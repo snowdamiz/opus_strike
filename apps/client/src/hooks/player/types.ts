@@ -94,25 +94,6 @@ export interface TargetingRefs {
 }
 
 // ============================================================================
-// SWING/GRAPPLE STATE (Hookshot)
-// ============================================================================
-
-export interface SwingState {
-  isSwinging: boolean;
-  attachPoint: { x: number; y: number; z: number } | null;
-  ropeLength: number;
-  initialRopeLength: number;
-  momentum: { x: number; y: number; z: number };
-  activeLineId: string | null;
-}
-
-export interface GrappleState {
-  isGrappling: boolean;
-  target: { x: number; y: number; z: number } | null;
-  activeLineId: string | null;
-}
-
-// ============================================================================
 // HERO-SPECIFIC STATE
 // ============================================================================
 
@@ -136,8 +117,7 @@ export interface BlazeState {
 export interface HookshotState {
   hookProjectileId: number;
   dragHookId: number;
-  grappleTrapId: number;
-  swingLineId: number;
+  groundHooksId: number;
   grappleLineId: number;
   earthWallId: number;
   lastHookTime: number;
@@ -176,7 +156,6 @@ export type TargetUpdateCallback = (position: THREE.Vector3 | null, isValid: boo
 
 export interface PlayerSounds {
   playPhantomBlink: () => void;
-  playPhantomShadowStep: () => void;
   playPhantomVeil: () => void;
   playPhantomBasic: () => void;
   playPhantomVoidRay: () => void;
@@ -184,9 +163,10 @@ export interface PlayerSounds {
   stopPhantomVoidRayCharge: () => void;
   playBlazeRocket: () => void;
   playBlazeBombTarget: () => void;
+  playBlazeBombRelease: () => void;
+  playBlazeBombFall: () => void;
   playBlazeBombExplode: () => void;
   playBlazeRocketJump: () => void;
-  playBlazeAirstrike: () => void;
   startFlamethrowerSound: () => void;
   stopFlamethrowerSound: () => void;
 }

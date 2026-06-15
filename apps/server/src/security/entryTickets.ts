@@ -9,8 +9,9 @@ export interface GameEntryTicketClaims {
   lobbyPlayerId: string;
   userId: string;
   displayName: string;
-  assignedTeam: Team;
+  assignedTeam?: Team;
   selectedHero?: HeroId;
+  observer?: boolean;
   clientId?: string;
   issuedAt: number;
   expiresAt: number;
@@ -23,8 +24,9 @@ export interface CreateGameEntryTicketInput {
   lobbyPlayerId: string;
   userId: string;
   displayName: string;
-  assignedTeam: Team;
+  assignedTeam?: Team;
   selectedHero?: HeroId;
+  observer?: boolean;
   clientId?: string;
   ttlMs?: number;
 }
@@ -68,6 +70,7 @@ export function createGameEntryTicket(input: CreateGameEntryTicketInput): string
     displayName: input.displayName,
     assignedTeam: input.assignedTeam,
     selectedHero: input.selectedHero,
+    observer: input.observer === true ? true : undefined,
     clientId: input.clientId,
     issuedAt: now,
     expiresAt: now + (input.ttlMs ?? DEFAULT_TICKET_TTL_MS),
@@ -100,7 +103,9 @@ export function verifyGameEntryTicket(
   if (expected.lobbyId && claims.lobbyId !== expected.lobbyId) return null;
   if (claims.expiresAt < now) return null;
   if (claims.issuedAt > now + 5_000) return null;
-  if (claims.assignedTeam !== 'red' && claims.assignedTeam !== 'blue') return null;
+  const isObserver = claims.observer === true;
+  if (!isObserver && claims.assignedTeam !== 'red' && claims.assignedTeam !== 'blue') return null;
+  if (isObserver && claims.assignedTeam !== undefined && claims.assignedTeam !== 'red' && claims.assignedTeam !== 'blue') return null;
   if (!claims.userId || !claims.lobbyPlayerId || !claims.displayName || !claims.nonce) return null;
 
   return claims;

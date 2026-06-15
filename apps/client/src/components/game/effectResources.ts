@@ -404,74 +404,9 @@ export function initializeEffectResources() {
     getGlowMaterial(color, 0.5);
     getGlowMaterial(color, 0.7);
   });
-  
-  // Prewarm Blaze materials.
-  import('./blaze/materials').then(({ prewarmBlazeMaterials }) => {
-    prewarmBlazeMaterials();
-  });
-  
-  // Prewarm Phantom materials
-  import('./phantom/materials').then(({ getRiftMaterial, getTrailMaterial, getShadowArrivalMaterial }) => {
-    getRiftMaterial();
-    getTrailMaterial();
-    getShadowArrivalMaterial();
-  });
-}
-
-export async function prewarmPhantomEffects(renderer?: THREE.WebGLRenderer): Promise<void> {
-  initializeEffectResources();
-
-  const [
-    phantomMaterials,
-    direBall,
-    terrainImpacts,
-    voidRay,
-    voidZone,
-  ] = await Promise.all([
-    import('./phantom/materials'),
-    import('./phantom/direBall'),
-    import('./TerrainImpactEffects'),
-    import('./phantom/voidRay'),
-    import('./phantom/voidZone'),
-  ]);
-
-  phantomMaterials.getRiftMaterial();
-  phantomMaterials.getTrailMaterial();
-  phantomMaterials.getShadowArrivalMaterial();
-  direBall.prewarmDireBallResources(renderer);
-  terrainImpacts.prewarmTerrainImpactResources(renderer);
-  voidRay.prewarmVoidRayResources(renderer);
-  voidZone.prewarmVoidZoneResources(renderer);
-}
-
-export async function prewarmBlazeEffects(renderer?: THREE.WebGLRenderer): Promise<void> {
-  initializeEffectResources();
-
-  const [
-    blazeMaterials,
-    rockets,
-  ] = await Promise.all([
-    import('./blaze/materials'),
-    import('./blaze/rockets'),
-  ]);
-
-  blazeMaterials.prewarmBlazeMaterials();
-  rockets.prewarmRocketResources(renderer);
 }
 
 // Auto-initialize on first import (browser only)
 if (typeof window !== 'undefined') {
   requestAnimationFrame(initializeEffectResources);
 }
-
-// Re-export LOD utilities for convenient single-import access
-export {
-  useEffectLOD,
-  useEffectDistance,
-  getOptimizedParticleCount,
-  shouldRenderAtDistance,
-  LOD_THRESHOLDS,
-  type LODConfig,
-  type LODResult,
-  type LODLevel,
-} from './useEffectLOD';

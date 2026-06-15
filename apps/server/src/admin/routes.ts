@@ -1,8 +1,33 @@
+import crypto from 'node:crypto';
+import type { Prisma } from '@prisma/client';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import prisma from '../db';
 import { verifyAuthToken } from '../auth/session';
+import { getAuthTokenSecret } from '../config/security';
+import {
+  DEFAULT_COMPETITIVE_RATING,
+  RANK_DEFINITIONS,
+  getRankFromRating,
+  type Team,
+} from '@voxel-strike/shared';
 import type { ColyseusRuntimeConfig } from '../config/colyseus';
 import { loggers } from '../utils/logger';
+import {
+  AntiCheatEvidenceStore,
+  applyHeldRankedOutcome,
+  cancelHeldRankedOutcome,
+  getAntiCheatConfig,
+  type AntiCheatAccountActionType,
+  type AntiCheatCaseStatus,
+} from '../anticheat';
+import {
+  buildPlayerReportResolution,
+  buildReportActionResolution,
+  createPlayerReportUpdate,
+  isPlayerReportStatus,
+  listPlayerReportQueue,
+} from '../reports/playerReportService';
+import { wagerService } from '../wagers/service';
 import {
   collectLocalAdminMachineSnapshot,
   listAdminMachineSnapshots,
@@ -11,6 +36,18 @@ import {
   type AdminMatchMaker,
   type AdminRoomListing,
 } from './machineRegistry';
+import { createInGameCapacitySnapshot } from '../matchmaking/playerCapacity';
+import {
+  getGlobalNotification,
+  setGlobalNotification,
+  removeGlobalNotification,
+  GLOBAL_NOTIFICATION_MAX_MESSAGE_LENGTH,
+} from '../notifications/globalNotificationService';
+import {
+  getRankedSeason,
+  setRankedSeason,
+  type RankedSeasonAdminView,
+} from '../ranking/seasonService';
 
 interface AdminRouterOptions {
   config: ColyseusRuntimeConfig;
@@ -23,7 +60,34 @@ interface AdminUser {
   id: string;
   name: string;
   walletAddress: string;
+  elevatedAntiCheatRole: boolean;
 }
+
+const ADMIN_RANK_USER_LIMIT_MAX = 100;
+const ADMIN_MANUAL_RATING_MAX = 5000;
+
+const adminRankUserSelect = {
+  id: true,
+  name: true,
+  walletAddress: true,
+  lastLoginAt: true,
+  createdAt: true,
+  updatedAt: true,
+  totalGames: true,
+  totalWins: true,
+  totalLosses: true,
+  totalDraws: true,
+  competitiveRating: true,
+  rankedGames: true,
+  rankedWins: true,
+  rankedLosses: true,
+  rankedDraws: true,
+  rankedPlacementsRemaining: true,
+  rankedPeakRating: true,
+  rankedLastMatchAt: true,
+} satisfies Prisma.UserSelect;
+
+type AdminRankUserRecord = Prisma.UserGetPayload<{ select: typeof adminRankUserSelect }>;
 
 interface RoomQueryResult {
   rooms: AdminRoomListing[];
@@ -42,6 +106,11 @@ interface MachineOverview {
   memoryRssBytes: number;
   systemFreeMemoryBytes: number;
   systemTotalMemoryBytes: number;
+  capacityPressure: number;
+  dynamicCapacityPlayers: number;
+  dynamicCapacitySource: 'live' | 'room_metrics' | 'bootstrap' | null;
+  eventLoopDelayP95Ms: number;
+  processCpuUtilization: number;
   localCcu: number;
   gameRoomCount: number;
   lobbyRoomCount: number;
@@ -52,10 +121,17 @@ interface MachineOverview {
   processes: AdminMachineSnapshot[];
 }
 
+type AdminRankedSeason = RankedSeasonAdminView;
+
 function adminWallet(): string | null {
   const wallet = process.env.ADMIN_WALLET?.trim();
   return wallet || null;
 }
+
+const ADMIN_CSRF_HEADER = 'x-csrf-token';
+const ADMIN_CSRF_WINDOW_MS = 60 * 60 * 1000;
+
+const antiCheatEvidenceStore = new AntiCheatEvidenceStore(prisma);
 
 function notFound(res: Response): void {
   res.status(404).type('text').send('Not found');
@@ -64,6 +140,271 @@ function notFound(res: Response): void {
 function noStore(res: Response): void {
   res.setHeader('Cache-Control', 'no-store, private, max-age=0');
   res.setHeader('Pragma', 'no-cache');
+}
+
+function isValidTeam(value: unknown): value is Team {
+  return value === 'red' || value === 'blue';
+}
+
+function timingSafeStringEqual(a: string, b: string): boolean {
+  const aBuffer = Buffer.from(a);
+  const bBuffer = Buffer.from(b);
+  return aBuffer.length === bBuffer.length && crypto.timingSafeEqual(aBuffer, bBuffer);
+}
+
+function adminCsrfSignature(adminUser: AdminUser, bucket: number): string {
+  return crypto
+    .createHmac('sha256', getAuthTokenSecret())
+    .update(`${adminUser.id}:${adminUser.walletAddress}:${bucket}`)
+    .digest('base64url');
+}
+
+function createAdminCsrfToken(adminUser: AdminUser, now = Date.now()): string {
+  const bucket = Math.floor(now / ADMIN_CSRF_WINDOW_MS);
+  return `${bucket}.${adminCsrfSignature(adminUser, bucket)}`;
+}
+
+function verifyAdminCsrfToken(adminUser: AdminUser, token: string, now = Date.now()): boolean {
+  const [bucketRaw, signature, ...extra] = token.split('.');
+  if (!bucketRaw || !signature || extra.length > 0 || !/^[0-9]+$/.test(bucketRaw)) return false;
+
+  const bucket = Number(bucketRaw);
+  if (!Number.isSafeInteger(bucket)) return false;
+
+  const currentBucket = Math.floor(now / ADMIN_CSRF_WINDOW_MS);
+  if (bucket < currentBucket - 1 || bucket > currentBucket) return false;
+
+  return timingSafeStringEqual(signature, adminCsrfSignature(adminUser, bucket));
+}
+
+function readHeaderString(req: Request, name: string): string {
+  const value = req.headers[name.toLowerCase()];
+  if (Array.isArray(value)) return value[0] ?? '';
+  return typeof value === 'string' ? value : '';
+}
+
+function readOriginList(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+function adminAllowedOrigins(): string[] {
+  const configuredOrigins = [
+    ...readOriginList(process.env.CLIENT_ORIGIN),
+    ...readOriginList(process.env.CLIENT_URL),
+    ...readOriginList(process.env.PUBLIC_CLIENT_ORIGIN),
+    ...readOriginList(process.env.ALLOWED_ORIGINS),
+  ];
+
+  if (process.env.NODE_ENV === 'production') return configuredOrigins;
+
+  return [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:5173',
+    ...configuredOrigins,
+  ];
+}
+
+function isAllowedConfiguredAdminOrigin(source: string): boolean {
+  try {
+    const sourceOrigin = new URL(source).origin;
+    return adminAllowedOrigins().some((origin) => {
+      try {
+        return new URL(origin).origin === sourceOrigin;
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
+function hasAllowedAdminOrigin(req: Request): boolean {
+  const fetchSite = readHeaderString(req, 'sec-fetch-site').toLowerCase();
+
+  const host = req.headers.host;
+  if (!host) return false;
+
+  const origin = readHeaderString(req, 'origin');
+  const referer = origin ? '' : readHeaderString(req, 'referer');
+  const source = origin || referer;
+  if (!source) return fetchSite === 'same-origin' || fetchSite === 'same-site' || fetchSite === 'none';
+
+  try {
+    if (fetchSite === 'cross-site') return isAllowedConfiguredAdminOrigin(source);
+    return new URL(source).host === host || isAllowedConfiguredAdminOrigin(source);
+  } catch {
+    return false;
+  }
+}
+
+function readRequestString(value: unknown, maxLength = 500): string {
+  return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
+}
+
+function readQueryString(value: unknown, maxLength = 500): string {
+  if (Array.isArray(value)) return readQueryString(value[0], maxLength);
+  return readRequestString(value, maxLength);
+}
+
+function readRequestInteger(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.round(value);
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.round(parsed) : null;
+  }
+  return null;
+}
+
+function readAdminRankUserLimit(value: unknown): number {
+  const limit = readRequestInteger(value) ?? 25;
+  return Math.max(1, Math.min(ADMIN_RANK_USER_LIMIT_MAX, limit));
+}
+
+function readAdminRankUserPage(value: unknown): number {
+  const page = readRequestInteger(value) ?? 1;
+  return Math.max(1, page);
+}
+
+function readManualRating(value: unknown): number | null {
+  const rating = readRequestInteger(value);
+  if (rating === null || rating < 0 || rating > ADMIN_MANUAL_RATING_MAX) return null;
+  return rating;
+}
+
+function prismaJson(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+const RANK_GATE_OPTIONS = RANK_DEFINITIONS.flatMap((tier) => (
+  tier.divisionThresholds.map((rating, index) => ({
+    label: `${tier.label} ${index + 1}`,
+    tier: tier.id,
+    division: index + 1,
+    rating,
+  }))
+)).map((option, index, options) => {
+  const nextRating = options[index + 1]?.rating ?? null;
+  const maxRating = nextRating === null ? null : nextRating - 1;
+  return {
+    ...option,
+    minRating: option.rating,
+    maxRating,
+    rangeLabel: maxRating === null ? `${option.rating}+` : `${option.rating}-${maxRating}`,
+  };
+});
+
+function rankDivisionOptions() {
+  return RANK_GATE_OPTIONS;
+}
+
+function rankGateForRating(rating: number) {
+  let current = RANK_GATE_OPTIONS[0];
+  for (const option of RANK_GATE_OPTIONS) {
+    if (rating >= option.minRating) current = option;
+    else break;
+  }
+  return current;
+}
+
+function serializeAdminRankUser(user: AdminRankUserRecord) {
+  const currentRank = getRankFromRating(user.competitiveRating, user.rankedGames);
+  const peakRank = getRankFromRating(user.rankedPeakRating, Math.max(user.rankedGames, 1));
+  const currentGate = rankGateForRating(user.competitiveRating);
+  const peakGate = rankGateForRating(user.rankedPeakRating);
+
+  return {
+    id: user.id,
+    name: user.name,
+    walletAddress: user.walletAddress,
+    lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
+    createdAt: user.createdAt.toISOString(),
+    updatedAt: user.updatedAt.toISOString(),
+    totalGames: user.totalGames,
+    totalWins: user.totalWins,
+    totalLosses: user.totalLosses,
+    totalDraws: user.totalDraws,
+    competitiveRating: user.competitiveRating,
+    rankedGames: user.rankedGames,
+    rankedWins: user.rankedWins,
+    rankedLosses: user.rankedLosses,
+    rankedDraws: user.rankedDraws,
+    rankedPlacementsRemaining: user.rankedPlacementsRemaining,
+    rankedPeakRating: user.rankedPeakRating,
+    rankedLastMatchAt: user.rankedLastMatchAt?.toISOString() ?? null,
+    rank: {
+      label: currentRank.label,
+      tier: currentRank.tier,
+      division: currentRank.division,
+      rating: currentRank.rating,
+      minRating: currentGate.minRating,
+      maxRating: currentGate.maxRating,
+      rangeLabel: currentGate.rangeLabel,
+    },
+    peakRank: {
+      label: peakRank.label,
+      tier: peakRank.tier,
+      division: peakRank.division,
+      rating: peakRank.rating,
+      minRating: peakGate.minRating,
+      maxRating: peakGate.maxRating,
+      rangeLabel: peakGate.rangeLabel,
+    },
+  };
+}
+
+async function listAdminRankUsers(query: string, page: number, limit: number) {
+  const search = query.trim();
+  const where = search
+    ? {
+      OR: [
+        { id: { contains: search, mode: 'insensitive' as const } },
+        { name: { contains: search, mode: 'insensitive' as const } },
+        { walletAddress: { contains: search, mode: 'insensitive' as const } },
+      ],
+    } satisfies Prisma.UserWhereInput
+    : undefined;
+
+  const [total, users] = await Promise.all([
+    prisma.user.count({ where }),
+    prisma.user.findMany({
+      where,
+      orderBy: search
+        ? [{ competitiveRating: 'desc' }, { rankedWins: 'desc' }, { updatedAt: 'desc' }]
+        : [{ updatedAt: 'desc' }],
+      skip: (page - 1) * limit,
+      take: limit,
+      select: adminRankUserSelect,
+    }),
+  ]);
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+
+  return {
+    users: users.map(serializeAdminRankUser),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
+      hasPrevious: page > 1,
+      hasNext: page < totalPages,
+    },
+  };
+}
+
+function readEvidenceEventIds(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+      .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      .map((item) => item.trim().slice(0, 96))
+      .slice(0, 50)
+    : [];
 }
 
 function readFiniteNumber(value: unknown): number | null {
@@ -171,6 +512,7 @@ async function ensureAdmin(req: Request, res: Response, next: NextFunction): Pro
       id: user.id,
       name: user.name,
       walletAddress,
+      elevatedAntiCheatRole: getAntiCheatConfig().elevatedAdminWallets.includes(walletAddress),
     } satisfies AdminUser;
     next();
   } catch (error) {
@@ -180,6 +522,27 @@ async function ensureAdmin(req: Request, res: Response, next: NextFunction): Pro
     });
     res.status(500).json({ error: 'Admin authorization failed' });
   }
+}
+
+function ensureAdminMutation(req: Request, res: Response, next: NextFunction): void {
+  noStore(res);
+
+  const adminUser = res.locals.adminUser as AdminUser | undefined;
+  const token = readHeaderString(req, ADMIN_CSRF_HEADER);
+
+  if (!adminUser || !hasAllowedAdminOrigin(req) || !verifyAdminCsrfToken(adminUser, token)) {
+    loggers.auth.warn('Admin mutation rejected by CSRF guard', {
+      path: req.path,
+      hasAdminUser: Boolean(adminUser),
+      hasToken: Boolean(token),
+      origin: readHeaderString(req, 'origin') || null,
+      fetchSite: readHeaderString(req, 'sec-fetch-site') || null,
+    });
+    notFound(res);
+    return;
+  }
+
+  next();
 }
 
 async function queryRooms(matchMaker: AdminMatchMaker, name: string): Promise<RoomQueryResult> {
@@ -231,6 +594,11 @@ function createMachineMap(snapshots: AdminMachineSnapshot[]): Map<string, Machin
         memoryRssBytes: snapshot.memoryRssBytes,
         systemFreeMemoryBytes: snapshot.systemFreeMemoryBytes,
         systemTotalMemoryBytes: snapshot.systemTotalMemoryBytes,
+        capacityPressure: snapshot.capacityPressure,
+        dynamicCapacityPlayers: 0,
+        dynamicCapacitySource: null,
+        eventLoopDelayP95Ms: snapshot.eventLoopDelayP95Ms,
+        processCpuUtilization: snapshot.processCpuUtilization,
         localCcu: snapshot.localCcu,
         gameRoomCount: 0,
         lobbyRoomCount: 0,
@@ -249,6 +617,9 @@ function createMachineMap(snapshots: AdminMachineSnapshot[]): Map<string, Machin
     existing.loadPct1 = Math.max(existing.loadPct1, snapshot.loadPct1);
     existing.cpuCount = Math.max(existing.cpuCount, snapshot.cpuCount);
     existing.memoryRssBytes += snapshot.memoryRssBytes;
+    existing.capacityPressure = Math.max(existing.capacityPressure, snapshot.capacityPressure);
+    existing.eventLoopDelayP95Ms = Math.max(existing.eventLoopDelayP95Ms, snapshot.eventLoopDelayP95Ms);
+    existing.processCpuUtilization = Math.max(existing.processCpuUtilization, snapshot.processCpuUtilization);
     existing.localCcu += snapshot.localCcu;
 
     if (snapshot.updatedAtMs > existing.latestUpdatedAtMs) {
@@ -261,6 +632,14 @@ function createMachineMap(snapshots: AdminMachineSnapshot[]): Map<string, Machin
   }
 
   return machines;
+}
+
+function pickCapacitySource(
+  current: MachineOverview['dynamicCapacitySource'],
+  next: NonNullable<MachineOverview['dynamicCapacitySource']>
+): NonNullable<MachineOverview['dynamicCapacitySource']> {
+  const rank = { bootstrap: 0, room_metrics: 1, live: 2 };
+  return !current || rank[next] > rank[current] ? next : current;
 }
 
 function addFallbackMachineRoomCounts(machines: Map<string, MachineOverview>): void {
@@ -294,6 +673,11 @@ function addGlobalRoomCounts(
       memoryRssBytes: 0,
       systemFreeMemoryBytes: 0,
       systemTotalMemoryBytes: 0,
+      capacityPressure: 0,
+      dynamicCapacityPlayers: 0,
+      dynamicCapacitySource: null,
+      eventLoopDelayP95Ms: 0,
+      processCpuUtilization: 0,
       localCcu: 0,
       gameRoomCount: 0,
       lobbyRoomCount: 0,
@@ -324,6 +708,11 @@ function addGlobalRoomCounts(
       memoryRssBytes: 0,
       systemFreeMemoryBytes: 0,
       systemTotalMemoryBytes: 0,
+      capacityPressure: 0,
+      dynamicCapacityPlayers: 0,
+      dynamicCapacitySource: null,
+      eventLoopDelayP95Ms: 0,
+      processCpuUtilization: 0,
       localCcu: 0,
       gameRoomCount: 0,
       lobbyRoomCount: 0,
@@ -376,10 +765,15 @@ function summarizeLobbyRoom(room: AdminRoomListing, processSnapshots: Map<string
 
 async function collectAdminOverview(options: AdminRouterOptions, adminUser: AdminUser) {
   const generatedAtMs = Date.now();
-  const redis = await pingRedis(options.redis);
-  const [gameRoomResult, lobbyRoomResult] = await Promise.all([
+  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, goldenBiomeRewards, globalNotification, rankedSeason] = await Promise.all([
+    pingRedis(options.redis),
     queryRooms(options.matchMaker, 'game_room'),
     queryRooms(options.matchMaker, 'lobby_room'),
+    antiCheatEvidenceStore.listReviewData(),
+    listPlayerReportQueue(prisma),
+    wagerService.getGoldenBiomeAdminOverview(),
+    getGlobalNotification(),
+    getRankedSeason(),
   ]);
 
   let machineSnapshots: AdminMachineSnapshot[] = [];
@@ -412,6 +806,16 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     addFallbackMachineRoomCounts(machines);
   } else {
     addGlobalRoomCounts(machines, processSnapshots, gameRoomResult.rooms, lobbyRoomResult.rooms);
+  }
+
+  const capacity = createInGameCapacitySnapshot(gameRoomResult.rooms, freshSnapshots);
+  for (const estimate of capacity.machines) {
+    const snapshot = processSnapshots.get(estimate.processId);
+    if (!snapshot) continue;
+    const machine = machines.get(snapshot.machineId);
+    if (!machine) continue;
+    machine.dynamicCapacityPlayers += estimate.playersPerMachine;
+    machine.dynamicCapacitySource = pickCapacitySource(machine.dynamicCapacitySource, estimate.source);
   }
 
   const machineList = Array.from(machines.values())
@@ -457,8 +861,11 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
       userId: adminUser.id,
       name: adminUser.name,
       walletAddress: adminUser.walletAddress,
+      elevatedAntiCheatRole: adminUser.elevatedAntiCheatRole,
+      csrfToken: createAdminCsrfToken(adminUser, generatedAtMs),
     },
     totals,
+    capacity,
     machines: machineList,
     rooms: {
       game: gameRooms,
@@ -479,383 +886,16 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
       localProcessId: options.matchMaker.processId ?? null,
       warnings,
     },
+    antiCheat,
+    playerReports,
+    goldenBiomeRewards,
+    globalNotification,
+    rankedSeason: rankedSeason satisfies AdminRankedSeason,
   };
-}
-
-function renderAdminHtml(): string {
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Slop Heroes Admin</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      --bg: #101114;
-      --panel: #17191f;
-      --panel-2: #1f232b;
-      --line: #303642;
-      --text: #eef2f6;
-      --muted: #98a2b3;
-      --good: #39d98a;
-      --warn: #f4bf50;
-      --bad: #ff6b6b;
-      --accent: #66d9ef;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background: var(--bg);
-      color: var(--text);
-      font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    main {
-      width: min(1360px, calc(100vw - 32px));
-      margin: 0 auto;
-      padding: 24px 0 40px;
-    }
-    header {
-      display: flex;
-      align-items: end;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 20px;
-    }
-    h1, h2 { margin: 0; font-weight: 700; letter-spacing: 0; }
-    h1 { font-size: 28px; }
-    h2 { font-size: 16px; }
-    .muted { color: var(--muted); }
-    .status {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      min-height: 32px;
-      padding: 6px 10px;
-      border: 1px solid var(--line);
-      background: var(--panel);
-      border-radius: 6px;
-      white-space: nowrap;
-    }
-    .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      background: var(--muted);
-    }
-    .ok .dot { background: var(--good); }
-    .degraded .dot { background: var(--warn); }
-    .error .dot { background: var(--bad); }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 16px;
-    }
-    .metric, section {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-    }
-    .metric { padding: 14px; min-width: 0; }
-    .metric .label {
-      color: var(--muted);
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-    }
-    .metric .value {
-      margin-top: 4px;
-      font-size: 28px;
-      font-weight: 750;
-      line-height: 1.1;
-      overflow-wrap: anywhere;
-    }
-    section { margin-top: 16px; overflow: hidden; }
-    section .section-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 13px 14px;
-      border-bottom: 1px solid var(--line);
-      background: var(--panel-2);
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      table-layout: fixed;
-    }
-    th, td {
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--line);
-      text-align: left;
-      vertical-align: middle;
-      overflow-wrap: anywhere;
-    }
-    th {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 650;
-      text-transform: uppercase;
-      letter-spacing: .06em;
-      background: rgba(255,255,255,.02);
-    }
-    tr:last-child td { border-bottom: 0; }
-    .num { text-align: right; font-variant-numeric: tabular-nums; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      min-height: 24px;
-      max-width: 100%;
-      padding: 2px 8px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      color: var(--text);
-      background: rgba(255,255,255,.03);
-    }
-    .warnings {
-      display: none;
-      margin: 0 0 16px;
-      padding: 12px 14px;
-      border: 1px solid rgba(244,191,80,.45);
-      background: rgba(244,191,80,.11);
-      border-radius: 8px;
-      color: #ffe4a3;
-    }
-    .empty {
-      padding: 18px 14px;
-      color: var(--muted);
-    }
-    @media (max-width: 1050px) {
-      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      header { align-items: start; flex-direction: column; }
-    }
-    @media (max-width: 720px) {
-      main { width: min(100vw - 20px, 1360px); padding-top: 16px; }
-      .grid { grid-template-columns: 1fr; }
-      table { min-width: 760px; }
-      .table-wrap { overflow-x: auto; }
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <div>
-        <h1>Slop Heroes Admin</h1>
-        <div class="muted" id="subtitle">Loading production telemetry</div>
-      </div>
-      <div class="status" id="status"><span class="dot"></span><span>Loading</span></div>
-    </header>
-
-    <div class="warnings" id="warnings"></div>
-
-    <div class="grid" id="metrics"></div>
-
-    <section>
-      <div class="section-head">
-        <h2>Machines</h2>
-        <span class="muted" id="machine-count"></span>
-      </div>
-      <div class="table-wrap" id="machines"></div>
-    </section>
-
-    <section>
-      <div class="section-head">
-        <h2>Game Rooms</h2>
-        <span class="muted" id="game-room-count"></span>
-      </div>
-      <div class="table-wrap" id="game-rooms"></div>
-    </section>
-
-    <section>
-      <div class="section-head">
-        <h2>Lobbies</h2>
-        <span class="muted" id="lobby-count"></span>
-      </div>
-      <div class="table-wrap" id="lobbies"></div>
-    </section>
-  </main>
-
-  <script>
-    const state = {
-      formatter: new Intl.NumberFormat(),
-      bytes: new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }),
-    };
-
-    function escapeHtml(value) {
-      return String(value ?? '').replace(/[&<>"']/g, (char) => ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;',
-      }[char]));
-    }
-
-    function num(value) {
-      return state.formatter.format(Number(value) || 0);
-    }
-
-    function bytes(value) {
-      const raw = Number(value) || 0;
-      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-      let current = raw;
-      let index = 0;
-      while (current >= 1024 && index < units.length - 1) {
-        current /= 1024;
-        index++;
-      }
-      return state.bytes.format(current) + ' ' + units[index];
-    }
-
-    function age(ms) {
-      if (!ms) return 'unknown';
-      const seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
-      if (seconds < 60) return seconds + 's ago';
-      return Math.round(seconds / 60) + 'm ago';
-    }
-
-    function setStatus(data) {
-      const el = document.getElementById('status');
-      el.className = 'status ' + (data.status === 'ok' ? 'ok' : 'degraded');
-      el.innerHTML = '<span class="dot"></span><span>' + escapeHtml(data.status) + '</span>';
-      document.getElementById('subtitle').textContent = 'Updated ' + new Date(data.generatedAt).toLocaleString();
-    }
-
-    function renderMetrics(data) {
-      const metrics = [
-        ['Machines', data.totals.runningMachines],
-        ['Game Players', data.totals.playersInGame],
-        ['Game Rooms', data.totals.gameRooms],
-        ['Lobby Participants', data.totals.lobbyParticipants],
-        ['Connected Clients', data.totals.totalConnectedClients],
-      ];
-
-      document.getElementById('metrics').innerHTML = metrics.map(([label, value]) =>
-        '<div class="metric"><div class="label">' + escapeHtml(label) + '</div><div class="value">' + num(value) + '</div></div>'
-      ).join('');
-    }
-
-    function renderWarnings(data) {
-      const el = document.getElementById('warnings');
-      const warnings = data.diagnostics.warnings || [];
-      if (warnings.length === 0) {
-        el.style.display = 'none';
-        el.innerHTML = '';
-        return;
-      }
-      el.style.display = 'block';
-      el.innerHTML = warnings.map((warning) => '<div>' + escapeHtml(warning) + '</div>').join('');
-    }
-
-    function renderMachines(data) {
-      document.getElementById('machine-count').textContent = num(data.machines.length) + ' running';
-      if (data.machines.length === 0) {
-        document.getElementById('machines').innerHTML = '<div class="empty">No running machines reported.</div>';
-        return;
-      }
-
-      document.getElementById('machines').innerHTML = '<table><thead><tr>' +
-        '<th>Machine</th><th>Region</th><th class="num">Players</th><th class="num">Bots</th><th class="num">Rooms</th><th class="num">Load</th><th class="num">Memory</th><th class="num">CCU</th><th>Updated</th>' +
-        '</tr></thead><tbody>' + data.machines.map((machine) => (
-          '<tr>' +
-          '<td><span class="mono">' + escapeHtml(machine.machineId) + '</span><br><span class="muted">' + num(machine.processCount) + ' process</span></td>' +
-          '<td>' + escapeHtml(machine.region || 'unknown') + '</td>' +
-          '<td class="num">' + num(machine.playersInGame) + '</td>' +
-          '<td class="num">' + num(machine.botsInGame) + '</td>' +
-          '<td class="num">' + num(machine.gameRoomCount) + ' game / ' + num(machine.lobbyRoomCount) + ' lobby</td>' +
-          '<td class="num">' + (Number(machine.loadAvg1) || 0).toFixed(2) + ' / ' + num(machine.cpuCount) + '<br><span class="muted">' + (Number(machine.loadPct1) || 0).toFixed(0) + '%</span></td>' +
-          '<td class="num">' + bytes(machine.memoryRssBytes) + '<br><span class="muted">' + bytes(machine.systemFreeMemoryBytes) + ' free</span></td>' +
-          '<td class="num">' + num(machine.localCcu) + '</td>' +
-          '<td>' + escapeHtml(age(machine.latestUpdatedAtMs)) + '</td>' +
-          '</tr>'
-        )).join('') + '</tbody></table>';
-    }
-
-    function renderGameRooms(data) {
-      const rooms = data.rooms.game;
-      document.getElementById('game-room-count').textContent = num(rooms.length) + ' active';
-      if (rooms.length === 0) {
-        document.getElementById('game-rooms').innerHTML = '<div class="empty">No active game rooms.</div>';
-        return;
-      }
-
-      document.getElementById('game-rooms').innerHTML = '<table><thead><tr>' +
-        '<th>Room</th><th>Machine</th><th>Phase</th><th>Mode</th><th class="num">Players</th><th class="num">Bots</th><th class="num">Clients</th>' +
-        '</tr></thead><tbody>' + rooms.map((room) => (
-          '<tr>' +
-          '<td><span class="mono">' + escapeHtml(room.roomId) + '</span></td>' +
-          '<td><span class="mono">' + escapeHtml(room.machineId) + '</span></td>' +
-          '<td><span class="pill">' + escapeHtml(room.phase) + '</span></td>' +
-          '<td>' + escapeHtml(room.matchMode) + '</td>' +
-          '<td class="num">' + num(room.players) + '</td>' +
-          '<td class="num">' + num(room.bots) + '</td>' +
-          '<td class="num">' + num(room.clients) + ' / ' + num(room.maxClients) + '</td>' +
-          '</tr>'
-        )).join('') + '</tbody></table>';
-    }
-
-    function renderLobbies(data) {
-      const rooms = data.rooms.lobbies;
-      document.getElementById('lobby-count').textContent = num(rooms.length) + ' active';
-      if (rooms.length === 0) {
-        document.getElementById('lobbies').innerHTML = '<div class="empty">No active lobbies.</div>';
-        return;
-      }
-
-      document.getElementById('lobbies').innerHTML = '<table><thead><tr>' +
-        '<th>Lobby</th><th>Machine</th><th>Status</th><th>Mode</th><th class="num">Humans</th><th class="num">Bots</th><th class="num">Participants</th>' +
-        '</tr></thead><tbody>' + rooms.map((room) => (
-          '<tr>' +
-          '<td>' + escapeHtml(room.name) + '<br><span class="mono muted">' + escapeHtml(room.roomId) + '</span></td>' +
-          '<td><span class="mono">' + escapeHtml(room.machineId) + '</span></td>' +
-          '<td><span class="pill">' + escapeHtml(room.status) + '</span></td>' +
-          '<td>' + escapeHtml(room.matchMode) + '</td>' +
-          '<td class="num">' + num(room.humans) + '</td>' +
-          '<td class="num">' + num(room.bots) + '</td>' +
-          '<td class="num">' + num(room.participants) + '</td>' +
-          '</tr>'
-        )).join('') + '</tbody></table>';
-    }
-
-    async function load() {
-      try {
-        const response = await fetch('/admin/api/overview', { credentials: 'include', cache: 'no-store' });
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        const data = await response.json();
-        setStatus(data);
-        renderWarnings(data);
-        renderMetrics(data);
-        renderMachines(data);
-        renderGameRooms(data);
-        renderLobbies(data);
-      } catch (error) {
-        const el = document.getElementById('status');
-        el.className = 'status error';
-        el.innerHTML = '<span class="dot"></span><span>Refresh failed</span>';
-        document.getElementById('warnings').style.display = 'block';
-        document.getElementById('warnings').textContent = error instanceof Error ? error.message : String(error);
-      }
-    }
-
-    load();
-    window.setInterval(load, 3000);
-  </script>
-</body>
-</html>`;
 }
 
 export function createAdminRouter(options: AdminRouterOptions): Router {
   const router: Router = Router();
-
-  router.get('/', ensureAdmin, (_req, res) => {
-    noStore(res);
-    res.type('html').send(renderAdminHtml());
-  });
 
   router.get('/api/overview', ensureAdmin, async (_req, res) => {
     noStore(res);
@@ -867,6 +907,442 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         error: error instanceof Error ? error.message : String(error),
       });
       res.status(500).json({ error: 'Failed to collect admin overview' });
+    }
+  });
+
+  router.get('/api/anti-cheat/overview', ensureAdmin, async (_req, res) => {
+    noStore(res);
+    try {
+      res.json(await antiCheatEvidenceStore.listReviewData());
+    } catch (error) {
+      loggers.room.error('Failed to collect anti-cheat overview', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: 'Failed to collect anti-cheat overview' });
+    }
+  });
+
+  router.get('/api/users', ensureAdmin, async (req, res) => {
+    noStore(res);
+    const query = readQueryString(req.query.query, 128);
+    const limit = readAdminRankUserLimit(req.query.limit);
+    const page = readAdminRankUserPage(req.query.page);
+
+    try {
+      const result = await listAdminRankUsers(query, page, limit);
+      res.json({
+        query,
+        ratingBounds: {
+          min: 0,
+          max: ADMIN_MANUAL_RATING_MAX,
+          default: DEFAULT_COMPETITIVE_RATING,
+        },
+        rankOptions: rankDivisionOptions(),
+        ...result,
+      });
+    } catch (error) {
+      loggers.room.error('Failed to list admin users', {
+        query,
+        page,
+        limit,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: 'Failed to list users' });
+    }
+  });
+
+  router.post('/api/users/:userId/rank', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const competitiveRating = readManualRating(req.body?.competitiveRating);
+    if (competitiveRating === null) {
+      res.status(400).json({ error: `Rating must be between 0 and ${ADMIN_MANUAL_RATING_MAX}` });
+      return;
+    }
+
+    const reason = readRequestString(req.body?.reason, 500) || 'Manual rank adjustment';
+
+    try {
+      const existing = await prisma.user.findUnique({
+        where: { id: req.params.userId },
+        select: adminRankUserSelect,
+      });
+      if (!existing) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+
+      const previousRank = getRankFromRating(existing.competitiveRating, existing.rankedGames);
+      const nextRank = getRankFromRating(competitiveRating, existing.rankedGames);
+      const rankedPeakRating = Math.max(existing.rankedPeakRating, competitiveRating);
+
+      const updated = await prisma.$transaction(async (tx) => {
+        const user = await tx.user.update({
+          where: { id: existing.id },
+          data: {
+            competitiveRating,
+            rankedPeakRating,
+          },
+          select: adminRankUserSelect,
+        });
+
+        await tx.antiCheatAction.create({
+          data: {
+            actionType: 'manual_rank_adjustment',
+            userId: existing.id,
+            actorUserId: adminUser.id,
+            reason,
+            details: prismaJson({
+              targetUserName: existing.name,
+              targetWalletAddress: existing.walletAddress,
+              ratingBefore: existing.competitiveRating,
+              ratingAfter: competitiveRating,
+              rankBefore: previousRank.label,
+              rankAfter: nextRank.label,
+              rankedGames: existing.rankedGames,
+              rankedPeakRatingBefore: existing.rankedPeakRating,
+              rankedPeakRatingAfter: rankedPeakRating,
+            }),
+            observedOnly: false,
+            evidenceEventIds: [],
+          },
+        });
+
+        return user;
+      });
+
+      res.json({ ok: true, user: serializeAdminRankUser(updated) });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/golden-biome/distribution-mode', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const mode = readRequestString(req.body?.mode, 16);
+    if (mode !== 'manual' && mode !== 'auto') {
+      res.status(400).json({ error: 'Invalid golden biome reward distribution mode' });
+      return;
+    }
+
+    try {
+      const distributionMode = await wagerService.setGoldenBiomeRewardDistributionMode(mode, adminUser.id);
+      res.json({ ok: true, distributionMode });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/golden-biome/rewards/:rewardId/distribute', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+
+    try {
+      const reward = await wagerService.distributeGoldenBiomeReward(req.params.rewardId, adminUser.id);
+      res.json({ ok: true, reward });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/global-notification', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const message = readRequestString(req.body?.message, GLOBAL_NOTIFICATION_MAX_MESSAGE_LENGTH);
+
+    if (!message) {
+      res.status(400).json({ error: 'Notification message is required' });
+      return;
+    }
+
+    try {
+      const notification = await setGlobalNotification(message, adminUser.id);
+      res.json({ ok: true, notification });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/global-notification/remove', ensureAdmin, ensureAdminMutation, async (_req, res) => {
+    noStore(res);
+
+    try {
+      await removeGlobalNotification();
+      res.json({ ok: true, notification: null });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/ranked-season', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+
+    try {
+      const result = await setRankedSeason({
+        mode: req.body?.mode,
+        seasonNumber: req.body?.seasonNumber,
+        endsAt: req.body?.endsAt ?? null,
+      }, adminUser.id);
+
+      res.json({ ok: true, ...result });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/player-reports/:reportId/status', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const status = req.body?.status;
+    if (!isPlayerReportStatus(status)) {
+      res.status(400).json({ error: 'Invalid report status' });
+      return;
+    }
+
+    const note = readRequestString(req.body?.note, 800);
+    try {
+      await prisma.playerReport.update({
+        where: { id: req.params.reportId },
+        data: createPlayerReportUpdate({
+          status,
+          actorUserId: adminUser.id,
+          resolution: buildPlayerReportResolution({
+            status,
+            actorName: adminUser.name,
+            note,
+          }),
+        }),
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/player-reports/:reportId/account-actions', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const actionType = readRequestString(req.body?.actionType, 64) as AntiCheatAccountActionType;
+    if (!['suspension', 'ban', 'lift_suspension', 'lift_ban'].includes(actionType)) {
+      res.status(400).json({ error: 'Invalid account action type' });
+      return;
+    }
+
+    const reason = readRequestString(req.body?.reason, 800);
+    if (!reason) {
+      res.status(400).json({ error: 'Reason is required' });
+      return;
+    }
+
+    const expiresAtRaw = readRequestString(req.body?.expiresAt, 64);
+    const expiresAt = expiresAtRaw ? new Date(expiresAtRaw) : null;
+    if (expiresAtRaw && Number.isNaN(expiresAt?.getTime())) {
+      res.status(400).json({ error: 'Invalid expiration' });
+      return;
+    }
+
+    try {
+      const report = await prisma.playerReport.findUniqueOrThrow({
+        where: { id: req.params.reportId },
+      });
+      if (!report.targetUserId) {
+        res.status(400).json({ error: 'Report target has no linked account for account actions' });
+        return;
+      }
+
+      const accountActionId = await antiCheatEvidenceStore.createAccountAction({
+        actorUserId: adminUser.id,
+        targetUserId: report.targetUserId,
+        actionType,
+        reason,
+        evidenceCaseId: null,
+        evidenceEventIds: report.evidenceEventId ? [report.evidenceEventId] : [],
+        expiresAt,
+        elevated: adminUser.elevatedAntiCheatRole,
+      });
+
+      await prisma.playerReport.update({
+        where: { id: report.id },
+        data: {
+          status: 'actioned',
+          resolvedByUserId: adminUser.id,
+          resolvedAt: new Date(),
+          resolution: buildReportActionResolution({
+            actionType,
+            actorName: adminUser.name,
+            reason,
+          }),
+          actionType,
+          accountActionId,
+        },
+      });
+
+      res.json({ ok: true, accountActionId });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/anti-cheat/cases/:caseId', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const status = req.body?.status;
+    const allowedStatuses = new Set(['open', 'investigating', 'resolved', 'false_positive', 'escalated']);
+    if (status !== undefined && !allowedStatuses.has(status)) {
+      res.status(400).json({ error: 'Invalid case status' });
+      return;
+    }
+
+    try {
+      await antiCheatEvidenceStore.updateCase({
+        caseId: req.params.caseId,
+        actorUserId: adminUser.id,
+        status: status as AntiCheatCaseStatus | undefined,
+        note: readRequestString(req.body?.note),
+        resolution: readRequestString(req.body?.resolution),
+        falsePositive: status === 'false_positive' ? true : undefined,
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/anti-cheat/ranked/:matchId/apply', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const reason = readRequestString(req.body?.reason);
+    if (!reason) {
+      res.status(400).json({ error: 'Reason is required' });
+      return;
+    }
+    try {
+      await applyHeldRankedOutcome(prisma, {
+        matchId: req.params.matchId,
+        actorUserId: adminUser.id,
+        reason,
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/anti-cheat/ranked/:matchId/cancel', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const reason = readRequestString(req.body?.reason);
+    if (!reason) {
+      res.status(400).json({ error: 'Reason is required' });
+      return;
+    }
+    try {
+      await cancelHeldRankedOutcome(prisma, {
+        matchId: req.params.matchId,
+        actorUserId: adminUser.id,
+        reason,
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/anti-cheat/payout-holds/:holdId/:action', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const action = req.params.action;
+    const reason = readRequestString(req.body?.reason);
+    if (!reason) {
+      res.status(400).json({ error: 'Reason is required' });
+      return;
+    }
+    if (action !== 'release' && action !== 'refund' && action !== 'cancel') {
+      res.status(400).json({ error: 'Invalid payout hold action' });
+      return;
+    }
+
+    try {
+      const hold = await prisma.antiCheatPayoutHold.findUniqueOrThrow({
+        where: { id: req.params.holdId },
+      });
+      if (hold.status !== 'open') {
+        throw new Error('Payout hold is already resolved');
+      }
+
+      if (action === 'release' || action === 'refund') {
+        await wagerService.settleWageredLobby({
+          wageredLobbyId: hold.wageredLobbyId,
+          matchId: hold.matchId,
+          winningTeam: action === 'release' && isValidTeam(hold.winningTeam) ? hold.winningTeam : null,
+        });
+      } else {
+        await prisma.wageredLobby.updateMany({
+          where: { id: hold.wageredLobbyId },
+          data: { status: 'failed' },
+        });
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.antiCheatPayoutHold.update({
+          where: { id: hold.id },
+          data: {
+            status: action === 'release' ? 'released' : action === 'refund' ? 'refunded' : 'canceled',
+            resolvedByUserId: adminUser.id,
+            resolvedAt: new Date(),
+            resolution: reason,
+          },
+        });
+        await tx.antiCheatAction.create({
+          data: {
+            actionType: action === 'release' ? 'payout_release' : action === 'refund' ? 'refund_decision' : 'settlement_cancel',
+            matchId: hold.matchId,
+            caseId: hold.caseId,
+            actorUserId: adminUser.id,
+            reason,
+            details: { payoutHoldId: hold.id, wageredLobbyId: hold.wageredLobbyId },
+            observedOnly: false,
+            evidenceEventIds: [],
+          },
+        });
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/anti-cheat/account-actions', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const actionType = readRequestString(req.body?.actionType, 64) as AntiCheatAccountActionType;
+    if (!['suspension', 'ban', 'lift_suspension', 'lift_ban'].includes(actionType)) {
+      res.status(400).json({ error: 'Invalid account action type' });
+      return;
+    }
+    const expiresAtRaw = readRequestString(req.body?.expiresAt, 64);
+    const expiresAt = expiresAtRaw ? new Date(expiresAtRaw) : null;
+    if (expiresAtRaw && Number.isNaN(expiresAt?.getTime())) {
+      res.status(400).json({ error: 'Invalid expiration' });
+      return;
+    }
+
+    try {
+      await antiCheatEvidenceStore.createAccountAction({
+        actorUserId: adminUser.id,
+        targetUserId: readRequestString(req.body?.targetUserId, 128),
+        actionType,
+        reason: readRequestString(req.body?.reason),
+        evidenceCaseId: readRequestString(req.body?.evidenceCaseId, 128) || null,
+        evidenceEventIds: readEvidenceEventIds(req.body?.evidenceEventIds),
+        expiresAt,
+        elevated: adminUser.elevatedAntiCheatRole,
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
 

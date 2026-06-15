@@ -2,7 +2,7 @@ import type { IncomingMessage } from 'http';
 import jwt from 'jsonwebtoken';
 import type { SignOptions } from 'jsonwebtoken';
 import prisma from '../db';
-import { isGuestPlayAllowed } from '../config/security';
+import { getAuthTokenSecret, isGuestPlayAllowed } from '../config/security';
 import type { AuthProviderName, PendingRegistrationIdentity } from './types';
 import { isAuthProvider } from './types';
 import {
@@ -38,7 +38,7 @@ export interface RoomAuthContext {
   rankPayload: PublicRankPayload;
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'voxel-strike-secret-key-change-in-production';
+const JWT_SECRET = getAuthTokenSecret();
 
 export function createAuthToken(options: {
   userId: string;

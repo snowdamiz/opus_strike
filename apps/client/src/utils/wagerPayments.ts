@@ -1,4 +1,4 @@
-import { Transaction } from '@solana/web3.js';
+import type { Transaction } from '@solana/web3.js';
 
 export function lamportsToSolDisplay(lamports: string | number | bigint | undefined): string {
   const value = typeof lamports === 'bigint'
@@ -36,6 +36,7 @@ function base64ToBytes(value: string): Uint8Array {
   return bytes;
 }
 
-export function deserializeWagerPaymentTransaction(transactionBase64: string): Transaction {
+export async function deserializeWagerPaymentTransaction(transactionBase64: string): Promise<Transaction> {
+  const { Transaction } = await import('@solana/web3.js');
   return Transaction.from(base64ToBytes(transactionBase64));
 }

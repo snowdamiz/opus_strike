@@ -1,9 +1,11 @@
 import type { Vec3, InputState, PlayerMovementState, HeroId } from '@voxel-strike/shared';
 import { 
-  BLINK_MAX_DISTANCE,
-  BLINK_COOLDOWN,
+  ABILITY_DEFINITIONS,
+  PHANTOM_BLINK_DISTANCE,
+  PLAYER_RADIUS,
+  calculateLookDirection,
 } from '@voxel-strike/shared';
-import { vec3Normalize, vec3Scale, vec3Add, createVec3 } from '@voxel-strike/shared';
+import { vec3Scale, vec3Add, createVec3 } from '@voxel-strike/shared';
 import type { PhysicsWorld } from '../PhysicsWorld.js';
 
 export interface AbilityMovementInput {
@@ -12,6 +14,8 @@ export interface AbilityMovementInput {
   input: InputState;
   forward: Vec3;
   right: Vec3;
+  lookYaw: number;
+  lookPitch: number;
   deltaTime: number;
   movementState: PlayerMovementState;
   heroId: HeroId | null;
@@ -37,7 +41,7 @@ export class AbilityMovement {
   }
 
   update(input: AbilityMovementInput): AbilityMovementResult {
-    const { position, velocity, input: playerInput, forward, deltaTime, heroId } = input;
+    const { position, velocity, input: playerInput, lookYaw, lookPitch, deltaTime, heroId } = input;
     
     let newPosition = { ...position };
     let newVelocity = { ...velocity };
@@ -54,14 +58,12 @@ export class AbilityMovement {
     }
 
     if (heroId === 'phantom' && playerInput.ability1 && this.blinkCooldown <= 0 && !this.isBlinking) {
-      // Blink in look direction
-      const blinkDir = vec3Normalize({
-        x: forward.x,
-        y: 0,
-        z: forward.z,
-      });
-      const blinkTarget = vec3Add(position, vec3Scale(blinkDir, BLINK_MAX_DISTANCE));
-      this.executeBlink(blinkTarget);
+      const blinkDir = calculateLookDirection(lookYaw, lookPitch);
+      const hit = this.world.sphereCast(position, PLAYER_RADIUS, blinkDir, PHANTOM_BLINK_DISTANCE, this.playerId);
+      const blinkDistance = hit ? Math.max(0, hit.distance - PLAYER_RADIUS) : PHANTOM_BLINK_DISTANCE;
+      if (blinkDistance >= 0.5) {
+        this.executeBlink(vec3Add(position, vec3Scale(blinkDir, blinkDistance)));
+      }
     }
 
     return {
@@ -78,7 +80,7 @@ export class AbilityMovement {
     
     this.isBlinking = true;
     this.blinkTarget = { ...targetPosition };
-    this.blinkCooldown = BLINK_COOLDOWN;
+    this.blinkCooldown = ABILITY_DEFINITIONS.phantom_blink?.cooldown ?? 10;
   }
 
   getBlinkCooldown(): number {

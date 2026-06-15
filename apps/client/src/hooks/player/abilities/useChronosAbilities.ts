@@ -1,10 +1,16 @@
 import { useCallback, useRef } from 'react';
 import {
+  ABILITY_DEFINITIONS,
+  CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
+  CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS,
+  CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
+  CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED,
   CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
   CHRONOS_VERDANT_PULSE_FIRE_READY_MS,
   CHRONOS_VERDANT_PULSE_SPEED,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
+import { predictLocalChronosAscendantParadox } from '../../../movement/localPrediction';
 import {
   CHRONOS_PRIMARY_ORB_SOCKET,
   calculateLookDirection,
@@ -12,17 +18,24 @@ import {
 } from '../constants';
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import {
-  CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+  triggerChronosAscendantParadoxPose,
   triggerChronosLifelineConduitPose,
   triggerChronosPrimaryShotGlow,
   triggerChronosTimebreakPose,
   type ChronosPrimaryOrbPoseSampleContext,
 } from '../../../viewmodel/chronosPose';
 import {
-  sampleViewmodelPose,
-  type ViewmodelSocketPose,
-} from '../../../viewmodel/viewmodelSocketRegistry';
+  resolveAbilitySocketOrigin,
+  type ResolvedAbilitySocketOrigin,
+} from '../../../model-system/abilitySocketResolver';
+import { offsetChronosOrbVisualPlainPosition } from '../../../model-system/chronosOrbVisualOrigin';
+import {
+  CHRONOS_VERDANT_PULSE_SHOT_PITCH,
+  CHRONOS_VERDANT_PULSE_SHOT_VOLUME,
+  playSharedSound,
+} from '../../useAudio';
 import type { AbilityContext } from '../types';
+import { markPredictedLocalAbilitySound } from '../useLocalAbilityAudioPrediction';
 import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
 
 export interface UseChronosAbilitiesReturn {
@@ -33,6 +46,14 @@ export interface UseChronosAbilitiesReturn {
   executeTimebreak: (
     ctx: AbilityContext,
     startClientCooldown: (abilityId: string) => void
+  ) => boolean;
+  executeAscendantParadox: (
+    ctx: AbilityContext,
+    setAbilityActive: (
+      abilityId: string,
+      active: boolean,
+      options?: { startTime?: number; startCooldownOnEnd?: boolean }
+    ) => void
   ) => boolean;
   fireVerdantPulse: (ctx: AbilityContext) => void;
 }
@@ -48,16 +69,19 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
   const timebreakIdRef = useRef(0);
   const primaryHoldStartedAtRef = useRef(0);
 
-  function sampleChronosPrimarySpawn(ctx: AbilityContext, now: number): ViewmodelSocketPose | null {
+  function sampleChronosPrimarySpawn(ctx: AbilityContext, now: number): ResolvedAbilitySocketOrigin | null {
     if (!ctx.camera) return null;
-    return sampleViewmodelPose<ChronosPrimaryOrbPoseSampleContext>(
-      CHRONOS_PRIMARY_ORB_SOCKET_NAME,
-      {
+    return resolveAbilitySocketOrigin({
+      ownerScope: 'localViewmodel',
+      abilityId: 'chronos_verdant_pulse',
+      sampledContext: {
         camera: ctx.camera,
         elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
         timestampMs: ctx.viewmodelNowMs ?? now,
-      }
-    );
+      } satisfies ChronosPrimaryOrbPoseSampleContext,
+      preferSampled: true,
+      warnOnSampleDrift: true,
+    });
   }
 
   const executeLifelineConduit = useCallback((
@@ -85,31 +109,97 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
     return true;
   }, []);
 
+  const executeAscendantParadox = useCallback((
+    ctx: AbilityContext,
+    setAbilityActive: (
+      abilityId: string,
+      active: boolean,
+      options?: { startTime?: number; startCooldownOnEnd?: boolean }
+    ) => void
+  ): boolean => {
+    const store = useGameStore.getState();
+    const localPlayer = store.localPlayer;
+    if (!localPlayer || localPlayer.heroId !== 'chronos' || (localPlayer.ultimateCharge ?? 0) < 100) return false;
+
+    const now = Date.now();
+    const abilityId = 'chronos_ascendant_paradox';
+    const predictedState = predictLocalChronosAscendantParadox(localPlayer, ctx.yaw);
+    const existingAbility = localPlayer.abilities?.[abilityId];
+    const abilityDef = ABILITY_DEFINITIONS[abilityId];
+    const cooldownSeconds = abilityDef?.cooldown ?? existingAbility?.cooldownRemaining ?? 0;
+
+    triggerChronosAscendantParadoxPose(now);
+    markPredictedLocalAbilityVisual(abilityId, localPlayer.id, `predicted_chronos_ascendant_${localPlayer.id}_${now}`, {
+      now,
+    });
+    setAbilityActive(abilityId, true, { startTime: now });
+    store.setUltimateEffect(true, abilityId, now + CHRONOS_ASCENDANT_PARADOX_DURATION_MS);
+    store.updateLocalPlayer({
+      ultimateCharge: 0,
+      position: predictedState.position,
+      velocity: predictedState.velocity,
+      movement: predictedState.movement,
+      abilities: {
+        ...localPlayer.abilities,
+        [abilityId]: {
+          abilityId,
+          cooldownRemaining: cooldownSeconds,
+          cooldownUntil: cooldownSeconds > 0 ? now + cooldownSeconds * 1000 : 0,
+          charges: existingAbility?.charges ?? abilityDef?.charges ?? 1,
+          isActive: true,
+          activatedAt: now,
+        },
+      },
+    });
+    return true;
+  }, []);
+
+  function isAscendantParadoxActive(now: number): boolean {
+    const localPlayer = useGameStore.getState().localPlayer;
+    if (localPlayer?.heroId !== 'chronos') return false;
+    const ability = localPlayer.abilities?.['chronos_ascendant_paradox'];
+    if (!ability?.isActive) return false;
+    const activatedAt = ability.activatedAt ?? now;
+    return now - activatedAt < CHRONOS_ASCENDANT_PARADOX_DURATION_MS;
+  }
+
   const fireVerdantPulse = useCallback((ctx: AbilityContext): void => {
     const now = Date.now();
-    if (!ctx.inputState.primaryFire) {
+    if (ctx.inputState.ability1 || !ctx.inputState.primaryFire) {
       primaryHoldStartedAtRef.current = 0;
       return;
     }
 
     const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+    const supercharged = isAscendantParadoxActive(now);
+    const cooldownMs = supercharged
+      ? CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS
+      : CHRONOS_VERDANT_PULSE_COOLDOWN_MS;
+    const pulseSpeed = supercharged
+      ? CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED
+      : CHRONOS_VERDANT_PULSE_SPEED;
     if (primaryHoldStartedAtRef.current <= 0) {
       primaryHoldStartedAtRef.current = now;
     }
     if (now - primaryHoldStartedAtRef.current < CHRONOS_VERDANT_PULSE_FIRE_READY_MS / tempoMultiplier) return;
-    if (now - lastPulseTimeRef.current < CHRONOS_VERDANT_PULSE_COOLDOWN_MS / tempoMultiplier) return;
+    if (now - lastPulseTimeRef.current < cooldownMs / tempoMultiplier) return;
 
     lastPulseTimeRef.current = now;
     pulseIdRef.current += 1;
     const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
     const sampledSpawn = sampleChronosPrimarySpawn(ctx, now);
-    const startPosition = sampledSpawn
+    const socketPosition = sampledSpawn
       ? {
         x: sampledSpawn.position.x,
         y: sampledSpawn.position.y,
         z: sampledSpawn.position.z,
       }
       : calculatePlayerSocketPosition(ctx.position, ctx.yaw, CHRONOS_PRIMARY_ORB_SOCKET);
+    const startPosition = offsetChronosOrbVisualPlainPosition(
+      socketPosition,
+      direction,
+      'chronos_verdant_pulse'
+    );
     const visualId = `predicted_chronos_pulse_${ctx.localPlayer.id}_${pulseIdRef.current}`;
 
     triggerChronosPrimaryShotGlow(now);
@@ -117,15 +207,22 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
       id: visualId,
       position: startPosition,
       velocity: {
-        x: direction.x * CHRONOS_VERDANT_PULSE_SPEED,
-        y: direction.y * CHRONOS_VERDANT_PULSE_SPEED,
-        z: direction.z * CHRONOS_VERDANT_PULSE_SPEED,
+        x: direction.x * pulseSpeed,
+        y: direction.y * pulseSpeed,
+        z: direction.z * pulseSpeed,
       },
       startTime: now,
       ownerId: ctx.localPlayer.id,
       ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      supercharged,
+      radius: supercharged ? CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS : undefined,
     });
     markPredictedLocalAbilityVisual('chronos_verdant_pulse', ctx.localPlayer.id, visualId, { now });
+    markPredictedLocalAbilitySound('chronos_verdant_pulse', now);
+    void playSharedSound('phantomBasic', {
+      pitch: CHRONOS_VERDANT_PULSE_SHOT_PITCH,
+      volume: CHRONOS_VERDANT_PULSE_SHOT_VOLUME,
+    });
   }, []);
 
   return {
@@ -134,6 +231,7 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
     timebreakIdRef,
     executeLifelineConduit,
     executeTimebreak,
+    executeAscendantParadox,
     fireVerdantPulse,
   };
 }

@@ -404,17 +404,11 @@ function getSkillByInput(skillItems: HeroSkillItem[], input: string): HeroSkillI
 export function MobileControls({ disabled = false, onOpenMenu, onScoreboardChange }: MobileControlsProps) {
   const controlsAvailable = useTouchControlsAvailable();
   const heroId = useGameStore(state => state.localPlayer?.heroId ?? null) as HeroId | null;
-  const shadowStepTargeting = useGameStore(state => state.shadowStepTargeting);
   const bombTargeting = useGameStore(state => state.bombTargeting);
-  const airStrikeTargeting = useGameStore(state => state.airStrikeTargeting);
-  const grappleTrapTargeting = useGameStore(state => state.grappleTrapTargeting);
-  const setShadowStepTargeting = useGameStore(state => state.setShadowStepTargeting);
   const setBombTargeting = useGameStore(state => state.setBombTargeting);
-  const setAirStrikeTargeting = useGameStore(state => state.setAirStrikeTargeting);
-  const setGrappleTrapTargeting = useGameStore(state => state.setGrappleTrapTargeting);
   const setActionPressed = useMobileControlsStore(state => state.setActionPressed);
   const shouldRender = Boolean(controlsAvailable && !disabled && heroId);
-  const isTargeting = shadowStepTargeting || bombTargeting || airStrikeTargeting || grappleTrapTargeting;
+  const isTargeting = bombTargeting;
   const heroTone = heroId ? HUD_HERO_COLORS[heroId] : HUD_HERO_COLORS.phantom;
 
   const skillItems = useMemo(
@@ -461,16 +455,10 @@ export function MobileControls({ disabled = false, onOpenMenu, onScoreboardChang
     setActionPressed('ability1', false);
     setActionPressed('ability2', false);
     setActionPressed('ultimate', false);
-    setShadowStepTargeting(false, false);
     setBombTargeting(false, false);
-    setAirStrikeTargeting(false, false);
-    setGrappleTrapTargeting(false, false);
   }, [
     setActionPressed,
-    setAirStrikeTargeting,
     setBombTargeting,
-    setGrappleTrapTargeting,
-    setShadowStepTargeting,
   ]);
 
   if (!shouldRender) return null;

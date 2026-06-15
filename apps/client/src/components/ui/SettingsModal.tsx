@@ -26,12 +26,6 @@ const resolutionScaleOptions = [
   { value: 'ultra', label: 'Ultra' },
 ];
 
-const materialQualityOptions = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-];
-
 const featureQualityOptions = [
   { value: 'off', label: 'Off' },
   { value: 'minimum', label: 'Minimum' },
@@ -43,8 +37,7 @@ const featureQualityOptions = [
 
 const fpsDisplayModeOptions = [
   { value: 'off', label: 'Off' },
-  { value: 'fps', label: 'FPS Only' },
-  { value: 'full', label: 'Full' },
+  { value: 'fps', label: 'FPS' },
 ];
 
 const graphicsPresetOptions = [
@@ -415,14 +408,6 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   />
                 </SettingRow>
 
-                <SettingRow label="Material Detail" description="Surface maps, bump detail, and occlusion">
-                  <SelectInput
-                    value={settings.materialQuality}
-                    onChange={(v) => updateSetting('materialQuality', v as ClientSettings['materialQuality'])}
-                    options={materialQualityOptions}
-                  />
-                </SettingRow>
-
                 <SettingRow label="Shadow Quality" description="Shadow map resolution and soft filtering">
                   <SelectInput
                     value={settings.shadowQuality}
@@ -435,6 +420,14 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   <SelectInput
                     value={settings.reflectionQuality}
                     onChange={(v) => updateSetting('reflectionQuality', v as ClientSettings['reflectionQuality'])}
+                    options={featureQualityOptions}
+                  />
+                </SettingRow>
+
+                <SettingRow label="Materials" description="Terrain texture detail and material variation">
+                  <SelectInput
+                    value={settings.materialQuality}
+                    onChange={(v) => updateSetting('materialQuality', v as ClientSettings['materialQuality'])}
                     options={featureQualityOptions}
                   />
                 </SettingRow>
@@ -457,7 +450,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   />
                 </SettingRow>
 
-                <SettingRow label="Show FPS" description="Display frame rate counter or diagnostics panel">
+                <SettingRow label="Show FPS" description="Display frame rate counter">
                   <SelectInput
                     value={settings.showFPS}
                     onChange={(v) => updateSetting('showFPS', v as ClientSettings['showFPS'])}

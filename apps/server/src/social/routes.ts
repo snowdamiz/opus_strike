@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
 import { Prisma, type MatchMode } from '@prisma/client';
 import prisma from '../db';
+import { assertGameplayAccountEligible } from '../auth/accountEligibility';
 import { verifyAuthToken, type AuthTokenPayload } from '../auth/session';
 import { consumeRateLimit } from '../auth/rateLimit';
 import {
@@ -59,6 +60,20 @@ async function requireCurrentUser(req: Request, res: Response): Promise<{
   id: string;
   walletAddress: string | null;
   name: string;
+} | null>;
+async function requireCurrentUser(req: Request, res: Response, options: {
+  requireGameplayEligible?: boolean;
+}): Promise<{
+  id: string;
+  walletAddress: string | null;
+  name: string;
+} | null>;
+async function requireCurrentUser(req: Request, res: Response, options: {
+  requireGameplayEligible?: boolean;
+} = {}): Promise<{
+  id: string;
+  walletAddress: string | null;
+  name: string;
 } | null> {
   const payload = await getAuthenticatedPayload(req);
   if (!payload) {
@@ -78,6 +93,10 @@ async function requireCurrentUser(req: Request, res: Response): Promise<{
   if (!user || (payload.walletAddress && user.walletAddress !== payload.walletAddress)) {
     res.status(401).json({ error: 'Session expired' });
     return null;
+  }
+
+  if (options.requireGameplayEligible) {
+    await assertGameplayAccountEligible(user.id);
   }
 
   return user;
@@ -121,6 +140,14 @@ function serializeFriendship(friendship: FriendshipWithUsers, currentUserId: str
 }
 
 function sendSocialError(res: Response, error: unknown): void {
+  const statusCode = typeof error === 'object' && error && 'statusCode' in error
+    ? Number((error as { statusCode?: unknown }).statusCode) || 500
+    : null;
+  if (statusCode && statusCode >= 400 && statusCode < 600) {
+    res.status(statusCode).json({ error: error instanceof Error ? error.message : 'Request failed' });
+    return;
+  }
+
   if (error instanceof SocialServiceError) {
     res.status(error.statusCode).json({ error: error.message });
     return;
@@ -270,7 +297,7 @@ router.post('/friend-requests', async (req: Request, res: Response) => {
   if (!enforceJsonRateLimit(req, res, 'social:mutate', SOCIAL_RATE_LIMITS.mutate)) return;
 
   try {
-    const user = await requireCurrentUser(req, res);
+    const user = await requireCurrentUser(req, res, { requireGameplayEligible: true });
     if (!user) return;
 
     const targetUserId = cleanShortText(req.body?.targetUserId, 96);
@@ -351,7 +378,7 @@ router.post('/friend-requests/:requestId/accept', async (req: Request, res: Resp
   if (!enforceJsonRateLimit(req, res, 'social:mutate', SOCIAL_RATE_LIMITS.mutate)) return;
 
   try {
-    const user = await requireCurrentUser(req, res);
+    const user = await requireCurrentUser(req, res, { requireGameplayEligible: true });
     if (!user) return;
 
     const requestId = cleanShortText(req.params.requestId, 96);
@@ -394,7 +421,7 @@ router.post('/friend-requests/:requestId/decline', async (req: Request, res: Res
   if (!enforceJsonRateLimit(req, res, 'social:mutate', SOCIAL_RATE_LIMITS.mutate)) return;
 
   try {
-    const user = await requireCurrentUser(req, res);
+    const user = await requireCurrentUser(req, res, { requireGameplayEligible: true });
     if (!user) return;
 
     const requestId = cleanShortText(req.params.requestId, 96);
@@ -437,7 +464,7 @@ router.post('/friend-requests/:requestId/cancel', async (req: Request, res: Resp
   if (!enforceJsonRateLimit(req, res, 'social:mutate', SOCIAL_RATE_LIMITS.mutate)) return;
 
   try {
-    const user = await requireCurrentUser(req, res);
+    const user = await requireCurrentUser(req, res, { requireGameplayEligible: true });
     if (!user) return;
 
     const requestId = cleanShortText(req.params.requestId, 96);
@@ -475,7 +502,7 @@ router.delete('/friends/:friendUserId', async (req: Request, res: Response) => {
   if (!enforceJsonRateLimit(req, res, 'social:mutate', SOCIAL_RATE_LIMITS.mutate)) return;
 
   try {
-    const user = await requireCurrentUser(req, res);
+    const user = await requireCurrentUser(req, res, { requireGameplayEligible: true });
     if (!user) return;
 
     const friendUserId = cleanShortText(req.params.friendUserId, 96);
@@ -514,7 +541,7 @@ router.post('/lobby-invites', async (req: Request, res: Response) => {
   if (!enforceJsonRateLimit(req, res, 'social:invite', SOCIAL_RATE_LIMITS.invite)) return;
 
   try {
-    const user = await requireCurrentUser(req, res);
+    const user = await requireCurrentUser(req, res, { requireGameplayEligible: true });
     if (!user) return;
 
     const toUserId = cleanShortText(req.body?.toUserId, 96);
@@ -545,7 +572,7 @@ router.post('/lobby-invites/:inviteId/accept', async (req: Request, res: Respons
   if (!enforceJsonRateLimit(req, res, 'social:invite', SOCIAL_RATE_LIMITS.invite)) return;
 
   try {
-    const user = await requireCurrentUser(req, res);
+    const user = await requireCurrentUser(req, res, { requireGameplayEligible: true });
     if (!user) return;
 
     await expireOldLobbyInvites();
@@ -590,7 +617,7 @@ router.post('/lobby-invites/:inviteId/decline', async (req: Request, res: Respon
   if (!enforceJsonRateLimit(req, res, 'social:invite', SOCIAL_RATE_LIMITS.invite)) return;
 
   try {
-    const user = await requireCurrentUser(req, res);
+    const user = await requireCurrentUser(req, res, { requireGameplayEligible: true });
     if (!user) return;
 
     const inviteId = cleanShortText(req.params.inviteId, 96);
@@ -628,7 +655,7 @@ router.post('/lobby-invites/:inviteId/cancel', async (req: Request, res: Respons
   if (!enforceJsonRateLimit(req, res, 'social:invite', SOCIAL_RATE_LIMITS.invite)) return;
 
   try {
-    const user = await requireCurrentUser(req, res);
+    const user = await requireCurrentUser(req, res, { requireGameplayEligible: true });
     if (!user) return;
 
     const inviteId = cleanShortText(req.params.inviteId, 96);

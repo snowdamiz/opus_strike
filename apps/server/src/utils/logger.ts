@@ -66,7 +66,6 @@ export function createLogger(namespace: string) {
 export const loggers = {
   auth: createLogger('auth'),
   network: createLogger('network'),
-  perf: createLogger('perf'),
   physics: createLogger('physics'),
   room: createLogger('room'),
   voice: createLogger('voice'),

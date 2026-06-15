@@ -1,10 +1,11 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
 import type { Team, Player } from '@voxel-strike/shared';
 import { FACTIONS } from '../../styles/colorTokens';
 import { useVoiceStore, type VoiceParticipant } from '../../store/voiceStore';
 import { RankBadge } from './RankBadge';
+import { useNetwork } from '../../contexts/NetworkContext';
 
 // Solar Icon
 function SolarIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -30,6 +31,9 @@ function VoidIcon({ className, style }: { className?: string; style?: React.CSSP
 }
 
 export function Scoreboard() {
+  const { reportPlayer } = useNetwork();
+  const [reportingPlayerId, setReportingPlayerId] = useState<string | null>(null);
+  const [reportNotice, setReportNotice] = useState<string | null>(null);
   const { players, localPlayer, playerPings, redScore, blueScore } = useGameStore(
     useShallow(state => ({
       players: state.players,
@@ -53,8 +57,32 @@ export function Scoreboard() {
       .map(participant => [participant.playerId, participant])
   ), [participants]);
 
-  const solarPlayers = Array.from(players.values()).filter(p => p.team === 'red');
-  const voidPlayers = Array.from(players.values()).filter(p => p.team === 'blue');
+  const solarPlayers: Player[] = [];
+  const voidPlayers: Player[] = [];
+  for (const player of players.values()) {
+    if (player.team === 'red') {
+      solarPlayers.push(player);
+    } else if (player.team === 'blue') {
+      voidPlayers.push(player);
+    }
+  }
+
+  const handleReportPlayer = async (player: Player) => {
+    if (reportingPlayerId) return;
+    const details = window.prompt(`Report ${player.name} for cheating`, '');
+    if (details === null) return;
+
+    setReportingPlayerId(player.id);
+    setReportNotice(null);
+    try {
+      await reportPlayer(player.id, 'cheating', details);
+      setReportNotice(`Report submitted for ${player.name}.`);
+    } catch (error) {
+      setReportNotice(error instanceof Error ? error.message : 'Report failed.');
+    } finally {
+      setReportingPlayerId(null);
+    }
+  };
 
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-md z-40 pointer-events-auto">
@@ -149,6 +177,9 @@ export function Scoreboard() {
                   voiceParticipant={voiceByPlayerId.get(player.id) ?? null}
                   voiceMuted={mutedPlayerIds.has(player.id)}
                   onToggleVoiceMute={() => togglePlayerMute(player.id)}
+                  canReport={player.id !== localPlayer?.id && !player.isBot}
+                  isReporting={reportingPlayerId === player.id}
+                  onReport={() => void handleReportPlayer(player)}
                   pingMs={playerPings.get(player.id) ?? null}
                   faction={FACTIONS.red}
                 />
@@ -175,6 +206,9 @@ export function Scoreboard() {
                   voiceParticipant={voiceByPlayerId.get(player.id) ?? null}
                   voiceMuted={mutedPlayerIds.has(player.id)}
                   onToggleVoiceMute={() => togglePlayerMute(player.id)}
+                  canReport={player.id !== localPlayer?.id && !player.isBot}
+                  isReporting={reportingPlayerId === player.id}
+                  onReport={() => void handleReportPlayer(player)}
                   pingMs={playerPings.get(player.id) ?? null}
                   faction={FACTIONS.blue}
                 />
@@ -198,7 +232,7 @@ export function Scoreboard() {
           }}
         >
           <span className="font-body text-xs text-white/30">
-            Press <span className="text-white/50 font-mono">TAB</span> to close
+            {reportNotice || <>Press <span className="text-white/50 font-mono">TAB</span> to close</>}
           </span>
         </div>
       </div>
@@ -213,7 +247,7 @@ interface FactionHeaderProps {
 function FactionHeader({ faction }: FactionHeaderProps) {
   return (
     <div 
-      className="grid grid-cols-8 gap-2 px-4 py-2.5 text-[10px] font-body uppercase tracking-wider"
+      className="grid grid-cols-9 gap-2 px-4 py-2.5 text-[10px] font-body uppercase tracking-wider"
       style={{ background: faction.bgColor }}
     >
       <span className="col-span-2" style={{ color: faction.primaryColor }}>Warrior</span>
@@ -223,6 +257,7 @@ function FactionHeader({ faction }: FactionHeaderProps) {
       <span className="text-white/40 text-center">Flags</span>
       <span className="text-white/40 text-center">Ping</span>
       <span className="text-white/40 text-center">Voice</span>
+      <span className="text-white/40 text-center">Report</span>
     </div>
   );
 }
@@ -235,15 +270,30 @@ interface PlayerRowProps {
   voiceParticipant: VoiceParticipant | null;
   voiceMuted: boolean;
   onToggleVoiceMute: () => void;
+  canReport: boolean;
+  isReporting: boolean;
+  onReport: () => void;
   pingMs: number | null;
 }
 
-function PlayerRow({ player, isLocal, faction, canMuteVoice, voiceParticipant, voiceMuted, onToggleVoiceMute, pingMs }: PlayerRowProps) {
+function PlayerRow({
+  player,
+  isLocal,
+  faction,
+  canMuteVoice,
+  voiceParticipant,
+  voiceMuted,
+  onToggleVoiceMute,
+  canReport,
+  isReporting,
+  onReport,
+  pingMs,
+}: PlayerRowProps) {
   const stats = player.stats ?? { kills: 0, deaths: 0, assists: 0, flagCaptures: 0, flagReturns: 0 };
   
   return (
     <div 
-      className={`grid grid-cols-8 gap-2 px-4 py-3 items-center transition-colors ${
+      className={`grid grid-cols-9 gap-2 px-4 py-3 items-center transition-colors ${
         isLocal ? 'bg-white/[0.06]' : 'hover:bg-white/[0.02]'
       }`}
     >
@@ -329,6 +379,24 @@ function PlayerRow({ player, isLocal, faction, canMuteVoice, voiceParticipant, v
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 10v1a7 7 0 0014 0v-1M12 18v3M8 21h8" />
               {voiceMuted && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4l16 16" />}
             </svg>
+          </button>
+        ) : (
+          <span className="text-white/18">-</span>
+        )}
+      </div>
+      <div className="flex justify-center">
+        {canReport ? (
+          <button
+            type="button"
+            title="Report cheating"
+            disabled={isReporting}
+            onClick={(event) => {
+              event.stopPropagation();
+              onReport();
+            }}
+            className="h-7 rounded-md border border-amber-300/20 bg-amber-400/10 px-2 font-display text-[9px] uppercase tracking-wider text-amber-100/75 transition hover:border-amber-200/45 hover:bg-amber-300/18 hover:text-white disabled:cursor-wait disabled:opacity-55"
+          >
+            {isReporting ? '...' : 'Report'}
           </button>
         ) : (
           <span className="text-white/18">-</span>

@@ -11,6 +11,7 @@
 
 import { useRef, useCallback } from 'react';
 import {
+  ABILITY_DEFINITIONS,
   PHANTOM_PRIMARY_FIRE_READY_MS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
@@ -31,16 +32,15 @@ import {
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import {
   PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
-  PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
   PHANTOM_PRIMARY_VISUAL_FIRE_LEAD_SECONDS,
-  PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
+  triggerPhantomVeilCastPose,
   type PhantomPrimaryPoseSampleContext,
   type PhantomVoidRayOrbPoseSampleContext,
 } from '../../../viewmodel/phantomPrimaryPose';
 import {
-  sampleViewmodelPose,
-  type ViewmodelSocketPose,
-} from '../../../viewmodel/viewmodelSocketRegistry';
+  resolveAbilitySocketOrigin,
+  type ResolvedAbilitySocketOrigin,
+} from '../../../model-system/abilitySocketResolver';
 import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
 import { markPredictedLocalAbilitySound } from '../useLocalAbilityAudioPrediction';
 
@@ -67,6 +67,7 @@ export interface UsePhantomAbilitiesReturn {
   voidRayChargingRef: React.MutableRefObject<boolean>;
   voidRayChargeStartRef: React.MutableRefObject<number>;
   voidRayIdRef: React.MutableRefObject<number>;
+  voidRayAwaitingReleaseRef: React.MutableRefObject<boolean>;
 
   // Methods
   updatePhantomPrimaryReload: (now?: number) => void;
@@ -91,7 +92,7 @@ export interface UsePhantomAbilitiesReturn {
     sounds: PlayerSounds,
     updateLocalPlayer: (data: any) => void,
     setAbilityActive: (id: string, active: boolean) => void
-  ) => void;
+  ) => boolean;
 }
 
 export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
@@ -114,33 +115,40 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     ctx: AbilityContext,
     launchSide: -1 | 1,
     now: number
-  ): ViewmodelSocketPose | null {
+  ): ResolvedAbilitySocketOrigin | null {
     if (!ctx.camera) return null;
-    return sampleViewmodelPose<PhantomPrimaryPoseSampleContext>(
-      PHANTOM_PRIMARY_PALM_SOCKET_NAMES[launchSide],
-      {
+    return resolveAbilitySocketOrigin({
+      ownerScope: 'localViewmodel',
+      abilityId: 'phantom_dire_ball',
+      side: launchSide,
+      sampledContext: {
         camera: ctx.camera,
         elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
         side: launchSide,
         actionTimeSeconds: PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
         timestampMs: ctx.viewmodelNowMs ?? now,
-      }
-    );
+      } satisfies PhantomPrimaryPoseSampleContext,
+      preferSampled: true,
+      warnOnSampleDrift: true,
+    });
   }
 
   function samplePhantomVoidRaySpawn(
     ctx: AbilityContext,
     now: number
-  ): ViewmodelSocketPose | null {
+  ): ResolvedAbilitySocketOrigin | null {
     if (!ctx.camera) return null;
-    return sampleViewmodelPose<PhantomVoidRayOrbPoseSampleContext>(
-      PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
-      {
+    return resolveAbilitySocketOrigin({
+      ownerScope: 'localViewmodel',
+      abilityId: 'phantom_void_ray',
+      sampledContext: {
         camera: ctx.camera,
         elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
         timestampMs: ctx.viewmodelNowMs ?? now,
-      }
-    );
+      } satisfies PhantomVoidRayOrbPoseSampleContext,
+      preferSampled: true,
+      warnOnSampleDrift: true,
+    });
   }
 
   const completePhantomPrimaryReload = useCallback(() => {
@@ -323,6 +331,9 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
       ownerId: ctx.localPlayer.id,
       ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
     });
+    if (store.isPracticeMode && store.localPlayer?.id === ctx.localPlayer.id) {
+      store.setClientCooldown('phantom_void_ray', now + cooldownMs);
+    }
     markPredictedLocalAbilityVisual('phantom_void_ray', ctx.localPlayer.id, visualId, { now });
   }, []);
 
@@ -348,12 +359,17 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
 
   // Phantom Veil is requested through input and confirmed by the server.
   const executePhantomVeil = useCallback((
-    _ctx: AbilityContext,
+    ctx: AbilityContext,
     _sounds: PlayerSounds,
     _updateLocalPlayer: (data: any) => void,
     _setAbilityActive: (id: string, active: boolean) => void
   ) => {
-    return undefined;
+    const now = ctx.viewmodelNowMs ?? Date.now();
+    const durationMs = (ABILITY_DEFINITIONS.phantom_veil?.duration ?? 0) * 1000;
+    const effectEndTime = now + durationMs;
+    triggerPhantomVeilCastPose(now);
+    useGameStore.getState().setUltimateEffect(true, 'phantom_veil', effectEndTime);
+    return true;
   }, []);
 
   return {
@@ -365,6 +381,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     voidRayChargingRef,
     voidRayChargeStartRef,
     voidRayIdRef,
+    voidRayAwaitingReleaseRef,
     updatePhantomPrimaryReload,
     reloadPhantomPrimary,
     resetPhantomPrimaryMagazine,

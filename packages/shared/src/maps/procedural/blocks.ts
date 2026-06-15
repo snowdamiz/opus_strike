@@ -36,6 +36,11 @@ export const VOXEL_BLOCK_IDS: VoxelBlockId[] = [
   'moss',
   'bamboo',
   'blossom_leaves',
+  'gold',
+  'gold_ore',
+  'gold_panel',
+  'gold_glass',
+  'crystal_growth',
 ];
 
 export const VOXEL_BLOCKS: Record<VoxelBlockId, VoxelBlockDefinition> = {
@@ -64,7 +69,22 @@ export const VOXEL_BLOCKS: Record<VoxelBlockId, VoxelBlockDefinition> = {
   moss: { id: 'moss', numericId: 22, solid: true, walkable: true, grappleable: true, slippery: false },
   bamboo: { id: 'bamboo', numericId: 23, solid: true, walkable: false, grappleable: true, slippery: false },
   blossom_leaves: { id: 'blossom_leaves', numericId: 24, solid: true, walkable: false, grappleable: true, slippery: false },
+  gold: { id: 'gold', numericId: 25, solid: true, walkable: true, grappleable: true, slippery: false },
+  gold_ore: { id: 'gold_ore', numericId: 26, solid: true, walkable: true, grappleable: true, slippery: false },
+  gold_panel: { id: 'gold_panel', numericId: 27, solid: true, walkable: true, grappleable: true, slippery: false },
+  gold_glass: { id: 'gold_glass', numericId: 28, solid: true, walkable: true, grappleable: true, slippery: false },
+  crystal_growth: { id: 'crystal_growth', numericId: 29, solid: true, walkable: false, grappleable: true, slippery: false },
 };
+
+export const GOLDEN_ONLY_VOXEL_BLOCK_IDS = [
+  'gold',
+  'gold_ore',
+  'gold_panel',
+  'gold_glass',
+  'crystal_growth',
+] as const satisfies readonly VoxelBlockId[];
+
+const GOLDEN_ONLY_VOXEL_BLOCK_ID_SET = new Set<VoxelBlockId>(GOLDEN_ONLY_VOXEL_BLOCK_IDS);
 
 export function getBlockDefinition(blockId: VoxelBlockId | number): VoxelBlockDefinition {
   if (typeof blockId === 'number') {
@@ -84,6 +104,10 @@ export function getBlockId(numericId: number): VoxelBlockId {
 
 export function isSolidBlock(blockId: VoxelBlockId | number): boolean {
   return getBlockDefinition(blockId).solid;
+}
+
+export function isGoldenOnlyBlock(blockId: VoxelBlockId | number): boolean {
+  return GOLDEN_ONLY_VOXEL_BLOCK_ID_SET.has(getBlockDefinition(blockId).id);
 }
 
 const NON_COLLIDING_DECORATIVE_BLOCKS = new Set<VoxelBlockId>();

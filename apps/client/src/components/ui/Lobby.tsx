@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
@@ -54,6 +55,25 @@ function BotIcon({ className }: { className?: string }) {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 5V3" />
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M8 5h8a4 4 0 014 4v5a4 4 0 01-4 4H8a4 4 0 01-4-4V9a4 4 0 014-4z" />
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M9 11h.01M15 11h.01M9.5 15h5" />
+    </svg>
+  );
+}
+
+function InvitePlayerIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M15 19a6 6 0 00-12 0" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M9 11a4 4 0 100-8 4 4 0 000 8z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M19 8v6m3-3h-6" />
+    </svg>
+  );
+}
+
+function ObserverIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M2.25 12s3.75-6.75 9.75-6.75S21.75 12 21.75 12 18 18.75 12 18.75 2.25 12 2.25 12z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 15.25A3.25 3.25 0 1012 8.75a3.25 3.25 0 000 6.5z" />
     </svg>
   );
 }
@@ -180,15 +200,40 @@ export function Lobby() {
     currentLobbyWager,
     lobbyPlayers, 
     isLobbyHost,
+    lobbyObserversEnabled,
+    maxLobbyObservers,
+    lobbyError,
     isLoading,
     userStats,
+    matchmakingStatus,
     setAppPhase,
     clearMapVote,
-  } = useGameStore();
+    setLobbyError,
+  } = useGameStore(
+    useShallow((state) => ({
+      playerName: state.playerName,
+      playerId: state.playerId,
+      currentLobbyId: state.currentLobbyId,
+      currentLobbyName: state.currentLobbyName,
+      currentLobbyWager: state.currentLobbyWager,
+      lobbyPlayers: state.lobbyPlayers,
+      isLobbyHost: state.isLobbyHost,
+      lobbyObserversEnabled: state.lobbyObserversEnabled,
+      maxLobbyObservers: state.maxLobbyObservers,
+      lobbyError: state.lobbyError,
+      isLoading: state.isLoading,
+      userStats: state.userStats,
+      matchmakingStatus: state.matchmakingStatus,
+      setAppPhase: state.setAppPhase,
+      clearMapVote: state.clearMapVote,
+      setLobbyError: state.setLobbyError,
+    }))
+  );
   const {
     leaveLobby,
     setLobbyReady,
     setLobbyTeam,
+    setLobbyObserver,
     addLobbyBot,
     removeLobbyBot,
     updateLobbyBotTeam,
@@ -212,12 +257,20 @@ export function Lobby() {
   const [showSocial, setShowSocial] = useState(false);
 
   const currentPlayer = playerId ? lobbyPlayers.get(playerId) : null;
-  const currentTeam = currentPlayer?.team;
+  const isLocalObserver = currentPlayer?.isObserver === true;
+  const currentTeam = isLocalObserver ? '' : currentPlayer?.team;
   const hasChosenTeam = currentTeam === 'red' || currentTeam === 'blue';
   const isReady = currentPlayer?.isReady || false;
   const currentRank = currentPlayer?.rank ?? getRankForStats(userStats);
   const playerList = Array.from(lobbyPlayers.values());
+  const combatPlayers = playerList.filter((p) => !p.isObserver);
+  const observerPlayers = playerList.filter((p) => p.isObserver);
+  const observerSlotCapacity = Math.max(0, maxLobbyObservers);
+  const observerSlotAvailable = lobbyObserversEnabled && observerPlayers.length < observerSlotCapacity;
   const wagerEnabled = currentLobbyWager.enabled;
+  const currentMatchMode = matchmakingStatus.matchMode ?? currentLobbyWager.matchMode ?? null;
+  const botsAllowed = !wagerEnabled && currentMatchMode === 'custom';
+  const invitesAllowed = currentMatchMode === 'custom' || currentMatchMode === 'custom_wager';
   const localPaymentStatus = currentPlayer?.paymentStatus || '';
   const localPlayerPaid = localPaymentStatus === 'credited' || localPaymentStatus === 'settled';
   const localPaymentConfirming = localPaymentStatus === 'intent_created' || localPaymentStatus === 'submitted' || localPaymentStatus === 'confirmed';
@@ -225,49 +278,70 @@ export function Lobby() {
   const showPayEntry = wagerEnabled
     && Boolean(currentPlayer)
     && !currentPlayer?.isBot
+    && !isLocalObserver
     && !localPlayerPaid
     && !localPaymentRefunding;
 
   const handleToggleReady = () => {
-    if (!hasChosenTeam) return;
+    if (!hasChosenTeam || isLocalObserver) return;
+    setLobbyError(null);
     setLobbyReady(!isReady);
   };
   const handleTeamChange = (team: LobbyTeam) => {
     if (currentTeam === team) return;
+    setLobbyError(null);
     setLobbyTeam(team);
   };
+  const handleObserverToggle = () => {
+    if (!lobbyObserversEnabled) return;
+    setLobbyError(null);
+    setLobbyObserver(!isLocalObserver);
+  };
   const handleStartGame = () => {
+    setLobbyError(null);
     clearMapVote();
     setAppPhase('map_vote');
     startGame();
   };
   const handleKick = (targetId: string) => kickPlayer(targetId);
 
-  const readyCount = playerList.filter(p => p.isReady || p.isHost).length;
-  const assignedCount = playerList.filter(p => p.team === 'red' || p.team === 'blue').length;
-  const allPlayersAssigned = playerList.length > 0 && assignedCount === playerList.length;
-  const assignedHumanPlayers = playerList.filter((p) => !p.isBot && (p.team === 'red' || p.team === 'blue'));
+  const readyCount = combatPlayers.filter(p => p.isReady || p.isHost).length;
+  const assignedCount = combatPlayers.filter(p => p.team === 'red' || p.team === 'blue').length;
+  const allPlayersAssigned = combatPlayers.length > 0 && assignedCount === combatPlayers.length;
+  const isProductionCustomLobby = import.meta.env.PROD
+    && (currentMatchMode === 'custom' || currentMatchMode === 'custom_wager');
+  const minimumParticipantsToStart = isProductionCustomLobby ? 2 : 1;
+  const hasMinimumParticipants = combatPlayers.length >= minimumParticipantsToStart;
+  const assignedHumanPlayers = combatPlayers.filter((p) => !p.isBot && (p.team === 'red' || p.team === 'blue'));
   const unpaidHumanPlayers = wagerEnabled
     ? assignedHumanPlayers.filter((p) => p.paymentStatus !== 'credited' && p.paymentStatus !== 'settled')
     : [];
   const paidRedHumans = assignedHumanPlayers.filter((p) => p.team === 'red' && (p.paymentStatus === 'credited' || p.paymentStatus === 'settled')).length;
   const paidBlueHumans = assignedHumanPlayers.filter((p) => p.team === 'blue' && (p.paymentStatus === 'credited' || p.paymentStatus === 'settled')).length;
   const wagerStartReady = !wagerEnabled || (unpaidHumanPlayers.length === 0 && paidRedHumans > 0 && paidBlueHumans > 0);
-  const canStart = isLobbyHost && allPlayersAssigned && wagerStartReady && (playerList.length === 1 || readyCount === playerList.length);
+  const canStart = isLobbyHost && hasMinimumParticipants && allPlayersAssigned && wagerStartReady && (combatPlayers.length === 1 || readyCount === combatPlayers.length);
 
-  const solarPlayers = playerList.filter(p => p.team === 'red');
-  const voidPlayers = playerList.filter(p => p.team === 'blue');
+  const solarPlayers = combatPlayers.filter(p => p.team === 'red');
+  const voidPlayers = combatPlayers.filter(p => p.team === 'blue');
 
   const currentFaction = currentPlayer?.team === 'red' ? FACTIONS.red : currentPlayer?.team === 'blue' ? FACTIONS.blue : null;
+  const currentRoleLabel = isLocalObserver ? 'Observer' : currentFaction?.fullName || 'Unassigned';
+  const currentRoleColor = isLocalObserver
+    ? 'rgb(var(--color-accent-secondary))'
+    : currentFaction?.primaryColor || 'rgb(var(--color-strike-border) / 0.4)';
 
   const handleBack = () => {
     leaveLobby();
-    setAppPhase('browsing_lobbies');
+    setAppPhase('menu');
   };
 
   const handleAddBot = (team: LobbyTeam) => {
     playButtonClick();
     addLobbyBot({ difficulty: 'normal', team });
+  };
+
+  const handleInvitePlayer = () => {
+    setShowSocial(true);
   };
 
   const handleRemoveBot = (botId: string) => {
@@ -303,7 +377,7 @@ export function Lobby() {
 
       const intent = await createWagerPaymentIntent(currentLobbyId, payerWallet, currentPlayer.id);
       const paymentTransaction = await createWagerPaymentTransaction(intent.intentId);
-      const transaction = deserializeWagerPaymentTransaction(paymentTransaction.transactionBase64);
+      const transaction = await deserializeWagerPaymentTransaction(paymentTransaction.transactionBase64);
       const signedTransactionBase64 = await signTransaction(transaction);
       await submitWagerSignedPaymentTransaction(intent.intentId, signedTransactionBase64);
     } catch (err) {
@@ -369,10 +443,12 @@ export function Lobby() {
           {/* Back button and lobby info */}
           <div className="flex min-w-0 items-center gap-3 xl:gap-4">
             <button
+              type="button"
               onClick={() => { playButtonClick(); handleBack(); }}
-              className="w-10 h-10 shrink-0 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 hover:border-white/20 group"
+              className="menu-back-button"
+              aria-label="Back to play"
             >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
             </button>
@@ -404,19 +480,13 @@ export function Lobby() {
               </div>
             )}
             <div 
-              className="flex items-center gap-3 py-2 pl-2 pr-4 rounded-xl border"
-              style={{
-                background: currentFaction 
-                  ? `linear-gradient(135deg, ${currentFaction.bgGradient}, rgb(var(--color-strike-panel-raised) / 0.9))`
-                  : 'rgba(255,255,255,0.03)',
-                borderColor: currentFaction?.borderColor || 'rgba(255,255,255,0.05)',
-              }}
+              className="flex items-center gap-3"
             >
               <RankIcon rank={currentRank} size={34} labelled className="shrink-0" />
               <div>
                 <p className="font-display text-white text-sm">{playerName}</p>
-                <p className="text-[10px] font-body" style={{ color: currentFaction?.primaryColor || 'rgba(255,255,255,0.4)' }}>
-                  {currentFaction?.fullName || 'Unassigned'}
+                <p className="text-[10px] font-body" style={{ color: currentRoleColor }}>
+                  {currentRoleLabel}
                 </p>
               </div>
             </div>
@@ -427,43 +497,77 @@ export function Lobby() {
       {/* Main Content */}
       <div className="team-select-main menu-main menu-main-play">
         <div className="team-select-layout lobby-layout menu-content-wide">
-        {/* Solar Vanguard Panel */}
-        <div className="lobby-team-panel">
-          <FactionPanel
-            faction={FACTIONS.red}
-            players={solarPlayers}
-            playerId={playerId}
-            isSelected={currentTeam === 'red'}
-            isLobbyHost={isLobbyHost}
-            onSelect={() => handleTeamChange('red')}
-            onAddBot={handleAddBot}
-            onKick={handleKick}
-            onRemoveBot={handleRemoveBot}
-            onBotTeamChange={handleBotTeamChange}
-            onBotDifficultyChange={handleBotDifficultyChange}
-            onBotHeroChange={handleBotHeroChange}
-          />
-        </div>
+          <div className="lobby-team-header-row">
+            <FactionHeader
+              faction={FACTIONS.red}
+              players={solarPlayers}
+              isSelected={currentTeam === 'red'}
+            />
 
-        {/* Void Legion Panel */}
-        <div className="lobby-team-panel">
-          <FactionPanel
-            faction={FACTIONS.blue}
-            players={voidPlayers}
-            playerId={playerId}
-            isSelected={currentTeam === 'blue'}
-            isLobbyHost={isLobbyHost}
-            onSelect={() => handleTeamChange('blue')}
-            onAddBot={handleAddBot}
-            onKick={handleKick}
-            onRemoveBot={handleRemoveBot}
-            onBotTeamChange={handleBotTeamChange}
-            onBotDifficultyChange={handleBotDifficultyChange}
-            onBotHeroChange={handleBotHeroChange}
-            reverse
-          />
+            {lobbyObserversEnabled ? (
+              <ObserverSlot
+                observers={observerPlayers}
+                playerId={playerId}
+                isLocalObserver={isLocalObserver}
+                canJoin={observerSlotAvailable || isLocalObserver}
+                capacity={observerSlotCapacity}
+                onToggle={handleObserverToggle}
+              />
+            ) : (
+              <div aria-hidden="true" />
+            )}
+
+            <FactionHeader
+              faction={FACTIONS.blue}
+              players={voidPlayers}
+              isSelected={currentTeam === 'blue'}
+              reverse
+            />
+          </div>
+
+          {/* Solar Vanguard Panel */}
+          <div className="lobby-team-panel">
+            <FactionPanel
+              faction={FACTIONS.red}
+              players={solarPlayers}
+              playerId={playerId}
+              isSelected={currentTeam === 'red'}
+              isLobbyHost={isLobbyHost}
+              botsAllowed={botsAllowed}
+              invitesAllowed={invitesAllowed}
+              onSelect={() => handleTeamChange('red')}
+              onAddBot={handleAddBot}
+              onInvite={handleInvitePlayer}
+              onKick={handleKick}
+              onRemoveBot={handleRemoveBot}
+              onBotTeamChange={handleBotTeamChange}
+              onBotDifficultyChange={handleBotDifficultyChange}
+              onBotHeroChange={handleBotHeroChange}
+            />
+          </div>
+
+          {/* Void Legion Panel */}
+          <div className="lobby-team-panel">
+            <FactionPanel
+              faction={FACTIONS.blue}
+              players={voidPlayers}
+              playerId={playerId}
+              isSelected={currentTeam === 'blue'}
+              isLobbyHost={isLobbyHost}
+              botsAllowed={botsAllowed}
+              invitesAllowed={invitesAllowed}
+              onSelect={() => handleTeamChange('blue')}
+              onAddBot={handleAddBot}
+              onInvite={handleInvitePlayer}
+              onKick={handleKick}
+              onRemoveBot={handleRemoveBot}
+              onBotTeamChange={handleBotTeamChange}
+              onBotDifficultyChange={handleBotDifficultyChange}
+              onBotHeroChange={handleBotHeroChange}
+              reverse
+            />
+          </div>
         </div>
-      </div>
       </div>
 
       {/* Bottom Status Bar */}
@@ -473,6 +577,11 @@ export function Lobby() {
           background: 'linear-gradient(to top, rgb(var(--color-strike-page-top) / 0.95), rgb(var(--color-strike-page-top) / 0.6), transparent)',
         }}
       >
+        {lobbyError && (
+          <div className="mx-auto mb-2 max-w-xl rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-center text-sm text-red-200">
+            {lobbyError}
+          </div>
+        )}
         {paymentError && (
           <div className="mx-auto mb-2 max-w-xl rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-center text-sm text-red-200">
             {paymentError}
@@ -570,13 +679,15 @@ export function Lobby() {
               <button
                 type="button"
                 onClick={() => { playButtonClick(); handleToggleReady(); }}
-                disabled={!hasChosenTeam || isLoading}
+                disabled={!hasChosenTeam || isLoading || isLocalObserver}
                 className={`h-10 min-w-[12.5rem] rounded-full px-5 font-display text-xs uppercase tracking-wide transition-all ${
-                  hasChosenTeam
+                  isLocalObserver
+                    ? 'bg-sky-500/15 text-sky-100 border border-sky-300/20 cursor-default'
+                    : hasChosenTeam
                     ? 'text-white hover:brightness-110 active:scale-[0.98]'
                     : 'bg-white/[0.055] text-white/30 cursor-not-allowed'
                 }`}
-                style={hasChosenTeam ? {
+                style={!isLocalObserver && hasChosenTeam ? {
                   background: isReady
                     ? 'linear-gradient(135deg, rgb(var(--color-ui-success)) 0%, rgb(var(--color-ui-success-deep)) 100%)'
                     : 'linear-gradient(135deg, rgb(var(--color-accent-primary)) 0%, rgb(var(--color-accent-primary-deep)) 100%)',
@@ -586,7 +697,12 @@ export function Lobby() {
                 } : undefined}
               >
                 <span className="flex items-center justify-center gap-2">
-                  {!hasChosenTeam ? (
+                  {isLocalObserver ? (
+                    <>
+                      <ObserverIcon className="h-4 w-4" />
+                      Observer Mode
+                    </>
+                  ) : !hasChosenTeam ? (
                     <>
                       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l7 4v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V7l7-4z" />
@@ -636,6 +752,109 @@ export function Lobby() {
   );
 }
 
+interface ObserverSlotProps {
+  observers: LobbyPlayer[];
+  playerId: string | null;
+  isLocalObserver: boolean;
+  canJoin: boolean;
+  capacity: number;
+  onToggle: () => void;
+}
+
+function ObserverSlot({
+  observers,
+  playerId,
+  isLocalObserver,
+  canJoin,
+  capacity,
+  onToggle,
+}: ObserverSlotProps) {
+  const { playButtonClick } = useUISounds();
+  const observer = observers[0] ?? null;
+  const isClaimable = canJoin && !isLocalObserver;
+  const statusLabel = observer ? `${observers.length}/${Math.max(1, capacity)}` : `0/${Math.max(1, capacity)}`;
+
+  return (
+    <div className="lobby-observer-slot">
+      <button
+        type="button"
+        aria-pressed={isLocalObserver}
+        disabled={!isClaimable}
+        onClick={() => {
+          if (!isClaimable) return;
+          playButtonClick();
+          onToggle();
+        }}
+        className={`group lobby-observer-chip ${
+          isLocalObserver
+            ? 'lobby-observer-chip-active'
+            : isClaimable
+              ? 'lobby-observer-chip-claimable'
+              : 'lobby-observer-chip-disabled'
+        }`}
+      >
+        <ObserverIcon className="h-4 w-4 shrink-0" />
+        <span className="truncate">Observer</span>
+        <span className="lobby-observer-count">{statusLabel}</span>
+      </button>
+      <p className="lobby-observer-caption">
+        {isLocalObserver ? 'Watching' : observer ? (observer.id === playerId ? 'You' : observer.name) : 'Ghost slot'}
+      </p>
+    </div>
+  );
+}
+
+interface FactionHeaderProps {
+  faction: typeof FACTIONS.red | typeof FACTIONS.blue;
+  players: LobbyPlayer[];
+  isSelected: boolean;
+  reverse?: boolean;
+}
+
+function FactionHeader({ faction, players, isSelected, reverse }: FactionHeaderProps) {
+  const maxPlayers = DEFAULT_GAME_CONFIG.teamSize;
+  const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
+
+  return (
+    <div className={`lobby-faction-header flex items-center gap-2 xl:gap-3 ${reverse ? 'flex-row-reverse' : ''}`}>
+      <div
+        className="w-10 h-10 xl:w-12 xl:h-12 rounded-xl border flex shrink-0 items-center justify-center"
+        style={{
+          background: isSelected ? `${faction.primaryColor}28` : `${faction.primaryColor}16`,
+          borderColor: isSelected ? `${faction.primaryColor}70` : `${faction.primaryColor}35`,
+        }}
+      >
+        <Icon className="w-5 h-5 xl:w-6 xl:h-6" style={{ color: faction.primaryColor }} />
+      </div>
+      <div className={`min-w-0 ${reverse ? 'text-right flex-1' : 'flex-1'}`}>
+        <div className={`flex items-center gap-2 ${reverse ? 'justify-end' : ''}`}>
+          <h2 className="min-w-0 font-display text-lg xl:text-xl 2xl:text-2xl tracking-wide truncate" style={{ color: faction.primaryColor }}>
+            {faction.fullName}
+          </h2>
+          {isSelected && (
+            <span className="w-5 h-5 rounded-full bg-green-500/15 text-green-400 flex shrink-0 items-center justify-center">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+              </svg>
+            </span>
+          )}
+        </div>
+        <div className={`flex gap-1 mt-1.5 ${reverse ? 'justify-end' : ''}`}>
+          {[...Array(maxPlayers)].map((_, i) => (
+            <div
+              key={i}
+              className="w-1.5 h-1.5 rounded-full transition-all"
+              style={{
+                background: i < players.length ? faction.primaryColor : 'rgba(255,255,255,0.15)'
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Faction Panel Component
 interface FactionPanelProps {
   faction: typeof FACTIONS.red | typeof FACTIONS.blue;
@@ -643,8 +862,11 @@ interface FactionPanelProps {
   playerId: string | null;
   isSelected: boolean;
   isLobbyHost: boolean;
+  botsAllowed: boolean;
+  invitesAllowed: boolean;
   onSelect: () => void;
   onAddBot: (team: LobbyTeam) => void;
+  onInvite: () => void;
   onKick: (id: string) => void;
   onRemoveBot: (id: string) => void;
   onBotTeamChange: (id: string, team: LobbyTeam) => void;
@@ -659,8 +881,11 @@ function FactionPanel({
   playerId,
   isSelected,
   isLobbyHost,
+  botsAllowed,
+  invitesAllowed,
   onSelect,
   onAddBot,
+  onInvite,
   onKick,
   onRemoveBot,
   onBotTeamChange,
@@ -670,51 +895,13 @@ function FactionPanel({
 }: FactionPanelProps) {
   const maxPlayers = DEFAULT_GAME_CONFIG.teamSize;
   const emptySlots = Math.max(0, maxPlayers - players.length);
-  const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
   const canJoin = !isSelected && emptySlots > 0;
-  const canAddBot = isLobbyHost && emptySlots > 0;
+  const canAddBot = botsAllowed && isLobbyHost && emptySlots > 0;
+  const canInvite = invitesAllowed && isLobbyHost && emptySlots > 0;
   const factionTeam = faction.id as LobbyTeam;
 
   return (
     <div className="h-full flex flex-col">
-      {/* Faction Header */}
-      <div className={`flex items-center gap-2 xl:gap-3 mb-3 xl:mb-4 ${reverse ? 'flex-row-reverse' : ''}`}>
-        <div 
-          className="w-10 h-10 xl:w-12 xl:h-12 rounded-xl border flex shrink-0 items-center justify-center"
-          style={{
-            background: isSelected ? `${faction.primaryColor}28` : `${faction.primaryColor}16`,
-            borderColor: isSelected ? `${faction.primaryColor}70` : `${faction.primaryColor}35`,
-          }}
-        >
-          <Icon className="w-5 h-5 xl:w-6 xl:h-6" style={{ color: faction.primaryColor }} />
-        </div>
-        <div className={`min-w-0 ${reverse ? 'text-right flex-1' : 'flex-1'}`}>
-          <div className={`flex items-center gap-2 ${reverse ? 'justify-end' : ''}`}>
-            <h2 className="min-w-0 font-display text-lg xl:text-xl 2xl:text-2xl tracking-wide truncate" style={{ color: faction.primaryColor }}>
-              {faction.fullName}
-            </h2>
-            {isSelected && (
-              <span className="w-5 h-5 rounded-full bg-green-500/15 text-green-400 flex shrink-0 items-center justify-center">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                </svg>
-              </span>
-            )}
-          </div>
-          <div className={`flex gap-1 mt-1.5 ${reverse ? 'justify-end' : ''}`}>
-            {[...Array(maxPlayers)].map((_, i) => (
-              <div
-                key={i}
-                className="w-1.5 h-1.5 rounded-full transition-all"
-                style={{
-                  background: i < players.length ? faction.primaryColor : 'rgba(255,255,255,0.15)'
-                }}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-
       <div className="flex-1 space-y-1.5 px-1 py-1">
         {players.map((player) => (
           <PlayerCard
@@ -722,6 +909,7 @@ function FactionPanel({
             player={player}
             isCurrentPlayer={player.id === playerId}
             isLobbyHost={isLobbyHost}
+            botsAllowed={botsAllowed}
             onKick={() => onKick(player.id)}
             onRemoveBot={() => onRemoveBot(player.id)}
             onBotTeamChange={(team) => onBotTeamChange(player.id, team)}
@@ -732,14 +920,16 @@ function FactionPanel({
           />
         ))}
 
-        {(canJoin || canAddBot) && (
+        {(canJoin || canAddBot || canInvite) && (
           <JoinTeamCard
             faction={faction}
             reverse={reverse}
             canJoin={canJoin}
             canAddBot={canAddBot}
+            canInvite={canInvite}
             onJoin={onSelect}
             onAddBot={() => onAddBot(factionTeam)}
+            onInvite={onInvite}
             compact
           />
         )}
@@ -753,17 +943,19 @@ interface JoinTeamCardProps {
   reverse?: boolean;
   canJoin: boolean;
   canAddBot: boolean;
+  canInvite: boolean;
   onJoin: () => void;
   onAddBot: () => void;
+  onInvite: () => void;
   compact?: boolean;
 }
 
-function JoinTeamCard({ faction, reverse, canJoin, canAddBot, onJoin, onAddBot, compact }: JoinTeamCardProps) {
+function JoinTeamCard({ faction, reverse, canJoin, canAddBot, canInvite, onJoin, onAddBot, onInvite, compact }: JoinTeamCardProps) {
   const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
   const { playButtonClick } = useUISounds();
   const containerClass = compact ? 'h-14 gap-2' : 'h-16 gap-2.5';
   const iconClass = compact ? 'h-10 w-10' : 'h-11 w-11';
-  const addBotClass = compact ? 'h-14 w-14' : 'h-16 w-16';
+  const actionButtonClass = compact ? 'h-14 w-14' : 'h-16 w-16';
 
   return (
     <div className={`flex w-full items-stretch ${containerClass} ${reverse ? 'flex-row-reverse' : ''}`}>
@@ -799,13 +991,29 @@ function JoinTeamCard({ faction, reverse, canJoin, canAddBot, onJoin, onAddBot, 
         </button>
       )}
 
+      {canInvite && (
+        <button
+          type="button"
+          onClick={() => { playButtonClick(); onInvite(); }}
+          aria-label="Invite player"
+          title="Invite player"
+          className={`group relative flex ${actionButtonClass} shrink-0 items-center justify-center rounded-xl border border-dashed bg-white/[0.045] text-white/55 transition-all hover:bg-white/[0.08] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30`}
+          style={{
+            borderColor: `${faction.primaryColor}28`,
+          }}
+        >
+          <InvitePlayerIcon className="h-5 w-5" />
+          <span className="absolute right-2 top-1.5 font-display text-[11px] leading-none" style={{ color: faction.primaryColor }}>+</span>
+        </button>
+      )}
+
       {canAddBot && (
         <button
           type="button"
           onClick={() => { playButtonClick(); onAddBot(); }}
           aria-label={`Add ${faction.name} bot`}
           title="Add bot"
-          className={`group relative flex ${addBotClass} shrink-0 items-center justify-center rounded-xl border border-dashed bg-cyan-500/[0.055] text-cyan-300 transition-all hover:bg-cyan-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40`}
+          className={`group relative flex ${actionButtonClass} shrink-0 items-center justify-center rounded-xl border border-dashed bg-cyan-500/[0.055] text-cyan-300 transition-all hover:bg-cyan-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40`}
           style={{
             borderColor: `${faction.primaryColor}28`,
           }}
@@ -845,6 +1053,7 @@ interface PlayerCardProps {
   player: LobbyPlayer;
   isCurrentPlayer: boolean;
   isLobbyHost: boolean;
+  botsAllowed: boolean;
   onKick: () => void;
   onRemoveBot: () => void;
   onBotTeamChange?: (team: LobbyTeam) => void;
@@ -858,6 +1067,7 @@ function PlayerCard({
   player,
   isCurrentPlayer,
   isLobbyHost,
+  botsAllowed,
   onKick,
   onRemoveBot,
   onBotTeamChange,
@@ -869,7 +1079,7 @@ function PlayerCard({
   const color = faction?.primaryColor || FACTIONS.red.primaryColor;
   const secondaryColor = faction?.secondaryColor || FACTIONS.red.secondaryColor;
   const { playButtonClick } = useUISounds();
-  const showBotControls = !player.isHost && Boolean(player.isBot) && isLobbyHost;
+  const showBotControls = botsAllowed && !player.isHost && Boolean(player.isBot) && isLobbyHost;
   const cardClass = compact
     ? showBotControls ? 'min-h-16 p-2' : 'h-14 p-2'
     : showBotControls ? 'min-h-[4.5rem] p-2.5' : 'h-16 p-2.5';

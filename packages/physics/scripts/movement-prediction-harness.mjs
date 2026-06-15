@@ -1,21 +1,27 @@
 import assert from 'node:assert/strict';
 import {
+  createVoxelCollisionWorld,
   createHookshotSwingState,
   MovementPredictionController,
+  resolveCapsuleTeleportDestination,
+  simulateCapsuleMotor,
   simulateSharedMovement,
+  sweepCapsulePathClear,
   stepHookshotSwing,
 } from '../dist/index.js';
 import {
   HERO_DEFINITIONS,
+  CHRONOS_ASCENDANT_PARADOX_MAX_ELEVATION_GAIN,
   MOVEMENT_BUTTON_ABILITY_1,
   MOVEMENT_BUTTON_CROUCH,
   MOVEMENT_BUTTON_CROUCH_PRESSED,
   MOVEMENT_BUTTON_MOVE_FORWARD,
   MOVEMENT_BUTTON_RELOAD,
   MOVEMENT_BUTTON_SPRINT,
-  MOVEMENT_BUTTON_UNSTUCK,
   MOVEMENT_PROTOCOL_VERSION,
+  createProceduralTerrainLookup,
   createEmptyInputState,
+  generateProceduralVoxelMap,
   inputStateToMovementButtons,
   movementButtonsForHeldCommand,
   movementButtonsToInputState,
@@ -31,6 +37,12 @@ const terrain = {
     z: Math.max(-50, Math.min(50, position.z)),
   }),
   getBlockAtWorld: () => 0,
+};
+
+const fineVoxelGrid = {
+  origin: { x: 0, y: 0, z: 0 },
+  voxelSize: { x: 0.1, y: 0.1, z: 0.1 },
+  collisionRevision: 0,
 };
 
 function createMovementState() {
@@ -85,6 +97,32 @@ function assertVecNear(actual, expected, label) {
   assert.ok(Math.abs(actual.z - expected.z) <= EPSILON, `${label}.z expected ${expected.z}, got ${actual.z}`);
 }
 
+function speed2D(velocity) {
+  return Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+}
+
+function simulateHeldInput(input, steps = 120) {
+  let state = createSimulationState();
+
+  for (let step = 0; step < steps; step++) {
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats: HERO_DEFINITIONS.phantom.stats,
+      input: {
+        ...createEmptyInputState(),
+        ...input,
+      },
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain,
+    });
+  }
+
+  return state;
+}
+
 function runDeterministicReplay() {
   const buttons = MOVEMENT_BUTTON_MOVE_FORWARD | MOVEMENT_BUTTON_SPRINT;
   const commands = Array.from({ length: 36 }, (_, index) => command(index + 1, buttons));
@@ -126,6 +164,28 @@ function runYawConvention() {
   assert.ok(Math.abs(result.velocity.z) < Math.abs(result.velocity.x), `forward at +90deg yaw should mostly move on X, got Z ${result.velocity.z}`);
 }
 
+function runDirectionalMovementSpeedRules() {
+  const forward = speed2D(simulateHeldInput({ moveForward: true }).velocity);
+  const strafe = speed2D(simulateHeldInput({ moveLeft: true }).velocity);
+  const backward = speed2D(simulateHeldInput({ moveBackward: true }).velocity);
+  const forwardStrafe = speed2D(simulateHeldInput({ moveForward: true, moveLeft: true }).velocity);
+
+  assert.ok(strafe < forward, `strafe should be slower than forward: strafe ${strafe}, forward ${forward}`);
+  assert.ok(backward < forward, `backpedal should be slower than forward: backward ${backward}, forward ${forward}`);
+  assert.ok(
+    forwardStrafe > strafe && forwardStrafe < forward,
+    `forward+strafe should land between strafe and forward: strafe ${strafe}, diagonal ${forwardStrafe}, forward ${forward}`
+  );
+
+  const backwardSprint = simulateHeldInput({ moveBackward: true, sprint: true });
+  const backwardSprintSpeed = speed2D(backwardSprint.velocity);
+  assert.equal(backwardSprint.movement.isSprinting, false, 'backward movement should not enter sprint state');
+  assert.ok(
+    Math.abs(backwardSprintSpeed - backward) <= 0.01,
+    `backward sprint input should stay at backpedal speed: sprint ${backwardSprintSpeed}, walk ${backward}`
+  );
+}
+
 function runDuplicateAckNoop() {
   const controller = new MovementPredictionController();
   controller.initialize(createSimulationState(), 0, 0);
@@ -150,6 +210,64 @@ function runDuplicateAckNoop() {
 
   const duplicate = controller.reconcile({ ...authority, correctionReason: undefined }, context(), 110);
   assert.equal(duplicate.corrected, false);
+  assert.equal(controller.getBufferedCommandCount(), 0);
+}
+
+function runNoCorrectionAckRefreshesAuthorityOwnedResources() {
+  const controller = new MovementPredictionController();
+  controller.initialize(createSimulationState(), 0, 0);
+  controller.step(command(1, MOVEMENT_BUTTON_MOVE_FORWARD), context());
+  const stateAtAck = controller.getState();
+  const authorityMovement = {
+    ...stateAtAck.movement,
+    isJetpacking: true,
+    jetpackFuel: 42,
+  };
+
+  const metrics = controller.reconcile({
+    serverTick: 1,
+    serverTime: 50,
+    ackSeq: 1,
+    movementEpoch: 0,
+    position: stateAtAck.position,
+    velocity: stateAtAck.velocity,
+    lookYaw: 0,
+    lookPitch: 0,
+    movement: authorityMovement,
+  }, context(), 60);
+
+  assert.equal(metrics.corrected, false, 'authority-owned resource updates should not create movement corrections');
+  assert.equal(controller.getState().movement.isJetpacking, true, 'authority-owned active status should refresh prediction state');
+  assert.equal(controller.getState().movement.jetpackFuel, 42, 'fuel-only authority updates should refresh prediction state');
+
+  controller.step(command(2, MOVEMENT_BUTTON_MOVE_FORWARD), context());
+  assert.equal(controller.getState().movement.isJetpacking, true, 'local prediction should preserve refreshed active status');
+  assert.equal(controller.getState().movement.jetpackFuel, 42, 'local prediction should preserve refreshed Blaze fuel');
+}
+
+function runSprintModeMismatchDoesNotCorrect() {
+  const controller = new MovementPredictionController();
+  controller.initialize(createSimulationState(), 0, 0);
+  controller.step(command(1, MOVEMENT_BUTTON_MOVE_FORWARD | MOVEMENT_BUTTON_SPRINT), context());
+  const stateAtAck = controller.getState();
+  const authorityMovement = {
+    ...stateAtAck.movement,
+    isSprinting: !stateAtAck.movement.isSprinting,
+  };
+
+  const metrics = controller.reconcile({
+    serverTick: 1,
+    serverTime: 50,
+    ackSeq: 1,
+    movementEpoch: 0,
+    position: stateAtAck.position,
+    velocity: stateAtAck.velocity,
+    lookYaw: 0,
+    lookPitch: 0,
+    movement: authorityMovement,
+  }, context(), 60);
+
+  assert.equal(metrics.corrected, false, 'sprint animation flag drift should not replay movement prediction');
   assert.equal(controller.getBufferedCommandCount(), 0);
 }
 
@@ -186,8 +304,7 @@ function runHeldCommandStripsEdgeButtons() {
     MOVEMENT_BUTTON_CROUCH |
     MOVEMENT_BUTTON_CROUCH_PRESSED |
     MOVEMENT_BUTTON_RELOAD |
-    MOVEMENT_BUTTON_ABILITY_1 |
-    MOVEMENT_BUTTON_UNSTUCK;
+    MOVEMENT_BUTTON_ABILITY_1;
 
   const heldButtons = movementButtonsForHeldCommand(buttons);
   const heldInput = movementButtonsToInputState(heldButtons);
@@ -198,7 +315,148 @@ function runHeldCommandStripsEdgeButtons() {
   assert.equal(heldInput.crouchPressed, false);
   assert.equal(heldInput.reload, false);
   assert.equal(heldInput.ability1, false);
-  assert.equal(heldInput.unstuck, false);
+}
+
+function runChronosAscendantReleaseDampsStrafe() {
+  let state = {
+    position: { x: 0, y: 6, z: 0 },
+    velocity: { x: 0, y: 0, z: 0 },
+    movement: {
+      ...createMovementState(),
+      isGrounded: false,
+      isJetpacking: true,
+      isGliding: true,
+    },
+  };
+
+  const stepAscendant = (input) => simulateSharedMovement({
+    position: state.position,
+    velocity: state.velocity,
+    movement: state.movement,
+    heroStats: HERO_DEFINITIONS.chronos.stats,
+    input,
+    lookYaw: 0,
+    deltaTime: 1 / 60,
+    terrain,
+    activeSpeedMultiplier: 1.38,
+    chronosAscendantActive: true,
+  });
+
+  const strafeInput = {
+    ...createEmptyInputState(),
+    moveLeft: true,
+  };
+  for (let step = 0; step < 12; step++) {
+    state = stepAscendant(strafeInput);
+  }
+
+  const strafeSpeed = speed2D(state.velocity);
+  assert.ok(state.velocity.x < -0.5, `Ascendant strafe input should build left velocity, got ${state.velocity.x}`);
+
+  const releasedInput = createEmptyInputState();
+  for (let step = 0; step < 30; step++) {
+    state = stepAscendant(releasedInput);
+  }
+
+  assert.ok(
+    speed2D(state.velocity) < strafeSpeed * 0.12,
+    `released Ascendant strafe should damp horizontal speed, got ${speed2D(state.velocity)} from ${strafeSpeed}`
+  );
+  assert.ok(
+    Math.abs(state.velocity.x) < 0.2,
+    `released Ascendant left strafe should settle near zero X velocity, got ${state.velocity.x}`
+  );
+}
+
+function runChronosAscendantCapsElevation() {
+  const startY = 6;
+  let state = {
+    position: { x: 0, y: startY, z: 0 },
+    velocity: { x: 0, y: 18.5, z: 0 },
+    movement: {
+      ...createMovementState(),
+      isGrounded: false,
+      isJetpacking: true,
+      isGliding: true,
+      chronosAscendantStartY: startY,
+    },
+  };
+
+  const input = {
+    ...createEmptyInputState(),
+    jump: true,
+  };
+
+  for (let step = 0; step < 180; step++) {
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats: HERO_DEFINITIONS.chronos.stats,
+      input,
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain,
+      activeSpeedMultiplier: 1.38,
+      chronosAscendantActive: true,
+    });
+  }
+
+  const maxY = startY + CHRONOS_ASCENDANT_PARADOX_MAX_ELEVATION_GAIN;
+  assert.ok(
+    state.position.y <= maxY + 0.001,
+    `Ascendant should cap elevation at ${maxY}, got ${state.position.y}`
+  );
+  assert.ok(state.velocity.y <= 0.001, `Ascendant upward velocity should stop at ceiling, got ${state.velocity.y}`);
+}
+
+function runChronosAscendantCapsAtPlayableCeiling() {
+  const startY = 6;
+  const playableCeilingY = startY + 5;
+  let state = {
+    position: { x: 0, y: startY, z: 0 },
+    velocity: { x: 0, y: 18.5, z: 0 },
+    movement: {
+      ...createMovementState(),
+      isGrounded: false,
+      isJetpacking: true,
+      isGliding: true,
+      chronosAscendantStartY: startY,
+    },
+  };
+  const terrainWithPlayableCeiling = {
+    ...terrain,
+    getMaxPlayableY: () => playableCeilingY,
+  };
+  const input = {
+    ...createEmptyInputState(),
+    jump: true,
+  };
+
+  for (let step = 0; step < 180; step++) {
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats: HERO_DEFINITIONS.chronos.stats,
+      input,
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain: terrainWithPlayableCeiling,
+      activeSpeedMultiplier: 1.38,
+      chronosAscendantActive: true,
+    });
+  }
+
+  assert.ok(
+    state.position.y <= playableCeilingY + 0.001,
+    `Ascendant should respect playable ceiling ${playableCeilingY}, got ${state.position.y}`
+  );
+  assert.ok(
+    playableCeilingY < startY + CHRONOS_ASCENDANT_PARADOX_MAX_ELEVATION_GAIN,
+    'test ceiling should be lower than the regular Ascendant cap'
+  );
+  assert.ok(state.velocity.y <= 0.001, `Ascendant upward velocity should stop at playable ceiling, got ${state.velocity.y}`);
 }
 
 function runCorrectionReplay() {
@@ -235,6 +493,48 @@ function runCorrectionReplay() {
   assert.equal(metrics.replayedCommands, 4);
   assert.equal(controller.getBufferedCommandCount(), 4);
   assert.equal(Number.isFinite(controller.getState().position.x), true);
+}
+
+function runClientAuthoritativeAckDoesNotMovePresentation() {
+  const input = createEmptyInputState();
+  input.moveForward = true;
+  const buttons = inputStateToMovementButtons(input);
+  const controller = new MovementPredictionController();
+  controller.initialize(createSimulationState(), 0, 0);
+  const commands = Array.from({ length: 8 }, (_, index) => command(index + 1, buttons));
+  for (const movementCommand of commands) {
+    controller.step(movementCommand, context());
+  }
+
+  const beforeAck = controller.getState();
+  const predictedAtAck = new MovementPredictionController();
+  predictedAtAck.initialize(createSimulationState(), 0, 0);
+  for (const movementCommand of commands.slice(0, 4)) {
+    predictedAtAck.step(movementCommand, context());
+  }
+  const ackState = predictedAtAck.getState();
+  const metrics = controller.acknowledgeAuthority({
+    serverTick: 100,
+    serverTime: 1000,
+    ackSeq: 4,
+    movementEpoch: 0,
+    position: { x: ackState.position.x + 0.4, y: ackState.position.y, z: ackState.position.z },
+    velocity: { ...ackState.velocity, x: ackState.velocity.x + 0.2 },
+    lookYaw: 0,
+    lookPitch: 0,
+    movement: {
+      ...ackState.movement,
+      isJetpacking: true,
+      jetpackFuel: 41,
+    },
+    correctionReason: 'normal',
+  }, context(), 1100);
+
+  assert.equal(metrics.corrected, false);
+  assert.equal(metrics.replayedCommands, 0);
+  assert.equal(controller.getBufferedCommandCount(), 4);
+  assertVecNear(controller.getState().position, beforeAck.position, 'client-owned ack position');
+  assert.equal(controller.getState().movement.jetpackFuel, 41);
 }
 
 function runOverwriteUpdatesLatestAckState() {
@@ -317,6 +617,7 @@ function runEpochBarrier() {
 
 function runVoxelWallBlocksMovement() {
   const wallTerrain = {
+    ...fineVoxelGrid,
     getGroundY: () => 0,
     clampPosition: (position) => ({ ...position }),
     getBlockAtWorld: (position) => (
@@ -345,8 +646,117 @@ function runVoxelWallBlocksMovement() {
   assert.ok(Math.abs(result.velocity.z) <= EPSILON, `blocked wall velocity should zero Z, got ${result.velocity.z}`);
 }
 
+function runProceduralSpawnGroundedMovement() {
+  const manifest = generateProceduralVoxelMap(4277893733);
+  const lookup = createProceduralTerrainLookup(manifest);
+  const spawn = manifest.spawnPoints.red[0];
+  const proceduralTerrain = {
+    getGroundY: (position) => lookup.getGroundY(position),
+    clampPosition: (position) => lookup.clampToPlayableMap(position),
+    getBlockAtWorld: (position) => lookup.getBlockAtWorld(position),
+    origin: lookup.origin,
+    voxelSize: lookup.voxelSize,
+    collisionRevision: 0,
+  };
+  const input = {
+    ...createEmptyInputState(),
+    moveForward: true,
+    sprint: true,
+  };
+  let state = {
+    position: { ...spawn },
+    velocity: { x: 0, y: 0, z: 0 },
+    movement: createMovementState(),
+  };
+
+  for (let step = 0; step < 10; step++) {
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats: HERO_DEFINITIONS.phantom.stats,
+      input,
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain: proceduralTerrain,
+    });
+  }
+
+  assert.ok(state.position.z < spawn.z - 0.05, `procedural spawn should allow grounded forward movement, got z ${state.position.z}`);
+  assert.equal(state.movement.isCrouching, false, 'standing spawn clearance should not force crouch');
+
+  const crouchedState = simulateSharedMovement({
+    position: { ...spawn },
+    velocity: { x: 0, y: 0, z: 0 },
+    movement: createMovementState(),
+    heroStats: HERO_DEFINITIONS.phantom.stats,
+    input: {
+      ...createEmptyInputState(),
+      moveForward: true,
+      crouch: true,
+    },
+    lookYaw: 0,
+    deltaTime: 1 / 60,
+    terrain: proceduralTerrain,
+  });
+  assert.equal(crouchedState.movement.isCrouching, true, 'procedural floor should allow explicit crouch input');
+  assert.ok(crouchedState.position.z < spawn.z, `crouched procedural movement should still advance, got z ${crouchedState.position.z}`);
+}
+
+function createStairMomentumTerrain() {
+  const stairTerrain = {
+    ...fineVoxelGrid,
+    origin: { x: -8, y: 0, z: -8 },
+    getGroundY: (position) => Math.min(1.25, Math.max(0, Math.floor((position.x + 0.05) / 0.75) * 0.25)),
+    clampPosition: (position) => ({ ...position }),
+    getBlockAtWorld(position) {
+      const groundY = stairTerrain.getGroundY(position);
+      return position.y >= 0 && position.y < groundY && Math.abs(position.z) < 3 ? 1 : 0;
+    },
+  };
+  return stairTerrain;
+}
+
+function runStairClimbReconcileHasNoMicroCorrections() {
+  const terrain = createStairMomentumTerrain();
+  const context = {
+    heroStats: HERO_DEFINITIONS.phantom.stats,
+    terrain,
+    flagCarrier: false,
+    activeSpeedMultiplier: 1,
+  };
+  const client = new MovementPredictionController();
+  const server = new MovementPredictionController();
+  client.initialize({ position: { x: 0, y: 0.9, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, movement: createMovementState() }, 0, 0);
+  server.initialize({ position: { x: 0, y: 0.9, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, movement: createMovementState() }, 0, 0);
+
+  let corrections = 0;
+  const buttons = MOVEMENT_BUTTON_MOVE_FORWARD | MOVEMENT_BUTTON_SPRINT;
+  for (let seq = 1; seq <= 120; seq++) {
+    const movementCommand = command(seq, buttons, -Math.PI / 2);
+    client.step(movementCommand, context);
+    server.step(movementCommand, context);
+    const serverState = server.getState();
+    const metrics = client.reconcile({
+      serverTick: seq,
+      serverTime: seq * 1000 / 60,
+      ackSeq: seq,
+      movementEpoch: 0,
+      position: serverState.position,
+      velocity: serverState.velocity,
+      lookYaw: movementCommand.lookYaw,
+      lookPitch: movementCommand.lookPitch,
+      movement: serverState.movement,
+    }, context, seq * 1000 / 60);
+    if (metrics.corrected) corrections++;
+  }
+
+  assert.equal(corrections, 0, 'stair climb authority acks should not produce prediction corrections');
+}
+
 function runVoxelStepUpKeepsMovementSmooth() {
   const stepTerrain = {
+    ...fineVoxelGrid,
     getGroundY: (position) => position.z <= -0.5 ? 0.4 : 0,
     clampPosition: (position) => ({ ...position }),
     getBlockAtWorld: (position) => (
@@ -380,6 +790,7 @@ function runVoxelStepUpKeepsMovementSmooth() {
 
 function runVoxelStepUpBeginsAtCapsuleEdge() {
   const stepTerrain = {
+    ...fineVoxelGrid,
     getGroundY: (position) => position.z <= -0.5 ? 0.5 : 0,
     clampPosition: (position) => ({ ...position }),
     getBlockAtWorld: (position) => (
@@ -414,6 +825,7 @@ function runVoxelStepUpBeginsAtCapsuleEdge() {
 
 function runLegacyHeightStepStillTraverses() {
   const stepTerrain = {
+    ...fineVoxelGrid,
     getGroundY: (position) => position.z <= -0.5 ? 0.75 : 0,
     clampPosition: (position) => ({ ...position }),
     getBlockAtWorld: (position) => (
@@ -448,6 +860,7 @@ function runLegacyHeightStepStillTraverses() {
 
 function runTallVoxelWallStillBlocksMovement() {
   const wallTerrain = {
+    ...fineVoxelGrid,
     getGroundY: (position) => position.z <= -0.5 ? 1.1 : 0,
     clampPosition: (position) => ({ ...position }),
     getBlockAtWorld: (position) => (
@@ -480,6 +893,7 @@ function runTallVoxelWallStillBlocksMovement() {
 
 function runLowCeilingMaintainsCrouch() {
   const lowCeilingTerrain = {
+    ...fineVoxelGrid,
     getGroundY: () => 0,
     clampPosition: (position) => ({ ...position }),
     getBlockAtWorld: (position) => (
@@ -506,6 +920,302 @@ function runLowCeilingMaintainsCrouch() {
   });
 
   assert.equal(result.movement.isCrouching, true, 'low ceiling should keep player crouched after releasing crouch');
+}
+
+function runCapsuleHoleRejection() {
+  const narrowHoleTerrain = {
+    ...fineVoxelGrid,
+    getGroundY: () => 0,
+    clampPosition: (position) => ({ ...position }),
+    getBlockAtWorld: (position) => (
+      position.z <= -0.4 &&
+      position.z >= -2.2 &&
+      position.y >= 0 &&
+      position.y < 2.4 &&
+      Math.abs(position.x) >= 0.32 &&
+      Math.abs(position.x) <= 2
+        ? 1
+        : 0
+    ),
+  };
+
+  const result = simulateSharedMovement({
+    position: { x: 0, y: 0.9, z: 0 },
+    velocity: { x: 0, y: 0, z: -16 },
+    movement: createMovementState(),
+    heroStats: HERO_DEFINITIONS.phantom.stats,
+    input: createEmptyInputState(),
+    lookYaw: 0,
+    deltaTime: 0.1,
+    terrain: narrowHoleTerrain,
+  });
+
+  assert.ok(result.position.z > -0.38, `capsule should reject sub-diameter hole before center enters, got z ${result.position.z}`);
+  assert.ok(Math.abs(result.velocity.z) < 0.5, `blocked narrow hole should remove forward velocity, got ${result.velocity.z}`);
+}
+
+function runDiagonalCornerSlide() {
+  const wallTerrain = {
+    ...fineVoxelGrid,
+    getGroundY: () => 0,
+    clampPosition: (position) => ({ ...position }),
+    getBlockAtWorld: (position) => (
+      position.x >= 0.55 &&
+      position.x <= 2 &&
+      position.y >= 0 &&
+      position.y < 3
+        ? 1
+        : 0
+    ),
+  };
+
+  const result = simulateSharedMovement({
+    position: { x: 0, y: 0.9, z: 0 },
+    velocity: { x: 10, y: 0, z: -8 },
+    movement: createMovementState(),
+    heroStats: HERO_DEFINITIONS.phantom.stats,
+    input: {
+      ...createEmptyInputState(),
+      moveForward: true,
+      moveRight: true,
+    },
+    lookYaw: 0,
+    deltaTime: 0.1,
+    terrain: wallTerrain,
+  });
+
+  assert.ok(result.position.x < 0.12, `glancing wall hit should keep capsule outside wall, got x ${result.position.x}`);
+  assert.ok(result.position.z < -0.25, `glancing wall hit should slide along tangential Z, got z ${result.position.z}`);
+  assert.ok(result.velocity.z < -3, `tangential velocity should be retained, got z velocity ${result.velocity.z}`);
+}
+
+function runHeldSlideGraduallyLosesSpeed() {
+  let state = createSimulationState();
+  const speeds = [];
+
+  for (let step = 0; step < 24; step++) {
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats: HERO_DEFINITIONS.phantom.stats,
+      input: {
+        ...createEmptyInputState(),
+        moveForward: true,
+        sprint: true,
+        crouch: true,
+        crouchPressed: step === 0,
+      },
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain,
+    });
+
+    assert.equal(state.movement.isSliding, true, `slide should still be active at step ${step}`);
+    speeds.push(speed2D(state.velocity));
+  }
+
+  for (let index = 1; index < speeds.length; index++) {
+    assert.ok(
+      speeds[index] <= speeds[index - 1] + EPSILON,
+      `held slide speed should not be replenished by input at step ${index}: ${speeds[index - 1]} -> ${speeds[index]}`
+    );
+  }
+
+  assert.ok(
+    speeds[speeds.length - 1] < speeds[0] * 0.7,
+    `held slide should gradually lose meaningful speed, got ${speeds[0]} -> ${speeds[speeds.length - 1]}`
+  );
+}
+
+function runSlideJump() {
+  const movement = createMovementState();
+  movement.isSliding = true;
+  movement.slideTimeRemaining = 0.3;
+  const result = simulateSharedMovement({
+    position: { x: 0, y: 0.9, z: 0 },
+    velocity: { x: 0, y: 0, z: -9 },
+    movement,
+    heroStats: HERO_DEFINITIONS.phantom.stats,
+    input: {
+      ...createEmptyInputState(),
+      jump: true,
+    },
+    lookYaw: 0,
+    deltaTime: 1 / 60,
+    terrain,
+  });
+
+  assert.equal(result.movement.isSliding, false, 'slide jump should exit slide');
+  assert.equal(result.movement.isGrounded, false, 'slide jump should detach from ground');
+  assert.ok(result.velocity.y > 7, `slide jump should apply jump impulse, got ${result.velocity.y}`);
+  assert.ok(speed2D(result.velocity) > 6, `slide jump should retain horizontal speed, got ${speed2D(result.velocity)}`);
+}
+
+function runLandingContact() {
+  const floorTerrain = {
+    ...fineVoxelGrid,
+    getGroundY: () => 0,
+    clampPosition: (position) => ({ ...position }),
+    getBlockAtWorld: (position) => (
+      position.y >= -0.2 &&
+      position.y < 0 &&
+      Math.abs(position.x) <= 4 &&
+      Math.abs(position.z) <= 4
+        ? 1
+        : 0
+    ),
+  };
+  const movement = createMovementState();
+  movement.isGrounded = false;
+
+  const result = simulateSharedMovement({
+    position: { x: 0, y: 3, z: 0 },
+    velocity: { x: 0, y: -35, z: 0 },
+    movement,
+    heroStats: HERO_DEFINITIONS.phantom.stats,
+    input: createEmptyInputState(),
+    lookYaw: 0,
+    deltaTime: 0.1,
+    terrain: floorTerrain,
+  });
+
+  assert.equal(result.movement.isGrounded, true, 'falling capsule should land on voxel floor');
+  assert.ok(Math.abs(result.velocity.y) <= EPSILON, `landing should clear downward velocity, got ${result.velocity.y}`);
+  assert.ok(result.position.y >= 0.9, `landing should end above floor, got y ${result.position.y}`);
+}
+
+function runTemporaryWallRevisionCollision() {
+  const wallTerrain = {
+    getGroundY: () => 0,
+    clampPosition: (position) => ({ ...position }),
+    collisionRevision: 7,
+    getCollisionAabbs: () => [{
+      id: 'anchorwall_test',
+      min: { x: -2, y: 0, z: -0.8 },
+      max: { x: 2, y: 3, z: -0.55 },
+    }],
+  };
+  const world = createVoxelCollisionWorld(wallTerrain);
+  assert.equal(world.collisionRevision, 7, 'collision world should expose dynamic collider revision');
+
+  const result = simulateSharedMovement({
+    position: { x: 0, y: 0.9, z: 0 },
+    velocity: { x: 0, y: 0, z: -14 },
+    movement: createMovementState(),
+    heroStats: HERO_DEFINITIONS.phantom.stats,
+    input: createEmptyInputState(),
+    lookYaw: 0,
+    deltaTime: 0.1,
+    terrain: wallTerrain,
+  });
+
+  assert.ok(result.position.z > -0.2, `temporary wall should block capsule movement, got z ${result.position.z}`);
+  assert.ok(Math.abs(result.velocity.z) < 0.5, `temporary wall should remove into-wall velocity, got ${result.velocity.z}`);
+}
+
+function runBlinkCapsuleClearance() {
+  const wallTerrain = {
+    ...fineVoxelGrid,
+    getGroundY: () => 0,
+    clampPosition: (position) => ({ ...position }),
+    getBlockAtWorld: (position) => (
+      position.z <= -1 &&
+      position.z >= -1.5 &&
+      position.y >= 0 &&
+      position.y < 3 &&
+      Math.abs(position.x) <= 2
+        ? 1
+        : 0
+    ),
+  };
+  const world = createVoxelCollisionWorld(wallTerrain);
+
+  assert.equal(
+    sweepCapsulePathClear(world, { x: 0, y: 0.9, z: 0 }, { x: 0, y: 0.9, z: -4 }),
+    false,
+    'blink clearance should reject a blocked path'
+  );
+  assert.equal(
+    sweepCapsulePathClear(world, { x: 0, y: 0.9, z: 0 }, { x: 0, y: 0.9, z: 1.5 }),
+    true,
+    'blink clearance should allow a clear path'
+  );
+
+  const verticalOpenDestination = resolveCapsuleTeleportDestination(
+    createVoxelCollisionWorld({
+      ...fineVoxelGrid,
+      getGroundY: () => 0,
+      clampPosition: (position) => ({ ...position }),
+      getBlockAtWorld: () => 0,
+    }),
+    { x: 0, y: 0.9, z: 0 },
+    { x: 0, y: 1, z: 0 },
+    4
+  );
+  assert.ok(
+    verticalOpenDestination.y > 4.8,
+    `directional blink should allow upward teleport through open air, got y ${verticalOpenDestination.y}`
+  );
+
+  const ceilingWorld = createVoxelCollisionWorld({
+    ...fineVoxelGrid,
+    getGroundY: () => 0,
+    clampPosition: (position) => ({ ...position }),
+    getBlockAtWorld: (position) => (
+      position.y >= 2.2 &&
+      position.y <= 3.4 &&
+      Math.abs(position.x) <= 2 &&
+      Math.abs(position.z) <= 2
+        ? 1
+        : 0
+    ),
+  });
+  const ceilingBlockedDestination = resolveCapsuleTeleportDestination(
+    ceilingWorld,
+    { x: 0, y: 0.9, z: 0 },
+    { x: 0, y: 1, z: 0 },
+    4
+  );
+  assertVecNear(
+    ceilingBlockedDestination,
+    { x: 0, y: 0.9, z: 0 },
+    'directional blink should stay put when an upward path is blocked'
+  );
+}
+
+function runHookshotTerrainContact() {
+  const wallTerrain = {
+    ...fineVoxelGrid,
+    getGroundY: () => 0,
+    clampPosition: (position) => ({ ...position }),
+    getBlockAtWorld: (position) => (
+      position.x >= 0.55 &&
+      position.x <= 2 &&
+      position.y >= 0 &&
+      position.y < 3
+        ? 1
+        : 0
+    ),
+  };
+  const movement = createMovementState();
+  movement.isGrounded = false;
+  movement.isGrappling = true;
+
+  const result = simulateSharedMovement({
+    position: { x: 0, y: 1.4, z: 0 },
+    velocity: { x: 12, y: 0, z: -6 },
+    movement,
+    heroStats: HERO_DEFINITIONS.hookshot.stats,
+    input: createEmptyInputState(),
+    lookYaw: 0,
+    deltaTime: 0.1,
+    terrain: wallTerrain,
+  });
+
+  assert.ok(result.position.x < 0.12, `hookshot contact should keep capsule outside wall, got x ${result.position.x}`);
+  assert.ok(result.position.z < -0.35, `hookshot contact should slide along terrain, got z ${result.position.z}`);
+  assert.ok(result.velocity.z < -4, `hookshot contact should preserve tangent velocity, got ${result.velocity.z}`);
 }
 
 function runHookshotSwingStep() {
@@ -560,19 +1270,36 @@ function runHookshotSwingStep() {
 
 runDeterministicReplay();
 runYawConvention();
+runDirectionalMovementSpeedRules();
 runDuplicateAckNoop();
+runNoCorrectionAckRefreshesAuthorityOwnedResources();
+runSprintModeMismatchDoesNotCorrect();
 runSlideRequiresFreshCrouchPress();
 runHeldCommandStripsEdgeButtons();
+runChronosAscendantReleaseDampsStrafe();
+runChronosAscendantCapsElevation();
+runChronosAscendantCapsAtPlayableCeiling();
 runCorrectionReplay();
+runClientAuthoritativeAckDoesNotMovePresentation();
 runOverwriteUpdatesLatestAckState();
 runOverwriteDefaultsToExternalCorrection();
 runEpochBarrier();
 runVoxelWallBlocksMovement();
+runProceduralSpawnGroundedMovement();
+runStairClimbReconcileHasNoMicroCorrections();
 runVoxelStepUpKeepsMovementSmooth();
 runVoxelStepUpBeginsAtCapsuleEdge();
 runLegacyHeightStepStillTraverses();
 runTallVoxelWallStillBlocksMovement();
 runLowCeilingMaintainsCrouch();
+runCapsuleHoleRejection();
+runDiagonalCornerSlide();
+runHeldSlideGraduallyLosesSpeed();
+runSlideJump();
+runLandingContact();
+runTemporaryWallRevisionCollision();
+runBlinkCapsuleClearance();
+runHookshotTerrainContact();
 runHookshotSwingStep();
 
 console.log(`movement prediction harness passed (protocol ${MOVEMENT_PROTOCOL_VERSION})`);

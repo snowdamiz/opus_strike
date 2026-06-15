@@ -1,7 +1,11 @@
-import { forwardRef, useCallback, useEffect, useRef, type ForwardedRef } from 'react';
+import { forwardRef, useCallback, useEffect, useRef, type ForwardedRef, type MutableRefObject } from 'react';
 import { useFrame, type ThreeElements } from '@react-three/fiber';
 import * as THREE from 'three';
-import { registerFrameSystem } from '../../../utils/perfMarks';
+import {
+  MOVEMENT_DIAGNOSTICS_ENABLED,
+  measureFrameWork,
+  recordDynamicLightDiagnostics,
+} from '../../../movement/networkDiagnostics';
 
 type PointLightProps = ThreeElements['pointLight'];
 
@@ -10,6 +14,7 @@ type BudgetedLightRecord = {
   lightRef: { current: THREE.PointLight | null };
   priority: number;
   radius: number;
+  selectedPass: number;
 };
 
 export type BudgetedPointLightProps = PointLightProps & {
@@ -20,6 +25,13 @@ export type BudgetedPointLightProps = PointLightProps & {
 const budgetedLights = new Set<BudgetedLightRecord>();
 const worldPosition = new THREE.Vector3();
 let nextLightId = 1;
+let lightBudgetPassId = 1;
+
+function setLightVisible(light: THREE.PointLight, visible: boolean): void {
+  if (light.visible !== visible) {
+    light.visible = visible;
+  }
+}
 
 function assignForwardedRef(ref: ForwardedRef<THREE.PointLight>, value: THREE.PointLight | null): void {
   if (typeof ref === 'function') {
@@ -30,6 +42,19 @@ function assignForwardedRef(ref: ForwardedRef<THREE.PointLight>, value: THREE.Po
   if (ref) {
     ref.current = value;
   }
+}
+
+function hasVisibleParentChain(light: THREE.PointLight): boolean {
+  let parent = light.parent;
+  while (parent) {
+    if (!parent.visible) return false;
+    parent = parent.parent;
+  }
+  return true;
+}
+
+function isActiveLightCandidate(light: THREE.PointLight | null): light is THREE.PointLight {
+  return Boolean(light?.parent && light.intensity > 0 && hasVisibleParentChain(light));
 }
 
 export const BudgetedPointLight = forwardRef<THREE.PointLight, BudgetedPointLightProps>(
@@ -47,6 +72,7 @@ export const BudgetedPointLight = forwardRef<THREE.PointLight, BudgetedPointLigh
       lightRef,
       priority: budgetPriority,
       radius: budgetRadius ?? 1,
+      selectedPass: 0,
     });
 
     recordRef.current.priority = budgetPriority;
@@ -81,50 +107,153 @@ interface RankedLight {
   score: number;
 }
 
+function insertRankedLight(
+  ranked: RankedLight[],
+  pool: RankedLight[],
+  record: BudgetedLightRecord,
+  score: number,
+  limit: number
+): void {
+  if (limit <= 0) return;
+
+  let insertIndex = ranked.length;
+  let entry: RankedLight;
+  if (insertIndex < limit) {
+    entry = pool[insertIndex];
+    if (!entry) {
+      entry = { record, score };
+      pool[insertIndex] = entry;
+    } else {
+      entry.record = record;
+      entry.score = score;
+    }
+    ranked.push(entry);
+  } else {
+    insertIndex = limit - 1;
+    entry = ranked[insertIndex];
+    if (!entry || score <= entry.score) return;
+    entry.record = record;
+    entry.score = score;
+  }
+
+  while (insertIndex > 0 && ranked[insertIndex - 1].score < score) {
+    ranked[insertIndex] = ranked[insertIndex - 1];
+    insertIndex--;
+  }
+  ranked[insertIndex] = entry;
+}
+
+function recordDynamicLightBudgetDiagnostics(
+  registered: number,
+  activeCandidates: number,
+  enabled: number,
+  budget: number
+): void {
+  if (!MOVEMENT_DIAGNOSTICS_ENABLED) return;
+  recordDynamicLightDiagnostics({
+    registered,
+    activeCandidates,
+    enabled,
+    budget,
+  });
+}
+
+function updateDynamicLightBudget(
+  camera: THREE.Camera,
+  delta: number,
+  maxLights: number,
+  accumulatorRef: MutableRefObject<number>,
+  rankedRef: MutableRefObject<RankedLight[]>,
+  rankedPoolRef: MutableRefObject<RankedLight[]>
+): void {
+  accumulatorRef.current += delta;
+  if (accumulatorRef.current < 0.08) return;
+  accumulatorRef.current = 0;
+
+  const lightLimit = Math.max(0, Math.floor(maxLights));
+  if (budgetedLights.size === 0) {
+    rankedRef.current.length = 0;
+    recordDynamicLightBudgetDiagnostics(0, 0, 0, lightLimit);
+    return;
+  }
+
+  const ranked = rankedRef.current;
+  const rankedPool = rankedPoolRef.current;
+  ranked.length = 0;
+
+  if (lightLimit <= 0) {
+    let activeCandidates = 0;
+    for (const record of budgetedLights) {
+      const light = record.lightRef.current;
+      if (isActiveLightCandidate(light)) activeCandidates++;
+      if (light) setLightVisible(light, false);
+    }
+    recordDynamicLightBudgetDiagnostics(budgetedLights.size, activeCandidates, 0, lightLimit);
+    return;
+  }
+
+  if (lightLimit >= budgetedLights.size) {
+    let activeCandidates = 0;
+    let enabled = 0;
+    for (const record of budgetedLights) {
+      const light = record.lightRef.current;
+      const active = isActiveLightCandidate(light);
+      if (active) activeCandidates++;
+      if (light) {
+        setLightVisible(light, active);
+        if (active) enabled++;
+      }
+    }
+    recordDynamicLightBudgetDiagnostics(budgetedLights.size, activeCandidates, enabled, lightLimit);
+    return;
+  }
+
+  const passId = lightBudgetPassId++;
+  let activeCandidates = 0;
+  for (const record of budgetedLights) {
+    const light = record.lightRef.current;
+    if (!isActiveLightCandidate(light)) {
+      continue;
+    }
+
+    activeCandidates++;
+    light.getWorldPosition(worldPosition);
+    const radius = Math.max(1, record.radius || light.distance || 1);
+    const distancePenalty = camera.position.distanceToSquared(worldPosition) / (radius * radius);
+    insertRankedLight(
+      ranked,
+      rankedPool,
+      record,
+      record.priority * 1000 + light.intensity * 10 - distancePenalty * 140,
+      lightLimit
+    );
+  }
+
+  for (let i = 0; i < ranked.length; i++) {
+    ranked[i].record.selectedPass = passId;
+  }
+
+  for (const record of budgetedLights) {
+    const light = record.lightRef.current;
+    if (light) {
+      setLightVisible(light, record.selectedPass === passId);
+    }
+  }
+  recordDynamicLightBudgetDiagnostics(budgetedLights.size, activeCandidates, ranked.length, lightLimit);
+}
+
 export function DynamicLightBudgetSystem({ maxLights }: { maxLights: number }) {
   const accumulatorRef = useRef(0);
   const rankedRef = useRef<RankedLight[]>([]);
-  const selectedRef = useRef(new Set<BudgetedLightRecord>());
-
-  useEffect(() => registerFrameSystem('dynamic-light-budget'), []);
+  const rankedPoolRef = useRef<RankedLight[]>([]);
 
   useFrame(({ camera }, delta) => {
-    accumulatorRef.current += delta;
-    if (accumulatorRef.current < 0.08) return;
-    accumulatorRef.current = 0;
-
-    const ranked = rankedRef.current;
-    const selected = selectedRef.current;
-    ranked.length = 0;
-    selected.clear();
-
-    for (const record of budgetedLights) {
-      const light = record.lightRef.current;
-      if (!light || !light.parent || light.intensity <= 0) {
-        if (light) light.visible = false;
-        continue;
-      }
-
-      light.getWorldPosition(worldPosition);
-      const radius = Math.max(1, record.radius || light.distance || 1);
-      const distancePenalty = camera.position.distanceToSquared(worldPosition) / (radius * radius);
-      ranked.push({
-        record,
-        score: record.priority * 1000 + light.intensity * 10 - distancePenalty * 140,
-      });
-    }
-
-    ranked.sort((a, b) => b.score - a.score);
-
-    for (let i = 0; i < Math.min(maxLights, ranked.length); i++) {
-      selected.add(ranked[i].record);
-    }
-
-    for (const record of budgetedLights) {
-      const light = record.lightRef.current;
-      if (light) {
-        light.visible = selected.has(record);
-      }
+    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+      measureFrameWork('frame.dynamicLights', () => (
+        updateDynamicLightBudget(camera, delta, maxLights, accumulatorRef, rankedRef, rankedPoolRef)
+      ));
+    } else {
+      updateDynamicLightBudget(camera, delta, maxLights, accumulatorRef, rankedRef, rankedPoolRef);
     }
   });
 

@@ -1,10 +1,19 @@
 import type { HeroDefinition, HeroId, HeroStats } from '../types/hero.js';
 import type { AbilityDefinition } from '../types/ability.js';
+import {
+  BLAZE_FLAMETHROWER_BURN_DAMAGE,
+  BLAZE_FLAMETHROWER_BURN_INTERVAL_MS,
+  BLAZE_FLAMETHROWER_BURN_TICKS,
+  BLAZE_FLAMETHROWER_DAMAGE,
+  BLAZE_FLAMETHROWER_FUEL_DRAIN,
+  BLAZE_FLAMETHROWER_FUEL_REGEN,
+  BLAZE_GEARSTORM_RADIUS,
+} from './physics.js';
 
 // Default hero stats - used as fallback when no hero is selected
 export const DEFAULT_HERO_STATS: HeroStats = {
   maxHealth: 200,
-  moveSpeed: 5.1,
+  moveSpeed: 4.08,
   jumpForce: 8.3,
   size: { width: 0.8, height: 1.8, depth: 0.8 },
 };
@@ -20,32 +29,165 @@ export function getHeroStats(heroId: HeroId | null | undefined): HeroStats {
 export const PHANTOM_PRIMARY_MAGAZINE_SIZE = 12;
 export const PHANTOM_PRIMARY_RELOAD_SECONDS = 2;
 export const PHANTOM_PRIMARY_RELOAD_MS = PHANTOM_PRIMARY_RELOAD_SECONDS * 1000;
+export const PHANTOM_DIRE_BALL_DAMAGE = 18;
+export const PHANTOM_DIRE_BALL_SPEED = 91;
+export const PHANTOM_DIRE_BALL_COLLISION_RADIUS = 0.21;
 export const PHANTOM_PRIMARY_FIRE_READY_MS = 240;
+export const PHANTOM_PRIMARY_COOLDOWN_MS = 250;
 export const PHANTOM_VOID_RAY_COOLDOWN_SECONDS = 3;
 export const PHANTOM_VOID_RAY_COOLDOWN_MS = PHANTOM_VOID_RAY_COOLDOWN_SECONDS * 1000;
+export const PHANTOM_VOID_RAY_DAMAGE = 34;
+export const PHANTOM_VOID_RAY_COLLISION_RADIUS = 0.45;
+export const VOID_RAY_CHARGE_TIME = 1000; // milliseconds to fully charge void ray
 export const PHANTOM_BLINK_DISTANCE = 8;
-export const PHANTOM_SHADOWSTEP_DISTANCE = 12;
+export const PHANTOM_VOID_ZONE_RADIUS = 3;
+export const PHANTOM_VOID_ZONE_DAMAGE = 12;
+export const PHANTOM_VOID_ZONE_DURATION_SECONDS = 4;
+export const PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS = 500;
+export const PHANTOM_PERSONAL_SHIELD_ABSORBED_HITS = 1;
+export const PHANTOM_VEIL_SPEED_BONUS_PERCENT = 30;
+export const PHANTOM_VEIL_SPEED_MULTIPLIER = 1 + PHANTOM_VEIL_SPEED_BONUS_PERCENT / 100;
+
+export const HOOKSHOT_CHAIN_HOOKS_DAMAGE = 16;
+export const HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS = 475;
+export const HOOKSHOT_CHAIN_HOOKS_COOLDOWN_SECONDS = HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS / 1000;
+export const HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE = 17.5;
+export const HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS = 0.22;
+export const HOOKSHOT_DRAG_HOOK_DAMAGE = 24;
+export const HOOKSHOT_DRAG_HOOK_MAX_DISTANCE = 24;
+export const HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS = 0.28;
+export const HOOKSHOT_DRAG_HOOK_PULL_FRONT_DISTANCE = 1.35;
+export const HOOKSHOT_GROUND_HOOKS_RADIUS = BLAZE_GEARSTORM_RADIUS;
+export const HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS = 3;
+export const HOOKSHOT_GROUND_HOOKS_HOOKS_PER_TARGET = 3;
 
 export const CHRONOS_LIFELINE_RADIUS = 14;
-export const CHRONOS_LIFELINE_HEAL = 40;
+export const CHRONOS_LIFELINE_ALLY_HEAL = 70;
+export const CHRONOS_LIFELINE_SELF_HEAL = 25;
 export const CHRONOS_LIFELINE_MAX_TARGETS = 3;
 export const CHRONOS_LIFELINE_RELEASE_DELAY_MS = 210;
 export const CHRONOS_LIFELINE_BEAM_DURATION_MS = 620;
 export const CHRONOS_LIFELINE_SOURCE_HEIGHT = 1.18;
 export const CHRONOS_LIFELINE_TARGET_HEIGHT = 1.02;
 export const CHRONOS_VERDANT_PULSE_DAMAGE = 16;
-export const CHRONOS_VERDANT_PULSE_COOLDOWN_MS = 250;
+export const CHRONOS_VERDANT_PULSE_COOLDOWN_MS = 300;
 export const CHRONOS_VERDANT_PULSE_FIRE_READY_MS = 140;
 export const CHRONOS_VERDANT_PULSE_SPEED = 68;
+export const CHRONOS_VERDANT_PULSE_COLLISION_RADIUS = 0.18;
 export const CHRONOS_VERDANT_PULSE_AIM_DISTANCE = 120;
 export const CHRONOS_VERDANT_PULSE_SPAWN_FORWARD_OFFSET = 0.82;
+export const CHRONOS_AEGIS_SHIELD_MAX_HP = 500;
+export const CHRONOS_AEGIS_SHIELD_RECHARGE_PER_SECOND = 80;
 export const CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE = 11;
 export const CHRONOS_TIMEBREAK_RADIUS = CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE;
 export const CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE = Math.PI / 5;
+export const CHRONOS_TIMEBREAK_SHOCKWAVE_MAX_VERTICAL_DELTA = 4.5;
 export const CHRONOS_TIMEBREAK_SHOCKWAVE_KNOCKBACK_FORCE = 13.5;
 export const CHRONOS_TIMEBREAK_SHOCKWAVE_VERTICAL_FORCE = 3.2;
 export const CHRONOS_TIMEBREAK_SHOCKWAVE_AUTHORITY_MS = 650;
 export const CHRONOS_TIMEBREAK_RELEASE_DELAY_MS = 420;
+export const CHRONOS_ASCENDANT_PARADOX_DURATION_MS = 10000;
+export const CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE = 18.5;
+export const CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE = 4.2;
+export const CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST = 0.75;
+export const CHRONOS_ASCENDANT_PARADOX_MAX_ELEVATION_GAIN = 22;
+export const CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER = 1.38;
+export const CHRONOS_ASCENDANT_PARADOX_AIR_ACCEL_MULTIPLIER = 1.9;
+export const CHRONOS_ASCENDANT_PARADOX_GRAVITY_SCALE = 0.18;
+export const CHRONOS_ASCENDANT_PARADOX_VERTICAL_ACCEL = 22;
+export const CHRONOS_ASCENDANT_PARADOX_MAX_ASCEND_SPEED = 14;
+export const CHRONOS_ASCENDANT_PARADOX_MAX_DESCEND_SPEED = -5.5;
+export const CHRONOS_ASCENDANT_PARADOX_HOVER_DAMPING = 7.5;
+export const CHRONOS_ASCENDANT_PARADOX_HORIZONTAL_DAMPING = 8;
+export const CHRONOS_ASCENDANT_PARADOX_HORIZONTAL_STOP_SPEED = 0.12;
+export const CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE = 24;
+export const CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS = 3.8;
+export const CHRONOS_ASCENDANT_PARADOX_PULSE_MIN_VISUAL_RADIUS_SCALE = 2.4;
+export const CHRONOS_ASCENDANT_PARADOX_PULSE_VISUAL_RADIUS_SCALE = 3.1;
+export const CHRONOS_ASCENDANT_PARADOX_PULSE_COLLISION_RADIUS =
+  CHRONOS_VERDANT_PULSE_COLLISION_RADIUS * CHRONOS_ASCENDANT_PARADOX_PULSE_VISUAL_RADIUS_SCALE;
+export const CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS = 360;
+export const CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED = 54;
+
+export const BLAZE_ROCKET_FIRE_INTERVAL_MS = 400;
+export const BLAZE_ROCKET_SPEED = 117.6;
+export const BLAZE_ROCKET_DAMAGE = 24;
+export const BLAZE_ROCKET_COLLISION_RADIUS = 0.21;
+export const BLAZE_ROCKET_SPLASH_RADIUS = 2.8;
+export const BLAZE_BOMB_DAMAGE = 34;
+export const BLAZE_BOMB_SPLASH_RADIUS = 4;
+export const BLAZE_BOMB_MAX_RANGE = 60;
+export const BLAZE_BOMB_MIN_RANGE = 3;
+export const BLAZE_BOMB_AEGIS_COLLISION_RADIUS = 0.65;
+export const BLAZE_FLAMETHROWER_COLLISION_RADIUS = 0.42;
+export const BLAZE_GEARSTORM_DAMAGE = 10;
+export const BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS = 500;
+
+export type AbilityCardStatFormat = 'number' | 'seconds';
+
+export interface AbilityCardStat {
+  value: number;
+  label: string;
+  format?: AbilityCardStatFormat;
+  prefix?: string;
+  suffix?: string;
+}
+
+export const ABILITY_CARD_STATS = {
+  phantom_dire_ball: [
+    { value: PHANTOM_DIRE_BALL_DAMAGE, label: 'dmg' },
+    { value: PHANTOM_PRIMARY_MAGAZINE_SIZE, label: 'ammo' },
+    { value: PHANTOM_PRIMARY_RELOAD_SECONDS, label: 'reload', format: 'seconds' },
+  ],
+  phantom_void_ray: [
+    { value: PHANTOM_VOID_RAY_DAMAGE, label: 'dmg' },
+    { value: VOID_RAY_CHARGE_TIME / 1000, label: 'charge', format: 'seconds' },
+  ],
+  phantom_blink: [
+    { value: PHANTOM_VOID_ZONE_DAMAGE, label: 'dmg/tick' },
+  ],
+  phantom_personal_shield: [
+    { value: PHANTOM_PERSONAL_SHIELD_ABSORBED_HITS, label: 'hit', prefix: 'absorbs ' },
+  ],
+  phantom_veil: [
+    { value: PHANTOM_VEIL_SPEED_BONUS_PERCENT, label: 'speed', prefix: '+', suffix: '%' },
+  ],
+  hookshot_basic_attack: [
+    { value: HOOKSHOT_CHAIN_HOOKS_DAMAGE, label: 'dmg' },
+  ],
+  hookshot_heavy_attack: [
+    { value: HOOKSHOT_DRAG_HOOK_DAMAGE, label: 'dmg' },
+  ],
+  hookshot_ground_hooks: [
+    { value: HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS, label: 'root', format: 'seconds' },
+    { value: HOOKSHOT_GROUND_HOOKS_RADIUS, label: 'radius' },
+  ],
+  blaze_rocket: [
+    { value: BLAZE_ROCKET_DAMAGE, label: 'dmg' },
+  ],
+  blaze_bomb: [
+    { value: BLAZE_BOMB_DAMAGE, label: 'dmg' },
+  ],
+  blaze_flamethrower: [
+    { value: BLAZE_FLAMETHROWER_DAMAGE, label: 'dmg/tick' },
+    { value: BLAZE_FLAMETHROWER_BURN_DAMAGE, label: `burn dmg x${BLAZE_FLAMETHROWER_BURN_TICKS}` },
+    { value: BLAZE_FLAMETHROWER_BURN_INTERVAL_MS / 1000, label: 'burn interval', suffix: 's' },
+    { value: BLAZE_FLAMETHROWER_FUEL_DRAIN, label: 'drain', suffix: '/s' },
+    { value: BLAZE_FLAMETHROWER_FUEL_REGEN, label: 'regen', suffix: '/s' },
+  ],
+  blaze_airstrike: [
+    { value: BLAZE_GEARSTORM_DAMAGE, label: 'dmg/tick' },
+  ],
+  chronos_verdant_pulse: [
+    { value: CHRONOS_VERDANT_PULSE_DAMAGE, label: 'dmg' },
+    { value: CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE, label: 'dmg with AOE during F' },
+  ],
+  chronos_lifeline_conduit: [
+    { value: CHRONOS_LIFELINE_ALLY_HEAL, label: 'ally heal' },
+    { value: CHRONOS_LIFELINE_SELF_HEAL, label: 'self heal' },
+    { value: CHRONOS_LIFELINE_MAX_TARGETS, label: 'targets' },
+  ],
+} as const satisfies Record<string, readonly AbilityCardStat[]>;
 
 export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
   phantom: {
@@ -54,14 +196,14 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     role: 'flanker',
     movementFocus: 'blink',
     stats: {
-      maxHealth: 175,
-      moveSpeed: 3.97,
+      maxHealth: 200,
+      moveSpeed: 3.18,
       jumpForce: 8.3,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
     },
     passive: {
-      name: 'Shadow Step',
-      description: 'Move 10% faster when not taking damage for 3 seconds',
+      name: 'No Passive',
+      description: 'Phantom does not have a separate passive effect.',
     },
     ability1: { abilityId: 'phantom_blink', defaultKey: 'KeyE' },
     ability2: { abilityId: 'phantom_personal_shield', defaultKey: 'KeyQ' },
@@ -75,18 +217,18 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     role: 'mobile',
     movementFocus: 'grapple',
     stats: {
-      maxHealth: 200,
-      moveSpeed: 4.54,
+      maxHealth: 225,
+      moveSpeed: 3.63,
       jumpForce: 7.9,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
     },
     passive: {
-      name: 'Momentum Master',
-      description: 'Gain 15% bonus speed after hook movement for 2 seconds',
+      name: 'No Passive',
+      description: 'Hookshot does not have a separate passive effect.',
     },
     ability1: { abilityId: 'hookshot_grapple', defaultKey: 'KeyE' },
     ability2: { abilityId: 'hookshot_anchor_wall', defaultKey: 'KeyQ' },
-    ultimate: { abilityId: 'hookshot_grapple_trap', defaultKey: 'KeyF' },
+    ultimate: { abilityId: 'hookshot_ground_hooks', defaultKey: 'KeyF' },
     description: 'A highly mobile fighter who uses grappling hooks and anchor walls to reshape fights.',
   },
 
@@ -96,14 +238,14 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     role: 'assault',
     movementFocus: 'aerial',
     stats: {
-      maxHealth: 200,
-      moveSpeed: 4.54,
+      maxHealth: 225,
+      moveSpeed: 3.63,
       jumpForce: 9.0,
       size: { width: 0.9, height: 1.9, depth: 0.9 },
     },
     passive: {
-      name: 'Afterburner',
-      description: 'Flamethrower fuel regenerates 50% faster after getting a kill',
+      name: 'No Passive',
+      description: 'Blaze does not have a separate passive effect.',
     },
     ability1: { abilityId: 'blaze_flamethrower', defaultKey: 'KeyE' },
     ability2: { abilityId: 'blaze_rocketjump', defaultKey: 'KeyQ' },
@@ -117,14 +259,14 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     role: 'support-tank',
     movementFocus: 'temporal',
     stats: {
-      maxHealth: 250,
-      moveSpeed: 4.35,
+      maxHealth: 275,
+      moveSpeed: 3.48,
       jumpForce: 8.1,
       size: { width: 0.78, height: 1.9, depth: 0.78 },
     },
     passive: {
-      name: 'Temporal Bulwark',
-      description: 'A front-line support-tank built to stabilize allies with shields, healing, and tempo control.',
+      name: 'No Passive',
+      description: 'Chronos does not have a separate passive effect.',
     },
     ability1: { abilityId: 'chronos_lifeline_conduit', defaultKey: 'KeyE' },
     ability2: { abilityId: 'chronos_timebreak', defaultKey: 'KeyQ' },
@@ -144,16 +286,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     cooldown: 10,
     charges: 2,
     chargeRegenTime: 10, // Both charges reset after 10 seconds
-    description: 'Instantly teleport a short distance in your movement direction. 2 charges.',
-  },
-  phantom_shadowstep: {
-    id: 'phantom_shadowstep',
-    name: 'Shadow Step',
-    type: 'movement',
-    targeting: 'ground',
-    cooldown: 10,
-    duration: 0.8,
-    description: 'Mark a location and teleport there after a brief delay.',
+    description: 'Instantly teleport in your aim direction, leaving a void zone at the destination. 2 charges.',
   },
   phantom_void_ray: {
     id: 'phantom_void_ray',
@@ -161,7 +294,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     type: 'offensive',
     targeting: 'direction',
     cooldown: PHANTOM_VOID_RAY_COOLDOWN_SECONDS,
-    description: 'Charge, then release a piercing beam at long range.',
+    description: 'Hold to charge for 1 second, then release a piercing long-range beam.',
   },
   phantom_personal_shield: {
     id: 'phantom_personal_shield',
@@ -201,31 +334,22 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     duration: 6.25,
     description: 'Launch a ground anchor that raises a solid barricade in your aim direction.',
   },
-  hookshot_swing: {
-    id: 'hookshot_swing',
-    name: 'Swing Line',
-    type: 'movement',
-    targeting: 'direction',
-    cooldown: 8,
-    duration: 2.75,
-    description: 'Fire a rope that lets you swing in an arc, building momentum.',
-  },
-  hookshot_grapple_trap: {
-    id: 'hookshot_grapple_trap',
-    name: 'Grapple Trap',
+  hookshot_ground_hooks: {
+    id: 'hookshot_ground_hooks',
+    name: 'Ground Hooks',
     type: 'ultimate',
-    targeting: 'ground',
+    targeting: 'area',
     cooldown: 0,
-    duration: 8,
+    duration: HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
     resourceCost: 100,
-    description: 'Throw a grapple device that hooks enemies in its AOE, holding them and dealing damage.',
+    description: 'Root nearby enemies for 3 seconds as three ground hooks tear up around each target and tether them in place.',
   },
   hookshot_basic_attack: {
     id: 'hookshot_basic_attack',
     name: 'Chain Hooks',
     type: 'offensive',
     targeting: 'direction',
-    cooldown: 0,
+    cooldown: HOOKSHOT_CHAIN_HOOKS_COOLDOWN_SECONDS,
     description: 'Fire short-range hooks attached by rope that shoot forward and retract.',
   },
   hookshot_heavy_attack: {
@@ -233,18 +357,26 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     name: 'Drag Hook',
     type: 'offensive',
     targeting: 'direction',
-    cooldown: 4,
-    description: 'Fire a long-range hook that attaches to enemy heroes and pulls them toward you.',
+    cooldown: 3.6,
+    description: 'Fire a long-range hook that attaches to heroes and pulls them in front of you.',
   },
 
   // Blaze Abilities
+  blaze_bomb: {
+    id: 'blaze_bomb',
+    name: 'Meteor Strike',
+    type: 'offensive',
+    targeting: 'ground',
+    cooldown: 8,
+    description: 'Mark a target zone, then call a blazing meteor down at an angle.',
+  },
   blaze_flamethrower: {
     id: 'blaze_flamethrower',
     name: 'Flamethrower',
     type: 'offensive',
     targeting: 'direction',
     cooldown: 0,
-    description: 'Hold to spray a short-range cone of flame. Consumes fuel that regenerates when grounded.',
+    description: 'Hold to spray a short-range cone of flame. Hits ignite enemies for lingering burn damage. Consumes fuel that regenerates when not firing.',
   },
   blaze_rocketjump: {
     id: 'blaze_rocketjump',
@@ -252,7 +384,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     type: 'movement',
     targeting: 'instant',
     cooldown: 8,
-    description: 'Launch yourself with an explosion. Deals damage to nearby enemies.',
+    description: 'Launch yourself upward and forward with an explosion.',
   },
   blaze_airstrike: {
     id: 'blaze_airstrike',
@@ -274,7 +406,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     cooldown: 15,
     charges: 3,
     chargeRegenTime: 15,
-    description: 'Auto-target up to 3 teammates in the area and send green healing beams to them. 3 charges; cooldown begins after all charges are spent.',
+    description: 'Press E to queue Lifeline. While the pyramid pulses, LMB heals up to 3 nearby teammates for a large amount; RMB heals only Chronos for less. 3 charges; cooldown begins after all charges are spent.',
   },
   chronos_timebreak: {
     id: 'chronos_timebreak',
@@ -290,7 +422,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     type: 'ultimate',
     targeting: 'self',
     cooldown: 0,
-    duration: 10,
+    duration: CHRONOS_ASCENDANT_PARADOX_DURATION_MS / 1000,
     resourceCost: 100,
     description: 'Lift off for 10 seconds and supercharge Verdant Pulse into larger green AOE blasts while airborne.',
   },
@@ -306,6 +438,3 @@ export function getAbilityDefinition(abilityId: string): AbilityDefinition | und
 }
 
 export const ALL_HERO_IDS: HeroId[] = Object.keys(HERO_DEFINITIONS) as HeroId[];
-
-// Phantom ability constants
-export const VOID_RAY_CHARGE_TIME = 1000; // milliseconds to fully charge void ray

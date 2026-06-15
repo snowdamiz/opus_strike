@@ -14,13 +14,18 @@ import {
   PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
   PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
   PHANTOM_PRIMARY_VISUAL_FIRE_LEAD_SECONDS,
+  PHANTOM_VOID_RAY_RELEASE_EXTENSION_SECONDS,
   PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
   getPhantomPrimaryHeldBlend,
+  getPhantomShieldCastPose,
   getPhantomPrimaryShotPulse,
+  getPhantomVeilCastPose,
   type PhantomPrimaryPoseSampleContext,
+  type PhantomShieldCastPose,
   type PhantomVoidRayOrbPoseSampleContext,
 } from '../../viewmodel/phantomPrimaryPose';
 import {
+  BLAZE_STAFF_SHOCKWAVE_DURATION_MS,
   BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
   getBlazeRocketJumpStaffSlamPose,
   getBlazeStaffHeldBlend,
@@ -30,18 +35,25 @@ import {
 } from '../../viewmodel/blazePose';
 import {
   CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+  getChronosAscendantParadoxPose,
+  getChronosLifelineQueuedPose,
   getChronosLifelineConduitPose,
   getChronosPrimaryHeldBlend,
   getChronosPrimaryShotGlowBlend,
   getChronosTimebreakPose,
   type ChronosPrimaryOrbPoseSampleContext,
 } from '../../viewmodel/chronosPose';
-import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../viewmodel/hookshotPose';
 import {
-  registerViewmodelPoseSampler,
-  registerViewmodelSocket,
+  HOOKSHOT_HOOK_SOCKET_NAMES,
+  HOOKSHOT_PRIMARY_RECOIL_DURATION_SECONDS,
+  HOOKSHOT_SECONDARY_POSE_DURATION_SECONDS,
+} from '../../viewmodel/hookshotPose';
+import {
+  registerViewmodelPoseSamplers,
+  useRegisteredViewmodelSocket,
+  viewmodelPoseDraftFromMatrix,
   type ViewmodelSocketPoseDraft,
-} from '../../viewmodel/viewmodelSocketRegistry';
+} from '../../viewmodel/viewmodelKit';
 import { visualStore } from '../../store/visualStore';
 import {
   BLAZE_COLORS,
@@ -51,6 +63,10 @@ import {
   getHookshotMaterials,
 } from './effectResources';
 import { HookshotViewmodelArrow } from './hookshot/arrowHead';
+import {
+  createPhantomVeilSplitMaterial,
+  updatePhantomVeilSplitMaterial,
+} from './phantom/veilClap';
 import {
   CHRONOS_AEGIS_PANEL_HEIGHT,
   CHRONOS_AEGIS_PANEL_WIDTH,
@@ -112,6 +128,8 @@ interface HookshotSecondaryFireState {
   startTimeMs: number;
 }
 
+type GameStoreSnapshot = ReturnType<typeof useGameStore.getState>;
+
 interface PhantomHandPoseTargets {
   closedHand?: MutableTransformTarget;
   arm: MutableTransformTarget;
@@ -119,6 +137,13 @@ interface PhantomHandPoseTargets {
   palm: MutableTransformTarget;
   thumb: MutableTransformTarget;
   fingers: MutableTransformTarget[];
+}
+
+function resolveFingerTargets(fingerRefs: (THREE.Group | null)[]): THREE.Group[] | null {
+  if (!fingerRefs[0] || !fingerRefs[1] || !fingerRefs[2] || !fingerRefs[3]) {
+    return null;
+  }
+  return fingerRefs as THREE.Group[];
 }
 
 interface PhantomLocomotionPose {
@@ -156,6 +181,9 @@ interface ChronosAegisPose {
   spread: number;
   shield: number;
   recoil: number;
+  spinBoost: number;
+  heartbeat: number;
+  durabilityRatio: number;
 }
 
 interface PhantomReloadPose {
@@ -200,6 +228,10 @@ const PHANTOM_SLIDE_BLEND_MAX_DELTA_SECONDS = 1 / 30;
 const PHANTOM_SLIDE_HAND_PULLBACK_Z = 0.11;
 const PHANTOM_SLIDE_FOREARM_PULLBACK_Z = 0.09;
 const PHANTOM_CLOSED_HAND_WRIST_PIVOT_Z = 0.105;
+const PHANTOM_PRIMARY_READY_HAND_TUCK_Z = 0.014;
+const PHANTOM_PRIMARY_SHOT_HAND_EXTENSION_Z = 0.044;
+const PHANTOM_PRIMARY_READY_FOREARM_TUCK_Z = 0.024;
+const PHANTOM_PRIMARY_SHOT_FOREARM_EXTENSION_Z = 0.04;
 const PHANTOM_IDLE_HAND_POSITION = {
   x: 0.326,
   y: -0.52,
@@ -213,11 +245,11 @@ const PHANTOM_IDLE_HAND_ROTATION = {
 const PHANTOM_RELOAD_PULLBACK_Z = 0.092;
 const PHANTOM_RELOAD_INWARD_X = 0.034;
 const PHANTOM_RELOAD_LIFT_Y = 0.018;
-const PHANTOM_VOID_RAY_RELEASE_EXTENSION_SECONDS = 0.5;
 const PHANTOM_VOID_RAY_ORB_POSITION = new THREE.Vector3(0, -0.472, -0.72);
 const PHANTOM_VOID_RAY_RELEASE_ORIGIN_POSITION = new THREE.Vector3(0, -0.38, -2.15);
-const HOOKSHOT_PRIMARY_RECOIL_DURATION_SECONDS = 0.26;
-const HOOKSHOT_SECONDARY_POSE_DURATION_SECONDS = 1.25;
+const PHANTOM_VEIL_SPLIT_POSITION = new THREE.Vector3(0, -0.22, -0.58);
+const PHANTOM_VEIL_SPLIT_BASE_SCALE = new THREE.Vector3(0.88, 2.1, 1);
+const PHANTOM_VEIL_ARM_GLOW_FADE_MS = 420;
 const HOOKSHOT_LAUNCHER_TUBE_LENGTH = 0.096;
 const HOOKSHOT_LAUNCHER_TUBE_CENTER_Z = -HOOKSHOT_LAUNCHER_TUBE_LENGTH * 0.5;
 const HOOKSHOT_LAUNCHER_TUBE_FRONT_Z = -HOOKSHOT_LAUNCHER_TUBE_LENGTH;
@@ -227,6 +259,29 @@ const BLAZE_RIGHT_HAND_READY_BLEND = 0.035;
 const BLAZE_STAFF_POSITION = new THREE.Vector3(0.006, -0.034, -0.088);
 const BLAZE_STAFF_ROTATION = new THREE.Euler(-0.23, -0.075, 0.24, VIEWMODEL_ROOT_EULER_ORDER);
 const BLAZE_STAFF_TIP_LOCAL_POSITION = new THREE.Vector3(0, 0.592, 0);
+const BLAZE_STAFF_TIP_PRONG_ANGLES = [0, Math.PI / 2, Math.PI, Math.PI * 1.5] as const;
+const BLAZE_STAFF_TIP_FLAME_ANGLES = [
+  Math.PI / 4,
+  Math.PI * 0.75,
+  Math.PI * 1.25,
+  Math.PI * 1.75,
+] as const;
+const VIEWMODEL_BURN_FADE_OUT_MS = 500;
+const VIEWMODEL_BURN_ANCHORS = [
+  { x: -0.34, y: -0.31, z: -0.5, radius: 0.054, phase: 0.08 },
+  { x: 0.34, y: -0.31, z: -0.5, radius: 0.054, phase: 0.31 },
+  { x: -0.31, y: -0.24, z: -0.69, radius: 0.046, phase: 0.54 },
+  { x: 0.31, y: -0.24, z: -0.69, radius: 0.046, phase: 0.77 },
+  { x: 0.06, y: -0.22, z: -0.6, radius: 0.05, phase: 0.95 },
+] as const;
+const VIEWMODEL_BURN_EMBERS = [
+  { x: -0.37, y: -0.27, z: -0.62, phase: 0.12 },
+  { x: -0.25, y: -0.21, z: -0.76, phase: 0.3 },
+  { x: 0.27, y: -0.21, z: -0.76, phase: 0.48 },
+  { x: 0.38, y: -0.27, z: -0.62, phase: 0.66 },
+  { x: 0.03, y: -0.19, z: -0.62, phase: 0.84 },
+  { x: 0.11, y: -0.18, z: -0.53, phase: 0.98 },
+] as const;
 const CHRONOS_FOREARM_READY_BLEND = 0.52;
 const CHRONOS_HAND_READY_BLEND = 0.62;
 const CHRONOS_MOVEMENT_BOB_WALK_SPEED = 5.35;
@@ -267,6 +322,7 @@ const CHRONOS_WEAPON_PYRAMID_WIRE_GLOW_OPACITY = 1;
 const CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X = -0.18;
 const CHRONOS_WEAPON_PYRAMID_SPIN_SPEED = 0.22;
 const CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST = 0.86;
+const CHRONOS_WEAPON_PYRAMID_HEARTBEAT_GROWTH = 0.085;
 const CHRONOS_AEGIS_VISUAL_STALE_MS = 220;
 const CHRONOS_AEGIS_BLEND_IN_SPEED = 6.8;
 const CHRONOS_AEGIS_BLEND_OUT_SPEED = 9;
@@ -278,6 +334,9 @@ const CHRONOS_AEGIS_VIEWMODEL_SHIELD_Z = -2.15;
 const CHRONOS_AEGIS_VIEWMODEL_EDGE_THICKNESS = 0.064;
 const CHRONOS_AEGIS_VIEWMODEL_WIDTH = CHRONOS_AEGIS_PANEL_WIDTH * 0.9;
 const CHRONOS_AEGIS_VIEWMODEL_HEIGHT = CHRONOS_AEGIS_PANEL_HEIGHT * 0.9;
+const CHRONOS_AEGIS_DAMAGE_EDGE_COLOR = 0xfde68a;
+const CHRONOS_AEGIS_DAMAGE_FILL_COLOR = 0xfacc15;
+const CHRONOS_AEGIS_CRACK_COLOR = 0xfff7c2;
 const PHANTOM_RELOAD_IDLE_POSE: PhantomReloadPose = {
   active: false,
   progress: 0,
@@ -309,6 +368,9 @@ const CHRONOS_AEGIS_IDLE_POSE: ChronosAegisPose = {
   spread: 0,
   shield: 0,
   recoil: 0,
+  spinBoost: 0,
+  heartbeat: 0,
+  durabilityRatio: 1,
 };
 const CHRONOS_STILL_MOVEMENT_BOB: ChronosMovementBobOffset = {
   horizontalX: 0,
@@ -328,7 +390,6 @@ const phantomWristMatrix = new THREE.Matrix4();
 const phantomPalmMatrix = new THREE.Matrix4();
 const phantomSocketMatrix = new THREE.Matrix4();
 const phantomWorldMatrix = new THREE.Matrix4();
-const phantomWorldPosition = new THREE.Vector3();
 const phantomWorldQuaternion = new THREE.Quaternion();
 const blazeClosedHandInnerMatrix = new THREE.Matrix4();
 const blazeStaffMatrix = new THREE.Matrix4();
@@ -448,6 +509,91 @@ function getViewmodelMaterials(heroId: ViewmodelHeroId): ViewmodelMaterialSet {
   return materials;
 }
 
+export function getHeroViewmodelGpuPrewarmMaterials(): THREE.Material[] {
+  const materials: THREE.Material[] = [];
+  for (const heroId of VIEWMODEL_HEROES) {
+    if (!isViewmodelHero(heroId)) continue;
+    const materialSet = getViewmodelMaterials(heroId);
+    materials.push(
+      materialSet.armor,
+      materialSet.dark,
+      materialSet.metal,
+      materialSet.accent,
+      materialSet.glow,
+      materialSet.glass
+    );
+  }
+  return materials;
+}
+
+export function prewarmHeroViewmodelResources(): void {
+  getHeroViewmodelGpuPrewarmMaterials();
+  getHookshotMaterials();
+}
+
+function hasOwnedProjectile<T extends { ownerId: string }>(
+  items: readonly T[],
+  ownerId: string | null | undefined
+): boolean {
+  if (!ownerId) return false;
+  for (let index = 0; index < items.length; index++) {
+    if (items[index].ownerId === ownerId) return true;
+  }
+  return false;
+}
+
+function hasOwnedProjectileOnSide<T extends { ownerId: string; launchSide?: -1 | 1 }>(
+  items: readonly T[],
+  ownerId: string | null | undefined,
+  side: -1 | 1
+): boolean {
+  if (!ownerId) return false;
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    if (item.ownerId === ownerId && (item.launchSide ?? 1) === side) return true;
+  }
+  return false;
+}
+
+function hasOwnedActiveGrappleLineOnSide(
+  state: GameStoreSnapshot,
+  ownerId: string | null | undefined,
+  side: -1 | 1
+): boolean {
+  if (!ownerId) return false;
+  for (let index = 0; index < state.grappleLines.length; index++) {
+    const line = state.grappleLines[index];
+    if (line.ownerId === ownerId && line.state !== 'done' && (line.launchSide ?? 1) === side) return true;
+  }
+  return false;
+}
+
+function hasOwnedGrappleLine(
+  state: GameStoreSnapshot,
+  ownerId: string | null | undefined
+): boolean {
+  return hasOwnedProjectile(state.grappleLines, ownerId);
+}
+
+function isViewmodelActionActive(
+  heroId: ViewmodelHeroId | null,
+  state: GameStoreSnapshot,
+  localPlayerId: string | null | undefined
+): boolean {
+  switch (heroId) {
+    case 'phantom':
+      return hasOwnedProjectile(state.voidRays, localPlayerId);
+    case 'hookshot':
+      return hasOwnedProjectile(state.dragHooks, localPlayerId) ||
+        hasOwnedGrappleLine(state, localPlayerId);
+    case 'blaze':
+      return state.flamethrowerActive || hasOwnedProjectile(state.rockets, localPlayerId);
+    case 'chronos':
+    case null:
+      return false;
+  }
+}
+
 function getActionState(heroId: ViewmodelHeroId): ViewmodelActionState {
   const store = useGameStore.getState();
   const localPlayerId = store.localPlayer?.id;
@@ -455,23 +601,21 @@ function getActionState(heroId: ViewmodelHeroId): ViewmodelActionState {
   switch (heroId) {
     case 'phantom':
       return {
-        active: store.voidRays.some(ray => ray.ownerId === localPlayerId),
+        active: isViewmodelActionActive(heroId, store, localPlayerId),
         charging: store.voidRayCharging,
-        targeting: store.shadowStepTargeting,
+        targeting: false,
       };
     case 'hookshot':
       return {
-        active:
-          store.dragHooks.some(hook => hook.ownerId === localPlayerId) ||
-          store.grappleLines.some(line => line.ownerId === localPlayerId),
+        active: isViewmodelActionActive(heroId, store, localPlayerId),
         charging: false,
-        targeting: store.grappleTrapTargeting,
+        targeting: false,
       };
     case 'blaze':
       return {
-        active: store.flamethrowerActive || store.rockets.some(rocket => rocket.ownerId === localPlayerId),
+        active: isViewmodelActionActive(heroId, store, localPlayerId),
         charging: false,
-        targeting: store.bombTargeting || store.airStrikeTargeting,
+        targeting: store.bombTargeting,
       };
     case 'chronos':
       return {
@@ -512,6 +656,123 @@ function createPhantomReloadGlowMaterial(): THREE.MeshBasicMaterial {
     depthWrite: false,
     toneMapped: false,
   });
+}
+
+function createViewmodelBurnMaterial(
+  color: number,
+  opacity: number
+): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+}
+
+function ViewmodelBurnOverlay() {
+  const groupRef = useRef<THREE.Group>(null);
+  const flameRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const emberRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const flameMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireOrange, 0), []);
+  const innerFlameMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireYellow, 0), []);
+  const emberMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireWhite, 0), []);
+  const glowMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireRed, 0), []);
+
+  useEffect(() => () => {
+    flameMaterial.dispose();
+    innerFlameMaterial.dispose();
+    emberMaterial.dispose();
+    glowMaterial.dispose();
+  }, [emberMaterial, flameMaterial, glowMaterial, innerFlameMaterial]);
+
+  useFrame((state) => {
+    const group = groupRef.current;
+    if (!group) return;
+
+    const player = useGameStore.getState().localPlayer;
+    const now = Date.now();
+    const remainingMs = Math.max(0, (player?.onFireUntil ?? 0) - now);
+    const active = Boolean(player && player.state === 'alive' && remainingMs > 0);
+    if (!active) {
+      group.visible = false;
+      flameMaterial.opacity = 0;
+      innerFlameMaterial.opacity = 0;
+      emberMaterial.opacity = 0;
+      glowMaterial.opacity = 0;
+      return;
+    }
+
+    const fade = THREE.MathUtils.smoothstep(Math.min(remainingMs, VIEWMODEL_BURN_FADE_OUT_MS), 0, VIEWMODEL_BURN_FADE_OUT_MS);
+    const t = state.clock.elapsedTime;
+    const flicker = 0.82 + Math.sin(t * 17.2) * 0.08 + Math.sin(t * 37.5) * 0.04;
+    const intensity = fade * flicker;
+
+    group.visible = intensity > 0.01;
+    flameMaterial.opacity = intensity * 0.18;
+    innerFlameMaterial.opacity = intensity * 0.12;
+    emberMaterial.opacity = intensity * 0.34;
+    glowMaterial.opacity = intensity * 0.055;
+
+    for (let index = 0; index < VIEWMODEL_BURN_ANCHORS.length; index++) {
+      const anchor = VIEWMODEL_BURN_ANCHORS[index];
+      const mesh = flameRefs.current[index];
+      if (!mesh) continue;
+
+      const pulse = Math.sin(t * 8.6 + anchor.phase * Math.PI * 2);
+      const sway = Math.sin(t * 5.4 + anchor.phase * Math.PI * 2) * 0.018;
+      const scale = anchor.radius * intensity * (0.82 + Math.max(0, pulse) * 0.24);
+      mesh.visible = intensity > 0.02;
+      mesh.position.set(anchor.x + sway, anchor.y + Math.max(0, pulse) * 0.016, anchor.z);
+      mesh.rotation.set(-0.26 + pulse * 0.08, anchor.phase * Math.PI * 2 + t * 0.22, pulse * 0.16);
+      mesh.scale.set(scale * 0.68, scale * 1.62, scale * 0.68);
+    }
+
+    for (let index = 0; index < VIEWMODEL_BURN_EMBERS.length; index++) {
+      const ember = VIEWMODEL_BURN_EMBERS[index];
+      const mesh = emberRefs.current[index];
+      if (!mesh) continue;
+
+      const cycle = (t * 0.9 + ember.phase) % 1;
+      const drift = Math.sin(t * 3.2 + ember.phase * 8) * 0.016;
+      const scale = (0.012 + cycle * 0.008) * intensity;
+      mesh.visible = intensity > 0.02;
+      mesh.position.set(
+        ember.x + drift,
+        ember.y + cycle * 0.105,
+        ember.z + Math.cos(t * 2.6 + ember.phase * 6) * 0.012
+      );
+      mesh.scale.setScalar(scale);
+    }
+  });
+
+  return (
+    <group ref={groupRef} visible={false} renderOrder={24}>
+      <mesh geometry={SHARED_GEOMETRIES.sphere12} material={glowMaterial} position={[0, -0.27, -0.62]} scale={[0.56, 0.18, 0.34]} frustumCulled={false} />
+      {VIEWMODEL_BURN_ANCHORS.map((anchor, index) => (
+        <mesh
+          key={`viewmodel-burn-flame-${index}`}
+          ref={(node) => { flameRefs.current[index] = node; }}
+          geometry={SHARED_GEOMETRIES.cone6}
+          material={index % 2 === 0 ? flameMaterial : innerFlameMaterial}
+          position={[anchor.x, anchor.y, anchor.z]}
+          frustumCulled={false}
+        />
+      ))}
+      {VIEWMODEL_BURN_EMBERS.map((ember, index) => (
+        <mesh
+          key={`viewmodel-burn-ember-${index}`}
+          ref={(node) => { emberRefs.current[index] = node; }}
+          geometry={SHARED_GEOMETRIES.sphere6}
+          material={emberMaterial}
+          position={[ember.x, ember.y, ember.z]}
+          frustumCulled={false}
+        />
+      ))}
+    </group>
+  );
 }
 
 function getPhantomReloadPose(nowMs: number, elapsedSeconds: number, side: -1 | 1): PhantomReloadPose {
@@ -564,6 +825,22 @@ function getPhantomVoidRayChargePose(nowMs: number, elapsedSeconds: number): Pha
     shakeY: Math.sin(elapsedSeconds * 51 + 0.7) * 0.0017 * shakeStrength,
     shakeZ: Math.sin(elapsedSeconds * 47 + 1.2) * 0.0021 * shakeStrength,
   };
+}
+
+function getPhantomVeilArmGlowOpacity(nowMs: number, elapsedSeconds: number): number {
+  const store = useGameStore.getState();
+  const veilEffectActive = store.ultimateEffectActive && store.ultimateEffectType === 'phantom_veil';
+  const castPose = getPhantomVeilCastPose(nowMs);
+  if (!veilEffectActive && !castPose.active) return 0;
+
+  const remainingMs = Math.max(0, store.ultimateEffectEndTime - nowMs);
+  const effectGlow = veilEffectActive
+    ? THREE.MathUtils.smoothstep(remainingMs, 0, PHANTOM_VEIL_ARM_GLOW_FADE_MS)
+    : 0;
+  const glowBase = Math.max(effectGlow, castPose.blend);
+  const shimmer = 0.82 + Math.sin(elapsedSeconds * 7.4) * 0.12 + Math.sin(elapsedSeconds * 16.8) * 0.06;
+
+  return THREE.MathUtils.clamp(glowBase * shimmer * 0.72, 0, 0.82);
 }
 
 function applyPhantomReloadMotion(
@@ -650,6 +927,16 @@ function applyPhantomVoidRayReleaseForearmPose(
   target.rotation.z += side * 0.07 * releaseBlend;
 }
 
+function syncPhantomClosedHandToArm(targets: PhantomHandPoseTargets): void {
+  if (!targets.closedHand) return;
+
+  targets.closedHand.rotation.copy(targets.arm.rotation);
+  phantomClosedHandPivotWorldOffset
+    .copy(phantomClosedHandPivotOffset)
+    .applyEuler(targets.closedHand.rotation);
+  targets.closedHand.position.copy(targets.arm.position).add(phantomClosedHandPivotWorldOffset);
+}
+
 function applyPhantomVoidRayChargeHandPose(
   targets: PhantomHandPoseTargets,
   side: -1 | 1,
@@ -701,13 +988,7 @@ function applyPhantomVoidRayChargeHandPose(
     finger.rotation.z += -fingerIndexOffset * (0.13 + energy * 0.04) * blend;
   }
 
-  if (targets.closedHand) {
-    targets.closedHand.rotation.copy(targets.arm.rotation);
-    phantomClosedHandPivotWorldOffset
-      .copy(phantomClosedHandPivotOffset)
-      .applyEuler(targets.closedHand.rotation);
-    targets.closedHand.position.copy(targets.arm.position).add(phantomClosedHandPivotWorldOffset);
-  }
+  syncPhantomClosedHandToArm(targets);
 }
 
 function applyPhantomVoidRayReleaseHandPose(
@@ -746,13 +1027,83 @@ function applyPhantomVoidRayReleaseHandPose(
     finger.rotation.z += -fingerIndexOffset * 0.045 * releaseBlend;
   }
 
-  if (targets.closedHand) {
-    targets.closedHand.rotation.copy(targets.arm.rotation);
-    phantomClosedHandPivotWorldOffset
-      .copy(phantomClosedHandPivotOffset)
-      .applyEuler(targets.closedHand.rotation);
-    targets.closedHand.position.copy(targets.arm.position).add(phantomClosedHandPivotWorldOffset);
+  syncPhantomClosedHandToArm(targets);
+}
+
+function applyPhantomShieldCastForearmPose(
+  target: MutableTransformTarget,
+  side: -1 | 1,
+  shieldPose: PhantomShieldCastPose
+): void {
+  if (!shieldPose.active || shieldPose.blend <= 0) return;
+
+  const blend = shieldPose.blend;
+  const push = shieldPose.push;
+  const pulse = shieldPose.pulse;
+
+  target.position.x += side * (-0.048 * blend - 0.006 * push);
+  target.position.y += 0.034 * blend + 0.004 * pulse;
+  target.position.z += -0.082 * blend - 0.014 * push;
+  target.rotation.x += -0.1 * blend - 0.014 * push;
+  target.rotation.y += side * (-0.044 * blend - 0.01 * push);
+  target.rotation.z += side * (0.14 * blend + 0.026 * pulse);
+}
+
+function applyPhantomShieldCastHandPose(
+  targets: PhantomHandPoseTargets,
+  side: -1 | 1,
+  shieldPose: PhantomShieldCastPose,
+  elapsedSeconds: number
+): void {
+  if (!shieldPose.active || shieldPose.blend <= 0) return;
+
+  const blend = shieldPose.blend;
+  const push = shieldPose.push;
+  const pulse = shieldPose.pulse;
+  const sideSign = side;
+  const thumbSide = -sideSign;
+  const tremor = Math.sin(elapsedSeconds * 18.5 + sideSign * 0.45) * 0.0025 * pulse;
+
+  targets.arm.position.x += sideSign * (-0.058 * blend - 0.009 * push);
+  targets.arm.position.y += 0.044 * blend + 0.004 * pulse + tremor;
+  targets.arm.position.z += -0.098 * blend - 0.018 * push;
+  targets.arm.rotation.x += -0.088 * blend - 0.02 * push;
+  targets.arm.rotation.y += sideSign * (-0.066 * blend - 0.012 * push);
+  targets.arm.rotation.z += sideSign * (0.165 * blend + 0.028 * pulse);
+
+  targets.wrist.position.y += 0.004 * blend;
+  targets.wrist.position.z += -0.009 * blend;
+  targets.wrist.rotation.x += -0.038 * blend - 0.007 * push;
+  targets.wrist.rotation.y += sideSign * -0.026 * blend;
+  targets.wrist.rotation.z += sideSign * (0.056 * blend + 0.012 * pulse);
+
+  targets.palm.position.x += sideSign * -0.007 * blend;
+  targets.palm.position.y += 0.01 * blend;
+  targets.palm.position.z += -0.022 * blend - 0.006 * push;
+  targets.palm.rotation.x += -0.028 * blend - 0.007 * push;
+  targets.palm.rotation.y += sideSign * -0.058 * blend;
+  targets.palm.rotation.z += sideSign * 0.038 * blend;
+
+  targets.thumb.position.x += thumbSide * 0.018 * blend;
+  targets.thumb.position.y += 0.012 * blend;
+  targets.thumb.position.z += -0.018 * blend;
+  targets.thumb.rotation.x += -0.03 * blend;
+  targets.thumb.rotation.y += thumbSide * 0.065 * blend;
+  targets.thumb.rotation.z += thumbSide * -0.08 * blend;
+
+  for (let index = 0; index < targets.fingers.length; index++) {
+    const finger = targets.fingers[index];
+    const fingerIndexOffset = index - 1.5;
+    const spread = Math.abs(fingerIndexOffset);
+    finger.position.x += fingerIndexOffset * 0.012 * blend;
+    finger.position.y += (0.012 - spread * 0.001) * blend;
+    finger.position.z += -0.018 * blend - 0.004 * push;
+    finger.rotation.x += -0.075 * blend - 0.016 * push;
+    finger.rotation.y += -fingerIndexOffset * 0.018 * blend;
+    finger.rotation.z += -fingerIndexOffset * (0.12 * blend + 0.025 * pulse);
   }
+
+  syncPhantomClosedHandToArm(targets);
 }
 
 function composeTransformMatrix(
@@ -771,11 +1122,15 @@ function writePhantomHandPose(
   holdBlend: number,
   shotPulse: number,
   elapsedSeconds: number,
-  locomotion: PhantomLocomotionPose = PHANTOM_STILL_LOCOMOTION_POSE
+  locomotion: PhantomLocomotionPose = PHANTOM_STILL_LOCOMOTION_POSE,
+  primaryReadyBlend = 0,
+  primaryShotExtension = 0
 ): void {
   const sideSign = side;
   const thumbSide = -sideSign;
   const readyBlend = THREE.MathUtils.clamp(holdBlend, 0, 1);
+  const primaryReadyTuck = THREE.MathUtils.clamp(primaryReadyBlend, 0, 1);
+  const primaryShotReach = THREE.MathUtils.clamp(primaryShotExtension, 0, 1);
   const slideBlend = THREE.MathUtils.clamp(locomotion.slideBlend, 0, 1);
   const locomotionBlend = THREE.MathUtils.clamp(
     locomotion.movementBlend * (1 - readyBlend * 0.16 - shotPulse * 0.24) * (1 - slideBlend * 0.9),
@@ -800,6 +1155,7 @@ function writePhantomHandPose(
   const inwardTuck = (0.018 + runBlend * 0.034) * locomotionBlend;
   const handUpBias = (0.18 + locomotionBlend * 0.028) * (1 - readyBlend * 0.45 - shotPulse * 0.4);
   const slidePullback = PHANTOM_SLIDE_HAND_PULLBACK_Z * slideBlend * (1 - readyBlend * 0.25 - shotPulse * 0.2);
+  const readyHandExtensionZ = 0.032 - PHANTOM_PRIMARY_READY_HAND_TUCK_Z * primaryReadyTuck;
 
   targets.arm.position.set(
     sideSign * (
@@ -817,41 +1173,39 @@ function writePhantomHandPose(
       cadencePulse * runTuck * 0.006 +
       breath * (1 - locomotionBlend),
     PHANTOM_IDLE_HAND_POSITION.z -
-      readyBlend * 0.032 -
+      readyBlend * readyHandExtensionZ -
       shotPulse * 0.014 -
+      primaryShotReach * PHANTOM_PRIMARY_SHOT_HAND_EXTENSION_Z -
       runTuck * 0.003 +
       retractPulse * retractAmount +
       slidePullback
   );
   targets.arm.rotation.set(
     PHANTOM_IDLE_HAND_ROTATION.x -
-      readyBlend * 0.37 -
+      readyBlend * (0.37 - primaryReadyTuck * 0.045) -
       shotPulse * 0.055 -
+      primaryShotReach * 0.07 -
       runTuck * 0.045 +
       retractPulse * pumpPitch +
       handUpBias,
     sideSign * (
       PHANTOM_IDLE_HAND_ROTATION.y -
       readyBlend * 0.2 -
-      shotPulse * 0.02 +
+      shotPulse * 0.02 -
+      primaryShotReach * 0.018 +
       counterSwing * (0.026 + runBlend * 0.028) * locomotionBlend
     ),
     sideSign * (
       PHANTOM_IDLE_HAND_ROTATION.z +
-      readyBlend * 0.42 +
+      readyBlend * (0.42 - primaryReadyTuck * 0.035) +
       shotPulse * 0.055 +
+      primaryShotReach * 0.035 +
       retractPulse * pumpRoll +
       counterSwing * 0.022 * locomotionBlend
     )
   );
 
-  if (targets.closedHand) {
-    targets.closedHand.rotation.copy(targets.arm.rotation);
-    phantomClosedHandPivotWorldOffset
-      .copy(phantomClosedHandPivotOffset)
-      .applyEuler(targets.closedHand.rotation);
-    targets.closedHand.position.copy(targets.arm.position).add(phantomClosedHandPivotWorldOffset);
-  }
+  syncPhantomClosedHandToArm(targets);
 
   targets.wrist.position.set(0, 0, 0);
   targets.wrist.rotation.set(
@@ -873,10 +1227,14 @@ function writePhantomHandPose(
   targets.palm.position.set(
     sideSign * readyBlend * 0.006,
     readyBlend * 0.004,
-    -readyBlend * 0.01 - shotPulse * 0.006
+    -readyBlend * (0.01 - primaryReadyTuck * 0.003) -
+      shotPulse * 0.006 -
+      primaryShotReach * 0.018
   );
   targets.palm.rotation.set(
-    -readyBlend * 0.045 - shotPulse * 0.022,
+    -readyBlend * (0.045 - primaryReadyTuck * 0.008) -
+      shotPulse * 0.022 -
+      primaryShotReach * 0.024,
     sideSign * -readyBlend * 0.05,
     sideSign * readyBlend * 0.03
   );
@@ -900,10 +1258,12 @@ function writePhantomHandPose(
     finger.position.set(
       slot + readyBlend * fingerIndexOffset * 0.006,
       0.056 + lengthBias,
-      -0.038 + Math.abs(fingerIndexOffset) * 0.001 - shotPulse * 0.002
+      -0.038 + Math.abs(fingerIndexOffset) * 0.001 -
+        shotPulse * 0.002 -
+        primaryShotReach * 0.005
     );
     finger.rotation.set(
-      -0.04 - shotPulse * 0.028,
+      -0.04 - shotPulse * 0.028 - primaryShotReach * 0.026,
       -fingerIndexOffset * 0.018,
       -fingerIndexOffset * (0.16 + readyBlend * 0.08)
     );
@@ -916,8 +1276,12 @@ function writePhantomForearmPose(
   holdBlend: number,
   shotPulse: number,
   elapsedSeconds: number,
-  locomotion: PhantomLocomotionPose = PHANTOM_STILL_LOCOMOTION_POSE
+  locomotion: PhantomLocomotionPose = PHANTOM_STILL_LOCOMOTION_POSE,
+  primaryReadyBlend = 0,
+  primaryShotExtension = 0
 ): void {
+  const primaryReadyTuck = THREE.MathUtils.clamp(primaryReadyBlend, 0, 1);
+  const primaryShotReach = THREE.MathUtils.clamp(primaryShotExtension, 0, 1);
   const locomotionBlend = THREE.MathUtils.clamp(
     locomotion.movementBlend * (1 - holdBlend * 0.08 - shotPulse * 0.18) * (1 - THREE.MathUtils.clamp(locomotion.slideBlend, 0, 1) * 0.9),
     0,
@@ -939,6 +1303,7 @@ function writePhantomForearmPose(
   const runTuck = runBlend * locomotionBlend;
   const inwardTuck = (0.016 + runBlend * 0.035) * locomotionBlend;
   const slidePullback = PHANTOM_SLIDE_FOREARM_PULLBACK_Z * slideBlend * (1 - holdBlend * 0.18 - shotPulse * 0.16);
+  const readyForearmExtensionZ = 0.096 - PHANTOM_PRIMARY_READY_FOREARM_TUCK_Z * primaryReadyTuck;
 
   target.position.set(
     side * (
@@ -955,28 +1320,32 @@ function writePhantomForearmPose(
       drop * liftAmount * 0.32 +
       breath * (1 - locomotionBlend),
     -0.41 -
-      holdBlend * 0.096 -
+      holdBlend * readyForearmExtensionZ -
       shotPulse * 0.01 -
+      primaryShotReach * PHANTOM_PRIMARY_SHOT_FOREARM_EXTENSION_Z -
       runTuck * 0.003 +
       retractPulse * retractAmount +
       slidePullback
   );
   target.rotation.set(
     0.22 -
-      holdBlend * 0.34 -
+      holdBlend * (0.34 - primaryReadyTuck * 0.035) -
       shotPulse * 0.055 -
+      primaryShotReach * 0.075 -
       runTuck * 0.035 -
       retractPulse * pumpPitch * 0.72,
     side * (
       -0.1 +
       holdBlend * 0.08 +
       shotPulse * 0.014 +
+      primaryShotReach * 0.018 +
       counterSwing * (0.026 + runBlend * 0.03) * locomotionBlend
     ),
     side * (
       -0.09 +
-      holdBlend * 0.235 +
+      holdBlend * (0.235 - primaryReadyTuck * 0.025) +
       shotPulse * 0.055 +
+      primaryShotReach * 0.04 +
       retractPulse * (0.055 + runBlend * 0.074) * locomotionBlend +
       counterSwing * 0.018 * locomotionBlend
     )
@@ -1134,19 +1503,9 @@ function isLocalHookshotHookDetached(side: -1 | 1): boolean {
   if (!localPlayerId) return false;
 
   return (
-    state.hookProjectiles.some(hook => (
-      hook.ownerId === localPlayerId &&
-      (hook.launchSide ?? 1) === side
-    )) ||
-    state.dragHooks.some(hook => (
-      hook.ownerId === localPlayerId &&
-      (hook.launchSide ?? 1) === side
-    )) ||
-    state.grappleLines.some(line => (
-      line.ownerId === localPlayerId &&
-      line.state !== 'done' &&
-      (line.launchSide ?? 1) === side
-    ))
+    hasOwnedProjectileOnSide(state.hookProjectiles, localPlayerId, side) ||
+    hasOwnedProjectileOnSide(state.dragHooks, localPlayerId, side) ||
+    hasOwnedActiveGrappleLineOnSide(state, localPlayerId, side)
   );
 }
 
@@ -1181,17 +1540,22 @@ function updatePhantomLocomotionRuntime(
   previousPosition.copy(camera.position);
 
   const frameSeconds = Math.max(delta, 1 / 120);
-  const horizontalSpeed = horizontalDistance > PHANTOM_LOCOMOTION_TELEPORT_DISTANCE
+  const cameraHorizontalSpeed = horizontalDistance > PHANTOM_LOCOMOTION_TELEPORT_DISTANCE
     ? 0
     : horizontalDistance / frameSeconds;
+  const visualState = visualStore.getState();
+  const localMovement = visualState.localViewmodelMovement;
+  const isLocalMovementFresh = Date.now() - localMovement.updatedAtMs <= CHRONOS_MOVEMENT_INPUT_FRESH_MS;
+  const horizontalSpeed = isLocalMovementFresh
+    ? localMovement.horizontalSpeed
+    : cameraHorizontalSpeed;
   const walkSpeed = HERO_DEFINITIONS[heroId].stats.moveSpeed;
   const runSpeed = walkSpeed * SPRINT_MULTIPLIER;
-  const store = useGameStore.getState();
-  const movementState = store.localPlayer?.movement;
-  const isGrounded = movementState?.isGrounded ?? true;
-  const isSliding = movementState?.isSliding ?? false;
+  const movementState = visualState.localMovement;
+  const isGrounded = movementState.isGrounded;
+  const isSliding = movementState.isSliding;
   const targetSlideBlend = THREE.MathUtils.clamp(
-    Math.max(isSliding ? 1 : 0, store.slideIntensity),
+    Math.max(isSliding ? 1 : 0, visualState.slideIntensity),
     0,
     1
   );
@@ -1208,7 +1572,7 @@ function updatePhantomLocomotionRuntime(
   );
   const targetRunBlend = targetMovementBlend * Math.max(
     speedRunBlend,
-    movementState?.isSprinting ? 1 : 0
+    movementState.isSprinting ? 1 : 0
   );
   const targetSpeedBlend = THREE.MathUtils.clamp(horizontalSpeed / runSpeed, 0, 1.35);
 
@@ -1261,6 +1625,9 @@ function composePhantomPrimaryPalmMatrix({
   side,
   holdBlend,
   shotPulse,
+  primaryReadyBlend = holdBlend,
+  primaryShotExtension = shotPulse,
+  shieldCastPose,
   locomotion,
 }: {
   camera: THREE.Camera;
@@ -1270,6 +1637,9 @@ function composePhantomPrimaryPalmMatrix({
   side: -1 | 1;
   holdBlend: number;
   shotPulse: number;
+  primaryReadyBlend?: number;
+  primaryShotExtension?: number;
+  shieldCastPose?: PhantomShieldCastPose;
   locomotion?: PhantomLocomotionPose;
 }): THREE.Matrix4 {
   const rootTransform = {
@@ -1293,7 +1663,19 @@ function composePhantomPrimaryPalmMatrix({
       rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
     })),
   };
-  writePhantomHandPose(poseTarget, side, holdBlend, shotPulse, elapsedSeconds, locomotion);
+  writePhantomHandPose(
+    poseTarget,
+    side,
+    holdBlend,
+    shotPulse,
+    elapsedSeconds,
+    locomotion,
+    primaryReadyBlend,
+    primaryShotExtension
+  );
+  if (shieldCastPose) {
+    applyPhantomShieldCastHandPose(poseTarget, side, shieldCastPose, elapsedSeconds);
+  }
 
   composeTransformMatrix(phantomArmMatrix, poseTarget.arm.position, poseTarget.arm.rotation);
   composeTransformMatrix(phantomWristMatrix, poseTarget.wrist.position, poseTarget.wrist.rotation);
@@ -1324,7 +1706,9 @@ function samplePhantomPrimaryPalmSocket(
 ): ViewmodelSocketPoseDraft {
   const attackTimeSeconds = context.actionTimeSeconds ?? PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS;
   const timestampMs = context.timestampMs ?? Date.now();
-  const holdBlend = context.holdBlend ?? getPhantomPrimaryHeldBlend(timestampMs);
+  const shieldCastPose = getPhantomShieldCastPose(timestampMs);
+  const primaryHoldBlend = context.holdBlend ?? getPhantomPrimaryHeldBlend(timestampMs);
+  const holdBlend = Math.max(primaryHoldBlend, shieldCastPose.blend);
   const shotPulse = context.shotPulse ?? getPhantomPrimaryShotPulse(attackTimeSeconds);
   const worldMatrix = composePhantomPrimaryPalmMatrix({
     camera: context.camera,
@@ -1334,16 +1718,13 @@ function samplePhantomPrimaryPalmSocket(
     side: context.side,
     holdBlend,
     shotPulse,
+    primaryReadyBlend: primaryHoldBlend,
+    primaryShotExtension: shotPulse,
+    shieldCastPose,
     locomotion,
   });
 
-  worldMatrix.decompose(phantomWorldPosition, phantomWorldQuaternion, phantomWorldScale);
-
-  return {
-    position: phantomWorldPosition.clone(),
-    quaternion: phantomWorldQuaternion.clone(),
-    timestampMs,
-  };
+  return viewmodelPoseDraftFromMatrix(worldMatrix, timestampMs);
 }
 
 function composePhantomVoidRayOrbMatrix({
@@ -1395,13 +1776,7 @@ function samplePhantomVoidRayOrbSocket(
     targetingBlend,
   });
 
-  worldMatrix.decompose(phantomWorldPosition, phantomWorldQuaternion, phantomWorldScale);
-
-  return {
-    position: phantomWorldPosition.clone(),
-    quaternion: phantomWorldQuaternion.clone(),
-    timestampMs,
-  };
+  return viewmodelPoseDraftFromMatrix(worldMatrix, timestampMs);
 }
 
 function PhantomAnimatedForearm({
@@ -1440,6 +1815,32 @@ function PhantomAnimatedForearm({
       : Number.POSITIVE_INFINITY;
     const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
     const chargePose = getPhantomVoidRayChargePose(nowMs, state.clock.elapsedTime);
+    const veilGlowOpacity = getPhantomVeilArmGlowOpacity(nowMs, state.clock.elapsedTime);
+    const veilCastPose = reloadPose.active || chargePose.active
+      ? null
+      : getPhantomVeilCastPose(nowMs);
+
+    if (veilCastPose?.active) {
+      forearm.visible = true;
+      writePhantomForearmPose(
+        forearm,
+        side,
+        0,
+        0,
+        state.clock.elapsedTime,
+        PHANTOM_STILL_LOCOMOTION_POSE,
+        0,
+        0
+      );
+      reloadGlowMaterial.opacity = Math.max(veilGlowOpacity, veilCastPose.blend * 0.46);
+      return;
+    }
+
+    forearm.visible = true;
+
+    const shieldCastPose = reloadPose.active || chargePose.active
+      ? null
+      : getPhantomShieldCastPose(nowMs);
     const voidRayReleasePulse = reloadPose.active
       ? 0
       : getPhantomVoidRayReleasePulse(voidRayReleaseRef.current, nowMs);
@@ -1447,7 +1848,12 @@ function PhantomAnimatedForearm({
       ? 0
       : getPhantomVoidRayReleaseExtensionBlend(voidRayReleaseRef.current, nowMs);
     const baseHoldBlend = reloadPose.active || chargePose.active ? 0 : getPhantomPrimaryHeldBlend(nowMs);
-    const holdBlend = Math.max(baseHoldBlend, voidRayReleasePulse, voidRayReleaseExtensionBlend * 0.78);
+    const holdBlend = Math.max(
+      baseHoldBlend,
+      shieldCastPose?.blend ?? 0,
+      voidRayReleasePulse,
+      voidRayReleaseExtensionBlend * 0.78
+    );
     const primaryShotPulse = getPhantomPrimaryShotPulse(attackTimeSeconds);
     const shotPulse = reloadPose.active ? 0 : Math.max(primaryShotPulse, voidRayReleasePulse);
     writePhantomForearmPose(
@@ -1456,16 +1862,23 @@ function PhantomAnimatedForearm({
       holdBlend,
       shotPulse,
       state.clock.elapsedTime,
-      locomotionRef.current
+      locomotionRef.current,
+      baseHoldBlend,
+      primaryShotPulse
     );
+    if (shieldCastPose) {
+      applyPhantomShieldCastForearmPose(forearm, side, shieldCastPose);
+    }
     applyPhantomVoidRayChargeForearmPose(forearm, side, chargePose, 0.92);
     applyPhantomVoidRayReleaseForearmPose(forearm, side, voidRayReleaseExtensionBlend);
     applyPhantomReloadMotion(forearm, side, reloadPose, 0.82);
     reloadGlowMaterial.opacity = Math.max(
       reloadPose.glowOpacity * 0.42,
+      (shieldCastPose?.blend ?? 0) * 0.38,
       chargePose.glowOpacity * 0.58,
       voidRayReleasePulse * 0.36,
-      voidRayReleaseExtensionBlend * 0.24
+      voidRayReleaseExtensionBlend * 0.24,
+      veilGlowOpacity * 0.72
     );
   });
 
@@ -1508,10 +1921,7 @@ function PhantomPoseableHand({
   const thumbSide = -side;
   const reloadGlowMaterial = useMemo(createPhantomReloadGlowMaterial, []);
 
-  useEffect(() => {
-    if (!socketRef.current) return undefined;
-    return registerViewmodelSocket(PHANTOM_PRIMARY_PALM_SOCKET_NAMES[side], socketRef.current);
-  }, [side]);
+  useRegisteredViewmodelSocket(PHANTOM_PRIMARY_PALM_SOCKET_NAMES[side], socketRef);
 
   useEffect(() => () => {
     reloadGlowMaterial.dispose();
@@ -1524,8 +1934,8 @@ function PhantomPoseableHand({
     const palm = palmRef.current;
     const openVisual = openVisualRef.current;
     const thumb = thumbRef.current;
-    const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
-    if (!arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
+    const fingers = resolveFingerTargets(fingerRefs.current);
+    if (!arm || !wrist || !palm || !thumb || !fingers) return;
 
     const nowMs = Date.now();
     const attack = primaryAttackRef.current;
@@ -1534,6 +1944,45 @@ function PhantomPoseableHand({
       : Number.POSITIVE_INFINITY;
     const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
     const chargePose = getPhantomVoidRayChargePose(nowMs, state.clock.elapsedTime);
+    const veilGlowOpacity = getPhantomVeilArmGlowOpacity(nowMs, state.clock.elapsedTime);
+    const veilCastPose = reloadPose.active || chargePose.active
+      ? null
+      : getPhantomVeilCastPose(nowMs);
+
+    if (veilCastPose?.active) {
+      if (closedVisual) {
+        closedVisual.visible = true;
+        closedVisual.scale.setScalar(1);
+      }
+      if (openVisual) {
+        openVisual.visible = false;
+        openVisual.scale.setScalar(0.001);
+      }
+      const poseTargets = {
+        ...(closedVisual ? { closedHand: closedVisual } : {}),
+        arm,
+        wrist,
+        palm,
+        thumb,
+        fingers,
+      };
+      writePhantomHandPose(
+        poseTargets,
+        side,
+        0,
+        0,
+        state.clock.elapsedTime,
+        PHANTOM_STILL_LOCOMOTION_POSE,
+        0,
+        0
+      );
+      reloadGlowMaterial.opacity = Math.max(veilGlowOpacity, veilCastPose.blend * 0.62);
+      return;
+    }
+
+    const shieldCastPose = reloadPose.active || chargePose.active
+      ? null
+      : getPhantomShieldCastPose(nowMs);
     const voidRayReleasePulse = reloadPose.active
       ? 0
       : getPhantomVoidRayReleasePulse(voidRayReleaseRef.current, nowMs);
@@ -1541,17 +1990,23 @@ function PhantomPoseableHand({
       ? 0
       : getPhantomVoidRayReleaseExtensionBlend(voidRayReleaseRef.current, nowMs);
     const baseHoldBlend = reloadPose.active || chargePose.active ? 0 : getPhantomPrimaryHeldBlend(nowMs);
-    const holdBlend = Math.max(baseHoldBlend, voidRayReleasePulse, voidRayReleaseExtensionBlend * 0.82);
+    const holdBlend = Math.max(
+      baseHoldBlend,
+      shieldCastPose?.blend ?? 0,
+      voidRayReleasePulse,
+      voidRayReleaseExtensionBlend * 0.82
+    );
     const primaryShotPulse = getPhantomPrimaryShotPulse(attackTimeSeconds);
     const shotPulse = reloadPose.active ? 0 : Math.max(primaryShotPulse, voidRayReleasePulse);
     const chargeOpenBlend = reloadPose.active ? 0 : chargePose.blend;
+    const shieldOpenBlend = shieldCastPose?.blend ?? 0;
     const openVisualBlend = THREE.MathUtils.smoothstep(
-      Math.max(holdBlend, chargeOpenBlend),
+      Math.max(holdBlend, chargeOpenBlend, shieldOpenBlend),
       0.02,
       0.72
     );
     const closedVisualBlend = 1 - THREE.MathUtils.smoothstep(
-      Math.max(holdBlend, chargeOpenBlend),
+      Math.max(holdBlend, chargeOpenBlend, shieldOpenBlend),
       0,
       0.5
     );
@@ -1579,8 +2034,25 @@ function PhantomPoseableHand({
       holdBlend,
       shotPulse,
       state.clock.elapsedTime,
-      locomotionRef.current
+      locomotionRef.current,
+      baseHoldBlend,
+      primaryShotPulse
     );
+    if (shieldCastPose) {
+      applyPhantomShieldCastHandPose(
+        {
+          ...(closedVisual ? { closedHand: closedVisual } : {}),
+          arm,
+          wrist,
+          palm,
+          thumb,
+          fingers,
+        },
+        side,
+        shieldCastPose,
+        state.clock.elapsedTime
+      );
+    }
     applyPhantomVoidRayChargeHandPose(
       {
         ...(closedVisual ? { closedHand: closedVisual } : {}),
@@ -1612,9 +2084,11 @@ function PhantomPoseableHand({
     }
     reloadGlowMaterial.opacity = Math.max(
       reloadPose.glowOpacity * 0.62,
+      (shieldCastPose?.blend ?? 0) * 0.54,
       chargePose.glowOpacity * 0.86,
       voidRayReleasePulse * 0.5,
-      voidRayReleaseExtensionBlend * 0.34
+      voidRayReleaseExtensionBlend * 0.34,
+      veilGlowOpacity
     );
   });
 
@@ -1847,6 +2321,44 @@ function PhantomVoidRayChargeOrb() {
   );
 }
 
+function PhantomVeilViewmodelSplit() {
+  const groupRef = useRef<THREE.Group>(null);
+  const material = useMemo(createPhantomVeilSplitMaterial, []);
+
+  useEffect(() => () => {
+    material.dispose();
+  }, [material]);
+
+  useFrame((_, delta) => {
+    const group = groupRef.current;
+    if (!group) return;
+
+    const veilPose = getPhantomVeilCastPose(Date.now());
+    const intensity = veilPose.contact * veilPose.blend;
+    group.visible = intensity > 0.01;
+
+    if (!group.visible) {
+      updatePhantomVeilSplitMaterial(material, 0, 0, 0, delta);
+      return;
+    }
+
+    const progress = THREE.MathUtils.clamp(veilPose.contact + veilPose.pulse * 0.28, 0, 1);
+    group.position.copy(PHANTOM_VEIL_SPLIT_POSITION);
+    group.scale.set(
+      PHANTOM_VEIL_SPLIT_BASE_SCALE.x * (0.7 + progress * 0.3),
+      PHANTOM_VEIL_SPLIT_BASE_SCALE.y * (0.82 + progress * 0.18),
+      PHANTOM_VEIL_SPLIT_BASE_SCALE.z
+    );
+    updatePhantomVeilSplitMaterial(material, progress, intensity, veilPose.contact, delta);
+  });
+
+  return (
+    <group ref={groupRef} visible={false} renderOrder={26}>
+      <mesh geometry={SHARED_GEOMETRIES.plane} material={material} frustumCulled={false} />
+    </group>
+  );
+}
+
 function PhantomViewmodel({
   materials,
   primaryAttackRef,
@@ -1869,6 +2381,7 @@ function PhantomViewmodel({
       <PhantomPoseableHand side={-1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
       <PhantomPoseableHand side={1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
       <PhantomVoidRayChargeOrb />
+      <PhantomVeilViewmodelSplit />
     </group>
   );
 }
@@ -1955,18 +2468,15 @@ function HookshotSimpleHookHand({
   const fingerRefs = useRef<(THREE.Group | null)[]>([]);
   const hookMaterials = getHookshotMaterials();
 
-  useEffect(() => {
-    if (!hookSocketRef.current) return undefined;
-    return registerViewmodelSocket(HOOKSHOT_HOOK_SOCKET_NAMES[side], hookSocketRef.current);
-  }, [side]);
+  useRegisteredViewmodelSocket(HOOKSHOT_HOOK_SOCKET_NAMES[side], hookSocketRef);
 
   const isHookProjectileDetached = useGameStore(
     useShallow(state => {
       const localPlayerId = state.localPlayer?.id;
       return Boolean(localPlayerId && (
-        state.hookProjectiles.some(hook => hook.ownerId === localPlayerId && (hook.launchSide ?? 1) === side) ||
-        state.dragHooks.some(hook => hook.ownerId === localPlayerId && (hook.launchSide ?? 1) === side) ||
-        state.grappleLines.some(line => line.ownerId === localPlayerId && line.state !== 'done' && (line.launchSide ?? 1) === side)
+        hasOwnedProjectileOnSide(state.hookProjectiles, localPlayerId, side) ||
+        hasOwnedProjectileOnSide(state.dragHooks, localPlayerId, side) ||
+        hasOwnedActiveGrappleLineOnSide(state, localPlayerId, side)
       ));
     })
   );
@@ -1976,8 +2486,8 @@ function HookshotSimpleHookHand({
     const wrist = wristRef.current;
     const palm = palmRef.current;
     const thumb = thumbRef.current;
-    const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
-    if (!arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
+    const fingers = resolveFingerTargets(fingerRefs.current);
+    if (!arm || !wrist || !palm || !thumb || !fingers) return;
 
     const secondaryPulse = getHookshotSecondaryPosePulse(secondaryFireRef.current, Date.now());
     if (hookVisualRef.current) {
@@ -2136,9 +2646,9 @@ function applyBlazeRocketPoseToForearm(
   if (side !== 1 || holdBlend <= 0) return;
 
   target.position.x += side * -0.014 * holdBlend;
-  target.position.y += 0.014 * holdBlend;
-  target.position.z -= 0.076 * holdBlend;
-  target.rotation.x -= 0.088 * holdBlend;
+  target.position.y += 0.018 * holdBlend;
+  target.position.z -= 0.096 * holdBlend;
+  target.rotation.x -= 0.116 * holdBlend;
   target.rotation.y += side * -0.024 * holdBlend;
   target.rotation.z += side * 0.046 * holdBlend;
 }
@@ -2151,29 +2661,29 @@ function applyBlazeRocketPoseToHand(
   if (side !== 1 || holdBlend <= 0) return;
 
   targets.arm.position.x += side * -0.018 * holdBlend;
-  targets.arm.position.y += 0.018 * holdBlend;
-  targets.arm.position.z -= 0.092 * holdBlend;
-  targets.arm.rotation.x -= 0.095 * holdBlend;
-  targets.arm.rotation.y += side * -0.024 * holdBlend;
-  targets.arm.rotation.z += side * 0.058 * holdBlend;
+  targets.arm.position.y += 0.022 * holdBlend;
+  targets.arm.position.z -= 0.112 * holdBlend;
+  targets.arm.rotation.x -= 0.122 * holdBlend;
+  targets.arm.rotation.y += side * -0.028 * holdBlend;
+  targets.arm.rotation.z += side * 0.062 * holdBlend;
 
-  targets.wrist.position.z -= 0.014 * holdBlend;
-  targets.wrist.rotation.x -= 0.128 * holdBlend;
+  targets.wrist.position.z -= 0.022 * holdBlend;
+  targets.wrist.rotation.x -= 0.156 * holdBlend;
   targets.wrist.rotation.y += side * -0.03 * holdBlend;
   targets.wrist.rotation.z += side * 0.034 * holdBlend;
 
   targets.palm.position.y += 0.004 * holdBlend;
-  targets.palm.position.z -= 0.018 * holdBlend;
-  targets.palm.rotation.x -= 0.088 * holdBlend;
+  targets.palm.position.z -= 0.026 * holdBlend;
+  targets.palm.rotation.x -= 0.112 * holdBlend;
   targets.palm.rotation.y += side * -0.018 * holdBlend;
   targets.palm.rotation.z += side * 0.02 * holdBlend;
 
   if (targets.closedHand) {
     targets.closedHand.position.x += side * -0.018 * holdBlend;
-    targets.closedHand.position.y += 0.018 * holdBlend;
-    targets.closedHand.position.z -= 0.1 * holdBlend;
-    targets.closedHand.rotation.x -= 0.145 * holdBlend;
-    targets.closedHand.rotation.y += side * -0.034 * holdBlend;
+    targets.closedHand.position.y += 0.022 * holdBlend;
+    targets.closedHand.position.z -= 0.124 * holdBlend;
+    targets.closedHand.rotation.x -= 0.178 * holdBlend;
+    targets.closedHand.rotation.y += side * -0.038 * holdBlend;
     targets.closedHand.rotation.z += side * 0.052 * holdBlend;
   }
 }
@@ -2271,12 +2781,12 @@ function writeBlazeStaffPose(
   const impact = rocketJumpPose.impactPulse;
 
   target.position.copy(BLAZE_STAFF_POSITION);
-  target.position.y += 0.006 * adjustedHoldBlend;
-  target.position.z -= 0.026 * adjustedHoldBlend;
+  target.position.y += 0.012 * adjustedHoldBlend;
+  target.position.z -= 0.052 * adjustedHoldBlend;
   target.rotation.copy(BLAZE_STAFF_ROTATION);
-  target.rotation.x -= 0.18 * adjustedHoldBlend;
-  target.rotation.y -= 0.032 * adjustedHoldBlend;
-  target.rotation.z += 0.018 * adjustedHoldBlend;
+  target.rotation.x -= 0.255 * adjustedHoldBlend;
+  target.rotation.y -= 0.038 * adjustedHoldBlend;
+  target.rotation.z += 0.024 * adjustedHoldBlend;
 
   target.position.x -= 0.03 * ready;
   target.position.y += 0.09 * ready - 0.255 * strike - 0.02 * impact;
@@ -2409,13 +2919,7 @@ function sampleBlazeRocketStaffTipSocket(
     locomotion,
   });
 
-  worldMatrix.decompose(phantomWorldPosition, phantomWorldQuaternion, phantomWorldScale);
-
-  return {
-    position: phantomWorldPosition.clone(),
-    quaternion: phantomWorldQuaternion.clone(),
-    timestampMs,
-  };
+  return viewmodelPoseDraftFromMatrix(worldMatrix, timestampMs);
 }
 
 function createBlazeStaffChargeGlowMaterial(color: number): THREE.MeshBasicMaterial {
@@ -2428,8 +2932,6 @@ function createBlazeStaffChargeGlowMaterial(color: number): THREE.MeshBasicMater
     toneMapped: false,
   });
 }
-
-const BLAZE_STAFF_SHOCKWAVE_DURATION_MS = 460;
 
 function BlazePhantomForearm({
   side,
@@ -2493,6 +2995,7 @@ function BlazeWizardStaff({
   const chargeCoreRef = useRef<THREE.Mesh>(null);
   const chargeHaloRef = useRef<THREE.Mesh>(null);
   const chargeRingRef = useRef<THREE.Mesh>(null);
+  const tipFlareRef = useRef<THREE.Group>(null);
   const shockwaveRef = useRef<THREE.Group>(null);
   const shockwaveShellRef = useRef<THREE.Mesh>(null);
   const shockwaveRingRefs = useRef<(THREE.Mesh | null)[]>([]);
@@ -2500,18 +3003,17 @@ function BlazeWizardStaff({
   const processedShockwaveRevisionRef = useRef(0);
   const chargeCoreMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff4a16), []);
   const chargeHaloMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff6f1f), []);
+  const tipFlareMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xffcf3a), []);
   const shockwaveMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff5a18), []);
 
-  useEffect(() => {
-    if (!socketRef.current) return undefined;
-    return registerViewmodelSocket(BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME, socketRef.current);
-  }, []);
+  useRegisteredViewmodelSocket(BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME, socketRef);
 
   useEffect(() => () => {
     chargeCoreMaterial.dispose();
     chargeHaloMaterial.dispose();
+    tipFlareMaterial.dispose();
     shockwaveMaterial.dispose();
-  }, [chargeCoreMaterial, chargeHaloMaterial, shockwaveMaterial]);
+  }, [chargeCoreMaterial, chargeHaloMaterial, shockwaveMaterial, tipFlareMaterial]);
 
   useFrame((state) => {
     const staff = staffRef.current;
@@ -2521,6 +3023,19 @@ function BlazeWizardStaff({
     const rocketJumpPose = getBlazeRocketJumpStaffSlamPose(nowMs);
     const holdBlend = getBlazeStaffHeldBlend(nowMs);
     writeBlazeStaffPose(staff, holdBlend, rocketJumpPose);
+
+    const tipFlare = tipFlareRef.current;
+    if (tipFlare) {
+      const idlePulse = 1 + Math.sin(state.clock.elapsedTime * 10.75) * 0.035;
+      const flareScale = idlePulse + holdBlend * 0.1 + rocketJumpPose.impactPulse * 0.18;
+      tipFlare.rotation.y = state.clock.elapsedTime * (0.32 + holdBlend * 0.72);
+      tipFlare.scale.setScalar(flareScale);
+      tipFlareMaterial.opacity = THREE.MathUtils.clamp(
+        0.34 + holdBlend * 0.32 + rocketJumpPose.impactPulse * 0.28,
+        0.26,
+        0.88
+      );
+    }
 
     const chargeGlow = chargeGlowRef.current;
     if (!chargeGlow) return;
@@ -2614,11 +3129,44 @@ function BlazeWizardStaff({
       ))}
 
       <group position={[0, 0.49, 0]}>
-        <mesh geometry={SHARED_GEOMETRIES.sphere12} material={materials.glass} scale={0.052} />
-        <mesh geometry={SHARED_GEOMETRIES.sphere16} material={materials.glow} scale={0.028} />
-        <mesh geometry={SHARED_GEOMETRIES.ring16} material={materials.accent} rotation={[Math.PI / 2, 0, 0]} scale={[0.072, 0.072, 1]} />
-        <mesh geometry={SHARED_GEOMETRIES.ring16} material={materials.glow} rotation={[Math.PI / 2, 0, 0]} scale={[0.054, 0.054, 1]} />
-        <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glow} position={[0, 0.066, 0]} scale={[0.03, 0.082, 0.03]} />
+        <mesh geometry={SHARED_GEOMETRIES.cylinder12} material={materials.metal} position={[0, -0.048, 0]} scale={[0.056, 0.026, 0.056]} />
+        <mesh geometry={SHARED_GEOMETRIES.cylinderOpen12} material={materials.glow} position={[0, -0.012, 0]} scale={[0.056, 0.068, 0.056]} />
+        <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glass} position={[0, 0.024, 0]} scale={[0.05, 0.074, 0.05]} />
+        <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glass} position={[0, -0.022, 0]} rotation={[Math.PI, 0, 0]} scale={[0.04, 0.054, 0.04]} />
+        <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glow} position={[0, 0.061, 0]} scale={[0.031, 0.082, 0.031]} />
+        <mesh geometry={SHARED_GEOMETRIES.ring24} material={materials.accent} rotation={[Math.PI / 2, 0, 0]} scale={[0.082, 0.082, 1]} />
+        <mesh geometry={SHARED_GEOMETRIES.ring16} material={materials.glow} position={[0, 0.034, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[0.064, 0.064, 1]} />
+        {BLAZE_STAFF_TIP_PRONG_ANGLES.map(angle => (
+          <group key={`prong-${angle}`} rotation={[0, angle, 0]}>
+            <mesh
+              geometry={SHARED_GEOMETRIES.box}
+              material={materials.metal}
+              position={[0, 0.006, 0.058]}
+              rotation={[-0.34, 0, 0]}
+              scale={[0.016, 0.112, 0.022]}
+            />
+            <mesh
+              geometry={SHARED_GEOMETRIES.box}
+              material={materials.accent}
+              position={[0, 0.05, 0.062]}
+              rotation={[-0.34, 0, 0]}
+              scale={[0.009, 0.04, 0.012]}
+            />
+          </group>
+        ))}
+        <group ref={tipFlareRef}>
+          {BLAZE_STAFF_TIP_FLAME_ANGLES.map(angle => (
+            <group key={`flare-${angle}`} rotation={[0, angle, 0]}>
+              <mesh
+                geometry={SHARED_GEOMETRIES.cone6}
+                material={tipFlareMaterial}
+                position={[0, 0.034, 0.066]}
+                rotation={[-0.54, 0, 0]}
+                scale={[0.013, 0.068, 0.013]}
+              />
+            </group>
+          ))}
+        </group>
         <group ref={chargeGlowRef} visible={false}>
           <mesh ref={chargeCoreRef} geometry={SHARED_GEOMETRIES.sphere16} material={chargeCoreMaterial} scale={0.001} />
           <mesh ref={chargeHaloRef} geometry={SHARED_GEOMETRIES.sphere16} material={chargeHaloMaterial} scale={0.001} />
@@ -2687,8 +3235,8 @@ function BlazePhantomHand({
     const wrist = wristRef.current;
     const palm = palmRef.current;
     const thumb = thumbRef.current;
-    const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
-    if (!closedHand || !arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
+    const fingers = resolveFingerTargets(fingerRefs.current);
+    if (!closedHand || !arm || !wrist || !palm || !thumb || !fingers) return;
 
     const nowMs = Date.now();
     const rocketJumpPose = getBlazeRocketJumpStaffSlamPose(nowMs);
@@ -2876,14 +3424,14 @@ function updateChronosMovementBobRuntime(
   const horizontalSpeed = horizontalDistance > PHANTOM_LOCOMOTION_TELEPORT_DISTANCE
     ? 0
     : horizontalDistance / frameSeconds;
-  const store = useGameStore.getState();
-  const movementState = store.localPlayer?.movement;
-  const localMovement = visualStore.getState().localViewmodelMovement;
+  const visualState = visualStore.getState();
+  const movementState = visualState.localMovement;
+  const localMovement = visualState.localViewmodelMovement;
   const isLocalMovementFresh = Date.now() - localMovement.updatedAtMs <= CHRONOS_MOVEMENT_INPUT_FRESH_MS;
   const localHorizontalSpeed = isLocalMovementFresh ? localMovement.horizontalSpeed : 0;
   const localInputMoveBlend = isLocalMovementFresh && localMovement.hasMovementInput ? 1 : 0;
   const targetSlideBlend = THREE.MathUtils.clamp(
-    Math.max(movementState?.isSliding ? 1 : 0, store.slideIntensity),
+    Math.max(movementState.isSliding ? 1 : 0, visualState.slideIntensity),
     0,
     1
   );
@@ -3260,13 +3808,7 @@ function sampleChronosPrimaryOrbSocket(
     aegisPose,
   });
 
-  worldMatrix.decompose(phantomWorldPosition, phantomWorldQuaternion, phantomWorldScale);
-
-  return {
-    position: phantomWorldPosition.clone(),
-    quaternion: phantomWorldQuaternion.clone(),
-    timestampMs,
-  };
+  return viewmodelPoseDraftFromMatrix(worldMatrix, timestampMs);
 }
 
 function ChronosPhantomForearm({
@@ -3342,8 +3884,8 @@ function ChronosTriangleHand({
     const wrist = wristRef.current;
     const palm = palmRef.current;
     const thumb = thumbRef.current;
-    const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
-    if (!arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
+    const fingers = resolveFingerTargets(fingerRefs.current);
+    if (!arm || !wrist || !palm || !thumb || !fingers) return;
 
     writeChronosTriangleHandPose(
       {
@@ -3506,10 +4048,7 @@ function ChronosFloatingPyramidWeapon({
     toneMapped: false,
   }), []);
 
-  useEffect(() => {
-    if (!orbRef.current) return undefined;
-    return registerViewmodelSocket(CHRONOS_PRIMARY_ORB_SOCKET_NAME, orbRef.current);
-  }, []);
+  useRegisteredViewmodelSocket(CHRONOS_PRIMARY_ORB_SOCKET_NAME, orbRef);
 
   useFrame((state, delta) => {
     const weapon = weaponRef.current;
@@ -3533,6 +4072,8 @@ function ChronosFloatingPyramidWeapon({
     const spread = aegisPose.spread;
     const shield = aegisPose.shield;
     const recoil = aegisPose.recoil;
+    const spinBoost = aegisPose.spinBoost;
+    const heartbeat = aegisPose.heartbeat;
     root.updateMatrixWorld(true);
     leftSocket.getWorldPosition(leftSocketWorldPosition);
     rightSocket.getWorldPosition(rightSocketWorldPosition);
@@ -3552,19 +4093,23 @@ function ChronosFloatingPyramidWeapon({
     );
 
     if (pyramidRef.current) {
-      const pyramidScale = 1 + CHRONOS_AEGIS_PYRAMID_GROWTH * spread + 0.18 * shield + 0.08 * recoil;
+      const pyramidScale = 1 +
+        CHRONOS_AEGIS_PYRAMID_GROWTH * spread +
+        0.18 * shield +
+        0.08 * recoil +
+        CHRONOS_WEAPON_PYRAMID_HEARTBEAT_GROWTH * heartbeat;
       primarySpinPhaseRef.current +=
-        Math.min(delta, 0.05) * CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST * (primaryHeldBlend + recoil * 2.4);
+        Math.min(delta, 0.05) * CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST * (primaryHeldBlend + recoil * 2.4 + spinBoost * 3.8);
       pyramidRef.current.rotation.set(
         CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X - 0.08 * shield + Math.sin(t * 0.42) * 0.02 + 0.16 * recoil,
         Math.PI / 4 +
-          t * (CHRONOS_WEAPON_PYRAMID_SPIN_SPEED + 0.5 * spread) +
+          t * (CHRONOS_WEAPON_PYRAMID_SPIN_SPEED + 0.5 * spread + 1.7 * spinBoost) +
           primarySpinPhaseRef.current,
         Math.sin(t * 0.5) * 0.018
       );
       pyramidRef.current.scale.setScalar(pyramidScale);
     }
-    const pyramidGlow = aegisGlow;
+    const pyramidGlow = Math.max(aegisGlow, spinBoost, heartbeat);
     pyramidFaceMaterial.opacity = THREE.MathUtils.clamp(
       THREE.MathUtils.lerp(
         CHRONOS_WEAPON_PYRAMID_FACE_BASE_OPACITY,
@@ -3674,6 +4219,7 @@ function ChronosAegisViewmodelShield({
   const fillRef = useRef<THREE.Mesh>(null);
   const wireRef = useRef<THREE.Mesh>(null);
   const braceRef = useRef<THREE.Group>(null);
+  const crackRef = useRef<THREE.Group>(null);
   const fillGeometry = useMemo(
     () => createChronosAegisPanelGeometry(
       CHRONOS_AEGIS_VIEWMODEL_WIDTH,
@@ -3721,13 +4267,26 @@ function ChronosAegisViewmodelShield({
     wireframe: true,
     toneMapped: false,
   }), []);
+  const crackMaterial = useMemo(() => new THREE.MeshBasicMaterial({
+    color: CHRONOS_AEGIS_CRACK_COLOR,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  }), []);
+  const fillFreshColor = useMemo(() => new THREE.Color(HERO_MATERIAL_COLORS.chronos.accent), []);
+  const fillDamagedColor = useMemo(() => new THREE.Color(CHRONOS_AEGIS_DAMAGE_FILL_COLOR), []);
+  const edgeFreshColor = useMemo(() => new THREE.Color(HERO_MATERIAL_COLORS.chronos.glow), []);
+  const edgeDamagedColor = useMemo(() => new THREE.Color(CHRONOS_AEGIS_DAMAGE_EDGE_COLOR), []);
   useEffect(() => () => {
     fillGeometry.dispose();
     wireGeometry.dispose();
     fillMaterial.dispose();
     edgeMaterial.dispose();
     wireMaterial.dispose();
-  }, [edgeMaterial, fillGeometry, fillMaterial, wireGeometry, wireMaterial]);
+    crackMaterial.dispose();
+  }, [crackMaterial, edgeMaterial, fillGeometry, fillMaterial, wireGeometry, wireMaterial]);
 
   useFrame((state) => {
     const group = groupRef.current;
@@ -3740,6 +4299,8 @@ function ChronosAegisViewmodelShield({
     }
 
     const t = state.clock.elapsedTime;
+    const durability = THREE.MathUtils.clamp(aegisPoseRef.current.durabilityRatio, 0, 1);
+    const damage = 1 - durability;
     const shieldScale = THREE.MathUtils.lerp(0.52, 0.98, shield);
     const opacityPulse = 0.92 + Math.sin(t * 5.8) * 0.08;
     group.visible = true;
@@ -3751,13 +4312,23 @@ function ChronosAegisViewmodelShield({
     );
     group.scale.set(shieldScale, shieldScale, 1);
 
-    fillMaterial.opacity = 0.18 * shield * opacityPulse;
-    edgeMaterial.opacity = 0.72 * shield;
-    wireMaterial.opacity = 0.24 * shield;
+    fillMaterial.color.copy(fillFreshColor).lerp(fillDamagedColor, damage * 0.74);
+    edgeMaterial.color.copy(edgeFreshColor).lerp(edgeDamagedColor, damage * 0.86);
+    wireMaterial.color.copy(edgeFreshColor).lerp(edgeDamagedColor, damage * 0.68);
+
+    fillMaterial.opacity = (0.08 + durability * 0.1) * shield * opacityPulse;
+    edgeMaterial.opacity = (0.28 + durability * 0.44) * shield;
+    wireMaterial.opacity = (0.07 + durability * 0.17) * shield;
 
     if (fillRef.current) fillRef.current.scale.set(1, 1 + Math.sin(t * 4.1) * 0.006, 1);
-    if (wireRef.current) wireRef.current.scale.setScalar(0.985 + Math.sin(t * 5.6) * 0.004);
-    if (braceRef.current) braceRef.current.position.z = -0.018 + Math.sin(t * 3.8) * 0.006;
+    if (wireRef.current) wireRef.current.scale.setScalar(0.985 + Math.sin(t * 5.6) * (0.004 + damage * 0.014));
+    if (braceRef.current) braceRef.current.position.z = -0.018 + Math.sin(t * 3.8) * (0.006 + damage * 0.018);
+    if (crackRef.current) {
+      const crackPulse = 0.76 + Math.sin(t * 13.2) * 0.18;
+      crackMaterial.opacity = shield * THREE.MathUtils.smoothstep(damage, 0.08, 0.74) * crackPulse;
+      crackRef.current.position.x = Math.sin(t * 19.5) * damage * 0.018;
+      crackRef.current.position.y = Math.cos(t * 15.5) * damage * 0.012;
+    }
   });
 
   const halfWidth = CHRONOS_AEGIS_VIEWMODEL_WIDTH * 0.5;
@@ -3777,6 +4348,11 @@ function ChronosAegisViewmodelShield({
         <mesh geometry={SHARED_GEOMETRIES.box} material={edgeMaterial} position={[halfWidth, halfHeight, 0.018]} scale={[edgeThickness * 2.2, edgeThickness * 2.2, 0.03]} frustumCulled={false} />
         <mesh geometry={SHARED_GEOMETRIES.box} material={edgeMaterial} position={[-halfWidth, -halfHeight, 0.018]} scale={[edgeThickness * 2.2, edgeThickness * 2.2, 0.03]} frustumCulled={false} />
         <mesh geometry={SHARED_GEOMETRIES.box} material={edgeMaterial} position={[halfWidth, -halfHeight, 0.018]} scale={[edgeThickness * 2.2, edgeThickness * 2.2, 0.03]} frustumCulled={false} />
+      </group>
+      <group ref={crackRef} position={[0, 0, -0.03]}>
+        <mesh geometry={SHARED_GEOMETRIES.box} material={crackMaterial} position={[-1.1, 0.42, 0]} rotation={[0, 0, -0.58]} scale={[0.022, 1.15, 0.016]} frustumCulled={false} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={crackMaterial} position={[0.72, -0.18, 0]} rotation={[0, 0, 0.72]} scale={[0.018, 0.9, 0.016]} frustumCulled={false} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={crackMaterial} position={[1.48, 0.48, 0]} rotation={[0, 0, -0.32]} scale={[0.016, 0.7, 0.016]} frustumCulled={false} />
       </group>
     </group>
   );
@@ -3806,16 +4382,18 @@ function ChronosViewmodel({
   const aegisPoseRef = useRef<ChronosAegisPose>({ ...CHRONOS_AEGIS_IDLE_POSE });
 
   useEffect(() => (
-    registerViewmodelPoseSampler<ChronosPrimaryOrbPoseSampleContext>(
-      CHRONOS_PRIMARY_ORB_SOCKET_NAME,
-      (context) => sampleChronosPrimaryOrbSocket(
-        context,
-        actionBlendRef.current,
-        targetingBlendRef.current,
-        movementBobRef.current,
-        aegisPoseRef.current
-      )
-    )
+    registerViewmodelPoseSamplers([
+      {
+        socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+        sampler: (context: ChronosPrimaryOrbPoseSampleContext) => sampleChronosPrimaryOrbSocket(
+          context,
+          actionBlendRef.current,
+          targetingBlendRef.current,
+          movementBobRef.current,
+          aegisPoseRef.current
+        ),
+      },
+    ])
   ), [actionBlendRef, targetingBlendRef]);
 
   useFrame((_, delta) => {
@@ -3852,10 +4430,12 @@ function ChronosViewmodel({
       CHRONOS_AEGIS_SPREAD_END
     );
     const lifelinePose = getChronosLifelineConduitPose(now);
+    const lifelineQueuedPose = getChronosLifelineQueuedPose(now);
     const timebreakPose = getChronosTimebreakPose(now);
+    const ascendantPose = getChronosAscendantParadoxPose(now);
 
-    aegisPose.active = active || lifelinePose.glow > 0.01 || timebreakPose.glow > 0.01;
-    aegisPose.blend = Math.max(aegisPose.aegisBlend, lifelinePose.glow, timebreakPose.glow);
+    aegisPose.active = active || lifelinePose.glow > 0.01 || lifelineQueuedPose.glow > 0.01 || timebreakPose.glow > 0.01;
+    aegisPose.blend = Math.max(aegisPose.aegisBlend, lifelinePose.glow, lifelineQueuedPose.glow, timebreakPose.glow);
     aegisPose.spread = Math.max(aegisSpread, lifelinePose.spread, timebreakPose.spread);
     aegisPose.recoil = timebreakPose.recoil;
     aegisPose.shield = THREE.MathUtils.smoothstep(
@@ -3863,6 +4443,9 @@ function ChronosViewmodel({
       CHRONOS_AEGIS_SHIELD_START,
       1
     );
+    aegisPose.spinBoost = ascendantPose.spinBoost;
+    aegisPose.heartbeat = lifelineQueuedPose.heartbeat;
+    aegisPose.durabilityRatio = aegisVisualState?.durabilityRatio ?? 1;
   });
 
   return (
@@ -3939,52 +4522,50 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
   useEffect(() => {
     if (heroId !== 'phantom') return undefined;
 
-    const unregisterLeft = registerViewmodelPoseSampler<PhantomPrimaryPoseSampleContext>(
-      PHANTOM_PRIMARY_PALM_SOCKET_NAMES[-1],
-      (context) => samplePhantomPrimaryPalmSocket(
-        { ...context, side: -1 },
-        actionBlendRef.current,
-        targetingBlendRef.current,
-        phantomLocomotionRef.current
-      )
-    );
-    const unregisterRight = registerViewmodelPoseSampler<PhantomPrimaryPoseSampleContext>(
-      PHANTOM_PRIMARY_PALM_SOCKET_NAMES[1],
-      (context) => samplePhantomPrimaryPalmSocket(
-        { ...context, side: 1 },
-        actionBlendRef.current,
-        targetingBlendRef.current,
-        phantomLocomotionRef.current
-      )
-    );
-    const unregisterVoidRayOrb = registerViewmodelPoseSampler<PhantomVoidRayOrbPoseSampleContext>(
-      PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
-      (context) => samplePhantomVoidRayOrbSocket(
-        context,
-        actionBlendRef.current,
-        targetingBlendRef.current
-      )
-    );
-
-    return () => {
-      unregisterLeft();
-      unregisterRight();
-      unregisterVoidRayOrb();
-    };
+    return registerViewmodelPoseSamplers([
+      {
+        socketName: PHANTOM_PRIMARY_PALM_SOCKET_NAMES[-1],
+        sampler: (context: PhantomPrimaryPoseSampleContext) => samplePhantomPrimaryPalmSocket(
+          { ...context, side: -1 },
+          actionBlendRef.current,
+          targetingBlendRef.current,
+          phantomLocomotionRef.current
+        ),
+      },
+      {
+        socketName: PHANTOM_PRIMARY_PALM_SOCKET_NAMES[1],
+        sampler: (context: PhantomPrimaryPoseSampleContext) => samplePhantomPrimaryPalmSocket(
+          { ...context, side: 1 },
+          actionBlendRef.current,
+          targetingBlendRef.current,
+          phantomLocomotionRef.current
+        ),
+      },
+      {
+        socketName: PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
+        sampler: (context: PhantomVoidRayOrbPoseSampleContext) => samplePhantomVoidRayOrbSocket(
+          context,
+          actionBlendRef.current,
+          targetingBlendRef.current
+        ),
+      },
+    ]);
   }, [heroId]);
 
   useEffect(() => {
     if (heroId !== 'blaze') return undefined;
 
-    return registerViewmodelPoseSampler<BlazeRocketStaffPoseSampleContext>(
-      BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-      (context) => sampleBlazeRocketStaffTipSocket(
-        context,
-        actionBlendRef.current,
-        targetingBlendRef.current,
-        phantomLocomotionRef.current
-      )
-    );
+    return registerViewmodelPoseSamplers([
+      {
+        socketName: BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+        sampler: (context: BlazeRocketStaffPoseSampleContext) => sampleBlazeRocketStaffTipSocket(
+          context,
+          actionBlendRef.current,
+          targetingBlendRef.current,
+          phantomLocomotionRef.current
+        ),
+      },
+    ]);
   }, [heroId]);
 
   useFrame((state, delta) => {
@@ -4164,6 +4745,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
             targetingBlendRef={targetingBlendRef}
           />
         )}
+        <ViewmodelBurnOverlay />
       </group>
     </group>
   );
@@ -4187,25 +4769,12 @@ export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
         heroId: viewmodelHeroId,
         playerState: state.localPlayer?.state ?? 'dead',
         gamePhase: state.gamePhase,
-        actionActive: Boolean(
-          viewmodelHeroId &&
-          (
-            (viewmodelHeroId === 'blaze' && state.flamethrowerActive) ||
-            (viewmodelHeroId === 'phantom' && state.voidRays.some(ray => ray.ownerId === localPlayerId)) ||
-            (viewmodelHeroId === 'hookshot' && (
-              state.dragHooks.some(hook => hook.ownerId === localPlayerId) ||
-              state.grappleLines.some(line => line.ownerId === localPlayerId)
-            ))
-          )
-        ),
+        actionActive: isViewmodelActionActive(viewmodelHeroId, state, localPlayerId),
         actionCharging: viewmodelHeroId === 'phantom' && state.voidRayCharging,
         actionTargeting: Boolean(
           viewmodelHeroId &&
-          (
-            (viewmodelHeroId === 'phantom' && state.shadowStepTargeting) ||
-            (viewmodelHeroId === 'blaze' && (state.bombTargeting || state.airStrikeTargeting)) ||
-            (viewmodelHeroId === 'hookshot' && state.grappleTrapTargeting)
-          )
+          viewmodelHeroId === 'blaze' &&
+          state.bombTargeting
         ),
       };
     })

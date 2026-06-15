@@ -2,13 +2,20 @@ import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
-import { BLAZE_FLAMETHROWER_RANGE } from '@voxel-strike/shared';
+import {
+  BLAZE_FLAMETHROWER_COLLISION_RADIUS,
+  BLAZE_FLAMETHROWER_RANGE,
+  type Team,
+} from '@voxel-strike/shared';
+import { useGameStore } from '../../../store/gameStore';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { visualStore } from '../../../store/visualStore';
 import { raycastDirection } from '../../../hooks/usePhysics';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
+import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
+import { measureFrameWork } from '../../../movement/networkDiagnostics';
 import {
   PLIABLE_ROPE_SEGMENT_COUNT,
   ROPE_SEGMENT_INDICES,
@@ -29,6 +36,14 @@ export interface FlamethrowerPose {
 interface FlamethrowerEffectProps {
   isActive: boolean;
   poseProvider?: () => FlamethrowerPose | null;
+  ownerId?: string;
+  ownerTeam?: Team;
+}
+
+interface FlamethrowerImpactHit {
+  point: { x: number; y: number; z: number };
+  normal: { x: number; y: number; z: number };
+  distance: number;
 }
 
 const _origin = new THREE.Vector3();
@@ -73,6 +88,8 @@ const FLAMETHROWER_SPIN_UP_DURATION = 0.14;
 const FLAMETHROWER_SPIN_DOWN_DURATION = 0.18;
 const FLAME_NOZZLE_VISUAL_OFFSET = 0.16;
 const FLAME_STREAM_MAX_LAG = 1.42;
+const FLAMETHROWER_COLLISION_SAMPLE_INTERVAL_MS = 50;
+const FLAMETHROWER_TERRAIN_IMPACT_INTERVAL_MS = 180;
 const FLAME_STREAM_POINT_INDICES = Array.from(
   { length: PLIABLE_ROPE_SEGMENT_COUNT + 1 },
   (_, index) => index
@@ -80,6 +97,23 @@ const FLAME_STREAM_POINT_INDICES = Array.from(
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
 const easeOutCubic = (value: number): number => 1 - Math.pow(1 - clamp01(value), 3);
+const FLAME_STREAM_SEGMENT_SAMPLES = ROPE_SEGMENT_INDICES.map((index) => {
+  const t = (index + 0.5) / PLIABLE_ROPE_SEGMENT_COUNT;
+  return {
+    index,
+    t,
+    widthBase: 0.045 + Math.pow(t, 0.92) * 0.62,
+    endFade: 1 - THREE.MathUtils.smoothstep(t, 0.72, 1),
+  };
+});
+const FLAME_STREAM_POINT_SAMPLES = FLAME_STREAM_POINT_INDICES.map((index) => {
+  const t = index / PLIABLE_ROPE_SEGMENT_COUNT;
+  return {
+    index,
+    t,
+    sizeBase: 0.045 + Math.pow(t, 0.86) * 0.56,
+  };
+});
 
 function sampleStreamPoint(
   out: THREE.Vector3,
@@ -96,7 +130,19 @@ function sampleStreamPoint(
   return out.copy(points[startIndex]).lerp(points[endIndex], scaledIndex - startIndex);
 }
 
-export const FlamethrowerEffect = React.memo(({ isActive, poseProvider }: FlamethrowerEffectProps) => {
+function copyImpactHit(
+  point: { x: number; y: number; z: number },
+  normal: { x: number; y: number; z: number },
+  distance: number
+): FlamethrowerImpactHit {
+  return {
+    point: { x: point.x, y: point.y, z: point.z },
+    normal: { x: normal.x, y: normal.y, z: normal.z },
+    distance,
+  };
+}
+
+export const FlamethrowerEffect = React.memo(({ isActive, poseProvider, ownerId, ownerTeam }: FlamethrowerEffectProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const flameRefs = useRef<(THREE.Mesh | null)[]>([]);
   const streamHeatRefs = useRef<(THREE.Mesh | null)[]>([]);
@@ -118,8 +164,10 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider }: Flamet
   const streamControlARef = useRef(new THREE.Vector3());
   const streamControlBRef = useRef(new THREE.Vector3());
   const streamLagRef = useRef(new THREE.Vector3());
+  const lastCollisionSampleRef = useRef(0);
+  const cachedImpactHitRef = useRef<FlamethrowerImpactHit | null>(null);
 
-  useFrame((state, delta) => {
+  useFrame((state, delta) => measureFrameWork('frame.effects.blazeFlamethrower', () => {
     if (!groupRef.current) return;
 
     const providedPose = poseProvider?.() ?? null;
@@ -161,8 +209,27 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider }: Flamet
     }
     wasLiveRef.current = hasLivePose;
 
-    if (hasLivePose && rampRef.current > 0.35 && now - lastTerrainImpactRef.current > 120) {
-      const hit = raycastDirection(
+    const shouldSampleCollision = hasLivePose &&
+      rampRef.current > 0.35 &&
+      (now - lastCollisionSampleRef.current >= FLAMETHROWER_COLLISION_SAMPLE_INTERVAL_MS || !cachedImpactHitRef.current);
+
+    if (!hasLivePose || rampRef.current <= 0.05) {
+      cachedImpactHitRef.current = null;
+    } else if (shouldSampleCollision) {
+      lastCollisionSampleRef.current = now;
+      const game = useGameStore.getState();
+      const owner = ownerId ? game.players.get(ownerId) : game.localPlayer;
+      const activeOwnerId = ownerId ?? game.localPlayer?.id ?? game.playerId ?? '';
+      const activeOwnerTeam = ownerTeam ?? owner?.team ?? null;
+      const aegisHit = getFirstChronosAegisVisualHit(
+        _origin,
+        _direction,
+        BLAZE_FLAMETHROWER_RANGE,
+        activeOwnerTeam,
+        activeOwnerId,
+        BLAZE_FLAMETHROWER_COLLISION_RADIUS
+      );
+      const terrainHit = raycastDirection(
         _origin.x, _origin.y, _origin.z,
         _direction.x, _direction.y, _direction.z,
         BLAZE_FLAMETHROWER_RANGE,
@@ -172,14 +239,22 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider }: Flamet
         }
       );
 
-      if (hit?.hit) {
-        lastTerrainImpactRef.current = now;
-        triggerTerrainImpact('blaze_flamethrower', hit.point, {
-          normal: hit.normal,
-          direction: { x: _direction.x, y: _direction.y, z: _direction.z },
-          scale: 1 + Math.max(0, 1 - hit.distance / BLAZE_FLAMETHROWER_RANGE) * 0.35,
-        });
-      }
+      cachedImpactHitRef.current = aegisHit && (!terrainHit?.hit || aegisHit.distance <= terrainHit.distance)
+        ? copyImpactHit(aegisHit.point, aegisHit.normal, aegisHit.distance)
+        : terrainHit?.hit
+          ? copyImpactHit(terrainHit.point, terrainHit.normal, terrainHit.distance)
+          : null;
+    }
+
+    const impactHit = cachedImpactHitRef.current;
+
+    if (impactHit && now - lastTerrainImpactRef.current > FLAMETHROWER_TERRAIN_IMPACT_INTERVAL_MS) {
+      lastTerrainImpactRef.current = now;
+      triggerTerrainImpact('blaze_flamethrower', impactHit.point, {
+        normal: impactHit.normal,
+        direction: { x: _direction.x, y: _direction.y, z: _direction.z },
+        scale: 1 + Math.max(0, 1 - impactHit.distance / BLAZE_FLAMETHROWER_RANGE) * 0.35,
+      });
     }
 
     if (!poseInitializedRef.current) {
@@ -207,7 +282,10 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider }: Flamet
     const plumeIntensity = easeOutCubic(rampRef.current);
     const spin = time * (10 + plumeIntensity * 18);
     const streamPoints = streamPointsRef.current;
-    const streamLength = BLAZE_FLAMETHROWER_RANGE * (0.78 + plumeIntensity * 0.18);
+    const collisionRange = impactHit
+      ? Math.max(FLAME_NOZZLE_VISUAL_OFFSET + 0.35, impactHit.distance)
+      : BLAZE_FLAMETHROWER_RANGE;
+    const streamLength = collisionRange * (0.78 + plumeIntensity * 0.18);
 
     _streamStart.set(0, FLAME_NOZZLE_VISUAL_OFFSET, 0);
     _streamEnd.set(
@@ -246,12 +324,11 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider }: Flamet
       streamPoints[i].add(_swirlOffset);
     }
 
-    ROPE_SEGMENT_INDICES.forEach((i) => {
-      const t = (i + 0.5) / PLIABLE_ROPE_SEGMENT_COUNT;
+    for (let sampleIndex = 0; sampleIndex < FLAME_STREAM_SEGMENT_SAMPLES.length; sampleIndex++) {
+      const { index: i, t, widthBase, endFade } = FLAME_STREAM_SEGMENT_SAMPLES[sampleIndex];
       const segmentRamp = easeOutCubic(clamp01((rampRef.current - t * 0.08) / 0.7));
-      const endFade = 1 - THREE.MathUtils.smoothstep(t, 0.72, 1);
       const widthPulse = flicker + Math.sin(time * (13 + i * 1.7) + i) * 0.08;
-      const radius = Math.max(0.001, (0.045 + Math.pow(t, 0.92) * 0.62) * widthPulse * segmentRamp);
+      const radius = Math.max(0.001, widthBase * widthPulse * segmentRamp);
       const opacity = endFade * segmentRamp;
 
       updateRopeSegment(streamHeatRefs.current[i], streamPoints[i], streamPoints[i + 1], radius * 2.15);
@@ -273,24 +350,26 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider }: Flamet
         core.visible = segmentRamp > 0.01;
         (core.material as THREE.MeshBasicMaterial).opacity = 0.54 * opacity;
       }
-    });
+    }
 
-    streamPuffRefs.current.forEach((puff, i) => {
-      if (!puff) return;
-      const t = i / PLIABLE_ROPE_SEGMENT_COUNT;
+    for (let sampleIndex = 0; sampleIndex < FLAME_STREAM_POINT_SAMPLES.length; sampleIndex++) {
+      const { index: i, t, sizeBase } = FLAME_STREAM_POINT_SAMPLES[sampleIndex];
+      const puff = streamPuffRefs.current[i];
+      if (!puff) continue;
       const source = streamPoints[Math.min(i, PLIABLE_ROPE_SEGMENT_COUNT)];
       const puffRamp = easeOutCubic(clamp01((rampRef.current - t * 0.06) / 0.7));
       const pulse = 0.85 + Math.sin(time * (16 + i) + i * 0.7) * 0.12;
 
       puff.visible = puffRamp > 0.01;
       puff.position.copy(source);
-      puff.scale.setScalar((0.045 + Math.pow(t, 0.86) * 0.56) * pulse * puffRamp);
+      puff.scale.setScalar(sizeBase * pulse * puffRamp);
       (puff.material as THREE.MeshBasicMaterial).opacity =
         (0.24 + (1 - t) * 0.28) * (1 - THREE.MathUtils.smoothstep(t, 0.78, 1)) * puffRamp;
-    });
+    }
 
-    flameRefs.current.forEach((flame, i) => {
-      if (!flame) return;
+    for (let i = 0; i < FLAME_SEGMENTS.length; i++) {
+      const flame = flameRefs.current[i];
+      if (!flame) continue;
       const segment = FLAME_SEGMENTS[i];
       const pulse = flicker + Math.sin(time * (18 + i * 3) + i) * 0.06;
       const segmentRamp = easeOutCubic(clamp01((rampRef.current - i * 0.06) / 0.7));
@@ -322,7 +401,7 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider }: Flamet
       );
       (flame.material as THREE.MeshBasicMaterial).opacity =
         segment.opacity * Math.min(1, pulse + 0.05) * segmentRamp;
-    });
+    }
 
     if (glowRef.current) {
       const glowPulse = 1 + Math.sin(time * 28) * 0.12;
@@ -341,8 +420,9 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider }: Flamet
         (0.055 + flicker * 0.02) * plumeIntensity;
     }
 
-    sparkRefs.current.forEach((spark, i) => {
-      if (!spark) return;
+    for (let i = 0; i < FLAME_SPARKS.length; i++) {
+      const spark = sparkRefs.current[i];
+      if (!spark) continue;
       const data = FLAME_SPARKS[i];
       const cycle = (elapsed * data.speed + data.phase) % 1;
       const distance = 0.5 + cycle * (BLAZE_FLAMETHROWER_RANGE * 0.85);
@@ -366,10 +446,11 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider }: Flamet
       );
       spark.scale.setScalar(cycle < 0.85 ? data.size * (1 + cycle * 1.2) * sparkRamp : 0);
       (spark.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.9 - cycle) * sparkRamp;
-    });
+    }
 
-    smokeRefs.current.forEach((smoke, i) => {
-      if (!smoke) return;
+    for (let i = 0; i < SMOKE_PUFFS.length; i++) {
+      const smoke = smokeRefs.current[i];
+      if (!smoke) continue;
       const data = SMOKE_PUFFS[i];
       const cycle = (elapsed * 0.9 + data.phase) % 1;
       const distance = 2.4 + cycle * (BLAZE_FLAMETHROWER_RANGE * 0.45);
@@ -390,13 +471,13 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider }: Flamet
       smoke.scale.setScalar((data.size + cycle * 0.28) * smokeRamp);
       (smoke.material as THREE.MeshBasicMaterial).opacity =
         Math.max(0, 0.28 - cycle * 0.28) * smokeRamp;
-    });
+    }
 
     if (lightRef.current) {
       lightRef.current.position.y = BLAZE_FLAMETHROWER_RANGE * 0.35;
       lightRef.current.intensity = (2 + flicker * 1.5) * plumeIntensity;
     }
-  });
+  }));
 
   if (getFrameClock().nowMs - startTimeRef.current > 5000) {
     startTimeRef.current = getFrameClock().nowMs;

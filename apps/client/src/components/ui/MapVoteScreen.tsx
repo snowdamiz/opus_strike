@@ -1,13 +1,16 @@
 import { Canvas, useThree } from '@react-three/fiber';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/shallow';
 import * as THREE from 'three';
-import { generateProceduralVoxelMap } from '@voxel-strike/shared';
+import { GOLDEN_VOXEL_MAP_THEME_ID, generateProceduralVoxelMap } from '@voxel-strike/shared';
 import type { VoxelMapManifest } from '@voxel-strike/shared';
 import { useGameStore, type LobbyPlayer, type MapVoteOption } from '../../store/gameStore';
+import { useSettingsStore } from '../../store/settingsStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useUISounds } from '../../hooks/useAudio';
 import { FACTIONS } from '../../styles/colorTokens';
 import { VoxelMap } from '../game/procedural';
+import { suppressExpectedContextLossLog } from '../game/webglLifecycle';
 import { PhaseCountdownTimer } from './PhaseCountdownTimer';
 import { RankIcon, getRankForStats } from './RankBadge';
 
@@ -38,11 +41,11 @@ function ClockGlyph({ className }: { className?: string }) {
 }
 
 function CaptureFrame({
-  seed,
+  captureKey,
   ready,
   onCapture,
 }: {
-  seed: number;
+  captureKey: string;
   ready: boolean;
   onCapture: (image: string) => void;
 }) {
@@ -51,7 +54,7 @@ function CaptureFrame({
 
   useEffect(() => {
     capturedRef.current = false;
-  }, [seed]);
+  }, [captureKey]);
 
   useEffect(() => {
     if (!ready || capturedRef.current) return;
@@ -76,7 +79,7 @@ function CaptureFrame({
       window.cancelAnimationFrame(secondFrame);
       window.cancelAnimationFrame(thirdFrame);
     };
-  }, [camera, gl, onCapture, ready, scene, seed]);
+  }, [camera, captureKey, gl, onCapture, ready, scene]);
 
   return null;
 }
@@ -126,14 +129,20 @@ function MapPreviewCanvas({
   option: MapVoteOption;
   onCapture: (image: string) => void;
 }) {
-  const manifest = useMemo(() => generateProceduralVoxelMap(option.seed), [option.seed]);
+  const mapThemeId = option.mapThemeId ?? null;
+  const manifest = useMemo(() => (
+    generateProceduralVoxelMap(option.seed, { themeId: mapThemeId })
+  ), [mapThemeId, option.seed]);
+  const previewThemeId = mapThemeId ?? manifest.themeId;
+  const optionKey = `${option.seed}:${previewThemeId}`;
   const theme = manifest.theme;
-  const [readySeed, setReadySeed] = useState<number | null>(null);
-  const mapReady = readySeed === option.seed;
+  const materialQuality = useSettingsStore((state) => state.settings.materialQuality);
+  const [readyKey, setReadyKey] = useState<string | null>(null);
+  const mapReady = readyKey === optionKey;
 
   const handleMapReady = useCallback(() => {
-    setReadySeed(option.seed);
-  }, [option.seed]);
+    setReadyKey(optionKey);
+  }, [optionKey]);
 
   return (
     <Canvas
@@ -145,6 +154,7 @@ function MapPreviewCanvas({
         powerPreference: 'low-power',
       }}
       onCreated={({ gl }) => {
+        suppressExpectedContextLossLog(gl);
         gl.toneMapping = THREE.ACESFilmicToneMapping;
         gl.toneMappingExposure = 1.05;
         gl.shadowMap.enabled = false;
@@ -164,56 +174,44 @@ function MapPreviewCanvas({
         <VoxelMap
           seed={option.seed}
           manifest={manifest}
+          themeId={previewThemeId}
           enablePhysics={false}
           shadowsEnabled={false}
           dressingShadows={false}
           dressingDensity={0.5}
           reflectionIntensity={0.35}
-          materialDetail="medium"
+          materialQuality={materialQuality}
           meshBuildMode="sync"
           progressiveReveal={false}
+          disposeGeometryCacheOnUnmount={false}
           onReady={handleMapReady}
         />
         <fogExp2 attach="fog" args={[theme.fogColor, 0.0048]} />
         <color attach="background" args={[theme.skyColor]} />
-        <CaptureFrame seed={option.seed} ready={mapReady} onCapture={onCapture} />
+        <CaptureFrame captureKey={optionKey} ready={mapReady} onCapture={onCapture} />
       </Suspense>
     </Canvas>
   );
 }
 
 function MapPreviewImage({
+  active,
   option,
   onReady,
 }: {
+  active: boolean;
   option: MapVoteOption;
   onReady: (optionId: string) => void;
 }) {
   const [image, setImage] = useState<string | null>(null);
   const [imageVisible, setImageVisible] = useState(false);
-  const [shouldRenderPreview, setShouldRenderPreview] = useState(false);
   const didReportReadyRef = useRef(false);
 
   useEffect(() => {
     setImage(null);
     setImageVisible(false);
-    setShouldRenderPreview(false);
     didReportReadyRef.current = false;
-
-    let firstFrame = 0;
-    let secondFrame = 0;
-
-    firstFrame = window.requestAnimationFrame(() => {
-      secondFrame = window.requestAnimationFrame(() => {
-        setShouldRenderPreview(true);
-      });
-    });
-
-    return () => {
-      window.cancelAnimationFrame(firstFrame);
-      window.cancelAnimationFrame(secondFrame);
-    };
-  }, [option.seed]);
+  }, [option.id, option.mapThemeId, option.seed]);
 
   useEffect(() => {
     if (!image) {
@@ -236,25 +234,28 @@ function MapPreviewImage({
     }
   }, [onReady, option.id]);
 
+  const hasVisibleImage = Boolean(image && imageVisible);
+
   return (
-    <div className="absolute inset-0 bg-black/[0.08]">
+    <div className="absolute inset-0">
+      <div className={`pointer-events-none absolute inset-0 bg-black/[0.08] transition-opacity duration-300 ease-out ${hasVisibleImage ? 'opacity-100' : 'opacity-0'}`} />
       {image && (
         <img
           src={image}
           alt={option.name}
-          className={`h-full w-full object-cover transition-opacity duration-300 ease-out ${imageVisible ? 'opacity-[0.84]' : 'opacity-0'}`}
+          className={`h-full w-full object-cover transition-opacity duration-300 ease-out ${hasVisibleImage ? 'opacity-[0.84]' : 'opacity-0'}`}
           draggable={false}
         />
       )}
-      {!image && shouldRenderPreview && (
+      {!image && active && (
         <div className="pointer-events-none absolute inset-0 opacity-0">
           <MapPreviewCanvas option={option} onCapture={handleCapture} />
         </div>
       )}
-      <div className={`pointer-events-none absolute inset-0 transition-opacity duration-200 ease-out ${image && imageVisible ? 'opacity-0' : 'opacity-100'}`}>
+      <div className={`pointer-events-none absolute inset-0 transition-opacity duration-200 ease-out ${hasVisibleImage ? 'opacity-0' : 'opacity-100'}`}>
         <GeneratingMapPanel />
       </div>
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/[0.36] via-black/[0.05] to-black/[0.025]" />
+      <div className={`pointer-events-none absolute inset-0 bg-gradient-to-t from-black/[0.36] via-black/[0.05] to-black/[0.025] transition-opacity duration-300 ease-out ${hasVisibleImage ? 'opacity-100' : 'opacity-0'}`} />
     </div>
   );
 }
@@ -273,22 +274,77 @@ function GeneratingMapPanel() {
   );
 }
 
+type MapVoteBadgeTone = 'idle' | 'selected' | 'winner';
+
+const mapVoteCardClass = 'map-vote-card relative overflow-hidden rounded-lg border bg-black/[0.1] shadow-2xl shadow-black/[0.26] backdrop-blur-xl';
+const mapVoteCardMetaClass = 'map-vote-card-meta relative overflow-hidden border-t border-white/[0.045] bg-black/[0.025] px-3.5 py-2.5 xl:px-4';
+const mapVoteCardMetaStyle = { backdropFilter: 'brightness(0.42) blur(2px)' };
+const GOLDEN_MAP_CARD_SHADOW = '0 20px 60px rgba(0,0,0,0.48), 0 0 34px rgba(247,190,71,0.38), inset 0 0 0 1px rgba(255,239,164,0.2)';
+
+function isGoldenMapOption(option: MapVoteOption): boolean {
+  return option.mapThemeId === GOLDEN_VOXEL_MAP_THEME_ID || option.themeId === GOLDEN_VOXEL_MAP_THEME_ID;
+}
+
+function getVoteBadgeStyle(tone: MapVoteBadgeTone) {
+  if (tone === 'winner') {
+    return {
+      background: 'rgb(var(--color-ui-success) / 0.22)',
+      color: 'rgb(var(--color-ui-success-light))',
+      borderColor: 'rgb(var(--color-ui-success) / 0.32)',
+    };
+  }
+
+  if (tone === 'selected') {
+    return {
+      background: 'rgb(var(--color-accent-primary) / 0.2)',
+      color: 'rgb(var(--color-accent-primary-hover))',
+      borderColor: 'rgb(var(--color-accent-primary) / 0.32)',
+    };
+  }
+
+  return {
+    background: 'rgba(255,255,255,0.035)',
+    color: 'rgba(255,255,255,0.58)',
+    borderColor: 'rgba(255,255,255,0.08)',
+  };
+}
+
+function MapVoteCardMeta({
+  voteCount,
+  badgeLabel,
+  badgeTone = 'idle',
+}: {
+  voteCount: number;
+  badgeLabel: string;
+  badgeTone?: MapVoteBadgeTone;
+}) {
+  return (
+    <div
+      className={mapVoteCardMetaClass}
+      style={mapVoteCardMetaStyle}
+    >
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/[0.02] via-transparent to-black/[0.07]" />
+      <div className="relative flex min-h-9 items-center justify-between gap-3">
+        <p className="shrink-0 font-display text-lg leading-none text-white">{getVoteLabel(voteCount)}</p>
+
+        <span
+          className="rounded-full border px-3 py-1.5 font-display text-[11px] uppercase tracking-wide transition-colors"
+          style={getVoteBadgeStyle(badgeTone)}
+        >
+          {badgeLabel}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function PreparingMapCard() {
   return (
-    <div className="map-vote-card map-vote-preparing-card relative overflow-hidden rounded-lg border border-white/[0.08] bg-black/[0.1] shadow-2xl shadow-black/[0.26] backdrop-blur-xl">
+    <div className={`${mapVoteCardClass} map-vote-preparing-card border-white/[0.16]`} aria-hidden="true">
       <div className="map-vote-preview relative aspect-[16/8.4] overflow-hidden border-b border-white/[0.06]">
         <GeneratingMapPanel />
       </div>
-      <div
-        className="map-vote-card-meta relative overflow-hidden border-t border-white/[0.045] bg-black/[0.025] px-3.5 py-2.5 xl:px-4"
-        style={{ backdropFilter: 'brightness(0.42) blur(2px)' }}
-      >
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/[0.02] via-transparent to-black/[0.07]" />
-        <div className="relative flex min-h-9 items-center justify-between gap-3">
-          <div className="h-5 w-20 rounded bg-white/[0.04]" />
-          <div className="h-7 w-14 rounded-full border border-white/[0.06] bg-white/[0.035]" />
-        </div>
-      </div>
+      <MapVoteCardMeta voteCount={0} badgeLabel="Vote" />
     </div>
   );
 }
@@ -308,14 +364,26 @@ export function MapVoteScreen() {
     mapVotePhaseEndTime,
     selectedMapOptionId,
     userStats,
-  } = useGameStore();
+  } = useGameStore(
+    useShallow((state) => ({
+      playerName: state.playerName,
+      playerId: state.playerId,
+      lobbyPlayers: state.lobbyPlayers,
+      isLobbyHost: state.isLobbyHost,
+      mapVoteOptions: state.mapVoteOptions,
+      mapVotes: state.mapVotes,
+      mapVotePhaseEndTime: state.mapVotePhaseEndTime,
+      selectedMapOptionId: state.selectedMapOptionId,
+      userStats: state.userStats,
+    }))
+  );
   const { leaveLobby, voteMap, reportMapVotePreviewsReady, finalizeMapVote } = useNetwork();
   const { playButtonClick } = useUISounds();
   const [readyPreviewIds, setReadyPreviewIds] = useState<Set<string>>(() => new Set());
   const reportedPreviewSignatureRef = useRef('');
 
   const mapOptionSignature = useMemo(
-    () => mapVoteOptions.map((option) => `${option.id}:${option.seed}`).join('|'),
+    () => mapVoteOptions.map((option) => `${option.id}:${option.seed}:${option.mapThemeId ?? ''}`).join('|'),
     [mapVoteOptions]
   );
 
@@ -333,6 +401,10 @@ export function MapVoteScreen() {
   const isPreparingMaps = mapVoteOptions.length === 0;
   const areMapPreviewsReady = mapVoteOptions.length > 0 && readyPreviewIds.size >= mapVoteOptions.length;
   const isVoteTimerStarted = Boolean(mapVotePhaseEndTime);
+  const activePreviewOptionId = useMemo(
+    () => mapVoteOptions.find((option) => !readyPreviewIds.has(option.id))?.id ?? null,
+    [mapVoteOptions, readyPreviewIds]
+  );
 
   const votersByOption = useMemo(() => {
     const groups = new Map<string, LobbyPlayer[]>();
@@ -423,10 +495,10 @@ export function MapVoteScreen() {
             <button
               type="button"
               onClick={handleLeave}
-              className="map-vote-back-button flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/60 transition-colors hover:border-white/20 hover:bg-white/10 hover:text-white"
+              className="menu-back-button map-vote-back-button"
               aria-label="Leave lobby"
             >
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
             </button>
@@ -440,15 +512,7 @@ export function MapVoteScreen() {
 
           <PhaseCountdownTimer phaseEndTime={mapVotePhaseEndTime} className="map-vote-timer" />
 
-          <div
-            className="map-vote-profile flex shrink-0 items-center gap-3 rounded-xl border py-2 pl-2 pr-4"
-            style={{
-              background: currentFaction
-                ? `linear-gradient(135deg, ${currentFaction.bgGradient}, rgb(var(--color-strike-panel-raised) / 0.9))`
-                : 'rgba(255,255,255,0.03)',
-              borderColor: currentFaction?.borderColor || 'rgba(255,255,255,0.05)',
-            }}
-          >
+          <div className="map-vote-profile flex shrink-0 items-center gap-3">
             <div className="map-vote-profile-avatar flex h-9 w-9 items-center justify-center" title={currentRank.label}>
               <RankIcon rank={currentRank} size={34} labelled />
             </div>
@@ -479,11 +543,14 @@ export function MapVoteScreen() {
               const voters = votersByOption.get(option.id) || [];
               const isSelected = localVote === option.id;
               const isWinner = selectedMapOptionId === option.id;
-              const cardBorderClass = isWinner
-                ? 'border-ui-success/70 hover:border-ui-success'
-                : isSelected
-                  ? 'border-accent-primary/70 hover:border-accent-primary'
-                  : 'border-white/[0.16] hover:border-orange-500/70';
+              const isGoldenBiome = isGoldenMapOption(option);
+              const cardBorderClass = isGoldenBiome
+                ? 'map-vote-card-golden'
+                : isWinner
+                  ? 'border-ui-success/70 hover:border-ui-success'
+                  : isSelected
+                    ? 'border-accent-primary/70 hover:border-accent-primary'
+                    : 'border-white/[0.16] hover:border-orange-500/70';
 
               return (
                 <button
@@ -491,15 +558,21 @@ export function MapVoteScreen() {
                   type="button"
                   onClick={() => handleVote(option.id)}
                   disabled={isFinalized}
-                  className={`map-vote-card relative overflow-hidden rounded-lg border bg-black/[0.1] text-left shadow-2xl shadow-black/[0.26] outline-none backdrop-blur-xl focus-visible:ring-2 focus-visible:ring-accent-primary/70 disabled:cursor-default ${cardBorderClass}`}
+                  className={`${mapVoteCardClass} text-left outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/70 disabled:cursor-default ${cardBorderClass}`}
                   style={{
-                    boxShadow: isSelected || isWinner
-                      ? `0 20px 60px rgba(0,0,0,0.48), 0 0 28px ${isWinner ? 'rgb(var(--color-ui-success) / 0.28)' : 'rgb(var(--color-accent-primary) / 0.25)'}`
-                      : undefined,
+                    boxShadow: isGoldenBiome
+                      ? GOLDEN_MAP_CARD_SHADOW
+                      : isSelected || isWinner
+                        ? `0 20px 60px rgba(0,0,0,0.48), 0 0 28px ${isWinner ? 'rgb(var(--color-ui-success) / 0.28)' : 'rgb(var(--color-accent-primary) / 0.25)'}`
+                        : undefined,
                   }}
                 >
                   <div className="map-vote-preview relative aspect-[16/8.4] overflow-hidden border-b border-white/[0.06]">
-                    <MapPreviewImage option={option} onReady={handlePreviewReady} />
+                    <MapPreviewImage
+                      active={activePreviewOptionId === option.id}
+                      option={option}
+                      onReady={handlePreviewReady}
+                    />
                     {(isSelected || isWinner) && (
                       <div
                         className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-lg border backdrop-blur-md"
@@ -514,38 +587,11 @@ export function MapVoteScreen() {
                     )}
                   </div>
 
-                  <div
-                    className="map-vote-card-meta relative overflow-hidden border-t border-white/[0.045] bg-black/[0.025] px-3.5 py-2.5 xl:px-4"
-                    style={{ backdropFilter: 'brightness(0.42) blur(2px)' }}
-                  >
-                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/[0.02] via-transparent to-black/[0.07]" />
-                    <div className="relative flex min-h-9 items-center justify-between gap-3">
-                      <p className="shrink-0 font-display text-lg leading-none text-white">{getVoteLabel(voters.length)}</p>
-
-                      <span
-                        className="rounded-full border px-3 py-1.5 font-display text-[11px] uppercase tracking-wide transition-colors"
-                        style={{
-                          background: isSelected || isWinner
-                            ? isWinner
-                              ? 'rgb(var(--color-ui-success) / 0.22)'
-                              : 'rgb(var(--color-accent-primary) / 0.2)'
-                            : 'rgba(255,255,255,0.035)',
-                          color: isWinner
-                            ? 'rgb(var(--color-ui-success-light))'
-                            : isSelected
-                              ? 'rgb(var(--color-accent-primary-hover))'
-                              : 'rgba(255,255,255,0.58)',
-                          borderColor: isWinner
-                            ? 'rgb(var(--color-ui-success) / 0.32)'
-                            : isSelected
-                              ? 'rgb(var(--color-accent-primary) / 0.32)'
-                              : 'rgba(255,255,255,0.08)',
-                        }}
-                      >
-                        {isWinner ? 'Locked' : isSelected ? 'Picked' : 'Vote'}
-                      </span>
-                    </div>
-                  </div>
+                  <MapVoteCardMeta
+                    voteCount={voters.length}
+                    badgeLabel={isWinner ? 'Locked' : isSelected ? 'Picked' : 'Vote'}
+                    badgeTone={isWinner ? 'winner' : isSelected ? 'selected' : 'idle'}
+                  />
                 </button>
               );
             })}

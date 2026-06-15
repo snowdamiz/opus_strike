@@ -6,12 +6,14 @@
  * - Drag Hook (secondary fire)
  * - Grapple (E ability)
  * - Anchor Wall (Q ability)
- * - Grapple Trap (Ultimate)
+ * - Ground Hooks (Ultimate)
  */
 
 import { useRef, useCallback } from 'react';
-import * as THREE from 'three';
-import { ABILITY_DEFINITIONS, GRAVITY } from '@voxel-strike/shared';
+import {
+  HOOKSHOT_GROUND_HOOKS_RADIUS,
+  HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
+} from '@voxel-strike/shared';
 import {
   createHookshotSwingState,
   stepHookshotSwing,
@@ -28,9 +30,6 @@ import {
   DRAG_HOOK_SPEED,
   DRAG_HOOK_MAX_DISTANCE,
   GRAPPLE_MAX_RANGE,
-  GRAPPLE_TRAP_MAX_RANGE,
-  GRAPPLE_TRAP_THROW_SPEED,
-  GRAPPLE_TRAP_GRAVITY,
   HOOKSHOT_CHAIN_SOCKET,
   calculatePlayerSocketPosition,
   calculateLookDirection,
@@ -38,16 +37,14 @@ import {
 } from '../constants';
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import type { AbilityContext } from '../types';
-import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../../viewmodel/hookshotPose';
-import { readViewmodelSocket } from '../../../viewmodel/viewmodelSocketRegistry';
+import { writeAbilitySocketOrigin } from '../../../model-system/abilitySocketResolver';
 import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
 
 export interface UseHookshotAbilitiesReturn {
   // State refs
   hookProjectileIdRef: React.MutableRefObject<number>;
   dragHookIdRef: React.MutableRefObject<number>;
-  grappleTrapIdRef: React.MutableRefObject<number>;
-  swingLineIdRef: React.MutableRefObject<number>;
+  groundHooksIdRef: React.MutableRefObject<number>;
   grappleLineIdRef: React.MutableRefObject<number>;
   earthWallIdRef: React.MutableRefObject<number>;
   lastHookTimeRef: React.MutableRefObject<number>;
@@ -59,44 +56,30 @@ export interface UseHookshotAbilitiesReturn {
   grappleTargetRef: React.MutableRefObject<{ x: number; y: number; z: number } | null>;
   activeGrappleLineIdRef: React.MutableRefObject<string | null>;
 
-  // Swing state
+  // Grapple swing state
   isSwingingRef: React.MutableRefObject<boolean>;
-  swingAttachPointRef: React.MutableRefObject<{ x: number; y: number; z: number } | null>;
-  swingRopeLengthRef: React.MutableRefObject<number>;
-  swingInitialRopeLengthRef: React.MutableRefObject<number>;
-  swingMomentumRef: React.MutableRefObject<{ x: number; y: number; z: number }>;
-  activeSwingLineIdRef: React.MutableRefObject<string | null>;
-
-  // Grapple trap targeting
-  grappleTrapTargetRef: React.MutableRefObject<THREE.Vector3 | null>;
-  grappleTrapValidRef: React.MutableRefObject<boolean>;
 
   // Methods
-  fireChainHook: (ctx: AbilityContext) => void;
-  fireDragHook: (ctx: AbilityContext) => void;
+  fireChainHook: (ctx: AbilityContext) => boolean;
+  fireDragHook: (ctx: AbilityContext) => boolean;
   canGrapple: (ctx: AbilityContext) => boolean;
   executeGrapple: (ctx: AbilityContext) => boolean;
-  executeEarthWall: (ctx: AbilityContext) => void;
-  executeGrappleTrap: (ctx: AbilityContext, updateLocalPlayer: (data: any) => void) => void;
+  executeEarthWall: (ctx: AbilityContext) => boolean;
+  executeGroundHooks: (ctx: AbilityContext, updateLocalPlayer: (data: any) => void) => boolean;
   updateGrapplePhysics: (ctx: AbilityContext) => void;
-  updateSwingPhysics: (ctx: AbilityContext) => void;
   handleSwingTerrainContact: () => void;
-  handleGrappleTrapTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
 }
 
-const WEB_SWING_DURATION_SECONDS = 2.75;
-
-function vectorToPlainPosition(vector: THREE.Vector3): { x: number; y: number; z: number } {
-  return {
-    x: vector.x,
-    y: vector.y,
-    z: vector.z,
-  };
-}
-
-function readHookshotHookSocketPosition(launchSide: -1 | 1): { x: number; y: number; z: number } | null {
-  const socketPose = readViewmodelSocket(HOOKSHOT_HOOK_SOCKET_NAMES[launchSide]);
-  return socketPose ? vectorToPlainPosition(socketPose.position) : null;
+function readHookshotHookSocketPosition(
+  abilityId: string,
+  launchSide: -1 | 1
+): { x: number; y: number; z: number } | null {
+  const origin = { x: 0, y: 0, z: 0 };
+  return writeAbilitySocketOrigin(origin, {
+    ownerScope: 'localViewmodel',
+    abilityId,
+    side: launchSide,
+  }) ? origin : null;
 }
 
 function calculateHookshotLaunch(
@@ -183,12 +166,43 @@ function resolveHookshotGrapplePoint(ctx: AbilityContext): { x: number; y: numbe
   return hit?.hit ? hit.point : null;
 }
 
+function resolveGroundHookTargets(ctx: AbilityContext, rootUntil: number) {
+  const ownerTeam = (ctx.localPlayer.team || 'red') as 'red' | 'blue';
+  const radiusSq = HOOKSHOT_GROUND_HOOKS_RADIUS * HOOKSHOT_GROUND_HOOKS_RADIUS;
+  const targets: Array<{
+    targetId: string;
+    position: { x: number; y: number; z: number };
+    rootUntil: number;
+  }> = [];
+
+  useGameStore.getState().players.forEach((player) => {
+    if (player.id === ctx.localPlayer.id) return;
+    if (player.state !== 'alive') return;
+    if (player.team === ownerTeam) return;
+
+    const dx = player.position.x - ctx.position.x;
+    const dz = player.position.z - ctx.position.z;
+    if (dx * dx + dz * dz > radiusSq) return;
+
+    targets.push({
+      targetId: player.id,
+      position: {
+        x: player.position.x,
+        y: player.position.y,
+        z: player.position.z,
+      },
+      rootUntil,
+    });
+  });
+
+  return targets;
+}
+
 export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
   // ID counters
   const hookProjectileIdRef = useRef(0);
   const dragHookIdRef = useRef(0);
-  const grappleTrapIdRef = useRef(0);
-  const swingLineIdRef = useRef(0);
+  const groundHooksIdRef = useRef(0);
   const grappleLineIdRef = useRef(0);
   const earthWallIdRef = useRef(0);
 
@@ -203,30 +217,21 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
   const activeGrappleLineIdRef = useRef<string | null>(null);
   const activeGrappleStartTimeRef = useRef(0);
 
-  // Swing state
+  // Grapple swing state
   const isSwingingRef = useRef(false);
-  const swingAttachPointRef = useRef<{ x: number; y: number; z: number } | null>(null);
-  const swingRopeLengthRef = useRef(0);
-  const swingInitialRopeLengthRef = useRef(0);
-  const swingMomentumRef = useRef({ x: 0, y: 0, z: 0 });
-  const activeSwingLineIdRef = useRef<string | null>(null);
   const swingWasAirborneRef = useRef(false);
   const grappleSwingStateRef = useRef<HookshotSwingState | null>(null);
-
-  // Grapple trap targeting
-  const grappleTrapTargetRef = useRef<THREE.Vector3 | null>(null);
-  const grappleTrapValidRef = useRef(false);
 
   // Fire Chain Hook (primary fire)
   const fireChainHook = useCallback((ctx: AbilityContext) => {
     const now = Date.now();
     const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
-    if (now - lastHookTimeRef.current < HOOKSHOT_FIRE_INTERVAL / tempoMultiplier) return;
+    if (now - lastHookTimeRef.current < HOOKSHOT_FIRE_INTERVAL / tempoMultiplier) return false;
 
     lastHookTimeRef.current = now;
     hookProjectileIdRef.current++;
     const launchSide = hookProjectileIdRef.current % 2 === 1 ? 1 : -1;
-    const socketSpawnPos = readHookshotHookSocketPosition(launchSide);
+    const socketSpawnPos = readHookshotHookSocketPosition('hookshot_basic_attack', launchSide);
     const { spawnPos, direction } = calculateHookshotLaunch(
       ctx,
       launchSide,
@@ -256,18 +261,19 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       launchSide,
       now,
     });
+    return true;
   }, []);
 
   // Fire Drag Hook (secondary fire)
   const fireDragHook = useCallback((ctx: AbilityContext) => {
     const now = Date.now();
     const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
-    if (now - lastDragHookTimeRef.current < DRAG_HOOK_COOLDOWN / tempoMultiplier) return;
+    if (now - lastDragHookTimeRef.current < DRAG_HOOK_COOLDOWN / tempoMultiplier) return false;
 
     lastDragHookTimeRef.current = now;
     dragHookIdRef.current++;
     const launchSide = 1;
-    const socketSpawnPos = readHookshotHookSocketPosition(launchSide);
+    const socketSpawnPos = readHookshotHookSocketPosition('hookshot_heavy_attack', launchSide);
     const { spawnPos, direction } = calculateHookshotLaunch(
       ctx,
       launchSide,
@@ -296,6 +302,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       launchSide,
       now,
     });
+    return true;
   }, []);
 
   const canGrapple = useCallback((ctx: AbilityContext) => {
@@ -311,7 +318,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     grappleLineIdRef.current++;
     const lineId = `grapple_${ctx.localPlayer.id}_${grappleLineIdRef.current}`;
     const launchSide = 1;
-    const startPos = readHookshotHookSocketPosition(launchSide) ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
+    const startPos = readHookshotHookSocketPosition('hookshot_grapple', launchSide) ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
       ...HOOKSHOT_CHAIN_SOCKET,
       sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
     });
@@ -370,114 +377,38 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
       maxDistance: 24.35,
       hookProgress: 0,
-      wallSegments: [],
     });
     markPredictedLocalAbilityVisual('hookshot_anchor_wall', ctx.localPlayer.id, wallId);
+    return true;
   }, []);
 
-  // Execute Grapple Trap (Ultimate)
-  const executeGrappleTrap = useCallback((
+  // Execute Ground Hooks (Ultimate)
+  const executeGroundHooks = useCallback((
     ctx: AbilityContext,
     updateLocalPlayer: (data: any) => void
   ) => {
     const now = Date.now();
-    const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
+    const rootUntil = now + HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS * 1000;
+    const targets = resolveGroundHookTargets(ctx, rootUntil);
+    groundHooksIdRef.current++;
+    const effectId = `ground_hooks_${ctx.localPlayer.id}_${groundHooksIdRef.current}`;
+    const store = useGameStore.getState();
 
-    // Start position
-    const startPos = {
-      x: ctx.localPlayer.position.x,
-      y: ctx.localPlayer.position.y + 1.5,
-      z: ctx.localPlayer.position.z,
-    };
-
-    // Find target
-    let targetX = startPos.x + direction.x * GRAPPLE_TRAP_MAX_RANGE;
-    let targetY = startPos.y + direction.y * GRAPPLE_TRAP_MAX_RANGE;
-    let targetZ = startPos.z + direction.z * GRAPPLE_TRAP_MAX_RANGE;
-
-    if (isPhysicsReady()) {
-      const directHit = raycastDirection(
-        ctx.position.x + 0.6, ctx.position.y, ctx.position.z,
-        direction.x, direction.y, direction.z,
-        GRAPPLE_TRAP_MAX_RANGE + 10
-      );
-
-      if (directHit?.hit) {
-        targetX = directHit.point.x;
-        targetY = directHit.point.y;
-        targetZ = directHit.point.z;
-
-        if (!directHit.isWalkable) {
-          const groundBelow = checkGroundWithNormal(targetX, targetY + 5, targetZ, 50);
-          if (groundBelow?.isWalkable) {
-            targetY = groundBelow.groundY + 0.1;
-          }
-        } else {
-          targetY += 0.1;
-        }
-      } else {
-        // Sample along direction
-        const sampleDistances = [15, 20, 25, GRAPPLE_TRAP_MAX_RANGE];
-        for (const dist of sampleDistances) {
-          const sampleX = ctx.position.x + direction.x * dist;
-          const sampleY = ctx.position.y + direction.y * dist;
-          const sampleZ = ctx.position.z + direction.z * dist;
-
-          const groundCheck = checkGroundWithNormal(
-            sampleX,
-            Math.max(sampleY + 50, ctx.position.y + 50),
-            sampleZ,
-            150
-          );
-          if (groundCheck?.isWalkable) {
-            targetX = sampleX;
-            targetY = groundCheck.groundY + 0.1;
-            targetZ = sampleZ;
-            break;
-          }
-        }
-      }
-    }
-
-    // Calculate throw velocity
-    const dx = targetX - startPos.x;
-    const dy = targetY - startPos.y;
-    const dz = targetZ - startPos.z;
-    const horizontalDist = Math.sqrt(dx * dx + dz * dz);
-    const timeOfFlight = Math.max(0.5, horizontalDist / 20);
-
-    const horizMag = Math.sqrt(dx * dx + dz * dz);
-    const horizVelX = horizMag > 0 ? (dx / horizMag) * (horizontalDist / timeOfFlight) : 0;
-    const horizVelZ = horizMag > 0 ? (dz / horizMag) * (horizontalDist / timeOfFlight) : 0;
-    const vertVel = (dy + 0.5 * GRAPPLE_TRAP_GRAVITY * timeOfFlight * timeOfFlight) / timeOfFlight;
-
-    const throwVelocity = {
-      x: Math.max(-GRAPPLE_TRAP_THROW_SPEED, Math.min(GRAPPLE_TRAP_THROW_SPEED, horizVelX)),
-      y: Math.max(5, Math.min(GRAPPLE_TRAP_THROW_SPEED * 1.2, vertVel)),
-      z: Math.max(-GRAPPLE_TRAP_THROW_SPEED, Math.min(GRAPPLE_TRAP_THROW_SPEED, horizVelZ)),
-    };
-
-    // Create trap
-    grappleTrapIdRef.current++;
-    const trapId = `grapple_trap_${ctx.localPlayer.id}_${grappleTrapIdRef.current}`;
-
-    useGameStore.getState().addGrappleTrap({
-      id: trapId,
-      position: { x: targetX, y: targetY, z: targetZ },
-      startPosition: startPos,
-      velocity: throwVelocity,
+    store.addHookshotGroundHooks({
+      id: effectId,
+      position: { x: ctx.position.x, y: ctx.position.y, z: ctx.position.z },
       startTime: now,
-      duration: 8,
+      duration: HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
       ownerId: ctx.localPlayer.id,
       ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
-      radius: 8,
-      hookedPlayers: [],
+      radius: HOOKSHOT_GROUND_HOOKS_RADIUS,
+      rootUntil,
+      targets,
     });
-    markPredictedLocalAbilityVisual('hookshot_grapple_trap', ctx.localPlayer.id, trapId, {
-      now,
-    });
+    markPredictedLocalAbilityVisual('hookshot_ground_hooks', ctx.localPlayer.id, effectId, { now });
 
     updateLocalPlayer({ ultimateCharge: 0 });
+    return true;
   }, []);
 
   const handleSwingTerrainContact = useCallback(() => {
@@ -487,19 +418,12 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     if (activeGrappleLineIdRef.current) {
       store.removeGrappleLine(activeGrappleLineIdRef.current);
     }
-    if (activeSwingLineIdRef.current) {
-      store.updateSwingLine(activeSwingLineIdRef.current, { state: 'done', isActive: false });
-    }
 
     isGrapplingRef.current = false;
     isSwingingRef.current = false;
     grappleTargetRef.current = null;
     activeGrappleLineIdRef.current = null;
     activeGrappleStartTimeRef.current = 0;
-    swingAttachPointRef.current = null;
-    activeSwingLineIdRef.current = null;
-    swingRopeLengthRef.current = 0;
-    swingInitialRopeLengthRef.current = 0;
     swingWasAirborneRef.current = false;
     grappleSwingStateRef.current = null;
   }, []);
@@ -516,8 +440,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       grappleTargetRef.current = null;
       activeGrappleLineIdRef.current = null;
       activeGrappleStartTimeRef.current = 0;
-      swingRopeLengthRef.current = 0;
-      swingInitialRopeLengthRef.current = 0;
       swingWasAirborneRef.current = false;
       grappleSwingStateRef.current = null;
     };
@@ -564,9 +486,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
         ctx.isGrounded
       );
       swingWasAirborneRef.current = grappleSwingStateRef.current.wasAirborne;
-      swingRopeLengthRef.current = grappleSwingStateRef.current.ropeLength;
-      swingInitialRopeLengthRef.current = grappleSwingStateRef.current.initialRopeLength;
-      swingMomentumRef.current = { x: ctx.velocity.x, y: ctx.velocity.y, z: ctx.velocity.z };
       store.updateGrappleLine(lineId, { state: 'pulling' });
     }
 
@@ -593,211 +512,15 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     grappleSwingStateRef.current = result.swing;
     if (result.swing) {
       swingWasAirborneRef.current = result.swing.wasAirborne;
-      swingRopeLengthRef.current = result.swing.ropeLength;
-      swingInitialRopeLengthRef.current = result.swing.initialRopeLength;
     } else {
       releaseGrappleSwing();
-    }
-  }, []);
-
-  // Update swing physics (Apex Pathfinder style)
-  const updateSwingPhysics = useCallback((ctx: AbilityContext) => {
-    // Phase 1: Wait for hook to reach target
-    if (activeSwingLineIdRef.current && swingAttachPointRef.current && !isSwingingRef.current) {
-      const swingLines = useGameStore.getState().swingLines;
-      const activeLine = swingLines.find(l => l.id === activeSwingLineIdRef.current);
-
-      if (activeLine && activeLine.state === 'attached') {
-        isSwingingRef.current = true;
-        useGameStore.getState().updateSwingLine(activeSwingLineIdRef.current, { state: 'swinging' });
-
-        const attach = swingAttachPointRef.current;
-        swingRopeLengthRef.current = Math.sqrt(
-          (attach.x - ctx.position.x) ** 2 +
-          (attach.y - ctx.position.y) ** 2 +
-          (attach.z - ctx.position.z) ** 2
-        );
-        swingInitialRopeLengthRef.current = swingRopeLengthRef.current;
-        swingMomentumRef.current = { x: ctx.velocity.x, y: ctx.velocity.y, z: ctx.velocity.z };
-        swingWasAirborneRef.current = !ctx.isGrounded;
-
-        // Initial pull
-        const toAttach = {
-          x: attach.x - ctx.position.x,
-          y: attach.y - ctx.position.y,
-          z: attach.z - ctx.position.z,
-        };
-        const dist = Math.sqrt(toAttach.x ** 2 + toAttach.y ** 2 + toAttach.z ** 2);
-        if (dist > 0) {
-          ctx.velocity.x += (toAttach.x / dist) * 12;
-          ctx.velocity.y += (toAttach.y / dist) * 12;
-          ctx.velocity.z += (toAttach.z / dist) * 12;
-        }
-      } else if (!activeLine) {
-        activeSwingLineIdRef.current = null;
-        swingAttachPointRef.current = null;
-      }
-    }
-
-    // Phase 2: Active swing
-    if (activeSwingLineIdRef.current && isSwingingRef.current && swingAttachPointRef.current) {
-      const attach = swingAttachPointRef.current;
-      const swingLines = useGameStore.getState().swingLines;
-      const activeLine = swingLines.find(l => l.id === activeSwingLineIdRef.current);
-      const elapsed = activeLine ? (Date.now() - activeLine.startTime) / 1000 : 0;
-      const duration = WEB_SWING_DURATION_SECONDS;
-
-      if (elapsed >= duration || !activeLine) {
-        isSwingingRef.current = false;
-        swingAttachPointRef.current = null;
-        activeSwingLineIdRef.current = null;
-        swingWasAirborneRef.current = false;
-        return;
-      }
-
-      if (ctx.isGrounded && swingWasAirborneRef.current) {
-        handleSwingTerrainContact();
-        return;
-      }
-      if (!ctx.isGrounded) {
-        swingWasAirborneRef.current = true;
-      }
-
-      // Rope direction
-      const toAttach = {
-        x: attach.x - ctx.position.x,
-        y: attach.y - ctx.position.y,
-        z: attach.z - ctx.position.z,
-      };
-      const currentLength = Math.sqrt(toAttach.x ** 2 + toAttach.y ** 2 + toAttach.z ** 2);
-      const ropeDir = {
-        x: toAttach.x / currentLength,
-        y: toAttach.y / currentLength,
-        z: toAttach.z / currentLength,
-      };
-
-      // Look direction slingshot effect
-      const lookDir = calculateLookDirection(ctx.yaw, ctx.pitch);
-      const lookDot = lookDir.x * ropeDir.x + lookDir.y * ropeDir.y + lookDir.z * ropeDir.z;
-      const slingshotFactor = 1 - lookDot;
-      const slingshotStrength = 25 * slingshotFactor;
-
-      const lookAlongRope = lookDir.x * ropeDir.x + lookDir.y * ropeDir.y + lookDir.z * ropeDir.z;
-      const lookPerp = {
-        x: lookDir.x - ropeDir.x * lookAlongRope,
-        y: lookDir.y - ropeDir.y * lookAlongRope,
-        z: lookDir.z - ropeDir.z * lookAlongRope,
-      };
-      const lookPerpLen = Math.sqrt(lookPerp.x ** 2 + lookPerp.y ** 2 + lookPerp.z ** 2);
-
-      if (lookPerpLen > 0.1) {
-        ctx.velocity.x += (lookPerp.x / lookPerpLen) * slingshotStrength * ctx.dt;
-        ctx.velocity.y += (lookPerp.y / lookPerpLen) * slingshotStrength * ctx.dt * 0.5;
-        ctx.velocity.z += (lookPerp.z / lookPerpLen) * slingshotStrength * ctx.dt;
-      }
-
-      // Strafe input momentum
-      const wishDir = { x: 0, y: 0, z: 0 };
-      if (ctx.inputState.moveForward) { wishDir.x -= Math.sin(ctx.yaw); wishDir.z -= Math.cos(ctx.yaw); }
-      if (ctx.inputState.moveBackward) { wishDir.x += Math.sin(ctx.yaw); wishDir.z += Math.cos(ctx.yaw); }
-      if (ctx.inputState.moveLeft) { wishDir.x -= Math.cos(ctx.yaw); wishDir.z += Math.sin(ctx.yaw); }
-      if (ctx.inputState.moveRight) { wishDir.x += Math.cos(ctx.yaw); wishDir.z -= Math.sin(ctx.yaw); }
-
-      const wishLen = Math.sqrt(wishDir.x ** 2 + wishDir.z ** 2);
-      if (wishLen > 0.1) {
-        wishDir.x /= wishLen;
-        wishDir.z /= wishLen;
-
-        const strafeAlongRope = wishDir.x * ropeDir.x + wishDir.z * ropeDir.z;
-        const strafePerp = {
-          x: wishDir.x - ropeDir.x * strafeAlongRope,
-          z: wishDir.z - ropeDir.z * strafeAlongRope,
-        };
-        const strafePerpLen = Math.sqrt(strafePerp.x ** 2 + strafePerp.z ** 2);
-
-        if (strafePerpLen > 0.1) {
-          ctx.velocity.x += (strafePerp.x / strafePerpLen) * 20 * ctx.dt;
-          ctx.velocity.z += (strafePerp.z / strafePerpLen) * 20 * ctx.dt;
-        }
-      }
-
-      // Gravity
-      ctx.velocity.y += GRAVITY * ctx.dt;
-
-      // Rope tension
-      const maxLength = swingInitialRopeLengthRef.current;
-      if (currentLength > maxLength) {
-        const velAlongRope = ctx.velocity.x * (-ropeDir.x) + ctx.velocity.y * (-ropeDir.y) + ctx.velocity.z * (-ropeDir.z);
-        if (velAlongRope > 0) {
-          ctx.velocity.x += ropeDir.x * velAlongRope;
-          ctx.velocity.y += ropeDir.y * velAlongRope;
-          ctx.velocity.z += ropeDir.z * velAlongRope;
-        }
-
-        const overExtend = currentLength - maxLength;
-        const tensionForce = overExtend * 50;
-        ctx.velocity.x += ropeDir.x * tensionForce * ctx.dt;
-        ctx.velocity.y += ropeDir.y * tensionForce * ctx.dt;
-        ctx.velocity.z += ropeDir.z * tensionForce * ctx.dt;
-
-        ctx.position.x = attach.x - ropeDir.x * maxLength;
-        ctx.position.y = attach.y - ropeDir.y * maxLength;
-        ctx.position.z = attach.z - ropeDir.z * maxLength;
-      }
-
-      // Natural pull
-      ctx.velocity.x += ropeDir.x * 8 * ctx.dt;
-      ctx.velocity.y += ropeDir.y * 8 * ctx.dt * 0.3;
-      ctx.velocity.z += ropeDir.z * 8 * ctx.dt;
-
-      // Pendulum boost
-      if (ctx.position.y < attach.y) {
-        const heightDiff = attach.y - ctx.position.y;
-        const swingBoost = Math.min(heightDiff * 0.5, 3);
-        const hSpeed = Math.sqrt(ctx.velocity.x ** 2 + ctx.velocity.z ** 2);
-        if (hSpeed > 0.1) {
-          ctx.velocity.x += (ctx.velocity.x / hSpeed) * swingBoost * ctx.dt;
-          ctx.velocity.z += (ctx.velocity.z / hSpeed) * swingBoost * ctx.dt;
-        }
-      }
-
-      // Jump to release
-      if (ctx.inputState.jump) {
-        const releaseBoost = 5;
-        const hSpeed = Math.sqrt(ctx.velocity.x ** 2 + ctx.velocity.z ** 2);
-        if (hSpeed > 0.1) {
-          ctx.velocity.x += (ctx.velocity.x / hSpeed) * releaseBoost;
-          ctx.velocity.z += (ctx.velocity.z / hSpeed) * releaseBoost;
-        }
-        ctx.velocity.y = Math.max(ctx.velocity.y, 8);
-
-        isSwingingRef.current = false;
-        swingAttachPointRef.current = null;
-        swingWasAirborneRef.current = false;
-        if (activeSwingLineIdRef.current) {
-          useGameStore.getState().updateSwingLine(activeSwingLineIdRef.current, { state: 'done', isActive: false });
-        }
-        activeSwingLineIdRef.current = null;
-      }
-    }
-  }, [handleSwingTerrainContact]);
-
-  // Handle grapple trap target updates
-  const handleGrappleTrapTargetUpdate = useCallback((position: THREE.Vector3 | null, isValid: boolean) => {
-    grappleTrapTargetRef.current = position;
-    grappleTrapValidRef.current = isValid;
-
-    const store = useGameStore.getState();
-    if (store.grappleTrapTargeting && store.grappleTrapTargetValid !== isValid) {
-      store.setGrappleTrapTargeting(true, isValid);
     }
   }, []);
 
   return {
     hookProjectileIdRef,
     dragHookIdRef,
-    grappleTrapIdRef,
-    swingLineIdRef,
+    groundHooksIdRef,
     grappleLineIdRef,
     earthWallIdRef,
     lastHookTimeRef,
@@ -807,22 +530,13 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     grappleTargetRef,
     activeGrappleLineIdRef,
     isSwingingRef,
-    swingAttachPointRef,
-    swingRopeLengthRef,
-    swingInitialRopeLengthRef,
-    swingMomentumRef,
-    activeSwingLineIdRef,
-    grappleTrapTargetRef,
-    grappleTrapValidRef,
     fireChainHook,
     fireDragHook,
     canGrapple,
     executeGrapple,
     executeEarthWall,
-    executeGrappleTrap,
+    executeGroundHooks,
     updateGrapplePhysics,
-    updateSwingPhysics,
     handleSwingTerrainContact,
-    handleGrappleTrapTargetUpdate,
   };
 }

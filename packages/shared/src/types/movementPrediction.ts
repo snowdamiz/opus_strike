@@ -1,6 +1,7 @@
 import type { InputState } from './input.js';
 import type { PlayerMovementState } from './player.js';
 import type { Vec3 } from './vector.js';
+import type { AbilityCastOriginHint } from './ability.js';
 
 export const MOVEMENT_PROTOCOL_VERSION = 1;
 export const MOVEMENT_SUBSTEP_RATE = 60;
@@ -10,14 +11,16 @@ export const MOVEMENT_COMMAND_BUFFER_SIZE = 256;
 export const MOVEMENT_MAX_PACKET_COMMANDS = 8;
 export const MOVEMENT_MAX_SERVER_QUEUE = 96;
 export const MOVEMENT_MAX_COMMANDS_PER_SECOND = 90;
-export const MOVEMENT_COMMAND_STALE_GRACE_STEPS = 6;
+export const MOVEMENT_COMMAND_STALE_GRACE_STEPS = MOVEMENT_MAX_PACKET_COMMANDS;
 export const MOVEMENT_SERVER_CATCHUP_BUDGET = 4;
 export const MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS = 100;
 export const MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS = 100;
-export const MOVEMENT_POSITION_EPSILON_METERS = 0.03;
-export const MOVEMENT_VELOCITY_EPSILON_METERS_PER_SECOND = 0.05;
+export const MOVEMENT_POSITION_EPSILON_METERS = 0.07;
+export const MOVEMENT_VELOCITY_EPSILON_METERS_PER_SECOND = 0.08;
 export const MOVEMENT_MEDIUM_CORRECTION_METERS = 0.35;
 export const MOVEMENT_HARD_CORRECTION_METERS = 1.5;
+export const ABILITY_CAST_ORIGIN_HINT_QUANTUM = 0.01;
+export const MOVEMENT_MAX_ABILITY_CAST_HINTS = 6;
 
 export const MOVEMENT_BUTTON_MOVE_FORWARD = 1 << 0;
 export const MOVEMENT_BUTTON_MOVE_BACKWARD = 1 << 1;
@@ -33,7 +36,6 @@ export const MOVEMENT_BUTTON_ABILITY_1 = 1 << 10;
 export const MOVEMENT_BUTTON_ABILITY_2 = 1 << 11;
 export const MOVEMENT_BUTTON_ULTIMATE = 1 << 12;
 export const MOVEMENT_BUTTON_INTERACT = 1 << 13;
-export const MOVEMENT_BUTTON_UNSTUCK = 1 << 14;
 export const MOVEMENT_BUTTON_CROUCH_PRESSED = 1 << 15;
 
 export const MOVEMENT_ALLOWED_BUTTON_MASK =
@@ -51,7 +53,6 @@ export const MOVEMENT_ALLOWED_BUTTON_MASK =
   MOVEMENT_BUTTON_ABILITY_2 |
   MOVEMENT_BUTTON_ULTIMATE |
   MOVEMENT_BUTTON_INTERACT |
-  MOVEMENT_BUTTON_UNSTUCK |
   MOVEMENT_BUTTON_CROUCH_PRESSED;
 
 export const MOVEMENT_HELD_COMMAND_CLEAR_MASK =
@@ -60,15 +61,13 @@ export const MOVEMENT_HELD_COMMAND_CLEAR_MASK =
   MOVEMENT_BUTTON_ABILITY_1 |
   MOVEMENT_BUTTON_ABILITY_2 |
   MOVEMENT_BUTTON_ULTIMATE |
-  MOVEMENT_BUTTON_INTERACT |
-  MOVEMENT_BUTTON_UNSTUCK;
+  MOVEMENT_BUTTON_INTERACT;
 
 export type MovementCorrectionReason =
   | 'normal'
   | 'spawn'
   | 'respawn'
   | 'teleport'
-  | 'unstuck'
   | 'knockback'
   | 'epoch_mismatch'
   | 'invalid_transform'
@@ -76,7 +75,8 @@ export type MovementCorrectionReason =
   | 'blocked_path'
   | 'bounds'
   | 'queue_overflow'
-  | 'collision_revision';
+  | 'collision_revision'
+  | 'root';
 
 export interface MovementCommand {
   seq: number;
@@ -86,6 +86,7 @@ export interface MovementCommand {
   clientTimeMs: number;
   movementEpoch: number;
   collisionRevision?: number;
+  abilityCastHints?: AbilityCastOriginHint[];
 }
 
 export interface MovementCommandPacket {
@@ -106,12 +107,20 @@ export interface SelfMovementAuthority {
   movement: PlayerMovementState;
   correctionReason?: MovementCorrectionReason;
   collisionRevision?: number;
+  chronosAegisActive?: boolean;
+  chronosAegisShieldRatio?: number;
+  rootedUntil?: number;
 }
 
 export interface MovementTelemetrySnapshot {
   commandsReceived: number;
   commandsProcessed: number;
+  commandsProcessedLastTick?: number;
   queueLength: number;
+  queueLengthBeforeTick?: number;
+  queueLengthAfterTick?: number;
+  underflowTicks?: number;
+  catchupTicks?: number;
   duplicateCommands: number;
   droppedCommands: number;
   lateCommands: number;
@@ -126,7 +135,15 @@ export interface MovementTelemetrySnapshot {
   abilityRejects?: number;
   rateLimitDrops?: number;
   staleCollisionRevisionDrops?: number;
+  shadowSamples?: number;
+  shadowLastPositionDrift?: number;
+  shadowLastVelocityDrift?: number;
+  shadowMaxPositionDrift?: number;
+  shadowMaxVelocityDrift?: number;
+  shadowMovementMismatches?: number;
   lastAckSeq: number;
+  authoritySends?: number;
+  lastAckIntervalMs?: number;
 }
 
 const UINT32_MAX = 0xffffffff;
@@ -174,7 +191,7 @@ export function sanitizeMovementButtons(buttons: number): number {
 
 export function inputStateToMovementButtons(
   input: InputState,
-  extras: { unstuck?: boolean; crouchPressed?: boolean } = {}
+  extras: { crouchPressed?: boolean } = {}
 ): number {
   let buttons = 0;
   if (input.moveForward) buttons |= MOVEMENT_BUTTON_MOVE_FORWARD;
@@ -191,7 +208,6 @@ export function inputStateToMovementButtons(
   if (input.ability2) buttons |= MOVEMENT_BUTTON_ABILITY_2;
   if (input.ultimate) buttons |= MOVEMENT_BUTTON_ULTIMATE;
   if (input.interact) buttons |= MOVEMENT_BUTTON_INTERACT;
-  if (extras.unstuck) buttons |= MOVEMENT_BUTTON_UNSTUCK;
   if (extras.crouchPressed) buttons |= MOVEMENT_BUTTON_CROUCH_PRESSED;
   return buttons;
 }
@@ -200,7 +216,7 @@ export function movementButtonsForHeldCommand(buttons: number): number {
   return sanitizeMovementButtons(buttons) & ~MOVEMENT_HELD_COMMAND_CLEAR_MASK;
 }
 
-export function movementButtonsToInputState(buttons: number): InputState & { unstuck?: boolean; crouchPressed?: boolean } {
+export function movementButtonsToInputState(buttons: number): InputState & { crouchPressed?: boolean } {
   const sanitized = sanitizeMovementButtons(buttons);
   return {
     moveForward: Boolean(sanitized & MOVEMENT_BUTTON_MOVE_FORWARD),
@@ -217,7 +233,6 @@ export function movementButtonsToInputState(buttons: number): InputState & { uns
     ability2: Boolean(sanitized & MOVEMENT_BUTTON_ABILITY_2),
     ultimate: Boolean(sanitized & MOVEMENT_BUTTON_ULTIMATE),
     interact: Boolean(sanitized & MOVEMENT_BUTTON_INTERACT),
-    unstuck: Boolean(sanitized & MOVEMENT_BUTTON_UNSTUCK),
     crouchPressed: Boolean(sanitized & MOVEMENT_BUTTON_CROUCH_PRESSED),
   };
 }
@@ -248,5 +263,143 @@ export function sanitizeMovementCommand(command: MovementCommand): MovementComma
     collisionRevision: Number.isFinite(command.collisionRevision)
       ? Math.max(0, Math.trunc(command.collisionRevision as number))
       : undefined,
+    abilityCastHints: sanitizeAbilityCastOriginHints(command.abilityCastHints),
   };
+}
+
+function quantizeCastOriginValue(value: number): number {
+  return Math.round(value / ABILITY_CAST_ORIGIN_HINT_QUANTUM) * ABILITY_CAST_ORIGIN_HINT_QUANTUM;
+}
+
+function sanitizeCastHintText(value: unknown, maxLength: number): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > maxLength) return null;
+  return trimmed;
+}
+
+export function quantizeAbilityCastOriginHint(hint: AbilityCastOriginHint): AbilityCastOriginHint {
+  return {
+    abilityId: hint.abilityId,
+    socketName: hint.socketName,
+    origin: {
+      x: quantizeCastOriginValue(hint.origin.x),
+      y: quantizeCastOriginValue(hint.origin.y),
+      z: quantizeCastOriginValue(hint.origin.z),
+    },
+    sampledAtMs: Number.isFinite(hint.sampledAtMs) ? Math.round(hint.sampledAtMs as number) : undefined,
+  };
+}
+
+export function sanitizeAbilityCastOriginHint(value: unknown): AbilityCastOriginHint | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+
+  const raw = value as Record<string, unknown>;
+  const abilityId = sanitizeCastHintText(raw.abilityId, 64);
+  const socketName = sanitizeCastHintText(raw.socketName, 96);
+  const origin = raw.origin;
+  if (!abilityId || !socketName || origin === null || typeof origin !== 'object' || Array.isArray(origin)) {
+    return null;
+  }
+
+  const rawOrigin = origin as Record<string, unknown>;
+  const x = coerceFiniteMovementNumber(rawOrigin.x);
+  const y = coerceFiniteMovementNumber(rawOrigin.y);
+  const z = coerceFiniteMovementNumber(rawOrigin.z);
+  if (x === null || y === null || z === null) return null;
+
+  const sampledAtMs = raw.sampledAtMs === undefined || raw.sampledAtMs === null
+    ? undefined
+    : coerceFiniteMovementNumber(raw.sampledAtMs);
+  if (sampledAtMs === null) return null;
+
+  return quantizeAbilityCastOriginHint({
+    abilityId,
+    socketName,
+    origin: { x, y, z },
+    sampledAtMs,
+  });
+}
+
+export function sanitizeAbilityCastOriginHints(value: unknown): AbilityCastOriginHint[] | undefined {
+  if (value === undefined || value === null) return undefined;
+
+  const rawHints = Array.isArray(value) ? value : [value];
+  const hints: AbilityCastOriginHint[] = [];
+  const seen = new Set<string>();
+
+  for (const rawHint of rawHints.slice(0, MOVEMENT_MAX_ABILITY_CAST_HINTS)) {
+    const hint = sanitizeAbilityCastOriginHint(rawHint);
+    if (!hint) continue;
+
+    const key = `${hint.abilityId}:${hint.socketName}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    hints.push(hint);
+  }
+
+  return hints.length > 0 ? hints : undefined;
+}
+
+function coerceFiniteMovementNumber(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === 'bigint') {
+    const numberValue = Number(value);
+    return Number.isSafeInteger(numberValue) ? numberValue : null;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return null;
+    const numberValue = Number(trimmed);
+    return Number.isFinite(numberValue) ? numberValue : null;
+  }
+
+  return null;
+}
+
+export function parseMovementCommandPayload(value: unknown): MovementCommand | null {
+  if (value === null || typeof value !== 'object') return null;
+
+  const raw = value as Record<string, unknown>;
+  const seq = coerceFiniteMovementNumber(raw.seq);
+  const buttons = coerceFiniteMovementNumber(raw.buttons);
+  const lookYaw = coerceFiniteMovementNumber(raw.lookYaw);
+  const lookPitch = coerceFiniteMovementNumber(raw.lookPitch);
+  const clientTimeMs = coerceFiniteMovementNumber(raw.clientTimeMs);
+  const movementEpoch = coerceFiniteMovementNumber(raw.movementEpoch);
+  const collisionRevision = raw.collisionRevision === undefined || raw.collisionRevision === null
+    ? undefined
+    : coerceFiniteMovementNumber(raw.collisionRevision);
+  const abilityCastHints = sanitizeAbilityCastOriginHints(raw.abilityCastHints);
+
+  if (
+    seq === null ||
+    buttons === null ||
+    lookYaw === null ||
+    lookPitch === null ||
+    clientTimeMs === null ||
+    movementEpoch === null ||
+    collisionRevision === null ||
+    seq < 0 ||
+    seq > UINT32_MAX
+  ) {
+    return null;
+  }
+
+  const sanitized = sanitizeMovementCommand({
+    seq,
+    buttons,
+    lookYaw,
+    lookPitch,
+    clientTimeMs,
+    movementEpoch,
+    collisionRevision,
+    abilityCastHints,
+  });
+
+  return isValidMovementCommand(sanitized) ? sanitized : null;
 }

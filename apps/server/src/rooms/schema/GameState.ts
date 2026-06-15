@@ -9,6 +9,7 @@ export class GameState extends Schema {
   tick: number = 0;
   serverTime: number = 0;
   mapSeed: number = 0;
+  mapThemeId: string = '';
 
   // Teams
   redTeam: TeamState = new TeamState();
@@ -43,13 +44,8 @@ export class GameState extends Schema {
 defineTypes(GameState, {
   roomId: 'string',
   phase: 'string',
-  tick: 'number',
-  serverTime: 'number',
   mapSeed: 'number',
-  redTeam: TeamState,
-  blueTeam: TeamState,
+  mapThemeId: 'string',
   players: { map: Player },
-  roundStartTime: 'number',
-  roundTimeRemaining: 'number',
   phaseEndTime: 'number',
 });

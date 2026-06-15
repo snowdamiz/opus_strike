@@ -12,6 +12,7 @@ export function HeroSelect() {
   const localHeroId = useGameStore((state) => state.localPlayer?.heroId);
   const localIsReady = useGameStore((state) => state.localPlayer?.isReady ?? false);
   const phaseEndTime = useGameStore((state) => state.phaseEndTime);
+  const isPracticeMode = useGameStore((state) => state.isPracticeMode);
   const { selectHero, setReady, leaveGame } = useNetwork();
   const { playButtonClick } = useUISounds();
   const [selectedHero, setSelectedHero] = useState<HeroId>('phantom');
@@ -95,9 +96,9 @@ export function HeroSelect() {
               aria-label="Leave hero select"
               title="Leave"
               onClick={() => { playButtonClick(); leaveGame(); }}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/60 transition-colors hover:border-white/20 hover:bg-white/10 hover:text-white"
+              className="menu-back-button"
             >
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
             </button>
@@ -109,11 +110,13 @@ export function HeroSelect() {
             </div>
           </div>
 
-          <PhaseCountdownTimer
-            phaseEndTime={phaseEndTime}
-            disabled={isLockedIn}
-            onExpired={handleTimerExpired}
-          />
+          {!isPracticeMode && (
+            <PhaseCountdownTimer
+              phaseEndTime={phaseEndTime}
+              disabled={isLockedIn}
+              onExpired={handleTimerExpired}
+            />
+          )}
 
           <div className="flex shrink-0 items-center gap-3 xl:gap-4">
             <button
@@ -225,6 +228,7 @@ const HeroCard = memo(function HeroCard({
             size="card"
             interactive={false}
             idleRotation={false}
+            idleAnimation={isSelected}
             showShadow={isSelected}
           className="h-full w-full"
         />

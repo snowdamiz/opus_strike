@@ -1,9 +1,17 @@
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import {
+  CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
   MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+  doesSegmentHitPlayerCombatHitbox,
+  type HeroId,
+  type Player,
+  type PlayerMovementState,
+  type Team,
+  type Vec3,
 } from '@voxel-strike/shared';
+import { recordHotStoreCommit } from '../movement/networkDiagnostics';
 
 // ============================================================================
 // VISUAL STATE INTERFACE
@@ -28,6 +36,12 @@ export interface VisualState {
   /** Player rotations for lookYaw interpolation (playerId -> rotation in radians) */
   playerRotations: Map<string, number>;
 
+  /** Last rendered remote player positions for non-reactive attachments like labels/beacons. */
+  renderedPlayerPositions: Map<string, { x: number; y: number; z: number }>;
+
+  /** Last rendered remote player rotations for non-reactive attachments like labels/beacons. */
+  renderedPlayerRotations: Map<string, number>;
+
   /** Camera shake effect: intensity (0-1) and remaining time (ms) */
   cameraShake: { intensity: number; time: number };
 
@@ -45,10 +59,16 @@ export interface VisualState {
   flamethrowerDirection: { x: number; y: number; z: number };
 
   /** High-frequency Chronos RMB shield state for local and remote view effects. */
-  chronosAegisStates: Map<string, { active: boolean; activatedAtMs: number; updatedAtMs: number }>;
+  chronosAegisStates: Map<string, { active: boolean; activatedAtMs: number; updatedAtMs: number; durabilityRatio: number }>;
 
   /** Short-lived attack pose state for remote player bodies. */
   remotePlayerAttackStates: Map<string, RemotePlayerAttackState>;
+
+  /** Short-lived client-only corpse visuals keyed by death visual id. */
+  deathVisuals: Map<string, DeathVisualSnapshot>;
+
+  /** Low-frequency version that changes only when death visuals are added/removed. */
+  deathVisualRevision: number;
 
   /** Current local movement snapshot for viewmodel-only animation. */
   localViewmodelMovement: {
@@ -58,8 +78,35 @@ export interface VisualState {
     updatedAtMs: number;
   };
 
+  /** High-frequency local movement used by first-person effects. */
+  localMovement: PlayerMovementState;
+
+  /** High-frequency slide intensity for UI and viewmodel effects. */
+  slideIntensity: number;
+
+  /** Latest local slide velocity for first-person directional motion effects. */
+  localSlideVelocity: Vec3;
+
+  /** Latest local camera yaw used to orient first-person directional motion effects. */
+  localViewYaw: number;
+
   /** Server-authoritative local velocity impulses to consume in PlayerController. */
   localPlayerImpulses: LocalPlayerImpulse[];
+
+  /** Shared per-frame player candidates for visual-only combat effects. */
+  combatFrameCache: CombatVisualFrameCache;
+
+  /** Active player indexes for visual-only gameplay effects. Mutated outside React. */
+  activeBlazeFlamethrowerPlayerIds: string[];
+  activeBlazeFlamethrowerPlayerIdSet: Set<string>;
+  activeBlazeBurningPlayerIds: string[];
+  activeBlazeBurningPlayerIdSet: Set<string>;
+  activePhantomVeilPlayerIds: string[];
+  activePhantomVeilPlayerIdSet: Set<string>;
+  activeChronosAegisPlayerIds: string[];
+  activeChronosAegisPlayerIdSet: Set<string>;
+  activeChronosAscendantPlayerIds: string[];
+  activeChronosAscendantPlayerIdSet: Set<string>;
 }
 
 export interface LocalPlayerImpulse {
@@ -69,10 +116,31 @@ export interface LocalPlayerImpulse {
   mode?: 'add' | 'set';
 }
 
+const EMPTY_LOCAL_PLAYER_IMPULSES = Object.freeze([]) as unknown as LocalPlayerImpulse[];
+
 export interface RemotePlayerAttackState {
   abilityId: string;
   startedAtMs: number;
   side: -1 | 1;
+}
+
+export interface DeathVisualSnapshot {
+  id: string;
+  playerId: string;
+  heroId: HeroId | null;
+  team: Team;
+  isBot: boolean;
+  name: string;
+  position: Vec3;
+  velocity: Vec3;
+  lookYaw: number;
+  lookPitch: number;
+  movement: PlayerMovementState;
+  killerId: string | null;
+  sourceDirection: Vec3 | null;
+  startedAtMs: number;
+  expiresAtMs: number;
+  local: boolean;
 }
 
 export interface RemoteTransformSnapshot {
@@ -106,13 +174,83 @@ export interface SampledRemoteTransform {
   stale: boolean;
 }
 
+export interface CombatVisualPlayer {
+  player: Player;
+  id: string;
+  team: Team;
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface CombatVisualFrameCache {
+  frameKey: number;
+  builtAtMs: number;
+  sourceSize: number;
+  alivePlayers: CombatVisualPlayer[];
+  byTeam: Record<Team, CombatVisualPlayer[]>;
+  buckets: Map<number, Map<number, CombatVisualPlayer[]>>;
+  activeBuckets: CombatVisualPlayer[][];
+  activeBucketSet: Set<CombatVisualPlayer[]>;
+  entryPool: CombatVisualPlayer[];
+  cellSize: number;
+}
+
+interface Vec3Like {
+  x: number;
+  y: number;
+  z: number;
+}
+
+interface Vec2Like {
+  x: number;
+  z: number;
+}
+
 // ============================================================================
 // INITIAL STATE
 // ============================================================================
 
+const DEFAULT_LOCAL_MOVEMENT: PlayerMovementState = {
+  isGrounded: true,
+  isSprinting: false,
+  isCrouching: false,
+  isSliding: false,
+  slideTimeRemaining: 0,
+  isWallRunning: false,
+  wallRunSide: null,
+  isGrappling: false,
+  grapplePoint: null,
+  isJetpacking: false,
+  jetpackFuel: 0,
+  isGliding: false,
+};
+
+const COMBAT_VISUAL_CELL_SIZE = 8;
+const CHRONOS_ASCENDANT_ABILITY_ID = 'chronos_ascendant_paradox';
+const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
+
+const createCombatFrameCache = (): CombatVisualFrameCache => ({
+  frameKey: -1,
+  builtAtMs: 0,
+  sourceSize: 0,
+  alivePlayers: [],
+  byTeam: {
+    red: [],
+    blue: [],
+  },
+  buckets: new Map(),
+  activeBuckets: [],
+  activeBucketSet: new Set(),
+  entryPool: [],
+  cellSize: COMBAT_VISUAL_CELL_SIZE,
+});
+
 const initialVisualState: VisualState = {
   playerPositions: new Map(),
   playerRotations: new Map(),
+  renderedPlayerPositions: new Map(),
+  renderedPlayerRotations: new Map(),
   cameraShake: { intensity: 0, time: 0 },
   slideFov: 0,
   interpolationTargets: new Map(),
@@ -121,16 +259,35 @@ const initialVisualState: VisualState = {
   flamethrowerDirection: { x: 0, y: 0, z: -1 },
   chronosAegisStates: new Map(),
   remotePlayerAttackStates: new Map(),
+  deathVisuals: new Map(),
+  deathVisualRevision: 0,
   localViewmodelMovement: {
     hasMovementInput: false,
     isSprinting: false,
     horizontalSpeed: 0,
     updatedAtMs: 0,
   },
+  localMovement: { ...DEFAULT_LOCAL_MOVEMENT },
+  slideIntensity: 0,
+  localSlideVelocity: { x: 0, y: 0, z: 0 },
+  localViewYaw: 0,
   localPlayerImpulses: [],
+  combatFrameCache: createCombatFrameCache(),
+  activeBlazeFlamethrowerPlayerIds: [],
+  activeBlazeFlamethrowerPlayerIdSet: new Set(),
+  activeBlazeBurningPlayerIds: [],
+  activeBlazeBurningPlayerIdSet: new Set(),
+  activePhantomVeilPlayerIds: [],
+  activePhantomVeilPlayerIdSet: new Set(),
+  activeChronosAegisPlayerIds: [],
+  activeChronosAegisPlayerIdSet: new Set(),
+  activeChronosAscendantPlayerIds: [],
+  activeChronosAscendantPlayerIdSet: new Set(),
 };
 
 const REMOTE_HISTORY_LIMIT = 32;
+
+export const DEATH_VISUAL_LIFETIME_MS = 5600;
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -193,6 +350,44 @@ export const setPlayerVisualRotation = (playerId: string, rotation: number): voi
   visualStore.getState().playerRotations.set(playerId, rotation);
 };
 
+export const setPlayerVisualTransform = (
+  playerId: string,
+  position: { x: number; y: number; z: number },
+  rotation: number
+): void => {
+  const state = visualStore.getState();
+  const current = state.playerPositions.get(playerId);
+  if (current) {
+    if (current.x !== position.x) current.x = position.x;
+    if (current.y !== position.y) current.y = position.y;
+    if (current.z !== position.z) current.z = position.z;
+  } else {
+    state.playerPositions.set(playerId, { x: position.x, y: position.y, z: position.z });
+  }
+
+  if (state.playerRotations.get(playerId) !== rotation) {
+    state.playerRotations.set(playerId, rotation);
+  }
+};
+
+export const setRenderedPlayerVisualTransform = (
+  playerId: string,
+  position: { x: number; y: number; z: number },
+  rotation: number
+): void => {
+  const state = visualStore.getState();
+  const current = state.renderedPlayerPositions.get(playerId);
+  if (current) {
+    current.x = position.x;
+    current.y = position.y;
+    current.z = position.z;
+  } else {
+    state.renderedPlayerPositions.set(playerId, { x: position.x, y: position.y, z: position.z });
+  }
+
+  state.renderedPlayerRotations.set(playerId, rotation);
+};
+
 export const setLocalViewmodelMovement = (
   movement: VisualState['localViewmodelMovement']
 ): void => {
@@ -201,6 +396,45 @@ export const setLocalViewmodelMovement = (
   current.isSprinting = movement.isSprinting;
   current.horizontalSpeed = movement.horizontalSpeed;
   current.updatedAtMs = movement.updatedAtMs;
+};
+
+export const setLocalVisualMovement = (movement: PlayerMovementState): void => {
+  const current = visualStore.getState().localMovement;
+  current.isGrounded = movement.isGrounded;
+  current.isSprinting = movement.isSprinting;
+  current.isCrouching = movement.isCrouching;
+  current.isSliding = movement.isSliding;
+  current.slideTimeRemaining = movement.slideTimeRemaining;
+  current.isWallRunning = movement.isWallRunning;
+  current.wallRunSide = movement.wallRunSide;
+  current.isGrappling = movement.isGrappling;
+  current.grapplePoint = movement.grapplePoint;
+  current.isJetpacking = movement.isJetpacking;
+  current.jetpackFuel = movement.jetpackFuel;
+  current.isGliding = movement.isGliding;
+  current.chronosAscendantStartY = movement.chronosAscendantStartY;
+};
+
+export const setLocalSlideIntensity = (intensity: number, velocity?: Vec3, viewYaw?: number): void => {
+  const state = visualStore.getState();
+  const nextIntensity = Math.max(0, Math.min(1, intensity));
+  if (state.slideIntensity !== nextIntensity) {
+    state.slideIntensity = nextIntensity;
+  }
+
+  if (typeof viewYaw === 'number') {
+    state.localViewYaw = viewYaw;
+  }
+
+  if (velocity && nextIntensity > 0) {
+    state.localSlideVelocity.x = velocity.x;
+    state.localSlideVelocity.y = velocity.y;
+    state.localSlideVelocity.z = velocity.z;
+  } else {
+    state.localSlideVelocity.x = 0;
+    state.localSlideVelocity.y = 0;
+    state.localSlideVelocity.z = 0;
+  }
 };
 
 export const pushLocalPlayerImpulse = (impulse: LocalPlayerImpulse): void => {
@@ -214,8 +448,9 @@ export const pushLocalPlayerImpulse = (impulse: LocalPlayerImpulse): void => {
 
 export const consumeLocalPlayerImpulses = (): VisualState['localPlayerImpulses'] => {
   const impulses = visualStore.getState().localPlayerImpulses;
-  if (impulses.length === 0) return [];
+  if (impulses.length === 0) return EMPTY_LOCAL_PLAYER_IMPULSES;
 
+  recordHotStoreCommit('visual.localPlayerImpulses');
   visualStore.setState({ localPlayerImpulses: [] });
   return impulses;
 };
@@ -227,6 +462,7 @@ export const consumeLocalPlayerImpulses = (): VisualState['localPlayerImpulses']
  * @param time - Duration of shake in milliseconds
  */
 export const setCameraShake = (intensity: number, time: number): void => {
+  recordHotStoreCommit('visual.cameraShake');
   visualStore.setState({ cameraShake: { intensity, time } });
 };
 
@@ -236,6 +472,7 @@ export const setCameraShake = (intensity: number, time: number): void => {
  * @param fov - FOV offset from default (0 = no adjustment)
  */
 export const setSlideFov = (fov: number): void => {
+  recordHotStoreCommit('visual.slideFov');
   visualStore.setState({ slideFov: fov });
 };
 
@@ -278,8 +515,24 @@ export const addRemoteTransformSnapshot = (
     histories.set(playerId, history);
   }
 
-  history.snapshots.push({ ...snapshot, receivedAtMs });
-  history.snapshots.sort((a, b) => a.serverTime - b.serverTime);
+  const fullSnapshot = { ...snapshot, receivedAtMs };
+  const snapshots = history.snapshots;
+  const latest = snapshots[snapshots.length - 1];
+  if (!latest || fullSnapshot.serverTime >= latest.serverTime) {
+    snapshots.push(fullSnapshot);
+  } else {
+    let low = 0;
+    let high = snapshots.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (snapshots[mid].serverTime <= fullSnapshot.serverTime) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    snapshots.splice(low, 0, fullSnapshot);
+  }
   if (history.snapshots.length > REMOTE_HISTORY_LIMIT) {
     history.snapshots.splice(0, history.snapshots.length - REMOTE_HISTORY_LIMIT);
   }
@@ -287,71 +540,453 @@ export const addRemoteTransformSnapshot = (
   history.latestReceivedAtMs = receivedAtMs;
 };
 
-export const sampleRemoteTransform = (
-  playerId: string,
+export const pruneRemoteTransformHistories = (activePlayerIds: ReadonlySet<string>): void => {
+  const state = visualStore.getState();
+  for (const playerId of state.remoteTransformHistories.keys()) {
+    if (!activePlayerIds.has(playerId)) {
+      state.remoteTransformHistories.delete(playerId);
+      state.interpolationTargets.delete(playerId);
+      state.playerPositions.delete(playerId);
+      state.playerRotations.delete(playerId);
+      state.renderedPlayerPositions.delete(playerId);
+      state.renderedPlayerRotations.delete(playerId);
+    }
+  }
+};
+
+export const sampleRemoteTransformHistoryInto = (
+  history: RemoteTransformHistory | null | undefined,
+  target: SampledRemoteTransform,
   nowMs = Date.now()
-): SampledRemoteTransform | null => {
-  const history = visualStore.getState().remoteTransformHistories.get(playerId);
-  if (!history || history.snapshots.length === 0) return null;
+): boolean => {
+  if (!history || history.snapshots.length === 0) return false;
 
   const snapshots = history.snapshots;
   const latest = snapshots[snapshots.length - 1];
   const estimatedServerTime = latest.serverTime + Math.max(0, nowMs - latest.receivedAtMs);
   const renderServerTime = estimatedServerTime - MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS;
 
-  let previous = snapshots[0];
-  let next: RemoteTransformSnapshot | null = null;
-  for (const snapshot of snapshots) {
-    if (snapshot.serverTime <= renderServerTime) {
-      previous = snapshot;
-      continue;
+  let low = 0;
+  let high = snapshots.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (snapshots[mid].serverTime <= renderServerTime) {
+      low = mid + 1;
+    } else {
+      high = mid;
     }
-    next = snapshot;
-    break;
   }
+
+  const previous = snapshots[Math.max(0, low - 1)];
+  const next = low < snapshots.length ? snapshots[low] : null;
 
   if (next) {
     const span = Math.max(1, next.serverTime - previous.serverTime);
     const t = Math.max(0, Math.min(1, (renderServerTime - previous.serverTime) / span));
-    return {
-      position: {
-        x: lerp(previous.position.x, next.position.x, t),
-        y: lerp(previous.position.y, next.position.y, t),
-        z: lerp(previous.position.z, next.position.z, t),
-      },
-      velocity: {
-        x: lerp(previous.velocity.x, next.velocity.x, t),
-        y: lerp(previous.velocity.y, next.velocity.y, t),
-        z: lerp(previous.velocity.z, next.velocity.z, t),
-      },
-      lookYaw: lerpYaw(previous.lookYaw, next.lookYaw, t),
-      lookPitch: lerp(previous.lookPitch, next.lookPitch, t),
-      movementBits: next.movementBits,
-      wallRunSide: next.wallRunSide,
-      movementEpoch: next.movementEpoch,
-      extrapolatedMs: 0,
-      stale: false,
-    };
+    target.position.x = lerp(previous.position.x, next.position.x, t);
+    target.position.y = lerp(previous.position.y, next.position.y, t);
+    target.position.z = lerp(previous.position.z, next.position.z, t);
+    target.velocity.x = lerp(previous.velocity.x, next.velocity.x, t);
+    target.velocity.y = lerp(previous.velocity.y, next.velocity.y, t);
+    target.velocity.z = lerp(previous.velocity.z, next.velocity.z, t);
+    target.lookYaw = lerpYaw(previous.lookYaw, next.lookYaw, t);
+    target.lookPitch = lerp(previous.lookPitch, next.lookPitch, t);
+    target.movementBits = next.movementBits;
+    target.wallRunSide = next.wallRunSide;
+    target.movementEpoch = next.movementEpoch;
+    target.extrapolatedMs = 0;
+    target.stale = false;
+    return true;
   }
 
   const extrapolatedMs = Math.max(0, renderServerTime - latest.serverTime);
   const cappedMs = Math.min(extrapolatedMs, MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS);
   const dt = cappedMs / 1000;
-  return {
-    position: {
-      x: latest.position.x + latest.velocity.x * dt,
-      y: latest.position.y + latest.velocity.y * dt,
-      z: latest.position.z + latest.velocity.z * dt,
-    },
-    velocity: { ...latest.velocity },
-    lookYaw: latest.lookYaw,
-    lookPitch: latest.lookPitch,
-    movementBits: latest.movementBits,
-    wallRunSide: latest.wallRunSide,
-    movementEpoch: latest.movementEpoch,
-    extrapolatedMs,
-    stale: extrapolatedMs > MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
+  target.position.x = latest.position.x + latest.velocity.x * dt;
+  target.position.y = latest.position.y + latest.velocity.y * dt;
+  target.position.z = latest.position.z + latest.velocity.z * dt;
+  target.velocity.x = latest.velocity.x;
+  target.velocity.y = latest.velocity.y;
+  target.velocity.z = latest.velocity.z;
+  target.lookYaw = latest.lookYaw;
+  target.lookPitch = latest.lookPitch;
+  target.movementBits = latest.movementBits;
+  target.wallRunSide = latest.wallRunSide;
+  target.movementEpoch = latest.movementEpoch;
+  target.extrapolatedMs = extrapolatedMs;
+  target.stale = extrapolatedMs > MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS;
+  return true;
+};
+
+export const sampleRemoteTransformInto = (
+  playerId: string,
+  target: SampledRemoteTransform,
+  nowMs = Date.now()
+): boolean => {
+  return sampleRemoteTransformHistoryInto(
+    visualStore.getState().remoteTransformHistories.get(playerId),
+    target,
+    nowMs
+  );
+};
+
+export const sampleRemoteTransform = (
+  playerId: string,
+  nowMs = Date.now()
+): SampledRemoteTransform | null => {
+  const sampled: SampledRemoteTransform = {
+    position: { x: 0, y: 0, z: 0 },
+    velocity: { x: 0, y: 0, z: 0 },
+    lookYaw: 0,
+    lookPitch: 0,
+    movementBits: 0,
+    wallRunSide: 0,
+    movementEpoch: 0,
+    extrapolatedMs: 0,
+    stale: false,
   };
+  return sampleRemoteTransformInto(playerId, sampled, nowMs) ? sampled : null;
+};
+
+function clearActiveCombatBuckets(cache: CombatVisualFrameCache): void {
+  for (let i = 0; i < cache.activeBuckets.length; i++) {
+    cache.activeBuckets[i].length = 0;
+  }
+  cache.activeBuckets.length = 0;
+  cache.activeBucketSet.clear();
+}
+
+function markActiveCombatBucket(
+  cache: CombatVisualFrameCache,
+  bucket: CombatVisualPlayer[]
+): void {
+  if (cache.activeBucketSet.has(bucket)) {
+    return;
+  }
+
+  cache.activeBucketSet.add(bucket);
+  cache.activeBuckets.push(bucket);
+}
+
+function getCombatBucket(
+  cache: CombatVisualFrameCache,
+  cellX: number,
+  cellZ: number
+): CombatVisualPlayer[] {
+  let zBuckets = cache.buckets.get(cellX);
+  if (!zBuckets) {
+    zBuckets = new Map();
+    cache.buckets.set(cellX, zBuckets);
+  }
+
+  let bucket = zBuckets.get(cellZ);
+  if (!bucket) {
+    bucket = [];
+    zBuckets.set(cellZ, bucket);
+  }
+  markActiveCombatBucket(cache, bucket);
+  return bucket;
+}
+
+export const rebuildCombatVisualFrameCache = (
+  players: Iterable<Player>,
+  frameKey: number,
+  nowMs = Date.now(),
+  sourceSize = -1
+): CombatVisualFrameCache => {
+  const cache = visualStore.getState().combatFrameCache;
+  if (cache.frameKey === frameKey && (sourceSize < 0 || cache.sourceSize === sourceSize)) {
+    return cache;
+  }
+
+  cache.frameKey = frameKey;
+  cache.builtAtMs = nowMs;
+  cache.sourceSize = sourceSize;
+  cache.alivePlayers.length = 0;
+  cache.byTeam.red.length = 0;
+  cache.byTeam.blue.length = 0;
+  clearActiveCombatBuckets(cache);
+
+  let entryIndex = 0;
+  for (const player of players) {
+    if (player.state !== 'alive') continue;
+    if (player.visibility === 'hidden' || player.visibility === 'last_known' || player.visibility === 'audible') continue;
+    let visualPlayer = cache.entryPool[entryIndex];
+    if (!visualPlayer) {
+      visualPlayer = {
+        player,
+        id: player.id,
+        team: player.team,
+        x: player.position.x,
+        y: player.position.y,
+        z: player.position.z,
+      };
+      cache.entryPool[entryIndex] = visualPlayer;
+    } else {
+      visualPlayer.player = player;
+      visualPlayer.id = player.id;
+      visualPlayer.team = player.team;
+      visualPlayer.x = player.position.x;
+      visualPlayer.y = player.position.y;
+      visualPlayer.z = player.position.z;
+    }
+    entryIndex++;
+    cache.alivePlayers.push(visualPlayer);
+    cache.byTeam[player.team].push(visualPlayer);
+
+    const bucket = getCombatBucket(
+      cache,
+      Math.floor(visualPlayer.x / cache.cellSize),
+      Math.floor(visualPlayer.z / cache.cellSize)
+    );
+    bucket.push(visualPlayer);
+  }
+
+  return cache;
+};
+
+function isEnemyCombatVisualPlayer(
+  visualPlayer: CombatVisualPlayer,
+  ownerTeam: Team | null | undefined,
+  ownerId: string
+): boolean {
+  return visualPlayer.id !== ownerId && (!ownerTeam || visualPlayer.team !== ownerTeam);
+}
+
+export type CombatVisualTargetTeam = 'enemy' | 'any';
+
+function isCombatVisualTargetPlayer(
+  visualPlayer: CombatVisualPlayer,
+  ownerTeam: Team | null | undefined,
+  ownerId: string,
+  targetTeam: CombatVisualTargetTeam
+): boolean {
+  if (visualPlayer.id === ownerId) return false;
+  return targetTeam === 'any' || !ownerTeam || visualPlayer.team !== ownerTeam;
+}
+
+function doesCombatVisualPlayerPassRadius(
+  visualPlayer: CombatVisualPlayer,
+  center: Vec2Like,
+  radiusSq: number
+): boolean {
+  const dx = visualPlayer.x - center.x;
+  const dz = visualPlayer.z - center.z;
+  return dx * dx + dz * dz <= radiusSq;
+}
+
+export const fillCombatVisualEnemyPlayers = (
+  cache: CombatVisualFrameCache,
+  ownerTeam: Team | null | undefined,
+  ownerId: string,
+  target: Player[],
+  center?: { x: number; z: number },
+  radius?: number
+): Player[] => {
+  target.length = 0;
+
+  if (center && typeof radius === 'number') {
+    const minCellX = Math.floor((center.x - radius) / cache.cellSize);
+    const maxCellX = Math.floor((center.x + radius) / cache.cellSize);
+    const minCellZ = Math.floor((center.z - radius) / cache.cellSize);
+    const maxCellZ = Math.floor((center.z + radius) / cache.cellSize);
+    const radiusSq = radius * radius;
+
+    for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+      const zBuckets = cache.buckets.get(cellX);
+      if (!zBuckets) continue;
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+        const bucket = zBuckets.get(cellZ);
+        if (!bucket) continue;
+        for (let i = 0; i < bucket.length; i++) {
+          const visualPlayer = bucket[i];
+          if (!isEnemyCombatVisualPlayer(visualPlayer, ownerTeam, ownerId)) continue;
+          if (doesCombatVisualPlayerPassRadius(visualPlayer, center, radiusSq)) {
+            target.push(visualPlayer.player);
+          }
+        }
+      }
+    }
+    return target;
+  }
+
+  const source = ownerTeam
+    ? (ownerTeam === 'red' ? cache.byTeam.blue : cache.byTeam.red)
+    : cache.alivePlayers;
+
+  for (let i = 0; i < source.length; i++) {
+    const visualPlayer = source[i];
+    if (isEnemyCombatVisualPlayer(visualPlayer, ownerTeam, ownerId)) {
+      target.push(visualPlayer.player);
+    }
+  }
+
+  return target;
+};
+
+export const findCombatVisualPlayerHit = (
+  cache: CombatVisualFrameCache,
+  ownerTeam: Team | null | undefined,
+  ownerId: string,
+  start: Vec3Like,
+  direction: Vec3Like,
+  distance: number,
+  extraRadius = 0,
+  center?: Vec2Like,
+  radius?: number,
+  targetTeam: CombatVisualTargetTeam = 'enemy'
+): Player | null => {
+  if (center && typeof radius === 'number') {
+    const minCellX = Math.floor((center.x - radius) / cache.cellSize);
+    const maxCellX = Math.floor((center.x + radius) / cache.cellSize);
+    const minCellZ = Math.floor((center.z - radius) / cache.cellSize);
+    const maxCellZ = Math.floor((center.z + radius) / cache.cellSize);
+    const radiusSq = radius * radius;
+
+    for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+      const zBuckets = cache.buckets.get(cellX);
+      if (!zBuckets) continue;
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+        const bucket = zBuckets.get(cellZ);
+        if (!bucket) continue;
+        for (let i = 0; i < bucket.length; i++) {
+          const visualPlayer = bucket[i];
+          if (!isCombatVisualTargetPlayer(visualPlayer, ownerTeam, ownerId, targetTeam)) continue;
+          if (!doesCombatVisualPlayerPassRadius(visualPlayer, center, radiusSq)) continue;
+          if (doesSegmentHitPlayerCombatHitbox(start, direction, distance, visualPlayer.player, extraRadius)) {
+            return visualPlayer.player;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  const source = ownerTeam && targetTeam === 'enemy'
+    ? (ownerTeam === 'red' ? cache.byTeam.blue : cache.byTeam.red)
+    : cache.alivePlayers;
+
+  for (let i = 0; i < source.length; i++) {
+    const visualPlayer = source[i];
+    if (!isCombatVisualTargetPlayer(visualPlayer, ownerTeam, ownerId, targetTeam)) continue;
+    if (doesSegmentHitPlayerCombatHitbox(start, direction, distance, visualPlayer.player, extraRadius)) {
+      return visualPlayer.player;
+    }
+  }
+
+  return null;
+};
+
+export const findCombatVisualEnemyPlayerHit = (
+  cache: CombatVisualFrameCache,
+  ownerTeam: Team | null | undefined,
+  ownerId: string,
+  start: Vec3Like,
+  direction: Vec3Like,
+  distance: number,
+  extraRadius = 0,
+  center?: Vec2Like,
+  radius?: number
+): Player | null => findCombatVisualPlayerHit(
+  cache,
+  ownerTeam,
+  ownerId,
+  start,
+  direction,
+  distance,
+  extraRadius,
+  center,
+  radius,
+  'enemy'
+);
+
+export const clearCombatVisualFrameCache = (): void => {
+  const cache = visualStore.getState().combatFrameCache;
+  cache.frameKey = -1;
+  cache.builtAtMs = 0;
+  cache.sourceSize = 0;
+  cache.alivePlayers.length = 0;
+  cache.byTeam.red.length = 0;
+  cache.byTeam.blue.length = 0;
+  cache.activeBuckets.length = 0;
+  cache.activeBucketSet.clear();
+  cache.buckets.clear();
+};
+
+function removeIndexedPlayerId(ids: string[], idSet: Set<string>, playerId: string): boolean {
+  if (!idSet.delete(playerId)) return false;
+  const index = ids.indexOf(playerId);
+  if (index >= 0) {
+    ids.splice(index, 1);
+  }
+  return true;
+}
+
+function setIndexedPlayerId(ids: string[], idSet: Set<string>, playerId: string, active: boolean): boolean {
+  if (active) {
+    if (idSet.has(playerId)) return false;
+    idSet.add(playerId);
+    ids.push(playerId);
+    return true;
+  }
+
+  return removeIndexedPlayerId(ids, idSet, playerId);
+}
+
+function isVisibleLiveEffectPlayer(player: Player): boolean {
+  return (
+    player.state === 'alive' &&
+    player.visibility !== 'hidden' &&
+    player.visibility !== 'last_known' &&
+    player.visibility !== 'audible'
+  );
+}
+
+function hasActiveChronosAscendant(player: Player, nowMs: number): boolean {
+  if (player.heroId !== 'chronos' || !isVisibleLiveEffectPlayer(player)) return false;
+
+  const ability = player.abilities?.[CHRONOS_ASCENDANT_ABILITY_ID];
+  if (!ability?.isActive) return false;
+
+  const activatedAt = ability.activatedAt ?? nowMs;
+  return nowMs - activatedAt < CHRONOS_ASCENDANT_PARADOX_DURATION_MS;
+}
+
+export const syncPlayerVisualEffectIndexes = (
+  player: Player,
+  options: { localPlayerId?: string | null; nowMs?: number } = {}
+): void => {
+  const state = visualStore.getState();
+  const localPlayerId = options.localPlayerId ?? null;
+  const nowMs = options.nowMs ?? Date.now();
+  const isLocalPlayer = player.id === localPlayerId;
+  const visibleAlive = isVisibleLiveEffectPlayer(player);
+
+  setIndexedPlayerId(
+    state.activeBlazeFlamethrowerPlayerIds,
+    state.activeBlazeFlamethrowerPlayerIdSet,
+    player.id,
+    !isLocalPlayer && visibleAlive && player.heroId === 'blaze' && player.movement.isJetpacking
+  );
+  setIndexedPlayerId(
+    state.activeBlazeBurningPlayerIds,
+    state.activeBlazeBurningPlayerIdSet,
+    player.id,
+    visibleAlive && (player.onFireUntil ?? 0) > nowMs
+  );
+  setIndexedPlayerId(
+    state.activePhantomVeilPlayerIds,
+    state.activePhantomVeilPlayerIdSet,
+    player.id,
+    visibleAlive && player.heroId === 'phantom' && player.abilities?.[PHANTOM_VEIL_ABILITY_ID]?.isActive === true
+  );
+  setIndexedPlayerId(
+    state.activeChronosAscendantPlayerIds,
+    state.activeChronosAscendantPlayerIdSet,
+    player.id,
+    hasActiveChronosAscendant(player, nowMs)
+  );
 };
 
 /**
@@ -360,23 +995,47 @@ export const sampleRemoteTransform = (
  *
  * @param playerId - The player's unique ID to remove
  */
-export const removePlayerVisualState = (playerId: string): void => {
+export const removePlayerLiveVisualState = (playerId: string): void => {
   const state = visualStore.getState();
   state.playerPositions.delete(playerId);
   state.playerRotations.delete(playerId);
+  state.renderedPlayerPositions.delete(playerId);
+  state.renderedPlayerRotations.delete(playerId);
   state.interpolationTargets.delete(playerId);
   state.remoteTransformHistories.delete(playerId);
   state.chronosAegisStates.delete(playerId);
   state.remotePlayerAttackStates.delete(playerId);
+  removeIndexedPlayerId(state.activeBlazeFlamethrowerPlayerIds, state.activeBlazeFlamethrowerPlayerIdSet, playerId);
+  removeIndexedPlayerId(state.activeBlazeBurningPlayerIds, state.activeBlazeBurningPlayerIdSet, playerId);
+  removeIndexedPlayerId(state.activePhantomVeilPlayerIds, state.activePhantomVeilPlayerIdSet, playerId);
+  removeIndexedPlayerId(state.activeChronosAegisPlayerIds, state.activeChronosAegisPlayerIdSet, playerId);
+  removeIndexedPlayerId(state.activeChronosAscendantPlayerIds, state.activeChronosAscendantPlayerIdSet, playerId);
+};
+
+export const removePlayerVisualState = (playerId: string): void => {
+  removePlayerLiveVisualState(playerId);
+  clearDeathVisualsForPlayer(playerId);
 };
 
 export const setChronosAegisVisualState = (
   playerId: string,
   active: boolean,
-  timestampMs = Date.now()
+  timestampMs = Date.now(),
+  durabilityRatio?: number,
+  options: { renderWorldEffect?: boolean } = {}
 ): void => {
-  const states = visualStore.getState().chronosAegisStates;
+  const state = visualStore.getState();
+  const states = state.chronosAegisStates;
   const current = states.get(playerId);
+  const nextDurabilityRatio = durabilityRatio === undefined
+    ? current?.durabilityRatio ?? 1
+    : Math.max(0, Math.min(1, durabilityRatio));
+  setIndexedPlayerId(
+    state.activeChronosAegisPlayerIds,
+    state.activeChronosAegisPlayerIdSet,
+    playerId,
+    active && options.renderWorldEffect === true
+  );
 
   if (current) {
     if (active && !current.active) {
@@ -384,6 +1043,7 @@ export const setChronosAegisVisualState = (
     }
     current.active = active;
     current.updatedAtMs = timestampMs;
+    current.durabilityRatio = nextDurabilityRatio;
     return;
   }
 
@@ -391,6 +1051,7 @@ export const setChronosAegisVisualState = (
     active,
     activatedAtMs: active ? timestampMs : 0,
     updatedAtMs: timestampMs,
+    durabilityRatio: nextDurabilityRatio,
   });
 };
 
@@ -404,6 +1065,159 @@ export const triggerRemotePlayerAttack = (
     startedAtMs: options.startedAtMs ?? Date.now(),
     side: options.side ?? 1,
   });
+};
+
+function cloneMovementState(movement: PlayerMovementState): PlayerMovementState {
+  return {
+    ...movement,
+    grapplePoint: movement.grapplePoint ? { ...movement.grapplePoint } : null,
+  };
+}
+
+function cloneDeathVisualSnapshot(snapshot: DeathVisualSnapshot): DeathVisualSnapshot {
+  return {
+    ...snapshot,
+    position: { ...snapshot.position },
+    velocity: { ...snapshot.velocity },
+    sourceDirection: snapshot.sourceDirection ? { ...snapshot.sourceDirection } : null,
+    movement: cloneMovementState(snapshot.movement),
+  };
+}
+
+function bumpDeathVisualRevision(state = visualStore.getState()): void {
+  recordHotStoreCommit('visual.deathVisuals');
+  visualStore.setState({ deathVisualRevision: state.deathVisualRevision + 1 });
+}
+
+export const addDeathVisual = (snapshot: DeathVisualSnapshot): boolean => {
+  const state = visualStore.getState();
+  const visuals = state.deathVisuals;
+  const existingSameId = visuals.get(snapshot.id);
+
+  if (existingSameId) {
+    return false;
+  }
+
+  for (const [id, existing] of visuals) {
+    if (existing.playerId === snapshot.playerId) {
+      visuals.delete(id);
+    }
+  }
+
+  visuals.set(snapshot.id, cloneDeathVisualSnapshot(snapshot));
+  bumpDeathVisualRevision(state);
+  return true;
+};
+
+export const removeDeathVisual = (id: string): boolean => {
+  const state = visualStore.getState();
+  if (!state.deathVisuals.delete(id)) return false;
+  bumpDeathVisualRevision(state);
+  return true;
+};
+
+export const clearDeathVisualsForPlayer = (playerId: string): number => {
+  const state = visualStore.getState();
+  let removed = 0;
+
+  for (const [id, snapshot] of state.deathVisuals) {
+    if (snapshot.playerId === playerId) {
+      state.deathVisuals.delete(id);
+      removed++;
+    }
+  }
+
+  if (removed > 0) {
+    bumpDeathVisualRevision(state);
+  }
+
+  return removed;
+};
+
+export const clearAllDeathVisuals = (): number => {
+  const state = visualStore.getState();
+  const removed = state.deathVisuals.size;
+  if (removed === 0) return 0;
+
+  state.deathVisuals.clear();
+  bumpDeathVisualRevision(state);
+  return removed;
+};
+
+export const updateDeathVisualExpirationForPlayer = (
+  playerId: string,
+  expiresAtMs: number | null | undefined
+): boolean => {
+  if (!Number.isFinite(expiresAtMs)) return false;
+
+  const state = visualStore.getState();
+  let changed = false;
+
+  for (const [id, snapshot] of state.deathVisuals) {
+    if (snapshot.playerId !== playerId) continue;
+
+    const nextExpiresAtMs = Math.max(snapshot.startedAtMs + 1, expiresAtMs as number);
+    if (Math.abs(snapshot.expiresAtMs - nextExpiresAtMs) <= 1) continue;
+
+    state.deathVisuals.set(id, {
+      ...snapshot,
+      expiresAtMs: nextExpiresAtMs,
+    });
+    changed = true;
+  }
+
+  if (changed) {
+    bumpDeathVisualRevision(state);
+  }
+
+  return changed;
+};
+
+export const clearExpiredDeathVisuals = (nowMs = Date.now()): number => {
+  const state = visualStore.getState();
+  let removed = 0;
+
+  for (const [id, snapshot] of state.deathVisuals) {
+    if (snapshot.expiresAtMs <= nowMs) {
+      state.deathVisuals.delete(id);
+      removed++;
+    }
+  }
+
+  if (removed > 0) {
+    bumpDeathVisualRevision(state);
+  }
+
+  return removed;
+};
+
+export const getDeathVisualForPlayer = (
+  playerId: string,
+  nowMs = Date.now()
+): DeathVisualSnapshot | null => {
+  let newest: DeathVisualSnapshot | null = null;
+
+  for (const snapshot of visualStore.getState().deathVisuals.values()) {
+    if (snapshot.playerId !== playerId || snapshot.expiresAtMs <= nowMs) continue;
+    if (!newest || snapshot.startedAtMs > newest.startedAtMs) {
+      newest = snapshot;
+    }
+  }
+
+  return newest;
+};
+
+export const getActiveDeathVisuals = (nowMs = Date.now()): DeathVisualSnapshot[] => {
+  const snapshots: DeathVisualSnapshot[] = [];
+
+  for (const snapshot of visualStore.getState().deathVisuals.values()) {
+    if (snapshot.expiresAtMs > nowMs) {
+      snapshots.push(snapshot);
+    }
+  }
+
+  snapshots.sort((a, b) => b.startedAtMs - a.startedAtMs);
+  return snapshots;
 };
 
 export const setFlamethrowerVisualPose = (
@@ -433,9 +1247,12 @@ export const setFlamethrowerVisualPose = (
  * Clear all visual state (e.g., on game reset or disconnect).
  */
 export const clearVisualState = (): void => {
-  visualStore.setState(() => ({
+  recordHotStoreCommit('visual.clear');
+  visualStore.setState((state) => ({
     playerPositions: new Map(),
     playerRotations: new Map(),
+    renderedPlayerPositions: new Map(),
+    renderedPlayerRotations: new Map(),
     cameraShake: { intensity: 0, time: 0 },
     slideFov: 0,
     interpolationTargets: new Map(),
@@ -444,13 +1261,30 @@ export const clearVisualState = (): void => {
     flamethrowerDirection: { x: 0, y: 0, z: -1 },
     chronosAegisStates: new Map(),
     remotePlayerAttackStates: new Map(),
+    deathVisuals: new Map(),
+    deathVisualRevision: state.deathVisualRevision + 1,
     localViewmodelMovement: {
       hasMovementInput: false,
       isSprinting: false,
       horizontalSpeed: 0,
       updatedAtMs: 0,
     },
+    localMovement: { ...DEFAULT_LOCAL_MOVEMENT },
+    slideIntensity: 0,
+    localSlideVelocity: { x: 0, y: 0, z: 0 },
+    localViewYaw: 0,
     localPlayerImpulses: [],
+    combatFrameCache: createCombatFrameCache(),
+    activeBlazeFlamethrowerPlayerIds: [],
+    activeBlazeFlamethrowerPlayerIdSet: new Set(),
+    activeBlazeBurningPlayerIds: [],
+    activeBlazeBurningPlayerIdSet: new Set(),
+    activePhantomVeilPlayerIds: [],
+    activePhantomVeilPlayerIdSet: new Set(),
+    activeChronosAegisPlayerIds: [],
+    activeChronosAegisPlayerIdSet: new Set(),
+    activeChronosAscendantPlayerIds: [],
+    activeChronosAscendantPlayerIdSet: new Set(),
   }));
 };
 

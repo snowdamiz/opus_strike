@@ -55,6 +55,10 @@ voxel-strike/
 └── pnpm-workspace.yaml
 ```
 
+## Documentation
+
+- [Game Optimization Log](docs/game-optimization-log.md) - Optimization passes, evidence, verification, and follow-up candidates.
+
 ## Getting Started
 
 ### Prerequisites
@@ -155,6 +159,23 @@ Optional production knobs:
 - `VOICE_MAX_PARTICIPANTS_PER_ROOM`: LiveKit team-room cap. Default: `8`.
 
 `GET /voice/status` reports whether voice is enabled and why it is disabled without exposing LiveKit secrets.
+
+### Ranked Token Hold
+
+Ranked matchmaking verifies that the linked wallet holds the configured token value before issuing a ranked ticket. Native SOL uses the wallet lamport balance; SPL-token addresses use token accounts for that mint.
+
+Server environment:
+
+- `RANKED_TOKEN_HOLD_ENABLED`: enable the gate. Default: `true`.
+- `RANKED_TOKEN_HOLD_TOKEN_ADDRESS`: ranked access token address. Default: `So11111111111111111111111111111111111111112` (native SOL).
+- `RANKED_TOKEN_HOLD_TOKEN_SYMBOL`: ticker shown in ranked UI. Default: `SOL` for native SOL, otherwise `TOKEN`.
+- `RANKED_TOKEN_HOLD_USD_CENTS`: required USD value in cents. Default: `2000` (`$20`).
+- `RANKED_TOKEN_HOLD_RPC_URL`: RPC URL for ranked hold checks. Falls back to `SOLANA_RPC_URL`.
+- `SOLANA_CLUSTER`: cluster label returned to clients. Default: `mainnet-beta`.
+- `RANKED_TOKEN_HOLD_PRICE_SOURCE`: `coingecko` or `env`. Default: `coingecko`.
+- `RANKED_TOKEN_HOLD_TOKEN_USD_PRICE` or `RANKED_TOKEN_HOLD_TOKEN_USD_MICRO_USD`: required when `RANKED_TOKEN_HOLD_PRICE_SOURCE=env`.
+- `RANKED_TOKEN_HOLD_PRICE_STALE_MS`: price cache window. Default: `60000`.
+- `RANKED_TOKEN_HOLD_RPC_TIMEOUT_MS`: balance RPC timeout. Default: `5000`.
 
 ### Playing
 

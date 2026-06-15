@@ -21,6 +21,12 @@ function formatDuration(durationMs: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
+function formatUsdCents(usdCents: number): string {
+  const dollars = Math.floor(usdCents / 100);
+  const cents = usdCents % 100;
+  return cents === 0 ? `$${dollars}` : `$${dollars}.${cents.toString().padStart(2, '0')}`;
+}
+
 function getHeroLabel(player: MatchSummaryPlayer): string {
   if (!player.heroId) return 'No Hero';
   return HERO_DEFINITIONS[player.heroId]?.name ?? player.heroId;
@@ -58,6 +64,11 @@ export function MatchSummaryScreen() {
   const resultLabel = localOutcome === 'win' ? 'Victory' : localOutcome === 'loss' ? 'Defeat' : 'Draw';
   const winnerLabel = summary.winningTeam ? `${getFactionLabel(summary.winningTeam)} Wins` : 'Draw';
   const showRankChange = summary.matchMode === 'ranked';
+  const showGoldenReward = Boolean(
+    summary.goldenBiomeReward
+    && localPlayer
+    && summary.goldenBiomeReward.eligiblePlayerIds.includes(localPlayer.playerId)
+  );
 
   const handleReturn = () => {
     clearMatchSummary();
@@ -87,6 +98,11 @@ export function MatchSummaryScreen() {
               <p className="mt-3 font-body text-sm text-white/45">
                 {formatDuration(summary.durationMs)} match length
               </p>
+              {summary.matchIntegrity?.reviewRequired && (
+                <div className="mt-4 border border-amber-300/30 bg-amber-300/10 px-3 py-2 font-body text-sm text-amber-100">
+                  {summary.matchIntegrity.message}
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border border-white/10 bg-black/35 p-3 backdrop-blur-sm">
@@ -114,6 +130,18 @@ export function MatchSummaryScreen() {
                   before={localPlayer?.rankBefore}
                   after={localPlayer?.rankAfter ?? localPlayer?.rank}
                 />
+              )}
+
+              {showGoldenReward && summary.goldenBiomeReward && (
+                <section className="border border-amber-200/35 bg-amber-300/10 p-4 text-amber-50 backdrop-blur-sm">
+                  <p className="font-body text-xs uppercase text-amber-100/70">Golden Biome Reward</p>
+                  <p className="mt-1 font-display text-3xl leading-none">
+                    {formatUsdCents(summary.goldenBiomeReward.rewardUsdCents)} SOL
+                  </p>
+                  <p className="mt-2 font-body text-sm text-amber-50/65">
+                    Reward settlement is pending treasury confirmation.
+                  </p>
+                </section>
               )}
 
               <LocalStatsPanel player={localPlayer} />

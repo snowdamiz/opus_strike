@@ -27,7 +27,7 @@ type WorkerResponse =
       positions: Float32Array;
       normals: Float32Array;
       uvs: Float32Array;
-      tileOrigins: Float32Array;
+      textureLayers: Float32Array;
       indices: Uint16Array | Uint32Array;
       buildMs: number;
     }
@@ -86,7 +86,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       data.positions.buffer,
       data.normals.buffer,
       data.uvs.buffer,
-      data.tileOrigins.buffer,
+      data.textureLayers.buffer,
       data.indices.buffer,
     ] as Transferable[]);
   } catch (error) {

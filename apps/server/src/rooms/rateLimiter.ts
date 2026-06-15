@@ -38,14 +38,15 @@ export class MessageRateLimiter {
 }
 
 export const GAME_MESSAGE_RATE_LIMITS = {
-  input: { limit: 90, intervalMs: 1000 },
+  movementCommands: { limit: 35, intervalMs: 1000 },
   chat: { limit: 4, intervalMs: 5000 },
   selection: { limit: 6, intervalMs: 3000 },
+  matchSceneReady: { limit: 12, intervalMs: 5000 },
+  playerPingResponse: { limit: 30, intervalMs: 10000 },
   blazeBombDrop: { limit: 8, intervalMs: 5000 },
-  blazeRocketImpact: { limit: 12, intervalMs: 5000 },
   devCommand: { limit: 6, intervalMs: 5000 },
-  perfSnapshot: { limit: 2, intervalMs: 5000 },
   voiceToken: { limit: 4, intervalMs: 60000 },
+  playerReport: { limit: 3, intervalMs: 60000 },
 } satisfies Record<string, RateLimitRule>;
 
 export const LOBBY_MESSAGE_RATE_LIMITS = {
@@ -55,4 +56,5 @@ export const LOBBY_MESSAGE_RATE_LIMITS = {
   mapVote: { limit: 8, intervalMs: 5000 },
   chat: { limit: 4, intervalMs: 5000 },
   payment: { limit: 6, intervalMs: 60000 },
+  devCommand: { limit: 6, intervalMs: 5000 },
 } satisfies Record<string, RateLimitRule>;

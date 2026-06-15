@@ -76,9 +76,9 @@ export const FACTIONS = {
 } as const;
 
 export const WALLET_AUTH_COLORS = {
-  gradient: 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
-  glow: '0 0 40px rgba(153, 69, 255, 0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
-  subtleGlow: '0 0 30px rgba(153, 69, 255, 0.25), inset 0 1px 0 rgba(255,255,255,0.2)',
+  gradient: 'linear-gradient(135deg, rgb(var(--color-accent-primary)) 0%, rgb(var(--color-accent-primary-deep)) 100%)',
+  glow: '0 0 40px rgb(var(--color-accent-primary) / 0.3), inset 0 1px 0 rgb(255 255 255 / 0.2)',
+  subtleGlow: '0 0 30px rgb(var(--color-accent-primary) / 0.25), inset 0 1px 0 rgb(255 255 255 / 0.2)',
   shimmer: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
 } as const;
 
@@ -94,4 +94,61 @@ export const ABILITY_COLORS = {
   ultimatePanelStart: 'rgba(180, 83, 9, 0.2)',
   ultimateGlow: 'rgba(245,158,11,0.12)',
   ultimateIconGlow: '0 4px 20px rgba(245, 158, 11, 0.4)',
+} as const;
+
+export const RANK_BADGE_COLORS = {
+  divisionMarkShadow: '#020617',
+} as const;
+
+export const MINIMAP_COLORS = {
+  frame: {
+    shadow: '0 12px 28px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255,255,255,0.04), inset 0 0 24px rgba(34, 211, 238, 0.03)',
+    overlay: 'linear-gradient(180deg, rgba(255,255,255,0.06), transparent 28%, transparent 72%, rgba(6,182,212,0.07))',
+  },
+  live: {
+    practiceTeam: '#e5e7eb',
+    teammateFlagRing: 'rgba(250, 204, 21, 0.88)',
+    teammateOutline: 'rgba(255, 255, 255, 0.72)',
+    localFlagRing: 'rgba(250, 204, 21, 0.92)',
+    localFill: 'rgba(248, 250, 252, 0.98)',
+  },
+  team: {
+    red: '#fb7185',
+    blue: '#67e8f9',
+  },
+  spawn: {
+    red: '#f43f5e',
+    blue: '#06b6d4',
+  },
+  static: {
+    background: 'rgba(2, 6, 12, 0.5)',
+    boundaryStroke: 'rgba(226, 242, 255, 0.62)',
+    boundaryShadow: 'rgba(125, 211, 252, 0.34)',
+    bridgeRoute: 'rgba(226, 242, 255, 0.22)',
+    route: 'rgba(148, 163, 184, 0.13)',
+    moduleFill: 'rgba(203, 213, 225, 0.16)',
+    moduleStroke: 'rgba(226, 242, 255, 0.22)',
+    objectiveOutline: 'rgba(255, 255, 255, 0.78)',
+    scanGrid: 'rgba(148, 163, 184, 0.08)',
+  },
+  surface: {
+    barrier: 'rgba(184, 197, 213, 0.66)',
+    hazard: 'rgba(251, 113, 71, 0.78)',
+    flag: 'rgba(250, 204, 21, 0.72)',
+    spawnRed: 'rgba(244, 63, 94, 0.84)',
+    spawnBlue: 'rgba(6, 182, 212, 0.84)',
+    accentRed: 'rgba(248, 113, 113, 0.82)',
+    accentBlue: 'rgba(103, 232, 249, 0.82)',
+    structure: (heightRatio: number) => rgba([
+      Math.round(104 + heightRatio * 54),
+      Math.round(119 + heightRatio * 62),
+      Math.round(137 + heightRatio * 70),
+    ] as const, 0.72),
+    terrain: (heightRatio: number) => rgba([
+      Math.round(26 + heightRatio * 48),
+      Math.round(60 + heightRatio * 42),
+      Math.round(54 + heightRatio * 38),
+    ] as const, 0.82),
+    void: 'rgba(5, 10, 16, 0.4)',
+  },
 } as const;

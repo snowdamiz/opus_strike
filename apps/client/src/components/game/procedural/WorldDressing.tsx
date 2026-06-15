@@ -8,7 +8,6 @@ import {
   type VoxelMapManifest,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
-import { setWorldDressingInstanceCount } from '../../../utils/perfMarks';
 
 interface SurfaceCell {
   x: number;
@@ -36,6 +35,18 @@ interface DressingSet {
   crystals: DressingInstance[];
 }
 
+interface CachedDressingSet {
+  dressing: DressingSet;
+  instanceCount: number;
+  lastUsedAt: number;
+}
+
+interface ProtectedSurfaceZone {
+  x: number;
+  z: number;
+  radiusSq: number;
+}
+
 const MAX_TUFTS = 520;
 const MAX_PEBBLES = 260;
 const MAX_CRYSTALS = 140;
@@ -47,6 +58,10 @@ const DRESSING_GEOMETRIES = {
 };
 
 const dressingMatrixDummy = new THREE.Object3D();
+const dressingSetCache = new Map<string, CachedDressingSet>();
+const DRESSING_SET_CACHE_MAX_ENTRIES = 8;
+const DRESSING_SET_CACHE_MAX_INSTANCES = 5200;
+let dressingSetCacheInstances = 0;
 
 function chunkIndex(x: number, y: number, z: number, chunk: VoxelChunk): number {
   return x + chunk.size.x * (z + chunk.size.z * y);
@@ -172,13 +187,18 @@ function worldPositionForSurface(
   ];
 }
 
-function isProtectedSurface(manifest: VoxelMapManifest, worldX: number, worldZ: number): boolean {
-  for (const flag of [manifest.flagZones.red, manifest.flagZones.blue]) {
-    if (distanceSq(worldX, worldZ, flag.x, flag.z) < 7.5 ** 2) return true;
-  }
+function createProtectedSurfaceZones(manifest: VoxelMapManifest): ProtectedSurfaceZone[] {
+  return [
+    { x: manifest.flagZones.red.x, z: manifest.flagZones.red.z, radiusSq: 7.5 ** 2 },
+    { x: manifest.flagZones.blue.x, z: manifest.flagZones.blue.z, radiusSq: 7.5 ** 2 },
+    ...manifest.spawnPoints.red.map((spawn) => ({ x: spawn.x, z: spawn.z, radiusSq: 5.8 ** 2 })),
+    ...manifest.spawnPoints.blue.map((spawn) => ({ x: spawn.x, z: spawn.z, radiusSq: 5.8 ** 2 })),
+  ];
+}
 
-  for (const spawn of [...manifest.spawnPoints.red, ...manifest.spawnPoints.blue]) {
-    if (distanceSq(worldX, worldZ, spawn.x, spawn.z) < 5.8 ** 2) return true;
+function isProtectedSurface(zones: ProtectedSurfaceZone[], worldX: number, worldZ: number): boolean {
+  for (const zone of zones) {
+    if (distanceSq(worldX, worldZ, zone.x, zone.z) < zone.radiusSq) return true;
   }
 
   return false;
@@ -194,11 +214,23 @@ function isNaturalSurface(blockId: VoxelBlockId): boolean {
     blockId === 'ice' ||
     blockId === 'ash' ||
     blockId === 'obsidian' ||
-    blockId === 'moss'
+    blockId === 'moss' ||
+    blockId === 'gold' ||
+    blockId === 'gold_ore' ||
+    blockId === 'gold_panel'
   );
 }
 
 function getDressingPalette(theme: VoxelMapTheme): DressingPalette {
+  if (theme.id === 'golden') {
+    return {
+      tuft: '#d9b956',
+      pebble: '#a67932',
+      crystal: '#fff0a6',
+      crystalEmissive: '#fff36b',
+    };
+  }
+
   if (theme.id === 'desert') {
     return {
       tuft: '#b7a75a',
@@ -262,6 +294,10 @@ function getDressingPalette(theme: VoxelMapTheme): DressingPalette {
 }
 
 function getBiomeDensities(theme: VoxelMapTheme): { tuft: number; pebble: number; crystal: number } {
+  if (theme.id === 'golden') {
+    return { tuft: 0.018, pebble: 0.028, crystal: 0.034 };
+  }
+
   if (theme.id === 'desert') {
     return { tuft: 0.024, pebble: 0.04, crystal: 0.008 };
   }
@@ -300,21 +336,28 @@ function createDressingSet(manifest: VoxelMapManifest, densityScale: number, max
   const maxPebbles = Math.min(Math.round(MAX_PEBBLES * safeDensityScale), Math.ceil(safeMaxInstances * 0.28));
   const maxCrystals = Math.min(Math.round(MAX_CRYSTALS * safeDensityScale), Math.ceil(safeMaxInstances * 0.14));
   const surfaces = getTopSurfaces(manifest);
+  const protectedZones = createProtectedSurfaceZones(manifest);
   const densities = getBiomeDensities(manifest.theme);
   const tufts: DressingInstance[] = [];
   const pebbles: DressingInstance[] = [];
   const crystals: DressingInstance[] = [];
 
+  scan:
   for (let z = 2; z < manifest.size.z - 2; z += 2) {
     for (let x = 2; x < manifest.size.x - 2; x += 2) {
       const surface = surfaces[x + z * manifest.size.x];
       if (!surface || !isNaturalSurface(surface.blockId)) continue;
-      if (tufts.length + pebbles.length + crystals.length >= safeMaxInstances) break;
+      if (
+        tufts.length + pebbles.length + crystals.length >= safeMaxInstances ||
+        (tufts.length >= maxTufts && pebbles.length >= maxPebbles && crystals.length >= maxCrystals)
+      ) {
+        break scan;
+      }
 
       const jitterX = (hashCell(manifest.seed, x, z, 0x51) - 0.5) * manifest.voxelSize.x * 0.7;
       const jitterZ = (hashCell(manifest.seed, x, z, 0x7a) - 0.5) * manifest.voxelSize.z * 0.7;
       const [worldX, worldY, worldZ] = worldPositionForSurface(manifest, surface, jitterX, jitterZ);
-      if (isProtectedSurface(manifest, worldX, worldZ)) continue;
+      if (isProtectedSurface(protectedZones, worldX, worldZ)) continue;
 
       const rotationY = hashCell(manifest.seed, x, z, 0xa11) * Math.PI * 2;
       const tuftRoll = hashCell(manifest.seed, x, z, 0x7475);
@@ -369,6 +412,55 @@ function createDressingSet(manifest: VoxelMapManifest, densityScale: number, max
   }
 
   return { tufts, pebbles, crystals };
+}
+
+function getCachedDressingSet(
+  manifest: VoxelMapManifest,
+  densityScale: number,
+  maxInstances = Number.POSITIVE_INFINITY
+): DressingSet {
+  const cacheKey = `${manifest.id}:${densityScale.toFixed(3)}:${Number.isFinite(maxInstances) ? Math.floor(maxInstances) : 'inf'}`;
+  const cached = dressingSetCache.get(cacheKey);
+  if (cached) {
+    cached.lastUsedAt = performance.now();
+    return cached.dressing;
+  }
+
+  const dressing = createDressingSet(manifest, densityScale, maxInstances);
+  const instanceCount = dressing.tufts.length + dressing.pebbles.length + dressing.crystals.length;
+
+  dressingSetCache.set(cacheKey, {
+    dressing,
+    instanceCount,
+    lastUsedAt: performance.now(),
+  });
+  dressingSetCacheInstances += instanceCount;
+  enforceDressingSetCacheBudget(cacheKey);
+  return dressing;
+}
+
+function enforceDressingSetCacheBudget(activeCacheKey: string): void {
+  if (
+    dressingSetCache.size <= DRESSING_SET_CACHE_MAX_ENTRIES &&
+    dressingSetCacheInstances <= DRESSING_SET_CACHE_MAX_INSTANCES
+  ) {
+    return;
+  }
+
+  const candidates = Array.from(dressingSetCache.entries())
+    .filter(([cacheKey]) => cacheKey !== activeCacheKey)
+    .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+
+  for (const [cacheKey, entry] of candidates) {
+    if (
+      dressingSetCache.size <= DRESSING_SET_CACHE_MAX_ENTRIES &&
+      dressingSetCacheInstances <= DRESSING_SET_CACHE_MAX_INSTANCES
+    ) {
+      break;
+    }
+    dressingSetCache.delete(cacheKey);
+    dressingSetCacheInstances = Math.max(0, dressingSetCacheInstances - entry.instanceCount);
+  }
 }
 
 function useInstancedMatrices(ref: RefObject<THREE.InstancedMesh>, instances: DressingInstance[]): void {
@@ -436,8 +528,7 @@ export function WorldDressing({
   reflectionIntensity: number;
 }) {
   const palette = useMemo(() => getDressingPalette(manifest.theme), [manifest.theme]);
-  const dressing = useMemo(() => createDressingSet(manifest, densityScale, maxInstances), [densityScale, manifest, maxInstances]);
-  const instanceCount = dressing.tufts.length + dressing.pebbles.length + dressing.crystals.length;
+  const dressing = useMemo(() => getCachedDressingSet(manifest, densityScale, maxInstances), [densityScale, manifest, maxInstances]);
   const resources = useMemo(() => {
     const tuftMaterial = new THREE.MeshStandardMaterial({
       color: palette.tuft,
@@ -477,11 +568,6 @@ export function WorldDressing({
     },
     [resources]
   );
-
-  useEffect(() => {
-    setWorldDressingInstanceCount(instanceCount);
-    return () => setWorldDressingInstanceCount(0);
-  }, [instanceCount]);
 
   return (
     <group name="procedural-world-dressing">

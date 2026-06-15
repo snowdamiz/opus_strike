@@ -1,6 +1,6 @@
 import type { Vec3, Quaternion } from './vector.js';
 import type { HeroId } from './hero.js';
-import type { AbilityState } from './ability.js';
+import type { AbilityCastOriginHint, AbilityState } from './ability.js';
 import type { PublicRankSnapshot } from '../progression/ranking.js';
 
 export type Team = 'red' | 'blue';
@@ -13,6 +13,8 @@ export type PlayerState =
   | 'spawning'
   | 'alive'
   | 'dead';
+
+export type PlayerVisibilityState = 'visible' | 'audible' | 'last_known' | 'hidden';
 
 export interface PlayerMovementState {
   isGrounded: boolean;
@@ -27,6 +29,7 @@ export interface PlayerMovementState {
   isJetpacking: boolean;
   jetpackFuel: number;
   isGliding: boolean;
+  chronosAscendantStartY?: number;
 }
 
 export interface PlayerInput {
@@ -49,11 +52,8 @@ export interface PlayerInput {
   lookYaw: number;
   lookPitch: number;
   timestamp: number;
-  unstuck?: boolean;
-  // Client position/velocity for sync (server-authoritative games should validate)
-  position?: Vec3;
-  velocity?: Vec3;
-  devFly?: boolean;
+  clientFrameRateBand?: string;
+  abilityCastHints?: AbilityCastOriginHint[];
 }
 
 export interface PlayerStats {
@@ -86,6 +86,7 @@ export interface Player {
   health: number;
   maxHealth: number;
   ultimateCharge: number;
+  onFireUntil?: number | null;
   
   // Movement state
   movement: PlayerMovementState;
@@ -103,6 +104,7 @@ export interface Player {
   // Match stats
   stats: PlayerStats;
   rank?: PublicRankSnapshot;
+  visibility?: PlayerVisibilityState;
 }
 
 export interface PlayerSnapshot {

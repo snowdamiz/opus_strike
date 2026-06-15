@@ -1,12 +1,21 @@
-import { useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
+import {
+  BLAZE_BOMB_AEGIS_COLLISION_RADIUS,
+  BLAZE_BOMB_MAX_RANGE,
+  BLAZE_BOMB_MIN_RANGE,
+  BLAZE_BOMB_SPLASH_RADIUS,
+  getBlazeMeteorPath,
+} from '@voxel-strike/shared';
 import { useGameStore, type BombData } from '../../../store/gameStore';
+import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
+import { measureFrameWork } from '../../../movement/networkDiagnostics';
 import {
   getBombBodyMaterial,
   getBombBandMaterial,
@@ -47,10 +56,7 @@ import {
 // BLAZE METEOR STRIKE EFFECT - Enhanced Visuals
 // ============================================================================
 
-const METEOR_FALL_DURATION = 1500;
 const EXPLOSION_DURATION = 1500; // Longer for more dramatic effect
-const METEOR_ENTRY_HEIGHT = 52;
-const METEOR_ENTRY_BACK_OFFSET = 30;
 const METEOR_TRAIL_BACK_OFFSET = 3.6;
 const METEOR_WAKE_BACK_OFFSET = 7.5;
 const METEOR_BODY_FORWARD = new THREE.Vector3(0, -1, 0);
@@ -68,7 +74,16 @@ interface BombEffectProps {
   bomb: BombData;
 }
 
+function sameOptionalVec3(
+  a: { x: number; y: number; z: number } | undefined,
+  b: { x: number; y: number; z: number } | undefined
+): boolean {
+  if (!a || !b) return a === b;
+  return a.x === b.x && a.y === b.y && a.z === b.z;
+}
+
 export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
+  const removeBomb = useGameStore(state => state.removeBomb);
   const bombRef = useRef<THREE.Group>(null);
   const trailRef = useRef<THREE.Mesh>(null);
   const wakeRef = useRef<THREE.Mesh>(null);
@@ -83,40 +98,97 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
   const debrisRefs = useRef<(THREE.Mesh | null)[]>([]);
   const lightRef = useRef<THREE.PointLight>(null);
   const hasExplodedRef = useRef(bomb.hasExploded);
-  const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - bomb.startTime));
+  const hasRemovedRef = useRef(false);
+  const createdAtMs = Date.now();
+  const createdFrameTimeMs = getFrameClock().nowMs;
+  const warningStartFrameTimeRef = useRef(
+    createdFrameTimeMs - (createdAtMs - (bomb.warningStartTime ?? bomb.startTime))
+  );
+  const startFrameTimeRef = useRef(createdFrameTimeMs - (createdAtMs - bomb.startTime));
   const impactFrameTimeRef = useRef(startFrameTimeRef.current + Math.max(0, bomb.impactTime - bomb.startTime));
+  const fallDurationRef = useRef(Math.max(60, impactFrameTimeRef.current - startFrameTimeRef.current));
+  const blastRadius = Math.max(0.1, bomb.radius || BLAZE_BOMB_SPLASH_RADIUS);
+  const blastDiameter = blastRadius * 2;
 
   const meteorPath = useMemo(() => {
-    const impactPosition = new THREE.Vector3(
-      bomb.targetPosition.x,
-      bomb.targetPosition.y + 0.9,
-      bomb.targetPosition.z
+    const sharedPath = getBlazeMeteorPath({
+      id: bomb.id,
+      startPosition: bomb.startPosition,
+      targetPosition: bomb.targetPosition,
+    });
+    const entryPosition = new THREE.Vector3(
+      sharedPath.entryPosition.x,
+      sharedPath.entryPosition.y,
+      sharedPath.entryPosition.z
     );
-    const casterPosition = new THREE.Vector3(
-      bomb.startPosition.x,
-      bomb.startPosition.y,
-      bomb.startPosition.z
+    const groundImpactPosition = new THREE.Vector3(
+      sharedPath.impactPosition.x,
+      sharedPath.impactPosition.y,
+      sharedPath.impactPosition.z
     );
-    const approachDirection = impactPosition.clone().sub(casterPosition);
-    approachDirection.y = 0;
+    const hasServerInterceptionFlag = bomb.interceptedByChronosAegis !== undefined;
+    const explicitShieldImpactPosition = bomb.interceptedByChronosAegis
+      ? bomb.impactPosition ?? bomb.interceptPosition
+      : undefined;
+    const visualAegisHit = explicitShieldImpactPosition || hasServerInterceptionFlag
+      ? null
+      : getFirstChronosAegisVisualHit(
+        sharedPath.entryPosition,
+        sharedPath.travelDirection,
+        sharedPath.distance,
+        bomb.ownerTeam,
+        bomb.ownerId,
+        BLAZE_BOMB_AEGIS_COLLISION_RADIUS
+      );
+    const shieldImpactPosition = explicitShieldImpactPosition ?? visualAegisHit?.point;
+    const intercepted = Boolean(shieldImpactPosition);
+    const impactPosition = shieldImpactPosition
+      ? new THREE.Vector3(
+        shieldImpactPosition.x,
+        shieldImpactPosition.y,
+        shieldImpactPosition.z
+      )
+      : groundImpactPosition;
+    const visualFallDurationMs = visualAegisHit
+      ? Math.max(
+        60,
+        Math.round(
+          Math.max(60, bomb.impactTime - bomb.startTime) *
+          Math.sqrt(visualAegisHit.distance / Math.max(0.0001, sharedPath.distance))
+        )
+      )
+      : Math.max(60, bomb.impactTime - bomb.startTime);
+    impactFrameTimeRef.current = startFrameTimeRef.current + visualFallDurationMs;
+    fallDurationRef.current = visualFallDurationMs;
 
-    if (approachDirection.lengthSq() < 0.0001) {
-      const seed = Array.from(bomb.id).reduce((sum, char) => sum + char.charCodeAt(0), 0);
-      const angle = (seed % 360) * (Math.PI / 180);
-      approachDirection.set(Math.cos(angle), 0, Math.sin(angle));
-    } else {
-      approachDirection.normalize();
+    const travelDirection = impactPosition.clone().sub(entryPosition);
+    if (travelDirection.lengthSq() < 0.0001) {
+      travelDirection.set(
+        sharedPath.travelDirection.x,
+        sharedPath.travelDirection.y,
+        sharedPath.travelDirection.z
+      );
     }
-
-    const entryPosition = impactPosition
-      .clone()
-      .addScaledVector(approachDirection, -METEOR_ENTRY_BACK_OFFSET);
-    entryPosition.y += METEOR_ENTRY_HEIGHT;
-
-    const travelDirection = impactPosition.clone().sub(entryPosition).normalize();
+    travelDirection.normalize();
     const trailDirection = travelDirection.clone().multiplyScalar(-1);
     const bodyQuaternion = new THREE.Quaternion().setFromUnitVectors(METEOR_BODY_FORWARD, travelDirection);
     const trailQuaternion = new THREE.Quaternion().setFromUnitVectors(METEOR_TRAIL_FORWARD, trailDirection);
+    const flashPosition = intercepted
+      ? impactPosition.clone()
+      : new THREE.Vector3(bomb.targetPosition.x, bomb.targetPosition.y + 1, bomb.targetPosition.z);
+    const explosionPosition = intercepted
+      ? impactPosition.clone()
+      : new THREE.Vector3(bomb.targetPosition.x, bomb.targetPosition.y + 1.5, bomb.targetPosition.z);
+    const shockwavePosition = new THREE.Vector3(
+      bomb.targetPosition.x,
+      bomb.targetPosition.y + 0.2,
+      bomb.targetPosition.z
+    );
+    const shockwave2Position = new THREE.Vector3(
+      bomb.targetPosition.x,
+      bomb.targetPosition.y + 0.25,
+      bomb.targetPosition.z
+    );
 
     return {
       impactPosition,
@@ -124,9 +196,22 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       travelDirection,
       bodyQuaternion,
       trailQuaternion,
+      flashPosition,
+      explosionPosition,
+      shockwavePosition,
+      shockwave2Position,
+      intercepted,
     };
   }, [
     bomb.id,
+    bomb.interceptPosition?.x,
+    bomb.interceptPosition?.y,
+    bomb.interceptPosition?.z,
+    bomb.impactPosition?.x,
+    bomb.impactPosition?.y,
+    bomb.impactPosition?.z,
+    bomb.interceptedByChronosAegis,
+    bomb.impactTime,
     bomb.startPosition.x,
     bomb.startPosition.y,
     bomb.startPosition.z,
@@ -172,74 +257,101 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       (i % 2 === 0 ? getExplosionDebrisOrangeMaterial() : getExplosionDebrisYellowMaterial()).clone()
     ),
   }), []);
+
+  useEffect(() => () => {
+    animatedMaterials.warningPulseFill.dispose();
+    animatedMaterials.explosionFlash.dispose();
+    animatedMaterials.explosionWhite.dispose();
+    animatedMaterials.explosionYellow.dispose();
+    animatedMaterials.explosionOrange.dispose();
+    animatedMaterials.explosionRed.dispose();
+    animatedMaterials.explosionDarkRed.dispose();
+    animatedMaterials.shockwaveOuter.dispose();
+    animatedMaterials.shockwaveInner.dispose();
+    animatedMaterials.smoke.forEach((material) => material.dispose());
+    animatedMaterials.debris.forEach((material) => material.dispose());
+  }, [animatedMaterials]);
   
-  useFrame(() => {
+  useFrame(() => measureFrameWork('frame.effects.blazeBomb', () => {
     const now = getFrameClock().nowMs;
     const elapsed = now - startFrameTimeRef.current;
-    const fallProgress = Math.max(0, Math.min(1, elapsed / METEOR_FALL_DURATION));
+    const fallProgress = Math.max(0, Math.min(1, elapsed / fallDurationRef.current));
+    const warningDuration = Math.max(60, impactFrameTimeRef.current - warningStartFrameTimeRef.current);
+    const warningElapsed = now - warningStartFrameTimeRef.current;
+    const warningProgress = Math.max(0, Math.min(1, warningElapsed / warningDuration));
+    const meteorActive = elapsed >= 0 && fallProgress < 1;
     
-    if (!hasExplodedRef.current && fallProgress < 1) {
+    if (!hasExplodedRef.current && now < impactFrameTimeRef.current) {
       if (bombRef.current) {
-        bombRef.current.visible = true;
-        const travelProgress = fallProgress * fallProgress;
-        bombRef.current.position.lerpVectors(
-          meteorPath.entryPosition,
-          meteorPath.impactPosition,
-          travelProgress
-        );
-        bombRef.current.quaternion.copy(meteorPath.bodyQuaternion);
-        bombRef.current.rotateY(elapsed * 0.012);
+        bombRef.current.visible = meteorActive;
+        if (meteorActive) {
+          const travelProgress = fallProgress * fallProgress;
+          bombRef.current.position.lerpVectors(
+            meteorPath.entryPosition,
+            meteorPath.impactPosition,
+            travelProgress
+          );
+          bombRef.current.quaternion.copy(meteorPath.bodyQuaternion);
+          bombRef.current.rotateY(elapsed * 0.012);
+        }
       }
       
       // Fire trail behind the meteor.
       if (trailRef.current && bombRef.current) {
-        trailRef.current.visible = true;
-        trailRef.current.position.copy(bombRef.current.position);
-        trailRef.current.position.addScaledVector(meteorPath.travelDirection, -METEOR_TRAIL_BACK_OFFSET);
-        trailRef.current.quaternion.copy(meteorPath.trailQuaternion);
-        const trailScale = 0.95 + Math.sin(elapsed * 0.05) * 0.16;
-        trailRef.current.scale.set(0.95 * trailScale, 6.4 * trailScale, 0.95 * trailScale);
+        trailRef.current.visible = meteorActive;
+        if (meteorActive) {
+          trailRef.current.position.copy(bombRef.current.position);
+          trailRef.current.position.addScaledVector(meteorPath.travelDirection, -METEOR_TRAIL_BACK_OFFSET);
+          trailRef.current.quaternion.copy(meteorPath.trailQuaternion);
+          const trailScale = 0.95 + Math.sin(elapsed * 0.05) * 0.16;
+          trailRef.current.scale.set(0.95 * trailScale, 6.4 * trailScale, 0.95 * trailScale);
+        }
       }
 
       if (wakeRef.current && bombRef.current) {
-        wakeRef.current.visible = true;
-        wakeRef.current.position.copy(bombRef.current.position);
-        wakeRef.current.position.addScaledVector(meteorPath.travelDirection, -METEOR_WAKE_BACK_OFFSET);
-        wakeRef.current.quaternion.copy(meteorPath.trailQuaternion);
-        const wakePulse = 0.85 + Math.sin(elapsed * 0.035) * 0.1;
-        wakeRef.current.scale.set(0.18 * wakePulse, 9.2 * wakePulse, 0.18 * wakePulse);
+        wakeRef.current.visible = meteorActive;
+        if (meteorActive) {
+          wakeRef.current.position.copy(bombRef.current.position);
+          wakeRef.current.position.addScaledVector(meteorPath.travelDirection, -METEOR_WAKE_BACK_OFFSET);
+          wakeRef.current.quaternion.copy(meteorPath.trailQuaternion);
+          const wakePulse = 0.85 + Math.sin(elapsed * 0.035) * 0.1;
+          wakeRef.current.scale.set(0.18 * wakePulse, 9.2 * wakePulse, 0.18 * wakePulse);
+        }
       }
       
       // Glow around meteor
       if (glowRef.current && bombRef.current) {
-        glowRef.current.visible = true;
-        glowRef.current.position.copy(bombRef.current.position);
-        const glowPulse = 1 + Math.sin(elapsed * 0.03) * 0.2;
-        glowRef.current.quaternion.copy(meteorPath.bodyQuaternion);
-        glowRef.current.scale.set(2.2 * glowPulse, 3.1 * glowPulse, 2.2 * glowPulse);
+        glowRef.current.visible = meteorActive;
+        if (meteorActive) {
+          glowRef.current.position.copy(bombRef.current.position);
+          const glowPulse = 1 + Math.sin(elapsed * 0.03) * 0.2;
+          glowRef.current.quaternion.copy(meteorPath.bodyQuaternion);
+          glowRef.current.scale.set(2.2 * glowPulse, 3.1 * glowPulse, 2.2 * glowPulse);
+        }
       }
       
       if (warningRef.current) {
         warningRef.current.visible = true;
-        // Faster pulsing as the meteor gets closer
-        const pulseSpeed = 0.01 + fallProgress * 0.03;
-        const pulse = 0.85 + Math.sin(elapsed * pulseSpeed) * 0.15;
-        warningRef.current.rotation.y = elapsed * 0.0018;
+        const pulseSpeed = 0.012 + warningProgress * 0.032;
+        const pulse = 0.9 + warningProgress * 0.05 + (Math.sin(warningElapsed * pulseSpeed) + 1) * 0.025;
+        warningRef.current.rotation.y = warningElapsed * 0.0018;
         warningRef.current.scale.setScalar(pulse);
       }
       
       // Pulsing fill that intensifies
       if (warningPulseRef.current) {
         warningPulseRef.current.visible = true;
-        const intensity = 0.15 + fallProgress * 0.25;
-        animatedMaterials.warningPulseFill.opacity = intensity * (0.8 + Math.sin(elapsed * 0.02) * 0.2);
+        const intensity = 0.12 + warningProgress * 0.34;
+        const fillPulse = 0.82 + warningProgress * 0.12 + (Math.sin(warningElapsed * 0.022) + 1) * 0.03;
+        warningPulseRef.current.scale.set(blastRadius * fillPulse, blastRadius * fillPulse, 1);
+        animatedMaterials.warningPulseFill.opacity = intensity * (0.78 + Math.sin(warningElapsed * 0.022) * 0.22);
       }
       
       if (explosionRef.current) explosionRef.current.visible = false;
       if (flashRef.current) flashRef.current.visible = false;
       if (shockwaveRef.current) shockwaveRef.current.visible = false;
       if (shockwave2Ref.current) shockwave2Ref.current.visible = false;
-    } else if (fallProgress >= 1 && !hasExplodedRef.current) {
+    } else if (now >= impactFrameTimeRef.current && !hasExplodedRef.current) {
       hasExplodedRef.current = true;
     }
     
@@ -259,7 +371,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
         const easeOut = 1 - Math.pow(1 - explosionProgress, 2);
         const easeOutQuart = 1 - Math.pow(1 - explosionProgress, 4);
         const fadeOut = Math.max(0, 1 - explosionProgress * 1.1);
-        const scale = 1 + easeOut * 7;
+        const scale = 0.7 + easeOut * blastRadius * 0.9;
         explosionRef.current.scale.setScalar(scale);
         
         // Update explosion material opacities
@@ -273,20 +385,20 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
         if (flashRef.current) {
           const flashProgress = Math.min(1, explosionElapsed / 100);
           flashRef.current.visible = flashProgress < 1;
-          flashRef.current.scale.setScalar(2 + flashProgress * 4);
+          flashRef.current.scale.setScalar(0.5 + flashProgress * blastRadius);
           animatedMaterials.explosionFlash.opacity = Math.max(0, 1 - flashProgress * 2);
         }
         
         // Shockwaves
         if (shockwaveRef.current) {
           shockwaveRef.current.visible = true;
-          const s = 1 + easeOutQuart * 10;
+          const s = blastRadius * THREE.MathUtils.lerp(0.15, 1, easeOutQuart);
           shockwaveRef.current.scale.set(s, s, 1);
           animatedMaterials.shockwaveOuter.opacity = fadeOut * 0.8;
         }
         if (shockwave2Ref.current) {
           shockwave2Ref.current.visible = true;
-          const s = 0.5 + easeOutQuart * 8;
+          const s = blastRadius * THREE.MathUtils.lerp(0.1, 0.72, easeOutQuart);
           shockwave2Ref.current.scale.set(s, s, 1);
           animatedMaterials.shockwaveInner.opacity = fadeOut * 0.5;
         }
@@ -327,13 +439,17 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
         if (lightRef.current) {
           lightRef.current.intensity = fadeOut * 60;
         }
-      } else if (explosionProgress >= 1 && explosionRef.current) {
-        explosionRef.current.visible = false;
+      } else if (explosionProgress >= 1) {
+        if (explosionRef.current) explosionRef.current.visible = false;
         if (shockwaveRef.current) shockwaveRef.current.visible = false;
         if (shockwave2Ref.current) shockwave2Ref.current.visible = false;
+        if (!hasRemovedRef.current) {
+          hasRemovedRef.current = true;
+          removeBomb(bomb.id);
+        }
       }
     }
-  });
+  }));
   
   return (
     <group>
@@ -358,17 +474,17 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       {/* Warning zone */}
       <group ref={warningRef} position={[bomb.targetPosition.x, bomb.targetPosition.y + 0.15, bomb.targetPosition.z]}>
         {/* Outer danger ring */}
-        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring24} scale={[6, 6, 1]} material={staticMaterials.warningOuterRing} />
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring24} scale={[blastRadius, blastRadius, 1]} material={staticMaterials.warningOuterRing} />
         {/* Inner ring */}
-        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring16} scale={[4, 4, 1]} material={staticMaterials.warningInnerRing} />
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring16} scale={[blastRadius * 0.66, blastRadius * 0.66, 1]} material={staticMaterials.warningInnerRing} />
         {/* Center ring */}
-        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring16} scale={[2, 2, 1]} material={staticMaterials.warningCenterRing} />
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring16} scale={[blastRadius * 0.33, blastRadius * 0.33, 1]} material={staticMaterials.warningCenterRing} />
         {/* Crosshairs */}
-        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, 12, 1]} material={staticMaterials.warningCrossMain} />
-        <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, 12, 1]} material={staticMaterials.warningCrossMain} />
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, blastDiameter, 1]} material={staticMaterials.warningCrossMain} />
+        <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, blastDiameter, 1]} material={staticMaterials.warningCrossMain} />
         {/* Diagonal lines */}
-        <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 4} geometry={SHARED_GEOMETRIES.plane} scale={[0.1, 8, 1]} material={staticMaterials.warningCrossDiag} />
-        <mesh rotation-x={-Math.PI / 2} rotation-z={-Math.PI / 4} geometry={SHARED_GEOMETRIES.plane} scale={[0.1, 8, 1]} material={staticMaterials.warningCrossDiag} />
+        <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 4} geometry={SHARED_GEOMETRIES.plane} scale={[0.1, blastRadius * 1.4, 1]} material={staticMaterials.warningCrossDiag} />
+        <mesh rotation-x={-Math.PI / 2} rotation-z={-Math.PI / 4} geometry={SHARED_GEOMETRIES.plane} scale={[0.1, blastRadius * 1.4, 1]} material={staticMaterials.warningCrossDiag} />
       </group>
       
       {/* Pulsing danger fill */}
@@ -378,7 +494,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
         position={[bomb.targetPosition.x, bomb.targetPosition.y + 0.08, bomb.targetPosition.z]}
         rotation-x={-Math.PI / 2} 
         geometry={SHARED_GEOMETRIES.circle16} 
-        scale={[6, 6, 1]}
+        scale={[blastRadius, blastRadius, 1]}
         material={animatedMaterials.warningPulseFill}
       />
       
@@ -386,13 +502,13 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       <mesh 
         ref={flashRef}
         visible={false}
-        position={[bomb.targetPosition.x, bomb.targetPosition.y + 1, bomb.targetPosition.z]}
+        position={meteorPath.flashPosition}
         geometry={SHARED_GEOMETRIES.sphere8}
         material={animatedMaterials.explosionFlash}
       />
       
       {/* Explosion group */}
-      <group ref={explosionRef} visible={false} position={[bomb.targetPosition.x, bomb.targetPosition.y + 1.5, bomb.targetPosition.z]}>
+      <group ref={explosionRef} visible={false} position={meteorPath.explosionPosition}>
         {/* White hot core */}
         <mesh geometry={SHARED_GEOMETRIES.sphere12} material={animatedMaterials.explosionWhite} />
         {/* Bright yellow */}
@@ -428,24 +544,28 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       </group>
       
       {/* Ground shockwave */}
-      <mesh 
-        ref={shockwaveRef}
-        visible={false}
-        position={[bomb.targetPosition.x, bomb.targetPosition.y + 0.2, bomb.targetPosition.z]}
-        rotation-x={-Math.PI / 2} 
-        geometry={SHARED_GEOMETRIES.ring24}
-        material={animatedMaterials.shockwaveOuter}
-      />
+      {!meteorPath.intercepted && (
+        <mesh
+          ref={shockwaveRef}
+          visible={false}
+          position={meteorPath.shockwavePosition}
+          rotation-x={-Math.PI / 2}
+          geometry={SHARED_GEOMETRIES.ring24}
+          material={animatedMaterials.shockwaveOuter}
+        />
+      )}
       
       {/* Secondary inner shockwave */}
-      <mesh 
-        ref={shockwave2Ref}
-        visible={false}
-        position={[bomb.targetPosition.x, bomb.targetPosition.y + 0.25, bomb.targetPosition.z]}
-        rotation-x={-Math.PI / 2} 
-        geometry={SHARED_GEOMETRIES.ring16}
-        material={animatedMaterials.shockwaveInner}
-      />
+      {!meteorPath.intercepted && (
+        <mesh
+          ref={shockwave2Ref}
+          visible={false}
+          position={meteorPath.shockwave2Position}
+          rotation-x={-Math.PI / 2}
+          geometry={SHARED_GEOMETRIES.ring16}
+          material={animatedMaterials.shockwaveInner}
+        />
+      )}
     </group>
   );
 }, (prev, next) => {
@@ -455,9 +575,12 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
     prev.bomb.targetPosition.x === next.bomb.targetPosition.x &&
     prev.bomb.targetPosition.y === next.bomb.targetPosition.y &&
     prev.bomb.targetPosition.z === next.bomb.targetPosition.z &&
+    sameOptionalVec3(prev.bomb.interceptPosition, next.bomb.interceptPosition) &&
+    prev.bomb.warningStartTime === next.bomb.warningStartTime &&
     prev.bomb.startTime === next.bomb.startTime &&
     prev.bomb.hasExploded === next.bomb.hasExploded &&
-    prev.bomb.impactTime === next.bomb.impactTime
+    prev.bomb.impactTime === next.bomb.impactTime &&
+    prev.bomb.radius === next.bomb.radius
   );
 });
 
@@ -467,19 +590,19 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
 
 interface BombTargetingIndicatorProps {
   isActive: boolean;
+  showIndicator?: boolean;
   onTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
 }
 
-const BOMB_MAX_RANGE = 60;
-const BOMB_MIN_RANGE = 3;
 const BOMB_TARGET_SAMPLE_FACTORS = [0.5, 1, 1.5] as const;
+const BOMB_TARGET_PHYSICS_SAMPLE_INTERVAL_MS = 34;
 
 // Pre-allocated vectors for Meteor Strike targeting (local to avoid conflicts)
 const _bombLookDir = new THREE.Vector3();
 const _bombTargetPos = new THREE.Vector3();
 const _bombHorizDir = new THREE.Vector3();
 
-export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargetingIndicatorProps) {
+export function BombTargetingIndicator({ isActive, showIndicator = true, onTargetUpdate }: BombTargetingIndicatorProps) {
   const indicatorRef = useRef<THREE.Group>(null);
   const targetOuterRef = useRef<THREE.Mesh>(null);
   const targetMiddleRef = useRef<THREE.Mesh>(null);
@@ -489,6 +612,10 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
   const targetBeamRef = useRef<THREE.Mesh>(null);
   const targetBeamTopRef = useRef<THREE.Mesh>(null);
   const isValidRef = useRef(false);
+  const cachedTargetRef = useRef(new THREE.Vector3());
+  const cachedTargetValidRef = useRef(false);
+  const hasCachedTargetRef = useRef(false);
+  const lastPhysicsSampleAtRef = useRef(Number.NEGATIVE_INFINITY);
   const reportedTargetRef = useRef(new THREE.Vector3());
   const lastReportedTargetRef = useRef(new THREE.Vector3(Number.POSITIVE_INFINITY, 0, 0));
   const lastReportedValidRef = useRef(false);
@@ -517,6 +644,9 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
         wasActiveRef.current = false;
         lastReportedTargetRef.current.set(Number.POSITIVE_INFINITY, 0, 0);
         lastReportedValidRef.current = false;
+        hasCachedTargetRef.current = false;
+        cachedTargetValidRef.current = false;
+        lastPhysicsSampleAtRef.current = Number.NEGATIVE_INFINITY;
         lastReportAtRef.current = now;
         onTargetUpdate(null, false);
       }
@@ -529,130 +659,141 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
       if (lastReportedValidRef.current || lastReportedTargetRef.current.x !== Number.POSITIVE_INFINITY) {
         lastReportedTargetRef.current.set(Number.POSITIVE_INFINITY, 0, 0);
         lastReportedValidRef.current = false;
+        hasCachedTargetRef.current = false;
+        cachedTargetValidRef.current = false;
         lastReportAtRef.current = now;
         onTargetUpdate(null, false);
       }
       return;
     }
-    
-    _bombLookDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
-    
-    let targetX = camera.position.x;
-    let targetY = camera.position.y;
-    let targetZ = camera.position.z;
-    let isValid = false;
-    let foundTarget = false;
-    
-    if (isPhysicsReady()) {
-      const directHit = raycastDirection(
-        camera.position.x, camera.position.y, camera.position.z,
-        _bombLookDir.x, _bombLookDir.y, _bombLookDir.z,
-        BOMB_MAX_RANGE + 10,
-        {
-          priority: 'visual',
-          feature: 'targeting:blazeBomb',
-        }
-      );
-      
-      if (directHit && directHit.hit) {
-        targetX = directHit.point.x;
-        targetY = directHit.point.y;
-        targetZ = directHit.point.z;
-        foundTarget = true;
-        
-        if (!directHit.isWalkable) {
-          const groundBelow = checkGroundWithNormal(targetX, targetY + 5, targetZ, 50, {
+
+    let isValid = cachedTargetValidRef.current;
+
+    if (!hasCachedTargetRef.current || now - lastPhysicsSampleAtRef.current >= BOMB_TARGET_PHYSICS_SAMPLE_INTERVAL_MS) {
+      lastPhysicsSampleAtRef.current = now;
+      _bombLookDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
+
+      let targetX = camera.position.x;
+      let targetY = camera.position.y;
+      let targetZ = camera.position.z;
+      let foundTarget = false;
+      isValid = false;
+
+      if (isPhysicsReady()) {
+        const directHit = raycastDirection(
+          camera.position.x, camera.position.y, camera.position.z,
+          _bombLookDir.x, _bombLookDir.y, _bombLookDir.z,
+          BLAZE_BOMB_MAX_RANGE + 10,
+          {
             priority: 'visual',
             feature: 'targeting:blazeBomb',
-          });
-          if (groundBelow?.isWalkable) {
-            targetY = groundBelow.groundY + 0.1;
           }
-        } else {
-          targetY += 0.1;
-        }
-      }
-      
-      if (!foundTarget) {
-        const pitch = Math.asin(Math.max(-1, Math.min(1, -_bombLookDir.y)));
-        const baseDist = pitch > 0.3 ? 15 : (pitch > 0 ? 25 : 40);
-        for (let sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
-          const dist = sampleIndex === 3
-            ? BOMB_MAX_RANGE
-            : baseDist * BOMB_TARGET_SAMPLE_FACTORS[sampleIndex];
-          const sampleX = camera.position.x + _bombLookDir.x * dist;
-          const sampleY = camera.position.y + _bombLookDir.y * dist;
-          const sampleZ = camera.position.z + _bombLookDir.z * dist;
-          
-          const groundCheck = checkGroundWithNormal(sampleX, Math.max(sampleY + 50, camera.position.y + 50), sampleZ, 150, {
-            priority: 'visual',
-            feature: 'targeting:blazeBomb',
-          });
-          
-          if (groundCheck?.isWalkable) {
-            targetX = sampleX;
-            targetY = groundCheck.groundY + 0.1;
-            targetZ = sampleZ;
-            foundTarget = true;
-            break;
-          }
-        }
-      }
-      
-      if (foundTarget) {
-        const dx = targetX - localPlayer.position.x;
-        const dy = targetY - localPlayer.position.y;
-        const dz = targetZ - localPlayer.position.z;
-        const dist3D = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        
-        if (dist3D > BOMB_MAX_RANGE) {
-          const scale = BOMB_MAX_RANGE / dist3D;
-          targetX = localPlayer.position.x + dx * scale;
-          targetY = localPlayer.position.y + dy * scale;
-          targetZ = localPlayer.position.z + dz * scale;
-          
-          const groundCheck = checkGroundWithNormal(targetX, targetY + 30, targetZ, 100, {
-            priority: 'visual',
-            feature: 'targeting:blazeBomb',
-          });
-          if (groundCheck?.isWalkable) {
-            targetY = groundCheck.groundY + 0.1;
-          } else {
-            foundTarget = false;
-          }
-        }
-        
-        const finalDistH = Math.sqrt(
-          (targetX - localPlayer.position.x) ** 2 + 
-          (targetZ - localPlayer.position.z) ** 2
         );
-        
-        if (foundTarget && finalDistH >= BOMB_MIN_RANGE) {
-          isValid = true;
+
+        if (directHit && directHit.hit) {
+          targetX = directHit.point.x;
+          targetY = directHit.point.y;
+          targetZ = directHit.point.z;
+          foundTarget = true;
+
+          if (!directHit.isWalkable) {
+            const groundBelow = checkGroundWithNormal(targetX, targetY + 5, targetZ, 50, {
+              priority: 'visual',
+              feature: 'targeting:blazeBomb',
+            });
+            if (groundBelow?.isWalkable) {
+              targetY = groundBelow.groundY + 0.1;
+            }
+          } else {
+            targetY += 0.1;
+          }
         }
-      }
-      
-      if (!foundTarget) {
-        const fallbackDist = 20;
-        _bombHorizDir.set(_bombLookDir.x, 0, _bombLookDir.z).normalize();
-        targetX = localPlayer.position.x + _bombHorizDir.x * fallbackDist;
-        targetZ = localPlayer.position.z + _bombHorizDir.z * fallbackDist;
-        
-        const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 30, targetZ, 100, {
-          priority: 'visual',
-          feature: 'targeting:blazeBomb',
-        });
-        if (groundCheck?.isWalkable) {
-          targetY = groundCheck.groundY + 0.1;
-          isValid = Math.sqrt(
-            (targetX - localPlayer.position.x) ** 2 + 
+
+        if (!foundTarget) {
+          const pitch = Math.asin(Math.max(-1, Math.min(1, -_bombLookDir.y)));
+          const baseDist = pitch > 0.3 ? 15 : (pitch > 0 ? 25 : 40);
+          for (let sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
+            const dist = sampleIndex === 3
+              ? BLAZE_BOMB_MAX_RANGE
+              : baseDist * BOMB_TARGET_SAMPLE_FACTORS[sampleIndex];
+            const sampleX = camera.position.x + _bombLookDir.x * dist;
+            const sampleY = camera.position.y + _bombLookDir.y * dist;
+            const sampleZ = camera.position.z + _bombLookDir.z * dist;
+
+            const groundCheck = checkGroundWithNormal(sampleX, Math.max(sampleY + 50, camera.position.y + 50), sampleZ, 150, {
+              priority: 'visual',
+              feature: 'targeting:blazeBomb',
+            });
+
+            if (groundCheck?.isWalkable) {
+              targetX = sampleX;
+              targetY = groundCheck.groundY + 0.1;
+              targetZ = sampleZ;
+              foundTarget = true;
+              break;
+            }
+          }
+        }
+
+        if (foundTarget) {
+          const dx = targetX - localPlayer.position.x;
+          const dy = targetY - localPlayer.position.y;
+          const dz = targetZ - localPlayer.position.z;
+          const dist3D = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+          if (dist3D > BLAZE_BOMB_MAX_RANGE) {
+            const scale = BLAZE_BOMB_MAX_RANGE / dist3D;
+            targetX = localPlayer.position.x + dx * scale;
+            targetY = localPlayer.position.y + dy * scale;
+            targetZ = localPlayer.position.z + dz * scale;
+
+            const groundCheck = checkGroundWithNormal(targetX, targetY + 30, targetZ, 100, {
+              priority: 'visual',
+              feature: 'targeting:blazeBomb',
+            });
+            if (groundCheck?.isWalkable) {
+              targetY = groundCheck.groundY + 0.1;
+            } else {
+              foundTarget = false;
+            }
+          }
+
+          const finalDistH = Math.sqrt(
+            (targetX - localPlayer.position.x) ** 2 +
             (targetZ - localPlayer.position.z) ** 2
-          ) >= BOMB_MIN_RANGE;
+          );
+
+          if (foundTarget && finalDistH >= BLAZE_BOMB_MIN_RANGE) {
+            isValid = true;
+          }
+        }
+
+        if (!foundTarget) {
+          const fallbackDist = 20;
+          _bombHorizDir.set(_bombLookDir.x, 0, _bombLookDir.z).normalize();
+          targetX = localPlayer.position.x + _bombHorizDir.x * fallbackDist;
+          targetZ = localPlayer.position.z + _bombHorizDir.z * fallbackDist;
+
+          const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 30, targetZ, 100, {
+            priority: 'visual',
+            feature: 'targeting:blazeBomb',
+          });
+          if (groundCheck?.isWalkable) {
+            targetY = groundCheck.groundY + 0.1;
+            isValid = Math.sqrt(
+              (targetX - localPlayer.position.x) ** 2 +
+              (targetZ - localPlayer.position.z) ** 2
+            ) >= BLAZE_BOMB_MIN_RANGE;
+          }
         }
       }
+
+      cachedTargetRef.current.set(targetX, targetY, targetZ);
+      cachedTargetValidRef.current = isValid;
+      hasCachedTargetRef.current = true;
     }
-    
-    _bombTargetPos.set(targetX, targetY, targetZ);
+
+    _bombTargetPos.copy(cachedTargetRef.current);
     isValidRef.current = isValid;
     
     if (indicatorRef.current) {
@@ -662,8 +803,8 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
 
     const time = now * 0.001;
     const validity = isValid ? 1 : 0.45;
-    const pulse = 1 + Math.sin(time * 5.4) * 0.045 * validity;
-    const slowPulse = 1 + Math.sin(time * 2.2) * 0.08 * validity;
+    const pulse = 0.96 + Math.sin(time * 5.4) * 0.04 * validity;
+    const slowPulse = 0.93 + (Math.sin(time * 2.2) + 1) * 0.035 * validity;
 
     materials.ring1.opacity = 0.42 + validity * 0.32;
     materials.ring2.opacity = 0.46 + validity * 0.34;
@@ -675,21 +816,23 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
 
     if (targetOuterRef.current) {
       targetOuterRef.current.rotation.z = time * 0.75;
-      targetOuterRef.current.scale.set(5 * pulse, 5 * pulse, 1);
+      targetOuterRef.current.scale.set(BLAZE_BOMB_SPLASH_RADIUS * pulse, BLAZE_BOMB_SPLASH_RADIUS * pulse, 1);
     }
     if (targetMiddleRef.current) {
       targetMiddleRef.current.rotation.z = -time * 1.1;
-      targetMiddleRef.current.scale.set(3.15 * slowPulse, 3.15 * slowPulse, 1);
+      const radius = BLAZE_BOMB_SPLASH_RADIUS * 0.66 * slowPulse;
+      targetMiddleRef.current.scale.set(radius, radius, 1);
     }
     if (targetInnerRef.current) {
       targetInnerRef.current.rotation.z = time * 1.8;
-      targetInnerRef.current.scale.set(1.45 * pulse, 1.45 * pulse, 1);
+      const radius = BLAZE_BOMB_SPLASH_RADIUS * 0.33 * pulse;
+      targetInnerRef.current.scale.set(radius, radius, 1);
     }
     if (targetCenterRef.current) {
       targetCenterRef.current.scale.setScalar(0.42 + validity * 0.18 + Math.sin(time * 7) * 0.04);
     }
     if (targetFillRef.current) {
-      const fillScale = 4.7 + Math.sin(time * 3.4) * 0.25 * validity;
+      const fillScale = BLAZE_BOMB_SPLASH_RADIUS * (0.9 + Math.sin(time * 3.4) * 0.04 * validity);
       targetFillRef.current.scale.set(fillScale, fillScale, 1);
     }
     if (targetBeamRef.current) {
@@ -713,17 +856,17 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
     }
   });
   
-  if (!isActive) return null;
+  if (!isActive || !showIndicator) return null;
   
   return (
     <group ref={indicatorRef}>
-      <mesh ref={targetOuterRef} rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[5, 5, 1]} material={materials.ring1} />
-      <mesh ref={targetMiddleRef} rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.ring16} scale={[3, 3, 1]} material={materials.ring2} />
-      <mesh ref={targetInnerRef} rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.ring16} scale={[1.5, 1.5, 1]} material={materials.ring3} />
+      <mesh ref={targetOuterRef} rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[BLAZE_BOMB_SPLASH_RADIUS, BLAZE_BOMB_SPLASH_RADIUS, 1]} material={materials.ring1} />
+      <mesh ref={targetMiddleRef} rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.ring16} scale={[BLAZE_BOMB_SPLASH_RADIUS * 0.66, BLAZE_BOMB_SPLASH_RADIUS * 0.66, 1]} material={materials.ring2} />
+      <mesh ref={targetInnerRef} rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.ring16} scale={[BLAZE_BOMB_SPLASH_RADIUS * 0.33, BLAZE_BOMB_SPLASH_RADIUS * 0.33, 1]} material={materials.ring3} />
       <mesh ref={targetCenterRef} rotation-x={-Math.PI / 2} position-y={0.25} geometry={SHARED_GEOMETRIES.circle16} scale={[0.5, 0.5, 1]} material={materials.center} />
-      <mesh ref={targetFillRef} rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[5, 5, 1]} material={materials.fill} />
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, 10, 1]} material={materials.cross} />
-      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, 10, 1]} material={materials.cross} />
+      <mesh ref={targetFillRef} rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[BLAZE_BOMB_SPLASH_RADIUS, BLAZE_BOMB_SPLASH_RADIUS, 1]} material={materials.fill} />
+      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, BLAZE_BOMB_SPLASH_RADIUS * 2, 1]} material={materials.cross} />
+      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, BLAZE_BOMB_SPLASH_RADIUS * 2, 1]} material={materials.cross} />
       <mesh ref={targetBeamRef} position-y={20} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 40, 0.06]} material={materials.beam} />
       <mesh ref={targetBeamTopRef} position-y={42} geometry={SHARED_GEOMETRIES.sphere8} scale={0.4} material={materials.beamTop} />
       <BudgetedPointLight budgetPriority={2} color={0xff4400} intensity={2} distance={6} decay={2} position-y={0.5} />

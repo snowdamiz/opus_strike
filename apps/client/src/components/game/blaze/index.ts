@@ -2,15 +2,17 @@
 
 export { 
   RocketsManager, 
-  triggerRocketJumpExplosion, 
-  RocketJumpExplosions,
-  ROCKET_JUMP_DURATION,
   prewarmRocketResources,
 } from './rockets';
 
+export {
+  triggerRocketJumpExplosion, 
+  RocketJumpExplosions,
+  ROCKET_JUMP_DURATION,
+} from './rocketJumpExplosion';
+
 export { 
   triggerAirStrike, 
-  AirStrikeTargetingIndicator,
   AirStrikeEffects,
   AIR_STRIKE_DURATION,
 } from './airstrike';

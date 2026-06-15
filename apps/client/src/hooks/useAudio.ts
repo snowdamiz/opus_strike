@@ -1,6 +1,14 @@
 import { useRef, useCallback, useEffect } from 'react';
 import { loadSettings, type ClientSettings } from '../store/settingsStore';
-import { recordSpawnMarker, recordSystemTime } from '../utils/perfMarks';
+import {
+  recordAudioLoadRequest,
+  recordAudioLoadSample,
+  recordAudioPlayLoadWait,
+  recordAudioPlayRequest,
+  recordAudioPreloadFlush,
+  recordAudioPreloadRequest,
+  recordAudioRuntimeState,
+} from '../movement/networkDiagnostics';
 
 interface AudioConfig {
   masterVolume: number;  // 0-100
@@ -12,6 +20,13 @@ interface AudioConfig {
 interface SoundEffect {
   buffer: AudioBuffer | null;
   volume: number;
+  playbackDurationRatio?: number;
+}
+
+interface SoundDefinition {
+  path: string;
+  volume: number;
+  playbackDurationRatio?: number;
 }
 
 export interface PlaySoundOptions {
@@ -56,6 +71,8 @@ let sharedAudioContext: AudioContext | null = null;
 const sharedConfig: AudioConfig = loadAudioSettings();
 const sharedSounds = new Map<string, SoundEffect>();
 const sharedSoundLoads = new Map<string, Promise<SoundEffect | null>>();
+const sharedSoundBuffersByPath = new Map<string, AudioBuffer>();
+const sharedSoundBufferLoads = new Map<string, Promise<AudioBuffer | null>>();
 const sharedLoops = new Map<string, {
   source: AudioBufferSourceNode;
   gain: GainNode;
@@ -66,6 +83,22 @@ const sharedLoops = new Map<string, {
   stopTimeout?: number;
 }>();
 const sharedPendingLoops = new Map<string, { cancelled: boolean }>();
+
+const DEFAULT_AUDIO_UP = { x: 0, y: 1, z: 0 };
+const AUDIO_LISTENER_POSITION_EPSILON_SQ = 0.000001;
+const AUDIO_LISTENER_DIRECTION_EPSILON_SQ = 0.00000001;
+let lastAudioListenerContext: AudioContext | null = null;
+let hasLastAudioListenerPosition = false;
+let hasLastAudioListenerOrientation = false;
+let lastAudioListenerPositionX = 0;
+let lastAudioListenerPositionY = 0;
+let lastAudioListenerPositionZ = 0;
+let lastAudioListenerForwardX = 0;
+let lastAudioListenerForwardY = 0;
+let lastAudioListenerForwardZ = -1;
+let lastAudioListenerUpX = 0;
+let lastAudioListenerUpY = 1;
+let lastAudioListenerUpZ = 0;
 
 let hasAudioUserActivation =
   typeof navigator !== 'undefined' && navigator.userActivation?.hasBeenActive === true;
@@ -89,6 +122,8 @@ function markAudioUserActivation(): void {
   if (sharedAudioContext?.state === 'suspended') {
     void sharedAudioContext.resume().catch(() => undefined);
   }
+  updateAudioDiagnosticsState();
+  void flushPendingAudioPreloads();
 }
 
 function installAudioUnlockListeners(): void {
@@ -128,35 +163,38 @@ function getMusicVolume(): number {
 // Sound effect definitions
 const SOUND_EFFECTS = {
   // Movement
-  footstep: { path: '/sounds/footstep.mp3', volume: 0.3 },
+  footstep: { path: '/sounds/walk.mp3', volume: 0.3 },
   walk: { path: '/sounds/walk.mp3', volume: 1.04 },
-  jump: { path: '/sounds/jump.mp3', volume: 0.5 },
-  land: { path: '/sounds/land.mp3', volume: 0.4 },
-  slide: { path: '/sounds/slide.mp3', volume: 0.18 },
-  wallRun: { path: '/sounds/wall_run.mp3', volume: 0.4 },
+  jump: { path: '/sounds/rocket_jump.mp3', volume: 0.34 },
+  land: { path: '/sounds/slide.mp3', volume: 0.4 },
+  slide: { path: '/sounds/slide.mp3', volume: 0.32 },
+  wallRun: { path: '/sounds/walk.mp3', volume: 0.4 },
   
   // Abilities - Generic
   blink: { path: '/sounds/blink.mp3', volume: 0.6 },
-  grapple: { path: '/sounds/grapple.mp3', volume: 0.5 },
+  grapple: { path: '/sounds/hookshot_shot.mp3', volume: 0.5 },
   jetpack: { path: '/sounds/jetpack.mp3', volume: 0.4 },
   
   // Phantom Abilities (using shortened clips)
-  phantomBlink: { path: '/sounds/blink.mp3', volume: 0.39 },
-  phantomShadowStep: { path: '/sounds/shadow_step_short.mp3', volume: 0.4 },
+  phantomBlink: { path: '/sounds/blink_short.mp3', volume: 0.39 },
   phantomVeil: { path: '/sounds/phantom_veil.mp3', volume: 0.2 },
   phantomBasic: { path: '/sounds/phantom_basic.mp3', volume: 0.1872 },
   phantomReload: { path: '/sounds/phantom_reload.mp3', volume: 0.27 },
+  phantomShield: { path: '/sounds/phantom_shield.mp3', volume: 0.336 },
+  phantomShieldCast: { path: '/sounds/phantom_shield_cast.mp3', volume: 0.464 },
   phantomVoidRay: { path: '/sounds/phantom_strong.mp3', volume: 0.6 },
   phantomVoidRayCharge: { path: '/sounds/phantom_right_click_charge.mp3', volume: 0.45 },
   
   // Blaze Abilities (using existing sounds as fallbacks)
   blazeRocket: { path: '/sounds/rocket_fire.mp3', volume: 0.4 },
   blazeBombTarget: { path: '/sounds/button.mp3', volume: 0.75 },
+  blazeBombRelease: { path: '/sounds/blaze_RMB_release.mp3', volume: 0.7 },
   blazeBombFall: { path: '/sounds/bomb_fall.mp3', volume: 0.8 },
   blazeBombExplode: { path: '/sounds/bomb_explode.mp3', volume: 1.862 },
   blazeFlamethrower: { path: '/sounds/jetpack.mp3', volume: 0.3 },
   blazeRocketJump: { path: '/sounds/rocket_jump.mp3', volume: 0.6 },
-  blazeAirstrike: { path: '/sounds/airstrike.mp3', volume: 0.6 },
+  blazeAirstrikeFire: { path: '/sounds/blaze_F_fire.mp3', volume: 0.5 },
+  blazeAirstrikeGears: { path: '/sounds/blaze_F_gears.mp3', volume: 0.46 },
 
   // Hookshot Abilities
   hookshotShot: { path: '/sounds/hookshot_shot.mp3', volume: 0.58 },
@@ -164,57 +202,104 @@ const SOUND_EFFECTS = {
   hookshotSecondary: { path: '/sounds/hookshot_rmb.mp3', volume: 0.58 },
   hookshotGrapple: { path: '/sounds/hookshot_lmb.mp3', volume: 0.5 },
   hookshotAnchorWall: { path: '/sounds/hookshot_q.mp3', volume: 0.6 },
-  hookshotTrap: { path: '/sounds/hookshot_hero_strike.mp3', volume: 0.58 },
+  hookshotGroundHooks: { path: '/sounds/hookshot_voxel_strike.mp3', volume: 0.58 },
   hookshotRetract: { path: '/sounds/hookshot_retract.mp3', volume: 0.42 },
 
   // Chronos Abilities
-  chronosPulse: { path: '/sounds/chronos_charge.mp3', volume: 0.34 },
-  chronosAegis: { path: '/sounds/chronos_charge.mp3', volume: 0.24 },
+  chronosPulse: { path: '/sounds/chronos_charge.mp3', volume: 0 },
+  chronosAegis: { path: '/sounds/chronos_shield.mp3', volume: 0.8352 },
   chronosLifeline: { path: '/sounds/choronos_heal.mp3', volume: 0.5 },
-  chronosTimebreak: { path: '/sounds/chronos_charge.mp3', volume: 0.62 },
+  chronosTimebreakCharge: { path: '/sounds/chronos_charge.mp3', volume: 0.72 },
+  chronosPush: { path: '/sounds/chronos_push.mp3', volume: 0.72 },
+  chronosTimebreak: { path: '/sounds/chronos_charge.mp3', volume: 0 },
+  chronosSuperchargedImpact: { path: '/sounds/magic_impact.mp3', volume: 0.72 },
   
   // Combat
-  hit: { path: '/sounds/hit.mp3', volume: 0.6 },
-  damage: { path: '/sounds/damage.mp3', volume: 0.5 },
-  death: { path: '/sounds/death.mp3', volume: 0.6 },
-  kill: { path: '/sounds/kill.mp3', volume: 0.7 },
+  hit: { path: '/sounds/laser_hit.mp3', volume: 0.6 },
+  damage: { path: '/sounds/laser_hit.mp3', volume: 0.5 },
+  death: { path: '/sounds/scream.mp3', volume: 0.6 },
+  kill: { path: '/sounds/magic_impact.mp3', volume: 0.7 },
   
   // CTF
-  flagPickup: { path: '/sounds/flag_pickup.mp3', volume: 0.8 },
-  flagDrop: { path: '/sounds/flag_drop.mp3', volume: 0.6 },
-  flagCapture: { path: '/sounds/flag_capture.mp3', volume: 1.0 },
-  flagReturn: { path: '/sounds/flag_return.mp3', volume: 0.7 },
+  flagPickup: { path: '/sounds/button_press.mp3', volume: 0.8 },
+  flagDrop: { path: '/sounds/button.mp3', volume: 0.6 },
+  flagCapture: { path: '/sounds/magic_impact.mp3', volume: 1.0 },
+  flagReturn: { path: '/sounds/button_press.mp3', volume: 0.7 },
   
   // UI
   buttonHover: { path: '/sounds/button.mp3', volume: 0.4 },
-  buttonClick: { path: '/sounds/button_press.mp3', volume: 0.1 },
+  buttonClick: { path: '/sounds/button.mp3', volume: 0.1, playbackDurationRatio: 0.15 },
   countdownTick: { path: '/sounds/tick.mp3', volume: 0.65 },
-  countdown: { path: '/sounds/countdown.mp3', volume: 0.6 },
-  matchStart: { path: '/sounds/match_start.mp3', volume: 0.8 },
-  roundEnd: { path: '/sounds/round_end.mp3', volume: 0.8 },
-  victory: { path: '/sounds/victory.mp3', volume: 0.9 },
-  defeat: { path: '/sounds/defeat.mp3', volume: 0.7 },
+  countdown: { path: '/sounds/tick.mp3', volume: 0.6 },
+  matchStart: { path: '/sounds/button_press.mp3', volume: 0.8 },
+  roundEnd: { path: '/sounds/button_press.mp3', volume: 0.8 },
+  victory: { path: '/sounds/magic_impact.mp3', volume: 0.9 },
+  defeat: { path: '/sounds/scream.mp3', volume: 0.7 },
   
   // Music (equal base volume, controlled by settings)
   lobbyMusic: { path: '/sounds/lobby.mp3', volume: 0.3 },
   gameMusic: { path: '/sounds/game.mp3', volume: 0.3 },
-} as const;
+} as const satisfies Record<string, SoundDefinition>;
 
 export type SoundName = keyof typeof SOUND_EFFECTS;
 export type SoundGroup = 'menu' | 'lobby' | 'commonCombat' | 'phantom' | 'blaze' | 'hookshot' | 'chronos';
 
+export const CHRONOS_VERDANT_PULSE_SHOT_PITCH = 1.28;
+export const CHRONOS_VERDANT_PULSE_SHOT_VOLUME = 0.72;
+export const BLAZE_BOMB_RELEASE_SOUND_START_OFFSET_MS = 260;
+export const BLAZE_BOMB_RELEASE_SOUND_DURATION_MS = 1100;
+export const BLAZE_BOMB_RELEASE_SOUND_FADE_OUT_MS = 80;
+export const BLAZE_AIRSTRIKE_SOUND_DURATION_MS = 5200;
+export const BLAZE_AIRSTRIKE_SOUND_FADE_IN_MS = 120;
+export const BLAZE_AIRSTRIKE_SOUND_FADE_OUT_MS = 360;
+
 const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   menu: ['buttonHover', 'buttonClick'],
   lobby: ['buttonHover', 'buttonClick'],
-  commonCombat: ['walk', 'slide', 'jetpack', 'countdownTick'],
-  phantom: ['phantomBlink', 'phantomShadowStep', 'phantomVeil', 'phantomBasic', 'phantomReload', 'phantomVoidRay', 'phantomVoidRayCharge'],
-  blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrike'],
-  hookshot: ['hookshotShot', 'hookshotPrimary', 'hookshotSecondary', 'hookshotGrapple', 'hookshotAnchorWall', 'hookshotTrap', 'hookshotRetract'],
-  chronos: ['chronosPulse', 'chronosAegis', 'chronosLifeline', 'chronosTimebreak'],
+  commonCombat: [
+    'footstep',
+    'walk',
+    'jump',
+    'land',
+    'slide',
+    'wallRun',
+    'blink',
+    'grapple',
+    'jetpack',
+    'hit',
+    'damage',
+    'death',
+    'kill',
+    'flagPickup',
+    'flagDrop',
+    'flagCapture',
+    'flagReturn',
+    'countdownTick',
+    'countdown',
+    'matchStart',
+    'roundEnd',
+    'victory',
+    'defeat',
+  ],
+  phantom: ['phantomBlink', 'phantomVeil', 'phantomBasic', 'phantomReload', 'phantomShield', 'phantomShieldCast', 'phantomVoidRay', 'phantomVoidRayCharge'],
+  blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombRelease', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrikeFire', 'blazeAirstrikeGears'],
+  hookshot: ['hookshotShot', 'hookshotPrimary', 'hookshotSecondary', 'hookshotGrapple', 'hookshotAnchorWall', 'hookshotGroundHooks', 'hookshotRetract'],
+  chronos: ['phantomBasic', 'chronosAegis', 'chronosLifeline', 'chronosTimebreakCharge', 'chronosPush', 'chronosSuperchargedImpact'],
 };
 
+const pendingAudioPreloadNames = new Set<SoundName>();
+let pendingAudioPreloadFlush: Promise<void> | null = null;
+const BLAZE_AIRSTRIKE_SOUND_LAYERS = ['blazeAirstrikeFire', 'blazeAirstrikeGears'] as const satisfies readonly SoundName[];
 const MUSIC_SOUND_NAMES = new Set<SoundName>(['lobbyMusic', 'gameMusic']);
 const MAX_CONCURRENT_AUDIO_DECODES = 2;
+const SHARED_SOUND_LAYER_START_DELAY_MS = 20;
+const GLOBAL_BUTTON_SOUND_SELECTOR = [
+  'button',
+  '[role="button"]',
+  'input[type="button"]',
+  'input[type="reset"]',
+  'input[type="submit"]',
+].join(',');
 
 let activeAudioDecodes = 0;
 const queuedAudioDecodeJobs: Array<() => void> = [];
@@ -229,13 +314,31 @@ const sharedStreamedLoops = new Map<string, {
   stopTimeout?: number;
 }>();
 
+function nowMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+function updateAudioDiagnosticsState(): void {
+  recordAudioRuntimeState({
+    userActivated: hasUserActivatedAudio(),
+    contextState: sharedAudioContext?.state ?? 'none',
+    loadedSounds: Array.from(sharedSounds.values()).filter((sound) => Boolean(sound.buffer)).length,
+    pendingLoads: sharedSoundLoads.size,
+    pendingPreloads: pendingAudioPreloadNames.size,
+    activeDecodes: activeAudioDecodes,
+    queuedDecodes: queuedAudioDecodeJobs.length,
+  });
+}
+
 function pumpAudioDecodeQueue(): void {
   while (activeAudioDecodes < MAX_CONCURRENT_AUDIO_DECODES) {
     const next = queuedAudioDecodeJobs.shift();
     if (!next) return;
     activeAudioDecodes++;
+    updateAudioDiagnosticsState();
     next();
   }
+  updateAudioDiagnosticsState();
 }
 
 function decodeAudioDataLimited(ctx: AudioContext, arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {
@@ -245,9 +348,11 @@ function decodeAudioDataLimited(ctx: AudioContext, arrayBuffer: ArrayBuffer): Pr
         .then(resolve, reject)
         .finally(() => {
           activeAudioDecodes = Math.max(0, activeAudioDecodes - 1);
+          updateAudioDiagnosticsState();
           pumpAudioDecodeQueue();
         });
     });
+    updateAudioDiagnosticsState();
     pumpAudioDecodeQueue();
   });
 }
@@ -256,11 +361,57 @@ function clampAudioVolume(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
+function getPlaybackDurationMs(sound: SoundEffect, options?: PlaySoundOptions): number | undefined {
+  const explicitDurationMs = options?.durationMs === undefined
+    ? undefined
+    : Math.max(0, options.durationMs);
+  const ratio = sound.playbackDurationRatio;
+
+  if (ratio === undefined || !sound.buffer) {
+    return explicitDurationMs;
+  }
+
+  const ratioDurationMs = sound.buffer.duration * 1000 * Math.max(0, Math.min(1, ratio));
+  return explicitDurationMs === undefined
+    ? ratioDurationMs
+    : Math.min(explicitDurationMs, ratioDurationMs);
+}
+
+type LoadedSoundEffect = SoundEffect & { buffer: AudioBuffer };
+
+function hasLoadedSoundBuffer(sound: SoundEffect | null): sound is LoadedSoundEffect {
+  return Boolean(sound?.buffer);
+}
+
+function createSoundEffect(buffer: AudioBuffer, soundDef: SoundDefinition): SoundEffect {
+  return {
+    buffer,
+    volume: soundDef.volume,
+    playbackDurationRatio: soundDef.playbackDurationRatio,
+  };
+}
+
+function getButtonSoundTarget(target: EventTarget | null): Element | null {
+  if (typeof Element === 'undefined') return null;
+  if (!(target instanceof Element)) return null;
+
+  const button = target.closest(GLOBAL_BUTTON_SOUND_SELECTOR);
+  if (!button) return null;
+
+  if (button.hasAttribute('disabled')) return null;
+  if (button.getAttribute('aria-disabled') === 'true') return null;
+
+  return button;
+}
+
 function ensureSharedAudioContext(): AudioContext | null {
   installAudioUnlockListeners();
 
   if (!sharedAudioContext) {
-    if (!hasUserActivatedAudio()) return null;
+    if (!hasUserActivatedAudio()) {
+      updateAudioDiagnosticsState();
+      return null;
+    }
 
     const AudioContextConstructor = getAudioContextConstructor();
     if (!AudioContextConstructor) return null;
@@ -272,6 +423,7 @@ function ensureSharedAudioContext(): AudioContext | null {
     void sharedAudioContext.resume().catch(() => undefined);
   }
 
+  updateAudioDiagnosticsState();
   return sharedAudioContext;
 }
 
@@ -299,6 +451,20 @@ function setAudioParam(
 ): void {
   if (!param) return;
   param.setValueAtTime(value, currentTime);
+}
+
+function vectorDistanceSq(
+  ax: number,
+  ay: number,
+  az: number,
+  bx: number,
+  by: number,
+  bz: number
+): number {
+  const dx = ax - bx;
+  const dy = ay - by;
+  const dz = az - bz;
+  return dx * dx + dy * dy + dz * dz;
 }
 
 function cancelStreamedLoopFade(loop: { fadeRaf?: number; stopTimeout?: number }): void {
@@ -431,10 +597,16 @@ function stopStreamedLoop(id: string, fadeOutMs = 0): void {
 export function setAudioListenerTransform(
   position: { x: number; y: number; z: number },
   forward?: { x: number; y: number; z: number },
-  up: { x: number; y: number; z: number } = { x: 0, y: 1, z: 0 }
+  up: { x: number; y: number; z: number } = DEFAULT_AUDIO_UP
 ): void {
   const ctx = sharedAudioContext;
   if (!ctx) return;
+
+  if (lastAudioListenerContext !== ctx) {
+    lastAudioListenerContext = ctx;
+    hasLastAudioListenerPosition = false;
+    hasLastAudioListenerOrientation = false;
+  }
 
   const listener = ctx.listener as AudioListener & {
     positionX?: AudioParam;
@@ -450,15 +622,52 @@ export function setAudioListenerTransform(
     setOrientation?: (fx: number, fy: number, fz: number, ux: number, uy: number, uz: number) => void;
   };
 
-  if (listener.positionX && listener.positionY && listener.positionZ) {
-    setAudioParam(listener.positionX, position.x, ctx.currentTime);
-    setAudioParam(listener.positionY, position.y, ctx.currentTime);
-    setAudioParam(listener.positionZ, position.z, ctx.currentTime);
-  } else {
-    listener.setPosition?.(position.x, position.y, position.z);
+  const positionChanged = !hasLastAudioListenerPosition || vectorDistanceSq(
+    position.x,
+    position.y,
+    position.z,
+    lastAudioListenerPositionX,
+    lastAudioListenerPositionY,
+    lastAudioListenerPositionZ
+  ) > AUDIO_LISTENER_POSITION_EPSILON_SQ;
+
+  if (positionChanged) {
+    if (listener.positionX && listener.positionY && listener.positionZ) {
+      setAudioParam(listener.positionX, position.x, ctx.currentTime);
+      setAudioParam(listener.positionY, position.y, ctx.currentTime);
+      setAudioParam(listener.positionZ, position.z, ctx.currentTime);
+    } else {
+      listener.setPosition?.(position.x, position.y, position.z);
+    }
+
+    hasLastAudioListenerPosition = true;
+    lastAudioListenerPositionX = position.x;
+    lastAudioListenerPositionY = position.y;
+    lastAudioListenerPositionZ = position.z;
   }
 
   if (!forward) return;
+
+  const orientationChanged = !hasLastAudioListenerOrientation || (
+    vectorDistanceSq(
+      forward.x,
+      forward.y,
+      forward.z,
+      lastAudioListenerForwardX,
+      lastAudioListenerForwardY,
+      lastAudioListenerForwardZ
+    ) > AUDIO_LISTENER_DIRECTION_EPSILON_SQ ||
+    vectorDistanceSq(
+      up.x,
+      up.y,
+      up.z,
+      lastAudioListenerUpX,
+      lastAudioListenerUpY,
+      lastAudioListenerUpZ
+    ) > AUDIO_LISTENER_DIRECTION_EPSILON_SQ
+  );
+
+  if (!orientationChanged) return;
 
   if (
     listener.forwardX &&
@@ -477,13 +686,23 @@ export function setAudioListenerTransform(
   } else {
     listener.setOrientation?.(forward.x, forward.y, forward.z, up.x, up.y, up.z);
   }
+
+  hasLastAudioListenerOrientation = true;
+  lastAudioListenerForwardX = forward.x;
+  lastAudioListenerForwardY = forward.y;
+  lastAudioListenerForwardZ = forward.z;
+  lastAudioListenerUpX = up.x;
+  lastAudioListenerUpY = up.y;
+  lastAudioListenerUpZ = up.z;
 }
 
 async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
   if (MUSIC_SOUND_NAMES.has(name)) {
+    const musicSoundDef: SoundDefinition = SOUND_EFFECTS[name];
     const musicEffect = sharedSounds.get(name) ?? {
       buffer: null,
-      volume: SOUND_EFFECTS[name].volume,
+      volume: musicSoundDef.volume,
+      playbackDurationRatio: musicSoundDef.playbackDurationRatio,
     };
     sharedSounds.set(name, musicEffect);
     return musicEffect;
@@ -495,73 +714,173 @@ async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
   }
 
   const existing = sharedSounds.get(name);
-  if (existing?.buffer) return existing;
+  if (existing?.buffer) {
+    recordAudioLoadRequest(true);
+    updateAudioDiagnosticsState();
+    return existing;
+  }
 
   const pending = sharedSoundLoads.get(name);
-  if (pending) return pending;
+  if (pending) {
+    recordAudioLoadRequest(false);
+    updateAudioDiagnosticsState();
+    return pending;
+  }
 
-  const soundDef = SOUND_EFFECTS[name];
+  const soundDef: SoundDefinition = SOUND_EFFECTS[name];
+  const cachedBuffer = sharedSoundBuffersByPath.get(soundDef.path);
+  if (cachedBuffer) {
+    const effect = createSoundEffect(cachedBuffer, soundDef);
+    sharedSounds.set(name, effect);
+    recordAudioLoadRequest(true);
+    updateAudioDiagnosticsState();
+    return effect;
+  }
+
   const loadPromise = (async () => {
     try {
+      const buffer = await loadSharedSoundBuffer(ctx, name, soundDef);
+      if (!buffer) {
+        return null;
+      }
+
+      const effect = createSoundEffect(buffer, soundDef);
+
+      sharedSounds.set(name, effect);
+      return effect;
+    } catch {
+      return null;
+    } finally {
+      sharedSoundLoads.delete(name);
+      updateAudioDiagnosticsState();
+    }
+  })();
+
+  recordAudioLoadRequest(false);
+  sharedSoundLoads.set(name, loadPromise);
+  updateAudioDiagnosticsState();
+  return loadPromise;
+}
+
+async function loadSharedSoundBuffer(
+  ctx: AudioContext,
+  name: SoundName,
+  soundDef: SoundDefinition
+): Promise<AudioBuffer | null> {
+  const cachedBuffer = sharedSoundBuffersByPath.get(soundDef.path);
+  if (cachedBuffer) {
+    updateAudioDiagnosticsState();
+    return cachedBuffer;
+  }
+
+  const pendingBuffer = sharedSoundBufferLoads.get(soundDef.path);
+  if (pendingBuffer) {
+    updateAudioDiagnosticsState();
+    return pendingBuffer;
+  }
+
+  const startedAtMs = nowMs();
+  const loadPromise = (async () => {
+    let fetchMs = 0;
+    let decodeMs = 0;
+    let bytes = 0;
+    try {
+      const fetchStartedAtMs = nowMs();
       const response = await fetch(soundDef.path);
+      fetchMs = nowMs() - fetchStartedAtMs;
       if (!response.ok) {
         console.warn(`[Audio] Sound file not found: ${soundDef.path}`);
+        recordAudioLoadSample({
+          name,
+          ok: false,
+          startedAtMs,
+          totalMs: nowMs() - startedAtMs,
+          fetchMs,
+          decodeMs: 0,
+          bytes: 0,
+          error: `http-${response.status}`,
+        });
         return null;
       }
 
       const arrayBuffer = await response.arrayBuffer();
+      bytes = arrayBuffer.byteLength;
+      const decodeStartedAtMs = nowMs();
       const buffer = await decodeAudioDataLimited(ctx, arrayBuffer);
-      const effect: SoundEffect = {
-        buffer,
-        volume: soundDef.volume,
-      };
-
-      sharedSounds.set(name, effect);
-      return effect;
+      decodeMs = nowMs() - decodeStartedAtMs;
+      sharedSoundBuffersByPath.set(soundDef.path, buffer);
+      recordAudioLoadSample({
+        name,
+        ok: true,
+        startedAtMs,
+        totalMs: nowMs() - startedAtMs,
+        fetchMs,
+        decodeMs,
+        bytes,
+      });
+      return buffer;
     } catch (error) {
       console.warn(`[Audio] Failed to load sound: ${name}`, error);
+      recordAudioLoadSample({
+        name,
+        ok: false,
+        startedAtMs,
+        totalMs: nowMs() - startedAtMs,
+        fetchMs,
+        decodeMs,
+        bytes,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     } finally {
-      sharedSoundLoads.delete(name);
+      sharedSoundBufferLoads.delete(soundDef.path);
+      updateAudioDiagnosticsState();
     }
   })();
 
-  sharedSoundLoads.set(name, loadPromise);
+  sharedSoundBufferLoads.set(soundDef.path, loadPromise);
+  updateAudioDiagnosticsState();
   return loadPromise;
 }
 
-export async function playSharedSound(
-  name: SoundName,
-  options?: PlaySoundOptions
-): Promise<SoundPlayback | undefined> {
-  if (sharedConfig.muted) return;
-  if (options?.signal?.aborted) return;
-
-  const ctx = await ensureRunningAudioContext();
-  if (!ctx) {
+async function flushPendingAudioPreloads(): Promise<void> {
+  if (!hasUserActivatedAudio()) {
+    updateAudioDiagnosticsState();
     return;
   }
+  if (pendingAudioPreloadFlush) return pendingAudioPreloadFlush;
+
+  pendingAudioPreloadFlush = (async () => {
+    const flushStartedAtMs = nowMs();
+    let flushedSoundCount = 0;
+    try {
+      while (pendingAudioPreloadNames.size > 0) {
+        const names = Array.from(pendingAudioPreloadNames);
+        pendingAudioPreloadNames.clear();
+        flushedSoundCount += names.length;
+        updateAudioDiagnosticsState();
+        await Promise.all(names.map((name) => loadSharedSound(name)));
+      }
+    } finally {
+      recordAudioPreloadFlush({
+        soundCount: flushedSoundCount,
+        durationMs: nowMs() - flushStartedAtMs,
+      });
+      pendingAudioPreloadFlush = null;
+      updateAudioDiagnosticsState();
+    }
+  })();
+
+  return pendingAudioPreloadFlush;
+}
+
+function startSharedSoundBuffer(
+  ctx: AudioContext,
+  sound: LoadedSoundEffect,
+  options?: PlaySoundOptions,
+  startAt = ctx.currentTime
+): SoundPlayback {
   const audioCtx = ctx;
-  if (options?.signal?.aborted) return;
-
-  const hadLoadedBuffer = Boolean(sharedSounds.get(name)?.buffer);
-  if (name === 'phantomBasic') {
-    recordSpawnMarker('audio:phantomBasic');
-  }
-
-  const loadStart = hadLoadedBuffer ? 0 : performance.now();
-  const sound = await loadSharedSound(name);
-  if (!hadLoadedBuffer) {
-    recordSystemTime('audioLoads', performance.now() - loadStart);
-    recordSpawnMarker(`audioLoad:${name}`);
-  }
-  if (options?.signal?.aborted) return;
-
-  if (!sound?.buffer) {
-    console.warn(`[Audio] Cannot play ${name} - no buffer`);
-    return;
-  }
-
   const source = ctx.createBufferSource();
   source.buffer = sound.buffer;
 
@@ -572,9 +891,10 @@ export async function playSharedSound(
   const gainNode = ctx.createGain();
   const targetGain = (options?.volume ?? 1) * sound.volume * getSfxVolume();
   const fadeInMs = Math.max(0, options?.fadeInMs ?? 0);
-  gainNode.gain.value = fadeInMs > 0 ? 0 : targetGain;
+  const startTime = Math.max(ctx.currentTime, startAt);
+  gainNode.gain.setValueAtTime(fadeInMs > 0 ? 0 : targetGain, startTime);
   if (fadeInMs > 0) {
-    gainNode.gain.linearRampToValueAtTime(targetGain, ctx.currentTime + fadeInMs / 1000);
+    gainNode.gain.linearRampToValueAtTime(targetGain, startTime + fadeInMs / 1000);
   }
   source.connect(gainNode);
 
@@ -640,18 +960,104 @@ export async function playSharedSound(
     Math.max(0, (options?.startOffsetMs ?? 0) / 1000),
     Math.max(0, sound.buffer.duration - 0.001)
   );
-  source.start(0, startOffsetSeconds);
-  if (options?.durationMs !== undefined) {
-    const durationMs = Math.max(0, options.durationMs);
-    const fadeOutMs = Math.min(durationMs, Math.max(0, options.fadeOutMs ?? 0));
+  source.start(startTime, startOffsetSeconds);
+  const playbackDurationMs = getPlaybackDurationMs(sound, options);
+  if (playbackDurationMs !== undefined) {
+    const durationMs = Math.max(0, playbackDurationMs);
+    const fadeOutMs = Math.min(durationMs, Math.max(0, options?.fadeOutMs ?? 0));
+    const startDelayMs = Math.max(0, (startTime - audioCtx.currentTime) * 1000);
     if (fadeOutMs > 0) {
-      fadeTimeout = window.setTimeout(() => fadeOutAndStop(fadeOutMs), durationMs - fadeOutMs);
+      fadeTimeout = window.setTimeout(() => fadeOutAndStop(fadeOutMs), startDelayMs + durationMs - fadeOutMs);
     } else {
-      durationTimeout = window.setTimeout(stop, durationMs);
+      durationTimeout = window.setTimeout(stop, startDelayMs + durationMs);
     }
   }
 
   return { stop };
+}
+
+async function loadSoundForPlayback(name: SoundName): Promise<SoundEffect | null> {
+  const hadLoadedBuffer = Boolean(sharedSounds.get(name)?.buffer);
+  const startedAtMs = nowMs();
+  const sound = await loadSharedSound(name);
+  const waitedMs = nowMs() - startedAtMs;
+
+  if (!hadLoadedBuffer && waitedMs >= 1) {
+    recordAudioPlayLoadWait({
+      name,
+      waitedMs,
+      startedAtMs,
+    });
+  }
+
+  return sound;
+}
+
+export async function playSharedSound(
+  name: SoundName,
+  options?: PlaySoundOptions
+): Promise<SoundPlayback | undefined> {
+  if (sharedConfig.muted) return;
+  if (options?.signal?.aborted) return;
+  recordAudioPlayRequest();
+
+  const ctx = await ensureRunningAudioContext();
+  if (!ctx) return;
+  if (options?.signal?.aborted) return;
+
+  const sound = await loadSoundForPlayback(name);
+  if (options?.signal?.aborted) return;
+
+  if (!hasLoadedSoundBuffer(sound)) {
+    console.warn(`[Audio] Cannot play ${name} - no buffer`);
+    return;
+  }
+
+  return startSharedSoundBuffer(ctx, sound, options);
+}
+
+export async function playSharedBlazeAirstrikeSound(
+  options?: PlaySoundOptions
+): Promise<SoundPlayback | undefined> {
+  if (sharedConfig.muted) return;
+  if (options?.signal?.aborted) return;
+  recordAudioPlayRequest();
+
+  const ctx = await ensureRunningAudioContext();
+  if (!ctx) return;
+  if (options?.signal?.aborted) return;
+
+  const layerOptions: PlaySoundOptions = {
+    ...options,
+    durationMs: options?.durationMs ?? BLAZE_AIRSTRIKE_SOUND_DURATION_MS,
+    fadeInMs: options?.fadeInMs ?? BLAZE_AIRSTRIKE_SOUND_FADE_IN_MS,
+    fadeOutMs: options?.fadeOutMs ?? BLAZE_AIRSTRIKE_SOUND_FADE_OUT_MS,
+  };
+  const layers = await Promise.all(BLAZE_AIRSTRIKE_SOUND_LAYERS.map(async (name) => ({
+    name,
+    sound: await loadSoundForPlayback(name),
+  })));
+  if (options?.signal?.aborted) return;
+
+  const startAt = ctx.currentTime + SHARED_SOUND_LAYER_START_DELAY_MS / 1000;
+  const playbacks: SoundPlayback[] = [];
+  for (const { name, sound } of layers) {
+    if (!hasLoadedSoundBuffer(sound)) {
+      console.warn(`[Audio] Cannot play ${name} - no buffer`);
+      continue;
+    }
+    playbacks.push(startSharedSoundBuffer(ctx, sound, layerOptions, startAt));
+  }
+
+  if (playbacks.length === 0) return;
+
+  return {
+    stop: () => {
+      for (const playback of playbacks) {
+        playback.stop();
+      }
+    },
+  };
 }
 
 export async function playSharedLoop(
@@ -666,6 +1072,7 @@ export async function playSharedLoop(
 ): Promise<void> {
   if (sharedConfig.muted) return;
   if (sharedLoops.has(id) || sharedStreamedLoops.has(id) || sharedPendingLoops.has(id)) return;
+  recordAudioPlayRequest();
 
   const pendingLoop = { cancelled: false };
   sharedPendingLoops.set(id, pendingLoop);
@@ -685,7 +1092,7 @@ export async function playSharedLoop(
   }
   if (pendingLoop.cancelled || sharedPendingLoops.get(id) !== pendingLoop) return;
 
-  const sound = await loadSharedSound(name);
+  const sound = await loadSoundForPlayback(name);
   if (pendingLoop.cancelled || sharedPendingLoops.get(id) !== pendingLoop) return;
   if (!sound?.buffer) {
     sharedPendingLoops.delete(id);
@@ -790,6 +1197,7 @@ export function stopSharedLoop(id: string, fadeOutMs = 0): void {
 export function useAudio() {
   useEffect(() => {
     installAudioUnlockListeners();
+    updateAudioDiagnosticsState();
   }, []);
 
   // Initialize audio context on first interaction
@@ -814,126 +1222,8 @@ export function useAudio() {
     name: SoundName, 
     options?: PlaySoundOptions
   ): Promise<SoundPlayback | undefined> => {
-    if (sharedConfig.muted) return;
-    if (options?.signal?.aborted) return;
-
-    const ctx = await ensureRunningAudioContext();
-    if (!ctx) {
-      return;
-    }
-    const audioCtx = ctx;
-    if (options?.signal?.aborted) return;
-
-    const hadLoadedBuffer = Boolean(sharedSounds.get(name)?.buffer);
-    if (name === 'phantomBasic') {
-      recordSpawnMarker('audio:phantomBasic');
-    }
-
-    const loadStart = hadLoadedBuffer ? 0 : performance.now();
-    const sound = await loadSound(name);
-    if (!hadLoadedBuffer) {
-      recordSystemTime('audioLoads', performance.now() - loadStart);
-      recordSpawnMarker(`audioLoad:${name}`);
-    }
-    if (options?.signal?.aborted) return;
-
-    if (!sound?.buffer) {
-      console.warn(`[Audio] Cannot play ${name} - no buffer`);
-      return;
-    }
-
-    // Create source
-    const source = ctx.createBufferSource();
-    source.buffer = sound.buffer;
-    
-    // Apply pitch
-    if (options?.pitch) {
-      source.playbackRate.value = options.pitch;
-    }
-
-    // Create gain node (SFX volume)
-    const gainNode = ctx.createGain();
-    const targetGain = (options?.volume ?? 1) * sound.volume * getSfxVolume();
-    const fadeInMs = Math.max(0, options?.fadeInMs ?? 0);
-    gainNode.gain.value = fadeInMs > 0 ? 0 : targetGain;
-    if (fadeInMs > 0) {
-      gainNode.gain.linearRampToValueAtTime(targetGain, ctx.currentTime + fadeInMs / 1000);
-    }
-
-    // Connect nodes
-    source.connect(gainNode);
-    
-    // Optional: 3D positioning with panner
-    if (options?.position) {
-      const panner = ctx.createPanner();
-      panner.setPosition(options.position.x, options.position.y, options.position.z);
-      gainNode.connect(panner);
-      panner.connect(ctx.destination);
-    } else {
-      gainNode.connect(ctx.destination);
-    }
-
-    let stopped = false;
-    let durationTimeout: number | null = null;
-    let fadeTimeout: number | null = null;
-
-    function cleanup() {
-      if (fadeTimeout !== null) {
-        window.clearTimeout(fadeTimeout);
-        fadeTimeout = null;
-      }
-      if (durationTimeout !== null) {
-        window.clearTimeout(durationTimeout);
-        durationTimeout = null;
-      }
-      options?.signal?.removeEventListener('abort', stop);
-    }
-
-    function stop() {
-      if (stopped) return;
-      stopped = true;
-      cleanup();
-      try {
-        source.stop();
-      } catch {
-        // Source may already have ended or been stopped by the scheduled duration.
-      }
-    }
-
-    function fadeOutAndStop(fadeOutMs: number) {
-      if (stopped) return;
-      fadeTimeout = null;
-      const fadeSeconds = fadeOutMs / 1000;
-      const currentTime = audioCtx.currentTime;
-      gainNode.gain.cancelScheduledValues(currentTime);
-      gainNode.gain.setValueAtTime(gainNode.gain.value, currentTime);
-      gainNode.gain.linearRampToValueAtTime(0, currentTime + fadeSeconds);
-      durationTimeout = window.setTimeout(stop, fadeOutMs);
-    }
-
-    options?.signal?.addEventListener('abort', stop, { once: true });
-    source.onended = () => {
-      stopped = true;
-      cleanup();
-    };
-
-    const startOffsetSeconds = Math.min(
-      Math.max(0, (options?.startOffsetMs ?? 0) / 1000),
-      Math.max(0, sound.buffer.duration - 0.001)
-    );
-    source.start(0, startOffsetSeconds);
-    if (options?.durationMs !== undefined) {
-      const durationMs = Math.max(0, options.durationMs);
-      const fadeOutMs = Math.min(durationMs, Math.max(0, options.fadeOutMs ?? 0));
-      if (fadeOutMs > 0) {
-        fadeTimeout = window.setTimeout(() => fadeOutAndStop(fadeOutMs), durationMs - fadeOutMs);
-      } else {
-        durationTimeout = window.setTimeout(stop, durationMs);
-      }
-    }
-
-    return { stop };
-  }, [loadSound, initAudio]);
+    return playSharedSound(name, options);
+  }, []);
 
   // Play looping sound
   const playLoop = useCallback(async (
@@ -985,11 +1275,29 @@ export function useAudio() {
 
   // Preload multiple sounds (for abilities that need instant playback)
   const preloadSounds = useCallback(async (names: SoundName[]) => {
-    if (!hasUserActivatedAudio()) return;
-    
-    await Promise.all(names
-      .filter(name => !MUSIC_SOUND_NAMES.has(name))
-      .map(name => loadSound(name)));
+    const preloadNames = Array.from(new Set(names.filter(name => !MUSIC_SOUND_NAMES.has(name))));
+    if (preloadNames.length === 0) {
+      updateAudioDiagnosticsState();
+      return;
+    }
+
+    if (!hasUserActivatedAudio()) {
+      preloadNames.forEach((name) => pendingAudioPreloadNames.add(name));
+      recordAudioPreloadRequest({
+        soundCount: preloadNames.length,
+        queuedForActivation: true,
+      });
+      updateAudioDiagnosticsState();
+      return;
+    }
+
+    recordAudioPreloadRequest({
+      soundCount: preloadNames.length,
+      queuedForActivation: false,
+    });
+    await Promise.all(preloadNames.map(name => loadSound(name)));
+    await flushPendingAudioPreloads();
+    updateAudioDiagnosticsState();
   }, [loadSound]);
 
   const preloadSoundGroup = useCallback(async (group: SoundGroup) => {
@@ -1038,6 +1346,11 @@ let walkingSoundState = {
   movementStartTime: 0, // When continuous movement started
 };
 
+const WALKING_STEP_BASE_GAIN = 0.572;
+const WALKING_STEP_VOLUME_MULTIPLIER = 1.3;
+const RUNNING_STEP_VOLUME_MULTIPLIER = 1.4;
+const RUNNING_STEP_SPEED_RATIO = 1.1;
+
 // Sound effect helper hooks
 export function useMovementSounds() {
   const { playSound, playLoop, stopLoop, loadSound, initAudio } = useAudio();
@@ -1082,7 +1395,7 @@ export function useMovementSounds() {
   }, [loadSound]);
 
   // Helper to play a single footstep sound
-  const playFootstep = useCallback(() => {
+  const playFootstep = useCallback((volumeMultiplier = WALKING_STEP_VOLUME_MULTIPLIER) => {
     const ctx = initAudio();
     if (!ctx) return;
 
@@ -1105,7 +1418,7 @@ export function useMovementSounds() {
     source.playbackRate.value = 0.85 + Math.random() * 0.3;
 
     const gainNode = ctx.createGain();
-    gainNode.gain.value = 0.52 * getSfxVolume();
+    gainNode.gain.value = WALKING_STEP_BASE_GAIN * volumeMultiplier * getSfxVolume();
 
     source.connect(gainNode);
     gainNode.connect(ctx.destination);
@@ -1144,11 +1457,16 @@ export function useMovementSounds() {
       ? now - walkingSoundState.movementStartTime 
       : 0;
     const hasMovedEnough = movementDuration >= MIN_MOVEMENT_TIME;
+    const safeBaseSpeed = Math.max(baseSpeed, MIN_WALKING_SPEED);
+    const speedRatio = horizontalSpeed / safeBaseSpeed;
+    const footstepVolumeMultiplier = speedRatio >= RUNNING_STEP_SPEED_RATIO
+      ? RUNNING_STEP_VOLUME_MULTIPLIER
+      : WALKING_STEP_VOLUME_MULTIPLIER;
 
     // Play footstep immediately on landing (bunny hop support)
     // Only if already moving for a while (not a fresh tap)
     if (justLanded && isMoving && !isSliding && hasMovedEnough) {
-      playFootstep();
+      playFootstep(footstepVolumeMultiplier);
       walkingSoundState.isWalking = true;
       return; // Already played a step this frame
     }
@@ -1159,7 +1477,6 @@ export function useMovementSounds() {
     }
 
     // Calculate interval between footsteps based on speed
-    const speedRatio = horizontalSpeed / baseSpeed;
     const baseInterval = 300; // ms at normal speed
     const minInterval = 150; // ms at max speed
     const maxInterval = 500; // ms at slow walk
@@ -1169,7 +1486,7 @@ export function useMovementSounds() {
 
     // Play footstep if enough time has passed
     if (timeSinceLastStep >= stepInterval) {
-      playFootstep();
+      playFootstep(footstepVolumeMultiplier);
       walkingSoundState.isWalking = true;
     }
   }, [playFootstep]);
@@ -1216,10 +1533,6 @@ export function useAbilitySounds() {
     playSound('phantomBlink', { durationMs: 900 });
   }, [playSound]);
 
-  const playPhantomShadowStep = useCallback(() => {
-    playSound('phantomShadowStep');
-  }, [playSound]);
-
   const playPhantomVeil = useCallback(() => {
     playSound('phantomVeil');
   }, [playSound]);
@@ -1263,6 +1576,14 @@ export function useAbilitySounds() {
   const playBlazeBombTarget = useCallback(() => {
     playSound('blazeBombTarget');
   }, [playSound]);
+
+  const playBlazeBombRelease = useCallback(() => {
+    playSound('blazeBombRelease', {
+      startOffsetMs: BLAZE_BOMB_RELEASE_SOUND_START_OFFSET_MS,
+      durationMs: BLAZE_BOMB_RELEASE_SOUND_DURATION_MS,
+      fadeOutMs: BLAZE_BOMB_RELEASE_SOUND_FADE_OUT_MS,
+    });
+  }, [playSound]);
   
   const playBlazeBombFall = useCallback(() => {
     playSound('blazeBombFall');
@@ -1274,10 +1595,6 @@ export function useAbilitySounds() {
   
   const playBlazeRocketJump = useCallback(() => {
     playSound('blazeRocketJump');
-  }, [playSound]);
-  
-  const playBlazeAirstrike = useCallback(() => {
-    playSound('blazeAirstrike');
   }, [playSound]);
   
   // Flamethrower loop controls
@@ -1292,7 +1609,6 @@ export function useAbilitySounds() {
   return {
     // Phantom
     playPhantomBlink,
-    playPhantomShadowStep,
     playPhantomVeil,
     playPhantomBasic,
     playPhantomVoidRay,
@@ -1301,10 +1617,10 @@ export function useAbilitySounds() {
     // Blaze
     playBlazeRocket,
     playBlazeBombTarget,
+    playBlazeBombRelease,
     playBlazeBombFall,
     playBlazeBombExplode,
     playBlazeRocketJump,
-    playBlazeAirstrike,
     startFlamethrowerSound,
     stopFlamethrowerSound,
   } as const;
@@ -1312,22 +1628,35 @@ export function useAbilitySounds() {
 
 // UI sound effects hook
 export function useUISounds() {
-  const { playSound, preloadSounds } = useAudio();
-
-  useEffect(() => {
-    void preloadSounds(['buttonClick']);
-  }, [preloadSounds]);
-
   const playButtonHover = useCallback(() => {}, []);
-
-  const playButtonClick = useCallback(() => {
-    playSound('buttonClick');
-  }, [playSound]);
+  const playButtonClick = useCallback(() => {}, []);
 
   return {
     playButtonHover,
     playButtonClick,
   };
+}
+
+export function useGlobalButtonSounds() {
+  const { preloadSounds } = useAudio();
+
+  useEffect(() => {
+    void preloadSounds(['buttonClick']);
+  }, [preloadSounds]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const handleButtonClick = (event: MouseEvent) => {
+      if (!getButtonSoundTarget(event.target)) return;
+      void playSharedSound('buttonClick');
+    };
+
+    document.addEventListener('click', handleButtonClick, true);
+    return () => {
+      document.removeEventListener('click', handleButtonClick, true);
+    };
+  }, []);
 }
 
 // Music state (shared singleton)

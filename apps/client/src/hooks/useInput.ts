@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import { createEmptyInputState } from '@voxel-strike/shared';
 import type { InputState } from '@voxel-strike/shared';
-import { isGameConsoleOpen } from '../components/ui/GameConsole';
+import { isGameConsoleOpen } from '../store/gameConsoleState';
 import { useMobileControlsStore } from '../store/mobileControlsStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { mouseButtonToKeybindCode } from '../utils/keybindings';
@@ -39,7 +39,9 @@ function mergeInputStates(primary: InputState, secondary: InputState): InputStat
 export function useInput(): UseInputReturn {
   const inputStateRef = useRef<InputState>(createEmptyInputState());
   const [inputState, setInputState] = useState<InputState>(createEmptyInputState());
-  const [isPointerLocked, setIsPointerLocked] = useState(false);
+  const [isPointerLocked, setIsPointerLocked] = useState(
+    () => typeof document !== 'undefined' && document.pointerLockElement !== null
+  );
   const [isControlPressed, setIsControlPressed] = useState(false);
   const mobileInputState = useMobileControlsStore(state => state.inputState);
   const isTouchInputActive = useMobileControlsStore(state => state.isTouchInputActive);
@@ -216,6 +218,7 @@ export function useInput(): UseInputReturn {
 
     document.addEventListener('pointerlockchange', handlePointerLockChange);
     document.addEventListener('pointerlockerror', handlePointerLockError);
+    handlePointerLockChange();
 
     return () => {
       document.removeEventListener('pointerlockchange', handlePointerLockChange);
@@ -236,15 +239,20 @@ export function useInput(): UseInputReturn {
   const requestPointerLock = useCallback(() => {
     const canvas = document.querySelector('canvas');
     if (canvas && document.pointerLockElement !== canvas) {
-      canvas.requestPointerLock().catch((err) => {
-        // Ignore pointer lock errors - they happen when user clicks too fast
-        console.log('Pointer lock request failed:', err.message);
-      });
+      const lockResult = canvas.requestPointerLock() as Promise<void> | void;
+      if (lockResult && typeof lockResult.catch === 'function') {
+        lockResult.catch((err) => {
+          // Ignore pointer lock errors - they happen when user clicks too fast
+          console.log('Pointer lock request failed:', err.message);
+        });
+      }
     }
   }, []);
 
   const exitPointerLock = useCallback(() => {
-    document.exitPointerLock();
+    if (document.pointerLockElement) {
+      document.exitPointerLock();
+    }
   }, []);
 
   const mergedInputState = useMemo(

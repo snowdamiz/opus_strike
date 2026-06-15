@@ -1,14 +1,19 @@
 import { create } from 'zustand';
-import { UNSTUCK_COOLDOWN_MS, createRandomSeed, type GameEndEvent, type GameStateSync, type PlayerPingsMessage } from '@voxel-strike/shared';
-import { removePlayerVisualState, setPlayerVisualPosition, setPlayerVisualRotation } from './visualStore';
+import { createRandomSeed, type GameEndEvent, type PlayerPingsMessage, type VoxelMapTheme } from '@voxel-strike/shared';
+import {
+  clearAllDeathVisuals,
+  clearVisualState,
+  removePlayerLiveVisualState,
+  removePlayerVisualState,
+  setPlayerVisualTransform,
+} from './visualStore';
+import { resetGameTiming } from './gameTimingStore';
 
 // Import types
 import type {
   GamePhase,
   Player,
   Vec3,
-  PlayerInput,
-  LobbyInfo,
   LobbyPlayer,
   LobbyWagerState,
   MapVoteOption,
@@ -28,9 +33,23 @@ import {
   type ProjectileSlice,
 } from './slices/projectiles';
 
+export type ObserverFlySpeedPreset = 'low' | 'med' | 'high';
+
+export interface ObserverFlySpeed {
+  base: number;
+  sprint: number;
+}
+
+export const OBSERVER_FLY_SPEED_PRESETS = {
+  low: { base: 6, sprint: 12 },
+  med: { base: 12, sprint: 23 },
+  high: { base: 18, sprint: 34 },
+} as const satisfies Record<ObserverFlySpeedPreset, ObserverFlySpeed>;
+
+const DEFAULT_OBSERVER_FLY_SPEED_PRESET: ObserverFlySpeedPreset = 'high';
+
 // Re-export all types for backwards compatibility
 export type {
-  LobbyInfo,
   LobbyPlayer,
   LobbyWagerState,
   MapVoteOption,
@@ -50,11 +69,10 @@ export type {
   RocketData,
   BombData,
   ChronosPulseData,
-  ChronosTimebreakData,
   HookProjectileData,
   DragHookData,
-  GrappleTrapData,
-  SwingLineData,
+  HookshotGroundHooksData,
+  HookshotGroundHooksTargetData,
   GrappleLineData,
   EarthWallData,
 } from './types';
@@ -75,17 +93,21 @@ interface CoreState {
   roomId: string | null;
   playerId: string | null;
   playerName: string;
+  isPracticeMode: boolean;
+  isPracticePreparing: boolean;
 
   // App phase (different from game phase)
   appPhase: AppPhase;
 
   // Lobby state
-  availableLobbies: LobbyInfo[];
   currentLobbyId: string | null;
   currentLobbyName: string | null;
   currentLobbyWager: LobbyWagerState;
   lobbyPlayers: Map<string, LobbyPlayer>;
   isLobbyHost: boolean;
+  lobbyObserversEnabled: boolean;
+  maxLobbyObservers: number;
+  lobbyError: string | null;
   mapVoteOptions: MapVoteOption[];
   mapVotes: Map<string, string>;
   mapVotePhaseEndTime: number | null;
@@ -96,9 +118,8 @@ interface CoreState {
   gamePhase: GamePhase;
   matchSummary: GameEndEvent | null;
   appliedExperienceMatchId: string | null;
-  tick: number;
-  serverTime: number;
   mapSeed: number;
+  mapThemeId: VoxelMapTheme['id'] | null;
 
   // Teams
   redScore: number;
@@ -110,18 +131,13 @@ interface CoreState {
   players: Map<string, Player>;
   localPlayer: Player | null;
   playerPings: Map<string, number | null>;
+  isObserverMode: boolean;
+  observerFlySpeedPreset: ObserverFlySpeedPreset;
 
   // Timing
   roundTimeRemaining: number;
   phaseEndTime: number | null;
-
-  // Input
-  pendingInputs: PlayerInput[];
-  lastProcessedTick: number;
-
-  // UI State
-  shadowStepTargeting: boolean;
-  shadowStepValid: boolean;
+  gameClockFrozen: boolean;
 
   // Ultimate effect state
   ultimateEffectActive: boolean;
@@ -131,14 +147,10 @@ interface CoreState {
   // Client-side cooldowns
   clientCooldowns: Record<string, number>;
   clientCharges: Record<string, number>;
-  unstuckCooldownUntil: number;
-  unstuckRequestId: number;
 
   // Slide visual effects
   slideIntensity: number;
 
-  // Debug mode (performance monitor)
-  debugMode: boolean;
 }
 
 interface CoreActions {
@@ -149,6 +161,8 @@ interface CoreActions {
   setRoomId: (roomId: string | null) => void;
   setPlayerId: (playerId: string | null) => void;
   setPlayerName: (name: string) => void;
+  setPracticeMode: (enabled: boolean) => void;
+  setPracticePreparing: (preparing: boolean) => void;
   setAppPhase: (phase: AppPhase) => void;
   setMatchmakingStatus: (status: MatchmakingStatus) => void;
   setGamePhase: (phase: GamePhase) => void;
@@ -156,38 +170,34 @@ interface CoreActions {
   clearMatchSummary: () => void;
   setPhaseEndTime: (time: number | null) => void;
   setMapSeed: (seed: number) => void;
-  updateGameState: (state: GameStateSync) => void;
+  setMapThemeId: (themeId: VoxelMapTheme['id'] | null) => void;
   updateLocalPlayer: (updates: Partial<Player>) => void;
   setLocalPlayer: (player: Player) => void;
   setPlayers: (players: Map<string, Player>) => void;
   updatePlayer: (playerId: string, player: Player) => void;
   removePlayer: (playerId: string) => void;
   setPlayerPings: (message: PlayerPingsMessage) => void;
-  addPendingInput: (input: PlayerInput) => void;
-  clearProcessedInputs: (tick: number) => void;
-
+  setObserverFlySpeedPreset: (preset: ObserverFlySpeedPreset) => void;
   // Lobby actions
-  setAvailableLobbies: (lobbies: LobbyInfo[]) => void;
   setCurrentLobby: (lobbyId: string | null, lobbyName: string | null) => void;
   setCurrentLobbyWager: (wager: LobbyWagerState) => void;
   setLobbyPlayers: (players: Map<string, LobbyPlayer>) => void;
   updateLobbyPlayer: (playerId: string, player: LobbyPlayer) => void;
   removeLobbyPlayer: (playerId: string) => void;
   setIsLobbyHost: (isHost: boolean) => void;
+  setLobbyObserverSettings: (enabled: boolean, maxObservers: number) => void;
+  setLobbyError: (message: string | null) => void;
+  setObserverMode: (enabled: boolean) => void;
   setMapVoteState: (options: MapVoteOption[], votes: MapVoteRecord[], phaseEndTime: number | null, selectedOptionId?: string | null) => void;
   setMapVotes: (votes: MapVoteRecord[], selectedOptionId?: string | null) => void;
   clearMapVote: () => void;
 
   // UI Actions
-  setShadowStepTargeting: (targeting: boolean, valid?: boolean) => void;
   setUltimateEffect: (active: boolean, type?: string | null, endTime?: number) => void;
   setClientCooldown: (abilityId: string, endTime: number) => void;
   setClientCharges: (abilityId: string, charges: number) => void;
   clearClientCooldowns: () => void;
-  requestUnstuck: () => boolean;
   setSlideIntensity: (intensity: number) => void;
-  setDebugMode: (enabled: boolean) => void;
-  toggleDebugMode: () => void;
 
   // Ghost cleanup
   cleanupGhostPlayers: () => void;
@@ -202,7 +212,11 @@ interface CoreActions {
 
 type GameStore = CoreState & CoreActions & ProjectileSlice;
 
-const MAX_PENDING_INPUTS = 128;
+const HIDDEN_VISIBILITY_STATES = new Set(['hidden', 'last_known', 'audible']);
+
+function shouldKeepPlayerLiveVisual(player: Player): boolean {
+  return !HIDDEN_VISIBILITY_STATES.has(player.visibility ?? 'visible');
+}
 
 // ============================================================================
 // INITIAL STATE
@@ -217,13 +231,17 @@ const coreInitialState: CoreState = {
   roomId: null,
   playerId: null,
   playerName: '',
+  isPracticeMode: false,
+  isPracticePreparing: false,
   appPhase: 'menu',
-  availableLobbies: [],
   currentLobbyId: null,
   currentLobbyName: null,
   currentLobbyWager: { enabled: false },
   lobbyPlayers: new Map(),
   isLobbyHost: false,
+  lobbyObserversEnabled: false,
+  maxLobbyObservers: 0,
+  lobbyError: null,
   mapVoteOptions: [],
   mapVotes: new Map(),
   mapVotePhaseEndTime: null,
@@ -238,15 +256,16 @@ const coreInitialState: CoreState = {
     queuedHumanCount: null,
     provisionalHumanCount: null,
     requiredPlayers: null,
+    capacityBlocked: false,
+    capacityMaxPlayers: null,
     rankedCoverChargeLamports: null,
     rankedEntryQuoteId: null,
   },
   gamePhase: 'waiting',
   matchSummary: null,
   appliedExperienceMatchId: null,
-  tick: 0,
-  serverTime: 0,
   mapSeed: createRandomSeed(),
+  mapThemeId: null,
   redScore: 0,
   blueScore: 0,
   redFlag: null,
@@ -254,21 +273,17 @@ const coreInitialState: CoreState = {
   players: new Map(),
   localPlayer: null,
   playerPings: new Map(),
+  isObserverMode: false,
+  observerFlySpeedPreset: DEFAULT_OBSERVER_FLY_SPEED_PRESET,
   roundTimeRemaining: 0,
   phaseEndTime: null,
-  pendingInputs: [],
-  lastProcessedTick: 0,
-  shadowStepTargeting: false,
-  shadowStepValid: false,
+  gameClockFrozen: false,
   ultimateEffectActive: false,
   ultimateEffectType: null,
   ultimateEffectEndTime: 0,
   clientCooldowns: {},
   clientCharges: {},
-  unstuckCooldownUntil: 0,
-  unstuckRequestId: 0,
   slideIntensity: 0,
-  debugMode: false,
 };
 
 const initialState = {
@@ -300,9 +315,26 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   setRoomId: (roomId) => set((state) => state.roomId === roomId ? state : { roomId }),
   setPlayerId: (playerId) => set((state) => state.playerId === playerId ? state : { playerId }),
   setPlayerName: (name) => set((state) => state.playerName === name ? state : { playerName: name }),
+  setPracticeMode: (enabled) => set((state) => {
+    if (enabled) {
+      return state.isPracticeMode ? state : { isPracticeMode: true };
+    }
+
+    return state.isPracticeMode || state.isPracticePreparing
+      ? { isPracticeMode: false, isPracticePreparing: false }
+      : state;
+  }),
+  setPracticePreparing: (preparing) => set((state) => (
+    state.isPracticePreparing === preparing ? state : { isPracticePreparing: preparing }
+  )),
   setAppPhase: (phase) => set((state) => state.appPhase === phase ? state : { appPhase: phase }),
   setMatchmakingStatus: (status) => set({ matchmakingStatus: status }),
-  setGamePhase: (phase) => set((state) => state.gamePhase === phase ? state : { gamePhase: phase }),
+  setGamePhase: (phase) => {
+    if (phase !== 'playing' && phase !== 'countdown') {
+      clearAllDeathVisuals();
+    }
+    set((state) => state.gamePhase === phase ? state : { gamePhase: phase });
+  },
   setMatchSummary: (summary) => set((state) => {
     if (!summary) {
       return state.matchSummary === null ? state : { matchSummary: null };
@@ -368,114 +400,9 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     const mapSeed = seed >>> 0;
     return state.mapSeed === mapSeed ? state : { mapSeed };
   }),
-
-  updateGameState: (state) => {
-    // NOTE: We update players Map entries in-place for position/rotation data to avoid
-    // triggering React re-renders on every server tick. The Map reference only changes
-    // when players are added/removed. Position data flows to visualStore (non-reactive)
-    // for 60fps interpolation, while gameStore tracks authoritative game state.
-    const { playerId, players: existingPlayers } = get();
-
-    // Build set of snapshot IDs for removal detection
-    const snapshotIds = new Set(state.players.map(p => p.id));
-
-    // Check if any players need to be removed (not in snapshot)
-    let needsRemoval = false;
-    for (const [id] of existingPlayers) {
-      if (!snapshotIds.has(id)) {
-        needsRemoval = true;
-        break;
-      }
-    }
-
-    // If no removals needed, update in-place without changing Map reference
-    if (!needsRemoval) {
-      // Update existing players in-place for position/rotation data
-      for (const snapshot of state.players) {
-        const existingPlayer = existingPlayers.get(snapshot.id);
-        if (existingPlayer) {
-          // Update in-place for position/rotation (high-frequency, visual-only)
-          existingPlayer.position = snapshot.position;
-          existingPlayer.velocity = snapshot.velocity;
-          existingPlayer.lookYaw = snapshot.lookYaw;
-          existingPlayer.lookPitch = snapshot.lookPitch;
-
-          // Update other fields (these are game events that MAY warrant re-renders)
-          existingPlayer.health = snapshot.health;
-          existingPlayer.state = snapshot.state;
-          existingPlayer.movement = snapshot.movement;
-          existingPlayer.abilities = snapshot.abilities;
-          existingPlayer.hasFlag = snapshot.hasFlag;
-        }
-      }
-
-      const localPlayer = playerId ? existingPlayers.get(playerId) ?? null : null;
-
-      // Same Map reference - no re-renders for position updates
-      set({
-        tick: state.tick,
-        serverTime: state.serverTime,
-        mapSeed: state.mapSeed ?? get().mapSeed,
-        gamePhase: state.phase,
-        redScore: state.redScore,
-        blueScore: state.blueScore,
-        redFlag: state.redFlag,
-        blueFlag: state.blueFlag,
-        roundTimeRemaining: state.roundTimeRemaining,
-        players: existingPlayers,
-        localPlayer,
-      });
-
-      // Update visual store with authoritative server positions for interpolation
-      state.players.forEach((snapshot) => {
-        setPlayerVisualPosition(snapshot.id, snapshot.position);
-        setPlayerVisualRotation(snapshot.id, snapshot.lookYaw);
-      });
-      return;
-    }
-
-    // If removals needed, create new Map (changes reference, triggers re-render)
-    const players = new Map<string, Player>();
-    for (const snapshot of state.players) {
-      const existingPlayer = existingPlayers.get(snapshot.id);
-      if (existingPlayer) {
-        players.set(snapshot.id, {
-          ...existingPlayer,
-          position: snapshot.position,
-          velocity: snapshot.velocity,
-          lookYaw: snapshot.lookYaw,
-          lookPitch: snapshot.lookPitch,
-          health: snapshot.health,
-          state: snapshot.state,
-          movement: snapshot.movement,
-          abilities: snapshot.abilities,
-          hasFlag: snapshot.hasFlag,
-        });
-      }
-    }
-
-    const localPlayer = playerId ? players.get(playerId) ?? null : null;
-
-    set({
-      tick: state.tick,
-      serverTime: state.serverTime,
-      mapSeed: state.mapSeed ?? get().mapSeed,
-      gamePhase: state.phase,
-      redScore: state.redScore,
-      blueScore: state.blueScore,
-      redFlag: state.redFlag,
-      blueFlag: state.blueFlag,
-      roundTimeRemaining: state.roundTimeRemaining,
-      players,
-      localPlayer,
-    });
-
-    // Update visual store with authoritative server positions for interpolation
-    players.forEach((player, id) => {
-      setPlayerVisualPosition(id, player.position);
-      setPlayerVisualRotation(id, player.lookYaw);
-    });
-  },
+  setMapThemeId: (themeId) => set((state) => (
+    state.mapThemeId === themeId ? state : { mapThemeId: themeId }
+  )),
 
   updateLocalPlayer: (updates) => {
     const { localPlayer, players } = get();
@@ -518,8 +445,11 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
     // Update visual store for bulk player updates (initial sync)
     players.forEach((player, id) => {
-      setPlayerVisualPosition(id, player.position);
-      setPlayerVisualRotation(id, player.lookYaw);
+      if (shouldKeepPlayerLiveVisual(player)) {
+        setPlayerVisualTransform(id, player.position, player.lookYaw);
+      } else {
+        removePlayerLiveVisualState(id);
+      }
     });
   },
 
@@ -536,8 +466,11 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     });
 
     // Update visual store for individual player updates
-    setPlayerVisualPosition(playerId, player.position);
-    setPlayerVisualRotation(playerId, player.lookYaw);
+    if (shouldKeepPlayerLiveVisual(player)) {
+      setPlayerVisualTransform(playerId, player.position, player.lookYaw);
+    } else {
+      removePlayerLiveVisualState(playerId);
+    }
   },
 
   removePlayer: (playerId) => {
@@ -604,38 +537,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       set({ players: cleanedPlayers });
     }
   },
-
-  addPendingInput: (input) => {
-    set((state) => ({
-      pendingInputs: state.pendingInputs.length >= MAX_PENDING_INPUTS
-        ? [...state.pendingInputs.slice(state.pendingInputs.length - MAX_PENDING_INPUTS + 1), input]
-        : [...state.pendingInputs, input],
-    }));
-  },
-
-  clearProcessedInputs: (tick) => {
-    set((state) => {
-      let firstUnprocessed = 0;
-      while (firstUnprocessed < state.pendingInputs.length && state.pendingInputs[firstUnprocessed].tick <= tick) {
-        firstUnprocessed++;
-      }
-
-      if (firstUnprocessed === 0 && state.lastProcessedTick === tick) {
-        return state;
-      }
-
-      return {
-        pendingInputs: firstUnprocessed === 0
-          ? state.pendingInputs
-          : state.pendingInputs.slice(firstUnprocessed),
-        lastProcessedTick: tick,
-      };
-    });
-  },
-
   // ==================== LOBBY ACTIONS ====================
-
-  setAvailableLobbies: (lobbies) => set({ availableLobbies: lobbies }),
 
   setCurrentLobby: (lobbyId, lobbyName) => set({
     currentLobbyId: lobbyId,
@@ -662,6 +564,23 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
   setIsLobbyHost: (isHost) => set((state) => state.isLobbyHost === isHost ? state : { isLobbyHost: isHost }),
 
+  setLobbyObserverSettings: (enabled, maxObservers) => set((state) => {
+    const normalizedMax = Math.max(0, Math.floor(maxObservers));
+    return state.lobbyObserversEnabled === enabled && state.maxLobbyObservers === normalizedMax
+      ? state
+      : { lobbyObserversEnabled: enabled, maxLobbyObservers: normalizedMax };
+  }),
+
+  setLobbyError: (message) => set((state) => state.lobbyError === message ? state : { lobbyError: message }),
+
+  setObserverMode: (enabled) => set((state) => (
+    state.isObserverMode === enabled ? state : { isObserverMode: enabled }
+  )),
+
+  setObserverFlySpeedPreset: (preset) => set((state) => (
+    state.observerFlySpeedPreset === preset ? state : { observerFlySpeedPreset: preset }
+  )),
+
   setMapVoteState: (options, votes, phaseEndTime, selectedOptionId = null) => set({
     mapVoteOptions: options,
     mapVotes: new Map(votes.map((vote) => [vote.playerId, vote.optionId])),
@@ -682,15 +601,6 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   }),
 
   // ==================== UI ACTIONS ====================
-
-  setShadowStepTargeting: (targeting, valid = false) => set((state) => (
-    state.shadowStepTargeting === targeting && state.shadowStepValid === valid
-      ? state
-      : {
-        shadowStepTargeting: targeting,
-        shadowStepValid: valid
-      }
-  )),
 
   setUltimateEffect: (active, type = null, endTime = 0) => set((state) => (
     state.ultimateEffectActive === active &&
@@ -718,30 +628,15 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
   clearClientCooldowns: () => set({ clientCooldowns: {}, clientCharges: {} }),
 
-  requestUnstuck: () => {
-    const now = Date.now();
-    const { gamePhase, localPlayer, unstuckCooldownUntil } = get();
-    const isActiveGame = gamePhase === 'playing' || gamePhase === 'countdown';
-
-    if (!isActiveGame || localPlayer?.state !== 'alive' || now < unstuckCooldownUntil) {
-      return false;
-    }
-
-    set((state) => ({
-      unstuckCooldownUntil: now + UNSTUCK_COOLDOWN_MS,
-      unstuckRequestId: state.unstuckRequestId + 1,
-    }));
-    return true;
-  },
-
   setSlideIntensity: (intensity) => set((state) => state.slideIntensity === intensity ? state : { slideIntensity: intensity }),
-
-  setDebugMode: (enabled) => set((state) => state.debugMode === enabled ? state : { debugMode: enabled }),
-  toggleDebugMode: () => set((state) => ({ debugMode: !state.debugMode })),
 
   // ==================== RESET ACTIONS ====================
 
-  reset: () => set(initialState),
+  reset: () => {
+    clearVisualState();
+    resetGameTiming();
+    set(initialState);
+  },
 
   resetLobby: () => set({
     currentLobbyId: null,
@@ -749,6 +644,9 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     currentLobbyWager: { enabled: false },
     lobbyPlayers: new Map(),
     isLobbyHost: false,
+    lobbyObserversEnabled: false,
+    maxLobbyObservers: 0,
+    lobbyError: null,
     mapVoteOptions: [],
     mapVotes: new Map(),
     mapVotePhaseEndTime: null,
@@ -763,6 +661,8 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       queuedHumanCount: null,
       provisionalHumanCount: null,
       requiredPlayers: null,
+      capacityBlocked: false,
+      capacityMaxPlayers: null,
       rankedCoverChargeLamports: null,
       rankedEntryQuoteId: null,
     },

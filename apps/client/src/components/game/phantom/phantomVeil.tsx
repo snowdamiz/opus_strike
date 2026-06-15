@@ -13,6 +13,7 @@ interface PhantomVeilEffectProps {
   isActive: boolean;
   playerPosition?: { x: number; y: number; z: number };
   playerId?: string;
+  renderParticles?: boolean;
 }
 
 const VEIL_HEIGHT = 2.65;
@@ -149,7 +150,12 @@ function createVeilParticleGeometry(): THREE.BufferGeometry {
   return geometry;
 }
 
-export function PhantomVeil3DEffect({ isActive, playerPosition, playerId }: PhantomVeilEffectProps) {
+export function PhantomVeil3DEffect({
+  isActive,
+  playerPosition,
+  playerId,
+  renderParticles = true,
+}: PhantomVeilEffectProps) {
   const groupRef = useRef<THREE.Group>(null);
   const particlesRef = useRef<THREE.Points>(null);
   const ribbonGroupRef = useRef<THREE.Group>(null);
@@ -264,7 +270,7 @@ export function PhantomVeil3DEffect({ isActive, playerPosition, playerId }: Phan
       highRingMaterial.opacity = 0.18 + (1 - pulse) * 0.22;
     }
 
-    if (particlesRef.current) {
+    if (renderParticles && particlesRef.current) {
       const positions = particlesRef.current.geometry.attributes.position as THREE.BufferAttribute;
       const angles = particlesRef.current.geometry.attributes.angle as THREE.BufferAttribute;
       const radii = particlesRef.current.geometry.attributes.radius as THREE.BufferAttribute;
@@ -329,9 +335,11 @@ export function PhantomVeil3DEffect({ isActive, playerPosition, playerId }: Phan
         <primitive object={highRingMaterial} />
       </mesh>
 
-      <points ref={particlesRef} geometry={particleGeometry}>
-        <primitive object={particleMaterial} />
-      </points>
+      {renderParticles && (
+        <points ref={particlesRef} geometry={particleGeometry}>
+          <primitive object={particleMaterial} />
+        </points>
+      )}
     </group>
   );
 }

@@ -1,21 +1,33 @@
-import { createContext, useContext, useRef, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useRef, useCallback, useState, ReactNode } from 'react';
 import { Client, Room } from 'colyseus.js';
-import { useGameStore, LobbyPlayer, LobbyInfo, LobbyWagerState, MapVoteOption, MapVoteRecord, RankedEntryQuote, WagerPaymentIntent, WagerPaymentTransaction } from '../store/gameStore';
+import { useGameStore, LobbyPlayer, LobbyWagerState, MapVoteOption, MapVoteRecord, WagerPaymentIntent, WagerPaymentTransaction } from '../store/gameStore';
 import { config } from '../config/environment';
 import { getClientId } from '../utils/clientId';
-import type {
-  BotDifficulty,
-  GameEndEvent,
-  HeroId,
-  Team,
-  PlayerInput,
-  PublicRankSnapshot,
-  MovementCommandPacket,
-  PlayerPingRequestMessage,
-  PlayerPingsMessage,
+import {
+  createRandomSeed,
+  getHeroStats,
+  MOVEMENT_PROTOCOL_VERSION,
+  type AbilityCastOriginHint,
+  type BotDifficulty,
+  type GameEndEvent,
+  type HeroId,
+  type Team,
+  type PublicRankSnapshot,
+  type MovementCommandPacket,
+  type PlayerPingRequestMessage,
+  type PlayerPingsMessage,
+  type VoxelMapTheme,
 } from '@voxel-strike/shared';
 import type { VoiceScope, VoiceTokenResponse } from '../voice/types';
 import { disconnectVoice } from '../voice/voiceControls';
+import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
+import { prebuildPreparedVoxelMapGeometry } from '../utils/mapWarmup/mapGeometryWarmup';
+import {
+  clearRunningGameSession,
+  loadRunningGameSession,
+  saveRunningGameSession,
+  type RunningGameSession,
+} from '../utils/runningGameSession';
 
 // Import extracted handlers
 import {
@@ -23,18 +35,42 @@ import {
   syncPlayerFromSchema,
   setupPlayerJoinedHandler,
   setupPlayerTransformsHandler,
+  setupPlayerInterestHandler,
   setupSelfMovementAuthorityHandler,
   setupPlayerVitalsHandler,
   setupMatchSnapshotHandler,
-  setupPlayerStatesHandler,
   setupVoidZoneHandlers,
   setupCombatHandlers,
   setupPollingSync,
+  forgetPlayerNetId,
   stopRemotePhantomCharge,
 } from './gameMessageHandlers';
 import { loggers } from '../utils/logger';
+import {
+  movementStateFromPlayer,
+  resetLocalMovementPrediction,
+} from '../movement/localPrediction';
+import { measureFrameWork } from '../movement/networkDiagnostics';
+import { projectileInitialState } from '../store/slices/projectiles';
+import { resetGameTiming } from '../store/gameTimingStore';
+import { createPracticeAbilityStates } from './practiceAbilities';
 
 type CreateLobbyWagerOptions = { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' };
+type CreateLobbyOptions = {
+  initialBotCount?: number;
+  botFillMode?: 'manual' | 'fill_even' | 'fill_empty';
+  defaultBotDifficulty?: BotDifficulty;
+  wager?: CreateLobbyWagerOptions;
+  mapSeed?: number;
+  forceGoldenMapOption?: boolean;
+  observersEnabled?: boolean;
+};
+type StartPracticeGameOptions = { mapSeed?: number };
+export interface RunningGameReconnectStatus {
+  available: boolean;
+  session: RunningGameSession | null;
+  reason?: string;
+}
 
 // ============================================================================
 // CONTEXT TYPE
@@ -42,25 +78,21 @@ type CreateLobbyWagerOptions = { enabled: boolean; coverChargeLamports?: string;
 
 interface NetworkContextType {
   // Lobby operations
-  fetchLobbies: () => Promise<LobbyInfo[]>;
-  watchLobbies: () => () => void;
   createLobby: (
     playerName: string,
     lobbyName?: string,
-    isPrivate?: boolean,
-    options?: {
-      initialBotCount?: number;
-      botFillMode?: 'manual' | 'fill_even' | 'fill_empty';
-      defaultBotDifficulty?: BotDifficulty;
-      wager?: CreateLobbyWagerOptions;
-    }
+    options?: CreateLobbyOptions
   ) => Promise<void>;
   quickPlay: (playerName: string) => Promise<void>;
   rankedPlay: (playerName: string) => Promise<void>;
+  getRankedTokenHoldStatus: () => Promise<RankedTokenHoldStatus>;
+  startPracticeGame: (playerName?: string, options?: StartPracticeGameOptions) => void;
   joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
   leaveLobby: () => void;
   setLobbyReady: (ready: boolean) => void;
   setLobbyTeam: (team: string) => void;
+  setLobbyObserver: (observer: boolean) => void;
+  devSetLobbyObserver: (observer: boolean) => void;
   addLobbyBot: (options?: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }) => void;
   removeLobbyBot: (botId: string) => void;
   updateLobbyBotTeam: (botId: string, team: string) => void;
@@ -77,24 +109,37 @@ interface NetworkContextType {
   submitWagerPaymentSignature: (intentId: string, signature: string) => Promise<WagerPaymentIntent>;
 
   // Game operations
-  joinGameRoom: (gameRoomId: string, playerName: string, team?: string, entryTicket?: string) => Promise<void>;
+  joinGameRoom: (
+    gameRoomId: string,
+    playerName: string,
+    team?: string,
+    entryTicket?: string,
+    observer?: boolean,
+    reconnectToRunningGame?: boolean
+  ) => Promise<void>;
+  getRunningGameReconnect: () => Promise<RunningGameReconnectStatus>;
+  reconnectRunningGame: () => Promise<void>;
   leaveGame: () => void;
   disconnect: () => void;
-  sendInput: (input: PlayerInput) => void;
   sendMovementCommands: (packet: MovementCommandPacket) => void;
-  requestBlazeBombDrop: () => void;
-  reportBlazeRocketImpact: (rocketId: string, position: { x: number; y: number; z: number }) => void;
+  requestBlazeBombDrop: (payload?: { abilityCastHints?: AbilityCastOriginHint[] }) => void;
   selectHero: (heroId: HeroId) => void;
   devSetHero: (heroId: HeroId) => void;
   devFillUltimate: () => void;
   devEndGame: () => void;
-  setDevFly: (enabled: boolean) => void;
+  devSetGameObserver: () => void;
   setDevImmune: (enabled: boolean) => void;
   setDevTimeFrozen: (enabled: boolean) => void;
   setDevBotsRooted: (enabled: boolean) => void;
+  setDevBotBrainEnabled: (enabled: boolean) => void;
   addGameBot: (heroId: HeroId, team: Team) => void;
+  devBotSkill: (heroId: HeroId, team: Team, skillKey: string) => void;
+  devBotLook: (heroId: HeroId, team: Team, direction: 'up' | 'down') => void;
   selectTeam: (team: Team) => void;
   setReady: (ready: boolean) => void;
+  matchStartGateKey: number | null;
+  reportMatchSceneReady: () => void;
+  reportPlayer: (targetPlayerId: string, reason?: string, details?: string) => Promise<void>;
   requestVoiceToken: (scope?: VoiceScope) => Promise<VoiceTokenResponse>;
 
   // NPC/Bot operations (for testing)
@@ -115,6 +160,21 @@ interface QuickPlayTicketResponse {
   targetRankLabel: string;
 }
 
+export interface RankedTokenHoldStatus {
+  eligible: boolean;
+  tokenAddress: string;
+  tokenSymbol?: string;
+  tokenDecimals: number | null;
+  usdCents: number;
+  tokenUsdPrice: string;
+  tokenUsdPriceMicroUsd: string;
+  requiredTokenBaseUnits: string;
+  balanceTokenBaseUnits: string;
+  cluster: string;
+  priceSource: string;
+  checkedAt: string;
+}
+
 interface RankedTicketResponse {
   ticket: string;
   mode: 'ranked';
@@ -124,18 +184,68 @@ interface RankedTicketResponse {
   isGuest: false;
   targetRankDivisionIndex: number;
   targetRankLabel: string;
-  quote: RankedEntryQuote;
+  tokenHold: RankedTokenHoldStatus;
+}
+
+interface PlayerReportResultMessage {
+  requestId?: string | null;
+  ok: boolean;
+  reportId?: string;
+  error?: string;
+}
+
+interface MatchStartGateMessage {
+  key: number;
+  serverTime?: number;
+  mapSeed?: number;
+  mapThemeId?: VoxelMapTheme['id'] | null;
+  position?: { x: number; y: number; z: number };
+  movementEpoch?: number;
+  ackSeq?: number;
+  collisionRevision?: number;
+}
+
+interface MatchCancelledMessage {
+  reason?: string;
+  message?: string;
+  roomId?: string;
+  requiredHumanPlayers?: number;
+  connectedHumanPlayers?: number;
+  refundedWager?: boolean;
+  serverTime?: number;
+  blockedPlayerId?: string;
+  blockedPlayerName?: string;
+  networkQuality?: {
+    reason?: string | null;
+    sampleCount?: number;
+    successfulSamples?: number;
+    timeoutCount?: number;
+    consecutiveTimeouts?: number;
+    timeoutRatio?: number;
+    averagePingMs?: number | null;
+    peakPingMs?: number | null;
+    jitterMs?: number | null;
+    observationMs?: number;
+    windowMs?: number;
+  };
 }
 
 const NetworkContext = createContext<NetworkContextType | null>(null);
+
+function measureNetworkMessage<T>(type: string, handler: (data: T) => void): (data: T) => void {
+  return (data) => {
+    measureFrameWork(`network.${type}`, () => handler(data));
+  };
+}
 
 function getHttpUrl(): string {
   return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
 }
 
-async function requestQuickPlayTicket(): Promise<QuickPlayTicketResponse> {
+async function requestQuickPlayTicket(clientId: string): Promise<QuickPlayTicketResponse> {
   const response = await fetch(`${getHttpUrl()}/matchmaking/quick-play-ticket`, {
     credentials: 'include',
+    headers: { 'X-Client-Id': clientId },
   });
 
   if (!response.ok) {
@@ -146,31 +256,48 @@ async function requestQuickPlayTicket(): Promise<QuickPlayTicketResponse> {
   return response.json();
 }
 
-async function requestRankedEntryQuote(): Promise<RankedEntryQuote> {
-  const response = await fetch(`${getHttpUrl()}/matchmaking/ranked-entry-quote`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ error: 'Failed to create ranked entry quote' }));
-    throw new Error(payload.error || 'Failed to create ranked entry quote');
-  }
-
-  const data = await response.json();
-  return data.quote;
-}
-
-async function requestRankedTicket(quoteId: string): Promise<RankedTicketResponse> {
+async function requestRankedTicket(): Promise<RankedTicketResponse> {
   const response = await fetch(`${getHttpUrl()}/matchmaking/ranked-ticket`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ quoteId }),
+    body: JSON.stringify({}),
   });
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ error: 'Failed to issue ranked ticket' }));
     throw new Error(payload.error || 'Failed to issue ranked ticket');
+  }
+
+  return response.json();
+}
+
+async function requestRankedTokenHoldStatus(): Promise<RankedTokenHoldStatus> {
+  const response = await fetch(`${getHttpUrl()}/matchmaking/ranked-token-hold-status`, {
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ error: 'Failed to check ranked token holding' }));
+    throw new Error(payload.error || 'Failed to check ranked token holding');
+  }
+
+  const payload = await response.json() as { tokenHold: RankedTokenHoldStatus };
+  return payload.tokenHold;
+}
+
+async function requestRunningGameStatus(roomId: string, clientId: string): Promise<{
+  available: boolean;
+  reason?: string;
+}> {
+  const response = await fetch(`${getHttpUrl()}/matchmaking/running-game/${encodeURIComponent(roomId)}`, {
+    credentials: 'include',
+    headers: { 'X-Client-Id': clientId },
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ error: 'Failed to check running game' }));
+    throw new Error(payload.error || 'Failed to check running game');
   }
 
   return response.json();
@@ -202,6 +329,49 @@ async function preflightWageredLobby(wager: CreateLobbyWagerOptions | undefined)
   });
 }
 
+function createPracticePlayerId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `practice:${crypto.randomUUID()}`;
+  }
+
+  return `practice:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+}
+
+function resolvePracticePlayerName(playerName?: string): string {
+  const requestedName = playerName?.trim();
+  if (requestedName) return requestedName;
+
+  const storeName = useGameStore.getState().playerName.trim();
+  return storeName || 'Practice';
+}
+
+function runAfterNextPaint(callback: () => void): void {
+  if (typeof window === 'undefined') {
+    setTimeout(callback, 0);
+    return;
+  }
+
+  let hasRun = false;
+  const runOnce = () => {
+    if (hasRun) return;
+    hasRun = true;
+    callback();
+  };
+
+  if (typeof window.requestAnimationFrame !== 'function') {
+    window.setTimeout(runOnce, 0);
+    return;
+  }
+
+  const fallbackTimeout = window.setTimeout(runOnce, 100);
+  window.requestAnimationFrame(() => {
+    window.setTimeout(() => {
+      window.clearTimeout(fallbackTimeout);
+      runOnce();
+    }, 0);
+  });
+}
+
 // ============================================================================
 // PROVIDER COMPONENT
 // ============================================================================
@@ -211,8 +381,16 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const lobbyRoomRef = useRef<Room | null>(null);
   const gameRoomRef = useRef<Room | null>(null);
   const isJoiningGameRef = useRef(false);
+  const practiceStartTokenRef = useRef(0);
+  const [matchStartGateKey, setMatchStartGateKeyState] = useState<number | null>(null);
+  const matchStartGateKeyRef = useRef<number | null>(null);
   const voiceTokenRequestsRef = useRef(new Map<string, {
     resolve: (response: VoiceTokenResponse) => void;
+    reject: (error: Error) => void;
+    timeoutId: number;
+  }>());
+  const playerReportRequestsRef = useRef(new Map<string, {
+    resolve: () => void;
     reject: (error: Error) => void;
     timeoutId: number;
   }>());
@@ -222,20 +400,26 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setLoading,
     setRoomId,
     setPlayerId,
+    setPlayerName,
+    setPracticeMode,
+    setPracticePreparing,
     setAppPhase,
     setGamePhase,
     setPhaseEndTime,
     setMapSeed,
+    setMapThemeId,
     setLocalPlayer,
     updatePlayer,
     removePlayer,
-    setAvailableLobbies,
     setCurrentLobby,
     setCurrentLobbyWager,
     setLobbyPlayers,
     updateLobbyPlayer,
     removeLobbyPlayer,
     setIsLobbyHost,
+    setLobbyObserverSettings,
+    setLobbyError,
+    setObserverMode,
     setMatchmakingStatus,
     setMatchSummary,
     setPlayerPings,
@@ -245,7 +429,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     clearMatchSummary,
     reset,
     resetLobby,
-  } = useGameStore();
+  } = useGameStore.getState();
+
+  const setMatchStartGateKey = useCallback((key: number | null) => {
+    matchStartGateKeyRef.current = key;
+    setMatchStartGateKeyState((current) => (current === key ? current : key));
+  }, []);
 
   // ==================== CLIENT INITIALIZATION ====================
 
@@ -258,45 +447,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   // ==================== LOBBY OPERATIONS ====================
 
-  const fetchLobbies = useCallback(async (): Promise<LobbyInfo[]> => {
-    try {
-      const response = await fetch(`${getHttpUrl()}/lobbies`);
-      const data = await response.json();
-      const lobbies = data.lobbies || [];
-      setAvailableLobbies(lobbies);
-      return lobbies;
-    } catch (error) {
-      loggers.network.error('failed to fetch lobbies', error);
-      return [];
-    }
-  }, [setAvailableLobbies]);
-
-  const watchLobbies = useCallback(() => {
-    if (typeof EventSource === 'undefined') {
-      fetchLobbies();
-      return () => {};
-    }
-
-    const events = new EventSource(`${getHttpUrl()}/lobbies/stream`);
-
-    events.addEventListener('lobbies', (event) => {
-      try {
-        const data = JSON.parse((event as MessageEvent).data);
-        setAvailableLobbies(data.lobbies || []);
-      } catch (error) {
-        loggers.network.error('failed to parse lobby stream event', error);
-      }
-    });
-
-    events.addEventListener('error', () => {
-      if (events.readyState === EventSource.CLOSED) {
-        fetchLobbies();
-      }
-    });
-
-    return () => events.close();
-  }, [fetchLobbies, setAvailableLobbies]);
-
   const rejectPendingVoiceTokenRequests = useCallback((message: string) => {
     voiceTokenRequestsRef.current.forEach((pending) => {
       window.clearTimeout(pending.timeoutId);
@@ -305,10 +455,21 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     voiceTokenRequestsRef.current.clear();
   }, []);
 
+  const rejectPendingPlayerReportRequests = useCallback((message: string) => {
+    playerReportRequestsRef.current.forEach((pending) => {
+      window.clearTimeout(pending.timeoutId);
+      pending.reject(new Error(message));
+    });
+    playerReportRequestsRef.current.clear();
+  }, []);
+
   const cleanupExistingConnections = useCallback(() => {
+    practiceStartTokenRef.current += 1;
     isJoiningGameRef.current = false;
     disconnectVoice('network_cleanup');
     rejectPendingVoiceTokenRequests('connection cleaned up before voice token response');
+    rejectPendingPlayerReportRequests('connection cleaned up before report response');
+    setObserverMode(false);
 
     if (lobbyRoomRef.current) {
       try {
@@ -326,7 +487,105 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       }
       gameRoomRef.current = null;
     }
-  }, [rejectPendingVoiceTokenRequests]);
+  }, [rejectPendingPlayerReportRequests, rejectPendingVoiceTokenRequests, setObserverMode]);
+
+  const startPracticeGame = useCallback((playerName?: string, options?: StartPracticeGameOptions) => {
+    const name = resolvePracticePlayerName(playerName);
+
+    cleanupExistingConnections();
+    clearRunningGameSession();
+    resetLobby();
+    rejectPendingVoiceTokenRequests('practice mode started');
+    setPlayerName(name);
+    setPracticeMode(true);
+    setLoading(false);
+    setPracticePreparing(true);
+
+    const startToken = ++practiceStartTokenRef.current;
+
+    runAfterNextPaint(() => {
+      if (practiceStartTokenRef.current !== startToken) return;
+
+      try {
+        const seed = typeof options?.mapSeed === 'number'
+          ? options.mapSeed >>> 0
+          : createRandomSeed();
+        const preparedMap = prepareVoxelMapCpu({ seed, source: 'match' });
+        prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'practice-start' });
+        const spawnPoints = [
+          ...preparedMap.manifest.spawnPoints.red,
+          ...preparedMap.manifest.spawnPoints.blue,
+        ];
+        const spawn = spawnPoints[Math.floor(Math.random() * spawnPoints.length)] ?? { x: 0, y: 1, z: 0 };
+        const playerId = createPracticePlayerId();
+        const player = createDefaultLocalPlayer(playerId, name);
+
+        player.state = 'selecting';
+        player.position = { ...spawn };
+        player.team = 'red';
+        player.isReady = false;
+        player.heroId = null;
+        player.hasFlag = false;
+
+        useGameStore.setState({
+          ...projectileInitialState,
+          isConnected: false,
+          isLoading: false,
+          isPracticeMode: true,
+          isPracticePreparing: false,
+          roomId: null,
+          playerId,
+          appPhase: 'in_game',
+          gamePhase: 'hero_select',
+          matchSummary: null,
+          appliedExperienceMatchId: null,
+          mapSeed: seed,
+          mapThemeId: null,
+          redScore: 0,
+          blueScore: 0,
+          redFlag: null,
+          blueFlag: null,
+          players: new Map([[playerId, player]]),
+          localPlayer: player,
+          playerPings: new Map(),
+          roundTimeRemaining: 0,
+          phaseEndTime: null,
+          ultimateEffectActive: false,
+          ultimateEffectType: null,
+          ultimateEffectEndTime: 0,
+          clientCooldowns: {},
+          clientCharges: {},
+          slideIntensity: 0,
+          isObserverMode: false,
+        });
+        resetGameTiming(Date.now());
+        resetLocalMovementPrediction(movementStateFromPlayer(player), 0, player.id);
+        setRoomId(null);
+        setConnected(false);
+
+        loggers.network.info('started local practice', seed);
+      } catch (error) {
+        loggers.network.error('failed to start local practice', error);
+        practiceStartTokenRef.current += 1;
+        useGameStore.setState({
+          isPracticePreparing: false,
+          isPracticeMode: false,
+          appPhase: 'menu',
+          gamePhase: 'waiting',
+        });
+      }
+    });
+  }, [
+    cleanupExistingConnections,
+    rejectPendingVoiceTokenRequests,
+    resetLobby,
+    setConnected,
+    setLoading,
+    setPlayerName,
+    setPracticePreparing,
+    setPracticeMode,
+    setRoomId,
+  ]);
 
   const setupLobbyListeners = useCallback((room: Room, playerName: string) => {
     room.onMessage('lobbyState', (data: {
@@ -336,6 +595,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       hostId: string;
       status: string;
       players: any[];
+      observersEnabled?: boolean;
+      maxObservers?: number;
       rankBandId?: number;
       rankBandLabel?: string;
       averageCompetitiveRating?: number;
@@ -344,6 +605,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       queuedHumanCount?: number;
       provisionalHumanCount?: number;
       requiredPlayers?: number;
+      capacityBlocked?: boolean;
+      capacityMaxPlayers?: number;
       rankedCoverChargeLamports?: string;
       rankedEntryQuoteId?: string;
       wager?: LobbyWagerState;
@@ -357,6 +620,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         rankedEntryQuoteExpiresAt: nextWager.rankedEntryQuoteExpiresAt ?? currentWager.rankedEntryQuoteExpiresAt ?? null,
       });
       setIsLobbyHost(data.hostId === room.sessionId);
+      setLobbyObserverSettings(Boolean(data.observersEnabled), typeof data.maxObservers === 'number' ? data.maxObservers : 0);
       setMatchmakingStatus({
         matchMode: data.matchMode ?? null,
         rankBandId: typeof data.rankBandId === 'number' ? data.rankBandId : null,
@@ -367,6 +631,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         queuedHumanCount: typeof data.queuedHumanCount === 'number' ? data.queuedHumanCount : null,
         provisionalHumanCount: typeof data.provisionalHumanCount === 'number' ? data.provisionalHumanCount : null,
         requiredPlayers: typeof data.requiredPlayers === 'number' ? data.requiredPlayers : null,
+        capacityBlocked: data.capacityBlocked === true,
+        capacityMaxPlayers: typeof data.capacityMaxPlayers === 'number' ? data.capacityMaxPlayers : null,
         rankedCoverChargeLamports: data.rankedCoverChargeLamports ?? null,
         rankedEntryQuoteId: data.rankedEntryQuoteId ?? data.wager?.rankedEntryQuoteId ?? null,
       });
@@ -384,6 +650,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           isHost: p.isHost,
           isReady: p.isReady,
           team: p.team,
+          isObserver: Boolean(p.isObserver),
           heroId: p.heroId || '',
           isBot: Boolean(p.isBot),
           botDifficulty: p.botDifficulty || '',
@@ -408,6 +675,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       queuedHumanCount?: number;
       provisionalHumanCount?: number;
       requiredPlayers?: number;
+      capacityBlocked?: boolean;
+      capacityMaxPlayers?: number;
       rankedCoverChargeLamports?: string;
       rankedEntryQuoteId?: string;
     }) => {
@@ -421,6 +690,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         queuedHumanCount: typeof data.queuedHumanCount === 'number' ? data.queuedHumanCount : null,
         provisionalHumanCount: typeof data.provisionalHumanCount === 'number' ? data.provisionalHumanCount : null,
         requiredPlayers: typeof data.requiredPlayers === 'number' ? data.requiredPlayers : null,
+        capacityBlocked: data.capacityBlocked === true,
+        capacityMaxPlayers: typeof data.capacityMaxPlayers === 'number' ? data.capacityMaxPlayers : null,
         rankedCoverChargeLamports: data.rankedCoverChargeLamports ?? null,
         rankedEntryQuoteId: data.rankedEntryQuoteId ?? null,
       });
@@ -447,11 +718,19 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     room.onMessage('mapVoteFinalized', (data: {
       selectedOptionId: string;
       mapSeed: number;
+      mapThemeId?: VoxelMapTheme['id'] | null;
       votes: MapVoteRecord[];
     }) => {
       loggers.network.info('map vote finalized', data.mapSeed);
       setMapVotes(data.votes, data.selectedOptionId);
       setMapSeed(data.mapSeed);
+      setMapThemeId(data.mapThemeId ?? null);
+      try {
+        const preparedMap = prepareVoxelMapCpu({ seed: data.mapSeed, themeId: data.mapThemeId ?? null, source: 'mapVoteFinalized' });
+        prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 3, label: 'map-vote-finalized' });
+      } catch (error) {
+        loggers.network.warn('selected map CPU prep failed', error);
+      }
     });
 
     room.onMessage('mapVoteCancelled', (data: { reason?: string; status?: string }) => {
@@ -466,6 +745,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       isHost: boolean;
       isReady?: boolean;
       team?: string;
+      isObserver?: boolean;
       heroId?: HeroId | '';
       isBot?: boolean;
       botDifficulty?: BotDifficulty | '';
@@ -483,6 +763,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         isHost: data.isHost,
         isReady: data.isReady ?? false,
         team: data.team || '',
+        isObserver: Boolean(data.isObserver),
         heroId: data.heroId || '',
         isBot: Boolean(data.isBot),
         botDifficulty: data.botDifficulty || '',
@@ -570,6 +851,19 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       }
     });
 
+    room.onMessage('playerObserverChanged', (data: { playerId: string; isObserver: boolean; team?: string; isReady?: boolean }) => {
+      const store = useGameStore.getState();
+      const player = store.lobbyPlayers.get(data.playerId);
+      if (player) {
+        updateLobbyPlayer(data.playerId, {
+          ...player,
+          isObserver: data.isObserver,
+          team: data.team ?? player.team,
+          isReady: data.isReady ?? player.isReady,
+        });
+      }
+    });
+
     room.onMessage('botDifficultyChanged', (data: { playerId: string; difficulty: BotDifficulty }) => {
       const store = useGameStore.getState();
       const player = store.lobbyPlayers.get(data.playerId);
@@ -601,7 +895,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     let isJoiningGame = false;
     room.onMessage('gameStarting', async (data: {
       gameRoomId: string;
-      players: { playerId: string; playerName: string; team: string; isBot?: boolean }[];
+      players: { playerId: string; playerName: string; team?: string; isBot?: boolean; isObserver?: boolean }[];
       entryTicket?: string;
     }) => {
       if (isJoiningGame) {
@@ -612,10 +906,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
       loggers.network.info('game starting', data.gameRoomId);
       const myAssignment = data.players.find(p => p.playerId === room.sessionId);
+      const isObserver = myAssignment?.isObserver === true;
       const myTeam = myAssignment?.team || 'red';
 
       try {
-        await joinGameRoom(data.gameRoomId, playerName, myTeam, data.entryTicket);
+        await joinGameRoom(data.gameRoomId, playerName, myTeam, data.entryTicket, isObserver);
       } catch (error) {
         loggers.network.error('failed to join game room', error);
         isJoiningGame = false;
@@ -635,6 +930,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
     room.onMessage('error', (data: { message: string }) => {
       loggers.network.error('lobby error', data.message);
+      setLobbyError(data.message || 'Lobby action failed');
     });
 
     room.onError((code, message) => {
@@ -646,24 +942,20 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       disconnectVoice('left_lobby');
       resetLobby();
     });
-  }, [setCurrentLobby, setCurrentLobbyWager, setIsLobbyHost, setMatchmakingStatus, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, setAppPhase, setMapVoteState, setMapVotes, setMapSeed, clearMapVote, resetLobby]);
+  }, [setCurrentLobby, setCurrentLobbyWager, setIsLobbyHost, setLobbyObserverSettings, setLobbyError, setMatchmakingStatus, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, setAppPhase, setMapVoteState, setMapVotes, setMapSeed, setMapThemeId, clearMapVote, resetLobby]);
 
   const createLobby = useCallback(async (
     playerName: string,
     lobbyName?: string,
-    isPrivate?: boolean,
-    options?: {
-      initialBotCount?: number;
-      botFillMode?: 'manual' | 'fill_even' | 'fill_empty';
-      defaultBotDifficulty?: BotDifficulty;
-      wager?: CreateLobbyWagerOptions;
-    }
+    options?: CreateLobbyOptions
   ) => {
     setLoading(true);
 
     try {
       await preflightWageredLobby(options?.wager);
       cleanupExistingConnections();
+      clearRunningGameSession();
+      setPracticeMode(false);
 
       const client = getClient();
       const clientId = getClientId();
@@ -673,12 +965,17 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       lobbyRoomRef.current = await client.create('lobby_room', {
         playerName,
         lobbyName: lobbyName || `${playerName}'s Lobby`,
-        isPrivate: isPrivate || false,
+        isPrivate: true,
         clientId,
         initialBotCount: options?.initialBotCount || 0,
         botFillMode: options?.botFillMode || 'manual',
         defaultBotDifficulty: options?.defaultBotDifficulty || 'normal',
         wager: options?.wager,
+        mapSeed: config.isDev && typeof options?.mapSeed === 'number'
+          ? options.mapSeed >>> 0
+          : undefined,
+        forceGoldenMapOption: config.isDev && options?.forceGoldenMapOption === true,
+        observersEnabled: config.isDev && options?.observersEnabled === true,
       });
 
       setupLobbyListeners(lobbyRoomRef.current, playerName);
@@ -696,17 +993,19 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       throw error;
     }
-  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setCurrentLobby, setIsLobbyHost, setAppPhase, setConnected]);
+  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setCurrentLobby, setIsLobbyHost, setAppPhase, setConnected, setPracticeMode]);
 
   const quickPlay = useCallback(async (playerName: string) => {
     setLoading(true);
 
     try {
       cleanupExistingConnections();
+      clearRunningGameSession();
+      setPracticeMode(false);
 
       const client = getClient();
       const clientId = getClientId();
-      const matchmakingTicket = await requestQuickPlayTicket();
+      const matchmakingTicket = await requestQuickPlayTicket(clientId);
 
       loggers.network.debug('quick play matchmaking with client id', clientId, matchmakingTicket.targetRankLabel);
 
@@ -737,20 +1036,21 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       throw error;
     }
-  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected]);
+  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected, setPracticeMode]);
 
   const rankedPlay = useCallback(async (playerName: string) => {
     setLoading(true);
 
     try {
-      cleanupExistingConnections();
-
+      const rankedTicket = await requestRankedTicket();
       const client = getClient();
       const clientId = getClientId();
-      const quote = await requestRankedEntryQuote();
-      const rankedTicket = await requestRankedTicket(quote.quoteId);
 
-      loggers.network.debug('ranked matchmaking with client id', clientId, rankedTicket.targetRankLabel, rankedTicket.quote.coverChargeLamports);
+      cleanupExistingConnections();
+      clearRunningGameSession();
+      setPracticeMode(false);
+
+      loggers.network.debug('ranked matchmaking with client id', clientId, rankedTicket.targetRankLabel, rankedTicket.tokenHold.requiredTokenBaseUnits);
 
       lobbyRoomRef.current = await client.joinOrCreate('lobby_room', {
         playerName,
@@ -760,8 +1060,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         matchMode: 'ranked',
         matchmakingTicket: rankedTicket.ticket,
         rankBandId: rankedTicket.targetRankDivisionIndex,
-        rankedEntryQuoteId: rankedTicket.quote.quoteId,
-        rankedCoverChargeLamports: rankedTicket.quote.coverChargeLamports,
         clientId,
         initialBotCount: 0,
         botFillMode: 'manual',
@@ -772,12 +1070,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
       setPlayerId(lobbyRoomRef.current.sessionId);
       setCurrentLobbyWager({
-        enabled: true,
+        enabled: false,
         matchMode: 'ranked',
-        rankedEntryQuoteId: rankedTicket.quote.quoteId,
-        rankedEntryQuoteExpiresAt: rankedTicket.quote.expiresAt,
         token: 'SOL',
-        coverChargeLamports: rankedTicket.quote.coverChargeLamports,
       });
       setMatchmakingStatus({
         matchMode: 'ranked',
@@ -789,8 +1084,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         queuedHumanCount: 0,
         provisionalHumanCount: 1,
         requiredPlayers: null,
-        rankedCoverChargeLamports: rankedTicket.quote.coverChargeLamports,
-        rankedEntryQuoteId: rankedTicket.quote.quoteId,
+        capacityBlocked: false,
+        capacityMaxPlayers: null,
+        rankedCoverChargeLamports: null,
+        rankedEntryQuoteId: null,
       });
       setAppPhase('matchmaking');
       setConnected(true);
@@ -802,13 +1099,17 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       throw error;
     }
-  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setCurrentLobbyWager, setMatchmakingStatus, setAppPhase, setConnected]);
+  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setCurrentLobbyWager, setMatchmakingStatus, setAppPhase, setConnected, setPracticeMode]);
+
+  const getRankedTokenHoldStatus = useCallback(() => requestRankedTokenHoldStatus(), []);
 
   const joinLobby = useCallback(async (playerName: string, lobbyId: string) => {
     setLoading(true);
 
     try {
       cleanupExistingConnections();
+      clearRunningGameSession();
+      setPracticeMode(false);
 
       const client = getClient();
       const clientId = getClientId();
@@ -833,7 +1134,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       throw error;
     }
-  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected]);
+  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected, setPracticeMode]);
 
   const leaveLobby = useCallback(() => {
     disconnectVoice('leave_lobby');
@@ -843,7 +1144,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     }
     isJoiningGameRef.current = false;
     resetLobby();
-    setAppPhase('browsing_lobbies');
+    setAppPhase('menu');
     setConnected(false);
   }, [resetLobby, setAppPhase, setConnected]);
 
@@ -855,25 +1156,39 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     lobbyRoomRef.current?.send('setTeam', { team });
   }, []);
 
-  const addLobbyBot = useCallback((options?: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }) => {
-    lobbyRoomRef.current?.send('addBot', options || {});
+  const setLobbyObserver = useCallback((observer: boolean) => {
+    lobbyRoomRef.current?.send('setObserver', { observer });
   }, []);
+
+  const devSetLobbyObserver = useCallback((observer: boolean) => {
+    if (!config.isDev) return;
+    lobbyRoomRef.current?.send('devSetObserver', { observer });
+  }, []);
+
+  const addLobbyBot = useCallback((options?: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }) => {
+    setLobbyError(null);
+    lobbyRoomRef.current?.send('addBot', options || {});
+  }, [setLobbyError]);
 
   const removeLobbyBot = useCallback((botId: string) => {
+    setLobbyError(null);
     lobbyRoomRef.current?.send('removeBot', { botId });
-  }, []);
+  }, [setLobbyError]);
 
   const updateLobbyBotTeam = useCallback((botId: string, team: string) => {
+    setLobbyError(null);
     lobbyRoomRef.current?.send('updateBotTeam', { botId, team });
-  }, []);
+  }, [setLobbyError]);
 
   const updateLobbyBotDifficulty = useCallback((botId: string, difficulty: BotDifficulty) => {
+    setLobbyError(null);
     lobbyRoomRef.current?.send('updateBotDifficulty', { botId, difficulty });
-  }, []);
+  }, [setLobbyError]);
 
   const updateLobbyBotHero = useCallback((botId: string, heroId: HeroId | '') => {
+    setLobbyError(null);
     lobbyRoomRef.current?.send('updateBotHero', { botId, heroId });
-  }, []);
+  }, [setLobbyError]);
 
   const startGame = useCallback(() => {
     lobbyRoomRef.current?.send('startGame');
@@ -951,18 +1266,37 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   // ==================== GAME ROOM OPERATIONS ====================
 
-  const setupGameListeners = useCallback((room: Room, playerName: string) => {
+  const enterObserverMode = useCallback((sessionId: string) => {
+    stopRemotePhantomCharge(sessionId);
+    forgetPlayerNetId(sessionId);
+    removePlayer(sessionId);
+    resetLocalMovementPrediction();
+    setObserverMode(true);
+    setMatchStartGateKey(null);
+    useGameStore.setState({
+      playerId: sessionId,
+      localPlayer: null,
+      clientCooldowns: {},
+      clientCharges: {},
+      slideIntensity: 0,
+    });
+  }, [removePlayer, setMatchStartGateKey, setObserverMode]);
+
+  const setupGameListeners = useCallback((room: Room, playerName: string, observer = false) => {
     const sessionId = room.sessionId;
-    const localPlayerName = playerName;
+    let localPlayerName = observer ? '' : playerName;
 
-    // Create default local player
-    setLocalPlayer(createDefaultLocalPlayer(sessionId, playerName));
+    setObserverMode(observer);
 
-    // Cleanup ghost players
-    useGameStore.getState().cleanupGhostPlayers();
+    if (observer) {
+      enterObserverMode(sessionId);
+    } else {
+      // Create default local player
+      setLocalPlayer(createDefaultLocalPlayer(sessionId, playerName));
 
-    // Store actions for handlers
-    const actions = { setLocalPlayer, updatePlayer, removePlayer, setGamePhase };
+      // Cleanup ghost players
+      useGameStore.getState().cleanupGhostPlayers();
+    }
 
     // Set up MapSchema callbacks
     const playersMap = room.state.players as any;
@@ -988,49 +1322,130 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
     const enableFallbackPolling = import.meta.env.DEV && import.meta.env.VITE_ENABLE_SCHEMA_POLLING === '1';
     const syncInterval = enableFallbackPolling
-      ? setupPollingSync(room, sessionId, localPlayerName, actions)
+      ? setupPollingSync(room, { setGamePhase })
       : null;
 
     // Set up message handlers
-    room.onMessage('phaseChange', (data: { phase: string; endTime: number; mapSeed?: number }) => {
+    room.onMessage('phaseChange', measureNetworkMessage('phaseChange', (data: { phase: string; endTime: number; mapSeed?: number; mapThemeId?: VoxelMapTheme['id'] | null }) => {
       loggers.network.debug('phase change message', data.phase);
       if (typeof data.mapSeed === 'number') {
         setMapSeed(data.mapSeed);
+        setMapThemeId(data.mapThemeId ?? null);
+        try {
+          const preparedMap = prepareVoxelMapCpu({ seed: data.mapSeed, themeId: data.mapThemeId ?? null, source: 'match' });
+          prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'phase-change' });
+        } catch (error) {
+          loggers.network.warn('phase map CPU prep failed', error);
+        }
       }
       setGamePhase(data.phase as any);
       setPhaseEndTime(data.endTime);
-    });
+      if (data.phase !== 'hero_select') {
+        setMatchStartGateKey(null);
+      }
+    }));
 
-    room.onMessage('gameEnd', (data: GameEndEvent) => {
+    room.onMessage('matchStartGate', measureNetworkMessage('matchStartGate', (data: MatchStartGateMessage) => {
+      if (!data || typeof data.key !== 'number' || !Number.isInteger(data.key)) return;
+
+      if (typeof data.mapSeed === 'number') {
+        setMapSeed(data.mapSeed);
+        setMapThemeId(data.mapThemeId ?? null);
+      }
+
+      const position = data.position;
+      const hasSpawnPosition = Boolean(
+        position &&
+        Number.isFinite(position.x) &&
+        Number.isFinite(position.y) &&
+        Number.isFinite(position.z)
+      );
+
+      const localPlayer = useGameStore.getState().localPlayer;
+      if (localPlayer && hasSpawnPosition && position) {
+        const movementEpoch = Number.isFinite(data.movementEpoch)
+          ? Math.max(0, Math.trunc(data.movementEpoch as number))
+          : 0;
+        const ackSeq = Number.isFinite(data.ackSeq)
+          ? Math.max(0, Math.trunc(data.ackSeq as number))
+          : 0;
+        const collisionRevision = Number.isFinite(data.collisionRevision)
+          ? Math.max(0, Math.trunc(data.collisionRevision as number))
+          : 0;
+        const nextPlayer = {
+          ...localPlayer,
+          state: 'spawning' as const,
+          position: { ...position },
+          velocity: { x: 0, y: 0, z: 0 },
+        };
+        setLocalPlayer(nextPlayer);
+        resetLocalMovementPrediction(movementStateFromPlayer(nextPlayer), movementEpoch, nextPlayer.id, {
+          lastAckSeq: ackSeq,
+          collisionRevision,
+        });
+      }
+
+      setMatchStartGateKey(data.key);
+    }));
+
+    room.onMessage('gameEnd', measureNetworkMessage('gameEnd', (data: GameEndEvent) => {
       loggers.network.info('game ended', data.finalScore);
+      clearRunningGameSession(room.id);
       setMatchSummary(data);
       setGamePhase('game_end' as any);
       setPhaseEndTime(null);
-    });
+    }));
+
+    room.onMessage('matchCancelled', measureNetworkMessage('matchCancelled', (data: MatchCancelledMessage) => {
+      loggers.network.warn('match cancelled', {
+        reason: data.reason,
+        message: data.message,
+        roomId: data.roomId,
+        requiredHumanPlayers: data.requiredHumanPlayers,
+        connectedHumanPlayers: data.connectedHumanPlayers,
+        refundedWager: data.refundedWager,
+        blockedPlayerId: data.blockedPlayerId,
+        blockedPlayerName: data.blockedPlayerName,
+        networkQuality: data.networkQuality,
+      });
+      disconnectVoice('match_cancelled');
+      clearRunningGameSession(room.id);
+      rejectPendingVoiceTokenRequests(data.message || 'match cancelled before start');
+      rejectPendingPlayerReportRequests(data.message || 'match cancelled before start');
+      setMatchStartGateKey(null);
+      clearMatchSummary();
+      setPhaseEndTime(null);
+      setLoading(false);
+      setPracticeMode(false);
+      setGamePhase('waiting');
+      resetLobby();
+      setAppPhase('menu');
+    }));
 
     setupPlayerJoinedHandler(room, sessionId, localPlayerName, updatePlayer);
     setupPlayerTransformsHandler(room, sessionId, localPlayerName, { setLocalPlayer });
-    setupSelfMovementAuthorityHandler(room, { setLocalPlayer });
-    setupPlayerVitalsHandler(room, sessionId, localPlayerName, { setLocalPlayer, updatePlayer, removePlayer });
+    setupPlayerInterestHandler(room, sessionId);
+    setupSelfMovementAuthorityHandler(room);
+    setupPlayerVitalsHandler(room, sessionId, localPlayerName);
     setupMatchSnapshotHandler(room);
-    setupPlayerStatesHandler(room, sessionId, localPlayerName, { setLocalPlayer, updatePlayer });
     setupVoidZoneHandlers(room, sessionId);
     setupCombatHandlers(room);
 
-    room.onMessage('playerPingRequest', (data: PlayerPingRequestMessage) => {
+    room.onMessage('playerPingRequest', measureNetworkMessage('playerPingRequest', (data: PlayerPingRequestMessage) => {
       if (!data || typeof data.nonce !== 'string') return;
       room.send('playerPingResponse', { nonce: data.nonce });
-    });
+    }));
 
-    room.onMessage('playerPings', (data: PlayerPingsMessage) => {
+    room.onMessage('playerPings', measureNetworkMessage('playerPings', (data: PlayerPingsMessage) => {
       setPlayerPings(data);
-    });
+    }));
 
-    room.onMessage('playerLeft', (data: { playerId: string }) => {
+    room.onMessage('playerLeft', measureNetworkMessage('playerLeft', (data: { playerId: string }) => {
       loggers.network.debug('player left', data.playerId);
       stopRemotePhantomCharge(data.playerId);
+      forgetPlayerNetId(data.playerId);
       removePlayer(data.playerId);
-    });
+    }));
 
     room.onMessage('duplicateSession', (data: { reason: string }) => {
       loggers.network.warn('duplicate session detected', data.reason);
@@ -1049,11 +1464,28 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       pending.resolve(data);
     });
 
+    room.onMessage('playerReportResult', (data: PlayerReportResultMessage) => {
+      const requestId = typeof data.requestId === 'string' ? data.requestId : '';
+      const pending = requestId ? playerReportRequestsRef.current.get(requestId) : null;
+      if (!pending) {
+        loggers.network.debug('received unmatched player report response', requestId);
+        return;
+      }
+
+      window.clearTimeout(pending.timeoutId);
+      playerReportRequestsRef.current.delete(requestId);
+      if (data.ok) {
+        pending.resolve();
+      } else {
+        pending.reject(new Error(data.error || 'Report failed'));
+      }
+    });
+
     room.onMessage('voiceTeamChanged', () => {
       disconnectVoice('voice_team_changed');
     });
 
-    room.onMessage('devHeroChanged', (data: { heroId: HeroId; health: number; maxHealth: number }) => {
+    room.onMessage('devHeroChanged', measureNetworkMessage('devHeroChanged', (data: { heroId: HeroId; health: number; maxHealth: number }) => {
       loggers.network.debug('developer hero switch confirmed', data.heroId);
       const store = useGameStore.getState();
       if (store.localPlayer) {
@@ -1064,7 +1496,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           maxHealth: data.maxHealth,
         });
       }
-    });
+    }));
+
+    room.onMessage('observerModeStarted', measureNetworkMessage('observerModeStarted', (data: { playerId?: string }) => {
+      const observerPlayerId = data.playerId || sessionId;
+      loggers.network.debug('observer mode started', observerPlayerId);
+      localPlayerName = '';
+      enterObserverMode(observerPlayerId);
+    }));
 
     room.onMessage('devCommandError', (data: { message: string }) => {
       loggers.network.error('developer command error:', data.message);
@@ -1078,6 +1517,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       loggers.network.debug('left room', code);
       if (syncInterval) clearInterval(syncInterval);
       rejectPendingVoiceTokenRequests('game room left before voice token response');
+      rejectPendingPlayerReportRequests('game room left before report response');
       disconnectVoice('left_game_room');
       if (gameRoomRef.current === room) {
         gameRoomRef.current = null;
@@ -1086,15 +1526,43 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       setConnected(false);
       setRoomId(null);
+      setPracticeMode(false);
+      setMatchStartGateKey(null);
+      setObserverMode(false);
       setGamePhase('waiting');
       resetLobby();
-      setAppPhase('browsing_lobbies');
+      setAppPhase('menu');
     });
 
     setConnected(true);
-  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, resetLobby, rejectPendingVoiceTokenRequests, setMatchSummary, setPlayerPings]);
+  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setMapThemeId, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, setPracticeMode, resetLobby, rejectPendingVoiceTokenRequests, rejectPendingPlayerReportRequests, setMatchSummary, clearMatchSummary, setPlayerPings, setMatchStartGateKey, setObserverMode, enterObserverMode]);
 
-  const joinGameRoom = useCallback(async (gameRoomId: string, playerName: string, team?: string, entryTicket?: string) => {
+  const getRunningGameReconnect = useCallback(async (): Promise<RunningGameReconnectStatus> => {
+    const session = loadRunningGameSession();
+    if (!session) return { available: false, session: null, reason: 'no_saved_game' };
+
+    try {
+      const status = await requestRunningGameStatus(session.roomId, getClientId());
+      if (!status.available) {
+        clearRunningGameSession(session.roomId);
+        return { available: false, session: null, reason: status.reason ?? 'unavailable' };
+      }
+
+      return { available: true, session };
+    } catch (error) {
+      loggers.network.warn('running game reconnect check failed', error);
+      return { available: false, session: null, reason: 'check_failed' };
+    }
+  }, []);
+
+  const joinGameRoom = useCallback(async (
+    gameRoomId: string,
+    playerName: string,
+    team?: string,
+    entryTicket?: string,
+    observer = false,
+    reconnectToRunningGame = false
+  ) => {
     if (isJoiningGameRef.current) {
       loggers.network.debug('already joining a game room, ignoring duplicate call');
       return;
@@ -1116,6 +1584,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
       useGameStore.getState().setPlayers(new Map());
       clearMatchSummary();
+      setPracticeMode(false);
+      setMatchStartGateKey(null);
+      setObserverMode(observer);
       setGamePhase('waiting');
       setPhaseEndTime(null);
 
@@ -1129,50 +1600,107 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         preferredTeam: team,
         clientId,
         entryTicket,
+        reconnectToRunningGame,
+        clientBuildId: config.buildId,
+        movementProtocolVersion: MOVEMENT_PROTOCOL_VERSION,
       });
 
-      setupGameListeners(gameRoomRef.current, playerName);
+      setupGameListeners(gameRoomRef.current, playerName, observer);
 
       setRoomId(gameRoomRef.current.id);
+      setPlayerId(gameRoomRef.current.sessionId);
       setAppPhase('in_game');
       setLoading(false);
+      saveRunningGameSession({
+        roomId: gameRoomRef.current.id,
+        playerName,
+        team: team === 'red' || team === 'blue' ? team : undefined,
+        observer,
+      });
 
       loggers.network.info('joined game room', gameRoomRef.current.id);
     } catch (error) {
       loggers.network.error('failed to join game room', error);
       setLoading(false);
+      setObserverMode(false);
       isJoiningGameRef.current = false;
       throw error;
     }
-  }, [getClient, setupGameListeners, setLoading, setRoomId, setAppPhase, clearMatchSummary, setGamePhase, setPhaseEndTime]);
+  }, [getClient, setupGameListeners, setLoading, setRoomId, setPlayerId, setAppPhase, clearMatchSummary, setPracticeMode, setMatchStartGateKey, setObserverMode, setGamePhase, setPhaseEndTime]);
+
+  const reconnectRunningGame = useCallback(async () => {
+    const status = await getRunningGameReconnect();
+    if (!status.available || !status.session) {
+      throw new Error('No running game is available to reconnect');
+    }
+
+    const fallbackName = useGameStore.getState().playerName;
+    await joinGameRoom(
+      status.session.roomId,
+      status.session.playerName || fallbackName,
+      status.session.team,
+      undefined,
+      status.session.observer,
+      true
+    );
+  }, [getRunningGameReconnect, joinGameRoom]);
 
   const leaveGame = useCallback(() => {
+    clearRunningGameSession(useGameStore.getState().roomId);
     disconnectVoice('leave_game');
     rejectPendingVoiceTokenRequests('left game before voice token response');
+    rejectPendingPlayerReportRequests('left game before report response');
     gameRoomRef.current?.leave();
     gameRoomRef.current = null;
     lobbyRoomRef.current?.leave();
     lobbyRoomRef.current = null;
     isJoiningGameRef.current = false;
     setRoomId(null);
+    setPlayerId(null);
     setConnected(false);
+    setPracticeMode(false);
+    setMatchStartGateKey(null);
+    useGameStore.setState({
+      ...projectileInitialState,
+      redScore: 0,
+      blueScore: 0,
+      mapThemeId: null,
+      redFlag: null,
+      blueFlag: null,
+      players: new Map(),
+      localPlayer: null,
+      playerPings: new Map(),
+      roundTimeRemaining: 0,
+      phaseEndTime: null,
+      ultimateEffectActive: false,
+      ultimateEffectType: null,
+      ultimateEffectEndTime: 0,
+      clientCooldowns: {},
+      clientCharges: {},
+      slideIntensity: 0,
+      isObserverMode: false,
+    });
+    resetLocalMovementPrediction();
     resetLobby();
     clearMatchSummary();
     setGamePhase('waiting' as any);
-    setAppPhase('browsing_lobbies');
-  }, [setRoomId, setConnected, resetLobby, clearMatchSummary, setGamePhase, setAppPhase, rejectPendingVoiceTokenRequests]);
+    setAppPhase('menu');
+  }, [setRoomId, setPlayerId, setConnected, setPracticeMode, setMatchStartGateKey, resetLobby, clearMatchSummary, setGamePhase, setAppPhase, rejectPendingVoiceTokenRequests, rejectPendingPlayerReportRequests]);
 
   const disconnect = useCallback(() => {
+    clearRunningGameSession();
     disconnectVoice('network_disconnect');
     rejectPendingVoiceTokenRequests('network disconnected before voice token response');
+    rejectPendingPlayerReportRequests('network disconnected before report response');
     gameRoomRef.current?.leave();
     gameRoomRef.current = null;
     lobbyRoomRef.current?.leave();
     lobbyRoomRef.current = null;
     clientRef.current = null;
     isJoiningGameRef.current = false;
+    setMatchStartGateKey(null);
     reset();
-  }, [reset, rejectPendingVoiceTokenRequests]);
+  }, [reset, setMatchStartGateKey, rejectPendingPlayerReportRequests, rejectPendingVoiceTokenRequests]);
 
   const requestVoiceToken = useCallback((scope: VoiceScope = 'match'): Promise<VoiceTokenResponse> => {
     const room = gameRoomRef.current;
@@ -1203,24 +1731,63 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   // ==================== GAME ACTIONS ====================
 
-  const sendInput = useCallback((input: PlayerInput) => {
-    gameRoomRef.current?.send('input', input);
-  }, []);
-
   const sendMovementCommands = useCallback((packet: MovementCommandPacket) => {
     if (packet.commands.length === 0) return;
     gameRoomRef.current?.send('movementCommands', packet);
   }, []);
 
-  const requestBlazeBombDrop = useCallback(() => {
-    gameRoomRef.current?.send('blazeBombDrop', {});
+  const requestBlazeBombDrop = useCallback((payload: { abilityCastHints?: AbilityCastOriginHint[] } = {}) => {
+    gameRoomRef.current?.send('blazeBombDrop', payload);
   }, []);
 
-  const reportBlazeRocketImpact = useCallback((rocketId: string, position: { x: number; y: number; z: number }) => {
-    gameRoomRef.current?.send('blazeRocketImpact', { rocketId, position });
+  const reportPlayer = useCallback((targetPlayerId: string, reason = 'cheating', details = ''): Promise<void> => {
+    const room = gameRoomRef.current;
+    const store = useGameStore.getState();
+    if (store.isPracticeMode) {
+      return Promise.reject(new Error('Reports are not available in practice mode'));
+    }
+    if (!room) {
+      return Promise.reject(new Error('Not connected to a game room'));
+    }
+
+    const requestId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    return new Promise<void>((resolve, reject) => {
+      const timeoutId = window.setTimeout(() => {
+        playerReportRequestsRef.current.delete(requestId);
+        reject(new Error('Report request timed out'));
+      }, 8000);
+
+      playerReportRequestsRef.current.set(requestId, { resolve, reject, timeoutId });
+      room.send('playerReport', {
+        requestId,
+        targetPlayerId,
+        reason,
+        details,
+      });
+    });
   }, []);
 
   const selectHero = useCallback((heroId: HeroId) => {
+    const store = useGameStore.getState();
+    if (store.isPracticeMode) {
+      const localPlayer = store.localPlayer;
+      if (!localPlayer) return;
+
+      const heroStats = getHeroStats(heroId);
+      store.updateLocalPlayer({
+        heroId,
+        health: heroStats.maxHealth,
+        maxHealth: heroStats.maxHealth,
+        ultimateCharge: 100,
+        abilities: createPracticeAbilityStates(heroId),
+        isReady: false,
+      });
+      return;
+    }
+
     loggers.network.debug('sending selectHero', heroId);
     gameRoomRef.current?.send('selectHero', { heroId });
   }, []);
@@ -1243,9 +1810,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('devEndGame', {});
   }, []);
 
-  const setDevFly = useCallback((enabled: boolean) => {
+  const devSetGameObserver = useCallback(() => {
     if (!config.isDev) return;
-    gameRoomRef.current?.send('setDevFly', { enabled });
+    gameRoomRef.current?.send('devSetObserver', {});
   }, []);
 
   const setDevImmune = useCallback((enabled: boolean) => {
@@ -1263,9 +1830,24 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('setDevBotsRooted', { enabled });
   }, []);
 
+  const setDevBotBrainEnabled = useCallback((enabled: boolean) => {
+    if (!config.isDev) return;
+    gameRoomRef.current?.send('setDevBotBrainEnabled', { enabled });
+  }, []);
+
   const addGameBot = useCallback((heroId: HeroId, team: Team) => {
     if (!config.isDev) return;
     gameRoomRef.current?.send('devAddBot', { heroId, team });
+  }, []);
+
+  const devBotSkill = useCallback((heroId: HeroId, team: Team, skillKey: string) => {
+    if (!config.isDev) return;
+    gameRoomRef.current?.send('devBotSkill', { heroId, team, skillKey });
+  }, []);
+
+  const devBotLook = useCallback((heroId: HeroId, team: Team, direction: 'up' | 'down') => {
+    if (!config.isDev) return;
+    gameRoomRef.current?.send('devBotLook', { heroId, team, direction });
   }, []);
 
   const selectTeam = useCallback((team: Team) => {
@@ -1274,8 +1856,44 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setReady = useCallback((ready: boolean) => {
+    const store = useGameStore.getState();
+    if (store.isPracticeMode) {
+      const localPlayer = store.localPlayer;
+      if (!localPlayer) return;
+
+      const heroId = localPlayer.heroId ?? 'phantom';
+      const heroStats = getHeroStats(heroId);
+      const nextPlayer = {
+        ...localPlayer,
+        heroId,
+        isReady: ready,
+        state: ready ? 'alive' as const : 'selecting' as const,
+        health: heroStats.maxHealth,
+        maxHealth: heroStats.maxHealth,
+        ultimateCharge: 100,
+        abilities: createPracticeAbilityStates(heroId),
+      };
+
+      store.setLocalPlayer(nextPlayer);
+      if (ready) {
+        resetLocalMovementPrediction(movementStateFromPlayer(nextPlayer), 0, nextPlayer.id);
+        setGamePhase('playing');
+      } else {
+        setGamePhase('hero_select');
+      }
+      setPhaseEndTime(null);
+      return;
+    }
+
     loggers.network.debug('sending ready', ready);
     gameRoomRef.current?.send('ready', { ready });
+  }, [setGamePhase, setPhaseEndTime]);
+
+  const reportMatchSceneReady = useCallback(() => {
+    const key = matchStartGateKeyRef.current;
+    if (key === null || useGameStore.getState().isPracticeMode) return;
+
+    gameRoomRef.current?.send('matchSceneReady', { key });
   }, []);
 
   // ==================== NPC OPERATIONS ====================
@@ -1304,11 +1922,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   return (
     <NetworkContext.Provider value={{
-      fetchLobbies,
-      watchLobbies,
       createLobby,
       quickPlay,
       rankedPlay,
+      getRankedTokenHoldStatus,
+      startPracticeGame,
       joinLobby,
       leaveLobby,
       setLobbyReady,
@@ -1328,23 +1946,31 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       submitWagerSignedPaymentTransaction,
       submitWagerPaymentSignature,
       joinGameRoom,
+      getRunningGameReconnect,
+      reconnectRunningGame,
       leaveGame,
       disconnect,
-      sendInput,
       sendMovementCommands,
       requestBlazeBombDrop,
-      reportBlazeRocketImpact,
       selectHero,
       devSetHero,
       devFillUltimate,
       devEndGame,
-      setDevFly,
+      devSetGameObserver,
       setDevImmune,
       setDevTimeFrozen,
       setDevBotsRooted,
+      setDevBotBrainEnabled,
       addGameBot,
+      devBotSkill,
+      devBotLook,
       selectTeam,
       setReady,
+      setLobbyObserver,
+      devSetLobbyObserver,
+      matchStartGateKey,
+      reportMatchSceneReady,
+      reportPlayer,
       requestVoiceToken,
       spawnNpc,
       damageNpc,

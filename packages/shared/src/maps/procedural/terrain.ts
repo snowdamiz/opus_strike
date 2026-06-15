@@ -1,13 +1,19 @@
 import type { Vec3 } from '../../types/vector.js';
 import { getBlockDefinition, isCollisionBlock } from './blocks.js';
-import { clampToBoundaryPolygon } from './boundaries.js';
+import { clampToBoundaryPolygon, isInsideBoundaryPolygon } from './boundaries.js';
 import type { VoxelChunk, VoxelMapManifest } from './types.js';
 
 export interface ProceduralTerrainLookup {
   getGroundY(position: Vec3): number | null;
   clampToPlayableMap(position: Vec3): Vec3;
   getBlockAtWorld(position: Vec3): number;
+  getMaxPlayableY(): number;
+  origin: Vec3;
+  voxelSize: Vec3;
+  collisionRevision: number;
 }
+
+const BOUNDARY_CEILING_SAMPLE_BAND = 4;
 
 function chunkLookupIndex(x: number, y: number, z: number, chunksX: number, chunksZ: number): number {
   return x + chunksX * (z + chunksZ * y);
@@ -19,6 +25,56 @@ function worldToGrid(value: number, origin: number, voxelSize: number): number {
 
 function isWalkableCollisionBlock(block: number): boolean {
   return isCollisionBlock(block) && getBlockDefinition(block).walkable;
+}
+
+function distanceToSegment(
+  pointX: number,
+  pointZ: number,
+  start: { x: number; z: number },
+  end: { x: number; z: number }
+): number {
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const lengthSq = dx * dx + dz * dz;
+  if (lengthSq <= 0.0001) return Math.hypot(pointX - start.x, pointZ - start.z);
+
+  const t = Math.max(0, Math.min(1, ((pointX - start.x) * dx + (pointZ - start.z) * dz) / lengthSq));
+  return Math.hypot(pointX - (start.x + dx * t), pointZ - (start.z + dz * t));
+}
+
+function distanceToBoundary(worldX: number, worldZ: number, manifest: VoxelMapManifest): number {
+  let closest = Infinity;
+  for (let index = 0; index < manifest.boundary.length; index++) {
+    closest = Math.min(
+      closest,
+      distanceToSegment(worldX, worldZ, manifest.boundary[index], manifest.boundary[(index + 1) % manifest.boundary.length])
+    );
+  }
+  return closest;
+}
+
+function getBoundaryWallCeilingY(manifest: VoxelMapManifest): number {
+  let highestBoundaryRow = 0;
+  const sampleBand = Math.max(
+    BOUNDARY_CEILING_SAMPLE_BAND,
+    manifest.voxelSize.x * 2,
+    manifest.voxelSize.z * 2
+  );
+
+  for (let gz = 0; gz < manifest.heightfield.size.z; gz++) {
+    const worldZ = manifest.origin.z + (gz + 0.5) * manifest.voxelSize.z;
+    for (let gx = 0; gx < manifest.heightfield.size.x; gx++) {
+      const worldX = manifest.origin.x + (gx + 0.5) * manifest.voxelSize.x;
+      const inside = isInsideBoundaryPolygon(worldX, worldZ, manifest.boundary);
+      if (inside && distanceToBoundary(worldX, worldZ, manifest) > sampleBand) continue;
+
+      const topRow = manifest.heightfield.topSolidRows[gx + gz * manifest.heightfield.size.x] ?? 0;
+      highestBoundaryRow = Math.max(highestBoundaryRow, topRow);
+    }
+  }
+
+  const ceilingRow = highestBoundaryRow > 0 ? highestBoundaryRow : manifest.size.y;
+  return manifest.origin.y + ceilingRow * manifest.voxelSize.y;
 }
 
 function buildChunkLookup(manifest: VoxelMapManifest): {
@@ -39,6 +95,7 @@ function buildChunkLookup(manifest: VoxelMapManifest): {
 
 export function createProceduralTerrainLookup(manifest: VoxelMapManifest): ProceduralTerrainLookup {
   const { chunksX, chunksZ, chunks } = buildChunkLookup(manifest);
+  const maxPlayableY = getBoundaryWallCeilingY(manifest);
 
   const getBlockAtWorld = (position: Vec3): number => {
     const gx = worldToGrid(position.x, manifest.origin.x, manifest.voxelSize.x);
@@ -62,6 +119,10 @@ export function createProceduralTerrainLookup(manifest: VoxelMapManifest): Proce
   };
 
   return {
+    origin: { ...manifest.origin },
+    voxelSize: { ...manifest.voxelSize },
+    collisionRevision: 0,
+    getMaxPlayableY: () => maxPlayableY,
     getBlockAtWorld,
     getGroundY(position: Vec3): number | null {
       const gx = worldToGrid(position.x, manifest.origin.x, manifest.voxelSize.x);

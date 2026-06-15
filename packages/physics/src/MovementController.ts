@@ -162,6 +162,8 @@ export class MovementController {
         input,
         forward,
         right,
+        lookYaw,
+        lookPitch,
         deltaTime,
         movementState: this.movementState,
         heroId: this.heroId,

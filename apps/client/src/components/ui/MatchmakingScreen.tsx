@@ -1,11 +1,10 @@
 import { DEFAULT_GAME_CONFIG } from '@voxel-strike/shared';
 import { useEffect, useState } from 'react';
+import { useShallow } from 'zustand/shallow';
 import { config } from '../../config/environment';
 import { useNetwork } from '../../contexts/NetworkContext';
-import { useWallet } from '../../contexts/WalletContext';
 import { useAudio, useUISounds } from '../../hooks/useAudio';
 import { useGameStore } from '../../store/gameStore';
-import { deserializeWagerPaymentTransaction, lamportsToSolDisplay } from '../../utils/wagerPayments';
 import { LobbyBackdrop } from './LobbyBackdrop';
 import { RankIcon, getRankForStats } from './RankBadge';
 
@@ -14,37 +13,32 @@ function getHttpUrl(): string {
 }
 
 const MIN_RANK_SEARCH_DISTANCE = 2;
+const RANKED_TOKEN_HOLD_LABEL = '$20 SOL';
 
 export function MatchmakingScreen() {
-  const { playerName, playerId, currentLobbyId, currentLobbyWager, lobbyPlayers, userStats, matchmakingStatus } = useGameStore();
-  const {
-    leaveLobby,
-    createWagerPaymentIntent,
-    createWagerPaymentTransaction,
-    submitWagerSignedPaymentTransaction,
-  } = useNetwork();
-  const {
-    walletAddress,
-    isConnected: isWalletConnected,
-    connect: connectWallet,
-    signTransaction,
-  } = useWallet();
+  const { playerName, currentLobbyWager, lobbyPlayers, userStats, matchmakingStatus } = useGameStore(
+    useShallow((state) => ({
+      playerName: state.playerName,
+      currentLobbyWager: state.currentLobbyWager,
+      lobbyPlayers: state.lobbyPlayers,
+      userStats: state.userStats,
+      matchmakingStatus: state.matchmakingStatus,
+    }))
+  );
+  const { leaveLobby } = useNetwork();
   const { playButtonClick } = useUISounds();
   const { preloadSoundGroup } = useAudio();
-  const currentPlayer = playerId ? lobbyPlayers.get(playerId) ?? null : null;
   const isRanked = matchmakingStatus.matchMode === 'ranked' || currentLobbyWager.matchMode === 'ranked';
   const humanCount = Array.from(lobbyPlayers.values()).filter((player) => !player.isBot).length;
-  const paidHumanCount = Array.from(lobbyPlayers.values()).filter((player) => (
-    !player.isBot && (player.paymentStatus === 'credited' || player.paymentStatus === 'settled')
-  )).length;
   const provisionalHumanCount = isRanked
-    ? Math.max(0, matchmakingStatus.provisionalHumanCount ?? humanCount - paidHumanCount)
+    ? Math.max(0, matchmakingStatus.provisionalHumanCount ?? 0)
     : 0;
   const requiredPlayers = matchmakingStatus.requiredPlayers ?? DEFAULT_GAME_CONFIG.maxPlayers;
-  const filledSlots = Math.min(isRanked ? (matchmakingStatus.queuedHumanCount ?? paidHumanCount) : humanCount, requiredPlayers);
+  const filledSlots = Math.min(isRanked ? (matchmakingStatus.queuedHumanCount ?? humanCount) : humanCount, requiredPlayers);
   const [totalPlayersInQueue, setTotalPlayersInQueue] = useState(filledSlots);
   const displayedQueueCount = Math.max(totalPlayersInQueue, filledSlots);
   const queuePlayerLabel = displayedQueueCount === 1 ? 'player' : 'players';
+  const capacityBlocked = matchmakingStatus.capacityBlocked;
   const currentRank = getRankForStats(userStats);
   const searchLabel = matchmakingStatus.averageVisibleRank
     ?? matchmakingStatus.rankBandLabel
@@ -53,29 +47,6 @@ export function MatchmakingScreen() {
     MIN_RANK_SEARCH_DISTANCE,
     matchmakingStatus.rankSearchDistance ?? MIN_RANK_SEARCH_DISTANCE
   );
-  const [isPaying, setIsPaying] = useState(false);
-  const [paymentError, setPaymentError] = useState<string | null>(null);
-  const localPaymentStatus = currentPlayer?.paymentStatus || '';
-  const localPlayerPaid = localPaymentStatus === 'credited' || localPaymentStatus === 'settled';
-  const localPlayerPending = localPaymentStatus === 'intent_created' || localPaymentStatus === 'submitted' || localPaymentStatus === 'confirmed';
-  const localPlayerRefunding = localPaymentStatus === 'refunding';
-  const localPlayerRefunded = localPaymentStatus === 'refunded';
-  const rankedCoverChargeLamports = currentLobbyWager.coverChargeLamports ?? matchmakingStatus.rankedCoverChargeLamports ?? undefined;
-  const rankedQuoteExpiration = currentLobbyWager.rankedEntryQuoteExpiresAt
-    ? new Date(currentLobbyWager.rankedEntryQuoteExpiresAt)
-    : null;
-  const rankedQuoteExpirationLabel = rankedQuoteExpiration && Number.isFinite(rankedQuoteExpiration.getTime())
-    ? rankedQuoteExpiration.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-    : null;
-  const rankedStateLabel = localPlayerRefunded
-    ? 'refunded'
-    : localPlayerRefunding
-      ? 'refunding'
-      : localPlayerPaid
-        ? 'queued'
-        : isPaying || localPlayerPending
-          ? 'confirming payment'
-          : 'payment required';
 
   useEffect(() => {
     preloadSoundGroup('lobby');
@@ -83,11 +54,20 @@ export function MatchmakingScreen() {
 
   useEffect(() => {
     let cancelled = false;
+    let inFlight = false;
+    let activeController: AbortController | null = null;
 
     const fetchQueueStatus = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      const controller = new AbortController();
+      activeController = controller;
+      const timeoutId = window.setTimeout(() => controller.abort(), 4000);
+
       try {
         const response = await fetch(`${getHttpUrl()}/matchmaking/queue-status${isRanked ? '?mode=ranked' : ''}`, {
           credentials: 'include',
+          signal: controller.signal,
         });
         if (!response.ok) return;
 
@@ -97,6 +77,12 @@ export function MatchmakingScreen() {
         }
       } catch {
         // Keep the last known count if the status request misses a beat.
+      } finally {
+        window.clearTimeout(timeoutId);
+        if (activeController === controller) {
+          activeController = null;
+        }
+        inFlight = false;
       }
     };
 
@@ -105,6 +91,7 @@ export function MatchmakingScreen() {
 
     return () => {
       cancelled = true;
+      activeController?.abort();
       window.clearInterval(intervalId);
     };
   }, [isRanked]);
@@ -112,37 +99,6 @@ export function MatchmakingScreen() {
   const handleCancel = () => {
     playButtonClick();
     leaveLobby();
-  };
-
-  const handlePayEntry = async () => {
-    if (!currentLobbyId || !currentPlayer || !isRanked || isPaying || localPlayerPaid || localPlayerRefunding) return;
-    setPaymentError(null);
-    setIsPaying(true);
-
-    try {
-      let payerWallet = walletAddress;
-      if (!isWalletConnected || !walletAddress) {
-        payerWallet = await connectWallet();
-      }
-      if (!payerWallet) {
-        throw new Error('Connect Phantom before paying');
-      }
-
-      const intent = await createWagerPaymentIntent(
-        currentLobbyId,
-        payerWallet,
-        currentPlayer.id,
-        currentLobbyWager.rankedEntryQuoteId ?? matchmakingStatus.rankedEntryQuoteId
-      );
-      const paymentTransaction = await createWagerPaymentTransaction(intent.intentId);
-      const transaction = deserializeWagerPaymentTransaction(paymentTransaction.transactionBase64);
-      const signedTransactionBase64 = await signTransaction(transaction);
-      await submitWagerSignedPaymentTransaction(intent.intentId, signedTransactionBase64);
-    } catch (error) {
-      setPaymentError(error instanceof Error ? error.message : 'Payment failed');
-    } finally {
-      setIsPaying(false);
-    }
   };
 
   return (
@@ -166,10 +122,10 @@ export function MatchmakingScreen() {
             MATCHMAKING
           </h1>
           <p className="mx-auto mt-4 max-w-md font-body text-sm leading-relaxed text-white/50 sm:text-base">
-            {isRanked
-              ? localPlayerPaid
-                ? `${playerName ? `${playerName}, ` : ''}entry confirmed.`
-                : 'Confirm entry to take a ranked queue slot.'
+            {capacityBlocked
+              ? 'Servers are full. Your squad will launch when a match frees space.'
+              : isRanked
+              ? `${playerName ? `${playerName}, ` : ''}SOL holding verified. Finding a ranked squad.`
               : `${playerName ? `${playerName}, hold tight.` : 'Hold tight.'} Building a full match squad.`}
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
@@ -183,39 +139,24 @@ export function MatchmakingScreen() {
             <div className="mx-auto mt-7 max-w-md border border-amber-300/18 bg-black/35 p-4 text-left backdrop-blur-sm">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="font-body text-xs uppercase tracking-[0.22em] text-amber-200/55">Entry</p>
+                  <p className="font-body text-xs uppercase tracking-[0.22em] text-amber-200/55">Access</p>
                   <p className="mt-1 font-display text-2xl text-amber-100">
-                    {rankedCoverChargeLamports ? `${lamportsToSolDisplay(rankedCoverChargeLamports)} SOL` : '$5 SOL'}
+                    {RANKED_TOKEN_HOLD_LABEL}
                   </p>
-                  {rankedQuoteExpirationLabel && (
-                    <p className="mt-1 font-body text-xs text-white/35">Quote expires {rankedQuoteExpirationLabel}</p>
-                  )}
+                  <p className="mt-1 font-body text-xs text-white/35">Holding requirement verified</p>
                 </div>
                 <span className="border border-white/10 bg-white/5 px-2.5 py-1 font-display text-xs uppercase text-white/70">
-                  {rankedStateLabel}
+                  queued
                 </span>
               </div>
-              {!localPlayerPaid && !localPlayerRefunding && !localPlayerRefunded && (
-                <button
-                  type="button"
-                  onClick={handlePayEntry}
-                  disabled={isPaying || localPlayerPending}
-                  className="mt-4 h-11 w-full border border-amber-300/35 bg-amber-400/15 font-display text-sm text-amber-50 transition hover:bg-amber-400/25 disabled:opacity-60"
-                >
-                  {isPaying ? 'AWAITING SIGNATURE' : localPlayerPending ? 'CONFIRMING PAYMENT' : 'PAY ENTRY'}
-                </button>
-              )}
-              {paymentError && (
-                <p className="mt-3 font-body text-xs text-red-300">{paymentError}</p>
-              )}
             </div>
           )}
 
           <div className="mt-10">
             <div className="mb-4 flex items-center justify-between font-display text-sm text-white/60">
-              <span>{isRanked ? 'PAID PLAYERS QUEUED' : 'PLAYERS FOUND'}</span>
+              <span>{isRanked ? 'PLAYERS QUEUED' : 'PLAYERS FOUND'}</span>
               {isRanked && provisionalHumanCount > 0 && (
-                <span>{provisionalHumanCount} confirming</span>
+                <span>{provisionalHumanCount} joining</span>
               )}
             </div>
 
@@ -257,7 +198,7 @@ export function MatchmakingScreen() {
 
       <div className="absolute inset-x-0 bottom-6 z-10 flex justify-center px-5">
         <p className="font-display text-sm uppercase tracking-[0.22em] text-white/65">
-          {displayedQueueCount} {queuePlayerLabel} {isRanked ? 'paid in queue' : 'in queue'}
+          {displayedQueueCount} {queuePlayerLabel} in queue
         </p>
       </div>
     </div>

@@ -1,10 +1,14 @@
-export const AUTOSCALER_PLAYERS_PER_MACHINE = 48;
+import { SERVER_LOAD_BOOTSTRAP_PLAYERS_PER_MACHINE } from '../capacity/serverLoadCapacity';
+
+export const AUTOSCALER_BOOTSTRAP_PLAYERS_PER_MACHINE = SERVER_LOAD_BOOTSTRAP_PLAYERS_PER_MACHINE;
 export const AUTOSCALER_SPARE_STOPPED_MACHINES = 1;
 export const AUTOSCALER_MIN_CREATED_MACHINES = 2;
-export const AUTOSCALER_MAX_DEMAND_CREATED_MACHINES = 3;
+export const AUTOSCALER_MAX_DEMAND_CREATED_MACHINES = 5;
+export const AUTOSCALER_DYNAMIC_PLAYERS_PER_MACHINE_METRIC = 'dynamic_players_per_machine';
+export const AUTOSCALER_OVERLOADED_MACHINES_METRIC = 'overloaded_machines';
 
 export const AUTOSCALER_CREATED_MACHINE_COUNT_EXPRESSION =
-  'max(running_machines, min(max(ceil(demand_players / 48) + 1, 2), 3))';
+  `max(running_machines, min(max(max(ceil(demand_players / ${AUTOSCALER_DYNAMIC_PLAYERS_PER_MACHINE_METRIC}) + ${AUTOSCALER_SPARE_STOPPED_MACHINES}, running_machines + ${AUTOSCALER_OVERLOADED_MACHINES_METRIC}), ${AUTOSCALER_MIN_CREATED_MACHINES}), ${AUTOSCALER_MAX_DEMAND_CREATED_MACHINES}))`;
 
 export interface CalculateDesiredCreatedMachinesOptions {
   demandPlayers: number;
@@ -24,8 +28,8 @@ export function calculateDesiredCreatedMachines(options: CalculateDesiredCreated
   const demandPlayers = normalizeNonNegativeInteger(options.demandPlayers);
   const runningMachines = normalizeNonNegativeInteger(options.runningMachines);
   const playersPerMachine = normalizeNonNegativeInteger(
-    options.playersPerMachine ?? AUTOSCALER_PLAYERS_PER_MACHINE
-  ) || AUTOSCALER_PLAYERS_PER_MACHINE;
+    options.playersPerMachine ?? AUTOSCALER_BOOTSTRAP_PLAYERS_PER_MACHINE
+  ) || AUTOSCALER_BOOTSTRAP_PLAYERS_PER_MACHINE;
   const spareStoppedMachines = normalizeNonNegativeInteger(
     options.spareStoppedMachines ?? AUTOSCALER_SPARE_STOPPED_MACHINES
   );

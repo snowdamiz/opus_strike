@@ -4,11 +4,13 @@ import { matchMaker } from 'colyseus';
 import prisma from '../db';
 import { isGuestPlayAllowed } from '../config/security';
 import { parseCookies, verifyAuthToken } from '../auth/session';
+import { assertGameplayAccountEligible } from '../auth/accountEligibility';
+import { consumeRateLimit, consumeRateLimitForKey } from '../auth/rateLimit';
 import { createMatchmakingTicket } from '../security/matchmakingTickets';
 import {
-  createRankedEntryQuote,
-  getValidRankedEntryQuote,
-} from './rankedEntry';
+  assertRankedTokenHoldingEligibility,
+  getRankedTokenHoldingStatus,
+} from './rankedTokenHold';
 import {
   DEFAULT_MATCHMAKING_RATING,
   DEFAULT_RANK_DIVISION_INDEX,
@@ -16,11 +18,20 @@ import {
   getRankDivisionLabel,
   normalizeRankDivisionIndex,
 } from './skill';
+import { collectInGameCapacitySnapshot, type InGameCapacitySnapshot } from './playerCapacity';
 import { getRankDivisionIndex } from '@voxel-strike/shared';
 import type { MatchMode } from '@voxel-strike/shared';
 import { serializeRankPayload, type PublicRankPayload } from '../ranking/serialization';
 
 const router: RouterType = Router();
+
+const MATCHMAKING_RATE_LIMITS = {
+  queueStatus: { limit: 120, windowMs: 60 * 1000 },
+  ticket: { limit: 18, windowMs: 60 * 1000 },
+  rankedStatus: { limit: 12, windowMs: 60 * 1000 },
+  rankedTicket: { limit: 8, windowMs: 60 * 1000 },
+  runningGameStatus: { limit: 60, windowMs: 60 * 1000 },
+} as const;
 
 interface MatchmakingUserContext {
   userId: string;
@@ -46,7 +57,18 @@ interface MatchmakingQueueStatus {
   queueCount: number;
   provisionalPlayerCount?: number;
   requiredPlayers?: number;
+  capacity: InGameCapacitySnapshot;
 }
+
+interface QueueStatusCacheEntry {
+  expiresAt: number;
+  value?: MatchmakingQueueStatus;
+  inFlight?: Promise<MatchmakingQueueStatus>;
+}
+
+const RUNNING_GAME_PHASES = new Set(['waiting', 'hero_select', 'countdown', 'playing', 'round_end']);
+const QUEUE_STATUS_CACHE_TTL_MS = 750;
+const queueStatusCache = new Map<MatchMode, QueueStatusCacheEntry>();
 
 function getRequestToken(req: Request): string | null {
   const authorization = req.headers.authorization;
@@ -68,9 +90,59 @@ function sendRouteError(res: Response, error: unknown, fallbackMessage: string):
   res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 500).json({ error: message });
 }
 
+function enforceMatchmakingRateLimit(req: Request, res: Response, keyPrefix: string, options: {
+  limit: number;
+  windowMs: number;
+}): boolean {
+  const ipLimit = consumeRateLimit(req, { keyPrefix, ...options });
+  if (!ipLimit.ok) {
+    res.setHeader('Retry-After', ipLimit.retryAfterSeconds.toString());
+    res.status(429).json({ error: 'Too many requests' });
+    return false;
+  }
+
+  return true;
+}
+
+function enforceMatchmakingIdentityRateLimit(res: Response, keyPrefix: string, options: {
+  limit: number;
+  windowMs: number;
+}, identity: string): boolean {
+  const identityLimit = consumeRateLimitForKey(`user:${identity}`, {
+    keyPrefix,
+    limit: Math.max(2, options.limit),
+    windowMs: options.windowMs,
+  });
+  if (identityLimit.ok) return true;
+
+  res.setHeader('Retry-After', identityLimit.retryAfterSeconds.toString());
+  res.status(429).json({ error: 'Too many requests' });
+  return false;
+}
+
+function readClientId(req: Request): string | null {
+  const header = req.headers['x-client-id'];
+  const value = (Array.isArray(header)
+    ? header[0] ?? ''
+    : typeof header === 'string'
+      ? header
+      : typeof req.query.clientId === 'string'
+        ? req.query.clientId
+        : '');
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 128) return null;
+  return /^[a-zA-Z0-9._:-]+$/.test(trimmed) ? trimmed : null;
+}
+
+function readRoomIdParam(req: Request): string | null {
+  const value = typeof req.params.roomId === 'string' ? req.params.roomId.trim() : '';
+  if (!value || value.length > 128) return null;
+  return /^[a-zA-Z0-9_-]+$/.test(value) ? value : null;
+}
+
 async function getMatchmakingUserContext(
   req: Request,
-  options: { allowGuest: boolean } = { allowGuest: true }
+  options: { allowGuest: boolean; guestClientId?: string | null } = { allowGuest: true }
 ): Promise<MatchmakingUserContext> {
   const token = getRequestToken(req);
   const payload = token ? verifyAuthToken(token) : null;
@@ -106,6 +178,7 @@ async function getMatchmakingUserContext(
     });
 
     if (user && (!payload.walletAddress || user.walletAddress === payload.walletAddress)) {
+      await assertGameplayAccountEligible(user.id);
       const rank = serializeRankPayload(user);
       return {
         userId: user.id,
@@ -122,8 +195,12 @@ async function getMatchmakingUserContext(
     throw new Error('Authentication required');
   }
 
+  if (!options.guestClientId) {
+    throw Object.assign(new Error('Client id is required for guest matchmaking'), { statusCode: 400 });
+  }
+
   return {
-    userId: 'guest:quick-play',
+    userId: `guest:${options.guestClientId}`,
     walletAddress: null,
     competitiveRating: DEFAULT_MATCHMAKING_RATING,
     rankDivisionIndex: DEFAULT_RANK_DIVISION_INDEX,
@@ -136,7 +213,6 @@ async function chooseMatchmakingRankBand(input: {
   mode: 'quick_play' | 'ranked';
   playerRating: number;
   playerDivisionIndex: number;
-  coverChargeLamports?: string;
 }): Promise<number> {
   const now = Date.now();
   const rooms = await matchMaker.query({ name: 'lobby_room' });
@@ -146,11 +222,6 @@ async function chooseMatchmakingRankBand(input: {
     if (room.locked || metadata.matchmakingMode !== true || metadata.status !== 'matchmaking') return [];
     const mode = metadata.matchMode === 'ranked' ? 'ranked' : 'quick_play';
     if (mode !== input.mode) return [];
-    if (
-      input.mode === 'ranked'
-      && metadata.rankedCoverChargeLamports !== input.coverChargeLamports
-    ) return [];
-
     const rankBandId = normalizeRankDivisionIndex(metadata.rankBandId);
     const averageCompetitiveRating = typeof metadata.averageCompetitiveRating === 'number'
       ? metadata.averageCompetitiveRating
@@ -190,7 +261,10 @@ async function chooseMatchmakingRankBand(input: {
 }
 
 async function getQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> {
-  const rooms = await matchMaker.query({ name: 'lobby_room' });
+  const [rooms, capacity] = await Promise.all([
+    matchMaker.query({ name: 'lobby_room' }),
+    collectInGameCapacitySnapshot(matchMaker),
+  ]);
   let totalPlayersInQueue = 0;
   let provisionalPlayerCount = 0;
   let queueCount = 0;
@@ -208,7 +282,7 @@ async function getQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> 
       : humanCount);
     const roomRequiredPlayers = typeof metadata.requiredPlayers === 'number' ? metadata.requiredPlayers : room.maxClients ?? 0;
     requiredPlayers = roomRequiredPlayers || requiredPlayers;
-    if (roomRequiredPlayers > 0 && queuedHumanCount >= roomRequiredPlayers) continue;
+    if (roomRequiredPlayers > 0 && queuedHumanCount >= roomRequiredPlayers && metadata.capacityBlocked !== true) continue;
 
     totalPlayersInQueue += queuedHumanCount;
     provisionalPlayerCount += Math.max(0, humanCount - queuedHumanCount);
@@ -221,22 +295,114 @@ async function getQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> 
     queueCount,
     provisionalPlayerCount,
     requiredPlayers,
+    capacity,
   };
 }
 
+function getCachedQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> {
+  const now = Date.now();
+  const cached = queueStatusCache.get(mode);
+  if (cached?.value && cached.expiresAt > now) {
+    return Promise.resolve(cached.value);
+  }
+  if (cached?.inFlight) {
+    return cached.inFlight;
+  }
+
+  const inFlight = getQueueStatus(mode)
+    .then((value) => {
+      queueStatusCache.set(mode, {
+        value,
+        expiresAt: Date.now() + QUEUE_STATUS_CACHE_TTL_MS,
+      });
+      return value;
+    })
+    .catch((error) => {
+      const current = queueStatusCache.get(mode);
+      if (current?.inFlight === inFlight) {
+        if (current.value) {
+          queueStatusCache.set(mode, {
+            value: current.value,
+            expiresAt: current.expiresAt,
+          });
+        } else {
+          queueStatusCache.delete(mode);
+        }
+      }
+      throw error;
+    });
+
+  queueStatusCache.set(mode, {
+    value: cached?.value,
+    expiresAt: cached?.expiresAt ?? 0,
+    inFlight,
+  });
+  return inFlight;
+}
+
 router.get('/queue-status', async (req: Request, res: Response) => {
+  if (!enforceMatchmakingRateLimit(req, res, 'matchmaking:queue-status', MATCHMAKING_RATE_LIMITS.queueStatus)) return;
+
   try {
     const requestedMode = req.query.mode === 'ranked' ? 'ranked' : 'quick_play';
-    res.json(await getQueueStatus(requestedMode));
+    res.set('Cache-Control', 'private, max-age=1');
+    res.json(await getCachedQueueStatus(requestedMode));
   } catch (error) {
     console.error('[matchmaking] Failed to get queue status:', error);
     res.status(500).json({ error: 'Failed to get queue status' });
   }
 });
 
-router.get('/quick-play-ticket', async (req: Request, res: Response) => {
+router.get('/running-game/:roomId', async (req: Request, res: Response) => {
+  if (!enforceMatchmakingRateLimit(req, res, 'matchmaking:running-game-status', MATCHMAKING_RATE_LIMITS.runningGameStatus)) return;
+
   try {
-    const context = await getMatchmakingUserContext(req);
+    const roomId = readRoomIdParam(req);
+    if (!roomId) {
+      res.status(400).json({ error: 'Invalid room id' });
+      return;
+    }
+
+    const clientId = readClientId(req);
+    const context = await getMatchmakingUserContext(req, { allowGuest: true, guestClientId: clientId });
+    if (!enforceMatchmakingIdentityRateLimit(res, 'matchmaking:running-game-status:user', MATCHMAKING_RATE_LIMITS.runningGameStatus, context.userId)) return;
+
+    const rooms = await matchMaker.query({ name: 'game_room' });
+    const room = (rooms as any[]).find((candidate) => candidate.roomId === roomId);
+    const metadata = room?.metadata ?? {};
+    const reconnectIdentityKeys = Array.isArray(metadata.reconnectIdentityKeys)
+      ? metadata.reconnectIdentityKeys
+      : [];
+    const status = typeof metadata.status === 'string' ? metadata.status : '';
+    const canReconnect = Boolean(
+      room
+      && RUNNING_GAME_PHASES.has(status)
+      && reconnectIdentityKeys.includes(context.userId)
+    );
+
+    res.json({
+      available: canReconnect,
+      reason: canReconnect ? undefined : 'unavailable',
+      roomId: canReconnect ? roomId : undefined,
+      status: canReconnect ? status : undefined,
+      matchMode: canReconnect ? metadata.matchMode : undefined,
+      mapSeed: canReconnect ? metadata.mapSeed : undefined,
+      mapThemeId: canReconnect ? metadata.mapThemeId : undefined,
+    });
+  } catch (error) {
+    console.error('[matchmaking] Failed to check running game:', error);
+    sendRouteError(res, error, 'Failed to check running game');
+  }
+});
+
+router.get('/quick-play-ticket', async (req: Request, res: Response) => {
+  if (!enforceMatchmakingRateLimit(req, res, 'matchmaking:quick-play-ticket', MATCHMAKING_RATE_LIMITS.ticket)) return;
+
+  try {
+    const clientId = readClientId(req);
+    const context = await getMatchmakingUserContext(req, { allowGuest: true, guestClientId: clientId });
+    if (!enforceMatchmakingIdentityRateLimit(res, 'matchmaking:quick-play-ticket:user', MATCHMAKING_RATE_LIMITS.ticket, context.userId)) return;
+
     const targetRankDivisionIndex = await chooseMatchmakingRankBand({
       mode: 'quick_play',
       playerRating: context.competitiveRating,
@@ -249,6 +415,7 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
       rankDivisionIndex: context.rankDivisionIndex,
       targetRankDivisionIndex,
       placementRemaining: context.rank.rankedPlacementsRemaining,
+      clientId: context.isGuest ? clientId ?? undefined : undefined,
     });
 
     res.json({
@@ -268,45 +435,39 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
   }
 });
 
-router.get('/ranked-entry-quote', async (req: Request, res: Response) => {
+router.get('/ranked-token-hold-status', async (req: Request, res: Response) => {
+  if (!enforceMatchmakingRateLimit(req, res, 'matchmaking:ranked-token-hold-status', MATCHMAKING_RATE_LIMITS.rankedStatus)) return;
+
   try {
     const context = await getMatchmakingUserContext(req, { allowGuest: false });
+    if (!enforceMatchmakingIdentityRateLimit(res, 'matchmaking:ranked-token-hold-status:user', MATCHMAKING_RATE_LIMITS.rankedStatus, context.userId)) return;
     if (!context.walletAddress) {
       throw Object.assign(new Error('A linked Solana wallet is required for ranked'), { statusCode: 400 });
     }
 
-    res.json({ quote: await createRankedEntryQuote(context.userId) });
+    res.json({ tokenHold: await getRankedTokenHoldingStatus(context.walletAddress) });
   } catch (error) {
-    console.error('[matchmaking] Failed to create ranked entry quote:', error);
-    sendRouteError(res, error, 'Failed to create ranked entry quote');
+    console.error('[matchmaking] Failed to check ranked token holding:', error);
+    sendRouteError(res, error, 'Failed to check ranked token holding');
   }
 });
 
 router.post('/ranked-ticket', async (req: Request, res: Response) => {
+  if (!enforceMatchmakingRateLimit(req, res, 'matchmaking:ranked-ticket', MATCHMAKING_RATE_LIMITS.rankedTicket)) return;
+
   try {
     const context = await getMatchmakingUserContext(req, { allowGuest: false });
+    if (!enforceMatchmakingIdentityRateLimit(res, 'matchmaking:ranked-ticket:user', MATCHMAKING_RATE_LIMITS.rankedTicket, context.userId)) return;
     if (!context.walletAddress) {
       throw Object.assign(new Error('A linked Solana wallet is required for ranked'), { statusCode: 400 });
     }
 
-    const quoteId = typeof req.body?.quoteId === 'string' ? req.body.quoteId : '';
-    if (!quoteId) {
-      throw Object.assign(new Error('quoteId is required'), { statusCode: 400 });
-    }
-
-    const quote = await getValidRankedEntryQuote({
-      quoteId,
-      userId: context.userId,
-    });
-    const coverChargeLamports = quote.coverChargeLamports.toString();
+    const tokenHold = await assertRankedTokenHoldingEligibility(context.walletAddress);
     const targetRankDivisionIndex = await chooseMatchmakingRankBand({
       mode: 'ranked',
       playerRating: context.competitiveRating,
       playerDivisionIndex: context.rankDivisionIndex,
-      coverChargeLamports,
     });
-    const now = Date.now();
-    const ttlMs = Math.max(1, Math.min(60_000, quote.expiresAt.getTime() - now));
     const { ticket, claims } = createMatchmakingTicket({
       mode: 'ranked',
       userId: context.userId,
@@ -314,10 +475,12 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
       rankDivisionIndex: context.rankDivisionIndex,
       targetRankDivisionIndex,
       placementRemaining: context.rank.rankedPlacementsRemaining,
-      rankedEntryQuoteId: quote.id,
-      coverChargeLamports,
-      rankedEntryQuoteExpiresAt: quote.expiresAt.getTime(),
-      ttlMs,
+      rankedTokenAddress: tokenHold.tokenAddress,
+      rankedTokenDecimals: tokenHold.tokenDecimals ?? undefined,
+      rankedTokenHoldUsdCents: tokenHold.usdCents,
+      rankedTokenRequiredBaseUnits: tokenHold.requiredTokenBaseUnits,
+      rankedTokenBalanceBaseUnits: tokenHold.balanceTokenBaseUnits,
+      rankedTokenCheckedAt: Date.parse(tokenHold.checkedAt),
     });
 
     res.json({
@@ -330,15 +493,7 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
       isGuest: false,
       targetRankDivisionIndex,
       targetRankLabel: getRankDivisionLabel(targetRankDivisionIndex),
-      quote: {
-        quoteId: quote.id,
-        usdCents: quote.usdCents,
-        solUsdPriceMicroUsd: quote.solUsdPriceMicroUsd.toString(),
-        coverChargeLamports,
-        priceSource: quote.priceSource,
-        expiresAt: quote.expiresAt.toISOString(),
-        cluster: quote.cluster,
-      },
+      tokenHold,
     });
   } catch (error) {
     console.error('[matchmaking] Failed to issue ranked ticket:', error);

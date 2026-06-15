@@ -1,19 +1,25 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { Player, Team } from '@voxel-strike/shared';
+import {
+  PHANTOM_DIRE_BALL_COLLISION_RADIUS,
+  PLAYER_COMBAT_HITBOX_PADDING,
+  PLAYER_RADIUS,
+  type Team,
+} from '@voxel-strike/shared';
 import { useGameStore, type DireBallData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
-import { recordSystemTime, registerFrameSystem } from '../../../utils/perfMarks';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
+import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
+import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
+import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
+import { playPrimaryImpactSound } from '../primaryImpactSound';
 
 const DIRE_BALL_LIFETIME_MS = 3000;
-const BALL_RADIUS = 0.21;
 const PARTICLES_PER_BALL = 30;
-const NPC_HIT_RADIUS = 1.2;
-const NPC_HIT_RADIUS_SQ = NPC_HIT_RADIUS * NPC_HIT_RADIUS;
+const PROJECTILE_COMBAT_QUERY_PADDING = PLAYER_RADIUS + PLAYER_COMBAT_HITBOX_PADDING + 0.75;
 export const DIRE_BALL_CAPACITY = 96;
 
 interface MutableVec3 {
@@ -30,6 +36,7 @@ interface DireBallRuntimeSlot {
   position: MutableVec3;
   velocity: MutableVec3;
   direction: MutableVec3;
+  impactPosition: MutableVec3 | null;
   right: MutableVec3;
   up: MutableVec3;
   speed: number;
@@ -293,6 +300,7 @@ class DireBallRuntimePool {
       position: { ...ZERO_VEC3 },
       velocity: { ...ZERO_VEC3 },
       direction: { x: 1, y: 0, z: 0 },
+      impactPosition: null,
       right: { x: 0, y: 0, z: 1 },
       up: { x: 0, y: 1, z: 0 },
       speed: 0,
@@ -319,6 +327,9 @@ class DireBallRuntimePool {
     slot.velocity.x = ball.velocity.x;
     slot.velocity.y = ball.velocity.y;
     slot.velocity.z = ball.velocity.z;
+    slot.impactPosition = ball.interceptedByChronosAegis && ball.impactPosition
+      ? { ...ball.impactPosition }
+      : null;
     slot.speed = normalizeInto(slot.velocity, slot.direction);
     slot.expiresAtMs = expiresAtMs;
     slot.particlePhase = ((slotIndex * 37) % 97) / 97;
@@ -366,6 +377,7 @@ class DireBallRuntimePool {
     slot.id = '';
     slot.ownerId = '';
     slot.ownerTeam = null;
+    slot.impactPosition = null;
     this.activeCount = Math.max(0, this.activeCount - 1);
     this.freeList.push(index);
   }
@@ -401,7 +413,7 @@ function fillTrailParticles(
     const phase = (slot.particlePhase + i * 0.071 + elapsedSeconds * 1.9) % 1;
     const angle = i * 2.399963 + elapsedSeconds * (2.2 + (i % 4) * 0.17);
     const trailDistance = 0.16 + phase * 2.35;
-    const radius = BALL_RADIUS * (0.36 + (1 - phase) * 0.86);
+    const radius = PHANTOM_DIRE_BALL_COLLISION_RADIUS * (0.36 + (1 - phase) * 0.86);
     const orbitX = Math.cos(angle) * radius;
     const orbitY = Math.sin(angle) * radius;
 
@@ -439,31 +451,58 @@ function setSphereInstance(
   mesh.setMatrixAt(index, dummy.matrix);
 }
 
-export function prewarmDireBallResources(renderer?: THREE.WebGLRenderer): void {
-  const coreMaterial = getSharedCoreMaterial();
-  const glowMaterial = getSharedGlowMaterial();
-  const innerCoreMaterial = getSharedInnerCoreMaterial();
-  const secondaryShellMaterial = getSharedSecondaryShellMaterial();
+function setInstancedMeshCount(mesh: THREE.InstancedMesh | null, count: number): void {
+  if (!mesh) return;
+  mesh.count = count;
+  if (count > 0) {
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+}
+
+function markInstancedMeshesDynamic(meshes: readonly (THREE.InstancedMesh | null)[]): void {
+  for (const mesh of meshes) {
+    mesh?.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  }
+}
+
+export function prewarmDireBallResources(): void {
+  getSharedCoreMaterial();
+  getSharedGlowMaterial();
+  getSharedInnerCoreMaterial();
+  getSharedSecondaryShellMaterial();
   getSharedParticleMaterial();
+}
 
-  if (!renderer) return;
+export function appendDireBallGpuPrewarmObjects(target: THREE.Object3D): void {
+  prewarmDireBallResources();
 
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
-  camera.position.z = 3;
+  const dummy = new THREE.Object3D();
+  dummy.position.set(-1.2, 0, -4);
+  dummy.scale.setScalar(0.35);
+  dummy.updateMatrix();
 
-  const matrix = new THREE.Matrix4().makeScale(BALL_RADIUS, BALL_RADIUS, BALL_RADIUS);
-  const core = new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere16, coreMaterial, 1);
-  const glow = new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere12, glowMaterial, 1);
-  const inner = new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere8, innerCoreMaterial, 1);
-  const shell = new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere8, secondaryShellMaterial, 1);
+  const addInstancedMesh = (geometry: THREE.BufferGeometry, material: THREE.Material, name: string) => {
+    const mesh = new THREE.InstancedMesh(geometry, material, 1);
+    mesh.name = name;
+    mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.setMatrixAt(0, dummy.matrix);
+    mesh.instanceMatrix.needsUpdate = true;
+    target.add(mesh);
+  };
 
-  core.setMatrixAt(0, matrix);
-  glow.setMatrixAt(0, matrix);
-  inner.setMatrixAt(0, matrix);
-  shell.setMatrixAt(0, matrix);
-  scene.add(core, glow, inner, shell);
-  renderer.compile(scene, camera);
+  addInstancedMesh(SHARED_GEOMETRIES.sphere16, getSharedCoreMaterial(), 'gpu-prewarm-dire-ball-core');
+  addInstancedMesh(SHARED_GEOMETRIES.sphere12, getSharedGlowMaterial(), 'gpu-prewarm-dire-ball-glow');
+  addInstancedMesh(SHARED_GEOMETRIES.sphere8, getSharedInnerCoreMaterial(), 'gpu-prewarm-dire-ball-inner');
+  addInstancedMesh(SHARED_GEOMETRIES.sphere8, getSharedSecondaryShellMaterial(), 'gpu-prewarm-dire-ball-shell');
+
+  const particleGeometry = new THREE.BufferGeometry();
+  particleGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    -1.2, 0, -4,
+    -1.05, 0.08, -4.08,
+    -1.35, -0.08, -3.92,
+  ]), 3));
+  target.add(new THREE.Points(particleGeometry, getSharedParticleMaterial()));
 }
 
 export function DireBallsManager() {
@@ -471,7 +510,6 @@ export function DireBallsManager() {
   const removeDireBalls = useGameStore(state => state.removeDireBalls);
   const poolRef = useRef<DireBallRuntimePool>();
   const activeStoreIdsRef = useRef<Set<string>>(new Set());
-  const enemyPlayersRef = useRef<Player[]>([]);
   const removalsRef = useRef<string[]>([]);
   const rayDirectionRef = useRef<MutableVec3>({ x: 1, y: 0, z: 0 });
   const dummy = useMemo(() => new THREE.Object3D(), []);
@@ -487,9 +525,14 @@ export function DireBallsManager() {
 
   const particleGeometry = useMemo(() => {
     const geometry = new THREE.BufferGeometry();
+    const positionAttribute = new THREE.BufferAttribute(
+      new Float32Array(DIRE_BALL_CAPACITY * PARTICLES_PER_BALL * 3),
+      3
+    );
+    positionAttribute.setUsage(THREE.StreamDrawUsage);
     geometry.setAttribute(
       'position',
-      new THREE.BufferAttribute(new Float32Array(DIRE_BALL_CAPACITY * PARTICLES_PER_BALL * 3), 3)
+      positionAttribute
     );
     const colors = new Float32Array(DIRE_BALL_CAPACITY * PARTICLES_PER_BALL * 3);
     const palette = [
@@ -509,7 +552,15 @@ export function DireBallsManager() {
   }, []);
 
   useEffect(() => () => particleGeometry.dispose(), [particleGeometry]);
-  useEffect(() => registerFrameSystem('phantom-projectiles'), []);
+
+  useEffect(() => {
+    markInstancedMeshesDynamic([
+      coreMeshRef.current,
+      glowMeshRef.current,
+      innerMeshRef.current,
+      secondaryShellMeshRef.current,
+    ]);
+  }, []);
 
   useEffect(() => {
     const pool = poolRef.current;
@@ -535,7 +586,6 @@ export function DireBallsManager() {
     const pool = poolRef.current;
     if (!pool) return;
 
-    const frameStart = performance.now();
     const clock = getFrameClock();
     const delta = clock.clampedDeltaSeconds;
     const elapsedSeconds = clock.elapsedSeconds;
@@ -545,19 +595,24 @@ export function DireBallsManager() {
     coreMaterial.uniforms.time.value = elapsedSeconds;
     glowMaterial.uniforms.time.value = elapsedSeconds;
 
-    const store = useGameStore.getState();
-    const enemies = enemyPlayersRef.current;
-    enemies.length = 0;
-    for (const [, player] of store.players) {
-      if (player.state === 'alive') enemies.push(player);
-    }
-
     const removals = removalsRef.current;
     removals.length = 0;
-    const positions = particleGeometry.attributes.position.array as Float32Array;
     let instanceIndex = 0;
     let particleOffset = 0;
-    let physicsMs = 0;
+
+    if (pool.activeCount === 0) {
+      setInstancedMeshCount(coreMeshRef.current, 0);
+      setInstancedMeshCount(glowMeshRef.current, 0);
+      setInstancedMeshCount(innerMeshRef.current, 0);
+      setInstancedMeshCount(secondaryShellMeshRef.current, 0);
+      particleGeometry.setDrawRange(0, 0);
+      return;
+    }
+
+    const store = useGameStore.getState();
+    const combatCache = rebuildCombatVisualFrameCache(store.players.values(), clock.nowMs, clock.nowMs, store.players.size);
+    const physicsWorld = isPhysicsReady() ? getPhysicsWorld() : null;
+    const positions = particleGeometry.attributes.position.array as Float32Array;
 
     pool.forEachActive((slot, slotIndex) => {
       if (clock.nowMs >= slot.expiresAtMs) {
@@ -567,80 +622,94 @@ export function DireBallsManager() {
       }
 
       const moveDistance = slot.speed * delta;
-      if (moveDistance > 0.001 && isPhysicsReady()) {
-        const world = getPhysicsWorld();
-        if (world) {
-          const physicsStart = performance.now();
-          rayDirectionRef.current.x = slot.direction.x;
-          rayDirectionRef.current.y = slot.direction.y;
-          rayDirectionRef.current.z = slot.direction.z;
-          const hit = raycast(world, slot.position, rayDirectionRef.current, moveDistance + BALL_RADIUS, {
+      if (moveDistance > 0.001) {
+        rayDirectionRef.current.x = slot.direction.x;
+        rayDirectionRef.current.y = slot.direction.y;
+        rayDirectionRef.current.z = slot.direction.z;
+        const collisionDistance = moveDistance + PHANTOM_DIRE_BALL_COLLISION_RADIUS;
+        const authoritativeHit = getAuthoritativeProjectileImpactHit(
+          slot.position,
+          rayDirectionRef.current,
+          slot.impactPosition,
+          collisionDistance,
+          PHANTOM_DIRE_BALL_COLLISION_RADIUS
+        );
+        const aegisHit = getFirstChronosAegisVisualHit(
+          slot.position,
+          rayDirectionRef.current,
+          collisionDistance,
+          slot.ownerTeam,
+          slot.ownerId,
+          PHANTOM_DIRE_BALL_COLLISION_RADIUS
+        );
+        const terrainHit = physicsWorld
+          ? raycast(physicsWorld, slot.position, rayDirectionRef.current, collisionDistance, {
             priority: 'visual',
             feature: 'projectile:phantomDireBall',
-          });
-          physicsMs += performance.now() - physicsStart;
-
-          if (hit && hit.distance <= moveDistance + BALL_RADIUS) {
-            triggerTerrainImpact('phantom_dire_ball', hit.point, {
-              normal: hit.normal,
-              direction: slot.direction,
-            });
-            removals.push(slot.id);
-            pool.deactivate(slotIndex);
-            return;
-          }
+          })
+          : null;
+        let hit = authoritativeHit;
+        if (aegisHit && (!hit || aegisHit.distance <= hit.distance)) {
+          hit = aegisHit;
         }
-      }
+        if (terrainHit && (!hit || terrainHit.distance <= hit.distance)) {
+          hit = terrainHit;
+        }
 
-      for (let i = 0; i < enemies.length; i++) {
-        const player = enemies[i];
-        if (player.id === slot.ownerId) continue;
-        if (slot.ownerTeam && player.team === slot.ownerTeam) continue;
-
-        const dx = player.position.x - slot.position.x;
-        const dy = player.position.y + 0.9 - slot.position.y;
-        const dz = player.position.z - slot.position.z;
-        if (dx * dx + dy * dy + dz * dz <= NPC_HIT_RADIUS_SQ) {
+        if (hit && hit.distance <= collisionDistance) {
+          triggerTerrainImpact('phantom_dire_ball', hit.point, {
+            normal: hit.normal,
+            direction: slot.direction,
+          });
+          playPrimaryImpactSound('phantom', hit.point);
           removals.push(slot.id);
           pool.deactivate(slotIndex);
           return;
         }
       }
 
-      const coreMesh = coreMeshRef.current;
-      const glowMesh = glowMeshRef.current;
-      const innerMesh = innerMeshRef.current;
-      const secondaryShellMesh = secondaryShellMeshRef.current;
-      if (coreMesh && glowMesh && innerMesh && secondaryShellMesh) {
-        setSphereInstance(coreMesh, dummy, instanceIndex, slot, BALL_RADIUS);
-        setSphereInstance(glowMesh, dummy, instanceIndex, slot, BALL_RADIUS * 1.68);
-        setSphereInstance(innerMesh, dummy, instanceIndex, slot, BALL_RADIUS * 0.4);
-        setSphereInstance(secondaryShellMesh, dummy, instanceIndex, slot, BALL_RADIUS * 0.5);
+      const hitPlayer = findCombatVisualEnemyPlayerHit(
+        combatCache,
+        slot.ownerTeam,
+        slot.ownerId,
+        slot.position,
+        slot.direction,
+        moveDistance,
+        PHANTOM_DIRE_BALL_COLLISION_RADIUS,
+        slot.position,
+        moveDistance + PHANTOM_DIRE_BALL_COLLISION_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
+      );
+      if (hitPlayer) {
+        playPrimaryImpactSound('phantom', slot.position);
+        removals.push(slot.id);
+        pool.deactivate(slotIndex);
+        return;
       }
-
-      particleOffset = fillTrailParticles(slot, elapsedSeconds, positions, particleOffset);
 
       slot.position.x += slot.velocity.x * delta;
       slot.position.y += slot.velocity.y * delta;
       slot.position.z += slot.velocity.z * delta;
 
+      const coreMesh = coreMeshRef.current;
+      const glowMesh = glowMeshRef.current;
+      const innerMesh = innerMeshRef.current;
+      const secondaryShellMesh = secondaryShellMeshRef.current;
+      if (coreMesh && glowMesh && innerMesh && secondaryShellMesh) {
+        setSphereInstance(coreMesh, dummy, instanceIndex, slot, PHANTOM_DIRE_BALL_COLLISION_RADIUS);
+        setSphereInstance(glowMesh, dummy, instanceIndex, slot, PHANTOM_DIRE_BALL_COLLISION_RADIUS * 1.68);
+        setSphereInstance(innerMesh, dummy, instanceIndex, slot, PHANTOM_DIRE_BALL_COLLISION_RADIUS * 0.4);
+        setSphereInstance(secondaryShellMesh, dummy, instanceIndex, slot, PHANTOM_DIRE_BALL_COLLISION_RADIUS * 0.5);
+      }
+
+      particleOffset = fillTrailParticles(slot, elapsedSeconds, positions, particleOffset);
+
       instanceIndex++;
     });
 
-    const coreMesh = coreMeshRef.current;
-    const glowMesh = glowMeshRef.current;
-    const innerMesh = innerMeshRef.current;
-    const secondaryShellMesh = secondaryShellMeshRef.current;
-    if (coreMesh && glowMesh && innerMesh && secondaryShellMesh) {
-      coreMesh.count = instanceIndex;
-      glowMesh.count = instanceIndex;
-      innerMesh.count = instanceIndex;
-      secondaryShellMesh.count = instanceIndex;
-      coreMesh.instanceMatrix.needsUpdate = true;
-      glowMesh.instanceMatrix.needsUpdate = true;
-      innerMesh.instanceMatrix.needsUpdate = true;
-      secondaryShellMesh.instanceMatrix.needsUpdate = true;
-    }
+    setInstancedMeshCount(coreMeshRef.current, instanceIndex);
+    setInstancedMeshCount(glowMeshRef.current, instanceIndex);
+    setInstancedMeshCount(innerMeshRef.current, instanceIndex);
+    setInstancedMeshCount(secondaryShellMeshRef.current, instanceIndex);
 
     particleGeometry.setDrawRange(0, particleOffset);
     const positionAttribute = particleGeometry.attributes.position as THREE.BufferAttribute;
@@ -650,11 +719,6 @@ export function DireBallsManager() {
       removeDireBalls(removals);
       removals.length = 0;
     }
-
-    if (physicsMs > 0) {
-      recordSystemTime('physicsQueries', physicsMs);
-    }
-    recordSystemTime('phantomProjectiles', performance.now() - frameStart);
   });
 
   return (

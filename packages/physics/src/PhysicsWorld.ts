@@ -19,6 +19,7 @@ export class PhysicsWorld {
   private world: RAPIER.World;
   private bodies: Map<string, RAPIER.RigidBody> = new Map();
   private colliders: Map<string, RAPIER.Collider> = new Map();
+  private disposed = false;
 
   constructor(config: PhysicsConfig = {}) {
     const gravity = { x: 0, y: config.gravity ?? GRAVITY, z: 0 };
@@ -202,8 +203,11 @@ export class PhysicsWorld {
   }
 
   destroy(): void {
+    if (this.disposed) return;
     this.bodies.clear();
     this.colliders.clear();
+    this.world.free();
+    this.disposed = true;
   }
 }
 
@@ -212,4 +216,3 @@ export interface RaycastHit {
   normal: Vec3;
   distance: number;
 }
-

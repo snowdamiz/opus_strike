@@ -1,14 +1,19 @@
 // Hookshot hero visual effects - split for maintainability
 
-export { HookProjectile } from './hookProjectile';
+export {
+  HookProjectile,
+  createHookProjectileSlotHandle,
+  type HookProjectileSlotHandle,
+} from './hookProjectile';
 
-export { DragHookEffect } from './dragHook';
+export {
+  DragHookEffect,
+  createDragHookSlotHandle,
+  type DragHookSlotHandle,
+} from './dragHook';
 
-export { GrappleTrapEffect, GrappleTrapTargetingIndicator } from './grappleTrap';
+export { GroundHooksEffect } from './groundHooks';
 
 export { EarthWallEffect } from './earthWall';
 
 export { GrappleLineEffect } from './grappleLine';
-
-export { SwingLineEffect } from './swingLine';
-

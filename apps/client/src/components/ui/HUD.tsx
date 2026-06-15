@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
 import {
@@ -8,9 +8,11 @@ import {
   VOID_RAY_CHARGE_TIME,
 } from '@voxel-strike/shared';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
-import { useCombatFeedbackStore, type DamageNumberEvent, type KillFeedEvent } from '../../store/combatFeedbackStore';
+import { useCombatFeedbackStore, type KillFeedEvent } from '../../store/combatFeedbackStore';
 import { useSettingsStore, type CrosshairStyle } from '../../store/settingsStore';
+import { useHudNow } from '../../store/hudSignals';
 import { FACTIONS, HUD_HERO_COLORS as HERO_COLORS } from '../../styles/colorTokens';
+import { Minimap } from './minimap/Minimap';
 import { VoiceHud } from './VoiceHud';
 
 // Solar Icon - Small version for HUD
@@ -36,28 +38,143 @@ function VoidIconSmall({ className, style }: { className?: string; style?: React
   );
 }
 
-// Simple Void Ray charge indicator
+function JetpackChargeIcon({ active }: { active: boolean }) {
+  return (
+    <div
+      className="relative grid h-9 w-9 place-items-center rounded-full overflow-hidden"
+      style={{
+        background: active
+          ? 'linear-gradient(145deg, rgba(255, 237, 213, 0.26), rgba(249, 115, 22, 0.22) 48%, rgba(15, 23, 42, 0.28))'
+          : 'linear-gradient(145deg, rgba(255,255,255,0.14), rgba(249, 115, 22, 0.11) 52%, rgba(15, 23, 42, 0.2))',
+        border: active
+          ? '1px solid rgba(253, 186, 116, 0.58)'
+          : '1px solid rgba(255, 237, 213, 0.22)',
+        boxShadow: active
+          ? '0 0 20px rgba(249, 115, 22, 0.42), inset 0 1px 0 rgba(255,255,255,0.28), inset 0 -10px 18px rgba(124,45,18,0.24)'
+          : '0 0 14px rgba(249, 115, 22, 0.18), inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -10px 18px rgba(15,23,42,0.18)',
+        backdropFilter: 'blur(10px)',
+      }}
+    >
+      <div
+        className="absolute inset-0"
+        style={{
+          background: 'radial-gradient(circle at 32% 22%, rgba(255,255,255,0.42), transparent 34%)',
+          opacity: active ? 0.92 : 0.58,
+        }}
+      />
+      <svg
+        className="relative h-5 w-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        aria-hidden="true"
+      >
+        <path
+          d="M8.2 7.2C8.2 4.9 9.7 3 12 3s3.8 1.9 3.8 4.2v7.4c0 .8-.6 1.4-1.4 1.4H9.6c-.8 0-1.4-.6-1.4-1.4V7.2Z"
+          fill={active ? 'rgba(255, 247, 237, 0.9)' : 'rgba(255, 237, 213, 0.72)'}
+        />
+        <path
+          d="M10.1 8.1h3.8M9.6 16l-1.7 2.8M14.4 16l1.7 2.8M7.9 10.1l-2.1 1.6v4.1M16.1 10.1l2.1 1.6v4.1"
+          stroke={active ? '#fed7aa' : 'rgba(253, 186, 116, 0.82)'}
+          strokeWidth="1.45"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M10.3 20.6 12 17.2l1.7 3.4"
+          stroke={active ? '#fb923c' : 'rgba(251, 146, 60, 0.68)'}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </div>
+  );
+}
+
+function BlazeFuelIndicator({ fuel, active }: { fuel: number; active: boolean }) {
+  const fuelPercent = Math.max(0, Math.min(100, fuel));
+
+  return (
+    <div className="mt-1 flex items-center gap-2.5">
+      <JetpackChargeIcon active={active} />
+      <div className="relative h-2 w-24 overflow-hidden rounded-full">
+        <div
+          className="absolute inset-0 rounded-full"
+          style={{
+            background: 'linear-gradient(180deg, rgba(255,255,255,0.14), rgba(255,255,255,0.04)), rgba(15,23,42,0.34)',
+            border: '1px solid rgba(255, 237, 213, 0.16)',
+            boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.46)',
+            backdropFilter: 'blur(8px)',
+          }}
+        />
+        <div
+          className="relative h-full w-full origin-left rounded-full transition-transform duration-100"
+          style={{
+            transform: `scaleX(${fuelPercent / 100})`,
+            background: active
+              ? 'linear-gradient(90deg, #f97316 0%, #fb923c 42%, #fde68a 100%)'
+              : 'linear-gradient(90deg, #ea580c 0%, #f97316 50%, #fbbf24 100%)',
+            boxShadow: active
+              ? '0 0 12px rgba(251, 146, 60, 0.74), inset 0 1px 0 rgba(255,255,255,0.42)'
+              : '0 0 8px rgba(249, 115, 22, 0.42), inset 0 1px 0 rgba(255,255,255,0.28)',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+const VOID_RAY_RING_CIRCUMFERENCE = 2 * Math.PI * 28;
 
 function VoidRayChargeIndicator({ chargeStart }: { chargeStart: number }) {
-  const [progress, setProgress] = useState(0);
+  const progressCircleRef = useRef<SVGCircleElement | null>(null);
+  const labelRef = useRef<HTMLSpanElement | null>(null);
 
-  // Fast update loop for smooth animation
   useEffect(() => {
-    // Immediately calculate initial progress
-    const calcProgress = () => Math.min(1, (Date.now() - chargeStart) / VOID_RAY_CHARGE_TIME);
-    setProgress(calcProgress());
+    let frameId = 0;
+    let wasReady = false;
+    let lastLabel = '';
 
-    // Update at 60fps for smooth animation
-    const interval = setInterval(() => {
-      setProgress(calcProgress());
-    }, 16);
+    const updateProgress = () => {
+      const progress = Math.min(1, (Date.now() - chargeStart) / VOID_RAY_CHARGE_TIME);
+      const isReady = progress >= 1;
+      const circle = progressCircleRef.current;
+      const label = labelRef.current;
 
-    return () => clearInterval(interval);
+      if (circle) {
+        circle.style.strokeDashoffset = String(VOID_RAY_RING_CIRCUMFERENCE * (1 - progress));
+        if (isReady !== wasReady) {
+          circle.setAttribute('stroke', isReady ? '#00ffff' : '#9333ea');
+          circle.style.filter = isReady ? 'drop-shadow(0 0 6px #00ffff)' : 'drop-shadow(0 0 4px #9333ea)';
+        }
+      }
+
+      if (label) {
+        const nextLabel = isReady ? 'FIRE' : `${Math.floor(progress * 100)}%`;
+        if (nextLabel !== lastLabel) {
+          label.textContent = nextLabel;
+          lastLabel = nextLabel;
+        }
+        if (isReady !== wasReady) {
+          label.className = `font-mono text-sm font-bold ${isReady ? 'text-cyan-300' : 'text-white/80'}`;
+          label.style.textShadow = isReady ? '0 0 8px #00ffff' : '0 2px 4px rgba(0,0,0,0.8)';
+        }
+      }
+
+      wasReady = isReady;
+      if (!isReady) {
+        frameId = requestAnimationFrame(updateProgress);
+      }
+    };
+
+    updateProgress();
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+    };
   }, [chargeStart]);
 
-  const isReady = progress >= 1;
-  const circumference = 2 * Math.PI * 28;
-  const strokeDashoffset = circumference * (1 - progress);
+  const initialProgress = Math.min(1, (Date.now() - chargeStart) / VOID_RAY_CHARGE_TIME);
+  const initialReady = initialProgress >= 1;
 
   return (
     <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50">
@@ -73,17 +190,18 @@ function VoidRayChargeIndicator({ chargeStart }: { chargeStart: number }) {
         />
         {/* Progress ring */}
         <circle
+          ref={progressCircleRef}
           cx="36"
           cy="36"
           r="28"
           fill="none"
-          stroke={isReady ? '#00ffff' : '#9333ea'}
+          stroke={initialReady ? '#00ffff' : '#9333ea'}
           strokeWidth="4"
-          strokeDasharray={circumference}
-          strokeDashoffset={strokeDashoffset}
+          strokeDasharray={VOID_RAY_RING_CIRCUMFERENCE}
+          strokeDashoffset={VOID_RAY_RING_CIRCUMFERENCE * (1 - initialProgress)}
           strokeLinecap="round"
           style={{
-            filter: isReady ? 'drop-shadow(0 0 6px #00ffff)' : 'drop-shadow(0 0 4px #9333ea)',
+            filter: initialReady ? 'drop-shadow(0 0 6px #00ffff)' : 'drop-shadow(0 0 4px #9333ea)',
             transition: 'stroke 0.1s',
           }}
         />
@@ -91,10 +209,11 @@ function VoidRayChargeIndicator({ chargeStart }: { chargeStart: number }) {
       {/* Center text */}
       <div className="absolute inset-0 flex items-center justify-center">
         <span
-          className={`font-mono text-sm font-bold ${isReady ? 'text-cyan-300' : 'text-white/80'}`}
-          style={{ textShadow: isReady ? '0 0 8px #00ffff' : '0 2px 4px rgba(0,0,0,0.8)' }}
+          ref={labelRef}
+          className={`font-mono text-sm font-bold ${initialReady ? 'text-cyan-300' : 'text-white/80'}`}
+          style={{ textShadow: initialReady ? '0 0 8px #00ffff' : '0 2px 4px rgba(0,0,0,0.8)' }}
         >
-          {isReady ? 'FIRE' : `${Math.floor(progress * 100)}%`}
+          {initialReady ? 'FIRE' : `${Math.floor(initialProgress * 100)}%`}
         </span>
       </div>
     </div>
@@ -129,27 +248,6 @@ function NormalCrosshair({ crosshairStyle, color }: { crosshairStyle: CrosshairS
   );
 }
 
-function DamageNumberStack({ events }: { events: DamageNumberEvent[] }) {
-  if (events.length === 0) return null;
-
-  return (
-    <div className="absolute left-1/2 top-[43%] -translate-x-1/2 flex flex-col-reverse items-center gap-1 z-[120]">
-      {events.map((event, index) => (
-        <div
-          key={event.id}
-          className="font-display text-xl text-orange-300 drop-shadow-[0_2px_10px_rgba(0,0,0,0.9)] animate-fade-in"
-          style={{
-            transform: `translateY(${-index * 6}px) scale(${1 - index * 0.08})`,
-            opacity: Math.max(0.35, 1 - index * 0.18),
-          }}
-        >
-          -{Math.round(event.damage)}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function KillFeed({ events }: { events: KillFeedEvent[] }) {
   if (events.length === 0) return null;
 
@@ -166,6 +264,37 @@ function KillFeed({ events }: { events: KillFeedEvent[] }) {
         </div>
       ))}
     </div>
+  );
+}
+
+function formatHudTime(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+function RoundTimer({
+  gamePhase,
+  phaseEndTime,
+  roundTimeRemaining,
+  gameClockFrozen,
+}: {
+  gamePhase: string;
+  phaseEndTime: number | null;
+  roundTimeRemaining: number;
+  gameClockFrozen: boolean;
+}) {
+  const now = useHudNow();
+  const displayedRoundTimeRemaining = gamePhase === 'playing' && !gameClockFrozen && phaseEndTime
+    ? Math.max(0, Math.ceil((phaseEndTime - now) / 1000))
+    : roundTimeRemaining;
+
+  return (
+    <span className={`font-mono text-base sm:text-lg lg:text-xl tracking-[0.12em] tabular-nums font-bold transition-colors ${displayedRoundTimeRemaining < 30 ? 'text-red-400 animate-pulse' :
+        displayedRoundTimeRemaining < 60 ? 'text-amber-300' : 'text-white'
+      }`}>
+      {formatHudTime(displayedRoundTimeRemaining)}
+    </span>
   );
 }
 
@@ -241,6 +370,7 @@ function PrimaryShotCounter({
   reloading,
   reloadStart,
   reloadEnd,
+  now,
   infinite = false,
   tone,
 }: {
@@ -249,10 +379,10 @@ function PrimaryShotCounter({
   reloading: boolean;
   reloadStart: number;
   reloadEnd: number;
+  now: number;
   infinite?: boolean;
   tone: ShotCounterTone;
 }) {
-  const now = Date.now();
   const maxAmmo = PHANTOM_PRIMARY_MAGAZINE_SIZE;
   const shownAmmo = Math.max(0, Math.min(maxAmmo, Math.round(ammo)));
   const reloadDuration = Math.max(1, reloadEnd - reloadStart || PHANTOM_PRIMARY_RELOAD_MS);
@@ -276,9 +406,9 @@ function PrimaryShotCounter({
       }}
     >
       <div
-        className="absolute inset-y-0 left-0 transition-[width] duration-100"
+        className="absolute inset-y-0 left-0 w-full origin-left transition-transform duration-100"
         style={{
-          width: isReloading ? `${reloadProgress * 100}%` : '100%',
+          transform: `scaleX(${isReloading ? reloadProgress : 1})`,
           background: isReloading ? tone.reloadFill : tone.idleFill,
         }}
       />
@@ -330,9 +460,9 @@ function PrimaryShotCounter({
 
         <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
           <div
-            className="h-full transition-[width] duration-100"
+            className="h-full w-full origin-left transition-transform duration-100"
             style={{
-              width: `${readoutProgress * 100}%`,
+              transform: `scaleX(${readoutProgress})`,
               background: isReloading ? tone.reloadProgress : tone.idleProgress,
               boxShadow: isReloading || infinite ? tone.progressShadow : 'none',
             }}
@@ -354,6 +484,8 @@ function PhantomAmmoCounter({
   reloadStart: number;
   reloadEnd: number;
 }) {
+  const now = useHudNow();
+
   return (
     <PrimaryShotCounter
       label="dire"
@@ -361,6 +493,7 @@ function PhantomAmmoCounter({
       reloading={reloading}
       reloadStart={reloadStart}
       reloadEnd={reloadEnd}
+      now={now}
       tone={PHANTOM_SHOT_COUNTER_TONE}
     />
   );
@@ -374,6 +507,7 @@ function HookshotShotCounter() {
       reloading={false}
       reloadStart={0}
       reloadEnd={0}
+      now={0}
       infinite
       tone={HOOKSHOT_SHOT_COUNTER_TONE}
     />
@@ -383,9 +517,13 @@ function HookshotShotCounter() {
 export function HUD() {
   const {
     localPlayer,
+    isPracticeMode,
+    gamePhase,
     redScore,
     blueScore,
     roundTimeRemaining,
+    phaseEndTime,
+    gameClockFrozen,
     redFlag,
     blueFlag,
     clientCooldowns,
@@ -404,9 +542,13 @@ export function HUD() {
   } = useGameStore(
     useShallow(state => ({
       localPlayer: state.localPlayer,
+      isPracticeMode: state.isPracticeMode,
+      gamePhase: state.gamePhase,
       redScore: state.redScore,
       blueScore: state.blueScore,
       roundTimeRemaining: state.roundTimeRemaining,
+      phaseEndTime: state.phaseEndTime,
+      gameClockFrozen: state.gameClockFrozen,
       redFlag: state.redFlag,
       blueFlag: state.blueFlag,
       clientCooldowns: state.clientCooldowns,
@@ -427,29 +569,15 @@ export function HUD() {
   const {
     crosshairStyle,
     crosshairColor,
-    showDamageNumbers,
     showKillFeed,
   } = useSettingsStore(
     useShallow(state => ({
       crosshairStyle: state.settings.crosshairStyle,
       crosshairColor: state.settings.crosshairColor,
-      showDamageNumbers: state.settings.showDamageNumbers,
       showKillFeed: state.settings.showKillFeed,
     }))
   );
-  const { damageNumbers, killFeed } = useCombatFeedbackStore(
-    useShallow(state => ({
-      damageNumbers: state.damageNumbers,
-      killFeed: state.killFeed,
-    }))
-  );
-
-  // Force re-render every 100ms for smooth cooldown updates
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const interval = setInterval(() => setTick(t => t + 1), 100);
-    return () => clearInterval(interval);
-  }, []);
+  const killFeed = useCombatFeedbackStore((state) => state.killFeed);
 
   if (!localPlayer) return null;
 
@@ -466,12 +594,6 @@ export function HUD() {
       : healthPercent <= 55
         ? '#fbbf24'
         : '#22c55e';
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
 
   return (
     <div className="absolute inset-0 pointer-events-none select-none z-hud">
@@ -523,9 +645,9 @@ export function HUD() {
         )}
       </div>
 
-      {showDamageNumbers && <DamageNumberStack events={damageNumbers} />}
       {showKillFeed && <KillFeed events={killFeed} />}
-      <VoiceHud />
+      <Minimap />
+      {!isPracticeMode && <VoiceHud />}
 
       {/* Meteor Strike targeting instructions */}
       {bombTargeting && (
@@ -551,142 +673,145 @@ export function HUD() {
       )}
 
       {/* ===== TOP CENTER - Score Panel (Redesigned) ===== */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 max-w-[92vw]">
-        <div className="relative">
-          {/* Main score container */}
-          <div
-            className="flex items-stretch rounded-b-xl overflow-hidden backdrop-blur-md"
-            style={{
-              background: 'linear-gradient(180deg, rgb(var(--color-strike-bg) / 0.95) 0%, rgb(var(--color-strike-elevated) / 0.9) 100%)',
-              boxShadow: '0 6px 24px rgba(0, 0, 0, 0.46), inset 0 -1px 0 rgba(255,255,255,0.05)',
-            }}
-          >
-            {/* Solar Vanguard Side */}
-            <div className="relative group">
-              <div
-                className="w-[clamp(3rem,5.5vw,5.75rem)] h-[clamp(2.25rem,3.4vw,3.25rem)] flex items-center justify-center gap-1 sm:gap-1.5 relative overflow-hidden"
-                style={{
-                  background: FACTIONS.red.gradient,
-                }}
-              >
-                {/* Animated glow effect */}
+      {!isPracticeMode && (
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 max-w-[92vw]">
+          <div className="relative">
+            {/* Main score container */}
+            <div
+              className="flex items-stretch rounded-b-xl overflow-hidden backdrop-blur-md"
+              style={{
+                background: 'linear-gradient(180deg, rgb(var(--color-strike-bg) / 0.95) 0%, rgb(var(--color-strike-elevated) / 0.9) 100%)',
+                boxShadow: '0 6px 24px rgba(0, 0, 0, 0.46), inset 0 -1px 0 rgba(255,255,255,0.05)',
+              }}
+            >
+              {/* Solar Vanguard Side */}
+              <div className="relative group">
                 <div
-                  className="absolute inset-0 opacity-50"
+                  className="w-[clamp(3rem,5.5vw,5.75rem)] h-[clamp(2.25rem,3.4vw,3.25rem)] flex items-center justify-center gap-1 sm:gap-1.5 relative overflow-hidden"
                   style={{
-                    background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.red.hudGlowColor} 0%, transparent 70%)`,
+                    background: FACTIONS.red.gradient,
+                  }}
+                >
+                  {/* Animated glow effect */}
+                  <div
+                    className="absolute inset-0 opacity-50"
+                    style={{
+                      background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.red.hudGlowColor} 0%, transparent 70%)`,
+                    }}
+                  />
+
+                  <SolarIconSmall className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-[18px] lg:h-[18px] text-white/80 relative z-10" />
+                  <span
+                    className="font-display text-xl sm:text-2xl lg:text-3xl text-white tabular-nums drop-shadow-lg relative z-10"
+                    style={{ textShadow: `0 0 20px ${FACTIONS.red.hudGlowColor}` }}
+                  >
+                    {redScore}
+                  </span>
+
+                  {/* Flag carrier indicator */}
+                  {redFlag?.carrierId && (
+                    <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-black/40 rounded-full">
+                      <span className="text-[9px]">🏴</span>
+                      <span className="text-[8px] text-amber-300 font-display tracking-wider">FLAG</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Faction label */}
+                <div
+                  className="absolute -bottom-3 left-0 right-0 h-3 flex items-center justify-center"
+                  style={{ background: `linear-gradient(180deg, ${FACTIONS.red.primaryColor}30, transparent)` }}
+                >
+                  <span
+                    className="text-[6px] sm:text-[7px] font-display tracking-[0.2em]"
+                    style={{ color: `${FACTIONS.red.primaryColor}b3` }}
+                  >
+                    SOLAR
+                  </span>
+                </div>
+              </div>
+
+              {/* Center Divider + Timer */}
+              <div className="relative flex items-center">
+                {/* Diagonal dividers */}
+                <div
+                  className="absolute -left-2 top-0 bottom-0 w-4 z-10"
+                  style={{
+                    background: 'linear-gradient(135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
+                  }}
+                />
+                <div
+                  className="absolute -right-2 top-0 bottom-0 w-4 z-10"
+                  style={{
+                    background: 'linear-gradient(-135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
                   }}
                 />
 
-                <SolarIconSmall className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-[18px] lg:h-[18px] text-white/80 relative z-10" />
-                <span
-                  className="font-display text-xl sm:text-2xl lg:text-3xl text-white tabular-nums drop-shadow-lg relative z-10"
-                  style={{ textShadow: `0 0 20px ${FACTIONS.red.hudGlowColor}` }}
-                >
-                  {redScore}
-                </span>
-
-                {/* Flag carrier indicator */}
-                {redFlag?.carrierId && (
-                  <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-black/40 rounded-full">
-                    <span className="text-[9px]">🏴</span>
-                    <span className="text-[8px] text-amber-300 font-display tracking-wider">FLAG</span>
-                  </div>
-                )}
+                {/* Timer */}
+                <div className="relative px-3 sm:px-4 lg:px-5 h-[clamp(2.25rem,3.4vw,3.25rem)] flex flex-col items-center justify-center z-20 min-w-[clamp(4.5rem,6vw,5.75rem)]">
+                  <RoundTimer
+                    gamePhase={gamePhase}
+                    phaseEndTime={phaseEndTime}
+                    roundTimeRemaining={roundTimeRemaining}
+                    gameClockFrozen={gameClockFrozen}
+                  />
+                  <span className="text-[6px] sm:text-[7px] font-display text-white/30 tracking-[0.24em] -mt-0.5">BATTLE</span>
+                </div>
               </div>
 
-              {/* Faction label */}
-              <div
-                className="absolute -bottom-3 left-0 right-0 h-3 flex items-center justify-center"
-                style={{ background: `linear-gradient(180deg, ${FACTIONS.red.primaryColor}30, transparent)` }}
-              >
-                <span
-                  className="text-[6px] sm:text-[7px] font-display tracking-[0.2em]"
-                  style={{ color: `${FACTIONS.red.primaryColor}b3` }}
-                >
-                  SOLAR
-                </span>
-              </div>
-            </div>
-
-            {/* Center Divider + Timer */}
-            <div className="relative flex items-center">
-              {/* Diagonal dividers */}
-              <div
-                className="absolute -left-2 top-0 bottom-0 w-4 z-10"
-                style={{
-                  background: 'linear-gradient(135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
-                }}
-              />
-              <div
-                className="absolute -right-2 top-0 bottom-0 w-4 z-10"
-                style={{
-                  background: 'linear-gradient(-135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
-                }}
-              />
-
-              {/* Timer */}
-              <div className="relative px-3 sm:px-4 lg:px-5 h-[clamp(2.25rem,3.4vw,3.25rem)] flex flex-col items-center justify-center z-20 min-w-[clamp(4.5rem,6vw,5.75rem)]">
-                <span className={`font-mono text-base sm:text-lg lg:text-xl tracking-[0.12em] tabular-nums font-bold transition-colors ${roundTimeRemaining < 30 ? 'text-red-400 animate-pulse' :
-                    roundTimeRemaining < 60 ? 'text-amber-300' : 'text-white'
-                  }`}>
-                  {formatTime(roundTimeRemaining)}
-                </span>
-                <span className="text-[6px] sm:text-[7px] font-display text-white/30 tracking-[0.24em] -mt-0.5">BATTLE</span>
-              </div>
-            </div>
-
-            {/* Void Legion Side */}
-            <div className="relative group">
-              <div
-                className="w-[clamp(3rem,5.5vw,5.75rem)] h-[clamp(2.25rem,3.4vw,3.25rem)] flex items-center justify-center gap-1 sm:gap-1.5 relative overflow-hidden"
-                style={{
-                  background: FACTIONS.blue.gradient,
-                }}
-              >
-                {/* Animated glow effect */}
+              {/* Void Legion Side */}
+              <div className="relative group">
                 <div
-                  className="absolute inset-0 opacity-50"
+                  className="w-[clamp(3rem,5.5vw,5.75rem)] h-[clamp(2.25rem,3.4vw,3.25rem)] flex items-center justify-center gap-1 sm:gap-1.5 relative overflow-hidden"
                   style={{
-                    background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.blue.hudGlowColor} 0%, transparent 70%)`,
+                    background: FACTIONS.blue.gradient,
                   }}
-                />
-
-                <span
-                  className="font-display text-xl sm:text-2xl lg:text-3xl text-white tabular-nums drop-shadow-lg relative z-10"
-                  style={{ textShadow: `0 0 20px ${FACTIONS.blue.hudGlowColor}` }}
                 >
-                  {blueScore}
-                </span>
-                <VoidIconSmall className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-[18px] lg:h-[18px] text-white/80 relative z-10" />
+                  {/* Animated glow effect */}
+                  <div
+                    className="absolute inset-0 opacity-50"
+                    style={{
+                      background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.blue.hudGlowColor} 0%, transparent 70%)`,
+                    }}
+                  />
 
-                {/* Flag carrier indicator */}
-                {blueFlag?.carrierId && (
-                  <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-black/40 rounded-full">
-                    <span className="text-[9px]">🏴</span>
-                    <span className="text-[8px] text-amber-300 font-display tracking-wider">FLAG</span>
-                  </div>
-                )}
-              </div>
+                  <span
+                    className="font-display text-xl sm:text-2xl lg:text-3xl text-white tabular-nums drop-shadow-lg relative z-10"
+                    style={{ textShadow: `0 0 20px ${FACTIONS.blue.hudGlowColor}` }}
+                  >
+                    {blueScore}
+                  </span>
+                  <VoidIconSmall className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-[18px] lg:h-[18px] text-white/80 relative z-10" />
 
-              {/* Faction label */}
-              <div
-                className="absolute -bottom-3 left-0 right-0 h-3 flex items-center justify-center"
-                style={{ background: `linear-gradient(180deg, ${FACTIONS.blue.primaryColor}30, transparent)` }}
-              >
-                <span className="text-[6px] sm:text-[7px] font-display tracking-[0.2em] text-cyan-300/70">VOID</span>
+                  {/* Flag carrier indicator */}
+                  {blueFlag?.carrierId && (
+                    <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-black/40 rounded-full">
+                      <span className="text-[9px]">🏴</span>
+                      <span className="text-[8px] text-amber-300 font-display tracking-wider">FLAG</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Faction label */}
+                <div
+                  className="absolute -bottom-3 left-0 right-0 h-3 flex items-center justify-center"
+                  style={{ background: `linear-gradient(180deg, ${FACTIONS.blue.primaryColor}30, transparent)` }}
+                >
+                  <span className="text-[6px] sm:text-[7px] font-display tracking-[0.2em] text-cyan-300/70">VOID</span>
+                </div>
               </div>
             </div>
+
+            {/* Bottom accent line */}
+            <div
+              className="absolute bottom-0 left-1/2 -translate-x-1/2 w-3/4 h-px"
+              style={{
+                background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)',
+              }}
+            />
           </div>
-
-          {/* Bottom accent line */}
-          <div
-            className="absolute bottom-0 left-1/2 -translate-x-1/2 w-3/4 h-px"
-            style={{
-              background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)',
-            }}
-          />
         </div>
-      </div>
+      )}
 
       {/* ===== BOTTOM LEFT - Health ===== */}
       <div
@@ -719,11 +844,11 @@ export function HUD() {
             }}
           >
             <div
-              className={`h-full rounded-full transition-all duration-150 ${isCriticalHealth ? 'health-bar-critical' :
+              className={`h-full w-full origin-left rounded-full transition-transform duration-150 ${isCriticalHealth ? 'health-bar-critical' :
                   isLowHealth ? 'health-bar-low' : ''
                 }`}
               style={{
-                width: `${healthPercent}%`,
+                transform: `scaleX(${healthPercent / 100})`,
                 background: healthColor,
                 boxShadow: `0 0 10px ${healthColor}66`,
               }}
@@ -776,30 +901,7 @@ export function HUD() {
 
         {/* Flamethrower Fuel */}
         {localPlayer.heroId === 'blaze' && (
-          <div
-            className="flex items-center gap-3 px-3 py-2 rounded-lg backdrop-blur-sm mt-1"
-            style={{
-              background: flamethrowerActive ? 'rgba(249, 115, 22, 0.25)' : 'rgba(249, 115, 22, 0.1)',
-              border: flamethrowerActive ? '1px solid rgba(249, 115, 22, 0.6)' : '1px solid rgba(249, 115, 22, 0.3)',
-            }}
-          >
-            <span className="text-[9px] font-display text-orange-400 tracking-wider">FLAME</span>
-            <div className="w-20 h-2 bg-black/60 rounded-full overflow-hidden">
-              <div
-                className="h-full transition-all duration-100"
-                style={{
-                  width: `${flamethrowerFuel}%`,
-                  background: flamethrowerActive
-                    ? 'linear-gradient(90deg, #ff6b00, #ffaa00)'
-                    : 'linear-gradient(90deg, #f97316, #fbbf24)',
-                  boxShadow: flamethrowerActive ? '0 0 15px rgba(255, 170, 0, 0.7)' : '0 0 10px rgba(249, 115, 22, 0.5)',
-                }}
-              />
-            </div>
-            <span className="text-[10px] font-mono text-orange-300/70">
-              {Math.round(flamethrowerFuel)}%
-            </span>
-          </div>
+          <BlazeFuelIndicator fuel={flamethrowerFuel} active={flamethrowerActive} />
         )}
 
       </div>
@@ -849,9 +951,41 @@ export function HUD() {
 interface AbilityState {
   abilityId: string;
   cooldownRemaining: number;
+  cooldownUntil?: number;
   charges: number;
   isActive: boolean;
   activatedAt?: number;
+}
+
+export function getHudAbilityCooldownSeconds({
+  now,
+  isUltimate,
+  canTrackAbility,
+  showActiveTimer,
+  clientCooldownEnd,
+  serverCooldownUntil,
+  serverCooldownRemaining,
+}: {
+  now: number;
+  isUltimate: boolean;
+  canTrackAbility: boolean;
+  showActiveTimer: boolean;
+  clientCooldownEnd?: number;
+  serverCooldownUntil?: number;
+  serverCooldownRemaining?: number;
+}): number {
+  if (isUltimate || !canTrackAbility || showActiveTimer) return 0;
+
+  if (clientCooldownEnd && clientCooldownEnd > now) {
+    return Math.max(0, (clientCooldownEnd - now) / 1000);
+  }
+
+  if (serverCooldownUntil && serverCooldownUntil > now) {
+    return Math.max(0, (serverCooldownUntil - now) / 1000);
+  }
+  if (serverCooldownUntil !== undefined) return 0;
+
+  return Math.max(0, serverCooldownRemaining ?? 0);
 }
 
 function HUDSkillSlot({
@@ -879,7 +1013,7 @@ function HUDSkillSlot({
   const maxCooldown = abilityId === 'phantom_blink' ? 10 : (abilityDef?.cooldown || skill.cooldown || 0);
   const cooldownStartsAfterActive = false;
 
-  const now = Date.now();
+  const now = useHudNow();
   const isActive = canTrackAbility
     ? isUltimate ? (ultimateEffectActive ?? false) : (abilityState?.isActive ?? false)
     : false;
@@ -894,15 +1028,16 @@ function HUDSkillSlot({
   const activeProgress = activeDuration > 0
     ? Math.max(0, Math.min(1, activeRemaining / activeDuration))
     : 0;
-  const clientCooldownRemaining = clientCooldownEnd && clientCooldownEnd > now
-    ? Math.ceil((clientCooldownEnd - now) / 1000)
-    : 0;
-
-  const serverCooldown = abilityState?.cooldownRemaining ?? 0;
   // Ultimates use the charge system, not cooldowns - ignore any cooldown values
-  const cooldown = isUltimate || !canTrackAbility || showActiveTimer
-    ? 0
-    : (clientCooldownRemaining > 0 ? clientCooldownRemaining : serverCooldown);
+  const cooldown = getHudAbilityCooldownSeconds({
+    now,
+    isUltimate,
+    canTrackAbility,
+    showActiveTimer,
+    clientCooldownEnd,
+    serverCooldownUntil: abilityState?.cooldownUntil,
+    serverCooldownRemaining: abilityState?.cooldownRemaining,
+  });
 
   const serverCharges = abilityState?.charges ?? maxCharges;
   let charges = clientCharges !== undefined ? clientCharges : serverCharges;
@@ -917,7 +1052,7 @@ function HUDSkillSlot({
   const hasCharges = maxCharges > 1;
   const noChargesLeft = hasCharges && charges === 0;
   const isUsable = !showActiveTimer && !onCooldown && !noChargesLeft && (!isUltimate || isUltReady);
-  const inputLabel = skill.input === 'PASSIVE' ? 'P' : skill.input;
+  const inputLabel = skill.input;
   const isWideInput = inputLabel.length > 1;
 
   return (

@@ -1,21 +1,30 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { Player } from '@voxel-strike/shared';
+import {
+  CHRONOS_ASCENDANT_PARADOX_PULSE_COLLISION_RADIUS,
+  CHRONOS_ASCENDANT_PARADOX_PULSE_MIN_VISUAL_RADIUS_SCALE,
+  CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
+  CHRONOS_ASCENDANT_PARADOX_PULSE_VISUAL_RADIUS_SCALE,
+  CHRONOS_VERDANT_PULSE_COLLISION_RADIUS,
+  PLAYER_COMBAT_HITBOX_PADDING,
+  PLAYER_RADIUS,
+} from '@voxel-strike/shared';
 import { useGameStore, type ChronosPulseData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
-import { recordSystemTime, registerFrameSystem } from '../../../utils/perfMarks';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
+import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
+import { getFirstChronosAegisVisualHit } from './aegisCollision';
+import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
+import { playPrimaryImpactSound } from '../primaryImpactSound';
 
 const CHRONOS_PULSE_CAPACITY = 96;
 const CHRONOS_PULSE_LIFETIME_MS = 3000;
 const CHRONOS_PULSE_RADIUS = 0.12;
-const CHRONOS_PULSE_COLLISION_RADIUS = 0.18;
-const NPC_HIT_RADIUS = 1.05;
-const NPC_HIT_RADIUS_SQ = NPC_HIT_RADIUS * NPC_HIT_RADIUS;
+const PROJECTILE_COMBAT_QUERY_PADDING = PLAYER_RADIUS + PLAYER_COMBAT_HITBOX_PADDING + 0.75;
 const RING_FORWARD = new THREE.Vector3(0, 0, 1);
 const ZERO_VEC3 = { x: 0, y: 0, z: 0 };
 
@@ -33,8 +42,12 @@ interface ChronosPulseRuntimeSlot {
   position: MutableVec3;
   velocity: MutableVec3;
   direction: MutableVec3;
+  impactPosition: MutableVec3 | null;
   speed: number;
   expiresAtMs: number;
+  collisionRadius: number;
+  radiusScale: number;
+  supercharged: boolean;
 }
 
 let sharedPulseCoreMaterial: THREE.MeshBasicMaterial | null = null;
@@ -87,6 +100,35 @@ function getPulseRingMaterial(): THREE.MeshBasicMaterial {
   return sharedPulseRingMaterial;
 }
 
+export function prewarmChronosPulseResources(): void {
+  getPulseCoreMaterial();
+  getPulseGlowMaterial();
+  getPulseRingMaterial();
+}
+
+export function appendChronosPulseGpuPrewarmObjects(target: THREE.Object3D): void {
+  prewarmChronosPulseResources();
+
+  const dummy = new THREE.Object3D();
+  dummy.position.set(0, 0.85, -4.2);
+  dummy.scale.setScalar(0.45);
+  dummy.updateMatrix();
+
+  const addInstancedMesh = (geometry: THREE.BufferGeometry, material: THREE.Material, name: string) => {
+    const mesh = new THREE.InstancedMesh(geometry, material, 1);
+    mesh.name = name;
+    mesh.frustumCulled = false;
+    mesh.setMatrixAt(0, dummy.matrix);
+    mesh.instanceMatrix.needsUpdate = true;
+    target.add(mesh);
+  };
+
+  addInstancedMesh(SHARED_GEOMETRIES.sphere12, getPulseGlowMaterial(), 'gpu-prewarm-chronos-pulse-glow');
+  addInstancedMesh(SHARED_GEOMETRIES.sphere8, getPulseCoreMaterial(), 'gpu-prewarm-chronos-pulse-core');
+  addInstancedMesh(SHARED_GEOMETRIES.sphere8, getPulseGlowMaterial(), 'gpu-prewarm-chronos-pulse-trail');
+  addInstancedMesh(SHARED_GEOMETRIES.ring24, getPulseRingMaterial(), 'gpu-prewarm-chronos-pulse-ring');
+}
+
 function normalizeInto(input: MutableVec3, output: MutableVec3): number {
   const speed = Math.sqrt(input.x * input.x + input.y * input.y + input.z * input.z);
   if (speed <= 0.0001) {
@@ -118,8 +160,12 @@ class ChronosPulseRuntimePool {
       position: { ...ZERO_VEC3 },
       velocity: { ...ZERO_VEC3 },
       direction: { x: 0, y: 0, z: -1 },
+      impactPosition: null,
       speed: 0,
       expiresAtMs: 0,
+      collisionRadius: CHRONOS_VERDANT_PULSE_COLLISION_RADIUS,
+      radiusScale: 1,
+      supercharged: false,
     }));
     this.freeList = Array.from({ length: capacity }, (_, i) => capacity - 1 - i);
   }
@@ -141,8 +187,23 @@ class ChronosPulseRuntimePool {
     slot.velocity.x = pulse.velocity.x;
     slot.velocity.y = pulse.velocity.y;
     slot.velocity.z = pulse.velocity.z;
+    slot.impactPosition = pulse.interceptedByChronosAegis && pulse.impactPosition
+      ? { ...pulse.impactPosition }
+      : null;
     slot.speed = normalizeInto(slot.velocity, slot.direction);
     slot.expiresAtMs = expiresAtMs;
+    slot.supercharged = Boolean(pulse.supercharged);
+    slot.collisionRadius = pulse.supercharged
+      ? CHRONOS_ASCENDANT_PARADOX_PULSE_COLLISION_RADIUS
+      : CHRONOS_VERDANT_PULSE_COLLISION_RADIUS;
+    slot.radiusScale = pulse.supercharged
+      ? Math.max(
+        CHRONOS_ASCENDANT_PARADOX_PULSE_MIN_VISUAL_RADIUS_SCALE,
+        (pulse.radius ?? CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS)
+          / CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS
+          * CHRONOS_ASCENDANT_PARADOX_PULSE_VISUAL_RADIUS_SCALE
+      )
+      : 1;
 
     this.idToSlot.set(pulse.id, slotIndex);
   }
@@ -171,6 +232,8 @@ class ChronosPulseRuntimePool {
     slot.active = false;
     slot.id = '';
     slot.ownerId = '';
+    slot.impactPosition = null;
+    slot.supercharged = false;
     this.activeCount = Math.max(0, this.activeCount - 1);
     this.freeList.push(index);
   }
@@ -192,6 +255,10 @@ class ChronosPulseRuntimePool {
 
     return 0;
   }
+}
+
+function playChronosImpact(position: MutableVec3, supercharged: boolean): void {
+  playPrimaryImpactSound('chronos', position, { supercharged });
 }
 
 function setSphereInstance(
@@ -240,13 +307,20 @@ function setRingInstance(
   mesh.setMatrixAt(index, dummy.matrix);
 }
 
+function setInstancedMeshCount(mesh: THREE.InstancedMesh | null, count: number): void {
+  if (!mesh) return;
+  mesh.count = count;
+  if (count > 0) {
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+}
+
 export function ChronosPulsesManager() {
   const storePulses = useGameStore(state => state.chronosPulses);
   const removeChronosPulses = useGameStore(state => state.removeChronosPulses);
   const poolRef = useRef<ChronosPulseRuntimePool>();
   const removalsRef = useRef<string[]>([]);
   const activeStoreIdsRef = useRef<Set<string>>(new Set());
-  const enemyPlayersRef = useRef<Player[]>([]);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const pulseDirection = useMemo(() => new THREE.Vector3(0, 0, -1), []);
   const pulseQuaternion = useMemo(() => new THREE.Quaternion(), []);
@@ -261,9 +335,6 @@ export function ChronosPulsesManager() {
   if (!poolRef.current) {
     poolRef.current = new ChronosPulseRuntimePool(CHRONOS_PULSE_CAPACITY);
   }
-
-  useEffect(() => registerFrameSystem('chronos-pulses'), []);
-
   useEffect(() => {
     const pool = poolRef.current;
     if (!pool) return;
@@ -286,12 +357,9 @@ export function ChronosPulsesManager() {
     const pool = poolRef.current;
     if (!pool) return;
 
-    const frameStart = performance.now();
-    const store = useGameStore.getState();
     const clock = getFrameClock();
     const delta = clock.clampedDeltaSeconds;
     let instanceIndex = 0;
-    let physicsMs = 0;
     let lightX = 0;
     let lightY = 0;
     let lightZ = 0;
@@ -299,11 +367,19 @@ export function ChronosPulsesManager() {
     const removals = removalsRef.current;
     removals.length = 0;
 
-    const enemies = enemyPlayersRef.current;
-    enemies.length = 0;
-    for (const [, player] of store.players) {
-      if (player.state === 'alive') enemies.push(player);
+    if (pool.activeCount === 0) {
+      setInstancedMeshCount(glowMeshRef.current, 0);
+      setInstancedMeshCount(coreMeshRef.current, 0);
+      setInstancedMeshCount(trailMeshRef.current, 0);
+      setInstancedMeshCount(frontRingMeshRef.current, 0);
+      setInstancedMeshCount(backRingMeshRef.current, 0);
+      if (lightRef.current) lightRef.current.intensity = 0;
+      return;
     }
+
+    const store = useGameStore.getState();
+    const combatCache = rebuildCombatVisualFrameCache(store.players.values(), clock.nowMs, clock.nowMs, store.players.size);
+    const physicsWorld = isPhysicsReady() ? getPhysicsWorld() : null;
 
     pool.forEachActive((slot, slotIndex) => {
       if (clock.nowMs >= slot.expiresAtMs) {
@@ -313,60 +389,88 @@ export function ChronosPulsesManager() {
       }
 
       const moveDistance = slot.speed * delta;
-      if (moveDistance > 0.001 && isPhysicsReady()) {
-        const world = getPhysicsWorld();
-        if (world) {
-          const physicsStart = performance.now();
-          const hit = raycast(
-            world,
+      const collisionRadius = slot.collisionRadius;
+      if (moveDistance > 0.001) {
+        const collisionDistance = moveDistance + collisionRadius;
+        const authoritativeHit = getAuthoritativeProjectileImpactHit(
+          slot.position,
+          slot.direction,
+          slot.impactPosition,
+          collisionDistance,
+          collisionRadius
+        );
+        const aegisHit = getFirstChronosAegisVisualHit(
+          slot.position,
+          slot.direction,
+          collisionDistance,
+          slot.ownerTeam,
+          slot.ownerId,
+          collisionRadius
+        );
+        const terrainHit = physicsWorld
+          ? raycast(
+            physicsWorld,
             slot.position,
             slot.direction,
-            moveDistance + CHRONOS_PULSE_COLLISION_RADIUS,
+            collisionDistance,
             {
-              priority: 'visual',
-              feature: 'projectile:chronosPulse',
+            priority: 'visual',
+            feature: 'projectile:chronosPulse',
             }
-          );
-          physicsMs += performance.now() - physicsStart;
-          if (hit && hit.distance <= moveDistance + CHRONOS_PULSE_COLLISION_RADIUS) {
-            triggerTerrainImpact('chronos_pulse', hit.point, {
-              normal: hit.normal,
-              direction: slot.direction,
-              scale: 0.72,
-            });
-            removals.push(slot.id);
-            pool.deactivate(slotIndex);
-            return;
-          }
-        }
-      }
-
-      for (let i = 0; i < enemies.length; i++) {
-        const player = enemies[i];
-        if (player.id === slot.ownerId) continue;
-        if (player.state !== 'alive') continue;
-        if (player.team === slot.ownerTeam) continue;
-
-        const dx = player.position.x - slot.position.x;
-        const dy = player.position.y + 0.9 - slot.position.y;
-        const dz = player.position.z - slot.position.z;
-        if (dx * dx + dy * dy + dz * dz <= NPC_HIT_RADIUS_SQ) {
+          )
+          : null;
+        const hit = aegisHit && (!terrainHit || aegisHit.distance <= terrainHit.distance)
+          ? aegisHit
+          : terrainHit;
+        const resolvedHit = authoritativeHit && (!hit || authoritativeHit.distance <= hit.distance)
+          ? authoritativeHit
+          : hit;
+        if (resolvedHit && resolvedHit.distance <= moveDistance + collisionRadius) {
+          triggerTerrainImpact('chronos_pulse', resolvedHit.point, {
+            normal: resolvedHit.normal,
+            direction: slot.direction,
+            scale: 0.72 * slot.radiusScale,
+          });
+          playChronosImpact(resolvedHit.point, slot.supercharged);
           removals.push(slot.id);
           pool.deactivate(slotIndex);
           return;
         }
       }
 
+      const hitPlayer = findCombatVisualEnemyPlayerHit(
+        combatCache,
+        slot.ownerTeam,
+        slot.ownerId,
+        slot.position,
+        slot.direction,
+        moveDistance,
+        collisionRadius,
+        slot.position,
+        moveDistance + collisionRadius + PROJECTILE_COMBAT_QUERY_PADDING
+      );
+      if (hitPlayer) {
+        playChronosImpact(slot.position, slot.supercharged);
+        removals.push(slot.id);
+        pool.deactivate(slotIndex);
+        return;
+      }
+
+      slot.position.x += slot.velocity.x * delta;
+      slot.position.y += slot.velocity.y * delta;
+      slot.position.z += slot.velocity.z * delta;
+
       const pulse = 1 + Math.sin(clock.nowMs * 0.02 + slotIndex * 0.8) * 0.055;
+      const radius = CHRONOS_PULSE_RADIUS * slot.radiusScale;
       setSphereInstance(
         glowMeshRef.current,
         dummy,
         slot,
         instanceIndex,
-        CHRONOS_PULSE_RADIUS * 1.35 * pulse
+        radius * 1.35 * pulse
       );
-      setSphereInstance(coreMeshRef.current, dummy, slot, instanceIndex, CHRONOS_PULSE_RADIUS * 0.68);
-      setSphereInstance(trailMeshRef.current, dummy, slot, instanceIndex, CHRONOS_PULSE_RADIUS * 0.82, 0.22);
+      setSphereInstance(coreMeshRef.current, dummy, slot, instanceIndex, radius * 0.68);
+      setSphereInstance(trailMeshRef.current, dummy, slot, instanceIndex, radius * 0.82, 0.22 * slot.radiusScale);
       setRingInstance(
         frontRingMeshRef.current,
         dummy,
@@ -374,8 +478,8 @@ export function ChronosPulsesManager() {
         instanceIndex,
         pulseDirection,
         pulseQuaternion,
-        CHRONOS_PULSE_RADIUS * 1.55,
-        0.08
+        radius * 1.55,
+        0.08 * slot.radiusScale
       );
       setRingInstance(
         backRingMeshRef.current,
@@ -384,32 +488,21 @@ export function ChronosPulsesManager() {
         instanceIndex,
         pulseDirection,
         pulseQuaternion,
-        CHRONOS_PULSE_RADIUS * 1.15,
-        0.3
+        radius * 1.15,
+        0.3 * slot.radiusScale
       );
 
       lightX += slot.position.x;
       lightY += slot.position.y;
       lightZ += slot.position.z;
       instanceIndex++;
-
-      slot.position.x += slot.velocity.x * delta;
-      slot.position.y += slot.velocity.y * delta;
-      slot.position.z += slot.velocity.z * delta;
     });
 
-    const meshes = [
-      glowMeshRef.current,
-      coreMeshRef.current,
-      trailMeshRef.current,
-      frontRingMeshRef.current,
-      backRingMeshRef.current,
-    ];
-    for (const mesh of meshes) {
-      if (!mesh) continue;
-      mesh.count = instanceIndex;
-      mesh.instanceMatrix.needsUpdate = true;
-    }
+    setInstancedMeshCount(glowMeshRef.current, instanceIndex);
+    setInstancedMeshCount(coreMeshRef.current, instanceIndex);
+    setInstancedMeshCount(trailMeshRef.current, instanceIndex);
+    setInstancedMeshCount(frontRingMeshRef.current, instanceIndex);
+    setInstancedMeshCount(backRingMeshRef.current, instanceIndex);
 
     if (lightRef.current) {
       if (instanceIndex > 0) {
@@ -424,11 +517,6 @@ export function ChronosPulsesManager() {
       removeChronosPulses(removals);
       removals.length = 0;
     }
-
-    if (physicsMs > 0) {
-      recordSystemTime('physicsQueries', physicsMs);
-    }
-    recordSystemTime('chronosPulses', performance.now() - frameStart);
   });
 
   return (
@@ -477,8 +565,6 @@ export function ChronosPulsesManager() {
 
 if (typeof window !== 'undefined') {
   requestAnimationFrame(() => {
-    getPulseCoreMaterial();
-    getPulseGlowMaterial();
-    getPulseRingMaterial();
+    prewarmChronosPulseResources();
   });
 }

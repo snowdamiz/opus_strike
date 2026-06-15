@@ -8,6 +8,42 @@ export function isProductionEnvironment(): boolean {
   return process.env.NODE_ENV === 'production';
 }
 
+const LOCAL_DEVELOPMENT_AUTH_SECRET = 'local-development-auth-secret-do-not-use-in-production';
+const LOCAL_DEVELOPMENT_ENTRY_TICKET_SECRET = 'local-development-entry-ticket-secret';
+const MIN_PRODUCTION_SECRET_LENGTH = 32;
+
+function isWeakProductionSecret(value: string): boolean {
+  return value.length < MIN_PRODUCTION_SECRET_LENGTH
+    || value === LOCAL_DEVELOPMENT_AUTH_SECRET
+    || value === LOCAL_DEVELOPMENT_ENTRY_TICKET_SECRET
+    || value === 'voxel-strike-secret-key-change-in-production';
+}
+
+function assertUsableProductionSecret(secret: string, label: string): void {
+  if (!isProductionEnvironment()) return;
+  if (!secret) {
+    throw new Error(`${label} must be set in production`);
+  }
+  if (isWeakProductionSecret(secret)) {
+    throw new Error(`${label} must be at least ${MIN_PRODUCTION_SECRET_LENGTH} characters and must not use a development fallback`);
+  }
+}
+
+export function getAuthTokenSecret(): string {
+  const secret = process.env.JWT_SECRET?.trim() || '';
+  if (secret) {
+    assertUsableProductionSecret(secret, 'JWT_SECRET');
+    return secret;
+  }
+
+  assertUsableProductionSecret('', 'JWT_SECRET');
+  return LOCAL_DEVELOPMENT_AUTH_SECRET;
+}
+
+export function assertUsableAuthSecret(): void {
+  void getAuthTokenSecret();
+}
+
 export function isHardenedMovementEnabled(): boolean {
   return envFlag('HARDENED_MOVEMENT', true);
 }
@@ -28,15 +64,17 @@ export function isDevelopmentToolsEnabled(): boolean {
 }
 
 export function getEntryTicketSecret(): string {
-  return process.env.ENTRY_TICKET_SECRET
-    || process.env.JWT_SECRET
+  return process.env.ENTRY_TICKET_SECRET?.trim()
+    || process.env.JWT_SECRET?.trim()
     || (isProductionEnvironment()
       ? ''
-      : 'local-development-entry-ticket-secret');
+      : LOCAL_DEVELOPMENT_ENTRY_TICKET_SECRET);
 }
 
 export function assertUsableEntryTicketSecret(): void {
-  if (!getEntryTicketSecret()) {
+  const secret = getEntryTicketSecret();
+  if (!secret) {
     throw new Error('ENTRY_TICKET_SECRET or JWT_SECRET must be set for lobby-created game rooms');
   }
+  assertUsableProductionSecret(secret, 'ENTRY_TICKET_SECRET or JWT_SECRET');
 }

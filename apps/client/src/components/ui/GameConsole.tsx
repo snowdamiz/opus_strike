@@ -1,5 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useGameStore } from '../../store/gameStore';
+import {
+  OBSERVER_FLY_SPEED_PRESETS,
+  useGameStore,
+  type ObserverFlySpeedPreset,
+} from '../../store/gameStore';
+import { setGameConsoleOpen } from '../../store/gameConsoleState';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { config } from '../../config/environment';
 import {
@@ -17,6 +22,59 @@ interface ConsoleMessage {
 }
 
 let messageId = 0;
+
+const PUBLIC_COMMAND_HELP = '/seed copy';
+const DEV_COMMAND_HELP = '/seed copy | /observe [low|med|high] | /immune | /hero <hero> | /end | /bot add <hero> <red|blue> | /bot skill <hero> <red|blue> <e|q|f|lmb|rmb> | /bot look <hero> <red|blue> <up|down> | /bot nobrain | /bot brain | /bots root | /bots release | /f | /time freeze';
+const PUBLIC_COMMAND_LIST = '/seed copy';
+const DEV_COMMAND_LIST = '/seed copy, /observe [low|med|high], /immune, /hero <hero>, /end, /bot add <hero> <red|blue>, /bot skill <hero> <red|blue> <e|q|f|lmb|rmb>, /bot look <hero> <red|blue> <up|down>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze';
+type BotLookDirection = 'up' | 'down';
+const BOT_SKILL_KEYS: Record<string, string> = {
+  e: 'e',
+  q: 'q',
+  f: 'f',
+  ult: 'f',
+  ultimate: 'f',
+  lmb: 'lmb',
+  m1: 'lmb',
+  mouse1: 'lmb',
+  primary: 'lmb',
+  fire: 'lmb',
+  rmb: 'rmb',
+  m2: 'rmb',
+  mouse2: 'rmb',
+  secondary: 'rmb',
+  shield: 'rmb',
+};
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fall through to the selection-based copy path below.
+    }
+  }
+
+  if (typeof document === 'undefined') return false;
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  textarea.style.pointerEvents = 'none';
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
 
 // Helper to check if a player ID is an NPC (server-spawned NPCs have npc_ prefix)
 export function isNpcId(playerId: string): boolean {
@@ -108,25 +166,10 @@ export function findNpcsInRadius(position: { x: number; y: number; z: number }, 
   return result;
 }
 
-// Global state for console open status - used by useInput to ignore game controls
-let isConsoleOpenGlobal = false;
-export function isGameConsoleOpen(): boolean {
-  return isConsoleOpenGlobal;
-}
-
-let devFlyModeGlobal = false;
 let devImmuneModeGlobal = false;
-
-export function isDevFlyMode(): boolean {
-  return config.isDev && devFlyModeGlobal;
-}
 
 function isDevImmuneMode(): boolean {
   return config.isDev && devImmuneModeGlobal;
-}
-
-function setDevFlyMode(enabled: boolean) {
-  devFlyModeGlobal = config.isDev && enabled;
 }
 
 function setDevImmuneMode(enabled: boolean) {
@@ -154,6 +197,25 @@ function resolveTeam(value: string | undefined): Team | null {
   return normalized === 'red' || normalized === 'blue' ? normalized : null;
 }
 
+function resolveBotSkillKey(value: string | undefined): string | null {
+  const normalized = value?.toLowerCase().replace(/[\s_-]+/g, '');
+  if (!normalized) return null;
+  const keyWithoutDomPrefix = normalized.startsWith('key') ? normalized.slice(3) : normalized;
+  return BOT_SKILL_KEYS[keyWithoutDomPrefix] ?? null;
+}
+
+function resolveBotLookDirection(value: string | undefined): BotLookDirection | null {
+  const normalized = value?.toLowerCase();
+  return normalized === 'up' || normalized === 'down' ? normalized : null;
+}
+
+function resolveObserverFlySpeedPreset(value: string | undefined): ObserverFlySpeedPreset | null {
+  const normalized = value?.toLowerCase();
+  return normalized && normalized in OBSERVER_FLY_SPEED_PRESETS
+    ? normalized as ObserverFlySpeedPreset
+    : null;
+}
+
 function parseCommandParts(input: string): string[] {
   const parts = input.split(/\s+/);
   if (parts[0] === '/' && parts[1]) {
@@ -164,10 +226,7 @@ function parseCommandParts(input: string): string[] {
 
 function disableActiveSkillState() {
   const store = useGameStore.getState();
-  store.setShadowStepTargeting(false, false);
   store.setBombTargeting(false, false);
-  store.setAirStrikeTargeting(false, false);
-  store.setGrappleTrapTargeting(false, false);
   store.setFlamethrowerActive(false);
 }
 
@@ -233,8 +292,8 @@ export function GameConsole() {
     {
       id: messageId++,
       text: config.isDev
-        ? 'Developer Console - /fly | /immune | /hero <hero> | /end | /bot add <hero> <red|blue> | /bots root | /bots release | /f | /time freeze'
-        : 'Developer commands are disabled in this build',
+        ? `Developer Console - ${DEV_COMMAND_HELP}`
+        : `Game Chat - ${PUBLIC_COMMAND_HELP}`,
       type: 'info',
     },
   ]);
@@ -250,11 +309,15 @@ export function GameConsole() {
     devSetHero,
     devFillUltimate,
     devEndGame,
-    setDevFly,
     setDevImmune,
     setDevTimeFrozen,
     setDevBotsRooted,
+    setDevBotBrainEnabled,
     addGameBot,
+    devBotSkill,
+    devBotLook,
+    devSetLobbyObserver,
+    devSetGameObserver,
   } = useNetwork();
 
   // Set the network functions for projectiles to use
@@ -277,9 +340,9 @@ export function GameConsole() {
 
   // Update global state when console opens/closes
   useEffect(() => {
-    isConsoleOpenGlobal = isOpen;
+    setGameConsoleOpen(isOpen);
     return () => {
-      isConsoleOpenGlobal = false;
+      setGameConsoleOpen(false);
     };
   }, [isOpen]);
 
@@ -312,7 +375,7 @@ export function GameConsole() {
     setMessages(prev => [...prev, { id: messageId++, text, type }]);
   }, []);
 
-  const executeCommand = useCallback((cmd: string) => {
+  const executeCommand = useCallback(async (cmd: string) => {
     const trimmed = cmd.trim();
     if (!trimmed) return;
 
@@ -327,20 +390,95 @@ export function GameConsole() {
     const command = parts[0].toLowerCase();
 
     switch (command) {
-      case '/fly': {
+      case '/seed': {
+        const action = parts[1]?.toLowerCase();
+        const seed = useGameStore.getState().mapSeed >>> 0;
+
+        if (!action) {
+          addMessage(`Current seed: ${seed}`, 'info');
+          break;
+        }
+
+        if (parts.length !== 2 || action !== 'copy') {
+          addMessage('Usage: /seed copy', 'error');
+          break;
+        }
+
+        const copied = await copyTextToClipboard(String(seed));
+        if (copied) {
+          addMessage(`Copied seed ${seed} to clipboard.`, 'info');
+        } else {
+          addMessage(`Clipboard unavailable. Current seed: ${seed}`, 'error');
+        }
+        break;
+      }
+
+      case '/observe': {
         if (!config.isDev) {
           addMessage('Developer commands are disabled outside development builds.', 'error');
           break;
         }
 
-        const nextFlyMode = !isDevFlyMode();
-        setDevFlyMode(nextFlyMode);
-        setDevFly(nextFlyMode);
-        if (nextFlyMode) {
-          disableActiveSkillState();
+        const speedPreset = resolveObserverFlySpeedPreset(parts[1]);
+        if (parts.length > 2 || (parts.length === 2 && !speedPreset)) {
+          addMessage('Usage: /observe [low|med|high]', 'error');
+          break;
         }
-        addMessage(`Fly mode ${nextFlyMode ? 'ON - invulnerable' : 'OFF'}`, 'info');
-        setTimeout(() => setIsOpen(false), 100);
+
+        const store = useGameStore.getState();
+        if (speedPreset) {
+          const speed = OBSERVER_FLY_SPEED_PRESETS[speedPreset];
+          store.setObserverFlySpeedPreset(speedPreset);
+          addMessage(`Observer fly speed set to ${speedPreset} (${speed.base}/${speed.sprint}).`, 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
+        if (store.isObserverMode) {
+          addMessage('Already observing.', 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
+        if (store.appPhase === 'in_lobby') {
+          const currentPlayer = store.playerId ? store.lobbyPlayers.get(store.playerId) : null;
+          if (!currentPlayer) {
+            addMessage('No lobby player to switch.', 'error');
+            break;
+          }
+
+          if (currentPlayer.isObserver) {
+            addMessage('Already observing.', 'info');
+            setTimeout(() => setIsOpen(false), 100);
+            break;
+          }
+
+          const observerCount = Array.from(store.lobbyPlayers.values()).filter((player) => player.isObserver).length;
+          const observerCapacity = store.lobbyObserversEnabled ? Math.max(0, store.maxLobbyObservers) : 1;
+          if (observerCount >= observerCapacity) {
+            addMessage('Observer slot is full.', 'error');
+            break;
+          }
+
+          devSetLobbyObserver(true);
+          addMessage('Switching to observer...', 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
+        if (store.appPhase === 'in_game' && !store.isPracticeMode) {
+          if (!store.localPlayer) {
+            addMessage('No active player to switch.', 'error');
+            break;
+          }
+
+          devSetGameObserver();
+          addMessage('Switching to observer...', 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
+        addMessage('Use /observe from a custom lobby or custom game.', 'error');
         break;
       }
 
@@ -441,12 +579,55 @@ export function GameConsole() {
         }
 
         const action = parts[1]?.toLowerCase();
+
+        if (parts.length === 2 && (action === 'nobrain' || action === 'brain')) {
+          const enabled = action === 'brain';
+          setDevBotBrainEnabled(enabled);
+          addMessage(`Bot AI ${enabled ? 'enabled' : 'disabled'}.`, 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
+        if (action === 'skill') {
+          const heroId = parts[2] ? resolveHeroId(parts[2]) : null;
+          const team = resolveTeam(parts[3]);
+          const skillKey = resolveBotSkillKey(parts[4]);
+
+          if (parts.length !== 5 || !heroId || !team || !skillKey) {
+            addMessage('Usage: /bot skill <hero> <red|blue> <e|q|f|lmb|rmb>', 'error');
+            addMessage(`Valid heroes: ${validHeroNames()}`, 'info');
+            break;
+          }
+
+          devBotSkill(heroId, team, skillKey);
+          addMessage(`Holding ${skillKey.toUpperCase()} on a ${team} ${HERO_DEFINITIONS[heroId].name} bot for 10s...`, 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
+        if (action === 'look') {
+          const heroId = parts[2] ? resolveHeroId(parts[2]) : null;
+          const team = resolveTeam(parts[3]);
+          const direction = resolveBotLookDirection(parts[4]);
+
+          if (parts.length !== 5 || !heroId || !team || !direction) {
+            addMessage('Usage: /bot look <hero> <red|blue> <up|down>', 'error');
+            addMessage(`Valid heroes: ${validHeroNames()}`, 'info');
+            break;
+          }
+
+          devBotLook(heroId, team, direction);
+          addMessage(`Forcing a ${team} ${HERO_DEFINITIONS[heroId].name} bot to look ${direction} for 10s...`, 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
         const heroName = parts[2];
         const heroId = heroName ? resolveHeroId(heroName) : null;
         const team = resolveTeam(parts[3]);
 
         if (parts.length !== 4 || action !== 'add' || !heroId || !team) {
-          addMessage('Usage: /bot add <hero> <red|blue>', 'error');
+          addMessage('Usage: /bot add <hero> <red|blue> | /bot skill <hero> <red|blue> <e|q|f|lmb|rmb> | /bot look <hero> <red|blue> <up|down> | /bot nobrain | /bot brain', 'error');
           addMessage(`Valid heroes: ${validHeroNames()}`, 'info');
           break;
         }
@@ -477,13 +658,13 @@ export function GameConsole() {
       }
 
       default:
-        addMessage(`Unknown command: ${command}. Available commands: /fly, /immune, /hero <hero>, /end, /bot add <hero> <red|blue>, /bots root, /bots release, /f, /time freeze`, 'error');
+        addMessage(`Unknown command: ${command}. Available commands: ${config.isDev ? DEV_COMMAND_LIST : PUBLIC_COMMAND_LIST}`, 'error');
     }
-  }, [addGameBot, addMessage, devEndGame, devFillUltimate, devSetHero, setDevBotsRooted, setDevFly, setDevImmune, setDevTimeFrozen]);
+  }, [addGameBot, addMessage, devBotLook, devBotSkill, devEndGame, devFillUltimate, devSetHero, devSetGameObserver, devSetLobbyObserver, setDevBotBrainEnabled, setDevBotsRooted, setDevImmune, setDevTimeFrozen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    executeCommand(input);
+    void executeCommand(input);
     setInput('');
   };
 
@@ -549,7 +730,7 @@ export function GameConsole() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             className="flex-1 bg-transparent outline-none text-white caret-green-400"
-            placeholder={config.isDev ? 'Type /fly, /immune, /hero <hero>, /end, /bot add <hero> <side>, /bots root, /f, or /time freeze...' : 'Developer commands disabled'}
+            placeholder={config.isDev ? `Type ${DEV_COMMAND_LIST}...` : `Type ${PUBLIC_COMMAND_LIST}...`}
             autoComplete="off"
             spellCheck={false}
           />
@@ -557,7 +738,7 @@ export function GameConsole() {
 
         {/* Help hint */}
         <div className="text-xs text-gray-500 px-3 pb-2">
-          Press Enter to open | ESC to close | Dev commands only run in development
+          Press Enter to open | ESC to close | /seed copy works in any match
         </div>
       </div>
     </>

@@ -4,10 +4,9 @@ import { loggers } from '../utils/logger';
 
 export type GraphicsQuality = 'minimum' | 'low' | 'medium' | 'high' | 'ultra';
 export type GraphicsFeatureQuality = 'off' | GraphicsQuality;
-export type MaterialQuality = 'low' | 'medium' | 'high';
 export type CrosshairStyle = 'default' | 'dot' | 'circle' | 'cross';
 export type GraphicsPreset = 'potato' | 'competitive' | 'balanced' | 'cinematic';
-export type FpsDisplayMode = 'off' | 'fps' | 'full';
+export type FpsDisplayMode = 'off' | 'fps';
 export type KeybindAction = keyof InputState | 'scoreboard' | 'pushToTalk';
 export type Keybindings = Record<KeybindAction, string>;
 
@@ -40,10 +39,10 @@ export interface ClientSettings {
   graphicsPreset: GraphicsPreset;
   resolutionScale: GraphicsQuality;
   antialiasing: boolean;
-  materialQuality: MaterialQuality;
   shadowQuality: GraphicsFeatureQuality;
   reflectionQuality: GraphicsFeatureQuality;
   environmentQuality: GraphicsFeatureQuality;
+  materialQuality: GraphicsFeatureQuality;
   adaptiveQuality: boolean;
   fov: number;
   showFPS: FpsDisplayMode;
@@ -76,46 +75,46 @@ export const graphicsPresetSettings: Record<GraphicsPreset, Pick<
   ClientSettings,
   | 'resolutionScale'
   | 'antialiasing'
-  | 'materialQuality'
   | 'shadowQuality'
   | 'reflectionQuality'
   | 'environmentQuality'
+  | 'materialQuality'
   | 'adaptiveQuality'
 >> = {
   potato: {
     resolutionScale: 'minimum',
     antialiasing: false,
-    materialQuality: 'low',
     shadowQuality: 'off',
     reflectionQuality: 'off',
     environmentQuality: 'off',
+    materialQuality: 'off',
     adaptiveQuality: true,
   },
   competitive: {
     resolutionScale: 'low',
     antialiasing: false,
-    materialQuality: 'medium',
     shadowQuality: 'off',
     reflectionQuality: 'off',
     environmentQuality: 'low',
+    materialQuality: 'low',
     adaptiveQuality: true,
   },
   balanced: {
     resolutionScale: 'medium',
     antialiasing: true,
-    materialQuality: 'medium',
     shadowQuality: 'medium',
     reflectionQuality: 'medium',
     environmentQuality: 'medium',
+    materialQuality: 'medium',
     adaptiveQuality: true,
   },
   cinematic: {
     resolutionScale: 'high',
     antialiasing: true,
-    materialQuality: 'high',
     shadowQuality: 'high',
     reflectionQuality: 'high',
     environmentQuality: 'high',
+    materialQuality: 'high',
     adaptiveQuality: false,
   },
 };
@@ -174,9 +173,9 @@ function pickBoolean(value: unknown, fallback: boolean): boolean {
 }
 
 function pickFpsDisplayMode(value: unknown, fallback: FpsDisplayMode): FpsDisplayMode {
-  if (value === true) return 'full';
+  if (value === true || value === 'full') return 'fps';
   if (value === false) return 'off';
-  return pickOption(value, ['off', 'fps', 'full'] as const, fallback);
+  return pickOption(value, ['off', 'fps'] as const, fallback);
 }
 
 function pickKeybindingCode(value: unknown, fallback: string): string {
@@ -225,12 +224,6 @@ function sanitizeKeybindings(value: unknown, legacyPushToTalkKey?: unknown): Key
   return next;
 }
 
-function materialQualityFromLegacyPreset(quality: GraphicsQuality): MaterialQuality {
-  if (quality === 'minimum' || quality === 'low') return 'low';
-  if (quality === 'medium') return 'medium';
-  return 'high';
-}
-
 export function sanitizeSettings(value: unknown): ClientSettings {
   const raw = typeof value === 'object' && value !== null
     ? value as Partial<ClientSettings> & { quality?: unknown; pushToTalkKey?: unknown }
@@ -247,14 +240,10 @@ export function sanitizeSettings(value: unknown): ClientSettings {
     graphicsPreset,
     resolutionScale: pickOption(raw.resolutionScale, qualityOptions, raw.quality ? legacyQuality : preset.resolutionScale),
     antialiasing: pickBoolean(raw.antialiasing, raw.quality ? legacyQuality === 'high' || legacyQuality === 'ultra' : preset.antialiasing),
-    materialQuality: pickOption(
-      raw.materialQuality,
-      ['low', 'medium', 'high'] as const,
-      raw.quality ? materialQualityFromLegacyPreset(legacyQuality) : preset.materialQuality
-    ),
     shadowQuality: pickOption(raw.shadowQuality, featureQualityOptions, preset.shadowQuality),
     reflectionQuality: pickOption(raw.reflectionQuality, featureQualityOptions, preset.reflectionQuality),
     environmentQuality: pickOption(raw.environmentQuality, featureQualityOptions, preset.environmentQuality),
+    materialQuality: pickOption(raw.materialQuality, featureQualityOptions, preset.materialQuality),
     adaptiveQuality: pickBoolean(raw.adaptiveQuality, preset.adaptiveQuality),
     fov: clamp(raw.fov, 60, 120, defaultSettings.fov),
     showFPS: pickFpsDisplayMode(raw.showFPS, defaultSettings.showFPS),
@@ -289,7 +278,7 @@ export function loadSettings(): ClientSettings {
     const saved = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
     return saved ? sanitizeSettings(JSON.parse(saved)) : defaultSettings;
   } catch (error) {
-    loggers.perf.warn('failed to load settings', error);
+    loggers.room.warn('failed to load settings', error);
     return defaultSettings;
   }
 }

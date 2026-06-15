@@ -1,11 +1,17 @@
 import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import type { Team } from '@voxel-strike/shared';
 
 export function Flags() {
-  const { redFlag, blueFlag } = useGameStore();
+  const { redFlag, blueFlag } = useGameStore(
+    useShallow((state) => ({
+      redFlag: state.redFlag,
+      blueFlag: state.blueFlag,
+    }))
+  );
 
   return (
     <group>

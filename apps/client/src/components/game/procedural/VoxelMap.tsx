@@ -1,114 +1,175 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { generateProceduralVoxelMap, type VoxelChunk, type VoxelMapManifest } from '@voxel-strike/shared';
+import { useFrame, type RootState } from '@react-three/fiber';
+import * as THREE from 'three';
+import type { VoxelMapManifest, VoxelMapTheme } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { areProceduralMapCollidersLoaded, isPhysicsReady, loadProceduralMapColliders } from '../../../hooks/usePhysics';
 import { setMapBoundaryPolygon } from '../../../config/mapBoundaries';
 import { useVoxelMaterial } from './materials';
-import { VoxelRegionMesh, type VoxelChunkRegion, type VoxelMeshBuildMode } from './VoxelChunkMesh';
+import { VoxelRegionMesh, type VoxelMeshBuildMode } from './VoxelChunkMesh';
 import { WorldDressing } from './WorldDressing';
-import { clearVoxelGeometryCache } from './meshBuilder';
-import type { VoxelMaterialDetail, WorldPerformanceBudget } from '../visualQuality';
-import { recordSystemTime, recordVoxelMapGenerated, recordVoxelWorldRegions } from '../../../utils/perfMarks';
+import { clearVoxelGeometryCache, prebuildVoxelRegionGeometries } from './meshBuilder';
+import type { MaterialQualityConfig, WorldPerformanceBudget } from '../visualQuality';
+import {
+  prepareVoxelMapCpu,
+  type PreparedVoxelMap,
+} from '../../../utils/mapWarmup/mapPrepCache';
+import {
+  MOVEMENT_DIAGNOSTICS_ENABLED,
+  measureFrameWork,
+} from '../../../movement/networkDiagnostics';
 
-const VOXEL_REGION_CHUNK_SPAN = 4;
+const TERRAIN_CULL_UPDATE_INTERVAL_MS = 180;
+const TERRAIN_CULL_HYSTERESIS = 18;
+const TERRAIN_CULL_CAMERA_MOVE_EPSILON_SQ = 0.45 * 0.45;
+const TERRAIN_CULL_CAMERA_ROTATE_EPSILON = 0.00008;
+
+function getRuntimeTerrainCullDistance(performanceBudget?: WorldPerformanceBudget): number {
+  const drawCalls = performanceBudget?.drawCalls ?? Number.POSITIVE_INFINITY;
+  if (drawCalls <= 320) return 155;
+  if (drawCalls <= 450) return 190;
+  if (drawCalls <= 560) return 235;
+  return Number.POSITIVE_INFINITY;
+}
 
 interface VoxelMapProps {
   seed?: number;
+  themeId?: VoxelMapTheme['id'] | null;
   manifest?: VoxelMapManifest;
   enablePhysics?: boolean;
   shadowsEnabled: boolean;
   dressingShadows: boolean;
   dressingDensity: number;
   reflectionIntensity: number;
-  materialDetail: VoxelMaterialDetail;
+  materialQuality: MaterialQualityConfig['terrainTextureQuality'];
   performanceBudget?: WorldPerformanceBudget;
   meshBuildMode?: VoxelMeshBuildMode;
   progressiveReveal?: boolean;
+  prebuildRegions?: boolean;
+  disposeGeometryCacheOnUnmount?: boolean;
+  onWarmupStatus?: (status: VoxelMapWarmupStatus) => void;
   onReady?: () => void;
 }
 
-interface ReadyRegionsState {
-  manifestId: string;
-  ids: Set<string>;
-}
-
-function createVoxelChunkRegions(chunks: VoxelChunk[]): VoxelChunkRegion[] {
-  const regions = new Map<string, VoxelChunkRegion>();
-
-  for (const chunk of chunks) {
-    const regionX = Math.floor(chunk.coord.x / VOXEL_REGION_CHUNK_SPAN);
-    const regionZ = Math.floor(chunk.coord.z / VOXEL_REGION_CHUNK_SPAN);
-    const id = `${regionX}:${chunk.coord.y}:${regionZ}`;
-    let region = regions.get(id);
-
-    if (!region) {
-      region = { id, chunks: [], castShadow: chunk.coord.y > 0 };
-      regions.set(id, region);
-    }
-
-    region.chunks.push(chunk);
-    region.castShadow ||= chunk.coord.y > 0;
-  }
-
-  return Array.from(regions.values());
+export interface VoxelMapWarmupStatus {
+  preparedMap: PreparedVoxelMap;
+  manifest: VoxelMapManifest;
+  renderableRegionCount: number;
+  visibleRegionCount: number;
+  readyRegionCount: number;
+  terrainReady: boolean;
+  collidersReady: boolean;
+  ready: boolean;
 }
 
 export function VoxelMap({
   seed,
+  themeId: providedThemeId,
   manifest: providedManifest,
   enablePhysics = true,
   shadowsEnabled,
   dressingShadows,
   dressingDensity,
   reflectionIntensity,
-  materialDetail,
+  materialQuality,
   performanceBudget,
   meshBuildMode = 'async',
   progressiveReveal = true,
+  prebuildRegions = false,
+  disposeGeometryCacheOnUnmount = true,
+  onWarmupStatus,
   onReady,
 }: VoxelMapProps) {
   const storeMapSeed = useGameStore((state) => state.mapSeed);
+  const storeMapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSeed = seed ?? storeMapSeed;
-  const manifest = useMemo(() => {
-    if (providedManifest) return providedManifest;
-
-    const start = performance.now();
-    const nextManifest = generateProceduralVoxelMap(mapSeed);
-    const generationMs = performance.now() - start;
-    recordSystemTime('voxelMapGenerate', generationMs);
-    recordVoxelMapGenerated({
-      generationMs,
-      totalChunkSlots: nextManifest.stats.totalChunkSlots ?? nextManifest.stats.chunkCount,
-      renderableChunks: nextManifest.stats.renderableChunkCount ?? nextManifest.stats.chunkCount,
-      emptyChunkSlots: nextManifest.stats.emptyChunkSlots ?? 0,
-      colliders: nextManifest.stats.colliderCount,
+  const mapThemeId = providedThemeId ?? storeMapThemeId;
+  const preparedMap = useMemo(() => {
+    return prepareVoxelMapCpu({
+      seed: mapSeed,
+      themeId: mapThemeId,
+      manifest: providedManifest,
+      source: providedManifest ? 'mapVotePreview' : 'match',
     });
-    return nextManifest;
-  }, [mapSeed, providedManifest]);
-  const renderableRegions = useMemo(() => {
-    const start = performance.now();
-    const renderableChunks = manifest.chunks.filter((chunk) => chunk.solidBlockCount > 0);
-    const regions = createVoxelChunkRegions(renderableChunks);
-    recordSystemTime('voxelRegionBatch', performance.now() - start);
-    return regions;
-  }, [manifest]);
-  const material = useVoxelMaterial(manifest.theme, { reflectionIntensity, detail: materialDetail });
+  }, [mapSeed, mapThemeId, providedManifest]);
+  const manifest = preparedMap.manifest;
+  const renderableRegions = preparedMap.renderableRegions;
+  const material = useVoxelMaterial(manifest.theme, materialQuality);
   const collidersLoadedRef = useRef(false);
   const didSignalReadyRef = useRef<string | null>(null);
   const regionRevealBudgetRef = useRef(performanceBudget?.maxGeneratedRegionMeshesPerFrame ?? 3);
+  const readyRegionManifestIdRef = useRef(manifest.id);
+  const readyRegionIdsRef = useRef<Set<string>>(new Set());
+  const terrainCullAccumulatorRef = useRef(0);
+  const terrainCullNeedsRefreshRef = useRef(true);
+  const terrainCullLastCameraPositionRef = useRef(new THREE.Vector3(Number.NaN, Number.NaN, Number.NaN));
+  const terrainCullLastCameraQuaternionRef = useRef(new THREE.Quaternion());
+  const regionVisibilityRef = useRef<Map<string, boolean>>(new Map());
+  const regionGroupsRef = useRef<Map<string, THREE.Group>>(new Map());
+  const terrainCullFrustumRef = useRef(new THREE.Frustum());
+  const terrainCullMatrixRef = useRef(new THREE.Matrix4());
+  const terrainCullSphereRef = useRef(new THREE.Sphere());
   const shouldRevealAllRegions = meshBuildMode === 'sync' || !progressiveReveal;
   const [visibleRegionCount, setVisibleRegionCount] = useState(() => (
     shouldRevealAllRegions ? renderableRegions.length : 0
   ));
-  const [readyRegions, setReadyRegions] = useState<ReadyRegionsState>(() => ({
-    manifestId: manifest.id,
-    ids: new Set(),
-  }));
+  const [readyRegionCount, setReadyRegionCount] = useState(0);
   const [collidersReady, setCollidersReady] = useState(!enablePhysics);
+  const terrainCullDistance = useMemo(
+    () => getRuntimeTerrainCullDistance(performanceBudget),
+    [performanceBudget?.drawCalls]
+  );
+
+  const setRegionVisibility = useCallback((regionId: string, visible: boolean) => {
+    const visibility = regionVisibilityRef.current;
+    if (visibility.get(regionId) === visible) return;
+    visibility.set(regionId, visible);
+    const group = regionGroupsRef.current.get(regionId);
+    if (group) group.visible = visible;
+  }, []);
+
+  const setRegionGroupNode = useCallback((regionId: string, group: THREE.Group | null) => {
+    if (!group) {
+      regionGroupsRef.current.delete(regionId);
+      return;
+    }
+
+    regionGroupsRef.current.set(regionId, group);
+    const visible = regionVisibilityRef.current.get(regionId);
+    group.visible = visible ?? true;
+  }, []);
 
   useEffect(() => {
     regionRevealBudgetRef.current = Math.max(1, performanceBudget?.maxGeneratedRegionMeshesPerFrame ?? 3);
   }, [performanceBudget?.maxGeneratedRegionMeshesPerFrame]);
+
+  useEffect(() => {
+    terrainCullAccumulatorRef.current = 0;
+    terrainCullNeedsRefreshRef.current = true;
+    terrainCullLastCameraPositionRef.current.set(Number.NaN, Number.NaN, Number.NaN);
+    terrainCullLastCameraQuaternionRef.current.identity();
+    regionVisibilityRef.current.clear();
+    for (const group of regionGroupsRef.current.values()) {
+      group.visible = true;
+    }
+  }, [manifest.id, terrainCullDistance]);
+
+  useEffect(() => {
+    if (!prebuildRegions) return;
+
+    let cancelled = false;
+    prebuildVoxelRegionGeometries(
+      manifest,
+      renderableRegions,
+      { frameBudgetMs: 4 }
+    ).catch((error) => {
+      if (!cancelled) console.warn('[VoxelMap] Failed to prebuild region meshes', error);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [manifest, prebuildRegions, renderableRegions]);
 
   useEffect(() => {
     if (shouldRevealAllRegions) {
@@ -146,26 +207,29 @@ export function VoxelMap({
   }, [manifest.id, renderableRegions, shouldRevealAllRegions]);
 
   const handleRegionGeometryReady = useCallback((regionId: string) => {
-    setReadyRegions((current) => {
-      const currentIds = current.manifestId === manifest.id ? current.ids : new Set<string>();
-      if (currentIds.has(regionId)) return current;
+    if (readyRegionManifestIdRef.current !== manifest.id) {
+      readyRegionManifestIdRef.current = manifest.id;
+      readyRegionIdsRef.current = new Set();
+      setReadyRegionCount(0);
+    }
 
-      const nextIds = new Set(currentIds);
-      nextIds.add(regionId);
-      return {
-        manifestId: manifest.id,
-        ids: nextIds,
-      };
-    });
+    if (readyRegionIdsRef.current.has(regionId)) return;
+    readyRegionIdsRef.current.add(regionId);
+    setReadyRegionCount(readyRegionIdsRef.current.size);
   }, [manifest.id]);
 
   useEffect(() => {
-    recordVoxelWorldRegions(renderableRegions.length);
-  }, [renderableRegions]);
+    if (readyRegionManifestIdRef.current === manifest.id) return;
+    readyRegionManifestIdRef.current = manifest.id;
+    readyRegionIdsRef.current = new Set();
+    setReadyRegionCount(0);
+  }, [manifest.id]);
 
   useEffect(() => () => {
-    clearVoxelGeometryCache(manifest.id);
-  }, [manifest.id]);
+    if (disposeGeometryCacheOnUnmount) {
+      clearVoxelGeometryCache(manifest.id);
+    }
+  }, [disposeGeometryCacheOnUnmount, manifest.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -226,12 +290,108 @@ export function VoxelMap({
     };
   }, [enablePhysics, manifest]);
 
-  const readyRegionCount = readyRegions.manifestId === manifest.id ? readyRegions.ids.size : 0;
+  const effectiveReadyRegionCount = readyRegionManifestIdRef.current === manifest.id ? readyRegionCount : 0;
   const terrainReady = (
     visibleRegionCount >= renderableRegions.length &&
-    readyRegionCount >= renderableRegions.length
+    effectiveReadyRegionCount >= renderableRegions.length
   );
   const isReady = terrainReady && collidersReady;
+  const visibleRegions = useMemo(
+    () => renderableRegions.slice(0, visibleRegionCount),
+    [renderableRegions, visibleRegionCount]
+  );
+
+  const runTerrainCullingFrame = (state: RootState, delta: number): void => {
+    if (!terrainReady || !Number.isFinite(terrainCullDistance)) return;
+
+    terrainCullAccumulatorRef.current += delta * 1000;
+    if (terrainCullAccumulatorRef.current < TERRAIN_CULL_UPDATE_INTERVAL_MS) return;
+    terrainCullAccumulatorRef.current = 0;
+
+    const camera = state.camera;
+    const lastCameraPosition = terrainCullLastCameraPositionRef.current;
+    const lastCameraQuaternion = terrainCullLastCameraQuaternionRef.current;
+    const cameraMoved = !Number.isFinite(lastCameraPosition.x) ||
+      lastCameraPosition.distanceToSquared(camera.position) > TERRAIN_CULL_CAMERA_MOVE_EPSILON_SQ;
+    const cameraRotated = 1 - Math.abs(lastCameraQuaternion.dot(camera.quaternion)) >
+      TERRAIN_CULL_CAMERA_ROTATE_EPSILON;
+
+    if (!terrainCullNeedsRefreshRef.current && !cameraMoved && !cameraRotated) return;
+    terrainCullNeedsRefreshRef.current = false;
+    lastCameraPosition.copy(camera.position);
+    lastCameraQuaternion.copy(camera.quaternion);
+
+    const frustum = terrainCullFrustumRef.current;
+    const matrix = terrainCullMatrixRef.current;
+    const sphere = terrainCullSphereRef.current;
+    matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(matrix);
+
+    let closestRegionId: string | null = null;
+    let closestDistanceSq = Infinity;
+    let visibleAfterCull = 0;
+
+    for (const region of visibleRegions) {
+      const { bounds } = region;
+      const dx = bounds.center.x - camera.position.x;
+      const dy = bounds.center.y - camera.position.y;
+      const dz = bounds.center.z - camera.position.z;
+      const distanceSq = dx * dx + dy * dy + dz * dz;
+      if (distanceSq < closestDistanceSq) {
+        closestDistanceSq = distanceSq;
+        closestRegionId = region.id;
+      }
+
+      const wasVisible = regionVisibilityRef.current.get(region.id) ?? true;
+      const maxDistance = terrainCullDistance + bounds.radius + (wasVisible ? TERRAIN_CULL_HYSTERESIS : 0);
+      let nextVisible = distanceSq <= maxDistance * maxDistance;
+
+      if (nextVisible) {
+        sphere.center.set(bounds.center.x, bounds.center.y, bounds.center.z);
+        sphere.radius = bounds.radius + (wasVisible ? TERRAIN_CULL_HYSTERESIS : 0);
+        nextVisible = frustum.intersectsSphere(sphere);
+      }
+
+      if (nextVisible) visibleAfterCull++;
+      setRegionVisibility(region.id, nextVisible);
+    }
+
+    if (visibleAfterCull === 0 && closestRegionId) {
+      setRegionVisibility(closestRegionId, true);
+    }
+  };
+
+  useFrame((state, delta) => {
+    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+      measureFrameWork('frame.terrainCulling', () => runTerrainCullingFrame(state, delta));
+      return;
+    }
+
+    runTerrainCullingFrame(state, delta);
+  });
+
+  useEffect(() => {
+    onWarmupStatus?.({
+      preparedMap,
+      manifest,
+      renderableRegionCount: renderableRegions.length,
+      visibleRegionCount,
+      readyRegionCount: effectiveReadyRegionCount,
+      terrainReady,
+      collidersReady,
+      ready: isReady,
+    });
+  }, [
+    collidersReady,
+    isReady,
+    manifest,
+    onWarmupStatus,
+    preparedMap,
+    effectiveReadyRegionCount,
+    renderableRegions.length,
+    terrainReady,
+    visibleRegionCount,
+  ]);
 
   useEffect(() => {
     if (!onReady || !isReady) return;
@@ -245,16 +405,20 @@ export function VoxelMap({
 
   return (
     <group name="procedural-voxel-map">
-      {renderableRegions.slice(0, visibleRegionCount).map((region) => (
-        <VoxelRegionMesh
+      {visibleRegions.map((region) => (
+        <group
           key={`${manifest.id}:${region.id}`}
-          region={region}
-          manifest={manifest}
-          material={material}
-          shadowsEnabled={shadowsEnabled}
-          buildMode={meshBuildMode}
-          onGeometryReady={handleRegionGeometryReady}
-        />
+          ref={(group) => setRegionGroupNode(region.id, group)}
+        >
+          <VoxelRegionMesh
+            region={region}
+            manifest={manifest}
+            material={material}
+            shadowsEnabled={shadowsEnabled}
+            buildMode={meshBuildMode}
+            onGeometryReady={handleRegionGeometryReady}
+          />
+        </group>
       ))}
       <WorldDressing
         manifest={manifest}

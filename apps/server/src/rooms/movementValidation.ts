@@ -147,10 +147,17 @@ export function validateMovementProposal(context: MovementProposalContext): Move
     return { accepted: false, reason: 'blocked_path', metrics };
   }
 
+  const landingSnap = (
+    context.proposedPosition.y < context.previous.position.y &&
+    context.previous.velocity.y < -0.1 &&
+    Math.abs(context.proposedVelocity.y) <= 0.25 &&
+    Math.abs(context.proposedPosition.y - context.previous.position.y) <= 2.25
+  );
+
   if (
     horizontalSpeed > maxHorizontalSpeed ||
     horizontalVelocity > maxHorizontalSpeed + 10 ||
-    verticalSpeed > maxVerticalSpeed ||
+    (!landingSnap && verticalSpeed > maxVerticalSpeed) ||
     verticalVelocity > maxVerticalSpeed + 16
   ) {
     return { accepted: false, reason: 'speed_limit', metrics };

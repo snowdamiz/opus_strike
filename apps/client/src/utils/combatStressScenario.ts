@@ -1,12 +1,14 @@
 import {
   ALL_HERO_IDS,
+  HOOKSHOT_GROUND_HOOKS_RADIUS,
+  HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
   type HeroId,
   type Player,
   type Team,
   type Vec3,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
-import { getClientPerfSnapshot } from './perfMarks';
+import { setFlamethrowerVisualPose, visualStore } from '../store/visualStore';
 
 export interface LocalCombatStressScenarioOptions {
   seed?: number;
@@ -18,7 +20,6 @@ export interface LocalCombatStressScenarioOptions {
 
 export interface LocalCombatStressScenarioHandle {
   stop: () => void;
-  snapshot: typeof getClientPerfSnapshot;
 }
 
 interface ActiveStressScenario {
@@ -128,6 +129,7 @@ export function runLocalCombatStressScenario(
   clearLocalCombatStressScenario();
 
   const state = useGameStore.getState();
+  const visualState = visualStore.getState();
   const previousPhase = {
     appPhase: state.appPhase,
     gamePhase: state.gamePhase,
@@ -140,10 +142,12 @@ export function runLocalCombatStressScenario(
     chronosPulses: state.chronosPulses,
     hookProjectiles: state.hookProjectiles,
     dragHooks: state.dragHooks,
-    grappleTraps: state.grappleTraps,
+    hookshotGroundHooks: state.hookshotGroundHooks,
     flamethrowerActive: state.flamethrowerActive,
-    flamethrowerOrigin: state.flamethrowerOrigin,
-    flamethrowerDirection: state.flamethrowerDirection,
+  };
+  const previousFlamethrowerVisualPose = {
+    origin: visualState.flamethrowerOrigin ? { ...visualState.flamethrowerOrigin } : null,
+    direction: { ...visualState.flamethrowerDirection },
   };
 
   const random = createSeededRandom(options.seed ?? DEFAULT_STRESS_SEED);
@@ -254,24 +258,27 @@ export function runLocalCombatStressScenario(
         });
         break;
       default:
-        store.addGrappleTrap({
+        store.addHookshotGroundHooks({
           id,
-          position: target,
-          startPosition: origin,
-          velocity: vectorToward(origin, target, 16),
+          position: origin,
           startTime: now,
-          duration: 5,
+          duration: HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
           ownerId,
           ownerTeam: team,
-          radius: 5,
-          hookedPlayers: [],
+          radius: HOOKSHOT_GROUND_HOOKS_RADIUS,
+          rootUntil: now + HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS * 1000,
+          targets: [{
+            targetId: `${id}:target`,
+            position: target,
+            rootUntil: now + HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS * 1000,
+          }],
         });
         break;
     }
   }
 
   store.setFlamethrowerActive(true);
-  store.setFlamethrowerPose(
+  setFlamethrowerVisualPose(
     { x: -8, y: 5, z: 8 },
     vectorToward({ x: -8, y: 5, z: 8 }, { x: 4, y: 4, z: -4 }, 1)
   );
@@ -283,6 +290,10 @@ export function runLocalCombatStressScenario(
       players: previousPhase.players,
       localPlayer: previousPhase.localPlayer,
     });
+    setFlamethrowerVisualPose(
+      previousFlamethrowerVisualPose.origin,
+      previousFlamethrowerVisualPose.direction
+    );
   };
 
   activeScenario = { stop };
@@ -295,7 +306,6 @@ export function runLocalCombatStressScenario(
 
   return {
     stop,
-    snapshot: getClientPerfSnapshot,
   };
 }
 
@@ -305,7 +315,6 @@ export function installLocalCombatStressScenario(): void {
   window.__opusStrikeStress = {
     run: runLocalCombatStressScenario,
     clear: clearLocalCombatStressScenario,
-    snapshot: getClientPerfSnapshot,
   };
 }
 
@@ -314,7 +323,6 @@ declare global {
     __opusStrikeStress?: {
       run: typeof runLocalCombatStressScenario;
       clear: typeof clearLocalCombatStressScenario;
-      snapshot: typeof getClientPerfSnapshot;
     };
   }
 }

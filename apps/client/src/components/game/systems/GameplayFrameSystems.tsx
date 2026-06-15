@@ -1,41 +1,48 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { cleanupExpiredTemporaryWallColliders } from '../../../hooks/usePhysics';
 import { useGameStore } from '../../../store/gameStore';
 import { updateFrameClock } from '../../../utils/frameClock';
-import { recordFrameSample, registerFrameSystem } from '../../../utils/perfMarks';
+import {
+  beginFrameWorkTiming,
+  finishFrameWorkTiming,
+} from '../../../movement/networkDiagnostics';
+import { gameplayFrameScheduler } from './gameplayFrameScheduler';
 
 const CLEANUP_INTERVAL_MS = 100;
+const FRAME_CLOCK_PRIORITY = -1000;
+const FRAME_WORK_END_PRIORITY = 0;
 
 export function GameplayFrameSystems() {
-  const cleanupAccumulatorRef = useRef(0);
-
-  useEffect(() => registerFrameSystem('gameplay-cleanup'), []);
+  useEffect(() => gameplayFrameScheduler.register({
+    system: 'gameplayCleanup',
+    label: 'frame.gameplayCleanup',
+    cadence: { kind: 'intervalMs', intervalMs: CLEANUP_INTERVAL_MS },
+    callback: () => {
+      const store = useGameStore.getState();
+      store.clearExpiredProjectiles();
+      cleanupExpiredTemporaryWallColliders(6500, 'anchorwall_');
+    },
+  }), []);
 
   useFrame((state, delta) => {
     const clock = updateFrameClock(state.clock.elapsedTime, delta);
-    recordFrameSample(delta);
+    beginFrameWorkTiming();
+    gameplayFrameScheduler.run({
+      deltaSeconds: clock.clampedDeltaSeconds,
+      deltaMs: clock.clampedDeltaSeconds * 1000,
+      nowMs: clock.epochNowMs,
+      elapsedSeconds: clock.elapsedSeconds,
+    });
+  }, FRAME_CLOCK_PRIORITY);
 
-    cleanupAccumulatorRef.current += clock.clampedDeltaSeconds * 1000;
-    if (cleanupAccumulatorRef.current < CLEANUP_INTERVAL_MS) return;
-    cleanupAccumulatorRef.current = 0;
+  return null;
+}
 
-    const store = useGameStore.getState();
-    store.clearExpiredRockets();
-    store.clearExpiredBombs();
-    store.clearExpiredDireBalls();
-    store.clearExpiredVoidRays();
-    store.clearExpiredVoidZones();
-    store.clearExpiredChronosPulses();
-    store.clearExpiredChronosTimebreaks();
-    store.clearExpiredHookProjectiles();
-    store.clearExpiredDragHooks();
-    store.clearExpiredGrappleTraps();
-    store.clearExpiredSwingLines();
-    store.clearExpiredGrappleLines();
-    store.clearExpiredEarthWalls();
-    cleanupExpiredTemporaryWallColliders(6500, 'anchorwall_');
-  });
+export function GameplayFrameWorkBoundary() {
+  useFrame(() => {
+    finishFrameWorkTiming('frame.r3fCallbacks');
+  }, FRAME_WORK_END_PRIORITY);
 
   return null;
 }

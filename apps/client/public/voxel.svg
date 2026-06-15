@@ -33,8 +33,6 @@
     </filter>
   </defs>
 
-  <rect width="128" height="128" fill="#111315"/>
-
   <g filter="url(#v2-shadow)">
     <path d="M64 12L111 39L111 89L64 116L17 89L17 39L64 12Z" fill="#05070b"/>
 

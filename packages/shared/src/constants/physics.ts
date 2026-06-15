@@ -6,6 +6,8 @@ export const GROUND_FRICTION = 0.9;
 // Movement multipliers (base speed/jump defined per-hero in heroes.ts)
 export const SPRINT_MULTIPLIER = 1.2;
 export const CROUCH_MULTIPLIER = 0.5;
+export const MOVEMENT_STRAFE_SPEED_MULTIPLIER = 0.92;
+export const MOVEMENT_BACKWARD_SPEED_MULTIPLIER = 0.85;
 export const AIR_CONTROL = 0.3;
 export const MAX_JUMPS = 1;
 
@@ -89,38 +91,38 @@ export const MANTLE_DURATION = 0.4;
 export const MANTLE_HEIGHT_BOOST = 0.5;
 
 // Grapple
-export const GRAPPLE_MAX_DISTANCE = 28;
+export const GRAPPLE_MAX_DISTANCE = 22;
 export const GRAPPLE_SPEED = 80;
 export const GRAPPLE_PULL_FORCE = 35;
 export const GRAPPLE_SWING_FORCE = 20;
 export const GRAPPLE_DETACH_DISTANCE = 2;
 export const GRAPPLE_MOMENTUM_TRANSFER = 0.8;
 
-// Jetpack
-export const JETPACK_MAX_FUEL = 100;
-export const JETPACK_FUEL_CONSUMPTION = 30; // per second
-export const JETPACK_FUEL_REGEN = 20; // per second when grounded
-export const JETPACK_THRUST = 20;
-export const JETPACK_HOVER_THRUST = 12;
-export const JETPACK_MAX_VERTICAL_SPEED = 15;
-
 // Blaze Flamethrower
 export const BLAZE_FLAMETHROWER_MAX_FUEL = 100;
-export const BLAZE_FLAMETHROWER_FUEL_DRAIN = 50; // per second
-export const BLAZE_FLAMETHROWER_FUEL_REGEN = 18; // per second when grounded
+export const BLAZE_FLAMETHROWER_FUEL_DRAIN = 40; // per second
+export const BLAZE_FLAMETHROWER_FUEL_REGEN = 20; // per second when not firing
 export const BLAZE_FLAMETHROWER_RANGE = 9;
 export const BLAZE_FLAMETHROWER_CONE_HALF_ANGLE = Math.PI / 5;
-export const BLAZE_FLAMETHROWER_DAMAGE = 8;
+export const BLAZE_FLAMETHROWER_DAMAGE = 6;
 export const BLAZE_FLAMETHROWER_DAMAGE_INTERVAL = 250; // ms between damage ticks
+export const BLAZE_FLAMETHROWER_BURN_DAMAGE = 1;
+export const BLAZE_FLAMETHROWER_BURN_TICKS = 10;
+export const BLAZE_FLAMETHROWER_BURN_INTERVAL_MS = 500;
 export const BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT = 0.42;
 export const BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET = 0.18;
 export const BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET = 0.14;
+export const BLAZE_FLAMETHROWER_SOCKET = {
+  handHeight: BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
+  forwardOffset: BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET,
+  sideOffset: BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
+} as const;
 
 // Blaze Ultimate - Infernal Gearstorm
-export const BLAZE_GEARSTORM_RADIUS = 23.1; // 40% larger than the previous 16.5 radius
+export const BLAZE_GEARSTORM_RADIUS = 13.9;
 
 // Rocket Jump
-export const BLAZE_ROCKET_JUMP_VERTICAL_FORCE = 11;
+export const BLAZE_ROCKET_JUMP_VERTICAL_FORCE = 13.5;
 export const BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE = 1.5;
 
 // Glide
@@ -128,15 +130,70 @@ export const GLIDE_FALL_SPEED = -4;
 export const GLIDE_FORWARD_BOOST = 1.3;
 export const GLIDE_TURN_SPEED = 2;
 
-// Blink
-export const BLINK_MAX_DISTANCE = 12;
-export const BLINK_COOLDOWN = 6;
-
-// ESC menu recovery
-export const UNSTUCK_COOLDOWN_MS = 30_000;
-
 // Player collision
 export const PLAYER_HEIGHT = 1.8;
 export const PLAYER_RADIUS = 0.48;
 export const PLAYER_CROUCH_HEIGHT = 1.0;
 export const PLAYER_MASS = 80;
+export const PLAYER_COMBAT_HITBOX_PADDING = 0.14;
+export const PLAYER_EYE_HEIGHT = 0.6;
+
+export interface SpawnOffset {
+  eyeHeight: number;
+  handDrop: number;
+  forwardOffset: number;
+}
+
+export interface PlayerSocketOffset {
+  handHeight: number;
+  forwardOffset: number;
+  sideOffset: number;
+}
+
+export const BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME = 'blaze.rocket.staffTip';
+export const PHANTOM_PRIMARY_PALM_SOCKET_NAMES = {
+  [-1]: 'phantom.primary.leftPalm',
+  [1]: 'phantom.primary.rightPalm',
+} as const satisfies Record<-1 | 1, string>;
+export const PHANTOM_VOID_RAY_ORB_SOCKET_NAME = 'phantom.voidRay.orb';
+export const HOOKSHOT_HOOK_SOCKET_NAMES = {
+  [-1]: 'hookshot.hook.leftTip',
+  [1]: 'hookshot.hook.rightTip',
+} as const satisfies Record<-1 | 1, string>;
+export const CHRONOS_PRIMARY_ORB_SOCKET_NAME = 'chronos.primary.orb';
+
+export const DEFAULT_SPAWN_OFFSET: SpawnOffset = {
+  eyeHeight: PLAYER_EYE_HEIGHT,
+  handDrop: 0.3,
+  forwardOffset: 0.8,
+};
+
+export const HOOKSHOT_CHAIN_SOCKET: PlayerSocketOffset = {
+  handHeight: 0.16,
+  forwardOffset: 0.62,
+  sideOffset: 0.24,
+};
+
+export const PHANTOM_DIRE_BALL_SOCKET: PlayerSocketOffset = {
+  handHeight: 0.2,
+  forwardOffset: 0.62,
+  sideOffset: 0.22,
+};
+
+export const PHANTOM_VOID_RAY_SOCKET: PlayerSocketOffset = {
+  handHeight: -0.08,
+  forwardOffset: 0.52,
+  sideOffset: 0,
+};
+
+export const BLAZE_ROCKET_STAFF_SOCKET: PlayerSocketOffset = {
+  handHeight: 0.24,
+  forwardOffset: 0.64,
+  sideOffset: 0.22,
+};
+
+export const CHRONOS_PRIMARY_ORB_SOCKET: PlayerSocketOffset = {
+  handHeight: -0.06,
+  forwardOffset: 0.56,
+  sideOffset: 0,
+};

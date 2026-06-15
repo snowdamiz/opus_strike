@@ -17,12 +17,24 @@ export interface WagerRuntimeConfig {
   treasuryLowBalanceLamports: bigint;
   refundFeeFallbackLamports: bigint;
   adminToken: string;
+  goldenBiomeEnabled: boolean;
+  goldenBiomeChanceBps: number;
+  goldenBiomeTreasuryMinUsdCents: number;
+  goldenBiomeWinnerRewardUsdCents: number;
+  goldenBiomeSolUsdPriceSource: 'env' | 'coingecko';
+  goldenBiomeSolUsdPriceStaleMs: number;
+  goldenBiomeSolUsdPriceTimeoutMs: number;
 }
 
 const DEFAULT_MIN_COVER_CHARGE_LAMPORTS = 1_000_000n;
 const DEFAULT_MAX_COVER_CHARGE_LAMPORTS = 10_000_000_000n;
 const DEFAULT_TREASURY_LOW_BALANCE_LAMPORTS = 20_000_000n;
 const DEFAULT_REFUND_FEE_FALLBACK_LAMPORTS = 5_000n;
+const DEFAULT_GOLDEN_BIOME_CHANCE_BPS = 200;
+const DEFAULT_GOLDEN_BIOME_TREASURY_MIN_USD_CENTS = 100_000;
+const DEFAULT_GOLDEN_BIOME_WINNER_REWARD_USD_CENTS = 2_000;
+const DEFAULT_GOLDEN_BIOME_PRICE_STALE_MS = 60 * 1000;
+const DEFAULT_GOLDEN_BIOME_PRICE_TIMEOUT_MS = 5 * 1000;
 
 function bigintEnv(name: string, fallback: bigint): bigint {
   const value = process.env[name];
@@ -47,6 +59,14 @@ function intEnv(name: string, fallback: number, options: { min?: number; max?: n
     throw new Error(`${name} must be <= ${options.max}`);
   }
   return parsed;
+}
+
+function priceSourceEnv(name: string, fallback: 'env' | 'coingecko'): 'env' | 'coingecko' {
+  const value = process.env[name];
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'env' || normalized === 'coingecko') return normalized;
+  throw new Error(`${name} must be "env" or "coingecko"`);
 }
 
 export function assertPublicKey(address: string, fieldName: string): void {
@@ -89,6 +109,13 @@ export function getWagerRuntimeConfig(): WagerRuntimeConfig {
     treasuryLowBalanceLamports: bigintEnv('WAGER_TREASURY_LOW_BALANCE_LAMPORTS', DEFAULT_TREASURY_LOW_BALANCE_LAMPORTS),
     refundFeeFallbackLamports: bigintEnv('WAGER_REFUND_FEE_FALLBACK_LAMPORTS', DEFAULT_REFUND_FEE_FALLBACK_LAMPORTS),
     adminToken: process.env.WAGER_ADMIN_TOKEN || '',
+    goldenBiomeEnabled: envFlag('GOLDEN_BIOME_ENABLED', true),
+    goldenBiomeChanceBps: intEnv('GOLDEN_BIOME_CHANCE_BPS', DEFAULT_GOLDEN_BIOME_CHANCE_BPS, { min: 0, max: 10_000 }),
+    goldenBiomeTreasuryMinUsdCents: intEnv('GOLDEN_BIOME_TREASURY_MIN_USD_CENTS', DEFAULT_GOLDEN_BIOME_TREASURY_MIN_USD_CENTS, { min: 1 }),
+    goldenBiomeWinnerRewardUsdCents: intEnv('GOLDEN_BIOME_WINNER_REWARD_USD_CENTS', DEFAULT_GOLDEN_BIOME_WINNER_REWARD_USD_CENTS, { min: 1 }),
+    goldenBiomeSolUsdPriceSource: priceSourceEnv('GOLDEN_BIOME_SOL_USD_PRICE_SOURCE', 'coingecko'),
+    goldenBiomeSolUsdPriceStaleMs: intEnv('GOLDEN_BIOME_SOL_USD_PRICE_STALE_MS', DEFAULT_GOLDEN_BIOME_PRICE_STALE_MS, { min: 5_000, max: 60 * 60 * 1000 }),
+    goldenBiomeSolUsdPriceTimeoutMs: intEnv('GOLDEN_BIOME_SOL_USD_PRICE_TIMEOUT_MS', DEFAULT_GOLDEN_BIOME_PRICE_TIMEOUT_MS, { min: 1_000, max: 60_000 }),
   };
 }
 

@@ -1,0 +1,134 @@
+import { useCallback, useEffect, useState } from 'react';
+import { config } from '../../config/environment';
+
+interface GlobalNotification {
+  id: string;
+  message: string;
+  updatedAt: string;
+}
+
+interface GlobalNotificationBannerProps {
+  onVisibilityChange?: (visible: boolean) => void;
+}
+
+const DISMISSED_NOTIFICATION_STORAGE_KEY = 'slop-heroes-dismissed-global-notification';
+const NOTIFICATION_POLL_MS = 30_000;
+
+function readDismissedNotificationToken(): string {
+  try {
+    return window.localStorage.getItem(DISMISSED_NOTIFICATION_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function writeDismissedNotificationToken(token: string): void {
+  try {
+    window.localStorage.setItem(DISMISSED_NOTIFICATION_STORAGE_KEY, token);
+  } catch {
+    // Dismissal is optional; private browsing/storage failures should not block the UI.
+  }
+}
+
+function notificationToken(notification: GlobalNotification): string {
+  return `${notification.id}:${notification.updatedAt}`;
+}
+
+function readGlobalNotificationPayload(value: unknown): GlobalNotification | null {
+  const notification = (value as { notification?: unknown } | null)?.notification;
+  if (!notification || typeof notification !== 'object') return null;
+
+  const data = notification as Partial<GlobalNotification>;
+  if (
+    typeof data.id !== 'string' ||
+    typeof data.message !== 'string' ||
+    typeof data.updatedAt !== 'string' ||
+    !data.id ||
+    !data.message ||
+    !data.updatedAt
+  ) {
+    return null;
+  }
+
+  return {
+    id: data.id,
+    message: data.message,
+    updatedAt: data.updatedAt,
+  };
+}
+
+export function GlobalNotificationBanner({ onVisibilityChange }: GlobalNotificationBannerProps) {
+  const [notification, setNotification] = useState<GlobalNotification | null>(null);
+  const [dismissedToken, setDismissedToken] = useState(readDismissedNotificationToken);
+
+  const loadNotification = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const response = await fetch(`${config.serverHttpUrl}/notifications/global`, {
+        cache: 'no-store',
+        credentials: 'include',
+        signal,
+      });
+      if (!response.ok) return;
+      setNotification(readGlobalNotificationPayload(await response.json()));
+    } catch {
+      // Keep the last known banner visible during transient network failures.
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadNotification(controller.signal);
+
+    const interval = window.setInterval(() => void loadNotification(), NOTIFICATION_POLL_MS);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void loadNotification();
+    };
+    const refreshOnFocus = () => void loadNotification();
+
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    window.addEventListener('focus', refreshOnFocus);
+
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      window.removeEventListener('focus', refreshOnFocus);
+    };
+  }, [loadNotification]);
+
+  const token = notification ? notificationToken(notification) : '';
+  const isVisible = Boolean(notification && token !== dismissedToken);
+
+  useEffect(() => {
+    onVisibilityChange?.(isVisible);
+
+    return () => onVisibilityChange?.(false);
+  }, [isVisible, onVisibilityChange]);
+
+  if (!notification || !isVisible) return null;
+
+  const dismiss = () => {
+    writeDismissedNotificationToken(token);
+    setDismissedToken(token);
+  };
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="absolute inset-x-0 top-0 z-[300] flex min-h-8 items-center justify-center bg-strike-bg/20 px-9 py-1 text-center"
+    >
+      <p className="max-w-[88rem] break-words font-body text-xs font-semibold leading-snug text-orange-50 sm:text-sm">
+        {notification.message}
+      </p>
+      <button
+        type="button"
+        aria-label="Dismiss notification"
+        onClick={dismiss}
+        className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-sm bg-white/[0.04] font-mono text-xs font-bold text-white/70 transition hover:bg-white/[0.1] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+      >
+        x
+      </button>
+    </div>
+  );
+}

@@ -5,16 +5,26 @@ import {
   buildVoxelRegionGeometryData,
   type VoxelMeshGeometryData,
 } from './meshGeometryData';
-import { recordSystemTime, recordVoxelMeshBuild } from '../../../utils/perfMarks';
-
-type MeshMetricName = 'voxelMeshBuild' | 'voxelRegionMeshBuild' | 'voxelRegionMeshBuildWorker';
 
 interface PendingRegionRequest {
   resolve: (geometry: THREE.BufferGeometry) => void;
   reject: (error: Error) => void;
   manifest: VoxelMapManifest;
   cacheKey: string;
-  metricName: MeshMetricName;
+}
+
+interface FallbackRegionRequest extends PendingRegionRequest {
+  regionId: string;
+  chunks: VoxelChunk[];
+  trackedPromise?: Promise<THREE.BufferGeometry>;
+  cancelled: boolean;
+}
+
+interface CachedVoxelGeometry {
+  geometry: THREE.BufferGeometry;
+  manifestId: string;
+  bytes: number;
+  lastUsedAt: number;
 }
 
 interface MeshWorkerResponse {
@@ -25,43 +35,219 @@ interface MeshWorkerResponse {
   positions?: Float32Array;
   normals?: Float32Array;
   uvs?: Float32Array;
-  tileOrigins?: Float32Array;
+  textureLayers?: Float32Array;
   indices?: Uint16Array | Uint32Array;
   buildMs?: number;
   message?: string;
 }
 
-const geometryCache = new Map<string, THREE.BufferGeometry>();
+const geometryCache = new Map<string, CachedVoxelGeometry>();
 const pendingRegionRequests = new Map<number, PendingRegionRequest>();
+const pendingRegionGeometryByCacheKey = new Map<string, Promise<THREE.BufferGeometry>>();
+const VOXEL_MESH_REQUEST_CANCELLED = 'Voxel mesh request cancelled because manifest cache was cleared';
+const VOXEL_GEOMETRY_CACHE_MAX_ENTRIES = 192;
+const VOXEL_GEOMETRY_CACHE_MAX_BYTES = 96 * 1024 * 1024;
+const FALLBACK_REGION_FRAME_BUDGET_MS = 4;
+const FALLBACK_REGION_MAX_BUILDS_PER_FRAME = 1;
+const FALLBACK_REGION_QUEUE_COMPACT_THRESHOLD = 64;
 let meshWorker: Worker | null = null;
 let workerManifestId: string | null = null;
 let nextWorkerRequestId = 1;
+let geometryCacheBytes = 0;
+const fallbackRegionQueue: FallbackRegionRequest[] = [];
+let fallbackRegionQueueHead = 0;
+let fallbackRegionQueueScheduled = false;
+
+function waitForNextFrame(): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve();
+
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
+function scheduleFallbackRegionQueue(): void {
+  if (fallbackRegionQueueScheduled || typeof window === 'undefined') return;
+  fallbackRegionQueueScheduled = true;
+  window.requestAnimationFrame(processFallbackRegionQueue);
+}
+
+function processFallbackRegionQueue(): void {
+  fallbackRegionQueueScheduled = false;
+  const frameStart = performance.now();
+  let buildsThisFrame = 0;
+
+  while (fallbackRegionQueueHead < fallbackRegionQueue.length) {
+    if (
+      buildsThisFrame >= FALLBACK_REGION_MAX_BUILDS_PER_FRAME ||
+      performance.now() - frameStart >= FALLBACK_REGION_FRAME_BUDGET_MS
+    ) {
+      compactFallbackRegionQueue();
+      scheduleFallbackRegionQueue();
+      return;
+    }
+
+    const request = fallbackRegionQueue[fallbackRegionQueueHead++];
+    if (!request || request.cancelled) continue;
+    if (pendingRegionGeometryByCacheKey.get(request.cacheKey) !== request.trackedPromise) {
+      request.cancelled = true;
+      request.reject(new Error(VOXEL_MESH_REQUEST_CANCELLED));
+      continue;
+    }
+
+    buildsThisFrame++;
+    try {
+      request.resolve(buildVoxelRegionGeometry(request.manifest, request.regionId, request.chunks));
+    } catch (error) {
+      request.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  fallbackRegionQueue.length = 0;
+  fallbackRegionQueueHead = 0;
+}
+
+function compactFallbackRegionQueue(force = false): void {
+  if (fallbackRegionQueueHead === 0) return;
+  if (
+    !force &&
+    fallbackRegionQueueHead < FALLBACK_REGION_QUEUE_COMPACT_THRESHOLD &&
+    fallbackRegionQueueHead * 2 < fallbackRegionQueue.length
+  ) {
+    return;
+  }
+
+  fallbackRegionQueue.splice(0, fallbackRegionQueueHead);
+  fallbackRegionQueueHead = 0;
+}
+
+function queueFallbackVoxelRegionGeometry(
+  manifest: VoxelMapManifest,
+  regionId: string,
+  chunks: VoxelChunk[],
+  cacheKey: string
+): Promise<THREE.BufferGeometry> {
+  if (typeof window === 'undefined') {
+    return Promise.resolve(buildVoxelRegionGeometry(manifest, regionId, chunks));
+  }
+
+  const request: FallbackRegionRequest = {
+    resolve: () => undefined,
+    reject: () => undefined,
+    manifest,
+    cacheKey,
+    regionId,
+    chunks,
+    cancelled: false,
+  };
+
+  const fallbackPromise = new Promise<THREE.BufferGeometry>((resolve, reject) => {
+    request.resolve = resolve;
+    request.reject = reject;
+  });
+  const trackedPromise = fallbackPromise.finally(() => {
+    request.cancelled = true;
+    pendingRegionGeometryByCacheKey.delete(cacheKey);
+  });
+  request.trackedPromise = trackedPromise;
+  pendingRegionGeometryByCacheKey.set(cacheKey, trackedPromise);
+  fallbackRegionQueue.push(request);
+  scheduleFallbackRegionQueue();
+  return trackedPromise;
+}
+
+function cancelQueuedFallbackRequests(manifestId?: string): void {
+  for (let index = fallbackRegionQueue.length - 1; index >= fallbackRegionQueueHead; index--) {
+    const request = fallbackRegionQueue[index];
+    if (manifestId && request.manifest.id !== manifestId && !request.cacheKey.startsWith(`${manifestId}:`)) {
+      continue;
+    }
+
+    request.cancelled = true;
+    request.reject(new Error(VOXEL_MESH_REQUEST_CANCELLED));
+    fallbackRegionQueue.splice(index, 1);
+  }
+
+  if (fallbackRegionQueueHead >= fallbackRegionQueue.length) {
+    fallbackRegionQueue.length = 0;
+    fallbackRegionQueueHead = 0;
+  } else {
+    compactFallbackRegionQueue(true);
+  }
+}
 
 function createGeometryFromData(
   manifest: VoxelMapManifest,
   cacheKey: string,
-  data: VoxelMeshGeometryData,
-  metricName: MeshMetricName,
-  buildMs: number
+  data: VoxelMeshGeometryData
 ): THREE.BufferGeometry {
   const cached = geometryCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    cached.lastUsedAt = performance.now();
+    return cached.geometry;
+  }
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
   geometry.setAttribute('normal', new THREE.BufferAttribute(data.normals, 3));
   geometry.setAttribute('uv', new THREE.BufferAttribute(data.uvs, 2));
   geometry.setAttribute('uv2', new THREE.BufferAttribute(data.uvs, 2));
-  geometry.setAttribute('voxelTileOrigin', new THREE.BufferAttribute(data.tileOrigins, 2));
+  geometry.setAttribute('voxelTextureLayer', new THREE.BufferAttribute(data.textureLayers, 1));
   geometry.setIndex(new THREE.BufferAttribute(data.indices, 1));
   geometry.scale(manifest.voxelSize.x, manifest.voxelSize.y, manifest.voxelSize.z);
   geometry.translate(manifest.origin.x, manifest.origin.y, manifest.origin.z);
   geometry.computeBoundingSphere();
 
-  geometryCache.set(cacheKey, geometry);
-  recordVoxelMeshBuild(buildMs);
-  recordSystemTime(metricName, buildMs);
+  const bytes = estimateGeometryBytes(geometry);
+  geometryCache.set(cacheKey, {
+    geometry,
+    manifestId: manifest.id,
+    bytes,
+    lastUsedAt: performance.now(),
+  });
+  geometryCacheBytes += bytes;
+  enforceVoxelGeometryCacheBudget(manifest.id);
   return geometry;
+}
+
+function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
+  let bytes = 0;
+  for (const attribute of Object.values(geometry.attributes)) {
+    bytes += attribute.array.byteLength;
+  }
+  if (geometry.index) {
+    bytes += geometry.index.array.byteLength;
+  }
+  return bytes;
+}
+
+function evictCachedGeometry(cacheKey: string, entry: CachedVoxelGeometry): void {
+  entry.geometry.dispose();
+  geometryCache.delete(cacheKey);
+  geometryCacheBytes = Math.max(0, geometryCacheBytes - entry.bytes);
+}
+
+function enforceVoxelGeometryCacheBudget(activeManifestId: string): void {
+  if (
+    geometryCache.size <= VOXEL_GEOMETRY_CACHE_MAX_ENTRIES &&
+    geometryCacheBytes <= VOXEL_GEOMETRY_CACHE_MAX_BYTES
+  ) {
+    return;
+  }
+
+  const candidates = Array.from(geometryCache.entries())
+    .filter(([, entry]) => entry.manifestId !== activeManifestId)
+    .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+
+  for (const [cacheKey, entry] of candidates) {
+    if (
+      geometryCache.size <= VOXEL_GEOMETRY_CACHE_MAX_ENTRIES &&
+      geometryCacheBytes <= VOXEL_GEOMETRY_CACHE_MAX_BYTES
+    ) {
+      break;
+    }
+    evictCachedGeometry(cacheKey, entry);
+  }
 }
 
 function getMeshWorker(): Worker | null {
@@ -93,7 +279,7 @@ function getMeshWorker(): Worker | null {
       if (!pending) return;
       pendingRegionRequests.delete(message.requestId);
 
-      if (!message.positions || !message.normals || !message.uvs || !message.tileOrigins || !message.indices) {
+      if (!message.positions || !message.normals || !message.uvs || !message.textureLayers || !message.indices) {
         pending.reject(new Error('Voxel mesh worker returned incomplete geometry data'));
         return;
       }
@@ -105,11 +291,9 @@ function getMeshWorker(): Worker | null {
           positions: message.positions,
           normals: message.normals,
           uvs: message.uvs,
-          tileOrigins: message.tileOrigins,
+          textureLayers: message.textureLayers,
           indices: message.indices,
-        },
-        pending.metricName,
-        message.buildMs ?? 0
+        }
       );
       pending.resolve(geometry);
     };
@@ -140,7 +324,10 @@ function initializeWorkerManifest(worker: Worker, manifest: VoxelMapManifest): v
 }
 
 export function getCachedVoxelGeometry(cacheKey: string): THREE.BufferGeometry | null {
-  return geometryCache.get(cacheKey) ?? null;
+  const cached = geometryCache.get(cacheKey);
+  if (!cached) return null;
+  cached.lastUsedAt = performance.now();
+  return cached.geometry;
 }
 
 export function getVoxelChunkGeometryCacheKey(manifest: VoxelMapManifest, chunk: VoxelChunk): string {
@@ -154,11 +341,13 @@ export function getVoxelRegionGeometryCacheKey(manifest: VoxelMapManifest, regio
 export function buildVoxelChunkGeometry(manifest: VoxelMapManifest, chunk: VoxelChunk): THREE.BufferGeometry {
   const cacheKey = getVoxelChunkGeometryCacheKey(manifest, chunk);
   const cached = geometryCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    cached.lastUsedAt = performance.now();
+    return cached.geometry;
+  }
 
-  const buildStart = performance.now();
   const data = buildVoxelChunkGeometryData(manifest, chunk);
-  return createGeometryFromData(manifest, cacheKey, data, 'voxelMeshBuild', performance.now() - buildStart);
+  return createGeometryFromData(manifest, cacheKey, data);
 }
 
 export function buildVoxelRegionGeometry(
@@ -168,11 +357,13 @@ export function buildVoxelRegionGeometry(
 ): THREE.BufferGeometry {
   const cacheKey = getVoxelRegionGeometryCacheKey(manifest, regionId);
   const cached = geometryCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    cached.lastUsedAt = performance.now();
+    return cached.geometry;
+  }
 
-  const buildStart = performance.now();
   const data = buildVoxelRegionGeometryData(manifest, chunks);
-  return createGeometryFromData(manifest, cacheKey, data, 'voxelRegionMeshBuild', performance.now() - buildStart);
+  return createGeometryFromData(manifest, cacheKey, data);
 }
 
 export function buildVoxelRegionGeometryAsync(
@@ -182,13 +373,17 @@ export function buildVoxelRegionGeometryAsync(
 ): Promise<THREE.BufferGeometry> {
   const cacheKey = getVoxelRegionGeometryCacheKey(manifest, regionId);
   const cached = geometryCache.get(cacheKey);
-  if (cached) return Promise.resolve(cached);
+  if (cached) {
+    cached.lastUsedAt = performance.now();
+    return Promise.resolve(cached.geometry);
+  }
+
+  const pending = pendingRegionGeometryByCacheKey.get(cacheKey);
+  if (pending) return pending;
 
   const worker = getMeshWorker();
   if (!worker) {
-    return new Promise((resolve) => {
-      window.setTimeout(() => resolve(buildVoxelRegionGeometry(manifest, regionId, chunks)), 0);
-    });
+    return queueFallbackVoxelRegionGeometry(manifest, regionId, chunks, cacheKey);
   }
 
   initializeWorkerManifest(worker, manifest);
@@ -199,7 +394,6 @@ export function buildVoxelRegionGeometryAsync(
       reject,
       manifest,
       cacheKey,
-      metricName: 'voxelRegionMeshBuildWorker',
     });
   });
 
@@ -211,26 +405,80 @@ export function buildVoxelRegionGeometryAsync(
     chunkCoords: chunks.map((chunk) => chunk.coord),
   });
 
-  return promise.catch(() => buildVoxelRegionGeometry(manifest, regionId, chunks));
+  const resolvedPromise = promise
+    .catch((error) => {
+      if (error instanceof Error && error.message === VOXEL_MESH_REQUEST_CANCELLED) {
+        throw error;
+      }
+      return queueFallbackVoxelRegionGeometry(manifest, regionId, chunks, cacheKey);
+    })
+    .finally(() => {
+      pendingRegionGeometryByCacheKey.delete(cacheKey);
+    });
+  pendingRegionGeometryByCacheKey.set(cacheKey, resolvedPromise);
+  return resolvedPromise;
+}
+
+export async function prebuildVoxelRegionGeometries(
+  manifest: VoxelMapManifest,
+  regions: Array<{ id: string; chunks: VoxelChunk[] }>,
+  options: {
+    frameBudgetMs?: number;
+    onDispatched?: (count: number) => void;
+  } = {}
+): Promise<void> {
+  const frameBudgetMs = options.frameBudgetMs ?? 4;
+  let frameStart = performance.now();
+  let dispatched = 0;
+
+  for (const region of regions) {
+    if (!getCachedVoxelGeometry(getVoxelRegionGeometryCacheKey(manifest, region.id))) {
+      void buildVoxelRegionGeometryAsync(manifest, region.id, region.chunks);
+      dispatched++;
+      options.onDispatched?.(dispatched);
+    }
+
+    if (performance.now() - frameStart >= frameBudgetMs) {
+      await waitForNextFrame();
+      frameStart = performance.now();
+    }
+  }
 }
 
 export function clearVoxelGeometryCache(manifestId?: string): void {
   if (!manifestId) {
-    for (const geometry of geometryCache.values()) {
-      geometry.dispose();
+    for (const entry of geometryCache.values()) {
+      entry.geometry.dispose();
     }
     geometryCache.clear();
+    geometryCacheBytes = 0;
     pendingRegionRequests.clear();
+    pendingRegionGeometryByCacheKey.clear();
+    cancelQueuedFallbackRequests();
     meshWorker?.terminate();
     meshWorker = null;
     workerManifestId = null;
     return;
   }
 
-  for (const key of geometryCache.keys()) {
+  for (const [key, entry] of geometryCache) {
+    if (entry.manifestId === manifestId || key.startsWith(`${manifestId}:`)) {
+      evictCachedGeometry(key, entry);
+    }
+  }
+
+  for (const key of pendingRegionGeometryByCacheKey.keys()) {
     if (key.startsWith(`${manifestId}:`)) {
-      geometryCache.get(key)?.dispose();
-      geometryCache.delete(key);
+      pendingRegionGeometryByCacheKey.delete(key);
+    }
+  }
+
+  cancelQueuedFallbackRequests(manifestId);
+
+  for (const [requestId, pending] of pendingRegionRequests) {
+    if (pending.manifest.id === manifestId) {
+      pending.reject(new Error(VOXEL_MESH_REQUEST_CANCELLED));
+      pendingRegionRequests.delete(requestId);
     }
   }
 
@@ -239,4 +487,18 @@ export function clearVoxelGeometryCache(manifestId?: string): void {
     meshWorker = null;
     workerManifestId = null;
   }
+}
+
+export function getVoxelGeometryCacheStats(): {
+  entries: number;
+  bytes: number;
+  pendingRegionRequests: number;
+  pendingRegionBuilds: number;
+} {
+  return {
+    entries: geometryCache.size,
+    bytes: geometryCacheBytes,
+    pendingRegionRequests: pendingRegionRequests.size,
+    pendingRegionBuilds: pendingRegionGeometryByCacheKey.size,
+  };
 }

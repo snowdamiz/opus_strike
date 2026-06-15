@@ -3,7 +3,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { VoxelMapTheme } from '@voxel-strike/shared';
 import type { EnvironmentQualityConfig } from './visualQuality';
-import { setAtmosphereParticleCount } from '../../utils/perfMarks';
+import { getBlazeGearstormSkyIntensity } from './blaze/airstrike';
+import { getPhantomVeilSkyIntensity } from './phantom/veilAtmosphere';
 
 interface WorldAtmosphereProps {
   theme: VoxelMapTheme;
@@ -62,8 +63,12 @@ interface DustDevilConfig {
   speed: number;
 }
 
-const ATMOSPHERE_UPDATE_INTERVAL = 1 / 30;
 const ATMOSPHERE_MAX_STEP = 1 / 12;
+const SUN_POSITION: [number, number, number] = [92, 118, -76];
+const SUN_DIRECTION = new THREE.Vector3(...SUN_POSITION).normalize();
+const BLAZE_SUN_CORE_COLOR = new THREE.Color('#ffd36a');
+const BLAZE_SUN_CORONA_COLOR = new THREE.Color('#ff5a00');
+const BLAZE_SUN_OUTER_CORONA_COLOR = new THREE.Color('#ff2700');
 
 function getAtmosphereCount(profile: AtmosphereProfileInput): number {
   const multiplier =
@@ -95,7 +100,25 @@ const SKY_FRAGMENT_SHADER = `
 uniform vec3 topColor;
 uniform vec3 horizonColor;
 uniform vec3 hazeColor;
+uniform vec3 fireTopColor;
+uniform vec3 fireHorizonColor;
+uniform vec3 emberColor;
+uniform vec3 smokeColor;
+uniform vec3 phantomTopColor;
+uniform vec3 phantomHorizonColor;
+uniform vec3 phantomPurpleColor;
+uniform vec3 phantomStarColor;
+uniform vec3 sunDirection;
+uniform float fireIntensity;
+uniform float phantomIntensity;
+uniform float time;
 varying vec3 vWorldPosition;
+
+float hash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
 
 void main() {
   vec3 direction = normalize(vWorldPosition);
@@ -103,6 +126,50 @@ void main() {
   float horizon = pow(1.0 - abs(direction.y), 3.0);
   vec3 color = mix(horizonColor, topColor, smoothstep(0.05, 1.0, height));
   color += hazeColor * horizon * 0.28;
+
+  float azimuth = atan(direction.z, direction.x);
+  float wave =
+    sin(azimuth * 7.0 + time * 1.55) * 0.5 +
+    sin(azimuth * 13.0 - time * 1.9 + direction.y * 4.0) * 0.32 +
+    sin((direction.x - direction.z) * 10.0 + time * 2.35) * 0.18;
+  float flame = smoothstep(0.18, 0.95, wave * 0.5 + 0.5);
+  float lowSky = 1.0 - smoothstep(0.5, 0.92, height);
+  float heatBand = horizon * (0.54 + flame * 0.46) * lowSky;
+  float smoke = smoothstep(0.5, 1.0, height) * (0.56 + flame * 0.18);
+  vec3 fireColor = mix(fireHorizonColor, emberColor, flame * 0.68 + horizon * 0.2);
+  color = mix(color, fireColor, fireIntensity * clamp(heatBand * 1.45 + lowSky * 0.12, 0.0, 0.82));
+  color = mix(color, fireTopColor, fireIntensity * smoke * 0.44);
+  color += emberColor * fireIntensity * flame * horizon * 0.18;
+
+  float sunFacing = max(dot(direction, normalize(sunDirection)), 0.0);
+  float corona = pow(sunFacing, 18.0);
+  float sunCore = pow(sunFacing, 220.0);
+  color += fireIntensity * (fireHorizonColor * corona * 0.42 + emberColor * sunCore * 1.15);
+  color = mix(color, smokeColor, fireIntensity * smoke * 0.2);
+
+  vec3 phantomSky = mix(phantomHorizonColor, phantomTopColor, smoothstep(0.02, 1.0, height));
+  float nebulaWave =
+    sin(azimuth * 2.4 + direction.y * 7.5 + time * 0.08) * 0.5 +
+    sin((direction.x + direction.z) * 5.2 - time * 0.06) * 0.35 +
+    sin(azimuth * 5.8 - direction.y * 3.0) * 0.15;
+  float nebula = smoothstep(0.28, 0.95, nebulaWave * 0.5 + 0.5) * smoothstep(0.12, 0.9, height);
+  phantomSky += phantomPurpleColor * (horizon * 0.38 + nebula * 0.32);
+
+  float polar = acos(clamp(direction.y, -1.0, 1.0)) / 3.14159265;
+  vec2 starCoord = vec2(azimuth / 6.2831853 + 0.5, polar);
+  vec2 starGrid = vec2(260.0, 124.0);
+  vec2 starCellPosition = starCoord * starGrid;
+  vec2 starCell = floor(starCellPosition);
+  vec2 starLocal = fract(starCellPosition) - 0.5;
+  float starSeed = hash12(starCell);
+  float starRadius = mix(0.08, 0.22, hash12(starCell + 19.17));
+  float starShape = 1.0 - smoothstep(starRadius * 0.28, starRadius, length(starLocal));
+  float starMask = step(0.962, starSeed) * starShape * smoothstep(0.18, 0.72, height);
+  float twinkle = 0.68 + sin(time * (1.8 + starSeed * 3.2) + starSeed * 43.0) * 0.32;
+  phantomSky += phantomStarColor * starMask * twinkle * mix(0.65, 1.75, hash12(starCell + 4.7));
+
+  color = mix(color, phantomSky, phantomIntensity);
+
   gl_FragColor = vec4(color, 1.0);
 }
 `;
@@ -120,6 +187,10 @@ function seededValue(seed: number, salt: number): number {
 
 function pickVariant<T>(seed: number, salt: number, variants: T[]): T {
   return variants[Math.floor(seededValue(seed, salt) * variants.length) % variants.length];
+}
+
+function getAtmosphereStep(delta: number): number {
+  return Math.min(Math.max(delta, 0), ATMOSPHERE_MAX_STEP);
 }
 
 function withSeededWind(seed: number, profile: AtmosphereProfileInput, salt: number): AtmosphereProfile {
@@ -144,6 +215,66 @@ function pickProfileStack(seed: number, salt: number, variants: AtmosphereProfil
 }
 
 function getAtmosphereProfiles(theme: VoxelMapTheme, seed: number): AtmosphereProfile[] {
+  if (theme.id === 'golden') {
+    return pickProfileStack(seed, 0x906d3a, [
+      [
+        {
+          kind: 'glimmer',
+          variant: 'treasury-motes',
+          color: '#fff3a8',
+          count: 360,
+          opacity: 0.82,
+          size: 0.115,
+          fallSpeed: 0.76,
+          spreadX: 82,
+          spreadZ: 72,
+          minY: 1.4,
+          maxY: 34,
+          turbulence: 0.2,
+          windScale: 0.72,
+          floatStrength: 0.34,
+          verticalDirection: 'float',
+        },
+        {
+          kind: 'mist',
+          variant: 'sunlit-vault-haze',
+          color: '#f7c85f',
+          count: 220,
+          opacity: 0.28,
+          size: 0.22,
+          fallSpeed: 0.42,
+          spreadX: 94,
+          spreadZ: 84,
+          minY: 0.4,
+          maxY: 24,
+          turbulence: 0.12,
+          windScale: 0.5,
+          floatStrength: 0.18,
+          verticalDirection: 'float',
+        },
+      ],
+      [
+        {
+          kind: 'glimmer',
+          variant: 'coinfall-radiance',
+          color: theme.structures.accent,
+          count: 420,
+          opacity: 0.72,
+          size: 0.095,
+          fallSpeed: 1.05,
+          spreadX: 88,
+          spreadZ: 78,
+          minY: 1,
+          maxY: 40,
+          turbulence: 0.18,
+          windScale: 0.84,
+          floatStrength: 0.24,
+          verticalDirection: 'fall',
+        },
+      ],
+    ]);
+  }
+
   if (theme.id === 'frost') {
     return pickProfileStack(seed, 0xf7057, [
       [
@@ -832,19 +963,30 @@ function createDustDevils(profile: AtmosphereProfile, seed: number): DustDevilCo
 }
 
 function getSkyUniforms(theme: VoxelMapTheme) {
-  const darken = theme.id === 'basalt' || theme.id === 'volcanic' ? 0.44 : theme.id === 'crystal' ? 0.2 : 0.08;
-  const warmHorizon = theme.id === 'desert' || theme.id === 'volcanic' || theme.id === 'sakura' ? 0.18 : 0.06;
+  const darken = theme.id === 'basalt' || theme.id === 'volcanic' ? 0.44 : theme.id === 'crystal' ? 0.2 : theme.id === 'golden' ? 0.02 : 0.08;
+  const warmHorizon = theme.id === 'golden' ? 0.28 : theme.id === 'desert' || theme.id === 'volcanic' || theme.id === 'sakura' ? 0.18 : 0.06;
 
   return {
     topColor: { value: createThemeColor(theme.skyColor, '#07111f', darken) },
     horizonColor: { value: createThemeColor(theme.fogColor, '#fff7e5', warmHorizon) },
     hazeColor: { value: createThemeColor(theme.structures.accent, theme.fogColor, 0.68) },
+    fireTopColor: { value: new THREE.Color('#2a0c0d') },
+    fireHorizonColor: { value: new THREE.Color('#ff5c1c') },
+    emberColor: { value: new THREE.Color('#ffd36a') },
+    smokeColor: { value: new THREE.Color('#17090b') },
+    phantomTopColor: { value: new THREE.Color('#02000a') },
+    phantomHorizonColor: { value: new THREE.Color('#120024') },
+    phantomPurpleColor: { value: new THREE.Color('#5b21b6') },
+    phantomStarColor: { value: new THREE.Color('#f8f7ff') },
+    sunDirection: { value: SUN_DIRECTION.clone() },
+    fireIntensity: { value: 0 },
+    phantomIntensity: { value: 0 },
+    time: { value: 0 },
   };
 }
 
 function FallingPoints({ profile, seed }: { profile: AtmosphereProfile; seed: number }) {
   const particleSet = useMemo(() => createPointParticleSet(profile, seed), [profile, seed]);
-  const accumulatedDeltaRef = useRef(0);
   const motion = useMemo(() => {
     const verticalDirection = profile.verticalDirection ?? 'fall';
     const slowAir = profile.kind === 'mist' || profile.kind === 'sand';
@@ -883,11 +1025,8 @@ function FallingPoints({ profile, seed }: { profile: AtmosphereProfile; seed: nu
   );
 
   useFrame(({ clock }, delta) => {
-    accumulatedDeltaRef.current += Math.min(delta, ATMOSPHERE_MAX_STEP);
-    if (accumulatedDeltaRef.current < ATMOSPHERE_UPDATE_INTERVAL) return;
-
-    const step = Math.min(accumulatedDeltaRef.current, ATMOSPHERE_MAX_STEP);
-    accumulatedDeltaRef.current = 0;
+    const step = getAtmosphereStep(delta);
+    if (step <= 0) return;
 
     const positionAttribute = particleSet.geometry.getAttribute('position') as THREE.BufferAttribute;
     const positions = positionAttribute.array as Float32Array;
@@ -947,7 +1086,6 @@ function FallingPoints({ profile, seed }: { profile: AtmosphereProfile; seed: nu
 
 function RainStreaks({ profile, seed }: { profile: AtmosphereProfile; seed: number }) {
   const streakSet = useMemo(() => createRainStreakSet(profile, seed), [profile, seed]);
-  const accumulatedDeltaRef = useRef(0);
   const motion = useMemo(
     () => ({
       halfX: profile.spreadX * 0.5,
@@ -971,11 +1109,8 @@ function RainStreaks({ profile, seed }: { profile: AtmosphereProfile; seed: numb
   );
 
   useFrame(({ clock }, delta) => {
-    accumulatedDeltaRef.current += Math.min(delta, ATMOSPHERE_MAX_STEP);
-    if (accumulatedDeltaRef.current < ATMOSPHERE_UPDATE_INTERVAL) return;
-
-    const step = Math.min(accumulatedDeltaRef.current, ATMOSPHERE_MAX_STEP);
-    accumulatedDeltaRef.current = 0;
+    const step = getAtmosphereStep(delta);
+    if (step <= 0) return;
 
     const positionAttribute = streakSet.geometry.getAttribute('position') as THREE.BufferAttribute;
     const positions = positionAttribute.array as Float32Array;
@@ -1135,6 +1270,10 @@ function SandDevils({ profile, seed }: { profile: AtmosphereProfile; seed: numbe
 }
 
 export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
+  const sunGroupRef = useRef<THREE.Group>(null);
+  const sunMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const sunInnerCoronaMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const sunOuterCoronaMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const atmosphereProfiles = useMemo(
     () => scaleAtmosphereProfiles(getAtmosphereProfiles(theme, seed), config),
     [config, theme, seed]
@@ -1157,13 +1296,37 @@ export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
     () => createThemeColor(theme.sunColor, '#ffffff', theme.id === 'basalt' ? 0.25 : 0.1),
     [theme]
   );
-  const activeParticleCount = atmosphereProfiles.reduce((sum, profile) => sum + profile.count, 0);
+
+  useFrame(({ clock }) => {
+    const fireIntensity = getBlazeGearstormSkyIntensity();
+    const phantomIntensity = getPhantomVeilSkyIntensity();
+    skyMaterial.uniforms.fireIntensity.value = fireIntensity;
+    skyMaterial.uniforms.phantomIntensity.value = phantomIntensity;
+    skyMaterial.uniforms.time.value = clock.elapsedTime;
+
+    const pulse = 0.92 + Math.sin(clock.elapsedTime * 7.4) * 0.08;
+    const sunVisibility = 1 - phantomIntensity;
+
+    if (sunMaterialRef.current) {
+      sunMaterialRef.current.color.copy(sunColor).lerp(BLAZE_SUN_CORE_COLOR, fireIntensity);
+      sunMaterialRef.current.opacity = sunVisibility;
+      sunMaterialRef.current.transparent = sunVisibility < 0.999;
+    }
+
+    if (sunInnerCoronaMaterialRef.current) {
+      sunInnerCoronaMaterialRef.current.opacity = fireIntensity * (0.2 + pulse * 0.12) * sunVisibility;
+    }
+
+    if (sunOuterCoronaMaterialRef.current) {
+      sunOuterCoronaMaterialRef.current.opacity = fireIntensity * (0.09 + pulse * 0.08) * sunVisibility;
+    }
+
+    if (sunGroupRef.current) {
+      sunGroupRef.current.scale.setScalar(1 + fireIntensity * (0.05 + pulse * 0.04));
+    }
+  });
 
   useEffect(() => () => skyMaterial.dispose(), [skyMaterial]);
-  useEffect(() => {
-    setAtmosphereParticleCount(activeParticleCount);
-    return () => setAtmosphereParticleCount(0);
-  }, [activeParticleCount]);
 
   return (
     <group name="world-atmosphere">
@@ -1171,10 +1334,38 @@ export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
         <sphereGeometry args={[420, ...config.skySegments]} />
         <primitive object={skyMaterial} attach="material" />
       </mesh>
-      <mesh position={[92, 118, -76]} frustumCulled={false} renderOrder={-90}>
-        <sphereGeometry args={[7.5, ...config.sunSegments]} />
-        <meshBasicMaterial color={sunColor} toneMapped={false} fog={false} />
-      </mesh>
+      <group ref={sunGroupRef} position={SUN_POSITION} frustumCulled={false}>
+        <mesh frustumCulled={false} renderOrder={-92} scale={[3.45, 3.45, 3.45]}>
+          <sphereGeometry args={[7.5, ...config.sunSegments]} />
+          <meshBasicMaterial
+            ref={sunOuterCoronaMaterialRef}
+            color={BLAZE_SUN_OUTER_CORONA_COLOR}
+            transparent
+            opacity={0}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            toneMapped={false}
+            fog={false}
+          />
+        </mesh>
+        <mesh frustumCulled={false} renderOrder={-91} scale={[2.15, 2.15, 2.15]}>
+          <sphereGeometry args={[7.5, ...config.sunSegments]} />
+          <meshBasicMaterial
+            ref={sunInnerCoronaMaterialRef}
+            color={BLAZE_SUN_CORONA_COLOR}
+            transparent
+            opacity={0}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            toneMapped={false}
+            fog={false}
+          />
+        </mesh>
+        <mesh frustumCulled={false} renderOrder={-90}>
+          <sphereGeometry args={[7.5, ...config.sunSegments]} />
+          <meshBasicMaterial ref={sunMaterialRef} color={sunColor} transparent opacity={1} toneMapped={false} fog={false} />
+        </mesh>
+      </group>
       {atmosphereProfiles.map((profile, index) => {
         const profileSeed = seed ^ (0x5a7c0de + index * 0x27d4eb2d);
         return (

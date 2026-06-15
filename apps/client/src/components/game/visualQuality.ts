@@ -4,16 +4,12 @@ import type {
   GraphicsFeatureQuality,
   GraphicsPreset,
   GraphicsQuality,
-  MaterialQuality,
 } from '../../store/settingsStore';
-
-export type VoxelMaterialDetail = MaterialQuality;
 
 export interface RenderQualityConfig {
   dpr: [number, number];
   antialias: boolean;
   exposure: number;
-  materialDetail: VoxelMaterialDetail;
 }
 
 export interface ShadowQualityConfig {
@@ -41,6 +37,10 @@ export interface EnvironmentQualityConfig {
   maxParticles: number;
 }
 
+export interface MaterialQualityConfig {
+  terrainTextureQuality: GraphicsFeatureQuality;
+}
+
 export interface WorldPerformanceBudget {
   frameTargetFps: number;
   cpuFrameP95Ms: number;
@@ -52,7 +52,6 @@ export interface WorldPerformanceBudget {
   materials: number;
   maxAtmosphereParticles: number;
   maxWorldDressingInstances: number;
-  maxFullRemoteBodies: number;
   maxGeneratedRegionMeshesPerFrame: number;
   maxVisualPhysicsQueriesPerFrame: number;
 }
@@ -63,17 +62,21 @@ export interface EffectQualityConfig {
   maxActiveParticles: number;
   maxVisibleRemoteAbilityEffects: number;
   enableDecorativeLights: boolean;
-  slideSpeedLineCount: number;
 }
 
 export interface RemotePlayerQualityConfig {
-  maxFullBodies: number;
-  nearDistance: number;
-  midDistance: number;
-  animateFarMarkers: boolean;
+  animateBeacons: boolean;
   showNameplates: boolean;
   showBeacons: boolean;
-  distantAnimationFps: number;
+  fullBodyDistance: number;
+  outlineDistance: number;
+  castShadows: boolean;
+}
+
+export interface RagdollQualityConfig {
+  maxHighQuality: number;
+  maxTotal: number;
+  castShadows: boolean;
 }
 
 export interface ViewmodelQualityConfig {
@@ -87,8 +90,10 @@ export interface VisualQualityConfig {
   shadows: ShadowQualityConfig;
   reflections: ReflectionQualityConfig;
   environment: EnvironmentQualityConfig;
+  materials: MaterialQualityConfig;
   effects: EffectQualityConfig;
   remotePlayers: RemotePlayerQualityConfig;
+  ragdolls: RagdollQualityConfig;
   viewmodel: ViewmodelQualityConfig;
   budgets: WorldPerformanceBudget;
   dynamicLights: {
@@ -233,12 +238,12 @@ const ENVIRONMENT_QUALITY_CONFIG: Record<GraphicsFeatureQuality, EnvironmentQual
     maxParticles: 120,
   },
   medium: {
-    particleDensity: 0.65,
-    dustDevilDensity: 0.75,
-    dressingDensity: 0.7,
+    particleDensity: 0.5,
+    dustDevilDensity: 0.55,
+    dressingDensity: 0.5,
     skySegments: [32, 16],
     sunSegments: [24, 12],
-    maxParticles: 360,
+    maxParticles: 260,
   },
   high: {
     particleDensity: 1,
@@ -295,11 +300,11 @@ const PROFILE_DYNAMIC_LIGHT_BUDGET: Record<GraphicsPreset, VisualQualityConfig['
     staticAccentLights: false,
   },
   balanced: {
-    maxDynamicLights: 4,
+    maxDynamicLights: 3,
     staticAccentLights: true,
   },
   cinematic: {
-    maxDynamicLights: 10,
+    maxDynamicLights: 8,
     staticAccentLights: true,
   },
 };
@@ -316,7 +321,6 @@ export const WORLD_PERFORMANCE_BUDGETS: Record<GraphicsPreset, WorldPerformanceB
     materials: 180,
     maxAtmosphereParticles: 50,
     maxWorldDressingInstances: 100,
-    maxFullRemoteBodies: 1,
     maxGeneratedRegionMeshesPerFrame: 1,
     maxVisualPhysicsQueriesPerFrame: 18,
   },
@@ -331,7 +335,6 @@ export const WORLD_PERFORMANCE_BUDGETS: Record<GraphicsPreset, WorldPerformanceB
     materials: 260,
     maxAtmosphereParticles: 120,
     maxWorldDressingInstances: 220,
-    maxFullRemoteBodies: 2,
     maxGeneratedRegionMeshesPerFrame: 2,
     maxVisualPhysicsQueriesPerFrame: 28,
   },
@@ -339,16 +342,15 @@ export const WORLD_PERFORMANCE_BUDGETS: Record<GraphicsPreset, WorldPerformanceB
     frameTargetFps: 60,
     cpuFrameP95Ms: 10,
     gpuFrameP95Ms: 12,
-    drawCalls: 650,
-    triangles: 650_000,
+    drawCalls: 560,
+    triangles: 540_000,
     textures: 180,
-    geometries: 700,
-    materials: 420,
-    maxAtmosphereParticles: 480,
-    maxWorldDressingInstances: 640,
-    maxFullRemoteBodies: 4,
-    maxGeneratedRegionMeshesPerFrame: 3,
-    maxVisualPhysicsQueriesPerFrame: 44,
+    geometries: 620,
+    materials: 360,
+    maxAtmosphereParticles: 300,
+    maxWorldDressingInstances: 460,
+    maxGeneratedRegionMeshesPerFrame: 2,
+    maxVisualPhysicsQueriesPerFrame: 36,
   },
   cinematic: {
     frameTargetFps: 60,
@@ -361,7 +363,6 @@ export const WORLD_PERFORMANCE_BUDGETS: Record<GraphicsPreset, WorldPerformanceB
     materials: 640,
     maxAtmosphereParticles: 980,
     maxWorldDressingInstances: 920,
-    maxFullRemoteBodies: 8,
     maxGeneratedRegionMeshesPerFrame: 4,
     maxVisualPhysicsQueriesPerFrame: 72,
   },
@@ -374,7 +375,6 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
     maxActiveParticles: 96,
     maxVisibleRemoteAbilityEffects: 8,
     enableDecorativeLights: false,
-    slideSpeedLineCount: 0,
   },
   competitive: {
     maxActiveImpacts: 34,
@@ -382,62 +382,78 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
     maxActiveParticles: 180,
     maxVisibleRemoteAbilityEffects: 16,
     enableDecorativeLights: true,
-    slideSpeedLineCount: 16,
   },
   balanced: {
-    maxActiveImpacts: 58,
-    maxActiveTrails: 36,
-    maxActiveParticles: 360,
-    maxVisibleRemoteAbilityEffects: 28,
+    maxActiveImpacts: 44,
+    maxActiveTrails: 28,
+    maxActiveParticles: 240,
+    maxVisibleRemoteAbilityEffects: 22,
     enableDecorativeLights: true,
-    slideSpeedLineCount: 28,
   },
   cinematic: {
-    maxActiveImpacts: 80,
-    maxActiveTrails: 64,
-    maxActiveParticles: 620,
-    maxVisibleRemoteAbilityEffects: 48,
+    maxActiveImpacts: 72,
+    maxActiveTrails: 54,
+    maxActiveParticles: 520,
+    maxVisibleRemoteAbilityEffects: 42,
     enableDecorativeLights: true,
-    slideSpeedLineCount: 36,
   },
 };
 
 const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityConfig> = {
   potato: {
-    maxFullBodies: 1,
-    nearDistance: 10,
-    midDistance: 28,
-    animateFarMarkers: false,
+    animateBeacons: false,
     showNameplates: false,
     showBeacons: false,
-    distantAnimationFps: 8,
+    fullBodyDistance: 36,
+    outlineDistance: 0,
+    castShadows: false,
   },
   competitive: {
-    maxFullBodies: 2,
-    nearDistance: 16,
-    midDistance: 34,
-    animateFarMarkers: false,
+    animateBeacons: false,
     showNameplates: true,
     showBeacons: false,
-    distantAnimationFps: 12,
+    fullBodyDistance: 52,
+    outlineDistance: 0,
+    castShadows: false,
   },
   balanced: {
-    maxFullBodies: 4,
-    nearDistance: 18,
-    midDistance: 38,
-    animateFarMarkers: true,
+    animateBeacons: true,
     showNameplates: true,
     showBeacons: true,
-    distantAnimationFps: 18,
+    fullBodyDistance: 72,
+    outlineDistance: 48,
+    castShadows: true,
   },
   cinematic: {
-    maxFullBodies: 8,
-    nearDistance: 24,
-    midDistance: 52,
-    animateFarMarkers: true,
+    animateBeacons: true,
     showNameplates: true,
     showBeacons: true,
-    distantAnimationFps: 30,
+    fullBodyDistance: Number.POSITIVE_INFINITY,
+    outlineDistance: 96,
+    castShadows: true,
+  },
+};
+
+const RAGDOLL_QUALITY_CONFIG: Record<GraphicsPreset, RagdollQualityConfig> = {
+  potato: {
+    maxHighQuality: 0,
+    maxTotal: 4,
+    castShadows: false,
+  },
+  competitive: {
+    maxHighQuality: 3,
+    maxTotal: 8,
+    castShadows: false,
+  },
+  balanced: {
+    maxHighQuality: 8,
+    maxTotal: 16,
+    castShadows: true,
+  },
+  cinematic: {
+    maxHighQuality: 8,
+    maxTotal: 16,
+    castShadows: true,
   },
 };
 
@@ -464,10 +480,10 @@ export function getVisualQualityConfig(settings: Pick<
   ClientSettings,
   | 'resolutionScale'
   | 'antialiasing'
-  | 'materialQuality'
   | 'shadowQuality'
   | 'reflectionQuality'
   | 'environmentQuality'
+  | 'materialQuality'
   | 'graphicsPreset'
 >): VisualQualityConfig {
   const renderConfig = RESOLUTION_SCALE_CONFIG[settings.resolutionScale];
@@ -490,13 +506,19 @@ export function getVisualQualityConfig(settings: Pick<
       ...renderConfig,
       antialias: settings.antialiasing,
       exposure: DEFAULT_RENDER_EXPOSURE,
-      materialDetail: settings.materialQuality,
     },
     shadows: SHADOW_QUALITY_CONFIG[settings.shadowQuality],
     reflections: REFLECTION_QUALITY_CONFIG[settings.reflectionQuality],
     environment: ENVIRONMENT_QUALITY_CONFIG[settings.environmentQuality],
+    materials: {
+      terrainTextureQuality: settings.materialQuality,
+    },
     effects: EFFECT_QUALITY_CONFIG[profile],
     remotePlayers: REMOTE_PLAYER_QUALITY_CONFIG[profile],
+    ragdolls: {
+      ...RAGDOLL_QUALITY_CONFIG[profile],
+      castShadows: RAGDOLL_QUALITY_CONFIG[profile].castShadows && SHADOW_QUALITY_CONFIG[settings.shadowQuality].enabled,
+    },
     viewmodel: VIEWMODEL_QUALITY_CONFIG[profile],
     budgets: WORLD_PERFORMANCE_BUDGETS[profile],
     dynamicLights,

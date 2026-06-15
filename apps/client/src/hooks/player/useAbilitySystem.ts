@@ -5,13 +5,25 @@
  */
 
 import { useRef, useCallback } from 'react';
-import { ABILITY_DEFINITIONS } from '@voxel-strike/shared';
+import { ABILITY_DEFINITIONS, PHANTOM_VEIL_SPEED_MULTIPLIER } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
-import { recordSystemTime } from '../../utils/perfMarks';
 import type { AbilityActiveState } from './types';
 import { getLocalChronosTimebreakTempoMultiplier } from './chronosTimebreakTempo';
 
 const CLIENT_COOLDOWN_SYNC_INTERVAL_MS = 100;
+const PHANTOM_RELOAD_ALLOWED_ABILITY_ID = 'phantom_blink';
+
+function getAbilityCooldownRemainingSeconds(
+  abilityState: { cooldownRemaining?: number; cooldownUntil?: number } | undefined,
+  now: number
+): number {
+  if (!abilityState) return 0;
+  if (abilityState.cooldownUntil && abilityState.cooldownUntil > now) {
+    return Math.max(0, (abilityState.cooldownUntil - now) / 1000);
+  }
+  if (abilityState.cooldownUntil !== undefined) return 0;
+  return Math.max(0, abilityState.cooldownRemaining ?? 0);
+}
 
 export interface UseAbilitySystemReturn {
   // Refs
@@ -127,11 +139,20 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
     isUltimate: boolean, 
     isTargetingActive: boolean = false
   ): boolean => {
-    const localPlayer = useGameStore.getState().localPlayer;
+    const store = useGameStore.getState();
+    const localPlayer = store.localPlayer;
     if (!localPlayer) return false;
 
-    // Don't allow using abilities while targeting mode is active
-    if (isTargetingActive && abilityId !== 'hookshot_grapple_trap') {
+    if (
+      localPlayer.heroId === 'phantom' &&
+      abilityId !== PHANTOM_RELOAD_ALLOWED_ABILITY_ID &&
+      store.phantomPrimaryReloading
+    ) {
+      return false;
+    }
+
+    // Don't allow using abilities while a targeting mode is active.
+    if (isTargetingActive) {
       return false;
     }
 
@@ -172,7 +193,7 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
 
       const abilityState = localPlayer.abilities?.[abilityId];
       if (abilityState) {
-        if (abilityState.cooldownRemaining > 0 && abilityState.charges <= 0) return false;
+        if (getAbilityCooldownRemainingSeconds(abilityState, now) > 0 && abilityState.charges <= 0) return false;
         return abilityState.charges > 0;
       }
 
@@ -189,7 +210,7 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
       ) {
         return false;
       }
-      if (abilityState.cooldownRemaining > 0) return false;
+      if (getAbilityCooldownRemainingSeconds(abilityState, now) > 0) return false;
     }
 
     // Check ultimate charge
@@ -226,7 +247,6 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
 
   // Update active abilities and return speed multiplier
   const updateActiveAbilities = useCallback((dt: number): { speedMultiplier: number } => {
-    const frameStart = performance.now();
     const now = Date.now();
     let speedMultiplier = 1;
 
@@ -256,6 +276,7 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
                 [abilityId]: {
                   ...currentAbility,
                   cooldownRemaining: abilityDef?.cooldown ?? 0,
+                  cooldownUntil: now + (abilityDef?.cooldown ?? 0) * 1000,
                   isActive: false,
                   activatedAt: now,
                 },
@@ -267,7 +288,7 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
       }
 
       // Apply speed boosts for active abilities
-      if (abilityId === 'phantom_veil') speedMultiplier *= 1.3;
+      if (abilityId === 'phantom_veil') speedMultiplier *= PHANTOM_VEIL_SPEED_MULTIPLIER;
     }
 
     const cooldownAdjustmentMs = (tempoMultiplier - 1) * Math.max(0, dt) * 1000;
@@ -302,8 +323,6 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
     }
 
     speedMultiplier *= tempoMultiplier;
-
-    recordSystemTime('abilitySystem', performance.now() - frameStart);
 
     return { speedMultiplier };
   }, [setClientCharges, setClientCooldown, startClientCooldown]);

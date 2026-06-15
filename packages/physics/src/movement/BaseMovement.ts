@@ -15,6 +15,7 @@ import {
   BHOP_STOP_SPEED,
   BHOP_TIMING_WINDOW,
   BHOP_LANDING_SPEED_RETENTION,
+  resolveDirectionalMovementIntent,
 } from '@voxel-strike/shared';
 import { vec3Length, createVec3 } from '@voxel-strike/shared';
 import type { PhysicsWorld } from '../PhysicsWorld.js';
@@ -117,24 +118,11 @@ export class BaseMovement {
     }
 
     // Calculate wish direction (the direction player wants to move)
+    const movementIntent = resolveDirectionalMovementIntent(playerInput);
     const wishDir = createVec3();
-    
-    if (playerInput.moveForward) {
-      wishDir.x += forward.x;
-      wishDir.z += forward.z;
-    }
-    if (playerInput.moveBackward) {
-      wishDir.x -= forward.x;
-      wishDir.z -= forward.z;
-    }
-    if (playerInput.moveLeft) {
-      wishDir.x -= right.x;
-      wishDir.z -= right.z;
-    }
-    if (playerInput.moveRight) {
-      wishDir.x += right.x;
-      wishDir.z += right.z;
-    }
+
+    wishDir.x = right.x * movementIntent.localX - forward.x * movementIntent.localZ;
+    wishDir.z = right.z * movementIntent.localX - forward.z * movementIntent.localZ;
 
     // Normalize wish direction
     const wishDirLen = vec3Length(wishDir);
@@ -144,8 +132,8 @@ export class BaseMovement {
     }
 
     // Calculate target speed (wish speed)
-    let wishSpeed = this.moveSpeed;
-    if (playerInput.sprint && !playerInput.crouch) {
+    let wishSpeed = this.moveSpeed * movementIntent.speedMultiplier;
+    if (playerInput.sprint && movementIntent.allowsSprint && !playerInput.crouch) {
       wishSpeed *= SPRINT_MULTIPLIER;
     }
     if (playerInput.crouch) {

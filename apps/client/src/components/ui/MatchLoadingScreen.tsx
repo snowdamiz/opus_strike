@@ -3,10 +3,21 @@ import { LobbyBackdrop } from './LobbyBackdrop';
 
 interface MatchLoadingScreenProps {
   isComplete?: boolean;
+  progress?: number;
+  label?: string;
 }
 
-export function MatchLoadingScreen({ isComplete = false }: MatchLoadingScreenProps) {
+export function MatchLoadingScreen({
+  isComplete = false,
+  progress: coordinatorProgress,
+  label = 'Systems',
+}: MatchLoadingScreenProps) {
   const [progress, setProgress] = useState(8);
+  const targetProgress = isComplete
+    ? 100
+    : typeof coordinatorProgress === 'number'
+      ? Math.min(99, Math.max(8, coordinatorProgress * 100))
+      : 92;
 
   useEffect(() => {
     if (isComplete) {
@@ -16,14 +27,18 @@ export function MatchLoadingScreen({ isComplete = false }: MatchLoadingScreenPro
 
     const interval = window.setInterval(() => {
       setProgress((current) => {
-        if (current >= 92) return current;
+        if (current >= targetProgress) return current;
         const increment = current < 50 ? 5.5 : current < 76 ? 2.2 : 0.65;
-        return Math.min(92, current + increment);
+        return Math.min(targetProgress, current + increment);
       });
     }, 140);
 
     return () => window.clearInterval(interval);
-  }, [isComplete]);
+  }, [isComplete, targetProgress]);
+
+  useEffect(() => {
+    setProgress((current) => Math.max(current, Math.min(targetProgress, current + 0.01)));
+  }, [targetProgress]);
 
   const percent = Math.round(progress);
 
@@ -67,7 +82,7 @@ export function MatchLoadingScreen({ isComplete = false }: MatchLoadingScreenPro
 
           <div className="mt-4 flex items-center justify-between gap-4 font-body text-[11px] uppercase tracking-[0.26em] text-white/35">
             <span>World</span>
-            <span>Systems</span>
+            <span>{label}</span>
             <span>Spawn</span>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useState } from 'react';
-import type { MeshStandardMaterial } from 'three';
+import type { Material } from 'three';
 import type { VoxelChunk, VoxelMapManifest } from '@voxel-strike/shared';
+import type { VoxelChunkRegion } from '../../../utils/mapWarmup/mapPrepCache';
 import {
   buildVoxelChunkGeometry,
   buildVoxelRegionGeometry,
@@ -12,20 +13,14 @@ import {
 interface VoxelChunkMeshProps {
   chunk: VoxelChunk;
   manifest: VoxelMapManifest;
-  material: MeshStandardMaterial;
+  material: Material;
   shadowsEnabled: boolean;
-}
-
-export interface VoxelChunkRegion {
-  id: string;
-  chunks: VoxelChunk[];
-  castShadow: boolean;
 }
 
 interface VoxelRegionMeshProps {
   region: VoxelChunkRegion;
   manifest: VoxelMapManifest;
-  material: MeshStandardMaterial;
+  material: Material;
   shadowsEnabled: boolean;
   buildMode?: VoxelMeshBuildMode;
   onGeometryReady?: (regionId: string) => void;
@@ -86,7 +81,7 @@ export const VoxelRegionMesh = memo(function VoxelRegionMesh({
         if (!cancelled) setGeometry(nextGeometry);
       })
       .catch((error) => {
-        console.warn('[VoxelMap] Failed to build region mesh', region.id, error);
+        if (!cancelled) console.warn('[VoxelMap] Failed to build region mesh', region.id, error);
       });
 
     return () => {

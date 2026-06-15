@@ -3,6 +3,7 @@ import type { Vec3 } from '../../types/vector.js';
 import { clamp, lerp } from '../../utils/math.js';
 import { clampToBoundaryPolygon } from './boundaries.js';
 import {
+  PROCEDURAL_MAP_FOOTPRINT_SCALE,
   PROCEDURAL_MAP_SCALE,
   PROCEDURAL_VOXEL_SIZE,
   createProceduralCTFLayout,
@@ -58,14 +59,6 @@ export interface MapConstructionResult {
   moduleDefinitions: ModuleDefinition[];
 }
 
-export interface TerrainConstraintSample {
-  influence: number;
-  targetHeightRows: number | null;
-  maxStepRows: number;
-  priority: number;
-  constraintIds: string[];
-}
-
 export interface CompiledMapDiagnosticInput {
   stats: VoxelMapStats;
   stageTimingsMs?: Record<string, number>;
@@ -91,6 +84,15 @@ const STREAM_NAMES = [
 const TOPOLOGIES: MapTopologyId[] = ['lane_triad', 'diamond', 'hourglass', 'ring', 'split_level'];
 const DEFAULT_PAD_HEIGHT_ROWS = Math.round(5 / PROCEDURAL_VOXEL_SIZE.y);
 const PLAYER_TRAVEL_SPEED = 7.6;
+const OPTIONAL_GENERATED_SLOT_ROLES = new Set<TacticalSlotRole>([
+  'defender_perch',
+  'flank_landmark',
+  'soft_cover_cluster',
+  'underpass',
+  'elevated_bridge',
+  'traversal_ramp',
+  'tunnel_entrance',
+]);
 
 export const MAP_MODULE_DEFINITIONS: ModuleDefinition[] = [
   {
@@ -373,7 +375,7 @@ function createDesignBrief(seed: number, theme: VoxelMapTheme, topologyId?: MapT
   const performanceBudget: MapPerformanceBudget = {
     maxSolidBlocks: 1_750_000,
     maxColliders: 48_000,
-    maxRenderableChunks: 1_100,
+    maxRenderableChunks: Math.round(1_100 * PROCEDURAL_MAP_FOOTPRINT_SCALE ** 2),
     maxGenerationMs: 900,
   };
 
@@ -568,6 +570,7 @@ function createSpawnCluster(team: MapTeam, points: Vec3[], flag: Vec3, outward: 
 }
 
 function createProtectedZones(bases: TeamMap<BaseZone>, flags: TeamMap<FlagZone>, spawns: TeamMap<SpawnCluster>, lanes: LaneDescriptor[], nodes: RouteGraphNode[]): ProtectedZone[] {
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const zones: ProtectedZone[] = [
     {
       id: 'red_base_protected',
@@ -618,9 +621,11 @@ function createProtectedZones(bases: TeamMap<BaseZone>, flags: TeamMap<FlagZone>
   ];
 
   for (const laneDescriptor of lanes) {
-    const laneNodes = laneDescriptor.nodeIds
-      .map((nodeId) => nodes.find((node) => node.id === nodeId))
-      .filter((node): node is RouteGraphNode => Boolean(node));
+    const laneNodes: RouteGraphNode[] = [];
+    for (const nodeId of laneDescriptor.nodeIds) {
+      const node = nodesById.get(nodeId);
+      if (node) laneNodes.push(node);
+    }
     zones.push({
       id: `${laneDescriptor.id}_route_clearance`,
       kind: 'route',
@@ -907,9 +912,11 @@ function createTerrainConstraints(
   }
 
   for (const laneDescriptor of lanes) {
-    const points = laneDescriptor.nodeIds
-      .map((nodeId) => nodesById.get(nodeId)?.position)
-      .filter((point): point is Vec3 => Boolean(point));
+    const points: Vec3[] = [];
+    for (const nodeId of laneDescriptor.nodeIds) {
+      const point = nodesById.get(nodeId)?.position;
+      if (point) points.push(point);
+    }
     constraints.push({
       id: `${laneDescriptor.id}_centerline`,
       kind: 'lane_centerline',
@@ -1063,9 +1070,29 @@ function scoreBlueprint(
   spawns: TeamMap<SpawnCluster>,
   boundary: BoundaryPoint[]
 ): Pick<MapDiagnostics, 'score' | 'scoreBreakdown' | 'warnings' | 'routeChoiceCount' | 'laneLengths' | 'laneWidths' | 'coverDensityByLane' | 'maxSightlineLength' | 'flagApproachClearances'> & { rejectedReasons: string[] } {
-  const primary = lanes.find((laneDescriptor) => laneDescriptor.id === 'primary') ?? lanes[0];
-  const flankLengths = lanes.filter((laneDescriptor) => laneDescriptor.kind === 'flank').map((laneDescriptor) => laneDescriptor.expectedDistance);
-  const averageFlank = flankLengths.reduce((sum, value) => sum + value, 0) / Math.max(1, flankLengths.length);
+  let primary: LaneDescriptor | undefined = lanes[0];
+  let flankLengthTotal = 0;
+  let flankLengthCount = 0;
+  let routeChoices = 0;
+  const laneLengths: Record<string, number> = {};
+  const laneWidths: Record<string, number> = {};
+  const coverDensityByLane: Record<string, number> = {};
+
+  for (const laneDescriptor of lanes) {
+    if (laneDescriptor.id === 'primary') primary = laneDescriptor;
+    if (laneDescriptor.kind === 'flank') {
+      flankLengthTotal += laneDescriptor.expectedDistance;
+      flankLengthCount++;
+    }
+    if (laneDescriptor.kind === 'primary' || laneDescriptor.kind === 'flank') {
+      routeChoices++;
+    }
+    laneLengths[laneDescriptor.id] = laneDescriptor.expectedDistance;
+    laneWidths[laneDescriptor.id] = laneDescriptor.width;
+    coverDensityByLane[laneDescriptor.id] = laneDescriptor.coverDensityTarget;
+  }
+
+  const averageFlank = flankLengthTotal / Math.max(1, flankLengthCount);
   const routeBalance = primary ? 1 - clamp(Math.abs(primary.expectedDistance - averageFlank) / Math.max(1, primary.expectedDistance), 0, 1) : 0.5;
   const spawnFlagBalance =
     1 -
@@ -1075,7 +1102,7 @@ function scoreBlueprint(
       0,
       1
     );
-  const routeChoices = Math.max(1, lanes.filter((laneDescriptor) => laneDescriptor.kind === 'primary' || laneDescriptor.kind === 'flank').length);
+  routeChoices = Math.max(1, routeChoices);
   const routeChoiceScore = clamp(routeChoices / 3, 0, 1);
   const slotCoverage = clamp(slots.length / 14, 0, 1);
   const boundaryClearance = Math.min(
@@ -1115,13 +1142,11 @@ function scoreBlueprint(
   if (protectedOverlapPenalty > 0.12) rejectedReasons.push(`${candidateId}: protected zones overlap heavily`);
   if (score < 58) warnings.push('low semantic layout score');
 
-  const laneLengths = Object.fromEntries(lanes.map((laneDescriptor) => [laneDescriptor.id, laneDescriptor.expectedDistance]));
-  const laneWidths = Object.fromEntries(lanes.map((laneDescriptor) => [laneDescriptor.id, laneDescriptor.width]));
-  const coverDensityByLane = Object.fromEntries(lanes.map((laneDescriptor) => [laneDescriptor.id, laneDescriptor.coverDensityTarget]));
-  const maxSightlineLength = Math.max(
-    ...routeGraph.edges.map((edge) => edge.distance),
-    distance2D(spawns.red.center, spawns.blue.center)
-  );
+  let maxRouteEdgeDistance = 0;
+  for (const edge of routeGraph.edges) {
+    maxRouteEdgeDistance = Math.max(maxRouteEdgeDistance, edge.distance);
+  }
+  const maxSightlineLength = Math.max(maxRouteEdgeDistance, distance2D(spawns.red.center, spawns.blue.center));
   const flagApproachClearances: TeamMap<number> = {
     red: distanceToBoundary(flags.red.center.x, flags.red.center.z, boundary),
     blue: distanceToBoundary(flags.blue.center.x, flags.blue.center.z, boundary),
@@ -1373,54 +1398,6 @@ export function createProceduralMapPreview(seed = 0): ProceduralMapPreview {
   };
 }
 
-export function sampleTerrainConstraints(
-  constraints: TerrainConstraint[],
-  worldX: number,
-  worldZ: number
-): TerrainConstraintSample {
-  let influence = 0;
-  let targetHeightRows: number | null = null;
-  let maxStepRows = 3;
-  let priority = 0;
-  const constraintIds: string[] = [];
-
-  for (const constraint of constraints) {
-    let distance = Infinity;
-    if (constraint.center) {
-      distance = distance2D({ x: worldX, z: worldZ }, constraint.center);
-    }
-    if (constraint.points && constraint.points.length > 1) {
-      for (let index = 1; index < constraint.points.length; index++) {
-        distance = Math.min(distance, distanceToSegment({ x: worldX, z: worldZ }, constraint.points[index - 1], constraint.points[index]));
-      }
-    }
-
-    const radius = Math.max(0.001, constraint.radius);
-    if (distance > radius) continue;
-
-    const localInfluence = Math.pow(1 - distance / radius, 1.7) * constraint.priority;
-    if (localInfluence <= 0.001) continue;
-
-    constraintIds.push(constraint.id);
-    if (localInfluence > influence) {
-      influence = localInfluence;
-      targetHeightRows = constraint.targetHeightRows ?? targetHeightRows;
-      maxStepRows = constraint.maxStepRows;
-      priority = constraint.priority;
-    } else if (constraint.targetHeightRows !== undefined && targetHeightRows !== null) {
-      targetHeightRows = Math.round(lerp(targetHeightRows, constraint.targetHeightRows, localInfluence / Math.max(influence, 0.001)));
-    }
-  }
-
-  return {
-    influence: clamp(influence, 0, 1),
-    targetHeightRows,
-    maxStepRows,
-    priority,
-    constraintIds,
-  };
-}
-
 export function finalizeCompiledMapDiagnostics(
   blueprint: MapBlueprint,
   input: CompiledMapDiagnosticInput
@@ -1448,8 +1425,14 @@ export function finalizeCompiledMapDiagnostics(
   if (input.stats.solidBlocks > 0 && input.stats.solidBlocks > 0.9 * 1_750_000) {
     diagnostics.warnings.push('solid block count is close to budget');
   }
-  if (input.rejectedModuleReasons && Object.keys(input.rejectedModuleReasons).length > 0) {
-    diagnostics.warnings.push('one or more planned modules were rejected by local validators');
+  const slotRoles = new Map(blueprint.tacticalSlots.map((slot) => [slot.id, slot.role]));
+  const rejectedCriticalSlots = blueprint.moduleInstances.filter(
+    (instance) =>
+      instance.validation.status !== 'accepted' &&
+      !OPTIONAL_GENERATED_SLOT_ROLES.has(slotRoles.get(instance.slotId) ?? 'soft_cover_cluster')
+  );
+  if (rejectedCriticalSlots.length > 0) {
+    diagnostics.warnings.push('one or more critical tactical slots did not receive generated map geometry');
   }
   if ((input.repairActions?.spawn_sightline_baffle ?? 0) > 0) {
     diagnostics.warnings.push('spawn sightline needed voxel-level repair');

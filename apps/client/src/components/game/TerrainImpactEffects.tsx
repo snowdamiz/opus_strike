@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
@@ -9,9 +9,13 @@ import {
   SHARED_GEOMETRIES,
 } from './effectResources';
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
-import { recordSpawnMarker, recordSystemTime, registerFrameSystem } from '../../utils/perfMarks';
 import { getFrameClock } from '../../utils/frameClock';
 import type { EffectQualityConfig } from './visualQuality';
+import {
+  MOVEMENT_DIAGNOSTICS_ENABLED,
+  measureFrameWork,
+  recordEffectSlotDiagnostics,
+} from '../../movement/networkDiagnostics';
 
 export type TerrainImpactKind =
   | 'blaze_rocket'
@@ -21,21 +25,8 @@ export type TerrainImpactKind =
   | 'hookshot_hook'
   | 'hookshot_drag_hook'
   | 'hookshot_grapple'
-  | 'hookshot_trap'
+  | 'hookshot_ground_hooks'
   | 'earth_wall';
-
-interface TerrainImpactData {
-  id: string;
-  kind: TerrainImpactKind;
-  position: { x: number; y: number; z: number };
-  normal: { x: number; y: number; z: number };
-  direction?: { x: number; y: number; z: number };
-  startTime: number;
-  frameStartTime: number;
-  duration: number;
-  scale: number;
-  seed: number;
-}
 
 interface TerrainImpactOptions {
   normal?: { x: number; y: number; z: number };
@@ -66,9 +57,7 @@ interface ImpactStyle {
   debrisShape: 'sphere' | 'box' | 'cone';
 }
 
-const terrainImpactEffects: TerrainImpactData[] = [];
 let terrainImpactIdCounter = 0;
-let terrainImpactRevision = 0;
 
 const UP = { x: 0, y: 1, z: 0 };
 const MAX_IMPACTS = 80;
@@ -78,14 +67,19 @@ let activeImpactConfig: EffectQualityConfig = {
   maxActiveParticles: 620,
   maxVisibleRemoteAbilityEffects: 48,
   enableDecorativeLights: true,
-  slideSpeedLineCount: 36,
 };
 const PHANTOM_DIRE_IMPACT_CAPACITY = 48;
 const PHANTOM_DIRE_IMPACT_PARTICLES = 10;
 const PHANTOM_DIRE_IMPACT_SMOKE = 1;
+const GENERIC_IMPACT_CAPACITY = MAX_IMPACTS;
+const GENERIC_IMPACT_MAX_PARTICLES = 16;
+const GENERIC_IMPACT_MAX_SMOKE = 6;
 const PHANTOM_DIRE_IMPACT_INDICES = Array.from({ length: PHANTOM_DIRE_IMPACT_CAPACITY }, (_, i) => i);
 const PHANTOM_DIRE_PARTICLE_INDICES = Array.from({ length: PHANTOM_DIRE_IMPACT_PARTICLES }, (_, i) => i);
 const PHANTOM_DIRE_SMOKE_INDICES = Array.from({ length: PHANTOM_DIRE_IMPACT_SMOKE }, (_, i) => i);
+const GENERIC_IMPACT_INDICES = Array.from({ length: GENERIC_IMPACT_CAPACITY }, (_, i) => i);
+const GENERIC_PARTICLE_INDICES = Array.from({ length: GENERIC_IMPACT_MAX_PARTICLES }, (_, i) => i);
+const GENERIC_SMOKE_INDICES = Array.from({ length: GENERIC_IMPACT_MAX_SMOKE }, (_, i) => i);
 const IMPACT_UP_VECTOR = new THREE.Vector3(0, 1, 0);
 const impactNormalVector = new THREE.Vector3();
 
@@ -229,7 +223,7 @@ function getImpactStyle(kind: TerrainImpactKind): ImpactStyle {
         additive: true,
         debrisShape: 'cone',
       };
-    case 'hookshot_trap':
+    case 'hookshot_ground_hooks':
       return {
         duration: 720,
         scale: 1.2,
@@ -327,6 +321,33 @@ interface PhantomDireImpactRenderSlot {
   light: THREE.PointLight | null;
 }
 
+interface PooledGenericImpactSlot {
+  active: boolean;
+  id: number;
+  kind: TerrainImpactKind;
+  style: ImpactStyle;
+  position: { x: number; y: number; z: number };
+  quaternion: THREE.Quaternion;
+  startTime: number;
+  duration: number;
+  scale: number;
+  seed: number;
+}
+
+interface GenericImpactRenderSlot {
+  boundId: number;
+  group: THREE.Group | null;
+  flash: THREE.Mesh | null;
+  core: THREE.Mesh | null;
+  outer: THREE.Mesh | null;
+  ring: THREE.Mesh | null;
+  ring2: THREE.Mesh | null;
+  particles: Array<THREE.Mesh | null>;
+  smoke: Array<THREE.Mesh | null>;
+  light: THREE.PointLight | null;
+  materials: Map<string, THREE.MeshBasicMaterial>;
+}
+
 const phantomDireImpactSlots: PooledPhantomDireImpactSlot[] = Array.from(
   { length: PHANTOM_DIRE_IMPACT_CAPACITY },
   () => ({
@@ -341,7 +362,25 @@ const phantomDireImpactSlots: PooledPhantomDireImpactSlot[] = Array.from(
   })
 );
 
+const DEFAULT_GENERIC_IMPACT_STYLE = getImpactStyle('hookshot_hook');
+const genericImpactSlots: PooledGenericImpactSlot[] = Array.from(
+  { length: GENERIC_IMPACT_CAPACITY },
+  () => ({
+    active: false,
+    id: 0,
+    kind: 'hookshot_hook',
+    style: DEFAULT_GENERIC_IMPACT_STYLE,
+    position: { x: 0, y: 0, z: 0 },
+    quaternion: new THREE.Quaternion(),
+    startTime: 0,
+    duration: DEFAULT_GENERIC_IMPACT_STYLE.duration,
+    scale: DEFAULT_GENERIC_IMPACT_STYLE.scale,
+    seed: 0,
+  })
+);
+
 let nextPhantomDireImpactSlot = 0;
+let nextGenericImpactSlot = 0;
 
 function ensurePhantomDireRenderSlot(
   slots: PhantomDireImpactRenderSlot[],
@@ -359,6 +398,30 @@ function ensurePhantomDireRenderSlot(
       particles: [],
       smoke: [],
       light: null,
+    };
+    slots[index] = slot;
+  }
+  return slot;
+}
+
+function ensureGenericImpactRenderSlot(
+  slots: GenericImpactRenderSlot[],
+  index: number
+): GenericImpactRenderSlot {
+  let slot = slots[index];
+  if (!slot) {
+    slot = {
+      boundId: -1,
+      group: null,
+      flash: null,
+      core: null,
+      outer: null,
+      ring: null,
+      ring2: null,
+      particles: [],
+      smoke: [],
+      light: null,
+      materials: new Map(),
     };
     slots[index] = slot;
   }
@@ -393,33 +456,130 @@ function claimPooledPhantomDireImpact(
   slot.seed = Math.random() * Math.PI * 2;
 }
 
-function compactActiveTerrainImpacts(frameNow: number): boolean {
-  let writeIndex = 0;
-  let changed = false;
-
-  for (let readIndex = 0; readIndex < terrainImpactEffects.length; readIndex++) {
-    const effect = terrainImpactEffects[readIndex];
-    if (frameNow - effect.frameStartTime < effect.duration) {
-      if (writeIndex !== readIndex) changed = true;
-      terrainImpactEffects[writeIndex] = effect;
-      writeIndex++;
+function countActiveGenericImpacts(frameNow: number): number {
+  let activeCount = 0;
+  for (const slot of genericImpactSlots) {
+    if (slot.active && frameNow - slot.startTime < slot.duration) {
+      activeCount++;
     } else {
-      changed = true;
+      slot.active = false;
+    }
+  }
+  return activeCount;
+}
+
+function countActivePhantomDireImpacts(frameNow: number): number {
+  let activeCount = 0;
+  for (const slot of phantomDireImpactSlots) {
+    if (slot.active && frameNow - slot.startTime < slot.duration) {
+      activeCount++;
+    }
+  }
+  return activeCount;
+}
+
+function countVisibleGenericImpacts(frameNow: number): number {
+  let activeCount = 0;
+  for (const slot of genericImpactSlots) {
+    if (slot.active && frameNow - slot.startTime < slot.duration) {
+      activeCount++;
+    }
+  }
+  return activeCount;
+}
+
+function recordTerrainImpactDiagnostics(frameNow: number, config: EffectQualityConfig): void {
+  if (!MOVEMENT_DIAGNOSTICS_ENABLED) return;
+
+  const phantomActive = countActivePhantomDireImpacts(frameNow);
+  const genericActive = countVisibleGenericImpacts(frameNow);
+  const genericCapacity = Math.min(GENERIC_IMPACT_CAPACITY, Math.max(0, config.maxActiveImpacts));
+  const totalCapacity = PHANTOM_DIRE_IMPACT_CAPACITY + genericCapacity;
+  const totalActive = phantomActive + genericActive;
+
+  recordEffectSlotDiagnostics('terrainImpacts', {
+    active: totalActive,
+    capacity: totalCapacity,
+    hiddenMounted: Math.max(0, totalCapacity - totalActive),
+  });
+  recordEffectSlotDiagnostics('terrainImpactGeneric', {
+    active: genericActive,
+    capacity: genericCapacity,
+    hiddenMounted: Math.max(0, genericCapacity - genericActive),
+  });
+  recordEffectSlotDiagnostics('terrainImpactPhantomDire', {
+    active: phantomActive,
+    capacity: PHANTOM_DIRE_IMPACT_CAPACITY,
+    hiddenMounted: Math.max(0, PHANTOM_DIRE_IMPACT_CAPACITY - phantomActive),
+  });
+}
+
+function chooseGenericImpactSlot(frameNow: number, maxActiveImpacts: number): PooledGenericImpactSlot | null {
+  if (maxActiveImpacts <= 0) return null;
+
+  const activeCount = countActiveGenericImpacts(frameNow);
+  if (activeCount >= maxActiveImpacts) {
+    let oldestSlot: PooledGenericImpactSlot | null = null;
+    for (const slot of genericImpactSlots) {
+      if (!slot.active) continue;
+      if (!oldestSlot || slot.startTime < oldestSlot.startTime) {
+        oldestSlot = slot;
+      }
+    }
+    return oldestSlot;
+  }
+
+  for (let offset = 0; offset < GENERIC_IMPACT_CAPACITY; offset++) {
+    const slotIndex = (nextGenericImpactSlot + offset) % GENERIC_IMPACT_CAPACITY;
+    const slot = genericImpactSlots[slotIndex];
+    if (!slot.active) {
+      nextGenericImpactSlot = (slotIndex + 1) % GENERIC_IMPACT_CAPACITY;
+      return slot;
     }
   }
 
-  if (terrainImpactEffects.length !== writeIndex) {
-    terrainImpactEffects.length = writeIndex;
-  }
-
-  return changed;
+  return null;
 }
 
-function syncActiveTerrainImpacts(activeEffects: TerrainImpactData[]): void {
-  activeEffects.length = terrainImpactEffects.length;
-  for (let i = 0; i < terrainImpactEffects.length; i++) {
-    activeEffects[i] = terrainImpactEffects[i];
+function writeImpactSurfaceTransform(
+  slot: Pick<PooledGenericImpactSlot, 'position' | 'quaternion'>,
+  position: { x: number; y: number; z: number },
+  normal: { x: number; y: number; z: number }
+): void {
+  impactNormalVector.set(normal.x, normal.y, normal.z);
+  if (impactNormalVector.lengthSq() < 0.0001) {
+    impactNormalVector.set(0, 1, 0);
+  } else {
+    impactNormalVector.normalize();
   }
+
+  slot.position.x = position.x + impactNormalVector.x * 0.04;
+  slot.position.y = position.y + impactNormalVector.y * 0.04;
+  slot.position.z = position.z + impactNormalVector.z * 0.04;
+  slot.quaternion.setFromUnitVectors(IMPACT_UP_VECTOR, impactNormalVector);
+}
+
+function claimGenericImpact(
+  kind: TerrainImpactKind,
+  style: ImpactStyle,
+  position: { x: number; y: number; z: number },
+  normal: { x: number; y: number; z: number },
+  scale: number,
+  frameNow: number
+): void {
+  const maxActiveImpacts = Math.min(GENERIC_IMPACT_CAPACITY, activeImpactConfig.maxActiveImpacts);
+  const slot = chooseGenericImpactSlot(frameNow, maxActiveImpacts);
+  if (!slot) return;
+
+  slot.active = true;
+  slot.id = terrainImpactIdCounter++;
+  slot.kind = kind;
+  slot.style = style;
+  writeImpactSurfaceTransform(slot, position, normal);
+  slot.startTime = frameNow;
+  slot.duration = style.duration;
+  slot.scale = scale;
+  slot.seed = Math.random() * Math.PI * 2;
 }
 
 export function triggerTerrainImpact(
@@ -431,124 +591,32 @@ export function triggerTerrainImpact(
 
   const style = getImpactStyle(kind);
   const normal = options.normal ?? UP;
-  const now = Date.now();
   const frameNow = getFrameClock().nowMs;
 
   if (kind === 'phantom_dire_ball') {
     const activePooledImpacts = phantomDireImpactSlots.reduce((count, slot) => count + (slot.active ? 1 : 0), 0);
     if (activePooledImpacts >= activeImpactConfig.maxActiveImpacts) return;
     claimPooledPhantomDireImpact(position, normal, (options.scale ?? 1) * style.scale, frameNow);
-    recordSpawnMarker('impact:phantomDireBall');
-    terrainImpactRevision++;
     return;
   }
 
-  terrainImpactEffects.push({
-    id: `terrain_impact_${terrainImpactIdCounter++}`,
-    kind,
-    position: { ...position },
-    normal: { ...normal },
-    direction: options.direction ? { ...options.direction } : undefined,
-    startTime: now,
-    frameStartTime: frameNow,
-    duration: style.duration,
-    scale: (options.scale ?? 1) * style.scale,
-    seed: Math.random() * Math.PI * 2,
-  });
-
-  const maxImpacts = Math.min(MAX_IMPACTS, activeImpactConfig.maxActiveImpacts);
-  if (terrainImpactEffects.length > maxImpacts) {
-    terrainImpactEffects.splice(0, terrainImpactEffects.length - maxImpacts);
-  }
-
-  terrainImpactRevision++;
-}
-
-export function prewarmTerrainImpactResources(renderer?: THREE.WebGLRenderer): void {
-  if (!renderer) return;
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
-  camera.position.z = 4;
-
-  const flashMaterial = new THREE.MeshBasicMaterial({
-    color: PHANTOM_DIRE_IMPACT_STYLE.flashColor,
-    transparent: true,
-    opacity: 0.8,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const coreMaterial = new THREE.MeshBasicMaterial({
-    color: PHANTOM_DIRE_IMPACT_STYLE.coreColor,
-    transparent: true,
-    opacity: 0.8,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const ringMaterial = new THREE.MeshBasicMaterial({
-    color: PHANTOM_DIRE_IMPACT_STYLE.ringColor,
-    transparent: true,
-    opacity: 0.7,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const smokeMaterial = new THREE.MeshBasicMaterial({
-    color: PHANTOM_DIRE_IMPACT_STYLE.smokeColor,
-    transparent: true,
-    opacity: 0.3,
-    depthWrite: false,
-  });
-
-  const flash = new THREE.Mesh(SHARED_GEOMETRIES.sphere8, flashMaterial);
-  const core = new THREE.Mesh(SHARED_GEOMETRIES.sphere8, coreMaterial);
-  const ring = new THREE.Mesh(SHARED_GEOMETRIES.ring24, ringMaterial);
-  const particle = new THREE.Mesh(SHARED_GEOMETRIES.sphere8, coreMaterial);
-  const smoke = new THREE.Mesh(SHARED_GEOMETRIES.sphere8, smokeMaterial);
-  flash.scale.setScalar(0.5);
-  core.scale.setScalar(0.7);
-  ring.scale.setScalar(1.2);
-  particle.scale.setScalar(0.08);
-  smoke.scale.setScalar(0.2);
-  scene.add(flash, core, ring, particle, smoke);
-
-  renderer.compile(scene, camera);
-  flashMaterial.dispose();
-  coreMaterial.dispose();
-  ringMaterial.dispose();
-  smokeMaterial.dispose();
+  claimGenericImpact(kind, style, position, normal, (options.scale ?? 1) * style.scale, frameNow);
 }
 
 export function TerrainImpactEffectsManager({ config }: { config: EffectQualityConfig }) {
-  const activeEffectsRef = useRef<TerrainImpactData[]>([]);
   const phantomRenderSlotsRef = useRef<PhantomDireImpactRenderSlot[]>([]);
-  const lastCountRef = useRef(0);
-  const lastRevisionRef = useRef(0);
-  const [, setVersion] = useState(0);
-
-  useEffect(() => registerFrameSystem('terrain-impacts'), []);
+  const genericRenderSlotsRef = useRef<GenericImpactRenderSlot[]>([]);
   useEffect(() => {
     activeImpactConfig = config;
   }, [config]);
 
   useFrame(() => {
-    const frameStart = performance.now();
     const frameNow = getFrameClock().nowMs;
-    const changed = compactActiveTerrainImpacts(frameNow);
-    syncActiveTerrainImpacts(activeEffectsRef.current);
-    updatePooledPhantomDireImpacts(phantomRenderSlotsRef.current, frameNow);
-
-    if (
-      changed ||
-      activeEffectsRef.current.length !== lastCountRef.current ||
-      terrainImpactRevision !== lastRevisionRef.current
-    ) {
-      lastCountRef.current = activeEffectsRef.current.length;
-      lastRevisionRef.current = terrainImpactRevision;
-      setVersion(v => v + 1);
-    }
-
-    recordSystemTime('terrainImpacts', performance.now() - frameStart);
+    measureFrameWork('frame.effects.terrainImpacts', () => {
+      updatePooledPhantomDireImpacts(phantomRenderSlotsRef.current, frameNow);
+      updatePooledGenericImpacts(genericRenderSlotsRef.current, frameNow);
+    });
+    recordTerrainImpactDiagnostics(frameNow, config);
   });
 
   return (
@@ -557,9 +625,10 @@ export function TerrainImpactEffectsManager({ config }: { config: EffectQualityC
         renderSlots={phantomRenderSlotsRef.current}
         enableDecorativeLights={config.enableDecorativeLights}
       />
-      {activeEffectsRef.current.map(effect => (
-        <TerrainImpactBurst key={effect.id} effect={effect} enableDecorativeLights={config.enableDecorativeLights} />
-      ))}
+      <PooledGenericImpactSlots
+        renderSlots={genericRenderSlotsRef.current}
+        enableDecorativeLights={config.enableDecorativeLights}
+      />
     </group>
   );
 }
@@ -754,197 +823,287 @@ function PooledPhantomDireImpactSlots({
   );
 }
 
-interface ParticleConfig {
-  angle: number;
-  speed: number;
-  lift: number;
-  size: number;
-  colorIndex: number;
-  spin: number;
+function getDebrisGeometry(shape: ImpactStyle['debrisShape']): THREE.BufferGeometry {
+  if (shape === 'box') return SHARED_GEOMETRIES.box;
+  if (shape === 'cone') return SHARED_GEOMETRIES.cone6;
+  return SHARED_GEOMETRIES.sphere8;
 }
 
-function TerrainImpactBurst({ effect, enableDecorativeLights }: { effect: TerrainImpactData; enableDecorativeLights: boolean }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const flashRef = useRef<THREE.Mesh>(null);
-  const coreRef = useRef<THREE.Mesh>(null);
-  const outerRef = useRef<THREE.Mesh>(null);
-  const ringRef = useRef<THREE.Mesh>(null);
-  const ring2Ref = useRef<THREE.Mesh>(null);
-  const particleRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const smokeRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const lightRef = useRef<THREE.PointLight>(null);
-  const style = useMemo(() => getImpactStyle(effect.kind), [effect.kind]);
+function getGenericImpactMaterial(
+  renderSlot: GenericImpactRenderSlot,
+  key: string,
+  color: number,
+  opacity: number,
+  additive: boolean,
+  side: THREE.Side = THREE.FrontSide
+): THREE.MeshBasicMaterial {
+  let material = renderSlot.materials.get(key);
+  if (!material) {
+    material = new THREE.MeshBasicMaterial({
+      color,
+      opacity,
+      transparent: true,
+      depthWrite: false,
+      blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+      side,
+      toneMapped: false,
+    });
+    renderSlot.materials.set(key, material);
+  } else {
+    material.opacity = opacity;
+  }
+  return material;
+}
 
-  const orientation = useMemo(() => {
-    const normal = new THREE.Vector3(effect.normal.x, effect.normal.y, effect.normal.z);
-    if (normal.lengthSq() < 0.0001) normal.set(0, 1, 0);
-    normal.normalize();
-    return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
-  }, [effect.normal.x, effect.normal.y, effect.normal.z]);
+function assignGenericImpactMaterial(
+  renderSlot: GenericImpactRenderSlot,
+  mesh: THREE.Mesh | null,
+  role: string,
+  color: number,
+  opacity: number,
+  additive: boolean,
+  side: THREE.Side = THREE.FrontSide
+): void {
+  if (!mesh) return;
+  const key = `${role}:${color}:${additive ? 'add' : 'norm'}:${side}`;
+  mesh.material = getGenericImpactMaterial(renderSlot, key, color, opacity, additive, side);
+}
 
-  const impactPosition = useMemo(() => {
-    const normal = new THREE.Vector3(effect.normal.x, effect.normal.y, effect.normal.z);
-    if (normal.lengthSq() < 0.0001) normal.set(0, 1, 0);
-    normal.normalize();
-    return new THREE.Vector3(effect.position.x, effect.position.y, effect.position.z).addScaledVector(normal, 0.04);
-  }, [effect.normal.x, effect.normal.y, effect.normal.z, effect.position.x, effect.position.y, effect.position.z]);
+function configureGenericRenderSlot(renderSlot: GenericImpactRenderSlot, data: PooledGenericImpactSlot): void {
+  const style = data.style;
+  const additive = style.additive;
 
-  const particles = useMemo<ParticleConfig[]>(() => {
-    return Array.from({ length: style.particleCount }, (_, i) => ({
-      angle: effect.seed + (i / style.particleCount) * Math.PI * 2 + Math.sin(i * 12.9898 + effect.seed) * 0.32,
-      speed: style.particleSpeed * (0.65 + ((i * 37) % 17) / 35),
-      lift: style.particleLift * (0.65 + ((i * 19) % 13) / 30),
-      size: 0.045 + ((i * 23) % 11) * 0.008,
-      colorIndex: i % style.particleColors.length,
-      spin: (i % 2 === 0 ? 1 : -1) * (2 + (i % 4)),
-    }));
-  }, [effect.seed, style.particleColors.length, style.particleCount, style.particleLift, style.particleSpeed]);
+  assignGenericImpactMaterial(renderSlot, renderSlot.flash, 'flash', style.flashColor, 1, true);
+  assignGenericImpactMaterial(renderSlot, renderSlot.core, 'core', style.coreColor, 0.9, additive);
+  assignGenericImpactMaterial(renderSlot, renderSlot.outer, 'outer', style.outerColor, 0.45, additive);
+  assignGenericImpactMaterial(renderSlot, renderSlot.ring, 'ring', style.ringColor, 0.7, additive, THREE.DoubleSide);
+  assignGenericImpactMaterial(renderSlot, renderSlot.ring2, 'ring2', style.secondRingColor, 0.5, additive, THREE.DoubleSide);
 
-  const smoke = useMemo<ParticleConfig[]>(() => {
-    return Array.from({ length: style.smokeCount }, (_, i) => ({
-      angle: effect.seed * 0.7 + (i / Math.max(1, style.smokeCount)) * Math.PI * 2,
-      speed: 0.7 + i * 0.18,
-      lift: 0.9 + i * 0.2,
-      size: 0.18 + i * 0.04,
-      colorIndex: 0,
-      spin: 0,
-    }));
-  }, [effect.seed, style.smokeCount]);
+  const particleGeometry = getDebrisGeometry(style.debrisShape);
+  for (let i = 0; i < GENERIC_IMPACT_MAX_PARTICLES; i++) {
+    const particle = renderSlot.particles[i];
+    if (!particle) continue;
+    particle.visible = i < style.particleCount;
+    particle.geometry = particleGeometry;
+    assignGenericImpactMaterial(
+      renderSlot,
+      particle,
+      `particle-${i}`,
+      style.particleColors[i % style.particleColors.length],
+      1,
+      additive
+    );
+  }
 
-  useFrame(() => {
-    const elapsed = getFrameClock().nowMs - effect.frameStartTime;
-    const progress = Math.min(1, elapsed / effect.duration);
+  for (let i = 0; i < GENERIC_IMPACT_MAX_SMOKE; i++) {
+    const smoke = renderSlot.smoke[i];
+    if (!smoke) continue;
+    smoke.visible = i < style.smokeCount;
+    assignGenericImpactMaterial(renderSlot, smoke, `smoke-${i}`, style.smokeColor, 0.3, false);
+  }
+
+  if (renderSlot.light) {
+    renderSlot.light.color.setHex(style.lightColor);
+    renderSlot.light.distance = 8 * data.scale;
+  }
+
+  renderSlot.boundId = data.id;
+}
+
+function updatePooledGenericImpacts(renderSlots: GenericImpactRenderSlot[], now: number): void {
+  for (let slotIndex = 0; slotIndex < GENERIC_IMPACT_CAPACITY; slotIndex++) {
+    const data = genericImpactSlots[slotIndex];
+    const renderSlot = renderSlots[slotIndex];
+    if (!renderSlot?.group) continue;
+
+    if (!data.active) {
+      renderSlot.group.visible = false;
+      if (renderSlot.light) renderSlot.light.intensity = 0;
+      continue;
+    }
+
+    const elapsed = now - data.startTime;
+    if (elapsed >= data.duration) {
+      data.active = false;
+      renderSlot.group.visible = false;
+      if (renderSlot.light) renderSlot.light.intensity = 0;
+      continue;
+    }
+
+    if (renderSlot.boundId !== data.id) {
+      configureGenericRenderSlot(renderSlot, data);
+    }
+
+    const style = data.style;
+    const progress = Math.min(1, elapsed / data.duration);
     const easeOut = 1 - Math.pow(1 - progress, 3);
     const fade = Math.max(0, 1 - progress);
     const hotFade = Math.max(0, 1 - progress * 1.6);
-    const baseScale = effect.scale;
+    const baseScale = data.scale;
 
-    if (groupRef.current) {
-      groupRef.current.quaternion.copy(orientation);
-    }
+    renderSlot.group.visible = true;
+    renderSlot.group.position.set(data.position.x, data.position.y, data.position.z);
+    renderSlot.group.quaternion.copy(data.quaternion);
 
-    if (flashRef.current) {
+    if (renderSlot.flash) {
       const flashProgress = Math.min(1, elapsed / 80);
-      flashRef.current.scale.setScalar(baseScale * (0.28 + flashProgress * style.coreRadius * 1.3));
-      (flashRef.current.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 1 - flashProgress * 1.45);
+      renderSlot.flash.scale.setScalar(baseScale * (0.28 + flashProgress * style.coreRadius * 1.3));
+      (renderSlot.flash.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 1 - flashProgress * 1.45);
     }
 
-    if (coreRef.current) {
-      coreRef.current.scale.setScalar(baseScale * style.coreRadius * (0.45 + easeOut * 0.85));
-      (coreRef.current.material as THREE.MeshBasicMaterial).opacity = hotFade * 0.88;
+    if (renderSlot.core) {
+      renderSlot.core.scale.setScalar(baseScale * style.coreRadius * (0.45 + easeOut * 0.85));
+      (renderSlot.core.material as THREE.MeshBasicMaterial).opacity = hotFade * 0.88;
     }
 
-    if (outerRef.current) {
-      outerRef.current.scale.setScalar(baseScale * style.coreRadius * (0.8 + easeOut * 1.4));
-      (outerRef.current.material as THREE.MeshBasicMaterial).opacity = fade * 0.45;
+    if (renderSlot.outer) {
+      renderSlot.outer.scale.setScalar(baseScale * style.coreRadius * (0.8 + easeOut * 1.4));
+      (renderSlot.outer.material as THREE.MeshBasicMaterial).opacity = fade * 0.45;
     }
 
-    if (ringRef.current) {
-      const s = baseScale * (0.35 + easeOut * style.ringRadius);
-      ringRef.current.scale.set(s, s, 1);
-      (ringRef.current.material as THREE.MeshBasicMaterial).opacity = fade * 0.72;
+    if (renderSlot.ring) {
+      const ringScale = baseScale * (0.35 + easeOut * style.ringRadius);
+      renderSlot.ring.scale.set(ringScale, ringScale, 1);
+      (renderSlot.ring.material as THREE.MeshBasicMaterial).opacity = fade * 0.72;
     }
 
-    if (ring2Ref.current) {
-      const s = baseScale * (0.2 + easeOut * style.ringRadius * 0.62);
-      ring2Ref.current.scale.set(s, s, 1);
-      (ring2Ref.current.material as THREE.MeshBasicMaterial).opacity = fade * 0.5;
+    if (renderSlot.ring2) {
+      const ringScale = baseScale * (0.2 + easeOut * style.ringRadius * 0.62);
+      renderSlot.ring2.scale.set(ringScale, ringScale, 1);
+      (renderSlot.ring2.material as THREE.MeshBasicMaterial).opacity = fade * 0.5;
     }
 
     const t = elapsed / 1000;
-    particleRefs.current.forEach((particle, i) => {
-      const config = particles[i];
-      if (!particle || !config) return;
-      const lateral = config.speed * t;
-      const y = config.lift * t - style.gravity * t * t * 0.5;
+    for (let i = 0; i < style.particleCount; i++) {
+      const particle = renderSlot.particles[i];
+      if (!particle) continue;
+
+      const angle = data.seed + (i / style.particleCount) * Math.PI * 2 + Math.sin(i * 12.9898 + data.seed) * 0.32;
+      const speed = style.particleSpeed * (0.65 + ((i * 37) % 17) / 35);
+      const lift = style.particleLift * (0.65 + ((i * 19) % 13) / 30);
+      const size = 0.045 + ((i * 23) % 11) * 0.008;
+      const spin = (i % 2 === 0 ? 1 : -1) * (2 + (i % 4));
+      const lateral = speed * t;
+      const y = lift * t - style.gravity * t * t * 0.5;
+
       particle.position.set(
-        Math.cos(config.angle) * lateral,
+        Math.cos(angle) * lateral,
         Math.max(-0.08, y),
-        Math.sin(config.angle) * lateral
+        Math.sin(angle) * lateral
       );
-      particle.rotation.set(t * config.spin, t * config.spin * 0.7, t * config.spin * 1.3);
-      particle.scale.setScalar(baseScale * config.size * (1 - progress * 0.55));
+      particle.rotation.set(t * spin, t * spin * 0.7, t * spin * 1.3);
+      particle.scale.setScalar(baseScale * size * (1 - progress * 0.55));
       (particle.material as THREE.MeshBasicMaterial).opacity = Math.max(0, fade * (y > -0.04 ? 1 : 0.25));
-    });
-
-    smokeRefs.current.forEach((puff, i) => {
-      const config = smoke[i];
-      if (!puff || !config) return;
-      const smokeProgress = Math.min(1, progress * 1.15);
-      puff.position.set(
-        Math.cos(config.angle) * config.speed * smokeProgress,
-        config.lift * smokeProgress,
-        Math.sin(config.angle) * config.speed * smokeProgress
-      );
-      puff.scale.setScalar(baseScale * (config.size + smokeProgress * 0.35));
-      (puff.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.34 - smokeProgress * 0.34);
-    });
-
-    if (lightRef.current) {
-      lightRef.current.intensity = style.lightIntensity * fade;
     }
-  });
+
+    for (let i = 0; i < style.smokeCount; i++) {
+      const puff = renderSlot.smoke[i];
+      if (!puff) continue;
+
+      const smokeProgress = Math.min(1, progress * 1.15);
+      const angle = data.seed * 0.7 + (i / Math.max(1, style.smokeCount)) * Math.PI * 2;
+      const speed = 0.7 + i * 0.18;
+      const lift = 0.9 + i * 0.2;
+      const size = 0.18 + i * 0.04;
+      puff.position.set(
+        Math.cos(angle) * speed * smokeProgress,
+        lift * smokeProgress,
+        Math.sin(angle) * speed * smokeProgress
+      );
+      puff.scale.setScalar(baseScale * (size + smokeProgress * 0.35));
+      (puff.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.34 - smokeProgress * 0.34);
+    }
+
+    if (renderSlot.light) {
+      renderSlot.light.intensity = style.lightIntensity * fade;
+      renderSlot.light.distance = 8 * data.scale;
+    }
+  }
+}
+
+function disposeGenericImpactRenderSlotMaterials(renderSlots: GenericImpactRenderSlot[]): void {
+  for (const slot of renderSlots) {
+    for (const material of slot.materials.values()) {
+      material.dispose();
+    }
+    slot.materials.clear();
+  }
+}
+
+function PooledGenericImpactSlots({
+  renderSlots,
+  enableDecorativeLights,
+}: {
+  renderSlots: GenericImpactRenderSlot[];
+  enableDecorativeLights: boolean;
+}) {
+  useEffect(() => () => disposeGenericImpactRenderSlotMaterials(renderSlots), [renderSlots]);
 
   return (
-    <group ref={groupRef} position={impactPosition}>
-      <mesh ref={flashRef} geometry={SHARED_GEOMETRIES.sphere8}>
-        <meshBasicMaterial color={style.flashColor} transparent opacity={1} depthWrite={false} blending={THREE.AdditiveBlending} />
-      </mesh>
+    <>
+      {GENERIC_IMPACT_INDICES.map((slotIndex) => {
+        const slot = ensureGenericImpactRenderSlot(renderSlots, slotIndex);
+        return (
+          <group
+            key={slotIndex}
+            ref={el => { slot.group = el; }}
+            visible={false}
+          >
+            <mesh ref={el => { slot.flash = el; }} geometry={SHARED_GEOMETRIES.sphere8}>
+              <meshBasicMaterial color={0xffffff} transparent opacity={1} depthWrite={false} blending={THREE.AdditiveBlending} />
+            </mesh>
 
-      <mesh ref={coreRef} geometry={SHARED_GEOMETRIES.sphere8}>
-        <meshBasicMaterial color={style.coreColor} transparent opacity={0.9} depthWrite={false} blending={style.additive ? THREE.AdditiveBlending : THREE.NormalBlending} />
-      </mesh>
+            <mesh ref={el => { slot.core = el; }} geometry={SHARED_GEOMETRIES.sphere8}>
+              <meshBasicMaterial color={0xffffff} transparent opacity={0.9} depthWrite={false} />
+            </mesh>
 
-      <mesh ref={outerRef} geometry={SHARED_GEOMETRIES.sphere8}>
-        <meshBasicMaterial color={style.outerColor} transparent opacity={0.45} depthWrite={false} blending={style.additive ? THREE.AdditiveBlending : THREE.NormalBlending} />
-      </mesh>
+            <mesh ref={el => { slot.outer = el; }} geometry={SHARED_GEOMETRIES.sphere8}>
+              <meshBasicMaterial color={0xffffff} transparent opacity={0.45} depthWrite={false} />
+            </mesh>
 
-      <mesh ref={ringRef} rotation-x={-Math.PI / 2} position-y={0.03} geometry={SHARED_GEOMETRIES.ring24}>
-        <meshBasicMaterial color={style.ringColor} transparent opacity={0.7} side={THREE.DoubleSide} depthWrite={false} blending={style.additive ? THREE.AdditiveBlending : THREE.NormalBlending} />
-      </mesh>
+            <mesh ref={el => { slot.ring = el; }} rotation-x={-Math.PI / 2} position-y={0.03} geometry={SHARED_GEOMETRIES.ring24}>
+              <meshBasicMaterial color={0xffffff} transparent opacity={0.7} side={THREE.DoubleSide} depthWrite={false} />
+            </mesh>
 
-      <mesh ref={ring2Ref} rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.ring16}>
-        <meshBasicMaterial color={style.secondRingColor} transparent opacity={0.5} side={THREE.DoubleSide} depthWrite={false} blending={style.additive ? THREE.AdditiveBlending : THREE.NormalBlending} />
-      </mesh>
+            <mesh ref={el => { slot.ring2 = el; }} rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.ring16}>
+              <meshBasicMaterial color={0xffffff} transparent opacity={0.5} side={THREE.DoubleSide} depthWrite={false} />
+            </mesh>
 
-      {particles.map((particle, i) => (
-        <mesh
-          key={`particle-${i}`}
-          ref={el => particleRefs.current[i] = el}
-          geometry={
-            style.debrisShape === 'box'
-              ? SHARED_GEOMETRIES.box
-              : style.debrisShape === 'cone'
-                ? SHARED_GEOMETRIES.cone6
-                : SHARED_GEOMETRIES.sphere8
-          }
-        >
-          <meshBasicMaterial
-            color={style.particleColors[particle.colorIndex]}
-            transparent
-            opacity={1}
-            depthWrite={false}
-            blending={style.additive ? THREE.AdditiveBlending : THREE.NormalBlending}
-          />
-        </mesh>
-      ))}
+            {GENERIC_PARTICLE_INDICES.map((particleIndex) => (
+              <mesh
+                key={`particle-${particleIndex}`}
+                ref={el => { slot.particles[particleIndex] = el; }}
+                visible={false}
+                geometry={SHARED_GEOMETRIES.sphere8}
+              >
+                <meshBasicMaterial color={0xffffff} transparent opacity={1} depthWrite={false} />
+              </mesh>
+            ))}
 
-      {smoke.map((_, i) => (
-        <mesh key={`smoke-${i}`} ref={el => smokeRefs.current[i] = el} geometry={SHARED_GEOMETRIES.sphere8}>
-          <meshBasicMaterial color={style.smokeColor} transparent opacity={0.3} depthWrite={false} />
-        </mesh>
-      ))}
+            {GENERIC_SMOKE_INDICES.map((smokeIndex) => (
+              <mesh
+                key={`smoke-${smokeIndex}`}
+                ref={el => { slot.smoke[smokeIndex] = el; }}
+                visible={false}
+                geometry={SHARED_GEOMETRIES.sphere8}
+              >
+                <meshBasicMaterial color={0x333333} transparent opacity={0.3} depthWrite={false} />
+              </mesh>
+            ))}
 
-      {enableDecorativeLights && (
-        <BudgetedPointLight
-          budgetPriority={1.6}
-          ref={lightRef}
-          color={style.lightColor}
-          intensity={style.lightIntensity}
-          distance={8 * effect.scale}
-          decay={2}
-        />
-      )}
-    </group>
+            {enableDecorativeLights && (
+              <BudgetedPointLight
+                budgetPriority={1.6}
+                ref={el => { slot.light = el; }}
+                color={0xffffff}
+                intensity={0}
+                distance={8}
+                decay={2}
+              />
+            )}
+          </group>
+        );
+      })}
+    </>
   );
 }

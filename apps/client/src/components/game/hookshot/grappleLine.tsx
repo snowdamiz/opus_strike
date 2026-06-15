@@ -1,5 +1,4 @@
 import React, { useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { HOOKSHOT_GRAPPLE_EXTENSION_SPEED } from '@voxel-strike/physics';
 import { useGameStore, type GrappleLineData } from '../../../store/gameStore';
@@ -14,8 +13,7 @@ import {
   getHookshotMaterials,
   TEMP_VECTORS,
 } from '../effectResources';
-import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../../viewmodel/hookshotPose';
-import { readViewmodelSocket } from '../../../viewmodel/viewmodelSocketRegistry';
+import { writeAbilitySocketOrigin } from '../../../model-system/abilitySocketResolver';
 import {
   HOOK_MAIN_ROPE_MATERIAL,
   PLIABLE_ROPE_SEGMENT_COUNT,
@@ -25,6 +23,7 @@ import {
   updateRopeSegment,
 } from './rope';
 import { HookshotProjectileArrowHead } from './arrowHead';
+import { useHookshotFrameUpdater } from './hookshotFrameRegistry';
 
 // ============================================================================
 // GRAPPLE LINE - Quick grapple to geometry (E ability)
@@ -36,13 +35,11 @@ import { HookshotProjectileArrowHead } from './arrowHead';
 const getHookMaterials = () => getHookshotMaterials();
 
 function writeLocalGrappleSocketPosition(out: { x: number; y: number; z: number }, launchSide: -1 | 1): boolean {
-  const socketPose = readViewmodelSocket(HOOKSHOT_HOOK_SOCKET_NAMES[launchSide]);
-  if (!socketPose) return false;
-
-  out.x = socketPose.position.x;
-  out.y = socketPose.position.y;
-  out.z = socketPose.position.z;
-  return true;
+  return writeAbilitySocketOrigin(out, {
+    ownerScope: 'localViewmodel',
+    abilityId: 'hookshot_grapple',
+    side: launchSide,
+  });
 }
 
 interface GrappleLineProps {
@@ -84,14 +81,15 @@ export const GrappleLineEffect = React.memo(({ line }: GrappleLineProps) => {
     forwardOffset: HOOKSHOT_CHAIN_SOCKET.forwardOffset,
     sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
     yaw: line.launchYaw,
-    socketName: HOOKSHOT_HOOK_SOCKET_NAMES[launchSide],
+    abilityId: 'hookshot_grapple',
+    side: launchSide,
   };
   
   const removeGrappleLine = useGameStore(state => state.removeGrappleLine);
   const localPlayerId = useGameStore(state => state.localPlayer?.id);
   const isLocalOwnerForRender = localPlayerId === line.ownerId;
   
-  useFrame((frameState, delta) => {
+  useHookshotFrameUpdater(`grapple-line:${line.id}`, (frameState, delta) => {
     if (!hookRef.current || shouldRemoveRef.current) return;
     const frameNow = getFrameClock().nowMs;
     

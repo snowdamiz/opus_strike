@@ -1,11 +1,14 @@
-import { useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
+import { PHANTOM_VOID_RAY_COLLISION_RADIUS } from '@voxel-strike/shared';
 import { useGameStore, VoidRayData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
-import { TEMP_VECTORS } from '../effectResources';
 import { getFrameClock } from '../../../utils/frameClock';
+import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
+import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
+import { measureFrameWork } from '../../../movement/networkDiagnostics';
 
 interface VoidRayProps {
   id: string;
@@ -13,6 +16,9 @@ interface VoidRayProps {
   direction: { x: number; y: number; z: number };
   startTime: number;
   ownerId: string;
+  ownerTeam: 'red' | 'blue';
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
 }
 
 // ============================================================================
@@ -23,16 +29,15 @@ interface VoidRayProps {
 
 const RAY_SPEED = 420;
 const RAY_LENGTH = 100;
-const RAY_RADIUS = 0.45;
+const RAY_RADIUS = PHANTOM_VOID_RAY_COLLISION_RADIUS;
 const RAY_SPIN_UP_TIME = 0.24;
 const RAY_SUSTAIN_TIME = 0.44;
 const RAY_SPIN_DOWN_TIME = 0.32;
 const RAY_LIFETIME = RAY_SPIN_UP_TIME + RAY_SUSTAIN_TIME + RAY_SPIN_DOWN_TIME;
-const RAY_DAMAGE = 80;
-const PLAYER_HIT_RADIUS = 1.5;
 const SPIRAL_COUNT = 5;
 const PARTICLE_COUNT = 120;
 const SPARK_COUNT = 32;
+const VOID_RAY_COLLISION_SAMPLE_INTERVAL_MS = 34;
 const LOCAL_ORIGIN_HALO_INNER_RADIUS = RAY_RADIUS * 5.5;
 const LOCAL_ORIGIN_HALO_OUTER_RADIUS = RAY_RADIUS * 7.5;
 const LOCAL_ORIGIN_HALO_SECONDARY_INNER_RADIUS = RAY_RADIUS * 8.5;
@@ -376,26 +381,127 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export function prewarmVoidRayResources(renderer?: THREE.WebGLRenderer): void {
-  const spiralMaterial = getSpiralMaterial();
-  const coreMaterial = getCoreMaterial();
-  const glowMaterial = getGlowMaterial();
-  const spiralGeometries = getSharedSpiralGeometries();
-
-  if (!renderer) return;
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
-  camera.position.z = 4;
-
-  const spiral = new THREE.Mesh(spiralGeometries[0], spiralMaterial);
-  const core = new THREE.Mesh(RAY_BEAM_GEOMETRY, coreMaterial);
-  const glow = new THREE.Mesh(RAY_GLOW_GEOMETRY, glowMaterial);
-  scene.add(spiral, core, glow);
-  renderer.compile(scene, camera);
+export function prewarmVoidRayResources(): void {
+  getSpiralMaterial();
+  getCoreMaterial();
+  getGlowMaterial();
+  getSharedSpiralGeometries();
 }
 
-export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ownerId }: VoidRayProps) => {
+export function appendVoidRayGpuPrewarmObjects(target: THREE.Object3D): void {
+  prewarmVoidRayResources();
+
+  const group = new THREE.Group();
+  group.name = 'gpu-prewarm-void-ray';
+  group.position.set(0.2, 0, -5);
+  group.scale.setScalar(0.25);
+
+  group.add(new THREE.Mesh(RAY_GLOW_GEOMETRY, getGlowMaterial()));
+  group.add(new THREE.Mesh(RAY_BEAM_GEOMETRY, getCoreMaterial()));
+  group.add(new THREE.Mesh(RAY_CORE_GEOMETRY, getCoreMaterial()));
+  group.add(new THREE.Mesh(LOCAL_ORIGIN_HALO_GEOMETRY, new THREE.MeshBasicMaterial({
+    color: 0xc084fc,
+    transparent: true,
+    opacity: 0.35,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })));
+  group.add(new THREE.Mesh(LOCAL_ORIGIN_HALO_SECONDARY_GEOMETRY, new THREE.MeshBasicMaterial({
+    color: 0x00ffff,
+    transparent: true,
+    opacity: 0.22,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })));
+  group.add(new THREE.Mesh(LOCAL_ORIGIN_ENERGY_CORE_GEOMETRY, new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.95,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  })));
+  group.add(new THREE.Mesh(LOCAL_ORIGIN_ENERGY_GLOW_GEOMETRY, getGlowMaterial()));
+  group.add(new THREE.Mesh(LOCAL_ORIGIN_ENERGY_SHELL_GEOMETRY, getCoreMaterial()));
+  group.add(new THREE.Mesh(LOCAL_ORIGIN_ENERGY_RING_GEOMETRY, new THREE.MeshBasicMaterial({
+    color: 0x7c3aed,
+    transparent: true,
+    opacity: 0.32,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })));
+  group.add(new THREE.Mesh(REMOTE_ORIGIN_CORE_GEOMETRY, getCoreMaterial()));
+  group.add(new THREE.Mesh(REMOTE_ORIGIN_GLOW_GEOMETRY, getGlowMaterial()));
+  group.add(new THREE.Mesh(VOID_RAY_IMPACT_INNER_RING_GEOMETRY, new THREE.MeshBasicMaterial({
+    color: 0x00ffff,
+    transparent: true,
+    opacity: 0.58,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })));
+  group.add(new THREE.Mesh(VOID_RAY_IMPACT_OUTER_RING_GEOMETRY, new THREE.MeshBasicMaterial({
+    color: 0xc084fc,
+    transparent: true,
+    opacity: 0.48,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })));
+  group.add(new THREE.Mesh(VOID_RAY_IMPACT_SPARK_GEOMETRY, new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.9,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  })));
+
+  for (const geometry of getSharedSpiralGeometries()) {
+    group.add(new THREE.Mesh(geometry, getSpiralMaterial()));
+  }
+
+  const particleGeometry = new THREE.BufferGeometry();
+  particleGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    0, 0, 0,
+    0.1, 0.25, -0.2,
+    -0.1, -0.25, -0.4,
+  ]), 3));
+  particleGeometry.setAttribute('random', new THREE.BufferAttribute(new Float32Array([0.15, 0.5, 0.85]), 1));
+  particleGeometry.setAttribute('speed', new THREE.BufferAttribute(new Float32Array([0.4, 0.8, 1]), 1));
+  particleGeometry.setAttribute('size', new THREE.BufferAttribute(new Float32Array([0.12, 0.16, 0.1]), 1));
+  group.add(new THREE.Points(particleGeometry, new THREE.PointsMaterial({
+    color: 0xc084fc,
+    size: 0.12,
+    transparent: true,
+    opacity: 0.82,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    sizeAttenuation: true,
+    toneMapped: false,
+  })));
+
+  target.add(group);
+}
+
+export const VoidRay = React.memo(({
+  id,
+  startPosition,
+  direction,
+  startTime,
+  ownerId,
+  ownerTeam,
+  impactPosition,
+  interceptedByChronosAegis,
+}: VoidRayProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const beamRef = useRef<THREE.Mesh>(null);
   const coreRef = useRef<THREE.Mesh>(null);
@@ -412,10 +518,9 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
   const localOriginHaloSecondaryRef = useRef<THREE.Mesh>(null);
   const remoteOriginCoreRef = useRef<THREE.Mesh>(null);
   const remoteOriginGlowRef = useRef<THREE.Mesh>(null);
-  const hitPlayersRef = useRef<Set<string>>(new Set());
-  const currentLengthRef = useRef(0);
-  const hasLoggedRef = useRef(false);
   const hasRequestedRemovalRef = useRef(false);
+  const lastCollisionSampleRef = useRef(-VOID_RAY_COLLISION_SAMPLE_INTERVAL_MS);
+  const cachedVisualCollisionDistanceRef = useRef<number | null>(null);
   const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - startTime));
   
   const isLocalOwner = useGameStore(state => state.localPlayer?.id === ownerId);
@@ -432,10 +537,6 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
   
   const coreMaterial = useMemo(() => getCoreMaterial().clone(), []);
   const glowMaterial = useMemo(() => getGlowMaterial().clone(), []);
-  const normalizedDirection = useMemo(
-    () => new THREE.Vector3(direction.x, direction.y, direction.z).normalize(),
-    [direction.x, direction.y, direction.z]
-  );
   
   const spiralGeometries = useMemo(() => getSharedSpiralGeometries(), []);
   
@@ -460,7 +561,9 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       sizes[i] = 0.06 + Math.random() * 0.1;
     }
     
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const positionAttribute = new THREE.BufferAttribute(positions, 3);
+    positionAttribute.setUsage(THREE.StreamDrawUsage);
+    geometry.setAttribute('position', positionAttribute);
     geometry.setAttribute('random', new THREE.BufferAttribute(randoms, 1));
     geometry.setAttribute('speed', new THREE.BufferAttribute(speeds, 1));
     geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
@@ -482,7 +585,9 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       randoms[i] = Math.random();
     }
     
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const positionAttribute = new THREE.BufferAttribute(positions, 3);
+    positionAttribute.setUsage(THREE.StreamDrawUsage);
+    geometry.setAttribute('position', positionAttribute);
     geometry.setAttribute('random', new THREE.BufferAttribute(randoms, 1));
     
     return geometry;
@@ -507,6 +612,24 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
     depthWrite: false,
     sizeAttenuation: true,
   }), []);
+
+  useEffect(() => () => {
+    spiralMaterials.forEach((material) => material.dispose());
+    coreMaterial.dispose();
+    glowMaterial.dispose();
+    particleGeometry.dispose();
+    sparkGeometry.dispose();
+    particleMaterial.dispose();
+    sparkMaterial.dispose();
+  }, [
+    coreMaterial,
+    glowMaterial,
+    particleGeometry,
+    particleMaterial,
+    sparkGeometry,
+    sparkMaterial,
+    spiralMaterials,
+  ]);
   
   // Beam rotation
   const rotation = useMemo(() => {
@@ -517,10 +640,11 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
   }, [direction.x, direction.y, direction.z]);
   
   
-  useFrame((state, delta) => {
+  useFrame((state, delta) => measureFrameWork('frame.effects.voidRay', () => {
     if (!groupRef.current) return;
     
-    const elapsed = (getFrameClock().nowMs - startFrameTimeRef.current) / 1000;
+    const frameNow = getFrameClock().nowMs;
+    const elapsed = (frameNow - startFrameTimeRef.current) / 1000;
     
     if (elapsed >= RAY_LIFETIME) {
       groupRef.current.visible = false;
@@ -537,22 +661,54 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
     
     // Calculate beam length
     let targetLength = Math.min(RAY_LENGTH, elapsed * RAY_SPEED) * envelope.lengthScale;
+    const authoritativeHit = interceptedByChronosAegis
+      ? getAuthoritativeProjectileImpactHit(
+        startPosition,
+        direction,
+        impactPosition,
+        targetLength,
+        RAY_RADIUS
+      )
+      : null;
     
-    // Terrain collision
-    if (isPhysicsReady()) {
-      const world = getPhysicsWorld();
-      if (world) {
-        const hit = raycast(world, startPosition, direction, targetLength, {
-          priority: 'visual',
-          feature: 'effect:voidRayBeam',
-        });
-        if (hit && hit.distance < targetLength) {
-          targetLength = hit.distance;
+    if (frameNow - lastCollisionSampleRef.current >= VOID_RAY_COLLISION_SAMPLE_INTERVAL_MS) {
+      lastCollisionSampleRef.current = frameNow;
+      let visualCollisionDistance: number | null = null;
+      const aegisHit = getFirstChronosAegisVisualHit(
+        startPosition,
+        direction,
+        targetLength,
+        ownerTeam,
+        ownerId,
+        RAY_RADIUS
+      );
+      if (aegisHit) {
+        visualCollisionDistance = aegisHit.distance;
+      }
+
+      if (isPhysicsReady()) {
+        const world = getPhysicsWorld();
+        if (world) {
+          const hit = raycast(world, startPosition, direction, targetLength, {
+            priority: 'visual',
+            feature: 'effect:voidRayBeam',
+          });
+          if (hit) {
+            visualCollisionDistance = visualCollisionDistance === null
+              ? hit.distance
+              : Math.min(visualCollisionDistance, hit.distance);
+          }
         }
       }
+      cachedVisualCollisionDistanceRef.current = visualCollisionDistance;
     }
-
-    currentLengthRef.current = targetLength;
+    const visualCollisionDistance = cachedVisualCollisionDistanceRef.current;
+    if (visualCollisionDistance !== null && visualCollisionDistance < targetLength) {
+      targetLength = visualCollisionDistance;
+    }
+    if (authoritativeHit && authoritativeHit.distance < targetLength) {
+      targetLength = authoritativeHit.distance;
+    }
     const safeTargetLength = Math.max(targetLength, 0.001);
     
     // Update core beam
@@ -636,25 +792,29 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
     
     // Animate particles - spiral motion
     if (particlesRef.current) {
-      const positions = particlesRef.current.geometry.attributes.position;
-      const randoms = particlesRef.current.geometry.attributes.random;
-      const speeds = particlesRef.current.geometry.attributes.speed;
+      const positions = particlesRef.current.geometry.attributes.position as THREE.BufferAttribute;
+      const randoms = particlesRef.current.geometry.attributes.random as THREE.BufferAttribute;
+      const speeds = particlesRef.current.geometry.attributes.speed as THREE.BufferAttribute;
+      const positionArray = positions.array as Float32Array;
+      const randomArray = randoms.array as Float32Array;
+      const speedArray = speeds.array as Float32Array;
       
       for (let i = 0; i < positions.count; i++) {
-        const r = (randoms as THREE.BufferAttribute).getX(i);
-        const speed = (speeds as THREE.BufferAttribute).getX(i);
+        const index = i * 3;
+        const r = randomArray[i];
+        const speed = speedArray[i];
         
         const angle = r * Math.PI * 2 + time * 10 * speed;
         const baseRadius = RAY_RADIUS * (0.5 + r * 0.8);
         const wobble = Math.sin(time * 20 + r * 30) * 0.08;
         const radius = baseRadius + wobble;
         
-        let t = positions.getY(i) / safeTargetLength;
+        let t = positionArray[index + 1] / safeTargetLength;
         t = (t + delta * speed * 2.5) % 1;
         
-        positions.setX(i, Math.cos(angle) * radius);
-        positions.setY(i, t * targetLength);
-        positions.setZ(i, Math.sin(angle) * radius);
+        positionArray[index] = Math.cos(angle) * radius;
+        positionArray[index + 1] = t * targetLength;
+        positionArray[index + 2] = Math.sin(angle) * radius;
       }
       positions.needsUpdate = true;
       
@@ -667,20 +827,23 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
     
     // Animate spark particles - random flashes
     if (sparkParticlesRef.current) {
-      const positions = sparkParticlesRef.current.geometry.attributes.position;
-      const randoms = sparkParticlesRef.current.geometry.attributes.random;
+      const positions = sparkParticlesRef.current.geometry.attributes.position as THREE.BufferAttribute;
+      const randoms = sparkParticlesRef.current.geometry.attributes.random as THREE.BufferAttribute;
+      const positionArray = positions.array as Float32Array;
+      const randomArray = randoms.array as Float32Array;
       
       for (let i = 0; i < positions.count; i++) {
-        const r = (randoms as THREE.BufferAttribute).getX(i);
+        const index = i * 3;
+        const r = randomArray[i];
         
         // Random position along beam with spiral
         const t = (r + time * 3) % 1;
         const angle = t * Math.PI * 8 + r * Math.PI * 2;
         const radius = RAY_RADIUS * (1.0 + Math.sin(time * 30 + r * 50) * 0.5);
         
-        positions.setX(i, Math.cos(angle) * radius);
-        positions.setY(i, t * targetLength);
-        positions.setZ(i, Math.sin(angle) * radius);
+        positionArray[index] = Math.cos(angle) * radius;
+        positionArray[index + 1] = t * targetLength;
+        positionArray[index + 2] = Math.sin(angle) * radius;
       }
       positions.needsUpdate = true;
       
@@ -704,38 +867,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       impactRef.current.scale.setScalar(Math.max(0.001, impactPulse * (0.24 + impactEnvelope * 0.92)));
       applyOpacityEnvelope(impactRef.current, impactEnvelope);
     }
-    
-    // Player collision
-    const { players, localPlayer } = useGameStore.getState();
-    
-    // Track if we've already logged (now a no-op but kept for hasLoggedRef reference)
-    hasLoggedRef.current = true;
-    
-    for (const [playerId, player] of players) {
-      if (playerId === localPlayer?.id) continue;
-      if (player.state !== 'alive') continue;
-      if (localPlayer && player.team === localPlayer.team) continue;
-      if (hitPlayersRef.current.has(playerId)) continue;
-
-      // Use pooled temp vectors to avoid per-frame allocations
-      const playerPos = TEMP_VECTORS.v5.set(player.position.x, player.position.y + 0.9, player.position.z);
-      const rayStart = TEMP_VECTORS.v6.set(startPosition.x, startPosition.y, startPosition.z);
-      const rayDir = TEMP_VECTORS.v7.copy(normalizedDirection);
-
-      const toPlayer = TEMP_VECTORS.v8.copy(playerPos).sub(rayStart);
-      const projectionLength = toPlayer.dot(rayDir);
-
-      if (projectionLength < 0 || projectionLength > currentLengthRef.current) continue;
-
-      const closestPoint = TEMP_VECTORS.v9.copy(rayStart).add(TEMP_VECTORS.v10.copy(rayDir).multiplyScalar(projectionLength));
-      const distanceSq = closestPoint.distanceToSquared(playerPos);
-
-      if (distanceSq <= (PLAYER_HIT_RADIUS + RAY_RADIUS) * (PLAYER_HIT_RADIUS + RAY_RADIUS)) {
-        hitPlayersRef.current.add(playerId);
-
-      }
-    }
-  });
+  }));
   
   return (
     <group ref={groupRef} position={[startPosition.x, startPosition.y, startPosition.z]} rotation={rotation}>
@@ -925,7 +1057,12 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
     prev.direction.y === next.direction.y &&
     prev.direction.z === next.direction.z &&
     prev.startTime === next.startTime &&
-    prev.ownerId === next.ownerId
+    prev.ownerId === next.ownerId &&
+    prev.ownerTeam === next.ownerTeam &&
+    prev.impactPosition?.x === next.impactPosition?.x &&
+    prev.impactPosition?.y === next.impactPosition?.y &&
+    prev.impactPosition?.z === next.impactPosition?.z &&
+    prev.interceptedByChronosAegis === next.interceptedByChronosAegis
   );
 });
 
@@ -945,6 +1082,9 @@ export function VoidRays({ rays }: VoidRaysProps) {
           direction={ray.direction}
           startTime={ray.startTime}
           ownerId={ray.ownerId}
+          ownerTeam={ray.ownerTeam}
+          impactPosition={ray.impactPosition}
+          interceptedByChronosAegis={ray.interceptedByChronosAegis}
         />
       ))}
     </>

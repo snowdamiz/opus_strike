@@ -10,31 +10,12 @@ import type {
   MapTopologyId,
   PublicRankSnapshot,
   MatchMode,
+  VoxelMapTheme,
 } from '@voxel-strike/shared';
 
 // Re-export VisualState from visualStore for central type access
 import type { VisualState } from './visualStore';
 export type { VisualState };
-
-// ============================================================================
-// LOBBY TYPES
-// ============================================================================
-
-export interface LobbyInfo {
-  roomId: string;
-  name: string;
-  matchMode?: MatchMode;
-  playerCount: number;
-  maxPlayers: number;
-  humanCount?: number;
-  botCount?: number;
-  participantCount?: number;
-  maxParticipants?: number;
-  status: string;
-  queuedHumanCount?: number;
-  requiredPlayers?: number;
-  wager?: LobbyWagerState;
-}
 
 export interface LobbyPlayer {
   id: string;
@@ -42,6 +23,7 @@ export interface LobbyPlayer {
   isHost: boolean;
   isReady: boolean;
   team: string;
+  isObserver?: boolean;
   heroId?: HeroId | '';
   isBot?: boolean;
   botDifficulty?: BotDifficulty | '';
@@ -115,6 +97,7 @@ export interface WagerPaymentTransaction {
 export interface MapVoteOption {
   id: string;
   seed: number;
+  mapThemeId?: VoxelMapTheme['id'] | null;
   name: string;
   themeId: string;
   themeName: string;
@@ -167,11 +150,13 @@ export interface MatchmakingStatus {
   queuedHumanCount: number | null;
   provisionalHumanCount: number | null;
   requiredPlayers: number | null;
+  capacityBlocked: boolean;
+  capacityMaxPlayers: number | null;
   rankedCoverChargeLamports: string | null;
   rankedEntryQuoteId: string | null;
 }
 
-export type AppPhase = 'menu' | 'browsing_lobbies' | 'matchmaking' | 'in_lobby' | 'map_vote' | 'in_game';
+export type AppPhase = 'menu' | 'matchmaking' | 'in_lobby' | 'map_vote' | 'in_game';
 
 // ============================================================================
 // PHANTOM PROJECTILE TYPES
@@ -191,6 +176,8 @@ export interface DireBallData {
   id: string;
   position: { x: number; y: number; z: number };
   velocity: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
   ownerTeam?: Team | null;
@@ -203,6 +190,8 @@ export interface VoidRayData {
   id: string;
   startPosition: { x: number; y: number; z: number };
   direction: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';
@@ -216,6 +205,8 @@ export interface RocketData {
   id: string;
   position: { x: number; y: number; z: number };
   velocity: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';
@@ -224,9 +215,14 @@ export interface RocketData {
 export interface BombData {
   id: string;
   targetPosition: { x: number; y: number; z: number };
+  interceptPosition?: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
   startPosition: { x: number; y: number; z: number };
+  warningStartTime?: number;
   startTime: number;
   impactTime: number; // When the bomb lands
+  radius: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';
   hasExploded: boolean;
@@ -240,21 +236,13 @@ export interface ChronosPulseData {
   id: string;
   position: { x: number; y: number; z: number };
   velocity: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';
-}
-
-export interface ChronosTimebreakData {
-  id: string;
-  position: { x: number; y: number; z: number };
-  direction: { x: number; y: number; z: number };
-  startTime: number;
-  releaseTime: number;
-  duration: number;
-  radius: number;
-  ownerId: string;
-  ownerTeam: 'red' | 'blue';
+  supercharged?: boolean;
+  radius?: number;
 }
 
 // ============================================================================
@@ -265,6 +253,8 @@ export interface HookProjectileData {
   id: string;
   position: { x: number; y: number; z: number };
   velocity: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';
@@ -279,6 +269,8 @@ export interface DragHookData {
   id: string;
   position: { x: number; y: number; z: number };
   velocity: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';
@@ -289,29 +281,22 @@ export interface DragHookData {
   launchYaw?: number; // Fallback orientation for resolving the launch socket
 }
 
-export interface GrappleTrapData {
+export interface HookshotGroundHooksTargetData {
+  targetId: string;
+  position: { x: number; y: number; z: number };
+  rootUntil: number;
+}
+
+export interface HookshotGroundHooksData {
   id: string;
-  position: { x: number; y: number; z: number }; // Target/landing position
-  startPosition?: { x: number; y: number; z: number }; // Where it was thrown from
-  velocity?: { x: number; y: number; z: number }; // Initial throw velocity for grenade arc
+  position: { x: number; y: number; z: number };
   startTime: number;
   duration: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';
   radius: number;
-  hookedPlayers: string[]; // IDs of players hooked
-}
-
-export interface SwingLineData {
-  id: string;
-  startPosition: { x: number; y: number; z: number };
-  attachPoint: { x: number; y: number; z: number };
-  startTime: number;
-  duration: number;
-  ownerId: string;
-  isActive: boolean;
-  // Apex-style grapple state
-  state: 'extending' | 'attached' | 'swinging' | 'done';
+  rootUntil: number;
+  targets: HookshotGroundHooksTargetData[];
 }
 
 export interface GrappleLineData {
@@ -335,7 +320,6 @@ export interface EarthWallData {
   ownerTeam: 'red' | 'blue';
   maxDistance: number; // How far the hook travels
   hookProgress: number; // 0-1, how far the hook has traveled
-  wallSegments: { x: number; y: number; z: number; height: number }[]; // Legacy visual segment data
 }
 
 // ============================================================================

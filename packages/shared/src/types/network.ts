@@ -1,4 +1,4 @@
-import type { BotDifficulty, PlayerInput, PlayerSnapshot, PlayerStats, Team } from './player.js';
+import type { BotDifficulty, PlayerSnapshot, PlayerStats, PlayerVisibilityState, Team } from './player.js';
 import type { HeroId } from './hero.js';
 import type { GamePhase, MatchOutcome } from './game.js';
 import type { Vec3 } from './vector.js';
@@ -7,37 +7,39 @@ import type { MovementCommandPacket, SelfMovementAuthority } from './movementPre
 import type { VoiceTokenRequest, VoiceTokenResponse, VoiceTeamChangedMessage } from './voice.js';
 import type { PublicRankSnapshot } from '../progression/ranking.js';
 import type { MatchMode } from './matchMode.js';
+import type { VoxelMapTheme } from '../maps/procedural/types.js';
 
 // Client -> Server Messages
 export type ClientMessage = 
-  | { type: 'input'; payload: PlayerInput }
   | { type: 'movementCommands'; payload: MovementCommandPacket }
   | { type: 'playerPingResponse'; payload: PlayerPingResponseMessage }
   | { type: 'selectHero'; payload: { heroId: HeroId } }
   | { type: 'devSetHero'; payload: { heroId: HeroId } }
   | { type: 'devFillUltimate'; payload: Record<string, never> }
   | { type: 'devEndGame'; payload: Record<string, never> }
-  | { type: 'setDevFly'; payload: { enabled: boolean } }
   | { type: 'setDevImmune'; payload: { enabled: boolean } }
   | { type: 'setDevTimeFrozen'; payload: { enabled: boolean } }
   | { type: 'selectTeam'; payload: { team: Team } }
   | { type: 'chat'; payload: { message: string; teamOnly: boolean } }
   | { type: 'ready'; payload: { ready: boolean } }
+  | { type: 'matchSceneReady'; payload: MatchSceneReadyMessage }
   | { type: 'requestVoiceToken'; payload: VoiceTokenRequest }
   | { type: 'ability'; payload: AbilityCast };
 
 // Server -> Client Messages
 export type ServerMessage = 
-  | { type: 'gameState'; payload: GameStateSync }
-  | { type: 'playerTransforms'; payload: PlayerTransformsMessage }
+  | { type: 'playerTransformsV2'; payload: PlayerTransformsV2Message }
+  | { type: 'playerInterest'; payload: PlayerInterestMessage }
   | { type: 'selfMovementAuthority'; payload: SelfMovementAuthority }
   | { type: 'playerVitals'; payload: PlayerVitalsMessage }
   | { type: 'playerPingRequest'; payload: PlayerPingRequestMessage }
   | { type: 'playerPings'; payload: PlayerPingsMessage }
   | { type: 'matchSnapshot'; payload: MatchSnapshotMessage }
+  | { type: 'matchStartGate'; payload: MatchStartGateMessage }
+  | { type: 'matchCancelled'; payload: MatchCancelledMessage }
   | { type: 'playerJoined'; payload: { playerId: string; playerName: string } }
   | { type: 'playerLeft'; payload: { playerId: string } }
-  | { type: 'playerDied'; payload: PlayerDeathEvent }
+  | { type: 'playerKilled'; payload: PlayerDeathEvent }
   | { type: 'flagPickup'; payload: FlagEvent }
   | { type: 'flagDrop'; payload: FlagEvent }
   | { type: 'flagCapture'; payload: FlagEvent }
@@ -52,44 +54,88 @@ export type ServerMessage =
   | { type: 'devCommandError'; payload: { message: string } }
   | { type: 'abilityEffect'; payload: AbilityEffectEvent }
   | { type: 'playerHealed'; payload: PlayerHealedEvent }
+  | { type: 'chronosAegisDamaged'; payload: ChronosAegisDamagedEvent }
+  | { type: 'chronosAegisBroken'; payload: ChronosAegisBrokenEvent }
+  | { type: 'phantomShieldBroken'; payload: PhantomShieldBrokenEvent }
   | { type: 'damage'; payload: DamageEvent };
 
-export interface GameStateSync {
-  tick: number;
+export interface ChronosAegisDamagedEvent {
+  playerId: string;
+  sourceId: string | null;
+  damage: number;
+  damageType: string;
+  shieldHp: number;
+  shieldRatio: number;
+  position: Vec3;
+  direction: Vec3;
   serverTime: number;
-  phase: GamePhase;
-  mapSeed: number;
-  players: PlayerSnapshot[];
-  redScore: number;
-  blueScore: number;
-  redFlag: FlagSync;
-  blueFlag: FlagSync;
-  roundTimeRemaining: number;
 }
 
-export interface QuantizedPlayerTransform {
-  id: string;
-  px: number;
-  py: number;
-  pz: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  yaw: number;
-  pitch: number;
-  movementBits: number;
-  wallRunSide: -1 | 0 | 1;
-  movementEpoch: number;
+export interface ChronosAegisBrokenEvent {
+  playerId: string;
+  position: Vec3;
+  direction: Vec3;
+  serverTime: number;
 }
 
-export interface PlayerTransformsMessage {
+export interface PhantomShieldBrokenEvent {
+  playerId: string;
+  position: Vec3;
+  direction: Vec3;
+  serverTime: number;
+}
+
+export type PackedPlayerTransform = [
+  netId: number,
+  px: number,
+  py: number,
+  pz: number,
+  vx: number,
+  vy: number,
+  vz: number,
+  yaw: number,
+  pitch: number,
+  movementBits: number,
+  wallRunSide: -1 | 0 | 1,
+  movementEpoch: number,
+  chronosAegisShield: number,
+];
+
+export interface PlayerTransformsV2Message {
+  version: 2;
   tick: number;
   serverTime: number;
-  players: QuantizedPlayerTransform[];
+  streamEpoch?: number;
+  full?: boolean;
+  players: PackedPlayerTransform[];
+  hiddenPlayerIds?: string[];
+}
+
+export interface PlayerInterestSnapshot {
+  playerId: string;
+  state: PlayerVisibilityState;
+  reason?: string;
+  lastKnownPosition?: Vec3;
+  expiresAt?: number;
+}
+
+export interface PlayerInterestMessage {
+  tick: number;
+  serverTime: number;
+  players: PlayerInterestSnapshot[];
+}
+
+export interface PlayerVitalsAbilitySnapshot {
+  abilityId: string;
+  cooldownUntil: number;
+  charges: number;
+  isActive: boolean;
+  activatedAt?: number;
 }
 
 export interface PlayerVitalsSnapshot {
   id: string;
+  netId: number;
   name: string;
   team: Team;
   heroId: HeroId | null;
@@ -102,12 +148,14 @@ export interface PlayerVitalsSnapshot {
   health: number;
   maxHealth: number;
   ultimateCharge: number;
+  onFireUntil?: number | null;
   hasFlag: boolean;
   movement: PlayerSnapshot['movement'];
-  abilities: PlayerSnapshot['abilities'];
+  abilities: Record<string, PlayerVitalsAbilitySnapshot>;
   stats: NonNullable<PlayerSnapshot['stats']>;
   respawnTime: number | null;
   spawnProtectionUntil: number | null;
+  visibility?: PlayerVisibilityState;
 }
 
 export interface PlayerVitalsMessage {
@@ -125,6 +173,47 @@ export interface PlayerPingResponseMessage {
   nonce: string;
 }
 
+export interface MatchSceneReadyMessage {
+  key: number;
+}
+
+export interface MatchStartGateMessage {
+  key: number;
+  serverTime: number;
+  mapSeed: number;
+  mapThemeId?: VoxelMapTheme['id'] | null;
+  position: Vec3;
+  movementEpoch: number;
+  ackSeq: number;
+  collisionRevision?: number;
+}
+
+export interface MatchCancelledMessage {
+  reason: string;
+  message: string;
+  roomId: string;
+  requiredHumanPlayers: number;
+  connectedHumanPlayers: number;
+  deadlineAt: number;
+  refundedWager: boolean;
+  serverTime: number;
+  blockedPlayerId?: string;
+  blockedPlayerName?: string;
+  networkQuality?: {
+    reason?: string | null;
+    sampleCount?: number;
+    successfulSamples?: number;
+    timeoutCount?: number;
+    consecutiveTimeouts?: number;
+    timeoutRatio?: number;
+    averagePingMs?: number | null;
+    peakPingMs?: number | null;
+    jitterMs?: number | null;
+    observationMs?: number;
+    windowMs?: number;
+  };
+}
+
 export interface PlayerPingSnapshot {
   playerId: string;
   pingMs: number | null;
@@ -140,12 +229,14 @@ export interface MatchSnapshotMessage {
   serverTime: number;
   phase: GamePhase;
   mapSeed: number;
+  mapThemeId?: VoxelMapTheme['id'] | null;
   redScore: number;
   blueScore: number;
   redFlag: FlagSync;
   blueFlag: FlagSync;
   roundTimeRemaining: number;
   phaseEndTime: number | null;
+  gameClockFrozen?: boolean;
 }
 
 export interface FlagSync {
@@ -160,6 +251,12 @@ export interface PlayerDeathEvent {
   assistIds: string[];
   abilityId?: string;
   position: Vec3;
+  velocity?: Vec3;
+  sourcePosition?: Vec3 | null;
+  sourceDirection?: Vec3 | null;
+  damageType?: string;
+  occurredAt?: number;
+  respawnTime?: number | null;
 }
 
 export interface FlagEvent {
@@ -183,7 +280,25 @@ export interface GameEndEvent {
   endedAt: number;
   durationMs: number;
   forcedByPlayerId?: string;
+  matchIntegrity?: MatchIntegritySummary;
+  goldenBiomeReward?: GoldenBiomeRewardSummary;
   players: MatchSummaryPlayer[];
+}
+
+export interface GoldenBiomeRewardSummary {
+  rewardUsdCents: number;
+  rewardToken: 'SOL';
+  winningTeam: Team | null;
+  eligiblePlayerIds: string[];
+  status: 'pending' | 'not_applicable';
+}
+
+export interface MatchIntegritySummary {
+  status: 'clean' | 'suspicious' | 'compromised' | 'no_contest';
+  reviewRequired: boolean;
+  rankedOutcome: 'normal' | 'review_required';
+  wagerOutcome: 'normal' | 'review_required';
+  message: string;
 }
 
 export interface MatchSummaryPlayer {
@@ -217,6 +332,12 @@ export interface AbilityEffectEvent {
   position: Vec3;
   direction?: Vec3;
   targetIds?: string[];
+  targets?: Array<{
+    targetId: string;
+    position: Vec3;
+    rootUntil: number;
+  }>;
+  rootUntil?: number;
 }
 
 export interface DamageEvent {

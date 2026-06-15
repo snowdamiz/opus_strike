@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
 const strictUiExemptions = [
-  /^src\/components\/ui\/(?:HUD|HeroIcons|ShadowStepOverlay|SlideEffects|TeleportEffects|UltimateEffects)\.tsx$/,
+  /^src\/components\/ui\/(?:HUD|HeroIcons|SlideEffects|TeleportEffects|UltimateEffects)\.tsx$/,
 ];
 
 const tokenSourceFiles = new Set([

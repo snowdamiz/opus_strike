@@ -2,7 +2,7 @@
 
 This server uses two scaling layers on Fly.io:
 
-- Fly Proxy autostop/autostart keeps at least two server Machines running and starts existing stopped Machines when connection load needs them.
+- Fly Proxy autostop/autostart keeps at least one server Machine running and starts existing stopped Machines when connection load needs them.
 - `opus-strike-server-autoscaler` runs `flyio/fly-autoscaler:0.3.1` and changes the number of created server Machines.
 
 ## Repository Files
@@ -16,12 +16,14 @@ This server uses two scaling layers on Fly.io:
 The autoscaler uses:
 
 ```text
-max(running_machines, min(max(ceil(demand_players / 48) + 1, 2), 3))
+max(running_machines, min(max(max(ceil(demand_players / dynamic_players_per_machine) + 1, running_machines + overloaded_machines), 2), 5))
 ```
 
 `demand_players` is the sum of `opus_strike_colyseus_local_ccu` across server Machines. Local CCU is additive; `opus_strike_lobby_participants` is deliberately not used for autoscaling because it comes from global matchmaker query results and would be duplicated when summed across Machines.
 
-That policy keeps a two-Machine floor, one spare stopped Machine above demand, and a first-production demand-driven cap of three created Machines. The `running_machines` guard wins over the cap so an already-running Machine is not destroyed during scale-down. Raise the cap to six after one real traffic window looks stable.
+`dynamic_players_per_machine` is the average live server capacity estimate exported by each server process from tick cost, CPU, event-loop delay, and memory pressure. `overloaded_machines` counts Machines whose capacity pressure is above 1 so the fleet can add capacity before raw player demand crosses the projected per-Machine capacity.
+
+That policy keeps a two-Machine created floor, one spare stopped Machine above demand, and a demand-driven cap of five created Machines. `fly.toml` keeps one of those Machines running; the other floor Machine starts stopped and ready. The `running_machines` guard wins over the cap so an already-running Machine is not destroyed during scale-down.
 
 New Machines are created in the `stopped` state. Fly Proxy starts them later when the server service crosses its connection limits.
 
@@ -132,7 +134,7 @@ Rollback should disable only the autoscaler app:
 
 ```sh
 fly scale count 0 -a opus-strike-server-autoscaler
-fly scale count 2 -a opus-strike-server
+fly scale count 1 -a opus-strike-server
 ```
 
-Keep `auto_stop_machines = "stop"`, `auto_start_machines = true`, and `min_machines_running = 2` on the server app.
+Keep `auto_stop_machines = "stop"`, `auto_start_machines = true`, and `min_machines_running = 1` on the server app.

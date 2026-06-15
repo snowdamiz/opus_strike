@@ -21,13 +21,18 @@ interface VoidZoneProps {
 let sharedVortexMaterial: THREE.ShaderMaterial | null = null;
 let sharedEventHorizonMaterial: THREE.ShaderMaterial | null = null;
 let sharedAccretionMaterial: THREE.ShaderMaterial | null = null;
-let sharedLightningMaterial: THREE.ShaderMaterial | null = null;
 const VOID_ZONE_VORTEX_GEOMETRY = new THREE.CircleGeometry(1, 128);
 const VOID_ZONE_EVENT_HORIZON_GEOMETRY = new THREE.CircleGeometry(1, 64);
 const VOID_ZONE_RING_INNER_GEOMETRY = new THREE.RingGeometry(0.28, 0.35, 64);
 const VOID_ZONE_RING_MIDDLE_GEOMETRY = new THREE.RingGeometry(0.45, 0.55, 64);
 const VOID_ZONE_RING_OUTER_GEOMETRY = new THREE.RingGeometry(0.7, 0.8, 64);
 const VOID_ZONE_BOUNDARY_RING_GEOMETRY = new THREE.RingGeometry(0.95, 1.05, 64);
+const VOID_ZONE_MOTE_COUNT = 18;
+const VOID_ZONE_MOTE_BASE_HEIGHT = 0.035;
+const VOID_ZONE_MOTE_MAX_LIFT = 0.18;
+const VOID_ZONE_MOTE_MIN_RADIUS = 0.34;
+const VOID_ZONE_MOTE_RESET_RADIUS = 0.8;
+const VOID_ZONE_GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 function getVortexMaterial(): THREE.ShaderMaterial {
   if (!sharedVortexMaterial) {
@@ -130,13 +135,13 @@ function getVortexMaterial(): THREE.ShaderMaterial {
           color += color5 * jets * 0.8;
           color += color4 * outerRing * ringPulse * 1.5;
           
-          float arc = step(0.9, hash(vec2(angle * 20.0, time * 10.0))) * outerRing;
-          color += color5 * arc * 3.0;
+          float glint = pow(max(0.0, sin(angle * 8.0 - time * 2.8 + dist * 12.0)), 10.0) * outerRing;
+          color += color4 * glint * 0.9;
           
           float alpha = smoothstep(0.5, 0.2, dist) * opacity;
           alpha = max(alpha, eventHorizon * 0.95);
-          alpha = max(alpha, outerRing * ringPulse * 0.8);
-          alpha = max(alpha, jets * 0.6);
+          alpha = max(alpha, outerRing * ringPulse * 0.68);
+          alpha = max(alpha, jets * 0.32);
           
           float pulse = sin(time * 3.0) * 0.1 + 0.9;
           alpha *= pulse;
@@ -255,36 +260,54 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export function prewarmVoidZoneResources(renderer?: THREE.WebGLRenderer): void {
-  const vortexMaterial = getVortexMaterial();
-  const eventHorizonMaterial = getEventHorizonMaterial();
-  const accretionMaterial = getAccretionMaterial();
-
-  if (!renderer) return;
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
-  camera.position.z = 4;
-  const vortex = new THREE.Mesh(VOID_ZONE_VORTEX_GEOMETRY, vortexMaterial);
-  const eventHorizon = new THREE.Mesh(VOID_ZONE_EVENT_HORIZON_GEOMETRY, eventHorizonMaterial);
-  const accretion = new THREE.Mesh(VOID_ZONE_RING_MIDDLE_GEOMETRY, accretionMaterial);
-  scene.add(vortex, eventHorizon, accretion);
-  renderer.compile(scene, camera);
+export function prewarmVoidZoneResources(): void {
+  getVortexMaterial();
+  getEventHorizonMaterial();
+  getAccretionMaterial();
 }
 
-const PARTICLE_COUNT = 40;
-const DEBRIS_COUNT = 12;
-const VOID_ZONE_DAMAGE = 15;
-const VOID_ZONE_DAMAGE_INTERVAL = 500;
+export function appendVoidZoneGpuPrewarmObjects(target: THREE.Object3D): void {
+  prewarmVoidZoneResources();
+
+  const group = new THREE.Group();
+  group.name = 'gpu-prewarm-void-zone';
+  group.position.set(1.4, 0, -4.8);
+  group.scale.setScalar(0.28);
+
+  group.add(new THREE.Mesh(VOID_ZONE_VORTEX_GEOMETRY, getVortexMaterial()));
+  group.add(new THREE.Mesh(VOID_ZONE_EVENT_HORIZON_GEOMETRY, getEventHorizonMaterial()));
+  group.add(new THREE.Mesh(VOID_ZONE_RING_INNER_GEOMETRY, getAccretionMaterial()));
+  group.add(new THREE.Mesh(VOID_ZONE_RING_MIDDLE_GEOMETRY, getAccretionMaterial()));
+  group.add(new THREE.Mesh(VOID_ZONE_RING_OUTER_GEOMETRY, getAccretionMaterial()));
+  group.add(new THREE.Mesh(VOID_ZONE_BOUNDARY_RING_GEOMETRY, getAccretionMaterial()));
+
+  const particleGeometry = new THREE.BufferGeometry();
+  particleGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    0, 0, 0,
+    0.18, 0.01, 0.16,
+    -0.14, 0.02, -0.2,
+  ]), 3));
+  particleGeometry.setAttribute('speed', new THREE.BufferAttribute(new Float32Array([0.45, 0.7, 0.9]), 1));
+  particleGeometry.setAttribute('angle', new THREE.BufferAttribute(new Float32Array([0, 2.1, 4.2]), 1));
+  particleGeometry.setAttribute('radius', new THREE.BufferAttribute(new Float32Array([0.2, 0.48, 0.72]), 1));
+  group.add(new THREE.Points(particleGeometry, new THREE.PointsMaterial({
+    color: 0xc084fc,
+    size: 0.08,
+    transparent: true,
+    opacity: 0.5,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    sizeAttenuation: true,
+    toneMapped: false,
+  })));
+
+  target.add(group);
+}
 
 export const VoidZone = React.memo(({ position, radius, duration, startTime, ownerId }: VoidZoneProps) => {
   const groupRef = useRef<THREE.Group>(null);
-  const vortexRef = useRef<THREE.Mesh>(null);
-  const eventHorizonRef = useRef<THREE.Mesh>(null);
   const innerRingsRef = useRef<THREE.Group>(null);
   const particlesRef = useRef<THREE.Points>(null);
-  const debrisRef = useRef<THREE.Points>(null);
-  const lastDamageTickRef = useRef<Map<string, number>>(new Map());
   const timeRef = useRef(0);
   const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - startTime));
 
@@ -294,28 +317,26 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
 
   const particleGeometry = useMemo(() => {
     const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(PARTICLE_COUNT * 3);
-    const sizes = new Float32Array(PARTICLE_COUNT);
-    const speeds = new Float32Array(PARTICLE_COUNT);
-    const angles = new Float32Array(PARTICLE_COUNT);
-    const radii = new Float32Array(PARTICLE_COUNT);
+    const positions = new Float32Array(VOID_ZONE_MOTE_COUNT * 3);
+    const speeds = new Float32Array(VOID_ZONE_MOTE_COUNT);
+    const angles = new Float32Array(VOID_ZONE_MOTE_COUNT);
+    const radii = new Float32Array(VOID_ZONE_MOTE_COUNT);
     
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const r = 0.3 + Math.random() * radius * 0.9;
-      const height = Math.random() * 0.8;
+    for (let i = 0; i < VOID_ZONE_MOTE_COUNT; i++) {
+      const angle = i * VOID_ZONE_GOLDEN_ANGLE;
+      const band = (i % 6) / 5;
+      const r = radius * Math.min(0.94, VOID_ZONE_MOTE_MIN_RADIUS + band * 0.54);
+      const height = VOID_ZONE_MOTE_BASE_HEIGHT + ((i % 4) / 3) * 0.06;
       
       positions[i * 3] = Math.cos(angle) * r;
       positions[i * 3 + 1] = height;
       positions[i * 3 + 2] = Math.sin(angle) * r;
-      sizes[i] = Math.random() * 0.1 + 0.03;
-      speeds[i] = 0.5 + Math.random() * 2;
+      speeds[i] = 0.34 + (i % 5) * 0.08;
       angles[i] = angle;
       radii[i] = r;
     }
     
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
     geometry.setAttribute('speed', new THREE.BufferAttribute(speeds, 1));
     geometry.setAttribute('angle', new THREE.BufferAttribute(angles, 1));
     geometry.setAttribute('radius', new THREE.BufferAttribute(radii, 1));
@@ -323,49 +344,11 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
     return geometry;
   }, [radius]);
 
-  const debrisGeometry = useMemo(() => {
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(DEBRIS_COUNT * 3);
-    const velocities = new Float32Array(DEBRIS_COUNT * 3);
-    const sizes = new Float32Array(DEBRIS_COUNT);
-    
-    for (let i = 0; i < DEBRIS_COUNT; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const r = radius * (0.8 + Math.random() * 0.3);
-      
-      positions[i * 3] = Math.cos(angle) * r;
-      positions[i * 3 + 1] = 0.5 + Math.random() * 1.5;
-      positions[i * 3 + 2] = Math.sin(angle) * r;
-      
-      velocities[i * 3] = -Math.cos(angle) * (0.5 + Math.random());
-      velocities[i * 3 + 1] = -0.3;
-      velocities[i * 3 + 2] = -Math.sin(angle) * (0.5 + Math.random());
-      
-      sizes[i] = 0.1 + Math.random() * 0.15;
-    }
-    
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('velocity', new THREE.BufferAttribute(velocities, 3));
-    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-    
-    return geometry;
-  }, [radius]);
-
   const particleMaterial = useMemo(() => new THREE.PointsMaterial({
     color: 0xc084fc,
-    size: 0.1,
+    size: 0.075,
     transparent: true,
-    opacity: 0.9,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    sizeAttenuation: true,
-  }), []);
-
-  const debrisMaterial = useMemo(() => new THREE.PointsMaterial({
-    color: 0x7c3aed,
-    size: 0.12,
-    transparent: true,
-    opacity: 0.8,
+    opacity: 0.5,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     sizeAttenuation: true,
@@ -425,91 +408,37 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
         let angle = (angleAttrs as THREE.BufferAttribute).getX(i);
         let r = (radiiAttrs as THREE.BufferAttribute).getX(i);
         
-        angle += delta * speed * (1 + (1 - r / radius) * 2);
-        r -= delta * 0.3;
+        const normalizedRadius = r / radius;
+        angle += delta * speed * (0.7 + (1 - normalizedRadius) * 0.9);
+        r -= delta * 0.14;
         
-        if (r < 0.2) {
-          r = radius * (0.7 + ((i * 17) % 10) * 0.03);
+        if (r < radius * VOID_ZONE_MOTE_MIN_RADIUS) {
+          r = radius * (VOID_ZONE_MOTE_RESET_RADIUS + ((i * 17) % 5) * 0.028);
           angle += Math.PI * 1.381966;
         }
         
         (angleAttrs as THREE.BufferAttribute).setX(i, angle);
         (radiiAttrs as THREE.BufferAttribute).setX(i, r);
         
-        const height = (Math.sin(time * 3 + i) * 0.2 + 0.4) * (r / radius);
+        const lift = (Math.sin(time * 2.2 + i * 0.85) * 0.5 + 0.5) * VOID_ZONE_MOTE_MAX_LIFT;
+        const height = VOID_ZONE_MOTE_BASE_HEIGHT + lift * (1 - Math.min(0.85, r / radius) * 0.65);
         
         positions.setX(i, Math.cos(angle) * r);
         positions.setY(i, height);
         positions.setZ(i, Math.sin(angle) * r);
       }
       positions.needsUpdate = true;
-      particleMaterial.opacity = currentOpacity * 0.9;
-    }
-
-    if (debrisRef.current) {
-      const positions = debrisRef.current.geometry.attributes.position;
-      const velocities = debrisRef.current.geometry.attributes.velocity;
-      
-      for (let i = 0; i < positions.count; i++) {
-        let x = positions.getX(i);
-        let y = positions.getY(i);
-        let z = positions.getZ(i);
-        
-        const vx = (velocities as THREE.BufferAttribute).getX(i);
-        const vy = (velocities as THREE.BufferAttribute).getY(i);
-        const vz = (velocities as THREE.BufferAttribute).getZ(i);
-        
-        x += vx * delta;
-        y += vy * delta;
-        z += vz * delta;
-        
-        const dist = Math.sqrt(x * x + z * z);
-        if (dist < 0.3 || y < 0) {
-          const angle = (i * 2.399963 + time * 0.37) % (Math.PI * 2);
-          const r = radius * (0.8 + ((i * 23) % 7) * 0.04);
-          x = Math.cos(angle) * r;
-          y = 0.5 + ((i * 31) % 11) * 0.13;
-          z = Math.sin(angle) * r;
-        }
-        
-        positions.setX(i, x);
-        positions.setY(i, y);
-        positions.setZ(i, z);
-      }
-      positions.needsUpdate = true;
-      debrisMaterial.opacity = currentOpacity * 0.8;
-    }
-
-    const now = frameClock.nowMs;
-    const { players, localPlayer } = useGameStore.getState();
-    
-    for (const [playerId, player] of players) {
-      if (playerId === localPlayer?.id) continue;
-      if (player.state !== 'alive') continue;
-      if (localPlayer && player.team === localPlayer.team) continue;
-      
-      const dx = player.position.x - position.x;
-      const dz = player.position.z - position.z;
-      const distSq = dx * dx + dz * dz;
-      
-      if (distSq <= radius * radius) {
-        const lastDamage = lastDamageTickRef.current.get(playerId) || 0;
-        if (now - lastDamage >= VOID_ZONE_DAMAGE_INTERVAL) {
-          lastDamageTickRef.current.set(playerId, now);
-          
-        }
-      }
+      particleMaterial.opacity = currentOpacity * 0.48;
     }
   });
 
   return (
     <group ref={groupRef} position={[position.x, position.y + 0.02, position.z]}>
-      <mesh ref={vortexRef} rotation-x={-Math.PI / 2} geometry={VOID_ZONE_VORTEX_GEOMETRY} scale={[radius, radius, 1]}>
+      <mesh rotation-x={-Math.PI / 2} geometry={VOID_ZONE_VORTEX_GEOMETRY} scale={[radius, radius, 1]}>
         <primitive object={vortexMaterial} />
       </mesh>
 
       <mesh
-        ref={eventHorizonRef}
         rotation-x={-Math.PI / 2}
         position-y={0.03}
         geometry={VOID_ZONE_EVENT_HORIZON_GEOMETRY}
@@ -563,21 +492,6 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
       <points ref={particlesRef} geometry={particleGeometry}>
         <primitive object={particleMaterial} />
       </points>
-
-      <points ref={debrisRef} geometry={debrisGeometry}>
-        <primitive object={debrisMaterial} />
-      </points>
-
-      <mesh position-y={0.5}>
-        <cylinderGeometry args={[0.1, radius * 0.3, 1, 16, 1, true]} />
-        <meshBasicMaterial 
-          color={0x7c3aed}
-          transparent
-          opacity={0.3}
-          side={THREE.DoubleSide}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
     </group>
   );
 }, (prev, next) => {

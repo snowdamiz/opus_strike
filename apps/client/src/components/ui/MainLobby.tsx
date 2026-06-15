@@ -1,22 +1,42 @@
-import { type CSSProperties, useState, useEffect, useRef } from 'react';
-import { useGameStore, LobbyInfo } from '../../store/gameStore';
-import { useNetwork } from '../../contexts/NetworkContext';
+import { lazy, Suspense, type CSSProperties, useCallback, useState, useEffect, useRef, useId } from 'react';
+import { useShallow } from 'zustand/shallow';
+import { useGameStore } from '../../store/gameStore';
+import { useNetwork, type RankedTokenHoldStatus } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
 import { HeroesPage } from './HeroesPage';
 import { StatsPage } from './StatsPage';
 import { SettingsModal } from './SettingsModal';
 import { GameDialog } from './GameDialog';
-import { HeroPreviewCanvas } from './HeroPreviewCanvas';
+import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton } from './SocialBox';
-import type { HeroAnimationMode } from '../game/HeroVoxelBody';
+import { TopNavIconButton } from './TopNavIconButton';
 import { useUISounds } from '../../hooks/useAudio';
-import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
-import type { HeroId } from '@voxel-strike/shared';
+import { useServerLatencyProbe } from '../../hooks/useServerLatencyProbe';
+import { config } from '../../config/environment';
+import {
+  ALL_HERO_IDS,
+  DEFAULT_RANKED_SEASON_NUMBER,
+  HERO_DEFINITIONS,
+  getRankedSeasonLabel,
+} from '@voxel-strike/shared';
+import type { HeroId, RankedSeasonSnapshot } from '@voxel-strike/shared';
 import { HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
-import { usePwaInstallPrompt } from '../../pwa';
-import { lamportsToSolDisplay, solInputToLamports } from '../../utils/wagerPayments';
+import { PwaInstallToast } from './PwaInstallToast';
+import { MAP_SEED_PLACEHOLDER, isAllowedMapSeedInput, parseOptionalMapSeedInput } from '../../utils/mapSeedInput';
+import { solInputToLamports } from '../../utils/wagerPayments';
+import {
+  RUNNING_GAME_SESSION_EVENT,
+  RUNNING_GAME_SESSION_STORAGE_KEY,
+  type RunningGameSession,
+} from '../../utils/runningGameSession';
+import type { ServerLatencyProbeSnapshot } from '../../utils/serverLatency';
 import { RankIcon, getRankForStats } from './RankBadge';
+
+const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((module) => ({
+  default: module.FeaturedHeroPreview,
+})));
+const HERO_SHOWCASE_ANIMATION_MODE: HeroPreviewAnimationMode = 'showcaseLoop';
 
 // Phantom wallet icon component
 function PhantomIcon({ className }: { className?: string }) {
@@ -79,41 +99,91 @@ function SlopHeroesMark({ className }: { className?: string }) {
   );
 }
 
-function PwaInstallButton({ onInstall }: { onInstall: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onInstall}
-      className="group relative w-10 h-10 shrink-0 rounded-lg border border-orange-400/20 bg-orange-500/10 text-orange-200 shadow-[0_0_24px_rgba(249,115,22,0.14)] transition hover:border-orange-300/50 hover:bg-orange-400/20 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300/70"
-      aria-label="Install Slop Heroes app"
-      title="Install Slop Heroes app"
-    >
-      <span className="absolute inset-0 rounded-lg opacity-0 transition group-hover:opacity-100 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.18),transparent_62%)]" />
-      <span className="relative flex h-full w-full items-center justify-center">
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 3v10m0 0l4-4m-4 4L8 9" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 14v3.5A2.5 2.5 0 007.5 20h9a2.5 2.5 0 002.5-2.5V14" />
-        </svg>
-      </span>
-    </button>
-  );
-}
-
 // Navigation tabs
 type MainTab = 'play' | 'heroes' | 'stats' | 'loadout';
+const RANKED_NATIVE_SOL_ADDRESS = 'So11111111111111111111111111111111111111112';
+const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
+  mode: 'season',
+  seasonNumber: DEFAULT_RANKED_SEASON_NUMBER,
+  label: getRankedSeasonLabel({ mode: 'season', seasonNumber: DEFAULT_RANKED_SEASON_NUMBER }),
+  endsAt: null,
+};
+const SEASON_RULES_ARIA = 'Season rewards: top 10 players split 10% of the treasury wallet at season end; golden biome wins pay $10 in SOL per player with a 2% spawn rate; ranked history is saved by season.';
 
-function isTextEntryTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLSelectElement ||
-    (target instanceof HTMLElement && target.isContentEditable)
-  );
+function formatRankedUsdCents(usdCents: number): string {
+  const normalizedCents = Number.isInteger(usdCents) && usdCents > 0 ? usdCents : 0;
+  const dollars = Math.floor(normalizedCents / 100);
+  const cents = normalizedCents % 100;
+  return cents === 0 ? `$${dollars}` : `$${dollars}.${cents.toString().padStart(2, '0')}`;
+}
+
+function formatRankedTokenLabel(status: RankedTokenHoldStatus): string {
+  const symbol = status.tokenSymbol?.trim().replace(/^\$/, '').toUpperCase();
+  if (symbol) return `$${symbol}`;
+  if (status.tokenAddress === RANKED_NATIVE_SOL_ADDRESS) return '$SOL';
+  return `$${status.tokenAddress.slice(0, 4)}...${status.tokenAddress.slice(-4)}`;
+}
+
+function rankedTokenHoldRequirement(status: RankedTokenHoldStatus): string {
+  return `${formatRankedUsdCents(status.usdCents)} hold`;
+}
+
+function formatRankedPreseasonSubtitle(season: RankedSeasonSnapshot): string {
+  const fallback = 'Ranked queue opens next season';
+  if (!season.endsAt) return fallback;
+
+  const date = new Date(season.endsAt);
+  if (Number.isNaN(date.getTime()) || date.getTime() <= Date.now()) return fallback;
+
+  const formattedDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `Ranked queue opens ${formattedDate}`;
+}
+
+function formatSeasonBoundaryDate(season: RankedSeasonSnapshot): string {
+  const fallback = season.mode === 'preseason' ? 'NEXT SEASON TBA' : 'ENDS TBA';
+  if (!season.endsAt) return fallback;
+  const date = new Date(season.endsAt);
+  if (Number.isNaN(date.getTime())) return fallback;
+  const formattedDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }).toUpperCase();
+  return season.mode === 'preseason' ? `NEXT SEASON BEGINS ${formattedDate}` : `ENDS ${formattedDate}`;
+}
+
+function formatSeasonBoundaryDetail(season: RankedSeasonSnapshot): string {
+  const pendingLabel = season.mode === 'preseason' ? 'Next season schedule pending' : 'Schedule pending';
+  if (!season.endsAt) return pendingLabel;
+  const date = new Date(season.endsAt);
+  if (Number.isNaN(date.getTime())) return pendingLabel;
+
+  const remainingMs = date.getTime() - Date.now();
+  const formattedDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  if (remainingMs <= 0) return season.mode === 'preseason' ? `Next season began ${formattedDate}` : `Ended ${formattedDate}`;
+  const daysRemaining = Math.ceil(remainingMs / 86_400_000);
+  if (daysRemaining > 1) return `${daysRemaining} days remaining`;
+  if (daysRemaining === 1) return season.mode === 'preseason' ? 'Begins within 24 hours' : 'Under 24 hours';
+  return season.mode === 'preseason' ? `Next season began ${formattedDate}` : `Ended ${formattedDate}`;
 }
 
 export function MainLobby() {
-  const { playerName, availableLobbies, isLoading, userStats, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
-  const { watchLobbies, createLobby, quickPlay, rankedPlay, joinLobby } = useNetwork();
+  const { playerName, isLoading, userStats, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore(
+    useShallow((state) => ({
+      playerName: state.playerName,
+      isLoading: state.isLoading,
+      userStats: state.userStats,
+      setAppPhase: state.setAppPhase,
+      setPlayerName: state.setPlayerName,
+      setUser: state.setUser,
+      setWalletAddress: state.setWalletAddress,
+    }))
+  );
+  const {
+    createLobby,
+    quickPlay,
+    rankedPlay,
+    getRankedTokenHoldStatus,
+    startPracticeGame,
+    getRunningGameReconnect,
+    reconnectRunningGame,
+  } = useNetwork();
   const { playButtonClick } = useUISounds();
   const {
     isPhantomInstalled,
@@ -129,7 +199,6 @@ export function MainLobby() {
     suggestedPlayerName,
     hasFullFunctionality,
     connect,
-    disconnect,
     logout,
     authenticate,
     signInWithDiscord,
@@ -140,16 +209,22 @@ export function MainLobby() {
     clearError,
     clearNotice,
   } = useWallet();
-  const { canInstall, install: installPwa } = usePwaInstallPrompt();
 
   const [activeTab, setActiveTab] = useState<MainTab>('play');
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showSocial, setShowSocial] = useState(false);
+  const [showPlayDialog, setShowPlayDialog] = useState(false);
   const [showCreateLobby, setShowCreateLobby] = useState(false);
-  const [showBrowseGames, setShowBrowseGames] = useState(false);
+  const [showPracticeSetup, setShowPracticeSetup] = useState(false);
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
-  const [heroAnimationMode, setHeroAnimationMode] = useState<HeroAnimationMode>('idle');
+  const [rankedTokenHoldStatus, setRankedTokenHoldStatus] = useState<RankedTokenHoldStatus | null>(null);
+  const [isRankedTokenHoldLoading, setIsRankedTokenHoldLoading] = useState(false);
+  const [rankedTokenHoldError, setRankedTokenHoldError] = useState<string | null>(null);
+  const [rankedSeason, setRankedSeason] = useState<RankedSeasonSnapshot>(DEFAULT_RANKED_SEASON);
+  const [runningGameSession, setRunningGameSession] = useState<RunningGameSession | null>(null);
+  const [isReconnectChecking, setIsReconnectChecking] = useState(false);
+  const heroAnimationMode = HERO_SHOWCASE_ANIMATION_MODE;
 
   // Authentication states
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -161,6 +236,36 @@ export function MainLobby() {
   const [isLinkingPhantom, setIsLinkingPhantom] = useState(false);
   const shouldAuthenticateConnectedWalletRef = useRef(false);
   const currentRank = getRankForStats(userStats);
+  const isRankedPreseason = rankedSeason.mode === 'preseason';
+  const serverLatency = useServerLatencyProbe(config.clientDiagnosticsEnabled && activeTab === 'play');
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetch(`${config.serverHttpUrl}/auth/ranked-season`, {
+      signal: controller.signal,
+      credentials: 'include',
+      cache: 'no-store',
+    })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error(`Season request failed (${response.status})`)))
+      .then((season: RankedSeasonSnapshot) => {
+        setRankedSeason({
+          mode: season.mode === 'preseason' ? 'preseason' : 'season',
+          seasonNumber: Number.isFinite(season.seasonNumber) ? season.seasonNumber : DEFAULT_RANKED_SEASON.seasonNumber,
+          label: season.label || getRankedSeasonLabel({
+            mode: season.mode === 'preseason' ? 'preseason' : 'season',
+            seasonNumber: season.seasonNumber,
+          }),
+          endsAt: season.endsAt ?? null,
+        });
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        console.warn('[MainLobby] Ranked season unavailable:', err);
+      });
+
+    return () => controller.abort();
+  }, []);
 
   // Handle authentication after wallet connection
   useEffect(() => {
@@ -189,6 +294,88 @@ export function MainLobby() {
       setNewPlayerName((currentName) => currentName || suggestedPlayerName);
     }
   }, [isAuthenticated, isNewUser, suggestedPlayerName]);
+
+  useEffect(() => {
+    if (!showPlayDialog || !isAuthenticated || !hasFullFunctionality || isRankedPreseason) {
+      setRankedTokenHoldStatus(null);
+      setRankedTokenHoldError(null);
+      setIsRankedTokenHoldLoading(false);
+      return;
+    }
+
+    let isCurrent = true;
+    setRankedTokenHoldStatus(null);
+    setRankedTokenHoldError(null);
+    setIsRankedTokenHoldLoading(true);
+
+    getRankedTokenHoldStatus()
+      .then((status) => {
+        if (!isCurrent) return;
+        setRankedTokenHoldStatus(status);
+      })
+      .catch((err) => {
+        if (!isCurrent) return;
+        setRankedTokenHoldError(err instanceof Error ? err.message : 'Failed to check ranked token holding');
+      })
+      .finally(() => {
+        if (!isCurrent) return;
+        setIsRankedTokenHoldLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [getRankedTokenHoldStatus, hasFullFunctionality, isAuthenticated, isRankedPreseason, showPlayDialog, user?.walletAddress, walletAddress]);
+
+  const refreshRunningGameReconnect = useCallback(() => {
+    if (!isAuthenticated) {
+      setRunningGameSession(null);
+      setIsReconnectChecking(false);
+      return;
+    }
+
+    let isCurrent = true;
+    setIsReconnectChecking(true);
+
+    getRunningGameReconnect()
+      .then((status) => {
+        if (!isCurrent) return;
+        setRunningGameSession(status.available ? status.session : null);
+      })
+      .catch(() => {
+        if (!isCurrent) return;
+        setRunningGameSession(null);
+      })
+      .finally(() => {
+        if (!isCurrent) return;
+        setIsReconnectChecking(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [getRunningGameReconnect, isAuthenticated]);
+
+  useEffect(() => {
+    const cancelRefresh = refreshRunningGameReconnect();
+    const handleSessionChanged = () => {
+      refreshRunningGameReconnect();
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === RUNNING_GAME_SESSION_STORAGE_KEY) {
+        refreshRunningGameReconnect();
+      }
+    };
+
+    window.addEventListener(RUNNING_GAME_SESSION_EVENT, handleSessionChanged);
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      cancelRefresh?.();
+      window.removeEventListener(RUNNING_GAME_SESSION_EVENT, handleSessionChanged);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, [refreshRunningGameReconnect]);
 
   const handleDiscordSignIn = () => {
     clearError();
@@ -291,10 +478,15 @@ export function MainLobby() {
     }
   };
 
-  const handleInstallPwa = () => {
-    playButtonClick();
-    installPwa().catch(() => undefined);
-  };
+  const shouldShowPwaInstallToast = (
+    activeTab === 'play' &&
+    !showSettings &&
+    !showSocial &&
+    !showPlayDialog &&
+    !showCreateLobby &&
+    !showPracticeSetup &&
+    !showAuthModal
+  );
 
   // Format wallet address for display
   const formatAddress = (address: string) => {
@@ -323,55 +515,16 @@ export function MainLobby() {
     setFeaturedHero(heroId);
   };
 
-  useEffect(() => {
-    const handleHeroAnimationKey = (event: KeyboardEvent) => {
-      if (
-        activeTab !== 'play' ||
-        showSettings ||
-        showSocial ||
-        showCreateLobby ||
-        showBrowseGames ||
-        showAuthModal ||
-        event.defaultPrevented ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey ||
-        isTextEntryTarget(event.target)
-      ) {
-        return;
-      }
-
-      if (event.key === '1') {
-        setHeroAnimationMode('walk');
-      } else if (event.key === '2') {
-        setHeroAnimationMode('jump');
-      } else if (event.key === '3') {
-        setHeroAnimationMode('crouchWalkLoop');
-      } else if (event.key === '4') {
-        setHeroAnimationMode('run');
-      } else if (event.key === '5') {
-        setHeroAnimationMode('slide');
-      } else if (event.key === '6') {
-        setHeroAnimationMode('attack');
-      } else if (event.key === '0') {
-        setHeroAnimationMode('idle');
-      }
-    };
-
-    window.addEventListener('keydown', handleHeroAnimationKey);
-    return () => window.removeEventListener('keydown', handleHeroAnimationKey);
-  }, [activeTab, showAuthModal, showBrowseGames, showCreateLobby, showSettings, showSocial]);
-
-  useEffect(() => {
-    if (activeTab === 'play') {
-      return watchLobbies();
-    }
-  }, [watchLobbies, activeTab]);
-
-  const handleCreateLobby = async (lobbyName: string, isPrivate: boolean, wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' }) => {
+  const handleCreateLobby = async (
+    lobbyName: string,
+    wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' },
+    mapSeed?: number,
+    forceGoldenMapOption?: boolean,
+    observersEnabled?: boolean
+  ) => {
     setError(null);
     try {
-      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, isPrivate, { wager });
+      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, { wager, mapSeed, forceGoldenMapOption, observersEnabled });
       setShowCreateLobby(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create lobby');
@@ -387,8 +540,30 @@ export function MainLobby() {
     }
   };
 
+  const handleReconnectGame = async () => {
+    setError(null);
+    try {
+      await reconnectRunningGame();
+    } catch (err) {
+      await getRunningGameReconnect();
+      setRunningGameSession(null);
+      setError(err instanceof Error ? err.message : 'Failed to reconnect');
+      setShowPlayDialog(true);
+    }
+  };
+
+  const handlePracticeGame = (mapSeed?: number) => {
+    setError(null);
+    startPracticeGame(playerName, { mapSeed });
+    setShowPracticeSetup(false);
+  };
+
   const handleRankedPlay = async () => {
     setError(null);
+    if (isRankedPreseason) {
+      setError('Ranked is disabled during Pre-season.');
+      return;
+    }
     if (!isAuthenticated) {
       handleSignInClick();
       return;
@@ -397,20 +572,17 @@ export function MainLobby() {
       await handleLinkPhantom();
       return;
     }
+    if (isRankedTokenHoldLoading) {
+      return;
+    }
+    if (rankedTokenHoldStatus?.eligible === false) {
+      setError(`Ranked requires ${rankedTokenHoldRequirement(rankedTokenHoldStatus)}.`);
+      return;
+    }
     try {
       await rankedPlay(playerName);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to enter ranked');
-    }
-  };
-
-  const handleJoinLobby = async (lobbyId: string) => {
-    setError(null);
-    try {
-      await joinLobby(playerName, lobbyId);
-      setShowBrowseGames(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to join lobby');
     }
   };
 
@@ -425,21 +597,19 @@ export function MainLobby() {
 
       {/* Top Navigation Bar */}
       <nav className="absolute top-0 left-0 right-0 z-20">
-        <div className="menu-nav flex items-center justify-between gap-4">
-          {/* Logo & Tabs */}
-          <div className="flex min-w-0 items-center gap-4 xl:gap-6">
-            <div className="flex shrink-0 items-center gap-3">
-              <div className="w-10 h-10 xl:w-12 xl:h-12 relative flex items-center justify-center">
-                <SlopHeroesMark className="w-full h-full" />
-              </div>
-              <div className="min-w-0">
-                <h1 className="font-display text-lg xl:text-xl text-white tracking-wider whitespace-nowrap">SLOP HEROES</h1>
-                <p className="text-[10px] text-white/40 font-body uppercase tracking-widest">Season 1</p>
-              </div>
+        <div className="menu-nav main-lobby-nav">
+          {/* Logo */}
+          <div className="main-lobby-brand flex min-w-0 shrink-0 items-center gap-3">
+            <div className="w-10 h-10 xl:w-12 xl:h-12 relative flex items-center justify-center">
+              <SlopHeroesMark className="w-full h-full" />
             </div>
+            <div className="flex h-10 min-w-0 items-center xl:h-12">
+              <h1 className="font-display text-2xl leading-none text-white tracking-wide whitespace-nowrap xl:text-3xl">SLOP HEROES</h1>
+            </div>
+          </div>
 
-            <div className="flex min-w-0 items-center ml-2 xl:ml-8">
-              {(['play', 'heroes', 'stats', 'loadout'] as MainTab[]).map((tab) => (
+          <div className="main-lobby-tabs flex min-w-0 items-center">
+            {(['play', 'heroes', 'stats', 'loadout'] as MainTab[]).map((tab) => (
  <button
  key={tab}
  onClick={() => { playButtonClick(); setActiveTab(tab); }}
@@ -451,12 +621,11 @@ export function MainLobby() {
  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-orange-500" />
  )}
  </button>
-              ))}
-            </div>
+            ))}
           </div>
 
           {/* Right side controls */}
-          <div className="flex shrink-0 items-center gap-3 xl:gap-4">
+          <div className="main-lobby-controls flex shrink-0 items-center gap-3 xl:gap-4">
             <SocialButton
               onClick={() => {
                 playButtonClick();
@@ -464,21 +633,20 @@ export function MainLobby() {
               }}
             />
 
- <button
- onClick={() => { playButtonClick(); setShowSettings(true); }}
- className="w-10 h-10 flex items-center justify-center text-white/60 hover:text-white"
- >
- <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
- </svg>
- </button>
+            <TopNavIconButton
+              label="Open settings"
+              title="Settings"
+              onClick={() => { playButtonClick(); setShowSettings(true); }}
+            >
+              <svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </TopNavIconButton>
 
-            {canInstall && <PwaInstallButton onInstall={handleInstallPwa} />}
-
-            {/* Conditional: Show sign-in button or profile card */}
+            {/* Conditional: Show sign-in button or profile summary */}
             {isAuthenticated && user ? (
-              <div className="flex items-center gap-3 py-1 pl-1 pr-0 rounded-lg group">
+              <div className="flex items-center gap-3">
                 <div
                   className="flex h-11 w-11 shrink-0 items-center justify-center"
                   title={currentRank.label}
@@ -489,16 +657,6 @@ export function MainLobby() {
                   <p className="font-display text-white text-sm">{playerName}</p>
                   <p className="mt-1 font-display text-[10px] uppercase leading-none text-white/70">{currentRank.label}</p>
                 </div>
-                {/* Disconnect button on hover */}
- <button
- onClick={handleDisconnect}
- className="w-8 h-8 shrink-0 opacity-60 group-hover:opacity-100 rounded-lg flex items-center justify-center hover:bg-white/10"
- title="Disconnect wallet"
- >
- <svg className="w-4 h-4 text-white/40 hover:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
- </svg>
- </button>
               </div>
             ) : (
  <button
@@ -544,26 +702,29 @@ export function MainLobby() {
         {activeTab === 'play' && (
           <PlayTab
             isLoading={isLoading}
-            error={error}
             featuredHero={featuredHero}
             heroInfo={heroInfo}
             heroColor={heroColor}
             heroAnimationMode={heroAnimationMode}
-            lobbyCount={availableLobbies.length}
+            rankedSeason={rankedSeason}
             isAuthenticated={isAuthenticated}
-            hasFullFunctionality={hasFullFunctionality}
-            isLinkingPhantom={isLinkingPhantom}
-            onQuickPlay={isAuthenticated ? handleQuickPlay : handleSignInClick}
-            onRankedPlay={handleRankedPlay}
-            onLinkPhantom={handleLinkPhantom}
-            onOpenCreateLobby={isAuthenticated ? () => setShowCreateLobby(true) : handleSignInClick}
-            onOpenBrowseGames={() => setShowBrowseGames(true)}
+            runningGameSession={runningGameSession}
+            isReconnectChecking={isReconnectChecking}
+            serverLatency={config.clientDiagnosticsEnabled ? serverLatency : null}
+            onOpenPlayDialog={() => setShowPlayDialog(true)}
+            onReconnect={handleReconnectGame}
+            onSignIn={handleSignInClick}
             onPrevHero={handlePrevHero}
             onNextHero={handleNextHero}
             onSelectHero={handleSelectHero}
           />
         )}
-        {activeTab === 'heroes' && <HeroesPage />}
+        {activeTab === 'heroes' && (
+          <HeroesPage
+            selectedHero={featuredHero}
+            onSelectHero={setFeaturedHero}
+          />
+        )}
         {activeTab === 'stats' && <StatsPage />}
         {activeTab === 'loadout' && (
           <div className="h-full flex items-center justify-center menu-content">
@@ -580,6 +741,8 @@ export function MainLobby() {
         )}
       </div>
 
+      {shouldShowPwaInstallToast && <PwaInstallToast />}
+
       {/* Modals */}
       {showSocial && (
         <SocialBox
@@ -588,6 +751,32 @@ export function MainLobby() {
         />
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showPlayDialog && (
+        <PlayDialog
+          error={error}
+          heroColor={heroColor}
+          isLoading={isLoading}
+          isAuthenticated={isAuthenticated}
+          hasFullFunctionality={hasFullFunctionality}
+          isLinkingPhantom={isLinkingPhantom}
+          rankedTokenHoldStatus={rankedTokenHoldStatus}
+          isRankedTokenHoldLoading={isRankedTokenHoldLoading}
+          rankedTokenHoldError={rankedTokenHoldError}
+          rankedSeason={rankedSeason}
+          onQuickPlay={handleQuickPlay}
+          onRankedPlay={handleRankedPlay}
+          onLinkPhantom={handleLinkPhantom}
+          onOpenPracticeSetup={() => {
+            setShowPlayDialog(false);
+            setShowPracticeSetup(true);
+          }}
+          onOpenCreateLobby={() => {
+            setShowPlayDialog(false);
+            setShowCreateLobby(true);
+          }}
+          onClose={() => setShowPlayDialog(false)}
+        />
+      )}
       {showCreateLobby && (
         <CreateLobbyModal
           playerName={playerName}
@@ -597,12 +786,12 @@ export function MainLobby() {
           onCreate={handleCreateLobby}
         />
       )}
-      {showBrowseGames && (
-        <BrowseGamesModal
-          availableLobbies={availableLobbies}
+      {showPracticeSetup && (
+        <PracticeSetupModal
           isLoading={isLoading}
-          onJoinLobby={handleJoinLobby}
-          onClose={() => setShowBrowseGames(false)}
+          error={error}
+          onClose={() => setShowPracticeSetup(false)}
+          onStart={handlePracticeGame}
         />
       )}
 
@@ -642,20 +831,18 @@ export function MainLobby() {
 // Play Tab Component
 interface PlayTabProps {
   isLoading: boolean;
-  error: string | null;
   featuredHero: HeroId;
   heroInfo: (typeof HERO_DEFINITIONS)[HeroId];
   heroColor: string;
-  heroAnimationMode: HeroAnimationMode;
-  lobbyCount: number;
+  heroAnimationMode: HeroPreviewAnimationMode;
+  rankedSeason: RankedSeasonSnapshot;
   isAuthenticated: boolean;
-  hasFullFunctionality: boolean;
-  isLinkingPhantom: boolean;
-  onQuickPlay: () => void;
-  onRankedPlay: () => void;
-  onLinkPhantom: () => void;
-  onOpenCreateLobby: () => void;
-  onOpenBrowseGames: () => void;
+  runningGameSession: RunningGameSession | null;
+  isReconnectChecking: boolean;
+  serverLatency: ServerLatencyProbeSnapshot | null;
+  onOpenPlayDialog: () => void;
+  onReconnect: () => void;
+  onSignIn: () => void;
   onPrevHero: () => void;
   onNextHero: () => void;
   onSelectHero: (heroId: HeroId) => void;
@@ -663,34 +850,28 @@ interface PlayTabProps {
 
 function PlayTab({
   isLoading,
-  error,
   featuredHero,
   heroInfo,
   heroColor,
   heroAnimationMode,
-  lobbyCount,
+  rankedSeason,
   isAuthenticated,
-  hasFullFunctionality,
-  isLinkingPhantom,
-  onQuickPlay,
-  onRankedPlay,
-  onLinkPhantom,
-  onOpenCreateLobby,
-  onOpenBrowseGames,
+  runningGameSession,
+  isReconnectChecking,
+  serverLatency,
+  onOpenPlayDialog,
+  onReconnect,
+  onSignIn,
   onPrevHero,
   onNextHero,
   onSelectHero,
 }: PlayTabProps) {
   const { playButtonClick } = useUISounds();
-  const featuredPreviewClassName =
-    heroAnimationMode === 'jump'
-      ? 'relative -mt-[clamp(5rem,14vh,10rem)] h-[clamp(22rem,56vh,40rem)] w-[clamp(15rem,32vw,30rem)]'
-      : heroAnimationMode === 'slide'
-        ? 'relative h-[clamp(18rem,44vh,32rem)] w-[clamp(18rem,36vw,34rem)]'
-      : 'relative h-[clamp(17rem,42vh,30rem)] w-[clamp(15rem,32vw,30rem)]';
+  const canReconnect = isAuthenticated && Boolean(runningGameSession);
 
   return (
     <div className="play-tab-shell h-full menu-content">
+      <RankedSeasonPlate season={rankedSeason} />
       <div className="play-tab-stage menu-compact-scale relative">
         <div className="play-hero-column flex flex-col items-center justify-center">
           {/* Hero Visual with Carousel Controls */}
@@ -707,24 +888,15 @@ function PlayTab({
  </button>
 
           {/* Hero Container */}
-          <div className="play-hero-preview-wrap relative">
-            {/* Background glow that matches hero color */}
-            <div
-              className="absolute inset-0 opacity-20 -z-10"
-              style={{
-                background: `radial-gradient(ellipse at center, ${heroColor} 0%, transparent 60%)`,
-                transform: 'scale(1.4)',
-              }}
-            />
-
-            <DeferredFeaturedHeroPreview
+          <Suspense fallback={null}>
+            <FeaturedHeroPreview
               heroId={featuredHero}
               accentColor={heroColor}
               initialYaw={Math.PI - 0.18}
               animationMode={heroAnimationMode}
-              className={featuredPreviewClassName}
+              scale="large"
             />
-          </div>
+          </Suspense>
 
           {/* Next Arrow */}
  <button
@@ -775,258 +947,417 @@ function PlayTab({
               );
             })}
           </div>
-        </div>
-
-        </div>
-
-        <div className="play-column-divider" aria-hidden="true" />
-
-        <div className="play-actions-column">
-          <div className="play-actions-copy">
-            <p className="font-display text-xl text-white sm:text-2xl xl:text-3xl">CHOOSE A MATCH</p>
-            <p className="mt-1 max-w-sm font-body text-xs leading-relaxed text-white/45 sm:text-sm">
-              Jump straight in, browse custom rooms, or queue ranked for SOL stakes.
-            </p>
-          </div>
-
-        {/* Action Buttons */}
-        <div className="play-action-stack w-[clamp(18rem,25vw,34rem)] space-y-1.5 lg:space-y-2 xl:space-y-2.5">
-          {error && (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg mb-4">
-              <p className="text-red-400 text-sm font-body text-center">{error}</p>
-            </div>
-          )}
-
-          {isAuthenticated && !hasFullFunctionality && (
-            <div className="p-3 bg-amber-500/10 border border-amber-400/20 rounded-lg mb-4">
-              <p className="text-amber-100 text-xs sm:text-sm font-body text-center">
-                Phantom is required for full functionality.
-              </p>
-              <button
-                type="button"
-                onClick={onLinkPhantom}
-                disabled={isLinkingPhantom}
-                className="mt-2 w-full py-2 rounded-lg font-display text-xs text-amber-50 bg-amber-500/20 border border-amber-300/20 hover:bg-amber-500/30 disabled:opacity-60"
-              >
-                {isLinkingPhantom ? 'CONNECTING...' : 'LINK PHANTOM'}
-              </button>
-            </div>
-          )}
 
           <button
- onClick={() => { playButtonClick(); onQuickPlay(); }}
- disabled={isLoading}
- className="w-full py-1.5 sm:py-2 md:py-2.5 lg:py-3 xl:py-3.5 2xl:py-4 rounded-lg sm:rounded-xl font-display text-sm sm:text-base md:text-lg xl:text-xl 2xl:text-2xl text-white border border-white/10 hover:border-white/30 relative overflow-hidden group"
- style={{
- background: isAuthenticated
- ? `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`
- : WALLET_AUTH_COLORS.gradient,
- boxShadow: isAuthenticated
- ? `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`
- : WALLET_AUTH_COLORS.glow,
- }}
- >
- {/* Button shimmer effect */}
- <div
- className="absolute inset-0 opacity-0 group-hover:opacity-100"
- style={{
- background: WALLET_AUTH_COLORS.shimmer,
- }}
- />
- <span className="relative flex items-center justify-center gap-1.5 sm:gap-2 lg:gap-2.5">
- {isAuthenticated ? (
- <>
- <svg className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 xl:w-7 xl:h-7" fill="currentColor" viewBox="0 0 24 24">
- <path d="M8 5v14l11-7z" />
- </svg>
- {isLoading ? 'STARTING...' : 'QUICK PLAY'}
- </>
- ) : (
- <>
- <SignInIcon className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 xl:w-7 xl:h-7" />
- SIGN IN TO PLAY
- </>
- )}
- </span>
- </button>
-
-          <button
-            onClick={() => { playButtonClick(); onRankedPlay(); }}
-            disabled={isLoading || isLinkingPhantom}
-            className="w-full py-1.5 sm:py-2 md:py-2.5 lg:py-3 xl:py-3.5 rounded-lg sm:rounded-xl font-display text-sm sm:text-base md:text-lg xl:text-xl text-amber-50 border border-amber-300/25 bg-amber-500/12 hover:border-amber-200/45 hover:bg-amber-500/20 disabled:opacity-60 flex items-center justify-center gap-1.5 sm:gap-2 lg:gap-2.5"
+            type="button"
+            onClick={() => {
+              playButtonClick();
+              if (canReconnect) {
+                onReconnect();
+              } else if (isAuthenticated) {
+                onOpenPlayDialog();
+              } else {
+                onSignIn();
+              }
+            }}
+            disabled={isAuthenticated && (isLoading || isReconnectChecking)}
+            className="play-main-cta group"
+            style={{
+              background: isAuthenticated
+                ? `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`
+                : WALLET_AUTH_COLORS.gradient,
+              boxShadow: isAuthenticated
+                ? `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`
+                : WALLET_AUTH_COLORS.glow,
+            }}
           >
-            <svg className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.3 6.8 19l1-5.8L3.6 9.1l5.8-.8L12 3z" />
-            </svg>
-            {isLoading ? 'PREPARING...' : isAuthenticated && hasFullFunctionality ? 'RANKED $5 SOL' : 'RANKED'}
+            <span
+              className="absolute inset-0 opacity-0 group-hover:opacity-100"
+              style={{ background: WALLET_AUTH_COLORS.shimmer }}
+            />
+            <span className="relative flex items-center justify-center gap-2">
+              {isAuthenticated ? (
+                <>
+                  {canReconnect ? (
+                    <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4v6h6M20 20v-6h-6M5.5 14a7 7 0 0012.1 2.4M18.5 10A7 7 0 006.4 7.6" />
+                    </svg>
+                  ) : (
+                    <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  )}
+                  {isReconnectChecking ? 'CHECKING...' : canReconnect ? 'RECONNECT' : 'PLAY'}
+                </>
+              ) : (
+                <>
+                  <SignInIcon className="h-5 w-5 sm:h-6 sm:w-6" />
+                  SIGN IN
+                </>
+              )}
+            </span>
           </button>
-
-          <div className="play-secondary-actions grid grid-cols-2 gap-1 sm:gap-1.5 lg:gap-2 xl:gap-2.5">
- <button
- onClick={() => { playButtonClick(); onOpenCreateLobby(); }}
- disabled={isLoading}
- className="py-1.5 sm:py-2 lg:py-2.5 xl:py-3 2xl:py-3.5 rounded-md sm:rounded-lg lg:rounded-xl font-display text-[10px] sm:text-xs lg:text-sm xl:text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 flex items-center justify-center gap-1 sm:gap-1.5 lg:gap-2"
- >
- {isAuthenticated ? (
- <>
- <svg className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
- </svg>
- CREATE GAME
- </>
- ) : (
- <>
- <svg className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
- </svg>
- SIGN IN
- </>
- )}
- </button>
-
- <button
- onClick={() => { playButtonClick(); onOpenBrowseGames(); }}
- className="py-1.5 sm:py-2 lg:py-2.5 xl:py-3 2xl:py-3.5 rounded-md sm:rounded-lg lg:rounded-xl font-display text-[10px] sm:text-xs lg:text-sm xl:text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 flex items-center justify-center gap-1 sm:gap-1.5 lg:gap-2"
- >
- <svg className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
- </svg>
- BROWSE GAMES
- {lobbyCount > 0 && (
- <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded-full">
- {lobbyCount}
- </span>
- )}
- </button>
-          </div>
-        </div>
-
-          <ul className="play-ranked-notes">
-            <li>$5 SOL entry locks your ranked queue slot.</li>
-            <li>Win the match to claim the losing side's pot.</li>
-            <li>Rating updates when the match ends.</li>
-          </ul>
         </div>
       </div>
+      </div>
+      {serverLatency && <ServerLatencyAdvisory snapshot={serverLatency} />}
     </div>
   );
 }
 
-function DeferredFeaturedHeroPreview({
-  heroId,
-  accentColor,
-  initialYaw,
-  animationMode,
-  className,
-}: {
-  heroId: HeroId;
-  accentColor: string;
-  initialYaw: number;
-  animationMode: HeroAnimationMode;
-  className: string;
-}) {
-  const [shouldMountPreview, setShouldMountPreview] = useState(false);
-
-  useEffect(() => {
-    setShouldMountPreview(false);
-
-    let secondFrame = 0;
-    let thirdFrame = 0;
-    const firstFrame = window.requestAnimationFrame(() => {
-      secondFrame = window.requestAnimationFrame(() => {
-        thirdFrame = window.requestAnimationFrame(() => {
-          setShouldMountPreview(true);
-        });
-      });
-    });
-
-    return () => {
-      window.cancelAnimationFrame(firstFrame);
-      window.cancelAnimationFrame(secondFrame);
-      window.cancelAnimationFrame(thirdFrame);
-    };
-  }, [animationMode, heroId]);
-
-  if (!shouldMountPreview) {
-    return (
-      <div
-        className={`hero-preview-shell relative overflow-hidden select-none ${className}`}
-        data-ready="false"
-        data-size="featured"
-        style={{ '--hero-preview-accent': accentColor } as CSSProperties}
-        aria-label={`Loading ${HERO_DEFINITIONS[heroId].name} voxel preview`}
-        aria-busy
-      >
-        <div className="hero-preview-loading pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="hero-preview-loader-ring" />
-        </div>
-      </div>
-    );
-  }
+function ServerLatencyAdvisory({ snapshot }: { snapshot: ServerLatencyProbeSnapshot }) {
+  const pingValue = snapshot.averagePingMs === null ? '--' : String(snapshot.averagePingMs);
+  const statusLabel = (() => {
+    switch (snapshot.quality) {
+      case 'good':
+        return `Ping ${pingValue} milliseconds. Server response looks stable.`;
+      case 'fair':
+        return `Ping ${pingValue} milliseconds. Playable, with a little delay.`;
+      case 'high':
+        return `High ping ${pingValue} milliseconds. Playable, but combat may feel delayed.`;
+      case 'offline':
+        return 'Connection check failed. Matchmaking may have trouble reaching the server.';
+      case 'checking':
+      default:
+        return 'Checking connection. Sampling server response before you queue.';
+    }
+  })();
 
   return (
-    <HeroPreviewCanvas
-      heroId={heroId}
-      accentColor={accentColor}
-      size="featured"
-      initialYaw={initialYaw}
-      animationMode={animationMode}
-      className={className}
-    />
+    <div
+      className="play-ping-advisory"
+      data-quality={snapshot.quality}
+      title={snapshot.error ?? statusLabel}
+      aria-label={statusLabel}
+      aria-live={snapshot.quality === 'high' || snapshot.quality === 'offline' ? 'polite' : 'off'}
+    >
+      <span className="play-ping-advisory-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 13.5a11.2 11.2 0 0116 0" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7.5 17a6.2 6.2 0 019 0" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M12 20h.01" />
+        </svg>
+      </span>
+      <span className="play-ping-advisory-value" aria-hidden="true">
+        {pingValue}
+        <span className="play-ping-advisory-unit">ms</span>
+      </span>
+    </div>
   );
 }
 
-// Browse Games Modal
-interface BrowseGamesModalProps {
-  availableLobbies: LobbyInfo[];
+function RankedSeasonPlate({ season }: { season: RankedSeasonSnapshot }) {
+  return (
+    <aside className="play-season-plate" aria-label={`${season.label}. ${formatSeasonBoundaryDate(season)}. ${SEASON_RULES_ARIA}`}>
+      <div className="play-season-plate-kicker">Ranked</div>
+      <div className="play-season-plate-title">{season.label}</div>
+      <div className="play-season-plate-end">{formatSeasonBoundaryDate(season)}</div>
+      <div className="play-season-plate-detail">{formatSeasonBoundaryDetail(season)}</div>
+    </aside>
+  );
+}
+
+interface PlayDialogProps {
+  error: string | null;
+  heroColor: string;
   isLoading: boolean;
-  onJoinLobby: (lobbyId: string) => void;
+  isAuthenticated: boolean;
+  hasFullFunctionality: boolean;
+  isLinkingPhantom: boolean;
+  rankedTokenHoldStatus: RankedTokenHoldStatus | null;
+  isRankedTokenHoldLoading: boolean;
+  rankedTokenHoldError: string | null;
+  rankedSeason: RankedSeasonSnapshot;
+  onQuickPlay: () => void;
+  onRankedPlay: () => void;
+  onLinkPhantom: () => void;
+  onOpenPracticeSetup: () => void;
+  onOpenCreateLobby: () => void;
   onClose: () => void;
 }
 
-function BrowseGamesModal({
-  availableLobbies,
+function PlayDialog({
+  error,
+  heroColor,
   isLoading,
-  onJoinLobby,
-  onClose
-}: BrowseGamesModalProps) {
+  isAuthenticated,
+  hasFullFunctionality,
+  isLinkingPhantom,
+  rankedTokenHoldStatus,
+  isRankedTokenHoldLoading,
+  rankedTokenHoldError,
+  rankedSeason,
+  onQuickPlay,
+  onRankedPlay,
+  onLinkPhantom,
+  onOpenPracticeSetup,
+  onOpenCreateLobby,
+  onClose,
+}: PlayDialogProps) {
+  const { playButtonClick } = useUISounds();
+  const titleId = useId();
+  const dialogStyle = { '--play-dialog-accent': heroColor } as CSSProperties;
+  const shouldCheckRankedHold = isAuthenticated && hasFullFunctionality;
+  const isRankedPreseason = rankedSeason.mode === 'preseason';
+  const isRankedHoldMissing = shouldCheckRankedHold && rankedTokenHoldStatus?.eligible === false;
+  const isRankedHoldPending = shouldCheckRankedHold && isRankedTokenHoldLoading;
+  const rankedRequirement = rankedTokenHoldStatus ? rankedTokenHoldRequirement(rankedTokenHoldStatus) : null;
+  const rankedTokenLabel = rankedTokenHoldStatus ? formatRankedTokenLabel(rankedTokenHoldStatus) : null;
+  const isRankedLocked = isRankedPreseason || isRankedHoldMissing;
+  const isRankedDisabled = isLoading || isLinkingPhantom || isRankedPreseason || isRankedHoldPending || isRankedHoldMissing;
+  const rankedSubtitle = isRankedPreseason
+    ? formatRankedPreseasonSubtitle(rankedSeason)
+    : isRankedHoldMissing && rankedTokenHoldStatus && rankedTokenLabel
+      ? `Hold ${formatRankedUsdCents(rankedTokenHoldStatus.usdCents)} worth of ${rankedTokenLabel} to play`
+      : isRankedHoldPending
+        ? 'Checking token hold...'
+        : rankedTokenHoldError
+          ? 'Token check unavailable'
+          : 'Competitive queue';
+  const rankedTitle = isRankedPreseason
+    ? 'Ranked is disabled during Pre-season'
+    : isRankedHoldMissing && rankedRequirement
+      ? `Ranked requires ${rankedRequirement}`
+      : rankedTokenHoldError ?? 'Competitive queue';
+  const rankedBadge = isRankedPreseason ? null : rankedTokenLabel;
+  const rankedBadgeTitle = rankedTokenHoldStatus
+    ? `Hold token: ${rankedTokenHoldStatus.tokenAddress}`
+    : undefined;
+  const rankedButtonClassName = `play-pay-option play-pay-option-ranked${isRankedLocked ? ' play-pay-option-ranked-locked' : ''}`;
+
+  const runAction = (action: () => void) => {
+    playButtonClick();
+    action();
+  };
+
+  return (
+    <div className="play-pay-dialog-root fixed inset-0 z-modal flex items-center justify-center p-[clamp(1rem,2vw,2rem)]">
+      <div className="play-pay-dialog-scrim absolute inset-0" onClick={onClose} />
+
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="play-pay-dialog relative w-full"
+        style={dialogStyle}
+      >
+        <header className="play-pay-dialog-header">
+          <div className="min-w-0">
+            <p className="play-pay-dialog-kicker">MATCH DESK</p>
+            <h2 id={titleId} className="play-pay-dialog-title">Choose a match</h2>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="play-pay-dialog-close"
+            aria-label="Close play dialog"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </header>
+
+        <div className="play-pay-dialog-body">
+          {error && (
+            <div className="play-pay-dialog-error">
+              <p>{error}</p>
+            </div>
+          )}
+
+          {isAuthenticated && !hasFullFunctionality && (
+            <div className="play-pay-dialog-wallet">
+              <div>
+                <p className="font-display text-sm text-amber-50">PHANTOM REQUIRED</p>
+                <p className="mt-1 text-xs leading-relaxed text-amber-100/60">Link Phantom before entering ranked queues.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => runAction(onLinkPhantom)}
+                disabled={isLinkingPhantom}
+                className="play-pay-dialog-wallet-button"
+              >
+                {isLinkingPhantom ? 'LINKING...' : 'LINK'}
+              </button>
+            </div>
+          )}
+
+          <div className="play-pay-dialog-grid">
+            <button
+              type="button"
+              onClick={() => runAction(onRankedPlay)}
+              disabled={isRankedDisabled}
+              className={rankedButtonClassName}
+              title={rankedTitle}
+              style={{
+                background: `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`,
+                boxShadow: `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`,
+              }}
+            >
+              <span
+                className="play-pay-option-shimmer"
+                style={{ background: WALLET_AUTH_COLORS.shimmer }}
+              />
+              <span className="play-pay-option-icon">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.3 6.8 19l1-5.8L3.6 9.1l5.8-.8L12 3z" />
+                </svg>
+              </span>
+              <span className="play-pay-option-copy">
+                <span className="play-pay-option-title">{isLoading ? 'PREPARING...' : 'RANKED'}</span>
+                <span className="play-pay-option-subtitle">{rankedSubtitle}</span>
+              </span>
+              {rankedBadge && (
+                <span className="play-pay-option-badge" title={rankedBadgeTitle}>
+                  {rankedBadge}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => runAction(onQuickPlay)}
+              disabled={isLoading}
+              className="play-pay-option"
+            >
+              <span className="play-pay-option-icon">
+                <svg fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </span>
+              <span className="play-pay-option-copy">
+                <span className="play-pay-option-title">{isLoading ? 'STARTING...' : 'QUICK PLAY'}</span>
+                <span className="play-pay-option-subtitle">Instant casual queue</span>
+              </span>
+            </button>
+
+            <div className="play-pay-option-row">
+              <button
+                type="button"
+                onClick={() => runAction(onOpenCreateLobby)}
+                disabled={isLoading}
+                className="play-pay-option play-pay-option-compact"
+              >
+                <span className="play-pay-option-icon">
+                  <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                </span>
+                <span className="play-pay-option-copy">
+                  <span className="play-pay-option-title">CUSTOM GAME</span>
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => runAction(onOpenPracticeSetup)}
+                disabled={isLoading}
+                className="play-pay-option play-pay-option-compact"
+              >
+                <span className="play-pay-option-icon">
+                  <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3v6m0 0l4 7a3 3 0 01-2.6 4.5H10.6A3 3 0 018 16l4-7zm-3.5 11h7" />
+                  </svg>
+                </span>
+                <span className="play-pay-option-copy">
+                  <span className="play-pay-option-title">PRACTICE</span>
+                </span>
+              </button>
+            </div>
+
+          </div>
+
+        </div>
+      </section>
+    </div>
+  );
+}
+
+interface PracticeSetupModalProps {
+  isLoading: boolean;
+  error: string | null;
+  onClose: () => void;
+  onStart: (mapSeed?: number) => void;
+}
+
+function PracticeSetupModal({ isLoading, error, onClose, onStart }: PracticeSetupModalProps) {
+  const [mapSeedInput, setMapSeedInput] = useState('');
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    setLocalError(null);
+
+    try {
+      onStart(parseOptionalMapSeedInput(mapSeedInput));
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Invalid map seed');
+    }
+  };
+
   return (
     <GameDialog
-      title="BROWSE GAMES"
+      title="PRACTICE"
       icon={(
         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3v6m0 0l4 7a3 3 0 01-2.6 4.5H10.6A3 3 0 018 16l4-7zm-3.5 11h7" />
         </svg>
       )}
-      iconClassName="bg-cyan-500/15 text-cyan-300"
-      size="lg"
+      size="sm"
       onClose={onClose}
-      bodyClassName="max-h-[min(56vh,32rem)] overflow-y-auto custom-scrollbar"
     >
-      {availableLobbies.length === 0 ? (
-        <div className="py-12 text-center">
-          <div className="w-14 h-14 mx-auto mb-4 rounded-xl bg-white/5 flex items-center justify-center">
-            <svg className="w-7 h-7 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-xs text-white/50 font-body uppercase tracking-wider mb-1.5">
+            Map Seed
+          </label>
+          <input
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]{1,10}"
+            maxLength={10}
+            value={mapSeedInput}
+            onChange={(event) => {
+              updateAllowedMapSeedInput(event.target.value, setMapSeedInput, () => setLocalError(null));
+            }}
+            placeholder={MAP_SEED_PLACEHOLDER}
+            className="input w-full px-3.5 py-2.5 text-base rounded-lg"
+            autoFocus
+          />
+        </div>
+
+        {(error || localError) && (
+          <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+            <p className="text-red-400 text-sm font-body">{localError || error}</p>
           </div>
-          <p className="font-display text-lg text-white/40">NO GAMES FOUND</p>
-          <p className="mt-2 text-white/20 text-sm font-body">Create one to get started!</p>
+        )}
+
+        <div className="flex gap-3 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-lg font-display text-sm text-white/60 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white"
+          >
+            CANCEL
+          </button>
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="flex-1 py-2.5 rounded-lg font-display text-sm text-white bg-orange-500 hover:bg-orange-400 disabled:opacity-50"
+          >
+            {isLoading ? 'STARTING...' : 'START'}
+          </button>
         </div>
-      ) : (
-        <div className="p-3 space-y-2">
-          {availableLobbies.map((lobby) => (
-            <LobbyRow
-              key={lobby.roomId}
-              lobby={lobby}
-              onJoin={() => onJoinLobby(lobby.roomId)}
-              disabled={isLoading}
-            />
-          ))}
-        </div>
-      )}
+      </form>
     </GameDialog>
   );
+}
+
+function updateAllowedMapSeedInput(value: string, setValue: (value: string) => void, clearError: () => void) {
+  if (!isAllowedMapSeedInput(value)) return;
+  setValue(value);
+  clearError();
 }
 
 // Create Lobby Modal
@@ -1035,31 +1366,40 @@ interface CreateLobbyModalProps {
   isLoading: boolean;
   error: string | null;
   onClose: () => void;
-  onCreate: (name: string, isPrivate: boolean, wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' }) => void;
+  onCreate: (
+    name: string,
+    wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' },
+    mapSeed?: number,
+    forceGoldenMapOption?: boolean,
+    observersEnabled?: boolean
+  ) => void;
 }
 
 function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: CreateLobbyModalProps) {
   const [lobbyName, setLobbyName] = useState('');
-  const [isPrivate, setIsPrivate] = useState(false);
   const [wagerEnabled, setWagerEnabled] = useState(false);
   const [coverChargeSol, setCoverChargeSol] = useState('0.01');
+  const [mapSeedInput, setMapSeedInput] = useState('');
+  const [forceGoldenMapOption, setForceGoldenMapOption] = useState(false);
+  const [observersEnabled, setObserversEnabled] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setLocalError(null);
     try {
-      onCreate(lobbyName, isPrivate, wagerEnabled
+      const mapSeed = config.isDev ? parseOptionalMapSeedInput(mapSeedInput) : undefined;
+      onCreate(lobbyName, wagerEnabled
         ? { enabled: true, token: 'SOL', coverChargeLamports: solInputToLamports(coverChargeSol) }
-        : { enabled: false });
+        : { enabled: false }, mapSeed, config.isDev && forceGoldenMapOption, config.isDev && observersEnabled);
     } catch (err) {
-      setLocalError(err instanceof Error ? err.message : 'Invalid wager amount');
+      setLocalError(err instanceof Error ? err.message : 'Invalid lobby settings');
     }
   };
 
   return (
     <GameDialog
-      title="CREATE GAME"
+      title="CUSTOM GAME"
       icon={(
         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
@@ -1088,24 +1428,68 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
           </p>
         </div>
 
-        {/* Private Toggle */}
-        <div
-          className="flex items-center justify-between gap-3 p-3 bg-white/[0.03] border border-white/5 rounded-lg cursor-pointer hover:border-white/10 transition-colors"
-          onClick={() => setIsPrivate(!isPrivate)}
-        >
-          <div className="flex items-center gap-3">
-            <svg className={`w-4 h-4 ${isPrivate ? 'text-orange-400' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
+        {config.isDev && (
+          <>
             <div>
-              <p className="font-body text-sm text-white">Private Game</p>
-              <p className="text-[11px] text-white/40">Invite only - won't appear in browser</p>
+              <label className="block text-xs text-white/50 font-body uppercase tracking-wider mb-1.5">
+                Map Seed
+              </label>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]{1,10}"
+                maxLength={10}
+                value={mapSeedInput}
+                onChange={(e) => {
+                  updateAllowedMapSeedInput(e.target.value, setMapSeedInput, () => setLocalError(null));
+                }}
+                placeholder={MAP_SEED_PLACEHOLDER}
+                className="input w-full px-3.5 py-2.5 text-base rounded-lg"
+              />
             </div>
-          </div>
-          <div className={`w-10 h-5 shrink-0 rounded-full transition-all relative ${isPrivate ? 'bg-orange-500' : 'bg-white/20'}`}>
-            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${isPrivate ? 'left-[22px]' : 'left-0.5'}`} />
-          </div>
-        </div>
+
+            <button
+              type="button"
+              aria-pressed={forceGoldenMapOption}
+              className="flex w-full items-center justify-between gap-3 rounded-lg border border-amber-300/15 bg-amber-300/[0.055] p-3 text-left transition-colors hover:border-amber-200/25"
+              onClick={() => setForceGoldenMapOption((enabled) => !enabled)}
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <svg className={`h-4 w-4 shrink-0 ${forceGoldenMapOption ? 'text-amber-200' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l2.4 5.6L20 11l-5.6 2.4L12 19l-2.4-5.6L4 11l5.6-2.4L12 3z" />
+                </svg>
+                <div className="min-w-0">
+                  <p className="font-body text-sm text-white">Force Golden Map</p>
+                  <p className="text-[11px] text-white/40">Development only. Guarantees one vote option uses the golden biome.</p>
+                </div>
+              </div>
+              <span className={`relative h-5 w-10 shrink-0 rounded-full transition-all ${forceGoldenMapOption ? 'bg-amber-400' : 'bg-white/20'}`}>
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${forceGoldenMapOption ? 'left-[22px]' : 'left-0.5'}`} />
+              </span>
+            </button>
+
+            <button
+              type="button"
+              aria-pressed={observersEnabled}
+              className="flex w-full items-center justify-between gap-3 rounded-lg border border-sky-300/15 bg-sky-300/[0.055] p-3 text-left transition-colors hover:border-sky-200/25"
+              onClick={() => setObserversEnabled((enabled) => !enabled)}
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <svg className={`h-4 w-4 shrink-0 ${observersEnabled ? 'text-sky-200' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.25 12s3.75-6.75 9.75-6.75S21.75 12 21.75 12 18 18.75 12 18.75 2.25 12 2.25 12z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15.25A3.25 3.25 0 1012 8.75a3.25 3.25 0 000 6.5z" />
+                </svg>
+                <div className="min-w-0">
+                  <p className="font-body text-sm text-white">Observer Slot</p>
+                  <p className="text-[11px] text-white/40">Development only. Adds one non-combat camera slot to the lobby.</p>
+                </div>
+              </div>
+              <span className={`relative h-5 w-10 shrink-0 rounded-full transition-all ${observersEnabled ? 'bg-sky-400' : 'bg-white/20'}`}>
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${observersEnabled ? 'left-[22px]' : 'left-0.5'}`} />
+              </span>
+            </button>
+          </>
+        )}
 
         <div
           className="flex items-center justify-between gap-3 p-3 bg-white/[0.03] border border-white/5 rounded-lg cursor-pointer hover:border-white/10 transition-colors"
@@ -1169,96 +1553,6 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
         </div>
       </form>
     </GameDialog>
-  );
-}
-
-// Lobby Row Component
-interface LobbyRowProps {
-  lobby: LobbyInfo;
-  onJoin: () => void;
-  disabled?: boolean;
-}
-
-function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
-  const humanCount = lobby.humanCount ?? lobby.playerCount;
-  const botCount = lobby.botCount ?? 0;
-  const participantCount = lobby.participantCount ?? humanCount + botCount;
-  const maxParticipants = lobby.maxParticipants ?? lobby.maxPlayers;
-  const capacityPercent = Math.min(100, (participantCount / Math.max(1, maxParticipants)) * 100);
-  const isFull = humanCount >= lobby.maxPlayers || participantCount >= maxParticipants;
-  const isInGame = lobby.status === 'in_game' || lobby.status === 'starting';
-  const canJoin = !isFull && !isInGame;
-
-  return (
-    <div className="flex items-center gap-3 p-3 rounded-lg bg-white/[0.02] hover:bg-white/[0.05] transition-colors group">
-      {/* Icon */}
-      <div className={`w-10 h-10 rounded-lg flex shrink-0 items-center justify-center ${canJoin ? 'bg-orange-500/10' : 'bg-white/5'
-        }`}>
-        {isInGame ? (
-          <svg className="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        ) : (
-          <svg className={`w-5 h-5 ${canJoin ? 'text-orange-400' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-        )}
-      </div>
-
-      {/* Info */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          <h3 className="font-display text-base text-white truncate">{lobby.name}</h3>
-          {isInGame && (
-            <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 text-[10px] font-display rounded-full animate-pulse">
-              IN GAME
-            </span>
-          )}
-          {!isInGame && isFull && (
-            <span className="px-2 py-0.5 bg-red-500/20 text-red-400 text-[10px] font-display rounded-full">
-              FULL
-            </span>
-          )}
-          {lobby.wager?.enabled && (
-            <span className="px-2 py-0.5 bg-cyan-500/15 text-cyan-200 text-[10px] font-display rounded-full">
-              {lamportsToSolDisplay(lobby.wager.coverChargeLamports)} SOL
-            </span>
-          )}
-        </div>
-
-        {/* Player count */}
-        <div className="flex items-center gap-3">
-          <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden max-w-40">
-            <div
-              className={`h-full rounded-full transition-all ${isFull ? 'bg-red-500' : isInGame ? 'bg-amber-500' : 'bg-orange-500'
-                }`}
-              style={{ width: `${capacityPercent}%` }}
-            />
-          </div>
-          <span className="text-xs text-white/50 font-mono">
-            {participantCount}/{maxParticipants}
-          </span>
-          {lobby.wager?.enabled && (
-            <span className="text-xs text-cyan-200/70 font-mono">
-              POT {lamportsToSolDisplay(lobby.wager.potLamports)}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Join Button */}
- <button
- onClick={onJoin}
- disabled={disabled || !canJoin}
- className={`px-4 py-2 rounded-lg font-display text-xs ${canJoin
- ? 'bg-orange-500 text-white hover:bg-orange-400 '
- : 'bg-white/5 text-white/30 cursor-not-allowed'
- }`}
- >
- {isInGame ? 'LIVE' : isFull ? 'FULL' : 'JOIN'}
- </button>
-    </div>
   );
 }
 
@@ -1326,9 +1620,9 @@ function AuthModal({
           ? isDiscordPending
             ? <DiscordIcon className="w-6 h-6 text-indigo-200" />
             : <PhantomIcon className="w-6 h-6" />
-          : <SignInIcon className="w-6 h-6 text-indigo-100" />
+          : <SignInIcon className="w-6 h-6 text-accent-primary" />
       }
-      iconClassName="bg-gradient-to-br from-indigo-500/20 to-purple-600/10 border border-indigo-400/20"
+      iconClassName="bg-accent-primary/15 border border-accent-primary/20"
       size="sm"
       onClose={onClose}
       bodyClassName="p-5 space-y-3"
@@ -1421,7 +1715,7 @@ function AuthModal({
                 <>
                   <button
                     onClick={onDiscordSignIn}
-                    className="w-full py-3 rounded-lg font-display text-base text-white border border-indigo-300/20 bg-indigo-500 hover:bg-indigo-400 shadow-[0_0_36px_rgba(99,102,241,0.28)] relative overflow-hidden group"
+                    className="w-full py-3 rounded-lg font-display text-base text-white border border-accent-primary/25 bg-accent-primary hover:bg-[rgb(var(--color-accent-primary-hover))] shadow-glow-orange relative overflow-hidden group"
                   >
                     <span className="relative flex items-center justify-center gap-2.5">
                       <DiscordIcon className="w-5 h-5" />

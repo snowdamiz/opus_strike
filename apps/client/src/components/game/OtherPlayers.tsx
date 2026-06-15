@@ -1,45 +1,39 @@
-import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import {
-  sampleRemoteTransform,
-  setPlayerVisualPosition,
-  setPlayerVisualRotation,
+  sampleRemoteTransformInto,
+  type SampledRemoteTransform,
   visualStore,
 } from '../../store/visualStore';
 import { useShallow } from 'zustand/shallow';
-import { HERO_DEFINITIONS, PLAYER_CROUCH_HEIGHT, PLAYER_HEIGHT } from '@voxel-strike/shared';
-import type { HeroId, Player, Team } from '@voxel-strike/shared';
+import type { Player, Team, VoxelMapTheme } from '@voxel-strike/shared';
 import { HeroVoxelBody } from './HeroVoxelBody';
 import type { HeroMovementPose, HeroWalkDirection } from './HeroVoxelBody';
-import { BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME } from '../../viewmodel/blazePose';
-import { CHRONOS_PRIMARY_ORB_SOCKET_NAME } from '../../viewmodel/chronosPose';
-import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../viewmodel/hookshotPose';
+import type { EffectQualityConfig, RemotePlayerQualityConfig } from './visualQuality';
+import { RemoteHeroBatchRenderer } from './RemoteHeroBatchRenderer';
+import { RemoteMovementEffects } from './RemoteMovementEffects';
 import {
-  PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
-  PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
-} from '../../viewmodel/phantomPrimaryPose';
-import { registerRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
-import { HERO_COLOR_SCHEMES as HERO_ICON_COLORS } from '../../styles/colorTokens';
-import { loggers } from '../../utils/logger';
-import { setFullRemoteBodyCount } from '../../utils/perfMarks';
-import type { RemotePlayerQualityConfig } from './visualQuality';
-
-// Debug: track last logged state to avoid spam
-let lastLoggedPlayerCount = -1;
-let lastLoggedOtherCount = -1;
+  getPlayerHeight,
+  getVisiblePlayerHeight,
+  hasLoweredPlayerPosture,
+  NAMEPLATE_WORLD_OFFSET_Y,
+  setPlayerRenderOrigin,
+} from './playerWorldAnchors';
+import { gameplayFrameScheduler } from './systems/gameplayFrameScheduler';
 
 interface OtherPlayersProps {
   config: RemotePlayerQualityConfig;
+  effectConfig: Pick<EffectQualityConfig, 'maxActiveParticles'>;
+  theme: VoxelMapTheme;
 }
 
-export function OtherPlayers({ config }: OtherPlayersProps) {
-  const { camera } = useThree();
+export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps) {
   // NOTE: This component subscribes to gameStore.players but does NOT re-render on
-  // position updates because updateGameState() updates Map entries in-place (same Map
-  // reference). The Map reference only changes when players are added/removed. Position
-  // interpolation reads from visualStore in useFrame (non-reactive, 60fps).
+  // v2 transform position updates because remote player entries are mutated in-place.
+  // The Map reference only changes when players are added/removed. Position interpolation
+  // reads from visualStore in the frame scheduler (non-reactive, 60fps).
   const { players, playerId, localPlayerId, gamePhase } = useGameStore(
     useShallow(state => ({
       players: state.players,
@@ -49,67 +43,31 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
     }))
   );
 
-  const allPlayers = Array.from(players.values());
+  const otherPlayers = useMemo(() => {
+    const nextPlayers: Player[] = [];
+    const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown';
 
-  // Filter out local player, show all other players except dead ones (unless in respawn view)
-  const otherPlayers = allPlayers.filter((p) => {
-    if (p.id === playerId || p.id === localPlayerId) return false;
-    // Hide only dead players during active gameplay
-    if (p.state === 'dead' && (gamePhase === 'playing' || gamePhase === 'countdown')) {
-      return false;
+    for (const player of players.values()) {
+      if (player.id === playerId || player.id === localPlayerId) continue;
+      if (hideDeadPlayers && player.state === 'dead') continue;
+      if (player.visibility === 'hidden' || player.visibility === 'last_known' || player.visibility === 'audible') continue;
+      nextPlayers.push(player);
     }
-    // Show all other players in lobby, hero select, and during gameplay
-    return true;
-  });
-  const fullBodyAllowedIds = useMemo(() => {
-    const visualState = visualStore.getState();
-    return new Set(
-      [...otherPlayers]
-        .sort((a, b) => {
-          if (a.hasFlag !== b.hasFlag) return a.hasFlag ? -1 : 1;
-          const aPos = visualState.playerPositions.get(a.id) ?? a.position;
-          const bPos = visualState.playerPositions.get(b.id) ?? b.position;
-          return camera.position.distanceToSquared(new THREE.Vector3(aPos.x, aPos.y, aPos.z)) -
-            camera.position.distanceToSquared(new THREE.Vector3(bPos.x, bPos.y, bPos.z));
-        })
-        .slice(0, Math.max(0, config.maxFullBodies))
-        .map((player) => player.id)
-    );
-  }, [camera.position, config.maxFullBodies, otherPlayers]);
 
-  useEffect(() => {
-    setFullRemoteBodyCount(fullBodyAllowedIds.size);
-    return () => setFullRemoteBodyCount(0);
-  }, [fullBodyAllowedIds.size]);
-
-  // Only log when counts change
-  if (players.size !== lastLoggedPlayerCount || otherPlayers.length !== lastLoggedOtherCount) {
-    loggers.effects.debug('OtherPlayers', {
-      totalInStore: players.size,
-      otherPlayersToRender: otherPlayers.length,
-      playerId,
-      localPlayerId,
-      gamePhase,
-      allPlayerIds: allPlayers.map(p => `${p.id.slice(0,6)}(${p.state})`),
-      otherPlayerPositions: otherPlayers.map(p => ({ 
-        id: p.id.slice(0,6), 
-        pos: `(${p.position.x.toFixed(1)}, ${p.position.y.toFixed(1)}, ${p.position.z.toFixed(1)})` 
-      })),
-    });
-    lastLoggedPlayerCount = players.size;
-    lastLoggedOtherCount = otherPlayers.length;
-  }
+    return nextPlayers;
+  }, [gamePhase, localPlayerId, playerId, players]);
 
   return (
     <group>
-      {otherPlayers.map((player) => (
+      <RemoteHeroBatchRenderer players={otherPlayers} config={config} />
+      <RemoteMovementEffects players={otherPlayers} theme={theme} config={effectConfig} />
+      {otherPlayers.map((player) => shouldRenderRemotePlayerFallback(player, config) ? (
         <OtherPlayer
           key={player.id}
           player={player}
           config={config}
-          allowFullBody={player.hasFlag || fullBodyAllowedIds.has(player.id)}
         />
-      ))}
+      ) : null)}
     </group>
   );
 }
@@ -117,77 +75,20 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
 interface OtherPlayerProps {
   player: Player;
   config: RemotePlayerQualityConfig;
-  allowFullBody: boolean;
 }
 
-const PLAYER_CENTER_TO_FEET = PLAYER_HEIGHT / 2;
-const CROUCH_HEIGHT_RATIO = PLAYER_CROUCH_HEIGHT / PLAYER_HEIGHT;
 const NETWORK_MOVING_SPEED = 0.45;
 const VISUAL_MOVING_SPEED = 0.18;
 const AIRBORNE_IDLE_VERTICAL_SPEED = 0.2;
-const LOD_UPDATE_INTERVAL = 0.25;
 const REMOTE_SAMPLE_POSITION_SMOOTHING = 28;
 const REMOTE_SAMPLE_ROTATION_SMOOTHING = 32;
 const REMOTE_SAMPLE_SNAP_DISTANCE = 3.5;
+const REMOTE_SAMPLE_SNAP_DISTANCE_SQ = REMOTE_SAMPLE_SNAP_DISTANCE * REMOTE_SAMPLE_SNAP_DISTANCE;
 const REMOTE_ATTACK_STATE_RETENTION_MS = 3200;
 const REMOTE_ATTACK_STATE_CLEANUP_MS = 5000;
-const REMOTE_SIMPLIFIED_GEOMETRIES = {
-  torso: new THREE.BoxGeometry(1, 1, 1),
-  head: new THREE.BoxGeometry(1, 1, 1),
-  flag: new THREE.BoxGeometry(1, 1, 1),
-  markerRing: new THREE.RingGeometry(0.24, 0.34, 18),
-  markerCore: new THREE.OctahedronGeometry(0.28, 0),
-};
-const remoteBodyMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
-const remoteMarkerMaterialCache = new Map<string, THREE.MeshBasicMaterial>();
-
-type RemotePlayerLodTier = 0 | 1 | 2;
-
-interface SimplifiedRemoteSocketMarker {
-  socketName: string;
-  position: [number, number, number];
-}
-
-function getSharedRemoteBodyMaterial(
-  color: string,
-  emissiveIntensity: number,
-  roughness = 0.7
-): THREE.MeshStandardMaterial {
-  const key = `${color}:${emissiveIntensity}:${roughness}`;
-  let material = remoteBodyMaterialCache.get(key);
-  if (!material) {
-    material = new THREE.MeshStandardMaterial({
-      color,
-      emissive: color,
-      emissiveIntensity,
-      roughness,
-    });
-    remoteBodyMaterialCache.set(key, material);
-  }
-  return material;
-}
-
-function getSharedRemoteMarkerMaterial(color: string, opacity = 1): THREE.MeshBasicMaterial {
-  const key = `${color}:${opacity}`;
-  let material = remoteMarkerMaterialCache.get(key);
-  if (!material) {
-    material = new THREE.MeshBasicMaterial({
-      color,
-      transparent: opacity < 1,
-      opacity,
-      side: THREE.DoubleSide,
-    });
-    remoteMarkerMaterialCache.set(key, material);
-  }
-  return material;
-}
-
-function setPlayerRenderOrigin(
-  target: THREE.Vector3,
-  position: { x: number; y: number; z: number }
-): THREE.Vector3 {
-  return target.set(position.x, position.y - PLAYER_CENTER_TO_FEET, position.z);
-}
+const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
+const PHANTOM_VEIL_BODY_OPACITY = 0.12;
+const PHANTOM_VEIL_OPACITY_DAMP_RATE = 12;
 
 function getHorizontalSpeed(velocity: { x: number; z: number }): number {
   return Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
@@ -208,7 +109,16 @@ function setWalkDirectionFromVelocity(
   velocity: { x: number; z: number },
   yaw: number
 ): void {
-  const speed = getHorizontalSpeed(velocity);
+  setWalkDirectionFromComponents(target, velocity.x, velocity.z, yaw);
+}
+
+function setWalkDirectionFromComponents(
+  target: HeroWalkDirection,
+  velocityX: number,
+  velocityZ: number,
+  yaw: number
+): void {
+  const speed = Math.sqrt(velocityX * velocityX + velocityZ * velocityZ);
   if (speed <= 0.001) {
     target.forward = 1;
     target.right = 0;
@@ -220,65 +130,15 @@ function setWalkDirectionFromVelocity(
   const rightX = Math.cos(yaw);
   const rightZ = -Math.sin(yaw);
 
-  target.forward = (velocity.x * forwardX + velocity.z * forwardZ) / speed;
-  target.right = (velocity.x * rightX + velocity.z * rightZ) / speed;
-}
-
-function createSimplifiedRemoteSocketMarkers(
-  heroId: HeroId,
-  height: number
-): SimplifiedRemoteSocketMarker[] {
-  switch (heroId) {
-    case 'phantom':
-      return [
-        {
-          socketName: PHANTOM_PRIMARY_PALM_SOCKET_NAMES[-1],
-          position: [-0.34, -height * 0.08, -0.32],
-        },
-        {
-          socketName: PHANTOM_PRIMARY_PALM_SOCKET_NAMES[1],
-          position: [0.34, -height * 0.08, -0.32],
-        },
-        {
-          socketName: PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
-          position: [0, 0, -0.34],
-        },
-      ];
-    case 'hookshot':
-      return [
-        {
-          socketName: HOOKSHOT_HOOK_SOCKET_NAMES[-1],
-          position: [-0.42, -height * 0.06, -0.38],
-        },
-        {
-          socketName: HOOKSHOT_HOOK_SOCKET_NAMES[1],
-          position: [0.42, -height * 0.06, -0.38],
-        },
-      ];
-    case 'blaze':
-      return [
-        {
-          socketName: BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-          position: [0.34, height * 0.34, -0.32],
-        },
-      ];
-    case 'chronos':
-      return [
-        {
-          socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
-          position: [0, height * 0.02, -0.34],
-        },
-      ];
-  }
+  target.forward = (velocityX * forwardX + velocityZ * forwardZ) / speed;
+  target.right = (velocityX * rightX + velocityZ * rightZ) / speed;
 }
 
 function isPlayerMovingForAnimation(player: Player, visualHorizontalSpeed = 0): boolean {
+  if (player.state !== 'alive') return false;
+
   const networkHorizontalSpeed = getHorizontalSpeed(player.velocity);
   const movement = player.movement;
-
-  if (player.state !== 'alive') {
-    return networkHorizontalSpeed > NETWORK_MOVING_SPEED || visualHorizontalSpeed > VISUAL_MOVING_SPEED;
-  }
 
   return (
     networkHorizontalSpeed > NETWORK_MOVING_SPEED ||
@@ -297,17 +157,22 @@ function getPlayerMovementPose(player: Player, hasLoweredPosture: boolean, isMov
   return player.movement.isSprinting ? 'run' : 'walk';
 }
 
-function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
+function hasActivePhantomVeil(player: Player): boolean {
+  if (player.state !== 'alive' || player.heroId !== 'phantom') return false;
+  const veil = player.abilities?.[PHANTOM_VEIL_ABILITY_ID];
+  return Boolean(veil?.isActive);
+}
+
+function shouldRenderRemotePlayerFallback(player: Player, config: RemotePlayerQualityConfig): boolean {
+  return player.heroId === 'phantom' || player.hasFlag || config.showNameplates || config.showBeacons;
+}
+
+const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerProps) {
   const groupRef = useRef<THREE.Group>(null);
-  const { camera } = useThree();
-  const [lodTier, setLodTier] = useState<RemotePlayerLodTier>(0);
-  const lodAccumulatorRef = useRef(0);
-  const heroStats = player.heroId ? HERO_DEFINITIONS[player.heroId].stats : null;
-  const playerHeight = heroStats?.size.height ?? 1.8;
-  const hasLoweredPosture = player.movement.isCrouching || player.movement.isSliding;
-  const visibleHeight = hasLoweredPosture
-    ? Math.max(PLAYER_CROUCH_HEIGHT, playerHeight * CROUCH_HEIGHT_RATIO)
-    : playerHeight;
+  const [isVeiled, setIsVeiled] = useState(() => hasActivePhantomVeil(player));
+  const playerHeight = getPlayerHeight(player.heroId);
+  const hasLoweredPosture = hasLoweredPlayerPosture(player.movement);
+  const visibleHeight = getVisiblePlayerHeight(player.heroId, player.movement);
   const postureScaleY = visibleHeight / playerHeight;
   const initialIsMoving = isPlayerMovingForAnimation(player);
   const initialMovementPose = getPlayerMovementPose(player, hasLoweredPosture, initialIsMoving);
@@ -322,171 +187,183 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
   const attackSideRef = useRef<-1 | 1>(1);
   const movementPoseRef = useRef<HeroMovementPose>(initialMovementPose);
   const postureScaleYRef = useRef(postureScaleY);
+  const bodyOpacityRef = useRef(isVeiled ? PHANTOM_VEIL_BODY_OPACITY : 1);
+  const isVeiledRef = useRef(isVeiled);
+  const lookPitchRef = useRef(player.lookPitch);
   const walkDirectionRef = useRef<HeroWalkDirection>({ forward: 1, right: 0 });
   const initializedRef = useRef(false);
-  const distantUpdateAccumulatorRef = useRef(0);
   const remoteEpochRef = useRef<number | null>(null);
-  const hasLoggedRef = useRef(false);
-  
-  // Debug log once when component first renders
-  if (!hasLoggedRef.current) {
-    loggers.effects.debug('OtherPlayer mounted', player.id.slice(0,6), player.name, player.position);
-    hasLoggedRef.current = true;
-  }
-
-  // VISUAL_STORE_VERIFICATION: This component reads visualStore.getState() in useFrame.
+  const sampledTransformRef = useRef<SampledRemoteTransform>({
+    position: { x: 0, y: 0, z: 0 },
+    velocity: { x: 0, y: 0, z: 0 },
+    lookYaw: 0,
+    lookPitch: 0,
+    movementBits: 0,
+    wallRunSide: 0,
+    movementEpoch: 0,
+    extrapolatedMs: 0,
+    stale: false,
+  });
+  // VISUAL_STORE_VERIFICATION: This component reads visualStore.getState() in the frame scheduler.
   // Verify with React DevTools profiler that OtherPlayers does NOT re-render when player positions update at 60fps.
   // Expected: OtherPlayers renders only when players Map changes (add/remove), not on position updates.
-  useFrame((_, delta) => {
-    if (!groupRef.current) return;
-    let stepDelta = delta;
+  useEffect(() => gameplayFrameScheduler.register({
+    system: 'remotePlayers',
+    label: 'frame.remotePlayers',
+    callback: ({ deltaSeconds, nowMs }) => {
+      if (!groupRef.current) return;
+      const stepDelta = deltaSeconds;
+      const frameNowMs = nowMs;
 
-    if (lodTier === 2) {
-      distantUpdateAccumulatorRef.current += delta;
-      const updateInterval = 1 / Math.max(1, config.distantAnimationFps);
-      if (distantUpdateAccumulatorRef.current < updateInterval) return;
-      stepDelta = distantUpdateAccumulatorRef.current;
-      distantUpdateAccumulatorRef.current = 0;
-    } else {
-      distantUpdateAccumulatorRef.current = 0;
-    }
-
-    // Initialize position on first frame
-    if (!initializedRef.current) {
-      const visualState = visualStore.getState();
-      const initialPos = visualState.playerPositions.get(player.id);
-      setPlayerRenderOrigin(currentPosition.current, initialPos ?? player.position);
-      groupRef.current.position.copy(currentPosition.current);
-      initializedRef.current = true;
-    }
-
-    // Read from visualStore non-reactively (no re-renders)
-    const visualState = visualStore.getState();
-    const remoteAttackState = visualState.remotePlayerAttackStates.get(player.id);
-    if (remoteAttackState) {
-      const attackAgeMs = Date.now() - remoteAttackState.startedAtMs;
-      isAttackingRef.current = attackAgeMs <= REMOTE_ATTACK_STATE_RETENTION_MS;
-      attackStartedAtMsRef.current = remoteAttackState.startedAtMs;
-      attackSideRef.current = remoteAttackState.side;
-
-      if (attackAgeMs > REMOTE_ATTACK_STATE_CLEANUP_MS) {
-        visualState.remotePlayerAttackStates.delete(player.id);
+      const frameIsVeiled = hasActivePhantomVeil(player);
+      if (frameIsVeiled !== isVeiledRef.current) {
+        isVeiledRef.current = frameIsVeiled;
+        setIsVeiled(frameIsVeiled);
       }
-    } else {
-      isAttackingRef.current = false;
-      attackStartedAtMsRef.current = null;
-    }
+      bodyOpacityRef.current = THREE.MathUtils.damp(
+        bodyOpacityRef.current,
+        frameIsVeiled ? PHANTOM_VEIL_BODY_OPACITY : 1,
+        PHANTOM_VEIL_OPACITY_DAMP_RATE,
+        stepDelta
+      );
 
-    const sampledTransform = sampleRemoteTransform(player.id);
-    let snappedToSample = false;
-    if (sampledTransform) {
-      setPlayerVisualPosition(player.id, sampledTransform.position);
-      setPlayerVisualRotation(player.id, sampledTransform.lookYaw);
-      setPlayerRenderOrigin(targetPosition.current, sampledTransform.position);
-      const epochChanged = remoteEpochRef.current !== null && remoteEpochRef.current !== sampledTransform.movementEpoch;
-      const tooFarForSmoothing = currentPosition.current.distanceToSquared(targetPosition.current) >
-        REMOTE_SAMPLE_SNAP_DISTANCE * REMOTE_SAMPLE_SNAP_DISTANCE;
-      if (epochChanged || tooFarForSmoothing) {
-        currentPosition.current.copy(targetPosition.current);
-        snappedToSample = true;
+      // Initialize position on first frame
+      if (!initializedRef.current) {
+        const visualState = visualStore.getState();
+        const initialPos = visualState.playerPositions.get(player.id);
+        setPlayerRenderOrigin(currentPosition.current, initialPos ?? player.position);
+        groupRef.current.position.copy(currentPosition.current);
+        initializedRef.current = true;
+      }
+
+      // Read from visualStore non-reactively (no re-renders)
+      const visualState = visualStore.getState();
+      if (!frameIsVeiled || player.heroId !== 'phantom') {
+        const targetPos = visualState.renderedPlayerPositions.get(player.id) ??
+          visualState.playerPositions.get(player.id);
+        setPlayerRenderOrigin(currentPosition.current, targetPos ?? player.position);
+        groupRef.current.position.copy(currentPosition.current);
+        groupRef.current.rotation.y = visualState.renderedPlayerRotations.get(player.id) ??
+          visualState.playerRotations.get(player.id) ??
+          player.lookYaw;
+        lookPitchRef.current = player.lookPitch;
+        previousFramePosition.current.copy(currentPosition.current);
+        return;
+      }
+
+      const sampledTransform = sampledTransformRef.current;
+      const hasSampledTransform = sampleRemoteTransformInto(player.id, sampledTransform, frameNowMs);
+      let snappedToSample = false;
+      if (hasSampledTransform) {
+        setPlayerRenderOrigin(targetPosition.current, sampledTransform.position);
+        const epochChanged = remoteEpochRef.current !== null && remoteEpochRef.current !== sampledTransform.movementEpoch;
+        const tooFarForSmoothing = currentPosition.current.distanceToSquared(targetPosition.current) >
+          REMOTE_SAMPLE_SNAP_DISTANCE_SQ;
+        if (epochChanged || tooFarForSmoothing) {
+          currentPosition.current.copy(targetPosition.current);
+          snappedToSample = true;
+        } else {
+          const samplePositionAlpha = smoothingFactor(REMOTE_SAMPLE_POSITION_SMOOTHING, stepDelta);
+          currentPosition.current.lerp(targetPosition.current, samplePositionAlpha);
+        }
+        remoteEpochRef.current = sampledTransform.movementEpoch;
       } else {
-        currentPosition.current.lerp(
-          targetPosition.current,
-          smoothingFactor(REMOTE_SAMPLE_POSITION_SMOOTHING, stepDelta)
+        const targetPos = visualState.playerPositions.get(player.id);
+        if (targetPos) {
+          setPlayerRenderOrigin(targetPosition.current, targetPos);
+        } else {
+          // Fallback to prop position if visualStore doesn't have data yet
+          setPlayerRenderOrigin(targetPosition.current, player.position);
+        }
+      }
+
+      // Lerp current position toward target
+      if (!hasSampledTransform) {
+        currentPosition.current.lerp(targetPosition.current, Math.min(1, stepDelta * 15));
+      }
+      groupRef.current.position.copy(currentPosition.current);
+
+      const visualDeltaX = currentPosition.current.x - previousFramePosition.current.x;
+      const visualDeltaZ = currentPosition.current.z - previousFramePosition.current.z;
+      // Read rotation from visualStore non-reactively
+      const targetRot = visualState.playerRotations.get(player.id);
+      const renderYaw = hasSampledTransform ? sampledTransform.lookYaw : targetRot ?? player.lookYaw;
+      if (hasSampledTransform && !snappedToSample) {
+        const sampleRotationAlpha = smoothingFactor(REMOTE_SAMPLE_ROTATION_SMOOTHING, stepDelta);
+        groupRef.current.rotation.y = lerpAngle(
+          groupRef.current.rotation.y,
+          sampledTransform.lookYaw,
+          sampleRotationAlpha
+        );
+      } else if (hasSampledTransform) {
+        groupRef.current.rotation.y = sampledTransform.lookYaw;
+      } else if (targetRot !== undefined) {
+        groupRef.current.rotation.y = targetRot;
+      } else {
+        // Fallback to prop rotation if visualStore doesn't have data yet
+        groupRef.current.rotation.y = player.lookYaw;
+      }
+      lookPitchRef.current = hasSampledTransform ? sampledTransform.lookPitch : player.lookPitch;
+
+      previousFramePosition.current.copy(currentPosition.current);
+      if (!frameIsVeiled || player.heroId !== 'phantom') return;
+
+      const visualHorizontalSpeed = stepDelta > 0
+        ? Math.sqrt(visualDeltaX * visualDeltaX + visualDeltaZ * visualDeltaZ) / stepDelta
+        : 0;
+
+      const remoteAttackState = visualState.remotePlayerAttackStates.get(player.id);
+      if (remoteAttackState) {
+        const attackAgeMs = frameNowMs - remoteAttackState.startedAtMs;
+        isAttackingRef.current = attackAgeMs <= REMOTE_ATTACK_STATE_RETENTION_MS;
+        attackStartedAtMsRef.current = remoteAttackState.startedAtMs;
+        attackSideRef.current = remoteAttackState.side;
+
+        if (attackAgeMs > REMOTE_ATTACK_STATE_CLEANUP_MS) {
+          visualState.remotePlayerAttackStates.delete(player.id);
+        }
+      } else {
+        isAttackingRef.current = false;
+        attackStartedAtMsRef.current = null;
+      }
+
+      if (visualHorizontalSpeed > VISUAL_MOVING_SPEED && stepDelta > 0) {
+        setWalkDirectionFromComponents(
+          walkDirectionRef.current,
+          visualDeltaX,
+          visualDeltaZ,
+          renderYaw
+        );
+      } else {
+        setWalkDirectionFromVelocity(
+          walkDirectionRef.current,
+          hasSampledTransform ? sampledTransform.velocity : player.velocity,
+          renderYaw
         );
       }
-      remoteEpochRef.current = sampledTransform.movementEpoch;
-    } else {
-      const targetPos = visualState.playerPositions.get(player.id);
-      if (targetPos) {
-        setPlayerRenderOrigin(targetPosition.current, targetPos);
-      } else {
-        // Fallback to prop position if visualStore doesn't have data yet
-        setPlayerRenderOrigin(targetPosition.current, player.position);
-      }
-    }
 
-    // Lerp current position toward target
-    if (!sampledTransform) {
-      currentPosition.current.lerp(targetPosition.current, Math.min(1, stepDelta * 15));
-    }
-    groupRef.current.position.copy(currentPosition.current);
-
-    const visualHorizontalSpeed = stepDelta > 0
-      ? Math.sqrt(
-        (currentPosition.current.x - previousFramePosition.current.x) ** 2 +
-        (currentPosition.current.z - previousFramePosition.current.z) ** 2
-      ) / stepDelta
-      : 0;
-    // Read rotation from visualStore non-reactively
-    const targetRot = visualState.playerRotations.get(player.id);
-    const renderYaw = sampledTransform?.lookYaw ?? targetRot ?? player.lookYaw;
-    if (sampledTransform && !snappedToSample) {
-      groupRef.current.rotation.y = lerpAngle(
-        groupRef.current.rotation.y,
-        sampledTransform.lookYaw,
-        smoothingFactor(REMOTE_SAMPLE_ROTATION_SMOOTHING, stepDelta)
-      );
-    } else if (sampledTransform) {
-      groupRef.current.rotation.y = sampledTransform.lookYaw;
-    } else if (targetRot !== undefined) {
-      groupRef.current.rotation.y = targetRot;
-    } else {
-      // Fallback to prop rotation if visualStore doesn't have data yet
-      groupRef.current.rotation.y = player.lookYaw;
-    }
-
-    if (visualHorizontalSpeed > VISUAL_MOVING_SPEED && stepDelta > 0) {
-      setWalkDirectionFromVelocity(
-        walkDirectionRef.current,
-        {
-          x: (currentPosition.current.x - previousFramePosition.current.x) / stepDelta,
-          z: (currentPosition.current.z - previousFramePosition.current.z) / stepDelta,
-        },
-        renderYaw
-      );
-    } else {
-      setWalkDirectionFromVelocity(walkDirectionRef.current, sampledTransform?.velocity ?? player.velocity, renderYaw);
-    }
-
-    previousFramePosition.current.copy(currentPosition.current);
-    const frameHasLoweredPosture = player.movement.isCrouching || player.movement.isSliding;
-    const frameVisibleHeight = frameHasLoweredPosture
-      ? Math.max(PLAYER_CROUCH_HEIGHT, playerHeight * CROUCH_HEIGHT_RATIO)
-      : playerHeight;
-    const frameIsMoving = isPlayerMovingForAnimation(player, visualHorizontalSpeed);
-    postureScaleYRef.current = frameVisibleHeight / playerHeight;
-    isCrouchingRef.current = player.movement.isCrouching;
-    isSlidingRef.current = player.movement.isSliding;
-    movementPoseRef.current = getPlayerMovementPose(player, frameHasLoweredPosture, frameIsMoving);
-    isMovingRef.current = frameIsMoving;
-
-    lodAccumulatorRef.current += stepDelta;
-    if (lodAccumulatorRef.current >= LOD_UPDATE_INTERVAL) {
-      lodAccumulatorRef.current = 0;
-      const distanceSq = camera.position.distanceToSquared(groupRef.current.position);
-      const nextTier: RemotePlayerLodTier = player.hasFlag
-        ? 0
-        : allowFullBody && distanceSq < config.nearDistance * config.nearDistance
-          ? 0
-          : distanceSq < config.midDistance * config.midDistance
-            ? 1
-            : 2;
-      setLodTier((current) => current === nextTier ? current : nextTier);
-    }
-  });
+      const frameHasLoweredPosture = hasLoweredPlayerPosture(player.movement);
+      const frameVisibleHeight = getVisiblePlayerHeight(player.heroId, player.movement);
+      const frameIsMoving = isPlayerMovingForAnimation(player, visualHorizontalSpeed);
+      postureScaleYRef.current = frameVisibleHeight / playerHeight;
+      isCrouchingRef.current = player.movement.isCrouching;
+      isSlidingRef.current = player.movement.isSliding;
+      movementPoseRef.current = getPlayerMovementPose(player, frameHasLoweredPosture, frameIsMoving);
+      isMovingRef.current = frameIsMoving;
+    },
+  }), [player, playerHeight]);
 
   return (
     <group ref={groupRef}>
-      {/* Player body */}
-      {lodTier === 0 ? (
+      {isVeiled && (
         <HeroVoxelBody
-          socketOwnerId={player.id}
           heroId={player.heroId}
           team={player.team}
           height={playerHeight}
           postureScaleY={postureScaleY}
           postureScaleYRef={postureScaleYRef}
+          lookPitch={player.lookPitch}
+          lookPitchRef={lookPitchRef}
           isBot={player.isBot}
           isMoving={initialIsMoving}
           isMovingRef={isMovingRef}
@@ -501,38 +378,29 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
           movementPoseRef={movementPoseRef}
           walkDirectionRef={walkDirectionRef}
           hasFlag={player.hasFlag}
+          castShadow={false}
+          bodyOpacity={PHANTOM_VEIL_BODY_OPACITY}
+          bodyOpacityRef={bodyOpacityRef}
+          showOutline={false}
         />
-      ) : lodTier === 1 ? (
-        <SimplifiedRemoteBody
-          socketOwnerId={player.id}
-          heroId={player.heroId}
-          team={player.team}
-          height={playerHeight}
-          postureScaleYRef={postureScaleYRef}
-          hasFlag={player.hasFlag}
-        />
-      ) : (
-        <RemotePlayerMarker team={player.team} isBot={player.isBot} hasFlag={player.hasFlag} />
       )}
 
       {/* Nameplate */}
-      {config.showNameplates && lodTier <= 1 && (
+      {!isVeiled && config.showNameplates && (
         <Nameplate
-          heroId={player.heroId}
           name={player.name}
-          team={player.team}
           health={player.health}
           maxHealth={player.maxHealth}
           height={visibleHeight}
         />
       )}
 
-      {config.showBeacons && lodTier <= 1 && (
+      {!isVeiled && config.showBeacons && (
         <PlayerVisibilityBeacon
           team={player.team}
           height={visibleHeight}
           isBot={player.isBot}
-          animate={config.animateFarMarkers}
+          animate={config.animateBeacons}
         />
       )}
 
@@ -542,129 +410,10 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
       )}
     </group>
   );
-}
-
-function getTeamColor(team: Team): string {
-  return team === 'red' ? '#ef4444' : '#38bdf8';
-}
-
-function getHeroAccent(heroId: HeroId | null, team: Team): string {
-  return heroId ? HERO_ICON_COLORS[heroId].primary : getTeamColor(team);
-}
-
-function SimplifiedRemoteBody({
-  socketOwnerId,
-  heroId,
-  team,
-  height,
-  postureScaleYRef,
-  hasFlag,
-}: {
-  socketOwnerId?: string;
-  heroId: HeroId | null;
-  team: Team;
-  height: number;
-  postureScaleYRef: MutableRefObject<number>;
-  hasFlag: boolean;
-}) {
-  const groupRef = useRef<THREE.Group>(null);
-  const socketRefs = useRef<Record<string, THREE.Group | null>>({});
-  const resolvedHero = heroId ?? 'phantom';
-  const teamColor = getTeamColor(team);
-  const accent = getHeroAccent(heroId, team);
-  const torsoMaterial = getSharedRemoteBodyMaterial(teamColor, 0.18, 0.72);
-  const headMaterial = getSharedRemoteBodyMaterial(accent, 0.25, 0.66);
-  const flagMaterial = getSharedRemoteBodyMaterial('#facc15', 0.55, 0.58);
-  const socketMarkers = useMemo(
-    () => createSimplifiedRemoteSocketMarkers(resolvedHero, height),
-    [height, resolvedHero]
-  );
-
-  useEffect(() => {
-    if (!socketOwnerId) return undefined;
-
-    const cleanups: Array<() => void> = [];
-    for (const marker of socketMarkers) {
-      const socketObject = socketRefs.current[marker.socketName];
-      if (!socketObject) continue;
-      cleanups.push(registerRemoteModelSocket(
-        socketOwnerId,
-        marker.socketName,
-        socketObject,
-        'simplifiedBody'
-      ));
-    }
-
-    return () => {
-      cleanups.forEach((cleanup) => cleanup());
-    };
-  }, [socketMarkers, socketOwnerId]);
-
-  useFrame(() => {
-    if (!groupRef.current) return;
-    groupRef.current.scale.y = postureScaleYRef.current;
-  });
-
-  return (
-    <group ref={groupRef} position={[0, height * 0.5, 0]} dispose={null}>
-      <mesh
-        geometry={REMOTE_SIMPLIFIED_GEOMETRIES.torso}
-        material={torsoMaterial}
-        scale={[0.62, height * 0.72, 0.42]}
-      />
-      <mesh
-        geometry={REMOTE_SIMPLIFIED_GEOMETRIES.head}
-        material={headMaterial}
-        position={[0, height * 0.43, 0]}
-        scale={[0.42, 0.34, 0.36]}
-      />
-      {hasFlag && (
-        <mesh
-          geometry={REMOTE_SIMPLIFIED_GEOMETRIES.flag}
-          material={flagMaterial}
-          position={[0, height * 0.7, -0.28]}
-          scale={[0.18, 0.42, 0.04]}
-        />
-      )}
-      {socketMarkers.map((marker) => (
-        <group
-          key={`${resolvedHero}-simplified-socket-${marker.socketName}`}
-          ref={(node) => {
-            socketRefs.current[marker.socketName] = node;
-          }}
-          position={marker.position}
-        />
-      ))}
-    </group>
-  );
-}
-
-function RemotePlayerMarker({ team, isBot, hasFlag }: { team: Team; isBot?: boolean; hasFlag: boolean }) {
-  const color = getTeamColor(team);
-  const scale = hasFlag ? 1.35 : isBot ? 1.1 : 1;
-  const ringMaterial = getSharedRemoteMarkerMaterial(color, 0.86);
-  const coreMaterial = getSharedRemoteMarkerMaterial(hasFlag ? '#facc15' : color);
-
-  return (
-    <group position={[0, 1.1, 0]} scale={scale} dispose={null}>
-      <mesh
-        geometry={REMOTE_SIMPLIFIED_GEOMETRIES.markerRing}
-        material={ringMaterial}
-        rotation={[Math.PI / 2, 0, 0]}
-      />
-      <mesh
-        geometry={REMOTE_SIMPLIFIED_GEOMETRIES.markerCore}
-        material={coreMaterial}
-        position={[0, 0.18, 0]}
-      />
-    </group>
-  );
-}
+});
 
 interface NameplateProps {
-  heroId: HeroId | null;
   name: string;
-  team: Team;
   health: number;
   maxHealth: number;
   height: number;
@@ -672,6 +421,7 @@ interface NameplateProps {
 
 const NAMEPLATE_CANVAS_WIDTH = 256;
 const NAMEPLATE_CANVAS_HEIGHT = 72;
+const NAMEPLATE_HEALTH_BUCKETS = 40;
 
 function roundedRectPath(
   ctx: CanvasRenderingContext2D,
@@ -708,43 +458,25 @@ function trimTextToWidth(ctx: CanvasRenderingContext2D, value: string, maxWidth:
 function drawNameplateTexture(
   canvas: HTMLCanvasElement,
   name: string,
-  teamColor: string,
-  heroColor: string,
   healthPercent: number
 ): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
   ctx.clearRect(0, 0, NAMEPLATE_CANVAS_WIDTH, NAMEPLATE_CANVAS_HEIGHT);
-  ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
-  ctx.shadowBlur = 10;
-  ctx.shadowOffsetY = 2;
-  roundedRectPath(ctx, 8, 8, 240, 40, 8);
-  ctx.fillStyle = 'rgba(5, 10, 18, 0.62)';
-  ctx.fill();
-  ctx.restore();
-
-  ctx.save();
-  ctx.fillStyle = heroColor;
-  ctx.shadowColor = heroColor;
-  ctx.shadowBlur = 8;
-  ctx.beginPath();
-  ctx.arc(28, 28, 8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
 
   ctx.font = '700 17px Inter, ui-sans-serif, system-ui, sans-serif';
   ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
   ctx.fillStyle = '#ffffff';
   ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
-  ctx.shadowBlur = 4;
-  ctx.shadowOffsetY = 1;
-  ctx.fillText(trimTextToWidth(ctx, name.toUpperCase(), 178), 44, 27);
+  ctx.shadowBlur = 5;
+  ctx.shadowOffsetY = 2;
+  ctx.fillText(trimTextToWidth(ctx, name.toUpperCase(), 224), NAMEPLATE_CANVAS_WIDTH / 2, 27);
 
-  const barX = 30;
+  const barX = 34;
   const barY = 52;
-  const barWidth = 196;
+  const barWidth = 188;
   const barHeight = 6;
   roundedRectPath(ctx, barX, barY, barWidth, barHeight, 3);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
@@ -764,17 +496,11 @@ function drawNameplateTexture(
     ctx.fillStyle = gradient;
     ctx.fill();
   }
-
-  ctx.fillStyle = teamColor;
-  ctx.globalAlpha = 0.9;
-  roundedRectPath(ctx, 232, 14, 6, 42, 3);
-  ctx.fill();
 }
 
-function Nameplate({ heroId, name, team, health, maxHealth, height }: NameplateProps) {
-  const teamColor = getTeamColor(team);
+const Nameplate = memo(function Nameplate({ name, health, maxHealth, height }: NameplateProps) {
   const healthPercent = Math.max(0, Math.min(1, health / Math.max(1, maxHealth)));
-  const heroColor = heroId ? HERO_ICON_COLORS[heroId].primary : teamColor;
+  const quantizedHealthPercent = Math.round(healthPercent * NAMEPLATE_HEALTH_BUCKETS) / NAMEPLATE_HEALTH_BUCKETS;
   const texture = useMemo(() => {
     const canvas = document.createElement('canvas');
     canvas.width = NAMEPLATE_CANVAS_WIDTH;
@@ -788,24 +514,37 @@ function Nameplate({ heroId, name, team, health, maxHealth, height }: NameplateP
   }, []);
 
   useEffect(() => {
-    drawNameplateTexture(texture.image as HTMLCanvasElement, name, teamColor, heroColor, healthPercent);
+    drawNameplateTexture(texture.image as HTMLCanvasElement, name, quantizedHealthPercent);
     texture.needsUpdate = true;
-  }, [healthPercent, heroColor, name, teamColor, texture]);
+  }, [name, quantizedHealthPercent, texture]);
 
   useEffect(() => () => texture.dispose(), [texture]);
 
   const width = Math.max(1.75, Math.min(2.7, 1.55 + name.length * 0.045));
 
   return (
-    <sprite position={[0, height + 0.58, 0]} scale={[width, 0.68, 1]} renderOrder={30}>
-      <spriteMaterial map={texture} transparent depthTest={false} depthWrite={false} toneMapped={false} />
+    <sprite position={[0, height + NAMEPLATE_WORLD_OFFSET_Y, 0]} scale={[width, 0.68, 1]} renderOrder={30}>
+      <spriteMaterial map={texture} transparent depthTest depthWrite={false} toneMapped={false} />
     </sprite>
   );
+});
+
+const BEACON_TORUS_GEOMETRY = new THREE.TorusGeometry(0.42, 0.018, 6, 24);
+const BEACON_MATERIALS = {
+  red: new THREE.MeshBasicMaterial({ color: '#ef4444', transparent: true, opacity: 0.75 }),
+  redBot: new THREE.MeshBasicMaterial({ color: '#ef4444', transparent: true, opacity: 0.95 }),
+  blue: new THREE.MeshBasicMaterial({ color: '#38bdf8', transparent: true, opacity: 0.75 }),
+  blueBot: new THREE.MeshBasicMaterial({ color: '#38bdf8', transparent: true, opacity: 0.95 }),
+} as const;
+
+function getBeaconMaterial(team: Team, isBot?: boolean): THREE.MeshBasicMaterial {
+  if (team === 'red') return isBot ? BEACON_MATERIALS.redBot : BEACON_MATERIALS.red;
+  return isBot ? BEACON_MATERIALS.blueBot : BEACON_MATERIALS.blue;
 }
 
-function PlayerVisibilityBeacon({ team, height, isBot, animate }: { team: Team; height: number; isBot?: boolean; animate: boolean }) {
+const PlayerVisibilityBeacon = memo(function PlayerVisibilityBeacon({ team, height, isBot, animate }: { team: Team; height: number; isBot?: boolean; animate: boolean }) {
   const groupRef = useRef<THREE.Group>(null);
-  const color = team === 'red' ? '#ef4444' : '#38bdf8';
+  const material = getBeaconMaterial(team, isBot);
 
   useFrame((state) => {
     if (!animate || !groupRef.current) return;
@@ -814,13 +553,15 @@ function PlayerVisibilityBeacon({ team, height, isBot, animate }: { team: Team; 
 
   return (
     <group ref={groupRef} position={[0, height + 0.18, 0]}>
-      <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[0.42, 0.018, 6, 24]} />
-        <meshBasicMaterial color={color} transparent opacity={isBot ? 0.95 : 0.75} />
-      </mesh>
+      <mesh
+        rotation={[Math.PI / 2, 0, 0]}
+        geometry={BEACON_TORUS_GEOMETRY}
+        material={material}
+        dispose={null}
+      />
     </group>
   );
-}
+});
 
 interface FlagCarrierIndicatorProps {
   team: Team; // Team of the flag being carried

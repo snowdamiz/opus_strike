@@ -5,22 +5,45 @@ import {
   ABILITY_DEFINITIONS,
   BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
+  CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE,
+  CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST,
+  CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   PHANTOM_BLINK_DISTANCE,
-  PHANTOM_SHADOWSTEP_DISTANCE,
+  PHANTOM_VOID_ZONE_DAMAGE,
+  PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS,
+  PHANTOM_VOID_ZONE_DURATION_SECONDS,
+  PHANTOM_VOID_ZONE_RADIUS,
+  calculateLookDirection,
 } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 
-const COOLDOWN_AFTER_ACTIVE_ABILITIES = new Set<string>();
+const COOLDOWN_AFTER_ACTIVE_ABILITIES = new Set<string>([
+  'phantom_personal_shield',
+]);
+
+export function deactivateActiveAbility(ability: AbilityStateSchema): void {
+  ability.isActive = false;
+  ability.activatedAt = 0;
+
+  if (!COOLDOWN_AFTER_ACTIVE_ABILITIES.has(ability.abilityId) || ability.cooldownRemaining > 0) {
+    return;
+  }
+
+  const abilityDef = ABILITY_DEFINITIONS[ability.abilityId];
+  if (abilityDef) {
+    ability.cooldownRemaining = abilityDef.cooldown;
+  }
+}
 
 // ============================================================================
 // VOID ZONE CONFIGURATION
 // ============================================================================
 
-export const VOID_ZONE_RADIUS = 3;
-export const VOID_ZONE_DAMAGE = 15;
-export const VOID_ZONE_DURATION = 4; // seconds
-export const VOID_ZONE_DAMAGE_INTERVAL = 500; // ms between damage ticks
+export const VOID_ZONE_RADIUS = PHANTOM_VOID_ZONE_RADIUS;
+export const VOID_ZONE_DAMAGE = PHANTOM_VOID_ZONE_DAMAGE;
+export const VOID_ZONE_DURATION = PHANTOM_VOID_ZONE_DURATION_SECONDS;
+export const VOID_ZONE_DAMAGE_INTERVAL = PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS;
 
 export interface VoidZone {
   id: string;
@@ -83,8 +106,6 @@ export function initializePlayerAbilities(player: Player, heroId: HeroId): void 
     ultimateState.isActive = false;
     player.abilities.set(ultimateId, ultimateState);
   }
-
-  console.log(`Initialized abilities for ${player.name}: ${ability1Id}, ${ability2Id}, ${ultimateId}`);
 }
 
 /**
@@ -147,20 +168,17 @@ export function tryUseAbility(
   const cooldownStartsAfterActive = COOLDOWN_AFTER_ACTIVE_ABILITIES.has(abilityId);
 
   if (abilityState.isActive) {
-    console.log(`${player.name} tried to use ${abilityDef.name} but it's already active`);
     return { success: false, reason: 'Active' };
   }
 
   // Check if on cooldown
   if (!hasMultipleCharges && abilityState.cooldownRemaining > 0) {
-    console.log(`${player.name} tried to use ${abilityDef.name} but it's on cooldown (${abilityState.cooldownRemaining.toFixed(1)}s)`);
     return { success: false, reason: 'On cooldown' };
   }
 
   // Check charges for multi-charge abilities
   if (hasMultipleCharges) {
     if (abilityState.charges <= 0) {
-      console.log(`${player.name} tried to use ${abilityDef.name} but has no charges`);
       return { success: false, reason: 'No charges' };
     }
   }
@@ -168,15 +186,11 @@ export function tryUseAbility(
   // Check ultimate charge
   if (slot === 'ultimate') {
     if (player.ultimateCharge < 100) {
-      console.log(`${player.name} tried to use ultimate but only has ${player.ultimateCharge.toFixed(0)}%`);
       return { success: false, reason: 'Ultimate not ready' };
     }
     // Consume ultimate charge
     player.ultimateCharge = 0;
   }
-
-  // Use the ability
-  console.log(`${player.name} used ${abilityDef.name}!`);
 
   // Handle charges vs cooldown
   if (hasMultipleCharges) {
@@ -201,7 +215,7 @@ export interface AbilityExecutionContext {
     player: Player,
     distance: number
   ) => { x: number; y: number; z: number };
-  markAuthoritativePosition?: (playerId: string, durationMs: number) => void;
+  markAuthoritativePosition?: (playerId: string, durationMs: number, reason?: 'teleport' | 'knockback') => void;
 }
 
 /**
@@ -221,41 +235,29 @@ export function executeAbility(
     case 'phantom_blink': {
       const distance = PHANTOM_BLINK_DISTANCE;
       const yaw = player.lookYaw;
+      const blinkDirection = calculateLookDirection(yaw, player.lookPitch);
       const fallbackDestination = {
-        x: player.position.x + -Math.sin(yaw) * distance,
-        y: player.position.y + (player.lookPitch < -0.3 ? 2 : 0),
-        z: player.position.z + -Math.cos(yaw) * distance,
+        x: player.position.x + blinkDirection.x * distance,
+        y: player.position.y + blinkDirection.y * distance,
+        z: player.position.z + blinkDirection.z * distance,
       };
       const destination = context.resolvePhantomBlinkDestination?.(player, distance) ?? fallbackDestination;
 
       player.position.x = destination.x;
       player.position.z = destination.z;
       player.position.y = destination.y;
-      player.velocity.x = -Math.sin(yaw) * 2;
-      player.velocity.z = -Math.cos(yaw) * 2;
+      player.velocity.x = blinkDirection.x * 2;
+      player.velocity.z = blinkDirection.z * 2;
       player.movement.isGrounded = false;
       player.movement.isSliding = false;
       player.movement.slideTimeRemaining = 0;
-      context.markAuthoritativePosition?.(player.id, 450);
+      context.markAuthoritativePosition?.(player.id, 450, 'teleport');
 
       context.createVoidZone(
         { x: destination.x, y: destination.y - 0.9, z: destination.z },
         player.id,
         player.team as 'red' | 'blue'
       );
-      break;
-    }
-
-    case 'phantom_shadowstep': {
-      abilityState.isActive = true;
-      abilityState.activatedAt = now;
-      const distance = PHANTOM_SHADOWSTEP_DISTANCE;
-      const yaw = player.lookYaw;
-      player.position.x += -Math.sin(yaw) * distance;
-      player.position.z += -Math.cos(yaw) * distance;
-      player.movement.isSliding = false;
-      player.movement.slideTimeRemaining = 0;
-      context.markAuthoritativePosition?.(player.id, 450);
       break;
     }
 
@@ -277,20 +279,14 @@ export function executeAbility(
       break;
     }
 
-    case 'hookshot_swing': {
-      abilityState.isActive = true;
-      abilityState.activatedAt = now;
-      break;
-    }
-
     case 'hookshot_anchor_wall': {
       abilityState.isActive = true;
       abilityState.activatedAt = now;
       break;
     }
 
-    case 'hookshot_grapple_trap': {
-      abilityState.isActive = true;
+    case 'hookshot_ground_hooks': {
+      abilityState.isActive = false;
       abilityState.activatedAt = now;
       break;
     }
@@ -309,7 +305,7 @@ export function executeAbility(
       player.movement.isGrounded = false;
       player.movement.isSliding = false;
       player.movement.slideTimeRemaining = 0;
-      context.markAuthoritativePosition?.(player.id, 550);
+      context.markAuthoritativePosition?.(player.id, 550, 'knockback');
       break;
     }
 
@@ -322,6 +318,25 @@ export function executeAbility(
     // ===== CHRONOS ABILITIES =====
     case 'chronos_timebreak': {
       abilityState.activatedAt = now + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS;
+      break;
+    }
+
+    case 'chronos_ascendant_paradox': {
+      const forwardX = -Math.sin(player.lookYaw);
+      const forwardZ = -Math.cos(player.lookYaw);
+      abilityState.isActive = true;
+      abilityState.activatedAt = now;
+      player.movement.chronosAscendantStartY = player.position.y;
+      player.position.y += CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST;
+      player.velocity.x += forwardX * CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE;
+      player.velocity.y = Math.max(player.velocity.y, CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE);
+      player.velocity.z += forwardZ * CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE;
+      player.movement.isGrounded = false;
+      player.movement.isSliding = false;
+      player.movement.slideTimeRemaining = 0;
+      player.movement.isJetpacking = true;
+      player.movement.isGliding = true;
+      context.markAuthoritativePosition?.(player.id, 650, 'knockback');
       break;
     }
 
@@ -360,10 +375,7 @@ export function updateActiveAbilities(player: Player, now: number): void {
 
     const elapsedMs = now - ability.activatedAt;
     if (elapsedMs >= abilityDef.duration * 1000) {
-      ability.isActive = false;
-      if (COOLDOWN_AFTER_ACTIVE_ABILITIES.has(ability.abilityId) && ability.cooldownRemaining <= 0) {
-        ability.cooldownRemaining = abilityDef.cooldown;
-      }
+      deactivateActiveAbility(ability);
     }
   });
 }
