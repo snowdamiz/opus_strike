@@ -76,8 +76,15 @@ export function pruneNetworkQualitySamples(
   config: NetworkQualityGateConfig = DEFAULT_COMPETITIVE_NETWORK_QUALITY_GATE
 ): void {
   const cutoff = now - config.sampleWindowMs;
-  while (state.samples.length > 0 && (state.samples[0]?.at ?? now) < cutoff) {
-    state.samples.shift();
+  let firstRetainedIndex = 0;
+  while (
+    firstRetainedIndex < state.samples.length &&
+    (state.samples[firstRetainedIndex]?.at ?? now) < cutoff
+  ) {
+    firstRetainedIndex++;
+  }
+  if (firstRetainedIndex > 0) {
+    state.samples.splice(0, firstRetainedIndex);
   }
 }
 
@@ -92,25 +99,46 @@ export function evaluatePlayerNetworkQuality(input: {
   pruneNetworkQualitySamples(input.state, input.now, config);
 
   const samples = input.state.samples;
-  const successfulSamples = samples.filter((sample) => (
-    typeof sample.pingMs === 'number' && Number.isFinite(sample.pingMs)
-  ));
-  const timeoutCount = samples.length - successfulSamples.length;
+  let successfulSamples = 0;
+  let timeoutCount = 0;
+  let consecutiveTimeouts = 0;
+  let maxConsecutiveTimeouts = 0;
+  let pingTotal = 0;
+  let peakPingMs: number | null = null;
+  let jitterMs: number | null = null;
+  let previousPingMs: number | null = null;
+
+  for (const sample of samples) {
+    const pingMs = sample.pingMs;
+    if (typeof pingMs === 'number' && Number.isFinite(pingMs)) {
+      successfulSamples++;
+      pingTotal += pingMs;
+      peakPingMs = peakPingMs === null ? pingMs : Math.max(peakPingMs, pingMs);
+      if (previousPingMs !== null) {
+        const delta = Math.abs(pingMs - previousPingMs);
+        jitterMs = jitterMs === null ? delta : Math.max(jitterMs, delta);
+      }
+      previousPingMs = pingMs;
+      consecutiveTimeouts = 0;
+      continue;
+    }
+
+    timeoutCount++;
+    consecutiveTimeouts++;
+    maxConsecutiveTimeouts = Math.max(maxConsecutiveTimeouts, consecutiveTimeouts);
+  }
+
   const timeoutRatio = samples.length > 0 ? timeoutCount / samples.length : 0;
-  const consecutiveTimeouts = getMaxConsecutiveTimeouts(samples);
-  const pingValues = successfulSamples.map((sample) => sample.pingMs as number);
-  const averagePingMs = pingValues.length > 0
-    ? Math.round(pingValues.reduce((sum, ping) => sum + ping, 0) / pingValues.length)
+  const averagePingMs = successfulSamples > 0
+    ? Math.round(pingTotal / successfulSamples)
     : null;
-  const peakPingMs = pingValues.length > 0 ? Math.max(...pingValues) : null;
-  const jitterMs = pingValues.length >= 2 ? getMaxConsecutivePingDelta(pingValues) : null;
   const observationMs = Math.max(0, input.now - input.state.firstProbeAt);
 
   const metrics: PlayerNetworkQualityMetrics = {
     sampleCount: samples.length,
-    successfulSamples: successfulSamples.length,
+    successfulSamples,
     timeoutCount,
-    consecutiveTimeouts,
+    consecutiveTimeouts: maxConsecutiveTimeouts,
     timeoutRatio,
     averagePingMs,
     peakPingMs,
@@ -171,31 +199,4 @@ function getNetworkQualityPendingReason(
   if (metrics.observationMs < config.minObservationMs) return 'collecting_network_samples';
   if (metrics.successfulSamples < config.minSuccessfulSamples) return 'network_not_verified';
   return null;
-}
-
-function getMaxConsecutiveTimeouts(samples: NetworkQualitySample[]): number {
-  let current = 0;
-  let max = 0;
-
-  for (const sample of samples) {
-    const timedOut = sample.timedOut === true || sample.pingMs === null;
-    if (!timedOut) {
-      current = 0;
-      continue;
-    }
-    current++;
-    max = Math.max(max, current);
-  }
-
-  return max;
-}
-
-function getMaxConsecutivePingDelta(pingValues: number[]): number {
-  let maxDelta = 0;
-
-  for (let index = 1; index < pingValues.length; index++) {
-    maxDelta = Math.max(maxDelta, Math.abs(pingValues[index] - pingValues[index - 1]));
-  }
-
-  return maxDelta;
 }

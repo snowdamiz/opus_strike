@@ -570,6 +570,7 @@ function createSpawnCluster(team: MapTeam, points: Vec3[], flag: Vec3, outward: 
 }
 
 function createProtectedZones(bases: TeamMap<BaseZone>, flags: TeamMap<FlagZone>, spawns: TeamMap<SpawnCluster>, lanes: LaneDescriptor[], nodes: RouteGraphNode[]): ProtectedZone[] {
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const zones: ProtectedZone[] = [
     {
       id: 'red_base_protected',
@@ -620,9 +621,11 @@ function createProtectedZones(bases: TeamMap<BaseZone>, flags: TeamMap<FlagZone>
   ];
 
   for (const laneDescriptor of lanes) {
-    const laneNodes = laneDescriptor.nodeIds
-      .map((nodeId) => nodes.find((node) => node.id === nodeId))
-      .filter((node): node is RouteGraphNode => Boolean(node));
+    const laneNodes: RouteGraphNode[] = [];
+    for (const nodeId of laneDescriptor.nodeIds) {
+      const node = nodesById.get(nodeId);
+      if (node) laneNodes.push(node);
+    }
     zones.push({
       id: `${laneDescriptor.id}_route_clearance`,
       kind: 'route',
@@ -909,9 +912,11 @@ function createTerrainConstraints(
   }
 
   for (const laneDescriptor of lanes) {
-    const points = laneDescriptor.nodeIds
-      .map((nodeId) => nodesById.get(nodeId)?.position)
-      .filter((point): point is Vec3 => Boolean(point));
+    const points: Vec3[] = [];
+    for (const nodeId of laneDescriptor.nodeIds) {
+      const point = nodesById.get(nodeId)?.position;
+      if (point) points.push(point);
+    }
     constraints.push({
       id: `${laneDescriptor.id}_centerline`,
       kind: 'lane_centerline',
@@ -1065,9 +1070,29 @@ function scoreBlueprint(
   spawns: TeamMap<SpawnCluster>,
   boundary: BoundaryPoint[]
 ): Pick<MapDiagnostics, 'score' | 'scoreBreakdown' | 'warnings' | 'routeChoiceCount' | 'laneLengths' | 'laneWidths' | 'coverDensityByLane' | 'maxSightlineLength' | 'flagApproachClearances'> & { rejectedReasons: string[] } {
-  const primary = lanes.find((laneDescriptor) => laneDescriptor.id === 'primary') ?? lanes[0];
-  const flankLengths = lanes.filter((laneDescriptor) => laneDescriptor.kind === 'flank').map((laneDescriptor) => laneDescriptor.expectedDistance);
-  const averageFlank = flankLengths.reduce((sum, value) => sum + value, 0) / Math.max(1, flankLengths.length);
+  let primary: LaneDescriptor | undefined = lanes[0];
+  let flankLengthTotal = 0;
+  let flankLengthCount = 0;
+  let routeChoices = 0;
+  const laneLengths: Record<string, number> = {};
+  const laneWidths: Record<string, number> = {};
+  const coverDensityByLane: Record<string, number> = {};
+
+  for (const laneDescriptor of lanes) {
+    if (laneDescriptor.id === 'primary') primary = laneDescriptor;
+    if (laneDescriptor.kind === 'flank') {
+      flankLengthTotal += laneDescriptor.expectedDistance;
+      flankLengthCount++;
+    }
+    if (laneDescriptor.kind === 'primary' || laneDescriptor.kind === 'flank') {
+      routeChoices++;
+    }
+    laneLengths[laneDescriptor.id] = laneDescriptor.expectedDistance;
+    laneWidths[laneDescriptor.id] = laneDescriptor.width;
+    coverDensityByLane[laneDescriptor.id] = laneDescriptor.coverDensityTarget;
+  }
+
+  const averageFlank = flankLengthTotal / Math.max(1, flankLengthCount);
   const routeBalance = primary ? 1 - clamp(Math.abs(primary.expectedDistance - averageFlank) / Math.max(1, primary.expectedDistance), 0, 1) : 0.5;
   const spawnFlagBalance =
     1 -
@@ -1077,7 +1102,7 @@ function scoreBlueprint(
       0,
       1
     );
-  const routeChoices = Math.max(1, lanes.filter((laneDescriptor) => laneDescriptor.kind === 'primary' || laneDescriptor.kind === 'flank').length);
+  routeChoices = Math.max(1, routeChoices);
   const routeChoiceScore = clamp(routeChoices / 3, 0, 1);
   const slotCoverage = clamp(slots.length / 14, 0, 1);
   const boundaryClearance = Math.min(
@@ -1117,13 +1142,11 @@ function scoreBlueprint(
   if (protectedOverlapPenalty > 0.12) rejectedReasons.push(`${candidateId}: protected zones overlap heavily`);
   if (score < 58) warnings.push('low semantic layout score');
 
-  const laneLengths = Object.fromEntries(lanes.map((laneDescriptor) => [laneDescriptor.id, laneDescriptor.expectedDistance]));
-  const laneWidths = Object.fromEntries(lanes.map((laneDescriptor) => [laneDescriptor.id, laneDescriptor.width]));
-  const coverDensityByLane = Object.fromEntries(lanes.map((laneDescriptor) => [laneDescriptor.id, laneDescriptor.coverDensityTarget]));
-  const maxSightlineLength = Math.max(
-    ...routeGraph.edges.map((edge) => edge.distance),
-    distance2D(spawns.red.center, spawns.blue.center)
-  );
+  let maxRouteEdgeDistance = 0;
+  for (const edge of routeGraph.edges) {
+    maxRouteEdgeDistance = Math.max(maxRouteEdgeDistance, edge.distance);
+  }
+  const maxSightlineLength = Math.max(maxRouteEdgeDistance, distance2D(spawns.red.center, spawns.blue.center));
   const flagApproachClearances: TeamMap<number> = {
     red: distanceToBoundary(flags.red.center.x, flags.red.center.z, boundary),
     blue: distanceToBoundary(flags.blue.center.x, flags.blue.center.z, boundary),
