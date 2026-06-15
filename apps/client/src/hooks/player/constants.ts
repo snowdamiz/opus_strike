@@ -4,6 +4,7 @@ import {
   GRAPPLE_MAX_DISTANCE,
   HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS,
   HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE,
+  HOOKSHOT_DRAG_HOOK_MAX_DISTANCE,
   PHANTOM_DIRE_BALL_SPEED as SHARED_PHANTOM_DIRE_BALL_SPEED,
 } from '@voxel-strike/shared';
 
@@ -78,7 +79,7 @@ export const HOOKSHOT_SPEED = 38;
 export const HOOKSHOT_MAX_DISTANCE = HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE;
 export const DRAG_HOOK_COOLDOWN = 3600;
 export const DRAG_HOOK_SPEED = 50;
-export const DRAG_HOOK_MAX_DISTANCE = 24;
+export const DRAG_HOOK_MAX_DISTANCE = HOOKSHOT_DRAG_HOOK_MAX_DISTANCE;
 export const GRAPPLE_MAX_RANGE = GRAPPLE_MAX_DISTANCE;
 
 // ============================================================================

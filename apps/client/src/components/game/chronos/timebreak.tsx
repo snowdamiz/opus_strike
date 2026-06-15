@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import {
   ABILITY_DEFINITIONS,
   CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE,
+  CHRONOS_TIMEBREAK_SHOCKWAVE_MAX_VERTICAL_DELTA,
   CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
   type Team,
 } from '@voxel-strike/shared';
@@ -17,8 +18,6 @@ const TIMEBREAK_BRIGHT_EMERALD = 0x73ffa2;
 const TIMEBREAK_CORE_GREEN = 0xb8ffc8;
 const CHRONOS_TIMEBREAK_ABILITY_ID = 'chronos_timebreak';
 const DEFAULT_TIMEBREAK_DIRECTION = { x: 0, y: 0, z: -1 };
-const CONE_HORIZONTAL_RADIUS_SCALE = 0.72;
-const CONE_VERTICAL_RADIUS_SCALE = 0.42;
 const CONE_CORE_RADIUS_SCALE = 0.18;
 const TIMEBREAK_RING_SPECS = [
   { depth: 0.2, opacity: 0.34, pulse: 0.12, spin: -0.75 },
@@ -374,12 +373,13 @@ function ChronosTimebreakEffect({ timebreak }: { timebreak: ChronosTimebreakEffe
 
     const progress = THREE.MathUtils.clamp(elapsedMs / TIMEBREAK_SHOCKWAVE_DURATION_MS, 0, 1);
     const expansion = easeOutCubic(progress);
-    const waveLength = (timebreak.radius || CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE) * THREE.MathUtils.lerp(0.08, 1, expansion);
+    const shockwaveRange = timebreak.radius || CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE;
+    const waveLength = shockwaveRange * THREE.MathUtils.lerp(0.08, 1, expansion);
     const maxHorizontalRadius = Math.tan(CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE)
-      * (timebreak.radius || CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE)
-      * CONE_HORIZONTAL_RADIUS_SCALE;
+      * shockwaveRange;
     const waveHorizontalRadius = maxHorizontalRadius * THREE.MathUtils.lerp(0.12, 1, expansion);
-    const waveVerticalRadius = waveHorizontalRadius * CONE_VERTICAL_RADIUS_SCALE;
+    const waveVerticalRadius = CHRONOS_TIMEBREAK_SHOCKWAVE_MAX_VERTICAL_DELTA
+      * THREE.MathUtils.lerp(0.12, 1, expansion);
     const fade = 1 - THREE.MathUtils.smoothstep(progress, 0.46, 1);
     const birth = THREE.MathUtils.smoothstep(progress, 0, 0.08);
     const opacity = birth * fade;
@@ -424,7 +424,7 @@ function ChronosTimebreakEffect({ timebreak }: { timebreak: ChronosTimebreakEffe
 
       const spec = TIMEBREAK_RING_SPECS[index];
       const depth = waveLength * spec.depth;
-      const ringPulse = 1 + Math.sin(progress * Math.PI * 4 + index * 0.9) * spec.pulse * (1 - progress);
+      const ringPulse = Math.min(1, 1 + Math.sin(progress * Math.PI * 4 + index * 0.9) * spec.pulse * (1 - progress));
       ring.position.z = -depth;
       ring.rotation.z = progress * spec.spin + index * 0.18;
       ring.scale.set(

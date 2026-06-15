@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import * as THREE from 'three';
+import { HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS } from '@voxel-strike/shared';
 import { useGameStore, type HookProjectileData } from '../../../store/gameStore';
 import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
@@ -34,7 +35,6 @@ import { useHookshotFrameUpdater } from './hookshotFrameRegistry';
 // FULLY OPTIMIZED: Zero state updates in useFrame, all refs, pre-allocated objects
 // ============================================================================
 
-const HOOK_COLLISION_RADIUS = 0.22;
 const HOOK_RETRACT_SPEED = 50;
 
 // Get shared materials from centralized resources
@@ -210,17 +210,17 @@ export const HookProjectile = React.memo(({ slot }: HookProjectileProps) => {
           previousPosition,
           hookDirection,
           hook.impactPosition,
-          moveDistance + HOOK_COLLISION_RADIUS,
-          HOOK_COLLISION_RADIUS
+          moveDistance + HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS,
+          HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS
         )
         : null;
       const aegisHit = getFirstChronosAegisVisualHit(
         previousPosition,
         hookDirection,
-        moveDistance + HOOK_COLLISION_RADIUS,
+        moveDistance + HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS,
         hook.ownerTeam,
         hook.ownerId,
-        HOOK_COLLISION_RADIUS
+        HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS
       );
       const terrainHit = isPhysicsReady()
         ? raycastDirection(previousPosition.x, previousPosition.y, previousPosition.z, dirX, dirY, dirZ, moveDistance + 0.5, {
@@ -257,12 +257,12 @@ export const HookProjectile = React.memo(({ slot }: HookProjectileProps) => {
           previousPosition,
           hookDirection,
           moveDistance,
-          HOOK_COLLISION_RADIUS,
+          HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS,
           {
             x: previousPosition.x + dirX * moveDistance * 0.5,
             z: previousPosition.z + dirZ * moveDistance * 0.5,
           },
-          moveDistance * 0.5 + HOOK_COLLISION_RADIUS + 1.2
+          moveDistance * 0.5 + HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS + 1.2
         );
 
         if (hitPlayer) {

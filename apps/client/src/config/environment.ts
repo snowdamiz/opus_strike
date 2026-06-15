@@ -11,6 +11,7 @@ function envBoolValue(raw: unknown, fallback: boolean): boolean {
 
 const isDev = envBoolValue(env.DEV, false);
 const isProd = envBoolValue(env.PROD, false);
+const clientDiagnosticsEnabled = isDev && envBool('VITE_CLIENT_DIAGNOSTICS', true);
 
 // Server URL configuration
 const DEV_SERVER_URL = 'ws://localhost:2567';
@@ -37,9 +38,14 @@ export const config = {
   serverUrl,
   serverHttpUrl: toHttpUrl(serverUrl),
   discordAuthEnabled: env.VITE_DISCORD_AUTH_ENABLED !== 'false',
-  antiCheatMovementTraceRecorderEnabled: envBool('VITE_ANTICHEAT_MOVEMENT_TRACE_RECORDER', isDev),
-  antiCheatMovementTraceSampleRate: envNumber('VITE_ANTICHEAT_MOVEMENT_TRACE_SAMPLE_RATE', isDev ? 1 : 0, { min: 0, max: 1 }),
-  antiCheatMovementTraceMaxFrames: envNumber('VITE_ANTICHEAT_MOVEMENT_TRACE_MAX_FRAMES', 1800, { min: 60, max: 5000 }),
+  clientDiagnosticsEnabled,
+  antiCheatMovementTraceRecorderEnabled: clientDiagnosticsEnabled && envBool('VITE_ANTICHEAT_MOVEMENT_TRACE_RECORDER', true),
+  antiCheatMovementTraceSampleRate: clientDiagnosticsEnabled
+    ? envNumber('VITE_ANTICHEAT_MOVEMENT_TRACE_SAMPLE_RATE', 1, { min: 0, max: 1 })
+    : 0,
+  antiCheatMovementTraceMaxFrames: clientDiagnosticsEnabled
+    ? envNumber('VITE_ANTICHEAT_MOVEMENT_TRACE_MAX_FRAMES', 1800, { min: 60, max: 5000 })
+    : 0,
   buildId: env.VITE_BUILD_ID || 'dev',
   isDev,
   isProd,

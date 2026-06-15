@@ -413,6 +413,8 @@ export function BlazeEffectsManager() {
   const scanAccumulatorRef = useRef(BLAZE_EFFECT_SCAN_INTERVAL_MS);
 
   const recordBlazeEffectDiagnostics = (): void => {
+    if (!MOVEMENT_DIAGNOSTICS_ENABLED) return;
+
     recordEffectSlotDiagnostics('blazeFlamethrower', {
       active: activeRemoteIdsRef.current.length + (flamethrowerActive ? 1 : 0),
       capacity: activeRemoteIdsRef.current.length + (flamethrowerActive ? 1 : 0),

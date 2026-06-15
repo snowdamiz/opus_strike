@@ -715,6 +715,18 @@ function isEnemyCombatVisualPlayer(
   return visualPlayer.id !== ownerId && (!ownerTeam || visualPlayer.team !== ownerTeam);
 }
 
+export type CombatVisualTargetTeam = 'enemy' | 'any';
+
+function isCombatVisualTargetPlayer(
+  visualPlayer: CombatVisualPlayer,
+  ownerTeam: Team | null | undefined,
+  ownerId: string,
+  targetTeam: CombatVisualTargetTeam
+): boolean {
+  if (visualPlayer.id === ownerId) return false;
+  return targetTeam === 'any' || !ownerTeam || visualPlayer.team !== ownerTeam;
+}
+
 function doesCombatVisualPlayerPassRadius(
   visualPlayer: CombatVisualPlayer,
   center: Vec2Like,
@@ -774,7 +786,7 @@ export const fillCombatVisualEnemyPlayers = (
   return target;
 };
 
-export const findCombatVisualEnemyPlayerHit = (
+export const findCombatVisualPlayerHit = (
   cache: CombatVisualFrameCache,
   ownerTeam: Team | null | undefined,
   ownerId: string,
@@ -783,7 +795,8 @@ export const findCombatVisualEnemyPlayerHit = (
   distance: number,
   extraRadius = 0,
   center?: Vec2Like,
-  radius?: number
+  radius?: number,
+  targetTeam: CombatVisualTargetTeam = 'enemy'
 ): Player | null => {
   if (center && typeof radius === 'number') {
     const minCellX = Math.floor((center.x - radius) / cache.cellSize);
@@ -800,7 +813,7 @@ export const findCombatVisualEnemyPlayerHit = (
         if (!bucket) continue;
         for (let i = 0; i < bucket.length; i++) {
           const visualPlayer = bucket[i];
-          if (!isEnemyCombatVisualPlayer(visualPlayer, ownerTeam, ownerId)) continue;
+          if (!isCombatVisualTargetPlayer(visualPlayer, ownerTeam, ownerId, targetTeam)) continue;
           if (!doesCombatVisualPlayerPassRadius(visualPlayer, center, radiusSq)) continue;
           if (doesSegmentHitPlayerCombatHitbox(start, direction, distance, visualPlayer.player, extraRadius)) {
             return visualPlayer.player;
@@ -812,13 +825,13 @@ export const findCombatVisualEnemyPlayerHit = (
     return null;
   }
 
-  const source = ownerTeam
+  const source = ownerTeam && targetTeam === 'enemy'
     ? (ownerTeam === 'red' ? cache.byTeam.blue : cache.byTeam.red)
     : cache.alivePlayers;
 
   for (let i = 0; i < source.length; i++) {
     const visualPlayer = source[i];
-    if (!isEnemyCombatVisualPlayer(visualPlayer, ownerTeam, ownerId)) continue;
+    if (!isCombatVisualTargetPlayer(visualPlayer, ownerTeam, ownerId, targetTeam)) continue;
     if (doesSegmentHitPlayerCombatHitbox(start, direction, distance, visualPlayer.player, extraRadius)) {
       return visualPlayer.player;
     }
@@ -826,6 +839,29 @@ export const findCombatVisualEnemyPlayerHit = (
 
   return null;
 };
+
+export const findCombatVisualEnemyPlayerHit = (
+  cache: CombatVisualFrameCache,
+  ownerTeam: Team | null | undefined,
+  ownerId: string,
+  start: Vec3Like,
+  direction: Vec3Like,
+  distance: number,
+  extraRadius = 0,
+  center?: Vec2Like,
+  radius?: number
+): Player | null => findCombatVisualPlayerHit(
+  cache,
+  ownerTeam,
+  ownerId,
+  start,
+  direction,
+  distance,
+  extraRadius,
+  center,
+  radius,
+  'enemy'
+);
 
 export const clearCombatVisualFrameCache = (): void => {
   const cache = visualStore.getState().combatFrameCache;

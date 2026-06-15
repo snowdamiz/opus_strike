@@ -118,7 +118,7 @@ import {
   type PlayerMovementState,
 } from '@voxel-strike/shared';
 import type { MovementSimulationState, PredictionCorrectionMetrics } from '@voxel-strike/physics';
-import { recordMovementTraceFrame } from '../../anticheat/movementTraceRecorder';
+import { isMovementTraceRecordingEnabled, recordMovementTraceFrame } from '../../anticheat/movementTraceRecorder';
 import {
   addLocalMovementImpulse,
   confirmLocalMovementTransform,
@@ -919,6 +919,8 @@ function runTracePhase(input: {
   now: number;
   dt: number;
 }): void {
+  if (!isMovementTraceRecordingEnabled()) return;
+
   const {
     ctx,
     localPlayer,
@@ -1109,14 +1111,16 @@ export function runPredictionAndCommandPhase(input: {
     refs.tickRef.current = command.seq;
     substepsThisFrame++;
   }
-  recordMovementFrameTiming({
-    frameDeltaSeconds: rawDelta,
-    movementDeltaSeconds: dt,
-    substepsThisFrame,
-    accumulatorBeforeStepSeconds: movementAccumulatorBeforeStep,
-    accumulatorAfterStepSeconds: refs.movementCommandAccumulatorRef.current,
-    catchup: substepsThisFrame > 1,
-  });
+  if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+    recordMovementFrameTiming({
+      frameDeltaSeconds: rawDelta,
+      movementDeltaSeconds: dt,
+      substepsThisFrame,
+      accumulatorBeforeStepSeconds: movementAccumulatorBeforeStep,
+      accumulatorAfterStepSeconds: refs.movementCommandAccumulatorRef.current,
+      catchup: substepsThisFrame > 1,
+    });
+  }
   flushMovementCommands(now, commandSchedule.forcePacketFlush);
   refs.pendingReloadInputRef.current = false;
 
@@ -1401,9 +1405,10 @@ function runAuthorityPhase(
 ): { localPlayer: Player; authorityApplied: number } {
   const { updateLocalPlayer, resetMovementCommandBuffer } = ctx;
   const pendingAuthoritiesBeforeDrain = getPendingSelfMovementAuthorityCount();
-  const authorityDrainStartedAt = pendingAuthoritiesBeforeDrain > 0 ? performance.now() : 0;
+  const shouldMeasureAuthorityDrain = MOVEMENT_DIAGNOSTICS_ENABLED && pendingAuthoritiesBeforeDrain > 0;
+  const authorityDrainStartedAt = shouldMeasureAuthorityDrain ? performance.now() : 0;
   const appliedAuthorities = drainSelfMovementAuthorities(localPlayer, frameNowMs);
-  if (pendingAuthoritiesBeforeDrain > 0) {
+  if (shouldMeasureAuthorityDrain) {
     recordAuthorityDrainFrame({
       pendingBeforeDrain: pendingAuthoritiesBeforeDrain,
       appliedCount: appliedAuthorities.length,
@@ -1419,12 +1424,14 @@ function runAuthorityPhase(
     appliedAuthorities[appliedAuthorities.length - 1].state.movement
   );
 
-  authorityMetricsScratch.length = 0;
-  for (const application of appliedAuthorities) {
-    authorityMetricsScratch.push(application.result);
+  if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+    authorityMetricsScratch.length = 0;
+    for (const application of appliedAuthorities) {
+      authorityMetricsScratch.push(application.result);
+    }
+    recordAuthorityFrameApplied(authorityMetricsScratch);
+    authorityMetricsScratch.length = 0;
   }
-  recordAuthorityFrameApplied(authorityMetricsScratch);
-  authorityMetricsScratch.length = 0;
   if (appliedAuthorities.some((application) => (
     application.authority.correctionReason &&
     application.authority.correctionReason !== 'normal'

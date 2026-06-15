@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
+  BLAZE_ROCKET_COLLISION_RADIUS,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_RADIUS,
 } from '@voxel-strike/shared';
@@ -29,7 +30,6 @@ import { playPrimaryImpactSound } from '../primaryImpactSound';
 
 const MAX_ROCKETS = 50;
 const ROCKET_LIFETIME = 3000;
-const PROJECTILE_RADIUS = 0.21;
 const PROJECTILE_COMBAT_QUERY_PADDING = PLAYER_RADIUS + PLAYER_COMBAT_HITBOX_PADDING + 0.75;
 const ROCKET_IMPACT_SCALE = 1.15;
 const FIREBALL_FLICKER_RATE = 0.018;
@@ -258,7 +258,7 @@ function getAuthoritativeRocketImpactHit(
     toImpact.y * slot.direction.y +
     toImpact.z * slot.direction.z;
 
-  if (forwardDistance < -PROJECTILE_RADIUS || forwardDistance > collisionDistance) {
+  if (forwardDistance < -BLAZE_ROCKET_COLLISION_RADIUS || forwardDistance > collisionDistance) {
     return null;
   }
 
@@ -365,7 +365,7 @@ export function RocketsManager() {
 
       const moveDistance = slot.speed * delta;
       if (moveDistance > 0.001) {
-        const collisionDistance = moveDistance + PROJECTILE_RADIUS;
+        const collisionDistance = moveDistance + BLAZE_ROCKET_COLLISION_RADIUS;
         const authoritativeHit = getAuthoritativeRocketImpactHit(slot, collisionDistance);
         const aegisHit = getFirstChronosAegisVisualHit(
           slot.position,
@@ -373,7 +373,7 @@ export function RocketsManager() {
           collisionDistance,
           slot.ownerTeam,
           slot.ownerId,
-          PROJECTILE_RADIUS
+          BLAZE_ROCKET_COLLISION_RADIUS
         );
         const terrainHit = physicsWorld
           ? raycast(physicsWorld, slot.position, slot.direction, collisionDistance, {
@@ -408,9 +408,9 @@ export function RocketsManager() {
         slot.position,
         slot.direction,
         moveDistance,
-        PROJECTILE_RADIUS,
+        BLAZE_ROCKET_COLLISION_RADIUS,
         slot.position,
-        moveDistance + PROJECTILE_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
+        moveDistance + BLAZE_ROCKET_COLLISION_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
       );
       if (hitPlayer) {
         triggerTerrainImpact('blaze_rocket', slot.position, {

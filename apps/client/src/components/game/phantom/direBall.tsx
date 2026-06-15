@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
+  PHANTOM_DIRE_BALL_COLLISION_RADIUS,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_RADIUS,
   type Team,
@@ -17,7 +18,6 @@ import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 import { playPrimaryImpactSound } from '../primaryImpactSound';
 
 const DIRE_BALL_LIFETIME_MS = 3000;
-const BALL_RADIUS = 0.21;
 const PARTICLES_PER_BALL = 30;
 const PROJECTILE_COMBAT_QUERY_PADDING = PLAYER_RADIUS + PLAYER_COMBAT_HITBOX_PADDING + 0.75;
 export const DIRE_BALL_CAPACITY = 96;
@@ -413,7 +413,7 @@ function fillTrailParticles(
     const phase = (slot.particlePhase + i * 0.071 + elapsedSeconds * 1.9) % 1;
     const angle = i * 2.399963 + elapsedSeconds * (2.2 + (i % 4) * 0.17);
     const trailDistance = 0.16 + phase * 2.35;
-    const radius = BALL_RADIUS * (0.36 + (1 - phase) * 0.86);
+    const radius = PHANTOM_DIRE_BALL_COLLISION_RADIUS * (0.36 + (1 - phase) * 0.86);
     const orbitX = Math.cos(angle) * radius;
     const orbitY = Math.sin(angle) * radius;
 
@@ -605,13 +605,13 @@ export function DireBallsManager() {
         rayDirectionRef.current.x = slot.direction.x;
         rayDirectionRef.current.y = slot.direction.y;
         rayDirectionRef.current.z = slot.direction.z;
-        const collisionDistance = moveDistance + BALL_RADIUS;
+        const collisionDistance = moveDistance + PHANTOM_DIRE_BALL_COLLISION_RADIUS;
         const authoritativeHit = getAuthoritativeProjectileImpactHit(
           slot.position,
           rayDirectionRef.current,
           slot.impactPosition,
           collisionDistance,
-          BALL_RADIUS
+          PHANTOM_DIRE_BALL_COLLISION_RADIUS
         );
         const aegisHit = getFirstChronosAegisVisualHit(
           slot.position,
@@ -619,7 +619,7 @@ export function DireBallsManager() {
           collisionDistance,
           slot.ownerTeam,
           slot.ownerId,
-          BALL_RADIUS
+          PHANTOM_DIRE_BALL_COLLISION_RADIUS
         );
         const terrainHit = physicsWorld
           ? raycast(physicsWorld, slot.position, rayDirectionRef.current, collisionDistance, {
@@ -654,9 +654,9 @@ export function DireBallsManager() {
         slot.position,
         slot.direction,
         moveDistance,
-        BALL_RADIUS,
+        PHANTOM_DIRE_BALL_COLLISION_RADIUS,
         slot.position,
-        moveDistance + BALL_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
+        moveDistance + PHANTOM_DIRE_BALL_COLLISION_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
       );
       if (hitPlayer) {
         playPrimaryImpactSound('phantom', slot.position);
@@ -674,10 +674,10 @@ export function DireBallsManager() {
       const innerMesh = innerMeshRef.current;
       const secondaryShellMesh = secondaryShellMeshRef.current;
       if (coreMesh && glowMesh && innerMesh && secondaryShellMesh) {
-        setSphereInstance(coreMesh, dummy, instanceIndex, slot, BALL_RADIUS);
-        setSphereInstance(glowMesh, dummy, instanceIndex, slot, BALL_RADIUS * 1.68);
-        setSphereInstance(innerMesh, dummy, instanceIndex, slot, BALL_RADIUS * 0.4);
-        setSphereInstance(secondaryShellMesh, dummy, instanceIndex, slot, BALL_RADIUS * 0.5);
+        setSphereInstance(coreMesh, dummy, instanceIndex, slot, PHANTOM_DIRE_BALL_COLLISION_RADIUS);
+        setSphereInstance(glowMesh, dummy, instanceIndex, slot, PHANTOM_DIRE_BALL_COLLISION_RADIUS * 1.68);
+        setSphereInstance(innerMesh, dummy, instanceIndex, slot, PHANTOM_DIRE_BALL_COLLISION_RADIUS * 0.4);
+        setSphereInstance(secondaryShellMesh, dummy, instanceIndex, slot, PHANTOM_DIRE_BALL_COLLISION_RADIUS * 0.5);
       }
 
       particleOffset = fillTrailParticles(slot, elapsedSeconds, positions, particleOffset);

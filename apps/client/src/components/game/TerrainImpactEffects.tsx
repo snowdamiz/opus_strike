@@ -12,6 +12,7 @@ import { BudgetedPointLight } from './systems/DynamicLightBudget';
 import { getFrameClock } from '../../utils/frameClock';
 import type { EffectQualityConfig } from './visualQuality';
 import {
+  MOVEMENT_DIAGNOSTICS_ENABLED,
   measureFrameWork,
   recordEffectSlotDiagnostics,
 } from '../../movement/networkDiagnostics';
@@ -488,6 +489,8 @@ function countVisibleGenericImpacts(frameNow: number): number {
 }
 
 function recordTerrainImpactDiagnostics(frameNow: number, config: EffectQualityConfig): void {
+  if (!MOVEMENT_DIAGNOSTICS_ENABLED) return;
+
   const phantomActive = countActivePhantomDireImpacts(frameNow);
   const genericActive = countVisibleGenericImpacts(frameNow);
   const genericCapacity = Math.min(GENERIC_IMPACT_CAPACITY, Math.max(0, config.maxActiveImpacts));

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { config } from '../../config/environment';
 import { useSettingsStore } from '../../store/settingsStore';
 
 function FpsCounter() {
@@ -40,9 +41,13 @@ export function PerfMonitor() {
   return null;
 }
 
-export function PerfMonitorOverlay() {
+function EnabledPerfMonitorOverlay() {
   const showFPS = useSettingsStore((state) => state.settings.showFPS);
   return showFPS === 'fps' ? <FpsCounter /> : null;
+}
+
+export function PerfMonitorOverlay() {
+  return config.clientDiagnosticsEnabled ? <EnabledPerfMonitorOverlay /> : null;
 }
 
 export default PerfMonitor;

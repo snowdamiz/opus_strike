@@ -222,6 +222,7 @@ export interface BombData {
   warningStartTime?: number;
   startTime: number;
   impactTime: number; // When the bomb lands
+  radius: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';
   hasExploded: boolean;

@@ -1,7 +1,8 @@
 import React, { useRef } from 'react';
 import * as THREE from 'three';
+import { HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS } from '@voxel-strike/shared';
 import { useGameStore, type DragHookData } from '../../../store/gameStore';
-import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
+import { findCombatVisualPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { DRAG_HOOK_MAX_DISTANCE, HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';
 import { writeOwnerVisualPosition } from './ownerPosition';
@@ -29,14 +30,13 @@ import { HookshotProjectileArrowHead } from './arrowHead';
 import { useHookshotFrameUpdater } from './hookshotFrameRegistry';
 
 // ============================================================================
-// DRAG HOOK - Long range hook that pulls enemies (heavy attack / right click)
+// DRAG HOOK - Long range hook that pulls heroes (heavy attack / right click)
 // SAME MECHANICS AS LEFT CLICK: Extends out, retracts back to player
-// If it hits an enemy, it pulls them back with it
+// If it hits a player, it pulls them back with it
 // OVER-THE-TOP STYLING: Bigger hook, thicker glowing chains
 // ============================================================================
 
 const DRAG_HOOK_RETRACT_SPEED = 55;
-const DRAG_HOOK_COLLISION_RADIUS = 0.28;
 
 // Get shared materials from centralized resources
 const getHookMaterials = () => getHookshotMaterials();
@@ -219,17 +219,17 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
           previousPosition,
           hookDirection,
           hook.impactPosition,
-          moveDistance + DRAG_HOOK_COLLISION_RADIUS,
-          DRAG_HOOK_COLLISION_RADIUS
+          moveDistance + HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS,
+          HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS
         )
         : null;
       const aegisHit = getFirstChronosAegisVisualHit(
         previousPosition,
         hookDirection,
-        moveDistance + DRAG_HOOK_COLLISION_RADIUS,
+        moveDistance + HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS,
         hook.ownerTeam,
         hook.ownerId,
-        DRAG_HOOK_COLLISION_RADIUS
+        HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS
       );
       const terrainHit = isPhysicsReady()
         ? raycastDirection(previousPosition.x, previousPosition.y, previousPosition.z, dirX, dirY, dirZ, moveDistance + 0.5, {
@@ -255,23 +255,24 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
         hookStateRef.current = 'retracting';
       }
       
-      // Enemy collision - if hit, start retracting AND pull enemy
+      // Player collision - if hit, start retracting while the server pulls the target in
       if (!hasHitRef.current) {
         const clock = getFrameClock();
         const combatCache = rebuildCombatVisualFrameCache(players.values(), clock.nowMs, clock.nowMs, players.size);
-        const hitPlayer = findCombatVisualEnemyPlayerHit(
+        const hitPlayer = findCombatVisualPlayerHit(
           combatCache,
           hook.ownerTeam,
           hook.ownerId,
           previousPosition,
           hookDirection,
           moveDistance,
-          DRAG_HOOK_COLLISION_RADIUS,
+          HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS,
           {
             x: previousPosition.x + dirX * moveDistance * 0.5,
             z: previousPosition.z + dirZ * moveDistance * 0.5,
           },
-          moveDistance * 0.5 + DRAG_HOOK_COLLISION_RADIUS + 1.5
+          moveDistance * 0.5 + HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS + 1.5,
+          'any'
         );
 
         if (hitPlayer) {

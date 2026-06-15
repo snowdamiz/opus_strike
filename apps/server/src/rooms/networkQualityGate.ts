@@ -1,3 +1,5 @@
+import type { MatchMode } from '@voxel-strike/shared';
+
 export interface NetworkQualityGateConfig {
   sampleWindowMs: number;
   minObservationMs: number;
@@ -53,6 +55,15 @@ export const DEFAULT_COMPETITIVE_NETWORK_QUALITY_GATE: NetworkQualityGateConfig 
   maxTimeouts: 1,
   maxConsecutiveTimeouts: 1,
 };
+
+export function isNetworkQualityGateRequiredForMatch(input: {
+  matchMode: MatchMode;
+  wagered: boolean;
+}): boolean {
+  return input.matchMode === 'ranked'
+    || input.matchMode === 'custom_wager'
+    || input.wagered;
+}
 
 export function createNetworkQualityState(now: number): NetworkQualityState {
   return {

@@ -109,15 +109,12 @@ movement simulation.
   ANTICHEAT_MOVEMENT_AUTHORITY_MODE=shadow
   ANTICHEAT_MOVEMENT_PARITY_GATE_REQUIRED=true
   ANTICHEAT_MOVEMENT_DRIFT_SAMPLE_RATE=0.05
-  ANTICHEAT_ALLOW_CLIENT_TRANSFORM_PROPOSALS=true
   ANTICHEAT_PAYOUT_HOLDS_ENABLED=false
   ```
 
 - These settings mean server anti-cheat was enabled in observe mode, with movement
   authority configured for shadow checks at a 5% drift sample rate and payout holds
   disabled.
-- During this pass, no runtime reads of `ANTICHEAT_ALLOW_CLIENT_TRANSFORM_PROPOSALS`
-  were found in the repo. It was present in the environment but likely had no effect.
 - During this pass, movement shadow simulation config and implementation were present,
   but no call site for the shadow simulation recorder was found. Treat shadow-mode
   overhead as unconfirmed until a trace or call-site audit proves otherwise.

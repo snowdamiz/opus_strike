@@ -77,10 +77,15 @@ let latestAck: { ackSeq: number; movementEpoch: number } = { ackSeq: 0, movement
 let skippedBySample = false;
 
 function shouldRecord(): boolean {
+  if (!config.clientDiagnosticsEnabled) return false;
   if (!config.antiCheatMovementTraceRecorderEnabled) return false;
   if (config.antiCheatMovementTraceSampleRate <= 0) return false;
   if (skippedBySample) return false;
   return true;
+}
+
+export function isMovementTraceRecordingEnabled(): boolean {
+  return shouldRecord();
 }
 
 function sampledIn(): boolean {
@@ -182,6 +187,8 @@ function getAllMovementTraces(): AntiCheatMovementTrace[] {
 }
 
 export function recordMovementTraceAuthorityAck(authority: SelfMovementAuthority): void {
+  if (!config.antiCheatMovementTraceRecorderEnabled) return;
+
   latestAck = {
     ackSeq: authority.ackSeq,
     movementEpoch: authority.movementEpoch,
@@ -278,7 +285,7 @@ export function downloadMovementTrace(): string[] | null {
   return traces.map((trace) => downloadTrace(trace));
 }
 
-if (typeof window !== 'undefined' && !window.__VOXEL_STRIKE_MOVEMENT_TRACE__) {
+if (config.clientDiagnosticsEnabled && typeof window !== 'undefined' && !window.__VOXEL_STRIKE_MOVEMENT_TRACE__) {
   window.__VOXEL_STRIKE_MOVEMENT_TRACE__ = {
     snapshot: getMovementTraceSnapshot,
     snapshots: getMovementTraceSnapshots,

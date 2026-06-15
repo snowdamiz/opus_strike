@@ -2,6 +2,7 @@ import { useEffect, useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
+import { PHANTOM_VOID_RAY_COLLISION_RADIUS } from '@voxel-strike/shared';
 import { useGameStore, VoidRayData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
@@ -28,7 +29,7 @@ interface VoidRayProps {
 
 const RAY_SPEED = 420;
 const RAY_LENGTH = 100;
-const RAY_RADIUS = 0.45;
+const RAY_RADIUS = PHANTOM_VOID_RAY_COLLISION_RADIUS;
 const RAY_SPIN_UP_TIME = 0.24;
 const RAY_SUSTAIN_TIME = 0.44;
 const RAY_SPIN_DOWN_TIME = 0.32;

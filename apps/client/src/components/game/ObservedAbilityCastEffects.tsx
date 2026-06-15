@@ -12,6 +12,7 @@ import { SHARED_GEOMETRIES } from './effectResources';
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
 import { getFrameClock } from '../../utils/frameClock';
 import {
+  MOVEMENT_DIAGNOSTICS_ENABLED,
   measureFrameWork,
   recordEffectSlotDiagnostics,
 } from '../../movement/networkDiagnostics';
@@ -512,11 +513,13 @@ export function ObservedAbilityCastEffectsManager() {
       }
 
       const active = observedCastActiveSlotIndices.length;
-      recordEffectSlotDiagnostics('observedAbilityCast', {
-        active,
-        capacity: OBSERVED_CAST_EFFECT_CAPACITY,
-        hiddenMounted: OBSERVED_CAST_EFFECT_CAPACITY - active,
-      });
+      if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+        recordEffectSlotDiagnostics('observedAbilityCast', {
+          active,
+          capacity: OBSERVED_CAST_EFFECT_CAPACITY,
+          hiddenMounted: OBSERVED_CAST_EFFECT_CAPACITY - active,
+        });
+      }
     });
   });
 

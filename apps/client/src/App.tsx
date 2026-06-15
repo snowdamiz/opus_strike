@@ -18,6 +18,7 @@ import { useNetwork } from './contexts/NetworkContext';
 import { mouseButtonToKeybindCode } from './utils/keybindings';
 import { installLocalCombatStressScenario } from './utils/combatStressScenario';
 import { getMapPrepCacheKey } from './utils/mapWarmup/mapPrepCache';
+import { config } from './config/environment';
 import type { MapWarmupSnapshot } from './utils/mapWarmup/mapWarmupCoordinator';
 
 const GameCanvas = lazy(() => import('./components/game/GameCanvas').then((module) => ({ default: module.GameCanvas })));
@@ -478,7 +479,7 @@ export function App() {
 
         {/* Performance monitor overlay */}
         <Suspense fallback={null}>
-          {isMatchSceneReady && <PerfMonitorOverlay />}
+          {config.clientDiagnosticsEnabled && isMatchSceneReady && <PerfMonitorOverlay />}
         </Suspense>
       </div>
     );

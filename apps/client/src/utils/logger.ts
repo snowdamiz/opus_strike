@@ -11,14 +11,26 @@ const LEVEL_WEIGHT: Record<LogLevel, number> = {
 const viteEnv = ((import.meta as ImportMeta & {
   env?: Record<string, string | boolean | undefined>;
 }).env ?? {});
-const DEFAULT_LEVEL: LogLevel = viteEnv.DEV ? 'warn' : 'error';
+
+function envBoolValue(raw: unknown, fallback: boolean): boolean {
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  if (typeof raw === 'boolean') return raw;
+  const normalized = String(raw).toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes';
+}
+
+const CLIENT_DIAGNOSTICS_ENABLED = envBoolValue(viteEnv.DEV, false)
+  && envBoolValue(viteEnv.VITE_CLIENT_DIAGNOSTICS, true);
+const DEFAULT_LEVEL: LogLevel = CLIENT_DIAGNOSTICS_ENABLED ? 'warn' : 'error';
 
 function envFlag(name: string): boolean {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return false;
   const value = viteEnv[name];
   return value === '1' || value === 'true' || value === 'TRUE';
 }
 
 function envLevel(): LogLevel {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return 'error';
   const value = String(viteEnv.VITE_LOG_LEVEL || '').toLowerCase();
   if (value === 'debug' || value === 'info' || value === 'warn' || value === 'error') {
     return value;
@@ -27,6 +39,7 @@ function envLevel(): LogLevel {
 }
 
 function namespaceEnabled(namespace: string, level: LogLevel): boolean {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return level === 'error';
   if (level === 'error') return true;
   if (LEVEL_WEIGHT[level] >= LEVEL_WEIGHT[envLevel()]) return true;
   if (envFlag('VITE_DEBUG_ALL')) return true;
@@ -56,6 +69,7 @@ export function createLogger(namespace: string) {
     warn: (...args: unknown[]) => write('warn', namespace, args),
     error: (...args: unknown[]) => write('error', namespace, args),
     sample: (sampleKey: string, intervalMs: number, ...args: unknown[]) => {
+      if (!CLIENT_DIAGNOSTICS_ENABLED) return;
       const now = performance.now();
       const key = `${namespace}:${sampleKey}`;
       const last = sampleLogTimes.get(key) ?? 0;

@@ -61,11 +61,17 @@ import {
   BLAZE_ROCKET_DAMAGE,
   BLAZE_ROCKET_FIRE_INTERVAL_MS,
   BLAZE_ROCKET_SPEED,
+  BLAZE_ROCKET_COLLISION_RADIUS,
   BLAZE_ROCKET_SPLASH_RADIUS,
   BLAZE_BOMB_DAMAGE,
   BLAZE_BOMB_SPLASH_RADIUS,
+  BLAZE_BOMB_MAX_RANGE,
+  BLAZE_BOMB_MIN_RANGE,
+  BLAZE_BOMB_AEGIS_COLLISION_RADIUS,
+  BLAZE_FLAMETHROWER_COLLISION_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS,
+  CHRONOS_ASCENDANT_PARADOX_PULSE_COLLISION_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE,
   CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED,
@@ -82,21 +88,27 @@ import {
   CHRONOS_TIMEBREAK_SHOCKWAVE_AUTHORITY_MS,
   CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE,
   CHRONOS_TIMEBREAK_SHOCKWAVE_KNOCKBACK_FORCE,
+  CHRONOS_TIMEBREAK_SHOCKWAVE_MAX_VERTICAL_DELTA,
   CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
   CHRONOS_TIMEBREAK_SHOCKWAVE_VERTICAL_FORCE,
   CHRONOS_VERDANT_PULSE_AIM_DISTANCE,
+  CHRONOS_VERDANT_PULSE_COLLISION_RADIUS,
   CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
   CHRONOS_VERDANT_PULSE_DAMAGE,
   CHRONOS_VERDANT_PULSE_FIRE_READY_MS,
   CHRONOS_VERDANT_PULSE_SPEED,
   GRAPPLE_MAX_DISTANCE,
   HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS,
+  HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS,
   HOOKSHOT_CHAIN_HOOKS_DAMAGE,
   HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE,
-  HOOKSHOT_CHAIN_HOOKS_RANGE,
+  HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS,
   HOOKSHOT_DRAG_HOOK_DAMAGE,
+  HOOKSHOT_DRAG_HOOK_MAX_DISTANCE,
+  HOOKSHOT_DRAG_HOOK_PULL_FRONT_DISTANCE,
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
+  PHANTOM_DIRE_BALL_COLLISION_RADIUS,
   PHANTOM_DIRE_BALL_DAMAGE,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_COOLDOWN_MS,
@@ -104,6 +116,7 @@ import {
   PHANTOM_PRIMARY_RELOAD_MS,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
   PHANTOM_VOID_RAY_COOLDOWN_MS,
+  PHANTOM_VOID_RAY_COLLISION_RADIUS,
   PHANTOM_VOID_RAY_DAMAGE,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_HEIGHT,
@@ -234,6 +247,7 @@ import {
   DEFAULT_COMPETITIVE_NETWORK_QUALITY_GATE,
   createNetworkQualityState,
   evaluatePlayerNetworkQuality,
+  isNetworkQualityGateRequiredForMatch,
   recordNetworkQualitySample,
   type NetworkQualityState,
   type PlayerNetworkQualityEvaluation,
@@ -636,8 +650,12 @@ interface AttackConfig {
   cooldownMs: number;
   coneDot: number;
   radius?: number;
+  collisionRadius?: number;
+  targetTeam?: AttackTargetTeam;
   damageType: string;
 }
+
+type AttackTargetTeam = 'enemy' | 'any';
 
 interface AimTargetHit {
   target: Player;
@@ -660,9 +678,6 @@ const BLAZE_ROCKET_AIM_DISTANCE = 120;
 const BLAZE_BOMB_COOLDOWN_MS = 8000;
 const BLAZE_BOMB_FALL_DURATION_MS = 1500;
 const BLAZE_BOMB_WARNING_LEAD_MS = 350;
-const BLAZE_BOMB_MAX_RANGE = 60;
-const BLAZE_BOMB_MIN_RANGE = 3;
-const BLAZE_BOMB_AEGIS_COLLISION_RADIUS = 0.65;
 const ABILITY_CAST_HINT_MAX_DISTANCE_FROM_FALLBACK = 1.15;
 const ABILITY_CAST_HINT_MAX_DISTANCE_FROM_PLAYER_CENTER = 1.7;
 const ABILITY_CAST_HINT_MAX_VERTICAL_FROM_PLAYER_CENTER = 1.15;
@@ -761,19 +776,18 @@ const SECURITY_EVENT_LOG_SAMPLE_MS = 5000;
 const MOVEMENT_CORRECTION_LOG_SAMPLE_MS = 1000;
 const MAX_SECURITY_LOG_SAMPLE_KEYS = 1024;
 const PRIMARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
-  phantom: { damage: PHANTOM_DIRE_BALL_DAMAGE, range: 30, cooldownMs: PHANTOM_PRIMARY_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'dire_ball' },
-  hookshot: { damage: HOOKSHOT_CHAIN_HOOKS_DAMAGE, range: HOOKSHOT_CHAIN_HOOKS_RANGE, cooldownMs: HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
-  blaze: { damage: BLAZE_ROCKET_DAMAGE, range: 36, cooldownMs: BLAZE_ROCKET_FIRE_INTERVAL_MS, coneDot: Math.cos(0.22), radius: BLAZE_ROCKET_SPLASH_RADIUS, damageType: 'rocket' },
-  chronos: { damage: CHRONOS_VERDANT_PULSE_DAMAGE, range: 34, cooldownMs: CHRONOS_VERDANT_PULSE_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'verdant_pulse' },
+  phantom: { damage: PHANTOM_DIRE_BALL_DAMAGE, range: 30, cooldownMs: PHANTOM_PRIMARY_COOLDOWN_MS, coneDot: Math.cos(0.18), collisionRadius: PHANTOM_DIRE_BALL_COLLISION_RADIUS, damageType: 'dire_ball' },
+  hookshot: { damage: HOOKSHOT_CHAIN_HOOKS_DAMAGE, range: HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE, cooldownMs: HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS, coneDot: Math.cos(0.2), collisionRadius: HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS, damageType: 'chain_hooks' },
+  blaze: { damage: BLAZE_ROCKET_DAMAGE, range: 36, cooldownMs: BLAZE_ROCKET_FIRE_INTERVAL_MS, coneDot: Math.cos(0.22), radius: BLAZE_ROCKET_SPLASH_RADIUS, collisionRadius: BLAZE_ROCKET_COLLISION_RADIUS, damageType: 'rocket' },
+  chronos: { damage: CHRONOS_VERDANT_PULSE_DAMAGE, range: 34, cooldownMs: CHRONOS_VERDANT_PULSE_COOLDOWN_MS, coneDot: Math.cos(0.18), collisionRadius: CHRONOS_VERDANT_PULSE_COLLISION_RADIUS, damageType: 'verdant_pulse' },
 };
 const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
-  phantom: { damage: PHANTOM_VOID_RAY_DAMAGE, range: 42, cooldownMs: PHANTOM_VOID_RAY_COOLDOWN_MS, coneDot: Math.cos(0.12), damageType: 'void_ray' },
-  hookshot: { damage: HOOKSHOT_DRAG_HOOK_DAMAGE, range: 28, cooldownMs: 3600, coneDot: Math.cos(0.14), damageType: 'drag_hook' },
+  phantom: { damage: PHANTOM_VOID_RAY_DAMAGE, range: 42, cooldownMs: PHANTOM_VOID_RAY_COOLDOWN_MS, coneDot: Math.cos(0.12), collisionRadius: PHANTOM_VOID_RAY_COLLISION_RADIUS, damageType: 'void_ray' },
+  hookshot: { damage: HOOKSHOT_DRAG_HOOK_DAMAGE, range: HOOKSHOT_DRAG_HOOK_MAX_DISTANCE, cooldownMs: 3600, coneDot: Math.cos(0.14), collisionRadius: HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS, targetTeam: 'any', damageType: 'drag_hook' },
   blaze: { damage: BLAZE_BOMB_DAMAGE, range: BLAZE_BOMB_MAX_RANGE, cooldownMs: BLAZE_BOMB_COOLDOWN_MS, coneDot: Math.cos(0.32), radius: BLAZE_BOMB_SPLASH_RADIUS, damageType: 'bomb' },
 };
 const HOOKSHOT_SPEED = 38;
 const DRAG_HOOK_SPEED = 50;
-const DRAG_HOOK_MAX_DISTANCE = 24;
 const HOOKSHOT_ANCHOR_WALL_DURATION = 6.25;
 const HOOKSHOT_ANCHOR_WALL_MAX_DISTANCE = 24.35;
 const ROOT_BLOCKED_MOVEMENT_ABILITIES = new Set([
@@ -3145,9 +3159,10 @@ export class GameRoom extends Room<GameState> {
   }
 
   private isCompetitiveNetworkQualityGateRequired(): boolean {
-    return this.matchMode === 'ranked'
-      || this.matchMode === 'custom_wager'
-      || Boolean(this.wagerContext);
+    return isNetworkQualityGateRequiredForMatch({
+      matchMode: this.matchMode,
+      wagered: Boolean(this.wagerContext),
+    });
   }
 
   private evaluateCompetitiveNetworkQualityGate(now = Date.now()): CompetitiveNetworkQualityGateResult {
@@ -5636,8 +5651,8 @@ export class GameRoom extends Room<GameState> {
     const aimOrigin = this.getBlazeAimOrigin(player);
     const startPosition = this.getAbilitySocketCastOrigin(player, 'blaze_rocket');
     const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, BLAZE_ROCKET_AIM_DISTANCE);
-    const target = this.findTargetInAimCone(player, attack.range, attack.coneDot);
-    const targetPoint = target ? this.getPlayerBodyAimPosition(target) : null;
+    const targetHit = this.findTargetHitInAimCone(player, attack.range, attack.coneDot, attack.collisionRadius ?? 0);
+    const targetPoint = targetHit?.hit.targetPoint ?? null;
     const terrainDistance = terrainHit ? this.distance3D(aimOrigin, terrainHit) : Infinity;
     const targetDistance = targetPoint ? this.distance3D(aimOrigin, targetPoint) : Infinity;
     const fallbackImpact = this.addScaled3D(aimOrigin, lookDirection, BLAZE_ROCKET_AIM_DISTANCE);
@@ -5733,8 +5748,8 @@ export class GameRoom extends Room<GameState> {
     const aimOrigin = this.getChronosAimOrigin(player);
     const socketPosition = this.getAbilitySocketCastOrigin(player, 'chronos_verdant_pulse');
     const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, CHRONOS_VERDANT_PULSE_AIM_DISTANCE);
-    const target = this.findTargetInAimCone(player, attack.range, attack.coneDot);
-    const targetPoint = target ? this.getPlayerBodyAimPosition(target) : null;
+    const targetHit = this.findTargetHitInAimCone(player, attack.range, attack.coneDot, attack.collisionRadius ?? 0);
+    const targetPoint = targetHit?.hit.targetPoint ?? null;
     const terrainDistance = terrainHit ? this.distance3D(aimOrigin, terrainHit) : Infinity;
     const targetDistance = targetPoint ? this.distance3D(aimOrigin, targetPoint) : Infinity;
     const fallbackAimPoint = this.addScaled3D(aimOrigin, lookDirection, CHRONOS_VERDANT_PULSE_AIM_DISTANCE);
@@ -5953,7 +5968,7 @@ export class GameRoom extends Room<GameState> {
       : 1;
     const maxDistance = abilityId === 'hookshot_basic_attack'
       ? HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE
-      : DRAG_HOOK_MAX_DISTANCE;
+      : HOOKSHOT_DRAG_HOOK_MAX_DISTANCE;
     const speed = abilityId === 'hookshot_basic_attack'
       ? HOOKSHOT_SPEED
       : DRAG_HOOK_SPEED;
@@ -6572,20 +6587,25 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getChronosAegisCollisionRadiusForAttack(attack: AttackConfig): number {
+    if (typeof attack.collisionRadius === 'number') {
+      return attack.collisionRadius;
+    }
+
     switch (attack.damageType) {
-      case 'void_ray':
-        return 0.45;
       case 'chain_hooks':
+        return HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS;
       case 'drag_hook':
-        return 0.22;
+        return HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS;
       case 'dire_ball':
+        return PHANTOM_DIRE_BALL_COLLISION_RADIUS;
       case 'rocket':
-        return 0.21;
+        return BLAZE_ROCKET_COLLISION_RADIUS;
       case 'bomb':
         return BLAZE_BOMB_AEGIS_COLLISION_RADIUS;
       case 'verdant_pulse':
+        return CHRONOS_VERDANT_PULSE_COLLISION_RADIUS;
       case 'ascendant_verdant_pulse':
-        return 0.18;
+        return CHRONOS_ASCENDANT_PARADOX_PULSE_COLLISION_RADIUS;
       default:
         return 0;
     }
@@ -6605,6 +6625,7 @@ export class GameRoom extends Room<GameState> {
         damage: CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE,
         cooldownMs: CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS,
         radius: CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
+        collisionRadius: CHRONOS_ASCENDANT_PARADOX_PULSE_COLLISION_RADIUS,
         range: Math.max(attack.range, 42),
         damageType: 'ascendant_verdant_pulse',
       };
@@ -6650,7 +6671,13 @@ export class GameRoom extends Room<GameState> {
 
     const origin = this.getPlayerEyePosition(player);
     const forward = this.getForwardVector(player.lookYaw, player.lookPitch);
-    const primaryTargetHit = this.findTargetHitInAimCone(player, attack.range, attack.coneDot);
+    const primaryTargetHit = this.findTargetHitInAimCone(
+      player,
+      attack.range,
+      attack.coneDot,
+      attack.collisionRadius ?? 0,
+      attack.targetTeam ?? 'enemy'
+    );
     const aegisHit = this.getChronosAegisSkillHit(player, origin, forward, attack.range, {
       projectileRadius: this.getChronosAegisCollisionRadiusForAttack(attack),
     });
@@ -6704,7 +6731,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     if (heroId === 'hookshot' && mode === 'secondary') {
-      this.pullTargetTowardSource(primaryTarget, player, 2.5);
+      this.pullTargetInFrontOfSource(primaryTarget, player, HOOKSHOT_DRAG_HOOK_PULL_FRONT_DISTANCE);
     }
   }
 
@@ -6790,43 +6817,33 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private findTargetHitInAimCone(source: Player, range: number, minDot: number): AimTargetHit | null {
+  private findTargetHitInAimCone(
+    source: Player,
+    range: number,
+    minDot: number,
+    extraRadius = 0,
+    targetTeam: AttackTargetTeam = 'enemy'
+  ): AimTargetHit | null {
     const origin = this.getPlayerEyePosition(source);
     const forward = this.getForwardVector(source.lookYaw, source.lookPitch);
     let bestTargetHit: AimTargetHit | null = null;
     let bestDistance = range;
+    const candidateRange = range + extraRadius + PLAYER_RADIUS + PLAYER_COMBAT_HITBOX_PADDING;
+    const targetTeamFilter = targetTeam === 'enemy'
+      ? (source.team === 'red' ? 'blue' : 'red')
+      : undefined;
     const candidates = this.playerSpatialIndex.queryConeCandidates(
       origin,
-      range,
+      candidateRange,
       this.spatialQueryScratch,
-      { team: source.team === 'red' ? 'blue' : 'red', excludeId: source.id }
+      { team: targetTeamFilter, excludeId: source.id }
     );
 
     for (const target of candidates) {
       if (target.id === source.id) continue;
 
-      const hit = this.getAimHitAgainstPlayer(origin, forward, range, target);
+      const hit = this.getAimConeHitAgainstPlayer(origin, forward, range, minDot, target, extraRadius);
       if (!hit || hit.distance > bestDistance) continue;
-
-      const targetCenter = this.getPlayerBodyAimPosition(target);
-      const toCenter = {
-        x: targetCenter.x - origin.x,
-        y: targetCenter.y - origin.y,
-        z: targetCenter.z - origin.z,
-      };
-      const centerDistance = Math.sqrt(toCenter.x * toCenter.x + toCenter.y * toCenter.y + toCenter.z * toCenter.z);
-      if (centerDistance <= 0.0001) continue;
-
-      const centerDot = this.clamp(
-        (toCenter.x * forward.x + toCenter.y * forward.y + toCenter.z * forward.z) / centerDistance,
-        -1,
-        1
-      );
-      const centerAngle = Math.acos(centerDot);
-      const coneAngle = Math.acos(this.clamp(minDot, -1, 1));
-      const hitboxAngle = Math.atan2(hit.radius, Math.max(hit.distance, hit.radius));
-      if (centerAngle > coneAngle + hitboxAngle) continue;
-      if (!this.hasLineOfSight(origin, hit.targetPoint)) continue;
 
       if (hit.distance < bestDistance) {
         bestDistance = hit.distance;
@@ -6837,8 +6854,38 @@ export class GameRoom extends Room<GameState> {
     return bestTargetHit;
   }
 
-  private findTargetInAimCone(source: Player, range: number, minDot: number): Player | null {
-    return this.findTargetHitInAimCone(source, range, minDot)?.target ?? null;
+  private getAimConeHitAgainstPlayer(
+    origin: PlainVec3,
+    forward: PlainVec3,
+    range: number,
+    minDot: number,
+    target: Player,
+    extraRadius = 0
+  ): NonNullable<ReturnType<typeof getSegmentHitAgainstPlayerCombatHitbox>> | null {
+    const hit = this.getAimHitAgainstPlayer(origin, forward, range, target, extraRadius);
+    if (!hit) return null;
+
+    const targetCenter = this.getPlayerBodyAimPosition(target);
+    const toCenter = {
+      x: targetCenter.x - origin.x,
+      y: targetCenter.y - origin.y,
+      z: targetCenter.z - origin.z,
+    };
+    const centerDistance = Math.sqrt(toCenter.x * toCenter.x + toCenter.y * toCenter.y + toCenter.z * toCenter.z);
+    if (centerDistance <= 0.0001) return null;
+
+    const centerDot = this.clamp(
+      (toCenter.x * forward.x + toCenter.y * forward.y + toCenter.z * forward.z) / centerDistance,
+      -1,
+      1
+    );
+    const centerAngle = Math.acos(centerDot);
+    const coneAngle = Math.acos(this.clamp(minDot, -1, 1));
+    const hitboxAngle = Math.atan2(hit.radius, Math.max(hit.distance, hit.radius));
+    if (centerAngle > coneAngle + hitboxAngle) return null;
+    if (!this.hasLineOfSight(origin, hit.targetPoint)) return null;
+
+    return hit;
   }
 
   private getAimHitAgainstPlayer(
@@ -7244,14 +7291,24 @@ export class GameRoom extends Room<GameState> {
     return multiplier;
   }
 
-  private pullTargetTowardSource(target: Player, source: Player, distance: number): void {
-    const dx = source.position.x - target.position.x;
-    const dz = source.position.z - target.position.z;
-    const len = Math.sqrt(dx * dx + dz * dz);
-    if (len <= 0.001) return;
+  private pullTargetInFrontOfSource(target: Player, source: Player, distance: number): void {
+    const forward = this.getForwardVector(source.lookYaw, 0);
+    const nextPosition = this.clampToPlayableMap({
+      x: source.position.x + forward.x * distance,
+      y: target.position.y,
+      z: source.position.z + forward.z * distance,
+    });
 
-    target.position.x += dx / len * distance;
-    target.position.z += dz / len * distance;
+    target.position.x = nextPosition.x;
+    target.position.z = nextPosition.z;
+    target.velocity.x = 0;
+    target.velocity.z = 0;
+    target.movement.isSliding = false;
+    target.movement.slideTimeRemaining = 0;
+    target.movement.isWallRunning = false;
+    target.movement.wallRunSide = '';
+    this.clearHookshotGrapple(target.id);
+    this.markMovementBarrier(target.id, 'teleport', { preserveQueuedCommands: true });
   }
 
   private scheduleChronosTimebreakShockwave(
@@ -7276,7 +7333,7 @@ export class GameRoom extends Room<GameState> {
     const origin = this.vec3SchemaToPlain(caster.position);
     const range = CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE;
     const minForwardDot = Math.cos(CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE);
-    const maxVerticalDelta = 4.5;
+    const maxVerticalDelta = CHRONOS_TIMEBREAK_SHOCKWAVE_MAX_VERTICAL_DELTA;
     const now = Date.now();
 
     this.state.players.forEach((target) => {
@@ -8292,7 +8349,13 @@ export class GameRoom extends Room<GameState> {
     const origin = this.getPlayerEyePosition(bot);
     const forward = this.getForwardVector(yaw, pitch);
     const readinessPadding = Math.max(0, skill.aimFireToleranceScale - 1) * PLAYER_COMBAT_HITBOX_PADDING;
-    return this.getAimHitAgainstPlayer(origin, forward, attack.range, target, readinessPadding) !== null;
+    return this.getAimHitAgainstPlayer(
+      origin,
+      forward,
+      attack.range,
+      target,
+      readinessPadding + (attack.collisionRadius ?? 0)
+    ) !== null;
   }
 
   private applyBotMovementInput(
@@ -10053,13 +10116,16 @@ export class GameRoom extends Room<GameState> {
       ? Math.min(BLAZE_FLAMETHROWER_RANGE, this.distance3D(origin, terrainHit))
       : BLAZE_FLAMETHROWER_RANGE;
     let aegisHitForDamage = this.getChronosAegisSkillHit(source, origin, forward, flameDistance, {
-      projectileRadius: 0.42,
+      projectileRadius: BLAZE_FLAMETHROWER_COLLISION_RADIUS,
     });
 
-    const rangeSq = BLAZE_FLAMETHROWER_RANGE * BLAZE_FLAMETHROWER_RANGE;
+    const candidateRange = BLAZE_FLAMETHROWER_RANGE
+      + BLAZE_FLAMETHROWER_COLLISION_RADIUS
+      + PLAYER_RADIUS
+      + PLAYER_COMBAT_HITBOX_PADDING;
     const candidates = this.playerSpatialIndex.queryConeCandidates(
       origin,
-      BLAZE_FLAMETHROWER_RANGE,
+      candidateRange,
       this.spatialQueryScratch,
       { team: source.team === 'red' ? 'blue' : 'red', excludeId: source.id }
     );
@@ -10067,31 +10133,29 @@ export class GameRoom extends Room<GameState> {
     for (const target of candidates) {
       if (target.id === source.id) continue;
       if (target.spawnProtectionUntil && now < target.spawnProtectionUntil) continue;
-      const targetPoint = this.getPlayerBodyAimPosition(target);
+      const hit = this.getAimConeHitAgainstPlayer(
+        origin,
+        forward,
+        flameDistance,
+        BLAZE_FLAMETHROWER_CONE_DOT,
+        target,
+        BLAZE_FLAMETHROWER_COLLISION_RADIUS
+      );
+      if (!hit) continue;
+      const targetPoint = hit.targetPoint;
 
       const toTarget = {
         x: targetPoint.x - origin.x,
         y: targetPoint.y - origin.y,
         z: targetPoint.z - origin.z,
       };
-      const distSq = toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z;
-      if (distSq > rangeSq || distSq <= 0.0001) continue;
-      const distance = Math.sqrt(distSq);
-      if (distance > flameDistance) continue;
-      if (!this.hasLineOfSight(origin, targetPoint)) continue;
-
-      const dot = (
-        toTarget.x * forward.x +
-        toTarget.y * forward.y +
-        toTarget.z * forward.z
-      ) / distance;
-      if (dot < BLAZE_FLAMETHROWER_CONE_DOT) continue;
+      const distance = Math.max(hit.distance, 0.0001);
 
       const targetDirection = this.normalize3D(toTarget);
       const targetAegisHit = targetDirection
         ? this.getChronosAegisSkillHit(source, origin, targetDirection, distance, {
           shieldTeam: target.team as Team,
-          projectileRadius: 0.42,
+          projectileRadius: BLAZE_FLAMETHROWER_COLLISION_RADIUS,
           targetPoint,
         })
         : null;

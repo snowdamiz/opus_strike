@@ -13,6 +13,7 @@ import {
   clearVisualState,
   fillCombatVisualEnemyPlayers,
   findCombatVisualEnemyPlayerHit,
+  findCombatVisualPlayerHit,
   getDeathVisualForPlayer,
   pruneRemoteTransformHistories,
   rebuildCombatVisualFrameCache,
@@ -240,6 +241,19 @@ const hitEnemy = findCombatVisualEnemyPlayerHit(
   4
 );
 assert.equal(hitEnemy?.id, 'near-blue');
+const hitAnyPlayer = findCombatVisualPlayerHit(
+  combatCache,
+  'red',
+  'owner',
+  { x: 0, y: 1, z: 0 },
+  { x: 1, y: 0, z: 0 },
+  3,
+  0.21,
+  { x: 0, z: 0 },
+  4,
+  'any'
+);
+assert.equal(hitAnyPlayer?.id, 'near-red');
 assert.equal(
   findCombatVisualEnemyPlayerHit(
     combatCache,

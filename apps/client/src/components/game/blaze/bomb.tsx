@@ -2,7 +2,13 @@ import { useEffect, useRef, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
-import { getBlazeMeteorPath } from '@voxel-strike/shared';
+import {
+  BLAZE_BOMB_AEGIS_COLLISION_RADIUS,
+  BLAZE_BOMB_MAX_RANGE,
+  BLAZE_BOMB_MIN_RANGE,
+  BLAZE_BOMB_SPLASH_RADIUS,
+  getBlazeMeteorPath,
+} from '@voxel-strike/shared';
 import { useGameStore, type BombData } from '../../../store/gameStore';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
@@ -53,7 +59,6 @@ import {
 const EXPLOSION_DURATION = 1500; // Longer for more dramatic effect
 const METEOR_TRAIL_BACK_OFFSET = 3.6;
 const METEOR_WAKE_BACK_OFFSET = 7.5;
-const METEOR_AEGIS_VISUAL_COLLISION_RADIUS = 0.65;
 const METEOR_BODY_FORWARD = new THREE.Vector3(0, -1, 0);
 const METEOR_TRAIL_FORWARD = new THREE.Vector3(0, 1, 0);
 
@@ -102,6 +107,8 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
   const startFrameTimeRef = useRef(createdFrameTimeMs - (createdAtMs - bomb.startTime));
   const impactFrameTimeRef = useRef(startFrameTimeRef.current + Math.max(0, bomb.impactTime - bomb.startTime));
   const fallDurationRef = useRef(Math.max(60, impactFrameTimeRef.current - startFrameTimeRef.current));
+  const blastRadius = Math.max(0.1, bomb.radius || BLAZE_BOMB_SPLASH_RADIUS);
+  const blastDiameter = blastRadius * 2;
 
   const meteorPath = useMemo(() => {
     const sharedPath = getBlazeMeteorPath({
@@ -131,7 +138,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
         sharedPath.distance,
         bomb.ownerTeam,
         bomb.ownerId,
-        METEOR_AEGIS_VISUAL_COLLISION_RADIUS
+        BLAZE_BOMB_AEGIS_COLLISION_RADIUS
       );
     const shieldImpactPosition = explicitShieldImpactPosition ?? visualAegisHit?.point;
     const intercepted = Boolean(shieldImpactPosition);
@@ -326,7 +333,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       if (warningRef.current) {
         warningRef.current.visible = true;
         const pulseSpeed = 0.012 + warningProgress * 0.032;
-        const pulse = 0.88 + warningProgress * 0.08 + Math.sin(warningElapsed * pulseSpeed) * 0.12;
+        const pulse = 0.9 + warningProgress * 0.05 + (Math.sin(warningElapsed * pulseSpeed) + 1) * 0.025;
         warningRef.current.rotation.y = warningElapsed * 0.0018;
         warningRef.current.scale.setScalar(pulse);
       }
@@ -335,6 +342,8 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       if (warningPulseRef.current) {
         warningPulseRef.current.visible = true;
         const intensity = 0.12 + warningProgress * 0.34;
+        const fillPulse = 0.82 + warningProgress * 0.12 + (Math.sin(warningElapsed * 0.022) + 1) * 0.03;
+        warningPulseRef.current.scale.set(blastRadius * fillPulse, blastRadius * fillPulse, 1);
         animatedMaterials.warningPulseFill.opacity = intensity * (0.78 + Math.sin(warningElapsed * 0.022) * 0.22);
       }
       
@@ -362,7 +371,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
         const easeOut = 1 - Math.pow(1 - explosionProgress, 2);
         const easeOutQuart = 1 - Math.pow(1 - explosionProgress, 4);
         const fadeOut = Math.max(0, 1 - explosionProgress * 1.1);
-        const scale = 1 + easeOut * 7;
+        const scale = 0.7 + easeOut * blastRadius * 0.9;
         explosionRef.current.scale.setScalar(scale);
         
         // Update explosion material opacities
@@ -376,20 +385,20 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
         if (flashRef.current) {
           const flashProgress = Math.min(1, explosionElapsed / 100);
           flashRef.current.visible = flashProgress < 1;
-          flashRef.current.scale.setScalar(2 + flashProgress * 4);
+          flashRef.current.scale.setScalar(0.5 + flashProgress * blastRadius);
           animatedMaterials.explosionFlash.opacity = Math.max(0, 1 - flashProgress * 2);
         }
         
         // Shockwaves
         if (shockwaveRef.current) {
           shockwaveRef.current.visible = true;
-          const s = 1 + easeOutQuart * 10;
+          const s = blastRadius * THREE.MathUtils.lerp(0.15, 1, easeOutQuart);
           shockwaveRef.current.scale.set(s, s, 1);
           animatedMaterials.shockwaveOuter.opacity = fadeOut * 0.8;
         }
         if (shockwave2Ref.current) {
           shockwave2Ref.current.visible = true;
-          const s = 0.5 + easeOutQuart * 8;
+          const s = blastRadius * THREE.MathUtils.lerp(0.1, 0.72, easeOutQuart);
           shockwave2Ref.current.scale.set(s, s, 1);
           animatedMaterials.shockwaveInner.opacity = fadeOut * 0.5;
         }
@@ -465,17 +474,17 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       {/* Warning zone */}
       <group ref={warningRef} position={[bomb.targetPosition.x, bomb.targetPosition.y + 0.15, bomb.targetPosition.z]}>
         {/* Outer danger ring */}
-        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring24} scale={[6, 6, 1]} material={staticMaterials.warningOuterRing} />
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring24} scale={[blastRadius, blastRadius, 1]} material={staticMaterials.warningOuterRing} />
         {/* Inner ring */}
-        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring16} scale={[4, 4, 1]} material={staticMaterials.warningInnerRing} />
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring16} scale={[blastRadius * 0.66, blastRadius * 0.66, 1]} material={staticMaterials.warningInnerRing} />
         {/* Center ring */}
-        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring16} scale={[2, 2, 1]} material={staticMaterials.warningCenterRing} />
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring16} scale={[blastRadius * 0.33, blastRadius * 0.33, 1]} material={staticMaterials.warningCenterRing} />
         {/* Crosshairs */}
-        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, 12, 1]} material={staticMaterials.warningCrossMain} />
-        <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, 12, 1]} material={staticMaterials.warningCrossMain} />
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, blastDiameter, 1]} material={staticMaterials.warningCrossMain} />
+        <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, blastDiameter, 1]} material={staticMaterials.warningCrossMain} />
         {/* Diagonal lines */}
-        <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 4} geometry={SHARED_GEOMETRIES.plane} scale={[0.1, 8, 1]} material={staticMaterials.warningCrossDiag} />
-        <mesh rotation-x={-Math.PI / 2} rotation-z={-Math.PI / 4} geometry={SHARED_GEOMETRIES.plane} scale={[0.1, 8, 1]} material={staticMaterials.warningCrossDiag} />
+        <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 4} geometry={SHARED_GEOMETRIES.plane} scale={[0.1, blastRadius * 1.4, 1]} material={staticMaterials.warningCrossDiag} />
+        <mesh rotation-x={-Math.PI / 2} rotation-z={-Math.PI / 4} geometry={SHARED_GEOMETRIES.plane} scale={[0.1, blastRadius * 1.4, 1]} material={staticMaterials.warningCrossDiag} />
       </group>
       
       {/* Pulsing danger fill */}
@@ -485,7 +494,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
         position={[bomb.targetPosition.x, bomb.targetPosition.y + 0.08, bomb.targetPosition.z]}
         rotation-x={-Math.PI / 2} 
         geometry={SHARED_GEOMETRIES.circle16} 
-        scale={[6, 6, 1]}
+        scale={[blastRadius, blastRadius, 1]}
         material={animatedMaterials.warningPulseFill}
       />
       
@@ -570,7 +579,8 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
     prev.bomb.warningStartTime === next.bomb.warningStartTime &&
     prev.bomb.startTime === next.bomb.startTime &&
     prev.bomb.hasExploded === next.bomb.hasExploded &&
-    prev.bomb.impactTime === next.bomb.impactTime
+    prev.bomb.impactTime === next.bomb.impactTime &&
+    prev.bomb.radius === next.bomb.radius
   );
 });
 
@@ -584,8 +594,6 @@ interface BombTargetingIndicatorProps {
   onTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
 }
 
-const BOMB_MAX_RANGE = 60;
-const BOMB_MIN_RANGE = 3;
 const BOMB_TARGET_SAMPLE_FACTORS = [0.5, 1, 1.5] as const;
 const BOMB_TARGET_PHYSICS_SAMPLE_INTERVAL_MS = 34;
 
@@ -675,7 +683,7 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
         const directHit = raycastDirection(
           camera.position.x, camera.position.y, camera.position.z,
           _bombLookDir.x, _bombLookDir.y, _bombLookDir.z,
-          BOMB_MAX_RANGE + 10,
+          BLAZE_BOMB_MAX_RANGE + 10,
           {
             priority: 'visual',
             feature: 'targeting:blazeBomb',
@@ -706,7 +714,7 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
           const baseDist = pitch > 0.3 ? 15 : (pitch > 0 ? 25 : 40);
           for (let sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
             const dist = sampleIndex === 3
-              ? BOMB_MAX_RANGE
+              ? BLAZE_BOMB_MAX_RANGE
               : baseDist * BOMB_TARGET_SAMPLE_FACTORS[sampleIndex];
             const sampleX = camera.position.x + _bombLookDir.x * dist;
             const sampleY = camera.position.y + _bombLookDir.y * dist;
@@ -733,8 +741,8 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
           const dz = targetZ - localPlayer.position.z;
           const dist3D = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-          if (dist3D > BOMB_MAX_RANGE) {
-            const scale = BOMB_MAX_RANGE / dist3D;
+          if (dist3D > BLAZE_BOMB_MAX_RANGE) {
+            const scale = BLAZE_BOMB_MAX_RANGE / dist3D;
             targetX = localPlayer.position.x + dx * scale;
             targetY = localPlayer.position.y + dy * scale;
             targetZ = localPlayer.position.z + dz * scale;
@@ -755,7 +763,7 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
             (targetZ - localPlayer.position.z) ** 2
           );
 
-          if (foundTarget && finalDistH >= BOMB_MIN_RANGE) {
+          if (foundTarget && finalDistH >= BLAZE_BOMB_MIN_RANGE) {
             isValid = true;
           }
         }
@@ -775,7 +783,7 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
             isValid = Math.sqrt(
               (targetX - localPlayer.position.x) ** 2 +
               (targetZ - localPlayer.position.z) ** 2
-            ) >= BOMB_MIN_RANGE;
+            ) >= BLAZE_BOMB_MIN_RANGE;
           }
         }
       }
@@ -795,8 +803,8 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
 
     const time = now * 0.001;
     const validity = isValid ? 1 : 0.45;
-    const pulse = 1 + Math.sin(time * 5.4) * 0.045 * validity;
-    const slowPulse = 1 + Math.sin(time * 2.2) * 0.08 * validity;
+    const pulse = 0.96 + Math.sin(time * 5.4) * 0.04 * validity;
+    const slowPulse = 0.93 + (Math.sin(time * 2.2) + 1) * 0.035 * validity;
 
     materials.ring1.opacity = 0.42 + validity * 0.32;
     materials.ring2.opacity = 0.46 + validity * 0.34;
@@ -808,21 +816,23 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
 
     if (targetOuterRef.current) {
       targetOuterRef.current.rotation.z = time * 0.75;
-      targetOuterRef.current.scale.set(5 * pulse, 5 * pulse, 1);
+      targetOuterRef.current.scale.set(BLAZE_BOMB_SPLASH_RADIUS * pulse, BLAZE_BOMB_SPLASH_RADIUS * pulse, 1);
     }
     if (targetMiddleRef.current) {
       targetMiddleRef.current.rotation.z = -time * 1.1;
-      targetMiddleRef.current.scale.set(3.15 * slowPulse, 3.15 * slowPulse, 1);
+      const radius = BLAZE_BOMB_SPLASH_RADIUS * 0.66 * slowPulse;
+      targetMiddleRef.current.scale.set(radius, radius, 1);
     }
     if (targetInnerRef.current) {
       targetInnerRef.current.rotation.z = time * 1.8;
-      targetInnerRef.current.scale.set(1.45 * pulse, 1.45 * pulse, 1);
+      const radius = BLAZE_BOMB_SPLASH_RADIUS * 0.33 * pulse;
+      targetInnerRef.current.scale.set(radius, radius, 1);
     }
     if (targetCenterRef.current) {
       targetCenterRef.current.scale.setScalar(0.42 + validity * 0.18 + Math.sin(time * 7) * 0.04);
     }
     if (targetFillRef.current) {
-      const fillScale = 4.7 + Math.sin(time * 3.4) * 0.25 * validity;
+      const fillScale = BLAZE_BOMB_SPLASH_RADIUS * (0.9 + Math.sin(time * 3.4) * 0.04 * validity);
       targetFillRef.current.scale.set(fillScale, fillScale, 1);
     }
     if (targetBeamRef.current) {
@@ -850,13 +860,13 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
   
   return (
     <group ref={indicatorRef}>
-      <mesh ref={targetOuterRef} rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[5, 5, 1]} material={materials.ring1} />
-      <mesh ref={targetMiddleRef} rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.ring16} scale={[3, 3, 1]} material={materials.ring2} />
-      <mesh ref={targetInnerRef} rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.ring16} scale={[1.5, 1.5, 1]} material={materials.ring3} />
+      <mesh ref={targetOuterRef} rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[BLAZE_BOMB_SPLASH_RADIUS, BLAZE_BOMB_SPLASH_RADIUS, 1]} material={materials.ring1} />
+      <mesh ref={targetMiddleRef} rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.ring16} scale={[BLAZE_BOMB_SPLASH_RADIUS * 0.66, BLAZE_BOMB_SPLASH_RADIUS * 0.66, 1]} material={materials.ring2} />
+      <mesh ref={targetInnerRef} rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.ring16} scale={[BLAZE_BOMB_SPLASH_RADIUS * 0.33, BLAZE_BOMB_SPLASH_RADIUS * 0.33, 1]} material={materials.ring3} />
       <mesh ref={targetCenterRef} rotation-x={-Math.PI / 2} position-y={0.25} geometry={SHARED_GEOMETRIES.circle16} scale={[0.5, 0.5, 1]} material={materials.center} />
-      <mesh ref={targetFillRef} rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[5, 5, 1]} material={materials.fill} />
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, 10, 1]} material={materials.cross} />
-      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, 10, 1]} material={materials.cross} />
+      <mesh ref={targetFillRef} rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[BLAZE_BOMB_SPLASH_RADIUS, BLAZE_BOMB_SPLASH_RADIUS, 1]} material={materials.fill} />
+      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, BLAZE_BOMB_SPLASH_RADIUS * 2, 1]} material={materials.cross} />
+      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, BLAZE_BOMB_SPLASH_RADIUS * 2, 1]} material={materials.cross} />
       <mesh ref={targetBeamRef} position-y={20} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 40, 0.06]} material={materials.beam} />
       <mesh ref={targetBeamTopRef} position-y={42} geometry={SHARED_GEOMETRIES.sphere8} scale={0.4} material={materials.beamTop} />
       <BudgetedPointLight budgetPriority={2} color={0xff4400} intensity={2} distance={6} decay={2} position-y={0.5} />

@@ -559,16 +559,18 @@ export function PhantomEffectsManager() {
       frameClock.nowMs,
       delta
     );
-    recordEffectSlotDiagnostics('phantomBlink', {
-      active: activeBlinkEffectsRef.current.length,
-      capacity: POOLED_BLINK_EFFECTS,
-      hiddenMounted: Math.max(0, POOLED_BLINK_EFFECTS - activeBlinkEffectsRef.current.length),
-    });
-    recordEffectSlotDiagnostics('phantomVeilClap', {
-      active: activeVeilClapEffectsRef.current.length,
-      capacity: POOLED_VEIL_CLAP_EFFECTS,
-      hiddenMounted: Math.max(0, POOLED_VEIL_CLAP_EFFECTS - activeVeilClapEffectsRef.current.length),
-    });
+    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+      recordEffectSlotDiagnostics('phantomBlink', {
+        active: activeBlinkEffectsRef.current.length,
+        capacity: POOLED_BLINK_EFFECTS,
+        hiddenMounted: Math.max(0, POOLED_BLINK_EFFECTS - activeBlinkEffectsRef.current.length),
+      });
+      recordEffectSlotDiagnostics('phantomVeilClap', {
+        active: activeVeilClapEffectsRef.current.length,
+        capacity: POOLED_VEIL_CLAP_EFFECTS,
+        hiddenMounted: Math.max(0, POOLED_VEIL_CLAP_EFFECTS - activeVeilClapEffectsRef.current.length),
+      });
+    }
 
     veilScanAccumulatorRef.current += delta * 1000;
     if (veilScanAccumulatorRef.current >= ACTIVE_VEIL_SCAN_INTERVAL_MS) {
@@ -580,11 +582,13 @@ export function PhantomEffectsManager() {
         setActiveVeilIds(committedIds);
       }
     }
-    recordEffectSlotDiagnostics('phantomVeil', {
-      active: activeVeilIdsRef.current.length,
-      capacity: activeVeilIdsRef.current.length,
-      hiddenMounted: 0,
-    });
+    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+      recordEffectSlotDiagnostics('phantomVeil', {
+        active: activeVeilIdsRef.current.length,
+        capacity: activeVeilIdsRef.current.length,
+        hiddenMounted: 0,
+      });
+    }
   };
 
   useFrame((_, delta) => {

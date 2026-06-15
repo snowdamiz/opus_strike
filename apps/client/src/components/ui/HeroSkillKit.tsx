@@ -123,7 +123,7 @@ export const HERO_CLICK_SKILLS: Record<HeroId, HeroClickSkill[]> = {
       input: 'RMB',
       statKey: 'hookshot_heavy_attack',
       name: 'Drag Hook',
-      description: 'Fire a heavier hook that catches enemy heroes and pulls them in.',
+      description: 'Fire a heavier hook that catches heroes and pulls them in front of you.',
       cooldown: secondsFromMs(DRAG_HOOK_COOLDOWN),
       iconType: 'draghook',
     },

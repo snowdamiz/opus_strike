@@ -2,7 +2,11 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
+  CHRONOS_ASCENDANT_PARADOX_PULSE_COLLISION_RADIUS,
+  CHRONOS_ASCENDANT_PARADOX_PULSE_MIN_VISUAL_RADIUS_SCALE,
   CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
+  CHRONOS_ASCENDANT_PARADOX_PULSE_VISUAL_RADIUS_SCALE,
+  CHRONOS_VERDANT_PULSE_COLLISION_RADIUS,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_RADIUS,
 } from '@voxel-strike/shared';
@@ -20,7 +24,6 @@ import { playPrimaryImpactSound } from '../primaryImpactSound';
 const CHRONOS_PULSE_CAPACITY = 96;
 const CHRONOS_PULSE_LIFETIME_MS = 3000;
 const CHRONOS_PULSE_RADIUS = 0.12;
-const CHRONOS_PULSE_COLLISION_RADIUS = 0.18;
 const PROJECTILE_COMBAT_QUERY_PADDING = PLAYER_RADIUS + PLAYER_COMBAT_HITBOX_PADDING + 0.75;
 const RING_FORWARD = new THREE.Vector3(0, 0, 1);
 const ZERO_VEC3 = { x: 0, y: 0, z: 0 };
@@ -42,6 +45,7 @@ interface ChronosPulseRuntimeSlot {
   impactPosition: MutableVec3 | null;
   speed: number;
   expiresAtMs: number;
+  collisionRadius: number;
   radiusScale: number;
   supercharged: boolean;
 }
@@ -159,6 +163,7 @@ class ChronosPulseRuntimePool {
       impactPosition: null,
       speed: 0,
       expiresAtMs: 0,
+      collisionRadius: CHRONOS_VERDANT_PULSE_COLLISION_RADIUS,
       radiusScale: 1,
       supercharged: false,
     }));
@@ -188,8 +193,16 @@ class ChronosPulseRuntimePool {
     slot.speed = normalizeInto(slot.velocity, slot.direction);
     slot.expiresAtMs = expiresAtMs;
     slot.supercharged = Boolean(pulse.supercharged);
+    slot.collisionRadius = pulse.supercharged
+      ? CHRONOS_ASCENDANT_PARADOX_PULSE_COLLISION_RADIUS
+      : CHRONOS_VERDANT_PULSE_COLLISION_RADIUS;
     slot.radiusScale = pulse.supercharged
-      ? Math.max(2.4, (pulse.radius ?? CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS) / CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS * 3.1)
+      ? Math.max(
+        CHRONOS_ASCENDANT_PARADOX_PULSE_MIN_VISUAL_RADIUS_SCALE,
+        (pulse.radius ?? CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS)
+          / CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS
+          * CHRONOS_ASCENDANT_PARADOX_PULSE_VISUAL_RADIUS_SCALE
+      )
       : 1;
 
     this.idToSlot.set(pulse.id, slotIndex);
@@ -376,7 +389,7 @@ export function ChronosPulsesManager() {
       }
 
       const moveDistance = slot.speed * delta;
-      const collisionRadius = CHRONOS_PULSE_COLLISION_RADIUS * slot.radiusScale;
+      const collisionRadius = slot.collisionRadius;
       if (moveDistance > 0.001) {
         const collisionDistance = moveDistance + collisionRadius;
         const authoritativeHit = getAuthoritativeProjectileImpactHit(

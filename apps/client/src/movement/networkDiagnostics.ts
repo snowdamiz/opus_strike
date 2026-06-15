@@ -1,9 +1,10 @@
 import type { PredictionCorrectionMetrics } from '@voxel-strike/physics';
 import type { SelfMovementAuthority } from '@voxel-strike/shared';
+import { config } from '../config/environment';
 
 type LocalReactiveUpdateSource = 'vitals' | 'transforms' | 'selfAuthority' | 'localGameplay';
 
-const IS_DEV_BUILD = import.meta.env?.DEV === true;
+const CLIENT_DIAGNOSTICS_ENABLED = config.clientDiagnosticsEnabled;
 
 export interface FrameWorkSample {
   label: string;
@@ -158,7 +159,7 @@ const AUDIO_SAMPLE_LIMIT = 80;
 const MIN_FRAME_WORK_SAMPLE_MS = 0.02;
 const FRAME_HITCH_THRESHOLD_MS = 1000 / 30;
 
-export const MOVEMENT_DIAGNOSTICS_ENABLED = IS_DEV_BUILD;
+export const MOVEMENT_DIAGNOSTICS_ENABLED = CLIENT_DIAGNOSTICS_ENABLED;
 
 const diagnostics: MovementNetworkDiagnosticsSnapshot = {
   commandsGenerated: 0,
@@ -508,10 +509,14 @@ export function getMovementNetworkDiagnosticsSnapshot(): MovementNetworkDiagnost
 }
 
 export function recordMovementCommandGenerated(): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
   diagnostics.commandsGenerated++;
 }
 
 export function recordMovementCommandsSent(commandCount: number, pendingBeforeFlush: number): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
   diagnostics.commandsSent += commandCount;
   diagnostics.commandPacketsSent++;
   pushSample(diagnostics.commandsPerPacket, commandCount);
@@ -526,6 +531,8 @@ export function recordMovementFrameTiming(input: {
   accumulatorAfterStepSeconds: number;
   catchup: boolean;
 }): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
   const recordedAtMs = nowMs();
   const intervalStartedAtMs = lastFrameWorkMarkAtMs;
   lastFrameWorkMarkAtMs = recordedAtMs;
@@ -556,6 +563,8 @@ export function recordMovementFrameTiming(input: {
 }
 
 export function recordAuthorityAckReceived(authority: SelfMovementAuthority): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
   const receivedAtMs = nowMs();
   diagnostics.authorityAcksReceived++;
   diagnostics.latestAckSeq = authority.ackSeq;
@@ -570,6 +579,8 @@ export function recordAuthorityDrainFrame(input: {
   appliedCount: number;
   durationMs: number;
 }): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
   diagnostics.authorityDrainFrames++;
   pushSample(diagnostics.authorityPendingBeforeDrain, input.pendingBeforeDrain);
   pushSample(diagnostics.authorityDrainDurationsMs, input.durationMs);
@@ -577,6 +588,8 @@ export function recordAuthorityDrainFrame(input: {
 }
 
 export function recordAuthorityFrameApplied(metrics: PredictionCorrectionMetrics[]): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
   diagnostics.authorityAcksApplied += metrics.length;
   pushSample(diagnostics.authorityAcksAppliedPerFrame, metrics.length);
   for (const metric of metrics) {
@@ -590,10 +603,14 @@ export function recordAuthorityFrameApplied(metrics: PredictionCorrectionMetrics
 }
 
 export function recordLocalReactiveUpdate(source: LocalReactiveUpdateSource): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
   diagnostics.localReactiveUpdates[source]++;
 }
 
 export function recordHotStoreCommit(slice: string, count = 1): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
   diagnostics.hotStoreCommits[slice] = (diagnostics.hotStoreCommits[slice] ?? 0) + Math.max(0, count);
 }
 
@@ -602,6 +619,8 @@ export function recordTransformMessage(input: {
   selfTransformCount: number;
   remoteTransformCount: number;
 }): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
   diagnostics.transformMessagesReceived++;
   if (input.transformCount > 0 && input.selfTransformCount === input.transformCount) {
     diagnostics.selfOnlyTransformMessages++;
@@ -612,6 +631,8 @@ export function recordTransformMessage(input: {
 export function recordFrameSchedulerDiagnostics(
   callbacksBySystem: Record<string, number>
 ): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
   diagnostics.frameScheduler.callbacksBySystem = { ...callbacksBySystem };
   diagnostics.frameScheduler.activeCallbacks = Object.values(callbacksBySystem).reduce(
     (total, count) => total + count,
@@ -623,6 +644,8 @@ export function recordEffectSlotDiagnostics(
   type: string,
   stats: Pick<EffectSlotDiagnostics, 'active' | 'hiddenMounted' | 'capacity'>
 ): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
   const capacity = Math.max(0, stats.capacity);
   diagnostics.effectSlots[type] = {
     active: Math.max(0, stats.active),
@@ -633,10 +656,14 @@ export function recordEffectSlotDiagnostics(
 }
 
 export function recordFrameAllocation(label: string, count = 1): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
   diagnostics.frameAllocations[label] = (diagnostics.frameAllocations[label] ?? 0) + Math.max(0, count);
 }
 
 export function recordDynamicLightDiagnostics(stats: DynamicLightDiagnostics): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
   diagnostics.dynamicLights.registered = Math.max(0, stats.registered);
   diagnostics.dynamicLights.activeCandidates = Math.max(0, stats.activeCandidates);
   diagnostics.dynamicLights.enabled = Math.max(0, stats.enabled);
@@ -652,7 +679,7 @@ export function recordAudioRuntimeState(stats: {
   activeDecodes: number;
   queuedDecodes: number;
 }): void {
-  if (!IS_DEV_BUILD) return;
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
 
   diagnostics.audio.userActivated = stats.userActivated;
   diagnostics.audio.contextState = stats.contextState;
@@ -667,7 +694,7 @@ export function recordAudioPreloadRequest(input: {
   soundCount: number;
   queuedForActivation: boolean;
 }): void {
-  if (!IS_DEV_BUILD) return;
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
 
   diagnostics.audio.preloadRequests++;
   if (input.queuedForActivation && input.soundCount > 0) {
@@ -679,7 +706,7 @@ export function recordAudioPreloadFlush(input: {
   soundCount: number;
   durationMs: number;
 }): void {
-  if (!IS_DEV_BUILD) return;
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
 
   diagnostics.audio.preloadFlushes++;
   diagnostics.audio.preloadFlushSounds += Math.max(0, input.soundCount);
@@ -687,14 +714,14 @@ export function recordAudioPreloadFlush(input: {
 }
 
 export function recordAudioLoadRequest(cacheHit: boolean): void {
-  if (!IS_DEV_BUILD) return;
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
 
   diagnostics.audio.loadRequests++;
   if (cacheHit) diagnostics.audio.cacheHits++;
 }
 
 export function recordAudioLoadSample(sample: AudioLoadSample): void {
-  if (!IS_DEV_BUILD) return;
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
 
   if (!sample.ok) diagnostics.audio.failedLoads++;
   diagnostics.audio.maxFetchMs = Math.max(diagnostics.audio.maxFetchMs, Math.max(0, sample.fetchMs));
@@ -703,13 +730,13 @@ export function recordAudioLoadSample(sample: AudioLoadSample): void {
 }
 
 export function recordAudioPlayRequest(): void {
-  if (!IS_DEV_BUILD) return;
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
 
   diagnostics.audio.playRequests++;
 }
 
 export function recordAudioPlayLoadWait(sample: AudioPlayWaitSample): void {
-  if (!IS_DEV_BUILD) return;
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
 
   diagnostics.audio.playLoadWaits++;
   diagnostics.audio.maxLoadWaitMs = Math.max(diagnostics.audio.maxLoadWaitMs, Math.max(0, sample.waitedMs));
@@ -717,7 +744,7 @@ export function recordAudioPlayLoadWait(sample: AudioPlayWaitSample): void {
 }
 
 export function recordFrameWorkDuration(label: string, startedAtMs: number, endedAtMs = nowMs()): void {
-  if (!IS_DEV_BUILD) return;
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
 
   const durationMs = Math.max(0, endedAtMs - startedAtMs);
   if (!Number.isFinite(durationMs) || durationMs < MIN_FRAME_WORK_SAMPLE_MS) return;
@@ -730,7 +757,7 @@ export function recordFrameWorkDuration(label: string, startedAtMs: number, ende
 }
 
 export function measureFrameWork<T>(label: string, work: () => T): T {
-  if (!IS_DEV_BUILD) return work();
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return work();
 
   const startedAtMs = nowMs();
   try {
@@ -741,12 +768,12 @@ export function measureFrameWork<T>(label: string, work: () => T): T {
 }
 
 export function beginFrameWorkTiming(): void {
-  if (!IS_DEV_BUILD) return;
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
   activeFrameWorkStartedAtMs = nowMs();
 }
 
 export function finishFrameWorkTiming(label: string): void {
-  if (!IS_DEV_BUILD || activeFrameWorkStartedAtMs <= 0) return;
+  if (!CLIENT_DIAGNOSTICS_ENABLED || activeFrameWorkStartedAtMs <= 0) return;
 
   recordFrameWorkDuration(label, activeFrameWorkStartedAtMs);
   activeFrameWorkStartedAtMs = 0;
@@ -783,7 +810,7 @@ function recordLongTaskEntry(entry: PerformanceEntry): void {
 }
 
 function installLongTaskObserver(): void {
-  if (!IS_DEV_BUILD || longTaskObserver || typeof PerformanceObserver === 'undefined') return;
+  if (!CLIENT_DIAGNOSTICS_ENABLED || longTaskObserver || typeof PerformanceObserver === 'undefined') return;
 
   const supportedEntryTypes = PerformanceObserver.supportedEntryTypes ?? [];
   if (!supportedEntryTypes.includes('longtask')) return;
@@ -800,7 +827,7 @@ function installLongTaskObserver(): void {
   }
 }
 
-if (IS_DEV_BUILD && typeof window !== 'undefined') {
+if (CLIENT_DIAGNOSTICS_ENABLED && typeof window !== 'undefined') {
   installLongTaskObserver();
 
   (window as unknown as {

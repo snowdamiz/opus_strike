@@ -5,6 +5,7 @@ import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
 import {
+  MOVEMENT_DIAGNOSTICS_ENABLED,
   measureFrameWork,
   recordEffectSlotDiagnostics,
 } from '../../../movement/networkDiagnostics';
@@ -260,11 +261,13 @@ export function useRocketJumpExplosions() {
       setActiveExplosions([...rocketJumpExplosions]);
     }
 
-    recordEffectSlotDiagnostics('blazeRocketJumpExplosion', {
-      active: rocketJumpExplosions.length,
-      capacity: Math.max(1, rocketJumpExplosions.length),
-      hiddenMounted: 0,
-    });
+    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+      recordEffectSlotDiagnostics('blazeRocketJumpExplosion', {
+        active: rocketJumpExplosions.length,
+        capacity: Math.max(1, rocketJumpExplosions.length),
+        hiddenMounted: 0,
+      });
+    }
   });
 
   return activeExplosions;

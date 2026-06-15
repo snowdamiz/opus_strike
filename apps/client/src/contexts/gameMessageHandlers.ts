@@ -2,6 +2,7 @@ import type { Room } from 'colyseus.js';
 import * as THREE from 'three';
 import {
   ABILITY_DEFINITIONS,
+  BLAZE_BOMB_SPLASH_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_LIFELINE_RELEASE_DELAY_MS,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
@@ -2013,6 +2014,7 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
         warningStartTime: now,
         startTime: meteorStartTime,
         impactTime,
+        radius: data.radius ?? BLAZE_BOMB_SPLASH_RADIUS,
         ownerId: data.playerId,
         ownerTeam,
         hasExploded: false,

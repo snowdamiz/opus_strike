@@ -27,6 +27,7 @@ import type {
   VoxelPart,
 } from '../../model-system/heroBodyTypes';
 import {
+  MOVEMENT_DIAGNOSTICS_ENABLED,
   measureFrameWork,
   recordEffectSlotDiagnostics,
   recordFrameAllocation,
@@ -797,11 +798,13 @@ export function RagdollManager({ config }: RagdollManagerProps) {
   useEffect(() => {
     lastSyncedDeathRevisionRef.current = -1;
     activeHandlesRef.current = [];
-    recordEffectSlotDiagnostics('ragdolls', {
-      active: 0,
-      hiddenMounted: poolHandles.length,
-      capacity: config.maxTotal,
-    });
+    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+      recordEffectSlotDiagnostics('ragdolls', {
+        active: 0,
+        hiddenMounted: poolHandles.length,
+        capacity: config.maxTotal,
+      });
+    }
 
     return () => {
       poolHandles.forEach(clearRagdollSlot);
@@ -823,11 +826,13 @@ export function RagdollManager({ config }: RagdollManagerProps) {
           ? []
           : getActiveDeathVisuals(now).slice(0, config.maxTotal);
         activeHandlesRef.current = syncRagdollSlots(poolHandles, activeSnapshots);
-        recordEffectSlotDiagnostics('ragdolls', {
-          active: activeSnapshots.length,
-          hiddenMounted: Math.max(0, poolHandles.length - activeSnapshots.length),
-          capacity: config.maxTotal,
-        });
+        if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+          recordEffectSlotDiagnostics('ragdolls', {
+            active: activeSnapshots.length,
+            hiddenMounted: Math.max(0, poolHandles.length - activeSnapshots.length),
+            capacity: config.maxTotal,
+          });
+        }
       }
     });
 

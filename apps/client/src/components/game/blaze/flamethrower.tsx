@@ -2,7 +2,11 @@ import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
-import { BLAZE_FLAMETHROWER_RANGE, type Team } from '@voxel-strike/shared';
+import {
+  BLAZE_FLAMETHROWER_COLLISION_RADIUS,
+  BLAZE_FLAMETHROWER_RANGE,
+  type Team,
+} from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { visualStore } from '../../../store/visualStore';
@@ -223,7 +227,7 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider, ownerId,
         BLAZE_FLAMETHROWER_RANGE,
         activeOwnerTeam,
         activeOwnerId,
-        0.42
+        BLAZE_FLAMETHROWER_COLLISION_RADIUS
       );
       const terrainHit = raycastDirection(
         _origin.x, _origin.y, _origin.z,

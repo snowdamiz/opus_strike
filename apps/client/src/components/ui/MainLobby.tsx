@@ -13,6 +13,7 @@ import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton } from './SocialBox';
 import { TopNavIconButton } from './TopNavIconButton';
 import { useUISounds } from '../../hooks/useAudio';
+import { useServerLatencyProbe } from '../../hooks/useServerLatencyProbe';
 import { config } from '../../config/environment';
 import {
   ALL_HERO_IDS,
@@ -30,6 +31,7 @@ import {
   RUNNING_GAME_SESSION_STORAGE_KEY,
   type RunningGameSession,
 } from '../../utils/runningGameSession';
+import type { ServerLatencyProbeSnapshot } from '../../utils/serverLatency';
 import { RankIcon, getRankForStats } from './RankBadge';
 
 // Phantom wallet icon component
@@ -245,6 +247,7 @@ export function MainLobby() {
   const shouldAuthenticateConnectedWalletRef = useRef(false);
   const currentRank = getRankForStats(userStats);
   const isRankedPreseason = rankedSeason.mode === 'preseason';
+  const serverLatency = useServerLatencyProbe(config.clientDiagnosticsEnabled && activeTab === 'play');
 
   useEffect(() => {
     const controller = new AbortController();
@@ -717,6 +720,7 @@ export function MainLobby() {
             isAuthenticated={isAuthenticated}
             runningGameSession={runningGameSession}
             isReconnectChecking={isReconnectChecking}
+            serverLatency={config.clientDiagnosticsEnabled ? serverLatency : null}
             onOpenPlayDialog={() => setShowPlayDialog(true)}
             onReconnect={handleReconnectGame}
             onSignIn={handleSignInClick}
@@ -845,6 +849,7 @@ interface PlayTabProps {
   isAuthenticated: boolean;
   runningGameSession: RunningGameSession | null;
   isReconnectChecking: boolean;
+  serverLatency: ServerLatencyProbeSnapshot | null;
   onOpenPlayDialog: () => void;
   onReconnect: () => void;
   onSignIn: () => void;
@@ -863,6 +868,7 @@ function PlayTab({
   isAuthenticated,
   runningGameSession,
   isReconnectChecking,
+  serverLatency,
   onOpenPlayDialog,
   onReconnect,
   onSignIn,
@@ -1002,6 +1008,48 @@ function PlayTab({
         </div>
       </div>
       </div>
+      {serverLatency && <ServerLatencyAdvisory snapshot={serverLatency} />}
+    </div>
+  );
+}
+
+function ServerLatencyAdvisory({ snapshot }: { snapshot: ServerLatencyProbeSnapshot }) {
+  const pingValue = snapshot.averagePingMs === null ? '--' : String(snapshot.averagePingMs);
+  const statusLabel = (() => {
+    switch (snapshot.quality) {
+      case 'good':
+        return `Ping ${pingValue} milliseconds. Server response looks stable.`;
+      case 'fair':
+        return `Ping ${pingValue} milliseconds. Playable, with a little delay.`;
+      case 'high':
+        return `High ping ${pingValue} milliseconds. Playable, but combat may feel delayed.`;
+      case 'offline':
+        return 'Connection check failed. Matchmaking may have trouble reaching the server.';
+      case 'checking':
+      default:
+        return 'Checking connection. Sampling server response before you queue.';
+    }
+  })();
+
+  return (
+    <div
+      className="play-ping-advisory"
+      data-quality={snapshot.quality}
+      title={snapshot.error ?? statusLabel}
+      aria-label={statusLabel}
+      aria-live={snapshot.quality === 'high' || snapshot.quality === 'offline' ? 'polite' : 'off'}
+    >
+      <span className="play-ping-advisory-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 13.5a11.2 11.2 0 0116 0" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7.5 17a6.2 6.2 0 019 0" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M12 20h.01" />
+        </svg>
+      </span>
+      <span className="play-ping-advisory-value" aria-hidden="true">
+        {pingValue}
+        <span className="play-ping-advisory-unit">ms</span>
+      </span>
     </div>
   );
 }

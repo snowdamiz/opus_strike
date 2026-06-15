@@ -16,6 +16,7 @@ import {
   BLAZE_FLAMETHROWER_FUEL_REGEN,
   BLAZE_FLAMETHROWER_MAX_FUEL,
   BLAZE_FLAMETHROWER_SOCKET,
+  BLAZE_BOMB_SPLASH_RADIUS,
   BLAZE_ROCKET_STAFF_SOCKET,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
@@ -318,6 +319,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
         warningStartTime: now,
         startTime: meteorStartTime,
         impactTime: meteorStartTime + BLAZE_BOMB_FALL_DURATION,
+        radius: BLAZE_BOMB_SPLASH_RADIUS,
         ownerId: store.localPlayer.id,
         ownerTeam: (store.localPlayer.team || 'red') as 'red' | 'blue',
         hasExploded: false,
