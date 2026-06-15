@@ -121,8 +121,6 @@ export class GameplayFrameScheduler {
   }
 
   private recordDiagnostics(): void {
-    if (!MOVEMENT_DIAGNOSTICS_ENABLED) return;
-
     recordFrameSchedulerDiagnostics(this.getCallbacksBySystem());
   }
 }

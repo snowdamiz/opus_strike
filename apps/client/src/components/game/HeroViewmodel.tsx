@@ -509,6 +509,28 @@ function getViewmodelMaterials(heroId: ViewmodelHeroId): ViewmodelMaterialSet {
   return materials;
 }
 
+export function getHeroViewmodelGpuPrewarmMaterials(): THREE.Material[] {
+  const materials: THREE.Material[] = [];
+  for (const heroId of VIEWMODEL_HEROES) {
+    if (!isViewmodelHero(heroId)) continue;
+    const materialSet = getViewmodelMaterials(heroId);
+    materials.push(
+      materialSet.armor,
+      materialSet.dark,
+      materialSet.metal,
+      materialSet.accent,
+      materialSet.glow,
+      materialSet.glass
+    );
+  }
+  return materials;
+}
+
+export function prewarmHeroViewmodelResources(): void {
+  getHeroViewmodelGpuPrewarmMaterials();
+  getHookshotMaterials();
+}
+
 function hasOwnedProjectile<T extends { ownerId: string }>(
   items: readonly T[],
   ownerId: string | null | undefined

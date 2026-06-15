@@ -588,7 +588,7 @@ interface RoomLoadSnapshot {
 }
 
 interface TransformReplicationState {
-  signatures: Map<string, string>;
+  signatures: Map<string, PackedPlayerTransform>;
   heartbeatAt: Map<string, number>;
 }
 
@@ -613,7 +613,8 @@ interface ReplicationFrameContext {
   currentIds: Set<string>;
   visibilityPlayers: Map<string, VisibilityInterestPlayer>;
   packedTransforms: Map<string, PackedPlayerTransform>;
-  packedTransformSignatures: Map<string, string>;
+  packedTransformSignatures: Map<string, PackedPlayerTransform>;
+  recipientInterests: Map<string, Map<string, RecipientInterestDecision>>;
 }
 
 interface RoomInterestMetricsSnapshot extends VisibilityInterestMetrics {
@@ -900,7 +901,7 @@ export class GameRoom extends Room<GameState> {
   private pingProbeSequence = 0;
   private playerVitalRecipientStates = new Map<string, PlayerVitalsReplicationState>();
   private playerInterestSignatures = new Map<string, Map<string, string>>();
-  private playerTransformSignatures = new Map<string, string>();
+  private playerTransformSignatures = new Map<string, PackedPlayerTransform>();
   private playerTransformHeartbeatAt = new Map<string, number>();
   private transformRecipientStates = new Map<string, TransformReplicationState>();
   private readonly replicationFrameContext: ReplicationFrameContext = {
@@ -909,6 +910,7 @@ export class GameRoom extends Room<GameState> {
     visibilityPlayers: new Map(),
     packedTransforms: new Map(),
     packedTransformSignatures: new Map(),
+    recipientInterests: new Map(),
   };
   private recentCombatTransformUntil = new Map<string, number>();
   private recentCombatInterestUntil = new Map<string, number>();
@@ -2022,6 +2024,9 @@ export class GameRoom extends Room<GameState> {
     frameContext.visibilityPlayers.clear();
     frameContext.packedTransforms.clear();
     frameContext.packedTransformSignatures.clear();
+    for (const targetInterests of frameContext.recipientInterests.values()) {
+      targetInterests.clear();
+    }
 
     this.state.players.forEach((player, id) => {
       frameContext.currentIds.add(id);
@@ -2033,10 +2038,40 @@ export class GameRoom extends Room<GameState> {
       frameContext.packedTransformSignatures.set(id, this.getPackedTransformSignature(transform));
     });
 
+    for (const recipientId of frameContext.recipientInterests.keys()) {
+      if (!frameContext.currentIds.has(recipientId)) {
+        frameContext.recipientInterests.delete(recipientId);
+      }
+    }
+
     return frameContext;
   }
 
   private getRecipientInterest(
+    recipient: Player | null,
+    target: Player,
+    now = this.state.serverTime || Date.now(),
+    frameContext?: ReplicationFrameContext
+  ): RecipientInterestDecision {
+    if (recipient && frameContext) {
+      let targetInterests = frameContext.recipientInterests.get(recipient.id);
+      if (!targetInterests) {
+        targetInterests = new Map<string, RecipientInterestDecision>();
+        frameContext.recipientInterests.set(recipient.id, targetInterests);
+      } else {
+        const cached = targetInterests.get(target.id);
+        if (cached) return cached;
+      }
+
+      const decision = this.computeRecipientInterest(recipient, target, now, frameContext);
+      targetInterests.set(target.id, decision);
+      return decision;
+    }
+
+    return this.computeRecipientInterest(recipient, target, now, frameContext);
+  }
+
+  private computeRecipientInterest(
     recipient: Player | null,
     target: Player,
     now = this.state.serverTime || Date.now(),
@@ -2078,8 +2113,19 @@ export class GameRoom extends Room<GameState> {
     return (interest ?? this.getRecipientInterest(recipient, target, now)).state === 'visible';
   }
 
-  private getPackedTransformSignature(transform: PackedPlayerTransform): string {
-    return transform.join(':');
+  private getPackedTransformSignature(transform: PackedPlayerTransform): PackedPlayerTransform {
+    return transform;
+  }
+
+  private havePackedTransformsChanged(
+    previous: PackedPlayerTransform | undefined,
+    next: PackedPlayerTransform
+  ): boolean {
+    if (!previous) return true;
+    for (let index = 0; index < next.length; index++) {
+      if (previous[index] !== next[index]) return true;
+    }
+    return false;
   }
 
   private isVisibleAbilityActive(player: Player): boolean {
@@ -2102,7 +2148,7 @@ export class GameRoom extends Room<GameState> {
     let state = this.transformRecipientStates.get(recipientId);
     if (!state) {
       state = {
-        signatures: new Map<string, string>(),
+        signatures: new Map<string, PackedPlayerTransform>(),
         heartbeatAt: new Map<string, number>(),
       };
       this.transformRecipientStates.set(recipientId, state);
@@ -3285,7 +3331,7 @@ export class GameRoom extends Room<GameState> {
         ? TRANSFORM_HEARTBEAT_INTERVAL_MS
         : DISTANT_TRANSFORM_HEARTBEAT_INTERVAL_MS;
       const heartbeatDue = now - lastHeartbeatAt >= heartbeatInterval;
-      const changed = signature !== previousSignature;
+      const changed = this.havePackedTransformsChanged(previousSignature, signature);
 
       if (force || (highRelevance && changed) || heartbeatDue) {
         players.push(transform);

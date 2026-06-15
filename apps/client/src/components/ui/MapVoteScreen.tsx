@@ -183,6 +183,7 @@ function MapPreviewCanvas({
           materialQuality={materialQuality}
           meshBuildMode="sync"
           progressiveReveal={false}
+          disposeGeometryCacheOnUnmount={false}
           onReady={handleMapReady}
         />
         <fogExp2 attach="fog" args={[theme.fogColor, 0.0048]} />

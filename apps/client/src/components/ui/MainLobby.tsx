@@ -113,11 +113,7 @@ const SEASON_REWARD_RULES = [
   {
     label: 'Golden Biome',
     text: '$10 SOL each, 2% spawn rate',
-  },
-  {
-    label: 'Season Archive',
-    text: 'saved each season end',
-  },
+  }
 ] as const;
 
 function formatRankedUsdCents(usdCents: number): string {

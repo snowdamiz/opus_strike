@@ -42,6 +42,10 @@ import {
   getRagdollGpuPrewarmMaterials,
   prewarmRagdollRenderResources,
 } from './RagdollManager';
+import {
+  getHeroViewmodelGpuPrewarmMaterials,
+  prewarmHeroViewmodelResources,
+} from './HeroViewmodel';
 
 export interface GameplayEffectGpuPrewarmBundle {
   scene: THREE.Scene;
@@ -84,6 +88,7 @@ export async function prewarmGameplayEffectResources(): Promise<void> {
     prewarmHookshotEffects(),
     prewarmChronosEffects(),
   ]);
+  prewarmHeroViewmodelResources();
   prewarmRagdollRenderResources();
 }
 
@@ -357,6 +362,10 @@ function addRagdollGpuPrewarmObjects(scene: THREE.Scene): void {
   addMaterialSwatches(scene, getRagdollGpuPrewarmMaterials(), -2.45, -5.8);
 }
 
+function addViewmodelGpuPrewarmObjects(scene: THREE.Scene): void {
+  addMaterialSwatches(scene, getHeroViewmodelGpuPrewarmMaterials(), 2.42, -5.85);
+}
+
 export function getGameplayEffectGpuPrewarmBundle(): GameplayEffectGpuPrewarmBundle {
   if (gameplayEffectGpuPrewarmBundle) return gameplayEffectGpuPrewarmBundle;
 
@@ -380,6 +389,7 @@ export function getGameplayEffectGpuPrewarmBundle(): GameplayEffectGpuPrewarmBun
   addChronosGpuPrewarmObjects(scene);
   addGlobalEffectGpuPrewarmObjects(scene);
   addRagdollGpuPrewarmObjects(scene);
+  addViewmodelGpuPrewarmObjects(scene);
 
   const camera = createPrewarmCamera();
   scene.updateMatrixWorld(true);

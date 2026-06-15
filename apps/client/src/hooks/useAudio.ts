@@ -205,7 +205,7 @@ const SOUND_EFFECTS = {
 
   // Chronos Abilities
   chronosPulse: { path: '/sounds/chronos_charge.mp3', volume: 0 },
-  chronosAegis: { path: '/sounds/chronos_shield.mp3', volume: 0.696 },
+  chronosAegis: { path: '/sounds/chronos_shield.mp3', volume: 0.8352 },
   chronosLifeline: { path: '/sounds/choronos_heal.mp3', volume: 0.5 },
   chronosTimebreakCharge: { path: '/sounds/chronos_charge.mp3', volume: 0.72 },
   chronosPush: { path: '/sounds/chronos_push.mp3', volume: 0.72 },
@@ -1292,7 +1292,7 @@ let walkingSoundState = {
   movementStartTime: 0, // When continuous movement started
 };
 
-const WALKING_STEP_BASE_GAIN = 0.52;
+const WALKING_STEP_BASE_GAIN = 0.572;
 const WALKING_STEP_VOLUME_MULTIPLIER = 1.3;
 const RUNNING_STEP_VOLUME_MULTIPLIER = 1.4;
 const RUNNING_STEP_SPEED_RATIO = 1.1;

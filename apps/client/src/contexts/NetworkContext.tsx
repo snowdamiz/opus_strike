@@ -21,6 +21,7 @@ import {
 import type { VoiceScope, VoiceTokenResponse } from '../voice/types';
 import { disconnectVoice } from '../voice/voiceControls';
 import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
+import { prebuildPreparedVoxelMapGeometry } from '../utils/mapWarmup/mapGeometryWarmup';
 import {
   clearRunningGameSession,
   loadRunningGameSession,
@@ -510,6 +511,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           ? options.mapSeed >>> 0
           : createRandomSeed();
         const preparedMap = prepareVoxelMapCpu({ seed, source: 'match' });
+        prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'practice-start' });
         const spawnPoints = [
           ...preparedMap.manifest.spawnPoints.red,
           ...preparedMap.manifest.spawnPoints.blue,
@@ -724,7 +726,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setMapSeed(data.mapSeed);
       setMapThemeId(data.mapThemeId ?? null);
       try {
-        prepareVoxelMapCpu({ seed: data.mapSeed, themeId: data.mapThemeId ?? null, source: 'mapVoteFinalized' });
+        const preparedMap = prepareVoxelMapCpu({ seed: data.mapSeed, themeId: data.mapThemeId ?? null, source: 'mapVoteFinalized' });
+        prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 3, label: 'map-vote-finalized' });
       } catch (error) {
         loggers.network.warn('selected map CPU prep failed', error);
       }
@@ -1329,7 +1332,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         setMapSeed(data.mapSeed);
         setMapThemeId(data.mapThemeId ?? null);
         try {
-          prepareVoxelMapCpu({ seed: data.mapSeed, themeId: data.mapThemeId ?? null, source: 'match' });
+          const preparedMap = prepareVoxelMapCpu({ seed: data.mapSeed, themeId: data.mapThemeId ?? null, source: 'match' });
+          prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'phase-change' });
         } catch (error) {
           loggers.network.warn('phase map CPU prep failed', error);
         }

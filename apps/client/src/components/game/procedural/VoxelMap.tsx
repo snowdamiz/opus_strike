@@ -21,6 +21,8 @@ import {
 
 const TERRAIN_CULL_UPDATE_INTERVAL_MS = 180;
 const TERRAIN_CULL_HYSTERESIS = 18;
+const TERRAIN_CULL_CAMERA_MOVE_EPSILON_SQ = 0.45 * 0.45;
+const TERRAIN_CULL_CAMERA_ROTATE_EPSILON = 0.00008;
 
 function getRuntimeTerrainCullDistance(performanceBudget?: WorldPerformanceBudget): number {
   const drawCalls = performanceBudget?.drawCalls ?? Number.POSITIVE_INFINITY;
@@ -44,6 +46,7 @@ interface VoxelMapProps {
   meshBuildMode?: VoxelMeshBuildMode;
   progressiveReveal?: boolean;
   prebuildRegions?: boolean;
+  disposeGeometryCacheOnUnmount?: boolean;
   onWarmupStatus?: (status: VoxelMapWarmupStatus) => void;
   onReady?: () => void;
 }
@@ -73,6 +76,7 @@ export function VoxelMap({
   meshBuildMode = 'async',
   progressiveReveal = true,
   prebuildRegions = false,
+  disposeGeometryCacheOnUnmount = true,
   onWarmupStatus,
   onReady,
 }: VoxelMapProps) {
@@ -97,6 +101,9 @@ export function VoxelMap({
   const readyRegionManifestIdRef = useRef(manifest.id);
   const readyRegionIdsRef = useRef<Set<string>>(new Set());
   const terrainCullAccumulatorRef = useRef(0);
+  const terrainCullNeedsRefreshRef = useRef(true);
+  const terrainCullLastCameraPositionRef = useRef(new THREE.Vector3(Number.NaN, Number.NaN, Number.NaN));
+  const terrainCullLastCameraQuaternionRef = useRef(new THREE.Quaternion());
   const regionVisibilityRef = useRef<Map<string, boolean>>(new Map());
   const regionGroupsRef = useRef<Map<string, THREE.Group>>(new Map());
   const terrainCullFrustumRef = useRef(new THREE.Frustum());
@@ -138,6 +145,9 @@ export function VoxelMap({
 
   useEffect(() => {
     terrainCullAccumulatorRef.current = 0;
+    terrainCullNeedsRefreshRef.current = true;
+    terrainCullLastCameraPositionRef.current.set(Number.NaN, Number.NaN, Number.NaN);
+    terrainCullLastCameraQuaternionRef.current.identity();
     regionVisibilityRef.current.clear();
     for (const group of regionGroupsRef.current.values()) {
       group.visible = true;
@@ -216,8 +226,10 @@ export function VoxelMap({
   }, [manifest.id]);
 
   useEffect(() => () => {
-    clearVoxelGeometryCache(manifest.id);
-  }, [manifest.id]);
+    if (disposeGeometryCacheOnUnmount) {
+      clearVoxelGeometryCache(manifest.id);
+    }
+  }, [disposeGeometryCacheOnUnmount, manifest.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -297,6 +309,18 @@ export function VoxelMap({
     terrainCullAccumulatorRef.current = 0;
 
     const camera = state.camera;
+    const lastCameraPosition = terrainCullLastCameraPositionRef.current;
+    const lastCameraQuaternion = terrainCullLastCameraQuaternionRef.current;
+    const cameraMoved = !Number.isFinite(lastCameraPosition.x) ||
+      lastCameraPosition.distanceToSquared(camera.position) > TERRAIN_CULL_CAMERA_MOVE_EPSILON_SQ;
+    const cameraRotated = 1 - Math.abs(lastCameraQuaternion.dot(camera.quaternion)) >
+      TERRAIN_CULL_CAMERA_ROTATE_EPSILON;
+
+    if (!terrainCullNeedsRefreshRef.current && !cameraMoved && !cameraRotated) return;
+    terrainCullNeedsRefreshRef.current = false;
+    lastCameraPosition.copy(camera.position);
+    lastCameraQuaternion.copy(camera.quaternion);
+
     const frustum = terrainCullFrustumRef.current;
     const matrix = terrainCullMatrixRef.current;
     const sphere = terrainCullSphereRef.current;

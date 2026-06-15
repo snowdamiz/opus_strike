@@ -88,6 +88,7 @@ import {
 } from '../hooks/useAudio';
 import { loggers } from '../utils/logger';
 import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
+import { prebuildPreparedVoxelMapGeometry } from '../utils/mapWarmup/mapGeometryWarmup';
 import type {
   BotDifficulty,
   ChronosAegisDamagedEvent,
@@ -2655,7 +2656,8 @@ export function setupPollingSync(
         useGameStore.getState().setMapSeed(room.state.mapSeed);
         useGameStore.getState().setMapThemeId(nextMapThemeId);
         try {
-          prepareVoxelMapCpu({ seed: room.state.mapSeed, themeId: nextMapThemeId, source: 'match' });
+          const preparedMap = prepareVoxelMapCpu({ seed: room.state.mapSeed, themeId: nextMapThemeId, source: 'match' });
+          prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'fallback-poll' });
         } catch (error) {
           loggers.network.warn('fallback poll map CPU prep failed', error);
         }

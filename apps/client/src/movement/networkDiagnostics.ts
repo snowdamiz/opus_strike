@@ -631,8 +631,6 @@ export function recordTransformMessage(input: {
 export function recordFrameSchedulerDiagnostics(
   callbacksBySystem: Record<string, number>
 ): void {
-  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
-
   diagnostics.frameScheduler.callbacksBySystem = { ...callbacksBySystem };
   diagnostics.frameScheduler.activeCallbacks = Object.values(callbacksBySystem).reduce(
     (total, count) => total + count,
