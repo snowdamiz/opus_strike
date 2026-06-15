@@ -491,7 +491,6 @@ export const BOT_AWARENESS_RANGE = 58;
 export const BOT_CLOSE_REVEAL_RANGE = 8;
 export const BOT_LOS_SAMPLE_STEP = 0.55;
 export const BOT_THINK_INTERVAL_MS = 200;
-export const BOT_AI_BUDGET_MS = 5;
 export const BOT_TACTICS_INTERVAL_MS = 420;
 
 export const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {

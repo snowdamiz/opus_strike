@@ -69,7 +69,6 @@ export function App() {
   const isObserverMode = useGameStore((state) => state.isObserverMode);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
-  const localHeroId = useGameStore((state) => state.localPlayer?.heroId ?? null);
   const scoreboardKeybind = useSettingsStore((state) => state.settings.keybindings.scoreboard);
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showInGameMenu, setShowInGameMenu] = useState(false);
@@ -83,7 +82,7 @@ export function App() {
   const revealedWarmupKeyRef = useRef<string | null>(null);
   const reportedMatchStartGateRef = useRef<number | null>(null);
   const { playLobbyMusic, playGameMusic, pauseMusic, resumeMusic } = useMusic();
-  const { preloadSoundGroup, preloadHeroSounds } = useAudio();
+  const { preloadSoundGroup } = useAudio();
   const { matchStartGateKey, reportMatchSceneReady } = useNetwork();
   useGlobalButtonSounds();
   const isPreGame = gamePhase === 'waiting' || gamePhase === 'hero_select' || !gamePhase;
@@ -114,17 +113,15 @@ export function App() {
 
     (async () => {
       try {
-        const heroEffectWarmup = import('./components/game/effectPrewarm').then((prewarm) => {
-          if (localHeroId === 'phantom') return prewarm.prewarmPhantomEffects();
-          if (localHeroId === 'blaze') return prewarm.prewarmBlazeEffects();
-          if (localHeroId === 'hookshot') return prewarm.prewarmHookshotEffects();
-          if (localHeroId === 'chronos') return prewarm.prewarmChronosEffects();
-          return Promise.resolve();
-        });
+        const heroEffectWarmup = import('./components/game/effectPrewarm')
+          .then((prewarm) => prewarm.prewarmGameplayEffectResources());
 
         await Promise.all([
           preloadSoundGroup('commonCombat'),
-          preloadHeroSounds(localHeroId),
+          preloadSoundGroup('phantom'),
+          preloadSoundGroup('blaze'),
+          preloadSoundGroup('hookshot'),
+          preloadSoundGroup('chronos'),
           heroEffectWarmup,
         ]);
       } catch (error) {
@@ -139,7 +136,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [localHeroId, preloadHeroSounds, preloadSoundGroup, shouldPrepareMatchWorld, warmupKey]);
+  }, [preloadSoundGroup, shouldPrepareMatchWorld, warmupKey]);
 
   // Manage background music based on game phase
   useEffect(() => {

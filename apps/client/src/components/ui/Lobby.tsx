@@ -202,11 +202,13 @@ export function Lobby() {
     isLobbyHost,
     lobbyObserversEnabled,
     maxLobbyObservers,
+    lobbyError,
     isLoading,
     userStats,
     matchmakingStatus,
     setAppPhase,
     clearMapVote,
+    setLobbyError,
   } = useGameStore(
     useShallow((state) => ({
       playerName: state.playerName,
@@ -218,11 +220,13 @@ export function Lobby() {
       isLobbyHost: state.isLobbyHost,
       lobbyObserversEnabled: state.lobbyObserversEnabled,
       maxLobbyObservers: state.maxLobbyObservers,
+      lobbyError: state.lobbyError,
       isLoading: state.isLoading,
       userStats: state.userStats,
       matchmakingStatus: state.matchmakingStatus,
       setAppPhase: state.setAppPhase,
       clearMapVote: state.clearMapVote,
+      setLobbyError: state.setLobbyError,
     }))
   );
   const {
@@ -280,17 +284,21 @@ export function Lobby() {
 
   const handleToggleReady = () => {
     if (!hasChosenTeam || isLocalObserver) return;
+    setLobbyError(null);
     setLobbyReady(!isReady);
   };
   const handleTeamChange = (team: LobbyTeam) => {
     if (currentTeam === team) return;
+    setLobbyError(null);
     setLobbyTeam(team);
   };
   const handleObserverToggle = () => {
     if (!lobbyObserversEnabled) return;
+    setLobbyError(null);
     setLobbyObserver(!isLocalObserver);
   };
   const handleStartGame = () => {
+    setLobbyError(null);
     clearMapVote();
     setAppPhase('map_vote');
     startGame();
@@ -569,6 +577,11 @@ export function Lobby() {
           background: 'linear-gradient(to top, rgb(var(--color-strike-page-top) / 0.95), rgb(var(--color-strike-page-top) / 0.6), transparent)',
         }}
       >
+        {lobbyError && (
+          <div className="mx-auto mb-2 max-w-xl rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-center text-sm text-red-200">
+            {lobbyError}
+          </div>
+        )}
         {paymentError && (
           <div className="mx-auto mb-2 max-w-xl rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-center text-sm text-red-200">
             {paymentError}

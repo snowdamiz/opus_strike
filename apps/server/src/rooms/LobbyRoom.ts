@@ -26,7 +26,7 @@ import {
   InGameCapacityAdmissionError,
 } from '../matchmaking/playerCapacity';
 import { serializeRankPayload } from '../ranking/serialization';
-import { LOBBY_MESSAGE_RATE_LIMITS, MessageRateLimiter } from './rateLimiter';
+import { LOBBY_MESSAGE_RATE_LIMITS, MessageRateLimiter, type RateLimitRule } from './rateLimiter';
 import { wagerService, type CreateWagerOptions, type LobbyWagerSnapshot, type LockedWagerContext, type WagerPaymentStatusChanged } from '../wagers/service';
 import { wagerEventBus } from '../wagers/eventBus';
 import type { WagerRosterPlayer } from '../wagers/math';
@@ -85,6 +85,10 @@ interface ObserverAssignment {
 }
 
 type GameStartingAssignment = ParticipantAssignment | ObserverAssignment;
+export type CreateBotFailureReason = 'bots_disabled' | 'lobby_full' | 'team_full';
+type CreateBotResult =
+  | { ok: true; bot: LobbyPlayer }
+  | { ok: false; reason: CreateBotFailureReason };
 
 interface MapVoteOption {
   id: string;
@@ -140,6 +144,32 @@ const BOT_NAMES = [
   'Mako',
   'Axiom',
 ];
+
+export function getCreateBotFailureReason(input: {
+  wageredLobby: boolean;
+  combatParticipantCount: number;
+  maxParticipants: number;
+  requestedTeam: Team | null;
+  requestedTeamCount: number;
+  maxPlayersPerTeam?: number;
+}): CreateBotFailureReason | null {
+  if (input.wageredLobby) {
+    return 'bots_disabled';
+  }
+
+  if (
+    input.requestedTeam
+    && input.requestedTeamCount >= (input.maxPlayersPerTeam ?? MAX_PLAYERS_PER_TEAM)
+  ) {
+    return 'team_full';
+  }
+
+  if (input.combatParticipantCount >= input.maxParticipants) {
+    return 'lobby_full';
+  }
+
+  return null;
+}
 
 function getShuffledThemeIndices(source: number): number[] {
   const themeIndices = VOXEL_MAP_THEMES.map((_, index) => index);
@@ -284,7 +314,7 @@ export class LobbyRoom extends Room<LobbyState> {
     });
 
     this.onMessage('startGame', (client) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'startGame', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
+      if (!this.consumeLobbyMessage(client, 'startGame', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
       this.handleStartGame(client);
     });
 
@@ -321,12 +351,12 @@ export class LobbyRoom extends Room<LobbyState> {
     });
 
     this.onMessage('finalizeMapVote', (client) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'finalizeMapVote', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
+      if (!this.consumeLobbyMessage(client, 'finalizeMapVote', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
       this.handleFinalizeMapVote(client);
     });
 
     this.onMessage('kick', (client, data: unknown) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'kick', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
+      if (!this.consumeLobbyMessage(client, 'kick', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
       if (!isRecord(data)) return;
       const playerId = sanitizeShortText(data.playerId, 96);
       if (!playerId) return;
@@ -334,21 +364,21 @@ export class LobbyRoom extends Room<LobbyState> {
     });
 
     this.onMessage('addBot', (client, data: unknown = {}) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'addBot', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
+      if (!this.consumeLobbyMessage(client, 'addBot', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
       const payload = validateBotPayload(data);
       if (!payload) return;
       this.handleAddBot(client, payload);
     });
 
     this.onMessage('removeBot', (client, data: unknown) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'removeBot', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
+      if (!this.consumeLobbyMessage(client, 'removeBot', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
       const botId = validateBotIdPayload(data);
       if (!botId) return;
       this.handleRemoveBot(client, botId);
     });
 
     this.onMessage('updateBotTeam', (client, data: unknown) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'updateBotTeam', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
+      if (!this.consumeLobbyMessage(client, 'updateBotTeam', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
       if (!isRecord(data)) return;
       const botId = validateBotIdPayload(data);
       const team = isTeam(data.team) ? data.team : null;
@@ -357,7 +387,7 @@ export class LobbyRoom extends Room<LobbyState> {
     });
 
     this.onMessage('updateBotDifficulty', (client, data: unknown) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'updateBotDifficulty', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
+      if (!this.consumeLobbyMessage(client, 'updateBotDifficulty', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
       if (!isRecord(data)) return;
       const botId = validateBotIdPayload(data);
       const difficulty = isBotDifficulty(data.difficulty) ? data.difficulty : null;
@@ -366,7 +396,7 @@ export class LobbyRoom extends Room<LobbyState> {
     });
 
     this.onMessage('updateBotHero', (client, data: unknown) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'updateBotHero', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
+      if (!this.consumeLobbyMessage(client, 'updateBotHero', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
       if (!isRecord(data)) return;
       const botId = validateBotIdPayload(data);
       const heroId = data.heroId === '' ? '' : isHeroId(data.heroId) ? data.heroId : null;
@@ -385,7 +415,8 @@ export class LobbyRoom extends Room<LobbyState> {
       ? 0
       : Math.max(0, Math.min(MAX_PARTICIPANTS - 1, Math.floor(options.initialBotCount || 0)));
     for (let i = 0; i < initialBotCount; i++) {
-      this.createBot({ difficulty: this.state.defaultBotDifficulty as BotDifficulty });
+      const result = this.createBot({ difficulty: this.state.defaultBotDifficulty as BotDifficulty });
+      if (!result.ok) break;
     }
     this.updateMetadata();
   }
@@ -692,6 +723,15 @@ export class LobbyRoom extends Room<LobbyState> {
         console.error('[LobbyRoom] Failed to refund disposed lobby wager:', error);
       });
     }
+  }
+
+  private consumeLobbyMessage(client: Client, messageType: string, rule: RateLimitRule): boolean {
+    if (this.rateLimiter.consume(client.sessionId, messageType, rule)) {
+      return true;
+    }
+
+    client.send('error', { message: 'Too many lobby actions. Wait a moment and try again.' });
+    return false;
   }
 
   private handleReady(client: Client, ready: boolean) {
@@ -1308,9 +1348,9 @@ export class LobbyRoom extends Room<LobbyState> {
       return;
     }
 
-    const bot = this.createBot(data);
-    if (!bot) {
-      client.send('error', { message: 'Lobby is full' });
+    const result = this.createBot(data);
+    if (!result.ok) {
+      client.send('error', { message: this.getCreateBotFailureMessage(result.reason) });
     }
   }
 
@@ -1360,13 +1400,31 @@ export class LobbyRoom extends Room<LobbyState> {
     this.updateMetadata();
   }
 
-  private createBot(data: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }): LobbyPlayer | null {
-    if (this.isWageredLobby()) {
-      return null;
+  private getCreateBotFailureMessage(reason: CreateBotFailureReason): string {
+    switch (reason) {
+      case 'team_full':
+        return 'Team is full';
+      case 'bots_disabled':
+        return 'Bots are disabled for this lobby';
+      case 'lobby_full':
+      default:
+        return 'Lobby is full';
     }
+  }
 
-    if (this.getCombatParticipantCount() >= this.state.maxParticipants) {
-      return null;
+  private createBot(data: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }): CreateBotResult {
+    const requestedTeam = data.team === 'red' || data.team === 'blue'
+      ? data.team
+      : null;
+    const failureReason = getCreateBotFailureReason({
+      wageredLobby: this.isWageredLobby(),
+      combatParticipantCount: this.getCombatParticipantCount(),
+      maxParticipants: this.state.maxParticipants,
+      requestedTeam,
+      requestedTeamCount: requestedTeam ? this.getTeamCount(requestedTeam) : 0,
+    });
+    if (failureReason) {
+      return { ok: false, reason: failureReason };
     }
 
     const bot = new LobbyPlayer();
@@ -1376,8 +1434,8 @@ export class LobbyRoom extends Room<LobbyState> {
     bot.name = data.name?.trim().slice(0, 24) || `${profileName} Bot`;
     bot.isHost = false;
     bot.isReady = true;
-    bot.team = data.team === 'red' || data.team === 'blue'
-      ? data.team
+    bot.team = requestedTeam
+      ? requestedTeam
       : this.assignBalancedTeam();
     bot.heroId = this.normalizeHeroId(data.heroId);
     bot.isBot = true;
@@ -1401,7 +1459,7 @@ export class LobbyRoom extends Room<LobbyState> {
       paymentStatus: bot.paymentStatus,
     });
     this.updateMetadata();
-    return bot;
+    return { ok: true, bot };
   }
 
   private removeBot(botId: string): void {

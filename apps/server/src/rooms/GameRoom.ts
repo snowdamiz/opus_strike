@@ -254,7 +254,6 @@ import {
   validateVec3,
 } from './protocolValidation';
 import {
-  BOT_AI_BUDGET_MS,
   BOT_AWARENESS_RANGE,
   BOT_CLOSE_REVEAL_RANGE,
   BOT_LOS_SAMPLE_STEP,
@@ -350,6 +349,52 @@ interface BotAssignment {
   heroId?: HeroId;
   botDifficulty?: BotDifficulty;
   botProfileId?: string;
+}
+
+interface SpawnPosition {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface TeamSpawnParticipant {
+  playerId: string;
+  team: Team;
+}
+
+export interface TeamSpawnAssignment {
+  playerId: string;
+  team: Team;
+  spawnIndex: number;
+}
+
+function normalizeSpawnOffset(offset: number, spawnPointCount: number): number {
+  if (spawnPointCount <= 0) return 0;
+  return ((Math.floor(offset) % spawnPointCount) + spawnPointCount) % spawnPointCount;
+}
+
+export function createTeamSpawnAssignments(
+  participants: readonly TeamSpawnParticipant[],
+  spawnPointCounts: Record<Team, number>,
+  offsetByTeam: Partial<Record<Team, number>> = {}
+): TeamSpawnAssignment[] {
+  const nextTeamIndex: Record<Team, number> = { red: 0, blue: 0 };
+  const assignments: TeamSpawnAssignment[] = [];
+
+  for (const participant of participants) {
+    const spawnPointCount = Math.max(0, Math.floor(spawnPointCounts[participant.team] ?? 0));
+    if (spawnPointCount === 0) continue;
+
+    const offset = normalizeSpawnOffset(offsetByTeam[participant.team] ?? 0, spawnPointCount);
+    const teamIndex = nextTeamIndex[participant.team]++;
+    assignments.push({
+      playerId: participant.playerId,
+      team: participant.team,
+      spawnIndex: (offset + teamIndex) % spawnPointCount,
+    });
+  }
+
+  return assignments;
 }
 
 type PendingPlayerPing = { nonce: string; sentAt: number };
@@ -7500,7 +7545,6 @@ export class GameRoom extends Room<GameState> {
   }
 
   private updateBots(now: number, dt: number): void {
-    const budgetStart = performance.now();
     this.urgentBotIdsScratch.length = 0;
     this.deferredBotIdsScratch.length = 0;
     const frameContext = this.buildBotFrameContext(now);
@@ -7596,10 +7640,10 @@ export class GameRoom extends Room<GameState> {
     });
 
     for (const botId of this.urgentBotIdsScratch) {
-      this.updateScheduledBot(botId, now, dt, budgetStart, true, frameContext);
+      this.updateScheduledBot(botId, now, dt, frameContext);
     }
     for (const botId of this.deferredBotIdsScratch) {
-      this.updateScheduledBot(botId, now, dt, budgetStart, false, frameContext);
+      this.updateScheduledBot(botId, now, dt, frameContext);
     }
   }
 
@@ -7623,28 +7667,11 @@ export class GameRoom extends Room<GameState> {
     botId: string,
     now: number,
     dt: number,
-    budgetStart: number,
-    priority: boolean,
     frameContext: BotFrameContext
   ): void {
     const bot = this.state.players.get(botId);
     const brain = this.botBrains.get(botId);
     if (!bot?.isBot || !brain || bot.state !== 'alive') return;
-
-    if (!priority && performance.now() - budgetStart > BOT_AI_BUDGET_MS) {
-      const skillOverride = this.getActiveDevBotSkillOverride(bot, now);
-      const lookOverride = this.getActiveDevBotLookOverride(bot, now);
-      bot.lastInput = this.applyDevBotLookOverride(
-        this.applyDevBotSkillOverride(
-          bot,
-          this.createEmptyBotInput(bot, now),
-          skillOverride
-        ),
-        lookOverride
-      );
-      this.enqueueServerOwnedMovementCommands(bot, bot.lastInput, now);
-      return;
-    }
 
     const skillOverride = this.getActiveDevBotSkillOverride(bot, now);
     const lookOverride = this.getActiveDevBotLookOverride(bot, now);
@@ -9588,8 +9615,8 @@ export class GameRoom extends Room<GameState> {
     const now = Date.now();
     this.state.players.forEach((player) => {
       player.state = 'spawning';
-      this.placePlayerAtSpawn(player, 'spawn');
     });
+    this.placeTeamsAtUniqueSpawns('spawn');
 
     this.forceTransformFullSync();
     this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
@@ -10387,9 +10414,14 @@ export class GameRoom extends Room<GameState> {
     return count;
   }
 
-  private getSpawnPosition(team: Team): { x: number; y: number; z: number } {
+  private getTeamSpawnPoints(team: Team): readonly SpawnPosition[] {
     const manifest = this.getMapManifest();
-    const spawnPoints = manifest.gameplay?.spawns?.[team]?.points ?? manifest.spawnPoints[team];
+    const spawnPoints = manifest.gameplay?.spawns?.[team]?.points ?? manifest.spawnPoints[team] ?? [];
+    return spawnPoints.length > 0 ? spawnPoints : [{ x: 0, y: 1, z: 0 }];
+  }
+
+  private getSpawnPosition(team: Team): SpawnPosition {
+    const spawnPoints = this.getTeamSpawnPoints(team);
     const spawn = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
 
     return {
@@ -10399,8 +10431,7 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private assignPlayerSpawnPosition(player: Player): void {
-    const spawn = this.getSpawnPosition(player.team as Team);
+  private assignPlayerSpawnPosition(player: Player, spawn = this.getSpawnPosition(player.team as Team)): void {
     player.position.x = spawn.x;
     player.position.y = spawn.y;
     player.position.z = spawn.z;
@@ -10412,6 +10443,39 @@ export class GameRoom extends Room<GameState> {
   private placePlayerAtSpawn(player: Player, reason: MovementCorrectionReason = 'spawn'): void {
     this.assignPlayerSpawnPosition(player);
     this.markMovementBarrier(player.id, reason);
+  }
+
+  private placeTeamsAtUniqueSpawns(reason: MovementCorrectionReason = 'spawn'): void {
+    const participants: TeamSpawnParticipant[] = [];
+    this.state.players.forEach((player, playerId) => {
+      if (isTeam(player.team)) {
+        participants.push({ playerId, team: player.team });
+      }
+    });
+
+    const spawnPointsByTeam: Record<Team, readonly SpawnPosition[]> = {
+      red: this.getTeamSpawnPoints('red'),
+      blue: this.getTeamSpawnPoints('blue'),
+    };
+    const assignments = createTeamSpawnAssignments(
+      participants,
+      {
+        red: spawnPointsByTeam.red.length,
+        blue: spawnPointsByTeam.blue.length,
+      },
+      {
+        red: Math.floor(Math.random() * spawnPointsByTeam.red.length),
+        blue: Math.floor(Math.random() * spawnPointsByTeam.blue.length),
+      }
+    );
+
+    for (const assignment of assignments) {
+      const player = this.state.players.get(assignment.playerId);
+      if (!player) continue;
+      const spawn = spawnPointsByTeam[assignment.team][assignment.spawnIndex];
+      this.assignPlayerSpawnPosition(player, spawn);
+      this.markMovementBarrier(player.id, reason);
+    }
   }
 
   // ===== NPC/BOT HANDLING =====

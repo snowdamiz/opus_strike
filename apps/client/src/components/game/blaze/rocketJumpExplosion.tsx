@@ -4,6 +4,10 @@ import * as THREE from 'three';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
+import {
+  measureFrameWork,
+  recordEffectSlotDiagnostics,
+} from '../../../movement/networkDiagnostics';
 
 interface RocketJumpExplosionData {
   id: string;
@@ -56,7 +60,7 @@ const RocketJumpExplosion = memo(({ explosion }: { explosion: RocketJumpExplosio
   const sparkRefs = useRef<(THREE.Mesh | null)[]>([]);
   const lightRef = useRef<THREE.PointLight>(null);
 
-  useFrame(() => {
+  useFrame(() => measureFrameWork('frame.effects.blazeRocketJumpExplosion', () => {
     const elapsed = getFrameClock().nowMs - explosion.frameStartTime;
     if (elapsed > ROCKET_JUMP_DURATION) return;
 
@@ -157,7 +161,7 @@ const RocketJumpExplosion = memo(({ explosion }: { explosion: RocketJumpExplosio
     if (lightRef.current) {
       lightRef.current.intensity = fadeOut * 36;
     }
-  });
+  }));
 
   const elapsed = getFrameClock().nowMs - explosion.frameStartTime;
   if (elapsed > ROCKET_JUMP_DURATION) return null;
@@ -255,6 +259,12 @@ export function useRocketJumpExplosions() {
       lastRevisionRef.current = rocketJumpExplosionRevision;
       setActiveExplosions([...rocketJumpExplosions]);
     }
+
+    recordEffectSlotDiagnostics('blazeRocketJumpExplosion', {
+      active: rocketJumpExplosions.length,
+      capacity: Math.max(1, rocketJumpExplosions.length),
+      hiddenMounted: 0,
+    });
   });
 
   return activeExplosions;

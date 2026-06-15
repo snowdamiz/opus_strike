@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { MOVEMENT_BUTTON_MOVE_FORWARD, parseMovementCommandPayload } from '@voxel-strike/shared';
-import type { HeroStats, Vec3 } from '@voxel-strike/shared';
+import { DEFAULT_GAME_CONFIG, MOVEMENT_BUTTON_MOVE_FORWARD, parseMovementCommandPayload } from '@voxel-strike/shared';
+import type { HeroStats, Team, Vec3 } from '@voxel-strike/shared';
 import { createGameEntryTicket, verifyGameEntryTicket } from '../security/entryTickets';
 import { MessageRateLimiter } from '../rooms/rateLimiter';
+import { getCreateBotFailureReason } from '../rooms/LobbyRoom';
+import { createTeamSpawnAssignments } from '../rooms/GameRoom';
 import { validateMovementProposal, type MovementBounds } from '../rooms/movementValidation';
 import { validateTeamPayload } from '../rooms/protocolValidation';
 import { shouldResolveGenericSecondaryAttack } from '../rooms/combatInputRouting';
@@ -211,6 +213,81 @@ function runRateLimitTests(): void {
   assert.equal(limiter.consume('player-a', 'chat', { limit: 2, intervalMs: 1000 }, 1100), true);
 }
 
+function runLobbyBotRosterTests(): void {
+  const createFailureReason = (options: {
+    combatParticipantCount: number;
+    requestedTeam: Team | null;
+    requestedTeamCount: number;
+    wageredLobby?: boolean;
+  }) => getCreateBotFailureReason({
+    wageredLobby: options.wageredLobby ?? false,
+    combatParticipantCount: options.combatParticipantCount,
+    maxParticipants: DEFAULT_GAME_CONFIG.maxPlayers,
+    requestedTeam: options.requestedTeam,
+    requestedTeamCount: options.requestedTeamCount,
+  });
+
+  assert.equal(createFailureReason({
+    combatParticipantCount: DEFAULT_GAME_CONFIG.maxPlayers - 1,
+    requestedTeam: 'red',
+    requestedTeamCount: DEFAULT_GAME_CONFIG.teamSize,
+  }), 'team_full', 'server must reject a fifth bot on one team before the lobby is globally full');
+
+  assert.equal(createFailureReason({
+    combatParticipantCount: DEFAULT_GAME_CONFIG.maxPlayers - 1,
+    requestedTeam: 'blue',
+    requestedTeamCount: DEFAULT_GAME_CONFIG.teamSize - 1,
+  }), null, 'observer-host custom match should still allow the eighth bot on the underfilled team');
+
+  assert.equal(createFailureReason({
+    combatParticipantCount: DEFAULT_GAME_CONFIG.maxPlayers,
+    requestedTeam: 'blue',
+    requestedTeamCount: DEFAULT_GAME_CONFIG.teamSize,
+  }), 'team_full', 'team-full failures should stay specific even when the full lobby is also full');
+
+  assert.equal(createFailureReason({
+    combatParticipantCount: DEFAULT_GAME_CONFIG.maxPlayers,
+    requestedTeam: null,
+    requestedTeamCount: 0,
+  }), 'lobby_full');
+
+  assert.equal(createFailureReason({
+    combatParticipantCount: 0,
+    requestedTeam: 'red',
+    requestedTeamCount: 0,
+    wageredLobby: true,
+  }), 'bots_disabled');
+}
+
+function runTeamSpawnAssignmentTests(): void {
+  const assignments = createTeamSpawnAssignments([
+    { playerId: 'red-bot-0', team: 'red' },
+    { playerId: 'red-bot-1', team: 'red' },
+    { playerId: 'red-bot-2', team: 'red' },
+    { playerId: 'blue-bot-0', team: 'blue' },
+    { playerId: 'blue-bot-1', team: 'blue' },
+    { playerId: 'blue-bot-2', team: 'blue' },
+    { playerId: 'blue-bot-3', team: 'blue' },
+    { playerId: 'human-red', team: 'red' },
+  ], { red: DEFAULT_GAME_CONFIG.teamSize, blue: DEFAULT_GAME_CONFIG.teamSize }, { red: 1, blue: 3 });
+
+  const spawnIndicesByTeam = new Map<Team, number[]>();
+  for (const assignment of assignments) {
+    const indices = spawnIndicesByTeam.get(assignment.team) ?? [];
+    indices.push(assignment.spawnIndex);
+    spawnIndicesByTeam.set(assignment.team, indices);
+  }
+
+  const redSpawnIndices = spawnIndicesByTeam.get('red') ?? [];
+  const blueSpawnIndices = spawnIndicesByTeam.get('blue') ?? [];
+  assert.equal(redSpawnIndices.length, DEFAULT_GAME_CONFIG.teamSize);
+  assert.equal(blueSpawnIndices.length, DEFAULT_GAME_CONFIG.teamSize);
+  assert.equal(new Set(redSpawnIndices).size, DEFAULT_GAME_CONFIG.teamSize, 'full red team must not reuse a spawn point at match start');
+  assert.equal(new Set(blueSpawnIndices).size, DEFAULT_GAME_CONFIG.teamSize, 'full blue team must not reuse a spawn point at match start');
+  assert.deepEqual([...redSpawnIndices].sort((a, b) => a - b), [0, 1, 2, 3]);
+  assert.deepEqual([...blueSpawnIndices].sort((a, b) => a - b), [0, 1, 2, 3]);
+}
+
 function createAbilityHarnessPlayer(heroId: 'phantom' | 'blaze'): Player {
   const player = new Player();
   player.id = `${heroId}-harness`;
@@ -289,6 +366,8 @@ runProtocolTests();
 runCombatInputRoutingTests();
 runMovementCommandPayloadTests();
 runRateLimitTests();
+runLobbyBotRosterTests();
+runTeamSpawnAssignmentTests();
 runAbilityBarrierTests();
 runPhantomShieldCooldownTests();
 

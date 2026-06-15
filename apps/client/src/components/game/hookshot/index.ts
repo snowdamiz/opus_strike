@@ -1,8 +1,16 @@
 // Hookshot hero visual effects - split for maintainability
 
-export { HookProjectile } from './hookProjectile';
+export {
+  HookProjectile,
+  createHookProjectileSlotHandle,
+  type HookProjectileSlotHandle,
+} from './hookProjectile';
 
-export { DragHookEffect } from './dragHook';
+export {
+  DragHookEffect,
+  createDragHookSlotHandle,
+  type DragHookSlotHandle,
+} from './dragHook';
 
 export { GroundHooksEffect } from './groundHooks';
 

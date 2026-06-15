@@ -1,4 +1,4 @@
-import { useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
@@ -9,6 +9,7 @@ import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../.
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
+import { measureFrameWork } from '../../../movement/networkDiagnostics';
 import {
   getBombBodyMaterial,
   getBombBandMaterial,
@@ -249,8 +250,22 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       (i % 2 === 0 ? getExplosionDebrisOrangeMaterial() : getExplosionDebrisYellowMaterial()).clone()
     ),
   }), []);
+
+  useEffect(() => () => {
+    animatedMaterials.warningPulseFill.dispose();
+    animatedMaterials.explosionFlash.dispose();
+    animatedMaterials.explosionWhite.dispose();
+    animatedMaterials.explosionYellow.dispose();
+    animatedMaterials.explosionOrange.dispose();
+    animatedMaterials.explosionRed.dispose();
+    animatedMaterials.explosionDarkRed.dispose();
+    animatedMaterials.shockwaveOuter.dispose();
+    animatedMaterials.shockwaveInner.dispose();
+    animatedMaterials.smoke.forEach((material) => material.dispose());
+    animatedMaterials.debris.forEach((material) => material.dispose());
+  }, [animatedMaterials]);
   
-  useFrame(() => {
+  useFrame(() => measureFrameWork('frame.effects.blazeBomb', () => {
     const now = getFrameClock().nowMs;
     const elapsed = now - startFrameTimeRef.current;
     const fallProgress = Math.max(0, Math.min(1, elapsed / fallDurationRef.current));
@@ -425,7 +440,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
         }
       }
     }
-  });
+  }));
   
   return (
     <group>

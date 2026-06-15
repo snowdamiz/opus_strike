@@ -6,11 +6,13 @@ import { checkGroundWithNormal, isPhysicsReady } from '../../../hooks/usePhysics
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
+import {
+  measureFrameWork,
+  recordEffectSlotDiagnostics,
+} from '../../../movement/networkDiagnostics';
 
 // ============================================================================
 // INFERNAL GEARSTORM EFFECT - BLAZE ULTIMATE
-// Legacy export names are kept so callers do not need to know the old airstrike
-// implementation was replaced.
 // ============================================================================
 
 interface BurningCogData {
@@ -96,8 +98,9 @@ const COG_SINK_DURATION_MS = 920;
 const COG_SINK_STAGGER_MS = 320;
 const COG_BURY_DEPTH = 2.45;
 const GROUND_FLAME_PLANE_ANGLES = [0, Math.PI / 2, Math.PI / 4, -Math.PI / 4];
-const GEARSTORM_GROUND_SAMPLE_CELL_SIZE = 4;
-const GEARSTORM_MAX_GROUND_SAMPLES = 40;
+const GEARSTORM_GROUND_SAMPLE_CELL_SIZE = 7;
+const GEARSTORM_MAX_GROUND_SAMPLES = 16;
+const GEARSTORM_MULTI_STRIKE_DECORATIVE_FRAME_STRIDE = 2;
 
 const GEARSTORM_BODY_MATERIAL_TEMPLATE = new THREE.MeshStandardMaterial({
   color: COG_FIRE_ORANGE,
@@ -485,7 +488,7 @@ function createGearstormGroundResolver(centerX: number, centerZ: number, fallbac
   };
 }
 
-export function triggerAirStrike(position: { x: number; y: number; z: number }) {
+function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }) {
   const fallbackGroundY = position.y - 1;
   const resolveGearstormGroundY = createGearstormGroundResolver(position.x, position.z, fallbackGroundY);
   const groundY = resolveGearstormGroundY(position.x, position.z);
@@ -566,6 +569,10 @@ export function triggerAirStrike(position: { x: number; y: number; z: number }) 
   airStrikeRevision++;
 }
 
+export function triggerAirStrike(position: { x: number; y: number; z: number }) {
+  measureFrameWork('event.effects.blazeAirstrikeTrigger', () => triggerAirStrikeImmediate(position));
+}
+
 function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
   const groupRef = useRef<THREE.Group>(null);
   const groundFillRef = useRef<THREE.Mesh>(null);
@@ -584,6 +591,7 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
   const matrixObjectRef = useRef(new THREE.Object3D());
   const childMatrixObjectRef = useRef(new THREE.Object3D());
   const tempVectorRef = useRef(new THREE.Vector3());
+  const decorativeFrameIndexRef = useRef(0);
   const materials = useMemo(createGearstormMaterials, []);
   const patchGroups = useMemo(() => ({
     orange: strike.burnPatches.filter((patch) => patch.color === 0xff4a00),
@@ -613,7 +621,7 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
     });
   }, []);
 
-  useFrame(() => {
+  useFrame(() => measureFrameWork('frame.effects.blazeAirstrike', () => {
     const elapsed = getFrameClock().nowMs - strike.frameStartTime;
 
     if (elapsed > AIR_STRIKE_DURATION) {
@@ -627,6 +635,9 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
     const fadeOut = clamp01((AIR_STRIKE_DURATION - elapsed) / 950);
     const fade = fadeIn * fadeOut;
     const pulse = 0.92 + Math.sin(elapsed * 0.006) * 0.08;
+    const updateDecorativeInstancing = airStrikes.length <= 1 ||
+      decorativeFrameIndexRef.current % GEARSTORM_MULTI_STRIKE_DECORATIVE_FRAME_STRIDE === 0;
+    decorativeFrameIndexRef.current++;
 
     if (groundFillRef.current) {
       groundFillRef.current.rotation.z = elapsed * 0.00065;
@@ -650,70 +661,74 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
     const childMatrixObject = childMatrixObjectRef.current;
     const tempVector = tempVectorRef.current;
 
-    writeBurnPatchMatrices(patchGroups.orange, orangePatchRef.current, elapsed, matrixObject);
-    writeBurnPatchMatrices(patchGroups.yellow, yellowPatchRef.current, elapsed, matrixObject);
+    if (updateDecorativeInstancing) {
+      writeBurnPatchMatrices(patchGroups.orange, orangePatchRef.current, elapsed, matrixObject);
+      writeBurnPatchMatrices(patchGroups.yellow, yellowPatchRef.current, elapsed, matrixObject);
+    }
     materials.burnPatchOrange.opacity = 0.26 * fade;
     materials.burnPatchYellow.opacity = 0.24 * fade;
 
-    let flamePlaneIndex = 0;
-    strike.groundFlames.forEach((flame, index) => {
-      const cycle = (elapsedSeconds * flame.flickerSpeed + flame.phase) % 1;
-      const active = cycle <= flame.dutyCycle;
-      const flameLife = active ? cycle / flame.dutyCycle : 0;
-      const bloom = active ? Math.sin(flameLife * Math.PI) * fade : 0;
-      const shimmer = 0.88 + Math.sin(elapsed * 0.028 + flame.phase * 17.31) * 0.12;
-      const flameHeight = 0.34 + bloom * 0.92;
-      const visible = bloom > 0.035;
-      const baseY = flame.groundY + GROUND_FLAME_OFFSET + bloom * 0.08;
-      const yaw = flame.yaw + Math.sin(elapsedSeconds * 2.1 + flame.phase * Math.PI * 2) * 0.2;
-      const scaleX = (0.82 + bloom * 0.36) * shimmer;
-      const scaleZ = (0.82 + bloom * 0.3) * (1.76 - shimmer);
+    if (updateDecorativeInstancing) {
+      let flamePlaneIndex = 0;
+      strike.groundFlames.forEach((flame, index) => {
+        const cycle = (elapsedSeconds * flame.flickerSpeed + flame.phase) % 1;
+        const active = cycle <= flame.dutyCycle;
+        const flameLife = active ? cycle / flame.dutyCycle : 0;
+        const bloom = active ? Math.sin(flameLife * Math.PI) * fade : 0;
+        const shimmer = 0.88 + Math.sin(elapsed * 0.028 + flame.phase * 17.31) * 0.12;
+        const flameHeight = 0.34 + bloom * 0.92;
+        const visible = bloom > 0.035;
+        const baseY = flame.groundY + GROUND_FLAME_OFFSET + bloom * 0.08;
+        const yaw = flame.yaw + Math.sin(elapsedSeconds * 2.1 + flame.phase * Math.PI * 2) * 0.2;
+        const scaleX = (0.82 + bloom * 0.36) * shimmer;
+        const scaleZ = (0.82 + bloom * 0.3) * (1.76 - shimmer);
 
-      if (!visible) {
-        setInstancedMatrix(flameRingRef.current, index, GEARSTORM_HIDDEN_MATRIX);
-        setInstancedMatrix(flameGlowRef.current, index, GEARSTORM_HIDDEN_MATRIX);
-        for (let planeIndex = 0; planeIndex < GROUND_FLAME_PLANE_ANGLES.length; planeIndex++) {
-          setInstancedMatrix(flameOuterRef.current, flamePlaneIndex, GEARSTORM_HIDDEN_MATRIX);
-          setInstancedMatrix(flameInnerRef.current, flamePlaneIndex, GEARSTORM_HIDDEN_MATRIX);
+        if (!visible) {
+          setInstancedMatrix(flameRingRef.current, index, GEARSTORM_HIDDEN_MATRIX);
+          setInstancedMatrix(flameGlowRef.current, index, GEARSTORM_HIDDEN_MATRIX);
+          for (let planeIndex = 0; planeIndex < GROUND_FLAME_PLANE_ANGLES.length; planeIndex++) {
+            setInstancedMatrix(flameOuterRef.current, flamePlaneIndex, GEARSTORM_HIDDEN_MATRIX);
+            setInstancedMatrix(flameInnerRef.current, flamePlaneIndex, GEARSTORM_HIDDEN_MATRIX);
+            flamePlaneIndex++;
+          }
+          return;
+        }
+
+        matrixObject.position.set(flame.x, baseY + 0.015, flame.z);
+        matrixObject.rotation.set(-Math.PI / 2, 0, yaw);
+        matrixObject.scale.set(flame.radius * 1.28 * scaleX, flame.radius * 1.28 * scaleZ, 1);
+        matrixObject.updateMatrix();
+        setInstancedMatrix(flameRingRef.current, index, matrixObject.matrix);
+
+        matrixObject.position.set(flame.x, baseY + flame.height * 0.24 * flameHeight, flame.z);
+        matrixObject.rotation.set(flame.leanX, yaw, flame.leanZ);
+        matrixObject.scale.set(
+          flame.radius * 0.72 * scaleX,
+          flame.height * 0.32 * flameHeight,
+          flame.radius * 0.72 * scaleZ
+        );
+        matrixObject.updateMatrix();
+        setInstancedMatrix(flameGlowRef.current, index, matrixObject.matrix);
+
+        for (const planeAngle of GROUND_FLAME_PLANE_ANGLES) {
+          matrixObject.position.set(flame.x, baseY, flame.z);
+          matrixObject.rotation.set(flame.leanX, yaw + planeAngle, flame.leanZ);
+          matrixObject.scale.set(flame.radius * scaleX, flame.height * flameHeight, 1);
+          matrixObject.updateMatrix();
+          setInstancedMatrix(flameOuterRef.current, flamePlaneIndex, matrixObject.matrix);
+
+          matrixObject.position.set(flame.x, baseY + flame.height * 0.03 * flameHeight, flame.z);
+          matrixObject.scale.set(flame.radius * 0.58 * scaleX, flame.height * 0.78 * flameHeight, 1);
+          matrixObject.updateMatrix();
+          setInstancedMatrix(flameInnerRef.current, flamePlaneIndex, matrixObject.matrix);
           flamePlaneIndex++;
         }
-        return;
-      }
-
-      matrixObject.position.set(flame.x, baseY + 0.015, flame.z);
-      matrixObject.rotation.set(-Math.PI / 2, 0, yaw);
-      matrixObject.scale.set(flame.radius * 1.28 * scaleX, flame.radius * 1.28 * scaleZ, 1);
-      matrixObject.updateMatrix();
-      setInstancedMatrix(flameRingRef.current, index, matrixObject.matrix);
-
-      matrixObject.position.set(flame.x, baseY + flame.height * 0.24 * flameHeight, flame.z);
-      matrixObject.rotation.set(flame.leanX, yaw, flame.leanZ);
-      matrixObject.scale.set(
-        flame.radius * 0.72 * scaleX,
-        flame.height * 0.32 * flameHeight,
-        flame.radius * 0.72 * scaleZ
-      );
-      matrixObject.updateMatrix();
-      setInstancedMatrix(flameGlowRef.current, index, matrixObject.matrix);
-
-      for (const planeAngle of GROUND_FLAME_PLANE_ANGLES) {
-        matrixObject.position.set(flame.x, baseY, flame.z);
-        matrixObject.rotation.set(flame.leanX, yaw + planeAngle, flame.leanZ);
-        matrixObject.scale.set(flame.radius * scaleX, flame.height * flameHeight, 1);
-        matrixObject.updateMatrix();
-        setInstancedMatrix(flameOuterRef.current, flamePlaneIndex, matrixObject.matrix);
-
-        matrixObject.position.set(flame.x, baseY + flame.height * 0.03 * flameHeight, flame.z);
-        matrixObject.scale.set(flame.radius * 0.58 * scaleX, flame.height * 0.78 * flameHeight, 1);
-        matrixObject.updateMatrix();
-        setInstancedMatrix(flameInnerRef.current, flamePlaneIndex, matrixObject.matrix);
-        flamePlaneIndex++;
-      }
-    });
-    commitInstancedMesh(flameRingRef.current);
-    commitInstancedMesh(flameGlowRef.current);
-    commitInstancedMesh(flameOuterRef.current);
-    commitInstancedMesh(flameInnerRef.current);
+      });
+      commitInstancedMesh(flameRingRef.current);
+      commitInstancedMesh(flameGlowRef.current);
+      commitInstancedMesh(flameOuterRef.current);
+      commitInstancedMesh(flameInnerRef.current);
+    }
 
     strike.cogs.forEach((cog, index) => {
       const phaseRatio = (cog.phase % (Math.PI * 2)) / (Math.PI * 2);
@@ -769,7 +784,7 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
       lightRef.current.position.set(strike.centerPosition.x, strike.groundY + 4.2, strike.centerPosition.z);
       lightRef.current.intensity = 12 * fade + Math.sin(elapsed * 0.012) * 1.8 * fade;
     }
-  });
+  }));
 
   return (
     <group ref={groupRef}>
@@ -951,6 +966,12 @@ export function useAirStrikes() {
       lastRevisionRef.current = airStrikeRevision;
       setActiveStrikes([...airStrikes]);
     }
+
+    recordEffectSlotDiagnostics('blazeAirstrike', {
+      active: airStrikes.length,
+      capacity: Math.max(1, airStrikes.length),
+      hiddenMounted: 0,
+    });
   });
 
   return activeStrikes;

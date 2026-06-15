@@ -38,6 +38,10 @@ import {
   HEAVY_HOOK_MAIN_ROPE_MATERIAL,
   HOOK_MAIN_ROPE_MATERIAL,
 } from './hookshot/rope';
+import {
+  getRagdollGpuPrewarmMaterials,
+  prewarmRagdollRenderResources,
+} from './RagdollManager';
 
 export interface GameplayEffectGpuPrewarmBundle {
   scene: THREE.Scene;
@@ -80,6 +84,7 @@ export async function prewarmGameplayEffectResources(): Promise<void> {
     prewarmHookshotEffects(),
     prewarmChronosEffects(),
   ]);
+  prewarmRagdollRenderResources();
 }
 
 function addMesh(
@@ -348,6 +353,10 @@ function addGlobalEffectGpuPrewarmObjects(scene: THREE.Scene): void {
   scene.add(new THREE.Points(pointsGeometry, pointsMaterial));
 }
 
+function addRagdollGpuPrewarmObjects(scene: THREE.Scene): void {
+  addMaterialSwatches(scene, getRagdollGpuPrewarmMaterials(), -2.45, -5.8);
+}
+
 export function getGameplayEffectGpuPrewarmBundle(): GameplayEffectGpuPrewarmBundle {
   if (gameplayEffectGpuPrewarmBundle) return gameplayEffectGpuPrewarmBundle;
 
@@ -370,6 +379,7 @@ export function getGameplayEffectGpuPrewarmBundle(): GameplayEffectGpuPrewarmBun
   addHookshotGpuPrewarmObjects(scene);
   addChronosGpuPrewarmObjects(scene);
   addGlobalEffectGpuPrewarmObjects(scene);
+  addRagdollGpuPrewarmObjects(scene);
 
   const camera = createPrewarmCamera();
   scene.updateMatrixWorld(true);

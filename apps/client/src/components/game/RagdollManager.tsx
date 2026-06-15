@@ -1,6 +1,5 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { useStore } from 'zustand';
 import * as THREE from 'three';
 import { HERO_DEFINITIONS, type HeroId } from '@voxel-strike/shared';
 import {
@@ -27,16 +26,15 @@ import type {
   TeamAccentPart,
   VoxelPart,
 } from '../../model-system/heroBodyTypes';
+import {
+  measureFrameWork,
+  recordEffectSlotDiagnostics,
+  recordFrameAllocation,
+} from '../../movement/networkDiagnostics';
 import type { RagdollQualityConfig } from './visualQuality';
 
 interface RagdollManagerProps {
   config: RagdollQualityConfig;
-}
-
-interface RagdollBodyProps {
-  snapshot: DeathVisualSnapshot;
-  highQuality: boolean;
-  castShadows: boolean;
 }
 
 interface BoneRuntime {
@@ -56,6 +54,25 @@ interface RagdollRuntime {
   scale: number;
   sleepMs: number;
   sleeping: boolean;
+}
+
+interface RagdollRenderResources {
+  riggedPartsByBone: Record<HeroBoneName, RiggedVoxelPart<VoxelPart>[]>;
+  riggedTeamAccentPartsByBone: Record<HeroBoneName, RiggedVoxelPart<TeamAccentPart>[]>;
+  baseMaterialByKind: Map<MaterialKind, THREE.MeshStandardMaterial>;
+}
+
+interface RagdollSlotHandle {
+  heroId: HeroId;
+  poolIndex: number;
+  group: THREE.Group | null;
+  boneRefs: Partial<Record<HeroBoneName, THREE.Group | null>>;
+  materialList: THREE.Material[];
+  assignedSnapshotId: string | null;
+  snapshot: DeathVisualSnapshot | null;
+  runtime: RagdollRuntime | null;
+  appliedOpacity: number;
+  hidden: boolean;
 }
 
 const RAGDOLL_BONES: HeroBoneName[] = [
@@ -123,6 +140,8 @@ const tmpVecA = new THREE.Vector3();
 const tmpVecB = new THREE.Vector3();
 const tmpQuatA = new THREE.Quaternion();
 const tmpEuler = new THREE.Euler();
+const ragdollRenderResourcesByHero = new Map<HeroId, RagdollRenderResources>();
+const RAGDOLL_HERO_IDS = Object.keys(HERO_BODY_MANIFESTS) as HeroId[];
 
 function hash01(value: string): number {
   let hash = 2166136261;
@@ -355,7 +374,7 @@ function getMaterialEmissiveIntensity(kind: MaterialKind): number {
   return 0;
 }
 
-function createRagdollMaterials(heroId: HeroId): Map<MaterialKind, THREE.MeshStandardMaterial> {
+function createRagdollBaseMaterials(heroId: HeroId): Map<MaterialKind, THREE.MeshStandardMaterial> {
   const manifest = HERO_BODY_MANIFESTS[heroId];
   const materialByKind = new Map<MaterialKind, THREE.MeshStandardMaterial>();
 
@@ -383,6 +402,41 @@ function createRagdollMaterials(heroId: HeroId): Map<MaterialKind, THREE.MeshSta
   return materialByKind;
 }
 
+function getRagdollRenderResources(heroId: HeroId): RagdollRenderResources {
+  const cached = ragdollRenderResourcesByHero.get(heroId);
+  if (cached) return cached;
+
+  const manifest = HERO_BODY_MANIFESTS[heroId];
+  const resources: RagdollRenderResources = {
+    riggedPartsByBone: groupRiggedParts(manifest.parts),
+    riggedTeamAccentPartsByBone: groupRiggedParts(manifest.teamAccentParts ?? EMPTY_TEAM_ACCENT_PARTS),
+    baseMaterialByKind: createRagdollBaseMaterials(heroId),
+  };
+  ragdollRenderResourcesByHero.set(heroId, resources);
+  return resources;
+}
+
+function createRagdollMaterialInstances(
+  baseMaterialByKind: Map<MaterialKind, THREE.MeshStandardMaterial>
+): Map<MaterialKind, THREE.MeshStandardMaterial> {
+  const materialByKind = new Map<MaterialKind, THREE.MeshStandardMaterial>();
+  baseMaterialByKind.forEach((baseMaterial, kind) => {
+    materialByKind.set(kind, baseMaterial.clone());
+  });
+  return materialByKind;
+}
+
+export function prewarmRagdollRenderResources(): void {
+  RAGDOLL_HERO_IDS.forEach(getRagdollRenderResources);
+}
+
+export function getRagdollGpuPrewarmMaterials(): THREE.Material[] {
+  prewarmRagdollRenderResources();
+  return Array.from(ragdollRenderResourcesByHero.values()).flatMap((resources) => (
+    Array.from(resources.baseMaterialByKind.values())
+  ));
+}
+
 function applyRagdollOpacity(materials: THREE.Material[], opacity: number): void {
   const clamped = THREE.MathUtils.clamp(opacity, 0, 1);
   for (const material of materials) {
@@ -408,6 +462,146 @@ function getFadeOpacity(snapshot: DeathVisualSnapshot, effectiveExpiresAt: numbe
   const fadeStart = lifetime * 0.76;
   if (age <= fadeStart) return 1;
   return 1 - THREE.MathUtils.clamp((age - fadeStart) / Math.max(1, lifetime - fadeStart), 0, 1);
+}
+
+function createRagdollSlotHandle(heroId: HeroId, poolIndex: number): RagdollSlotHandle {
+  return {
+    heroId,
+    poolIndex,
+    group: null,
+    boneRefs: {},
+    materialList: [],
+    assignedSnapshotId: null,
+    snapshot: null,
+    runtime: null,
+    appliedOpacity: -1,
+    hidden: true,
+  };
+}
+
+function createRagdollSlotPool(maxTotal: number): RagdollSlotHandle[] {
+  const clampedMax = Math.max(0, maxTotal);
+  const handles: RagdollSlotHandle[] = [];
+  for (const heroId of RAGDOLL_HERO_IDS) {
+    for (let poolIndex = 0; poolIndex < clampedMax; poolIndex++) {
+      handles.push(createRagdollSlotHandle(heroId, poolIndex));
+    }
+  }
+  return handles;
+}
+
+function clearRagdollSlot(handle: RagdollSlotHandle): void {
+  handle.assignedSnapshotId = null;
+  handle.snapshot = null;
+  handle.runtime = null;
+  handle.appliedOpacity = -1;
+  handle.hidden = true;
+  if (handle.group) {
+    handle.group.visible = false;
+  }
+}
+
+function findRagdollSlotForSnapshot(
+  pool: RagdollSlotHandle[],
+  snapshotId: string,
+  heroId: HeroId
+): RagdollSlotHandle | null {
+  for (const handle of pool) {
+    if (handle.heroId === heroId && handle.assignedSnapshotId === snapshotId) {
+      return handle;
+    }
+  }
+  return null;
+}
+
+function findFreeRagdollSlot(pool: RagdollSlotHandle[], heroId: HeroId): RagdollSlotHandle | null {
+  for (const handle of pool) {
+    if (handle.heroId === heroId && !handle.assignedSnapshotId) {
+      return handle;
+    }
+  }
+  return null;
+}
+
+function activateRagdollSlot(handle: RagdollSlotHandle, snapshot: DeathVisualSnapshot): void {
+  measureFrameWork('event.ragdoll.activateSlot', () => {
+    const height = HERO_DEFINITIONS[handle.heroId].stats.size.height;
+    handle.assignedSnapshotId = snapshot.id;
+    handle.snapshot = snapshot;
+    handle.runtime = measureFrameWork('event.ragdoll.createRuntime', () => {
+      recordFrameAllocation('ragdoll.runtime');
+      return createRagdollRuntime(snapshot, height);
+    });
+    handle.appliedOpacity = -1;
+    handle.hidden = false;
+    applyRagdollOpacity(handle.materialList, 1);
+    if (handle.group) {
+      handle.group.visible = true;
+    }
+  });
+}
+
+function updateRagdollSlot(handle: RagdollSlotHandle, delta: number, nowMs: number): boolean {
+  const snapshot = handle.snapshot;
+  const runtime = handle.runtime;
+  const root = handle.group;
+  if (!snapshot || !runtime || !root) return false;
+
+  if (!handle.hidden && !root.visible) {
+    root.visible = true;
+  }
+
+  if (nowMs >= snapshot.expiresAtMs && !handle.hidden) {
+    handle.hidden = true;
+    root.visible = false;
+  }
+
+  if (!handle.hidden) {
+    stepRagdoll(runtime, delta);
+  }
+
+  const opacity = getFadeOpacity(snapshot, snapshot.expiresAtMs, nowMs);
+  if (Math.abs(handle.appliedOpacity - opacity) > 0.002) {
+    handle.appliedOpacity = opacity;
+    applyRagdollOpacity(handle.materialList, opacity);
+  }
+
+  for (const boneName of RENDER_BONES) {
+    const node = handle.boneRefs[boneName];
+    const bone = runtime.bones[boneName];
+    if (!node || !bone) continue;
+
+    node.position.copy(bone.position);
+    node.quaternion.copy(bone.quaternion);
+    node.scale.setScalar(runtime.scale);
+  }
+
+  return !handle.hidden;
+}
+
+function syncRagdollSlots(
+  pool: RagdollSlotHandle[],
+  activeSnapshots: DeathVisualSnapshot[]
+): RagdollSlotHandle[] {
+  const activeIds = new Set(activeSnapshots.map((snapshot) => snapshot.id));
+
+  for (const handle of pool) {
+    if (handle.assignedSnapshotId && !activeIds.has(handle.assignedSnapshotId)) {
+      clearRagdollSlot(handle);
+    }
+  }
+
+  for (const snapshot of activeSnapshots) {
+    const heroId = snapshot.heroId ?? DEFAULT_HERO;
+    if (findRagdollSlotForSnapshot(pool, snapshot.id, heroId)) continue;
+
+    const freeSlot = findFreeRagdollSlot(pool, heroId);
+    if (freeSlot) {
+      activateRagdollSlot(freeSlot, snapshot);
+    }
+  }
+
+  return pool.filter((handle) => handle.assignedSnapshotId !== null);
 }
 
 function RagdollPartMeshes({
@@ -464,39 +658,27 @@ function RagdollTeamAccentMeshes({
   );
 }
 
-const RagdollBody = memo(function RagdollBody({
-  snapshot,
-  highQuality,
+const PooledRagdollSlot = memo(function PooledRagdollSlot({
+  handle,
   castShadows,
-}: RagdollBodyProps) {
-  const resolvedHero = snapshot.heroId ?? DEFAULT_HERO;
-  const heroStats = HERO_DEFINITIONS[resolvedHero].stats;
-  const height = heroStats.size.height;
-  const runtimeRef = useRef<RagdollRuntime | null>(null);
-  const groupRef = useRef<THREE.Group>(null);
-  const boneRefs = useRef<Partial<Record<HeroBoneName, THREE.Group | null>>>({});
-  const appliedOpacityRef = useRef(-1);
-  const hiddenRef = useRef(false);
-  const effectiveExpiresAt = snapshot.expiresAtMs;
-  const manifest = HERO_BODY_MANIFESTS[resolvedHero];
-  const riggedPartsByBone = useMemo(() => groupRiggedParts(manifest.parts), [manifest.parts]);
-  const riggedTeamAccentPartsByBone = useMemo(
-    () => groupRiggedParts(manifest.teamAccentParts ?? EMPTY_TEAM_ACCENT_PARTS),
-    [manifest.teamAccentParts]
-  );
+}: {
+  handle: RagdollSlotHandle;
+  castShadows: boolean;
+}) {
+  const resolvedHero = handle.heroId;
+  const renderResources = getRagdollRenderResources(resolvedHero);
   const materialByKind = useMemo(
-    () => createRagdollMaterials(resolvedHero),
-    [resolvedHero]
+    () => measureFrameWork('event.ragdoll.createMaterials', () => (
+      createRagdollMaterialInstances(renderResources.baseMaterialByKind)
+    )),
+    [renderResources]
   );
   const materialList = useMemo(
     () => [...materialByKind.values()],
     [materialByKind]
   );
-  const shouldCastShadow = highQuality && castShadows;
 
-  if (!runtimeRef.current) {
-    runtimeRef.current = createRagdollRuntime(snapshot, height);
-  }
+  handle.materialList = materialList;
 
   useEffect(() => {
     return () => {
@@ -504,49 +686,17 @@ const RagdollBody = memo(function RagdollBody({
     };
   }, [materialByKind]);
 
-  useFrame((_, delta) => {
-    const runtime = runtimeRef.current;
-    const root = groupRef.current;
-    if (!runtime || !root) return;
-
-    const nowMs = Date.now();
-    if (nowMs >= effectiveExpiresAt && !hiddenRef.current) {
-      hiddenRef.current = true;
-      root.visible = false;
-    }
-
-    if (!hiddenRef.current) {
-      stepRagdoll(runtime, delta);
-    }
-
-    const opacity = getFadeOpacity(snapshot, effectiveExpiresAt, nowMs);
-    if (Math.abs(appliedOpacityRef.current - opacity) > 0.002) {
-      appliedOpacityRef.current = opacity;
-      applyRagdollOpacity(materialList, opacity);
-    }
-
-    for (const boneName of RENDER_BONES) {
-      const node = boneRefs.current[boneName];
-      const bone = runtime.bones[boneName];
-      if (!node || !bone) continue;
-
-      node.position.copy(bone.position);
-      node.quaternion.copy(bone.quaternion);
-      node.scale.setScalar(runtime.scale);
-    }
-  });
-
   const renderPartsForBone = (bone: HeroBoneName) => (
     <>
       <RagdollPartMeshes
-        parts={riggedPartsByBone[bone] ?? EMPTY_RIGGED_PARTS}
+        parts={renderResources.riggedPartsByBone[bone] ?? EMPTY_RIGGED_PARTS}
         materialByKind={materialByKind}
-        castShadow={shouldCastShadow}
+        castShadow={castShadows}
       />
       <RagdollTeamAccentMeshes
-        parts={riggedTeamAccentPartsByBone[bone] ?? EMPTY_RIGGED_PARTS}
+        parts={renderResources.riggedTeamAccentPartsByBone[bone] ?? EMPTY_RIGGED_PARTS}
         materialByKind={materialByKind}
-        castShadow={shouldCastShadow}
+        castShadow={castShadows}
       />
     </>
   );
@@ -557,7 +707,7 @@ const RagdollBody = memo(function RagdollBody({
         key={`${resolvedHero}-${side}-ragdoll-knee-cap`}
         position={[0, 0.015, -0.185]}
         scale={[0.18, 0.08, 0.05]}
-        castShadow={shouldCastShadow}
+        castShadow={castShadows}
         geometry={HERO_PART_GEOMETRIES.box}
       >
         <primitive object={materialByKind.get('edge')!} attach="material" />
@@ -566,7 +716,7 @@ const RagdollBody = memo(function RagdollBody({
         key={`${resolvedHero}-${side}-ragdoll-knee-glow`}
         position={[0, 0.018, -0.222]}
         scale={[0.105, 0.028, 0.026]}
-        castShadow={shouldCastShadow}
+        castShadow={castShadows}
         geometry={HERO_PART_GEOMETRIES.box}
       >
         <primitive object={materialByKind.get('accent')!} attach="material" />
@@ -579,7 +729,7 @@ const RagdollBody = memo(function RagdollBody({
       key={`${resolvedHero}-${side}-ragdoll-upper-leg-link`}
       position={[0, -0.15, -0.018]}
       scale={[0.17, 0.3, 0.13]}
-      castShadow={shouldCastShadow}
+      castShadow={castShadows}
       geometry={HERO_PART_GEOMETRIES.box}
     >
       <primitive object={materialByKind.get('dark')!} attach="material" />
@@ -587,46 +737,51 @@ const RagdollBody = memo(function RagdollBody({
   );
 
   return (
-    <group ref={groupRef}>
-      <group ref={(node) => { boneRefs.current.hips = node; }}>
+    <group ref={(node) => {
+      handle.group = node;
+      if (node) {
+        node.visible = Boolean(handle.assignedSnapshotId) && !handle.hidden;
+      }
+    }} visible={false}>
+      <group ref={(node) => { handle.boneRefs.hips = node; }}>
         {renderPartsForBone('hips')}
       </group>
-      <group ref={(node) => { boneRefs.current.torso = node; }}>
+      <group ref={(node) => { handle.boneRefs.torso = node; }}>
         {renderPartsForBone('torso')}
       </group>
-      <group ref={(node) => { boneRefs.current.head = node; }}>
+      <group ref={(node) => { handle.boneRefs.head = node; }}>
         {renderPartsForBone('head')}
       </group>
-      <group ref={(node) => { boneRefs.current.leftLeg = node; }}>
+      <group ref={(node) => { handle.boneRefs.leftLeg = node; }}>
         {renderUpperLegLink('left')}
         {renderPartsForBone('leftLeg')}
       </group>
-      <group ref={(node) => { boneRefs.current.rightLeg = node; }}>
+      <group ref={(node) => { handle.boneRefs.rightLeg = node; }}>
         {renderUpperLegLink('right')}
         {renderPartsForBone('rightLeg')}
       </group>
-      <group ref={(node) => { boneRefs.current.leftKnee = node; }}>
+      <group ref={(node) => { handle.boneRefs.leftKnee = node; }}>
         {renderKneeJoint('left')}
       </group>
-      <group ref={(node) => { boneRefs.current.rightKnee = node; }}>
+      <group ref={(node) => { handle.boneRefs.rightKnee = node; }}>
         {renderKneeJoint('right')}
       </group>
-      <group ref={(node) => { boneRefs.current.leftShin = node; }}>
+      <group ref={(node) => { handle.boneRefs.leftShin = node; }}>
         {renderPartsForBone('leftShin')}
       </group>
-      <group ref={(node) => { boneRefs.current.rightShin = node; }}>
+      <group ref={(node) => { handle.boneRefs.rightShin = node; }}>
         {renderPartsForBone('rightShin')}
       </group>
-      <group ref={(node) => { boneRefs.current.leftArm = node; }}>
+      <group ref={(node) => { handle.boneRefs.leftArm = node; }}>
         {renderPartsForBone('leftArm')}
       </group>
-      <group ref={(node) => { boneRefs.current.rightArm = node; }}>
+      <group ref={(node) => { handle.boneRefs.rightArm = node; }}>
         {renderPartsForBone('rightArm')}
       </group>
-      <group ref={(node) => { boneRefs.current.leftForearm = node; }}>
+      <group ref={(node) => { handle.boneRefs.leftForearm = node; }}>
         {renderPartsForBone('leftForearm')}
       </group>
-      <group ref={(node) => { boneRefs.current.rightForearm = node; }}>
+      <group ref={(node) => { handle.boneRefs.rightForearm = node; }}>
         {renderPartsForBone('rightForearm')}
       </group>
     </group>
@@ -634,30 +789,66 @@ const RagdollBody = memo(function RagdollBody({
 });
 
 export function RagdollManager({ config }: RagdollManagerProps) {
-  const deathVisualRevision = useStore(visualStore, (state) => state.deathVisualRevision);
+  const poolHandles = useMemo(() => createRagdollSlotPool(config.maxTotal), [config.maxTotal]);
   const lastExpirySweepRef = useRef(0);
-  const activeSnapshots = useMemo(() => {
-    if (config.maxTotal <= 0) return [];
-    return getActiveDeathVisuals(Date.now()).slice(0, config.maxTotal);
-  }, [config.maxTotal, deathVisualRevision]);
+  const lastSyncedDeathRevisionRef = useRef(-1);
+  const activeHandlesRef = useRef<RagdollSlotHandle[]>([]);
 
-  useFrame(() => {
-    const now = Date.now();
-    if (now - lastExpirySweepRef.current < EXPIRY_SWEEP_INTERVAL_MS) return;
-    lastExpirySweepRef.current = now;
-    clearExpiredDeathVisuals(now);
+  useEffect(() => {
+    lastSyncedDeathRevisionRef.current = -1;
+    activeHandlesRef.current = [];
+    recordEffectSlotDiagnostics('ragdolls', {
+      active: 0,
+      hiddenMounted: poolHandles.length,
+      capacity: config.maxTotal,
+    });
+
+    return () => {
+      poolHandles.forEach(clearRagdollSlot);
+    };
+  }, [config.maxTotal, poolHandles]);
+
+  useFrame((_, delta) => {
+    measureFrameWork('frame.effects.ragdollManager', () => {
+      const now = Date.now();
+      if (now - lastExpirySweepRef.current >= EXPIRY_SWEEP_INTERVAL_MS) {
+        lastExpirySweepRef.current = now;
+        clearExpiredDeathVisuals(now);
+      }
+
+      const deathVisualRevision = visualStore.getState().deathVisualRevision;
+      if (deathVisualRevision !== lastSyncedDeathRevisionRef.current) {
+        lastSyncedDeathRevisionRef.current = deathVisualRevision;
+        const activeSnapshots = config.maxTotal <= 0
+          ? []
+          : getActiveDeathVisuals(now).slice(0, config.maxTotal);
+        activeHandlesRef.current = syncRagdollSlots(poolHandles, activeSnapshots);
+        recordEffectSlotDiagnostics('ragdolls', {
+          active: activeSnapshots.length,
+          hiddenMounted: Math.max(0, poolHandles.length - activeSnapshots.length),
+          capacity: config.maxTotal,
+        });
+      }
+    });
+
+    if (activeHandlesRef.current.length > 0) {
+      measureFrameWork('frame.effects.ragdollBody', () => {
+        activeHandlesRef.current = activeHandlesRef.current.filter((handle) => (
+          updateRagdollSlot(handle, delta, Date.now())
+        ));
+      });
+    }
   });
 
-  if (activeSnapshots.length === 0) return null;
+  if (poolHandles.length === 0) return null;
 
   return (
     <group>
-      {activeSnapshots.map((snapshot, index) => (
-        <RagdollBody
-          key={snapshot.id}
-          snapshot={snapshot}
-          highQuality={index < config.maxHighQuality}
-          castShadows={config.castShadows}
+      {poolHandles.map((handle) => (
+        <PooledRagdollSlot
+          key={`${handle.heroId}:${handle.poolIndex}`}
+          handle={handle}
+          castShadows={config.castShadows && handle.poolIndex < config.maxHighQuality}
         />
       ))}
     </group>

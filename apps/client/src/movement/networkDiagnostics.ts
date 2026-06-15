@@ -18,12 +18,30 @@ export interface FrameWorkAggregate {
   maxMs: number;
 }
 
+export interface LongTaskAttributionSample {
+  name: string;
+  entryType: string;
+  containerType?: string;
+  containerName?: string;
+  containerSrc?: string;
+  containerId?: string;
+}
+
+export interface LongTaskSample {
+  startedAtMs: number;
+  durationMs: number;
+  name: string;
+  attribution: LongTaskAttributionSample[];
+}
+
 export interface HitchFrameWorkSample {
   endedAtMs: number;
   frameDeltaMs: number;
   movementSubsteps: number;
   totalMeasuredMs: number;
+  totalLongTaskMs: number;
   work: FrameWorkAggregate[];
+  longTasks: LongTaskSample[];
 }
 
 export interface FrameSchedulerDiagnostics {
@@ -43,6 +61,47 @@ export interface DynamicLightDiagnostics {
   activeCandidates: number;
   enabled: number;
   budget: number;
+}
+
+export interface AudioLoadSample {
+  name: string;
+  ok: boolean;
+  startedAtMs: number;
+  totalMs: number;
+  fetchMs: number;
+  decodeMs: number;
+  bytes: number;
+  error?: string;
+}
+
+export interface AudioPlayWaitSample {
+  name: string;
+  waitedMs: number;
+  startedAtMs: number;
+}
+
+export interface AudioDiagnostics {
+  userActivated: boolean;
+  contextState: AudioContextState | 'none' | 'unknown';
+  loadedSounds: number;
+  pendingLoads: number;
+  pendingPreloads: number;
+  activeDecodes: number;
+  queuedDecodes: number;
+  preloadRequests: number;
+  preloadFlushes: number;
+  preloadFlushSounds: number;
+  preloadWaitsForActivation: number;
+  loadRequests: number;
+  cacheHits: number;
+  failedLoads: number;
+  playRequests: number;
+  playLoadWaits: number;
+  maxLoadWaitMs: number;
+  maxFetchMs: number;
+  maxDecodeMs: number;
+  recentLoads: AudioLoadSample[];
+  recentPlayWaits: AudioPlayWaitSample[];
 }
 
 export interface MovementNetworkDiagnosticsSnapshot {
@@ -79,6 +138,8 @@ export interface MovementNetworkDiagnosticsSnapshot {
   remoteTransformSnapshotsAdded: number;
   frameWorkSamples: FrameWorkSample[];
   hitchFrameWork: HitchFrameWorkSample[];
+  longTasks: LongTaskSample[];
+  audio: AudioDiagnostics;
   frameScheduler: FrameSchedulerDiagnostics;
   effectSlots: Record<string, EffectSlotDiagnostics>;
   frameAllocations: Record<string, number>;
@@ -90,6 +151,10 @@ const SAMPLE_LIMIT = 120;
 const FRAME_WORK_SAMPLE_LIMIT = 240;
 const HITCH_FRAME_WORK_SAMPLE_LIMIT = 40;
 const HITCH_FRAME_WORK_LABEL_LIMIT = 12;
+const LONG_TASK_SAMPLE_LIMIT = 80;
+const HITCH_LONG_TASK_LIMIT = 8;
+const HITCH_LONG_TASK_WINDOW_PADDING_MS = 8;
+const AUDIO_SAMPLE_LIMIT = 80;
 const MIN_FRAME_WORK_SAMPLE_MS = 0.02;
 const FRAME_HITCH_THRESHOLD_MS = 1000 / 30;
 
@@ -134,6 +199,30 @@ const diagnostics: MovementNetworkDiagnosticsSnapshot = {
   remoteTransformSnapshotsAdded: 0,
   frameWorkSamples: [],
   hitchFrameWork: [],
+  longTasks: [],
+  audio: {
+    userActivated: false,
+    contextState: 'none',
+    loadedSounds: 0,
+    pendingLoads: 0,
+    pendingPreloads: 0,
+    activeDecodes: 0,
+    queuedDecodes: 0,
+    preloadRequests: 0,
+    preloadFlushes: 0,
+    preloadFlushSounds: 0,
+    preloadWaitsForActivation: 0,
+    loadRequests: 0,
+    cacheHits: 0,
+    failedLoads: 0,
+    playRequests: 0,
+    playLoadWaits: 0,
+    maxLoadWaitMs: 0,
+    maxFetchMs: 0,
+    maxDecodeMs: 0,
+    recentLoads: [],
+    recentPlayWaits: [],
+  },
   frameScheduler: {
     activeCallbacks: 0,
     callbacksBySystem: {},
@@ -152,6 +241,7 @@ const diagnostics: MovementNetworkDiagnosticsSnapshot = {
 let lastAuthorityAckReceivedAtMs = 0;
 let lastFrameWorkMarkAtMs = 0;
 let activeFrameWorkStartedAtMs = 0;
+let longTaskObserver: PerformanceObserver | null = null;
 
 function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -178,15 +268,52 @@ function pushHitchFrameWork(sample: HitchFrameWorkSample): void {
   }
 }
 
+function pushLongTaskSample(sample: LongTaskSample): void {
+  diagnostics.longTasks.push(sample);
+  if (diagnostics.longTasks.length > LONG_TASK_SAMPLE_LIMIT) {
+    diagnostics.longTasks.splice(0, diagnostics.longTasks.length - LONG_TASK_SAMPLE_LIMIT);
+  }
+}
+
+function pushAudioLoadSample(sample: AudioLoadSample): void {
+  diagnostics.audio.recentLoads.push(sample);
+  if (diagnostics.audio.recentLoads.length > AUDIO_SAMPLE_LIMIT) {
+    diagnostics.audio.recentLoads.splice(0, diagnostics.audio.recentLoads.length - AUDIO_SAMPLE_LIMIT);
+  }
+}
+
+function pushAudioPlayWaitSample(sample: AudioPlayWaitSample): void {
+  diagnostics.audio.recentPlayWaits.push(sample);
+  if (diagnostics.audio.recentPlayWaits.length > AUDIO_SAMPLE_LIMIT) {
+    diagnostics.audio.recentPlayWaits.splice(0, diagnostics.audio.recentPlayWaits.length - AUDIO_SAMPLE_LIMIT);
+  }
+}
+
 function cloneFrameWorkSample(sample: FrameWorkSample): FrameWorkSample {
   return { ...sample };
+}
+
+function cloneLongTaskSample(sample: LongTaskSample): LongTaskSample {
+  return {
+    ...sample,
+    attribution: sample.attribution.map((entry) => ({ ...entry })),
+  };
 }
 
 function cloneHitchFrameWorkSample(sample: HitchFrameWorkSample): HitchFrameWorkSample {
   return {
     ...sample,
     work: sample.work.map((entry) => ({ ...entry })),
+    longTasks: sample.longTasks.map(cloneLongTaskSample),
   };
+}
+
+function cloneAudioLoadSample(sample: AudioLoadSample): AudioLoadSample {
+  return { ...sample };
+}
+
+function cloneAudioPlayWaitSample(sample: AudioPlayWaitSample): AudioPlayWaitSample {
+  return { ...sample };
 }
 
 function cloneEffectSlotDiagnosticsByType(): Record<string, EffectSlotDiagnostics> {
@@ -225,6 +352,45 @@ function aggregateFrameWork(startedAfterMs: number, endedAtMs: number): FrameWor
     .slice(0, HITCH_FRAME_WORK_LABEL_LIMIT);
 }
 
+function getLongTasksInWindow(startedAfterMs: number, endedAtMs: number): LongTaskSample[] {
+  if (startedAfterMs <= 0) return [];
+
+  const windowStartMs = startedAfterMs - HITCH_LONG_TASK_WINDOW_PADDING_MS;
+  const windowEndMs = endedAtMs + HITCH_LONG_TASK_WINDOW_PADDING_MS;
+  const tasks: LongTaskSample[] = [];
+  for (const sample of diagnostics.longTasks) {
+    const sampleEndMs = sample.startedAtMs + sample.durationMs;
+    if (sample.startedAtMs >= windowEndMs || sampleEndMs <= windowStartMs) continue;
+    tasks.push(cloneLongTaskSample(sample));
+  }
+
+  return tasks
+    .sort((a, b) => b.durationMs - a.durationMs)
+    .slice(0, HITCH_LONG_TASK_LIMIT);
+}
+
+function isSameLongTaskSample(a: LongTaskSample, b: LongTaskSample): boolean {
+  return a.startedAtMs === b.startedAtMs && a.durationMs === b.durationMs && a.name === b.name;
+}
+
+function backfillRecentHitchesWithLongTask(sample: LongTaskSample): void {
+  const sampleEndMs = sample.startedAtMs + sample.durationMs;
+
+  for (const hitch of diagnostics.hitchFrameWork) {
+    const windowStartMs = hitch.endedAtMs - hitch.frameDeltaMs - HITCH_LONG_TASK_WINDOW_PADDING_MS;
+    const windowEndMs = hitch.endedAtMs + HITCH_LONG_TASK_WINDOW_PADDING_MS;
+    if (sample.startedAtMs >= windowEndMs || sampleEndMs <= windowStartMs) continue;
+    if (hitch.longTasks.some((existing) => isSameLongTaskSample(existing, sample))) continue;
+
+    hitch.longTasks.push(cloneLongTaskSample(sample));
+    hitch.longTasks.sort((a, b) => b.durationMs - a.durationMs);
+    if (hitch.longTasks.length > HITCH_LONG_TASK_LIMIT) {
+      hitch.longTasks.length = HITCH_LONG_TASK_LIMIT;
+    }
+    hitch.totalLongTaskMs = hitch.longTasks.reduce((total, entry) => total + entry.durationMs, 0);
+  }
+}
+
 function cloneDiagnostics(): MovementNetworkDiagnosticsSnapshot {
   return {
     ...diagnostics,
@@ -247,6 +413,12 @@ function cloneDiagnostics(): MovementNetworkDiagnosticsSnapshot {
     localReactiveUpdates: { ...diagnostics.localReactiveUpdates },
     frameWorkSamples: diagnostics.frameWorkSamples.map(cloneFrameWorkSample),
     hitchFrameWork: diagnostics.hitchFrameWork.map(cloneHitchFrameWorkSample),
+    longTasks: diagnostics.longTasks.map(cloneLongTaskSample),
+    audio: {
+      ...diagnostics.audio,
+      recentLoads: diagnostics.audio.recentLoads.map(cloneAudioLoadSample),
+      recentPlayWaits: diagnostics.audio.recentPlayWaits.map(cloneAudioPlayWaitSample),
+    },
     frameScheduler: {
       activeCallbacks: diagnostics.frameScheduler.activeCallbacks,
       callbacksBySystem: { ...diagnostics.frameScheduler.callbacksBySystem },
@@ -295,6 +467,28 @@ export function resetMovementNetworkDiagnostics(): void {
   diagnostics.remoteTransformSnapshotsAdded = 0;
   diagnostics.frameWorkSamples.length = 0;
   diagnostics.hitchFrameWork.length = 0;
+  diagnostics.longTasks.length = 0;
+  diagnostics.audio.userActivated = false;
+  diagnostics.audio.contextState = 'none';
+  diagnostics.audio.loadedSounds = 0;
+  diagnostics.audio.pendingLoads = 0;
+  diagnostics.audio.pendingPreloads = 0;
+  diagnostics.audio.activeDecodes = 0;
+  diagnostics.audio.queuedDecodes = 0;
+  diagnostics.audio.preloadRequests = 0;
+  diagnostics.audio.preloadFlushes = 0;
+  diagnostics.audio.preloadFlushSounds = 0;
+  diagnostics.audio.preloadWaitsForActivation = 0;
+  diagnostics.audio.loadRequests = 0;
+  diagnostics.audio.cacheHits = 0;
+  diagnostics.audio.failedLoads = 0;
+  diagnostics.audio.playRequests = 0;
+  diagnostics.audio.playLoadWaits = 0;
+  diagnostics.audio.maxLoadWaitMs = 0;
+  diagnostics.audio.maxFetchMs = 0;
+  diagnostics.audio.maxDecodeMs = 0;
+  diagnostics.audio.recentLoads.length = 0;
+  diagnostics.audio.recentPlayWaits.length = 0;
   diagnostics.frameScheduler.activeCallbacks = 0;
   diagnostics.frameScheduler.callbacksBySystem = {};
   diagnostics.effectSlots = {};
@@ -345,12 +539,15 @@ export function recordMovementFrameTiming(input: {
   if (frameDeltaMs >= FRAME_HITCH_THRESHOLD_MS) {
     diagnostics.movementHitchFrames++;
     const work = aggregateFrameWork(intervalStartedAtMs, recordedAtMs);
+    const longTasks = getLongTasksInWindow(intervalStartedAtMs, recordedAtMs);
     pushHitchFrameWork({
       endedAtMs: recordedAtMs,
       frameDeltaMs,
       movementSubsteps: input.substepsThisFrame,
       totalMeasuredMs: work.reduce((total, entry) => total + entry.totalMs, 0),
+      totalLongTaskMs: longTasks.reduce((total, entry) => total + entry.durationMs, 0),
       work,
+      longTasks,
     });
   }
   if (input.catchup) {
@@ -446,6 +643,79 @@ export function recordDynamicLightDiagnostics(stats: DynamicLightDiagnostics): v
   diagnostics.dynamicLights.budget = Math.max(0, stats.budget);
 }
 
+export function recordAudioRuntimeState(stats: {
+  userActivated: boolean;
+  contextState: AudioDiagnostics['contextState'];
+  loadedSounds: number;
+  pendingLoads: number;
+  pendingPreloads: number;
+  activeDecodes: number;
+  queuedDecodes: number;
+}): void {
+  if (!IS_DEV_BUILD) return;
+
+  diagnostics.audio.userActivated = stats.userActivated;
+  diagnostics.audio.contextState = stats.contextState;
+  diagnostics.audio.loadedSounds = Math.max(0, stats.loadedSounds);
+  diagnostics.audio.pendingLoads = Math.max(0, stats.pendingLoads);
+  diagnostics.audio.pendingPreloads = Math.max(0, stats.pendingPreloads);
+  diagnostics.audio.activeDecodes = Math.max(0, stats.activeDecodes);
+  diagnostics.audio.queuedDecodes = Math.max(0, stats.queuedDecodes);
+}
+
+export function recordAudioPreloadRequest(input: {
+  soundCount: number;
+  queuedForActivation: boolean;
+}): void {
+  if (!IS_DEV_BUILD) return;
+
+  diagnostics.audio.preloadRequests++;
+  if (input.queuedForActivation && input.soundCount > 0) {
+    diagnostics.audio.preloadWaitsForActivation++;
+  }
+}
+
+export function recordAudioPreloadFlush(input: {
+  soundCount: number;
+  durationMs: number;
+}): void {
+  if (!IS_DEV_BUILD) return;
+
+  diagnostics.audio.preloadFlushes++;
+  diagnostics.audio.preloadFlushSounds += Math.max(0, input.soundCount);
+  diagnostics.audio.maxLoadWaitMs = Math.max(diagnostics.audio.maxLoadWaitMs, Math.max(0, input.durationMs));
+}
+
+export function recordAudioLoadRequest(cacheHit: boolean): void {
+  if (!IS_DEV_BUILD) return;
+
+  diagnostics.audio.loadRequests++;
+  if (cacheHit) diagnostics.audio.cacheHits++;
+}
+
+export function recordAudioLoadSample(sample: AudioLoadSample): void {
+  if (!IS_DEV_BUILD) return;
+
+  if (!sample.ok) diagnostics.audio.failedLoads++;
+  diagnostics.audio.maxFetchMs = Math.max(diagnostics.audio.maxFetchMs, Math.max(0, sample.fetchMs));
+  diagnostics.audio.maxDecodeMs = Math.max(diagnostics.audio.maxDecodeMs, Math.max(0, sample.decodeMs));
+  pushAudioLoadSample(sample);
+}
+
+export function recordAudioPlayRequest(): void {
+  if (!IS_DEV_BUILD) return;
+
+  diagnostics.audio.playRequests++;
+}
+
+export function recordAudioPlayLoadWait(sample: AudioPlayWaitSample): void {
+  if (!IS_DEV_BUILD) return;
+
+  diagnostics.audio.playLoadWaits++;
+  diagnostics.audio.maxLoadWaitMs = Math.max(diagnostics.audio.maxLoadWaitMs, Math.max(0, sample.waitedMs));
+  pushAudioPlayWaitSample(sample);
+}
+
 export function recordFrameWorkDuration(label: string, startedAtMs: number, endedAtMs = nowMs()): void {
   if (!IS_DEV_BUILD) return;
 
@@ -482,7 +752,57 @@ export function finishFrameWorkTiming(label: string): void {
   activeFrameWorkStartedAtMs = 0;
 }
 
+function recordLongTaskEntry(entry: PerformanceEntry): void {
+  const longTask = entry as PerformanceEntry & {
+    attribution?: Array<{
+      name?: string;
+      entryType?: string;
+      containerType?: string;
+      containerName?: string;
+      containerSrc?: string;
+      containerId?: string;
+    }>;
+  };
+
+  const sample: LongTaskSample = {
+    startedAtMs: entry.startTime,
+    durationMs: entry.duration,
+    name: entry.name,
+    attribution: (longTask.attribution ?? []).slice(0, 4).map((attribution) => ({
+      name: attribution.name ?? '',
+      entryType: attribution.entryType ?? '',
+      containerType: attribution.containerType,
+      containerName: attribution.containerName,
+      containerSrc: attribution.containerSrc,
+      containerId: attribution.containerId,
+    })),
+  };
+
+  pushLongTaskSample(sample);
+  backfillRecentHitchesWithLongTask(sample);
+}
+
+function installLongTaskObserver(): void {
+  if (!IS_DEV_BUILD || longTaskObserver || typeof PerformanceObserver === 'undefined') return;
+
+  const supportedEntryTypes = PerformanceObserver.supportedEntryTypes ?? [];
+  if (!supportedEntryTypes.includes('longtask')) return;
+
+  try {
+    longTaskObserver = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        recordLongTaskEntry(entry);
+      }
+    });
+    longTaskObserver.observe({ entryTypes: ['longtask'] });
+  } catch {
+    longTaskObserver = null;
+  }
+}
+
 if (IS_DEV_BUILD && typeof window !== 'undefined') {
+  installLongTaskObserver();
+
   (window as unknown as {
     __voxelMovementDiagnostics?: {
       snapshot: typeof getMovementNetworkDiagnosticsSnapshot;

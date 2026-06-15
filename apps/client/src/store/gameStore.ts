@@ -107,6 +107,7 @@ interface CoreState {
   isLobbyHost: boolean;
   lobbyObserversEnabled: boolean;
   maxLobbyObservers: number;
+  lobbyError: string | null;
   mapVoteOptions: MapVoteOption[];
   mapVotes: Map<string, string>;
   mapVotePhaseEndTime: number | null;
@@ -185,6 +186,7 @@ interface CoreActions {
   removeLobbyPlayer: (playerId: string) => void;
   setIsLobbyHost: (isHost: boolean) => void;
   setLobbyObserverSettings: (enabled: boolean, maxObservers: number) => void;
+  setLobbyError: (message: string | null) => void;
   setObserverMode: (enabled: boolean) => void;
   setMapVoteState: (options: MapVoteOption[], votes: MapVoteRecord[], phaseEndTime: number | null, selectedOptionId?: string | null) => void;
   setMapVotes: (votes: MapVoteRecord[], selectedOptionId?: string | null) => void;
@@ -239,6 +241,7 @@ const coreInitialState: CoreState = {
   isLobbyHost: false,
   lobbyObserversEnabled: false,
   maxLobbyObservers: 0,
+  lobbyError: null,
   mapVoteOptions: [],
   mapVotes: new Map(),
   mapVotePhaseEndTime: null,
@@ -568,6 +571,8 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       : { lobbyObserversEnabled: enabled, maxLobbyObservers: normalizedMax };
   }),
 
+  setLobbyError: (message) => set((state) => state.lobbyError === message ? state : { lobbyError: message }),
+
   setObserverMode: (enabled) => set((state) => (
     state.isObserverMode === enabled ? state : { isObserverMode: enabled }
   )),
@@ -641,6 +646,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     isLobbyHost: false,
     lobbyObserversEnabled: false,
     maxLobbyObservers: 0,
+    lobbyError: null,
     mapVoteOptions: [],
     mapVotes: new Map(),
     mapVotePhaseEndTime: null,

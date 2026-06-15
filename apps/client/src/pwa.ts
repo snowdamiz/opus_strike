@@ -24,10 +24,17 @@ export function registerServiceWorker(): void {
     return;
   }
 
+  if (import.meta.env.DEV) {
+    navigator.serviceWorker.getRegistrations()
+      .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+      .catch(() => undefined);
+    return;
+  }
+
   const register = () => {
     navigator.serviceWorker.register('/sw.js', {
       scope: '/',
-      updateViaCache: import.meta.env.DEV ? 'none' : 'imports',
+      updateViaCache: 'imports',
     }).catch(() => undefined);
   };
 

@@ -44,6 +44,19 @@ function assignForwardedRef(ref: ForwardedRef<THREE.PointLight>, value: THREE.Po
   }
 }
 
+function hasVisibleParentChain(light: THREE.PointLight): boolean {
+  let parent = light.parent;
+  while (parent) {
+    if (!parent.visible) return false;
+    parent = parent.parent;
+  }
+  return true;
+}
+
+function isActiveLightCandidate(light: THREE.PointLight | null): light is THREE.PointLight {
+  return Boolean(light?.parent && light.intensity > 0 && hasVisibleParentChain(light));
+}
+
 export const BudgetedPointLight = forwardRef<THREE.PointLight, BudgetedPointLightProps>(
   function BudgetedPointLight(
     {
@@ -172,7 +185,7 @@ function updateDynamicLightBudget(
     let activeCandidates = 0;
     for (const record of budgetedLights) {
       const light = record.lightRef.current;
-      if (light?.parent && light.intensity > 0) activeCandidates++;
+      if (isActiveLightCandidate(light)) activeCandidates++;
       if (light) setLightVisible(light, false);
     }
     recordDynamicLightBudgetDiagnostics(budgetedLights.size, activeCandidates, 0, lightLimit);
@@ -184,7 +197,7 @@ function updateDynamicLightBudget(
     let enabled = 0;
     for (const record of budgetedLights) {
       const light = record.lightRef.current;
-      const active = Boolean(light?.parent && light.intensity > 0);
+      const active = isActiveLightCandidate(light);
       if (active) activeCandidates++;
       if (light) {
         setLightVisible(light, active);
@@ -199,7 +212,7 @@ function updateDynamicLightBudget(
   let activeCandidates = 0;
   for (const record of budgetedLights) {
     const light = record.lightRef.current;
-    if (!light || !light.parent || light.intensity <= 0) {
+    if (!isActiveLightCandidate(light)) {
       continue;
     }
 

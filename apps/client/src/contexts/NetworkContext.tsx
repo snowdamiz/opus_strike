@@ -417,6 +417,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     removeLobbyPlayer,
     setIsLobbyHost,
     setLobbyObserverSettings,
+    setLobbyError,
     setObserverMode,
     setMatchmakingStatus,
     setMatchSummary,
@@ -926,6 +927,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
     room.onMessage('error', (data: { message: string }) => {
       loggers.network.error('lobby error', data.message);
+      setLobbyError(data.message || 'Lobby action failed');
     });
 
     room.onError((code, message) => {
@@ -937,7 +939,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       disconnectVoice('left_lobby');
       resetLobby();
     });
-  }, [setCurrentLobby, setCurrentLobbyWager, setIsLobbyHost, setLobbyObserverSettings, setMatchmakingStatus, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, setAppPhase, setMapVoteState, setMapVotes, setMapSeed, setMapThemeId, clearMapVote, resetLobby]);
+  }, [setCurrentLobby, setCurrentLobbyWager, setIsLobbyHost, setLobbyObserverSettings, setLobbyError, setMatchmakingStatus, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, setAppPhase, setMapVoteState, setMapVotes, setMapSeed, setMapThemeId, clearMapVote, resetLobby]);
 
   const createLobby = useCallback(async (
     playerName: string,
@@ -1161,24 +1163,29 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addLobbyBot = useCallback((options?: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }) => {
+    setLobbyError(null);
     lobbyRoomRef.current?.send('addBot', options || {});
-  }, []);
+  }, [setLobbyError]);
 
   const removeLobbyBot = useCallback((botId: string) => {
+    setLobbyError(null);
     lobbyRoomRef.current?.send('removeBot', { botId });
-  }, []);
+  }, [setLobbyError]);
 
   const updateLobbyBotTeam = useCallback((botId: string, team: string) => {
+    setLobbyError(null);
     lobbyRoomRef.current?.send('updateBotTeam', { botId, team });
-  }, []);
+  }, [setLobbyError]);
 
   const updateLobbyBotDifficulty = useCallback((botId: string, difficulty: BotDifficulty) => {
+    setLobbyError(null);
     lobbyRoomRef.current?.send('updateBotDifficulty', { botId, difficulty });
-  }, []);
+  }, [setLobbyError]);
 
   const updateLobbyBotHero = useCallback((botId: string, heroId: HeroId | '') => {
+    setLobbyError(null);
     lobbyRoomRef.current?.send('updateBotHero', { botId, heroId });
-  }, []);
+  }, [setLobbyError]);
 
   const startGame = useCallback(() => {
     lobbyRoomRef.current?.send('startGame');

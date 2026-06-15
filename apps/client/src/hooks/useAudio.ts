@@ -1,5 +1,14 @@
 import { useRef, useCallback, useEffect } from 'react';
 import { loadSettings, type ClientSettings } from '../store/settingsStore';
+import {
+  recordAudioLoadRequest,
+  recordAudioLoadSample,
+  recordAudioPlayLoadWait,
+  recordAudioPlayRequest,
+  recordAudioPreloadFlush,
+  recordAudioPreloadRequest,
+  recordAudioRuntimeState,
+} from '../movement/networkDiagnostics';
 
 interface AudioConfig {
   masterVolume: number;  // 0-100
@@ -111,6 +120,7 @@ function markAudioUserActivation(): void {
   if (sharedAudioContext?.state === 'suspended') {
     void sharedAudioContext.resume().catch(() => undefined);
   }
+  updateAudioDiagnosticsState();
   void flushPendingAudioPreloads();
 }
 
@@ -151,16 +161,16 @@ function getMusicVolume(): number {
 // Sound effect definitions
 const SOUND_EFFECTS = {
   // Movement
-  footstep: { path: '/sounds/footstep.mp3', volume: 0.3 },
+  footstep: { path: '/sounds/walk.mp3', volume: 0.3 },
   walk: { path: '/sounds/walk.mp3', volume: 1.04 },
-  jump: { path: '/sounds/jump.mp3', volume: 0.5 },
-  land: { path: '/sounds/land.mp3', volume: 0.4 },
+  jump: { path: '/sounds/rocket_jump.mp3', volume: 0.34 },
+  land: { path: '/sounds/slide.mp3', volume: 0.4 },
   slide: { path: '/sounds/slide.mp3', volume: 0.32 },
-  wallRun: { path: '/sounds/wall_run.mp3', volume: 0.4 },
+  wallRun: { path: '/sounds/walk.mp3', volume: 0.4 },
   
   // Abilities - Generic
   blink: { path: '/sounds/blink.mp3', volume: 0.6 },
-  grapple: { path: '/sounds/grapple.mp3', volume: 0.5 },
+  grapple: { path: '/sounds/hookshot_shot.mp3', volume: 0.5 },
   jetpack: { path: '/sounds/jetpack.mp3', volume: 0.4 },
   
   // Phantom Abilities (using shortened clips)
@@ -203,26 +213,26 @@ const SOUND_EFFECTS = {
   chronosSuperchargedImpact: { path: '/sounds/magic_impact.mp3', volume: 0.72 },
   
   // Combat
-  hit: { path: '/sounds/hit.mp3', volume: 0.6 },
-  damage: { path: '/sounds/damage.mp3', volume: 0.5 },
-  death: { path: '/sounds/death.mp3', volume: 0.6 },
-  kill: { path: '/sounds/kill.mp3', volume: 0.7 },
+  hit: { path: '/sounds/laser_hit.mp3', volume: 0.6 },
+  damage: { path: '/sounds/laser_hit.mp3', volume: 0.5 },
+  death: { path: '/sounds/scream.mp3', volume: 0.6 },
+  kill: { path: '/sounds/magic_impact.mp3', volume: 0.7 },
   
   // CTF
-  flagPickup: { path: '/sounds/flag_pickup.mp3', volume: 0.8 },
-  flagDrop: { path: '/sounds/flag_drop.mp3', volume: 0.6 },
-  flagCapture: { path: '/sounds/flag_capture.mp3', volume: 1.0 },
-  flagReturn: { path: '/sounds/flag_return.mp3', volume: 0.7 },
+  flagPickup: { path: '/sounds/button_press.mp3', volume: 0.8 },
+  flagDrop: { path: '/sounds/button.mp3', volume: 0.6 },
+  flagCapture: { path: '/sounds/magic_impact.mp3', volume: 1.0 },
+  flagReturn: { path: '/sounds/button_press.mp3', volume: 0.7 },
   
   // UI
   buttonHover: { path: '/sounds/button.mp3', volume: 0.4 },
   buttonClick: { path: '/sounds/button.mp3', volume: 0.1, playbackDurationRatio: 0.15 },
   countdownTick: { path: '/sounds/tick.mp3', volume: 0.65 },
-  countdown: { path: '/sounds/countdown.mp3', volume: 0.6 },
-  matchStart: { path: '/sounds/match_start.mp3', volume: 0.8 },
-  roundEnd: { path: '/sounds/round_end.mp3', volume: 0.8 },
-  victory: { path: '/sounds/victory.mp3', volume: 0.9 },
-  defeat: { path: '/sounds/defeat.mp3', volume: 0.7 },
+  countdown: { path: '/sounds/tick.mp3', volume: 0.6 },
+  matchStart: { path: '/sounds/button_press.mp3', volume: 0.8 },
+  roundEnd: { path: '/sounds/button_press.mp3', volume: 0.8 },
+  victory: { path: '/sounds/magic_impact.mp3', volume: 0.9 },
+  defeat: { path: '/sounds/scream.mp3', volume: 0.7 },
   
   // Music (equal base volume, controlled by settings)
   lobbyMusic: { path: '/sounds/lobby.mp3', volume: 0.3 },
@@ -244,7 +254,31 @@ export const BLAZE_AIRSTRIKE_SOUND_FADE_OUT_MS = 360;
 const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   menu: ['buttonHover', 'buttonClick'],
   lobby: ['buttonHover', 'buttonClick'],
-  commonCombat: ['walk', 'slide', 'jetpack', 'countdownTick'],
+  commonCombat: [
+    'footstep',
+    'walk',
+    'jump',
+    'land',
+    'slide',
+    'wallRun',
+    'blink',
+    'grapple',
+    'jetpack',
+    'hit',
+    'damage',
+    'death',
+    'kill',
+    'flagPickup',
+    'flagDrop',
+    'flagCapture',
+    'flagReturn',
+    'countdownTick',
+    'countdown',
+    'matchStart',
+    'roundEnd',
+    'victory',
+    'defeat',
+  ],
   phantom: ['phantomBlink', 'phantomVeil', 'phantomBasic', 'phantomReload', 'phantomShield', 'phantomShieldCast', 'phantomVoidRay', 'phantomVoidRayCharge'],
   blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombRelease', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrikeFire', 'blazeAirstrikeGears'],
   hookshot: ['hookshotShot', 'hookshotPrimary', 'hookshotSecondary', 'hookshotGrapple', 'hookshotAnchorWall', 'hookshotGroundHooks', 'hookshotRetract'],
@@ -278,13 +312,31 @@ const sharedStreamedLoops = new Map<string, {
   stopTimeout?: number;
 }>();
 
+function nowMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
+function updateAudioDiagnosticsState(): void {
+  recordAudioRuntimeState({
+    userActivated: hasUserActivatedAudio(),
+    contextState: sharedAudioContext?.state ?? 'none',
+    loadedSounds: Array.from(sharedSounds.values()).filter((sound) => Boolean(sound.buffer)).length,
+    pendingLoads: sharedSoundLoads.size,
+    pendingPreloads: pendingAudioPreloadNames.size,
+    activeDecodes: activeAudioDecodes,
+    queuedDecodes: queuedAudioDecodeJobs.length,
+  });
+}
+
 function pumpAudioDecodeQueue(): void {
   while (activeAudioDecodes < MAX_CONCURRENT_AUDIO_DECODES) {
     const next = queuedAudioDecodeJobs.shift();
     if (!next) return;
     activeAudioDecodes++;
+    updateAudioDiagnosticsState();
     next();
   }
+  updateAudioDiagnosticsState();
 }
 
 function decodeAudioDataLimited(ctx: AudioContext, arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {
@@ -294,9 +346,11 @@ function decodeAudioDataLimited(ctx: AudioContext, arrayBuffer: ArrayBuffer): Pr
         .then(resolve, reject)
         .finally(() => {
           activeAudioDecodes = Math.max(0, activeAudioDecodes - 1);
+          updateAudioDiagnosticsState();
           pumpAudioDecodeQueue();
         });
     });
+    updateAudioDiagnosticsState();
     pumpAudioDecodeQueue();
   });
 }
@@ -344,7 +398,10 @@ function ensureSharedAudioContext(): AudioContext | null {
   installAudioUnlockListeners();
 
   if (!sharedAudioContext) {
-    if (!hasUserActivatedAudio()) return null;
+    if (!hasUserActivatedAudio()) {
+      updateAudioDiagnosticsState();
+      return null;
+    }
 
     const AudioContextConstructor = getAudioContextConstructor();
     if (!AudioContextConstructor) return null;
@@ -356,6 +413,7 @@ function ensureSharedAudioContext(): AudioContext | null {
     void sharedAudioContext.resume().catch(() => undefined);
   }
 
+  updateAudioDiagnosticsState();
   return sharedAudioContext;
 }
 
@@ -646,22 +704,49 @@ async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
   }
 
   const existing = sharedSounds.get(name);
-  if (existing?.buffer) return existing;
+  if (existing?.buffer) {
+    recordAudioLoadRequest(true);
+    updateAudioDiagnosticsState();
+    return existing;
+  }
 
   const pending = sharedSoundLoads.get(name);
-  if (pending) return pending;
+  if (pending) {
+    recordAudioLoadRequest(false);
+    updateAudioDiagnosticsState();
+    return pending;
+  }
 
   const soundDef: SoundDefinition = SOUND_EFFECTS[name];
+  const startedAtMs = nowMs();
   const loadPromise = (async () => {
+    let fetchMs = 0;
+    let decodeMs = 0;
+    let bytes = 0;
     try {
+      const fetchStartedAtMs = nowMs();
       const response = await fetch(soundDef.path);
+      fetchMs = nowMs() - fetchStartedAtMs;
       if (!response.ok) {
         console.warn(`[Audio] Sound file not found: ${soundDef.path}`);
+        recordAudioLoadSample({
+          name,
+          ok: false,
+          startedAtMs,
+          totalMs: nowMs() - startedAtMs,
+          fetchMs,
+          decodeMs: 0,
+          bytes: 0,
+          error: `http-${response.status}`,
+        });
         return null;
       }
 
       const arrayBuffer = await response.arrayBuffer();
+      bytes = arrayBuffer.byteLength;
+      const decodeStartedAtMs = nowMs();
       const buffer = await decodeAudioDataLimited(ctx, arrayBuffer);
+      decodeMs = nowMs() - decodeStartedAtMs;
       const effect: SoundEffect = {
         buffer,
         volume: soundDef.volume,
@@ -669,32 +754,66 @@ async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
       };
 
       sharedSounds.set(name, effect);
+      recordAudioLoadSample({
+        name,
+        ok: true,
+        startedAtMs,
+        totalMs: nowMs() - startedAtMs,
+        fetchMs,
+        decodeMs,
+        bytes,
+      });
       return effect;
     } catch (error) {
       console.warn(`[Audio] Failed to load sound: ${name}`, error);
+      recordAudioLoadSample({
+        name,
+        ok: false,
+        startedAtMs,
+        totalMs: nowMs() - startedAtMs,
+        fetchMs,
+        decodeMs,
+        bytes,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
     } finally {
       sharedSoundLoads.delete(name);
+      updateAudioDiagnosticsState();
     }
   })();
 
+  recordAudioLoadRequest(false);
   sharedSoundLoads.set(name, loadPromise);
+  updateAudioDiagnosticsState();
   return loadPromise;
 }
 
 async function flushPendingAudioPreloads(): Promise<void> {
-  if (!hasUserActivatedAudio()) return;
+  if (!hasUserActivatedAudio()) {
+    updateAudioDiagnosticsState();
+    return;
+  }
   if (pendingAudioPreloadFlush) return pendingAudioPreloadFlush;
 
   pendingAudioPreloadFlush = (async () => {
+    const flushStartedAtMs = nowMs();
+    let flushedSoundCount = 0;
     try {
       while (pendingAudioPreloadNames.size > 0) {
         const names = Array.from(pendingAudioPreloadNames);
         pendingAudioPreloadNames.clear();
+        flushedSoundCount += names.length;
+        updateAudioDiagnosticsState();
         await Promise.all(names.map((name) => loadSharedSound(name)));
       }
     } finally {
+      recordAudioPreloadFlush({
+        soundCount: flushedSoundCount,
+        durationMs: nowMs() - flushStartedAtMs,
+      });
       pendingAudioPreloadFlush = null;
+      updateAudioDiagnosticsState();
     }
   })();
 
@@ -803,18 +922,36 @@ function startSharedSoundBuffer(
   return { stop };
 }
 
+async function loadSoundForPlayback(name: SoundName): Promise<SoundEffect | null> {
+  const hadLoadedBuffer = Boolean(sharedSounds.get(name)?.buffer);
+  const startedAtMs = nowMs();
+  const sound = await loadSharedSound(name);
+  const waitedMs = nowMs() - startedAtMs;
+
+  if (!hadLoadedBuffer && waitedMs >= 1) {
+    recordAudioPlayLoadWait({
+      name,
+      waitedMs,
+      startedAtMs,
+    });
+  }
+
+  return sound;
+}
+
 export async function playSharedSound(
   name: SoundName,
   options?: PlaySoundOptions
 ): Promise<SoundPlayback | undefined> {
   if (sharedConfig.muted) return;
   if (options?.signal?.aborted) return;
+  recordAudioPlayRequest();
 
   const ctx = await ensureRunningAudioContext();
   if (!ctx) return;
   if (options?.signal?.aborted) return;
 
-  const sound = await loadSharedSound(name);
+  const sound = await loadSoundForPlayback(name);
   if (options?.signal?.aborted) return;
 
   if (!hasLoadedSoundBuffer(sound)) {
@@ -830,6 +967,7 @@ export async function playSharedBlazeAirstrikeSound(
 ): Promise<SoundPlayback | undefined> {
   if (sharedConfig.muted) return;
   if (options?.signal?.aborted) return;
+  recordAudioPlayRequest();
 
   const ctx = await ensureRunningAudioContext();
   if (!ctx) return;
@@ -843,7 +981,7 @@ export async function playSharedBlazeAirstrikeSound(
   };
   const layers = await Promise.all(BLAZE_AIRSTRIKE_SOUND_LAYERS.map(async (name) => ({
     name,
-    sound: await loadSharedSound(name),
+    sound: await loadSoundForPlayback(name),
   })));
   if (options?.signal?.aborted) return;
 
@@ -880,6 +1018,7 @@ export async function playSharedLoop(
 ): Promise<void> {
   if (sharedConfig.muted) return;
   if (sharedLoops.has(id) || sharedStreamedLoops.has(id) || sharedPendingLoops.has(id)) return;
+  recordAudioPlayRequest();
 
   const pendingLoop = { cancelled: false };
   sharedPendingLoops.set(id, pendingLoop);
@@ -899,7 +1038,7 @@ export async function playSharedLoop(
   }
   if (pendingLoop.cancelled || sharedPendingLoops.get(id) !== pendingLoop) return;
 
-  const sound = await loadSharedSound(name);
+  const sound = await loadSoundForPlayback(name);
   if (pendingLoop.cancelled || sharedPendingLoops.get(id) !== pendingLoop) return;
   if (!sound?.buffer) {
     sharedPendingLoops.delete(id);
@@ -1004,6 +1143,7 @@ export function stopSharedLoop(id: string, fadeOutMs = 0): void {
 export function useAudio() {
   useEffect(() => {
     installAudioUnlockListeners();
+    updateAudioDiagnosticsState();
   }, []);
 
   // Initialize audio context on first interaction
@@ -1081,14 +1221,29 @@ export function useAudio() {
 
   // Preload multiple sounds (for abilities that need instant playback)
   const preloadSounds = useCallback(async (names: SoundName[]) => {
-    const preloadNames = names.filter(name => !MUSIC_SOUND_NAMES.has(name));
-    if (!hasUserActivatedAudio()) {
-      preloadNames.forEach((name) => pendingAudioPreloadNames.add(name));
+    const preloadNames = Array.from(new Set(names.filter(name => !MUSIC_SOUND_NAMES.has(name))));
+    if (preloadNames.length === 0) {
+      updateAudioDiagnosticsState();
       return;
     }
 
+    if (!hasUserActivatedAudio()) {
+      preloadNames.forEach((name) => pendingAudioPreloadNames.add(name));
+      recordAudioPreloadRequest({
+        soundCount: preloadNames.length,
+        queuedForActivation: true,
+      });
+      updateAudioDiagnosticsState();
+      return;
+    }
+
+    recordAudioPreloadRequest({
+      soundCount: preloadNames.length,
+      queuedForActivation: false,
+    });
     await Promise.all(preloadNames.map(name => loadSound(name)));
     await flushPendingAudioPreloads();
+    updateAudioDiagnosticsState();
   }, [loadSound]);
 
   const preloadSoundGroup = useCallback(async (group: SoundGroup) => {

@@ -1,13 +1,13 @@
-import { useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
-import { doesSegmentHitPlayerCombatHitbox } from '@voxel-strike/shared';
 import { useGameStore, VoidRayData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
+import { measureFrameWork } from '../../../movement/networkDiagnostics';
 
 interface VoidRayProps {
   id: string;
@@ -33,10 +33,10 @@ const RAY_SPIN_UP_TIME = 0.24;
 const RAY_SUSTAIN_TIME = 0.44;
 const RAY_SPIN_DOWN_TIME = 0.32;
 const RAY_LIFETIME = RAY_SPIN_UP_TIME + RAY_SUSTAIN_TIME + RAY_SPIN_DOWN_TIME;
-const RAY_DAMAGE = 80;
 const SPIRAL_COUNT = 5;
 const PARTICLE_COUNT = 120;
 const SPARK_COUNT = 32;
+const VOID_RAY_COLLISION_SAMPLE_INTERVAL_MS = 34;
 const LOCAL_ORIGIN_HALO_INNER_RADIUS = RAY_RADIUS * 5.5;
 const LOCAL_ORIGIN_HALO_OUTER_RADIUS = RAY_RADIUS * 7.5;
 const LOCAL_ORIGIN_HALO_SECONDARY_INNER_RADIUS = RAY_RADIUS * 8.5;
@@ -517,10 +517,9 @@ export const VoidRay = React.memo(({
   const localOriginHaloSecondaryRef = useRef<THREE.Mesh>(null);
   const remoteOriginCoreRef = useRef<THREE.Mesh>(null);
   const remoteOriginGlowRef = useRef<THREE.Mesh>(null);
-  const hitPlayersRef = useRef<Set<string>>(new Set());
-  const currentLengthRef = useRef(0);
-  const hasLoggedRef = useRef(false);
   const hasRequestedRemovalRef = useRef(false);
+  const lastCollisionSampleRef = useRef(-VOID_RAY_COLLISION_SAMPLE_INTERVAL_MS);
+  const cachedVisualCollisionDistanceRef = useRef<number | null>(null);
   const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - startTime));
   
   const isLocalOwner = useGameStore(state => state.localPlayer?.id === ownerId);
@@ -537,10 +536,6 @@ export const VoidRay = React.memo(({
   
   const coreMaterial = useMemo(() => getCoreMaterial().clone(), []);
   const glowMaterial = useMemo(() => getGlowMaterial().clone(), []);
-  const normalizedDirection = useMemo(
-    () => new THREE.Vector3(direction.x, direction.y, direction.z).normalize(),
-    [direction.x, direction.y, direction.z]
-  );
   
   const spiralGeometries = useMemo(() => getSharedSpiralGeometries(), []);
   
@@ -612,6 +607,24 @@ export const VoidRay = React.memo(({
     depthWrite: false,
     sizeAttenuation: true,
   }), []);
+
+  useEffect(() => () => {
+    spiralMaterials.forEach((material) => material.dispose());
+    coreMaterial.dispose();
+    glowMaterial.dispose();
+    particleGeometry.dispose();
+    sparkGeometry.dispose();
+    particleMaterial.dispose();
+    sparkMaterial.dispose();
+  }, [
+    coreMaterial,
+    glowMaterial,
+    particleGeometry,
+    particleMaterial,
+    sparkGeometry,
+    sparkMaterial,
+    spiralMaterials,
+  ]);
   
   // Beam rotation
   const rotation = useMemo(() => {
@@ -622,10 +635,11 @@ export const VoidRay = React.memo(({
   }, [direction.x, direction.y, direction.z]);
   
   
-  useFrame((state, delta) => {
+  useFrame((state, delta) => measureFrameWork('frame.effects.voidRay', () => {
     if (!groupRef.current) return;
     
-    const elapsed = (getFrameClock().nowMs - startFrameTimeRef.current) / 1000;
+    const frameNow = getFrameClock().nowMs;
+    const elapsed = (frameNow - startFrameTimeRef.current) / 1000;
     
     if (elapsed >= RAY_LIFETIME) {
       groupRef.current.visible = false;
@@ -652,35 +666,44 @@ export const VoidRay = React.memo(({
       )
       : null;
     
-    // Skill/terrain collision
-    const aegisHit = getFirstChronosAegisVisualHit(
-      startPosition,
-      direction,
-      targetLength,
-      ownerTeam,
-      ownerId,
-      RAY_RADIUS
-    );
-    if (isPhysicsReady()) {
-      const world = getPhysicsWorld();
-      if (world) {
-        const hit = raycast(world, startPosition, direction, targetLength, {
-          priority: 'visual',
-          feature: 'effect:voidRayBeam',
-        });
-        if (hit && hit.distance < targetLength) {
-          targetLength = hit.distance;
+    if (frameNow - lastCollisionSampleRef.current >= VOID_RAY_COLLISION_SAMPLE_INTERVAL_MS) {
+      lastCollisionSampleRef.current = frameNow;
+      let visualCollisionDistance: number | null = null;
+      const aegisHit = getFirstChronosAegisVisualHit(
+        startPosition,
+        direction,
+        targetLength,
+        ownerTeam,
+        ownerId,
+        RAY_RADIUS
+      );
+      if (aegisHit) {
+        visualCollisionDistance = aegisHit.distance;
+      }
+
+      if (isPhysicsReady()) {
+        const world = getPhysicsWorld();
+        if (world) {
+          const hit = raycast(world, startPosition, direction, targetLength, {
+            priority: 'visual',
+            feature: 'effect:voidRayBeam',
+          });
+          if (hit) {
+            visualCollisionDistance = visualCollisionDistance === null
+              ? hit.distance
+              : Math.min(visualCollisionDistance, hit.distance);
+          }
         }
       }
+      cachedVisualCollisionDistanceRef.current = visualCollisionDistance;
     }
-    if (aegisHit && aegisHit.distance < targetLength) {
-      targetLength = aegisHit.distance;
+    const visualCollisionDistance = cachedVisualCollisionDistanceRef.current;
+    if (visualCollisionDistance !== null && visualCollisionDistance < targetLength) {
+      targetLength = visualCollisionDistance;
     }
     if (authoritativeHit && authoritativeHit.distance < targetLength) {
       targetLength = authoritativeHit.distance;
     }
-
-    currentLengthRef.current = targetLength;
     const safeTargetLength = Math.max(targetLength, 0.001);
     
     // Update core beam
@@ -832,25 +855,7 @@ export const VoidRay = React.memo(({
       impactRef.current.scale.setScalar(Math.max(0.001, impactPulse * (0.24 + impactEnvelope * 0.92)));
       applyOpacityEnvelope(impactRef.current, impactEnvelope);
     }
-    
-    // Player collision
-    const { players, localPlayer } = useGameStore.getState();
-    
-    // Track if we've already logged (now a no-op but kept for hasLoggedRef reference)
-    hasLoggedRef.current = true;
-    
-    for (const [playerId, player] of players) {
-      if (playerId === localPlayer?.id) continue;
-      if (player.state !== 'alive') continue;
-      if (localPlayer && player.team === localPlayer.team) continue;
-      if (hitPlayersRef.current.has(playerId)) continue;
-
-      if (doesSegmentHitPlayerCombatHitbox(startPosition, normalizedDirection, currentLengthRef.current, player, RAY_RADIUS)) {
-        hitPlayersRef.current.add(playerId);
-
-      }
-    }
-  });
+  }));
   
   return (
     <group ref={groupRef} position={[startPosition.x, startPosition.y, startPosition.z]} rotation={rotation}>

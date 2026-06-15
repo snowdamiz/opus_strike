@@ -423,6 +423,11 @@ export function BlazeEffectsManager() {
       capacity: activeBurningIdsRef.current.length,
       hiddenMounted: 0,
     });
+    recordEffectSlotDiagnostics('blazeBomb', {
+      active: bombs.length,
+      capacity: Math.max(1, bombs.length),
+      hiddenMounted: 0,
+    });
   };
 
   const runBlazeEffectsFrame = (state: RootState, delta: number): void => {

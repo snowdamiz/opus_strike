@@ -11,6 +11,10 @@ import {
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
 import { getFrameClock } from '../../utils/frameClock';
 import type { EffectQualityConfig } from './visualQuality';
+import {
+  measureFrameWork,
+  recordEffectSlotDiagnostics,
+} from '../../movement/networkDiagnostics';
 
 export type TerrainImpactKind =
   | 'blaze_rocket'
@@ -463,6 +467,50 @@ function countActiveGenericImpacts(frameNow: number): number {
   return activeCount;
 }
 
+function countActivePhantomDireImpacts(frameNow: number): number {
+  let activeCount = 0;
+  for (const slot of phantomDireImpactSlots) {
+    if (slot.active && frameNow - slot.startTime < slot.duration) {
+      activeCount++;
+    }
+  }
+  return activeCount;
+}
+
+function countVisibleGenericImpacts(frameNow: number): number {
+  let activeCount = 0;
+  for (const slot of genericImpactSlots) {
+    if (slot.active && frameNow - slot.startTime < slot.duration) {
+      activeCount++;
+    }
+  }
+  return activeCount;
+}
+
+function recordTerrainImpactDiagnostics(frameNow: number, config: EffectQualityConfig): void {
+  const phantomActive = countActivePhantomDireImpacts(frameNow);
+  const genericActive = countVisibleGenericImpacts(frameNow);
+  const genericCapacity = Math.min(GENERIC_IMPACT_CAPACITY, Math.max(0, config.maxActiveImpacts));
+  const totalCapacity = PHANTOM_DIRE_IMPACT_CAPACITY + genericCapacity;
+  const totalActive = phantomActive + genericActive;
+
+  recordEffectSlotDiagnostics('terrainImpacts', {
+    active: totalActive,
+    capacity: totalCapacity,
+    hiddenMounted: Math.max(0, totalCapacity - totalActive),
+  });
+  recordEffectSlotDiagnostics('terrainImpactGeneric', {
+    active: genericActive,
+    capacity: genericCapacity,
+    hiddenMounted: Math.max(0, genericCapacity - genericActive),
+  });
+  recordEffectSlotDiagnostics('terrainImpactPhantomDire', {
+    active: phantomActive,
+    capacity: PHANTOM_DIRE_IMPACT_CAPACITY,
+    hiddenMounted: Math.max(0, PHANTOM_DIRE_IMPACT_CAPACITY - phantomActive),
+  });
+}
+
 function chooseGenericImpactSlot(frameNow: number, maxActiveImpacts: number): PooledGenericImpactSlot | null {
   if (maxActiveImpacts <= 0) return null;
 
@@ -561,8 +609,11 @@ export function TerrainImpactEffectsManager({ config }: { config: EffectQualityC
 
   useFrame(() => {
     const frameNow = getFrameClock().nowMs;
-    updatePooledPhantomDireImpacts(phantomRenderSlotsRef.current, frameNow);
-    updatePooledGenericImpacts(genericRenderSlotsRef.current, frameNow);
+    measureFrameWork('frame.effects.terrainImpacts', () => {
+      updatePooledPhantomDireImpacts(phantomRenderSlotsRef.current, frameNow);
+      updatePooledGenericImpacts(genericRenderSlotsRef.current, frameNow);
+    });
+    recordTerrainImpactDiagnostics(frameNow, config);
   });
 
   return (

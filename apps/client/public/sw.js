@@ -73,7 +73,6 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (IS_LOCAL_DEVELOPMENT) {
-    event.respondWith(fetch(request));
     return;
   }
 
