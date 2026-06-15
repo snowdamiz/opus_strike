@@ -1206,6 +1206,7 @@ interface AbilityUsedMessage {
   releaseAt?: number;
   radius?: number;
   duration?: number;
+  meteorStartTime?: number;
   impactTime?: number;
   active?: boolean;
   fuel?: number;
@@ -1984,10 +1985,17 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
       );
       if (!startPosition || !targetPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId);
+      const serverTime = data.serverTime ?? now;
+      const meteorStartDelay = data.meteorStartTime
+        ? Math.max(0, data.meteorStartTime - serverTime)
+        : 0;
       const impactDelay = data.impactTime
-        ? Math.max(0, data.impactTime - (data.serverTime ?? now))
+        ? Math.max(0, data.impactTime - serverTime)
         : BLAZE_BOMB_FALL_DURATION;
+      const meteorStartTime = now + meteorStartDelay;
       const impactTime = now + impactDelay;
+      const fallSoundDelay = Math.min(meteorStartDelay, impactDelay);
+      const fallSoundDuration = Math.max(0, impactDelay - fallSoundDelay);
       const visualImpactPosition = data.impactPosition ?? data.interceptPosition ?? targetPosition;
       if (isLocalPlayer) {
         const abilityDef = ABILITY_DEFINITIONS[data.abilityId];
@@ -2002,7 +2010,8 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
         impactPosition: visualImpactPosition,
         interceptedByChronosAegis: Boolean(data.interceptedByChronosAegis || data.interceptPosition),
         startPosition,
-        startTime: now,
+        warningStartTime: now,
+        startTime: meteorStartTime,
         impactTime,
         ownerId: data.playerId,
         ownerTeam,
@@ -2016,10 +2025,14 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
         });
       }
       playBlazeWorldSound('blazeBombTarget', startPosition);
-      playBlazeWorldSound('blazeBombFall', startPosition, {
-        durationMs: impactDelay,
-        fadeOutMs: Math.min(200, impactDelay),
-      });
+      if (fallSoundDuration > 0) {
+        window.setTimeout(() => {
+          playBlazeWorldSound('blazeBombFall', startPosition, {
+            durationMs: fallSoundDuration,
+            fadeOutMs: Math.min(200, fallSoundDuration),
+          });
+        }, fallSoundDelay);
+      }
       window.setTimeout(() => {
         playBlazeWorldSound('blazeBombExplode', visualImpactPosition, { volume: 1.05 });
       }, impactDelay);

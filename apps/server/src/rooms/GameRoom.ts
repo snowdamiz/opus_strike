@@ -90,7 +90,10 @@ import {
   CHRONOS_VERDANT_PULSE_FIRE_READY_MS,
   CHRONOS_VERDANT_PULSE_SPEED,
   GRAPPLE_MAX_DISTANCE,
+  HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS,
   HOOKSHOT_CHAIN_HOOKS_DAMAGE,
+  HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE,
+  HOOKSHOT_CHAIN_HOOKS_RANGE,
   HOOKSHOT_DRAG_HOOK_DAMAGE,
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
@@ -611,6 +614,7 @@ interface SkillImpactHint {
 const BLAZE_ROCKET_AIM_DISTANCE = 120;
 const BLAZE_BOMB_COOLDOWN_MS = 8000;
 const BLAZE_BOMB_FALL_DURATION_MS = 1500;
+const BLAZE_BOMB_WARNING_LEAD_MS = 350;
 const BLAZE_BOMB_MAX_RANGE = 60;
 const BLAZE_BOMB_MIN_RANGE = 3;
 const BLAZE_BOMB_AEGIS_COLLISION_RADIUS = 0.65;
@@ -713,7 +717,7 @@ const MOVEMENT_CORRECTION_LOG_SAMPLE_MS = 1000;
 const MAX_SECURITY_LOG_SAMPLE_KEYS = 1024;
 const PRIMARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   phantom: { damage: PHANTOM_DIRE_BALL_DAMAGE, range: 30, cooldownMs: PHANTOM_PRIMARY_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'dire_ball' },
-  hookshot: { damage: HOOKSHOT_CHAIN_HOOKS_DAMAGE, range: 22, cooldownMs: 600, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
+  hookshot: { damage: HOOKSHOT_CHAIN_HOOKS_DAMAGE, range: HOOKSHOT_CHAIN_HOOKS_RANGE, cooldownMs: HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
   blaze: { damage: BLAZE_ROCKET_DAMAGE, range: 36, cooldownMs: BLAZE_ROCKET_FIRE_INTERVAL_MS, coneDot: Math.cos(0.22), radius: BLAZE_ROCKET_SPLASH_RADIUS, damageType: 'rocket' },
   chronos: { damage: CHRONOS_VERDANT_PULSE_DAMAGE, range: 34, cooldownMs: CHRONOS_VERDANT_PULSE_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'verdant_pulse' },
 };
@@ -723,7 +727,6 @@ const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   blaze: { damage: BLAZE_BOMB_DAMAGE, range: BLAZE_BOMB_MAX_RANGE, cooldownMs: BLAZE_BOMB_COOLDOWN_MS, coneDot: Math.cos(0.32), radius: BLAZE_BOMB_SPLASH_RADIUS, damageType: 'bomb' },
 };
 const HOOKSHOT_SPEED = 38;
-const HOOKSHOT_MAX_DISTANCE = 14;
 const DRAG_HOOK_SPEED = 50;
 const DRAG_HOOK_MAX_DISTANCE = 24;
 const HOOKSHOT_ANCHOR_WALL_DURATION = 6.25;
@@ -821,6 +824,7 @@ export class GameRoom extends Room<GameState> {
     getGroundY: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().getGroundY(position),
     clampPosition: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().clampToPlayableMap(position),
     getBlockAtWorld: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().getBlockAtWorld(position),
+    getMaxPlayableY: () => this.getProceduralTerrainLookup().getMaxPlayableY(),
     collisionRevision: 0,
     cacheStaticAabbs: true,
     getCollisionAabbs: (bounds: MovementCollisionBounds) => this.getHookshotAnchorWallAabbs(bounds),
@@ -5784,7 +5788,8 @@ export class GameRoom extends Room<GameState> {
     const impactProgress = aegisHit
       ? Math.sqrt(this.clamp(aegisHit.distance / Math.max(0.0001, meteorPath.distance), 0, 1))
       : 1;
-    const impactTime = now + Math.max(60, Math.round(BLAZE_BOMB_FALL_DURATION_MS * impactProgress));
+    const meteorStartTime = now + BLAZE_BOMB_WARNING_LEAD_MS;
+    const impactTime = meteorStartTime + Math.max(60, Math.round(BLAZE_BOMB_FALL_DURATION_MS * impactProgress));
 
     if (aegisHit) {
       this.absorbDamageWithChronosAegis(aegisHit.blocker, attack.damage, now, {
@@ -5819,6 +5824,7 @@ export class GameRoom extends Room<GameState> {
       ownerTeam: player.team as Team,
       launchYaw: player.lookYaw,
       serverTime: now,
+      meteorStartTime,
       impactTime,
       radius: attack.radius ?? BLAZE_BOMB_SPLASH_RADIUS,
     });
@@ -5901,7 +5907,7 @@ export class GameRoom extends Room<GameState> {
       ? this.getNextHookshotPrimaryLaunchSide(player.id)
       : 1;
     const maxDistance = abilityId === 'hookshot_basic_attack'
-      ? HOOKSHOT_MAX_DISTANCE
+      ? HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE
       : DRAG_HOOK_MAX_DISTANCE;
     const speed = abilityId === 'hookshot_basic_attack'
       ? HOOKSHOT_SPEED

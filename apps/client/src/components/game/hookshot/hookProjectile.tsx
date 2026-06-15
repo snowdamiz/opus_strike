@@ -33,8 +33,6 @@ import { useHookshotFrameUpdater } from './hookshotFrameRegistry';
 // FULLY OPTIMIZED: Zero state updates in useFrame, all refs, pre-allocated objects
 // ============================================================================
 
-const HOOK_SPEED = 38;
-const HOOK_MAX_DISTANCE = 10; // Reduced for close-range
 const HOOK_DAMAGE = 25;
 const HOOK_COLLISION_RADIUS = 0.22;
 const HOOK_RETRACT_SPEED = 50;
@@ -157,8 +155,7 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
       const dx = curPos.x - hook.startPosition.x;
       const dy = curPos.y - hook.startPosition.y;
       const dz = curPos.z - hook.startPosition.z;
-      const maxDistance = Math.min(hook.maxDistance, HOOK_MAX_DISTANCE);
-      if (dx * dx + dy * dy + dz * dz >= maxDistance * maxDistance) {
+      if (dx * dx + dy * dy + dz * dz >= hook.maxDistance * hook.maxDistance) {
         hookStateRef.current = 'retracting';
       }
       

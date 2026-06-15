@@ -47,6 +47,10 @@ export const PHANTOM_VEIL_SPEED_BONUS_PERCENT = 30;
 export const PHANTOM_VEIL_SPEED_MULTIPLIER = 1 + PHANTOM_VEIL_SPEED_BONUS_PERCENT / 100;
 
 export const HOOKSHOT_CHAIN_HOOKS_DAMAGE = 16;
+export const HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS = 475;
+export const HOOKSHOT_CHAIN_HOOKS_COOLDOWN_SECONDS = HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS / 1000;
+export const HOOKSHOT_CHAIN_HOOKS_RANGE = 27.5;
+export const HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE = 17.5;
 export const HOOKSHOT_DRAG_HOOK_DAMAGE = 24;
 export const HOOKSHOT_GROUND_HOOKS_RADIUS = BLAZE_GEARSTORM_RADIUS;
 export const HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS = 3;
@@ -329,7 +333,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     name: 'Chain Hooks',
     type: 'offensive',
     targeting: 'direction',
-    cooldown: 0.6,
+    cooldown: HOOKSHOT_CHAIN_HOOKS_COOLDOWN_SECONDS,
     description: 'Fire short-range hooks attached by rope that shoot forward and retract.',
   },
   hookshot_heavy_attack: {

@@ -219,6 +219,7 @@ export interface BombData {
   impactPosition?: { x: number; y: number; z: number };
   interceptedByChronosAegis?: boolean;
   startPosition: { x: number; y: number; z: number };
+  warningStartTime?: number;
   startTime: number;
   impactTime: number; // When the bomb lands
   ownerId: string;

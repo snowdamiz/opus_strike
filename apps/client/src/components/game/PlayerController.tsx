@@ -30,7 +30,7 @@ import {
 import { useInput } from '../../hooks/useInput';
 import { usePhysics } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
-import { setAudioListenerTransform, useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
+import { playSharedSound, setAudioListenerTransform, useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
 import {
   PHANTOM_PRIMARY_RETURN_TO_IDLE_MS,
   PHANTOM_PRIMARY_SHOT_PULSE_DURATION_MS,
@@ -70,8 +70,10 @@ import {
   useBlazeAbilities,
   useHookshotAbilities,
   useChronosAbilities,
+  CHRONOS_PRIMARY_ORB_SOCKET,
   PLAYER_HEIGHT,
   EYE_HEIGHT,
+  calculatePlayerSocketPosition,
   type AbilityContext,
   type MovementSounds,
   type PlayerSounds,
@@ -86,6 +88,7 @@ import {
 import { getFrameClock } from '../../utils/frameClock';
 import {
   markPredictedLocalAbilitySound,
+  shouldSuppressPredictedLocalAbilitySound,
   useLocalAbilityAudioPrediction,
 } from '../../hooks/player/useLocalAbilityAudioPrediction';
 import { buildAbilityCastOriginHints } from '../../hooks/player/abilityCastOriginHints';
@@ -150,9 +153,15 @@ import { triggerPhantomShieldCastEffect } from './phantom';
 import { addChronosLifelineEffects, addChronosSelfHealPulseEffect } from './chronos/lifeline';
 import { addChronosTimebreakEffect } from './chronos/timebreak';
 import { triggerTeleportEffect } from '../ui/TeleportEffects';
+import { resolveAbilitySocketOrigin } from '../../model-system/abilitySocketResolver';
+import {
+  chronosOrbForwardFromYaw,
+  offsetChronosOrbVisualPlainPosition,
+} from '../../model-system/chronosOrbVisualOrigin';
 
 const INACTIVE_INPUT_STATE = createEmptyInputState();
 const DEFAULT_FLAMETHROWER_DIRECTION = { x: 0, y: 0, z: -1 };
+const CHRONOS_TIMEBREAK_CHARGE_FADE_OUT_MS = 110;
 const TERRAIN_STEP_VISUAL_SNAP_THRESHOLD = 1.35;
 const TERRAIN_STEP_VISUAL_UP_RATE = 16;
 const TERRAIN_STEP_VISUAL_DOWN_RATE = 28;
@@ -360,10 +369,43 @@ function buildPracticeAbilityState(
   };
 }
 
+function resolveChronosTimebreakPracticeOrigin(ctx: AbilityContext, now: number): MutableVec3 {
+  const resolvedOrigin = resolveAbilitySocketOrigin({
+    ownerScope: 'localViewmodel',
+    abilityId: 'chronos_timebreak',
+    sampledContext: ctx.camera
+      ? {
+        camera: ctx.camera,
+        elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
+        timestampMs: ctx.viewmodelNowMs ?? now,
+      }
+      : undefined,
+    preferSampled: true,
+    warnOnSampleDrift: true,
+    fallback: {
+      position: ctx.position,
+      yaw: ctx.yaw,
+    },
+  });
+  const socketPosition = resolvedOrigin
+    ? {
+      x: resolvedOrigin.position.x,
+      y: resolvedOrigin.position.y,
+      z: resolvedOrigin.position.z,
+    }
+    : calculatePlayerSocketPosition(ctx.position, ctx.yaw, CHRONOS_PRIMARY_ORB_SOCKET);
+
+  return offsetChronosOrbVisualPlainPosition(
+    socketPosition,
+    chronosOrbForwardFromYaw(ctx.yaw),
+    'chronos_timebreak'
+  );
+}
+
 type CastActionFields = Pick<InputState, 'primaryFire' | 'secondaryFire' | 'ability1' | 'ability2' | 'ultimate'>;
 type ExclusiveHoldInput = Pick<InputState, 'primaryFire' | 'secondaryFire' | 'ability1'>;
 export type ServerCombatInput = CastActionFields;
-export type CommandScheduleReason = 'combat_edge' | 'movement_barrier';
+export type CommandScheduleReason = 'combat_edge' | 'movement_barrier' | 'crouch_edge';
 interface CommandSchedule {
   forceSubstep: boolean;
   flushExistingBeforeSample: boolean;
@@ -994,7 +1036,8 @@ export function runPredictionAndCommandPhase(input: {
     refs.pendingReloadInputRef.current ||
     (phantomAutoReloadForServer && !serverCombatInput.primaryFire);
   const crouchHeld = frameInput.crouch || ctx.isControlPressed;
-  if (crouchHeld && !refs.lastCrouchHeldRef.current) {
+  const crouchPressedThisFrame = crouchHeld && !refs.lastCrouchHeldRef.current;
+  if (crouchPressedThisFrame) {
     refs.pendingCrouchPressedRef.current = true;
   }
   refs.lastCrouchHeldRef.current = crouchHeld;
@@ -1015,6 +1058,9 @@ export function runPredictionAndCommandPhase(input: {
   refs.latestAbilityCastHintsRef.current = abilityCastHints ?? [];
 
   const commandScheduleReasons = [...requestedCommandScheduleReasons];
+  if (crouchPressedThisFrame) {
+    addCommandScheduleReason(commandScheduleReasons, 'crouch_edge');
+  }
   if (shouldForceImmediateCombatCommand(serverCombatInput, refs.lastServerCombatInputRef.current)) {
     addCommandScheduleReason(commandScheduleReasons, 'combat_edge');
   }
@@ -2473,14 +2519,28 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                 y: 0,
                 z: -Math.cos(abilityCtx.yaw),
               };
+              const effectPosition = resolveChronosTimebreakPracticeOrigin(abilityCtx, now);
+              if (!shouldSuppressPredictedLocalAbilitySound('chronos_timebreak', now)) {
+                void playSharedSound('chronosTimebreakCharge', {
+                  position: effectPosition,
+                  durationMs: CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
+                  fadeOutMs: CHRONOS_TIMEBREAK_CHARGE_FADE_OUT_MS,
+                });
+              }
               addChronosTimebreakEffect({
-                position: { x: position.x, y: position.y + 1.18, z: position.z },
+                position: effectPosition,
                 ownerId: localPlayer.id,
                 ownerTeam: localPlayer.team,
                 direction: forward,
                 startTime: now,
                 releaseTime: now + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
               });
+              window.setTimeout(() => {
+                void playSharedSound('chronosPush', {
+                  position: effectPosition,
+                  volume: 1.05,
+                });
+              }, CHRONOS_TIMEBREAK_RELEASE_DELAY_MS);
               abilitySystem.startClientCooldown(heroDef.ability2.abilityId);
             }
           }
@@ -2661,6 +2721,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     <>
       <BombTargetingIndicator
         isActive={bombTargeting}
+        showIndicator={false}
         onTargetUpdate={blazeAbilities.handleBombTargetUpdate}
       />
     </>

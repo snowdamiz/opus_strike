@@ -93,7 +93,12 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
   const lightRef = useRef<THREE.PointLight>(null);
   const hasExplodedRef = useRef(bomb.hasExploded);
   const hasRemovedRef = useRef(false);
-  const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - bomb.startTime));
+  const createdAtMs = Date.now();
+  const createdFrameTimeMs = getFrameClock().nowMs;
+  const warningStartFrameTimeRef = useRef(
+    createdFrameTimeMs - (createdAtMs - (bomb.warningStartTime ?? bomb.startTime))
+  );
+  const startFrameTimeRef = useRef(createdFrameTimeMs - (createdAtMs - bomb.startTime));
   const impactFrameTimeRef = useRef(startFrameTimeRef.current + Math.max(0, bomb.impactTime - bomb.startTime));
   const fallDurationRef = useRef(Math.max(60, impactFrameTimeRef.current - startFrameTimeRef.current));
 
@@ -249,69 +254,80 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
     const now = getFrameClock().nowMs;
     const elapsed = now - startFrameTimeRef.current;
     const fallProgress = Math.max(0, Math.min(1, elapsed / fallDurationRef.current));
+    const warningDuration = Math.max(60, impactFrameTimeRef.current - warningStartFrameTimeRef.current);
+    const warningElapsed = now - warningStartFrameTimeRef.current;
+    const warningProgress = Math.max(0, Math.min(1, warningElapsed / warningDuration));
+    const meteorActive = elapsed >= 0 && fallProgress < 1;
     
-    if (!hasExplodedRef.current && fallProgress < 1) {
+    if (!hasExplodedRef.current && now < impactFrameTimeRef.current) {
       if (bombRef.current) {
-        bombRef.current.visible = true;
-        const travelProgress = fallProgress * fallProgress;
-        bombRef.current.position.lerpVectors(
-          meteorPath.entryPosition,
-          meteorPath.impactPosition,
-          travelProgress
-        );
-        bombRef.current.quaternion.copy(meteorPath.bodyQuaternion);
-        bombRef.current.rotateY(elapsed * 0.012);
+        bombRef.current.visible = meteorActive;
+        if (meteorActive) {
+          const travelProgress = fallProgress * fallProgress;
+          bombRef.current.position.lerpVectors(
+            meteorPath.entryPosition,
+            meteorPath.impactPosition,
+            travelProgress
+          );
+          bombRef.current.quaternion.copy(meteorPath.bodyQuaternion);
+          bombRef.current.rotateY(elapsed * 0.012);
+        }
       }
       
       // Fire trail behind the meteor.
       if (trailRef.current && bombRef.current) {
-        trailRef.current.visible = true;
-        trailRef.current.position.copy(bombRef.current.position);
-        trailRef.current.position.addScaledVector(meteorPath.travelDirection, -METEOR_TRAIL_BACK_OFFSET);
-        trailRef.current.quaternion.copy(meteorPath.trailQuaternion);
-        const trailScale = 0.95 + Math.sin(elapsed * 0.05) * 0.16;
-        trailRef.current.scale.set(0.95 * trailScale, 6.4 * trailScale, 0.95 * trailScale);
+        trailRef.current.visible = meteorActive;
+        if (meteorActive) {
+          trailRef.current.position.copy(bombRef.current.position);
+          trailRef.current.position.addScaledVector(meteorPath.travelDirection, -METEOR_TRAIL_BACK_OFFSET);
+          trailRef.current.quaternion.copy(meteorPath.trailQuaternion);
+          const trailScale = 0.95 + Math.sin(elapsed * 0.05) * 0.16;
+          trailRef.current.scale.set(0.95 * trailScale, 6.4 * trailScale, 0.95 * trailScale);
+        }
       }
 
       if (wakeRef.current && bombRef.current) {
-        wakeRef.current.visible = true;
-        wakeRef.current.position.copy(bombRef.current.position);
-        wakeRef.current.position.addScaledVector(meteorPath.travelDirection, -METEOR_WAKE_BACK_OFFSET);
-        wakeRef.current.quaternion.copy(meteorPath.trailQuaternion);
-        const wakePulse = 0.85 + Math.sin(elapsed * 0.035) * 0.1;
-        wakeRef.current.scale.set(0.18 * wakePulse, 9.2 * wakePulse, 0.18 * wakePulse);
+        wakeRef.current.visible = meteorActive;
+        if (meteorActive) {
+          wakeRef.current.position.copy(bombRef.current.position);
+          wakeRef.current.position.addScaledVector(meteorPath.travelDirection, -METEOR_WAKE_BACK_OFFSET);
+          wakeRef.current.quaternion.copy(meteorPath.trailQuaternion);
+          const wakePulse = 0.85 + Math.sin(elapsed * 0.035) * 0.1;
+          wakeRef.current.scale.set(0.18 * wakePulse, 9.2 * wakePulse, 0.18 * wakePulse);
+        }
       }
       
       // Glow around meteor
       if (glowRef.current && bombRef.current) {
-        glowRef.current.visible = true;
-        glowRef.current.position.copy(bombRef.current.position);
-        const glowPulse = 1 + Math.sin(elapsed * 0.03) * 0.2;
-        glowRef.current.quaternion.copy(meteorPath.bodyQuaternion);
-        glowRef.current.scale.set(2.2 * glowPulse, 3.1 * glowPulse, 2.2 * glowPulse);
+        glowRef.current.visible = meteorActive;
+        if (meteorActive) {
+          glowRef.current.position.copy(bombRef.current.position);
+          const glowPulse = 1 + Math.sin(elapsed * 0.03) * 0.2;
+          glowRef.current.quaternion.copy(meteorPath.bodyQuaternion);
+          glowRef.current.scale.set(2.2 * glowPulse, 3.1 * glowPulse, 2.2 * glowPulse);
+        }
       }
       
       if (warningRef.current) {
         warningRef.current.visible = true;
-        // Faster pulsing as the meteor gets closer
-        const pulseSpeed = 0.01 + fallProgress * 0.03;
-        const pulse = 0.85 + Math.sin(elapsed * pulseSpeed) * 0.15;
-        warningRef.current.rotation.y = elapsed * 0.0018;
+        const pulseSpeed = 0.012 + warningProgress * 0.032;
+        const pulse = 0.88 + warningProgress * 0.08 + Math.sin(warningElapsed * pulseSpeed) * 0.12;
+        warningRef.current.rotation.y = warningElapsed * 0.0018;
         warningRef.current.scale.setScalar(pulse);
       }
       
       // Pulsing fill that intensifies
       if (warningPulseRef.current) {
         warningPulseRef.current.visible = true;
-        const intensity = 0.15 + fallProgress * 0.25;
-        animatedMaterials.warningPulseFill.opacity = intensity * (0.8 + Math.sin(elapsed * 0.02) * 0.2);
+        const intensity = 0.12 + warningProgress * 0.34;
+        animatedMaterials.warningPulseFill.opacity = intensity * (0.78 + Math.sin(warningElapsed * 0.022) * 0.22);
       }
       
       if (explosionRef.current) explosionRef.current.visible = false;
       if (flashRef.current) flashRef.current.visible = false;
       if (shockwaveRef.current) shockwaveRef.current.visible = false;
       if (shockwave2Ref.current) shockwave2Ref.current.visible = false;
-    } else if (fallProgress >= 1 && !hasExplodedRef.current) {
+    } else if (now >= impactFrameTimeRef.current && !hasExplodedRef.current) {
       hasExplodedRef.current = true;
     }
     
@@ -536,6 +552,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
     prev.bomb.targetPosition.y === next.bomb.targetPosition.y &&
     prev.bomb.targetPosition.z === next.bomb.targetPosition.z &&
     sameOptionalVec3(prev.bomb.interceptPosition, next.bomb.interceptPosition) &&
+    prev.bomb.warningStartTime === next.bomb.warningStartTime &&
     prev.bomb.startTime === next.bomb.startTime &&
     prev.bomb.hasExploded === next.bomb.hasExploded &&
     prev.bomb.impactTime === next.bomb.impactTime
@@ -548,6 +565,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
 
 interface BombTargetingIndicatorProps {
   isActive: boolean;
+  showIndicator?: boolean;
   onTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
 }
 
@@ -561,7 +579,7 @@ const _bombLookDir = new THREE.Vector3();
 const _bombTargetPos = new THREE.Vector3();
 const _bombHorizDir = new THREE.Vector3();
 
-export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargetingIndicatorProps) {
+export function BombTargetingIndicator({ isActive, showIndicator = true, onTargetUpdate }: BombTargetingIndicatorProps) {
   const indicatorRef = useRef<THREE.Group>(null);
   const targetOuterRef = useRef<THREE.Mesh>(null);
   const targetMiddleRef = useRef<THREE.Mesh>(null);
@@ -813,7 +831,7 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
     }
   });
   
-  if (!isActive) return null;
+  if (!isActive || !showIndicator) return null;
   
   return (
     <group ref={indicatorRef}>

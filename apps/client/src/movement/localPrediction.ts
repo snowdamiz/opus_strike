@@ -155,6 +155,7 @@ function getClientTerrainAdapter(): MovementTerrainAdapter {
     getGroundY: (position) => lookup.getGroundY(position),
     clampPosition: (position) => lookup.clampToPlayableMap(position),
     getBlockAtWorld: (position) => lookup.getBlockAtWorld(position),
+    getMaxPlayableY: () => lookup.getMaxPlayableY(),
     origin: lookup.origin,
     voxelSize: lookup.voxelSize,
     collisionRevision: latestServerCollisionRevision,

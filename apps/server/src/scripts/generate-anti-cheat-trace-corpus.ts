@@ -94,7 +94,8 @@ function cloneMovement(movement: PlayerMovementState): PlayerMovementState {
 function movementBarrier(reason: MovementCorrectionReason | undefined): AntiCheatTraceAbilityState['movementBarrier'] {
   return reason === 'respawn' ||
     reason === 'teleport' ||
-    reason === 'knockback'
+    reason === 'knockback' ||
+    reason === 'root'
     ? reason
     : null;
 }

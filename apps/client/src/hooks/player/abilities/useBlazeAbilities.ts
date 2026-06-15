@@ -24,6 +24,7 @@ import {
   BLAZE_ROCKET_SPEED,
   BLAZE_BOMB_COOLDOWN,
   BLAZE_BOMB_FALL_DURATION,
+  BLAZE_BOMB_WARNING_LEAD,
   FUEL_UPDATE_THRESHOLD,
   calculatePlayerSocketPosition,
   calculateLookDirection,
@@ -309,20 +310,24 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
         y: store.localPlayer.position.y + 1.35,
         z: store.localPlayer.position.z,
       };
+      const meteorStartTime = now + BLAZE_BOMB_WARNING_LEAD;
       store.addBomb({
         id: `practice_blaze_bomb_${store.localPlayer.id}_${now}`,
         targetPosition,
         startPosition,
-        startTime: now,
-        impactTime: now + BLAZE_BOMB_FALL_DURATION,
+        warningStartTime: now,
+        startTime: meteorStartTime,
+        impactTime: meteorStartTime + BLAZE_BOMB_FALL_DURATION,
         ownerId: store.localPlayer.id,
         ownerTeam: (store.localPlayer.team || 'red') as 'red' | 'blue',
         hasExploded: false,
       });
-      sounds.playBlazeBombFall();
+      window.setTimeout(() => {
+        sounds.playBlazeBombFall();
+      }, BLAZE_BOMB_WARNING_LEAD);
       window.setTimeout(() => {
         sounds.playBlazeBombExplode();
-      }, BLAZE_BOMB_FALL_DURATION);
+      }, BLAZE_BOMB_WARNING_LEAD + BLAZE_BOMB_FALL_DURATION);
     }
 
     // Exit targeting mode

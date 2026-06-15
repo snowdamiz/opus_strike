@@ -458,6 +458,12 @@ export class MovementPredictionController {
     };
   }
 
+  clearVisualCorrection(): void {
+    this.visualCorrection = { x: 0, y: 0, z: 0 };
+    this.correctionDurationMs = 0;
+    this.correctionStartedAtMs = 0;
+  }
+
   getBufferedCommandCount(): number {
     return this.commandOrder.length;
   }

@@ -410,6 +410,55 @@ function runChronosAscendantCapsElevation() {
   assert.ok(state.velocity.y <= 0.001, `Ascendant upward velocity should stop at ceiling, got ${state.velocity.y}`);
 }
 
+function runChronosAscendantCapsAtPlayableCeiling() {
+  const startY = 6;
+  const playableCeilingY = startY + 5;
+  let state = {
+    position: { x: 0, y: startY, z: 0 },
+    velocity: { x: 0, y: 18.5, z: 0 },
+    movement: {
+      ...createMovementState(),
+      isGrounded: false,
+      isJetpacking: true,
+      isGliding: true,
+      chronosAscendantStartY: startY,
+    },
+  };
+  const terrainWithPlayableCeiling = {
+    ...terrain,
+    getMaxPlayableY: () => playableCeilingY,
+  };
+  const input = {
+    ...createEmptyInputState(),
+    jump: true,
+  };
+
+  for (let step = 0; step < 180; step++) {
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats: HERO_DEFINITIONS.chronos.stats,
+      input,
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain: terrainWithPlayableCeiling,
+      activeSpeedMultiplier: 1.38,
+      chronosAscendantActive: true,
+    });
+  }
+
+  assert.ok(
+    state.position.y <= playableCeilingY + 0.001,
+    `Ascendant should respect playable ceiling ${playableCeilingY}, got ${state.position.y}`
+  );
+  assert.ok(
+    playableCeilingY < startY + CHRONOS_ASCENDANT_PARADOX_MAX_ELEVATION_GAIN,
+    'test ceiling should be lower than the regular Ascendant cap'
+  );
+  assert.ok(state.velocity.y <= 0.001, `Ascendant upward velocity should stop at playable ceiling, got ${state.velocity.y}`);
+}
+
 function runCorrectionReplay() {
   const input = createEmptyInputState();
   input.moveForward = true;
@@ -1229,6 +1278,7 @@ runSlideRequiresFreshCrouchPress();
 runHeldCommandStripsEdgeButtons();
 runChronosAscendantReleaseDampsStrafe();
 runChronosAscendantCapsElevation();
+runChronosAscendantCapsAtPlayableCeiling();
 runCorrectionReplay();
 runClientAuthoritativeAckDoesNotMovePresentation();
 runOverwriteUpdatesLatestAckState();
