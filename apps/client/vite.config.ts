@@ -9,6 +9,20 @@ const isProduction = process.argv.includes('build');
 const dropOptions = isProduction ? ['console', 'debugger'] : [];
 const analyzeBundle = process.env.ANALYZE === 'true';
 
+function getNodeModulePackageName(normalizedId: string) {
+  const nodeModulesMarker = '/node_modules/';
+  const packagePathStart = normalizedId.lastIndexOf(nodeModulesMarker);
+  if (packagePathStart === -1) return undefined;
+
+  const packagePath = normalizedId.slice(packagePathStart + nodeModulesMarker.length);
+  const [scopeOrName, packageName] = packagePath.split('/');
+  if (!scopeOrName) return undefined;
+
+  return scopeOrName.startsWith('@') && packageName
+    ? `${scopeOrName}/${packageName}`
+    : scopeOrName;
+}
+
 export default defineConfig({
   plugins: [
     react(),
@@ -45,53 +59,56 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined;
           const normalizedId = id.split(path.sep).join('/');
+          const packageName = getNodeModulePackageName(normalizedId);
+          if (!packageName) return undefined;
 
-          if (normalizedId.includes('@dimforge/rapier3d-compat')) {
+          if (packageName === '@dimforge/rapier3d-compat') {
             return 'physics-vendor';
           }
-          if (normalizedId.includes('livekit-client')) {
+          if (packageName === 'livekit-client') {
             return 'voice-vendor';
           }
           if (
-            normalizedId.includes('@solana/') ||
-            normalizedId.includes('@noble/') ||
-            normalizedId.includes('/bn.js/') ||
-            normalizedId.includes('/borsh/') ||
-            normalizedId.includes('/jayson/') ||
-            normalizedId.includes('/rpc-websockets/') ||
-            normalizedId.includes('/superstruct/')
+            packageName.startsWith('@solana/') ||
+            packageName.startsWith('@noble/') ||
+            packageName === 'bn.js' ||
+            packageName === 'borsh' ||
+            packageName === 'jayson' ||
+            packageName === 'rpc-websockets' ||
+            packageName === 'superstruct'
           ) {
             return 'wallet-vendor';
           }
           if (
-            normalizedId.includes('/react/') ||
-            normalizedId.includes('/react-dom/') ||
-            normalizedId.includes('/scheduler/')
+            packageName === 'react' ||
+            packageName === 'react-dom' ||
+            packageName === 'scheduler'
           ) {
             return 'react-vendor';
           }
           if (
-            normalizedId.includes('/three/') ||
-            normalizedId.includes('/@react-three/') ||
-            normalizedId.includes('/three-stdlib/') ||
-            normalizedId.includes('/maath/')
+            packageName === 'three' ||
+            packageName.startsWith('@react-three/') ||
+            packageName === 'three-stdlib' ||
+            packageName === 'maath'
           ) {
             return 'rendering-vendor';
           }
           if (
-            normalizedId.includes('/colyseus.js/') ||
-            normalizedId.includes('/@colyseus/') ||
-            normalizedId.includes('/msgpackr/')
+            packageName === 'colyseus.js' ||
+            packageName.startsWith('@colyseus/') ||
+            packageName === 'msgpackr'
           ) {
             return 'network-vendor';
           }
-          if (normalizedId.includes('/zustand/')) {
+          if (packageName === 'zustand') {
             return 'state-vendor';
           }
           if (
-            normalizedId.includes('/@radix-ui/') ||
-            normalizedId.includes('/lucide-react/') ||
-            normalizedId.includes('/framer-motion/')
+            packageName.startsWith('@radix-ui/') ||
+            packageName.startsWith('@floating-ui/') ||
+            packageName === 'lucide-react' ||
+            packageName === 'framer-motion'
           ) {
             return 'ui-vendor';
           }
