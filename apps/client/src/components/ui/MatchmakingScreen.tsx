@@ -54,11 +54,20 @@ export function MatchmakingScreen() {
 
   useEffect(() => {
     let cancelled = false;
+    let inFlight = false;
+    let activeController: AbortController | null = null;
 
     const fetchQueueStatus = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      const controller = new AbortController();
+      activeController = controller;
+      const timeoutId = window.setTimeout(() => controller.abort(), 4000);
+
       try {
         const response = await fetch(`${getHttpUrl()}/matchmaking/queue-status${isRanked ? '?mode=ranked' : ''}`, {
           credentials: 'include',
+          signal: controller.signal,
         });
         if (!response.ok) return;
 
@@ -68,6 +77,12 @@ export function MatchmakingScreen() {
         }
       } catch {
         // Keep the last known count if the status request misses a beat.
+      } finally {
+        window.clearTimeout(timeoutId);
+        if (activeController === controller) {
+          activeController = null;
+        }
+        inFlight = false;
       }
     };
 
@@ -76,6 +91,7 @@ export function MatchmakingScreen() {
 
     return () => {
       cancelled = true;
+      activeController?.abort();
       window.clearInterval(intervalId);
     };
   }, [isRanked]);

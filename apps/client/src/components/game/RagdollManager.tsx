@@ -838,9 +838,16 @@ export function RagdollManager({ config }: RagdollManagerProps) {
 
     if (activeHandlesRef.current.length > 0) {
       measureFrameWork('frame.effects.ragdollBody', () => {
-        activeHandlesRef.current = activeHandlesRef.current.filter((handle) => (
-          updateRagdollSlot(handle, delta, Date.now())
-        ));
+        const activeHandles = activeHandlesRef.current;
+        const now = Date.now();
+        let writeIndex = 0;
+        for (let readIndex = 0; readIndex < activeHandles.length; readIndex++) {
+          const handle = activeHandles[readIndex];
+          if (!updateRagdollSlot(handle, delta, now)) continue;
+          activeHandles[writeIndex] = handle;
+          writeIndex++;
+        }
+        activeHandles.length = writeIndex;
       });
     }
   });

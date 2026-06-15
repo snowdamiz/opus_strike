@@ -71,6 +71,8 @@ let sharedAudioContext: AudioContext | null = null;
 const sharedConfig: AudioConfig = loadAudioSettings();
 const sharedSounds = new Map<string, SoundEffect>();
 const sharedSoundLoads = new Map<string, Promise<SoundEffect | null>>();
+const sharedSoundBuffersByPath = new Map<string, AudioBuffer>();
+const sharedSoundBufferLoads = new Map<string, Promise<AudioBuffer | null>>();
 const sharedLoops = new Map<string, {
   source: AudioBufferSourceNode;
   gain: GainNode;
@@ -379,6 +381,14 @@ type LoadedSoundEffect = SoundEffect & { buffer: AudioBuffer };
 
 function hasLoadedSoundBuffer(sound: SoundEffect | null): sound is LoadedSoundEffect {
   return Boolean(sound?.buffer);
+}
+
+function createSoundEffect(buffer: AudioBuffer, soundDef: SoundDefinition): SoundEffect {
+  return {
+    buffer,
+    volume: soundDef.volume,
+    playbackDurationRatio: soundDef.playbackDurationRatio,
+  };
 }
 
 function getButtonSoundTarget(target: EventTarget | null): Element | null {
@@ -718,6 +728,57 @@ async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
   }
 
   const soundDef: SoundDefinition = SOUND_EFFECTS[name];
+  const cachedBuffer = sharedSoundBuffersByPath.get(soundDef.path);
+  if (cachedBuffer) {
+    const effect = createSoundEffect(cachedBuffer, soundDef);
+    sharedSounds.set(name, effect);
+    recordAudioLoadRequest(true);
+    updateAudioDiagnosticsState();
+    return effect;
+  }
+
+  const loadPromise = (async () => {
+    try {
+      const buffer = await loadSharedSoundBuffer(ctx, name, soundDef);
+      if (!buffer) {
+        return null;
+      }
+
+      const effect = createSoundEffect(buffer, soundDef);
+
+      sharedSounds.set(name, effect);
+      return effect;
+    } catch {
+      return null;
+    } finally {
+      sharedSoundLoads.delete(name);
+      updateAudioDiagnosticsState();
+    }
+  })();
+
+  recordAudioLoadRequest(false);
+  sharedSoundLoads.set(name, loadPromise);
+  updateAudioDiagnosticsState();
+  return loadPromise;
+}
+
+async function loadSharedSoundBuffer(
+  ctx: AudioContext,
+  name: SoundName,
+  soundDef: SoundDefinition
+): Promise<AudioBuffer | null> {
+  const cachedBuffer = sharedSoundBuffersByPath.get(soundDef.path);
+  if (cachedBuffer) {
+    updateAudioDiagnosticsState();
+    return cachedBuffer;
+  }
+
+  const pendingBuffer = sharedSoundBufferLoads.get(soundDef.path);
+  if (pendingBuffer) {
+    updateAudioDiagnosticsState();
+    return pendingBuffer;
+  }
+
   const startedAtMs = nowMs();
   const loadPromise = (async () => {
     let fetchMs = 0;
@@ -747,13 +808,7 @@ async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
       const decodeStartedAtMs = nowMs();
       const buffer = await decodeAudioDataLimited(ctx, arrayBuffer);
       decodeMs = nowMs() - decodeStartedAtMs;
-      const effect: SoundEffect = {
-        buffer,
-        volume: soundDef.volume,
-        playbackDurationRatio: soundDef.playbackDurationRatio,
-      };
-
-      sharedSounds.set(name, effect);
+      sharedSoundBuffersByPath.set(soundDef.path, buffer);
       recordAudioLoadSample({
         name,
         ok: true,
@@ -763,7 +818,7 @@ async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
         decodeMs,
         bytes,
       });
-      return effect;
+      return buffer;
     } catch (error) {
       console.warn(`[Audio] Failed to load sound: ${name}`, error);
       recordAudioLoadSample({
@@ -778,13 +833,12 @@ async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
       });
       return null;
     } finally {
-      sharedSoundLoads.delete(name);
+      sharedSoundBufferLoads.delete(soundDef.path);
       updateAudioDiagnosticsState();
     }
   })();
 
-  recordAudioLoadRequest(false);
-  sharedSoundLoads.set(name, loadPromise);
+  sharedSoundBufferLoads.set(soundDef.path, loadPromise);
   updateAudioDiagnosticsState();
   return loadPromise;
 }

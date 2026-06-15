@@ -308,19 +308,12 @@ function hasRecentRemoteAttack(player: Player, visualState: VisualState, frameNo
   return attackAgeMs <= REMOTE_ATTACK_STATE_RETENTION_MS;
 }
 
-function includesPlayerId(playerIds: readonly string[], playerId: string): boolean {
-  for (let index = 0; index < playerIds.length; index++) {
-    if (playerIds[index] === playerId) return true;
-  }
-  return false;
-}
-
 function hasActiveRemoteBodyEffect(player: Player, visualState: VisualState, frameNowMs: number): boolean {
   return (
-    includesPlayerId(visualState.activeBlazeFlamethrowerPlayerIds, player.id) ||
-    includesPlayerId(visualState.activeBlazeBurningPlayerIds, player.id) ||
-    includesPlayerId(visualState.activeChronosAegisPlayerIds, player.id) ||
-    includesPlayerId(visualState.activeChronosAscendantPlayerIds, player.id) ||
+    visualState.activeBlazeFlamethrowerPlayerIdSet.has(player.id) ||
+    visualState.activeBlazeBurningPlayerIdSet.has(player.id) ||
+    visualState.activeChronosAegisPlayerIdSet.has(player.id) ||
+    visualState.activeChronosAscendantPlayerIdSet.has(player.id) ||
     (player.onFireUntil ?? 0) > frameNowMs
   );
 }

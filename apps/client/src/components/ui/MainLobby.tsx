@@ -1,4 +1,4 @@
-import { type CSSProperties, useCallback, useState, useEffect, useRef, useId } from 'react';
+import { lazy, Suspense, type CSSProperties, useCallback, useState, useEffect, useRef, useId } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork, type RankedTokenHoldStatus } from '../../contexts/NetworkContext';
@@ -8,7 +8,6 @@ import { StatsPage } from './StatsPage';
 import { SettingsModal } from './SettingsModal';
 import { GameDialog } from './GameDialog';
 import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
-import { FeaturedHeroPreview, HERO_SHOWCASE_ANIMATION_MODE } from './FeaturedHeroPreview';
 import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton } from './SocialBox';
 import { TopNavIconButton } from './TopNavIconButton';
@@ -33,6 +32,11 @@ import {
 } from '../../utils/runningGameSession';
 import type { ServerLatencyProbeSnapshot } from '../../utils/serverLatency';
 import { RankIcon, getRankForStats } from './RankBadge';
+
+const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((module) => ({
+  default: module.FeaturedHeroPreview,
+})));
+const HERO_SHOWCASE_ANIMATION_MODE: HeroPreviewAnimationMode = 'showcaseLoop';
 
 // Phantom wallet icon component
 function PhantomIcon({ className }: { className?: string }) {
@@ -105,16 +109,6 @@ const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
   endsAt: null,
 };
 const SEASON_RULES_ARIA = 'Season rewards: top 10 players split 10% of the treasury wallet at season end; golden biome wins pay $10 in SOL per player with a 2% spawn rate; ranked history is saved by season.';
-const SEASON_REWARD_RULES = [
-  {
-    label: 'Rank in Top 10',
-    text: 'split 10% of treasury wallet',
-  },
-  {
-    label: 'Golden Biome',
-    text: '$10 SOL each, 2% spawn rate',
-  }
-] as const;
 
 function formatRankedUsdCents(usdCents: number): string {
   const normalizedCents = Number.isInteger(usdCents) && usdCents > 0 ? usdCents : 0;
@@ -894,13 +888,15 @@ function PlayTab({
  </button>
 
           {/* Hero Container */}
-          <FeaturedHeroPreview
-            heroId={featuredHero}
-            accentColor={heroColor}
-            initialYaw={Math.PI - 0.18}
-            animationMode={heroAnimationMode}
-            scale="large"
-          />
+          <Suspense fallback={null}>
+            <FeaturedHeroPreview
+              heroId={featuredHero}
+              accentColor={heroColor}
+              initialYaw={Math.PI - 0.18}
+              animationMode={heroAnimationMode}
+              scale="large"
+            />
+          </Suspense>
 
           {/* Next Arrow */}
  <button
@@ -1057,17 +1053,6 @@ function RankedSeasonPlate({ season }: { season: RankedSeasonSnapshot }) {
       <div className="play-season-plate-title">{season.label}</div>
       <div className="play-season-plate-end">{formatSeasonBoundaryDate(season)}</div>
       <div className="play-season-plate-detail">{formatSeasonBoundaryDetail(season)}</div>
-      {/* <div className="play-season-plate-rewards" aria-hidden="true">
-        <div className="play-season-plate-rewards-heading">Season rewards</div>
-        <ul className="play-season-plate-rewards-list">
-          {SEASON_REWARD_RULES.map((rule) => (
-            <li className="play-season-plate-rewards-item" key={rule.label}>
-              <span className="play-season-plate-rewards-label">{rule.label}</span>
-              <span className="play-season-plate-rewards-text">{rule.text}</span>
-            </li>
-          ))}
-        </ul>
-      </div> */}
     </aside>
   );
 }

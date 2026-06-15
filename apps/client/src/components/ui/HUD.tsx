@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
 import {
@@ -108,9 +108,9 @@ function BlazeFuelIndicator({ fuel, active }: { fuel: number; active: boolean })
           }}
         />
         <div
-          className="relative h-full rounded-full transition-all duration-100"
+          className="relative h-full w-full origin-left rounded-full transition-transform duration-100"
           style={{
-            width: `${fuelPercent}%`,
+            transform: `scaleX(${fuelPercent / 100})`,
             background: active
               ? 'linear-gradient(90deg, #f97316 0%, #fb923c 42%, #fde68a 100%)'
               : 'linear-gradient(90deg, #ea580c 0%, #f97316 50%, #fbbf24 100%)',
@@ -124,28 +124,57 @@ function BlazeFuelIndicator({ fuel, active }: { fuel: number; active: boolean })
   );
 }
 
-// Simple Void Ray charge indicator
+const VOID_RAY_RING_CIRCUMFERENCE = 2 * Math.PI * 28;
 
 function VoidRayChargeIndicator({ chargeStart }: { chargeStart: number }) {
-  const [progress, setProgress] = useState(0);
+  const progressCircleRef = useRef<SVGCircleElement | null>(null);
+  const labelRef = useRef<HTMLSpanElement | null>(null);
 
-  // Fast update loop for smooth animation
   useEffect(() => {
-    // Immediately calculate initial progress
-    const calcProgress = () => Math.min(1, (Date.now() - chargeStart) / VOID_RAY_CHARGE_TIME);
-    setProgress(calcProgress());
+    let frameId = 0;
+    let wasReady = false;
+    let lastLabel = '';
 
-    // Update at 60fps for smooth animation
-    const interval = setInterval(() => {
-      setProgress(calcProgress());
-    }, 16);
+    const updateProgress = () => {
+      const progress = Math.min(1, (Date.now() - chargeStart) / VOID_RAY_CHARGE_TIME);
+      const isReady = progress >= 1;
+      const circle = progressCircleRef.current;
+      const label = labelRef.current;
 
-    return () => clearInterval(interval);
+      if (circle) {
+        circle.style.strokeDashoffset = String(VOID_RAY_RING_CIRCUMFERENCE * (1 - progress));
+        if (isReady !== wasReady) {
+          circle.setAttribute('stroke', isReady ? '#00ffff' : '#9333ea');
+          circle.style.filter = isReady ? 'drop-shadow(0 0 6px #00ffff)' : 'drop-shadow(0 0 4px #9333ea)';
+        }
+      }
+
+      if (label) {
+        const nextLabel = isReady ? 'FIRE' : `${Math.floor(progress * 100)}%`;
+        if (nextLabel !== lastLabel) {
+          label.textContent = nextLabel;
+          lastLabel = nextLabel;
+        }
+        if (isReady !== wasReady) {
+          label.className = `font-mono text-sm font-bold ${isReady ? 'text-cyan-300' : 'text-white/80'}`;
+          label.style.textShadow = isReady ? '0 0 8px #00ffff' : '0 2px 4px rgba(0,0,0,0.8)';
+        }
+      }
+
+      wasReady = isReady;
+      if (!isReady) {
+        frameId = requestAnimationFrame(updateProgress);
+      }
+    };
+
+    updateProgress();
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+    };
   }, [chargeStart]);
 
-  const isReady = progress >= 1;
-  const circumference = 2 * Math.PI * 28;
-  const strokeDashoffset = circumference * (1 - progress);
+  const initialProgress = Math.min(1, (Date.now() - chargeStart) / VOID_RAY_CHARGE_TIME);
+  const initialReady = initialProgress >= 1;
 
   return (
     <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50">
@@ -161,17 +190,18 @@ function VoidRayChargeIndicator({ chargeStart }: { chargeStart: number }) {
         />
         {/* Progress ring */}
         <circle
+          ref={progressCircleRef}
           cx="36"
           cy="36"
           r="28"
           fill="none"
-          stroke={isReady ? '#00ffff' : '#9333ea'}
+          stroke={initialReady ? '#00ffff' : '#9333ea'}
           strokeWidth="4"
-          strokeDasharray={circumference}
-          strokeDashoffset={strokeDashoffset}
+          strokeDasharray={VOID_RAY_RING_CIRCUMFERENCE}
+          strokeDashoffset={VOID_RAY_RING_CIRCUMFERENCE * (1 - initialProgress)}
           strokeLinecap="round"
           style={{
-            filter: isReady ? 'drop-shadow(0 0 6px #00ffff)' : 'drop-shadow(0 0 4px #9333ea)',
+            filter: initialReady ? 'drop-shadow(0 0 6px #00ffff)' : 'drop-shadow(0 0 4px #9333ea)',
             transition: 'stroke 0.1s',
           }}
         />
@@ -179,10 +209,11 @@ function VoidRayChargeIndicator({ chargeStart }: { chargeStart: number }) {
       {/* Center text */}
       <div className="absolute inset-0 flex items-center justify-center">
         <span
-          className={`font-mono text-sm font-bold ${isReady ? 'text-cyan-300' : 'text-white/80'}`}
-          style={{ textShadow: isReady ? '0 0 8px #00ffff' : '0 2px 4px rgba(0,0,0,0.8)' }}
+          ref={labelRef}
+          className={`font-mono text-sm font-bold ${initialReady ? 'text-cyan-300' : 'text-white/80'}`}
+          style={{ textShadow: initialReady ? '0 0 8px #00ffff' : '0 2px 4px rgba(0,0,0,0.8)' }}
         >
-          {isReady ? 'FIRE' : `${Math.floor(progress * 100)}%`}
+          {initialReady ? 'FIRE' : `${Math.floor(initialProgress * 100)}%`}
         </span>
       </div>
     </div>
@@ -375,9 +406,9 @@ function PrimaryShotCounter({
       }}
     >
       <div
-        className="absolute inset-y-0 left-0 transition-[width] duration-100"
+        className="absolute inset-y-0 left-0 w-full origin-left transition-transform duration-100"
         style={{
-          width: isReloading ? `${reloadProgress * 100}%` : '100%',
+          transform: `scaleX(${isReloading ? reloadProgress : 1})`,
           background: isReloading ? tone.reloadFill : tone.idleFill,
         }}
       />
@@ -429,9 +460,9 @@ function PrimaryShotCounter({
 
         <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
           <div
-            className="h-full transition-[width] duration-100"
+            className="h-full w-full origin-left transition-transform duration-100"
             style={{
-              width: `${readoutProgress * 100}%`,
+              transform: `scaleX(${readoutProgress})`,
               background: isReloading ? tone.reloadProgress : tone.idleProgress,
               boxShadow: isReloading || infinite ? tone.progressShadow : 'none',
             }}
@@ -813,11 +844,11 @@ export function HUD() {
             }}
           >
             <div
-              className={`h-full rounded-full transition-all duration-150 ${isCriticalHealth ? 'health-bar-critical' :
+              className={`h-full w-full origin-left rounded-full transition-transform duration-150 ${isCriticalHealth ? 'health-bar-critical' :
                   isLowHealth ? 'health-bar-low' : ''
                 }`}
               style={{
-                width: `${healthPercent}%`,
+                transform: `scaleX(${healthPercent / 100})`,
                 background: healthColor,
                 boxShadow: `0 0 10px ${healthColor}66`,
               }}

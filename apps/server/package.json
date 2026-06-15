@@ -45,7 +45,6 @@
     "@dimforge/rapier3d-compat": "^0.14.0",
     "@prisma/client": "^5.22.0",
     "@solana/web3.js": "^1.95.4",
-    "@voxel-strike/game-logic": "workspace:*",
     "@voxel-strike/physics": "workspace:*",
     "@voxel-strike/shared": "workspace:*",
     "bs58": "^6.0.0",

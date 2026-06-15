@@ -98,10 +98,15 @@ export interface VisualState {
 
   /** Active player indexes for visual-only gameplay effects. Mutated outside React. */
   activeBlazeFlamethrowerPlayerIds: string[];
+  activeBlazeFlamethrowerPlayerIdSet: Set<string>;
   activeBlazeBurningPlayerIds: string[];
+  activeBlazeBurningPlayerIdSet: Set<string>;
   activePhantomVeilPlayerIds: string[];
+  activePhantomVeilPlayerIdSet: Set<string>;
   activeChronosAegisPlayerIds: string[];
+  activeChronosAegisPlayerIdSet: Set<string>;
   activeChronosAscendantPlayerIds: string[];
+  activeChronosAscendantPlayerIdSet: Set<string>;
 }
 
 export interface LocalPlayerImpulse {
@@ -269,10 +274,15 @@ const initialVisualState: VisualState = {
   localPlayerImpulses: [],
   combatFrameCache: createCombatFrameCache(),
   activeBlazeFlamethrowerPlayerIds: [],
+  activeBlazeFlamethrowerPlayerIdSet: new Set(),
   activeBlazeBurningPlayerIds: [],
+  activeBlazeBurningPlayerIdSet: new Set(),
   activePhantomVeilPlayerIds: [],
+  activePhantomVeilPlayerIdSet: new Set(),
   activeChronosAegisPlayerIds: [],
+  activeChronosAegisPlayerIdSet: new Set(),
   activeChronosAscendantPlayerIds: [],
+  activeChronosAscendantPlayerIdSet: new Set(),
 };
 
 const REMOTE_HISTORY_LIMIT = 32;
@@ -904,24 +914,24 @@ export const clearCombatVisualFrameCache = (): void => {
   cache.buckets.clear();
 };
 
-function removeIndexedPlayerId(ids: string[], playerId: string): boolean {
+function removeIndexedPlayerId(ids: string[], idSet: Set<string>, playerId: string): boolean {
+  if (!idSet.delete(playerId)) return false;
   const index = ids.indexOf(playerId);
-  if (index < 0) return false;
-  ids.splice(index, 1);
+  if (index >= 0) {
+    ids.splice(index, 1);
+  }
   return true;
 }
 
-function setIndexedPlayerId(ids: string[], playerId: string, active: boolean): boolean {
-  const index = ids.indexOf(playerId);
+function setIndexedPlayerId(ids: string[], idSet: Set<string>, playerId: string, active: boolean): boolean {
   if (active) {
-    if (index >= 0) return false;
+    if (idSet.has(playerId)) return false;
+    idSet.add(playerId);
     ids.push(playerId);
     return true;
   }
 
-  if (index < 0) return false;
-  ids.splice(index, 1);
-  return true;
+  return removeIndexedPlayerId(ids, idSet, playerId);
 }
 
 function isVisibleLiveEffectPlayer(player: Player): boolean {
@@ -955,21 +965,25 @@ export const syncPlayerVisualEffectIndexes = (
 
   setIndexedPlayerId(
     state.activeBlazeFlamethrowerPlayerIds,
+    state.activeBlazeFlamethrowerPlayerIdSet,
     player.id,
     !isLocalPlayer && visibleAlive && player.heroId === 'blaze' && player.movement.isJetpacking
   );
   setIndexedPlayerId(
     state.activeBlazeBurningPlayerIds,
+    state.activeBlazeBurningPlayerIdSet,
     player.id,
     visibleAlive && (player.onFireUntil ?? 0) > nowMs
   );
   setIndexedPlayerId(
     state.activePhantomVeilPlayerIds,
+    state.activePhantomVeilPlayerIdSet,
     player.id,
     visibleAlive && player.heroId === 'phantom' && player.abilities?.[PHANTOM_VEIL_ABILITY_ID]?.isActive === true
   );
   setIndexedPlayerId(
     state.activeChronosAscendantPlayerIds,
+    state.activeChronosAscendantPlayerIdSet,
     player.id,
     hasActiveChronosAscendant(player, nowMs)
   );
@@ -991,11 +1005,11 @@ export const removePlayerLiveVisualState = (playerId: string): void => {
   state.remoteTransformHistories.delete(playerId);
   state.chronosAegisStates.delete(playerId);
   state.remotePlayerAttackStates.delete(playerId);
-  removeIndexedPlayerId(state.activeBlazeFlamethrowerPlayerIds, playerId);
-  removeIndexedPlayerId(state.activeBlazeBurningPlayerIds, playerId);
-  removeIndexedPlayerId(state.activePhantomVeilPlayerIds, playerId);
-  removeIndexedPlayerId(state.activeChronosAegisPlayerIds, playerId);
-  removeIndexedPlayerId(state.activeChronosAscendantPlayerIds, playerId);
+  removeIndexedPlayerId(state.activeBlazeFlamethrowerPlayerIds, state.activeBlazeFlamethrowerPlayerIdSet, playerId);
+  removeIndexedPlayerId(state.activeBlazeBurningPlayerIds, state.activeBlazeBurningPlayerIdSet, playerId);
+  removeIndexedPlayerId(state.activePhantomVeilPlayerIds, state.activePhantomVeilPlayerIdSet, playerId);
+  removeIndexedPlayerId(state.activeChronosAegisPlayerIds, state.activeChronosAegisPlayerIdSet, playerId);
+  removeIndexedPlayerId(state.activeChronosAscendantPlayerIds, state.activeChronosAscendantPlayerIdSet, playerId);
 };
 
 export const removePlayerVisualState = (playerId: string): void => {
@@ -1016,7 +1030,12 @@ export const setChronosAegisVisualState = (
   const nextDurabilityRatio = durabilityRatio === undefined
     ? current?.durabilityRatio ?? 1
     : Math.max(0, Math.min(1, durabilityRatio));
-  setIndexedPlayerId(state.activeChronosAegisPlayerIds, playerId, active && options.renderWorldEffect === true);
+  setIndexedPlayerId(
+    state.activeChronosAegisPlayerIds,
+    state.activeChronosAegisPlayerIdSet,
+    playerId,
+    active && options.renderWorldEffect === true
+  );
 
   if (current) {
     if (active && !current.active) {
@@ -1257,10 +1276,15 @@ export const clearVisualState = (): void => {
     localPlayerImpulses: [],
     combatFrameCache: createCombatFrameCache(),
     activeBlazeFlamethrowerPlayerIds: [],
+    activeBlazeFlamethrowerPlayerIdSet: new Set(),
     activeBlazeBurningPlayerIds: [],
+    activeBlazeBurningPlayerIdSet: new Set(),
     activePhantomVeilPlayerIds: [],
+    activePhantomVeilPlayerIdSet: new Set(),
     activeChronosAegisPlayerIds: [],
+    activeChronosAegisPlayerIdSet: new Set(),
     activeChronosAscendantPlayerIds: [],
+    activeChronosAscendantPlayerIdSet: new Set(),
   }));
 };
 

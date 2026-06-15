@@ -1,10 +1,15 @@
-import { type CSSProperties, type ReactNode } from 'react';
+import { lazy, Suspense, type CSSProperties, type ReactNode } from 'react';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
-import { FeaturedHeroPreview, HERO_SHOWCASE_ANIMATION_MODE } from './FeaturedHeroPreview';
+import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { HeroIcon } from './HeroIcons';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
 import { ABILITY_COLORS, HERO_COLORS } from '../../styles/colorTokens';
+
+const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((module) => ({
+  default: module.FeaturedHeroPreview,
+})));
+const HERO_SHOWCASE_ANIMATION_MODE: HeroPreviewAnimationMode = 'showcaseLoop';
 
 const SIDE_STACK_CLASS = 'flex flex-col gap-1.5 xl:gap-2';
 const GLASS_CARD_STYLE = {
@@ -91,12 +96,14 @@ export function HeroesPage({ selectedHero, onSelectHero }: HeroesPageProps) {
 
       <div className="min-w-0 flex flex-col items-center justify-center relative">
         <div className="relative flex flex-col items-center menu-compact-scale">
-          <FeaturedHeroPreview
-            heroId={selectedHero}
-            accentColor={heroColor}
-            initialYaw={Math.PI - 0.18}
-            animationMode={HERO_SHOWCASE_ANIMATION_MODE}
-          />
+          <Suspense fallback={null}>
+            <FeaturedHeroPreview
+              heroId={selectedHero}
+              accentColor={heroColor}
+              initialYaw={Math.PI - 0.18}
+              animationMode={HERO_SHOWCASE_ANIMATION_MODE}
+            />
+          </Suspense>
 
           <div className="text-center w-[clamp(18rem,24vw,34rem)] mt-3 xl:mt-4">
             <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1 mb-2">

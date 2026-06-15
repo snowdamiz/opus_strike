@@ -44,27 +44,58 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined;
-          if (id.includes('@dimforge/rapier3d-compat')) {
+          const normalizedId = id.split(path.sep).join('/');
+
+          if (normalizedId.includes('@dimforge/rapier3d-compat')) {
             return 'physics-vendor';
           }
-          if (id.includes('livekit-client')) {
+          if (normalizedId.includes('livekit-client')) {
             return 'voice-vendor';
           }
           if (
-            id.includes('@solana/') ||
-            id.includes('@noble/') ||
-            id.includes('/bn.js/') ||
-            id.includes('/borsh/') ||
-            id.includes('/jayson/') ||
-            id.includes('/rpc-websockets/') ||
-            id.includes('/superstruct/')
+            normalizedId.includes('@solana/') ||
+            normalizedId.includes('@noble/') ||
+            normalizedId.includes('/bn.js/') ||
+            normalizedId.includes('/borsh/') ||
+            normalizedId.includes('/jayson/') ||
+            normalizedId.includes('/rpc-websockets/') ||
+            normalizedId.includes('/superstruct/')
           ) {
             return 'wallet-vendor';
           }
-          // Keep the React/R3F/Colyseus dependency graph together. Splitting
-          // these libraries by package creates browser ESM cycles where React
-          // can be read before its namespace export initializes.
-          return 'vendor';
+          if (
+            normalizedId.includes('/react/') ||
+            normalizedId.includes('/react-dom/') ||
+            normalizedId.includes('/scheduler/')
+          ) {
+            return 'react-vendor';
+          }
+          if (
+            normalizedId.includes('/three/') ||
+            normalizedId.includes('/@react-three/') ||
+            normalizedId.includes('/three-stdlib/') ||
+            normalizedId.includes('/maath/')
+          ) {
+            return 'rendering-vendor';
+          }
+          if (
+            normalizedId.includes('/colyseus.js/') ||
+            normalizedId.includes('/@colyseus/') ||
+            normalizedId.includes('/msgpackr/')
+          ) {
+            return 'network-vendor';
+          }
+          if (normalizedId.includes('/zustand/')) {
+            return 'state-vendor';
+          }
+          if (
+            normalizedId.includes('/@radix-ui/') ||
+            normalizedId.includes('/lucide-react/') ||
+            normalizedId.includes('/framer-motion/')
+          ) {
+            return 'ui-vendor';
+          }
+          return undefined;
         },
       },
     },

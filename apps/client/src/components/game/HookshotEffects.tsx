@@ -31,60 +31,63 @@ type ProjectileSlot<T extends { id: string }> = {
   hook: T | null;
 };
 
-function hasProjectileWithId<T extends { id: string }>(projectiles: readonly T[], id: string): boolean {
-  for (let i = 0; i < projectiles.length; i++) {
-    if (projectiles[i].id === id) return true;
-  }
-  return false;
-}
+type ProjectileSlotSyncScratch<T extends { id: string }> = {
+  projectileById: Map<string, T>;
+  assignedIds: Set<string>;
+};
 
-function findAssignedSlot<T extends { id: string }>(
-  slots: readonly ProjectileSlot<T>[],
-  id: string
-): ProjectileSlot<T> | null {
-  for (let i = 0; i < slots.length; i++) {
-    const slot = slots[i];
-    if (slot.hook?.id === id) return slot;
-  }
-  return null;
-}
-
-function findFreeSlot<T extends { id: string }>(slots: readonly ProjectileSlot<T>[]): ProjectileSlot<T> | null {
-  for (let i = 0; i < slots.length; i++) {
-    if (!slots[i].hook) return slots[i];
-  }
-  return null;
+function createProjectileSlotSyncScratch<T extends { id: string }>(): ProjectileSlotSyncScratch<T> {
+  return {
+    projectileById: new Map<string, T>(),
+    assignedIds: new Set<string>(),
+  };
 }
 
 function syncProjectileSlots<T extends { id: string }>(
   slots: readonly ProjectileSlot<T>[],
-  projectiles: readonly T[]
+  projectiles: readonly T[],
+  scratch: ProjectileSlotSyncScratch<T>
 ): number {
-  for (let i = 0; i < slots.length; i++) {
-    const slot = slots[i];
-    if (slot.hook && !hasProjectileWithId(projectiles, slot.hook.id)) {
-      slot.hook = null;
-    }
-  }
+  scratch.projectileById.clear();
+  scratch.assignedIds.clear();
 
   for (let i = 0; i < projectiles.length; i++) {
     const projectile = projectiles[i];
-    const assignedSlot = findAssignedSlot(slots, projectile.id);
-    if (assignedSlot) {
-      assignedSlot.hook = projectile;
-      continue;
-    }
-
-    const freeSlot = findFreeSlot(slots);
-    if (freeSlot) {
-      freeSlot.hook = projectile;
-    }
+    scratch.projectileById.set(projectile.id, projectile);
   }
 
   let activeCount = 0;
   for (let i = 0; i < slots.length; i++) {
-    if (slots[i].hook) activeCount++;
+    const slot = slots[i];
+    if (!slot.hook) continue;
+
+    const projectile = scratch.projectileById.get(slot.hook.id);
+    if (!projectile) {
+      slot.hook = null;
+      continue;
+    }
+
+    slot.hook = projectile;
+    scratch.assignedIds.add(projectile.id);
+    activeCount++;
   }
+
+  let freeSlotIndex = 0;
+  for (let i = 0; i < projectiles.length; i++) {
+    const projectile = projectiles[i];
+    if (scratch.assignedIds.has(projectile.id)) continue;
+
+    while (freeSlotIndex < slots.length && slots[freeSlotIndex].hook) {
+      freeSlotIndex++;
+    }
+    if (freeSlotIndex >= slots.length) break;
+
+    slots[freeSlotIndex].hook = projectile;
+    scratch.assignedIds.add(projectile.id);
+    activeCount++;
+    freeSlotIndex++;
+  }
+
   return activeCount;
 }
 
@@ -135,11 +138,19 @@ export function HookshotEffectsManager() {
     ),
     []
   );
+  const hookSlotSyncScratch = useMemo(
+    () => createProjectileSlotSyncScratch<HookProjectileData>(),
+    []
+  );
+  const dragSlotSyncScratch = useMemo(
+    () => createProjectileSlotSyncScratch<DragHookData>(),
+    []
+  );
 
   useFrame((state, delta) => {
     const store = useGameStore.getState();
-    const basicActive = syncProjectileSlots<HookProjectileData>(hookProjectileSlots, store.hookProjectiles);
-    const dragActive = syncProjectileSlots<DragHookData>(dragHookSlots, store.dragHooks);
+    const basicActive = syncProjectileSlots<HookProjectileData>(hookProjectileSlots, store.hookProjectiles, hookSlotSyncScratch);
+    const dragActive = syncProjectileSlots<DragHookData>(dragHookSlots, store.dragHooks, dragSlotSyncScratch);
     recordHookshotSlotDiagnostics(basicActive, dragActive);
     runHookshotFrameUpdaters(state, delta);
   });

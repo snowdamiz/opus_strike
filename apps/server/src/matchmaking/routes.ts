@@ -60,7 +60,15 @@ interface MatchmakingQueueStatus {
   capacity: InGameCapacitySnapshot;
 }
 
+interface QueueStatusCacheEntry {
+  expiresAt: number;
+  value?: MatchmakingQueueStatus;
+  inFlight?: Promise<MatchmakingQueueStatus>;
+}
+
 const RUNNING_GAME_PHASES = new Set(['waiting', 'hero_select', 'countdown', 'playing', 'round_end']);
+const QUEUE_STATUS_CACHE_TTL_MS = 750;
+const queueStatusCache = new Map<MatchMode, QueueStatusCacheEntry>();
 
 function getRequestToken(req: Request): string | null {
   const authorization = req.headers.authorization;
@@ -291,12 +299,54 @@ async function getQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> 
   };
 }
 
+function getCachedQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> {
+  const now = Date.now();
+  const cached = queueStatusCache.get(mode);
+  if (cached?.value && cached.expiresAt > now) {
+    return Promise.resolve(cached.value);
+  }
+  if (cached?.inFlight) {
+    return cached.inFlight;
+  }
+
+  const inFlight = getQueueStatus(mode)
+    .then((value) => {
+      queueStatusCache.set(mode, {
+        value,
+        expiresAt: Date.now() + QUEUE_STATUS_CACHE_TTL_MS,
+      });
+      return value;
+    })
+    .catch((error) => {
+      const current = queueStatusCache.get(mode);
+      if (current?.inFlight === inFlight) {
+        if (current.value) {
+          queueStatusCache.set(mode, {
+            value: current.value,
+            expiresAt: current.expiresAt,
+          });
+        } else {
+          queueStatusCache.delete(mode);
+        }
+      }
+      throw error;
+    });
+
+  queueStatusCache.set(mode, {
+    value: cached?.value,
+    expiresAt: cached?.expiresAt ?? 0,
+    inFlight,
+  });
+  return inFlight;
+}
+
 router.get('/queue-status', async (req: Request, res: Response) => {
   if (!enforceMatchmakingRateLimit(req, res, 'matchmaking:queue-status', MATCHMAKING_RATE_LIMITS.queueStatus)) return;
 
   try {
     const requestedMode = req.query.mode === 'ranked' ? 'ranked' : 'quick_play';
-    res.json(await getQueueStatus(requestedMode));
+    res.set('Cache-Control', 'private, max-age=1');
+    res.json(await getCachedQueueStatus(requestedMode));
   } catch (error) {
     console.error('[matchmaking] Failed to get queue status:', error);
     res.status(500).json({ error: 'Failed to get queue status' });

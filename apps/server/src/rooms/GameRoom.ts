@@ -1697,12 +1697,21 @@ export class GameRoom extends Room<GameState> {
         this.blazeBurnEffects.delete(targetId);
       }
     }
+    this.clearFlamethrowerDamageTicksForPlayer(playerId);
     this.movementAuthorities.delete(playerId);
     this.chronosAegisShieldHp.delete(playerId);
     this.attackCooldownUntil.delete(`${playerId}:primary`);
     this.attackCooldownUntil.delete(`${playerId}:secondary`);
     this.devImmunePlayers.delete(playerId);
     this.countdownSceneReadyPlayerIds.delete(playerId);
+  }
+
+  private clearFlamethrowerDamageTicksForPlayer(playerId: string): void {
+    for (const key of this.flamethrowerLastDamageTick.keys()) {
+      if (key.startsWith(`${playerId}:`) || key.endsWith(`:${playerId}`)) {
+        this.flamethrowerLastDamageTick.delete(key);
+      }
+    }
   }
 
   onDispose() {
@@ -1722,6 +1731,7 @@ export class GameRoom extends Room<GameState> {
       clearInterval(this.tickInterval);
       this.tickInterval = null;
     }
+    this.flamethrowerLastDamageTick.clear();
     this.settleWagerNoContest('room_dispose');
   }
 
@@ -3421,121 +3431,188 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private broadcastPlayerTransforms(force = false, frameContext = this.buildReplicationFrameContext()): void {
-    for (const client of this.clients) {
-      const recipient = this.state.players.get(client.sessionId) ?? null;
-      const payload = this.buildPlayerTransformsV2Payload({
-        force,
-        recipient,
-        recipientId: client.sessionId,
-        frameContext,
-      });
-      if (payload.players.length > 0 || payload.hiddenPlayerIds?.length || payload.full) {
-        this.sendTracked(client, 'playerTransformsV2', payload);
-      }
-    }
-  }
-
-  private broadcastPlayerVitals(force = false, frameContext = this.buildReplicationFrameContext()): void {
+  private broadcastPlayerStateStreams(options: {
+    transforms: boolean;
+    vitals: boolean;
+    forceTransforms?: boolean;
+    forceVitals?: boolean;
+    frameContext: ReplicationFrameContext;
+  }): void {
+    const frameContext = options.frameContext;
     const now = frameContext.now;
-    if (!force && now - this.lastVitalsBroadcastAt < PLAYER_VITALS_INTERVAL_MS) return;
+    const forceVitals = options.forceVitals === true;
+    const forceTransforms = options.forceTransforms === true;
+    const shouldBroadcastVitals = options.vitals && (forceVitals || now - this.lastVitalsBroadcastAt >= PLAYER_VITALS_INTERVAL_MS);
+    const shouldBroadcastInterest = options.vitals && (forceVitals || now - this.lastInterestBroadcastAt >= PLAYER_INTEREST_INTERVAL_MS);
+    const shouldBroadcastTransforms = options.transforms;
 
-    const currentIds = frameContext.currentIds;
-    currentIds.forEach((id) => {
-      this.knownPlayerIds.add(id);
-    });
+    if (!shouldBroadcastVitals && !shouldBroadcastInterest && !shouldBroadcastTransforms) return;
 
     const globallyRemovedPlayerIds: string[] = [];
-    this.knownPlayerIds.forEach((id) => {
-      if (!currentIds.has(id)) {
-        globallyRemovedPlayerIds.push(id);
-        this.knownPlayerIds.delete(id);
-        this.clearPlayerReplicationState(id);
-      }
-    });
+    if (shouldBroadcastVitals) {
+      frameContext.currentIds.forEach((id) => {
+        this.knownPlayerIds.add(id);
+      });
 
-    let sentAny = false;
+      this.knownPlayerIds.forEach((id) => {
+        if (!frameContext.currentIds.has(id)) {
+          globallyRemovedPlayerIds.push(id);
+          this.knownPlayerIds.delete(id);
+          this.clearPlayerReplicationState(id);
+        }
+      });
+    }
+
+    let sentVitals = false;
+    let sentInterest = false;
+
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
       const recipientId = client.sessionId;
-      const replicationState = this.getVitalsReplicationState(recipientId);
-      const players: PlayerVitalsSnapshot[] = [];
-      const removedPlayerIds: string[] = [...globallyRemovedPlayerIds];
+      const vitalsState = shouldBroadcastVitals ? this.getVitalsReplicationState(recipientId) : null;
+      const vitalsPlayers: PlayerVitalsSnapshot[] = [];
+      const removedPlayerIds = shouldBroadcastVitals ? [...globallyRemovedPlayerIds] : [];
+      const interestSignatures = shouldBroadcastInterest && recipient
+        ? this.getInterestSignatureState(recipientId)
+        : null;
+      const interestPlayers: ReturnType<typeof buildPlayerInterestSnapshot>[] = [];
+      const transformState = shouldBroadcastTransforms ? this.getTransformReplicationState(recipientId) : null;
+      const transformPlayers: PackedPlayerTransform[] = [];
+      const hiddenPlayerIds: string[] = [];
 
       this.state.players.forEach((player, id) => {
-        replicationState.knownPlayerIds.add(id);
-        const interest = recipient ? this.getRecipientInterest(recipient, player, now, frameContext) : undefined;
-        const vitals = this.buildPlayerVitalsForRecipient(id, player, recipient, now, interest, frameContext);
-        const reconcileDue = now - (replicationState.reconcileAt.get(id) ?? 0) >= PLAYER_VITALS_RECONCILE_INTERVAL_MS;
-        if (force || reconcileDue || this.haveVitalsChanged(replicationState.signatures.get(id), vitals)) {
-          replicationState.signatures.set(id, vitals);
-          replicationState.reconcileAt.set(id, now);
-          players.push(vitals);
+        let interest: RecipientInterestDecision | undefined;
+        let interestResolved = false;
+        const getInterest = (): RecipientInterestDecision | undefined => {
+          if (!recipient) return undefined;
+          if (!interestResolved) {
+            interest = this.getRecipientInterest(recipient, player, now, frameContext);
+            interestResolved = true;
+          }
+          return interest;
+        };
+
+        if (vitalsState) {
+          vitalsState.knownPlayerIds.add(id);
+          const vitals = this.buildPlayerVitalsForRecipient(
+            id,
+            player,
+            recipient,
+            now,
+            recipient && recipient.id !== id && recipient.team !== player.team ? getInterest() : undefined,
+            frameContext
+          );
+          const reconcileDue = now - (vitalsState.reconcileAt.get(id) ?? 0) >= PLAYER_VITALS_RECONCILE_INTERVAL_MS;
+          if (forceVitals || reconcileDue || this.haveVitalsChanged(vitalsState.signatures.get(id), vitals)) {
+            vitalsState.signatures.set(id, vitals);
+            vitalsState.reconcileAt.set(id, now);
+            vitalsPlayers.push(vitals);
+          }
+        }
+
+        if (interestSignatures) {
+          const decision = getInterest();
+          if (decision) {
+            const snapshot = buildPlayerInterestSnapshot(id, decision);
+            const signature = getPlayerInterestSignature(snapshot);
+            if (forceVitals || interestSignatures.get(id) !== signature) {
+              interestSignatures.set(id, signature);
+              interestPlayers.push(snapshot);
+            }
+          }
+        }
+
+        if (transformState) {
+          if (player.state !== 'alive' && player.state !== 'spawning') return;
+          if (!forceTransforms && id === recipientId) return;
+
+          const transformInterest = recipient && recipient.id !== id && recipient.team !== player.team
+            ? getInterest()
+            : undefined;
+          const exactStateVisible = this.shouldSendExactEnemyState(recipient, id, player, now, transformInterest);
+          if (!exactStateVisible) {
+            const hadTransform = transformState.signatures.delete(id);
+            transformState.heartbeatAt.delete(id);
+            if (hadTransform || forceTransforms) {
+              hiddenPlayerIds.push(id);
+            }
+            return;
+          }
+
+          const transform = frameContext.packedTransforms.get(id) ?? this.buildPackedPlayerTransform(id, player);
+          const signature = frameContext.packedTransformSignatures.get(id) ?? this.getPackedTransformSignature(transform);
+          const previousSignature = transformState.signatures.get(id);
+          const lastHeartbeatAt = transformState.heartbeatAt.get(id) ?? 0;
+          const highRelevance = this.isHighRelevanceTransform(recipient, id, player, now);
+          const heartbeatInterval = highRelevance
+            ? TRANSFORM_HEARTBEAT_INTERVAL_MS
+            : DISTANT_TRANSFORM_HEARTBEAT_INTERVAL_MS;
+          const heartbeatDue = now - lastHeartbeatAt >= heartbeatInterval;
+          const changed = this.havePackedTransformsChanged(previousSignature, signature);
+
+          if (forceTransforms || (highRelevance && changed) || heartbeatDue) {
+            transformPlayers.push(transform);
+            transformState.signatures.set(id, signature);
+            transformState.heartbeatAt.set(id, now);
+          }
         }
       });
 
-      for (const id of replicationState.knownPlayerIds) {
-        if (!currentIds.has(id)) {
-          removedPlayerIds.push(id);
-          replicationState.knownPlayerIds.delete(id);
-          replicationState.signatures.delete(id);
-          replicationState.reconcileAt.delete(id);
+      if (vitalsState) {
+        for (const id of vitalsState.knownPlayerIds) {
+          if (!frameContext.currentIds.has(id)) {
+            removedPlayerIds.push(id);
+            vitalsState.knownPlayerIds.delete(id);
+            vitalsState.signatures.delete(id);
+            vitalsState.reconcileAt.delete(id);
+          }
+        }
+
+        if (vitalsPlayers.length > 0 || removedPlayerIds.length > 0 || forceVitals) {
+          sentVitals = true;
+          this.sendTracked(client, 'playerVitals', {
+            tick: this.state.tick,
+            serverTime: this.state.serverTime,
+            players: vitalsPlayers,
+            removedPlayerIds,
+          } satisfies PlayerVitalsMessage);
         }
       }
 
-      if (players.length === 0 && removedPlayerIds.length === 0 && !force) continue;
-      sentAny = true;
-      this.sendTracked(client, 'playerVitals', {
-        tick: this.state.tick,
-        serverTime: this.state.serverTime,
-        players,
-        removedPlayerIds,
-      } satisfies PlayerVitalsMessage);
+      if (interestSignatures) {
+        for (const targetId of interestSignatures.keys()) {
+          if (!frameContext.currentIds.has(targetId)) {
+            interestSignatures.delete(targetId);
+          }
+        }
+
+        if (interestPlayers.length > 0 || forceVitals) {
+          sentInterest = true;
+          this.sendTracked(client, 'playerInterest', {
+            tick: this.state.tick,
+            serverTime: this.state.serverTime,
+            players: interestPlayers,
+          } satisfies PlayerInterestMessage);
+        }
+      }
+
+      if (transformState && (transformPlayers.length > 0 || hiddenPlayerIds.length > 0 || forceTransforms)) {
+        this.sendTracked(client, 'playerTransformsV2', {
+          version: 2,
+          tick: this.state.tick,
+          serverTime: this.state.serverTime,
+          streamEpoch: this.transformStreamEpoch,
+          full: forceTransforms,
+          players: transformPlayers,
+          hiddenPlayerIds,
+        } satisfies PlayerTransformsV2Message);
+      }
     }
 
-    if (sentAny || force) {
+    if (shouldBroadcastVitals && (sentVitals || forceVitals)) {
       this.lastVitalsBroadcastAt = now;
     }
-  }
-
-  private broadcastPlayerInterest(force = false, frameContext = this.buildReplicationFrameContext()): void {
-    const now = frameContext.now;
-    if (!force && now - this.lastInterestBroadcastAt < PLAYER_INTEREST_INTERVAL_MS) return;
-
-    let sentAny = false;
-    for (const client of this.clients) {
-      const recipient = this.state.players.get(client.sessionId) ?? null;
-      if (!recipient) continue;
-
-      const signatures = this.getInterestSignatureState(client.sessionId);
-      const snapshots: ReturnType<typeof buildPlayerInterestSnapshot>[] = [];
-
-      this.state.players.forEach((target, targetId) => {
-        const decision = this.getRecipientInterest(recipient, target, now, frameContext);
-        const snapshot = buildPlayerInterestSnapshot(targetId, decision);
-        const signature = getPlayerInterestSignature(snapshot);
-        if (force || signatures.get(targetId) !== signature) {
-          signatures.set(targetId, signature);
-          snapshots.push(snapshot);
-        }
-      });
-
-      for (const targetId of signatures.keys()) {
-        if (!frameContext.currentIds.has(targetId)) {
-          signatures.delete(targetId);
-        }
-      }
-
-      if (snapshots.length === 0 && !force) continue;
-      sentAny = true;
-      this.sendTracked(client, 'playerInterest', {
-        tick: this.state.tick,
-        serverTime: this.state.serverTime,
-        players: snapshots,
-      } satisfies PlayerInterestMessage);
-    }
-
-    if (sentAny || force) {
+    if (shouldBroadcastInterest && (sentInterest || forceVitals)) {
       this.lastInterestBroadcastAt = now;
     }
   }
@@ -3558,15 +3635,14 @@ export class GameRoom extends Room<GameState> {
     this.broadcastPlayerPings();
     const frameContext = this.buildReplicationFrameContext();
 
-    if (options.vitals ?? true) {
-      this.broadcastPlayerVitals(options.forceVitals, frameContext);
-      this.broadcastPlayerInterest(options.forceVitals, frameContext);
-    }
-
     const shouldBroadcastTransforms = options.transforms ?? (this.state.phase === 'playing' || this.state.phase === 'countdown');
-    if (shouldBroadcastTransforms) {
-      this.broadcastPlayerTransforms(options.forceTransforms, frameContext);
-    }
+    this.broadcastPlayerStateStreams({
+      transforms: shouldBroadcastTransforms,
+      vitals: options.vitals ?? true,
+      forceTransforms: options.forceTransforms,
+      forceVitals: options.forceVitals,
+      frameContext,
+    });
 
     if (options.match ?? true) {
       this.broadcastMatchSnapshot(options.forceMatch);
