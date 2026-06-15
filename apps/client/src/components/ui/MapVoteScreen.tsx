@@ -279,7 +279,7 @@ type MapVoteBadgeTone = 'idle' | 'selected' | 'winner';
 const mapVoteCardClass = 'map-vote-card relative overflow-hidden rounded-lg border bg-black/[0.1] shadow-2xl shadow-black/[0.26] backdrop-blur-xl';
 const mapVoteCardMetaClass = 'map-vote-card-meta relative overflow-hidden border-t border-white/[0.045] bg-black/[0.025] px-3.5 py-2.5 xl:px-4';
 const mapVoteCardMetaStyle = { backdropFilter: 'brightness(0.42) blur(2px)' };
-const GOLDEN_MAP_CARD_SHADOW = '0 20px 60px rgba(0,0,0,0.48), 0 0 34px rgba(247,190,71,0.38), inset 0 0 0 1px rgba(255,239,164,0.2)';
+const GOLDEN_MAP_CARD_SHADOW = '0 20px 60px rgba(0,0,0,0.48), 0 0 34px rgb(var(--color-map-golden-glow) / 0.38), inset 0 0 0 1px rgb(var(--color-map-golden-highlight) / 0.2)';
 
 function isGoldenMapOption(option: MapVoteOption): boolean {
   return option.mapThemeId === GOLDEN_VOXEL_MAP_THEME_ID || option.themeId === GOLDEN_VOXEL_MAP_THEME_ID;

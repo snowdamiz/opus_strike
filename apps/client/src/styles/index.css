@@ -41,6 +41,8 @@
   --color-ui-danger-deep: 220 38 38;
   --color-ui-info: 6 182 212;
   --color-ui-objective: 0 255 136;
+  --color-map-golden-glow: 247 190 71;
+  --color-map-golden-highlight: 255 239 164;
 
   --bg-primary: rgb(var(--color-strike-bg));
   --bg-surface: rgb(var(--color-strike-surface));
@@ -2765,7 +2767,7 @@ body,
   inset: 0;
   z-index: 2;
   pointer-events: none;
-  border: 1px solid rgb(255 239 164 / 0.72);
+  border: 1px solid rgb(var(--color-map-golden-highlight) / 0.72);
   border-radius: inherit;
   box-shadow:
     inset 0 0 0 1px rgb(180 83 9 / 0.36),
