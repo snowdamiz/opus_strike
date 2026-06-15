@@ -1405,6 +1405,10 @@ body,
   filter: brightness(1.05);
 }
 
+.play-main-cta-discord {
+  font-size: clamp(0.88rem, 0.76rem + 0.35vw, 1.12rem);
+}
+
 .play-main-cta:disabled {
   cursor: not-allowed;
   opacity: 0.65;
