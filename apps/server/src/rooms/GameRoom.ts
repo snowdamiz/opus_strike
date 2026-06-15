@@ -89,10 +89,13 @@ import {
   CHRONOS_VERDANT_PULSE_FIRE_READY_MS,
   CHRONOS_VERDANT_PULSE_SPEED,
   GRAPPLE_MAX_DISTANCE,
+  HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS,
   HOOKSHOT_CHAIN_HOOKS_DAMAGE,
+  HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE,
+  HOOKSHOT_CHAIN_HOOKS_RANGE,
   HOOKSHOT_DRAG_HOOK_DAMAGE,
-  HOOKSHOT_GRAPPLE_TRAP_DAMAGE_INTERVAL_MS,
-  HOOKSHOT_GRAPPLE_TRAP_DAMAGE_PER_SECOND,
+  HOOKSHOT_GROUND_HOOKS_RADIUS,
+  HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
   PHANTOM_DIRE_BALL_DAMAGE,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_COOLDOWN_MS,
@@ -407,17 +410,14 @@ interface PhantomCastPayload {
   radius?: number;
   duration?: number;
   impactTime?: number;
+  targets?: HookshotGroundHooksTarget[];
+  rootUntil?: number;
 }
 
-interface HookshotTrapInstance {
-  id: string;
+interface HookshotGroundHooksTarget {
+  targetId: string;
   position: PlainVec3;
-  radius: number;
-  duration: number;
-  startTime: number;
-  ownerId: string;
-  ownerTeam: Team;
-  lastDamageTick: Map<string, number>;
+  rootUntil: number;
 }
 
 interface HookshotAnchorWallInstance extends AnchorWallCollisionSource {
@@ -584,6 +584,7 @@ interface SkillImpactHint {
 const BLAZE_ROCKET_AIM_DISTANCE = 120;
 const BLAZE_BOMB_COOLDOWN_MS = 8000;
 const BLAZE_BOMB_FALL_DURATION_MS = 1500;
+const BLAZE_BOMB_WARNING_LEAD_MS = 350;
 const BLAZE_BOMB_MAX_RANGE = 60;
 const BLAZE_BOMB_MIN_RANGE = 3;
 const BLAZE_BOMB_AEGIS_COLLISION_RADIUS = 0.65;
@@ -686,7 +687,7 @@ const MOVEMENT_CORRECTION_LOG_SAMPLE_MS = 1000;
 const MAX_SECURITY_LOG_SAMPLE_KEYS = 1024;
 const PRIMARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   phantom: { damage: PHANTOM_DIRE_BALL_DAMAGE, range: 30, cooldownMs: PHANTOM_PRIMARY_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'dire_ball' },
-  hookshot: { damage: HOOKSHOT_CHAIN_HOOKS_DAMAGE, range: 22, cooldownMs: 600, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
+  hookshot: { damage: HOOKSHOT_CHAIN_HOOKS_DAMAGE, range: HOOKSHOT_CHAIN_HOOKS_RANGE, cooldownMs: HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
   blaze: { damage: BLAZE_ROCKET_DAMAGE, range: 36, cooldownMs: BLAZE_ROCKET_FIRE_INTERVAL_MS, coneDot: Math.cos(0.22), radius: BLAZE_ROCKET_SPLASH_RADIUS, damageType: 'rocket' },
   chronos: { damage: CHRONOS_VERDANT_PULSE_DAMAGE, range: 34, cooldownMs: CHRONOS_VERDANT_PULSE_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'verdant_pulse' },
 };
@@ -696,16 +697,16 @@ const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   blaze: { damage: BLAZE_BOMB_DAMAGE, range: BLAZE_BOMB_MAX_RANGE, cooldownMs: BLAZE_BOMB_COOLDOWN_MS, coneDot: Math.cos(0.32), radius: BLAZE_BOMB_SPLASH_RADIUS, damageType: 'bomb' },
 };
 const HOOKSHOT_SPEED = 38;
-const HOOKSHOT_MAX_DISTANCE = 14;
 const DRAG_HOOK_SPEED = 50;
 const DRAG_HOOK_MAX_DISTANCE = 24;
 const HOOKSHOT_ANCHOR_WALL_DURATION = 6.25;
 const HOOKSHOT_ANCHOR_WALL_MAX_DISTANCE = 24.35;
-const GRAPPLE_TRAP_MAX_RANGE = 30;
-const GRAPPLE_TRAP_THROW_SPEED = 30;
-const GRAPPLE_TRAP_GRAVITY = 25;
-const GRAPPLE_TRAP_RADIUS = 8;
-const GRAPPLE_TRAP_DURATION = 8;
+const ROOT_BLOCKED_MOVEMENT_ABILITIES = new Set([
+  'phantom_blink',
+  'hookshot_grapple',
+  'blaze_rocketjump',
+  'chronos_ascendant_paradox',
+]);
 const DEFAULT_MATCH_START_CANCEL_TIMEOUT_MS = 60_000;
 const MATCH_CANCEL_DISCONNECT_DELAY_MS = 750;
 
@@ -753,10 +754,10 @@ export class GameRoom extends Room<GameState> {
   private blazeRocketIdCounter: number = 0;
   private blazeBombIdCounter: number = 0;
   private blazeGearstormIdCounter: number = 0;
-  private hookshotTrapIdCounter: number = 0;
+  private hookshotGroundHooksIdCounter: number = 0;
   private phantomPrimaryLaunchSide: Map<string, -1 | 1> = new Map();
   private hookshotPrimaryLaunchSide: Map<string, -1 | 1> = new Map();
-  private hookshotTraps: HookshotTrapInstance[] = [];
+  private playerRootedUntil: Map<string, number> = new Map();
   private hookshotAnchorWalls: HookshotAnchorWallInstance[] = [];
   private hookshotGrapples: Map<string, HookshotGrappleAuthorityState> = new Map();
   private pendingAreaDamage: PendingAreaDamageInstance[] = [];
@@ -793,6 +794,7 @@ export class GameRoom extends Room<GameState> {
     getGroundY: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().getGroundY(position),
     clampPosition: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().clampToPlayableMap(position),
     getBlockAtWorld: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().getBlockAtWorld(position),
+    getMaxPlayableY: () => this.getProceduralTerrainLookup().getMaxPlayableY(),
     collisionRevision: 0,
     cacheStaticAabbs: true,
     getCollisionAabbs: (bounds: MovementCollisionBounds) => this.getHookshotAnchorWallAabbs(bounds),
@@ -1557,7 +1559,7 @@ export class GameRoom extends Room<GameState> {
     this.hookshotPrimaryLaunchSide.delete(playerId);
     this.devBotSkillOverrides.delete(playerId);
     this.devBotLookOverrides.delete(playerId);
-    this.removeHookshotTrapsForOwner(playerId);
+    this.playerRootedUntil.delete(playerId);
     this.hookshotGrapples.delete(playerId);
     this.blazeBombDropConsumedForHold.delete(playerId);
     this.blazeFlamethrowerActivePlayers.delete(playerId);
@@ -1793,10 +1795,10 @@ export class GameRoom extends Room<GameState> {
       this.syncChronosAscendantMovementState(player, now);
     });
     this.updateChronosAegisShields(dt);
+    this.cleanupExpiredPlayerRoots(now);
 
     // Update void zones (damage enemies inside)
     this.updateVoidZones(now);
-    this.updateHookshotTraps(now);
 
     this.updatePendingAreaDamage(now);
     this.updateBlazeGearstorms(now);
@@ -4380,6 +4382,57 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private cleanupExpiredPlayerRoots(now: number): void {
+    for (const [playerId, rootedUntil] of this.playerRootedUntil) {
+      if (rootedUntil <= now) {
+        this.playerRootedUntil.delete(playerId);
+      }
+    }
+  }
+
+  private isPlayerRooted(playerId: string, now = Date.now()): boolean {
+    const rootedUntil = this.playerRootedUntil.get(playerId) ?? 0;
+    if (rootedUntil <= now) {
+      this.playerRootedUntil.delete(playerId);
+      return false;
+    }
+    return true;
+  }
+
+  private stopRootedMovement(player: Player): void {
+    this.clearHookshotGrapple(player.id);
+    player.velocity.x = 0;
+    player.velocity.z = 0;
+    player.movement.isSprinting = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    player.movement.isGrappling = false;
+    player.movement.isJetpacking = false;
+    player.movement.isGliding = false;
+  }
+
+  private getRootedMovementInput(player: Player, input: PlayerInput, now: number): PlayerInput {
+    if (!this.isPlayerRooted(player.id, now)) return input;
+
+    this.stopRootedMovement(player);
+    return {
+      ...input,
+      moveForward: false,
+      moveBackward: false,
+      moveLeft: false,
+      moveRight: false,
+      jump: false,
+      crouch: false,
+      sprint: false,
+    };
+  }
+
+  private isRootBlockedAbility(abilityId: string | undefined): boolean {
+    return Boolean(abilityId && ROOT_BLOCKED_MOVEMENT_ABILITIES.has(abilityId));
+  }
+
   private markMovementBarrier(
     playerId: string,
     reason: MovementCorrectionReason,
@@ -4864,6 +4917,7 @@ export class GameRoom extends Room<GameState> {
   private sendSelfMovementAuthority(player: Player, client: Client, reason: MovementCorrectionReason | null): void {
     const authority = this.getMovementAuthority(player.id);
     const now = this.state.serverTime || Date.now();
+    const rootedUntil = this.playerRootedUntil.get(player.id) ?? 0;
     const payload: SelfMovementAuthority = {
       serverTick: this.state.tick,
       serverTime: now,
@@ -4893,6 +4947,7 @@ export class GameRoom extends Room<GameState> {
       collisionRevision: this.getMovementCollisionRevision(),
       chronosAegisActive: this.isChronosAegisActive(player),
       chronosAegisShieldRatio: this.getChronosAegisShieldRatio(player.id),
+      rootedUntil: rootedUntil > now ? rootedUntil : undefined,
     };
     this.sendRoomMessage(client, 'selfMovementAuthority', payload);
     if (authority.lastAuthoritySentAt > 0) {
@@ -5334,84 +5389,6 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private resolveHookshotTrapTarget(player: Player): { startPosition: PlainVec3; targetPosition: PlainVec3; velocity: PlainVec3 } {
-    const direction = this.getForwardVector(player.lookYaw, player.lookPitch);
-    const launchSide = 1;
-    const startPosition = this.getAbilitySocketCastOrigin(player, 'hookshot_grapple_trap', launchSide);
-
-    let targetPosition = this.addScaled3D(startPosition, direction, GRAPPLE_TRAP_MAX_RANGE);
-    const directHit = this.raycastTerrain(this.getHookshotAimOrigin(player), direction, GRAPPLE_TRAP_MAX_RANGE + 10);
-    if (directHit) {
-      const groundY = this.getProceduralGroundY({
-        x: directHit.x,
-        y: directHit.y + 5,
-        z: directHit.z,
-      });
-      targetPosition = {
-        x: directHit.x,
-        y: groundY !== null ? groundY + 0.1 : directHit.y + 0.1,
-        z: directHit.z,
-      };
-    } else {
-      const sampleDistances = [15, 20, 25, GRAPPLE_TRAP_MAX_RANGE];
-      for (const distance of sampleDistances) {
-        const sample = this.addScaled3D(this.vec3SchemaToPlain(player.position), direction, distance);
-        const groundY = this.getProceduralGroundY({
-          x: sample.x,
-          y: Math.max(sample.y + 50, player.position.y + 50),
-          z: sample.z,
-        });
-        if (groundY !== null) {
-          targetPosition = {
-            x: sample.x,
-            y: groundY + 0.1,
-            z: sample.z,
-          };
-          break;
-        }
-      }
-    }
-
-    targetPosition = this.clampToPlayableMap(targetPosition);
-    const velocity = this.calculateHookshotTrapVelocity(startPosition, targetPosition);
-    return { startPosition, targetPosition, velocity };
-  }
-
-  private calculateHookshotTrapVelocity(startPosition: PlainVec3, targetPosition: PlainVec3): PlainVec3 {
-    const dx = targetPosition.x - startPosition.x;
-    const dy = targetPosition.y - startPosition.y;
-    const dz = targetPosition.z - startPosition.z;
-    const horizontalDistance = Math.sqrt(dx * dx + dz * dz);
-    const timeOfFlight = Math.max(0.5, horizontalDistance / 20);
-    const horizontalSpeed = horizontalDistance / timeOfFlight;
-
-    const horizontalLength = Math.sqrt(dx * dx + dz * dz);
-    const horizontalVelocityX = horizontalLength > 0 ? (dx / horizontalLength) * horizontalSpeed : 0;
-    const horizontalVelocityZ = horizontalLength > 0 ? (dz / horizontalLength) * horizontalSpeed : 0;
-    const verticalVelocity = (dy + 0.5 * GRAPPLE_TRAP_GRAVITY * timeOfFlight * timeOfFlight) / timeOfFlight;
-
-    return {
-      x: this.clamp(horizontalVelocityX, -GRAPPLE_TRAP_THROW_SPEED, GRAPPLE_TRAP_THROW_SPEED),
-      y: this.clamp(verticalVelocity, 5, GRAPPLE_TRAP_THROW_SPEED * 1.2),
-      z: this.clamp(horizontalVelocityZ, -GRAPPLE_TRAP_THROW_SPEED, GRAPPLE_TRAP_THROW_SPEED),
-    };
-  }
-
-  private createHookshotTrap(trap: HookshotTrapInstance): void {
-    this.hookshotTraps.push(trap);
-  }
-
-  private removeHookshotTrapsForOwner(ownerId: string): void {
-    let writeIndex = 0;
-    for (let readIndex = 0; readIndex < this.hookshotTraps.length; readIndex++) {
-      const trap = this.hookshotTraps[readIndex];
-      if (trap.ownerId !== ownerId) {
-        this.hookshotTraps[writeIndex++] = trap;
-      }
-    }
-    this.hookshotTraps.length = writeIndex;
-  }
-
   private queuePendingAreaDamage(instance: PendingAreaDamageInstance): void {
     this.pendingAreaDamage.push(instance);
   }
@@ -5506,51 +5483,35 @@ export class GameRoom extends Room<GameState> {
     this.blazeGearstorms.length = writeIndex;
   }
 
-  private updateHookshotTraps(now: number): void {
-    if (this.hookshotTraps.length === 0) return;
+  private applyHookshotGroundHooksRoot(caster: Player, now: number): HookshotGroundHooksTarget[] {
+    const ownerTeam = caster.team as Team;
+    const enemyTeam = ownerTeam === 'red' ? 'blue' : 'red';
+    const rootUntil = now + HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS * 1000;
+    const targets = this.playerSpatialIndex.queryRadius(
+      caster.position,
+      HOOKSHOT_GROUND_HOOKS_RADIUS,
+      this.spatialQueryScratch,
+      { team: enemyTeam }
+    );
+    const rootedTargets: HookshotGroundHooksTarget[] = [];
 
-    let writeIndex = 0;
-    for (let readIndex = 0; readIndex < this.hookshotTraps.length; readIndex++) {
-      const trap = this.hookshotTraps[readIndex];
-      if ((now - trap.startTime) / 1000 >= trap.duration) continue;
+    for (const target of targets) {
+      if (target.state !== 'alive') continue;
 
-      const owner = this.state.players.get(trap.ownerId) ?? null;
-      const radiusSq = trap.radius * trap.radius;
-      const targets = this.playerSpatialIndex.queryRadius(
-        trap.position,
-        trap.radius,
-        this.spatialQueryScratch,
-        { team: trap.ownerTeam === 'red' ? 'blue' : 'red', excludeId: trap.ownerId }
+      this.playerRootedUntil.set(
+        target.id,
+        Math.max(this.playerRootedUntil.get(target.id) ?? 0, rootUntil)
       );
-      for (const target of targets) {
-        if (target.id === trap.ownerId) continue;
-        if (target.state !== 'alive') continue;
-        if (target.team === trap.ownerTeam) continue;
-
-        const dx = target.position.x - trap.position.x;
-        const dz = target.position.z - trap.position.z;
-        if (dx * dx + dz * dz > radiusSq) continue;
-
-        const lastDamage = trap.lastDamageTick.get(target.id) || 0;
-        if (now - lastDamage < HOOKSHOT_GRAPPLE_TRAP_DAMAGE_INTERVAL_MS) continue;
-        trap.lastDamageTick.set(target.id, now);
-
-        const pullDirection = this.direction2DFromTo(target.position, trap.position);
-        if (pullDirection) {
-          target.velocity.x += pullDirection.x * 2.5;
-          target.velocity.z += pullDirection.z * 2.5;
-          this.markMovementBarrier(target.id, 'knockback');
-        }
-
-        this.applyDamage(target, HOOKSHOT_GRAPPLE_TRAP_DAMAGE_PER_SECOND, owner ? trap.ownerId : null, 'grapple_trap', {
-          abilityId: 'hookshot_grapple_trap',
-          sourcePosition: trap.position,
-        });
-      }
-
-      this.hookshotTraps[writeIndex++] = trap;
+      this.stopRootedMovement(target);
+      this.markMovementBarrier(target.id, 'root', { preserveQueuedCommands: true });
+      rootedTargets.push({
+        targetId: target.id,
+        position: this.vec3SchemaToPlain(target.position),
+        rootUntil,
+      });
     }
-    this.hookshotTraps.length = writeIndex;
+
+    return rootedTargets;
   }
 
   private nextBlazeCastId(playerId: string, abilityId: string, counter: number): string {
@@ -5775,7 +5736,8 @@ export class GameRoom extends Room<GameState> {
     const impactProgress = aegisHit
       ? Math.sqrt(this.clamp(aegisHit.distance / Math.max(0.0001, meteorPath.distance), 0, 1))
       : 1;
-    const impactTime = now + Math.max(60, Math.round(BLAZE_BOMB_FALL_DURATION_MS * impactProgress));
+    const meteorStartTime = now + BLAZE_BOMB_WARNING_LEAD_MS;
+    const impactTime = meteorStartTime + Math.max(60, Math.round(BLAZE_BOMB_FALL_DURATION_MS * impactProgress));
 
     if (aegisHit) {
       this.absorbDamageWithChronosAegis(aegisHit.blocker, attack.damage, now, {
@@ -5796,7 +5758,7 @@ export class GameRoom extends Room<GameState> {
       });
     }
 
-    this.broadcastAbilityUsed(player, {
+    const payload = {
       playerId: player.id,
       abilityId: 'blaze_bomb',
       castId,
@@ -5810,9 +5772,12 @@ export class GameRoom extends Room<GameState> {
       ownerTeam: player.team as Team,
       launchYaw: player.lookYaw,
       serverTime: now,
+      meteorStartTime,
       impactTime,
       radius: attack.radius ?? BLAZE_BOMB_SPLASH_RADIUS,
-    });
+    };
+
+    this.broadcastRoomMessage('abilityUsed', payload);
   }
 
   private broadcastPhantomCast(payload: PhantomCastPayload): void {
@@ -5892,7 +5857,7 @@ export class GameRoom extends Room<GameState> {
       ? this.getNextHookshotPrimaryLaunchSide(player.id)
       : 1;
     const maxDistance = abilityId === 'hookshot_basic_attack'
-      ? HOOKSHOT_MAX_DISTANCE
+      ? HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE
       : DRAG_HOOK_MAX_DISTANCE;
     const speed = abilityId === 'hookshot_basic_attack'
       ? HOOKSHOT_SPEED
@@ -6016,6 +5981,10 @@ export class GameRoom extends Room<GameState> {
 
     const abilityId = HERO_DEFINITIONS[player.heroId as HeroId]?.[slot]?.abilityId;
     const usedAt = Date.now();
+    if (this.isPlayerRooted(player.id, usedAt) && this.isRootBlockedAbility(abilityId)) {
+      this.rejectAbilityOrCombat(player, `root_blocks:${abilityId}`, false);
+      return;
+    }
     if (
       abilityId &&
       abilityId !== 'phantom_blink' &&
@@ -6144,39 +6113,28 @@ export class GameRoom extends Room<GameState> {
         return;
       }
 
-      if (result.abilityId === 'hookshot_grapple_trap') {
-        const trap = this.resolveHookshotTrapTarget(player);
-        const trapId = `hookshot_trap_${player.id}_${this.hookshotTrapIdCounter++}`;
-        this.createHookshotTrap({
-          id: trapId,
-          position: trap.targetPosition,
-          radius: GRAPPLE_TRAP_RADIUS,
-          duration: GRAPPLE_TRAP_DURATION,
-          startTime: usedAt,
-          ownerId: player.id,
-          ownerTeam,
-          lastDamageTick: new Map(),
-        });
+      if (result.abilityId === 'hookshot_ground_hooks') {
+        const rootTargets = this.applyHookshotGroundHooksRoot(player, usedAt);
+        const castId = `ground_hooks_${player.id}_${this.hookshotGroundHooksIdCounter++}`;
+        const rootUntil = usedAt + HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS * 1000;
 
         this.broadcastAbilityUsed(player, {
           playerId: player.id,
           abilityId: result.abilityId,
-          castId: trapId,
+          castId,
           position: this.vec3SchemaToPlain(player.position),
-          startPosition: trap.startPosition,
-          targetPosition: trap.targetPosition,
-          velocity: trap.velocity,
+          targetIds: rootTargets.map((target) => target.targetId),
+          targets: rootTargets,
           direction: {
             yaw: player.lookYaw,
             pitch: player.lookPitch,
           },
-          aimDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
           ownerTeam,
-          launchSide: 1,
           launchYaw: player.lookYaw,
           serverTime: usedAt,
-          radius: GRAPPLE_TRAP_RADIUS,
-          duration: GRAPPLE_TRAP_DURATION,
+          radius: HOOKSHOT_GROUND_HOOKS_RADIUS,
+          duration: HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
+          rootUntil,
         });
         return;
       }
@@ -7881,10 +7839,9 @@ export class GameRoom extends Room<GameState> {
     const blinkDangerous = blackboard.visibleEnemies.filter((enemy) => enemy.distance <= 12).length >= 2;
     const grappleAnchorAvailable = bot.heroId === 'hookshot' && this.resolveHookshotGrappleTarget(bot) !== null;
     const objectiveZone = blackboard.droppedFriendlyFlag ?? blackboard.droppedEnemyFlag ?? routePlan.targetPosition;
-    const trapZoneValuable = Boolean(
-      blackboard.droppedFriendlyFlag ||
-      blackboard.droppedEnemyFlag ||
-      blackboard.visibleEnemies.some((enemy) => this.distance2D(enemy.lastKnownPosition, objectiveZone) <= 12)
+    const groundHooksValuable = Boolean(
+      blackboard.visibleEnemies.filter((enemy) => enemy.distance <= HOOKSHOT_GROUND_HOOKS_RADIUS).length >= 2 ||
+      blackboard.visibleEnemies.some((enemy) => this.distance2D(enemy.lastKnownPosition, objectiveZone) <= HOOKSHOT_GROUND_HOOKS_RADIUS)
     );
 
     return {
@@ -7895,7 +7852,7 @@ export class GameRoom extends Room<GameState> {
       grappleAnchorAvailable,
       anchorWallProtectsAlly: this.doesBotShieldLineProtectAlly(bot, blackboard),
       anchorWallBlocksFriendlyCarrier: this.wouldBotWallBlockFriendlyCarrier(bot, blackboard),
-      trapZoneValuable,
+      groundHooksValuable,
     };
   }
 
@@ -10249,6 +10206,7 @@ export class GameRoom extends Room<GameState> {
     if (player.heroId === 'chronos') {
       this.chronosAegisShieldHp.delete(player.id);
     }
+    this.playerRootedUntil.delete(player.id);
 
     // Reset ability cooldowns on respawn
     resetAbilityCooldowns(player);
@@ -10304,15 +10262,16 @@ export class GameRoom extends Room<GameState> {
         const command = this.getNextMovementCommand(authority);
         if (!command) break;
         const input = this.movementCommandToInput(command, player);
-        player.lastInput = input;
-        player.lookYaw = input.lookYaw;
-        player.lookPitch = input.lookPitch;
+        const movementInput = this.getRootedMovementInput(player, input, stepNow);
+        player.lastInput = movementInput;
+        player.lookYaw = movementInput.lookYaw;
+        player.lookPitch = movementInput.lookPitch;
         this.prepareHookshotGrappleForMovement(player, stepNow);
 
-        this.simulateAuthoritativeMovementStep(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow);
-        this.stepHookshotGrappleAuthority(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow);
-        this.processPlayerInput(player, input);
-        this.updateLastSafeMovement(player, input.tick, stepNow);
+        this.simulateAuthoritativeMovementStep(player, movementInput, MOVEMENT_SUBSTEP_SECONDS, stepNow);
+        this.stepHookshotGrappleAuthority(player, movementInput, MOVEMENT_SUBSTEP_SECONDS, stepNow);
+        this.processPlayerInput(player, movementInput);
+        this.updateLastSafeMovement(player, movementInput.tick, stepNow);
         authority.metrics.commandsProcessed++;
         processedThisTick++;
         if (authority.movementEpoch !== epochBeforeStep) break;

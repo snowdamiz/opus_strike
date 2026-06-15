@@ -35,7 +35,7 @@ export interface AntiCheatTraceTerrainContact {
 export interface AntiCheatTraceAbilityState {
   activeAbilityIds: string[];
   activeSpeedMultiplier: number;
-  movementBarrier?: 'respawn' | 'teleport' | 'knockback' | null;
+  movementBarrier?: 'respawn' | 'teleport' | 'knockback' | 'root' | null;
 }
 
 export interface AntiCheatMovementTraceFrame {

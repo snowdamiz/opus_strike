@@ -151,8 +151,8 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
       return false;
     }
 
-    // Don't allow using abilities while targeting mode is active
-    if (isTargetingActive && abilityId !== 'hookshot_grapple_trap') {
+    // Don't allow using abilities while a targeting mode is active.
+    if (isTargetingActive) {
       return false;
     }
 

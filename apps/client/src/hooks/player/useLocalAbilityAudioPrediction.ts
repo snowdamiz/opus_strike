@@ -58,7 +58,6 @@ export interface LocalAbilityAudioPredictionFrame {
   inputState: InputState;
   ultimateCharge: number;
   bombTargeting: boolean;
-  grappleTrapTargeting: boolean;
   phantomPrimaryAmmo: number;
   phantomPrimaryReloading: boolean;
   canUseAbility: (abilityId: string, isUltimate: boolean, isTargetingActive?: boolean) => boolean;
@@ -67,7 +66,7 @@ export interface LocalAbilityAudioPredictionFrame {
   hasChronosLifelineTarget?: () => boolean;
 }
 
-function playHookshotCastSounds(abilityId: string, castSound: 'hookshotPrimary' | 'hookshotSecondary' | 'hookshotGrapple' | 'hookshotTrap', volume = 1): void {
+function playHookshotCastSounds(abilityId: string, castSound: 'hookshotPrimary' | 'hookshotSecondary' | 'hookshotGrapple' | 'hookshotGroundHooks', volume = 1): void {
   markPredictedLocalAbilitySound(abilityId);
   void playSharedSound('hookshotShot', {
     durationMs: HOOKSHOT_SHOT_CLIP_MS,
@@ -255,7 +254,6 @@ export function useLocalAbilityAudioPrediction() {
       inputState,
       ultimateCharge,
       bombTargeting,
-      grappleTrapTargeting,
       phantomPrimaryAmmo,
       phantomPrimaryReloading,
       canUseAbility,
@@ -348,7 +346,6 @@ export function useLocalAbilityAudioPrediction() {
       case 'hookshot':
         if (
           primaryPressed &&
-          !grappleTrapTargeting &&
           canPlayPrimary(now, HOOKSHOT_FIRE_INTERVAL / tempoMultiplier)
         ) {
           playHookshotCastSounds('hookshot_basic_attack', 'hookshotPrimary');
@@ -368,7 +365,6 @@ export function useLocalAbilityAudioPrediction() {
         startPredictedPhantomVoidRayCharge(now, VOID_RAY_CHARGE_TIME / tempoMultiplier);
       } else if (
         heroId === 'hookshot' &&
-        !grappleTrapTargeting &&
         canPlaySecondary(now, DRAG_HOOK_COOLDOWN / tempoMultiplier)
       ) {
         playHookshotCastSounds('hookshot_heavy_attack', 'hookshotSecondary', 1.05);
@@ -412,7 +408,6 @@ export function useLocalAbilityAudioPrediction() {
         void playSharedSound('phantomBlink', { durationMs: 900, volume: 1.1 });
       } else if (
         heroId === 'hookshot' &&
-        !grappleTrapTargeting &&
         (canUseHookshotGrapple?.() ?? false) &&
         canReservePredictedSkillSound('hookshot_grapple')
       ) {
@@ -444,8 +439,8 @@ export function useLocalAbilityAudioPrediction() {
       } else if (heroId === 'blaze' && canReservePredictedSkillSound('blaze_airstrike', true)) {
         markPredictedLocalAbilitySound('blaze_airstrike', now);
         void playSharedBlazeAirstrikeSound();
-      } else if (heroId === 'hookshot' && canReservePredictedSkillSound('hookshot_grapple_trap', true, grappleTrapTargeting)) {
-        playHookshotCastSounds('hookshot_grapple_trap', 'hookshotTrap', 1.15);
+      } else if (heroId === 'hookshot' && canReservePredictedSkillSound('hookshot_ground_hooks', true)) {
+        playHookshotCastSounds('hookshot_ground_hooks', 'hookshotGroundHooks', 1.12);
       }
     }
 

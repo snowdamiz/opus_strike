@@ -27,6 +27,10 @@ export interface VisibilityInterestPlayer {
 type AbilityInterestState = { abilityId?: string; isActive?: boolean };
 type AbilityCollection = Iterable<AbilityInterestState> | { values(): Iterable<AbilityInterestState> };
 
+function hasAbilityValues(collection: AbilityCollection): collection is { values(): Iterable<AbilityInterestState> } {
+  return typeof (collection as { values?: unknown }).values === 'function';
+}
+
 export interface RecipientInterestDecision {
   recipientId: string;
   targetId: string;
@@ -96,7 +100,7 @@ function isActiveStealthAbility(ability: { abilityId?: string; isActive?: boolea
 
 function hasStealthActive(player: VisibilityInterestPlayer): boolean {
   if (!player.abilities) return false;
-  const abilities = typeof player.abilities.values === 'function'
+  const abilities = hasAbilityValues(player.abilities)
     ? player.abilities.values()
     : player.abilities;
   for (const ability of abilities) {

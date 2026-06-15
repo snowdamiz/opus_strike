@@ -7,6 +7,7 @@ import {
   BLAZE_FLAMETHROWER_DAMAGE,
   BLAZE_FLAMETHROWER_FUEL_DRAIN,
   BLAZE_FLAMETHROWER_FUEL_REGEN,
+  BLAZE_GEARSTORM_RADIUS,
 } from './physics.js';
 
 // Default hero stats - used as fallback when no hero is selected
@@ -46,9 +47,14 @@ export const PHANTOM_VEIL_SPEED_BONUS_PERCENT = 30;
 export const PHANTOM_VEIL_SPEED_MULTIPLIER = 1 + PHANTOM_VEIL_SPEED_BONUS_PERCENT / 100;
 
 export const HOOKSHOT_CHAIN_HOOKS_DAMAGE = 16;
+export const HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS = 475;
+export const HOOKSHOT_CHAIN_HOOKS_COOLDOWN_SECONDS = HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS / 1000;
+export const HOOKSHOT_CHAIN_HOOKS_RANGE = 27.5;
+export const HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE = 17.5;
 export const HOOKSHOT_DRAG_HOOK_DAMAGE = 24;
-export const HOOKSHOT_GRAPPLE_TRAP_DAMAGE_PER_SECOND = 15;
-export const HOOKSHOT_GRAPPLE_TRAP_DAMAGE_INTERVAL_MS = 1000;
+export const HOOKSHOT_GROUND_HOOKS_RADIUS = BLAZE_GEARSTORM_RADIUS;
+export const HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS = 3;
+export const HOOKSHOT_GROUND_HOOKS_HOOKS_PER_TARGET = 3;
 
 export const CHRONOS_LIFELINE_RADIUS = 14;
 export const CHRONOS_LIFELINE_ALLY_HEAL = 70;
@@ -136,8 +142,9 @@ export const ABILITY_CARD_STATS = {
   hookshot_heavy_attack: [
     { value: HOOKSHOT_DRAG_HOOK_DAMAGE, label: 'dmg' },
   ],
-  hookshot_grapple_trap: [
-    { value: HOOKSHOT_GRAPPLE_TRAP_DAMAGE_PER_SECOND, label: 'dmg/s' },
+  hookshot_ground_hooks: [
+    { value: HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS, label: 'root', format: 'seconds' },
+    { value: HOOKSHOT_GROUND_HOOKS_RADIUS, label: 'radius' },
   ],
   blaze_rocket: [
     { value: BLAZE_ROCKET_DAMAGE, label: 'dmg' },
@@ -205,7 +212,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     },
     ability1: { abilityId: 'hookshot_grapple', defaultKey: 'KeyE' },
     ability2: { abilityId: 'hookshot_anchor_wall', defaultKey: 'KeyQ' },
-    ultimate: { abilityId: 'hookshot_grapple_trap', defaultKey: 'KeyF' },
+    ultimate: { abilityId: 'hookshot_ground_hooks', defaultKey: 'KeyF' },
     description: 'A highly mobile fighter who uses grappling hooks and anchor walls to reshape fights.',
   },
 
@@ -311,22 +318,22 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     duration: 6.25,
     description: 'Launch a ground anchor that raises a solid barricade in your aim direction.',
   },
-  hookshot_grapple_trap: {
-    id: 'hookshot_grapple_trap',
-    name: 'Grapple Trap',
+  hookshot_ground_hooks: {
+    id: 'hookshot_ground_hooks',
+    name: 'Ground Hooks',
     type: 'ultimate',
-    targeting: 'ground',
+    targeting: 'area',
     cooldown: 0,
-    duration: 8,
+    duration: HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
     resourceCost: 100,
-    description: 'Throw a grapple device that hooks enemies in its AOE, holding them and dealing damage.',
+    description: 'Root nearby enemies for 3 seconds as three ground hooks tear up around each target and tether them in place.',
   },
   hookshot_basic_attack: {
     id: 'hookshot_basic_attack',
     name: 'Chain Hooks',
     type: 'offensive',
     targeting: 'direction',
-    cooldown: 0.6,
+    cooldown: HOOKSHOT_CHAIN_HOOKS_COOLDOWN_SECONDS,
     description: 'Fire short-range hooks attached by rope that shoot forward and retract.',
   },
   hookshot_heavy_attack: {

@@ -269,7 +269,6 @@ function runCommandPhase(inputOverrides: {
 
 useGameStore.setState({
   bombTargeting: false,
-  grappleTrapTargeting: false,
 });
 
 for (const heroId of ['phantom', 'hookshot', 'blaze', 'chronos'] as const satisfies readonly HeroId[]) {

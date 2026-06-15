@@ -117,7 +117,7 @@ export interface BlazeState {
 export interface HookshotState {
   hookProjectileId: number;
   dragHookId: number;
-  grappleTrapId: number;
+  groundHooksId: number;
   grappleLineId: number;
   earthWallId: number;
   lastHookTime: number;

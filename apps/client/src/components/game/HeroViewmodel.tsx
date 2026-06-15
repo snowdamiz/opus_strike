@@ -587,7 +587,7 @@ function getActionState(heroId: ViewmodelHeroId): ViewmodelActionState {
       return {
         active: isViewmodelActionActive(heroId, store, localPlayerId),
         charging: false,
-        targeting: store.grappleTrapTargeting,
+        targeting: false,
       };
     case 'blaze':
       return {
@@ -4751,10 +4751,8 @@ export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
         actionCharging: viewmodelHeroId === 'phantom' && state.voidRayCharging,
         actionTargeting: Boolean(
           viewmodelHeroId &&
-          (
-            (viewmodelHeroId === 'blaze' && state.bombTargeting) ||
-            (viewmodelHeroId === 'hookshot' && state.grappleTrapTargeting)
-          )
+          viewmodelHeroId === 'blaze' &&
+          state.bombTargeting
         ),
       };
     })

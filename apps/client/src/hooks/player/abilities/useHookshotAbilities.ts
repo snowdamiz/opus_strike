@@ -6,12 +6,14 @@
  * - Drag Hook (secondary fire)
  * - Grapple (E ability)
  * - Anchor Wall (Q ability)
- * - Grapple Trap (Ultimate)
+ * - Ground Hooks (Ultimate)
  */
 
 import { useRef, useCallback } from 'react';
-import * as THREE from 'three';
-import { ABILITY_DEFINITIONS } from '@voxel-strike/shared';
+import {
+  HOOKSHOT_GROUND_HOOKS_RADIUS,
+  HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
+} from '@voxel-strike/shared';
 import {
   createHookshotSwingState,
   stepHookshotSwing,
@@ -28,9 +30,6 @@ import {
   DRAG_HOOK_SPEED,
   DRAG_HOOK_MAX_DISTANCE,
   GRAPPLE_MAX_RANGE,
-  GRAPPLE_TRAP_MAX_RANGE,
-  GRAPPLE_TRAP_THROW_SPEED,
-  GRAPPLE_TRAP_GRAVITY,
   HOOKSHOT_CHAIN_SOCKET,
   calculatePlayerSocketPosition,
   calculateLookDirection,
@@ -45,7 +44,7 @@ export interface UseHookshotAbilitiesReturn {
   // State refs
   hookProjectileIdRef: React.MutableRefObject<number>;
   dragHookIdRef: React.MutableRefObject<number>;
-  grappleTrapIdRef: React.MutableRefObject<number>;
+  groundHooksIdRef: React.MutableRefObject<number>;
   grappleLineIdRef: React.MutableRefObject<number>;
   earthWallIdRef: React.MutableRefObject<number>;
   lastHookTimeRef: React.MutableRefObject<number>;
@@ -60,20 +59,15 @@ export interface UseHookshotAbilitiesReturn {
   // Grapple swing state
   isSwingingRef: React.MutableRefObject<boolean>;
 
-  // Grapple trap targeting
-  grappleTrapTargetRef: React.MutableRefObject<THREE.Vector3 | null>;
-  grappleTrapValidRef: React.MutableRefObject<boolean>;
-
   // Methods
   fireChainHook: (ctx: AbilityContext) => boolean;
   fireDragHook: (ctx: AbilityContext) => boolean;
   canGrapple: (ctx: AbilityContext) => boolean;
   executeGrapple: (ctx: AbilityContext) => boolean;
   executeEarthWall: (ctx: AbilityContext) => boolean;
-  executeGrappleTrap: (ctx: AbilityContext, updateLocalPlayer: (data: any) => void) => boolean;
+  executeGroundHooks: (ctx: AbilityContext, updateLocalPlayer: (data: any) => void) => boolean;
   updateGrapplePhysics: (ctx: AbilityContext) => void;
   handleSwingTerrainContact: () => void;
-  handleGrappleTrapTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
 }
 
 function readHookshotHookSocketPosition(
@@ -172,11 +166,43 @@ function resolveHookshotGrapplePoint(ctx: AbilityContext): { x: number; y: numbe
   return hit?.hit ? hit.point : null;
 }
 
+function resolveGroundHookTargets(ctx: AbilityContext, rootUntil: number) {
+  const ownerTeam = (ctx.localPlayer.team || 'red') as 'red' | 'blue';
+  const radiusSq = HOOKSHOT_GROUND_HOOKS_RADIUS * HOOKSHOT_GROUND_HOOKS_RADIUS;
+  const targets: Array<{
+    targetId: string;
+    position: { x: number; y: number; z: number };
+    rootUntil: number;
+  }> = [];
+
+  useGameStore.getState().players.forEach((player) => {
+    if (player.id === ctx.localPlayer.id) return;
+    if (player.state !== 'alive') return;
+    if (player.team === ownerTeam) return;
+
+    const dx = player.position.x - ctx.position.x;
+    const dz = player.position.z - ctx.position.z;
+    if (dx * dx + dz * dz > radiusSq) return;
+
+    targets.push({
+      targetId: player.id,
+      position: {
+        x: player.position.x,
+        y: player.position.y,
+        z: player.position.z,
+      },
+      rootUntil,
+    });
+  });
+
+  return targets;
+}
+
 export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
   // ID counters
   const hookProjectileIdRef = useRef(0);
   const dragHookIdRef = useRef(0);
-  const grappleTrapIdRef = useRef(0);
+  const groundHooksIdRef = useRef(0);
   const grappleLineIdRef = useRef(0);
   const earthWallIdRef = useRef(0);
 
@@ -195,10 +221,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
   const isSwingingRef = useRef(false);
   const swingWasAirborneRef = useRef(false);
   const grappleSwingStateRef = useRef<HookshotSwingState | null>(null);
-
-  // Grapple trap targeting
-  const grappleTrapTargetRef = useRef<THREE.Vector3 | null>(null);
-  const grappleTrapValidRef = useRef(false);
 
   // Fire Chain Hook (primary fire)
   const fireChainHook = useCallback((ctx: AbilityContext) => {
@@ -360,107 +382,30 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     return true;
   }, []);
 
-  // Execute Grapple Trap (Ultimate)
-  const executeGrappleTrap = useCallback((
+  // Execute Ground Hooks (Ultimate)
+  const executeGroundHooks = useCallback((
     ctx: AbilityContext,
     updateLocalPlayer: (data: any) => void
   ) => {
     const now = Date.now();
-    const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
+    const rootUntil = now + HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS * 1000;
+    const targets = resolveGroundHookTargets(ctx, rootUntil);
+    groundHooksIdRef.current++;
+    const effectId = `ground_hooks_${ctx.localPlayer.id}_${groundHooksIdRef.current}`;
+    const store = useGameStore.getState();
 
-    const launchSide = 1;
-    const startPos = readHookshotHookSocketPosition('hookshot_grapple_trap', launchSide) ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
-      ...HOOKSHOT_CHAIN_SOCKET,
-      sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
-    });
-
-    const cachedTarget = grappleTrapValidRef.current ? grappleTrapTargetRef.current : null;
-    let targetX = cachedTarget?.x ?? startPos.x + direction.x * GRAPPLE_TRAP_MAX_RANGE;
-    let targetY = cachedTarget?.y ?? startPos.y + direction.y * GRAPPLE_TRAP_MAX_RANGE;
-    let targetZ = cachedTarget?.z ?? startPos.z + direction.z * GRAPPLE_TRAP_MAX_RANGE;
-
-    if (!cachedTarget && isPhysicsReady()) {
-      const directHit = raycastDirection(
-        ctx.position.x + 0.6, ctx.position.y, ctx.position.z,
-        direction.x, direction.y, direction.z,
-        GRAPPLE_TRAP_MAX_RANGE + 10
-      );
-
-      if (directHit?.hit) {
-        targetX = directHit.point.x;
-        targetY = directHit.point.y;
-        targetZ = directHit.point.z;
-
-        if (!directHit.isWalkable) {
-          const groundBelow = checkGroundWithNormal(targetX, targetY + 5, targetZ, 50);
-          if (groundBelow?.isWalkable) {
-            targetY = groundBelow.groundY + 0.1;
-          }
-        } else {
-          targetY += 0.1;
-        }
-      } else {
-        // Sample along direction
-        const sampleDistances = [15, 20, 25, GRAPPLE_TRAP_MAX_RANGE];
-        for (const dist of sampleDistances) {
-          const sampleX = ctx.position.x + direction.x * dist;
-          const sampleY = ctx.position.y + direction.y * dist;
-          const sampleZ = ctx.position.z + direction.z * dist;
-
-          const groundCheck = checkGroundWithNormal(
-            sampleX,
-            Math.max(sampleY + 50, ctx.position.y + 50),
-            sampleZ,
-            150
-          );
-          if (groundCheck?.isWalkable) {
-            targetX = sampleX;
-            targetY = groundCheck.groundY + 0.1;
-            targetZ = sampleZ;
-            break;
-          }
-        }
-      }
-    }
-
-    // Calculate throw velocity
-    const dx = targetX - startPos.x;
-    const dy = targetY - startPos.y;
-    const dz = targetZ - startPos.z;
-    const horizontalDist = Math.sqrt(dx * dx + dz * dz);
-    const timeOfFlight = Math.max(0.5, horizontalDist / 20);
-
-    const horizMag = Math.sqrt(dx * dx + dz * dz);
-    const horizVelX = horizMag > 0 ? (dx / horizMag) * (horizontalDist / timeOfFlight) : 0;
-    const horizVelZ = horizMag > 0 ? (dz / horizMag) * (horizontalDist / timeOfFlight) : 0;
-    const vertVel = (dy + 0.5 * GRAPPLE_TRAP_GRAVITY * timeOfFlight * timeOfFlight) / timeOfFlight;
-
-    const throwVelocity = {
-      x: Math.max(-GRAPPLE_TRAP_THROW_SPEED, Math.min(GRAPPLE_TRAP_THROW_SPEED, horizVelX)),
-      y: Math.max(5, Math.min(GRAPPLE_TRAP_THROW_SPEED * 1.2, vertVel)),
-      z: Math.max(-GRAPPLE_TRAP_THROW_SPEED, Math.min(GRAPPLE_TRAP_THROW_SPEED, horizVelZ)),
-    };
-
-    // Create trap
-    grappleTrapIdRef.current++;
-    const trapId = `grapple_trap_${ctx.localPlayer.id}_${grappleTrapIdRef.current}`;
-
-    useGameStore.getState().addGrappleTrap({
-      id: trapId,
-      position: { x: targetX, y: targetY, z: targetZ },
-      startPosition: startPos,
-      velocity: throwVelocity,
+    store.addHookshotGroundHooks({
+      id: effectId,
+      position: { x: ctx.position.x, y: ctx.position.y, z: ctx.position.z },
       startTime: now,
-      duration: 8,
+      duration: HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
       ownerId: ctx.localPlayer.id,
       ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
-      radius: 8,
-      hookedPlayers: [],
+      radius: HOOKSHOT_GROUND_HOOKS_RADIUS,
+      rootUntil,
+      targets,
     });
-    markPredictedLocalAbilityVisual('hookshot_grapple_trap', ctx.localPlayer.id, trapId, {
-      launchSide,
-      now,
-    });
+    markPredictedLocalAbilityVisual('hookshot_ground_hooks', ctx.localPlayer.id, effectId, { now });
 
     updateLocalPlayer({ ultimateCharge: 0 });
     return true;
@@ -572,21 +517,10 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     }
   }, []);
 
-  // Handle grapple trap target updates
-  const handleGrappleTrapTargetUpdate = useCallback((position: THREE.Vector3 | null, isValid: boolean) => {
-    grappleTrapTargetRef.current = position;
-    grappleTrapValidRef.current = isValid;
-
-    const store = useGameStore.getState();
-    if (store.grappleTrapTargeting && store.grappleTrapTargetValid !== isValid) {
-      store.setGrappleTrapTargeting(true, isValid);
-    }
-  }, []);
-
   return {
     hookProjectileIdRef,
     dragHookIdRef,
-    grappleTrapIdRef,
+    groundHooksIdRef,
     grappleLineIdRef,
     earthWallIdRef,
     lastHookTimeRef,
@@ -596,16 +530,13 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     grappleTargetRef,
     activeGrappleLineIdRef,
     isSwingingRef,
-    grappleTrapTargetRef,
-    grappleTrapValidRef,
     fireChainHook,
     fireDragHook,
     canGrapple,
     executeGrapple,
     executeEarthWall,
-    executeGrappleTrap,
+    executeGroundHooks,
     updateGrapplePhysics,
     handleSwingTerrainContact,
-    handleGrappleTrapTargetUpdate,
   };
 }

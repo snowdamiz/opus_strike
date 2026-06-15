@@ -53,6 +53,7 @@ export interface VoxelMovementTerrainAdapter {
   getGroundY?: (position: Vec3) => number | null;
   clampPosition?: (position: Vec3) => Vec3;
   getBlockAtWorld?: (position: Vec3) => number;
+  getMaxPlayableY?: () => number | null;
   origin?: Vec3;
   voxelSize?: Vec3;
   collisionRevision?: number;
@@ -88,6 +89,7 @@ export interface MovementCollisionWorld {
   sweepCapsule(position: Vec3, delta: Vec3, height: number, radius: number): CapsuleSweepHit | null;
   findGround(position: Vec3, snapDistance: number, radius: number, height: number): MovementGroundHit | null;
   clampToPlayableArea(position: Vec3): Vec3;
+  getMaxPlayableY?: () => number | null;
 }
 
 export interface MovementCommandInput {
@@ -207,6 +209,14 @@ function clampHorizontalSpeed(velocity: Vec3, maxSpeed: number): Vec3 {
     y: velocity.y,
     z: velocity.z * amount,
   };
+}
+
+function resolveAscendantMaxY(world: MovementCollisionWorld, startY: number): number {
+  const abilityMaxY = startY + CHRONOS_ASCENDANT_PARADOX_MAX_ELEVATION_GAIN;
+  const playableMaxY = world.getMaxPlayableY?.();
+  return typeof playableMaxY === 'number' && Number.isFinite(playableMaxY)
+    ? Math.min(abilityMaxY, playableMaxY)
+    : abilityMaxY;
 }
 
 function normalizeHorizontal(vector: Vec3): Vec3 {
@@ -769,6 +779,9 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
     clampToPlayableArea(position: Vec3): Vec3 {
       return terrain.clampPosition ? terrain.clampPosition(position) : cloneVec3(position);
     },
+    getMaxPlayableY(): number | null {
+      return terrain.getMaxPlayableY?.() ?? null;
+    },
   };
 }
 
@@ -1133,7 +1146,7 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
     const ascendantStartY = Number.isFinite(movement.chronosAscendantStartY)
       ? movement.chronosAscendantStartY!
       : position.y;
-    const ascendantMaxY = ascendantStartY + CHRONOS_ASCENDANT_PARADOX_MAX_ELEVATION_GAIN;
+    const ascendantMaxY = resolveAscendantMaxY(world, ascendantStartY);
 
     movement.isGrounded = false;
     movement.isGliding = true;
@@ -1197,7 +1210,7 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
 
   if (chronosAscendantActive) {
     const ascendantStartY = movement.chronosAscendantStartY ?? position.y;
-    const ascendantMaxY = ascendantStartY + CHRONOS_ASCENDANT_PARADOX_MAX_ELEVATION_GAIN;
+    const ascendantMaxY = resolveAscendantMaxY(world, ascendantStartY);
     if (position.y > ascendantMaxY) {
       position.y = ascendantMaxY;
       if (velocity.y > 0) velocity.y = 0;

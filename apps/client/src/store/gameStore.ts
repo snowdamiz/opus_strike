@@ -71,7 +71,8 @@ export type {
   ChronosPulseData,
   HookProjectileData,
   DragHookData,
-  GrappleTrapData,
+  HookshotGroundHooksData,
+  HookshotGroundHooksTargetData,
   GrappleLineData,
   EarthWallData,
 } from './types';

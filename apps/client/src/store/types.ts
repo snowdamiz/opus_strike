@@ -219,6 +219,7 @@ export interface BombData {
   impactPosition?: { x: number; y: number; z: number };
   interceptedByChronosAegis?: boolean;
   startPosition: { x: number; y: number; z: number };
+  warningStartTime?: number;
   startTime: number;
   impactTime: number; // When the bomb lands
   ownerId: string;
@@ -279,17 +280,22 @@ export interface DragHookData {
   launchYaw?: number; // Fallback orientation for resolving the launch socket
 }
 
-export interface GrappleTrapData {
+export interface HookshotGroundHooksTargetData {
+  targetId: string;
+  position: { x: number; y: number; z: number };
+  rootUntil: number;
+}
+
+export interface HookshotGroundHooksData {
   id: string;
-  position: { x: number; y: number; z: number }; // Target/landing position
-  startPosition?: { x: number; y: number; z: number }; // Where it was thrown from
-  velocity?: { x: number; y: number; z: number }; // Initial throw velocity for grenade arc
+  position: { x: number; y: number; z: number };
   startTime: number;
   duration: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';
   radius: number;
-  hookedPlayers: string[]; // IDs of players hooked
+  rootUntil: number;
+  targets: HookshotGroundHooksTargetData[];
 }
 
 export interface GrappleLineData {

@@ -190,7 +190,7 @@ const SOUND_EFFECTS = {
   hookshotSecondary: { path: '/sounds/hookshot_rmb.mp3', volume: 0.58 },
   hookshotGrapple: { path: '/sounds/hookshot_lmb.mp3', volume: 0.5 },
   hookshotAnchorWall: { path: '/sounds/hookshot_q.mp3', volume: 0.6 },
-  hookshotTrap: { path: '/sounds/hookshot_hero_strike.mp3', volume: 0.58 },
+  hookshotGroundHooks: { path: '/sounds/hookshot_voxel_strike.mp3', volume: 0.58 },
   hookshotRetract: { path: '/sounds/hookshot_retract.mp3', volume: 0.42 },
 
   // Chronos Abilities
@@ -247,7 +247,7 @@ const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   commonCombat: ['walk', 'slide', 'jetpack', 'countdownTick'],
   phantom: ['phantomBlink', 'phantomVeil', 'phantomBasic', 'phantomReload', 'phantomShield', 'phantomShieldCast', 'phantomVoidRay', 'phantomVoidRayCharge'],
   blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombRelease', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrikeFire', 'blazeAirstrikeGears'],
-  hookshot: ['hookshotShot', 'hookshotPrimary', 'hookshotSecondary', 'hookshotGrapple', 'hookshotAnchorWall', 'hookshotTrap', 'hookshotRetract'],
+  hookshot: ['hookshotShot', 'hookshotPrimary', 'hookshotSecondary', 'hookshotGrapple', 'hookshotAnchorWall', 'hookshotGroundHooks', 'hookshotRetract'],
   chronos: ['phantomBasic', 'chronosAegis', 'chronosLifeline', 'chronosTimebreakCharge', 'chronosPush', 'chronosSuperchargedImpact'],
 };
 

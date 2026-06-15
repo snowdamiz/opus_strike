@@ -46,7 +46,7 @@ function abilitiesFor(heroId: HeroId): BotPlayerSnapshot['abilities'] {
       return {
         hookshot_grapple: ability('hookshot_grapple'),
         hookshot_anchor_wall: ability('hookshot_anchor_wall'),
-        hookshot_grapple_trap: ability('hookshot_grapple_trap'),
+        hookshot_ground_hooks: ability('hookshot_ground_hooks'),
       };
     case 'blaze':
       return {
@@ -173,7 +173,7 @@ function defaultGeometry(overrides: Partial<BotAbilityGeometry> = {}): BotAbilit
     grappleAnchorAvailable: true,
     anchorWallProtectsAlly: false,
     anchorWallBlocksFriendlyCarrier: false,
-    trapZoneValuable: false,
+    groundHooksValuable: false,
     ...overrides,
   };
 }
@@ -366,9 +366,9 @@ function testHeroAbilityControllers() {
     blackboard: hookBoard,
     combatPlan: { targetId: enemy.id, stance: 'block', score: 100, reason: 'test' },
     skill: getBotSkillProfile('hard'),
-    geometry: defaultGeometry({ trapZoneValuable: true }),
+    geometry: defaultGeometry({ groundHooksValuable: true }),
   });
-  assert.equal(hookPlan.mode, 'hookshot_trap');
+  assert.equal(hookPlan.mode, 'hookshot_ground_hooks');
 
   const blaze = player({ id: 'blaze', team: 'red', heroId: 'blaze', x: 0, z: 0 });
   const blazeBoard = blackboardFor(blaze, [blaze, enemy], { visibleEnemyIds: [enemy.id], losEnemyIds: [enemy.id] });
@@ -476,7 +476,7 @@ function testUncontestedDefendersHoldControlUltimates() {
     skill: getBotSkillProfile('normal'),
     geometry: defaultGeometry(),
   });
-  assert.notEqual(hookPlan.mode, 'hookshot_trap');
+  assert.notEqual(hookPlan.mode, 'hookshot_ground_hooks');
 }
 
 function testContestedObjectiveStillSpendsControlUltimate() {

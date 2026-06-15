@@ -5,6 +5,8 @@ import {
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_LIFELINE_RELEASE_DELAY_MS,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
+  HOOKSHOT_GROUND_HOOKS_RADIUS,
+  HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
   CHRONOS_VERDANT_PULSE_SPEED,
   VOID_RAY_CHARGE_TIME,
   type PublicRankSnapshot,
@@ -31,7 +33,7 @@ import {
   triggerRemotePlayerAttack,
   visualStore,
 } from '../store/visualStore';
-import { confirmLocalMovementTransform, enqueueSelfMovementAuthority } from '../movement/localPrediction';
+import { confirmLocalMovementTransform, enqueueSelfMovementAuthority, setLocalMovementRootedUntil } from '../movement/localPrediction';
 import { recordMovementTraceAuthorityAck } from '../anticheat/movementTraceRecorder';
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike, triggerRocketJumpExplosion } from '../components/game/BlazeEffects';
@@ -1158,6 +1160,11 @@ interface AbilityUsedMessage {
   impactPosition?: { x: number; y: number; z: number };
   interceptedByChronosAegis?: boolean;
   targetIds?: string[];
+  targets?: Array<{
+    targetId: string;
+    position: { x: number; y: number; z: number };
+    rootUntil: number;
+  }>;
   mode?: 'allies' | 'self';
   aimDirection?: { x: number; y: number; z: number };
   velocity?: { x: number; y: number; z: number };
@@ -1175,6 +1182,8 @@ interface AbilityUsedMessage {
   releaseAt?: number;
   radius?: number;
   duration?: number;
+  rootUntil?: number;
+  meteorStartTime?: number;
   impactTime?: number;
   active?: boolean;
   fuel?: number;
@@ -1857,37 +1866,42 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
       return true;
     }
 
-    case 'hookshot_grapple_trap': {
-      const startPosition = resolveObservedStartPosition(
-        data,
-        localPlayerId,
-        fallbackStartPosition
-      );
-      if (!startPosition || !targetPosition) return true;
+    case 'hookshot_ground_hooks': {
+      const effectPosition = data.position ?? fallbackStartPosition;
+      if (!effectPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId, data.launchSide);
       const predictedVisualId = isLocalPlayer
-        ? consumePredictedLocalAbilityVisual('hookshot_grapple_trap', data.playerId)
+        ? consumePredictedLocalAbilityVisual('hookshot_ground_hooks', data.playerId)
         : null;
-      if (!predictedVisualId) {
-        store.addGrappleTrap({
-          id: castId,
-          position: targetPosition,
-          startPosition,
-          velocity: data.velocity,
-          startTime: now,
-          duration: data.duration ?? 8,
-          ownerId: data.playerId,
-          ownerTeam,
-          radius: data.radius ?? 8,
-          hookedPlayers: [],
-        });
+      const duration = data.duration ?? HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS;
+      const rootUntil = data.rootUntil ?? now + duration * 1000;
+      const targets = data.targets ?? [];
+      const effect = {
+        id: castId,
+        position: effectPosition,
+        startTime: now,
+        duration,
+        ownerId: data.playerId,
+        ownerTeam,
+        radius: data.radius ?? HOOKSHOT_GROUND_HOOKS_RADIUS,
+        rootUntil,
+        targets,
+      };
+
+      if (predictedVisualId) {
+        store.updateHookshotGroundHooks(predictedVisualId, effect);
+      } else {
+        store.addHookshotGroundHooks(effect);
       }
       if (isLocalPlayer) {
         store.updateLocalPlayer({ ultimateCharge: 0 });
       }
-      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('hookshot_grapple_trap')) {
-        playHookshotShotSound(startPosition);
-        playHookshotWorldSound('hookshotTrap', startPosition, { volume: 1.15 });
+      if (localPlayerId && targets.some((target) => target.targetId === localPlayerId)) {
+        setLocalMovementRootedUntil(rootUntil);
+      }
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('hookshot_ground_hooks')) {
+        playHookshotShotSound(effectPosition);
+        playHookshotWorldSound('hookshotGroundHooks', effectPosition, { volume: 1.12 });
       }
       return true;
     }
@@ -1948,10 +1962,17 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
       );
       if (!startPosition || !targetPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId);
+      const serverTime = data.serverTime ?? now;
+      const meteorStartDelay = data.meteorStartTime
+        ? Math.max(0, data.meteorStartTime - serverTime)
+        : 0;
       const impactDelay = data.impactTime
-        ? Math.max(0, data.impactTime - (data.serverTime ?? now))
+        ? Math.max(0, data.impactTime - serverTime)
         : BLAZE_BOMB_FALL_DURATION;
+      const meteorStartTime = now + meteorStartDelay;
       const impactTime = now + impactDelay;
+      const fallSoundDelay = Math.min(meteorStartDelay, impactDelay);
+      const fallSoundDuration = Math.max(0, impactDelay - fallSoundDelay);
       const visualImpactPosition = data.impactPosition ?? data.interceptPosition ?? targetPosition;
       if (isLocalPlayer) {
         const abilityDef = ABILITY_DEFINITIONS[data.abilityId];
@@ -1966,7 +1987,8 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
         impactPosition: visualImpactPosition,
         interceptedByChronosAegis: Boolean(data.interceptedByChronosAegis || data.interceptPosition),
         startPosition,
-        startTime: now,
+        warningStartTime: now,
+        startTime: meteorStartTime,
         impactTime,
         ownerId: data.playerId,
         ownerTeam,
@@ -1980,10 +2002,14 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
         });
       }
       playBlazeWorldSound('blazeBombTarget', startPosition);
-      playBlazeWorldSound('blazeBombFall', startPosition, {
-        durationMs: impactDelay,
-        fadeOutMs: Math.min(200, impactDelay),
-      });
+      if (fallSoundDuration > 0) {
+        window.setTimeout(() => {
+          playBlazeWorldSound('blazeBombFall', startPosition, {
+            durationMs: fallSoundDuration,
+            fadeOutMs: Math.min(200, fallSoundDuration),
+          });
+        }, fallSoundDelay);
+      }
       window.setTimeout(() => {
         playBlazeWorldSound('blazeBombExplode', visualImpactPosition, { volume: 1.05 });
       }, impactDelay);

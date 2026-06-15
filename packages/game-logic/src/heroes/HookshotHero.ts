@@ -1,15 +1,12 @@
 import { HeroBase, AbilityContext, AbilityResult } from './HeroBase.js';
-import { GRAPPLE_MAX_DISTANCE } from '@voxel-strike/shared';
+import {
+  GRAPPLE_MAX_DISTANCE,
+  HOOKSHOT_GROUND_HOOKS_RADIUS,
+  HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
+} from '@voxel-strike/shared';
 import { vec3Scale, vec3Add, vec3Normalize } from '@voxel-strike/shared';
 
 export class HookshotHero extends HeroBase {
-  private activeGrappleTrap: { 
-    position: { x: number; y: number; z: number }; 
-    radius: number;
-    startTime: number;
-    duration: number;
-  } | null = null;
-
   constructor() {
     super('hookshot');
   }
@@ -20,8 +17,8 @@ export class HookshotHero extends HeroBase {
         return this.executeGrapple(context);
       case 'hookshot_anchor_wall':
         return this.executeAnchorWall(context);
-      case 'hookshot_grapple_trap':
-        return this.executeGrappleTrap(context);
+      case 'hookshot_ground_hooks':
+        return this.executeGroundHooks(context);
       default:
         return { success: false, message: 'Unknown ability' };
     }
@@ -67,55 +64,17 @@ export class HookshotHero extends HeroBase {
     };
   }
 
-  private executeGrappleTrap(context: AbilityContext): AbilityResult {
-    // F ability (Ultimate) - Throw grapple trap that hooks enemies in AOE
-    // The trap position should be set by targeting on client
-    const trapPosition = context.targetPosition || context.position;
-    const trapRadius = 8;
-    const trapDuration = 8;
-
-    this.activeGrappleTrap = {
-      position: { ...trapPosition },
-      radius: trapRadius,
-      startTime: context.timestamp,
-      duration: trapDuration,
-    };
-
+  private executeGroundHooks(context: AbilityContext): AbilityResult {
     return {
       success: true,
       effect: {
-        type: 'grapple_trap',
-        position: trapPosition,
-        radius: trapRadius,
-        duration: trapDuration,
+        type: 'ground_hooks_root',
+        position: context.position,
+        radius: HOOKSHOT_GROUND_HOOKS_RADIUS,
+        duration: HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
       },
     };
   }
 
-  updatePassive(_deltaTime: number): void {
-    const now = Date.now();
-
-    // Check grapple trap expiration
-    if (this.activeGrappleTrap) {
-      const elapsed = (now - this.activeGrappleTrap.startTime) / 1000;
-      if (elapsed >= this.activeGrappleTrap.duration) {
-        this.activeGrappleTrap = null;
-      }
-    }
-  }
-
-  getActiveGrappleTrap(): { 
-    position: { x: number; y: number; z: number }; 
-    radius: number;
-    startTime: number;
-    duration: number;
-  } | null {
-    return this.activeGrappleTrap;
-  }
-
-  isGrappleTrapActive(): boolean {
-    if (!this.activeGrappleTrap) return false;
-    const elapsed = (Date.now() - this.activeGrappleTrap.startTime) / 1000;
-    return elapsed < this.activeGrappleTrap.duration;
-  }
+  updatePassive(_deltaTime: number): void {}
 }
