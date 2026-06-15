@@ -213,30 +213,25 @@ class ProviderConflictError extends Error {
 
 const nonceStore = new Map<string, NonceRecord>();
 
-function setAuthCookie(res: Response, token: string): void {
-  res.cookie('auth_token', token, {
+function authCookieOptions(maxAge?: number) {
+  return {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
-    maxAge: COOKIE_MAX_AGE,
-  });
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' as const : 'lax' as const,
+    ...(maxAge === undefined ? {} : { maxAge }),
+  };
+}
+
+function setAuthCookie(res: Response, token: string): void {
+  res.cookie('auth_token', token, authCookieOptions(COOKIE_MAX_AGE));
 }
 
 function setPendingAuthCookie(res: Response, token: string): void {
-  res.cookie('auth_token', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
-    maxAge: PENDING_COOKIE_MAX_AGE,
-  });
+  res.cookie('auth_token', token, authCookieOptions(PENDING_COOKIE_MAX_AGE));
 }
 
 function clearAuthCookie(res: Response): void {
-  res.clearCookie('auth_token', {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
-  });
+  res.clearCookie('auth_token', authCookieOptions());
 }
 
 function cleanupNonces(): void {
