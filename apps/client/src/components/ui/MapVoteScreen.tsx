@@ -2,7 +2,7 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/shallow';
 import * as THREE from 'three';
-import { generateProceduralVoxelMap } from '@voxel-strike/shared';
+import { GOLDEN_VOXEL_MAP_THEME_ID, generateProceduralVoxelMap } from '@voxel-strike/shared';
 import type { VoxelMapManifest } from '@voxel-strike/shared';
 import { useGameStore, type LobbyPlayer, type MapVoteOption } from '../../store/gameStore';
 import { useSettingsStore } from '../../store/settingsStore';
@@ -233,13 +233,16 @@ function MapPreviewImage({
     }
   }, [onReady, option.id]);
 
+  const hasVisibleImage = Boolean(image && imageVisible);
+
   return (
-    <div className="absolute inset-0 bg-black/[0.08]">
+    <div className="absolute inset-0">
+      <div className={`pointer-events-none absolute inset-0 bg-black/[0.08] transition-opacity duration-300 ease-out ${hasVisibleImage ? 'opacity-100' : 'opacity-0'}`} />
       {image && (
         <img
           src={image}
           alt={option.name}
-          className={`h-full w-full object-cover transition-opacity duration-300 ease-out ${imageVisible ? 'opacity-[0.84]' : 'opacity-0'}`}
+          className={`h-full w-full object-cover transition-opacity duration-300 ease-out ${hasVisibleImage ? 'opacity-[0.84]' : 'opacity-0'}`}
           draggable={false}
         />
       )}
@@ -248,10 +251,10 @@ function MapPreviewImage({
           <MapPreviewCanvas option={option} onCapture={handleCapture} />
         </div>
       )}
-      <div className={`pointer-events-none absolute inset-0 transition-opacity duration-200 ease-out ${image && imageVisible ? 'opacity-0' : 'opacity-100'}`}>
+      <div className={`pointer-events-none absolute inset-0 transition-opacity duration-200 ease-out ${hasVisibleImage ? 'opacity-0' : 'opacity-100'}`}>
         <GeneratingMapPanel />
       </div>
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/[0.36] via-black/[0.05] to-black/[0.025]" />
+      <div className={`pointer-events-none absolute inset-0 bg-gradient-to-t from-black/[0.36] via-black/[0.05] to-black/[0.025] transition-opacity duration-300 ease-out ${hasVisibleImage ? 'opacity-100' : 'opacity-0'}`} />
     </div>
   );
 }
@@ -275,6 +278,11 @@ type MapVoteBadgeTone = 'idle' | 'selected' | 'winner';
 const mapVoteCardClass = 'map-vote-card relative overflow-hidden rounded-lg border bg-black/[0.1] shadow-2xl shadow-black/[0.26] backdrop-blur-xl';
 const mapVoteCardMetaClass = 'map-vote-card-meta relative overflow-hidden border-t border-white/[0.045] bg-black/[0.025] px-3.5 py-2.5 xl:px-4';
 const mapVoteCardMetaStyle = { backdropFilter: 'brightness(0.42) blur(2px)' };
+const GOLDEN_MAP_CARD_SHADOW = '0 20px 60px rgba(0,0,0,0.48), 0 0 34px rgba(247,190,71,0.38), inset 0 0 0 1px rgba(255,239,164,0.2)';
+
+function isGoldenMapOption(option: MapVoteOption): boolean {
+  return option.mapThemeId === GOLDEN_VOXEL_MAP_THEME_ID || option.themeId === GOLDEN_VOXEL_MAP_THEME_ID;
+}
 
 function getVoteBadgeStyle(tone: MapVoteBadgeTone) {
   if (tone === 'winner') {
@@ -534,11 +542,14 @@ export function MapVoteScreen() {
               const voters = votersByOption.get(option.id) || [];
               const isSelected = localVote === option.id;
               const isWinner = selectedMapOptionId === option.id;
-              const cardBorderClass = isWinner
-                ? 'border-ui-success/70 hover:border-ui-success'
-                : isSelected
-                  ? 'border-accent-primary/70 hover:border-accent-primary'
-                  : 'border-white/[0.16] hover:border-orange-500/70';
+              const isGoldenBiome = isGoldenMapOption(option);
+              const cardBorderClass = isGoldenBiome
+                ? 'map-vote-card-golden'
+                : isWinner
+                  ? 'border-ui-success/70 hover:border-ui-success'
+                  : isSelected
+                    ? 'border-accent-primary/70 hover:border-accent-primary'
+                    : 'border-white/[0.16] hover:border-orange-500/70';
 
               return (
                 <button
@@ -548,9 +559,11 @@ export function MapVoteScreen() {
                   disabled={isFinalized}
                   className={`${mapVoteCardClass} text-left outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/70 disabled:cursor-default ${cardBorderClass}`}
                   style={{
-                    boxShadow: isSelected || isWinner
-                      ? `0 20px 60px rgba(0,0,0,0.48), 0 0 28px ${isWinner ? 'rgb(var(--color-ui-success) / 0.28)' : 'rgb(var(--color-accent-primary) / 0.25)'}`
-                      : undefined,
+                    boxShadow: isGoldenBiome
+                      ? GOLDEN_MAP_CARD_SHADOW
+                      : isSelected || isWinner
+                        ? `0 20px 60px rgba(0,0,0,0.48), 0 0 28px ${isWinner ? 'rgb(var(--color-ui-success) / 0.28)' : 'rgb(var(--color-accent-primary) / 0.25)'}`
+                        : undefined,
                   }}
                 >
                   <div className="map-vote-preview relative aspect-[16/8.4] overflow-hidden border-b border-white/[0.06]">
