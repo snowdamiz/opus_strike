@@ -39,7 +39,6 @@ import {
   getRankFromRating,
   toPublicRankSnapshot,
   isInsideBoundaryPolygon,
-  clampToBoundaryPolygon,
   isCollisionBlock,
   FLAG_CAPTURE_RADIUS,
   FLAG_PICKUP_RADIUS,
@@ -64,6 +63,7 @@ import {
   BLAZE_ROCKET_SPEED,
   BLAZE_ROCKET_COLLISION_RADIUS,
   BLAZE_ROCKET_SPLASH_RADIUS,
+  BLAZE_BOMB_COOLDOWN_MS,
   BLAZE_BOMB_DAMAGE,
   BLAZE_BOMB_SPLASH_RADIUS,
   BLAZE_BOMB_MAX_RANGE,
@@ -112,6 +112,9 @@ import {
   HOOKSHOT_DRAG_HOOK_RETRACT_SPEED,
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
+  HERO_OUT_OF_COMBAT_REGEN_CAP_RATIO,
+  HERO_OUT_OF_COMBAT_REGEN_DELAY_MS,
+  HERO_OUT_OF_COMBAT_REGEN_PER_SECOND,
   PHANTOM_DIRE_BALL_COLLISION_RADIUS,
   PHANTOM_DIRE_BALL_DAMAGE,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
@@ -153,6 +156,8 @@ import {
   getPlayerLineOfSightSamplePoints as getSharedPlayerLineOfSightSamplePoints,
   getSegmentHitAgainstPlayerCombatHitbox,
   getSegmentHitAgainstChronosAegis,
+  isTeamHeroAvailable,
+  pickAvailableTeamHero,
 } from '@voxel-strike/shared';
 import type { 
   AbilityCastOriginHint,
@@ -686,7 +691,6 @@ interface SkillImpactHint {
 }
 
 const BLAZE_ROCKET_AIM_DISTANCE = 120;
-const BLAZE_BOMB_COOLDOWN_MS = 8000;
 const BLAZE_BOMB_FALL_DURATION_MS = 1500;
 const BLAZE_BOMB_WARNING_LEAD_MS = 350;
 const ABILITY_CAST_HINT_MAX_DISTANCE_FROM_FALLBACK = 1.15;
@@ -878,6 +882,7 @@ export class GameRoom extends Room<GameState> {
   private flamethrowerLastDamageTick: Map<string, number> = new Map();
   private botBrains: Map<string, BotBrain> = new Map();
   private attackCooldownUntil: Map<string, number> = new Map();
+  private playerCombatActivityAt: Map<string, number> = new Map();
   private damageHistory: Map<string, Map<string, DamageHistoryEntry>> = new Map();
   private chronosAegisShieldHp: Map<string, number> = new Map();
   private devImmunePlayers: Set<string> = new Set();
@@ -1672,6 +1677,7 @@ export class GameRoom extends Room<GameState> {
     this.chronosAegisShieldHp.delete(playerId);
     this.attackCooldownUntil.delete(`${playerId}:primary`);
     this.attackCooldownUntil.delete(`${playerId}:secondary`);
+    this.playerCombatActivityAt.delete(playerId);
     this.devImmunePlayers.delete(playerId);
     this.countdownSceneReadyPlayerIds.delete(playerId);
   }
@@ -1919,6 +1925,7 @@ export class GameRoom extends Room<GameState> {
     // Update held Blaze flamethrowers
     this.updateBlazeFlamethrowers(now, dt);
     this.updateBlazeBurns(now);
+    this.updateOutOfCombatHealthRegens(now, dt);
 
     // Update physics simulation (simplified)
     this.updatePhysics();
@@ -1930,6 +1937,37 @@ export class GameRoom extends Room<GameState> {
   }
 
   // Ability cooldown and active ability updates are now in abilityHandlers.ts
+
+  private markPlayerCombatActivity(playerId: string, now: number): void {
+    this.playerCombatActivityAt.set(playerId, now);
+  }
+
+  private markCombatActivityBetween(source: Player | null, target: Player, now: number): void {
+    this.markPlayerCombatActivity(target.id, now);
+    if (source && source.id !== target.id) {
+      this.markPlayerCombatActivity(source.id, now);
+    }
+  }
+
+  private updateOutOfCombatHealthRegen(player: Player, now: number, dt: number): void {
+    const regenCap = player.maxHealth * HERO_OUT_OF_COMBAT_REGEN_CAP_RATIO;
+    if (player.health <= 0 || player.health >= regenCap) return;
+
+    const lastCombatAt = this.playerCombatActivityAt.get(player.id) ?? 0;
+    if (now - lastCombatAt < HERO_OUT_OF_COMBAT_REGEN_DELAY_MS) return;
+
+    player.health = Math.min(
+      regenCap,
+      player.health + HERO_OUT_OF_COMBAT_REGEN_PER_SECOND * Math.max(0, dt)
+    );
+  }
+
+  private updateOutOfCombatHealthRegens(now: number, dt: number): void {
+    this.state.players.forEach((player) => {
+      if (player.state !== 'alive') return;
+      this.updateOutOfCombatHealthRegen(player, now, dt);
+    });
+  }
 
   private quantize(value: number, scale: number): number {
     return Math.round(value * scale);
@@ -2334,6 +2372,8 @@ export class GameRoom extends Room<GameState> {
         jetpackFuel: player.movement.jetpackFuel,
         isGliding: player.movement.isGliding,
         chronosAscendantStartY: player.movement.chronosAscendantStartY || undefined,
+        airJumpsUsed: player.movement.airJumpsUsed || 0,
+        jumpHeld: player.movement.jumpHeld,
       },
       abilities,
       stats: {
@@ -5039,6 +5079,8 @@ export class GameRoom extends Room<GameState> {
     player.movement.jetpackFuel = result.movement.jetpackFuel;
     player.movement.isGliding = result.movement.isGliding;
     player.movement.chronosAscendantStartY = result.movement.chronosAscendantStartY ?? 0;
+    player.movement.airJumpsUsed = result.movement.airJumpsUsed ?? 0;
+    player.movement.jumpHeld = Boolean(result.movement.jumpHeld);
   }
 
   private startHookshotGrappleAuthority(
@@ -5187,6 +5229,8 @@ export class GameRoom extends Room<GameState> {
         jetpackFuel: player.movement.jetpackFuel,
         isGliding: player.movement.isGliding,
         chronosAscendantStartY: player.movement.chronosAscendantStartY || undefined,
+        airJumpsUsed: player.movement.airJumpsUsed || 0,
+        jumpHeld: player.movement.jumpHeld,
       },
       heroStats,
       input,
@@ -5264,6 +5308,8 @@ export class GameRoom extends Room<GameState> {
       jetpackFuel: player.movement.jetpackFuel,
       isGliding: player.movement.isGliding,
       chronosAscendantStartY: player.movement.chronosAscendantStartY || undefined,
+      airJumpsUsed: player.movement.airJumpsUsed || 0,
+      jumpHeld: player.movement.jumpHeld,
     };
   }
 
@@ -6320,6 +6366,7 @@ export class GameRoom extends Room<GameState> {
       executeAbility(player, result.abilityId, result.abilityState, result.abilityDef, {
         createVoidZone: (position, ownerId, ownerTeam) => this.createVoidZone(position, ownerId, ownerTeam),
         resolvePhantomBlinkDestination: (caster, distance) => this.resolvePhantomBlinkDestination(caster, distance),
+        clampPosition: (position) => this.clampToPlayableMap(position),
         markAuthoritativePosition: (playerId, _durationMs, reason = 'teleport') => {
           this.markMovementBarrier(playerId, reason, { preserveQueuedCommands: true });
         },
@@ -6509,9 +6556,8 @@ export class GameRoom extends Room<GameState> {
       const preferredHero = assignment.heroId && HERO_DEFINITIONS[assignment.heroId]
         ? assignment.heroId
         : null;
-      if (preferredHero) {
+      if (preferredHero && this.setPlayerHero(bot, preferredHero)) {
         this.preferredBotHeroes.set(bot.id, preferredHero);
-        this.setPlayerHero(bot, preferredHero);
       }
 
       this.state.players.set(bot.id, bot);
@@ -7290,6 +7336,7 @@ export class GameRoom extends Room<GameState> {
     this.recentCombatTransformUntil.set(blocker.id, now + RECENT_COMBAT_TRANSFORM_MS);
     const direction = context.direction ?? this.getChronosAegisForward(blocker);
     if (absorbed > 0) {
+      this.markCombatActivityBetween(context.source ?? null, blocker, now);
       this.broadcastChronosAegisDamaged(blocker, context.source ?? null, {
         playerId: blocker.id,
         sourceId: context.source?.id ?? null,
@@ -7370,6 +7417,7 @@ export class GameRoom extends Room<GameState> {
 
     const phantomShield = target.abilities.get('phantom_personal_shield');
     if (phantomShield?.isActive) {
+      this.markCombatActivityBetween(source ?? null, target, now);
       deactivateActiveAbility(phantomShield);
       this.broadcastPhantomShieldBroken(target, source ?? null, {
         playerId: target.id,
@@ -7382,6 +7430,7 @@ export class GameRoom extends Room<GameState> {
 
     const damage = Math.max(1, Math.round(damageToApply * this.getDamageTakenMultiplier(target)));
     target.health = Math.max(0, target.health - damage);
+    this.markCombatActivityBetween(source ?? null, target, now);
     this.recentCombatTransformUntil.set(target.id, now + RECENT_COMBAT_TRANSFORM_MS);
 
     if (source && source.id !== target.id) {
@@ -8050,7 +8099,7 @@ export class GameRoom extends Room<GameState> {
       if (this.state.phase === 'hero_select' && bot.state === 'selecting') {
         let changedSelectionState = false;
         if (!bot.heroId) {
-          this.setPlayerHero(bot, this.selectRandomBotHero());
+          this.setPlayerHero(bot, this.selectRandomBotHero(bot.team, bot.id));
           changedSelectionState = true;
         }
         if (!bot.isReady) {
@@ -9046,6 +9095,8 @@ export class GameRoom extends Room<GameState> {
     player.movement.isJetpacking = false;
     player.movement.isGliding = false;
     player.movement.chronosAscendantStartY = 0;
+    player.movement.airJumpsUsed = 0;
+    player.movement.jumpHeld = false;
   }
 
   private resetPlayerLifeRuntime(player: Player, now = Date.now()): void {
@@ -9059,6 +9110,7 @@ export class GameRoom extends Room<GameState> {
     this.clearHookshotDragPullsInvolving(player.id);
     this.attackCooldownUntil.delete(`${player.id}:primary`);
     this.attackCooldownUntil.delete(`${player.id}:secondary`);
+    this.playerCombatActivityAt.delete(player.id);
     player.lastInput = player.isBot
       ? this.createEmptyBotInput(player, now)
       : null;
@@ -9226,12 +9278,24 @@ export class GameRoom extends Room<GameState> {
 
     if (!isSelectionPhase && !isActiveDevRoom) return;
 
-    if (!this.setPlayerHero(player, heroId)) {
+    const heroDef = HERO_DEFINITIONS[heroId];
+    if (!heroDef) {
       if (this.isDevelopmentMode()) {
         client.send('devCommandError', { message: `Invalid hero: ${heroId}` });
       }
       return;
     }
+
+    if (!this.isPlayerTeamHeroAvailable(player, heroId)) {
+      const message = 'Hero is already picked on your team';
+      client.send('error', { message });
+      if (this.isDevelopmentMode()) {
+        client.send('devCommandError', { message });
+      }
+      return;
+    }
+
+    this.setPlayerHero(player, heroId);
 
     if (isSelectionPhase) {
       this.resetCountdownStartGate();
@@ -9256,6 +9320,11 @@ export class GameRoom extends Room<GameState> {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
 
+    if (HERO_DEFINITIONS[heroId] && !this.isPlayerTeamHeroAvailable(player, heroId)) {
+      client.send('devCommandError', { message: 'Hero is already picked on your team' });
+      return;
+    }
+
     if (!this.setPlayerHero(player, heroId)) {
       client.send('devCommandError', { message: `Invalid hero: ${heroId}` });
       return;
@@ -9268,9 +9337,25 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
+  private getHeroLockPlayers(): Player[] {
+    const players: Player[] = [];
+    this.state.players.forEach((player) => {
+      if (!this.spawnedNpcs.has(player.id)) {
+        players.push(player);
+      }
+    });
+    return players;
+  }
+
+  private isPlayerTeamHeroAvailable(player: Player, heroId: HeroId): boolean {
+    if (!isTeam(player.team)) return true;
+    return isTeamHeroAvailable(this.getHeroLockPlayers(), player.team, heroId, player.id);
+  }
+
   private setPlayerHero(player: Player, heroId: HeroId): boolean {
     const heroDef = HERO_DEFINITIONS[heroId];
     if (!heroDef) return false;
+    if (!this.isPlayerTeamHeroAvailable(player, heroId)) return false;
 
     player.heroId = heroId;
     player.maxHealth = heroDef.stats.maxHealth;
@@ -9311,8 +9396,15 @@ export class GameRoom extends Room<GameState> {
     return true;
   }
 
-  private selectRandomBotHero(): HeroId {
+  private selectRandomBotHero(team?: string, playerId?: string): HeroId {
+    if (isTeam(team)) {
+      return pickAvailableTeamHero(this.getHeroLockPlayers(), team, playerId) ?? 'phantom';
+    }
     return ALL_HERO_IDS[Math.floor(Math.random() * ALL_HERO_IDS.length)] ?? 'phantom';
+  }
+
+  private selectAvailableHeroForPlayer(player: Player): HeroId {
+    return this.selectRandomBotHero(player.team, player.id);
   }
 
   private isDevelopmentMode(): boolean {
@@ -9506,6 +9598,11 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
+    if (!isTeamHeroAvailable(this.getHeroLockPlayers(), team, heroId)) {
+      client.send('devCommandError', { message: 'Hero is already picked on that team' });
+      return;
+    }
+
     const botIndex = this.devBotIdCounter++;
     const now = Date.now();
     const bot = new Player();
@@ -9523,7 +9620,10 @@ export class GameRoom extends Room<GameState> {
         : 'selecting';
 
     this.placePlayerAtSpawn(bot);
-    this.setPlayerHero(bot, heroId);
+    if (!this.setPlayerHero(bot, heroId)) {
+      client.send('devCommandError', { message: 'Hero is already picked on that team' });
+      return;
+    }
     if (this.state.phase === 'playing') {
       bot.spawnProtectionUntil = now + this.config.spawnProtectionSeconds * 1000;
       resetAbilityCooldowns(bot);
@@ -9801,15 +9901,6 @@ export class GameRoom extends Room<GameState> {
     return this.proceduralTerrainLookup;
   }
 
-  private getMapWorldBounds(manifest = this.getMapManifest()): { minX: number; maxX: number; minZ: number; maxZ: number } {
-    return {
-      minX: manifest.origin.x,
-      maxX: manifest.origin.x + manifest.size.x * manifest.voxelSize.x,
-      minZ: manifest.origin.z,
-      maxZ: manifest.origin.z + manifest.size.z * manifest.voxelSize.z,
-    };
-  }
-
   private getChunkKey(x: number, y: number, z: number): string {
     return `${x}:${y}:${z}`;
   }
@@ -9877,15 +9968,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private clampToPlayableMap(position: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
-    const manifest = this.getMapManifest();
-    const bounds = this.getMapWorldBounds(manifest);
-    const clampedBoundary = clampToBoundaryPolygon(position.x, position.z, manifest.boundary);
-
-    return {
-      x: Math.max(bounds.minX, Math.min(bounds.maxX, clampedBoundary.x)),
-      y: Math.max(-20, Math.min(120, position.y)),
-      z: Math.max(bounds.minZ, Math.min(bounds.maxZ, clampedBoundary.z)),
-    };
+    return this.getProceduralTerrainLookup().clampToPlayableMap(position);
   }
 
   private isFiniteVec3(position: { x: number; y: number; z: number }): boolean {
@@ -10073,7 +10156,7 @@ export class GameRoom extends Room<GameState> {
         if (this.state.phaseEndTime && Date.now() >= this.state.phaseEndTime) {
           this.state.players.forEach(p => {
             if (!p.heroId) {
-              this.setPlayerHero(p, p.isBot ? this.selectRandomBotHero() : 'phantom');
+              this.setPlayerHero(p, this.selectAvailableHeroForPlayer(p));
             }
             p.isReady = true;
           });
@@ -10196,9 +10279,7 @@ export class GameRoom extends Room<GameState> {
         player.state = 'selecting';
         player.isReady = false;
         const preferredHero = this.preferredBotHeroes.get(player.id);
-        if (preferredHero) {
-          this.setPlayerHero(player, preferredHero);
-        } else {
+        if (!preferredHero || !this.setPlayerHero(player, preferredHero)) {
           player.heroId = '';
           player.abilities.clear();
           this.disablePlayerSkills(player);

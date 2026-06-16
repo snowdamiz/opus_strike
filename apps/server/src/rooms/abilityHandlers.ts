@@ -215,7 +215,32 @@ export interface AbilityExecutionContext {
     player: Player,
     distance: number
   ) => { x: number; y: number; z: number };
+  clampPosition?: (position: { x: number; y: number; z: number }) => { x: number; y: number; z: number };
   markAuthoritativePosition?: (playerId: string, durationMs: number, reason?: 'teleport' | 'knockback') => void;
+}
+
+function clampPlayerPosition(
+  player: Player,
+  context: AbilityExecutionContext
+): { clampedY: boolean } {
+  const clampedPosition = context.clampPosition?.({
+    x: player.position.x,
+    y: player.position.y,
+    z: player.position.z,
+  });
+  if (!clampedPosition) return { clampedY: false };
+
+  const clampedY = clampedPosition.y < player.position.y;
+  player.position.x = clampedPosition.x;
+  player.position.y = clampedPosition.y;
+  player.position.z = clampedPosition.z;
+  return { clampedY };
+}
+
+function stopUpwardVelocityAtCeiling(player: Player, clampedY: boolean): void {
+  if (clampedY && player.velocity.y > 0) {
+    player.velocity.y = 0;
+  }
 }
 
 /**
@@ -302,6 +327,7 @@ export function executeAbility(
       player.velocity.y = BLAZE_ROCKET_JUMP_VERTICAL_FORCE;
       player.velocity.z += -Math.cos(player.lookYaw) * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE;
       player.position.y += 0.5;
+      stopUpwardVelocityAtCeiling(player, clampPlayerPosition(player, context).clampedY);
       player.movement.isGrounded = false;
       player.movement.isSliding = false;
       player.movement.slideTimeRemaining = 0;
@@ -331,6 +357,7 @@ export function executeAbility(
       player.velocity.x += forwardX * CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE;
       player.velocity.y = Math.max(player.velocity.y, CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE);
       player.velocity.z += forwardZ * CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE;
+      stopUpwardVelocityAtCeiling(player, clampPlayerPosition(player, context).clampedY);
       player.movement.isGrounded = false;
       player.movement.isSliding = false;
       player.movement.slideTimeRemaining = 0;

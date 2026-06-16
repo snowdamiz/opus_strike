@@ -30,6 +30,30 @@ export interface PlayerMovementState {
   jetpackFuel: number;
   isGliding: boolean;
   chronosAscendantStartY?: number;
+  airJumpsUsed?: number;
+  jumpHeld?: boolean;
+}
+
+export function createDefaultPlayerMovementState(
+  overrides: Partial<PlayerMovementState> = {}
+): PlayerMovementState {
+  return {
+    isGrounded: true,
+    isSprinting: false,
+    isCrouching: false,
+    isSliding: false,
+    slideTimeRemaining: 0,
+    isWallRunning: false,
+    wallRunSide: null,
+    isGrappling: false,
+    isJetpacking: false,
+    jetpackFuel: 100,
+    isGliding: false,
+    airJumpsUsed: 0,
+    jumpHeld: false,
+    ...overrides,
+    grapplePoint: overrides.grapplePoint ? { ...overrides.grapplePoint } : overrides.grapplePoint ?? null,
+  };
 }
 
 export interface PlayerInput {

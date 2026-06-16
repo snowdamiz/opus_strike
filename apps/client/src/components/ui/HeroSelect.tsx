@@ -1,6 +1,7 @@
-import { memo, useCallback, useEffect, useState } from 'react';
-import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { HERO_DEFINITIONS, ALL_HERO_IDS, getPickedTeamHeroIds } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
+import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useUISounds } from '../../hooks/useAudio';
@@ -9,10 +10,25 @@ import { HERO_COLORS } from '../../styles/colorTokens';
 import { PhaseCountdownTimer } from './PhaseCountdownTimer';
 
 export function HeroSelect() {
-  const localHeroId = useGameStore((state) => state.localPlayer?.heroId);
-  const localIsReady = useGameStore((state) => state.localPlayer?.isReady ?? false);
-  const phaseEndTime = useGameStore((state) => state.phaseEndTime);
-  const isPracticeMode = useGameStore((state) => state.isPracticeMode);
+  const {
+    localHeroId,
+    localIsReady,
+    localPlayerId,
+    localTeam,
+    players,
+    phaseEndTime,
+    isPracticeMode,
+  } = useGameStore(
+    useShallow((state) => ({
+      localHeroId: state.localPlayer?.heroId ?? null,
+      localIsReady: state.localPlayer?.isReady ?? false,
+      localPlayerId: state.localPlayer?.id ?? null,
+      localTeam: state.localPlayer?.team ?? null,
+      players: state.players,
+      phaseEndTime: state.phaseEndTime,
+      isPracticeMode: state.isPracticeMode,
+    }))
+  );
   const { selectHero, setReady, leaveGame } = useNetwork();
   const { playButtonClick } = useUISounds();
   const [selectedHero, setSelectedHero] = useState<HeroId>('phantom');
@@ -27,32 +43,61 @@ export function HeroSelect() {
     setIsLockedIn(localIsReady);
   }, [localIsReady]);
 
+  const lockedHeroIds = useMemo(() => {
+    if (isPracticeMode || !localPlayerId || (localTeam !== 'red' && localTeam !== 'blue')) {
+      return EMPTY_HERO_LOCKS;
+    }
+
+    return getPickedTeamHeroIds(players.values(), localTeam, localPlayerId);
+  }, [isPracticeMode, localPlayerId, localTeam, players]);
+
+  const firstAvailableHero = useMemo(
+    () => ALL_HERO_IDS.find((heroId) => !lockedHeroIds.has(heroId)) ?? null,
+    [lockedHeroIds]
+  );
+  const isSelectedHeroLocked = lockedHeroIds.has(selectedHero);
+
+  useEffect(() => {
+    if (isLockedIn || !isSelectedHeroLocked || !firstAvailableHero || firstAvailableHero === selectedHero) return;
+    setSelectedHero(firstAvailableHero);
+  }, [firstAvailableHero, isLockedIn, isSelectedHeroLocked, selectedHero]);
+
   const accentColor = HERO_COLORS[selectedHero];
 
+  const isHeroUnavailable = useCallback((heroId: HeroId) => {
+    return lockedHeroIds.has(heroId);
+  }, [lockedHeroIds]);
+
   const handleSelectHero = useCallback((heroId: HeroId) => {
-    if (isLockedIn || heroId === selectedHero) return;
+    if (isLockedIn || heroId === selectedHero || isHeroUnavailable(heroId)) return;
     setSelectedHero(heroId);
     selectHero(heroId);
-  }, [isLockedIn, selectedHero, selectHero]);
+  }, [isHeroUnavailable, isLockedIn, selectedHero, selectHero]);
+
+  const commitSelectedHero = useCallback(() => {
+    if (!selectedHero || isLockedIn) return;
+    const heroToLock = isSelectedHeroLocked ? firstAvailableHero : selectedHero;
+    if (!heroToLock || isHeroUnavailable(heroToLock)) return;
+
+    setSelectedHero(heroToLock);
+    selectHero(heroToLock);
+    setIsLockedIn(true);
+    setReady(true);
+  }, [firstAvailableHero, isHeroUnavailable, isLockedIn, isSelectedHeroLocked, selectHero, selectedHero, setReady]);
 
   const handleLockIn = useCallback(() => {
-    if (!selectedHero || isLockedIn) return;
-    selectHero(selectedHero);
-    setIsLockedIn(true);
-    setReady(true);
-  }, [isLockedIn, selectHero, selectedHero, setReady]);
+    commitSelectedHero();
+  }, [commitSelectedHero]);
 
   const handleTimerExpired = useCallback(() => {
-    if (isLockedIn || !selectedHero) return;
-    selectHero(selectedHero);
-    setIsLockedIn(true);
-    setReady(true);
-  }, [isLockedIn, selectHero, selectedHero, setReady]);
+    commitSelectedHero();
+  }, [commitSelectedHero]);
 
   const handleHeroCardClick = useCallback((heroId: HeroId) => {
+    if (isHeroUnavailable(heroId)) return;
     handleSelectHero(heroId);
     playButtonClick();
-  }, [handleSelectHero, playButtonClick]);
+  }, [handleSelectHero, isHeroUnavailable, playButtonClick]);
 
   return (
     <div className="menu-screen bg-strike-bg">
@@ -159,6 +204,7 @@ export function HeroSelect() {
                 const hero = HERO_DEFINITIONS[heroId];
                 const color = HERO_COLORS[heroId];
                 const isSelected = selectedHero === heroId;
+                const isUnavailable = isHeroUnavailable(heroId);
 
                 return (
                   <HeroCard
@@ -168,6 +214,7 @@ export function HeroSelect() {
                     color={color}
                     isSelected={isSelected}
                     isLockedIn={isLockedIn}
+                    isUnavailable={isUnavailable}
                     onSelect={handleHeroCardClick}
                   />
                 );
@@ -181,6 +228,7 @@ export function HeroSelect() {
 }
 
 type HeroDefinition = (typeof HERO_DEFINITIONS)[HeroId];
+const EMPTY_HERO_LOCKS = new Set<HeroId>();
 
 const HeroCard = memo(function HeroCard({
   heroId,
@@ -188,6 +236,7 @@ const HeroCard = memo(function HeroCard({
   color,
   isSelected,
   isLockedIn,
+  isUnavailable,
   onSelect,
 }: {
   heroId: HeroId;
@@ -195,6 +244,7 @@ const HeroCard = memo(function HeroCard({
   color: string;
   isSelected: boolean;
   isLockedIn: boolean;
+  isUnavailable: boolean;
   onSelect: (heroId: HeroId) => void;
 }) {
   return (
@@ -202,9 +252,10 @@ const HeroCard = memo(function HeroCard({
       type="button"
       aria-pressed={isSelected}
       onClick={() => onSelect(heroId)}
-      disabled={isLockedIn}
+      disabled={isLockedIn || isUnavailable}
+      title={isUnavailable ? 'Picked by teammate' : hero.name}
       className={`group relative aspect-[3/4] w-full overflow-hidden rounded-xl border text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 disabled:cursor-default ${
-        isLockedIn && !isSelected ? 'opacity-30' : ''
+        (isLockedIn && !isSelected) || isUnavailable ? 'opacity-30' : ''
       }`}
       style={{
         background: isSelected
@@ -259,6 +310,14 @@ const HeroCard = memo(function HeroCard({
             >
               <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+          )}
+          {isUnavailable && (
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-black/45 text-white/65">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M16.5 10V7.5a4.5 4.5 0 00-9 0V10" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M6.5 10h11v10h-11V10z" />
               </svg>
             </div>
           )}

@@ -205,6 +205,17 @@ function getClientCollisionWorld(terrain = getClientTerrainAdapter()): MovementC
   return world;
 }
 
+function clampClientPosition(position: Vec3): { position: Vec3; clampedY: boolean } {
+  const lookup = getClientProceduralTerrainLookup();
+  if (!lookup) return { position, clampedY: false };
+
+  const clampedPosition = lookup.clampToPlayableMap(position);
+  return {
+    position: clampedPosition,
+    clampedY: clampedPosition.y < position.y,
+  };
+}
+
 export function getLocalPredictionContext(player: Player): MovementPredictionContext {
   let activeSpeedMultiplier = 1;
   const phantomVeil = player.heroId === 'phantom' ? player.abilities?.['phantom_veil'] : undefined;
@@ -368,15 +379,17 @@ export function predictLocalBlazeRocketJump(player: Player, lookYaw: number): Mo
   ensureLocalPredictionInitialized(player);
   const current = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
   const forward = horizontalForwardFromYaw(lookYaw);
+  const liftedPosition = {
+    ...current.position,
+    y: current.position.y + 0.5,
+  };
+  const { position, clampedY } = clampClientPosition(liftedPosition);
 
   return applyLocalPredictedState(player.id, {
-    position: {
-      ...current.position,
-      y: current.position.y + 0.5,
-    },
+    position,
     velocity: {
       x: current.velocity.x + forward.x * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
-      y: BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
+      y: clampedY ? 0 : BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
       z: current.velocity.z + forward.z * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
     },
     movement: {
@@ -392,15 +405,17 @@ export function predictLocalChronosAscendantParadox(player: Player, lookYaw: num
   ensureLocalPredictionInitialized(player);
   const current = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
   const forward = horizontalForwardFromYaw(lookYaw);
+  const liftedPosition = {
+    ...current.position,
+    y: current.position.y + CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST,
+  };
+  const { position, clampedY } = clampClientPosition(liftedPosition);
 
   return applyLocalPredictedState(player.id, {
-    position: {
-      ...current.position,
-      y: current.position.y + CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST,
-    },
+    position,
     velocity: {
       x: current.velocity.x + forward.x * CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE,
-      y: Math.max(current.velocity.y, CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE),
+      y: clampedY ? 0 : Math.max(current.velocity.y, CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE),
       z: current.velocity.z + forward.z * CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE,
     },
     movement: {

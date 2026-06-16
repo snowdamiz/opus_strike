@@ -34,9 +34,13 @@ export const PHANTOM_DIRE_BALL_SPEED = 91;
 export const PHANTOM_DIRE_BALL_COLLISION_RADIUS = 0.21;
 export const PHANTOM_PRIMARY_FIRE_READY_MS = 240;
 export const PHANTOM_PRIMARY_COOLDOWN_MS = 250;
-export const PHANTOM_VOID_RAY_COOLDOWN_SECONDS = 3;
+export const HERO_AIR_JUMPS = 1;
+export const HERO_OUT_OF_COMBAT_REGEN_DELAY_MS = 4000;
+export const HERO_OUT_OF_COMBAT_REGEN_CAP_RATIO = 0.5;
+export const HERO_OUT_OF_COMBAT_REGEN_PER_SECOND = 10;
+export const PHANTOM_VOID_RAY_COOLDOWN_SECONDS = 5;
 export const PHANTOM_VOID_RAY_COOLDOWN_MS = PHANTOM_VOID_RAY_COOLDOWN_SECONDS * 1000;
-export const PHANTOM_VOID_RAY_DAMAGE = 34;
+export const PHANTOM_VOID_RAY_DAMAGE = 41;
 export const PHANTOM_VOID_RAY_COLLISION_RADIUS = 0.45;
 export const VOID_RAY_CHARGE_TIME = 1000; // milliseconds to fully charge void ray
 export const PHANTOM_BLINK_DISTANCE = 8;
@@ -60,7 +64,7 @@ export const HOOKSHOT_DRAG_HOOK_PULL_FRONT_DISTANCE = 1.35;
 export const HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS = 1250;
 export const HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE = 0.32;
 export const HOOKSHOT_DRAG_HOOK_RETRACT_SPEED = 55;
-export const HOOKSHOT_GROUND_HOOKS_RADIUS = BLAZE_GEARSTORM_RADIUS;
+export const HOOKSHOT_GROUND_HOOKS_RADIUS = 13.9;
 export const HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS = 3;
 export const HOOKSHOT_GROUND_HOOKS_HOOKS_PER_TARGET = 3;
 
@@ -117,14 +121,18 @@ export const BLAZE_ROCKET_SPEED = 117.6;
 export const BLAZE_ROCKET_DAMAGE = 24;
 export const BLAZE_ROCKET_COLLISION_RADIUS = 0.21;
 export const BLAZE_ROCKET_SPLASH_RADIUS = 2.8;
-export const BLAZE_BOMB_DAMAGE = 34;
+export const BLAZE_BOMB_COOLDOWN_SECONDS = 5;
+export const BLAZE_BOMB_COOLDOWN_MS = BLAZE_BOMB_COOLDOWN_SECONDS * 1000;
+export const BLAZE_BOMB_DAMAGE = 41;
 export const BLAZE_BOMB_SPLASH_RADIUS = 4;
 export const BLAZE_BOMB_MAX_RANGE = 60;
 export const BLAZE_BOMB_MIN_RANGE = 3;
 export const BLAZE_BOMB_AEGIS_COLLISION_RADIUS = 0.65;
 export const BLAZE_FLAMETHROWER_COLLISION_RADIUS = 0.42;
-export const BLAZE_GEARSTORM_DAMAGE = 10;
-export const BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS = 500;
+export const BLAZE_GEARSTORM_DAMAGE = 14;
+export const BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS = 400;
+export const BLAZE_GEARSTORM_DURATION_SECONDS = 6;
+export const BLAZE_GEARSTORM_DURATION_MS = BLAZE_GEARSTORM_DURATION_SECONDS * 1000;
 
 export type AbilityCardStatFormat = 'number' | 'seconds';
 
@@ -180,6 +188,8 @@ export const ABILITY_CARD_STATS = {
   ],
   blaze_airstrike: [
     { value: BLAZE_GEARSTORM_DAMAGE, label: 'dmg/tick' },
+    { value: BLAZE_GEARSTORM_RADIUS, label: 'radius' },
+    { value: BLAZE_GEARSTORM_DURATION_SECONDS, label: 'duration', format: 'seconds' },
   ],
   chronos_verdant_pulse: [
     { value: CHRONOS_VERDANT_PULSE_DAMAGE, label: 'dmg' },
@@ -370,7 +380,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     name: 'Meteor Strike',
     type: 'offensive',
     targeting: 'ground',
-    cooldown: 8,
+    cooldown: BLAZE_BOMB_COOLDOWN_SECONDS,
     description: 'Mark a target zone, then call a blazing meteor down at an angle.',
   },
   blaze_flamethrower: {
@@ -395,7 +405,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     type: 'ultimate',
     targeting: 'instant',
     cooldown: 0,
-    duration: 5,
+    duration: BLAZE_GEARSTORM_DURATION_SECONDS,
     resourceCost: 100,
     description: 'Ignite a massive area around yourself, scorching the ground while flaming cogs spin through the air.',
   },

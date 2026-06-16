@@ -23,6 +23,7 @@ export * from './utils/playerGeometry.js';
 export * from './utils/chronosAegis.js';
 export * from './utils/blazeMeteor.js';
 export * from './utils/movementDirection.js';
+export * from './utils/teamHeroLocks.js';
 
 // Model system
 export * from './model/abilitySocketCatalog.js';

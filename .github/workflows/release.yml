@@ -16,7 +16,8 @@ concurrency:
 env:
   SERVER_APP: opus-strike-server
   CLIENT_APP: opus-strike-client
-  SERVER_URL: wss://opus-strike-server.fly.dev
+  CLIENT_ORIGIN: https://slopheroes.xyz
+  EXPECTED_CLIENT_SERVER_URL: wss://api.slopheroes.xyz
 
 jobs:
   verify:
@@ -78,12 +79,50 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
+      - name: Verify client server URL config
+        run: |
+          set -euo pipefail
+
+          if ! grep -Fq "VITE_SERVER_URL = \"$EXPECTED_CLIENT_SERVER_URL\"" apps/client/fly.toml; then
+            echo "::error file=apps/client/fly.toml::Expected VITE_SERVER_URL to be $EXPECTED_CLIENT_SERVER_URL"
+            exit 1
+          fi
+
+          if grep -R -n -E 'wss://(opus-strike-server\.fly\.dev|voxel-strike\.example\.com)' .github apps/client/src apps/client/fly.toml apps/client/.env.example; then
+            echo "::error::Found stale client server URL in CI-controlled client config"
+            exit 1
+          fi
+
       - name: Deploy client
         run: >
           flyctl deploy . --config apps/client/fly.toml --app "$CLIENT_APP" --remote-only
           --dockerfile apps/client/Dockerfile
-          --build-arg VITE_SERVER_URL="$SERVER_URL"
-          --build-arg VITE_DISCORD_AUTH_ENABLED=true
           --ha=false
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Verify deployed client auth endpoint
+        run: |
+          set -euo pipefail
+
+          index_file="$(mktemp)"
+          bundle_file="$(mktemp)"
+          curl -fsSL "$CLIENT_ORIGIN/" -o "$index_file"
+
+          bundle_path="$(grep -o 'assets/[^" ]*\.js' "$index_file" | head -n 1)"
+          if [ -z "$bundle_path" ]; then
+            echo "::error::Could not find deployed client bundle in $CLIENT_ORIGIN/"
+            exit 1
+          fi
+
+          curl -fsSL "$CLIENT_ORIGIN/$bundle_path" -o "$bundle_file"
+
+          if ! grep -Fq "$EXPECTED_CLIENT_SERVER_URL" "$bundle_file"; then
+            echo "::error::Deployed client bundle does not contain $EXPECTED_CLIENT_SERVER_URL"
+            exit 1
+          fi
+
+          if grep -E 'wss://(opus-strike-server\.fly\.dev|voxel-strike\.example\.com)' "$bundle_file"; then
+            echo "::error::Deployed client bundle contains a stale server URL"
+            exit 1
+          fi

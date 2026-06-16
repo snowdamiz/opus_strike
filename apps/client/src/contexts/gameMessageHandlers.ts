@@ -10,6 +10,7 @@ import {
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
   CHRONOS_VERDANT_PULSE_SPEED,
   VOID_RAY_CHARGE_TIME,
+  createDefaultPlayerMovementState,
   type PublicRankSnapshot,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
@@ -160,20 +161,7 @@ interface UnpackedPlayerTransform {
  * Creates a default movement state object for a player
  */
 export function createDefaultMovement() {
-  return {
-    isGrounded: true,
-    isSprinting: false,
-    isCrouching: false,
-    isSliding: false,
-    slideTimeRemaining: 0,
-    isWallRunning: false,
-    wallRunSide: null,
-    isGrappling: false,
-    grapplePoint: null,
-    isJetpacking: false,
-    jetpackFuel: 100,
-    isGliding: false,
-  };
+  return createDefaultPlayerMovementState();
 }
 
 function normalizeMovementState(
@@ -213,6 +201,10 @@ function normalizeMovementState(
     chronosAscendantStartY: Number.isFinite(movement?.chronosAscendantStartY)
       ? movement.chronosAscendantStartY
       : base.chronosAscendantStartY,
+    airJumpsUsed: Number.isFinite(movement?.airJumpsUsed)
+      ? Math.max(0, Math.trunc(movement.airJumpsUsed))
+      : base.airJumpsUsed ?? 0,
+    jumpHeld: movement?.jumpHeld ?? base.jumpHeld ?? false,
   };
 }
 

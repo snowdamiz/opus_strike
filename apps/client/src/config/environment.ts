@@ -15,7 +15,7 @@ const clientDiagnosticsEnabled = isDev && envBool('VITE_CLIENT_DIAGNOSTICS', tru
 
 // Server URL configuration
 const DEV_SERVER_URL = 'ws://localhost:2567';
-const PROD_SERVER_URL = env.VITE_SERVER_URL || 'wss://voxel-strike.example.com';
+const PROD_SERVER_URL = env.VITE_SERVER_URL || 'wss://api.slopheroes.xyz';
 const serverUrl = isDev ? DEV_SERVER_URL : PROD_SERVER_URL;
 
 function envNumber(name: string, fallback: number, options: { min?: number; max?: number } = {}): number {

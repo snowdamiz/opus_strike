@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { BLAZE_GEARSTORM_RADIUS } from '@voxel-strike/shared';
+import { BLAZE_GEARSTORM_DURATION_MS, BLAZE_GEARSTORM_RADIUS } from '@voxel-strike/shared';
 import { checkGroundWithNormal, isPhysicsReady } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
@@ -75,7 +75,7 @@ let cachedGearstormSkyIntensityRevision = -1;
 let cachedGearstormSkyIntensityCount = -1;
 let cachedGearstormSkyIntensity = 0;
 
-export const AIR_STRIKE_DURATION = 5200;
+export const AIR_STRIKE_DURATION = BLAZE_GEARSTORM_DURATION_MS;
 const GEARSTORM_SKY_AFTERGLOW_MS = 900;
 
 const GEARSTORM_RADIUS = BLAZE_GEARSTORM_RADIUS;
