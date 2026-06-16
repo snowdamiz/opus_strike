@@ -92,7 +92,7 @@ export function normalizeAntiCheatSignal(input: AntiCheatSignalInput, now = new 
     matchId: input.matchId ?? null,
     lobbyId: input.lobbyId ?? null,
     matchMode: input.matchMode ?? null,
-    userId: input.userId && !input.userId.startsWith('guest:') ? input.userId : null,
+    userId: input.userId ?? null,
     playerSessionId: input.playerSessionId ?? null,
     team: input.team ?? null,
     heroId: input.heroId ?? null,

@@ -12,7 +12,6 @@ export interface GameEntryTicketClaims {
   assignedTeam?: Team;
   selectedHero?: HeroId;
   observer?: boolean;
-  clientId?: string;
   issuedAt: number;
   expiresAt: number;
   nonce: string;
@@ -27,7 +26,6 @@ export interface CreateGameEntryTicketInput {
   assignedTeam?: Team;
   selectedHero?: HeroId;
   observer?: boolean;
-  clientId?: string;
   ttlMs?: number;
 }
 
@@ -71,7 +69,6 @@ export function createGameEntryTicket(input: CreateGameEntryTicketInput): string
     assignedTeam: input.assignedTeam,
     selectedHero: input.selectedHero,
     observer: input.observer === true ? true : undefined,
-    clientId: input.clientId,
     issuedAt: now,
     expiresAt: now + (input.ttlMs ?? DEFAULT_TICKET_TTL_MS),
     nonce: crypto.randomBytes(16).toString('hex'),

@@ -2,7 +2,6 @@ import { createContext, useContext, useRef, useCallback, useState, ReactNode } f
 import { Client, Room } from 'colyseus.js';
 import { useGameStore, LobbyPlayer, LobbyWagerState, MapVoteOption, MapVoteRecord, WagerPaymentIntent, WagerPaymentTransaction } from '../store/gameStore';
 import { config } from '../config/environment';
-import { getClientId } from '../utils/clientId';
 import {
   createRandomSeed,
   getHeroStats,
@@ -155,7 +154,6 @@ interface QuickPlayTicketResponse {
   competitiveRating: number;
   rankDivisionIndex: number;
   rank: unknown;
-  isGuest: boolean;
   targetRankDivisionIndex: number;
   targetRankLabel: string;
 }
@@ -181,7 +179,6 @@ interface RankedTicketResponse {
   competitiveRating: number;
   rankDivisionIndex: number;
   rank: unknown;
-  isGuest: false;
   targetRankDivisionIndex: number;
   targetRankLabel: string;
   tokenHold: RankedTokenHoldStatus;
@@ -242,10 +239,9 @@ function getHttpUrl(): string {
   return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
 }
 
-async function requestQuickPlayTicket(clientId: string): Promise<QuickPlayTicketResponse> {
+async function requestQuickPlayTicket(): Promise<QuickPlayTicketResponse> {
   const response = await fetch(`${getHttpUrl()}/matchmaking/quick-play-ticket`, {
     credentials: 'include',
-    headers: { 'X-Client-Id': clientId },
   });
 
   if (!response.ok) {
@@ -286,13 +282,12 @@ async function requestRankedTokenHoldStatus(): Promise<RankedTokenHoldStatus> {
   return payload.tokenHold;
 }
 
-async function requestRunningGameStatus(roomId: string, clientId: string): Promise<{
+async function requestRunningGameStatus(roomId: string): Promise<{
   available: boolean;
   reason?: string;
 }> {
   const response = await fetch(`${getHttpUrl()}/matchmaking/running-game/${encodeURIComponent(roomId)}`, {
     credentials: 'include',
-    headers: { 'X-Client-Id': clientId },
   });
 
   if (!response.ok) {
@@ -958,15 +953,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setPracticeMode(false);
 
       const client = getClient();
-      const clientId = getClientId();
-
-      loggers.network.debug('creating lobby with client id', clientId);
 
       lobbyRoomRef.current = await client.create('lobby_room', {
         playerName,
         lobbyName: lobbyName || `${playerName}'s Lobby`,
         isPrivate: true,
-        clientId,
         initialBotCount: options?.initialBotCount || 0,
         botFillMode: options?.botFillMode || 'manual',
         defaultBotDifficulty: options?.defaultBotDifficulty || 'normal',
@@ -1004,10 +995,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setPracticeMode(false);
 
       const client = getClient();
-      const clientId = getClientId();
-      const matchmakingTicket = await requestQuickPlayTicket(clientId);
+      const matchmakingTicket = await requestQuickPlayTicket();
 
-      loggers.network.debug('quick play matchmaking with client id', clientId, matchmakingTicket.targetRankLabel);
+      loggers.network.debug('quick play matchmaking', matchmakingTicket.targetRankLabel);
 
       lobbyRoomRef.current = await client.joinOrCreate('lobby_room', {
         playerName,
@@ -1017,7 +1007,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         matchMode: 'quick_play',
         matchmakingTicket: matchmakingTicket.ticket,
         rankBandId: matchmakingTicket.targetRankDivisionIndex,
-        clientId,
         initialBotCount: 0,
         botFillMode: 'manual',
         defaultBotDifficulty: 'normal',
@@ -1044,13 +1033,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     try {
       const rankedTicket = await requestRankedTicket();
       const client = getClient();
-      const clientId = getClientId();
 
       cleanupExistingConnections();
       clearRunningGameSession();
       setPracticeMode(false);
 
-      loggers.network.debug('ranked matchmaking with client id', clientId, rankedTicket.targetRankLabel, rankedTicket.tokenHold.requiredTokenBaseUnits);
+      loggers.network.debug('ranked matchmaking', rankedTicket.targetRankLabel, rankedTicket.tokenHold.requiredTokenBaseUnits);
 
       lobbyRoomRef.current = await client.joinOrCreate('lobby_room', {
         playerName,
@@ -1060,7 +1048,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         matchMode: 'ranked',
         matchmakingTicket: rankedTicket.ticket,
         rankBandId: rankedTicket.targetRankDivisionIndex,
-        clientId,
         initialBotCount: 0,
         botFillMode: 'manual',
         defaultBotDifficulty: 'normal',
@@ -1112,13 +1099,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setPracticeMode(false);
 
       const client = getClient();
-      const clientId = getClientId();
-
-      loggers.network.debug('joining lobby with client id', clientId);
 
       lobbyRoomRef.current = await client.joinById(lobbyId, {
         playerName,
-        clientId,
       });
 
       setupLobbyListeners(lobbyRoomRef.current, playerName);
@@ -1542,7 +1525,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     if (!session) return { available: false, session: null, reason: 'no_saved_game' };
 
     try {
-      const status = await requestRunningGameStatus(session.roomId, getClientId());
+      const status = await requestRunningGameStatus(session.roomId);
       if (!status.available) {
         clearRunningGameSession(session.roomId);
         return { available: false, session: null, reason: status.reason ?? 'unavailable' };
@@ -1591,14 +1574,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setPhaseEndTime(null);
 
       const client = getClient();
-      const clientId = getClientId();
-
-      loggers.network.debug('joining game room with client id', clientId);
 
       gameRoomRef.current = await client.joinById(gameRoomId, {
         playerName,
         preferredTeam: team,
-        clientId,
         entryTicket,
         reconnectToRunningGame,
         clientBuildId: config.buildId,

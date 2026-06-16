@@ -2,7 +2,6 @@ import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
 import { matchMaker } from 'colyseus';
 import prisma from '../db';
-import { isGuestPlayAllowed } from '../config/security';
 import { parseCookies, verifyAuthToken } from '../auth/session';
 import { assertGameplayAccountEligible } from '../auth/accountEligibility';
 import { consumeRateLimit, consumeRateLimitForKey } from '../auth/rateLimit';
@@ -12,8 +11,6 @@ import {
   getRankedTokenHoldingStatus,
 } from './rankedTokenHold';
 import {
-  DEFAULT_MATCHMAKING_RATING,
-  DEFAULT_RANK_DIVISION_INDEX,
   getAllowedRankDivisionDistance,
   getRankDivisionLabel,
   normalizeRankDivisionIndex,
@@ -39,7 +36,6 @@ interface MatchmakingUserContext {
   competitiveRating: number;
   rankDivisionIndex: number;
   rank: PublicRankPayload;
-  isGuest: boolean;
 }
 
 interface QueueCandidate {
@@ -120,30 +116,13 @@ function enforceMatchmakingIdentityRateLimit(res: Response, keyPrefix: string, o
   return false;
 }
 
-function readClientId(req: Request): string | null {
-  const header = req.headers['x-client-id'];
-  const value = (Array.isArray(header)
-    ? header[0] ?? ''
-    : typeof header === 'string'
-      ? header
-      : typeof req.query.clientId === 'string'
-        ? req.query.clientId
-        : '');
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.length > 128) return null;
-  return /^[a-zA-Z0-9._:-]+$/.test(trimmed) ? trimmed : null;
-}
-
 function readRoomIdParam(req: Request): string | null {
   const value = typeof req.params.roomId === 'string' ? req.params.roomId.trim() : '';
   if (!value || value.length > 128) return null;
   return /^[a-zA-Z0-9_-]+$/.test(value) ? value : null;
 }
 
-async function getMatchmakingUserContext(
-  req: Request,
-  options: { allowGuest: boolean; guestClientId?: string | null } = { allowGuest: true }
-): Promise<MatchmakingUserContext> {
+async function getMatchmakingUserContext(req: Request): Promise<MatchmakingUserContext> {
   const token = getRequestToken(req);
   const payload = token ? verifyAuthToken(token) : null;
 
@@ -186,27 +165,11 @@ async function getMatchmakingUserContext(
         competitiveRating: user.competitiveRating,
         rankDivisionIndex: getRankDivisionIndex(user.competitiveRating),
         rank,
-        isGuest: false,
       };
     }
   }
 
-  if (!options.allowGuest || !isGuestPlayAllowed()) {
-    throw new Error('Authentication required');
-  }
-
-  if (!options.guestClientId) {
-    throw Object.assign(new Error('Client id is required for guest matchmaking'), { statusCode: 400 });
-  }
-
-  return {
-    userId: `guest:${options.guestClientId}`,
-    walletAddress: null,
-    competitiveRating: DEFAULT_MATCHMAKING_RATING,
-    rankDivisionIndex: DEFAULT_RANK_DIVISION_INDEX,
-    rank: serializeRankPayload(null),
-    isGuest: true,
-  };
+  throw new Error('Authentication required');
 }
 
 async function chooseMatchmakingRankBand(input: {
@@ -363,8 +326,7 @@ router.get('/running-game/:roomId', async (req: Request, res: Response) => {
       return;
     }
 
-    const clientId = readClientId(req);
-    const context = await getMatchmakingUserContext(req, { allowGuest: true, guestClientId: clientId });
+    const context = await getMatchmakingUserContext(req);
     if (!enforceMatchmakingIdentityRateLimit(res, 'matchmaking:running-game-status:user', MATCHMAKING_RATE_LIMITS.runningGameStatus, context.userId)) return;
 
     const rooms = await matchMaker.query({ name: 'game_room' });
@@ -399,8 +361,7 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
   if (!enforceMatchmakingRateLimit(req, res, 'matchmaking:quick-play-ticket', MATCHMAKING_RATE_LIMITS.ticket)) return;
 
   try {
-    const clientId = readClientId(req);
-    const context = await getMatchmakingUserContext(req, { allowGuest: true, guestClientId: clientId });
+    const context = await getMatchmakingUserContext(req);
     if (!enforceMatchmakingIdentityRateLimit(res, 'matchmaking:quick-play-ticket:user', MATCHMAKING_RATE_LIMITS.ticket, context.userId)) return;
 
     const targetRankDivisionIndex = await chooseMatchmakingRankBand({
@@ -415,7 +376,6 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
       rankDivisionIndex: context.rankDivisionIndex,
       targetRankDivisionIndex,
       placementRemaining: context.rank.rankedPlacementsRemaining,
-      clientId: context.isGuest ? clientId ?? undefined : undefined,
     });
 
     res.json({
@@ -425,7 +385,6 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
       competitiveRating: context.competitiveRating,
       rankDivisionIndex: context.rankDivisionIndex,
       rank: context.rank,
-      isGuest: context.isGuest,
       targetRankDivisionIndex,
       targetRankLabel: getRankDivisionLabel(targetRankDivisionIndex),
     });
@@ -439,7 +398,7 @@ router.get('/ranked-token-hold-status', async (req: Request, res: Response) => {
   if (!enforceMatchmakingRateLimit(req, res, 'matchmaking:ranked-token-hold-status', MATCHMAKING_RATE_LIMITS.rankedStatus)) return;
 
   try {
-    const context = await getMatchmakingUserContext(req, { allowGuest: false });
+    const context = await getMatchmakingUserContext(req);
     if (!enforceMatchmakingIdentityRateLimit(res, 'matchmaking:ranked-token-hold-status:user', MATCHMAKING_RATE_LIMITS.rankedStatus, context.userId)) return;
     if (!context.walletAddress) {
       throw Object.assign(new Error('A linked Solana wallet is required for ranked'), { statusCode: 400 });
@@ -456,7 +415,7 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
   if (!enforceMatchmakingRateLimit(req, res, 'matchmaking:ranked-ticket', MATCHMAKING_RATE_LIMITS.rankedTicket)) return;
 
   try {
-    const context = await getMatchmakingUserContext(req, { allowGuest: false });
+    const context = await getMatchmakingUserContext(req);
     if (!enforceMatchmakingIdentityRateLimit(res, 'matchmaking:ranked-ticket:user', MATCHMAKING_RATE_LIMITS.rankedTicket, context.userId)) return;
     if (!context.walletAddress) {
       throw Object.assign(new Error('A linked Solana wallet is required for ranked'), { statusCode: 400 });
@@ -490,7 +449,6 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
       competitiveRating: context.competitiveRating,
       rankDivisionIndex: context.rankDivisionIndex,
       rank: context.rank,
-      isGuest: false,
       targetRankDivisionIndex,
       targetRankLabel: getRankDivisionLabel(targetRankDivisionIndex),
       tokenHold,

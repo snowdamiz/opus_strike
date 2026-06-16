@@ -48,10 +48,6 @@ export function isHardenedMovementEnabled(): boolean {
   return envFlag('HARDENED_MOVEMENT', true);
 }
 
-export function isGuestPlayAllowed(): boolean {
-  return envFlag('ALLOW_GUEST_PLAY', !isProductionEnvironment());
-}
-
 export function isDirectGameRoomJoinAllowed(): boolean {
   if (isProductionEnvironment()) {
     return envFlag('ALLOW_DIRECT_GAME_ROOM', false);

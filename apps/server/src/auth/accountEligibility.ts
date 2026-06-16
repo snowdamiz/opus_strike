@@ -18,14 +18,9 @@ export class AccountRestrictedError extends Error {
   }
 }
 
-export function isGuestUserId(userId: string | null | undefined): boolean {
-  return typeof userId === 'string' && userId.startsWith('guest:');
-}
-
 export async function getGameplayAccountRestriction(
   userId: string
 ): Promise<GameplayAccountRestriction | null> {
-  if (isGuestUserId(userId)) return null;
   return getActiveAccountRestriction(prisma, userId);
 }
 

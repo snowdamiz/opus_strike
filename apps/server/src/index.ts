@@ -116,7 +116,7 @@ app.use((_req, res, next) => {
   }
 
   res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Client-Id, X-CSRF-Token, X-Internal-Status-Token, X-Wager-Admin-Token');
+  res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-CSRF-Token, X-Internal-Status-Token, X-Wager-Admin-Token');
   res.header('Access-Control-Allow-Credentials', 'true');
 
   // Handle preflight requests
