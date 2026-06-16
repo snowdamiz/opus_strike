@@ -1767,6 +1767,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     chronosLifelineBlockPrimaryRef.current = queued && Boolean(input?.primaryFire);
     chronosLifelineBlockSecondaryRef.current = queued && Boolean(input?.secondaryFire);
     chronosLifelineCommitHeldRef.current = false;
+    useGameStore.getState().setChronosLifelineQueuedHud(queued);
     setChronosLifelineQueued(queued, timestampMs);
   }, []);
 

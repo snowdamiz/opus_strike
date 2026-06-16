@@ -5,6 +5,7 @@ import {
   chooseBotAbilityPlan,
   chooseBotCombatPlan,
   chooseLocalAvoidanceDirection,
+  composeBotMovementDirection,
   createBotRouteGraphAdapter,
   getBotSkillProfile,
   planBotRoute,
@@ -13,6 +14,7 @@ import {
   type BotFlagSnapshot,
   type BotPlayerSnapshot,
   type BotRouteGraphAdapter,
+  type BotRoutePlan,
   type BotTeamTactics,
   type PlainVec3,
 } from '../rooms/bot-ai';
@@ -178,6 +180,22 @@ function defaultGeometry(overrides: Partial<BotAbilityGeometry> = {}): BotAbilit
   };
 }
 
+function directRoutePlan(targetPosition: PlainVec3): BotRoutePlan {
+  return {
+    targetPosition,
+    steeringTarget: targetPosition,
+    pathNodeIds: [],
+    nextNodeId: null,
+    activeEdgeId: null,
+    laneId: null,
+    cost: 0,
+    expandedNodes: 0,
+    capped: false,
+    reason: 'test direct route',
+    plannedAt: NOW,
+  };
+}
+
 function routeGraph(): BotRouteGraphAdapter {
   const manifest = {
     gameplay: {
@@ -275,6 +293,71 @@ function testLocalAvoidance() {
   assert.ok(choice.direction && choice.direction.z < 0, 'expected left tangent recovery');
 }
 
+function testCombatPlannerHoldsStandoffInsideAttackEnvelope() {
+  const bot = player({ id: 'red-phantom', team: 'red', heroId: 'phantom', x: 0, z: 0 });
+  const enemy = player({ id: 'blue-hook', team: 'blue', heroId: 'hookshot', x: 21.5, z: 0 });
+  const blackboard = blackboardFor(bot, [bot, enemy], { visibleEnemyIds: [enemy.id], losEnemyIds: [enemy.id] });
+  const intent = {
+    ...scoreBotIntents(bot, blackboard, getBotSkillProfile('normal')),
+    type: 'fight_local_enemy' as const,
+    targetPosition: enemy.position,
+    targetPlayerId: enemy.id,
+    reason: 'test local duel',
+  };
+  const combatPlan = chooseBotCombatPlan({
+    bot,
+    intent,
+    blackboard,
+    skill: getBotSkillProfile('normal'),
+    primaryRange: 30,
+    protectedEnemyIds: new Set(),
+  });
+
+  assert.equal(combatPlan.targetId, enemy.id);
+  assert.equal(combatPlan.stance, 'strafe');
+}
+
+function testCombatMovementKitesInsideMinimumRange() {
+  const bot = player({ id: 'red-phantom', team: 'red', heroId: 'phantom', x: 0, z: 0 });
+  const enemy = player({ id: 'blue-hook', team: 'blue', heroId: 'hookshot', x: 7, z: 0 });
+  const skill = getBotSkillProfile('normal');
+  const blackboard = blackboardFor(bot, [bot, enemy], { visibleEnemyIds: [enemy.id], losEnemyIds: [enemy.id] });
+  const intent = {
+    ...scoreBotIntents(bot, blackboard, skill),
+    type: 'fight_local_enemy' as const,
+    targetPosition: enemy.position,
+    targetPlayerId: enemy.id,
+    reason: 'test close duel',
+  };
+  const move = composeBotMovementDirection(
+    bot,
+    { strafeDirection: 1 },
+    intent,
+    directRoutePlan(vec(40, 0)),
+    enemy,
+    blackboard,
+    skill,
+    { stance: 'kite' }
+  );
+
+  assert.ok(move, 'expected a movement direction');
+  assert.ok(move.x < -0.45, `expected bot to back away from close enemy, got ${JSON.stringify(move)}`);
+}
+
+function testOutnumberedBotsRegroupBeforeCriticalHealth() {
+  const bot = player({ id: 'red-phantom', team: 'red', heroId: 'phantom', x: 0, z: 0, health: 125, maxHealth: 200 });
+  const enemyA = player({ id: 'blue-a', team: 'blue', heroId: 'phantom', x: 8, z: 0 });
+  const enemyB = player({ id: 'blue-b', team: 'blue', heroId: 'hookshot', x: 10, z: 3 });
+  const blackboard = blackboardFor(bot, [bot, enemyA, enemyB], {
+    visibleEnemyIds: [enemyA.id, enemyB.id],
+    losEnemyIds: [enemyA.id, enemyB.id],
+  });
+  const intent = scoreBotIntents(bot, blackboard, getBotSkillProfile('normal'));
+
+  assert.equal(intent.type, 'regroup');
+  assert.equal(intent.reason, 'outnumbered local fight');
+}
+
 function testChronosHealingThresholds() {
   const chronos = player({ id: 'chronos', team: 'red', heroId: 'chronos', x: 0, z: 0 });
   const scratched = player({ id: 'scratched', team: 'red', heroId: 'phantom', x: 4, z: 0, health: 190, maxHealth: 200 });
@@ -285,7 +368,6 @@ function testChronosHealingThresholds() {
     blackboard: trivialBoard,
     skill: getBotSkillProfile('normal'),
     primaryRange: 18,
-    preferredRange: 13,
     protectedEnemyIds: new Set(),
   });
   const trivialPlan = chooseBotAbilityPlan({
@@ -513,6 +595,9 @@ testTeamTacticsAssignments();
 testIntentScoring();
 testRoutePlannerAvoidsBlockedEdge();
 testLocalAvoidance();
+testCombatPlannerHoldsStandoffInsideAttackEnvelope();
+testCombatMovementKitesInsideMinimumRange();
+testOutnumberedBotsRegroupBeforeCriticalHealth();
 testChronosHealingThresholds();
 testHeroAbilityControllers();
 testDifficultyChangesDecisionQuality();

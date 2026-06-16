@@ -280,7 +280,6 @@ import {
   createBotRouteGraphAdapter,
   createInitialBotBrain,
   createSteeringProbeDirections,
-  getBotPreferredCombatRange,
   getBotSkillProfile,
   normalizeBotDifficulty,
   planBotRoute,
@@ -8577,7 +8576,6 @@ export class GameRoom extends Room<GameState> {
       blackboard,
       skill,
       primaryRange: this.getBotAttackRange(bot),
-      preferredRange: getBotPreferredCombatRange(botSnapshot.heroId),
       protectedEnemyIds: frameContext.protectedEnemyIdsByTeam[botSnapshot.team],
     });
     const combatTarget = combatPlan.targetId ? this.state.players.get(combatPlan.targetId) ?? null : null;
@@ -8611,7 +8609,8 @@ export class GameRoom extends Room<GameState> {
       routePlan,
       combatTargetSnapshot,
       blackboard,
-      skill
+      skill,
+      combatPlan
     );
     const probes = this.getBotSteeringProbes(bot, desiredMove, skill);
     const steering = chooseLocalAvoidanceDirection(desiredMove, probes, skill);

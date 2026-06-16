@@ -369,7 +369,6 @@ function runBotAiBenchmark(botCount = 8): Record<string, number | string> {
         blackboard,
         skill,
         primaryRange: 30,
-        preferredRange: 16,
         protectedEnemyIds: new Set(),
       });
       chooseBotAbilityPlan({

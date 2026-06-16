@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
 import {
@@ -514,6 +514,122 @@ function HookshotShotCounter() {
   );
 }
 
+const CHRONOS_LIFELINE_HELPERS = [
+  { input: 'mouse-left', icon: 'allies', ariaLabel: 'Left click heals allies' },
+  { input: 'mouse-right', icon: 'self', ariaLabel: 'Right click heals self' },
+  { input: 'key-e', icon: 'cancel', ariaLabel: 'E cancels Lifeline' },
+] as const;
+
+const CHRONOS_LIFELINE_ICON_COLOR = 'rgba(255, 255, 255, 0.64)';
+const CHRONOS_LIFELINE_ICON_MUTED = 'rgba(255, 255, 255, 0.34)';
+const CHRONOS_LIFELINE_ICON_SOFT = 'rgba(255, 255, 255, 0.12)';
+
+type ChronosLifelineHelperIcon = (typeof CHRONOS_LIFELINE_HELPERS)[number]['icon'];
+type ChronosLifelineInputIcon = (typeof CHRONOS_LIFELINE_HELPERS)[number]['input'];
+
+function ChronosLifelineInputGlyph({
+  input,
+  color,
+}: {
+  input: ChronosLifelineInputIcon;
+  color: string;
+}) {
+  if (input === 'key-e') {
+    return (
+      <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+          d="M7.2 5.2h9.6c1 0 1.8.8 1.8 1.8v10c0 1-.8 1.8-1.8 1.8H7.2c-1 0-1.8-.8-1.8-1.8V7c0-1 .8-1.8 1.8-1.8Z"
+          fill={CHRONOS_LIFELINE_ICON_SOFT}
+          stroke={CHRONOS_LIFELINE_ICON_MUTED}
+          strokeWidth="1.4"
+        />
+        <path d="M14.7 8.5H9.5v7h5.4M9.9 12h4.1" stroke={color} strokeWidth="1.55" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  const leftActive = input === 'mouse-left';
+
+  return (
+    <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M12 3.5c-3.35 0-6.1 2.75-6.1 6.1v4.8c0 3.35 2.75 6.1 6.1 6.1s6.1-2.75 6.1-6.1V9.6c0-3.35-2.75-6.1-6.1-6.1Z"
+        fill={CHRONOS_LIFELINE_ICON_SOFT}
+        stroke={CHRONOS_LIFELINE_ICON_MUTED}
+        strokeWidth="1.45"
+      />
+      <path d="M12 4.3v5.5" stroke="rgba(255,255,255,0.22)" strokeWidth="1.15" strokeLinecap="round" />
+      <path
+        d={leftActive ? 'M11.2 4.8c-2.3.35-4 2.35-4 4.8h4V4.8Z' : 'M12.8 4.8c2.3.35 4 2.35 4 4.8h-4V4.8Z'}
+        fill={color}
+      />
+      <path d="M12 11.3v2" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ChronosLifelineActionIcon({
+  icon,
+  color,
+}: {
+  icon: ChronosLifelineHelperIcon;
+  color: string;
+}) {
+  if (icon === 'cancel') {
+    return (
+      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M6.2 6.2 17.8 17.8M17.8 6.2 6.2 17.8" stroke={color} strokeWidth="2.4" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (icon === 'self') {
+    return (
+      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="10" cy="7.2" r="3" stroke={color} strokeWidth="1.8" />
+        <path d="M4.7 18.6c.7-3.4 2.5-5.2 5.3-5.2s4.6 1.8 5.3 5.2" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M18.2 10.7v5M15.7 13.2h5" stroke={color} strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="8" cy="7.3" r="2.4" stroke={color} strokeWidth="1.7" />
+      <circle cx="15.8" cy="7.3" r="2.4" stroke={color} strokeWidth="1.7" opacity="0.76" />
+      <path d="M3.7 18.2c.6-3.1 2-4.7 4.3-4.7s3.7 1.6 4.3 4.7" stroke={color} strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M12.5 14c.7-.4 1.5-.6 2.5-.6 2.2 0 3.7 1.6 4.3 4.7" stroke={color} strokeWidth="1.7" strokeLinecap="round" opacity="0.76" />
+      <path d="M18.7 11.1v4.2M16.6 13.2h4.2" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ChronosLifelineHelper() {
+  return (
+    <div
+      className="relative flex max-w-[92vw] items-center justify-center gap-3 px-1 pb-0.5 animate-fade-in sm:gap-4"
+      style={{
+        filter: 'drop-shadow(0 1px 2px rgba(0, 0, 0, 0.48))',
+      }}
+      aria-label="Chronos Lifeline helper actions"
+    >
+      <span className="absolute left-1/2 top-1/2 h-px w-[calc(100%-1.2rem)] -translate-x-1/2 bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+
+      {CHRONOS_LIFELINE_HELPERS.map((helper) => (
+        <div
+          key={helper.input}
+          className="relative flex h-9 items-center gap-1.5"
+          aria-label={helper.ariaLabel}
+        >
+          <ChronosLifelineInputGlyph input={helper.input} color={CHRONOS_LIFELINE_ICON_COLOR} />
+          <span className="h-1 w-1 rounded-full bg-white/40" />
+          <ChronosLifelineActionIcon icon={helper.icon} color={CHRONOS_LIFELINE_ICON_COLOR} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function HUD() {
   const {
     localPlayer,
@@ -539,6 +655,7 @@ export function HUD() {
     phantomPrimaryReloading,
     phantomPrimaryReloadStart,
     phantomPrimaryReloadEnd,
+    chronosLifelineQueued,
   } = useGameStore(
     useShallow(state => ({
       localPlayer: state.localPlayer,
@@ -564,6 +681,7 @@ export function HUD() {
       phantomPrimaryReloading: state.phantomPrimaryReloading,
       phantomPrimaryReloadStart: state.phantomPrimaryReloadStart,
       phantomPrimaryReloadEnd: state.phantomPrimaryReloadEnd,
+      chronosLifelineQueued: state.chronosLifelineQueued,
     }))
   );
   const {
@@ -587,6 +705,7 @@ export function HUD() {
   const ultimatePercent = localPlayer.ultimateCharge ?? 0;
   const heroColors = localPlayer.heroId ? HERO_COLORS[localPlayer.heroId] : HERO_COLORS.phantom;
   const heroSkillItems = localPlayer.heroId ? getHeroSkillItems(localPlayer.heroId) : [];
+  const showChronosLifelineHelper = localPlayer.heroId === 'chronos' && chronosLifelineQueued;
   const healthColor = healthPercent <= 15
     ? '#ef4444'
     : healthPercent <= 30
@@ -860,7 +979,10 @@ export function HUD() {
 
       {/* ===== BOTTOM CENTER - Skill Bar ===== */}
       {heroSkillItems.length > 0 && (
-        <div className="absolute bottom-[clamp(0.45rem,1vw,0.875rem)] left-1/2 -translate-x-1/2 max-w-[94vw] hud-skill-bar">
+        <div className="absolute bottom-[clamp(0.45rem,1vw,0.875rem)] left-1/2 flex max-w-[94vw] -translate-x-1/2 flex-col items-center gap-2 hud-skill-bar">
+          {showChronosLifelineHelper && (
+            <ChronosLifelineHelper />
+          )}
           <div className="flex items-end justify-center gap-2 sm:gap-2.5 lg:gap-3">
             {heroSkillItems.map((skill) => (
               <HUDSkillSlot
