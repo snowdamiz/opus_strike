@@ -5,7 +5,7 @@ interface ParsedArgs {
   clientCount: number;
   holdMs: number;
   connectIntervalMs: number;
-  authToken: string | undefined;
+  authTokens: string[];
   lobbyPrefix: string;
   isPrivate: boolean;
 }
@@ -24,18 +24,37 @@ function readPositiveInteger(value: string | undefined, fallback: number): numbe
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function readCsv(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 function parseArgs(args: string[]): ParsedArgs {
+  const clientCount = readPositiveInteger(readOption(args, '--clients') ?? process.env.AUTOSCALER_DEMAND_CLIENTS, 49);
+  const authTokens = readCsv(
+    readOption(args, '--auth-tokens')
+      ?? process.env.AUTOSCALER_AUTH_TOKENS
+      ?? readOption(args, '--auth-token')
+      ?? process.env.AUTOSCALER_AUTH_TOKEN
+  );
+
+  if (authTokens.length < clientCount) {
+    throw new Error(`AUTOSCALER_AUTH_TOKENS must provide at least ${clientCount} Discord auth tokens`);
+  }
+
   return {
     serverUrl: readOption(args, '--server-url')
       ?? process.env.AUTOSCALER_SERVER_URL
       ?? 'wss://opus-strike-server.fly.dev',
-    clientCount: readPositiveInteger(readOption(args, '--clients') ?? process.env.AUTOSCALER_DEMAND_CLIENTS, 49),
+    clientCount,
     holdMs: readPositiveInteger(readOption(args, '--hold-ms') ?? process.env.AUTOSCALER_DEMAND_HOLD_MS, 180_000),
     connectIntervalMs: readPositiveInteger(
       readOption(args, '--connect-interval-ms') ?? process.env.AUTOSCALER_DEMAND_CONNECT_INTERVAL_MS,
       100
     ),
-    authToken: readOption(args, '--auth-token') ?? process.env.AUTOSCALER_AUTH_TOKEN,
+    authTokens,
     lobbyPrefix: readOption(args, '--lobby-prefix') ?? process.env.AUTOSCALER_DEMAND_LOBBY_PREFIX ?? 'Autoscaler Demand',
     isPrivate: args.includes('--private') || process.env.AUTOSCALER_DEMAND_PRIVATE === '1',
   };
@@ -88,7 +107,6 @@ async function leaveRooms(rooms: Room[]): Promise<void> {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const wsUrl = toWebSocketUrl(args.serverUrl);
-  const runId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const rooms: Room[] = [];
   let shuttingDown = false;
 
@@ -116,11 +134,10 @@ async function main(): Promise<void> {
         playerName: `Autoscale ${index + 1}`,
         lobbyName: `${args.lobbyPrefix} ${index + 1}`,
         isPrivate: args.isPrivate,
-        clientId: `autoscaler-demand-${runId}-${index + 1}`,
         initialBotCount: 0,
         botFillMode: 'manual',
         defaultBotDifficulty: 'normal',
-        authToken: args.authToken,
+        authToken: args.authTokens[index],
       });
       room.onMessage('*', () => undefined);
       rooms.push(room);

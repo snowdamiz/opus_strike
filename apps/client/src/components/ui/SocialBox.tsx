@@ -56,6 +56,7 @@ interface SocialState {
   incomingRequests: FriendRequest[];
   outgoingRequests: FriendRequest[];
   lobbyInvites: LobbyInvite[];
+  discordPlayers: SearchResult[];
 }
 
 interface SearchResult {
@@ -68,6 +69,7 @@ const emptySocialState: SocialState = {
   incomingRequests: [],
   outgoingRequests: [],
   lobbyInvites: [],
+  discordPlayers: [],
 };
 
 function getHttpUrl(): string {
@@ -310,10 +312,10 @@ export function SocialBox({
   const requestCount = social.incomingRequests.length + social.outgoingRequests.length;
   const inviteCount = social.lobbyInvites.length;
   const tabCounts = useMemo(() => ({
-    friends: social.friends.length,
+    friends: social.friends.length + social.discordPlayers.filter((candidate) => candidate.relationship === 'none').length,
     requests: requestCount,
     invites: inviteCount,
-  }), [inviteCount, requestCount, social.friends.length]);
+  }), [inviteCount, requestCount, social.discordPlayers, social.friends.length]);
   const tabs: { id: SocialTab; label: string; icon: ReactNode; count: number }[] = [
     { id: 'friends', label: 'Friends', icon: <UsersIcon className="h-4 w-4" />, count: tabCounts.friends },
     { id: 'requests', label: 'Requests', icon: <RequestIcon className="h-4 w-4" />, count: tabCounts.requests },
@@ -605,6 +607,32 @@ export function SocialBox({
                           </div>
                         )}
                       </section>
+
+                      {social.discordPlayers.length > 0 && (
+                        <section className="space-y-2 border-t border-white/5 pt-4">
+                          <h3 className="font-display text-base text-white">Discord Players</h3>
+                          {social.discordPlayers.map((result) => {
+                            const canSend = result.relationship === 'none';
+                            return (
+                              <div key={result.user.userId} className="flex items-center justify-between gap-3 rounded-lg bg-white/5 px-3.5 py-3">
+                                <UserIdentity user={result.user} detail="Discord" />
+                                <button
+                                  type="button"
+                                  disabled={!canSend || Boolean(pendingAction)}
+                                  onClick={() => sendFriendRequest({ targetUserId: result.user.userId })}
+                                  className={`h-9 px-3.5 rounded-lg font-display text-xs flex shrink-0 items-center justify-center border focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-300/70 ${
+                                    canSend
+                                      ? 'border-orange-300/20 bg-orange-500/15 text-orange-100 hover:border-orange-200/40 hover:bg-orange-500/25'
+                                      : 'cursor-not-allowed border-white/10 bg-white/5 text-white/25'
+                                  }`}
+                                >
+                                  {statusLabel(result.relationship)}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </section>
+                      )}
 
                       {social.friends.length > 0 && (
                         <section className="space-y-2 border-t border-white/5 pt-4">

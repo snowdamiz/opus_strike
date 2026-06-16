@@ -2,7 +2,7 @@
   "id": "/",
   "name": "Slop Heroes",
   "short_name": "Slop Heroes",
-  "description": "A fast voxel arena hero shooter where heroes grapple, blink, burn, and bend time through capture-the-flag fights.",
+  "description": "A fast arena hero shooter where heroes grapple, blink, burn, and bend time through capture-the-flag fights.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

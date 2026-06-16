@@ -44,7 +44,7 @@ async function run() {
   const tokenResponse = await service.issueMatchVoiceToken({
     requestId: 'request-1',
     playerId: 'session-red',
-    identity: 'guest:lobby-red',
+    identity: 'user:lobby-red',
     displayName: 'Red Player',
     team: 'red',
     lobbyId: 'lobby-1',
@@ -89,10 +89,10 @@ async function run() {
   assert.equal(botResponse.enabled, false);
   assert.equal(botResponse.reason, 'bots cannot join voice');
 
-  await service.removeMatchParticipant('game-123', 'guest:lobby-red', null, 'test');
+  await service.removeMatchParticipant('game-123', 'user:lobby-red', null, 'test');
   assert.deepEqual(removedParticipants, [
-    { room: 'opus:test:match:game-123:red', identity: 'guest:lobby-red' },
-    { room: 'opus:test:match:game-123:blue', identity: 'guest:lobby-red' },
+    { room: 'opus:test:match:game-123:red', identity: 'user:lobby-red' },
+    { room: 'opus:test:match:game-123:blue', identity: 'user:lobby-red' },
   ]);
 
   assert.deepEqual(createdRooms, ['opus:test:match:game-123:red']);

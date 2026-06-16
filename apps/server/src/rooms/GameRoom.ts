@@ -21,6 +21,7 @@ import {
 } from './visibilityInterest';
 import {
   SERVER_MOVEMENT_SUBSTEPS_PER_TICK,
+  getMovementBacklogTrimCount,
   getMovementCommandDrainDecision,
 } from './movementCommandDrain';
 import {
@@ -35,7 +36,6 @@ import {
   createProceduralTerrainLookup,
   getVoxelMapTheme,
   GOLDEN_VOXEL_MAP_THEME_ID,
-  getRankDivisionIndex,
   getRankFromRating,
   toPublicRankSnapshot,
   isInsideBoundaryPolygon,
@@ -107,6 +107,8 @@ import {
   HOOKSHOT_DRAG_HOOK_DAMAGE,
   HOOKSHOT_DRAG_HOOK_MAX_DISTANCE,
   HOOKSHOT_DRAG_HOOK_PULL_FRONT_DISTANCE,
+  HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS,
+  HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE,
   HOOKSHOT_DRAG_HOOK_RETRACT_SPEED,
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
@@ -210,11 +212,6 @@ import {
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
 import { verifyGameEntryTicket, type GameEntryTicketClaims } from '../security/entryTickets';
 import {
-  DEFAULT_MATCHMAKING_RATING,
-  DEFAULT_RANK_DIVISION_INDEX,
-} from '../matchmaking/skill';
-import { serializeRankPayload } from '../ranking/serialization';
-import {
   calculateRankedRatingUpdates,
   type RankedUserState,
 } from '../ranking/ratingService';
@@ -260,7 +257,6 @@ import {
   isHeroId,
   isRecord,
   isTeam,
-  sanitizeDisplayName,
   sanitizeShortText,
   validateBotIdPayload,
   validateChatPayload,
@@ -338,7 +334,6 @@ interface CreateOptions {
 interface JoinOptions {
   playerName?: string;
   preferredTeam?: Team;
-  clientId?: string;
   entryTicket?: string;
   reconnectToRunningGame?: boolean;
   authToken?: string;
@@ -805,8 +800,6 @@ const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
 };
 const HOOKSHOT_SPEED = 38;
 const DRAG_HOOK_SPEED = 50;
-const HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS = 1250;
-const HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE = 0.32;
 const HOOKSHOT_DRAG_HOOK_PULL_BUMP_ITERATIONS = 3;
 const HOOKSHOT_DRAG_HOOK_PULL_BUMP_SKIN = 0.04;
 const HOOKSHOT_DRAG_HOOK_PULL_MIN_PROGRESS = 0.025;
@@ -913,9 +906,9 @@ export class GameRoom extends Room<GameState> {
     getCollisionAabbs: (bounds: MovementCollisionBounds) => this.getHookshotAnchorWallAabbs(bounds),
   };
   
-  // Track clientId -> sessionId mapping for reconnection detection
-  private clientIdToSessionId: Map<string, string> = new Map();
-  private sessionIdToClientId: Map<string, string> = new Map();
+  // Track durable auth identity -> sessionId mapping for duplicate session handling.
+  private identityToSessionId: Map<string, string> = new Map();
+  private sessionIdToIdentity: Map<string, string> = new Map();
   private lastVitalsBroadcastAt = 0;
   private lastMatchSnapshotBroadcastAt = 0;
   private lastInterestBroadcastAt = 0;
@@ -1023,7 +1016,7 @@ export class GameRoom extends Room<GameState> {
       throw new Error('Direct game room joins are disabled');
     }
 
-    let auth = await resolveRoomAuthContext(client.sessionId, options as Record<string, unknown>, request);
+    const auth = await resolveRoomAuthContext(options as Record<string, unknown>, request);
     let ticket: GameEntryTicketClaims | null = null;
 
     if (this.lobbyId) {
@@ -1043,27 +1036,13 @@ export class GameRoom extends Room<GameState> {
           this.recordAuthReject(client, 'entry_ticket_nonce_replay', { lobbyId: this.lobbyId });
           throw new Error('Game entry ticket already used');
         }
-        if (auth.kind === 'authenticated' && auth.userId !== ticket.userId) {
+        if (auth.userId !== ticket.userId) {
           this.recordAuthReject(client, 'entry_ticket_user_mismatch', {
             lobbyId: this.lobbyId,
             authUserId: auth.userId,
             ticketUserId: ticket.userId,
           });
           throw new Error('Game entry ticket does not match authenticated user');
-        }
-        if (auth.kind === 'guest') {
-          const competitiveRating = DEFAULT_MATCHMAKING_RATING;
-          auth = {
-            kind: 'guest',
-            userId: ticket.userId,
-            displayName: ticket.displayName,
-            competitiveRating,
-            rankedGames: 0,
-            rankedPlacementsRemaining: 0,
-            rankDivisionIndex: getRankDivisionIndex(competitiveRating) ?? DEFAULT_RANK_DIVISION_INDEX,
-            rank: getRankFromRating(competitiveRating, 0),
-            rankPayload: serializeRankPayload(null),
-          };
         }
         this.rememberReconnectParticipant(ticket);
       }
@@ -1096,14 +1075,6 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private getReconnectIdentity(auth: RoomAuthContext, options: JoinOptions): string | null {
-    if (auth.kind === 'authenticated') return auth.userId;
-
-    const clientId = typeof options.clientId === 'string' ? options.clientId.trim() : '';
-    if (!clientId || clientId.length > 128 || !/^[a-zA-Z0-9._:-]+$/.test(clientId)) return null;
-    return `guest:${clientId}`;
-  }
-
   private canAcceptRunningGameReconnect(): boolean {
     if (!this.lobbyId || this.matchCancelled) return false;
     return this.state?.phase !== 'game_end';
@@ -1115,8 +1086,7 @@ export class GameRoom extends Room<GameState> {
   ): GameEntryTicketClaims | null {
     if (options.reconnectToRunningGame !== true || !this.canAcceptRunningGameReconnect()) return null;
 
-    const identity = this.getReconnectIdentity(auth, options);
-    const participant = identity ? this.reconnectParticipants.get(identity) : null;
+    const participant = this.reconnectParticipants.get(auth.userId);
     if (!participant || !this.lobbyId) return null;
 
     const now = Date.now();
@@ -1454,11 +1424,12 @@ export class GameRoom extends Room<GameState> {
     }
 
     const authBundle = (client as Client & { auth?: { auth?: RoomAuthContext; ticket?: GameEntryTicketClaims | null } }).auth;
-    const authContext = authBundle?.auth ?? {
-      kind: 'guest' as const,
-      userId: `guest:${client.sessionId}`,
-      displayName: sanitizeDisplayName(options.playerName),
-    };
+    const authContext = authBundle?.auth;
+    if (!authContext) {
+      client.send('error', { message: 'Authentication required' });
+      client.leave();
+      return;
+    }
     const entryTicket = authBundle?.ticket ?? null;
     const joinsAsObserver = entryTicket?.observer === true;
 
@@ -1470,7 +1441,7 @@ export class GameRoom extends Room<GameState> {
     // Handle reconnect/duplicate tabs by authenticated user or signed lobby ticket identity.
     const identityKey = authContext.userId;
     if (identityKey) {
-      const existingSessionId = this.clientIdToSessionId.get(identityKey);
+      const existingSessionId = this.identityToSessionId.get(identityKey);
       
       if (existingSessionId && existingSessionId !== client.sessionId) {
         loggers.room.info('Duplicate session detected, kicking old session', existingSessionId);
@@ -1503,7 +1474,7 @@ export class GameRoom extends Room<GameState> {
         this.state.players.delete(existingSessionId);
         this.clearCombatPlayerRuntimeState(existingSessionId);
         this.observerClientIds.delete(existingSessionId);
-        this.sessionIdToClientId.delete(existingSessionId);
+        this.sessionIdToIdentity.delete(existingSessionId);
         this.clientsBySessionId.delete(existingSessionId);
         this.playerAuthContexts.delete(existingSessionId);
         this.playerEntryTickets.delete(existingSessionId);
@@ -1516,18 +1487,18 @@ export class GameRoom extends Room<GameState> {
       }
       
       // Register this durable identity mapping for duplicate-tab handling.
-      this.clientIdToSessionId.set(identityKey, client.sessionId);
-      this.sessionIdToClientId.set(client.sessionId, identityKey);
+      this.identityToSessionId.set(identityKey, client.sessionId);
+      this.sessionIdToIdentity.set(client.sessionId, identityKey);
     }
 
     if (!joinsAsObserver && this.state.players.size >= this.config.maxPlayers) {
       client.send('error', { message: 'Game room is full' });
       this.playerAuthContexts.delete(client.sessionId);
       this.playerEntryTickets.delete(client.sessionId);
-      if (this.clientIdToSessionId.get(identityKey) === client.sessionId) {
-        this.clientIdToSessionId.delete(identityKey);
+      if (this.identityToSessionId.get(identityKey) === client.sessionId) {
+        this.identityToSessionId.delete(identityKey);
       }
-      this.sessionIdToClientId.delete(client.sessionId);
+      this.sessionIdToIdentity.delete(client.sessionId);
       client.leave();
       return;
     }
@@ -1625,12 +1596,12 @@ export class GameRoom extends Room<GameState> {
       this.countdownSceneReadyPlayerIds.delete(client.sessionId);
       this.playerPingsDirty = true;
 
-      const clientId = this.sessionIdToClientId.get(client.sessionId);
-      if (clientId) {
-        if (this.clientIdToSessionId.get(clientId) === client.sessionId) {
-          this.clientIdToSessionId.delete(clientId);
+      const identity = this.sessionIdToIdentity.get(client.sessionId);
+      if (identity) {
+        if (this.identityToSessionId.get(identity) === client.sessionId) {
+          this.identityToSessionId.delete(identity);
         }
-        this.sessionIdToClientId.delete(client.sessionId);
+        this.sessionIdToIdentity.delete(client.sessionId);
       }
 
       this.updateMetadata();
@@ -1657,15 +1628,13 @@ export class GameRoom extends Room<GameState> {
     this.updateMetadata();
     this.resetCountdownStartGate();
     
-    // Clean up clientId mappings
-    const clientId = this.sessionIdToClientId.get(client.sessionId);
-    if (clientId) {
-      // Only remove from clientIdToSessionId if it still points to this session
-      // (it may have been updated to point to a new session if this was a duplicate kick)
-      if (this.clientIdToSessionId.get(clientId) === client.sessionId) {
-        this.clientIdToSessionId.delete(clientId);
+    // Clean up auth identity mappings.
+    const identity = this.sessionIdToIdentity.get(client.sessionId);
+    if (identity) {
+      if (this.identityToSessionId.get(identity) === client.sessionId) {
+        this.identityToSessionId.delete(identity);
       }
-      this.sessionIdToClientId.delete(client.sessionId);
+      this.sessionIdToIdentity.delete(client.sessionId);
     }
 
     this.broadcastTracked('playerLeft', {
@@ -1908,7 +1877,10 @@ export class GameRoom extends Room<GameState> {
     // Update each player
     this.state.players.forEach(player => {
       // Handle respawns
-      if (player.state === 'dead' && player.respawnTime) {
+      if (player.state === 'dead') {
+        if (!Number.isFinite(player.respawnTime) || player.respawnTime <= 0) {
+          player.respawnTime = now + this.config.respawnTimeSeconds * 1000;
+        }
         if (now >= player.respawnTime) {
           this.respawnPlayer(player);
         }
@@ -2698,7 +2670,7 @@ export class GameRoom extends Room<GameState> {
 
   private getRankedUserState(userId: string): RankedUserState | null {
     for (const authContext of this.playerAuthContexts.values()) {
-      if (authContext.kind !== 'authenticated' || authContext.userId !== userId) continue;
+      if (authContext.userId !== userId) continue;
       return {
         id: userId,
         competitiveRating: authContext.competitiveRating,
@@ -3960,19 +3932,10 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private isGuestUserId(userId: string | undefined): boolean {
-    return !userId || userId.startsWith('guest:');
-  }
-
   private getDurableUserId(playerId: string): string | null {
     const authContext = this.playerAuthContexts.get(playerId);
     const ticket = this.playerEntryTickets.get(playerId);
-    const userId = authContext?.kind === 'authenticated'
-      ? authContext.userId
-      : ticket?.userId ?? authContext?.userId;
-
-    if (this.isGuestUserId(userId)) return null;
-    return userId ?? null;
+    return authContext?.userId ?? ticket?.userId ?? null;
   }
 
   private isDurableHumanPlayer(player: Player | null | undefined): player is Player {
@@ -4190,7 +4153,7 @@ export class GameRoom extends Room<GameState> {
       && !forcedByPlayerId
       && this.spawnedNpcs.size === 0
       && participants.length === this.rankedRequiredHumanPlayers
-      && participants.every((participant) => participant.userId && !participant.userId.startsWith('guest:'))
+      && participants.every((participant) => participant.userId)
     );
   }
 
@@ -4466,7 +4429,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     const winners: GoldenBiomeRewardWinner[] = participants
-      .filter((participant) => participant.team === winningTeam && participant.userId && !participant.userId.startsWith('guest:'))
+      .filter((participant) => participant.team === winningTeam && participant.userId)
       .map((participant) => ({
         userId: participant.userId,
         playerSessionId: participant.playerSessionId,
@@ -4500,10 +4463,10 @@ export class GameRoom extends Room<GameState> {
       });
   }
 
-  private getVoiceIdentity(playerId: string): string {
+  private getVoiceIdentity(playerId: string): string | null {
     return this.playerAuthContexts.get(playerId)?.userId
       ?? this.playerEntryTickets.get(playerId)?.userId
-      ?? `guest:${playerId}`;
+      ?? null;
   }
 
   private normalizeVoiceTeam(team: string | null | undefined): Team | null {
@@ -4516,7 +4479,9 @@ export class GameRoom extends Room<GameState> {
     reason: string
   ): Promise<void> {
     if (!voiceService.isEnabled()) return;
-    await voiceService.removeMatchParticipant(this.roomId, this.getVoiceIdentity(playerId), team, reason);
+    const identity = this.getVoiceIdentity(playerId);
+    if (!identity) return;
+    await voiceService.removeMatchParticipant(this.roomId, identity, team, reason);
   }
 
   private recordSecurityEvent(event: Omit<SecurityEvent, 'roomId' | 'tick' | 'serverTime'>): void {
@@ -9067,6 +9032,39 @@ export class GameRoom extends Room<GameState> {
     bot.movement.wallRunSide = '';
   }
 
+  private resetPlayerMovementRuntime(player: Player): void {
+    player.velocity.x = 0;
+    player.velocity.y = 0;
+    player.velocity.z = 0;
+    player.movement.isGrounded = true;
+    player.movement.isSprinting = false;
+    player.movement.isCrouching = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    player.movement.isGrappling = false;
+    player.movement.isJetpacking = false;
+    player.movement.isGliding = false;
+    player.movement.chronosAscendantStartY = 0;
+  }
+
+  private resetPlayerLifeRuntime(player: Player, now = Date.now()): void {
+    this.disablePlayerSkills(player);
+    this.resetPlayerPressState(player.id);
+    this.resetPlayerMovementRuntime(player);
+    this.blazeBurnEffects.delete(player.id);
+    this.clearFlamethrowerDamageTicksForPlayer(player.id);
+    this.blazeBombDropConsumedForHold.delete(player.id);
+    this.playerRootedUntil.delete(player.id);
+    this.clearHookshotDragPullsInvolving(player.id);
+    this.attackCooldownUntil.delete(`${player.id}:primary`);
+    this.attackCooldownUntil.delete(`${player.id}:secondary`);
+    player.lastInput = player.isBot
+      ? this.createEmptyBotInput(player, now)
+      : null;
+  }
+
   private getActiveDevBotSkillOverride(bot: Player, now: number): DevBotSkillOverride | null {
     const override = this.devBotSkillOverrides.get(bot.id);
     if (!override) return null;
@@ -9976,10 +9974,16 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
+    const voiceIdentity = this.getVoiceIdentity(client.sessionId);
+    if (!voiceIdentity) {
+      client.send('voiceToken', voiceService.createDisabledResponse(requestId, 'Authentication required'));
+      return;
+    }
+
     const response = await voiceService.issueMatchVoiceToken({
       requestId,
       playerId: client.sessionId,
-      identity: this.getVoiceIdentity(client.sessionId),
+      identity: voiceIdentity,
       displayName: player.name,
       team: playerTeam,
       lobbyId: this.lobbyId,
@@ -10272,17 +10276,20 @@ export class GameRoom extends Room<GameState> {
       player.state = 'alive';
       player.health = player.maxHealth;
       player.spawnProtectionUntil = now + this.config.spawnProtectionSeconds * 1000;
-      player.velocity.x = 0;
-      player.velocity.y = 0;
-      player.velocity.z = 0;
+      this.resetPlayerLifeRuntime(player, now);
       if (player.heroId === 'blaze') {
         player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
-        player.movement.isJetpacking = false;
       }
       if (player.heroId === 'phantom') {
         this.resetPhantomPrimaryMagazine(player.id);
       }
-      
+      if (player.heroId === 'chronos') {
+        this.chronosAegisShieldHp.delete(player.id);
+      }
+      if (player.isBot) {
+        this.botBrains.set(player.id, this.createBotBrain(player, this.hashString(player.id)));
+      }
+
       // Reset ability cooldowns
       resetAbilityCooldowns(player);
       if (ledger.state === 'active') {
@@ -10682,19 +10689,15 @@ export class GameRoom extends Room<GameState> {
     const killer = this.state.players.get(killerId);
     
     const deathAt = Date.now();
+    const deathPosition = { x: player.position.x, y: player.position.y, z: player.position.z };
+    const deathVelocity = { x: player.velocity.x, y: player.velocity.y, z: player.velocity.z };
 
     player.state = 'dead';
     player.health = 0;
     player.deaths++;
     this.recordMatchDeath(player, killer ?? null);
     player.respawnTime = deathAt + this.config.respawnTimeSeconds * 1000;
-    player.movement.isJetpacking = false;
-    this.blazeBurnEffects.delete(player.id);
-    this.broadcastBlazeFlamethrowerState(player, false, deathAt);
-    this.blazeBombDropConsumedForHold.delete(player.id);
-    this.clearHookshotGrapple(player.id);
-    this.clearHookshotDragPullsInvolving(player.id);
-    this.playerRootedUntil.delete(player.id);
+    this.resetPlayerLifeRuntime(player, deathAt);
     
     // Drop flag if carrying
     if (player.hasFlag) {
@@ -10732,8 +10735,8 @@ export class GameRoom extends Room<GameState> {
       victimId: player.id,
       killerId: killerId || null,
       assistIds,
-      position: { x: player.position.x, y: player.position.y, z: player.position.z },
-      velocity: { x: player.velocity.x, y: player.velocity.y, z: player.velocity.z },
+      position: deathPosition,
+      velocity: deathVelocity,
       sourcePosition: context.sourcePosition ?? lastDamageEntry?.sourcePosition ?? (killer ? this.vec3SchemaToPlain(killer.position) : null),
       sourceDirection: context.sourceDirection ?? lastDamageEntry?.sourceDirection ?? null,
       damageType: context.damageType ?? lastDamageEntry?.damageType,
@@ -10808,26 +10811,25 @@ export class GameRoom extends Room<GameState> {
   }
 
   private respawnPlayer(player: Player) {
+    const now = Date.now();
     player.state = 'alive';
     player.health = player.maxHealth;
     player.respawnTime = 0;
-    player.spawnProtectionUntil = Date.now() + this.config.spawnProtectionSeconds * 1000;
-    this.blazeBurnEffects.delete(player.id);
-    this.playerRootedUntil.delete(player.id);
+    player.spawnProtectionUntil = now + this.config.spawnProtectionSeconds * 1000;
+    this.resetPlayerLifeRuntime(player, now);
 
     this.placePlayerAtSpawn(player, 'respawn');
-    player.velocity.x = 0;
-    player.velocity.y = 0;
-    player.velocity.z = 0;
     if (player.heroId === 'blaze') {
       player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
-      player.movement.isJetpacking = false;
     }
     if (player.heroId === 'phantom') {
       this.resetPhantomPrimaryMagazine(player.id);
     }
     if (player.heroId === 'chronos') {
       this.chronosAegisShieldHp.delete(player.id);
+    }
+    if (player.isBot) {
+      this.botBrains.set(player.id, this.createBotBrain(player, this.hashString(player.id)));
     }
 
     // Reset ability cooldowns on respawn
@@ -10914,8 +10916,10 @@ export class GameRoom extends Room<GameState> {
       authority.metrics.queueLengthAfterTick = authority.pendingCommands.length;
       authority.metrics.commandsProcessedLastTick = processedThisTick;
       authority.metrics.lastAckSeq = authority.lastProcessedSeq;
-      if (processedThisTick > 0 && authority.pendingCommands.length > MOVEMENT_MAX_SERVER_QUEUE / 2) {
-        const stale = Math.max(0, authority.pendingCommands.length - MOVEMENT_MAX_SERVER_QUEUE / 2);
+      const stale = processedThisTick > 0
+        ? getMovementBacklogTrimCount(authority.pendingCommands.length)
+        : 0;
+      if (stale > 0) {
         this.removeOldestPendingCommands(authority, stale);
         authority.metrics.droppedCommands += stale;
         this.markMovementBarrier(player.id, 'epoch_mismatch');

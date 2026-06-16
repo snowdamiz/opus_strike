@@ -221,7 +221,7 @@ export function MainLobby() {
   const [isLinkingPhantom, setIsLinkingPhantom] = useState(false);
   const currentRank = getRankForStats(userStats);
   const isRankedPreseason = rankedSeason.mode === 'preseason';
-  const serverLatency = useServerLatencyProbe(config.clientDiagnosticsEnabled && activeTab === 'play');
+  const serverLatency = useServerLatencyProbe(activeTab === 'play');
 
   useEffect(() => {
     const controller = new AbortController();
@@ -631,7 +631,7 @@ export function MainLobby() {
             isAuthenticated={isAuthenticated}
             runningGameSession={runningGameSession}
             isReconnectChecking={isReconnectChecking}
-            serverLatency={config.clientDiagnosticsEnabled ? serverLatency : null}
+            serverLatency={serverLatency}
             onOpenPlayDialog={() => setShowPlayDialog(true)}
             onReconnect={handleReconnectGame}
             onDiscordSignIn={handleDiscordSignIn}

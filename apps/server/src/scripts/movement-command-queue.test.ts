@@ -2,13 +2,17 @@ import assert from 'node:assert/strict';
 import {
   MOVEMENT_COMMAND_STALE_GRACE_STEPS,
   MOVEMENT_MAX_PACKET_COMMANDS,
+  MOVEMENT_MAX_SERVER_QUEUE,
   movementSeqDistance,
   type MovementCommand,
 } from '@voxel-strike/shared';
 import { MovementCommandQueue } from '../rooms/MovementCommandQueue';
 import {
+  SERVER_MOVEMENT_BACKLOG_BARRIER_COMMANDS,
+  SERVER_MOVEMENT_BACKLOG_TRIM_TARGET_COMMANDS,
   SERVER_MOVEMENT_SUBSTEPS_PER_TICK,
   SERVER_MOVEMENT_TARGET_PENDING_COMMANDS,
+  getMovementBacklogTrimCount,
   getMovementCommandDrainDecision,
 } from '../rooms/movementCommandDrain';
 
@@ -88,6 +92,17 @@ const catchupDrain = getMovementCommandDrainDecision(
 );
 assert.equal(catchupDrain.catchup, true);
 assert.ok(catchupDrain.budget > SERVER_MOVEMENT_SUBSTEPS_PER_TICK);
+
+assert.ok(
+  SERVER_MOVEMENT_BACKLOG_BARRIER_COMMANDS > MOVEMENT_MAX_SERVER_QUEUE / 2,
+  'moderate production backlog should catch up before forcing an epoch barrier'
+);
+assert.ok(SERVER_MOVEMENT_BACKLOG_TRIM_TARGET_COMMANDS >= SERVER_MOVEMENT_TARGET_PENDING_COMMANDS);
+assert.equal(getMovementBacklogTrimCount(SERVER_MOVEMENT_BACKLOG_BARRIER_COMMANDS), 0);
+assert.equal(
+  getMovementBacklogTrimCount(SERVER_MOVEMENT_BACKLOG_BARRIER_COMMANDS + 1),
+  SERVER_MOVEMENT_BACKLOG_BARRIER_COMMANDS + 1 - SERVER_MOVEMENT_BACKLOG_TRIM_TARGET_COMMANDS
+);
 
 function simulateDrainCadence(arrivalsPerTick: readonly number[]) {
   const cadenceQueue = new MovementCommandQueue(128);

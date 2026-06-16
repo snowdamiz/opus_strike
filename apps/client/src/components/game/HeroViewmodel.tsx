@@ -267,6 +267,9 @@ const BLAZE_STAFF_TIP_FLAME_ANGLES = [
   Math.PI * 1.75,
 ] as const;
 const VIEWMODEL_BURN_FADE_OUT_MS = 500;
+const VIEWMODEL_BURN_OPACITY_SCALE = 0.5;
+const VIEWMODEL_BURN_FLAME_SCALE = 0.72;
+const VIEWMODEL_BURN_EMBER_SCALE = 0.58;
 const VIEWMODEL_BURN_ANCHORS = [
   { x: -0.34, y: -0.31, z: -0.5, radius: 0.054, phase: 0.08 },
   { x: 0.34, y: -0.31, z: -0.5, radius: 0.054, phase: 0.31 },
@@ -711,10 +714,10 @@ function ViewmodelBurnOverlay() {
     const intensity = fade * flicker;
 
     group.visible = intensity > 0.01;
-    flameMaterial.opacity = intensity * 0.18;
-    innerFlameMaterial.opacity = intensity * 0.12;
-    emberMaterial.opacity = intensity * 0.34;
-    glowMaterial.opacity = intensity * 0.055;
+    flameMaterial.opacity = intensity * 0.18 * VIEWMODEL_BURN_OPACITY_SCALE;
+    innerFlameMaterial.opacity = intensity * 0.12 * VIEWMODEL_BURN_OPACITY_SCALE;
+    emberMaterial.opacity = intensity * 0.34 * VIEWMODEL_BURN_OPACITY_SCALE;
+    glowMaterial.opacity = intensity * 0.055 * VIEWMODEL_BURN_OPACITY_SCALE;
 
     for (let index = 0; index < VIEWMODEL_BURN_ANCHORS.length; index++) {
       const anchor = VIEWMODEL_BURN_ANCHORS[index];
@@ -723,7 +726,7 @@ function ViewmodelBurnOverlay() {
 
       const pulse = Math.sin(t * 8.6 + anchor.phase * Math.PI * 2);
       const sway = Math.sin(t * 5.4 + anchor.phase * Math.PI * 2) * 0.018;
-      const scale = anchor.radius * intensity * (0.82 + Math.max(0, pulse) * 0.24);
+      const scale = anchor.radius * intensity * VIEWMODEL_BURN_FLAME_SCALE * (0.82 + Math.max(0, pulse) * 0.24);
       mesh.visible = intensity > 0.02;
       mesh.position.set(anchor.x + sway, anchor.y + Math.max(0, pulse) * 0.016, anchor.z);
       mesh.rotation.set(-0.26 + pulse * 0.08, anchor.phase * Math.PI * 2 + t * 0.22, pulse * 0.16);
@@ -737,7 +740,7 @@ function ViewmodelBurnOverlay() {
 
       const cycle = (t * 0.9 + ember.phase) % 1;
       const drift = Math.sin(t * 3.2 + ember.phase * 8) * 0.016;
-      const scale = (0.012 + cycle * 0.008) * intensity;
+      const scale = (0.012 + cycle * 0.008) * intensity * VIEWMODEL_BURN_EMBER_SCALE;
       mesh.visible = intensity > 0.02;
       mesh.position.set(
         ember.x + drift,

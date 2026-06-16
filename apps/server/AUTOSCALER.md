@@ -123,10 +123,11 @@ To create enough lobby demand for the staging check:
 AUTOSCALER_SERVER_URL=wss://opus-strike-server.fly.dev \
   AUTOSCALER_DEMAND_CLIENTS=49 \
   AUTOSCALER_DEMAND_HOLD_MS=180000 \
+  AUTOSCALER_AUTH_TOKENS=token-1,token-2,... \
   pnpm --filter @voxel-strike/server simulate:autoscaler-demand
 ```
 
-Production disables guest play by default. Use `AUTOSCALER_AUTH_TOKEN` for a real test account token, or explicitly set `ALLOW_GUEST_PLAY=true` for a guest-play rollout test. The simulator creates one lobby per connection, holds those sockets for the requested interval, and leaves the rooms on exit.
+Provide one Discord auth token per simulated client in `AUTOSCALER_AUTH_TOKENS`. The simulator creates one lobby per connection, holds those sockets for the requested interval, and leaves the rooms on exit.
 
 ## Rollback
 

@@ -42,6 +42,7 @@ export interface MovementAabb {
   min: Vec3;
   max: Vec3;
   id?: string;
+  pushCapsuleUpFromTop?: boolean;
 }
 
 export interface MovementCollisionBounds {
@@ -333,6 +334,23 @@ function overlapCapsuleAabb(position: Vec3, height: number, radius: number, aabb
   const radiusSq = radius * radius;
 
   if (distanceSq >= radiusSq) return null;
+
+  if (aabb.pushCapsuleUpFromTop) {
+    const capsuleFeetY = feetY(position);
+    const horizontalInside =
+      position.x >= aabb.min.x - radius &&
+      position.x <= aabb.max.x + radius &&
+      position.z >= aabb.min.z - radius &&
+      position.z <= aabb.max.z + radius;
+    const canLiftOntoTop = horizontalInside && capsuleFeetY <= aabb.max.y + SKIN_WIDTH;
+    if (canLiftOntoTop) {
+      return {
+        normal: { x: 0, y: 1, z: 0 },
+        depth: Math.max(0, aabb.max.y - capsuleFeetY),
+        aabb,
+      };
+    }
+  }
 
   if (distanceSq > EPSILON) {
     const distance = Math.sqrt(distanceSq);

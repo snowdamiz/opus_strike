@@ -798,7 +798,7 @@ export class WagerService extends EventEmitter {
 
     const userIds = roster
       .map((player) => player.userId)
-      .filter((userId): userId is string => Boolean(userId && !userId.startsWith('guest:')));
+      .filter((userId): userId is string => Boolean(userId));
     const wageredLobby = await prisma.wageredLobby.findUnique({
       where: { lobbyId },
       select: { id: true },
@@ -854,9 +854,6 @@ export class WagerService extends EventEmitter {
     const config = this.getConfig();
     assertWagerPaymentsConfigured(config);
     assertPublicKey(input.walletAddress, 'walletAddress');
-    if (input.userId.startsWith('guest:')) {
-      throw new Error('Sign in with a Solana wallet before paying');
-    }
 
     const wageredLobby = await prisma.wageredLobby.findUnique({ where: { lobbyId: input.lobbyId } });
     if (!wageredLobby) {

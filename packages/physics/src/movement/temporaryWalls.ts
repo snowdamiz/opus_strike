@@ -7,6 +7,7 @@ export const ANCHOR_WALL_FIRST_SEGMENT_DISTANCE = 6.25;
 export const ANCHOR_WALL_MAX_HEIGHT = 4.15;
 export const ANCHOR_WALL_WIDTH = 3.25;
 export const ANCHOR_WALL_DEPTH = 1.05;
+export const ANCHOR_WALL_RISE_SPEED = 14;
 export const ANCHOR_WALL_SEGMENT_BACKSET = 0.85;
 export const ANCHOR_WALL_COLLIDER_PREFIX = 'anchorwall_';
 
@@ -87,6 +88,8 @@ export function computeAnchorWallAabbs(
       const width = ANCHOR_WALL_WIDTH * seededRange(index, 92, 0.9, 1.08);
       const depth = ANCHOR_WALL_DEPTH * seededRange(index, 93, 0.92, 1.16);
       const height = ANCHOR_WALL_MAX_HEIGHT * seededRange(index, 91, 0.86, 1.08);
+      const segmentAge = Math.max(0, elapsedSeconds - distance / ANCHOR_WALL_SPEED);
+      const currentHeight = Math.max(0.05, Math.min(height, segmentAge * ANCHOR_WALL_RISE_SPEED));
       const center = {
         x: wall.startPosition.x + direction.x * (distance - ANCHOR_WALL_SEGMENT_BACKSET),
         y: wall.startPosition.y,
@@ -104,9 +107,10 @@ export function computeAnchorWallAabbs(
         },
         max: {
           x: center.x + halfX,
-          y: center.y + height,
+          y: center.y + currentHeight,
           z: center.z + halfZ,
         },
+        pushCapsuleUpFromTop: currentHeight < height,
       };
 
       if (!bounds || boundsOverlap(bounds, aabb)) {

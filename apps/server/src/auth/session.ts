@@ -2,13 +2,11 @@ import type { IncomingMessage } from 'http';
 import jwt from 'jsonwebtoken';
 import type { SignOptions } from 'jsonwebtoken';
 import prisma from '../db';
-import { getAuthTokenSecret, isGuestPlayAllowed } from '../config/security';
+import { getAuthTokenSecret } from '../config/security';
 import type { AuthProviderName, PendingRegistrationIdentity } from './types';
 import { isAuthProvider } from './types';
 import {
-  DEFAULT_COMPETITIVE_RATING,
   getRankDivisionIndex,
-  getRankFromRating,
   type RankSummary,
 } from '@voxel-strike/shared';
 import { serializeRankPayload, type PublicRankPayload } from '../ranking/serialization';
@@ -26,7 +24,6 @@ export interface PendingAuthTokenPayload extends PendingRegistrationIdentity {
 }
 
 export interface RoomAuthContext {
-  kind: 'authenticated' | 'guest';
   userId: string;
   walletAddress?: string;
   displayName: string;
@@ -128,7 +125,6 @@ function sanitizeDisplayName(value: unknown, fallback: string): string {
 }
 
 export async function resolveRoomAuthContext(
-  sessionId: string,
   options: Record<string, unknown> | undefined,
   request?: IncomingMessage
 ): Promise<RoomAuthContext> {
@@ -178,7 +174,6 @@ export async function resolveRoomAuthContext(
     if (user && hasDiscordAccount && (!payload.walletAddress || user.walletAddress === payload.walletAddress)) {
       const rankPayload = serializeRankPayload(user);
       return {
-        kind: 'authenticated',
         userId: user.id,
         walletAddress: user.walletAddress ?? undefined,
         displayName: sanitizeDisplayName(user.name, 'Player'),
@@ -192,21 +187,5 @@ export async function resolveRoomAuthContext(
     }
   }
 
-  if (!isGuestPlayAllowed()) {
-    throw new Error('Authentication required');
-  }
-
-  const guestRank = getRankFromRating(DEFAULT_COMPETITIVE_RATING, 0);
-  const guestRankPayload = serializeRankPayload(null);
-  return {
-    kind: 'guest',
-    userId: `guest:${sessionId}`,
-    displayName: sanitizeDisplayName(options?.playerName, 'Guest'),
-    competitiveRating: DEFAULT_COMPETITIVE_RATING,
-    rankedGames: 0,
-    rankedPlacementsRemaining: guestRank.placementRemaining,
-    rankDivisionIndex: getRankDivisionIndex(DEFAULT_COMPETITIVE_RATING),
-    rank: guestRank,
-    rankPayload: guestRankPayload,
-  };
+  throw new Error('Authentication required');
 }

@@ -17,11 +17,13 @@ import {
 import type { MovementSimulationState } from '@voxel-strike/physics';
 import {
   createMovementCommandPacket,
+  enqueueSelfMovementAuthority,
   movementStateFromPlayer,
   resetLocalMovementPrediction,
 } from '../../movement/localPrediction';
 import { createPracticeAbilityStates } from '../../contexts/practiceAbilities';
 import { useGameStore } from '../../store/gameStore';
+import { removePlayerVisualState, visualStore } from '../../store/visualStore';
 import {
   createLocalVisualInterpolationState,
   deriveServerCombatInput,
@@ -30,6 +32,7 @@ import {
   movementClassForTrace,
   recordLocalVisualFixedStep,
   runInputPhase,
+  runAuthorityPhase,
   runPredictionAndCommandPhase,
   sampleLocalVisualInterpolatedPosition,
   shouldForceImmediateCombatCommand,
@@ -232,6 +235,40 @@ function makeCommandPhaseContext(options: {
   return ctx as unknown as LocalPlayerFrameContext & {
     __sentPackets: MovementCommandPacket[];
     __flushCalls: Array<{ nowMs: number; force: boolean; sentCommandCount: number }>;
+  };
+}
+
+function makeAuthorityPhaseContext(options: {
+  lookYaw: number;
+  lookPitch: number;
+}): LocalPlayerFrameContext & {
+  __updates: Partial<Player>[];
+  __resetMovementCommandBufferCalls: number;
+} {
+  const updates: Partial<Player>[] = [];
+  let resetMovementCommandBufferCalls = 0;
+  const ctx = {
+    cameraControl: {
+      refs: {
+        yaw: ref(options.lookYaw),
+        pitch: ref(options.lookPitch),
+      },
+    },
+    updateLocalPlayer: (update: Partial<Player>) => {
+      updates.push(update);
+    },
+    resetMovementCommandBuffer: () => {
+      resetMovementCommandBufferCalls++;
+    },
+    __updates: updates,
+    get __resetMovementCommandBufferCalls() {
+      return resetMovementCommandBufferCalls;
+    },
+  };
+
+  return ctx as unknown as LocalPlayerFrameContext & {
+    __updates: Partial<Player>[];
+    __resetMovementCommandBufferCalls: number;
   };
 }
 
@@ -522,6 +559,38 @@ assert.deepEqual(
     { force: true, sentCommandCount: 1 },
   ]
 );
+
+const authorityPlayer = makePlayer('phantom');
+authorityPlayer.lookYaw = 0.4;
+authorityPlayer.lookPitch = -0.15;
+resetLocalMovementPrediction(movementStateFromPlayer(authorityPlayer), 0, authorityPlayer.id);
+removePlayerVisualState(authorityPlayer.id);
+enqueueSelfMovementAuthority({
+  serverTick: 100,
+  serverTime: 2000,
+  ackSeq: 0,
+  movementEpoch: 0,
+  position: { x: 8, y: 1, z: -4 },
+  velocity: { x: 0, y: 0, z: 0 },
+  lookYaw: -2.75,
+  lookPitch: 0.72,
+  movement: makeMovement(),
+  correctionReason: 'epoch_mismatch',
+});
+const authorityCtx = makeAuthorityPhaseContext({
+  lookYaw: 1.35,
+  lookPitch: -0.42,
+});
+const authorityResult = runAuthorityPhase(authorityCtx, authorityPlayer, 2000);
+assert.equal(authorityResult.authorityApplied, 1);
+assert.equal(authorityCtx.__resetMovementCommandBufferCalls, 1);
+assert.equal(authorityCtx.__updates.length, 1);
+assert.deepEqual(authorityCtx.__updates[0].position, { x: 8, y: 1, z: -4 });
+assert.equal(authorityCtx.__updates[0].lookYaw, 1.35);
+assert.equal(authorityCtx.__updates[0].lookPitch, -0.42);
+assert.equal(authorityResult.localPlayer.lookYaw, 1.35);
+assert.equal(authorityResult.localPlayer.lookPitch, -0.42);
+assert.equal(visualStore.getState().playerRotations.get(authorityPlayer.id), 1.35);
 
 const chronosCommit = runInputPhase(
   makeInputPhaseContext({ chronosQueued: true }),

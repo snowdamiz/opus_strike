@@ -372,7 +372,6 @@ export interface RoomOptions {
 export interface JoinOptions {
   playerName: string;
   preferredTeam?: Team;
-  clientId?: string;
   entryTicket?: string;
   authToken?: string;
 }

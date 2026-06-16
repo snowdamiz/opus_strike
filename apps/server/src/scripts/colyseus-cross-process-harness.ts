@@ -49,6 +49,10 @@ const redisUrl = process.env.COLYSEUS_REDIS_URL || process.env.REDIS_URL || 'red
 const portA = Number(process.env.HARNESS_PORT_A || 2567);
 const portB = Number(process.env.HARNESS_PORT_B || 2568);
 const playerCount = Number(process.env.HARNESS_PLAYER_COUNT || DEFAULT_GAME_CONFIG.maxPlayers);
+const authTokens = (process.env.HARNESS_AUTH_TOKENS || process.env.HARNESS_AUTH_TOKEN || '')
+  .split(',')
+  .map((token) => token.trim())
+  .filter(Boolean);
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
@@ -66,7 +70,6 @@ function startServer(name: string, port: number): ManagedServer {
       JWT_SECRET: process.env.JWT_SECRET || 'cross-process-harness-jwt-secret',
       ENTRY_TICKET_SECRET: process.env.ENTRY_TICKET_SECRET || 'cross-process-harness-entry-secret',
       ENABLE_DEV_TOOLS: 'true',
-      ALLOW_GUEST_PLAY: 'true',
       WAGER_SOL_ENABLED: 'false',
       LOG_LEVEL: process.env.LOG_LEVEL || 'warn',
     },
@@ -83,8 +86,8 @@ function startServer(name: string, port: number): ManagedServer {
   return { name, port, child, killed: false };
 }
 
-async function requestJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
   if (!response.ok) {
     throw new Error(`${url} returned ${response.status}: ${await response.text()}`);
   }
@@ -192,8 +195,11 @@ function movementCommandPacket(tick: number): Record<string, unknown> {
   };
 }
 
-async function issueQuickPlayTicket(port: number): Promise<string> {
-  const response = await requestJson<QuickPlayTicketResponse>(`http://localhost:${port}/matchmaking/quick-play-ticket`);
+async function issueQuickPlayTicket(port: number, authToken: string): Promise<string> {
+  const response = await requestJson<QuickPlayTicketResponse>(
+    `http://localhost:${port}/matchmaking/quick-play-ticket`,
+    { headers: { Authorization: `Bearer ${authToken}` } }
+  );
   assert.ok(response.ticket, `expected quick-play ticket from ${port}`);
   return response.ticket;
 }
@@ -225,6 +231,7 @@ async function findSingleGameOwner(serverA: ManagedServer, serverB: ManagedServe
 async function main(): Promise<void> {
   assert.notEqual(portA, portB, 'HARNESS_PORT_A and HARNESS_PORT_B must be different');
   assert.ok(Number.isInteger(playerCount) && playerCount > 1, 'HARNESS_PLAYER_COUNT must be an integer greater than 1');
+  assert.ok(authTokens.length >= playerCount, `HARNESS_AUTH_TOKENS must provide at least ${playerCount} Discord auth tokens`);
 
   const serverA = startServer('A', portA);
   const serverB = startServer('B', portB);
@@ -238,18 +245,18 @@ async function main(): Promise<void> {
 
     const endpoints = Array.from({ length: playerCount }, (_, index) => {
       const port = index % 2 === 0 ? portA : portB;
-      return { port, client: new Client(`ws://localhost:${port}`) };
+      return { port, client: new Client(`ws://localhost:${port}`), authToken: authTokens[index] };
     });
 
     for (let index = 0; index < endpoints.length; index++) {
       const entry = endpoints[index];
-      const ticket = await issueQuickPlayTicket(entry.port);
+      const ticket = await issueQuickPlayTicket(entry.port, entry.authToken);
       const room = await entry.client.joinOrCreate('lobby_room', {
         playerName: `Harness ${index + 1}`,
         matchmakingMode: true,
         matchMode: 'quick_play',
         matchmakingTicket: ticket,
-        clientId: `cross-process-harness-${index + 1}`,
+        authToken: entry.authToken,
       });
       room.onMessage('*', () => undefined);
       lobbyRooms.push(room);
@@ -281,7 +288,7 @@ async function main(): Promise<void> {
     for (let index = 0; index < endpoints.length; index++) {
       const room = await endpoints[index].client.joinById(gameRoomId, {
         playerName: `Harness ${index + 1}`,
-        clientId: `cross-process-harness-game-${index + 1}`,
+        authToken: endpoints[index].authToken,
         entryTicket: starts[index].entryTicket,
       });
       room.onMessage('*', () => undefined);

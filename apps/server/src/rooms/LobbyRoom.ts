@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'http';
 import { Room, Client, matchMaker } from 'colyseus';
 import { LobbyState, LobbyPlayer } from './schema/LobbyState';
-import { DEFAULT_GAME_CONFIG, GOLDEN_VOXEL_MAP_THEME_ID, HERO_DEFINITIONS, createRandomSeed, createProceduralMapPreview, getRankDivisionIndex, getRankFromRating, getVoxelMapTheme, hashSeed, isMatchMode, toPublicRankSnapshot, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
+import { DEFAULT_GAME_CONFIG, GOLDEN_VOXEL_MAP_THEME_ID, HERO_DEFINITIONS, createRandomSeed, createProceduralMapPreview, getRankFromRating, getVoxelMapTheme, hashSeed, isMatchMode, toPublicRankSnapshot, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
 import type { MatchMode } from '@voxel-strike/shared';
 import type { BlueprintPreview, BotDifficulty, HeroId, MapTopologyId, Team, VoxelMapTheme } from '@voxel-strike/shared';
 import { assertUsableEntryTicketSecret, isDevelopmentToolsEnabled } from '../config/security';
@@ -25,7 +25,6 @@ import {
   runWithInGameCapacity,
   InGameCapacityAdmissionError,
 } from '../matchmaking/playerCapacity';
-import { serializeRankPayload } from '../ranking/serialization';
 import { LOBBY_MESSAGE_RATE_LIMITS, MessageRateLimiter, type RateLimitRule } from './rateLimiter';
 import { wagerService, type CreateWagerOptions, type LobbyWagerSnapshot, type LockedWagerContext, type WagerPaymentStatusChanged } from '../wagers/service';
 import { wagerEventBus } from '../wagers/eventBus';
@@ -56,7 +55,6 @@ interface JoinOptions {
   matchmakingTicket?: string;
   rankBandId?: number;
   rankedEntryQuoteId?: string;
-  clientId?: string; // Persistent client ID for reconnection detection
   authToken?: string;
   initialBotCount?: number;
   botFillMode?: 'manual' | 'fill_even' | 'fill_empty';
@@ -238,12 +236,12 @@ export class LobbyRoom extends Room<LobbyState> {
   private matchmakingCapacityBlocked = false;
   private matchmakingCapacityCheckInFlight = false;
   
-  // Track clientId -> sessionId mapping for reconnection detection
-  private clientIdToSessionId: Map<string, string> = new Map();
-  private sessionIdToClientId: Map<string, string> = new Map();
+  // Track durable auth identity -> sessionId mapping for duplicate session handling.
+  private identityToSessionId: Map<string, string> = new Map();
+  private sessionIdToIdentity: Map<string, string> = new Map();
 
   async onAuth(client: Client, options: JoinOptions, request?: IncomingMessage): Promise<RoomAuthContext> {
-    const authContext = await resolveRoomAuthContext(client.sessionId, options as Record<string, unknown>, request);
+    const authContext = await resolveRoomAuthContext(options as Record<string, unknown>, request);
     await assertGameplayAccountEligible(authContext.userId);
     return authContext;
   }
@@ -422,22 +420,17 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   async onJoin(client: Client, options: JoinOptions) {
-    const authContext = (client as Client & { auth?: RoomAuthContext }).auth ?? {
-      kind: 'guest' as const,
-      userId: `guest:${client.sessionId}`,
-      displayName: sanitizeDisplayName(options.playerName),
-      competitiveRating: DEFAULT_MATCHMAKING_RATING,
-      rankedGames: 0,
-      rankedPlacementsRemaining: 0,
-      rankDivisionIndex: DEFAULT_RANK_DIVISION_INDEX,
-      rank: getRankFromRating(DEFAULT_MATCHMAKING_RATING, 0),
-      rankPayload: serializeRankPayload(null),
-    };
+    const authContext = (client as Client & { auth?: RoomAuthContext }).auth;
+    if (!authContext) {
+      client.send('error', { message: 'Authentication required' });
+      client.leave();
+      return;
+    }
 
     const matchmakingTicket = this.isMatchmakingQueue()
       ? verifyMatchmakingTicket(options.matchmakingTicket)
       : null;
-    if (this.isMatchmakingQueue() && !this.isValidMatchmakingTicket(matchmakingTicket, authContext, options.clientId)) {
+    if (this.isMatchmakingQueue() && !this.isValidMatchmakingTicket(matchmakingTicket, authContext)) {
       client.send('error', { message: 'Invalid matchmaking ticket' });
       client.leave();
       return;
@@ -467,10 +460,10 @@ export class LobbyRoom extends Room<LobbyState> {
 
     this.playerAuthContexts.set(client.sessionId, authContext);
 
-    // Handle reconnection: identity comes from auth or explicit guest mode, not localStorage clientId.
+    // Handle duplicate tabs by durable auth identity.
     const identityKey = authContext.userId;
     if (identityKey) {
-      const existingSessionId = this.clientIdToSessionId.get(identityKey);
+      const existingSessionId = this.identityToSessionId.get(identityKey);
       
       if (existingSessionId && existingSessionId !== client.sessionId) {
         // Find and disconnect the old client
@@ -485,7 +478,7 @@ export class LobbyRoom extends Room<LobbyState> {
         const oldAuthContext = this.playerAuthContexts.get(existingSessionId);
         if (
           this.state.wagerEnabled
-          && oldAuthContext?.kind === 'authenticated'
+          && oldAuthContext
           && this.state.status !== 'in_game'
           && !this.state.gameRoomId
         ) {
@@ -497,7 +490,7 @@ export class LobbyRoom extends Room<LobbyState> {
         this.state.players.delete(existingSessionId);
         const removedOldVote = this.mapVoteSession?.votes.delete(existingSessionId) ?? false;
         this.mapVoteSession?.previewReadyPlayerIds.delete(existingSessionId);
-        this.sessionIdToClientId.delete(existingSessionId);
+        this.sessionIdToIdentity.delete(existingSessionId);
         this.playerAuthContexts.delete(existingSessionId);
         this.playerMatchmakingTickets.delete(existingSessionId);
         this.playerCompetitiveRatings.delete(existingSessionId);
@@ -512,9 +505,8 @@ export class LobbyRoom extends Room<LobbyState> {
         // If old player was host, we'll assign new host below when creating this player
       }
       
-      // Register this identity mapping. The clientId remains reconnect convenience only.
-      this.clientIdToSessionId.set(identityKey, client.sessionId);
-      this.sessionIdToClientId.set(client.sessionId, identityKey);
+      this.identityToSessionId.set(identityKey, client.sessionId);
+      this.sessionIdToIdentity.set(client.sessionId, identityKey);
     }
 
     if (this.state.players.size >= this.state.maxParticipants + this.state.maxObservers) {
@@ -522,10 +514,10 @@ export class LobbyRoom extends Room<LobbyState> {
       this.playerAuthContexts.delete(client.sessionId);
       this.playerMatchmakingTickets.delete(client.sessionId);
       this.playerCompetitiveRatings.delete(client.sessionId);
-      if (this.clientIdToSessionId.get(identityKey) === client.sessionId) {
-        this.clientIdToSessionId.delete(identityKey);
+      if (this.identityToSessionId.get(identityKey) === client.sessionId) {
+        this.identityToSessionId.delete(identityKey);
       }
-      this.sessionIdToClientId.delete(client.sessionId);
+      this.sessionIdToIdentity.delete(client.sessionId);
       client.leave();
       return;
     }
@@ -557,11 +549,11 @@ export class LobbyRoom extends Room<LobbyState> {
         this.playerMatchmakingTickets.delete(client.sessionId);
         this.playerCompetitiveRatings.delete(client.sessionId);
         this.rateLimiter.clearScope(client.sessionId);
-        const identity = this.sessionIdToClientId.get(client.sessionId);
-        if (identity && this.clientIdToSessionId.get(identity) === client.sessionId) {
-          this.clientIdToSessionId.delete(identity);
+        const identity = this.sessionIdToIdentity.get(client.sessionId);
+        if (identity && this.identityToSessionId.get(identity) === client.sessionId) {
+          this.identityToSessionId.delete(identity);
         }
-        this.sessionIdToClientId.delete(client.sessionId);
+        this.sessionIdToIdentity.delete(client.sessionId);
         client.send('error', { message: error instanceof Error ? error.message : 'Failed to create wagered lobby' });
         client.leave();
         return;
@@ -570,7 +562,7 @@ export class LobbyRoom extends Room<LobbyState> {
     await this.refreshWagerState();
     this.playerCompetitiveRatings.set(
       client.sessionId,
-      this.resolvePlayerCompetitiveRating(authContext, matchmakingTicket)
+      this.resolvePlayerCompetitiveRating(authContext)
     );
 
     // Notify all players
@@ -625,13 +617,9 @@ export class LobbyRoom extends Room<LobbyState> {
       return true;
     }
 
-    const existingSessionId = this.clientIdToSessionId.get(authContext.userId);
+    const existingSessionId = this.identityToSessionId.get(authContext.userId);
     if (existingSessionId && this.state.players.has(existingSessionId)) {
       return true;
-    }
-
-    if (authContext.kind !== 'authenticated') {
-      return false;
     }
 
     const invite = await prisma.lobbyInvite.findFirst({
@@ -660,14 +648,13 @@ export class LobbyRoom extends Room<LobbyState> {
     this.playerCompetitiveRatings.delete(client.sessionId);
     this.rateLimiter.clearScope(client.sessionId);
     
-    // Clean up clientId mappings
-    const clientId = this.sessionIdToClientId.get(client.sessionId);
-    if (clientId) {
-      // Only remove from clientIdToSessionId if it still points to this session
-      if (this.clientIdToSessionId.get(clientId) === client.sessionId) {
-        this.clientIdToSessionId.delete(clientId);
+    // Clean up auth identity mappings.
+    const identity = this.sessionIdToIdentity.get(client.sessionId);
+    if (identity) {
+      if (this.identityToSessionId.get(identity) === client.sessionId) {
+        this.identityToSessionId.delete(identity);
       }
-      this.sessionIdToClientId.delete(client.sessionId);
+      this.sessionIdToIdentity.delete(client.sessionId);
     }
 
     // If host left, assign new host
@@ -689,7 +676,7 @@ export class LobbyRoom extends Room<LobbyState> {
     });
     if (
       this.state.wagerEnabled
-      && authContext?.kind === 'authenticated'
+      && authContext
       && this.state.status !== 'in_game'
       && !this.state.gameRoomId
     ) {
@@ -1039,6 +1026,11 @@ export class LobbyRoom extends Room<LobbyState> {
       return;
     }
 
+    if (!this.mapVoteSession.phaseEndTime) {
+      client.send('error', { message: 'Map vote is still preparing' });
+      return;
+    }
+
     const player = this.state.players.get(client.sessionId);
     if (!player || player.isBot) return;
 
@@ -1184,24 +1176,30 @@ export class LobbyRoom extends Room<LobbyState> {
       for (const assignment of playerAssignments) {
         if (assignment.isBot) continue;
         const authContext = this.playerAuthContexts.get(assignment.playerId);
+        if (!authContext) {
+          throw new Error('Authenticated player context missing');
+        }
         ticketsByPlayerId.set(assignment.playerId, createGameEntryTicket({
           lobbyId: this.state.lobbyId,
           gameRoomId: gameRoom.roomId,
           lobbyPlayerId: assignment.playerId,
-          userId: authContext?.userId ?? `guest:${assignment.playerId}`,
-          displayName: authContext?.displayName ?? assignment.playerName,
+          userId: authContext.userId,
+          displayName: authContext.displayName || assignment.playerName,
           assignedTeam: assignment.team,
           selectedHero: assignment.heroId,
         }));
       }
       for (const assignment of observerAssignments) {
         const authContext = this.playerAuthContexts.get(assignment.playerId);
+        if (!authContext) {
+          throw new Error('Authenticated observer context missing');
+        }
         ticketsByPlayerId.set(assignment.playerId, createGameEntryTicket({
           lobbyId: this.state.lobbyId,
           gameRoomId: gameRoom.roomId,
           lobbyPlayerId: assignment.playerId,
-          userId: authContext?.userId ?? `guest:${assignment.playerId}`,
-          displayName: authContext?.displayName ?? assignment.playerName,
+          userId: authContext.userId,
+          displayName: authContext.displayName || assignment.playerName,
           observer: true,
         }));
       }
@@ -1763,9 +1761,6 @@ export class LobbyRoom extends Room<LobbyState> {
     this.pendingWagerOptions = undefined;
 
     if (!pending.enabled) return;
-    if (authContext.kind !== 'authenticated') {
-      throw new Error('Sign in before creating a wagered lobby');
-    }
     if (this.getBotCount() > 0) {
       throw new Error('Wagered lobbies do not allow bots');
     }
@@ -1818,7 +1813,7 @@ export class LobbyRoom extends Room<LobbyState> {
       const authContext = this.playerAuthContexts.get(playerId);
       roster.push({
         lobbyPlayerId: playerId,
-        userId: player.isBot ? null : authContext?.userId ?? `guest:${playerId}`,
+        userId: player.isBot ? null : authContext?.userId ?? null,
         name: player.name,
         team: this.isTeam(player.team) ? player.team : null,
         isBot: player.isBot,
@@ -1837,7 +1832,7 @@ export class LobbyRoom extends Room<LobbyState> {
     if (playerAssignments.some((assignment) => assignment.isBot)) return false;
 
     return playerAssignments.every((assignment) => (
-      this.playerAuthContexts.get(assignment.playerId)?.kind === 'authenticated'
+      Boolean(this.playerAuthContexts.get(assignment.playerId))
       && this.playerMatchmakingTickets.get(assignment.playerId)?.mode === 'ranked'
     ));
   }
@@ -1879,7 +1874,7 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private async handleCreatePaymentIntent(client: Client, walletAddress: string): Promise<void> {
     const authContext = this.playerAuthContexts.get(client.sessionId);
-    if (authContext?.kind !== 'authenticated') {
+    if (!authContext) {
       throw new Error('Sign in with a Solana wallet before paying');
     }
     if (!this.state.wagerEnabled) {
@@ -1903,7 +1898,7 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private async handleSubmitPaymentSignature(client: Client, intentId: string, signature: string): Promise<void> {
     const authContext = this.playerAuthContexts.get(client.sessionId);
-    if (authContext?.kind !== 'authenticated') {
+    if (!authContext) {
       throw new Error('Sign in before verifying payment');
     }
 
@@ -2170,40 +2165,17 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private isValidMatchmakingTicket(
     ticket: MatchmakingTicketClaims | null,
-    authContext: RoomAuthContext,
-    clientId: string | undefined
+    authContext: RoomAuthContext
   ): ticket is MatchmakingTicketClaims {
     if (!ticket) return false;
     if (ticket.mode !== this.matchMode) return false;
     if (ticket.targetRankDivisionIndex !== this.rankBandId) return false;
 
-    if (this.isRankedQueue) {
-      return authContext.kind === 'authenticated'
-        && ticket.userId === authContext.userId
-        && ticket.mode === 'ranked';
-    }
-
-    if (authContext.kind === 'authenticated') {
-      return ticket.userId === authContext.userId;
-    }
-
-    return Boolean(
-      ticket.clientId
-        && clientId
-        && ticket.clientId === clientId
-        && ticket.userId === `guest:${clientId}`
-    );
+    return ticket.userId === authContext.userId;
   }
 
-  private resolvePlayerCompetitiveRating(
-    authContext: RoomAuthContext,
-    ticket: MatchmakingTicketClaims | null
-  ): number {
-    if (authContext.kind === 'authenticated') {
-      return authContext.competitiveRating;
-    }
-
-    return ticket?.competitiveRating ?? authContext.competitiveRating;
+  private resolvePlayerCompetitiveRating(authContext: RoomAuthContext): number {
+    return authContext.competitiveRating;
   }
 
   private getAverageCompetitiveRating(): number {

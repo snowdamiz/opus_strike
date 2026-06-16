@@ -64,6 +64,10 @@ export interface AppliedSelfMovementAuthority {
   state: MovementSimulationState;
 }
 
+export interface SelfMovementAuthorityApplyOptions {
+  visualLookYaw?: number;
+}
+
 const fallbackTerrain: MovementTerrainAdapter = {
   getGroundY: () => 0,
   clampPosition: (position) => ({ ...position }),
@@ -478,7 +482,11 @@ function isSelfAuthorityBarrier(authority: SelfMovementAuthority): boolean {
   return Boolean(authority.correctionReason && authority.correctionReason !== 'normal');
 }
 
-export function drainSelfMovementAuthorities(player: Player, nowMs: number): AppliedSelfMovementAuthority[] {
+export function drainSelfMovementAuthorities(
+  player: Player,
+  nowMs: number,
+  options: SelfMovementAuthorityApplyOptions = {}
+): AppliedSelfMovementAuthority[] {
   if (pendingSelfMovementAuthorities.length === 0) return [];
 
   const authorities = pendingSelfMovementAuthorities.splice(0);
@@ -499,14 +507,30 @@ export function drainSelfMovementAuthorities(player: Player, nowMs: number): App
       continue;
     }
 
-    const application = applySelfMovementAuthority(player, authority, nowMs);
+    const application = applySelfMovementAuthority(player, authority, nowMs, options);
     applied.push({ authority, ...application });
   }
 
   return applied;
 }
 
-export function applySelfMovementAuthority(player: Player, authority: SelfMovementAuthority, nowMs = Date.now()) {
+function resolveSelfAuthorityVisualLookYaw(
+  player: Player,
+  authority: SelfMovementAuthority,
+  options: SelfMovementAuthorityApplyOptions
+): number {
+  const visualLookYaw = options.visualLookYaw;
+  if (visualLookYaw !== undefined && Number.isFinite(visualLookYaw)) return visualLookYaw;
+  if (Number.isFinite(player.lookYaw)) return player.lookYaw;
+  return authority.lookYaw;
+}
+
+export function applySelfMovementAuthority(
+  player: Player,
+  authority: SelfMovementAuthority,
+  nowMs = Date.now(),
+  options: SelfMovementAuthorityApplyOptions = {}
+) {
   ensureLocalPredictionInitialized(player);
   if (authority.rootedUntil !== undefined) {
     setLocalMovementRootedUntil(authority.rootedUntil, nowMs);
@@ -524,7 +548,12 @@ export function applySelfMovementAuthority(player: Player, authority: SelfMoveme
   );
   advanceNextCommandSeqPastAck(authority.ackSeq);
   const state = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
-  setPredictedVisuals(player.id, state.position, authority.lookYaw, nowMs);
+  setPredictedVisuals(
+    player.id,
+    state.position,
+    resolveSelfAuthorityVisualLookYaw(player, authority, options),
+    nowMs
+  );
   return { result, state };
 }
 

@@ -5,7 +5,7 @@ export const DEFAULT_GAME_CONFIG: GameConfig = {
   teamSize: 4,
   scoreToWin: 3,
   roundTimeSeconds: 600, // 10 minutes
-  respawnTimeSeconds: 5,
+  respawnTimeSeconds: 8,
   spawnProtectionSeconds: 3,
   flagReturnTimeSeconds: 30,
   heroSelectTimeSeconds: 30,

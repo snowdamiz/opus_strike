@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://opus-strike-client.fly.dev/sitemap.xml
+Sitemap: https://slopheroes.xyz/sitemap.xml

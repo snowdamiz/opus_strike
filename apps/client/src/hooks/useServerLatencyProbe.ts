@@ -29,7 +29,7 @@ export function useServerLatencyProbe(enabled: boolean): ServerLatencyProbeSnaps
   const [snapshot, setSnapshot] = useState<ServerLatencyProbeSnapshot>(INITIAL_SERVER_LATENCY_SNAPSHOT);
 
   useEffect(() => {
-    if (!enabled || !config.clientDiagnosticsEnabled) return;
+    if (!enabled) return;
 
     let cancelled = false;
     const controller = new AbortController();

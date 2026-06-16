@@ -32,6 +32,7 @@ const friendshipInclude = {
 } satisfies Prisma.FriendshipInclude;
 
 type FriendshipWithUsers = Prisma.FriendshipGetPayload<{ include: typeof friendshipInclude }>;
+type RelationshipState = 'none' | 'friend' | 'pending_incoming' | 'pending_outgoing';
 
 function enforceJsonRateLimit(req: Request, res: Response, keyPrefix: string, options: {
   limit: number;
@@ -139,6 +140,44 @@ function serializeFriendship(friendship: FriendshipWithUsers, currentUserId: str
   };
 }
 
+async function getRelationshipsForCandidates(
+  currentUserId: string,
+  candidateUserIds: string[]
+): Promise<Map<string, RelationshipState>> {
+  if (candidateUserIds.length === 0) return new Map();
+
+  const friendships = await prisma.friendship.findMany({
+    where: {
+      OR: [
+        { userAId: currentUserId, userBId: { in: candidateUserIds } },
+        { userBId: currentUserId, userAId: { in: candidateUserIds } },
+      ],
+    },
+    select: {
+      userAId: true,
+      userBId: true,
+      requestedByUserId: true,
+      status: true,
+    },
+  });
+
+  const relationshipByUserId = new Map<string, RelationshipState>();
+  for (const friendship of friendships) {
+    const otherUserId = friendship.userAId === currentUserId ? friendship.userBId : friendship.userAId;
+    if (friendship.status === 'accepted') {
+      relationshipByUserId.set(otherUserId, 'friend');
+    } else if (friendship.status === 'pending' && friendship.requestedByUserId === currentUserId) {
+      relationshipByUserId.set(otherUserId, 'pending_outgoing');
+    } else if (friendship.status === 'pending') {
+      relationshipByUserId.set(otherUserId, 'pending_incoming');
+    } else {
+      relationshipByUserId.set(otherUserId, 'none');
+    }
+  }
+
+  return relationshipByUserId;
+}
+
 function sendSocialError(res: Response, error: unknown): void {
   const statusCode = typeof error === 'object' && error && 'statusCode' in error
     ? Number((error as { statusCode?: unknown }).statusCode) || 500
@@ -171,7 +210,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     await expireOldLobbyInvites();
 
-    const [friendships, incomingRequests, outgoingRequests, lobbyInvites] = await Promise.all([
+    const [friendships, incomingRequests, outgoingRequests, lobbyInvites, discordPlayers] = await Promise.all([
       prisma.friendship.findMany({
         where: {
           status: 'accepted',
@@ -207,13 +246,38 @@ router.get('/', async (req: Request, res: Response) => {
         orderBy: { createdAt: 'desc' },
         take: 20,
       }),
+      prisma.user.findMany({
+        where: {
+          id: { not: user.id },
+          authAccounts: {
+            some: { provider: 'discord' },
+          },
+        },
+        select: socialUserSelect,
+        orderBy: [
+          { lastLoginAt: 'desc' },
+          { rankedGames: 'desc' },
+          { totalScore: 'desc' },
+        ],
+        take: 12,
+      }),
     ]);
+    const discordRelationships = await getRelationshipsForCandidates(
+      user.id,
+      discordPlayers.map((candidate) => candidate.id)
+    );
 
     res.json({
       friends: friendships.map((friendship) => serializeFriendship(friendship, user.id)),
       incomingRequests: incomingRequests.map((request) => serializeFriendshipRequest(request, user.id)),
       outgoingRequests: outgoingRequests.map((request) => serializeFriendshipRequest(request, user.id)),
       lobbyInvites: lobbyInvites.map(serializeLobbyInvite),
+      discordPlayers: discordPlayers
+        .map((candidate) => ({
+          user: serializeSocialUser(candidate),
+          relationship: discordRelationships.get(candidate.id) ?? 'none',
+        }))
+        .filter((candidate) => candidate.relationship !== 'friend'),
     });
   } catch (error) {
     sendSocialError(res, error);
@@ -250,37 +314,10 @@ router.get('/search', async (req: Request, res: Response) => {
       take: 8,
     });
 
-    const userIds = users.map((candidate) => candidate.id);
-    const friendships = userIds.length === 0
-      ? []
-      : await prisma.friendship.findMany({
-        where: {
-          OR: [
-            { userAId: user.id, userBId: { in: userIds } },
-            { userBId: user.id, userAId: { in: userIds } },
-          ],
-        },
-        select: {
-          userAId: true,
-          userBId: true,
-          requestedByUserId: true,
-          status: true,
-        },
-      });
-
-    const relationshipByUserId = new Map<string, string>();
-    for (const friendship of friendships) {
-      const otherUserId = friendship.userAId === user.id ? friendship.userBId : friendship.userAId;
-      if (friendship.status === 'accepted') {
-        relationshipByUserId.set(otherUserId, 'friend');
-      } else if (friendship.status === 'pending' && friendship.requestedByUserId === user.id) {
-        relationshipByUserId.set(otherUserId, 'pending_outgoing');
-      } else if (friendship.status === 'pending') {
-        relationshipByUserId.set(otherUserId, 'pending_incoming');
-      } else {
-        relationshipByUserId.set(otherUserId, 'none');
-      }
-    }
+    const relationshipByUserId = await getRelationshipsForCandidates(
+      user.id,
+      users.map((candidate) => candidate.id)
+    );
 
     res.json({
       users: users.map((candidate) => ({

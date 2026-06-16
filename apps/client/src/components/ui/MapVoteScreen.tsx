@@ -401,10 +401,6 @@ export function MapVoteScreen() {
   const isPreparingMaps = mapVoteOptions.length === 0;
   const areMapPreviewsReady = mapVoteOptions.length > 0 && readyPreviewIds.size >= mapVoteOptions.length;
   const isVoteTimerStarted = Boolean(mapVotePhaseEndTime);
-  const activePreviewOptionId = useMemo(
-    () => mapVoteOptions.find((option) => !readyPreviewIds.has(option.id))?.id ?? null,
-    [mapVoteOptions, readyPreviewIds]
-  );
 
   const votersByOption = useMemo(() => {
     const groups = new Map<string, LobbyPlayer[]>();
@@ -423,7 +419,7 @@ export function MapVoteScreen() {
   }, [mapVoteOptions, mapVotes, playerList]);
 
   const handleVote = (optionId: string) => {
-    if (isFinalized || localVote === optionId) return;
+    if (isFinalized || !isVoteTimerStarted || localVote === optionId) return;
     playButtonClick();
     voteMap(optionId);
   };
@@ -544,6 +540,7 @@ export function MapVoteScreen() {
               const isSelected = localVote === option.id;
               const isWinner = selectedMapOptionId === option.id;
               const isGoldenBiome = isGoldenMapOption(option);
+              const canVoteForOption = isVoteTimerStarted && !isFinalized;
               const cardBorderClass = isGoldenBiome
                 ? 'map-vote-card-golden'
                 : isWinner
@@ -557,8 +554,8 @@ export function MapVoteScreen() {
                   key={option.id}
                   type="button"
                   onClick={() => handleVote(option.id)}
-                  disabled={isFinalized}
-                  className={`${mapVoteCardClass} text-left outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/70 disabled:cursor-default ${cardBorderClass}`}
+                  disabled={!canVoteForOption}
+                  className={`${mapVoteCardClass} text-left outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/70 disabled:cursor-default disabled:hover:border-white/[0.16] ${cardBorderClass}`}
                   style={{
                     boxShadow: isGoldenBiome
                       ? GOLDEN_MAP_CARD_SHADOW
@@ -569,7 +566,7 @@ export function MapVoteScreen() {
                 >
                   <div className="map-vote-preview relative aspect-[16/8.4] overflow-hidden border-b border-white/[0.06]">
                     <MapPreviewImage
-                      active={activePreviewOptionId === option.id}
+                      active={!readyPreviewIds.has(option.id)}
                       option={option}
                       onReady={handlePreviewReady}
                     />
@@ -589,7 +586,7 @@ export function MapVoteScreen() {
 
                   <MapVoteCardMeta
                     voteCount={voters.length}
-                    badgeLabel={isWinner ? 'Locked' : isSelected ? 'Picked' : 'Vote'}
+                    badgeLabel={isWinner ? 'Locked' : isSelected ? 'Picked' : isVoteTimerStarted ? 'Vote' : 'Generating'}
                     badgeTone={isWinner ? 'winner' : isSelected ? 'selected' : 'idle'}
                   />
                 </button>
@@ -629,7 +626,7 @@ export function MapVoteScreen() {
               </button>
             ) : (
               <div className="map-vote-lock-status flex h-10 min-w-[13rem] items-center justify-center rounded-full bg-white/[0.055] px-5 font-display text-xs uppercase tracking-wide text-white/[0.42]">
-                {localVote ? 'Vote Locked' : 'Awaiting Vote'}
+                {!isVoteTimerStarted ? 'Generating' : localVote ? 'Vote Locked' : 'Awaiting Vote'}
               </div>
             )}
 
