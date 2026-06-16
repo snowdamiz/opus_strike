@@ -214,12 +214,12 @@ type HeroSkillIconSize = 'card' | 'hud';
 
 const iconSizeClass: Record<HeroSkillIconSize, string> = {
   card: 'w-9 h-9',
-  hud: 'w-9 h-9 sm:w-10 sm:h-10 lg:w-11 lg:h-11',
+  hud: 'w-10 h-10 sm:w-11 sm:h-11 lg:w-12 lg:h-12',
 };
 
 const iconGlyphSize: Record<HeroSkillIconSize, number> = {
   card: 20,
-  hud: 23,
+  hud: 26,
 };
 
 export function HeroSkillIcon({

@@ -861,7 +861,7 @@ export function HUD() {
       {/* ===== BOTTOM CENTER - Skill Bar ===== */}
       {heroSkillItems.length > 0 && (
         <div className="absolute bottom-[clamp(0.45rem,1vw,0.875rem)] left-1/2 -translate-x-1/2 max-w-[94vw] hud-skill-bar">
-          <div className="flex items-end justify-center gap-1.5 sm:gap-2 lg:gap-2.5">
+          <div className="flex items-end justify-center gap-2 sm:gap-2.5 lg:gap-3">
             {heroSkillItems.map((skill) => (
               <HUDSkillSlot
                 key={`${skill.input}-${skill.name}`}
@@ -1129,11 +1129,11 @@ function HUDSkillSlot({
         )}
 
         <div
-          className={`absolute top-0.5 left-0.5 z-30 h-4 rounded flex items-center justify-center font-mono font-bold leading-none ${isWideInput ? 'min-w-[1.45rem] px-1 text-[7px]' : 'w-4 text-[9px]'} ${isUsable
+          className={`absolute top-1 left-1 z-30 flex h-5 items-center justify-center rounded-[0.25rem] font-mono font-bold leading-none shadow-[0_1px_4px_rgba(0,0,0,0.7)] ring-1 ring-inset tabular-nums ${isWideInput ? 'min-w-7 px-1.5 text-[8px] sm:text-[9px]' : 'w-5 text-[10px] sm:text-[11px]'} ${isUsable
               ? isUltimate
-                ? 'bg-amber-500/70 text-amber-100'
-                : 'bg-white/30 text-white'
-              : 'bg-black/60 text-white/45'
+                ? 'bg-amber-500/85 text-amber-50 ring-amber-100/45'
+                : 'bg-slate-950/75 text-white ring-white/35'
+              : 'bg-black/75 text-white/55 ring-white/15'
             }`}
         >
           {inputLabel}
