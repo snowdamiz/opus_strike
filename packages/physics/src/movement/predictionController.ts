@@ -97,7 +97,9 @@ function movementModesRequireReplay(a: PlayerMovementState, b: PlayerMovementSta
     a.isWallRunning !== b.isWallRunning ||
     a.wallRunSide !== b.wallRunSide ||
     a.isGrappling !== b.isGrappling ||
-    a.isGliding !== b.isGliding
+    a.isGliding !== b.isGliding ||
+    (a.airJumpsUsed ?? 0) !== (b.airJumpsUsed ?? 0) ||
+    Boolean(a.jumpHeld) !== Boolean(b.jumpHeld)
   );
 }
 
@@ -408,6 +410,13 @@ export class MovementPredictionController {
     const predictedAtAck = this.commandRecords.get(authority.ackSeq)?.predictedState;
     const positionError = predictedAtAck ? distance(predictedAtAck.position, authoritativeState.position) : Infinity;
     const velocityError = predictedAtAck ? distance(predictedAtAck.velocity, authoritativeState.velocity) : Infinity;
+    const modesRequireReplay = predictedAtAck
+      ? movementModesRequireReplay(predictedAtAck.movement, authoritativeState.movement)
+      : false;
+
+    if (modesRequireReplay) {
+      return this.reconcile(authority, context, nowMs);
+    }
 
     this.trimAcknowledged(authority.ackSeq);
     this.lastAckSeq = authority.ackSeq;

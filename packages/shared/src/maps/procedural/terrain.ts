@@ -14,6 +14,7 @@ export interface ProceduralTerrainLookup {
 }
 
 const BOUNDARY_CEILING_SAMPLE_BAND = 4;
+const MIN_PLAYABLE_Y = -20;
 
 function chunkLookupIndex(x: number, y: number, z: number, chunksX: number, chunksZ: number): number {
   return x + chunksX * (z + chunksZ * y);
@@ -174,7 +175,7 @@ export function createProceduralTerrainLookup(manifest: VoxelMapManifest): Proce
 
       return {
         x: Math.max(bounds.minX, Math.min(bounds.maxX, clampedBoundary.x)),
-        y: Math.max(-20, Math.min(120, position.y)),
+        y: Math.max(MIN_PLAYABLE_Y, Math.min(maxPlayableY, position.y)),
         z: Math.max(bounds.minZ, Math.min(bounds.maxZ, clampedBoundary.z)),
       };
     },

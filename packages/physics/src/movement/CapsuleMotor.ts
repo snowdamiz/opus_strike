@@ -19,6 +19,7 @@ import {
   BHOP_STOP_SPEED,
   CROUCH_MULTIPLIER,
   GRAVITY,
+  HERO_AIR_JUMPS,
   PLAYER_CROUCH_HEIGHT,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
@@ -1058,10 +1059,18 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
   }
 
   const wasSliding = movement.isSliding;
+  const wasJumpHeld = Boolean(movement.jumpHeld);
+  const jumpPressed = Boolean(input.command.input.jump && !wasJumpHeld);
   const startHeight = bodyHeightForMovement(movement);
   const startGround = world.findGround(position, GROUND_SNAP_DISTANCE, PLAYER_RADIUS, startHeight);
   const wasGrounded = !chronosAscendantActive && Boolean(startGround?.walkable && velocity.y <= 0);
   movement.isGrounded = wasGrounded;
+  if (wasGrounded) {
+    movement.airJumpsUsed = 0;
+  } else {
+    const airJumpsUsed = Number.isFinite(movement.airJumpsUsed) ? Math.trunc(movement.airJumpsUsed!) : 0;
+    movement.airJumpsUsed = Math.max(0, Math.min(HERO_AIR_JUMPS, airJumpsUsed));
+  }
   if (startGround && wasGrounded && startGround.distance <= GROUND_SNAP_DISTANCE) {
     position = startGround.position;
     velocity.y = 0;
@@ -1176,9 +1185,21 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
   }
 
   let jumpedThisStep = false;
-  if (input.command.input.jump && movement.isGrounded && !movement.isSliding) {
+  const canGroundJump = input.command.input.jump && movement.isGrounded && !movement.isSliding;
+  const canAirJump =
+    jumpPressed &&
+    !movement.isGrounded &&
+    !movement.isSliding &&
+    !movement.isGrappling &&
+    !movement.isWallRunning &&
+    !chronosAscendantActive &&
+    (movement.airJumpsUsed ?? 0) < HERO_AIR_JUMPS;
+  if (canGroundJump || canAirJump) {
     velocity.y = input.heroStats.jumpForce;
     movement.isGrounded = false;
+    if (canAirJump) {
+      movement.airJumpsUsed = (movement.airJumpsUsed ?? 0) + 1;
+    }
     jumpedThisStep = true;
   }
 
@@ -1291,7 +1312,9 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
   }
   if (movement.isGrounded) {
     velocity.y = Math.max(0, velocity.y);
+    movement.airJumpsUsed = 0;
   }
+  movement.jumpHeld = Boolean(input.command.input.jump);
 
   return {
     state: {

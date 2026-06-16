@@ -33,7 +33,7 @@ const terrain = {
   getGroundY: () => 0,
   clampPosition: (position) => ({
     x: Math.max(-50, Math.min(50, position.x)),
-    y: Math.max(-20, Math.min(120, position.y)),
+    y: Math.max(-20, position.y),
     z: Math.max(-50, Math.min(50, position.z)),
   }),
   getBlockAtWorld: () => 0,
@@ -317,6 +317,107 @@ function runHeldCommandStripsEdgeButtons() {
   assert.equal(heldInput.ability1, false);
 }
 
+function runDoubleJumpForAllHeroes() {
+  const heroIds = Object.keys(HERO_DEFINITIONS);
+
+  for (const heroId of heroIds) {
+    const heroStats = HERO_DEFINITIONS[heroId].stats;
+    let state = createSimulationState();
+    const jumpInput = {
+      ...createEmptyInputState(),
+      jump: true,
+    };
+    const releasedInput = createEmptyInputState();
+
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats,
+      input: jumpInput,
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain,
+    });
+
+    assert.equal(state.movement.isGrounded, false, `${heroId} first jump should leave ground`);
+    assert.equal(state.movement.airJumpsUsed ?? 0, 0, `${heroId} ground jump should not spend air jump`);
+
+    for (let step = 0; step < 5; step++) {
+      state = simulateSharedMovement({
+        position: state.position,
+        velocity: state.velocity,
+        movement: state.movement,
+        heroStats,
+        input: jumpInput,
+        lookYaw: 0,
+        deltaTime: 1 / 60,
+        terrain,
+      });
+    }
+
+    assert.equal(state.movement.airJumpsUsed ?? 0, 0, `${heroId} held jump should not spend air jump`);
+
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats,
+      input: releasedInput,
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain,
+    });
+
+    const beforeDoubleJumpVelocityY = state.velocity.y;
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats,
+      input: jumpInput,
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain,
+    });
+
+    assert.equal(state.movement.airJumpsUsed ?? 0, 1, `${heroId} air jump should spend one air jump`);
+    assert.ok(
+      state.velocity.y > beforeDoubleJumpVelocityY + 1,
+      `${heroId} air jump should refresh upward velocity`
+    );
+
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats,
+      input: releasedInput,
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain,
+    });
+
+    const beforeDeniedJumpVelocityY = state.velocity.y;
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats,
+      input: jumpInput,
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain,
+    });
+
+    assert.equal(state.movement.airJumpsUsed ?? 0, 1, `${heroId} should not spend more than one air jump`);
+    assert.ok(
+      state.velocity.y < beforeDeniedJumpVelocityY,
+      `${heroId} third jump should be denied before landing`
+    );
+  }
+}
+
 function runChronosAscendantReleaseDampsStrafe() {
   let state = {
     position: { x: 0, y: 6, z: 0 },
@@ -457,6 +558,59 @@ function runChronosAscendantCapsAtPlayableCeiling() {
     'test ceiling should be lower than the regular Ascendant cap'
   );
   assert.ok(state.velocity.y <= 0.001, `Ascendant upward velocity should stop at playable ceiling, got ${state.velocity.y}`);
+}
+
+function runPlayableCeilingClampsSharedMovement() {
+  const playableCeilingY = 4;
+  const ceilingTerrain = {
+    ...terrain,
+    clampPosition: (position) => ({
+      ...terrain.clampPosition(position),
+      y: Math.max(-20, Math.min(playableCeilingY, position.y)),
+    }),
+    getMaxPlayableY: () => playableCeilingY,
+  };
+
+  const result = simulateSharedMovement({
+    position: { x: 0, y: playableCeilingY - 0.05, z: 0 },
+    velocity: { x: 0, y: 24, z: 0 },
+    movement: {
+      ...createMovementState(),
+      isGrounded: false,
+    },
+    heroStats: HERO_DEFINITIONS.blaze.stats,
+    input: createEmptyInputState(),
+    lookYaw: 0,
+    deltaTime: 0.1,
+    terrain: ceilingTerrain,
+  });
+
+  assert.ok(
+    result.position.y <= playableCeilingY + 0.001,
+    `shared movement should clamp every hero to playable ceiling ${playableCeilingY}, got ${result.position.y}`
+  );
+  assert.ok(
+    result.velocity.y <= 0.001,
+    `shared movement should stop upward velocity at playable ceiling, got ${result.velocity.y}`
+  );
+}
+
+function runProceduralLookupClampsToBoundaryCeiling() {
+  const manifest = generateProceduralVoxelMap(4277893733);
+  const lookup = createProceduralTerrainLookup(manifest);
+  const playableCeilingY = lookup.getMaxPlayableY();
+  const spawn = manifest.spawnPoints.red[0] ?? { x: 0, y: 0, z: 0 };
+  const clamped = lookup.clampToPlayableMap({
+    x: spawn.x,
+    y: playableCeilingY + 10,
+    z: spawn.z,
+  });
+
+  assert.equal(
+    clamped.y,
+    playableCeilingY,
+    `procedural map clamp should use boundary ceiling ${playableCeilingY}, got ${clamped.y}`
+  );
 }
 
 function runCorrectionReplay() {
@@ -1276,9 +1430,12 @@ runNoCorrectionAckRefreshesAuthorityOwnedResources();
 runSprintModeMismatchDoesNotCorrect();
 runSlideRequiresFreshCrouchPress();
 runHeldCommandStripsEdgeButtons();
+runDoubleJumpForAllHeroes();
 runChronosAscendantReleaseDampsStrafe();
 runChronosAscendantCapsElevation();
 runChronosAscendantCapsAtPlayableCeiling();
+runPlayableCeilingClampsSharedMovement();
+runProceduralLookupClampsToBoundaryCeiling();
 runCorrectionReplay();
 runClientAuthoritativeAckDoesNotMovePresentation();
 runOverwriteUpdatesLatestAckState();

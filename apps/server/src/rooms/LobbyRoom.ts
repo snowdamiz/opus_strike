@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'http';
 import { Room, Client, matchMaker } from 'colyseus';
 import { LobbyState, LobbyPlayer } from './schema/LobbyState';
-import { DEFAULT_GAME_CONFIG, GOLDEN_VOXEL_MAP_THEME_ID, HERO_DEFINITIONS, createRandomSeed, createProceduralMapPreview, getRankFromRating, getVoxelMapTheme, hashSeed, isMatchMode, toPublicRankSnapshot, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
+import { ALL_HERO_IDS, DEFAULT_GAME_CONFIG, GOLDEN_VOXEL_MAP_THEME_ID, HERO_DEFINITIONS, createRandomSeed, createProceduralMapPreview, getRankFromRating, getVoxelMapTheme, hashSeed, isMatchMode, isTeamHeroAvailable, toPublicRankSnapshot, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
 import type { MatchMode } from '@voxel-strike/shared';
 import type { BlueprintPreview, BotDifficulty, HeroId, MapTopologyId, Team, VoxelMapTheme } from '@voxel-strike/shared';
 import { assertUsableEntryTicketSecret, isDevelopmentToolsEnabled } from '../config/security';
@@ -83,7 +83,7 @@ interface ObserverAssignment {
 }
 
 type GameStartingAssignment = ParticipantAssignment | ObserverAssignment;
-export type CreateBotFailureReason = 'bots_disabled' | 'lobby_full' | 'team_full';
+export type CreateBotFailureReason = 'bots_disabled' | 'lobby_full' | 'team_full' | 'hero_taken';
 type CreateBotResult =
   | { ok: true; bot: LobbyPlayer }
   | { ok: false; reason: CreateBotFailureReason };
@@ -1371,8 +1371,16 @@ export class LobbyRoom extends Room<LobbyState> {
       return;
     }
 
+    const botHeroId = this.normalizeHeroId(bot.heroId);
+    const shouldClearHero = botHeroId !== ''
+      && !isTeamHeroAvailable(this.state.players.values(), team, botHeroId, botId);
+
     bot.team = team;
     this.broadcast('playerTeamChanged', { playerId: botId, team });
+    if (shouldClearHero) {
+      bot.heroId = '';
+      this.broadcast('botHeroChanged', { playerId: botId, heroId: bot.heroId });
+    }
     this.updateMetadata();
   }
 
@@ -1393,7 +1401,17 @@ export class LobbyRoom extends Room<LobbyState> {
     const bot = this.state.players.get(botId);
     if (!bot?.isBot) return;
 
-    bot.heroId = this.normalizeHeroId(heroId);
+    const nextHeroId = this.normalizeHeroId(heroId);
+    if (
+      nextHeroId
+      && this.isTeam(bot.team)
+      && !isTeamHeroAvailable(this.state.players.values(), bot.team, nextHeroId, botId)
+    ) {
+      client.send('error', { message: 'Hero is already picked on that team' });
+      return;
+    }
+
+    bot.heroId = nextHeroId;
     this.broadcast('botHeroChanged', { playerId: botId, heroId: bot.heroId });
     this.updateMetadata();
   }
@@ -1404,6 +1422,8 @@ export class LobbyRoom extends Room<LobbyState> {
         return 'Team is full';
       case 'bots_disabled':
         return 'Bots are disabled for this lobby';
+      case 'hero_taken':
+        return 'Hero is already picked on that team';
       case 'lobby_full':
       default:
         return 'Lobby is full';
@@ -1435,7 +1455,15 @@ export class LobbyRoom extends Room<LobbyState> {
     bot.team = requestedTeam
       ? requestedTeam
       : this.assignBalancedTeam();
-    bot.heroId = this.normalizeHeroId(data.heroId);
+    const botHeroId = this.normalizeHeroId(data.heroId);
+    if (
+      botHeroId
+      && this.isTeam(bot.team)
+      && !isTeamHeroAvailable(this.state.players.values(), bot.team, botHeroId)
+    ) {
+      return { ok: false, reason: 'hero_taken' };
+    }
+    bot.heroId = botHeroId;
     bot.isBot = true;
     bot.botDifficulty = this.normalizeDifficulty(data.difficulty);
     bot.botProfileId = profileName.toLowerCase();
@@ -1595,7 +1623,12 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   private createPlayerAssignments(): ParticipantAssignment[] {
+    const participants: LobbyPlayer[] = [];
     const assignments: ParticipantAssignment[] = [];
+    const claimedHeroesByTeam: Record<Team, Map<HeroId, string>> = {
+      red: new Map(),
+      blue: new Map(),
+    };
 
     this.state.players.forEach((p) => {
       if (p.isObserver) return;
@@ -1605,12 +1638,37 @@ export class LobbyRoom extends Room<LobbyState> {
         throw new Error('Cannot create assignments with unassigned players');
       }
 
+      participants.push(p);
+      const heroId = this.normalizeHeroId(p.heroId);
+      if (heroId && !claimedHeroesByTeam[team].has(heroId)) {
+        claimedHeroesByTeam[team].set(heroId, p.id);
+      }
+    });
+
+    participants.forEach((p) => {
+      const team = p.team as Team;
+      const normalizedHeroId = this.normalizeHeroId(p.heroId);
+      let heroId: HeroId | undefined = normalizedHeroId || undefined;
+      if (heroId && claimedHeroesByTeam[team].get(heroId) !== p.id) {
+        heroId = undefined;
+      }
+
+      if (p.isBot && !heroId) {
+        const claimed = claimedHeroesByTeam[team];
+        const availableHeroes = ALL_HERO_IDS.filter((candidate) => !claimed.has(candidate));
+        const randomIndex = Math.floor(Math.random() * availableHeroes.length);
+        heroId = availableHeroes[randomIndex];
+        if (heroId) {
+          claimed.set(heroId, p.id);
+        }
+      }
+
       assignments.push({
         playerId: p.id,
         playerName: p.name,
         team,
         isBot: p.isBot,
-        heroId: this.normalizeHeroId(p.heroId) || undefined,
+        heroId,
         botDifficulty: p.isBot ? this.normalizeDifficulty(p.botDifficulty) : undefined,
         botProfileId: p.botProfileId || undefined,
       });

@@ -1,4 +1,5 @@
 import { useRef, useCallback, useEffect } from 'react';
+import { BLAZE_GEARSTORM_DURATION_MS } from '@voxel-strike/shared';
 import { loadSettings, type ClientSettings } from '../store/settingsStore';
 import {
   recordAudioLoadRequest,
@@ -249,7 +250,7 @@ export const CHRONOS_VERDANT_PULSE_SHOT_VOLUME = 0.72;
 export const BLAZE_BOMB_RELEASE_SOUND_START_OFFSET_MS = 260;
 export const BLAZE_BOMB_RELEASE_SOUND_DURATION_MS = 1100;
 export const BLAZE_BOMB_RELEASE_SOUND_FADE_OUT_MS = 80;
-export const BLAZE_AIRSTRIKE_SOUND_DURATION_MS = 5200;
+export const BLAZE_AIRSTRIKE_SOUND_DURATION_MS = BLAZE_GEARSTORM_DURATION_MS;
 export const BLAZE_AIRSTRIKE_SOUND_FADE_IN_MS = 120;
 export const BLAZE_AIRSTRIKE_SOUND_FADE_OUT_MS = 360;
 

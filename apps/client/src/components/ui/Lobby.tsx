@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
@@ -8,6 +8,7 @@ import {
   ALL_HERO_IDS,
   DEFAULT_GAME_CONFIG,
   HERO_DEFINITIONS,
+  getPickedTeamHeroIds,
   type BotDifficulty,
   type HeroId,
 } from '@voxel-strike/shared';
@@ -84,6 +85,8 @@ type LobbyBotHero = HeroId | '';
 type InlinePickerOption<T extends string> = {
   value: T;
   label: string;
+  disabled?: boolean;
+  disabledReason?: string;
 };
 
 const BOT_DIFFICULTY_OPTIONS = [
@@ -136,6 +139,7 @@ function InlinePicker<T extends string>({
         aria-label={label}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
+        title={selected.disabledReason}
         onClick={(event) => {
           event.stopPropagation();
           setIsOpen((open) => !open);
@@ -164,21 +168,27 @@ function InlinePicker<T extends string>({
         >
           {options.map((option) => {
             const isSelected = option.value === value;
+            const isDisabled = option.disabled === true;
             return (
               <button
                 key={option.value || option.label}
                 type="button"
                 role="option"
                 aria-selected={isSelected}
+                disabled={isDisabled}
+                title={option.disabledReason}
                 onClick={(event) => {
                   event.stopPropagation();
+                  if (isDisabled) return;
                   onChange(option.value);
                   setIsOpen(false);
                 }}
-                className="flex h-6 w-full items-center whitespace-nowrap rounded px-1.5 text-left font-body text-[9px] uppercase tracking-wide transition-colors hover:bg-white/[0.07]"
+                className={`flex h-6 w-full items-center whitespace-nowrap rounded px-1.5 text-left font-body text-[9px] uppercase tracking-wide transition-colors ${
+                  isDisabled ? 'cursor-not-allowed opacity-35' : 'hover:bg-white/[0.07]'
+                }`}
                 style={{
                   background: isSelected ? `${accentColor}20` : 'transparent',
-                  color: isSelected ? accentColor : 'rgba(255,255,255,0.58)',
+                  color: isDisabled ? 'rgba(255,255,255,0.32)' : isSelected ? accentColor : 'rgba(255,255,255,0.58)',
                 }}
               >
                 {option.label}
@@ -265,6 +275,10 @@ export function Lobby() {
   const currentRank = currentPlayer?.rank ?? getRankForStats(userStats);
   const playerList = Array.from(lobbyPlayers.values());
   const combatPlayers = playerList.filter((p) => !p.isObserver);
+  const pickedHeroIdsByTeam = useMemo(() => ({
+    red: getPickedTeamHeroIds(combatPlayers, 'red'),
+    blue: getPickedTeamHeroIds(combatPlayers, 'blue'),
+  }), [lobbyPlayers]);
   const observerPlayers = playerList.filter((p) => p.isObserver);
   const observerSlotCapacity = Math.max(0, maxLobbyObservers);
   const observerSlotAvailable = lobbyObserversEnabled && observerPlayers.length < observerSlotCapacity;
@@ -546,6 +560,7 @@ export function Lobby() {
               onBotTeamChange={handleBotTeamChange}
               onBotDifficultyChange={handleBotDifficultyChange}
               onBotHeroChange={handleBotHeroChange}
+              pickedHeroIds={pickedHeroIdsByTeam.red}
             />
           </div>
 
@@ -567,6 +582,7 @@ export function Lobby() {
               onBotTeamChange={handleBotTeamChange}
               onBotDifficultyChange={handleBotDifficultyChange}
               onBotHeroChange={handleBotHeroChange}
+              pickedHeroIds={pickedHeroIdsByTeam.blue}
               reverse
             />
           </div>
@@ -875,6 +891,7 @@ interface FactionPanelProps {
   onBotTeamChange: (id: string, team: LobbyTeam) => void;
   onBotDifficultyChange: (id: string, difficulty: BotDifficulty) => void;
   onBotHeroChange: (id: string, heroId: LobbyBotHero) => void;
+  pickedHeroIds: ReadonlySet<HeroId>;
   reverse?: boolean;
 }
 
@@ -894,6 +911,7 @@ function FactionPanel({
   onBotTeamChange,
   onBotDifficultyChange,
   onBotHeroChange,
+  pickedHeroIds,
   reverse,
 }: FactionPanelProps) {
   const maxPlayers = DEFAULT_GAME_CONFIG.teamSize;
@@ -918,6 +936,7 @@ function FactionPanel({
             onBotTeamChange={(team) => onBotTeamChange(player.id, team)}
             onBotDifficultyChange={(difficulty) => onBotDifficultyChange(player.id, difficulty)}
             onBotHeroChange={(heroId) => onBotHeroChange(player.id, heroId)}
+            pickedHeroIds={pickedHeroIds}
             faction={faction}
             compact
           />
@@ -1062,6 +1081,7 @@ interface PlayerCardProps {
   onBotTeamChange?: (team: LobbyTeam) => void;
   onBotDifficultyChange?: (difficulty: BotDifficulty) => void;
   onBotHeroChange?: (heroId: LobbyBotHero) => void;
+  pickedHeroIds: ReadonlySet<HeroId>;
   faction?: typeof FACTIONS.red | typeof FACTIONS.blue;
   compact?: boolean;
 }
@@ -1076,6 +1096,7 @@ function PlayerCard({
   onBotTeamChange,
   onBotDifficultyChange,
   onBotHeroChange,
+  pickedHeroIds,
   faction,
   compact,
 }: PlayerCardProps) {
@@ -1096,6 +1117,18 @@ function PlayerCard({
   const botTeam: LobbyTeam = player.team === 'blue' ? 'blue' : 'red';
   const botHero: LobbyBotHero = isHeroId(player.heroId) ? player.heroId : '';
   const botHeroColor = botHero ? HERO_COLORS[botHero] : color;
+  const botHeroOptions = useMemo(() => BOT_HERO_OPTIONS.map((option) => {
+    const heroId = option.value;
+    if (!heroId || heroId === botHero || !pickedHeroIds.has(heroId)) {
+      return option;
+    }
+
+    return {
+      ...option,
+      disabled: true,
+      disabledReason: 'Picked by teammate',
+    };
+  }), [botHero, pickedHeroIds]);
 
   return (
     <div
@@ -1157,7 +1190,7 @@ function PlayerCard({
             <InlinePicker
               label={`${player.name} hero`}
               value={botHero}
-              options={BOT_HERO_OPTIONS}
+              options={botHeroOptions}
               accentColor={botHeroColor}
               widthClass="w-[4.65rem]"
               onChange={(heroId) => onBotHeroChange?.(heroId)}
