@@ -1,5 +1,15 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import {
+  ANCHOR_WALL_COLLIDER_PREFIX,
+  ANCHOR_WALL_DEPTH,
+  ANCHOR_WALL_FIRST_SEGMENT_DISTANCE,
+  ANCHOR_WALL_MAX_HEIGHT,
+  ANCHOR_WALL_SEGMENT_BACKSET,
+  ANCHOR_WALL_SEGMENT_SPACING,
+  ANCHOR_WALL_SPEED,
+  ANCHOR_WALL_WIDTH,
+} from '@voxel-strike/physics';
 import { useGameStore, type EarthWallData } from '../../../store/gameStore';
 import {
   addTemporaryWallCollider,
@@ -21,16 +31,8 @@ import { useHookshotFrameUpdater } from './hookshotFrameRegistry';
 // A ground anchor tears forward and lifts a temporary solid barricade.
 // ============================================================================
 
-const ANCHOR_WALL_SPEED = 42;
-const ANCHOR_WALL_SEGMENT_SPACING = 2.35;
-const ANCHOR_WALL_FIRST_SEGMENT_DISTANCE = 6.25;
-const ANCHOR_WALL_MAX_HEIGHT = 4.15;
-const ANCHOR_WALL_WIDTH = 3.25;
-const ANCHOR_WALL_DEPTH = 1.05;
-const ANCHOR_WALL_RISE_SPEED = 14;
 const ANCHOR_WALL_COLLAPSE_DURATION = 1.15;
-const ANCHOR_WALL_SEGMENT_BACKSET = 0.85;
-const ANCHOR_WALL_COLLIDER_PREFIX = 'anchorwall_';
+const ANCHOR_WALL_RISE_SPEED = 14;
 const ANCHOR_WALL_SOUND_VOLUME = 4.4;
 const ANCHOR_WALL_SOUND_START_OFFSET_MS = 250;
 const ANCHOR_WALL_SOUND_FADE_IN_MS = 180;

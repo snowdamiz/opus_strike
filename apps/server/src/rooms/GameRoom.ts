@@ -1876,7 +1876,10 @@ export class GameRoom extends Room<GameState> {
     // Update each player
     this.state.players.forEach(player => {
       // Handle respawns
-      if (player.state === 'dead' && player.respawnTime) {
+      if (player.state === 'dead') {
+        if (!Number.isFinite(player.respawnTime) || player.respawnTime <= 0) {
+          player.respawnTime = now + this.config.respawnTimeSeconds * 1000;
+        }
         if (now >= player.respawnTime) {
           this.respawnPlayer(player);
         }
@@ -9028,6 +9031,39 @@ export class GameRoom extends Room<GameState> {
     bot.movement.wallRunSide = '';
   }
 
+  private resetPlayerMovementRuntime(player: Player): void {
+    player.velocity.x = 0;
+    player.velocity.y = 0;
+    player.velocity.z = 0;
+    player.movement.isGrounded = true;
+    player.movement.isSprinting = false;
+    player.movement.isCrouching = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    player.movement.isGrappling = false;
+    player.movement.isJetpacking = false;
+    player.movement.isGliding = false;
+    player.movement.chronosAscendantStartY = 0;
+  }
+
+  private resetPlayerLifeRuntime(player: Player, now = Date.now()): void {
+    this.disablePlayerSkills(player);
+    this.resetPlayerPressState(player.id);
+    this.resetPlayerMovementRuntime(player);
+    this.blazeBurnEffects.delete(player.id);
+    this.clearFlamethrowerDamageTicksForPlayer(player.id);
+    this.blazeBombDropConsumedForHold.delete(player.id);
+    this.playerRootedUntil.delete(player.id);
+    this.clearHookshotDragPullsInvolving(player.id);
+    this.attackCooldownUntil.delete(`${player.id}:primary`);
+    this.attackCooldownUntil.delete(`${player.id}:secondary`);
+    player.lastInput = player.isBot
+      ? this.createEmptyBotInput(player, now)
+      : null;
+  }
+
   private getActiveDevBotSkillOverride(bot: Player, now: number): DevBotSkillOverride | null {
     const override = this.devBotSkillOverrides.get(bot.id);
     if (!override) return null;
@@ -10239,17 +10275,20 @@ export class GameRoom extends Room<GameState> {
       player.state = 'alive';
       player.health = player.maxHealth;
       player.spawnProtectionUntil = now + this.config.spawnProtectionSeconds * 1000;
-      player.velocity.x = 0;
-      player.velocity.y = 0;
-      player.velocity.z = 0;
+      this.resetPlayerLifeRuntime(player, now);
       if (player.heroId === 'blaze') {
         player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
-        player.movement.isJetpacking = false;
       }
       if (player.heroId === 'phantom') {
         this.resetPhantomPrimaryMagazine(player.id);
       }
-      
+      if (player.heroId === 'chronos') {
+        this.chronosAegisShieldHp.delete(player.id);
+      }
+      if (player.isBot) {
+        this.botBrains.set(player.id, this.createBotBrain(player, this.hashString(player.id)));
+      }
+
       // Reset ability cooldowns
       resetAbilityCooldowns(player);
       if (ledger.state === 'active') {
@@ -10649,19 +10688,15 @@ export class GameRoom extends Room<GameState> {
     const killer = this.state.players.get(killerId);
     
     const deathAt = Date.now();
+    const deathPosition = { x: player.position.x, y: player.position.y, z: player.position.z };
+    const deathVelocity = { x: player.velocity.x, y: player.velocity.y, z: player.velocity.z };
 
     player.state = 'dead';
     player.health = 0;
     player.deaths++;
     this.recordMatchDeath(player, killer ?? null);
     player.respawnTime = deathAt + this.config.respawnTimeSeconds * 1000;
-    player.movement.isJetpacking = false;
-    this.blazeBurnEffects.delete(player.id);
-    this.broadcastBlazeFlamethrowerState(player, false, deathAt);
-    this.blazeBombDropConsumedForHold.delete(player.id);
-    this.clearHookshotGrapple(player.id);
-    this.clearHookshotDragPullsInvolving(player.id);
-    this.playerRootedUntil.delete(player.id);
+    this.resetPlayerLifeRuntime(player, deathAt);
     
     // Drop flag if carrying
     if (player.hasFlag) {
@@ -10699,8 +10734,8 @@ export class GameRoom extends Room<GameState> {
       victimId: player.id,
       killerId: killerId || null,
       assistIds,
-      position: { x: player.position.x, y: player.position.y, z: player.position.z },
-      velocity: { x: player.velocity.x, y: player.velocity.y, z: player.velocity.z },
+      position: deathPosition,
+      velocity: deathVelocity,
       sourcePosition: context.sourcePosition ?? lastDamageEntry?.sourcePosition ?? (killer ? this.vec3SchemaToPlain(killer.position) : null),
       sourceDirection: context.sourceDirection ?? lastDamageEntry?.sourceDirection ?? null,
       damageType: context.damageType ?? lastDamageEntry?.damageType,
@@ -10775,26 +10810,25 @@ export class GameRoom extends Room<GameState> {
   }
 
   private respawnPlayer(player: Player) {
+    const now = Date.now();
     player.state = 'alive';
     player.health = player.maxHealth;
     player.respawnTime = 0;
-    player.spawnProtectionUntil = Date.now() + this.config.spawnProtectionSeconds * 1000;
-    this.blazeBurnEffects.delete(player.id);
-    this.playerRootedUntil.delete(player.id);
+    player.spawnProtectionUntil = now + this.config.spawnProtectionSeconds * 1000;
+    this.resetPlayerLifeRuntime(player, now);
 
     this.placePlayerAtSpawn(player, 'respawn');
-    player.velocity.x = 0;
-    player.velocity.y = 0;
-    player.velocity.z = 0;
     if (player.heroId === 'blaze') {
       player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
-      player.movement.isJetpacking = false;
     }
     if (player.heroId === 'phantom') {
       this.resetPhantomPrimaryMagazine(player.id);
     }
     if (player.heroId === 'chronos') {
       this.chronosAegisShieldHp.delete(player.id);
+    }
+    if (player.isBot) {
+      this.botBrains.set(player.id, this.createBotBrain(player, this.hashString(player.id)));
     }
 
     // Reset ability cooldowns on respawn

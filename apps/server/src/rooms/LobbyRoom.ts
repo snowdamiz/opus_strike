@@ -1026,6 +1026,11 @@ export class LobbyRoom extends Room<LobbyState> {
       return;
     }
 
+    if (!this.mapVoteSession.phaseEndTime) {
+      client.send('error', { message: 'Map vote is still preparing' });
+      return;
+    }
+
     const player = this.state.players.get(client.sessionId);
     if (!player || player.isBot) return;
 

@@ -2728,7 +2728,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     <>
       <BombTargetingIndicator
         isActive={bombTargeting}
-        showIndicator={false}
         onTargetUpdate={blazeAbilities.handleBombTargetUpdate}
       />
     </>
