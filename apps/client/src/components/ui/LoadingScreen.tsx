@@ -12,7 +12,7 @@ export function LoadingScreen() {
         {/* Logo */}
         <div className="mb-8">
           <h1 className="font-display text-5xl 2xl:text-6xl text-white">
-            VOXEL <span className="text-orange-500">STRIKE</span>
+            SLOP <span className="text-orange-500">HEROES</span>
           </h1>
         </div>
 
