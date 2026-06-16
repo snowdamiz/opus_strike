@@ -1,6 +1,11 @@
 import React, { useRef } from 'react';
 import * as THREE from 'three';
-import { HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS } from '@voxel-strike/shared';
+import {
+  HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS,
+  HOOKSHOT_DRAG_HOOK_PULL_FRONT_DISTANCE,
+  HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS,
+  HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE,
+} from '@voxel-strike/shared';
 import { useGameStore, type DragHookData } from '../../../store/gameStore';
 import { findCombatVisualPlayerHit, rebuildCombatVisualFrameCache, visualStore } from '../../../store/visualStore';
 import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
@@ -78,6 +83,29 @@ function writeDragHookTargetPosition(
   return true;
 }
 
+function writeDragHookOwnerBasePosition(
+  out: { x: number; y: number; z: number },
+  ownerId: string,
+  fallback: { x: number; y: number; z: number },
+  players: ReturnType<typeof useGameStore.getState>['players'],
+  localPlayer: ReturnType<typeof useGameStore.getState>['localPlayer']
+): boolean {
+  const visualPosition = visualStore.getState().playerPositions.get(ownerId);
+  const owner = localPlayer?.id === ownerId ? localPlayer : players.get(ownerId);
+  const position = visualPosition ?? owner?.position;
+  if (!position) {
+    out.x = fallback.x;
+    out.y = fallback.y;
+    out.z = fallback.z;
+    return false;
+  }
+
+  out.x = position.x;
+  out.y = position.y;
+  out.z = position.z;
+  return true;
+}
+
 function getPointSegmentDistanceSq(
   point: { x: number; y: number; z: number },
   start: { x: number; y: number; z: number },
@@ -147,6 +175,7 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
   const previousPosRef = useRef({ x: 0, y: 0, z: 0 });
   const playerPosRef = useRef({ x: 0, y: 0, z: 0 });
   const ownerVisualPositionRef = useRef({ x: 0, y: 0, z: 0 });
+  const ownerBasePositionRef = useRef({ x: 0, y: 0, z: 0 });
   const targetVisualPositionRef = useRef({ x: 0, y: 0, z: 0 });
   const smoothedSocketRef = useRef(new THREE.Vector3());
   const ropeLagRef = useRef(new THREE.Vector3());
@@ -158,6 +187,7 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
   const shouldRemoveRef = useRef(false);
   const hasHitRef = useRef(false);
   const hookedTargetIdRef = useRef<string | null>(null);
+  const hookedTargetAttachedAtRef = useRef(0);
   
   const removeDragHook = useGameStore(state => state.removeDragHook);
   
@@ -184,6 +214,9 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
       ownerVisualPositionRef.current.x = hook.startPosition.x;
       ownerVisualPositionRef.current.y = hook.startPosition.y;
       ownerVisualPositionRef.current.z = hook.startPosition.z;
+      ownerBasePositionRef.current.x = hook.startPosition.x;
+      ownerBasePositionRef.current.y = hook.startPosition.y;
+      ownerBasePositionRef.current.z = hook.startPosition.z;
       targetVisualPositionRef.current.x = hook.position.x;
       targetVisualPositionRef.current.y = hook.position.y;
       targetVisualPositionRef.current.z = hook.position.z;
@@ -197,6 +230,7 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
       shouldRemoveRef.current = false;
       hasHitRef.current = false;
       hookedTargetIdRef.current = hook.targetId ?? null;
+      hookedTargetAttachedAtRef.current = 0;
       groupRef.current.visible = true;
       hookRef.current.position.set(hook.position.x, hook.position.y, hook.position.z);
     }
@@ -280,6 +314,7 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
         if (getPointSegmentDistanceSq(targetVisualPositionRef.current, previousPosition, curPos) <= latchDistanceSq) {
           hasHitRef.current = true;
           hookedTargetIdRef.current = serverTargetId;
+          hookedTargetAttachedAtRef.current = time * 1000;
           hookStateRef.current = 'retracting';
           curPos.x = targetVisualPositionRef.current.x;
           curPos.y = targetVisualPositionRef.current.y;
@@ -367,6 +402,9 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
     } else {
       // Retracting - move toward player - SAME AS LEFT CLICK
       if (hasLiveAttachedTarget) {
+        if (hookedTargetAttachedAtRef.current <= 0) {
+          hookedTargetAttachedAtRef.current = time * 1000;
+        }
         curPos.x = targetVisualPositionRef.current.x;
         curPos.y = targetVisualPositionRef.current.y;
         curPos.z = targetVisualPositionRef.current.z;
@@ -376,8 +414,34 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
       const toY = pY - curPos.y;
       const toZ = pZ - curPos.z;
       const distSq = toX * toX + toY * toY + toZ * toZ;
+      let shouldReleaseAttachedTarget = false;
+      if (hasLiveAttachedTarget) {
+        const ownerBaseReady = writeDragHookOwnerBasePosition(
+          ownerBasePositionRef.current,
+          hook.ownerId,
+          hook.startPosition,
+          players,
+          localPlayer
+        );
+        const owner = localPlayer?.id === hook.ownerId ? localPlayer : players.get(hook.ownerId);
+        const releaseYaw = hook.launchYaw ?? owner?.lookYaw ?? 0;
+        const forwardX = -Math.sin(releaseYaw);
+        const forwardZ = -Math.cos(releaseYaw);
+        const destinationX = ownerBasePositionRef.current.x + forwardX * HOOKSHOT_DRAG_HOOK_PULL_FRONT_DISTANCE;
+        const destinationZ = ownerBasePositionRef.current.z + forwardZ * HOOKSHOT_DRAG_HOOK_PULL_FRONT_DISTANCE;
+        const destinationDx = curPos.x - destinationX;
+        const destinationDz = curPos.z - destinationZ;
+        const destinationDistSq = destinationDx * destinationDx + destinationDz * destinationDz;
+        const attachedElapsedMs = hookedTargetAttachedAtRef.current > 0
+          ? time * 1000 - hookedTargetAttachedAtRef.current
+          : 0;
+        shouldReleaseAttachedTarget = (
+          ownerBaseReady &&
+          destinationDistSq <= HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE * HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE
+        ) || attachedElapsedMs >= HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS;
+      }
       
-      if (distSq < 0.25) { // 0.5^2 - close enough to player, remove
+      if (shouldReleaseAttachedTarget || (!hasLiveAttachedTarget && distSq <= 0.25)) {
         shouldRemoveRef.current = true;
         groupRef.current.visible = false;
         slot.hook = null;

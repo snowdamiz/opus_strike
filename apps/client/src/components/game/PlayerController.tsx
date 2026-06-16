@@ -1349,6 +1349,18 @@ function shouldApplyReactiveAuthority(
   );
 }
 
+function localControlLookForAuthority(
+  ctx: LocalPlayerFrameContext,
+  localPlayer: Player
+): Pick<Player, 'lookYaw' | 'lookPitch'> {
+  const lookYaw = ctx.cameraControl.refs.yaw.current;
+  const lookPitch = ctx.cameraControl.refs.pitch.current;
+  return {
+    lookYaw: Number.isFinite(lookYaw) ? lookYaw : localPlayer.lookYaw,
+    lookPitch: Number.isFinite(lookPitch) ? lookPitch : localPlayer.lookPitch,
+  };
+}
+
 const AUTHORITY_RESOURCE_EPSILON = 0.01;
 
 function syncBlazeAuthorityMovementAnchor(
@@ -1398,16 +1410,19 @@ function syncBlazeAuthorityMovementAnchor(
   return syncedPlayer;
 }
 
-function runAuthorityPhase(
+export function runAuthorityPhase(
   ctx: LocalPlayerFrameContext,
   localPlayer: Player,
   frameNowMs: number
 ): { localPlayer: Player; authorityApplied: number } {
   const { updateLocalPlayer, resetMovementCommandBuffer } = ctx;
+  const localLook = localControlLookForAuthority(ctx, localPlayer);
   const pendingAuthoritiesBeforeDrain = getPendingSelfMovementAuthorityCount();
   const shouldMeasureAuthorityDrain = MOVEMENT_DIAGNOSTICS_ENABLED && pendingAuthoritiesBeforeDrain > 0;
   const authorityDrainStartedAt = shouldMeasureAuthorityDrain ? performance.now() : 0;
-  const appliedAuthorities = drainSelfMovementAuthorities(localPlayer, frameNowMs);
+  const appliedAuthorities = drainSelfMovementAuthorities(localPlayer, frameNowMs, {
+    visualLookYaw: localLook.lookYaw,
+  });
   if (shouldMeasureAuthorityDrain) {
     recordAuthorityDrainFrame({
       pendingBeforeDrain: pendingAuthoritiesBeforeDrain,
@@ -1447,8 +1462,8 @@ function runAuthorityPhase(
   const updates = {
     position: { ...reactiveAuthority!.state.position },
     velocity: { ...reactiveAuthority!.state.velocity },
-    lookYaw: reactiveAuthority!.authority.lookYaw,
-    lookPitch: reactiveAuthority!.authority.lookPitch,
+    lookYaw: localLook.lookYaw,
+    lookPitch: localLook.lookPitch,
     movement: {
       ...reactiveAuthority!.state.movement,
       grapplePoint: reactiveAuthority!.state.movement.grapplePoint

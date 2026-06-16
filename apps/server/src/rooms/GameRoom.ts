@@ -21,6 +21,7 @@ import {
 } from './visibilityInterest';
 import {
   SERVER_MOVEMENT_SUBSTEPS_PER_TICK,
+  getMovementBacklogTrimCount,
   getMovementCommandDrainDecision,
 } from './movementCommandDrain';
 import {
@@ -106,6 +107,8 @@ import {
   HOOKSHOT_DRAG_HOOK_DAMAGE,
   HOOKSHOT_DRAG_HOOK_MAX_DISTANCE,
   HOOKSHOT_DRAG_HOOK_PULL_FRONT_DISTANCE,
+  HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS,
+  HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE,
   HOOKSHOT_DRAG_HOOK_RETRACT_SPEED,
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
@@ -797,8 +800,6 @@ const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
 };
 const HOOKSHOT_SPEED = 38;
 const DRAG_HOOK_SPEED = 50;
-const HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS = 1250;
-const HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE = 0.32;
 const HOOKSHOT_DRAG_HOOK_PULL_BUMP_ITERATIONS = 3;
 const HOOKSHOT_DRAG_HOOK_PULL_BUMP_SKIN = 0.04;
 const HOOKSHOT_DRAG_HOOK_PULL_MIN_PROGRESS = 0.025;
@@ -10915,8 +10916,10 @@ export class GameRoom extends Room<GameState> {
       authority.metrics.queueLengthAfterTick = authority.pendingCommands.length;
       authority.metrics.commandsProcessedLastTick = processedThisTick;
       authority.metrics.lastAckSeq = authority.lastProcessedSeq;
-      if (processedThisTick > 0 && authority.pendingCommands.length > MOVEMENT_MAX_SERVER_QUEUE / 2) {
-        const stale = Math.max(0, authority.pendingCommands.length - MOVEMENT_MAX_SERVER_QUEUE / 2);
+      const stale = processedThisTick > 0
+        ? getMovementBacklogTrimCount(authority.pendingCommands.length)
+        : 0;
+      if (stale > 0) {
         this.removeOldestPendingCommands(authority, stale);
         authority.metrics.droppedCommands += stale;
         this.markMovementBarrier(player.id, 'epoch_mismatch');
