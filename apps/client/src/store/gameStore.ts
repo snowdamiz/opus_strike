@@ -147,6 +147,7 @@ interface CoreState {
   // Client-side cooldowns
   clientCooldowns: Record<string, number>;
   clientCharges: Record<string, number>;
+  chronosLifelineQueued: boolean;
 
   // Slide visual effects
   slideIntensity: number;
@@ -197,6 +198,7 @@ interface CoreActions {
   setClientCooldown: (abilityId: string, endTime: number) => void;
   setClientCharges: (abilityId: string, charges: number) => void;
   clearClientCooldowns: () => void;
+  setChronosLifelineQueuedHud: (queued: boolean) => void;
   setSlideIntensity: (intensity: number) => void;
 
   // Ghost cleanup
@@ -216,6 +218,14 @@ const HIDDEN_VISIBILITY_STATES = new Set(['hidden', 'last_known', 'audible']);
 
 function shouldKeepPlayerLiveVisual(player: Player): boolean {
   return !HIDDEN_VISIBILITY_STATES.has(player.visibility ?? 'visible');
+}
+
+function shouldKeepChronosLifelineQueued(
+  queued: boolean,
+  previousLocalPlayer: Player | null,
+  nextLocalPlayer: Player | null
+): boolean {
+  return queued && nextLocalPlayer?.heroId === 'chronos' && previousLocalPlayer?.id === nextLocalPlayer.id;
 }
 
 // ============================================================================
@@ -283,6 +293,7 @@ const coreInitialState: CoreState = {
   ultimateEffectEndTime: 0,
   clientCooldowns: {},
   clientCharges: {},
+  chronosLifelineQueued: false,
   slideIntensity: 0,
 };
 
@@ -405,7 +416,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   )),
 
   updateLocalPlayer: (updates) => {
-    const { localPlayer, players } = get();
+    const { localPlayer, players, chronosLifelineQueued } = get();
     if (!localPlayer) return;
 
     const updatedPlayer = { ...localPlayer, ...updates };
@@ -415,11 +426,12 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     set({
       localPlayer: updatedPlayer,
       players: updatedPlayers,
+      chronosLifelineQueued: shouldKeepChronosLifelineQueued(chronosLifelineQueued, localPlayer, updatedPlayer),
     });
   },
 
   setLocalPlayer: (player) => {
-    const { players } = get();
+    const { players, localPlayer, chronosLifelineQueued } = get();
     const updatedPlayers = new Map(players);
     updatedPlayers.set(player.id, player);
 
@@ -427,11 +439,12 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       localPlayer: player,
       players: updatedPlayers,
       playerId: player.id,
+      chronosLifelineQueued: shouldKeepChronosLifelineQueued(chronosLifelineQueued, localPlayer, player),
     });
   },
 
   setPlayers: (players) => {
-    const { playerId, playerPings } = get();
+    const { playerId, playerPings, localPlayer: previousLocalPlayer, chronosLifelineQueued } = get();
     const localPlayer = playerId ? players.get(playerId) ?? null : null;
     const nextPlayerPings = new Map<string, number | null>();
 
@@ -441,7 +454,12 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       }
     });
 
-    set({ players, localPlayer, playerPings: nextPlayerPings });
+    set({
+      players,
+      localPlayer,
+      playerPings: nextPlayerPings,
+      chronosLifelineQueued: shouldKeepChronosLifelineQueued(chronosLifelineQueued, previousLocalPlayer, localPlayer),
+    });
 
     // Update visual store for bulk player updates (initial sync)
     players.forEach((player, id) => {
@@ -454,15 +472,17 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   },
 
   updatePlayer: (playerId, player) => {
-    const { players, localPlayer } = get();
+    const { players, localPlayer, chronosLifelineQueued } = get();
     if (players.get(playerId) === player) return;
 
     const updatedPlayers = new Map(players);
     updatedPlayers.set(playerId, player);
+    const nextLocalPlayer = playerId === localPlayer?.id ? player : localPlayer;
 
     set({
       players: updatedPlayers,
-      localPlayer: playerId === localPlayer?.id ? player : localPlayer,
+      localPlayer: nextLocalPlayer,
+      chronosLifelineQueued: shouldKeepChronosLifelineQueued(chronosLifelineQueued, localPlayer, nextLocalPlayer),
     });
 
     // Update visual store for individual player updates
@@ -627,6 +647,10 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   )),
 
   clearClientCooldowns: () => set({ clientCooldowns: {}, clientCharges: {} }),
+
+  setChronosLifelineQueuedHud: (queued) => set((state) => (
+    state.chronosLifelineQueued === queued ? state : { chronosLifelineQueued: queued }
+  )),
 
   setSlideIntensity: (intensity) => set((state) => state.slideIntensity === intensity ? state : { slideIntensity: intensity }),
 

@@ -470,7 +470,6 @@ export interface BotCombatPlanInput {
   blackboard: BotBlackboard;
   skill: BotSkillProfile;
   primaryRange: number;
-  preferredRange: number;
   protectedEnemyIds: Set<string>;
   focusTargetIds?: Set<string>;
 }
@@ -496,21 +495,21 @@ export const BOT_TACTICS_INTERVAL_MS = 420;
 export const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {
   easy: {
     thinkIntervalMs: 360,
-    reactionMs: 360,
-    turnRateRadians: 4.8,
-    aimLeadSeconds: 0.05,
-    aimErrorRadians: 0.14,
-    aimJitterRefreshMs: [480, 900],
-    aimFireToleranceScale: 1.4,
-    fireChance: 0.48,
-    secondaryChance: 0.28,
+    reactionMs: 430,
+    turnRateRadians: 4.2,
+    aimLeadSeconds: 0.02,
+    aimErrorRadians: 0.18,
+    aimJitterRefreshMs: [420, 860],
+    aimFireToleranceScale: 1.12,
+    fireChance: 0.4,
+    secondaryChance: 0.22,
     fireDecisionMs: [360, 720],
     burstDurationMs: [180, 420],
     abilityCadenceMs: [1500, 2600],
     ultimateCadenceMs: [2200, 3800],
-    preferredRangeScale: 0.92,
-    aggression: 0.75,
-    retreatHealthRatio: 0.38,
+    preferredRangeScale: 1.04,
+    aggression: 0.62,
+    retreatHealthRatio: 0.46,
     routeDangerWeight: 0.45,
     blockedEdgeTtlMs: 1400,
     pathExpansionLimit: 18,
@@ -525,21 +524,21 @@ export const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {
   },
   normal: {
     thinkIntervalMs: 220,
-    reactionMs: 210,
-    turnRateRadians: 8.5,
-    aimLeadSeconds: 0.16,
-    aimErrorRadians: 0.075,
-    aimJitterRefreshMs: [360, 720],
-    aimFireToleranceScale: 1.18,
-    fireChance: 0.68,
-    secondaryChance: 0.46,
-    fireDecisionMs: [260, 540],
-    burstDurationMs: [240, 620],
+    reactionMs: 280,
+    turnRateRadians: 7.2,
+    aimLeadSeconds: 0.1,
+    aimErrorRadians: 0.105,
+    aimJitterRefreshMs: [320, 680],
+    aimFireToleranceScale: 1,
+    fireChance: 0.56,
+    secondaryChance: 0.36,
+    fireDecisionMs: [300, 620],
+    burstDurationMs: [200, 540],
     abilityCadenceMs: [1100, 2100],
     ultimateCadenceMs: [1600, 3000],
-    preferredRangeScale: 1,
-    aggression: 1,
-    retreatHealthRatio: 0.3,
+    preferredRangeScale: 1.08,
+    aggression: 0.84,
+    retreatHealthRatio: 0.38,
     routeDangerWeight: 0.82,
     blockedEdgeTtlMs: 2400,
     pathExpansionLimit: 36,
@@ -554,21 +553,21 @@ export const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {
   },
   hard: {
     thinkIntervalMs: 150,
-    reactionMs: 120,
-    turnRateRadians: 12.5,
-    aimLeadSeconds: 0.24,
-    aimErrorRadians: 0.035,
+    reactionMs: 180,
+    turnRateRadians: 9.5,
+    aimLeadSeconds: 0.17,
+    aimErrorRadians: 0.06,
     aimJitterRefreshMs: [260, 520],
-    aimFireToleranceScale: 1.06,
-    fireChance: 0.84,
-    secondaryChance: 0.62,
-    fireDecisionMs: [180, 360],
-    burstDurationMs: [300, 760],
+    aimFireToleranceScale: 0.98,
+    fireChance: 0.72,
+    secondaryChance: 0.5,
+    fireDecisionMs: [220, 440],
+    burstDurationMs: [260, 680],
     abilityCadenceMs: [760, 1550],
     ultimateCadenceMs: [1200, 2400],
-    preferredRangeScale: 1.08,
-    aggression: 1.18,
-    retreatHealthRatio: 0.24,
+    preferredRangeScale: 1.12,
+    aggression: 1.02,
+    retreatHealthRatio: 0.31,
     routeDangerWeight: 1.18,
     blockedEdgeTtlMs: 3600,
     pathExpansionLimit: 64,
@@ -1544,6 +1543,7 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
   const candidates: BotIntentCandidate[] = [];
   const healthRatio = bot.health / Math.max(1, bot.maxHealth);
   const nearestEnemyDistance = blackboard.nearestEnemy?.distance ?? Infinity;
+  const localEnemyPressure = Math.max(0, blackboard.nearbyEnemyCount - blackboard.nearbyAllyCount);
   const assignmentBoost = (job: BotTacticsJob, amount: number): number => assignment?.job === job ? amount + assignment.priority * 0.22 : 0;
   const role = assignment?.role ?? getDefaultRole(bot, blackboard.teamTactics.roleDemand);
 
@@ -1551,8 +1551,11 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
     addIntent(candidates, 'carry_flag_home', 10000, blackboard.ownBasePosition, 'bot is carrying enemy flag');
   }
 
-  if (healthRatio < skill.retreatHealthRatio && nearestEnemyDistance < 24 && !blackboard.enemyCarrier) {
-    addIntent(candidates, 'retreat', 820 + (1 - healthRatio) * 520, blackboard.ownBasePosition, 'low health under pressure');
+  const pressuredRetreatHealthRatio = skill.retreatHealthRatio + localEnemyPressure * 0.08;
+  if (healthRatio < pressuredRetreatHealthRatio && nearestEnemyDistance < 24 && !blackboard.enemyCarrier) {
+    addIntent(candidates, 'retreat', 820 + (1 - healthRatio) * 520 + localEnemyPressure * 90, blackboard.ownBasePosition, 'low health under pressure');
+  } else if (localEnemyPressure >= 2 && healthRatio < 0.72 && nearestEnemyDistance < 20 && !blackboard.enemyCarrier) {
+    addIntent(candidates, 'regroup', 620 + localEnemyPressure * 80 + (0.72 - healthRatio) * 260, blackboard.nearestAlly?.position ?? blackboard.ownBasePosition, 'outnumbered local fight');
   }
 
   if (blackboard.enemyCarrier) {
@@ -1683,6 +1686,29 @@ export function getBotEngageRange(heroId: HeroId | '', skill: BotSkillProfile, p
   return Math.min(
     BOT_AWARENESS_RANGE,
     Math.max(18, primaryRange * (1.05 + skill.aggression * 0.18), preferredRange + 8)
+  );
+}
+
+export function getBotMinimumCombatRange(heroId: HeroId | '', skill: BotSkillProfile): number {
+  const preferredRange = getBotPreferredCombatRange(heroId) * skill.preferredRangeScale;
+  switch (heroId) {
+    case 'blaze':
+      return Math.max(6.5, preferredRange * 0.56);
+    case 'phantom':
+      return Math.max(11, preferredRange * 0.68);
+    case 'hookshot':
+      return Math.max(9.5, preferredRange * 0.64);
+    default:
+      return Math.max(8.5, preferredRange * 0.62);
+  }
+}
+
+export function getBotCloseCombatRange(heroId: HeroId | '', skill: BotSkillProfile, primaryRange = 18): number {
+  const preferredRange = getBotPreferredCombatRange(heroId) * skill.preferredRangeScale;
+  const usefulRangeScale = heroId === 'blaze' ? 0.58 : 0.72;
+  return Math.min(
+    primaryRange * 0.92,
+    Math.max(preferredRange + 4, preferredRange + primaryRange * usefulRangeScale * 0.25)
   );
 }
 
@@ -2018,6 +2044,8 @@ export function planBotRoute(input: BotRoutePlanInput): BotRoutePlan {
 export function chooseBotCombatPlan(input: BotCombatPlanInput): BotCombatPlan {
   let bestTarget: BotKnownEnemy | null = null;
   let bestScore = -Infinity;
+  const healthRatio = input.bot.health / Math.max(1, input.bot.maxHealth);
+  const localEnemyPressure = Math.max(0, input.blackboard.nearbyEnemyCount - input.blackboard.nearbyAllyCount);
   for (const enemy of input.blackboard.enemies) {
     if (enemy.distance > BOT_AWARENESS_RANGE && !enemy.player.hasFlag) continue;
     const enemyHealthRatio = enemy.player.health / Math.max(1, enemy.player.maxHealth);
@@ -2028,11 +2056,14 @@ export function chooseBotCombatPlan(input: BotCombatPlanInput): BotCombatPlan {
     if (input.intent.type === 'fight_local_enemy' && enemy.player.id === input.blackboard.nearestEnemy?.player.id) score += 130;
     if (enemy.player.id === input.blackboard.weakestEnemy?.player.id) score += 90;
     if (enemy.hasLineOfSight) score += 120;
+    if (enemy.visible && !enemy.hasLineOfSight && !enemy.player.hasFlag) score -= 80;
     if (input.protectedEnemyIds.has(enemy.player.id)) score -= 260;
     if (input.focusTargetIds?.has(enemy.player.id)) score += input.skill.focusFireWeight * 120;
     score += (1 - enemyHealthRatio) * 180;
     score += Math.max(0, 28 - enemy.distance) * 4.5;
     score -= Math.max(0, enemy.distance - input.primaryRange) * (enemy.player.hasFlag ? 2 : 6);
+    if (!enemy.visible && !enemy.player.hasFlag) score -= 80;
+    if (localEnemyPressure > 0 && !enemy.player.hasFlag) score -= localEnemyPressure * 34;
     score -= enemy.memoryAgeMs / 1000 * 28;
     score *= input.skill.aggression;
     if (score > bestScore || (score === bestScore && enemy.player.id < (bestTarget?.player.id ?? '~'))) {
@@ -2050,15 +2081,25 @@ export function chooseBotCombatPlan(input: BotCombatPlanInput): BotCombatPlan {
     };
   }
 
-  const stance: BotCombatPlan['stance'] = input.intent.type === 'retreat'
+  const minimumRange = getBotMinimumCombatRange(input.bot.heroId, input.skill);
+  const closeRange = getBotCloseCombatRange(input.bot.heroId, input.skill, input.primaryRange);
+  const cautiousUnderPressure = (localEnemyPressure >= 2 && healthRatio < 0.78) || healthRatio < input.skill.retreatHealthRatio + 0.1;
+  const canSafelyClose = bestTarget.player.hasFlag
+    || (
+      bestTarget.visible &&
+      bestTarget.hasLineOfSight &&
+      !cautiousUnderPressure &&
+      localEnemyPressure <= 1
+    );
+  const stance: BotCombatPlan['stance'] = input.intent.type === 'retreat' || (cautiousUnderPressure && bestTarget.distance < closeRange + 4)
     ? 'retreat'
     : input.intent.type === 'escort_allied_carrier'
       ? 'escort'
       : input.bot.hasFlag
         ? 'kite'
-        : bestTarget.distance < input.preferredRange - 2
+        : bestTarget.distance < minimumRange
           ? 'kite'
-          : bestTarget.distance > input.preferredRange + 4
+          : bestTarget.distance > closeRange && canSafelyClose
             ? 'close'
             : 'strafe';
 
@@ -2397,7 +2438,8 @@ export function composeBotMovementDirection(
   routePlan: BotRoutePlan,
   combatTarget: BotPlayerSnapshot | null,
   blackboard: BotBlackboard,
-  skill: BotSkillProfile
+  skill: BotSkillProfile,
+  combatPlan: Pick<BotCombatPlan, 'stance'> | null = null
 ): PlainVec2 | null {
   const objectiveDir = direction2DFromTo(bot.position, routePlan.steeringTarget);
   let move: PlainVec2 = objectiveDir ? { ...objectiveDir } : { x: 0, z: 0 };
@@ -2413,16 +2455,21 @@ export function composeBotMovementDirection(
     const strafe = { x: -toEnemy.z * brain.strafeDirection, z: toEnemy.x * brain.strafeDirection };
     const distance = distance2D(bot.position, combatTarget.position);
     const preferredRange = getBotPreferredCombatRange(bot.heroId) * skill.preferredRangeScale;
+    const minimumRange = getBotMinimumCombatRange(bot.heroId, skill);
+    const stance = combatPlan?.stance
+      ?? (intent.type === 'retreat' ? 'retreat' : bot.hasFlag ? 'kite' : 'strafe');
     let rangeMove: PlainVec2 = { x: 0, z: 0 };
 
-    if (distance > preferredRange + 3) {
+    if (stance === 'retreat' || distance < minimumRange || (stance === 'kite' && distance < preferredRange + 3)) {
+      rangeMove = awayFromEnemy;
+    } else if (stance === 'close' && distance > preferredRange + 1) {
       rangeMove = toEnemy;
-    } else if (distance < Math.max(2.2, preferredRange - 2)) {
+    } else if (stance === 'escort' && distance < preferredRange - 1) {
       rangeMove = awayFromEnemy;
     }
 
     if (intent.type === 'carry_flag_home' || intent.type === 'return_dropped_friendly_flag') {
-      move = mix2D(move, 1.35, rangeMove, 0.45);
+      move = mix2D(move, 1.35, rangeMove, stance === 'kite' || stance === 'retreat' ? 0.85 : 0.45);
       move = mix2D(move, 1, strafe, 0.25);
     } else if (intent.type === 'retreat') {
       move = mix2D(move, 1.2, awayFromEnemy, 0.65);
@@ -2431,9 +2478,13 @@ export function composeBotMovementDirection(
       move = mix2D(move, 0.95, rangeMove, 0.55);
       move = mix2D(move, 1, strafe, 0.35);
     } else if (intent.type === 'intercept_enemy_carrier') {
-      move = mix2D(toEnemy, 1.25, strafe, 0.18);
+      move = stance === 'close'
+        ? mix2D(toEnemy, 1.05, strafe, 0.26)
+        : mix2D(rangeMove, 0.8, strafe, 0.72);
     } else {
-      move = mix2D(rangeMove, 1, strafe, distance < preferredRange + 6 ? 0.7 : 0.28);
+      const rangeWeight = stance === 'close' ? 0.95 : stance === 'kite' || stance === 'retreat' ? 1.15 : 0.35;
+      const strafeWeight = distance < preferredRange + 6 ? 0.82 : 0.52;
+      move = mix2D(rangeMove, rangeWeight, strafe, strafeWeight);
     }
   }
 
