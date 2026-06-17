@@ -27,6 +27,8 @@ import {
   type SampledRemoteTransform,
 } from './visualStore';
 
+const TEST_REMOTE_TRANSFORM_RECEIVED_AT_MS = 10_000;
+
 function makeTarget(): SampledRemoteTransform {
   return {
     position: { x: 0, y: 0, z: 0 },
@@ -42,17 +44,21 @@ function makeTarget(): SampledRemoteTransform {
 }
 
 function addSnapshot(serverTime: number, x: number): void {
-  addRemoteTransformSnapshot('remote-a', {
-    serverTick: serverTime / 50,
-    serverTime,
-    position: { x, y: 1, z: 0 },
-    velocity: { x: 1, y: 0, z: 0 },
-    lookYaw: x,
-    lookPitch: 0,
-    movementBits: x,
-    wallRunSide: 0,
-    movementEpoch: 1,
-  });
+  addRemoteTransformSnapshot(
+    'remote-a',
+    {
+      serverTick: serverTime / 50,
+      serverTime,
+      position: { x, y: 1, z: 0 },
+      velocity: { x: 1, y: 0, z: 0 },
+      lookYaw: x,
+      lookPitch: 0,
+      movementBits: x,
+      wallRunSide: 0,
+      movementEpoch: 1,
+    },
+    TEST_REMOTE_TRANSFORM_RECEIVED_AT_MS
+  );
 }
 
 function makePlayer(id: string, team: Team, x: number, z: number, state: Player['state'] = 'alive'): Player {

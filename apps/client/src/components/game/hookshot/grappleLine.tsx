@@ -1,7 +1,8 @@
 import React, { useRef } from 'react';
 import * as THREE from 'three';
 import { HOOKSHOT_GRAPPLE_EXTENSION_SPEED } from '@voxel-strike/physics';
-import { useGameStore, type GrappleLineData } from '../../../store/gameStore';
+import { useGameStore } from '../../../store/gameStore';
+import type { GrappleLineData } from '../../../store/types';
 import { HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';
 import { writeOwnerVisualPosition } from './ownerPosition';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';

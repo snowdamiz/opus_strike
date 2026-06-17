@@ -13,7 +13,7 @@ import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
 import { TopNavIconButton } from './TopNavIconButton';
 import { PhantomLogo } from './PhantomLogo';
-import { useUISounds } from '../../hooks/useAudio';
+import { useUISounds } from '../../hooks/useUiAudio';
 import { useServerLatencyProbe } from '../../hooks/useServerLatencyProbe';
 import { config } from '../../config/environment';
 import {

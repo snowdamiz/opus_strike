@@ -1,6 +1,7 @@
 import * as SelectPrimitive from '@radix-ui/react-select';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useGameStore, type UserStats } from '../../store/gameStore';
+import { useGameStore } from '../../store/gameStore';
+import type { UserStats } from '../../store/types';
 import { config } from '../../config/environment';
 import { getLevelProgress } from '@voxel-strike/shared';
 import { lamportsToSolDisplay } from '../../utils/wagerPayments';

@@ -100,6 +100,21 @@ export interface PlayerDamagedEvent {
   targetHeroId?: string | null;
 }
 
+// Shared wire-format constants for packed player transform replication.
+export const TRANSFORM_POSITION_SCALE = 100;
+export const TRANSFORM_VELOCITY_SCALE = 100;
+export const TRANSFORM_ANGLE_SCALE = 10000;
+
+export const MOVEMENT_BIT_GROUNDED = 1 << 0;
+export const MOVEMENT_BIT_SPRINTING = 1 << 1;
+export const MOVEMENT_BIT_CROUCHING = 1 << 2;
+export const MOVEMENT_BIT_SLIDING = 1 << 3;
+export const MOVEMENT_BIT_WALL_RUNNING = 1 << 4;
+export const MOVEMENT_BIT_GRAPPLING = 1 << 5;
+export const MOVEMENT_BIT_JETPACKING = 1 << 6;
+export const MOVEMENT_BIT_GLIDING = 1 << 7;
+export const MOVEMENT_BIT_CHRONOS_AEGIS = 1 << 8;
+
 export type PackedPlayerTransform = [
   netId: number,
   px: number,

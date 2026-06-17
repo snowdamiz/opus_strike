@@ -25,23 +25,25 @@ import { createPracticeAbilityStates } from '../../contexts/practiceAbilities';
 import { useGameStore } from '../../store/gameStore';
 import { removePlayerVisualState, visualStore } from '../../store/visualStore';
 import {
-  createLocalVisualInterpolationState,
   deriveServerCombatInput,
   getContinuingHeroHoldInput,
   getExclusiveHeroInput,
   movementClassForTrace,
-  recordLocalVisualFixedStep,
   runInputPhase,
   runAuthorityPhase,
   runPredictionAndCommandPhase,
-  sampleLocalVisualInterpolatedPosition,
   shouldForceImmediateCombatCommand,
-  smoothTerrainVisualY,
   withCastActionFields,
   type CommandScheduleReason,
   type LocalPlayerFrameContext,
   type ServerCombatInput,
 } from './PlayerController';
+import {
+  createLocalVisualInterpolationState,
+  recordLocalVisualFixedStep,
+  sampleLocalVisualInterpolatedPosition,
+  smoothTerrainVisualY,
+} from './localVisualInterpolation';
 
 function ref<T>(current: T): { current: T } {
   return { current };

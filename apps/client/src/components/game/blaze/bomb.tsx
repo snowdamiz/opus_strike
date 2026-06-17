@@ -10,7 +10,8 @@ import {
   BLAZE_BOMB_SPLASH_RADIUS,
   getBlazeMeteorPath,
 } from '@voxel-strike/shared';
-import { useGameStore, type BombData } from '../../../store/gameStore';
+import { useGameStore } from '../../../store/gameStore';
+import type { BombData } from '../../../store/types';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';

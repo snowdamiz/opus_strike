@@ -7,7 +7,8 @@ import {
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_RADIUS,
 } from '@voxel-strike/shared';
-import { useGameStore, type RocketData } from '../../../store/gameStore';
+import { useGameStore } from '../../../store/gameStore';
+import type { RocketData } from '../../../store/types';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';

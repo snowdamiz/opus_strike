@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
-import { useUISounds } from '../../hooks/useAudio';
+import { useUISounds } from '../../hooks/useUiAudio';
 import {
   ALL_HERO_IDS,
   DEFAULT_GAME_CONFIG,
@@ -13,7 +13,7 @@ import {
   type BotDifficulty,
   type HeroId,
 } from '@voxel-strike/shared';
-import type { LobbyPlayer } from '../../store/gameStore';
+import type { LobbyPlayer } from '../../store/types';
 import { FACTIONS, HERO_COLORS } from '../../styles/colorTokens';
 import { deserializeWagerPaymentTransaction, lamportsToSolDisplay } from '../../utils/wagerPayments';
 import { RankIcon, getRankForStats } from './RankBadge';

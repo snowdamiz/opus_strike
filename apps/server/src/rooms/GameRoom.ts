@@ -25,6 +25,14 @@ import {
   getMovementCommandDrainDecision,
 } from './movementCommandDrain';
 import {
+  createTeamSpawnAssignments,
+  type TeamSpawnParticipant,
+} from './spawnAssignments';
+import {
+  MATCH_CANCEL_DISCONNECT_DELAY_MS,
+  MATCH_START_CANCEL_TIMEOUT_MS,
+} from './matchStartTiming';
+import {
   DEFAULT_GAME_CONFIG,
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_VOXEL_MAP_SIZE_ID,
@@ -48,8 +56,6 @@ import {
   FLAG_CAPTURE_RADIUS,
   FLAG_PICKUP_RADIUS,
   POWERUP_ABILITY_ATTACK_SPEED_MULTIPLIER,
-  POWERUP_BUFF_DURATION_MS,
-  POWERUP_HEALTH_RESTORE_RATIO,
   POWERUP_MOVEMENT_SPEED_MULTIPLIER,
   ULTIMATE_CHARGE_PER_CAPTURE,
   ULTIMATE_CHARGE_PER_KILL,
@@ -138,6 +144,15 @@ import {
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
   VOID_RAY_CHARGE_TIME,
+  MOVEMENT_BIT_CHRONOS_AEGIS,
+  MOVEMENT_BIT_CROUCHING,
+  MOVEMENT_BIT_GLIDING,
+  MOVEMENT_BIT_GRAPPLING,
+  MOVEMENT_BIT_GROUNDED,
+  MOVEMENT_BIT_JETPACKING,
+  MOVEMENT_BIT_SLIDING,
+  MOVEMENT_BIT_SPRINTING,
+  MOVEMENT_BIT_WALL_RUNNING,
   MOVEMENT_PROTOCOL_VERSION,
   MOVEMENT_SUBSTEP_SECONDS,
   MOVEMENT_MAX_PACKET_COMMANDS,
@@ -168,6 +183,9 @@ import {
   isTeamHeroAvailable,
   pickAvailableTeamHero,
   calculateFalloffDamage,
+  TRANSFORM_ANGLE_SCALE,
+  TRANSFORM_POSITION_SCALE,
+  TRANSFORM_VELOCITY_SCALE,
 } from '@voxel-strike/shared';
 import type { 
   AbilityCastOriginHint,
@@ -195,7 +213,6 @@ import type {
   PlayerDamagedEvent,
   PlayerDeathEvent,
   PowerupCollectedMessage,
-  PowerupStateMessage,
   PlayerTransformsV2Message,
   PlayerVitalsAbilitySnapshot,
   PlayerVitalsMessage,
@@ -246,6 +263,7 @@ import {
   persistCompletedMatch,
   type MatchParticipantSnapshot,
 } from '../persistence/matchPersistence';
+import { normalizePlayerReportReason } from '../reports/playerReportReason';
 import { serializeReportMetadata } from '../reports/playerReportService';
 import {
   AntiCheatEvidenceStore,
@@ -290,7 +308,6 @@ import {
 import {
   BOT_AWARENESS_RANGE,
   BOT_CLOSE_REVEAL_RANGE,
-  BOT_LOS_SAMPLE_STEP,
   BOT_TACTICS_INTERVAL_MS,
   buildBotBlackboard,
   buildTeamTactics,
@@ -311,7 +328,6 @@ import {
   type BotAbilityPlan,
   type BotBlackboard,
   type BotBrain,
-  type BotFlagSnapshot,
   type BotPlayerSnapshot,
   type BotRecentDamageSource,
   type BotRouteGraphAdapter,
@@ -321,6 +337,75 @@ import {
   type PlainVec2,
   type PlainVec3,
 } from './bot-ai';
+import { LineOfSightCache } from './lineOfSightCache';
+import {
+  DEV_BOT_LOOK_HOLD_MS,
+  DEV_BOT_LOOK_PITCH,
+  DEV_BOT_SKILL_HOLD_MS,
+  resolveDevBotLookDirection,
+  resolveDevBotSkillOverride,
+  type DevBotLookOverride,
+  type DevBotSkillOverride,
+  type DevBotSkillSlot,
+} from './devBotCommands';
+import {
+  clamp,
+  direction2DFromTo,
+  distance2D,
+  distance3D,
+  forward2D,
+  getCoarseEventPosition,
+  getForwardVector,
+  hashString,
+  normalize2D,
+  normalizeAngle,
+  normalizeHorizontalPlain,
+  randomBetween,
+  randomSigned,
+  rotateAngleToward,
+  vec3SchemaToPlain,
+  worldDirectionToLocalMove,
+} from './roomMath';
+import {
+  createEmptyBotInput,
+  createEmptyPlayerInput,
+  resetPlayerMovementRuntime,
+  stopBotMovement,
+} from './playerRuntime';
+import {
+  applyPowerupPickup,
+  buildPowerupStateMessage,
+  getPowerupBoostUntil,
+  getPowerupPickupState,
+  hasPowerupBoost,
+  resetPowerupPickupStates,
+  type MapPowerupPickup,
+  type PowerupPickupRuntimeState,
+} from './powerups';
+import {
+  getDefaultPublicMovementVitals,
+  haveVitalsChanged,
+} from './playerVitals';
+import {
+  getWinningTeam,
+  hasTeamReachedScoreLimit,
+  isCaptureTheFlagMode,
+  isTeamDeathmatchMode,
+  shouldEndGameAfterRound,
+} from './gameModeRules';
+import {
+  CTF_TEAMS,
+  getBotFlagSnapshots,
+  getCarriedFlagCountForPlayer,
+  getEnemyTeam,
+  getFlagByTeam,
+  getFlagSync,
+  resetFlagToBase,
+  resetFlagsFromManifest,
+  setFlagCarried,
+  setFlagDroppedAtPlayer,
+  syncCarriedFlagPosition,
+} from './ctfFlags';
 
 // Import extracted ability handlers
 import {
@@ -364,17 +449,6 @@ interface JoinOptions {
   movementProtocolVersion?: number;
 }
 
-const PLAYER_REPORT_REASONS = new Set([
-  'cheating',
-  'aimbot',
-  'wallhack',
-  'speed_hack',
-  'movement_exploit',
-  'ability_exploit',
-  'match_exploit',
-  'other',
-]);
-
 interface BotAssignment {
   playerId: string;
   playerName: string;
@@ -389,46 +463,6 @@ interface SpawnPosition {
   x: number;
   y: number;
   z: number;
-}
-
-export interface TeamSpawnParticipant {
-  playerId: string;
-  team: Team;
-}
-
-export interface TeamSpawnAssignment {
-  playerId: string;
-  team: Team;
-  spawnIndex: number;
-}
-
-function normalizeSpawnOffset(offset: number, spawnPointCount: number): number {
-  if (spawnPointCount <= 0) return 0;
-  return ((Math.floor(offset) % spawnPointCount) + spawnPointCount) % spawnPointCount;
-}
-
-export function createTeamSpawnAssignments(
-  participants: readonly TeamSpawnParticipant[],
-  spawnPointCounts: Record<Team, number>,
-  offsetByTeam: Partial<Record<Team, number>> = {}
-): TeamSpawnAssignment[] {
-  const nextTeamIndex: Record<Team, number> = { red: 0, blue: 0 };
-  const assignments: TeamSpawnAssignment[] = [];
-
-  for (const participant of participants) {
-    const spawnPointCount = Math.max(0, Math.floor(spawnPointCounts[participant.team] ?? 0));
-    if (spawnPointCount === 0) continue;
-
-    const offset = normalizeSpawnOffset(offsetByTeam[participant.team] ?? 0, spawnPointCount);
-    const teamIndex = nextTeamIndex[participant.team]++;
-    assignments.push({
-      playerId: participant.playerId,
-      team: participant.team,
-      spawnIndex: (offset + teamIndex) % spawnPointCount,
-    });
-  }
-
-  return assignments;
 }
 
 type PendingPlayerPing = { nonce: string; sentAt: number };
@@ -537,10 +571,6 @@ interface BlazeBurnEffect {
   sourceDirection: PlainVec3 | null;
 }
 
-interface PowerupPickupRuntimeState {
-  availableAt: number;
-}
-
 interface ServerMovementAuthorityState {
   pendingCommands: MovementCommandQueue;
   lastProcessedSeq: number;
@@ -620,7 +650,7 @@ interface PlayerVitalsReplicationState {
 interface BotFrameContext {
   snapshots: BotPlayerSnapshot[];
   snapshotById: Map<string, BotPlayerSnapshot>;
-  flags: Record<Team, BotFlagSnapshot>;
+  flags: ReturnType<typeof getBotFlagSnapshots>;
   teamTactics: BotTeamTacticsByTeam;
   protectedEnemyIdsByTeam: Record<Team, Set<string>>;
   visibleEnemyIdsByBot: Map<string, Set<string>>;
@@ -716,59 +746,12 @@ type PlayerPressState = {
   ultimate: boolean;
 };
 type ChronosLifelineMode = 'allies' | 'self';
-type DevBotSkillSlot = 'primary' | 'secondary' | 'ability1' | 'ability2' | 'ultimate';
-type DevBotLookDirection = 'up' | 'down';
-interface DevBotSkillOverride {
-  slot: DevBotSkillSlot;
-  skillKey: string;
-  expiresAt: number;
-}
-interface DevBotLookOverride {
-  direction: DevBotLookDirection;
-  pitch: number;
-  expiresAt: number;
-}
 
 const playerPressState = new Map<string, PlayerPressState>();
-const DEV_BOT_SKILL_HOLD_MS = 10_000;
-const DEV_BOT_LOOK_HOLD_MS = 10_000;
-const DEV_BOT_LOOK_PITCH: Record<DevBotLookDirection, number> = {
-  up: Math.PI / 2,
-  down: -Math.PI / 2,
-};
-const DEV_BOT_SKILL_ALIASES: Record<string, { slot: DevBotSkillSlot; skillKey: string }> = {
-  lmb: { slot: 'primary', skillKey: 'lmb' },
-  m1: { slot: 'primary', skillKey: 'lmb' },
-  mouse1: { slot: 'primary', skillKey: 'lmb' },
-  leftmouse: { slot: 'primary', skillKey: 'lmb' },
-  mouseleft: { slot: 'primary', skillKey: 'lmb' },
-  primary: { slot: 'primary', skillKey: 'lmb' },
-  fire: { slot: 'primary', skillKey: 'lmb' },
-  attack: { slot: 'primary', skillKey: 'lmb' },
-  rmb: { slot: 'secondary', skillKey: 'rmb' },
-  m2: { slot: 'secondary', skillKey: 'rmb' },
-  mouse2: { slot: 'secondary', skillKey: 'rmb' },
-  rightmouse: { slot: 'secondary', skillKey: 'rmb' },
-  mouseright: { slot: 'secondary', skillKey: 'rmb' },
-  secondary: { slot: 'secondary', skillKey: 'rmb' },
-  altfire: { slot: 'secondary', skillKey: 'rmb' },
-  shield: { slot: 'secondary', skillKey: 'rmb' },
-  e: { slot: 'ability1', skillKey: 'e' },
-  ability1: { slot: 'ability1', skillKey: 'e' },
-  q: { slot: 'ability2', skillKey: 'q' },
-  ability2: { slot: 'ability2', skillKey: 'q' },
-  f: { slot: 'ultimate', skillKey: 'f' },
-  ult: { slot: 'ultimate', skillKey: 'f' },
-  ultimate: { slot: 'ultimate', skillKey: 'f' },
-};
 const BLAZE_FLAMETHROWER_CONE_DOT = Math.cos(BLAZE_FLAMETHROWER_CONE_HALF_ANGLE);
 const PLAYER_PING_INTERVAL_MS = 3000;
 const PLAYER_PING_TIMEOUT_MS = 10000;
 const MAX_REPORTED_PLAYER_PING_MS = 999;
-const LOS_CACHE_TTL_MS = 180;
-const TRANSFORM_POSITION_SCALE = 100;
-const TRANSFORM_VELOCITY_SCALE = 100;
-const TRANSFORM_ANGLE_SCALE = 10000;
 const PLAYER_VITALS_INTERVAL_MS = 125;
 const PLAYER_VITALS_RECONCILE_INTERVAL_MS = 2500;
 const TRANSFORM_HEARTBEAT_INTERVAL_MS = 250;
@@ -777,19 +760,9 @@ const TRANSFORM_HIGH_RELEVANCE_DISTANCE_SQ = 48 * 48;
 const RECENT_COMBAT_TRANSFORM_MS = 650;
 const RECENT_COMBAT_INTEREST_MS = 900;
 const PLAYER_INTEREST_INTERVAL_MS = 200;
-const FLAG_CARRIER_APPROX_GRID_METERS = 12;
 const MATCH_SNAPSHOT_DRIFT_SYNC_INTERVAL_MS = 2000;
 const LOW_FREQUENCY_STATE_INTERVAL_MS = 250;
 const ROOM_LOAD_SAMPLE_COUNT = 240;
-const MOVEMENT_BIT_GROUNDED = 1 << 0;
-const MOVEMENT_BIT_SPRINTING = 1 << 1;
-const MOVEMENT_BIT_CROUCHING = 1 << 2;
-const MOVEMENT_BIT_SLIDING = 1 << 3;
-const MOVEMENT_BIT_WALL_RUNNING = 1 << 4;
-const MOVEMENT_BIT_GRAPPLING = 1 << 5;
-const MOVEMENT_BIT_JETPACKING = 1 << 6;
-const MOVEMENT_BIT_GLIDING = 1 << 7;
-const MOVEMENT_BIT_CHRONOS_AEGIS = 1 << 8;
 const CHRONOS_AEGIS_SHIELD_TRANSFORM_SCALE = 255;
 const OBJECTIVE_SUPPRESSION_MS = 650;
 const MAX_SECURITY_EVENTS = 2000;
@@ -820,32 +793,6 @@ const ROOT_BLOCKED_MOVEMENT_ABILITIES = new Set([
   'blaze_rocketjump',
   'chronos_ascendant_paradox',
 ]);
-const DEFAULT_MATCH_START_CANCEL_TIMEOUT_MS = 60_000;
-const MATCH_CANCEL_DISCONNECT_DELAY_MS = 750;
-
-function readPositiveIntegerEnvMs(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-
-  const value = Number(raw);
-  return Number.isInteger(value) && value > 0 ? value : fallback;
-}
-
-const MATCH_START_CANCEL_TIMEOUT_MS = readPositiveIntegerEnvMs(
-  'MATCH_START_CANCEL_TIMEOUT_MS',
-  readPositiveIntegerEnvMs('MATCH_CONNECT_TIMEOUT_MS', DEFAULT_MATCH_START_CANCEL_TIMEOUT_MS)
-);
-
-function resolveDevBotSkillOverride(skillKey: string): Omit<DevBotSkillOverride, 'expiresAt'> | null {
-  const normalized = skillKey.trim().toLowerCase().replace(/[\s_-]+/g, '');
-  const keyWithoutDomPrefix = normalized.startsWith('key') ? normalized.slice(3) : normalized;
-  return DEV_BOT_SKILL_ALIASES[keyWithoutDomPrefix] ?? null;
-}
-
-function resolveDevBotLookDirection(direction: string): DevBotLookDirection | null {
-  const normalized = direction.trim().toLowerCase();
-  return normalized === 'up' || normalized === 'down' ? normalized : null;
-}
 
 export class GameRoom extends Room<GameState> {
   maxClients = DEFAULT_GAME_CONFIG.maxPlayers;
@@ -986,8 +933,7 @@ export class GameRoom extends Room<GameState> {
   private readonly deferredBotIdsScratch: string[] = [];
   private alivePlayers: Player[] = [];
   private alivePlayersByTeam: Record<Team, Player[]> = { red: [], blue: [] };
-  private losCache = new Map<string, { result: boolean; expiresAt: number }>();
-  private readonly lineOfSightSamplePoint: PlainVec3 = { x: 0, y: 0, z: 0 };
+  private readonly lineOfSightCache = new LineOfSightCache();
   private preferredBotHeroes: Map<string, HeroId> = new Map();
   private readonly rateLimiter = new MessageRateLimiter();
   private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
@@ -1004,7 +950,7 @@ export class GameRoom extends Room<GameState> {
     isDevelopmentMode: () => this.isDevelopmentMode(),
     isPlayerDevImmune: (playerId) => this.devImmunePlayers.has(playerId),
     getRespawnDelayMs: () => this.config.respawnTimeSeconds * 1000,
-    vec3ToPlain: (value) => this.vec3SchemaToPlain(value),
+    vec3ToPlain: vec3SchemaToPlain,
     normalize3D: (value) => this.normalize3D(value),
     getPlayerEyePosition: (player) => this.getPlayerEyePosition(player),
     shouldDamageBypassChronosAegis: (damageType, context) => this.shouldDamageBypassChronosAegis(damageType, context),
@@ -1023,7 +969,7 @@ export class GameRoom extends Room<GameState> {
     recordMatchKill: (killer, victim) => this.recordMatchKill(killer, victim),
     recordMatchAssist: (assister, victim) => this.recordMatchAssist(assister, victim),
     resetPlayerLifeRuntime: (player, deathAt) => this.resetPlayerLifeRuntime(player, deathAt),
-    isCaptureTheFlagMode: () => this.isCaptureTheFlagMode(),
+    isCaptureTheFlagMode: () => isCaptureTheFlagMode(this.gameplayMode),
     dropFlag: (player) => this.dropFlag(player),
     scoreTeamDeathmatchKill: (killer, victim) => this.scoreTeamDeathmatchKill(killer, victim),
     removeNpcPlayer: (playerId) => this.removeNpcPlayer(playerId),
@@ -1201,7 +1147,7 @@ export class GameRoom extends Room<GameState> {
     this.state.mapSize = normalizeVoxelMapSizeId(options.mapSize);
     this.refreshMapManifest();
     loggers.room.info('Map seed', this.state.mapSeed);
-    this.resetFlags();
+    resetFlagsFromManifest(this.state, this.getMapManifest());
     this.createBotsFromAssignments(options.botAssignments || []);
     this.updateMetadata();
     this.startMatchStartCancelTimer();
@@ -1966,7 +1912,7 @@ export class GameRoom extends Room<GameState> {
     this.updatePowerupPickups(now);
 
     // Update CTF objective interactions after movement.
-    if (this.isCaptureTheFlagMode()) {
+    if (isCaptureTheFlagMode(this.gameplayMode)) {
       this.updateCTFObjectives(now);
     }
 
@@ -2006,91 +1952,36 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private resetPowerupPickupStates(availableAt = 0): void {
-    this.powerupPickupStates.clear();
-    for (const pickup of this.mapManifest?.gameplay.powerups ?? []) {
-      this.powerupPickupStates.set(pickup.id, { availableAt });
-    }
-  }
-
-  private getPowerupPickupState(pickupId: string): PowerupPickupRuntimeState {
-    let state = this.powerupPickupStates.get(pickupId);
-    if (!state) {
-      state = { availableAt: 0 };
-      this.powerupPickupStates.set(pickupId, state);
-    }
-    return state;
-  }
-
-  private buildPowerupStateMessage(): PowerupStateMessage {
-    return {
-      serverTime: this.state.serverTime || Date.now(),
-      pickups: (this.mapManifest?.gameplay.powerups ?? []).map((pickup) => ({
-        pickupId: pickup.id,
-        availableAt: this.getPowerupPickupState(pickup.id).availableAt,
-      })),
-    };
-  }
-
-  private getPowerupBoostUntil(playerId: string, now = Date.now()): number | null {
-    const expiresAt = this.powerupBoostUntil.get(playerId) ?? 0;
-    if (expiresAt <= now) {
-      this.powerupBoostUntil.delete(playerId);
-      return null;
-    }
-    return expiresAt;
-  }
-
-  private hasPowerupBoost(player: Player, now = Date.now()): boolean {
-    return this.getPowerupBoostUntil(player.id, now) !== null;
-  }
-
   private collectPowerupPickup(
     player: Player,
-    pickup: NonNullable<VoxelMapManifest['gameplay']['powerups']>[number],
+    pickup: MapPowerupPickup,
     now: number
   ): boolean {
-    let healthRestored: number | undefined;
-    let expiresAt: number | null = null;
+    const result = applyPowerupPickup({
+      player,
+      pickup,
+      now,
+      pickupStates: this.powerupPickupStates,
+      powerupBoostUntil: this.powerupBoostUntil,
+    });
+    if (!result) return false;
 
-    if (pickup.kind === 'health_pack') {
-      const missingHealth = Math.max(0, player.maxHealth - player.health);
-      if (missingHealth <= 0) return false;
-      const healAmount = Math.max(1, Math.round(player.maxHealth * POWERUP_HEALTH_RESTORE_RATIO));
-      healthRestored = Math.min(missingHealth, healAmount);
-      player.health = Math.min(player.maxHealth, player.health + healthRestored);
+    if (result.healing) {
       this.broadcastPlayerHealed(player, {
         sourceId: player.id,
         abilityId: 'health_pack',
-        sourcePosition: this.vec3SchemaToPlain(player.position),
+        sourcePosition: result.healing.position,
         targets: [{
           targetId: player.id,
-          amount: healthRestored,
-          newHealth: player.health,
-          position: this.vec3SchemaToPlain(player.position),
+          amount: result.healing.amount,
+          newHealth: result.healing.newHealth,
+          position: result.healing.position,
         }],
         timestamp: now,
       });
-    } else {
-      const boostExpiresAt = now + POWERUP_BUFF_DURATION_MS;
-      expiresAt = boostExpiresAt;
-      this.powerupBoostUntil.set(player.id, boostExpiresAt);
     }
 
-    const state = this.getPowerupPickupState(pickup.id);
-    state.availableAt = now + Math.max(0, pickup.respawnSeconds * 1000);
-
-    const payload = {
-      pickupId: pickup.id,
-      kind: pickup.kind,
-      playerId: player.id,
-      position: pickup.position,
-      availableAt: state.availableAt,
-      expiresAt,
-      healthRestored,
-      serverTime: now,
-    } satisfies PowerupCollectedMessage;
-    this.broadcastPowerupCollected(player, payload);
+    this.broadcastPowerupCollected(player, result.message);
     return true;
   }
 
@@ -2100,9 +1991,9 @@ export class GameRoom extends Room<GameState> {
 
     for (const player of this.alivePlayers) {
       for (const pickup of pickups) {
-        const state = this.getPowerupPickupState(pickup.id);
+        const state = getPowerupPickupState(this.powerupPickupStates, pickup.id);
         if (state.availableAt > now) continue;
-        if (this.distance2D(player.position, pickup.position) > pickup.radius + PLAYER_RADIUS) continue;
+        if (distance2D(player.position, pickup.position) > pickup.radius + PLAYER_RADIUS) continue;
         if (this.collectPowerupPickup(player, pickup, now)) break;
       }
     }
@@ -2438,23 +2329,6 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private getDefaultPublicMovementVitals(): PlayerVitalsSnapshot['movement'] {
-    return {
-      isGrounded: true,
-      isSprinting: false,
-      isCrouching: false,
-      isSliding: false,
-      slideTimeRemaining: 0,
-      isWallRunning: false,
-      wallRunSide: null,
-      isGrappling: false,
-      grapplePoint: null,
-      isJetpacking: false,
-      jetpackFuel: 0,
-      isGliding: false,
-    };
-  }
-
   private getBlazeBurnUntil(playerId: string): number | null {
     const burn = this.blazeBurnEffects.get(playerId);
     if (!burn || burn.ticksRemaining <= 0) return null;
@@ -2494,7 +2368,7 @@ export class GameRoom extends Room<GameState> {
       maxHealth: player.maxHealth,
       ultimateCharge: player.ultimateCharge,
       onFireUntil: this.getBlazeBurnUntil(id),
-      powerupBoostUntil: this.getPowerupBoostUntil(id, now),
+      powerupBoostUntil: getPowerupBoostUntil(this.powerupBoostUntil, id, now),
       hasFlag: player.hasFlag,
       movement: {
         isGrounded: player.movement.isGrounded,
@@ -2578,7 +2452,7 @@ export class GameRoom extends Room<GameState> {
       onFireUntil: null,
       powerupBoostUntil: null,
       hasFlag: false,
-      movement: this.getDefaultPublicMovementVitals(),
+      movement: getDefaultPublicMovementVitals(),
       abilities: {},
       stats: {
         kills: player.kills,
@@ -2626,92 +2500,6 @@ export class GameRoom extends Room<GameState> {
     return vitals;
   }
 
-  private haveVitalsChanged(previous: PlayerVitalsSnapshot | undefined, next: PlayerVitalsSnapshot): boolean {
-    if (!previous) return true;
-
-    return (
-      previous.name !== next.name ||
-      previous.netId !== next.netId ||
-      previous.team !== next.team ||
-      previous.heroId !== next.heroId ||
-      previous.state !== next.state ||
-      previous.isReady !== next.isReady ||
-      previous.isBot !== next.isBot ||
-      previous.botDifficulty !== next.botDifficulty ||
-      previous.botProfileId !== next.botProfileId ||
-      previous.visibility !== next.visibility ||
-      previous.health !== next.health ||
-      previous.maxHealth !== next.maxHealth ||
-      Math.round(previous.ultimateCharge) !== Math.round(next.ultimateCharge) ||
-      previous.onFireUntil !== next.onFireUntil ||
-      previous.powerupBoostUntil !== next.powerupBoostUntil ||
-      previous.hasFlag !== next.hasFlag ||
-      (next.state !== 'alive' && this.haveMovementVitalsChanged(previous.movement, next.movement)) ||
-      this.haveAbilityVitalsChanged(previous.abilities, next.abilities) ||
-      this.haveStatVitalsChanged(previous.stats, next.stats) ||
-      previous.respawnTime !== next.respawnTime ||
-      previous.spawnProtectionUntil !== next.spawnProtectionUntil
-    );
-  }
-
-  private haveMovementVitalsChanged(
-    previous: PlayerVitalsSnapshot['movement'],
-    next: PlayerVitalsSnapshot['movement']
-  ): boolean {
-    return (
-      previous.isGrounded !== next.isGrounded ||
-      previous.isSprinting !== next.isSprinting ||
-      previous.isCrouching !== next.isCrouching ||
-      previous.isSliding !== next.isSliding ||
-      previous.slideTimeRemaining !== next.slideTimeRemaining ||
-      previous.isWallRunning !== next.isWallRunning ||
-      previous.wallRunSide !== next.wallRunSide ||
-      previous.isGrappling !== next.isGrappling ||
-      previous.isJetpacking !== next.isJetpacking ||
-      previous.jetpackFuel !== next.jetpackFuel ||
-      previous.isGliding !== next.isGliding
-    );
-  }
-
-  private haveAbilityVitalsChanged(
-    previous: PlayerVitalsSnapshot['abilities'],
-    next: PlayerVitalsSnapshot['abilities']
-  ): boolean {
-    const previousKeys = Object.keys(previous);
-    const nextKeys = Object.keys(next);
-    if (previousKeys.length !== nextKeys.length) return true;
-
-    for (const abilityId of nextKeys) {
-      const previousAbility = previous[abilityId];
-      const nextAbility = next[abilityId];
-      if (!previousAbility || !nextAbility) return true;
-      if (
-        previousAbility.abilityId !== nextAbility.abilityId ||
-        previousAbility.cooldownUntil !== nextAbility.cooldownUntil ||
-        previousAbility.charges !== nextAbility.charges ||
-        previousAbility.isActive !== nextAbility.isActive ||
-        previousAbility.activatedAt !== nextAbility.activatedAt
-      ) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  private haveStatVitalsChanged(
-    previous: PlayerVitalsSnapshot['stats'],
-    next: PlayerVitalsSnapshot['stats']
-  ): boolean {
-    return (
-      previous.kills !== next.kills ||
-      previous.deaths !== next.deaths ||
-      previous.assists !== next.assists ||
-      previous.flagCaptures !== next.flagCaptures ||
-      previous.flagReturns !== next.flagReturns
-    );
-  }
-
   private buildMatchSnapshot(): MatchSnapshotMessage {
     return {
       tick: this.state.tick,
@@ -2723,8 +2511,8 @@ export class GameRoom extends Room<GameState> {
       mapSize: this.state.mapSize as VoxelMapSizeId,
       redScore: this.state.redTeam.score,
       blueScore: this.state.blueTeam.score,
-      redFlag: this.getFlagSync('red'),
-      blueFlag: this.getFlagSync('blue'),
+      redFlag: getFlagSync(this.state, 'red'),
+      blueFlag: getFlagSync(this.state, 'blue'),
       roundTimeRemaining: this.state.roundTimeRemaining,
       phaseEndTime: this.state.phaseEndTime || null,
       gameClockFrozen: this.devGameClockFrozen,
@@ -3258,14 +3046,6 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private getCoarseEventPosition(position: PlainVec3): PlainVec3 {
-    return {
-      x: Math.round(position.x / FLAG_CARRIER_APPROX_GRID_METERS) * FLAG_CARRIER_APPROX_GRID_METERS,
-      y: Math.round(position.y),
-      z: Math.round(position.z / FLAG_CARRIER_APPROX_GRID_METERS) * FLAG_CARRIER_APPROX_GRID_METERS,
-    };
-  }
-
   private broadcastPlayerKilled(victim: Player, killer: Player | null, payload: PlayerDeathEvent): void {
     const now = this.state.serverTime || Date.now();
     const exactPosition = payload.position;
@@ -3286,7 +3066,7 @@ export class GameRoom extends Room<GameState> {
 
       this.sendTracked(client, 'playerKilled', {
         ...payload,
-        position: canKnowVictim ? payload.position : this.getCoarseEventPosition(exactPosition),
+        position: canKnowVictim ? payload.position : getCoarseEventPosition(exactPosition),
         velocity: canKnowVictim ? payload.velocity : undefined,
         sourcePosition: canKnowKiller ? payload.sourcePosition : undefined,
         sourceDirection: canKnowKiller ? payload.sourceDirection : undefined,
@@ -3327,7 +3107,7 @@ export class GameRoom extends Room<GameState> {
     };
 
     if (this.shouldIncludeJoinPosition(recipient, target)) {
-      payload.position = this.vec3SchemaToPlain(target.position);
+      payload.position = vec3SchemaToPlain(target.position);
     }
 
     this.sendTracked(client, 'playerJoined', payload);
@@ -3337,7 +3117,11 @@ export class GameRoom extends Room<GameState> {
     const recipient = this.state.players.get(client.sessionId) ?? null;
     const matchSnapshot = this.buildMatchSnapshot();
     this.sendTracked(client, 'matchSnapshot', matchSnapshot);
-    this.sendTracked(client, 'powerupState', this.buildPowerupStateMessage());
+    this.sendTracked(client, 'powerupState', buildPowerupStateMessage(
+      this.state.serverTime || Date.now(),
+      this.mapManifest,
+      this.powerupPickupStates
+    ));
     this.sendTracked(client, 'playerVitals', {
       tick: this.state.tick,
       serverTime: this.state.serverTime,
@@ -3674,7 +3458,7 @@ export class GameRoom extends Room<GameState> {
             frameContext
           );
           const reconcileDue = now - (vitalsState.reconcileAt.get(id) ?? 0) >= PLAYER_VITALS_RECONCILE_INTERVAL_MS;
-          if (forceVitals || reconcileDue || this.haveVitalsChanged(vitalsState.signatures.get(id), vitals)) {
+          if (forceVitals || reconcileDue || haveVitalsChanged(vitalsState.signatures.get(id), vitals)) {
             vitalsState.signatures.set(id, vitals);
             vitalsState.reconcileAt.set(id, now);
             vitalsPlayers.push(vitals);
@@ -3823,29 +3607,12 @@ export class GameRoom extends Room<GameState> {
   private updateRoundEnd() {
     if (this.state.phaseEndTime && Date.now() >= this.state.phaseEndTime) {
       // Check if game should end
-      if (this.shouldEndGameAfterRound()) {
+      if (shouldEndGameAfterRound(this.gameplayMode, this.state.redTeam.score, this.state.blueTeam.score, this.config.scoreToWin)) {
         this.endGame();
       } else {
         this.startHeroSelect();
       }
     }
-  }
-
-  private isCaptureTheFlagMode(): boolean {
-    return this.gameplayMode === 'capture_the_flag';
-  }
-
-  private isTeamDeathmatchMode(): boolean {
-    return this.gameplayMode === 'team_deathmatch';
-  }
-
-  private hasTeamReachedScoreLimit(): boolean {
-    return this.state.redTeam.score >= this.config.scoreToWin
-      || this.state.blueTeam.score >= this.config.scoreToWin;
-  }
-
-  private shouldEndGameAfterRound(): boolean {
-    return this.hasTeamReachedScoreLimit() || this.isTeamDeathmatchMode();
   }
 
   private createMovementAuthorityState(): ServerMovementAuthorityState {
@@ -4002,11 +3769,6 @@ export class GameRoom extends Room<GameState> {
     return isRecord(data) ? sanitizeShortText(data.requestId, 96) : null;
   }
 
-  private normalizePlayerReportReason(value: unknown): string {
-    const normalized = sanitizeShortText(value, 64)?.toLowerCase().replace(/[^a-z0-9_]+/g, '_') ?? '';
-    return PLAYER_REPORT_REASONS.has(normalized) ? normalized : 'cheating';
-  }
-
   private sendPlayerReportResult(
     client: Client,
     requestId: string | null,
@@ -4058,7 +3820,7 @@ export class GameRoom extends Room<GameState> {
       fail('Reports require authenticated player accounts');
       return;
     }
-    const reason = this.normalizePlayerReportReason(data.reason);
+    const reason = normalizePlayerReportReason(data.reason);
     const details = sanitizeShortText(data.details, 1000);
     const signal = this.antiCheat?.record({
       eventType: 'player_report.cheating',
@@ -4769,8 +4531,8 @@ export class GameRoom extends Room<GameState> {
   private updateLastSafeMovement(player: Player, sequence: number, acceptedAt = Date.now()): void {
     const authority = this.getMovementAuthority(player.id);
     authority.lastSafe = {
-      position: this.vec3SchemaToPlain(player.position),
-      velocity: this.vec3SchemaToPlain(player.velocity),
+      position: vec3SchemaToPlain(player.position),
+      velocity: vec3SchemaToPlain(player.velocity),
       acceptedAt,
       sequence,
     };
@@ -4787,7 +4549,7 @@ export class GameRoom extends Room<GameState> {
       movementEpoch: authority.movementEpoch,
       reason,
       position: this.state.players.get(playerId)
-        ? this.vec3SchemaToPlain(this.state.players.get(playerId)!.position)
+        ? vec3SchemaToPlain(this.state.players.get(playerId)!.position)
         : undefined,
     });
   }
@@ -4804,7 +4566,7 @@ export class GameRoom extends Room<GameState> {
       userId: this.getPlayerUserId(player.id),
       movementEpoch: authority.movementEpoch,
       reason: team,
-      position: this.vec3SchemaToPlain(player.position),
+      position: vec3SchemaToPlain(player.position),
       detail: {
         team: player.team,
         phase: this.state.phase,
@@ -4840,7 +4602,7 @@ export class GameRoom extends Room<GameState> {
       movementEpoch: authority.movementEpoch,
       reason: messageType,
       position: this.state.players.get(playerId)
-        ? this.vec3SchemaToPlain(this.state.players.get(playerId)!.position)
+        ? vec3SchemaToPlain(this.state.players.get(playerId)!.position)
         : undefined,
     });
   }
@@ -4855,7 +4617,7 @@ export class GameRoom extends Room<GameState> {
       userId: this.getPlayerUserId(player.id),
       movementEpoch: authority.movementEpoch,
       reason,
-      position: this.vec3SchemaToPlain(player.position),
+      position: vec3SchemaToPlain(player.position),
     });
   }
 
@@ -4970,7 +4732,7 @@ export class GameRoom extends Room<GameState> {
       userId: this.getPlayerUserId(playerId),
       movementEpoch: authority.movementEpoch,
       reason,
-      position: player ? this.vec3SchemaToPlain(player.position) : undefined,
+      position: player ? vec3SchemaToPlain(player.position) : undefined,
       detail: {
         preserveQueuedCommands: options.preserveQueuedCommands === true,
         queueLength: authority.pendingCommands.length,
@@ -5117,7 +4879,7 @@ export class GameRoom extends Room<GameState> {
         userId: this.getPlayerUserId(client.sessionId),
         movementEpoch: authority.movementEpoch,
         reason: 'movementCommands',
-        position: this.vec3SchemaToPlain(player.position),
+        position: vec3SchemaToPlain(player.position),
         detail: {
           protocolVersion: packet?.protocolVersion,
           commandCount: Array.isArray(packet?.commands) ? packet.commands.length : null,
@@ -5135,7 +4897,7 @@ export class GameRoom extends Room<GameState> {
           userId: this.getPlayerUserId(client.sessionId),
           movementEpoch: authority.movementEpoch,
           reason: 'command_rate_limit',
-          position: this.vec3SchemaToPlain(player.position),
+          position: vec3SchemaToPlain(player.position),
           detail: {
             commandsInWindow: authority.commandsInWindow,
             limit: MOVEMENT_MAX_COMMANDS_PER_SECOND,
@@ -5162,7 +4924,7 @@ export class GameRoom extends Room<GameState> {
         userId: this.getPlayerUserId(client.sessionId),
         movementEpoch: authority.movementEpoch,
         reason: 'queue_overflow',
-        position: this.vec3SchemaToPlain(player.position),
+        position: vec3SchemaToPlain(player.position),
         detail: {
           overflow,
           maxQueue: MOVEMENT_MAX_SERVER_QUEUE,
@@ -5264,7 +5026,7 @@ export class GameRoom extends Room<GameState> {
   ): void {
     const travelMs = Math.max(
       0,
-      (this.distance3D(startPosition, target) / HOOKSHOT_GRAPPLE_EXTENSION_SPEED) * 1000
+      (distance3D(startPosition, target) / HOOKSHOT_GRAPPLE_EXTENSION_SPEED) * 1000
     );
     this.hookshotGrapples.set(player.id, {
       castId,
@@ -5286,7 +5048,7 @@ export class GameRoom extends Room<GameState> {
 
     if (!grapple.swing) {
       grapple.swing = createHookshotSwingState(
-        this.vec3SchemaToPlain(player.position),
+        vec3SchemaToPlain(player.position),
         grapple.target,
         player.movement.isGrounded
       );
@@ -5306,10 +5068,10 @@ export class GameRoom extends Room<GameState> {
     const grapple = this.hookshotGrapples.get(player.id);
     if (!grapple || now < grapple.attachAt || !grapple.swing) return;
 
-    const previousPosition = this.vec3SchemaToPlain(player.position);
+    const previousPosition = vec3SchemaToPlain(player.position);
     const result = stepHookshotSwing({
       position: previousPosition,
-      velocity: this.vec3SchemaToPlain(player.velocity),
+      velocity: vec3SchemaToPlain(player.velocity),
       swing: grapple.swing,
       input,
       lookYaw: player.lookYaw,
@@ -5383,8 +5145,8 @@ export class GameRoom extends Room<GameState> {
     const heroStats = getHeroStats(heroId);
     const collisionWorld = this.getMovementCollisionWorld(now);
     const result = simulateSharedMovement({
-      position: this.vec3SchemaToPlain(player.position),
-      velocity: this.vec3SchemaToPlain(player.velocity),
+      position: vec3SchemaToPlain(player.position),
+      velocity: vec3SchemaToPlain(player.velocity),
       movement: {
         isGrounded: player.movement.isGrounded,
         isSprinting: player.movement.isSprinting,
@@ -5408,7 +5170,7 @@ export class GameRoom extends Room<GameState> {
       deltaTime: dt,
       terrain: this.movementTerrain,
       collisionWorld,
-      flagCarrier: this.isCaptureTheFlagMode() && player.hasFlag,
+      flagCarrier: isCaptureTheFlagMode(this.gameplayMode) && player.hasFlag,
       activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
       chronosAscendantActive: this.isChronosAscendantActive(player),
     });
@@ -5424,8 +5186,8 @@ export class GameRoom extends Room<GameState> {
       serverTime: now,
       ackSeq: authority.lastProcessedSeq,
       movementEpoch: authority.movementEpoch,
-      position: this.vec3SchemaToPlain(player.position),
-      velocity: this.vec3SchemaToPlain(player.velocity),
+      position: vec3SchemaToPlain(player.position),
+      velocity: vec3SchemaToPlain(player.velocity),
       lookYaw: player.lookYaw,
       lookPitch: player.lookPitch,
       movement: {
@@ -5452,7 +5214,7 @@ export class GameRoom extends Room<GameState> {
       rootedUntil: this.isPlayerRooted(player.id, now)
         ? this.playerRootedUntil.get(player.id)
         : undefined,
-      powerupBoostUntil: this.getPowerupBoostUntil(player.id, now),
+      powerupBoostUntil: getPowerupBoostUntil(this.powerupBoostUntil, player.id, now),
     };
     this.sendTracked(client, 'selfMovementAuthority', payload);
     if (authority.lastAuthoritySentAt > 0) {
@@ -5548,13 +5310,13 @@ export class GameRoom extends Room<GameState> {
 
     const result = advanceMovementShadowSimulation({
       state: authority.shadow,
-      playerPosition: this.vec3SchemaToPlain(player.position),
-      playerVelocity: this.vec3SchemaToPlain(player.velocity),
+      playerPosition: vec3SchemaToPlain(player.position),
+      playerVelocity: vec3SchemaToPlain(player.velocity),
       playerMovement: this.playerMovementSnapshot(player),
       heroStats: getHeroStats(heroId),
       input,
       terrain: this.movementTerrain,
-      flagCarrier: this.isCaptureTheFlagMode() && player.hasFlag,
+      flagCarrier: isCaptureTheFlagMode(this.gameplayMode) && player.hasFlag,
       activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
       chronosAscendantActive: this.isChronosAscendantActive(player),
       proposedPosition,
@@ -5654,7 +5416,7 @@ export class GameRoom extends Room<GameState> {
         targetId: target.id,
         amount,
         newHealth: target.health,
-        position: this.vec3SchemaToPlain(target.position),
+        position: vec3SchemaToPlain(target.position),
       });
     }
 
@@ -5665,7 +5427,7 @@ export class GameRoom extends Room<GameState> {
       this.broadcastPlayerHealed(caster, {
         sourceId: caster.id,
         abilityId: 'chronos_lifeline_conduit',
-        sourcePosition: this.vec3SchemaToPlain(caster.position),
+        sourcePosition: vec3SchemaToPlain(caster.position),
         targets: healedTargets,
         timestamp: now,
       });
@@ -5724,9 +5486,9 @@ export class GameRoom extends Room<GameState> {
     if (!hint) return fallbackOrigin;
 
     const origin = hint.origin;
-    const playerCenter = this.vec3SchemaToPlain(player.position);
-    const distanceFromFallback = this.distance3D(origin, fallbackOrigin);
-    const distanceFromCenter = this.distance3D(origin, playerCenter);
+    const playerCenter = vec3SchemaToPlain(player.position);
+    const distanceFromFallback = distance3D(origin, fallbackOrigin);
+    const distanceFromCenter = distance3D(origin, playerCenter);
     const verticalFromCenter = Math.abs(origin.y - playerCenter.y);
 
     if (
@@ -5763,7 +5525,7 @@ export class GameRoom extends Room<GameState> {
   ): PlainVec3 {
     const resolved = resolveAbilitySocket({ abilityId, side: launchSide });
     if (!resolved) {
-      return this.vec3SchemaToPlain(player.position);
+      return vec3SchemaToPlain(player.position);
     }
 
     const fallbackOrigin = calculatePlayerSocketPosition(
@@ -5838,7 +5600,7 @@ export class GameRoom extends Room<GameState> {
     maxDistance: number,
     abilityId: 'hookshot_basic_attack' | 'hookshot_heavy_attack'
   ): { startPosition: PlainVec3; aimDirection: PlainVec3 } {
-    const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
+    const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
     const startPosition = this.getAbilitySocketCastOrigin(player, abilityId, launchSide);
     const aimOrigin = this.getHookshotAimOrigin(player);
     const aimPoint = this.raycastTerrain(aimOrigin, lookDirection, maxDistance)
@@ -5857,7 +5619,7 @@ export class GameRoom extends Room<GameState> {
 
   private resolveHookshotGrappleTarget(player: Player): PlainVec3 | null {
     const aimOrigin = this.getHookshotAimOrigin(player);
-    const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
+    const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
     const directHit = this.raycastTerrain(aimOrigin, lookDirection, GRAPPLE_MAX_DISTANCE);
     if (directHit) return directHit;
 
@@ -5872,8 +5634,8 @@ export class GameRoom extends Room<GameState> {
   }
 
   private resolveHookshotAnchorWall(player: Player): { startPosition: PlainVec3; direction: PlainVec3 } {
-    const forward = this.forward2D(player.lookYaw);
-    const normalized = this.normalize2D(forward) ?? { x: 0, z: -1 };
+    const forward = forward2D(player.lookYaw);
+    const normalized = normalize2D(forward) ?? { x: 0, z: -1 };
     const groundY = this.getProceduralGroundY({
       x: player.position.x,
       y: player.position.y + 2,
@@ -6009,7 +5771,7 @@ export class GameRoom extends Room<GameState> {
       this.markMovementBarrier(target.id, 'root', { preserveQueuedCommands: true });
       rootedTargets.push({
         targetId: target.id,
-        position: this.vec3SchemaToPlain(target.position),
+        position: vec3SchemaToPlain(target.position),
         rootUntil,
       });
     }
@@ -6038,21 +5800,21 @@ export class GameRoom extends Room<GameState> {
     aegisHit?: ChronosAegisSkillHit;
   } {
     const castId = this.nextBlazeCastId(player.id, 'blaze_rocket', this.blazeRocketIdCounter++);
-    const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
+    const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
     const aimOrigin = this.getBlazeAimOrigin(player);
     const startPosition = this.getAbilitySocketCastOrigin(player, 'blaze_rocket');
     const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, BLAZE_ROCKET_AIM_DISTANCE);
     const targetHit = this.findTargetHitInAimCone(player, attack.range, attack.coneDot, attack.collisionRadius ?? 0);
     const targetPoint = targetHit?.hit.targetPoint ?? null;
-    const terrainDistance = terrainHit ? this.distance3D(aimOrigin, terrainHit) : Infinity;
-    const targetDistance = targetPoint ? this.distance3D(aimOrigin, targetPoint) : Infinity;
+    const terrainDistance = terrainHit ? distance3D(aimOrigin, terrainHit) : Infinity;
+    const targetDistance = targetPoint ? distance3D(aimOrigin, targetPoint) : Infinity;
     const fallbackImpact = this.addScaled3D(aimOrigin, lookDirection, BLAZE_ROCKET_AIM_DISTANCE);
     const intendedImpactPosition = targetPoint && targetDistance <= terrainDistance
       ? targetPoint
       : terrainHit ?? fallbackImpact;
     const intendedImpactDistance = Math.min(
       BLAZE_ROCKET_AIM_DISTANCE,
-      this.distance3D(aimOrigin, intendedImpactPosition)
+      distance3D(aimOrigin, intendedImpactPosition)
     );
     const aegisHit = this.getChronosAegisSkillHit(player, aimOrigin, lookDirection, intendedImpactDistance, {
       projectileRadius: this.getChronosAegisCollisionRadiusForAttack(attack),
@@ -6065,7 +5827,7 @@ export class GameRoom extends Room<GameState> {
     }) ?? lookDirection;
     const travelMs = Math.max(
       60,
-      Math.min(3000, (this.distance3D(startPosition, impactPosition) / BLAZE_ROCKET_SPEED) * 1000)
+      Math.min(3000, (distance3D(startPosition, impactPosition) / BLAZE_ROCKET_SPEED) * 1000)
     );
 
     return {
@@ -6103,7 +5865,7 @@ export class GameRoom extends Room<GameState> {
       playerId: player.id,
       abilityId: 'blaze_rocket',
       castId: rocket.castId,
-      position: this.vec3SchemaToPlain(player.position),
+      position: vec3SchemaToPlain(player.position),
       startPosition: rocket.startPosition,
       targetPosition: rocket.impactPosition,
       impactPosition: rocket.impactPosition,
@@ -6135,14 +5897,14 @@ export class GameRoom extends Room<GameState> {
     aimDirection: PlainVec3;
   } {
     const castId = this.nextPhantomCastId(player.id, 'chronos_verdant_pulse');
-    const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
+    const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
     const aimOrigin = this.getChronosAimOrigin(player);
     const socketPosition = this.getAbilitySocketCastOrigin(player, 'chronos_verdant_pulse');
     const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, CHRONOS_VERDANT_PULSE_AIM_DISTANCE);
     const targetHit = this.findTargetHitInAimCone(player, attack.range, attack.coneDot, attack.collisionRadius ?? 0);
     const targetPoint = targetHit?.hit.targetPoint ?? null;
-    const terrainDistance = terrainHit ? this.distance3D(aimOrigin, terrainHit) : Infinity;
-    const targetDistance = targetPoint ? this.distance3D(aimOrigin, targetPoint) : Infinity;
+    const terrainDistance = terrainHit ? distance3D(aimOrigin, terrainHit) : Infinity;
+    const targetDistance = targetPoint ? distance3D(aimOrigin, targetPoint) : Infinity;
     const fallbackAimPoint = this.addScaled3D(aimOrigin, lookDirection, CHRONOS_VERDANT_PULSE_AIM_DISTANCE);
     const aimPoint = targetPoint && targetDistance <= terrainDistance
       ? targetPoint
@@ -6176,7 +5938,7 @@ export class GameRoom extends Room<GameState> {
       playerId: player.id,
       abilityId: 'chronos_verdant_pulse',
       castId: pulse.castId,
-      position: this.vec3SchemaToPlain(player.position),
+      position: vec3SchemaToPlain(player.position),
       startPosition: pulse.startPosition,
       aimDirection: pulse.aimDirection,
       velocity: {
@@ -6196,13 +5958,13 @@ export class GameRoom extends Room<GameState> {
 
   private resolveBlazeBombTarget(player: Player): PlainVec3 {
     const aimOrigin = this.getBlazeAimOrigin(player);
-    const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
+    const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
     const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, BLAZE_BOMB_MAX_RANGE);
     let targetPosition = terrainHit ?? this.addScaled3D(aimOrigin, lookDirection, BLAZE_BOMB_MAX_RANGE);
 
-    const horizontalDistance = this.distance2D(aimOrigin, targetPosition);
+    const horizontalDistance = distance2D(aimOrigin, targetPosition);
     if (horizontalDistance < BLAZE_BOMB_MIN_RANGE) {
-      const forward = this.forward2D(player.lookYaw);
+      const forward = forward2D(player.lookYaw);
       targetPosition = {
         x: aimOrigin.x + forward.x * BLAZE_BOMB_MIN_RANGE,
         y: targetPosition.y,
@@ -6237,7 +5999,7 @@ export class GameRoom extends Room<GameState> {
       { projectileRadius: this.getChronosAegisCollisionRadiusForAttack(attack) }
     );
     const impactProgress = aegisHit
-      ? Math.sqrt(this.clamp(aegisHit.distance / Math.max(0.0001, meteorPath.distance), 0, 1))
+      ? Math.sqrt(clamp(aegisHit.distance / Math.max(0.0001, meteorPath.distance), 0, 1))
       : 1;
     const meteorStartTime = now + BLAZE_BOMB_WARNING_LEAD_MS;
     const impactTime = meteorStartTime + Math.max(60, Math.round(BLAZE_BOMB_FALL_DURATION_MS * impactProgress));
@@ -6265,13 +6027,13 @@ export class GameRoom extends Room<GameState> {
       playerId: player.id,
       abilityId: 'blaze_bomb',
       castId,
-      position: this.vec3SchemaToPlain(player.position),
+      position: vec3SchemaToPlain(player.position),
       startPosition,
       targetPosition,
       interceptPosition: aegisHit?.point,
       impactPosition: aegisHit?.point ?? targetPosition,
       interceptedByChronosAegis: Boolean(aegisHit),
-      aimDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
+      aimDirection: getForwardVector(player.lookYaw, player.lookPitch),
       ownerTeam: player.team as Team,
       launchYaw: player.lookYaw,
       serverTime: now,
@@ -6293,7 +6055,7 @@ export class GameRoom extends Room<GameState> {
     now: number,
     impactHint: SkillImpactHint = {}
   ): void {
-    const aimDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
+    const aimDirection = getForwardVector(player.lookYaw, player.lookPitch);
     const launchSide = abilityId === 'phantom_dire_ball'
       ? this.getNextPhantomPrimaryLaunchSide(player.id)
       : 1;
@@ -6306,7 +6068,7 @@ export class GameRoom extends Room<GameState> {
       playerId: player.id,
       abilityId,
       castId: this.nextPhantomCastId(player.id, abilityId),
-      position: this.vec3SchemaToPlain(player.position),
+      position: vec3SchemaToPlain(player.position),
       startPosition,
       aimDirection,
       ownerTeam: player.team as Team,
@@ -6327,9 +6089,9 @@ export class GameRoom extends Room<GameState> {
       playerId: player.id,
       abilityId: 'phantom_void_ray_charge',
       castId: this.nextPhantomCastId(player.id, 'phantom_void_ray_charge'),
-      position: this.vec3SchemaToPlain(player.position),
+      position: vec3SchemaToPlain(player.position),
       startPosition: this.getAbilitySocketCastOrigin(player, 'phantom_void_ray_charge'),
-      aimDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
+      aimDirection: getForwardVector(player.lookYaw, player.lookPitch),
       ownerTeam: player.team as Team,
       launchYaw: player.lookYaw,
       serverTime: now,
@@ -6342,7 +6104,7 @@ export class GameRoom extends Room<GameState> {
       playerId: player.id,
       abilityId: 'phantom_void_ray_charge_cancel',
       castId: this.nextPhantomCastId(player.id, 'phantom_void_ray_charge_cancel'),
-      position: this.vec3SchemaToPlain(player.position),
+      position: vec3SchemaToPlain(player.position),
       ownerTeam: player.team as Team,
       serverTime: now,
     });
@@ -6369,7 +6131,7 @@ export class GameRoom extends Room<GameState> {
       playerId: player.id,
       abilityId,
       castId: this.nextPhantomCastId(player.id, abilityId),
-      position: this.vec3SchemaToPlain(player.position),
+      position: vec3SchemaToPlain(player.position),
       startPosition: launch.startPosition,
       aimDirection: launch.aimDirection,
       velocity: {
@@ -6389,7 +6151,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private resolvePhantomBlinkDestination(player: Player, distance: number): PlainVec3 {
-    const start = this.vec3SchemaToPlain(player.position);
+    const start = vec3SchemaToPlain(player.position);
     return resolveCapsuleTeleportDestination(
       this.getMovementCollisionWorld(),
       start,
@@ -6506,7 +6268,7 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    const startedAt = this.vec3SchemaToPlain(player.position);
+    const startedAt = vec3SchemaToPlain(player.position);
 
     if (result.abilityId === 'chronos_lifeline_conduit' && chronosLifelineTargets && chronosLifelineMode) {
       const releaseAt = usedAt + CHRONOS_LIFELINE_RELEASE_DELAY_MS;
@@ -6519,7 +6281,7 @@ export class GameRoom extends Room<GameState> {
         playerId: player.id,
         abilityId: result.abilityId,
         castId: this.nextPhantomCastId(player.id, result.abilityId),
-        position: this.vec3SchemaToPlain(player.position),
+        position: vec3SchemaToPlain(player.position),
         startPosition: this.getAbilitySocketCastOrigin(player, 'chronos_lifeline_conduit'),
         targetIds: chronosLifelineTargets.map((target) => target.id),
         mode: chronosLifelineMode,
@@ -6561,7 +6323,7 @@ export class GameRoom extends Room<GameState> {
           x: hookshotGrappleTarget.x - startPosition.x,
           y: hookshotGrappleTarget.y - startPosition.y,
           z: hookshotGrappleTarget.z - startPosition.z,
-        }) ?? this.getForwardVector(player.lookYaw, player.lookPitch);
+        }) ?? getForwardVector(player.lookYaw, player.lookPitch);
         this.startHookshotGrappleAuthority(
           player,
           castId,
@@ -6574,7 +6336,7 @@ export class GameRoom extends Room<GameState> {
           playerId: player.id,
           abilityId: result.abilityId,
           castId,
-          position: this.vec3SchemaToPlain(player.position),
+          position: vec3SchemaToPlain(player.position),
           startPosition,
           targetPosition: hookshotGrappleTarget,
           direction: {
@@ -6606,7 +6368,7 @@ export class GameRoom extends Room<GameState> {
           playerId: player.id,
           abilityId: result.abilityId,
           castId,
-          position: this.vec3SchemaToPlain(player.position),
+          position: vec3SchemaToPlain(player.position),
           startPosition: wall.startPosition,
           targetPosition: wall.startPosition,
           direction: wall.direction,
@@ -6628,7 +6390,7 @@ export class GameRoom extends Room<GameState> {
           playerId: player.id,
           abilityId: result.abilityId,
           castId,
-          position: this.vec3SchemaToPlain(player.position),
+          position: vec3SchemaToPlain(player.position),
           targetIds: rootTargets.map((target) => target.targetId),
           targets: rootTargets,
           direction: {
@@ -6647,7 +6409,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     const shockwaveDirection = result.abilityId === 'chronos_timebreak'
-      ? this.getForwardVector(player.lookYaw, 0)
+      ? getForwardVector(player.lookYaw, 0)
       : undefined;
     if (shockwaveDirection) {
       this.scheduleChronosTimebreakShockwave(
@@ -6667,7 +6429,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     const ascendantParadoxVelocity = result.abilityId === 'chronos_ascendant_paradox'
-      ? this.vec3SchemaToPlain(player.velocity)
+      ? vec3SchemaToPlain(player.velocity)
       : undefined;
     const abilityStartPosition = result.abilityId === 'blaze_rocketjump'
       ? this.getAbilitySocketCastOrigin(player, 'blaze_rocketjump')
@@ -6686,9 +6448,9 @@ export class GameRoom extends Room<GameState> {
         yaw: player.lookYaw, 
         pitch: player.lookPitch 
       },
-      aimDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
+      aimDirection: getForwardVector(player.lookYaw, player.lookPitch),
       velocity: result.abilityId === 'blaze_rocketjump'
-        ? this.vec3SchemaToPlain(player.velocity)
+        ? vec3SchemaToPlain(player.velocity)
         : ascendantParadoxVelocity
           ? ascendantParadoxVelocity
         : undefined,
@@ -6742,7 +6504,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private createBotBrain(bot: Player, index = 0): BotBrain {
-    const brain = createInitialBotBrain(this.vec3SchemaToPlain(bot.position), index);
+    const brain = createInitialBotBrain(vec3SchemaToPlain(bot.position), index);
     brain.aimYaw = bot.lookYaw;
     brain.aimPitch = bot.lookPitch;
     return brain;
@@ -7059,7 +6821,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     const origin = this.getPlayerEyePosition(player);
-    const forward = this.getForwardVector(player.lookYaw, player.lookPitch);
+    const forward = getForwardVector(player.lookYaw, player.lookPitch);
     const primaryTargetHit = this.findTargetHitInAimCone(
       player,
       attack.range,
@@ -7146,7 +6908,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     const authority = this.getMovementAuthority(source.id);
-    const distance = this.distance3D(source.position, target.position);
+    const distance = distance3D(source.position, target.position);
     this.antiCheat?.record({
       eventType: 'combat.non_visible_target_hit',
       category: 'combat',
@@ -7189,7 +6951,7 @@ export class GameRoom extends Room<GameState> {
     targetTeam: AttackTargetTeam = 'enemy'
   ): AimTargetHit | null {
     const origin = this.getPlayerEyePosition(source);
-    const forward = this.getForwardVector(source.lookYaw, source.lookPitch);
+    const forward = getForwardVector(source.lookYaw, source.lookPitch);
     let bestTargetHit: AimTargetHit | null = null;
     let bestDistance = range;
     const candidateRange = range + extraRadius + PLAYER_RADIUS + PLAYER_COMBAT_HITBOX_PADDING;
@@ -7232,7 +6994,7 @@ export class GameRoom extends Room<GameState> {
       range,
       minDot,
       {
-        position: this.vec3SchemaToPlain(target.position),
+        position: vec3SchemaToPlain(target.position),
         heroId: target.heroId,
       },
       extraRadius,
@@ -7252,7 +7014,7 @@ export class GameRoom extends Room<GameState> {
       direction,
       range,
       {
-        position: this.vec3SchemaToPlain(target.position),
+        position: vec3SchemaToPlain(target.position),
         heroId: target.heroId,
       },
       extraRadius
@@ -7333,7 +7095,7 @@ export class GameRoom extends Room<GameState> {
   private getChronosAegisCenter(player: Player): PlainVec3 {
     return getSharedChronosAegisCenter({
       playerId: player.id,
-      position: this.vec3SchemaToPlain(player.position),
+      position: vec3SchemaToPlain(player.position),
       lookYaw: player.lookYaw,
       lookPitch: player.lookPitch,
     });
@@ -7386,7 +7148,7 @@ export class GameRoom extends Room<GameState> {
           options.targetPoint,
           {
             playerId: aegisPlayer.id,
-            position: this.vec3SchemaToPlain(aegisPlayer.position),
+            position: vec3SchemaToPlain(aegisPlayer.position),
             lookYaw: aegisPlayer.lookYaw,
             lookPitch: aegisPlayer.lookPitch,
           }
@@ -7401,7 +7163,7 @@ export class GameRoom extends Room<GameState> {
         range,
         {
           playerId: aegisPlayer.id,
-          position: this.vec3SchemaToPlain(aegisPlayer.position),
+          position: vec3SchemaToPlain(aegisPlayer.position),
           lookYaw: aegisPlayer.lookYaw,
           lookPitch: aegisPlayer.lookPitch,
         },
@@ -7432,7 +7194,7 @@ export class GameRoom extends Room<GameState> {
     });
     if (!segment) return null;
 
-    const hit = this.getChronosAegisSkillHit(source, sourcePoint, segment, this.distance3D(sourcePoint, targetPoint), {
+    const hit = this.getChronosAegisSkillHit(source, sourcePoint, segment, distance3D(sourcePoint, targetPoint), {
       shieldTeam: target.team as Team,
       targetPoint,
     });
@@ -7495,7 +7257,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private startHookshotDragPull(target: Player, source: Player, distance: number, now: number): void {
-    const forward = this.normalizeHorizontalPlain(this.getForwardVector(source.lookYaw, 0));
+    const forward = normalizeHorizontalPlain(getForwardVector(source.lookYaw, 0));
     if (!forward) return;
 
     const pull: HookshotDragPullAuthorityState = {
@@ -7664,7 +7426,7 @@ export class GameRoom extends Room<GameState> {
       return false;
     }
 
-    const currentPosition = this.vec3SchemaToPlain(player.position);
+    const currentPosition = vec3SchemaToPlain(player.position);
     const dx = destination.x - currentPosition.x;
     const dz = destination.z - currentPosition.z;
     const distanceToDestination = Math.sqrt(dx * dx + dz * dz);
@@ -7751,7 +7513,7 @@ export class GameRoom extends Room<GameState> {
       const stepNow = tickTime + step * MOVEMENT_SUBSTEP_SECONDS * 1000;
       const input = this.getRootedMovementInput(
         player,
-        this.suppressLocomotionInput(player.lastInput ?? this.createEmptyPlayerInput(player, stepNow)),
+        this.suppressLocomotionInput(player.lastInput ?? createEmptyPlayerInput(this.state.tick, player, stepNow)),
         stepNow
       );
 
@@ -7782,10 +7544,10 @@ export class GameRoom extends Room<GameState> {
     if (!caster || caster.state !== 'alive') return;
     if (caster.team !== 'red' && caster.team !== 'blue') return;
 
-    const forward = this.normalizeHorizontalPlain(castDirection);
+    const forward = normalizeHorizontalPlain(castDirection);
     if (!forward) return;
 
-    const origin = this.vec3SchemaToPlain(caster.position);
+    const origin = vec3SchemaToPlain(caster.position);
     const range = CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE;
     const minForwardDot = Math.cos(CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE);
     const maxVerticalDelta = CHRONOS_TIMEBREAK_SHOCKWAVE_MAX_VERTICAL_DELTA;
@@ -7840,22 +7602,14 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private normalizeHorizontalPlain(vector: { x: number; z: number }): { x: number; z: number } | null {
-    const length = Math.sqrt(vector.x * vector.x + vector.z * vector.z);
-    if (length <= 0.0001) return null;
-    return {
-      x: vector.x / length,
-      z: vector.z / length,
-    };
-  }
-
   private getActiveSpeedMultiplier(player: Player): number {
+    const now = Date.now();
     let multiplier = 1;
     if (player.abilities.get('phantom_veil')?.isActive) multiplier *= PHANTOM_VEIL_SPEED_MULTIPLIER;
-    if (this.isChronosAscendantActive(player)) {
+    if (this.isChronosAscendantActive(player, now)) {
       multiplier *= CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER;
     }
-    if (this.hasPowerupBoost(player)) {
+    if (hasPowerupBoost(this.powerupBoostUntil, player, now)) {
       multiplier *= POWERUP_MOVEMENT_SPEED_MULTIPLIER;
     }
     multiplier *= this.getChronosTimebreakTempoMultiplier(player);
@@ -7899,7 +7653,7 @@ export class GameRoom extends Room<GameState> {
 
   private getAbilityTempoMultiplier(player: Player, now = Date.now()): number {
     let multiplier = this.getChronosTimebreakTempoMultiplier(player);
-    if (this.hasPowerupBoost(player, now)) {
+    if (hasPowerupBoost(this.powerupBoostUntil, player, now)) {
       multiplier *= POWERUP_ABILITY_ATTACK_SPEED_MULTIPLIER;
     }
     return multiplier;
@@ -7944,26 +7698,25 @@ export class GameRoom extends Room<GameState> {
 
   private updateCTFObjectives(now: number): void {
     this.updateCarriedFlagPositions();
-    this.checkFlagReturns();
+    this.checkFlagReturns(now);
 
     this.state.players.forEach((player) => {
       if (player.state !== 'alive') return;
       if (!isTeam(player.team)) return;
       if (this.isObjectiveSuppressed(player.id, now)) return;
 
-      const playerTeam = player.team as Team;
-      const enemyTeam = playerTeam === 'red' ? 'blue' : 'red';
-      const ownFlag = this.getFlagByTeam(playerTeam);
-      const enemyFlag = this.getFlagByTeam(enemyTeam);
-      const carriedFlagCount = (this.state.redTeam.flag.carrierId === player.id ? 1 : 0)
-        + (this.state.blueTeam.flag.carrierId === player.id ? 1 : 0);
+      const playerTeam = player.team;
+      const enemyTeam = getEnemyTeam(playerTeam);
+      const ownFlag = getFlagByTeam(this.state, playerTeam);
+      const enemyFlag = getFlagByTeam(this.state, enemyTeam);
+      const carriedFlagCount = getCarriedFlagCountForPlayer(this.state, player.id);
       if (player.hasFlag && carriedFlagCount !== 1) {
         player.hasFlag = false;
         this.recordObjectiveEvent(player, 'carrier_mismatch', enemyTeam, now);
         return;
       }
 
-      if (!ownFlag.isAtBase && !ownFlag.carrierId && this.distance2D(player.position, ownFlag.position) <= FLAG_PICKUP_RADIUS) {
+      if (!ownFlag.isAtBase && !ownFlag.carrierId && distance2D(player.position, ownFlag.position) <= FLAG_PICKUP_RADIUS) {
         this.returnFlagToBase(playerTeam, player.id);
         player.flagReturns++;
         this.recordMatchFlagReturn(player);
@@ -7971,38 +7724,29 @@ export class GameRoom extends Room<GameState> {
         this.recordObjectiveEvent(player, 'return', playerTeam, now);
       }
 
-      if (!player.hasFlag && !enemyFlag.carrierId && this.distance2D(player.position, enemyFlag.position) <= FLAG_PICKUP_RADIUS) {
-        enemyFlag.carrierId = player.id;
-        enemyFlag.isAtBase = false;
-        enemyFlag.droppedAt = 0;
+      if (!player.hasFlag && !enemyFlag.carrierId && distance2D(player.position, enemyFlag.position) <= FLAG_PICKUP_RADIUS) {
+        setFlagCarried(enemyFlag, player.id);
         player.hasFlag = true;
         this.recordObjectiveEvent(player, 'pickup', enemyTeam, now);
         this.broadcastTracked('flagPickup', {
           team: enemyTeam,
           playerId: player.id,
-          position: this.getCoarseEventPosition(this.vec3SchemaToPlain(player.position)),
+          position: getCoarseEventPosition(vec3SchemaToPlain(player.position)),
           timestamp: now,
         });
       }
 
-      if (player.hasFlag && ownFlag.isAtBase && this.distance2D(player.position, ownFlag.basePosition) <= FLAG_CAPTURE_RADIUS) {
+      if (player.hasFlag && ownFlag.isAtBase && distance2D(player.position, ownFlag.basePosition) <= FLAG_CAPTURE_RADIUS) {
         this.captureFlag(player, enemyTeam, now);
       }
     });
   }
 
   private updateCarriedFlagPositions(): void {
-    for (const team of ['red', 'blue'] as const) {
-      const flag = this.getFlagByTeam(team);
+    for (const team of CTF_TEAMS) {
+      const flag = getFlagByTeam(this.state, team);
       if (!flag.carrierId) continue;
-      const carrier = this.state.players.get(flag.carrierId);
-      if (!carrier || carrier.state !== 'alive') {
-        flag.carrierId = '';
-        continue;
-      }
-      flag.position.x = carrier.position.x;
-      flag.position.y = carrier.position.y + 1.4;
-      flag.position.z = carrier.position.z;
+      syncCarriedFlagPosition(flag, this.state.players.get(flag.carrierId));
     }
   }
 
@@ -8011,13 +7755,8 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    const flag = this.getFlagByTeam(capturedTeam);
-    flag.position.x = flag.basePosition.x;
-    flag.position.y = flag.basePosition.y;
-    flag.position.z = flag.basePosition.z;
-    flag.carrierId = '';
-    flag.isAtBase = true;
-    flag.droppedAt = 0;
+    const flag = getFlagByTeam(this.state, capturedTeam);
+    resetFlagToBase(flag);
 
     player.hasFlag = false;
     player.flagCaptures++;
@@ -8035,13 +7774,13 @@ export class GameRoom extends Room<GameState> {
     this.broadcastTracked('flagCapture', {
       team: capturedTeam,
       playerId: player.id,
-      position: this.getCoarseEventPosition(this.vec3SchemaToPlain(player.position)),
+      position: getCoarseEventPosition(vec3SchemaToPlain(player.position)),
       redScore: this.state.redTeam.score,
       blueScore: this.state.blueTeam.score,
       timestamp: now,
     });
 
-    if (this.hasTeamReachedScoreLimit()) {
+    if (hasTeamReachedScoreLimit(this.state.redTeam.score, this.state.blueTeam.score, this.config.scoreToWin)) {
       this.endRound();
     } else {
       this.returnFlagToBase(capturedTeam, player.id, false);
@@ -8049,19 +7788,14 @@ export class GameRoom extends Room<GameState> {
   }
 
   private returnFlagToBase(team: Team, playerId = '', broadcast = true): void {
-    const flag = this.getFlagByTeam(team);
-    flag.position.x = flag.basePosition.x;
-    flag.position.y = flag.basePosition.y;
-    flag.position.z = flag.basePosition.z;
-    flag.carrierId = '';
-    flag.isAtBase = true;
-    flag.droppedAt = 0;
+    const flag = getFlagByTeam(this.state, team);
+    resetFlagToBase(flag);
 
     if (broadcast) {
       this.broadcastTracked('flagReturn', {
         team,
         playerId,
-        position: this.vec3SchemaToPlain(flag.position),
+        position: vec3SchemaToPlain(flag.position),
         timestamp: Date.now(),
       });
     }
@@ -8093,7 +7827,7 @@ export class GameRoom extends Room<GameState> {
           ...brain.intent,
           type: 'selecting',
           score: 0,
-          targetPosition: this.vec3SchemaToPlain(bot.position),
+          targetPosition: vec3SchemaToPlain(bot.position),
           reason: 'hero select',
           candidates: [],
         };
@@ -8109,13 +7843,13 @@ export class GameRoom extends Room<GameState> {
       if (bot.state !== 'alive') {
         this.devBotSkillOverrides.delete(bot.id);
         this.devBotLookOverrides.delete(bot.id);
-        bot.lastInput = this.createEmptyBotInput(bot, now);
+        bot.lastInput = createEmptyBotInput(this.state.tick, bot, now);
         if (bot.state === 'dead') {
           brain.intent = {
             ...brain.intent,
             type: 'respawning',
             score: 0,
-            targetPosition: this.vec3SchemaToPlain(bot.position),
+            targetPosition: vec3SchemaToPlain(bot.position),
             reason: 'bot is dead',
             candidates: [],
           };
@@ -8131,7 +7865,7 @@ export class GameRoom extends Room<GameState> {
             this.createDevBotSkillInput(bot, now, skillOverride),
             lookOverride
           );
-          this.stopBotMovement(bot, { vertical: true });
+          stopBotMovement(bot, { vertical: true });
           this.enqueueServerOwnedMovementCommands(bot, bot.lastInput, now);
         } else {
           this.rootBotMovementAndSkills(bot, now);
@@ -8147,11 +7881,11 @@ export class GameRoom extends Room<GameState> {
             this.createDevBotSkillInput(bot, now, skillOverride),
             lookOverride
           );
-          this.stopBotMovement(bot, { vertical: false });
+          stopBotMovement(bot, { vertical: false });
         } else {
           this.disableBotBrainInput(bot, now);
         }
-        this.enqueueServerOwnedMovementCommands(bot, bot.lastInput ?? this.createEmptyBotInput(bot, now), now);
+        this.enqueueServerOwnedMovementCommands(bot, bot.lastInput ?? createEmptyBotInput(this.state.tick, bot, now), now);
         return;
       }
 
@@ -8233,8 +7967,8 @@ export class GameRoom extends Room<GameState> {
       isBot: player.isBot,
       botDifficulty: normalizeBotDifficulty(player.botDifficulty),
       botProfileId: player.botProfileId || '',
-      position: this.vec3SchemaToPlain(player.position),
-      velocity: this.vec3SchemaToPlain(player.velocity),
+      position: vec3SchemaToPlain(player.position),
+      velocity: vec3SchemaToPlain(player.velocity),
       lookYaw: player.lookYaw,
       lookPitch: player.lookPitch,
       health: player.health,
@@ -8272,7 +8006,7 @@ export class GameRoom extends Room<GameState> {
       snapshotById.set(snapshot.id, snapshot);
     }
 
-    const flags = this.getBotFlagSnapshots();
+    const flags = getBotFlagSnapshots(this.state);
     const teamTactics = this.refreshBotTeamTactics(now, snapshots, flags);
     const protectedEnemyIdsByTeam: Record<Team, Set<string>> = {
       red: new Set<string>(),
@@ -8280,7 +8014,7 @@ export class GameRoom extends Room<GameState> {
     };
     this.state.players.forEach((player) => {
       if (!isTeam(player.team) || !this.isProtectedSpawnTarget(player, now)) return;
-      const enemyTeam = player.team === 'red' ? 'blue' : 'red';
+      const enemyTeam = getEnemyTeam(player.team);
       protectedEnemyIdsByTeam[enemyTeam].add(player.id);
     });
 
@@ -8295,33 +8029,10 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private getBotFlagSnapshots(): Record<Team, { team: Team; position: PlainVec3; basePosition: PlainVec3; carrierId: string; isAtBase: boolean; droppedAt: number }> {
-    const redFlag = this.getFlagByTeam('red');
-    const blueFlag = this.getFlagByTeam('blue');
-    return {
-      red: {
-        team: 'red',
-        position: this.vec3SchemaToPlain(redFlag.position),
-        basePosition: this.vec3SchemaToPlain(redFlag.basePosition),
-        carrierId: redFlag.carrierId,
-        isAtBase: redFlag.isAtBase,
-        droppedAt: redFlag.droppedAt,
-      },
-      blue: {
-        team: 'blue',
-        position: this.vec3SchemaToPlain(blueFlag.position),
-        basePosition: this.vec3SchemaToPlain(blueFlag.basePosition),
-        carrierId: blueFlag.carrierId,
-        isAtBase: blueFlag.isAtBase,
-        droppedAt: blueFlag.droppedAt,
-      },
-    };
-  }
-
   private refreshBotTeamTactics(
     now: number,
     snapshots = this.getBotPlayerSnapshots(),
-    flags = this.getBotFlagSnapshots()
+    flags = getBotFlagSnapshots(this.state)
   ): BotTeamTacticsByTeam {
     if (this.botTeamTactics && now < this.nextBotTacticsAt) return this.botTeamTactics;
     this.botTacticsRevision++;
@@ -8348,7 +8059,7 @@ export class GameRoom extends Room<GameState> {
       if (snapshot.team === bot.team || snapshot.state !== 'alive') continue;
       const enemy = this.state.players.get(snapshot.id);
       if (!enemy) continue;
-      const distance = this.distance3D(bot.position, enemy.position);
+      const distance = distance3D(bot.position, enemy.position);
       if (this.canBotPerceiveEnemy(bot, enemy, distance)) {
         visible.add(snapshot.id);
       }
@@ -8373,9 +8084,9 @@ export class GameRoom extends Room<GameState> {
   }
 
   private isBotPathClear(bot: Player, direction: PlainVec2 | null, distance: number): boolean {
-    const normalized = direction ? this.normalize2D(direction) : null;
+    const normalized = direction ? normalize2D(direction) : null;
     if (!normalized) return true;
-    const start = this.vec3SchemaToPlain(bot.position);
+    const start = vec3SchemaToPlain(bot.position);
     const end = {
       x: start.x + normalized.x * distance,
       y: start.y,
@@ -8397,21 +8108,21 @@ export class GameRoom extends Room<GameState> {
     const enemy = blackboard.nearestEnemy;
     const ally = blackboard.alliedCarrier ?? blackboard.nearestAlly;
     if (!enemy || !ally) return false;
-    const forward = this.forward2D(bot.lookYaw);
-    const toEnemy = this.direction2DFromTo(bot.position, enemy.lastKnownPosition);
-    const toAlly = this.direction2DFromTo(bot.position, ally.position);
+    const forward = forward2D(bot.lookYaw);
+    const toEnemy = direction2DFromTo(bot.position, enemy.lastKnownPosition);
+    const toAlly = direction2DFromTo(bot.position, ally.position);
     if (!toEnemy || !toAlly) return false;
     const enemyInFront = forward.x * toEnemy.x + forward.z * toEnemy.z > 0.42;
     const allyBehind = forward.x * toAlly.x + forward.z * toAlly.z < -0.15;
-    return enemyInFront && allyBehind && this.distance2D(bot.position, ally.position) <= 9;
+    return enemyInFront && allyBehind && distance2D(bot.position, ally.position) <= 9;
   }
 
   private wouldBotWallBlockFriendlyCarrier(bot: Player, blackboard: BotBlackboard): boolean {
     const carrier = blackboard.alliedCarrier;
     if (!carrier) return false;
-    const forward = this.forward2D(bot.lookYaw);
-    const toCarrier = this.direction2DFromTo(bot.position, carrier.position);
-    return Boolean(toCarrier && forward.x * toCarrier.x + forward.z * toCarrier.z > 0.35 && this.distance2D(bot.position, carrier.position) <= 7);
+    const forward = forward2D(bot.lookYaw);
+    const toCarrier = direction2DFromTo(bot.position, carrier.position);
+    return Boolean(toCarrier && forward.x * toCarrier.x + forward.z * toCarrier.z > 0.35 && distance2D(bot.position, carrier.position) <= 7);
   }
 
   private getBotAbilityGeometry(
@@ -8421,7 +8132,7 @@ export class GameRoom extends Room<GameState> {
     desiredMove: PlainVec2 | null,
     directPathBlocked: boolean
   ): BotAbilityGeometry {
-    const forward = this.forward2D(bot.lookYaw);
+    const forward = forward2D(bot.lookYaw);
     const blinkSafe = bot.heroId === 'phantom'
       ? this.isBotPathClear(bot, desiredMove ?? forward, 6.5)
       : true;
@@ -8431,7 +8142,7 @@ export class GameRoom extends Room<GameState> {
     const groundHooksValuable = Boolean(
       blackboard.droppedFriendlyFlag ||
       blackboard.droppedEnemyFlag ||
-      blackboard.visibleEnemies.some((enemy) => this.distance2D(enemy.lastKnownPosition, objectiveZone) <= 12)
+      blackboard.visibleEnemies.some((enemy) => distance2D(enemy.lastKnownPosition, objectiveZone) <= 12)
     );
 
     return {
@@ -8500,7 +8211,7 @@ export class GameRoom extends Room<GameState> {
         input.primaryFire = false;
         brain.pendingSecondaryMode = plan.mode;
         brain.secondaryHoldUntil = now + (plan.holdMs ?? 120);
-        brain.nextSecondaryAt = now + this.randomBetween(900, 1450) / tempoMultiplier;
+        brain.nextSecondaryAt = now + randomBetween(900, 1450) / tempoMultiplier;
         return;
       default:
         if (plan.slot === 'ability1') input.ability1 = true;
@@ -8511,9 +8222,9 @@ export class GameRoom extends Room<GameState> {
     }
 
     if (plan.slot === 'ultimate') {
-      brain.nextUltimateAt = now + this.randomBetween(skill.ultimateCadenceMs[0], skill.ultimateCadenceMs[1]) / tempoMultiplier;
+      brain.nextUltimateAt = now + randomBetween(skill.ultimateCadenceMs[0], skill.ultimateCadenceMs[1]) / tempoMultiplier;
     } else if (plan.slot !== 'secondary' && plan.mode !== 'blaze_flamethrower') {
-      brain.nextAbilityAt = now + this.randomBetween(skill.abilityCadenceMs[0], skill.abilityCadenceMs[1]) / tempoMultiplier;
+      brain.nextAbilityAt = now + randomBetween(skill.abilityCadenceMs[0], skill.abilityCadenceMs[1]) / tempoMultiplier;
     }
   }
 
@@ -8527,10 +8238,10 @@ export class GameRoom extends Room<GameState> {
     const skill = getBotSkillProfile(bot.botDifficulty);
     const snapshots = frameContext.snapshots;
     const botSnapshot = frameContext.snapshotById.get(bot.id) ?? this.getBotPlayerSnapshot(bot);
-    if (!botSnapshot) return this.createEmptyBotInput(bot, now);
+    if (!botSnapshot) return createEmptyBotInput(this.state.tick, bot, now);
 
     const tactics = frameContext.teamTactics[botSnapshot.team];
-    if (!tactics) return this.createEmptyBotInput(bot, now);
+    if (!tactics) return createEmptyBotInput(this.state.tick, bot, now);
 
     clearExpiredBlockedEdges(brain.blockedEdges, now);
     const shouldRefreshBlackboard = !brain.blackboard || now >= brain.nextBlackboardAt || now >= brain.nextThinkAt;
@@ -8567,11 +8278,11 @@ export class GameRoom extends Room<GameState> {
         skill,
         previousPlan: brain.routePlan,
       });
-      brain.nextThinkAt = now + this.randomBetween(skill.thinkIntervalMs * 0.75, skill.thinkIntervalMs * 1.25);
+      brain.nextThinkAt = now + randomBetween(skill.thinkIntervalMs * 0.75, skill.thinkIntervalMs * 1.25);
 
       if (now >= brain.strafeUntil) {
-        brain.strafeDirection = this.hashString(`${bot.id}:${Math.floor(now / 1000)}`) % 2 === 0 ? -1 : 1;
-        brain.strafeUntil = now + this.randomBetween(900, 2600);
+        brain.strafeDirection = hashString(`${bot.id}:${Math.floor(now / 1000)}`) % 2 === 0 ? -1 : 1;
+        brain.strafeUntil = now + randomBetween(900, 2600);
       }
     }
 
@@ -8608,7 +8319,7 @@ export class GameRoom extends Room<GameState> {
       : routePlan.steeringTarget || brain.intent.targetPosition || this.getEnemyFlagPosition(bot.team as Team);
     const desiredAim = this.getYawPitchTowardPosition(bot, aimPoint);
     const aim = this.updateBotAim(bot, brain, desiredAim, combatTarget, skill, now, dt);
-    const enemyDistance = combatTarget ? this.distance3D(bot.position, combatTarget.position) : Infinity;
+    const enemyDistance = combatTarget ? distance3D(bot.position, combatTarget.position) : Infinity;
     const attackRange = this.getBotAttackRange(bot);
     const shouldFight = Boolean(
       combatTarget
@@ -8657,25 +8368,25 @@ export class GameRoom extends Room<GameState> {
       });
     }
     if (progress.stalled && steering.blocked) {
-      brain.reverseUntil = now + this.randomBetween(220, 420);
+      brain.reverseUntil = now + randomBetween(220, 420);
     }
 
     const tempoMultiplier = this.getAbilityTempoMultiplier(bot, now);
-    const input = this.createEmptyBotInput(bot, now);
+    const input = createEmptyBotInput(this.state.tick, bot, now);
     input.lookYaw = aim.yaw;
     input.lookPitch = combatTarget ? aim.pitch : 0;
     this.applyBotMovementInput(input, input.lookYaw, steering.direction, now < brain.reverseUntil, brain);
-    input.sprint = this.distance2D(bot.position, routePlan.steeringTarget) > 9
+    input.sprint = distance2D(bot.position, routePlan.steeringTarget) > 9
       || bot.hasFlag
       || (brain.intent.type !== 'fight_local_enemy' && brain.intent.type !== 'defend_base');
     input.jump = steering.jump || (progress.stalled && bot.movement.isGrounded);
-    input.crouch = input.sprint && this.distance2D(bot.position, routePlan.steeringTarget) > 14 && !combatTarget && this.hashString(`${bot.id}:${Math.floor(now / 500)}`) % 11 === 0;
+    input.crouch = input.sprint && distance2D(bot.position, routePlan.steeringTarget) > 14 && !combatTarget && hashString(`${bot.id}:${Math.floor(now / 500)}`) % 11 === 0;
     input.crouchPressed = input.crouch && !bot.lastInput?.crouch;
 
     if (now >= brain.nextFireDecisionAt) {
-      brain.nextFireDecisionAt = now + this.randomBetween(skill.fireDecisionMs[0], skill.fireDecisionMs[1]) / tempoMultiplier;
+      brain.nextFireDecisionAt = now + randomBetween(skill.fireDecisionMs[0], skill.fireDecisionMs[1]) / tempoMultiplier;
       if (aimReady && Math.random() < skill.fireChance) {
-        brain.fireUntil = now + this.randomBetween(skill.burstDurationMs[0], skill.burstDurationMs[1]) / tempoMultiplier;
+        brain.fireUntil = now + randomBetween(skill.burstDurationMs[0], skill.burstDurationMs[1]) / tempoMultiplier;
       }
     }
     input.primaryFire = aimReady && now < brain.fireUntil;
@@ -8693,8 +8404,8 @@ export class GameRoom extends Room<GameState> {
       const firedSecondary = Math.random() < skill.secondaryChance;
       input.secondaryFire = firedSecondary;
       const secondaryDelayMs = firedSecondary
-        ? this.randomBetween(secondaryAttack.cooldownMs * 0.85, secondaryAttack.cooldownMs * 1.3)
-        : this.randomBetween(350, 900);
+        ? randomBetween(secondaryAttack.cooldownMs * 0.85, secondaryAttack.cooldownMs * 1.3)
+        : randomBetween(350, 900);
       brain.nextSecondaryAt = now + secondaryDelayMs / tempoMultiplier;
     }
 
@@ -8721,8 +8432,8 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getEnemyFlagPosition(team: Team): { x: number; y: number; z: number } {
-    const enemyTeam = team === 'red' ? 'blue' : 'red';
-    return this.vec3SchemaToPlain(this.getFlagByTeam(enemyTeam).position);
+    const enemyTeam = getEnemyTeam(team);
+    return vec3SchemaToPlain(getFlagByTeam(this.state, enemyTeam).position);
   }
 
   private getBotAttackRange(bot: Player): number {
@@ -8743,7 +8454,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getBotAimPoint(bot: Player, target: Player, skill: BotSkillProfile): PlainVec3 {
-    const targetDistance = this.distance3D(bot.position, target.position);
+    const targetDistance = distance3D(bot.position, target.position);
     const reactionLag = skill.reactionMs / 1000;
     const leadSeconds = Math.max(-0.22, Math.min(0.42, skill.aimLeadSeconds + targetDistance / 160 - reactionLag * 0.45));
     const targetPoint = this.getPlayerBodyAimPosition(target);
@@ -8768,23 +8479,23 @@ export class GameRoom extends Room<GameState> {
     if (!Number.isFinite(brain.aimPitch)) brain.aimPitch = bot.lookPitch;
 
     if (target && now >= brain.nextAimJitterAt) {
-      const distance = this.distance3D(bot.position, target.position);
+      const distance = distance3D(bot.position, target.position);
       const distanceScale = Math.max(0.55, Math.min(1.35, distance / 24));
-      brain.aimJitterYaw = this.randomSigned(skill.aimErrorRadians * distanceScale);
-      brain.aimJitterPitch = this.randomSigned(skill.aimErrorRadians * 0.55 * distanceScale);
-      brain.nextAimJitterAt = now + this.randomBetween(skill.aimJitterRefreshMs[0], skill.aimJitterRefreshMs[1]);
+      brain.aimJitterYaw = randomSigned(skill.aimErrorRadians * distanceScale);
+      brain.aimJitterPitch = randomSigned(skill.aimErrorRadians * 0.55 * distanceScale);
+      brain.nextAimJitterAt = now + randomBetween(skill.aimJitterRefreshMs[0], skill.aimJitterRefreshMs[1]);
     } else if (!target) {
       brain.aimJitterYaw *= 0.82;
       brain.aimJitterPitch *= 0.82;
     }
 
-    const targetYaw = this.normalizeAngle(desiredAim.yaw + brain.aimJitterYaw);
-    const targetPitch = this.clamp(desiredAim.pitch + brain.aimJitterPitch, -0.8, 0.8);
+    const targetYaw = normalizeAngle(desiredAim.yaw + brain.aimJitterYaw);
+    const targetPitch = clamp(desiredAim.pitch + brain.aimJitterPitch, -0.8, 0.8);
     const maxStep = skill.turnRateRadians * Math.max(0.016, Math.min(0.1, dt));
 
-    brain.aimYaw = this.rotateAngleToward(brain.aimYaw, targetYaw, maxStep);
-    const pitchDelta = this.clamp(targetPitch - brain.aimPitch, -maxStep, maxStep);
-    brain.aimPitch = this.clamp(brain.aimPitch + pitchDelta, -0.8, 0.8);
+    brain.aimYaw = rotateAngleToward(brain.aimYaw, targetYaw, maxStep);
+    const pitchDelta = clamp(targetPitch - brain.aimPitch, -maxStep, maxStep);
+    brain.aimPitch = clamp(brain.aimPitch + pitchDelta, -0.8, 0.8);
 
     return { yaw: brain.aimYaw, pitch: brain.aimPitch };
   }
@@ -8800,7 +8511,7 @@ export class GameRoom extends Room<GameState> {
     if (!attack) return false;
 
     const origin = this.getPlayerEyePosition(bot);
-    const forward = this.getForwardVector(yaw, pitch);
+    const forward = getForwardVector(yaw, pitch);
     const readinessPadding = Math.max(0, skill.aimFireToleranceScale - 1) * PLAYER_COMBAT_HITBOX_PADDING;
     return this.getAimHitAgainstPlayer(
       origin,
@@ -8832,7 +8543,7 @@ export class GameRoom extends Room<GameState> {
 
     if (!desiredMove) return;
 
-    const local = this.worldDirectionToLocalMove(desiredMove, lookYaw);
+    const local = worldDirectionToLocalMove(desiredMove, lookYaw);
     const threshold = 0.22;
     input.moveForward = local.z < -threshold;
     input.moveBackward = local.z > threshold;
@@ -8858,7 +8569,7 @@ export class GameRoom extends Room<GameState> {
     const horizontal = Math.sqrt(dx * dx + dz * dz);
     return {
       yaw: Math.atan2(-dx, -dz),
-      pitch: this.clamp(Math.atan2(dy, horizontal), -0.8, 0.8),
+      pitch: clamp(Math.atan2(dy, horizontal), -0.8, 0.8),
     };
   }
 
@@ -8875,46 +8586,14 @@ export class GameRoom extends Room<GameState> {
     return this.hasLineOfSight(this.getPlayerEyePosition(source), this.getPlayerBodyAimPosition(target));
   }
 
-  private getLineOfSightCacheKey(start: PlainVec3, end: PlainVec3): string {
-    const q = (value: number) => Math.round(value * 2);
-    return `${q(start.x)}:${q(start.y)}:${q(start.z)}>${q(end.x)}:${q(end.y)}:${q(end.z)}`;
-  }
-
   private hasLineOfSight(start: PlainVec3, end: PlainVec3): boolean {
     const now = this.state.serverTime || Date.now();
-    const cacheKey = this.getLineOfSightCacheKey(start, end);
-    const cached = this.losCache.get(cacheKey);
-    if (cached && cached.expiresAt > now) {
-      return cached.result;
-    }
-
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
-    const dz = end.z - start.z;
-    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const steps = Math.max(1, Math.ceil(distance / BOT_LOS_SAMPLE_STEP));
-
-    let result = true;
-    const samplePoint = this.lineOfSightSamplePoint;
-    for (let i = 1; i < steps; i++) {
-      const t = i / steps;
-      samplePoint.x = start.x + dx * t;
-      samplePoint.y = start.y + dy * t;
-      samplePoint.z = start.z + dz * t;
-      if (isCollisionBlock(this.getBlockAtWorld(samplePoint))) {
-        result = false;
-        break;
-      }
-    }
-
-    if (this.losCache.size > 1500) {
-      this.losCache.clear();
-    }
-    this.losCache.set(cacheKey, {
-      result,
-      expiresAt: now + LOS_CACHE_TTL_MS,
-    });
-    return result;
+    return this.lineOfSightCache.hasLineOfSight(
+      start,
+      end,
+      now,
+      (samplePoint) => isCollisionBlock(this.getBlockAtWorld(samplePoint))
+    );
   }
 
   private getPlayerEyePosition(player: Player): PlainVec3 {
@@ -8923,154 +8602,19 @@ export class GameRoom extends Room<GameState> {
 
   private getPlayerBodyAimPosition(player: Player): PlainVec3 {
     return getSharedPlayerBodyAimPosition({
-      position: this.vec3SchemaToPlain(player.position),
+      position: vec3SchemaToPlain(player.position),
       heroId: player.heroId,
     });
-  }
-
-  private getForwardVector(yaw: number, pitch: number): PlainVec3 {
-    const cosPitch = Math.cos(pitch);
-    return {
-      x: -Math.sin(yaw) * cosPitch,
-      y: Math.sin(pitch),
-      z: -Math.cos(yaw) * cosPitch,
-    };
   }
 
   private isProtectedSpawnTarget(target: Player, now: number): boolean {
     return Boolean(target.spawnProtectionUntil && now < target.spawnProtectionUntil);
   }
 
-  private direction2DFromTo(from: { x: number; z: number }, to: { x: number; z: number }): PlainVec2 | null {
-    const dx = to.x - from.x;
-    const dz = to.z - from.z;
-    const length = Math.sqrt(dx * dx + dz * dz);
-    if (length <= 0.001) return null;
-    return { x: dx / length, z: dz / length };
-  }
-
-  private forward2D(yaw: number): PlainVec2 {
-    return {
-      x: -Math.sin(yaw),
-      z: -Math.cos(yaw),
-    };
-  }
-
-  private normalize2D(vector: PlainVec2): PlainVec2 | null {
-    const length = Math.sqrt(vector.x * vector.x + vector.z * vector.z);
-    if (length <= 0.001) return null;
-    return { x: vector.x / length, z: vector.z / length };
-  }
-
-  private mix2D(a: PlainVec2, aWeight: number, b: PlainVec2, bWeight: number): PlainVec2 {
-    return {
-      x: a.x * aWeight + b.x * bWeight,
-      z: a.z * aWeight + b.z * bWeight,
-    };
-  }
-
-  private worldDirectionToLocalMove(direction: PlainVec2, lookYaw: number): PlainVec2 {
-    const cos = Math.cos(lookYaw);
-    const sin = Math.sin(lookYaw);
-    return {
-      x: direction.x * cos - direction.z * sin,
-      z: direction.x * sin + direction.z * cos,
-    };
-  }
-
-  private rotateAngleToward(current: number, target: number, maxStep: number): number {
-    const delta = this.normalizeAngle(target - current);
-    if (Math.abs(delta) <= maxStep) return this.normalizeAngle(target);
-    return this.normalizeAngle(current + Math.sign(delta) * maxStep);
-  }
-
-  private normalizeAngle(angle: number): number {
-    let normalized = angle;
-    while (normalized > Math.PI) normalized -= Math.PI * 2;
-    while (normalized < -Math.PI) normalized += Math.PI * 2;
-    return normalized;
-  }
-
-  private clamp(value: number, min: number, max: number): number {
-    return Math.max(min, Math.min(max, value));
-  }
-
-  private randomBetween(min: number, max: number): number {
-    return min + Math.random() * (max - min);
-  }
-
-  private randomSigned(amount: number): number {
-    return (Math.random() * 2 - 1) * amount;
-  }
-
-  private hashString(value: string): number {
-    let hash = 0;
-    for (let i = 0; i < value.length; i++) {
-      hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
-    }
-    return Math.abs(hash);
-  }
-
-  private createEmptyPlayerInput(player: Player, now: number): PlayerInput {
-    return {
-      tick: this.state.tick,
-      moveForward: false,
-      moveBackward: false,
-      moveLeft: false,
-      moveRight: false,
-      jump: false,
-      crouch: false,
-      sprint: false,
-      primaryFire: false,
-      secondaryFire: false,
-      reload: false,
-      ability1: false,
-      ability2: false,
-      ultimate: false,
-      interact: false,
-      lookYaw: player.lookYaw,
-      lookPitch: player.lookPitch,
-      timestamp: now,
-    };
-  }
-
-  private createEmptyBotInput(bot: Player, now: number): PlayerInput {
-    return this.createEmptyPlayerInput(bot, now);
-  }
-
-  private stopBotMovement(bot: Player, options: { vertical: boolean }): void {
-    bot.velocity.x = 0;
-    if (options.vertical) {
-      bot.velocity.y = 0;
-    }
-    bot.velocity.z = 0;
-    bot.movement.isSprinting = false;
-    bot.movement.isCrouching = false;
-    bot.movement.isWallRunning = false;
-    bot.movement.wallRunSide = '';
-  }
-
-  private resetPlayerMovementRuntime(player: Player): void {
-    player.velocity.x = 0;
-    player.velocity.y = 0;
-    player.velocity.z = 0;
-    player.movement.isGrounded = true;
-    player.movement.isSprinting = false;
-    player.movement.isCrouching = false;
-    player.movement.isSliding = false;
-    player.movement.slideTimeRemaining = 0;
-    player.movement.isWallRunning = false;
-    player.movement.wallRunSide = '';
-    player.movement.isGrappling = false;
-    player.movement.isJetpacking = false;
-    player.movement.isGliding = false;
-    player.movement.chronosAscendantStartY = 0;
-  }
-
   private resetPlayerLifeRuntime(player: Player, now = Date.now()): void {
     this.disablePlayerSkills(player);
     this.resetPlayerPressState(player.id);
-    this.resetPlayerMovementRuntime(player);
+    resetPlayerMovementRuntime(player);
     this.blazeBurnEffects.delete(player.id);
     this.clearFlamethrowerDamageTicksForPlayer(player.id);
     this.playerRootedUntil.delete(player.id);
@@ -9080,7 +8624,7 @@ export class GameRoom extends Room<GameState> {
     this.attackCooldownUntil.delete(`${player.id}:secondary`);
     this.playerCombatActivityAt.delete(player.id);
     player.lastInput = player.isBot
-      ? this.createEmptyBotInput(player, now)
+      ? createEmptyBotInput(this.state.tick, player, now)
       : null;
   }
 
@@ -9117,7 +8661,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private createDevBotSkillInput(bot: Player, now: number, override: DevBotSkillOverride | null): PlayerInput {
-    return this.applyDevBotSkillOverride(bot, this.createEmptyBotInput(bot, now), override);
+    return this.applyDevBotSkillOverride(bot, createEmptyBotInput(this.state.tick, bot, now), override);
   }
 
   private applyDevBotLookOverride(input: PlayerInput, override: DevBotLookOverride | null): PlayerInput {
@@ -9165,15 +8709,15 @@ export class GameRoom extends Room<GameState> {
   }
 
   private rootBotMovementAndSkills(bot: Player, now: number): void {
-    bot.lastInput = this.createEmptyBotInput(bot, now);
-    this.stopBotMovement(bot, { vertical: true });
+    bot.lastInput = createEmptyBotInput(this.state.tick, bot, now);
+    stopBotMovement(bot, { vertical: true });
     this.disablePlayerSkills(bot);
     this.resetPlayerPressState(bot.id);
   }
 
   private disableBotBrainInput(bot: Player, now: number): void {
-    bot.lastInput = this.createEmptyBotInput(bot, now);
-    this.stopBotMovement(bot, { vertical: false });
+    bot.lastInput = createEmptyBotInput(this.state.tick, bot, now);
+    stopBotMovement(bot, { vertical: false });
     this.disablePlayerSkills(bot);
     this.resetPlayerPressState(bot.id);
   }
@@ -9191,47 +8735,6 @@ export class GameRoom extends Room<GameState> {
     pressState.ability1 = false;
     pressState.ability2 = false;
     pressState.ultimate = false;
-  }
-
-  private getFlagByTeam(team: Team) {
-    return team === 'red' ? this.state.redTeam.flag : this.state.blueTeam.flag;
-  }
-
-  private getPublicFlagPosition(flag: ReturnType<GameRoom['getFlagByTeam']>): PlainVec3 {
-    const position = this.vec3SchemaToPlain(flag.position);
-    if (!flag.carrierId) return position;
-
-    return {
-      x: Math.round(position.x / FLAG_CARRIER_APPROX_GRID_METERS) * FLAG_CARRIER_APPROX_GRID_METERS,
-      y: Math.round(position.y),
-      z: Math.round(position.z / FLAG_CARRIER_APPROX_GRID_METERS) * FLAG_CARRIER_APPROX_GRID_METERS,
-    };
-  }
-
-  private getFlagSync(team: Team) {
-    const flag = this.getFlagByTeam(team);
-    return {
-      position: this.getPublicFlagPosition(flag),
-      carrierId: flag.carrierId || null,
-      isAtBase: flag.isAtBase,
-    };
-  }
-
-  private vec3SchemaToPlain(position: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
-    return { x: position.x, y: position.y, z: position.z };
-  }
-
-  private distance2D(a: { x: number; z: number }, b: { x: number; z: number }): number {
-    const dx = a.x - b.x;
-    const dz = a.z - b.z;
-    return Math.sqrt(dx * dx + dz * dz);
-  }
-
-  private distance3D(a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }): number {
-    const dx = a.x - b.x;
-    const dy = a.y - b.y;
-    const dz = a.z - b.z;
-    return Math.sqrt(dx * dx + dy * dy + dz * dz);
   }
 
   private handleHeroSelect(client: Client, heroId: HeroId) {
@@ -9686,7 +9189,7 @@ export class GameRoom extends Room<GameState> {
     const pitch = clampLookPitch(DEV_BOT_LOOK_PITCH[direction]);
     bot.lookPitch = pitch;
     bot.lastInput = {
-      ...(bot.lastInput ?? this.createEmptyBotInput(bot, now)),
+      ...(bot.lastInput ?? createEmptyBotInput(this.state.tick, bot, now)),
       lookPitch: pitch,
       timestamp: now,
     };
@@ -9775,7 +9278,7 @@ export class GameRoom extends Room<GameState> {
     this.state.mapSize = mapSize;
     this.mapManifest = generateProceduralVoxelMap(this.state.mapSeed, { themeId, mapSize });
     this.powerupBoostUntil.clear();
-    this.resetPowerupPickupStates(0);
+    resetPowerupPickupStates(this.powerupPickupStates, this.mapManifest, 0);
     this.proceduralTerrainLookup = createProceduralTerrainLookup(this.mapManifest);
     this.mapChunkLookup.clear();
     for (const chunk of this.mapManifest.chunks) {
@@ -9790,7 +9293,7 @@ export class GameRoom extends Room<GameState> {
     this.movementCollisionRevision = 0;
     this.movementTerrain.collisionRevision = 0;
     this.movementCollisionWorldCache = null;
-    this.losCache.clear();
+    this.lineOfSightCache.clear();
     this.visibilityInterest.clearAll();
     this.forceTransformFullSync();
   }
@@ -9802,7 +9305,7 @@ export class GameRoom extends Room<GameState> {
     }
     this.movementTerrain.collisionRevision = this.movementCollisionRevision;
     this.movementCollisionWorldCache = null;
-    this.losCache.clear();
+    this.lineOfSightCache.clear();
     this.visibilityInterest.clearLineOfSightCache();
     this.forceTransformFullSync();
   }
@@ -10228,7 +9731,7 @@ export class GameRoom extends Room<GameState> {
         mapSeed: this.state.mapSeed,
         mapThemeId: this.state.mapThemeId,
         mapSize: this.state.mapSize as VoxelMapSizeId,
-        position: this.vec3SchemaToPlain(player.position),
+        position: vec3SchemaToPlain(player.position),
         movementEpoch: authority.movementEpoch,
         ackSeq: authority.lastProcessedSeq,
         collisionRevision: this.getMovementCollisionRevision(now),
@@ -10339,7 +9842,7 @@ export class GameRoom extends Room<GameState> {
         this.chronosAegisShieldHp.delete(player.id);
       }
       if (player.isBot) {
-        this.botBrains.set(player.id, this.createBotBrain(player, this.hashString(player.id)));
+        this.botBrains.set(player.id, this.createBotBrain(player, hashString(player.id)));
       }
 
       // Reset ability cooldowns
@@ -10350,9 +9853,9 @@ export class GameRoom extends Room<GameState> {
     });
 
     // Reset flags
-    this.resetFlags();
+    resetFlagsFromManifest(this.state, this.getMapManifest());
     this.powerupBoostUntil.clear();
-    this.resetPowerupPickupStates(0);
+    resetPowerupPickupStates(this.powerupPickupStates, this.mapManifest, 0);
 
     this.broadcastTracked('phaseChange', {
       phase: 'playing',
@@ -10361,7 +9864,11 @@ export class GameRoom extends Room<GameState> {
       mapThemeId: this.state.mapThemeId,
       mapSize: this.state.mapSize as VoxelMapSizeId,
     });
-    this.broadcastTracked('powerupState', this.buildPowerupStateMessage());
+    this.broadcastTracked('powerupState', buildPowerupStateMessage(
+      this.state.serverTime || Date.now(),
+      this.mapManifest,
+      this.powerupPickupStates
+    ));
     this.forceTransformFullSync();
     this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
   }
@@ -10371,14 +9878,13 @@ export class GameRoom extends Room<GameState> {
     this.state.phaseEndTime = Date.now() + 5000; // 5 second intermission
     this.updateMetadata();
 
-    const winningTeam = this.state.redTeam.score > this.state.blueTeam.score ? 'red' : 
-                        this.state.blueTeam.score > this.state.redTeam.score ? 'blue' : null;
+    const winningTeam = getWinningTeam(this.state.redTeam.score, this.state.blueTeam.score);
 
     this.broadcastTracked('roundEnd', {
       winningTeam,
       redScore: this.state.redTeam.score,
       blueScore: this.state.blueTeam.score,
-      nextPhase: this.shouldEndGameAfterRound() ? 'game_end' : 'hero_select',
+      nextPhase: shouldEndGameAfterRound(this.gameplayMode, this.state.redTeam.score, this.state.blueTeam.score, this.config.scoreToWin) ? 'game_end' : 'hero_select',
     });
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
   }
@@ -10391,8 +9897,7 @@ export class GameRoom extends Room<GameState> {
     this.state.roundTimeRemaining = 0;
     this.updateMetadata();
 
-    const winningTeam = this.state.redTeam.score > this.state.blueTeam.score ? 'red' :
-                        this.state.blueTeam.score > this.state.redTeam.score ? 'blue' : null;
+    const winningTeam = getWinningTeam(this.state.redTeam.score, this.state.blueTeam.score);
     const finalScore = {
       red: this.state.redTeam.score,
       blue: this.state.blueTeam.score,
@@ -10415,7 +9920,7 @@ export class GameRoom extends Room<GameState> {
       this.refreshMapManifest();
       this.state.redTeam.score = 0;
       this.state.blueTeam.score = 0;
-      this.resetFlags();
+      resetFlagsFromManifest(this.state, this.getMapManifest());
       
       this.state.players.forEach(player => {
         player.state = 'selecting';
@@ -10432,33 +9937,6 @@ export class GameRoom extends Room<GameState> {
       this.matchPersistenceLedger = null;
       this.updateMetadata();
     }, 10000);
-  }
-
-  private resetFlags() {
-    const manifest = this.getMapManifest();
-    const redFlag = manifest.gameplay?.flags?.red?.center ?? manifest.flagZones.red;
-    const blueFlag = manifest.gameplay?.flags?.blue?.center ?? manifest.flagZones.blue;
-
-    this.state.redTeam.flag.position.x = redFlag.x;
-    this.state.redTeam.flag.position.y = redFlag.y;
-    this.state.redTeam.flag.position.z = redFlag.z;
-    this.state.redTeam.flag.isAtBase = true;
-    this.state.redTeam.flag.carrierId = '';
-    this.state.redTeam.flag.droppedAt = 0;
-
-    this.state.redTeam.flag.basePosition.x = redFlag.x;
-    this.state.redTeam.flag.basePosition.y = redFlag.y;
-    this.state.redTeam.flag.basePosition.z = redFlag.z;
-
-    this.state.blueTeam.flag.position.x = blueFlag.x;
-    this.state.blueTeam.flag.position.y = blueFlag.y;
-    this.state.blueTeam.flag.position.z = blueFlag.z;
-    this.state.blueTeam.flag.isAtBase = true;
-    this.state.blueTeam.flag.carrierId = '';
-    this.state.blueTeam.flag.droppedAt = 0;
-    this.state.blueTeam.flag.basePosition.x = blueFlag.x;
-    this.state.blueTeam.flag.basePosition.y = blueFlag.y;
-    this.state.blueTeam.flag.basePosition.z = blueFlag.z;
   }
 
   private updateVoidZones(now: number) {
@@ -10535,7 +10013,7 @@ export class GameRoom extends Room<GameState> {
       playerId: player.id,
       abilityId: 'blaze_flamethrower',
       castId: `blaze_flamethrower_${player.id}_${active ? 'start' : 'stop'}_${now}`,
-      position: this.vec3SchemaToPlain(player.position),
+      position: vec3SchemaToPlain(player.position),
       startPosition: pose.origin,
       aimDirection: pose.direction,
       ownerTeam: player.team as Team,
@@ -10651,7 +10129,7 @@ export class GameRoom extends Room<GameState> {
     const { origin, direction: forward } = this.getBlazeFlamethrowerPose(source);
     const terrainHit = this.raycastTerrain(origin, forward, BLAZE_FLAMETHROWER_RANGE);
     const flameDistance = terrainHit
-      ? Math.min(BLAZE_FLAMETHROWER_RANGE, this.distance3D(origin, terrainHit))
+      ? Math.min(BLAZE_FLAMETHROWER_RANGE, distance3D(origin, terrainHit))
       : BLAZE_FLAMETHROWER_RANGE;
     let aegisHitForDamage = this.getChronosAegisSkillHit(source, origin, forward, flameDistance, {
       projectileRadius: BLAZE_FLAMETHROWER_COLLISION_RADIUS,
@@ -10743,7 +10221,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private scoreTeamDeathmatchKill(killer: Player, victim: Player): void {
-    if (!this.isTeamDeathmatchMode()) return;
+    if (!isTeamDeathmatchMode(this.gameplayMode)) return;
     if (!isTeam(killer.team) || !isTeam(victim.team) || killer.team === victim.team) return;
     if (this.spawnedNpcs.has(killer.id) || this.spawnedNpcs.has(victim.id)) return;
 
@@ -10753,7 +10231,7 @@ export class GameRoom extends Room<GameState> {
       this.state.blueTeam.score++;
     }
 
-    if (this.hasTeamReachedScoreLimit()) {
+    if (hasTeamReachedScoreLimit(this.state.redTeam.score, this.state.blueTeam.score, this.config.scoreToWin)) {
       this.endRound();
     }
   }
@@ -10787,13 +10265,12 @@ export class GameRoom extends Room<GameState> {
     return zone;
   }
 
-  private checkFlagReturns() {
-    // Check if flags should auto-return
-    const flags = [this.state.redTeam.flag, this.state.blueTeam.flag];
-    for (const flag of flags) {
+  private checkFlagReturns(now: number): void {
+    for (const team of CTF_TEAMS) {
+      const flag = getFlagByTeam(this.state, team);
       if (!flag.isAtBase && !flag.carrierId && flag.droppedAt) {
-        if (Date.now() - flag.droppedAt >= this.config.flagReturnTimeSeconds * 1000) {
-          this.returnFlagToBase(flag.team as Team);
+        if (now - flag.droppedAt >= this.config.flagReturnTimeSeconds * 1000) {
+          this.returnFlagToBase(team);
         }
       }
     }
@@ -10801,24 +10278,20 @@ export class GameRoom extends Room<GameState> {
 
   private dropFlag(player: Player) {
     if (!player.hasFlag) return;
+    if (!isTeam(player.team)) return;
 
-    const enemyTeam = player.team === 'red' ? this.state.blueTeam : this.state.redTeam;
-    const flag = enemyTeam.flag;
-
-    flag.position.x = player.position.x;
-    flag.position.y = player.position.y;
-    flag.position.z = player.position.z;
-    flag.carrierId = '';
-    flag.droppedAt = Date.now();
-    flag.isAtBase = false;
+    const now = Date.now();
+    const droppedTeam = getEnemyTeam(player.team);
+    const flag = getFlagByTeam(this.state, droppedTeam);
+    setFlagDroppedAtPlayer(flag, player, now);
 
     player.hasFlag = false;
-    this.recordObjectiveEvent(player, 'drop', player.team === 'red' ? 'blue' : 'red', Date.now());
+    this.recordObjectiveEvent(player, 'drop', droppedTeam, now);
 
     this.broadcastTracked('flagDrop', {
-      team: player.team === 'red' ? 'blue' : 'red',
+      team: droppedTeam,
       playerId: player.id,
-      position: { x: flag.position.x, y: flag.position.y, z: flag.position.z },
+      position: vec3SchemaToPlain(flag.position),
     });
   }
 
@@ -10841,7 +10314,7 @@ export class GameRoom extends Room<GameState> {
       this.chronosAegisShieldHp.delete(player.id);
     }
     if (player.isBot) {
-      this.botBrains.set(player.id, this.createBotBrain(player, this.hashString(player.id)));
+      this.botBrains.set(player.id, this.createBotBrain(player, hashString(player.id)));
     }
 
     // Reset ability cooldowns on respawn
@@ -10998,7 +10471,7 @@ export class GameRoom extends Room<GameState> {
       return team === 'red' ? Math.PI : 0;
     }
 
-    return this.normalizeAngle(Math.atan2(-facing.x, -facing.z));
+    return normalizeAngle(Math.atan2(-facing.x, -facing.z));
   }
 
   private getSpawnPosition(team: Team): SpawnPosition {
@@ -11150,7 +10623,7 @@ export class GameRoom extends Room<GameState> {
         isNpc: true,
       };
       if (this.shouldIncludeJoinPosition(recipient, npc)) {
-        payload.position = this.vec3SchemaToPlain(npc.position);
+        payload.position = vec3SchemaToPlain(npc.position);
       }
       this.sendTracked(roomClient, 'playerJoined', payload);
     }
@@ -11192,7 +10665,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     const source = this.state.players.get(client.sessionId) ?? null;
-    const sourcePosition = source ? this.vec3SchemaToPlain(source.position) : null;
+    const sourcePosition = source ? vec3SchemaToPlain(source.position) : null;
     const sourceDirection = source
       ? this.normalize3D({
         x: npc.position.x - source.position.x,
@@ -11210,7 +10683,7 @@ export class GameRoom extends Room<GameState> {
         damageType: 'console',
         newHealth: npc.health,
         sourcePosition,
-        targetPosition: this.vec3SchemaToPlain(npc.position),
+        targetPosition: vec3SchemaToPlain(npc.position),
         sourceHeroId: source?.heroId || null,
         targetHeroId: npc.heroId || null,
       });
@@ -11280,7 +10753,7 @@ export class GameRoom extends Room<GameState> {
 
   private handleNpcDeath(npc: Player, killerId: string) {
     const killer = this.state.players.get(killerId);
-    const sourcePosition = killer ? this.vec3SchemaToPlain(killer.position) : null;
+    const sourcePosition = killer ? vec3SchemaToPlain(killer.position) : null;
     const sourceDirection = killer
       ? this.normalize3D({
         x: npc.position.x - killer.position.x,

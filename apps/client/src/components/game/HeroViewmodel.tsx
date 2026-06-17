@@ -56,12 +56,24 @@ import {
 } from '../../viewmodel/viewmodelKit';
 import { visualStore } from '../../store/visualStore';
 import {
-  BLAZE_COLORS,
-  HOOKSHOT_COLORS,
   PHANTOM_COLORS,
   SHARED_GEOMETRIES,
   getHookshotMaterials,
 } from './effectResources';
+import {
+  HERO_MATERIAL_COLORS,
+  getViewmodelMaterials,
+  isViewmodelHero,
+  type ViewmodelHeroId,
+  type ViewmodelMaterialSet,
+} from './heroViewmodelMaterials';
+import {
+  getActionState,
+  hasOwnedActiveGrappleLineOnSide,
+  hasOwnedProjectileOnSide,
+  isViewmodelActionActive,
+  type ViewmodelActionState,
+} from './heroViewmodelActions';
 import { HookshotViewmodelArrow } from './hookshot/arrowHead';
 import {
   createPhantomVeilSplitMaterial,
@@ -74,32 +86,13 @@ import {
 } from './chronos/aegisGeometry';
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
 import type { ViewmodelQualityConfig } from './visualQuality';
-
-type ViewmodelHeroId = Extract<HeroId, 'phantom' | 'hookshot' | 'blaze' | 'chronos'>;
-
-interface ViewmodelActionState {
-  active: boolean;
-  charging: boolean;
-  targeting: boolean;
-}
-
-interface ViewmodelMaterialSet {
-  armor: THREE.MeshStandardMaterial;
-  dark: THREE.MeshStandardMaterial;
-  metal: THREE.MeshStandardMaterial;
-  accent: THREE.MeshStandardMaterial;
-  glow: THREE.MeshBasicMaterial;
-  glass: THREE.MeshStandardMaterial;
-}
+import { ViewmodelBurnOverlay } from './ViewmodelBurnOverlay';
 
 interface HeroViewmodelProps {
   heroId: ViewmodelHeroId;
   action: ViewmodelActionState;
   config: ViewmodelQualityConfig;
 }
-
-const VIEWMODEL_HEROES = new Set<HeroId>(['phantom', 'hookshot', 'blaze', 'chronos']);
-const materialCache = new Map<ViewmodelHeroId, ViewmodelMaterialSet>();
 
 interface MutableTransformTarget {
   position: THREE.Vector3;
@@ -127,8 +120,6 @@ interface HookshotSecondaryFireState {
   eventId: string;
   startTimeMs: number;
 }
-
-type GameStoreSnapshot = ReturnType<typeof useGameStore.getState>;
 
 interface PhantomHandPoseTargets {
   closedHand?: MutableTransformTarget;
@@ -266,25 +257,6 @@ const BLAZE_STAFF_TIP_FLAME_ANGLES = [
   Math.PI * 1.25,
   Math.PI * 1.75,
 ] as const;
-const VIEWMODEL_BURN_FADE_OUT_MS = 500;
-const VIEWMODEL_BURN_OPACITY_SCALE = 0.5;
-const VIEWMODEL_BURN_FLAME_SCALE = 0.72;
-const VIEWMODEL_BURN_EMBER_SCALE = 0.58;
-const VIEWMODEL_BURN_ANCHORS = [
-  { x: -0.34, y: -0.31, z: -0.5, radius: 0.054, phase: 0.08 },
-  { x: 0.34, y: -0.31, z: -0.5, radius: 0.054, phase: 0.31 },
-  { x: -0.31, y: -0.24, z: -0.69, radius: 0.046, phase: 0.54 },
-  { x: 0.31, y: -0.24, z: -0.69, radius: 0.046, phase: 0.77 },
-  { x: 0.06, y: -0.22, z: -0.6, radius: 0.05, phase: 0.95 },
-] as const;
-const VIEWMODEL_BURN_EMBERS = [
-  { x: -0.37, y: -0.27, z: -0.62, phase: 0.12 },
-  { x: -0.25, y: -0.21, z: -0.76, phase: 0.3 },
-  { x: 0.27, y: -0.21, z: -0.76, phase: 0.48 },
-  { x: 0.38, y: -0.27, z: -0.62, phase: 0.66 },
-  { x: 0.03, y: -0.19, z: -0.62, phase: 0.84 },
-  { x: 0.11, y: -0.18, z: -0.53, phase: 0.98 },
-] as const;
 const CHRONOS_FOREARM_READY_BLEND = 0.52;
 const CHRONOS_HAND_READY_BLEND = 0.62;
 const CHRONOS_MOVEMENT_BOB_WALK_SPEED = 5.35;
@@ -419,216 +391,6 @@ const PHANTOM_STILL_LOCOMOTION_POSE: PhantomLocomotionPose = {
   cycleTime: 0,
 };
 
-const HERO_MATERIAL_COLORS: Record<ViewmodelHeroId, {
-  armor: number;
-  dark: number;
-  metal: number;
-  accent: number;
-  glow: number;
-  glass: number;
-}> = {
-  phantom: {
-    armor: 0x302447,
-    dark: 0x090612,
-    metal: 0x211833,
-    accent: PHANTOM_COLORS.violet,
-    glow: PHANTOM_COLORS.lightPurple,
-    glass: 0x251a3a,
-  },
-  hookshot: {
-    armor: 0x1f3b4a,
-    dark: 0x10242e,
-    metal: HOOKSHOT_COLORS.metal,
-    accent: HOOKSHOT_COLORS.energy,
-    glow: HOOKSHOT_COLORS.energy,
-    glass: 0x22d3ee,
-  },
-  blaze: {
-    armor: 0x7c2d12,
-    dark: 0x1f130d,
-    metal: BLAZE_COLORS.metal,
-    accent: BLAZE_COLORS.fireOrange,
-    glow: BLAZE_COLORS.fireYellow,
-    glass: 0xfb923c,
-  },
-  chronos: {
-    armor: 0x123b2d,
-    dark: 0x07130f,
-    metal: 0x9b7a34,
-    accent: 0x22c55e,
-    glow: 0xa7f3d0,
-    glass: 0xb91c1c,
-  },
-};
-
-function isViewmodelHero(heroId: HeroId | '' | null | undefined): heroId is ViewmodelHeroId {
-  return Boolean(heroId && VIEWMODEL_HEROES.has(heroId));
-}
-
-function getViewmodelMaterials(heroId: ViewmodelHeroId): ViewmodelMaterialSet {
-  const cached = materialCache.get(heroId);
-  if (cached) return cached;
-
-  const colors = HERO_MATERIAL_COLORS[heroId];
-  const materials: ViewmodelMaterialSet = {
-    armor: new THREE.MeshStandardMaterial({
-      color: colors.armor,
-      metalness: 0.3,
-      roughness: 0.42,
-    }),
-    dark: new THREE.MeshStandardMaterial({
-      color: colors.dark,
-      metalness: 0.24,
-      roughness: 0.6,
-    }),
-    metal: new THREE.MeshStandardMaterial({
-      color: colors.metal,
-      metalness: 0.76,
-      roughness: 0.25,
-    }),
-    accent: new THREE.MeshStandardMaterial({
-      color: colors.accent,
-      emissive: colors.accent,
-      emissiveIntensity: 0.34,
-      metalness: 0.2,
-      roughness: 0.32,
-    }),
-    glow: new THREE.MeshBasicMaterial({
-      color: colors.glow,
-      transparent: true,
-      opacity: 1,
-      toneMapped: false,
-    }),
-    glass: new THREE.MeshStandardMaterial({
-      color: colors.glass,
-      emissive: colors.glass,
-      emissiveIntensity: 0.26,
-      metalness: 0.1,
-      roughness: 0.18,
-    }),
-  };
-
-  materialCache.set(heroId, materials);
-  return materials;
-}
-
-export function getHeroViewmodelGpuPrewarmMaterials(): THREE.Material[] {
-  const materials: THREE.Material[] = [];
-  for (const heroId of VIEWMODEL_HEROES) {
-    if (!isViewmodelHero(heroId)) continue;
-    const materialSet = getViewmodelMaterials(heroId);
-    materials.push(
-      materialSet.armor,
-      materialSet.dark,
-      materialSet.metal,
-      materialSet.accent,
-      materialSet.glow,
-      materialSet.glass
-    );
-  }
-  return materials;
-}
-
-export function prewarmHeroViewmodelResources(): void {
-  getHeroViewmodelGpuPrewarmMaterials();
-  getHookshotMaterials();
-}
-
-function hasOwnedProjectile<T extends { ownerId: string }>(
-  items: readonly T[],
-  ownerId: string | null | undefined
-): boolean {
-  if (!ownerId) return false;
-  for (let index = 0; index < items.length; index++) {
-    if (items[index].ownerId === ownerId) return true;
-  }
-  return false;
-}
-
-function hasOwnedProjectileOnSide<T extends { ownerId: string; launchSide?: -1 | 1 }>(
-  items: readonly T[],
-  ownerId: string | null | undefined,
-  side: -1 | 1
-): boolean {
-  if (!ownerId) return false;
-  for (let index = 0; index < items.length; index++) {
-    const item = items[index];
-    if (item.ownerId === ownerId && (item.launchSide ?? 1) === side) return true;
-  }
-  return false;
-}
-
-function hasOwnedActiveGrappleLineOnSide(
-  state: GameStoreSnapshot,
-  ownerId: string | null | undefined,
-  side: -1 | 1
-): boolean {
-  if (!ownerId) return false;
-  for (let index = 0; index < state.grappleLines.length; index++) {
-    const line = state.grappleLines[index];
-    if (line.ownerId === ownerId && line.state !== 'done' && (line.launchSide ?? 1) === side) return true;
-  }
-  return false;
-}
-
-function hasOwnedGrappleLine(
-  state: GameStoreSnapshot,
-  ownerId: string | null | undefined
-): boolean {
-  return hasOwnedProjectile(state.grappleLines, ownerId);
-}
-
-function isViewmodelActionActive(
-  heroId: ViewmodelHeroId | null,
-  state: GameStoreSnapshot,
-  localPlayerId: string | null | undefined
-): boolean {
-  switch (heroId) {
-    case 'phantom':
-      return hasOwnedProjectile(state.voidRays, localPlayerId);
-    case 'hookshot':
-      return hasOwnedProjectile(state.dragHooks, localPlayerId) ||
-        hasOwnedGrappleLine(state, localPlayerId);
-    case 'blaze':
-      return state.flamethrowerActive || hasOwnedProjectile(state.rockets, localPlayerId);
-    case 'chronos':
-    case null:
-      return false;
-  }
-}
-
-function getActionState(heroId: ViewmodelHeroId): ViewmodelActionState {
-  const store = useGameStore.getState();
-  const localPlayerId = store.localPlayer?.id;
-
-  switch (heroId) {
-    case 'phantom':
-      return {
-        active: isViewmodelActionActive(heroId, store, localPlayerId),
-        charging: store.voidRayCharging,
-        targeting: false,
-      };
-    case 'hookshot':
-      return {
-        active: isViewmodelActionActive(heroId, store, localPlayerId),
-        charging: false,
-        targeting: false,
-      };
-    case 'blaze':
-      return {
-        active: isViewmodelActionActive(heroId, store, localPlayerId),
-        charging: false,
-        targeting: store.bombTargeting,
-      };
-    case 'chronos':
-      return {
-        active: false,
-        charging: false,
-        targeting: false,
-      };
-  }
-}
-
 function writeViewmodelRootTransform(
   target: MutableTransformTarget,
   elapsedSeconds: number,
@@ -659,123 +421,6 @@ function createPhantomReloadGlowMaterial(): THREE.MeshBasicMaterial {
     depthWrite: false,
     toneMapped: false,
   });
-}
-
-function createViewmodelBurnMaterial(
-  color: number,
-  opacity: number
-): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial({
-    color,
-    transparent: true,
-    opacity,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    toneMapped: false,
-  });
-}
-
-function ViewmodelBurnOverlay() {
-  const groupRef = useRef<THREE.Group>(null);
-  const flameRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const emberRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const flameMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireOrange, 0), []);
-  const innerFlameMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireYellow, 0), []);
-  const emberMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireWhite, 0), []);
-  const glowMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireRed, 0), []);
-
-  useEffect(() => () => {
-    flameMaterial.dispose();
-    innerFlameMaterial.dispose();
-    emberMaterial.dispose();
-    glowMaterial.dispose();
-  }, [emberMaterial, flameMaterial, glowMaterial, innerFlameMaterial]);
-
-  useFrame((state) => {
-    const group = groupRef.current;
-    if (!group) return;
-
-    const player = useGameStore.getState().localPlayer;
-    const now = Date.now();
-    const remainingMs = Math.max(0, (player?.onFireUntil ?? 0) - now);
-    const active = Boolean(player && player.state === 'alive' && remainingMs > 0);
-    if (!active) {
-      group.visible = false;
-      flameMaterial.opacity = 0;
-      innerFlameMaterial.opacity = 0;
-      emberMaterial.opacity = 0;
-      glowMaterial.opacity = 0;
-      return;
-    }
-
-    const fade = THREE.MathUtils.smoothstep(Math.min(remainingMs, VIEWMODEL_BURN_FADE_OUT_MS), 0, VIEWMODEL_BURN_FADE_OUT_MS);
-    const t = state.clock.elapsedTime;
-    const flicker = 0.82 + Math.sin(t * 17.2) * 0.08 + Math.sin(t * 37.5) * 0.04;
-    const intensity = fade * flicker;
-
-    group.visible = intensity > 0.01;
-    flameMaterial.opacity = intensity * 0.18 * VIEWMODEL_BURN_OPACITY_SCALE;
-    innerFlameMaterial.opacity = intensity * 0.12 * VIEWMODEL_BURN_OPACITY_SCALE;
-    emberMaterial.opacity = intensity * 0.34 * VIEWMODEL_BURN_OPACITY_SCALE;
-    glowMaterial.opacity = intensity * 0.055 * VIEWMODEL_BURN_OPACITY_SCALE;
-
-    for (let index = 0; index < VIEWMODEL_BURN_ANCHORS.length; index++) {
-      const anchor = VIEWMODEL_BURN_ANCHORS[index];
-      const mesh = flameRefs.current[index];
-      if (!mesh) continue;
-
-      const pulse = Math.sin(t * 8.6 + anchor.phase * Math.PI * 2);
-      const sway = Math.sin(t * 5.4 + anchor.phase * Math.PI * 2) * 0.018;
-      const scale = anchor.radius * intensity * VIEWMODEL_BURN_FLAME_SCALE * (0.82 + Math.max(0, pulse) * 0.24);
-      mesh.visible = intensity > 0.02;
-      mesh.position.set(anchor.x + sway, anchor.y + Math.max(0, pulse) * 0.016, anchor.z);
-      mesh.rotation.set(-0.26 + pulse * 0.08, anchor.phase * Math.PI * 2 + t * 0.22, pulse * 0.16);
-      mesh.scale.set(scale * 0.68, scale * 1.62, scale * 0.68);
-    }
-
-    for (let index = 0; index < VIEWMODEL_BURN_EMBERS.length; index++) {
-      const ember = VIEWMODEL_BURN_EMBERS[index];
-      const mesh = emberRefs.current[index];
-      if (!mesh) continue;
-
-      const cycle = (t * 0.9 + ember.phase) % 1;
-      const drift = Math.sin(t * 3.2 + ember.phase * 8) * 0.016;
-      const scale = (0.012 + cycle * 0.008) * intensity * VIEWMODEL_BURN_EMBER_SCALE;
-      mesh.visible = intensity > 0.02;
-      mesh.position.set(
-        ember.x + drift,
-        ember.y + cycle * 0.105,
-        ember.z + Math.cos(t * 2.6 + ember.phase * 6) * 0.012
-      );
-      mesh.scale.setScalar(scale);
-    }
-  });
-
-  return (
-    <group ref={groupRef} visible={false} renderOrder={24}>
-      <mesh geometry={SHARED_GEOMETRIES.sphere12} material={glowMaterial} position={[0, -0.27, -0.62]} scale={[0.56, 0.18, 0.34]} frustumCulled={false} />
-      {VIEWMODEL_BURN_ANCHORS.map((anchor, index) => (
-        <mesh
-          key={`viewmodel-burn-flame-${index}`}
-          ref={(node) => { flameRefs.current[index] = node; }}
-          geometry={SHARED_GEOMETRIES.cone6}
-          material={index % 2 === 0 ? flameMaterial : innerFlameMaterial}
-          position={[anchor.x, anchor.y, anchor.z]}
-          frustumCulled={false}
-        />
-      ))}
-      {VIEWMODEL_BURN_EMBERS.map((ember, index) => (
-        <mesh
-          key={`viewmodel-burn-ember-${index}`}
-          ref={(node) => { emberRefs.current[index] = node; }}
-          geometry={SHARED_GEOMETRIES.sphere6}
-          material={emberMaterial}
-          position={[ember.x, ember.y, ember.z]}
-          frustumCulled={false}
-        />
-      ))}
-    </group>
-  );
 }
 
 function getPhantomReloadPose(nowMs: number, elapsedSeconds: number, side: -1 | 1): PhantomReloadPose {

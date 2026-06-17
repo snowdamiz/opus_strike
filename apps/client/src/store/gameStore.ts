@@ -64,35 +64,6 @@ export const OBSERVER_FLY_SPEED_PRESETS = {
 
 const DEFAULT_OBSERVER_FLY_SPEED_PRESET: ObserverFlySpeedPreset = 'high';
 
-// Re-export all types for backwards compatibility
-export type {
-  LobbyPlayer,
-  LobbyWagerState,
-  MapVoteOption,
-  MapVoteRecord,
-  WagerPaymentIntent,
-  WagerPaymentTransaction,
-  RankedEntryQuote,
-  UserStats,
-  MatchmakingStatus,
-  AppPhase,
-} from './types';
-
-export type {
-  VoidZoneData,
-  DireBallData,
-  VoidRayData,
-  RocketData,
-  BombData,
-  ChronosPulseData,
-  HookProjectileData,
-  DragHookData,
-  HookshotGroundHooksData,
-  HookshotGroundHooksTargetData,
-  GrappleLineData,
-  EarthWallData,
-} from './types';
-
 // ============================================================================
 // CORE STATE INTERFACE (non-slice state)
 // ============================================================================

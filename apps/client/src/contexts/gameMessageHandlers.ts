@@ -9,6 +9,18 @@ import {
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
   CHRONOS_VERDANT_PULSE_SPEED,
+  MOVEMENT_BIT_CHRONOS_AEGIS,
+  MOVEMENT_BIT_CROUCHING,
+  MOVEMENT_BIT_GLIDING,
+  MOVEMENT_BIT_GRAPPLING,
+  MOVEMENT_BIT_GROUNDED,
+  MOVEMENT_BIT_JETPACKING,
+  MOVEMENT_BIT_SLIDING,
+  MOVEMENT_BIT_SPRINTING,
+  MOVEMENT_BIT_WALL_RUNNING,
+  TRANSFORM_ANGLE_SCALE,
+  TRANSFORM_POSITION_SCALE,
+  TRANSFORM_VELOCITY_SCALE,
   VOID_RAY_CHARGE_TIME,
   createDefaultPlayerMovementState,
   DEFAULT_GAMEPLAY_MODE,
@@ -101,6 +113,7 @@ import type {
   ChronosAegisDamagedEvent,
   ChronosAegisBrokenEvent,
   PhantomShieldBrokenEvent,
+  GamePhase,
   HeroId,
   MatchSnapshotMessage,
   PlayerDeathEvent,
@@ -115,34 +128,47 @@ import type {
   PackedPlayerTransform,
   PowerupCollectedMessage,
   PowerupStateMessage,
+  PlayerState,
   SelfMovementAuthority,
   Team,
 } from '@voxel-strike/shared';
+import type { AppPhase } from '../store/types';
 
-const TRANSFORM_POSITION_SCALE = 100;
-const TRANSFORM_VELOCITY_SCALE = 100;
-const TRANSFORM_ANGLE_SCALE = 10000;
 const CHRONOS_TIMEBREAK_CHARGE_FADE_OUT_MS = 110;
-const MOVEMENT_BIT_GROUNDED = 1 << 0;
-const MOVEMENT_BIT_SPRINTING = 1 << 1;
-const MOVEMENT_BIT_CROUCHING = 1 << 2;
-const MOVEMENT_BIT_SLIDING = 1 << 3;
-const MOVEMENT_BIT_WALL_RUNNING = 1 << 4;
-const MOVEMENT_BIT_GRAPPLING = 1 << 5;
-const MOVEMENT_BIT_JETPACKING = 1 << 6;
-const MOVEMENT_BIT_GLIDING = 1 << 7;
-const MOVEMENT_BIT_CHRONOS_AEGIS = 1 << 8;
 const remotePhantomChargeControllers = new Map<string, AbortController>();
 const playerIdByNetId = new Map<number, string>();
 const netIdByPlayerId = new Map<string, number>();
 let lastLocalPhantomReloadSoundKey = '';
 let hasReceivedSelfMovementAuthority = false;
 const HOOKSHOT_SHOT_CLIP_MS = 250;
+const GAME_PHASES = new Set<string>([
+  'waiting',
+  'hero_select',
+  'countdown',
+  'playing',
+  'round_end',
+  'game_end',
+]);
+const PLAYER_STATES = new Set<string>([
+  'spectating',
+  'selecting',
+  'spawning',
+  'alive',
+  'dead',
+]);
 
 function measureNetworkMessage<T>(type: string, handler: (data: T) => void): (data: T) => void {
   return (data) => {
     measureFrameWork(`network.${type}`, () => handler(data));
   };
+}
+
+export function normalizeGamePhase(value: unknown, fallback: GamePhase = 'waiting'): GamePhase {
+  return typeof value === 'string' && GAME_PHASES.has(value) ? value as GamePhase : fallback;
+}
+
+function normalizePlayerState(value: unknown, fallback: PlayerState = 'alive'): PlayerState {
+  return typeof value === 'string' && PLAYER_STATES.has(value) ? value as PlayerState : fallback;
 }
 
 interface UnpackedPlayerTransform {
@@ -250,7 +276,7 @@ export function createPlayerFromSchema(schemaPlayer: any, id: string): Player {
     name: schemaPlayer.name || 'Unknown',
     team: (schemaPlayer.team || 'red') as Team,
     heroId: (schemaPlayer.heroId || null) as HeroId | null,
-    state: (schemaPlayer.state || 'alive') as any,
+    state: normalizePlayerState(schemaPlayer.state),
     isReady: schemaPlayer.isReady || false,
     isBot: Boolean(schemaPlayer.isBot),
     botDifficulty: schemaPlayer.botDifficulty || undefined,
@@ -674,12 +700,12 @@ export interface GameStoreActions {
   setLocalPlayer: (player: Player) => void;
   updatePlayer: (playerId: string, player: Player) => void;
   removePlayer: (playerId: string) => void;
-  setGamePhase: (phase: any) => void;
+  setGamePhase: (phase: GamePhase) => void;
   setPhaseEndTime: (time: number | null) => void;
   setMapSeed: (seed: number) => void;
   setConnected: (connected: boolean) => void;
   setRoomId: (roomId: string | null) => void;
-  setAppPhase: (phase: any) => void;
+  setAppPhase: (phase: AppPhase) => void;
   resetLobby: () => void;
 }
 
@@ -2725,7 +2751,7 @@ export function setupPollingSync(
       }
 
       if (room.state.phase !== store.gamePhase) {
-        actions.setGamePhase(room.state.phase as any);
+        actions.setGamePhase(normalizeGamePhase(room.state.phase, store.gamePhase));
       }
       if (isGameplayMode(room.state.gameplayMode) && room.state.gameplayMode !== store.gameplayMode) {
         useGameStore.setState({ gameplayMode: room.state.gameplayMode });

@@ -4,7 +4,7 @@ import type { HeroId } from '@voxel-strike/shared';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
-import { useUISounds } from '../../hooks/useAudio';
+import { useUISounds } from '../../hooks/useUiAudio';
 import { HeroPreviewCanvas } from './HeroPreviewCanvas';
 import { HERO_COLORS } from '../../styles/colorTokens';
 import { PhaseCountdownTimer } from './PhaseCountdownTimer';

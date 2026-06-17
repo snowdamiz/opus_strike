@@ -12,7 +12,8 @@ import {
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_RADIUS,
 } from '@voxel-strike/shared';
-import { useGameStore, type ChronosPulseData } from '../../../store/gameStore';
+import { useGameStore } from '../../../store/gameStore';
+import type { ChronosPulseData } from '../../../store/types';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
 import { SHARED_GEOMETRIES } from '../effectResources';

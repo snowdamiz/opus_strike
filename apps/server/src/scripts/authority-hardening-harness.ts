@@ -9,7 +9,7 @@ import type { HeroStats, Team, Vec3 } from '@voxel-strike/shared';
 import { createGameEntryTicket, verifyGameEntryTicket } from '../security/entryTickets';
 import { MessageRateLimiter } from '../rooms/rateLimiter';
 import { getCreateBotFailureReason } from '../rooms/LobbyRoom';
-import { createTeamSpawnAssignments } from '../rooms/GameRoom';
+import { createTeamSpawnAssignments } from '../rooms/spawnAssignments';
 import { validateMovementProposal, type MovementBounds } from '../rooms/movementValidation';
 import { validateTeamPayload } from '../rooms/protocolValidation';
 import { shouldResolveGenericSecondaryAttack } from '../rooms/combatInputRouting';

@@ -10,7 +10,8 @@ import {
   ANCHOR_WALL_SPEED,
   ANCHOR_WALL_WIDTH,
 } from '@voxel-strike/physics';
-import { useGameStore, type EarthWallData } from '../../../store/gameStore';
+import { useGameStore } from '../../../store/gameStore';
+import type { EarthWallData } from '../../../store/types';
 import {
   addTemporaryWallCollider,
   removeTemporaryWallCollider,

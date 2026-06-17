@@ -8,7 +8,8 @@ import {
   PLAYER_RADIUS,
   type Team,
 } from '@voxel-strike/shared';
-import { useGameStore, type DireBallData } from '../../../store/gameStore';
+import { useGameStore } from '../../../store/gameStore';
+import type { DireBallData } from '../../../store/types';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
 import { SHARED_GEOMETRIES } from '../effectResources';

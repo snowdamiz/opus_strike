@@ -495,10 +495,10 @@ export const setInterpolationTarget = (
 
 export const addRemoteTransformSnapshot = (
   playerId: string,
-  snapshot: Omit<RemoteTransformSnapshot, 'receivedAtMs'>
+  snapshot: Omit<RemoteTransformSnapshot, 'receivedAtMs'>,
+  receivedAtMs = Date.now()
 ): void => {
   const histories = visualStore.getState().remoteTransformHistories;
-  const receivedAtMs = Date.now();
   let history = histories.get(playerId);
   const last = history?.snapshots[history.snapshots.length - 1] ?? null;
   if (!history || (last && last.movementEpoch !== snapshot.movementEpoch)) {
