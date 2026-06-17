@@ -1,5 +1,9 @@
 # Opus Strike - Custom Map System
 
+## Related Planning
+
+- [Admin Hero Editor And Animator](HERO_EDITOR_PLAN.md)
+
 ## What This Is
 
 A custom low-poly competitive CTF map for Opus Strike, replacing the imported map with a purpose-built asymmetrical arena. The map provides a CS:GO-inspired gameplay environment with strategic lanes, cover positions, and proper game system integration for testing and play.
