@@ -44,6 +44,10 @@ import {
   sampleLocalVisualInterpolatedPosition,
   smoothTerrainVisualY,
 } from './localVisualInterpolation';
+import {
+  HERO_ACTION_OVERLAP_GRACE_MS,
+  isActionLockBlocking,
+} from '../../hooks/player/actionLock';
 
 function ref<T>(current: T): { current: T } {
   return { current };
@@ -143,6 +147,7 @@ function makeAbilityContext(player: Player, heroId: HeroId, inputState: InputSta
 
 function makeInputPhaseContext(options: {
   actionLocked?: boolean;
+  actionLockUntil?: number;
   previousHold?: { primaryFire: boolean; secondaryFire: boolean; ability1: boolean };
   chronosQueued?: boolean;
   abilityPressed?: { ability1: boolean; ability2: boolean; ultimate: boolean };
@@ -179,7 +184,11 @@ function makeInputPhaseContext(options: {
       })),
     },
     lockHeroActions: () => undefined,
-    isHeroActionLocked: () => Boolean(options.actionLocked),
+    isHeroActionLocked: (_heroId: HeroId, timestampMs = Date.now(), overlapGraceMs = 0) => (
+      options.actionLockUntil === undefined
+        ? Boolean(options.actionLocked)
+        : isActionLockBlocking(options.actionLockUntil, timestampMs, overlapGraceMs)
+    ),
     flushMovementCommands: () => undefined,
   } as unknown as LocalPlayerFrameContext;
 }
@@ -380,6 +389,37 @@ const lockedPhantomInput = runInputPhase(
 assert.equal(lockedPhantomInput.frameInput.primaryFire, false);
 assert.equal(lockedPhantomInput.frameInput.secondaryFire, false);
 assert.equal(lockedPhantomInput.frameInput.ultimate, false);
+
+const lockBeyondGraceInput = runInputPhase(
+  makeInputPhaseContext({ actionLockUntil: 1000 + HERO_ACTION_OVERLAP_GRACE_MS + 1 }),
+  makePlayer('phantom'),
+  'phantom',
+  input({ ability2: true }),
+  input({ ability2: true }),
+  1000
+);
+assert.equal(lockBeyondGraceInput.frameInput.ability2, false);
+
+const lockGraceInput = runInputPhase(
+  makeInputPhaseContext({ actionLockUntil: 1000 + HERO_ACTION_OVERLAP_GRACE_MS }),
+  makePlayer('phantom'),
+  'phantom',
+  input({ ability2: true }),
+  input({ ability2: true }),
+  1000
+);
+assert.equal(lockGraceInput.frameInput.ability2, true);
+
+const lockGraceBlinkInput = runInputPhase(
+  makeInputPhaseContext({ actionLockUntil: 1000 + HERO_ACTION_OVERLAP_GRACE_MS }),
+  makePlayer('phantom'),
+  'phantom',
+  input({ ability1: true }),
+  input({ ability1: true }),
+  1000
+);
+assert.deepEqual(lockGraceBlinkInput.serverCombatInput, combatInput({ ability1: true }));
+assert.deepEqual(lockGraceBlinkInput.requestedCommandScheduleReasons, ['movement_barrier']);
 
 const phantomPrimaryCtx = makeInputPhaseContext();
 const phantomPrimaryInput = runInputPhase(

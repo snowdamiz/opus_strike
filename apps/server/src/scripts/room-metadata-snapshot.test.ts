@@ -2,6 +2,31 @@ import assert from 'node:assert/strict';
 import { buildGameRoomMetadata } from '../rooms/roomMetadataSnapshot';
 import type { RoomLoadSnapshot } from '../rooms/roomLoadSnapshot';
 
+const tickOperationCounts = {
+  bot_los_checks: 29,
+  bot_steering_probe_checks: 11,
+} as RoomLoadSnapshot['tickOperationCounts'];
+const tickOperationCountAvg = {
+  bot_los_checks: 2.9,
+  bot_steering_probe_checks: 1.1,
+} as RoomLoadSnapshot['tickOperationCountAvg'];
+const tickOperationCountP95 = {
+  bot_los_checks: 19,
+  bot_steering_probe_checks: 8,
+} as RoomLoadSnapshot['tickOperationCountP95'];
+const tickOperationCountP99 = {
+  bot_los_checks: 27,
+  bot_steering_probe_checks: 10,
+} as RoomLoadSnapshot['tickOperationCountP99'];
+const tickOperationCountMax = {
+  bot_los_checks: 29,
+  bot_steering_probe_checks: 11,
+} as RoomLoadSnapshot['tickOperationCountMax'];
+const tickOperationCountTotal = {
+  bot_los_checks: 290,
+  bot_steering_probe_checks: 110,
+} as RoomLoadSnapshot['tickOperationCountTotal'];
+
 const load: RoomLoadSnapshot = {
   tickDurationP50Ms: 1,
   tickDurationP95Ms: 2,
@@ -19,9 +44,29 @@ const load: RoomLoadSnapshot = {
   streamVitalsBytes: 14,
   streamFilteredTargets: 15,
   streamHiddenTargetLeakCount: 16,
-  antiCheatQueueDepth: 17,
-  antiCheatDroppedLowMediumSignals: 18,
-  antiCheatDbErrors: 19,
+  tickOverrun16Count: 17,
+  tickOverrun33Count: 18,
+  tickOverrun50Count: 19,
+  tickLastP99SpikeSpanName: 'movement_entries_process',
+  tickLastP99SpikeSpanMs: 20,
+  tickLastP99SpikeDurationMs: 21,
+  tickSpanP99Ms: {
+    movement_entries_process: 22,
+    player_state_stream_fanout: 23,
+  },
+  tickSpanMaxMs: {
+    movement_entries_process: 24,
+    player_state_stream_fanout: 25,
+  },
+  tickOperationCounts,
+  tickOperationCountAvg,
+  tickOperationCountP95,
+  tickOperationCountP99,
+  tickOperationCountMax,
+  tickOperationCountTotal,
+  antiCheatQueueDepth: 26,
+  antiCheatDroppedLowMediumSignals: 27,
+  antiCheatDbErrors: 28,
 };
 
 {
@@ -89,9 +134,29 @@ const load: RoomLoadSnapshot = {
       streamVitalsBytes: 14,
       streamFilteredTargets: 15,
       streamHiddenTargetLeakCount: 16,
-      antiCheatQueueDepth: 17,
-      antiCheatDroppedLowMediumSignals: 18,
-      antiCheatDbErrors: 19,
+      tickOverrun16Count: 17,
+      tickOverrun33Count: 18,
+      tickOverrun50Count: 19,
+      tickLastP99SpikeSpanName: 'movement_entries_process',
+      tickLastP99SpikeSpanMs: 20,
+      tickLastP99SpikeDurationMs: 21,
+      tickSpanP99Ms: {
+        movement_entries_process: 22,
+        player_state_stream_fanout: 23,
+      },
+      tickSpanMaxMs: {
+        movement_entries_process: 24,
+        player_state_stream_fanout: 25,
+      },
+      tickOperationCounts,
+      tickOperationCountAvg,
+      tickOperationCountP95,
+      tickOperationCountP99,
+      tickOperationCountMax,
+      tickOperationCountTotal,
+      antiCheatQueueDepth: 26,
+      antiCheatDroppedLowMediumSignals: 27,
+      antiCheatDbErrors: 28,
     }
   );
 }

@@ -43,9 +43,15 @@ function makeTarget(): SampledRemoteTransform {
   };
 }
 
-function addSnapshot(serverTime: number, x: number): void {
+function addRemoteSnapshot(
+  playerId: string,
+  serverTime: number,
+  x: number,
+  receivedAtMs: number,
+  movementEpoch = 1
+): void {
   addRemoteTransformSnapshot(
-    'remote-a',
+    playerId,
     {
       serverTick: serverTime / 50,
       serverTime,
@@ -55,10 +61,14 @@ function addSnapshot(serverTime: number, x: number): void {
       lookPitch: 0,
       movementBits: x,
       wallRunSide: 0,
-      movementEpoch: 1,
+      movementEpoch,
     },
-    TEST_REMOTE_TRANSFORM_RECEIVED_AT_MS
+    receivedAtMs
   );
+}
+
+function addSnapshot(serverTime: number, x: number): void {
+  addRemoteSnapshot('remote-a', serverTime, x, TEST_REMOTE_TRANSFORM_RECEIVED_AT_MS);
 }
 
 function makePlayer(id: string, team: Team, x: number, z: number, state: Player['state'] = 'alive'): Player {
@@ -171,6 +181,32 @@ assert.equal(visualStore.getState().remoteTransformHistories.has('remote-b'), fa
 
 const missingTarget = makeTarget();
 assert.equal(sampleRemoteTransformInto('missing', missingTarget), false);
+
+clearVisualState();
+addRemoteSnapshot('jittery', 1000, 10, 10_000);
+addRemoteSnapshot('jittery', 1050, 11, 10_050);
+let jitteryHistory = visualStore.getState().remoteTransformHistories.get('jittery');
+assert.ok(jitteryHistory);
+assert.equal(jitteryHistory.interpolationDelayMs, MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS);
+addRemoteSnapshot('jittery', 1100, 12, 10_210);
+jitteryHistory = visualStore.getState().remoteTransformHistories.get('jittery');
+assert.ok(jitteryHistory);
+const raisedInterpolationDelayMs = jitteryHistory.interpolationDelayMs;
+assert.ok(raisedInterpolationDelayMs > MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS);
+
+for (let index = 1; index <= 12; index++) {
+  addRemoteSnapshot('jittery', 1100 + index * 50, 12 + index, 10_210 + index * 50);
+}
+jitteryHistory = visualStore.getState().remoteTransformHistories.get('jittery');
+assert.ok(jitteryHistory);
+assert.ok(jitteryHistory.interpolationDelayMs < raisedInterpolationDelayMs);
+assert.ok(jitteryHistory.interpolationDelayMs >= MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS);
+
+addRemoteSnapshot('jittery', 2000, 20, 11_000, 2);
+jitteryHistory = visualStore.getState().remoteTransformHistories.get('jittery');
+assert.ok(jitteryHistory);
+assert.equal(jitteryHistory.interpolationDelayMs, MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS);
+assert.equal(jitteryHistory.arrivalJitterMs, 0);
 
 setPlayerVisualTransform('remote-a', { x: 3, y: 4, z: 5 }, 1.25);
 assert.deepEqual(visualStore.getState().playerPositions.get('remote-a'), { x: 3, y: 4, z: 5 });

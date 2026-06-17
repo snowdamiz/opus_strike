@@ -49,6 +49,7 @@ import {
   type ResolvedAbilitySocketOrigin,
 } from '../../../model-system/abilitySocketResolver';
 import type { AbilityContext, PlayerSounds } from '../types';
+import { isActionLockBlocking } from '../actionLock';
 import { markPredictedLocalAbilitySound } from '../useLocalAbilityAudioPrediction';
 import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
 
@@ -151,7 +152,7 @@ export interface UseBlazeAbilitiesReturn {
   // Methods
   lockActions: (durationMs: number, timestampMs?: number) => void;
   clearActionLock: () => void;
-  isActionLocked: (timestampMs?: number) => boolean;
+  isActionLocked: (timestampMs?: number, overlapGraceMs?: number) => boolean;
   handleBombTargeting: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   fireRocket: (ctx: AbilityContext) => void;
   executeBombDrop: (sounds: PlayerSounds) => void;
@@ -207,8 +208,8 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     actionLockUntilRef.current = 0;
   }, []);
 
-  const isActionLocked = useCallback((timestampMs = Date.now()) => (
-    actionLockUntilRef.current > timestampMs
+  const isActionLocked = useCallback((timestampMs = Date.now(), overlapGraceMs = 0) => (
+    isActionLockBlocking(actionLockUntilRef.current, timestampMs, overlapGraceMs)
   ), []);
 
   // Handle Meteor Strike targeting mode

@@ -91,6 +91,10 @@ import {
   type UseMovementReturn,
   type UsePhantomAbilitiesReturn,
 } from '../../hooks/player';
+import {
+  HERO_ACTION_OVERLAP_GRACE_MS,
+  isActionLockBlocking,
+} from '../../hooks/player/actionLock';
 import { getFrameClock } from '../../utils/frameClock';
 import {
   markPredictedLocalAbilitySound,
@@ -479,7 +483,7 @@ export interface LocalPlayerFrameContext {
     timestampMs?: number,
     input?: Pick<InputState, 'primaryFire' | 'secondaryFire'>
   ) => void;
-  isHeroActionLocked: (heroId: HeroId, timestampMs?: number) => boolean;
+  isHeroActionLocked: (heroId: HeroId, timestampMs?: number, overlapGraceMs?: number) => boolean;
   flushMovementCommands: (nowMs: number, force?: boolean) => void;
   hasChronosLifelineTarget: () => boolean;
   getChronosPracticeLifelineTargets: (
@@ -946,7 +950,7 @@ export function runInputPhase(
     refs.chronosLifelineBlockSecondaryRef.current = false;
   }
   let chronosLifelineCommitMode: ChronosLifelineMode | null = null;
-  if (chronosLifelineQueuedAtFrameStart && !isHeroActionLocked(heroId, now)) {
+  if (chronosLifelineQueuedAtFrameStart && !isHeroActionLocked(heroId, now, HERO_ACTION_OVERLAP_GRACE_MS)) {
     if (rawFrameInput.primaryFire && !refs.chronosLifelineBlockPrimaryRef.current) {
       chronosLifelineCommitMode = 'allies';
     } else if (rawFrameInput.secondaryFire && !refs.chronosLifelineBlockSecondaryRef.current) {
@@ -993,7 +997,7 @@ export function runInputPhase(
     frameInput = getExclusiveHeroInput(
       heroId,
       rawFrameInput,
-      isHeroActionLocked(heroId, now),
+      isHeroActionLocked(heroId, now, HERO_ACTION_OVERLAP_GRACE_MS),
       heroId === 'blaze' && bombTargetingForFrame,
       continuingHoldInput,
       lockedAllowedInput
@@ -1562,10 +1566,10 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     setChronosLifelineQueued(queued, timestampMs);
   }, []);
 
-  const isHeroActionLocked = useCallback((heroId: HeroId, timestampMs = Date.now()) => (
+  const isHeroActionLocked = useCallback((heroId: HeroId, timestampMs = Date.now(), overlapGraceMs = 0) => (
     heroId === 'blaze'
-      ? isBlazeActionLocked(timestampMs)
-      : actionLockUntilRef.current > timestampMs
+      ? isBlazeActionLocked(timestampMs, overlapGraceMs)
+      : isActionLockBlocking(actionLockUntilRef.current, timestampMs, overlapGraceMs)
   ), [isBlazeActionLocked]);
 
   const flushMovementCommands = useCallback((nowMs: number, force = false) => {
@@ -2271,7 +2275,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
             }
           }
         }
-        abilitySystem.abilityPressedRef.current.ability1 = rawFrameInput.ability1;
+        abilitySystem.abilityPressedRef.current.ability1 = heroId === 'chronos'
+          ? rawFrameInput.ability1
+          : frameInput.ability1;
       }
 
       // Ability 2 (Q)
@@ -2371,7 +2377,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
           }
         }
       }
-      abilitySystem.abilityPressedRef.current.ability2 = rawFrameInput.ability2;
+      abilitySystem.abilityPressedRef.current.ability2 = localAbilityInput.ability2;
 
       // Ultimate (F)
       if (localAbilityInput.ultimate && !abilitySystem.abilityPressedRef.current.ultimate) {
@@ -2438,7 +2444,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
           }
         }
       }
-      abilitySystem.abilityPressedRef.current.ultimate = rawFrameInput.ultimate;
+      abilitySystem.abilityPressedRef.current.ultimate = localAbilityInput.ultimate;
 
       // Hero-specific primary/secondary fire and hold abilities
       if (heroId === 'phantom') {

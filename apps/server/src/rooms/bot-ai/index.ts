@@ -774,6 +774,10 @@ export function getBotSkillProfile(difficulty?: string): BotSkillProfile {
   return BOT_SKILL_PROFILES[normalizeBotDifficulty(difficulty)];
 }
 
+export function shouldRefreshBotPlanningState(brain: BotBrain, now: number): boolean {
+  return !brain.blackboard || now >= brain.nextBlackboardAt || now >= brain.nextThinkAt;
+}
+
 export function otherTeam(team: Team): Team {
   return team === 'red' ? 'blue' : 'red';
 }
@@ -1116,7 +1120,7 @@ export function applyBotAbilityInputPlan(input: BotAbilityInputPlanInput): void 
 export function updateBotPlanningState(input: BotPlanningStateInput): BotPlanningStateResult {
   const { brain, now, bot, skill } = input;
   const random = input.random ?? Math.random;
-  const shouldRefreshBlackboard = !brain.blackboard || now >= brain.nextBlackboardAt || now >= brain.nextThinkAt;
+  const shouldRefreshBlackboard = shouldRefreshBotPlanningState(brain, now);
   const blackboard = shouldRefreshBlackboard
     ? buildBotBlackboard({
       now,

@@ -4,6 +4,7 @@ import {
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
   MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+  TICK_INTERVAL_MS,
   doesSegmentHitPlayerCombatHitbox,
   type HeroId,
   type Player,
@@ -158,6 +159,8 @@ export interface RemoteTransformHistory {
   snapshots: RemoteTransformSnapshot[];
   latestServerTime: number;
   latestReceivedAtMs: number;
+  interpolationDelayMs: number;
+  arrivalJitterMs: number;
 }
 
 export interface SampledRemoteTransform {
@@ -281,8 +284,17 @@ const initialVisualState: VisualState = {
 };
 
 const REMOTE_HISTORY_LIMIT = 32;
+const REMOTE_TRANSFORM_EXPECTED_CADENCE_MS = TICK_INTERVAL_MS;
+const REMOTE_INTERPOLATION_MAX_DELAY_MS =
+  MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS + MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS;
+const REMOTE_INTERPOLATION_JITTER_DECAY_ALPHA = 0.12;
+const REMOTE_INTERPOLATION_JITTER_GAIN = 0.75;
 
 export const DEATH_VISUAL_LIFETIME_MS = 5600;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -292,6 +304,36 @@ function lerpYaw(a: number, b: number, t: number): number {
   const twoPi = Math.PI * 2;
   const delta = ((b - a + Math.PI) % twoPi + twoPi) % twoPi - Math.PI;
   return a + delta * t;
+}
+
+function createRemoteTransformHistory(serverTime: number, receivedAtMs: number): RemoteTransformHistory {
+  return {
+    snapshots: [],
+    latestServerTime: serverTime,
+    latestReceivedAtMs: receivedAtMs,
+    interpolationDelayMs: MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+    arrivalJitterMs: 0,
+  };
+}
+
+function updateRemoteTransformTiming(
+  history: RemoteTransformHistory,
+  previousLatest: RemoteTransformSnapshot,
+  nextLatest: RemoteTransformSnapshot
+): void {
+  const serverGapMs = Math.max(0, nextLatest.serverTime - previousLatest.serverTime);
+  const receiveGapMs = Math.max(0, nextLatest.receivedAtMs - previousLatest.receivedAtMs);
+  const observedGapMs = Math.max(serverGapMs, receiveGapMs);
+  const excessGapMs = Math.max(0, observedGapMs - REMOTE_TRANSFORM_EXPECTED_CADENCE_MS);
+
+  history.arrivalJitterMs = excessGapMs >= history.arrivalJitterMs
+    ? excessGapMs
+    : lerp(history.arrivalJitterMs, excessGapMs, REMOTE_INTERPOLATION_JITTER_DECAY_ALPHA);
+  history.interpolationDelayMs = clamp(
+    MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS + history.arrivalJitterMs * REMOTE_INTERPOLATION_JITTER_GAIN,
+    MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+    REMOTE_INTERPOLATION_MAX_DELAY_MS
+  );
 }
 
 // ============================================================================
@@ -502,17 +544,14 @@ export const addRemoteTransformSnapshot = (
   let history = histories.get(playerId);
   const last = history?.snapshots[history.snapshots.length - 1] ?? null;
   if (!history || (last && last.movementEpoch !== snapshot.movementEpoch)) {
-    history = {
-      snapshots: [],
-      latestServerTime: snapshot.serverTime,
-      latestReceivedAtMs: receivedAtMs,
-    };
+    history = createRemoteTransformHistory(snapshot.serverTime, receivedAtMs);
     histories.set(playerId, history);
   }
 
   const fullSnapshot = { ...snapshot, receivedAtMs };
   const snapshots = history.snapshots;
   const latest = snapshots[snapshots.length - 1];
+  const isNewestSnapshot = !latest || fullSnapshot.serverTime >= latest.serverTime;
   if (!latest || fullSnapshot.serverTime >= latest.serverTime) {
     snapshots.push(fullSnapshot);
   } else {
@@ -531,8 +570,13 @@ export const addRemoteTransformSnapshot = (
   if (history.snapshots.length > REMOTE_HISTORY_LIMIT) {
     history.snapshots.splice(0, history.snapshots.length - REMOTE_HISTORY_LIMIT);
   }
-  history.latestServerTime = snapshot.serverTime;
-  history.latestReceivedAtMs = receivedAtMs;
+  if (isNewestSnapshot) {
+    if (latest) {
+      updateRemoteTransformTiming(history, latest, fullSnapshot);
+    }
+    history.latestServerTime = snapshot.serverTime;
+    history.latestReceivedAtMs = receivedAtMs;
+  }
 };
 
 export const pruneRemoteTransformHistories = (activePlayerIds: ReadonlySet<string>): void => {
@@ -559,7 +603,10 @@ export const sampleRemoteTransformHistoryInto = (
   const snapshots = history.snapshots;
   const latest = snapshots[snapshots.length - 1];
   const estimatedServerTime = latest.serverTime + Math.max(0, nowMs - latest.receivedAtMs);
-  const renderServerTime = estimatedServerTime - MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS;
+  const interpolationDelayMs = Number.isFinite(history.interpolationDelayMs)
+    ? history.interpolationDelayMs
+    : MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS;
+  const renderServerTime = estimatedServerTime - interpolationDelayMs;
 
   let low = 0;
   let high = snapshots.length;

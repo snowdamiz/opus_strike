@@ -5,6 +5,10 @@ import {
   MOVEMENT_BUTTON_MOVE_FORWARD,
   MOVEMENT_BUTTON_MOVE_LEFT,
   MOVEMENT_BUTTON_SPRINT,
+  MOVEMENT_PROTOCOL_VERSION,
+  MOVEMENT_SUBSTEP_MS,
+  PLAYER_HEIGHT,
+  PLAYER_RADIUS,
   movementButtonsToInputState,
   type PlayerMovementState,
   type MovementCommand,
@@ -16,14 +20,19 @@ import {
   type VoxelMapManifest,
 } from '@voxel-strike/shared';
 import {
+  canCapsuleOccupy,
   createVoxelCollisionWorld,
   simulateSharedMovement,
+  type MovementCollisionWorld,
   type MovementTerrainAdapter,
   type SharedMovementSimulationResult,
 } from '@voxel-strike/physics';
 import { MovementCommandQueue } from '../rooms/MovementCommandQueue';
 import { PlayerSpatialIndex } from '../rooms/PlayerSpatialIndex';
+import { GameRoom } from '../rooms/GameRoom';
 import { estimateCustomMessageBytes } from '../rooms/customMessageMetrics';
+import type { RoomLoadSnapshot } from '../rooms/roomLoadSnapshot';
+import { initializePlayerAbilities } from '../rooms/abilityHandlers';
 import {
   buildBotBlackboard,
   buildTeamTactics,
@@ -55,7 +64,24 @@ function summarize(name: string, samples: number[]): Record<string, number | str
     p50Ms: percentile(samples, 0.5),
     p95Ms: percentile(samples, 0.95),
     p99Ms: percentile(samples, 0.99),
+    maxMs: samples[samples.length - 1] ?? 0,
   };
+}
+
+type BenchmarkSummaryValue = number | string | boolean | Record<string, number>;
+type BenchmarkResult = Record<string, BenchmarkSummaryValue>;
+type BenchmarkCase = {
+  name: string;
+  run: () => BenchmarkResult;
+};
+
+function topNumericEntries(values: Record<string, number>, limit = 3): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(values)
+      .filter(([, value]) => Number.isFinite(value) && value > 0)
+      .sort(([, left], [, right]) => right - left)
+      .slice(0, limit)
+  );
 }
 
 function command(seq: number, buttons = MOVEMENT_BUTTON_MOVE_FORWARD | MOVEMENT_BUTTON_SPRINT): MovementCommand {
@@ -597,20 +623,478 @@ function runCustomMessageTrackingBenchmark(playerCount = 8): Record<string, numb
   return summarize(`replication_payload_${playerCount}_players_stream_mix`, samples);
 }
 
-const results = [
-  runMovementQueueBenchmark(),
-  runMovementSimulationBenchmark(),
-  runSpatialBenchmark(),
-  runBotAiBenchmark(8),
-  runBotAiBenchmark(16),
-  runBotAiBenchmark(24),
-  runAntiCheatQueueBenchmark(),
-  runCustomMessageTrackingBenchmark(12),
-  runCustomMessageTrackingBenchmark(24),
-  runCustomMessageTrackingBenchmark(48),
+interface BenchmarkClient {
+  sessionId: string;
+  lastPingNonce: string | null;
+  sentMessages: number;
+  send(type: string, payload: unknown): void;
+  leave(): void;
+}
+
+interface GameRoomTickScenarioOptions {
+  name: string;
+  humanCount: number;
+  botCount: number;
+  burstMovement?: boolean;
+}
+
+const ROOM_TICK_INTERVAL_MS = 50;
+const ROOM_TICK_BUDGET_P99_MS = 20;
+const ROOM_TICK_BUDGET_MAX_MS = 50;
+const ROOM_TICK_WARMUP_ITERATIONS = 40;
+const ROOM_TICK_SAMPLE_ITERATIONS = 220;
+const ROOM_TICK_HEROES: HeroId[] = ['phantom', 'hookshot', 'blaze', 'chronos'];
+
+function createBenchmarkClient(sessionId: string): BenchmarkClient {
+  return {
+    sessionId,
+    lastPingNonce: null,
+    sentMessages: 0,
+    send(type: string, payload: unknown): void {
+      this.sentMessages++;
+      if (
+        type === 'playerPingRequest' &&
+        payload &&
+        typeof payload === 'object' &&
+        typeof (payload as { nonce?: unknown }).nonce === 'string'
+      ) {
+        this.lastPingNonce = (payload as { nonce: string }).nonce;
+      }
+    },
+    leave(): void {
+      // Fake benchmark clients never own transport resources.
+    },
+  };
+}
+
+function installBenchmarkRoomHost(room: GameRoom, roomId: string): void {
+  const roomHost = room as unknown as {
+    roomId: string;
+    autoDispose: boolean;
+    setMetadata: (metadata: Record<string, unknown>) => void;
+    broadcast: (type: string, payload: unknown) => void;
+    clients: BenchmarkClient[];
+  };
+  roomHost.roomId = roomId;
+  roomHost.autoDispose = false;
+  roomHost.setMetadata = () => undefined;
+  roomHost.broadcast = (_type: string, _payload: unknown) => {
+    for (const client of roomHost.clients) {
+      client.send(_type, _payload);
+    }
+  };
+}
+
+function cleanupBenchmarkRoom(room: GameRoom): void {
+  const roomAny = room as unknown as {
+    tickInterval?: ReturnType<typeof setInterval> | null;
+    matchStartCancelTimeout?: ReturnType<typeof setTimeout> | null;
+    matchCancelDisconnectTimeout?: ReturnType<typeof setTimeout> | null;
+    _autoDisposeTimeout?: ReturnType<typeof setTimeout> | null;
+    _patchInterval?: ReturnType<typeof setInterval> | null;
+    eventLoopDelay?: { disable(): void } | null;
+    roomTimeouts?: { clear(): void };
+    clock?: { clear(): void };
+  };
+
+  if (roomAny.tickInterval) {
+    clearInterval(roomAny.tickInterval);
+    roomAny.tickInterval = null;
+  }
+  if (roomAny.matchStartCancelTimeout) {
+    clearTimeout(roomAny.matchStartCancelTimeout);
+    roomAny.matchStartCancelTimeout = null;
+  }
+  if (roomAny.matchCancelDisconnectTimeout) {
+    clearTimeout(roomAny.matchCancelDisconnectTimeout);
+    roomAny.matchCancelDisconnectTimeout = null;
+  }
+  if (roomAny._autoDisposeTimeout) {
+    clearTimeout(roomAny._autoDisposeTimeout);
+    roomAny._autoDisposeTimeout = null;
+  }
+  if (roomAny._patchInterval) {
+    clearInterval(roomAny._patchInterval);
+    roomAny._patchInterval = null;
+  }
+  roomAny.eventLoopDelay?.disable();
+  roomAny.roomTimeouts?.clear();
+  roomAny.clock?.clear();
+}
+
+function addBenchmarkPlayer(input: {
+  room: GameRoom;
+  id: string;
+  name: string;
+  team: Team;
+  heroId: HeroId;
+  isBot: boolean;
+  index: number;
+  now: number;
+  clientsById: Map<string, BenchmarkClient>;
+}): Player {
+  const roomAny = input.room as unknown as {
+    clients: BenchmarkClient[];
+    clientRegistry: { setClient(playerId: string, client: BenchmarkClient): void };
+    replicationState: { markKnownPlayer(playerId: string): void };
+    initializePressState(playerId: string): void;
+    assignPlayerSpawnPosition(player: Player): void;
+    resetPhantomPrimaryMagazine(playerId: string): void;
+  };
+  const heroDef = HERO_DEFINITIONS[input.heroId];
+  const player = new Player();
+  player.id = input.id;
+  player.name = input.name;
+  player.team = input.team;
+  player.heroId = input.heroId;
+  player.state = 'alive';
+  player.isReady = true;
+  player.isBot = input.isBot;
+  player.botDifficulty = input.isBot ? (input.index % 3 === 0 ? 'hard' : input.index % 3 === 1 ? 'normal' : 'easy') : '';
+  player.botProfileId = input.isBot ? input.id : '';
+  player.maxHealth = heroDef.stats.maxHealth;
+  player.health = player.maxHealth;
+  player.ultimateCharge = input.index % 5 === 0 ? 100 : 35;
+  player.spawnProtectionUntil = 0;
+  initializePlayerAbilities(player, input.heroId);
+  roomAny.assignPlayerSpawnPosition(player);
+  if (input.heroId === 'phantom') {
+    roomAny.resetPhantomPrimaryMagazine(player.id);
+  }
+
+  input.room.state.players.set(player.id, player);
+  roomAny.replicationState.markKnownPlayer(player.id);
+  roomAny.initializePressState(player.id);
+
+  if (!input.isBot) {
+    const client = createBenchmarkClient(player.id);
+    roomAny.clients.push(client);
+    roomAny.clientRegistry.setClient(player.id, client);
+    input.clientsById.set(player.id, client);
+  }
+
+  return player;
+}
+
+function getBenchmarkMovementCollisionWorld(room: GameRoom, now: number): MovementCollisionWorld {
+  return (room as unknown as {
+    getMovementCollisionWorld(now?: number): MovementCollisionWorld;
+  }).getMovementCollisionWorld(now);
+}
+
+function getInvalidBenchmarkPlayerPlacements(room: GameRoom, now: number): string[] {
+  const world = getBenchmarkMovementCollisionWorld(room, now);
+  const invalidPlayerIds: string[] = [];
+  for (const player of room.state.players.values()) {
+    if (player.state !== 'alive') continue;
+    if (!canCapsuleOccupy(world, player.position, PLAYER_HEIGHT, PLAYER_RADIUS)) {
+      invalidPlayerIds.push(player.id);
+    }
+  }
+  return invalidPlayerIds;
+}
+
+function createBenchmarkRoomScenario(
+  options: GameRoomTickScenarioOptions,
+  now: number
+): { room: GameRoom; clientsById: Map<string, BenchmarkClient>; humanIds: string[]; invalidSpawnCount: number } {
+  const room = new GameRoom();
+  installBenchmarkRoomHost(room, `benchmark-${options.name}`);
+  room.onCreate({
+    mapSeed: 424242,
+    gameplayMode: DEFAULT_GAMEPLAY_MODE,
+    requiredHumanPlayers: 0,
+    reservedHumanPlayers: options.humanCount,
+    observerCount: 0,
+  });
+  cleanupBenchmarkRoom(room);
+
+  room.state.phase = 'playing';
+  room.state.serverTime = now;
+  room.state.roundStartTime = now;
+  room.state.roundTimeRemaining = 600;
+  room.state.phaseEndTime = now + 600_000;
+
+  const clientsById = new Map<string, BenchmarkClient>();
+  const humanIds: string[] = [];
+  const createdPlayers: Array<{ player: Player; index: number }> = [];
+  const totalPlayers = options.humanCount + options.botCount;
+  for (let index = 0; index < totalPlayers; index++) {
+    const isBot = index >= options.humanCount;
+    const team: Team = index % 2 === 0 ? 'red' : 'blue';
+    const heroId = ROOM_TICK_HEROES[index % ROOM_TICK_HEROES.length];
+    const id = isBot ? `bot-${index - options.humanCount}` : `human-${index}`;
+    const player = addBenchmarkPlayer({
+      room,
+      id,
+      name: isBot ? `Bot ${index - options.humanCount}` : `Human ${index}`,
+      team,
+      heroId,
+      isBot,
+      index,
+      now,
+      clientsById,
+    });
+    createdPlayers.push({ player, index });
+    if (!isBot) humanIds.push(player.id);
+  }
+
+  const roomAny = room as unknown as {
+    placeTeamsAtUniqueSpawns(reason?: string): void;
+    updateLastSafeMovement(player: Player, sequence: number, acceptedAt?: number): void;
+    botRuntime: { setBrain(playerId: string, brain: unknown): void };
+    createBotBrain(player: Player, index: number): unknown;
+  };
+  roomAny.placeTeamsAtUniqueSpawns('spawn');
+
+  for (const { player, index } of createdPlayers) {
+    roomAny.updateLastSafeMovement(player, 0, now);
+    if (player.isBot) {
+      roomAny.botRuntime.setBrain(player.id, roomAny.createBotBrain(player, index));
+    }
+  }
+
+  const invalidPlacements = getInvalidBenchmarkPlayerPlacements(room, now);
+  if (invalidPlacements.length > 0) {
+    throw new Error(`${options.name} invalidSpawnCount=${invalidPlacements.length} invalidPlayers=${invalidPlacements.join(',')}`);
+  }
+
+  return { room, clientsById, humanIds, invalidSpawnCount: invalidPlacements.length };
+}
+
+function enqueueBenchmarkHumanMovement(input: {
+  room: GameRoom;
+  clientsById: Map<string, BenchmarkClient>;
+  humanIds: readonly string[];
+  sequences: Map<string, number>;
+  tickIndex: number;
+  now: number;
+  burstMovement: boolean;
+}): void {
+  const roomAny = input.room as unknown as {
+    getMovementAuthority(playerId: string): { movementEpoch: number };
+    getMovementCollisionRevision(now?: number): number;
+    handleMovementCommandPacket(client: BenchmarkClient, packet: { protocolVersion: number; firstSeq: number; commands: MovementCommand[] }): void;
+  };
+  const commandCount = input.burstMovement && input.tickIndex % 24 === 0
+    ? 8
+    : 3;
+
+  for (let playerIndex = 0; playerIndex < input.humanIds.length; playerIndex++) {
+    const playerId = input.humanIds[playerIndex];
+    const client = input.clientsById.get(playerId);
+    if (!client) continue;
+
+    const authority = roomAny.getMovementAuthority(playerId);
+    const commands: MovementCommand[] = [];
+    let seq = input.sequences.get(playerId) ?? 0;
+    for (let index = 0; index < commandCount; index++) {
+      seq = (seq + 1) >>> 0;
+      commands.push({
+        seq,
+        buttons: MOVEMENT_BUTTON_MOVE_FORWARD |
+          MOVEMENT_BUTTON_SPRINT |
+          ((input.tickIndex + playerIndex + index) % 16 < 5 ? MOVEMENT_BUTTON_MOVE_LEFT : 0),
+        lookYaw: Math.sin((input.tickIndex + playerIndex) / 18) * 0.9,
+        lookPitch: 0,
+        clientTimeMs: input.now + index * MOVEMENT_SUBSTEP_MS,
+        movementEpoch: authority.movementEpoch,
+        collisionRevision: roomAny.getMovementCollisionRevision(input.now),
+      });
+    }
+    input.sequences.set(playerId, seq);
+    roomAny.handleMovementCommandPacket(client, {
+      protocolVersion: MOVEMENT_PROTOCOL_VERSION,
+      firstSeq: commands[0]?.seq ?? seq,
+      commands,
+    });
+  }
+}
+
+function markBenchmarkCombatInterest(room: GameRoom, now: number): void {
+  const roomAny = room as unknown as {
+    replicationState: {
+      markRecentCombatTransform(playerId: string, now: number, durationMs: number): void;
+      markRecentCombatInterest(sourceId: string, targetId: string, now: number, durationMs: number): void;
+    };
+  };
+  const players = Array.from(room.state.players.values());
+  for (let index = 0; index < players.length; index++) {
+    const player = players[index];
+    if (index % 3 === 0) {
+      roomAny.replicationState.markRecentCombatTransform(player.id, now, 650);
+    }
+    const target = players[(index + 3) % players.length];
+    if (target && target.team !== player.team) {
+      roomAny.replicationState.markRecentCombatInterest(player.id, target.id, now, 900);
+    }
+  }
+}
+
+function respondToBenchmarkPings(input: {
+  room: GameRoom;
+  clientsById: Map<string, BenchmarkClient>;
+}): void {
+  const roomAny = input.room as unknown as {
+    handlePlayerPingResponse(client: BenchmarkClient, data: { nonce: string }): void;
+  };
+  for (const client of input.clientsById.values()) {
+    if (!client.lastPingNonce) continue;
+    roomAny.handlePlayerPingResponse(client, { nonce: client.lastPingNonce });
+    client.lastPingNonce = null;
+  }
+}
+
+function runGameRoomTickBenchmark(options: GameRoomTickScenarioOptions): Record<string, BenchmarkSummaryValue> {
+  const originalDateNow = Date.now;
+  let now = 1_800_000_000_000;
+  Date.now = () => now;
+  const samples: number[] = [];
+  let room: GameRoom | null = null;
+  let lastP99SpikeSpanName = '';
+  let lastP99SpikeSpanMs = 0;
+  let lastP99SpikeDurationMs = 0;
+  let tickOverrun50Count = 0;
+  let topSpanP99Ms: Record<string, number> = {};
+  let topSpanMaxMs: Record<string, number> = {};
+  let topOperationP99Counts: Record<string, number> = {};
+  let topOperationMaxCounts: Record<string, number> = {};
+  let topOperationTotalCounts: Record<string, number> = {};
+  let tickOperationCounts: Record<string, number> = {};
+  let invalidSpawnCount = 0;
+
+  try {
+    const scenario = createBenchmarkRoomScenario(options, now);
+    room = scenario.room;
+    invalidSpawnCount = scenario.invalidSpawnCount;
+    const sequences = new Map<string, number>();
+    const totalIterations = ROOM_TICK_WARMUP_ITERATIONS + ROOM_TICK_SAMPLE_ITERATIONS;
+
+    for (let iteration = 0; iteration < totalIterations; iteration++) {
+      enqueueBenchmarkHumanMovement({
+        room,
+        clientsById: scenario.clientsById,
+        humanIds: scenario.humanIds,
+        sequences,
+        tickIndex: iteration,
+        now,
+        burstMovement: options.burstMovement === true,
+      });
+      if (iteration % 4 === 0) {
+        markBenchmarkCombatInterest(room, now);
+      }
+
+      const startedAt = performance.now();
+      (room as unknown as { tick(): void }).tick();
+      const durationMs = performance.now() - startedAt;
+      if (iteration >= ROOM_TICK_WARMUP_ITERATIONS) {
+        samples.push(durationMs);
+      }
+
+      now += 16;
+      respondToBenchmarkPings({
+        room,
+        clientsById: scenario.clientsById,
+      });
+      now += ROOM_TICK_INTERVAL_MS - 16;
+    }
+
+    const load = (room as unknown as { getRoomLoadSnapshot(): RoomLoadSnapshot }).getRoomLoadSnapshot();
+    lastP99SpikeSpanName = load.tickLastP99SpikeSpanName;
+    lastP99SpikeSpanMs = load.tickLastP99SpikeSpanMs;
+    lastP99SpikeDurationMs = load.tickLastP99SpikeDurationMs;
+    tickOverrun50Count = load.tickOverrun50Count;
+    topSpanP99Ms = topNumericEntries(load.tickSpanP99Ms);
+    topSpanMaxMs = topNumericEntries(load.tickSpanMaxMs);
+    topOperationP99Counts = topNumericEntries(load.tickOperationCountP99, 10);
+    topOperationMaxCounts = topNumericEntries(load.tickOperationCountMax, 10);
+    topOperationTotalCounts = topNumericEntries(load.tickOperationCountTotal, 10);
+    tickOperationCounts = load.tickOperationCounts;
+  } finally {
+    if (room) cleanupBenchmarkRoom(room);
+    Date.now = originalDateNow;
+  }
+
+  const summary = summarize(options.name, samples) as Record<string, BenchmarkSummaryValue>;
+  const p99Ms = typeof summary.p99Ms === 'number' ? summary.p99Ms : 0;
+  const maxMs = typeof summary.maxMs === 'number' ? summary.maxMs : 0;
+  summary.budgetP99Ms = ROOM_TICK_BUDGET_P99_MS;
+  summary.budgetMaxMs = ROOM_TICK_BUDGET_MAX_MS;
+  summary.budgetExceeded = p99Ms > ROOM_TICK_BUDGET_P99_MS || maxMs > ROOM_TICK_BUDGET_MAX_MS;
+  summary.lastP99SpikeSpanName = lastP99SpikeSpanName;
+  summary.lastP99SpikeSpanMs = lastP99SpikeSpanMs;
+  summary.lastP99SpikeDurationMs = lastP99SpikeDurationMs;
+  summary.tickOverrun50Count = tickOverrun50Count;
+  summary.topSpanP99Ms = topSpanP99Ms;
+  summary.topSpanMaxMs = topSpanMaxMs;
+  summary.topOperationP99Counts = topOperationP99Counts;
+  summary.topOperationMaxCounts = topOperationMaxCounts;
+  summary.topOperationTotalCounts = topOperationTotalCounts;
+  summary.tickOperationCounts = tickOperationCounts;
+  summary.invalidSpawnCount = invalidSpawnCount;
+  return summary;
+}
+
+const benchmarkCases: BenchmarkCase[] = [
+  { name: 'movement_queue_8_players_burst', run: () => runMovementQueueBenchmark() },
+  { name: 'shared_movement_8_players', run: () => runMovementSimulationBenchmark() },
+  { name: 'spatial_rebuild_and_queries', run: () => runSpatialBenchmark() },
+  { name: 'bot_ai_8_bots_tactics_path_abilities', run: () => runBotAiBenchmark(8) },
+  { name: 'bot_ai_16_bots_tactics_path_abilities', run: () => runBotAiBenchmark(16) },
+  { name: 'bot_ai_24_bots_tactics_path_abilities', run: () => runBotAiBenchmark(24) },
+  { name: 'anti_cheat_priority_queue_noise', run: () => runAntiCheatQueueBenchmark() },
+  { name: 'replication_payload_12_players_stream_mix', run: () => runCustomMessageTrackingBenchmark(12) },
+  { name: 'replication_payload_24_players_stream_mix', run: () => runCustomMessageTrackingBenchmark(24) },
+  { name: 'replication_payload_48_players_stream_mix', run: () => runCustomMessageTrackingBenchmark(48) },
+  {
+    name: 'game_room_tick_8_players',
+    run: () => runGameRoomTickBenchmark({ name: 'game_room_tick_8_players', humanCount: 8, botCount: 0 }),
+  },
+  {
+    name: 'game_room_tick_8_players_8_bots',
+    run: () => runGameRoomTickBenchmark({ name: 'game_room_tick_8_players_8_bots', humanCount: 8, botCount: 8 }),
+  },
+  {
+    name: 'game_room_tick_8_players_16_bots',
+    run: () => runGameRoomTickBenchmark({ name: 'game_room_tick_8_players_16_bots', humanCount: 8, botCount: 16 }),
+  },
+  {
+    name: 'game_room_tick_8_players_24_bots',
+    run: () => runGameRoomTickBenchmark({ name: 'game_room_tick_8_players_24_bots', humanCount: 8, botCount: 24 }),
+  },
+  {
+    name: 'game_room_tick_8_players_32_bots',
+    run: () => runGameRoomTickBenchmark({ name: 'game_room_tick_8_players_32_bots', humanCount: 8, botCount: 32 }),
+  },
+  {
+    name: 'game_room_tick_4_players_48_bots',
+    run: () => runGameRoomTickBenchmark({ name: 'game_room_tick_4_players_48_bots', humanCount: 4, botCount: 48 }),
+  },
+  {
+    name: 'game_room_tick_burst_alignment',
+    run: () => runGameRoomTickBenchmark({ name: 'game_room_tick_burst_alignment', humanCount: 8, botCount: 8, burstMovement: true }),
+  },
 ];
+
+const benchmarkFilter = (process.env.ROOM_BENCH_FILTER ?? '').trim();
+const benchmarkFilterParts = benchmarkFilter
+  .split(',')
+  .map((part) => part.trim())
+  .filter(Boolean);
+const selectedBenchmarkCases = benchmarkFilterParts.length === 0
+  ? benchmarkCases
+  : benchmarkCases.filter((benchmarkCase) => (
+    benchmarkFilterParts.some((filterPart) => benchmarkCase.name.includes(filterPart))
+  ));
+
+if (selectedBenchmarkCases.length === 0) {
+  throw new Error(`ROOM_BENCH_FILTER="${benchmarkFilter}" did not match any benchmark cases`);
+}
+
+const results = selectedBenchmarkCases.map((benchmarkCase) => benchmarkCase.run());
 
 console.log(JSON.stringify({
   generatedAt: new Date().toISOString(),
+  filter: benchmarkFilter || undefined,
   results,
 }, null, 2));

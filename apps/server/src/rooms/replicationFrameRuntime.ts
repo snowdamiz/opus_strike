@@ -68,6 +68,8 @@ export interface PlayerStateStreamBroadcastPlanInput {
   lastInterestBroadcastAt: number;
   vitalsIntervalMs: number;
   interestIntervalMs: number;
+  vitalsPhaseAtMs?: number;
+  interestPhaseAtMs?: number;
 }
 
 export interface PlayerStateStreamBroadcastPlan {
@@ -402,13 +404,54 @@ export function getPlayerStateStreamBroadcastPlan(
 ): PlayerStateStreamBroadcastPlan {
   return {
     shouldBroadcastVitals: input.vitals && (
-      input.forceVitals || input.now - input.lastVitalsBroadcastAt >= input.vitalsIntervalMs
+      input.forceVitals || isStreamIntervalDue({
+        now: input.now,
+        lastAt: input.lastVitalsBroadcastAt,
+        intervalMs: input.vitalsIntervalMs,
+        phaseAtMs: input.vitalsPhaseAtMs,
+      })
     ),
     shouldBroadcastInterest: input.vitals && (
-      input.forceVitals || input.now - input.lastInterestBroadcastAt >= input.interestIntervalMs
+      input.forceVitals || isStreamIntervalDue({
+        now: input.now,
+        lastAt: input.lastInterestBroadcastAt,
+        intervalMs: input.interestIntervalMs,
+        phaseAtMs: input.interestPhaseAtMs,
+      })
     ),
     shouldBroadcastTransforms: input.transforms,
   };
+}
+
+function isStreamIntervalDue(input: {
+  now: number;
+  lastAt: number;
+  intervalMs: number;
+  phaseAtMs?: number;
+}): boolean {
+  if (input.phaseAtMs === undefined) {
+    return input.now - input.lastAt >= input.intervalMs;
+  }
+  return isPhasedIntervalDue(input.now, input.lastAt, input.intervalMs, input.phaseAtMs);
+}
+
+export function getPreviousPhasedIntervalTime(
+  now: number,
+  intervalMs: number,
+  phaseAtMs = 0
+): number {
+  const interval = Math.max(1, Math.trunc(intervalMs));
+  return phaseAtMs + Math.floor((now - phaseAtMs) / interval) * interval;
+}
+
+export function isPhasedIntervalDue(
+  now: number,
+  lastAt: number,
+  intervalMs: number,
+  phaseAtMs = 0
+): boolean {
+  const interval = Math.max(1, Math.trunc(intervalMs));
+  return Math.floor((now - phaseAtMs) / interval) > Math.floor((lastAt - phaseAtMs) / interval);
 }
 
 export function buildPlayerVitalsStreamMessage(

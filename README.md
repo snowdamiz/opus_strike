@@ -2,6 +2,10 @@
 
 A browser-based 4v4 Capture the Flag game with Minecraft-style voxel graphics and movement-based hero abilities.
 
+## Planning
+
+- [Battle Royal Mode Plan](BATTLE_ROYAL_PLAN.md)
+
 ## Features
 
 - **3 Unique Heroes** with distinct movement abilities:

@@ -69,7 +69,7 @@ import {
   type RankedSummaryPreviewInput,
 } from './matchSummaryRuntime';
 import { MatchSnapshotRuntime } from './matchSnapshotRuntime';
-import { PlayerPingRuntime } from './playerPingRuntime';
+import { DEFAULT_PLAYER_PING_INTERVAL_MS, PlayerPingRuntime } from './playerPingRuntime';
 import {
   POST_GAME_RESET_DELAY_MS,
   buildPostGameResetStatePatch,
@@ -102,18 +102,20 @@ import {
   buildPlayerTransformsStreamMessage,
   buildPlayerVitalsStreamMessage,
   collectRecipientPlayerStateStreams,
+  getPreviousPhasedIntervalTime,
   getPlayerStateStreamBroadcastPlan,
+  isPhasedIntervalDue,
   type ReplicationFrameContext,
 } from './replicationFrameRuntime';
 import {
+  SERVER_OWNED_MOVEMENT_STEP_SECONDS,
   SERVER_MOVEMENT_SUBSTEPS_PER_TICK,
+  allocateRoomMovementCatchupBudget,
   getMovementBacklogTrimCount,
   getMovementCommandDrainDecision,
+  type MovementCommandDrainDecision,
 } from './movementCommandDrain';
-import {
-  getMovementQueueOverflowBarrierPolicy,
-  ingestMovementCommandPacket,
-} from './movementCommandIngress';
+import { ingestMovementCommandPacket } from './movementCommandIngress';
 import {
   MovementAuthorityRegistry,
   type ServerMovementAuthorityState,
@@ -221,6 +223,14 @@ import {
   FLAG_PICKUP_RADIUS,
   POWERUP_ABILITY_ATTACK_SPEED_MULTIPLIER,
   POWERUP_MOVEMENT_SPEED_MULTIPLIER,
+  BHOP_GROUND_ACCEL,
+  BHOP_GROUND_FRICTION,
+  BHOP_GROUND_STOP_THRESHOLD,
+  BHOP_NO_INPUT_FRICTION_MULTIPLIER,
+  BHOP_STOP_SPEED,
+  CROUCH_MULTIPLIER,
+  GRAVITY,
+  SPRINT_MULTIPLIER,
   ULTIMATE_CHARGE_PER_CAPTURE,
   ULTIMATE_CHARGE_PER_KILL,
   ULTIMATE_CHARGE_PER_SECOND,
@@ -273,10 +283,23 @@ import {
   MOVEMENT_SUBSTEP_SECONDS,
   MOVEMENT_MAX_PACKET_COMMANDS,
   MOVEMENT_MAX_SERVER_QUEUE,
-  inputStateToMovementButtons,
-  movementButtonsToInputState,
+  MOVEMENT_BUTTON_MOVE_FORWARD,
+  MOVEMENT_BUTTON_MOVE_BACKWARD,
+  MOVEMENT_BUTTON_MOVE_LEFT,
+  MOVEMENT_BUTTON_MOVE_RIGHT,
+  MOVEMENT_BUTTON_JUMP,
+  MOVEMENT_BUTTON_CROUCH,
+  MOVEMENT_BUTTON_SPRINT,
+  MOVEMENT_BUTTON_PRIMARY_FIRE,
+  MOVEMENT_BUTTON_SECONDARY_FIRE,
+  MOVEMENT_BUTTON_RELOAD,
+  MOVEMENT_BUTTON_ABILITY_1,
+  MOVEMENT_BUTTON_ABILITY_2,
+  MOVEMENT_BUTTON_ULTIMATE,
+  MOVEMENT_BUTTON_INTERACT,
+  MOVEMENT_BUTTON_CROUCH_PRESSED,
+  sanitizeMovementButtons,
   isMovementSeqAfter,
-  nextMovementSeq,
   normalizeLookYaw,
   clampLookPitch,
   calculateLookDirection,
@@ -292,6 +315,7 @@ import {
   getSegmentHitAgainstPlayerCombatHitbox,
   getSegmentHitAgainstChronosAegis,
   calculateFalloffDamage,
+  resolveDirectionalMovementIntent,
 } from '@voxel-strike/shared';
 import type { 
   AbilityCastOriginHint,
@@ -300,6 +324,7 @@ import type {
   HeroId, 
   Team, 
   PlayerInput,
+  PlayerMovementState,
   MovementCommand,
   MovementCommandPacket,
   MovementCorrectionReason,
@@ -425,6 +450,7 @@ import {
   BOT_AWARENESS_RANGE,
   BOT_CLOSE_REVEAL_RANGE,
   applyBotAbilityInputPlan,
+  canUseBotAbility,
   chooseBotAbilityPlan,
   chooseBotCombatPlan,
   chooseLocalAvoidanceDirection,
@@ -440,6 +466,7 @@ import {
   getBotYawPitchTowardPosition,
   isBotSecondaryFireWindowOpen,
   normalizeBotDifficulty,
+  shouldRefreshBotPlanningState,
   updateBotAimState,
   updateBotPrimaryFireDecision,
   updateBotMovementRecoveryState,
@@ -451,6 +478,8 @@ import {
   type BotPlayerSnapshot,
   type BotRecentDamageSource,
   type BotRoutePlan,
+  type BotSteeringChoice,
+  type BotSteeringProbe,
   type BotSkillProfile,
   type BotTeamTacticsByTeam,
   type PlainVec2,
@@ -549,6 +578,7 @@ import {
   type AbilityUseResult,
 } from './abilityHandlers';
 import { RoomDamageRuntime, type RoomDamageContext as DamageContext } from './roomDamageRuntime';
+import { RoomTickProfiler, type RoomTickCounterName, type RoomTickSpanName } from './roomTickProfiler';
 
 type ResolvedAbilityUseResult = {
   abilityId: string;
@@ -634,11 +664,35 @@ interface HookshotGroundHooksTarget {
 interface BotFrameContext {
   snapshots: BotPlayerSnapshot[];
   snapshotById: Map<string, BotPlayerSnapshot>;
+  aliveBotCount: number;
   flags: ReturnType<typeof getBotFlagSnapshots>;
   teamTactics: BotTeamTacticsByTeam;
   protectedEnemyIdsByTeam: Record<Team, Set<string>>;
-  visibleEnemyIdsByBot: Map<string, Set<string>>;
-  enemyLineOfSightIdsByBot: Map<string, Set<string>>;
+  perceptionByBot: Map<string, BotPerceptionSets>;
+}
+
+type BotSimulationTier = 'critical' | 'near' | 'background';
+
+interface BotPerceptionSets {
+  visibleEnemyIds: Set<string>;
+  enemyLineOfSightIds: Set<string>;
+  lineOfSightUnknownEnemyIds: Set<string>;
+}
+
+interface BotSteeringPathCacheEntry {
+  clear: boolean;
+  expiresAt: number;
+  collisionRevision: number;
+}
+
+interface MovementPhysicsFrameEntry {
+  player: Player;
+  authority: ServerMovementAuthorityState;
+  queuedCommandCount: number;
+  drainDecision: MovementCommandDrainDecision;
+  grantedExtraSubsteps: number;
+  skippedExtraSubsteps: number;
+  serverOwnedInput?: PlayerInput;
 }
 
 interface AimTargetHit {
@@ -669,6 +723,51 @@ const RECENT_COMBAT_INTEREST_MS = 900;
 const PLAYER_INTEREST_INTERVAL_MS = 200;
 const MATCH_SNAPSHOT_DRIFT_SYNC_INTERVAL_MS = 2000;
 const LOW_FREQUENCY_STATE_INTERVAL_MS = 250;
+const PLAYER_PING_BROADCAST_INTERVAL_MS = 250;
+const ROOM_MOVEMENT_EXTRA_CATCHUP_SUBSTEPS_PER_TICK = SERVER_MOVEMENT_SUBSTEPS_PER_TICK * 4;
+const BOT_URGENT_PLANNING_BUDGET_PER_TICK = 8;
+const BOT_DEFERRED_PLANNING_BUDGET_PER_TICK = 4;
+const BOT_FULL_RATE_PLANNING_COUNT = 6;
+const BOT_PLANNING_LOD_START_COUNT = 8;
+const BOT_MID_URGENT_PLANNING_BUDGET_PER_TICK = 5;
+const BOT_MID_DEFERRED_PLANNING_BUDGET_PER_TICK = 2;
+const BOT_MIN_URGENT_PLANNING_BUDGET_PER_TICK = 3;
+const BOT_MIN_DEFERRED_PLANNING_BUDGET_PER_TICK = 1;
+const BOT_MOVEMENT_LOD_START_COUNT = 8;
+const BOT_MOVEMENT_LOD_MEDIUM_COUNT = 16;
+const BOT_MOVEMENT_LOD_HIGH_COUNT = 32;
+const BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE = 26;
+const BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE_SQ = BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE * BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE;
+const BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_LOW = 8;
+const BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_MEDIUM = 10;
+const BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_HIGH = 10;
+const BOT_MOVEMENT_LOD_PROXY_MAX_DISTANCE = 0.68;
+const BOT_MOVEMENT_LOD_PROXY_MAX_GROUND_DELTA = 0.95;
+const BOT_MOVEMENT_LOD_PROXY_MIN_HORIZONTAL_SPEED = 0.05;
+const BOT_SIMULATION_NEAR_HUMAN_DISTANCE = 22;
+const BOT_SIMULATION_NEAR_HUMAN_DISTANCE_SQ = BOT_SIMULATION_NEAR_HUMAN_DISTANCE * BOT_SIMULATION_NEAR_HUMAN_DISTANCE;
+const BOT_NEAR_PLANNING_CADENCE_HIGH = 2;
+const BOT_BACKGROUND_PLANNING_CADENCE_MEDIUM = 3;
+const BOT_BACKGROUND_PLANNING_CADENCE_HIGH = 5;
+const BOT_BACKGROUND_MOVEMENT_CADENCE_MEDIUM = 4;
+const BOT_BACKGROUND_MOVEMENT_CADENCE_HIGH = 6;
+const BOT_PROXIMITY_VISIBLE_RANGE = 18;
+const BOT_PERCEPTION_LOS_LOD_START_COUNT = 8;
+const BOT_PERCEPTION_LOS_LOD_MEDIUM_COUNT = 16;
+const BOT_PERCEPTION_LOS_LOD_HIGH_COUNT = 32;
+const BOT_PERCEPTION_LOS_MEDIUM_CANDIDATE_LIMIT = 10;
+const BOT_PERCEPTION_LOS_HIGH_CANDIDATE_LIMIT = 8;
+const BOT_PERCEPTION_LOS_NEAR_MEDIUM_CANDIDATE_LIMIT = 6;
+const BOT_PERCEPTION_LOS_NEAR_HIGH_CANDIDATE_LIMIT = 4;
+const BOT_PERCEPTION_LOS_BACKGROUND_MEDIUM_CANDIDATE_LIMIT = 2;
+const BOT_PERCEPTION_LOS_BACKGROUND_HIGH_CANDIDATE_LIMIT = 1;
+const BOT_PERCEPTION_LOS_TARGET_SCORE_BONUS = 10_000;
+const EMPTY_BOT_PERCEPTION_IDS = new Set<string>();
+const BOT_STEERING_PATH_CACHE_TTL_MS = 160;
+const BOT_STEERING_PATH_CACHE_MAX_ENTRIES = 2048;
+const BOT_STEERING_PATH_POSITION_QUANTIZATION = 2;
+const BOT_STEERING_PATH_DIRECTION_QUANTIZATION = 12;
+const BOT_STEERING_PATH_DISTANCE_QUANTIZATION = 4;
 const CHRONOS_AEGIS_SHIELD_TRANSFORM_SCALE = 255;
 const OBJECTIVE_SUPPRESSION_MS = 650;
 const SECURITY_EVENT_LOG_SAMPLE_MS = 5000;
@@ -741,6 +840,47 @@ export class GameRoom extends Room<GameState> {
   });
   private matchSnapshotSignature = '';
   private readonly playerPings = new PlayerPingRuntime();
+  private readonly tickProfiler = new RoomTickProfiler();
+  private streamScheduleStartedAt = 0;
+  private vitalsPhaseAtMs = 0;
+  private interestPhaseAtMs = 0;
+  private pingProbePhaseAtMs = 0;
+  private pingBroadcastPhaseAtMs = 0;
+  private matchSnapshotPhaseAtMs = 0;
+  private lastPingProbeAt = 0;
+  private lastPingBroadcastAt = 0;
+  private movementCatchupBudgetCursor = 0;
+  private botMovementLodCountTick = -1;
+  private aliveBotMovementLodCount = 0;
+  private botMovementFullStepBudgetTick = -1;
+  private botMovementFullStepBudgetRemaining = Number.POSITIVE_INFINITY;
+  private botSimulationTierTick = -1;
+  private readonly botSimulationTierById = new Map<string, BotSimulationTier>();
+  private botSnapshotRosterIds: string[] = [];
+  private readonly botsWithReusedInputThisTick = new Set<string>();
+  private readonly botPerceptionCandidatesScratch: Player[] = [];
+  private readonly botPerceptionCandidateIdsScratch = new Set<string>();
+  private readonly botPerceptionLosCandidatePlayersScratch: Player[] = [];
+  private readonly botPerceptionLosCandidateScoresScratch: number[] = [];
+  private readonly botMovementLodEnemyHumanScratch: Player[] = [];
+  private readonly botSimulationHumanScratch: Player[] = [];
+  private readonly botSteeringPathCache = new Map<string, BotSteeringPathCacheEntry>();
+  private readonly movementStepPosition: PlainVec3 = { x: 0, y: 0, z: 0 };
+  private readonly movementStepVelocity: PlainVec3 = { x: 0, y: 0, z: 0 };
+  private readonly movementStepState: PlayerMovementState = {
+    isGrounded: true,
+    isSprinting: false,
+    isCrouching: false,
+    isSliding: false,
+    slideTimeRemaining: 0,
+    isWallRunning: false,
+    wallRunSide: null,
+    isGrappling: false,
+    grapplePoint: null,
+    isJetpacking: false,
+    jetpackFuel: 100,
+    isGliding: false,
+  };
   private readonly playerSpatialIndex = new PlayerSpatialIndex(8);
   private readonly playerSpatialQueries = new PlayerSpatialQueries(this.playerSpatialIndex);
   private readonly roomMetrics = new RoomMetrics();
@@ -1002,6 +1142,7 @@ export class GameRoom extends Room<GameState> {
     this.state.mapThemeId = options.mapThemeId ?? getVoxelMapTheme(this.state.mapSeed).id;
     this.state.mapSize = normalizeVoxelMapSizeId(options.mapSize);
     this.refreshMapManifest();
+    this.initializeStreamSchedule(Date.now());
     loggers.room.info('Map seed', this.state.mapSeed);
     resetFlagsFromManifest(this.state, this.getMapManifest());
     this.createBotsFromAssignments(options.botAssignments || []);
@@ -1407,6 +1548,34 @@ export class GameRoom extends Room<GameState> {
     this.matchCancelDisconnectTimeout = null;
   }
 
+  private initializeStreamSchedule(now: number): void {
+    const seed = hashString(`${this.roomId}:${this.state.mapSeed}`);
+    this.streamScheduleStartedAt = now;
+    this.vitalsPhaseAtMs = now + (seed % PLAYER_VITALS_INTERVAL_MS);
+    this.interestPhaseAtMs = now + ((seed + Math.floor(PLAYER_INTEREST_INTERVAL_MS / 2)) % PLAYER_INTEREST_INTERVAL_MS);
+    this.pingProbePhaseAtMs = now + ((seed + 997) % DEFAULT_PLAYER_PING_INTERVAL_MS);
+    this.pingBroadcastPhaseAtMs = now + ((seed + 53) % PLAYER_PING_BROADCAST_INTERVAL_MS);
+    this.matchSnapshotPhaseAtMs = now + ((seed + 131) % MATCH_SNAPSHOT_DRIFT_SYNC_INTERVAL_MS);
+    this.lastVitalsBroadcastAt = getPreviousPhasedIntervalTime(now, PLAYER_VITALS_INTERVAL_MS, this.vitalsPhaseAtMs);
+    this.lastInterestBroadcastAt = getPreviousPhasedIntervalTime(now, PLAYER_INTEREST_INTERVAL_MS, this.interestPhaseAtMs);
+    this.lastPingProbeAt = getPreviousPhasedIntervalTime(now, DEFAULT_PLAYER_PING_INTERVAL_MS, this.pingProbePhaseAtMs);
+    this.lastPingBroadcastAt = getPreviousPhasedIntervalTime(now, PLAYER_PING_BROADCAST_INTERVAL_MS, this.pingBroadcastPhaseAtMs);
+    this.lastMatchSnapshotBroadcastAt = getPreviousPhasedIntervalTime(
+      now,
+      MATCH_SNAPSHOT_DRIFT_SYNC_INTERVAL_MS,
+      this.matchSnapshotPhaseAtMs
+    );
+  }
+
+  private measureTickSpan<T>(spanName: RoomTickSpanName, run: () => T): T {
+    const startedAt = performance.now();
+    try {
+      return run();
+    } finally {
+      this.tickProfiler.recordSpan(spanName, performance.now() - startedAt);
+    }
+  }
+
   private buildMatchCancelledPayload(notice: PreMatchCancelNotice): Record<string, unknown> {
     return buildMatchCancelledPayload({
       notice,
@@ -1454,23 +1623,30 @@ export class GameRoom extends Room<GameState> {
 
   private tick() {
     const tickStartedAt = performance.now();
+    this.tickProfiler.beginTick();
     try {
       this.state.tick++;
       this.state.serverTime = Date.now();
       const dt = TICK_INTERVAL_MS / 1000;
-      this.rebuildPlayerSpatialIndex();
+      this.measureTickSpan('spatial_index_rebuild', () => this.rebuildPlayerSpatialIndex());
       this.updateBots(this.state.serverTime, dt);
 
       // Update based on phase
       switch (this.state.phase) {
         case 'hero_select':
-          if (this.state.serverTime - this.lastLowFrequencyStateAt >= LOW_FREQUENCY_STATE_INTERVAL_MS) {
-            this.lastLowFrequencyStateAt = this.state.serverTime;
+          let shouldBroadcastHeroSelectState = false;
+          this.measureTickSpan('phase_gameplay_update', () => {
+            if (this.state.serverTime - this.lastLowFrequencyStateAt >= LOW_FREQUENCY_STATE_INTERVAL_MS) {
+              this.lastLowFrequencyStateAt = this.state.serverTime;
+              shouldBroadcastHeroSelectState = true;
+            }
+          });
+          if (shouldBroadcastHeroSelectState) {
             this.broadcastStateStreams({ transforms: false });
           }
           break;
         case 'countdown':
-          this.updateCountdown();
+          this.measureTickSpan('phase_gameplay_update', () => this.updateCountdown());
           this.updatePhysics();
           this.broadcastStateStreams({ transforms: true });
           break;
@@ -1478,15 +1654,23 @@ export class GameRoom extends Room<GameState> {
           this.updatePlaying();
           break;
         case 'round_end':
-          this.updateRoundEnd();
-          if (this.state.serverTime - this.lastLowFrequencyStateAt >= LOW_FREQUENCY_STATE_INTERVAL_MS) {
-            this.lastLowFrequencyStateAt = this.state.serverTime;
+          let shouldBroadcastRoundEndState = false;
+          this.measureTickSpan('phase_gameplay_update', () => {
+            this.updateRoundEnd();
+            if (this.state.serverTime - this.lastLowFrequencyStateAt >= LOW_FREQUENCY_STATE_INTERVAL_MS) {
+              this.lastLowFrequencyStateAt = this.state.serverTime;
+              shouldBroadcastRoundEndState = true;
+            }
+          });
+          if (shouldBroadcastRoundEndState) {
             this.broadcastStateStreams({ transforms: false });
           }
           break;
       }
     } finally {
-      this.roomMetrics.recordTickDuration(performance.now() - tickStartedAt);
+      const tickDurationMs = performance.now() - tickStartedAt;
+      this.tickProfiler.endTick(tickDurationMs);
+      this.roomMetrics.recordTickDuration(tickDurationMs);
     }
   }
 
@@ -1508,79 +1692,84 @@ export class GameRoom extends Room<GameState> {
     const now = Date.now();
     const dt = TICK_INTERVAL_MS / 1000;
 
-    // Update round timer
-    if (this.state.roundStartTime && !this.devRuntime.isGameClockFrozen()) {
-      this.state.roundTimeRemaining = getRoomRoundTimeRemaining({
-        roundStartTime: this.state.roundStartTime,
-        roundTimeRemaining: this.state.roundTimeRemaining,
-        roundTimeSeconds: this.config.roundTimeSeconds,
-        now,
+    this.measureTickSpan('phase_gameplay_update', () => {
+      // Update round timer
+      if (this.state.roundStartTime && !this.devRuntime.isGameClockFrozen()) {
+        this.state.roundTimeRemaining = getRoomRoundTimeRemaining({
+          roundStartTime: this.state.roundStartTime,
+          roundTimeRemaining: this.state.roundTimeRemaining,
+          roundTimeSeconds: this.config.roundTimeSeconds,
+          now,
+        });
+
+        if (this.state.roundTimeRemaining <= 0) {
+          this.endRound();
+        }
+      }
+
+      // Update each player
+      this.state.players.forEach(player => {
+        // Handle respawns
+        if (player.state === 'dead') {
+          if (!Number.isFinite(player.respawnTime) || player.respawnTime <= 0) {
+            player.respawnTime = now + this.config.respawnTimeSeconds * 1000;
+          }
+          if (now >= player.respawnTime) {
+            this.respawnPlayer(player);
+          }
+          return;
+        }
+
+        if (player.state !== 'alive') return;
+
+        const chronosTempoMultiplier = this.getChronosTimebreakTempoMultiplier(player);
+        const abilityTempoMultiplier = this.getAbilityTempoMultiplier(player, now);
+
+        // Update ability cooldowns
+        updateAbilityCooldowns(player, dt, abilityTempoMultiplier);
+        this.updateTimeScaledSkillTimers(player, dt, abilityTempoMultiplier, now);
+
+        // Passive ultimate charge
+        if (player.ultimateCharge < 100) {
+          player.ultimateCharge = Math.min(
+            100,
+            player.ultimateCharge + ULTIMATE_CHARGE_PER_SECOND * dt * chronosTempoMultiplier
+          );
+        }
+
+        // Process active abilities (like Phantom Veil)
+        updateActiveAbilities(player, now);
+        this.syncChronosAscendantMovementState(player, now);
       });
-
-      if (this.state.roundTimeRemaining <= 0) {
-        this.endRound();
-      }
-    }
-
-    // Update each player
-    this.state.players.forEach(player => {
-      // Handle respawns
-      if (player.state === 'dead') {
-        if (!Number.isFinite(player.respawnTime) || player.respawnTime <= 0) {
-          player.respawnTime = now + this.config.respawnTimeSeconds * 1000;
-        }
-        if (now >= player.respawnTime) {
-          this.respawnPlayer(player);
-        }
-        return;
-      }
-
-      if (player.state !== 'alive') return;
-
-      const chronosTempoMultiplier = this.getChronosTimebreakTempoMultiplier(player);
-      const abilityTempoMultiplier = this.getAbilityTempoMultiplier(player, now);
-
-      // Update ability cooldowns
-      updateAbilityCooldowns(player, dt, abilityTempoMultiplier);
-      this.updateTimeScaledSkillTimers(player, dt, abilityTempoMultiplier, now);
-
-      // Passive ultimate charge
-      if (player.ultimateCharge < 100) {
-        player.ultimateCharge = Math.min(
-          100,
-          player.ultimateCharge + ULTIMATE_CHARGE_PER_SECOND * dt * chronosTempoMultiplier
-        );
-      }
-
-      // Process active abilities (like Phantom Veil)
-      updateActiveAbilities(player, now);
-      this.syncChronosAscendantMovementState(player, now);
+      this.updateChronosAegisShields(dt);
+      this.playerRoots.clearExpired(now);
     });
-    this.updateChronosAegisShields(dt);
-    this.playerRoots.clearExpired(now);
 
-    // Update void zones (damage enemies inside)
-    this.updateVoidZones(now);
+    this.measureTickSpan('powerups_objectives_effects', () => {
+      // Update void zones (damage enemies inside)
+      this.updateVoidZones(now);
 
-    this.updatePendingAreaDamage(now);
-    this.updateBlazeGearstorms(now);
-    this.cleanupDamageWindows(now);
+      this.updatePendingAreaDamage(now);
+      this.updateBlazeGearstorms(now);
+      this.cleanupDamageWindows(now);
 
-    // Update held Blaze flamethrowers
-    this.updateBlazeFlamethrowers(now, dt);
-    this.updateBlazeBurns(now);
-    this.playerCombatActivity.updateOutOfCombatHealthRegens(this.state.players.values(), now, dt);
+      // Update held Blaze flamethrowers
+      this.updateBlazeFlamethrowers(now, dt);
+      this.updateBlazeBurns(now);
+      this.playerCombatActivity.updateOutOfCombatHealthRegens(this.state.players.values(), now, dt);
+    });
 
-    // Update physics simulation (simplified)
     this.updatePhysics();
 
-    // Update map pickups after movement so collection uses the latest authoritative position.
-    this.updatePowerupPickups(now);
+    this.measureTickSpan('powerups_objectives_effects', () => {
+      // Update map pickups after movement so collection uses the latest authoritative position.
+      this.updatePowerupPickups(now);
 
-    // Update CTF objective interactions after movement.
-    if (isCaptureTheFlagMode(this.gameplayMode)) {
-      this.updateCTFObjectives(now);
-    }
+      // Update CTF objective interactions after movement.
+      if (isCaptureTheFlagMode(this.gameplayMode)) {
+        this.updateCTFObjectives(now);
+      }
+    });
 
     this.broadcastStateStreams();
   }
@@ -1939,6 +2128,7 @@ export class GameRoom extends Room<GameState> {
       interest: this.visibilityInterest.getMetricsSnapshot(),
       transformMetric: this.roomMetrics.getCustomMessageMetric('playerTransformsV2'),
       vitalsMetric: this.roomMetrics.getCustomMessageMetric('playerVitals'),
+      tickProfiler: this.tickProfiler.snapshot(),
       antiCheatQueue: this.antiCheatEvidenceStore.getQueueHealth(),
     });
   }
@@ -2214,6 +2404,11 @@ export class GameRoom extends Room<GameState> {
 
   private probePlayerPings(): void {
     const now = this.state.serverTime || Date.now();
+    if (!isPhasedIntervalDue(now, this.lastPingProbeAt, DEFAULT_PLAYER_PING_INTERVAL_MS, this.pingProbePhaseAtMs)) {
+      return;
+    }
+    this.lastPingProbeAt = now;
+
     const probe = this.playerPings.startProbe({
       clients: this.clients,
       players: this.state.players,
@@ -2262,7 +2457,17 @@ export class GameRoom extends Room<GameState> {
   }
 
   private broadcastPlayerPings(force = false): void {
+    const now = this.state.serverTime || Date.now();
+    if (!force && !isPhasedIntervalDue(
+      now,
+      this.lastPingBroadcastAt,
+      PLAYER_PING_BROADCAST_INTERVAL_MS,
+      this.pingBroadcastPhaseAtMs
+    )) {
+      return;
+    }
     if (!this.playerPings.shouldBroadcast(force)) return;
+    this.lastPingBroadcastAt = now;
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
       this.sendTracked(client, 'playerPings', this.playerPings.buildMessage({
@@ -2345,6 +2550,8 @@ export class GameRoom extends Room<GameState> {
       lastInterestBroadcastAt: this.lastInterestBroadcastAt,
       vitalsIntervalMs: PLAYER_VITALS_INTERVAL_MS,
       interestIntervalMs: PLAYER_INTEREST_INTERVAL_MS,
+      vitalsPhaseAtMs: this.vitalsPhaseAtMs,
+      interestPhaseAtMs: this.interestPhaseAtMs,
     });
 
     if (!shouldBroadcastVitals && !shouldBroadcastInterest && !shouldBroadcastTransforms) return;
@@ -2502,7 +2709,12 @@ export class GameRoom extends Room<GameState> {
     const now = this.state.serverTime || Date.now();
     const snapshot = this.buildMatchSnapshot();
     const signature = this.matchSnapshots.getSignature(snapshot);
-    const driftSyncDue = now - this.lastMatchSnapshotBroadcastAt >= MATCH_SNAPSHOT_DRIFT_SYNC_INTERVAL_MS;
+    const driftSyncDue = isPhasedIntervalDue(
+      now,
+      this.lastMatchSnapshotBroadcastAt,
+      MATCH_SNAPSHOT_DRIFT_SYNC_INTERVAL_MS,
+      this.matchSnapshotPhaseAtMs
+    );
     if (!force && signature === this.matchSnapshotSignature && !driftSyncDue) return;
 
     this.lastMatchSnapshotBroadcastAt = now;
@@ -2512,21 +2724,26 @@ export class GameRoom extends Room<GameState> {
 
   private broadcastStateStreams(options: { transforms?: boolean; vitals?: boolean; match?: boolean; forceTransforms?: boolean; forceVitals?: boolean; forceMatch?: boolean } = {}): void {
     this.visibilityInterest.resetMetricsWindow();
-    this.probePlayerPings();
-    this.broadcastPlayerPings();
-    const frameContext = this.buildReplicationFrameContext();
+    this.measureTickSpan('ping_probe_broadcast', () => {
+      this.probePlayerPings();
+      this.broadcastPlayerPings();
+    });
+    const frameContext = this.measureTickSpan(
+      'replication_frame_context',
+      () => this.buildReplicationFrameContext()
+    );
 
     const shouldBroadcastTransforms = options.transforms ?? (this.state.phase === 'playing' || this.state.phase === 'countdown');
-    this.broadcastPlayerStateStreams({
+    this.measureTickSpan('player_state_stream_fanout', () => this.broadcastPlayerStateStreams({
       transforms: shouldBroadcastTransforms,
       vitals: options.vitals ?? true,
       forceTransforms: options.forceTransforms,
       forceVitals: options.forceVitals,
       frameContext,
-    });
+    }));
 
     if (options.match ?? true) {
-      this.broadcastMatchSnapshot(options.forceMatch);
+      this.measureTickSpan('match_snapshot_broadcast', () => this.broadcastMatchSnapshot(options.forceMatch));
     }
   }
 
@@ -3079,69 +3296,93 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private movementCommandToInput(
+  private writeMovementCommandToInput(
     command: MovementCommand,
+    target: PlayerInput,
     now = this.state.serverTime || Date.now()
   ): PlayerInput {
-    const buttons = movementButtonsToInputState(command.buttons);
-    return {
-      tick: command.seq,
-      moveForward: buttons.moveForward,
-      moveBackward: buttons.moveBackward,
-      moveLeft: buttons.moveLeft,
-      moveRight: buttons.moveRight,
-      jump: buttons.jump,
-      crouch: buttons.crouch,
-      crouchPressed: buttons.crouchPressed,
-      sprint: buttons.sprint,
-      primaryFire: buttons.primaryFire,
-      secondaryFire: buttons.secondaryFire,
-      reload: buttons.reload,
-      ability1: buttons.ability1,
-      ability2: buttons.ability2,
-      ultimate: buttons.ultimate,
-      interact: buttons.interact,
-      lookYaw: command.lookYaw,
-      lookPitch: command.lookPitch,
-      timestamp: now,
-      abilityCastHints: command.abilityCastHints,
-    };
+    const buttons = sanitizeMovementButtons(command.buttons);
+    target.tick = command.seq;
+    target.moveForward = Boolean(buttons & MOVEMENT_BUTTON_MOVE_FORWARD);
+    target.moveBackward = Boolean(buttons & MOVEMENT_BUTTON_MOVE_BACKWARD);
+    target.moveLeft = Boolean(buttons & MOVEMENT_BUTTON_MOVE_LEFT);
+    target.moveRight = Boolean(buttons & MOVEMENT_BUTTON_MOVE_RIGHT);
+    target.jump = Boolean(buttons & MOVEMENT_BUTTON_JUMP);
+    target.crouch = Boolean(buttons & MOVEMENT_BUTTON_CROUCH);
+    target.crouchPressed = Boolean(buttons & MOVEMENT_BUTTON_CROUCH_PRESSED);
+    target.sprint = Boolean(buttons & MOVEMENT_BUTTON_SPRINT);
+    target.primaryFire = Boolean(buttons & MOVEMENT_BUTTON_PRIMARY_FIRE);
+    target.secondaryFire = Boolean(buttons & MOVEMENT_BUTTON_SECONDARY_FIRE);
+    target.reload = Boolean(buttons & MOVEMENT_BUTTON_RELOAD);
+    target.ability1 = Boolean(buttons & MOVEMENT_BUTTON_ABILITY_1);
+    target.ability2 = Boolean(buttons & MOVEMENT_BUTTON_ABILITY_2);
+    target.ultimate = Boolean(buttons & MOVEMENT_BUTTON_ULTIMATE);
+    target.interact = Boolean(buttons & MOVEMENT_BUTTON_INTERACT);
+    target.lookYaw = command.lookYaw;
+    target.lookPitch = command.lookPitch;
+    target.timestamp = now;
+    delete target.clientFrameRateBand;
+    if (command.abilityCastHints) {
+      target.abilityCastHints = command.abilityCastHints;
+    } else {
+      delete target.abilityCastHints;
+    }
+    return target;
   }
 
-  private enqueueServerOwnedMovementCommands(
+  private getServerOwnedMovementInput(
+    player: Player,
+    input: PlayerInput | undefined,
+    now: number
+  ): PlayerInput {
+    const movementInput = input ?? player.lastInput ?? createEmptyBotInput(this.state.tick, player, now);
+    movementInput.tick = this.state.tick;
+    movementInput.timestamp = now;
+    movementInput.lookYaw = normalizeLookYaw(movementInput.lookYaw);
+    movementInput.lookPitch = clampLookPitch(movementInput.lookPitch);
+    delete movementInput.clientFrameRateBand;
+    return movementInput;
+  }
+
+  private stepAuthoritativeMovementInput(
     player: Player,
     input: PlayerInput,
-    now: number,
-    commandCount = SERVER_MOVEMENT_SUBSTEPS_PER_TICK
-  ): void {
-    const authority = this.getMovementAuthority(player.id);
-    let seq = authority.pendingCommands.peekLast()?.seq ?? authority.lastProcessedSeq;
-
-    for (let step = 0; step < commandCount; step++) {
-      seq = nextMovementSeq(seq);
-      this.movementAuthorities.pushPendingCommand(authority, {
-        seq,
-        buttons: inputStateToMovementButtons(input, {
-          crouchPressed: step === 0 && Boolean(input.crouchPressed),
-        }),
-        lookYaw: normalizeLookYaw(input.lookYaw),
-        lookPitch: clampLookPitch(input.lookPitch),
-        clientTimeMs: now + step * MOVEMENT_SUBSTEP_SECONDS * 1000,
-        movementEpoch: authority.movementEpoch,
-        collisionRevision: this.getMovementCollisionRevision(now),
+    stepSeconds: number,
+    stepNow: number,
+    collisionWorld: MovementCollisionWorld,
+    options: { processGameplayInput: boolean }
+  ): PlayerInput {
+    const movementInput = this.getRootedMovementInput(player, input, stepNow);
+    player.lastInput = movementInput;
+    player.lookYaw = movementInput.lookYaw;
+    player.lookPitch = movementInput.lookPitch;
+    const dragPullActive = this.hookshotRuntime.hasDragPull(player.id);
+    if (dragPullActive) {
+      this.clearHookshotGrapple(player.id);
+    } else {
+      this.prepareHookshotGrappleForMovement(player, stepNow);
+    }
+    const simulationInput = dragPullActive
+      ? suppressLocomotionInput(movementInput)
+      : movementInput;
+    this.simulateAuthoritativeMovementStep(
+      player,
+      simulationInput,
+      stepSeconds,
+      stepNow,
+      collisionWorld
+    );
+    if (!dragPullActive) {
+      this.stepHookshotGrappleAuthority(player, simulationInput, stepSeconds, stepNow, collisionWorld);
+    }
+    this.stepHookshotDragPullAuthority(player, stepSeconds, stepNow, collisionWorld);
+    if (options.processGameplayInput) {
+      this.measureTickSpan('movement_gameplay_input', () => {
+        this.processPlayerInput(player, movementInput, stepNow);
       });
     }
-
-    const overflowPolicy = getMovementQueueOverflowBarrierPolicy({
-      queueLength: authority.pendingCommands.length,
-      maxServerQueue: MOVEMENT_MAX_SERVER_QUEUE,
-    });
-    if (overflowPolicy.shouldMarkQueueOverflowBarrier) {
-      authority.metrics.droppedCommands += overflowPolicy.discardedCommandCount;
-      this.markMovementBarrier(player.id, 'queue_overflow');
-    }
-    authority.metrics.commandsReceived += commandCount;
-    authority.metrics.queueLength = authority.pendingCommands.length;
+    this.updateLastSafeMovement(player, movementInput.tick, stepNow);
+    return movementInput;
   }
 
   private applyMovementSimulationResult(player: Player, result: ReturnType<typeof simulateSharedMovement>): void {
@@ -3211,7 +3452,8 @@ export class GameRoom extends Room<GameState> {
     player: Player,
     input: PlayerInput,
     dt: number,
-    now: number
+    now: number,
+    collisionWorld = this.getMovementCollisionWorld(now)
   ): void {
     const grapple = this.hookshotRuntime.getGrapple(player.id);
     if (!grapple || now < grapple.attachAt || !grapple.swing) return;
@@ -3228,13 +3470,12 @@ export class GameRoom extends Room<GameState> {
       deltaTime: dt,
     });
 
-    const world = this.getMovementCollisionWorld(now);
     const swingDelta = {
       x: result.position.x - previousPosition.x,
       y: result.position.y - previousPosition.y,
       z: result.position.z - previousPosition.z,
     };
-    const terrainHit = world.sweepCapsule(previousPosition, swingDelta, PLAYER_HEIGHT, PLAYER_RADIUS);
+    const terrainHit = collisionWorld.sweepCapsule(previousPosition, swingDelta, PLAYER_HEIGHT, PLAYER_RADIUS);
     let nextPosition = result.position;
     let nextVelocity = result.velocity;
     if (terrainHit) {
@@ -3255,7 +3496,7 @@ export class GameRoom extends Room<GameState> {
         : result.velocity;
     }
 
-    if (!canCapsuleOccupy(world, nextPosition, PLAYER_HEIGHT, PLAYER_RADIUS)) {
+    if (!canCapsuleOccupy(collisionWorld, nextPosition, PLAYER_HEIGHT, PLAYER_RADIUS)) {
       nextPosition = previousPosition;
       nextVelocity = { x: 0, y: Math.min(0, result.velocity.y), z: 0 };
     }
@@ -3287,31 +3528,42 @@ export class GameRoom extends Room<GameState> {
     player: Player,
     input: PlayerInput,
     dt: number,
-    now = this.state.serverTime || Date.now()
+    now = this.state.serverTime || Date.now(),
+    collisionWorld = this.getMovementCollisionWorld(now)
   ): void {
     const heroId = player.heroId as HeroId;
     const heroStats = getHeroStats(heroId);
-    const collisionWorld = this.getMovementCollisionWorld(now);
+    const position = this.movementStepPosition;
+    position.x = player.position.x;
+    position.y = player.position.y;
+    position.z = player.position.z;
+
+    const velocity = this.movementStepVelocity;
+    velocity.x = player.velocity.x;
+    velocity.y = player.velocity.y;
+    velocity.z = player.velocity.z;
+
+    const movement = this.movementStepState;
+    movement.isGrounded = player.movement.isGrounded;
+    movement.isSprinting = player.movement.isSprinting;
+    movement.isCrouching = player.movement.isCrouching;
+    movement.isSliding = player.movement.isSliding;
+    movement.slideTimeRemaining = player.movement.slideTimeRemaining;
+    movement.isWallRunning = player.movement.isWallRunning;
+    movement.wallRunSide = player.movement.wallRunSide === 'left' || player.movement.wallRunSide === 'right'
+      ? player.movement.wallRunSide
+      : null;
+    movement.isGrappling = player.movement.isGrappling;
+    movement.grapplePoint = null;
+    movement.isJetpacking = player.movement.isJetpacking;
+    movement.jetpackFuel = player.movement.jetpackFuel;
+    movement.isGliding = player.movement.isGliding;
+    movement.chronosAscendantStartY = player.movement.chronosAscendantStartY || undefined;
+
     const result = simulateSharedMovement({
-      position: vec3SchemaToPlain(player.position),
-      velocity: vec3SchemaToPlain(player.velocity),
-      movement: {
-        isGrounded: player.movement.isGrounded,
-        isSprinting: player.movement.isSprinting,
-        isCrouching: player.movement.isCrouching,
-        isSliding: player.movement.isSliding,
-        slideTimeRemaining: player.movement.slideTimeRemaining,
-        isWallRunning: player.movement.isWallRunning,
-        wallRunSide: player.movement.wallRunSide === 'left' || player.movement.wallRunSide === 'right'
-          ? player.movement.wallRunSide
-          : null,
-        isGrappling: player.movement.isGrappling,
-        grapplePoint: null,
-        isJetpacking: player.movement.isJetpacking,
-        jetpackFuel: player.movement.jetpackFuel,
-        isGliding: player.movement.isGliding,
-        chronosAscendantStartY: player.movement.chronosAscendantStartY || undefined,
-      },
+      position,
+      velocity,
+      movement,
       heroStats,
       input,
       lookYaw: player.lookYaw,
@@ -5146,7 +5398,12 @@ export class GameRoom extends Room<GameState> {
     player.movement.isGrappling = false;
   }
 
-  private stepHookshotDragPullAuthority(player: Player, dt: number, now: number): boolean {
+  private stepHookshotDragPullAuthority(
+    player: Player,
+    dt: number,
+    now: number,
+    collisionWorld = this.getMovementCollisionWorld(now)
+  ): boolean {
     const pull = this.hookshotRuntime.getDragPull(player.id);
     if (!pull) return false;
 
@@ -5166,7 +5423,6 @@ export class GameRoom extends Room<GameState> {
     const dx = destination.x - currentPosition.x;
     const dz = destination.z - currentPosition.z;
     const distanceToDestination = Math.sqrt(dx * dx + dz * dz);
-    const collisionWorld = this.getMovementCollisionWorld(now);
 
     if (distanceToDestination <= HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE) {
       const finalDelta = {
@@ -5240,7 +5496,11 @@ export class GameRoom extends Room<GameState> {
     return true;
   }
 
-  private stepHookshotDragPullWithoutCommand(player: Player, tickTime: number): boolean {
+  private stepHookshotDragPullWithoutCommand(
+    player: Player,
+    tickTime: number,
+    collisionWorld = this.getMovementCollisionWorld(tickTime)
+  ): boolean {
     if (!this.hookshotRuntime.hasDragPull(player.id)) return false;
 
     let moved = false;
@@ -5255,8 +5515,8 @@ export class GameRoom extends Room<GameState> {
       );
 
       this.clearHookshotGrapple(player.id);
-      this.simulateAuthoritativeMovementStep(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow);
-      if (this.stepHookshotDragPullAuthority(player, MOVEMENT_SUBSTEP_SECONDS, stepNow)) {
+      this.simulateAuthoritativeMovementStep(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow, collisionWorld);
+      if (this.stepHookshotDragPullAuthority(player, MOVEMENT_SUBSTEP_SECONDS, stepNow, collisionWorld)) {
         moved = true;
         this.updateLastSafeMovement(player, authority.lastProcessedSeq, stepNow);
       }
@@ -5520,7 +5780,10 @@ export class GameRoom extends Room<GameState> {
 
   private updateBots(now: number, dt: number): void {
     this.botRuntime.beginFrameSchedule();
-    const frameContext = this.buildBotFrameContext(now);
+    this.botsWithReusedInputThisTick.clear();
+    this.prepareBotSimulationTierCache();
+    const aliveBotCount = this.getAliveBotMovementLodCount();
+    let scheduledBotCount = 0;
 
     this.botRuntime.forEachBrain((brain, botId) => {
       const bot = this.state.players.get(botId);
@@ -5581,7 +5844,6 @@ export class GameRoom extends Room<GameState> {
             lookOverride
           );
           stopBotMovement(bot, { vertical: true });
-          this.enqueueServerOwnedMovementCommands(bot, bot.lastInput, now);
         } else {
           this.rootBotMovementAndSkills(bot, now);
         }
@@ -5600,32 +5862,204 @@ export class GameRoom extends Room<GameState> {
         } else {
           this.disableBotBrainInput(bot, now);
         }
-        this.enqueueServerOwnedMovementCommands(bot, bot.lastInput ?? createEmptyBotInput(this.state.tick, bot, now), now);
         return;
       }
 
-      this.botRuntime.scheduleForFrame(botId, this.isPriorityBot(bot, brain, now));
+      const simulationTier = this.getServerOwnedBotSimulationTier(bot, now, brain, true);
+      if (!this.shouldScheduleBotPlanningForTier(bot, simulationTier, aliveBotCount)) {
+        this.tickProfiler.recordCounter('bot_planning_tier_cadence_skipped');
+        this.continueDeferredBotInput(botId, now, simulationTier);
+        return;
+      }
+
+      this.botRuntime.scheduleForFrame(botId, simulationTier === 'critical');
+      scheduledBotCount++;
     });
 
-    this.botRuntime.forEachScheduledFrameBot((botId) => {
-      this.updateScheduledBot(botId, now, dt, frameContext);
+    if (scheduledBotCount === 0) return;
+
+    const frameContext = this.measureTickSpan('bot_frame_context', () => this.buildBotFrameContext(now));
+    this.measureTickSpan('bot_updates', () => {
+      const planningBudgets = this.getBotPlanningBudgets(scheduledBotCount);
+      const schedule = this.botRuntime.runScheduledFrameBots({
+        urgentBudget: planningBudgets.urgentBudget,
+        deferredBudget: planningBudgets.deferredBudget,
+        run: (botId) => {
+          this.updateScheduledBot(botId, now, dt, frameContext);
+        },
+        skipUrgent: (botId) => {
+          this.continueDeferredBotInput(botId, now);
+        },
+        skipDeferred: (botId) => {
+          this.continueDeferredBotInput(botId, now);
+        },
+      });
+      this.tickProfiler.recordCounter('bot_urgent_scheduled', schedule.urgentCount);
+      this.tickProfiler.recordCounter('bot_urgent_processed', schedule.urgentProcessedCount);
+      this.tickProfiler.recordCounter('bot_urgent_skipped', schedule.urgentSkippedCount);
+      this.tickProfiler.recordCounter('bot_deferred_scheduled', schedule.deferredCount);
+      this.tickProfiler.recordCounter('bot_deferred_processed', schedule.deferredProcessedCount);
+      this.tickProfiler.recordCounter('bot_deferred_skipped', schedule.deferredSkippedCount);
+      this.tickProfiler.recordCounter('bot_input_reuse', schedule.urgentSkippedCount + schedule.deferredSkippedCount);
     });
   }
 
-  private isPriorityBot(bot: Player, brain: BotBrain, now: number): boolean {
+  private getBotPlanningBudgets(scheduledBotCount: number): { urgentBudget: number; deferredBudget: number } {
+    if (scheduledBotCount <= BOT_FULL_RATE_PLANNING_COUNT) {
+      return {
+        urgentBudget: BOT_URGENT_PLANNING_BUDGET_PER_TICK,
+        deferredBudget: BOT_DEFERRED_PLANNING_BUDGET_PER_TICK,
+      };
+    }
+
+    if (scheduledBotCount <= BOT_PLANNING_LOD_START_COUNT) {
+      return {
+        urgentBudget: BOT_MID_URGENT_PLANNING_BUDGET_PER_TICK,
+        deferredBudget: BOT_MID_DEFERRED_PLANNING_BUDGET_PER_TICK,
+      };
+    }
+
+    const scale = BOT_PLANNING_LOD_START_COUNT / scheduledBotCount;
+    return {
+      urgentBudget: Math.max(
+        BOT_MIN_URGENT_PLANNING_BUDGET_PER_TICK,
+        Math.round(BOT_URGENT_PLANNING_BUDGET_PER_TICK * scale) - 1
+      ),
+      deferredBudget: Math.max(
+        BOT_MIN_DEFERRED_PLANNING_BUDGET_PER_TICK,
+        Math.floor(BOT_DEFERRED_PLANNING_BUDGET_PER_TICK * scale)
+      ),
+    };
+  }
+
+  private continueDeferredBotInput(
+    botId: string,
+    now: number,
+    simulationTier?: BotSimulationTier
+  ): void {
+    const bot = this.state.players.get(botId);
+    if (!bot?.isBot || bot.state !== 'alive') return;
+    const tier = simulationTier ?? this.getServerOwnedBotSimulationTier(bot, now);
+
+    const input = bot.lastInput ?? createEmptyBotInput(this.state.tick, bot, now);
+    input.tick = this.state.tick;
+    input.timestamp = now;
+    input.crouchPressed = false;
+    input.reload = false;
+    input.ability1 = false;
+    input.ability2 = false;
+    input.ultimate = false;
+    input.interact = false;
+    if (tier !== 'critical' && input.primaryFire) {
+      input.primaryFire = false;
+      this.tickProfiler.recordCounter('bot_noncritical_primary_fire_suppressed');
+    }
+
+    bot.lastInput = input;
+    this.botsWithReusedInputThisTick.add(botId);
+  }
+
+  private prepareBotSimulationTierCache(): void {
+    if (this.botSimulationTierTick === this.state.tick) return;
+    this.botSimulationTierTick = this.state.tick;
+    this.botSimulationTierById.clear();
+  }
+
+  private getServerOwnedBotSimulationTier(
+    bot: Player,
+    now: number,
+    brain = this.botRuntime.getBrain(bot.id),
+    recordCounter = false
+  ): BotSimulationTier {
+    this.prepareBotSimulationTierCache();
+    const cached = this.botSimulationTierById.get(bot.id);
+    if (cached) return cached;
+
+    const tier = this.resolveServerOwnedBotSimulationTier(bot, brain, now);
+    this.botSimulationTierById.set(bot.id, tier);
+    if (recordCounter) this.recordBotSimulationTierCounter(tier);
+    return tier;
+  }
+
+  private resolveServerOwnedBotSimulationTier(
+    bot: Player,
+    brain: BotBrain | undefined,
+    now: number
+  ): BotSimulationTier {
+    if (!bot.isBot || bot.state !== 'alive') return 'critical';
+    if (this.getAliveBotMovementLodCount() <= BOT_MOVEMENT_LOD_START_COUNT) return 'critical';
+    if (this.isPriorityBot(bot, brain, now)) return 'critical';
+    if (this.isServerOwnedBotNearHuman(bot, BOT_SIMULATION_NEAR_HUMAN_DISTANCE_SQ)) return 'near';
+    return 'background';
+  }
+
+  private recordBotSimulationTierCounter(tier: BotSimulationTier): void {
+    switch (tier) {
+      case 'critical':
+        this.tickProfiler.recordCounter('bot_sim_tier_critical');
+        return;
+      case 'near':
+        this.tickProfiler.recordCounter('bot_sim_tier_near');
+        return;
+      case 'background':
+        this.tickProfiler.recordCounter('bot_sim_tier_background');
+        return;
+    }
+  }
+
+  private shouldScheduleBotPlanningForTier(
+    bot: Player,
+    tier: BotSimulationTier,
+    aliveBotCount: number
+  ): boolean {
+    if (tier === 'critical') return true;
+    if (aliveBotCount <= BOT_PLANNING_LOD_START_COUNT) return true;
+
+    const cadence = this.getBotPlanningCadenceForTier(tier, aliveBotCount);
+    return (this.state.tick + hashString(bot.id)) % cadence === 0;
+  }
+
+  private getBotPlanningCadenceForTier(tier: BotSimulationTier, aliveBotCount: number): number {
+    if (tier === 'critical') return 1;
+    if (tier === 'near') {
+      return aliveBotCount >= BOT_MOVEMENT_LOD_HIGH_COUNT ? BOT_NEAR_PLANNING_CADENCE_HIGH : 1;
+    }
+    if (aliveBotCount >= BOT_MOVEMENT_LOD_HIGH_COUNT) return BOT_BACKGROUND_PLANNING_CADENCE_HIGH;
+    if (aliveBotCount >= BOT_MOVEMENT_LOD_MEDIUM_COUNT) return BOT_BACKGROUND_PLANNING_CADENCE_MEDIUM;
+    return 2;
+  }
+
+  private isPriorityBot(bot: Player, brain: BotBrain | undefined, now: number): boolean {
     if (bot.hasFlag) return true;
-    if (this.replicationState.getRecentCombatTransformUntil(bot.id) > now) return true;
     if (
-      brain.intent.type === 'fight_local_enemy' ||
-      brain.intent.type === 'intercept_enemy_carrier' ||
-      brain.intent.type === 'escort_allied_carrier' ||
-      brain.intent.type === 'return_dropped_friendly_flag' ||
-      brain.intent.type === 'carry_flag_home'
+      this.replicationState.getRecentCombatTransformUntil(bot.id) > now &&
+      (
+        this.hasRecentHumanCombatInterest(bot, now) ||
+        this.isServerOwnedBotNearHuman(bot, BOT_SIMULATION_NEAR_HUMAN_DISTANCE_SQ)
+      )
     ) {
       return true;
     }
-    const target = brain.targetId ? this.state.players.get(brain.targetId) : null;
-    return Boolean(target && target.state === 'alive' && target.team !== bot.team);
+    const target = brain?.targetId ? this.state.players.get(brain.targetId) : null;
+    const hasCloseHumanCombatTarget = Boolean(
+      target &&
+      !target.isBot &&
+      target.state === 'alive' &&
+      target.team !== bot.team &&
+      distance3D(bot.position, target.position) <= 22
+    );
+    if (brain?.intent.type === 'fight_local_enemy') {
+      return hasCloseHumanCombatTarget || this.isServerOwnedBotNearEnemyHuman(bot, BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE_SQ);
+    }
+    return hasCloseHumanCombatTarget;
+  }
+
+  private hasRecentHumanCombatInterest(bot: Player, now: number): boolean {
+    for (const player of this.playerSpatialIndex.getAlivePlayers()) {
+      if (player.isBot || player.id === bot.id) continue;
+      if (this.replicationState.getRecentCombatInterestUntil(bot.id, player.id) > now) return true;
+    }
+    return false;
   }
 
   private updateScheduledBot(
@@ -5649,7 +6083,6 @@ export class GameRoom extends Room<GameState> {
       lookOverride
     );
     bot.lastInput = botInput;
-    this.enqueueServerOwnedMovementCommands(bot, botInput, now);
   }
 
   private getBotPlayerSnapshot(player: Player): BotPlayerSnapshot | null {
@@ -5699,19 +6132,35 @@ export class GameRoom extends Room<GameState> {
 
   private getBotPlayerSnapshots(): BotPlayerSnapshot[] {
     const snapshots: BotPlayerSnapshot[] = [];
-    this.state.players.forEach((player) => {
+    for (const playerId of this.getBotSnapshotRosterIds()) {
+      const player = this.state.players.get(playerId);
+      if (!player) continue;
       const snapshot = this.getBotPlayerSnapshot(player);
       if (snapshot) snapshots.push(snapshot);
-    });
-    snapshots.sort((a, b) => a.id.localeCompare(b.id));
+    }
     return snapshots;
+  }
+
+  private getBotSnapshotRosterIds(): readonly string[] {
+    const cachedIds = this.botSnapshotRosterIds;
+    if (
+      cachedIds.length === this.state.players.size
+      && cachedIds.every((playerId) => this.state.players.has(playerId))
+    ) {
+      return cachedIds;
+    }
+
+    this.botSnapshotRosterIds = Array.from(this.state.players.keys()).sort((a, b) => a.localeCompare(b));
+    return this.botSnapshotRosterIds;
   }
 
   private buildBotFrameContext(now: number): BotFrameContext {
     const snapshots = this.getBotPlayerSnapshots();
     const snapshotById = new Map<string, BotPlayerSnapshot>();
+    let aliveBotCount = 0;
     for (const snapshot of snapshots) {
       snapshotById.set(snapshot.id, snapshot);
+      if (snapshot.isBot && snapshot.state === 'alive') aliveBotCount++;
     }
 
     const flags = getBotFlagSnapshots(this.state);
@@ -5729,11 +6178,11 @@ export class GameRoom extends Room<GameState> {
     return {
       snapshots,
       snapshotById,
+      aliveBotCount,
       flags,
       teamTactics,
       protectedEnemyIdsByTeam,
-      visibleEnemyIdsByBot: new Map(),
-      enemyLineOfSightIdsByBot: new Map(),
+      perceptionByBot: new Map(),
     };
   }
 
@@ -5754,57 +6203,302 @@ export class GameRoom extends Room<GameState> {
     return this.damageRuntime.getBotRecentDamageSources(botId, now);
   }
 
-  private getVisibleEnemyIdsForBot(bot: Player, frameContext: BotFrameContext): Set<string> {
-    const cached = frameContext.visibleEnemyIdsByBot.get(bot.id);
+  private getBotPerceptionSets(
+    bot: Player,
+    frameContext: BotFrameContext,
+    simulationTier: BotSimulationTier
+  ): BotPerceptionSets {
+    const cached = frameContext.perceptionByBot.get(bot.id);
     if (cached) return cached;
-    const visible = new Set<string>();
-    for (const snapshot of frameContext.snapshots) {
-      if (snapshot.team === bot.team || snapshot.state !== 'alive') continue;
-      const enemy = this.state.players.get(snapshot.id);
-      if (!enemy) continue;
+
+    const visibleEnemyIds = new Set<string>();
+    const enemyLineOfSightIds = new Set<string>();
+    const lineOfSightUnknownEnemyIds = new Set<string>();
+    const losCandidateLimit = this.getBotPerceptionLineOfSightCandidateLimit(
+      frameContext.aliveBotCount,
+      simulationTier
+    );
+    const losCandidatePlayers = this.botPerceptionLosCandidatePlayersScratch;
+    const losCandidateScores = this.botPerceptionLosCandidateScoresScratch;
+    const preferredLosTargetId = this.botRuntime.getBrain(bot.id)?.targetId || '';
+    losCandidatePlayers.length = 0;
+    losCandidateScores.length = 0;
+    let budgetedLosCandidateCount = 0;
+    const candidates = this.getBotPerceptionCandidates(bot, frameContext);
+    for (const enemy of candidates) {
+      this.tickProfiler.recordCounter('bot_perception_candidates');
       const distance = distance3D(bot.position, enemy.position);
-      if (this.canBotPerceiveEnemy(bot, enemy, distance)) {
-        visible.add(snapshot.id);
+      if (distance > BOT_AWARENESS_RANGE && !enemy.hasFlag) continue;
+
+      const veil = enemy.abilities.get('phantom_veil');
+      if (veil?.isActive && !enemy.hasFlag && distance > BOT_CLOSE_REVEAL_RANGE) continue;
+
+      if (this.canBotPerceiveEnemyWithoutLineOfSight(enemy, distance)) {
+        this.tickProfiler.recordCounter('bot_visible_enemies');
+        this.tickProfiler.recordCounter('bot_los_visibility_rule_skips');
+        visibleEnemyIds.add(enemy.id);
+        lineOfSightUnknownEnemyIds.add(enemy.id);
+        continue;
+      }
+
+      if (Number.isFinite(losCandidateLimit)) {
+        budgetedLosCandidateCount++;
+        this.addBotPerceptionLineOfSightCandidate(
+          losCandidatePlayers,
+          losCandidateScores,
+          enemy,
+          distance - (enemy.id === preferredLosTargetId ? BOT_PERCEPTION_LOS_TARGET_SCORE_BONUS : 0),
+          losCandidateLimit
+        );
+        continue;
+      }
+
+      this.tickProfiler.recordCounter('bot_los_checks');
+      const hasLineOfSight = this.hasClearShot(bot, enemy);
+      if (hasLineOfSight) {
+        enemyLineOfSightIds.add(enemy.id);
+      }
+      if (this.canBotPerceiveEnemy(enemy, distance, hasLineOfSight)) {
+        this.tickProfiler.recordCounter('bot_visible_enemies');
+        visibleEnemyIds.add(enemy.id);
       }
     }
-    frameContext.visibleEnemyIdsByBot.set(bot.id, visible);
-    return visible;
+
+    if (Number.isFinite(losCandidateLimit)) {
+      this.tickProfiler.recordCounter('bot_los_budget_candidates_selected', losCandidatePlayers.length);
+      this.tickProfiler.recordCounter(
+        'bot_los_budget_candidates_skipped',
+        Math.max(0, budgetedLosCandidateCount - losCandidatePlayers.length)
+      );
+      for (const enemy of losCandidatePlayers) {
+        this.tickProfiler.recordCounter('bot_los_checks');
+        const hasLineOfSight = this.hasClearShot(bot, enemy);
+        if (hasLineOfSight) {
+          enemyLineOfSightIds.add(enemy.id);
+        }
+        if (this.canBotPerceiveEnemy(enemy, distance3D(bot.position, enemy.position), hasLineOfSight)) {
+          this.tickProfiler.recordCounter('bot_visible_enemies');
+          visibleEnemyIds.add(enemy.id);
+        }
+      }
+    }
+
+    const perception = { visibleEnemyIds, enemyLineOfSightIds, lineOfSightUnknownEnemyIds };
+    frameContext.perceptionByBot.set(bot.id, perception);
+    return perception;
   }
 
-  private getEnemyLineOfSightIdsForBot(bot: Player, frameContext: BotFrameContext): Set<string> {
-    const cached = frameContext.enemyLineOfSightIdsByBot.get(bot.id);
-    if (cached) return cached;
-    const visible = new Set<string>();
-    for (const snapshot of frameContext.snapshots) {
-      if (snapshot.team === bot.team || snapshot.state !== 'alive') continue;
-      const enemy = this.state.players.get(snapshot.id);
-      if (enemy && this.hasClearShot(bot, enemy)) {
-        visible.add(snapshot.id);
+  private getBotPerceptionLineOfSightCandidateLimit(
+    aliveBotCount: number,
+    simulationTier: BotSimulationTier
+  ): number {
+    if (aliveBotCount <= BOT_PERCEPTION_LOS_LOD_START_COUNT) return Number.POSITIVE_INFINITY;
+    if (simulationTier === 'background') {
+      if (aliveBotCount >= BOT_PERCEPTION_LOS_LOD_HIGH_COUNT) return BOT_PERCEPTION_LOS_BACKGROUND_HIGH_CANDIDATE_LIMIT;
+      return BOT_PERCEPTION_LOS_BACKGROUND_MEDIUM_CANDIDATE_LIMIT;
+    }
+    if (simulationTier === 'near') {
+      if (aliveBotCount >= BOT_PERCEPTION_LOS_LOD_HIGH_COUNT) return BOT_PERCEPTION_LOS_NEAR_HIGH_CANDIDATE_LIMIT;
+      return BOT_PERCEPTION_LOS_NEAR_MEDIUM_CANDIDATE_LIMIT;
+    }
+    if (aliveBotCount >= BOT_PERCEPTION_LOS_LOD_HIGH_COUNT) return BOT_PERCEPTION_LOS_HIGH_CANDIDATE_LIMIT;
+    if (aliveBotCount >= BOT_PERCEPTION_LOS_LOD_MEDIUM_COUNT) return BOT_PERCEPTION_LOS_MEDIUM_CANDIDATE_LIMIT;
+    return BOT_PERCEPTION_LOS_MEDIUM_CANDIDATE_LIMIT;
+  }
+
+  private addBotPerceptionLineOfSightCandidate(
+    players: Player[],
+    scores: number[],
+    enemy: Player,
+    score: number,
+    limit: number
+  ): void {
+    if (limit <= 0) return;
+    if (players.length < limit) {
+      players.push(enemy);
+      scores.push(score);
+      return;
+    }
+
+    let worstIndex = 0;
+    let worstScore = scores[0] ?? Number.NEGATIVE_INFINITY;
+    for (let index = 1; index < scores.length; index++) {
+      const candidateScore = scores[index] ?? Number.NEGATIVE_INFINITY;
+      if (candidateScore > worstScore) {
+        worstScore = candidateScore;
+        worstIndex = index;
       }
     }
-    frameContext.enemyLineOfSightIdsByBot.set(bot.id, visible);
-    return visible;
+    if (score >= worstScore) return;
+
+    players[worstIndex] = enemy;
+    scores[worstIndex] = score;
+  }
+
+  private getBotPerceptionCandidates(bot: Player, frameContext: BotFrameContext): readonly Player[] {
+    const candidates = this.botPerceptionCandidatesScratch;
+    const candidateIds = this.botPerceptionCandidateIdsScratch;
+    candidates.length = 0;
+    candidateIds.clear();
+
+    if (!isTeam(bot.team)) {
+      for (const snapshot of frameContext.snapshots) {
+        if (snapshot.team === bot.team || snapshot.state !== 'alive') continue;
+        const enemy = this.state.players.get(snapshot.id);
+        if (!enemy || candidateIds.has(enemy.id)) continue;
+        candidateIds.add(enemy.id);
+        candidates.push(enemy);
+      }
+      return candidates;
+    }
+
+    const enemyTeam = getEnemyTeam(bot.team);
+    this.playerSpatialIndex.queryRadius(
+      bot.position,
+      BOT_AWARENESS_RANGE,
+      candidates,
+      { team: enemyTeam, excludeId: bot.id }
+    );
+    for (const enemy of candidates) {
+      candidateIds.add(enemy.id);
+    }
+
+    for (const enemy of this.playerSpatialIndex.getEnemyPlayers(bot.team)) {
+      if (!enemy.hasFlag || candidateIds.has(enemy.id)) continue;
+      candidateIds.add(enemy.id);
+      candidates.push(enemy);
+    }
+
+    return candidates;
+  }
+
+  private hasCurrentBotTargetLineOfSight(
+    bot: Player,
+    target: Player,
+    refreshedPerception: BotPerceptionSets | null
+  ): boolean {
+    if (refreshedPerception) {
+      if (refreshedPerception.enemyLineOfSightIds.has(target.id)) return true;
+      if (!refreshedPerception.lineOfSightUnknownEnemyIds.has(target.id)) return false;
+      this.tickProfiler.recordCounter('bot_los_lazy_target_checks');
+      this.tickProfiler.recordCounter('bot_los_checks');
+      const hasLineOfSight = this.hasClearShot(bot, target);
+      refreshedPerception.lineOfSightUnknownEnemyIds.delete(target.id);
+      if (hasLineOfSight) {
+        refreshedPerception.enemyLineOfSightIds.add(target.id);
+      }
+      return hasLineOfSight;
+    }
+
+    this.tickProfiler.recordCounter('bot_los_checks');
+    return this.hasClearShot(bot, target);
   }
 
   private isBotPathClear(bot: Player, direction: PlainVec2 | null, distance: number): boolean {
     const normalized = direction ? normalize2D(direction) : null;
     if (!normalized) return true;
+    const now = this.state.serverTime || Date.now();
+    const collisionRevision = this.getMovementCollisionRevision(now);
     const start = vec3SchemaToPlain(bot.position);
+    const cacheKey = this.getBotSteeringPathCacheKey(start, normalized, distance, collisionRevision);
+    const cached = this.botSteeringPathCache.get(cacheKey);
+    if (cached && cached.expiresAt > now && cached.collisionRevision === collisionRevision) {
+      return cached.clear;
+    }
+
     const end = {
       x: start.x + normalized.x * distance,
       y: start.y,
       z: start.z + normalized.z * distance,
     };
-    return sweepCapsulePathClear(this.getMovementCollisionWorld(), start, end, PLAYER_HEIGHT, PLAYER_RADIUS);
+    const clear = sweepCapsulePathClear(this.getMovementCollisionWorld(now), start, end, PLAYER_HEIGHT, PLAYER_RADIUS);
+    if (this.botSteeringPathCache.size >= BOT_STEERING_PATH_CACHE_MAX_ENTRIES) {
+      this.botSteeringPathCache.clear();
+    }
+    this.botSteeringPathCache.set(cacheKey, {
+      clear,
+      expiresAt: now + BOT_STEERING_PATH_CACHE_TTL_MS,
+      collisionRevision,
+    });
+    return clear;
   }
 
-  private getBotSteeringProbes(bot: Player, desiredMove: PlainVec2 | null, skill: BotSkillProfile) {
-    const directions = createSteeringProbeDirections(desiredMove);
-    return directions.map((probe) => ({
+  private getBotSteeringPathCacheKey(
+    start: PlainVec3,
+    normalizedDirection: PlainVec2,
+    distance: number,
+    collisionRevision: number
+  ): string {
+    const qPosition = BOT_STEERING_PATH_POSITION_QUANTIZATION;
+    const qDirection = BOT_STEERING_PATH_DIRECTION_QUANTIZATION;
+    const qDistance = BOT_STEERING_PATH_DISTANCE_QUANTIZATION;
+    return `${collisionRevision}:${
+      Math.round(start.x * qPosition)
+    }:${
+      Math.round(start.y * qPosition)
+    }:${
+      Math.round(start.z * qPosition)
+    }:${
+      Math.round(normalizedDirection.x * qDirection)
+    }:${
+      Math.round(normalizedDirection.z * qDirection)
+    }:${
+      Math.round(distance * qDistance)
+    }`;
+  }
+
+  private getBotSteeringProbe(
+    bot: Player,
+    probe: Omit<BotSteeringProbe, 'clear' | 'distance'>,
+    distance: number
+  ): BotSteeringProbe {
+    this.tickProfiler.recordCounter('bot_steering_probe_checks');
+    return {
       ...probe,
-      clear: this.isBotPathClear(bot, probe.direction, skill.localProbeDistance),
-      distance: skill.localProbeDistance,
-    }));
+      clear: this.isBotPathClear(bot, probe.direction, distance),
+      distance,
+    };
+  }
+
+  private chooseBotSteering(
+    bot: Player,
+    desiredMove: PlainVec2 | null,
+    skill: BotSkillProfile
+  ): { steering: BotSteeringChoice; directPathBlocked: boolean } {
+    const directions = createSteeringProbeDirections(desiredMove);
+    if (directions.length === 0) {
+      return {
+        steering: chooseLocalAvoidanceDirection(desiredMove, [], skill),
+        directPathBlocked: false,
+      };
+    }
+
+    const directDirection = directions.find((probe) => probe.label === 'direct') ?? directions[0];
+    if (!directDirection) {
+      return {
+        steering: chooseLocalAvoidanceDirection(desiredMove, [], skill),
+        directPathBlocked: false,
+      };
+    }
+
+    const directProbe = this.getBotSteeringProbe(bot, directDirection, skill.localProbeDistance);
+    if (directProbe.clear) {
+      return {
+        steering: chooseLocalAvoidanceDirection(desiredMove, [directProbe], skill),
+        directPathBlocked: false,
+      };
+    }
+
+    const probes: BotSteeringProbe[] = [directProbe];
+    for (const probe of directions) {
+      if (probe.label === 'direct') continue;
+      probes.push(this.getBotSteeringProbe(bot, probe, skill.localProbeDistance));
+    }
+
+    return {
+      steering: chooseLocalAvoidanceDirection(desiredMove, probes, skill),
+      directPathBlocked: true,
+    };
   }
 
   private doesBotShieldLineProtectAlly(bot: Player, blackboard: BotBlackboard): boolean {
@@ -5830,17 +6524,20 @@ export class GameRoom extends Room<GameState> {
 
   private getBotAbilityGeometry(
     bot: Player,
+    botSnapshot: BotPlayerSnapshot,
     blackboard: BotBlackboard,
     routePlan: BotRoutePlan,
     desiredMove: PlainVec2 | null,
     directPathBlocked: boolean
   ): BotAbilityGeometry {
     const forward = forward2D(bot.lookYaw);
-    const blinkSafe = bot.heroId === 'phantom'
+    const canBlink = canUseBotAbility(botSnapshot, 'phantom_blink', 'ability1');
+    const blinkSafe = canBlink
       ? this.isBotPathClear(bot, desiredMove ?? forward, 6.5)
       : true;
     const blinkDangerous = blackboard.visibleEnemies.filter((enemy) => enemy.distance <= 12).length >= 2;
-    const grappleAnchorAvailable = bot.heroId === 'hookshot' && this.resolveHookshotGrappleTarget(bot) !== null;
+    const grappleAnchorAvailable = canUseBotAbility(botSnapshot, 'hookshot_grapple', 'ability1') &&
+      this.resolveHookshotGrappleTarget(bot) !== null;
     const objectiveZone = blackboard.droppedFriendlyFlag ?? blackboard.droppedEnemyFlag ?? routePlan.targetPosition;
     const groundHooksValuable = Boolean(
       blackboard.droppedFriendlyFlag ||
@@ -5876,6 +6573,12 @@ export class GameRoom extends Room<GameState> {
     if (!tactics) return createEmptyBotInput(this.state.tick, bot, now);
 
     clearExpiredBlockedEdges(brain.blockedEdges, now);
+    const simulationTier = this.getServerOwnedBotSimulationTier(bot, now, brain);
+    const refreshedPerception = shouldRefreshBotPlanningState(brain, now)
+      ? this.getBotPerceptionSets(bot, frameContext, simulationTier)
+      : null;
+    const enemyLineOfSightIds = refreshedPerception?.enemyLineOfSightIds ?? EMPTY_BOT_PERCEPTION_IDS;
+    const visibleEnemyIds = refreshedPerception?.visibleEnemyIds ?? EMPTY_BOT_PERCEPTION_IDS;
     const { blackboard, routePlan } = updateBotPlanningState({
       brain,
       now,
@@ -5883,8 +6586,8 @@ export class GameRoom extends Room<GameState> {
       bot: botSnapshot,
       players: snapshots,
       flags: frameContext.flags,
-      visibleEnemyIds: this.getVisibleEnemyIdsForBot(bot, frameContext),
-      enemyLineOfSightIds: this.getEnemyLineOfSightIdsForBot(bot, frameContext),
+      visibleEnemyIds,
+      enemyLineOfSightIds,
       recentDamageSources: this.getBotRecentDamageSources(bot.id, now),
       teamTactics: tactics,
       routeGraph: this.mapRuntime.getBotRouteGraph(),
@@ -5941,7 +6644,9 @@ export class GameRoom extends Room<GameState> {
       hasCombatTarget: Boolean(combatTarget),
       enemyDistance,
       attackRange,
-      hasClearShot: combatTarget ? this.hasClearShot(bot, combatTarget) : false,
+      hasClearShot: combatTarget
+        ? this.hasCurrentBotTargetLineOfSight(bot, combatTarget, refreshedPerception)
+        : false,
       targetProtected: combatTarget ? this.isProtectedSpawnTarget(combatTarget, now) : false,
       primaryAimReady,
     });
@@ -5955,8 +6660,7 @@ export class GameRoom extends Room<GameState> {
       skill,
       combatPlan
     );
-    const probes = this.getBotSteeringProbes(bot, desiredMove, skill);
-    const steering = chooseLocalAvoidanceDirection(desiredMove, probes, skill);
+    const { steering, directPathBlocked } = this.chooseBotSteering(bot, desiredMove, skill);
     const recovery = updateBotMovementRecoveryState({
       brain,
       now,
@@ -6028,7 +6732,6 @@ export class GameRoom extends Room<GameState> {
       tempoMultiplier,
     });
 
-    const directPathBlocked = probes.find((probe) => probe.label === 'direct')?.clear === false;
     const abilityPlan = chooseBotAbilityPlan({
       now,
       bot: botSnapshot,
@@ -6036,7 +6739,7 @@ export class GameRoom extends Room<GameState> {
       blackboard,
       combatPlan,
       skill,
-      geometry: this.getBotAbilityGeometry(bot, blackboard, routePlan, desiredMove, directPathBlocked),
+      geometry: this.getBotAbilityGeometry(bot, botSnapshot, blackboard, routePlan, desiredMove, directPathBlocked),
     });
     applyBotAbilityInputPlan({
       input,
@@ -6069,7 +6772,7 @@ export class GameRoom extends Room<GameState> {
     return primaryAttack?.range ?? 18;
   }
 
-  private canBotPerceiveEnemy(bot: Player, enemy: Player, distance: number): boolean {
+  private canBotPerceiveEnemy(enemy: Player, distance: number, hasLineOfSight: boolean): boolean {
     if (distance > BOT_AWARENESS_RANGE && !enemy.hasFlag) return false;
 
     const veil = enemy.abilities.get('phantom_veil');
@@ -6077,8 +6780,12 @@ export class GameRoom extends Room<GameState> {
       return false;
     }
 
-    if (distance <= 18 || enemy.hasFlag) return true;
-    return this.hasClearShot(bot, enemy);
+    if (this.canBotPerceiveEnemyWithoutLineOfSight(enemy, distance)) return true;
+    return hasLineOfSight;
+  }
+
+  private canBotPerceiveEnemyWithoutLineOfSight(enemy: Player, distance: number): boolean {
+    return distance <= BOT_PROXIMITY_VISIBLE_RANGE || enemy.hasFlag;
   }
 
   private isBotAimReady(
@@ -6704,6 +7411,7 @@ export class GameRoom extends Room<GameState> {
     this.powerupBoosts.clearAll();
     this.powerupPickups.reset(mapManifest, 0);
     this.hookshotRuntime.clearAnchorWalls();
+    this.botSteeringPathCache.clear();
     this.lineOfSightCache.clear();
     this.visibilityInterest.clearAll();
     this.forceTransformFullSync();
@@ -6711,6 +7419,7 @@ export class GameRoom extends Room<GameState> {
 
   private bumpMovementCollisionRevision(): void {
     this.mapRuntime.bumpMovementCollisionRevision();
+    this.botSteeringPathCache.clear();
     this.lineOfSightCache.clear();
     this.visibilityInterest.clearLineOfSightCache();
     this.forceTransformFullSync();
@@ -7515,8 +8224,34 @@ export class GameRoom extends Room<GameState> {
 
   private updatePhysics() {
     const tickTime = this.state.serverTime || Date.now();
+    let collisionWorld: MovementCollisionWorld | null = null;
+    let frameEntries: MovementPhysicsFrameEntry[] = [];
 
-    this.state.players.forEach(player => {
+    this.measureTickSpan('movement_frame_build', () => {
+      collisionWorld = this.getMovementCollisionWorld(tickTime);
+      frameEntries = this.buildMovementPhysicsFrame(tickTime);
+    });
+
+    this.measureTickSpan('movement_entries_process', () => {
+      const frameCollisionWorld = collisionWorld;
+      if (!frameCollisionWorld) return;
+      for (const entry of frameEntries) {
+        this.processMovementPhysicsFrameEntry(entry, tickTime, frameCollisionWorld);
+      }
+    });
+  }
+
+  private buildMovementPhysicsFrame(tickTime: number): MovementPhysicsFrameEntry[] {
+    const entries: MovementPhysicsFrameEntry[] = [];
+    const catchupRequests: Array<{
+      playerId: string;
+      requestedExtraSubsteps: number;
+      backlogCommands: number;
+      oldestCommandClientTimeMs: number;
+      skippedCatchupSubsteps: number;
+    }> = [];
+
+    this.state.players.forEach((player) => {
       if (player.state !== 'alive') return;
 
       if (
@@ -7530,87 +8265,684 @@ export class GameRoom extends Room<GameState> {
       }
 
       const authority = this.getMovementAuthority(player.id);
-      let processedThisTick = 0;
       const queuedCommandCount = authority.pendingCommands.length;
       authority.metrics.queueLengthBeforeTick = queuedCommandCount;
       authority.metrics.commandsProcessedLastTick = 0;
+      authority.metrics.catchupSubstepsSkippedLastTick = 0;
+
+      if (player.isBot) {
+        if (queuedCommandCount > 0) {
+          this.movementAuthorities.replacePendingCommands(authority, []);
+        }
+        authority.metrics.queueLength = 0;
+        authority.metrics.queueLengthBeforeTick = 0;
+        authority.metrics.queueLengthAfterTick = 0;
+        entries.push({
+          player,
+          authority,
+          queuedCommandCount,
+          drainDecision: {
+            budget: 1,
+            underflow: false,
+            catchup: false,
+            targetPendingCommands: 0,
+          },
+          grantedExtraSubsteps: 0,
+          skippedExtraSubsteps: 0,
+          serverOwnedInput: player.lastInput ?? createEmptyBotInput(this.state.tick, player, tickTime),
+        });
+        this.tickProfiler.recordCounter('movement_frame_entries');
+        this.tickProfiler.recordCounter('movement_bot_entries');
+        return;
+      }
 
       const drainDecision = getMovementCommandDrainDecision(queuedCommandCount, {
         hasAuthorityBarrier: Boolean(authority.correctionReason),
       });
+      const baseBudget = Math.min(drainDecision.budget, SERVER_MOVEMENT_SUBSTEPS_PER_TICK);
+      const requestedExtraSubsteps = Math.max(0, drainDecision.budget - baseBudget);
 
-      if (drainDecision.underflow) {
-        authority.metrics.underflowTicks = (authority.metrics.underflowTicks ?? 0) + 1;
-        const dragPullMoved = this.stepHookshotDragPullWithoutCommand(player, tickTime);
-        authority.metrics.queueLength = authority.pendingCommands.length;
-        authority.metrics.queueLengthAfterTick = authority.pendingCommands.length;
-        if (player.position.y < -10) {
-          this.placePlayerAtSpawn(player, 'respawn');
-        }
-
-        const client = this.clientRegistry.getClient(player.id);
-        if (client && (authority.correctionReason || dragPullMoved)) {
-          this.sendSelfMovementAuthority(player, client, authority.correctionReason);
-        }
-        return;
-      }
-      if (drainDecision.catchup) {
-        authority.metrics.catchupTicks = (authority.metrics.catchupTicks ?? 0) + 1;
+      entries.push({
+        player,
+        authority,
+        queuedCommandCount,
+        drainDecision,
+        grantedExtraSubsteps: requestedExtraSubsteps,
+        skippedExtraSubsteps: 0,
+      });
+      this.tickProfiler.recordCounter('movement_frame_entries');
+      if (this.npcs.has(player.id)) {
+        this.tickProfiler.recordCounter('movement_npc_entries');
+      } else {
+        this.tickProfiler.recordCounter('movement_human_entries');
       }
 
-      for (let step = 0; step < drainDecision.budget; step++) {
-        const stepNow = tickTime + step * MOVEMENT_SUBSTEP_SECONDS * 1000;
-        const epochBeforeStep = authority.movementEpoch;
-        const command = this.movementAuthorities.getNextMovementCommand(authority);
-        if (!command) break;
-        const input = this.movementCommandToInput(command, stepNow);
-        const movementInput = this.getRootedMovementInput(player, input, stepNow);
-        player.lastInput = movementInput;
-        player.lookYaw = movementInput.lookYaw;
-        player.lookPitch = movementInput.lookPitch;
-        const dragPullActive = this.hookshotRuntime.hasDragPull(player.id);
-        if (dragPullActive) {
-          this.clearHookshotGrapple(player.id);
-        } else {
-          this.prepareHookshotGrappleForMovement(player, stepNow);
-        }
-        const simulationInput = dragPullActive
-          ? suppressLocomotionInput(movementInput)
-          : movementInput;
-        this.simulateAuthoritativeMovementStep(player, simulationInput, MOVEMENT_SUBSTEP_SECONDS, stepNow);
-        if (!dragPullActive) {
-          this.stepHookshotGrappleAuthority(player, simulationInput, MOVEMENT_SUBSTEP_SECONDS, stepNow);
-        }
-        this.stepHookshotDragPullAuthority(player, MOVEMENT_SUBSTEP_SECONDS, stepNow);
-        this.processPlayerInput(player, movementInput, stepNow);
-        this.updateLastSafeMovement(player, movementInput.tick, stepNow);
-        authority.metrics.commandsProcessed++;
-        processedThisTick++;
-        if (authority.movementEpoch !== epochBeforeStep) break;
+      if (requestedExtraSubsteps > 0) {
+        this.tickProfiler.recordCounter('movement_catchup_entries');
+        catchupRequests.push({
+          playerId: player.id,
+          requestedExtraSubsteps,
+          backlogCommands: Math.max(0, queuedCommandCount - drainDecision.targetPendingCommands),
+          oldestCommandClientTimeMs: authority.pendingCommands.peek()?.clientTimeMs ?? Number.POSITIVE_INFINITY,
+          skippedCatchupSubsteps: authority.metrics.catchupSubstepsSkipped ?? 0,
+        });
       }
+    });
 
+    if (catchupRequests.length === 0) {
+      return entries;
+    }
+
+    const allocation = allocateRoomMovementCatchupBudget(
+      catchupRequests,
+      ROOM_MOVEMENT_EXTRA_CATCHUP_SUBSTEPS_PER_TICK,
+      this.movementCatchupBudgetCursor
+    );
+    this.movementCatchupBudgetCursor = allocation.nextCursor;
+    const grantsByPlayerId = new Map(allocation.grants.map((grant) => [grant.playerId, grant]));
+
+    for (const entry of entries) {
+      const grant = grantsByPlayerId.get(entry.player.id);
+      if (!grant) continue;
+
+      entry.grantedExtraSubsteps = grant.grantedExtraSubsteps;
+      entry.skippedExtraSubsteps = grant.skippedExtraSubsteps;
+      if (grant.skippedExtraSubsteps > 0) {
+        entry.authority.metrics.catchupSubstepsSkipped = (
+          entry.authority.metrics.catchupSubstepsSkipped ?? 0
+        ) + grant.skippedExtraSubsteps;
+        entry.authority.metrics.catchupSubstepsSkippedLastTick = grant.skippedExtraSubsteps;
+        entry.authority.metrics.roomCatchupBudgetExhaustedTicks = (
+          entry.authority.metrics.roomCatchupBudgetExhaustedTicks ?? 0
+        ) + 1;
+      }
+    }
+
+    return entries;
+  }
+
+  private processMovementPhysicsFrameEntry(
+    entry: MovementPhysicsFrameEntry,
+    tickTime: number,
+    collisionWorld: MovementCollisionWorld
+  ): void {
+    const { player, authority, drainDecision } = entry;
+    let processedThisTick = 0;
+
+    if (player.isBot) {
+      this.processServerOwnedMovementFrameEntry(entry, tickTime, collisionWorld);
+      return;
+    }
+
+    if (drainDecision.underflow) {
+      this.tickProfiler.recordCounter('movement_underflow_entries');
+      authority.metrics.underflowTicks = (authority.metrics.underflowTicks ?? 0) + 1;
+      const dragPullMoved = this.stepHookshotDragPullWithoutCommand(player, tickTime, collisionWorld);
       authority.metrics.queueLength = authority.pendingCommands.length;
       authority.metrics.queueLengthAfterTick = authority.pendingCommands.length;
-      authority.metrics.commandsProcessedLastTick = processedThisTick;
-      authority.metrics.lastAckSeq = authority.lastProcessedSeq;
-      const stale = processedThisTick > 0
-        ? getMovementBacklogTrimCount(authority.pendingCommands.length)
-        : 0;
-      if (stale > 0) {
-        this.movementAuthorities.removeOldestPendingCommands(authority, stale);
-        authority.metrics.droppedCommands += stale;
-        this.markMovementBarrier(player.id, 'epoch_mismatch');
-      }
-
       if (player.position.y < -10) {
         this.placePlayerAtSpawn(player, 'respawn');
       }
 
       const client = this.clientRegistry.getClient(player.id);
-      if (client && (processedThisTick > 0 || authority.correctionReason)) {
+      if (client && (authority.correctionReason || dragPullMoved)) {
         this.sendSelfMovementAuthority(player, client, authority.correctionReason);
       }
+      return;
+    }
+
+    if (drainDecision.catchup) {
+      authority.metrics.catchupTicks = (authority.metrics.catchupTicks ?? 0) + 1;
+    }
+
+    const budget = Math.min(
+      drainDecision.budget,
+      SERVER_MOVEMENT_SUBSTEPS_PER_TICK + entry.grantedExtraSubsteps
+    );
+
+    for (let step = 0; step < budget; step++) {
+      const stepSeconds = MOVEMENT_SUBSTEP_SECONDS;
+      const stepNow = tickTime + step * stepSeconds * 1000;
+      const epochBeforeStep = authority.movementEpoch;
+      const command = this.movementAuthorities.getNextMovementCommand(authority);
+      if (!command) break;
+      const input = this.writeMovementCommandToInput(
+        command,
+        player.lastInput ?? createEmptyPlayerInput(command.seq, player, stepNow),
+        stepNow
+      );
+      this.measureTickSpan('movement_human_full_steps', () => {
+        this.stepAuthoritativeMovementInput(
+          player,
+          input,
+          stepSeconds,
+          stepNow,
+          collisionWorld,
+          { processGameplayInput: true }
+        );
+      });
+      authority.metrics.commandsProcessed++;
+      processedThisTick++;
+      if (authority.movementEpoch !== epochBeforeStep) break;
+    }
+
+    authority.metrics.queueLength = authority.pendingCommands.length;
+    authority.metrics.queueLengthAfterTick = authority.pendingCommands.length;
+    authority.metrics.commandsProcessedLastTick = processedThisTick;
+    this.tickProfiler.recordCounter('movement_steps_processed', processedThisTick);
+    if (this.npcs.has(player.id)) {
+      this.tickProfiler.recordCounter('movement_npc_commands_processed', processedThisTick);
+    } else {
+      this.tickProfiler.recordCounter('movement_human_commands_processed', processedThisTick);
+    }
+    authority.metrics.lastAckSeq = authority.lastProcessedSeq;
+    const stale = processedThisTick > 0
+      ? getMovementBacklogTrimCount(authority.pendingCommands.length)
+      : 0;
+    if (stale > 0) {
+      this.movementAuthorities.removeOldestPendingCommands(authority, stale);
+      authority.metrics.droppedCommands += stale;
+      this.markMovementBarrier(player.id, 'epoch_mismatch');
+    }
+
+    if (player.position.y < -10) {
+      this.placePlayerAtSpawn(player, 'respawn');
+    }
+
+    const client = this.clientRegistry.getClient(player.id);
+    if (client && (processedThisTick > 0 || authority.correctionReason)) {
+      this.sendSelfMovementAuthority(player, client, authority.correctionReason);
+    }
+  }
+
+  private processServerOwnedMovementFrameEntry(
+    entry: MovementPhysicsFrameEntry,
+    tickTime: number,
+    collisionWorld: MovementCollisionWorld
+  ): void {
+    const { player, authority } = entry;
+    const stepNow = tickTime;
+    const input = this.getServerOwnedMovementInput(player, entry.serverOwnedInput, stepNow);
+    const simulationTier = this.getServerOwnedBotSimulationTier(player, tickTime);
+
+    if (!this.shouldRunServerOwnedBotFullMovementStep(player, tickTime, input, simulationTier)) {
+      player.lastInput = input;
+      player.lookYaw = input.lookYaw;
+      player.lookPitch = input.lookPitch;
+      const proxied = this.measureTickSpan('movement_bot_proxy_steps', () => (
+        this.stepServerOwnedBotKinematicMovementProxy(
+          player,
+          input,
+          SERVER_OWNED_MOVEMENT_STEP_SECONDS
+        )
+      ));
+      this.measureTickSpan('movement_gameplay_input', () => {
+        this.processPlayerInput(player, input, stepNow);
+      });
+      this.updateLastSafeMovement(player, input.tick, stepNow);
+      authority.metrics.commandsProcessedLastTick = 0;
+      authority.metrics.queueLength = 0;
+      authority.metrics.queueLengthAfterTick = 0;
+      authority.metrics.lastAckSeq = authority.lastProcessedSeq;
+      this.tickProfiler.recordCounter('movement_bot_lod_steps_skipped');
+      if (proxied) {
+        this.tickProfiler.recordCounter('movement_bot_lod_kinematic_proxy_steps');
+      }
+      if (proxied && simulationTier === 'background') {
+        this.tickProfiler.recordCounter('movement_bot_lod_background_proxy_steps');
+      }
+      this.tickProfiler.recordCounter(proxied ? 'movement_bot_lod_proxy_steps' : 'movement_bot_lod_proxy_rejected');
+      if (player.position.y < -10) {
+        this.placePlayerAtSpawn(player, 'respawn');
+      }
+      return;
+    }
+
+    this.measureTickSpan('movement_bot_full_steps', () => {
+      this.stepAuthoritativeMovementInput(
+        player,
+        input,
+        SERVER_OWNED_MOVEMENT_STEP_SECONDS,
+        stepNow,
+        collisionWorld,
+        { processGameplayInput: true }
+      );
     });
+
+    const processedThisTick = 1;
+    authority.metrics.commandsProcessed += processedThisTick;
+    authority.metrics.commandsProcessedLastTick = processedThisTick;
+    authority.metrics.queueLength = 0;
+    authority.metrics.queueLengthAfterTick = 0;
+    authority.metrics.lastAckSeq = authority.lastProcessedSeq;
+    this.tickProfiler.recordCounter('movement_steps_processed', processedThisTick);
+    this.tickProfiler.recordCounter('movement_bot_steps_processed', processedThisTick);
+
+    if (player.position.y < -10) {
+      this.placePlayerAtSpawn(player, 'respawn');
+    }
+  }
+
+  private shouldRunServerOwnedBotFullMovementStep(
+    player: Player,
+    tickTime: number,
+    input: PlayerInput,
+    simulationTier = this.getServerOwnedBotSimulationTier(player, tickTime)
+  ): boolean {
+    const fullRateReason = this.getServerOwnedBotMovementFullRateReason(player, input);
+    if (fullRateReason) {
+      this.tickProfiler.recordCounter(fullRateReason);
+      if (this.shouldServerOwnedBotMovementReasonBypassBudget(fullRateReason, simulationTier, input)) {
+        return true;
+      }
+      return this.consumeServerOwnedBotMovementFullStepBudget(this.getAliveBotMovementLodCount(), simulationTier);
+    }
+
+    const aliveBotCount = this.getAliveBotMovementLodCount();
+    if (aliveBotCount <= BOT_MOVEMENT_LOD_START_COUNT) return true;
+
+    this.tickProfiler.recordCounter('movement_bot_lod_eligible');
+    const cadence = this.getServerOwnedBotMovementLodCadence(aliveBotCount, simulationTier);
+    if ((this.state.tick + hashString(player.id)) % cadence !== 0) return false;
+    return this.consumeServerOwnedBotMovementFullStepBudget(aliveBotCount, simulationTier);
+  }
+
+  private recordBotMovementBudgetStepTierCounter(tier: BotSimulationTier): void {
+    switch (tier) {
+      case 'critical':
+        this.tickProfiler.recordCounter('movement_bot_lod_budget_steps_critical');
+        return;
+      case 'near':
+        this.tickProfiler.recordCounter('movement_bot_lod_budget_steps_near');
+        return;
+      case 'background':
+        this.tickProfiler.recordCounter('movement_bot_lod_budget_steps_background');
+        return;
+    }
+  }
+
+  private recordBotMovementBudgetExhaustedTierCounter(tier: BotSimulationTier): void {
+    switch (tier) {
+      case 'critical':
+        this.tickProfiler.recordCounter('movement_bot_lod_budget_exhausted_critical');
+        return;
+      case 'near':
+        this.tickProfiler.recordCounter('movement_bot_lod_budget_exhausted_near');
+        return;
+      case 'background':
+        this.tickProfiler.recordCounter('movement_bot_lod_budget_exhausted_background');
+        return;
+    }
+  }
+
+  private shouldServerOwnedBotMovementReasonBypassBudget(
+    reason: RoomTickCounterName,
+    tier: BotSimulationTier,
+    input: PlayerInput
+  ): boolean {
+    if (tier === 'critical') {
+      return this.isCriticalServerOwnedBotMovementFullRateReason(reason) ||
+        this.doesServerOwnedBotMovementInputRequireCriticalFullRate(input);
+    }
+    if (tier === 'background') {
+      return reason === 'movement_bot_lod_full_flag' || reason === 'movement_bot_lod_full_enemy_human';
+    }
+    return this.isCriticalServerOwnedBotMovementFullRateReason(reason) ||
+      this.doesServerOwnedBotMovementInputRequireCriticalFullRate(input);
+  }
+
+  private isCriticalServerOwnedBotMovementFullRateReason(reason: RoomTickCounterName): boolean {
+    return reason !== 'movement_bot_lod_full_input' && reason !== 'movement_bot_lod_full_airborne';
+  }
+
+  private doesServerOwnedBotMovementInputRequireCriticalFullRate(input: PlayerInput): boolean {
+    return input.ability1 || input.ability2 || input.ultimate;
+  }
+
+  private consumeServerOwnedBotMovementFullStepBudget(
+    aliveBotCount: number,
+    simulationTier?: BotSimulationTier
+  ): boolean {
+    if (this.botMovementFullStepBudgetTick !== this.state.tick) {
+      this.botMovementFullStepBudgetTick = this.state.tick;
+      this.botMovementFullStepBudgetRemaining = this.getServerOwnedBotMovementFullStepBudget(aliveBotCount);
+    }
+
+    if (!Number.isFinite(this.botMovementFullStepBudgetRemaining)) return true;
+    if (this.botMovementFullStepBudgetRemaining <= 0) {
+      this.tickProfiler.recordCounter('movement_bot_lod_budget_exhausted');
+      if (simulationTier) this.recordBotMovementBudgetExhaustedTierCounter(simulationTier);
+      return false;
+    }
+
+    this.botMovementFullStepBudgetRemaining--;
+    this.tickProfiler.recordCounter('movement_bot_lod_budget_steps');
+    if (simulationTier) this.recordBotMovementBudgetStepTierCounter(simulationTier);
+    return true;
+  }
+
+  private getServerOwnedBotMovementFullStepBudget(aliveBotCount: number): number {
+    if (aliveBotCount <= BOT_MOVEMENT_LOD_START_COUNT) return Number.POSITIVE_INFINITY;
+    if (aliveBotCount >= BOT_MOVEMENT_LOD_HIGH_COUNT) return BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_HIGH;
+    if (aliveBotCount >= BOT_MOVEMENT_LOD_MEDIUM_COUNT) return BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_MEDIUM;
+    return BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_LOW;
+  }
+
+  private stepServerOwnedBotMovementLodProxy(
+    player: Player,
+    input: PlayerInput,
+    stepSeconds: number
+  ): boolean {
+    if (
+      !player.movement.isGrounded ||
+      player.movement.isSliding ||
+      player.movement.isWallRunning ||
+      player.movement.isGrappling ||
+      player.movement.isJetpacking ||
+      player.movement.isGliding ||
+      Math.abs(player.velocity.y) > 0.01 ||
+      input.ability1 ||
+      input.ability2 ||
+      input.ultimate
+    ) {
+      return false;
+    }
+
+    const dt = Math.max(0, Math.min(0.1, stepSeconds));
+    if (dt <= 0) return false;
+
+    const movementIntent = resolveDirectionalMovementIntent(input);
+    let velocityX = player.velocity.x;
+    let velocityZ = player.velocity.z;
+    const horizontalSpeed = Math.sqrt(velocityX * velocityX + velocityZ * velocityZ);
+    if (horizontalSpeed > 0) {
+      const friction = movementIntent.hasMovementInput
+        ? BHOP_GROUND_FRICTION
+        : BHOP_GROUND_FRICTION * BHOP_NO_INPUT_FRICTION_MULTIPLIER;
+      const control = horizontalSpeed < BHOP_STOP_SPEED ? BHOP_STOP_SPEED : horizontalSpeed;
+      const drop = control * friction * dt;
+      let nextSpeed = Math.max(0, horizontalSpeed - drop);
+      if (!movementIntent.hasMovementInput && nextSpeed < BHOP_GROUND_STOP_THRESHOLD) nextSpeed = 0;
+      if (nextSpeed !== horizontalSpeed) {
+        const scale = nextSpeed / horizontalSpeed;
+        velocityX *= scale;
+        velocityZ *= scale;
+      }
+    }
+
+    if (movementIntent.hasMovementInput) {
+      const forwardScale = -movementIntent.localZ;
+      const rightScale = movementIntent.localX;
+      const forwardX = -Math.sin(input.lookYaw);
+      const forwardZ = -Math.cos(input.lookYaw);
+      const rightX = Math.cos(input.lookYaw);
+      const rightZ = -Math.sin(input.lookYaw);
+      let wishX = forwardX * forwardScale + rightX * rightScale;
+      let wishZ = forwardZ * forwardScale + rightZ * rightScale;
+      const wishLength = Math.sqrt(wishX * wishX + wishZ * wishZ);
+      if (wishLength > 0.001) {
+        wishX /= wishLength;
+        wishZ /= wishLength;
+        let wishSpeed = getHeroStats(player.heroId as HeroId).moveSpeed *
+          movementIntent.speedMultiplier *
+          this.getActiveSpeedMultiplier(player);
+        if (input.sprint && movementIntent.allowsSprint && !input.crouch && !player.movement.isCrouching) {
+          wishSpeed *= SPRINT_MULTIPLIER;
+        }
+        if (input.crouch || player.movement.isCrouching) {
+          wishSpeed *= CROUCH_MULTIPLIER;
+        }
+
+        const currentSpeed = velocityX * wishX + velocityZ * wishZ;
+        const addSpeed = wishSpeed - currentSpeed;
+        if (addSpeed > 0) {
+          const accelSpeed = Math.min(BHOP_GROUND_ACCEL * dt * wishSpeed, addSpeed);
+          velocityX += accelSpeed * wishX;
+          velocityZ += accelSpeed * wishZ;
+        }
+      }
+    }
+
+    let deltaX = velocityX * dt;
+    let deltaZ = velocityZ * dt;
+    let distance = Math.sqrt(deltaX * deltaX + deltaZ * deltaZ);
+    if (distance < BOT_MOVEMENT_LOD_PROXY_MIN_HORIZONTAL_SPEED * dt) {
+      player.velocity.x = 0;
+      player.velocity.y = 0;
+      player.velocity.z = 0;
+      player.movement.isSprinting = false;
+      this.tickProfiler.recordCounter('movement_bot_lod_proxy_stationary');
+      return true;
+    }
+
+    if (distance > BOT_MOVEMENT_LOD_PROXY_MAX_DISTANCE) {
+      const scale = BOT_MOVEMENT_LOD_PROXY_MAX_DISTANCE / distance;
+      deltaX *= scale;
+      deltaZ *= scale;
+      velocityX *= scale;
+      velocityZ *= scale;
+      distance = BOT_MOVEMENT_LOD_PROXY_MAX_DISTANCE;
+    }
+
+    const proposed = this.clampToPlayableMap({
+      x: player.position.x + deltaX,
+      y: player.position.y,
+      z: player.position.z + deltaZ,
+    });
+    if (!this.isFiniteVec3(proposed)) return false;
+
+    const groundY = this.getProceduralGroundY(proposed);
+    if (groundY === null) return false;
+
+    const nextY = groundY + PLAYER_HEIGHT / 2;
+    if (!Number.isFinite(nextY) || Math.abs(nextY - player.position.y) > BOT_MOVEMENT_LOD_PROXY_MAX_GROUND_DELTA) {
+      return false;
+    }
+
+    const clampedX = Math.abs(proposed.x - (player.position.x + deltaX)) > 0.001;
+    const clampedZ = Math.abs(proposed.z - (player.position.z + deltaZ)) > 0.001;
+    player.position.x = proposed.x;
+    player.position.y = nextY;
+    player.position.z = proposed.z;
+    player.velocity.x = clampedX ? 0 : velocityX;
+    player.velocity.y = 0;
+    player.velocity.z = clampedZ ? 0 : velocityZ;
+    player.movement.isGrounded = true;
+    player.movement.isSprinting = Boolean(
+      input.sprint &&
+      movementIntent.allowsSprint &&
+      movementIntent.hasMovementInput &&
+      !input.crouch &&
+      !player.movement.isCrouching
+    );
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    return distance > 0;
+  }
+
+  private stepServerOwnedBotKinematicMovementProxy(
+    player: Player,
+    input: PlayerInput,
+    stepSeconds: number
+  ): boolean {
+    const groundedProxy = this.stepServerOwnedBotMovementLodProxy(player, input, stepSeconds);
+    if (groundedProxy) return true;
+
+    if (
+      player.movement.isGrappling ||
+      player.movement.isWallRunning ||
+      player.movement.isJetpacking ||
+      player.movement.isGliding ||
+      input.ability1 ||
+      input.ability2 ||
+      input.ultimate
+    ) {
+      return false;
+    }
+
+    const dt = Math.max(0, Math.min(0.1, stepSeconds));
+    if (dt <= 0) return false;
+
+    let deltaX = player.velocity.x * dt;
+    let deltaZ = player.velocity.z * dt;
+    const horizontalDistance = Math.sqrt(deltaX * deltaX + deltaZ * deltaZ);
+    if (horizontalDistance > BOT_MOVEMENT_LOD_PROXY_MAX_DISTANCE) {
+      const scale = BOT_MOVEMENT_LOD_PROXY_MAX_DISTANCE / horizontalDistance;
+      deltaX *= scale;
+      deltaZ *= scale;
+    }
+
+    const proposed = this.clampToPlayableMap({
+      x: player.position.x + deltaX,
+      y: player.position.y,
+      z: player.position.z + deltaZ,
+    });
+    if (!this.isFiniteVec3(proposed)) return false;
+
+    const groundY = this.getProceduralGroundY(proposed);
+    if (groundY === null) return false;
+
+    const previousVelocityY = player.velocity.y;
+    const nextVelocityY = previousVelocityY + GRAVITY * dt;
+    const groundedY = groundY + PLAYER_HEIGHT / 2;
+    let nextY = player.position.y + (previousVelocityY + nextVelocityY) * 0.5 * dt;
+    let grounded = false;
+
+    if (nextY <= groundedY + 0.05 && nextVelocityY <= 0) {
+      nextY = groundedY;
+      grounded = true;
+    } else if (Math.abs(nextY - player.position.y) > BOT_MOVEMENT_LOD_PROXY_MAX_GROUND_DELTA) {
+      return false;
+    }
+
+    const clampedX = Math.abs(proposed.x - (player.position.x + deltaX)) > 0.001;
+    const clampedZ = Math.abs(proposed.z - (player.position.z + deltaZ)) > 0.001;
+    player.position.x = proposed.x;
+    player.position.y = nextY;
+    player.position.z = proposed.z;
+    player.velocity.x = clampedX ? 0 : player.velocity.x;
+    player.velocity.y = grounded ? 0 : nextVelocityY;
+    player.velocity.z = clampedZ ? 0 : player.velocity.z;
+    player.movement.isGrounded = grounded;
+    if (grounded) {
+      player.movement.isSliding = false;
+      player.movement.slideTimeRemaining = 0;
+    }
+    return true;
+  }
+
+  private getAliveBotMovementLodCount(): number {
+    if (this.botMovementLodCountTick === this.state.tick) {
+      return this.aliveBotMovementLodCount;
+    }
+
+    let count = 0;
+    this.state.players.forEach((player) => {
+      if (player.isBot && player.state === 'alive') count++;
+    });
+    this.botMovementLodCountTick = this.state.tick;
+    this.aliveBotMovementLodCount = count;
+    return count;
+  }
+
+  private getServerOwnedBotMovementLodCadence(
+    aliveBotCount: number,
+    simulationTier: BotSimulationTier = 'near'
+  ): number {
+    if (simulationTier === 'background') {
+      if (aliveBotCount >= BOT_MOVEMENT_LOD_HIGH_COUNT) return BOT_BACKGROUND_MOVEMENT_CADENCE_HIGH;
+      if (aliveBotCount >= BOT_MOVEMENT_LOD_MEDIUM_COUNT) return BOT_BACKGROUND_MOVEMENT_CADENCE_MEDIUM;
+    }
+    if (aliveBotCount >= BOT_MOVEMENT_LOD_HIGH_COUNT) return 4;
+    if (aliveBotCount >= BOT_MOVEMENT_LOD_MEDIUM_COUNT) return 3;
+    return 2;
+  }
+
+  private getServerOwnedBotMovementFullRateReason(
+    player: Player,
+    input: PlayerInput
+  ): RoomTickCounterName | null {
+    if (player.hasFlag) return 'movement_bot_lod_full_flag';
+    if (this.doesServerOwnedBotMovementInputRequireFullRate(player, input)) {
+      return 'movement_bot_lod_full_input';
+    }
+    if (this.hookshotRuntime.hasDragPull(player.id) || player.movement.isGrappling) {
+      return 'movement_bot_lod_full_grapple';
+    }
+    if (this.isVisibleAbilityActive(player)) return 'movement_bot_lod_full_active_ability';
+    if (
+      !player.movement.isGrounded ||
+      player.movement.isSliding ||
+      player.movement.isWallRunning ||
+      player.movement.isJetpacking ||
+      player.movement.isGliding ||
+      Math.abs(player.velocity.y) > 0.01
+    ) {
+      return 'movement_bot_lod_full_airborne';
+    }
+    return this.isServerOwnedBotNearEnemyHuman(player, BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE_SQ)
+      ? 'movement_bot_lod_full_enemy_human'
+      : null;
+  }
+
+  private isServerOwnedBotNearEnemyHuman(bot: Player, distanceSq: number): boolean {
+    if (!isTeam(bot.team)) return true;
+    const candidates = this.botMovementLodEnemyHumanScratch;
+    this.playerSpatialIndex.queryRadius(
+      bot.position,
+      BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE,
+      candidates,
+      { team: getEnemyTeam(bot.team), excludeId: bot.id }
+    );
+
+    for (const player of candidates) {
+      if (player.isBot || player.state !== 'alive') continue;
+      const dx = player.position.x - bot.position.x;
+      const dy = player.position.y - bot.position.y;
+      const dz = player.position.z - bot.position.z;
+      if (dx * dx + dy * dy + dz * dz <= distanceSq) return true;
+    }
+    return false;
+  }
+
+  private isServerOwnedBotNearHuman(bot: Player, distanceSq: number): boolean {
+    const radius = Math.sqrt(distanceSq);
+    const candidates = this.botSimulationHumanScratch;
+    this.playerSpatialIndex.queryRadius(
+      bot.position,
+      radius,
+      candidates,
+      { excludeId: bot.id }
+    );
+
+    for (const player of candidates) {
+      if (player.isBot || player.state !== 'alive') continue;
+      const dx = player.position.x - bot.position.x;
+      const dy = player.position.y - bot.position.y;
+      const dz = player.position.z - bot.position.z;
+      if (dx * dx + dy * dy + dz * dz <= distanceSq) return true;
+    }
+    return false;
+  }
+
+  private doesServerOwnedBotMovementInputRequireFullRate(player: Player, input: PlayerInput): boolean {
+    if (input.jump || input.crouchPressed) return true;
+    if (!isHeroId(player.heroId)) return input.ability1 || input.ability2 || input.ultimate;
+
+    switch (player.heroId) {
+      case 'phantom':
+        return input.ability1;
+      case 'hookshot':
+        return input.ability1;
+      case 'blaze':
+        return input.ability2;
+      case 'chronos':
+        return input.ultimate;
+      default:
+        return input.ability1 || input.ability2 || input.ultimate;
+    }
   }
 
   private assignPlayerSpawnPosition(player: Player, spawn?: TeamSpawnPosition): void {

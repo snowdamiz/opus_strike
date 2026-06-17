@@ -5,16 +5,19 @@ import {
   MOVEMENT_MAX_PACKET_COMMANDS,
   MOVEMENT_MAX_SERVER_QUEUE,
   MOVEMENT_PROTOCOL_VERSION,
+  MOVEMENT_SUBSTEP_RATE,
   movementSeqDistance,
   type MovementCommand,
 } from '@voxel-strike/shared';
 import { MovementCommandQueue } from '../rooms/MovementCommandQueue';
 import { MovementAuthorityRegistry } from '../rooms/movementAuthorityRegistry';
 import {
+  SERVER_OWNED_MOVEMENT_STEP_SECONDS,
   SERVER_MOVEMENT_BACKLOG_BARRIER_COMMANDS,
   SERVER_MOVEMENT_BACKLOG_TRIM_TARGET_COMMANDS,
   SERVER_MOVEMENT_SUBSTEPS_PER_TICK,
   SERVER_MOVEMENT_TARGET_PENDING_COMMANDS,
+  allocateRoomMovementCatchupBudget,
   getMovementBacklogTrimCount,
   getMovementCommandDrainDecision,
 } from '../rooms/movementCommandDrain';
@@ -70,17 +73,20 @@ assert.equal(queue.hasSeq(1), false);
 queue.push(command(4));
 queue.push(command(5));
 assert.deepEqual(queue.toArray().map((item) => item.seq), [2, 3, 4, 5]);
+assert.equal(queue.peek()?.seq, 2);
 
 const removed = queue.dropOldest(2);
 assert.deepEqual(removed.map((item) => item.seq), [2, 3]);
 assert.deepEqual(queue.toArray().map((item) => item.seq), [4, 5]);
 assert.equal(queue.hasSeq(2), false);
+assert.equal(queue.peek()?.seq, 4);
 assert.equal(queue.peekLast()?.seq, 5);
 
 queue.replace([command(9), command(7), command(8)]);
 assert.deepEqual(queue.toArray().map((item) => item.seq), [7, 8, 9]);
 queue.clear();
 assert.equal(queue.length, 0);
+assert.equal(queue.peek(), null);
 assert.equal(queue.pop(), null);
 
 const wrap = new MovementCommandQueue(2);
@@ -394,6 +400,8 @@ const barrierDrain = getMovementCommandDrainDecision(1, { hasAuthorityBarrier: t
 assert.equal(barrierDrain.budget, 1);
 assert.equal(barrierDrain.underflow, false);
 
+assert.equal(SERVER_OWNED_MOVEMENT_STEP_SECONDS, SERVER_MOVEMENT_SUBSTEPS_PER_TICK / MOVEMENT_SUBSTEP_RATE);
+
 assert.ok(
   MOVEMENT_COMMAND_STALE_GRACE_STEPS >= MOVEMENT_MAX_PACKET_COMMANDS,
   'previous-epoch grace should cover one full in-flight movement packet'
@@ -475,5 +483,62 @@ assert.ok(
   burstCadence[0].processed < burstCadence[0].before,
   'catchup must drain backlog gradually instead of reflecting packet bursts'
 );
+
+{
+  const allocation = allocateRoomMovementCatchupBudget([
+    {
+      playerId: 'low-backlog',
+      requestedExtraSubsteps: 4,
+      backlogCommands: 4,
+      oldestCommandClientTimeMs: 200,
+      skippedCatchupSubsteps: 0,
+    },
+    {
+      playerId: 'oldest',
+      requestedExtraSubsteps: 4,
+      backlogCommands: 8,
+      oldestCommandClientTimeMs: 50,
+      skippedCatchupSubsteps: 0,
+    },
+    {
+      playerId: 'previously-skipped',
+      requestedExtraSubsteps: 4,
+      backlogCommands: 6,
+      oldestCommandClientTimeMs: 100,
+      skippedCatchupSubsteps: 3,
+    },
+  ], 5);
+
+  assert.deepEqual(allocation.grants, [
+    { playerId: 'low-backlog', grantedExtraSubsteps: 1, skippedExtraSubsteps: 3 },
+    { playerId: 'oldest', grantedExtraSubsteps: 2, skippedExtraSubsteps: 2 },
+    { playerId: 'previously-skipped', grantedExtraSubsteps: 2, skippedExtraSubsteps: 2 },
+  ]);
+  assert.equal(allocation.skippedSubsteps, 7);
+}
+
+{
+  const allocation = allocateRoomMovementCatchupBudget([
+    {
+      playerId: 'a',
+      requestedExtraSubsteps: 2,
+      backlogCommands: 10,
+      oldestCommandClientTimeMs: 100,
+      skippedCatchupSubsteps: 0,
+    },
+    {
+      playerId: 'b',
+      requestedExtraSubsteps: 2,
+      backlogCommands: 10,
+      oldestCommandClientTimeMs: 100,
+      skippedCatchupSubsteps: 0,
+    },
+  ], 1, 1);
+
+  assert.deepEqual(allocation.grants, [
+    { playerId: 'a', grantedExtraSubsteps: 0, skippedExtraSubsteps: 2 },
+    { playerId: 'b', grantedExtraSubsteps: 1, skippedExtraSubsteps: 1 },
+  ]);
+}
 
 console.log('movement command queue tests passed');

@@ -8,7 +8,9 @@ import {
   buildPlayerVitalsStreamMessage,
   collectRecipientPlayerStateStreams,
   createVisibilityInterestPlayer,
+  getPreviousPhasedIntervalTime,
   getPlayerStateStreamBroadcastPlan,
+  isPhasedIntervalDue,
 } from '../rooms/replicationFrameRuntime';
 import { VisibilityInterestManager } from '../rooms/visibilityInterest';
 
@@ -108,6 +110,29 @@ function createRuntime(options: {
     interestIntervalMs: 200,
   }), {
     shouldBroadcastVitals: false,
+    shouldBroadcastInterest: false,
+    shouldBroadcastTransforms: true,
+  });
+
+  const scheduleStartedAt = 10_000;
+  const vitalsPhaseAt = scheduleStartedAt + 75;
+  const lastVitalsAt = getPreviousPhasedIntervalTime(scheduleStartedAt, 125, vitalsPhaseAt);
+  assert.equal(isPhasedIntervalDue(scheduleStartedAt + 74, lastVitalsAt, 125, vitalsPhaseAt), false);
+  assert.equal(isPhasedIntervalDue(scheduleStartedAt + 75, lastVitalsAt, 125, vitalsPhaseAt), true);
+
+  assert.deepEqual(getPlayerStateStreamBroadcastPlan({
+    transforms: true,
+    vitals: true,
+    forceVitals: false,
+    now: scheduleStartedAt + 75,
+    lastVitalsBroadcastAt: lastVitalsAt,
+    lastInterestBroadcastAt: scheduleStartedAt,
+    vitalsIntervalMs: 125,
+    interestIntervalMs: 200,
+    vitalsPhaseAtMs: vitalsPhaseAt,
+    interestPhaseAtMs: scheduleStartedAt + 150,
+  }), {
+    shouldBroadcastVitals: true,
     shouldBroadcastInterest: false,
     shouldBroadcastTransforms: true,
   });

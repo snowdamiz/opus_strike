@@ -20,6 +20,7 @@ import {
   isBotSecondaryFireWindowOpen,
   planBotRoute,
   scoreBotIntents,
+  shouldRefreshBotPlanningState,
   updateBotAimState,
   updateBotPrimaryFireDecision,
   updateBotSecondaryFireDecision,
@@ -321,6 +322,7 @@ function testBotPlanningStateRefreshesAndReusesCachedState() {
   const graph = routeGraph();
   const players = [bot];
   const teamTactics = tacticsFor(bot, players, flagState);
+  assert.equal(shouldRefreshBotPlanningState(brain, NOW), true);
 
   const planned = updateBotPlanningState({
     brain,
@@ -347,6 +349,7 @@ function testBotPlanningStateRefreshesAndReusesCachedState() {
 
   const cachedBlackboard = planned.blackboard;
   const cachedRoutePlan = planned.routePlan;
+  assert.equal(shouldRefreshBotPlanningState(brain, NOW + 50), false);
   const reused = updateBotPlanningState({
     brain,
     now: NOW + 50,
@@ -367,6 +370,7 @@ function testBotPlanningStateRefreshesAndReusesCachedState() {
   assert.equal(reused.routePlan, cachedRoutePlan);
   assert.equal(brain.nextBlackboardAt, NOW + 150);
   assert.equal(brain.nextThinkAt, NOW + 150);
+  assert.equal(shouldRefreshBotPlanningState(brain, NOW + 150), true);
 }
 
 function testBotMovementRecoveryStateReplansBlockedEdges() {

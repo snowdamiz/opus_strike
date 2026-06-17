@@ -5,12 +5,23 @@ export interface BotRuntimeBrainSchedule {
   nextBlackboardAt: number;
 }
 
+export interface BotFrameScheduleResult {
+  urgentCount: number;
+  urgentProcessedCount: number;
+  urgentSkippedCount: number;
+  deferredCount: number;
+  deferredProcessedCount: number;
+  deferredSkippedCount: number;
+}
+
 export class BotRuntimeRegistry<TBrain extends BotRuntimeBrainSchedule> {
   private nextDevBotIndex = 0;
   private readonly brains = new Map<string, TBrain>();
   private readonly preferredHeroes = new Map<string, HeroId>();
   private readonly urgentFrameBotIds: string[] = [];
   private readonly deferredFrameBotIds: string[] = [];
+  private urgentFrameCursor = 0;
+  private deferredFrameCursor = 0;
 
   createDevBotIndex(): number {
     return this.nextDevBotIndex++;
@@ -52,13 +63,77 @@ export class BotRuntimeRegistry<TBrain extends BotRuntimeBrainSchedule> {
     }
   }
 
-  forEachScheduledFrameBot(callback: (botId: string) => void): void {
-    for (const botId of this.urgentFrameBotIds) {
-      callback(botId);
+  runScheduledFrameBots(input: {
+    urgentBudget?: number;
+    deferredBudget: number;
+    run: (botId: string) => void;
+    skipUrgent?: (botId: string) => void;
+    skipDeferred?: (botId: string) => void;
+  }): BotFrameScheduleResult {
+    const urgentCount = this.urgentFrameBotIds.length;
+    const urgentBudget = input.urgentBudget === undefined
+      ? urgentCount
+      : Math.max(0, Math.trunc(input.urgentBudget));
+    const urgentStart = urgentCount > 0 ? this.urgentFrameCursor % urgentCount : 0;
+    let urgentProcessedCount = 0;
+
+    if (urgentCount > 0 && urgentBudget > 0) {
+      const limit = Math.min(urgentBudget, urgentCount);
+      for (let offset = 0; offset < limit; offset++) {
+        const index = (urgentStart + offset) % urgentCount;
+        const botId = this.urgentFrameBotIds[index];
+        if (!botId) continue;
+        urgentProcessedCount++;
+        input.run(botId);
+      }
+      this.urgentFrameCursor = (urgentStart + limit) % urgentCount;
     }
-    for (const botId of this.deferredFrameBotIds) {
-      callback(botId);
+
+    if (input.skipUrgent) {
+      for (let index = 0; index < urgentCount; index++) {
+        if (!isCircularIndexInWindow(index, urgentStart, urgentProcessedCount, urgentCount)) {
+          const botId = this.urgentFrameBotIds[index];
+          if (!botId) continue;
+          input.skipUrgent(botId);
+        }
+      }
     }
+
+    const deferredCount = this.deferredFrameBotIds.length;
+    const deferredBudget = Math.max(0, Math.trunc(input.deferredBudget));
+    const deferredStart = deferredCount > 0 ? this.deferredFrameCursor % deferredCount : 0;
+    let deferredProcessedCount = 0;
+
+    if (deferredCount > 0 && deferredBudget > 0) {
+      const limit = Math.min(deferredBudget, deferredCount);
+      for (let offset = 0; offset < limit; offset++) {
+        const index = (deferredStart + offset) % deferredCount;
+        const botId = this.deferredFrameBotIds[index];
+        if (!botId) continue;
+        deferredProcessedCount++;
+        input.run(botId);
+      }
+      this.deferredFrameCursor = (deferredStart + limit) % deferredCount;
+    }
+
+    if (input.skipDeferred) {
+      for (let index = 0; index < deferredCount; index++) {
+        if (!isCircularIndexInWindow(index, deferredStart, deferredProcessedCount, deferredCount)) {
+          const botId = this.deferredFrameBotIds[index];
+          if (!botId) continue;
+          input.skipDeferred(botId);
+        }
+      }
+    }
+
+    return {
+      urgentCount,
+      urgentProcessedCount,
+      urgentSkippedCount: Math.max(0, urgentCount - urgentProcessedCount),
+      deferredCount,
+      deferredProcessedCount,
+      deferredSkippedCount: Math.max(0, deferredCount - deferredProcessedCount),
+    };
   }
 
   setPreferredHero(botId: string, heroId: HeroId): void {
@@ -68,4 +143,13 @@ export class BotRuntimeRegistry<TBrain extends BotRuntimeBrainSchedule> {
   getPreferredHero(botId: string): HeroId | undefined {
     return this.preferredHeroes.get(botId);
   }
+}
+
+function isCircularIndexInWindow(index: number, start: number, count: number, total: number): boolean {
+  if (count <= 0 || total <= 0) return false;
+  if (count >= total) return true;
+  const end = start + count;
+  return end <= total
+    ? index >= start && index < end
+    : index >= start || index < end % total;
 }

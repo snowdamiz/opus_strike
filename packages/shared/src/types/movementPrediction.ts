@@ -122,6 +122,9 @@ export interface MovementTelemetrySnapshot {
   queueLengthAfterTick?: number;
   underflowTicks?: number;
   catchupTicks?: number;
+  catchupSubstepsSkipped?: number;
+  catchupSubstepsSkippedLastTick?: number;
+  roomCatchupBudgetExhaustedTicks?: number;
   duplicateCommands: number;
   droppedCommands: number;
   lateCommands: number;

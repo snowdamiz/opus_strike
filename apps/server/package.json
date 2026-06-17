@@ -14,6 +14,7 @@
     "test:attack-cooldowns": "tsx src/scripts/attack-cooldown-tracker.test.ts",
     "test:auth-reject-runtime": "tsx src/scripts/auth-reject-runtime.test.ts",
     "test:bot-runtime": "tsx src/scripts/bot-runtime-registry.test.ts",
+    "test:bot-movement-lod": "tsx src/scripts/bot-movement-lod.test.ts",
     "test:blaze-burns": "tsx src/scripts/blaze-burn-effects.test.ts",
     "test:blaze-flamethrower": "tsx src/scripts/blaze-flamethrower-runtime.test.ts",
     "test:chronos-aegis": "tsx src/scripts/chronos-aegis-shield.test.ts",

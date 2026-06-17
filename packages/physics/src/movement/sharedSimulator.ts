@@ -52,6 +52,7 @@ export function simulateSharedMovement(input: SharedMovementSimulationInput): Sh
       chronosAscendantActive: input.chronosAscendantActive,
     },
     dt: input.deltaTime,
+    collectContacts: false,
   });
 
   return result.state;
