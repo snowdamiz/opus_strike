@@ -13,6 +13,7 @@ import { TeleportEffects } from './components/ui/TeleportEffects';
 import { UltimateEffects } from './components/ui/UltimateEffects';
 import { SlideEffects } from './components/ui/SlideEffects';
 import { MobileControls } from './components/ui/MobileControls';
+import { TutorialGuide } from './components/ui/TutorialGuide';
 import { useAudio, useGlobalButtonSounds, useMusic } from './hooks/useAudio';
 import { useNetwork } from './contexts/NetworkContext';
 import { mouseButtonToKeybindCode } from './utils/keybindings';
@@ -66,10 +67,13 @@ export function App() {
   const matchSummary = useGameStore((state) => state.matchSummary);
   const isLoading = useGameStore((state) => state.isLoading);
   const isPracticeMode = useGameStore((state) => state.isPracticeMode);
+  const isTutorialMode = useGameStore((state) => state.isTutorialMode);
+  const tutorialCompletionOverlayOpen = useGameStore((state) => state.tutorialCompletionOverlayOpen);
   const isPracticePreparing = useGameStore((state) => state.isPracticePreparing);
   const isObserverMode = useGameStore((state) => state.isObserverMode);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
+  const mapSize = useGameStore((state) => state.mapSize);
   const scoreboardKeybind = useSettingsStore((state) => state.settings.keybindings.scoreboard);
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showInGameMenu, setShowInGameMenu] = useState(false);
@@ -93,7 +97,10 @@ export function App() {
     !matchSummary &&
     (gamePhase === 'waiting' || gamePhase === 'hero_select' || isActiveGame)
   );
-  const warmupKey = useMemo(() => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId }), [mapSeed, mapThemeId]);
+  const warmupKey = useMemo(
+    () => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId, mapSize }),
+    [mapSeed, mapThemeId, mapSize]
+  );
 
   useEffect(() => {
     installLocalCombatStressScenario();
@@ -216,7 +223,13 @@ export function App() {
 
     // When pointer lock is released (by ESC or other means), open the menu
     const handlePointerLockChange = () => {
-      if (document.pointerLockElement === null && appPhase === 'in_game' && !showInGameMenu) {
+      const tutorialCompletionOverlayOpen = useGameStore.getState().tutorialCompletionOverlayOpen;
+      if (
+        document.pointerLockElement === null &&
+        appPhase === 'in_game' &&
+        !showInGameMenu &&
+        !tutorialCompletionOverlayOpen
+      ) {
         // Pointer lock was exited - open the menu
         setShowInGameMenu(true);
       }
@@ -243,6 +256,12 @@ export function App() {
       setShowInGameMenu(false);
     }
   }, [appPhase]);
+
+  useEffect(() => {
+    if (tutorialCompletionOverlayOpen) {
+      setShowInGameMenu(false);
+    }
+  }, [tutorialCompletionOverlayOpen]);
 
   useEffect(() => {
     if (!shouldPrepareMatchWorld) {
@@ -437,11 +456,12 @@ export function App() {
         {isActiveGame && isMatchSceneReady && !isObserverMode && (
           <>
             <HUD />
+            {isTutorialMode && <TutorialGuide />}
             <TeleportEffects />
             <UltimateEffects />
             <SlideEffects />
             <MobileControls
-              disabled={showInGameMenu}
+              disabled={showInGameMenu || tutorialCompletionOverlayOpen}
               onOpenMenu={() => setShowInGameMenu(true)}
               onScoreboardChange={setShowScoreboard}
             />
@@ -469,7 +489,7 @@ export function App() {
 
         {/* In-game menu (ESC) */}
         <Suspense fallback={null}>
-          {showInGameMenu && <InGameMenu onClose={() => setShowInGameMenu(false)} />}
+          {showInGameMenu && !tutorialCompletionOverlayOpen && <InGameMenu onClose={() => setShowInGameMenu(false)} />}
         </Suspense>
 
         {/* Developer console (Enter key) */}

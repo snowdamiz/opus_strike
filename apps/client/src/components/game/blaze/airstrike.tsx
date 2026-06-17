@@ -1,7 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { BLAZE_GEARSTORM_DURATION_MS, BLAZE_GEARSTORM_RADIUS } from '@voxel-strike/shared';
+import {
+  BLAZE_GEARSTORM_DAMAGE,
+  BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+  BLAZE_GEARSTORM_DURATION_MS,
+  BLAZE_GEARSTORM_RADIUS,
+  type Team,
+} from '@voxel-strike/shared';
 import { checkGroundWithNormal, isPhysicsReady } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
@@ -10,6 +16,7 @@ import {
   measureFrameWork,
   recordEffectSlotDiagnostics,
 } from '../../../movement/networkDiagnostics';
+import { applyTutorialTrainingAreaDamage } from '../../../utils/tutorialTrainingHeroes';
 
 // ============================================================================
 // INFERNAL GEARSTORM EFFECT - BLAZE ULTIMATE
@@ -58,10 +65,13 @@ interface GroundFlameData {
 
 interface AirStrikeData {
   id: string;
+  ownerId: string | null;
+  ownerTeam: Team | null;
   centerPosition: { x: number; y: number; z: number };
   startTime: number;
   frameStartTime: number;
   groundY: number;
+  lastDamageTick: Map<string, number>;
   cogs: BurningCogData[];
   burnPatches: BurnPatchData[];
   groundFlames: GroundFlameData[];
@@ -488,7 +498,12 @@ function createGearstormGroundResolver(centerX: number, centerZ: number, fallbac
   };
 }
 
-function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }) {
+interface AirStrikeOwner {
+  ownerId?: string | null;
+  ownerTeam?: Team | null;
+}
+
+function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }, owner: AirStrikeOwner = {}) {
   const fallbackGroundY = position.y - 1;
   const resolveGearstormGroundY = createGearstormGroundResolver(position.x, position.z, fallbackGroundY);
   const groundY = resolveGearstormGroundY(position.x, position.z);
@@ -558,10 +573,13 @@ function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }
 
   airStrikes.push({
     id: `gearstorm_${airStrikeIdCounter++}`,
+    ownerId: owner.ownerId ?? null,
+    ownerTeam: owner.ownerTeam ?? null,
     centerPosition: { ...position },
     startTime: Date.now(),
     frameStartTime: getFrameClock().nowMs,
     groundY,
+    lastDamageTick: new Map(),
     cogs,
     burnPatches,
     groundFlames,
@@ -569,8 +587,8 @@ function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }
   airStrikeRevision++;
 }
 
-export function triggerAirStrike(position: { x: number; y: number; z: number }) {
-  measureFrameWork('event.effects.blazeAirstrikeTrigger', () => triggerAirStrikeImmediate(position));
+export function triggerAirStrike(position: { x: number; y: number; z: number }, owner: AirStrikeOwner = {}) {
+  measureFrameWork('event.effects.blazeAirstrikeTrigger', () => triggerAirStrikeImmediate(position, owner));
 }
 
 function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
@@ -635,6 +653,18 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
     const fadeOut = clamp01((AIR_STRIKE_DURATION - elapsed) / 950);
     const fade = fadeIn * fadeOut;
     const pulse = 0.92 + Math.sin(elapsed * 0.006) * 0.08;
+    applyTutorialTrainingAreaDamage({
+      center: strike.centerPosition,
+      radius: GEARSTORM_RADIUS,
+      damage: BLAZE_GEARSTORM_DAMAGE,
+      damageType: 'airstrike',
+      sourceId: strike.ownerId,
+      sourceTeam: strike.ownerTeam,
+      abilityId: 'blaze_airstrike',
+      falloffScale: 0.35,
+      damageIntervalMs: BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+      lastDamageTick: strike.lastDamageTick,
+    });
     const updateDecorativeInstancing = airStrikes.length <= 1 ||
       decorativeFrameIndexRef.current % GEARSTORM_MULTI_STRIKE_DECORATIVE_FRAME_STRIDE === 0;
     decorativeFrameIndexRef.current++;

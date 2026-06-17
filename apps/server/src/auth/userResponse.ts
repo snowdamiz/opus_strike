@@ -22,6 +22,7 @@ export function serializeUser(user: UserWithAccounts): UserResponse {
     walletAddress: user.walletAddress,
     name: user.name,
     lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
+    tutorialCompletedAt: user.tutorialCompletedAt?.toISOString() ?? null,
     stats: {
       totalGames: user.totalGames,
       totalWins: user.totalWins,

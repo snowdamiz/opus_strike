@@ -253,7 +253,9 @@ function BurningHeroFire({ playerId }: { playerId: string }) {
       const fade = THREE.MathUtils.smoothstep(Math.min(remainingMs, BURN_FADE_OUT_MS), 0, BURN_FADE_OUT_MS);
       const time = state.clock.elapsedTime;
       const visualState = visualStore.getState();
-      const visualPosition = visualState.playerPositions.get(playerId) ?? player.position;
+      const visualPosition = visualState.renderedPlayerPositions.get(playerId) ??
+        visualState.playerPositions.get(playerId) ??
+        player.position;
       const visibleHeight = getVisiblePlayerHeight(player.heroId, player.movement);
       const flicker = 0.88 + Math.sin(time * 19.0 + playerId.length) * 0.08 + Math.sin(time * 43.0) * 0.04;
 

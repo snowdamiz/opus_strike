@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   PHANTOM_DIRE_BALL_COLLISION_RADIUS,
+  PHANTOM_DIRE_BALL_DAMAGE,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_RADIUS,
   type Team,
@@ -16,6 +17,7 @@ import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '.
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 import { playPrimaryImpactSound } from '../primaryImpactSound';
+import { applyTutorialTrainingDamage } from '../../../utils/tutorialTrainingHeroes';
 
 const DIRE_BALL_LIFETIME_MS = 3000;
 const PARTICLES_PER_BALL = 30;
@@ -680,6 +682,15 @@ export function DireBallsManager() {
         moveDistance + PHANTOM_DIRE_BALL_COLLISION_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
       );
       if (hitPlayer) {
+        applyTutorialTrainingDamage({
+          target: hitPlayer,
+          damage: PHANTOM_DIRE_BALL_DAMAGE,
+          damageType: 'dire_ball',
+          hitPosition: slot.position,
+          sourceId: slot.ownerId,
+          sourceTeam: slot.ownerTeam,
+          abilityId: 'phantom_dire_ball',
+        });
         playPrimaryImpactSound('phantom', slot.position);
         removals.push(slot.id);
         pool.deactivate(slotIndex);

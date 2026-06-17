@@ -34,8 +34,9 @@ export function Scoreboard() {
   const { reportPlayer } = useNetwork();
   const [reportingPlayerId, setReportingPlayerId] = useState<string | null>(null);
   const [reportNotice, setReportNotice] = useState<string | null>(null);
-  const { players, localPlayer, playerPings, redScore, blueScore } = useGameStore(
+  const { gameplayMode, players, localPlayer, playerPings, redScore, blueScore } = useGameStore(
     useShallow(state => ({
+      gameplayMode: state.gameplayMode,
       players: state.players,
       localPlayer: state.localPlayer,
       playerPings: state.playerPings,
@@ -56,6 +57,8 @@ export function Scoreboard() {
       .filter(participant => participant.playerId)
       .map(participant => [participant.playerId, participant])
   ), [participants]);
+  const isCaptureTheFlag = gameplayMode === 'capture_the_flag';
+  const objectiveLabel = isCaptureTheFlag ? 'Flags' : 'Elims';
 
   const solarPlayers: Player[] = [];
   const voidPlayers: Player[] = [];
@@ -166,7 +169,7 @@ export function Scoreboard() {
         <div className="flex">
           {/* Solar team */}
           <div className="flex-1 border-r border-white/5">
-            <FactionHeader faction={FACTIONS.red} />
+            <FactionHeader faction={FACTIONS.red} objectiveLabel={objectiveLabel} />
             <div className="divide-y divide-white/5">
               {solarPlayers.map(player => (
                 <PlayerRow 
@@ -182,6 +185,7 @@ export function Scoreboard() {
                   onReport={() => void handleReportPlayer(player)}
                   pingMs={playerPings.get(player.id) ?? null}
                   faction={FACTIONS.red}
+                  isCaptureTheFlag={isCaptureTheFlag}
                 />
               ))}
               {solarPlayers.length === 0 && (
@@ -195,7 +199,7 @@ export function Scoreboard() {
 
           {/* Void team */}
           <div className="flex-1">
-            <FactionHeader faction={FACTIONS.blue} />
+            <FactionHeader faction={FACTIONS.blue} objectiveLabel={objectiveLabel} />
             <div className="divide-y divide-white/5">
               {voidPlayers.map(player => (
                 <PlayerRow 
@@ -211,6 +215,7 @@ export function Scoreboard() {
                   onReport={() => void handleReportPlayer(player)}
                   pingMs={playerPings.get(player.id) ?? null}
                   faction={FACTIONS.blue}
+                  isCaptureTheFlag={isCaptureTheFlag}
                 />
               ))}
               {voidPlayers.length === 0 && (
@@ -242,9 +247,10 @@ export function Scoreboard() {
 
 interface FactionHeaderProps {
   faction: typeof FACTIONS.red | typeof FACTIONS.blue;
+  objectiveLabel: string;
 }
 
-function FactionHeader({ faction }: FactionHeaderProps) {
+function FactionHeader({ faction, objectiveLabel }: FactionHeaderProps) {
   return (
     <div 
       className="grid grid-cols-9 gap-2 px-4 py-2.5 text-[10px] font-body uppercase tracking-wider"
@@ -254,7 +260,7 @@ function FactionHeader({ faction }: FactionHeaderProps) {
       <span className="text-white/40 text-center">K</span>
       <span className="text-white/40 text-center">D</span>
       <span className="text-white/40 text-center">A</span>
-      <span className="text-white/40 text-center">Flags</span>
+      <span className="text-white/40 text-center">{objectiveLabel}</span>
       <span className="text-white/40 text-center">Ping</span>
       <span className="text-white/40 text-center">Voice</span>
       <span className="text-white/40 text-center">Report</span>
@@ -274,6 +280,7 @@ interface PlayerRowProps {
   isReporting: boolean;
   onReport: () => void;
   pingMs: number | null;
+  isCaptureTheFlag: boolean;
 }
 
 function PlayerRow({
@@ -288,8 +295,10 @@ function PlayerRow({
   isReporting,
   onReport,
   pingMs,
+  isCaptureTheFlag,
 }: PlayerRowProps) {
   const stats = player.stats ?? { kills: 0, deaths: 0, assists: 0, flagCaptures: 0, flagReturns: 0 };
+  const objectiveValue = isCaptureTheFlag ? stats.flagCaptures : stats.kills;
   
   return (
     <div 
@@ -337,7 +346,7 @@ function PlayerRow({
           {!player.isBot && player.rank && (
             <RankBadge rank={player.rank} compact className="mt-1 max-w-[8rem] py-0.5 text-[10px]" />
           )}
-          {player.hasFlag && (
+          {isCaptureTheFlag && player.hasFlag && (
             <span className="text-[9px] text-amber-400 font-display flex items-center gap-1">
               <span>🏴</span> Carrying Flag
             </span>
@@ -350,9 +359,9 @@ function PlayerRow({
       <span className="font-mono text-sm text-center text-white/50">{stats.assists}</span>
       <span 
         className="font-mono text-sm text-center font-medium"
-        style={{ color: stats.flagCaptures > 0 ? FACTIONS.red.secondaryColor : 'rgba(255,255,255,0.3)' }}
+        style={{ color: objectiveValue > 0 ? faction.secondaryColor : 'rgba(255,255,255,0.3)' }}
       >
-        {stats.flagCaptures}
+        {objectiveValue}
       </span>
       <span className={`font-mono text-xs text-center ${getPingClassName(player, pingMs)}`}>
         {formatPing(player, pingMs)}

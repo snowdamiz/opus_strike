@@ -19,10 +19,11 @@ import {
   BHOP_STOP_SPEED,
   CROUCH_MULTIPLIER,
   GRAVITY,
-  HERO_AIR_JUMPS,
   PLAYER_CROUCH_HEIGHT,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
+  PLAYER_SLIDE_HEIGHT,
+  PLAYER_SLIDE_RADIUS,
   PROCEDURAL_VOXEL_SIZE,
   resolveDirectionalMovementIntent,
   SLIDE_COOLDOWN,
@@ -160,6 +161,14 @@ const DEFAULT_VOXEL_SIZE: Vec3 = {
 const EPSILON = 0.00001;
 const STATIC_AABB_CACHE_LIMIT = 512;
 const SKIN_WIDTH_EXPANSION: Vec3 = { x: SKIN_WIDTH, y: SKIN_WIDTH, z: SKIN_WIDTH };
+const SLIDE_EXIT_PROBE_DISTANCES = [0, 0.08, 0.16, 0.24] as const;
+
+type SlideExitPosture = 'stand' | 'crouch';
+
+interface SlideExitResolution {
+  position: Vec3;
+  posture: SlideExitPosture;
+}
 
 function cloneVec3(value: Vec3): Vec3 {
   return { x: value.x, y: value.y, z: value.z };
@@ -253,7 +262,13 @@ function referencePositionFromFeet(position: Vec3, nextFeetY: number): Vec3 {
 }
 
 function bodyHeightForMovement(movement: PlayerMovementState): number {
-  return movement.isSliding || movement.isCrouching ? PLAYER_CROUCH_HEIGHT : PLAYER_HEIGHT;
+  if (movement.isSliding) return PLAYER_SLIDE_HEIGHT;
+  if (movement.isCrouching) return PLAYER_CROUCH_HEIGHT;
+  return PLAYER_HEIGHT;
+}
+
+function bodyRadiusForMovement(movement: PlayerMovementState): number {
+  return movement.isSliding ? PLAYER_SLIDE_RADIUS : PLAYER_RADIUS;
 }
 
 function capsuleBounds(position: Vec3, height: number, radius: number): MovementCollisionBounds {
@@ -856,6 +871,50 @@ function canOccupy(world: MovementCollisionWorld, position: Vec3, height: number
   return world.testCapsule(position, height, radius).length === 0;
 }
 
+function resolveSlideExitPosture(
+  world: MovementCollisionWorld,
+  position: Vec3,
+  wantsCrouch: boolean,
+  exitDirection?: Vec3,
+  allowCrouchFallback = true
+): SlideExitResolution | null {
+  const postures = wantsCrouch
+    ? ([{ posture: 'crouch', height: PLAYER_CROUCH_HEIGHT }] as const)
+    : allowCrouchFallback
+      ? ([
+          { posture: 'stand', height: PLAYER_HEIGHT },
+          { posture: 'crouch', height: PLAYER_CROUCH_HEIGHT },
+        ] as const)
+      : ([{ posture: 'stand', height: PLAYER_HEIGHT }] as const);
+  const direction = exitDirection ? normalizeHorizontal(exitDirection) : null;
+
+  for (const posture of postures) {
+    for (const probeDistance of SLIDE_EXIT_PROBE_DISTANCES) {
+      if (probeDistance > 0 && (!direction || length(direction) <= EPSILON)) continue;
+
+      const candidate =
+        probeDistance > 0 && direction
+          ? add(position, scale(direction, probeDistance))
+          : position;
+
+      if (probeDistance > 0) {
+        const delta = subtract(candidate, position);
+        if (world.sweepCapsule(position, delta, PLAYER_SLIDE_HEIGHT, PLAYER_SLIDE_RADIUS)) continue;
+        if (!canOccupy(world, candidate, PLAYER_SLIDE_HEIGHT, PLAYER_SLIDE_RADIUS)) continue;
+      }
+
+      if (canOccupy(world, candidate, posture.height, PLAYER_RADIUS)) {
+        return {
+          position: candidate,
+          posture: posture.posture,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
 function tryStepUp(
   world: MovementCollisionWorld,
   position: Vec3,
@@ -1059,18 +1118,11 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
   }
 
   const wasSliding = movement.isSliding;
-  const wasJumpHeld = Boolean(movement.jumpHeld);
-  const jumpPressed = Boolean(input.command.input.jump && !wasJumpHeld);
   const startHeight = bodyHeightForMovement(movement);
-  const startGround = world.findGround(position, GROUND_SNAP_DISTANCE, PLAYER_RADIUS, startHeight);
+  const startRadius = bodyRadiusForMovement(movement);
+  const startGround = world.findGround(position, GROUND_SNAP_DISTANCE, startRadius, startHeight);
   const wasGrounded = !chronosAscendantActive && Boolean(startGround?.walkable && velocity.y <= 0);
   movement.isGrounded = wasGrounded;
-  if (wasGrounded) {
-    movement.airJumpsUsed = 0;
-  } else {
-    const airJumpsUsed = Number.isFinite(movement.airJumpsUsed) ? Math.trunc(movement.airJumpsUsed!) : 0;
-    movement.airJumpsUsed = Math.max(0, Math.min(HERO_AIR_JUMPS, airJumpsUsed));
-  }
   if (startGround && wasGrounded && startGround.distance <= GROUND_SNAP_DISTANCE) {
     position = startGround.position;
     velocity.y = 0;
@@ -1080,9 +1132,31 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
   const wishDir = getWishDirection(movementIntent, input.command.lookYaw);
   const hasMovementInput = movementIntent.hasMovementInput;
 
-  const wantsCrouch = Boolean(input.command.input.crouch && !movement.isSliding);
-  const canStand = wantsCrouch || canOccupy(world, position, PLAYER_HEIGHT, PLAYER_RADIUS);
-  movement.isCrouching = wantsCrouch || !canStand;
+  const refreshCrouchState = () => {
+    if (movement.isSliding) {
+      movement.isCrouching = false;
+      return;
+    }
+    const wantsCrouch = Boolean(input.command.input.crouch);
+    const canStand = wantsCrouch || canOccupy(world, position, PLAYER_HEIGHT, PLAYER_RADIUS);
+    movement.isCrouching = wantsCrouch || !canStand;
+  };
+  const finishSlide = (exit: SlideExitResolution, slideJumpRequested: boolean, sprintSpeed: number) => {
+    position = exit.position;
+    if (slideJumpRequested) {
+      velocity.x *= SLIDE_JUMP_SPEED_RETENTION;
+      velocity.z *= SLIDE_JUMP_SPEED_RETENTION;
+      velocity = clampHorizontalSpeed(velocity, sprintSpeed * SLIDE_JUMP_MAX_SPEED_MULTIPLIER);
+    }
+    movement.isSliding = false;
+    movement.isCrouching = exit.posture === 'crouch';
+    movement.slideTimeRemaining = SLIDE_COOLDOWN;
+    refreshCrouchState();
+  };
+  let slideExitPending = false;
+  let slideJumpExitPending = false;
+
+  refreshCrouchState();
   movement.isSprinting = Boolean(
     input.command.input.sprint &&
     movementIntent.allowsSprint &&
@@ -1142,13 +1216,25 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
 
     const slideJumpRequested = input.command.input.jump;
     if (movement.slideTimeRemaining <= 0 || slideJumpRequested || horizontalSpeed(velocity) < 2) {
-      if (slideJumpRequested) {
-        velocity.x *= SLIDE_JUMP_SPEED_RETENTION;
-        velocity.z *= SLIDE_JUMP_SPEED_RETENTION;
-        velocity = clampHorizontalSpeed(velocity, sprintSpeed * SLIDE_JUMP_MAX_SPEED_MULTIPLIER);
+      const exit = resolveSlideExitPosture(
+        world,
+        position,
+        Boolean(input.command.input.crouch),
+        undefined,
+        false
+      );
+      if (exit) {
+        finishSlide(exit, slideJumpRequested, sprintSpeed);
+      } else {
+        const lowCoverCrawlSpeed = input.heroStats.moveSpeed * CROUCH_MULTIPLIER;
+        if (hasMovementInput && horizontalSpeed(velocity) < lowCoverCrawlSpeed) {
+          velocity.x = wishDir.x * lowCoverCrawlSpeed;
+          velocity.z = wishDir.z * lowCoverCrawlSpeed;
+        }
+        movement.slideTimeRemaining = 0;
+        slideExitPending = true;
+        slideJumpExitPending = slideJumpRequested;
       }
-      movement.isSliding = false;
-      movement.slideTimeRemaining = SLIDE_COOLDOWN;
     }
   } else {
     let wishSpeed = input.heroStats.moveSpeed * movementIntent.speedMultiplier * (modifiers.activeSpeedMultiplier ?? 1);
@@ -1186,20 +1272,9 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
 
   let jumpedThisStep = false;
   const canGroundJump = input.command.input.jump && movement.isGrounded && !movement.isSliding;
-  const canAirJump =
-    jumpPressed &&
-    !movement.isGrounded &&
-    !movement.isSliding &&
-    !movement.isGrappling &&
-    !movement.isWallRunning &&
-    !chronosAscendantActive &&
-    (movement.airJumpsUsed ?? 0) < HERO_AIR_JUMPS;
-  if (canGroundJump || canAirJump) {
+  if (canGroundJump) {
     velocity.y = input.heroStats.jumpForce;
     movement.isGrounded = false;
-    if (canAirJump) {
-      movement.airJumpsUsed = (movement.airJumpsUsed ?? 0) + 1;
-    }
     jumpedThisStep = true;
   }
 
@@ -1251,14 +1326,15 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
   const maxHorizontalSpeed = BHOP_MAX_VELOCITY * Math.max(1, modifiers.activeSpeedMultiplier ?? 1);
   velocity = clampHorizontalSpeed(velocity, maxHorizontalSpeed);
 
-  const height = bodyHeightForMovement(movement);
+  let height = bodyHeightForMovement(movement);
+  let radius = bodyRadiusForMovement(movement);
   const moveResult = moveAndSlide(
     world,
     position,
     velocity,
     dt,
     height,
-    PLAYER_RADIUS,
+    radius,
     movement.isGrounded && !jumpedThisStep,
     contacts
   );
@@ -1268,6 +1344,23 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
   const boundary = applyBoundaryClamp(world, position, velocity, contacts);
   position = boundary.position;
   velocity = boundary.velocity;
+
+  if (slideExitPending && movement.isSliding) {
+    const velocityExitDirection = normalizeHorizontal({ x: velocity.x, y: 0, z: velocity.z });
+    const fallbackExitDirection = hasMovementInput ? wishDir : undefined;
+    const exitDirection = length(velocityExitDirection) > EPSILON ? velocityExitDirection : fallbackExitDirection;
+    const exit = resolveSlideExitPosture(
+      world,
+      position,
+      Boolean(input.command.input.crouch),
+      exitDirection
+    );
+    if (exit) {
+      finishSlide(exit, slideJumpExitPending, input.heroStats.moveSpeed * SPRINT_MULTIPLIER);
+      height = bodyHeightForMovement(movement);
+      radius = bodyRadiusForMovement(movement);
+    }
+  }
 
   if (chronosAscendantActive) {
     const ascendantStartY = movement.chronosAscendantStartY ?? position.y;
@@ -1291,7 +1384,7 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
     velocity.y <= 0.1;
 
   if (canSnapDown && !movement.isGrounded) {
-    const ground = world.findGround(position, GROUND_SNAP_DISTANCE, PLAYER_RADIUS, height);
+    const ground = world.findGround(position, GROUND_SNAP_DISTANCE, radius, height);
     if (ground?.walkable) {
       position = ground.position;
       velocity.y = 0;
@@ -1312,9 +1405,7 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
   }
   if (movement.isGrounded) {
     velocity.y = Math.max(0, velocity.y);
-    movement.airJumpsUsed = 0;
   }
-  movement.jumpHeld = Boolean(input.command.input.jump);
 
   return {
     state: {

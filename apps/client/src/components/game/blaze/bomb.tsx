@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import React from 'react';
 import {
   BLAZE_BOMB_AEGIS_COLLISION_RADIUS,
+  BLAZE_BOMB_DAMAGE,
   BLAZE_BOMB_MAX_RANGE,
   BLAZE_BOMB_MIN_RANGE,
   BLAZE_BOMB_SPLASH_RADIUS,
@@ -16,6 +17,7 @@ import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
 import { measureFrameWork } from '../../../movement/networkDiagnostics';
+import { applyTutorialTrainingAreaDamage } from '../../../utils/tutorialTrainingHeroes';
 import {
   getBombBodyMaterial,
   getBombBandMaterial,
@@ -99,6 +101,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
   const lightRef = useRef<THREE.PointLight>(null);
   const hasExplodedRef = useRef(bomb.hasExploded);
   const hasRemovedRef = useRef(false);
+  const tutorialDamageAppliedRef = useRef(false);
   const createdAtMs = Date.now();
   const createdFrameTimeMs = getFrameClock().nowMs;
   const warningStartFrameTimeRef = useRef(
@@ -353,6 +356,19 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       if (shockwave2Ref.current) shockwave2Ref.current.visible = false;
     } else if (now >= impactFrameTimeRef.current && !hasExplodedRef.current) {
       hasExplodedRef.current = true;
+      if (!meteorPath.intercepted && !tutorialDamageAppliedRef.current) {
+        tutorialDamageAppliedRef.current = true;
+        applyTutorialTrainingAreaDamage({
+          center: bomb.targetPosition,
+          radius: blastRadius,
+          damage: BLAZE_BOMB_DAMAGE,
+          damageType: 'bomb',
+          sourceId: bomb.ownerId,
+          sourceTeam: bomb.ownerTeam,
+          abilityId: 'blaze_bomb',
+          falloffScale: 0.45,
+        });
+      }
     }
     
     if (hasExplodedRef.current) {

@@ -1,9 +1,14 @@
 import type { GameConfig } from '../types/game.js';
+import { DEFAULT_GAMEPLAY_MODE, type GameplayMode } from '../types/gameplayMode.js';
+
+export const CAPTURE_THE_FLAG_SCORE_TO_WIN = 3;
+export const TEAM_DEATHMATCH_SCORE_TO_WIN = 30;
 
 export const DEFAULT_GAME_CONFIG: GameConfig = {
+  gameplayMode: DEFAULT_GAMEPLAY_MODE,
   maxPlayers: 8,
   teamSize: 4,
-  scoreToWin: 3,
+  scoreToWin: CAPTURE_THE_FLAG_SCORE_TO_WIN,
   roundTimeSeconds: 600, // 10 minutes
   respawnTimeSeconds: 8,
   spawnProtectionSeconds: 3,
@@ -11,6 +16,16 @@ export const DEFAULT_GAME_CONFIG: GameConfig = {
   heroSelectTimeSeconds: 30,
   countdownSeconds: 10,
 };
+
+export function createGameConfigForGameplayMode(gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE): GameConfig {
+  return {
+    ...DEFAULT_GAME_CONFIG,
+    gameplayMode,
+    scoreToWin: gameplayMode === 'team_deathmatch'
+      ? TEAM_DEATHMATCH_SCORE_TO_WIN
+      : CAPTURE_THE_FLAG_SCORE_TO_WIN,
+  };
+}
 
 export const TICK_RATE = 20; // Server ticks per second
 export const TICK_INTERVAL_MS = 1000 / TICK_RATE; // 50ms
@@ -28,6 +43,13 @@ export const ULTIMATE_CHARGE_PER_SECOND = 1;
 export const FLAG_PICKUP_RADIUS = 2;
 export const FLAG_CAPTURE_RADIUS = 3;
 export const FLAG_CARRIER_SPEED_PENALTY = 0.85;
+
+export const POWERUP_HEALTH_RESTORE_RATIO = 0.2;
+export const POWERUP_ABILITY_ATTACK_SPEED_MULTIPLIER = 1.15;
+export const POWERUP_MOVEMENT_SPEED_MULTIPLIER = 1.1;
+export const POWERUP_BUFF_DURATION_MS = 15000;
+export const POWERUP_PICKUP_RADIUS = 1.45;
+export const POWERUP_RESPAWN_SECONDS = 28;
 
 export const DAMAGE_FALLOFF_START = 15;
 export const DAMAGE_FALLOFF_END = 40;

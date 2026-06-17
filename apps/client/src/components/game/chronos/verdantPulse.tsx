@@ -3,10 +3,12 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   CHRONOS_ASCENDANT_PARADOX_PULSE_COLLISION_RADIUS,
+  CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE,
   CHRONOS_ASCENDANT_PARADOX_PULSE_MIN_VISUAL_RADIUS_SCALE,
   CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_VISUAL_RADIUS_SCALE,
   CHRONOS_VERDANT_PULSE_COLLISION_RADIUS,
+  CHRONOS_VERDANT_PULSE_DAMAGE,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_RADIUS,
 } from '@voxel-strike/shared';
@@ -20,6 +22,7 @@ import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '.
 import { getFirstChronosAegisVisualHit } from './aegisCollision';
 import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 import { playPrimaryImpactSound } from '../primaryImpactSound';
+import { applyTutorialTrainingDamage } from '../../../utils/tutorialTrainingHeroes';
 
 const CHRONOS_PULSE_CAPACITY = 96;
 const CHRONOS_PULSE_LIFETIME_MS = 3000;
@@ -450,6 +453,15 @@ export function ChronosPulsesManager() {
         moveDistance + collisionRadius + PROJECTILE_COMBAT_QUERY_PADDING
       );
       if (hitPlayer) {
+        applyTutorialTrainingDamage({
+          target: hitPlayer,
+          damage: slot.supercharged ? CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE : CHRONOS_VERDANT_PULSE_DAMAGE,
+          damageType: slot.supercharged ? 'ascendant_verdant_pulse' : 'verdant_pulse',
+          hitPosition: slot.position,
+          sourceId: slot.ownerId,
+          sourceTeam: slot.ownerTeam,
+          abilityId: 'chronos_verdant_pulse',
+        });
         playChronosImpact(slot.position, slot.supercharged);
         removals.push(slot.id);
         pool.deactivate(slotIndex);

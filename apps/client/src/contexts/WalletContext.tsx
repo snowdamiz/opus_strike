@@ -61,6 +61,7 @@ export interface UserData {
   walletAddress: string | null;
   name: string;
   lastLoginAt: string | null;
+  tutorialCompletedAt: string | null;
   stats: {
     totalGames: number;
     totalWins: number;
@@ -128,6 +129,7 @@ interface WalletContextType {
   linkPhantom: () => Promise<UserData>;
   signTransaction: (transaction: Transaction) => Promise<string>;
   registerUser: (name: string) => Promise<UserData>;
+  completeTutorial: () => Promise<UserData>;
   logout: () => Promise<void>;
 
   error: string | null;
@@ -690,6 +692,29 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [applyUserSession, authProvider]);
 
+  const completeTutorial = useCallback(async (): Promise<UserData> => {
+    setError(null);
+    setNotice(null);
+
+    try {
+      const result = await apiRequest<{ success: boolean; user: UserData }>(
+        '/auth/tutorial/complete',
+        { method: 'POST', body: JSON.stringify({}) }
+      );
+
+      if (result.success && result.user) {
+        applyUserSession(result.user, authProvider);
+        return result.user;
+      }
+
+      throw new Error('Tutorial completion was not saved');
+    } catch (err: any) {
+      loggers.auth.error('tutorial completion error:', err);
+      setError(err.message || 'Failed to save tutorial completion');
+      throw err;
+    }
+  }, [applyUserSession, authProvider]);
+
   const logout = useCallback(async () => {
     try {
       await apiRequest('/auth/logout', { method: 'POST' });
@@ -748,6 +773,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         linkPhantom,
         signTransaction,
         registerUser,
+        completeTutorial,
         logout,
         error,
         notice,

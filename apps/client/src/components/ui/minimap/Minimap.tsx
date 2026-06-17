@@ -29,17 +29,19 @@ export function Minimap() {
   const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const size = useMeasuredSquareSize(containerRef, DEFAULT_MINIMAP_SIZE);
   const devicePixelRatio = useDevicePixelRatio();
-  const { localPlayer, mapSeed, mapThemeId } = useGameStore(
+  const { localPlayer, mapSeed, mapThemeId, mapSize } = useGameStore(
     useShallow((state) => ({
       localPlayer: state.localPlayer,
       mapSeed: state.mapSeed,
       mapThemeId: state.mapThemeId,
+      mapSize: state.mapSize,
     }))
   );
 
   const preparedMap = useMemo(() => (
-    getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId }) ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, source: 'match' })
-  ), [mapSeed, mapThemeId]);
+    getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize })
+    ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, source: 'match' })
+  ), [mapSeed, mapThemeId, mapSize]);
   const manifest = preparedMap.manifest;
   const localPlayerId = localPlayer?.id ?? null;
   const projection = useMemo(() => (

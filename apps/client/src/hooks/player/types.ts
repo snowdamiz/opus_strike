@@ -172,6 +172,7 @@ export interface PlayerSounds {
 }
 
 export interface MovementSounds {
+  playGroundJump: () => void;
   updateWalkingSound: (speed: number, grounded: boolean, sliding: boolean, baseSpeed: number, justLanded: boolean) => void;
   startSlide: () => void;
   stopSlide: () => void;

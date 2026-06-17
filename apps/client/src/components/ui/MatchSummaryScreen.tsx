@@ -4,6 +4,7 @@ import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import {
   getLevelProgress,
+  getGameplayModeLabel,
   HERO_DEFINITIONS,
   type MatchSummaryPlayer,
   type Team,
@@ -63,6 +64,7 @@ export function MatchSummaryScreen() {
   const localOutcome = localPlayer?.outcome ?? 'draw';
   const resultLabel = localOutcome === 'win' ? 'Victory' : localOutcome === 'loss' ? 'Defeat' : 'Draw';
   const winnerLabel = summary.winningTeam ? `${getFactionLabel(summary.winningTeam)} Wins` : 'Draw';
+  const isCaptureTheFlag = summary.gameplayMode === 'capture_the_flag';
   const showRankChange = summary.matchMode === 'ranked';
   const showGoldenReward = Boolean(
     summary.goldenBiomeReward
@@ -96,7 +98,7 @@ export function MatchSummaryScreen() {
                 </span>
               </div>
               <p className="mt-3 font-body text-sm text-white/45">
-                {formatDuration(summary.durationMs)} match length
+                {getGameplayModeLabel(summary.gameplayMode)} - {formatDuration(summary.durationMs)} match length
               </p>
               {summary.matchIntegrity?.reviewRequired && (
                 <div className="mt-4 border border-amber-300/30 bg-amber-300/10 px-3 py-2 font-body text-sm text-amber-100">
@@ -144,7 +146,7 @@ export function MatchSummaryScreen() {
                 </section>
               )}
 
-              <LocalStatsPanel player={localPlayer} />
+              <LocalStatsPanel player={localPlayer} isCaptureTheFlag={isCaptureTheFlag} />
 
               <button
                 type="button"
@@ -156,8 +158,8 @@ export function MatchSummaryScreen() {
             </div>
 
             <div className="min-w-0 space-y-5">
-              <TeamScoreboard team="red" players={playersByTeam.red} localPlayerId={playerId} />
-              <TeamScoreboard team="blue" players={playersByTeam.blue} localPlayerId={playerId} />
+              <TeamScoreboard team="red" players={playersByTeam.red} localPlayerId={playerId} isCaptureTheFlag={isCaptureTheFlag} />
+              <TeamScoreboard team="blue" players={playersByTeam.blue} localPlayerId={playerId} isCaptureTheFlag={isCaptureTheFlag} />
             </div>
           </section>
         </div>
@@ -229,7 +231,7 @@ function ExperiencePanel({
   );
 }
 
-function LocalStatsPanel({ player }: { player: MatchSummaryPlayer | null }) {
+function LocalStatsPanel({ player, isCaptureTheFlag }: { player: MatchSummaryPlayer | null; isCaptureTheFlag: boolean }) {
   const stats = player?.stats ?? {
     kills: 0,
     deaths: 0,
@@ -250,8 +252,8 @@ function LocalStatsPanel({ player }: { player: MatchSummaryPlayer | null }) {
       <div className="grid grid-cols-2 gap-px overflow-hidden border border-white/10 bg-white/10">
         <SummaryStat label="Score" value={player?.score ?? 0} />
         <SummaryStat label="K/D/A" value={`${stats.kills}/${stats.deaths}/${stats.assists}`} />
-        <SummaryStat label="Captures" value={stats.flagCaptures} />
-        <SummaryStat label="Returns" value={stats.flagReturns} />
+        <SummaryStat label={isCaptureTheFlag ? 'Captures' : 'Elims'} value={isCaptureTheFlag ? stats.flagCaptures : stats.kills} />
+        <SummaryStat label={isCaptureTheFlag ? 'Returns' : 'Assists'} value={isCaptureTheFlag ? stats.flagReturns : stats.assists} />
       </div>
     </section>
   );
@@ -272,12 +274,15 @@ function TeamScoreboard({
   team,
   players,
   localPlayerId,
+  isCaptureTheFlag,
 }: {
   team: Team;
   players: MatchSummaryPlayer[];
   localPlayerId: string | null;
+  isCaptureTheFlag: boolean;
 }) {
   const faction = FACTIONS[team];
+  const objectiveLabel = isCaptureTheFlag ? 'Caps' : 'Elims';
 
   return (
     <section className="min-w-0 border border-white/10 bg-black/35 backdrop-blur-sm">
@@ -300,7 +305,7 @@ function TeamScoreboard({
         <span className="text-right">K</span>
         <span className="text-right">D</span>
         <span className="text-right">A</span>
-        <span className="text-right">Caps</span>
+        <span className="text-right">{objectiveLabel}</span>
         <span className="text-right">Score</span>
         <span className="hidden text-right sm:block">XP</span>
       </div>
@@ -312,6 +317,7 @@ function TeamScoreboard({
             player={player}
             isLocal={player.playerId === localPlayerId}
             faction={faction}
+            isCaptureTheFlag={isCaptureTheFlag}
           />
         )) : (
           <div className="px-4 py-8 text-center font-body text-sm text-white/35">No players</div>
@@ -325,11 +331,15 @@ function ScoreboardRow({
   player,
   isLocal,
   faction,
+  isCaptureTheFlag,
 }: {
   player: MatchSummaryPlayer;
   isLocal: boolean;
   faction: typeof FACTIONS.red | typeof FACTIONS.blue;
+  isCaptureTheFlag: boolean;
 }) {
+  const objectiveValue = isCaptureTheFlag ? player.stats.flagCaptures : player.stats.kills;
+
   return (
     <div className={`grid grid-cols-[minmax(0,1.4fr)_2.75rem_2.75rem_2.75rem_3.25rem_4.5rem] gap-2 border-b border-white/10 px-4 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1.6fr)_4.5rem_2.75rem_2.75rem_2.75rem_3.25rem_4.5rem_4.5rem] ${isLocal ? 'bg-white/[0.08]' : ''}`}>
       <div className="min-w-0">
@@ -357,8 +367,8 @@ function ScoreboardRow({
       <span className="self-center text-right font-mono text-sm text-white/80">{player.stats.kills}</span>
       <span className="self-center text-right font-mono text-sm text-white/55">{player.stats.deaths}</span>
       <span className="self-center text-right font-mono text-sm text-white/55">{player.stats.assists}</span>
-      <span className="self-center text-right font-mono text-sm" style={{ color: player.stats.flagCaptures > 0 ? faction.secondaryColor : 'rgba(255,255,255,0.45)' }}>
-        {player.stats.flagCaptures}
+      <span className="self-center text-right font-mono text-sm" style={{ color: objectiveValue > 0 ? faction.secondaryColor : 'rgba(255,255,255,0.45)' }}>
+        {objectiveValue}
       </span>
       <span className="self-center text-right font-mono text-sm text-white/85">{formatNumber(player.score)}</span>
       <span className="hidden self-center text-right font-mono text-sm text-accent-primary sm:block">

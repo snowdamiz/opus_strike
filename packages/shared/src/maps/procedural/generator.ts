@@ -1,4 +1,8 @@
 import { PLAYER_HEIGHT, PLAYER_RADIUS, STEP_HEIGHT } from '../../constants/physics.js';
+import {
+  POWERUP_PICKUP_RADIUS,
+  POWERUP_RESPAWN_SECONDS,
+} from '../../constants/game.js';
 import type { Vec3 } from '../../types/vector.js';
 import { getBlockNumericId, isCollisionBlock, isSolidBlock } from './blocks.js';
 import { isInsideBoundaryPolygon } from './boundaries.js';
@@ -8,10 +12,21 @@ import {
   finalizeCompiledMapDiagnostics,
   type MapConstructionResult,
 } from './construction.js';
-import { createProceduralCTFLayout, PROCEDURAL_VOXEL_SIZE, type ProceduralCTFLayout } from './ctfLayout.js';
+import {
+  createProceduralCTFLayout,
+  normalizeVoxelMapSizeId,
+  PROCEDURAL_VOXEL_SIZE,
+  type ProceduralCTFLayout,
+} from './ctfLayout.js';
 import { fractalNoise2 } from './noise.js';
 import { mulberry32 } from './rng.js';
 import { getVoxelMapTheme } from './themes.js';
+import {
+  TUTORIAL_MAP_SEED,
+  TUTORIAL_MAP_SIZE_ID,
+  createTutorialVoxelMapManifest,
+  isTutorialMapSeed,
+} from './tutorial.js';
 import {
   CONSTRUCTED_MAP_MANIFEST_VERSION,
   DEFAULT_PROCEDURAL_MAP_SEED,
@@ -19,9 +34,13 @@ import {
   type MapBlueprint,
   type MapDesignBrief,
   type MapDiagnostics,
+  type MapPowerupKind,
+  type MapPowerupPickup,
+  type MapPowerupStrategicRole,
   type MapTeam,
   type ModuleInstance,
   type ModuleRoleTag,
+  type RouteGraphNode,
   type TacticalSlot,
   type TacticalSlotRole,
   type TeamMap,
@@ -29,6 +48,7 @@ import {
   type VoxelChunk,
   type VoxelMapManifest,
   type VoxelMapStats,
+  type VoxelMapSizeId,
   type VoxelMapTheme,
   type VoxelSize,
 } from './types.js';
@@ -50,6 +70,8 @@ type BlockPalette = Record<
   | 'spawnRed'
   | 'spawnBlue'
   | 'flag'
+  | 'healthPad'
+  | 'powerupPad'
   | 'barrier',
   number
 >;
@@ -99,6 +121,7 @@ interface ProceduralVoxelMapDiagnosticsBlueprint
 
 export interface ProceduralVoxelMapDiagnostics {
   seed: number;
+  mapSize: VoxelMapSizeId;
   themeId: VoxelMapTheme['id'];
   designBrief?: MapDesignBrief;
   blueprint?: ProceduralVoxelMapDiagnosticsBlueprint;
@@ -115,6 +138,7 @@ export interface ProceduralVoxelMapGenerationResult {
 
 export interface ProceduralVoxelMapGenerationOptions {
   themeId?: VoxelMapTheme['id'] | null;
+  mapSize?: VoxelMapSizeId | null;
 }
 
 interface PlacedStructure {
@@ -163,6 +187,8 @@ const OBJECTIVE_PAD_RADIUS = 3.9;
 const OBJECTIVE_PAD_BLEND = 2.4;
 const SPAWN_PAD_RADIUS = 1.65;
 const FLAG_PAD_RADIUS = 2.6;
+const POWERUP_PAD_RADIUS = 1.85;
+const POWERUP_PAD_BLEND = 1.1;
 const SPAWN_HEADROOM_RADIUS = PLAYER_RADIUS + 1.25;
 const SPAWN_EGRESS_RADIUS = PLAYER_RADIUS + 1.05;
 const SPAWN_EGRESS_MAX_DISTANCE = 3.4;
@@ -231,9 +257,25 @@ const STRUCTURAL_FOOTPRINT_SCALES: Partial<Record<TacticalSlotRole, number>> = {
   soft_cover_cluster: 1.12,
 };
 
-function createProceduralVoxelMapDiagnostics(seed: number, themeId: VoxelMapTheme['id']): ProceduralVoxelMapDiagnostics {
+interface PowerupPlacementCandidate {
+  position: Vec3;
+  strategicRole: MapPowerupStrategicRole;
+  powerupScore: number;
+  healthScore: number;
+  routeNodeId?: string;
+  laneId?: string;
+  teamBias?: MapTeam;
+  tieBreak: number;
+}
+
+function createProceduralVoxelMapDiagnostics(
+  seed: number,
+  themeId: VoxelMapTheme['id'],
+  mapSize: VoxelMapSizeId
+): ProceduralVoxelMapDiagnostics {
   return {
     seed,
+    mapSize,
     themeId,
     repairActions: {},
     stageTimingsMs: {},
@@ -538,6 +580,8 @@ function createBlockPalette(theme: VoxelMapTheme): BlockPalette {
     spawnRed: getBlockNumericId('spawn_pad_red'),
     spawnBlue: getBlockNumericId('spawn_pad_blue'),
     flag: getBlockNumericId('flag_pad'),
+    healthPad: getBlockNumericId('health_pad'),
+    powerupPad: getBlockNumericId('powerup_pad'),
     barrier: getBlockNumericId('barrier'),
   };
 }
@@ -2307,6 +2351,465 @@ function getSurfacePosition(layout: ProceduralCTFLayout, heightMap: Uint16Array,
   };
 }
 
+function getPowerupCounts(mapSize: VoxelMapSizeId): Record<MapPowerupKind, number> {
+  switch (mapSize) {
+    case 'small':
+      return { health_pack: 2, powerup: 2 };
+    case 'large':
+      return { health_pack: 4, powerup: 4 };
+    case 'medium':
+    default:
+      return { health_pack: 4, powerup: 2 };
+  }
+}
+
+function getPowerupScore(candidate: PowerupPlacementCandidate, kind: MapPowerupKind): number {
+  return kind === 'health_pack' ? candidate.healthScore : candidate.powerupScore;
+}
+
+function getPowerupPlacementBasis(layout: ProceduralCTFLayout): {
+  center: { x: number; z: number };
+  axis: { x: number; z: number };
+  normal: { x: number; z: number };
+} {
+  const center = {
+    x: (layout.flagZones.red.x + layout.flagZones.blue.x) / 2,
+    z: (layout.flagZones.red.z + layout.flagZones.blue.z) / 2,
+  };
+  const axis = normalize2D({
+    x: layout.flagZones.blue.x - layout.flagZones.red.x,
+    z: layout.flagZones.blue.z - layout.flagZones.red.z,
+  });
+  return {
+    center,
+    axis,
+    normal: perpendicular(axis),
+  };
+}
+
+function getPowerupSide(point: { x: number; z: number }, layout: ProceduralCTFLayout): MapTeam | null {
+  const { center, axis } = getPowerupPlacementBasis(layout);
+  const along = (point.x - center.x) * axis.x + (point.z - center.z) * axis.z;
+  if (Math.abs(along) < 2.2) return null;
+  return along < 0 ? 'red' : 'blue';
+}
+
+function mirrorPowerupPointToTeam(
+  point: { x: number; z: number },
+  layout: ProceduralCTFLayout,
+  team: MapTeam
+): { x: number; z: number } {
+  const { center, axis, normal } = getPowerupPlacementBasis(layout);
+  const relX = point.x - center.x;
+  const relZ = point.z - center.z;
+  const along = Math.abs(relX * axis.x + relZ * axis.z);
+  const side = relX * normal.x + relZ * normal.z;
+  const teamAlong = team === 'red' ? -along : along;
+  return {
+    x: center.x + axis.x * teamAlong + normal.x * side,
+    z: center.z + axis.z * teamAlong + normal.z * side,
+  };
+}
+
+function getPowerupPairMatchScore(
+  source: PowerupPlacementCandidate,
+  candidate: PowerupPlacementCandidate,
+  kind: MapPowerupKind,
+  layout: ProceduralCTFLayout
+): number {
+  const { center, axis, normal } = getPowerupPlacementBasis(layout);
+  const sourceRel = { x: source.position.x - center.x, z: source.position.z - center.z };
+  const candidateRel = { x: candidate.position.x - center.x, z: candidate.position.z - center.z };
+  const sourceAlong = Math.abs(sourceRel.x * axis.x + sourceRel.z * axis.z);
+  const candidateAlong = Math.abs(candidateRel.x * axis.x + candidateRel.z * axis.z);
+  const sourceSide = sourceRel.x * normal.x + sourceRel.z * normal.z;
+  const candidateSide = candidateRel.x * normal.x + candidateRel.z * normal.z;
+  const shapePenalty = Math.abs(sourceAlong - candidateAlong) + Math.abs(sourceSide - candidateSide) * 0.65;
+  return shapePenalty - getPowerupScore(candidate, kind) * 0.035;
+}
+
+function getSlotFootprintRadius(slot: TacticalSlot): number {
+  if (typeof slot.footprint.radius === 'number') return slot.footprint.radius;
+  if (slot.footprint.halfExtents) {
+    return Math.hypot(slot.footprint.halfExtents.x, slot.footprint.halfExtents.z);
+  }
+  return slot.protectedClearance;
+}
+
+function getLaneKindScore(kind: MapPowerupKind, laneId: string | undefined, lanes: MapBlueprint['lanes']): number {
+  if (!laneId) return 0;
+  const lane = lanes.find((candidate) => candidate.id === laneId);
+  switch (lane?.kind) {
+    case 'flank':
+      return kind === 'powerup' ? 4.5 : 3.5;
+    case 'return':
+      return kind === 'health_pack' ? 5 : 1.5;
+    case 'primary':
+      return kind === 'powerup' ? 3 : 1.5;
+    case 'access':
+      return 1.75;
+    default:
+      return 0;
+  }
+}
+
+function scoreRouteNodeForPowerups(node: RouteGraphNode, lanes: MapBlueprint['lanes']): Pick<PowerupPlacementCandidate, 'powerupScore' | 'healthScore' | 'strategicRole'> {
+  const laneScore = Math.max(0, ...node.laneIds.map((laneId) => getLaneKindScore('powerup', laneId, lanes)));
+  const healthLaneScore = Math.max(0, ...node.laneIds.map((laneId) => getLaneKindScore('health_pack', laneId, lanes)));
+
+  switch (node.kind) {
+    case 'contest':
+      return { strategicRole: 'midfield_contest', powerupScore: 15 + laneScore, healthScore: 5 + healthLaneScore };
+    case 'midfield':
+      return { strategicRole: 'midfield_contest', powerupScore: 12 + laneScore, healthScore: 6 + healthLaneScore };
+    case 'flank':
+      return { strategicRole: 'flank_reward', powerupScore: 10 + laneScore, healthScore: 9 + healthLaneScore };
+    case 'landmark':
+      return { strategicRole: 'flank_reward', powerupScore: 8 + laneScore, healthScore: 7 + healthLaneScore };
+    case 'fallback':
+      return { strategicRole: 'return_route', powerupScore: 4 + laneScore, healthScore: 12 + healthLaneScore };
+    case 'flag':
+    case 'base':
+      return { strategicRole: 'defensive_reset', powerupScore: 2 + laneScore, healthScore: 9 + healthLaneScore };
+    case 'spawn':
+    default:
+      return { strategicRole: 'route_bridge', powerupScore: 0, healthScore: 0 };
+  }
+}
+
+function scoreTacticalSlotForPowerups(slot: TacticalSlot, lanes: MapBlueprint['lanes']): Pick<PowerupPlacementCandidate, 'powerupScore' | 'healthScore' | 'strategicRole'> {
+  const powerupLaneScore = getLaneKindScore('powerup', slot.laneId, lanes);
+  const healthLaneScore = getLaneKindScore('health_pack', slot.laneId, lanes);
+
+  switch (slot.role) {
+    case 'midfield_occluder':
+    case 'elevated_bridge':
+    case 'underpass':
+      return { strategicRole: 'midfield_contest', powerupScore: 13 + powerupLaneScore, healthScore: 6 + healthLaneScore };
+    case 'flank_landmark':
+    case 'side_lane_cover_chain':
+    case 'tunnel_entrance':
+      return { strategicRole: 'flank_reward', powerupScore: 11 + powerupLaneScore, healthScore: 8 + healthLaneScore };
+    case 'defender_perch':
+    case 'hard_cover_cluster':
+      return { strategicRole: 'defensive_reset', powerupScore: 5 + powerupLaneScore, healthScore: 11 + healthLaneScore };
+    case 'soft_cover_cluster':
+      return { strategicRole: 'return_route', powerupScore: 5 + powerupLaneScore, healthScore: 10 + healthLaneScore };
+    case 'traversal_ramp':
+      return { strategicRole: 'route_bridge', powerupScore: 8 + powerupLaneScore, healthScore: 5 + healthLaneScore };
+    default:
+      return { strategicRole: 'route_bridge', powerupScore: 1 + powerupLaneScore, healthScore: 1 + healthLaneScore };
+  }
+}
+
+function offsetPowerupCandidate(
+  point: Vec3,
+  seed: number,
+  index: number,
+  radius: number,
+  direction?: { x: number; z: number }
+): Vec3 {
+  const random = mulberry32(seed ^ Math.imul(index + 1, 0x45d9f3b));
+  const facing = direction ? normalize2D(direction) : normalize2D({ x: random() - 0.5, z: random() - 0.5 });
+  const side = perpendicular(facing);
+  const sideOffset = lerp(-radius, radius, random());
+  const forwardOffset = lerp(-radius * 0.55, radius * 0.55, random());
+  return {
+    x: point.x + side.x * sideOffset + facing.x * forwardOffset,
+    y: point.y,
+    z: point.z + side.z * sideOffset + facing.z * forwardOffset,
+  };
+}
+
+function approximateZoneRadius(zone: { radius?: number; halfExtents?: { x: number; z: number }; clearanceRadius?: number }): number {
+  const shapeRadius = zone.radius
+    ?? (zone.halfExtents ? Math.hypot(zone.halfExtents.x, zone.halfExtents.z) : 0);
+  return Math.max(shapeRadius, zone.clearanceRadius ?? 0);
+}
+
+function isPowerupPlacementSafe(
+  point: Vec3,
+  blueprint: MapBlueprint,
+  layout: ProceduralCTFLayout,
+  accepted: readonly MapPowerupPickup[],
+  minSpacing = 7.25
+): boolean {
+  if (!isInsideBoundaryPolygon(point.x, point.z, layout.boundary)) return false;
+  if (distanceToBoundary(point.x, point.z, layout.boundary) < 5.2) return false;
+
+  for (const zone of blueprint.protectedZones) {
+    if (zone.kind !== 'spawn' && zone.kind !== 'flag' && zone.kind !== 'base') continue;
+    const avoidRadius = approximateZoneRadius(zone) + 3.25;
+    if (distance2D(point, zone.center) < avoidRadius) return false;
+  }
+
+  for (const module of blueprint.moduleInstances) {
+    if (distance2D(point, module.position) < POWERUP_PAD_RADIUS + 1.15) return false;
+  }
+
+  for (const existing of accepted) {
+    if (distance2D(point, existing.position) < minSpacing) return false;
+  }
+
+  return true;
+}
+
+function buildPowerupPlacementCandidates(
+  seed: number,
+  blueprint: MapBlueprint
+): PowerupPlacementCandidate[] {
+  const candidates: PowerupPlacementCandidate[] = [];
+  const random = mulberry32(seed ^ 0x706f7772);
+
+  blueprint.routeGraph.nodes.forEach((node, index) => {
+    const scores = scoreRouteNodeForPowerups(node, blueprint.lanes);
+    if (scores.powerupScore <= 0 && scores.healthScore <= 0) return;
+    candidates.push({
+      position: offsetPowerupCandidate(node.position, seed ^ 0x6e6f6465, index, 1.7),
+      strategicRole: scores.strategicRole,
+      powerupScore: scores.powerupScore,
+      healthScore: scores.healthScore,
+      routeNodeId: node.id,
+      laneId: node.laneIds[0],
+      teamBias: node.team,
+      tieBreak: random(),
+    });
+  });
+
+  blueprint.routeGraph.edges.forEach((edge, index) => {
+    const from = blueprint.routeGraph.nodes.find((node) => node.id === edge.from);
+    const to = blueprint.routeGraph.nodes.find((node) => node.id === edge.to);
+    if (!from || !to) return;
+    const mid = {
+      x: (from.position.x + to.position.x) / 2,
+      y: (from.position.y + to.position.y) / 2,
+      z: (from.position.z + to.position.z) / 2,
+    };
+    const direction = { x: to.position.x - from.position.x, z: to.position.z - from.position.z };
+    const powerupLaneScore = getLaneKindScore('powerup', edge.laneId, blueprint.lanes);
+    const healthLaneScore = getLaneKindScore('health_pack', edge.laneId, blueprint.lanes);
+    candidates.push({
+      position: offsetPowerupCandidate(mid, seed ^ 0x65646765, index, 1.25, direction),
+      strategicRole: edge.tags.includes('flank') ? 'flank_reward' : 'route_bridge',
+      powerupScore: 6 + powerupLaneScore,
+      healthScore: 5 + healthLaneScore,
+      laneId: edge.laneId,
+      tieBreak: random(),
+    });
+  });
+
+  blueprint.tacticalSlots.forEach((slot, index) => {
+    const scores = scoreTacticalSlotForPowerups(slot, blueprint.lanes);
+    if (scores.powerupScore <= 1 && scores.healthScore <= 1) return;
+    const slotRadius = clamp(getSlotFootprintRadius(slot), 1.6, 5.5);
+    const normal = perpendicular(slot.facing);
+    const sideSign = index % 2 === 0 ? 1 : -1;
+    const point = {
+      x: slot.position.x + normal.x * sideSign * (slotRadius + 1.1) - slot.facing.x * 0.65,
+      y: slot.position.y,
+      z: slot.position.z + normal.z * sideSign * (slotRadius + 1.1) - slot.facing.z * 0.65,
+    };
+    candidates.push({
+      position: point,
+      strategicRole: scores.strategicRole,
+      powerupScore: scores.powerupScore,
+      healthScore: scores.healthScore,
+      routeNodeId: slot.nodeId,
+      laneId: slot.laneId,
+      teamBias: slot.team,
+      tieBreak: random(),
+    });
+  });
+
+  return candidates;
+}
+
+function createMapPowerups(
+  seed: number,
+  blueprint: MapBlueprint,
+  layout: ProceduralCTFLayout,
+  heightMap: Uint16Array
+): MapPowerupPickup[] {
+  const counts = getPowerupCounts(layout.mapSize);
+  const accepted: MapPowerupPickup[] = [];
+  const candidates = buildPowerupPlacementCandidates(seed, blueprint);
+
+  const createPickup = (
+    kind: MapPowerupKind,
+    team: MapTeam,
+    pairIndex: number,
+    candidate: PowerupPlacementCandidate,
+    position: Vec3
+  ): MapPowerupPickup => ({
+    id: `${kind}_${team}_${pairIndex + 1}`,
+    kind,
+    position,
+    radius: POWERUP_PICKUP_RADIUS,
+    respawnSeconds: POWERUP_RESPAWN_SECONDS,
+    strategicRole: candidate.strategicRole,
+    routeNodeId: candidate.routeNodeId,
+    laneId: candidate.laneId,
+    teamBias: team,
+  });
+
+  const findCounterpartCandidate = (
+    kind: MapPowerupKind,
+    source: PowerupPlacementCandidate,
+    targetTeam: MapTeam,
+    sorted: PowerupPlacementCandidate[],
+    acceptedWithSource: readonly MapPowerupPickup[],
+    minSpacing: number
+  ): { candidate: PowerupPlacementCandidate; position: Vec3 } | null => {
+    let best: { candidate: PowerupPlacementCandidate; position: Vec3; score: number } | null = null;
+
+    for (const candidate of sorted) {
+      if (candidate === source || getPowerupSide(candidate.position, layout) !== targetTeam) continue;
+      if (getPowerupScore(candidate, kind) <= 0) continue;
+
+      const position = getSurfacePosition(layout, heightMap, candidate.position, 0.68);
+      if (!isPowerupPlacementSafe(position, blueprint, layout, acceptedWithSource, minSpacing)) continue;
+
+      const score = getPowerupPairMatchScore(source, candidate, kind, layout);
+      if (!best || score < best.score) {
+        best = { candidate, position, score };
+      }
+    }
+
+    return best ? { candidate: best.candidate, position: best.position } : null;
+  };
+
+  const selectKind = (kind: MapPowerupKind, targetCount: number): void => {
+    const targetPairCount = Math.floor(targetCount / 2);
+    const sorted = [...candidates].sort((candidateA, candidateB) => (
+      getPowerupScore(candidateB, kind) - getPowerupScore(candidateA, kind)
+      || candidateB.powerupScore + candidateB.healthScore - (candidateA.powerupScore + candidateA.healthScore)
+      || candidateA.tieBreak - candidateB.tieBreak
+    ));
+
+    for (const minSpacing of [7.25, 5.35, 4.25]) {
+      for (const sourceTeam of ['red', 'blue'] as const) {
+        const targetTeam: MapTeam = sourceTeam === 'red' ? 'blue' : 'red';
+
+        for (const candidate of sorted) {
+          const selectedPairCount = accepted.filter((pickup) => pickup.kind === kind).length / 2;
+          if (selectedPairCount >= targetPairCount) break;
+          if (getPowerupSide(candidate.position, layout) !== sourceTeam) continue;
+          if (getPowerupScore(candidate, kind) <= 0) continue;
+
+          const sourcePosition = getSurfacePosition(layout, heightMap, candidate.position, 0.68);
+          if (!isPowerupPlacementSafe(sourcePosition, blueprint, layout, accepted, minSpacing)) continue;
+
+          const pairIndex = Math.floor(accepted.filter((pickup) => pickup.kind === kind).length / 2);
+          const sourcePickup = createPickup(kind, sourceTeam, pairIndex, candidate, sourcePosition);
+          const acceptedWithSource = [...accepted, sourcePickup];
+          const mirroredPoint = mirrorPowerupPointToTeam(candidate.position, layout, targetTeam);
+          const mirroredPosition = getSurfacePosition(layout, heightMap, { ...mirroredPoint, y: candidate.position.y }, 0.68);
+
+          if (isPowerupPlacementSafe(mirroredPosition, blueprint, layout, acceptedWithSource, minSpacing)) {
+            accepted.push(
+              sourcePickup,
+              createPickup(kind, targetTeam, pairIndex, candidate, mirroredPosition)
+            );
+            continue;
+          }
+
+          const counterpart = findCounterpartCandidate(
+            kind,
+            candidate,
+            targetTeam,
+            sorted,
+            acceptedWithSource,
+            minSpacing
+          );
+          if (!counterpart) continue;
+
+          accepted.push(
+            sourcePickup,
+            createPickup(kind, targetTeam, pairIndex, counterpart.candidate, counterpart.position)
+          );
+        }
+      }
+    }
+  };
+
+  selectKind('powerup', counts.powerup);
+  selectKind('health_pack', counts.health_pack);
+
+  return accepted;
+}
+
+function flattenPowerupPads(
+  heightMap: Uint16Array,
+  layout: ProceduralCTFLayout,
+  powerups: readonly MapPowerupPickup[]
+): void {
+  for (const pickup of powerups) {
+    const targetRow = sampleMedianHeight(
+      heightMap,
+      layout.origin,
+      layout.size,
+      layout.voxelSize,
+      pickup.position,
+      POWERUP_PAD_RADIUS
+    );
+    flattenDisc(
+      heightMap,
+      layout.origin,
+      layout.size,
+      layout.voxelSize,
+      pickup.position,
+      POWERUP_PAD_RADIUS,
+      targetRow,
+      POWERUP_PAD_BLEND
+    );
+  }
+}
+
+function updatePowerupSurfacePositions(
+  layout: ProceduralCTFLayout,
+  heightMap: Uint16Array,
+  powerups: readonly MapPowerupPickup[]
+): MapPowerupPickup[] {
+  return powerups.map((pickup) => ({
+    ...pickup,
+    position: getSurfacePosition(layout, heightMap, pickup.position, 0.68),
+  }));
+}
+
+function paintPowerupPads(ctx: StructureStampContext, powerups: readonly MapPowerupPickup[]): void {
+  for (const pickup of powerups) {
+    const row = heightRowAtWorld(ctx.heightMap, ctx.origin, ctx.size, ctx.voxelSize, pickup.position);
+    const block = pickup.kind === 'health_pack' ? ctx.palette.healthPad : ctx.palette.powerupPad;
+    stampDisc(ctx, pickup.position, POWERUP_PAD_RADIUS, row, block);
+  }
+}
+
+function clearPowerupPadHeadroom(ctx: StructureStampContext, powerups: readonly MapPowerupPickup[]): void {
+  const clearRadius = POWERUP_PAD_RADIUS + 0.2;
+
+  for (const pickup of powerups) {
+    const row = heightRowAtWorld(ctx.heightMap, ctx.origin, ctx.size, ctx.voxelSize, pickup.position);
+    const minX = worldToGrid(pickup.position.x - clearRadius, ctx.origin.x, ctx.voxelSize.x, ctx.size.x);
+    const maxX = worldToGrid(pickup.position.x + clearRadius, ctx.origin.x, ctx.voxelSize.x, ctx.size.x);
+    const minZ = worldToGrid(pickup.position.z - clearRadius, ctx.origin.z, ctx.voxelSize.z, ctx.size.z);
+    const maxZ = worldToGrid(pickup.position.z + clearRadius, ctx.origin.z, ctx.voxelSize.z, ctx.size.z);
+    const clearRadiusSq = clearRadius * clearRadius;
+    const maxY = ctx.size.y - 1;
+
+    for (let z = minZ; z <= maxZ; z++) {
+      const worldZ = gridToWorldCenter(z, ctx.origin.z, ctx.voxelSize.z);
+      for (let x = minX; x <= maxX; x++) {
+        const worldX = gridToWorldCenter(x, ctx.origin.x, ctx.voxelSize.x);
+        if ((worldX - pickup.position.x) ** 2 + (worldZ - pickup.position.z) ** 2 > clearRadiusSq) continue;
+
+        for (let y = row + 1; y <= maxY; y++) {
+          setBlock(ctx, x, y, z, AIR);
+        }
+      }
+    }
+  }
+}
+
 function createModuleInstance(layout: ProceduralCTFLayout, heightMap: Uint16Array, placement: PlacedStructure): ModuleInstance {
   return {
     id: placement.id,
@@ -2439,8 +2942,9 @@ function generateProceduralVoxelMapInternal(
   options: ProceduralVoxelMapGenerationOptions = {}
 ): VoxelMapManifest {
   const normalizedSeed = seed >>> 0;
+  const mapSize = normalizeVoxelMapSizeId(options.mapSize);
   const markStage = markStageFactory(diagnostics);
-  const layout = createProceduralCTFLayout(normalizedSeed);
+  const layout = createProceduralCTFLayout(normalizedSeed, mapSize);
   const theme = getVoxelMapTheme(normalizedSeed, options.themeId);
   const construction = createMapConstruction(normalizedSeed, layout, theme);
   const palette = createBlockPalette(theme);
@@ -2454,6 +2958,29 @@ function generateProceduralVoxelMapInternal(
   flattenGameplayPads(heightMap, layout);
   flattenStructurePads(heightMap, layout, placements);
   updatePlacementSurfaceRows(heightMap, layout, placements);
+  const spawnPoints = createSpawnPoints(layout, heightMap);
+  const flagZones = createFlagZones(layout, heightMap);
+  let blueprint = patchBlueprintForGeneratedMap({
+    blueprint: construction.blueprint,
+    construction,
+    layout,
+    heightMap,
+    spawnPoints,
+    flagZones,
+    placements,
+  });
+  let powerups = createMapPowerups(normalizedSeed, blueprint, layout, heightMap);
+  flattenPowerupPads(heightMap, layout, powerups);
+  powerups = updatePowerupSurfacePositions(layout, heightMap, powerups);
+  blueprint = patchBlueprintForGeneratedMap({
+    blueprint: construction.blueprint,
+    construction,
+    layout,
+    heightMap,
+    spawnPoints,
+    flagZones,
+    placements,
+  });
   markStage('terrain');
 
   const blocks = new Uint8Array(layout.size.x * layout.size.y * layout.size.z);
@@ -2473,6 +3000,8 @@ function generateProceduralVoxelMapInternal(
   anchorBoundaryFloatingDetails(stampContext, layout);
   clearObjectiveHeadroom(stampContext, layout);
   paintObjectivePads(stampContext, layout);
+  clearPowerupPadHeadroom(stampContext, powerups);
+  paintPowerupPads(stampContext, powerups);
   removeSmallFloatingFragments(stampContext, layout, SPAWN_EGRESS_FLOATING_CLEANUP_MAX_BLOCKS);
   markStage('objects');
 
@@ -2496,17 +3025,6 @@ function generateProceduralVoxelMapInternal(
   const stats = createStats({ chunks, colliders, size: layout.size, chunkSize: layout.chunkSize });
   markStage('compile');
 
-  const spawnPoints = createSpawnPoints(layout, heightMap);
-  const flagZones = createFlagZones(layout, heightMap);
-  const blueprint = patchBlueprintForGeneratedMap({
-    blueprint: construction.blueprint,
-    construction,
-    layout,
-    heightMap,
-    spawnPoints,
-    flagZones,
-    placements,
-  });
   const compiledDiagnostics = finalizeCompiledMapDiagnostics(blueprint, {
     stats,
     stageTimingsMs: diagnostics?.stageTimingsMs,
@@ -2529,14 +3047,19 @@ function generateProceduralVoxelMapInternal(
       terrainConstraints: blueprint.terrainConstraints,
     };
     diagnostics.map = compiledDiagnostics;
-    diagnostics.objectSummary = buildObjectSummary(placements);
+    diagnostics.objectSummary = {
+      ...buildObjectSummary(placements),
+      health_pack: powerups.filter((pickup) => pickup.kind === 'health_pack').length,
+      powerup: powerups.filter((pickup) => pickup.kind === 'powerup').length,
+    };
     diagnostics.repairActions = {};
   }
 
   return {
-    id: `procedural_ctf_${normalizedSeed.toString(16).padStart(8, '0')}`,
+    id: `procedural_ctf_${layout.mapSize}_${normalizedSeed.toString(16).padStart(8, '0')}`,
     version: CONSTRUCTED_MAP_MANIFEST_VERSION,
     seed: normalizedSeed,
+    mapSize: layout.mapSize,
     familyId: construction.designBrief.familyId,
     topologyId: blueprint.topologyId,
     themeId: theme.id,
@@ -2561,6 +3084,7 @@ function generateProceduralVoxelMapInternal(
       protectedZones: blueprint.protectedZones,
       lanes: blueprint.lanes,
       routeGraph: blueprint.routeGraph,
+      powerups,
       sightlineSamples: blueprint.sightlineSamples,
     },
     construction: {
@@ -2590,6 +3114,10 @@ export function generateProceduralVoxelMap(
   seed = DEFAULT_PROCEDURAL_MAP_SEED,
   options: ProceduralVoxelMapGenerationOptions = {}
 ): VoxelMapManifest {
+  if (isTutorialMapSeed(seed)) {
+    return createTutorialVoxelMapManifest();
+  }
+
   return generateProceduralVoxelMapInternal(seed, undefined, options);
 }
 
@@ -2597,8 +3125,29 @@ export function generateProceduralVoxelMapWithDiagnostics(
   seed = DEFAULT_PROCEDURAL_MAP_SEED,
   options: ProceduralVoxelMapGenerationOptions = {}
 ): ProceduralVoxelMapGenerationResult {
+  if (isTutorialMapSeed(seed)) {
+    return {
+      manifest: createTutorialVoxelMapManifest(),
+      diagnostics: {
+        seed: TUTORIAL_MAP_SEED,
+        mapSize: TUTORIAL_MAP_SIZE_ID,
+        themeId: 'verdant',
+        repairActions: {},
+        stageTimingsMs: {},
+        objectSummary: {
+          tutorial: 1,
+        },
+      },
+    };
+  }
+
   const normalizedSeed = seed >>> 0;
-  const diagnostics = createProceduralVoxelMapDiagnostics(normalizedSeed, getVoxelMapTheme(normalizedSeed, options.themeId).id);
+  const mapSize = normalizeVoxelMapSizeId(options.mapSize);
+  const diagnostics = createProceduralVoxelMapDiagnostics(
+    normalizedSeed,
+    getVoxelMapTheme(normalizedSeed, options.themeId).id,
+    mapSize
+  );
   const manifest = generateProceduralVoxelMapInternal(normalizedSeed, diagnostics, options);
   return { manifest, diagnostics };
 }

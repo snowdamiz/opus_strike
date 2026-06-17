@@ -1,14 +1,7 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import {
-  HERO_DEFINITIONS,
-  PLAYER_CROUCH_HEIGHT,
-  PLAYER_HEIGHT,
-  type HeroId,
-  type Player,
-  type Team,
-} from '@voxel-strike/shared';
+import type { HeroId, Player, Team } from '@voxel-strike/shared';
 import {
   DEFAULT_WALK_DIRECTION,
   EMPTY_TEAM_ACCENT_PARTS,
@@ -78,6 +71,12 @@ import {
   visualStore,
 } from '../../store/visualStore';
 import { registerRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
+import {
+  getPlayerBodyPostureScaleY,
+  getPlayerHeight,
+  PLAYER_CENTER_TO_FEET,
+  setPlayerRenderOrigin,
+} from './playerWorldAnchors';
 import { gameplayFrameScheduler } from './systems/gameplayFrameScheduler';
 import type { RemotePlayerQualityConfig } from './visualQuality';
 
@@ -182,8 +181,6 @@ interface RemoteHeroRuntime {
   glowPulse: number;
 }
 
-const PLAYER_CENTER_TO_FEET = PLAYER_HEIGHT / 2;
-const CROUCH_HEIGHT_RATIO = PLAYER_CROUCH_HEIGHT / PLAYER_HEIGHT;
 const NETWORK_MOVING_SPEED = 0.45;
 const VISUAL_MOVING_SPEED = 0.18;
 const AIRBORNE_IDLE_VERTICAL_SPEED = 0.2;
@@ -206,13 +203,6 @@ function isHeroId(value: string | null | undefined): value is HeroId {
 
 function resolveHeroId(player: Player): HeroId {
   return isHeroId(player.heroId) ? player.heroId : 'phantom';
-}
-
-function setPlayerRenderOrigin(
-  target: THREE.Vector3,
-  position: { x: number; y: number; z: number }
-): THREE.Vector3 {
-  return target.set(position.x, position.y - PLAYER_CENTER_TO_FEET, position.z);
 }
 
 function getHorizontalSpeed(velocity: { x: number; z: number }): number {
@@ -338,17 +328,8 @@ function isWithinDistance(camera: THREE.Camera, position: THREE.Vector3, maxDist
   return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
 }
 
-function getPlayerHeight(player: Player): number {
-  const heroStats = player.heroId ? HERO_DEFINITIONS[player.heroId]?.stats : null;
-  return heroStats?.size.height ?? 1.8;
-}
-
-function getPostureScaleY(player: Player, playerHeight: number): number {
-  const hasLoweredPosture = player.movement.isCrouching || player.movement.isSliding;
-  const visibleHeight = hasLoweredPosture
-    ? Math.max(PLAYER_CROUCH_HEIGHT, playerHeight * CROUCH_HEIGHT_RATIO)
-    : playerHeight;
-  return visibleHeight / playerHeight;
+function getRemotePlayerHeight(player: Player): number {
+  return getPlayerHeight(player.heroId);
 }
 
 function getOutlineScale(scale: VoxelPart['scale']): VoxelPart['scale'] {
@@ -401,7 +382,7 @@ function resetRemoteAnimationState(runtime: RemoteHeroRuntime, player: Player): 
   runtime.jumpBlend = !player.movement.isGrounded ? 1 : 0;
   runtime.slideBlend = player.movement.isSliding ? 1 : 0;
   runtime.attackBlend = 0;
-  runtime.postureScaleY = getPostureScaleY(player, getPlayerHeight(player));
+  runtime.postureScaleY = getPlayerBodyPostureScaleY(player.movement);
   runtime.targetMovementPose = movementPose;
   runtime.previousMovementProfile = movementProfile;
   runtime.currentMovementProfile = movementProfile;
@@ -479,7 +460,7 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
     currentMovementProfile: initialMovementProfile,
     movementProfileBlend: 1,
     movementCycle: 0,
-    postureScaleY: getPostureScaleY(player, getPlayerHeight(player)),
+    postureScaleY: getPlayerBodyPostureScaleY(player.movement),
     smoothedWalkDirection: { ...DEFAULT_WALK_DIRECTION },
     wasJumping: false,
     jumpStartedAt: null,
@@ -651,9 +632,9 @@ function updateRemotePose(
   const frameDelta = Math.min(delta, 0.05);
   const heroId = runtime.heroId;
   const manifest = HERO_BODY_MANIFESTS[heroId];
-  const playerHeight = getPlayerHeight(player);
+  const playerHeight = getRemotePlayerHeight(player);
   const scale = playerHeight / 1.8;
-  const targetPostureScaleY = Math.max(0.45, Math.min(1, getPostureScaleY(player, playerHeight)));
+  const targetPostureScaleY = getPlayerBodyPostureScaleY(player.movement);
   runtime.postureScaleY = THREE.MathUtils.damp(
     runtime.postureScaleY,
     targetPostureScaleY,

@@ -10,6 +10,7 @@ export * from './types/movementPrediction.js';
 export * from './types/antiCheatTrace.js';
 export * from './types/voice.js';
 export * from './types/matchMode.js';
+export * from './types/gameplayMode.js';
 export * from './types/modelSystem.js';
 
 // Constants
@@ -22,6 +23,7 @@ export * from './utils/math.js';
 export * from './utils/playerGeometry.js';
 export * from './utils/chronosAegis.js';
 export * from './utils/blazeMeteor.js';
+export * from './utils/blazeRocketJump.js';
 export * from './utils/movementDirection.js';
 export * from './utils/teamHeroLocks.js';
 

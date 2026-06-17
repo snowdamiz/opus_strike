@@ -4,17 +4,24 @@ import { useGameStore, LobbyPlayer, LobbyWagerState, MapVoteOption, MapVoteRecor
 import { config } from '../config/environment';
 import {
   createRandomSeed,
+  DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_VOXEL_MAP_SIZE_ID,
+  TUTORIAL_MAP_SEED,
+  createTutorialVoxelMapManifest,
   getHeroStats,
+  isGameplayMode,
   MOVEMENT_PROTOCOL_VERSION,
-  type AbilityCastOriginHint,
+  POWERUP_HEALTH_RESTORE_RATIO,
   type BotDifficulty,
   type GameEndEvent,
+  type GameplayMode,
   type HeroId,
   type Team,
   type PublicRankSnapshot,
   type MovementCommandPacket,
   type PlayerPingRequestMessage,
   type PlayerPingsMessage,
+  type VoxelMapSizeId,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
 import type { VoiceScope, VoiceTokenResponse } from '../voice/types';
@@ -38,6 +45,7 @@ import {
   setupSelfMovementAuthorityHandler,
   setupPlayerVitalsHandler,
   setupMatchSnapshotHandler,
+  setupPowerupHandlers,
   setupVoidZoneHandlers,
   setupCombatHandlers,
   setupPollingSync,
@@ -60,11 +68,27 @@ type CreateLobbyOptions = {
   botFillMode?: 'manual' | 'fill_even' | 'fill_empty';
   defaultBotDifficulty?: BotDifficulty;
   wager?: CreateLobbyWagerOptions;
+  gameplayMode?: GameplayMode;
   mapSeed?: number;
   forceGoldenMapOption?: boolean;
   observersEnabled?: boolean;
 };
-type StartPracticeGameOptions = { mapSeed?: number };
+type StartPracticeGameOptions = { mapSeed?: number; tutorial?: boolean };
+const TUTORIAL_HERO_ID: HeroId = 'blaze';
+
+function facingToLookYaw(facing: { x: number; z: number } | null | undefined): number {
+  if (
+    !facing ||
+    !Number.isFinite(facing.x) ||
+    !Number.isFinite(facing.z) ||
+    Math.hypot(facing.x, facing.z) <= 0.001
+  ) {
+    return Math.PI;
+  }
+
+  return Math.atan2(-facing.x, -facing.z);
+}
+
 export interface RunningGameReconnectStatus {
   available: boolean;
   session: RunningGameSession | null;
@@ -86,6 +110,7 @@ interface NetworkContextType {
   rankedPlay: (playerName: string) => Promise<void>;
   getRankedTokenHoldStatus: () => Promise<RankedTokenHoldStatus>;
   startPracticeGame: (playerName?: string, options?: StartPracticeGameOptions) => void;
+  startTutorialGame: (playerName?: string) => void;
   joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
   leaveLobby: () => void;
   setLobbyReady: (ready: boolean) => void;
@@ -121,7 +146,6 @@ interface NetworkContextType {
   leaveGame: () => void;
   disconnect: () => void;
   sendMovementCommands: (packet: MovementCommandPacket) => void;
-  requestBlazeBombDrop: (payload?: { abilityCastHints?: AbilityCastOriginHint[] }) => void;
   selectHero: (heroId: HeroId) => void;
   devSetHero: (heroId: HeroId) => void;
   devFillUltimate: () => void;
@@ -196,6 +220,7 @@ interface MatchStartGateMessage {
   serverTime?: number;
   mapSeed?: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
+  mapSize?: VoxelMapSizeId | null;
   position?: { x: number; y: number; z: number };
   movementEpoch?: number;
   ackSeq?: number;
@@ -285,6 +310,9 @@ async function requestRankedTokenHoldStatus(): Promise<RankedTokenHoldStatus> {
 async function requestRunningGameStatus(roomId: string): Promise<{
   available: boolean;
   reason?: string;
+  mapSeed?: number;
+  mapThemeId?: VoxelMapTheme['id'] | null;
+  mapSize?: VoxelMapSizeId | null;
 }> {
   const response = await fetch(`${getHttpUrl()}/matchmaking/running-game/${encodeURIComponent(roomId)}`, {
     credentials: 'include',
@@ -397,12 +425,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setPlayerId,
     setPlayerName,
     setPracticeMode,
+    setTutorialMode,
     setPracticePreparing,
     setAppPhase,
     setGamePhase,
     setPhaseEndTime,
     setMapSeed,
     setMapThemeId,
+    setMapSize,
     setLocalPlayer,
     updatePlayer,
     removePlayer,
@@ -486,6 +516,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const startPracticeGame = useCallback((playerName?: string, options?: StartPracticeGameOptions) => {
     const name = resolvePracticePlayerName(playerName);
+    const isTutorial = options?.tutorial === true;
 
     cleanupExistingConnections();
     clearRunningGameSession();
@@ -493,6 +524,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     rejectPendingVoiceTokenRequests('practice mode started');
     setPlayerName(name);
     setPracticeMode(true);
+    setTutorialMode(isTutorial);
     setLoading(false);
     setPracticePreparing(true);
 
@@ -502,24 +534,51 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       if (practiceStartTokenRef.current !== startToken) return;
 
       try {
-        const seed = typeof options?.mapSeed === 'number'
+        const tutorialManifest = isTutorial ? createTutorialVoxelMapManifest() : null;
+        const seed = isTutorial
+          ? TUTORIAL_MAP_SEED
+          : typeof options?.mapSeed === 'number'
           ? options.mapSeed >>> 0
           : createRandomSeed();
-        const preparedMap = prepareVoxelMapCpu({ seed, source: 'match' });
+        const preparedMap = prepareVoxelMapCpu({
+          seed,
+          manifest: tutorialManifest ?? undefined,
+          mapSize: tutorialManifest?.mapSize ?? DEFAULT_VOXEL_MAP_SIZE_ID,
+          themeId: tutorialManifest?.themeId ?? null,
+          source: 'match',
+        });
         prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'practice-start' });
-        const spawnPoints = [
-          ...preparedMap.manifest.spawnPoints.red,
-          ...preparedMap.manifest.spawnPoints.blue,
-        ];
-        const spawn = spawnPoints[Math.floor(Math.random() * spawnPoints.length)] ?? { x: 0, y: 1, z: 0 };
+        const spawnPoints = isTutorial
+          ? preparedMap.manifest.spawnPoints.red
+          : [
+            ...preparedMap.manifest.spawnPoints.red,
+            ...preparedMap.manifest.spawnPoints.blue,
+          ];
+        const spawn = isTutorial
+          ? spawnPoints[0] ?? { x: 0, y: 1, z: 0 }
+          : spawnPoints[Math.floor(Math.random() * spawnPoints.length)] ?? { x: 0, y: 1, z: 0 };
         const playerId = createPracticePlayerId();
         const player = createDefaultLocalPlayer(playerId, name);
+        const tutorialHeroStats = isTutorial ? getHeroStats(TUTORIAL_HERO_ID) : null;
 
-        player.state = 'selecting';
+        player.state = isTutorial ? 'alive' : 'selecting';
         player.position = { ...spawn };
         player.team = 'red';
-        player.isReady = false;
-        player.heroId = null;
+        if (isTutorial) {
+          player.lookYaw = facingToLookYaw(preparedMap.manifest.gameplay.spawns.red.facing);
+          player.lookPitch = 0;
+        }
+        player.isReady = isTutorial;
+        player.heroId = isTutorial ? TUTORIAL_HERO_ID : null;
+        if (tutorialHeroStats) {
+          player.maxHealth = tutorialHeroStats.maxHealth;
+          player.health = Math.max(
+            1,
+            tutorialHeroStats.maxHealth - Math.max(1, Math.round(tutorialHeroStats.maxHealth * POWERUP_HEALTH_RESTORE_RATIO))
+          );
+          player.ultimateCharge = 100;
+          player.abilities = createPracticeAbilityStates(TUTORIAL_HERO_ID);
+        }
         player.hasFlag = false;
 
         useGameStore.setState({
@@ -527,19 +586,31 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           isConnected: false,
           isLoading: false,
           isPracticeMode: true,
+          isTutorialMode: isTutorial,
           isPracticePreparing: false,
           roomId: null,
           playerId,
           appPhase: 'in_game',
-          gamePhase: 'hero_select',
+          gameplayMode: DEFAULT_GAMEPLAY_MODE,
+          gamePhase: isTutorial ? 'playing' : 'hero_select',
           matchSummary: null,
           appliedExperienceMatchId: null,
           mapSeed: seed,
-          mapThemeId: null,
+          mapThemeId: preparedMap.manifest.themeId,
+          mapSize: preparedMap.manifest.mapSize,
           redScore: 0,
           blueScore: 0,
-          redFlag: null,
-          blueFlag: null,
+          redFlag: isTutorial
+            ? { position: { ...preparedMap.manifest.flagZones.red }, carrierId: null, isAtBase: true }
+            : null,
+          blueFlag: isTutorial
+            ? { position: { ...preparedMap.manifest.flagZones.blue }, carrierId: null, isAtBase: true }
+            : null,
+          powerupPickups: new Map(preparedMap.manifest.gameplay.powerups.map((pickup) => [
+            pickup.id,
+            { pickupId: pickup.id, availableAt: 0 },
+          ])),
+          powerupPickupCollections: new Map(),
           players: new Map([[playerId, player]]),
           localPlayer: player,
           playerPings: new Map(),
@@ -550,6 +621,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           ultimateEffectEndTime: 0,
           clientCooldowns: {},
           clientCharges: {},
+          lastSkillCastAt: 0,
+          lastPrimaryFireAt: 0,
           slideIntensity: 0,
           isObserverMode: false,
         });
@@ -558,13 +631,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         setRoomId(null);
         setConnected(false);
 
-        loggers.network.info('started local practice', seed);
+        loggers.network.info(isTutorial ? 'started local tutorial' : 'started local practice', seed);
       } catch (error) {
         loggers.network.error('failed to start local practice', error);
         practiceStartTokenRef.current += 1;
         useGameStore.setState({
           isPracticePreparing: false,
           isPracticeMode: false,
+          isTutorialMode: false,
           appPhase: 'menu',
           gamePhase: 'waiting',
         });
@@ -579,14 +653,20 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setPlayerName,
     setPracticePreparing,
     setPracticeMode,
+    setTutorialMode,
     setRoomId,
   ]);
+
+  const startTutorialGame = useCallback((playerName?: string) => {
+    startPracticeGame(playerName, { tutorial: true });
+  }, [startPracticeGame]);
 
   const setupLobbyListeners = useCallback((room: Room, playerName: string) => {
     room.onMessage('lobbyState', (data: {
       lobbyId: string;
       name: string;
       matchMode?: LobbyWagerState['matchMode'];
+      gameplayMode?: GameplayMode;
       hostId: string;
       status: string;
       players: any[];
@@ -608,6 +688,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     }) => {
       loggers.network.debug('received lobby state', data);
       setCurrentLobby(data.lobbyId, data.name);
+      useGameStore.setState({
+        gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : DEFAULT_GAMEPLAY_MODE,
+      });
       const currentWager = useGameStore.getState().currentLobbyWager;
       const nextWager = data.wager ?? { enabled: false };
       setCurrentLobbyWager({
@@ -714,14 +797,21 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       selectedOptionId: string;
       mapSeed: number;
       mapThemeId?: VoxelMapTheme['id'] | null;
+      mapSize?: VoxelMapSizeId | null;
       votes: MapVoteRecord[];
     }) => {
       loggers.network.info('map vote finalized', data.mapSeed);
       setMapVotes(data.votes, data.selectedOptionId);
       setMapSeed(data.mapSeed);
       setMapThemeId(data.mapThemeId ?? null);
+      setMapSize(data.mapSize);
       try {
-        const preparedMap = prepareVoxelMapCpu({ seed: data.mapSeed, themeId: data.mapThemeId ?? null, source: 'mapVoteFinalized' });
+        const preparedMap = prepareVoxelMapCpu({
+          seed: data.mapSeed,
+          themeId: data.mapThemeId ?? null,
+          mapSize: data.mapSize,
+          source: 'mapVoteFinalized',
+        });
         prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 3, label: 'map-vote-finalized' });
       } catch (error) {
         loggers.network.warn('selected map CPU prep failed', error);
@@ -892,6 +982,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       gameRoomId: string;
       players: { playerId: string; playerName: string; team?: string; isBot?: boolean; isObserver?: boolean }[];
       entryTicket?: string;
+      gameplayMode?: GameplayMode;
+      mapSize?: VoxelMapSizeId | null;
     }) => {
       if (isJoiningGame) {
         loggers.network.debug('ignoring duplicate gameStarting message');
@@ -903,6 +995,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       const myAssignment = data.players.find(p => p.playerId === room.sessionId);
       const isObserver = myAssignment?.isObserver === true;
       const myTeam = myAssignment?.team || 'red';
+      useGameStore.setState({
+        gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : DEFAULT_GAMEPLAY_MODE,
+      });
+      setMapSize(data.mapSize);
 
       try {
         await joinGameRoom(data.gameRoomId, playerName, myTeam, data.entryTicket, isObserver);
@@ -937,7 +1033,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       disconnectVoice('left_lobby');
       resetLobby();
     });
-  }, [setCurrentLobby, setCurrentLobbyWager, setIsLobbyHost, setLobbyObserverSettings, setLobbyError, setMatchmakingStatus, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, setAppPhase, setMapVoteState, setMapVotes, setMapSeed, setMapThemeId, clearMapVote, resetLobby]);
+  }, [setCurrentLobby, setCurrentLobbyWager, setIsLobbyHost, setLobbyObserverSettings, setLobbyError, setMatchmakingStatus, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, setAppPhase, setMapVoteState, setMapVotes, setMapSeed, setMapThemeId, setMapSize, clearMapVote, resetLobby]);
 
   const createLobby = useCallback(async (
     playerName: string,
@@ -962,6 +1058,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         botFillMode: options?.botFillMode || 'manual',
         defaultBotDifficulty: options?.defaultBotDifficulty || 'normal',
         wager: options?.wager,
+        gameplayMode: options?.gameplayMode ?? DEFAULT_GAMEPLAY_MODE,
         mapSeed: config.isDev && typeof options?.mapSeed === 'number'
           ? options.mapSeed >>> 0
           : undefined,
@@ -1261,6 +1358,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       localPlayer: null,
       clientCooldowns: {},
       clientCharges: {},
+      lastSkillCastAt: 0,
+      lastPrimaryFireAt: 0,
       slideIntensity: 0,
     });
   }, [removePlayer, setMatchStartGateKey, setObserverMode]);
@@ -1309,13 +1408,25 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       : null;
 
     // Set up message handlers
-    room.onMessage('phaseChange', measureNetworkMessage('phaseChange', (data: { phase: string; endTime: number; mapSeed?: number; mapThemeId?: VoxelMapTheme['id'] | null }) => {
+    room.onMessage('phaseChange', measureNetworkMessage('phaseChange', (data: {
+      phase: string;
+      endTime: number;
+      mapSeed?: number;
+      mapThemeId?: VoxelMapTheme['id'] | null;
+      mapSize?: VoxelMapSizeId | null;
+    }) => {
       loggers.network.debug('phase change message', data.phase);
       if (typeof data.mapSeed === 'number') {
         setMapSeed(data.mapSeed);
         setMapThemeId(data.mapThemeId ?? null);
+        setMapSize(data.mapSize);
         try {
-          const preparedMap = prepareVoxelMapCpu({ seed: data.mapSeed, themeId: data.mapThemeId ?? null, source: 'match' });
+          const preparedMap = prepareVoxelMapCpu({
+            seed: data.mapSeed,
+            themeId: data.mapThemeId ?? null,
+            mapSize: data.mapSize,
+            source: 'match',
+          });
           prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'phase-change' });
         } catch (error) {
           loggers.network.warn('phase map CPU prep failed', error);
@@ -1334,6 +1445,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       if (typeof data.mapSeed === 'number') {
         setMapSeed(data.mapSeed);
         setMapThemeId(data.mapThemeId ?? null);
+        setMapSize(data.mapSize);
       }
 
       const position = data.position;
@@ -1374,6 +1486,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     room.onMessage('gameEnd', measureNetworkMessage('gameEnd', (data: GameEndEvent) => {
       loggers.network.info('game ended', data.finalScore);
       clearRunningGameSession(room.id);
+      useGameStore.setState({
+        gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : DEFAULT_GAMEPLAY_MODE,
+      });
       setMatchSummary(data);
       setGamePhase('game_end' as any);
       setPhaseEndTime(null);
@@ -1411,6 +1526,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setupSelfMovementAuthorityHandler(room);
     setupPlayerVitalsHandler(room, sessionId, localPlayerName);
     setupMatchSnapshotHandler(room);
+    setupPowerupHandlers(room);
     setupVoidZoneHandlers(room, sessionId);
     setupCombatHandlers(room);
 
@@ -1518,7 +1634,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
 
     setConnected(true);
-  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setMapThemeId, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, setPracticeMode, resetLobby, rejectPendingVoiceTokenRequests, rejectPendingPlayerReportRequests, setMatchSummary, clearMatchSummary, setPlayerPings, setMatchStartGateKey, setObserverMode, enterObserverMode]);
+  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setMapThemeId, setMapSize, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, setPracticeMode, resetLobby, rejectPendingVoiceTokenRequests, rejectPendingPlayerReportRequests, setMatchSummary, clearMatchSummary, setPlayerPings, setMatchStartGateKey, setObserverMode, enterObserverMode]);
 
   const getRunningGameReconnect = useCallback(async (): Promise<RunningGameReconnectStatus> => {
     const session = loadRunningGameSession();
@@ -1644,6 +1760,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       redScore: 0,
       blueScore: 0,
       mapThemeId: null,
+      mapSize: DEFAULT_VOXEL_MAP_SIZE_ID,
+      gameplayMode: DEFAULT_GAMEPLAY_MODE,
       redFlag: null,
       blueFlag: null,
       players: new Map(),
@@ -1656,6 +1774,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       ultimateEffectEndTime: 0,
       clientCooldowns: {},
       clientCharges: {},
+      lastSkillCastAt: 0,
+      lastPrimaryFireAt: 0,
       slideIntensity: 0,
       isObserverMode: false,
     });
@@ -1713,10 +1833,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const sendMovementCommands = useCallback((packet: MovementCommandPacket) => {
     if (packet.commands.length === 0) return;
     gameRoomRef.current?.send('movementCommands', packet);
-  }, []);
-
-  const requestBlazeBombDrop = useCallback((payload: { abilityCastHints?: AbilityCastOriginHint[] } = {}) => {
-    gameRoomRef.current?.send('blazeBombDrop', payload);
   }, []);
 
   const reportPlayer = useCallback((targetPlayerId: string, reason = 'cheating', details = ''): Promise<void> => {
@@ -1906,6 +2022,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       rankedPlay,
       getRankedTokenHoldStatus,
       startPracticeGame,
+      startTutorialGame,
       joinLobby,
       leaveLobby,
       setLobbyReady,
@@ -1930,7 +2047,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       leaveGame,
       disconnect,
       sendMovementCommands,
-      requestBlazeBombDrop,
       selectHero,
       devSetHero,
       devFillUltimate,

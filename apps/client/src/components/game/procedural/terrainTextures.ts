@@ -3,7 +3,7 @@ import type { VoxelBlockId, VoxelMapTheme } from '@voxel-strike/shared';
 import type { GraphicsFeatureQuality } from '../../../store/settingsStore';
 
 export const TERRAIN_TEXTURE_COLUMNS = 6;
-export const TERRAIN_TEXTURE_ROWS = 5;
+export const TERRAIN_TEXTURE_ROWS = 6;
 export const TERRAIN_TEXTURE_LAYER_COUNT = TERRAIN_TEXTURE_COLUMNS * TERRAIN_TEXTURE_ROWS;
 export const TERRAIN_TEXTURE_TILE_SIZE = 64;
 export let TILE_SIZE = TERRAIN_TEXTURE_TILE_SIZE;
@@ -139,6 +139,8 @@ const TILE_MAP: Record<string, TerrainTextureTile> = {
   gold_panel: textureTile(3, 4),
   gold_glass: textureTile(4, 4),
   crystal_growth: textureTile(5, 4),
+  health_pad: textureTile(0, 5),
+  powerup_pad: textureTile(1, 5),
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -343,6 +345,8 @@ const DETAIL_KIND_BY_TILE = new Map<TerrainTextureTile, TerrainDetailKind>([
   [TILE_MAP.spawn_pad_red, 'panel'],
   [TILE_MAP.spawn_pad_blue, 'panel'],
   [TILE_MAP.flag_pad, 'panel'],
+  [TILE_MAP.health_pad, 'panel'],
+  [TILE_MAP.powerup_pad, 'panel'],
   [TILE_MAP.barrier, 'panel'],
   [TILE_MAP.wood, 'wood'],
   [TILE_MAP.bamboo, 'wood'],
@@ -667,6 +671,8 @@ function paintTerrainTileSet(
     [TILE_MAP.spawn_pad_red, mixHex(theme.structures.metal, '#3a1114', 0.58)],
     [TILE_MAP.spawn_pad_blue, mixHex(theme.structures.metal, '#101d3a', 0.58)],
     [TILE_MAP.flag_pad, mixHex(theme.structures.metal, '#f7f7ff', 0.2)],
+    [TILE_MAP.health_pad, mixHex(theme.structures.metal, '#7f1717', 0.62)],
+    [TILE_MAP.powerup_pad, mixHex(theme.structures.metal, '#114f69', 0.62)],
     [TILE_MAP.barrier, theme.structures.barrier],
     [TILE_MAP.wood, '#8a5a32'],
     [TILE_MAP.bamboo, '#82a84a'],
@@ -719,6 +725,8 @@ function paintTerrainTileSet(
     [TILE_MAP.spawn_pad_red, '#ff684f'],
     [TILE_MAP.spawn_pad_blue, '#47ddff'],
     [TILE_MAP.flag_pad, '#f7f7ff'],
+    [TILE_MAP.health_pad, '#ff4f5f'],
+    [TILE_MAP.powerup_pad, '#45e2ff'],
     [TILE_MAP.lava, '#ff7b1f'],
   ];
 

@@ -47,6 +47,7 @@ const AUTH_RATE_LIMITS = {
   nonce: { limit: 30, windowMs: 60 * 1000 },
   verify: { limit: 20, windowMs: 60 * 1000 },
   register: { limit: 10, windowMs: 60 * 1000 },
+  tutorialComplete: { limit: 12, windowMs: 60 * 1000 },
   oauthStart: { limit: 20, windowMs: 60 * 1000 },
   oauthCallback: { limit: 30, windowMs: 60 * 1000 },
 } as const;
@@ -1086,6 +1087,37 @@ router.get('/session', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('[auth] Session validation error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/tutorial/complete', async (req: Request, res: Response) => {
+  if (!enforceJsonRateLimit(req, res, 'auth:tutorial:complete', AUTH_RATE_LIMITS.tutorialComplete)) return;
+
+  try {
+    const payload = await getAuthenticatedPayload(req);
+    const user = payload ? await findUserForPayload(payload) : null;
+    if (!user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const completedAt = user.tutorialCompletedAt ?? new Date();
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        tutorialCompletedAt: completedAt,
+        lastLoginAt: new Date(),
+      },
+      include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
+    });
+
+    res.json({
+      success: true,
+      user: serializeUser(updatedUser),
+    });
+  } catch (error) {
+    console.error('[auth] Tutorial completion error:', error);
+    res.status(500).json({ error: 'Failed to save tutorial completion' });
   }
 });
 

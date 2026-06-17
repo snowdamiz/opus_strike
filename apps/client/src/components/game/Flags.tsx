@@ -6,12 +6,15 @@ import { useGameStore } from '../../store/gameStore';
 import type { Team } from '@voxel-strike/shared';
 
 export function Flags() {
-  const { redFlag, blueFlag } = useGameStore(
+  const { gameplayMode, redFlag, blueFlag } = useGameStore(
     useShallow((state) => ({
+      gameplayMode: state.gameplayMode,
       redFlag: state.redFlag,
       blueFlag: state.blueFlag,
     }))
   );
+
+  if (gameplayMode !== 'capture_the_flag') return null;
 
   return (
     <group>

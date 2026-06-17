@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   BLAZE_ROCKET_COLLISION_RADIUS,
+  BLAZE_ROCKET_DAMAGE,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_RADIUS,
 } from '@voxel-strike/shared';
@@ -14,6 +15,7 @@ import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
 import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
+import { applyTutorialTrainingDamage } from '../../../utils/tutorialTrainingHeroes';
 import {
   getFireballCoreMaterial,
   getFireballInnerMaterial,
@@ -431,6 +433,15 @@ export function RocketsManager() {
         moveDistance + BLAZE_ROCKET_COLLISION_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
       );
       if (hitPlayer) {
+        applyTutorialTrainingDamage({
+          target: hitPlayer,
+          damage: BLAZE_ROCKET_DAMAGE,
+          damageType: 'rocket',
+          hitPosition: slot.position,
+          sourceId: slot.ownerId,
+          sourceTeam: slot.ownerTeam,
+          abilityId: 'blaze_rocket',
+        });
         triggerTerrainImpact('blaze_rocket', slot.position, {
           direction: slot.direction,
           scale: ROCKET_IMPACT_SCALE,

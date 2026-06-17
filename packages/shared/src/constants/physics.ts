@@ -9,7 +9,6 @@ export const CROUCH_MULTIPLIER = 0.5;
 export const MOVEMENT_STRAFE_SPEED_MULTIPLIER = 0.92;
 export const MOVEMENT_BACKWARD_SPEED_MULTIPLIER = 0.85;
 export const AIR_CONTROL = 0.3;
-export const MAX_JUMPS = 1;
 
 // ============================================
 // CS-STYLE BUNNY HOP / STRAFE JUMP PHYSICS
@@ -68,6 +67,7 @@ export const SLIDE_JUMP_MAX_SPEED_MULTIPLIER = 1.9; // Max horizontal carry when
 // Crouch
 export const CROUCH_TRANSITION_SPEED = 12; // How fast to transition camera height
 export const CROUCH_HEIGHT_OFFSET = -0.4; // How much to lower the camera when crouching
+export const SLIDE_CAMERA_HEIGHT_OFFSET = -0.8; // Match the lower slide capsule used for slide-only cover.
 export const SLIDE_CAMERA_PITCH_OFFSET = 0.12; // Slight upward camera tilt during slide (radians, ~7 degrees)
 export const SLIDE_FOV_BOOST = 15; // Extra FOV degrees during slide
 export const SLIDE_CAMERA_ROLL = 0.08; // Camera roll during slide (radians, ~4.5 degrees)
@@ -134,6 +134,8 @@ export const GLIDE_TURN_SPEED = 2;
 export const PLAYER_HEIGHT = 1.8;
 export const PLAYER_RADIUS = 0.48;
 export const PLAYER_CROUCH_HEIGHT = 1.0;
+export const PLAYER_SLIDE_HEIGHT = 0.78;
+export const PLAYER_SLIDE_RADIUS = 0.36;
 export const PLAYER_MASS = 80;
 export const PLAYER_COMBAT_HITBOX_PADDING = 0.14;
 export const PLAYER_EYE_HEIGHT = 0.6;

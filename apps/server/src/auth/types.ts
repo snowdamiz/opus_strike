@@ -29,6 +29,7 @@ export interface UserResponse {
   walletAddress: string | null;
   name: string;
   lastLoginAt: string | null;
+  tutorialCompletedAt: string | null;
   stats: {
     totalGames: number;
     totalWins: number;

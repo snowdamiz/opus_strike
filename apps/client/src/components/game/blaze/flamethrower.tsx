@@ -3,7 +3,13 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
 import {
+  BLAZE_FLAMETHROWER_BURN_DAMAGE,
+  BLAZE_FLAMETHROWER_BURN_INTERVAL_MS,
+  BLAZE_FLAMETHROWER_BURN_TICKS,
   BLAZE_FLAMETHROWER_COLLISION_RADIUS,
+  BLAZE_FLAMETHROWER_CONE_HALF_ANGLE,
+  BLAZE_FLAMETHROWER_DAMAGE,
+  BLAZE_FLAMETHROWER_DAMAGE_INTERVAL,
   BLAZE_FLAMETHROWER_RANGE,
   type Team,
 } from '@voxel-strike/shared';
@@ -16,6 +22,7 @@ import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
 import { measureFrameWork } from '../../../movement/networkDiagnostics';
+import { applyTutorialTrainingConeDamage } from '../../../utils/tutorialTrainingHeroes';
 import {
   PLIABLE_ROPE_SEGMENT_COUNT,
   ROPE_SEGMENT_INDICES,
@@ -204,6 +211,11 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider, ownerId,
     _direction.normalize();
 
     const now = getFrameClock().nowMs;
+    const game = useGameStore.getState();
+    const owner = ownerId ? game.players.get(ownerId) : game.localPlayer;
+    const activeOwnerId = ownerId ?? game.localPlayer?.id ?? game.playerId ?? '';
+    const activeOwnerTeam = ownerTeam ?? owner?.team ?? null;
+
     if (hasLivePose && !wasLiveRef.current) {
       startTimeRef.current = now;
     }
@@ -217,10 +229,6 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider, ownerId,
       cachedImpactHitRef.current = null;
     } else if (shouldSampleCollision) {
       lastCollisionSampleRef.current = now;
-      const game = useGameStore.getState();
-      const owner = ownerId ? game.players.get(ownerId) : game.localPlayer;
-      const activeOwnerId = ownerId ?? game.localPlayer?.id ?? game.playerId ?? '';
-      const activeOwnerTeam = ownerTeam ?? owner?.team ?? null;
       const aegisHit = getFirstChronosAegisVisualHit(
         _origin,
         _direction,
@@ -247,6 +255,33 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider, ownerId,
     }
 
     const impactHit = cachedImpactHitRef.current;
+    const collisionRange = impactHit
+      ? Math.max(FLAME_NOZZLE_VISUAL_OFFSET + 0.35, impactHit.distance)
+      : BLAZE_FLAMETHROWER_RANGE;
+
+    if (hasLivePose && rampRef.current > 0.35) {
+      applyTutorialTrainingConeDamage({
+        origin: { x: _origin.x, y: _origin.y, z: _origin.z },
+        direction: { x: _direction.x, y: _direction.y, z: _direction.z },
+        range: collisionRange,
+        coneDot: Math.cos(BLAZE_FLAMETHROWER_CONE_HALF_ANGLE),
+        extraRadius: BLAZE_FLAMETHROWER_COLLISION_RADIUS,
+        damage: BLAZE_FLAMETHROWER_DAMAGE,
+        damageType: 'flamethrower',
+        sourceId: activeOwnerId,
+        sourceTeam: activeOwnerTeam,
+        abilityId: 'blaze_flamethrower',
+        falloffScale: 0.35,
+        damageIntervalMs: BLAZE_FLAMETHROWER_DAMAGE_INTERVAL,
+        burn: {
+          damage: BLAZE_FLAMETHROWER_BURN_DAMAGE,
+          damageType: 'burn',
+          ticks: BLAZE_FLAMETHROWER_BURN_TICKS,
+          intervalMs: BLAZE_FLAMETHROWER_BURN_INTERVAL_MS,
+          abilityId: 'blaze_flamethrower',
+        },
+      });
+    }
 
     if (impactHit && now - lastTerrainImpactRef.current > FLAMETHROWER_TERRAIN_IMPACT_INTERVAL_MS) {
       lastTerrainImpactRef.current = now;
@@ -282,9 +317,6 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider, ownerId,
     const plumeIntensity = easeOutCubic(rampRef.current);
     const spin = time * (10 + plumeIntensity * 18);
     const streamPoints = streamPointsRef.current;
-    const collisionRange = impactHit
-      ? Math.max(FLAME_NOZZLE_VISUAL_OFFSET + 0.35, impactHit.distance)
-      : BLAZE_FLAMETHROWER_RANGE;
     const streamLength = collisionRange * (0.78 + plumeIntensity * 0.18);
 
     _streamStart.set(0, FLAME_NOZZLE_VISUAL_OFFSET, 0);

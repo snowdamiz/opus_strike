@@ -41,6 +41,7 @@ interface EmitterState {
 
 interface MovementParticle {
   active: boolean;
+  ownerId: string;
   x: number;
   y: number;
   z: number;
@@ -215,6 +216,10 @@ export function getRemoteMovementEffectMode(input: {
   return 'walk';
 }
 
+export function shouldSuppressRemoteMovementEffects(player: Pick<Player, 'heroId' | 'abilities'>): boolean {
+  return player.heroId === 'phantom' && player.abilities?.phantom_veil?.isActive === true;
+}
+
 export function getRemoteMovementEmissionRate(mode: RemoteMovementEffectMode, horizontalSpeed: number): number {
   if (mode === 'idle') return 0;
 
@@ -241,6 +246,7 @@ function getParticleDensity(capacity: number): number {
 function createParticles(capacity: number): MovementParticle[] {
   return Array.from({ length: capacity }, () => ({
     active: false,
+    ownerId: '',
     x: 0,
     y: 0,
     z: 0,
@@ -300,6 +306,7 @@ function applyStyleScale(
 
 function spawnParticle(
   particle: MovementParticle,
+  ownerId: string,
   style: RemoteMovementEffectStyle,
   mode: RemoteMovementEffectMode,
   position: THREE.Vector3,
@@ -317,6 +324,7 @@ function spawnParticle(
   const baseSize = (style.baseSize + Math.random() * style.sizeVariance) * randomBetween(0.86, 1.22) * intensity;
 
   particle.active = true;
+  particle.ownerId = ownerId;
   particle.x = position.x - moveDirX * backstep + perpendicularX * sideJitter;
   particle.y = position.y + PARTICLE_GROUND_OFFSET + randomBetween(0, 0.05);
   particle.z = position.z - moveDirZ * backstep + perpendicularZ * sideJitter;
@@ -330,6 +338,14 @@ function spawnParticle(
   particle.spinY = randomBetween(-2.2, 2.2);
   particle.spinZ = randomBetween(-2.4, 2.4) - speed * 0.03;
   applyStyleScale(particle, style, baseSize);
+}
+
+function deactivateParticlesForOwner(particles: MovementParticle[], ownerId: string): void {
+  for (const particle of particles) {
+    if (particle.ownerId !== ownerId) continue;
+    particle.active = false;
+    particle.ownerId = '';
+  }
 }
 
 function getEffectPosition(player: Player, visualState: VisualState, target: THREE.Vector3): THREE.Vector3 {
@@ -400,7 +416,7 @@ function updateEmitterState(
   for (let index = 0; index < emitCount; index++) {
     const particle = particles[nextParticleIndexRef.current];
     nextParticleIndexRef.current = (nextParticleIndexRef.current + 1) % particles.length;
-    spawnParticle(particle, style, mode, position, moveDirX, moveDirZ, speed);
+    spawnParticle(particle, player.id, style, mode, position, moveDirX, moveDirZ, speed);
   }
 
   emitterState.lastX = position.x;
@@ -422,6 +438,7 @@ function updateParticles(
     particle.ageMs += deltaMs;
     if (particle.ageMs >= particle.lifetimeMs) {
       particle.active = false;
+      particle.ownerId = '';
       continue;
     }
 
@@ -514,9 +531,10 @@ export function RemoteMovementEffects({
     for (const playerId of emitterStatesRef.current.keys()) {
       if (!activePlayerIds.has(playerId)) {
         emitterStatesRef.current.delete(playerId);
+        deactivateParticlesForOwner(particles, playerId);
       }
     }
-  }, [players]);
+  }, [particles, players]);
 
   useEffect(() => gameplayFrameScheduler.register({
     system: 'remoteMovementEffects',
@@ -529,6 +547,12 @@ export function RemoteMovementEffects({
       const visualState = visualStore.getState();
       const positionScratch = positionScratchRef.current;
       for (const player of players) {
+        if (shouldSuppressRemoteMovementEffects(player)) {
+          emitterStatesRef.current.delete(player.id);
+          deactivateParticlesForOwner(particles, player.id);
+          continue;
+        }
+
         let emitterState = emitterStatesRef.current.get(player.id);
         if (!emitterState) {
           emitterState = {

@@ -103,21 +103,22 @@ export function ObserverCameraController({ enabled }: ObserverCameraControllerPr
   const cameraControl = useCamera({ isPointerLocked });
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
+  const mapSize = useGameStore((state) => state.mapSize);
   const flySpeed = useGameStore((state) => OBSERVER_FLY_SPEED_PRESETS[state.observerFlySpeedPreset]);
   const cameraStart = useMemo(() => {
     try {
-      const preparedMap = getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId })
-        ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, source: 'match' });
+      const preparedMap = getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize })
+        ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, source: 'match' });
       return createObserverCameraStart(preparedMap.manifest, preparedMap.key);
     } catch (error) {
       console.warn('[ObserverCamera] Failed to resolve map start position', error);
       return {
-        key: `fallback:${mapSeed >>> 0}:${mapThemeId ?? 'default'}`,
+        key: `fallback:${mapSeed >>> 0}:${mapThemeId ?? 'default'}:${mapSize}`,
         position: FALLBACK_START_POSITION.clone(),
         target: FALLBACK_LOOK_TARGET.clone(),
       };
     }
-  }, [mapSeed, mapThemeId]);
+  }, [mapSeed, mapThemeId, mapSize]);
   const positionRef = useRef(cameraStart.position.clone());
   const initializedKeyRef = useRef<string | null>(null);
   const verticalRef = useRef({ up: false, down: false });

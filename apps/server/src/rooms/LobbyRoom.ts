@@ -1,12 +1,13 @@
 import type { IncomingMessage } from 'http';
 import { Room, Client, matchMaker } from 'colyseus';
 import { LobbyState, LobbyPlayer } from './schema/LobbyState';
-import { ALL_HERO_IDS, DEFAULT_GAME_CONFIG, GOLDEN_VOXEL_MAP_THEME_ID, HERO_DEFINITIONS, createRandomSeed, createProceduralMapPreview, getRankFromRating, getVoxelMapTheme, hashSeed, isMatchMode, isTeamHeroAvailable, toPublicRankSnapshot, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
+import { ALL_HERO_IDS, DEFAULT_GAMEPLAY_MODE, DEFAULT_GAME_CONFIG, DEFAULT_VOXEL_MAP_SIZE_ID, GOLDEN_VOXEL_MAP_THEME_ID, HERO_DEFINITIONS, VOXEL_MAP_SIZE_IDS, createRandomSeed, createProceduralMapPreview, getRankFromRating, getVoxelMapSizeDefinition, getVoxelMapTheme, hashSeed, isGameplayMode, isMatchMode, isTeamHeroAvailable, toPublicRankSnapshot, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
 import type { MatchMode } from '@voxel-strike/shared';
-import type { BlueprintPreview, BotDifficulty, HeroId, MapTopologyId, Team, VoxelMapTheme } from '@voxel-strike/shared';
+import type { BlueprintPreview, BotDifficulty, GameplayMode, HeroId, MapTopologyId, Team, VoxelMapSizeId, VoxelMapTheme } from '@voxel-strike/shared';
 import { assertUsableEntryTicketSecret, isDevelopmentToolsEnabled } from '../config/security';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
 import { assertGameplayAccountEligible } from '../auth/accountEligibility';
+import { assertTutorialCompleted } from '../auth/tutorialCompletion';
 import { createGameEntryTicket } from '../security/entryTickets';
 import { verifyMatchmakingTicket, type MatchmakingTicketClaims } from '../security/matchmakingTickets';
 import { consumeReplayNonce } from '../security/replayNonceStore';
@@ -52,6 +53,7 @@ interface JoinOptions {
   isPrivate?: boolean;
   matchmakingMode?: boolean;
   matchMode?: MatchMode;
+  gameplayMode?: GameplayMode;
   matchmakingTicket?: string;
   rankBandId?: number;
   rankedEntryQuoteId?: string;
@@ -92,6 +94,8 @@ interface MapVoteOption {
   id: string;
   seed: number;
   name: string;
+  mapSize: VoxelMapSizeId;
+  mapSizeLabel: string;
   themeId: string;
   themeName: string;
   mapThemeId?: VoxelMapTheme['id'] | null;
@@ -117,7 +121,7 @@ const MAX_PLAYERS_PER_TEAM = DEFAULT_GAME_CONFIG.teamSize;
 const MAX_OBSERVERS = 1;
 const QUICK_PLAY_REQUIRED_PLAYERS = DEFAULT_GAME_CONFIG.maxPlayers;
 const PRODUCTION_CUSTOM_MIN_PARTICIPANTS = 2;
-const MAP_VOTE_OPTION_COUNT = 3;
+const MAP_VOTE_OPTION_COUNT = VOXEL_MAP_SIZE_IDS.length;
 const MAP_VOTE_DURATION_MS = 30000;
 const WAGER_SAFETY_REFRESH_MS = 10_000;
 const MAP_NAME_SUFFIXES = [
@@ -224,6 +228,7 @@ export class LobbyRoom extends Room<LobbyState> {
   private wagerSafetyRefreshInterval: ReturnType<typeof setInterval> | null = null;
   private disposed = false;
   private matchMode: MatchMode = 'custom';
+  private gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE;
   private isQuickPlayQueue = false;
   private isRankedQueue = false;
   private rankBandId = DEFAULT_RANK_DIVISION_INDEX;
@@ -243,6 +248,7 @@ export class LobbyRoom extends Room<LobbyState> {
   async onAuth(client: Client, options: JoinOptions, request?: IncomingMessage): Promise<RoomAuthContext> {
     const authContext = await resolveRoomAuthContext(options as Record<string, unknown>, request);
     await assertGameplayAccountEligible(authContext.userId);
+    assertTutorialCompleted(authContext.tutorialCompletedAt);
     return authContext;
   }
 
@@ -253,6 +259,7 @@ export class LobbyRoom extends Room<LobbyState> {
       ? verifyMatchmakingTicket(options.matchmakingTicket)
       : null;
     this.matchMode = this.resolveRoomMatchMode(options, initialMatchmakingTicket);
+    this.gameplayMode = this.resolveRoomGameplayMode(options);
     this.isQuickPlayQueue = this.matchMode === 'quick_play';
     this.isRankedQueue = this.matchMode === 'ranked';
     this.rankBandId = this.resolveRoomRankBand(options, initialMatchmakingTicket);
@@ -264,6 +271,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.setState(new LobbyState());
     this.state.lobbyId = this.roomId;
     this.state.matchMode = this.matchMode;
+    this.state.gameplayMode = this.gameplayMode;
     this.state.name = options.lobbyName || (this.isQuickPlayQueue ? 'Quick Play' : this.isRankedQueue ? 'Ranked' : `Lobby ${this.roomId.slice(0, 6)}`);
     this.state.maxPlayers = this.maxClients;
     this.state.maxParticipants = MAX_PARTICIPANTS;
@@ -589,6 +597,7 @@ export class LobbyRoom extends Room<LobbyState> {
       lobbyId: this.state.lobbyId,
       name: this.state.name,
       matchMode: this.matchMode,
+      gameplayMode: this.gameplayMode,
       hostId: this.state.hostId,
       status: this.state.status,
       players: this.getPlayersArray(),
@@ -1092,11 +1101,12 @@ export class LobbyRoom extends Room<LobbyState> {
       selectedOptionId: selectedOption.id,
       mapSeed: selectedOption.seed,
       mapThemeId: selectedMapThemeId,
+      mapSize: selectedOption.mapSize,
       votes: this.getMapVoteRecords(),
     });
 
     try {
-      await this.createGameFromLobby(selectedOption.seed, selectedMapThemeId);
+      await this.createGameFromLobby(selectedOption.seed, selectedMapThemeId, selectedOption.mapSize);
     } catch (error) {
       console.error('Failed to create game room:', error);
       const capacityError = isInGameCapacityAdmissionError(error) ? error : null;
@@ -1117,7 +1127,11 @@ export class LobbyRoom extends Room<LobbyState> {
     }
   }
 
-  private async createGameFromLobby(mapSeed: number, mapThemeId: VoxelMapTheme['id']): Promise<void> {
+  private async createGameFromLobby(
+    mapSeed: number,
+    mapThemeId: VoxelMapTheme['id'],
+    mapSize: VoxelMapSizeId
+  ): Promise<void> {
     const playerAssignments = this.createPlayerAssignments();
     const observerAssignments = this.createObserverAssignments();
     const gameStartingAssignments: GameStartingAssignment[] = [...playerAssignments, ...observerAssignments];
@@ -1144,8 +1158,10 @@ export class LobbyRoom extends Room<LobbyState> {
         lobbyId: this.state.lobbyId,
         lobbyName: this.state.name,
         matchMode: this.matchMode,
+        gameplayMode: this.gameplayMode,
         mapSeed,
         mapThemeId,
+        mapSize,
         botAssignments: playerAssignments.filter((assignment) => assignment.isBot),
         observerCount: observerAssignments.length,
         wagerContext: lockedWagerContext,
@@ -1210,7 +1226,9 @@ export class LobbyRoom extends Room<LobbyState> {
           gameRoomId: gameRoom.roomId,
           players: gameStartingAssignments,
           entryTicket: ticketsByPlayerId.get(client.sessionId),
+          gameplayMode: this.gameplayMode,
           mapThemeId,
+          mapSize,
           wager: lockedWagerContext,
         });
       }
@@ -1504,7 +1522,7 @@ export class LobbyRoom extends Room<LobbyState> {
   private createMapVoteOptions(): MapVoteOption[] {
     if (this.customMapSeed !== null) {
       const mapThemeId = this.forceGoldenMapOption ? GOLDEN_VOXEL_MAP_THEME_ID : null;
-      return [this.createMapVoteOption(this.customMapSeed, 0, mapThemeId)];
+      return [this.createMapVoteOption(this.customMapSeed, 0, mapThemeId, DEFAULT_VOXEL_MAP_SIZE_ID)];
     }
 
     const source = hashSeed(Date.now() ^ Math.imul(this.botIdCounter + 1, 0x632be59b));
@@ -1517,22 +1535,30 @@ export class LobbyRoom extends Room<LobbyState> {
       const themeIndex = themeIndices[index % themeIndices.length];
       const seed = createSeedForTheme(themeIndex, source ^ Math.imul(index + 1, 0x85ebca6b));
       const mapThemeId = index === forcedGoldenIndex ? GOLDEN_VOXEL_MAP_THEME_ID : null;
-      return this.createMapVoteOption(seed, index, mapThemeId);
+      const mapSize = VOXEL_MAP_SIZE_IDS[index % VOXEL_MAP_SIZE_IDS.length];
+      return this.createMapVoteOption(seed, index, mapThemeId, mapSize);
     });
   }
 
-  private createMapVoteOption(seed: number, index: number, mapThemeId: VoxelMapTheme['id'] | null = null): MapVoteOption {
+  private createMapVoteOption(
+    seed: number,
+    index: number,
+    mapThemeId: VoxelMapTheme['id'] | null = null,
+    mapSize: VoxelMapSizeId = DEFAULT_VOXEL_MAP_SIZE_ID
+  ): MapVoteOption {
     const normalizedSeed = seed >>> 0;
     const theme = getVoxelMapTheme(normalizedSeed, mapThemeId);
-    const preview = createProceduralMapPreview(normalizedSeed);
+    const preview = createProceduralMapPreview(normalizedSeed, mapSize);
+    const mapSizeDefinition = getVoxelMapSizeDefinition(mapSize);
     const suffix = MAP_NAME_SUFFIXES[hashSeed(normalizedSeed ^ index) % MAP_NAME_SUFFIXES.length];
     const themeName = mapThemeId ? theme.name : preview.themeName || theme.name;
-    const topologyLabel = preview.name.replace(`${preview.themeName || getVoxelMapTheme(normalizedSeed).name} `, '');
 
     return {
       id: `map_${index + 1}`,
       seed: normalizedSeed,
-      name: `${themeName} ${topologyLabel} ${suffix}`,
+      name: `${themeName} ${suffix}`,
+      mapSize: mapSizeDefinition.id,
+      mapSizeLabel: mapSizeDefinition.label,
       themeId: theme.id,
       themeName,
       mapThemeId,
@@ -2013,6 +2039,7 @@ export class LobbyRoom extends Room<LobbyState> {
       lobbyId: this.state.lobbyId,
       name: this.state.name,
       matchMode: this.matchMode,
+      gameplayMode: this.gameplayMode,
       hostId: this.state.hostId,
       status: this.state.status,
       players: this.getPlayersArray(),
@@ -2215,6 +2242,11 @@ export class LobbyRoom extends Room<LobbyState> {
     return options.wager?.enabled ? 'custom_wager' : 'custom';
   }
 
+  private resolveRoomGameplayMode(options: JoinOptions): GameplayMode {
+    if (options.matchmakingMode === true) return DEFAULT_GAMEPLAY_MODE;
+    return isGameplayMode(options.gameplayMode) ? options.gameplayMode : DEFAULT_GAMEPLAY_MODE;
+  }
+
   private resolveRoomRankBand(options: JoinOptions, ticket: MatchmakingTicketClaims | null): number {
     if (options.matchmakingMode !== true) return DEFAULT_RANK_DIVISION_INDEX;
 
@@ -2321,6 +2353,7 @@ export class LobbyRoom extends Room<LobbyState> {
       maxParticipants: this.state.maxParticipants,
       maxPlayers: this.state.maxPlayers,
       matchMode: this.matchMode,
+      gameplayMode: this.gameplayMode,
       matchmakingMode: this.isMatchmakingQueue(),
       rankBandId: this.isMatchmakingQueue() ? this.rankBandId : undefined,
       requiredPlayers: this.isMatchmakingQueue() ? QUICK_PLAY_REQUIRED_PLAYERS : undefined,
