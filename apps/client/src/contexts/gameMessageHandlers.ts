@@ -16,6 +16,7 @@ import {
   isGameplayMode,
   normalizeVoxelMapSizeId,
   type PublicRankSnapshot,
+  type PlayerDamagedEvent,
   type VoxelMapSizeId,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
@@ -2510,14 +2511,7 @@ export function setupCombatHandlers(room: Room) {
     });
   }));
 
-  room.onMessage('playerDamaged', measureNetworkMessage('playerDamaged', (data: {
-    targetId: string;
-    damage: number;
-    sourceId: string | null;
-    damageType: string;
-    sourcePosition?: { x: number; y: number; z: number } | null;
-    targetPosition?: { x: number; y: number; z: number } | null;
-  }) => {
+  room.onMessage('playerDamaged', measureNetworkMessage('playerDamaged', (data: PlayerDamagedEvent) => {
     loggers.network.sample('playerDamaged', 1000, 'player damaged', data.targetId, data.damage, data.damageType);
 
     const store = useGameStore.getState();

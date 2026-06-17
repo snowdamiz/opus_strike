@@ -13,7 +13,7 @@ import { useAudio } from '../../hooks/useAudio';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
 import { formatKeybind } from '../../utils/keybindings';
-import { isTutorialTrainingHeroId } from '../../utils/tutorialTrainingHeroes';
+import { isOfflineTrainingHeroId } from '../../utils/offlineCombatRuntime';
 import { visualStore } from '../../store/visualStore';
 import { HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 
@@ -103,7 +103,7 @@ function horizontalSpeed(velocity: { x: number; z: number }): number {
 
 function hasDownedTutorialTrainingHero(players: Iterable<{ id: string; state: string; health: number }>): boolean {
   for (const player of players) {
-    if (isTutorialTrainingHeroId(player.id) && (player.state === 'dead' || player.health <= 0)) {
+    if (isOfflineTrainingHeroId(player.id) && (player.state === 'dead' || player.health <= 0)) {
       return true;
     }
   }

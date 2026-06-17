@@ -65,6 +65,7 @@ interface JoinOptions {
   mapSeed?: number;
   forceGoldenMapOption?: boolean;
   observersEnabled?: boolean;
+  devTutorialBypass?: boolean;
 }
 
 interface ParticipantAssignment {
@@ -248,7 +249,9 @@ export class LobbyRoom extends Room<LobbyState> {
   async onAuth(client: Client, options: JoinOptions, request?: IncomingMessage): Promise<RoomAuthContext> {
     const authContext = await resolveRoomAuthContext(options as Record<string, unknown>, request);
     await assertGameplayAccountEligible(authContext.userId);
-    assertTutorialCompleted(authContext.tutorialCompletedAt);
+    assertTutorialCompleted(authContext.tutorialCompletedAt, {
+      devBypass: options.devTutorialBypass,
+    });
     return authContext;
   }
 

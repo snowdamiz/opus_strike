@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAudio } from '../../hooks/useAudio';
+import { config } from '../../config/environment';
 import {
   defaultSettings,
   graphicsPresetSettings,
   type ClientSettings,
+  type DevTutorialOverride,
   type KeybindAction,
   useSettingsStore,
 } from '../../store/settingsStore';
@@ -13,7 +15,7 @@ import { formatKeybind, mouseButtonToKeybindCode } from '../../utils/keybindings
 import { GameDialog } from './GameDialog';
 import { PhantomLogo } from './PhantomLogo';
 
-type SettingsTab = 'video' | 'audio' | 'controls' | 'gameplay' | 'account';
+type SettingsTab = 'video' | 'audio' | 'controls' | 'gameplay' | 'account' | 'development';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -46,6 +48,12 @@ const graphicsPresetOptions = [
   { value: 'competitive', label: 'Competitive' },
   { value: 'balanced', label: 'Balanced' },
   { value: 'cinematic', label: 'Cinematic' },
+];
+
+const devTutorialOverrideOptions = [
+  { value: 'account', label: 'Account Status' },
+  { value: 'bypass', label: 'Bypass Tutorial' },
+  { value: 'force', label: 'Force Tutorial' },
 ];
 
 const keybindRows: { action: KeybindAction; label: string }[] = [
@@ -103,6 +111,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const phantomAccount = linkedAccounts.find((account) => account.provider === 'phantom') ?? null;
   const accountInitial = displayName.charAt(0).toUpperCase();
   const hasAccount = isAuthenticated && Boolean(user);
+  const showDevelopmentSettings = config.isDev;
 
   const updateSetting = <K extends keyof ClientSettings>(key: K, value: ClientSettings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -302,6 +311,18 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       )
     },
   ];
+
+  if (showDevelopmentSettings) {
+    tabs.push({
+      id: 'development',
+      label: 'Dev',
+      icon: (
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 9l-3 3 3 3m8-6l3 3-3 3M13.5 5l-3 14" />
+        </svg>
+      ),
+    });
+  }
 
   const inputDeviceOptions = [
     { value: '', label: 'Default Input' },
@@ -661,6 +682,18 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     />
                     <span className="text-white/50 font-mono text-sm">{settings.crosshairColor}</span>
                   </div>
+                </SettingRow>
+              </div>
+            )}
+
+            {showDevelopmentSettings && activeTab === 'development' && (
+              <div className="space-y-4">
+                <SettingRow label="Tutorial Gate" description="Local development account gating">
+                  <SelectInput
+                    value={settings.devTutorialOverride}
+                    onChange={(v) => updateSetting('devTutorialOverride', v as DevTutorialOverride)}
+                    options={devTutorialOverrideOptions}
+                  />
                 </SettingRow>
               </div>
             )}

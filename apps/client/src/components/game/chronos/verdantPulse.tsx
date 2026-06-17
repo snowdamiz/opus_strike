@@ -22,7 +22,7 @@ import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '.
 import { getFirstChronosAegisVisualHit } from './aegisCollision';
 import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 import { playPrimaryImpactSound } from '../primaryImpactSound';
-import { applyTutorialTrainingDamage } from '../../../utils/tutorialTrainingHeroes';
+import { applyOfflineTrainingDamage } from '../../../utils/offlineCombatRuntime';
 
 const CHRONOS_PULSE_CAPACITY = 96;
 const CHRONOS_PULSE_LIFETIME_MS = 3000;
@@ -453,7 +453,7 @@ export function ChronosPulsesManager() {
         moveDistance + collisionRadius + PROJECTILE_COMBAT_QUERY_PADDING
       );
       if (hitPlayer) {
-        applyTutorialTrainingDamage({
+        applyOfflineTrainingDamage({
           target: hitPlayer,
           damage: slot.supercharged ? CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE : CHRONOS_VERDANT_PULSE_DAMAGE,
           damageType: slot.supercharged ? 'ascendant_verdant_pulse' : 'verdant_pulse',

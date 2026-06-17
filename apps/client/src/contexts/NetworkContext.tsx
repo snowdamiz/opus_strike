@@ -1,6 +1,7 @@
 import { createContext, useContext, useRef, useCallback, useState, ReactNode } from 'react';
 import { Client, Room } from 'colyseus.js';
 import { useGameStore, LobbyPlayer, LobbyWagerState, MapVoteOption, MapVoteRecord, WagerPaymentIntent, WagerPaymentTransaction } from '../store/gameStore';
+import { useSettingsStore } from '../store/settingsStore';
 import { config } from '../config/environment';
 import {
   createRandomSeed,
@@ -34,6 +35,7 @@ import {
   saveRunningGameSession,
   type RunningGameSession,
 } from '../utils/runningGameSession';
+import { DEV_TUTORIAL_BYPASS_HEADER, shouldBypassTutorialForDev } from '../utils/tutorialAccess';
 
 // Import extracted handlers
 import {
@@ -264,9 +266,23 @@ function getHttpUrl(): string {
   return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
 }
 
+function isDevTutorialBypassEnabled(): boolean {
+  return shouldBypassTutorialForDev(useSettingsStore.getState().settings.devTutorialOverride);
+}
+
+function getDevTutorialBypassHeaders(): Record<string, string> | undefined {
+  return isDevTutorialBypassEnabled() ? { [DEV_TUTORIAL_BYPASS_HEADER]: 'true' } : undefined;
+}
+
+function getDevTutorialBypassRoomOptions(): { devTutorialBypass?: true } {
+  return isDevTutorialBypassEnabled() ? { devTutorialBypass: true } : {};
+}
+
 async function requestQuickPlayTicket(): Promise<QuickPlayTicketResponse> {
+  const devTutorialBypassHeaders = getDevTutorialBypassHeaders();
   const response = await fetch(`${getHttpUrl()}/matchmaking/quick-play-ticket`, {
     credentials: 'include',
+    ...(devTutorialBypassHeaders ? { headers: devTutorialBypassHeaders } : {}),
   });
 
   if (!response.ok) {
@@ -281,7 +297,10 @@ async function requestRankedTicket(): Promise<RankedTicketResponse> {
   const response = await fetch(`${getHttpUrl()}/matchmaking/ranked-ticket`, {
     method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...getDevTutorialBypassHeaders(),
+    },
     body: JSON.stringify({}),
   });
 
@@ -1053,6 +1072,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       lobbyRoomRef.current = await client.create('lobby_room', {
         playerName,
         lobbyName: lobbyName || `${playerName}'s Lobby`,
+        ...getDevTutorialBypassRoomOptions(),
         isPrivate: true,
         initialBotCount: options?.initialBotCount || 0,
         botFillMode: options?.botFillMode || 'manual',
@@ -1099,6 +1119,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       lobbyRoomRef.current = await client.joinOrCreate('lobby_room', {
         playerName,
         lobbyName: 'Quick Play',
+        ...getDevTutorialBypassRoomOptions(),
         isPrivate: false,
         matchmakingMode: true,
         matchMode: 'quick_play',
@@ -1140,6 +1161,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       lobbyRoomRef.current = await client.joinOrCreate('lobby_room', {
         playerName,
         lobbyName: 'Ranked',
+        ...getDevTutorialBypassRoomOptions(),
         isPrivate: false,
         matchmakingMode: true,
         matchMode: 'ranked',
@@ -1199,6 +1221,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
       lobbyRoomRef.current = await client.joinById(lobbyId, {
         playerName,
+        ...getDevTutorialBypassRoomOptions(),
       });
 
       setupLobbyListeners(lobbyRoomRef.current, playerName);

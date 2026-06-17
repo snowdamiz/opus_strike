@@ -4,6 +4,8 @@ import { config } from '../../config/environment';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
 import { useGameStore } from '../../store/gameStore';
+import { useSettingsStore } from '../../store/settingsStore';
+import { requiresTutorial } from '../../utils/tutorialAccess';
 import { GameDialog } from './GameDialog';
 import { TopNavIconButton } from './TopNavIconButton';
 
@@ -334,6 +336,7 @@ export function SocialBox({
   const currentLobbyId = useGameStore((state) => state.currentLobbyId);
   const currentLobbyName = useGameStore((state) => state.currentLobbyName);
   const currentLobbyMatchMode = useGameStore((state) => state.currentLobbyWager.matchMode ?? null);
+  const devTutorialOverride = useSettingsStore((state) => state.settings.devTutorialOverride);
 
   const [activeTab, setActiveTab] = useState<SocialTab>('friends');
   const [social, setSocial] = useState<SocialState>(emptySocialState);
@@ -346,7 +349,7 @@ export function SocialBox({
   const [error, setError] = useState<string | null>(null);
 
   const canInviteFromLobby = isAuthenticated && appPhase === 'in_lobby' && Boolean(currentLobbyId);
-  const hasCompletedTutorial = Boolean(user?.tutorialCompletedAt);
+  const tutorialRequired = requiresTutorial(user?.tutorialCompletedAt, devTutorialOverride);
   const requestCount = social.incomingRequests.length + social.outgoingRequests.length;
   const inviteCount = social.lobbyInvites.length;
   const tabCounts = useMemo(() => ({
@@ -508,7 +511,7 @@ export function SocialBox({
 
   const acceptLobbyInvite = (invite: LobbyInvite) => {
     runAction(`accept-invite:${invite.inviteId}`, async () => {
-      if (!hasCompletedTutorial) {
+      if (tutorialRequired) {
         onClose();
         startTutorialGame(playerName || user?.name || 'Player');
         return;

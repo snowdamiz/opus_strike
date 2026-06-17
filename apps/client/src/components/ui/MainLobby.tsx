@@ -1,6 +1,7 @@
 import { lazy, Suspense, type CSSProperties, useCallback, useState, useEffect, useId } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
+import { useSettingsStore } from '../../store/settingsStore';
 import { useNetwork, type RankedTokenHoldStatus } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
 import { HeroesPage } from './HeroesPage';
@@ -34,6 +35,7 @@ import {
   type RunningGameSession,
 } from '../../utils/runningGameSession';
 import type { ServerLatencyProbeSnapshot } from '../../utils/serverLatency';
+import { requiresTutorial } from '../../utils/tutorialAccess';
 import { RankIcon, getRankForStats } from './RankBadge';
 
 const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((module) => ({
@@ -227,7 +229,8 @@ export function MainLobby() {
   const currentRank = getRankForStats(userStats);
   const isRankedPreseason = rankedSeason.mode === 'preseason';
   const serverLatency = useServerLatencyProbe(activeTab === 'play');
-  const hasCompletedTutorial = Boolean(user?.tutorialCompletedAt);
+  const devTutorialOverride = useSettingsStore((state) => state.settings.devTutorialOverride);
+  const tutorialRequired = requiresTutorial(user?.tutorialCompletedAt, devTutorialOverride);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -477,7 +480,7 @@ export function MainLobby() {
     observersEnabled?: boolean
   ) => {
     setError(null);
-    if (!hasCompletedTutorial) {
+    if (tutorialRequired) {
       handleStartTutorial();
       return;
     }
@@ -496,7 +499,7 @@ export function MainLobby() {
 
   const handleQuickPlay = async () => {
     setError(null);
-    if (!hasCompletedTutorial) {
+    if (tutorialRequired) {
       handleStartTutorial();
       return;
     }
@@ -535,7 +538,7 @@ export function MainLobby() {
 
   const handleRankedPlay = async () => {
     setError(null);
-    if (!hasCompletedTutorial) {
+    if (tutorialRequired) {
       handleStartTutorial();
       return;
     }
@@ -657,7 +660,7 @@ export function MainLobby() {
             heroAnimationMode={heroAnimationMode}
             rankedSeason={rankedSeason}
             isAuthenticated={isAuthenticated}
-            requiresTutorial={!hasCompletedTutorial}
+            requiresTutorial={tutorialRequired}
             runningGameSession={runningGameSession}
             isReconnectChecking={isReconnectChecking}
             serverLatency={serverLatency}
@@ -711,7 +714,7 @@ export function MainLobby() {
           isRankedTokenHoldLoading={isRankedTokenHoldLoading}
           rankedTokenHoldError={rankedTokenHoldError}
           rankedSeason={rankedSeason}
-          requiresTutorial={!hasCompletedTutorial}
+          requiresTutorial={tutorialRequired}
           onQuickPlay={handleQuickPlay}
           onRankedPlay={handleRankedPlay}
           onOpenPracticeSetup={() => {

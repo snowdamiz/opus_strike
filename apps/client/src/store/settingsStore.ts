@@ -7,6 +7,7 @@ export type GraphicsFeatureQuality = 'off' | GraphicsQuality;
 export type CrosshairStyle = 'default' | 'dot' | 'circle' | 'cross';
 export type GraphicsPreset = 'potato' | 'competitive' | 'balanced' | 'cinematic';
 export type FpsDisplayMode = 'off' | 'fps';
+export type DevTutorialOverride = 'account' | 'bypass' | 'force';
 export type KeybindAction = keyof InputState | 'scoreboard' | 'pushToTalk';
 export type Keybindings = Record<KeybindAction, string>;
 
@@ -66,6 +67,7 @@ export interface ClientSettings {
   showKillFeed: boolean;
   crosshairStyle: CrosshairStyle;
   crosshairColor: string;
+  devTutorialOverride: DevTutorialOverride;
   keybindings: Keybindings;
 }
 
@@ -144,6 +146,7 @@ export const defaultSettings: ClientSettings = {
   showKillFeed: true,
   crosshairStyle: 'default',
   crosshairColor: '#ffffff',
+  devTutorialOverride: 'account',
   keybindings: { ...defaultKeybindings },
 };
 
@@ -267,6 +270,7 @@ export function sanitizeSettings(value: unknown): ClientSettings {
     showKillFeed: pickBoolean(raw.showKillFeed, defaultSettings.showKillFeed),
     crosshairStyle: pickOption(raw.crosshairStyle, ['default', 'dot', 'circle', 'cross'] as const, defaultSettings.crosshairStyle),
     crosshairColor: normalizeHexColor(raw.crosshairColor, defaultSettings.crosshairColor),
+    devTutorialOverride: pickOption(raw.devTutorialOverride, ['account', 'bypass', 'force'] as const, defaultSettings.devTutorialOverride),
     keybindings,
   };
 }

@@ -41,7 +41,8 @@ export type ServerMessage =
   | { type: 'matchStartGate'; payload: MatchStartGateMessage }
   | { type: 'matchCancelled'; payload: MatchCancelledMessage }
   | { type: 'playerJoined'; payload: { playerId: string; playerName: string } }
-  | { type: 'playerLeft'; payload: { playerId: string } }
+  | { type: 'playerLeft'; payload: { playerId: string; isNpc?: boolean } }
+  | { type: 'playerDamaged'; payload: PlayerDamagedEvent }
   | { type: 'playerKilled'; payload: PlayerDeathEvent }
   | { type: 'flagPickup'; payload: FlagEvent }
   | { type: 'flagDrop'; payload: FlagEvent }
@@ -59,8 +60,7 @@ export type ServerMessage =
   | { type: 'playerHealed'; payload: PlayerHealedEvent }
   | { type: 'chronosAegisDamaged'; payload: ChronosAegisDamagedEvent }
   | { type: 'chronosAegisBroken'; payload: ChronosAegisBrokenEvent }
-  | { type: 'phantomShieldBroken'; payload: PhantomShieldBrokenEvent }
-  | { type: 'damage'; payload: DamageEvent };
+  | { type: 'phantomShieldBroken'; payload: PhantomShieldBrokenEvent };
 
 export interface ChronosAegisDamagedEvent {
   playerId: string;
@@ -86,6 +86,18 @@ export interface PhantomShieldBrokenEvent {
   position: Vec3;
   direction: Vec3;
   serverTime: number;
+}
+
+export interface PlayerDamagedEvent {
+  targetId: string;
+  damage: number;
+  sourceId: string | null;
+  damageType: string;
+  newHealth?: number;
+  sourcePosition?: Vec3 | null;
+  targetPosition?: Vec3 | null;
+  sourceHeroId?: string | null;
+  targetHeroId?: string | null;
 }
 
 export type PackedPlayerTransform = [
@@ -285,6 +297,7 @@ export interface PlayerDeathEvent {
   damageType?: string;
   occurredAt?: number;
   respawnTime?: number | null;
+  isNpc?: boolean;
 }
 
 export interface FlagEvent {
@@ -367,14 +380,6 @@ export interface AbilityEffectEvent {
     rootUntil: number;
   }>;
   rootUntil?: number;
-}
-
-export interface DamageEvent {
-  targetId: string;
-  sourceId: string | null;
-  amount: number;
-  abilityId?: string;
-  position: Vec3;
 }
 
 export interface PlayerHealedEvent {

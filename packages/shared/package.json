@@ -19,6 +19,7 @@
     "typecheck": "tsc --noEmit",
     "test:rank": "pnpm build && node scripts/ranking.test.mjs",
     "test:aegis": "pnpm build && node scripts/chronos-aegis-collision.test.mjs",
+    "test:damage": "pnpm build && node scripts/damage-engine.test.mjs",
     "test:model-sockets": "pnpm build && node scripts/ability-socket-catalog.test.mjs",
     "test:maps": "pnpm build && node scripts/procedural-building-smoke.mjs --known",
     "smoke:buildings": "pnpm build && node scripts/procedural-building-smoke.mjs",

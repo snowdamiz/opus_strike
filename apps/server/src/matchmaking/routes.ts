@@ -4,7 +4,10 @@ import { matchMaker } from 'colyseus';
 import prisma from '../db';
 import { parseCookies, verifyAuthToken } from '../auth/session';
 import { assertGameplayAccountEligible } from '../auth/accountEligibility';
-import { assertTutorialCompleted } from '../auth/tutorialCompletion';
+import {
+  DEV_TUTORIAL_BYPASS_HEADER,
+  assertTutorialCompleted,
+} from '../auth/tutorialCompletion';
 import { consumeRateLimit, consumeRateLimitForKey } from '../auth/rateLimit';
 import { createMatchmakingTicket } from '../security/matchmakingTickets';
 import {
@@ -368,7 +371,9 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
   try {
     const context = await getMatchmakingUserContext(req);
     if (!enforceMatchmakingIdentityRateLimit(res, 'matchmaking:quick-play-ticket:user', MATCHMAKING_RATE_LIMITS.ticket, context.userId)) return;
-    assertTutorialCompleted(context.tutorialCompletedAt);
+    assertTutorialCompleted(context.tutorialCompletedAt, {
+      devBypass: req.headers[DEV_TUTORIAL_BYPASS_HEADER],
+    });
 
     const targetRankDivisionIndex = await chooseMatchmakingRankBand({
       mode: 'quick_play',
@@ -423,7 +428,9 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
   try {
     const context = await getMatchmakingUserContext(req);
     if (!enforceMatchmakingIdentityRateLimit(res, 'matchmaking:ranked-ticket:user', MATCHMAKING_RATE_LIMITS.rankedTicket, context.userId)) return;
-    assertTutorialCompleted(context.tutorialCompletedAt);
+    assertTutorialCompleted(context.tutorialCompletedAt, {
+      devBypass: req.headers[DEV_TUTORIAL_BYPASS_HEADER],
+    });
     if (!context.walletAddress) {
       throw Object.assign(new Error('A linked Solana wallet is required for ranked'), { statusCode: 400 });
     }

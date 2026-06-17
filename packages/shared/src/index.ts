@@ -27,6 +27,9 @@ export * from './utils/blazeRocketJump.js';
 export * from './utils/movementDirection.js';
 export * from './utils/teamHeroLocks.js';
 
+// Combat
+export * from './combat/damageEngine.js';
+
 // Model system
 export * from './model/abilitySocketCatalog.js';
 

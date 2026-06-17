@@ -16,7 +16,7 @@ import {
   measureFrameWork,
   recordEffectSlotDiagnostics,
 } from '../../../movement/networkDiagnostics';
-import { applyTutorialTrainingAreaDamage } from '../../../utils/tutorialTrainingHeroes';
+import { applyOfflineTrainingAreaDamage } from '../../../utils/offlineCombatRuntime';
 
 // ============================================================================
 // INFERNAL GEARSTORM EFFECT - BLAZE ULTIMATE
@@ -653,7 +653,7 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
     const fadeOut = clamp01((AIR_STRIKE_DURATION - elapsed) / 950);
     const fade = fadeIn * fadeOut;
     const pulse = 0.92 + Math.sin(elapsed * 0.006) * 0.08;
-    applyTutorialTrainingAreaDamage({
+    applyOfflineTrainingAreaDamage({
       center: strike.centerPosition,
       radius: GEARSTORM_RADIUS,
       damage: BLAZE_GEARSTORM_DAMAGE,
