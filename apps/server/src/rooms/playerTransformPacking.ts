@@ -23,6 +23,9 @@ interface BuildPackedPlayerTransformInput {
   chronosAegisShieldByte: number;
 }
 
+export const TRANSFORM_HEARTBEAT_INTERVAL_MS = 250;
+export const DISTANT_TRANSFORM_HEARTBEAT_INTERVAL_MS = 750;
+
 function quantize(value: number, scale: number): number {
   return Math.round(value * scale);
 }
@@ -78,4 +81,77 @@ export function havePackedTransformsChanged(
     if (previous[index] !== next[index]) return true;
   }
   return false;
+}
+
+export function getPackedTransformHeartbeatInterval(highRelevance: boolean): number {
+  return highRelevance
+    ? TRANSFORM_HEARTBEAT_INTERVAL_MS
+    : DISTANT_TRANSFORM_HEARTBEAT_INTERVAL_MS;
+}
+
+export function shouldSendPackedTransformUpdate(input: {
+  force: boolean;
+  highRelevance: boolean;
+  previousSignature: PackedPlayerTransform | undefined;
+  signature: PackedPlayerTransform;
+  lastHeartbeatAt: number;
+  now: number;
+}): boolean {
+  if (input.force) return true;
+
+  const changed = havePackedTransformsChanged(input.previousSignature, input.signature);
+  if (input.highRelevance && changed) return true;
+
+  return input.now - input.lastHeartbeatAt >= getPackedTransformHeartbeatInterval(input.highRelevance);
+}
+
+export interface PackedTransformReplicationState {
+  signatures: Map<string, PackedPlayerTransform>;
+  heartbeatAt: Map<string, number>;
+}
+
+export type PackedTransformDelta =
+  | { kind: 'visible'; transform: PackedPlayerTransform }
+  | { kind: 'hidden'; playerId: string }
+  | null;
+
+export interface PackedTransformSnapshot {
+  transform: PackedPlayerTransform;
+  signature: PackedPlayerTransform;
+}
+
+export function selectPackedTransformDelta(input: {
+  state: PackedTransformReplicationState;
+  playerId: string;
+  getSnapshot: () => PackedTransformSnapshot;
+  exactStateVisible: boolean;
+  force: boolean;
+  getHighRelevance: () => boolean;
+  now: number;
+}): PackedTransformDelta {
+  if (!input.exactStateVisible) {
+    const hadTransform = input.state.signatures.delete(input.playerId);
+    input.state.heartbeatAt.delete(input.playerId);
+    return hadTransform || input.force
+      ? { kind: 'hidden', playerId: input.playerId }
+      : null;
+  }
+
+  const snapshot = input.getSnapshot();
+  const previousSignature = input.state.signatures.get(input.playerId);
+  const lastHeartbeatAt = input.state.heartbeatAt.get(input.playerId) ?? 0;
+  if (!shouldSendPackedTransformUpdate({
+    force: input.force,
+    highRelevance: input.getHighRelevance(),
+    previousSignature,
+    signature: snapshot.signature,
+    lastHeartbeatAt,
+    now: input.now,
+  })) {
+    return null;
+  }
+
+  input.state.signatures.set(input.playerId, snapshot.signature);
+  input.state.heartbeatAt.set(input.playerId, input.now);
+  return { kind: 'visible', transform: snapshot.transform };
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { config } from '../../config/environment';
 
 interface GlobalNotification {
@@ -60,22 +60,39 @@ function readGlobalNotificationPayload(value: unknown): GlobalNotification | nul
 export function GlobalNotificationBanner({ onVisibilityChange }: GlobalNotificationBannerProps) {
   const [notification, setNotification] = useState<GlobalNotification | null>(null);
   const [dismissedToken, setDismissedToken] = useState(readDismissedNotificationToken);
+  const activeLoadRef = useRef<Promise<void> | null>(null);
+  const mountedRef = useRef(false);
 
   const loadNotification = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const response = await fetch(`${config.serverHttpUrl}/notifications/global`, {
-        cache: 'no-store',
-        credentials: 'include',
-        signal,
-      });
-      if (!response.ok) return;
-      setNotification(readGlobalNotificationPayload(await response.json()));
-    } catch {
-      // Keep the last known banner visible during transient network failures.
-    }
+    if (activeLoadRef.current) return activeLoadRef.current;
+
+    const loadPromise = (async () => {
+      try {
+        const response = await fetch(`${config.serverHttpUrl}/notifications/global`, {
+          credentials: 'include',
+          signal,
+        });
+        if (response.status === 304 || !response.ok) return;
+        const nextNotification = readGlobalNotificationPayload(await response.json());
+        if (mountedRef.current) {
+          setNotification(nextNotification);
+        }
+      } catch {
+        // Keep the last known banner visible during transient network failures.
+      }
+    })();
+
+    activeLoadRef.current = loadPromise;
+    void loadPromise.finally(() => {
+      if (activeLoadRef.current === loadPromise) {
+        activeLoadRef.current = null;
+      }
+    });
+    return loadPromise;
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     const controller = new AbortController();
     void loadNotification(controller.signal);
 
@@ -89,6 +106,7 @@ export function GlobalNotificationBanner({ onVisibilityChange }: GlobalNotificat
     window.addEventListener('focus', refreshOnFocus);
 
     return () => {
+      mountedRef.current = false;
       controller.abort();
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', refreshWhenVisible);

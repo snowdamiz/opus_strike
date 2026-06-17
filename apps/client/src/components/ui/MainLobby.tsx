@@ -238,7 +238,6 @@ export function MainLobby() {
     fetch(`${config.serverHttpUrl}/auth/ranked-season`, {
       signal: controller.signal,
       credentials: 'include',
-      cache: 'no-store',
     })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error(`Season request failed (${response.status})`)))
       .then((season: RankedSeasonSnapshot) => {

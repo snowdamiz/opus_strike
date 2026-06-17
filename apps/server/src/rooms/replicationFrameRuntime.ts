@@ -1,0 +1,459 @@
+import {
+  getPlayerEyePosition as getSharedPlayerEyePosition,
+  getPlayerLineOfSightSamplePoints as getSharedPlayerLineOfSightSamplePoints,
+  type PlayerInterestSnapshot,
+  type PlayerInterestMessage,
+  type PackedPlayerTransform,
+  type PlayerTransformsV2Message,
+  type PlayerVitalsMessage,
+  type PlayerVitalsSnapshot,
+  type Vec3,
+} from '@voxel-strike/shared';
+import type { Player } from './schema/Player';
+import type {
+  PlayerVitalsReplicationState,
+  TransformReplicationState,
+} from './playerReplicationState';
+import {
+  getPackedTransformSignature,
+  selectPackedTransformDelta,
+} from './playerTransformPacking';
+import {
+  buildPlayerInterestSnapshot,
+  removeMissingPlayerInterestSignatures,
+  selectChangedPlayerInterestSnapshot,
+} from './playerInterestSnapshot';
+import {
+  removeMissingKnownPlayerVitals,
+  selectChangedPlayerVitalsSnapshot,
+} from './playerVitals';
+import {
+  VisibilityInterestManager,
+  type RecipientInterestDecision,
+  type VisibilityInterestContext,
+  type VisibilityInterestPlayer,
+} from './visibilityInterest';
+
+export interface ReplicationFrameContext {
+  now: number;
+  currentIds: Set<string>;
+  visibilityContext: VisibilityInterestContext;
+  visibilityPlayers: Map<string, VisibilityInterestPlayer>;
+  packedTransforms: Map<string, PackedPlayerTransform>;
+  packedTransformSignatures: Map<string, PackedPlayerTransform>;
+  recipientInterests: Map<string, Map<string, RecipientInterestDecision>>;
+  fullVitalsByPlayer: Map<string, PlayerVitalsSnapshot>;
+  visibleEnemyVitalsByPlayer: Map<string, PlayerVitalsSnapshot>;
+  publicEnemyVitalsByPlayer: Map<string, PlayerVitalsSnapshot>;
+}
+
+export interface ReplicationFramePlayerCollection {
+  forEach(callback: (player: Player, id: string) => void): void;
+}
+
+export interface ReplicationFrameRuntimeOptions {
+  visibilityInterest: VisibilityInterestManager;
+  getMovementCollisionRevision: (now: number) => number;
+  hasLineOfSight: (from: Vec3, to: Vec3) => boolean;
+  getRecentCombatRevealUntil: (recipientId: string, targetId: string) => number;
+  buildPackedTransform: (id: string, player: Player) => PackedPlayerTransform;
+}
+
+export interface PlayerStateStreamBroadcastPlanInput {
+  transforms: boolean;
+  vitals: boolean;
+  forceVitals: boolean;
+  now: number;
+  lastVitalsBroadcastAt: number;
+  lastInterestBroadcastAt: number;
+  vitalsIntervalMs: number;
+  interestIntervalMs: number;
+}
+
+export interface PlayerStateStreamBroadcastPlan {
+  shouldBroadcastVitals: boolean;
+  shouldBroadcastInterest: boolean;
+  shouldBroadcastTransforms: boolean;
+}
+
+export interface RecipientPlayerStateStreamCollectionInput {
+  players: ReplicationFramePlayerCollection;
+  recipient: Player | null;
+  recipientId: string;
+  frameContext: ReplicationFrameContext;
+  vitalsState: PlayerVitalsReplicationState | null;
+  interestSignatures: Map<string, string> | null;
+  transformState: TransformReplicationState | null;
+  globallyRemovedPlayerIds: readonly string[];
+  forceVitals: boolean;
+  forceTransforms: boolean;
+  vitalsReconcileIntervalMs: number;
+  buildPlayerVitalsForRecipient: (
+    playerId: string,
+    player: Player,
+    recipient: Player | null,
+    now: number,
+    interest: RecipientInterestDecision | undefined,
+    frameContext: ReplicationFrameContext
+  ) => PlayerVitalsSnapshot;
+  getRecipientInterest: (
+    recipient: Player,
+    target: Player,
+    now: number,
+    frameContext: ReplicationFrameContext
+  ) => RecipientInterestDecision;
+  shouldSendExactEnemyState: (
+    recipient: Player | null,
+    playerId: string,
+    player: Player,
+    now: number,
+    interest: RecipientInterestDecision | undefined
+  ) => boolean;
+  isHighRelevanceTransform: (
+    recipient: Player | null,
+    playerId: string,
+    player: Player,
+    now: number
+  ) => boolean;
+  buildPackedTransform: (playerId: string, player: Player) => PackedPlayerTransform;
+}
+
+export interface RecipientPlayerStateStreamCollection {
+  vitalsPlayers: PlayerVitalsSnapshot[];
+  removedPlayerIds: string[];
+  interestPlayers: PlayerInterestSnapshot[];
+  transformPlayers: PackedPlayerTransform[];
+  hiddenPlayerIds: string[];
+}
+
+export interface PlayerVitalsStreamMessageInput {
+  tick: number;
+  serverTime: number;
+  players: PlayerVitalsSnapshot[];
+  removedPlayerIds: string[];
+  force: boolean;
+}
+
+export interface PlayerInterestStreamMessageInput {
+  tick: number;
+  serverTime: number;
+  players: PlayerInterestSnapshot[];
+  force: boolean;
+}
+
+export interface PlayerTransformsStreamMessageInput {
+  tick: number;
+  serverTime: number;
+  streamEpoch: number;
+  full: boolean;
+  players: PackedPlayerTransform[];
+  hiddenPlayerIds: string[];
+}
+
+export class ReplicationFrameRuntime {
+  private readonly frameVisibilityContext: VisibilityInterestContext;
+  private readonly standaloneVisibilityContext: VisibilityInterestContext;
+  private readonly frameContext: ReplicationFrameContext;
+
+  constructor(private readonly options: ReplicationFrameRuntimeOptions) {
+    this.frameVisibilityContext = this.createVisibilityContext();
+    this.standaloneVisibilityContext = this.createVisibilityContext();
+    this.frameContext = {
+      now: 0,
+      currentIds: new Set(),
+      visibilityContext: this.frameVisibilityContext,
+      visibilityPlayers: new Map(),
+      packedTransforms: new Map(),
+      packedTransformSignatures: new Map(),
+      recipientInterests: new Map(),
+      fullVitalsByPlayer: new Map(),
+      visibleEnemyVitalsByPlayer: new Map(),
+      publicEnemyVitalsByPlayer: new Map(),
+    };
+  }
+
+  buildFrameContext(players: ReplicationFramePlayerCollection, now: number): ReplicationFrameContext {
+    const collisionRevision = this.options.getMovementCollisionRevision(now);
+    const frameContext = this.frameContext;
+    frameContext.now = now;
+    this.prepareVisibilityContext(frameContext.visibilityContext, now, collisionRevision);
+    frameContext.currentIds.clear();
+    frameContext.visibilityPlayers.clear();
+    frameContext.packedTransforms.clear();
+    frameContext.packedTransformSignatures.clear();
+    frameContext.fullVitalsByPlayer.clear();
+    frameContext.visibleEnemyVitalsByPlayer.clear();
+    frameContext.publicEnemyVitalsByPlayer.clear();
+    for (const targetInterests of frameContext.recipientInterests.values()) {
+      targetInterests.clear();
+    }
+
+    players.forEach((player, id) => {
+      frameContext.currentIds.add(id);
+      frameContext.visibilityPlayers.set(id, createVisibilityInterestPlayer(player));
+      if (player.state !== 'alive' && player.state !== 'spawning') return;
+
+      const transform = this.options.buildPackedTransform(id, player);
+      frameContext.packedTransforms.set(id, transform);
+      frameContext.packedTransformSignatures.set(id, getPackedTransformSignature(transform));
+    });
+
+    for (const recipientId of frameContext.recipientInterests.keys()) {
+      if (!frameContext.currentIds.has(recipientId)) {
+        frameContext.recipientInterests.delete(recipientId);
+      }
+    }
+
+    return frameContext;
+  }
+
+  getRecipientInterest(
+    recipient: Player | null,
+    target: Player,
+    now: number,
+    frameContext?: ReplicationFrameContext
+  ): RecipientInterestDecision {
+    if (recipient && frameContext) {
+      let targetInterests = frameContext.recipientInterests.get(recipient.id);
+      if (!targetInterests) {
+        targetInterests = new Map<string, RecipientInterestDecision>();
+        frameContext.recipientInterests.set(recipient.id, targetInterests);
+      } else {
+        const cached = targetInterests.get(target.id);
+        if (cached) return cached;
+      }
+
+      const decision = this.computeRecipientInterest(recipient, target, now, frameContext);
+      targetInterests.set(target.id, decision);
+      return decision;
+    }
+
+    return this.computeRecipientInterest(recipient, target, now, frameContext);
+  }
+
+  private computeRecipientInterest(
+    recipient: Player | null,
+    target: Player,
+    now: number,
+    frameContext?: ReplicationFrameContext
+  ): RecipientInterestDecision {
+    const recipientInterestPlayer = recipient
+      ? frameContext?.visibilityPlayers.get(recipient.id) ?? createVisibilityInterestPlayer(recipient)
+      : null;
+    const targetInterestPlayer = frameContext?.visibilityPlayers.get(target.id) ?? createVisibilityInterestPlayer(target);
+    const visibilityContext = frameContext?.visibilityContext
+      ?? this.prepareVisibilityContext(
+        this.standaloneVisibilityContext,
+        now,
+        this.options.getMovementCollisionRevision(now)
+      );
+
+    return this.options.visibilityInterest.getRecipientInterest(
+      recipientInterestPlayer,
+      targetInterestPlayer,
+      visibilityContext
+    );
+  }
+
+  private createVisibilityContext(): VisibilityInterestContext {
+    return {
+      now: 0,
+      collisionRevision: 0,
+      getEyePosition: (player) => getSharedPlayerEyePosition(player.position),
+      getLineOfSightPoints: getSharedPlayerLineOfSightSamplePoints,
+      hasLineOfSight: (from, to) => this.options.hasLineOfSight(from, to),
+      getRecentCombatRevealUntil: (recipient, target) => (
+        this.options.getRecentCombatRevealUntil(recipient.id, target.id)
+      ),
+    };
+  }
+
+  private prepareVisibilityContext(
+    context: VisibilityInterestContext,
+    now: number,
+    collisionRevision: number
+  ): VisibilityInterestContext {
+    context.now = now;
+    context.collisionRevision = collisionRevision;
+    return context;
+  }
+}
+
+export function createVisibilityInterestPlayer(player: Player): VisibilityInterestPlayer {
+  return {
+    id: player.id,
+    team: player.team,
+    state: player.state,
+    position: player.position,
+    heroId: player.heroId,
+    abilities: player.abilities.values(),
+  };
+}
+
+export function collectRecipientPlayerStateStreams(
+  input: RecipientPlayerStateStreamCollectionInput
+): RecipientPlayerStateStreamCollection {
+  const now = input.frameContext.now;
+  const vitalsPlayers: PlayerVitalsSnapshot[] = [];
+  const removedPlayerIds = input.vitalsState ? [...input.globallyRemovedPlayerIds] : [];
+  const interestPlayers: PlayerInterestSnapshot[] = [];
+  const transformPlayers: PackedPlayerTransform[] = [];
+  const hiddenPlayerIds: string[] = [];
+
+  input.players.forEach((player, id) => {
+    let interest: RecipientInterestDecision | undefined;
+    let interestResolved = false;
+    const getInterest = (): RecipientInterestDecision | undefined => {
+      if (!input.recipient) return undefined;
+      if (!interestResolved) {
+        interest = input.getRecipientInterest(input.recipient, player, now, input.frameContext);
+        interestResolved = true;
+      }
+      return interest;
+    };
+
+    if (input.vitalsState) {
+      const vitals = input.buildPlayerVitalsForRecipient(
+        id,
+        player,
+        input.recipient,
+        now,
+        input.recipient && input.recipient.id !== id && input.recipient.team !== player.team
+          ? getInterest()
+          : undefined,
+        input.frameContext
+      );
+      const changedVitals = selectChangedPlayerVitalsSnapshot({
+        state: input.vitalsState,
+        playerId: id,
+        vitals,
+        now,
+        force: input.forceVitals,
+        reconcileIntervalMs: input.vitalsReconcileIntervalMs,
+      });
+      if (changedVitals) vitalsPlayers.push(changedVitals);
+    }
+
+    if (input.interestSignatures) {
+      const decision = getInterest();
+      if (decision) {
+        const snapshot = buildPlayerInterestSnapshot(id, decision);
+        const changedSnapshot = selectChangedPlayerInterestSnapshot({
+          signatures: input.interestSignatures,
+          playerId: id,
+          snapshot,
+          force: input.forceVitals,
+        });
+        if (changedSnapshot) interestPlayers.push(changedSnapshot);
+      }
+    }
+
+    if (input.transformState) {
+      if (player.state !== 'alive' && player.state !== 'spawning') return;
+      if (!input.forceTransforms && id === input.recipientId) return;
+
+      const transformInterest = input.recipient && input.recipient.id !== id && input.recipient.team !== player.team
+        ? getInterest()
+        : undefined;
+      const exactStateVisible = input.shouldSendExactEnemyState(
+        input.recipient,
+        id,
+        player,
+        now,
+        transformInterest
+      );
+      const delta = selectPackedTransformDelta({
+        state: input.transformState,
+        playerId: id,
+        getSnapshot: () => {
+          const transform = input.frameContext.packedTransforms.get(id) ?? input.buildPackedTransform(id, player);
+          const signature = input.frameContext.packedTransformSignatures.get(id) ?? getPackedTransformSignature(transform);
+          return { transform, signature };
+        },
+        exactStateVisible,
+        force: input.forceTransforms,
+        getHighRelevance: () => input.isHighRelevanceTransform(input.recipient, id, player, now),
+        now,
+      });
+      if (delta?.kind === 'visible') transformPlayers.push(delta.transform);
+      if (delta?.kind === 'hidden') hiddenPlayerIds.push(delta.playerId);
+    }
+  });
+
+  if (input.vitalsState) {
+    removedPlayerIds.push(...removeMissingKnownPlayerVitals(input.vitalsState, input.frameContext.currentIds));
+  }
+
+  if (input.interestSignatures) {
+    removeMissingPlayerInterestSignatures(input.interestSignatures, input.frameContext.currentIds);
+  }
+
+  return {
+    vitalsPlayers,
+    removedPlayerIds,
+    interestPlayers,
+    transformPlayers,
+    hiddenPlayerIds,
+  };
+}
+
+export function getPlayerStateStreamBroadcastPlan(
+  input: PlayerStateStreamBroadcastPlanInput
+): PlayerStateStreamBroadcastPlan {
+  return {
+    shouldBroadcastVitals: input.vitals && (
+      input.forceVitals || input.now - input.lastVitalsBroadcastAt >= input.vitalsIntervalMs
+    ),
+    shouldBroadcastInterest: input.vitals && (
+      input.forceVitals || input.now - input.lastInterestBroadcastAt >= input.interestIntervalMs
+    ),
+    shouldBroadcastTransforms: input.transforms,
+  };
+}
+
+export function buildPlayerVitalsStreamMessage(
+  input: PlayerVitalsStreamMessageInput
+): PlayerVitalsMessage | null {
+  if (input.players.length === 0 && input.removedPlayerIds.length === 0 && !input.force) {
+    return null;
+  }
+
+  return {
+    tick: input.tick,
+    serverTime: input.serverTime,
+    players: input.players,
+    removedPlayerIds: input.removedPlayerIds,
+  };
+}
+
+export function buildPlayerInterestStreamMessage(
+  input: PlayerInterestStreamMessageInput
+): PlayerInterestMessage | null {
+  if (input.players.length === 0 && !input.force) {
+    return null;
+  }
+
+  return {
+    tick: input.tick,
+    serverTime: input.serverTime,
+    players: input.players,
+  };
+}
+
+export function buildPlayerTransformsStreamMessage(
+  input: PlayerTransformsStreamMessageInput
+): PlayerTransformsV2Message | null {
+  if (input.players.length === 0 && input.hiddenPlayerIds.length === 0 && !input.full) {
+    return null;
+  }
+
+  return {
+    version: 2,
+    tick: input.tick,
+    serverTime: input.serverTime,
+    streamEpoch: input.streamEpoch,
+    full: input.full,
+    players: input.players,
+    hiddenPlayerIds: input.hiddenPlayerIds,
+  };
+}

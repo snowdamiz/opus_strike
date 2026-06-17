@@ -1,7 +1,7 @@
 import type { Team } from '@voxel-strike/shared';
 import type { Player } from './schema/Player';
 
-interface QueryOptions {
+export interface PlayerSpatialQueryOptions {
   team?: Team;
   excludeId?: string;
 }
@@ -48,11 +48,15 @@ export class PlayerSpatialIndex {
     return this.alivePlayersByTeam[team === 'red' ? 'blue' : 'red'];
   }
 
+  getTeamPlayers(team: Team): Player[] {
+    return this.alivePlayersByTeam[team];
+  }
+
   queryRadius(
     center: { x: number; z: number },
     radius: number,
     out: Player[],
-    options: QueryOptions = {}
+    options: PlayerSpatialQueryOptions = {}
   ): Player[] {
     out.length = 0;
     const minCellX = Math.floor((center.x - radius) / this.cellSize);
@@ -85,7 +89,7 @@ export class PlayerSpatialIndex {
     origin: { x: number; z: number },
     range: number,
     out: Player[],
-    options: QueryOptions = {}
+    options: PlayerSpatialQueryOptions = {}
   ): Player[] {
     return this.queryRadius(origin, range, out, options);
   }

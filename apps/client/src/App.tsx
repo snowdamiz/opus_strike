@@ -8,7 +8,6 @@ import { HUD } from './components/ui/HUD';
 import { LoadingScreen } from './components/ui/LoadingScreen';
 import { PracticeLoadingScreen } from './components/ui/PracticeLoadingScreen';
 import { MatchLoadingScreen } from './components/ui/MatchLoadingScreen';
-import { MapVoteScreen } from './components/ui/MapVoteScreen';
 import { TeleportEffects } from './components/ui/TeleportEffects';
 import { UltimateEffects } from './components/ui/UltimateEffects';
 import { SlideEffects } from './components/ui/SlideEffects';
@@ -28,6 +27,7 @@ const HeroSelect = lazy(() => import('./components/ui/HeroSelect').then((module)
 const Scoreboard = lazy(() => import('./components/ui/Scoreboard').then((module) => ({ default: module.Scoreboard })));
 const InGameMenu = lazy(() => import('./components/ui/InGameMenu').then((module) => ({ default: module.InGameMenu })));
 const GameConsole = lazy(() => import('./components/ui/GameConsole').then((module) => ({ default: module.GameConsole })));
+const MapVoteScreen = lazy(() => import('./components/ui/MapVoteScreen').then((module) => ({ default: module.MapVoteScreen })));
 const MatchSummaryScreen = lazy(() => import('./components/ui/MatchSummaryScreen').then((module) => ({ default: module.MatchSummaryScreen })));
 const PerfMonitorOverlay = lazy(() => import('./components/game/PerfMonitor').then((module) => ({ default: module.PerfMonitorOverlay })));
 const PREMATCH_COUNTDOWN_EFFECT_FADE_MS = 3000;
@@ -412,7 +412,11 @@ export function App() {
   }
 
   if (appPhase === 'map_vote') {
-    return <MapVoteScreen />;
+    return (
+      <Suspense fallback={null}>
+        <MapVoteScreen />
+      </Suspense>
+    );
   }
 
   // In game

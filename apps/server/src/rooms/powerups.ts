@@ -9,7 +9,7 @@ import type { PlainVec3 } from './bot-ai';
 import type { Player } from './schema/Player';
 import { vec3SchemaToPlain } from './roomMath';
 
-export interface PowerupPickupRuntimeState {
+interface PowerupPickupRuntimeState {
   availableAt: number;
 }
 
@@ -26,76 +26,88 @@ export interface AppliedPowerupPickup {
   healing?: PowerupPickupHealing;
 }
 
+export class PowerupBoostTracker {
+  private readonly boostUntil = new Map<string, number>();
+
+  clear(playerId: string): boolean {
+    return this.boostUntil.delete(playerId);
+  }
+
+  clearAll(): void {
+    this.boostUntil.clear();
+  }
+
+  getUntil(playerId: string, now: number): number | null {
+    const expiresAt = this.boostUntil.get(playerId) ?? 0;
+    if (expiresAt <= now) {
+      this.boostUntil.delete(playerId);
+      return null;
+    }
+    return expiresAt;
+  }
+
+  has(playerId: string, now: number): boolean {
+    return this.getUntil(playerId, now) !== null;
+  }
+
+  setUntil(playerId: string, expiresAt: number): void {
+    this.boostUntil.set(playerId, expiresAt);
+  }
+}
+
 function getMapPowerups(mapManifest: VoxelMapManifest | null | undefined): readonly MapPowerupPickup[] {
   return mapManifest?.gameplay.powerups ?? [];
 }
 
-export function resetPowerupPickupStates(
-  pickupStates: Map<string, PowerupPickupRuntimeState>,
-  mapManifest: VoxelMapManifest | null | undefined,
-  availableAt = 0
-): void {
-  pickupStates.clear();
-  for (const pickup of getMapPowerups(mapManifest)) {
-    pickupStates.set(pickup.id, { availableAt });
+export class PowerupPickupTracker {
+  private readonly pickupStates = new Map<string, PowerupPickupRuntimeState>();
+
+  reset(mapManifest: VoxelMapManifest | null | undefined, availableAt = 0): void {
+    this.pickupStates.clear();
+    for (const pickup of getMapPowerups(mapManifest)) {
+      this.pickupStates.set(pickup.id, { availableAt });
+    }
   }
-}
 
-export function getPowerupPickupState(
-  pickupStates: Map<string, PowerupPickupRuntimeState>,
-  pickupId: string
-): PowerupPickupRuntimeState {
-  let state = pickupStates.get(pickupId);
-  if (!state) {
-    state = { availableAt: 0 };
-    pickupStates.set(pickupId, state);
+  getAvailableAt(pickupId: string): number {
+    return this.getOrCreateState(pickupId).availableAt;
   }
-  return state;
-}
 
-export function buildPowerupStateMessage(
-  serverTime: number,
-  mapManifest: VoxelMapManifest | null | undefined,
-  pickupStates: Map<string, PowerupPickupRuntimeState>
-): PowerupStateMessage {
-  return {
-    serverTime,
-    pickups: getMapPowerups(mapManifest).map((pickup) => ({
-      pickupId: pickup.id,
-      availableAt: getPowerupPickupState(pickupStates, pickup.id).availableAt,
-    })),
-  };
-}
-
-export function getPowerupBoostUntil(
-  powerupBoostUntil: Map<string, number>,
-  playerId: string,
-  now: number
-): number | null {
-  const expiresAt = powerupBoostUntil.get(playerId) ?? 0;
-  if (expiresAt <= now) {
-    powerupBoostUntil.delete(playerId);
-    return null;
+  setAvailableAt(pickupId: string, availableAt: number): void {
+    this.getOrCreateState(pickupId).availableAt = availableAt;
   }
-  return expiresAt;
-}
 
-export function hasPowerupBoost(
-  powerupBoostUntil: Map<string, number>,
-  player: Player,
-  now: number
-): boolean {
-  return getPowerupBoostUntil(powerupBoostUntil, player.id, now) !== null;
+  buildStateMessage(
+    serverTime: number,
+    mapManifest: VoxelMapManifest | null | undefined
+  ): PowerupStateMessage {
+    return {
+      serverTime,
+      pickups: getMapPowerups(mapManifest).map((pickup) => ({
+        pickupId: pickup.id,
+        availableAt: this.getAvailableAt(pickup.id),
+      })),
+    };
+  }
+
+  private getOrCreateState(pickupId: string): PowerupPickupRuntimeState {
+    let state = this.pickupStates.get(pickupId);
+    if (!state) {
+      state = { availableAt: 0 };
+      this.pickupStates.set(pickupId, state);
+    }
+    return state;
+  }
 }
 
 export function applyPowerupPickup(input: {
   player: Player;
   pickup: MapPowerupPickup;
   now: number;
-  pickupStates: Map<string, PowerupPickupRuntimeState>;
-  powerupBoostUntil: Map<string, number>;
+  powerupPickups: PowerupPickupTracker;
+  powerupBoosts: PowerupBoostTracker;
 }): AppliedPowerupPickup | null {
-  const { player, pickup, now, pickupStates, powerupBoostUntil } = input;
+  const { player, pickup, now, powerupPickups, powerupBoosts } = input;
   let healthRestored: number | undefined;
   let healing: PowerupPickupHealing | undefined;
   let expiresAt: number | null = null;
@@ -114,11 +126,11 @@ export function applyPowerupPickup(input: {
     };
   } else {
     expiresAt = now + POWERUP_BUFF_DURATION_MS;
-    powerupBoostUntil.set(player.id, expiresAt);
+    powerupBoosts.setUntil(player.id, expiresAt);
   }
 
-  const state = getPowerupPickupState(pickupStates, pickup.id);
-  state.availableAt = now + Math.max(0, pickup.respawnSeconds * 1000);
+  const availableAt = now + Math.max(0, pickup.respawnSeconds * 1000);
+  powerupPickups.setAvailableAt(pickup.id, availableAt);
 
   return {
     message: {
@@ -126,7 +138,7 @@ export function applyPowerupPickup(input: {
       kind: pickup.kind,
       playerId: player.id,
       position: pickup.position,
-      availableAt: state.availableAt,
+      availableAt,
       expiresAt,
       healthRestored,
       serverTime: now,

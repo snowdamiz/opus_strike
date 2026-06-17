@@ -24,6 +24,8 @@ const players = [
 index.rebuild(players);
 
 assert.deepEqual(index.getAlivePlayers().map((player) => player.id), ['red-a', 'red-b', 'blue-a', 'blue-b']);
+assert.deepEqual(index.getTeamPlayers('red').map((player) => player.id), ['red-a', 'red-b']);
+assert.deepEqual(index.getTeamPlayers('blue').map((player) => player.id), ['blue-a', 'blue-b']);
 assert.deepEqual(index.getEnemyPlayers('red').map((player) => player.id), ['blue-a', 'blue-b']);
 
 const radiusResults: Player[] = [];

@@ -14,6 +14,7 @@ import {
 import {
   HERO_BODY_MANIFESTS,
 } from './heroBodyManifests';
+import { getHeroBodyRenderParts } from './heroBodyRenderParts';
 import { HERO_MODEL_DOCUMENTS } from './heroModelDocuments';
 import {
   addVoxelPartMetadata,
@@ -89,6 +90,11 @@ for (const heroId of heroIds) {
   assert.ok(manifest.teamAccentParts.length > 0, `${heroId} body manifest needs team accent parts`);
   assert.ok(manifest.attackDurationSeconds > 0, `${heroId} body manifest needs attack timing`);
   assert.ok(manifest.idleProfile.breathingAmplitude > 0, `${heroId} body manifest needs idle breathing`);
+  assert.deepEqual(
+    getHeroBodyRenderParts(manifest.parts).map((part) => part.id),
+    manifest.parts.map((part) => part.id),
+    `${heroId} render parts should not inject shared generated bone geometry`
+  );
 
   const partIds = new Set<string>();
   for (const part of [...manifest.parts, ...manifest.teamAccentParts]) {

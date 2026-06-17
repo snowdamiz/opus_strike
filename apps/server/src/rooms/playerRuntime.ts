@@ -1,5 +1,43 @@
-import type { PlayerInput } from '@voxel-strike/shared';
+import {
+  BLAZE_FLAMETHROWER_MAX_FUEL,
+  type PlayerInput,
+} from '@voxel-strike/shared';
 import { Player } from './schema/Player';
+
+export interface PlayerAliveRuntimeResetInput {
+  now: number;
+  spawnProtectionMs: number;
+  resetRespawnTime?: boolean;
+}
+
+export interface PlayerAliveRuntimeResetPlan {
+  resetAbilityCooldowns: boolean;
+  resetBotBrain: boolean;
+  resetPhantomPrimaryMagazine: boolean;
+  clearChronosAegisShield: boolean;
+}
+
+export function applyPlayerAliveRuntimeReset(
+  player: Player,
+  input: PlayerAliveRuntimeResetInput
+): PlayerAliveRuntimeResetPlan {
+  player.state = 'alive';
+  player.health = player.maxHealth;
+  player.spawnProtectionUntil = input.now + input.spawnProtectionMs;
+  if (input.resetRespawnTime) {
+    player.respawnTime = 0;
+  }
+  if (player.heroId === 'blaze') {
+    player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
+  }
+
+  return {
+    resetAbilityCooldowns: true,
+    resetBotBrain: player.isBot,
+    resetPhantomPrimaryMagazine: player.heroId === 'phantom',
+    clearChronosAegisShield: player.heroId === 'chronos',
+  };
+}
 
 export function createEmptyPlayerInput(tick: number, player: Player, now: number): PlayerInput {
   return {

@@ -3,6 +3,8 @@ const CACHE_VERSION = `${CACHE_PREFIX}-v5`;
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const CACHE_PREFIXES_TO_CLEAN = ['slop-heroes-', 'voxel-strike-'];
+const MAX_RUNTIME_CACHE_ENTRIES = 120;
+const MAX_RUNTIME_RESPONSE_BYTES = 2 * 1024 * 1024;
 const LOCAL_DEVELOPMENT_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 const IS_LOCAL_DEVELOPMENT = LOCAL_DEVELOPMENT_HOSTS.has(self.location.hostname);
 const APP_SHELL_ASSETS = [
@@ -11,7 +13,6 @@ const APP_SHELL_ASSETS = [
   '/manifest.webmanifest',
   '/favicon.svg',
   '/voxel.svg',
-  '/og-image.png',
   '/apple-touch-icon.png',
   '/pwa-icon-192.png',
   '/pwa-icon-512.png',
@@ -120,8 +121,9 @@ async function staleWhileRevalidate(request, cacheName) {
   const fetchAndCache = async () => {
     const response = await fetch(request);
 
-    if (response.ok) {
+    if (response.ok && shouldCacheRuntimeResponse(response)) {
       await cache.put(request, response.clone());
+      await trimRuntimeCache(cache);
     }
 
     return response;
@@ -133,4 +135,22 @@ async function staleWhileRevalidate(request, cacheName) {
   }
 
   return fetchAndCache();
+}
+
+function shouldCacheRuntimeResponse(response) {
+  const contentLength = Number(response.headers.get('content-length') || 0);
+  return !Number.isFinite(contentLength) ||
+    contentLength <= 0 ||
+    contentLength <= MAX_RUNTIME_RESPONSE_BYTES;
+}
+
+async function trimRuntimeCache(cache) {
+  const keys = await cache.keys();
+  if (keys.length <= MAX_RUNTIME_CACHE_ENTRIES) return;
+
+  await Promise.all(
+    keys
+      .slice(0, keys.length - MAX_RUNTIME_CACHE_ENTRIES)
+      .map((request) => cache.delete(request))
+  );
 }

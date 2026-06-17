@@ -1,3 +1,5 @@
+import type { HeroId, PlayerInput } from '@voxel-strike/shared';
+
 export type DevBotSkillSlot = 'primary' | 'secondary' | 'ability1' | 'ability2' | 'ultimate';
 export type DevBotLookDirection = 'up' | 'down';
 
@@ -59,4 +61,56 @@ export function resolveDevBotSkillOverride(skillKey: string): DevBotSkillCommand
 export function resolveDevBotLookDirection(direction: string): DevBotLookDirection | null {
   const normalized = direction.trim().toLowerCase();
   return normalized === 'up' || normalized === 'down' ? normalized : null;
+}
+
+type DevBotSkillInput = Pick<
+  PlayerInput,
+  'primaryFire' | 'secondaryFire' | 'reload' | 'ability1' | 'ability2' | 'ultimate'
+>;
+
+export function applyDevBotSkillOverride<TInput extends DevBotSkillInput>(
+  input: TInput,
+  heroId: HeroId | string | null | undefined,
+  override: DevBotSkillOverride | null
+): TInput {
+  if (!override) return input;
+
+  input.primaryFire = false;
+  input.secondaryFire = false;
+  input.reload = false;
+  input.ability1 = false;
+  input.ability2 = false;
+  input.ultimate = false;
+
+  switch (override.slot) {
+    case 'primary':
+      input.primaryFire = true;
+      break;
+    case 'secondary':
+      input.secondaryFire = true;
+      break;
+    case 'ability1':
+      input.ability1 = true;
+      if (heroId === 'chronos') {
+        input.primaryFire = true;
+      }
+      break;
+    case 'ability2':
+      input.ability2 = true;
+      break;
+    case 'ultimate':
+      input.ultimate = true;
+      break;
+  }
+
+  return input;
+}
+
+export function applyDevBotLookOverride<TInput extends Pick<PlayerInput, 'lookPitch'>>(
+  input: TInput,
+  override: DevBotLookOverride | null
+): TInput {
+  if (!override) return input;
+  input.lookPitch = override.pitch;
+  return input;
 }

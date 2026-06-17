@@ -1,60 +1,219 @@
 import type { IncomingMessage } from 'http';
-import { randomUUID } from 'node:crypto';
 import { monitorEventLoopDelay, performance, type IntervalHistogram } from 'node:perf_hooks';
 import { Room, Client } from 'colyseus';
 import { GameState } from './schema/GameState';
 import { Player } from './schema/Player';
 import { Vec3Schema, AbilityStateSchema } from './schema/Components';
 import { PlayerSpatialIndex } from './PlayerSpatialIndex';
-import { MovementCommandQueue } from './MovementCommandQueue';
-import { estimateCustomMessageBytes } from './customMessageMetrics';
+import { PlayerSpatialQueries } from './playerSpatialQueries';
+import { AlternatingLaunchSideTracker } from './alternatingLaunchSide';
+import { AttackCooldownTracker } from './attackCooldownTracker';
+import { ChronosAegisShieldTracker } from './chronosAegisShield';
+import { RoomAbilityIdGenerator } from './roomAbilityIds';
+import { RoomMetrics, type RoomCustomMessageMetric } from './roomMetrics';
 import {
-  buildPlayerInterestSnapshot,
-  getPlayerInterestSignature,
-} from './playerInterestSnapshot';
+  buildRoomInterestMetricsSnapshot,
+  buildRoomLoadSnapshot,
+  type RoomInterestMetricsSnapshot,
+  type RoomLoadSnapshot,
+} from './roomLoadSnapshot';
+import { buildGameRoomMetadata } from './roomMetadataSnapshot';
+import { getRoomPopulationCounts } from './roomPopulation';
+import { applyRoomRankState, buildRoomRankSnapshot } from './roomRankSnapshot';
+import {
+  buildDevTimeFreezeStatePatch,
+  buildCountdownPhaseStatePatch,
+  buildGameEndPhaseStatePatch,
+  buildHeroSelectPhaseStatePatch,
+  buildPhaseChangePayload,
+  buildPlayingPhaseStatePatch,
+  buildRoundEndPhaseStatePatch,
+  buildRoundEndPayload,
+  getNextRoundEndPhase,
+  getRoomRoundTimeRemaining,
+  hasPhaseDeadlineElapsed,
+  shouldAutoReadyHeroSelectPhase,
+  shouldStartHeroSelectPhase,
+  type RoomPhaseStatePatch,
+} from './roomPhaseRuntime';
+import { RoomTimeoutRegistry } from './roomTimeouts';
+import {
+  PhantomPrimaryMagazineTracker,
+  type PhantomPrimaryMagazineState,
+} from './phantomPrimaryMagazine';
+import { PhantomVoidRayChargeTracker } from './phantomVoidRayCharge';
+import {
+  PlayerPressStateTracker,
+  type PlayerPressState,
+} from './playerPressState';
+import { PlayerHoldTracker } from './playerHoldTracker';
+import { PlayerCombatActivityTracker } from './playerCombatActivity';
+import {
+  PlayerReplicationStateTracker,
+  type PlayerVitalsReplicationState,
+  type TransformReplicationState,
+} from './playerReplicationState';
+import { RoomClientRegistry } from './roomClientRegistry';
+import { buildRoomChatPayload, getRoomChatRecipientIds } from './roomChatRuntime';
+import { RoomNpcRegistry } from './roomNpcRegistry';
+import { RoomParticipantRegistry } from './roomParticipantRegistry';
+import { RoomMapRuntime } from './roomMapRuntime';
+import {
+  MatchLedgerRuntime,
+  type MatchPersistenceLedger,
+} from './matchLedgerRuntime';
+import { createRoomMatchFinalizationRuntime } from './matchFinalizationRuntime';
+import {
+  MatchSummaryRuntime,
+  buildRankedUserStatesFromAuthContexts,
+  type RankedSummaryPreviewInput,
+} from './matchSummaryRuntime';
+import { MatchSnapshotRuntime } from './matchSnapshotRuntime';
+import { PlayerPingRuntime } from './playerPingRuntime';
+import {
+  POST_GAME_RESET_DELAY_MS,
+  buildPostGameResetStatePatch,
+  resetPostGamePlayer,
+  type PostGameResetStatePatch,
+} from './postGameResetRuntime';
+import {
+  PlayerRootTracker,
+  isRootBlockedAbility,
+  stopRootedMovementState,
+  suppressLocomotionInput,
+} from './playerRootState';
+import { buildPlayerInterestSnapshot } from './playerInterestSnapshot';
+import {
+  buildChronosAegisDamagedPayload,
+  buildPhantomShieldBrokenPayload,
+  buildPlayerDamagedPayload,
+  buildPlayerHealedPayload,
+  buildPlayerKilledPayload,
+  buildPowerupCollectedPayload,
+  shouldIncludePlayerJoinPosition,
+} from './roomPlayerEventRedaction';
 import {
   VisibilityInterestManager,
   type RecipientInterestDecision,
-  type VisibilityInterestContext,
-  type VisibilityInterestPlayer,
-  type VisibilityInterestMetrics,
 } from './visibilityInterest';
+import {
+  ReplicationFrameRuntime,
+  buildPlayerInterestStreamMessage,
+  buildPlayerTransformsStreamMessage,
+  buildPlayerVitalsStreamMessage,
+  collectRecipientPlayerStateStreams,
+  getPlayerStateStreamBroadcastPlan,
+  type ReplicationFrameContext,
+} from './replicationFrameRuntime';
 import {
   SERVER_MOVEMENT_SUBSTEPS_PER_TICK,
   getMovementBacklogTrimCount,
   getMovementCommandDrainDecision,
 } from './movementCommandDrain';
 import {
-  createTeamSpawnAssignments,
-  type TeamSpawnParticipant,
+  getMovementQueueOverflowBarrierPolicy,
+  ingestMovementCommandPacket,
+} from './movementCommandIngress';
+import {
+  MovementAuthorityRegistry,
+  type ServerMovementAuthorityState,
+} from './movementAuthorityRegistry';
+import {
+  createTeamSpawnPlan,
+  resolveTeamSpawnAssignmentPosition,
+  resolveTeamSpawnPlacement,
+  type TeamSpawnPosition,
 } from './spawnAssignments';
+import {
+  getRoomHeroLockParticipants,
+  isPlayerTeamHeroAvailable as isRoomPlayerTeamHeroAvailable,
+  selectAvailableRoomHero,
+  type RoomHeroLockParticipant,
+} from './roomHeroSelection';
 import {
   buildPackedPlayerTransform,
   getPackedTransformSignature,
-  havePackedTransformsChanged,
+  selectPackedTransformDelta,
 } from './playerTransformPacking';
 import {
   MATCH_CANCEL_DISCONNECT_DELAY_MS,
   MATCH_START_CANCEL_TIMEOUT_MS,
 } from './matchStartTiming';
 import {
+  buildMatchCancelledPayload,
+  buildPreMatchCancelNotice,
+  canCancelPreMatch,
+  createStartTimeoutCancelNotice,
+  type PreMatchCancelNotice,
+  type PreMatchCancelNoticeDetails,
+  type PreMatchCancelReason,
+} from './preMatchCancellation';
+import {
+  arePlayersReadyForCountdown as arePlayersReadyForCountdownState,
+  buildMatchStartGatePayload,
+  canMarkMatchSceneReady,
+  countConnectedHumanPlayers,
+  hasRequiredHumanPlayersConnected as hasRequiredHumanPlayersConnectedState,
+  MatchStartGateTracker,
+  readMatchSceneReadyGateKey,
+  shouldOpenCountdownStartGate,
+  shouldStartCountdownAfterSceneReady,
+} from './matchStartReadiness';
+import {
+  BlazeGearstormTracker,
+  PendingAreaDamageQueue,
+  VoidZoneTracker,
+  type PendingAreaDamageInstance,
+} from './areaEffectRuntime';
+import { BlazeBurnEffectTracker } from './blazeBurnEffects';
+import {
+  BlazeFlamethrowerRuntimeTracker,
+  resolveBlazeFlamethrowerDamageTargets,
+  resolveBlazeFlamethrowerDamageFrame,
+  resolveBlazeFlamethrowerFrameState,
+} from './blazeFlamethrowerRuntime';
+import {
+  HookshotRuntimeTracker,
+  resolveHookshotDragPullTerrainStep,
+  type HookshotAnchorWallInstance,
+  type HookshotDragPullAuthorityState,
+} from './hookshotRuntime';
+import {
+  buildChronosLifelineCastPlan,
+  buildHookshotAnchorWallPlan,
+  buildHookshotGrappleCastPayload,
+  buildHookshotGroundHooksCastPayload,
+  buildStandardAbilityCastPlan,
+  getAbilityUsePreflightRejection,
+  type AbilityCasterSnapshot,
+  type ChronosLifelineMode,
+} from './roomAbilityCastRuntime';
+import {
+  buildAttackImpactHint,
+  getAttackCastKind,
+  getAttackDamageResolutionPlan,
+  getAttackPreflightRejection,
+  getChronosAegisCollisionRadiusForAttack,
+  getRoomAttackConfig,
+  withHookshotHeavyAttackTargetHint,
+  type AttackConfig,
+  type AttackMode,
+  type AttackTargetTeam,
+  type SkillImpactHint,
+} from './roomAttackRuntime';
+import {
   DEFAULT_GAME_CONFIG,
   DEFAULT_GAMEPLAY_MODE,
-  DEFAULT_VOXEL_MAP_SIZE_ID,
   TICK_INTERVAL_MS,
   createGameConfigForGameplayMode,
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
   getHeroStats,
-  ALL_HERO_IDS,
   createRandomSeed,
-  generateProceduralVoxelMap,
-  createProceduralTerrainLookup,
   getVoxelMapTheme,
   isGameplayMode,
   normalizeVoxelMapSizeId,
   GOLDEN_VOXEL_MAP_THEME_ID,
-  getRankFromRating,
   toPublicRankSnapshot,
   isInsideBoundaryPolygon,
   isCollisionBlock,
@@ -66,46 +225,26 @@ import {
   ULTIMATE_CHARGE_PER_KILL,
   ULTIMATE_CHARGE_PER_SECOND,
   BLAZE_FLAMETHROWER_MAX_FUEL,
-  BLAZE_FLAMETHROWER_FUEL_DRAIN,
-  BLAZE_FLAMETHROWER_FUEL_REGEN,
   BLAZE_FLAMETHROWER_RANGE,
   BLAZE_FLAMETHROWER_CONE_HALF_ANGLE,
   BLAZE_FLAMETHROWER_DAMAGE,
   BLAZE_FLAMETHROWER_DAMAGE_INTERVAL,
   BLAZE_FLAMETHROWER_BURN_DAMAGE,
-  BLAZE_FLAMETHROWER_BURN_INTERVAL_MS,
-  BLAZE_FLAMETHROWER_BURN_TICKS,
   BLAZE_GEARSTORM_RADIUS,
   BLAZE_GEARSTORM_DAMAGE,
-  BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
-  BLAZE_ROCKET_DAMAGE,
-  BLAZE_ROCKET_FIRE_INTERVAL_MS,
   BLAZE_ROCKET_SPEED,
-  BLAZE_ROCKET_COLLISION_RADIUS,
   BLAZE_ROCKET_SPLASH_RADIUS,
-  BLAZE_BOMB_COOLDOWN_MS,
-  BLAZE_BOMB_DAMAGE,
   BLAZE_BOMB_SPLASH_RADIUS,
   BLAZE_BOMB_MAX_RANGE,
   BLAZE_BOMB_MIN_RANGE,
-  BLAZE_BOMB_AEGIS_COLLISION_RADIUS,
   BLAZE_FLAMETHROWER_COLLISION_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
-  CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS,
-  CHRONOS_ASCENDANT_PARADOX_PULSE_COLLISION_RADIUS,
-  CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE,
   CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED,
   CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER,
-  CHRONOS_AEGIS_SHIELD_MAX_HP,
-  CHRONOS_AEGIS_SHIELD_RECHARGE_PER_SECOND,
   CHRONOS_AEGIS_TARGET_BACK_MAX,
-  CHRONOS_LIFELINE_ALLY_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
-  CHRONOS_LIFELINE_RELEASE_DELAY_MS,
-  CHRONOS_LIFELINE_SELF_HEAL,
-  CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   CHRONOS_TIMEBREAK_SHOCKWAVE_AUTHORITY_MS,
   CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE,
   CHRONOS_TIMEBREAK_SHOCKWAVE_KNOCKBACK_FORCE,
@@ -113,18 +252,10 @@ import {
   CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
   CHRONOS_TIMEBREAK_SHOCKWAVE_VERTICAL_FORCE,
   CHRONOS_VERDANT_PULSE_AIM_DISTANCE,
-  CHRONOS_VERDANT_PULSE_COLLISION_RADIUS,
-  CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
-  CHRONOS_VERDANT_PULSE_DAMAGE,
   CHRONOS_VERDANT_PULSE_FIRE_READY_MS,
   CHRONOS_VERDANT_PULSE_SPEED,
   GRAPPLE_MAX_DISTANCE,
-  HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS,
-  HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS,
-  HOOKSHOT_CHAIN_HOOKS_DAMAGE,
   HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE,
-  HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS,
-  HOOKSHOT_DRAG_HOOK_DAMAGE,
   HOOKSHOT_DRAG_HOOK_MAX_DISTANCE,
   HOOKSHOT_DRAG_HOOK_PULL_FRONT_DISTANCE,
   HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS,
@@ -132,19 +263,8 @@ import {
   HOOKSHOT_DRAG_HOOK_RETRACT_SPEED,
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
-  HERO_OUT_OF_COMBAT_REGEN_CAP_RATIO,
-  HERO_OUT_OF_COMBAT_REGEN_DELAY_MS,
-  HERO_OUT_OF_COMBAT_REGEN_PER_SECOND,
-  PHANTOM_DIRE_BALL_COLLISION_RADIUS,
-  PHANTOM_DIRE_BALL_DAMAGE,
-  PHANTOM_PRIMARY_MAGAZINE_SIZE,
-  PHANTOM_PRIMARY_COOLDOWN_MS,
   PHANTOM_PRIMARY_FIRE_READY_MS,
-  PHANTOM_PRIMARY_RELOAD_MS,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
-  PHANTOM_VOID_RAY_COOLDOWN_MS,
-  PHANTOM_VOID_RAY_COLLISION_RADIUS,
-  PHANTOM_VOID_RAY_DAMAGE,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
@@ -153,14 +273,10 @@ import {
   MOVEMENT_SUBSTEP_SECONDS,
   MOVEMENT_MAX_PACKET_COMMANDS,
   MOVEMENT_MAX_SERVER_QUEUE,
-  MOVEMENT_MAX_COMMANDS_PER_SECOND,
-  MOVEMENT_COMMAND_STALE_GRACE_STEPS,
   inputStateToMovementButtons,
   movementButtonsToInputState,
   isMovementSeqAfter,
   nextMovementSeq,
-  movementSeqDistance,
-  parseMovementCommandPayload,
   normalizeLookYaw,
   clampLookPitch,
   calculateLookDirection,
@@ -172,14 +288,10 @@ import {
   getBlazeMeteorPath,
   getPlayerBodyAimPosition as getSharedPlayerBodyAimPosition,
   getPlayerEyePosition as getSharedPlayerEyePosition,
-  getPlayerLineOfSightSamplePoints as getSharedPlayerLineOfSightSamplePoints,
   getAimConeHitAgainstPlayerCombatHitbox,
   getSegmentHitAgainstPlayerCombatHitbox,
   getSegmentHitAgainstChronosAegis,
-  isTeamHeroAvailable,
-  pickAvailableTeamHero,
   calculateFalloffDamage,
-  TRANSFORM_POSITION_SCALE,
 } from '@voxel-strike/shared';
 import type { 
   AbilityCastOriginHint,
@@ -188,32 +300,26 @@ import type {
   HeroId, 
   Team, 
   PlayerInput,
-  PlayerMovementState,
   MovementCommand,
   MovementCommandPacket,
   MovementCorrectionReason,
-  MovementTelemetrySnapshot,
   GameEndEvent,
   GameplayMode,
   MatchMode,
-  MatchOutcome,
-  MatchSummaryPlayer,
   SelfMovementAuthority,
   MatchSnapshotMessage,
   PhantomShieldBrokenEvent,
-  PlayerPingRequestMessage,
-  PlayerPingsMessage,
   PlayerInterestMessage,
   PlayerDamagedEvent,
   PlayerDeathEvent,
+  PlayerHealedEvent,
   PowerupCollectedMessage,
   PlayerTransformsV2Message,
-  PlayerVitalsAbilitySnapshot,
   PlayerVitalsMessage,
   PlayerVitalsSnapshot,
   PlayerVisibilityState,
   PackedPlayerTransform,
-  VoxelChunk,
+  GamePhase,
   VoxelMapManifest,
   VoxelMapSizeId,
   VoxelMapTheme,
@@ -221,19 +327,12 @@ import type {
 import {
   HOOKSHOT_GRAPPLE_EXTENSION_SPEED,
   canCapsuleOccupy,
-  computeAnchorWallAabbs,
-  createVoxelCollisionWorld,
   createHookshotSwingState,
   resolveCapsuleTeleportDestination,
   simulateSharedMovement,
   stepHookshotSwing,
   sweepCapsulePathClear,
-  type AnchorWallCollisionSource,
-  type HookshotSwingState,
-  type MovementAabb,
-  type MovementCollisionBounds,
   type MovementCollisionWorld,
-  type MovementTerrainAdapter,
 } from '@voxel-strike/physics';
 import { loggers } from '../utils/logger';
 import prisma from '../db';
@@ -244,88 +343,113 @@ import {
 } from '../config/security';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
 import { verifyGameEntryTicket, type GameEntryTicketClaims } from '../security/entryTickets';
-import {
-  calculateRankedRatingUpdates,
-  type RankedUserState,
-} from '../ranking/ratingService';
 import { voiceService } from '../voice/VoiceService';
-import { wagerService, type GoldenBiomeRewardWinner, type LockedWagerContext } from '../wagers/service';
-import {
-  calculateParticipantExperience,
-  calculateParticipantScore,
-  getMatchOutcome,
-  persistCompletedMatch,
-  type MatchParticipantSnapshot,
-} from '../persistence/matchPersistence';
-import { normalizePlayerReportReason } from '../reports/playerReportReason';
+import { wagerService, type LockedWagerContext } from '../wagers/service';
+import type { MatchParticipantSnapshot } from '../persistence/matchPersistence';
 import { createPlayerReport } from '../reports/playerReportService';
 import {
   AntiCheatEvidenceStore,
   AntiCheatRoomRuntime,
-  advanceMovementShadowSimulation,
   createMovementShadowSimulationState,
   getAntiCheatConfig,
-  recordMovementShadowDriftSample,
   type AntiCheatIntegrityGate,
-  type MovementShadowSimulationState,
 } from '../anticheat';
 import { AccountRestrictedError, assertGameplayAccountEligible } from '../auth/accountEligibility';
 import { consumeReplayNonce } from '../security/replayNonceStore';
-import type { LastSafeMovementState } from './movementValidation';
 import {
   GAME_MESSAGE_RATE_LIMITS,
   MessageRateLimiter,
   type RateLimitRule,
 } from './rateLimiter';
-import {
-  DEFAULT_COMPETITIVE_NETWORK_QUALITY_GATE,
-  createNetworkQualityState,
-  evaluatePlayerNetworkQuality,
-  isNetworkQualityGateRequiredForMatch,
-  recordNetworkQualitySample,
-  type NetworkQualityState,
-  type PlayerNetworkQualityEvaluation,
-} from './networkQualityGate';
 import { shouldResolveGenericSecondaryAttack } from './combatInputRouting';
-import { getSecurityEventLogLevel } from './securityEventLogging';
+import {
+  SecurityEventLogSampler,
+  buildRoomSecurityEvent,
+  buildSecurityAuthorityEvent,
+  getSecurityEventLogLevel,
+  type RoomSecurityEventInput,
+  type SecurityEvent,
+} from './securityEventLogging';
 import {
   isHeroId,
   isRecord,
   isTeam,
-  sanitizeShortText,
-  validateBotIdPayload,
   validateChatPayload,
   validateHeroPayload,
   validateReadyPayload,
   validateTeamPayload,
-  validateVec3,
 } from './protocolValidation';
+import {
+  buildCreatePlayerReportInput,
+  buildPlayerReportEvidenceInput,
+  buildPlayerReportResultPayload,
+  parsePlayerReportPayload,
+  readPlayerReportRequestId,
+  validatePlayerReportContext,
+  type PlayerReportParticipantSnapshot,
+  type PlayerReportResult,
+  type PlayerReportRoomSnapshot,
+} from './playerReportRuntime';
+import {
+  buildReconnectParticipantSyncPayload,
+  buildRunningGameReconnectTicketRequest,
+} from './roomReconnectRuntime';
+import {
+  getRoomTeamSelectionDecision,
+  resolveRoomJoinTeam,
+} from './roomTeamSelection';
+import {
+  resolveRoomJoinPlayerName,
+  shouldActivateJoinedPlayer,
+  shouldRejectRoomJoinForCapacity,
+} from './roomJoinRuntime';
+import {
+  normalizeVoiceTeam,
+  prepareMatchVoiceTokenRequest,
+} from './roomVoiceRuntime';
+import {
+  buildAllNpcsKilledPayload,
+  buildNpcDamagedPayload,
+  buildNpcErrorPayload,
+  buildNpcJoinedPayload,
+  buildNpcKilledPayload,
+  buildNpcLeftPayload,
+  buildNpcSpawnedPayload,
+  resolveNpcDamageSourceContext,
+  resolveNpcSpawnPosition,
+  resolveNpcSpawnTeam,
+} from './roomNpcSpawnRuntime';
+import { buildAuthRejectRecord } from './authRejectRuntime';
+import { buildClientJoinHintRecords } from './clientJoinHintsRuntime';
 import {
   BOT_AWARENESS_RANGE,
   BOT_CLOSE_REVEAL_RANGE,
-  BOT_TACTICS_INTERVAL_MS,
-  buildBotBlackboard,
-  buildTeamTactics,
+  applyBotAbilityInputPlan,
   chooseBotAbilityPlan,
   chooseBotCombatPlan,
   chooseLocalAvoidanceDirection,
   clearExpiredBlockedEdges,
+  composeBotInputMovementState,
   composeBotMovementDirection,
-  createBotRouteGraphAdapter,
   createInitialBotBrain,
   createSteeringProbeDirections,
+  getBotAimReadinessTrace,
+  getBotCombatEngagementState,
+  getBotPredictedAimPoint,
   getBotSkillProfile,
+  getBotYawPitchTowardPosition,
+  isBotSecondaryFireWindowOpen,
   normalizeBotDifficulty,
-  planBotRoute,
-  scoreBotIntents,
-  updateBotMovementProgress,
+  updateBotAimState,
+  updateBotPrimaryFireDecision,
+  updateBotMovementRecoveryState,
+  updateBotPlanningState,
+  updateBotSecondaryFireDecision,
   type BotAbilityGeometry,
-  type BotAbilityPlan,
   type BotBlackboard,
   type BotBrain,
   type BotPlayerSnapshot,
   type BotRecentDamageSource,
-  type BotRouteGraphAdapter,
   type BotRoutePlan,
   type BotSkillProfile,
   type BotTeamTacticsByTeam,
@@ -333,16 +457,31 @@ import {
   type PlainVec3,
 } from './bot-ai';
 import { LineOfSightCache } from './lineOfSightCache';
+import { BotRuntimeRegistry } from './botRuntimeRegistry';
 import {
   DEV_BOT_LOOK_HOLD_MS,
   DEV_BOT_LOOK_PITCH,
   DEV_BOT_SKILL_HOLD_MS,
+  applyDevBotLookOverride,
+  applyDevBotSkillOverride,
   resolveDevBotLookDirection,
   resolveDevBotSkillOverride,
   type DevBotLookOverride,
   type DevBotSkillOverride,
   type DevBotSkillSlot,
 } from './devBotCommands';
+import {
+  DevRoomRuntime,
+  buildDevBotSpawnProfile,
+  parseDevBotLookRequest,
+  parseDevBotSkillRequest,
+  parseDevHeroTeamRequest,
+  parseDevNpcDamageRequest,
+  parseDevNpcIdRequest,
+  parseDevNpcSpawnRequest,
+  readDevEnabledFlag,
+  validateDevBotAddRequest,
+} from './devRoomRuntime';
 import {
   clamp,
   direction2DFromTo,
@@ -353,15 +492,11 @@ import {
   getForwardVector,
   hashString,
   normalize2D,
-  normalizeAngle,
   normalizeHorizontalPlain,
-  randomBetween,
-  randomSigned,
-  rotateAngleToward,
   vec3SchemaToPlain,
-  worldDirectionToLocalMove,
 } from './roomMath';
 import {
+  applyPlayerAliveRuntimeReset,
   createEmptyBotInput,
   createEmptyPlayerInput,
   resetPlayerMovementRuntime,
@@ -369,24 +504,22 @@ import {
 } from './playerRuntime';
 import {
   applyPowerupPickup,
-  buildPowerupStateMessage,
-  getPowerupBoostUntil,
-  getPowerupPickupState,
-  hasPowerupBoost,
-  resetPowerupPickupStates,
+  PowerupBoostTracker,
+  PowerupPickupTracker,
   type MapPowerupPickup,
-  type PowerupPickupRuntimeState,
 } from './powerups';
 import {
-  getDefaultPublicMovementVitals,
-  haveVitalsChanged,
+  buildFullPlayerVitalsSnapshot,
+  buildPlayerVitalsStats,
+  buildPublicEnemyVitalsSnapshot,
+  buildVisibleEnemyVitalsSnapshot,
+  selectPlayerVitalsForRecipient,
 } from './playerVitals';
 import {
   getWinningTeam,
   hasTeamReachedScoreLimit,
   isCaptureTheFlagMode,
   isTeamDeathmatchMode,
-  shouldEndGameAfterRound,
 } from './gameModeRules';
 import {
   CTF_TEAMS,
@@ -404,19 +537,29 @@ import {
 
 // Import extracted ability handlers
 import {
-  VoidZone,
   VOID_ZONE_RADIUS,
   VOID_ZONE_DAMAGE,
   VOID_ZONE_DURATION,
-  VOID_ZONE_DAMAGE_INTERVAL,
   initializePlayerAbilities,
   resetAbilityCooldowns,
   tryUseAbility,
   executeAbility,
   updateAbilityCooldowns,
   updateActiveAbilities,
+  type AbilityUseResult,
 } from './abilityHandlers';
 import { RoomDamageRuntime, type RoomDamageContext as DamageContext } from './roomDamageRuntime';
+
+type ResolvedAbilityUseResult = {
+  abilityId: string;
+  abilityDef: NonNullable<AbilityUseResult['abilityDef']>;
+  abilityState: AbilityStateSchema;
+};
+
+interface PlayerStateStreamRecipientSendResult {
+  sentVitals: boolean;
+  sentInterest: boolean;
+}
 
 interface CreateOptions {
   lobbyId?: string;
@@ -454,34 +597,6 @@ interface BotAssignment {
   botProfileId?: string;
 }
 
-interface SpawnPosition {
-  x: number;
-  y: number;
-  z: number;
-}
-
-type PendingPlayerPing = { nonce: string; sentAt: number };
-type PreMatchCancelReason = 'start_timeout' | 'network_quality';
-
-interface PreMatchCancelNotice {
-  reason: PreMatchCancelReason;
-  message: string;
-  blockedPlayerId?: string;
-  blockedPlayerName?: string;
-  networkQuality?: Record<string, unknown>;
-}
-
-interface CompetitiveNetworkQualityGateResult {
-  status: 'ready' | 'pending' | 'blocked';
-  evaluation?: PlayerNetworkQualityEvaluation;
-}
-
-interface PhantomPrimaryMagazineState {
-  ammo: number;
-  reloadUntil: number;
-  reloadStartedAt: number;
-}
-
 interface PhantomCastPayload {
   playerId: string;
   abilityId: string;
@@ -516,132 +631,6 @@ interface HookshotGroundHooksTarget {
   rootUntil: number;
 }
 
-interface HookshotAnchorWallInstance extends AnchorWallCollisionSource {
-  ownerId: string;
-  ownerTeam: Team;
-}
-
-interface HookshotGrappleAuthorityState {
-  castId: string;
-  target: PlainVec3;
-  attachAt: number;
-  swing: HookshotSwingState | null;
-}
-
-interface HookshotDragPullAuthorityState {
-  sourceId: string;
-  forward: PlainVec3;
-  frontDistance: number;
-  startedAt: number;
-  expiresAt: number;
-}
-
-interface PendingAreaDamageInstance {
-  id: string;
-  ownerId: string;
-  center: PlainVec3;
-  radius: number;
-  damage: number;
-  damageType: string;
-  resolveAt: number;
-}
-
-interface BlazeGearstormInstance {
-  id: string;
-  ownerId: string;
-  ownerTeam: Team;
-  position: PlainVec3;
-  radius: number;
-  damage: number;
-  startTime: number;
-  endTime: number;
-  lastDamageTick: Map<string, number>;
-}
-
-interface BlazeBurnEffect {
-  sourceId: string;
-  ticksRemaining: number;
-  nextTickAt: number;
-  sourcePosition: PlainVec3 | null;
-  sourceDirection: PlainVec3 | null;
-}
-
-interface ServerMovementAuthorityState {
-  pendingCommands: MovementCommandQueue;
-  lastProcessedSeq: number;
-  movementEpoch: number;
-  correctionReason: MovementCorrectionReason | null;
-  metrics: MovementTelemetrySnapshot;
-  commandWindowStartedAt: number;
-  commandsInWindow: number;
-  lastAuthoritySentAt: number;
-  lastSafe: LastSafeMovementState | null;
-  objectiveSuppressedUntil: number;
-  shadow: MovementShadowSimulationState;
-}
-
-interface SecurityEvent {
-  type: string;
-  playerId: string;
-  userId?: string;
-  roomId: string;
-  tick: number;
-  movementEpoch: number;
-  movementSequence?: number;
-  reason?: string;
-  position?: PlainVec3;
-  serverTime: number;
-  detail?: Record<string, unknown>;
-}
-
-interface ReconnectParticipant {
-  userId: string;
-  lobbyPlayerId: string;
-  displayName: string;
-  assignedTeam?: Team;
-  selectedHero?: HeroId;
-  observer: boolean;
-}
-
-interface CustomMessageMetric {
-  messages: number;
-  recipients: number;
-  bytes: number;
-}
-
-interface RoomLoadSnapshot {
-  tickDurationP50Ms: number;
-  tickDurationP95Ms: number;
-  tickDurationP99Ms: number;
-  eventLoopDelayP95Ms: number;
-  eventLoopDelayP99Ms: number;
-  customMessageBytes: number;
-  customMessageCount: number;
-  interestRecomputeMs: number;
-  interestLosChecks: number;
-  interestVisibleTargets: number;
-  interestHiddenTargets: number;
-  interestLastKnownTargets: number;
-  streamTransformsBytes: number;
-  streamVitalsBytes: number;
-  streamFilteredTargets: number;
-  streamHiddenTargetLeakCount: number;
-  antiCheatQueueDepth: number;
-  antiCheatDroppedLowMediumSignals: number;
-  antiCheatDbErrors: number;
-}
-
-interface TransformReplicationState {
-  signatures: Map<string, PackedPlayerTransform>;
-  heartbeatAt: Map<string, number>;
-}
-
-interface PlayerVitalsReplicationState {
-  signatures: Map<string, PlayerVitalsSnapshot>;
-  reconcileAt: Map<string, number>;
-  knownPlayerIds: Set<string>;
-}
-
 interface BotFrameContext {
   snapshots: BotPlayerSnapshot[];
   snapshotById: Map<string, BotPlayerSnapshot>;
@@ -651,60 +640,6 @@ interface BotFrameContext {
   visibleEnemyIdsByBot: Map<string, Set<string>>;
   enemyLineOfSightIdsByBot: Map<string, Set<string>>;
 }
-
-interface ReplicationFrameContext {
-  now: number;
-  currentIds: Set<string>;
-  visibilityContext: VisibilityInterestContext;
-  visibilityPlayers: Map<string, VisibilityInterestPlayer>;
-  packedTransforms: Map<string, PackedPlayerTransform>;
-  packedTransformSignatures: Map<string, PackedPlayerTransform>;
-  recipientInterests: Map<string, Map<string, RecipientInterestDecision>>;
-  fullVitalsByPlayer: Map<string, PlayerVitalsSnapshot>;
-  visibleEnemyVitalsByPlayer: Map<string, PlayerVitalsSnapshot>;
-  publicEnemyVitalsByPlayer: Map<string, PlayerVitalsSnapshot>;
-}
-
-interface RoomInterestMetricsSnapshot extends VisibilityInterestMetrics {
-  transformBytes: number;
-  vitalsBytes: number;
-}
-
-type MatchPersistenceState = 'active' | 'persisting' | 'persisted' | 'failed';
-
-interface MatchLedgerParticipant extends MatchParticipantSnapshot {
-  team: Team;
-}
-
-interface MatchPersistenceLedger {
-  matchId: string;
-  roomId: string;
-  lobbyId: string | null;
-  matchMode: MatchMode;
-  mapSeed: number;
-  mapThemeId: VoxelMapTheme['id'];
-  rankedEligible: boolean;
-  startedAt: Date;
-  endedAt: Date | null;
-  redScore: number | null;
-  blueScore: number | null;
-  winningTeam: Team | null;
-  state: MatchPersistenceState;
-  participants: Map<string, MatchLedgerParticipant>;
-}
-
-interface AttackConfig {
-  damage: number;
-  range: number;
-  cooldownMs: number;
-  coneDot: number;
-  radius?: number;
-  collisionRadius?: number;
-  targetTeam?: AttackTargetTeam;
-  damageType: string;
-}
-
-type AttackTargetTeam = 'enemy' | 'any';
 
 interface AimTargetHit {
   target: Player;
@@ -718,12 +653,6 @@ interface ChronosAegisSkillHit {
   distance: number;
 }
 
-interface SkillImpactHint {
-  impactPosition?: PlainVec3;
-  interceptedByChronosAegis?: boolean;
-  targetIds?: string[];
-}
-
 const BLAZE_ROCKET_AIM_DISTANCE = 120;
 const BLAZE_BOMB_FALL_DURATION_MS = 1500;
 const BLAZE_BOMB_WARNING_LEAD_MS = 350;
@@ -731,219 +660,115 @@ const ABILITY_CAST_HINT_MAX_DISTANCE_FROM_FALLBACK = 1.15;
 const ABILITY_CAST_HINT_MAX_DISTANCE_FROM_PLAYER_CENTER = 1.7;
 const ABILITY_CAST_HINT_MAX_VERTICAL_FROM_PLAYER_CENTER = 1.15;
 
-// Track previous press state to detect edges for both humans and server-owned bots.
-type PlayerPressState = {
-  primaryFire: boolean;
-  secondaryFire: boolean;
-  reload: boolean;
-  ability1: boolean;
-  ability2: boolean;
-  ultimate: boolean;
-};
-type ChronosLifelineMode = 'allies' | 'self';
-
-const playerPressState = new Map<string, PlayerPressState>();
 const BLAZE_FLAMETHROWER_CONE_DOT = Math.cos(BLAZE_FLAMETHROWER_CONE_HALF_ANGLE);
-const PLAYER_PING_INTERVAL_MS = 3000;
-const PLAYER_PING_TIMEOUT_MS = 10000;
-const MAX_REPORTED_PLAYER_PING_MS = 999;
 const PLAYER_VITALS_INTERVAL_MS = 125;
 const PLAYER_VITALS_RECONCILE_INTERVAL_MS = 2500;
-const TRANSFORM_HEARTBEAT_INTERVAL_MS = 250;
-const DISTANT_TRANSFORM_HEARTBEAT_INTERVAL_MS = 750;
 const TRANSFORM_HIGH_RELEVANCE_DISTANCE_SQ = 48 * 48;
 const RECENT_COMBAT_TRANSFORM_MS = 650;
 const RECENT_COMBAT_INTEREST_MS = 900;
 const PLAYER_INTEREST_INTERVAL_MS = 200;
 const MATCH_SNAPSHOT_DRIFT_SYNC_INTERVAL_MS = 2000;
 const LOW_FREQUENCY_STATE_INTERVAL_MS = 250;
-const ROOM_LOAD_SAMPLE_COUNT = 240;
 const CHRONOS_AEGIS_SHIELD_TRANSFORM_SCALE = 255;
 const OBJECTIVE_SUPPRESSION_MS = 650;
-const MAX_SECURITY_EVENTS = 2000;
 const SECURITY_EVENT_LOG_SAMPLE_MS = 5000;
 const MOVEMENT_CORRECTION_LOG_SAMPLE_MS = 1000;
 const MAX_SECURITY_LOG_SAMPLE_KEYS = 1024;
-const PRIMARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
-  phantom: { damage: PHANTOM_DIRE_BALL_DAMAGE, range: 30, cooldownMs: PHANTOM_PRIMARY_COOLDOWN_MS, coneDot: Math.cos(0.18), collisionRadius: PHANTOM_DIRE_BALL_COLLISION_RADIUS, damageType: 'dire_ball' },
-  hookshot: { damage: HOOKSHOT_CHAIN_HOOKS_DAMAGE, range: HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE, cooldownMs: HOOKSHOT_CHAIN_HOOKS_COOLDOWN_MS, coneDot: Math.cos(0.2), collisionRadius: HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS, damageType: 'chain_hooks' },
-  blaze: { damage: BLAZE_ROCKET_DAMAGE, range: 36, cooldownMs: BLAZE_ROCKET_FIRE_INTERVAL_MS, coneDot: Math.cos(0.22), radius: BLAZE_ROCKET_SPLASH_RADIUS, collisionRadius: BLAZE_ROCKET_COLLISION_RADIUS, damageType: 'rocket' },
-  chronos: { damage: CHRONOS_VERDANT_PULSE_DAMAGE, range: 34, cooldownMs: CHRONOS_VERDANT_PULSE_COOLDOWN_MS, coneDot: Math.cos(0.18), collisionRadius: CHRONOS_VERDANT_PULSE_COLLISION_RADIUS, damageType: 'verdant_pulse' },
-};
-const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
-  phantom: { damage: PHANTOM_VOID_RAY_DAMAGE, range: 42, cooldownMs: PHANTOM_VOID_RAY_COOLDOWN_MS, coneDot: Math.cos(0.12), collisionRadius: PHANTOM_VOID_RAY_COLLISION_RADIUS, damageType: 'void_ray' },
-  hookshot: { damage: HOOKSHOT_DRAG_HOOK_DAMAGE, range: HOOKSHOT_DRAG_HOOK_MAX_DISTANCE, cooldownMs: 3600, coneDot: Math.cos(0.14), collisionRadius: HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS, targetTeam: 'any', damageType: 'drag_hook' },
-  blaze: { damage: BLAZE_BOMB_DAMAGE, range: BLAZE_BOMB_MAX_RANGE, cooldownMs: BLAZE_BOMB_COOLDOWN_MS, coneDot: Math.cos(0.32), radius: BLAZE_BOMB_SPLASH_RADIUS, damageType: 'bomb' },
-};
+const DEV_COMMANDS_DISABLED_MESSAGE = 'Developer commands are disabled';
 const HOOKSHOT_SPEED = 38;
 const DRAG_HOOK_SPEED = 50;
-const HOOKSHOT_DRAG_HOOK_PULL_BUMP_ITERATIONS = 3;
-const HOOKSHOT_DRAG_HOOK_PULL_BUMP_SKIN = 0.04;
-const HOOKSHOT_DRAG_HOOK_PULL_MIN_PROGRESS = 0.025;
-const HOOKSHOT_ANCHOR_WALL_DURATION = 6.25;
-const HOOKSHOT_ANCHOR_WALL_MAX_DISTANCE = 24.35;
-const ROOT_BLOCKED_MOVEMENT_ABILITIES = new Set([
-  'phantom_blink',
-  'hookshot_grapple',
-  'blaze_rocketjump',
-  'chronos_ascendant_paradox',
-]);
-
 export class GameRoom extends Room<GameState> {
   maxClients = DEFAULT_GAME_CONFIG.maxPlayers;
 
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private matchStartCancelTimeout: ReturnType<typeof setTimeout> | null = null;
   private matchCancelDisconnectTimeout: ReturnType<typeof setTimeout> | null = null;
-  private readonly scheduledTimeouts = new Set<ReturnType<typeof setTimeout>>();
+  private readonly roomTimeouts = new RoomTimeoutRegistry();
+  private readonly playerPressStates = new PlayerPressStateTracker();
   private config = createGameConfigForGameplayMode();
   private lobbyId: string | null = null;
   private lobbyName: string | null = null;
-  private voidZones: VoidZone[] = [];
-  private phantomPrimaryMagazines: Map<string, PhantomPrimaryMagazineState> = new Map();
-  private phantomPrimaryHoldStartedAt: Map<string, number> = new Map();
-  private chronosPrimaryHoldStartedAt: Map<string, number> = new Map();
-  private phantomVoidRayChargeStartedAt: Map<string, number> = new Map();
-  private phantomVoidRayResolvedForPress: Set<string> = new Set();
-  private phantomCastIdCounter: number = 0;
-  private blazeRocketIdCounter: number = 0;
-  private blazeBombIdCounter: number = 0;
-  private blazeGearstormIdCounter: number = 0;
-  private hookshotGroundHooksIdCounter: number = 0;
-  private phantomPrimaryLaunchSide: Map<string, -1 | 1> = new Map();
-  private hookshotPrimaryLaunchSide: Map<string, -1 | 1> = new Map();
-  private hookshotAnchorWalls: HookshotAnchorWallInstance[] = [];
-  private readonly emptyMovementAabbs: MovementAabb[] = [];
-  private hookshotGrapples: Map<string, HookshotGrappleAuthorityState> = new Map();
-  private hookshotDragPulls: Map<string, HookshotDragPullAuthorityState> = new Map();
-  private playerRootedUntil: Map<string, number> = new Map();
-  private powerupPickupStates: Map<string, PowerupPickupRuntimeState> = new Map();
-  private powerupBoostUntil: Map<string, number> = new Map();
-  private pendingAreaDamage: PendingAreaDamageInstance[] = [];
-  private blazeGearstorms: BlazeGearstormInstance[] = [];
-  private blazeFlamethrowerActivePlayers: Set<string> = new Set();
-  private blazeBurnEffects: Map<string, BlazeBurnEffect> = new Map();
-  private voidZoneIdCounter: number = 0;
-  private npcIdCounter: number = 0;
-  private devBotIdCounter: number = 0;
-  private spawnedNpcs: Set<string> = new Set(); // Track NPC IDs
-  private movementAuthorities: Map<string, ServerMovementAuthorityState> = new Map();
-  private flamethrowerLastDamageTick: Map<string, number> = new Map();
-  private botBrains: Map<string, BotBrain> = new Map();
-  private attackCooldownUntil: Map<string, number> = new Map();
-  private playerCombatActivityAt: Map<string, number> = new Map();
-  private chronosAegisShieldHp: Map<string, number> = new Map();
-  private devImmunePlayers: Set<string> = new Set();
-  private devGameClockFrozen = false;
-  private devBotsRooted = false;
-  private devBotBrainEnabled = true;
-  private devBotSkillOverrides: Map<string, DevBotSkillOverride> = new Map();
-  private devBotLookOverrides: Map<string, DevBotLookOverride> = new Map();
-  private mapManifest: VoxelMapManifest | null = null;
-  private botRouteGraph: BotRouteGraphAdapter | null = null;
-  private botTeamTactics: BotTeamTacticsByTeam | null = null;
-  private nextBotTacticsAt = 0;
-  private botTacticsRevision = 0;
-  private proceduralTerrainLookup: ReturnType<typeof createProceduralTerrainLookup> | null = null;
-  private mapChunkLookup: Map<string, VoxelChunk> = new Map();
-  private movementCollisionRevision = 0;
-  private movementCollisionWorldCache: { revision: number; world: MovementCollisionWorld } | null = null;
-  private movementTerrain: MovementTerrainAdapter = {
-    getGroundY: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().getGroundY(position),
-    clampPosition: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().clampToPlayableMap(position),
-    getBlockAtWorld: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().getBlockAtWorld(position),
-    getMaxPlayableY: () => this.getProceduralTerrainLookup().getMaxPlayableY(),
-    collisionRevision: 0,
-    cacheStaticAabbs: true,
-    getCollisionAabbs: (bounds: MovementCollisionBounds) => this.getHookshotAnchorWallAabbs(bounds),
-  };
+  private readonly voidZones = new VoidZoneTracker();
+  private readonly phantomPrimaryMagazines = new PhantomPrimaryMagazineTracker();
+  private readonly phantomPrimaryHolds = new PlayerHoldTracker();
+  private readonly chronosPrimaryHolds = new PlayerHoldTracker();
+  private readonly phantomVoidRayCharges = new PhantomVoidRayChargeTracker();
+  private readonly abilityIds = new RoomAbilityIdGenerator();
+  private readonly phantomPrimaryLaunchSide = new AlternatingLaunchSideTracker();
+  private readonly hookshotPrimaryLaunchSide = new AlternatingLaunchSideTracker();
+  private readonly hookshotRuntime = new HookshotRuntimeTracker();
+  private readonly playerRoots = new PlayerRootTracker();
+  private readonly powerupPickups = new PowerupPickupTracker();
+  private readonly powerupBoosts = new PowerupBoostTracker();
+  private readonly pendingAreaDamage = new PendingAreaDamageQueue();
+  private readonly blazeGearstorms = new BlazeGearstormTracker();
+  private readonly blazeFlamethrowers = new BlazeFlamethrowerRuntimeTracker();
+  private readonly blazeBurns = new BlazeBurnEffectTracker();
+  private readonly npcs = new RoomNpcRegistry();
+  private readonly movementAuthorities = new MovementAuthorityRegistry({
+    maxServerQueue: MOVEMENT_MAX_SERVER_QUEUE,
+    maxPacketCommands: MOVEMENT_MAX_PACKET_COMMANDS,
+  });
+  private readonly botRuntime = new BotRuntimeRegistry<BotBrain>();
+  private readonly attackCooldowns = new AttackCooldownTracker();
+  private readonly playerCombatActivity = new PlayerCombatActivityTracker();
+  private readonly chronosAegisShields = new ChronosAegisShieldTracker();
+  private readonly devRuntime = new DevRoomRuntime();
+  private readonly mapRuntime = new RoomMapRuntime({
+    getMapConfig: () => ({
+      mapSeed: this.state.mapSeed,
+      mapThemeId: this.state.mapThemeId as VoxelMapTheme['id'] | null,
+      mapSize: this.state.mapSize as VoxelMapSizeId | null,
+    }),
+    getCollisionAabbs: (bounds) => this.hookshotRuntime.getAnchorWallAabbs(this.state.serverTime || Date.now(), bounds),
+  });
   
-  // Track durable auth identity -> sessionId mapping for duplicate session handling.
-  private identityToSessionId: Map<string, string> = new Map();
-  private sessionIdToIdentity: Map<string, string> = new Map();
+  private readonly clientRegistry = new RoomClientRegistry<Client>();
   private lastVitalsBroadcastAt = 0;
   private lastMatchSnapshotBroadcastAt = 0;
   private lastInterestBroadcastAt = 0;
   private lastLowFrequencyStateAt = 0;
-  private lastPingProbeAt = 0;
-  private pingProbeSequence = 0;
-  private playerVitalRecipientStates = new Map<string, PlayerVitalsReplicationState>();
-  private playerInterestSignatures = new Map<string, Map<string, string>>();
-  private playerTransformSignatures = new Map<string, PackedPlayerTransform>();
-  private playerTransformHeartbeatAt = new Map<string, number>();
-  private transformRecipientStates = new Map<string, TransformReplicationState>();
-  private readonly replicationVisibilityContext: VisibilityInterestContext = {
-    now: 0,
-    collisionRevision: 0,
-    getEyePosition: GameRoom.getVisibilityEyePosition,
-    getLineOfSightPoints: GameRoom.getVisibilityLineOfSightPoints,
-    hasLineOfSight: (from, to) => this.hasLineOfSight(from, to),
-    getRecentCombatRevealUntil: (recipient, target) => (
-      this.recentCombatInterestUntil.get(this.getRecentCombatInterestKey(recipient.id, target.id)) ?? 0
-    ),
-  };
-  private readonly standaloneVisibilityContext: VisibilityInterestContext = {
-    now: 0,
-    collisionRevision: 0,
-    getEyePosition: GameRoom.getVisibilityEyePosition,
-    getLineOfSightPoints: GameRoom.getVisibilityLineOfSightPoints,
-    hasLineOfSight: (from, to) => this.hasLineOfSight(from, to),
-    getRecentCombatRevealUntil: (recipient, target) => (
-      this.recentCombatInterestUntil.get(this.getRecentCombatInterestKey(recipient.id, target.id)) ?? 0
-    ),
-  };
-  private readonly replicationFrameContext: ReplicationFrameContext = {
-    now: 0,
-    currentIds: new Set(),
-    visibilityContext: this.replicationVisibilityContext,
-    visibilityPlayers: new Map(),
-    packedTransforms: new Map(),
-    packedTransformSignatures: new Map(),
-    recipientInterests: new Map(),
-    fullVitalsByPlayer: new Map(),
-    visibleEnemyVitalsByPlayer: new Map(),
-    publicEnemyVitalsByPlayer: new Map(),
-  };
-  private recentCombatTransformUntil = new Map<string, number>();
-  private recentCombatInterestUntil = new Map<string, number>();
-  private transformStreamEpoch = 0;
-  private matchSnapshotSignature = '';
-  private pendingPlayerPings = new Map<string, PendingPlayerPing>();
-  private playerPingMs = new Map<string, number>();
-  private playerNetworkQuality = new Map<string, NetworkQualityState>();
-  private playerPingsDirty = true;
-  private knownPlayerIds = new Set<string>();
-  private playerNetIds = new Map<string, number>();
-  private nextPlayerNetId = 1;
-  private readonly playerSpatialIndex = new PlayerSpatialIndex(8);
-  private readonly spatialQueryScratch: Player[] = [];
-  private readonly customMessageMetrics = new Map<string, CustomMessageMetric>();
+  private readonly replicationState = new PlayerReplicationStateTracker();
   private readonly visibilityInterest = new VisibilityInterestManager();
-  private readonly tickDurationSamplesMs = new Float64Array(ROOM_LOAD_SAMPLE_COUNT);
-  private tickDurationSampleIndex = 0;
-  private tickDurationSampleCount = 0;
+  private readonly replicationFrames = new ReplicationFrameRuntime({
+    visibilityInterest: this.visibilityInterest,
+    getMovementCollisionRevision: (now) => this.getMovementCollisionRevision(now),
+    hasLineOfSight: (from, to) => this.hasLineOfSight(from, to),
+    getRecentCombatRevealUntil: (recipientId, targetId) => (
+      this.replicationState.getRecentCombatInterestUntil(recipientId, targetId)
+    ),
+    buildPackedTransform: (id, player) => this.buildPackedTransform(id, player),
+  });
+  private matchSnapshotSignature = '';
+  private readonly playerPings = new PlayerPingRuntime();
+  private readonly playerSpatialIndex = new PlayerSpatialIndex(8);
+  private readonly playerSpatialQueries = new PlayerSpatialQueries(this.playerSpatialIndex);
+  private readonly roomMetrics = new RoomMetrics();
   private eventLoopDelay: IntervalHistogram | null = null;
-  private readonly activeBlazePlayersScratch = new Set<string>();
-  private readonly urgentBotIdsScratch: string[] = [];
-  private readonly deferredBotIdsScratch: string[] = [];
-  private alivePlayers: Player[] = [];
-  private alivePlayersByTeam: Record<Team, Player[]> = { red: [], blue: [] };
   private readonly lineOfSightCache = new LineOfSightCache();
-  private preferredBotHeroes: Map<string, HeroId> = new Map();
   private readonly rateLimiter = new MessageRateLimiter();
-  private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
-  private readonly playerEntryTickets = new Map<string, GameEntryTicketClaims>();
-  private readonly reconnectParticipants = new Map<string, ReconnectParticipant>();
-  private readonly clientsBySessionId = new Map<string, Client>();
-  private readonly observerClientIds = new Set<string>();
-  private readonly securityEvents: SecurityEvent[] = [];
+  private readonly participantRegistry = new RoomParticipantRegistry();
   private readonly antiCheatEvidenceStore = new AntiCheatEvidenceStore(prisma);
+  private readonly matchFinalization = createRoomMatchFinalizationRuntime({
+    evidenceStore: this.antiCheatEvidenceStore,
+    serializeError: (error) => this.serializePersistenceError(error),
+  });
+  private readonly matchSummary = new MatchSummaryRuntime({
+    getDurableUserId: (playerId) => this.getDurableUserId(playerId),
+    isNpc: (playerId) => this.npcs.has(playerId),
+    getRankPayload: buildRoomRankSnapshot,
+  });
+  private readonly matchSnapshots = new MatchSnapshotRuntime();
   private antiCheat: AntiCheatRoomRuntime | null = null;
-  private readonly securityLogSamples = new Map<string, { lastLoggedAt: number; suppressed: number }>();
+  private readonly securityLogSampler = new SecurityEventLogSampler<SecurityEvent>({
+    securityEventIntervalMs: SECURITY_EVENT_LOG_SAMPLE_MS,
+    movementCorrectionIntervalMs: MOVEMENT_CORRECTION_LOG_SAMPLE_MS,
+    maxKeys: MAX_SECURITY_LOG_SAMPLE_KEYS,
+  });
   private readonly damageRuntime = new RoomDamageRuntime({
     getPlayerById: (playerId) => this.state.players.get(playerId) ?? null,
     isDevelopmentMode: () => this.isDevelopmentMode(),
-    isPlayerDevImmune: (playerId) => this.devImmunePlayers.has(playerId),
+    isPlayerDevImmune: (playerId) => this.devRuntime.isPlayerImmune(playerId),
     getRespawnDelayMs: () => this.config.respawnTimeSeconds * 1000,
     vec3ToPlain: vec3SchemaToPlain,
     normalize3D: (value) => this.normalize3D(value),
@@ -952,11 +777,11 @@ export class GameRoom extends Room<GameState> {
     getChronosAegisBlockerHit: (target, source, sourcePoint) => this.getChronosAegisBlockerHit(target, source, sourcePoint),
     absorbDamageWithChronosAegis: (blocker, rawDamage, now, context) => this.absorbDamageWithChronosAegis(blocker, rawDamage, now, context),
     rejectAbilityOrCombat: (player, reason) => this.rejectAbilityOrCombat(player, reason),
-    markCombatActivityBetween: (source, target, now) => this.markCombatActivityBetween(source, target, now),
-    markRecentCombatTransform: (playerId, now) => {
-      this.recentCombatTransformUntil.set(playerId, now + RECENT_COMBAT_TRANSFORM_MS);
-    },
-    markRecentCombatInterest: (sourceId, targetId, now) => this.markRecentCombatInterest(sourceId, targetId, now),
+    markCombatActivityBetween: (source, target, now) => this.playerCombatActivity.markBetween(source, target, now),
+    markRecentCombatTransform: (playerId, now) => this.replicationState.markRecentCombatTransform(playerId, now, RECENT_COMBAT_TRANSFORM_MS),
+    markRecentCombatInterest: (sourceId, targetId, now) => (
+      this.replicationState.markRecentCombatInterest(sourceId, targetId, now, RECENT_COMBAT_INTEREST_MS)
+    ),
     broadcastPhantomShieldBroken: (target, source, payload) => this.broadcastPhantomShieldBroken(target, source, payload),
     broadcastPlayerDamaged: (target, source, payload) => this.broadcastPlayerDamaged(target, source, payload),
     broadcastPlayerKilled: (target, killer, payload) => this.broadcastPlayerKilled(target, killer, payload),
@@ -969,7 +794,18 @@ export class GameRoom extends Room<GameState> {
     scoreTeamDeathmatchKill: (killer, victim) => this.scoreTeamDeathmatchKill(killer, victim),
     removeNpcPlayer: (playerId) => this.removeNpcPlayer(playerId),
   });
-  private matchPersistenceLedger: MatchPersistenceLedger | null = null;
+  private readonly matchLedger = new MatchLedgerRuntime({
+    getConfig: () => ({
+      roomId: this.roomId,
+      lobbyId: this.lobbyId,
+      matchMode: this.matchMode,
+      mapSeed: this.state.mapSeed,
+      mapThemeId: this.state.mapThemeId as VoxelMapTheme['id'],
+      rankedEligible: this.rankedEligibilityCandidate,
+    }),
+    getDurableUserId: (playerId) => this.getDurableUserId(playerId),
+    isNpc: (playerId) => this.npcs.has(playerId),
+  });
   private wagerContext: LockedWagerContext | null = null;
   private rankedEligibilityCandidate = false;
   private requiredHumanPlayers = 1;
@@ -978,9 +814,7 @@ export class GameRoom extends Room<GameState> {
   private matchMode: MatchMode = 'custom';
   private gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE;
   private wagerSettlementRequested = false;
-  private countdownStartGateOpen = false;
-  private countdownStartGateKey = 0;
-  private readonly countdownSceneReadyPlayerIds = new Set<string>();
+  private readonly matchStartGate = new MatchStartGateTracker();
   private matchStartDeadlineAt = 0;
   private matchCancelled = false;
   private matchCancelNotice: PreMatchCancelNotice | null = null;
@@ -1024,7 +858,7 @@ export class GameRoom extends Room<GameState> {
           });
           throw new Error('Game entry ticket does not match authenticated user');
         }
-        this.rememberReconnectParticipant(ticket);
+        this.participantRegistry.rememberReconnectParticipant(ticket);
       }
     }
 
@@ -1044,59 +878,24 @@ export class GameRoom extends Room<GameState> {
     return { auth, ticket };
   }
 
-  private rememberReconnectParticipant(ticket: GameEntryTicketClaims): void {
-    this.reconnectParticipants.set(ticket.userId, {
-      userId: ticket.userId,
-      lobbyPlayerId: ticket.lobbyPlayerId,
-      displayName: ticket.displayName,
-      assignedTeam: ticket.assignedTeam,
-      selectedHero: ticket.selectedHero,
-      observer: ticket.observer === true,
-    });
-  }
-
-  private canAcceptRunningGameReconnect(): boolean {
-    if (!this.lobbyId || this.matchCancelled) return false;
-    return this.state?.phase !== 'game_end';
-  }
-
   private createRunningGameReconnectTicket(
     auth: RoomAuthContext,
     options: JoinOptions
   ): GameEntryTicketClaims | null {
-    if (options.reconnectToRunningGame !== true || !this.canAcceptRunningGameReconnect()) return null;
-
-    const participant = this.reconnectParticipants.get(auth.userId);
-    if (!participant || !this.lobbyId) return null;
-
-    const now = Date.now();
-    return {
-      version: 1,
+    const ticketRequest = buildRunningGameReconnectTicketRequest({
+      reconnectToRunningGame: options.reconnectToRunningGame,
+      userId: auth.userId,
       lobbyId: this.lobbyId,
       gameRoomId: this.roomId,
-      lobbyPlayerId: participant.lobbyPlayerId,
-      userId: participant.userId,
-      displayName: participant.displayName,
-      assignedTeam: participant.assignedTeam,
-      selectedHero: participant.selectedHero,
-      observer: participant.observer ? true : undefined,
-      issuedAt: now,
-      expiresAt: now + 60_000,
-      nonce: `reconnect:${participant.userId}:${now}`,
-    };
+      matchCancelled: this.matchCancelled,
+      phase: this.state.phase,
+      now: Date.now(),
+    });
+    return ticketRequest ? this.participantRegistry.createRunningGameReconnectTicket(ticketRequest) : null;
   }
 
   private syncReconnectParticipantFromPlayer(player: Player): void {
-    const userId = this.playerAuthContexts.get(player.id)?.userId ?? this.playerEntryTickets.get(player.id)?.userId;
-    if (!userId) return;
-
-    const participant = this.reconnectParticipants.get(userId);
-    if (!participant) return;
-
-    participant.displayName = player.name || participant.displayName;
-    participant.assignedTeam = player.team as Team;
-    participant.selectedHero = isHeroId(player.heroId) ? player.heroId : participant.selectedHero;
-    participant.observer = false;
+    this.participantRegistry.syncReconnectParticipant(buildReconnectParticipantSyncPayload(player));
   }
 
   private onRateLimitedMessage<T = unknown>(
@@ -1113,6 +912,51 @@ export class GameRoom extends Room<GameState> {
       }
 
       handler(client, data);
+    });
+  }
+
+  private onParsedDevCommand<T>(
+    type: string,
+    parse: (data: unknown) => T | null,
+    handler: (client: Client, request: T) => void,
+    errorResponse?: { logMessage: string; clientMessage: string }
+  ): void {
+    this.onRateLimitedMessage(type, GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
+      const runHandler = () => {
+        const request = parse(data);
+        if (request === null) return;
+        handler(client, request);
+      };
+
+      if (!errorResponse) {
+        runHandler();
+        return;
+      }
+
+      try {
+        runHandler();
+      } catch (error) {
+        loggers.room.error(errorResponse.logMessage, error);
+        client.send('devCommandError', { message: errorResponse.clientMessage });
+      }
+    });
+  }
+
+  private onDevFlagCommand(
+    type: string,
+    handler: (client: Client, enabled: boolean) => void
+  ): void {
+    this.onRateLimitedMessage(type, GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
+      handler(client, readDevEnabledFlag(data));
+    });
+  }
+
+  private onDevClientCommand(
+    type: string,
+    handler: (client: Client) => void
+  ): void {
+    this.onRateLimitedMessage(type, GAME_MESSAGE_RATE_LIMITS.devCommand, (client) => {
+      handler(client);
     });
   }
 
@@ -1137,7 +981,7 @@ export class GameRoom extends Room<GameState> {
       roomId: this.roomId,
       lobbyId: this.lobbyId,
       matchMode: this.matchMode,
-      getMatchId: () => this.matchPersistenceLedger?.matchId ?? null,
+      getMatchId: () => this.matchLedger.getMatchId(),
       getServerTick: () => this.state?.tick ?? 0,
       getServerTime: () => this.state?.serverTime || Date.now(),
       evidenceStore: this.antiCheatEvidenceStore,
@@ -1167,7 +1011,13 @@ export class GameRoom extends Room<GameState> {
     // Set up tick loop
     this.tickInterval = setInterval(() => this.tick(), TICK_INTERVAL_MS);
 
-    // Handle messages
+    this.registerCoreMessageHandlers();
+    if (this.isDevelopmentMode()) {
+      this.registerDevelopmentMessageHandlers();
+    }
+  }
+
+  private registerCoreMessageHandlers(): void {
     this.onRateLimitedMessage('movementCommands', GAME_MESSAGE_RATE_LIMITS.movementCommands, (client, packet: MovementCommandPacket) => {
       this.handleMovementCommandPacket(client, packet);
     });
@@ -1208,11 +1058,11 @@ export class GameRoom extends Room<GameState> {
     this.onRateLimitedMessage('playerReport', GAME_MESSAGE_RATE_LIMITS.playerReport, (client, data: unknown) => {
       void this.handlePlayerReport(client, data);
     }, (client, data) => {
-      const requestId = this.readReportRequestId(data);
-        this.sendPlayerReportResult(client, requestId, {
-          ok: false,
-          error: 'Please wait before sending another report',
-        });
+      const requestId = readPlayerReportRequestId(data);
+      this.sendPlayerReportResult(client, requestId, {
+        ok: false,
+        error: 'Please wait before sending another report',
+      });
     });
 
     this.onRateLimitedMessage('requestVoiceToken', GAME_MESSAGE_RATE_LIMITS.voiceToken, (client, data: unknown) => {
@@ -1222,100 +1072,60 @@ export class GameRoom extends Room<GameState> {
     this.onRateLimitedMessage('playerPingResponse', GAME_MESSAGE_RATE_LIMITS.playerPingResponse, (client, data: unknown) => {
       this.handlePlayerPingResponse(client, data);
     });
+  }
 
-    if (this.isDevelopmentMode()) {
-      this.onRateLimitedMessage('devSetHero', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
-        try {
-          const heroId = validateHeroPayload(data);
-          if (!heroId) return;
-          this.handleDevSetHero(client, heroId);
-        } catch (error) {
-          loggers.room.error('Failed to apply dev hero switch:', error);
-          client.send('devCommandError', { message: 'Failed to switch hero' });
-        }
-      });
+  private registerDevelopmentMessageHandlers(): void {
+    this.onParsedDevCommand(
+      'devSetHero',
+      validateHeroPayload,
+      (client, heroId) => this.handleDevSetHero(client, heroId),
+      {
+        logMessage: 'Failed to apply dev hero switch:',
+        clientMessage: 'Failed to switch hero',
+      }
+    );
 
-      // Development-only entity helpers. Production bots are lobby participants.
-      this.onRateLimitedMessage('spawnNpc', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
-        if (!isRecord(data) || !isHeroId(data.heroId)) return;
-        const team = data.team === undefined ? undefined : isTeam(data.team) ? data.team : null;
-        const position = data.position === undefined ? undefined : validateVec3(data.position);
-        const name = data.name === undefined ? undefined : sanitizeShortText(data.name, 24) ?? undefined;
-        if (team === null || (data.position !== undefined && !position)) return;
-        this.handleSpawnNpc(client, { heroId: data.heroId, team, position: position ?? undefined, name });
-      });
-
-      this.onRateLimitedMessage('damageNpc', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
-        if (!isRecord(data) || typeof data.damage !== 'number' || !Number.isFinite(data.damage)) return;
-        const npcId = sanitizeShortText(data.npcId, 96);
-        if (!npcId) return;
-        this.handleDamageNpc(client, { npcId, damage: Math.max(0, Math.min(1000, data.damage)) });
-      });
-
-      this.onRateLimitedMessage('killNpc', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
-        const npcId = validateBotIdPayload(data, 'npcId');
-        if (!npcId) return;
-        this.handleKillNpc(client, { npcId });
-      });
-
-      this.onRateLimitedMessage('killAllNpcs', GAME_MESSAGE_RATE_LIMITS.devCommand, (client) => {
-        this.handleKillAllNpcs(client);
-      });
-
-      this.onRateLimitedMessage('setDevImmune', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
-        this.handleSetDevImmune(client, isRecord(data) && data.enabled === true);
-      });
-
-      this.onRateLimitedMessage('devFillUltimate', GAME_MESSAGE_RATE_LIMITS.devCommand, (client) => {
-        this.handleDevFillUltimate(client);
-      });
-
-      this.onRateLimitedMessage('devEndGame', GAME_MESSAGE_RATE_LIMITS.devCommand, (client) => {
-        this.handleDevEndGame(client);
-      });
-
-      this.onRateLimitedMessage('devSetObserver', GAME_MESSAGE_RATE_LIMITS.devCommand, (client) => {
-        this.handleDevSetObserver(client);
-      });
-
-      this.onRateLimitedMessage('setDevTimeFrozen', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
-        this.handleSetDevTimeFrozen(client, isRecord(data) && data.enabled === true);
-      });
-
-      this.onRateLimitedMessage('setDevBotsRooted', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
-        this.handleSetDevBotsRooted(client, isRecord(data) && data.enabled === true);
-      });
-
-      this.onRateLimitedMessage('setDevBotBrainEnabled', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
-        this.handleSetDevBotBrainEnabled(client, isRecord(data) && data.enabled === true);
-      });
-
-      this.onRateLimitedMessage('devAddBot', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
-        if (!isRecord(data) || !isHeroId(data.heroId) || !isTeam(data.team)) return;
-        this.handleDevAddBot(client, { heroId: data.heroId, team: data.team });
-      });
-
-      this.onRateLimitedMessage('devBotSkill', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
-        if (!isRecord(data) || !isHeroId(data.heroId) || !isTeam(data.team)) return;
-        const skillKey = sanitizeShortText(data.skillKey, 24);
-        if (!skillKey) return;
-        this.handleDevBotSkill(client, { heroId: data.heroId, team: data.team, skillKey });
-      });
-
-      this.onRateLimitedMessage('devBotLook', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
-        if (!isRecord(data) || !isHeroId(data.heroId) || !isTeam(data.team)) return;
-        const direction = sanitizeShortText(data.direction, 12);
-        if (!direction) return;
-        this.handleDevBotLook(client, { heroId: data.heroId, team: data.team, direction });
-      });
-
-    }
+    // Development-only entity helpers. Production bots are lobby participants.
+    this.onParsedDevCommand('spawnNpc', parseDevNpcSpawnRequest, (client, request) => {
+      this.handleSpawnNpc(client, request);
+    });
+    this.onParsedDevCommand('damageNpc', parseDevNpcDamageRequest, (client, request) => {
+      this.handleDamageNpc(client, request);
+    });
+    this.onParsedDevCommand('killNpc', parseDevNpcIdRequest, (client, request) => {
+      this.handleKillNpc(client, request);
+    });
+    this.onDevClientCommand('killAllNpcs', (client) => this.handleKillAllNpcs(client));
+    this.onDevFlagCommand('setDevImmune', (client, enabled) => {
+      this.handleSetDevImmune(client, enabled);
+    });
+    this.onDevClientCommand('devFillUltimate', (client) => this.handleDevFillUltimate(client));
+    this.onDevClientCommand('devEndGame', (client) => this.handleDevEndGame(client));
+    this.onDevClientCommand('devSetObserver', (client) => this.handleDevSetObserver(client));
+    this.onDevFlagCommand('setDevTimeFrozen', (client, enabled) => {
+      this.handleSetDevTimeFrozen(client, enabled);
+    });
+    this.onDevFlagCommand('setDevBotsRooted', (client, enabled) => {
+      this.handleSetDevBotsRooted(client, enabled);
+    });
+    this.onDevFlagCommand('setDevBotBrainEnabled', (client, enabled) => {
+      this.handleSetDevBotBrainEnabled(client, enabled);
+    });
+    this.onParsedDevCommand('devAddBot', parseDevHeroTeamRequest, (client, request) => {
+      this.handleDevAddBot(client, request);
+    });
+    this.onParsedDevCommand('devBotSkill', parseDevBotSkillRequest, (client, request) => {
+      this.handleDevBotSkill(client, request);
+    });
+    this.onParsedDevCommand('devBotLook', parseDevBotLookRequest, (client, request) => {
+      this.handleDevBotLook(client, request);
+    });
   }
 
   onJoin(client: Client, options: JoinOptions) {
     if (this.matchCancelled) {
       client.send('matchCancelled', this.buildMatchCancelledPayload(
-        this.matchCancelNotice ?? this.createStartTimeoutCancelNotice()
+        this.matchCancelNotice ?? createStartTimeoutCancelNotice()
       ));
       client.leave();
       return;
@@ -1331,117 +1141,31 @@ export class GameRoom extends Room<GameState> {
     const entryTicket = authBundle?.ticket ?? null;
     const joinsAsObserver = entryTicket?.observer === true;
 
-    if (entryTicket) {
-      this.playerEntryTickets.set(client.sessionId, entryTicket);
-    }
-    this.playerAuthContexts.set(client.sessionId, authContext);
+    this.participantRegistry.setSession(client.sessionId, authContext, entryTicket);
 
-    // Handle reconnect/duplicate tabs by authenticated user or signed lobby ticket identity.
-    const identityKey = authContext.userId;
-    if (identityKey) {
-      const existingSessionId = this.identityToSessionId.get(identityKey);
-      
-      if (existingSessionId && existingSessionId !== client.sessionId) {
-        loggers.room.info('Duplicate session detected, kicking old session', existingSessionId);
-        this.recordSecurityEvent({
-          type: 'auth_duplicate_session',
-          playerId: client.sessionId,
-          userId: authContext.userId,
-          movementEpoch: this.getMovementAuthority(client.sessionId).movementEpoch,
-          reason: 'duplicate_identity',
-          detail: { previousSessionId: existingSessionId },
-        });
-        
-        // Find and disconnect the old client
-        const oldClient = this.clients.find(c => c.sessionId === existingSessionId);
-        if (oldClient) {
-          // Send a message to the old client before kicking
-          oldClient.send('duplicateSession', { reason: 'Connected from another tab/window' });
-          oldClient.leave(4000); // Custom code for duplicate session
-        }
-        
-        // Clean up old session data (onLeave will also be called, but let's be safe)
-        const oldPlayer = this.state.players.get(existingSessionId);
-        void this.removeVoiceParticipantForPlayer(existingSessionId, this.normalizeVoiceTeam(oldPlayer?.team), 'duplicate_session');
-        if (oldPlayer) {
-          this.markMatchParticipantLeft(oldPlayer);
-        }
-        if (oldPlayer?.hasFlag) {
-          this.dropFlag(oldPlayer);
-        }
-        this.state.players.delete(existingSessionId);
-        this.clearCombatPlayerRuntimeState(existingSessionId);
-        this.observerClientIds.delete(existingSessionId);
-        this.sessionIdToIdentity.delete(existingSessionId);
-        this.clientsBySessionId.delete(existingSessionId);
-        this.playerAuthContexts.delete(existingSessionId);
-        this.playerEntryTickets.delete(existingSessionId);
-        this.rateLimiter.clearScope(existingSessionId);
-        this.clearPlayerReplicationState(existingSessionId);
-        this.resetCountdownStartGate();
-        
-        // Broadcast that old player left
-        this.broadcastTracked('playerLeft', { playerId: existingSessionId });
-      }
-      
-      // Register this durable identity mapping for duplicate-tab handling.
-      this.identityToSessionId.set(identityKey, client.sessionId);
-      this.sessionIdToIdentity.set(client.sessionId, identityKey);
+    if (authContext.userId) {
+      this.disconnectDuplicateIdentitySession(client.sessionId, authContext.userId);
+      this.clientRegistry.setIdentity(authContext.userId, client.sessionId);
     }
 
-    if (!joinsAsObserver && this.state.players.size >= this.config.maxPlayers) {
+    if (shouldRejectRoomJoinForCapacity({
+      joinsAsObserver,
+      playerCount: this.state.players.size,
+      maxPlayers: this.config.maxPlayers,
+    })) {
       client.send('error', { message: 'Game room is full' });
-      this.playerAuthContexts.delete(client.sessionId);
-      this.playerEntryTickets.delete(client.sessionId);
-      if (this.identityToSessionId.get(identityKey) === client.sessionId) {
-        this.identityToSessionId.delete(identityKey);
-      }
-      this.sessionIdToIdentity.delete(client.sessionId);
+      this.participantRegistry.clearSession(client.sessionId);
+      this.clientRegistry.clearIdentityForSession(client.sessionId);
       client.leave();
       return;
     }
 
     if (joinsAsObserver) {
-      this.clientsBySessionId.set(client.sessionId, client);
-      this.observerClientIds.add(client.sessionId);
-      this.playerPingsDirty = true;
-      this.updateMetadata();
-      this.state.players.forEach((existingPlayer) => {
-        this.sendPlayerJoinedSnapshot(client, existingPlayer, null);
-      });
-      this.sendCurrentSnapshots(client);
-      this.requestPlayerPing(client, Date.now());
-      loggers.room.info('Observer join complete', {
-        sessionId: client.sessionId,
-        totalObservers: this.observerClientIds.size,
-      });
-      this.checkPhaseTransition();
+      this.joinObserver(client);
       return;
     }
 
-    // Initialize ability press state tracking
-    this.initializePressState(client.sessionId);
-
-    // Create player
-    const player = new Player();
-    player.id = client.sessionId;
-    player.name = entryTicket?.displayName || authContext.displayName || `Player${this.state.players.size + 1}`;
-    player.team = entryTicket?.assignedTeam || this.assignTeam(isTeam(options.preferredTeam) ? options.preferredTeam : undefined);
-    player.state = 'selecting';
-    player.isBot = false;
-    player.botDifficulty = '';
-    player.botProfileId = '';
-    this.applyPlayerRank(player, toPublicRankSnapshot(authContext.rank));
-
-    // Set lobby spawn position without consuming a movement authority epoch.
-    this.assignPlayerSpawnPosition(player);
-    if (entryTicket?.selectedHero && isHeroId(entryTicket.selectedHero)) {
-      this.setPlayerHero(player, entryTicket.selectedHero);
-    }
-    if ((this.state.phase === 'countdown' || this.state.phase === 'playing') && player.heroId) {
-      player.state = 'alive';
-      this.placePlayerAtSpawn(player, 'respawn');
-    }
+    const player = this.createJoinedHumanPlayer(client.sessionId, authContext, entryTicket, options);
     this.syncReconnectParticipantFromPlayer(player);
 
     // Send existing players to the new client with recipient-scoped position data.
@@ -1450,10 +1174,10 @@ export class GameRoom extends Room<GameState> {
     });
 
     this.state.players.set(client.sessionId, player);
-    this.clientsBySessionId.set(client.sessionId, client);
-    this.knownPlayerIds.add(client.sessionId);
+    this.clientRegistry.setClient(client.sessionId, client);
+    this.replicationState.markKnownPlayer(client.sessionId);
     this.resetCountdownStartGate();
-    this.playerPingsDirty = true;
+    this.playerPings.markDirty();
     this.forceTransformFullSync();
     this.updateMetadata();
     this.updateLastSafeMovement(player, 0);
@@ -1480,34 +1204,119 @@ export class GameRoom extends Room<GameState> {
     this.checkPhaseTransition();
   }
 
+  private joinObserver(client: Client): void {
+    this.clientRegistry.addObserver(client.sessionId, client);
+    this.playerPings.markDirty();
+    this.updateMetadata();
+    this.state.players.forEach((existingPlayer) => {
+      this.sendPlayerJoinedSnapshot(client, existingPlayer, null);
+    });
+    this.sendCurrentSnapshots(client);
+    this.requestPlayerPing(client, Date.now());
+    loggers.room.info('Observer join complete', {
+      sessionId: client.sessionId,
+      totalObservers: this.clientRegistry.getObserverCount(),
+    });
+    this.checkPhaseTransition();
+  }
+
+  private createJoinedHumanPlayer(
+    sessionId: string,
+    authContext: RoomAuthContext,
+    entryTicket: GameEntryTicketClaims | null,
+    options: JoinOptions
+  ): Player {
+    this.initializePressState(sessionId);
+
+    const player = new Player();
+    player.id = sessionId;
+    player.name = resolveRoomJoinPlayerName({
+      ticketDisplayName: entryTicket?.displayName,
+      authDisplayName: authContext.displayName,
+      playerNumber: this.state.players.size + 1,
+    });
+    player.team = resolveRoomJoinTeam({
+      players: this.state.players.values(),
+      assignedTeam: entryTicket?.assignedTeam,
+      preferredTeam: options.preferredTeam,
+    });
+    player.state = 'selecting';
+    player.isBot = false;
+    player.botDifficulty = '';
+    player.botProfileId = '';
+    applyRoomRankState(player, toPublicRankSnapshot(authContext.rank));
+
+    this.assignPlayerSpawnPosition(player);
+    if (entryTicket?.selectedHero && isHeroId(entryTicket.selectedHero)) {
+      this.setPlayerHero(player, entryTicket.selectedHero);
+    }
+    if (shouldActivateJoinedPlayer({
+      phase: this.state.phase,
+      heroId: player.heroId,
+    })) {
+      player.state = 'alive';
+      this.placePlayerAtSpawn(player, 'respawn');
+    }
+
+    return player;
+  }
+
+  private disconnectDuplicateIdentitySession(newSessionId: string, userId: string): void {
+    const existingSessionId = this.clientRegistry.getSessionIdForIdentity(userId);
+    if (!existingSessionId || existingSessionId === newSessionId) return;
+
+    loggers.room.info('Duplicate session detected, kicking old session', existingSessionId);
+    this.recordSecurityEvent({
+      type: 'auth_duplicate_session',
+      playerId: newSessionId,
+      userId,
+      movementEpoch: this.getMovementAuthority(newSessionId).movementEpoch,
+      reason: 'duplicate_identity',
+      detail: { previousSessionId: existingSessionId },
+    });
+
+    const oldClient = this.clients.find((candidate) => candidate.sessionId === existingSessionId);
+    if (oldClient) {
+      oldClient.send('duplicateSession', { reason: 'Connected from another tab/window' });
+      oldClient.leave(4000);
+    }
+
+    const oldPlayer = this.state.players.get(existingSessionId);
+    void this.removeVoiceParticipantForPlayer(existingSessionId, normalizeVoiceTeam(oldPlayer?.team), 'duplicate_session');
+    if (oldPlayer) {
+      this.markMatchParticipantLeft(oldPlayer);
+    }
+    if (oldPlayer?.hasFlag) {
+      this.dropFlag(oldPlayer);
+    }
+    this.state.players.delete(existingSessionId);
+    this.clearCombatPlayerRuntimeState(existingSessionId);
+    this.clientRegistry.clearSession(existingSessionId);
+    this.participantRegistry.clearSession(existingSessionId);
+    this.rateLimiter.clearScope(existingSessionId);
+    this.clearPlayerReplicationState(existingSessionId);
+    this.resetCountdownStartGate();
+    this.broadcastTracked('playerLeft', { playerId: existingSessionId });
+  }
+
   onLeave(client: Client, consented: boolean) {
     loggers.room.info('Player left', client.sessionId, 'consented', consented);
 
     const player = this.state.players.get(client.sessionId);
-    if (!player && this.observerClientIds.has(client.sessionId)) {
-      this.observerClientIds.delete(client.sessionId);
-      this.clientsBySessionId.delete(client.sessionId);
+    if (!player && this.clientRegistry.isObserver(client.sessionId)) {
+      this.clientRegistry.clearSession(client.sessionId);
       this.clearPlayerReplicationState(client.sessionId);
-      this.playerAuthContexts.delete(client.sessionId);
-      this.playerEntryTickets.delete(client.sessionId);
+      this.participantRegistry.clearSession(client.sessionId);
       this.rateLimiter.clearScope(client.sessionId);
-      this.countdownSceneReadyPlayerIds.delete(client.sessionId);
-      this.playerPingsDirty = true;
-
-      const identity = this.sessionIdToIdentity.get(client.sessionId);
-      if (identity) {
-        if (this.identityToSessionId.get(identity) === client.sessionId) {
-          this.identityToSessionId.delete(identity);
-        }
-        this.sessionIdToIdentity.delete(client.sessionId);
-      }
+      this.matchStartGate.clearPlayer(client.sessionId);
+      this.playerPings.markDirty();
 
       this.updateMetadata();
       return;
     }
 
-    void this.removeVoiceParticipantForPlayer(client.sessionId, this.normalizeVoiceTeam(player?.team), consented ? 'leave' : 'disconnect');
-    
+    void this.removeVoiceParticipantForPlayer(client.sessionId, normalizeVoiceTeam(player?.team), consented ? 'leave' : 'disconnect');
+
     // Handle flag drop if carrying
     if (player?.hasFlag) {
       this.dropFlag(player);
@@ -1517,23 +1326,15 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.state.players.delete(client.sessionId);
-    this.clientsBySessionId.delete(client.sessionId);
+    this.clientRegistry.deleteClient(client.sessionId);
     this.clearPlayerReplicationState(client.sessionId);
     this.clearCombatPlayerRuntimeState(client.sessionId);
-    this.playerAuthContexts.delete(client.sessionId);
-    this.playerEntryTickets.delete(client.sessionId);
+    this.participantRegistry.clearSession(client.sessionId);
     this.rateLimiter.clearScope(client.sessionId);
     this.updateMetadata();
     this.resetCountdownStartGate();
-    
-    // Clean up auth identity mappings.
-    const identity = this.sessionIdToIdentity.get(client.sessionId);
-    if (identity) {
-      if (this.identityToSessionId.get(identity) === client.sessionId) {
-        this.identityToSessionId.delete(identity);
-      }
-      this.sessionIdToIdentity.delete(client.sessionId);
-    }
+
+    this.clientRegistry.clearIdentityForSession(client.sessionId);
 
     this.broadcastTracked('playerLeft', {
       playerId: client.sessionId,
@@ -1545,43 +1346,23 @@ export class GameRoom extends Room<GameState> {
   }
 
   private clearCombatPlayerRuntimeState(playerId: string): void {
-    playerPressState.delete(playerId);
-    this.phantomPrimaryMagazines.delete(playerId);
-    this.phantomPrimaryHoldStartedAt.delete(playerId);
-    this.chronosPrimaryHoldStartedAt.delete(playerId);
-    this.phantomVoidRayChargeStartedAt.delete(playerId);
-    this.phantomVoidRayResolvedForPress.delete(playerId);
-    this.phantomPrimaryLaunchSide.delete(playerId);
-    this.hookshotPrimaryLaunchSide.delete(playerId);
-    this.devBotSkillOverrides.delete(playerId);
-    this.devBotLookOverrides.delete(playerId);
-    this.hookshotGrapples.delete(playerId);
-    this.clearHookshotDragPullsInvolving(playerId);
-    this.playerRootedUntil.delete(playerId);
-    this.powerupBoostUntil.delete(playerId);
-    this.blazeFlamethrowerActivePlayers.delete(playerId);
-    this.blazeBurnEffects.delete(playerId);
-    for (const [targetId, burn] of this.blazeBurnEffects) {
-      if (burn.sourceId === playerId) {
-        this.blazeBurnEffects.delete(targetId);
-      }
-    }
-    this.clearFlamethrowerDamageTicksForPlayer(playerId);
+    this.playerPressStates.clear(playerId);
+    this.phantomPrimaryMagazines.clear(playerId);
+    this.clearPrimaryHoldStates(playerId);
+    this.phantomVoidRayCharges.clear(playerId);
+    this.phantomPrimaryLaunchSide.clear(playerId);
+    this.hookshotPrimaryLaunchSide.clear(playerId);
+    this.hookshotRuntime.clearPlayer(playerId);
+    this.playerRoots.clear(playerId);
+    this.powerupBoosts.clear(playerId);
+    this.blazeFlamethrowers.clearPlayer(playerId);
+    this.blazeBurns.clearPlayer(playerId);
     this.movementAuthorities.delete(playerId);
-    this.chronosAegisShieldHp.delete(playerId);
-    this.attackCooldownUntil.delete(`${playerId}:primary`);
-    this.attackCooldownUntil.delete(`${playerId}:secondary`);
-    this.playerCombatActivityAt.delete(playerId);
-    this.devImmunePlayers.delete(playerId);
-    this.countdownSceneReadyPlayerIds.delete(playerId);
-  }
-
-  private clearFlamethrowerDamageTicksForPlayer(playerId: string): void {
-    for (const key of this.flamethrowerLastDamageTick.keys()) {
-      if (key.startsWith(`${playerId}:`) || key.endsWith(`:${playerId}`)) {
-        this.flamethrowerLastDamageTick.delete(key);
-      }
-    }
+    this.chronosAegisShields.clear(playerId);
+    this.attackCooldowns.clearPlayer(playerId);
+    this.playerCombatActivity.clear(playerId);
+    this.devRuntime.clearPlayer(playerId);
+    this.matchStartGate.clearPlayer(playerId);
   }
 
   onDispose() {
@@ -1589,19 +1370,19 @@ export class GameRoom extends Room<GameState> {
     this.clearMatchStartCancelTimer();
     this.clearMatchCancelDisconnectTimer();
     this.eventLoopDelay?.disable();
-    this.clearScheduledTimeouts();
+    this.roomTimeouts.clear();
     this.antiCheat?.flushAggregates();
     void this.antiCheatEvidenceStore.flush();
     this.state.players.forEach((player, playerId) => {
       if (!player.isBot) {
-        void this.removeVoiceParticipantForPlayer(playerId, this.normalizeVoiceTeam(player.team), 'room_dispose');
+        void this.removeVoiceParticipantForPlayer(playerId, normalizeVoiceTeam(player.team), 'room_dispose');
       }
     });
     if (this.tickInterval) {
       clearInterval(this.tickInterval);
       this.tickInterval = null;
     }
-    this.flamethrowerLastDamageTick.clear();
+    this.blazeFlamethrowers.clearDamageTicks();
     this.settleWagerNoContest('room_dispose');
   }
 
@@ -1626,60 +1407,25 @@ export class GameRoom extends Room<GameState> {
     this.matchCancelDisconnectTimeout = null;
   }
 
-  private scheduleRoomTimeout(callback: () => void, delayMs: number): void {
-    let timeout: ReturnType<typeof setTimeout>;
-    timeout = setTimeout(() => {
-      this.scheduledTimeouts.delete(timeout);
-      callback();
-    }, delayMs);
-    this.scheduledTimeouts.add(timeout);
-    timeout.unref?.();
-  }
-
-  private clearScheduledTimeouts(): void {
-    for (const timeout of this.scheduledTimeouts) {
-      clearTimeout(timeout);
-    }
-    this.scheduledTimeouts.clear();
-  }
-
-  private createStartTimeoutCancelNotice(): PreMatchCancelNotice {
-    return {
-      reason: 'start_timeout',
-      message: 'Match canceled because all players did not connect and load in time.',
-    };
-  }
-
   private buildMatchCancelledPayload(notice: PreMatchCancelNotice): Record<string, unknown> {
-    return {
-      reason: notice.reason,
-      message: notice.message,
+    return buildMatchCancelledPayload({
+      notice,
       roomId: this.roomId,
       requiredHumanPlayers: this.requiredHumanPlayers,
       connectedHumanPlayers: this.getConnectedHumanPlayerCount(),
       deadlineAt: this.matchStartDeadlineAt,
       refundedWager: Boolean(this.wagerContext),
       serverTime: Date.now(),
-      blockedPlayerId: notice.blockedPlayerId,
-      blockedPlayerName: notice.blockedPlayerName,
-      networkQuality: notice.networkQuality,
-    };
+    });
   }
 
-  private cancelPreMatch(reason: PreMatchCancelReason, details: Omit<PreMatchCancelNotice, 'reason'> | null = null): void {
-    if (
-      this.matchCancelled
-      || (this.state.phase !== 'waiting' && this.state.phase !== 'hero_select' && this.state.phase !== 'countdown')
-    ) {
+  private cancelPreMatch(reason: PreMatchCancelReason, details: PreMatchCancelNoticeDetails | null = null): void {
+    if (!canCancelPreMatch({ matchCancelled: this.matchCancelled, phase: this.state.phase })) {
       return;
     }
 
     this.matchCancelled = true;
-    const fallbackDetails = details ?? { message: this.createStartTimeoutCancelNotice().message };
-    this.matchCancelNotice = {
-      reason,
-      ...fallbackDetails,
-    };
+    this.matchCancelNotice = buildPreMatchCancelNotice(reason, details);
     this.clearMatchStartCancelTimer();
     this.resetCountdownStartGate();
     const connectedHumanPlayers = this.getConnectedHumanPlayerCount();
@@ -1740,14 +1486,12 @@ export class GameRoom extends Room<GameState> {
           break;
       }
     } finally {
-      this.recordTickDuration(performance.now() - tickStartedAt);
+      this.roomMetrics.recordTickDuration(performance.now() - tickStartedAt);
     }
   }
 
   private rebuildPlayerSpatialIndex(): void {
     this.playerSpatialIndex.rebuild(this.state.players.values());
-    this.alivePlayers = this.playerSpatialIndex.getAlivePlayers();
-    this.alivePlayersByTeam = this.playerSpatialIndex.getAlivePlayersByTeam();
   }
 
   private getEnemyPlayers(team: Team): Player[] {
@@ -1755,7 +1499,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private updateCountdown() {
-    if (this.state.phaseEndTime && Date.now() >= this.state.phaseEndTime) {
+    if (hasPhaseDeadlineElapsed(this.state.phaseEndTime, Date.now())) {
       this.startPlaying();
     }
   }
@@ -1765,8 +1509,13 @@ export class GameRoom extends Room<GameState> {
     const dt = TICK_INTERVAL_MS / 1000;
 
     // Update round timer
-    if (this.state.roundStartTime && !this.devGameClockFrozen) {
-      this.state.roundTimeRemaining = this.getRoundTimeRemaining(now);
+    if (this.state.roundStartTime && !this.devRuntime.isGameClockFrozen()) {
+      this.state.roundTimeRemaining = getRoomRoundTimeRemaining({
+        roundStartTime: this.state.roundStartTime,
+        roundTimeRemaining: this.state.roundTimeRemaining,
+        roundTimeSeconds: this.config.roundTimeSeconds,
+        now,
+      });
 
       if (this.state.roundTimeRemaining <= 0) {
         this.endRound();
@@ -1808,7 +1557,7 @@ export class GameRoom extends Room<GameState> {
       this.syncChronosAscendantMovementState(player, now);
     });
     this.updateChronosAegisShields(dt);
-    this.cleanupExpiredPlayerRoots(now);
+    this.playerRoots.clearExpired(now);
 
     // Update void zones (damage enemies inside)
     this.updateVoidZones(now);
@@ -1820,7 +1569,7 @@ export class GameRoom extends Room<GameState> {
     // Update held Blaze flamethrowers
     this.updateBlazeFlamethrowers(now, dt);
     this.updateBlazeBurns(now);
-    this.updateOutOfCombatHealthRegens(now, dt);
+    this.playerCombatActivity.updateOutOfCombatHealthRegens(this.state.players.values(), now, dt);
 
     // Update physics simulation (simplified)
     this.updatePhysics();
@@ -1838,37 +1587,6 @@ export class GameRoom extends Room<GameState> {
 
   // Ability cooldown and active ability updates are now in abilityHandlers.ts
 
-  private markPlayerCombatActivity(playerId: string, now: number): void {
-    this.playerCombatActivityAt.set(playerId, now);
-  }
-
-  private markCombatActivityBetween(source: Player | null, target: Player, now: number): void {
-    this.markPlayerCombatActivity(target.id, now);
-    if (source && source.id !== target.id) {
-      this.markPlayerCombatActivity(source.id, now);
-    }
-  }
-
-  private updateOutOfCombatHealthRegen(player: Player, now: number, dt: number): void {
-    const regenCap = player.maxHealth * HERO_OUT_OF_COMBAT_REGEN_CAP_RATIO;
-    if (player.health <= 0 || player.health >= regenCap) return;
-
-    const lastCombatAt = this.playerCombatActivityAt.get(player.id) ?? 0;
-    if (now - lastCombatAt < HERO_OUT_OF_COMBAT_REGEN_DELAY_MS) return;
-
-    player.health = Math.min(
-      regenCap,
-      player.health + HERO_OUT_OF_COMBAT_REGEN_PER_SECOND * Math.max(0, dt)
-    );
-  }
-
-  private updateOutOfCombatHealthRegens(now: number, dt: number): void {
-    this.state.players.forEach((player) => {
-      if (player.state !== 'alive') return;
-      this.updateOutOfCombatHealthRegen(player, now, dt);
-    });
-  }
-
   private collectPowerupPickup(
     player: Player,
     pickup: MapPowerupPickup,
@@ -1878,8 +1596,8 @@ export class GameRoom extends Room<GameState> {
       player,
       pickup,
       now,
-      pickupStates: this.powerupPickupStates,
-      powerupBoostUntil: this.powerupBoostUntil,
+      powerupPickups: this.powerupPickups,
+      powerupBoosts: this.powerupBoosts,
     });
     if (!result) return false;
 
@@ -1903,13 +1621,12 @@ export class GameRoom extends Room<GameState> {
   }
 
   private updatePowerupPickups(now: number): void {
-    const pickups = this.mapManifest?.gameplay.powerups ?? [];
+    const pickups = this.getMapManifest().gameplay.powerups ?? [];
     if (pickups.length === 0) return;
 
-    for (const player of this.alivePlayers) {
+    for (const player of this.playerSpatialIndex.getAlivePlayers()) {
       for (const pickup of pickups) {
-        const state = getPowerupPickupState(this.powerupPickupStates, pickup.id);
-        if (state.availableAt > now) continue;
+        if (this.powerupPickups.getAvailableAt(pickup.id) > now) continue;
         if (distance2D(player.position, pickup.position) > pickup.radius + PLAYER_RADIUS) continue;
         if (this.collectPowerupPickup(player, pickup, now)) break;
       }
@@ -1917,150 +1634,29 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getPlayerNetId(playerId: string): number {
-    let netId = this.playerNetIds.get(playerId);
-    if (netId === undefined) {
-      netId = this.nextPlayerNetId++;
-      this.playerNetIds.set(playerId, netId);
-      this.forceTransformFullSync();
-    }
-    return netId;
+    return this.replicationState.getPlayerNetId(playerId);
   }
 
   private forceTransformFullSync(): void {
-    this.transformStreamEpoch++;
-    this.playerTransformSignatures.clear();
-    this.playerTransformHeartbeatAt.clear();
-    this.transformRecipientStates.clear();
+    this.replicationState.forceTransformFullSync();
   }
 
   private clearPlayerReplicationState(playerId: string): void {
-    this.knownPlayerIds.delete(playerId);
-    this.playerVitalRecipientStates.delete(playerId);
-    for (const state of this.playerVitalRecipientStates.values()) {
-      state.signatures.delete(playerId);
-      state.reconcileAt.delete(playerId);
-      state.knownPlayerIds.delete(playerId);
-    }
-    this.playerInterestSignatures.delete(playerId);
-    for (const signatures of this.playerInterestSignatures.values()) {
-      signatures.delete(playerId);
-    }
-    this.playerTransformSignatures.delete(playerId);
-    this.playerTransformHeartbeatAt.delete(playerId);
-    this.transformRecipientStates.delete(playerId);
-    for (const state of this.transformRecipientStates.values()) {
-      state.signatures.delete(playerId);
-      state.heartbeatAt.delete(playerId);
-    }
-    this.recentCombatTransformUntil.delete(playerId);
+    this.replicationState.clearPlayer(playerId);
     this.visibilityInterest.clearPlayer(playerId);
-    for (const key of Array.from(this.recentCombatInterestUntil.keys())) {
-      if (key.startsWith(`${playerId}:`) || key.endsWith(`:${playerId}`)) {
-        this.recentCombatInterestUntil.delete(key);
-      }
-    }
-    this.playerNetIds.delete(playerId);
-    this.playerPingMs.delete(playerId);
-    this.pendingPlayerPings.delete(playerId);
-    this.playerNetworkQuality.delete(playerId);
-    this.playerPingsDirty = true;
-    this.forceTransformFullSync();
+    this.playerPings.clearPlayer(playerId);
   }
 
   private getVitalsReplicationState(recipientId: string): PlayerVitalsReplicationState {
-    let state = this.playerVitalRecipientStates.get(recipientId);
-    if (!state) {
-      state = {
-        signatures: new Map<string, PlayerVitalsSnapshot>(),
-        reconcileAt: new Map<string, number>(),
-        knownPlayerIds: new Set<string>(),
-      };
-      this.playerVitalRecipientStates.set(recipientId, state);
-    }
-    return state;
+    return this.replicationState.getVitalsState(recipientId);
   }
 
   private getInterestSignatureState(recipientId: string): Map<string, string> {
-    let state = this.playerInterestSignatures.get(recipientId);
-    if (!state) {
-      state = new Map<string, string>();
-      this.playerInterestSignatures.set(recipientId, state);
-    }
-    return state;
-  }
-
-  private getRecentCombatInterestKey(recipientId: string, targetId: string): string {
-    return `${recipientId}:${targetId}`;
-  }
-
-  private markRecentCombatInterest(sourceId: string, targetId: string, now: number): void {
-    const until = now + RECENT_COMBAT_INTEREST_MS;
-    this.recentCombatInterestUntil.set(this.getRecentCombatInterestKey(sourceId, targetId), until);
-    this.recentCombatInterestUntil.set(this.getRecentCombatInterestKey(targetId, sourceId), until);
-  }
-
-  private static getVisibilityEyePosition(player: VisibilityInterestPlayer): PlainVec3 {
-    return getSharedPlayerEyePosition(player.position);
-  }
-
-  private static getVisibilityLineOfSightPoints(player: VisibilityInterestPlayer): readonly PlainVec3[] {
-    return getSharedPlayerLineOfSightSamplePoints(player);
-  }
-
-  private prepareVisibilityContext(
-    context: VisibilityInterestContext,
-    now: number,
-    collisionRevision = this.getMovementCollisionRevision(now)
-  ): VisibilityInterestContext {
-    context.now = now;
-    context.collisionRevision = collisionRevision;
-    return context;
-  }
-
-  private getVisibilityInterestPlayer(player: Player): VisibilityInterestPlayer {
-    return {
-      id: player.id,
-      team: player.team,
-      state: player.state,
-      position: player.position,
-      heroId: player.heroId,
-      abilities: player.abilities.values(),
-    };
+    return this.replicationState.getInterestSignatures(recipientId);
   }
 
   private buildReplicationFrameContext(now = this.state.serverTime || Date.now()): ReplicationFrameContext {
-    const frameContext = this.replicationFrameContext;
-    const collisionRevision = this.getMovementCollisionRevision(now);
-    frameContext.now = now;
-    this.prepareVisibilityContext(frameContext.visibilityContext, now, collisionRevision);
-    frameContext.currentIds.clear();
-    frameContext.visibilityPlayers.clear();
-    frameContext.packedTransforms.clear();
-    frameContext.packedTransformSignatures.clear();
-    frameContext.fullVitalsByPlayer.clear();
-    frameContext.visibleEnemyVitalsByPlayer.clear();
-    frameContext.publicEnemyVitalsByPlayer.clear();
-    for (const targetInterests of frameContext.recipientInterests.values()) {
-      targetInterests.clear();
-    }
-
-    this.state.players.forEach((player, id) => {
-      frameContext.currentIds.add(id);
-      frameContext.visibilityPlayers.set(id, player);
-      if (player.state !== 'alive' && player.state !== 'spawning') return;
-
-      const transform = this.buildPackedTransform(id, player);
-      frameContext.packedTransforms.set(id, transform);
-      frameContext.packedTransformSignatures.set(id, getPackedTransformSignature(transform));
-    });
-
-    for (const recipientId of frameContext.recipientInterests.keys()) {
-      if (!frameContext.currentIds.has(recipientId)) {
-        frameContext.recipientInterests.delete(recipientId);
-      }
-    }
-
-    return frameContext;
+    return this.replicationFrames.buildFrameContext(this.state.players, now);
   }
 
   private getRecipientInterest(
@@ -2069,42 +1665,7 @@ export class GameRoom extends Room<GameState> {
     now = this.state.serverTime || Date.now(),
     frameContext?: ReplicationFrameContext
   ): RecipientInterestDecision {
-    if (recipient && frameContext) {
-      let targetInterests = frameContext.recipientInterests.get(recipient.id);
-      if (!targetInterests) {
-        targetInterests = new Map<string, RecipientInterestDecision>();
-        frameContext.recipientInterests.set(recipient.id, targetInterests);
-      } else {
-        const cached = targetInterests.get(target.id);
-        if (cached) return cached;
-      }
-
-      const decision = this.computeRecipientInterest(recipient, target, now, frameContext);
-      targetInterests.set(target.id, decision);
-      return decision;
-    }
-
-    return this.computeRecipientInterest(recipient, target, now, frameContext);
-  }
-
-  private computeRecipientInterest(
-    recipient: Player | null,
-    target: Player,
-    now = this.state.serverTime || Date.now(),
-    frameContext?: ReplicationFrameContext
-  ): RecipientInterestDecision {
-    const recipientInterestPlayer = recipient
-      ? frameContext?.visibilityPlayers.get(recipient.id) ?? this.getVisibilityInterestPlayer(recipient)
-      : null;
-    const targetInterestPlayer = frameContext?.visibilityPlayers.get(target.id) ?? this.getVisibilityInterestPlayer(target);
-    const visibilityContext = frameContext?.visibilityContext
-      ?? this.prepareVisibilityContext(this.standaloneVisibilityContext, now);
-
-    return this.visibilityInterest.getRecipientInterest(
-      recipientInterestPlayer,
-      targetInterestPlayer,
-      visibilityContext
-    );
+    return this.replicationFrames.getRecipientInterest(recipient, target, now, frameContext);
   }
 
   private shouldSendExactEnemyState(
@@ -2131,21 +1692,13 @@ export class GameRoom extends Room<GameState> {
     return (
       player.hasFlag ||
       this.isChronosAegisActive(player) ||
-      (this.recentCombatTransformUntil.get(id) ?? 0) > now ||
+      this.replicationState.getRecentCombatTransformUntil(id) > now ||
       this.isVisibleAbilityActive(player)
     );
   }
 
   private getTransformReplicationState(recipientId: string): TransformReplicationState {
-    let state = this.transformRecipientStates.get(recipientId);
-    if (!state) {
-      state = {
-        signatures: new Map<string, PackedPlayerTransform>(),
-        heartbeatAt: new Map<string, number>(),
-      };
-      this.transformRecipientStates.set(recipientId, state);
-    }
-    return state;
+    return this.replicationState.getTransformState(recipientId);
   }
 
   private isHighRelevanceTransform(
@@ -2163,11 +1716,6 @@ export class GameRoom extends Room<GameState> {
     return dx * dx + dz * dz <= TRANSFORM_HIGH_RELEVANCE_DISTANCE_SQ;
   }
 
-  private getAbilityCooldownUntil(ability: AbilityStateSchema, now: number): number {
-    if (ability.cooldownRemaining <= 0) return 0;
-    return Math.round((now + ability.cooldownRemaining * 1000) / 100) * 100;
-  }
-
   private buildPackedTransform(id: string, player: Player): PackedPlayerTransform {
     return buildPackedPlayerTransform({
       netId: this.getPlayerNetId(id),
@@ -2178,37 +1726,8 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private applyPlayerRank(
-    player: Player,
-    rank: ReturnType<typeof toPublicRankSnapshot>
-  ): void {
-    player.rankTier = rank.tier;
-    player.rankTierLabel = rank.tierLabel;
-    player.rankDivision = rank.division ?? 0;
-    player.rankDivisionIndex = rank.divisionIndex ?? -1;
-    player.rankLabel = rank.label;
-    player.rankIconKey = rank.iconKey;
-    player.rankIsRanked = rank.isRanked;
-    player.rankPlacementRemaining = rank.placementRemaining;
-  }
-
-  private getPlayerRankPayload(player: Player): ReturnType<typeof toPublicRankSnapshot> {
-    return {
-      tier: player.rankTier as ReturnType<typeof toPublicRankSnapshot>['tier'],
-      tierLabel: player.rankTierLabel,
-      division: player.rankDivision > 0 ? player.rankDivision : null,
-      divisionIndex: player.rankDivisionIndex >= 0 ? player.rankDivisionIndex : null,
-      label: player.rankLabel,
-      iconKey: player.rankIconKey,
-      isRanked: player.rankIsRanked,
-      placementRemaining: player.rankPlacementRemaining,
-    };
-  }
-
   private getBlazeBurnUntil(playerId: string): number | null {
-    const burn = this.blazeBurnEffects.get(playerId);
-    if (!burn || burn.ticksRemaining <= 0) return null;
-    return burn.nextTickAt + Math.max(0, burn.ticksRemaining - 1) * BLAZE_FLAMETHROWER_BURN_INTERVAL_MS;
+    return this.blazeBurns.getBurnUntil(playerId);
   }
 
   private buildPlayerVitals(
@@ -2217,18 +1736,7 @@ export class GameRoom extends Room<GameState> {
     visibility: PlayerVisibilityState = 'visible'
   ): PlayerVitalsSnapshot {
     const now = this.state.serverTime || Date.now();
-    const abilities: Record<string, PlayerVitalsAbilitySnapshot> = {};
-    player.abilities.forEach((ability, abilityId) => {
-      abilities[abilityId] = {
-        abilityId: ability.abilityId,
-        cooldownUntil: this.getAbilityCooldownUntil(ability, now),
-        charges: ability.charges,
-        isActive: ability.isActive,
-        activatedAt: ability.activatedAt,
-      };
-    });
-
-    return {
+    return buildFullPlayerVitalsSnapshot({
       id,
       netId: this.getPlayerNetId(id),
       name: player.name,
@@ -2239,42 +1747,21 @@ export class GameRoom extends Room<GameState> {
       isBot: player.isBot,
       botDifficulty: player.botDifficulty ? normalizeBotDifficulty(player.botDifficulty) : undefined,
       botProfileId: player.botProfileId || undefined,
-      rank: this.getPlayerRankPayload(player),
+      rank: buildRoomRankSnapshot(player),
       health: player.health,
       maxHealth: player.maxHealth,
       ultimateCharge: player.ultimateCharge,
       onFireUntil: this.getBlazeBurnUntil(id),
-      powerupBoostUntil: getPowerupBoostUntil(this.powerupBoostUntil, id, now),
+      powerupBoostUntil: this.powerupBoosts.getUntil(id, now),
       hasFlag: player.hasFlag,
-      movement: {
-        isGrounded: player.movement.isGrounded,
-        isSprinting: player.movement.isSprinting,
-        isCrouching: player.movement.isCrouching,
-        isSliding: player.movement.isSliding,
-        slideTimeRemaining: player.movement.slideTimeRemaining,
-        isWallRunning: player.movement.isWallRunning,
-        wallRunSide: player.movement.wallRunSide === 'left' || player.movement.wallRunSide === 'right'
-          ? player.movement.wallRunSide
-          : null,
-        isGrappling: player.movement.isGrappling,
-        grapplePoint: null,
-        isJetpacking: player.movement.isJetpacking,
-        jetpackFuel: player.movement.jetpackFuel,
-        isGliding: player.movement.isGliding,
-        chronosAscendantStartY: player.movement.chronosAscendantStartY || undefined,
-      },
-      abilities,
-      stats: {
-        kills: player.kills,
-        deaths: player.deaths,
-        assists: player.assists,
-        flagCaptures: player.flagCaptures,
-        flagReturns: player.flagReturns,
-      },
+      movement: player.movement,
+      abilities: player.abilities,
+      stats: player,
       respawnTime: player.respawnTime || null,
       spawnProtectionUntil: player.spawnProtectionUntil || null,
+      now,
       visibility,
-    };
+    });
   }
 
   private buildVisibleEnemyVitals(
@@ -2283,25 +1770,7 @@ export class GameRoom extends Room<GameState> {
     visibility: PlayerVisibilityState
   ): PlayerVitalsSnapshot {
     const full = this.buildPlayerVitals(id, player, visibility);
-    const activeAbilities: Record<string, PlayerVitalsAbilitySnapshot> = {};
-    for (const [abilityId, ability] of Object.entries(full.abilities)) {
-      if (!ability.isActive) continue;
-      activeAbilities[abilityId] = {
-        abilityId: ability.abilityId,
-        cooldownUntil: 0,
-        charges: 0,
-        isActive: true,
-        activatedAt: ability.activatedAt,
-      };
-    }
-
-    return {
-      ...full,
-      ultimateCharge: 0,
-      abilities: activeAbilities,
-      respawnTime: null,
-      spawnProtectionUntil: null,
-    };
+    return buildVisibleEnemyVitalsSnapshot(full, visibility);
   }
 
   private buildPublicEnemyVitals(
@@ -2309,38 +1778,22 @@ export class GameRoom extends Room<GameState> {
     player: Player,
     visibility: PlayerVisibilityState
   ): PlayerVitalsSnapshot {
-    const publicState: PlayerVitalsSnapshot['state'] = player.state === 'dead' ? 'dead' : 'alive';
-    return {
+    return buildPublicEnemyVitalsSnapshot({
       id,
       netId: this.getPlayerNetId(id),
       name: player.name,
       team: player.team as Team,
       heroId: (player.heroId || null) as HeroId | null,
-      state: publicState,
+      state: player.state as PlayerVitalsSnapshot['state'],
       isReady: player.isReady,
       isBot: player.isBot,
       botDifficulty: player.botDifficulty ? normalizeBotDifficulty(player.botDifficulty) : undefined,
       botProfileId: player.botProfileId || undefined,
-      rank: this.getPlayerRankPayload(player),
-      health: player.maxHealth,
+      rank: buildRoomRankSnapshot(player),
       maxHealth: player.maxHealth,
-      ultimateCharge: 0,
-      onFireUntil: null,
-      powerupBoostUntil: null,
-      hasFlag: false,
-      movement: getDefaultPublicMovementVitals(),
-      abilities: {},
-      stats: {
-        kills: player.kills,
-        deaths: player.deaths,
-        assists: player.assists,
-        flagCaptures: player.flagCaptures,
-        flagReturns: player.flagReturns,
-      },
-      respawnTime: null,
-      spawnProtectionUntil: null,
+      stats: buildPlayerVitalsStats(player),
       visibility,
-    };
+    });
   }
 
   private buildPlayerVitalsForRecipient(
@@ -2351,33 +1804,26 @@ export class GameRoom extends Room<GameState> {
     interest?: RecipientInterestDecision,
     frameContext?: ReplicationFrameContext
   ): PlayerVitalsSnapshot {
-    if (!recipient || recipient.id === id || recipient.team === player.team) {
-      const cached = frameContext?.fullVitalsByPlayer.get(id);
-      if (cached) return cached;
-      const vitals = this.buildPlayerVitals(id, player, 'visible');
-      frameContext?.fullVitalsByPlayer.set(id, vitals);
-      return vitals;
-    }
+    const shouldResolveInterest = recipient && recipient.id !== id && recipient.team !== player.team;
+    const visibility = shouldResolveInterest
+      ? (interest ?? this.getRecipientInterest(recipient, player, now, frameContext)).state
+      : 'visible';
 
-    const decision = interest ?? this.getRecipientInterest(recipient, player, now, frameContext);
-    if (decision.state === 'visible') {
-      const cached = frameContext?.visibleEnemyVitalsByPlayer.get(id);
-      if (cached) return cached;
-      const vitals = this.buildVisibleEnemyVitals(id, player, decision.state);
-      frameContext?.visibleEnemyVitalsByPlayer.set(id, vitals);
-      return vitals;
-    }
-
-    const publicCacheKey = `${id}:${decision.state}`;
-    const cached = frameContext?.publicEnemyVitalsByPlayer.get(publicCacheKey);
-    if (cached) return cached;
-    const vitals = this.buildPublicEnemyVitals(id, player, decision.state);
-    frameContext?.publicEnemyVitalsByPlayer.set(publicCacheKey, vitals);
-    return vitals;
+    return selectPlayerVitalsForRecipient({
+      targetId: id,
+      targetTeam: player.team,
+      recipientId: recipient?.id,
+      recipientTeam: recipient?.team,
+      visibility,
+      caches: frameContext,
+      buildFull: () => this.buildPlayerVitals(id, player, 'visible'),
+      buildVisible: (state) => this.buildVisibleEnemyVitals(id, player, state),
+      buildPublic: (state) => this.buildPublicEnemyVitals(id, player, state),
+    });
   }
 
   private buildMatchSnapshot(): MatchSnapshotMessage {
-    return {
+    return this.matchSnapshots.buildSnapshot({
       tick: this.state.tick,
       serverTime: this.state.serverTime,
       phase: this.state.phase as MatchSnapshotMessage['phase'],
@@ -2391,76 +1837,7 @@ export class GameRoom extends Room<GameState> {
       blueFlag: getFlagSync(this.state, 'blue'),
       roundTimeRemaining: this.state.roundTimeRemaining,
       phaseEndTime: this.state.phaseEndTime || null,
-      gameClockFrozen: this.devGameClockFrozen,
-    };
-  }
-
-  private getMatchSnapshotSignature(snapshot: MatchSnapshotMessage): string {
-    return [
-      snapshot.phase,
-      snapshot.mapSeed,
-      snapshot.mapSize ?? DEFAULT_VOXEL_MAP_SIZE_ID,
-      snapshot.gameplayMode,
-      snapshot.redScore,
-      snapshot.blueScore,
-      snapshot.phaseEndTime ?? 0,
-      snapshot.gameClockFrozen ? 1 : 0,
-      snapshot.redFlag.carrierId ?? '',
-      snapshot.redFlag.isAtBase ? 1 : 0,
-      Math.round(snapshot.redFlag.position.x * TRANSFORM_POSITION_SCALE),
-      Math.round(snapshot.redFlag.position.y * TRANSFORM_POSITION_SCALE),
-      Math.round(snapshot.redFlag.position.z * TRANSFORM_POSITION_SCALE),
-      snapshot.blueFlag.carrierId ?? '',
-      snapshot.blueFlag.isAtBase ? 1 : 0,
-      Math.round(snapshot.blueFlag.position.x * TRANSFORM_POSITION_SCALE),
-      Math.round(snapshot.blueFlag.position.y * TRANSFORM_POSITION_SCALE),
-      Math.round(snapshot.blueFlag.position.z * TRANSFORM_POSITION_SCALE),
-    ].join(':');
-  }
-
-  private buildPlayerMatchStats(player: Player): MatchSummaryPlayer['stats'] {
-    return {
-      kills: player.kills,
-      deaths: player.deaths,
-      assists: player.assists,
-      flagCaptures: player.flagCaptures,
-      flagReturns: player.flagReturns,
-    };
-  }
-
-  private buildMatchSummaryPlayers(winningTeam: Team | null): MatchSummaryPlayer[] {
-    const players: MatchSummaryPlayer[] = [];
-
-    this.state.players.forEach((player, playerId) => {
-      if (this.spawnedNpcs.has(playerId)) return;
-
-      const team = isTeam(player.team) ? player.team : 'red';
-      const heroId = isHeroId(player.heroId) ? player.heroId : null;
-      const outcome: MatchOutcome = getMatchOutcome(team, winningTeam);
-      const stats = this.buildPlayerMatchStats(player);
-      const score = calculateParticipantScore(stats);
-      const isExperienceEligible = !player.isBot;
-
-      players.push({
-        playerId,
-        userId: this.getDurableUserId(playerId),
-        playerName: player.name,
-        team,
-        heroId,
-        isBot: player.isBot,
-        outcome,
-        stats,
-        score,
-        experienceGained: isExperienceEligible
-          ? calculateParticipantExperience(stats, outcome)
-          : 0,
-        rank: this.getPlayerRankPayload(player),
-      });
-    });
-
-    return players.sort((a, b) => {
-      if (a.team !== b.team) return a.team === 'red' ? -1 : 1;
-      return b.score - a.score || b.stats.kills - a.stats.kills || a.playerName.localeCompare(b.playerName);
+      gameClockFrozen: this.devRuntime.isGameClockFrozen(),
     });
   }
 
@@ -2470,302 +1847,120 @@ export class GameRoom extends Room<GameState> {
     endedAt: number,
     forcedByPlayerId?: string
   ): GameEndEvent {
-    const startedAt = this.matchPersistenceLedger?.startedAt.getTime()
+    const ledger = this.matchLedger.getLedger();
+    const startedAt = ledger?.startedAt.getTime()
       ?? (this.state.roundStartTime || endedAt);
+    const integrityGate = this.antiCheat?.buildIntegrityGate({
+      rankedEligible: ledger?.rankedEligible === true,
+      wagered: Boolean(this.wagerContext),
+    });
+    let rankedPreview: RankedSummaryPreviewInput | undefined;
+    if (ledger && ledger.state === 'active') {
+      const participants = this.buildMatchParticipantSnapshots(ledger);
+      rankedPreview = {
+        participants,
+        rankedUserStates: buildRankedUserStatesFromAuthContexts(this.participantRegistry.getAuthContexts()),
+        rankedEligible: this.isFinalRankedEligible(
+          ledger,
+          participants,
+          forcedByPlayerId
+        ),
+        rankedHoldRequired: integrityGate?.rankedHoldRequired === true,
+      };
+    }
 
-    const event: GameEndEvent = {
+    return this.matchSummary.buildGameEndEvent({
       matchMode: this.matchMode,
       gameplayMode: this.gameplayMode,
       winningTeam,
       finalScore,
-      matchId: this.matchPersistenceLedger?.matchId ?? null,
+      matchId: this.matchLedger.getMatchId(),
+      startedAt,
       endedAt,
-      durationMs: Math.max(0, endedAt - startedAt),
       forcedByPlayerId,
-      players: this.buildMatchSummaryPlayers(winningTeam),
-    };
-    const gate = this.antiCheat?.buildIntegrityGate({
-      rankedEligible: this.matchPersistenceLedger?.rankedEligible === true,
-      wagered: Boolean(this.wagerContext),
+      players: this.state.players,
+      integrityGate,
+      mapThemeId: this.state.mapThemeId,
+      goldenBiomeRewardUsdCents: this.state.mapThemeId === GOLDEN_VOXEL_MAP_THEME_ID && this.matchMode === 'ranked'
+        ? wagerService.getConfig().goldenBiomeWinnerRewardUsdCents
+        : 0,
+      rankedPreview,
     });
-    if (gate && gate.reviewRequired) {
-      event.matchIntegrity = {
-        status: gate.status,
-        reviewRequired: gate.rankedHoldRequired || gate.payoutHoldRequired,
-        rankedOutcome: gate.rankedHoldRequired ? 'review_required' : 'normal',
-        wagerOutcome: gate.payoutHoldRequired ? 'review_required' : 'normal',
-        message: gate.rankedHoldRequired || gate.payoutHoldRequired
-          ? 'Match rewards are pending integrity review.'
-          : 'Match integrity telemetry has been recorded.',
-      };
-    }
-    this.attachRankedSummaryUpdates(event, winningTeam, new Date(endedAt), forcedByPlayerId);
-    if (this.state.mapThemeId === GOLDEN_VOXEL_MAP_THEME_ID && this.matchMode === 'ranked') {
-      event.goldenBiomeReward = {
-        rewardUsdCents: wagerService.getConfig().goldenBiomeWinnerRewardUsdCents,
-        rewardToken: 'SOL',
-        winningTeam,
-        eligiblePlayerIds: winningTeam
-          ? event.players
-            .filter((player) => !player.isBot && player.team === winningTeam)
-            .map((player) => player.playerId)
-          : [],
-        status: winningTeam ? 'pending' : 'not_applicable',
-      };
-    }
-    return event;
-  }
-
-  private getRankedUserState(userId: string): RankedUserState | null {
-    for (const authContext of this.playerAuthContexts.values()) {
-      if (authContext.userId !== userId) continue;
-      return {
-        id: userId,
-        competitiveRating: authContext.competitiveRating,
-        rankedGames: authContext.rankedGames,
-        rankedWins: authContext.rankPayload.rankedWins,
-        rankedLosses: authContext.rankPayload.rankedLosses,
-        rankedDraws: authContext.rankPayload.rankedDraws,
-        rankedPlacementsRemaining: authContext.rankedPlacementsRemaining,
-        rankedPeakRating: authContext.rankPayload.peak.rating,
-      };
-    }
-
-    return null;
-  }
-
-  private attachRankedSummaryUpdates(
-    event: GameEndEvent,
-    winningTeam: Team | null,
-    endedAt: Date,
-    forcedByPlayerId?: string
-  ): void {
-    const ledger = this.matchPersistenceLedger;
-    if (!ledger || ledger.state !== 'active') return;
-
-    const participants = this.buildMatchParticipantSnapshots(ledger);
-
-    if (!this.isFinalRankedEligible(ledger, participants, forcedByPlayerId)) return;
-    const gate = this.antiCheat?.buildIntegrityGate({ rankedEligible: true, wagered: Boolean(this.wagerContext) });
-    if (gate?.rankedHoldRequired) return;
-
-    const users = participants
-      .map((participant) => this.getRankedUserState(participant.userId))
-      .filter((user): user is RankedUserState => user !== null);
-    if (users.length !== participants.length) return;
-
-    const updates = calculateRankedRatingUpdates({
-      participants: event.players
-        .filter((player) => !player.isBot && player.userId)
-        .map((player) => ({
-          userId: player.userId!,
-          team: player.team,
-          outcome: player.outcome,
-          score: player.score,
-          kills: player.stats.kills,
-          deaths: player.stats.deaths,
-          assists: player.stats.assists,
-          flagCaptures: player.stats.flagCaptures,
-          flagReturns: player.stats.flagReturns,
-          leftAt: participants.find((participant) => participant.userId === player.userId)?.leftAt ?? null,
-        })),
-      users,
-      winningTeam,
-      endedAt,
-    });
-    const updatesByUserId = new Map(updates.map((update) => [update.userId, update]));
-    const usersById = new Map(users.map((user) => [user.id, user]));
-
-    for (const player of event.players) {
-      if (!player.userId) continue;
-      const update = updatesByUserId.get(player.userId);
-      const user = usersById.get(player.userId);
-      if (!update || !user) continue;
-
-      player.ratingDelta = update.ratingDelta;
-      player.rankBefore = toPublicRankSnapshot(getRankFromRating(update.ratingBefore, user.rankedGames));
-      player.rankAfter = toPublicRankSnapshot(getRankFromRating(update.ratingAfter, update.rankedGamesAfter));
-    }
-  }
-
-  private getPopulationCounts(): {
-    humanCount: number;
-    botCount: number;
-    observerCount: number;
-    npcCount: number;
-    participantCount: number;
-    entityCount: number;
-  } {
-    let humanCount = 0;
-    let botCount = 0;
-    let npcCount = 0;
-
-    this.state.players.forEach((player) => {
-      if (this.spawnedNpcs.has(player.id)) {
-        npcCount++;
-      } else if (player.isBot) {
-        botCount++;
-      } else {
-        humanCount++;
-      }
-    });
-
-    return {
-      humanCount,
-      botCount,
-      observerCount: this.observerClientIds.size,
-      npcCount,
-      participantCount: humanCount + botCount,
-      entityCount: humanCount + botCount + npcCount,
-    };
   }
 
   private updateMetadata(): void {
-    const counts = this.getPopulationCounts();
+    const counts = getRoomPopulationCounts({
+      players: this.state.players.values(),
+      npcIds: this.npcs.ids,
+      observerCount: this.clientRegistry.getObserverCount(),
+    });
     const load = this.getRoomLoadSnapshot();
-    this.setMetadata({
-      name: this.lobbyName || `Game ${this.roomId.slice(0, 6)}`,
-      status: this.state.phase,
+    this.setMetadata(buildGameRoomMetadata({
+      roomId: this.roomId,
+      lobbyName: this.lobbyName,
       phase: this.state.phase,
-      lobbyId: this.lobbyId || undefined,
+      lobbyId: this.lobbyId,
       matchMode: this.matchMode,
       gameplayMode: this.gameplayMode,
       mapSeed: this.state.mapSeed,
       mapThemeId: this.state.mapThemeId,
       mapSize: this.state.mapSize,
-      humanCount: counts.humanCount,
-      botCount: counts.botCount,
-      observerCount: counts.observerCount,
-      npcCount: counts.npcCount,
-      participantCount: counts.participantCount,
-      entityCount: counts.entityCount,
+      counts,
       maxPlayers: this.config.maxPlayers,
       reservedHumanPlayers: this.reservedHumanPlayers,
-      rankedEligibleCandidate: this.rankedEligibilityCandidate,
+      rankedEligibilityCandidate: this.rankedEligibilityCandidate,
       rankedRequiredHumanPlayers: this.rankedRequiredHumanPlayers,
-      reconnectIdentityKeys: Array.from(this.reconnectParticipants.keys()),
+      reconnectIdentityKeys: this.participantRegistry.getReconnectIdentityKeys(),
       wagerEnabled: Boolean(this.wagerContext),
-      tickDurationP95Ms: load.tickDurationP95Ms,
-      tickDurationP99Ms: load.tickDurationP99Ms,
-      eventLoopDelayP95Ms: load.eventLoopDelayP95Ms,
-      eventLoopDelayP99Ms: load.eventLoopDelayP99Ms,
-      customMessageBytes: load.customMessageBytes,
-      customMessageCount: load.customMessageCount,
-      interestRecomputeMs: load.interestRecomputeMs,
-      interestLosChecks: load.interestLosChecks,
-      interestVisibleTargets: load.interestVisibleTargets,
-      interestHiddenTargets: load.interestHiddenTargets,
-      interestLastKnownTargets: load.interestLastKnownTargets,
-      streamTransformsBytes: load.streamTransformsBytes,
-      streamVitalsBytes: load.streamVitalsBytes,
-      streamFilteredTargets: load.streamFilteredTargets,
-      streamHiddenTargetLeakCount: load.streamHiddenTargetLeakCount,
-      antiCheatQueueDepth: load.antiCheatQueueDepth,
-      antiCheatDroppedLowMediumSignals: load.antiCheatDroppedLowMediumSignals,
-      antiCheatDbErrors: load.antiCheatDbErrors,
-    });
+      load,
+    }));
   }
 
-  getCustomMessageMetricsSnapshot(): Record<string, CustomMessageMetric> {
-    const snapshot: Record<string, CustomMessageMetric> = {};
-    for (const [type, metric] of this.customMessageMetrics) {
-      snapshot[type] = { ...metric };
-    }
-    return snapshot;
+  getCustomMessageMetricsSnapshot(): Record<string, RoomCustomMessageMetric> {
+    return this.roomMetrics.getCustomMessageMetricsSnapshot();
   }
 
   getInterestMetricsSnapshot(): RoomInterestMetricsSnapshot {
-    const interest = this.visibilityInterest.getMetricsSnapshot();
-    return {
-      ...interest,
-      transformBytes: this.customMessageMetrics.get('playerTransformsV2')?.bytes ?? 0,
-      vitalsBytes: this.customMessageMetrics.get('playerVitals')?.bytes ?? 0,
-    };
+    return buildRoomInterestMetricsSnapshot({
+      interest: this.visibilityInterest.getMetricsSnapshot(),
+      transformMetric: this.roomMetrics.getCustomMessageMetric('playerTransformsV2'),
+      vitalsMetric: this.roomMetrics.getCustomMessageMetric('playerVitals'),
+    });
   }
 
   getRoomLoadSnapshot(): RoomLoadSnapshot {
-    const tickP50 = this.getTickDurationPercentile(0.5);
-    const tickP95 = this.getTickDurationPercentile(0.95);
-    const tickP99 = this.getTickDurationPercentile(0.99);
-    let customMessageBytes = 0;
-    let customMessageCount = 0;
-    for (const metric of this.customMessageMetrics.values()) {
-      customMessageBytes += metric.bytes;
-      customMessageCount += metric.messages;
-    }
-    const interest = this.visibilityInterest.getMetricsSnapshot();
-    const transformMetric = this.customMessageMetrics.get('playerTransformsV2');
-    const vitalsMetric = this.customMessageMetrics.get('playerVitals');
-    const antiCheatQueue = this.antiCheatEvidenceStore.getQueueHealth();
-    return {
-      tickDurationP50Ms: tickP50,
-      tickDurationP95Ms: tickP95,
-      tickDurationP99Ms: tickP99,
+    return buildRoomLoadSnapshot({
+      tickDurationP50Ms: this.roomMetrics.getTickDurationPercentile(0.5),
+      tickDurationP95Ms: this.roomMetrics.getTickDurationPercentile(0.95),
+      tickDurationP99Ms: this.roomMetrics.getTickDurationPercentile(0.99),
       eventLoopDelayP95Ms: this.eventLoopDelay ? this.eventLoopDelay.percentile(95) / 1_000_000 : 0,
       eventLoopDelayP99Ms: this.eventLoopDelay ? this.eventLoopDelay.percentile(99) / 1_000_000 : 0,
-      customMessageBytes,
-      customMessageCount,
-      interestRecomputeMs: interest.recomputeMs,
-      interestLosChecks: interest.losChecks,
-      interestVisibleTargets: interest.visibleTargets,
-      interestHiddenTargets: interest.hiddenTargets,
-      interestLastKnownTargets: interest.lastKnownTargets,
-      streamTransformsBytes: transformMetric?.bytes ?? 0,
-      streamVitalsBytes: vitalsMetric?.bytes ?? 0,
-      streamFilteredTargets: interest.filteredTargets,
-      streamHiddenTargetLeakCount: interest.hiddenTargetLeakCount,
-      antiCheatQueueDepth: antiCheatQueue.depth,
-      antiCheatDroppedLowMediumSignals: antiCheatQueue.droppedLowMediumSignals,
-      antiCheatDbErrors: antiCheatQueue.dbErrorCount,
-    };
-  }
-
-  private recordTickDuration(durationMs: number): void {
-    this.tickDurationSamplesMs[this.tickDurationSampleIndex] = Math.max(0, durationMs);
-    this.tickDurationSampleIndex = (this.tickDurationSampleIndex + 1) % this.tickDurationSamplesMs.length;
-    this.tickDurationSampleCount = Math.min(this.tickDurationSamplesMs.length, this.tickDurationSampleCount + 1);
-  }
-
-  private getTickDurationPercentile(percentile: number): number {
-    if (this.tickDurationSampleCount === 0) return 0;
-
-    const samples: number[] = [];
-    for (let index = 0; index < this.tickDurationSampleCount; index++) {
-      samples.push(this.tickDurationSamplesMs[index]);
-    }
-    samples.sort((a, b) => a - b);
-    return samples[Math.min(samples.length - 1, Math.floor((samples.length - 1) * percentile))] ?? 0;
-  }
-
-  private recordCustomMessage(type: string, payload: unknown, recipients: number): void {
-    if (recipients <= 0) return;
-
-    const metric = this.customMessageMetrics.get(type) ?? { messages: 0, recipients: 0, bytes: 0 };
-    const bytes = estimateCustomMessageBytes(type, payload);
-    metric.messages++;
-    metric.recipients += recipients;
-    metric.bytes += bytes * recipients;
-    this.customMessageMetrics.set(type, metric);
+      customMessageTotals: this.roomMetrics.getCustomMessageTotals(),
+      interest: this.visibilityInterest.getMetricsSnapshot(),
+      transformMetric: this.roomMetrics.getCustomMessageMetric('playerTransformsV2'),
+      vitalsMetric: this.roomMetrics.getCustomMessageMetric('playerVitals'),
+      antiCheatQueue: this.antiCheatEvidenceStore.getQueueHealth(),
+    });
   }
 
   private sendTracked(client: Client, type: string, payload: unknown): void {
-    this.recordCustomMessage(type, payload, 1);
+    this.roomMetrics.recordCustomMessage(type, payload, 1);
     client.send(type, payload);
   }
 
   private broadcastTracked(type: string, payload: unknown): void {
-    this.recordCustomMessage(type, payload, this.clients.length);
+    this.roomMetrics.recordCustomMessage(type, payload, this.clients.length);
     this.broadcast(type, payload);
   }
 
-  private broadcastAbilityUsed(caster: Player, payload: Record<string, unknown>): void {
-    const now = this.state.serverTime || Date.now();
-    for (const client of this.clients) {
-      const recipient = this.state.players.get(client.sessionId) ?? null;
-      const interest = recipient ? this.getRecipientInterest(recipient, caster, now) : undefined;
-      if (!this.shouldSendExactEnemyState(recipient, caster.id, caster, now, interest)) continue;
-      this.sendTracked(client, 'abilityUsed', payload);
-    }
+  private broadcastPhaseChange(phase: GamePhase): void {
+    this.broadcastTracked('phaseChange', buildPhaseChangePayload({
+      phase,
+      endTime: this.state.phaseEndTime,
+      mapSeed: this.state.mapSeed,
+      mapThemeId: this.state.mapThemeId,
+      mapSize: this.state.mapSize as VoxelMapSizeId,
+    }));
   }
 
   private broadcastExactPlayerEvent(type: string, player: Player, payload: Record<string, unknown>): void {
@@ -2793,20 +1988,14 @@ export class GameRoom extends Room<GameState> {
         ? this.shouldSendExactEnemyState(recipient, source.id, source, now, sourceInterest)
         : true;
       const isParticipant = recipient?.id === target.id || (source && recipient?.id === source.id);
-
-      if (!isParticipant && !canKnowTarget && !canKnowSource) continue;
-
-      this.sendTracked(client, 'playerDamaged', {
-        targetId: payload.targetId,
-        damage: payload.damage,
-        sourceId: payload.sourceId,
-        damageType: payload.damageType,
-        newHealth: canKnowTarget || isParticipant ? payload.newHealth : undefined,
-        sourcePosition: canKnowSource || isParticipant ? payload.sourcePosition : undefined,
-        targetPosition: canKnowTarget || isParticipant ? payload.targetPosition : undefined,
-        sourceHeroId: canKnowSource || isParticipant ? payload.sourceHeroId : null,
-        targetHeroId: canKnowTarget || isParticipant ? payload.targetHeroId : null,
+      const eventPayload = buildPlayerDamagedPayload(payload, {
+        isParticipant: Boolean(isParticipant),
+        canKnowTarget,
+        canKnowSource,
       });
+
+      if (!eventPayload) continue;
+      this.sendTracked(client, 'playerDamaged', eventPayload);
     }
   }
 
@@ -2835,20 +2024,14 @@ export class GameRoom extends Room<GameState> {
         ? this.shouldSendExactEnemyState(recipient, source.id, source, now, sourceInterest)
         : true;
       const isParticipant = recipient?.id === blocker.id || (source && recipient?.id === source.id);
-
-      if (!isParticipant && !canKnowBlocker) continue;
-
-      this.sendTracked(client, 'chronosAegisDamaged', {
-        playerId: payload.playerId,
-        sourceId: canKnowSource || isParticipant ? payload.sourceId : null,
-        damage: payload.damage,
-        damageType: payload.damageType,
-        shieldHp: payload.shieldHp,
-        shieldRatio: payload.shieldRatio,
-        position: payload.position,
-        direction: payload.direction,
-        serverTime: payload.serverTime,
+      const eventPayload = buildChronosAegisDamagedPayload(payload, {
+        isParticipant: Boolean(isParticipant),
+        canKnowBlocker,
+        canKnowSource,
       });
+
+      if (!eventPayload) continue;
+      this.sendTracked(client, 'chronosAegisDamaged', eventPayload);
     }
   }
 
@@ -2863,42 +2046,36 @@ export class GameRoom extends Room<GameState> {
       const targetInterest = recipient ? this.getRecipientInterest(recipient, target, now) : undefined;
       const canKnowTarget = this.shouldSendExactEnemyState(recipient, target.id, target, now, targetInterest);
       const isParticipant = recipient?.id === target.id || (source && recipient?.id === source.id);
+      const eventPayload = buildPhantomShieldBrokenPayload(payload, {
+        isParticipant: Boolean(isParticipant),
+        canKnowTarget,
+      });
 
-      if (!isParticipant && !canKnowTarget) continue;
-      this.sendTracked(client, 'phantomShieldBroken', payload);
+      if (!eventPayload) continue;
+      this.sendTracked(client, 'phantomShieldBroken', eventPayload);
     }
   }
 
-  private broadcastPlayerHealed(source: Player, payload: {
-    sourceId: string;
-    abilityId: string;
-    sourcePosition: PlainVec3;
-    targets: Array<{
-      targetId: string;
-      amount: number;
-      newHealth: number;
-      position: PlainVec3;
-    }>;
-    timestamp: number;
-  }): void {
+  private broadcastPlayerHealed(source: Player, payload: PlayerHealedEvent): void {
     const now = this.state.serverTime || Date.now();
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
       const sourceInterest = recipient ? this.getRecipientInterest(recipient, source, now) : undefined;
       if (!this.shouldSendExactEnemyState(recipient, source.id, source, now, sourceInterest)) continue;
 
-      const visibleTargets = payload.targets.filter((targetPayload) => {
+      const visibleTargetIds = new Set<string>();
+      for (const targetPayload of payload.targets) {
         const target = this.state.players.get(targetPayload.targetId);
-        if (!target) return false;
+        if (!target) continue;
         const targetInterest = recipient ? this.getRecipientInterest(recipient, target, now) : undefined;
-        return this.shouldSendExactEnemyState(recipient, target.id, target, now, targetInterest);
-      });
-      if (visibleTargets.length === 0) continue;
+        if (this.shouldSendExactEnemyState(recipient, target.id, target, now, targetInterest)) {
+          visibleTargetIds.add(targetPayload.targetId);
+        }
+      }
 
-      this.sendTracked(client, 'playerHealed', {
-        ...payload,
-        targets: visibleTargets,
-      });
+      const eventPayload = buildPlayerHealedPayload(payload, visibleTargetIds);
+      if (!eventPayload) continue;
+      this.sendTracked(client, 'playerHealed', eventPayload);
     }
   }
 
@@ -2911,14 +2088,7 @@ export class GameRoom extends Room<GameState> {
       const recipient = this.state.players.get(client.sessionId) ?? null;
       const interest = recipient ? this.getRecipientInterest(recipient, collector, now) : undefined;
       const canKnowCollector = this.shouldSendExactEnemyState(recipient, collector.id, collector, now, interest);
-      const visibleCollectorId = canKnowCollector ? collector.id : null;
-
-      this.sendTracked(client, 'powerupCollected', {
-        ...payload,
-        playerId: visibleCollectorId,
-        expiresAt: visibleCollectorId ? payload.expiresAt : null,
-        healthRestored: visibleCollectorId ? payload.healthRestored : undefined,
-      } satisfies PowerupCollectedMessage);
+      this.sendTracked(client, 'powerupCollected', buildPowerupCollectedPayload(payload, canKnowCollector));
     }
   }
 
@@ -2935,27 +2105,22 @@ export class GameRoom extends Room<GameState> {
         : true;
       const isParticipant = recipient?.id === victim.id || (killer && recipient?.id === killer.id);
 
-      if (isParticipant || (canKnowVictim && canKnowKiller)) {
-        this.sendTracked(client, 'playerKilled', payload);
-        continue;
-      }
-
-      this.sendTracked(client, 'playerKilled', {
-        ...payload,
-        position: canKnowVictim ? payload.position : getCoarseEventPosition(exactPosition),
-        velocity: canKnowVictim ? payload.velocity : undefined,
-        sourcePosition: canKnowKiller ? payload.sourcePosition : undefined,
-        sourceDirection: canKnowKiller ? payload.sourceDirection : undefined,
-        respawnTime: null,
-      });
+      this.sendTracked(client, 'playerKilled', buildPlayerKilledPayload(payload, {
+        isParticipant: Boolean(isParticipant),
+        canKnowTarget: canKnowVictim,
+        canKnowSource: canKnowKiller,
+      }, getCoarseEventPosition(exactPosition)));
     }
   }
 
   private shouldIncludeJoinPosition(recipient: Player | null, target: Player): boolean {
-    if (!recipient) return true;
-    if (recipient.id === target.id) return true;
-    if (recipient.team === target.team) return true;
-    return this.state.phase !== 'playing' && this.state.phase !== 'countdown';
+    return shouldIncludePlayerJoinPosition({
+      recipientId: recipient?.id,
+      recipientTeam: recipient?.team,
+      targetId: target.id,
+      targetTeam: target.team,
+      phase: this.state.phase as GamePhase,
+    });
   }
 
   private sendPlayerJoinedSnapshot(client: Client, target: Player, recipient: Player | null): void {
@@ -2968,7 +2133,7 @@ export class GameRoom extends Room<GameState> {
       isBot: boolean;
       botDifficulty?: string;
       botProfileId?: string;
-      rank: ReturnType<typeof toPublicRankSnapshot>;
+      rank: ReturnType<typeof buildRoomRankSnapshot>;
       position?: PlainVec3;
     } = {
       playerId: target.id,
@@ -2979,7 +2144,7 @@ export class GameRoom extends Room<GameState> {
       isBot: target.isBot,
       botDifficulty: target.botDifficulty,
       botProfileId: target.botProfileId,
-      rank: this.getPlayerRankPayload(target),
+      rank: buildRoomRankSnapshot(target),
     };
 
     if (this.shouldIncludeJoinPosition(recipient, target)) {
@@ -2993,10 +2158,9 @@ export class GameRoom extends Room<GameState> {
     const recipient = this.state.players.get(client.sessionId) ?? null;
     const matchSnapshot = this.buildMatchSnapshot();
     this.sendTracked(client, 'matchSnapshot', matchSnapshot);
-    this.sendTracked(client, 'powerupState', buildPowerupStateMessage(
+    this.sendTracked(client, 'powerupState', this.powerupPickups.buildStateMessage(
       this.state.serverTime || Date.now(),
-      this.mapManifest,
-      this.powerupPickupStates
+      this.getMapManifest()
     ));
     this.sendTracked(client, 'playerVitals', {
       tick: this.state.tick,
@@ -3006,7 +2170,11 @@ export class GameRoom extends Room<GameState> {
         ([id, player]) => this.buildPlayerVitalsForRecipient(id, player, recipient)
       ),
     } satisfies PlayerVitalsMessage);
-    this.sendTracked(client, 'playerPings', this.buildPlayerPingsMessage(recipient));
+    this.sendTracked(client, 'playerPings', this.playerPings.buildMessage({
+      serverTime: this.state.serverTime,
+      players: this.state.players,
+      recipient,
+    }));
     this.sendTracked(client, 'playerInterest', {
       tick: this.state.tick,
       serverTime: this.state.serverTime,
@@ -3029,84 +2197,45 @@ export class GameRoom extends Room<GameState> {
   }
 
   private requestPlayerPing(client: Client, now: number): void {
-    const nonce = `${this.state.tick}:${++this.pingProbeSequence}:${client.sessionId}`;
-    this.pendingPlayerPings.set(client.sessionId, { nonce, sentAt: now });
-    this.getPlayerNetworkQualityState(client.sessionId, now);
-    this.sendTracked(client, 'playerPingRequest', { nonce } satisfies PlayerPingRequestMessage);
+    this.sendTracked(
+      client,
+      'playerPingRequest',
+      this.playerPings.createPingRequest(client.sessionId, this.state.tick, now)
+    );
   }
 
   private handlePlayerPingResponse(client: Client, data: unknown): void {
     if (!isRecord(data) || typeof data.nonce !== 'string') return;
 
-    const pending = this.pendingPlayerPings.get(client.sessionId);
-    if (!pending || pending.nonce !== data.nonce) return;
-
-    this.pendingPlayerPings.delete(client.sessionId);
-    const pingMs = Math.min(
-      MAX_REPORTED_PLAYER_PING_MS,
-      Math.max(0, Math.round(Date.now() - pending.sentAt))
-    );
-
-    if (this.playerPingMs.get(client.sessionId) !== pingMs) {
-      this.playerPingMs.set(client.sessionId, pingMs);
-      this.playerPingsDirty = true;
-    }
-    this.recordPlayerNetworkQualitySample(client.sessionId, {
-      at: Date.now(),
-      pingMs,
-    });
+    const result = this.playerPings.recordPingResponse(client.sessionId, data.nonce, Date.now());
+    if (!result.accepted) return;
     this.checkCompetitiveNetworkQualityAfterProbe();
   }
 
   private probePlayerPings(): void {
     const now = this.state.serverTime || Date.now();
-    if (now - this.lastPingProbeAt < PLAYER_PING_INTERVAL_MS) return;
+    const probe = this.playerPings.startProbe({
+      clients: this.clients,
+      players: this.state.players,
+      tick: this.state.tick,
+      now,
+    });
+    if (!probe.started) return;
 
-    this.lastPingProbeAt = now;
-
-    for (const [playerId, pending] of this.pendingPlayerPings) {
-      if (now - pending.sentAt > PLAYER_PING_TIMEOUT_MS) {
-        this.pendingPlayerPings.delete(playerId);
-        this.recordPlayerNetworkQualitySample(playerId, {
-          at: now,
-          pingMs: null,
-          timedOut: true,
-        });
-        this.checkCompetitiveNetworkQualityAfterProbe();
-      }
+    for (let index = 0; index < probe.timedOutPlayerIds.length; index++) {
+      this.checkCompetitiveNetworkQualityAfterProbe();
     }
 
-    for (const client of this.clients) {
-      const player = this.state.players.get(client.sessionId);
-      if (!player || player.isBot) continue;
-      if (this.pendingPlayerPings.has(client.sessionId)) continue;
-      this.requestPlayerPing(client, now);
+    for (const request of probe.requests) {
+      this.sendTracked(request.client, 'playerPingRequest', request.message);
     }
-  }
-
-  private getPlayerNetworkQualityState(playerId: string, now = Date.now()): NetworkQualityState {
-    let state = this.playerNetworkQuality.get(playerId);
-    if (!state) {
-      state = createNetworkQualityState(now);
-      this.playerNetworkQuality.set(playerId, state);
-    }
-    return state;
-  }
-
-  private recordPlayerNetworkQualitySample(playerId: string, sample: {
-    at: number;
-    pingMs: number | null;
-    timedOut?: boolean;
-  }): void {
-    const state = this.getPlayerNetworkQualityState(playerId, sample.at);
-    recordNetworkQualitySample(state, sample, DEFAULT_COMPETITIVE_NETWORK_QUALITY_GATE);
   }
 
   private checkCompetitiveNetworkQualityAfterProbe(): void {
     if (
       this.matchCancelled
       || this.state.phase !== 'hero_select'
-      || !this.countdownStartGateOpen
+      || !this.matchStartGate.isOpen()
       || !this.areAllHumansSceneReadyForCountdown()
     ) {
       return;
@@ -3115,91 +2244,32 @@ export class GameRoom extends Room<GameState> {
     this.checkPhaseTransition();
   }
 
-  private isCompetitiveNetworkQualityGateRequired(): boolean {
-    return isNetworkQualityGateRequiredForMatch({
+  private ensureCompetitiveNetworkQualityForStart(options: { cancelPending?: boolean } = {}): boolean {
+    const result = this.playerPings.ensureCompetitiveGateForStart({
+      players: this.state.players,
+      now: Date.now(),
       matchMode: this.matchMode,
       wagered: Boolean(this.wagerContext),
+      cancelPending: options.cancelPending,
     });
-  }
+    if (result.ready) return true;
 
-  private evaluateCompetitiveNetworkQualityGate(now = Date.now()): CompetitiveNetworkQualityGateResult {
-    if (!this.isCompetitiveNetworkQualityGateRequired()) return { status: 'ready' };
-
-    let pendingEvaluation: PlayerNetworkQualityEvaluation | undefined;
-    for (const [playerId, player] of this.state.players) {
-      if (player.isBot) continue;
-
-      const evaluation = evaluatePlayerNetworkQuality({
-        playerId,
-        playerName: player.name,
-        state: this.getPlayerNetworkQualityState(playerId, now),
-        now,
-        config: DEFAULT_COMPETITIVE_NETWORK_QUALITY_GATE,
-      });
-
-      if (evaluation.status === 'blocked') {
-        return { status: 'blocked', evaluation };
-      }
-      if (!pendingEvaluation && evaluation.status === 'pending') {
-        pendingEvaluation = evaluation;
-      }
-    }
-
-    return pendingEvaluation
-      ? { status: 'pending', evaluation: pendingEvaluation }
-      : { status: 'ready' };
-  }
-
-  private ensureCompetitiveNetworkQualityForStart(options: { cancelPending?: boolean } = {}): boolean {
-    const gate = this.evaluateCompetitiveNetworkQualityGate();
-    if (gate.status === 'ready') return true;
-
-    if (gate.status === 'blocked' || options.cancelPending) {
-      const evaluation = gate.evaluation;
-      this.cancelPreMatch('network_quality', this.buildNetworkQualityCancelNotice(
-        evaluation,
-        gate.status === 'pending' ? 'network_not_verified' : evaluation?.reason ?? 'network_quality'
-      ));
+    if (result.cancelNotice) {
+      this.cancelPreMatch('network_quality', result.cancelNotice);
     }
 
     return false;
   }
 
-  private buildNetworkQualityCancelNotice(
-    evaluation: PlayerNetworkQualityEvaluation | undefined,
-    fallbackReason: string
-  ): Omit<PreMatchCancelNotice, 'reason'> {
-    const playerName = evaluation?.playerName || 'A player';
-    return {
-      message: `Match canceled because ${playerName}'s connection is not stable enough for ranked or wager play.`,
-      blockedPlayerId: evaluation?.playerId,
-      blockedPlayerName: evaluation?.playerName,
-      networkQuality: {
-        reason: evaluation?.reason ?? fallbackReason,
-        ...(evaluation?.metrics ?? {}),
-      },
-    };
-  }
-
-  private buildPlayerPingsMessage(recipient: Player | null = null): PlayerPingsMessage {
-    return {
-      serverTime: this.state.serverTime,
-      players: Array.from(this.state.players, ([playerId, player]) => ({
-        playerId,
-        pingMs: player.isBot || (recipient && recipient.id !== playerId && recipient.team !== player.team)
-          ? null
-          : this.playerPingMs.get(playerId) ?? null,
-      })),
-    };
-  }
-
   private broadcastPlayerPings(force = false): void {
-    if (!force && !this.playerPingsDirty) return;
-
-    this.playerPingsDirty = false;
+    if (!this.playerPings.shouldBroadcast(force)) return;
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
-      this.sendTracked(client, 'playerPings', this.buildPlayerPingsMessage(recipient));
+      this.sendTracked(client, 'playerPings', this.playerPings.buildMessage({
+        serverTime: this.state.serverTime,
+        players: this.state.players,
+        recipient,
+      }));
     }
   }
 
@@ -3215,47 +2285,36 @@ export class GameRoom extends Room<GameState> {
     const force = options.force === true;
     const replicationState = options.recipientId
       ? this.getTransformReplicationState(options.recipientId)
-      : null;
-    const signatures = replicationState?.signatures ?? this.playerTransformSignatures;
-    const heartbeatAt = replicationState?.heartbeatAt ?? this.playerTransformHeartbeatAt;
-
+      : this.replicationState.getGlobalTransformState();
     this.state.players.forEach((player, id) => {
       if (player.state !== 'alive' && player.state !== 'spawning') return;
       if (!force && options.recipientId && id === options.recipientId) return;
       const interest = options.recipient
         ? this.getRecipientInterest(options.recipient, player, now, options.frameContext)
         : undefined;
-      if (!this.shouldSendExactEnemyState(options.recipient ?? null, id, player, now, interest)) {
-        const hadTransform = signatures.delete(id);
-        heartbeatAt.delete(id);
-        if (hadTransform || force) {
-          hiddenPlayerIds.push(id);
-        }
-        return;
-      }
-      const transform = options.frameContext?.packedTransforms.get(id) ?? this.buildPackedTransform(id, player);
-      const signature = options.frameContext?.packedTransformSignatures.get(id) ?? getPackedTransformSignature(transform);
-      const previousSignature = signatures.get(id);
-      const lastHeartbeatAt = heartbeatAt.get(id) ?? 0;
-      const highRelevance = this.isHighRelevanceTransform(options.recipient ?? null, id, player, now);
-      const heartbeatInterval = highRelevance
-        ? TRANSFORM_HEARTBEAT_INTERVAL_MS
-        : DISTANT_TRANSFORM_HEARTBEAT_INTERVAL_MS;
-      const heartbeatDue = now - lastHeartbeatAt >= heartbeatInterval;
-      const changed = havePackedTransformsChanged(previousSignature, signature);
-
-      if (force || (highRelevance && changed) || heartbeatDue) {
-        players.push(transform);
-        signatures.set(id, signature);
-        heartbeatAt.set(id, now);
-      }
+      const exactStateVisible = this.shouldSendExactEnemyState(options.recipient ?? null, id, player, now, interest);
+      const delta = selectPackedTransformDelta({
+        state: replicationState,
+        playerId: id,
+        getSnapshot: () => {
+          const transform = options.frameContext?.packedTransforms.get(id) ?? this.buildPackedTransform(id, player);
+          const signature = options.frameContext?.packedTransformSignatures.get(id) ?? getPackedTransformSignature(transform);
+          return { transform, signature };
+        },
+        exactStateVisible,
+        force,
+        getHighRelevance: () => this.isHighRelevanceTransform(options.recipient ?? null, id, player, now),
+        now,
+      });
+      if (delta?.kind === 'visible') players.push(delta.transform);
+      if (delta?.kind === 'hidden') hiddenPlayerIds.push(delta.playerId);
     });
 
     return {
       version: 2,
       tick: this.state.tick,
       serverTime: this.state.serverTime,
-      streamEpoch: this.transformStreamEpoch,
+      streamEpoch: this.replicationState.getStreamEpoch(),
       full: force,
       players,
       hiddenPlayerIds,
@@ -3273,171 +2332,51 @@ export class GameRoom extends Room<GameState> {
     const now = frameContext.now;
     const forceVitals = options.forceVitals === true;
     const forceTransforms = options.forceTransforms === true;
-    const shouldBroadcastVitals = options.vitals && (forceVitals || now - this.lastVitalsBroadcastAt >= PLAYER_VITALS_INTERVAL_MS);
-    const shouldBroadcastInterest = options.vitals && (forceVitals || now - this.lastInterestBroadcastAt >= PLAYER_INTEREST_INTERVAL_MS);
-    const shouldBroadcastTransforms = options.transforms;
+    const {
+      shouldBroadcastVitals,
+      shouldBroadcastInterest,
+      shouldBroadcastTransforms,
+    } = getPlayerStateStreamBroadcastPlan({
+      transforms: options.transforms,
+      vitals: options.vitals,
+      forceVitals,
+      now,
+      lastVitalsBroadcastAt: this.lastVitalsBroadcastAt,
+      lastInterestBroadcastAt: this.lastInterestBroadcastAt,
+      vitalsIntervalMs: PLAYER_VITALS_INTERVAL_MS,
+      interestIntervalMs: PLAYER_INTEREST_INTERVAL_MS,
+    });
 
     if (!shouldBroadcastVitals && !shouldBroadcastInterest && !shouldBroadcastTransforms) return;
 
     const globallyRemovedPlayerIds: string[] = [];
     if (shouldBroadcastVitals) {
       frameContext.currentIds.forEach((id) => {
-        this.knownPlayerIds.add(id);
+        this.replicationState.markKnownPlayer(id);
       });
 
-      this.knownPlayerIds.forEach((id) => {
-        if (!frameContext.currentIds.has(id)) {
-          globallyRemovedPlayerIds.push(id);
-          this.knownPlayerIds.delete(id);
-          this.clearPlayerReplicationState(id);
-        }
-      });
+      globallyRemovedPlayerIds.push(...this.replicationState.removeMissingKnownPlayers(frameContext.currentIds));
+      for (const id of globallyRemovedPlayerIds) {
+        this.visibilityInterest.clearPlayer(id);
+        this.playerPings.clearPlayer(id);
+      }
     }
 
     let sentVitals = false;
     let sentInterest = false;
 
     for (const client of this.clients) {
-      const recipient = this.state.players.get(client.sessionId) ?? null;
-      const recipientId = client.sessionId;
-      const vitalsState = shouldBroadcastVitals ? this.getVitalsReplicationState(recipientId) : null;
-      const vitalsPlayers: PlayerVitalsSnapshot[] = [];
-      const removedPlayerIds = shouldBroadcastVitals ? [...globallyRemovedPlayerIds] : [];
-      const interestSignatures = shouldBroadcastInterest && recipient
-        ? this.getInterestSignatureState(recipientId)
-        : null;
-      const interestPlayers: ReturnType<typeof buildPlayerInterestSnapshot>[] = [];
-      const transformState = shouldBroadcastTransforms ? this.getTransformReplicationState(recipientId) : null;
-      const transformPlayers: PackedPlayerTransform[] = [];
-      const hiddenPlayerIds: string[] = [];
-
-      this.state.players.forEach((player, id) => {
-        let interest: RecipientInterestDecision | undefined;
-        let interestResolved = false;
-        const getInterest = (): RecipientInterestDecision | undefined => {
-          if (!recipient) return undefined;
-          if (!interestResolved) {
-            interest = this.getRecipientInterest(recipient, player, now, frameContext);
-            interestResolved = true;
-          }
-          return interest;
-        };
-
-        if (vitalsState) {
-          vitalsState.knownPlayerIds.add(id);
-          const vitals = this.buildPlayerVitalsForRecipient(
-            id,
-            player,
-            recipient,
-            now,
-            recipient && recipient.id !== id && recipient.team !== player.team ? getInterest() : undefined,
-            frameContext
-          );
-          const reconcileDue = now - (vitalsState.reconcileAt.get(id) ?? 0) >= PLAYER_VITALS_RECONCILE_INTERVAL_MS;
-          if (forceVitals || reconcileDue || haveVitalsChanged(vitalsState.signatures.get(id), vitals)) {
-            vitalsState.signatures.set(id, vitals);
-            vitalsState.reconcileAt.set(id, now);
-            vitalsPlayers.push(vitals);
-          }
-        }
-
-        if (interestSignatures) {
-          const decision = getInterest();
-          if (decision) {
-            const snapshot = buildPlayerInterestSnapshot(id, decision);
-            const signature = getPlayerInterestSignature(snapshot);
-            if (forceVitals || interestSignatures.get(id) !== signature) {
-              interestSignatures.set(id, signature);
-              interestPlayers.push(snapshot);
-            }
-          }
-        }
-
-        if (transformState) {
-          if (player.state !== 'alive' && player.state !== 'spawning') return;
-          if (!forceTransforms && id === recipientId) return;
-
-          const transformInterest = recipient && recipient.id !== id && recipient.team !== player.team
-            ? getInterest()
-            : undefined;
-          const exactStateVisible = this.shouldSendExactEnemyState(recipient, id, player, now, transformInterest);
-          if (!exactStateVisible) {
-            const hadTransform = transformState.signatures.delete(id);
-            transformState.heartbeatAt.delete(id);
-            if (hadTransform || forceTransforms) {
-              hiddenPlayerIds.push(id);
-            }
-            return;
-          }
-
-          const transform = frameContext.packedTransforms.get(id) ?? this.buildPackedTransform(id, player);
-          const signature = frameContext.packedTransformSignatures.get(id) ?? getPackedTransformSignature(transform);
-          const previousSignature = transformState.signatures.get(id);
-          const lastHeartbeatAt = transformState.heartbeatAt.get(id) ?? 0;
-          const highRelevance = this.isHighRelevanceTransform(recipient, id, player, now);
-          const heartbeatInterval = highRelevance
-            ? TRANSFORM_HEARTBEAT_INTERVAL_MS
-            : DISTANT_TRANSFORM_HEARTBEAT_INTERVAL_MS;
-          const heartbeatDue = now - lastHeartbeatAt >= heartbeatInterval;
-          const changed = havePackedTransformsChanged(previousSignature, signature);
-
-          if (forceTransforms || (highRelevance && changed) || heartbeatDue) {
-            transformPlayers.push(transform);
-            transformState.signatures.set(id, signature);
-            transformState.heartbeatAt.set(id, now);
-          }
-        }
+      const sent = this.sendPlayerStateStreamsToClient(client, {
+        frameContext,
+        globallyRemovedPlayerIds,
+        shouldBroadcastVitals,
+        shouldBroadcastInterest,
+        shouldBroadcastTransforms,
+        forceVitals,
+        forceTransforms,
       });
-
-      if (vitalsState) {
-        for (const id of vitalsState.knownPlayerIds) {
-          if (!frameContext.currentIds.has(id)) {
-            removedPlayerIds.push(id);
-            vitalsState.knownPlayerIds.delete(id);
-            vitalsState.signatures.delete(id);
-            vitalsState.reconcileAt.delete(id);
-          }
-        }
-
-        if (vitalsPlayers.length > 0 || removedPlayerIds.length > 0 || forceVitals) {
-          sentVitals = true;
-          this.sendTracked(client, 'playerVitals', {
-            tick: this.state.tick,
-            serverTime: this.state.serverTime,
-            players: vitalsPlayers,
-            removedPlayerIds,
-          } satisfies PlayerVitalsMessage);
-        }
-      }
-
-      if (interestSignatures) {
-        for (const targetId of interestSignatures.keys()) {
-          if (!frameContext.currentIds.has(targetId)) {
-            interestSignatures.delete(targetId);
-          }
-        }
-
-        if (interestPlayers.length > 0 || forceVitals) {
-          sentInterest = true;
-          this.sendTracked(client, 'playerInterest', {
-            tick: this.state.tick,
-            serverTime: this.state.serverTime,
-            players: interestPlayers,
-          } satisfies PlayerInterestMessage);
-        }
-      }
-
-      if (transformState && (transformPlayers.length > 0 || hiddenPlayerIds.length > 0 || forceTransforms)) {
-        this.sendTracked(client, 'playerTransformsV2', {
-          version: 2,
-          tick: this.state.tick,
-          serverTime: this.state.serverTime,
-          streamEpoch: this.transformStreamEpoch,
-          full: forceTransforms,
-          players: transformPlayers,
-          hiddenPlayerIds,
-        } satisfies PlayerTransformsV2Message);
-      }
+      sentVitals ||= sent.sentVitals;
+      sentInterest ||= sent.sentInterest;
     }
 
     if (shouldBroadcastVitals && (sentVitals || forceVitals)) {
@@ -3448,10 +2387,121 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private sendPlayerStateStreamsToClient(
+    client: Client,
+    options: {
+      frameContext: ReplicationFrameContext;
+      globallyRemovedPlayerIds: string[];
+      shouldBroadcastVitals: boolean;
+      shouldBroadcastInterest: boolean;
+      shouldBroadcastTransforms: boolean;
+      forceVitals: boolean;
+      forceTransforms: boolean;
+    }
+  ): PlayerStateStreamRecipientSendResult {
+    const recipient = this.state.players.get(client.sessionId) ?? null;
+    const recipientId = client.sessionId;
+    const vitalsState = options.shouldBroadcastVitals ? this.getVitalsReplicationState(recipientId) : null;
+    const interestSignatures = options.shouldBroadcastInterest && recipient
+      ? this.getInterestSignatureState(recipientId)
+      : null;
+    const transformState = options.shouldBroadcastTransforms ? this.getTransformReplicationState(recipientId) : null;
+    const {
+      vitalsPlayers,
+      removedPlayerIds,
+      interestPlayers,
+      transformPlayers,
+      hiddenPlayerIds,
+    } = collectRecipientPlayerStateStreams({
+      players: this.state.players,
+      recipient,
+      recipientId,
+      frameContext: options.frameContext,
+      vitalsState,
+      interestSignatures,
+      transformState,
+      globallyRemovedPlayerIds: options.globallyRemovedPlayerIds,
+      forceVitals: options.forceVitals,
+      forceTransforms: options.forceTransforms,
+      vitalsReconcileIntervalMs: PLAYER_VITALS_RECONCILE_INTERVAL_MS,
+      buildPlayerVitalsForRecipient: (
+        id,
+        player,
+        targetRecipient,
+        targetNow,
+        interest,
+        targetFrameContext
+      ) => this.buildPlayerVitalsForRecipient(
+        id,
+        player,
+        targetRecipient,
+        targetNow,
+        interest,
+        targetFrameContext
+      ),
+      getRecipientInterest: (targetRecipient, player, targetNow, targetFrameContext) => (
+        this.getRecipientInterest(targetRecipient, player, targetNow, targetFrameContext)
+      ),
+      shouldSendExactEnemyState: (targetRecipient, id, player, targetNow, interest) => (
+        this.shouldSendExactEnemyState(targetRecipient, id, player, targetNow, interest)
+      ),
+      isHighRelevanceTransform: (targetRecipient, id, player, targetNow) => (
+        this.isHighRelevanceTransform(targetRecipient, id, player, targetNow)
+      ),
+      buildPackedTransform: (id, player) => this.buildPackedTransform(id, player),
+    });
+
+    let sentVitals = false;
+    let sentInterest = false;
+
+    if (vitalsState) {
+      const message = buildPlayerVitalsStreamMessage({
+        tick: this.state.tick,
+        serverTime: this.state.serverTime,
+        players: vitalsPlayers,
+        removedPlayerIds,
+        force: options.forceVitals,
+      });
+      if (message) {
+        sentVitals = true;
+        this.sendTracked(client, 'playerVitals', message);
+      }
+    }
+
+    if (interestSignatures) {
+      const message = buildPlayerInterestStreamMessage({
+        tick: this.state.tick,
+        serverTime: this.state.serverTime,
+        players: interestPlayers,
+        force: options.forceVitals,
+      });
+      if (message) {
+        sentInterest = true;
+        this.sendTracked(client, 'playerInterest', message);
+      }
+    }
+
+    if (transformState) {
+      const message = buildPlayerTransformsStreamMessage({
+        tick: this.state.tick,
+        serverTime: this.state.serverTime,
+        streamEpoch: this.replicationState.getStreamEpoch(),
+        full: options.forceTransforms,
+        players: transformPlayers,
+        hiddenPlayerIds,
+      });
+      if (message) {
+        this.sendTracked(client, 'playerTransformsV2', message);
+      }
+    }
+
+    return { sentVitals, sentInterest };
+  }
+
   private broadcastMatchSnapshot(force = false): void {
     const now = this.state.serverTime || Date.now();
     const snapshot = this.buildMatchSnapshot();
-    const signature = this.getMatchSnapshotSignature(snapshot);
+    const signature = this.matchSnapshots.getSignature(snapshot);
     const driftSyncDue = now - this.lastMatchSnapshotBroadcastAt >= MATCH_SNAPSHOT_DRIFT_SYNC_INTERVAL_MS;
     if (!force && signature === this.matchSnapshotSignature && !driftSyncDue) return;
 
@@ -3481,9 +2531,14 @@ export class GameRoom extends Room<GameState> {
   }
 
   private updateRoundEnd() {
-    if (this.state.phaseEndTime && Date.now() >= this.state.phaseEndTime) {
+    if (hasPhaseDeadlineElapsed(this.state.phaseEndTime, Date.now())) {
       // Check if game should end
-      if (shouldEndGameAfterRound(this.gameplayMode, this.state.redTeam.score, this.state.blueTeam.score, this.config.scoreToWin)) {
+      if (getNextRoundEndPhase({
+        gameplayMode: this.gameplayMode,
+        redScore: this.state.redTeam.score,
+        blueScore: this.state.blueTeam.score,
+        scoreToWin: this.config.scoreToWin,
+      }) === 'game_end') {
         this.endGame();
       } else {
         this.startHeroSelect();
@@ -3491,289 +2546,132 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private createMovementAuthorityState(): ServerMovementAuthorityState {
-    return {
-      pendingCommands: new MovementCommandQueue(MOVEMENT_MAX_SERVER_QUEUE + MOVEMENT_MAX_PACKET_COMMANDS),
-      lastProcessedSeq: 0,
-      movementEpoch: 0,
-      correctionReason: null,
-      metrics: {
-        commandsReceived: 0,
-        commandsProcessed: 0,
-        commandsProcessedLastTick: 0,
-        queueLength: 0,
-        queueLengthBeforeTick: 0,
-        queueLengthAfterTick: 0,
-        underflowTicks: 0,
-        catchupTicks: 0,
-        duplicateCommands: 0,
-        droppedCommands: 0,
-        lateCommands: 0,
-        malformedCommands: 0,
-        hardCorrections: 0,
-        mediumCorrections: 0,
-        invalidTransforms: 0,
-        speedViolations: 0,
-        blockedPathCorrections: 0,
-        boundsCorrections: 0,
-        objectiveSuppressions: 0,
-        abilityRejects: 0,
-        rateLimitDrops: 0,
-        staleCollisionRevisionDrops: 0,
-        lastAckSeq: 0,
-        authoritySends: 0,
-        lastAckIntervalMs: 0,
-      },
-      commandWindowStartedAt: Date.now(),
-      commandsInWindow: 0,
-      lastAuthoritySentAt: 0,
-      lastSafe: null,
-      objectiveSuppressedUntil: 0,
-      shadow: createMovementShadowSimulationState(),
-    };
-  }
-
   private getMovementAuthority(playerId: string): ServerMovementAuthorityState {
-    const existing = this.movementAuthorities.get(playerId);
-    if (existing) return existing;
-
-    const created = this.createMovementAuthorityState();
-    this.movementAuthorities.set(playerId, created);
-    return created;
-  }
-
-  private replacePendingCommands(authority: ServerMovementAuthorityState, commands: MovementCommand[]): void {
-    authority.pendingCommands.replace(commands);
-  }
-
-  private pushPendingCommand(authority: ServerMovementAuthorityState, command: MovementCommand): void {
-    authority.pendingCommands.push(command);
-  }
-
-  private removeOldestPendingCommands(authority: ServerMovementAuthorityState, count: number): void {
-    if (count <= 0) return;
-    authority.pendingCommands.dropOldest(count);
-  }
-
-  private getNextMovementCommand(authority: ServerMovementAuthorityState): MovementCommand | null {
-    const command = authority.pendingCommands.pop();
-    if (command) {
-      authority.lastProcessedSeq = command.seq;
-      return command;
-    }
-    return null;
+    return this.movementAuthorities.get(playerId);
   }
 
   private getPlayerUserId(playerId: string): string | undefined {
-    return this.playerAuthContexts.get(playerId)?.userId;
+    return this.participantRegistry.getAuthUserId(playerId);
   }
 
   private recordAuthReject(client: Client, reason: string, detail: Record<string, unknown> = {}): void {
-    this.antiCheat?.record({
-      eventType: `auth.${reason}`,
-      category: 'auth',
-      source: 'game_room_auth',
-      userId: this.playerAuthContexts.get(client.sessionId)?.userId ?? null,
-      playerSessionId: client.sessionId,
-      severity: reason.includes('replay') || reason.includes('direct_join') ? 'critical' : 'high',
-      confidence: 0.98,
+    this.antiCheat?.record(buildAuthRejectRecord({
       reason,
+      userId: this.participantRegistry.getAuthUserId(client.sessionId) ?? null,
+      playerSessionId: client.sessionId,
       details: detail,
-      retentionClass: 'extended',
-    });
+    }));
   }
 
   private recordClientJoinHints(client: Client, auth: RoomAuthContext, options: JoinOptions): void {
     if (!getAntiCheatConfig().clientHintsEnabled) return;
 
     const expectedBuildId = process.env.ANTICHEAT_EXPECTED_CLIENT_BUILD_ID || process.env.CLIENT_BUILD_ID || null;
-    const clientBuildId = typeof options.clientBuildId === 'string' && options.clientBuildId.trim()
-      ? options.clientBuildId.trim().slice(0, 80)
-      : null;
-    const movementProtocolVersion = Number.isFinite(options.movementProtocolVersion)
-      ? Math.trunc(options.movementProtocolVersion as number)
-      : null;
-
-    if (!clientBuildId) {
-      this.antiCheat?.record({
-        eventType: 'client_hint.build_missing',
-        category: 'client_hint',
-        source: 'game_room_join',
-        userId: auth.userId,
-        playerSessionId: client.sessionId,
-        severity: 'low',
-        confidence: 0.4,
-        reason: 'build_missing',
-        details: { expectedBuildId },
-        retentionClass: 'short',
-      });
-    } else if (expectedBuildId && clientBuildId !== expectedBuildId) {
-      this.antiCheat?.record({
-        eventType: 'client_hint.build_mismatch',
-        category: 'client_hint',
-        source: 'game_room_join',
-        userId: auth.userId,
-        playerSessionId: client.sessionId,
-        severity: 'low',
-        confidence: 0.5,
-        reason: 'build_mismatch',
-        details: { clientBuildId, expectedBuildId },
-        retentionClass: 'short',
-      });
-    }
-
-    if (movementProtocolVersion !== MOVEMENT_PROTOCOL_VERSION) {
-      this.antiCheat?.record({
-        eventType: 'client_hint.movement_protocol_mismatch',
-        category: 'client_hint',
-        source: 'game_room_join',
-        userId: auth.userId,
-        playerSessionId: client.sessionId,
-        severity: 'low',
-        confidence: 0.5,
-        reason: movementProtocolVersion === null ? 'movement_protocol_missing' : 'movement_protocol_mismatch',
-        details: {
-          movementProtocolVersion,
-          expectedMovementProtocolVersion: MOVEMENT_PROTOCOL_VERSION,
-        },
-        retentionClass: 'short',
-      });
+    for (const record of buildClientJoinHintRecords({
+      userId: auth.userId,
+      playerSessionId: client.sessionId,
+      expectedBuildId,
+      clientBuildId: options.clientBuildId,
+      movementProtocolVersion: options.movementProtocolVersion,
+      expectedMovementProtocolVersion: MOVEMENT_PROTOCOL_VERSION,
+    })) {
+      this.antiCheat?.record(record);
     }
   }
 
-  private readReportRequestId(data: unknown): string | null {
-    return isRecord(data) ? sanitizeShortText(data.requestId, 96) : null;
+  private getPlayerReportParticipantSnapshot(playerId: string): PlayerReportParticipantSnapshot | null {
+    const player = this.state.players.get(playerId);
+    if (!player) return null;
+
+    return {
+      id: player.id,
+      name: player.name,
+      team: player.team,
+      heroId: player.heroId ?? null,
+      isBot: player.isBot,
+      isNpc: this.npcs.has(player.id),
+      userId: this.getDurableUserId(player.id),
+      stats: {
+        kills: player.kills,
+        deaths: player.deaths,
+        assists: player.assists,
+        flagCaptures: player.flagCaptures,
+        flagReturns: player.flagReturns,
+      },
+      position: {
+        x: player.position.x,
+        y: player.position.y,
+        z: player.position.z,
+      },
+    };
+  }
+
+  private getPlayerReportRoomSnapshot(): PlayerReportRoomSnapshot {
+    return {
+      roomId: this.roomId,
+      matchId: this.matchLedger.getMatchId(),
+      lobbyId: this.lobbyId,
+      matchMode: this.matchMode,
+      mapSeed: this.state.mapSeed,
+      serverTick: this.state.tick,
+    };
   }
 
   private sendPlayerReportResult(
     client: Client,
     requestId: string | null,
-    result: { ok: true; reportId: string } | { ok: false; error: string }
+    result: PlayerReportResult
   ): void {
-    client.send('playerReportResult', {
-      requestId,
-      ...result,
-    });
+    client.send('playerReportResult', buildPlayerReportResultPayload(requestId, result));
   }
 
   private async handlePlayerReport(client: Client, data: unknown): Promise<void> {
-    const requestId = this.readReportRequestId(data);
-    const fail = (error: string) => this.sendPlayerReportResult(client, requestId, { ok: false, error });
+    const parsed = parsePlayerReportPayload(data, client.sessionId);
+    const fail = (error: string) => this.sendPlayerReportResult(client, parsed.requestId, { ok: false, error });
 
-    if (!isRecord(data)) {
-      fail('Invalid report payload');
-      return;
-    }
-
-    const targetPlayerId = sanitizeShortText(data.targetPlayerId, 96);
-    if (!targetPlayerId) {
-      fail('Target player is required');
-      return;
-    }
-    if (targetPlayerId === client.sessionId) {
-      fail('You cannot report yourself');
+    if (!parsed.ok) {
+      fail(parsed.error);
       return;
     }
 
-    const reporter = this.state.players.get(client.sessionId);
-    const target = this.state.players.get(targetPlayerId);
-    if (!reporter) {
-      fail('Reporter is not in this match');
-      return;
-    }
-    if (!target) {
-      fail('Target player is no longer in this match');
-      return;
-    }
-    if (target.isBot || this.spawnedNpcs.has(target.id)) {
-      fail('Bots cannot be reported');
-      return;
-    }
-
-    const targetUserId = this.getDurableUserId(target.id);
-    const reporterUserId = this.getDurableUserId(client.sessionId);
-    if (!reporterUserId || !targetUserId) {
-      fail('Reports require authenticated player accounts');
-      return;
-    }
-    const reason = normalizePlayerReportReason(data.reason);
-    const details = sanitizeShortText(data.details, 1000);
-    const signal = this.antiCheat?.record({
-      eventType: 'player_report.cheating',
-      category: 'player_report',
-      source: 'game_room_player_report',
-      userId: targetUserId,
-      playerSessionId: target.id,
-      team: target.team,
-      heroId: target.heroId ?? null,
-      severity: 'medium',
-      confidence: 0.55,
-      reason,
-      details: {
-        reporterUserId,
-        reporterPlayerSessionId: client.sessionId,
-        reporterName: reporter.name,
-        targetName: target.name,
-        targetTeam: target.team,
-        details,
-      },
-      retentionClass: 'extended',
+    const reportContext = validatePlayerReportContext({
+      reporter: this.getPlayerReportParticipantSnapshot(client.sessionId),
+      target: this.getPlayerReportParticipantSnapshot(parsed.targetPlayerId),
     });
+    if (!reportContext.ok) {
+      fail(reportContext.error);
+      return;
+    }
+
+    const { reporter, target } = reportContext;
+    const room = this.getPlayerReportRoomSnapshot();
+    const signal = this.antiCheat?.record(buildPlayerReportEvidenceInput({ parsed, reporter, target }));
 
     try {
-      const report = await createPlayerReport(prisma, {
-        reason,
-        details,
-        reporterUserId,
-        reporterPlayerSessionId: client.sessionId,
-        reporterName: reporter.name,
-        targetUserId,
-        targetPlayerSessionId: target.id,
-        targetName: target.name,
-        targetTeam: target.team,
-        roomId: this.roomId,
-        matchId: this.matchPersistenceLedger?.matchId ?? null,
-        lobbyId: this.lobbyId,
-        matchMode: this.matchMode,
-        mapSeed: this.state.mapSeed,
-        serverTick: this.state.tick,
-        evidenceEventId: signal?.eventId ?? null,
-        metadata: {
-          targetHeroId: target.heroId ?? null,
-          reporterTeam: reporter.team,
-          targetStats: {
-            kills: target.kills,
-            deaths: target.deaths,
-            assists: target.assists,
-            flagCaptures: target.flagCaptures,
-            flagReturns: target.flagReturns,
-          },
-          reporterPosition: {
-            x: reporter.position.x,
-            y: reporter.position.y,
-            z: reporter.position.z,
-          },
-          targetPosition: {
-            x: target.position.x,
-            y: target.position.y,
-            z: target.position.z,
-          },
-        },
-      });
+      const report = await createPlayerReport(
+        prisma,
+        buildCreatePlayerReportInput({
+          parsed,
+          reporter,
+          target,
+          room,
+          evidenceEventId: signal?.eventId ?? null,
+        })
+      );
 
       loggers.room.info('Player report created', {
         reportId: report.id,
-        reporterUserId,
-        targetUserId,
-        roomId: this.roomId,
-        matchId: this.matchPersistenceLedger?.matchId ?? null,
+        reporterUserId: reporter.userId,
+        targetUserId: target.userId,
+        roomId: room.roomId,
+        matchId: room.matchId,
       });
-      this.sendPlayerReportResult(client, requestId, { ok: true, reportId: report.id });
+      this.sendPlayerReportResult(client, parsed.requestId, { ok: true, reportId: report.id });
     } catch (error) {
       loggers.room.error('Failed to create player report', {
-        reporterUserId,
-        targetUserId,
-        roomId: this.roomId,
+        reporterUserId: reporter.userId,
+        targetUserId: target.userId,
+        roomId: room.roomId,
         error: error instanceof Error ? error.message : String(error),
       });
       fail('Failed to submit report');
@@ -3781,186 +2679,59 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getDurableUserId(playerId: string): string | null {
-    const authContext = this.playerAuthContexts.get(playerId);
-    const ticket = this.playerEntryTickets.get(playerId);
-    return authContext?.userId ?? ticket?.userId ?? null;
-  }
-
-  private isDurableHumanPlayer(player: Player | null | undefined): player is Player {
-    return Boolean(
-      player
-      && !player.isBot
-      && !this.spawnedNpcs.has(player.id)
-      && this.getDurableUserId(player.id)
-    );
+    return this.participantRegistry.getDurableUserId(playerId);
   }
 
   private ensureMatchPersistenceLedger(now = Date.now()): MatchPersistenceLedger {
-    if (
-      !this.matchPersistenceLedger
-      || this.matchPersistenceLedger.state === 'persisted'
-      || this.matchPersistenceLedger.state === 'failed'
-    ) {
-      this.matchPersistenceLedger = {
-        matchId: randomUUID(),
-        roomId: this.roomId,
-        lobbyId: this.lobbyId,
-        matchMode: this.matchMode,
-        mapSeed: this.state.mapSeed,
-        mapThemeId: this.state.mapThemeId as VoxelMapTheme['id'],
-        rankedEligible: this.rankedEligibilityCandidate,
-        startedAt: new Date(now),
-        endedAt: null,
-        redScore: null,
-        blueScore: null,
-        winningTeam: null,
-        state: 'active',
-        participants: new Map(),
-      };
-
+    const { ledger, created } = this.matchLedger.ensureLedger(now);
+    if (created) {
       loggers.room.info('Match persistence ledger started', {
         roomId: this.roomId,
-        matchId: this.matchPersistenceLedger.matchId,
+        matchId: ledger.matchId,
         lobbyId: this.lobbyId,
         mapSeed: this.state.mapSeed,
         mapThemeId: this.state.mapThemeId,
       });
     }
 
-    return this.matchPersistenceLedger;
+    return ledger;
   }
 
-  private registerMatchParticipant(player: Player, now = Date.now()): MatchLedgerParticipant | null {
-    const ledger = this.matchPersistenceLedger;
-    if (!ledger || ledger.state !== 'active') return null;
-    if (!this.isDurableHumanPlayer(player) || !isTeam(player.team)) return null;
-
-    const userId = this.getDurableUserId(player.id);
-    if (!userId) return null;
-
-    const existing = ledger.participants.get(userId);
-    if (existing) {
-      existing.playerSessionId = player.id;
-      existing.displayName = player.name;
-      existing.team = player.team;
-      existing.heroId = isHeroId(player.heroId) ? player.heroId : null;
-      existing.leftAt = null;
-      return existing;
-    }
-
-    const participant: MatchLedgerParticipant = {
-      userId,
-      playerSessionId: player.id,
-      displayName: player.name,
-      team: player.team,
-      heroId: isHeroId(player.heroId) ? player.heroId : null,
-      kills: 0,
-      deaths: 0,
-      assists: 0,
-      flagCaptures: 0,
-      flagReturns: 0,
-      joinedAt: new Date(now),
-      leftAt: null,
-    };
-    ledger.participants.set(userId, participant);
-    return participant;
+  private registerMatchParticipant(player: Player, now = Date.now()) {
+    return this.matchLedger.registerParticipant(player, now);
   }
 
-  private syncMatchParticipant(player: Player): MatchLedgerParticipant | null {
-    const ledger = this.matchPersistenceLedger;
-    if (!ledger || ledger.state !== 'active') return null;
-    if (!this.isDurableHumanPlayer(player) || !isTeam(player.team)) return null;
-
-    const userId = this.getDurableUserId(player.id);
-    if (!userId) return null;
-
-    const participant = ledger.participants.get(userId) ?? this.registerMatchParticipant(player);
-    if (!participant) return null;
-
-    participant.playerSessionId = player.id;
-    participant.displayName = player.name;
-    participant.team = player.team;
-    participant.heroId = isHeroId(player.heroId) ? player.heroId : null;
-    participant.kills = Math.max(participant.kills, player.kills);
-    participant.deaths = Math.max(participant.deaths, player.deaths);
-    participant.assists = Math.max(participant.assists, player.assists);
-    participant.flagCaptures = Math.max(participant.flagCaptures, player.flagCaptures);
-    participant.flagReturns = Math.max(participant.flagReturns, player.flagReturns);
-    return participant;
+  private syncMatchParticipant(player: Player) {
+    return this.matchLedger.syncParticipant(player);
   }
 
   private buildMatchParticipantSnapshots(ledger: MatchPersistenceLedger): MatchParticipantSnapshot[] {
-    this.state.players.forEach((player) => {
-      this.syncMatchParticipant(player);
-    });
-
-    return Array.from(ledger.participants.values()).map((participant) => ({
-      userId: participant.userId,
-      playerSessionId: participant.playerSessionId,
-      displayName: participant.displayName,
-      team: participant.team,
-      heroId: participant.heroId,
-      kills: participant.kills,
-      deaths: participant.deaths,
-      assists: participant.assists,
-      flagCaptures: participant.flagCaptures,
-      flagReturns: participant.flagReturns,
-      joinedAt: participant.joinedAt,
-      leftAt: participant.leftAt,
-    }));
+    if (ledger !== this.matchLedger.getLedger()) return [];
+    return this.matchLedger.buildParticipantSnapshots(this.state.players.values());
   }
 
   private markMatchParticipantLeft(player: Player, now = Date.now()): void {
-    const participant = this.syncMatchParticipant(player);
-    if (!participant) return;
-
-    participant.leftAt = new Date(now);
+    this.matchLedger.markParticipantLeft(player, now);
   }
 
   private recordMatchDeath(victim: Player, killer: Player | null): void {
-    if (!this.isDurableHumanPlayer(victim)) return;
-    if (killer && !this.isDurableHumanPlayer(killer)) return;
-
-    const participant = this.registerMatchParticipant(victim);
-    if (participant) {
-      participant.deaths++;
-    }
+    this.matchLedger.recordDeath(victim, killer);
   }
 
   private recordMatchKill(killer: Player, victim: Player): void {
-    if (!this.isDurableHumanPlayer(killer) || !this.isDurableHumanPlayer(victim)) return;
-
-    const participant = this.registerMatchParticipant(killer);
-    if (participant) {
-      participant.kills++;
-    }
+    this.matchLedger.recordKill(killer, victim);
   }
 
   private recordMatchAssist(assister: Player, victim: Player): void {
-    if (!this.isDurableHumanPlayer(assister) || !this.isDurableHumanPlayer(victim)) return;
-
-    const participant = this.registerMatchParticipant(assister);
-    if (participant) {
-      participant.assists++;
-    }
+    this.matchLedger.recordAssist(assister, victim);
   }
 
   private recordMatchFlagCapture(player: Player): void {
-    if (!this.isDurableHumanPlayer(player)) return;
-
-    const participant = this.registerMatchParticipant(player);
-    if (participant) {
-      participant.flagCaptures++;
-    }
+    this.matchLedger.recordFlagCapture(player);
   }
 
   private recordMatchFlagReturn(player: Player): void {
-    if (!this.isDurableHumanPlayer(player)) return;
-
-    const participant = this.registerMatchParticipant(player);
-    if (participant) {
-      participant.flagReturns++;
-    }
+    this.matchLedger.recordFlagReturn(player);
   }
 
   private serializePersistenceError(error: unknown): Record<string, unknown> {
@@ -3994,15 +2765,14 @@ export class GameRoom extends Room<GameState> {
     participants: MatchParticipantSnapshot[],
     forcedByPlayerId?: string
   ): boolean {
-    return Boolean(
-      ledger.rankedEligible
-      && ledger.matchMode === 'ranked'
-      && this.matchMode === 'ranked'
-      && !forcedByPlayerId
-      && this.spawnedNpcs.size === 0
-      && participants.length === this.rankedRequiredHumanPlayers
-      && participants.every((participant) => participant.userId)
-    );
+    return this.matchLedger.isFinalRankedEligible({
+      ledger,
+      participants,
+      currentMatchMode: this.matchMode,
+      npcCount: this.npcs.size,
+      requiredHumanPlayers: this.rankedRequiredHumanPlayers,
+      forcedByPlayerId,
+    });
   }
 
   private persistMatchLedger(
@@ -4010,15 +2780,8 @@ export class GameRoom extends Room<GameState> {
     winningTeam: Team | null,
     forcedByPlayerId?: string
   ): void {
-    const ledger = this.matchPersistenceLedger;
+    const ledger = this.matchLedger.getLedger();
     if (!ledger || ledger.state !== 'active') return;
-
-    const endedAt = new Date();
-    ledger.endedAt = endedAt;
-    ledger.redScore = finalScore.red;
-    ledger.blueScore = finalScore.blue;
-    ledger.winningTeam = winningTeam;
-    ledger.state = 'persisting';
 
     const participants = this.buildMatchParticipantSnapshots(ledger);
     const rankedEligible = this.isFinalRankedEligible(ledger, participants, forcedByPlayerId);
@@ -4026,299 +2789,76 @@ export class GameRoom extends Room<GameState> {
       rankedEligible,
       wagered: Boolean(this.wagerContext),
     }) ?? this.cleanAntiCheatGate();
-    const rankedOutcomeStatus = rankedEligible
-      ? integrityGate.rankedHoldRequired ? 'held' : 'applied'
-      : ledger.matchMode === 'ranked' ? 'canceled' : 'not_applicable';
-    const rankedImpact = rankedEligible
-      ? integrityGate.rankedHoldRequired
-        ? 'held'
-        : integrityGate.reviewRequired
-          ? 'reported'
-          : 'none'
-      : 'none';
-    const wagerImpact = this.wagerContext
-      ? integrityGate.payoutHoldRequired
-        ? 'held'
-        : integrityGate.reviewRequired
-          ? 'reported'
-          : 'none'
-      : 'none';
 
-    void this.antiCheatEvidenceStore.upsertMatchIntegrity({
-      matchId: ledger.matchId,
-      roomId: ledger.roomId,
-      lobbyId: ledger.lobbyId,
-      matchMode: ledger.matchMode,
-      gate: integrityGate,
-      rankedImpact,
-      wagerImpact,
-    }).catch((error) => {
-      loggers.room.error('Failed to persist anti-cheat match integrity', {
-        roomId: ledger.roomId,
-        matchId: ledger.matchId,
-        error: this.serializePersistenceError(error),
-      });
-    });
-
-    if (rankedEligible && (integrityGate.rankedHoldRequired || (integrityGate.reviewRequired && integrityGate.observedOnly))) {
-      void this.antiCheatEvidenceStore.recordAction({
-        type: 'ranked_hold',
-        roomId: ledger.roomId,
-        matchId: ledger.matchId,
-        caseId: integrityGate.caseId,
-        reason: integrityGate.reason ?? 'match_integrity_review',
-        observedOnly: !integrityGate.rankedHoldRequired,
-        details: {
-          status: integrityGate.status,
-          score: integrityGate.score,
-          affectedUserIds: integrityGate.affectedUserIds,
-          rankedOutcomeStatus,
-        },
-      }).catch((error) => {
-        loggers.room.error('Failed to persist anti-cheat ranked action', {
-          roomId: ledger.roomId,
-          matchId: ledger.matchId,
-          error: this.serializePersistenceError(error),
-        });
-      });
-    }
-
-    void persistCompletedMatch(prisma, {
-      matchId: ledger.matchId,
-      roomId: ledger.roomId,
-      lobbyId: ledger.lobbyId,
-      mapSeed: ledger.mapSeed,
-      mapThemeId: ledger.mapThemeId,
-      matchMode: ledger.matchMode,
-      rankedEligible,
-      startedAt: ledger.startedAt,
-      endedAt,
-      redScore: finalScore.red,
-      blueScore: finalScore.blue,
+    void this.matchFinalization.persistLedger({
+      ledger,
+      finalScore,
       winningTeam,
       participants,
-      antiCheatIntegrityStatus: integrityGate.status,
-      antiCheatReviewRequired: integrityGate.rankedHoldRequired || integrityGate.payoutHoldRequired,
-      antiCheatIntegrityReason: integrityGate.reason,
-      rankedOutcomeStatus,
-    })
-      .then((result) => {
-        ledger.state = 'persisted';
-        loggers.room.info('Match persistence completed', {
-          roomId: ledger.roomId,
-          matchId: ledger.matchId,
-          lobbyId: ledger.lobbyId,
-          mapSeed: ledger.mapSeed,
-          redScore: finalScore.red,
-          blueScore: finalScore.blue,
-          winningTeam,
-          participantCount: result.participantCount,
-          alreadyPersisted: result.alreadyPersisted,
-          skippedUserIds: result.skippedUserIds,
-          rankedEligible,
-        });
-      })
-      .catch((error) => {
-        ledger.state = 'failed';
-        loggers.room.error('Match persistence failed', {
-          roomId: ledger.roomId,
-          matchId: ledger.matchId,
-          lobbyId: ledger.lobbyId,
-          mapSeed: ledger.mapSeed,
-          redScore: finalScore.red,
-          blueScore: finalScore.blue,
-          winningTeam,
-          participantCount: participants.length,
-          error: this.serializePersistenceError(error),
-        });
-      });
+      rankedEligible,
+      integrityGate,
+      wagered: Boolean(this.wagerContext),
+    });
   }
 
   private settleWagerAfterGame(winningTeam: Team | null): void {
     if (!this.wagerContext) return;
-    this.wagerSettlementRequested = true;
 
-    const matchId = this.matchPersistenceLedger?.matchId ?? null;
-    const gate = this.antiCheat?.buildIntegrityGate({
-      rankedEligible: this.matchPersistenceLedger?.rankedEligible === true,
+    const integrityGate = this.antiCheat?.buildIntegrityGate({
+      rankedEligible: this.matchLedger.getLedger()?.rankedEligible === true,
       wagered: true,
     }) ?? this.cleanAntiCheatGate();
-    if (gate.payoutHoldRequired) {
-      this.antiCheatEvidenceStore.createPayoutHold({
-        wageredLobbyId: this.wagerContext.wageredLobbyId,
-        matchId,
-        winningTeam,
-        gate,
-      })
-        .then((holdId) => {
-          loggers.room.info('Wager settlement paused for anti-cheat review', {
-            roomId: this.roomId,
-            lobbyId: this.lobbyId,
-            matchId,
-            wageredLobbyId: this.wagerContext?.wageredLobbyId,
-            holdId,
-            reason: gate.reason,
-          });
-        })
-        .catch((error) => {
-          loggers.room.error('Failed to create anti-cheat payout hold', {
-            roomId: this.roomId,
-            lobbyId: this.lobbyId,
-            matchId,
-            wageredLobbyId: this.wagerContext?.wageredLobbyId,
-            error: this.serializePersistenceError(error),
-          });
-        });
-      return;
-    }
-
-    if (gate.reviewRequired && gate.observedOnly) {
-      void this.antiCheatEvidenceStore.recordAction({
-        type: 'payout_hold',
-        roomId: this.roomId,
-        matchId,
-        caseId: gate.caseId,
-        reason: gate.reason ?? 'match_integrity_review',
-        observedOnly: true,
-        details: {
-          wageredLobbyId: this.wagerContext.wageredLobbyId,
-          winningTeam,
-          score: gate.score,
-          status: gate.status,
-        },
-      }).catch((error) => {
-        loggers.room.error('Failed to record observed anti-cheat payout hold', {
-          roomId: this.roomId,
-          lobbyId: this.lobbyId,
-          matchId,
-          error: this.serializePersistenceError(error),
-        });
-      });
-    }
-
-    wagerService.settleWageredLobby({
-      wageredLobbyId: this.wagerContext.wageredLobbyId,
-      matchId,
+    const requested = this.matchFinalization.settleWagerAfterGame({
+      roomId: this.roomId,
+      lobbyId: this.lobbyId,
+      wagerContext: this.wagerContext,
+      matchId: this.matchLedger.getMatchId(),
       winningTeam,
-    })
-      .then((settlement) => {
-        loggers.room.info('Wager settlement requested', {
-          roomId: this.roomId,
-          lobbyId: this.lobbyId,
-          matchId,
-          wageredLobbyId: this.wagerContext?.wageredLobbyId,
-          settlement,
-        });
-      })
-      .catch((error) => {
-        loggers.room.error('Wager settlement failed', {
-          roomId: this.roomId,
-          lobbyId: this.lobbyId,
-          matchId,
-          wageredLobbyId: this.wagerContext?.wageredLobbyId,
-          error: this.serializePersistenceError(error),
-        });
-      });
+      integrityGate,
+    });
+    if (requested) {
+      this.wagerSettlementRequested = true;
+    }
   }
 
   private settleWagerNoContest(reason: string): void {
-    if (!this.wagerContext || this.wagerSettlementRequested) return;
-
-    this.wagerSettlementRequested = true;
-    const matchId = this.matchPersistenceLedger?.matchId ?? null;
-    wagerService.settleWageredLobby({
-      wageredLobbyId: this.wagerContext.wageredLobbyId,
-      matchId,
-      winningTeam: null,
-    })
-      .then((settlement) => {
-        loggers.room.info('Wager no-contest refund requested', {
-          roomId: this.roomId,
-          lobbyId: this.lobbyId,
-          matchId,
-          reason,
-          wageredLobbyId: this.wagerContext?.wageredLobbyId,
-          settlement,
-        });
-      })
-      .catch((error) => {
-        loggers.room.error('Failed to request wager no-contest refund', {
-          roomId: this.roomId,
-          lobbyId: this.lobbyId,
-          matchId,
-          reason,
-          wageredLobbyId: this.wagerContext?.wageredLobbyId,
-          error: this.serializePersistenceError(error),
-        });
-      });
+    const requested = this.matchFinalization.settleWagerNoContest({
+      roomId: this.roomId,
+      lobbyId: this.lobbyId,
+      wagerContext: this.wagerContext,
+      settlementAlreadyRequested: this.wagerSettlementRequested,
+      matchId: this.matchLedger.getMatchId(),
+      reason,
+    });
+    if (requested) {
+      this.wagerSettlementRequested = true;
+    }
   }
 
   private settleGoldenBiomeRewardAfterGame(winningTeam: Team | null, forcedByPlayerId?: string): void {
-    const ledger = this.matchPersistenceLedger;
+    const ledger = this.matchLedger.getLedger();
     if (this.state.mapThemeId !== GOLDEN_VOXEL_MAP_THEME_ID || !ledger || ledger.state !== 'active') return;
     if (this.matchMode !== 'ranked' || !winningTeam || forcedByPlayerId) return;
 
     const participants = this.buildMatchParticipantSnapshots(ledger);
-    if (!this.isFinalRankedEligible(ledger, participants, forcedByPlayerId)) return;
-
-    const gate = this.antiCheat?.buildIntegrityGate({
-      rankedEligible: true,
+    const rankedEligible = this.isFinalRankedEligible(ledger, participants, forcedByPlayerId);
+    const integrityGate = this.antiCheat?.buildIntegrityGate({
+      rankedEligible,
       wagered: true,
     }) ?? this.cleanAntiCheatGate();
-    if (gate.payoutHoldRequired || gate.rankedHoldRequired) {
-      loggers.room.warn('Golden biome reward held for match integrity review', {
-        roomId: this.roomId,
-        lobbyId: this.lobbyId,
-        matchId: ledger.matchId,
-        reason: gate.reason,
-        status: gate.status,
-      });
-      return;
-    }
-
-    const winners: GoldenBiomeRewardWinner[] = participants
-      .filter((participant) => participant.team === winningTeam && participant.userId)
-      .map((participant) => ({
-        userId: participant.userId,
-        playerSessionId: participant.playerSessionId,
-      }));
-
-    if (winners.length === 0) return;
-
-    wagerService.settleGoldenBiomeReward({
-      matchId: ledger.matchId,
+    this.matchFinalization.settleGoldenBiomeReward({
+      ledger,
       roomId: this.roomId,
       lobbyId: this.lobbyId,
+      mapThemeId: this.state.mapThemeId,
       mapSeed: this.state.mapSeed,
+      matchMode: this.matchMode,
       winningTeam,
-      winners,
-    })
-      .then((reward) => {
-        loggers.room.info('Golden biome reward settlement requested', {
-          roomId: this.roomId,
-          lobbyId: this.lobbyId,
-          matchId: ledger.matchId,
-          reward,
-        });
-      })
-      .catch((error) => {
-        loggers.room.error('Golden biome reward settlement failed', {
-          roomId: this.roomId,
-          lobbyId: this.lobbyId,
-          matchId: ledger.matchId,
-          error: this.serializePersistenceError(error),
-        });
-      });
-  }
-
-  private getVoiceIdentity(playerId: string): string | null {
-    return this.playerAuthContexts.get(playerId)?.userId
-      ?? this.playerEntryTickets.get(playerId)?.userId
-      ?? null;
-  }
-
-  private normalizeVoiceTeam(team: string | null | undefined): Team | null {
-    return isTeam(team) ? team : null;
+      forcedByPlayerId,
+      participants,
+      rankedEligible,
+      integrityGate,
+    });
   }
 
   private async removeVoiceParticipantForPlayer(
@@ -4327,78 +2867,37 @@ export class GameRoom extends Room<GameState> {
     reason: string
   ): Promise<void> {
     if (!voiceService.isEnabled()) return;
-    const identity = this.getVoiceIdentity(playerId);
+    const identity = this.getDurableUserId(playerId);
     if (!identity) return;
     await voiceService.removeMatchParticipant(this.roomId, identity, team, reason);
   }
 
-  private recordSecurityEvent(event: Omit<SecurityEvent, 'roomId' | 'tick' | 'serverTime'>): void {
-    const fullEvent: SecurityEvent = {
-      ...event,
+  private recordSecurityEvent(event: RoomSecurityEventInput): void {
+    const fullEvent = buildRoomSecurityEvent(event, {
       roomId: this.roomId,
       tick: this.state.tick,
       serverTime: this.state.serverTime || Date.now(),
-    };
-    this.securityEvents.push(fullEvent);
-    if (this.securityEvents.length > MAX_SECURITY_EVENTS) {
-      this.securityEvents.splice(0, this.securityEvents.length - MAX_SECURITY_EVENTS);
-    }
+    });
     const player = this.state.players.get(event.playerId);
-    this.antiCheat?.recordAuthorityEvent({
-      ...fullEvent,
+    this.antiCheat?.recordAuthorityEvent(buildSecurityAuthorityEvent(fullEvent, {
       team: player?.team ?? null,
       heroId: isHeroId(player?.heroId) ? player.heroId : null,
-    });
+    }));
     this.logSecurityEvent(fullEvent);
   }
 
-  private securityEventLogIntervalMs(event: SecurityEvent): number {
-    return event.type === 'movement_correction'
-      ? MOVEMENT_CORRECTION_LOG_SAMPLE_MS
-      : SECURITY_EVENT_LOG_SAMPLE_MS;
-  }
-
-  private securityEventLogKey(event: SecurityEvent): string {
-    const validationReason = typeof event.detail?.validationReason === 'string'
-      ? event.detail.validationReason
-      : '';
-    return [
-      event.type,
-      event.playerId,
-      event.reason ?? '',
-      validationReason,
-    ].join(':');
-  }
-
   private logSecurityEvent(event: SecurityEvent): void {
-    const now = Date.now();
-    const key = this.securityEventLogKey(event);
-    const sample = this.securityLogSamples.get(key);
-    const intervalMs = this.securityEventLogIntervalMs(event);
+    const sampledEvent = this.securityLogSampler.sample(event);
+    if (!sampledEvent) return;
 
-    if (sample && now - sample.lastLoggedAt < intervalMs) {
-      sample.suppressed++;
-      return;
-    }
-
-    if (!sample && this.securityLogSamples.size >= MAX_SECURITY_LOG_SAMPLE_KEYS) {
-      const oldestKey = this.securityLogSamples.keys().next().value;
-      if (oldestKey) this.securityLogSamples.delete(oldestKey);
-    }
-
-    const suppressedSinceLastLog = sample?.suppressed ?? 0;
-    this.securityLogSamples.set(key, { lastLoggedAt: now, suppressed: 0 });
     const logLevel = getSecurityEventLogLevel(event);
     if (logLevel === 'silent') return;
 
-    const logEvent = suppressedSinceLastLog > 0
-      ? { ...event, suppressedSinceLastLog }
-      : event;
     if (logLevel === 'debug') {
-      loggers.room.debug('authority event', logEvent);
+      loggers.room.debug('authority event', sampledEvent);
       return;
     }
-    loggers.room.warn('authority event', logEvent);
+    loggers.room.warn('authority event', sampledEvent);
   }
 
   private updateLastSafeMovement(player: Player, sequence: number, acceptedAt = Date.now()): void {
@@ -4450,21 +2949,6 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private incrementCorrectionMetric(authority: ServerMovementAuthorityState, reason: MovementCorrectionReason): void {
-    authority.metrics.hardCorrections++;
-    if (reason === 'invalid_transform') {
-      authority.metrics.invalidTransforms = (authority.metrics.invalidTransforms ?? 0) + 1;
-    } else if (reason === 'speed_limit') {
-      authority.metrics.speedViolations = (authority.metrics.speedViolations ?? 0) + 1;
-    } else if (reason === 'blocked_path') {
-      authority.metrics.blockedPathCorrections = (authority.metrics.blockedPathCorrections ?? 0) + 1;
-    } else if (reason === 'bounds') {
-      authority.metrics.boundsCorrections = (authority.metrics.boundsCorrections ?? 0) + 1;
-    } else if (reason === 'collision_revision') {
-      authority.metrics.staleCollisionRevisionDrops = (authority.metrics.staleCollisionRevisionDrops ?? 0) + 1;
-    }
-  }
-
   private recordRateLimitDrop(playerId: string, messageType: string): void {
     const authority = this.getMovementAuthority(playerId);
     authority.metrics.rateLimitDrops = (authority.metrics.rateLimitDrops ?? 0) + 1;
@@ -4495,7 +2979,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private clearHookshotGrapple(playerId: string): void {
-    this.hookshotGrapples.delete(playerId);
+    this.hookshotRuntime.clearGrapple(playerId);
     const player = this.state.players.get(playerId);
     if (player) {
       player.movement.isGrappling = false;
@@ -4503,70 +2987,22 @@ export class GameRoom extends Room<GameState> {
   }
 
   private clearHookshotDragPull(playerId: string): void {
-    this.hookshotDragPulls.delete(playerId);
+    this.hookshotRuntime.clearDragPull(playerId);
   }
 
   private clearHookshotDragPullsInvolving(playerId: string): void {
-    this.hookshotDragPulls.delete(playerId);
-    for (const [targetId, pull] of this.hookshotDragPulls) {
-      if (pull.sourceId === playerId) {
-        this.hookshotDragPulls.delete(targetId);
-      }
-    }
-  }
-
-  private cleanupExpiredPlayerRoots(now: number): void {
-    for (const [playerId, rootedUntil] of this.playerRootedUntil) {
-      if (rootedUntil <= now) {
-        this.playerRootedUntil.delete(playerId);
-      }
-    }
-  }
-
-  private isPlayerRooted(playerId: string, now = Date.now()): boolean {
-    const rootedUntil = this.playerRootedUntil.get(playerId) ?? 0;
-    if (rootedUntil <= now) {
-      this.playerRootedUntil.delete(playerId);
-      return false;
-    }
-    return true;
+    this.hookshotRuntime.clearDragPullsInvolving(playerId);
   }
 
   private stopRootedMovement(player: Player): void {
     this.clearHookshotGrapple(player.id);
-    player.velocity.x = 0;
-    player.velocity.z = 0;
-    player.movement.isSprinting = false;
-    player.movement.isSliding = false;
-    player.movement.slideTimeRemaining = 0;
-    player.movement.isWallRunning = false;
-    player.movement.wallRunSide = '';
-    player.movement.isGrappling = false;
-    player.movement.isJetpacking = false;
-    player.movement.isGliding = false;
-  }
-
-  private suppressLocomotionInput(input: PlayerInput): PlayerInput {
-    return {
-      ...input,
-      moveForward: false,
-      moveBackward: false,
-      moveLeft: false,
-      moveRight: false,
-      jump: false,
-      crouch: false,
-      sprint: false,
-    };
+    stopRootedMovementState(player);
   }
 
   private getRootedMovementInput(player: Player, input: PlayerInput, now: number): PlayerInput {
-    if (!this.isPlayerRooted(player.id, now)) return input;
+    if (!this.playerRoots.isRooted(player.id, now)) return input;
     this.stopRootedMovement(player);
-    return this.suppressLocomotionInput(input);
-  }
-
-  private isRootBlockedAbility(abilityId: string | undefined): boolean {
-    return Boolean(abilityId && ROOT_BLOCKED_MOVEMENT_ABILITIES.has(abilityId));
+    return suppressLocomotionInput(input);
   }
 
   private markMovementBarrier(
@@ -4592,7 +3028,8 @@ export class GameRoom extends Room<GameState> {
     if (preservedOverflow > 0) {
       authority.metrics.droppedCommands += preservedOverflow;
     }
-    this.replacePendingCommands(authority, preservedCommands.slice(-MOVEMENT_MAX_SERVER_QUEUE));
+    this.movementAuthorities.replacePendingCommands(authority, preservedCommands.slice(-MOVEMENT_MAX_SERVER_QUEUE));
+    authority.metrics.queueLength = authority.pendingCommands.length;
     authority.correctionReason = reason;
     this.forceTransformFullSync();
     const player = this.state.players.get(playerId);
@@ -4616,200 +3053,36 @@ export class GameRoom extends Room<GameState> {
     this.clearHookshotDragPull(playerId);
   }
 
-  private sanitizeIncomingMovementCommand(
-    authority: ServerMovementAuthorityState,
-    command: unknown,
-    playerId: string
-  ): MovementCommand | null {
-    const sanitized = parseMovementCommandPayload(command);
-    if (!sanitized) {
-      authority.metrics.malformedCommands++;
-      const commandShape = command && typeof command === 'object'
-        ? Object.fromEntries(
-          ['seq', 'buttons', 'lookYaw', 'lookPitch', 'clientTimeMs', 'movementEpoch', 'collisionRevision', 'abilityCastHints']
-            .map((key) => [key, typeof (command as Record<string, unknown>)[key]])
-        )
-        : undefined;
-      this.recordSecurityEvent({
-        type: 'movement_command_reject',
-        playerId,
-        userId: this.getPlayerUserId(playerId),
-        movementEpoch: authority.movementEpoch,
-        reason: 'malformed_command',
-        detail: {
-          commandType: Array.isArray(command) ? 'array' : typeof command,
-          commandKeys: command && typeof command === 'object' ? Object.keys(command).slice(0, 12) : undefined,
-          commandShape,
-        },
-      });
-      return null;
-    }
-
-    if (sanitized.movementEpoch !== authority.movementEpoch) {
-      const canPromotePreviousEpochCommand = (
-        sanitized.movementEpoch + 1 === authority.movementEpoch &&
-        isMovementSeqAfter(sanitized.seq, authority.lastProcessedSeq) &&
-        movementSeqDistance(authority.lastProcessedSeq, sanitized.seq) <= MOVEMENT_COMMAND_STALE_GRACE_STEPS
-      );
-
-      if (canPromotePreviousEpochCommand) {
-        return {
-          ...sanitized,
-          movementEpoch: authority.movementEpoch,
-        };
-      }
-
-      authority.metrics.lateCommands++;
-      authority.correctionReason = 'epoch_mismatch';
-      this.recordSecurityEvent({
-        type: 'movement_command_reject',
-        playerId,
-        userId: this.getPlayerUserId(playerId),
-        movementEpoch: authority.movementEpoch,
-        movementSequence: sanitized.seq,
-        reason: 'epoch_mismatch',
-        detail: {
-          commandEpoch: sanitized.movementEpoch,
-          authorityEpoch: authority.movementEpoch,
-          lastProcessedSeq: authority.lastProcessedSeq,
-        },
-      });
-      return null;
-    }
-
-    const currentCollisionRevision = this.getMovementCollisionRevision();
-    if ((sanitized.collisionRevision ?? 0) !== currentCollisionRevision) {
-      authority.metrics.staleCollisionRevisionDrops = (authority.metrics.staleCollisionRevisionDrops ?? 0) + 1;
-      authority.correctionReason = 'collision_revision';
-      this.recordSecurityEvent({
-        type: 'movement_command_reject',
-        playerId,
-        userId: this.getPlayerUserId(playerId),
-        movementEpoch: authority.movementEpoch,
-        movementSequence: sanitized.seq,
-        reason: 'collision_revision',
-        detail: {
-          commandRevision: sanitized.collisionRevision ?? 0,
-          currentRevision: currentCollisionRevision,
-        },
-      });
-      return null;
-    }
-
-    if (!isMovementSeqAfter(sanitized.seq, authority.lastProcessedSeq)) {
-      authority.metrics.duplicateCommands++;
-      this.recordSecurityEvent({
-        type: 'movement_command_reject',
-        playerId,
-        userId: this.getPlayerUserId(playerId),
-        movementEpoch: authority.movementEpoch,
-        movementSequence: sanitized.seq,
-        reason: 'duplicate_command',
-        detail: { lastProcessedSeq: authority.lastProcessedSeq },
-      });
-      return null;
-    }
-
-    if (authority.pendingCommands.hasSeq(sanitized.seq)) {
-      authority.metrics.duplicateCommands++;
-      this.recordSecurityEvent({
-        type: 'movement_command_reject',
-        playerId,
-        userId: this.getPlayerUserId(playerId),
-        movementEpoch: authority.movementEpoch,
-        movementSequence: sanitized.seq,
-        reason: 'duplicate_queued_command',
-        detail: { queueLength: authority.pendingCommands.length },
-      });
-      return null;
-    }
-
-    return sanitized;
-  }
-
   private handleMovementCommandPacket(client: Client, packet: MovementCommandPacket): void {
     const player = this.state.players.get(client.sessionId);
     if (!player || player.state !== 'alive' || player.isBot) return;
 
     const authority = this.getMovementAuthority(client.sessionId);
-    const now = Date.now();
-    if (now - authority.commandWindowStartedAt >= 1000) {
-      authority.commandWindowStartedAt = now;
-      authority.commandsInWindow = 0;
-    }
-
-    if (
-      !packet ||
-      packet.protocolVersion !== MOVEMENT_PROTOCOL_VERSION ||
-      !Array.isArray(packet.commands) ||
-      packet.commands.length === 0 ||
-      packet.commands.length > MOVEMENT_MAX_PACKET_COMMANDS
-    ) {
-      authority.metrics.malformedCommands++;
+    const position = vec3SchemaToPlain(player.position);
+    const result = ingestMovementCommandPacket({
+      authority,
+      packet,
+      now: Date.now(),
+      currentCollisionRevision: this.getMovementCollisionRevision(),
+    });
+    for (const event of result.events) {
       this.recordSecurityEvent({
-        type: 'malformed_message',
+        ...event,
         playerId: client.sessionId,
         userId: this.getPlayerUserId(client.sessionId),
-        movementEpoch: authority.movementEpoch,
-        reason: 'movementCommands',
-        position: vec3SchemaToPlain(player.position),
-        detail: {
-          protocolVersion: packet?.protocolVersion,
-          commandCount: Array.isArray(packet?.commands) ? packet.commands.length : null,
-        },
+        ...(event.type === 'movement_command_reject' ? {} : { position }),
       });
-      return;
     }
 
-    for (const rawCommand of packet.commands) {
-      if (authority.commandsInWindow >= MOVEMENT_MAX_COMMANDS_PER_SECOND) {
-        authority.metrics.droppedCommands++;
-        this.recordSecurityEvent({
-          type: 'movement_command_drop',
-          playerId: client.sessionId,
-          userId: this.getPlayerUserId(client.sessionId),
-          movementEpoch: authority.movementEpoch,
-          reason: 'command_rate_limit',
-          position: vec3SchemaToPlain(player.position),
-          detail: {
-            commandsInWindow: authority.commandsInWindow,
-            limit: MOVEMENT_MAX_COMMANDS_PER_SECOND,
-          },
-        });
-        continue;
-      }
-
-      const command = this.sanitizeIncomingMovementCommand(authority, rawCommand, client.sessionId);
-      if (!command) continue;
-
-      authority.commandsInWindow++;
-      authority.metrics.commandsReceived++;
-      this.pushPendingCommand(authority, command);
-    }
-
-    if (authority.pendingCommands.length > MOVEMENT_MAX_SERVER_QUEUE) {
-      const overflow = authority.pendingCommands.length - MOVEMENT_MAX_SERVER_QUEUE;
-      this.removeOldestPendingCommands(authority, overflow);
-      authority.metrics.droppedCommands += overflow;
-      this.recordSecurityEvent({
-        type: 'movement_command_drop',
-        playerId: client.sessionId,
-        userId: this.getPlayerUserId(client.sessionId),
-        movementEpoch: authority.movementEpoch,
-        reason: 'queue_overflow',
-        position: vec3SchemaToPlain(player.position),
-        detail: {
-          overflow,
-          maxQueue: MOVEMENT_MAX_SERVER_QUEUE,
-        },
-      });
+    if (result.shouldMarkQueueOverflowBarrier) {
       this.markMovementBarrier(client.sessionId, 'queue_overflow');
     }
-
-    authority.metrics.queueLength = authority.pendingCommands.length;
   }
 
-  private movementCommandToInput(command: MovementCommand, player: Player): PlayerInput {
+  private movementCommandToInput(
+    command: MovementCommand,
+    now = this.state.serverTime || Date.now()
+  ): PlayerInput {
     const buttons = movementButtonsToInputState(command.buttons);
     return {
       tick: command.seq,
@@ -4830,7 +3103,7 @@ export class GameRoom extends Room<GameState> {
       interact: buttons.interact,
       lookYaw: command.lookYaw,
       lookPitch: command.lookPitch,
-      timestamp: this.state.serverTime || Date.now(),
+      timestamp: now,
       abilityCastHints: command.abilityCastHints,
     };
   }
@@ -4846,7 +3119,7 @@ export class GameRoom extends Room<GameState> {
 
     for (let step = 0; step < commandCount; step++) {
       seq = nextMovementSeq(seq);
-      this.pushPendingCommand(authority, {
+      this.movementAuthorities.pushPendingCommand(authority, {
         seq,
         buttons: inputStateToMovementButtons(input, {
           crouchPressed: step === 0 && Boolean(input.crouchPressed),
@@ -4859,10 +3132,12 @@ export class GameRoom extends Room<GameState> {
       });
     }
 
-    if (authority.pendingCommands.length > MOVEMENT_MAX_SERVER_QUEUE) {
-      const overflow = authority.pendingCommands.length - MOVEMENT_MAX_SERVER_QUEUE;
-      this.removeOldestPendingCommands(authority, overflow);
-      authority.metrics.droppedCommands += overflow;
+    const overflowPolicy = getMovementQueueOverflowBarrierPolicy({
+      queueLength: authority.pendingCommands.length,
+      maxServerQueue: MOVEMENT_MAX_SERVER_QUEUE,
+    });
+    if (overflowPolicy.shouldMarkQueueOverflowBarrier) {
+      authority.metrics.droppedCommands += overflowPolicy.discardedCommandCount;
       this.markMovementBarrier(player.id, 'queue_overflow');
     }
     authority.metrics.commandsReceived += commandCount;
@@ -4901,7 +3176,7 @@ export class GameRoom extends Room<GameState> {
       0,
       (distance3D(startPosition, target) / HOOKSHOT_GRAPPLE_EXTENSION_SPEED) * 1000
     );
-    this.hookshotGrapples.set(player.id, {
+    this.hookshotRuntime.setGrapple(player.id, {
       castId,
       target: { ...target },
       attachAt: startedAt + travelMs,
@@ -4911,7 +3186,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private prepareHookshotGrappleForMovement(player: Player, now: number): void {
-    const grapple = this.hookshotGrapples.get(player.id);
+    const grapple = this.hookshotRuntime.getGrapple(player.id);
     if (!grapple) return;
 
     if (now < grapple.attachAt) {
@@ -4938,7 +3213,7 @@ export class GameRoom extends Room<GameState> {
     dt: number,
     now: number
   ): void {
-    const grapple = this.hookshotGrapples.get(player.id);
+    const grapple = this.hookshotRuntime.getGrapple(player.id);
     if (!grapple || now < grapple.attachAt || !grapple.swing) return;
 
     const previousPosition = vec3SchemaToPlain(player.position);
@@ -5041,7 +3316,7 @@ export class GameRoom extends Room<GameState> {
       input,
       lookYaw: player.lookYaw,
       deltaTime: dt,
-      terrain: this.movementTerrain,
+      terrain: this.mapRuntime.terrain,
       collisionWorld,
       flagCarrier: isCaptureTheFlagMode(this.gameplayMode) && player.hasFlag,
       activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
@@ -5074,7 +3349,7 @@ export class GameRoom extends Room<GameState> {
           ? player.movement.wallRunSide
           : null,
         isGrappling: player.movement.isGrappling,
-        grapplePoint: this.hookshotGrapples.get(player.id)?.target ?? null,
+        grapplePoint: this.hookshotRuntime.getGrappleTarget(player.id),
         isJetpacking: player.movement.isJetpacking,
         jetpackFuel: player.movement.jetpackFuel,
         isGliding: player.movement.isGliding,
@@ -5084,10 +3359,8 @@ export class GameRoom extends Room<GameState> {
       collisionRevision: this.getMovementCollisionRevision(),
       chronosAegisActive: this.isChronosAegisActive(player),
       chronosAegisShieldRatio: this.getChronosAegisShieldRatio(player.id),
-      rootedUntil: this.isPlayerRooted(player.id, now)
-        ? this.playerRootedUntil.get(player.id)
-        : undefined,
-      powerupBoostUntil: getPowerupBoostUntil(this.powerupBoostUntil, player.id, now),
+      rootedUntil: this.playerRoots.getRootedUntil(player.id, now),
+      powerupBoostUntil: this.powerupBoosts.getUntil(player.id, now),
     };
     this.sendTracked(client, 'selfMovementAuthority', payload);
     if (authority.lastAuthoritySentAt > 0) {
@@ -5096,136 +3369,6 @@ export class GameRoom extends Room<GameState> {
     authority.lastAuthoritySentAt = now;
     authority.metrics.authoritySends = (authority.metrics.authoritySends ?? 0) + 1;
     authority.correctionReason = null;
-  }
-
-  private playerMovementSnapshot(player: Player): PlayerMovementState {
-    return {
-      isGrounded: player.movement.isGrounded,
-      isSprinting: player.movement.isSprinting,
-      isCrouching: player.movement.isCrouching,
-      isSliding: player.movement.isSliding,
-      slideTimeRemaining: player.movement.slideTimeRemaining,
-      isWallRunning: player.movement.isWallRunning,
-      wallRunSide: player.movement.wallRunSide === 'left' || player.movement.wallRunSide === 'right'
-        ? player.movement.wallRunSide
-        : null,
-      isGrappling: player.movement.isGrappling,
-      grapplePoint: null,
-      isJetpacking: player.movement.isJetpacking,
-      jetpackFuel: player.movement.jetpackFuel,
-      isGliding: player.movement.isGliding,
-      chronosAscendantStartY: player.movement.chronosAscendantStartY || undefined,
-    };
-  }
-
-  private movementShadowPingBand(playerId: string): string {
-    const ping = this.playerPingMs.get(playerId);
-    if (!Number.isFinite(ping)) return 'unknown';
-    if ((ping as number) <= 50) return '0-50';
-    if ((ping as number) <= 100) return '51-100';
-    if ((ping as number) <= 180) return '101-180';
-    return '181+';
-  }
-
-  private movementShadowFrameRateBand(input: PlayerInput): string {
-    const value = input.clientFrameRateBand;
-    return value === '90fps+' ||
-      value === '45-90fps' ||
-      value === '30-45fps' ||
-      value === 'sub30fps'
-      ? value
-      : 'unknown';
-  }
-
-  private movementShadowClass(player: Player, input: PlayerInput): string {
-    if (player.hasFlag) return 'flag_route';
-    if (player.movement.isGrappling) return 'grapple';
-    if (player.movement.isSliding) return input.jump ? 'slide_jump' : 'slide';
-    if (player.movement.isGliding) return 'glide';
-    if (player.movement.isWallRunning) return 'wallrun';
-    if (player.heroId === 'blaze' && input.ability2) return 'rocket_jump';
-    if (player.heroId === 'phantom' && (input.ability1 || input.ability2)) return 'teleport_ability';
-    if (player.heroId === 'chronos' && input.ability1) {
-      return input.secondaryFire ? 'chronos_lifeline_self' : 'chronos_lifeline_allies';
-    }
-    if (player.heroId === 'chronos' && input.ability2) return 'chronos_tempo';
-    if (input.jump && !player.movement.isGrounded) return 'bhop_air';
-    if (input.crouch) return 'crouch';
-    if (input.sprint) return 'sprint';
-    if (input.moveForward || input.moveBackward || input.moveLeft || input.moveRight) return 'walk';
-    return 'idle';
-  }
-
-  private shouldRunMovementShadowSimulation(authority: ServerMovementAuthorityState, input: PlayerInput): boolean {
-    const config = getAntiCheatConfig();
-    if (config.movementAuthorityMode !== 'shadow' && config.movementAuthorityMode !== 'strict') return false;
-    if (config.movementDriftSampleRate <= 0) return false;
-    if (Math.random() > config.movementDriftSampleRate) return false;
-    if (authority.shadow.initialized && input.tick <= authority.shadow.lastSequence) {
-      authority.shadow = createMovementShadowSimulationState();
-      return false;
-    }
-    return true;
-  }
-
-  private recordMovementShadowSimulation(
-    player: Player,
-    input: PlayerInput,
-    proposedPosition: PlainVec3,
-    proposedVelocity: PlainVec3,
-    now: number
-  ): void {
-    const authority = this.getMovementAuthority(player.id);
-    if (!this.shouldRunMovementShadowSimulation(authority, input)) return;
-
-    const heroId = isHeroId(player.heroId) ? player.heroId : null;
-    if (!heroId) return;
-
-    const result = advanceMovementShadowSimulation({
-      state: authority.shadow,
-      playerPosition: vec3SchemaToPlain(player.position),
-      playerVelocity: vec3SchemaToPlain(player.velocity),
-      playerMovement: this.playerMovementSnapshot(player),
-      heroStats: getHeroStats(heroId),
-      input,
-      terrain: this.movementTerrain,
-      flagCarrier: isCaptureTheFlagMode(this.gameplayMode) && player.hasFlag,
-      activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
-      chronosAscendantActive: this.isChronosAscendantActive(player),
-      proposedPosition,
-      proposedVelocity,
-    });
-    authority.shadow = result.nextState;
-
-    authority.metrics.shadowSamples = (authority.metrics.shadowSamples ?? 0) + 1;
-    authority.metrics.shadowLastPositionDrift = result.sample.positionDrift;
-    authority.metrics.shadowLastVelocityDrift = result.sample.velocityDrift;
-    authority.metrics.shadowMaxPositionDrift = Math.max(
-      authority.metrics.shadowMaxPositionDrift ?? 0,
-      result.sample.positionDrift
-    );
-    authority.metrics.shadowMaxVelocityDrift = Math.max(
-      authority.metrics.shadowMaxVelocityDrift ?? 0,
-      result.sample.velocityDrift
-    );
-    if (result.sample.movementMismatch) {
-      authority.metrics.shadowMovementMismatches = (authority.metrics.shadowMovementMismatches ?? 0) + 1;
-    }
-
-    recordMovementShadowDriftSample({
-      roomId: this.roomId,
-      matchMode: this.matchMode,
-      heroId,
-      movementClass: this.movementShadowClass(player, input),
-      mapSeed: this.state.mapSeed,
-      pingBandMs: this.movementShadowPingBand(player.id),
-      frameRateBand: this.movementShadowFrameRateBand(input),
-      positionDrift: result.sample.positionDrift,
-      velocityDrift: result.sample.velocityDrift,
-      movementMismatch: result.sample.movementMismatch,
-      objectiveSuppressed: this.isObjectiveSuppressed(player.id, now),
-      sampledAt: now,
-    });
   }
 
   private getChronosLifelineTargets(caster: Player): Player[] {
@@ -5315,7 +3458,7 @@ export class GameRoom extends Room<GameState> {
   ): void {
     const delayMs = Math.max(0, releaseAt - Date.now());
 
-    this.scheduleRoomTimeout(() => {
+    this.roomTimeouts.schedule(() => {
       const caster = this.state.players.get(casterId);
       if (!caster || caster.state !== 'alive') return;
 
@@ -5328,10 +3471,6 @@ export class GameRoom extends Room<GameState> {
 
       this.executeChronosLifelineConduit(caster, abilityState, targets, healAmount);
     }, delayMs);
-  }
-
-  private nextPhantomCastId(playerId: string, abilityId: string): string {
-    return `${abilityId}_${playerId}_${this.phantomCastIdCounter++}`;
   }
 
   private getAbilityCastOriginHint(
@@ -5373,22 +3512,6 @@ export class GameRoom extends Room<GameState> {
     }
 
     return this.hasLineOfSight(fallbackOrigin, origin) ? origin : fallbackOrigin;
-  }
-
-  private getPhantomCastOrigin(
-    player: Player,
-    socket: { handHeight: number; forwardOffset: number; sideOffset: number },
-    launchSide: -1 | 1 = 1,
-    hint?: { abilityId: string; socketName: string }
-  ): PlainVec3 {
-    const fallbackOrigin = calculatePlayerSocketPosition(player.position, player.lookYaw, {
-      ...socket,
-      sideOffset: socket.sideOffset * launchSide,
-    });
-
-    return hint
-      ? this.resolveValidatedCastOriginHint(player, hint.abilityId, hint.socketName, fallbackOrigin)
-      : fallbackOrigin;
   }
 
   private getAbilitySocketCastOrigin(
@@ -5454,17 +3577,11 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getNextHookshotPrimaryLaunchSide(playerId: string): -1 | 1 {
-    const previous = this.hookshotPrimaryLaunchSide.get(playerId) ?? -1;
-    const next = previous === 1 ? -1 : 1;
-    this.hookshotPrimaryLaunchSide.set(playerId, next);
-    return next;
+    return this.hookshotPrimaryLaunchSide.next(playerId);
   }
 
   private getNextPhantomPrimaryLaunchSide(playerId: string): -1 | 1 {
-    const previous = this.phantomPrimaryLaunchSide.get(playerId) ?? -1;
-    const next = previous === 1 ? -1 : 1;
-    this.phantomPrimaryLaunchSide.set(playerId, next);
-    return next;
+    return this.phantomPrimaryLaunchSide.next(playerId);
   }
 
   private resolveHookshotLaunch(
@@ -5530,20 +3647,11 @@ export class GameRoom extends Room<GameState> {
   }
 
   private queuePendingAreaDamage(instance: PendingAreaDamageInstance): void {
-    this.pendingAreaDamage.push(instance);
+    this.pendingAreaDamage.enqueue(instance);
   }
 
   private updatePendingAreaDamage(now: number): void {
-    if (this.pendingAreaDamage.length === 0) return;
-
-    let writeIndex = 0;
-    for (let readIndex = 0; readIndex < this.pendingAreaDamage.length; readIndex++) {
-      const instance = this.pendingAreaDamage[readIndex];
-      if (now < instance.resolveAt) {
-        this.pendingAreaDamage[writeIndex++] = instance;
-        continue;
-      }
-
+    for (const instance of this.pendingAreaDamage.drainReady(now)) {
       const owner = this.state.players.get(instance.ownerId);
       if (owner) {
         this.applyAreaDamage(
@@ -5555,7 +3663,6 @@ export class GameRoom extends Room<GameState> {
         );
       }
     }
-    this.pendingAreaDamage.length = writeIndex;
   }
 
   private createBlazeGearstorm(
@@ -5564,8 +3671,8 @@ export class GameRoom extends Room<GameState> {
     now: number,
     durationSeconds: number
   ): void {
-    this.blazeGearstorms.push({
-      id: `blaze_gearstorm_${player.id}_${this.blazeGearstormIdCounter++}`,
+    this.blazeGearstorms.add({
+      id: this.abilityIds.nextBlazeGearstormId(player.id),
       ownerId: player.id,
       ownerTeam: player.team as Team,
       position,
@@ -5573,73 +3680,46 @@ export class GameRoom extends Room<GameState> {
       damage: BLAZE_GEARSTORM_DAMAGE,
       startTime: now,
       endTime: now + durationSeconds * 1000,
-      lastDamageTick: new Map(),
     });
   }
 
   private updateBlazeGearstorms(now: number): void {
-    if (this.blazeGearstorms.length === 0) return;
-
-    let writeIndex = 0;
-    for (let readIndex = 0; readIndex < this.blazeGearstorms.length; readIndex++) {
-      const storm = this.blazeGearstorms[readIndex];
-      if (now >= storm.endTime) continue;
-
-      const owner = this.state.players.get(storm.ownerId);
-      if (!owner) {
-        this.blazeGearstorms[writeIndex++] = storm;
-        continue;
-      }
-
-      const radiusSq = storm.radius * storm.radius;
-      const targets = this.playerSpatialIndex.queryRadius(
+    this.blazeGearstorms.update(now, {
+      hasOwner: (ownerId) => this.state.players.has(ownerId),
+      getTargets: (storm) => this.playerSpatialQueries.queryRadius(
         storm.position,
         storm.radius,
-        this.spatialQueryScratch,
         { team: storm.ownerTeam === 'red' ? 'blue' : 'red' }
-      );
-      for (const target of targets) {
-        if (target.state !== 'alive') continue;
-
-        const dx = target.position.x - storm.position.x;
-        const dy = target.position.y - storm.position.y;
-        const dz = target.position.z - storm.position.z;
-        const distSq = dx * dx + dy * dy + dz * dz;
-        if (distSq > radiusSq) continue;
-
-        const lastDamage = storm.lastDamageTick.get(target.id) || 0;
-        if (now - lastDamage < BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS) continue;
-        storm.lastDamageTick.set(target.id, now);
-
-        this.applyDamage(target, calculateFalloffDamage(storm.damage, Math.sqrt(distSq), storm.radius, 0.35), owner.id, 'airstrike', {
-          abilityId: 'blaze_airstrike',
-          sourcePosition: storm.position,
-        });
-      }
-
-      this.blazeGearstorms[writeIndex++] = storm;
-    }
-    this.blazeGearstorms.length = writeIndex;
+      ),
+      applyDamage: (storm, target, distance) => {
+        this.applyDamage(
+          target,
+          calculateFalloffDamage(storm.damage, distance, storm.radius, 0.35),
+          storm.ownerId,
+          'airstrike',
+          {
+            abilityId: 'blaze_airstrike',
+            sourcePosition: storm.position,
+          }
+        );
+      },
+    });
   }
 
   private applyHookshotGroundHooksRoot(caster: Player, now: number): HookshotGroundHooksTarget[] {
     const ownerTeam = caster.team as Team;
     const enemyTeam = ownerTeam === 'red' ? 'blue' : 'red';
     const rootUntil = now + HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS * 1000;
-    const targets = this.playerSpatialIndex.queryRadius(
+    const targets = this.playerSpatialQueries.queryRadius(
       caster.position,
       HOOKSHOT_GROUND_HOOKS_RADIUS,
-      this.spatialQueryScratch,
       { team: enemyTeam }
     );
     const rootedTargets: HookshotGroundHooksTarget[] = [];
 
     for (const target of targets) {
       if (target.state !== 'alive') continue;
-      this.playerRootedUntil.set(
-        target.id,
-        Math.max(this.playerRootedUntil.get(target.id) ?? 0, rootUntil)
-      );
+      this.playerRoots.extendRoot(target.id, rootUntil);
       this.stopRootedMovement(target);
       this.markMovementBarrier(target.id, 'root', { preserveQueuedCommands: true });
       rootedTargets.push({
@@ -5650,10 +3730,6 @@ export class GameRoom extends Room<GameState> {
     }
 
     return rootedTargets;
-  }
-
-  private nextBlazeCastId(playerId: string, abilityId: string, counter: number): string {
-    return `${abilityId}_${playerId}_${counter}`;
   }
 
   private getBlazeAimOrigin(player: Player): PlainVec3 {
@@ -5672,7 +3748,7 @@ export class GameRoom extends Room<GameState> {
     impactTime: number;
     aegisHit?: ChronosAegisSkillHit;
   } {
-    const castId = this.nextBlazeCastId(player.id, 'blaze_rocket', this.blazeRocketIdCounter++);
+    const castId = this.abilityIds.nextBlazeRocketCastId(player.id);
     const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
     const aimOrigin = this.getBlazeAimOrigin(player);
     const startPosition = this.getAbilitySocketCastOrigin(player, 'blaze_rocket');
@@ -5690,7 +3766,7 @@ export class GameRoom extends Room<GameState> {
       distance3D(aimOrigin, intendedImpactPosition)
     );
     const aegisHit = this.getChronosAegisSkillHit(player, aimOrigin, lookDirection, intendedImpactDistance, {
-      projectileRadius: this.getChronosAegisCollisionRadiusForAttack(attack),
+      projectileRadius: getChronosAegisCollisionRadiusForAttack(attack),
     });
     const impactPosition = aegisHit?.point ?? intendedImpactPosition;
     const aimDirection = this.normalize3D({
@@ -5734,7 +3810,7 @@ export class GameRoom extends Room<GameState> {
       });
     }
 
-    this.broadcastAbilityUsed(player, {
+    this.broadcastExactPlayerEvent('abilityUsed', player, {
       playerId: player.id,
       abilityId: 'blaze_rocket',
       castId: rocket.castId,
@@ -5769,7 +3845,7 @@ export class GameRoom extends Room<GameState> {
     startPosition: PlainVec3;
     aimDirection: PlainVec3;
   } {
-    const castId = this.nextPhantomCastId(player.id, 'chronos_verdant_pulse');
+    const castId = this.abilityIds.nextSharedCastId(player.id, 'chronos_verdant_pulse');
     const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
     const aimOrigin = this.getChronosAimOrigin(player);
     const socketPosition = this.getAbilitySocketCastOrigin(player, 'chronos_verdant_pulse');
@@ -5807,7 +3883,7 @@ export class GameRoom extends Room<GameState> {
       ? CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED
       : CHRONOS_VERDANT_PULSE_SPEED;
 
-    this.broadcastAbilityUsed(player, {
+    this.broadcastExactPlayerEvent('abilityUsed', player, {
       playerId: player.id,
       abilityId: 'chronos_verdant_pulse',
       castId: pulse.castId,
@@ -5860,7 +3936,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private dropBlazeBomb(player: Player, attack: AttackConfig, now: number): void {
-    const castId = this.nextBlazeCastId(player.id, 'blaze_bomb', this.blazeBombIdCounter++);
+    const castId = this.abilityIds.nextBlazeBombCastId(player.id);
     const targetPosition = this.resolveBlazeBombTarget(player);
     const startPosition = this.getAbilitySocketCastOrigin(player, 'blaze_bomb');
     const meteorPath = getBlazeMeteorPath({ id: castId, startPosition, targetPosition });
@@ -5869,7 +3945,7 @@ export class GameRoom extends Room<GameState> {
       meteorPath.entryPosition,
       meteorPath.travelDirection,
       meteorPath.distance,
-      { projectileRadius: this.getChronosAegisCollisionRadiusForAttack(attack) }
+      { projectileRadius: getChronosAegisCollisionRadiusForAttack(attack) }
     );
     const impactProgress = aegisHit
       ? Math.sqrt(clamp(aegisHit.distance / Math.max(0.0001, meteorPath.distance), 0, 1))
@@ -5896,7 +3972,7 @@ export class GameRoom extends Room<GameState> {
       });
     }
 
-    this.broadcastAbilityUsed(player, {
+    this.broadcastExactPlayerEvent('abilityUsed', player, {
       playerId: player.id,
       abilityId: 'blaze_bomb',
       castId,
@@ -5919,7 +3995,7 @@ export class GameRoom extends Room<GameState> {
   private broadcastPhantomCast(payload: PhantomCastPayload): void {
     const caster = this.state.players.get(payload.playerId);
     if (!caster) return;
-    this.broadcastAbilityUsed(caster, payload as unknown as Record<string, unknown>);
+    this.broadcastExactPlayerEvent('abilityUsed', caster, payload as unknown as Record<string, unknown>);
   }
 
   private broadcastPhantomAttackCast(
@@ -5940,7 +4016,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcastPhantomCast({
       playerId: player.id,
       abilityId,
-      castId: this.nextPhantomCastId(player.id, abilityId),
+      castId: this.abilityIds.nextSharedCastId(player.id, abilityId),
       position: vec3SchemaToPlain(player.position),
       startPosition,
       aimDirection,
@@ -5961,7 +4037,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcastPhantomCast({
       playerId: player.id,
       abilityId: 'phantom_void_ray_charge',
-      castId: this.nextPhantomCastId(player.id, 'phantom_void_ray_charge'),
+      castId: this.abilityIds.nextSharedCastId(player.id, 'phantom_void_ray_charge'),
       position: vec3SchemaToPlain(player.position),
       startPosition: this.getAbilitySocketCastOrigin(player, 'phantom_void_ray_charge'),
       aimDirection: getForwardVector(player.lookYaw, player.lookPitch),
@@ -5976,7 +4052,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcastPhantomCast({
       playerId: player.id,
       abilityId: 'phantom_void_ray_charge_cancel',
-      castId: this.nextPhantomCastId(player.id, 'phantom_void_ray_charge_cancel'),
+      castId: this.abilityIds.nextSharedCastId(player.id, 'phantom_void_ray_charge_cancel'),
       position: vec3SchemaToPlain(player.position),
       ownerTeam: player.team as Team,
       serverTime: now,
@@ -6003,7 +4079,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcastPhantomCast({
       playerId: player.id,
       abilityId,
-      castId: this.nextPhantomCastId(player.id, abilityId),
+      castId: this.abilityIds.nextSharedCastId(player.id, abilityId),
       position: vec3SchemaToPlain(player.position),
       startPosition: launch.startPosition,
       aimDirection: launch.aimDirection,
@@ -6035,14 +4111,13 @@ export class GameRoom extends Room<GameState> {
   }
 
   private handlePhantomSecondaryInput(player: Player, input: PlayerInput, previousSecondaryFire: boolean, now: number): void {
-    const wasCharging = this.phantomVoidRayChargeStartedAt.has(player.id);
+    const wasCharging = this.phantomVoidRayCharges.isCharging(player.id);
 
     if (this.isPhantomPrimaryReloading(player, now)) {
-      if (wasCharging && !this.phantomVoidRayResolvedForPress.has(player.id)) {
+      if (wasCharging && !this.phantomVoidRayCharges.isResolvedForPress(player.id)) {
         this.broadcastPhantomVoidRayChargeCancel(player, now);
       }
-      this.phantomVoidRayChargeStartedAt.delete(player.id);
-      this.phantomVoidRayResolvedForPress.delete(player.id);
+      this.phantomVoidRayCharges.clear(player.id);
       if (input.secondaryFire && !previousSecondaryFire) {
         this.rejectAbilityOrCombat(player, 'phantom_reload_blocks:phantom_void_ray', false);
       }
@@ -6050,45 +4125,45 @@ export class GameRoom extends Room<GameState> {
     }
 
     if (input.secondaryFire && !previousSecondaryFire) {
-      const secondaryAttack = SECONDARY_ATTACKS[player.heroId as HeroId];
-      const cooldownKey = `${player.id}:secondary`;
-      if (!secondaryAttack || now < (this.attackCooldownUntil.get(cooldownKey) || 0)) {
+      const secondaryAttack = isHeroId(player.heroId)
+        ? getRoomAttackConfig({ heroId: player.heroId, mode: 'secondary', chronosAscendantActive: false })
+        : null;
+      if (!secondaryAttack || this.attackCooldowns.isCoolingDown(player.id, 'secondary', now)) {
         return;
       }
 
-      this.phantomVoidRayChargeStartedAt.set(player.id, now);
-      this.phantomVoidRayResolvedForPress.delete(player.id);
+      this.phantomVoidRayCharges.start(player.id, now);
       this.broadcastPhantomVoidRayCharge(player, now);
       return;
     }
 
-    const chargeStartedAt = this.phantomVoidRayChargeStartedAt.get(player.id);
+    const chargeStartedAt = this.phantomVoidRayCharges.getStartedAt(player.id);
     const tempoMultiplier = this.getAbilityTempoMultiplier(player, now);
     const chargeComplete =
       chargeStartedAt !== undefined &&
       now - chargeStartedAt >= VOID_RAY_CHARGE_TIME / tempoMultiplier;
 
     if (!input.secondaryFire) {
-      if (wasCharging && !this.phantomVoidRayResolvedForPress.has(player.id)) {
+      if (wasCharging && !this.phantomVoidRayCharges.isResolvedForPress(player.id)) {
         if (chargeComplete) {
-          this.tryResolveAttack(player, 'secondary');
-          this.phantomVoidRayResolvedForPress.add(player.id);
+          this.tryResolveAttack(player, 'secondary', now);
+          this.phantomVoidRayCharges.markResolvedForPress(player.id);
         } else {
           this.broadcastPhantomVoidRayChargeCancel(player, now);
         }
       }
-      this.phantomVoidRayChargeStartedAt.delete(player.id);
-      this.phantomVoidRayResolvedForPress.delete(player.id);
+      this.phantomVoidRayCharges.clear(player.id);
       return;
     }
 
-    if (chargeStartedAt === undefined || this.phantomVoidRayResolvedForPress.has(player.id)) return;
+    if (chargeStartedAt === undefined || this.phantomVoidRayCharges.isResolvedForPress(player.id)) return;
   }
 
   private handleAbilityUse(
     player: Player,
     slot: 'ability1' | 'ability2' | 'ultimate',
-    options: { chronosLifelineMode?: ChronosLifelineMode } = {}
+    options: { chronosLifelineMode?: ChronosLifelineMode } = {},
+    usedAt = Date.now()
   ) {
     if (player.state !== 'alive' || !isHeroId(player.heroId)) {
       this.rejectAbilityOrCombat(player, `invalid_state:${slot}`);
@@ -6106,32 +4181,25 @@ export class GameRoom extends Room<GameState> {
     const hookshotGrappleTarget = player.heroId === 'hookshot' && slot === 'ability1'
       ? this.resolveHookshotGrappleTarget(player)
       : null;
-
-    if (player.heroId === 'chronos' && slot === 'ability1' && !chronosLifelineMode) {
-      this.rejectAbilityOrCombat(player, 'chronos_lifeline_mode_required', false);
-      return;
-    }
-    if (player.heroId === 'chronos' && slot === 'ability1' && (!chronosLifelineTargets || chronosLifelineTargets.length === 0)) {
-      this.rejectAbilityOrCombat(player, 'chronos_lifeline_no_targets', false);
-      return;
-    }
-    if (player.heroId === 'hookshot' && slot === 'ability1' && !hookshotGrappleTarget) {
-      this.rejectAbilityOrCombat(player, 'hookshot_grapple_no_target', false);
-      return;
-    }
-
     const abilityId = HERO_DEFINITIONS[player.heroId as HeroId]?.[slot]?.abilityId;
-    const usedAt = Date.now();
-    if (
-      abilityId &&
-      abilityId !== 'phantom_blink' &&
-      this.isPhantomPrimaryReloading(player, usedAt)
-    ) {
-      this.rejectAbilityOrCombat(player, `phantom_reload_blocks:${abilityId}`, false);
-      return;
-    }
-    if (this.isPlayerRooted(player.id, usedAt) && this.isRootBlockedAbility(abilityId)) {
-      this.rejectAbilityOrCombat(player, 'rooted_movement_ability_blocked');
+    const preflightRejection = getAbilityUsePreflightRejection({
+      playerState: player.state,
+      heroId: player.heroId,
+      isHeroId: isHeroId(player.heroId),
+      slot,
+      abilityId,
+      chronosLifelineMode,
+      chronosLifelineTargetCount: chronosLifelineTargets?.length ?? 0,
+      hasHookshotGrappleTarget: Boolean(hookshotGrappleTarget),
+      phantomPrimaryReloading: Boolean(
+        abilityId &&
+        abilityId !== 'phantom_blink' &&
+        this.isPhantomPrimaryReloading(player, usedAt)
+      ),
+      rootedAndBlocked: this.playerRoots.isRooted(player.id, usedAt) && isRootBlockedAbility(abilityId),
+    });
+    if (preflightRejection) {
+      this.rejectAbilityOrCombat(player, preflightRejection.reason, preflightRejection.logEvent);
       return;
     }
 
@@ -6141,55 +4209,92 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
+    const ability: ResolvedAbilityUseResult = {
+      abilityId: result.abilityId,
+      abilityDef: result.abilityDef,
+      abilityState: result.abilityState,
+    };
     const startedAt = vec3SchemaToPlain(player.position);
 
-    if (result.abilityId === 'chronos_lifeline_conduit' && chronosLifelineTargets && chronosLifelineMode) {
-      const releaseAt = usedAt + CHRONOS_LIFELINE_RELEASE_DELAY_MS;
-      const healAmount = chronosLifelineMode === 'self'
-        ? CHRONOS_LIFELINE_SELF_HEAL
-        : CHRONOS_LIFELINE_ALLY_HEAL;
-      result.abilityState.activatedAt = usedAt;
-
-      this.broadcastAbilityUsed(player, {
-        playerId: player.id,
-        abilityId: result.abilityId,
-        castId: this.nextPhantomCastId(player.id, result.abilityId),
-        position: vec3SchemaToPlain(player.position),
-        startPosition: this.getAbilitySocketCastOrigin(player, 'chronos_lifeline_conduit'),
-        targetIds: chronosLifelineTargets.map((target) => target.id),
-        mode: chronosLifelineMode,
-        ownerTeam: player.team,
-        serverTime: usedAt,
-        releaseAt,
-      });
-      this.scheduleChronosLifelineConduit(
-        player.id,
-        chronosLifelineTargets.map((target) => target.id),
-        healAmount,
-        releaseAt
-      );
-      return;
-    } else {
-      // Execute ability effect with context for void zone creation
-      executeAbility(player, result.abilityId, result.abilityState, result.abilityDef, {
-        createVoidZone: (position, ownerId, ownerTeam) => this.createVoidZone(position, ownerId, ownerTeam),
-        resolvePhantomBlinkDestination: (caster, distance) => this.resolvePhantomBlinkDestination(caster, distance),
-        clampPosition: (position) => this.clampToPlayableMap(position),
-        markAuthoritativePosition: (playerId, _durationMs, reason = 'teleport') => {
-          this.markMovementBarrier(playerId, reason, { preserveQueuedCommands: true });
-        },
-      });
-    }
-
-    if (result.abilityId === 'blaze_flamethrower') {
+    if (ability.abilityId === 'chronos_lifeline_conduit' && chronosLifelineTargets && chronosLifelineMode) {
+      this.handleChronosLifelineAbilityCast(player, ability, chronosLifelineTargets, chronosLifelineMode, usedAt);
       return;
     }
 
+    this.executeRoomAbilityEffect(player, ability);
+
+    if (ability.abilityId === 'blaze_flamethrower') {
+      return;
+    }
+
+    if (this.tryBroadcastHookshotAbilityCast(player, ability, hookshotGrappleTarget, usedAt)) {
+      return;
+    }
+
+    this.handleStandardAbilityCast(player, ability, startedAt, usedAt);
+  }
+
+  private getAbilityCasterSnapshot(player: Player): AbilityCasterSnapshot {
+    return {
+      id: player.id,
+      team: player.team as Team,
+      heroId: player.heroId,
+      position: vec3SchemaToPlain(player.position),
+      velocity: vec3SchemaToPlain(player.velocity),
+      lookYaw: player.lookYaw,
+      lookPitch: player.lookPitch,
+    };
+  }
+
+  private executeRoomAbilityEffect(player: Player, ability: ResolvedAbilityUseResult): void {
+    executeAbility(player, ability.abilityId, ability.abilityState, ability.abilityDef, {
+      createVoidZone: (position, ownerId, ownerTeam) => this.createVoidZone(position, ownerId, ownerTeam),
+      resolvePhantomBlinkDestination: (caster, distance) => this.resolvePhantomBlinkDestination(caster, distance),
+      clampPosition: (position) => this.clampToPlayableMap(position),
+      markAuthoritativePosition: (playerId, _durationMs, reason = 'teleport') => {
+        this.markMovementBarrier(playerId, reason, { preserveQueuedCommands: true });
+      },
+    });
+  }
+
+  private handleChronosLifelineAbilityCast(
+    player: Player,
+    ability: ResolvedAbilityUseResult,
+    targets: Player[],
+    mode: ChronosLifelineMode,
+    usedAt: number
+  ): void {
+    const targetIds = targets.map((target) => target.id);
+    const plan = buildChronosLifelineCastPlan({
+      caster: this.getAbilityCasterSnapshot(player),
+      abilityId: ability.abilityId,
+      castId: this.abilityIds.nextSharedCastId(player.id, ability.abilityId),
+      startPosition: this.getAbilitySocketCastOrigin(player, 'chronos_lifeline_conduit'),
+      targetIds,
+      mode,
+      usedAt,
+    });
+    ability.abilityState.activatedAt = usedAt;
+
+    this.broadcastExactPlayerEvent('abilityUsed', player, plan.payload);
+    this.scheduleChronosLifelineConduit(
+      player.id,
+      plan.targetIds,
+      plan.healAmount,
+      plan.releaseAt
+    );
+  }
+
+  private tryBroadcastHookshotAbilityCast(
+    player: Player,
+    ability: ResolvedAbilityUseResult,
+    hookshotGrappleTarget: PlainVec3 | null,
+    usedAt: number
+  ): boolean {
     if (player.heroId === 'hookshot') {
-      const ownerTeam = player.team as Team;
-      const castId = this.nextPhantomCastId(player.id, result.abilityId);
+      const castId = this.abilityIds.nextSharedCastId(player.id, ability.abilityId);
 
-      if (result.abilityId === 'hookshot_grapple' && hookshotGrappleTarget) {
+      if (ability.abilityId === 'hookshot_grapple' && hookshotGrappleTarget) {
         const launchSide = 1;
         const startPosition = this.getAbilitySocketCastOrigin(player, 'hookshot_grapple', launchSide);
         const aimDirection = this.normalize3D({
@@ -6205,146 +4310,90 @@ export class GameRoom extends Room<GameState> {
           usedAt
         );
 
-        this.broadcastAbilityUsed(player, {
-          playerId: player.id,
-          abilityId: result.abilityId,
+        this.broadcastExactPlayerEvent('abilityUsed', player, buildHookshotGrappleCastPayload({
+          caster: this.getAbilityCasterSnapshot(player),
+          abilityId: ability.abilityId,
           castId,
-          position: vec3SchemaToPlain(player.position),
           startPosition,
           targetPosition: hookshotGrappleTarget,
-          direction: {
-            yaw: player.lookYaw,
-            pitch: player.lookPitch,
-          },
           aimDirection,
-          ownerTeam,
-          launchSide,
-          launchYaw: player.lookYaw,
-          serverTime: usedAt,
-        });
-        return;
+          usedAt,
+        }));
+        return true;
       }
 
-      if (result.abilityId === 'hookshot_anchor_wall') {
+      if (ability.abilityId === 'hookshot_anchor_wall') {
         const wall = this.resolveHookshotAnchorWall(player);
-        this.createHookshotAnchorWall({
-          id: castId,
-          startPosition: wall.startPosition,
-          direction: wall.direction,
-          startTime: usedAt,
-          duration: HOOKSHOT_ANCHOR_WALL_DURATION,
-          maxDistance: HOOKSHOT_ANCHOR_WALL_MAX_DISTANCE,
-          ownerId: player.id,
-          ownerTeam,
-        });
-        this.broadcastAbilityUsed(player, {
-          playerId: player.id,
-          abilityId: result.abilityId,
+        const plan = buildHookshotAnchorWallPlan({
+          caster: this.getAbilityCasterSnapshot(player),
+          abilityId: ability.abilityId,
           castId,
-          position: vec3SchemaToPlain(player.position),
           startPosition: wall.startPosition,
-          targetPosition: wall.startPosition,
           direction: wall.direction,
-          aimDirection: wall.direction,
-          ownerTeam,
-          launchYaw: player.lookYaw,
-          serverTime: usedAt,
-          maxDistance: HOOKSHOT_ANCHOR_WALL_MAX_DISTANCE,
-          duration: HOOKSHOT_ANCHOR_WALL_DURATION,
+          usedAt,
         });
-        return;
+        this.createHookshotAnchorWall(plan.wall);
+        this.broadcastExactPlayerEvent('abilityUsed', player, plan.payload);
+        return true;
       }
 
-      if (result.abilityId === 'hookshot_ground_hooks') {
+      if (ability.abilityId === 'hookshot_ground_hooks') {
         const rootTargets = this.applyHookshotGroundHooksRoot(player, usedAt);
-        const castId = `ground_hooks_${player.id}_${this.hookshotGroundHooksIdCounter++}`;
-        const rootUntil = usedAt + HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS * 1000;
-        this.broadcastAbilityUsed(player, {
-          playerId: player.id,
-          abilityId: result.abilityId,
+        const castId = this.abilityIds.nextHookshotGroundHooksCastId(player.id);
+        this.broadcastExactPlayerEvent('abilityUsed', player, buildHookshotGroundHooksCastPayload({
+          caster: this.getAbilityCasterSnapshot(player),
+          abilityId: ability.abilityId,
           castId,
-          position: vec3SchemaToPlain(player.position),
-          targetIds: rootTargets.map((target) => target.targetId),
-          targets: rootTargets,
-          direction: {
-            yaw: player.lookYaw,
-            pitch: player.lookPitch,
-          },
-          ownerTeam,
-          launchYaw: player.lookYaw,
-          serverTime: usedAt,
-          radius: HOOKSHOT_GROUND_HOOKS_RADIUS,
-          duration: HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
-          rootUntil,
-        });
-        return;
+          rootTargets,
+          usedAt,
+        }));
+        return true;
       }
     }
 
-    const shockwaveDirection = result.abilityId === 'chronos_timebreak'
-      ? getForwardVector(player.lookYaw, 0)
-      : undefined;
-    if (shockwaveDirection) {
-      this.scheduleChronosTimebreakShockwave(
-        player.id,
-        shockwaveDirection,
-        result.abilityState.activatedAt || Date.now() + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS
-      );
-    }
+    return false;
+  }
 
-    if (result.abilityId === 'blaze_airstrike') {
-      this.createBlazeGearstorm(
-        player,
-        startedAt,
-        usedAt,
-        result.abilityDef.duration ?? 5
-      );
-    }
-
-    const ascendantParadoxVelocity = result.abilityId === 'chronos_ascendant_paradox'
-      ? vec3SchemaToPlain(player.velocity)
-      : undefined;
-    const abilityStartPosition = result.abilityId === 'blaze_rocketjump'
+  private handleStandardAbilityCast(
+    player: Player,
+    ability: ResolvedAbilityUseResult,
+    startedAt: PlainVec3,
+    usedAt: number
+  ): void {
+    const abilityStartPosition = ability.abilityId === 'blaze_rocketjump'
       ? this.getAbilitySocketCastOrigin(player, 'blaze_rocketjump')
-      : result.abilityId === 'chronos_timebreak'
+      : ability.abilityId === 'chronos_timebreak'
         ? this.getAbilitySocketCastOrigin(player, 'chronos_timebreak')
         : startedAt;
-
-    // Broadcast ability use
-    this.broadcastAbilityUsed(player, {
-      playerId: player.id,
-      abilityId: result.abilityId,
-      castId: this.nextPhantomCastId(player.id, result.abilityId),
-      position: { x: player.position.x, y: player.position.y, z: player.position.z },
-      startPosition: abilityStartPosition,
-      direction: { 
-        yaw: player.lookYaw, 
-        pitch: player.lookPitch 
-      },
-      aimDirection: getForwardVector(player.lookYaw, player.lookPitch),
-      velocity: result.abilityId === 'blaze_rocketjump'
-        ? vec3SchemaToPlain(player.velocity)
-        : ascendantParadoxVelocity
-          ? ascendantParadoxVelocity
-        : undefined,
-      ownerTeam: player.team,
-      serverTime: usedAt,
-      releaseAt: result.abilityId === 'chronos_timebreak'
-        ? result.abilityState.activatedAt
-        : undefined,
-      radius: result.abilityId === 'chronos_timebreak'
-        ? CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE
-        : undefined,
-      duration: result.abilityId === 'chronos_timebreak'
-        ? result.abilityDef.duration
-        : result.abilityId === 'chronos_ascendant_paradox'
-          ? result.abilityDef.duration
-        : undefined,
-      durationMs: result.abilityId === 'chronos_ascendant_paradox'
-        ? CHRONOS_ASCENDANT_PARADOX_DURATION_MS
-        : undefined,
-      shockwaveDirection,
+    const standardPlan = buildStandardAbilityCastPlan({
+      caster: this.getAbilityCasterSnapshot(player),
+      abilityId: ability.abilityId,
+      abilityDef: ability.abilityDef,
+      castId: this.abilityIds.nextSharedCastId(player.id, ability.abilityId),
+      startedAt,
+      abilityStartPosition,
+      abilityActivatedAt: ability.abilityState.activatedAt,
+      usedAt,
     });
+
+    if (standardPlan.timebreakShockwave) {
+      this.scheduleChronosTimebreakShockwave(
+        standardPlan.timebreakShockwave.casterId,
+        standardPlan.timebreakShockwave.direction,
+        standardPlan.timebreakShockwave.releaseAt
+      );
+    }
+
+    if (standardPlan.blazeGearstorm) {
+      this.createBlazeGearstorm(
+        player,
+        standardPlan.blazeGearstorm.startedAt,
+        standardPlan.blazeGearstorm.usedAt,
+        standardPlan.blazeGearstorm.duration
+      );
+    }
+
+    this.broadcastExactPlayerEvent('abilityUsed', player, standardPlan.payload);
   }
 
   private createBotsFromAssignments(assignments: BotAssignment[]): void {
@@ -6365,14 +4414,14 @@ export class GameRoom extends Room<GameState> {
         ? assignment.heroId
         : null;
       if (preferredHero && this.setPlayerHero(bot, preferredHero)) {
-        this.preferredBotHeroes.set(bot.id, preferredHero);
+        this.botRuntime.setPreferredHero(bot.id, preferredHero);
       }
 
       this.state.players.set(bot.id, bot);
-      this.knownPlayerIds.add(bot.id);
+      this.replicationState.markKnownPlayer(bot.id);
       this.updateLastSafeMovement(bot, 0);
       this.initializePressState(bot.id);
-      this.botBrains.set(bot.id, this.createBotBrain(bot, index));
+      this.botRuntime.setBrain(bot.id, this.createBotBrain(bot, index));
     });
   }
 
@@ -6384,23 +4433,17 @@ export class GameRoom extends Room<GameState> {
   }
 
   private initializePressState(playerId: string): void {
-    playerPressState.set(playerId, {
-      primaryFire: false,
-      secondaryFire: false,
-      reload: false,
-      ability1: false,
-      ability2: false,
-      ultimate: false,
-    });
+    this.playerPressStates.initialize(playerId);
+  }
+
+  private clearPrimaryHoldStates(playerId: string): void {
+    this.phantomPrimaryHolds.clear(playerId);
+    this.chronosPrimaryHolds.clear(playerId);
   }
 
   private resetPhantomPrimaryMagazine(playerId: string): void {
-    this.phantomPrimaryHoldStartedAt.delete(playerId);
-    this.phantomPrimaryMagazines.set(playerId, {
-      ammo: PHANTOM_PRIMARY_MAGAZINE_SIZE,
-      reloadUntil: 0,
-      reloadStartedAt: 0,
-    });
+    this.phantomPrimaryHolds.clear(playerId);
+    this.phantomPrimaryMagazines.reset(playerId);
     const player = this.state.players.get(playerId);
     if (player?.heroId === 'phantom') {
       this.sendPhantomPrimaryState(player, Date.now());
@@ -6408,25 +4451,12 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getOrCreatePhantomPrimaryMagazine(player: Player): PhantomPrimaryMagazineState {
-    let magazine = this.phantomPrimaryMagazines.get(player.id);
-    if (!magazine) {
-      magazine = {
-        ammo: PHANTOM_PRIMARY_MAGAZINE_SIZE,
-        reloadUntil: 0,
-        reloadStartedAt: 0,
-      };
-      this.phantomPrimaryMagazines.set(player.id, magazine);
-    }
-
-    return magazine;
+    return this.phantomPrimaryMagazines.getOrCreate(player.id);
   }
 
   private completePhantomPrimaryReloadIfReady(player: Player, now: number): PhantomPrimaryMagazineState {
-    const magazine = this.getOrCreatePhantomPrimaryMagazine(player);
-    if (magazine.reloadUntil > 0 && now >= magazine.reloadUntil) {
-      magazine.ammo = PHANTOM_PRIMARY_MAGAZINE_SIZE;
-      magazine.reloadUntil = 0;
-      magazine.reloadStartedAt = 0;
+    const { magazine, completed } = this.phantomPrimaryMagazines.completeReloadIfReady(player.id, now);
+    if (completed) {
       this.sendPhantomPrimaryState(player, now);
     }
 
@@ -6441,39 +4471,21 @@ export class GameRoom extends Room<GameState> {
   private sendPhantomPrimaryState(player: Player, now: number): void {
     if (player.heroId !== 'phantom' || player.isBot) return;
 
-    const magazine = this.getOrCreatePhantomPrimaryMagazine(player);
-    const client = this.clientsBySessionId.get(player.id);
+    const state = this.phantomPrimaryMagazines.getClientState(player.id, now);
+    const client = this.clientRegistry.getClient(player.id);
     if (!client) return;
-    this.sendTracked(client, 'phantomPrimaryState', {
-      ammo: magazine.ammo,
-      reloading: magazine.reloadUntil > now,
-      reloadStartedAt: magazine.reloadUntil > now ? magazine.reloadStartedAt : 0,
-      reloadUntil: magazine.reloadUntil > now ? magazine.reloadUntil : 0,
-      serverTime: now,
-    });
+    this.sendTracked(client, 'phantomPrimaryState', state);
   }
 
   private consumePhantomPrimaryShot(player: Player, now: number): boolean {
     if (player.heroId !== 'phantom') return true;
 
-    const magazine = this.completePhantomPrimaryReloadIfReady(player, now);
+    this.completePhantomPrimaryReloadIfReady(player, now);
+    const result = this.phantomPrimaryMagazines.consumeShot(player.id, now);
 
-    if (magazine.reloadUntil > now) {
+    if (!result.consumed) {
       this.sendPhantomPrimaryState(player, now);
       return false;
-    }
-
-    if (magazine.ammo <= 0) {
-      magazine.reloadUntil = now + PHANTOM_PRIMARY_RELOAD_MS;
-      magazine.reloadStartedAt = now;
-      this.sendPhantomPrimaryState(player, now);
-      return false;
-    }
-
-    magazine.ammo--;
-    if (magazine.ammo === 0) {
-      magazine.reloadUntil = now + PHANTOM_PRIMARY_RELOAD_MS;
-      magazine.reloadStartedAt = now;
     }
 
     return true;
@@ -6482,19 +4494,14 @@ export class GameRoom extends Room<GameState> {
   private reloadHeroPrimary(player: Player, now: number): boolean {
     if (player.heroId !== 'phantom') return false;
 
-    const magazine = this.completePhantomPrimaryReloadIfReady(player, now);
+    this.completePhantomPrimaryReloadIfReady(player, now);
+    const result = this.phantomPrimaryMagazines.reload(player.id, now);
 
-    if (magazine.reloadUntil > now) {
-      this.sendPhantomPrimaryState(player, now);
-      return false;
-    }
-    if (magazine.ammo >= PHANTOM_PRIMARY_MAGAZINE_SIZE) {
+    if (!result.started) {
       this.sendPhantomPrimaryState(player, now);
       return false;
     }
 
-    magazine.reloadStartedAt = now;
-    magazine.reloadUntil = now + PHANTOM_PRIMARY_RELOAD_MS;
     this.sendPhantomPrimaryState(player, now);
     return true;
   }
@@ -6507,21 +4514,13 @@ export class GameRoom extends Room<GameState> {
   ): void {
     if (player.heroId !== 'phantom') return;
 
-    if (!input.primaryFire) {
-      this.phantomPrimaryHoldStartedAt.delete(player.id);
-      return;
-    }
-
-    if (!previous.primaryFire || !this.phantomPrimaryHoldStartedAt.has(player.id)) {
-      this.phantomPrimaryHoldStartedAt.set(player.id, now);
-    }
+    this.phantomPrimaryHolds.update(player.id, input.primaryFire, previous.primaryFire, now);
   }
 
   private isPhantomPrimaryReady(player: Player, now: number): boolean {
     if (player.heroId !== 'phantom') return true;
 
-    const holdStartedAt = this.phantomPrimaryHoldStartedAt.get(player.id);
-    return holdStartedAt !== undefined && now - holdStartedAt >= PHANTOM_PRIMARY_FIRE_READY_MS;
+    return this.phantomPrimaryHolds.isReady(player.id, now, PHANTOM_PRIMARY_FIRE_READY_MS);
   }
 
   private updateChronosPrimaryHoldState(
@@ -6532,32 +4531,28 @@ export class GameRoom extends Room<GameState> {
   ): void {
     if (player.heroId !== 'chronos') return;
 
-    if (!input.primaryFire || input.ability1) {
-      this.chronosPrimaryHoldStartedAt.delete(player.id);
-      return;
-    }
-
-    if (!previous.primaryFire || !this.chronosPrimaryHoldStartedAt.has(player.id)) {
-      this.chronosPrimaryHoldStartedAt.set(player.id, now);
-    }
+    this.chronosPrimaryHolds.update(
+      player.id,
+      Boolean(input.primaryFire && !input.ability1),
+      previous.primaryFire,
+      now
+    );
   }
 
   private isChronosPrimaryReady(player: Player, now: number): boolean {
     if (player.heroId !== 'chronos') return true;
 
-    const holdStartedAt = this.chronosPrimaryHoldStartedAt.get(player.id);
-    return holdStartedAt !== undefined && now - holdStartedAt >= CHRONOS_VERDANT_PULSE_FIRE_READY_MS;
+    return this.chronosPrimaryHolds.isReady(player.id, now, CHRONOS_VERDANT_PULSE_FIRE_READY_MS);
   }
 
-  private processPlayerInput(player: Player, input: PlayerInput): void {
+  private processPlayerInput(
+    player: Player,
+    input: PlayerInput,
+    now = Date.now()
+  ): void {
     if (player.state !== 'alive') return;
 
-    const pressState = playerPressState.get(player.id);
-    if (!pressState) {
-      this.initializePressState(player.id);
-    }
-    const previous = playerPressState.get(player.id)!;
-    const now = Date.now();
+    const previous = this.playerPressStates.getOrCreate(player.id);
     const reloadPressed = Boolean(input.reload);
     this.updatePhantomPrimaryHoldState(player, input, previous, now);
     this.updateChronosPrimaryHoldState(player, input, previous, now);
@@ -6576,108 +4571,85 @@ export class GameRoom extends Room<GameState> {
     const isChronosLifelineCommit = chronosLifelineMode !== null;
 
     if (isChronosLifelineCommit && !previous.ability1) {
-      this.handleAbilityUse(player, 'ability1', { chronosLifelineMode });
+      this.handleAbilityUse(player, 'ability1', { chronosLifelineMode }, now);
     }
 
     if (input.primaryFire && !isChronosLifelineCommit) {
-      this.tryResolveAttack(player, 'primary');
+      this.tryResolveAttack(player, 'primary', now);
     }
     if (player.heroId === 'phantom') {
       this.handlePhantomSecondaryInput(player, input, previous.secondaryFire, now);
     } else if (player.heroId === 'blaze') {
       if (!input.secondaryFire && previous.secondaryFire) {
-        this.tryResolveAttack(player, 'secondary');
+        this.tryResolveAttack(player, 'secondary', now);
       }
     } else if (shouldResolveGenericSecondaryAttack(player.heroId, input, previous.secondaryFire, isChronosLifelineCommit)) {
-      this.tryResolveAttack(player, 'secondary');
+      this.tryResolveAttack(player, 'secondary', now);
     }
 
     if (input.ability1 && !previous.ability1 && !isChronosLifelineCommit) {
-      this.handleAbilityUse(player, 'ability1');
+      this.handleAbilityUse(player, 'ability1', {}, now);
     }
     if (input.ability2 && !previous.ability2) {
-      this.handleAbilityUse(player, 'ability2');
+      this.handleAbilityUse(player, 'ability2', {}, now);
     }
     if (input.ultimate && !previous.ultimate) {
-      this.handleAbilityUse(player, 'ultimate');
+      this.handleAbilityUse(player, 'ultimate', {}, now);
     }
 
-    previous.primaryFire = input.primaryFire;
-    previous.secondaryFire = input.secondaryFire;
-    previous.reload = reloadPressed;
-    previous.ability1 = input.ability1;
-    previous.ability2 = input.ability2;
-    previous.ultimate = input.ultimate;
+    this.playerPressStates.applyInput(player.id, {
+      primaryFire: input.primaryFire,
+      secondaryFire: input.secondaryFire,
+      reload: reloadPressed,
+      ability1: input.ability1,
+      ability2: input.ability2,
+      ultimate: input.ultimate,
+    });
   }
 
-  private getChronosAegisCollisionRadiusForAttack(attack: AttackConfig): number {
-    if (typeof attack.collisionRadius === 'number') {
-      return attack.collisionRadius;
-    }
-
-    switch (attack.damageType) {
-      case 'chain_hooks':
-        return HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS;
-      case 'drag_hook':
-        return HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS;
-      case 'dire_ball':
-        return PHANTOM_DIRE_BALL_COLLISION_RADIUS;
-      case 'rocket':
-        return BLAZE_ROCKET_COLLISION_RADIUS;
-      case 'bomb':
-        return BLAZE_BOMB_AEGIS_COLLISION_RADIUS;
-      case 'verdant_pulse':
-        return CHRONOS_VERDANT_PULSE_COLLISION_RADIUS;
-      case 'ascendant_verdant_pulse':
-        return CHRONOS_ASCENDANT_PARADOX_PULSE_COLLISION_RADIUS;
-      default:
-        return 0;
-    }
-  }
-
-  private tryResolveAttack(player: Player, mode: 'primary' | 'secondary'): void {
-    const heroId = player.heroId as HeroId;
-    if (!isHeroId(heroId) || player.state !== 'alive') {
-      this.rejectAbilityOrCombat(player, `attack_invalid_state:${mode}`);
+  private tryResolveAttack(player: Player, mode: AttackMode, now = Date.now()): void {
+    const heroId = isHeroId(player.heroId) ? player.heroId : null;
+    const attack = heroId
+      ? getRoomAttackConfig({
+        heroId,
+        mode,
+        chronosAscendantActive: heroId === 'chronos' && mode === 'primary' && this.isChronosAscendantActive(player),
+      })
+      : null;
+    const readinessRejection = getAttackPreflightRejection({
+      isHeroId: Boolean(heroId),
+      playerState: player.state,
+      mode,
+      attackExists: Boolean(attack),
+      isCoolingDown: this.attackCooldowns.isCoolingDown(player.id, mode, now),
+      phantomPrimaryReady: mode !== 'primary' || this.isPhantomPrimaryReady(player, now),
+      chronosPrimaryReady: mode !== 'primary' || this.isChronosPrimaryReady(player, now),
+      phantomPrimaryShotAvailable: true,
+    });
+    if (readinessRejection || !heroId || !attack) {
+      this.rejectAbilityOrCombat(
+        player,
+        readinessRejection?.reason ?? `attack_missing_config:${mode}`,
+        readinessRejection?.logEvent ?? true
+      );
       return;
     }
 
-    let attack = mode === 'primary' ? PRIMARY_ATTACKS[heroId] : SECONDARY_ATTACKS[heroId];
-    if (heroId === 'chronos' && mode === 'primary' && attack && this.isChronosAscendantActive(player)) {
-      attack = {
-        ...attack,
-        damage: CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE,
-        cooldownMs: CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS,
-        radius: CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
-        collisionRadius: CHRONOS_ASCENDANT_PARADOX_PULSE_COLLISION_RADIUS,
-        range: Math.max(attack.range, 42),
-        damageType: 'ascendant_verdant_pulse',
-      };
-    }
-    if (!attack) {
-      this.rejectAbilityOrCombat(player, `attack_missing_config:${mode}`);
-      return;
-    }
-
-    const cooldownKey = `${player.id}:${mode}`;
-    const now = Date.now();
-    if (now < (this.attackCooldownUntil.get(cooldownKey) || 0)) {
-      this.rejectAbilityOrCombat(player, `attack_cooldown:${mode}`, false);
-      return;
-    }
-    if (mode === 'primary' && !this.isPhantomPrimaryReady(player, now)) {
-      this.rejectAbilityOrCombat(player, 'phantom_primary_not_ready', false);
-      return;
-    }
-    if (mode === 'primary' && !this.isChronosPrimaryReady(player, now)) {
-      this.rejectAbilityOrCombat(player, 'chronos_primary_not_ready', false);
-      return;
-    }
     if (mode === 'primary' && !this.consumePhantomPrimaryShot(player, now)) {
-      this.rejectAbilityOrCombat(player, 'phantom_primary_no_ammo', false);
+      const ammoRejection = getAttackPreflightRejection({
+        isHeroId: true,
+        playerState: player.state,
+        mode,
+        attackExists: true,
+        isCoolingDown: false,
+        phantomPrimaryReady: true,
+        chronosPrimaryReady: true,
+        phantomPrimaryShotAvailable: false,
+      });
+      this.rejectAbilityOrCombat(player, ammoRejection?.reason ?? 'phantom_primary_no_ammo', ammoRejection?.logEvent ?? false);
       return;
     }
-    this.attackCooldownUntil.set(cooldownKey, now + attack.cooldownMs);
+    this.attackCooldowns.setFromDuration(player.id, mode, now, attack.cooldownMs);
 
     const veil = player.abilities.get('phantom_veil');
     if (veil?.isActive) {
@@ -6703,40 +4675,74 @@ export class GameRoom extends Room<GameState> {
       attack.targetTeam ?? 'enemy'
     );
     const aegisHit = this.getChronosAegisSkillHit(player, origin, forward, attack.range, {
-      projectileRadius: this.getChronosAegisCollisionRadiusForAttack(attack),
+      projectileRadius: getChronosAegisCollisionRadiusForAttack(attack),
     });
     const aegisBlocksAttack = Boolean(aegisHit && (!primaryTargetHit || aegisHit.distance <= primaryTargetHit.hit.distance));
-    const impactHint: SkillImpactHint = aegisBlocksAttack && aegisHit
-      ? {
-        impactPosition: aegisHit.point,
-        interceptedByChronosAegis: true,
-      }
-      : {};
-
-    if (heroId === 'phantom') {
-      this.broadcastPhantomAttackCast(
-        player,
-        mode === 'primary' ? 'phantom_dire_ball' : 'phantom_void_ray',
-        now,
-        impactHint
-      );
-    } else if (heroId === 'hookshot') {
-      this.broadcastHookshotAttackCast(
-        player,
-        mode === 'primary' ? 'hookshot_basic_attack' : 'hookshot_heavy_attack',
-        now,
-        {
-          ...impactHint,
-          targetIds: mode === 'secondary' && !aegisBlocksAttack && primaryTargetHit?.target
-            ? [primaryTargetHit.target.id]
-            : undefined,
-        }
-      );
-    } else if (heroId === 'chronos' && mode === 'primary') {
+    const impactHint = buildAttackImpactHint({
+      aegisBlocksAttack,
+      aegisPoint: aegisHit?.point,
+    });
+    const castKind = getAttackCastKind({ heroId, mode });
+    if (castKind === 'phantom_dire_ball' || castKind === 'phantom_void_ray') {
+      this.broadcastPhantomAttackCast(player, castKind, now, impactHint);
+    } else if (castKind === 'hookshot_basic_attack' || castKind === 'hookshot_heavy_attack') {
+      this.broadcastHookshotAttackCast(player, castKind, now, withHookshotHeavyAttackTargetHint({
+        impactHint,
+        mode,
+        aegisBlocksAttack,
+        targetId: primaryTargetHit?.target.id,
+      }));
+    } else if (castKind === 'chronos_verdant_pulse') {
       this.broadcastChronosVerdantPulseCast(player, attack, now, impactHint);
     }
 
-    if (aegisBlocksAttack && aegisHit) {
+    this.applyResolvedAttackDamage({
+      player,
+      heroId,
+      mode,
+      attack,
+      now,
+      origin,
+      forward,
+      primaryTarget: primaryTargetHit?.target ?? null,
+      aegisHit,
+      aegisBlocksAttack,
+    });
+  }
+
+  private applyResolvedAttackDamage(input: {
+    player: Player;
+    heroId: HeroId;
+    mode: AttackMode;
+    attack: AttackConfig;
+    now: number;
+    origin: PlainVec3;
+    forward: PlainVec3;
+    primaryTarget: Player | null;
+    aegisHit: ChronosAegisSkillHit | null;
+    aegisBlocksAttack: boolean;
+  }): void {
+    const {
+      player,
+      heroId,
+      mode,
+      attack,
+      now,
+      origin,
+      forward,
+      primaryTarget,
+      aegisHit,
+      aegisBlocksAttack,
+    } = input;
+    const damagePlan = getAttackDamageResolutionPlan({
+      heroId,
+      mode,
+      aegisBlocksAttack,
+      hasPrimaryTarget: Boolean(primaryTarget),
+      attackRadius: attack.radius,
+    });
+
+    if (damagePlan.action === 'chronos_aegis_absorb' && aegisHit) {
       this.absorbDamageWithChronosAegis(aegisHit.blocker, attack.damage, now, {
         source: player,
         damageType: attack.damageType,
@@ -6746,20 +4752,19 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    const primaryTarget = primaryTargetHit?.target;
-    if (!primaryTarget) return;
+    if (!primaryTarget || damagePlan.action === 'none') return;
     this.recordCombatVisibilityAtHit(player, primaryTarget, mode, attack.damageType, now);
 
-    if (attack.radius && attack.radius > 0) {
-      this.applyAreaDamage(player, primaryTarget.position, attack.radius, attack.damage, attack.damageType);
-    } else {
+    if (damagePlan.action === 'area_damage') {
+      this.applyAreaDamage(player, primaryTarget.position, attack.radius ?? 0, attack.damage, attack.damageType);
+    } else if (damagePlan.action === 'direct_damage') {
       this.applyDamage(primaryTarget, attack.damage, player.id, attack.damageType, {
         sourcePosition: origin,
         sourceDirection: forward,
       });
     }
 
-    if (heroId === 'hookshot' && mode === 'secondary') {
+    if (damagePlan.startHookshotDragPull) {
       this.startHookshotDragPull(primaryTarget, player, HOOKSHOT_DRAG_HOOK_PULL_FRONT_DISTANCE, now);
     }
   }
@@ -6831,10 +4836,9 @@ export class GameRoom extends Room<GameState> {
     const targetTeamFilter = targetTeam === 'enemy'
       ? (source.team === 'red' ? 'blue' : 'red')
       : undefined;
-    const candidates = this.playerSpatialIndex.queryConeCandidates(
+    const candidates = this.playerSpatialQueries.queryConeCandidates(
       origin,
       candidateRange,
-      this.spatialQueryScratch,
       { team: targetTeamFilter, excludeId: source.id }
     );
 
@@ -6896,10 +4900,9 @@ export class GameRoom extends Room<GameState> {
 
   private applyAreaDamage(source: Player, center: { x: number; y: number; z: number }, radius: number, damage: number, damageType: string): void {
     const radiusSq = radius * radius;
-    const targets = this.playerSpatialIndex.queryRadius(
+    const targets = this.playerSpatialQueries.queryRadius(
       center,
       radius,
-      this.spatialQueryScratch,
       { team: source.team === 'red' ? 'blue' : 'red', excludeId: source.id }
     );
     for (const target of targets) {
@@ -6926,21 +4929,8 @@ export class GameRoom extends Room<GameState> {
     );
   }
 
-  private getChronosAegisShieldHp(playerId: string): number {
-    return this.chronosAegisShieldHp.get(playerId) ?? CHRONOS_AEGIS_SHIELD_MAX_HP;
-  }
-
-  private setChronosAegisShieldHp(playerId: string, hp: number): void {
-    const clamped = Math.max(0, Math.min(CHRONOS_AEGIS_SHIELD_MAX_HP, hp));
-    if (clamped >= CHRONOS_AEGIS_SHIELD_MAX_HP) {
-      this.chronosAegisShieldHp.delete(playerId);
-    } else {
-      this.chronosAegisShieldHp.set(playerId, clamped);
-    }
-  }
-
   private getChronosAegisShieldRatio(playerId: string): number {
-    return this.getChronosAegisShieldHp(playerId) / CHRONOS_AEGIS_SHIELD_MAX_HP;
+    return this.chronosAegisShields.getRatio(playerId);
   }
 
   private getChronosAegisShieldByte(player: Player): number {
@@ -6948,17 +4938,8 @@ export class GameRoom extends Room<GameState> {
     return Math.round(this.getChronosAegisShieldRatio(player.id) * CHRONOS_AEGIS_SHIELD_TRANSFORM_SCALE);
   }
 
-  private isChronosAegisHeld(player: Player): boolean {
-    return (
-      player.heroId === 'chronos' &&
-      player.state === 'alive' &&
-      Boolean(player.lastInput?.secondaryFire) &&
-      !player.lastInput?.ability1
-    );
-  }
-
   private isChronosAegisActive(player: Player): boolean {
-    return this.isChronosAegisHeld(player) && this.getChronosAegisShieldHp(player.id) > 0;
+    return this.chronosAegisShields.isActive(player);
   }
 
   private getChronosAegisForward(player: Player): PlainVec3 {
@@ -6975,23 +4956,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private updateChronosAegisShields(dt: number): void {
-    const recharge = CHRONOS_AEGIS_SHIELD_RECHARGE_PER_SECOND * dt;
-    this.state.players.forEach((player) => {
-      if (player.heroId !== 'chronos') {
-        this.chronosAegisShieldHp.delete(player.id);
-        return;
-      }
-      if (player.state !== 'alive') {
-        this.chronosAegisShieldHp.delete(player.id);
-        return;
-      }
-      if (this.isChronosAegisHeld(player)) return;
-
-      const hp = this.getChronosAegisShieldHp(player.id);
-      if (hp < CHRONOS_AEGIS_SHIELD_MAX_HP) {
-        this.setChronosAegisShieldHp(player.id, hp + recharge);
-      }
-    });
+    this.chronosAegisShields.update(this.state.players.values(), dt);
   }
 
   private getChronosAegisSkillHit(
@@ -7007,7 +4972,7 @@ export class GameRoom extends Room<GameState> {
   ): ChronosAegisSkillHit | null {
     const shieldTeam = options.shieldTeam ?? (source.team === 'red' ? 'blue' : 'red');
     let bestHit: ChronosAegisSkillHit | null = null;
-    const aegisCandidates = this.alivePlayersByTeam[shieldTeam];
+    const aegisCandidates = this.playerSpatialIndex.getTeamPlayers(shieldTeam);
     const playersToCheck = aegisCandidates.length > 0 ? aegisCandidates : this.state.players.values();
 
     for (const aegisPlayer of playersToCheck) {
@@ -7085,29 +5050,26 @@ export class GameRoom extends Room<GameState> {
       direction?: PlainVec3;
     } = {}
   ): number {
-    const hp = this.getChronosAegisShieldHp(blocker.id);
-    if (hp <= 0) return rawDamage;
+    const absorption = this.chronosAegisShields.absorbDamage(blocker.id, rawDamage);
+    if (!absorption.hadShield) return absorption.remainingDamage;
 
-    const absorbed = Math.min(hp, Math.max(0, rawDamage));
-    const nextHp = hp - absorbed;
-    this.setChronosAegisShieldHp(blocker.id, nextHp);
-    this.recentCombatTransformUntil.set(blocker.id, now + RECENT_COMBAT_TRANSFORM_MS);
+    this.replicationState.markRecentCombatTransform(blocker.id, now, RECENT_COMBAT_TRANSFORM_MS);
     const direction = context.direction ?? this.getChronosAegisForward(blocker);
-    if (absorbed > 0) {
-      this.markCombatActivityBetween(context.source ?? null, blocker, now);
+    if (absorption.absorbed > 0) {
+      this.playerCombatActivity.markBetween(context.source ?? null, blocker, now);
       this.broadcastChronosAegisDamaged(blocker, context.source ?? null, {
         playerId: blocker.id,
         sourceId: context.source?.id ?? null,
-        damage: Math.max(1, Math.round(absorbed)),
+        damage: Math.max(1, Math.round(absorption.absorbed)),
         damageType: context.damageType ?? 'shield',
-        shieldHp: Math.max(0, nextHp),
-        shieldRatio: Math.max(0, Math.min(1, nextHp / CHRONOS_AEGIS_SHIELD_MAX_HP)),
+        shieldHp: Math.max(0, absorption.nextHp),
+        shieldRatio: absorption.shieldRatio,
         position: context.position ?? this.getChronosAegisCenter(blocker),
         direction,
         serverTime: now,
       });
     }
-    if (nextHp <= 0) {
+    if (absorption.broken) {
       this.broadcastExactPlayerEvent('chronosAegisBroken', blocker, {
         playerId: blocker.id,
         position: this.getChronosAegisCenter(blocker),
@@ -7116,7 +5078,7 @@ export class GameRoom extends Room<GameState> {
       });
     }
 
-    return Math.max(0, rawDamage - absorbed);
+    return absorption.remainingDamage;
   }
 
   private applyDamage(
@@ -7157,7 +5119,7 @@ export class GameRoom extends Room<GameState> {
     target.movement.wallRunSide = '';
 
     this.markMovementBarrier(target.id, 'knockback', { preserveQueuedCommands: true });
-    this.hookshotDragPulls.set(target.id, pull);
+    this.hookshotRuntime.setDragPull(target.id, pull);
   }
 
   private getHookshotDragPullDestination(
@@ -7174,7 +5136,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private stopHookshotDragPull(player: Player): void {
-    this.hookshotDragPulls.delete(player.id);
+    this.hookshotRuntime.clearDragPull(player.id);
     player.velocity.x = 0;
     player.velocity.z = 0;
     player.movement.isSliding = false;
@@ -7184,107 +5146,8 @@ export class GameRoom extends Room<GameState> {
     player.movement.isGrappling = false;
   }
 
-  private resolveHookshotDragPullTerrainStep(
-    collisionWorld: MovementCollisionWorld,
-    startPosition: PlainVec3,
-    desiredDelta: PlainVec3,
-    destination: PlainVec3
-  ): { position: PlainVec3; blocked: boolean } {
-    let position = startPosition;
-    let remainingDelta = desiredDelta;
-
-    for (let bump = 0; bump < HOOKSHOT_DRAG_HOOK_PULL_BUMP_ITERATIONS; bump++) {
-      const remainingDistance = Math.sqrt(
-        remainingDelta.x * remainingDelta.x +
-        remainingDelta.y * remainingDelta.y +
-        remainingDelta.z * remainingDelta.z
-      );
-      if (remainingDistance <= HOOKSHOT_DRAG_HOOK_PULL_MIN_PROGRESS) {
-        return { position, blocked: false };
-      }
-
-      const hit = collisionWorld.sweepCapsule(position, remainingDelta, PLAYER_HEIGHT, PLAYER_RADIUS);
-      if (!hit) {
-        const nextPosition = this.clampToPlayableMap({
-          x: position.x + remainingDelta.x,
-          y: position.y + remainingDelta.y,
-          z: position.z + remainingDelta.z,
-        });
-        return canCapsuleOccupy(collisionWorld, nextPosition, PLAYER_HEIGHT, PLAYER_RADIUS)
-          ? { position: nextPosition, blocked: false }
-          : { position, blocked: true };
-      }
-
-      const safeTime = Math.max(
-        0,
-        hit.time - HOOKSHOT_DRAG_HOOK_PULL_BUMP_SKIN / Math.max(remainingDistance, HOOKSHOT_DRAG_HOOK_PULL_BUMP_SKIN)
-      );
-      const contactPosition = this.clampToPlayableMap({
-        x: position.x + remainingDelta.x * safeTime,
-        y: position.y + remainingDelta.y * safeTime,
-        z: position.z + remainingDelta.z * safeTime,
-      });
-      if (!canCapsuleOccupy(collisionWorld, contactPosition, PLAYER_HEIGHT, PLAYER_RADIUS)) {
-        return { position, blocked: true };
-      }
-
-      const distanceBeforeContact = Math.sqrt(
-        (destination.x - position.x) * (destination.x - position.x) +
-        (destination.z - position.z) * (destination.z - position.z)
-      );
-      const distanceAfterContact = Math.sqrt(
-        (destination.x - contactPosition.x) * (destination.x - contactPosition.x) +
-        (destination.z - contactPosition.z) * (destination.z - contactPosition.z)
-      );
-      const contactProgress = distanceBeforeContact - distanceAfterContact;
-      position = contactPosition;
-
-      const remainingScale = 1 - safeTime;
-      const postHitDelta = {
-        x: remainingDelta.x * remainingScale,
-        y: remainingDelta.y * remainingScale,
-        z: remainingDelta.z * remainingScale,
-      };
-      const intoNormal = postHitDelta.x * hit.normal.x +
-        postHitDelta.y * hit.normal.y +
-        postHitDelta.z * hit.normal.z;
-      const slideDelta = {
-        x: postHitDelta.x - hit.normal.x * intoNormal,
-        y: 0,
-        z: postHitDelta.z - hit.normal.z * intoNormal,
-      };
-      const slideLength = Math.sqrt(slideDelta.x * slideDelta.x + slideDelta.z * slideDelta.z);
-      if (slideLength <= HOOKSHOT_DRAG_HOOK_PULL_MIN_PROGRESS) {
-        return {
-          position,
-          blocked: contactProgress < HOOKSHOT_DRAG_HOOK_PULL_MIN_PROGRESS,
-        };
-      }
-
-      const toDestinationLength = Math.sqrt(
-        (destination.x - position.x) * (destination.x - position.x) +
-        (destination.z - position.z) * (destination.z - position.z)
-      );
-      if (toDestinationLength <= HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE) {
-        return { position, blocked: false };
-      }
-
-      const slideProgress = (
-        slideDelta.x * ((destination.x - position.x) / toDestinationLength) +
-        slideDelta.z * ((destination.z - position.z) / toDestinationLength)
-      );
-      if (contactProgress + slideProgress < HOOKSHOT_DRAG_HOOK_PULL_MIN_PROGRESS) {
-        return { position, blocked: true };
-      }
-
-      remainingDelta = slideDelta;
-    }
-
-    return { position, blocked: true };
-  }
-
   private stepHookshotDragPullAuthority(player: Player, dt: number, now: number): boolean {
-    const pull = this.hookshotDragPulls.get(player.id);
+    const pull = this.hookshotRuntime.getDragPull(player.id);
     if (!pull) return false;
 
     const source = this.state.players.get(pull.sourceId);
@@ -7334,12 +5197,13 @@ export class GameRoom extends Room<GameState> {
       y: proposedPosition.y - currentPosition.y,
       z: proposedPosition.z - currentPosition.z,
     };
-    const resolvedStep = this.resolveHookshotDragPullTerrainStep(
+    const resolvedStep = resolveHookshotDragPullTerrainStep({
       collisionWorld,
-      currentPosition,
-      moveDelta,
-      destination
-    );
+      startPosition: currentPosition,
+      desiredDelta: moveDelta,
+      destination,
+      clampToPlayableMap: (position) => this.clampToPlayableMap(position),
+    });
     const nextPosition = resolvedStep.position;
 
     const nextPositionOccupiable = canCapsuleOccupy(collisionWorld, nextPosition, PLAYER_HEIGHT, PLAYER_RADIUS);
@@ -7377,16 +5241,16 @@ export class GameRoom extends Room<GameState> {
   }
 
   private stepHookshotDragPullWithoutCommand(player: Player, tickTime: number): boolean {
-    if (!this.hookshotDragPulls.has(player.id)) return false;
+    if (!this.hookshotRuntime.hasDragPull(player.id)) return false;
 
     let moved = false;
     const authority = this.getMovementAuthority(player.id);
     for (let step = 0; step < SERVER_MOVEMENT_SUBSTEPS_PER_TICK; step++) {
-      if (!this.hookshotDragPulls.has(player.id)) break;
+      if (!this.hookshotRuntime.hasDragPull(player.id)) break;
       const stepNow = tickTime + step * MOVEMENT_SUBSTEP_SECONDS * 1000;
       const input = this.getRootedMovementInput(
         player,
-        this.suppressLocomotionInput(player.lastInput ?? createEmptyPlayerInput(this.state.tick, player, stepNow)),
+        suppressLocomotionInput(player.lastInput ?? createEmptyPlayerInput(this.state.tick, player, stepNow)),
         stepNow
       );
 
@@ -7407,7 +5271,7 @@ export class GameRoom extends Room<GameState> {
     releaseAt: number
   ): void {
     const delayMs = Math.max(0, releaseAt - Date.now());
-    this.scheduleRoomTimeout(() => {
+    this.roomTimeouts.schedule(() => {
       this.applyChronosTimebreakShockwave(casterId, castDirection);
     }, delayMs);
   }
@@ -7466,7 +5330,7 @@ export class GameRoom extends Room<GameState> {
       target.movement.slideTimeRemaining = 0;
       this.markMovementBarrier(target.id, 'knockback');
 
-      const targetClient = this.clientsBySessionId.get(target.id);
+      const targetClient = this.clientRegistry.getClient(target.id);
       targetClient?.send('chronosTimebreakImpulse', {
         sourceId: caster.id,
         sourcePosition: origin,
@@ -7482,7 +5346,7 @@ export class GameRoom extends Room<GameState> {
     if (this.isChronosAscendantActive(player, now)) {
       multiplier *= CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER;
     }
-    if (hasPowerupBoost(this.powerupBoostUntil, player, now)) {
+    if (this.powerupBoosts.has(player.id, now)) {
       multiplier *= POWERUP_MOVEMENT_SPEED_MULTIPLIER;
     }
     multiplier *= this.getChronosTimebreakTempoMultiplier(player);
@@ -7526,7 +5390,7 @@ export class GameRoom extends Room<GameState> {
 
   private getAbilityTempoMultiplier(player: Player, now = Date.now()): number {
     let multiplier = this.getChronosTimebreakTempoMultiplier(player);
-    if (hasPowerupBoost(this.powerupBoostUntil, player, now)) {
+    if (this.powerupBoosts.has(player.id, now)) {
       multiplier *= POWERUP_ABILITY_ATTACK_SPEED_MULTIPLIER;
     }
     return multiplier;
@@ -7541,32 +5405,12 @@ export class GameRoom extends Room<GameState> {
     const adjustmentMs = (tempoMultiplier - 1) * Math.max(0, dt) * 1000;
     if (Math.abs(adjustmentMs) <= 0.001) return;
 
-    this.adjustCooldownUntil(`${player.id}:primary`, this.attackCooldownUntil, adjustmentMs, now);
-    this.adjustCooldownUntil(`${player.id}:secondary`, this.attackCooldownUntil, adjustmentMs, now);
+    this.attackCooldowns.adjust(player.id, 'primary', adjustmentMs, now);
+    this.attackCooldowns.adjust(player.id, 'secondary', adjustmentMs, now);
 
-    const magazine = this.phantomPrimaryMagazines.get(player.id);
-    if (magazine?.reloadUntil && magazine.reloadUntil > now) {
-      magazine.reloadUntil = Math.max(now, magazine.reloadUntil - adjustmentMs);
+    if (this.phantomPrimaryMagazines.adjustActiveReload(player.id, adjustmentMs, now).adjusted) {
       this.sendPhantomPrimaryState(player, now);
     }
-  }
-
-  private adjustCooldownUntil(
-    key: string,
-    cooldowns: Map<string, number>,
-    adjustmentMs: number,
-    now: number
-  ): void {
-    const cooldownUntil = cooldowns.get(key);
-    if (!cooldownUntil || cooldownUntil <= now) return;
-
-    const nextCooldownUntil = cooldownUntil - adjustmentMs;
-    if (nextCooldownUntil <= now) {
-      cooldowns.delete(key);
-      return;
-    }
-
-    cooldowns.set(key, nextCooldownUntil);
   }
 
   private updateCTFObjectives(now: number): void {
@@ -7675,14 +5519,13 @@ export class GameRoom extends Room<GameState> {
   }
 
   private updateBots(now: number, dt: number): void {
-    this.urgentBotIdsScratch.length = 0;
-    this.deferredBotIdsScratch.length = 0;
+    this.botRuntime.beginFrameSchedule();
     const frameContext = this.buildBotFrameContext(now);
 
-    this.botBrains.forEach((brain, botId) => {
+    this.botRuntime.forEachBrain((brain, botId) => {
       const bot = this.state.players.get(botId);
       if (!bot?.isBot) {
-        this.botBrains.delete(botId);
+        this.botRuntime.deleteBrain(botId);
         return;
       }
 
@@ -7714,8 +5557,7 @@ export class GameRoom extends Room<GameState> {
       }
 
       if (bot.state !== 'alive') {
-        this.devBotSkillOverrides.delete(bot.id);
-        this.devBotLookOverrides.delete(bot.id);
+        this.devRuntime.clearPlayer(bot.id);
         bot.lastInput = createEmptyBotInput(this.state.tick, bot, now);
         if (bot.state === 'dead') {
           brain.intent = {
@@ -7730,11 +5572,11 @@ export class GameRoom extends Room<GameState> {
         return;
       }
 
-      if (this.devBotsRooted) {
+      if (this.devRuntime.areBotsRooted()) {
         const skillOverride = this.getActiveDevBotSkillOverride(bot, now);
         const lookOverride = this.getActiveDevBotLookOverride(bot, now);
         if (skillOverride || lookOverride) {
-          bot.lastInput = this.applyDevBotLookOverride(
+          bot.lastInput = applyDevBotLookOverride(
             this.createDevBotSkillInput(bot, now, skillOverride),
             lookOverride
           );
@@ -7746,11 +5588,11 @@ export class GameRoom extends Room<GameState> {
         return;
       }
 
-      if (!this.devBotBrainEnabled) {
+      if (!this.devRuntime.isBotBrainEnabled()) {
         const skillOverride = this.getActiveDevBotSkillOverride(bot, now);
         const lookOverride = this.getActiveDevBotLookOverride(bot, now);
         if (skillOverride || lookOverride) {
-          bot.lastInput = this.applyDevBotLookOverride(
+          bot.lastInput = applyDevBotLookOverride(
             this.createDevBotSkillInput(bot, now, skillOverride),
             lookOverride
           );
@@ -7762,24 +5604,17 @@ export class GameRoom extends Room<GameState> {
         return;
       }
 
-      if (this.isPriorityBot(bot, brain, now)) {
-        this.urgentBotIdsScratch.push(botId);
-      } else {
-        this.deferredBotIdsScratch.push(botId);
-      }
+      this.botRuntime.scheduleForFrame(botId, this.isPriorityBot(bot, brain, now));
     });
 
-    for (const botId of this.urgentBotIdsScratch) {
+    this.botRuntime.forEachScheduledFrameBot((botId) => {
       this.updateScheduledBot(botId, now, dt, frameContext);
-    }
-    for (const botId of this.deferredBotIdsScratch) {
-      this.updateScheduledBot(botId, now, dt, frameContext);
-    }
+    });
   }
 
   private isPriorityBot(bot: Player, brain: BotBrain, now: number): boolean {
     if (bot.hasFlag) return true;
-    if ((this.recentCombatTransformUntil.get(bot.id) ?? 0) > now) return true;
+    if (this.replicationState.getRecentCombatTransformUntil(bot.id) > now) return true;
     if (
       brain.intent.type === 'fight_local_enemy' ||
       brain.intent.type === 'intercept_enemy_carrier' ||
@@ -7800,15 +5635,15 @@ export class GameRoom extends Room<GameState> {
     frameContext: BotFrameContext
   ): void {
     const bot = this.state.players.get(botId);
-    const brain = this.botBrains.get(botId);
+    const brain = this.botRuntime.getBrain(botId);
     if (!bot?.isBot || !brain || bot.state !== 'alive') return;
 
     const skillOverride = this.getActiveDevBotSkillOverride(bot, now);
     const lookOverride = this.getActiveDevBotLookOverride(bot, now);
-    const botInput = this.applyDevBotLookOverride(
-      this.applyDevBotSkillOverride(
-        bot,
+    const botInput = applyDevBotLookOverride(
+      applyDevBotSkillOverride(
         this.createBotInput(bot, brain, now, dt, frameContext),
+        bot.heroId,
         skillOverride
       ),
       lookOverride
@@ -7907,17 +5742,12 @@ export class GameRoom extends Room<GameState> {
     snapshots = this.getBotPlayerSnapshots(),
     flags = getBotFlagSnapshots(this.state)
   ): BotTeamTacticsByTeam {
-    if (this.botTeamTactics && now < this.nextBotTacticsAt) return this.botTeamTactics;
-    this.botTacticsRevision++;
-    this.botTeamTactics = buildTeamTactics({
+    return this.mapRuntime.refreshBotTeamTactics({
       now,
-      revision: this.botTacticsRevision,
       gameplayMode: this.gameplayMode,
       players: snapshots,
       flags,
     });
-    this.nextBotTacticsAt = now + BOT_TACTICS_INTERVAL_MS;
-    return this.botTeamTactics;
   }
 
   private getBotRecentDamageSources(botId: string, now: number): BotRecentDamageSource[] {
@@ -8030,77 +5860,6 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private applyBotAbilityPlan(
-    bot: Player,
-    input: PlayerInput,
-    brain: BotBrain,
-    plan: BotAbilityPlan,
-    skill: BotSkillProfile,
-    now: number,
-    tempoMultiplier: number
-  ): void {
-    if (brain.pendingSecondaryMode) {
-      if (now < brain.secondaryHoldUntil) {
-        input.secondaryFire = true;
-        input.primaryFire = false;
-        return;
-      }
-      brain.pendingSecondaryMode = '';
-      brain.secondaryHoldUntil = 0;
-      input.secondaryFire = false;
-      return;
-    }
-
-    if (plan.mode === 'none' || !plan.slot) return;
-
-    if (plan.slot === 'ultimate') {
-      if (now < brain.nextUltimateAt && plan.score < skill.abilityScoreThreshold + 75) return;
-    } else if (plan.slot !== 'secondary' && plan.mode !== 'blaze_flamethrower') {
-      if (now < brain.nextAbilityAt && plan.score < skill.abilityScoreThreshold + 55) return;
-    }
-
-    switch (plan.mode) {
-      case 'chronos_lifeline_allies':
-        input.ability1 = true;
-        input.primaryFire = true;
-        input.secondaryFire = false;
-        break;
-      case 'chronos_lifeline_self':
-        input.ability1 = true;
-        input.primaryFire = false;
-        input.secondaryFire = true;
-        break;
-      case 'chronos_aegis':
-        input.secondaryFire = true;
-        input.primaryFire = false;
-        return;
-      case 'blaze_flamethrower':
-        input.ability1 = true;
-        input.primaryFire = false;
-        break;
-      case 'blaze_bomb':
-        if (now < brain.nextSecondaryAt) return;
-        input.secondaryFire = true;
-        input.primaryFire = false;
-        brain.pendingSecondaryMode = plan.mode;
-        brain.secondaryHoldUntil = now + (plan.holdMs ?? 120);
-        brain.nextSecondaryAt = now + randomBetween(900, 1450) / tempoMultiplier;
-        return;
-      default:
-        if (plan.slot === 'ability1') input.ability1 = true;
-        if (plan.slot === 'ability2') input.ability2 = true;
-        if (plan.slot === 'ultimate') input.ultimate = true;
-        if (plan.slot) input.primaryFire = false;
-        break;
-    }
-
-    if (plan.slot === 'ultimate') {
-      brain.nextUltimateAt = now + randomBetween(skill.ultimateCadenceMs[0], skill.ultimateCadenceMs[1]) / tempoMultiplier;
-    } else if (plan.slot !== 'secondary' && plan.mode !== 'blaze_flamethrower') {
-      brain.nextAbilityAt = now + randomBetween(skill.abilityCadenceMs[0], skill.abilityCadenceMs[1]) / tempoMultiplier;
-    }
-  }
-
   private createBotInput(
     bot: Player,
     brain: BotBrain,
@@ -8117,62 +5876,20 @@ export class GameRoom extends Room<GameState> {
     if (!tactics) return createEmptyBotInput(this.state.tick, bot, now);
 
     clearExpiredBlockedEdges(brain.blockedEdges, now);
-    const shouldRefreshBlackboard = !brain.blackboard || now >= brain.nextBlackboardAt || now >= brain.nextThinkAt;
-    const blackboard = shouldRefreshBlackboard
-      ? buildBotBlackboard({
-        now,
-        gameplayMode: this.gameplayMode,
-        bot: botSnapshot,
-        players: snapshots,
-        flags: frameContext.flags,
-        visibleEnemyIds: this.getVisibleEnemyIdsForBot(bot, frameContext),
-        enemyLineOfSightIds: this.getEnemyLineOfSightIdsForBot(bot, frameContext),
-        recentDamageSources: this.getBotRecentDamageSources(bot.id, now),
-        teamTactics: tactics,
-        enemyMemory: brain.enemyMemory,
-        skill,
-      })
-      : brain.blackboard!;
-    if (shouldRefreshBlackboard) {
-      brain.blackboard = blackboard;
-      brain.nextBlackboardAt = now + Math.max(80, skill.thinkIntervalMs * 0.75);
-    }
-
-    const shouldThink = now >= brain.nextThinkAt;
-    if (shouldThink) {
-      brain.intent = scoreBotIntents(botSnapshot, blackboard, skill);
-      brain.routePlan = planBotRoute({
-        now,
-        bot: botSnapshot,
-        intent: brain.intent,
-        blackboard,
-        routeGraph: this.botRouteGraph,
-        blockedEdges: brain.blockedEdges,
-        skill,
-        previousPlan: brain.routePlan,
-      });
-      brain.nextThinkAt = now + randomBetween(skill.thinkIntervalMs * 0.75, skill.thinkIntervalMs * 1.25);
-
-      if (now >= brain.strafeUntil) {
-        brain.strafeDirection = hashString(`${bot.id}:${Math.floor(now / 1000)}`) % 2 === 0 ? -1 : 1;
-        brain.strafeUntil = now + randomBetween(900, 2600);
-      }
-    }
-
-    if (!brain.routePlan || now - brain.routePlan.plannedAt > skill.replanIntervalMs * 2) {
-      brain.routePlan = planBotRoute({
-        now,
-        bot: botSnapshot,
-        intent: brain.intent,
-        blackboard,
-        routeGraph: this.botRouteGraph,
-        blockedEdges: brain.blockedEdges,
-        skill,
-        previousPlan: brain.routePlan,
-      });
-    }
-
-    const routePlan = brain.routePlan;
+    const { blackboard, routePlan } = updateBotPlanningState({
+      brain,
+      now,
+      gameplayMode: this.gameplayMode,
+      bot: botSnapshot,
+      players: snapshots,
+      flags: frameContext.flags,
+      visibleEnemyIds: this.getVisibleEnemyIdsForBot(bot, frameContext),
+      enemyLineOfSightIds: this.getEnemyLineOfSightIdsForBot(bot, frameContext),
+      recentDamageSources: this.getBotRecentDamageSources(bot.id, now),
+      teamTactics: tactics,
+      routeGraph: this.mapRuntime.getBotRouteGraph(),
+      skill,
+    });
     const combatPlan = chooseBotCombatPlan({
       bot: botSnapshot,
       intent: brain.intent,
@@ -8187,24 +5904,47 @@ export class GameRoom extends Room<GameState> {
       : null;
     brain.targetId = combatTarget?.id || '';
 
-    const aimPoint = combatTarget
-      ? this.getBotAimPoint(bot, combatTarget, skill)
-      : routePlan.steeringTarget || brain.intent.targetPosition || this.getEnemyFlagPosition(bot.team as Team);
-    const desiredAim = this.getYawPitchTowardPosition(bot, aimPoint);
-    const aim = this.updateBotAim(bot, brain, desiredAim, combatTarget, skill, now, dt);
     const enemyDistance = combatTarget ? distance3D(bot.position, combatTarget.position) : Infinity;
+    const aimPoint = combatTarget
+      ? getBotPredictedAimPoint({
+        sourcePosition: vec3SchemaToPlain(bot.position),
+        targetPosition: this.getPlayerBodyAimPosition(combatTarget),
+        targetVelocity: vec3SchemaToPlain(combatTarget.velocity),
+        targetDistance: enemyDistance,
+        skill,
+      })
+      : routePlan.steeringTarget || brain.intent.targetPosition || this.getEnemyFlagPosition(bot.team as Team);
+    const desiredAim = getBotYawPitchTowardPosition(this.getPlayerEyePosition(bot), aimPoint);
+    const aim = updateBotAimState({
+      brain,
+      skill,
+      desiredAim,
+      currentYaw: bot.lookYaw,
+      currentPitch: bot.lookPitch,
+      targetDistance: combatTarget ? enemyDistance : null,
+      now,
+      dt,
+    });
     const attackRange = this.getBotAttackRange(bot);
-    const shouldFight = Boolean(
+    const primaryAimReady = Boolean(
       combatTarget
-      && enemyDistance <= attackRange
-      && this.hasClearShot(bot, combatTarget)
-      && !this.isProtectedSpawnTarget(combatTarget, now)
+      && this.isBotAimReady(
+        bot,
+        combatTarget,
+        getRoomAttackConfig({ heroId: bot.heroId as HeroId, mode: 'primary', chronosAscendantActive: false }),
+        skill,
+        aim.yaw,
+        aim.pitch
+      )
     );
-    const aimReady = Boolean(
-      shouldFight
-      && combatTarget
-      && this.isBotAimReady(bot, combatTarget, PRIMARY_ATTACKS[bot.heroId as HeroId], skill, aim.yaw, aim.pitch)
-    );
+    const { shouldFight, aimReady } = getBotCombatEngagementState({
+      hasCombatTarget: Boolean(combatTarget),
+      enemyDistance,
+      attackRange,
+      hasClearShot: combatTarget ? this.hasClearShot(bot, combatTarget) : false,
+      targetProtected: combatTarget ? this.isProtectedSpawnTarget(combatTarget, now) : false,
+      primaryAimReady,
+    });
     const desiredMove = composeBotMovementDirection(
       botSnapshot,
       brain,
@@ -8217,70 +5957,76 @@ export class GameRoom extends Room<GameState> {
     );
     const probes = this.getBotSteeringProbes(bot, desiredMove, skill);
     const steering = chooseLocalAvoidanceDirection(desiredMove, probes, skill);
-    const progress = updateBotMovementProgress(
-      brain.movementProgress,
+    const recovery = updateBotMovementRecoveryState({
+      brain,
       now,
-      botSnapshot.position,
-      routePlan.steeringTarget,
-      routePlan.activeEdgeId,
+      bot: botSnapshot,
+      blackboard,
+      routeGraph: this.mapRuntime.getBotRouteGraph(),
+      routePlan,
       desiredMove,
-      steering.blocked,
-      skill
-    );
-    if (progress.markBlockedEdgeId) {
-      brain.blockedEdges.set(progress.markBlockedEdgeId, now + skill.blockedEdgeTtlMs);
-      brain.routePlan = planBotRoute({
-        now,
-        bot: botSnapshot,
-        intent: brain.intent,
-        blackboard,
-        routeGraph: this.botRouteGraph,
-        blockedEdges: brain.blockedEdges,
-        skill,
-        previousPlan: brain.routePlan,
-      });
-    }
-    if (progress.stalled && steering.blocked) {
-      brain.reverseUntil = now + randomBetween(220, 420);
-    }
+      steeringBlocked: steering.blocked,
+      skill,
+    });
 
     const tempoMultiplier = this.getAbilityTempoMultiplier(bot, now);
     const input = createEmptyBotInput(this.state.tick, bot, now);
     input.lookYaw = aim.yaw;
     input.lookPitch = combatTarget ? aim.pitch : 0;
-    this.applyBotMovementInput(input, input.lookYaw, steering.direction, now < brain.reverseUntil, brain);
-    input.sprint = distance2D(bot.position, routePlan.steeringTarget) > 9
-      || bot.hasFlag
-      || (brain.intent.type !== 'fight_local_enemy' && brain.intent.type !== 'defend_base');
-    input.jump = steering.jump || (progress.stalled && bot.movement.isGrounded);
-    input.crouch = input.sprint && distance2D(bot.position, routePlan.steeringTarget) > 14 && !combatTarget && hashString(`${bot.id}:${Math.floor(now / 500)}`) % 11 === 0;
-    input.crouchPressed = input.crouch && !bot.lastInput?.crouch;
+    Object.assign(input, composeBotInputMovementState({
+      lookYaw: input.lookYaw,
+      desiredMove: steering.direction,
+      recovering: now < brain.reverseUntil,
+      strafeDirection: brain.strafeDirection,
+      botId: bot.id,
+      position: bot.position,
+      hasFlag: bot.hasFlag,
+      isGrounded: bot.movement.isGrounded,
+      previousCrouch: bot.lastInput?.crouch,
+      intentType: brain.intent.type,
+      steeringTarget: routePlan.steeringTarget,
+      steeringJump: steering.jump,
+      stalled: recovery.stalled,
+      hasCombatTarget: Boolean(combatTarget),
+      now,
+    }));
 
-    if (now >= brain.nextFireDecisionAt) {
-      brain.nextFireDecisionAt = now + randomBetween(skill.fireDecisionMs[0], skill.fireDecisionMs[1]) / tempoMultiplier;
-      if (aimReady && Math.random() < skill.fireChance) {
-        brain.fireUntil = now + randomBetween(skill.burstDurationMs[0], skill.burstDurationMs[1]) / tempoMultiplier;
-      }
-    }
-    input.primaryFire = aimReady && now < brain.fireUntil;
+    input.primaryFire = updateBotPrimaryFireDecision({
+      brain,
+      skill,
+      now,
+      aimReady,
+      tempoMultiplier,
+    });
 
-    const secondaryAttack = SECONDARY_ATTACKS[bot.heroId as HeroId];
-    if (
-      shouldFight
+    const secondaryAttack = isHeroId(bot.heroId)
+      ? getRoomAttackConfig({ heroId: bot.heroId, mode: 'secondary', chronosAscendantActive: false })
+      : null;
+    const secondaryFireWindowOpen = isBotSecondaryFireWindowOpen({
+      brain,
+      now,
+      shouldFight,
+      heroId: bot.heroId as HeroId,
+      secondaryAttack,
+      enemyDistance,
+    });
+    const secondaryAimReady = Boolean(
+      secondaryFireWindowOpen
       && combatTarget
-      && bot.heroId !== 'blaze'
       && secondaryAttack
-      && enemyDistance <= secondaryAttack.range
       && this.isBotAimReady(bot, combatTarget, secondaryAttack, skill, aim.yaw, aim.pitch)
-      && now >= brain.nextSecondaryAt
-    ) {
-      const firedSecondary = Math.random() < skill.secondaryChance;
-      input.secondaryFire = firedSecondary;
-      const secondaryDelayMs = firedSecondary
-        ? randomBetween(secondaryAttack.cooldownMs * 0.85, secondaryAttack.cooldownMs * 1.3)
-        : randomBetween(350, 900);
-      brain.nextSecondaryAt = now + secondaryDelayMs / tempoMultiplier;
-    }
+    );
+    input.secondaryFire = updateBotSecondaryFireDecision({
+      brain,
+      skill,
+      now,
+      shouldFight,
+      heroId: bot.heroId as HeroId,
+      secondaryAttack,
+      enemyDistance,
+      aimReady: secondaryAimReady,
+      tempoMultiplier,
+    });
 
     const directPathBlocked = probes.find((probe) => probe.label === 'direct')?.clear === false;
     const abilityPlan = chooseBotAbilityPlan({
@@ -8292,7 +6038,14 @@ export class GameRoom extends Room<GameState> {
       skill,
       geometry: this.getBotAbilityGeometry(bot, blackboard, routePlan, desiredMove, directPathBlocked),
     });
-    this.applyBotAbilityPlan(bot, input, brain, abilityPlan, skill, now, tempoMultiplier);
+    applyBotAbilityInputPlan({
+      input,
+      brain,
+      plan: abilityPlan,
+      skill,
+      now,
+      tempoMultiplier,
+    });
 
     if (dt <= 0) {
       input.moveForward = false;
@@ -8310,8 +6063,10 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getBotAttackRange(bot: Player): number {
-    const heroId = bot.heroId as HeroId;
-    return PRIMARY_ATTACKS[heroId]?.range ?? 18;
+    const primaryAttack = isHeroId(bot.heroId)
+      ? getRoomAttackConfig({ heroId: bot.heroId, mode: 'primary', chronosAscendantActive: false })
+      : null;
+    return primaryAttack?.range ?? 18;
   }
 
   private canBotPerceiveEnemy(bot: Player, enemy: Player, distance: number): boolean {
@@ -8326,133 +6081,32 @@ export class GameRoom extends Room<GameState> {
     return this.hasClearShot(bot, enemy);
   }
 
-  private getBotAimPoint(bot: Player, target: Player, skill: BotSkillProfile): PlainVec3 {
-    const targetDistance = distance3D(bot.position, target.position);
-    const reactionLag = skill.reactionMs / 1000;
-    const leadSeconds = Math.max(-0.22, Math.min(0.42, skill.aimLeadSeconds + targetDistance / 160 - reactionLag * 0.45));
-    const targetPoint = this.getPlayerBodyAimPosition(target);
-
-    return {
-      x: targetPoint.x + target.velocity.x * leadSeconds,
-      y: targetPoint.y + target.velocity.y * leadSeconds,
-      z: targetPoint.z + target.velocity.z * leadSeconds,
-    };
-  }
-
-  private updateBotAim(
-    bot: Player,
-    brain: BotBrain,
-    desiredAim: { yaw: number; pitch: number },
-    target: Player | null,
-    skill: BotSkillProfile,
-    now: number,
-    dt: number
-  ): { yaw: number; pitch: number } {
-    if (!Number.isFinite(brain.aimYaw)) brain.aimYaw = bot.lookYaw;
-    if (!Number.isFinite(brain.aimPitch)) brain.aimPitch = bot.lookPitch;
-
-    if (target && now >= brain.nextAimJitterAt) {
-      const distance = distance3D(bot.position, target.position);
-      const distanceScale = Math.max(0.55, Math.min(1.35, distance / 24));
-      brain.aimJitterYaw = randomSigned(skill.aimErrorRadians * distanceScale);
-      brain.aimJitterPitch = randomSigned(skill.aimErrorRadians * 0.55 * distanceScale);
-      brain.nextAimJitterAt = now + randomBetween(skill.aimJitterRefreshMs[0], skill.aimJitterRefreshMs[1]);
-    } else if (!target) {
-      brain.aimJitterYaw *= 0.82;
-      brain.aimJitterPitch *= 0.82;
-    }
-
-    const targetYaw = normalizeAngle(desiredAim.yaw + brain.aimJitterYaw);
-    const targetPitch = clamp(desiredAim.pitch + brain.aimJitterPitch, -0.8, 0.8);
-    const maxStep = skill.turnRateRadians * Math.max(0.016, Math.min(0.1, dt));
-
-    brain.aimYaw = rotateAngleToward(brain.aimYaw, targetYaw, maxStep);
-    const pitchDelta = clamp(targetPitch - brain.aimPitch, -maxStep, maxStep);
-    brain.aimPitch = clamp(brain.aimPitch + pitchDelta, -0.8, 0.8);
-
-    return { yaw: brain.aimYaw, pitch: brain.aimPitch };
-  }
-
   private isBotAimReady(
     bot: Player,
     target: Player,
-    attack: AttackConfig | undefined,
+    attack: AttackConfig | null | undefined,
     skill: BotSkillProfile,
     yaw: number,
     pitch: number
   ): boolean {
     if (!attack) return false;
 
-    const origin = this.getPlayerEyePosition(bot);
-    const forward = getForwardVector(yaw, pitch);
-    const readinessPadding = Math.max(0, skill.aimFireToleranceScale - 1) * PLAYER_COMBAT_HITBOX_PADDING;
-    return this.getAimHitAgainstPlayer(
-      origin,
-      forward,
-      attack.range,
-      target,
-      readinessPadding + (attack.collisionRadius ?? 0)
-    ) !== null;
-  }
-
-  private applyBotMovementInput(
-    input: PlayerInput,
-    lookYaw: number,
-    desiredMove: PlainVec2 | null,
-    recovering: boolean,
-    brain: BotBrain
-  ): void {
-    input.moveForward = false;
-    input.moveBackward = false;
-    input.moveLeft = false;
-    input.moveRight = false;
-
-    if (recovering) {
-      input.moveBackward = true;
-      input.moveLeft = brain.strafeDirection < 0;
-      input.moveRight = brain.strafeDirection > 0;
-      return;
-    }
-
-    if (!desiredMove) return;
-
-    const local = worldDirectionToLocalMove(desiredMove, lookYaw);
-    const threshold = 0.22;
-    input.moveForward = local.z < -threshold;
-    input.moveBackward = local.z > threshold;
-    input.moveLeft = local.x < -threshold;
-    input.moveRight = local.x > threshold;
-
-    if (!input.moveForward && !input.moveBackward && !input.moveLeft && !input.moveRight) {
-      if (Math.abs(local.x) > Math.abs(local.z)) {
-        input.moveLeft = local.x < 0;
-        input.moveRight = local.x >= 0;
-      } else {
-        input.moveForward = local.z <= 0;
-        input.moveBackward = local.z > 0;
-      }
-    }
-  }
-
-  private getYawPitchTowardPosition(source: Player, targetPosition: PlainVec3): { yaw: number; pitch: number } {
-    const sourceEye = this.getPlayerEyePosition(source);
-    const dx = targetPosition.x - sourceEye.x;
-    const dy = targetPosition.y - sourceEye.y;
-    const dz = targetPosition.z - sourceEye.z;
-    const horizontal = Math.sqrt(dx * dx + dz * dz);
-    return {
-      yaw: Math.atan2(-dx, -dz),
-      pitch: clamp(Math.atan2(dy, horizontal), -0.8, 0.8),
-    };
-  }
-
-  private getYawPitchToward(source: Player, target: Player | { x: number; y: number; z: number }): { yaw: number; pitch: number } {
-    const targetPosition = 'position' in target ? this.getPlayerBodyAimPosition(target) : target;
-    return this.getYawPitchTowardPosition(source, {
-      x: targetPosition.x,
-      y: targetPosition.y,
-      z: targetPosition.z,
+    const trace = getBotAimReadinessTrace({
+      origin: this.getPlayerEyePosition(bot),
+      yaw,
+      pitch,
+      attackRange: attack.range,
+      attackCollisionRadius: attack.collisionRadius,
+      hitboxPadding: PLAYER_COMBAT_HITBOX_PADDING,
+      skill,
     });
+    return this.getAimHitAgainstPlayer(
+      trace.origin,
+      trace.direction,
+      trace.range,
+      target,
+      trace.extraRadius
+    ) !== null;
   }
 
   private hasClearShot(source: Player, target: Player): boolean {
@@ -8488,97 +6142,52 @@ export class GameRoom extends Room<GameState> {
     this.disablePlayerSkills(player);
     this.resetPlayerPressState(player.id);
     resetPlayerMovementRuntime(player);
-    this.blazeBurnEffects.delete(player.id);
-    this.clearFlamethrowerDamageTicksForPlayer(player.id);
-    this.playerRootedUntil.delete(player.id);
-    this.powerupBoostUntil.delete(player.id);
+    this.blazeBurns.clearTarget(player.id);
+    this.blazeFlamethrowers.clearDamageTicksForPlayer(player.id);
+    this.playerRoots.clear(player.id);
+    this.powerupBoosts.clear(player.id);
     this.clearHookshotDragPullsInvolving(player.id);
-    this.attackCooldownUntil.delete(`${player.id}:primary`);
-    this.attackCooldownUntil.delete(`${player.id}:secondary`);
-    this.playerCombatActivityAt.delete(player.id);
+    this.attackCooldowns.clearPlayer(player.id);
+    this.playerCombatActivity.clear(player.id);
     player.lastInput = player.isBot
       ? createEmptyBotInput(this.state.tick, player, now)
       : null;
   }
 
   private getActiveDevBotSkillOverride(bot: Player, now: number): DevBotSkillOverride | null {
-    const override = this.devBotSkillOverrides.get(bot.id);
+    const override = this.devRuntime.getBotSkillOverride(bot.id);
     if (!override) return null;
     if (now < override.expiresAt) return override;
 
-    this.finishDevBotSkillOverride(bot, override);
+    this.finishDevBotSkillOverride(bot, override, now);
     return null;
   }
 
-  private finishDevBotSkillOverride(bot: Player, override: DevBotSkillOverride): void {
-    this.devBotSkillOverrides.delete(bot.id);
+  private finishDevBotSkillOverride(bot: Player, override: DevBotSkillOverride, now = Date.now()): void {
+    this.devRuntime.clearBotSkillOverride(bot.id);
 
     if (
       bot.heroId === 'blaze' &&
       override.slot === 'secondary' &&
-      playerPressState.get(bot.id)?.secondaryFire
+      this.playerPressStates.get(bot.id)?.secondaryFire
     ) {
-      this.tryResolveAttack(bot, 'secondary');
+      this.tryResolveAttack(bot, 'secondary', now);
     }
 
     this.resetPlayerPressState(bot.id);
   }
 
   private getActiveDevBotLookOverride(bot: Player, now: number): DevBotLookOverride | null {
-    const override = this.devBotLookOverrides.get(bot.id);
+    const override = this.devRuntime.getBotLookOverride(bot.id);
     if (!override) return null;
     if (now < override.expiresAt) return override;
 
-    this.devBotLookOverrides.delete(bot.id);
+    this.devRuntime.clearBotLookOverride(bot.id);
     return null;
   }
 
   private createDevBotSkillInput(bot: Player, now: number, override: DevBotSkillOverride | null): PlayerInput {
-    return this.applyDevBotSkillOverride(bot, createEmptyBotInput(this.state.tick, bot, now), override);
-  }
-
-  private applyDevBotLookOverride(input: PlayerInput, override: DevBotLookOverride | null): PlayerInput {
-    if (!override) return input;
-    input.lookPitch = override.pitch;
-    return input;
-  }
-
-  private applyDevBotSkillOverride(
-    bot: Player,
-    input: PlayerInput,
-    override: DevBotSkillOverride | null
-  ): PlayerInput {
-    if (!override) return input;
-
-    input.primaryFire = false;
-    input.secondaryFire = false;
-    input.reload = false;
-    input.ability1 = false;
-    input.ability2 = false;
-    input.ultimate = false;
-
-    switch (override.slot) {
-      case 'primary':
-        input.primaryFire = true;
-        break;
-      case 'secondary':
-        input.secondaryFire = true;
-        break;
-      case 'ability1':
-        input.ability1 = true;
-        if (bot.heroId === 'chronos') {
-          input.primaryFire = true;
-        }
-        break;
-      case 'ability2':
-        input.ability2 = true;
-        break;
-      case 'ultimate':
-        input.ultimate = true;
-        break;
-    }
-
-    return input;
+    return applyDevBotSkillOverride(createEmptyBotInput(this.state.tick, bot, now), bot.heroId, override);
   }
 
   private rootBotMovementAndSkills(bot: Player, now: number): void {
@@ -8596,18 +6205,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private resetPlayerPressState(playerId: string): void {
-    let pressState = playerPressState.get(playerId);
-    if (!pressState) {
-      this.initializePressState(playerId);
-      pressState = playerPressState.get(playerId)!;
-    }
-
-    pressState.primaryFire = false;
-    pressState.secondaryFire = false;
-    pressState.reload = false;
-    pressState.ability1 = false;
-    pressState.ability2 = false;
-    pressState.ultimate = false;
+    this.playerPressStates.reset(playerId);
   }
 
   private handleHeroSelect(client: Client, heroId: HeroId) {
@@ -8654,10 +6252,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private handleDevSetHero(client: Client, heroId: HeroId) {
-    if (!this.isDevelopmentMode()) {
-      client.send('devCommandError', { message: 'Developer commands are disabled' });
-      return;
-    }
+    if (!this.requireDevelopmentMode(client)) return;
 
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
@@ -8679,19 +6274,17 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private getHeroLockPlayers(): Player[] {
-    const players: Player[] = [];
-    this.state.players.forEach((player) => {
-      if (!this.spawnedNpcs.has(player.id)) {
-        players.push(player);
-      }
-    });
-    return players;
+  private getHeroLockPlayers(): RoomHeroLockParticipant[] {
+    return getRoomHeroLockParticipants(this.state.players.values(), this.npcs.ids);
   }
 
   private isPlayerTeamHeroAvailable(player: Player, heroId: HeroId): boolean {
-    if (!isTeam(player.team)) return true;
-    return isTeamHeroAvailable(this.getHeroLockPlayers(), player.team, heroId, player.id);
+    return isRoomPlayerTeamHeroAvailable({
+      players: this.getHeroLockPlayers(),
+      team: player.team,
+      heroId,
+      playerId: player.id,
+    });
   }
 
   private setPlayerHero(player: Player, heroId: HeroId): boolean {
@@ -8703,15 +6296,13 @@ export class GameRoom extends Room<GameState> {
     player.maxHealth = heroDef.stats.maxHealth;
     player.health = player.maxHealth;
     player.ultimateCharge = 0;
-    this.phantomPrimaryHoldStartedAt.delete(player.id);
-    this.chronosPrimaryHoldStartedAt.delete(player.id);
-    this.chronosAegisShieldHp.delete(player.id);
-    this.devBotSkillOverrides.delete(player.id);
-    this.devBotLookOverrides.delete(player.id);
+    this.clearPrimaryHoldStates(player.id);
+    this.chronosAegisShields.clear(player.id);
+    this.devRuntime.clearPlayer(player.id);
     if (heroId === 'phantom') {
       this.resetPhantomPrimaryMagazine(player.id);
     } else {
-      this.phantomPrimaryMagazines.delete(player.id);
+      this.phantomPrimaryMagazines.clear(player.id);
     }
     this.disablePlayerSkills(player);
     if (player.lastInput) {
@@ -8739,10 +6330,11 @@ export class GameRoom extends Room<GameState> {
   }
 
   private selectRandomBotHero(team?: string, playerId?: string): HeroId {
-    if (isTeam(team)) {
-      return pickAvailableTeamHero(this.getHeroLockPlayers(), team, playerId) ?? 'phantom';
-    }
-    return ALL_HERO_IDS[Math.floor(Math.random() * ALL_HERO_IDS.length)] ?? 'phantom';
+    return selectAvailableRoomHero({
+      players: this.getHeroLockPlayers(),
+      team,
+      playerId,
+    });
   }
 
   private selectAvailableHeroForPlayer(player: Player): HeroId {
@@ -8753,21 +6345,21 @@ export class GameRoom extends Room<GameState> {
     return isDevelopmentToolsEnabled();
   }
 
+  private requireDevelopmentMode(client: Client): boolean {
+    if (this.isDevelopmentMode()) return true;
+
+    client.send('devCommandError', { message: DEV_COMMANDS_DISABLED_MESSAGE });
+    return false;
+  }
+
   private handleSetDevImmune(client: Client, enabled: boolean): void {
     if (!this.isDevelopmentMode()) return;
 
-    if (enabled) {
-      this.devImmunePlayers.add(client.sessionId);
-    } else {
-      this.devImmunePlayers.delete(client.sessionId);
-    }
+    this.devRuntime.setPlayerImmune(client.sessionId, enabled);
   }
 
   private handleDevFillUltimate(client: Client): void {
-    if (!this.isDevelopmentMode()) {
-      client.send('devCommandError', { message: 'Developer commands are disabled' });
-      return;
-    }
+    if (!this.requireDevelopmentMode(client)) return;
 
     const player = this.state.players.get(client.sessionId);
     if (!player || !player.heroId) {
@@ -8779,10 +6371,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private handleDevEndGame(client: Client): void {
-    if (!this.isDevelopmentMode()) {
-      client.send('devCommandError', { message: 'Developer commands are disabled' });
-      return;
-    }
+    if (!this.requireDevelopmentMode(client)) return;
 
     const player = this.state.players.get(client.sessionId);
     if (!player) {
@@ -8794,17 +6383,14 @@ export class GameRoom extends Room<GameState> {
   }
 
   private handleDevSetObserver(client: Client): void {
-    if (!this.isDevelopmentMode()) {
-      client.send('devCommandError', { message: 'Developer commands are disabled' });
-      return;
-    }
+    if (!this.requireDevelopmentMode(client)) return;
 
     if (this.matchMode !== 'custom') {
       client.send('devCommandError', { message: 'Observer command is only available in custom games' });
       return;
     }
 
-    if (this.observerClientIds.has(client.sessionId)) {
+    if (this.clientRegistry.isObserver(client.sessionId)) {
       client.send('observerModeStarted', { playerId: client.sessionId });
       return;
     }
@@ -8815,7 +6401,7 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    void this.removeVoiceParticipantForPlayer(client.sessionId, this.normalizeVoiceTeam(player.team), 'observe');
+    void this.removeVoiceParticipantForPlayer(client.sessionId, normalizeVoiceTeam(player.team), 'observe');
 
     if (player.hasFlag) {
       this.dropFlag(player);
@@ -8825,9 +6411,8 @@ export class GameRoom extends Room<GameState> {
     this.state.players.delete(client.sessionId);
     this.clearCombatPlayerRuntimeState(client.sessionId);
     this.clearPlayerReplicationState(client.sessionId);
-    this.observerClientIds.add(client.sessionId);
-    this.clientsBySessionId.set(client.sessionId, client);
-    this.playerPingsDirty = true;
+    this.clientRegistry.addObserver(client.sessionId, client);
+    this.playerPings.markDirty();
 
     if (this.state.phase === 'waiting' || this.state.phase === 'hero_select' || this.state.phase === 'countdown') {
       this.resetCountdownStartGate();
@@ -8841,37 +6426,35 @@ export class GameRoom extends Room<GameState> {
   }
 
   private handleSetDevTimeFrozen(client: Client, enabled: boolean): void {
-    if (!this.isDevelopmentMode()) {
-      client.send('devCommandError', { message: 'Developer commands are disabled' });
-      return;
-    }
+    if (!this.requireDevelopmentMode(client)) return;
 
     const now = Date.now();
-    if (enabled) {
-      this.state.roundTimeRemaining = this.getRoundTimeRemaining(now);
-      if (this.state.roundStartTime) {
-        this.state.phaseEndTime = now + this.state.roundTimeRemaining * 1000;
-      }
-      this.devGameClockFrozen = true;
-    } else {
-      this.devGameClockFrozen = false;
-      if (this.state.roundStartTime) {
-        const elapsedSeconds = this.config.roundTimeSeconds - this.state.roundTimeRemaining;
-        this.state.roundStartTime = now - elapsedSeconds * 1000;
-        this.state.phaseEndTime = now + this.state.roundTimeRemaining * 1000;
-      }
+    const patch = buildDevTimeFreezeStatePatch({
+      enabled,
+      roundStartTime: this.state.roundStartTime,
+      roundTimeRemaining: this.state.roundTimeRemaining,
+      roundTimeSeconds: this.config.roundTimeSeconds,
+      now,
+    });
+
+    this.devRuntime.setGameClockFrozen(patch.gameClockFrozen);
+    if (patch.roundTimeRemaining !== undefined) {
+      this.state.roundTimeRemaining = patch.roundTimeRemaining;
+    }
+    if (patch.roundStartTime !== undefined) {
+      this.state.roundStartTime = patch.roundStartTime;
+    }
+    if (patch.phaseEndTime !== undefined) {
+      this.state.phaseEndTime = patch.phaseEndTime;
     }
 
     this.broadcastMatchSnapshot(true);
   }
 
   private handleSetDevBotsRooted(client: Client, enabled: boolean): void {
-    if (!this.isDevelopmentMode()) {
-      client.send('devCommandError', { message: 'Developer commands are disabled' });
-      return;
-    }
+    if (!this.requireDevelopmentMode(client)) return;
 
-    this.devBotsRooted = enabled;
+    this.devRuntime.setBotsRooted(enabled);
 
     if (enabled) {
       const now = Date.now();
@@ -8881,10 +6464,7 @@ export class GameRoom extends Room<GameState> {
         }
       });
     } else {
-      this.botBrains.forEach((brain) => {
-        brain.nextThinkAt = 0;
-        brain.nextBlackboardAt = 0;
-      });
+      this.botRuntime.resetBrainSchedules();
     }
 
     client.send('devBotsRootedChanged', { enabled });
@@ -8892,18 +6472,12 @@ export class GameRoom extends Room<GameState> {
   }
 
   private handleSetDevBotBrainEnabled(client: Client, enabled: boolean): void {
-    if (!this.isDevelopmentMode()) {
-      client.send('devCommandError', { message: 'Developer commands are disabled' });
-      return;
-    }
+    if (!this.requireDevelopmentMode(client)) return;
 
-    this.devBotBrainEnabled = enabled;
+    this.devRuntime.setBotBrainEnabled(enabled);
 
     if (enabled) {
-      this.botBrains.forEach((brain) => {
-        brain.nextThinkAt = 0;
-        brain.nextBlackboardAt = 0;
-      });
+      this.botRuntime.resetBrainSchedules();
     } else {
       const now = Date.now();
       this.state.players.forEach((player) => {
@@ -8918,51 +6492,51 @@ export class GameRoom extends Room<GameState> {
   }
 
   private handleDevAddBot(client: Client, data: { heroId?: HeroId; team?: Team }): void {
-    if (!this.isDevelopmentMode()) {
-      client.send('devCommandError', { message: 'Developer commands are disabled' });
-      return;
-    }
+    if (!this.requireDevelopmentMode(client)) return;
 
     const { heroId, team } = data;
-    const heroDef = heroId ? HERO_DEFINITIONS[heroId] : null;
-    if (!heroId || !heroDef) {
-      client.send('devCommandError', { message: `Invalid bot hero: ${heroId || ''}` });
+    const request = validateDevBotAddRequest({
+      heroId,
+      team,
+      playerCount: this.state.players.size,
+      maxPlayers: this.config.maxPlayers,
+      heroAvailable: Boolean(
+        heroId &&
+        team &&
+        isRoomPlayerTeamHeroAvailable({
+          players: this.getHeroLockPlayers(),
+          team,
+          heroId,
+        })
+      ),
+    });
+    if (!request.ok) {
+      client.send('devCommandError', { message: request.error });
       return;
     }
 
-    if (team !== 'red' && team !== 'blue') {
-      client.send('devCommandError', { message: `Invalid bot team: ${team || ''}` });
-      return;
-    }
-
-    if (this.state.players.size >= this.config.maxPlayers) {
-      client.send('devCommandError', { message: 'Game room is full' });
-      return;
-    }
-
-    if (!isTeamHeroAvailable(this.getHeroLockPlayers(), team, heroId)) {
-      client.send('devCommandError', { message: 'Hero is already picked on that team' });
-      return;
-    }
-
-    const botIndex = this.devBotIdCounter++;
+    const botIndex = this.botRuntime.createDevBotIndex();
     const now = Date.now();
+    const profile = buildDevBotSpawnProfile({
+      roomId: this.roomId,
+      heroId: request.heroId,
+      heroName: request.heroName,
+      team: request.team,
+      botIndex,
+      phase: this.state.phase,
+    });
     const bot = new Player();
-    bot.id = `bot_dev_${this.roomId}_${botIndex}`;
-    bot.name = `${heroDef.name} Bot ${botIndex + 1}`;
-    bot.team = team;
-    bot.isBot = true;
-    bot.botDifficulty = 'normal';
-    bot.botProfileId = `dev-${heroId}-${botIndex}`;
-    bot.isReady = true;
-    bot.state = this.state.phase === 'playing'
-      ? 'alive'
-      : this.state.phase === 'countdown'
-        ? 'spawning'
-        : 'selecting';
+    bot.id = profile.id;
+    bot.name = profile.name;
+    bot.team = profile.team;
+    bot.isBot = profile.isBot;
+    bot.botDifficulty = profile.botDifficulty;
+    bot.botProfileId = profile.botProfileId;
+    bot.isReady = profile.isReady;
+    bot.state = profile.state;
 
     this.placePlayerAtSpawn(bot);
-    if (!this.setPlayerHero(bot, heroId)) {
+    if (!this.setPlayerHero(bot, request.heroId)) {
       client.send('devCommandError', { message: 'Hero is already picked on that team' });
       return;
     }
@@ -8972,14 +6546,14 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.state.players.set(bot.id, bot);
-    this.knownPlayerIds.add(bot.id);
+    this.replicationState.markKnownPlayer(bot.id);
     this.updateLastSafeMovement(bot, 0);
-    this.preferredBotHeroes.set(bot.id, heroId);
+    this.botRuntime.setPreferredHero(bot.id, request.heroId);
     this.initializePressState(bot.id);
-    this.botBrains.set(bot.id, this.createBotBrain(bot, botIndex));
-    if (this.devBotsRooted) {
+    this.botRuntime.setBrain(bot.id, this.createBotBrain(bot, botIndex));
+    if (this.devRuntime.areBotsRooted()) {
       this.rootBotMovementAndSkills(bot, now);
-    } else if (!this.devBotBrainEnabled) {
+    } else if (!this.devRuntime.isBotBrainEnabled()) {
       this.disableBotBrainInput(bot, now);
     }
     this.updateMetadata();
@@ -8992,8 +6566,8 @@ export class GameRoom extends Room<GameState> {
     client.send('devBotAdded', {
       playerId: bot.id,
       name: bot.name,
-      heroId,
-      team,
+      heroId: request.heroId,
+      team: request.team,
     });
 
     this.broadcastStateStreams({ transforms: true, forceVitals: true, forceMatch: true });
@@ -9001,10 +6575,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private handleDevBotSkill(client: Client, data: { heroId: HeroId; team: Team; skillKey: string }): void {
-    if (!this.isDevelopmentMode()) {
-      client.send('devCommandError', { message: 'Developer commands are disabled' });
-      return;
-    }
+    if (!this.requireDevelopmentMode(client)) return;
 
     const skill = resolveDevBotSkillOverride(data.skillKey);
     if (!skill) {
@@ -9023,7 +6594,7 @@ export class GameRoom extends Room<GameState> {
     const now = Date.now();
     this.primeDevBotSkill(bot, skill.slot);
     this.resetPlayerPressState(bot.id);
-    this.devBotSkillOverrides.set(bot.id, {
+    this.devRuntime.setBotSkillOverride(bot.id, {
       ...skill,
       expiresAt: now + DEV_BOT_SKILL_HOLD_MS,
     });
@@ -9039,10 +6610,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private handleDevBotLook(client: Client, data: { heroId: HeroId; team: Team; direction: string }): void {
-    if (!this.isDevelopmentMode()) {
-      client.send('devCommandError', { message: 'Developer commands are disabled' });
-      return;
-    }
+    if (!this.requireDevelopmentMode(client)) return;
 
     const direction = resolveDevBotLookDirection(data.direction);
     if (!direction) {
@@ -9066,11 +6634,11 @@ export class GameRoom extends Room<GameState> {
       lookPitch: pitch,
       timestamp: now,
     };
-    const brain = this.botBrains.get(bot.id);
+    const brain = this.botRuntime.getBrain(bot.id);
     if (brain) {
       brain.aimPitch = pitch;
     }
-    this.devBotLookOverrides.set(bot.id, {
+    this.devRuntime.setBotLookOverride(bot.id, {
       direction,
       pitch,
       expiresAt: now + DEV_BOT_LOOK_HOLD_MS,
@@ -9091,7 +6659,7 @@ export class GameRoom extends Room<GameState> {
     let fallback: Player | null = null;
     this.state.players.forEach((player) => {
       if (fallback || !player.isBot || player.heroId !== heroId || player.team !== team) return;
-      if (this.spawnedNpcs.has(player.id)) return;
+      if (this.npcs.has(player.id)) return;
       if (player.state === 'alive') {
         fallback = player;
       }
@@ -9100,24 +6668,18 @@ export class GameRoom extends Room<GameState> {
   }
 
   private primeDevBotSkill(player: Player, slot: DevBotSkillSlot): void {
-    this.attackCooldownUntil.delete(`${player.id}:primary`);
-    this.attackCooldownUntil.delete(`${player.id}:secondary`);
-    this.phantomPrimaryHoldStartedAt.delete(player.id);
-    this.chronosPrimaryHoldStartedAt.delete(player.id);
-    this.phantomVoidRayChargeStartedAt.delete(player.id);
-    this.phantomVoidRayResolvedForPress.delete(player.id);
+    this.attackCooldowns.clearPlayer(player.id);
+    this.clearPrimaryHoldStates(player.id);
+    this.phantomVoidRayCharges.clear(player.id);
 
     if (player.heroId === 'phantom' && slot === 'primary') {
-      const magazine = this.getOrCreatePhantomPrimaryMagazine(player);
-      magazine.ammo = PHANTOM_PRIMARY_MAGAZINE_SIZE;
-      magazine.reloadStartedAt = 0;
-      magazine.reloadUntil = 0;
+      this.phantomPrimaryMagazines.reset(player.id);
     }
     if (player.heroId === 'blaze') {
       player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
     }
     if (player.heroId === 'chronos' && slot === 'secondary') {
-      this.chronosAegisShieldHp.delete(player.id);
+      this.chronosAegisShields.clear(player.id);
     }
 
     if (slot === 'primary' || slot === 'secondary') return;
@@ -9135,186 +6697,60 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private getRoundTimeRemaining(now: number): number {
-    if (!this.state.roundStartTime) return this.state.roundTimeRemaining;
-
-    const elapsed = Math.max(0, (now - this.state.roundStartTime) / 1000);
-    return Math.max(0, this.config.roundTimeSeconds - elapsed);
-  }
-
   private refreshMapManifest(): void {
-    const themeId = this.state.mapThemeId
-      ? this.state.mapThemeId as VoxelMapTheme['id']
-      : getVoxelMapTheme(this.state.mapSeed).id;
-    const mapSize = normalizeVoxelMapSizeId(this.state.mapSize || DEFAULT_VOXEL_MAP_SIZE_ID);
-    this.state.mapThemeId = themeId;
-    this.state.mapSize = mapSize;
-    this.mapManifest = generateProceduralVoxelMap(this.state.mapSeed, { themeId, mapSize });
-    this.powerupBoostUntil.clear();
-    resetPowerupPickupStates(this.powerupPickupStates, this.mapManifest, 0);
-    this.proceduralTerrainLookup = createProceduralTerrainLookup(this.mapManifest);
-    this.mapChunkLookup.clear();
-    for (const chunk of this.mapManifest.chunks) {
-      this.mapChunkLookup.set(this.getChunkKey(chunk.coord.x, chunk.coord.y, chunk.coord.z), chunk);
-    }
-    this.botRouteGraph = createBotRouteGraphAdapter(this.mapManifest);
-    this.botTeamTactics = null;
-    this.nextBotTacticsAt = 0;
-    this.movementTerrain.origin = this.mapManifest.origin;
-    this.movementTerrain.voxelSize = this.mapManifest.voxelSize;
-    this.hookshotAnchorWalls = [];
-    this.movementCollisionRevision = 0;
-    this.movementTerrain.collisionRevision = 0;
-    this.movementCollisionWorldCache = null;
+    const mapManifest = this.mapRuntime.refreshMap();
+    this.state.mapThemeId = mapManifest.themeId;
+    this.state.mapSize = mapManifest.mapSize;
+    this.powerupBoosts.clearAll();
+    this.powerupPickups.reset(mapManifest, 0);
+    this.hookshotRuntime.clearAnchorWalls();
     this.lineOfSightCache.clear();
     this.visibilityInterest.clearAll();
     this.forceTransformFullSync();
   }
 
   private bumpMovementCollisionRevision(): void {
-    this.movementCollisionRevision = (this.movementCollisionRevision + 1) >>> 0;
-    if (this.movementCollisionRevision === 0) {
-      this.movementCollisionRevision = 1;
-    }
-    this.movementTerrain.collisionRevision = this.movementCollisionRevision;
-    this.movementCollisionWorldCache = null;
+    this.mapRuntime.bumpMovementCollisionRevision();
     this.lineOfSightCache.clear();
     this.visibilityInterest.clearLineOfSightCache();
     this.forceTransformFullSync();
   }
 
   private pruneExpiredHookshotAnchorWalls(now = Date.now()): void {
-    let writeIndex = 0;
-    for (let readIndex = 0; readIndex < this.hookshotAnchorWalls.length; readIndex++) {
-      const wall = this.hookshotAnchorWalls[readIndex];
-      const age = now - wall.startTime;
-      if (age >= 0 && age <= wall.duration * 1000) {
-        this.hookshotAnchorWalls[writeIndex++] = wall;
-      }
-    }
-    if (writeIndex !== this.hookshotAnchorWalls.length) {
-      this.hookshotAnchorWalls.length = writeIndex;
+    if (this.hookshotRuntime.pruneExpiredAnchorWalls(now)) {
       this.bumpMovementCollisionRevision();
     }
   }
 
   private getMovementCollisionRevision(now = Date.now()): number {
     this.pruneExpiredHookshotAnchorWalls(now);
-    return this.movementCollisionRevision;
+    return this.mapRuntime.getMovementCollisionRevision();
   }
 
   private getMovementCollisionWorld(now = Date.now()): MovementCollisionWorld {
-    const revision = this.getMovementCollisionRevision(now);
-    const cached = this.movementCollisionWorldCache;
-    if (cached && cached.revision === revision) {
-      return cached.world;
-    }
-
-    this.movementTerrain.collisionRevision = revision;
-    const world = createVoxelCollisionWorld(this.movementTerrain);
-    this.movementCollisionWorldCache = { revision, world };
-    return world;
-  }
-
-  private getHookshotAnchorWallAabbs(bounds: MovementCollisionBounds): MovementAabb[] {
-    if (this.hookshotAnchorWalls.length === 0) return this.emptyMovementAabbs;
-    return computeAnchorWallAabbs(this.hookshotAnchorWalls, this.state.serverTime || Date.now(), bounds);
+    this.getMovementCollisionRevision(now);
+    return this.mapRuntime.getMovementCollisionWorld();
   }
 
   private createHookshotAnchorWall(instance: HookshotAnchorWallInstance): void {
-    this.pruneExpiredHookshotAnchorWalls(instance.startTime);
-    this.hookshotAnchorWalls.push(instance);
+    this.hookshotRuntime.addAnchorWall(instance);
     this.bumpMovementCollisionRevision();
   }
 
   private getMapManifest(): VoxelMapManifest {
-    if (
-      !this.mapManifest
-      || this.mapManifest.seed !== this.state.mapSeed
-      || this.mapManifest.themeId !== this.state.mapThemeId
-      || this.mapManifest.mapSize !== normalizeVoxelMapSizeId(this.state.mapSize)
-    ) {
-      this.refreshMapManifest();
-    }
-    return this.mapManifest!;
-  }
-
-  private getProceduralTerrainLookup(): ReturnType<typeof createProceduralTerrainLookup> {
-    this.getMapManifest();
-    if (!this.proceduralTerrainLookup) {
-      this.proceduralTerrainLookup = createProceduralTerrainLookup(this.mapManifest!);
-    }
-    return this.proceduralTerrainLookup;
-  }
-
-  private getChunkKey(x: number, y: number, z: number): string {
-    return `${x}:${y}:${z}`;
-  }
-
-  private worldToGrid(value: number, origin: number, voxelSize: number): number {
-    return Math.floor((value - origin) / voxelSize);
+    return this.mapRuntime.getMapManifest();
   }
 
   private getBlockAtWorld(position: { x: number; y: number; z: number }): number {
-    const manifest = this.getMapManifest();
-    const gx = this.worldToGrid(position.x, manifest.origin.x, manifest.voxelSize.x);
-    const gy = this.worldToGrid(position.y, manifest.origin.y, manifest.voxelSize.y);
-    const gz = this.worldToGrid(position.z, manifest.origin.z, manifest.voxelSize.z);
-
-    if (gx < 0 || gx >= manifest.size.x || gy < 0 || gy >= manifest.size.y || gz < 0 || gz >= manifest.size.z) {
-      return 0;
-    }
-
-    const cx = Math.floor(gx / manifest.chunkSize.x);
-    const cy = Math.floor(gy / manifest.chunkSize.y);
-    const cz = Math.floor(gz / manifest.chunkSize.z);
-    const chunk = this.mapChunkLookup.get(this.getChunkKey(cx, cy, cz));
-    if (!chunk) return 0;
-
-    const lx = gx - cx * manifest.chunkSize.x;
-    const ly = gy - cy * manifest.chunkSize.y;
-    const lz = gz - cz * manifest.chunkSize.z;
-    return chunk.blocks[lx + chunk.size.x * (lz + chunk.size.z * ly)] || 0;
+    return this.mapRuntime.getBlockAtWorld(position);
   }
 
   private getProceduralGroundY(position: { x: number; y: number; z: number }): number | null {
-    const manifest = this.getMapManifest();
-    const gx = this.worldToGrid(position.x, manifest.origin.x, manifest.voxelSize.x);
-    const gz = this.worldToGrid(position.z, manifest.origin.z, manifest.voxelSize.z);
-
-    if (gx < 0 || gx >= manifest.size.x || gz < 0 || gz >= manifest.size.z) {
-      return null;
-    }
-
-    const topRow = manifest.heightfield.topSolidRows[gx + gz * manifest.heightfield.size.x];
-    if (topRow > 0) {
-      const topY = manifest.origin.y + topRow * manifest.voxelSize.y;
-      if (position.y >= topY - 0.75) {
-        return topY;
-      }
-    }
-
-    const startY = Math.max(0, Math.min(
-      manifest.size.y - 1,
-      this.worldToGrid(position.y - 0.15, manifest.origin.y, manifest.voxelSize.y)
-    ));
-
-    for (let gy = startY; gy >= 0; gy--) {
-      const block = this.getBlockAtWorld({
-        x: position.x,
-        y: manifest.origin.y + (gy + 0.5) * manifest.voxelSize.y,
-        z: position.z,
-      });
-      if (isCollisionBlock(block)) {
-        return manifest.origin.y + (gy + 1) * manifest.voxelSize.y;
-      }
-    }
-
-    return null;
+    return this.mapRuntime.getProceduralGroundY(position);
   }
 
   private clampToPlayableMap(position: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
-    return this.getProceduralTerrainLookup().clampToPlayableMap(position);
+    return this.mapRuntime.clampToPlayableMap(position);
   }
 
   private isFiniteVec3(position: { x: number; y: number; z: number }): boolean {
@@ -9326,10 +6762,8 @@ export class GameRoom extends Room<GameState> {
       ability.isActive = false;
     });
     this.broadcastBlazeFlamethrowerState(player, false, Date.now());
-    this.phantomPrimaryHoldStartedAt.delete(player.id);
-    this.chronosPrimaryHoldStartedAt.delete(player.id);
-    this.phantomVoidRayChargeStartedAt.delete(player.id);
-    this.phantomVoidRayResolvedForPress.delete(player.id);
+    this.clearPrimaryHoldStates(player.id);
+    this.phantomVoidRayCharges.clear(player.id);
     this.clearHookshotGrapple(player.id);
     this.clearHookshotDragPull(player.id);
     player.movement.isGrappling = false;
@@ -9342,27 +6776,26 @@ export class GameRoom extends Room<GameState> {
   private handleTeamSelect(client: Client, team: Team) {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
-    if (this.playerEntryTickets.has(client.sessionId)) {
+    if (this.participantRegistry.hasEntryTicket(client.sessionId)) {
       return;
     }
 
-    // Check team balance
-    const teamCount = this.getTeamCountExcluding(team, client.sessionId);
-    const otherTeamCount = this.getTeamCountExcluding(team === 'red' ? 'blue' : 'red', client.sessionId);
+    const teamSelection = getRoomTeamSelectionDecision({
+      players: this.state.players,
+      playerId: client.sessionId,
+      requestedTeam: team,
+      teamSize: this.config.teamSize,
+    });
+    if (!teamSelection.canSelect) return;
 
-    if (teamCount >= this.config.teamSize || teamCount > otherTeamCount) {
-      // Team is full
-      return;
-    }
-
-    const previousTeam = this.normalizeVoiceTeam(player.team);
+    const previousTeam = normalizeVoiceTeam(player.team);
     player.team = team;
     this.syncMatchParticipant(player);
     if (previousTeam && previousTeam !== team) {
       void this.removeVoiceParticipantForPlayer(client.sessionId, previousTeam, 'team_changed');
       client.send('voiceTeamChanged', { previousTeam, team });
     }
-    
+
     this.placePlayerAtSpawn(player, 'respawn');
     this.resetCountdownStartGate();
     this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
@@ -9370,53 +6803,27 @@ export class GameRoom extends Room<GameState> {
   }
 
   private async handleVoiceTokenRequest(client: Client, data: unknown): Promise<void> {
-    const requestId = isRecord(data)
-      ? sanitizeShortText(data.requestId, 80)
-      : null;
-
-    if (!requestId) {
-      client.send('voiceToken', voiceService.createDisabledResponse('invalid', 'invalid voice token request'));
-      return;
-    }
-
-    if (isRecord(data) && data.scope !== undefined && data.scope !== 'match') {
-      client.send('voiceToken', voiceService.createDisabledResponse(requestId, 'unsupported voice scope'));
-      return;
-    }
-
     const player = this.state.players.get(client.sessionId);
-    if (!player) {
-      client.send('voiceToken', voiceService.createDisabledResponse(requestId, 'not in game room'));
-      return;
-    }
-
-    if (player.isBot) {
-      client.send('voiceToken', voiceService.createDisabledResponse(requestId, 'bots cannot join voice'));
-      return;
-    }
-
-    const playerTeam = this.normalizeVoiceTeam(player.team);
-    if (!playerTeam) {
-      client.send('voiceToken', voiceService.createDisabledResponse(requestId, 'player has no voice team'));
-      return;
-    }
-
-    const voiceIdentity = this.getVoiceIdentity(client.sessionId);
-    if (!voiceIdentity) {
-      client.send('voiceToken', voiceService.createDisabledResponse(requestId, 'Authentication required'));
+    const prepared = prepareMatchVoiceTokenRequest({
+      payload: data,
+      player,
+      identity: this.getDurableUserId(client.sessionId),
+    });
+    if (!prepared.ok) {
+      client.send('voiceToken', voiceService.createDisabledResponse(prepared.requestId, prepared.reason));
       return;
     }
 
     const response = await voiceService.issueMatchVoiceToken({
-      requestId,
+      requestId: prepared.requestId,
       playerId: client.sessionId,
-      identity: voiceIdentity,
-      displayName: player.name,
-      team: playerTeam,
+      identity: prepared.identity,
+      displayName: prepared.displayName,
+      team: prepared.team,
       lobbyId: this.lobbyId,
       gameRoomId: this.roomId,
-      human: !player.isBot,
-      canPublish: player.state !== 'spectating',
+      human: prepared.human,
+      canPublish: prepared.canPublish,
     });
 
     client.send('voiceToken', response);
@@ -9437,17 +6844,14 @@ export class GameRoom extends Room<GameState> {
 
   private handleMatchSceneReady(client: Client, data: unknown): void {
     if (this.matchCancelled) return;
-    if (this.state.phase !== 'hero_select' || !this.countdownStartGateOpen) return;
+    if (this.state.phase !== 'hero_select' || !this.matchStartGate.isOpen()) return;
 
-    const gateKey = isRecord(data) && typeof data.key === 'number' && Number.isInteger(data.key)
-      ? data.key
-      : null;
-    if (gateKey !== this.countdownStartGateKey) return;
+    if (!this.matchStartGate.canAcceptSceneReadyKey(readMatchSceneReadyGateKey(data))) return;
 
     const player = this.state.players.get(client.sessionId);
-    if (!player || player.isBot || !player.heroId || !player.isReady) return;
+    if (!canMarkMatchSceneReady(player)) return;
 
-    this.countdownSceneReadyPlayerIds.add(client.sessionId);
+    this.matchStartGate.markSceneReady(client.sessionId);
     this.checkPhaseTransition();
   }
 
@@ -9455,50 +6859,47 @@ export class GameRoom extends Room<GameState> {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
 
-    // Filter out empty messages
-    if (!message.trim()) return;
+    const payload = buildRoomChatPayload({
+      playerId: client.sessionId,
+      playerName: player.name,
+      message,
+      teamOnly,
+      timestamp: Date.now(),
+    });
+    if (!payload) return;
 
-    // Limit message length
-    const sanitizedMessage = message.substring(0, 200);
+    if (!teamOnly) {
+      this.broadcast('chat', payload);
+      return;
+    }
 
-    if (teamOnly) {
-      // Send to team only
-      this.state.players.forEach((p, sessionId) => {
-        if (p.team === player.team) {
-          this.clientsBySessionId.get(sessionId)?.send('chat', {
-            playerId: client.sessionId,
-            playerName: player.name,
-            message: sanitizedMessage,
-            teamOnly: true,
-            timestamp: Date.now(),
-          });
-        }
-      });
-    } else {
-      this.broadcast('chat', {
-        playerId: client.sessionId,
-        playerName: player.name,
-        message: sanitizedMessage,
-        teamOnly: false,
-        timestamp: Date.now(),
-      });
+    for (const sessionId of getRoomChatRecipientIds({
+      players: this.state.players,
+      senderTeam: player.team,
+      teamOnly,
+    })) {
+      this.clientRegistry.getClient(sessionId)?.send('chat', payload);
     }
   }
 
   private checkPhaseTransition() {
     if (this.matchCancelled) return;
 
-    const playerCount = this.state.players.size;
-
     switch (this.state.phase) {
       case 'waiting':
-        if (playerCount >= 1 && this.hasRequiredHumanPlayersConnected()) {
+        if (shouldStartHeroSelectPhase({
+          playerCount: this.state.players.size,
+          hasRequiredHumanPlayersConnected: this.hasRequiredHumanPlayersConnected(),
+        })) {
           this.startHeroSelect();
         }
         break;
 
       case 'hero_select':
-        if (this.state.phaseEndTime && Date.now() >= this.state.phaseEndTime) {
+        if (shouldAutoReadyHeroSelectPhase({
+          phaseEndTime: this.state.phaseEndTime,
+          now: Date.now(),
+        })) {
           this.state.players.forEach(p => {
             if (!p.heroId) {
               this.setPlayerHero(p, this.selectAvailableHeroForPlayer(p));
@@ -9507,14 +6908,21 @@ export class GameRoom extends Room<GameState> {
           });
         }
 
-        if (!this.areAllPlayersReadyForCountdown()) return;
+        const playersReadyForCountdown = this.areAllPlayersReadyForCountdown();
+        if (!playersReadyForCountdown) return;
 
-        if (!this.countdownStartGateOpen) {
+        if (shouldOpenCountdownStartGate({
+          playersReadyForCountdown,
+          countdownStartGateOpen: this.matchStartGate.isOpen(),
+        })) {
           loggers.room.info('all players ready, waiting for clients to load into spawn');
           this.openCountdownStartGate();
         }
 
-        if (this.areAllHumansSceneReadyForCountdown()) {
+        if (shouldStartCountdownAfterSceneReady({
+          playersReadyForCountdown,
+          humansSceneReadyForCountdown: this.areAllHumansSceneReadyForCountdown(),
+        })) {
           if (!this.ensureCompetitiveNetworkQualityForStart()) return;
           loggers.room.info('all players loaded into spawn, starting countdown');
           this.startCountdown();
@@ -9524,62 +6932,62 @@ export class GameRoom extends Room<GameState> {
   }
 
   private resetCountdownStartGate(): void {
-    this.countdownStartGateOpen = false;
-    this.countdownSceneReadyPlayerIds.clear();
-    this.countdownStartGateKey++;
+    this.matchStartGate.reset();
+  }
+
+  private applyPhaseStatePatch(patch: RoomPhaseStatePatch): void {
+    this.state.phase = patch.phase;
+    this.state.phaseEndTime = patch.phaseEndTime;
+    if (patch.roundStartTime !== undefined) {
+      this.state.roundStartTime = patch.roundStartTime;
+    }
+    if (patch.roundTimeRemaining !== undefined) {
+      this.state.roundTimeRemaining = patch.roundTimeRemaining;
+    }
+  }
+
+  private applyPostGameResetStatePatch(patch: PostGameResetStatePatch): void {
+    this.state.phase = patch.phase;
+    this.state.mapSeed = patch.mapSeed;
+    this.state.mapThemeId = patch.mapThemeId;
+    this.state.mapSize = patch.mapSize;
+    this.state.redTeam.score = patch.redScore;
+    this.state.blueTeam.score = patch.blueScore;
   }
 
   private getConnectedHumanPlayerCount(): number {
-    let count = 0;
-    this.state.players.forEach((player) => {
-      if (!player.isBot) count++;
-    });
-    return count;
+    return countConnectedHumanPlayers(this.state.players.values());
   }
 
   private hasRequiredHumanPlayersConnected(): boolean {
-    return this.getConnectedHumanPlayerCount() >= this.requiredHumanPlayers;
+    return hasRequiredHumanPlayersConnectedState(
+      this.state.players.values(),
+      this.requiredHumanPlayers
+    );
   }
 
   private areAllPlayersReadyForCountdown(): boolean {
-    if (this.state.players.size === 0 || !this.hasRequiredHumanPlayersConnected()) {
-      this.resetCountdownStartGate();
-      return false;
-    }
-
-    let allReady = true;
-    this.state.players.forEach((player) => {
-      if (!player.heroId || !player.isReady) {
-        allReady = false;
-      }
+    const ready = arePlayersReadyForCountdownState({
+      players: this.state.players.values(),
+      requiredHumanPlayers: this.requiredHumanPlayers,
     });
 
-    if (!allReady) {
+    if (!ready) {
       this.resetCountdownStartGate();
     }
-    return allReady;
+    return ready;
   }
 
   private areAllHumansSceneReadyForCountdown(): boolean {
-    if (!this.countdownStartGateOpen || !this.hasRequiredHumanPlayersConnected()) return false;
-
-    let allReady = true;
-    this.state.players.forEach((player, playerId) => {
-      if (player.isBot) return;
-      if (!this.clientsBySessionId.has(playerId) || !this.countdownSceneReadyPlayerIds.has(playerId)) {
-        allReady = false;
-      }
+    return this.matchStartGate.areHumansSceneReady({
+      players: this.state.players,
+      connectedClientIds: this.clientRegistry.getConnectedClientIds(),
+      requiredHumanPlayers: this.requiredHumanPlayers,
     });
-
-    return allReady;
   }
 
   private openCountdownStartGate(): void {
-    if (this.countdownStartGateOpen) return;
-
-    this.countdownStartGateOpen = true;
-    this.countdownSceneReadyPlayerIds.clear();
-    this.countdownStartGateKey++;
+    if (!this.matchStartGate.openGate()) return;
 
     const now = Date.now();
     this.state.players.forEach((player) => {
@@ -9593,13 +7001,13 @@ export class GameRoom extends Room<GameState> {
     this.state.players.forEach((player, playerId) => {
       if (player.isBot) return;
 
-      const client = this.clientsBySessionId.get(playerId);
+      const client = this.clientRegistry.getClient(playerId);
       if (!client) return;
 
       const authority = this.getMovementAuthority(player.id);
       this.sendSelfMovementAuthority(player, client, 'spawn');
-      this.sendTracked(client, 'matchStartGate', {
-        key: this.countdownStartGateKey,
+      this.sendTracked(client, 'matchStartGate', buildMatchStartGatePayload({
+        key: this.matchStartGate.key,
         serverTime: now,
         mapSeed: this.state.mapSeed,
         mapThemeId: this.state.mapThemeId,
@@ -9608,15 +7016,17 @@ export class GameRoom extends Room<GameState> {
         movementEpoch: authority.movementEpoch,
         ackSeq: authority.lastProcessedSeq,
         collisionRevision: this.getMovementCollisionRevision(now),
-      });
+      }));
     });
   }
 
   private startHeroSelect() {
     if (this.matchCancelled) return;
 
-    this.state.phase = 'hero_select';
-    this.state.phaseEndTime = Date.now() + this.config.heroSelectTimeSeconds * 1000;
+    this.applyPhaseStatePatch(buildHeroSelectPhaseStatePatch({
+      now: Date.now(),
+      durationSeconds: this.config.heroSelectTimeSeconds,
+    }));
     this.resetCountdownStartGate();
     this.updateMetadata();
 
@@ -9624,7 +7034,7 @@ export class GameRoom extends Room<GameState> {
       if (player.isBot) {
         player.state = 'selecting';
         player.isReady = false;
-        const preferredHero = this.preferredBotHeroes.get(player.id);
+        const preferredHero = this.botRuntime.getPreferredHero(player.id);
         if (!preferredHero || !this.setPlayerHero(player, preferredHero)) {
           player.heroId = '';
           player.abilities.clear();
@@ -9633,13 +7043,7 @@ export class GameRoom extends Room<GameState> {
       }
     });
 
-    this.broadcastTracked('phaseChange', {
-      phase: 'hero_select',
-      endTime: this.state.phaseEndTime,
-      mapSeed: this.state.mapSeed,
-      mapThemeId: this.state.mapThemeId,
-      mapSize: this.state.mapSize as VoxelMapSizeId,
-    });
+    this.broadcastPhaseChange('hero_select');
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
   }
 
@@ -9653,8 +7057,10 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.clearMatchStartCancelTimer();
-    this.state.phase = 'countdown';
-    this.state.phaseEndTime = Date.now() + this.config.countdownSeconds * 1000;
+    this.applyPhaseStatePatch(buildCountdownPhaseStatePatch({
+      now: Date.now(),
+      durationSeconds: this.config.countdownSeconds,
+    }));
     this.updateMetadata();
 
     this.state.players.forEach(player => {
@@ -9664,13 +7070,7 @@ export class GameRoom extends Room<GameState> {
       player.velocity.z = 0;
     });
 
-    this.broadcastTracked('phaseChange', {
-      phase: 'countdown',
-      endTime: this.state.phaseEndTime,
-      mapSeed: this.state.mapSeed,
-      mapThemeId: this.state.mapThemeId,
-      mapSize: this.state.mapSize as VoxelMapSizeId,
-    });
+    this.broadcastPhaseChange('countdown');
     this.forceTransformFullSync();
     this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
   }
@@ -9680,94 +7080,78 @@ export class GameRoom extends Room<GameState> {
     if (!this.ensureCompetitiveNetworkQualityForStart({ cancelPending: true })) return;
 
     this.clearMatchStartCancelTimer();
-    this.state.phase = 'playing';
     const now = Date.now();
-    this.state.roundStartTime = now;
-    this.state.roundTimeRemaining = this.config.roundTimeSeconds;
-    this.state.phaseEndTime = now + this.config.roundTimeSeconds * 1000;
+    this.applyPhaseStatePatch(buildPlayingPhaseStatePatch({
+      now,
+      roundTimeSeconds: this.config.roundTimeSeconds,
+    }));
     this.updateMetadata();
     const ledger = this.ensureMatchPersistenceLedger(this.state.roundStartTime);
-    if (this.wagerContext) {
-      wagerService.attachMatchId(this.wagerContext.wageredLobbyId, ledger.matchId).catch((error) => {
-        loggers.room.error('Failed to attach wager to match ledger', {
-          wageredLobbyId: this.wagerContext?.wageredLobbyId,
-          matchId: ledger.matchId,
-          error: this.serializePersistenceError(error),
-        });
-      });
-    }
+    this.matchFinalization.attachWagerMatchId({
+      roomId: this.roomId,
+      lobbyId: this.lobbyId,
+      wagerContext: this.wagerContext,
+      matchId: ledger.matchId,
+    });
 
-    this.blazeBurnEffects.clear();
+    this.blazeBurns.clearAll();
 
-    // Set all players to alive
     this.state.players.forEach(player => {
-      player.state = 'alive';
-      player.health = player.maxHealth;
-      player.spawnProtectionUntil = now + this.config.spawnProtectionSeconds * 1000;
+      const resetPlan = applyPlayerAliveRuntimeReset(player, {
+        now,
+        spawnProtectionMs: this.config.spawnProtectionSeconds * 1000,
+      });
       this.resetPlayerLifeRuntime(player, now);
-      if (player.heroId === 'blaze') {
-        player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
-      }
-      if (player.heroId === 'phantom') {
+      if (resetPlan.resetPhantomPrimaryMagazine) {
         this.resetPhantomPrimaryMagazine(player.id);
       }
-      if (player.heroId === 'chronos') {
-        this.chronosAegisShieldHp.delete(player.id);
+      if (resetPlan.clearChronosAegisShield) {
+        this.chronosAegisShields.clear(player.id);
       }
-      if (player.isBot) {
-        this.botBrains.set(player.id, this.createBotBrain(player, hashString(player.id)));
+      if (resetPlan.resetBotBrain) {
+        this.botRuntime.setBrain(player.id, this.createBotBrain(player, hashString(player.id)));
       }
 
-      // Reset ability cooldowns
-      resetAbilityCooldowns(player);
+      if (resetPlan.resetAbilityCooldowns) {
+        resetAbilityCooldowns(player);
+      }
       if (ledger.state === 'active') {
         this.registerMatchParticipant(player, this.state.roundStartTime);
       }
     });
 
     // Reset flags
-    resetFlagsFromManifest(this.state, this.getMapManifest());
-    this.powerupBoostUntil.clear();
-    resetPowerupPickupStates(this.powerupPickupStates, this.mapManifest, 0);
+    const mapManifest = this.getMapManifest();
+    resetFlagsFromManifest(this.state, mapManifest);
+    this.powerupBoosts.clearAll();
+    this.powerupPickups.reset(mapManifest, 0);
 
-    this.broadcastTracked('phaseChange', {
-      phase: 'playing',
-      endTime: this.state.phaseEndTime,
-      mapSeed: this.state.mapSeed,
-      mapThemeId: this.state.mapThemeId,
-      mapSize: this.state.mapSize as VoxelMapSizeId,
-    });
-    this.broadcastTracked('powerupState', buildPowerupStateMessage(
+    this.broadcastPhaseChange('playing');
+    this.broadcastTracked('powerupState', this.powerupPickups.buildStateMessage(
       this.state.serverTime || Date.now(),
-      this.mapManifest,
-      this.powerupPickupStates
+      mapManifest
     ));
     this.forceTransformFullSync();
     this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
   }
 
   private endRound() {
-    this.state.phase = 'round_end';
-    this.state.phaseEndTime = Date.now() + 5000; // 5 second intermission
+    this.applyPhaseStatePatch(buildRoundEndPhaseStatePatch({ now: Date.now() }));
     this.updateMetadata();
 
-    const winningTeam = getWinningTeam(this.state.redTeam.score, this.state.blueTeam.score);
-
-    this.broadcastTracked('roundEnd', {
-      winningTeam,
+    this.broadcastTracked('roundEnd', buildRoundEndPayload({
+      gameplayMode: this.gameplayMode,
       redScore: this.state.redTeam.score,
       blueScore: this.state.blueTeam.score,
-      nextPhase: shouldEndGameAfterRound(this.gameplayMode, this.state.redTeam.score, this.state.blueTeam.score, this.config.scoreToWin) ? 'game_end' : 'hero_select',
-    });
+      scoreToWin: this.config.scoreToWin,
+    }));
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
   }
 
   private endGame(forcedByPlayerId?: string) {
     if (this.state.phase === 'game_end') return;
 
-    this.state.phase = 'game_end';
-    this.state.phaseEndTime = 0;
-    this.state.roundTimeRemaining = 0;
+    this.applyPhaseStatePatch(buildGameEndPhaseStatePatch());
     this.updateMetadata();
 
     const winningTeam = getWinningTeam(this.state.redTeam.score, this.state.blueTeam.score);
@@ -9784,76 +7168,36 @@ export class GameRoom extends Room<GameState> {
     this.persistMatchLedger(finalScore, winningTeam, forcedByPlayerId);
     this.settleWagerAfterGame(forcedByPlayerId ? null : winningTeam);
 
-    // Reset room after delay
-    this.scheduleRoomTimeout(() => {
-      this.state.phase = 'waiting';
-      this.state.mapSeed = createRandomSeed();
-      this.state.mapThemeId = getVoxelMapTheme(this.state.mapSeed).id;
-      this.state.mapSize = DEFAULT_VOXEL_MAP_SIZE_ID;
-      this.refreshMapManifest();
-      this.state.redTeam.score = 0;
-      this.state.blueTeam.score = 0;
-      resetFlagsFromManifest(this.state, this.getMapManifest());
-      
-      this.state.players.forEach(player => {
-        player.state = 'selecting';
-        player.heroId = '';
-        player.isReady = false;
-        player.kills = 0;
-        player.deaths = 0;
-        player.assists = 0;
-        player.flagCaptures = 0;
-        player.flagReturns = 0;
-        player.ultimateCharge = 0;
-        player.abilities.clear();
-      });
-      this.matchPersistenceLedger = null;
-      this.updateMetadata();
-    }, 10000);
+    this.roomTimeouts.schedule(() => this.resetAfterGame(), POST_GAME_RESET_DELAY_MS);
+  }
+
+  private resetAfterGame(): void {
+    this.applyPostGameResetStatePatch(buildPostGameResetStatePatch(createRandomSeed()));
+    this.refreshMapManifest();
+    resetFlagsFromManifest(this.state, this.getMapManifest());
+
+    this.state.players.forEach(resetPostGamePlayer);
+    this.matchLedger.clear();
+    this.updateMetadata();
   }
 
   private updateVoidZones(now: number) {
-    let writeIndex = 0;
-    for (let readIndex = 0; readIndex < this.voidZones.length; readIndex++) {
-      const zone = this.voidZones[readIndex];
-      const elapsed = (now - zone.startTime) / 1000;
-      if (elapsed >= zone.duration) {
+    this.voidZones.update(now, {
+      onExpired: (zone) => {
         this.broadcastTracked('voidZoneExpired', { id: zone.id });
-        continue;
-      }
-      this.voidZones[writeIndex++] = zone;
-    }
-    this.voidZones.length = writeIndex;
-
-    // Apply damage to players in active void zones
-    for (const zone of this.voidZones) {
-      if (now - zone.startTime < VOID_ZONE_DAMAGE_INTERVAL) continue;
-
-      const targets = this.playerSpatialIndex.queryRadius(
+      },
+      getTargets: (zone) => this.playerSpatialQueries.queryRadius(
         zone.position,
         zone.radius,
-        this.spatialQueryScratch,
         { team: zone.ownerTeam === 'red' ? 'blue' : 'red', excludeId: zone.ownerId }
-      );
-      for (const player of targets) {
-        if (player.id === zone.ownerId) continue;
-        if (player.spawnProtectionUntil && now < player.spawnProtectionUntil) continue;
-
-        const dx = player.position.x - zone.position.x;
-        const dz = player.position.z - zone.position.z;
-        const distSq = dx * dx + dz * dz;
-        if (distSq > zone.radius * zone.radius) continue;
-
-        const lastDamage = zone.lastDamageTick.get(player.id) || 0;
-        if (now - lastDamage >= VOID_ZONE_DAMAGE_INTERVAL) {
-          zone.lastDamageTick.set(player.id, now);
-          this.applyDamage(player, zone.damage, zone.ownerId, 'void_zone', {
-            abilityId: 'phantom_void_zone',
-            sourcePosition: zone.position,
-          });
-        }
-      }
-    }
+      ),
+      applyDamage: (zone, player) => {
+        this.applyDamage(player, zone.damage, zone.ownerId, 'void_zone', {
+          abilityId: 'phantom_void_zone',
+          sourcePosition: zone.position,
+        });
+      },
+    });
   }
 
   private getBlazeFlamethrowerPose(player: Player): { origin: PlainVec3; direction: PlainVec3 } {
@@ -9872,17 +7216,10 @@ export class GameRoom extends Room<GameState> {
   }
 
   private broadcastBlazeFlamethrowerState(player: Player, active: boolean, now: number): void {
-    const wasActive = this.blazeFlamethrowerActivePlayers.has(player.id);
-    if (wasActive === active) return;
-
-    if (active) {
-      this.blazeFlamethrowerActivePlayers.add(player.id);
-    } else {
-      this.blazeFlamethrowerActivePlayers.delete(player.id);
-    }
+    if (!this.blazeFlamethrowers.setActive(player.id, active)) return;
 
     const pose = this.getBlazeFlamethrowerPose(player);
-    this.broadcastAbilityUsed(player, {
+    this.broadcastExactPlayerEvent('abilityUsed', player, {
       playerId: player.id,
       abilityId: 'blaze_flamethrower',
       castId: `blaze_flamethrower_${player.id}_${active ? 'start' : 'stop'}_${now}`,
@@ -9903,30 +7240,16 @@ export class GameRoom extends Room<GameState> {
     sourcePosition: PlainVec3 | null,
     sourceDirection: PlainVec3 | null
   ): void {
-    const existing = this.blazeBurnEffects.get(target.id);
-    const nextTickAt = existing && existing.ticksRemaining > 0
-      ? Math.min(existing.nextTickAt, now + BLAZE_FLAMETHROWER_BURN_INTERVAL_MS)
-      : now + BLAZE_FLAMETHROWER_BURN_INTERVAL_MS;
-
-    this.blazeBurnEffects.set(target.id, {
-      sourceId: source.id,
-      ticksRemaining: BLAZE_FLAMETHROWER_BURN_TICKS,
-      nextTickAt,
-      sourcePosition: sourcePosition ? { ...sourcePosition } : null,
-      sourceDirection: sourceDirection ? { ...sourceDirection } : null,
-    });
+    this.blazeBurns.ignite(target.id, source.id, now, sourcePosition, sourceDirection);
   }
 
   private updateBlazeBurns(now: number): void {
-    for (const [targetId, burn] of this.blazeBurnEffects) {
-      const target = this.state.players.get(targetId);
-      if (!target || target.state !== 'alive' || burn.ticksRemaining <= 0) {
-        this.blazeBurnEffects.delete(targetId);
-        continue;
-      }
-
-      while (burn.ticksRemaining > 0 && now >= burn.nextTickAt && target.state === 'alive') {
-        const sourceId = this.state.players.has(burn.sourceId) ? burn.sourceId : null;
+    this.blazeBurns.update(now, {
+      isTargetAlive: (targetId) => this.state.players.get(targetId)?.state === 'alive',
+      hasSource: (sourceId) => this.state.players.has(sourceId),
+      applyTick: ({ targetId, sourceId, sourcePosition, sourceDirection }) => {
+        const target = this.state.players.get(targetId);
+        if (!target || target.state !== 'alive') return false;
         const killed = this.applyDamage(
           target,
           BLAZE_FLAMETHROWER_BURN_DAMAGE,
@@ -9934,62 +7257,42 @@ export class GameRoom extends Room<GameState> {
           'burn',
           {
             abilityId: 'blaze_flamethrower',
-            sourcePosition: burn.sourcePosition,
-            sourceDirection: burn.sourceDirection,
+            sourcePosition,
+            sourceDirection,
           }
         );
-        burn.ticksRemaining--;
-        burn.nextTickAt += BLAZE_FLAMETHROWER_BURN_INTERVAL_MS;
-
-        if (killed || target.state !== 'alive') {
-          break;
-        }
-      }
-
-      if (burn.ticksRemaining <= 0 || target.state !== 'alive') {
-        this.blazeBurnEffects.delete(targetId);
-      }
-    }
+        return killed;
+      },
+    });
   }
 
   private updateBlazeFlamethrowers(now: number, dt: number) {
-    const activeBlazePlayersThisTick = this.activeBlazePlayersScratch;
-    activeBlazePlayersThisTick.clear();
+    this.blazeFlamethrowers.beginActiveFrame();
 
-    for (const player of this.alivePlayers) {
+    for (const player of this.playerSpatialIndex.getAlivePlayers()) {
       if (player.heroId !== 'blaze') continue;
-      activeBlazePlayersThisTick.add(player.id);
+      this.blazeFlamethrowers.markActiveThisFrame(player.id);
 
-      player.movement.isJetpacking = false;
       const tempoMultiplier = this.getAbilityTempoMultiplier(player, now);
+      const frameState = resolveBlazeFlamethrowerFrameState({
+        isFiring: Boolean(player.lastInput?.ability1),
+        fuel: player.movement.jetpackFuel,
+        dt,
+        tempoMultiplier,
+      });
+      player.movement.isJetpacking = frameState.isJetpacking;
+      player.movement.jetpackFuel = frameState.fuel;
 
-      const isFiring = Boolean(player.lastInput?.ability1);
-      if (isFiring && player.movement.jetpackFuel > 0) {
-        player.movement.isJetpacking = true;
-        player.movement.jetpackFuel = Math.max(
-          0,
-          player.movement.jetpackFuel - BLAZE_FLAMETHROWER_FUEL_DRAIN * dt * tempoMultiplier
-        );
+      if (frameState.shouldApplyDamage) {
         this.applyFlamethrowerDamage(player, now, tempoMultiplier);
-        this.broadcastBlazeFlamethrowerState(player, true, now);
-        continue;
       }
-
-      if (player.movement.jetpackFuel < BLAZE_FLAMETHROWER_MAX_FUEL) {
-        player.movement.jetpackFuel = Math.min(
-          BLAZE_FLAMETHROWER_MAX_FUEL,
-          player.movement.jetpackFuel + BLAZE_FLAMETHROWER_FUEL_REGEN * dt * tempoMultiplier
-        );
-      }
-      this.broadcastBlazeFlamethrowerState(player, false, now);
+      this.broadcastBlazeFlamethrowerState(player, frameState.active, now);
     }
 
-    for (const playerId of this.blazeFlamethrowerActivePlayers) {
-      if (activeBlazePlayersThisTick.has(playerId)) continue;
-
+    for (const playerId of this.blazeFlamethrowers.getActivePlayerIdsMissingFromFrame()) {
       const player = this.state.players.get(playerId);
       if (!player) {
-        this.blazeFlamethrowerActivePlayers.delete(playerId);
+        this.blazeFlamethrowers.setActive(playerId, false);
         continue;
       }
 
@@ -10001,24 +7304,32 @@ export class GameRoom extends Room<GameState> {
   private applyFlamethrowerDamage(source: Player, now: number, tempoMultiplier: number) {
     const { origin, direction: forward } = this.getBlazeFlamethrowerPose(source);
     const terrainHit = this.raycastTerrain(origin, forward, BLAZE_FLAMETHROWER_RANGE);
-    const flameDistance = terrainHit
-      ? Math.min(BLAZE_FLAMETHROWER_RANGE, distance3D(origin, terrainHit))
-      : BLAZE_FLAMETHROWER_RANGE;
-    let aegisHitForDamage = this.getChronosAegisSkillHit(source, origin, forward, flameDistance, {
+    const damageFrame = resolveBlazeFlamethrowerDamageFrame({
+      origin,
+      terrainHit,
+      range: BLAZE_FLAMETHROWER_RANGE,
+      collisionRadius: BLAZE_FLAMETHROWER_COLLISION_RADIUS,
+      playerRadius: PLAYER_RADIUS,
+      hitboxPadding: PLAYER_COMBAT_HITBOX_PADDING,
+      baseDamageIntervalMs: BLAZE_FLAMETHROWER_DAMAGE_INTERVAL,
+      tempoMultiplier,
+    });
+    const flameDistance = damageFrame.flameDistance;
+    const initialAegisHit = this.getChronosAegisSkillHit(source, origin, forward, flameDistance, {
       projectileRadius: BLAZE_FLAMETHROWER_COLLISION_RADIUS,
     });
 
-    const candidateRange = BLAZE_FLAMETHROWER_RANGE
-      + BLAZE_FLAMETHROWER_COLLISION_RADIUS
-      + PLAYER_RADIUS
-      + PLAYER_COMBAT_HITBOX_PADDING;
-    const candidates = this.playerSpatialIndex.queryConeCandidates(
+    const candidates = this.playerSpatialQueries.queryConeCandidates(
       origin,
-      candidateRange,
-      this.spatialQueryScratch,
+      damageFrame.candidateRange,
       { team: source.team === 'red' ? 'blue' : 'red', excludeId: source.id }
     );
 
+    const hitCandidates: Array<{
+      player: Player;
+      distance: number;
+      aegisHit: ChronosAegisSkillHit | null;
+    }> = [];
     for (const target of candidates) {
       if (target.id === source.id) continue;
       if (target.spawnProtectionUntil && now < target.spawnProtectionUntil) continue;
@@ -10048,19 +7359,29 @@ export class GameRoom extends Room<GameState> {
           targetPoint,
         })
         : null;
-      if (targetAegisHit && targetAegisHit.distance <= distance) {
-        if (!aegisHitForDamage || targetAegisHit.distance < aegisHitForDamage.distance) {
-          aegisHitForDamage = targetAegisHit;
-        }
+      hitCandidates.push({
+        player: target,
+        distance,
+        aegisHit: targetAegisHit,
+      });
+    }
+
+    const damagePlan = resolveBlazeFlamethrowerDamageTargets({
+      initialAegisHit,
+      candidates: hitCandidates,
+    });
+
+    for (const { player: target, distance } of damagePlan.playerHits) {
+      if (!this.blazeFlamethrowers.consumeDamageTick(
+        source.id,
+        { kind: 'player', playerId: target.id },
+        now,
+        damageFrame.damageIntervalMs
+      )) {
         continue;
       }
 
-      const tickKey = `${source.id}:${target.id}`;
-      const lastDamage = this.flamethrowerLastDamageTick.get(tickKey) || 0;
-      if (now - lastDamage < BLAZE_FLAMETHROWER_DAMAGE_INTERVAL / tempoMultiplier) continue;
-
       const damage = calculateFalloffDamage(BLAZE_FLAMETHROWER_DAMAGE, distance, BLAZE_FLAMETHROWER_RANGE, 0.35);
-      this.flamethrowerLastDamageTick.set(tickKey, now);
       const previousHealth = target.health;
       this.applyDamage(target, damage, source.id, 'flamethrower', {
         abilityId: 'blaze_flamethrower',
@@ -10072,22 +7393,24 @@ export class GameRoom extends Room<GameState> {
       }
     }
 
-    if (aegisHitForDamage) {
-      const tickKey = `${source.id}:aegis:${aegisHitForDamage.blocker.id}`;
-      const lastDamage = this.flamethrowerLastDamageTick.get(tickKey) || 0;
-      if (now - lastDamage >= BLAZE_FLAMETHROWER_DAMAGE_INTERVAL / tempoMultiplier) {
+    if (damagePlan.aegisHit) {
+      if (this.blazeFlamethrowers.consumeDamageTick(
+        source.id,
+        { kind: 'aegis', playerId: damagePlan.aegisHit.blocker.id },
+        now,
+        damageFrame.damageIntervalMs
+      )) {
         const damage = calculateFalloffDamage(
           BLAZE_FLAMETHROWER_DAMAGE,
-          aegisHitForDamage.distance,
+          damagePlan.aegisHit.distance,
           BLAZE_FLAMETHROWER_RANGE,
           0.35
         );
-        this.flamethrowerLastDamageTick.set(tickKey, now);
-        this.absorbDamageWithChronosAegis(aegisHitForDamage.blocker, damage, now, {
+        this.absorbDamageWithChronosAegis(damagePlan.aegisHit.blocker, damage, now, {
           source,
           damageType: 'flamethrower',
-          position: aegisHitForDamage.point,
-          direction: aegisHitForDamage.normal,
+          position: damagePlan.aegisHit.point,
+          direction: damagePlan.aegisHit.normal,
         });
       }
     }
@@ -10096,7 +7419,7 @@ export class GameRoom extends Room<GameState> {
   private scoreTeamDeathmatchKill(killer: Player, victim: Player): void {
     if (!isTeamDeathmatchMode(this.gameplayMode)) return;
     if (!isTeam(killer.team) || !isTeam(victim.team) || killer.team === victim.team) return;
-    if (this.spawnedNpcs.has(killer.id) || this.spawnedNpcs.has(victim.id)) return;
+    if (this.npcs.has(killer.id) || this.npcs.has(victim.id)) return;
 
     if (killer.team === 'red') {
       this.state.redTeam.score++;
@@ -10110,8 +7433,8 @@ export class GameRoom extends Room<GameState> {
   }
 
   private createVoidZone(position: { x: number; y: number; z: number }, ownerId: string, ownerTeam: 'red' | 'blue') {
-    const zone: VoidZone = {
-      id: `void_${this.voidZoneIdCounter++}`,
+    const zone = this.voidZones.add({
+      id: this.abilityIds.nextVoidZoneId(),
       position: { ...position },
       radius: VOID_ZONE_RADIUS,
       damage: VOID_ZONE_DAMAGE,
@@ -10119,10 +7442,7 @@ export class GameRoom extends Room<GameState> {
       startTime: Date.now(),
       ownerId,
       ownerTeam,
-      lastDamageTick: new Map(),
-    };
-
-    this.voidZones.push(zone);
+    });
 
     // Broadcast zone creation to all clients
     this.broadcastTracked('voidZoneCreated', {
@@ -10170,28 +7490,27 @@ export class GameRoom extends Room<GameState> {
 
   private respawnPlayer(player: Player) {
     const now = Date.now();
-    player.state = 'alive';
-    player.health = player.maxHealth;
-    player.respawnTime = 0;
-    player.spawnProtectionUntil = now + this.config.spawnProtectionSeconds * 1000;
+    const resetPlan = applyPlayerAliveRuntimeReset(player, {
+      now,
+      spawnProtectionMs: this.config.spawnProtectionSeconds * 1000,
+      resetRespawnTime: true,
+    });
     this.resetPlayerLifeRuntime(player, now);
 
     this.placePlayerAtSpawn(player, 'respawn');
-    if (player.heroId === 'blaze') {
-      player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
-    }
-    if (player.heroId === 'phantom') {
+    if (resetPlan.resetPhantomPrimaryMagazine) {
       this.resetPhantomPrimaryMagazine(player.id);
     }
-    if (player.heroId === 'chronos') {
-      this.chronosAegisShieldHp.delete(player.id);
+    if (resetPlan.clearChronosAegisShield) {
+      this.chronosAegisShields.clear(player.id);
     }
-    if (player.isBot) {
-      this.botBrains.set(player.id, this.createBotBrain(player, hashString(player.id)));
+    if (resetPlan.resetBotBrain) {
+      this.botRuntime.setBrain(player.id, this.createBotBrain(player, hashString(player.id)));
     }
 
-    // Reset ability cooldowns on respawn
-    resetAbilityCooldowns(player);
+    if (resetPlan.resetAbilityCooldowns) {
+      resetAbilityCooldowns(player);
+    }
   }
 
   private updatePhysics() {
@@ -10201,12 +7520,12 @@ export class GameRoom extends Room<GameState> {
       if (player.state !== 'alive') return;
 
       if (
-        this.devBotsRooted &&
+        this.devRuntime.areBotsRooted() &&
         player.isBot &&
         !this.getActiveDevBotSkillOverride(player, tickTime) &&
         !this.getActiveDevBotLookOverride(player, tickTime)
       ) {
-        this.rootBotMovementAndSkills(player, Date.now());
+        this.rootBotMovementAndSkills(player, tickTime);
         return;
       }
 
@@ -10229,7 +7548,7 @@ export class GameRoom extends Room<GameState> {
           this.placePlayerAtSpawn(player, 'respawn');
         }
 
-        const client = this.clientsBySessionId.get(player.id);
+        const client = this.clientRegistry.getClient(player.id);
         if (client && (authority.correctionReason || dragPullMoved)) {
           this.sendSelfMovementAuthority(player, client, authority.correctionReason);
         }
@@ -10242,28 +7561,28 @@ export class GameRoom extends Room<GameState> {
       for (let step = 0; step < drainDecision.budget; step++) {
         const stepNow = tickTime + step * MOVEMENT_SUBSTEP_SECONDS * 1000;
         const epochBeforeStep = authority.movementEpoch;
-        const command = this.getNextMovementCommand(authority);
+        const command = this.movementAuthorities.getNextMovementCommand(authority);
         if (!command) break;
-        const input = this.movementCommandToInput(command, player);
+        const input = this.movementCommandToInput(command, stepNow);
         const movementInput = this.getRootedMovementInput(player, input, stepNow);
         player.lastInput = movementInput;
         player.lookYaw = movementInput.lookYaw;
         player.lookPitch = movementInput.lookPitch;
-        const dragPullActive = this.hookshotDragPulls.has(player.id);
+        const dragPullActive = this.hookshotRuntime.hasDragPull(player.id);
         if (dragPullActive) {
           this.clearHookshotGrapple(player.id);
         } else {
           this.prepareHookshotGrappleForMovement(player, stepNow);
         }
         const simulationInput = dragPullActive
-          ? this.suppressLocomotionInput(movementInput)
+          ? suppressLocomotionInput(movementInput)
           : movementInput;
         this.simulateAuthoritativeMovementStep(player, simulationInput, MOVEMENT_SUBSTEP_SECONDS, stepNow);
         if (!dragPullActive) {
           this.stepHookshotGrappleAuthority(player, simulationInput, MOVEMENT_SUBSTEP_SECONDS, stepNow);
         }
         this.stepHookshotDragPullAuthority(player, MOVEMENT_SUBSTEP_SECONDS, stepNow);
-        this.processPlayerInput(player, movementInput);
+        this.processPlayerInput(player, movementInput, stepNow);
         this.updateLastSafeMovement(player, movementInput.tick, stepNow);
         authority.metrics.commandsProcessed++;
         processedThisTick++;
@@ -10278,7 +7597,7 @@ export class GameRoom extends Room<GameState> {
         ? getMovementBacklogTrimCount(authority.pendingCommands.length)
         : 0;
       if (stale > 0) {
-        this.removeOldestPendingCommands(authority, stale);
+        this.movementAuthorities.removeOldestPendingCommands(authority, stale);
         authority.metrics.droppedCommands += stale;
         this.markMovementBarrier(player.id, 'epoch_mismatch');
       }
@@ -10287,88 +7606,27 @@ export class GameRoom extends Room<GameState> {
         this.placePlayerAtSpawn(player, 'respawn');
       }
 
-      const client = this.clientsBySessionId.get(player.id);
+      const client = this.clientRegistry.getClient(player.id);
       if (client && (processedThisTick > 0 || authority.correctionReason)) {
         this.sendSelfMovementAuthority(player, client, authority.correctionReason);
       }
     });
   }
 
-  private assignTeam(preferred?: Team): string {
-    const redCount = this.getTeamCount('red');
-    const blueCount = this.getTeamCount('blue');
-
-    if (preferred) {
-      const preferredCount = preferred === 'red' ? redCount : blueCount;
-      const otherCount = preferred === 'red' ? blueCount : redCount;
-      
-      if (preferredCount <= otherCount) {
-        return preferred;
-      }
-    }
-
-    // Assign to smaller team
-    return redCount <= blueCount ? 'red' : 'blue';
-  }
-
-  private getTeamCount(team: Team): number {
-    let count = 0;
-    this.state.players.forEach(p => {
-      if (p.team === team) count++;
+  private assignPlayerSpawnPosition(player: Player, spawn?: TeamSpawnPosition): void {
+    const placement = resolveTeamSpawnPlacement({
+      manifest: this.getMapManifest(),
+      team: player.team,
+      spawn,
     });
-    return count;
-  }
-
-  private getTeamCountExcluding(team: Team, excludedPlayerId: string): number {
-    let count = 0;
-    this.state.players.forEach((p, id) => {
-      if (id !== excludedPlayerId && p.team === team) count++;
-    });
-    return count;
-  }
-
-  private getTeamSpawnPoints(team: Team): readonly SpawnPosition[] {
-    const manifest = this.getMapManifest();
-    const spawnPoints = manifest.gameplay?.spawns?.[team]?.points ?? manifest.spawnPoints[team] ?? [];
-    return spawnPoints.length > 0 ? spawnPoints : [{ x: 0, y: 1, z: 0 }];
-  }
-
-  private getTeamSpawnLookYaw(team: Team): number {
-    const facing = this.getMapManifest().gameplay?.spawns?.[team]?.facing;
-    if (
-      !facing ||
-      !Number.isFinite(facing.x) ||
-      !Number.isFinite(facing.z) ||
-      Math.hypot(facing.x, facing.z) <= 0.001
-    ) {
-      return team === 'red' ? Math.PI : 0;
-    }
-
-    return normalizeAngle(Math.atan2(-facing.x, -facing.z));
-  }
-
-  private getSpawnPosition(team: Team): SpawnPosition {
-    const spawnPoints = this.getTeamSpawnPoints(team);
-    const spawn = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
-
-    return {
-      x: spawn.x,
-      y: spawn.y,
-      z: spawn.z,
-    };
-  }
-
-  private assignPlayerSpawnPosition(player: Player, spawn?: SpawnPosition): void {
-    const team = isTeam(player.team) ? player.team : 'red';
-    const spawnPosition = spawn ?? this.getSpawnPosition(team);
-    player.position.x = spawnPosition.x;
-    player.position.y = spawnPosition.y;
-    player.position.z = spawnPosition.z;
+    player.position.x = placement.position.x;
+    player.position.y = placement.position.y;
+    player.position.z = placement.position.z;
     player.velocity.x = 0;
     player.velocity.y = 0;
     player.velocity.z = 0;
-    player.lookYaw = this.getTeamSpawnLookYaw(team);
-    player.lookPitch = 0;
+    player.lookYaw = placement.lookYaw;
+    player.lookPitch = placement.lookPitch;
   }
 
   private placePlayerAtSpawn(player: Player, reason: MovementCorrectionReason = 'spawn'): void {
@@ -10377,34 +7635,18 @@ export class GameRoom extends Room<GameState> {
   }
 
   private placeTeamsAtUniqueSpawns(reason: MovementCorrectionReason = 'spawn'): void {
-    const participants: TeamSpawnParticipant[] = [];
-    this.state.players.forEach((player, playerId) => {
-      if (isTeam(player.team)) {
-        participants.push({ playerId, team: player.team });
-      }
+    const { spawnPointsByTeam, assignments } = createTeamSpawnPlan({
+      manifest: this.getMapManifest(),
+      players: this.state.players,
     });
-
-    const spawnPointsByTeam: Record<Team, readonly SpawnPosition[]> = {
-      red: this.getTeamSpawnPoints('red'),
-      blue: this.getTeamSpawnPoints('blue'),
-    };
-    const assignments = createTeamSpawnAssignments(
-      participants,
-      {
-        red: spawnPointsByTeam.red.length,
-        blue: spawnPointsByTeam.blue.length,
-      },
-      {
-        red: Math.floor(Math.random() * spawnPointsByTeam.red.length),
-        blue: Math.floor(Math.random() * spawnPointsByTeam.blue.length),
-      }
-    );
 
     for (const assignment of assignments) {
       const player = this.state.players.get(assignment.playerId);
       if (!player) continue;
-      const spawn = spawnPointsByTeam[assignment.team][assignment.spawnIndex];
-      this.assignPlayerSpawnPosition(player, spawn);
+      this.assignPlayerSpawnPosition(player, resolveTeamSpawnAssignmentPosition({
+        spawnPointsByTeam,
+        assignment,
+      }));
       this.markMovementBarrier(player.id, reason);
     }
   }
@@ -10413,29 +7655,28 @@ export class GameRoom extends Room<GameState> {
   
   private handleSpawnNpc(client: Client, data: { heroId: HeroId; team?: Team; position?: { x: number; y: number; z: number }; name?: string }) {
     const { heroId, position, name } = data;
-    let { team } = data;
     
     // Validate hero
     const heroDef = HERO_DEFINITIONS[heroId];
     if (!heroDef) {
-      client.send('npcError', { message: `Invalid hero: ${heroId}` });
+      client.send('npcError', buildNpcErrorPayload(`Invalid hero: ${heroId}`));
       return;
     }
 
-    // If no team specified, spawn on OPPOSITE team of the requesting player
-    // This ensures NPCs can be damaged by the spawner
-    if (!team) {
-      const requestingPlayer = this.state.players.get(client.sessionId);
-      if (requestingPlayer) {
-        team = requestingPlayer.team === 'red' ? 'blue' : 'red';
-      } else {
-        team = 'blue'; // fallback
-      }
-    }
+    const requestingPlayer = this.state.players.get(client.sessionId) ?? null;
+    const team = resolveNpcSpawnTeam(data.team, requestingPlayer?.team);
+    const spawnPosition = resolveNpcSpawnPosition({
+      requestedPosition: position,
+      requester: requestingPlayer
+        ? {
+          team: requestingPlayer.team,
+          position: vec3SchemaToPlain(requestingPlayer.position),
+          lookYaw: requestingPlayer.lookYaw,
+        }
+        : null,
+    });
 
-    // Generate NPC ID and name
-    const npcId = `npc_${this.npcIdCounter++}`;
-    const npcName = name || `${heroDef.name}_${this.npcIdCounter}`;
+    const { id: npcId, name: npcName } = this.npcs.createIdentity(heroDef.name, name);
 
     // Create NPC player entity
     const npc = new Player();
@@ -10446,27 +7687,9 @@ export class GameRoom extends Room<GameState> {
     npc.state = 'alive';
     npc.isReady = true;
     
-    // Set position - use provided position or spawn near requesting player
-    if (position) {
-      npc.position.x = position.x;
-      npc.position.y = position.y;
-      npc.position.z = position.z;
-    } else {
-      // Spawn near the requesting player
-      const requestingPlayer = this.state.players.get(client.sessionId);
-      if (requestingPlayer) {
-        const angle = requestingPlayer.lookYaw + (Math.random() - 0.5) * 0.5;
-        const distance = 5 + Math.random() * 5;
-        npc.position.x = requestingPlayer.position.x + Math.sin(angle) * distance;
-        npc.position.y = requestingPlayer.position.y;
-        npc.position.z = requestingPlayer.position.z + Math.cos(angle) * distance;
-      } else {
-        // Default spawn
-        npc.position.x = 0;
-        npc.position.y = 5;
-        npc.position.z = 0;
-      }
-    }
+    npc.position.x = spawnPosition.x;
+    npc.position.y = spawnPosition.y;
+    npc.position.z = spawnPosition.z;
     
     // Set health based on hero
     npc.maxHealth = heroDef.stats.maxHealth;
@@ -10482,70 +7705,53 @@ export class GameRoom extends Room<GameState> {
 
     // Add to game state
     this.state.players.set(npcId, npc);
-    this.spawnedNpcs.add(npcId);
+    this.npcs.add(npcId);
     this.updateMetadata();
 
     // Broadcast NPC spawn to all clients with recipient-scoped position data.
     for (const roomClient of this.clients) {
       const recipient = this.state.players.get(roomClient.sessionId) ?? null;
-      const payload: Record<string, unknown> = {
-        playerId: npcId,
-        playerName: npcName,
+      this.sendTracked(roomClient, 'playerJoined', buildNpcJoinedPayload({
+        npcId,
+        npcName,
         team,
         heroId,
-        isNpc: true,
-      };
-      if (this.shouldIncludeJoinPosition(recipient, npc)) {
-        payload.position = vec3SchemaToPlain(npc.position);
-      }
-      this.sendTracked(roomClient, 'playerJoined', payload);
+        position: vec3SchemaToPlain(npc.position),
+        includePosition: this.shouldIncludeJoinPosition(recipient, npc),
+      }));
     }
 
     // Send confirmation to requesting client
-    client.send('npcSpawned', {
+    client.send('npcSpawned', buildNpcSpawnedPayload({
       npcId,
-      name: npcName,
-      heroId,
+      npcName,
       team,
-      position: { x: npc.position.x, y: npc.position.y, z: npc.position.z },
-    });
+      heroId,
+      position: vec3SchemaToPlain(npc.position),
+    }));
   }
 
   private handleDamageNpc(client: Client, data: { npcId: string; damage: number }) {
     const { npcId, damage } = data;
     
-    // Find NPC (support partial matching)
-    let targetId = npcId;
-    if (!this.spawnedNpcs.has(npcId)) {
-      for (const id of this.spawnedNpcs) {
-        if (id.includes(npcId)) {
-          targetId = id;
-          break;
-        }
-      }
-    }
-
-    if (!this.spawnedNpcs.has(targetId)) {
-      client.send('npcError', { message: `NPC not found: ${npcId}` });
+    const targetId = this.npcs.resolveId(npcId);
+    if (!targetId) {
+      client.send('npcError', buildNpcErrorPayload(`NPC not found: ${npcId}`));
       return;
     }
 
     const npc = this.state.players.get(targetId);
     if (!npc) {
-      this.spawnedNpcs.delete(targetId);
-      client.send('npcError', { message: `NPC data not found: ${targetId}` });
+      this.npcs.delete(targetId);
+      client.send('npcError', buildNpcErrorPayload(`NPC data not found: ${targetId}`));
       return;
     }
 
     const source = this.state.players.get(client.sessionId) ?? null;
-    const sourcePosition = source ? vec3SchemaToPlain(source.position) : null;
-    const sourceDirection = source
-      ? this.normalize3D({
-        x: npc.position.x - source.position.x,
-        y: npc.position.y - source.position.y,
-        z: npc.position.z - source.position.z,
-      })
-      : null;
+    const { sourcePosition, sourceDirection } = resolveNpcDamageSourceContext({
+      source,
+      target: npc,
+    });
     const result = this.damageRuntime.applyNpcDamage(npc, source, damage, sourcePosition, sourceDirection);
 
     if (result.applied) {
@@ -10567,91 +7773,74 @@ export class GameRoom extends Room<GameState> {
     }
 
     // Send confirmation
-    client.send('npcDamaged', {
+    client.send('npcDamaged', buildNpcDamagedPayload({
       npcId: targetId,
-      name: npc.name,
+      npcName: npc.name,
       damage: result.damage,
       health: npc.health,
       maxHealth: npc.maxHealth,
       killed: Boolean(result.death),
-    });
+    }));
   }
 
   private handleKillNpc(client: Client, data: { npcId: string }) {
     const { npcId } = data;
     
-    // Find NPC (support partial matching)
-    let targetId = npcId;
-    if (!this.spawnedNpcs.has(npcId)) {
-      for (const id of this.spawnedNpcs) {
-        if (id.includes(npcId)) {
-          targetId = id;
-          break;
-        }
-      }
-    }
-
-    if (!this.spawnedNpcs.has(targetId)) {
-      client.send('npcError', { message: `NPC not found: ${npcId}` });
+    const targetId = this.npcs.resolveId(npcId);
+    if (!targetId) {
+      client.send('npcError', buildNpcErrorPayload(`NPC not found: ${npcId}`));
       return;
     }
 
     const npc = this.state.players.get(targetId);
     if (!npc) {
-      this.spawnedNpcs.delete(targetId);
+      this.npcs.delete(targetId);
       return;
     }
 
     const npcName = npc.name;
     this.handleNpcDeath(npc, client.sessionId);
 
-    client.send('npcKilled', {
+    client.send('npcKilled', buildNpcKilledPayload({
       npcId: targetId,
-      name: npcName,
-    });
+      npcName,
+    }));
   }
 
   private handleKillAllNpcs(client: Client) {
-    const count = this.spawnedNpcs.size;
+    const count = this.npcs.size;
     
-    for (const npcId of Array.from(this.spawnedNpcs)) {
+    for (const npcId of this.npcs.snapshotIds()) {
       const npc = this.state.players.get(npcId);
       if (npc) {
         this.handleNpcDeath(npc, client.sessionId);
       }
     }
 
-    client.send('allNpcsKilled', { count });
+    client.send('allNpcsKilled', buildAllNpcsKilledPayload(count));
   }
 
   private handleNpcDeath(npc: Player, killerId: string) {
     const killer = this.state.players.get(killerId);
-    const sourcePosition = killer ? vec3SchemaToPlain(killer.position) : null;
-    const sourceDirection = killer
-      ? this.normalize3D({
-        x: npc.position.x - killer.position.x,
-        y: npc.position.y - killer.position.y,
-        z: npc.position.z - killer.position.z,
-      })
-      : null;
+    const { sourcePosition, sourceDirection } = resolveNpcDamageSourceContext({
+      source: killer,
+      target: npc,
+    });
     const result = this.damageRuntime.killNpc(npc, killer ?? null, sourcePosition, sourceDirection);
     this.damageRuntime.handleNpcDamageDeath(npc, killer ?? null, result);
   }
 
   private removeNpcPlayer(playerId: string): void {
     this.state.players.delete(playerId);
-    this.spawnedNpcs.delete(playerId);
-    this.playerNetIds.delete(playerId);
+    this.npcs.delete(playerId);
+    this.clearPlayerReplicationState(playerId);
     this.updateMetadata();
 
-    this.broadcastTracked('playerLeft', {
-      playerId,
-      isNpc: true,
-    });
+    this.broadcastTracked('playerLeft', buildNpcLeftPayload(playerId));
   }
 
   // Check if a player ID is an NPC
   isNpc(playerId: string): boolean {
-    return this.spawnedNpcs.has(playerId);
+    return this.npcs.has(playerId);
   }
 }

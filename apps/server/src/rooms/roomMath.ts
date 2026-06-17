@@ -45,15 +45,6 @@ export function normalize2D(vector: PlainVec2): PlainVec2 | null {
   return { x: vector.x / length, z: vector.z / length };
 }
 
-export function worldDirectionToLocalMove(direction: PlainVec2, lookYaw: number): PlainVec2 {
-  const cos = Math.cos(lookYaw);
-  const sin = Math.sin(lookYaw);
-  return {
-    x: direction.x * cos - direction.z * sin,
-    z: direction.x * sin + direction.z * cos,
-  };
-}
-
 export function rotateAngleToward(current: number, target: number, maxStep: number): number {
   const delta = normalizeAngle(target - current);
   if (Math.abs(delta) <= maxStep) return normalizeAngle(target);

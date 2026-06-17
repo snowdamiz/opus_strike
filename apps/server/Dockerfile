@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 FROM node:22-slim AS base
 
 ENV PNPM_HOME="/pnpm"
@@ -6,7 +8,6 @@ ENV PATH="$PNPM_HOME:$PATH"
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates openssl \
   && rm -rf /var/lib/apt/lists/* \
-  && npm install -g corepack@latest \
   && corepack enable \
   && corepack prepare pnpm@9.12.0 --activate
 
@@ -20,7 +21,8 @@ COPY apps/client/package.json apps/client/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/physics/package.json packages/physics/package.json
 
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+  pnpm install --frozen-lockfile --store-dir /pnpm/store
 
 FROM deps AS build
 
@@ -41,7 +43,8 @@ COPY apps/server/prisma apps/server/prisma
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/physics/package.json packages/physics/package.json
 
-RUN pnpm install --prod --frozen-lockfile --filter @voxel-strike/server... \
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+  pnpm install --prod --frozen-lockfile --filter @voxel-strike/server... --store-dir /pnpm/store \
   && pnpm --filter @voxel-strike/server db:generate
 
 COPY --from=build /app/apps/server/dist apps/server/dist
@@ -51,5 +54,8 @@ COPY --from=build /app/packages/physics/dist packages/physics/dist
 WORKDIR /app/apps/server
 
 EXPOSE 2567
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 2567) + '/health').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));"
 
 CMD ["node", "dist/index.js"]

@@ -38,3 +38,31 @@ export function getPlayerInterestSignature(snapshot: PlayerInterestSnapshot): st
     lastKnown,
   ].join(':');
 }
+
+export function selectChangedPlayerInterestSnapshot(input: {
+  signatures: Map<string, string>;
+  playerId: string;
+  snapshot: PlayerInterestSnapshot;
+  force: boolean;
+}): PlayerInterestSnapshot | null {
+  const signature = getPlayerInterestSignature(input.snapshot);
+  if (!input.force && input.signatures.get(input.playerId) === signature) {
+    return null;
+  }
+
+  input.signatures.set(input.playerId, signature);
+  return input.snapshot;
+}
+
+export function removeMissingPlayerInterestSignatures(
+  signatures: Map<string, string>,
+  currentPlayerIds: ReadonlySet<string>
+): string[] {
+  const removedPlayerIds: string[] = [];
+  for (const playerId of signatures.keys()) {
+    if (currentPlayerIds.has(playerId)) continue;
+    signatures.delete(playerId);
+    removedPlayerIds.push(playerId);
+  }
+  return removedPlayerIds;
+}

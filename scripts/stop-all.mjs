@@ -12,11 +12,6 @@ const composeProjects = [
     cwd: rootDir,
     file: 'docker-compose.yml',
   },
-  {
-    label: 'server compose services',
-    cwd: resolve(rootDir, 'apps/server'),
-    file: 'docker-compose.yml',
-  },
 ];
 
 const processPatterns = [
@@ -54,9 +49,6 @@ const knownContainers = [
   'voxel-strike-db',
   'voxel-strike-redis',
   'voxel-strike-livekit',
-  'opus_strike_db',
-  'opus_strike_redis',
-  'opus_strike_livekit',
 ];
 
 function run(label, command, args, options = {}) {

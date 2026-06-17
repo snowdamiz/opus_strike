@@ -36,7 +36,7 @@ import {
   startAdminMachineHeartbeat,
   type AdminMachineHeartbeatHandle,
 } from './admin/machineRegistry';
-import { getGlobalNotification } from './notifications/globalNotificationService';
+import { getCachedGlobalNotification } from './notifications/globalNotificationService';
 import { loggers } from './utils/logger';
 
 const app = express();
@@ -145,16 +145,18 @@ app.use('/admin', createAdminRouter({
   flyReplayRegistered: () => Boolean(flyReplayRouteHandle),
 }));
 
-function noStorePublic(res: Response): void {
-  res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('Pragma', 'no-cache');
-}
-
-app.get('/notifications/global', async (_req, res) => {
-  noStorePublic(res);
-
+app.get('/notifications/global', async (req, res) => {
   try {
-    res.json({ notification: await getGlobalNotification() });
+    const { notification, etag } = await getCachedGlobalNotification();
+    res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=30');
+    res.setHeader('ETag', etag);
+
+    if (req.headers['if-none-match'] === etag) {
+      res.status(304).end();
+      return;
+    }
+
+    res.json({ notification });
   } catch (error) {
     loggers.room.error('Failed to load global notification', {
       error: error instanceof Error ? error.message : String(error),

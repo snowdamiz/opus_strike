@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { estimateCustomMessageBytes } from '../rooms/customMessageMetrics';
+import { RoomMetrics } from '../rooms/roomMetrics';
 
 const singleTransform = {
   version: 2,
@@ -47,5 +48,30 @@ assert.ok(estimateCustomMessageBytes('playerInterest', interestUpdate) > 0);
 const cyclic: Record<string, unknown> = { type: 'diagnostic' };
 cyclic.self = cyclic;
 assert.ok(estimateCustomMessageBytes('diagnostic', cyclic) > 0);
+
+const roomMetrics = new RoomMetrics(3);
+assert.equal(roomMetrics.getTickDurationPercentile(0.95), 0);
+roomMetrics.recordTickDuration(12);
+roomMetrics.recordTickDuration(-4);
+roomMetrics.recordTickDuration(30);
+roomMetrics.recordTickDuration(18);
+assert.equal(roomMetrics.getTickDurationPercentile(0), 0);
+assert.equal(roomMetrics.getTickDurationPercentile(0.5), 18);
+assert.equal(roomMetrics.getTickDurationPercentile(1), 30);
+
+roomMetrics.recordCustomMessage('playerTransformsV2', singleTransform, 2);
+roomMetrics.recordCustomMessage('playerVitals', { players: [{ playerId: 'a' }], removedPlayerIds: [] }, 1);
+roomMetrics.recordCustomMessage('ignored', { ok: true }, 0);
+
+const metricsSnapshot = roomMetrics.getCustomMessageMetricsSnapshot();
+assert.equal(metricsSnapshot.playerTransformsV2.messages, 1);
+assert.equal(metricsSnapshot.playerTransformsV2.recipients, 2);
+assert.equal(metricsSnapshot.playerTransformsV2.bytes, singleBytes * 2);
+assert.equal(metricsSnapshot.ignored, undefined);
+assert.equal(roomMetrics.getCustomMessageMetric('playerTransformsV2')?.bytes, singleBytes * 2);
+
+const messageTotals = roomMetrics.getCustomMessageTotals();
+assert.equal(messageTotals.messages, 2);
+assert.ok(messageTotals.bytes > singleBytes * 2);
 
 console.log('custom message metrics tests passed');

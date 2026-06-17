@@ -1,12 +1,8 @@
-import { HERO_BODY_GENERATED_BONE_PARTS } from './heroBodyGeneratedParts';
 import type { HeroBoneName, RiggedVoxelPart, VoxelPart } from './heroBodyTypes';
 import { groupRiggedParts } from './heroRig';
 
 export function getHeroBodyRenderParts(parts: readonly VoxelPart[]): VoxelPart[] {
-  return [
-    ...HERO_BODY_GENERATED_BONE_PARTS,
-    ...parts,
-  ];
+  return [...parts];
 }
 
 export function groupHeroBodyRenderParts(
@@ -14,4 +10,3 @@ export function groupHeroBodyRenderParts(
 ): Record<HeroBoneName, RiggedVoxelPart<VoxelPart>[]> {
   return groupRiggedParts(getHeroBodyRenderParts(parts));
 }
-

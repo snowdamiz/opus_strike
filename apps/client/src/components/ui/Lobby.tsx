@@ -277,13 +277,83 @@ export function Lobby() {
   const hasChosenTeam = currentTeam === 'red' || currentTeam === 'blue';
   const isReady = currentPlayer?.isReady || false;
   const currentRank = currentPlayer?.rank ?? getRankForStats(userStats);
-  const playerList = Array.from(lobbyPlayers.values());
-  const combatPlayers = playerList.filter((p) => !p.isObserver);
-  const pickedHeroIdsByTeam = useMemo(() => ({
-    red: getPickedTeamHeroIds(combatPlayers, 'red'),
-    blue: getPickedTeamHeroIds(combatPlayers, 'blue'),
-  }), [lobbyPlayers]);
-  const observerPlayers = playerList.filter((p) => p.isObserver);
+  const {
+    combatPlayers,
+    observerPlayers,
+    readyCount,
+    assignedCount,
+    unpaidHumanPlayers,
+    paidRedHumans,
+    paidBlueHumans,
+    solarPlayers,
+    voidPlayers,
+    pickedHeroIdsByTeam,
+  } = useMemo(() => {
+    const nextCombatPlayers: LobbyPlayer[] = [];
+    const nextObserverPlayers: LobbyPlayer[] = [];
+    const nextUnpaidHumanPlayers: LobbyPlayer[] = [];
+    const nextSolarPlayers: LobbyPlayer[] = [];
+    const nextVoidPlayers: LobbyPlayer[] = [];
+    let nextReadyCount = 0;
+    let nextAssignedCount = 0;
+    let nextPaidRedHumans = 0;
+    let nextPaidBlueHumans = 0;
+
+    for (const player of lobbyPlayers.values()) {
+      if (player.isObserver) {
+        nextObserverPlayers.push(player);
+        continue;
+      }
+
+      nextCombatPlayers.push(player);
+
+      if (player.isReady || player.isHost) {
+        nextReadyCount += 1;
+      }
+
+      const isAssigned = player.team === 'red' || player.team === 'blue';
+      if (!isAssigned) {
+        continue;
+      }
+
+      nextAssignedCount += 1;
+
+      if (player.team === 'red') {
+        nextSolarPlayers.push(player);
+      } else {
+        nextVoidPlayers.push(player);
+      }
+
+      if (player.isBot) {
+        continue;
+      }
+
+      const isPaid = player.paymentStatus === 'credited' || player.paymentStatus === 'settled';
+      if (!isPaid) {
+        nextUnpaidHumanPlayers.push(player);
+      } else if (player.team === 'red') {
+        nextPaidRedHumans += 1;
+      } else {
+        nextPaidBlueHumans += 1;
+      }
+    }
+
+    return {
+      combatPlayers: nextCombatPlayers,
+      observerPlayers: nextObserverPlayers,
+      readyCount: nextReadyCount,
+      assignedCount: nextAssignedCount,
+      unpaidHumanPlayers: nextUnpaidHumanPlayers,
+      paidRedHumans: nextPaidRedHumans,
+      paidBlueHumans: nextPaidBlueHumans,
+      solarPlayers: nextSolarPlayers,
+      voidPlayers: nextVoidPlayers,
+      pickedHeroIdsByTeam: {
+        red: getPickedTeamHeroIds(nextCombatPlayers, 'red'),
+        blue: getPickedTeamHeroIds(nextCombatPlayers, 'blue'),
+      },
+    };
+  }, [lobbyPlayers]);
   const observerSlotCapacity = Math.max(0, maxLobbyObservers);
   const observerSlotAvailable = lobbyObserversEnabled && observerPlayers.length < observerSlotCapacity;
   const wagerEnabled = currentLobbyWager.enabled;
@@ -324,24 +394,13 @@ export function Lobby() {
   };
   const handleKick = (targetId: string) => kickPlayer(targetId);
 
-  const readyCount = combatPlayers.filter(p => p.isReady || p.isHost).length;
-  const assignedCount = combatPlayers.filter(p => p.team === 'red' || p.team === 'blue').length;
   const allPlayersAssigned = combatPlayers.length > 0 && assignedCount === combatPlayers.length;
   const isProductionCustomLobby = import.meta.env.PROD
     && (currentMatchMode === 'custom' || currentMatchMode === 'custom_wager');
   const minimumParticipantsToStart = isProductionCustomLobby ? 2 : 1;
   const hasMinimumParticipants = combatPlayers.length >= minimumParticipantsToStart;
-  const assignedHumanPlayers = combatPlayers.filter((p) => !p.isBot && (p.team === 'red' || p.team === 'blue'));
-  const unpaidHumanPlayers = wagerEnabled
-    ? assignedHumanPlayers.filter((p) => p.paymentStatus !== 'credited' && p.paymentStatus !== 'settled')
-    : [];
-  const paidRedHumans = assignedHumanPlayers.filter((p) => p.team === 'red' && (p.paymentStatus === 'credited' || p.paymentStatus === 'settled')).length;
-  const paidBlueHumans = assignedHumanPlayers.filter((p) => p.team === 'blue' && (p.paymentStatus === 'credited' || p.paymentStatus === 'settled')).length;
   const wagerStartReady = !wagerEnabled || (unpaidHumanPlayers.length === 0 && paidRedHumans > 0 && paidBlueHumans > 0);
   const canStart = isLobbyHost && hasMinimumParticipants && allPlayersAssigned && wagerStartReady && (combatPlayers.length === 1 || readyCount === combatPlayers.length);
-
-  const solarPlayers = combatPlayers.filter(p => p.team === 'red');
-  const voidPlayers = combatPlayers.filter(p => p.team === 'blue');
 
   const currentFaction = currentPlayer?.team === 'red' ? FACTIONS.red : currentPlayer?.team === 'blue' ? FACTIONS.blue : null;
   const currentRoleLabel = isLocalObserver ? 'Observer' : currentFaction?.fullName || 'Unassigned';

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
 import { Prisma } from '@prisma/client';
+import { PublicKey } from '@solana/web3.js';
 import {
   DEFAULT_COMPETITIVE_RATING,
   RANK_PLACEMENT_MATCHES,
@@ -42,6 +43,7 @@ const JWT_EXPIRY = '30d';
 const COOKIE_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
 const PENDING_COOKIE_MAX_AGE = 60 * 60 * 1000;
 const NONCE_TTL_MS = 5 * 60 * 1000;
+const MAX_NONCE_RECORDS = 2_000;
 const DEFAULT_CLIENT_ORIGIN = process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3000';
 
 const AUTH_RATE_LIMITS = {
@@ -242,6 +244,28 @@ function cleanupNonces(): void {
     if (data.timestamp < expiresBefore) {
       nonceStore.delete(address);
     }
+  }
+}
+
+function trimNonces(): void {
+  cleanupNonces();
+
+  while (nonceStore.size >= MAX_NONCE_RECORDS) {
+    const oldestAddress = nonceStore.keys().next().value as string | undefined;
+    if (!oldestAddress) break;
+    nonceStore.delete(oldestAddress);
+  }
+}
+
+function normalizeWalletAddress(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed.length < 32 || trimmed.length > 44) return null;
+
+  try {
+    return new PublicKey(trimmed).toBase58();
+  } catch {
+    return null;
   }
 }
 
@@ -838,13 +862,13 @@ function logOAuthFailure(reason: string, details?: unknown): void {
 router.get('/nonce', (req: Request, res: Response) => {
   if (!enforceJsonRateLimit(req, res, 'auth:nonce', AUTH_RATE_LIMITS.nonce)) return;
 
-  const walletAddress = typeof req.query.walletAddress === 'string' ? req.query.walletAddress : '';
+  const walletAddress = normalizeWalletAddress(req.query.walletAddress);
   if (!walletAddress) {
-    res.status(400).json({ error: 'Wallet address is required' });
+    res.status(400).json({ error: 'Valid wallet address is required' });
     return;
   }
 
-  cleanupNonces();
+  trimNonces();
   const nonce = generateNonce();
   const message = createSignMessage(nonce);
   nonceStore.set(walletAddress, { nonce, timestamp: Date.now() });
@@ -855,7 +879,8 @@ router.post('/verify', async (req: Request, res: Response) => {
   if (!enforceJsonRateLimit(req, res, 'auth:verify', AUTH_RATE_LIMITS.verify)) return;
 
   try {
-    const { walletAddress, signature, nonce } = req.body;
+    const { signature, nonce } = req.body;
+    const walletAddress = normalizeWalletAddress(req.body?.walletAddress);
 
     if (!walletAddress || !signature || !nonce) {
       res.status(400).json({ error: 'Missing required fields' });
