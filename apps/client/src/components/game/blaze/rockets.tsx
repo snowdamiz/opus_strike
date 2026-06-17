@@ -15,7 +15,7 @@ import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
 import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
-import { applyOfflineTrainingDamage } from '../../../utils/offlineCombatRuntime';
+import { applyTutorialOfflineTrainingDamage } from '../../../utils/tutorialOfflineCombatRuntime';
 import {
   getFireballCoreMaterial,
   getFireballInnerMaterial,
@@ -433,7 +433,7 @@ export function RocketsManager() {
         moveDistance + BLAZE_ROCKET_COLLISION_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
       );
       if (hitPlayer) {
-        applyOfflineTrainingDamage({
+        applyTutorialOfflineTrainingDamage({
           target: hitPlayer,
           damage: BLAZE_ROCKET_DAMAGE,
           damageType: 'rocket',

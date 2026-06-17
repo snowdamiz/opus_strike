@@ -17,6 +17,7 @@ export * from './types/modelSystem.js';
 export * from './constants/game.js';
 export * from './constants/physics.js';
 export * from './constants/heroes.js';
+export * from './constants/tutorial.js';
 
 // Utils
 export * from './utils/math.js';

@@ -76,96 +76,6 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
   }
 }
 
-// Helper to check if a player ID is an NPC (server-spawned NPCs have npc_ prefix)
-export function isNpcId(playerId: string): boolean {
-  return playerId.startsWith('npc_');
-}
-
-// Get all NPC IDs from the current players in store
-export function getSpawnedNpcIds(): string[] {
-  const { players } = useGameStore.getState();
-  const npcs: string[] = [];
-  players.forEach((_, id) => {
-    if (isNpcId(id)) {
-      npcs.push(id);
-    }
-  });
-  return npcs;
-}
-
-// For backward compatibility with DireBall/VoidZone - create a Map view
-export function getSpawnedNpcs(): Map<string, { heroId: HeroId; team: Team }> {
-  const { players } = useGameStore.getState();
-  const npcs = new Map<string, { heroId: HeroId; team: Team }>();
-  players.forEach((player, id) => {
-    if (isNpcId(id) && player.heroId) {
-      npcs.set(id, { heroId: player.heroId as HeroId, team: player.team });
-    }
-  });
-  return npcs;
-}
-
-// Store network functions reference for use by projectiles (set by GameConsole component)
-let networkDamageNpc: ((npcId: string, damage: number) => void) | null = null;
-let networkKillNpc: ((npcId: string) => void) | null = null;
-
-export function setNetworkDamageNpc(fn: (npcId: string, damage: number) => void) {
-  networkDamageNpc = fn;
-}
-
-export function setNetworkKillNpc(fn: (npcId: string) => void) {
-  networkKillNpc = fn;
-}
-
-// Damage NPC - sends to server OR falls back to client-side handling
-export function damageNpc(npcId: string, damage: number): { killed: boolean; npcName: string } | null {
-  const { players, updatePlayer, removePlayer } = useGameStore.getState();
-  const npc = players.get(npcId);
-  if (!npc || !isNpcId(npcId)) return null;
-
-  // Try to send damage to server first
-  if (networkDamageNpc) {
-    networkDamageNpc(npcId, damage);
-    // Return predicted result (server will confirm)
-    const predictedKill = npc.health - damage <= 0;
-    return { killed: predictedKill, npcName: npc.name };
-  }
-
-  // Fallback: Apply damage client-side if network not available
-  // This ensures damage works even before network context is fully initialized
-  const newHealth = Math.max(0, npc.health - damage);
-
-  if (newHealth <= 0) {
-    removePlayer(npcId);
-    return { killed: true, npcName: npc.name };
-  } else {
-    updatePlayer(npcId, { ...npc, health: newHealth });
-    return { killed: false, npcName: npc.name };
-  }
-}
-
-// Find NPCs within a radius (for ability targeting)
-export function findNpcsInRadius(position: { x: number; y: number; z: number }, radius: number): string[] {
-  const { players } = useGameStore.getState();
-  const result: string[] = [];
-
-  players.forEach((player, playerId) => {
-    if (!isNpcId(playerId)) return;
-    if (player.state !== 'alive') return;
-
-    const dx = player.position.x - position.x;
-    const dy = player.position.y - position.y;
-    const dz = player.position.z - position.z;
-    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-    if (distance <= radius) {
-      result.push(playerId);
-    }
-  });
-
-  return result;
-}
-
 let devImmuneModeGlobal = false;
 
 function isDevImmuneMode(): boolean {
@@ -304,8 +214,6 @@ export function GameConsole() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const {
-    damageNpc: networkDamageNpcFn,
-    killNpc: networkKillNpcFn,
     devSetHero,
     devFillUltimate,
     devEndGame,
@@ -319,12 +227,6 @@ export function GameConsole() {
     devSetLobbyObserver,
     devSetGameObserver,
   } = useNetwork();
-
-  // Set the network functions for projectiles to use
-  useEffect(() => {
-    setNetworkDamageNpc(networkDamageNpcFn);
-    setNetworkKillNpc(networkKillNpcFn);
-  }, [networkDamageNpcFn, networkKillNpcFn]);
 
   // Auto-scroll to bottom
   useEffect(() => {

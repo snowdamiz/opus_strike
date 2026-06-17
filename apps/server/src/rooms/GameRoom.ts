@@ -162,19 +162,17 @@ import {
   getPlayerBodyAimPosition as getSharedPlayerBodyAimPosition,
   getPlayerEyePosition as getSharedPlayerEyePosition,
   getPlayerLineOfSightSamplePoints as getSharedPlayerLineOfSightSamplePoints,
+  getAimConeHitAgainstPlayerCombatHitbox,
   getSegmentHitAgainstPlayerCombatHitbox,
   getSegmentHitAgainstChronosAegis,
   isTeamHeroAvailable,
   pickAvailableTeamHero,
-  applyDamage as resolveSharedDamage,
   calculateFalloffDamage,
 } from '@voxel-strike/shared';
 import type { 
   AbilityCastOriginHint,
-  ApplyDamageResult,
   BotDifficulty,
-  DamageEngineAdapter,
-  DamageHistoryEntry,
+  PlayerCombatHitResult,
   HeroId, 
   Team, 
   PlayerInput,
@@ -195,6 +193,7 @@ import type {
   PlayerPingsMessage,
   PlayerInterestMessage,
   PlayerDamagedEvent,
+  PlayerDeathEvent,
   PowerupCollectedMessage,
   PowerupStateMessage,
   PlayerTransformsV2Message,
@@ -334,10 +333,10 @@ import {
   resetAbilityCooldowns,
   tryUseAbility,
   executeAbility,
-  deactivateActiveAbility,
   updateAbilityCooldowns,
   updateActiveAbilities,
 } from './abilityHandlers';
+import { RoomDamageRuntime, type RoomDamageContext as DamageContext } from './roomDamageRuntime';
 
 interface CreateOptions {
   lobbyId?: string;
@@ -446,15 +445,6 @@ interface PreMatchCancelNotice {
 interface CompetitiveNetworkQualityGateResult {
   status: 'ready' | 'pending' | 'blocked';
   evaluation?: PlayerNetworkQualityEvaluation;
-}
-
-interface DamageContext {
-  abilityId?: string;
-  sourcePosition?: PlainVec3 | null;
-  sourceDirection?: PlainVec3 | null;
-  allowFriendlyFire?: boolean;
-  bypassPersonalShield?: boolean;
-  skipDamageBudget?: boolean;
 }
 
 interface PhantomPrimaryMagazineState {
@@ -693,7 +683,7 @@ type AttackTargetTeam = 'enemy' | 'any';
 
 interface AimTargetHit {
   target: Player;
-  hit: NonNullable<ReturnType<typeof getSegmentHitAgainstPlayerCombatHitbox>>;
+  hit: PlayerCombatHitResult;
 }
 
 interface ChronosAegisSkillHit {
@@ -772,7 +762,6 @@ const DEV_BOT_SKILL_ALIASES: Record<string, { slot: DevBotSkillSlot; skillKey: s
   ultimate: { slot: 'ultimate', skillKey: 'f' },
 };
 const BLAZE_FLAMETHROWER_CONE_DOT = Math.cos(BLAZE_FLAMETHROWER_CONE_HALF_ANGLE);
-const DAMAGE_HISTORY_WINDOW_MS = 10000;
 const PLAYER_PING_INTERVAL_MS = 3000;
 const PLAYER_PING_TIMEOUT_MS = 10000;
 const MAX_REPORTED_PLAYER_PING_MS = 999;
@@ -803,8 +792,6 @@ const MOVEMENT_BIT_GLIDING = 1 << 7;
 const MOVEMENT_BIT_CHRONOS_AEGIS = 1 << 8;
 const CHRONOS_AEGIS_SHIELD_TRANSFORM_SCALE = 255;
 const OBJECTIVE_SUPPRESSION_MS = 650;
-const DAMAGE_CAP_WINDOW_MS = 1000;
-const DAMAGE_CAP_PER_SOURCE_TARGET_MULTIPLIER = 2.25;
 const MAX_SECURITY_EVENTS = 2000;
 const SECURITY_EVENT_LOG_SAMPLE_MS = 5000;
 const MOVEMENT_CORRECTION_LOG_SAMPLE_MS = 1000;
@@ -903,7 +890,6 @@ export class GameRoom extends Room<GameState> {
   private botBrains: Map<string, BotBrain> = new Map();
   private attackCooldownUntil: Map<string, number> = new Map();
   private playerCombatActivityAt: Map<string, number> = new Map();
-  private damageHistory: Map<string, Map<string, DamageHistoryEntry>> = new Map();
   private chronosAegisShieldHp: Map<string, number> = new Map();
   private devImmunePlayers: Set<string> = new Set();
   private devGameClockFrozen = false;
@@ -1013,44 +999,35 @@ export class GameRoom extends Room<GameState> {
   private readonly antiCheatEvidenceStore = new AntiCheatEvidenceStore(prisma);
   private antiCheat: AntiCheatRoomRuntime | null = null;
   private readonly securityLogSamples = new Map<string, { lastLoggedAt: number; suppressed: number }>();
-  private readonly damageCapWindows = new Map<string, { startedAt: number; damage: number }>();
-  private readonly damageEngineAdapter: DamageEngineAdapter<Player> = {
-    getPlayerById: (id) => this.state.players.get(id) ?? null,
-    getId: (player) => player.id,
-    getTeam: (player) => isTeam(player.team) ? player.team : null,
-    getState: (player) => player.state,
-    setState: (player, state) => {
-      player.state = state;
+  private readonly damageRuntime = new RoomDamageRuntime({
+    getPlayerById: (playerId) => this.state.players.get(playerId) ?? null,
+    isDevelopmentMode: () => this.isDevelopmentMode(),
+    isPlayerDevImmune: (playerId) => this.devImmunePlayers.has(playerId),
+    getRespawnDelayMs: () => this.config.respawnTimeSeconds * 1000,
+    vec3ToPlain: (value) => this.vec3SchemaToPlain(value),
+    normalize3D: (value) => this.normalize3D(value),
+    getPlayerEyePosition: (player) => this.getPlayerEyePosition(player),
+    shouldDamageBypassChronosAegis: (damageType, context) => this.shouldDamageBypassChronosAegis(damageType, context),
+    getChronosAegisBlockerHit: (target, source, sourcePoint) => this.getChronosAegisBlockerHit(target, source, sourcePoint),
+    absorbDamageWithChronosAegis: (blocker, rawDamage, now, context) => this.absorbDamageWithChronosAegis(blocker, rawDamage, now, context),
+    rejectAbilityOrCombat: (player, reason) => this.rejectAbilityOrCombat(player, reason),
+    markCombatActivityBetween: (source, target, now) => this.markCombatActivityBetween(source, target, now),
+    markRecentCombatTransform: (playerId, now) => {
+      this.recentCombatTransformUntil.set(playerId, now + RECENT_COMBAT_TRANSFORM_MS);
     },
-    getHealth: (player) => player.health,
-    setHealth: (player, health) => {
-      player.health = health;
-    },
-    getMaxHealth: (player) => player.maxHealth,
-    getSpawnProtectionUntil: (player) => player.spawnProtectionUntil || null,
-    getUltimateCharge: (player) => player.ultimateCharge,
-    setUltimateCharge: (player, charge) => {
-      player.ultimateCharge = charge;
-    },
-    getPersonalShieldState: (player) => player.abilities.get('phantom_personal_shield') ?? null,
-    deactivatePersonalShield: (player) => {
-      const shield = player.abilities.get('phantom_personal_shield');
-      if (shield) deactivateActiveAbility(shield);
-    },
-    setRespawnTime: (player, respawnTime) => {
-      player.respawnTime = respawnTime ?? 0;
-    },
-    addKill: (player) => {
-      player.kills++;
-    },
-    addDeath: (player) => {
-      player.deaths++;
-    },
-    addAssist: (player) => {
-      player.assists++;
-    },
-    isDamageImmune: (player) => this.isDevelopmentMode() && this.devImmunePlayers.has(player.id),
-  };
+    markRecentCombatInterest: (sourceId, targetId, now) => this.markRecentCombatInterest(sourceId, targetId, now),
+    broadcastPhantomShieldBroken: (target, source, payload) => this.broadcastPhantomShieldBroken(target, source, payload),
+    broadcastPlayerDamaged: (target, source, payload) => this.broadcastPlayerDamaged(target, source, payload),
+    broadcastPlayerKilled: (target, killer, payload) => this.broadcastPlayerKilled(target, killer, payload),
+    recordMatchDeath: (victim, killer) => this.recordMatchDeath(victim, killer),
+    recordMatchKill: (killer, victim) => this.recordMatchKill(killer, victim),
+    recordMatchAssist: (assister, victim) => this.recordMatchAssist(assister, victim),
+    resetPlayerLifeRuntime: (player, deathAt) => this.resetPlayerLifeRuntime(player, deathAt),
+    isCaptureTheFlagMode: () => this.isCaptureTheFlagMode(),
+    dropFlag: (player) => this.dropFlag(player),
+    scoreTeamDeathmatchKill: (killer, victim) => this.scoreTeamDeathmatchKill(killer, victim),
+    removeNpcPlayer: (playerId) => this.removeNpcPlayer(playerId),
+  });
   private matchPersistenceLedger: MatchPersistenceLedger | null = null;
   private wagerContext: LockedWagerContext | null = null;
   private rankedEligibilityCandidate = false;
@@ -3289,9 +3266,9 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private broadcastPlayerKilled(victim: Player, killer: Player | null, payload: Record<string, unknown>): void {
+  private broadcastPlayerKilled(victim: Player, killer: Player | null, payload: PlayerDeathEvent): void {
     const now = this.state.serverTime || Date.now();
-    const exactPosition = payload.position as PlainVec3;
+    const exactPosition = payload.position;
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
       const victimInterest = recipient ? this.getRecipientInterest(recipient, victim, now) : undefined;
@@ -7201,12 +7178,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private cleanupDamageWindows(now: number): void {
-    if (this.damageCapWindows.size === 0) return;
-    for (const [key, window] of this.damageCapWindows) {
-      if (now - window.startedAt >= DAMAGE_CAP_WINDOW_MS * 3) {
-        this.damageCapWindows.delete(key);
-      }
-    }
+    this.damageRuntime.cleanupDamageWindows(now);
   }
 
   private findTargetHitInAimCone(
@@ -7253,31 +7225,19 @@ export class GameRoom extends Room<GameState> {
     minDot: number,
     target: Player,
     extraRadius = 0
-  ): NonNullable<ReturnType<typeof getSegmentHitAgainstPlayerCombatHitbox>> | null {
-    const hit = this.getAimHitAgainstPlayer(origin, forward, range, target, extraRadius);
-    if (!hit) return null;
-
-    const targetCenter = this.getPlayerBodyAimPosition(target);
-    const toCenter = {
-      x: targetCenter.x - origin.x,
-      y: targetCenter.y - origin.y,
-      z: targetCenter.z - origin.z,
-    };
-    const centerDistance = Math.sqrt(toCenter.x * toCenter.x + toCenter.y * toCenter.y + toCenter.z * toCenter.z);
-    if (centerDistance <= 0.0001) return null;
-
-    const centerDot = this.clamp(
-      (toCenter.x * forward.x + toCenter.y * forward.y + toCenter.z * forward.z) / centerDistance,
-      -1,
-      1
+  ): PlayerCombatHitResult | null {
+    return getAimConeHitAgainstPlayerCombatHitbox(
+      origin,
+      forward,
+      range,
+      minDot,
+      {
+        position: this.vec3SchemaToPlain(target.position),
+        heroId: target.heroId,
+      },
+      extraRadius,
+      { hasLineOfSight: (from, to) => this.hasLineOfSight(from, to) }
     );
-    const centerAngle = Math.acos(centerDot);
-    const coneAngle = Math.acos(this.clamp(minDot, -1, 1));
-    const hitboxAngle = Math.atan2(hit.radius, Math.max(hit.distance, hit.radius));
-    if (centerAngle > coneAngle + hitboxAngle) return null;
-    if (!this.hasLineOfSight(origin, hit.targetPoint)) return null;
-
-    return hit;
   }
 
   private getAimHitAgainstPlayer(
@@ -7524,89 +7484,6 @@ export class GameRoom extends Room<GameState> {
     return Math.max(0, rawDamage - absorbed);
   }
 
-  private applyDamageResolutionSideEffects(
-    result: ApplyDamageResult<Player>,
-    context: DamageContext & { damageType: string }
-  ): void {
-    const now = result.death?.deathAt ?? Date.now();
-    const target = result.target;
-    const source = result.source;
-
-    if (result.rejectedReason === 'damage_cap' && source) {
-      this.rejectAbilityOrCombat(source, `damage_cap:${result.damageType}`);
-      return;
-    }
-
-    if (result.personalShieldBroken) {
-      this.markCombatActivityBetween(source ?? null, target, now);
-      this.broadcastPhantomShieldBroken(target, source ?? null, {
-        playerId: target.id,
-        position: this.vec3SchemaToPlain(target.position),
-        direction: result.sourceDirection ?? { x: 0, y: 1, z: 0 },
-        serverTime: now,
-      });
-      return;
-    }
-
-    if (!result.applied) return;
-
-    this.markCombatActivityBetween(source ?? null, target, now);
-    this.recentCombatTransformUntil.set(target.id, now + RECENT_COMBAT_TRANSFORM_MS);
-    if (source && source.id !== target.id) {
-      this.recentCombatTransformUntil.set(source.id, now + RECENT_COMBAT_TRANSFORM_MS);
-      this.markRecentCombatInterest(source.id, target.id, now);
-    }
-
-    this.broadcastPlayerDamaged(target, source ?? null, {
-      targetId: target.id,
-      damage: result.damage,
-      sourceId: result.sourceId,
-      damageType: result.damageType,
-      newHealth: result.newHealth,
-      sourcePosition: result.sourcePosition,
-      targetPosition: this.vec3SchemaToPlain(target.position),
-      sourceHeroId: source?.heroId || null,
-      targetHeroId: target.heroId || null,
-    });
-
-    if (!result.death) return;
-
-    const death = result.death;
-    const killer = death.killer;
-    const deathPosition = { x: target.position.x, y: target.position.y, z: target.position.z };
-    const deathVelocity = { x: target.velocity.x, y: target.velocity.y, z: target.velocity.z };
-    this.recordMatchDeath(target, killer ?? null);
-    this.resetPlayerLifeRuntime(target, death.deathAt);
-
-    if (this.isCaptureTheFlagMode() && target.hasFlag) {
-      this.dropFlag(target);
-    }
-
-    if (killer) {
-      this.recordMatchKill(killer, target);
-      this.scoreTeamDeathmatchKill(killer, target);
-    }
-
-    for (const assistId of death.assistIds) {
-      const assister = this.state.players.get(assistId);
-      if (assister) this.recordMatchAssist(assister, target);
-    }
-
-    this.broadcastPlayerKilled(target, killer ?? null, {
-      victimId: target.id,
-      killerId: death.killerId,
-      assistIds: death.assistIds,
-      position: deathPosition,
-      velocity: deathVelocity,
-      sourcePosition: context.sourcePosition ?? death.lastDamageEntry?.sourcePosition ?? (killer ? this.vec3SchemaToPlain(killer.position) : null),
-      sourceDirection: context.sourceDirection ?? death.lastDamageEntry?.sourceDirection ?? null,
-      damageType: context.damageType ?? death.lastDamageEntry?.damageType,
-      abilityId: context.abilityId,
-      occurredAt: death.deathAt,
-      respawnTime: target.respawnTime || null,
-    });
-  }
-
   private applyDamage(
     target: Player,
     rawDamage: number,
@@ -7614,70 +7491,7 @@ export class GameRoom extends Room<GameState> {
     damageType: string,
     context: DamageContext = {}
   ): boolean {
-    const source = sourceId ? this.state.players.get(sourceId) : null;
-    const now = Date.now();
-    const sourcePosition = context.sourcePosition !== undefined
-      ? context.sourcePosition
-      : source
-        ? this.vec3SchemaToPlain(source.position)
-        : null;
-    const sourceDirection = context.sourceDirection !== undefined
-      ? context.sourceDirection
-      : sourcePosition
-        ? this.normalize3D({
-          x: target.position.x - sourcePosition.x,
-          y: target.position.y - sourcePosition.y,
-          z: target.position.z - sourcePosition.z,
-        })
-        : null;
-
-    const result = resolveSharedDamage({
-      adapter: this.damageEngineAdapter,
-      damageHistory: this.damageHistory,
-      damageCapWindows: this.damageCapWindows,
-      now,
-      assistWindowMs: DAMAGE_HISTORY_WINDOW_MS,
-      damageCapWindowMs: DAMAGE_CAP_WINDOW_MS,
-      damageCapPerSourceTargetMultiplier: DAMAGE_CAP_PER_SOURCE_TARGET_MULTIPLIER,
-      respawnDelayMs: this.config.respawnTimeSeconds * 1000,
-      ultimateChargePerKill: ULTIMATE_CHARGE_PER_KILL,
-      ultimateChargePerAssist: 8,
-    }, {
-      target,
-      source,
-      rawDamage,
-      damageType,
-      abilityId: context.abilityId,
-      sourcePosition,
-      sourceDirection,
-      allowFriendlyFire: context.allowFriendlyFire,
-      bypassPersonalShield: context.bypassPersonalShield,
-      skipDamageBudget: context.skipDamageBudget,
-      absorbDamage: (damageToApply) => {
-        const aegisHit = source && !this.shouldDamageBypassChronosAegis(damageType, context)
-          ? this.getChronosAegisBlockerHit(target, source, sourcePosition ?? this.getPlayerEyePosition(source))
-          : null;
-        if (!aegisHit) return { remainingDamage: damageToApply };
-
-        return {
-          remainingDamage: this.absorbDamageWithChronosAegis(aegisHit.blocker, damageToApply, now, {
-            source,
-            damageType,
-            position: aegisHit.point,
-            direction: aegisHit.normal,
-          }),
-        };
-      },
-    });
-
-    this.applyDamageResolutionSideEffects(result, {
-      ...context,
-      damageType,
-      sourcePosition,
-      sourceDirection,
-    });
-
-    return result.killed;
+    return this.damageRuntime.applyPlayerDamage(target, rawDamage, sourceId, damageType, context);
   }
 
   private startHookshotDragPull(target: Player, source: Player, distance: number, now: number): void {
@@ -8523,22 +8337,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getBotRecentDamageSources(botId: string, now: number): BotRecentDamageSource[] {
-    const history = this.damageHistory.get(botId);
-    if (!history) return [];
-    const sources: BotRecentDamageSource[] = [];
-    for (const [sourceId, entry] of history) {
-      if (now - entry.timestamp > DAMAGE_HISTORY_WINDOW_MS) continue;
-      sources.push({
-        sourceId,
-        damage: entry.damage,
-        timestamp: entry.timestamp,
-        sourcePosition: entry.sourcePosition ? { ...entry.sourcePosition } : null,
-        sourceDirection: entry.sourceDirection ? { ...entry.sourceDirection } : null,
-        damageType: entry.damageType,
-      });
-    }
-    sources.sort((a, b) => b.timestamp - a.timestamp || b.damage - a.damage);
-    return sources;
+    return this.damageRuntime.getBotRecentDamageSources(botId, now);
   }
 
   private getVisibleEnemyIdsForBot(bot: Player, frameContext: BotFrameContext): Set<string> {
@@ -11401,25 +11200,7 @@ export class GameRoom extends Room<GameState> {
         z: npc.position.z - source.position.z,
       })
       : null;
-    const result = resolveSharedDamage({
-      adapter: this.damageEngineAdapter,
-      damageHistory: this.damageHistory,
-      now: Date.now(),
-      assistWindowMs: DAMAGE_HISTORY_WINDOW_MS,
-      respawnDelayMs: null,
-      ultimateChargePerKill: 20,
-      ultimateChargePerAssist: 0,
-    }, {
-      target: npc,
-      source,
-      rawDamage: damage,
-      damageType: 'console',
-      sourcePosition,
-      sourceDirection,
-      allowFriendlyFire: true,
-      bypassPersonalShield: true,
-      skipDamageBudget: true,
-    });
+    const result = this.damageRuntime.applyNpcDamage(npc, source, damage, sourcePosition, sourceDirection);
 
     if (result.applied) {
       this.broadcastPlayerDamaged(npc, source, {
@@ -11436,7 +11217,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     if (result.death) {
-      this.handleNpcDamageDeath(npc, source, result);
+      this.damageRuntime.handleNpcDamageDeath(npc, source, result);
     }
 
     // Send confirmation
@@ -11487,7 +11268,7 @@ export class GameRoom extends Room<GameState> {
   private handleKillAllNpcs(client: Client) {
     const count = this.spawnedNpcs.size;
     
-    for (const npcId of this.spawnedNpcs) {
+    for (const npcId of Array.from(this.spawnedNpcs)) {
       const npc = this.state.players.get(npcId);
       if (npc) {
         this.handleNpcDeath(npc, client.sessionId);
@@ -11495,34 +11276,6 @@ export class GameRoom extends Room<GameState> {
     }
 
     client.send('allNpcsKilled', { count });
-  }
-
-  private handleNpcDamageDeath(npc: Player, killer: Player | null, result: ApplyDamageResult<Player>) {
-    if (!result.death) return;
-
-    this.broadcastPlayerKilled(npc, killer ?? null, {
-      victimId: npc.id,
-      killerId: result.death.killerId,
-      assistIds: result.death.assistIds,
-      position: { x: npc.position.x, y: npc.position.y, z: npc.position.z },
-      velocity: { x: npc.velocity.x, y: npc.velocity.y, z: npc.velocity.z },
-      sourcePosition: result.sourcePosition,
-      sourceDirection: result.sourceDirection,
-      damageType: result.damageType,
-      occurredAt: result.death.deathAt,
-      respawnTime: null,
-      isNpc: true,
-    });
-
-    this.state.players.delete(npc.id);
-    this.spawnedNpcs.delete(npc.id);
-    this.playerNetIds.delete(npc.id);
-    this.updateMetadata();
-
-    this.broadcastTracked('playerLeft', {
-      playerId: npc.id,
-      isNpc: true,
-    });
   }
 
   private handleNpcDeath(npc: Player, killerId: string) {
@@ -11535,27 +11288,20 @@ export class GameRoom extends Room<GameState> {
         z: npc.position.z - killer.position.z,
       })
       : null;
-    const result = resolveSharedDamage({
-      adapter: this.damageEngineAdapter,
-      damageHistory: this.damageHistory,
-      now: Date.now(),
-      assistWindowMs: DAMAGE_HISTORY_WINDOW_MS,
-      respawnDelayMs: null,
-      ultimateChargePerKill: 20,
-      ultimateChargePerAssist: 0,
-    }, {
-      target: npc,
-      source: killer ?? null,
-      rawDamage: Math.max(1, npc.health, npc.maxHealth),
-      damageType: 'console',
-      sourcePosition,
-      sourceDirection,
-      allowFriendlyFire: true,
-      bypassPersonalShield: true,
-      skipDamageBudget: true,
-    });
+    const result = this.damageRuntime.killNpc(npc, killer ?? null, sourcePosition, sourceDirection);
+    this.damageRuntime.handleNpcDamageDeath(npc, killer ?? null, result);
+  }
 
-    this.handleNpcDamageDeath(npc, killer ?? null, result);
+  private removeNpcPlayer(playerId: string): void {
+    this.state.players.delete(playerId);
+    this.spawnedNpcs.delete(playerId);
+    this.playerNetIds.delete(playerId);
+    this.updateMetadata();
+
+    this.broadcastTracked('playerLeft', {
+      playerId,
+      isNpc: true,
+    });
   }
 
   // Check if a player ID is an NPC

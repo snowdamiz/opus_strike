@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   applyDamage,
   calculateFalloffDamage,
+  getAimConeHitAgainstPlayerCombatHitbox,
   shouldApplyDamageTick,
 } from '../dist/index.js';
 
@@ -148,6 +149,26 @@ function adapter(players) {
   assert.equal(shouldApplyDamageTick(ticks, 'a', 100, 1000), true);
   assert.equal(shouldApplyDamageTick(ticks, 'a', 100, 1050), false);
   assert.equal(shouldApplyDamageTick(ticks, 'a', 100, 1100), true);
+}
+
+{
+  const hit = getAimConeHitAgainstPlayerCombatHitbox(
+    { x: 0, y: 0, z: 0 },
+    { x: 0, y: 0, z: 1 },
+    10,
+    Math.cos(0.2),
+    { position: { x: 0, y: 0, z: 5 }, heroId: 'phantom' }
+  );
+  assert.ok(hit);
+
+  const miss = getAimConeHitAgainstPlayerCombatHitbox(
+    { x: 0, y: 0, z: 0 },
+    { x: 0, y: 0, z: 1 },
+    10,
+    Math.cos(0.05),
+    { position: { x: 5, y: 0, z: 5 }, heroId: 'phantom' }
+  );
+  assert.equal(miss, null);
 }
 
 console.log('damage engine tests passed');

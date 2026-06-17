@@ -334,6 +334,41 @@ export function getSegmentHitAgainstPlayerCombatHitbox(
   };
 }
 
+export interface AimConeCombatHitOptions {
+  hasLineOfSight?: (from: Vec3Like, to: Vec3Like) => boolean;
+}
+
+export function getAimConeHitAgainstPlayerCombatHitbox(
+  start: Vec3Like,
+  direction: Vec3Like,
+  distance: number,
+  minDot: number,
+  target: PlayerGeometryTarget,
+  extraRadius = 0,
+  options: AimConeCombatHitOptions = {}
+): PlayerCombatHitResult | null {
+  const hit = getSegmentHitAgainstPlayerCombatHitbox(start, direction, distance, target, extraRadius);
+  if (!hit) return null;
+
+  const targetCenter = getPlayerBodyAimPosition(target);
+  const toCenter = {
+    x: targetCenter.x - start.x,
+    y: targetCenter.y - start.y,
+    z: targetCenter.z - start.z,
+  };
+  const centerDistance = Math.sqrt(toCenter.x * toCenter.x + toCenter.y * toCenter.y + toCenter.z * toCenter.z);
+  if (centerDistance <= 0.0001) return null;
+
+  const centerDot = clamp(dot(toCenter, direction) / centerDistance, -1, 1);
+  const centerAngle = Math.acos(centerDot);
+  const coneAngle = Math.acos(clamp(minDot, -1, 1));
+  const hitboxAngle = Math.atan2(hit.radius, Math.max(hit.distance, hit.radius));
+  if (centerAngle > coneAngle + hitboxAngle) return null;
+  if (options.hasLineOfSight && !options.hasLineOfSight(start, hit.targetPoint)) return null;
+
+  return hit;
+}
+
 export function doesSegmentHitPlayerCombatHitbox(
   start: Vec3Like,
   direction: Vec3Like,

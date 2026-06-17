@@ -17,7 +17,7 @@ import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
 import { measureFrameWork } from '../../../movement/networkDiagnostics';
-import { applyOfflineTrainingAreaDamage } from '../../../utils/offlineCombatRuntime';
+import { applyTutorialOfflineTrainingAreaDamage } from '../../../utils/tutorialOfflineCombatRuntime';
 import {
   getBombBodyMaterial,
   getBombBandMaterial,
@@ -358,7 +358,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       hasExplodedRef.current = true;
       if (!meteorPath.intercepted && !tutorialDamageAppliedRef.current) {
         tutorialDamageAppliedRef.current = true;
-        applyOfflineTrainingAreaDamage({
+        applyTutorialOfflineTrainingAreaDamage({
           center: bomb.targetPosition,
           radius: blastRadius,
           damage: BLAZE_BOMB_DAMAGE,

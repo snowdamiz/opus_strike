@@ -1,6 +1,6 @@
 import { isProductionEnvironment } from '../config/security';
 
-export const DEV_TUTORIAL_BYPASS_HEADER = 'x-voxel-strike-dev-tutorial-bypass';
+export { DEV_TUTORIAL_BYPASS_HEADER } from '@voxel-strike/shared';
 
 export class TutorialRequiredError extends Error {
   readonly statusCode = 403;

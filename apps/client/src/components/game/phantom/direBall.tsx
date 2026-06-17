@@ -17,7 +17,7 @@ import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '.
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 import { playPrimaryImpactSound } from '../primaryImpactSound';
-import { applyOfflineTrainingDamage } from '../../../utils/offlineCombatRuntime';
+import { applyTutorialOfflineTrainingDamage } from '../../../utils/tutorialOfflineCombatRuntime';
 
 const DIRE_BALL_LIFETIME_MS = 3000;
 const PARTICLES_PER_BALL = 30;
@@ -682,7 +682,7 @@ export function DireBallsManager() {
         moveDistance + PHANTOM_DIRE_BALL_COLLISION_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
       );
       if (hitPlayer) {
-        applyOfflineTrainingDamage({
+        applyTutorialOfflineTrainingDamage({
           target: hitPlayer,
           damage: PHANTOM_DIRE_BALL_DAMAGE,
           damageType: 'dire_ball',

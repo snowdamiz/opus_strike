@@ -13,9 +13,9 @@ import {
 import { useGameStore } from '../../store/gameStore';
 import { setPlayerVisualTransform } from '../../store/visualStore';
 import {
-  OFFLINE_TRAINING_HERO_ID_PREFIX,
-  updateOfflineTrainingDamageOverTime,
-} from '../../utils/offlineCombatRuntime';
+  TUTORIAL_OFFLINE_TRAINING_HERO_ID_PREFIX,
+  updateTutorialOfflineTrainingDamageOverTime,
+} from '../../utils/tutorialOfflineCombatRuntime';
 
 type TrainingBehavior = 'run' | 'strafe' | 'crouch' | 'slide' | 'hop';
 
@@ -45,7 +45,7 @@ const TRAINING_AREA_MIN_Z = TUTORIAL_TARGET_STAND_POSITION.z - 2.7;
 const TRAINING_AREA_MAX_Z = TUTORIAL_TARGET_STAND_POSITION.z + 4.2;
 const TRAINING_HEROES: readonly TrainingHeroDefinition[] = [
   {
-    id: `${OFFLINE_TRAINING_HERO_ID_PREFIX}phantom`,
+    id: `${TUTORIAL_OFFLINE_TRAINING_HERO_ID_PREFIX}phantom`,
     name: 'Training Phantom',
     heroId: 'phantom',
     base: { x: -1.1, y: TRAINING_BASE_Y, z: TUTORIAL_TARGET_STAND_POSITION.z + 0.6 },
@@ -55,7 +55,7 @@ const TRAINING_HEROES: readonly TrainingHeroDefinition[] = [
     runSpeed: 4.9,
   },
   {
-    id: `${OFFLINE_TRAINING_HERO_ID_PREFIX}hookshot`,
+    id: `${TUTORIAL_OFFLINE_TRAINING_HERO_ID_PREFIX}hookshot`,
     name: 'Training Hookshot',
     heroId: 'hookshot',
     base: { x: 1.1, y: TRAINING_BASE_Y, z: TUTORIAL_TARGET_STAND_POSITION.z + 1.9 },
@@ -255,7 +255,7 @@ function TutorialTrainingHeroes() {
     updateAccumulatorRef.current = 0;
     const store = useGameStore.getState();
     const now = Date.now();
-    updateOfflineTrainingDamageOverTime(now);
+    updateTutorialOfflineTrainingDamageOverTime(now);
 
     for (const definition of TRAINING_HEROES) {
       const current = store.players.get(definition.id);

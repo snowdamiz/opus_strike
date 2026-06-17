@@ -1,8 +1,7 @@
 import {
   applyDamage as resolveSharedDamage,
   calculateFalloffDamage,
-  getPlayerBodyAimPosition,
-  getSegmentHitAgainstPlayerCombatHitbox,
+  getAimConeHitAgainstPlayerCombatHitbox,
   shouldApplyDamageTick,
   type DamageEngineAdapter,
   type DamageHistoryStore,
@@ -14,10 +13,10 @@ import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import { useGameStore } from '../store/gameStore';
 import { syncPlayerVisualEffectIndexes } from '../store/visualStore';
 
-export const OFFLINE_TRAINING_HERO_ID_PREFIX = 'tutorial_training_hero_';
-export const OFFLINE_TRAINING_HERO_RESPAWN_MS = 1800;
+export const TUTORIAL_OFFLINE_TRAINING_HERO_ID_PREFIX = 'tutorial_training_hero_';
+export const TUTORIAL_OFFLINE_TRAINING_HERO_RESPAWN_MS = 1800;
 
-interface OfflineTrainingDamageInput {
+interface TutorialOfflineTrainingDamageInput {
   target: Player | null | undefined;
   damage: number;
   damageType: string;
@@ -27,13 +26,13 @@ interface OfflineTrainingDamageInput {
   abilityId?: string;
 }
 
-interface OfflineTrainingDamageResult {
+interface TutorialOfflineTrainingDamageResult {
   applied: boolean;
   killed: boolean;
   damage: number;
 }
 
-interface OfflineTrainingAreaDamageInput {
+interface TutorialOfflineTrainingAreaDamageInput {
   center: Vec3;
   radius: number;
   damage: number;
@@ -46,7 +45,7 @@ interface OfflineTrainingAreaDamageInput {
   lastDamageTick?: Map<string, number>;
 }
 
-interface OfflineTrainingConeDamageInput {
+interface TutorialOfflineTrainingConeDamageInput {
   origin: Vec3;
   direction: Vec3;
   range: number;
@@ -68,7 +67,7 @@ interface OfflineTrainingConeDamageInput {
   };
 }
 
-interface OfflineBurn {
+interface TutorialOfflineBurn {
   targetId: string;
   sourceId: string | null;
   sourceTeam: Team | null;
@@ -80,19 +79,19 @@ interface OfflineBurn {
   nextTickAt: number;
 }
 
-const offlineDamageTicks = new Map<string, number>();
-const offlineBurns = new Map<string, OfflineBurn>();
-const offlineDamageHistory: DamageHistoryStore = new Map();
+const tutorialOfflineDamageTicks = new Map<string, number>();
+const tutorialOfflineBurns = new Map<string, TutorialOfflineBurn>();
+const tutorialOfflineDamageHistory: DamageHistoryStore = new Map();
 
-export function isOfflineTrainingHeroId(playerId: string | null | undefined): boolean {
-  return Boolean(playerId?.startsWith(OFFLINE_TRAINING_HERO_ID_PREFIX));
+export function isTutorialOfflineTrainingHeroId(playerId: string | null | undefined): boolean {
+  return Boolean(playerId?.startsWith(TUTORIAL_OFFLINE_TRAINING_HERO_ID_PREFIX));
 }
 
-export function isOfflineTrainingHero(player: Player | null | undefined): player is Player {
-  return Boolean(player && isOfflineTrainingHeroId(player.id));
+export function isTutorialOfflineTrainingHero(player: Player | null | undefined): player is Player {
+  return Boolean(player && isTutorialOfflineTrainingHeroId(player.id));
 }
 
-function getOfflineSource(input: Pick<OfflineTrainingDamageInput, 'sourceId' | 'sourceTeam'>): {
+function getTutorialOfflineSource(input: Pick<TutorialOfflineTrainingDamageInput, 'sourceId' | 'sourceTeam'>): {
   sourceId: string | null;
   sourceTeam: Team | null;
 } {
@@ -105,7 +104,7 @@ function getOfflineSource(input: Pick<OfflineTrainingDamageInput, 'sourceId' | '
   };
 }
 
-function getDefaultDamageResult(): OfflineTrainingDamageResult {
+function getDefaultDamageResult(): TutorialOfflineTrainingDamageResult {
   return { applied: false, killed: false, damage: 0 };
 }
 
@@ -146,7 +145,7 @@ function createDamageDrafts(players: Map<string, Player>): {
   };
 }
 
-function createOfflineDamageAdapter(getDraft: (playerId: string) => Player | null): DamageEngineAdapter<Player> {
+function createTutorialOfflineDamageAdapter(getDraft: (playerId: string) => Player | null): DamageEngineAdapter<Player> {
   return {
     getPlayerById: getDraft,
     getId: (player) => player.id,
@@ -198,7 +197,7 @@ function applyDrafts(drafts: Map<string, Player>, now: number): void {
       store.updatePlayer(playerId, player);
     }
 
-    if (isOfflineTrainingHero(player)) {
+    if (isTutorialOfflineTrainingHero(player)) {
       syncPlayerVisualEffectIndexes(player, {
         localPlayerId: store.localPlayer?.id ?? null,
         nowMs: now,
@@ -220,19 +219,19 @@ function prepareDeadTrainingHero(player: Player): void {
 }
 
 function clearTargetDamageRuntime(targetId: string): void {
-  offlineBurns.delete(targetId);
-  offlineDamageHistory.delete(targetId);
-  for (const key of Array.from(offlineDamageTicks.keys())) {
+  tutorialOfflineBurns.delete(targetId);
+  tutorialOfflineDamageHistory.delete(targetId);
+  for (const key of Array.from(tutorialOfflineDamageTicks.keys())) {
     if (key.includes(`:${targetId}:`)) {
-      offlineDamageTicks.delete(key);
+      tutorialOfflineDamageTicks.delete(key);
     }
   }
 }
 
-function extendOfflineTargetBurn(targetId: string, burnUntil: number, now: number): void {
+function extendTutorialOfflineTargetBurn(targetId: string, burnUntil: number, now: number): void {
   const store = useGameStore.getState();
   const current = store.players.get(targetId);
-  if (!isOfflineTrainingHero(current) || current.state !== 'alive') return;
+  if (!isTutorialOfflineTrainingHero(current) || current.state !== 'alive') return;
 
   const nextPlayer = {
     ...current,
@@ -245,17 +244,17 @@ function extendOfflineTargetBurn(targetId: string, burnUntil: number, now: numbe
   });
 }
 
-export function applyOfflineTrainingDamage(input: OfflineTrainingDamageInput): OfflineTrainingDamageResult {
-  if (!isOfflineTrainingHero(input.target)) return getDefaultDamageResult();
+export function applyTutorialOfflineTrainingDamage(input: TutorialOfflineTrainingDamageInput): TutorialOfflineTrainingDamageResult {
+  if (!isTutorialOfflineTrainingHero(input.target)) return getDefaultDamageResult();
 
   const store = useGameStore.getState();
   if (!store.isPracticeMode || store.gamePhase !== 'playing') return getDefaultDamageResult();
 
   const current = store.players.get(input.target.id);
-  if (!isOfflineTrainingHero(current) || current.state !== 'alive') return getDefaultDamageResult();
+  if (!isTutorialOfflineTrainingHero(current) || current.state !== 'alive') return getDefaultDamageResult();
 
   const now = Date.now();
-  const { sourceId, sourceTeam } = getOfflineSource(input);
+  const { sourceId, sourceTeam } = getTutorialOfflineSource(input);
   if (sourceTeam && current.team === sourceTeam) return getDefaultDamageResult();
 
   const { drafts, getDraft } = createDamageDrafts(store.players);
@@ -264,11 +263,11 @@ export function applyOfflineTrainingDamage(input: OfflineTrainingDamageInput): O
   if (!target) return getDefaultDamageResult();
 
   const result = resolveSharedDamage({
-    adapter: createOfflineDamageAdapter(getDraft),
-    damageHistory: offlineDamageHistory,
+    adapter: createTutorialOfflineDamageAdapter(getDraft),
+    damageHistory: tutorialOfflineDamageHistory,
     now,
     assistWindowMs: 10000,
-    respawnDelayMs: OFFLINE_TRAINING_HERO_RESPAWN_MS,
+    respawnDelayMs: TUTORIAL_OFFLINE_TRAINING_HERO_RESPAWN_MS,
     creditOverkillDamage: false,
     ultimateChargePerKill: 0,
     ultimateChargePerAssist: 0,
@@ -309,18 +308,18 @@ export function applyOfflineTrainingDamage(input: OfflineTrainingDamageInput): O
   return { applied: true, killed: result.killed, damage: result.appliedDamage };
 }
 
-export function applyOfflineTrainingAreaDamage(input: OfflineTrainingAreaDamageInput): number {
+export function applyTutorialOfflineTrainingAreaDamage(input: TutorialOfflineTrainingAreaDamageInput): number {
   const store = useGameStore.getState();
   if (!store.isPracticeMode || store.gamePhase !== 'playing' || input.radius <= 0 || input.damage <= 0) return 0;
 
   const now = Date.now();
-  const { sourceId, sourceTeam } = getOfflineSource(input);
+  const { sourceId, sourceTeam } = getTutorialOfflineSource(input);
   const radiusSq = input.radius * input.radius;
   const falloffScale = input.falloffScale ?? 0.45;
   let appliedCount = 0;
 
   for (const target of store.players.values()) {
-    if (!isOfflineTrainingHero(target) || target.state !== 'alive') continue;
+    if (!isTutorialOfflineTrainingHero(target) || target.state !== 'alive') continue;
     if (sourceTeam && target.team === sourceTeam) continue;
 
     const dx = target.position.x - input.center.x;
@@ -330,9 +329,9 @@ export function applyOfflineTrainingAreaDamage(input: OfflineTrainingAreaDamageI
     if (distSq > radiusSq) continue;
 
     const tickKey = `${sourceId ?? 'offline'}:${target.id}:${input.damageType}`;
-    if (!shouldApplyDamageTick(input.lastDamageTick ?? offlineDamageTicks, tickKey, input.damageIntervalMs, now)) continue;
+    if (!shouldApplyDamageTick(input.lastDamageTick ?? tutorialOfflineDamageTicks, tickKey, input.damageIntervalMs, now)) continue;
 
-    const result = applyOfflineTrainingDamage({
+    const result = applyTutorialOfflineTrainingDamage({
       target,
       damage: calculateFalloffDamage(input.damage, Math.sqrt(distSq), input.radius, falloffScale),
       damageType: input.damageType,
@@ -347,12 +346,12 @@ export function applyOfflineTrainingAreaDamage(input: OfflineTrainingAreaDamageI
   return appliedCount;
 }
 
-export function applyOfflineTrainingConeDamage(input: OfflineTrainingConeDamageInput): number {
+export function applyTutorialOfflineTrainingConeDamage(input: TutorialOfflineTrainingConeDamageInput): number {
   const store = useGameStore.getState();
   if (!store.isPracticeMode || store.gamePhase !== 'playing' || input.range <= 0 || input.damage <= 0) return 0;
 
   const now = Date.now();
-  const { sourceId, sourceTeam } = getOfflineSource(input);
+  const { sourceId, sourceTeam } = getTutorialOfflineSource(input);
   const directionLength = Math.hypot(input.direction.x, input.direction.y, input.direction.z);
   if (directionLength <= 0.0001) return 0;
 
@@ -361,44 +360,27 @@ export function applyOfflineTrainingConeDamage(input: OfflineTrainingConeDamageI
     y: input.direction.y / directionLength,
     z: input.direction.z / directionLength,
   };
-  const coneAngle = Math.acos(Math.max(-1, Math.min(1, input.coneDot)));
   const falloffScale = input.falloffScale ?? 0.35;
   let appliedCount = 0;
 
   for (const target of store.players.values()) {
-    if (!isOfflineTrainingHero(target) || target.state !== 'alive') continue;
+    if (!isTutorialOfflineTrainingHero(target) || target.state !== 'alive') continue;
     if (sourceTeam && target.team === sourceTeam) continue;
 
-    const hit = getSegmentHitAgainstPlayerCombatHitbox(
+    const hit = getAimConeHitAgainstPlayerCombatHitbox(
       input.origin,
       direction,
       input.range,
+      input.coneDot,
       { position: target.position, heroId: target.heroId },
       input.extraRadius
     );
     if (!hit) continue;
 
-    const targetCenter = getPlayerBodyAimPosition({ position: target.position, heroId: target.heroId });
-    const toCenter = {
-      x: targetCenter.x - input.origin.x,
-      y: targetCenter.y - input.origin.y,
-      z: targetCenter.z - input.origin.z,
-    };
-    const centerDistance = Math.hypot(toCenter.x, toCenter.y, toCenter.z);
-    if (centerDistance <= 0.0001) continue;
-
-    const centerDot = Math.max(-1, Math.min(1, (
-      toCenter.x * direction.x +
-      toCenter.y * direction.y +
-      toCenter.z * direction.z
-    ) / centerDistance));
-    const hitboxAngle = Math.atan2(hit.radius, Math.max(hit.distance, hit.radius));
-    if (Math.acos(centerDot) > coneAngle + hitboxAngle) continue;
-
     const tickKey = `${sourceId ?? 'offline'}:${target.id}:${input.damageType}`;
-    if (!shouldApplyDamageTick(offlineDamageTicks, tickKey, input.damageIntervalMs, now)) continue;
+    if (!shouldApplyDamageTick(tutorialOfflineDamageTicks, tickKey, input.damageIntervalMs, now)) continue;
 
-    const result = applyOfflineTrainingDamage({
+    const result = applyTutorialOfflineTrainingDamage({
       target,
       damage: calculateFalloffDamage(input.damage, hit.distance, input.range, falloffScale),
       damageType: input.damageType,
@@ -413,7 +395,7 @@ export function applyOfflineTrainingConeDamage(input: OfflineTrainingConeDamageI
 
     if (input.burn && !result.killed) {
       const burnUntil = now + input.burn.intervalMs * input.burn.ticks;
-      offlineBurns.set(target.id, {
+      tutorialOfflineBurns.set(target.id, {
         targetId: target.id,
         sourceId,
         sourceTeam,
@@ -424,31 +406,31 @@ export function applyOfflineTrainingConeDamage(input: OfflineTrainingConeDamageI
         intervalMs: input.burn.intervalMs,
         nextTickAt: now + input.burn.intervalMs,
       });
-      extendOfflineTargetBurn(target.id, burnUntil, now);
+      extendTutorialOfflineTargetBurn(target.id, burnUntil, now);
     }
   }
 
   return appliedCount;
 }
 
-export function updateOfflineTrainingDamageOverTime(now = Date.now()): void {
-  if (offlineBurns.size === 0) return;
+export function updateTutorialOfflineTrainingDamageOverTime(now = Date.now()): void {
+  if (tutorialOfflineBurns.size === 0) return;
 
-  for (const burn of Array.from(offlineBurns.values())) {
+  for (const burn of Array.from(tutorialOfflineBurns.values())) {
     const store = useGameStore.getState();
     const target = store.players.get(burn.targetId);
-    if (!isOfflineTrainingHero(target) || target.state !== 'alive' || burn.ticksRemaining <= 0) {
-      offlineBurns.delete(burn.targetId);
+    if (!isTutorialOfflineTrainingHero(target) || target.state !== 'alive' || burn.ticksRemaining <= 0) {
+      tutorialOfflineBurns.delete(burn.targetId);
       continue;
     }
 
     while (burn.ticksRemaining > 0 && now >= burn.nextTickAt) {
       const currentTarget = useGameStore.getState().players.get(burn.targetId);
-      if (!isOfflineTrainingHero(currentTarget) || currentTarget.state !== 'alive') {
+      if (!isTutorialOfflineTrainingHero(currentTarget) || currentTarget.state !== 'alive') {
         break;
       }
 
-      const result = applyOfflineTrainingDamage({
+      const result = applyTutorialOfflineTrainingDamage({
         target: currentTarget,
         damage: burn.damage,
         damageType: burn.damageType,
@@ -466,7 +448,7 @@ export function updateOfflineTrainingDamageOverTime(now = Date.now()): void {
     }
 
     if (burn.ticksRemaining <= 0) {
-      offlineBurns.delete(burn.targetId);
+      tutorialOfflineBurns.delete(burn.targetId);
     }
   }
 }

@@ -166,12 +166,6 @@ interface NetworkContextType {
   reportMatchSceneReady: () => void;
   reportPlayer: (targetPlayerId: string, reason?: string, details?: string) => Promise<void>;
   requestVoiceToken: (scope?: VoiceScope) => Promise<VoiceTokenResponse>;
-
-  // NPC/Bot operations (for testing)
-  spawnNpc: (heroId: HeroId, team?: Team, position?: { x: number; y: number; z: number }, name?: string) => void;
-  damageNpc: (npcId: string, damage: number) => void;
-  killNpc: (npcId: string) => void;
-  killAllNpcs: () => void;
 }
 
 interface QuickPlayTicketResponse {
@@ -2014,28 +2008,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('matchSceneReady', { key });
   }, []);
 
-  // ==================== NPC OPERATIONS ====================
-
-  const spawnNpc = useCallback((heroId: HeroId, team?: Team, position?: { x: number; y: number; z: number }, name?: string) => {
-    if (gameRoomRef.current) {
-      const data: any = { heroId, position, name };
-      if (team) data.team = team;
-      gameRoomRef.current.send('spawnNpc', data);
-    }
-  }, []);
-
-  const damageNpc = useCallback((npcId: string, damage: number) => {
-    gameRoomRef.current?.send('damageNpc', { npcId, damage });
-  }, []);
-
-  const killNpc = useCallback((npcId: string) => {
-    gameRoomRef.current?.send('killNpc', { npcId });
-  }, []);
-
-  const killAllNpcs = useCallback(() => {
-    gameRoomRef.current?.send('killAllNpcs', {});
-  }, []);
-
   // ==================== RENDER ====================
 
   return (
@@ -2090,10 +2062,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       reportMatchSceneReady,
       reportPlayer,
       requestVoiceToken,
-      spawnNpc,
-      damageNpc,
-      killNpc,
-      killAllNpcs,
     }}>
       {children}
     </NetworkContext.Provider>

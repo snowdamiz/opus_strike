@@ -1,7 +1,7 @@
 import { config } from '../config/environment';
 import type { DevTutorialOverride } from '../store/settingsStore';
 
-export const DEV_TUTORIAL_BYPASS_HEADER = 'x-voxel-strike-dev-tutorial-bypass';
+export { DEV_TUTORIAL_BYPASS_HEADER } from '@voxel-strike/shared';
 
 export function requiresTutorial(
   tutorialCompletedAt: string | null | undefined,
