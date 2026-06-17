@@ -24,7 +24,9 @@ import type {
   RemoteBodySocketMarker,
   TeamAccentPart,
   VoxelPart,
+  VoxelPartDraft,
 } from './heroBodyTypes';
+import { addVoxelPartMetadata } from './heroRig';
 
 function easeInOutSine(value: number): number {
   const t = Math.max(0, Math.min(1, value));
@@ -64,6 +66,7 @@ export const HERO_COLORS: Record<HeroId, Record<MaterialKind, string>> = {
   phantom: {
     armor: '#302447',
     dark: '#090612',
+    metal: '#211833',
     accent: '#7c3aed',
     glow: '#c084fc',
     glass: '#251a3a',
@@ -76,6 +79,7 @@ export const HERO_COLORS: Record<HeroId, Record<MaterialKind, string>> = {
   hookshot: {
     armor: '#1f3b4a',
     dark: '#10242e',
+    metal: '#9ca3af',
     accent: '#14b8a6',
     glow: '#67e8f9',
     glass: '#22d3ee',
@@ -88,6 +92,7 @@ export const HERO_COLORS: Record<HeroId, Record<MaterialKind, string>> = {
   blaze: {
     armor: '#7c2d12',
     dark: '#1f130d',
+    metal: '#374151',
     accent: '#f97316',
     glow: '#facc15',
     glass: '#fb923c',
@@ -100,6 +105,7 @@ export const HERO_COLORS: Record<HeroId, Record<MaterialKind, string>> = {
   chronos: {
     armor: '#123c2a',
     dark: '#07120f',
+    metal: '#9b7a34',
     accent: '#dc2626',
     glow: '#22c55e',
     glass: '#34d399',
@@ -111,46 +117,65 @@ export const HERO_COLORS: Record<HeroId, Record<MaterialKind, string>> = {
   },
 };
 
-export function createPhantomBlazeArmParts(side: -1 | 1): VoxelPart[] {
-  const upperLimb: HeroBoneName = side < 0 ? 'leftArm' : 'rightArm';
-  const lowerLimb: HeroBoneName = side < 0 ? 'leftForearm' : 'rightForearm';
+type TeamAccentPartDraft = Omit<TeamAccentPart, 'id' | 'bone'> & {
+  id?: string;
+  bone?: TeamAccentPart['bone'];
+};
+
+type RemoteBodySocketMarkerDraft = Omit<RemoteBodySocketMarker, 'id'> & {
+  id?: string;
+};
+
+function addRemoteSocketMarkerIds(
+  markers: readonly RemoteBodySocketMarkerDraft[],
+  idPrefix: string
+): RemoteBodySocketMarker[] {
+  return markers.map((marker) => ({
+    ...marker,
+    id: marker.id ?? `${idPrefix}.${marker.socketName.replace(/[^a-zA-Z0-9]+/g, '.')}`,
+  }));
+}
+
+export function createPhantomBlazeArmParts(side: -1 | 1): VoxelPartDraft[] {
+  const upperBone: HeroBoneName = side < 0 ? 'leftArm' : 'rightArm';
+  const lowerBone: HeroBoneName = side < 0 ? 'leftForearm' : 'rightForearm';
 
   return [
     {
       material: 'dark',
       position: [side * 0.43, 1.1, 0],
       scale: [0.13, 0.42, 0.16],
-      limb: upperLimb,
+      bone: upperBone,
     },
     {
       material: 'edge',
       position: [side * 0.43, 0.88, -0.03],
       scale: [0.16, 0.12, 0.15],
-      limb: lowerLimb,
+      bone: lowerBone,
     },
     {
       material: 'armor',
       position: [side * 0.43, 0.88, -0.18],
       scale: [0.13, 0.1, 0.18],
-      limb: lowerLimb,
+      bone: lowerBone,
     },
     {
       material: 'edge',
       position: [side * 0.43, 0.88, -0.32],
       scale: [0.13, 0.13, 0.12],
-      limb: lowerLimb,
+      bone: lowerBone,
     },
     {
       material: 'glow',
       position: [side * 0.43, 0.77, -0.36],
       scale: [0.05, 0.055, 0.032],
       emissive: true,
-      limb: lowerLimb,
+      bone: lowerBone,
     },
   ];
 }
 
-export const PHANTOM_PARTS: VoxelPart[] = [
+export const PHANTOM_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.015, 0], scale: [0.5, 0.024, 0.5], transparent: true },
   { material: 'void', position: [-0.14, 0.36, 0], scale: [0.14, 0.64, 0.17] },
   { material: 'void', position: [0.14, 0.36, 0], scale: [0.14, 0.64, 0.17] },
@@ -184,9 +209,9 @@ export const PHANTOM_PARTS: VoxelPart[] = [
   { material: 'armor', position: [-0.12, 1.89, -0.05], scale: [0.22, 0.13, 0.36] },
   { material: 'edge', position: [0.18, 1.86, -0.02], scale: [0.24, 0.11, 0.32] },
   { material: 'armor', position: [0, 1.66, 0.18], scale: [0.32, 0.22, 0.09] },
-];
+], 'phantom.body');
 
-export const HOOKSHOT_PARTS: VoxelPart[] = [
+export const HOOKSHOT_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.016, 0], scale: [0.54, 0.024, 0.54], transparent: true },
   { material: 'dark', position: [-0.18, 0.36, 0], scale: [0.16, 0.62, 0.17] },
   { material: 'dark', position: [0.18, 0.36, 0], scale: [0.16, 0.62, 0.17] },
@@ -209,28 +234,28 @@ export const HOOKSHOT_PARTS: VoxelPart[] = [
   { material: 'void', position: [0, 0.91, 0.2], scale: [0.34, 0.5, 0.09] },
 
   { material: 'edge', position: [0, 1.43, -0.01], scale: [0.58, 0.12, 0.38] },
-  { material: 'armor', position: [-0.36, 1.32, -0.01], scale: [0.24, 0.22, 0.31], limb: 'static' },
-  { material: 'armor', position: [0.36, 1.32, -0.01], scale: [0.24, 0.22, 0.31], limb: 'static' },
+  { material: 'armor', position: [-0.36, 1.32, -0.01], scale: [0.24, 0.22, 0.31], bone: 'torso' },
+  { material: 'armor', position: [0.36, 1.32, -0.01], scale: [0.24, 0.22, 0.31], bone: 'torso' },
   { material: 'dark', position: [-0.43, 1.02, 0], scale: [0.13, 0.4, 0.16] },
   { material: 'dark', position: [0.44, 1.02, 0], scale: [0.14, 0.4, 0.16] },
-  { material: 'edge', position: [-0.5, 0.82, -0.06], scale: [0.18, 0.34, 0.16], limb: 'leftForearm' },
-  { material: 'accent', position: [-0.57, 0.83, -0.2], scale: [0.15, 0.22, 0.056], emissive: true, limb: 'leftForearm' },
-  { material: 'dark', position: [-0.6, 0.84, -0.34], scale: [0.18, 0.17, 0.18], limb: 'leftForearm' },
-  { material: 'edge', position: [-0.6, 0.84, -0.49], scale: [0.13, 0.13, 0.15], limb: 'leftForearm' },
-  { material: 'glow', position: [-0.6, 0.84, -0.585], scale: [0.074, 0.074, 0.04], emissive: true, limb: 'leftForearm' },
-  { material: 'edge', kind: 'cylinder', position: [-0.6, 0.7, -0.42], scale: [0.024, 0.34, 0.024], rotation: [Math.PI / 2, 0, 0], limb: 'leftForearm' },
-  { material: 'glow', position: [-0.6, 0.7, -0.66], scale: [0.048, 0.056, 0.048], emissive: true, limb: 'leftForearm' },
-  { material: 'glow', position: [-0.68, 0.7, -0.72], scale: [0.038, 0.044, 0.115], rotation: [0, 0.42, 0], emissive: true, limb: 'leftForearm' },
-  { material: 'glow', position: [-0.52, 0.7, -0.72], scale: [0.038, 0.044, 0.115], rotation: [0, -0.42, 0], emissive: true, limb: 'leftForearm' },
-  { material: 'edge', position: [0.5, 0.83, -0.06], scale: [0.18, 0.36, 0.16], limb: 'rightForearm' },
-  { material: 'accent', position: [0.57, 0.84, -0.2], scale: [0.16, 0.25, 0.056], emissive: true, limb: 'rightForearm' },
-  { material: 'dark', position: [0.6, 0.86, -0.34], scale: [0.19, 0.18, 0.18], limb: 'rightForearm' },
-  { material: 'edge', position: [0.6, 0.86, -0.49], scale: [0.14, 0.14, 0.16], limb: 'rightForearm' },
-  { material: 'glow', position: [0.6, 0.86, -0.585], scale: [0.082, 0.082, 0.042], emissive: true, limb: 'rightForearm' },
-  { material: 'edge', kind: 'cylinder', position: [0.6, 0.73, -0.42], scale: [0.024, 0.38, 0.024], rotation: [Math.PI / 2, 0, 0], limb: 'rightForearm' },
-  { material: 'glow', position: [0.6, 0.73, -0.66], scale: [0.05, 0.06, 0.05], emissive: true, limb: 'rightForearm' },
-  { material: 'glow', position: [0.52, 0.73, -0.72], scale: [0.04, 0.045, 0.12], rotation: [0, 0.42, 0], emissive: true, limb: 'rightForearm' },
-  { material: 'glow', position: [0.68, 0.73, -0.72], scale: [0.04, 0.045, 0.12], rotation: [0, -0.42, 0], emissive: true, limb: 'rightForearm' },
+  { material: 'edge', position: [-0.5, 0.82, -0.06], scale: [0.18, 0.34, 0.16], bone: 'leftForearm' },
+  { material: 'accent', position: [-0.57, 0.83, -0.2], scale: [0.15, 0.22, 0.056], emissive: true, bone: 'leftForearm' },
+  { material: 'dark', position: [-0.6, 0.84, -0.34], scale: [0.18, 0.17, 0.18], bone: 'leftForearm' },
+  { material: 'edge', position: [-0.6, 0.84, -0.49], scale: [0.13, 0.13, 0.15], bone: 'leftForearm' },
+  { material: 'glow', position: [-0.6, 0.84, -0.585], scale: [0.074, 0.074, 0.04], emissive: true, bone: 'leftForearm' },
+  { material: 'edge', kind: 'cylinder', position: [-0.6, 0.7, -0.42], scale: [0.024, 0.34, 0.024], rotation: [Math.PI / 2, 0, 0], bone: 'leftForearm' },
+  { material: 'glow', position: [-0.6, 0.7, -0.66], scale: [0.048, 0.056, 0.048], emissive: true, bone: 'leftForearm' },
+  { material: 'glow', position: [-0.68, 0.7, -0.72], scale: [0.038, 0.044, 0.115], rotation: [0, 0.42, 0], emissive: true, bone: 'leftForearm' },
+  { material: 'glow', position: [-0.52, 0.7, -0.72], scale: [0.038, 0.044, 0.115], rotation: [0, -0.42, 0], emissive: true, bone: 'leftForearm' },
+  { material: 'edge', position: [0.5, 0.83, -0.06], scale: [0.18, 0.36, 0.16], bone: 'rightForearm' },
+  { material: 'accent', position: [0.57, 0.84, -0.2], scale: [0.16, 0.25, 0.056], emissive: true, bone: 'rightForearm' },
+  { material: 'dark', position: [0.6, 0.86, -0.34], scale: [0.19, 0.18, 0.18], bone: 'rightForearm' },
+  { material: 'edge', position: [0.6, 0.86, -0.49], scale: [0.14, 0.14, 0.16], bone: 'rightForearm' },
+  { material: 'glow', position: [0.6, 0.86, -0.585], scale: [0.082, 0.082, 0.042], emissive: true, bone: 'rightForearm' },
+  { material: 'edge', kind: 'cylinder', position: [0.6, 0.73, -0.42], scale: [0.024, 0.38, 0.024], rotation: [Math.PI / 2, 0, 0], bone: 'rightForearm' },
+  { material: 'glow', position: [0.6, 0.73, -0.66], scale: [0.05, 0.06, 0.05], emissive: true, bone: 'rightForearm' },
+  { material: 'glow', position: [0.52, 0.73, -0.72], scale: [0.04, 0.045, 0.12], rotation: [0, 0.42, 0], emissive: true, bone: 'rightForearm' },
+  { material: 'glow', position: [0.68, 0.73, -0.72], scale: [0.04, 0.045, 0.12], rotation: [0, -0.42, 0], emissive: true, bone: 'rightForearm' },
 
   { material: 'void', position: [0, 1.64, 0.01], scale: [0.34, 0.29, 0.31] },
   { material: 'armor', position: [0, 1.77, -0.03], scale: [0.44, 0.18, 0.34] },
@@ -242,9 +267,9 @@ export const HOOKSHOT_PARTS: VoxelPart[] = [
   { material: 'armor', position: [-0.25, 1.62, 0.02], scale: [0.08, 0.22, 0.24] },
   { material: 'armor', position: [0.25, 1.62, 0.02], scale: [0.08, 0.22, 0.24] },
   { material: 'edge', position: [0.24, 1.86, 0.02], scale: [0.16, 0.09, 0.2], rotation: [0, 0, -0.34] },
-];
+], 'hookshot.body');
 
-export const BLAZE_PARTS: VoxelPart[] = [
+export const BLAZE_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.014, 0], scale: [0.48, 0.022, 0.48], transparent: true },
   { material: 'dark', position: [-0.16, 0.38, 0.02], scale: [0.15, 0.66, 0.17] },
   { material: 'dark', position: [0.16, 0.38, 0.02], scale: [0.15, 0.66, 0.17] },
@@ -275,23 +300,23 @@ export const BLAZE_PARTS: VoxelPart[] = [
   { material: 'edge', position: [0, 1.43, -0.01], scale: [0.52, 0.11, 0.34] },
   { material: 'armor', position: [-0.31, 1.31, -0.01], scale: [0.15, 0.19, 0.27] },
   { material: 'armor', position: [0.31, 1.31, -0.01], scale: [0.15, 0.19, 0.27] },
-  { material: 'dark', position: [-0.43, 1.1, 0], scale: [0.13, 0.42, 0.16], limb: 'leftArm' },
-  { material: 'dark', position: [0.43, 1.1, 0], scale: [0.13, 0.42, 0.16], limb: 'rightArm' },
-  { material: 'edge', position: [-0.43, 0.88, -0.03], scale: [0.16, 0.12, 0.15], limb: 'leftArm' },
-  { material: 'edge', position: [0.43, 0.88, -0.03], scale: [0.16, 0.12, 0.15], limb: 'rightForearm' },
-  { material: 'armor', position: [-0.43, 0.72, -0.02], scale: [0.12, 0.2, 0.14], limb: 'leftArm' },
-  { material: 'armor', position: [0.43, 0.88, -0.18], scale: [0.13, 0.1, 0.18], limb: 'rightForearm' },
-  { material: 'edge', position: [-0.43, 0.57, -0.04], scale: [0.13, 0.13, 0.12], limb: 'leftArm' },
-  { material: 'edge', position: [0.43, 0.88, -0.32], scale: [0.13, 0.13, 0.12], limb: 'rightForearm' },
-  { material: 'glow', position: [-0.43, 0.47, -0.12], scale: [0.05, 0.055, 0.032], emissive: true, limb: 'leftArm' },
-  { material: 'glow', position: [0.43, 0.77, -0.36], scale: [0.05, 0.055, 0.032], emissive: true, limb: 'rightForearm' },
+  { material: 'dark', position: [-0.43, 1.1, 0], scale: [0.13, 0.42, 0.16], bone: 'leftArm' },
+  { material: 'dark', position: [0.43, 1.1, 0], scale: [0.13, 0.42, 0.16], bone: 'rightArm' },
+  { material: 'edge', position: [-0.43, 0.88, -0.03], scale: [0.16, 0.12, 0.15], bone: 'leftArm' },
+  { material: 'edge', position: [0.43, 0.88, -0.03], scale: [0.16, 0.12, 0.15], bone: 'rightForearm' },
+  { material: 'armor', position: [-0.43, 0.72, -0.02], scale: [0.12, 0.2, 0.14], bone: 'leftArm' },
+  { material: 'armor', position: [0.43, 0.88, -0.18], scale: [0.13, 0.1, 0.18], bone: 'rightForearm' },
+  { material: 'edge', position: [-0.43, 0.57, -0.04], scale: [0.13, 0.13, 0.12], bone: 'leftArm' },
+  { material: 'edge', position: [0.43, 0.88, -0.32], scale: [0.13, 0.13, 0.12], bone: 'rightForearm' },
+  { material: 'glow', position: [-0.43, 0.47, -0.12], scale: [0.05, 0.055, 0.032], emissive: true, bone: 'leftArm' },
+  { material: 'glow', position: [0.43, 0.77, -0.36], scale: [0.05, 0.055, 0.032], emissive: true, bone: 'rightForearm' },
 
-  { material: 'dark', kind: 'cylinder', position: [0.52, 0.95, -0.38], scale: [0.05, 1.3, 0.05], limb: 'rightForearm' },
-  { material: 'edge', kind: 'cylinder', position: [0.52, 0.33, -0.38], scale: [0.078, 0.08, 0.078], limb: 'rightForearm' },
-  { material: 'edge', kind: 'cylinder', position: [0.52, 1.49, -0.38], scale: [0.086, 0.08, 0.086], limb: 'rightForearm' },
-  { material: 'glow', kind: 'sphere', position: [0.52, 1.63, -0.38], scale: [0.13, 0.13, 0.13], emissive: true, limb: 'rightForearm' },
-  { material: 'accent', kind: 'cylinder', position: [0.52, 1.63, -0.38], scale: [0.16, 0.028, 0.16], emissive: true, limb: 'rightForearm' },
-  { material: 'glow', position: [0.52, 1.76, -0.38], scale: [0.055, 0.12, 0.055], emissive: true, limb: 'rightForearm' },
+  { material: 'dark', kind: 'cylinder', position: [0.52, 0.95, -0.38], scale: [0.05, 1.3, 0.05], bone: 'rightForearm' },
+  { material: 'edge', kind: 'cylinder', position: [0.52, 0.33, -0.38], scale: [0.078, 0.08, 0.078], bone: 'rightForearm' },
+  { material: 'edge', kind: 'cylinder', position: [0.52, 1.49, -0.38], scale: [0.086, 0.08, 0.086], bone: 'rightForearm' },
+  { material: 'glow', kind: 'sphere', position: [0.52, 1.63, -0.38], scale: [0.13, 0.13, 0.13], emissive: true, bone: 'rightForearm' },
+  { material: 'accent', kind: 'cylinder', position: [0.52, 1.63, -0.38], scale: [0.16, 0.028, 0.16], emissive: true, bone: 'rightForearm' },
+  { material: 'glow', position: [0.52, 1.76, -0.38], scale: [0.055, 0.12, 0.055], emissive: true, bone: 'rightForearm' },
 
   { material: 'void', position: [0, 1.63, 0.02], scale: [0.32, 0.29, 0.3] },
   { material: 'armor', position: [0, 1.76, -0.02], scale: [0.4, 0.16, 0.3] },
@@ -306,9 +331,9 @@ export const BLAZE_PARTS: VoxelPart[] = [
   { material: 'armor', kind: 'cone', position: [0.035, 2.1, -0.02], scale: [0.38, 0.5, 0.38], rotation: [0, 0, -0.12] },
   { material: 'accent', position: [0, 1.88, -0.245], scale: [0.32, 0.045, 0.034], emissive: true },
   { material: 'glow', kind: 'sphere', position: [0.075, 2.39, -0.02], scale: [0.055, 0.055, 0.055], emissive: true },
-];
+], 'blaze.body');
 
-export const CHRONOS_PARTS: VoxelPart[] = [
+export const CHRONOS_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.016, 0], scale: [0.58, 0.024, 0.58], transparent: true },
 
   { material: 'dark', position: [-0.15, 0.37, 0.02], scale: [0.14, 0.66, 0.15] },
@@ -350,7 +375,7 @@ export const CHRONOS_PARTS: VoxelPart[] = [
   { material: 'eye', position: [0.08, 1.65, -0.22], scale: [0.065, 0.04, 0.03], emissive: true },
   { material: 'glow', position: [0, 1.57, -0.222], scale: [0.13, 0.032, 0.028], emissive: true },
   { material: 'edge', kind: 'cylinder', position: [0, 1.82, -0.02], scale: [0.46, 0.046, 0.32] },
-];
+], 'chronos.body');
 
 export const HERO_PARTS: Record<HeroId, VoxelPart[]> = {
   phantom: PHANTOM_PARTS,
@@ -484,7 +509,7 @@ export function getHeroMovementProfile(heroId: HeroId, pose: HeroMovementPose): 
 }
 
 export const REMOTE_BODY_SOCKET_MARKERS: Record<HeroId, RemoteBodySocketMarker[]> = {
-  phantom: [
+  phantom: addRemoteSocketMarkerIds([
     {
       socketName: PHANTOM_PRIMARY_PALM_SOCKET_NAMES[-1],
       bone: 'leftForearm',
@@ -500,8 +525,8 @@ export const REMOTE_BODY_SOCKET_MARKERS: Record<HeroId, RemoteBodySocketMarker[]
       bone: 'torso',
       position: [0, -0.16, -0.42],
     },
-  ],
-  hookshot: [
+  ], 'phantom.remoteSocket'),
+  hookshot: addRemoteSocketMarkerIds([
     {
       socketName: HOOKSHOT_HOOK_SOCKET_NAMES[-1],
       bone: 'leftForearm',
@@ -512,21 +537,21 @@ export const REMOTE_BODY_SOCKET_MARKERS: Record<HeroId, RemoteBodySocketMarker[]
       bone: 'rightForearm',
       position: [0.1, -0.17, -0.66],
     },
-  ],
-  blaze: [
+  ], 'hookshot.remoteSocket'),
+  blaze: addRemoteSocketMarkerIds([
     {
       socketName: BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
       bone: 'rightForearm',
       position: [0.02, 0.86, -0.32],
     },
-  ],
-  chronos: [
+  ], 'blaze.remoteSocket'),
+  chronos: addRemoteSocketMarkerIds([
     {
       socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
       bone: 'torso',
       position: [0, -0.16, -0.42],
     },
-  ],
+  ], 'chronos.remoteSocket'),
 };
 
 
@@ -566,7 +591,7 @@ export const HERO_IDLE_PROFILES: Record<HeroId, HeroIdleProfile> = {
 };
 
 
-function teamAccentPart(part: VoxelPart & Partial<TeamAccentPart>): TeamAccentPart {
+function teamAccentPart(part: VoxelPartDraft & Partial<TeamAccentPart>): TeamAccentPartDraft {
   const transparent = part.transparent || part.opacity !== undefined;
   return {
     emissiveIntensity: part.emissiveIntensity ?? (transparent ? 0.24 : 0.45),
@@ -580,49 +605,49 @@ function teamAccentPart(part: VoxelPart & Partial<TeamAccentPart>): TeamAccentPa
 }
 
 export const TEAM_ACCENT_PARTS: Record<HeroId, TeamAccentPart[]> = {
-  phantom: [
+  phantom: addVoxelPartMetadata([
     teamAccentPart({ material: 'accent', position: [-0.19, 1.37, -0.235], scale: [0.12, 0.04, 0.035], emissiveIntensity: 0.55, roughness: 0.35, metalness: 0.2 }),
     teamAccentPart({ material: 'accent', position: [0.19, 1.37, -0.235], scale: [0.12, 0.04, 0.035], emissiveIntensity: 0.55, roughness: 0.35, metalness: 0.2 }),
-    teamAccentPart({ material: 'accent', position: [-0.43, 0.77, -0.36], scale: [0.034, 0.08, 0.03], emissiveIntensity: 0.45, roughness: 0.32, metalness: 0.15, toneMapped: false, limb: 'leftForearm' }),
-    teamAccentPart({ material: 'accent', position: [0.43, 0.77, -0.36], scale: [0.034, 0.08, 0.03], emissiveIntensity: 0.45, roughness: 0.32, metalness: 0.15, toneMapped: false, limb: 'rightForearm' }),
-    teamAccentPart({ material: 'accent', position: [-0.43, 0.88, -0.4], scale: [0.032, 0.1, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.16, limb: 'leftForearm' }),
-    teamAccentPart({ material: 'accent', position: [0.43, 0.88, -0.4], scale: [0.032, 0.1, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.16, limb: 'rightForearm' }),
+    teamAccentPart({ material: 'accent', position: [-0.43, 0.77, -0.36], scale: [0.034, 0.08, 0.03], emissiveIntensity: 0.45, roughness: 0.32, metalness: 0.15, toneMapped: false, bone: 'leftForearm' }),
+    teamAccentPart({ material: 'accent', position: [0.43, 0.77, -0.36], scale: [0.034, 0.08, 0.03], emissiveIntensity: 0.45, roughness: 0.32, metalness: 0.15, toneMapped: false, bone: 'rightForearm' }),
+    teamAccentPart({ material: 'accent', position: [-0.43, 0.88, -0.4], scale: [0.032, 0.1, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.16, bone: 'leftForearm' }),
+    teamAccentPart({ material: 'accent', position: [0.43, 0.88, -0.4], scale: [0.032, 0.1, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.16, bone: 'rightForearm' }),
     teamAccentPart({ material: 'accent', position: [-0.16, 0.18, -0.19], scale: [0.075, 0.055, 0.032], emissiveIntensity: 0.45, roughness: 0.4, metalness: 0.1 }),
     teamAccentPart({ material: 'accent', position: [0.16, 0.18, -0.19], scale: [0.075, 0.055, 0.032], emissiveIntensity: 0.45, roughness: 0.4, metalness: 0.1 }),
     teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.44, 0.014, 0.44], transparent: true, opacity: 0.16, emissiveIntensity: 0.22, roughness: 0.65, depthWrite: false }),
-  ],
-  hookshot: [
+  ], 'phantom.teamAccent'),
+  hookshot: addVoxelPartMetadata([
     teamAccentPart({ material: 'accent', position: [-0.18, 1.39, -0.235], scale: [0.12, 0.04, 0.035], emissiveIntensity: 0.5, roughness: 0.36, metalness: 0.2, toneMapped: false }),
     teamAccentPart({ material: 'accent', position: [0.18, 1.39, -0.235], scale: [0.12, 0.04, 0.035], emissiveIntensity: 0.5, roughness: 0.36, metalness: 0.2, toneMapped: false }),
-    teamAccentPart({ material: 'accent', position: [-0.63, 0.91, -0.245], scale: [0.058, 0.26, 0.036], emissiveIntensity: 0.5, roughness: 0.32, metalness: 0.2, toneMapped: false, limb: 'leftForearm' }),
-    teamAccentPart({ material: 'accent', position: [-0.63, 0.66, -0.47], scale: [0.04, 0.052, 0.18], emissiveIntensity: 0.42, roughness: 0.4, metalness: 0.14, limb: 'leftForearm' }),
-    teamAccentPart({ material: 'accent', position: [0.63, 0.93, -0.245], scale: [0.058, 0.28, 0.036], emissiveIntensity: 0.5, roughness: 0.32, metalness: 0.2, toneMapped: false, limb: 'rightForearm' }),
-    teamAccentPart({ material: 'accent', position: [0.63, 0.68, -0.47], scale: [0.04, 0.052, 0.18], emissiveIntensity: 0.42, roughness: 0.4, metalness: 0.14, limb: 'rightForearm' }),
+    teamAccentPart({ material: 'accent', position: [-0.63, 0.91, -0.245], scale: [0.058, 0.26, 0.036], emissiveIntensity: 0.5, roughness: 0.32, metalness: 0.2, toneMapped: false, bone: 'leftForearm' }),
+    teamAccentPart({ material: 'accent', position: [-0.63, 0.66, -0.47], scale: [0.04, 0.052, 0.18], emissiveIntensity: 0.42, roughness: 0.4, metalness: 0.14, bone: 'leftForearm' }),
+    teamAccentPart({ material: 'accent', position: [0.63, 0.93, -0.245], scale: [0.058, 0.28, 0.036], emissiveIntensity: 0.5, roughness: 0.32, metalness: 0.2, toneMapped: false, bone: 'rightForearm' }),
+    teamAccentPart({ material: 'accent', position: [0.63, 0.68, -0.47], scale: [0.04, 0.052, 0.18], emissiveIntensity: 0.42, roughness: 0.4, metalness: 0.14, bone: 'rightForearm' }),
     teamAccentPart({ material: 'accent', position: [-0.2, 0.2, -0.205], scale: [0.08, 0.05, 0.032], emissiveIntensity: 0.42, roughness: 0.42, metalness: 0.12 }),
     teamAccentPart({ material: 'accent', position: [0.2, 0.2, -0.205], scale: [0.08, 0.05, 0.032], emissiveIntensity: 0.42, roughness: 0.42, metalness: 0.12 }),
     teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.46, 0.014, 0.46], transparent: true, opacity: 0.16, emissiveIntensity: 0.22, roughness: 0.65, depthWrite: false }),
-  ],
-  blaze: [
+  ], 'hookshot.teamAccent'),
+  blaze: addVoxelPartMetadata([
     teamAccentPart({ material: 'accent', position: [-0.26, 1.38, -0.215], scale: [0.1, 0.038, 0.034], emissiveIntensity: 0.5, roughness: 0.34, metalness: 0.22, toneMapped: false }),
     teamAccentPart({ material: 'accent', position: [0.26, 1.38, -0.215], scale: [0.1, 0.038, 0.034], emissiveIntensity: 0.5, roughness: 0.34, metalness: 0.22, toneMapped: false }),
     teamAccentPart({ material: 'accent', position: [-0.19, 1.01, -0.252], scale: [0.06, 0.13, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.18 }),
     teamAccentPart({ material: 'accent', position: [0.19, 1.01, -0.252], scale: [0.06, 0.13, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.18 }),
-    teamAccentPart({ material: 'accent', position: [-0.43, 0.47, -0.15], scale: [0.034, 0.08, 0.03], emissiveIntensity: 0.4, roughness: 0.42, metalness: 0.14, limb: 'leftArm' }),
-    teamAccentPart({ material: 'accent', position: [0.43, 0.77, -0.36], scale: [0.034, 0.08, 0.03], emissiveIntensity: 0.4, roughness: 0.42, metalness: 0.14, limb: 'rightForearm' }),
+    teamAccentPart({ material: 'accent', position: [-0.43, 0.47, -0.15], scale: [0.034, 0.08, 0.03], emissiveIntensity: 0.4, roughness: 0.42, metalness: 0.14, bone: 'leftArm' }),
+    teamAccentPart({ material: 'accent', position: [0.43, 0.77, -0.36], scale: [0.034, 0.08, 0.03], emissiveIntensity: 0.4, roughness: 0.42, metalness: 0.14, bone: 'rightForearm' }),
     teamAccentPart({ material: 'accent', position: [-0.17, 0.24, -0.205], scale: [0.065, 0.045, 0.03], emissiveIntensity: 0.4, roughness: 0.42, metalness: 0.12 }),
     teamAccentPart({ material: 'accent', position: [0.17, 0.24, -0.205], scale: [0.065, 0.045, 0.03], emissiveIntensity: 0.4, roughness: 0.42, metalness: 0.12 }),
     teamAccentPart({ material: 'accent', position: [0, 1.88, -0.282], scale: [0.28, 0.036, 0.03], emissiveIntensity: 0.48, roughness: 0.36, metalness: 0.2, toneMapped: false }),
-    teamAccentPart({ material: 'accent', kind: 'cylinder', position: [0.52, 1.51, -0.38], scale: [0.12, 0.034, 0.12], emissiveIntensity: 0.46, roughness: 0.35, metalness: 0.18, toneMapped: false, limb: 'rightForearm' }),
-    teamAccentPart({ material: 'accent', position: [0.43, 0.88, -0.4], scale: [0.032, 0.1, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.16, limb: 'rightForearm' }),
+    teamAccentPart({ material: 'accent', kind: 'cylinder', position: [0.52, 1.51, -0.38], scale: [0.12, 0.034, 0.12], emissiveIntensity: 0.46, roughness: 0.35, metalness: 0.18, toneMapped: false, bone: 'rightForearm' }),
+    teamAccentPart({ material: 'accent', position: [0.43, 0.88, -0.4], scale: [0.032, 0.1, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.16, bone: 'rightForearm' }),
     teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.42, 0.014, 0.42], transparent: true, opacity: 0.16, emissiveIntensity: 0.24, roughness: 0.65, depthWrite: false }),
-  ],
-  chronos: [
+  ], 'blaze.teamAccent'),
+  chronos: addVoxelPartMetadata([
     teamAccentPart({ material: 'accent', position: [-0.22, 1.38, -0.225], scale: [0.1, 0.038, 0.034], emissiveIntensity: 0.48, roughness: 0.34, metalness: 0.18, toneMapped: false }),
     teamAccentPart({ material: 'accent', position: [0.22, 1.38, -0.225], scale: [0.1, 0.038, 0.034], emissiveIntensity: 0.48, roughness: 0.34, metalness: 0.18, toneMapped: false }),
     teamAccentPart({ material: 'accent', position: [-0.16, 0.2, -0.205], scale: [0.065, 0.045, 0.03], emissiveIntensity: 0.4, roughness: 0.42, metalness: 0.12 }),
     teamAccentPart({ material: 'accent', position: [0.16, 0.2, -0.205], scale: [0.065, 0.045, 0.03], emissiveIntensity: 0.4, roughness: 0.42, metalness: 0.12 }),
     teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.5, 0.014, 0.5], transparent: true, opacity: 0.15, emissiveIntensity: 0.23, roughness: 0.65, depthWrite: false }),
-  ],
+  ], 'chronos.teamAccent'),
 };
 
 export const EMPTY_TEAM_ACCENT_PARTS: TeamAccentPart[] = [];

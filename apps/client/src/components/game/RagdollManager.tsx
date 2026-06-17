@@ -11,7 +11,6 @@ import {
 import {
   EMPTY_RIGGED_PARTS,
   HERO_BONE_PIVOTS,
-  HERO_PART_GEOMETRIES,
   getPartGeometry,
   groupRiggedParts,
 } from '../../model-system/heroRig';
@@ -19,6 +18,7 @@ import {
   EMPTY_TEAM_ACCENT_PARTS,
   HERO_BODY_MANIFESTS,
 } from '../../model-system/heroBodyManifests';
+import { groupHeroBodyRenderParts } from '../../model-system/heroBodyRenderParts';
 import type {
   HeroBoneName,
   MaterialKind,
@@ -409,7 +409,7 @@ function getRagdollRenderResources(heroId: HeroId): RagdollRenderResources {
 
   const manifest = HERO_BODY_MANIFESTS[heroId];
   const resources: RagdollRenderResources = {
-    riggedPartsByBone: groupRiggedParts(manifest.parts),
+    riggedPartsByBone: groupHeroBodyRenderParts(manifest.parts),
     riggedTeamAccentPartsByBone: groupRiggedParts(manifest.teamAccentParts ?? EMPTY_TEAM_ACCENT_PARTS),
     baseMaterialByKind: createRagdollBaseMaterials(heroId),
   };
@@ -618,7 +618,7 @@ function RagdollPartMeshes({
     <>
       {parts.map((riggedPart, index) => (
         <mesh
-          key={`${riggedPart.bone}-${index}`}
+          key={riggedPart.part.id ?? `${riggedPart.bone}-${index}`}
           position={riggedPart.meshOffset}
           rotation={riggedPart.part.rotation}
           scale={riggedPart.part.scale}
@@ -645,7 +645,7 @@ function RagdollTeamAccentMeshes({
     <>
       {parts.map((riggedPart, index) => (
         <mesh
-          key={`team-${riggedPart.bone}-${index}`}
+          key={`team-${riggedPart.part.id ?? `${riggedPart.bone}-${index}`}`}
           position={riggedPart.meshOffset}
           rotation={riggedPart.part.rotation}
           scale={riggedPart.part.scale}
@@ -702,41 +702,6 @@ const PooledRagdollSlot = memo(function PooledRagdollSlot({
     </>
   );
 
-  const renderKneeJoint = (side: 'left' | 'right') => (
-    <>
-      <mesh
-        key={`${resolvedHero}-${side}-ragdoll-knee-cap`}
-        position={[0, 0.015, -0.185]}
-        scale={[0.18, 0.08, 0.05]}
-        castShadow={castShadows}
-        geometry={HERO_PART_GEOMETRIES.box}
-      >
-        <primitive object={materialByKind.get('edge')!} attach="material" />
-      </mesh>
-      <mesh
-        key={`${resolvedHero}-${side}-ragdoll-knee-glow`}
-        position={[0, 0.018, -0.222]}
-        scale={[0.105, 0.028, 0.026]}
-        castShadow={castShadows}
-        geometry={HERO_PART_GEOMETRIES.box}
-      >
-        <primitive object={materialByKind.get('accent')!} attach="material" />
-      </mesh>
-    </>
-  );
-
-  const renderUpperLegLink = (side: 'left' | 'right') => (
-    <mesh
-      key={`${resolvedHero}-${side}-ragdoll-upper-leg-link`}
-      position={[0, -0.15, -0.018]}
-      scale={[0.17, 0.3, 0.13]}
-      castShadow={castShadows}
-      geometry={HERO_PART_GEOMETRIES.box}
-    >
-      <primitive object={materialByKind.get('dark')!} attach="material" />
-    </mesh>
-  );
-
   return (
     <group ref={(node) => {
       handle.group = node;
@@ -754,18 +719,16 @@ const PooledRagdollSlot = memo(function PooledRagdollSlot({
         {renderPartsForBone('head')}
       </group>
       <group ref={(node) => { handle.boneRefs.leftLeg = node; }}>
-        {renderUpperLegLink('left')}
         {renderPartsForBone('leftLeg')}
       </group>
       <group ref={(node) => { handle.boneRefs.rightLeg = node; }}>
-        {renderUpperLegLink('right')}
         {renderPartsForBone('rightLeg')}
       </group>
       <group ref={(node) => { handle.boneRefs.leftKnee = node; }}>
-        {renderKneeJoint('left')}
+        {renderPartsForBone('leftKnee')}
       </group>
       <group ref={(node) => { handle.boneRefs.rightKnee = node; }}>
-        {renderKneeJoint('right')}
+        {renderPartsForBone('rightKnee')}
       </group>
       <group ref={(node) => { handle.boneRefs.leftShin = node; }}>
         {renderPartsForBone('leftShin')}

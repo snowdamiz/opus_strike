@@ -33,6 +33,7 @@ export * from './combat/damageEngine.js';
 
 // Model system
 export * from './model/abilitySocketCatalog.js';
+export * from './model/heroModelDocument.js';
 
 // Progression
 export * from './progression/leveling.js';

@@ -54,6 +54,7 @@ import {
   viewmodelPoseDraftFromMatrix,
   type ViewmodelSocketPoseDraft,
 } from '../../viewmodel/viewmodelKit';
+import { SHARED_VIEWMODEL_ROOT_OFFSET } from '../../viewmodel/viewmodelManifests';
 import { visualStore } from '../../store/visualStore';
 import {
   PHANTOM_COLORS,
@@ -137,7 +138,7 @@ function resolveFingerTargets(fingerRefs: (THREE.Group | null)[]): THREE.Group[]
   return fingerRefs as THREE.Group[];
 }
 
-interface PhantomLocomotionPose {
+interface ViewmodelLocomotionPose {
   movementBlend: number;
   runBlend: number;
   slideBlend: number;
@@ -145,7 +146,7 @@ interface PhantomLocomotionPose {
   cycleTime: number;
 }
 
-interface PhantomLocomotionRuntime extends PhantomLocomotionPose {
+interface ViewmodelLocomotionRuntime extends ViewmodelLocomotionPose {
   previousCameraPosition: THREE.Vector3;
   hasPreviousCameraPosition: boolean;
 }
@@ -204,7 +205,7 @@ interface PhantomVoidRayChargePose {
 }
 
 const VIEWMODEL_ROOT_EULER_ORDER = 'XYZ';
-const PHANTOM_VIEWMODEL_OFFSET = new THREE.Vector3(0, 0.28, -0.04);
+const DEFAULT_VIEWMODEL_ROOT_OFFSET = new THREE.Vector3(...SHARED_VIEWMODEL_ROOT_OFFSET);
 const PHANTOM_PALM_SOCKET_OFFSET = new THREE.Vector3(0, 0.012, -0.4);
 const PHANTOM_CLOSED_FINGER_ROWS = [-0.066, -0.022, 0.022, 0.066] as const;
 const PHANTOM_OPEN_FINGER_SLOTS = [-0.056, -0.019, 0.019, 0.056] as const;
@@ -356,16 +357,16 @@ const CHRONOS_STILL_MOVEMENT_BOB: ChronosMovementBobOffset = {
 const matrixPosition = new THREE.Vector3();
 const matrixQuaternion = new THREE.Quaternion();
 const matrixUnitScale = new THREE.Vector3(1, 1, 1);
-const phantomWorldScale = new THREE.Vector3(1, 1, 1);
+const viewmodelWorldScale = new THREE.Vector3(1, 1, 1);
 const matrixEuler = new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER);
 const viewmodelRootMatrix = new THREE.Matrix4();
-const phantomOffsetMatrix = new THREE.Matrix4();
-const phantomArmMatrix = new THREE.Matrix4();
-const phantomWristMatrix = new THREE.Matrix4();
-const phantomPalmMatrix = new THREE.Matrix4();
-const phantomSocketMatrix = new THREE.Matrix4();
-const phantomWorldMatrix = new THREE.Matrix4();
-const phantomWorldQuaternion = new THREE.Quaternion();
+const viewmodelOffsetMatrix = new THREE.Matrix4();
+const viewmodelArmMatrix = new THREE.Matrix4();
+const viewmodelWristMatrix = new THREE.Matrix4();
+const viewmodelPalmMatrix = new THREE.Matrix4();
+const viewmodelSocketMatrix = new THREE.Matrix4();
+const viewmodelWorldMatrix = new THREE.Matrix4();
+const viewmodelWorldQuaternion = new THREE.Quaternion();
 const blazeClosedHandInnerMatrix = new THREE.Matrix4();
 const blazeStaffMatrix = new THREE.Matrix4();
 const blazeStaffTipMatrix = new THREE.Matrix4();
@@ -383,7 +384,7 @@ const blazeStaffPositionScratch = new THREE.Vector3();
 const blazeStaffRotationScratch = new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER);
 const phantomClosedHandPivotOffset = new THREE.Vector3(0, 0, PHANTOM_CLOSED_HAND_WRIST_PIVOT_Z);
 const phantomClosedHandPivotWorldOffset = new THREE.Vector3();
-const PHANTOM_STILL_LOCOMOTION_POSE: PhantomLocomotionPose = {
+const VIEWMODEL_STILL_LOCOMOTION_POSE: ViewmodelLocomotionPose = {
   movementBlend: 0,
   runBlend: 0,
   slideBlend: 0,
@@ -774,7 +775,7 @@ function writePhantomHandPose(
   holdBlend: number,
   shotPulse: number,
   elapsedSeconds: number,
-  locomotion: PhantomLocomotionPose = PHANTOM_STILL_LOCOMOTION_POSE,
+  locomotion: ViewmodelLocomotionPose = VIEWMODEL_STILL_LOCOMOTION_POSE,
   primaryReadyBlend = 0,
   primaryShotExtension = 0
 ): void {
@@ -928,7 +929,7 @@ function writePhantomForearmPose(
   holdBlend: number,
   shotPulse: number,
   elapsedSeconds: number,
-  locomotion: PhantomLocomotionPose = PHANTOM_STILL_LOCOMOTION_POSE,
+  locomotion: ViewmodelLocomotionPose = VIEWMODEL_STILL_LOCOMOTION_POSE,
   primaryReadyBlend = 0,
   primaryShotExtension = 0
 ): void {
@@ -1161,7 +1162,7 @@ function isLocalHookshotHookDetached(side: -1 | 1): boolean {
   );
 }
 
-function createPhantomLocomotionRuntime(): PhantomLocomotionRuntime {
+function createViewmodelLocomotionRuntime(): ViewmodelLocomotionRuntime {
   return {
     movementBlend: 0,
     runBlend: 0,
@@ -1173,8 +1174,8 @@ function createPhantomLocomotionRuntime(): PhantomLocomotionRuntime {
   };
 }
 
-function updatePhantomLocomotionRuntime(
-  locomotion: PhantomLocomotionRuntime,
+function updateViewmodelLocomotionRuntime(
+  locomotion: ViewmodelLocomotionRuntime,
   camera: THREE.Camera,
   delta: number,
   heroId: ViewmodelHeroId = 'phantom'
@@ -1292,7 +1293,7 @@ function composePhantomPrimaryPalmMatrix({
   primaryReadyBlend?: number;
   primaryShotExtension?: number;
   shieldCastPose?: PhantomShieldCastPose;
-  locomotion?: PhantomLocomotionPose;
+  locomotion?: ViewmodelLocomotionPose;
 }): THREE.Matrix4 {
   const rootTransform = {
     position: matrixPosition,
@@ -1301,9 +1302,9 @@ function composePhantomPrimaryPalmMatrix({
   writeViewmodelRootTransform(rootTransform, elapsedSeconds, actionBlend, targetingBlend);
   composeTransformMatrix(viewmodelRootMatrix, rootTransform.position, rootTransform.rotation);
 
-  matrixPosition.copy(PHANTOM_VIEWMODEL_OFFSET);
+  matrixPosition.copy(DEFAULT_VIEWMODEL_ROOT_OFFSET);
   matrixEuler.set(0, 0, 0);
-  composeTransformMatrix(phantomOffsetMatrix, matrixPosition, matrixEuler);
+  composeTransformMatrix(viewmodelOffsetMatrix, matrixPosition, matrixEuler);
 
   const poseTarget: PhantomHandPoseTargets = {
     arm: { position: matrixPosition, rotation: matrixEuler },
@@ -1329,32 +1330,32 @@ function composePhantomPrimaryPalmMatrix({
     applyPhantomShieldCastHandPose(poseTarget, side, shieldCastPose, elapsedSeconds);
   }
 
-  composeTransformMatrix(phantomArmMatrix, poseTarget.arm.position, poseTarget.arm.rotation);
-  composeTransformMatrix(phantomWristMatrix, poseTarget.wrist.position, poseTarget.wrist.rotation);
-  composeTransformMatrix(phantomPalmMatrix, poseTarget.palm.position, poseTarget.palm.rotation);
+  composeTransformMatrix(viewmodelArmMatrix, poseTarget.arm.position, poseTarget.arm.rotation);
+  composeTransformMatrix(viewmodelWristMatrix, poseTarget.wrist.position, poseTarget.wrist.rotation);
+  composeTransformMatrix(viewmodelPalmMatrix, poseTarget.palm.position, poseTarget.palm.rotation);
 
   matrixPosition.copy(PHANTOM_PALM_SOCKET_OFFSET);
   matrixEuler.set(0, 0, 0);
-  composeTransformMatrix(phantomSocketMatrix, matrixPosition, matrixEuler);
+  composeTransformMatrix(viewmodelSocketMatrix, matrixPosition, matrixEuler);
 
   camera.updateMatrixWorld();
-  phantomWorldMatrix
+  viewmodelWorldMatrix
     .copy(camera.matrixWorld)
     .multiply(viewmodelRootMatrix)
-    .multiply(phantomOffsetMatrix)
-    .multiply(phantomArmMatrix)
-    .multiply(phantomWristMatrix)
-    .multiply(phantomPalmMatrix)
-    .multiply(phantomSocketMatrix);
+    .multiply(viewmodelOffsetMatrix)
+    .multiply(viewmodelArmMatrix)
+    .multiply(viewmodelWristMatrix)
+    .multiply(viewmodelPalmMatrix)
+    .multiply(viewmodelSocketMatrix);
 
-  return phantomWorldMatrix;
+  return viewmodelWorldMatrix;
 }
 
 function samplePhantomPrimaryPalmSocket(
   context: PhantomPrimaryPoseSampleContext,
   actionBlend: number,
   targetingBlend: number,
-  locomotion?: PhantomLocomotionPose
+  locomotion?: ViewmodelLocomotionPose
 ): ViewmodelSocketPoseDraft {
   const attackTimeSeconds = context.actionTimeSeconds ?? PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS;
   const timestampMs = context.timestampMs ?? Date.now();
@@ -1397,22 +1398,22 @@ function composePhantomVoidRayOrbMatrix({
   writeViewmodelRootTransform(rootTransform, elapsedSeconds, actionBlend, targetingBlend);
   composeTransformMatrix(viewmodelRootMatrix, rootTransform.position, rootTransform.rotation);
 
-  matrixPosition.copy(PHANTOM_VIEWMODEL_OFFSET);
+  matrixPosition.copy(DEFAULT_VIEWMODEL_ROOT_OFFSET);
   matrixEuler.set(0, 0, 0);
-  composeTransformMatrix(phantomOffsetMatrix, matrixPosition, matrixEuler);
+  composeTransformMatrix(viewmodelOffsetMatrix, matrixPosition, matrixEuler);
 
   matrixPosition.copy(PHANTOM_VOID_RAY_RELEASE_ORIGIN_POSITION);
   matrixEuler.set(0, 0, 0);
-  composeTransformMatrix(phantomSocketMatrix, matrixPosition, matrixEuler);
+  composeTransformMatrix(viewmodelSocketMatrix, matrixPosition, matrixEuler);
 
   camera.updateMatrixWorld();
-  phantomWorldMatrix
+  viewmodelWorldMatrix
     .copy(camera.matrixWorld)
     .multiply(viewmodelRootMatrix)
-    .multiply(phantomOffsetMatrix)
-    .multiply(phantomSocketMatrix);
+    .multiply(viewmodelOffsetMatrix)
+    .multiply(viewmodelSocketMatrix);
 
-  return phantomWorldMatrix;
+  return viewmodelWorldMatrix;
 }
 
 function samplePhantomVoidRayOrbSocket(
@@ -1442,7 +1443,7 @@ function PhantomAnimatedForearm({
   materials: ViewmodelMaterialSet;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
   voidRayReleaseRef: MutableRefObject<PhantomVoidRayReleaseState | null>;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   const forearmRef = useRef<THREE.Group>(null);
   const length = 0.32;
@@ -1480,7 +1481,7 @@ function PhantomAnimatedForearm({
         0,
         0,
         state.clock.elapsedTime,
-        PHANTOM_STILL_LOCOMOTION_POSE,
+        VIEWMODEL_STILL_LOCOMOTION_POSE,
         0,
         0
       );
@@ -1560,7 +1561,7 @@ function PhantomPoseableHand({
   materials: ViewmodelMaterialSet;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
   voidRayReleaseRef: MutableRefObject<PhantomVoidRayReleaseState | null>;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   const closedVisualRef = useRef<THREE.Group>(null);
   const armRef = useRef<THREE.Group>(null);
@@ -1624,7 +1625,7 @@ function PhantomPoseableHand({
         0,
         0,
         state.clock.elapsedTime,
-        PHANTOM_STILL_LOCOMOTION_POSE,
+        VIEWMODEL_STILL_LOCOMOTION_POSE,
         0,
         0
       );
@@ -2013,13 +2014,13 @@ function PhantomViewmodel({
   materials: ViewmodelMaterialSet;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
   voidRayReleaseRef: MutableRefObject<PhantomVoidRayReleaseState | null>;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   return (
     <group position={[
-      PHANTOM_VIEWMODEL_OFFSET.x,
-      PHANTOM_VIEWMODEL_OFFSET.y,
-      PHANTOM_VIEWMODEL_OFFSET.z,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.x,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.y,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.z,
     ]}>
       <PhantomAnimatedForearm side={-1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
       <PhantomAnimatedForearm side={1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
@@ -2042,7 +2043,7 @@ function HookshotPhantomForearm({
   materials: ViewmodelMaterialSet;
   primaryFireRef: MutableRefObject<HookshotPrimaryFireState | null>;
   secondaryFireRef: MutableRefObject<HookshotSecondaryFireState | null>;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   const forearmRef = useRef<THREE.Group>(null);
   const length = 0.32;
@@ -2102,7 +2103,7 @@ function HookshotSimpleHookHand({
   materials: ViewmodelMaterialSet;
   primaryFireRef: MutableRefObject<HookshotPrimaryFireState | null>;
   secondaryFireRef: MutableRefObject<HookshotSecondaryFireState | null>;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   const armRef = useRef<THREE.Group>(null);
   const wristRef = useRef<THREE.Group>(null);
@@ -2243,13 +2244,13 @@ function HookshotViewmodel({
   materials: ViewmodelMaterialSet;
   primaryFireRef: MutableRefObject<HookshotPrimaryFireState | null>;
   secondaryFireRef: MutableRefObject<HookshotSecondaryFireState | null>;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   return (
     <group position={[
-      PHANTOM_VIEWMODEL_OFFSET.x,
-      PHANTOM_VIEWMODEL_OFFSET.y,
-      PHANTOM_VIEWMODEL_OFFSET.z,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.x,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.y,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.z,
     ]}>
       <HookshotPhantomForearm
         side={-1}
@@ -2487,7 +2488,7 @@ function composeBlazeRocketStaffTipMatrix({
   targetingBlend: number;
   holdBlend: number;
   rocketJumpPose: BlazeRocketJumpStaffSlamPose;
-  locomotion?: PhantomLocomotionPose;
+  locomotion?: ViewmodelLocomotionPose;
 }): THREE.Matrix4 {
   const adjustedHoldBlend = holdBlend * (1 - getBlazeRocketJumpPoseAmount(rocketJumpPose));
   const rootTransform = {
@@ -2497,9 +2498,9 @@ function composeBlazeRocketStaffTipMatrix({
   writeViewmodelRootTransform(rootTransform, elapsedSeconds, actionBlend, targetingBlend);
   composeTransformMatrix(viewmodelRootMatrix, rootTransform.position, rootTransform.rotation);
 
-  matrixPosition.copy(PHANTOM_VIEWMODEL_OFFSET);
+  matrixPosition.copy(DEFAULT_VIEWMODEL_ROOT_OFFSET);
   matrixEuler.set(0, 0, 0);
-  composeTransformMatrix(phantomOffsetMatrix, matrixPosition, matrixEuler);
+  composeTransformMatrix(viewmodelOffsetMatrix, matrixPosition, matrixEuler);
 
   const poseTarget = createBlazeRocketHandPoseTargets();
   writePhantomHandPose(
@@ -2513,7 +2514,7 @@ function composeBlazeRocketStaffTipMatrix({
   applyBlazeRocketPoseToHand(poseTarget, 1, adjustedHoldBlend);
   applyBlazeRocketJumpPoseToHand(poseTarget, 1, rocketJumpPose);
   composeTransformMatrix(
-    phantomArmMatrix,
+    viewmodelArmMatrix,
     poseTarget.closedHand.position,
     poseTarget.closedHand.rotation
   );
@@ -2533,23 +2534,23 @@ function composeBlazeRocketStaffTipMatrix({
   composeTransformMatrix(blazeStaffTipMatrix, matrixPosition, matrixEuler);
 
   camera.updateMatrixWorld();
-  phantomWorldMatrix
+  viewmodelWorldMatrix
     .copy(camera.matrixWorld)
     .multiply(viewmodelRootMatrix)
-    .multiply(phantomOffsetMatrix)
-    .multiply(phantomArmMatrix)
+    .multiply(viewmodelOffsetMatrix)
+    .multiply(viewmodelArmMatrix)
     .multiply(blazeClosedHandInnerMatrix)
     .multiply(blazeStaffMatrix)
     .multiply(blazeStaffTipMatrix);
 
-  return phantomWorldMatrix;
+  return viewmodelWorldMatrix;
 }
 
 function sampleBlazeRocketStaffTipSocket(
   context: BlazeRocketStaffPoseSampleContext,
   actionBlend: number,
   targetingBlend: number,
-  locomotion?: PhantomLocomotionPose
+  locomotion?: ViewmodelLocomotionPose
 ): ViewmodelSocketPoseDraft {
   const timestampMs = context.timestampMs ?? Date.now();
   const holdBlend = context.holdBlend ?? getBlazeStaffHeldBlend(timestampMs);
@@ -2578,7 +2579,7 @@ function BlazePhantomForearm({
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   const forearmRef = useRef<THREE.Group>(null);
   const length = 0.32;
@@ -2858,7 +2859,7 @@ function BlazePhantomHand({
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   const closedVisualRef = useRef<THREE.Group>(null);
   const armRef = useRef<THREE.Group>(null);
@@ -2994,13 +2995,13 @@ function BlazeViewmodel({
   locomotionRef,
 }: {
   materials: ViewmodelMaterialSet;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   return (
     <group position={[
-      PHANTOM_VIEWMODEL_OFFSET.x,
-      PHANTOM_VIEWMODEL_OFFSET.y,
-      PHANTOM_VIEWMODEL_OFFSET.z,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.x,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.y,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.z,
     ]}>
       <group position={[0.06, -0.035, 0.18]}>
         <BlazePhantomForearm
@@ -3041,7 +3042,7 @@ function createChronosMovementBobRuntime(): ChronosMovementBobRuntime {
 
 function updateChronosMovementBobRuntime(
   runtime: ChronosMovementBobRuntime,
-  locomotion: PhantomLocomotionPose,
+  locomotion: ViewmodelLocomotionPose,
   camera: THREE.Camera,
   delta: number
 ): ChronosMovementBobOffset {
@@ -3155,7 +3156,7 @@ function writeChronosTriangleForearmPose(
     CHRONOS_FOREARM_READY_BLEND,
     0,
     elapsedSeconds,
-    PHANTOM_STILL_LOCOMOTION_POSE
+    VIEWMODEL_STILL_LOCOMOTION_POSE
   );
 
   const breath = Math.sin(elapsedSeconds * 1.2 + side * 0.65) * 0.002;
@@ -3198,7 +3199,7 @@ function writeChronosTriangleHandPose(
     CHRONOS_HAND_READY_BLEND,
     0,
     elapsedSeconds,
-    PHANTOM_STILL_LOCOMOTION_POSE
+    VIEWMODEL_STILL_LOCOMOTION_POSE
   );
 
   const innerSide = -side;
@@ -3325,9 +3326,9 @@ function composeChronosWeaponSocketLocalMatrix({
     aegisPose
   );
 
-  composeTransformMatrix(phantomArmMatrix, poseTarget.arm.position, poseTarget.arm.rotation);
-  composeTransformMatrix(phantomWristMatrix, poseTarget.wrist.position, poseTarget.wrist.rotation);
-  composeTransformMatrix(phantomPalmMatrix, poseTarget.palm.position, poseTarget.palm.rotation);
+  composeTransformMatrix(viewmodelArmMatrix, poseTarget.arm.position, poseTarget.arm.rotation);
+  composeTransformMatrix(viewmodelWristMatrix, poseTarget.wrist.position, poseTarget.wrist.rotation);
+  composeTransformMatrix(viewmodelPalmMatrix, poseTarget.palm.position, poseTarget.palm.rotation);
 
   const innerSide = -side;
   matrixPosition.set(
@@ -3336,13 +3337,13 @@ function composeChronosWeaponSocketLocalMatrix({
     CHRONOS_WEAPON_SOCKET_Z
   );
   matrixEuler.set(0, 0, 0);
-  composeTransformMatrix(phantomSocketMatrix, matrixPosition, matrixEuler);
+  composeTransformMatrix(viewmodelSocketMatrix, matrixPosition, matrixEuler);
 
   targetMatrix
-    .copy(phantomArmMatrix)
-    .multiply(phantomWristMatrix)
-    .multiply(phantomPalmMatrix)
-    .multiply(phantomSocketMatrix);
+    .copy(viewmodelArmMatrix)
+    .multiply(viewmodelWristMatrix)
+    .multiply(viewmodelPalmMatrix)
+    .multiply(viewmodelSocketMatrix);
 
   return targetMatrix;
 }
@@ -3369,9 +3370,9 @@ function composeChronosPrimaryOrbMatrix({
   writeViewmodelRootTransform(rootTransform, elapsedSeconds, actionBlend, targetingBlend);
   composeTransformMatrix(viewmodelRootMatrix, rootTransform.position, rootTransform.rotation);
 
-  matrixPosition.copy(PHANTOM_VIEWMODEL_OFFSET);
+  matrixPosition.copy(DEFAULT_VIEWMODEL_ROOT_OFFSET);
   matrixEuler.set(0, 0, 0);
-  composeTransformMatrix(phantomOffsetMatrix, matrixPosition, matrixEuler);
+  composeTransformMatrix(viewmodelOffsetMatrix, matrixPosition, matrixEuler);
 
   composeChronosWeaponSocketLocalMatrix({
     targetMatrix: chronosLeftSocketMatrix,
@@ -3380,7 +3381,7 @@ function composeChronosPrimaryOrbMatrix({
     movementBob,
     aegisPose,
   });
-  chronosLeftSocketMatrix.decompose(chronosLeftSocketPosition, phantomWorldQuaternion, phantomWorldScale);
+  chronosLeftSocketMatrix.decompose(chronosLeftSocketPosition, viewmodelWorldQuaternion, viewmodelWorldScale);
 
   composeChronosWeaponSocketLocalMatrix({
     targetMatrix: chronosRightSocketMatrix,
@@ -3389,7 +3390,7 @@ function composeChronosPrimaryOrbMatrix({
     movementBob,
     aegisPose,
   });
-  chronosRightSocketMatrix.decompose(chronosRightSocketPosition, phantomWorldQuaternion, phantomWorldScale);
+  chronosRightSocketMatrix.decompose(chronosRightSocketPosition, viewmodelWorldQuaternion, viewmodelWorldScale);
 
   const spread = aegisPose.spread;
   const shield = aegisPose.shield;
@@ -3419,14 +3420,14 @@ function composeChronosPrimaryOrbMatrix({
   chronosRootMatrix
     .copy(camera.matrixWorld)
     .multiply(viewmodelRootMatrix)
-    .multiply(phantomOffsetMatrix);
+    .multiply(viewmodelOffsetMatrix);
 
-  phantomWorldMatrix
+  viewmodelWorldMatrix
     .copy(chronosRootMatrix)
     .multiply(chronosWeaponMatrix)
     .multiply(chronosOrbMatrix);
 
-  return phantomWorldMatrix;
+  return viewmodelWorldMatrix;
 }
 
 function sampleChronosPrimaryOrbSocket(
@@ -4003,7 +4004,7 @@ function ChronosViewmodel({
   targetingBlendRef,
 }: {
   materials: ViewmodelMaterialSet;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
   actionBlendRef: MutableRefObject<number>;
   targetingBlendRef: MutableRefObject<number>;
 }) {
@@ -4090,9 +4091,9 @@ function ChronosViewmodel({
     <group
       ref={rootRef}
       position={[
-        PHANTOM_VIEWMODEL_OFFSET.x,
-        PHANTOM_VIEWMODEL_OFFSET.y,
-        PHANTOM_VIEWMODEL_OFFSET.z,
+        DEFAULT_VIEWMODEL_ROOT_OFFSET.x,
+        DEFAULT_VIEWMODEL_ROOT_OFFSET.y,
+        DEFAULT_VIEWMODEL_ROOT_OFFSET.z,
       ]}
     >
       <ChronosPhantomForearm
@@ -4142,7 +4143,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
   const phantomVoidRayReleaseRef = useRef<PhantomVoidRayReleaseState | null>(null);
   const hookshotPrimaryFireRef = useRef<HookshotPrimaryFireState | null>(null);
   const hookshotSecondaryFireRef = useRef<HookshotSecondaryFireState | null>(null);
-  const phantomLocomotionRef = useRef<PhantomLocomotionRuntime>(createPhantomLocomotionRuntime());
+  const viewmodelLocomotionRef = useRef<ViewmodelLocomotionRuntime>(createViewmodelLocomotionRuntime());
   const processedPhantomPrimaryEventIdRef = useRef<string | null>(null);
   const processedPhantomVoidRayEventIdRef = useRef<string | null>(null);
   const processedHookshotPrimaryEventIdRef = useRef<string | null>(null);
@@ -4167,7 +4168,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
           { ...context, side: -1 },
           actionBlendRef.current,
           targetingBlendRef.current,
-          phantomLocomotionRef.current
+          viewmodelLocomotionRef.current
         ),
       },
       {
@@ -4176,7 +4177,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
           { ...context, side: 1 },
           actionBlendRef.current,
           targetingBlendRef.current,
-          phantomLocomotionRef.current
+          viewmodelLocomotionRef.current
         ),
       },
       {
@@ -4200,7 +4201,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
           context,
           actionBlendRef.current,
           targetingBlendRef.current,
-          phantomLocomotionRef.current
+          viewmodelLocomotionRef.current
         ),
       },
     ]);
@@ -4230,7 +4231,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
     const actionBlend = actionBlendRef.current;
     const targetingBlend = targetingBlendRef.current;
 
-    updatePhantomLocomotionRuntime(phantomLocomotionRef.current, camera, delta, heroId);
+    updateViewmodelLocomotionRuntime(viewmodelLocomotionRef.current, camera, delta, heroId);
 
     if (heroId === 'phantom') {
       const store = useGameStore.getState();
@@ -4358,7 +4359,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
             materials={materials}
             primaryAttackRef={phantomPrimaryAttackRef}
             voidRayReleaseRef={phantomVoidRayReleaseRef}
-            locomotionRef={phantomLocomotionRef}
+            locomotionRef={viewmodelLocomotionRef}
           />
         )}
         {heroId === 'hookshot' && (
@@ -4366,19 +4367,19 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
             materials={materials}
             primaryFireRef={hookshotPrimaryFireRef}
             secondaryFireRef={hookshotSecondaryFireRef}
-            locomotionRef={phantomLocomotionRef}
+            locomotionRef={viewmodelLocomotionRef}
           />
         )}
         {heroId === 'blaze' && (
           <BlazeViewmodel
             materials={materials}
-            locomotionRef={phantomLocomotionRef}
+            locomotionRef={viewmodelLocomotionRef}
           />
         )}
         {heroId === 'chronos' && (
           <ChronosViewmodel
             materials={materials}
-            locomotionRef={phantomLocomotionRef}
+            locomotionRef={viewmodelLocomotionRef}
             actionBlendRef={actionBlendRef}
             targetingBlendRef={targetingBlendRef}
           />

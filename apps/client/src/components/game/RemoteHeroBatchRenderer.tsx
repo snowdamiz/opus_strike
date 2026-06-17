@@ -43,6 +43,10 @@ import {
   type HeroBodyPoseTransitionRuntime,
 } from '../../model-system/heroBodyPose';
 import {
+  HERO_BODY_BOT_MARKER_PART,
+} from '../../model-system/heroBodyGeneratedParts';
+import { groupHeroBodyRenderParts } from '../../model-system/heroBodyRenderParts';
+import {
   EMPTY_REMOTE_SOCKET_MARKERS,
   EMPTY_RIGGED_PARTS,
   HERO_BONE_PARENTS,
@@ -1056,7 +1060,7 @@ function appendRiggedPartDescriptors<TPart extends VoxelPart>(
       const part = riggedPart.part;
       const geometryKey = geometryKeyForPart(part);
       const base = descriptorBase(
-        `${options.prefix}-${bone}-${index}`,
+        `${options.prefix}-${part.id}`,
         bone,
         riggedPart.meshOffset,
         part.scale,
@@ -1091,7 +1095,7 @@ function createRemotePartDescriptors(heroId: HeroId, team: Team): { descriptors:
     return getOrAddMaterialKey(getPaletteMaterialOptions(part.material, color));
   };
 
-  const riggedPartsByBone = groupRiggedParts(manifest.parts);
+  const riggedPartsByBone = groupHeroBodyRenderParts(manifest.parts);
   appendRiggedPartDescriptors(descriptors, riggedPartsByBone, materialKeyForPalettePart, {
     prefix: `${heroId}-palette`,
     palette: true,
@@ -1116,39 +1120,6 @@ function createRemotePartDescriptors(heroId: HeroId, team: Team): { descriptors:
     trim: true,
   });
 
-  const addPaletteDescriptor = (
-    id: string,
-    bone: BoneOrRoot,
-    material: MaterialKind,
-    position: [number, number, number],
-    scale: [number, number, number],
-    geometry = HERO_PART_GEOMETRIES.box,
-    rotation?: [number, number, number]
-  ) => {
-    const options = getPaletteMaterialOptions(material, manifest.materialPalette[material]);
-    descriptors.push({
-      ...descriptorBase(
-        id,
-        bone,
-        position,
-        scale,
-        rotation,
-        geometry,
-        'box',
-        getOrAddMaterialKey(options),
-        'all'
-      ),
-      paletteKind: material,
-    });
-  };
-
-  addPaletteDescriptor(`${heroId}-left-knee-cap`, 'leftKnee', 'edge', [0, 0.015, -0.185], [0.18, 0.08, 0.05]);
-  addPaletteDescriptor(`${heroId}-left-knee-glow`, 'leftKnee', 'accent', [0, 0.018, -0.222], [0.105, 0.028, 0.026]);
-  addPaletteDescriptor(`${heroId}-right-knee-cap`, 'rightKnee', 'edge', [0, 0.015, -0.185], [0.18, 0.08, 0.05]);
-  addPaletteDescriptor(`${heroId}-right-knee-glow`, 'rightKnee', 'accent', [0, 0.018, -0.222], [0.105, 0.028, 0.026]);
-  addPaletteDescriptor(`${heroId}-left-upper-leg-link`, 'leftLeg', 'dark', [0, -0.15, -0.018], [0.17, 0.3, 0.13]);
-  addPaletteDescriptor(`${heroId}-right-upper-leg-link`, 'rightLeg', 'dark', [0, -0.15, -0.018], [0.17, 0.3, 0.13]);
-
   const botMarkerOptions = getPaletteMaterialOptions('accent', teamColor);
   const botMarkerKey = getOrAddMaterialKey({
     ...botMarkerOptions,
@@ -1158,17 +1129,17 @@ function createRemotePartDescriptors(heroId: HeroId, team: Team): { descriptors:
   });
   descriptors.push({
     ...descriptorBase(
-      `${heroId}-bot-marker`,
-      'root',
-      [0, 1.98, 0],
-      [0.14, 0.04, 0.14],
-      undefined,
-      HERO_PART_GEOMETRIES.box,
-      'box',
+      `${heroId}-${HERO_BODY_BOT_MARKER_PART.id}`,
+      HERO_BODY_BOT_MARKER_PART.bone,
+      HERO_BODY_BOT_MARKER_PART.position,
+      HERO_BODY_BOT_MARKER_PART.scale,
+      HERO_BODY_BOT_MARKER_PART.rotation,
+      HERO_PART_GEOMETRIES[HERO_BODY_BOT_MARKER_PART.kind ?? 'box'],
+      HERO_BODY_BOT_MARKER_PART.kind ?? 'box',
       botMarkerKey,
       'bot'
     ),
-    fixedEmissiveIntensity: 0.75,
+    fixedEmissiveIntensity: HERO_BODY_BOT_MARKER_PART.fixedEmissiveIntensity,
   });
 
   return { descriptors, materialOptions: materialOptionsByKey };

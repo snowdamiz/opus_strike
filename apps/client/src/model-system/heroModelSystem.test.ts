@@ -1,18 +1,22 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
+  ABILITY_SOCKET_CATALOG,
   BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
   CHRONOS_PRIMARY_ORB_SOCKET_NAME,
   HERO_DEFINITIONS,
   HOOKSHOT_HOOK_SOCKET_NAMES,
   PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
   PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
+  validateHeroModelDocument,
   type HeroId,
 } from '@voxel-strike/shared';
 import {
   HERO_BODY_MANIFESTS,
 } from './heroBodyManifests';
+import { HERO_MODEL_DOCUMENTS } from './heroModelDocuments';
 import {
+  addVoxelPartMetadata,
   HERO_BONE_PARENTS,
   HERO_BONE_PIVOTS,
   classifyHeroBone,
@@ -30,7 +34,11 @@ import {
   getNormalizedWalkDirection,
   setBoneBasePose,
 } from './heroBodyPose';
-import { createViewmodelPoseRuntime, resetViewmodelPoseRuntime } from '../viewmodel/viewmodelPoseRuntime';
+import {
+  createViewmodelPoseRuntime,
+  getViewmodelHeldBlend,
+  resetViewmodelPoseRuntime,
+} from '../viewmodel/viewmodelPoseRuntime';
 import {
   getPhantomPrimaryHeldBlend,
   getPhantomVeilCastPose,
@@ -49,11 +57,12 @@ import {
   setChronosPrimaryHeld,
   triggerChronosTimebreakPose,
 } from '../viewmodel/chronosPose';
-import type { HeroBoneRefs, VoxelPart } from './heroBodyTypes';
+import type { HeroBoneRefs, VoxelPartDraft } from './heroBodyTypes';
 
 const heroIds = Object.keys(HERO_DEFINITIONS).sort() as HeroId[];
 
 assert.deepEqual(Object.keys(HERO_BODY_MANIFESTS).sort(), heroIds);
+assert.deepEqual(Object.keys(HERO_MODEL_DOCUMENTS).sort(), heroIds);
 
 const expectedRemoteSockets: Record<HeroId, readonly string[]> = {
   phantom: [
@@ -81,6 +90,14 @@ for (const heroId of heroIds) {
   assert.ok(manifest.attackDurationSeconds > 0, `${heroId} body manifest needs attack timing`);
   assert.ok(manifest.idleProfile.breathingAmplitude > 0, `${heroId} body manifest needs idle breathing`);
 
+  const partIds = new Set<string>();
+  for (const part of [...manifest.parts, ...manifest.teamAccentParts]) {
+    assert.ok(part.id, `${heroId} part needs a stable id`);
+    assert.ok(!partIds.has(part.id), `${heroId} duplicate part id ${part.id}`);
+    partIds.add(part.id);
+    assert.ok(HERO_BONE_PIVOTS[part.bone], `${heroId} part ${part.id} references an unknown bone`);
+  }
+
   const materials = new Set([
     ...manifest.parts.map((part) => part.material),
     ...manifest.teamAccentParts.map((part) => part.material),
@@ -96,18 +113,85 @@ for (const heroId of heroIds) {
   );
 
   for (const marker of manifest.remoteSocketMarkers) {
+    assert.ok(marker.id, `${heroId} socket ${marker.socketName} needs a stable id`);
     assert.ok(HERO_BONE_PIVOTS[marker.bone], `${heroId} socket ${marker.socketName} references an unknown bone`);
+  }
+
+  const document = HERO_MODEL_DOCUMENTS[heroId];
+  const validation = validateHeroModelDocument(document);
+  assert.deepEqual(validation.errors, [], `${heroId} model document must validate`);
+  assert.equal(validation.ok, true, `${heroId} model document must validate`);
+
+  const fullBodySocketNames = new Set(document.fullBody.sockets.map((socket) => socket.name));
+  const viewmodelSocketNames = new Set(document.viewmodel?.sockets.map((socket) => socket.name) ?? []);
+  assert.ok((document.viewmodel?.parts.length ?? 0) > 0, `${heroId} viewmodel document must include editable parts`);
+  const viewmodelMaterials = new Set(document.viewmodel?.materials.map((material) => material.token) ?? []);
+  for (const material of ['armor', 'dark', 'metal', 'accent', 'glow', 'glass'] as const) {
+    assert.ok(viewmodelMaterials.has(material), `${heroId} viewmodel document missing ${material} material`);
+  }
+  const requiredSocketNames = Object.values(ABILITY_SOCKET_CATALOG)
+    .filter((entry) => entry.heroId === heroId)
+    .flatMap((entry) => entry.socketNames);
+  for (const socketName of requiredSocketNames) {
+    assert.ok(
+      fullBodySocketNames.has(socketName),
+      `${heroId} full-body document missing catalog socket ${socketName}`
+    );
+    assert.ok(
+      viewmodelSocketNames.has(socketName),
+      `${heroId} viewmodel document missing catalog socket ${socketName}`
+    );
   }
 }
 
-const sampleParts: VoxelPart[] = [
+const invalidViewmodelDocument = JSON.parse(JSON.stringify(HERO_MODEL_DOCUMENTS.phantom));
+invalidViewmodelDocument.viewmodel.poseChannels = [{ id: 'phantom.invalid', kind: 'unknown-kind' }];
+invalidViewmodelDocument.viewmodel.materials = [
+  { token: 'armor', color: '#ffffff' },
+  { token: 'armor', color: '#eeeeee' },
+];
+invalidViewmodelDocument.defaultFallbackSockets.customEditorRole = {
+  handHeight: 'not-a-number',
+  forwardOffset: 0,
+  sideOffset: 0,
+};
+const invalidViewmodelValidation = validateHeroModelDocument(invalidViewmodelDocument);
+assert.equal(invalidViewmodelValidation.ok, false);
+assert.ok(
+  invalidViewmodelValidation.errors.some((error) => error.includes('viewmodel.poseChannels[0].kind')),
+  'validator should reject unknown viewmodel pose channel kinds'
+);
+assert.ok(
+  invalidViewmodelValidation.errors.some((error) => error.includes('viewmodel.materials[1].token')),
+  'validator should reject duplicate viewmodel material tokens'
+);
+assert.ok(
+  invalidViewmodelValidation.errors.some((error) => error.includes('defaultFallbackSockets.customEditorRole.handHeight')),
+  'validator should reject malformed custom fallback socket offsets'
+);
+
+const customEditorDocument = JSON.parse(JSON.stringify(HERO_MODEL_DOCUMENTS.phantom));
+customEditorDocument.heroId = 'editor-authored-hero';
+customEditorDocument.materialPalette.editorCrystal = '#88ffee';
+customEditorDocument.fullBody.parts[0].material = 'editorCrystal';
+customEditorDocument.fullBody.sockets[0].role = 'editorPrimary';
+customEditorDocument.defaultFallbackSockets.editorPrimary = {
+  handHeight: 1.1,
+  forwardOffset: 0.3,
+  sideOffset: 0,
+};
+const customEditorValidation = validateHeroModelDocument(customEditorDocument);
+assert.deepEqual(customEditorValidation.errors, [], 'validator should allow editor-authored hero ids, materials, and socket roles');
+assert.equal(customEditorValidation.ok, true);
+
+const sampleParts = addVoxelPartMetadata<VoxelPartDraft>([
   { material: 'armor', position: [0, 1.66, 0], scale: [0.2, 0.2, 0.2] },
   { material: 'armor', position: [0, 0.76, 0.02], scale: [0.3, 0.2, 0.2] },
   { material: 'armor', position: [-0.2, 0.45, 0], scale: [0.1, 0.2, 0.1] },
   { material: 'armor', position: [0.62, 1.0, -0.1], scale: [0.1, 0.2, 0.1] },
   { material: 'mist', kind: 'cylinder', position: [0, 0.02, 0], scale: [0.5, 0.02, 0.5] },
-  { material: 'glow', position: [0.4, 0.9, -0.2], scale: [0.08, 0.08, 0.08], limb: 'rightForearm' },
-];
+  { material: 'glow', position: [0.4, 0.9, -0.2], scale: [0.08, 0.08, 0.08], bone: 'rightForearm' },
+], 'test.body');
 
 assert.equal(classifyHeroBone(sampleParts[0]), 'head');
 assert.equal(classifyHeroBone(sampleParts[1]), 'hips');
@@ -276,5 +360,23 @@ assert.equal(getBlazeRocketHeldBlend(1400, runtime), 0);
 assert.equal(getChronosPrimaryHeldBlend(1400, runtime), 0);
 assert.equal(getBlazeRocketJumpStaffSlamPose(1400, runtime).active, false);
 assert.equal(getChronosTimebreakPose(1400, runtime).glow, 0);
+assert.throws(
+  () => getViewmodelHeldBlend({
+    runtime,
+    channelId: 'phantom.typoHeld',
+    transitionSeconds: 0.1,
+    timestampMs: 1400,
+  }),
+  /Unknown viewmodel pose channel/
+);
+assert.throws(
+  () => getViewmodelHeldBlend({
+    runtime,
+    channelId: 'phantom.voidRayCharge',
+    transitionSeconds: 0.1,
+    timestampMs: 1400,
+  }),
+  /driven by componentRef/
+);
 
 console.log('hero model system tests passed');
