@@ -1,5 +1,6 @@
 import type { Vec3 } from './vector.js';
 import type { Player, Team } from './player.js';
+import type { GameplayMode } from './gameplayMode.js';
 
 export type GamePhase = 
   | 'waiting'       // Waiting for players
@@ -28,6 +29,7 @@ export interface TeamState {
 }
 
 export interface GameConfig {
+  gameplayMode: GameplayMode;
   maxPlayers: number;
   teamSize: number;
   scoreToWin: number;

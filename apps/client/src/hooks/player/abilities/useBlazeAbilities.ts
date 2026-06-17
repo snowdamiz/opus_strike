@@ -256,7 +256,8 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
 
   const fireRocket = useCallback((ctx: AbilityContext) => {
     if (!ctx.inputState.primaryFire) return;
-    if (useGameStore.getState().bombTargeting) return;
+    const store = useGameStore.getState();
+    if (store.bombTargeting) return;
 
     const now = Date.now();
     const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
@@ -272,7 +273,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       : calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_ROCKET_STAFF_SOCKET);
     const visualId = `predicted_blaze_rocket_${ctx.localPlayer.id}_${rocketIdRef.current}`;
 
-    useGameStore.getState().addRocket({
+    store.addRocket({
       id: visualId,
       position: startPosition,
       velocity: {
@@ -284,6 +285,9 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       ownerId: ctx.localPlayer.id,
       ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
     });
+    if (store.isTutorialMode) {
+      store.recordPrimaryFire(now);
+    }
     markPredictedLocalAbilityVisual('blaze_rocket', ctx.localPlayer.id, visualId, { now });
   }, []);
 
@@ -406,6 +410,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
 
     if (shouldPlayLocalFlamethrowerSound && !flamethrowerActiveRef.current) {
       flamethrowerActiveRef.current = true;
+      store.recordSkillCast(timestampMs);
       sounds.startFlamethrowerSound();
     } else if (!shouldPlayLocalFlamethrowerSound && flamethrowerActiveRef.current) {
       flamethrowerActiveRef.current = false;

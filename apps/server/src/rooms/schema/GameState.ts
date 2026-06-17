@@ -1,5 +1,5 @@
 import { Schema, MapSchema, defineTypes } from '@colyseus/schema';
-import type { GameConfig } from '@voxel-strike/shared';
+import { DEFAULT_VOXEL_MAP_SIZE_ID, type GameConfig } from '@voxel-strike/shared';
 import { Player } from './Player';
 import { TeamState, Flag, Vec3Schema } from './Components';
 
@@ -10,6 +10,8 @@ export class GameState extends Schema {
   serverTime: number = 0;
   mapSeed: number = 0;
   mapThemeId: string = '';
+  mapSize: string = DEFAULT_VOXEL_MAP_SIZE_ID;
+  gameplayMode: string = 'capture_the_flag';
 
   // Teams
   redTeam: TeamState = new TeamState();
@@ -46,6 +48,8 @@ defineTypes(GameState, {
   phase: 'string',
   mapSeed: 'number',
   mapThemeId: 'string',
+  mapSize: 'string',
+  gameplayMode: 'string',
   players: { map: Player },
   phaseEndTime: 'number',
 });

@@ -71,6 +71,11 @@ const emptySocialState: SocialState = {
   lobbyInvites: [],
   discordPlayers: [],
 };
+const SOCIAL_REFRESH_INTERVAL_MS = 10000;
+
+function actionableSocialCount(social: SocialState): number {
+  return social.incomingRequests.length + social.lobbyInvites.length;
+}
 
 function getHttpUrl(): string {
   return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
@@ -285,13 +290,45 @@ export function SocialButton({
   );
 }
 
+export function useSocialBadgeCount(): number {
+  const { isAuthenticated } = useWallet();
+  const [badgeCount, setBadgeCount] = useState(0);
+
+  const refreshBadgeCount = useCallback(async () => {
+    if (!isAuthenticated) {
+      setBadgeCount(0);
+      return;
+    }
+
+    try {
+      const data = await socialApi<SocialState>('/social');
+      setBadgeCount(actionableSocialCount(data));
+    } catch {
+      setBadgeCount(0);
+    }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    refreshBadgeCount();
+  }, [refreshBadgeCount]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const interval = window.setInterval(refreshBadgeCount, SOCIAL_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [isAuthenticated, refreshBadgeCount]);
+
+  return badgeCount;
+}
+
 export function SocialBox({
   onClose,
 }: {
   onClose: () => void;
 }) {
   const { isAuthenticated, user } = useWallet();
-  const { joinLobby } = useNetwork();
+  const { joinLobby, startTutorialGame } = useNetwork();
   const playerName = useGameStore((state) => state.playerName);
   const appPhase = useGameStore((state) => state.appPhase);
   const currentLobbyId = useGameStore((state) => state.currentLobbyId);
@@ -309,6 +346,7 @@ export function SocialBox({
   const [error, setError] = useState<string | null>(null);
 
   const canInviteFromLobby = isAuthenticated && appPhase === 'in_lobby' && Boolean(currentLobbyId);
+  const hasCompletedTutorial = Boolean(user?.tutorialCompletedAt);
   const requestCount = social.incomingRequests.length + social.outgoingRequests.length;
   const inviteCount = social.lobbyInvites.length;
   const tabCounts = useMemo(() => ({
@@ -348,7 +386,7 @@ export function SocialBox({
     if (!isAuthenticated) return;
     const interval = window.setInterval(() => {
       refreshSocial(true);
-    }, 10000);
+    }, SOCIAL_REFRESH_INTERVAL_MS);
 
     return () => window.clearInterval(interval);
   }, [isAuthenticated, refreshSocial]);
@@ -470,6 +508,12 @@ export function SocialBox({
 
   const acceptLobbyInvite = (invite: LobbyInvite) => {
     runAction(`accept-invite:${invite.inviteId}`, async () => {
+      if (!hasCompletedTutorial) {
+        onClose();
+        startTutorialGame(playerName || user?.name || 'Player');
+        return;
+      }
+
       const data = await socialApi<{ invite: LobbyInvite }>(
         `/social/lobby-invites/${encodeURIComponent(invite.inviteId)}/accept`,
         { method: 'POST' }

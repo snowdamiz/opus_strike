@@ -3134,8 +3134,8 @@ function BlazeWizardStaff({
       <group position={[0, 0.49, 0]}>
         <mesh geometry={SHARED_GEOMETRIES.cylinder12} material={materials.metal} position={[0, -0.048, 0]} scale={[0.056, 0.026, 0.056]} />
         <mesh geometry={SHARED_GEOMETRIES.cylinderOpen12} material={materials.glow} position={[0, -0.012, 0]} scale={[0.056, 0.068, 0.056]} />
-        <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glass} position={[0, 0.024, 0]} scale={[0.05, 0.074, 0.05]} />
-        <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glass} position={[0, -0.022, 0]} rotation={[Math.PI, 0, 0]} scale={[0.04, 0.054, 0.04]} />
+        <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glass} position={[0, 0.031, 0]} scale={[0.05, 0.074, 0.05]} />
+        <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glass} position={[0, -0.033, 0]} rotation={[Math.PI, 0, 0]} scale={[0.04, 0.054, 0.04]} />
         <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glow} position={[0, 0.061, 0]} scale={[0.031, 0.082, 0.031]} />
         <mesh geometry={SHARED_GEOMETRIES.ring24} material={materials.accent} rotation={[Math.PI / 2, 0, 0]} scale={[0.082, 0.082, 1]} />
         <mesh geometry={SHARED_GEOMETRIES.ring16} material={materials.glow} position={[0, 0.034, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[0.064, 0.064, 1]} />
@@ -3194,8 +3194,8 @@ function BlazeWizardStaff({
             />
           ))}
         </group>
-        <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0.041, -0.008, 0]} rotation={[0, 0, 0.28]} scale={[0.016, 0.096, 0.02]} />
-        <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[-0.041, -0.008, 0]} rotation={[0, 0, -0.28]} scale={[0.016, 0.096, 0.02]} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0.069, -0.014, 0]} rotation={[0, 0, 0.22]} scale={[0.012, 0.074, 0.018]} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[-0.069, -0.014, 0]} rotation={[0, 0, -0.22]} scale={[0.012, 0.074, 0.018]} />
       </group>
 
       <group position={[0, -0.43, 0]}>

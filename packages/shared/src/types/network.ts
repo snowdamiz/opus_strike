@@ -7,7 +7,8 @@ import type { MovementCommandPacket, SelfMovementAuthority } from './movementPre
 import type { VoiceTokenRequest, VoiceTokenResponse, VoiceTeamChangedMessage } from './voice.js';
 import type { PublicRankSnapshot } from '../progression/ranking.js';
 import type { MatchMode } from './matchMode.js';
-import type { VoxelMapTheme } from '../maps/procedural/types.js';
+import type { GameplayMode } from './gameplayMode.js';
+import type { MapPowerupKind, VoxelMapSizeId, VoxelMapTheme } from '../maps/procedural/types.js';
 
 // Client -> Server Messages
 export type ClientMessage = 
@@ -35,6 +36,8 @@ export type ServerMessage =
   | { type: 'playerPingRequest'; payload: PlayerPingRequestMessage }
   | { type: 'playerPings'; payload: PlayerPingsMessage }
   | { type: 'matchSnapshot'; payload: MatchSnapshotMessage }
+  | { type: 'powerupState'; payload: PowerupStateMessage }
+  | { type: 'powerupCollected'; payload: PowerupCollectedMessage }
   | { type: 'matchStartGate'; payload: MatchStartGateMessage }
   | { type: 'matchCancelled'; payload: MatchCancelledMessage }
   | { type: 'playerJoined'; payload: { playerId: string; playerName: string } }
@@ -149,6 +152,7 @@ export interface PlayerVitalsSnapshot {
   maxHealth: number;
   ultimateCharge: number;
   onFireUntil?: number | null;
+  powerupBoostUntil?: number | null;
   hasFlag: boolean;
   movement: PlayerSnapshot['movement'];
   abilities: Record<string, PlayerVitalsAbilitySnapshot>;
@@ -182,6 +186,7 @@ export interface MatchStartGateMessage {
   serverTime: number;
   mapSeed: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
+  mapSize?: VoxelMapSizeId | null;
   position: Vec3;
   movementEpoch: number;
   ackSeq: number;
@@ -228,8 +233,10 @@ export interface MatchSnapshotMessage {
   tick: number;
   serverTime: number;
   phase: GamePhase;
+  gameplayMode: GameplayMode;
   mapSeed: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
+  mapSize?: VoxelMapSizeId | null;
   redScore: number;
   blueScore: number;
   redFlag: FlagSync;
@@ -237,6 +244,27 @@ export interface MatchSnapshotMessage {
   roundTimeRemaining: number;
   phaseEndTime: number | null;
   gameClockFrozen?: boolean;
+}
+
+export interface PowerupPickupRuntimeState {
+  pickupId: string;
+  availableAt: number;
+}
+
+export interface PowerupStateMessage {
+  serverTime: number;
+  pickups: PowerupPickupRuntimeState[];
+}
+
+export interface PowerupCollectedMessage {
+  pickupId: string;
+  kind: MapPowerupKind;
+  playerId: string | null;
+  position: Vec3;
+  availableAt: number;
+  expiresAt?: number | null;
+  healthRestored?: number;
+  serverTime: number;
 }
 
 export interface FlagSync {
@@ -274,6 +302,7 @@ export interface RoundEndEvent {
 
 export interface GameEndEvent {
   matchMode: MatchMode;
+  gameplayMode: GameplayMode;
   winningTeam: Team | null;
   finalScore: { red: number; blue: number };
   matchId: string | null;

@@ -220,7 +220,10 @@ function resolveCombatTextAnchor(event: CombatTextEvent, target: THREE.Vector3):
     return;
   }
 
-  const position = visualStore.getState().playerPositions.get(player.id) ?? player.position;
+  const visualState = visualStore.getState();
+  const position = visualState.renderedPlayerPositions.get(player.id) ??
+    visualState.playerPositions.get(player.id) ??
+    player.position;
   const heroId = player.heroId;
   const movement = player.movement;
 

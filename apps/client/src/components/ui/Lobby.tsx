@@ -8,6 +8,7 @@ import {
   ALL_HERO_IDS,
   DEFAULT_GAME_CONFIG,
   HERO_DEFINITIONS,
+  getGameplayModeLabel,
   getPickedTeamHeroIds,
   type BotDifficulty,
   type HeroId,
@@ -16,7 +17,7 @@ import type { LobbyPlayer } from '../../store/gameStore';
 import { FACTIONS, HERO_COLORS } from '../../styles/colorTokens';
 import { deserializeWagerPaymentTransaction, lamportsToSolDisplay } from '../../utils/wagerPayments';
 import { RankIcon, getRankForStats } from './RankBadge';
-import { SocialBox, SocialButton } from './SocialBox';
+import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
 
 // Solar Vanguard Icon - Stylized sun with radiating beams
 function SolarIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -207,6 +208,7 @@ export function Lobby() {
     playerId,
     currentLobbyId,
     currentLobbyName, 
+    gameplayMode,
     currentLobbyWager,
     lobbyPlayers, 
     isLobbyHost,
@@ -225,6 +227,7 @@ export function Lobby() {
       playerId: state.playerId,
       currentLobbyId: state.currentLobbyId,
       currentLobbyName: state.currentLobbyName,
+      gameplayMode: state.gameplayMode,
       currentLobbyWager: state.currentLobbyWager,
       lobbyPlayers: state.lobbyPlayers,
       isLobbyHost: state.isLobbyHost,
@@ -266,6 +269,7 @@ export function Lobby() {
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [isPaying, setIsPaying] = useState(false);
   const [showSocial, setShowSocial] = useState(false);
+  const socialBadgeCount = useSocialBadgeCount();
 
   const currentPlayer = playerId ? lobbyPlayers.get(playerId) : null;
   const isLocalObserver = currentPlayer?.isObserver === true;
@@ -341,6 +345,7 @@ export function Lobby() {
 
   const currentFaction = currentPlayer?.team === 'red' ? FACTIONS.red : currentPlayer?.team === 'blue' ? FACTIONS.blue : null;
   const currentRoleLabel = isLocalObserver ? 'Observer' : currentFaction?.fullName || 'Unassigned';
+  const gameplayModeLabel = getGameplayModeLabel(gameplayMode);
   const currentRoleColor = isLocalObserver
     ? 'rgb(var(--color-accent-secondary))'
     : currentFaction?.primaryColor || 'rgb(var(--color-strike-border) / 0.4)';
@@ -468,8 +473,9 @@ export function Lobby() {
               </svg>
             </button>
             
-            <div className="flex h-10 min-w-0 items-center">
+            <div className="flex h-10 min-w-0 flex-col justify-center">
               <h1 className="font-display translate-y-[0.08em] text-xl xl:text-2xl leading-none text-white tracking-wide truncate">{currentLobbyName || 'Game Lobby'}</h1>
+              <p className="mt-1 truncate font-body text-[10px] uppercase tracking-widest text-white/35">{gameplayModeLabel}</p>
             </div>
           </div>
 
@@ -477,6 +483,7 @@ export function Lobby() {
           <div className="flex shrink-0 items-center gap-3 xl:gap-4">
             {isAuthenticated && (
               <SocialButton
+                badgeCount={socialBadgeCount}
                 onClick={() => {
                   playButtonClick();
                   setShowSocial(true);

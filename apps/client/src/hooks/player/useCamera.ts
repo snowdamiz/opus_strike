@@ -11,6 +11,7 @@ import {
   PITCH_LIMIT,
   PLAYER_EYE_HEIGHT,
   PLAYER_HEIGHT,
+  SLIDE_CAMERA_HEIGHT_OFFSET,
   SLIDE_CAMERA_PITCH_OFFSET,
 } from '@voxel-strike/shared';
 import type { CameraRefs } from './types';
@@ -264,7 +265,7 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
     }
 
     // Interpolate crouch camera height
-    const targetCrouchOffset = (isCrouching || isSliding) ? CROUCH_HEIGHT_OFFSET : 0;
+    const targetCrouchOffset = isSliding ? SLIDE_CAMERA_HEIGHT_OFFSET : isCrouching ? CROUCH_HEIGHT_OFFSET : 0;
     crouchHeightRef.current += (targetCrouchOffset - crouchHeightRef.current) * Math.min(CROUCH_TRANSITION_SPEED * dt, 1);
 
     // Interpolate slide camera effects

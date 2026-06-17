@@ -110,6 +110,7 @@ export interface SelfMovementAuthority {
   chronosAegisActive?: boolean;
   chronosAegisShieldRatio?: number;
   rootedUntil?: number;
+  powerupBoostUntil?: number | null;
 }
 
 export interface MovementTelemetrySnapshot {

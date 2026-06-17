@@ -1,5 +1,16 @@
 import { create } from 'zustand';
-import { createRandomSeed, type GameEndEvent, type PlayerPingsMessage, type VoxelMapTheme } from '@voxel-strike/shared';
+import {
+  DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_VOXEL_MAP_SIZE_ID,
+  createRandomSeed,
+  normalizeVoxelMapSizeId,
+  type GameplayMode,
+  type GameEndEvent,
+  type PlayerPingsMessage,
+  type PowerupPickupRuntimeState,
+  type VoxelMapSizeId,
+  type VoxelMapTheme,
+} from '@voxel-strike/shared';
 import {
   clearAllDeathVisuals,
   clearVisualState,
@@ -38,6 +49,11 @@ export type ObserverFlySpeedPreset = 'low' | 'med' | 'high';
 export interface ObserverFlySpeed {
   base: number;
   sprint: number;
+}
+
+export interface PowerupPickupCollectionState {
+  pickupId: string;
+  collectedAt: number;
 }
 
 export const OBSERVER_FLY_SPEED_PRESETS = {
@@ -94,6 +110,8 @@ interface CoreState {
   playerId: string | null;
   playerName: string;
   isPracticeMode: boolean;
+  isTutorialMode: boolean;
+  tutorialCompletionOverlayOpen: boolean;
   isPracticePreparing: boolean;
 
   // App phase (different from game phase)
@@ -115,11 +133,15 @@ interface CoreState {
   matchmakingStatus: MatchmakingStatus;
 
   // Game state
+  gameplayMode: GameplayMode;
   gamePhase: GamePhase;
   matchSummary: GameEndEvent | null;
   appliedExperienceMatchId: string | null;
   mapSeed: number;
   mapThemeId: VoxelMapTheme['id'] | null;
+  mapSize: VoxelMapSizeId;
+  powerupPickups: Map<string, PowerupPickupRuntimeState>;
+  powerupPickupCollections: Map<string, PowerupPickupCollectionState>;
 
   // Teams
   redScore: number;
@@ -148,6 +170,8 @@ interface CoreState {
   clientCooldowns: Record<string, number>;
   clientCharges: Record<string, number>;
   chronosLifelineQueued: boolean;
+  lastSkillCastAt: number;
+  lastPrimaryFireAt: number;
 
   // Slide visual effects
   slideIntensity: number;
@@ -163,6 +187,8 @@ interface CoreActions {
   setPlayerId: (playerId: string | null) => void;
   setPlayerName: (name: string) => void;
   setPracticeMode: (enabled: boolean) => void;
+  setTutorialMode: (enabled: boolean) => void;
+  setTutorialCompletionOverlayOpen: (open: boolean) => void;
   setPracticePreparing: (preparing: boolean) => void;
   setAppPhase: (phase: AppPhase) => void;
   setMatchmakingStatus: (status: MatchmakingStatus) => void;
@@ -172,6 +198,11 @@ interface CoreActions {
   setPhaseEndTime: (time: number | null) => void;
   setMapSeed: (seed: number) => void;
   setMapThemeId: (themeId: VoxelMapTheme['id'] | null) => void;
+  setMapSize: (mapSize: VoxelMapSizeId | string | null | undefined) => void;
+  setPowerupPickups: (pickups: PowerupPickupRuntimeState[]) => void;
+  updatePowerupPickup: (pickup: PowerupPickupRuntimeState) => void;
+  recordPowerupPickupCollection: (collection: PowerupPickupCollectionState) => void;
+  clearPowerupPickups: () => void;
   updateLocalPlayer: (updates: Partial<Player>) => void;
   setLocalPlayer: (player: Player) => void;
   setPlayers: (players: Map<string, Player>) => void;
@@ -199,6 +230,8 @@ interface CoreActions {
   setClientCharges: (abilityId: string, charges: number) => void;
   clearClientCooldowns: () => void;
   setChronosLifelineQueuedHud: (queued: boolean) => void;
+  recordSkillCast: (timestampMs?: number) => void;
+  recordPrimaryFire: (timestampMs?: number) => void;
   setSlideIntensity: (intensity: number) => void;
 
   // Ghost cleanup
@@ -242,6 +275,8 @@ const coreInitialState: CoreState = {
   playerId: null,
   playerName: '',
   isPracticeMode: false,
+  isTutorialMode: false,
+  tutorialCompletionOverlayOpen: false,
   isPracticePreparing: false,
   appPhase: 'menu',
   currentLobbyId: null,
@@ -256,6 +291,7 @@ const coreInitialState: CoreState = {
   mapVotes: new Map(),
   mapVotePhaseEndTime: null,
   selectedMapOptionId: null,
+  gameplayMode: DEFAULT_GAMEPLAY_MODE,
   matchmakingStatus: {
     matchMode: null,
     rankBandId: null,
@@ -276,6 +312,9 @@ const coreInitialState: CoreState = {
   appliedExperienceMatchId: null,
   mapSeed: createRandomSeed(),
   mapThemeId: null,
+  mapSize: DEFAULT_VOXEL_MAP_SIZE_ID,
+  powerupPickups: new Map(),
+  powerupPickupCollections: new Map(),
   redScore: 0,
   blueScore: 0,
   redFlag: null,
@@ -294,6 +333,8 @@ const coreInitialState: CoreState = {
   clientCooldowns: {},
   clientCharges: {},
   chronosLifelineQueued: false,
+  lastSkillCastAt: 0,
+  lastPrimaryFireAt: 0,
   slideIntensity: 0,
 };
 
@@ -331,10 +372,18 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       return state.isPracticeMode ? state : { isPracticeMode: true };
     }
 
-    return state.isPracticeMode || state.isPracticePreparing
-      ? { isPracticeMode: false, isPracticePreparing: false }
+    return state.isPracticeMode || state.isTutorialMode || state.isPracticePreparing
+      ? { isPracticeMode: false, isTutorialMode: false, isPracticePreparing: false }
       : state;
   }),
+  setTutorialMode: (enabled) => set((state) => (
+    state.isTutorialMode === enabled && (enabled || !state.tutorialCompletionOverlayOpen)
+      ? state
+      : { isTutorialMode: enabled, tutorialCompletionOverlayOpen: enabled ? state.tutorialCompletionOverlayOpen : false }
+  )),
+  setTutorialCompletionOverlayOpen: (open) => set((state) => (
+    state.tutorialCompletionOverlayOpen === open ? state : { tutorialCompletionOverlayOpen: open }
+  )),
   setPracticePreparing: (preparing) => set((state) => (
     state.isPracticePreparing === preparing ? state : { isPracticePreparing: preparing }
   )),
@@ -409,10 +458,36 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   setPhaseEndTime: (time) => set((state) => state.phaseEndTime === time ? state : { phaseEndTime: time }),
   setMapSeed: (seed) => set((state) => {
     const mapSeed = seed >>> 0;
-    return state.mapSeed === mapSeed ? state : { mapSeed };
+    return state.mapSeed === mapSeed ? state : { mapSeed, powerupPickups: new Map(), powerupPickupCollections: new Map() };
   }),
   setMapThemeId: (themeId) => set((state) => (
-    state.mapThemeId === themeId ? state : { mapThemeId: themeId }
+    state.mapThemeId === themeId ? state : { mapThemeId: themeId, powerupPickups: new Map(), powerupPickupCollections: new Map() }
+  )),
+  setMapSize: (mapSize) => set((state) => {
+    const normalizedMapSize = normalizeVoxelMapSizeId(mapSize);
+    return state.mapSize === normalizedMapSize ? state : { mapSize: normalizedMapSize, powerupPickups: new Map(), powerupPickupCollections: new Map() };
+  }),
+
+  setPowerupPickups: (pickups) => set({
+    powerupPickups: new Map(pickups.map((pickup) => [pickup.pickupId, pickup])),
+  }),
+
+  updatePowerupPickup: (pickup) => set((state) => {
+    const next = new Map(state.powerupPickups);
+    next.set(pickup.pickupId, pickup);
+    return { powerupPickups: next };
+  }),
+
+  recordPowerupPickupCollection: (collection) => set((state) => {
+    const next = new Map(state.powerupPickupCollections);
+    next.set(collection.pickupId, collection);
+    return { powerupPickupCollections: next };
+  }),
+
+  clearPowerupPickups: () => set((state) => (
+    state.powerupPickups.size === 0 && state.powerupPickupCollections.size === 0
+      ? state
+      : { powerupPickups: new Map(), powerupPickupCollections: new Map() }
   )),
 
   updateLocalPlayer: (updates) => {
@@ -652,6 +727,14 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     state.chronosLifelineQueued === queued ? state : { chronosLifelineQueued: queued }
   )),
 
+  recordSkillCast: (timestampMs = Date.now()) => set((state) => (
+    state.lastSkillCastAt === timestampMs ? state : { lastSkillCastAt: timestampMs }
+  )),
+
+  recordPrimaryFire: (timestampMs = Date.now()) => set((state) => (
+    state.lastPrimaryFireAt === timestampMs ? state : { lastPrimaryFireAt: timestampMs }
+  )),
+
   setSlideIntensity: (intensity) => set((state) => state.slideIntensity === intensity ? state : { slideIntensity: intensity }),
 
   // ==================== RESET ACTIONS ====================
@@ -675,7 +758,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     mapVotes: new Map(),
     mapVotePhaseEndTime: null,
     selectedMapOptionId: null,
-    matchmakingStatus: {
+      matchmakingStatus: {
       matchMode: null,
       rankBandId: null,
       rankBandLabel: null,
@@ -690,5 +773,6 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       rankedCoverChargeLamports: null,
       rankedEntryQuoteId: null,
     },
+    gameplayMode: DEFAULT_GAMEPLAY_MODE,
   }),
 }));

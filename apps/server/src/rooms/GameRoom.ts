@@ -26,7 +26,10 @@ import {
 } from './movementCommandDrain';
 import {
   DEFAULT_GAME_CONFIG,
+  DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_VOXEL_MAP_SIZE_ID,
   TICK_INTERVAL_MS,
+  createGameConfigForGameplayMode,
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
   getHeroStats,
@@ -35,6 +38,8 @@ import {
   generateProceduralVoxelMap,
   createProceduralTerrainLookup,
   getVoxelMapTheme,
+  isGameplayMode,
+  normalizeVoxelMapSizeId,
   GOLDEN_VOXEL_MAP_THEME_ID,
   getRankFromRating,
   toPublicRankSnapshot,
@@ -42,6 +47,10 @@ import {
   isCollisionBlock,
   FLAG_CAPTURE_RADIUS,
   FLAG_PICKUP_RADIUS,
+  POWERUP_ABILITY_ATTACK_SPEED_MULTIPLIER,
+  POWERUP_BUFF_DURATION_MS,
+  POWERUP_HEALTH_RESTORE_RATIO,
+  POWERUP_MOVEMENT_SPEED_MULTIPLIER,
   ULTIMATE_CHARGE_PER_CAPTURE,
   ULTIMATE_CHARGE_PER_KILL,
   ULTIMATE_CHARGE_PER_SECOND,
@@ -141,7 +150,6 @@ import {
   nextMovementSeq,
   movementSeqDistance,
   parseMovementCommandPayload,
-  sanitizeAbilityCastOriginHints,
   normalizeLookYaw,
   clampLookPitch,
   calculateLookDirection,
@@ -171,6 +179,7 @@ import type {
   MovementCorrectionReason,
   MovementTelemetrySnapshot,
   GameEndEvent,
+  GameplayMode,
   MatchMode,
   MatchOutcome,
   MatchSummaryPlayer,
@@ -180,6 +189,8 @@ import type {
   PlayerPingRequestMessage,
   PlayerPingsMessage,
   PlayerInterestMessage,
+  PowerupCollectedMessage,
+  PowerupStateMessage,
   PlayerTransformsV2Message,
   PlayerVitalsAbilitySnapshot,
   PlayerVitalsMessage,
@@ -188,6 +199,7 @@ import type {
   PackedPlayerTransform,
   VoxelChunk,
   VoxelMapManifest,
+  VoxelMapSizeId,
   VoxelMapTheme,
 } from '@voxel-strike/shared';
 import {
@@ -325,8 +337,10 @@ interface CreateOptions {
   lobbyId?: string;
   lobbyName?: string;
   matchMode?: MatchMode;
+  gameplayMode?: GameplayMode;
   mapSeed?: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
+  mapSize?: VoxelMapSizeId | null;
   botAssignments?: BotAssignment[];
   observerCount?: number;
   wagerContext?: LockedWagerContext | null;
@@ -530,6 +544,10 @@ interface BlazeBurnEffect {
   nextTickAt: number;
   sourcePosition: PlainVec3 | null;
   sourceDirection: PlainVec3 | null;
+}
+
+interface PowerupPickupRuntimeState {
+  availableAt: number;
 }
 
 interface ServerMovementAuthorityState {
@@ -848,7 +866,7 @@ export class GameRoom extends Room<GameState> {
   private matchStartCancelTimeout: ReturnType<typeof setTimeout> | null = null;
   private matchCancelDisconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private readonly scheduledTimeouts = new Set<ReturnType<typeof setTimeout>>();
-  private readonly config = DEFAULT_GAME_CONFIG;
+  private config = createGameConfigForGameplayMode();
   private lobbyId: string | null = null;
   private lobbyName: string | null = null;
   private voidZones: VoidZone[] = [];
@@ -869,9 +887,10 @@ export class GameRoom extends Room<GameState> {
   private hookshotGrapples: Map<string, HookshotGrappleAuthorityState> = new Map();
   private hookshotDragPulls: Map<string, HookshotDragPullAuthorityState> = new Map();
   private playerRootedUntil: Map<string, number> = new Map();
+  private powerupPickupStates: Map<string, PowerupPickupRuntimeState> = new Map();
+  private powerupBoostUntil: Map<string, number> = new Map();
   private pendingAreaDamage: PendingAreaDamageInstance[] = [];
   private blazeGearstorms: BlazeGearstormInstance[] = [];
-  private blazeBombDropConsumedForHold: Set<string> = new Set();
   private blazeFlamethrowerActivePlayers: Set<string> = new Set();
   private blazeBurnEffects: Map<string, BlazeBurnEffect> = new Map();
   private voidZoneIdCounter: number = 0;
@@ -1001,6 +1020,7 @@ export class GameRoom extends Room<GameState> {
   private rankedRequiredHumanPlayers = DEFAULT_GAME_CONFIG.maxPlayers;
   private reservedHumanPlayers = 0;
   private matchMode: MatchMode = 'custom';
+  private gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE;
   private wagerSettlementRequested = false;
   private countdownStartGateOpen = false;
   private countdownStartGateKey = 0;
@@ -1129,6 +1149,8 @@ export class GameRoom extends Room<GameState> {
     this.lobbyId = options.lobbyId || null;
     this.lobbyName = options.lobbyName || null;
     this.matchMode = options.matchMode ?? options.wagerContext?.matchMode ?? (options.wagerContext ? 'custom_wager' : 'custom');
+    this.gameplayMode = isGameplayMode(options.gameplayMode) ? options.gameplayMode : DEFAULT_GAMEPLAY_MODE;
+    this.config = createGameConfigForGameplayMode(this.gameplayMode);
     this.wagerContext = options.wagerContext || null;
     this.rankedEligibilityCandidate = options.rankedEligible === true;
     this.requiredHumanPlayers = Math.max(
@@ -1156,10 +1178,12 @@ export class GameRoom extends Room<GameState> {
     this.setState(new GameState());
     this.state.roomId = this.roomId;
     this.state.config = this.config;
+    this.state.gameplayMode = this.gameplayMode;
     this.state.mapSeed = typeof options.mapSeed === 'number'
       ? options.mapSeed >>> 0
       : createRandomSeed();
     this.state.mapThemeId = options.mapThemeId ?? getVoxelMapTheme(this.state.mapSeed).id;
+    this.state.mapSize = normalizeVoxelMapSizeId(options.mapSize);
     this.refreshMapManifest();
     loggers.room.info('Map seed', this.state.mapSeed);
     this.resetFlags();
@@ -1177,14 +1201,6 @@ export class GameRoom extends Room<GameState> {
         return;
       }
       this.handleMovementCommandPacket(client, packet);
-    });
-
-    this.onMessage('blazeBombDrop', (client, data: unknown) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'blazeBombDrop', GAME_MESSAGE_RATE_LIMITS.blazeBombDrop)) {
-        this.recordRateLimitDrop(client.sessionId, 'blazeBombDrop');
-        return;
-      }
-      this.handleBlazeBombDrop(client, data);
     });
 
     this.onMessage('selectHero', (client, data: unknown) => {
@@ -1664,7 +1680,7 @@ export class GameRoom extends Room<GameState> {
     this.hookshotGrapples.delete(playerId);
     this.clearHookshotDragPullsInvolving(playerId);
     this.playerRootedUntil.delete(playerId);
-    this.blazeBombDropConsumedForHold.delete(playerId);
+    this.powerupBoostUntil.delete(playerId);
     this.blazeFlamethrowerActivePlayers.delete(playerId);
     this.blazeBurnEffects.delete(playerId);
     for (const [targetId, burn] of this.blazeBurnEffects) {
@@ -1894,17 +1910,18 @@ export class GameRoom extends Room<GameState> {
 
       if (player.state !== 'alive') return;
 
-      const tempoMultiplier = this.getChronosTimebreakTempoMultiplier(player);
+      const chronosTempoMultiplier = this.getChronosTimebreakTempoMultiplier(player);
+      const abilityTempoMultiplier = this.getAbilityTempoMultiplier(player, now);
 
       // Update ability cooldowns
-      updateAbilityCooldowns(player, dt, tempoMultiplier);
-      this.updateTimeScaledSkillTimers(player, dt, tempoMultiplier, now);
+      updateAbilityCooldowns(player, dt, abilityTempoMultiplier);
+      this.updateTimeScaledSkillTimers(player, dt, abilityTempoMultiplier, now);
 
       // Passive ultimate charge
       if (player.ultimateCharge < 100) {
         player.ultimateCharge = Math.min(
           100,
-          player.ultimateCharge + ULTIMATE_CHARGE_PER_SECOND * dt * tempoMultiplier
+          player.ultimateCharge + ULTIMATE_CHARGE_PER_SECOND * dt * chronosTempoMultiplier
         );
       }
 
@@ -1930,8 +1947,13 @@ export class GameRoom extends Room<GameState> {
     // Update physics simulation (simplified)
     this.updatePhysics();
 
+    // Update map pickups after movement so collection uses the latest authoritative position.
+    this.updatePowerupPickups(now);
+
     // Update CTF objective interactions after movement.
-    this.updateCTFObjectives(now);
+    if (this.isCaptureTheFlagMode()) {
+      this.updateCTFObjectives(now);
+    }
 
     this.broadcastStateStreams();
   }
@@ -1967,6 +1989,108 @@ export class GameRoom extends Room<GameState> {
       if (player.state !== 'alive') return;
       this.updateOutOfCombatHealthRegen(player, now, dt);
     });
+  }
+
+  private resetPowerupPickupStates(availableAt = 0): void {
+    this.powerupPickupStates.clear();
+    for (const pickup of this.mapManifest?.gameplay.powerups ?? []) {
+      this.powerupPickupStates.set(pickup.id, { availableAt });
+    }
+  }
+
+  private getPowerupPickupState(pickupId: string): PowerupPickupRuntimeState {
+    let state = this.powerupPickupStates.get(pickupId);
+    if (!state) {
+      state = { availableAt: 0 };
+      this.powerupPickupStates.set(pickupId, state);
+    }
+    return state;
+  }
+
+  private buildPowerupStateMessage(): PowerupStateMessage {
+    return {
+      serverTime: this.state.serverTime || Date.now(),
+      pickups: (this.mapManifest?.gameplay.powerups ?? []).map((pickup) => ({
+        pickupId: pickup.id,
+        availableAt: this.getPowerupPickupState(pickup.id).availableAt,
+      })),
+    };
+  }
+
+  private getPowerupBoostUntil(playerId: string, now = Date.now()): number | null {
+    const expiresAt = this.powerupBoostUntil.get(playerId) ?? 0;
+    if (expiresAt <= now) {
+      this.powerupBoostUntil.delete(playerId);
+      return null;
+    }
+    return expiresAt;
+  }
+
+  private hasPowerupBoost(player: Player, now = Date.now()): boolean {
+    return this.getPowerupBoostUntil(player.id, now) !== null;
+  }
+
+  private collectPowerupPickup(
+    player: Player,
+    pickup: NonNullable<VoxelMapManifest['gameplay']['powerups']>[number],
+    now: number
+  ): boolean {
+    let healthRestored: number | undefined;
+    let expiresAt: number | null = null;
+
+    if (pickup.kind === 'health_pack') {
+      const missingHealth = Math.max(0, player.maxHealth - player.health);
+      if (missingHealth <= 0) return false;
+      const healAmount = Math.max(1, Math.round(player.maxHealth * POWERUP_HEALTH_RESTORE_RATIO));
+      healthRestored = Math.min(missingHealth, healAmount);
+      player.health = Math.min(player.maxHealth, player.health + healthRestored);
+      this.broadcastPlayerHealed(player, {
+        sourceId: player.id,
+        abilityId: 'health_pack',
+        sourcePosition: this.vec3SchemaToPlain(player.position),
+        targets: [{
+          targetId: player.id,
+          amount: healthRestored,
+          newHealth: player.health,
+          position: this.vec3SchemaToPlain(player.position),
+        }],
+        timestamp: now,
+      });
+    } else {
+      const boostExpiresAt = now + POWERUP_BUFF_DURATION_MS;
+      expiresAt = boostExpiresAt;
+      this.powerupBoostUntil.set(player.id, boostExpiresAt);
+    }
+
+    const state = this.getPowerupPickupState(pickup.id);
+    state.availableAt = now + Math.max(0, pickup.respawnSeconds * 1000);
+
+    const payload = {
+      pickupId: pickup.id,
+      kind: pickup.kind,
+      playerId: player.id,
+      position: pickup.position,
+      availableAt: state.availableAt,
+      expiresAt,
+      healthRestored,
+      serverTime: now,
+    } satisfies PowerupCollectedMessage;
+    this.broadcastPowerupCollected(player, payload);
+    return true;
+  }
+
+  private updatePowerupPickups(now: number): void {
+    const pickups = this.mapManifest?.gameplay.powerups ?? [];
+    if (pickups.length === 0) return;
+
+    for (const player of this.alivePlayers) {
+      for (const pickup of pickups) {
+        const state = this.getPowerupPickupState(pickup.id);
+        if (state.availableAt > now) continue;
+        if (this.distance2D(player.position, pickup.position) > pickup.radius + PLAYER_RADIUS) continue;
+        if (this.collectPowerupPickup(player, pickup, now)) break;
+      }
+    }
   }
 
   private quantize(value: number, scale: number): number {
@@ -2355,6 +2479,7 @@ export class GameRoom extends Room<GameState> {
       maxHealth: player.maxHealth,
       ultimateCharge: player.ultimateCharge,
       onFireUntil: this.getBlazeBurnUntil(id),
+      powerupBoostUntil: this.getPowerupBoostUntil(id, now),
       hasFlag: player.hasFlag,
       movement: {
         isGrounded: player.movement.isGrounded,
@@ -2372,8 +2497,6 @@ export class GameRoom extends Room<GameState> {
         jetpackFuel: player.movement.jetpackFuel,
         isGliding: player.movement.isGliding,
         chronosAscendantStartY: player.movement.chronosAscendantStartY || undefined,
-        airJumpsUsed: player.movement.airJumpsUsed || 0,
-        jumpHeld: player.movement.jumpHeld,
       },
       abilities,
       stats: {
@@ -2438,6 +2561,7 @@ export class GameRoom extends Room<GameState> {
       maxHealth: player.maxHealth,
       ultimateCharge: 0,
       onFireUntil: null,
+      powerupBoostUntil: null,
       hasFlag: false,
       movement: this.getDefaultPublicMovementVitals(),
       abilities: {},
@@ -2505,6 +2629,7 @@ export class GameRoom extends Room<GameState> {
       previous.maxHealth !== next.maxHealth ||
       Math.round(previous.ultimateCharge) !== Math.round(next.ultimateCharge) ||
       previous.onFireUntil !== next.onFireUntil ||
+      previous.powerupBoostUntil !== next.powerupBoostUntil ||
       previous.hasFlag !== next.hasFlag ||
       (next.state !== 'alive' && this.haveMovementVitalsChanged(previous.movement, next.movement)) ||
       this.haveAbilityVitalsChanged(previous.abilities, next.abilities) ||
@@ -2577,8 +2702,10 @@ export class GameRoom extends Room<GameState> {
       tick: this.state.tick,
       serverTime: this.state.serverTime,
       phase: this.state.phase as MatchSnapshotMessage['phase'],
+      gameplayMode: this.gameplayMode,
       mapSeed: this.state.mapSeed,
       mapThemeId: this.state.mapThemeId as VoxelMapTheme['id'],
+      mapSize: this.state.mapSize as VoxelMapSizeId,
       redScore: this.state.redTeam.score,
       blueScore: this.state.blueTeam.score,
       redFlag: this.getFlagSync('red'),
@@ -2593,6 +2720,8 @@ export class GameRoom extends Room<GameState> {
     return [
       snapshot.phase,
       snapshot.mapSeed,
+      snapshot.mapSize ?? DEFAULT_VOXEL_MAP_SIZE_ID,
+      snapshot.gameplayMode,
       snapshot.redScore,
       snapshot.blueScore,
       snapshot.phaseEndTime ?? 0,
@@ -2667,6 +2796,7 @@ export class GameRoom extends Room<GameState> {
 
     const event: GameEndEvent = {
       matchMode: this.matchMode,
+      gameplayMode: this.gameplayMode,
       winningTeam,
       finalScore,
       matchId: this.matchPersistenceLedger?.matchId ?? null,
@@ -2820,8 +2950,10 @@ export class GameRoom extends Room<GameState> {
       phase: this.state.phase,
       lobbyId: this.lobbyId || undefined,
       matchMode: this.matchMode,
+      gameplayMode: this.gameplayMode,
       mapSeed: this.state.mapSeed,
       mapThemeId: this.state.mapThemeId,
+      mapSize: this.state.mapSize,
       humanCount: counts.humanCount,
       botCount: counts.botCount,
       observerCount: counts.observerCount,
@@ -3101,6 +3233,26 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private broadcastPowerupCollected(
+    collector: Player,
+    payload: PowerupCollectedMessage
+  ): void {
+    const now = this.state.serverTime || Date.now();
+    for (const client of this.clients) {
+      const recipient = this.state.players.get(client.sessionId) ?? null;
+      const interest = recipient ? this.getRecipientInterest(recipient, collector, now) : undefined;
+      const canKnowCollector = this.shouldSendExactEnemyState(recipient, collector.id, collector, now, interest);
+      const visibleCollectorId = canKnowCollector ? collector.id : null;
+
+      this.sendTracked(client, 'powerupCollected', {
+        ...payload,
+        playerId: visibleCollectorId,
+        expiresAt: visibleCollectorId ? payload.expiresAt : null,
+        healthRestored: visibleCollectorId ? payload.healthRestored : undefined,
+      } satisfies PowerupCollectedMessage);
+    }
+  }
+
   private getCoarseEventPosition(position: PlainVec3): PlainVec3 {
     return {
       x: Math.round(position.x / FLAG_CARRIER_APPROX_GRID_METERS) * FLAG_CARRIER_APPROX_GRID_METERS,
@@ -3180,6 +3332,7 @@ export class GameRoom extends Room<GameState> {
     const recipient = this.state.players.get(client.sessionId) ?? null;
     const matchSnapshot = this.buildMatchSnapshot();
     this.sendTracked(client, 'matchSnapshot', matchSnapshot);
+    this.sendTracked(client, 'powerupState', this.buildPowerupStateMessage());
     this.sendTracked(client, 'playerVitals', {
       tick: this.state.tick,
       serverTime: this.state.serverTime,
@@ -3665,13 +3818,29 @@ export class GameRoom extends Room<GameState> {
   private updateRoundEnd() {
     if (this.state.phaseEndTime && Date.now() >= this.state.phaseEndTime) {
       // Check if game should end
-      if (this.state.redTeam.score >= this.config.scoreToWin || 
-          this.state.blueTeam.score >= this.config.scoreToWin) {
+      if (this.shouldEndGameAfterRound()) {
         this.endGame();
       } else {
         this.startHeroSelect();
       }
     }
+  }
+
+  private isCaptureTheFlagMode(): boolean {
+    return this.gameplayMode === 'capture_the_flag';
+  }
+
+  private isTeamDeathmatchMode(): boolean {
+    return this.gameplayMode === 'team_deathmatch';
+  }
+
+  private hasTeamReachedScoreLimit(): boolean {
+    return this.state.redTeam.score >= this.config.scoreToWin
+      || this.state.blueTeam.score >= this.config.scoreToWin;
+  }
+
+  private shouldEndGameAfterRound(): boolean {
+    return this.hasTeamReachedScoreLimit() || this.isTeamDeathmatchMode();
   }
 
   private createMovementAuthorityState(): ServerMovementAuthorityState {
@@ -5079,8 +5248,6 @@ export class GameRoom extends Room<GameState> {
     player.movement.jetpackFuel = result.movement.jetpackFuel;
     player.movement.isGliding = result.movement.isGliding;
     player.movement.chronosAscendantStartY = result.movement.chronosAscendantStartY ?? 0;
-    player.movement.airJumpsUsed = result.movement.airJumpsUsed ?? 0;
-    player.movement.jumpHeld = Boolean(result.movement.jumpHeld);
   }
 
   private startHookshotGrappleAuthority(
@@ -5229,8 +5396,6 @@ export class GameRoom extends Room<GameState> {
         jetpackFuel: player.movement.jetpackFuel,
         isGliding: player.movement.isGliding,
         chronosAscendantStartY: player.movement.chronosAscendantStartY || undefined,
-        airJumpsUsed: player.movement.airJumpsUsed || 0,
-        jumpHeld: player.movement.jumpHeld,
       },
       heroStats,
       input,
@@ -5238,7 +5403,7 @@ export class GameRoom extends Room<GameState> {
       deltaTime: dt,
       terrain: this.movementTerrain,
       collisionWorld,
-      flagCarrier: player.hasFlag,
+      flagCarrier: this.isCaptureTheFlagMode() && player.hasFlag,
       activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
       chronosAscendantActive: this.isChronosAscendantActive(player),
     });
@@ -5269,10 +5434,11 @@ export class GameRoom extends Room<GameState> {
           ? player.movement.wallRunSide
           : null,
         isGrappling: player.movement.isGrappling,
-        grapplePoint: null,
+        grapplePoint: this.hookshotGrapples.get(player.id)?.target ?? null,
         isJetpacking: player.movement.isJetpacking,
         jetpackFuel: player.movement.jetpackFuel,
         isGliding: player.movement.isGliding,
+        chronosAscendantStartY: player.movement.chronosAscendantStartY || undefined,
       },
       correctionReason: reason ?? undefined,
       collisionRevision: this.getMovementCollisionRevision(),
@@ -5281,6 +5447,7 @@ export class GameRoom extends Room<GameState> {
       rootedUntil: this.isPlayerRooted(player.id, now)
         ? this.playerRootedUntil.get(player.id)
         : undefined,
+      powerupBoostUntil: this.getPowerupBoostUntil(player.id, now),
     };
     this.sendTracked(client, 'selfMovementAuthority', payload);
     if (authority.lastAuthoritySentAt > 0) {
@@ -5308,8 +5475,6 @@ export class GameRoom extends Room<GameState> {
       jetpackFuel: player.movement.jetpackFuel,
       isGliding: player.movement.isGliding,
       chronosAscendantStartY: player.movement.chronosAscendantStartY || undefined,
-      airJumpsUsed: player.movement.airJumpsUsed || 0,
-      jumpHeld: player.movement.jumpHeld,
     };
   }
 
@@ -5384,7 +5549,7 @@ export class GameRoom extends Room<GameState> {
       heroStats: getHeroStats(heroId),
       input,
       terrain: this.movementTerrain,
-      flagCarrier: player.hasFlag,
+      flagCarrier: this.isCaptureTheFlagMode() && player.hasFlag,
       activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
       chronosAscendantActive: this.isChronosAscendantActive(player),
       proposedPosition,
@@ -6153,7 +6318,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private broadcastPhantomVoidRayCharge(player: Player, now: number): void {
-    const tempoMultiplier = this.getChronosTimebreakTempoMultiplier(player);
+    const tempoMultiplier = this.getAbilityTempoMultiplier(player, now);
     this.broadcastPhantomCast({
       playerId: player.id,
       abilityId: 'phantom_void_ray_charge',
@@ -6258,23 +6423,27 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
+    const chargeStartedAt = this.phantomVoidRayChargeStartedAt.get(player.id);
+    const tempoMultiplier = this.getAbilityTempoMultiplier(player, now);
+    const chargeComplete =
+      chargeStartedAt !== undefined &&
+      now - chargeStartedAt >= VOID_RAY_CHARGE_TIME / tempoMultiplier;
+
     if (!input.secondaryFire) {
       if (wasCharging && !this.phantomVoidRayResolvedForPress.has(player.id)) {
-        this.broadcastPhantomVoidRayChargeCancel(player, now);
+        if (chargeComplete) {
+          this.tryResolveAttack(player, 'secondary');
+          this.phantomVoidRayResolvedForPress.add(player.id);
+        } else {
+          this.broadcastPhantomVoidRayChargeCancel(player, now);
+        }
       }
       this.phantomVoidRayChargeStartedAt.delete(player.id);
       this.phantomVoidRayResolvedForPress.delete(player.id);
       return;
     }
 
-    const chargeStartedAt = this.phantomVoidRayChargeStartedAt.get(player.id);
-    if (chargeStartedAt === undefined) return;
-    if (this.phantomVoidRayResolvedForPress.has(player.id)) return;
-    const tempoMultiplier = this.getChronosTimebreakTempoMultiplier(player);
-    if (now - chargeStartedAt < VOID_RAY_CHARGE_TIME / tempoMultiplier) return;
-
-    this.tryResolveAttack(player, 'secondary');
-    this.phantomVoidRayResolvedForPress.add(player.id);
+    if (chargeStartedAt === undefined || this.phantomVoidRayResolvedForPress.has(player.id)) return;
   }
 
   private handleAbilityUse(
@@ -6777,15 +6946,8 @@ export class GameRoom extends Room<GameState> {
     if (player.heroId === 'phantom') {
       this.handlePhantomSecondaryInput(player, input, previous.secondaryFire, now);
     } else if (player.heroId === 'blaze') {
-      if (input.secondaryFire && !previous.secondaryFire) {
-        this.blazeBombDropConsumedForHold.delete(player.id);
-      }
       if (!input.secondaryFire && previous.secondaryFire) {
-        if (this.blazeBombDropConsumedForHold.has(player.id)) {
-          this.blazeBombDropConsumedForHold.delete(player.id);
-        } else {
-          this.tryResolveAttack(player, 'secondary');
-        }
+        this.tryResolveAttack(player, 'secondary');
       }
     } else if (shouldResolveGenericSecondaryAttack(player.heroId, input, previous.secondaryFire, isChronosLifelineCommit)) {
       this.tryResolveAttack(player, 'secondary');
@@ -7009,31 +7171,6 @@ export class GameRoom extends Room<GameState> {
       },
       retentionClass: interest.state === 'hidden' ? 'standard' : 'short',
     });
-  }
-
-  private handleBlazeBombDrop(client: Client, data: unknown): void {
-    const player = this.state.players.get(client.sessionId);
-    if (!player || player.state !== 'alive' || player.heroId !== 'blaze') return;
-    if (!player.lastInput?.secondaryFire) {
-      this.rejectAbilityOrCombat(player, 'blaze_bomb_without_secondary_hold');
-      return;
-    }
-    if (this.blazeBombDropConsumedForHold.has(player.id)) {
-      this.rejectAbilityOrCombat(player, 'blaze_bomb_duplicate_hold', false);
-      return;
-    }
-
-    this.blazeBombDropConsumedForHold.add(player.id);
-    const abilityCastHints = isRecord(data)
-      ? sanitizeAbilityCastOriginHints(data.abilityCastHints)
-      : undefined;
-    if (abilityCastHints && player.lastInput) {
-      player.lastInput = {
-        ...player.lastInput,
-        abilityCastHints,
-      };
-    }
-    this.tryResolveAttack(player, 'secondary');
   }
 
   private cleanupDamageWindows(now: number): void {
@@ -7883,6 +8020,9 @@ export class GameRoom extends Room<GameState> {
     if (this.isChronosAscendantActive(player)) {
       multiplier *= CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER;
     }
+    if (this.hasPowerupBoost(player)) {
+      multiplier *= POWERUP_MOVEMENT_SPEED_MULTIPLIER;
+    }
     multiplier *= this.getChronosTimebreakTempoMultiplier(player);
     return multiplier;
   }
@@ -7920,6 +8060,14 @@ export class GameRoom extends Room<GameState> {
 
   private getChronosTimebreakTempoMultiplier(player: Player): number {
     return 1;
+  }
+
+  private getAbilityTempoMultiplier(player: Player, now = Date.now()): number {
+    let multiplier = this.getChronosTimebreakTempoMultiplier(player);
+    if (this.hasPowerupBoost(player, now)) {
+      multiplier *= POWERUP_ABILITY_ATTACK_SPEED_MULTIPLIER;
+    }
+    return multiplier;
   }
 
   private updateTimeScaledSkillTimers(
@@ -8058,7 +8206,7 @@ export class GameRoom extends Room<GameState> {
       timestamp: now,
     });
 
-    if (this.state.redTeam.score >= this.config.scoreToWin || this.state.blueTeam.score >= this.config.scoreToWin) {
+    if (this.hasTeamReachedScoreLimit()) {
       this.endRound();
     } else {
       this.returnFlagToBase(capturedTeam, player.id, false);
@@ -8345,6 +8493,7 @@ export class GameRoom extends Room<GameState> {
     this.botTeamTactics = buildTeamTactics({
       now,
       revision: this.botTacticsRevision,
+      gameplayMode: this.gameplayMode,
       players: snapshots,
       flags,
     });
@@ -8568,6 +8717,7 @@ export class GameRoom extends Room<GameState> {
     const blackboard = shouldRefreshBlackboard
       ? buildBotBlackboard({
         now,
+        gameplayMode: this.gameplayMode,
         bot: botSnapshot,
         players: snapshots,
         flags: frameContext.flags,
@@ -8690,7 +8840,7 @@ export class GameRoom extends Room<GameState> {
       brain.reverseUntil = now + this.randomBetween(220, 420);
     }
 
-    const tempoMultiplier = this.getChronosTimebreakTempoMultiplier(bot);
+    const tempoMultiplier = this.getAbilityTempoMultiplier(bot, now);
     const input = this.createEmptyBotInput(bot, now);
     input.lookYaw = aim.yaw;
     input.lookPitch = combatTarget ? aim.pitch : 0;
@@ -9095,8 +9245,6 @@ export class GameRoom extends Room<GameState> {
     player.movement.isJetpacking = false;
     player.movement.isGliding = false;
     player.movement.chronosAscendantStartY = 0;
-    player.movement.airJumpsUsed = 0;
-    player.movement.jumpHeld = false;
   }
 
   private resetPlayerLifeRuntime(player: Player, now = Date.now()): void {
@@ -9105,8 +9253,8 @@ export class GameRoom extends Room<GameState> {
     this.resetPlayerMovementRuntime(player);
     this.blazeBurnEffects.delete(player.id);
     this.clearFlamethrowerDamageTicksForPlayer(player.id);
-    this.blazeBombDropConsumedForHold.delete(player.id);
     this.playerRootedUntil.delete(player.id);
+    this.powerupBoostUntil.delete(player.id);
     this.clearHookshotDragPullsInvolving(player.id);
     this.attackCooldownUntil.delete(`${player.id}:primary`);
     this.attackCooldownUntil.delete(`${player.id}:secondary`);
@@ -9131,13 +9279,11 @@ export class GameRoom extends Room<GameState> {
     if (
       bot.heroId === 'blaze' &&
       override.slot === 'secondary' &&
-      playerPressState.get(bot.id)?.secondaryFire &&
-      !this.blazeBombDropConsumedForHold.has(bot.id)
+      playerPressState.get(bot.id)?.secondaryFire
     ) {
       this.tryResolveAttack(bot, 'secondary');
     }
 
-    this.blazeBombDropConsumedForHold.delete(bot.id);
     this.resetPlayerPressState(bot.id);
   }
 
@@ -9760,7 +9906,6 @@ export class GameRoom extends Room<GameState> {
   private primeDevBotSkill(player: Player, slot: DevBotSkillSlot): void {
     this.attackCooldownUntil.delete(`${player.id}:primary`);
     this.attackCooldownUntil.delete(`${player.id}:secondary`);
-    this.blazeBombDropConsumedForHold.delete(player.id);
     this.phantomPrimaryHoldStartedAt.delete(player.id);
     this.chronosPrimaryHoldStartedAt.delete(player.id);
     this.phantomVoidRayChargeStartedAt.delete(player.id);
@@ -9805,8 +9950,12 @@ export class GameRoom extends Room<GameState> {
     const themeId = this.state.mapThemeId
       ? this.state.mapThemeId as VoxelMapTheme['id']
       : getVoxelMapTheme(this.state.mapSeed).id;
+    const mapSize = normalizeVoxelMapSizeId(this.state.mapSize || DEFAULT_VOXEL_MAP_SIZE_ID);
     this.state.mapThemeId = themeId;
-    this.mapManifest = generateProceduralVoxelMap(this.state.mapSeed, { themeId });
+    this.state.mapSize = mapSize;
+    this.mapManifest = generateProceduralVoxelMap(this.state.mapSeed, { themeId, mapSize });
+    this.powerupBoostUntil.clear();
+    this.resetPowerupPickupStates(0);
     this.proceduralTerrainLookup = createProceduralTerrainLookup(this.mapManifest);
     this.mapChunkLookup.clear();
     for (const chunk of this.mapManifest.chunks) {
@@ -9887,6 +10036,7 @@ export class GameRoom extends Room<GameState> {
       !this.mapManifest
       || this.mapManifest.seed !== this.state.mapSeed
       || this.mapManifest.themeId !== this.state.mapThemeId
+      || this.mapManifest.mapSize !== normalizeVoxelMapSizeId(this.state.mapSize)
     ) {
       this.refreshMapManifest();
     }
@@ -9980,7 +10130,6 @@ export class GameRoom extends Room<GameState> {
       ability.isActive = false;
     });
     this.broadcastBlazeFlamethrowerState(player, false, Date.now());
-    this.blazeBombDropConsumedForHold.delete(player.id);
     this.phantomPrimaryHoldStartedAt.delete(player.id);
     this.chronosPrimaryHoldStartedAt.delete(player.id);
     this.phantomVoidRayChargeStartedAt.delete(player.id);
@@ -10258,6 +10407,7 @@ export class GameRoom extends Room<GameState> {
         serverTime: now,
         mapSeed: this.state.mapSeed,
         mapThemeId: this.state.mapThemeId,
+        mapSize: this.state.mapSize as VoxelMapSizeId,
         position: this.vec3SchemaToPlain(player.position),
         movementEpoch: authority.movementEpoch,
         ackSeq: authority.lastProcessedSeq,
@@ -10292,6 +10442,7 @@ export class GameRoom extends Room<GameState> {
       endTime: this.state.phaseEndTime,
       mapSeed: this.state.mapSeed,
       mapThemeId: this.state.mapThemeId,
+      mapSize: this.state.mapSize as VoxelMapSizeId,
     });
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
   }
@@ -10322,6 +10473,7 @@ export class GameRoom extends Room<GameState> {
       endTime: this.state.phaseEndTime,
       mapSeed: this.state.mapSeed,
       mapThemeId: this.state.mapThemeId,
+      mapSize: this.state.mapSize as VoxelMapSizeId,
     });
     this.forceTransformFullSync();
     this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
@@ -10379,13 +10531,17 @@ export class GameRoom extends Room<GameState> {
 
     // Reset flags
     this.resetFlags();
+    this.powerupBoostUntil.clear();
+    this.resetPowerupPickupStates(0);
 
     this.broadcastTracked('phaseChange', {
       phase: 'playing',
       endTime: this.state.phaseEndTime,
       mapSeed: this.state.mapSeed,
       mapThemeId: this.state.mapThemeId,
+      mapSize: this.state.mapSize as VoxelMapSizeId,
     });
+    this.broadcastTracked('powerupState', this.buildPowerupStateMessage());
     this.forceTransformFullSync();
     this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
   }
@@ -10402,8 +10558,7 @@ export class GameRoom extends Room<GameState> {
       winningTeam,
       redScore: this.state.redTeam.score,
       blueScore: this.state.blueTeam.score,
-      nextPhase: this.state.redTeam.score >= this.config.scoreToWin || 
-                 this.state.blueTeam.score >= this.config.scoreToWin ? 'game_end' : 'hero_select',
+      nextPhase: this.shouldEndGameAfterRound() ? 'game_end' : 'hero_select',
     });
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
   }
@@ -10436,6 +10591,7 @@ export class GameRoom extends Room<GameState> {
       this.state.phase = 'waiting';
       this.state.mapSeed = createRandomSeed();
       this.state.mapThemeId = getVoxelMapTheme(this.state.mapSeed).id;
+      this.state.mapSize = DEFAULT_VOXEL_MAP_SIZE_ID;
       this.refreshMapManifest();
       this.state.redTeam.score = 0;
       this.state.blueTeam.score = 0;
@@ -10634,7 +10790,7 @@ export class GameRoom extends Room<GameState> {
       activeBlazePlayersThisTick.add(player.id);
 
       player.movement.isJetpacking = false;
-      const tempoMultiplier = this.getChronosTimebreakTempoMultiplier(player);
+      const tempoMultiplier = this.getAbilityTempoMultiplier(player, now);
 
       const isFiring = Boolean(player.lastInput?.ability1);
       if (isFiring && player.movement.jetpackFuel > 0) {
@@ -10780,7 +10936,7 @@ export class GameRoom extends Room<GameState> {
     this.resetPlayerLifeRuntime(player, deathAt);
     
     // Drop flag if carrying
-    if (player.hasFlag) {
+    if (this.isCaptureTheFlagMode() && player.hasFlag) {
       this.dropFlag(player);
     }
 
@@ -10788,6 +10944,7 @@ export class GameRoom extends Room<GameState> {
       killer.kills++;
       this.recordMatchKill(killer, player);
       killer.ultimateCharge = Math.min(100, killer.ultimateCharge + ULTIMATE_CHARGE_PER_KILL);
+      this.scoreTeamDeathmatchKill(killer, player);
     }
 
     const now = Date.now();
@@ -10824,6 +10981,22 @@ export class GameRoom extends Room<GameState> {
       occurredAt: deathAt,
       respawnTime: player.respawnTime || null,
     });
+  }
+
+  private scoreTeamDeathmatchKill(killer: Player, victim: Player): void {
+    if (!this.isTeamDeathmatchMode()) return;
+    if (!isTeam(killer.team) || !isTeam(victim.team) || killer.team === victim.team) return;
+    if (this.spawnedNpcs.has(killer.id) || this.spawnedNpcs.has(victim.id)) return;
+
+    if (killer.team === 'red') {
+      this.state.redTeam.score++;
+    } else {
+      this.state.blueTeam.score++;
+    }
+
+    if (this.hasTeamReachedScoreLimit()) {
+      this.endRound();
+    }
   }
 
   private createVoidZone(position: { x: number; y: number; z: number }, ownerId: string, ownerTeam: 'red' | 'blue') {
@@ -11055,6 +11228,20 @@ export class GameRoom extends Room<GameState> {
     return spawnPoints.length > 0 ? spawnPoints : [{ x: 0, y: 1, z: 0 }];
   }
 
+  private getTeamSpawnLookYaw(team: Team): number {
+    const facing = this.getMapManifest().gameplay?.spawns?.[team]?.facing;
+    if (
+      !facing ||
+      !Number.isFinite(facing.x) ||
+      !Number.isFinite(facing.z) ||
+      Math.hypot(facing.x, facing.z) <= 0.001
+    ) {
+      return team === 'red' ? Math.PI : 0;
+    }
+
+    return this.normalizeAngle(Math.atan2(-facing.x, -facing.z));
+  }
+
   private getSpawnPosition(team: Team): SpawnPosition {
     const spawnPoints = this.getTeamSpawnPoints(team);
     const spawn = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
@@ -11066,13 +11253,17 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private assignPlayerSpawnPosition(player: Player, spawn = this.getSpawnPosition(player.team as Team)): void {
-    player.position.x = spawn.x;
-    player.position.y = spawn.y;
-    player.position.z = spawn.z;
+  private assignPlayerSpawnPosition(player: Player, spawn?: SpawnPosition): void {
+    const team = isTeam(player.team) ? player.team : 'red';
+    const spawnPosition = spawn ?? this.getSpawnPosition(team);
+    player.position.x = spawnPosition.x;
+    player.position.y = spawnPosition.y;
+    player.position.z = spawnPosition.z;
     player.velocity.x = 0;
     player.velocity.y = 0;
     player.velocity.z = 0;
+    player.lookYaw = this.getTeamSpawnLookYaw(team);
+    player.lookPitch = 0;
   }
 
   private placePlayerAtSpawn(player: Player, reason: MovementCorrectionReason = 'spawn'): void {

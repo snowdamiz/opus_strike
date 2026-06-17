@@ -194,6 +194,22 @@ body,
   animation: bounce-slow 2s ease-in-out infinite;
 }
 
+@keyframes hud-flag-float {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.hud-flag-float {
+  animation: hud-flag-float 2.4s ease-in-out infinite;
+}
+
 /* Slow spin for targeting */
 @keyframes spin-slow {
   from {

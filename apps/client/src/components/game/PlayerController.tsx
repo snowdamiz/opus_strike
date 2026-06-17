@@ -30,7 +30,13 @@ import {
 import { useInput } from '../../hooks/useInput';
 import { usePhysics } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
-import { playSharedSound, setAudioListenerTransform, useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
+import {
+  playSharedBlazeAirstrikeSound,
+  playSharedSound,
+  setAudioListenerTransform,
+  useAbilitySounds,
+  useMovementSounds,
+} from '../../hooks/useAudio';
 import {
   PHANTOM_PRIMARY_RETURN_TO_IDLE_MS,
   PHANTOM_PRIMARY_SHOT_PULSE_DURATION_MS,
@@ -92,6 +98,7 @@ import {
   useLocalAbilityAudioPrediction,
 } from '../../hooks/player/useLocalAbilityAudioPrediction';
 import { buildAbilityCastOriginHints } from '../../hooks/player/abilityCastOriginHints';
+import { getLocalChronosTimebreakTempoMultiplier } from '../../hooks/player/chronosTimebreakTempo';
 import {
   ABILITY_DEFINITIONS,
   BLAZE_FLAMETHROWER_MAX_FUEL,
@@ -105,6 +112,8 @@ import {
   PHANTOM_VEIL_SPEED_MULTIPLIER,
   PHANTOM_VOID_ZONE_DURATION_SECONDS,
   PHANTOM_VOID_ZONE_RADIUS,
+  POWERUP_MOVEMENT_SPEED_MULTIPLIER,
+  VOID_RAY_CHARGE_TIME,
   TICK_RATE,
   createEmptyInputState,
   getHeroStats,
@@ -604,6 +613,29 @@ function getSecondaryReleaseLockMs(heroId: HeroId, didReleaseChargedVoidRay: boo
   return 0;
 }
 
+function didReleaseChargedPhantomVoidRay(input: {
+  heroId: HeroId;
+  previousSecondaryFire: boolean;
+  nextSecondaryFire: boolean;
+  phantomAbilities: UsePhantomAbilitiesReturn;
+  now: number;
+}): boolean {
+  if (
+    input.heroId !== 'phantom' ||
+    !input.previousSecondaryFire ||
+    input.nextSecondaryFire
+  ) {
+    return false;
+  }
+
+  const store = useGameStore.getState();
+  const chargeStart = input.phantomAbilities.voidRayChargeStartRef.current || store.voidRayChargeStart || 0;
+  if (chargeStart <= 0) return false;
+
+  const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(input.now);
+  return input.now - chargeStart >= VOID_RAY_CHARGE_TIME / tempoMultiplier;
+}
+
 function getAbility1ReleaseLockMs(heroId: HeroId): number {
   return heroId === 'blaze' ? BLAZE_STAFF_RETURN_TO_IDLE_MS : 0;
 }
@@ -695,7 +727,7 @@ export interface LocalPlayerFrameContext {
   hookshotAbilities: UseHookshotAbilitiesReturn;
   chronosAbilities: UseChronosAbilitiesReturn;
   playerSounds: PlayerSounds;
-  movementSounds: Pick<MovementSounds, 'updateWalkingSound' | 'startSlide' | 'stopSlide'>;
+  movementSounds: Pick<MovementSounds, 'playGroundJump' | 'updateWalkingSound' | 'startSlide' | 'stopSlide'>;
   resetPredictedAbilitySounds: LocalAbilityAudioPrediction['resetPredictedAbilitySounds'];
   updatePredictedAbilitySounds: LocalAbilityAudioPrediction['updatePredictedAbilitySounds'];
   resetMovementCommandBuffer: () => void;
@@ -943,6 +975,7 @@ function runTracePhase(input: {
 
   refs.lastTraceRef.current = now;
   const storeForTrace = useGameStore.getState();
+  const isTraceFlagCarrier = storeForTrace.gameplayMode === 'capture_the_flag' && localPlayer.hasFlag;
   const traceAbilityIds = writeActiveAbilityIdsForTrace(localPlayer.abilities, refs.traceAbilityIdsRef.current);
   if (frameInput.ability1) pushUniqueTraceAbilityId(traceAbilityIds, heroDef?.ability1.abilityId);
   if (frameInput.ability2) pushUniqueTraceAbilityId(traceAbilityIds, heroDef?.ability2.abilityId);
@@ -956,7 +989,7 @@ function runTracePhase(input: {
     heroId,
     movement: localMovementForTrace,
     inputState: commandInput,
-    flagCarrier: localPlayer.hasFlag,
+    flagCarrier: isTraceFlagCarrier,
   });
   const traceMovementBarrier = heroId === 'phantom' && frameInput.ability1
     ? 'teleport'
@@ -980,7 +1013,7 @@ function runTracePhase(input: {
     movement: localMovementForTrace,
     playerState: localPlayer.state,
     health: localPlayer.health,
-    flagCarrier: localPlayer.hasFlag,
+    flagCarrier: isTraceFlagCarrier,
     activeAbilityState: {
       activeAbilityIds: traceAbilityIds,
       activeSpeedMultiplier: speedMultiplier,
@@ -1027,7 +1060,7 @@ export function runPredictionAndCommandPhase(input: {
     dt,
     rawDelta,
   } = input;
-  const { cameraControl, phantomAbilities, flushMovementCommands, refs } = ctx;
+  const { cameraControl, phantomAbilities, flushMovementCommands, movementSounds, refs } = ctx;
   let { predictedState } = input;
   const wasGroundedBeforePrediction = predictedState.movement.isGrounded;
   const currentBombTargeting = useGameStore.getState().bombTargeting;
@@ -1090,6 +1123,8 @@ export function runPredictionAndCommandPhase(input: {
     substepsThisFrame < MOVEMENT_MAX_PACKET_COMMANDS
   ) {
     const previousStepPosition = predictedState.position;
+    const wasGroundedBeforeStep = predictedState.movement.isGrounded;
+    const wasSlidingBeforeStep = predictedState.movement.isSliding;
     const command = createLocalMovementCommand(commandInput, {
       lookYaw: cameraControl.refs.yaw.current,
       lookPitch: cameraControl.refs.pitch.current,
@@ -1101,6 +1136,14 @@ export function runPredictionAndCommandPhase(input: {
     refs.pendingCrouchPressedRef.current = false;
     refs.pendingMovementCommandsRef.current.push(command);
     const nextPredictedState = stepLocalMovementPrediction(localPlayer, command);
+    if (
+      commandInput.jump &&
+      wasGroundedBeforeStep &&
+      !wasSlidingBeforeStep &&
+      !nextPredictedState.movement.isGrounded
+    ) {
+      movementSounds.playGroundJump();
+    }
     recordLocalVisualFixedStep(
       refs.localVisualInterpolationRef.current,
       previousStepPosition,
@@ -1177,9 +1220,16 @@ export function runInputPhase(
     lockHeroActions(heroId, getPrimaryReleaseLockMs(heroId), now);
   }
   if (previousHoldInput.secondaryFire && !rawFrameInput.secondaryFire) {
+    const didReleaseChargedVoidRay = didReleaseChargedPhantomVoidRay({
+      heroId,
+      previousSecondaryFire: previousHoldInput.secondaryFire,
+      nextSecondaryFire: rawFrameInput.secondaryFire,
+      phantomAbilities,
+      now,
+    });
     lockHeroActions(
       heroId,
-      getSecondaryReleaseLockMs(heroId, phantomAbilities.voidRayAwaitingReleaseRef.current),
+      getSecondaryReleaseLockMs(heroId, didReleaseChargedVoidRay),
       now
     );
   }
@@ -1662,7 +1712,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   // Input and network
   const { inputState, isPointerLocked, isControlPressed, isTouchInputActive, requestPointerLock, exitPointerLock } = useInput();
   usePhysics();
-  const { sendMovementCommands, requestBlazeBombDrop } = useNetwork();
+  const { sendMovementCommands } = useNetwork();
 
   // Audio hooks
   const {
@@ -1671,7 +1721,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     playBlazeRocket, playBlazeBombTarget, playBlazeBombRelease, playBlazeBombFall, playBlazeBombExplode, playBlazeRocketJump,
     startFlamethrowerSound, stopFlamethrowerSound,
   } = useAbilitySounds();
-  const { updateWalkingSound, preloadWalkingSound, startSlide, stopSlide } = useMovementSounds();
+  const { playGroundJump, updateWalkingSound, preloadWalkingSound, startSlide, stopSlide } = useMovementSounds();
 
   // Player hooks
   const cameraControl = useCamera({ isPointerLocked });
@@ -1900,11 +1950,19 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     if (localPlayerForInit && !initializedRef.current) {
       // Trust the server's spawn position - it uses configured map positions
       const startY = localPlayerForInit.position.y;
+      const startYaw = Number.isFinite(localPlayerForInit.lookYaw) ? localPlayerForInit.lookYaw : 0;
+      const startPitch = Number.isFinite(localPlayerForInit.lookPitch) ? localPlayerForInit.lookPitch : 0;
+      cameraControl.refs.yaw.current = startYaw;
+      cameraControl.refs.pitch.current = startPitch;
       camera.position.set(localPlayerForInit.position.x, startY + EYE_HEIGHT, localPlayerForInit.position.z);
+      camera.rotation.order = 'YXZ';
+      camera.rotation.y = startYaw;
+      camera.rotation.x = startPitch;
+      camera.rotation.z = 0;
 
       initializedRef.current = true;
     }
-  }, [localPlayerForInit, camera]);
+  }, [localPlayerForInit, camera, cameraControl.refs.pitch, cameraControl.refs.yaw]);
 
   // Create sound objects for passing to ability hooks
   const playerSounds = useMemo(() => ({
@@ -1971,26 +2029,14 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     };
   }, [clearHeroActionLock, resetBlazeFlamethrower, resetMovementCommandBuffer, resetViewmodelPoseState, setChronosLifelineQueuedState]);
 
-  // Handle targeting confirmations via click
+  // Enter pointer lock from the canvas click.
   const handleClick = useCallback(() => {
     if (!enabled) return;
 
     if (!isPointerLocked) {
       requestPointerLock();
-    } else if (bombTargeting && blazeAbilities.bombValidRef.current && blazeAbilities.bombTargetRef.current) {
-      if (!isPracticeMode) {
-        requestBlazeBombDrop({
-          abilityCastHints: latestAbilityCastHintsRef.current.filter((hint) => hint.abilityId === 'blaze_bomb'),
-        });
-      }
-      blazeAbilities.executeBombDrop(playerSounds);
     }
-  }, [
-    enabled, isPointerLocked, requestPointerLock, bombTargeting,
-    phantomAbilities, blazeAbilities, hookshotAbilities, playerSounds, abilitySystem, movement,
-    cameraControl, requestBlazeBombDrop, updateLocalPlayer, camera, inputState,
-    isPracticeMode,
-  ]);
+  }, [enabled, isPointerLocked, requestPointerLock]);
 
   // Canvas click listener
   useEffect(() => {
@@ -2070,6 +2116,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       chronosAbilities,
       playerSounds,
       movementSounds: {
+        playGroundJump,
         updateWalkingSound,
         startSlide,
         stopSlide,
@@ -2141,6 +2188,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       frameCtx.hookshotAbilities = hookshotAbilities;
       frameCtx.chronosAbilities = chronosAbilities;
       frameCtx.playerSounds = playerSounds;
+      frameCtx.movementSounds.playGroundJump = playGroundJump;
       frameCtx.movementSounds.updateWalkingSound = updateWalkingSound;
       frameCtx.movementSounds.startSlide = startSlide;
       frameCtx.movementSounds.stopSlide = stopSlide;
@@ -2273,6 +2321,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     if (localPlayer.heroId === 'phantom' && localPlayer.abilities?.['phantom_veil']?.isActive) {
       speedMultiplier *= PHANTOM_VEIL_SPEED_MULTIPLIER;
     }
+    if ((localPlayer.powerupBoostUntil ?? 0) > now) {
+      speedMultiplier *= POWERUP_MOVEMENT_SPEED_MULTIPLIER;
+    }
 
     // Handle hero-specific abilities
     const inputPhase = runInputPhase(frameCtx, localPlayer, heroId, rawFrameInput, frameInput, now);
@@ -2377,6 +2428,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                   : CHRONOS_LIFELINE_ALLY_HEAL;
                 const targets = getChronosPracticeLifelineTargets(chronosLifelineCommitMode, healAmount);
                 if (targets.length > 0 && abilitySystem.useAbilityCharge(ability1Id)) {
+                  useGameStore.getState().recordSkillCast(now);
                   if (chronosAbilities.executeLifelineConduit(abilityCtx, abilitySystem.useAbilityCharge)) {
                     lockHeroActions(heroId, CHRONOS_LIFELINE_POSE_DURATION_MS, now);
                   }
@@ -2431,6 +2483,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                   setChronosLifelineQueuedState(false, now);
                 }
               } else if (chronosAbilities.executeLifelineConduit(abilityCtx, abilitySystem.useAbilityCharge)) {
+                useGameStore.getState().recordSkillCast(now);
                 lockHeroActions(heroId, CHRONOS_LIFELINE_POSE_DURATION_MS, now);
                 setChronosLifelineQueuedState(false, now);
               }
@@ -2442,6 +2495,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
               if (isPracticeMode) {
                 const startPosition = { x: position.x, y: position.y, z: position.z };
                 if (abilitySystem.useAbilityCharge(ability1Id)) {
+                  useGameStore.getState().recordSkillCast(now);
                   const nextState = predictLocalPhantomBlink(localPlayer, abilityCtx.yaw, abilityCtx.pitch);
                   applyPracticePredictedState(nextState);
                   triggerBlinkEffect(startPosition, nextState.position);
@@ -2462,10 +2516,12 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                   lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
                 }
               } else if (phantomAbilities.executeBlink(abilityCtx, playerSounds, abilitySystem.useAbilityCharge)) {
+                useGameStore.getState().recordSkillCast(now);
                 lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
               }
             } else if (heroId === 'hookshot') {
               if (hookshotAbilities.executeGrapple(abilityCtx)) {
+                useGameStore.getState().recordSkillCast(now);
                 lockHeroActions(heroId, HOOKSHOT_SECONDARY_POSE_DURATION_MS, now);
                 if (isPracticeMode) {
                   abilitySystem.startClientCooldown(ability1Id);
@@ -2500,6 +2556,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                   [abilityId]: buildPracticeAbilityState(localPlayer.abilities, abilityId, now, true),
                 },
               });
+              useGameStore.getState().recordSkillCast(now);
               playLocalShieldCast();
               lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
             } else if (phantomAbilities.executePersonalShield(
@@ -2509,11 +2566,13 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
               abilitySystem.startClientCooldown,
               updateLocalPlayer
             )) {
+              useGameStore.getState().recordSkillCast(now);
               playLocalShieldCast();
               lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
             }
           } else if (heroId === 'blaze') {
             blazeAbilities.executeRocketJump(abilityCtx);
+            useGameStore.getState().recordSkillCast(now);
             if (isPracticeMode) {
               const startPosition = { x: position.x, y: position.y, z: position.z };
               const nextState = predictLocalBlazeRocketJump(localPlayer, abilityCtx.yaw);
@@ -2523,6 +2582,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
             }
           } else if (heroId === 'hookshot') {
             if (hookshotAbilities.executeEarthWall(abilityCtx)) {
+              useGameStore.getState().recordSkillCast(now);
               lockHeroActions(heroId, HOOKSHOT_PRIMARY_RECOIL_DURATION_MS, now);
               if (isPracticeMode) {
                 abilitySystem.startClientCooldown(heroDef.ability2.abilityId);
@@ -2534,6 +2594,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
               abilitySystem.startClientCooldown
             );
             if (didCastTimebreak) {
+              useGameStore.getState().recordSkillCast(now);
               lockHeroActions(heroId, CHRONOS_TIMEBREAK_POSE_DURATION_MS, now);
             }
             if (didCastTimebreak && isPracticeMode) {
@@ -2590,23 +2651,44 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                   [abilityId]: buildPracticeAbilityState(localPlayer.abilities, abilityId, now, true),
                 },
               });
+              useGameStore.getState().recordSkillCast(now);
               lockHeroActions(heroId, PHANTOM_VEIL_CAST_POSE_DURATION_MS, now);
             } else if (phantomAbilities.executePhantomVeil(abilityCtx, playerSounds, updateLocalPlayer, abilitySystem.setAbilityActive)) {
+              useGameStore.getState().recordSkillCast(now);
               lockHeroActions(heroId, PHANTOM_VEIL_CAST_POSE_DURATION_MS, now);
             }
           } else if (heroId === 'blaze') {
+            const abilityId = heroDef.ultimate.abilityId;
             blazeAbilities.executeAirStrike(abilityCtx, playerSounds, updateLocalPlayer);
+            useGameStore.getState().recordSkillCast(now);
             if (isPracticeMode) {
+              const abilityDef = ABILITY_DEFINITIONS[abilityId];
+              const durationMs = (abilityDef?.duration ?? 0) * 1000;
+              const effectEndTime = now + durationMs;
               const effectPosition = { x: position.x, y: position.y, z: position.z };
-              triggerAirStrike(effectPosition);
-              updateLocalPlayer({ ultimateCharge: 0 });
+              resetBlazeFlamethrower(now);
+              triggerAirStrike(effectPosition, { ownerId: localPlayer.id, ownerTeam: localPlayer.team });
+              abilitySystem.setAbilityActive(abilityId, true, { startTime: now, startCooldownOnEnd: true });
+              useGameStore.getState().setUltimateEffect(true, abilityId, effectEndTime);
+              if (!shouldSuppressPredictedLocalAbilitySound(abilityId, now)) {
+                void playSharedBlazeAirstrikeSound({ position: effectPosition });
+              }
+              updateLocalPlayer({
+                ultimateCharge: 0,
+                abilities: {
+                  ...localPlayer.abilities,
+                  [abilityId]: buildPracticeAbilityState(localPlayer.abilities, abilityId, now, true),
+                },
+              });
             }
           } else if (heroId === 'hookshot') {
             if (hookshotAbilities.executeGroundHooks(abilityCtx, updateLocalPlayer)) {
+              useGameStore.getState().recordSkillCast(now);
               lockHeroActions(heroId, HOOKSHOT_SECONDARY_POSE_DURATION_MS, now);
             }
           } else if (heroId === 'chronos') {
             if (chronosAbilities.executeAscendantParadox(abilityCtx, abilitySystem.setAbilityActive)) {
+              useGameStore.getState().recordSkillCast(now);
               lockHeroActions(heroId, CHRONOS_ASCENDANT_CAST_LOCK_MS, now);
               predictedState = getCurrentPredictedState(predictedState);
               position.set(predictedState.position.x, predictedState.position.y, predictedState.position.z);
@@ -2646,9 +2728,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
           }
         }
         hookshotAbilities.secondaryFirePressedRef.current = frameInput.secondaryFire;
-
-        // Update grapple physics
-        hookshotAbilities.updateGrapplePhysics(abilityCtx);
       }
 
       if (heroId === 'chronos') {
@@ -2696,6 +2775,51 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       wasGroundedBeforePrediction,
       commandInput,
     } = predictionPhase;
+
+    if (heroId === 'hookshot') {
+      position.set(predictedState.position.x, predictedState.position.y, predictedState.position.z);
+      velocity.set(predictedState.velocity.x, predictedState.velocity.y, predictedState.velocity.z);
+      hookshotAbilities.updateGrapplePhysics({
+        ...abilityCtx,
+        position,
+        velocity,
+        inputState: commandInput,
+        isGrounded: predictedState.movement.isGrounded,
+      });
+
+      const nextGrappleActive = hookshotAbilities.isGrapplingRef.current || hookshotAbilities.isSwingingRef.current;
+      const nextGrapplePoint = hookshotAbilities.grappleTargetRef.current;
+      const predictedGrapplePoint = predictedState.movement.grapplePoint;
+      const grapplePointChanged = predictedGrapplePoint === null || nextGrapplePoint === null
+        ? predictedGrapplePoint !== nextGrapplePoint
+        : predictedGrapplePoint.x !== nextGrapplePoint.x ||
+          predictedGrapplePoint.y !== nextGrapplePoint.y ||
+          predictedGrapplePoint.z !== nextGrapplePoint.z;
+      if (
+        position.x !== predictedState.position.x ||
+        position.y !== predictedState.position.y ||
+        position.z !== predictedState.position.z ||
+        velocity.x !== predictedState.velocity.x ||
+        velocity.y !== predictedState.velocity.y ||
+        velocity.z !== predictedState.velocity.z ||
+        predictedState.movement.isGrappling !== nextGrappleActive ||
+        grapplePointChanged
+      ) {
+        predictedState = confirmLocalMovementTransform(
+          localPlayer,
+          {
+            position: { x: position.x, y: position.y, z: position.z },
+            velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
+            movement: {
+              isGrappling: nextGrappleActive,
+              grapplePoint: nextGrapplePoint,
+            },
+          },
+          cameraControl.refs.yaw.current,
+          { updateLatestCommandRecord: true }
+        );
+      }
+    }
 
     const presentation = runPresentationPhase({
       ctx: frameCtx,

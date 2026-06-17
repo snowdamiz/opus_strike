@@ -1,9 +1,17 @@
-import type { BoundaryPoint, VoxelMapManifest, VoxelSize } from './types.js';
+import {
+  DEFAULT_VOXEL_MAP_SIZE_ID,
+  type BoundaryPoint,
+  type VoxelMapManifest,
+  type VoxelMapSizeId,
+  type VoxelSize,
+} from './types.js';
 import { isInsideBoundaryPolygon } from './boundaries.js';
 import { mulberry32 } from './rng.js';
 import { DEFAULT_GAME_CONFIG } from '../../constants/game.js';
 
 export interface ProceduralCTFLayout {
+  mapSize: VoxelMapSizeId;
+  mapScale: number;
   origin: { x: number; y: number; z: number };
   voxelSize: VoxelSize;
   size: VoxelSize;
@@ -33,10 +41,25 @@ export const PROCEDURAL_MAP_ORIGIN = {
   z: -PROCEDURAL_MAP_WORLD_SIZE.z / 2,
 };
 
+export interface VoxelMapSizeDefinition {
+  id: VoxelMapSizeId;
+  label: string;
+  scale: number;
+}
+
+export const VOXEL_MAP_SIZE_IDS = ['small', 'medium', 'large'] as const satisfies readonly VoxelMapSizeId[];
+
+export const VOXEL_MAP_SIZE_DEFINITIONS: Record<VoxelMapSizeId, VoxelMapSizeDefinition> = {
+  small: { id: 'small', label: 'Small', scale: 0.85 },
+  medium: { id: 'medium', label: 'Medium', scale: 1 },
+  large: { id: 'large', label: 'Large', scale: 1.18 },
+};
+
 interface ProceduralMapFootprint {
   worldSize: VoxelSize;
   origin: { x: number; y: number; z: number };
   size: VoxelSize;
+  mapScale: number;
 }
 
 interface Point2 {
@@ -72,6 +95,16 @@ function randomInt(random: () => number, min: number, max: number): number {
 
 function scaleMap(value: number): number {
   return value * PROCEDURAL_MAP_SCALE;
+}
+
+export function normalizeVoxelMapSizeId(mapSize?: VoxelMapSizeId | string | null): VoxelMapSizeId {
+  return VOXEL_MAP_SIZE_IDS.includes(mapSize as VoxelMapSizeId)
+    ? mapSize as VoxelMapSizeId
+    : DEFAULT_VOXEL_MAP_SIZE_ID;
+}
+
+export function getVoxelMapSizeDefinition(mapSize?: VoxelMapSizeId | string | null): VoxelMapSizeDefinition {
+  return VOXEL_MAP_SIZE_DEFINITIONS[normalizeVoxelMapSizeId(mapSize)];
 }
 
 function distanceSq(xA: number, zA: number, xB: number, zB: number): number {
@@ -131,15 +164,16 @@ function isBoundarySafePoint(x: number, z: number, boundary: BoundaryPoint[], mi
   return isInsideBoundaryPolygon(x, z, boundary) && distanceToBoundary(x, z, boundary) >= minBoundaryDistance;
 }
 
-function createProceduralMapFootprint(seed: number): ProceduralMapFootprint {
+function createProceduralMapFootprint(seed: number, mapSize: VoxelMapSizeId): ProceduralMapFootprint {
   const random = mulberry32(seed ^ 0x793f7d9);
+  const mapScale = getVoxelMapSizeDefinition(mapSize).scale;
   const sizeScale = lerp(0.98, 1.06, random());
   const xScale = lerp(0.96, 1.05, random());
   const zScale = lerp(0.96, 1.05, random());
   const requestedWorldSize = {
-    x: PROCEDURAL_MAP_WORLD_SIZE.x * sizeScale * xScale,
+    x: PROCEDURAL_MAP_WORLD_SIZE.x * mapScale * sizeScale * xScale,
     y: PROCEDURAL_MAP_WORLD_SIZE.y,
-    z: PROCEDURAL_MAP_WORLD_SIZE.z * sizeScale * zScale,
+    z: PROCEDURAL_MAP_WORLD_SIZE.z * mapScale * sizeScale * zScale,
   };
   const size = {
     x: Math.round(requestedWorldSize.x / PROCEDURAL_VOXEL_SIZE.x),
@@ -160,6 +194,7 @@ function createProceduralMapFootprint(seed: number): ProceduralMapFootprint {
       z: -worldSize.z / 2,
     },
     size,
+    mapScale,
   };
 }
 
@@ -390,8 +425,9 @@ function createLayoutSpawnCluster(
   }));
 }
 
-export function createProceduralCTFLayout(seed = 0): ProceduralCTFLayout {
-  const footprint = createProceduralMapFootprint(seed);
+export function createProceduralCTFLayout(seed = 0, mapSize?: VoxelMapSizeId | null): ProceduralCTFLayout {
+  const normalizedMapSize = normalizeVoxelMapSizeId(mapSize);
+  const footprint = createProceduralMapFootprint(seed, normalizedMapSize);
   const boundary = createProceduralBoundary(seed, footprint.worldSize);
   const flagRandom = mulberry32(seed ^ 0x51f15eed);
   const spawnRandom = mulberry32(seed ^ 0xbadc0de);
@@ -402,6 +438,8 @@ export function createProceduralCTFLayout(seed = 0): ProceduralCTFLayout {
   const blueFlag = { x: flagPair.blue.x, y: 5, z: flagPair.blue.z };
 
   return {
+    mapSize: normalizedMapSize,
+    mapScale: footprint.mapScale,
     origin: footprint.origin,
     voxelSize: PROCEDURAL_VOXEL_SIZE,
     size: footprint.size,

@@ -38,6 +38,38 @@ function VoidIconSmall({ className, style }: { className?: string; style?: React
   );
 }
 
+function FloatingFlagIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <g opacity="0.3">
+        <path
+          d="M15 39V9.5"
+          stroke="#fff"
+          strokeWidth="3"
+          strokeLinecap="round"
+        />
+        <path
+          d="M17 10.5c5.8-2.9 10.7 2.2 17-.7v18.6c-6.3 2.9-11.2-2.3-17 .7V10.5Z"
+          fill="#fff"
+          stroke="#fff"
+          strokeWidth="1.8"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M17 10.5c5.8-2.9 10.7 2.2 17-.7v5.6c-6.3 2.9-11.2-2.2-17 .7v-5.6Z"
+          fill="#fff"
+        />
+        <path
+          d="M15 39h7"
+          stroke="#fff"
+          strokeWidth="3"
+          strokeLinecap="round"
+        />
+      </g>
+    </svg>
+  );
+}
+
 function JetpackChargeIcon({ active }: { active: boolean }) {
   return (
     <div
@@ -634,14 +666,14 @@ export function HUD() {
   const {
     localPlayer,
     isPracticeMode,
+    isTutorialMode,
+    gameplayMode,
     gamePhase,
     redScore,
     blueScore,
     roundTimeRemaining,
     phaseEndTime,
     gameClockFrozen,
-    redFlag,
-    blueFlag,
     clientCooldowns,
     clientCharges,
     ultimateEffectActive,
@@ -660,14 +692,14 @@ export function HUD() {
     useShallow(state => ({
       localPlayer: state.localPlayer,
       isPracticeMode: state.isPracticeMode,
+      isTutorialMode: state.isTutorialMode,
+      gameplayMode: state.gameplayMode,
       gamePhase: state.gamePhase,
       redScore: state.redScore,
       blueScore: state.blueScore,
       roundTimeRemaining: state.roundTimeRemaining,
       phaseEndTime: state.phaseEndTime,
       gameClockFrozen: state.gameClockFrozen,
-      redFlag: state.redFlag,
-      blueFlag: state.blueFlag,
       clientCooldowns: state.clientCooldowns,
       clientCharges: state.clientCharges,
       ultimateEffectActive: state.ultimateEffectActive,
@@ -706,6 +738,12 @@ export function HUD() {
   const heroColors = localPlayer.heroId ? HERO_COLORS[localPlayer.heroId] : HERO_COLORS.phantom;
   const heroSkillItems = localPlayer.heroId ? getHeroSkillItems(localPlayer.heroId) : [];
   const showChronosLifelineHelper = localPlayer.heroId === 'chronos' && chronosLifelineQueued;
+  const isCaptureTheFlag = gameplayMode === 'capture_the_flag';
+  const showFloatingFlag = localPlayer.hasFlag;
+  const floatingFlagTop = isPracticeMode
+    ? 'clamp(3.25rem, 8vh, 4.75rem)'
+    : 'calc(clamp(2.25rem, 3.4vw, 3.25rem) + 0.5rem)';
+  const scoreLabel = gameplayMode === 'team_deathmatch' ? 'KILLS' : 'BATTLE';
   const healthColor = healthPercent <= 15
     ? '#ef4444'
     : healthPercent <= 30
@@ -765,7 +803,7 @@ export function HUD() {
       </div>
 
       {showKillFeed && <KillFeed events={killFeed} />}
-      <Minimap />
+      {!isTutorialMode && <Minimap />}
       {!isPracticeMode && <VoiceHud />}
 
       {/* Meteor Strike targeting instructions */}
@@ -826,14 +864,6 @@ export function HUD() {
                   >
                     {redScore}
                   </span>
-
-                  {/* Flag carrier indicator */}
-                  {redFlag?.carrierId && (
-                    <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-black/40 rounded-full">
-                      <span className="text-[9px]">🏴</span>
-                      <span className="text-[8px] text-amber-300 font-display tracking-wider">FLAG</span>
-                    </div>
-                  )}
                 </div>
 
                 {/* Faction label */}
@@ -874,7 +904,7 @@ export function HUD() {
                     roundTimeRemaining={roundTimeRemaining}
                     gameClockFrozen={gameClockFrozen}
                   />
-                  <span className="text-[6px] sm:text-[7px] font-display text-white/30 tracking-[0.24em] -mt-0.5">BATTLE</span>
+                  <span className="text-[6px] sm:text-[7px] font-display text-white/30 tracking-[0.24em] -mt-0.5">{scoreLabel}</span>
                 </div>
               </div>
 
@@ -901,14 +931,6 @@ export function HUD() {
                     {blueScore}
                   </span>
                   <VoidIconSmall className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-[18px] lg:h-[18px] text-white/80 relative z-10" />
-
-                  {/* Flag carrier indicator */}
-                  {blueFlag?.carrierId && (
-                    <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-black/40 rounded-full">
-                      <span className="text-[9px]">🏴</span>
-                      <span className="text-[8px] text-amber-300 font-display tracking-wider">FLAG</span>
-                    </div>
-                  )}
                 </div>
 
                 {/* Faction label */}
@@ -932,6 +954,17 @@ export function HUD() {
         </div>
       )}
 
+      {showFloatingFlag && (
+        <div
+          className="absolute left-1/2 -translate-x-1/2"
+          style={{ top: floatingFlagTop }}
+          role="img"
+          aria-label="Carrying flag"
+        >
+          <FloatingFlagIcon className="hud-flag-float h-[clamp(3rem,4.8vw,4.25rem)] w-[clamp(3rem,4.8vw,4.25rem)] drop-shadow-[0_8px_16px_rgba(0,0,0,0.62)]" />
+        </div>
+      )}
+
       {/* ===== BOTTOM LEFT - Health ===== */}
       <div
         className="absolute hud-scale hud-health"
@@ -941,19 +974,6 @@ export function HUD() {
         }}
       >
         <div className="relative w-[clamp(8.75rem,14vw,13rem)]">
-          {localPlayer.hasFlag && (
-            <div
-              className="absolute -top-2 -right-2 w-5 h-5 rounded flex items-center justify-center animate-bounce border"
-              style={{
-                background: '#f59e0b',
-                borderColor: '#fde047',
-                boxShadow: '0 0 12px rgba(251, 191, 36, 0.55)',
-              }}
-            >
-              <span className="text-[10px]">🏴</span>
-            </div>
-          )}
-
           <div
             className="h-2 sm:h-2.5 rounded-full overflow-hidden"
             style={{
@@ -1027,45 +1047,6 @@ export function HUD() {
         )}
 
       </div>
-
-      {/* ===== FLAG CARRIER ALERT (Improved) ===== */}
-      {localPlayer.hasFlag && (
-        <div className="absolute top-24 left-1/2 -translate-x-1/2 animate-bounce-slow">
-          <div
-            className="relative px-6 py-3 rounded-xl overflow-hidden"
-            style={{
-              background: 'linear-gradient(135deg, rgba(251, 191, 36, 0.2) 0%, rgba(245, 158, 11, 0.3) 100%)',
-              border: '2px solid rgba(251, 191, 36, 0.5)',
-              boxShadow: '0 0 40px rgba(251, 191, 36, 0.3), inset 0 0 20px rgba(251, 191, 36, 0.1)',
-            }}
-          >
-            {/* Animated border glow */}
-            <div
-              className="absolute inset-0 animate-pulse opacity-50"
-              style={{
-                background: 'radial-gradient(ellipse at center, rgba(251, 191, 36, 0.3) 0%, transparent 70%)',
-              }}
-            />
-
-            <div className="relative flex items-center gap-4">
-              <span className="text-2xl animate-bounce">🏴</span>
-              <div className="flex flex-col">
-                <span className="font-display text-amber-200 tracking-[0.2em] text-sm">
-                  RETURN THE FLAG
-                </span>
-                <span className="text-[10px] text-amber-300/60 font-body">
-                  to your base to score
-                </span>
-              </div>
-              <div className="flex items-center gap-1 text-amber-400">
-                <span className="font-display text-lg">→</span>
-                <span className="font-display text-lg">→</span>
-                <span className="font-display text-lg animate-pulse">→</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

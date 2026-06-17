@@ -151,7 +151,7 @@ function makeInputPhaseContext(options: {
       abilityPressedRef: ref(options.abilityPressed ?? { ability1: false, ability2: false, ultimate: false }),
     },
     phantomAbilities: {
-      voidRayAwaitingReleaseRef: ref(false),
+      voidRayChargeStartRef: ref(0),
       phantomPrimaryReloadingRef: ref(false),
       phantomPrimaryAmmoRef: ref(3),
       updatePhantomPrimaryReload: () => undefined,
@@ -189,10 +189,12 @@ function makeCommandPhaseContext(options: {
 } = {}): LocalPlayerFrameContext & {
   __sentPackets: MovementCommandPacket[];
   __flushCalls: Array<{ nowMs: number; force: boolean; sentCommandCount: number }>;
+  __groundJumpSoundCalls: number;
 } {
   const pendingMovementCommandsRef = ref<MovementCommand[]>([...(options.pendingCommands ?? [])]);
   const sentPackets: MovementCommandPacket[] = [];
   const flushCalls: Array<{ nowMs: number; force: boolean; sentCommandCount: number }> = [];
+  let groundJumpSoundCalls = 0;
 
   const ctx = {
     isControlPressed: false,
@@ -228,13 +230,22 @@ function makeCommandPhaseContext(options: {
       sentPackets.push(createMovementCommandPacket(commands));
       flushCalls.push({ nowMs, force, sentCommandCount: commands.length });
     },
+    movementSounds: {
+      playGroundJump: () => {
+        groundJumpSoundCalls++;
+      },
+    },
     __sentPackets: sentPackets,
     __flushCalls: flushCalls,
+    get __groundJumpSoundCalls() {
+      return groundJumpSoundCalls;
+    },
   };
 
   return ctx as unknown as LocalPlayerFrameContext & {
     __sentPackets: MovementCommandPacket[];
     __flushCalls: Array<{ nowMs: number; force: boolean; sentCommandCount: number }>;
+    __groundJumpSoundCalls: number;
   };
 }
 
@@ -525,6 +536,27 @@ assert.equal(
   movementButtonsToInputState(slideStartCommand.ctx.__sentPackets[0].commands[0].buttons).crouchPressed,
   true
 );
+
+const groundedJumpCommand = runCommandPhase({
+  player: makePlayer('phantom'),
+  frameInput: input({ jump: true }),
+  serverCombatInput: combatInput(),
+  dt: MOVEMENT_SUBSTEP_SECONDS,
+});
+assert.equal(groundedJumpCommand.result.substepsThisFrame, 1);
+assert.equal(groundedJumpCommand.ctx.__groundJumpSoundCalls, 1);
+
+const midairPlayer = makePlayer('phantom');
+midairPlayer.position.y = 4;
+midairPlayer.movement = makeMovement({ isGrounded: false });
+const airborneJumpCommand = runCommandPhase({
+  player: midairPlayer,
+  frameInput: input({ jump: true }),
+  serverCombatInput: combatInput(),
+  dt: MOVEMENT_SUBSTEP_SECONDS,
+});
+assert.equal(airborneJumpCommand.result.substepsThisFrame, 1);
+assert.equal(airborneJumpCommand.ctx.__groundJumpSoundCalls, 0);
 
 const pendingBarrierCommand: MovementCommand = {
   seq: 41,

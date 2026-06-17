@@ -131,10 +131,10 @@ function MapPreviewCanvas({
 }) {
   const mapThemeId = option.mapThemeId ?? null;
   const manifest = useMemo(() => (
-    generateProceduralVoxelMap(option.seed, { themeId: mapThemeId })
-  ), [mapThemeId, option.seed]);
+    generateProceduralVoxelMap(option.seed, { themeId: mapThemeId, mapSize: option.mapSize })
+  ), [mapThemeId, option.mapSize, option.seed]);
   const previewThemeId = mapThemeId ?? manifest.themeId;
-  const optionKey = `${option.seed}:${previewThemeId}`;
+  const optionKey = `${option.seed}:${previewThemeId}:${manifest.mapSize}`;
   const theme = manifest.theme;
   const materialQuality = useSettingsStore((state) => state.settings.materialQuality);
   const [readyKey, setReadyKey] = useState<string | null>(null);
@@ -175,6 +175,7 @@ function MapPreviewCanvas({
           seed={option.seed}
           manifest={manifest}
           themeId={previewThemeId}
+          mapSize={manifest.mapSize}
           enablePhysics={false}
           shadowsEnabled={false}
           dressingShadows={false}
@@ -211,7 +212,7 @@ function MapPreviewImage({
     setImage(null);
     setImageVisible(false);
     didReportReadyRef.current = false;
-  }, [option.id, option.mapThemeId, option.seed]);
+  }, [option.id, option.mapSize, option.mapThemeId, option.seed]);
 
   useEffect(() => {
     if (!image) {
@@ -310,10 +311,12 @@ function getVoteBadgeStyle(tone: MapVoteBadgeTone) {
 }
 
 function MapVoteCardMeta({
+  titleLabel,
   voteCount,
   badgeLabel,
   badgeTone = 'idle',
 }: {
+  titleLabel: string;
   voteCount: number;
   badgeLabel: string;
   badgeTone?: MapVoteBadgeTone;
@@ -324,11 +327,16 @@ function MapVoteCardMeta({
       style={mapVoteCardMetaStyle}
     >
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/[0.02] via-transparent to-black/[0.07]" />
-      <div className="relative flex min-h-9 items-center justify-between gap-3">
-        <p className="shrink-0 font-display text-lg leading-none text-white">{getVoteLabel(voteCount)}</p>
+      <div className="relative flex min-h-11 items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate font-display text-base leading-none text-white xl:text-lg">{titleLabel}</p>
+          <p className="mt-1 truncate font-display text-[10px] uppercase tracking-wide text-white/45">
+            {getVoteLabel(voteCount)}
+          </p>
+        </div>
 
         <span
-          className="rounded-full border px-3 py-1.5 font-display text-[11px] uppercase tracking-wide transition-colors"
+          className="shrink-0 rounded-full border px-3 py-1.5 font-display text-[11px] uppercase tracking-wide transition-colors"
           style={getVoteBadgeStyle(badgeTone)}
         >
           {badgeLabel}
@@ -344,13 +352,44 @@ function PreparingMapCard() {
       <div className="map-vote-preview relative aspect-[16/8.4] overflow-hidden border-b border-white/[0.06]">
         <GeneratingMapPanel />
       </div>
-      <MapVoteCardMeta voteCount={0} badgeLabel="Vote" />
+      <MapVoteCardMeta titleLabel="Preparing Map" voteCount={0} badgeLabel="Vote" />
     </div>
   );
 }
 
 function getVoteLabel(count: number): string {
   return count === 1 ? '1 vote' : `${count} votes`;
+}
+
+function getMapSizeLabel(option: MapVoteOption): string {
+  if (option.mapSizeLabel) return option.mapSizeLabel;
+  if (!option.mapSize) return 'Medium';
+
+  return `${option.mapSize.charAt(0).toUpperCase()}${option.mapSize.slice(1)}`;
+}
+
+function getMapSizeBadgeStyle(option: MapVoteOption) {
+  switch (option.mapSize) {
+    case 'small':
+      return {
+        background: 'rgb(var(--color-ui-success) / 0.2)',
+        borderColor: 'rgb(var(--color-ui-success) / 0.34)',
+        color: 'rgb(var(--color-ui-success-light))',
+      };
+    case 'large':
+      return {
+        background: 'rgb(var(--color-accent-primary) / 0.22)',
+        borderColor: 'rgb(var(--color-accent-primary) / 0.36)',
+        color: 'rgb(var(--color-accent-primary-hover))',
+      };
+    case 'medium':
+    default:
+      return {
+        background: 'rgba(255,255,255,0.12)',
+        borderColor: 'rgba(255,255,255,0.24)',
+        color: 'rgba(255,255,255,0.86)',
+      };
+  }
 }
 
 export function MapVoteScreen() {
@@ -383,7 +422,7 @@ export function MapVoteScreen() {
   const reportedPreviewSignatureRef = useRef('');
 
   const mapOptionSignature = useMemo(
-    () => mapVoteOptions.map((option) => `${option.id}:${option.seed}:${option.mapThemeId ?? ''}`).join('|'),
+    () => mapVoteOptions.map((option) => `${option.id}:${option.seed}:${option.mapThemeId ?? ''}:${option.mapSize}`).join('|'),
     [mapVoteOptions]
   );
 
@@ -570,6 +609,12 @@ export function MapVoteScreen() {
                       option={option}
                       onReady={handlePreviewReady}
                     />
+                    <div
+                      className="absolute left-3 top-3 rounded-md border px-2.5 py-1 font-display text-[10px] uppercase tracking-wide shadow-lg shadow-black/20 backdrop-blur-md"
+                      style={getMapSizeBadgeStyle(option)}
+                    >
+                      {getMapSizeLabel(option)}
+                    </div>
                     {(isSelected || isWinner) && (
                       <div
                         className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-lg border backdrop-blur-md"
@@ -585,6 +630,7 @@ export function MapVoteScreen() {
                   </div>
 
                   <MapVoteCardMeta
+                    titleLabel={option.name}
                     voteCount={voters.length}
                     badgeLabel={isWinner ? 'Locked' : isSelected ? 'Picked' : isVoteTimerStarted ? 'Vote' : 'Generating'}
                     badgeTone={isWinner ? 'winner' : isSelected ? 'selected' : 'idle'}

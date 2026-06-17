@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import { DEFAULT_GAME_CONFIG, MOVEMENT_BUTTON_MOVE_FORWARD, parseMovementCommandPayload } from '@voxel-strike/shared';
+import {
+  BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
+  DEFAULT_GAME_CONFIG,
+  MOVEMENT_BUTTON_MOVE_FORWARD,
+  parseMovementCommandPayload,
+} from '@voxel-strike/shared';
 import type { HeroStats, Team, Vec3 } from '@voxel-strike/shared';
 import { createGameEntryTicket, verifyGameEntryTicket } from '../security/entryTickets';
 import { MessageRateLimiter } from '../rooms/rateLimiter';
@@ -328,10 +333,17 @@ function runAbilityBarrierTests(): void {
   assert.equal(blinkPlayer.movement.isSliding, false);
 
   const rocketPlayer = createAbilityHarnessPlayer('blaze');
+  rocketPlayer.velocity.y = 8.5;
   executeAbility(rocketPlayer, 'blaze_rocketjump', new AbilityStateSchema(), {}, context);
   assert.equal(marks[marks.length - 1]?.reason, 'knockback');
+  assert.equal(rocketPlayer.velocity.y, 8.5 + BLAZE_ROCKET_JUMP_VERTICAL_FORCE);
   assert.equal(rocketPlayer.movement.isGrounded, false);
   assert.equal(rocketPlayer.movement.isSliding, false);
+
+  const fallingRocketPlayer = createAbilityHarnessPlayer('blaze');
+  fallingRocketPlayer.velocity.y = -6;
+  executeAbility(fallingRocketPlayer, 'blaze_rocketjump', new AbilityStateSchema(), {}, context);
+  assert.equal(fallingRocketPlayer.velocity.y, BLAZE_ROCKET_JUMP_VERTICAL_FORCE);
 }
 
 function runPhantomShieldCooldownTests(): void {

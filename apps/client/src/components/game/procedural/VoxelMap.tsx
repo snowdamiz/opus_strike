@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, type RootState } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { VoxelMapManifest, VoxelMapTheme } from '@voxel-strike/shared';
+import type { VoxelMapManifest, VoxelMapSizeId, VoxelMapTheme } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { areProceduralMapCollidersLoaded, isPhysicsReady, loadProceduralMapColliders } from '../../../hooks/usePhysics';
 import { setMapBoundaryPolygon } from '../../../config/mapBoundaries';
@@ -35,6 +35,7 @@ function getRuntimeTerrainCullDistance(performanceBudget?: WorldPerformanceBudge
 interface VoxelMapProps {
   seed?: number;
   themeId?: VoxelMapTheme['id'] | null;
+  mapSize?: VoxelMapSizeId | null;
   manifest?: VoxelMapManifest;
   enablePhysics?: boolean;
   shadowsEnabled: boolean;
@@ -65,6 +66,7 @@ export interface VoxelMapWarmupStatus {
 export function VoxelMap({
   seed,
   themeId: providedThemeId,
+  mapSize: providedMapSize,
   manifest: providedManifest,
   enablePhysics = true,
   shadowsEnabled,
@@ -82,16 +84,19 @@ export function VoxelMap({
 }: VoxelMapProps) {
   const storeMapSeed = useGameStore((state) => state.mapSeed);
   const storeMapThemeId = useGameStore((state) => state.mapThemeId);
+  const storeMapSize = useGameStore((state) => state.mapSize);
   const mapSeed = seed ?? storeMapSeed;
   const mapThemeId = providedThemeId ?? storeMapThemeId;
+  const mapSize = providedMapSize ?? providedManifest?.mapSize ?? storeMapSize;
   const preparedMap = useMemo(() => {
     return prepareVoxelMapCpu({
       seed: mapSeed,
       themeId: mapThemeId,
+      mapSize,
       manifest: providedManifest,
       source: providedManifest ? 'mapVotePreview' : 'match',
     });
-  }, [mapSeed, mapThemeId, providedManifest]);
+  }, [mapSeed, mapThemeId, mapSize, providedManifest]);
   const manifest = preparedMap.manifest;
   const renderableRegions = preparedMap.renderableRegions;
   const material = useVoxelMaterial(manifest.theme, materialQuality);

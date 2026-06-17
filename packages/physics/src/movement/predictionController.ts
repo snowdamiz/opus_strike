@@ -93,13 +93,12 @@ function magnitude(offset: VisualCorrectionOffset): number {
 function movementModesRequireReplay(a: PlayerMovementState, b: PlayerMovementState): boolean {
   return (
     a.isGrounded !== b.isGrounded ||
+    a.isCrouching !== b.isCrouching ||
     a.isSliding !== b.isSliding ||
     a.isWallRunning !== b.isWallRunning ||
     a.wallRunSide !== b.wallRunSide ||
     a.isGrappling !== b.isGrappling ||
-    a.isGliding !== b.isGliding ||
-    (a.airJumpsUsed ?? 0) !== (b.airJumpsUsed ?? 0) ||
-    Boolean(a.jumpHeld) !== Boolean(b.jumpHeld)
+    a.isGliding !== b.isGliding
   );
 }
 

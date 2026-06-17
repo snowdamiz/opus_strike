@@ -111,6 +111,7 @@ model User {
   // Callsigns are unique case-insensitively via the User_name_lower_key index.
   name                   String                  @unique
   lastLoginAt            DateTime?
+  tutorialCompletedAt    DateTime?
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   authAccounts           AuthAccount[]

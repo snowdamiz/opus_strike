@@ -67,7 +67,6 @@ export interface UsePhantomAbilitiesReturn {
   voidRayChargingRef: React.MutableRefObject<boolean>;
   voidRayChargeStartRef: React.MutableRefObject<number>;
   voidRayIdRef: React.MutableRefObject<number>;
-  voidRayAwaitingReleaseRef: React.MutableRefObject<boolean>;
 
   // Methods
   updatePhantomPrimaryReload: (now?: number) => void;
@@ -107,7 +106,6 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   const voidRayChargingRef = useRef(false);
   const voidRayChargeStartRef = useRef(0);
   const voidRayIdRef = useRef(0);
-  const voidRayAwaitingReleaseRef = useRef(false);
   const phantomPrimaryHoldStartedAtRef = useRef(0);
   const localVoidRayLastReleaseAtRef = useRef(0);
 
@@ -211,7 +209,6 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     phantomPrimaryReloadStartRef.current = 0;
     voidRayChargingRef.current = false;
     voidRayChargeStartRef.current = 0;
-    voidRayAwaitingReleaseRef.current = false;
     localVoidRayLastReleaseAtRef.current = 0;
     useGameStore.getState().resetPhantomPrimaryMagazine();
   }, []);
@@ -285,21 +282,16 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     const chargeDurationMs = VOID_RAY_CHARGE_TIME / tempoMultiplier;
     const cooldownMs = PHANTOM_VOID_RAY_COOLDOWN_MS / tempoMultiplier;
 
-    if (!ctx.inputState.secondaryFire) {
-      if (voidRayChargingRef.current && !voidRayAwaitingReleaseRef.current) {
-        store.setVoidRayCharging(false, 0);
+    if (ctx.inputState.secondaryFire) {
+      if (voidRayChargingRef.current || store.voidRayCharging) {
+        voidRayChargingRef.current = true;
+        voidRayChargeStartRef.current = voidRayChargeStartRef.current || store.voidRayChargeStart || now;
+        return;
       }
-      voidRayChargingRef.current = store.voidRayCharging;
-      voidRayChargeStartRef.current = store.voidRayChargeStart;
-      voidRayAwaitingReleaseRef.current = false;
-      return;
-    }
 
-    if (!voidRayChargingRef.current && !store.voidRayCharging) {
       if (now - localVoidRayLastReleaseAtRef.current < cooldownMs) return;
       voidRayChargingRef.current = true;
       voidRayChargeStartRef.current = now;
-      voidRayAwaitingReleaseRef.current = false;
       store.setVoidRayCharging(true, now);
       markPredictedLocalAbilityVisual('phantom_void_ray_charge', ctx.localPlayer.id, `predicted_phantom_void_ray_charge_${ctx.localPlayer.id}_${now}`, {
         now,
@@ -308,9 +300,15 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     }
 
     const chargeStart = voidRayChargeStartRef.current || store.voidRayChargeStart || now;
-    if (voidRayAwaitingReleaseRef.current || now - chargeStart < chargeDurationMs) return;
+    if (!voidRayChargingRef.current && !store.voidRayCharging) return;
 
-    voidRayAwaitingReleaseRef.current = true;
+    if (now - chargeStart < chargeDurationMs) {
+      store.setVoidRayCharging(false, 0);
+      voidRayChargingRef.current = false;
+      voidRayChargeStartRef.current = 0;
+      return;
+    }
+
     voidRayChargingRef.current = false;
     voidRayChargeStartRef.current = 0;
     localVoidRayLastReleaseAtRef.current = now;
@@ -381,7 +379,6 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     voidRayChargingRef,
     voidRayChargeStartRef,
     voidRayIdRef,
-    voidRayAwaitingReleaseRef,
     updatePhantomPrimaryReload,
     reloadPhantomPrimary,
     resetPhantomPrimaryMagazine,

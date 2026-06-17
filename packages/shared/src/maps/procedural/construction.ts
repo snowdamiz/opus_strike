@@ -7,6 +7,7 @@ import {
   PROCEDURAL_MAP_SCALE,
   PROCEDURAL_VOXEL_SIZE,
   createProceduralCTFLayout,
+  getVoxelMapSizeDefinition,
   type ProceduralCTFLayout,
 } from './ctfLayout.js';
 import { hashSeed, mulberry32 } from './rng.js';
@@ -38,11 +39,13 @@ import type {
   TeamMap,
   TerrainConstraint,
   VoxelMapStats,
+  VoxelMapSizeId,
   VoxelMapTheme,
 } from './types.js';
 
 export interface ProceduralMapPreview {
   seed: number;
+  mapSize: VoxelMapSizeId;
   familyId: MapDesignBrief['familyId'];
   topologyId: MapTopologyId;
   themeId: VoxelMapTheme['id'];
@@ -368,19 +371,27 @@ function makeZoneCenter(point: Vec3): Vec3 {
   return { x: point.x, y: point.y, z: point.z };
 }
 
-function createDesignBrief(seed: number, theme: VoxelMapTheme, topologyId?: MapTopologyId): MapDesignBrief {
+function createDesignBrief(
+  seed: number,
+  theme: VoxelMapTheme,
+  topologyId?: MapTopologyId,
+  mapSize?: VoxelMapSizeId
+): MapDesignBrief {
   const normalizedSeed = seed >>> 0;
   const streams = createRngStreams(normalizedSeed);
   const topology = topologyId ?? TOPOLOGIES[streams.topology % TOPOLOGIES.length];
+  const mapSizeDefinition = getVoxelMapSizeDefinition(mapSize);
+  const mapAreaScale = mapSizeDefinition.scale ** 2;
   const performanceBudget: MapPerformanceBudget = {
-    maxSolidBlocks: 1_750_000,
-    maxColliders: 48_000,
-    maxRenderableChunks: Math.round(1_100 * PROCEDURAL_MAP_FOOTPRINT_SCALE ** 2),
+    maxSolidBlocks: Math.round(1_750_000 * mapAreaScale),
+    maxColliders: Math.round(48_000 * Math.max(0.8, mapAreaScale)),
+    maxRenderableChunks: Math.round(1_100 * PROCEDURAL_MAP_FOOTPRINT_SCALE ** 2 * mapAreaScale),
     maxGenerationMs: 900,
   };
 
   return {
     seed: normalizedSeed,
+    mapSize: mapSizeDefinition.id,
     gameMode: 'ctf',
     teamSize: DEFAULT_GAME_CONFIG.teamSize,
     familyId: 'ctf_semantic_arena',
@@ -393,8 +404,8 @@ function createDesignBrief(seed: number, theme: VoxelMapTheme, topologyId?: MapT
   };
 }
 
-export function createMapDesignBrief(seed = 0, topologyId?: MapTopologyId): MapDesignBrief {
-  return createDesignBrief(seed, getVoxelMapTheme(seed), topologyId);
+export function createMapDesignBrief(seed = 0, topologyId?: MapTopologyId, mapSize?: VoxelMapSizeId): MapDesignBrief {
+  return createDesignBrief(seed, getVoxelMapTheme(seed), topologyId, mapSize);
 }
 
 function createNode(id: string, kind: RouteGraphNode['kind'], position: Vec3, laneIds: string[], tags: string[], team?: MapTeam): RouteGraphNode {
@@ -1349,15 +1360,15 @@ export function createMapConstruction(
   theme = getVoxelMapTheme(seed >>> 0)
 ): MapConstructionResult {
   const normalizedSeed = seed >>> 0;
-  const baseBrief = createDesignBrief(normalizedSeed, theme);
+  const baseBrief = createDesignBrief(normalizedSeed, theme, undefined, layout.mapSize);
   const topologyStartIndex = TOPOLOGIES.indexOf(baseBrief.desiredTopology);
   const candidates = Array.from({ length: 4 }, (_, index) => {
     const topologyId = TOPOLOGIES[(topologyStartIndex + index) % TOPOLOGIES.length];
-    const brief = createDesignBrief(normalizedSeed, theme, topologyId);
+    const brief = createDesignBrief(normalizedSeed, theme, topologyId, layout.mapSize);
     return buildBlueprintCandidate(index, brief, layout, theme, topologyId);
   });
   const { selected, rejected } = chooseCandidate(candidates);
-  const designBrief = createDesignBrief(normalizedSeed, theme, selected.topologyId);
+  const designBrief = createDesignBrief(normalizedSeed, theme, selected.topologyId, layout.mapSize);
 
   selected.diagnostics.candidateCount = candidates.length;
   selected.diagnostics.rejectedCandidates = rejected;
@@ -1371,10 +1382,11 @@ export function createMapConstruction(
   };
 }
 
-export function createProceduralMapPreview(seed = 0): ProceduralMapPreview {
+export function createProceduralMapPreview(seed = 0, mapSize?: VoxelMapSizeId | null): ProceduralMapPreview {
   const normalizedSeed = seed >>> 0;
   const theme = getVoxelMapTheme(normalizedSeed);
-  const construction = createMapConstruction(normalizedSeed, createProceduralCTFLayout(normalizedSeed), theme);
+  const layout = createProceduralCTFLayout(normalizedSeed, mapSize);
+  const construction = createMapConstruction(normalizedSeed, layout, theme);
   const topologyLabel = construction.blueprint.topologyId
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -1382,6 +1394,7 @@ export function createProceduralMapPreview(seed = 0): ProceduralMapPreview {
 
   return {
     seed: normalizedSeed,
+    mapSize: layout.mapSize,
     familyId: construction.designBrief.familyId,
     topologyId: construction.blueprint.topologyId,
     themeId: theme.id,

@@ -55,6 +55,7 @@ export class LobbyState extends Schema {
   lobbyId: string = '';
   name: string = '';
   matchMode: string = 'custom';
+  gameplayMode: string = 'capture_the_flag';
   hostId: string = '';
   maxPlayers: number = DEFAULT_GAME_CONFIG.maxPlayers;
   maxParticipants: number = DEFAULT_GAME_CONFIG.maxPlayers;
@@ -83,6 +84,7 @@ defineTypes(LobbyState, {
   lobbyId: 'string',
   name: 'string',
   matchMode: 'string',
+  gameplayMode: 'string',
   hostId: 'string',
   maxPlayers: 'number',
   maxParticipants: 'number',

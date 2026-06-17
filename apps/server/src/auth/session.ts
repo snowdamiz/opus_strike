@@ -30,6 +30,7 @@ export interface RoomAuthContext {
   competitiveRating: number;
   rankedGames: number;
   rankedPlacementsRemaining: number;
+  tutorialCompletedAt: Date | null;
   rankDivisionIndex: number;
   rank: RankSummary;
   rankPayload: PublicRankPayload;
@@ -162,6 +163,7 @@ export async function resolveRoomAuthContext(
         rankedPlacementsRemaining: true,
         rankedPeakRating: true,
         rankedLastMatchAt: true,
+        tutorialCompletedAt: true,
         authAccounts: {
           select: {
             provider: true,
@@ -180,6 +182,7 @@ export async function resolveRoomAuthContext(
         competitiveRating: user.competitiveRating,
         rankedGames: user.rankedGames,
         rankedPlacementsRemaining: user.rankedPlacementsRemaining,
+        tutorialCompletedAt: user.tutorialCompletedAt,
         rankDivisionIndex: getRankDivisionIndex(user.competitiveRating),
         rank: rankPayload.current,
         rankPayload,

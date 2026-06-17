@@ -30,8 +30,6 @@ export interface PlayerMovementState {
   jetpackFuel: number;
   isGliding: boolean;
   chronosAscendantStartY?: number;
-  airJumpsUsed?: number;
-  jumpHeld?: boolean;
 }
 
 export function createDefaultPlayerMovementState(
@@ -49,8 +47,6 @@ export function createDefaultPlayerMovementState(
     isJetpacking: false,
     jetpackFuel: 100,
     isGliding: false,
-    airJumpsUsed: 0,
-    jumpHeld: false,
     ...overrides,
     grapplePoint: overrides.grapplePoint ? { ...overrides.grapplePoint } : overrides.grapplePoint ?? null,
   };
@@ -111,6 +107,7 @@ export interface Player {
   maxHealth: number;
   ultimateCharge: number;
   onFireUntil?: number | null;
+  powerupBoostUntil?: number | null;
   
   // Movement state
   movement: PlayerMovementState;
@@ -142,6 +139,7 @@ export interface PlayerSnapshot {
   lookPitch: number;
   health: number;
   maxHealth?: number;
+  powerupBoostUntil?: number | null;
   state: PlayerState;
   movement: PlayerMovementState;
   abilities: Record<string, AbilityState>;

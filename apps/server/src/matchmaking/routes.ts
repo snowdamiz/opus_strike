@@ -4,6 +4,7 @@ import { matchMaker } from 'colyseus';
 import prisma from '../db';
 import { parseCookies, verifyAuthToken } from '../auth/session';
 import { assertGameplayAccountEligible } from '../auth/accountEligibility';
+import { assertTutorialCompleted } from '../auth/tutorialCompletion';
 import { consumeRateLimit, consumeRateLimitForKey } from '../auth/rateLimit';
 import { createMatchmakingTicket } from '../security/matchmakingTickets';
 import {
@@ -36,6 +37,7 @@ interface MatchmakingUserContext {
   competitiveRating: number;
   rankDivisionIndex: number;
   rank: PublicRankPayload;
+  tutorialCompletedAt: Date | null;
 }
 
 interface QueueCandidate {
@@ -153,6 +155,7 @@ async function getMatchmakingUserContext(req: Request): Promise<MatchmakingUserC
         rankedPlacementsRemaining: true,
         rankedPeakRating: true,
         rankedLastMatchAt: true,
+        tutorialCompletedAt: true,
       },
     });
 
@@ -165,6 +168,7 @@ async function getMatchmakingUserContext(req: Request): Promise<MatchmakingUserC
         competitiveRating: user.competitiveRating,
         rankDivisionIndex: getRankDivisionIndex(user.competitiveRating),
         rank,
+        tutorialCompletedAt: user.tutorialCompletedAt,
       };
     }
   }
@@ -350,6 +354,7 @@ router.get('/running-game/:roomId', async (req: Request, res: Response) => {
       matchMode: canReconnect ? metadata.matchMode : undefined,
       mapSeed: canReconnect ? metadata.mapSeed : undefined,
       mapThemeId: canReconnect ? metadata.mapThemeId : undefined,
+      mapSize: canReconnect ? metadata.mapSize : undefined,
     });
   } catch (error) {
     console.error('[matchmaking] Failed to check running game:', error);
@@ -363,6 +368,7 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
   try {
     const context = await getMatchmakingUserContext(req);
     if (!enforceMatchmakingIdentityRateLimit(res, 'matchmaking:quick-play-ticket:user', MATCHMAKING_RATE_LIMITS.ticket, context.userId)) return;
+    assertTutorialCompleted(context.tutorialCompletedAt);
 
     const targetRankDivisionIndex = await chooseMatchmakingRankBand({
       mode: 'quick_play',
@@ -417,6 +423,7 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
   try {
     const context = await getMatchmakingUserContext(req);
     if (!enforceMatchmakingIdentityRateLimit(res, 'matchmaking:ranked-ticket:user', MATCHMAKING_RATE_LIMITS.rankedTicket, context.userId)) return;
+    assertTutorialCompleted(context.tutorialCompletedAt);
     if (!context.walletAddress) {
       throw Object.assign(new Error('A linked Solana wallet is required for ranked'), { statusCode: 400 });
     }

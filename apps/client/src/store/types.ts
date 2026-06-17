@@ -10,8 +10,12 @@ import type {
   MapTopologyId,
   PublicRankSnapshot,
   MatchMode,
+  PowerupPickupRuntimeState,
+  VoxelMapSizeId,
   VoxelMapTheme,
 } from '@voxel-strike/shared';
+
+export type { PowerupPickupRuntimeState };
 
 // Re-export VisualState from visualStore for central type access
 import type { VisualState } from './visualStore';
@@ -98,6 +102,8 @@ export interface MapVoteOption {
   id: string;
   seed: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
+  mapSize: VoxelMapSizeId;
+  mapSizeLabel?: string;
   name: string;
   themeId: string;
   themeName: string;

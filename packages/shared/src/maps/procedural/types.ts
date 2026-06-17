@@ -1,7 +1,10 @@
 import type { Vec3 } from '../../types/vector.js';
 
 export const DEFAULT_PROCEDURAL_MAP_SEED = 0x57564f58;
-export const CONSTRUCTED_MAP_MANIFEST_VERSION = 4;
+export const CONSTRUCTED_MAP_MANIFEST_VERSION = 7;
+
+export type VoxelMapSizeId = 'small' | 'medium' | 'large';
+export const DEFAULT_VOXEL_MAP_SIZE_ID: VoxelMapSizeId = 'medium';
 
 export type VoxelBlockId =
   | 'air'
@@ -33,7 +36,9 @@ export type VoxelBlockId =
   | 'gold_ore'
   | 'gold_panel'
   | 'gold_glass'
-  | 'crystal_growth';
+  | 'crystal_growth'
+  | 'health_pad'
+  | 'powerup_pad';
 
 export interface VoxelSize {
   x: number;
@@ -81,6 +86,7 @@ export interface MapPerformanceBudget {
 
 export interface MapDesignBrief {
   seed: number;
+  mapSize: VoxelMapSizeId;
   gameMode: MapGameMode;
   teamSize: number;
   familyId: MapFamilyId;
@@ -186,6 +192,26 @@ export interface RouteGraph {
   edges: RouteGraphEdge[];
   primaryRouteNodeIds: TeamMap<string[]>;
   fallbackAnchorNodeIds: TeamMap<string[]>;
+}
+
+export type MapPowerupKind = 'health_pack' | 'powerup';
+export type MapPowerupStrategicRole =
+  | 'midfield_contest'
+  | 'flank_reward'
+  | 'return_route'
+  | 'defensive_reset'
+  | 'route_bridge';
+
+export interface MapPowerupPickup {
+  id: string;
+  kind: MapPowerupKind;
+  position: Vec3;
+  radius: number;
+  respawnSeconds: number;
+  strategicRole: MapPowerupStrategicRole;
+  routeNodeId?: string;
+  laneId?: string;
+  teamBias?: MapTeam;
 }
 
 export interface SightlineSample {
@@ -451,6 +477,7 @@ export interface VoxelMapManifest {
   id: string;
   version: number;
   seed: number;
+  mapSize: VoxelMapSizeId;
   familyId: MapFamilyId;
   topologyId: MapTopologyId;
   themeId: VoxelMapTheme['id'];
@@ -475,6 +502,7 @@ export interface VoxelMapManifest {
     protectedZones: ProtectedZone[];
     lanes: LaneDescriptor[];
     routeGraph: RouteGraph;
+    powerups: MapPowerupPickup[];
     sightlineSamples: SightlineSample[];
   };
   construction: {

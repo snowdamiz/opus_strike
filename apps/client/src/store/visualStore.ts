@@ -101,8 +101,6 @@ export interface VisualState {
   activeBlazeFlamethrowerPlayerIdSet: Set<string>;
   activeBlazeBurningPlayerIds: string[];
   activeBlazeBurningPlayerIdSet: Set<string>;
-  activePhantomVeilPlayerIds: string[];
-  activePhantomVeilPlayerIdSet: Set<string>;
   activeChronosAegisPlayerIds: string[];
   activeChronosAegisPlayerIdSet: Set<string>;
   activeChronosAscendantPlayerIds: string[];
@@ -228,7 +226,6 @@ const DEFAULT_LOCAL_MOVEMENT: PlayerMovementState = {
 
 const COMBAT_VISUAL_CELL_SIZE = 8;
 const CHRONOS_ASCENDANT_ABILITY_ID = 'chronos_ascendant_paradox';
-const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
 
 const createCombatFrameCache = (): CombatVisualFrameCache => ({
   frameKey: -1,
@@ -277,8 +274,6 @@ const initialVisualState: VisualState = {
   activeBlazeFlamethrowerPlayerIdSet: new Set(),
   activeBlazeBurningPlayerIds: [],
   activeBlazeBurningPlayerIdSet: new Set(),
-  activePhantomVeilPlayerIds: [],
-  activePhantomVeilPlayerIdSet: new Set(),
   activeChronosAegisPlayerIds: [],
   activeChronosAegisPlayerIdSet: new Set(),
   activeChronosAscendantPlayerIds: [],
@@ -976,12 +971,6 @@ export const syncPlayerVisualEffectIndexes = (
     visibleAlive && (player.onFireUntil ?? 0) > nowMs
   );
   setIndexedPlayerId(
-    state.activePhantomVeilPlayerIds,
-    state.activePhantomVeilPlayerIdSet,
-    player.id,
-    visibleAlive && player.heroId === 'phantom' && player.abilities?.[PHANTOM_VEIL_ABILITY_ID]?.isActive === true
-  );
-  setIndexedPlayerId(
     state.activeChronosAscendantPlayerIds,
     state.activeChronosAscendantPlayerIdSet,
     player.id,
@@ -1007,7 +996,6 @@ export const removePlayerLiveVisualState = (playerId: string): void => {
   state.remotePlayerAttackStates.delete(playerId);
   removeIndexedPlayerId(state.activeBlazeFlamethrowerPlayerIds, state.activeBlazeFlamethrowerPlayerIdSet, playerId);
   removeIndexedPlayerId(state.activeBlazeBurningPlayerIds, state.activeBlazeBurningPlayerIdSet, playerId);
-  removeIndexedPlayerId(state.activePhantomVeilPlayerIds, state.activePhantomVeilPlayerIdSet, playerId);
   removeIndexedPlayerId(state.activeChronosAegisPlayerIds, state.activeChronosAegisPlayerIdSet, playerId);
   removeIndexedPlayerId(state.activeChronosAscendantPlayerIds, state.activeChronosAscendantPlayerIdSet, playerId);
 };
@@ -1279,8 +1267,6 @@ export const clearVisualState = (): void => {
     activeBlazeFlamethrowerPlayerIdSet: new Set(),
     activeBlazeBurningPlayerIds: [],
     activeBlazeBurningPlayerIdSet: new Set(),
-    activePhantomVeilPlayerIds: [],
-    activePhantomVeilPlayerIdSet: new Set(),
     activeChronosAegisPlayerIds: [],
     activeChronosAegisPlayerIdSet: new Set(),
     activeChronosAscendantPlayerIds: [],

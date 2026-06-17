@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import {
+  DEFAULT_GAMEPLAY_MODE,
   HERO_DEFINITIONS,
   MOVEMENT_BUTTON_MOVE_FORWARD,
   MOVEMENT_BUTTON_MOVE_LEFT,
@@ -339,7 +340,7 @@ function runBotAiBenchmark(botCount = 8): Record<string, number | string> {
   for (let iteration = 0; iteration < iterations; iteration++) {
     const startedAt = performance.now();
     const now = Date.now() + iteration * 33;
-    const tactics = buildTeamTactics({ now, revision: iteration, players, flags });
+    const tactics = buildTeamTactics({ gameplayMode: DEFAULT_GAMEPLAY_MODE, now, revision: iteration, players, flags });
     const blockedEdges = new Map<string, number>(iteration % 4 === 0 ? [['e-primary-a', now + 1200]] : []);
 
     for (let botIndex = 0; botIndex < botCount; botIndex++) {
@@ -351,6 +352,7 @@ function runBotAiBenchmark(botCount = 8): Record<string, number | string> {
       }
       const blackboard = buildBotBlackboard({
         now,
+        gameplayMode: DEFAULT_GAMEPLAY_MODE,
         bot,
         players,
         flags,

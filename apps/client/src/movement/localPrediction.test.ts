@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import {
+  BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
+  BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
   createEmptyInputState,
   movementButtonsToInputState,
 } from '@voxel-strike/shared';
@@ -9,6 +11,7 @@ import {
   applySelfMovementAuthority,
   createLocalMovementCommand,
   getLocalMovementCollisionRevision,
+  predictLocalBlazeRocketJump,
   resetLocalMovementPrediction,
   setLocalMovementRootedUntil,
 } from './localPrediction';
@@ -110,5 +113,34 @@ const releasedCommand = createLocalMovementCommand(releasedInput, {
   clientTimeMs: 2700,
 });
 assert.equal(movementButtonsToInputState(releasedCommand.buttons).moveLeft, true);
+
+const airborneBlazeState: MovementSimulationState = {
+  position: { x: 1, y: 5, z: 2 },
+  velocity: { x: 0.25, y: 8.5, z: -0.5 },
+  movement: {
+    ...state().movement,
+    isGrounded: false,
+  },
+};
+const blazePlayer = {
+  ...player,
+  id: 'blaze-player',
+  heroId: 'blaze',
+  position: airborneBlazeState.position,
+  velocity: airborneBlazeState.velocity,
+  movement: airborneBlazeState.movement,
+} as Player;
+resetLocalMovementPrediction(airborneBlazeState, 0, blazePlayer.id);
+const rocketJumpFromAirborneState = predictLocalBlazeRocketJump(blazePlayer, 0);
+assert.equal(
+  rocketJumpFromAirborneState.velocity.y,
+  airborneBlazeState.velocity.y + BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
+  'Blaze rocket jump should stack with existing upward airborne velocity'
+);
+assert.equal(
+  rocketJumpFromAirborneState.velocity.z,
+  airborneBlazeState.velocity.z - BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE
+);
+assert.equal(rocketJumpFromAirborneState.movement.isGrounded, false);
 
 console.log('local prediction tests passed');

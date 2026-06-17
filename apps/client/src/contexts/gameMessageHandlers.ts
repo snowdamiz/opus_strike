@@ -11,7 +11,12 @@ import {
   CHRONOS_VERDANT_PULSE_SPEED,
   VOID_RAY_CHARGE_TIME,
   createDefaultPlayerMovementState,
+  DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_VOXEL_MAP_SIZE_ID,
+  isGameplayMode,
+  normalizeVoxelMapSizeId,
   type PublicRankSnapshot,
+  type VoxelMapSizeId,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
@@ -45,7 +50,7 @@ import {
 import { recordMovementTraceAuthorityAck } from '../anticheat/movementTraceRecorder';
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike, triggerRocketJumpExplosion } from '../components/game/BlazeEffects';
-import { triggerBlinkEffect, triggerPhantomVeilClapEffect } from '../components/game/PhantomEffects';
+import { triggerBlinkEffect } from '../components/game/PhantomEffects';
 import { triggerPhantomShieldBreakEffect, triggerPhantomShieldCastEffect } from '../components/game/phantom';
 import {
   startObservedAbilityCastEffect,
@@ -107,6 +112,8 @@ import type {
   PlayerVitalsMessage,
   PlayerVitalsSnapshot,
   PackedPlayerTransform,
+  PowerupCollectedMessage,
+  PowerupStateMessage,
   SelfMovementAuthority,
   Team,
 } from '@voxel-strike/shared';
@@ -201,10 +208,6 @@ function normalizeMovementState(
     chronosAscendantStartY: Number.isFinite(movement?.chronosAscendantStartY)
       ? movement.chronosAscendantStartY
       : base.chronosAscendantStartY,
-    airJumpsUsed: Number.isFinite(movement?.airJumpsUsed)
-      ? Math.max(0, Math.trunc(movement.airJumpsUsed))
-      : base.airJumpsUsed ?? 0,
-    jumpHeld: movement?.jumpHeld ?? base.jumpHeld ?? false,
   };
 }
 
@@ -589,6 +592,7 @@ function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: number
     maxHealth: vitals.maxHealth,
     ultimateCharge: vitals.ultimateCharge,
     onFireUntil: vitals.onFireUntil ?? null,
+    powerupBoostUntil: vitals.powerupBoostUntil ?? null,
     movement: normalizeMovementState(vitals.movement, existing?.movement),
     abilities: normalizeAbilityVitals(vitals.abilities, serverTime, existing?.abilities),
     hasFlag: vitals.hasFlag,
@@ -652,6 +656,7 @@ function applyLocalVitalsPatchInPlace(player: Player, vitals: PlayerVitalsSnapsh
   player.maxHealth = vitals.maxHealth;
   player.ultimateCharge = vitals.ultimateCharge;
   player.onFireUntil = vitals.onFireUntil ?? null;
+  player.powerupBoostUntil = vitals.powerupBoostUntil ?? null;
   player.abilities = normalizeAbilityVitals(vitals.abilities, serverTime, player.abilities);
   player.hasFlag = vitals.hasFlag;
   player.respawnTime = vitals.respawnTime;
@@ -981,6 +986,9 @@ export function setupSelfMovementAuthorityHandler(room: Room) {
         authority.chronosAegisShieldRatio
       );
     }
+    if (localPlayer && authority.powerupBoostUntil !== undefined) {
+      useGameStore.getState().updateLocalPlayer({ powerupBoostUntil: authority.powerupBoostUntil ?? null });
+    }
   }));
 }
 
@@ -1131,7 +1139,9 @@ export function setupMatchSnapshotHandler(room: Room) {
     setGameTiming(data.tick, data.serverTime);
     useGameStore.setState({
       mapSeed: data.mapSeed,
+      gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : store.gameplayMode ?? DEFAULT_GAMEPLAY_MODE,
       mapThemeId: data.mapThemeId ?? null,
+      mapSize: normalizeVoxelMapSizeId(data.mapSize),
       gamePhase: data.phase,
       redScore: data.redScore,
       blueScore: data.blueScore,
@@ -1141,6 +1151,46 @@ export function setupMatchSnapshotHandler(room: Room) {
       phaseEndTime: data.phaseEndTime,
       gameClockFrozen: data.gameClockFrozen === true,
     });
+  }));
+}
+
+export function setupPowerupHandlers(room: Room) {
+  room.onMessage('powerupState', measureNetworkMessage('powerupState', (data: PowerupStateMessage) => {
+    if (!data || !Array.isArray(data.pickups)) return;
+    useGameStore.getState().setPowerupPickups(data.pickups);
+  }));
+
+  room.onMessage('powerupCollected', measureNetworkMessage('powerupCollected', (data: PowerupCollectedMessage) => {
+    if (!data || typeof data.pickupId !== 'string') return;
+
+    const store = useGameStore.getState();
+    store.updatePowerupPickup({
+      pickupId: data.pickupId,
+      availableAt: data.availableAt,
+    });
+    store.recordPowerupPickupCollection({
+      pickupId: data.pickupId,
+      collectedAt: Date.now(),
+    });
+
+    void playSharedSound(data.kind === 'health_pack' ? 'healPickup' : 'powerupPickup', {
+      position: data.position,
+    });
+
+    if (data.kind !== 'powerup' || !data.playerId) return;
+    const powerupBoostUntil = data.expiresAt ?? null;
+    if (data.playerId === store.localPlayer?.id) {
+      store.updateLocalPlayer({ powerupBoostUntil });
+      return;
+    }
+
+    const player = store.players.get(data.playerId);
+    if (player) {
+      store.updatePlayer(data.playerId, {
+        ...player,
+        powerupBoostUntil,
+      });
+    }
   }));
 }
 
@@ -1505,6 +1555,15 @@ function applyConfirmedPhantomActiveAbility(data: AbilityUsedMessage): void {
   });
 }
 
+function hasActivePhantomVeil(player: Player | null | undefined): boolean {
+  return player?.heroId === 'phantom' && player.abilities?.phantom_veil?.isActive === true;
+}
+
+function isRemotePhantomVeiled(playerId: string, localPlayerId: string | null): boolean {
+  if (playerId === localPlayerId) return false;
+  return hasActivePhantomVeil(useGameStore.getState().players.get(playerId));
+}
+
 function applyLocalPhantomBlinkConfirmation(
   data: AbilityUsedMessage,
   destination: { x: number; y: number; z: number },
@@ -1678,6 +1737,7 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
 
     case 'phantom_blink': {
       if (fallbackStartPosition && position) {
+        const hideRemoteVeilParticles = isRemotePhantomVeiled(data.playerId, localPlayerId);
         if (isLocalPlayer) {
           applyLocalPhantomBlinkConfirmation(data, position, normalizeAimDirection(data));
           triggerTeleportEffect('blink');
@@ -1687,7 +1747,9 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
         } else {
           playPhantomWorldSound('phantomBlink', fallbackStartPosition, { durationMs: 900, volume: 1.1 });
         }
-        triggerBlinkEffect(fallbackStartPosition, position);
+        if (!hideRemoteVeilParticles) {
+          triggerBlinkEffect(fallbackStartPosition, position);
+        }
       }
       return true;
     }
@@ -1706,13 +1768,6 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
 
     case 'phantom_veil':
       applyConfirmedPhantomActiveAbility(data);
-      if (!isLocalPlayer && position) {
-        triggerPhantomVeilClapEffect({
-          playerId: data.playerId,
-          position,
-          yaw: data.direction?.yaw,
-        });
-      }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_veil')) {
         playPhantomWorldSound('phantomVeil', position);
       }
@@ -2079,7 +2134,7 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
 
     case 'blaze_airstrike': {
       if (position) {
-        triggerAirStrike(position);
+        triggerAirStrike(position, { ownerId: data.playerId, ownerTeam: data.ownerTeam ?? null });
         if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('blaze_airstrike')) {
           void playSharedBlazeAirstrikeSound({ position });
         }
@@ -2648,14 +2703,27 @@ export function setupPollingSync(
       const nextMapThemeId = typeof room.state.mapThemeId === 'string'
         ? room.state.mapThemeId as VoxelMapTheme['id']
         : null;
+      const nextMapSize = normalizeVoxelMapSizeId(
+        typeof room.state.mapSize === 'string' ? room.state.mapSize : DEFAULT_VOXEL_MAP_SIZE_ID
+      );
       if (
         typeof room.state.mapSeed === 'number'
-        && (room.state.mapSeed !== store.mapSeed || nextMapThemeId !== store.mapThemeId)
+        && (
+          room.state.mapSeed !== store.mapSeed
+          || nextMapThemeId !== store.mapThemeId
+          || nextMapSize !== store.mapSize
+        )
       ) {
         useGameStore.getState().setMapSeed(room.state.mapSeed);
         useGameStore.getState().setMapThemeId(nextMapThemeId);
+        useGameStore.getState().setMapSize(nextMapSize);
         try {
-          const preparedMap = prepareVoxelMapCpu({ seed: room.state.mapSeed, themeId: nextMapThemeId, source: 'match' });
+          const preparedMap = prepareVoxelMapCpu({
+            seed: room.state.mapSeed,
+            themeId: nextMapThemeId,
+            mapSize: nextMapSize,
+            source: 'match',
+          });
           prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'fallback-poll' });
         } catch (error) {
           loggers.network.warn('fallback poll map CPU prep failed', error);
@@ -2664,6 +2732,9 @@ export function setupPollingSync(
 
       if (room.state.phase !== store.gamePhase) {
         actions.setGamePhase(room.state.phase as any);
+      }
+      if (isGameplayMode(room.state.gameplayMode) && room.state.gameplayMode !== store.gameplayMode) {
+        useGameStore.setState({ gameplayMode: room.state.gameplayMode });
       }
     }
   }, FALLBACK_POLL_INTERVAL_MS);

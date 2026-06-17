@@ -317,7 +317,7 @@ function runHeldCommandStripsEdgeButtons() {
   assert.equal(heldInput.ability1, false);
 }
 
-function runDoubleJumpForAllHeroes() {
+function runAirborneJumpDeniedForAllHeroes() {
   const heroIds = Object.keys(HERO_DEFINITIONS);
 
   for (const heroId of heroIds) {
@@ -341,7 +341,6 @@ function runDoubleJumpForAllHeroes() {
     });
 
     assert.equal(state.movement.isGrounded, false, `${heroId} first jump should leave ground`);
-    assert.equal(state.movement.airJumpsUsed ?? 0, 0, `${heroId} ground jump should not spend air jump`);
 
     for (let step = 0; step < 5; step++) {
       state = simulateSharedMovement({
@@ -356,8 +355,6 @@ function runDoubleJumpForAllHeroes() {
       });
     }
 
-    assert.equal(state.movement.airJumpsUsed ?? 0, 0, `${heroId} held jump should not spend air jump`);
-
     state = simulateSharedMovement({
       position: state.position,
       velocity: state.velocity,
@@ -369,7 +366,7 @@ function runDoubleJumpForAllHeroes() {
       terrain,
     });
 
-    const beforeDoubleJumpVelocityY = state.velocity.y;
+    const beforeAirborneJumpVelocityY = state.velocity.y;
     state = simulateSharedMovement({
       position: state.position,
       velocity: state.velocity,
@@ -381,10 +378,9 @@ function runDoubleJumpForAllHeroes() {
       terrain,
     });
 
-    assert.equal(state.movement.airJumpsUsed ?? 0, 1, `${heroId} air jump should spend one air jump`);
     assert.ok(
-      state.velocity.y > beforeDoubleJumpVelocityY + 1,
-      `${heroId} air jump should refresh upward velocity`
+      state.velocity.y < beforeAirborneJumpVelocityY,
+      `${heroId} airborne jump input should be ignored before landing`
     );
 
     state = simulateSharedMovement({
@@ -398,7 +394,7 @@ function runDoubleJumpForAllHeroes() {
       terrain,
     });
 
-    const beforeDeniedJumpVelocityY = state.velocity.y;
+    const beforeRepeatedAirborneJumpVelocityY = state.velocity.y;
     state = simulateSharedMovement({
       position: state.position,
       velocity: state.velocity,
@@ -410,10 +406,9 @@ function runDoubleJumpForAllHeroes() {
       terrain,
     });
 
-    assert.equal(state.movement.airJumpsUsed ?? 0, 1, `${heroId} should not spend more than one air jump`);
     assert.ok(
-      state.velocity.y < beforeDeniedJumpVelocityY,
-      `${heroId} third jump should be denied before landing`
+      state.velocity.y < beforeRepeatedAirborneJumpVelocityY,
+      `${heroId} repeated airborne jump input should remain ignored before landing`
     );
   }
 }
@@ -1430,7 +1425,7 @@ runNoCorrectionAckRefreshesAuthorityOwnedResources();
 runSprintModeMismatchDoesNotCorrect();
 runSlideRequiresFreshCrouchPress();
 runHeldCommandStripsEdgeButtons();
-runDoubleJumpForAllHeroes();
+runAirborneJumpDeniedForAllHeroes();
 runChronosAscendantReleaseDampsStrafe();
 runChronosAscendantCapsElevation();
 runChronosAscendantCapsAtPlayableCeiling();

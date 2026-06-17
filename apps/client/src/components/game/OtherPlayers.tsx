@@ -15,6 +15,7 @@ import type { EffectQualityConfig, RemotePlayerQualityConfig } from './visualQua
 import { RemoteHeroBatchRenderer } from './RemoteHeroBatchRenderer';
 import { RemoteMovementEffects } from './RemoteMovementEffects';
 import {
+  getPlayerBodyPostureScaleY,
   getPlayerHeight,
   getVisiblePlayerHeight,
   hasLoweredPlayerPosture,
@@ -173,7 +174,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
   const playerHeight = getPlayerHeight(player.heroId);
   const hasLoweredPosture = hasLoweredPlayerPosture(player.movement);
   const visibleHeight = getVisiblePlayerHeight(player.heroId, player.movement);
-  const postureScaleY = visibleHeight / playerHeight;
+  const postureScaleY = getPlayerBodyPostureScaleY(player.movement);
   const initialIsMoving = isPlayerMovingForAnimation(player);
   const initialMovementPose = getPlayerMovementPose(player, hasLoweredPosture, initialIsMoving);
   const targetPosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
@@ -343,9 +344,8 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
       }
 
       const frameHasLoweredPosture = hasLoweredPlayerPosture(player.movement);
-      const frameVisibleHeight = getVisiblePlayerHeight(player.heroId, player.movement);
       const frameIsMoving = isPlayerMovingForAnimation(player, visualHorizontalSpeed);
-      postureScaleYRef.current = frameVisibleHeight / playerHeight;
+      postureScaleYRef.current = getPlayerBodyPostureScaleY(player.movement);
       isCrouchingRef.current = player.movement.isCrouching;
       isSlidingRef.current = player.movement.isSliding;
       movementPoseRef.current = getPlayerMovementPose(player, frameHasLoweredPosture, frameIsMoving);

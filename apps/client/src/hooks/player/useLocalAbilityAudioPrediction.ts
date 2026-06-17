@@ -373,28 +373,15 @@ export function useLocalAbilityAudioPrediction() {
       }
     }
 
-    if (
-      heroId === 'phantom' &&
-      !phantomReloadBlocksNonBlinkCasts &&
-      inputState.secondaryFire &&
-      phantomVoidRayChargeStartedAtRef.current > 0
-    ) {
-      const chargeElapsed = now - phantomVoidRayChargeStartedAtRef.current;
-      if (!phantomVoidRayReleasePlayedRef.current && chargeElapsed >= VOID_RAY_CHARGE_TIME / tempoMultiplier) {
-        phantomVoidRayReleasePlayedRef.current = true;
+    if (!inputState.secondaryFire && previousInput.secondaryFire && heroId === 'phantom') {
+      const chargeStartedAt = phantomVoidRayChargeStartedAtRef.current;
+      const charged = chargeStartedAt > 0 && now - chargeStartedAt >= VOID_RAY_CHARGE_TIME / tempoMultiplier;
+      stopPredictedPhantomVoidRayCharge();
+
+      if (charged && !phantomReloadBlocksNonBlinkCasts) {
         lastPhantomVoidRayAtRef.current = now;
         markPredictedLocalAbilitySound('phantom_void_ray', now);
         void playSharedSound('phantomVoidRay');
-      }
-    }
-
-    if (!inputState.secondaryFire && previousInput.secondaryFire && heroId === 'phantom') {
-      if (!phantomVoidRayReleasePlayedRef.current) {
-        stopPredictedPhantomVoidRayCharge();
-      } else {
-        phantomVoidRayChargeStartedAtRef.current = 0;
-        phantomVoidRayReleasePlayedRef.current = false;
-        phantomVoidRayChargeAbortRef.current = null;
       }
     }
 

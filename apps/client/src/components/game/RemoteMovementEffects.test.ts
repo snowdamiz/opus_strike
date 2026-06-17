@@ -5,6 +5,7 @@ import {
   getRemoteMovementEffectStyle,
   getRemoteMovementEmissionRate,
   getRemoteMovementParticleCapacity,
+  shouldSuppressRemoteMovementEffects,
 } from './RemoteMovementEffects';
 
 const groundedMovement: Pick<PlayerMovementState, 'isGrounded' | 'isSliding' | 'isSprinting'> = {
@@ -70,5 +71,48 @@ assert.equal(getRemoteMovementParticleCapacity(0), 24);
 assert.equal(getRemoteMovementParticleCapacity(96), 28);
 assert.equal(getRemoteMovementParticleCapacity(520), 156);
 assert.equal(getRemoteMovementParticleCapacity(1000), 160);
+
+assert.equal(
+  shouldSuppressRemoteMovementEffects({
+    heroId: 'phantom',
+    abilities: {
+      phantom_veil: {
+        abilityId: 'phantom_veil',
+        cooldownRemaining: 0,
+        charges: 1,
+        isActive: true,
+      },
+    },
+  }),
+  true
+);
+assert.equal(
+  shouldSuppressRemoteMovementEffects({
+    heroId: 'phantom',
+    abilities: {
+      phantom_veil: {
+        abilityId: 'phantom_veil',
+        cooldownRemaining: 0,
+        charges: 1,
+        isActive: false,
+      },
+    },
+  }),
+  false
+);
+assert.equal(
+  shouldSuppressRemoteMovementEffects({
+    heroId: 'blaze',
+    abilities: {
+      phantom_veil: {
+        abilityId: 'phantom_veil',
+        cooldownRemaining: 0,
+        charges: 1,
+        isActive: true,
+      },
+    },
+  }),
+  false
+);
 
 console.log('remote movement effect tests passed');

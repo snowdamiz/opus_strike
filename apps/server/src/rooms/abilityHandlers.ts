@@ -3,8 +3,6 @@ import { AbilityStateSchema } from './schema/Components';
 import { 
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
-  BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
-  BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
   CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE,
   CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST,
   CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE,
@@ -14,6 +12,7 @@ import {
   PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS,
   PHANTOM_VOID_ZONE_DURATION_SECONDS,
   PHANTOM_VOID_ZONE_RADIUS,
+  calculateBlazeRocketJumpVelocity,
   calculateLookDirection,
 } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
@@ -323,9 +322,10 @@ export function executeAbility(
     }
 
     case 'blaze_rocketjump': {
-      player.velocity.x += -Math.sin(player.lookYaw) * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE;
-      player.velocity.y = BLAZE_ROCKET_JUMP_VERTICAL_FORCE;
-      player.velocity.z += -Math.cos(player.lookYaw) * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE;
+      const velocity = calculateBlazeRocketJumpVelocity(player.velocity, player.lookYaw);
+      player.velocity.x = velocity.x;
+      player.velocity.y = velocity.y;
+      player.velocity.z = velocity.z;
       player.position.y += 0.5;
       stopUpwardVelocityAtCeiling(player, clampPlayerPosition(player, context).clampedY);
       player.movement.isGrounded = false;

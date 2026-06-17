@@ -9,7 +9,7 @@ import { SettingsModal } from './SettingsModal';
 import { GameDialog } from './GameDialog';
 import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { LobbyBackdrop } from './LobbyBackdrop';
-import { SocialBox, SocialButton } from './SocialBox';
+import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
 import { TopNavIconButton } from './TopNavIconButton';
 import { PhantomLogo } from './PhantomLogo';
 import { useUISounds } from '../../hooks/useAudio';
@@ -17,11 +17,13 @@ import { useServerLatencyProbe } from '../../hooks/useServerLatencyProbe';
 import { config } from '../../config/environment';
 import {
   ALL_HERO_IDS,
+  DEFAULT_GAMEPLAY_MODE,
   DEFAULT_RANKED_SEASON_NUMBER,
   HERO_DEFINITIONS,
+  getGameplayModeLabel,
   getRankedSeasonLabel,
 } from '@voxel-strike/shared';
-import type { HeroId, RankedSeasonSnapshot } from '@voxel-strike/shared';
+import type { GameplayMode, HeroId, RankedSeasonSnapshot } from '@voxel-strike/shared';
 import { DISCORD_AUTH_COLORS, HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 import { PwaInstallToast } from './PwaInstallToast';
 import { MAP_SEED_PLACEHOLDER, isAllowedMapSeedInput, parseOptionalMapSeedInput } from '../../utils/mapSeedInput';
@@ -38,6 +40,7 @@ const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((mod
   default: module.FeaturedHeroPreview,
 })));
 const HERO_SHOWCASE_ANIMATION_MODE: HeroPreviewAnimationMode = 'showcaseLoop';
+const CUSTOM_GAMEPLAY_MODE_OPTIONS: GameplayMode[] = ['capture_the_flag', 'team_deathmatch'];
 
 function DiscordIcon({ className, style }: { className?: string; style?: CSSProperties }) {
   return (
@@ -178,6 +181,7 @@ export function MainLobby() {
     rankedPlay,
     getRankedTokenHoldStatus,
     startPracticeGame,
+    startTutorialGame,
     getRunningGameReconnect,
     reconnectRunningGame,
   } = useNetwork();
@@ -219,9 +223,11 @@ export function MainLobby() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
   const [isLinkingPhantom, setIsLinkingPhantom] = useState(false);
+  const socialBadgeCount = useSocialBadgeCount();
   const currentRank = getRankForStats(userStats);
   const isRankedPreseason = rankedSeason.mode === 'preseason';
   const serverLatency = useServerLatencyProbe(activeTab === 'play');
+  const hasCompletedTutorial = Boolean(user?.tutorialCompletedAt);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -465,18 +471,23 @@ export function MainLobby() {
   const handleCreateLobby = async (
     lobbyName: string,
     wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' },
+    gameplayMode?: GameplayMode,
     mapSeed?: number,
     forceGoldenMapOption?: boolean,
     observersEnabled?: boolean
   ) => {
     setError(null);
+    if (!hasCompletedTutorial) {
+      handleStartTutorial();
+      return;
+    }
     if (wager?.enabled && !hasPhantomAccount) {
       const linked = await handleLinkPhantom();
       if (!linked) return;
     }
 
     try {
-      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, { wager, mapSeed, forceGoldenMapOption, observersEnabled });
+      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, { wager, gameplayMode, mapSeed, forceGoldenMapOption, observersEnabled });
       setShowCreateLobby(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create lobby');
@@ -485,6 +496,10 @@ export function MainLobby() {
 
   const handleQuickPlay = async () => {
     setError(null);
+    if (!hasCompletedTutorial) {
+      handleStartTutorial();
+      return;
+    }
     try {
       await quickPlay(playerName);
     } catch (err) {
@@ -510,8 +525,20 @@ export function MainLobby() {
     setShowPracticeSetup(false);
   };
 
+  const handleStartTutorial = () => {
+    setError(null);
+    setShowPlayDialog(false);
+    setShowCreateLobby(false);
+    setShowPracticeSetup(false);
+    startTutorialGame(playerName);
+  };
+
   const handleRankedPlay = async () => {
     setError(null);
+    if (!hasCompletedTutorial) {
+      handleStartTutorial();
+      return;
+    }
     if (isRankedPreseason) {
       setError('Ranked is disabled during Pre-season.');
       return;
@@ -582,6 +609,7 @@ export function MainLobby() {
           <div className="main-lobby-controls flex shrink-0 items-center gap-3 xl:gap-4">
             {isAuthenticated && (
               <SocialButton
+                badgeCount={socialBadgeCount}
                 onClick={() => {
                   playButtonClick();
                   setShowSocial(true);
@@ -629,10 +657,12 @@ export function MainLobby() {
             heroAnimationMode={heroAnimationMode}
             rankedSeason={rankedSeason}
             isAuthenticated={isAuthenticated}
+            requiresTutorial={!hasCompletedTutorial}
             runningGameSession={runningGameSession}
             isReconnectChecking={isReconnectChecking}
             serverLatency={serverLatency}
             onOpenPlayDialog={() => setShowPlayDialog(true)}
+            onStartTutorial={handleStartTutorial}
             onReconnect={handleReconnectGame}
             onDiscordSignIn={handleDiscordSignIn}
             onPrevHero={handlePrevHero}
@@ -681,6 +711,7 @@ export function MainLobby() {
           isRankedTokenHoldLoading={isRankedTokenHoldLoading}
           rankedTokenHoldError={rankedTokenHoldError}
           rankedSeason={rankedSeason}
+          requiresTutorial={!hasCompletedTutorial}
           onQuickPlay={handleQuickPlay}
           onRankedPlay={handleRankedPlay}
           onOpenPracticeSetup={() => {
@@ -738,10 +769,12 @@ interface PlayTabProps {
   heroAnimationMode: HeroPreviewAnimationMode;
   rankedSeason: RankedSeasonSnapshot;
   isAuthenticated: boolean;
+  requiresTutorial: boolean;
   runningGameSession: RunningGameSession | null;
   isReconnectChecking: boolean;
   serverLatency: ServerLatencyProbeSnapshot | null;
   onOpenPlayDialog: () => void;
+  onStartTutorial: () => void;
   onReconnect: () => void;
   onDiscordSignIn: () => void;
   onPrevHero: () => void;
@@ -757,10 +790,12 @@ function PlayTab({
   heroAnimationMode,
   rankedSeason,
   isAuthenticated,
+  requiresTutorial,
   runningGameSession,
   isReconnectChecking,
   serverLatency,
   onOpenPlayDialog,
+  onStartTutorial,
   onReconnect,
   onDiscordSignIn,
   onPrevHero,
@@ -769,6 +804,15 @@ function PlayTab({
 }: PlayTabProps) {
   const { playButtonClick } = useUISounds();
   const canReconnect = isAuthenticated && Boolean(runningGameSession);
+  const mainPlayLabel = isReconnectChecking
+    ? 'CHECKING...'
+    : canReconnect
+      ? 'RECONNECT'
+      : requiresTutorial
+        ? isLoading
+          ? 'STARTING...'
+          : 'START TUTORIAL'
+        : 'PLAY';
 
   return (
     <div className="play-tab-shell h-full menu-content">
@@ -856,6 +900,8 @@ function PlayTab({
                 playButtonClick();
                 if (canReconnect) {
                   onReconnect();
+                } else if (requiresTutorial) {
+                  onStartTutorial();
                 } else {
                   onOpenPlayDialog();
                 }
@@ -882,7 +928,7 @@ function PlayTab({
                       <path d="M8 5v14l11-7z" />
                     </svg>
                   )}
-                  {isReconnectChecking ? 'CHECKING...' : canReconnect ? 'RECONNECT' : 'PLAY'}
+                  {mainPlayLabel}
                 </>
               </span>
             </button>
@@ -966,6 +1012,7 @@ interface PlayDialogProps {
   isRankedTokenHoldLoading: boolean;
   rankedTokenHoldError: string | null;
   rankedSeason: RankedSeasonSnapshot;
+  requiresTutorial: boolean;
   onQuickPlay: () => void;
   onRankedPlay: () => void;
   onOpenPracticeSetup: () => void;
@@ -984,6 +1031,7 @@ function PlayDialog({
   isRankedTokenHoldLoading,
   rankedTokenHoldError,
   rankedSeason,
+  requiresTutorial,
   onQuickPlay,
   onRankedPlay,
   onOpenPracticeSetup,
@@ -1000,9 +1048,11 @@ function PlayDialog({
   const rankedRequirement = rankedTokenHoldStatus ? rankedTokenHoldRequirement(rankedTokenHoldStatus) : null;
   const rankedTokenLabel = rankedTokenHoldStatus ? formatRankedTokenLabel(rankedTokenHoldStatus) : null;
   const isRankedLocked = isRankedPreseason || isRankedHoldMissing;
-  const isRankedDisabled = isLoading || isLinkingPhantom || isRankedPreseason || isRankedHoldPending || isRankedHoldMissing;
+  const isRankedDisabled = requiresTutorial || isLoading || isLinkingPhantom || isRankedPreseason || isRankedHoldPending || isRankedHoldMissing;
   const rankedSubtitle = isRankedPreseason
     ? formatRankedPreseasonSubtitle(rankedSeason)
+    : requiresTutorial
+      ? 'Complete the tutorial first'
     : isAuthenticated && !hasPhantomAccount
       ? 'Connect Phantom to enter ranked'
     : isRankedHoldMissing && rankedTokenHoldStatus && rankedTokenLabel
@@ -1014,6 +1064,8 @@ function PlayDialog({
           : 'Competitive queue';
   const rankedTitle = isRankedPreseason
     ? 'Ranked is disabled during Pre-season'
+    : requiresTutorial
+      ? 'Complete the tutorial before entering ranked'
     : isAuthenticated && !hasPhantomAccount
       ? 'Connect Phantom before entering ranked'
     : isRankedHoldMissing && rankedRequirement
@@ -1024,7 +1076,7 @@ function PlayDialog({
     ? `Hold token: ${rankedTokenHoldStatus.tokenAddress}`
     : undefined;
   const showRankedPhantomBadge = isAuthenticated && !hasPhantomAccount && !isRankedPreseason;
-  const rankedButtonClassName = `play-pay-option play-pay-option-ranked${isRankedLocked ? ' play-pay-option-ranked-locked' : ''}`;
+  const rankedButtonClassName = `play-pay-option play-pay-option-ranked${isRankedLocked || requiresTutorial ? ' play-pay-option-ranked-locked' : ''}`;
 
   const runAction = (action: () => void) => {
     playButtonClick();
@@ -1110,8 +1162,9 @@ function PlayDialog({
             <button
               type="button"
               onClick={() => runAction(onQuickPlay)}
-              disabled={isLoading}
+              disabled={requiresTutorial || isLoading}
               className="play-pay-option"
+              title={requiresTutorial ? 'Complete the tutorial before quick play' : undefined}
             >
               <span className="play-pay-option-icon">
                 <svg fill="currentColor" viewBox="0 0 24 24">
@@ -1120,7 +1173,7 @@ function PlayDialog({
               </span>
               <span className="play-pay-option-copy">
                 <span className="play-pay-option-title">{isLoading ? 'STARTING...' : 'QUICK PLAY'}</span>
-                <span className="play-pay-option-subtitle">Instant casual queue</span>
+                <span className="play-pay-option-subtitle">{requiresTutorial ? 'Complete the tutorial first' : 'Instant casual queue'}</span>
               </span>
             </button>
 
@@ -1128,8 +1181,9 @@ function PlayDialog({
               <button
                 type="button"
                 onClick={() => runAction(onOpenCreateLobby)}
-                disabled={isLoading}
+                disabled={requiresTutorial || isLoading}
                 className="play-pay-option play-pay-option-compact"
+                title={requiresTutorial ? 'Complete the tutorial before custom games' : undefined}
               >
                 <span className="play-pay-option-icon">
                   <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1261,6 +1315,7 @@ interface CreateLobbyModalProps {
   onCreate: (
     name: string,
     wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' },
+    gameplayMode?: GameplayMode,
     mapSeed?: number,
     forceGoldenMapOption?: boolean,
     observersEnabled?: boolean
@@ -1269,6 +1324,7 @@ interface CreateLobbyModalProps {
 
 function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: CreateLobbyModalProps) {
   const [lobbyName, setLobbyName] = useState('');
+  const [gameplayMode, setGameplayMode] = useState<GameplayMode>(DEFAULT_GAMEPLAY_MODE);
   const [wagerEnabled, setWagerEnabled] = useState(false);
   const [coverChargeSol, setCoverChargeSol] = useState('0.01');
   const [mapSeedInput, setMapSeedInput] = useState('');
@@ -1283,7 +1339,7 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
       const mapSeed = config.isDev ? parseOptionalMapSeedInput(mapSeedInput) : undefined;
       onCreate(lobbyName, wagerEnabled
         ? { enabled: true, token: 'SOL', coverChargeLamports: solInputToLamports(coverChargeSol) }
-        : { enabled: false }, mapSeed, config.isDev && forceGoldenMapOption, config.isDev && observersEnabled);
+        : { enabled: false }, gameplayMode, mapSeed, config.isDev && forceGoldenMapOption, config.isDev && observersEnabled);
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Invalid lobby settings');
     }
@@ -1318,6 +1374,32 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
           <p className="mt-1.5 text-white/30 text-[11px] font-body">
             Leave empty for default name
           </p>
+        </div>
+
+        <div>
+          <label className="block text-xs text-white/50 font-body uppercase tracking-wider mb-1.5">
+            Mode
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            {CUSTOM_GAMEPLAY_MODE_OPTIONS.map((mode) => {
+              const selected = gameplayMode === mode;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => setGameplayMode(mode)}
+                  className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                    selected
+                      ? 'border-orange-300/55 bg-orange-400/18 text-white'
+                      : 'border-white/10 bg-white/[0.035] text-white/55 hover:border-white/20 hover:text-white/80'
+                  }`}
+                >
+                  <span className="block font-display text-sm">{getGameplayModeLabel(mode)}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {config.isDev && (

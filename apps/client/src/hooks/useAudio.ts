@@ -34,6 +34,7 @@ export interface PlaySoundOptions {
   volume?: number;
   pitch?: number;
   position?: { x: number; y: number; z: number };
+  stretchToDurationMs?: boolean;
   startOffsetMs?: number;
   durationMs?: number;
   fadeInMs?: number;
@@ -166,7 +167,7 @@ const SOUND_EFFECTS = {
   // Movement
   footstep: { path: '/sounds/walk.mp3', volume: 0.3 },
   walk: { path: '/sounds/walk.mp3', volume: 1.04 },
-  jump: { path: '/sounds/rocket_jump.mp3', volume: 0.34 },
+  jump: { path: '/sounds/jump.mp3', volume: 0.34 },
   land: { path: '/sounds/slide.mp3', volume: 0.4 },
   slide: { path: '/sounds/slide.mp3', volume: 0.32 },
   wallRun: { path: '/sounds/walk.mp3', volume: 0.4 },
@@ -226,6 +227,10 @@ const SOUND_EFFECTS = {
   flagDrop: { path: '/sounds/button.mp3', volume: 0.6 },
   flagCapture: { path: '/sounds/magic_impact.mp3', volume: 1.0 },
   flagReturn: { path: '/sounds/button_press.mp3', volume: 0.7 },
+
+  // Map pickups
+  healPickup: { path: '/sounds/heal_pickup.mp3', volume: 0.78 },
+  powerupPickup: { path: '/sounds/powerup_pickkup.mp3', volume: 0.82 },
   
   // UI
   buttonHover: { path: '/sounds/button.mp3', volume: 0.4 },
@@ -251,8 +256,8 @@ export const BLAZE_BOMB_RELEASE_SOUND_START_OFFSET_MS = 260;
 export const BLAZE_BOMB_RELEASE_SOUND_DURATION_MS = 1100;
 export const BLAZE_BOMB_RELEASE_SOUND_FADE_OUT_MS = 80;
 export const BLAZE_AIRSTRIKE_SOUND_DURATION_MS = BLAZE_GEARSTORM_DURATION_MS;
-export const BLAZE_AIRSTRIKE_SOUND_FADE_IN_MS = 120;
-export const BLAZE_AIRSTRIKE_SOUND_FADE_OUT_MS = 360;
+export const BLAZE_AIRSTRIKE_SOUND_FADE_IN_MS = 420;
+export const BLAZE_AIRSTRIKE_SOUND_FADE_OUT_MS = 950;
 
 const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   menu: ['buttonHover', 'buttonClick'],
@@ -275,6 +280,8 @@ const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
     'flagDrop',
     'flagCapture',
     'flagReturn',
+    'healPickup',
+    'powerupPickup',
     'countdownTick',
     'countdown',
     'matchStart',
@@ -884,9 +891,21 @@ function startSharedSoundBuffer(
   const audioCtx = ctx;
   const source = ctx.createBufferSource();
   source.buffer = sound.buffer;
+  const startOffsetSeconds = Math.min(
+    Math.max(0, (options?.startOffsetMs ?? 0) / 1000),
+    Math.max(0, sound.buffer.duration - 0.001)
+  );
+  const playbackDurationMs = getPlaybackDurationMs(sound, options);
+  const playableBufferDurationMs = Math.max(0, (sound.buffer.duration - startOffsetSeconds) * 1000);
+  const playbackRate = options?.stretchToDurationMs &&
+    playbackDurationMs !== undefined &&
+    playbackDurationMs > playableBufferDurationMs &&
+    playableBufferDurationMs > 0
+    ? playableBufferDurationMs / playbackDurationMs
+    : options?.pitch;
 
-  if (options?.pitch) {
-    source.playbackRate.value = options.pitch;
+  if (playbackRate !== undefined) {
+    source.playbackRate.value = Math.max(0.001, playbackRate);
   }
 
   const gainNode = ctx.createGain();
@@ -957,12 +976,7 @@ function startSharedSoundBuffer(
     cleanup();
   };
 
-  const startOffsetSeconds = Math.min(
-    Math.max(0, (options?.startOffsetMs ?? 0) / 1000),
-    Math.max(0, sound.buffer.duration - 0.001)
-  );
   source.start(startTime, startOffsetSeconds);
-  const playbackDurationMs = getPlaybackDurationMs(sound, options);
   if (playbackDurationMs !== undefined) {
     const durationMs = Math.max(0, playbackDurationMs);
     const fadeOutMs = Math.min(durationMs, Math.max(0, options?.fadeOutMs ?? 0));
@@ -1030,6 +1044,7 @@ export async function playSharedBlazeAirstrikeSound(
 
   const layerOptions: PlaySoundOptions = {
     ...options,
+    stretchToDurationMs: true,
     durationMs: options?.durationMs ?? BLAZE_AIRSTRIKE_SOUND_DURATION_MS,
     fadeInMs: options?.fadeInMs ?? BLAZE_AIRSTRIKE_SOUND_FADE_IN_MS,
     fadeOutMs: options?.fadeOutMs ?? BLAZE_AIRSTRIKE_SOUND_FADE_OUT_MS,
@@ -1360,7 +1375,7 @@ export function useMovementSounds() {
     playSound('footstep', { pitch: 0.9 + Math.random() * 0.2 });
   }, [playSound]);
 
-  const onJump = useCallback(() => {
+  const playGroundJump = useCallback(() => {
     playSound('jump');
   }, [playSound]);
 
@@ -1499,7 +1514,7 @@ export function useMovementSounds() {
 
   return {
     onFootstep,
-    onJump,
+    playGroundJump,
     onLand,
     startSlide,
     stopSlide,

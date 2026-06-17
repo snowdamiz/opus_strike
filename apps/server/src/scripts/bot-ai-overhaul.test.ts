@@ -18,7 +18,7 @@ import {
   type BotTeamTactics,
   type PlainVec3,
 } from '../rooms/bot-ai';
-import type { BotDifficulty, HeroId, Team, VoxelMapManifest } from '@voxel-strike/shared';
+import { DEFAULT_GAMEPLAY_MODE, type BotDifficulty, type HeroId, type Team, type VoxelMapManifest } from '@voxel-strike/shared';
 
 const NOW = 10_000;
 
@@ -134,6 +134,7 @@ function flags(overrides: Partial<Record<Team, Partial<BotFlagSnapshot>>> = {}):
 
 function tacticsFor(bot: BotPlayerSnapshot, players: BotPlayerSnapshot[], flagState = flags()): BotTeamTactics {
   return buildTeamTactics({
+    gameplayMode: DEFAULT_GAMEPLAY_MODE,
     now: NOW,
     revision: 1,
     players,
@@ -154,6 +155,7 @@ function blackboardFor(
   const flagState = options.flagState ?? flags();
   return buildBotBlackboard({
     now: NOW,
+    gameplayMode: DEFAULT_GAMEPLAY_MODE,
     bot,
     players,
     flags: flagState,
@@ -234,7 +236,13 @@ function testTeamTacticsAssignments() {
   const redFighter = player({ id: 'red-fighter', team: 'red', heroId: 'hookshot', x: -4, z: 8 });
   const blueThreat = player({ id: 'blue-threat', team: 'blue', heroId: 'hookshot', x: 13, z: 0 });
   const flagState = flags({ blue: { carrierId: redCarrier.id, isAtBase: false, position: redCarrier.position } });
-  const tactics = buildTeamTactics({ now: NOW, revision: 1, players: [redCarrier, redChronos, redDefender, redFighter, blueThreat], flags: flagState }).red;
+  const tactics = buildTeamTactics({
+    gameplayMode: DEFAULT_GAMEPLAY_MODE,
+    now: NOW,
+    revision: 1,
+    players: [redCarrier, redChronos, redDefender, redFighter, blueThreat],
+    flags: flagState,
+  }).red;
 
   assert.equal(tactics.assignments[redCarrier.id].job, 'carry');
   assert.equal(tactics.assignments[redChronos.id].job, 'escort_carrier');
@@ -511,7 +519,13 @@ function testNeutralAllBotOpenerPressuresFlag() {
   ];
   const players = [...redBots, ...blueBots];
   const flagState = flags();
-  const tactics = buildTeamTactics({ now: NOW, revision: 1, players, flags: flagState }).red;
+  const tactics = buildTeamTactics({
+    gameplayMode: DEFAULT_GAMEPLAY_MODE,
+    now: NOW,
+    revision: 1,
+    players,
+    flags: flagState,
+  }).red;
   const intents = redBots.map((bot) => scoreBotIntents(
     bot,
     blackboardFor(bot, players, { flagState, visibleEnemyIds: [], losEnemyIds: [] }),

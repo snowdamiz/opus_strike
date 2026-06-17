@@ -43,7 +43,6 @@ export const GAME_MESSAGE_RATE_LIMITS = {
   selection: { limit: 6, intervalMs: 3000 },
   matchSceneReady: { limit: 12, intervalMs: 5000 },
   playerPingResponse: { limit: 30, intervalMs: 10000 },
-  blazeBombDrop: { limit: 8, intervalMs: 5000 },
   devCommand: { limit: 6, intervalMs: 5000 },
   voiceToken: { limit: 4, intervalMs: 60000 },
   playerReport: { limit: 3, intervalMs: 60000 },

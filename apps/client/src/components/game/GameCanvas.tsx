@@ -11,6 +11,9 @@ import { ObserverCameraController } from './ObserverCameraController';
 import { OtherPlayers } from './OtherPlayers';
 import { RagdollManager } from './RagdollManager';
 import { Flags } from './Flags';
+import { Powerups } from './Powerups';
+import { TutorialWorldPrompts } from './TutorialWorldPrompts';
+import { TutorialTargetRange } from './TutorialTargetRange';
 import { Effects } from './Effects';
 import { HeroViewmodel } from './HeroViewmodel';
 import { VoidZonesManager, DireBallsManager, VoidRaysManager, PhantomPersonalShieldsManager } from './phantom';
@@ -783,13 +786,18 @@ export function GameCanvas({
 }: GameCanvasProps) {
   const gamePhase = useGameStore((state) => state.gamePhase);
   const isPracticeMode = useGameStore((state) => state.isPracticeMode);
+  const isTutorialMode = useGameStore((state) => state.isTutorialMode);
   const isObserverMode = useGameStore((state) => state.isObserverMode);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
+  const mapSize = useGameStore((state) => state.mapSize);
   const settings = useSettingsStore(state => state.settings);
   const qualityConfig = useMemo(() => getVisualQualityConfig(settings), [settings]);
   const canvasAntialiasRef = useRef(qualityConfig.render.antialias);
-  const warmupKey = useMemo(() => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId }), [mapSeed, mapThemeId]);
+  const warmupKey = useMemo(
+    () => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId, mapSize }),
+    [mapSeed, mapThemeId, mapSize]
+  );
   const [warmupSnapshot, dispatchWarmup] = useReducer(
     reduceMapWarmup,
     createMapWarmupSnapshot(warmupKey, mapSeed)
@@ -995,7 +1003,10 @@ export function GameCanvas({
         {/* Gameplay objects mount during warmup so first-use shaders and buffers are paid before input. */}
         {shouldMountGameplayObjects && (
           <>
-            {!isPracticeMode && <Flags />}
+            {(!isPracticeMode || isTutorialMode) && <Flags />}
+            {(!isPracticeMode || isTutorialMode) && <Powerups />}
+            {isTutorialMode && <TutorialWorldPrompts />}
+            {isTutorialMode && <TutorialTargetRange />}
             <Effects />
             <CombatTextLayer enabled={settings.showDamageNumbers} />
             {!isObserverMode && <HeroViewmodel config={qualityConfig.viewmodel} />}

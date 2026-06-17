@@ -1,8 +1,13 @@
 import {
   CONSTRUCTED_MAP_MANIFEST_VERSION,
+  DEFAULT_VOXEL_MAP_SIZE_ID,
+  TUTORIAL_MAP_SEED,
   generateProceduralVoxelMap,
+  isTutorialMapSeed,
+  normalizeVoxelMapSizeId,
   type VoxelChunk,
   type VoxelMapManifest,
+  type VoxelMapSizeId,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
 
@@ -26,6 +31,7 @@ export interface VoxelChunkRegion {
 export interface MapPrepCacheKeyInput {
   seed: number;
   themeId?: VoxelMapTheme['id'] | null;
+  mapSize?: VoxelMapSizeId | string | null;
   generatorVersion?: number;
 }
 
@@ -56,10 +62,17 @@ function nowMs(): number {
 export function getMapPrepCacheKey({
   seed,
   themeId,
+  mapSize,
   generatorVersion = CONSTRUCTED_MAP_MANIFEST_VERSION,
 }: MapPrepCacheKeyInput): string {
+  if (isTutorialMapSeed(seed)) {
+    return `tutorial-v${generatorVersion}:${TUTORIAL_MAP_SEED}`;
+  }
+
   const themeSuffix = themeId ? `:${themeId}` : '';
-  return `procedural-v${generatorVersion}:${seed >>> 0}${themeSuffix}`;
+  const normalizedMapSize = normalizeVoxelMapSizeId(mapSize);
+  const sizeSuffix = normalizedMapSize === DEFAULT_VOXEL_MAP_SIZE_ID ? '' : `:${normalizedMapSize}`;
+  return `procedural-v${generatorVersion}:${seed >>> 0}${themeSuffix}${sizeSuffix}`;
 }
 
 function createEmptyRegionBounds(): VoxelChunkRegionBounds {
@@ -159,6 +172,7 @@ export function prepareVoxelMapCpu(options: PrepareVoxelMapOptions): PreparedVox
   const key = getMapPrepCacheKey({
     seed: options.seed,
     themeId: options.themeId ?? options.manifest?.themeId ?? null,
+    mapSize: options.mapSize ?? options.manifest?.mapSize ?? DEFAULT_VOXEL_MAP_SIZE_ID,
     generatorVersion,
   });
   const cached = preparedMapCache.get(key);
@@ -170,7 +184,8 @@ export function prepareVoxelMapCpu(options: PrepareVoxelMapOptions): PreparedVox
   }
 
   const source = options.source ?? 'match';
-  const manifest = options.manifest ?? generateProceduralVoxelMap(options.seed, { themeId: options.themeId });
+  const mapSize = normalizeVoxelMapSizeId(options.mapSize ?? options.manifest?.mapSize ?? DEFAULT_VOXEL_MAP_SIZE_ID);
+  const manifest = options.manifest ?? generateProceduralVoxelMap(options.seed, { themeId: options.themeId, mapSize });
 
   const renderableChunks = manifest.chunks.filter((chunk) => chunk.solidBlockCount > 0);
   const renderableRegions = createVoxelChunkRegions(renderableChunks, manifest);

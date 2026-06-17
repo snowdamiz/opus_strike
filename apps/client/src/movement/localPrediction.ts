@@ -7,10 +7,10 @@ import {
   CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST,
   CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE,
   CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER,
-  BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
-  BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
   PHANTOM_BLINK_DISTANCE,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
+  POWERUP_MOVEMENT_SPEED_MULTIPLIER,
+  calculateBlazeRocketJumpVelocity,
   calculateLookDirection,
   inputStateToMovementButtons,
   compareMovementSeq,
@@ -231,6 +231,9 @@ export function getLocalPredictionContext(player: Player): MovementPredictionCon
   if (chronosAscendantActive) {
     activeSpeedMultiplier *= CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER;
   }
+  if ((player.powerupBoostUntil ?? 0) > Date.now()) {
+    activeSpeedMultiplier *= POWERUP_MOVEMENT_SPEED_MULTIPLIER;
+  }
 
   const terrain = getClientTerrainAdapter();
   return {
@@ -378,19 +381,18 @@ export function addLocalMovementImpulse(impulse: Vec3, mode: 'add' | 'set' = 'ad
 export function predictLocalBlazeRocketJump(player: Player, lookYaw: number): MovementSimulationState {
   ensureLocalPredictionInitialized(player);
   const current = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
-  const forward = horizontalForwardFromYaw(lookYaw);
   const liftedPosition = {
     ...current.position,
     y: current.position.y + 0.5,
   };
   const { position, clampedY } = clampClientPosition(liftedPosition);
+  const velocity = calculateBlazeRocketJumpVelocity(current.velocity, lookYaw);
 
   return applyLocalPredictedState(player.id, {
     position,
     velocity: {
-      x: current.velocity.x + forward.x * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
-      y: clampedY ? 0 : BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
-      z: current.velocity.z + forward.z * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
+      ...velocity,
+      y: clampedY ? 0 : velocity.y,
     },
     movement: {
       ...current.movement,
@@ -437,7 +439,8 @@ export function confirmLocalMovementTransform(
     velocity?: Vec3;
     movement?: Partial<MovementSimulationState['movement']>;
   },
-  lookYaw: number
+  lookYaw: number,
+  options: { updateLatestCommandRecord?: boolean } = {}
 ): MovementSimulationState {
   ensureLocalPredictionInitialized(player);
   const current = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
@@ -446,7 +449,7 @@ export function confirmLocalMovementTransform(
     Object.prototype.hasOwnProperty.call(transform.movement, 'grapplePoint')
   );
 
-  return applyLocalPredictedState(player.id, {
+  const nextState: MovementSimulationState = {
     position: transform.position ? { ...transform.position } : current.position,
     velocity: transform.velocity ? { ...transform.velocity } : current.velocity,
     movement: {
@@ -458,7 +461,13 @@ export function confirmLocalMovementTransform(
           ? null
           : current.movement.grapplePoint,
     },
-  }, lookYaw);
+  };
+
+  localMovementPrediction.overwriteState(nextState, {
+    updateLatestCommandRecord: options.updateLatestCommandRecord ?? false,
+  });
+  setPredictedVisuals(player.id, nextState.position, lookYaw);
+  return nextState;
 }
 
 function advanceNextCommandSeqPastAck(ackSeq: number): void {

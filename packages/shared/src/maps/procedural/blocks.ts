@@ -41,6 +41,8 @@ export const VOXEL_BLOCK_IDS: VoxelBlockId[] = [
   'gold_panel',
   'gold_glass',
   'crystal_growth',
+  'health_pad',
+  'powerup_pad',
 ];
 
 export const VOXEL_BLOCKS: Record<VoxelBlockId, VoxelBlockDefinition> = {
@@ -74,6 +76,8 @@ export const VOXEL_BLOCKS: Record<VoxelBlockId, VoxelBlockDefinition> = {
   gold_panel: { id: 'gold_panel', numericId: 27, solid: true, walkable: true, grappleable: true, slippery: false },
   gold_glass: { id: 'gold_glass', numericId: 28, solid: true, walkable: true, grappleable: true, slippery: false },
   crystal_growth: { id: 'crystal_growth', numericId: 29, solid: true, walkable: false, grappleable: true, slippery: false },
+  health_pad: { id: 'health_pad', numericId: 30, solid: true, walkable: true, grappleable: false, slippery: false },
+  powerup_pad: { id: 'powerup_pad', numericId: 31, solid: true, walkable: true, grappleable: false, slippery: false },
 };
 
 export const GOLDEN_ONLY_VOXEL_BLOCK_IDS = [
