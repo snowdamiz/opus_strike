@@ -31,6 +31,7 @@ import {
 import { appendAuthStatus, sanitizeReturnTo } from './returnTo';
 import { consumeOAuthState, createOAuthState, type OAuthStateRecord } from './oauthState';
 import { consumeRateLimit } from './rateLimit';
+import { enforceJsonRateLimit, getRequestAuthToken } from './http';
 import { serializeUser } from './userResponse';
 import type { AuthAccountIdentity, AuthProviderName, PendingRegistrationIdentity } from './types';
 import { getRankedSeason } from '../ranking/seasonService';
@@ -246,18 +247,6 @@ function cleanupNonces(): void {
 
 setInterval(cleanupNonces, 5 * 60 * 1000).unref?.();
 
-function enforceJsonRateLimit(req: Request, res: Response, keyPrefix: string, options: {
-  limit: number;
-  windowMs: number;
-}): boolean {
-  const result = consumeRateLimit(req, { keyPrefix, ...options });
-  if (result.ok) return true;
-
-  res.setHeader('Retry-After', result.retryAfterSeconds.toString());
-  res.status(429).json({ error: 'Too many requests' });
-  return false;
-}
-
 function isPrismaUniqueError(error: unknown): error is Prisma.PrismaClientKnownRequestError {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
@@ -275,11 +264,6 @@ function isUserNameUniqueError(error: unknown): boolean {
     target.includes('User_name_key') ||
     target.includes('name')
   );
-}
-
-function getRequestToken(req: Request): string | null {
-  const token = req.cookies?.auth_token;
-  return typeof token === 'string' && token.length > 0 ? token : null;
 }
 
 function getClientOrigin(): string {
@@ -680,7 +664,7 @@ async function getRankedSeasonLeaderboardRank(
 }
 
 async function getAuthenticatedPayload(req: Request): Promise<AuthTokenPayload | null> {
-  const token = getRequestToken(req);
+  const token = getRequestAuthToken(req);
   if (!token) return null;
   return verifyAuthToken(token);
 }
@@ -962,7 +946,7 @@ router.post('/register', async (req: Request, res: Response) => {
       return;
     }
 
-    const token = getRequestToken(req);
+    const token = getRequestAuthToken(req);
     const pending = token ? verifyPendingAuthToken(token) : null;
 
     if (!pending) {
@@ -1032,7 +1016,7 @@ router.get('/session', async (req: Request, res: Response) => {
   };
 
   try {
-    const token = getRequestToken(req);
+    const token = getRequestAuthToken(req);
     if (!token) {
       sendUnauthenticated('No session found');
       return;

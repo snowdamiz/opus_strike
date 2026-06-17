@@ -2,13 +2,17 @@ import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
 import { matchMaker } from 'colyseus';
 import prisma from '../db';
-import { parseCookies, verifyAuthToken } from '../auth/session';
+import { verifyAuthToken } from '../auth/session';
+import {
+  enforceJsonRateLimit as enforceMatchmakingRateLimit,
+  getRequestAuthToken,
+} from '../auth/http';
 import { assertGameplayAccountEligible } from '../auth/accountEligibility';
 import {
   DEV_TUTORIAL_BYPASS_HEADER,
   assertTutorialCompleted,
 } from '../auth/tutorialCompletion';
-import { consumeRateLimit, consumeRateLimitForKey } from '../auth/rateLimit';
+import { consumeRateLimitForKey } from '../auth/rateLimit';
 import { createMatchmakingTicket } from '../security/matchmakingTickets';
 import {
   assertRankedTokenHoldingEligibility,
@@ -71,16 +75,6 @@ const RUNNING_GAME_PHASES = new Set(['waiting', 'hero_select', 'countdown', 'pla
 const QUEUE_STATUS_CACHE_TTL_MS = 750;
 const queueStatusCache = new Map<MatchMode, QueueStatusCacheEntry>();
 
-function getRequestToken(req: Request): string | null {
-  const authorization = req.headers.authorization;
-  if (typeof authorization === 'string' && authorization.startsWith('Bearer ')) {
-    return authorization.slice('Bearer '.length).trim() || null;
-  }
-
-  const cookies = parseCookies(req.headers.cookie);
-  return cookies.auth_token || null;
-}
-
 function sendRouteError(res: Response, error: unknown, fallbackMessage: string): void {
   const statusCode = typeof error === 'object' && error && 'statusCode' in error
     ? Number((error as { statusCode?: unknown }).statusCode) || 500
@@ -89,20 +83,6 @@ function sendRouteError(res: Response, error: unknown, fallbackMessage: string):
       : 500;
   const message = error instanceof Error ? error.message : fallbackMessage;
   res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 500).json({ error: message });
-}
-
-function enforceMatchmakingRateLimit(req: Request, res: Response, keyPrefix: string, options: {
-  limit: number;
-  windowMs: number;
-}): boolean {
-  const ipLimit = consumeRateLimit(req, { keyPrefix, ...options });
-  if (!ipLimit.ok) {
-    res.setHeader('Retry-After', ipLimit.retryAfterSeconds.toString());
-    res.status(429).json({ error: 'Too many requests' });
-    return false;
-  }
-
-  return true;
 }
 
 function enforceMatchmakingIdentityRateLimit(res: Response, keyPrefix: string, options: {
@@ -128,7 +108,7 @@ function readRoomIdParam(req: Request): string | null {
 }
 
 async function getMatchmakingUserContext(req: Request): Promise<MatchmakingUserContext> {
-  const token = getRequestToken(req);
+  const token = getRequestAuthToken(req, { allowBearer: true });
   const payload = token ? verifyAuthToken(token) : null;
 
   if (payload) {

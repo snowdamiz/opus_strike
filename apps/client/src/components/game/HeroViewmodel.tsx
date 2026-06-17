@@ -412,15 +412,19 @@ function writeViewmodelRootTransform(
   );
 }
 
-function createPhantomReloadGlowMaterial(): THREE.MeshBasicMaterial {
+function createAdditiveGlowMaterial(color: number): THREE.MeshBasicMaterial {
   return new THREE.MeshBasicMaterial({
-    color: PHANTOM_COLORS.lightPurple,
+    color,
     transparent: true,
     opacity: 0,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     toneMapped: false,
   });
+}
+
+function createPhantomReloadGlowMaterial(): THREE.MeshBasicMaterial {
+  return createAdditiveGlowMaterial(PHANTOM_COLORS.lightPurple);
 }
 
 function getPhantomReloadPose(nowMs: number, elapsedSeconds: number, side: -1 | 1): PhantomReloadPose {
@@ -1894,14 +1898,7 @@ function PhantomPoseableHand({
 }
 
 function createPhantomVoidRayChargeOrbMaterial(color: number): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial({
-    color,
-    transparent: true,
-    opacity: 0,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    toneMapped: false,
-  });
+  return createAdditiveGlowMaterial(color);
 }
 
 function PhantomVoidRayChargeOrb() {
@@ -2571,14 +2568,7 @@ function sampleBlazeRocketStaffTipSocket(
 }
 
 function createBlazeStaffChargeGlowMaterial(color: number): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial({
-    color,
-    transparent: true,
-    opacity: 0,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    toneMapped: false,
-  });
+  return createAdditiveGlowMaterial(color);
 }
 
 function BlazePhantomForearm({

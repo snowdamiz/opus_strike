@@ -3,8 +3,8 @@ import type { Router as RouterType } from 'express';
 import { Prisma, type MatchMode } from '@prisma/client';
 import prisma from '../db';
 import { assertGameplayAccountEligible } from '../auth/accountEligibility';
+import { enforceJsonRateLimit, getRequestAuthToken } from '../auth/http';
 import { verifyAuthToken, type AuthTokenPayload } from '../auth/session';
-import { consumeRateLimit } from '../auth/rateLimit';
 import {
   SocialServiceError,
   createLobbyInvite,
@@ -34,25 +34,8 @@ const friendshipInclude = {
 type FriendshipWithUsers = Prisma.FriendshipGetPayload<{ include: typeof friendshipInclude }>;
 type RelationshipState = 'none' | 'friend' | 'pending_incoming' | 'pending_outgoing';
 
-function enforceJsonRateLimit(req: Request, res: Response, keyPrefix: string, options: {
-  limit: number;
-  windowMs: number;
-}): boolean {
-  const result = consumeRateLimit(req, { keyPrefix, ...options });
-  if (result.ok) return true;
-
-  res.setHeader('Retry-After', result.retryAfterSeconds.toString());
-  res.status(429).json({ error: 'Too many requests' });
-  return false;
-}
-
-function getRequestToken(req: Request): string | null {
-  const token = req.cookies?.auth_token;
-  return typeof token === 'string' && token.length > 0 ? token : null;
-}
-
 async function getAuthenticatedPayload(req: Request): Promise<AuthTokenPayload | null> {
-  const token = getRequestToken(req);
+  const token = getRequestAuthToken(req);
   if (!token) return null;
   return verifyAuthToken(token);
 }

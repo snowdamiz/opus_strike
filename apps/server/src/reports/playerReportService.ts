@@ -1,4 +1,4 @@
-import type { PlayerReport, Prisma, PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 
 export const PLAYER_REPORT_STATUSES = ['open', 'reviewing', 'cleared', 'actioned', 'dismissed'] as const;
 export type PlayerReportStatus = typeof PLAYER_REPORT_STATUSES[number];
@@ -26,6 +26,55 @@ function reportStatusRank(status: string): number {
 
 function summarizeUsers(users: Array<{ id: string; name: string; walletAddress: string | null }>) {
   return new Map(users.map((user) => [user.id, user]));
+}
+
+export interface CreatePlayerReportInput {
+  reason: string;
+  details: string | null;
+  reporterUserId: string;
+  reporterPlayerSessionId: string;
+  reporterName: string;
+  targetUserId: string;
+  targetPlayerSessionId: string;
+  targetName: string;
+  targetTeam: string | null;
+  roomId: string;
+  matchId: string | null;
+  lobbyId: string | null;
+  matchMode: Prisma.PlayerReportCreateInput['matchMode'];
+  mapSeed: number | null;
+  serverTick: number;
+  evidenceEventId: string | null;
+  metadata: unknown;
+}
+
+export async function createPlayerReport(
+  prisma: PrismaClient,
+  input: CreatePlayerReportInput
+): Promise<{ id: string }> {
+  return prisma.playerReport.create({
+    select: { id: true },
+    data: {
+      status: 'open',
+      reason: input.reason,
+      details: input.details,
+      reporterUserId: input.reporterUserId,
+      reporterPlayerSessionId: input.reporterPlayerSessionId,
+      reporterName: input.reporterName,
+      targetUserId: input.targetUserId,
+      targetPlayerSessionId: input.targetPlayerSessionId,
+      targetName: input.targetName,
+      targetTeam: input.targetTeam,
+      roomId: input.roomId,
+      matchId: input.matchId,
+      lobbyId: input.lobbyId,
+      matchMode: input.matchMode,
+      mapSeed: input.mapSeed,
+      serverTick: input.serverTick,
+      evidenceEventId: input.evidenceEventId,
+      metadata: serializeReportMetadata(input.metadata),
+    },
+  });
 }
 
 export async function listPlayerReportQueue(prisma: PrismaClient): Promise<{
@@ -156,5 +205,3 @@ export function createPlayerReportUpdate(input: {
 export function serializeReportMetadata(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
-
-export type PlayerReportRecord = PlayerReport;

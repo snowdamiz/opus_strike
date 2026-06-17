@@ -29,6 +29,11 @@ import {
   type TeamSpawnParticipant,
 } from './spawnAssignments';
 import {
+  buildPackedPlayerTransform,
+  getPackedTransformSignature,
+  havePackedTransformsChanged,
+} from './playerTransformPacking';
+import {
   MATCH_CANCEL_DISCONNECT_DELAY_MS,
   MATCH_START_CANCEL_TIMEOUT_MS,
 } from './matchStartTiming';
@@ -144,15 +149,6 @@ import {
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
   VOID_RAY_CHARGE_TIME,
-  MOVEMENT_BIT_CHRONOS_AEGIS,
-  MOVEMENT_BIT_CROUCHING,
-  MOVEMENT_BIT_GLIDING,
-  MOVEMENT_BIT_GRAPPLING,
-  MOVEMENT_BIT_GROUNDED,
-  MOVEMENT_BIT_JETPACKING,
-  MOVEMENT_BIT_SLIDING,
-  MOVEMENT_BIT_SPRINTING,
-  MOVEMENT_BIT_WALL_RUNNING,
   MOVEMENT_PROTOCOL_VERSION,
   MOVEMENT_SUBSTEP_SECONDS,
   MOVEMENT_MAX_PACKET_COMMANDS,
@@ -183,9 +179,7 @@ import {
   isTeamHeroAvailable,
   pickAvailableTeamHero,
   calculateFalloffDamage,
-  TRANSFORM_ANGLE_SCALE,
   TRANSFORM_POSITION_SCALE,
-  TRANSFORM_VELOCITY_SCALE,
 } from '@voxel-strike/shared';
 import type { 
   AbilityCastOriginHint,
@@ -264,7 +258,7 @@ import {
   type MatchParticipantSnapshot,
 } from '../persistence/matchPersistence';
 import { normalizePlayerReportReason } from '../reports/playerReportReason';
-import { serializeReportMetadata } from '../reports/playerReportService';
+import { createPlayerReport } from '../reports/playerReportService';
 import {
   AntiCheatEvidenceStore,
   AntiCheatRoomRuntime,
@@ -281,6 +275,7 @@ import type { LastSafeMovementState } from './movementValidation';
 import {
   GAME_MESSAGE_RATE_LIMITS,
   MessageRateLimiter,
+  type RateLimitRule,
 } from './rateLimiter';
 import {
   DEFAULT_COMPETITIVE_NETWORK_QUALITY_GATE,
@@ -1104,6 +1099,23 @@ export class GameRoom extends Room<GameState> {
     participant.observer = false;
   }
 
+  private onRateLimitedMessage<T = unknown>(
+    type: string,
+    rule: RateLimitRule,
+    handler: (client: Client, data: T) => void,
+    onDrop?: (client: Client, data: T) => void
+  ): void {
+    this.onMessage(type, (client, data: T) => {
+      if (!this.rateLimiter.consume(client.sessionId, type, rule)) {
+        this.recordRateLimitDrop(client.sessionId, type);
+        onDrop?.(client, data);
+        return;
+      }
+
+      handler(client, data);
+    });
+  }
+
   onCreate(options: CreateOptions) {
     this.eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
     this.eventLoopDelay.enable();
@@ -1156,20 +1168,12 @@ export class GameRoom extends Room<GameState> {
     this.tickInterval = setInterval(() => this.tick(), TICK_INTERVAL_MS);
 
     // Handle messages
-    this.onMessage('movementCommands', (client, packet: MovementCommandPacket) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'movementCommands', GAME_MESSAGE_RATE_LIMITS.movementCommands)) {
-        this.recordRateLimitDrop(client.sessionId, 'movementCommands');
-        return;
-      }
+    this.onRateLimitedMessage('movementCommands', GAME_MESSAGE_RATE_LIMITS.movementCommands, (client, packet: MovementCommandPacket) => {
       this.handleMovementCommandPacket(client, packet);
     });
 
-    this.onMessage('selectHero', (client, data: unknown) => {
+    this.onRateLimitedMessage('selectHero', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
       try {
-        if (!this.rateLimiter.consume(client.sessionId, 'selectHero', GAME_MESSAGE_RATE_LIMITS.selection)) {
-          this.recordRateLimitDrop(client.sessionId, 'selectHero');
-          return;
-        }
         const heroId = validateHeroPayload(data);
         if (!heroId) return;
         this.handleHeroSelect(client, heroId);
@@ -1179,80 +1183,49 @@ export class GameRoom extends Room<GameState> {
       }
     });
 
-    this.onMessage('selectTeam', (client, data: unknown) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'selectTeam', GAME_MESSAGE_RATE_LIMITS.selection)) {
-        this.recordRateLimitDrop(client.sessionId, 'selectTeam');
-        return;
-      }
+    this.onRateLimitedMessage('selectTeam', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
       const team = validateTeamPayload(data);
       if (!team) return;
       this.handleTeamSelect(client, team);
     });
 
-    this.onMessage('ready', (client, data: unknown) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'ready', GAME_MESSAGE_RATE_LIMITS.selection)) {
-        this.recordRateLimitDrop(client.sessionId, 'ready');
-        return;
-      }
+    this.onRateLimitedMessage('ready', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
       const ready = validateReadyPayload(data);
       if (ready === null) return;
       this.handleReady(client, ready);
     });
 
-    this.onMessage('matchSceneReady', (client, data: unknown) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'matchSceneReady', GAME_MESSAGE_RATE_LIMITS.matchSceneReady)) {
-        this.recordRateLimitDrop(client.sessionId, 'matchSceneReady');
-        return;
-      }
+    this.onRateLimitedMessage('matchSceneReady', GAME_MESSAGE_RATE_LIMITS.matchSceneReady, (client, data: unknown) => {
       this.handleMatchSceneReady(client, data);
     });
 
-    this.onMessage('chat', (client, data: unknown) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'chat', GAME_MESSAGE_RATE_LIMITS.chat)) {
-        this.recordRateLimitDrop(client.sessionId, 'chat');
-        return;
-      }
+    this.onRateLimitedMessage('chat', GAME_MESSAGE_RATE_LIMITS.chat, (client, data: unknown) => {
       const chat = validateChatPayload(data, { teamOnly: true });
       if (!chat) return;
       this.handleChat(client, chat.message, chat.teamOnly);
     });
 
-    this.onMessage('playerReport', (client, data: unknown) => {
+    this.onRateLimitedMessage('playerReport', GAME_MESSAGE_RATE_LIMITS.playerReport, (client, data: unknown) => {
+      void this.handlePlayerReport(client, data);
+    }, (client, data) => {
       const requestId = this.readReportRequestId(data);
-      if (!this.rateLimiter.consume(client.sessionId, 'playerReport', GAME_MESSAGE_RATE_LIMITS.playerReport)) {
-        this.recordRateLimitDrop(client.sessionId, 'playerReport');
         this.sendPlayerReportResult(client, requestId, {
           ok: false,
           error: 'Please wait before sending another report',
         });
-        return;
-      }
-      void this.handlePlayerReport(client, data);
     });
 
-    this.onMessage('requestVoiceToken', (client, data: unknown) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'requestVoiceToken', GAME_MESSAGE_RATE_LIMITS.voiceToken)) {
-        this.recordRateLimitDrop(client.sessionId, 'requestVoiceToken');
-        return;
-      }
+    this.onRateLimitedMessage('requestVoiceToken', GAME_MESSAGE_RATE_LIMITS.voiceToken, (client, data: unknown) => {
       void this.handleVoiceTokenRequest(client, data);
     });
 
-    this.onMessage('playerPingResponse', (client, data: unknown) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'playerPingResponse', GAME_MESSAGE_RATE_LIMITS.playerPingResponse)) {
-        this.recordRateLimitDrop(client.sessionId, 'playerPingResponse');
-        return;
-      }
+    this.onRateLimitedMessage('playerPingResponse', GAME_MESSAGE_RATE_LIMITS.playerPingResponse, (client, data: unknown) => {
       this.handlePlayerPingResponse(client, data);
     });
 
     if (this.isDevelopmentMode()) {
-      this.onMessage('devSetHero', (client, data: unknown) => {
+      this.onRateLimitedMessage('devSetHero', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
         try {
-          if (!this.rateLimiter.consume(client.sessionId, 'devSetHero', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-            this.recordRateLimitDrop(client.sessionId, 'devSetHero');
-            return;
-          }
           const heroId = validateHeroPayload(data);
           if (!heroId) return;
           this.handleDevSetHero(client, heroId);
@@ -1263,11 +1236,7 @@ export class GameRoom extends Room<GameState> {
       });
 
       // Development-only entity helpers. Production bots are lobby participants.
-      this.onMessage('spawnNpc', (client, data: unknown) => {
-        if (!this.rateLimiter.consume(client.sessionId, 'spawnNpc', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-          this.recordRateLimitDrop(client.sessionId, 'spawnNpc');
-          return;
-        }
+      this.onRateLimitedMessage('spawnNpc', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
         if (!isRecord(data) || !isHeroId(data.heroId)) return;
         const team = data.team === undefined ? undefined : isTeam(data.team) ? data.team : null;
         const position = data.position === undefined ? undefined : validateVec3(data.position);
@@ -1276,116 +1245,64 @@ export class GameRoom extends Room<GameState> {
         this.handleSpawnNpc(client, { heroId: data.heroId, team, position: position ?? undefined, name });
       });
 
-      this.onMessage('damageNpc', (client, data: unknown) => {
-        if (!this.rateLimiter.consume(client.sessionId, 'damageNpc', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-          this.recordRateLimitDrop(client.sessionId, 'damageNpc');
-          return;
-        }
+      this.onRateLimitedMessage('damageNpc', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
         if (!isRecord(data) || typeof data.damage !== 'number' || !Number.isFinite(data.damage)) return;
         const npcId = sanitizeShortText(data.npcId, 96);
         if (!npcId) return;
         this.handleDamageNpc(client, { npcId, damage: Math.max(0, Math.min(1000, data.damage)) });
       });
 
-      this.onMessage('killNpc', (client, data: unknown) => {
-        if (!this.rateLimiter.consume(client.sessionId, 'killNpc', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-          this.recordRateLimitDrop(client.sessionId, 'killNpc');
-          return;
-        }
+      this.onRateLimitedMessage('killNpc', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
         const npcId = validateBotIdPayload(data, 'npcId');
         if (!npcId) return;
         this.handleKillNpc(client, { npcId });
       });
 
-      this.onMessage('killAllNpcs', (client) => {
-        if (!this.rateLimiter.consume(client.sessionId, 'killAllNpcs', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-          this.recordRateLimitDrop(client.sessionId, 'killAllNpcs');
-          return;
-        }
+      this.onRateLimitedMessage('killAllNpcs', GAME_MESSAGE_RATE_LIMITS.devCommand, (client) => {
         this.handleKillAllNpcs(client);
       });
 
-      this.onMessage('setDevImmune', (client, data: unknown) => {
-        if (!this.rateLimiter.consume(client.sessionId, 'setDevImmune', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-          this.recordRateLimitDrop(client.sessionId, 'setDevImmune');
-          return;
-        }
+      this.onRateLimitedMessage('setDevImmune', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
         this.handleSetDevImmune(client, isRecord(data) && data.enabled === true);
       });
 
-      this.onMessage('devFillUltimate', (client) => {
-        if (!this.rateLimiter.consume(client.sessionId, 'devFillUltimate', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-          this.recordRateLimitDrop(client.sessionId, 'devFillUltimate');
-          return;
-        }
+      this.onRateLimitedMessage('devFillUltimate', GAME_MESSAGE_RATE_LIMITS.devCommand, (client) => {
         this.handleDevFillUltimate(client);
       });
 
-      this.onMessage('devEndGame', (client) => {
-        if (!this.rateLimiter.consume(client.sessionId, 'devEndGame', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-          this.recordRateLimitDrop(client.sessionId, 'devEndGame');
-          return;
-        }
+      this.onRateLimitedMessage('devEndGame', GAME_MESSAGE_RATE_LIMITS.devCommand, (client) => {
         this.handleDevEndGame(client);
       });
 
-      this.onMessage('devSetObserver', (client) => {
-        if (!this.rateLimiter.consume(client.sessionId, 'devSetObserver', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-          this.recordRateLimitDrop(client.sessionId, 'devSetObserver');
-          return;
-        }
+      this.onRateLimitedMessage('devSetObserver', GAME_MESSAGE_RATE_LIMITS.devCommand, (client) => {
         this.handleDevSetObserver(client);
       });
 
-      this.onMessage('setDevTimeFrozen', (client, data: unknown) => {
-        if (!this.rateLimiter.consume(client.sessionId, 'setDevTimeFrozen', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-          this.recordRateLimitDrop(client.sessionId, 'setDevTimeFrozen');
-          return;
-        }
+      this.onRateLimitedMessage('setDevTimeFrozen', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
         this.handleSetDevTimeFrozen(client, isRecord(data) && data.enabled === true);
       });
 
-      this.onMessage('setDevBotsRooted', (client, data: unknown) => {
-        if (!this.rateLimiter.consume(client.sessionId, 'setDevBotsRooted', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-          this.recordRateLimitDrop(client.sessionId, 'setDevBotsRooted');
-          return;
-        }
+      this.onRateLimitedMessage('setDevBotsRooted', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
         this.handleSetDevBotsRooted(client, isRecord(data) && data.enabled === true);
       });
 
-      this.onMessage('setDevBotBrainEnabled', (client, data: unknown) => {
-        if (!this.rateLimiter.consume(client.sessionId, 'setDevBotBrainEnabled', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-          this.recordRateLimitDrop(client.sessionId, 'setDevBotBrainEnabled');
-          return;
-        }
+      this.onRateLimitedMessage('setDevBotBrainEnabled', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
         this.handleSetDevBotBrainEnabled(client, isRecord(data) && data.enabled === true);
       });
 
-      this.onMessage('devAddBot', (client, data: unknown) => {
-        if (!this.rateLimiter.consume(client.sessionId, 'devAddBot', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-          this.recordRateLimitDrop(client.sessionId, 'devAddBot');
-          return;
-        }
+      this.onRateLimitedMessage('devAddBot', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
         if (!isRecord(data) || !isHeroId(data.heroId) || !isTeam(data.team)) return;
         this.handleDevAddBot(client, { heroId: data.heroId, team: data.team });
       });
 
-      this.onMessage('devBotSkill', (client, data: unknown) => {
-        if (!this.rateLimiter.consume(client.sessionId, 'devBotSkill', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-          this.recordRateLimitDrop(client.sessionId, 'devBotSkill');
-          return;
-        }
+      this.onRateLimitedMessage('devBotSkill', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
         if (!isRecord(data) || !isHeroId(data.heroId) || !isTeam(data.team)) return;
         const skillKey = sanitizeShortText(data.skillKey, 24);
         if (!skillKey) return;
         this.handleDevBotSkill(client, { heroId: data.heroId, team: data.team, skillKey });
       });
 
-      this.onMessage('devBotLook', (client, data: unknown) => {
-        if (!this.rateLimiter.consume(client.sessionId, 'devBotLook', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-          this.recordRateLimitDrop(client.sessionId, 'devBotLook');
-          return;
-        }
+      this.onRateLimitedMessage('devBotLook', GAME_MESSAGE_RATE_LIMITS.devCommand, (client, data: unknown) => {
         if (!isRecord(data) || !isHeroId(data.heroId) || !isTeam(data.team)) return;
         const direction = sanitizeShortText(data.direction, 12);
         if (!direction) return;
@@ -1999,24 +1916,6 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private quantize(value: number, scale: number): number {
-    return Math.round(value * scale);
-  }
-
-  private getMovementBits(player: Player): number {
-    let bits = 0;
-    if (player.movement.isGrounded) bits |= MOVEMENT_BIT_GROUNDED;
-    if (player.movement.isSprinting) bits |= MOVEMENT_BIT_SPRINTING;
-    if (player.movement.isCrouching) bits |= MOVEMENT_BIT_CROUCHING;
-    if (player.movement.isSliding) bits |= MOVEMENT_BIT_SLIDING;
-    if (player.movement.isWallRunning) bits |= MOVEMENT_BIT_WALL_RUNNING;
-    if (player.movement.isGrappling) bits |= MOVEMENT_BIT_GRAPPLING;
-    if (player.movement.isJetpacking) bits |= MOVEMENT_BIT_JETPACKING;
-    if (player.movement.isGliding) bits |= MOVEMENT_BIT_GLIDING;
-    if (this.isChronosAegisActive(player)) bits |= MOVEMENT_BIT_CHRONOS_AEGIS;
-    return bits;
-  }
-
   private getPlayerNetId(playerId: string): number {
     let netId = this.playerNetIds.get(playerId);
     if (netId === undefined) {
@@ -2150,9 +2049,9 @@ export class GameRoom extends Room<GameState> {
       frameContext.visibilityPlayers.set(id, player);
       if (player.state !== 'alive' && player.state !== 'spawning') return;
 
-      const transform = this.buildPackedPlayerTransform(id, player);
+      const transform = this.buildPackedTransform(id, player);
       frameContext.packedTransforms.set(id, transform);
-      frameContext.packedTransformSignatures.set(id, this.getPackedTransformSignature(transform));
+      frameContext.packedTransformSignatures.set(id, getPackedTransformSignature(transform));
     });
 
     for (const recipientId of frameContext.recipientInterests.keys()) {
@@ -2221,21 +2120,6 @@ export class GameRoom extends Room<GameState> {
     return (interest ?? this.getRecipientInterest(recipient, target, now)).state === 'visible';
   }
 
-  private getPackedTransformSignature(transform: PackedPlayerTransform): PackedPlayerTransform {
-    return transform;
-  }
-
-  private havePackedTransformsChanged(
-    previous: PackedPlayerTransform | undefined,
-    next: PackedPlayerTransform
-  ): boolean {
-    if (!previous) return true;
-    for (let index = 0; index < next.length; index++) {
-      if (previous[index] !== next[index]) return true;
-    }
-    return false;
-  }
-
   private isVisibleAbilityActive(player: Player): boolean {
     for (const ability of player.abilities.values()) {
       if (ability.isActive) return true;
@@ -2284,22 +2168,14 @@ export class GameRoom extends Room<GameState> {
     return Math.round((now + ability.cooldownRemaining * 1000) / 100) * 100;
   }
 
-  private buildPackedPlayerTransform(id: string, player: Player): PackedPlayerTransform {
-    return [
-      this.getPlayerNetId(id),
-      this.quantize(player.position.x, TRANSFORM_POSITION_SCALE),
-      this.quantize(player.position.y, TRANSFORM_POSITION_SCALE),
-      this.quantize(player.position.z, TRANSFORM_POSITION_SCALE),
-      this.quantize(player.velocity.x, TRANSFORM_VELOCITY_SCALE),
-      this.quantize(player.velocity.y, TRANSFORM_VELOCITY_SCALE),
-      this.quantize(player.velocity.z, TRANSFORM_VELOCITY_SCALE),
-      this.quantize(player.lookYaw, TRANSFORM_ANGLE_SCALE),
-      this.quantize(player.lookPitch, TRANSFORM_ANGLE_SCALE),
-      this.getMovementBits(player),
-      player.movement.wallRunSide === 'left' ? -1 : player.movement.wallRunSide === 'right' ? 1 : 0,
-      this.getMovementAuthority(id).movementEpoch,
-      this.getChronosAegisShieldByte(player),
-    ];
+  private buildPackedTransform(id: string, player: Player): PackedPlayerTransform {
+    return buildPackedPlayerTransform({
+      netId: this.getPlayerNetId(id),
+      player,
+      movementEpoch: this.getMovementAuthority(id).movementEpoch,
+      chronosAegisActive: this.isChronosAegisActive(player),
+      chronosAegisShieldByte: this.getChronosAegisShieldByte(player),
+    });
   }
 
   private applyPlayerRank(
@@ -3357,8 +3233,8 @@ export class GameRoom extends Room<GameState> {
         }
         return;
       }
-      const transform = options.frameContext?.packedTransforms.get(id) ?? this.buildPackedPlayerTransform(id, player);
-      const signature = options.frameContext?.packedTransformSignatures.get(id) ?? this.getPackedTransformSignature(transform);
+      const transform = options.frameContext?.packedTransforms.get(id) ?? this.buildPackedTransform(id, player);
+      const signature = options.frameContext?.packedTransformSignatures.get(id) ?? getPackedTransformSignature(transform);
       const previousSignature = signatures.get(id);
       const lastHeartbeatAt = heartbeatAt.get(id) ?? 0;
       const highRelevance = this.isHighRelevanceTransform(options.recipient ?? null, id, player, now);
@@ -3366,7 +3242,7 @@ export class GameRoom extends Room<GameState> {
         ? TRANSFORM_HEARTBEAT_INTERVAL_MS
         : DISTANT_TRANSFORM_HEARTBEAT_INTERVAL_MS;
       const heartbeatDue = now - lastHeartbeatAt >= heartbeatInterval;
-      const changed = this.havePackedTransformsChanged(previousSignature, signature);
+      const changed = havePackedTransformsChanged(previousSignature, signature);
 
       if (force || (highRelevance && changed) || heartbeatDue) {
         players.push(transform);
@@ -3494,8 +3370,8 @@ export class GameRoom extends Room<GameState> {
             return;
           }
 
-          const transform = frameContext.packedTransforms.get(id) ?? this.buildPackedPlayerTransform(id, player);
-          const signature = frameContext.packedTransformSignatures.get(id) ?? this.getPackedTransformSignature(transform);
+          const transform = frameContext.packedTransforms.get(id) ?? this.buildPackedTransform(id, player);
+          const signature = frameContext.packedTransformSignatures.get(id) ?? getPackedTransformSignature(transform);
           const previousSignature = transformState.signatures.get(id);
           const lastHeartbeatAt = transformState.heartbeatAt.get(id) ?? 0;
           const highRelevance = this.isHighRelevanceTransform(recipient, id, player, now);
@@ -3503,7 +3379,7 @@ export class GameRoom extends Room<GameState> {
             ? TRANSFORM_HEARTBEAT_INTERVAL_MS
             : DISTANT_TRANSFORM_HEARTBEAT_INTERVAL_MS;
           const heartbeatDue = now - lastHeartbeatAt >= heartbeatInterval;
-          const changed = this.havePackedTransformsChanged(previousSignature, signature);
+          const changed = havePackedTransformsChanged(previousSignature, signature);
 
           if (forceTransforms || (highRelevance && changed) || heartbeatDue) {
             transformPlayers.push(transform);
@@ -3845,46 +3721,43 @@ export class GameRoom extends Room<GameState> {
     });
 
     try {
-      const report = await prisma.playerReport.create({
-        data: {
-          status: 'open',
-          reason,
-          details,
-          reporterUserId,
-          reporterPlayerSessionId: client.sessionId,
-          reporterName: reporter.name,
-          targetUserId,
-          targetPlayerSessionId: target.id,
-          targetName: target.name,
-          targetTeam: target.team,
-          roomId: this.roomId,
-          matchId: this.matchPersistenceLedger?.matchId ?? null,
-          lobbyId: this.lobbyId,
-          matchMode: this.matchMode,
-          mapSeed: this.state.mapSeed,
-          serverTick: this.state.tick,
-          evidenceEventId: signal?.eventId ?? null,
-          metadata: serializeReportMetadata({
-            targetHeroId: target.heroId ?? null,
-            reporterTeam: reporter.team,
-            targetStats: {
-              kills: target.kills,
-              deaths: target.deaths,
-              assists: target.assists,
-              flagCaptures: target.flagCaptures,
-              flagReturns: target.flagReturns,
-            },
-            reporterPosition: {
-              x: reporter.position.x,
-              y: reporter.position.y,
-              z: reporter.position.z,
-            },
-            targetPosition: {
-              x: target.position.x,
-              y: target.position.y,
-              z: target.position.z,
-            },
-          }),
+      const report = await createPlayerReport(prisma, {
+        reason,
+        details,
+        reporterUserId,
+        reporterPlayerSessionId: client.sessionId,
+        reporterName: reporter.name,
+        targetUserId,
+        targetPlayerSessionId: target.id,
+        targetName: target.name,
+        targetTeam: target.team,
+        roomId: this.roomId,
+        matchId: this.matchPersistenceLedger?.matchId ?? null,
+        lobbyId: this.lobbyId,
+        matchMode: this.matchMode,
+        mapSeed: this.state.mapSeed,
+        serverTick: this.state.tick,
+        evidenceEventId: signal?.eventId ?? null,
+        metadata: {
+          targetHeroId: target.heroId ?? null,
+          reporterTeam: reporter.team,
+          targetStats: {
+            kills: target.kills,
+            deaths: target.deaths,
+            assists: target.assists,
+            flagCaptures: target.flagCaptures,
+            flagReturns: target.flagReturns,
+          },
+          reporterPosition: {
+            x: reporter.position.x,
+            y: reporter.position.y,
+            z: reporter.position.z,
+          },
+          targetPosition: {
+            x: target.position.x,
+            y: target.position.y,
+            z: target.position.z,
+          },
         },
       });
 

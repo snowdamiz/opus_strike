@@ -18,6 +18,7 @@ import {
   BHOP_NO_INPUT_FRICTION_MULTIPLIER,
   BHOP_STOP_SPEED,
   CROUCH_MULTIPLIER,
+  FLAG_CARRIER_SPEED_PENALTY,
   GRAVITY,
   PLAYER_CROUCH_HEIGHT,
   PLAYER_HEIGHT,
@@ -1240,7 +1241,7 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
     let wishSpeed = input.heroStats.moveSpeed * movementIntent.speedMultiplier * (modifiers.activeSpeedMultiplier ?? 1);
     if (movement.isSprinting) wishSpeed *= SPRINT_MULTIPLIER;
     if (movement.isCrouching) wishSpeed *= CROUCH_MULTIPLIER;
-    if (modifiers.flagCarrier) wishSpeed *= 0.85;
+    if (modifiers.flagCarrier) wishSpeed *= FLAG_CARRIER_SPEED_PENALTY;
 
     if (movement.isGrounded) {
       const speed = horizontalSpeed(velocity);

@@ -14,6 +14,14 @@ import { useHudNow } from '../../store/hudSignals';
 import { FACTIONS, HUD_HERO_COLORS as HERO_COLORS } from '../../styles/colorTokens';
 import { Minimap } from './minimap/Minimap';
 import { VoiceHud } from './VoiceHud';
+import {
+  getAbilityCooldownSeconds,
+  getAbilityMaxCharges,
+  getDisplayAbilityCharges,
+  getHudAbilityCooldownSeconds,
+} from '../../abilities/cooldowns';
+
+export { getHudAbilityCooldownSeconds } from '../../abilities/cooldowns';
 
 // Solar Icon - Small version for HUD
 function SolarIconSmall({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -1060,37 +1068,6 @@ interface AbilityState {
   activatedAt?: number;
 }
 
-export function getHudAbilityCooldownSeconds({
-  now,
-  isUltimate,
-  canTrackAbility,
-  showActiveTimer,
-  clientCooldownEnd,
-  serverCooldownUntil,
-  serverCooldownRemaining,
-}: {
-  now: number;
-  isUltimate: boolean;
-  canTrackAbility: boolean;
-  showActiveTimer: boolean;
-  clientCooldownEnd?: number;
-  serverCooldownUntil?: number;
-  serverCooldownRemaining?: number;
-}): number {
-  if (isUltimate || !canTrackAbility || showActiveTimer) return 0;
-
-  if (clientCooldownEnd && clientCooldownEnd > now) {
-    return Math.max(0, (clientCooldownEnd - now) / 1000);
-  }
-
-  if (serverCooldownUntil && serverCooldownUntil > now) {
-    return Math.max(0, (serverCooldownUntil - now) / 1000);
-  }
-  if (serverCooldownUntil !== undefined) return 0;
-
-  return Math.max(0, serverCooldownRemaining ?? 0);
-}
-
 function HUDSkillSlot({
   skill,
   abilityState,
@@ -1112,8 +1089,8 @@ function HUDSkillSlot({
   const abilityDef = abilityId ? ABILITY_DEFINITIONS[abilityId] : undefined;
   const isUltimate = skill.tone === 'ultimate';
   const canTrackAbility = Boolean(abilityId && abilityDef);
-  const maxCharges = abilityDef?.charges || 1;
-  const maxCooldown = abilityId === 'phantom_blink' ? 10 : (abilityDef?.cooldown || skill.cooldown || 0);
+  const maxCharges = getAbilityMaxCharges(abilityDef);
+  const maxCooldown = abilityId ? getAbilityCooldownSeconds(abilityId, abilityDef, skill.cooldown || 0) : skill.cooldown || 0;
   const cooldownStartsAfterActive = false;
 
   const now = useHudNow();
@@ -1142,12 +1119,13 @@ function HUDSkillSlot({
     serverCooldownRemaining: abilityState?.cooldownRemaining,
   });
 
-  const serverCharges = abilityState?.charges ?? maxCharges;
-  let charges = clientCharges !== undefined ? clientCharges : serverCharges;
-
-  if (maxCharges > 1 && clientCooldownEnd && now >= clientCooldownEnd && charges === 0) {
-    charges = maxCharges;
-  }
+  const charges = getDisplayAbilityCharges({
+    maxCharges,
+    serverCharges: abilityState?.charges ?? maxCharges,
+    clientCharges,
+    clientCooldownEnd,
+    now,
+  });
 
   const onCooldown = cooldown > 0;
   const isUltReady = isUltimate && ultimateCharge >= 100;

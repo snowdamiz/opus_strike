@@ -1,12 +1,12 @@
 import crypto from 'crypto';
 import { PublicKey } from '@solana/web3.js';
-import { getEntryTicketSecret } from '../config/security';
 import {
   DEFAULT_MATCHMAKING_RATING,
   DEFAULT_RANK_DIVISION_INDEX,
   normalizeRankDivisionIndex,
 } from '../matchmaking/skill';
 import { isMatchMode, type MatchMode } from '@voxel-strike/shared';
+import { createSignedTicket, readSignedTicketClaims } from './signedTicket';
 
 export interface MatchmakingTicketClaims {
   version: 2;
@@ -51,32 +51,6 @@ export interface CreateMatchmakingTicketInput {
 
 const DEFAULT_TICKET_TTL_MS = 60_000;
 
-function base64UrlEncode(input: Buffer | string): string {
-  return Buffer.from(input)
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
-}
-
-function base64UrlDecode(input: string): Buffer {
-  const normalized = input.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
-  return Buffer.from(padded, 'base64');
-}
-
-function signPayload(payload: string): string {
-  return base64UrlEncode(
-    crypto.createHmac('sha256', getEntryTicketSecret()).update(payload).digest()
-  );
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const aBuffer = Buffer.from(a);
-  const bBuffer = Buffer.from(b);
-  return aBuffer.length === bBuffer.length && crypto.timingSafeEqual(aBuffer, bBuffer);
-}
-
 function isCanonicalSolanaAddress(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   try {
@@ -113,26 +87,15 @@ export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
     nonce: crypto.randomBytes(16).toString('hex'),
   };
 
-  const payload = base64UrlEncode(JSON.stringify(claims));
   return {
-    ticket: `${payload}.${signPayload(payload)}`,
+    ticket: createSignedTicket(claims),
     claims,
   };
 }
 
 export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): MatchmakingTicketClaims | null {
-  if (typeof ticket !== 'string' || ticket.length > 4096) return null;
-
-  const [payload, signature, ...extra] = ticket.split('.');
-  if (!payload || !signature || extra.length > 0) return null;
-  if (!safeEqual(signPayload(payload), signature)) return null;
-
-  let claims: MatchmakingTicketClaims;
-  try {
-    claims = JSON.parse(base64UrlDecode(payload).toString('utf8')) as MatchmakingTicketClaims;
-  } catch {
-    return null;
-  }
+  const claims = readSignedTicketClaims<MatchmakingTicketClaims>(ticket);
+  if (!claims) return null;
 
   if (claims.version !== 2) return null;
   const mode = isMatchMode(claims.mode) ? claims.mode : 'quick_play';

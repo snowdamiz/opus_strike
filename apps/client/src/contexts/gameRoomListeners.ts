@@ -19,10 +19,8 @@ import {
   movementStateFromPlayer,
   resetLocalMovementPrediction,
 } from '../movement/localPrediction';
-import { measureFrameWork } from '../movement/networkDiagnostics';
 import {
   createDefaultLocalPlayer,
-  normalizeGamePhase,
   syncPlayerFromSchema,
   setupPlayerJoinedHandler,
   setupPlayerTransformsHandler,
@@ -33,10 +31,12 @@ import {
   setupPowerupHandlers,
   setupVoidZoneHandlers,
   setupCombatHandlers,
-  setupPollingSync,
   forgetPlayerNetId,
   stopRemotePhantomCharge,
 } from './gameMessageHandlers';
+import { normalizeGamePhase } from './gamePhase';
+import { setupPollingSync } from './gamePollingSync';
+import { measureNetworkMessage } from './networkMessageMetrics';
 import { loggers } from '../utils/logger';
 
 type MutableRef<T> = { current: T };
@@ -115,12 +115,6 @@ interface MatchCancelledMessage {
     jitterMs?: number | null;
     observationMs?: number;
     windowMs?: number;
-  };
-}
-
-function measureNetworkMessage<T>(type: string, handler: (data: T) => void): (data: T) => void {
-  return (data) => {
-    measureFrameWork(`network.${type}`, () => handler(data));
   };
 }
 

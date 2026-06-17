@@ -10,27 +10,13 @@ import {
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
   CHRONOS_VERDANT_PULSE_SPEED,
   MOVEMENT_BIT_CHRONOS_AEGIS,
-  MOVEMENT_BIT_CROUCHING,
-  MOVEMENT_BIT_GLIDING,
-  MOVEMENT_BIT_GRAPPLING,
-  MOVEMENT_BIT_GROUNDED,
-  MOVEMENT_BIT_JETPACKING,
-  MOVEMENT_BIT_SLIDING,
-  MOVEMENT_BIT_SPRINTING,
-  MOVEMENT_BIT_WALL_RUNNING,
-  TRANSFORM_ANGLE_SCALE,
-  TRANSFORM_POSITION_SCALE,
-  TRANSFORM_VELOCITY_SCALE,
   VOID_RAY_CHARGE_TIME,
   createDefaultPlayerMovementState,
   DEFAULT_GAMEPLAY_MODE,
-  DEFAULT_VOXEL_MAP_SIZE_ID,
   isGameplayMode,
   normalizeVoxelMapSizeId,
   type PublicRankSnapshot,
   type PlayerDamagedEvent,
-  type VoxelMapSizeId,
-  type VoxelMapTheme,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
@@ -55,7 +41,6 @@ import {
 } from '../store/visualStore';
 import { confirmLocalMovementTransform, enqueueSelfMovementAuthority, setLocalMovementRootedUntil } from '../movement/localPrediction';
 import {
-  measureFrameWork,
   recordAuthorityAckReceived,
   recordLocalReactiveUpdate,
   recordTransformMessage,
@@ -106,8 +91,15 @@ import {
   type SoundName,
 } from '../hooks/useAudio';
 import { loggers } from '../utils/logger';
-import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
-import { prebuildPreparedVoxelMapGeometry } from '../utils/mapWarmup/mapGeometryWarmup';
+import { normalizeServerAbilityCooldown } from '../abilities/cooldowns';
+import { normalizeGamePhase } from './gamePhase';
+import { measureNetworkMessage } from './networkMessageMetrics';
+import {
+  dequantizeTransform,
+  movementFromBits,
+  unpackPackedTransform,
+  type UnpackedPlayerTransform,
+} from './playerTransformCodec';
 import type {
   BotDifficulty,
   ChronosAegisDamagedEvent,
@@ -125,7 +117,6 @@ import type {
   PlayerTransformsV2Message,
   PlayerVitalsMessage,
   PlayerVitalsSnapshot,
-  PackedPlayerTransform,
   PowerupCollectedMessage,
   PowerupStateMessage,
   PlayerState,
@@ -141,14 +132,6 @@ const netIdByPlayerId = new Map<string, number>();
 let lastLocalPhantomReloadSoundKey = '';
 let hasReceivedSelfMovementAuthority = false;
 const HOOKSHOT_SHOT_CLIP_MS = 250;
-const GAME_PHASES = new Set<string>([
-  'waiting',
-  'hero_select',
-  'countdown',
-  'playing',
-  'round_end',
-  'game_end',
-]);
 const PLAYER_STATES = new Set<string>([
   'spectating',
   'selecting',
@@ -157,34 +140,8 @@ const PLAYER_STATES = new Set<string>([
   'dead',
 ]);
 
-function measureNetworkMessage<T>(type: string, handler: (data: T) => void): (data: T) => void {
-  return (data) => {
-    measureFrameWork(`network.${type}`, () => handler(data));
-  };
-}
-
-export function normalizeGamePhase(value: unknown, fallback: GamePhase = 'waiting'): GamePhase {
-  return typeof value === 'string' && GAME_PHASES.has(value) ? value as GamePhase : fallback;
-}
-
 function normalizePlayerState(value: unknown, fallback: PlayerState = 'alive'): PlayerState {
   return typeof value === 'string' && PLAYER_STATES.has(value) ? value as PlayerState : fallback;
-}
-
-interface UnpackedPlayerTransform {
-  netId: number;
-  px: number;
-  py: number;
-  pz: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  yaw: number;
-  pitch: number;
-  movementBits: number;
-  wallRunSide: -1 | 0 | 1;
-  movementEpoch: number;
-  chronosAegisShieldRatio: number;
 }
 
 // ============================================================================
@@ -497,61 +454,6 @@ function syncDeathVisualForVitals(
   updateDeathVisualExpirationForPlayer(playerId, respawnTime);
 }
 
-type MovementBitsTransform = Pick<UnpackedPlayerTransform, 'movementBits' | 'wallRunSide'>;
-
-function dequantizeTransform(transform: Pick<UnpackedPlayerTransform, 'px' | 'py' | 'pz' | 'vx' | 'vy' | 'vz' | 'yaw' | 'pitch'>) {
-  return {
-    position: {
-      x: transform.px / TRANSFORM_POSITION_SCALE,
-      y: transform.py / TRANSFORM_POSITION_SCALE,
-      z: transform.pz / TRANSFORM_POSITION_SCALE,
-    },
-    velocity: {
-      x: transform.vx / TRANSFORM_VELOCITY_SCALE,
-      y: transform.vy / TRANSFORM_VELOCITY_SCALE,
-      z: transform.vz / TRANSFORM_VELOCITY_SCALE,
-    },
-    lookYaw: transform.yaw / TRANSFORM_ANGLE_SCALE,
-    lookPitch: transform.pitch / TRANSFORM_ANGLE_SCALE,
-  };
-}
-
-function movementFromBits(
-  transform: MovementBitsTransform,
-  fallback: PlayerMovementState
-): PlayerMovementState {
-  return {
-    ...fallback,
-    isGrounded: Boolean(transform.movementBits & MOVEMENT_BIT_GROUNDED),
-    isSprinting: Boolean(transform.movementBits & MOVEMENT_BIT_SPRINTING),
-    isCrouching: Boolean(transform.movementBits & MOVEMENT_BIT_CROUCHING),
-    isSliding: Boolean(transform.movementBits & MOVEMENT_BIT_SLIDING),
-    isWallRunning: Boolean(transform.movementBits & MOVEMENT_BIT_WALL_RUNNING),
-    wallRunSide: transform.wallRunSide === -1 ? 'left' : transform.wallRunSide === 1 ? 'right' : null,
-    isGrappling: Boolean(transform.movementBits & MOVEMENT_BIT_GRAPPLING),
-    isJetpacking: Boolean(transform.movementBits & MOVEMENT_BIT_JETPACKING),
-    isGliding: Boolean(transform.movementBits & MOVEMENT_BIT_GLIDING),
-  };
-}
-
-function unpackPackedTransform(transform: PackedPlayerTransform): UnpackedPlayerTransform {
-  return {
-    netId: transform[0],
-    px: transform[1],
-    py: transform[2],
-    pz: transform[3],
-    vx: transform[4],
-    vy: transform[5],
-    vz: transform[6],
-    yaw: transform[7],
-    pitch: transform[8],
-    movementBits: transform[9],
-    wallRunSide: transform[10],
-    movementEpoch: transform[11],
-    chronosAegisShieldRatio: (transform[12] ?? 255) / 255,
-  };
-}
-
 export function forgetPlayerNetId(playerId: string): void {
   const netId = netIdByPlayerId.get(playerId);
   if (netId !== undefined) {
@@ -579,17 +481,13 @@ function normalizeAbilityVitals(
   if (!abilities) return fallback || {};
 
   const normalized: Player['abilities'] = {};
+  const now = Date.now();
   for (const [abilityId, ability] of Object.entries(abilities)) {
-    const cooldownUntil = Number.isFinite(ability.cooldownUntil)
-      ? ability.cooldownUntil
-      : Number.isFinite(ability.cooldownRemaining)
-        ? serverTime + Math.max(0, ability.cooldownRemaining || 0) * 1000
-        : 0;
-    const cooldownRemainingMs = Math.max(0, cooldownUntil - serverTime);
+    const cooldown = normalizeServerAbilityCooldown(ability, serverTime, now);
     normalized[abilityId] = {
       abilityId: ability.abilityId || abilityId,
-      cooldownRemaining: cooldownRemainingMs / 1000,
-      cooldownUntil: cooldownRemainingMs > 0 ? Date.now() + cooldownRemainingMs : 0,
+      cooldownRemaining: cooldown.cooldownRemaining,
+      cooldownUntil: cooldown.cooldownUntil,
       charges: ability.charges,
       isActive: ability.isActive,
       activatedAt: ability.activatedAt,
@@ -2703,59 +2601,4 @@ export function setupCombatHandlers(room: Room) {
   }) => {
     pushLocalPlayerImpulse(data.impulse);
   }));
-}
-
-/**
- * Sets up low-rate room metadata polling as a development fallback.
- */
-export function setupPollingSync(
-  room: Room,
-  actions: Pick<GameStoreActions, 'setGamePhase'>
-): ReturnType<typeof setInterval> {
-  const FALLBACK_POLL_INTERVAL_MS = 250;
-
-  return setInterval(() => {
-    if (!room.state) return;
-
-    // Sync phase
-    if (room.state.phase) {
-      const store = useGameStore.getState();
-      const nextMapThemeId = typeof room.state.mapThemeId === 'string'
-        ? room.state.mapThemeId as VoxelMapTheme['id']
-        : null;
-      const nextMapSize = normalizeVoxelMapSizeId(
-        typeof room.state.mapSize === 'string' ? room.state.mapSize : DEFAULT_VOXEL_MAP_SIZE_ID
-      );
-      if (
-        typeof room.state.mapSeed === 'number'
-        && (
-          room.state.mapSeed !== store.mapSeed
-          || nextMapThemeId !== store.mapThemeId
-          || nextMapSize !== store.mapSize
-        )
-      ) {
-        useGameStore.getState().setMapSeed(room.state.mapSeed);
-        useGameStore.getState().setMapThemeId(nextMapThemeId);
-        useGameStore.getState().setMapSize(nextMapSize);
-        try {
-          const preparedMap = prepareVoxelMapCpu({
-            seed: room.state.mapSeed,
-            themeId: nextMapThemeId,
-            mapSize: nextMapSize,
-            source: 'match',
-          });
-          prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'fallback-poll' });
-        } catch (error) {
-          loggers.network.warn('fallback poll map CPU prep failed', error);
-        }
-      }
-
-      if (room.state.phase !== store.gamePhase) {
-        actions.setGamePhase(normalizeGamePhase(room.state.phase, store.gamePhase));
-      }
-      if (isGameplayMode(room.state.gameplayMode) && room.state.gameplayMode !== store.gameplayMode) {
-        useGameStore.setState({ gameplayMode: room.state.gameplayMode });
-      }
-    }
-  }, FALLBACK_POLL_INTERVAL_MS);
 }
