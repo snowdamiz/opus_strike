@@ -719,72 +719,40 @@ const PLATFORM_PROFILES = {
   plastic: {
     ...DEFAULT_PLATFORM_PROFILE,
     baseRotation: Math.PI / 8,
-    deckRadius: 0.68,
     centerSegments: 4,
     centerRotation: Math.PI / 4,
   },
   bronze: {
     ...DEFAULT_PLATFORM_PROFILE,
-    baseHeight: 0.16,
-    baseRadius: 0.84,
-    baseFootRadius: 0.9,
     baseRotation: Math.PI / 6,
-    deckRadius: 0.7,
     deckRotation: Math.PI / 6,
-    centerRadius: 0.3,
     centerSegments: 6,
-    outerRingRadius: 0.7,
   },
   silver: {
     ...DEFAULT_PLATFORM_PROFILE,
-    baseHeight: 0.13,
-    baseRadius: 0.86,
-    baseFootRadius: 0.9,
     baseRotation: Math.PI / 8,
-    deckRadius: 0.76,
     deckRotation: Math.PI / 8,
-    centerRadius: 0.26,
     centerSegments: 8,
-    outerRingRadius: 0.75,
-    innerRingRadius: 0.33,
   },
   gold: {
     ...DEFAULT_PLATFORM_PROFILE,
-    baseHeight: 0.15,
-    baseRadius: 0.84,
-    baseFootRadius: 0.9,
     baseRotation: Math.PI / 12,
-    deckRadius: 0.72,
     deckRotation: Math.PI / 12,
-    centerRadius: 0.34,
     centerSegments: 6,
-    outerRingRadius: 0.76,
   },
   diamond: {
     ...DEFAULT_PLATFORM_PROFILE,
-    baseHeight: 0.15,
-    baseRadius: 0.86,
-    baseFootRadius: 0.9,
     baseRotation: Math.PI / 4,
-    deckRadius: 0.72,
     deckRotation: Math.PI / 4,
-    centerRadius: 0.3,
     centerSegments: 4,
     centerRotation: Math.PI / 4,
   },
   unemployed: {
     ...DEFAULT_PLATFORM_PROFILE,
-    baseHeight: 0.16,
-    baseRadius: 0.8,
-    baseFootRadius: 0.86,
     baseRotation: Math.PI / 4,
-    deckRadius: 0.68,
     deckRotation: Math.PI / 4,
-    centerRadius: 0.28,
     centerSegments: 4,
     centerRotation: Math.PI / 4,
-    outerRingRadius: 0.68,
-    innerRingRadius: 0.32,
   },
 } satisfies Record<NonNullable<HeroPlatformTier>, PlatformProfile>;
 
@@ -847,6 +815,19 @@ function HeroRankPlatform({
           roughness={0.52}
         />
       </mesh>
+      <HeroRankPlatformApronDecorations
+        tier={tier}
+        profile={profile}
+        theme={theme}
+        division={division}
+        receiveShadow={receiveShadow}
+      />
+      <HeroRankPlatformPrestigeRails
+        tier={tier}
+        profile={profile}
+        theme={theme}
+        division={division}
+      />
       <mesh position={[0, -profile.baseHeight + 0.012, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <torusGeometry args={[profile.baseFootRadius * 0.96, lipRingTube, 10, RANK_PLATFORM_SEGMENTS]} />
         <meshStandardMaterial
@@ -937,6 +918,335 @@ function HeroRankPlatform({
           roughness={0.48}
         />
       </mesh>
+      <HeroRankPlatformTopDecorations
+        tier={tier}
+        profile={profile}
+        theme={theme}
+        division={division}
+        receiveShadow={receiveShadow}
+      />
+    </group>
+  );
+}
+
+function HeroRankPlatformPrestigeRails({
+  tier,
+  profile,
+  theme,
+  division,
+}: {
+  tier: HeroPlatformTier;
+  profile: PlatformProfile;
+  theme: ReturnType<typeof getRankTheme>;
+  division: number;
+}) {
+  if (tier !== 'gold' && tier !== 'diamond' && tier !== 'unemployed') return null;
+
+  const upperRailY = -profile.baseHeight * 0.28;
+  const lowerRailY = -profile.baseHeight * 0.72;
+  const railTube = tier === 'unemployed' ? 0.017 : 0.014;
+  const railMaterial = (
+    <meshStandardMaterial
+      color={theme.accent}
+      emissive={theme.primary}
+      emissiveIntensity={0.14 + division * 0.024}
+      metalness={0.38}
+      roughness={0.34}
+    />
+  );
+
+  return (
+    <group>
+      <mesh position={[0, upperRailY, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[profile.baseRadius * 0.99, railTube, 8, RANK_PLATFORM_SEGMENTS]} />
+        {railMaterial}
+      </mesh>
+      {(tier === 'diamond' || tier === 'unemployed') && (
+        <mesh position={[0, lowerRailY, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[profile.baseFootRadius * 0.9, railTube * 0.84, 8, RANK_PLATFORM_SEGMENTS]} />
+          {railMaterial}
+        </mesh>
+      )}
+    </group>
+  );
+}
+
+function HeroRankPlatformApronDecorations({
+  tier,
+  profile,
+  theme,
+  division,
+  receiveShadow,
+}: {
+  tier: HeroPlatformTier;
+  profile: PlatformProfile;
+  theme: ReturnType<typeof getRankTheme>;
+  division: number;
+  receiveShadow: boolean;
+}) {
+  const frontZ = profile.baseFootRadius * 0.96;
+  const apronY = -profile.baseHeight * 0.56;
+  const accentMaterial = (
+    <meshStandardMaterial
+      color={theme.accent}
+      emissive={theme.primary}
+      emissiveIntensity={0.16 + division * 0.024}
+      metalness={0.34}
+      roughness={0.36}
+    />
+  );
+  const secondaryMaterial = (
+    <meshStandardMaterial
+      color={theme.primary}
+      emissive={theme.primary}
+      emissiveIntensity={0.1 + division * 0.018}
+      metalness={0.28}
+      roughness={0.4}
+    />
+  );
+
+  if (tier === 'bronze') {
+    return (
+      <group>
+        {[-0.18, 0.18].map((x) => (
+          <mesh key={`bronze-apron:${x}`} position={[x, apronY, frontZ]} rotation={[Math.PI / 2, 0, 0]} castShadow={receiveShadow}>
+            <cylinderGeometry args={[0.03, 0.034, 0.022, 14]} />
+            {accentMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'silver') {
+    return (
+      <group position={[0, apronY, frontZ]}>
+        <mesh castShadow={receiveShadow}>
+          <boxGeometry args={[0.62, 0.034, 0.032]} />
+          {secondaryMaterial}
+        </mesh>
+        {[-0.22, 0.22].map((x) => (
+          <mesh key={`silver-notch:${x}`} position={[x, 0.038, 0]} castShadow={receiveShadow}>
+            <boxGeometry args={[0.13, 0.026, 0.032]} />
+            {accentMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'gold') {
+    return (
+      <group position={[0, apronY + 0.006, frontZ]}>
+        <mesh position={[0, 0.044, 0]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.18, 0.102, 0.038]} />
+          {accentMaterial}
+        </mesh>
+        {[-0.28, -0.14, 0.14, 0.28].map((x) => (
+          <mesh key={`gold-side-tooth:${x}`} position={[x, 0.012, 0]} castShadow={receiveShadow}>
+            <boxGeometry args={[0.1, 0.064, 0.038]} />
+            {accentMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'diamond') {
+    return (
+      <group>
+        <mesh position={[0, apronY + 0.022, frontZ]} rotation={[0, 0, Math.PI / 4]} scale={[1.55, 0.82, 0.42]} castShadow={receiveShadow}>
+          <octahedronGeometry args={[0.15, 0]} />
+          {accentMaterial}
+        </mesh>
+        {[-0.32, 0.32].map((x) => (
+          <mesh key={`diamond-side-chip:${x}`} position={[x, apronY - 0.012, frontZ]} rotation={[0, 0, Math.PI / 4]} scale={[0.7, 0.42, 0.24]} castShadow={receiveShadow}>
+            <octahedronGeometry args={[0.105, 0]} />
+            {secondaryMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'unemployed') {
+    return (
+      <group position={[0, apronY, frontZ]}>
+        <mesh position={[0, 0.012, 0]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.62, 0.096, 0.04]} />
+          {accentMaterial}
+        </mesh>
+        <mesh position={[0, 0.088, 0]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.28, 0.044, 0.044]} />
+          {secondaryMaterial}
+        </mesh>
+        {[-0.27, 0.27].map((x) => (
+          <mesh key={`unemployed-latch:${x}`} position={[x, -0.052, 0]} castShadow={receiveShadow}>
+            <boxGeometry args={[0.12, 0.04, 0.042]} />
+            {secondaryMaterial}
+          </mesh>
+        ))}
+        <mesh position={[0, -0.006, 0.003]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.2, 0.052, 0.044]} />
+          {secondaryMaterial}
+        </mesh>
+      </group>
+    );
+  }
+
+  return (
+    <group position={[0, apronY, frontZ]}>
+      {[-0.16, 0.16].map((x) => (
+        <mesh key={`default-apron:${x}`} position={[x, 0, 0]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.14, 0.034, 0.028]} />
+          {secondaryMaterial}
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function HeroRankPlatformTopDecorations({
+  tier,
+  profile,
+  theme,
+  division,
+  receiveShadow,
+}: {
+  tier: HeroPlatformTier;
+  profile: PlatformProfile;
+  theme: ReturnType<typeof getRankTheme>;
+  division: number;
+  receiveShadow: boolean;
+}) {
+  const decorationY = 0.048;
+  const accentMaterial = (
+    <meshStandardMaterial
+      color={theme.accent}
+      emissive={theme.primary}
+      emissiveIntensity={0.11 + division * 0.018}
+      metalness={0.32}
+      roughness={0.38}
+    />
+  );
+  const foregroundMaterial = (
+    <meshStandardMaterial
+      color={theme.foreground}
+      emissive={theme.primary}
+      emissiveIntensity={0.06 + division * 0.012}
+      metalness={0.28}
+      roughness={0.42}
+    />
+  );
+
+  if (tier === 'bronze') {
+    return (
+      <group>
+        {[-0.62, 0.62].map((angle) => (
+          <mesh
+            key={`bronze-rivet:${angle}`}
+            position={[Math.sin(angle) * profile.deckRadius * 0.62, decorationY, Math.cos(angle) * profile.deckRadius * 0.62]}
+            castShadow={receiveShadow}
+          >
+            <cylinderGeometry args={[0.022, 0.026, 0.018, 12]} />
+            {accentMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'silver') {
+    return (
+      <group>
+        {[-0.82, -0.27, 0.27, 0.82].map((angle) => (
+          <mesh
+            key={`silver-bar:${angle}`}
+            position={[Math.sin(angle) * profile.deckRadius * 0.58, decorationY, Math.cos(angle) * profile.deckRadius * 0.58]}
+            rotation={[0, angle, 0]}
+            castShadow={receiveShadow}
+          >
+            <boxGeometry args={[0.18, 0.022, 0.05]} />
+            {foregroundMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'gold') {
+    return (
+      <group>
+        {[-1.18, -0.7, -0.24, 0.24, 0.7, 1.18].map((angle) => (
+          <mesh
+            key={`gold-tooth:${angle}`}
+            position={[Math.sin(angle) * profile.deckRadius * 0.88, decorationY + 0.026, Math.cos(angle) * profile.deckRadius * 0.88]}
+            rotation={[0, angle + Math.PI / 4, 0]}
+            castShadow={receiveShadow}
+          >
+            <coneGeometry args={[0.048, 0.088, 4]} />
+            {accentMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'diamond') {
+    return (
+      <group>
+        {[-0.9, -0.3, 0.3, 0.9].map((angle) => (
+          <mesh
+            key={`diamond-chip:${angle}`}
+            position={[Math.sin(angle) * profile.deckRadius * 0.72, decorationY + 0.02, Math.cos(angle) * profile.deckRadius * 0.72]}
+            rotation={[0.38, angle + Math.PI / 4, 0.2]}
+            scale={[1.14, 0.48, 1.14]}
+            castShadow={receiveShadow}
+          >
+            <octahedronGeometry args={[0.066, 0]} />
+            {accentMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'unemployed') {
+    return (
+      <group>
+        <mesh position={[0, decorationY, profile.deckRadius * 0.5]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.46, 0.03, 0.066]} />
+          {accentMaterial}
+        </mesh>
+        <mesh position={[0, decorationY, -profile.deckRadius * 0.5]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.46, 0.03, 0.066]} />
+          {accentMaterial}
+        </mesh>
+        <mesh position={[-0.16, decorationY + 0.022, 0]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.11, 0.026, 0.16]} />
+          {foregroundMaterial}
+        </mesh>
+        <mesh position={[0.16, decorationY + 0.022, 0]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.11, 0.026, 0.16]} />
+          {foregroundMaterial}
+        </mesh>
+      </group>
+    );
+  }
+
+  return (
+    <group>
+      {[-0.7, 0.7].map((angle) => (
+        <mesh
+          key={`default-mark:${angle}`}
+          position={[Math.sin(angle) * profile.deckRadius * 0.64, decorationY, Math.cos(angle) * profile.deckRadius * 0.64]}
+          rotation={[0, angle, 0]}
+          castShadow={receiveShadow}
+        >
+          <boxGeometry args={[0.13, 0.018, 0.055]} />
+          {foregroundMaterial}
+        </mesh>
+      ))}
     </group>
   );
 }
