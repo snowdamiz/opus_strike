@@ -1,4 +1,4 @@
-import { lazy, Suspense, type CSSProperties, useCallback, useState, useEffect } from 'react';
+import { lazy, Suspense, type CSSProperties, useCallback, useState, useEffect, useRef } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import {
@@ -28,7 +28,6 @@ import {
   DEFAULT_RANKED_SEASON_NUMBER,
   HERO_DEFINITIONS,
   PARTY_MAX_MEMBERS,
-  createDefaultPartyBotFillSettings,
   getGameplayModeLabel,
   getHumanPartyHeroIds,
   getRankedSeasonLabel,
@@ -41,6 +40,14 @@ import {
   RUNNING_GAME_SESSION_STORAGE_KEY,
   type RunningGameSession,
 } from '../../utils/runningGameSession';
+import { clearActivePartySession, loadActivePartySession } from '../../utils/activePartySession';
+import {
+  PLAY_MODE_OPTIONS,
+  loadPlayMenuPreferences,
+  savePlayMenuPreferences,
+  type PlayMenuMode,
+  type PlayMenuPreferences,
+} from '../../utils/playMenuPreferences';
 import type { ServerLatencyProbeSnapshot } from '../../utils/serverLatency';
 import { requiresTutorial } from '../../utils/tutorialAccess';
 import { RankIcon, getRankForStats } from './RankBadge';
@@ -49,9 +56,8 @@ const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((mod
   default: module.FeaturedHeroPreview,
 })));
 const HERO_IDLE_ANIMATION_MODE: HeroPreviewAnimationMode = 'idle';
-type PlayMenuMode = Exclude<PartyMode, 'custom'> | 'team_deathmatch' | 'battle_royal';
-const PLAY_MODE_OPTIONS: PlayMenuMode[] = ['ranked', 'quick_play', 'team_deathmatch', 'battle_royal', 'practice'];
 const PLAY_PARTY_SLOT_COUNT = PARTY_MAX_MEMBERS;
+const PING_ADVISORY_VISIBLE_MIN_MS = 100;
 
 function DiscordIcon({ className, style }: { className?: string; style?: CSSProperties }) {
   return (
@@ -141,21 +147,6 @@ function formatSeasonBoundaryDate(season: RankedSeasonSnapshot): string {
   return season.mode === 'preseason' ? `Opens ${formattedDate}` : `Ends ${formattedDate}`;
 }
 
-function formatSeasonBoundaryDetail(season: RankedSeasonSnapshot): string {
-  const pendingLabel = season.mode === 'preseason' ? 'Next season schedule pending' : 'Schedule pending';
-  if (!season.endsAt) return pendingLabel;
-  const date = new Date(season.endsAt);
-  if (Number.isNaN(date.getTime())) return pendingLabel;
-
-  const remainingMs = date.getTime() - Date.now();
-  const formattedDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  if (remainingMs <= 0) return season.mode === 'preseason' ? `Next season began ${formattedDate}` : `Ended ${formattedDate}`;
-  const daysRemaining = Math.ceil(remainingMs / 86_400_000);
-  if (daysRemaining > 1) return `${daysRemaining} days remaining`;
-  if (daysRemaining === 1) return season.mode === 'preseason' ? 'Begins within 24 hours' : 'Under 24 hours';
-  return season.mode === 'preseason' ? `Next season began ${formattedDate}` : `Ended ${formattedDate}`;
-}
-
 function getGameplayModeForPlayMode(mode: PlayMenuMode): GameplayMode {
   switch (mode) {
     case 'team_deathmatch':
@@ -223,6 +214,9 @@ export function MainLobby() {
     getRankedTokenHoldStatus,
     startPracticeGame,
     startTutorialGame,
+    joinParty,
+    restoreParty,
+    getActivePartySession,
     setPartyHero,
     kickPartyMember,
     setPartyMode,
@@ -255,8 +249,7 @@ export function MainLobby() {
   const [showSettings, setShowSettings] = useState(false);
   const [showSocial, setShowSocial] = useState(false);
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
-  const [selectedPlayMode, setSelectedPlayMode] = useState<PlayMenuMode>('quick_play');
-  const [botFillEnabledByMode, setBotFillEnabledByMode] = useState<PartyBotFillSettings>(() => createDefaultPartyBotFillSettings());
+  const [playMenuPreferences, setPlayMenuPreferences] = useState<PlayMenuPreferences>(loadPlayMenuPreferences);
   const [rankedTokenHoldStatus, setRankedTokenHoldStatus] = useState<RankedTokenHoldStatus | null>(null);
   const [isRankedTokenHoldLoading, setIsRankedTokenHoldLoading] = useState(false);
   const [rankedTokenHoldError, setRankedTokenHoldError] = useState<string | null>(null);
@@ -270,6 +263,7 @@ export function MainLobby() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
   const [isLinkingPhantom, setIsLinkingPhantom] = useState(false);
+  const autoJoinPartyAttemptRef = useRef<string | null>(null);
   const socialBadgeCount = useSocialBadgeCount();
   const { party, localPartyUserId, partyLaunchError } = usePartyStore(
     useShallow((state) => ({
@@ -282,6 +276,8 @@ export function MainLobby() {
   const isInParty = Boolean(party);
   const isPartyLeader = isPartyLeaderForUser(party, localPartyUserId);
   const isPartyReadyToStart = arePartyMembersReady(party);
+  const selectedPlayMode = playMenuPreferences.selectedPlayMode;
+  const botFillEnabledByMode = playMenuPreferences.botFillEnabledByMode;
   const activePlayMode = party ? getPlayModeFromParty(party) : selectedPlayMode;
   const activeBotFillEnabledByMode = party?.botFillEnabledByMode ?? botFillEnabledByMode;
   const currentRank = getRankForStats(userStats);
@@ -301,6 +297,14 @@ export function MainLobby() {
   const serverLatency = useServerLatencyProbe(activeTab === 'play');
   const devTutorialOverride = useSettingsStore((state) => state.settings.devTutorialOverride);
   const tutorialRequired = requiresTutorial(user?.tutorialCompletedAt, devTutorialOverride);
+
+  const updatePlayMenuPreferences = useCallback((updater: (current: PlayMenuPreferences) => PlayMenuPreferences) => {
+    setPlayMenuPreferences((current) => {
+      const next = updater(current);
+      savePlayMenuPreferences(next);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -352,6 +356,85 @@ export function MainLobby() {
       setShowSocial(false);
     }
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (party) {
+      autoJoinPartyAttemptRef.current = null;
+    }
+  }, [party?.partyId]);
+
+  useEffect(() => {
+    if (!isAuthenticated || isNewUser || !user || party) return;
+
+    let cancelled = false;
+
+    const resumeParty = async () => {
+      const savedParty = loadActivePartySession();
+      if (savedParty && savedParty.userId !== user.id) {
+        clearActivePartySession(savedParty.partyId);
+      }
+
+      const activeParty = await getActivePartySession()
+        .then((response) => response.party)
+        .catch(() => null);
+
+      if (cancelled) return;
+
+      const validSavedParty = savedParty?.userId === user.id ? savedParty : null;
+      const partyId = activeParty?.partyId ?? validSavedParty?.partyId ?? null;
+      const persistentPartyId = activeParty?.persistentPartyId ?? null;
+      if (!partyId && !persistentPartyId) return;
+
+      const attemptKey = persistentPartyId ?? partyId;
+      if (autoJoinPartyAttemptRef.current === attemptKey) return;
+      autoJoinPartyAttemptRef.current = attemptKey;
+
+      const rejoinName = playerName || user.name || validSavedParty?.playerName || 'Player';
+      const heroId = validSavedParty?.heroId ?? featuredHero;
+
+      try {
+        if (!partyId) throw new Error('Saved party room is unavailable');
+        await joinParty(rejoinName, partyId, heroId);
+      } catch {
+        if (!persistentPartyId) {
+          if (partyId) {
+            clearActivePartySession(partyId);
+          }
+          if (autoJoinPartyAttemptRef.current === attemptKey) {
+            autoJoinPartyAttemptRef.current = null;
+          }
+          return;
+        }
+
+        try {
+          await restoreParty(rejoinName, persistentPartyId, heroId);
+        } catch {
+          if (partyId) {
+            clearActivePartySession(partyId);
+          }
+          if (autoJoinPartyAttemptRef.current === attemptKey) {
+            autoJoinPartyAttemptRef.current = null;
+          }
+        }
+      }
+    };
+
+    void resumeParty();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    featuredHero,
+    getActivePartySession,
+    isAuthenticated,
+    isNewUser,
+    joinParty,
+    party,
+    playerName,
+    restoreParty,
+    user?.id,
+    user?.name,
+  ]);
 
   useEffect(() => {
     if (activePlayMode !== 'ranked' || !isAuthenticated || !hasPhantomAccount || isRankedPreseason) {
@@ -475,6 +558,9 @@ export function MainLobby() {
   };
 
   const handleDisconnect = async () => {
+    if (isInParty) {
+      leaveParty();
+    }
     await logout();
     setNewPlayerName('');
     setNameError(null);
@@ -535,7 +621,7 @@ export function MainLobby() {
       return;
     }
     try {
-      await quickPlay(playerName, gameplayMode, botFillEnabled);
+      await quickPlay(playerName, gameplayMode, botFillEnabled, featuredHero);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to find a match');
     }
@@ -554,7 +640,7 @@ export function MainLobby() {
 
   const handlePracticeGame = (mapSeed?: number) => {
     setError(null);
-    startPracticeGame(playerName, { mapSeed });
+    startPracticeGame(playerName, { mapSeed, heroId: featuredHero });
   };
 
   const handleStartTutorial = () => {
@@ -590,7 +676,7 @@ export function MainLobby() {
       return;
     }
     try {
-      await rankedPlay(playerName);
+      await rankedPlay(playerName, featuredHero);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to enter ranked');
     }
@@ -604,7 +690,12 @@ export function MainLobby() {
       return;
     }
 
-    setSelectedPlayMode(mode);
+    updatePlayMenuPreferences((current) => (
+      current.selectedPlayMode === mode ? current : {
+        ...current,
+        selectedPlayMode: mode,
+      }
+    ));
   };
 
   const handleSetBotFillEnabled = (gameplayMode: GameplayMode, enabled: boolean) => {
@@ -615,10 +706,13 @@ export function MainLobby() {
       return;
     }
 
-    setBotFillEnabledByMode((current) => (
-      current[gameplayMode] === enabled ? current : {
+    updatePlayMenuPreferences((current) => (
+      current.botFillEnabledByMode[gameplayMode] === enabled ? current : {
         ...current,
-        [gameplayMode]: enabled,
+        botFillEnabledByMode: {
+          ...current.botFillEnabledByMode,
+          [gameplayMode]: enabled,
+        },
       }
     ));
   };
@@ -775,7 +869,7 @@ export function MainLobby() {
         {activeTab === 'heroes' && (
           <HeroesPage
             selectedHero={featuredHero}
-            onSelectHero={setFeaturedHero}
+            onSelectHero={handleSelectHero}
           />
         )}
         {activeTab === 'stats' && <StatsPage />}
@@ -986,7 +1080,10 @@ function PlayTab({
           onAddMember={handleLineupAddMember}
         />
       </div>
-      {serverLatency && <ServerLatencyAdvisory snapshot={serverLatency} />}
+      {serverLatency && shouldShowServerLatencyAdvisory(serverLatency) && (
+        <ServerLatencyAdvisory snapshot={serverLatency} />
+      )}
+      <RankedSeasonPlate season={rankedSeason} />
     </div>
   );
 }
@@ -1037,6 +1134,7 @@ function PartyLineup({
                   accentColor={heroColor}
                   initialYaw={Math.PI - 0.12}
                   animationMode={heroAnimationMode}
+                  rank={member.rank}
                   className="party-member-preview"
                 />
               </Suspense>
@@ -1364,7 +1462,7 @@ function PlayActionStack({
 
   return (
     <div className="play-action-stack">
-      <RankedSeasonPlate season={rankedSeason} />
+      <PlayPanelHeading />
       <PartyTeammateStrip
         members={teammateMembers}
         localUserId={localPartyUserId}
@@ -1660,12 +1758,15 @@ function PlayModeSelector({
   );
 }
 
+function shouldShowServerLatencyAdvisory(snapshot: ServerLatencyProbeSnapshot): boolean {
+  return snapshot.averagePingMs !== null && snapshot.averagePingMs > PING_ADVISORY_VISIBLE_MIN_MS;
+}
+
 function ServerLatencyAdvisory({ snapshot }: { snapshot: ServerLatencyProbeSnapshot }) {
   const pingValue = snapshot.averagePingMs === null ? '--' : String(snapshot.averagePingMs);
+  const displayQuality = snapshot.quality === 'good' ? 'fair' : snapshot.quality;
   const statusLabel = (() => {
-    switch (snapshot.quality) {
-      case 'good':
-        return `Ping ${pingValue} milliseconds. Server response looks stable.`;
+    switch (displayQuality) {
       case 'fair':
         return `Ping ${pingValue} milliseconds. Playable, with a little delay.`;
       case 'high':
@@ -1681,10 +1782,10 @@ function ServerLatencyAdvisory({ snapshot }: { snapshot: ServerLatencyProbeSnaps
   return (
     <div
       className="play-ping-advisory"
-      data-quality={snapshot.quality}
+      data-quality={displayQuality}
       title={snapshot.error ?? statusLabel}
       aria-label={statusLabel}
-      aria-live={snapshot.quality === 'high' || snapshot.quality === 'offline' ? 'polite' : 'off'}
+      aria-live={displayQuality === 'high' || displayQuality === 'offline' ? 'polite' : 'off'}
     >
       <span className="play-ping-advisory-icon" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -1701,13 +1802,20 @@ function ServerLatencyAdvisory({ snapshot }: { snapshot: ServerLatencyProbeSnaps
   );
 }
 
+function PlayPanelHeading() {
+  return (
+    <header className="play-panel-heading" aria-label="Play">
+      <h2 className="play-panel-heading-title">Play</h2>
+    </header>
+  );
+}
+
 function RankedSeasonPlate({ season }: { season: RankedSeasonSnapshot }) {
   return (
     <aside className="play-season-plate" aria-label={`${season.label}. ${formatSeasonBoundaryDate(season)}. ${SEASON_RULES_ARIA}`}>
       <div className="play-season-plate-kicker">Ranked</div>
       <div className="play-season-plate-title">{season.label}</div>
       <div className="play-season-plate-end">{formatSeasonBoundaryDate(season)}</div>
-      <div className="play-season-plate-detail">{formatSeasonBoundaryDetail(season)}</div>
     </aside>
   );
 }

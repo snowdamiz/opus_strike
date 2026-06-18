@@ -248,6 +248,21 @@ model PartyInvite {
   @@index([expiresAt])
 }
 
+model PersistentParty {
+  id             String   @id
+  roomId         String   @unique
+  ownerUserId    String
+  leaderUserId   String?
+  allowedUserIds String[] @default([])
+  snapshot       Json
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([ownerUserId, updatedAt])
+  @@index([expiresAt])
+}
+
 model GameMatch {
   id                       String    @id
   roomId                   String

@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom';
 import { ContactShadows } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { HERO_DEFINITIONS } from '@voxel-strike/shared';
-import type { HeroId, Team } from '@voxel-strike/shared';
+import { HERO_DEFINITIONS, getRankTheme } from '@voxel-strike/shared';
+import type { HeroId, PublicRankSnapshot, Team } from '@voxel-strike/shared';
 import { HeroVoxelBody } from '../game/HeroVoxelBody';
 import type { HeroAnimationMode, HeroWalkDirection } from '../game/HeroVoxelBody';
 import { suppressExpectedContextLossLog } from '../game/webglLifecycle';
@@ -22,6 +22,7 @@ type HeroPreviewLoopStep = {
 };
 type Vector3Tuple = [number, number, number];
 type DprSetting = number | [number, number];
+export type HeroPreviewRank = Pick<PublicRankSnapshot, 'tier' | 'division' | 'isRanked'>;
 
 interface HeroPreviewCanvasProps {
   heroId: HeroId;
@@ -38,6 +39,7 @@ interface HeroPreviewCanvasProps {
   hasFlag?: boolean;
   postureScaleY?: number;
   animationMode?: HeroPreviewAnimationMode;
+  platformRank?: HeroPreviewRank | null;
   preserveDrawingBuffer?: boolean;
   'aria-label'?: string;
 }
@@ -74,9 +76,9 @@ const PREVIEW_CONFIG: Record<HeroPreviewSize, PreviewConfig> = {
     cameraTarget: [0, 0.22, 0],
     fov: 40,
     dpr: [1, 1.75],
-    bodyScale: 1.04,
+    bodyScale: 1.1,
     floorScale: 3.1,
-    bodyLift: 0,
+    bodyLift: 0.14,
     shadowOpacity: 0.34,
     idleSpeed: 0.18,
     idleIntensity: 0.9,
@@ -298,6 +300,7 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   hasFlag = false,
   postureScaleY = 1,
   animationMode = 'idle',
+  platformRank = null,
   preserveDrawingBuffer = false,
   'aria-label': ariaLabel,
 }: HeroPreviewCanvasProps) {
@@ -312,7 +315,8 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   const shouldIdleRotate = idleRotation ?? interactive;
   const shouldIdleAnimate = idleAnimation && config.idleIntensity > 0;
   const rotationInitialYaw = animationMode === 'slide' ? SLIDE_PREVIEW_YAW : initialYaw;
-  const previewReadyKey = `${heroId}:${team}:${size}:${animationMode}:${isBot}:${hasFlag}:${postureScaleY}`;
+  const platformRankKey = platformRank ? `${platformRank.tier}:${platformRank.division ?? 0}:${platformRank.isRanked}` : 'none';
+  const previewReadyKey = `${heroId}:${team}:${size}:${animationMode}:${isBot}:${hasFlag}:${postureScaleY}:${platformRankKey}`;
   const previewShellStyle = {
     '--hero-preview-accent': resolvedAccentColor,
   } as CSSProperties;
@@ -466,6 +470,7 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
             postureScaleY={postureScaleY}
             idleAnimation={shouldIdleAnimate}
             animationMode={animationMode}
+            platformRank={platformRank}
           />
           <PreviewRenderReadySignal readyKey={previewReadyKey} onReady={handlePreviewRendered} />
         </Canvas>
@@ -527,6 +532,7 @@ interface HeroPreviewSceneProps {
   postureScaleY: number;
   idleAnimation: boolean;
   animationMode: HeroPreviewAnimationMode;
+  platformRank: HeroPreviewRank | null;
 }
 
 function HeroPreviewScene({
@@ -543,6 +549,7 @@ function HeroPreviewScene({
   postureScaleY,
   idleAnimation,
   animationMode,
+  platformRank,
 }: HeroPreviewSceneProps) {
   const heroHeight = HERO_DEFINITIONS[heroId].stats.size.height;
   const rootRef = useRef<THREE.Group>(null);
@@ -569,6 +576,9 @@ function HeroPreviewScene({
   const previewFloorScale = config.floorScale * (actionFraming?.floorScale ?? 1);
   const scaledHeight = heroHeight * Math.max(0.45, Math.min(1, activePostureScaleY)) * previewBodyScale;
   const bodyCenterOffset = scaledHeight * 0.5;
+  const groundY = previewBodyLift - bodyCenterOffset - (platformRank ? 0.018 : 0.04);
+  const shadowY = platformRank ? groundY + 0.024 : groundY;
+  const shadowScale = platformRank ? Math.min(previewFloorScale, 1.95) : previewFloorScale;
   const previewMovementPose = bodyAnimationMode === 'run' || bodyAnimationMode === 'slide'
     ? 'run'
     : bodyAnimationMode === 'crouchWalk'
@@ -625,6 +635,15 @@ function HeroPreviewScene({
       <pointLight color={accentColor} position={[-2.4, 1.4, 2.2]} intensity={2.2} distance={6} />
       <pointLight color={accentColor} position={[2, 2.2, -1.8]} intensity={1.15} distance={5} />
 
+      {platformRank && (
+        <HeroRankPlatform
+          rank={platformRank}
+          accentColor={accentColor}
+          topY={groundY}
+          receiveShadow={config.shadows}
+        />
+      )}
+
       <group ref={rootRef} position={[0, previewBodyLift, 0]}>
         <group position={[0, -bodyCenterOffset, 0]} scale={previewBodyScale}>
           <HeroVoxelBody
@@ -650,15 +669,218 @@ function HeroPreviewScene({
 
       {showShadow && (
         <ContactShadows
-          position={[0, previewBodyLift - bodyCenterOffset - 0.04, 0]}
-          opacity={config.shadowOpacity}
-          scale={previewFloorScale}
+          position={[0, shadowY, 0]}
+          opacity={platformRank ? Math.min(0.5, config.shadowOpacity + 0.08) : config.shadowOpacity}
+          scale={shadowScale}
           blur={1.8}
           far={2.2}
           color={accentColor}
         />
       )}
     </>
+  );
+}
+
+type HeroPlatformTier = HeroPreviewRank['tier'];
+type HeroPlatformTheme = ReturnType<typeof getRankTheme>;
+
+function clampPlatformDivision(division: HeroPreviewRank['division']): number {
+  if (typeof division !== 'number' || !Number.isFinite(division)) return 0;
+  return Math.max(0, Math.min(4, Math.floor(division)));
+}
+
+function getPlatformDecorationAngles(tier: HeroPlatformTier, division: number): number[] {
+  if (tier === 'unranked') return [-0.72, 0.72];
+  if (tier === 'gold' || tier === 'unemployed') return [-0.96, -0.48, 0, 0.48, 0.96];
+  if (tier === 'diamond') return [-1.08, -0.54, 0, 0.54, 1.08];
+
+  const count = Math.min(5, Math.max(3, division + 2));
+  if (count === 3) return [-0.82, 0, 0.82];
+  if (count === 4) return [-0.96, -0.32, 0.32, 0.96];
+  return [-1.04, -0.52, 0, 0.52, 1.04];
+}
+
+function HeroRankPlatform({
+  rank,
+  accentColor,
+  topY,
+  receiveShadow,
+}: {
+  rank: HeroPreviewRank;
+  accentColor: string;
+  topY: number;
+  receiveShadow: boolean;
+}) {
+  const tier = rank.tier ?? 'unranked';
+  const theme = getRankTheme(tier);
+  const division = clampPlatformDivision(rank.division);
+  const height = 0.12;
+  const radius = 0.8;
+  const ringTube = 0.022;
+  const centerY = topY - height * 0.5;
+  const topLocalY = height * 0.5;
+  const rankedIntensity = rank.isRanked ? 1 : 0.58;
+  const decorationAngles = getPlatformDecorationAngles(tier, division);
+
+  return (
+    <group position={[0, centerY, 0]}>
+      <pointLight
+        color={theme.primary}
+        position={[0, topLocalY + 0.24, 0.36]}
+        intensity={(0.55 + division * 0.12) * rankedIntensity}
+        distance={2.65}
+      />
+      <mesh castShadow={receiveShadow} receiveShadow={receiveShadow}>
+        <cylinderGeometry args={[radius, radius * 1.08, height, 64, 1, false]} />
+        <meshStandardMaterial
+          color={theme.secondary}
+          emissive={theme.primary}
+          emissiveIntensity={0.08 + division * 0.018}
+          metalness={0.28}
+          roughness={0.58}
+        />
+      </mesh>
+      <mesh position={[0, topLocalY + 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow={receiveShadow}>
+        <circleGeometry args={[radius * 0.94, 64]} />
+        <meshStandardMaterial
+          color={theme.primary}
+          emissive={accentColor}
+          emissiveIntensity={0.04}
+          metalness={0.2}
+          roughness={0.5}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      <mesh position={[0, topLocalY + 0.024, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[radius * 0.89, ringTube, 10, 64]} />
+        <meshStandardMaterial
+          color={theme.accent}
+          emissive={theme.primary}
+          emissiveIntensity={0.22 + division * 0.035}
+          metalness={0.34}
+          roughness={0.38}
+        />
+      </mesh>
+      <mesh position={[0, topLocalY + 0.029, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[radius * 0.46, ringTube * 0.52, 8, 48]} />
+        <meshStandardMaterial
+          color={theme.foreground}
+          emissive={theme.primary}
+          emissiveIntensity={0.08 + division * 0.02}
+          metalness={0.24}
+          roughness={0.48}
+        />
+      </mesh>
+      <mesh position={[0, -height * 0.5 - 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[radius * 1.06, 64]} />
+        <meshBasicMaterial
+          color={theme.primary}
+          transparent
+          opacity={rank.isRanked ? 0.16 + division * 0.025 : 0.09}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      {decorationAngles.map((angle) => (
+        <HeroRankPlatformDecoration
+          key={`${tier}:${angle}`}
+          tier={tier}
+          theme={theme}
+          angle={angle}
+          radius={radius * 0.74}
+          topY={topLocalY}
+          division={division}
+        />
+      ))}
+    </group>
+  );
+}
+
+function HeroRankPlatformDecoration({
+  tier,
+  theme,
+  angle,
+  radius,
+  topY,
+  division,
+}: {
+  tier: HeroPlatformTier;
+  theme: HeroPlatformTheme;
+  angle: number;
+  radius: number;
+  topY: number;
+  division: number;
+}) {
+  const x = Math.sin(angle) * radius;
+  const z = Math.cos(angle) * radius;
+  const size = 0.058;
+  const position: Vector3Tuple = [x, topY + 0.031, z];
+  const commonMaterial = (
+    <meshStandardMaterial
+      color={theme.accent}
+      emissive={theme.primary}
+      emissiveIntensity={0.14 + division * 0.025}
+      metalness={0.28}
+      roughness={0.42}
+    />
+  );
+
+  if (tier === 'gold') {
+    return (
+      <mesh position={[x, topY + size * 1.18, z]} rotation={[0, angle + Math.PI / 4, 0]} castShadow>
+        <coneGeometry args={[size * 0.95, size * 2.2, 4]} />
+        {commonMaterial}
+      </mesh>
+    );
+  }
+
+  if (tier === 'diamond') {
+    return (
+      <mesh position={[x, topY + size * 1.24, z]} rotation={[0.22, angle, 0.18]} scale={[0.78, 1.32, 0.78]} castShadow>
+        <octahedronGeometry args={[size * 1.25, 0]} />
+        {commonMaterial}
+      </mesh>
+    );
+  }
+
+  if (tier === 'bronze') {
+    return (
+      <mesh position={position} rotation={[0, angle, 0]} castShadow>
+        <cylinderGeometry args={[size * 0.92, size * 1.05, size * 0.62, 18]} />
+        {commonMaterial}
+      </mesh>
+    );
+  }
+
+  if (tier === 'silver') {
+    return (
+      <mesh position={[x, topY + size * 0.92, z]} rotation={[0.6, angle, 0.5]} scale={[1, 0.68, 1]} castShadow>
+        <octahedronGeometry args={[size * 1.12, 0]} />
+        {commonMaterial}
+      </mesh>
+    );
+  }
+
+  if (tier === 'unemployed') {
+    return (
+      <group position={[x, topY + 0.02, z]} rotation={[0, angle, 0]}>
+        <mesh position={[0, size * 0.5, 0]} castShadow>
+          <boxGeometry args={[size * 1.65, size, size * 0.72]} />
+          {commonMaterial}
+        </mesh>
+        <mesh position={[0, size * 1.17, 0]} castShadow>
+          <boxGeometry args={[size * 0.82, size * 0.26, size * 0.34]} />
+          {commonMaterial}
+        </mesh>
+      </group>
+    );
+  }
+
+  return (
+    <mesh position={position} rotation={[0.18, angle + Math.PI / 5, 0.12]} castShadow>
+      <boxGeometry args={[size * 1.2, size * 0.72, size * 1.2]} />
+      {commonMaterial}
+    </mesh>
   );
 }
 

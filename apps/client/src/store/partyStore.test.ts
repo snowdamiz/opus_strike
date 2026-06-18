@@ -12,6 +12,35 @@ import {
   isPartyLeader,
   usePartyStore,
 } from './partyStore';
+import { clearActivePartySession, loadActivePartySession, saveActivePartySession } from '../utils/activePartySession';
+import { loadPlayMenuPreferences, savePlayMenuPreferences } from '../utils/playMenuPreferences';
+
+function installStorageMock(): void {
+  const storage = new Map<string, string>();
+  const localStorage = {
+    get length() {
+      return storage.size;
+    },
+    clear: () => {
+      storage.clear();
+    },
+    getItem: (key: string) => storage.get(key) ?? null,
+    key: (index: number) => Array.from(storage.keys())[index] ?? null,
+    setItem: (key: string, value: string) => {
+      storage.set(key, value);
+    },
+    removeItem: (key: string) => {
+      storage.delete(key);
+    },
+  };
+
+  (globalThis as any).window = {
+    localStorage,
+    dispatchEvent: () => true,
+  };
+}
+
+installStorageMock();
 
 const rank = getRankFromRating(900, 0);
 const party: PartyStateSnapshot = {
@@ -79,5 +108,27 @@ assert.equal(usePartyStore.getState().launchError, 'launch failed');
 usePartyStore.getState().clearParty();
 assert.equal(usePartyStore.getState().party, null);
 assert.equal(usePartyStore.getState().localUserId, null);
+
+const botFillEnabledByMode = createDefaultPartyBotFillSettings();
+botFillEnabledByMode.battle_royal = true;
+savePlayMenuPreferences({
+  selectedPlayMode: 'battle_royal',
+  botFillEnabledByMode,
+});
+assert.equal(loadPlayMenuPreferences().selectedPlayMode, 'battle_royal');
+assert.equal(loadPlayMenuPreferences().botFillEnabledByMode.battle_royal, true);
+
+saveActivePartySession({
+  partyId: 'party-a',
+  userId: 'leader',
+  playerName: 'Leader',
+  heroId: 'chronos',
+});
+assert.equal(loadActivePartySession()?.partyId, 'party-a');
+assert.equal(loadActivePartySession()?.heroId, 'chronos');
+clearActivePartySession('party-b');
+assert.equal(loadActivePartySession()?.partyId, 'party-a');
+clearActivePartySession('party-a');
+assert.equal(loadActivePartySession(), null);
 
 console.log('party-store tests passed');

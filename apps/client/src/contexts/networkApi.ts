@@ -47,6 +47,14 @@ export interface RunningGameStatusResponse {
   mapSize?: VoxelMapSizeId | null;
 }
 
+export interface ActivePartySessionResponse {
+  party: {
+    partyId: string;
+    persistentPartyId: string;
+    updatedAt: string;
+  } | null;
+}
+
 function getHttpUrl(): string {
   return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
 }
@@ -120,6 +128,18 @@ export async function requestRunningGameStatus(roomId: string): Promise<RunningG
 
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, 'Failed to check running game'));
+  }
+
+  return response.json();
+}
+
+export async function requestActivePartySession(): Promise<ActivePartySessionResponse> {
+  const response = await fetch(`${getHttpUrl()}/social/party-session`, {
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load saved party'));
   }
 
   return response.json();

@@ -18,11 +18,18 @@ import {
   launchPartyToCustomLobby,
   launchPartyToMatchmaking,
 } from '../party/partyLaunch';
+import {
+  deletePersistentParty,
+  loadPersistentPartyForRestore,
+  savePersistentParty,
+} from '../party/persistentParty';
+import { loggers } from '../utils/logger';
 
 interface PartyJoinOptions {
   heroId?: HeroId;
   authToken?: string;
   devTutorialBypass?: boolean;
+  restorePartyId?: string;
 }
 
 const PARTY_MESSAGE_RATE_LIMITS = {
@@ -34,6 +41,7 @@ const PARTY_MESSAGE_RATE_LIMITS = {
   kick: { limit: 8, intervalMs: 5000 },
   start: { limit: 4, intervalMs: 8000 },
 } satisfies Record<string, RateLimitRule>;
+const PARTY_IDLE_DISCONNECT_MS = 10 * 60 * 1000;
 
 function booleanValue(value: unknown): boolean | null {
   if (typeof value === 'boolean') return value;
@@ -109,15 +117,28 @@ function isDevTutorialBypassEnabled(value: unknown): boolean {
   return value === true || value === 'true' || value === '1';
 }
 
+function sanitizePersistentPartyId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return /^[a-zA-Z0-9:_-]{2,160}$/.test(trimmed) ? trimmed : null;
+}
+
 export class PartyRoom extends Room {
   maxClients = PARTY_MAX_MEMBERS;
   override get autoDispose(): boolean {
-    return true;
+    return false;
   }
 
   private party!: PartyRosterRuntime;
   private readonly rateLimiter = new MessageRateLimiter();
   private readonly authBySessionId = new Map<string, RoomAuthContext>();
+  private readonly allowedHumanUserIds = new Set<string>();
+  private idleDisconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  private persistentPartyId: string | null = null;
+  private restorePartyId: string | null = null;
+  private restoreAttempted = false;
+  private hasHadHumanMember = false;
+  private disposed = false;
 
   async onAuth(client: Client, options: PartyJoinOptions, request?: IncomingMessage): Promise<RoomAuthContext> {
     const authContext = await resolveRoomAuthContext(options as Record<string, unknown>, request);
@@ -125,8 +146,10 @@ export class PartyRoom extends Room {
     return authContext;
   }
 
-  onCreate() {
+  onCreate(options: PartyJoinOptions = {}) {
     this.party = new PartyRosterRuntime(this.roomId, PARTY_MAX_MEMBERS);
+    this.restorePartyId = sanitizePersistentPartyId(options.restorePartyId);
+    this.persistentPartyId = this.restorePartyId ?? this.roomId;
 
     this.onMessage('setHero', (client, data: unknown) => {
       if (!this.consumePartyMessage(client, 'setHero', PARTY_MESSAGE_RATE_LIMITS.hero)) return;
@@ -182,9 +205,16 @@ export class PartyRoom extends Room {
   }
 
   async onJoin(client: Client, options: PartyJoinOptions) {
+    this.clearIdleDisconnectTimer();
     const authContext = (client as Client & { auth?: RoomAuthContext }).auth;
     if (!authContext) {
       client.send('error', { message: 'Authentication required' });
+      client.leave();
+      return;
+    }
+
+    if (!(await this.restorePersistentPartyFor(authContext))) {
+      client.send('error', { message: 'Party is no longer available' });
       client.leave();
       return;
     }
@@ -224,6 +254,8 @@ export class PartyRoom extends Room {
       oldClient?.leave(4000);
     }
 
+    this.allowedHumanUserIds.add(authContext.userId);
+    this.hasHadHumanMember = true;
     this.broadcast('partyMemberJoined', {
       userId: authContext.userId,
       displayName: authContext.displayName,
@@ -234,12 +266,21 @@ export class PartyRoom extends Room {
     this.broadcastPartyState();
   }
 
-  onLeave(client: Client) {
+  onLeave(client: Client, consented?: boolean) {
     this.rateLimiter.clearScope(client.sessionId);
     this.authBySessionId.delete(client.sessionId);
     const change = this.party.removeSession(client.sessionId);
-    if (!change) return;
+    const hasRemainingClients = this.clients.filter((candidate) => candidate.sessionId !== client.sessionId).length > 0;
+    if (!change) {
+      if (!hasRemainingClients) {
+        this.scheduleIdleDisconnect();
+      }
+      return;
+    }
 
+    if (consented === true && !change.member.isBot) {
+      this.allowedHumanUserIds.delete(change.member.userId);
+    }
     this.broadcast('partyMemberLeft', {
       userId: change.member.userId,
       displayName: change.member.displayName,
@@ -248,10 +289,45 @@ export class PartyRoom extends Room {
       this.broadcast('partyLeaderChanged', { leaderUserId: this.party.leaderId });
     }
     this.broadcastPartyState();
+    if (!hasRemainingClients) {
+      this.scheduleIdleDisconnect();
+    }
+  }
+
+  onDispose() {
+    this.disposed = true;
+    this.clearIdleDisconnectTimer();
+  }
+
+  private async restorePersistentPartyFor(authContext: RoomAuthContext): Promise<boolean> {
+    if (!this.restorePartyId || this.restoreAttempted) return true;
+    this.restoreAttempted = true;
+
+    const persistentParty = await loadPersistentPartyForRestore(this.restorePartyId, authContext.userId);
+    if (!persistentParty) return false;
+
+    this.persistentPartyId = persistentParty.id;
+    this.allowedHumanUserIds.clear();
+    for (const userId of persistentParty.allowedUserIds) {
+      this.allowedHumanUserIds.add(userId);
+    }
+    this.allowedHumanUserIds.add(persistentParty.ownerUserId);
+    if (persistentParty.leaderUserId) {
+      this.allowedHumanUserIds.add(persistentParty.leaderUserId);
+    }
+    this.hasHadHumanMember = true;
+    this.party.restorePersistentSnapshot(isRecord(persistentParty.snapshot) ? persistentParty.snapshot : null);
+    return true;
   }
 
   private async canJoinParty(authContext: RoomAuthContext): Promise<boolean> {
-    if (this.party.size === 0 || this.party.getMember(authContext.userId)) return true;
+    if (
+      this.party.getMember(authContext.userId) ||
+      this.allowedHumanUserIds.has(authContext.userId)
+    ) {
+      return true;
+    }
+    if (this.party.size === 0 && !this.hasHadHumanMember) return true;
 
     const invite = await prisma.partyInvite.findFirst({
       where: {
@@ -366,6 +442,9 @@ export class PartyRoom extends Room {
         targetClient?.send('partyKicked', { reason: 'Kicked by party leader' });
         targetClient?.leave(4001);
       }
+      if (!removed.isBot) {
+        this.allowedHumanUserIds.delete(removed.userId);
+      }
       this.broadcastPartyState();
     } catch (error) {
       client.send('error', { message: error instanceof Error ? error.message : 'Failed to kick party member' });
@@ -396,6 +475,7 @@ export class PartyRoom extends Room {
       const target = this.clients.find((candidate) => candidate.sessionId === partyMember.sessionId);
       target?.send('partyLaunch', payload);
     }
+    this.deletePersistentPartyRecord();
   }
 
   private sendLaunchError(client: Client, message: string): void {
@@ -407,11 +487,61 @@ export class PartyRoom extends Room {
   private broadcastPartyState(): void {
     this.updateMetadata();
     this.broadcast('partyState', this.party.snapshot());
+    this.persistPartyState();
+  }
+
+  private persistPartyState(): void {
+    const persistentPartyId = this.persistentPartyId ?? this.roomId;
+    this.persistentPartyId = persistentPartyId;
+    const allowedUserIds = Array.from(this.allowedHumanUserIds);
+    const ownerUserId = this.party.leaderId ?? allowedUserIds[0] ?? null;
+
+    if (!ownerUserId) {
+      this.deletePersistentPartyRecord();
+      return;
+    }
+
+    savePersistentParty({
+      persistentPartyId,
+      roomId: this.roomId,
+      ownerUserId,
+      leaderUserId: this.party.leaderId,
+      allowedUserIds,
+      party: this.party,
+    }).catch((error) => {
+      loggers.room.warn('Failed to persist party state', error);
+    });
+  }
+
+  private deletePersistentPartyRecord(): void {
+    const persistentPartyId = this.persistentPartyId;
+    if (!persistentPartyId) return;
+
+    deletePersistentParty(persistentPartyId).catch((error) => {
+      loggers.room.warn('Failed to clear persistent party', error);
+    });
+  }
+
+  private scheduleIdleDisconnect(): void {
+    this.clearIdleDisconnectTimer();
+    this.idleDisconnectTimeout = setTimeout(() => {
+      this.idleDisconnectTimeout = null;
+      if (this.disposed || this.clients.length > 0) return;
+      this.disconnect();
+    }, PARTY_IDLE_DISCONNECT_MS);
+    this.idleDisconnectTimeout.unref?.();
+  }
+
+  private clearIdleDisconnectTimer(): void {
+    if (!this.idleDisconnectTimeout) return;
+    clearTimeout(this.idleDisconnectTimeout);
+    this.idleDisconnectTimeout = null;
   }
 
   private updateMetadata(): void {
     this.setMetadata({
       leaderUserId: this.party.leaderId,
+      persistentPartyId: this.persistentPartyId,
       memberUserIds: this.party.getMembers().map((member) => member.userId),
       selectedMode: this.party.mode,
       size: this.party.size,

@@ -108,6 +108,7 @@ interface JoinOptions {
   initialBotCount?: number;
   botFillMode?: BotFillMode;
   defaultBotDifficulty?: BotDifficulty;
+  selectedHero?: HeroId;
   partyBots?: PartyBotLaunchDescriptor[];
   devTutorialBypass?: boolean;
 }
@@ -490,7 +491,7 @@ export class LobbyRoom extends Room<LobbyState> {
     player.isHost = this.getLobbyHumanCount() === 0; // First human player is host
     player.isReady = this.isMatchmakingQueue();
     player.team = this.resolveJoiningPlayerTeam(authContext);
-    player.heroId = '';
+    player.heroId = isHeroId(options.selectedHero) ? options.selectedHero : '';
     player.isBot = false;
     player.botDifficulty = '';
     player.botProfileId = '';

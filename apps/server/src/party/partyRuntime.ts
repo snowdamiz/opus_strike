@@ -56,6 +56,13 @@ export interface AddPartyBotInput {
   difficulty?: BotDifficulty;
 }
 
+export interface PersistentPartySnapshotInput {
+  selectedMode?: unknown;
+  gameplayMode?: unknown;
+  botFillEnabledByMode?: unknown;
+  members?: unknown;
+}
+
 export interface PartyMemberChange {
   member: PartyRuntimeMember;
   replacedSessionId: string | null;
@@ -237,6 +244,71 @@ export class PartyRosterRuntime {
     return this.getMembers().filter((member) => member.isBot);
   }
 
+  restorePersistentSnapshot(snapshot: PersistentPartySnapshotInput | null | undefined): void {
+    if (!snapshot || typeof snapshot !== 'object') return;
+
+    if (isPartyMode(snapshot.selectedMode)) {
+      this.selectedMode = snapshot.selectedMode;
+    }
+    if (isGameplayMode(snapshot.gameplayMode)) {
+      this.gameplayMode = snapshot.gameplayMode;
+    }
+
+    const botFill = createDefaultPartyBotFillSettings();
+    if (snapshot.botFillEnabledByMode && typeof snapshot.botFillEnabledByMode === 'object') {
+      const rawBotFill = snapshot.botFillEnabledByMode as Partial<Record<GameplayMode, unknown>>;
+      for (const mode of Object.keys(botFill) as GameplayMode[]) {
+        botFill[mode] = rawBotFill[mode] === true;
+      }
+    }
+    this.botFillEnabledByMode = botFill;
+
+    const members = Array.isArray(snapshot.members) ? snapshot.members : [];
+    for (const member of Array.from(this.members.values())) {
+      if (member.isBot) {
+        this.members.delete(member.userId);
+      }
+    }
+
+    for (const member of members) {
+      if (this.members.size >= this.maxMembers) break;
+      if (!member || typeof member !== 'object') continue;
+      const rawMember = member as Partial<PartyMemberSnapshot>;
+      if (rawMember.isBot !== true) continue;
+
+      const botIndex = this.botCounter++;
+      const competitiveRating = 800;
+      const heroId = typeof rawMember.heroId === 'string' && ALL_HERO_IDS.includes(rawMember.heroId as HeroId)
+        ? rawMember.heroId as HeroId
+        : 'blaze';
+      const difficulty = normalizeBotDifficulty(rawMember.botDifficulty);
+      const displayName = typeof rawMember.displayName === 'string' && rawMember.displayName.trim()
+        ? rawMember.displayName.trim().slice(0, 24)
+        : `Bot ${botIndex + 1}`;
+
+      this.members.set(`party-bot:${this.partyId}:restored:${botIndex}`, {
+        userId: `party-bot:${this.partyId}:restored:${botIndex}`,
+        sessionId: null,
+        displayName,
+        heroId,
+        ready: true,
+        connected: true,
+        isBot: true,
+        botDifficulty: difficulty,
+        rank: getRankFromRating(competitiveRating, 0),
+        competitiveRating,
+        rankDivisionIndex: getRankDivisionIndex(competitiveRating),
+        walletAddress: null,
+        tutorialCompletedAt: null,
+        rankedPlacementsRemaining: 0,
+        devTutorialBypass: true,
+      });
+    }
+
+    this.reassignBotHeroes();
+    this.launchError = null;
+  }
+
   updateHero(userId: string, heroId: HeroId): PartyRuntimeMember | null {
     const member = this.members.get(userId);
     if (!member) return null;
@@ -407,4 +479,8 @@ export class PartyRosterRuntime {
       occupied.add(bot.heroId);
     }
   }
+}
+
+function normalizeBotDifficulty(value: unknown): BotDifficulty {
+  return value === 'easy' || value === 'normal' || value === 'hard' ? value : 'normal';
 }

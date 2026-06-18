@@ -35,9 +35,11 @@ import {
 import {
   getDevTutorialBypassRoomOptions,
   requestQuickPlayTicket,
+  requestActivePartySession,
   requestRankedTicket,
   requestRankedTokenHoldStatus,
   requestRunningGameStatus,
+  type ActivePartySessionResponse,
   type RankedTokenHoldStatus,
 } from './networkApi';
 import { setupLobbyListeners as setupLobbyRoomListeners } from './lobbyListeners';
@@ -56,10 +58,11 @@ import { projectileInitialState } from '../store/slices/projectiles';
 import { resetGameTiming } from '../store/gameTimingStore';
 import { createPracticeAbilityStates } from './practiceAbilities';
 import { usePartyStore } from '../store/partyStore';
+import { clearActivePartySession, saveActivePartySession } from '../utils/activePartySession';
 
 export type { RankedTokenHoldStatus } from './networkApi';
 
-type StartPracticeGameOptions = { mapSeed?: number; tutorial?: boolean };
+type StartPracticeGameOptions = { mapSeed?: number; tutorial?: boolean; heroId?: HeroId };
 const TUTORIAL_HERO_ID: HeroId = 'blaze';
 
 function facingToLookYaw(facing: { x: number; z: number } | null | undefined): number {
@@ -87,8 +90,8 @@ export interface RunningGameReconnectStatus {
 
 interface NetworkContextType {
   // Lobby operations
-  quickPlay: (playerName: string, gameplayMode?: GameplayMode, botFillEnabled?: boolean) => Promise<void>;
-  rankedPlay: (playerName: string) => Promise<void>;
+  quickPlay: (playerName: string, gameplayMode?: GameplayMode, botFillEnabled?: boolean, selectedHero?: HeroId) => Promise<void>;
+  rankedPlay: (playerName: string, selectedHero?: HeroId) => Promise<void>;
   getRankedTokenHoldStatus: () => Promise<RankedTokenHoldStatus>;
   startPracticeGame: (playerName?: string, options?: StartPracticeGameOptions) => void;
   startTutorialGame: (playerName?: string) => void;
@@ -97,6 +100,8 @@ interface NetworkContextType {
   leaveLobby: () => void;
   ensureParty: (playerName: string, heroId?: HeroId) => Promise<string>;
   joinParty: (playerName: string, partyId: string, heroId?: HeroId) => Promise<void>;
+  restoreParty: (playerName: string, persistentPartyId: string, heroId?: HeroId) => Promise<void>;
+  getActivePartySession: () => Promise<ActivePartySessionResponse>;
   leaveParty: () => void;
   setPartyHero: (heroId: HeroId) => void;
   setPartyReady: (ready: boolean) => void;
@@ -281,6 +286,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     rejectPendingVoiceTokenRequests('connection cleaned up before voice token response');
     rejectPendingPlayerReportRequests('connection cleaned up before report response');
     if (partyRoomRef.current) {
+      clearActivePartySession(partyRoomRef.current.id);
       try {
         partyRoomRef.current.leave(false);
       } catch (e) {
@@ -363,7 +369,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           player.lookPitch = 0;
         }
         player.isReady = isTutorial;
-        player.heroId = isTutorial ? TUTORIAL_HERO_ID : null;
+        player.heroId = isTutorial ? TUTORIAL_HERO_ID : options?.heroId ?? null;
         if (tutorialHeroStats) {
           player.maxHealth = tutorialHeroStats.maxHealth;
           player.health = Math.max(
@@ -474,7 +480,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const quickPlay = useCallback(async (
     playerName: string,
     gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE,
-    botFillEnabled = false
+    botFillEnabled = false,
+    selectedHero?: HeroId
   ) => {
     setLoading(true);
 
@@ -504,6 +511,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         initialBotCount: 0,
         botFillMode: botFillEnabled ? 'fill_even' : 'manual',
         defaultBotDifficulty: 'normal',
+        selectedHero,
       });
 
       setupLobbyListeners(lobbyRoomRef.current, playerName);
@@ -538,7 +546,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     }
   }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setMatchmakingStatus, setAppPhase, setConnected, setPracticeMode]);
 
-  const rankedPlay = useCallback(async (playerName: string) => {
+  const rankedPlay = useCallback(async (playerName: string, selectedHero?: HeroId) => {
     setLoading(true);
 
     try {
@@ -563,6 +571,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         initialBotCount: 0,
         botFillMode: 'manual',
         defaultBotDifficulty: 'normal',
+        selectedHero,
       });
 
       setupLobbyListeners(lobbyRoomRef.current, playerName);
@@ -699,7 +708,18 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     };
 
     room.onMessage('partyState', (partyState: unknown) => {
-      usePartyStore.getState().setPartyState(partyState as PartyStateSnapshot, useGameStore.getState().userId);
+      const snapshot = partyState as PartyStateSnapshot;
+      const userId = useGameStore.getState().userId;
+      usePartyStore.getState().setPartyState(snapshot, userId);
+      const localMember = snapshot.members.find((member) => member.userId === userId);
+      if (userId && localMember) {
+        saveActivePartySession({
+          partyId: snapshot.partyId,
+          userId,
+          playerName: playerNameForLaunch,
+          heroId: localMember.heroId,
+        });
+      }
     });
     room.onMessage('partyMemberJoined', (payload: unknown) => {
       logPartyNotification('party member joined', payload);
@@ -717,6 +737,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       const message = typeof payload === 'object' && payload && 'reason' in payload
         ? String((payload as { reason?: unknown }).reason || 'Kicked from party')
         : 'Kicked from party';
+      clearActivePartySession(room.id);
       usePartyStore.getState().clearParty();
       usePartyStore.getState().setLaunchError(message);
     });
@@ -744,6 +765,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     if (partyRoomRef.current && existingParty?.partyId === partyId) return;
 
     if (partyRoomRef.current) {
+      clearActivePartySession(partyRoomRef.current.id);
       try {
         partyRoomRef.current.leave(false);
       } catch (error) {
@@ -763,6 +785,31 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setAppPhase('menu');
   }, [getClient, setAppPhase, setupPartyListeners]);
 
+  const restoreParty = useCallback(async (playerName: string, persistentPartyId: string, heroId?: HeroId) => {
+    if (partyRoomRef.current) {
+      clearActivePartySession(partyRoomRef.current.id);
+      try {
+        partyRoomRef.current.leave(false);
+      } catch (error) {
+        loggers.network.debug('error leaving old party room', error);
+      }
+      partyRoomRef.current = null;
+      usePartyStore.getState().clearParty();
+    }
+
+    const client = getClient();
+    partyRoomRef.current = await client.create('party_room', {
+      playerName,
+      heroId,
+      restorePartyId: persistentPartyId,
+      ...getDevTutorialBypassRoomOptions(),
+    });
+    setupPartyListeners(partyRoomRef.current, playerName);
+    setAppPhase('menu');
+  }, [getClient, setAppPhase, setupPartyListeners]);
+
+  const getActivePartySession = useCallback(() => requestActivePartySession(), []);
+
   const ensureParty = useCallback(async (playerName: string, heroId?: HeroId): Promise<string> => {
     const existingParty = usePartyStore.getState().party;
     if (partyRoomRef.current && existingParty) return existingParty.partyId;
@@ -780,6 +827,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const leaveParty = useCallback(() => {
     if (partyRoomRef.current) {
+      clearActivePartySession(partyRoomRef.current.id);
       partyRoomRef.current.leave();
       partyRoomRef.current = null;
     }
@@ -1252,6 +1300,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     joinMatchmakingLobby,
     ensureParty,
     joinParty,
+    restoreParty,
+    getActivePartySession,
     leaveParty,
     setPartyHero,
     setPartyReady,
@@ -1307,6 +1357,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     devSetHero,
     disconnect,
     finalizeMapVote,
+    getActivePartySession,
     getRankedTokenHoldStatus,
     ensureParty,
     getRunningGameReconnect,
@@ -1328,6 +1379,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     reportMatchSceneReady,
     reportPlayer,
     requestVoiceToken,
+    restoreParty,
     selectHero,
     selectTeam,
     sendMovementCommands,

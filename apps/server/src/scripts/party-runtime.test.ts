@@ -116,6 +116,33 @@ botOnlyParty.addBot(botOnlyLeader.userId);
 botOnlyParty.removeSession('session-solo-leader');
 assert.equal(botOnlyParty.leaderId, null);
 
+const rejoinParty = new PartyRosterRuntime('party-rejoin', 4);
+const rejoinLeader = addMember(rejoinParty, 'rejoin-leader', 'session-rejoin-a', 900);
+rejoinParty.setMode(rejoinLeader.userId, 'quick_play', 'battle_royal');
+rejoinParty.setBotFillEnabled(rejoinLeader.userId, 'battle_royal', true);
+const rejoinBot = rejoinParty.addBot(rejoinLeader.userId, { difficulty: 'hard' });
+rejoinParty.removeSession('session-rejoin-a');
+assert.equal(rejoinParty.leaderId, null);
+assert.equal(rejoinParty.getBotMembers().length, 1);
+assert.equal(rejoinParty.snapshot().members.find((snapshot) => snapshot.userId === rejoinBot.userId)?.isBot, true);
+assert.equal(rejoinParty.snapshot().gameplayMode, 'battle_royal');
+assert.equal(rejoinParty.snapshot().botFillEnabledByMode.battle_royal, true);
+addMember(rejoinParty, 'rejoin-leader', 'session-rejoin-b', 900);
+assert.equal(rejoinParty.leaderId, 'rejoin-leader');
+assert.equal(rejoinParty.getBotMembers().length, 1);
+assert.equal(rejoinParty.snapshot().gameplayMode, 'battle_royal');
+assert.equal(rejoinParty.snapshot().botFillEnabledByMode.battle_royal, true);
+
+const restoredParty = new PartyRosterRuntime('party-restored', 4);
+restoredParty.restorePersistentSnapshot(rejoinParty.snapshot());
+assert.equal(restoredParty.getBotMembers().length, 1);
+assert.equal(restoredParty.snapshot().gameplayMode, 'battle_royal');
+assert.equal(restoredParty.snapshot().botFillEnabledByMode.battle_royal, true);
+addMember(restoredParty, 'rejoin-leader', 'session-restored-leader', 900);
+assert.equal(restoredParty.leaderId, 'rejoin-leader');
+assert.equal(restoredParty.getBotMembers().length, 1);
+assert.equal(restoredParty.validateStart().ok, true);
+
 const kickParty = new PartyRosterRuntime('party-kick', 4);
 const kickLeader = addMember(kickParty, 'kick-leader', 'session-kick-leader', 900);
 const kickedMember = addMember(kickParty, 'kicked-member', 'session-kicked-member', 950);

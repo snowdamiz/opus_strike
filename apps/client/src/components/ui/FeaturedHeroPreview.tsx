@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { HERO_DEFINITIONS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
-import { HeroPreviewCanvas, type HeroPreviewAnimationMode } from './HeroPreviewCanvas';
+import { HeroPreviewCanvas, type HeroPreviewAnimationMode, type HeroPreviewRank } from './HeroPreviewCanvas';
 
 type FeaturedHeroPreviewScale = 'default' | 'large';
 
@@ -36,6 +36,7 @@ export function FeaturedHeroPreview({
   animationMode,
   scale = 'default',
   className,
+  rank,
 }: {
   heroId: HeroId;
   accentColor: string;
@@ -43,6 +44,7 @@ export function FeaturedHeroPreview({
   animationMode: HeroPreviewAnimationMode;
   scale?: FeaturedHeroPreviewScale;
   className?: string;
+  rank?: HeroPreviewRank | null;
 }) {
   const [shouldMountPreview, setShouldMountPreview] = useState(false);
   const previewClassName = className ?? getFeaturedHeroPreviewClassName(animationMode, scale);
@@ -74,6 +76,7 @@ export function FeaturedHeroPreview({
       size="featured"
       initialYaw={initialYaw}
       animationMode={animationMode}
+      platformRank={rank}
       className={previewClassName}
     />
   ) : (

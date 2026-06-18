@@ -7,6 +7,10 @@ import { assertGameplayAccountEligible } from '../auth/accountEligibility';
 import { enforceJsonRateLimit, getRequestAuthToken } from '../auth/http';
 import { verifyAuthToken, type AuthTokenPayload } from '../auth/session';
 import {
+  canUserAccessPersistentPartyRoom,
+  findActivePersistentPartyForUser,
+} from '../party/persistentParty';
+import {
   SocialServiceError,
   createLobbyInvite,
   createPartyInvite,
@@ -106,9 +110,11 @@ function parseMatchMode(value: unknown): MatchMode | null {
 async function canInviteFromParty(partyId: string, userId: string): Promise<boolean> {
   const rooms = await matchMaker.query({ name: 'party_room' });
   const room = (rooms as any[]).find((candidate) => candidate.roomId === partyId);
-  if (!room) return false;
-  const memberUserIds = room.metadata?.memberUserIds;
-  return Array.isArray(memberUserIds) && memberUserIds.includes(userId);
+  if (room) {
+    const memberUserIds = room.metadata?.memberUserIds;
+    if (Array.isArray(memberUserIds) && memberUserIds.includes(userId)) return true;
+  }
+  return canUserAccessPersistentPartyRoom(partyId, userId);
 }
 
 function otherUser(friendship: FriendshipWithUsers, currentUserId: string) {
@@ -196,6 +202,28 @@ function sendSocialError(res: Response, error: unknown): void {
   console.error('[social] request failed:', error);
   res.status(500).json({ error: 'Internal server error' });
 }
+
+router.get('/party-session', async (req: Request, res: Response) => {
+  if (!enforceJsonRateLimit(req, res, 'social:read', SOCIAL_RATE_LIMITS.read)) return;
+
+  try {
+    const user = await requireCurrentUser(req, res, { requireGameplayEligible: true });
+    if (!user) return;
+
+    const party = await findActivePersistentPartyForUser(user.id);
+    res.json({
+      party: party
+        ? {
+            partyId: party.roomId,
+            persistentPartyId: party.id,
+            updatedAt: party.updatedAt.toISOString(),
+          }
+        : null,
+    });
+  } catch (error) {
+    sendSocialError(res, error);
+  }
+});
 
 router.get('/', async (req: Request, res: Response) => {
   if (!enforceJsonRateLimit(req, res, 'social:read', SOCIAL_RATE_LIMITS.read)) return;
