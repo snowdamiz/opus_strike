@@ -130,6 +130,7 @@ function getMusicVolume(): number {
 const pendingAudioPreloadNames = new Set<SoundName>();
 let pendingAudioPreloadFlush: Promise<void> | null = null;
 const SHARED_SOUND_LAYER_START_DELAY_MS = 20;
+const AUDIO_PRELOAD_FLUSH_BATCH_SIZE = 4;
 
 const sharedStreamedLoops = new Map<string, {
   audio: HTMLAudioElement;
@@ -140,6 +141,16 @@ const sharedStreamedLoops = new Map<string, {
   fadeRaf?: number;
   stopTimeout?: number;
 }>();
+
+function yieldAfterAudioPreloadBatch(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(() => resolve(), { timeout: 60 });
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
+}
 
 function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -528,9 +539,15 @@ async function flushPendingAudioPreloads(): Promise<void> {
       while (pendingAudioPreloadNames.size > 0) {
         const names = Array.from(pendingAudioPreloadNames);
         pendingAudioPreloadNames.clear();
-        flushedSoundCount += names.length;
-        updateAudioDiagnosticsState();
-        await Promise.all(names.map((name) => loadSharedSound(name)));
+        for (let index = 0; index < names.length; index += AUDIO_PRELOAD_FLUSH_BATCH_SIZE) {
+          const batch = names.slice(index, index + AUDIO_PRELOAD_FLUSH_BATCH_SIZE);
+          flushedSoundCount += batch.length;
+          updateAudioDiagnosticsState();
+          await Promise.all(batch.map((name) => loadSharedSound(name)));
+          if (index + AUDIO_PRELOAD_FLUSH_BATCH_SIZE < names.length || pendingAudioPreloadNames.size > 0) {
+            await yieldAfterAudioPreloadBatch();
+          }
+        }
       }
     } finally {
       recordAudioPreloadFlush({

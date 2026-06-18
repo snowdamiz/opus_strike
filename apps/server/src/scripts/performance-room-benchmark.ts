@@ -1051,6 +1051,14 @@ const benchmarkCases: BenchmarkCase[] = [
     run: () => runGameRoomTickBenchmark({ name: 'game_room_tick_8_players', humanCount: 8, botCount: 0 }),
   },
   {
+    name: 'game_room_tick_40_players',
+    run: () => runGameRoomTickBenchmark({ name: 'game_room_tick_40_players', humanCount: 40, botCount: 0 }),
+  },
+  {
+    name: 'game_room_tick_40_players_burst',
+    run: () => runGameRoomTickBenchmark({ name: 'game_room_tick_40_players_burst', humanCount: 40, botCount: 0, burstMovement: true }),
+  },
+  {
     name: 'game_room_tick_8_players_8_bots',
     run: () => runGameRoomTickBenchmark({ name: 'game_room_tick_8_players_8_bots', humanCount: 8, botCount: 8 }),
   },

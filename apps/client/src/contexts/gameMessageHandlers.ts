@@ -320,20 +320,49 @@ function clearHiddenLiveVisuals(playerId: string): void {
   removePlayerLiveVisualState(playerId);
 }
 
-function setStoredPlayerVisibility(playerId: string, visibility: PlayerVisibilityState): Player | null {
-  const store = useGameStore.getState();
-  const current = store.players.get(playerId);
-  if (!current) return null;
-  if (current.visibility === visibility) return current;
+interface PlayerVisibilityBatch {
+  getPlayer: (playerId: string) => Player | null;
+  setVisibility: (playerId: string, visibility: PlayerVisibilityState) => Player | null;
+  commit: () => void;
+}
 
-  const nextPlayer = { ...current, visibility };
-  const nextPlayers = new Map(store.players);
-  nextPlayers.set(playerId, nextPlayer);
-  useGameStore.setState({
-    players: nextPlayers,
-    localPlayer: store.localPlayer?.id === playerId ? nextPlayer : store.localPlayer,
-  });
-  return nextPlayer;
+function createPlayerVisibilityBatch(): PlayerVisibilityBatch {
+  const pendingPlayers = new Map<string, Player>();
+
+  return {
+    getPlayer: (playerId) => pendingPlayers.get(playerId) ?? useGameStore.getState().players.get(playerId) ?? null,
+    setVisibility: (playerId, visibility) => {
+      const current = pendingPlayers.get(playerId) ?? useGameStore.getState().players.get(playerId);
+      if (!current) return null;
+
+      if (current.visibility === visibility) {
+        return current;
+      }
+
+      const nextPlayer = { ...current, visibility };
+      pendingPlayers.set(playerId, nextPlayer);
+      return nextPlayer;
+    },
+    commit: () => {
+      if (pendingPlayers.size === 0) return;
+
+      const store = useGameStore.getState();
+      const nextPlayers = new Map(store.players);
+      let nextLocalPlayer = store.localPlayer;
+
+      for (const [playerId, player] of pendingPlayers) {
+        nextPlayers.set(playerId, player);
+        if (nextLocalPlayer?.id === playerId) {
+          nextLocalPlayer = player;
+        }
+      }
+
+      useGameStore.setState({
+        players: nextPlayers,
+        localPlayer: nextLocalPlayer,
+      });
+    },
+  };
 }
 
 function clonePlainVec3(source: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
@@ -743,7 +772,8 @@ export function setupPlayerTransformsHandler(
     transform: UnpackedPlayerTransform,
     tick: number,
     serverTime: number,
-    allowSelfBootstrap: boolean
+    allowSelfBootstrap: boolean,
+    visibilityBatch: PlayerVisibilityBatch
   ): 'remote' | 'self' | 'ignored' => {
     const decoded = dequantizeTransform(transform);
 
@@ -772,15 +802,14 @@ export function setupPlayerTransformsHandler(
       return 'self';
     }
 
-    const store = useGameStore.getState();
-    const existingPlayer = store.players.get(playerId);
+    const existingPlayer = visibilityBatch.getPlayer(playerId);
     if (!existingPlayer) return 'ignored';
     if (existingPlayer.name === localPlayerName) {
       loggers.network.sample('ghost-transform', 5000, 'ignoring ghost transform', playerId);
       return 'ignored';
     }
 
-    const remotePlayer = setStoredPlayerVisibility(playerId, 'visible') ?? existingPlayer;
+    const remotePlayer = visibilityBatch.setVisibility(playerId, 'visible') ?? existingPlayer;
     const wasGrappling = remotePlayer.movement.isGrappling;
     const nextMovement = movementFromBits(transform, remotePlayer.movement);
     remotePlayer.position = decoded.position;
@@ -825,12 +854,13 @@ export function setupPlayerTransformsHandler(
   };
 
   room.onMessage('playerTransformsV2', measureNetworkMessage('playerTransformsV2', (data: PlayerTransformsV2Message) => {
+    const visibilityBatch = createPlayerVisibilityBatch();
     const fullSnapshotPlayerIds = data.full ? new Set<string>() : null;
     let selfTransformCount = 0;
     let remoteTransformCount = 0;
     for (const hiddenPlayerId of data.hiddenPlayerIds || []) {
       if (hiddenPlayerId === sessionId) continue;
-      setStoredPlayerVisibility(hiddenPlayerId, 'hidden');
+      visibilityBatch.setVisibility(hiddenPlayerId, 'hidden');
       clearHiddenLiveVisuals(hiddenPlayerId);
     }
     for (const packedTransform of data.players) {
@@ -838,13 +868,14 @@ export function setupPlayerTransformsHandler(
       const playerId = playerIdByNetId.get(transform.netId);
       if (!playerId) continue;
       fullSnapshotPlayerIds?.add(playerId);
-      const result = handleTransform(playerId, transform, data.tick, data.serverTime, data.full === true);
+      const result = handleTransform(playerId, transform, data.tick, data.serverTime, data.full === true, visibilityBatch);
       if (result === 'self') {
         selfTransformCount++;
       } else if (result === 'remote') {
         remoteTransformCount++;
       }
     }
+    visibilityBatch.commit();
     if (remoteTransformCount > 0 || (data.hiddenPlayerIds?.length ?? 0) > 0) {
       setGameTiming(data.tick, data.serverTime);
     }

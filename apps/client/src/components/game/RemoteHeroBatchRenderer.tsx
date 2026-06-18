@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { HeroId, Player, Team } from '@voxel-strike/shared';
@@ -200,6 +200,9 @@ const ALL_HERO_IDS = Object.keys(HERO_BODY_MANIFESTS) as HeroId[];
 const ALL_TEAMS: readonly Team[] = ['red', 'blue'];
 const WORLD_UP_AXIS = new THREE.Vector3(0, 1, 0);
 const WORLD_UNIT_SCALE = new THREE.Vector3(1, 1, 1);
+const EMPTY_REMOTE_PLAYERS: readonly Player[] = Object.freeze([]);
+const REMOTE_BATCH_PREWARM_PLAYER_CAPACITY = 4;
+const REMOTE_BATCH_CAPACITY_GROWTH_PADDING = 2;
 
 function isHeroId(value: string | null | undefined): value is HeroId {
   return Boolean(value && HERO_BODY_MANIFESTS[value as HeroId]);
@@ -1311,6 +1314,7 @@ function RemoteHeroBatchGroup({
   const outlineMeshesRef = useRef<Array<THREE.InstancedMesh | null>>([]);
   const countsRef = useRef<Uint32Array>(new Uint32Array(resources.batches.length));
   const outlineCountsRef = useRef<Uint32Array>(new Uint32Array(resources.outlineBatches.length));
+  const capacityPlayersRef = useRef(Math.max(REMOTE_BATCH_PREWARM_PLAYER_CAPACITY, players.length));
   const playerIds = useMemo(() => {
     const ids = new Set<string>();
     for (const player of players) {
@@ -1318,7 +1322,10 @@ function RemoteHeroBatchGroup({
     }
     return ids;
   }, [players]);
-  const capacity = Math.max(1, players.length);
+  if (players.length > capacityPlayersRef.current) {
+    capacityPlayersRef.current = players.length + REMOTE_BATCH_CAPACITY_GROWTH_PADDING;
+  }
+  const capacity = capacityPlayersRef.current;
 
   if (countsRef.current.length !== resources.batches.length) {
     countsRef.current = new Uint32Array(resources.batches.length);
@@ -1326,6 +1333,18 @@ function RemoteHeroBatchGroup({
   if (outlineCountsRef.current.length !== resources.outlineBatches.length) {
     outlineCountsRef.current = new Uint32Array(resources.outlineBatches.length);
   }
+
+  useLayoutEffect(() => {
+    const runtimes = runtimeByPlayerIdRef.current;
+    for (const player of players) {
+      const runtime = runtimes.get(player.id);
+      if (runtime) {
+        updateRuntimeHero(runtime, player);
+      } else {
+        runtimes.set(player.id, createRemoteRuntime(player));
+      }
+    }
+  }, [players]);
 
   useEffect(() => {
     const runtimes = runtimeByPlayerIdRef.current;
@@ -1491,9 +1510,8 @@ export const RemoteHeroBatchRenderer = memo(function RemoteHeroBatchRenderer({
     }
   }, [resources]);
 
-  const groupedPlayers = useMemo<Array<{ key: string; players: Player[] }>>(() => {
+  const groupedPlayers = useMemo<Array<{ key: string; players: readonly Player[] }>>(() => {
     const groups = new Map<string, Player[]>();
-    const entries: Array<{ key: string; players: Player[] }> = [];
     for (const player of players) {
       const heroId = resolveHeroId(player);
       const key = `${heroId}:${player.team as Team}`;
@@ -1502,17 +1520,19 @@ export const RemoteHeroBatchRenderer = memo(function RemoteHeroBatchRenderer({
       else {
         const groupPlayers = [player];
         groups.set(key, groupPlayers);
-        entries.push({ key, players: groupPlayers });
       }
     }
-    return entries;
-  }, [players]);
+    return Array.from(resources.keys(), (key) => ({
+      key,
+      players: groups.get(key) ?? EMPTY_REMOTE_PLAYERS,
+    }));
+  }, [players, resources]);
 
   return (
     <>
       {groupedPlayers.map(({ key, players: groupPlayers }) => {
         const resource = resources.get(key);
-        if (!resource || groupPlayers.length === 0) return null;
+        if (!resource) return null;
         return (
           <RemoteHeroBatchGroup
             key={key}

@@ -7,6 +7,7 @@ import { SERVER_OWNED_MOVEMENT_STEP_SECONDS } from '../rooms/movementCommandDrai
 import { GameRoom } from '../rooms/GameRoom';
 import { Player } from '../rooms/schema/Player';
 import { createEmptyBotInput } from '../rooms/playerRuntime';
+import { PlayerPressStateTracker } from '../rooms/playerPressState';
 
 type BotMovementLodRoom = {
   stepServerOwnedBotMovementLodProxy(player: Player, input: PlayerInput, stepSeconds: number): boolean;
@@ -15,7 +16,6 @@ type BotMovementLodRoom = {
     aliveBotCount: number,
     simulationTier?: 'critical' | 'near' | 'background'
   ): boolean;
-  doesServerOwnedBotMovementInputRequireCriticalFullRate(input: PlayerInput): boolean;
   shouldScheduleBotPlanningForTier(
     bot: Player,
     tier: 'critical' | 'near' | 'background',
@@ -25,15 +25,23 @@ type BotMovementLodRoom = {
     aliveBotCount: number,
     simulationTier: 'critical' | 'near' | 'background'
   ): number;
+  getBotLineOfSightFrameBudget(aliveBotCount: number): number;
+  getBotSteeringProbeFrameBudget(aliveBotCount: number): number;
+  consumeBotLineOfSightFrameBudget(frameContext: { lineOfSightChecksRemaining: number }): boolean;
+  consumeBotSteeringProbeFrameBudget(frameContext: { steeringProbeChecksRemaining: number }): boolean;
   continueDeferredBotInput(botId: string, now: number, simulationTier?: 'critical' | 'near' | 'background'): void;
   shouldServerOwnedBotMovementReasonBypassBudget(
     reason: string,
     tier: 'critical' | 'near' | 'background',
     input: PlayerInput
   ): boolean;
+  suppressServerOwnedBotSkippedFullStepGameplayInput(input: PlayerInput): void;
+  suppressServerOwnedBotHighCountFullStepAbilityInput(input: PlayerInput): void;
+  shouldProcessServerOwnedBotProxyGameplayInput(player: Player, input: PlayerInput): boolean;
   state: { tick: number; serverTime: number; players: Map<string, Player> };
   tickProfiler: { recordCounter(name: string, count?: number): void };
   botsWithReusedInputThisTick: Set<string>;
+  playerPressStates: PlayerPressStateTracker;
   botMovementFullStepBudgetTick: number;
   botMovementFullStepBudgetRemaining: number;
   clampToPlayableMap(position: { x: number; y: number; z: number }): { x: number; y: number; z: number };
@@ -47,6 +55,7 @@ function createRoom(): BotMovementLodRoom {
   room.state = { tick: 0, serverTime: 1_800_000_000_000, players: new Map() };
   room.tickProfiler = { recordCounter: () => undefined };
   room.botsWithReusedInputThisTick = new Set();
+  room.playerPressStates = new PlayerPressStateTracker();
   room.botMovementFullStepBudgetTick = -1;
   room.botMovementFullStepBudgetRemaining = Number.POSITIVE_INFINITY;
   room.clampToPlayableMap = (position) => ({ ...position });
@@ -120,7 +129,6 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
 {
   const room = createRoom();
   const bot = createBot(room);
-  assert.equal(room.doesServerOwnedBotMovementInputRequireCriticalFullRate(botInput(bot, { ability1: true })), true);
   assert.equal(
     room.stepServerOwnedBotMovementLodProxy(bot, botInput(bot, { ability1: true }), SERVER_OWNED_MOVEMENT_STEP_SECONDS),
     false
@@ -130,7 +138,25 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
 {
   const room = createRoom();
   room.state.tick = 77;
-  for (let index = 0; index < 10; index++) {
+  for (let index = 0; index < 3; index++) {
+    assert.equal(room.consumeServerOwnedBotMovementFullStepBudget(8), true);
+  }
+  assert.equal(room.consumeServerOwnedBotMovementFullStepBudget(8), false);
+}
+
+{
+  const room = createRoom();
+  room.state.tick = 78;
+  for (let index = 0; index < 2; index++) {
+    assert.equal(room.consumeServerOwnedBotMovementFullStepBudget(24), true);
+  }
+  assert.equal(room.consumeServerOwnedBotMovementFullStepBudget(24), false);
+}
+
+{
+  const room = createRoom();
+  room.state.tick = 79;
+  for (let index = 0; index < 1; index++) {
     assert.equal(room.consumeServerOwnedBotMovementFullStepBudget(48), true);
   }
   assert.equal(room.consumeServerOwnedBotMovementFullStepBudget(48), false);
@@ -145,12 +171,20 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   assert.ok(counters.includes('movement_bot_lod_budget_steps'));
   assert.ok(counters.includes('movement_bot_lod_budget_steps_near'));
 
-  for (let index = 0; index < 9; index++) {
-    assert.equal(room.consumeServerOwnedBotMovementFullStepBudget(48, 'background'), true);
-  }
   assert.equal(room.consumeServerOwnedBotMovementFullStepBudget(48, 'background'), false);
   assert.ok(counters.includes('movement_bot_lod_budget_exhausted'));
   assert.ok(counters.includes('movement_bot_lod_budget_exhausted_background'));
+}
+
+{
+  const room = createRoom();
+  const bot = createBot(room);
+  let scheduled = 0;
+  for (let tick = 0; tick < 6; tick++) {
+    room.state.tick = tick;
+    if (room.shouldScheduleBotPlanningForTier(bot, 'background', 8)) scheduled++;
+  }
+  assert.ok(scheduled > 0 && scheduled < 6, `expected cadenced 8-bot background planning, got ${scheduled}`);
 }
 
 {
@@ -166,21 +200,40 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
 
 {
   const room = createRoom();
-  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(8, 'critical'), Number.POSITIVE_INFINITY);
-  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(8, 'near'), Number.POSITIVE_INFINITY);
-  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(8, 'background'), Number.POSITIVE_INFINITY);
-  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(24, 'critical'), 10);
-  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(24, 'near'), 6);
+  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(8, 'critical'), 5);
+  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(8, 'near'), 4);
+  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(8, 'background'), 2);
+  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(24, 'critical'), 6);
+  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(24, 'near'), 4);
   assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(24, 'background'), 2);
-  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'critical'), 8);
-  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'near'), 4);
+  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'critical'), 5);
+  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'near'), 3);
   assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'background'), 1);
+  assert.equal(room.getBotLineOfSightFrameBudget(7), Number.POSITIVE_INFINITY);
+  assert.equal(room.getBotLineOfSightFrameBudget(8), 12);
+  assert.equal(room.getBotLineOfSightFrameBudget(24), 14);
+  assert.equal(room.getBotLineOfSightFrameBudget(48), 16);
+  assert.equal(room.getBotSteeringProbeFrameBudget(7), Number.POSITIVE_INFINITY);
+  assert.equal(room.getBotSteeringProbeFrameBudget(8), 12);
+  assert.equal(room.getBotSteeringProbeFrameBudget(24), 14);
+  assert.equal(room.getBotSteeringProbeFrameBudget(48), 16);
+
+  const losFrame = { lineOfSightChecksRemaining: 1 };
+  assert.equal(room.consumeBotLineOfSightFrameBudget(losFrame), true);
+  assert.equal(losFrame.lineOfSightChecksRemaining, 0);
+  assert.equal(room.consumeBotLineOfSightFrameBudget(losFrame), false);
+
+  const steeringFrame = { steeringProbeChecksRemaining: 1 };
+  assert.equal(room.consumeBotSteeringProbeFrameBudget(steeringFrame), true);
+  assert.equal(steeringFrame.steeringProbeChecksRemaining, 0);
+  assert.equal(room.consumeBotSteeringProbeFrameBudget(steeringFrame), false);
 }
 
 {
   const room = createRoom();
   const bot = createBot(room);
   bot.lastInput = botInput(bot, {
+    jump: true,
     primaryFire: true,
     secondaryFire: true,
     reload: true,
@@ -193,7 +246,8 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   room.continueDeferredBotInput(bot.id, 1_800_000_000_000, 'background');
 
   assert.equal(bot.lastInput?.primaryFire, false);
-  assert.equal(bot.lastInput?.secondaryFire, true);
+  assert.equal(bot.lastInput?.secondaryFire, false);
+  assert.equal(bot.lastInput?.jump, false);
   assert.equal(bot.lastInput?.reload, false);
   assert.equal(bot.lastInput?.ability1, false);
   assert.equal(bot.lastInput?.ability2, false);
@@ -214,11 +268,85 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
 {
   const room = createRoom();
   const bot = createBot(room);
-  bot.lastInput = botInput(bot, { primaryFire: true });
+  bot.lastInput = botInput(bot, { jump: true, primaryFire: true, secondaryFire: true });
 
   room.continueDeferredBotInput(bot.id, 1_800_000_000_000, 'critical');
 
   assert.equal(bot.lastInput?.primaryFire, true);
+  assert.equal(bot.lastInput?.secondaryFire, true);
+  assert.equal(bot.lastInput?.jump, true);
+}
+
+{
+  const room = createRoom();
+  const bot = createBot(room);
+  const inertInput = botInput(bot, { moveForward: false, sprint: false });
+  assert.equal(room.shouldProcessServerOwnedBotProxyGameplayInput(bot, inertInput), false);
+
+  room.playerPressStates.applyInput(bot.id, {
+    primaryFire: false,
+    secondaryFire: true,
+    reload: false,
+    ability1: false,
+    ability2: false,
+    ultimate: false,
+  });
+  assert.equal(room.shouldProcessServerOwnedBotProxyGameplayInput(bot, inertInput), true);
+  room.playerPressStates.reset(bot.id);
+  assert.equal(
+    room.shouldProcessServerOwnedBotProxyGameplayInput(bot, botInput(bot, { primaryFire: true })),
+    true
+  );
+}
+
+{
+  const room = createRoom();
+  const bot = createBot(room);
+  const input = botInput(bot, {
+    jump: true,
+    primaryFire: true,
+    secondaryFire: true,
+    reload: true,
+    ability1: true,
+    ability2: true,
+    ultimate: true,
+    interact: true,
+  });
+
+  room.suppressServerOwnedBotSkippedFullStepGameplayInput(input);
+
+  assert.equal(input.jump, true);
+  assert.equal(input.moveForward, true);
+  assert.equal(input.primaryFire, false);
+  assert.equal(input.secondaryFire, false);
+  assert.equal(input.reload, false);
+  assert.equal(input.ability1, false);
+  assert.equal(input.ability2, false);
+  assert.equal(input.ultimate, false);
+  assert.equal(input.interact, false);
+  assert.equal(room.shouldProcessServerOwnedBotProxyGameplayInput(bot, input), false);
+}
+
+{
+  const room = createRoom();
+  const bot = createBot(room);
+  const input = botInput(bot, {
+    primaryFire: true,
+    secondaryFire: true,
+    ability1: true,
+    ability2: true,
+    ultimate: true,
+    interact: true,
+  });
+
+  room.suppressServerOwnedBotHighCountFullStepAbilityInput(input);
+
+  assert.equal(input.primaryFire, true);
+  assert.equal(input.secondaryFire, true);
+  assert.equal(input.ability1, false);
+  assert.equal(input.ability2, false);
+  assert.equal(input.ultimate, false);
+  assert.equal(input.interact, false);
 }
 
 {
@@ -283,7 +411,7 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
       'near',
       botInput(bot, { ability1: true })
     ),
-    true
+    false
   );
 }
 

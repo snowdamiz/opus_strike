@@ -21,6 +21,14 @@ const PLAYER_INTEREST_SNAPSHOT_ESTIMATE_BYTES = 96;
 const PLAYER_PING_BASE_BYTES = 48;
 const PLAYER_PING_SNAPSHOT_ESTIMATE_BYTES = 48;
 const MATCH_SNAPSHOT_ESTIMATE_BYTES = 760;
+const ABILITY_USED_ESTIMATE_BYTES = 280;
+const PLAYER_DAMAGED_ESTIMATE_BYTES = 260;
+const CHRONOS_AEGIS_DAMAGED_ESTIMATE_BYTES = 280;
+const PHANTOM_SHIELD_BROKEN_ESTIMATE_BYTES = 240;
+const PLAYER_KILLED_ESTIMATE_BYTES = 300;
+const PLAYER_HEALED_BASE_BYTES = 180;
+const PLAYER_HEALED_TARGET_ESTIMATE_BYTES = 88;
+const POWERUP_COLLECTED_ESTIMATE_BYTES = 180;
 
 function estimateStringBytes(value: string): number {
   return STRING_WRAPPER_BYTES + Buffer.byteLength(value);
@@ -61,6 +69,11 @@ function estimatePlayerPingsBytes(payload: unknown): number {
 function estimatePingRequestBytes(payload: unknown): number {
   if (!isRecord(payload) || typeof payload.nonce !== 'string') return UNKNOWN_OBJECT_BYTES;
   return 16 + estimateStringBytes(payload.nonce);
+}
+
+function estimatePlayerHealedBytes(payload: unknown): number {
+  if (!isRecord(payload)) return UNKNOWN_OBJECT_BYTES;
+  return PLAYER_HEALED_BASE_BYTES + arrayLength(payload.targets) * PLAYER_HEALED_TARGET_ESTIMATE_BYTES;
 }
 
 function estimateValueBytes(value: unknown, seen: WeakSet<object>, depth: number): number {
@@ -131,6 +144,20 @@ export function estimateCustomMessageBytes(type: string, payload: unknown): numb
       return estimatePingRequestBytes(payload);
     case 'matchSnapshot':
       return MATCH_SNAPSHOT_ESTIMATE_BYTES;
+    case 'abilityUsed':
+      return ABILITY_USED_ESTIMATE_BYTES;
+    case 'playerDamaged':
+      return PLAYER_DAMAGED_ESTIMATE_BYTES;
+    case 'chronosAegisDamaged':
+      return CHRONOS_AEGIS_DAMAGED_ESTIMATE_BYTES;
+    case 'phantomShieldBroken':
+      return PHANTOM_SHIELD_BROKEN_ESTIMATE_BYTES;
+    case 'playerKilled':
+      return PLAYER_KILLED_ESTIMATE_BYTES;
+    case 'playerHealed':
+      return estimatePlayerHealedBytes(payload);
+    case 'powerupCollected':
+      return POWERUP_COLLECTED_ESTIMATE_BYTES;
     default:
       return estimateFallbackMessageBytes(payload);
   }

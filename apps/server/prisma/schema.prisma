@@ -105,6 +105,14 @@ enum LobbyInviteStatus {
   expired
 }
 
+enum PartyInviteStatus {
+  pending
+  accepted
+  declined
+  canceled
+  expired
+}
+
 model User {
   id                     String                  @id @default(cuid())
   walletAddress          String?                 @unique
@@ -125,6 +133,8 @@ model User {
   friendshipRequestsSent Friendship[]            @relation("FriendshipRequester")
   sentLobbyInvites       LobbyInvite[]           @relation("LobbyInviteSender")
   receivedLobbyInvites   LobbyInvite[]           @relation("LobbyInviteRecipient")
+  sentPartyInvites       PartyInvite[]           @relation("PartyInviteSender")
+  receivedPartyInvites   PartyInvite[]           @relation("PartyInviteRecipient")
 
   // Player stats (optional - can expand later)
   totalGames                Int       @default(0)
@@ -215,6 +225,26 @@ model LobbyInvite {
   @@index([toUserId, status, createdAt])
   @@index([fromUserId, createdAt])
   @@index([lobbyId, status])
+  @@index([expiresAt])
+}
+
+model PartyInvite {
+  id          String            @id @default(cuid())
+  partyId     String
+  fromUserId  String
+  toUserId    String
+  status      PartyInviteStatus @default(pending)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  expiresAt   DateTime
+  respondedAt DateTime?
+
+  fromUser User @relation("PartyInviteSender", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser   User @relation("PartyInviteRecipient", fields: [toUserId], references: [id], onDelete: Cascade)
+
+  @@index([toUserId, status, createdAt])
+  @@index([fromUserId, createdAt])
+  @@index([partyId, status])
   @@index([expiresAt])
 }
 

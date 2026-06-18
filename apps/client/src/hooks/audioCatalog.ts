@@ -148,9 +148,11 @@ export const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   ],
   chronos: [
     'phantomBasic',
+    'chronosPulse',
     'chronosAegis',
     'chronosLifeline',
     'chronosTimebreakCharge',
+    'chronosTimebreak',
     'chronosPush',
     'chronosSuperchargedImpact',
   ],

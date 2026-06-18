@@ -19,6 +19,9 @@ import {
   type BotDifficulty,
   type GameplayMode,
   type HeroId,
+  type PartyLaunchPayload,
+  type PartyMode,
+  type PartyStateSnapshot,
   type Team,
   type MovementCommandPacket,
 } from '@voxel-strike/shared';
@@ -60,6 +63,7 @@ import {
 import { projectileInitialState } from '../store/slices/projectiles';
 import { resetGameTiming } from '../store/gameTimingStore';
 import { createPracticeAbilityStates } from './practiceAbilities';
+import { usePartyStore } from '../store/partyStore';
 
 export type { RankedTokenHoldStatus } from './networkApi';
 
@@ -112,7 +116,15 @@ interface NetworkContextType {
   startPracticeGame: (playerName?: string, options?: StartPracticeGameOptions) => void;
   startTutorialGame: (playerName?: string) => void;
   joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
+  joinMatchmakingLobby: (playerName: string, launch: PartyLaunchPayload) => Promise<void>;
   leaveLobby: () => void;
+  ensureParty: (playerName: string, heroId?: HeroId) => Promise<string>;
+  joinParty: (playerName: string, partyId: string, heroId?: HeroId) => Promise<void>;
+  leaveParty: () => void;
+  setPartyHero: (heroId: HeroId) => void;
+  setPartyReady: (ready: boolean) => void;
+  setPartyMode: (mode: PartyMode, gameplayMode?: GameplayMode) => void;
+  startParty: () => void;
   setLobbyReady: (ready: boolean) => void;
   setLobbyTeam: (team: string) => void;
   setLobbyObserver: (observer: boolean) => void;
@@ -217,6 +229,7 @@ function runAfterNextPaint(callback: () => void): void {
 
 export function NetworkProvider({ children }: { children: ReactNode }) {
   const clientRef = useRef<Client | null>(null);
+  const partyRoomRef = useRef<Room | null>(null);
   const lobbyRoomRef = useRef<Room | null>(null);
   const gameRoomRef = useRef<Room | null>(null);
   const isJoiningGameRef = useRef(false);
@@ -301,6 +314,15 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     rejectPendingPlayerReportRequests('connection cleaned up before report response');
     setObserverMode(false);
 
+    if (partyRoomRef.current) {
+      try {
+        partyRoomRef.current.leave(false);
+      } catch (e) {
+        loggers.network.debug('error leaving old party room', e);
+      }
+      partyRoomRef.current = null;
+      usePartyStore.getState().clearParty();
+    }
     if (lobbyRoomRef.current) {
       try {
         lobbyRoomRef.current.leave(false);
@@ -666,6 +688,162 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       throw error;
     }
   }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected, setPracticeMode]);
+
+  const joinMatchmakingLobby = useCallback(async (playerName: string, launch: PartyLaunchPayload) => {
+    setLoading(true);
+
+    try {
+      cleanupExistingConnections();
+      clearRunningGameSession();
+      setPracticeMode(false);
+
+      const client = getClient();
+      const joinOptions: Record<string, unknown> = {
+        playerName,
+        ...getDevTutorialBypassRoomOptions(),
+      };
+      if (launch.matchmakingTicket) {
+        joinOptions.matchmakingTicket = launch.matchmakingTicket;
+      }
+
+      lobbyRoomRef.current = await client.joinById(launch.lobbyId, joinOptions);
+
+      setupLobbyListeners(lobbyRoomRef.current, playerName);
+
+      setPlayerId(lobbyRoomRef.current.sessionId);
+      if (launch.matchMode === 'ranked') {
+        setCurrentLobbyWager({
+          enabled: false,
+          matchMode: 'ranked',
+          token: 'SOL',
+        });
+        setMatchmakingStatus({
+          matchMode: 'ranked',
+          rankBandId: launch.targetRankDivisionIndex ?? null,
+          rankBandLabel: launch.targetRankLabel ?? null,
+          averageCompetitiveRating: null,
+          averageVisibleRank: null,
+          rankSearchDistance: null,
+          queuedHumanCount: 0,
+          provisionalHumanCount: 1,
+          requiredPlayers: null,
+          capacityBlocked: false,
+          capacityMaxPlayers: null,
+          rankedCoverChargeLamports: null,
+          rankedEntryQuoteId: null,
+        });
+      }
+      setAppPhase(launch.matchMode === 'custom' ? 'in_lobby' : 'matchmaking');
+      setConnected(true);
+      setLoading(false);
+
+      loggers.network.info('joined party launch lobby', launch.lobbyId);
+    } catch (error) {
+      loggers.network.error('failed to join party launch lobby', error);
+      setLoading(false);
+      throw error;
+    }
+  }, [
+    cleanupExistingConnections,
+    getClient,
+    setAppPhase,
+    setConnected,
+    setCurrentLobbyWager,
+    setLoading,
+    setMatchmakingStatus,
+    setPlayerId,
+    setPracticeMode,
+    setupLobbyListeners,
+  ]);
+
+  const setupPartyListeners = useCallback((room: Room, playerNameForLaunch: string) => {
+    const localUserId = useGameStore.getState().userId;
+    usePartyStore.getState().setLocalUserId(localUserId);
+
+    room.onMessage('partyState', (partyState: unknown) => {
+      usePartyStore.getState().setPartyState(partyState as PartyStateSnapshot, useGameStore.getState().userId);
+    });
+    room.onMessage('partyLaunch', (launch: unknown) => {
+      joinMatchmakingLobby(playerNameForLaunch, launch as PartyLaunchPayload).catch((error) => {
+        usePartyStore.getState().setLaunchError(error instanceof Error ? error.message : 'Failed to join party launch');
+      });
+    });
+    room.onMessage('error', (payload: unknown) => {
+      const message = typeof payload === 'object' && payload && 'message' in payload
+        ? String((payload as { message?: unknown }).message || 'Party action failed')
+        : 'Party action failed';
+      usePartyStore.getState().setLaunchError(message);
+    });
+    room.onLeave(() => {
+      if (partyRoomRef.current === room) {
+        partyRoomRef.current = null;
+        usePartyStore.getState().clearParty();
+      }
+    });
+  }, [joinMatchmakingLobby]);
+
+  const joinParty = useCallback(async (playerName: string, partyId: string, heroId?: HeroId) => {
+    const existingParty = usePartyStore.getState().party;
+    if (partyRoomRef.current && existingParty?.partyId === partyId) return;
+
+    if (partyRoomRef.current) {
+      try {
+        partyRoomRef.current.leave(false);
+      } catch (error) {
+        loggers.network.debug('error leaving old party room', error);
+      }
+      partyRoomRef.current = null;
+      usePartyStore.getState().clearParty();
+    }
+
+    const client = getClient();
+    partyRoomRef.current = await client.joinById(partyId, {
+      playerName,
+      heroId,
+      ...getDevTutorialBypassRoomOptions(),
+    });
+    setupPartyListeners(partyRoomRef.current, playerName);
+    setAppPhase('menu');
+  }, [getClient, setAppPhase, setupPartyListeners]);
+
+  const ensureParty = useCallback(async (playerName: string, heroId?: HeroId): Promise<string> => {
+    const existingParty = usePartyStore.getState().party;
+    if (partyRoomRef.current && existingParty) return existingParty.partyId;
+
+    const client = getClient();
+    partyRoomRef.current = await client.create('party_room', {
+      playerName,
+      heroId,
+      ...getDevTutorialBypassRoomOptions(),
+    });
+    setupPartyListeners(partyRoomRef.current, playerName);
+    setAppPhase('menu');
+    return partyRoomRef.current.id;
+  }, [getClient, setAppPhase, setupPartyListeners]);
+
+  const leaveParty = useCallback(() => {
+    if (partyRoomRef.current) {
+      partyRoomRef.current.leave();
+      partyRoomRef.current = null;
+    }
+    usePartyStore.getState().clearParty();
+  }, []);
+
+  const setPartyHero = useCallback((heroId: HeroId) => {
+    partyRoomRef.current?.send('setHero', { heroId });
+  }, []);
+
+  const setPartyReady = useCallback((ready: boolean) => {
+    partyRoomRef.current?.send('setReady', { ready });
+  }, []);
+
+  const setPartyMode = useCallback((mode: PartyMode, gameplayMode?: GameplayMode) => {
+    partyRoomRef.current?.send('setMode', { mode, gameplayMode });
+  }, []);
+
+  const startParty = useCallback(() => {
+    partyRoomRef.current?.send('start');
+  }, []);
 
   const leaveLobby = useCallback(() => {
     disconnectVoice('leave_lobby');
@@ -1196,6 +1374,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     startPracticeGame,
     startTutorialGame,
     joinLobby,
+    joinMatchmakingLobby,
+    ensureParty,
+    joinParty,
+    leaveParty,
+    setPartyHero,
+    setPartyReady,
+    setPartyMode,
+    startParty,
     leaveLobby,
     setLobbyReady,
     setLobbyTeam,
@@ -1255,12 +1441,16 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     disconnect,
     finalizeMapVote,
     getRankedTokenHoldStatus,
+    ensureParty,
     getRunningGameReconnect,
     joinGameRoom,
     joinLobby,
+    joinMatchmakingLobby,
+    joinParty,
     kickPlayer,
     leaveGame,
     leaveLobby,
+    leaveParty,
     matchStartGateKey,
     quickPlay,
     rankedPlay,
@@ -1280,8 +1470,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setLobbyObserver,
     setLobbyReady,
     setLobbyTeam,
+    setPartyHero,
+    setPartyMode,
+    setPartyReady,
     setReady,
     startGame,
+    startParty,
     startPracticeGame,
     startTutorialGame,
     submitWagerPaymentSignature,

@@ -7,6 +7,7 @@ import { Server, matchMaker } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { GameRoom } from './rooms/GameRoom';
 import { LobbyRoom } from './rooms/LobbyRoom';
+import { PartyRoom } from './rooms/PartyRoom';
 import authRoutes from './auth/routes';
 import createAdminRouter from './admin/routes';
 import matchmakingRoutes from './matchmaking/routes';
@@ -90,6 +91,9 @@ const gameServer = new Server({
 
 // Register rooms
 gameServer.define('game_room', GameRoom);
+gameServer
+  .define('party_room', PartyRoom)
+  .enableRealtimeListing();
 gameServer
   .define('lobby_room', LobbyRoom)
   .filterBy(['isPrivate', 'matchmakingMode', 'matchMode', 'rankBandId'])

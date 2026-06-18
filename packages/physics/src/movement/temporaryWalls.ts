@@ -32,14 +32,22 @@ function seededRange(index: number, salt: number, min: number, max: number): num
   return min + unit * (max - min);
 }
 
-function boundsOverlap(a: MovementCollisionBounds, b: MovementCollisionBounds): boolean {
+function scalarBoundsOverlap(
+  bounds: MovementCollisionBounds,
+  minX: number,
+  minY: number,
+  minZ: number,
+  maxX: number,
+  maxY: number,
+  maxZ: number
+): boolean {
   return (
-    a.min.x <= b.max.x &&
-    a.max.x >= b.min.x &&
-    a.min.y <= b.max.y &&
-    a.max.y >= b.min.y &&
-    a.min.z <= b.max.z &&
-    a.max.z >= b.min.z
+    minX <= bounds.max.x &&
+    maxX >= bounds.min.x &&
+    minY <= bounds.max.y &&
+    maxY >= bounds.min.y &&
+    minZ <= bounds.max.z &&
+    maxZ >= bounds.min.z
   );
 }
 
@@ -73,7 +81,8 @@ export function computeAnchorWallAabbs(
     if (elapsedSeconds < 0 || elapsedSeconds > wall.duration) continue;
 
     const direction = normalize2D(wall.direction);
-    const right = { x: -direction.z, z: direction.x };
+    const rightX = -direction.z;
+    const rightZ = direction.x;
     const currentDistance = Math.min(wall.maxDistance, elapsedSeconds * ANCHOR_WALL_SPEED);
     if (currentDistance < ANCHOR_WALL_FIRST_SEGMENT_DISTANCE) continue;
 
@@ -90,32 +99,38 @@ export function computeAnchorWallAabbs(
       const height = ANCHOR_WALL_MAX_HEIGHT * seededRange(index, 91, 0.86, 1.08);
       const segmentAge = Math.max(0, elapsedSeconds - distance / ANCHOR_WALL_SPEED);
       const currentHeight = Math.max(0.05, Math.min(height, segmentAge * ANCHOR_WALL_RISE_SPEED));
-      const center = {
-        x: wall.startPosition.x + direction.x * (distance - ANCHOR_WALL_SEGMENT_BACKSET),
-        y: wall.startPosition.y,
-        z: wall.startPosition.z + direction.z * (distance - ANCHOR_WALL_SEGMENT_BACKSET),
-      };
+      const centerX = wall.startPosition.x + direction.x * (distance - ANCHOR_WALL_SEGMENT_BACKSET);
+      const centerY = wall.startPosition.y;
+      const centerZ = wall.startPosition.z + direction.z * (distance - ANCHOR_WALL_SEGMENT_BACKSET);
+      const halfX = Math.abs(rightX) * (width / 2) + Math.abs(direction.x) * (depth / 2);
+      const halfZ = Math.abs(rightZ) * (width / 2) + Math.abs(direction.z) * (depth / 2);
+      const minX = centerX - halfX;
+      const minY = centerY;
+      const minZ = centerZ - halfZ;
+      const maxX = centerX + halfX;
+      const maxY = centerY + currentHeight;
+      const maxZ = centerZ + halfZ;
 
-      const halfX = Math.abs(right.x) * (width / 2) + Math.abs(direction.x) * (depth / 2);
-      const halfZ = Math.abs(right.z) * (width / 2) + Math.abs(direction.z) * (depth / 2);
+      if (bounds && !scalarBoundsOverlap(bounds, minX, minY, minZ, maxX, maxY, maxZ)) {
+        continue;
+      }
+
       const aabb: MovementAabb = {
         id: `${ANCHOR_WALL_COLLIDER_PREFIX}${wall.id}_${index}`,
         min: {
-          x: center.x - halfX,
-          y: center.y,
-          z: center.z - halfZ,
+          x: minX,
+          y: minY,
+          z: minZ,
         },
         max: {
-          x: center.x + halfX,
-          y: center.y + currentHeight,
-          z: center.z + halfZ,
+          x: maxX,
+          y: maxY,
+          z: maxZ,
         },
         pushCapsuleUpFromTop: currentHeight < height,
       };
 
-      if (!bounds || boundsOverlap(bounds, aabb)) {
-        aabbs.push(aabb);
-      }
+      aabbs.push(aabb);
     }
   }
 

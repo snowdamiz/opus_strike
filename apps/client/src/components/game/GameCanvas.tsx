@@ -44,6 +44,7 @@ import {
 } from './visualQuality';
 import { FrameTimeHistogram } from './adaptiveQualityHistogram';
 import { configureVisualPhysicsQueryBudget } from '../../hooks/usePhysics';
+import { prewarmLocalMovementCollisionWorld } from '../../movement/localPrediction';
 import { getBlazeGearstormSkyIntensity } from './blaze/airstrike';
 import { getPhantomVeilSkyIntensity } from './phantom/veilAtmosphere';
 import { suppressExpectedContextLossLog } from './webglLifecycle';
@@ -874,6 +875,7 @@ export function GameCanvas({
     markWarmupStageDone('map', status.preparedMap.source === 'match' ? undefined : 0);
 
     if (status.collidersReady) {
+      prewarmLocalMovementCollisionWorld();
       markWarmupStageDone('colliders');
     }
 

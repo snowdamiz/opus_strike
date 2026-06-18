@@ -58,6 +58,14 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
     return nextPlayers;
   }, [gamePhase, localPlayerId, playerId, players]);
 
+  useEffect(() => {
+    if (!config.showNameplates) return;
+    for (const player of players.values()) {
+      if (player.id === playerId || player.id === localPlayerId) continue;
+      prewarmNameplateTexture(player.name, player.health, player.maxHealth);
+    }
+  }, [config.showNameplates, localPlayerId, playerId, players]);
+
   return (
     <group>
       <RemoteHeroBatchRenderer players={otherPlayers} config={config} />
@@ -422,6 +430,16 @@ interface NameplateProps {
 const NAMEPLATE_CANVAS_WIDTH = 256;
 const NAMEPLATE_CANVAS_HEIGHT = 72;
 const NAMEPLATE_HEALTH_BUCKETS = 40;
+const NAMEPLATE_TEXTURE_CACHE_LIMIT = 192;
+
+interface NameplateTextureEntry {
+  texture: THREE.CanvasTexture;
+  refCount: number;
+  lastUsedAt: number;
+}
+
+const nameplateTextureCache = new Map<string, NameplateTextureEntry>();
+let nameplateTextureUseCounter = 0;
 
 function roundedRectPath(
   ctx: CanvasRenderingContext2D,
@@ -498,27 +516,85 @@ function drawNameplateTexture(
   }
 }
 
-const Nameplate = memo(function Nameplate({ name, health, maxHealth, height }: NameplateProps) {
+function getQuantizedNameplateHealthPercent(health: number, maxHealth: number): number {
   const healthPercent = Math.max(0, Math.min(1, health / Math.max(1, maxHealth)));
-  const quantizedHealthPercent = Math.round(healthPercent * NAMEPLATE_HEALTH_BUCKETS) / NAMEPLATE_HEALTH_BUCKETS;
-  const texture = useMemo(() => {
-    const canvas = document.createElement('canvas');
-    canvas.width = NAMEPLATE_CANVAS_WIDTH;
-    canvas.height = NAMEPLATE_CANVAS_HEIGHT;
-    const nextTexture = new THREE.CanvasTexture(canvas);
-    nextTexture.colorSpace = THREE.SRGBColorSpace;
-    nextTexture.minFilter = THREE.LinearFilter;
-    nextTexture.magFilter = THREE.LinearFilter;
-    nextTexture.generateMipmaps = false;
-    return nextTexture;
-  }, []);
+  return Math.round(healthPercent * NAMEPLATE_HEALTH_BUCKETS) / NAMEPLATE_HEALTH_BUCKETS;
+}
 
-  useEffect(() => {
-    drawNameplateTexture(texture.image as HTMLCanvasElement, name, quantizedHealthPercent);
-    texture.needsUpdate = true;
-  }, [name, quantizedHealthPercent, texture]);
+function getNameplateTextureKey(name: string, healthPercent: number): string {
+  return `${name}:${healthPercent}`;
+}
 
-  useEffect(() => () => texture.dispose(), [texture]);
+function createNameplateTexture(name: string, healthPercent: number): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = NAMEPLATE_CANVAS_WIDTH;
+  canvas.height = NAMEPLATE_CANVAS_HEIGHT;
+  drawNameplateTexture(canvas, name, healthPercent);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  return texture;
+}
+
+function evictUnusedNameplateTextures(): void {
+  if (nameplateTextureCache.size <= NAMEPLATE_TEXTURE_CACHE_LIMIT) return;
+
+  const unusedEntries = Array.from(nameplateTextureCache)
+    .filter(([, entry]) => entry.refCount <= 0)
+    .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+
+  for (const [key, entry] of unusedEntries) {
+    if (nameplateTextureCache.size <= NAMEPLATE_TEXTURE_CACHE_LIMIT) break;
+    entry.texture.dispose();
+    nameplateTextureCache.delete(key);
+  }
+}
+
+function acquireNameplateTexture(name: string, healthPercent: number): THREE.CanvasTexture {
+  const key = getNameplateTextureKey(name, healthPercent);
+  let entry = nameplateTextureCache.get(key);
+  if (!entry) {
+    entry = {
+      texture: createNameplateTexture(name, healthPercent),
+      refCount: 0,
+      lastUsedAt: 0,
+    };
+    nameplateTextureCache.set(key, entry);
+  }
+
+  entry.refCount++;
+  entry.lastUsedAt = ++nameplateTextureUseCounter;
+  evictUnusedNameplateTextures();
+  return entry.texture;
+}
+
+function releaseNameplateTexture(name: string, healthPercent: number): void {
+  const entry = nameplateTextureCache.get(getNameplateTextureKey(name, healthPercent));
+  if (!entry) return;
+  entry.refCount = Math.max(0, entry.refCount - 1);
+  entry.lastUsedAt = ++nameplateTextureUseCounter;
+  evictUnusedNameplateTextures();
+}
+
+function prewarmNameplateTexture(name: string, health: number, maxHealth: number): void {
+  if (typeof document === 'undefined') return;
+  const healthPercent = getQuantizedNameplateHealthPercent(health, maxHealth);
+  const texture = acquireNameplateTexture(name, healthPercent);
+  releaseNameplateTexture(name, healthPercent);
+  texture.needsUpdate = true;
+}
+
+const Nameplate = memo(function Nameplate({ name, health, maxHealth, height }: NameplateProps) {
+  const quantizedHealthPercent = getQuantizedNameplateHealthPercent(health, maxHealth);
+  const texture = useMemo(
+    () => acquireNameplateTexture(name, quantizedHealthPercent),
+    [name, quantizedHealthPercent]
+  );
+
+  useEffect(() => () => releaseNameplateTexture(name, quantizedHealthPercent), [name, quantizedHealthPercent]);
 
   const width = Math.max(1.75, Math.min(2.7, 1.55 + name.length * 0.045));
 

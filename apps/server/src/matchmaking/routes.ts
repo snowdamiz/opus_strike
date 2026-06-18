@@ -1,32 +1,24 @@
 import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
 import { matchMaker } from 'colyseus';
-import prisma from '../db';
-import { verifyAuthToken } from '../auth/session';
-import {
-  enforceJsonRateLimit as enforceMatchmakingRateLimit,
-  getRequestAuthToken,
-} from '../auth/http';
-import { assertGameplayAccountEligible } from '../auth/accountEligibility';
+import { enforceJsonRateLimit as enforceMatchmakingRateLimit } from '../auth/http';
 import {
   DEV_TUTORIAL_BYPASS_HEADER,
   assertTutorialCompleted,
 } from '../auth/tutorialCompletion';
 import { consumeRateLimitForKey } from '../auth/rateLimit';
-import { createMatchmakingTicket } from '../security/matchmakingTickets';
 import {
   assertRankedTokenHoldingEligibility,
   getRankedTokenHoldingStatus,
 } from './rankedTokenHold';
-import {
-  getAllowedRankDivisionDistance,
-  getRankDivisionLabel,
-  normalizeRankDivisionIndex,
-} from './skill';
 import { collectInGameCapacitySnapshot, type InGameCapacitySnapshot } from './playerCapacity';
-import { getRankDivisionIndex } from '@voxel-strike/shared';
 import type { MatchMode } from '@voxel-strike/shared';
-import { serializeRankPayload, type PublicRankPayload } from '../ranking/serialization';
+import {
+  chooseMatchmakingRankBand,
+  getMatchmakingUserContext,
+  issueQuickPlayTicket,
+  issueRankedTicket,
+} from './service';
 
 const router: RouterType = Router();
 
@@ -37,24 +29,6 @@ const MATCHMAKING_RATE_LIMITS = {
   rankedTicket: { limit: 8, windowMs: 60 * 1000 },
   runningGameStatus: { limit: 60, windowMs: 60 * 1000 },
 } as const;
-
-interface MatchmakingUserContext {
-  userId: string;
-  walletAddress: string | null;
-  competitiveRating: number;
-  rankDivisionIndex: number;
-  rank: PublicRankPayload;
-  tutorialCompletedAt: Date | null;
-}
-
-interface QueueCandidate {
-  rankBandId: number;
-  humanCount: number;
-  queuedHumanCount: number;
-  waitMs: number;
-  distance: number;
-  ratingDistance: number;
-}
 
 interface MatchmakingQueueStatus {
   mode: MatchMode;
@@ -105,109 +79,6 @@ function readRoomIdParam(req: Request): string | null {
   const value = typeof req.params.roomId === 'string' ? req.params.roomId.trim() : '';
   if (!value || value.length > 128) return null;
   return /^[a-zA-Z0-9_-]+$/.test(value) ? value : null;
-}
-
-async function getMatchmakingUserContext(req: Request): Promise<MatchmakingUserContext> {
-  const token = getRequestAuthToken(req, { allowBearer: true });
-  const payload = token ? verifyAuthToken(token) : null;
-
-  if (payload) {
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { id: payload.userId },
-          ...(payload.walletAddress ? [{ walletAddress: payload.walletAddress }] : []),
-        ],
-      },
-      select: {
-        id: true,
-        walletAddress: true,
-        totalGames: true,
-        totalWins: true,
-        totalKills: true,
-        totalDeaths: true,
-        totalAssists: true,
-        totalCaptures: true,
-        totalFlagReturns: true,
-        totalScore: true,
-        competitiveRating: true,
-        rankedGames: true,
-        rankedWins: true,
-        rankedLosses: true,
-        rankedDraws: true,
-        rankedPlacementsRemaining: true,
-        rankedPeakRating: true,
-        rankedLastMatchAt: true,
-        tutorialCompletedAt: true,
-      },
-    });
-
-    if (user && (!payload.walletAddress || user.walletAddress === payload.walletAddress)) {
-      await assertGameplayAccountEligible(user.id);
-      const rank = serializeRankPayload(user);
-      return {
-        userId: user.id,
-        walletAddress: user.walletAddress,
-        competitiveRating: user.competitiveRating,
-        rankDivisionIndex: getRankDivisionIndex(user.competitiveRating),
-        rank,
-        tutorialCompletedAt: user.tutorialCompletedAt,
-      };
-    }
-  }
-
-  throw new Error('Authentication required');
-}
-
-async function chooseMatchmakingRankBand(input: {
-  mode: 'quick_play' | 'ranked';
-  playerRating: number;
-  playerDivisionIndex: number;
-}): Promise<number> {
-  const now = Date.now();
-  const rooms = await matchMaker.query({ name: 'lobby_room' });
-
-  const candidates: QueueCandidate[] = rooms.flatMap((room: any) => {
-    const metadata = room.metadata ?? {};
-    if (room.locked || metadata.matchmakingMode !== true || metadata.status !== 'matchmaking') return [];
-    const mode = metadata.matchMode === 'ranked' ? 'ranked' : 'quick_play';
-    if (mode !== input.mode) return [];
-    const rankBandId = normalizeRankDivisionIndex(metadata.rankBandId);
-    const averageCompetitiveRating = typeof metadata.averageCompetitiveRating === 'number'
-      ? metadata.averageCompetitiveRating
-      : input.playerRating;
-    const averageDivisionIndex = getRankDivisionIndex(averageCompetitiveRating);
-    const distance = Math.abs(averageDivisionIndex - input.playerDivisionIndex);
-    const ratingDistance = Math.abs(averageCompetitiveRating - input.playerRating);
-    const createdAt = typeof metadata.matchmakingCreatedAt === 'number' ? metadata.matchmakingCreatedAt : now;
-    const waitMs = Math.max(0, now - createdAt);
-    const humanCount = typeof metadata.humanCount === 'number' ? metadata.humanCount : room.clients ?? 0;
-    const queuedHumanCount = typeof metadata.queuedHumanCount === 'number'
-      ? metadata.queuedHumanCount
-      : humanCount;
-    const requiredPlayers = typeof metadata.requiredPlayers === 'number' ? metadata.requiredPlayers : room.maxClients ?? 0;
-
-    if (humanCount >= requiredPlayers) return [];
-    if (distance > getAllowedRankDivisionDistance(waitMs)) return [];
-
-    return [{
-      rankBandId,
-      humanCount,
-      queuedHumanCount,
-      waitMs,
-      distance,
-      ratingDistance,
-    }];
-  });
-
-  candidates.sort((a, b) => (
-    a.ratingDistance - b.ratingDistance
-    || a.distance - b.distance
-    || b.humanCount - a.humanCount
-    || b.waitMs - a.waitMs
-  ));
-
-  return candidates[0]?.rankBandId ?? input.playerDivisionIndex;
 }
 
 async function getQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> {
@@ -360,25 +231,7 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
       playerRating: context.competitiveRating,
       playerDivisionIndex: context.rankDivisionIndex,
     });
-    const { ticket, claims } = createMatchmakingTicket({
-      mode: 'quick_play',
-      userId: context.userId,
-      competitiveRating: context.competitiveRating,
-      rankDivisionIndex: context.rankDivisionIndex,
-      targetRankDivisionIndex,
-      placementRemaining: context.rank.rankedPlacementsRemaining,
-    });
-
-    res.json({
-      ticket,
-      mode: claims.mode,
-      expiresAt: claims.expiresAt,
-      competitiveRating: context.competitiveRating,
-      rankDivisionIndex: context.rankDivisionIndex,
-      rank: context.rank,
-      targetRankDivisionIndex,
-      targetRankLabel: getRankDivisionLabel(targetRankDivisionIndex),
-    });
+    res.json(issueQuickPlayTicket(context, targetRankDivisionIndex));
   } catch (error) {
     console.error('[matchmaking] Failed to issue quick-play ticket:', error);
     sendRouteError(res, error, 'Failed to issue matchmaking ticket');
@@ -421,32 +274,7 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
       playerRating: context.competitiveRating,
       playerDivisionIndex: context.rankDivisionIndex,
     });
-    const { ticket, claims } = createMatchmakingTicket({
-      mode: 'ranked',
-      userId: context.userId,
-      competitiveRating: context.competitiveRating,
-      rankDivisionIndex: context.rankDivisionIndex,
-      targetRankDivisionIndex,
-      placementRemaining: context.rank.rankedPlacementsRemaining,
-      rankedTokenAddress: tokenHold.tokenAddress,
-      rankedTokenDecimals: tokenHold.tokenDecimals ?? undefined,
-      rankedTokenHoldUsdCents: tokenHold.usdCents,
-      rankedTokenRequiredBaseUnits: tokenHold.requiredTokenBaseUnits,
-      rankedTokenBalanceBaseUnits: tokenHold.balanceTokenBaseUnits,
-      rankedTokenCheckedAt: Date.parse(tokenHold.checkedAt),
-    });
-
-    res.json({
-      ticket,
-      mode: claims.mode,
-      expiresAt: claims.expiresAt,
-      competitiveRating: context.competitiveRating,
-      rankDivisionIndex: context.rankDivisionIndex,
-      rank: context.rank,
-      targetRankDivisionIndex,
-      targetRankLabel: getRankDivisionLabel(targetRankDivisionIndex),
-      tokenHold,
-    });
+    res.json(issueRankedTicket(context, targetRankDivisionIndex, tokenHold));
   } catch (error) {
     console.error('[matchmaking] Failed to issue ranked ticket:', error);
     sendRouteError(res, error, 'Failed to issue ranked ticket');

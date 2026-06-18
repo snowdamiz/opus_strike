@@ -124,6 +124,8 @@ export function App() {
       try {
         const heroEffectWarmup = import('./components/game/effectPrewarm')
           .then((prewarm) => prewarm.prewarmGameplayEffectResources());
+        const combatTextWarmup = import('./components/game/CombatText')
+          .then((combatText) => combatText.prewarmCombatTextTextures());
 
         await Promise.all([
           preloadSoundGroup('commonCombat'),
@@ -132,6 +134,7 @@ export function App() {
           preloadSoundGroup('hookshot'),
           preloadSoundGroup('chronos'),
           heroEffectWarmup,
+          combatTextWarmup,
         ]);
       } catch (error) {
         console.warn('[App] Match resource preload failed', error);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { type MatchMode } from '@voxel-strike/shared';
+import { type HeroId, type MatchMode } from '@voxel-strike/shared';
 import { config } from '../../config/environment';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
@@ -53,11 +53,23 @@ interface LobbyInvite {
   to: SocialUser;
 }
 
+interface PartyInvite {
+  inviteId: string;
+  partyId: string;
+  status: string;
+  createdAt: string;
+  expiresAt: string;
+  respondedAt: string | null;
+  from: SocialUser;
+  to: SocialUser;
+}
+
 interface SocialState {
   friends: SocialFriend[];
   incomingRequests: FriendRequest[];
   outgoingRequests: FriendRequest[];
   lobbyInvites: LobbyInvite[];
+  partyInvites: PartyInvite[];
   discordPlayers: SearchResult[];
 }
 
@@ -71,12 +83,13 @@ const emptySocialState: SocialState = {
   incomingRequests: [],
   outgoingRequests: [],
   lobbyInvites: [],
+  partyInvites: [],
   discordPlayers: [],
 };
 const SOCIAL_REFRESH_INTERVAL_MS = 10000;
 
 function actionableSocialCount(social: SocialState): number {
-  return social.incomingRequests.length + social.lobbyInvites.length;
+  return social.incomingRequests.length + social.lobbyInvites.length + social.partyInvites.length;
 }
 
 function getHttpUrl(): string {
@@ -235,13 +248,13 @@ function IconButton({
 
 function FriendCard({
   friend,
-  canInviteFromLobby,
+  canInvite,
   pendingAction,
   onInvite,
   onRemove,
 }: {
   friend: SocialFriend;
-  canInviteFromLobby: boolean;
+  canInvite: boolean;
   pendingAction: string | null;
   onInvite: (friend: SocialFriend) => void;
   onRemove: (friendUserId: string) => void;
@@ -252,9 +265,9 @@ function FriendCard({
       <div className="flex shrink-0 items-center gap-2">
         <IconButton
           label={`Invite ${friend.user.name}`}
-          title={canInviteFromLobby ? `Invite ${friend.user.name}` : 'Create or join a lobby to invite'}
+          title={canInvite ? `Invite ${friend.user.name}` : 'Open Play or join a lobby to invite'}
           tone="primary"
-          disabled={!canInviteFromLobby || Boolean(pendingAction)}
+          disabled={!canInvite || Boolean(pendingAction)}
           onClick={() => onInvite(friend)}
         >
           <InviteIcon className="h-4 w-4" />
@@ -326,11 +339,13 @@ export function useSocialBadgeCount(): number {
 
 export function SocialBox({
   onClose,
+  selectedHero = 'blaze',
 }: {
   onClose: () => void;
+  selectedHero?: HeroId;
 }) {
   const { isAuthenticated, user } = useWallet();
-  const { joinLobby, startTutorialGame } = useNetwork();
+  const { ensureParty, joinLobby, joinParty, startTutorialGame } = useNetwork();
   const playerName = useGameStore((state) => state.playerName);
   const appPhase = useGameStore((state) => state.appPhase);
   const currentLobbyId = useGameStore((state) => state.currentLobbyId);
@@ -349,9 +364,11 @@ export function SocialBox({
   const [error, setError] = useState<string | null>(null);
 
   const canInviteFromLobby = isAuthenticated && appPhase === 'in_lobby' && Boolean(currentLobbyId);
+  const canInviteFromMenu = isAuthenticated && appPhase === 'menu';
+  const canInviteFriend = canInviteFromLobby || canInviteFromMenu;
   const tutorialRequired = requiresTutorial(user?.tutorialCompletedAt, devTutorialOverride);
   const requestCount = social.incomingRequests.length + social.outgoingRequests.length;
-  const inviteCount = social.lobbyInvites.length;
+  const inviteCount = social.lobbyInvites.length + social.partyInvites.length;
   const tabCounts = useMemo(() => ({
     friends: social.friends.length + social.discordPlayers.filter((candidate) => candidate.relationship === 'none').length,
     requests: requestCount,
@@ -491,20 +508,34 @@ export function SocialBox({
 
   const inviteFriend = (friend: SocialFriend) => {
     runAction(`invite:${friend.user.userId}`, async () => {
-      if (!currentLobbyId) {
-        throw new Error('Create or join a lobby before inviting friends');
+      if (canInviteFromLobby && currentLobbyId) {
+        await socialApi('/social/lobby-invites', {
+          method: 'POST',
+          body: JSON.stringify({
+            toUserId: friend.user.userId,
+            lobbyId: currentLobbyId,
+            lobbyName: currentLobbyName ?? 'Game Lobby',
+            matchMode: currentLobbyMatchMode ?? 'custom',
+          }),
+        });
+        setNotice(`Lobby invite sent to ${friend.user.name}.`);
+        await refreshSocial();
+        return;
       }
 
-      await socialApi('/social/lobby-invites', {
+      if (!canInviteFromMenu) {
+        throw new Error('Open Play or join a lobby before inviting friends');
+      }
+
+      const partyId = await ensureParty(playerName || user?.name || 'Player', selectedHero);
+      await socialApi('/social/party-invites', {
         method: 'POST',
         body: JSON.stringify({
           toUserId: friend.user.userId,
-          lobbyId: currentLobbyId,
-          lobbyName: currentLobbyName ?? 'Game Lobby',
-          matchMode: currentLobbyMatchMode ?? 'custom',
+          partyId,
         }),
       });
-      setNotice(`Invite sent to ${friend.user.name}.`);
+      setNotice(`Party invite sent to ${friend.user.name}.`);
       await refreshSocial();
     });
   };
@@ -529,6 +560,24 @@ export function SocialBox({
   const declineLobbyInvite = (inviteId: string) => {
     runAction(`decline-invite:${inviteId}`, async () => {
       await socialApi(`/social/lobby-invites/${encodeURIComponent(inviteId)}/decline`, { method: 'POST' });
+      await refreshSocial();
+    });
+  };
+
+  const acceptPartyInvite = (invite: PartyInvite) => {
+    runAction(`accept-party-invite:${invite.inviteId}`, async () => {
+      const data = await socialApi<{ invite: PartyInvite }>(
+        `/social/party-invites/${encodeURIComponent(invite.inviteId)}/accept`,
+        { method: 'POST' }
+      );
+      await joinParty(playerName || user?.name || 'Player', data.invite.partyId, selectedHero);
+      onClose();
+    });
+  };
+
+  const declinePartyInvite = (inviteId: string) => {
+    runAction(`decline-party-invite:${inviteId}`, async () => {
+      await socialApi(`/social/party-invites/${encodeURIComponent(inviteId)}/decline`, { method: 'POST' });
       await refreshSocial();
     });
   };
@@ -687,7 +736,7 @@ export function SocialBox({
                             <FriendCard
                               key={friend.friendshipId}
                               friend={friend}
-                              canInviteFromLobby={canInviteFromLobby}
+                              canInvite={canInviteFriend}
                               pendingAction={pendingAction}
                               onInvite={inviteFriend}
                               onRemove={removeFriend}
@@ -720,10 +769,42 @@ export function SocialBox({
 
                   {activeTab === 'invites' && (
                     <div className="space-y-2">
-                      {social.lobbyInvites.length === 0 ? (
-                        <EmptyState title="NO LOBBY INVITES" />
-                      ) : social.lobbyInvites.map((invite) => (
-                        <div key={invite.inviteId} className="rounded-lg bg-white/5 px-3.5 py-3">
+                      {social.partyInvites.length === 0 && social.lobbyInvites.length === 0 ? (
+                        <EmptyState title="NO INVITES" />
+                      ) : (
+                        <>
+                          {social.partyInvites.map((invite) => (
+                            <div key={invite.inviteId} className="rounded-lg bg-white/5 px-3.5 py-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <UserIdentity
+                                  user={invite.from}
+                                  detail="PARTY - Main Play"
+                                />
+                                <div className="flex shrink-0 items-center gap-2">
+                                  <IconButton
+                                    label="Join party"
+                                    title="Join party"
+                                    tone="success"
+                                    disabled={Boolean(pendingAction)}
+                                    onClick={() => acceptPartyInvite(invite)}
+                                  >
+                                    <CheckIcon className="h-4 w-4" />
+                                  </IconButton>
+                                  <IconButton
+                                    label="Decline invite"
+                                    title="Decline invite"
+                                    tone="danger"
+                                    disabled={Boolean(pendingAction)}
+                                    onClick={() => declinePartyInvite(invite.inviteId)}
+                                  >
+                                    <XIcon className="h-4 w-4" />
+                                  </IconButton>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                          {social.lobbyInvites.map((invite) => (
+                            <div key={invite.inviteId} className="rounded-lg bg-white/5 px-3.5 py-3">
                           <div className="flex items-start justify-between gap-3">
                             <UserIdentity
                               user={invite.from}
@@ -751,7 +832,9 @@ export function SocialBox({
                             </div>
                           </div>
                         </div>
-                      ))}
+                          ))}
+                        </>
+                      )}
                     </div>
                   )}
                 </>

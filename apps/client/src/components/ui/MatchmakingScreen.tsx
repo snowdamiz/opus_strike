@@ -6,6 +6,7 @@ import { useNetwork } from '../../contexts/NetworkContext';
 import { useAudio } from '../../hooks/useAudio';
 import { useUISounds } from '../../hooks/useUiAudio';
 import { useGameStore } from '../../store/gameStore';
+import type { LobbyPlayer } from '../../store/types';
 import { LobbyBackdrop } from './LobbyBackdrop';
 import { RankIcon, getRankForStats } from './RankBadge';
 
@@ -16,9 +17,16 @@ function getHttpUrl(): string {
 const MIN_RANK_SEARCH_DISTANCE = 2;
 const RANKED_TOKEN_HOLD_LABEL = '$20 SOL';
 
+interface MatchmakingTeammate {
+  id: string;
+  name: string;
+  rank: LobbyPlayer['rank'];
+}
+
 export function MatchmakingScreen() {
-  const { playerName, currentLobbyWager, lobbyPlayers, userStats, matchmakingStatus } = useGameStore(
+  const { playerId, playerName, currentLobbyWager, lobbyPlayers, userStats, matchmakingStatus } = useGameStore(
     useShallow((state) => ({
+      playerId: state.playerId,
       playerName: state.playerName,
       currentLobbyWager: state.currentLobbyWager,
       lobbyPlayers: state.lobbyPlayers,
@@ -41,6 +49,29 @@ export function MatchmakingScreen() {
   const queuePlayerLabel = displayedQueueCount === 1 ? 'player' : 'players';
   const capacityBlocked = matchmakingStatus.capacityBlocked;
   const currentRank = getRankForStats(userStats);
+  const lobbyTeammates: MatchmakingTeammate[] = Array.from(lobbyPlayers.values())
+    .filter((player) => !player.isBot && !player.isObserver)
+    .map((player) => ({
+      id: player.id,
+      name: player.name,
+      rank: player.rank,
+    }));
+  const localTeammate: MatchmakingTeammate = {
+    id: playerId ?? 'local-player',
+    name: playerName || 'Player',
+    rank: currentRank,
+  };
+  const hasLocalTeammate = Boolean(playerId && lobbyTeammates.some((teammate) => teammate.id === playerId));
+  const matchmakingTeammates = lobbyTeammates.length === 0
+    ? [localTeammate]
+    : [
+        ...(hasLocalTeammate ? [] : [localTeammate]),
+        ...lobbyTeammates,
+      ].sort((a, b) => {
+        if (a.id === playerId) return -1;
+        if (b.id === playerId) return 1;
+        return 0;
+      });
   const searchLabel = matchmakingStatus.averageVisibleRank
     ?? matchmakingStatus.rankBandLabel
     ?? currentRank.label;
@@ -116,6 +147,7 @@ export function MatchmakingScreen() {
 
       <main className="relative z-10 flex h-full items-center justify-center px-5">
         <section className="w-full max-w-xl text-center">
+          <MatchmakingTeammateRow teammates={matchmakingTeammates} />
           <p className="mb-3 font-body text-xs uppercase tracking-[0.32em] text-orange-200/70">
             {isRanked ? 'Ranked' : 'Quick Play'}
           </p>
@@ -202,6 +234,21 @@ export function MatchmakingScreen() {
           {displayedQueueCount} {queuePlayerLabel} in queue
         </p>
       </div>
+    </div>
+  );
+}
+
+function MatchmakingTeammateRow({ teammates }: { teammates: MatchmakingTeammate[] }) {
+  return (
+    <div className="mb-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2" aria-label="Matchmaking teammates">
+      {teammates.map((teammate) => (
+        <div key={teammate.id} className="flex min-w-0 items-center gap-2.5">
+          <RankIcon rank={teammate.rank} size={24} labelled />
+          <span className="max-w-32 truncate font-display text-sm leading-none text-white/76">
+            {teammate.name}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

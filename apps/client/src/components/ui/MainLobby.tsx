@@ -1,6 +1,12 @@
-import { lazy, Suspense, type CSSProperties, useCallback, useState, useEffect, useId } from 'react';
+import { lazy, Suspense, type CSSProperties, useCallback, useState, useEffect } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
+import {
+  arePartyMembersReady,
+  getPartyMember,
+  isPartyLeader as isPartyLeaderForUser,
+  usePartyStore,
+} from '../../store/partyStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useNetwork, type RankedTokenHoldStatus } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
@@ -12,19 +18,20 @@ import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
 import { TopNavIconButton } from './TopNavIconButton';
-import { PhantomLogo } from './PhantomLogo';
+import { HeroIcon } from './HeroIcons';
 import { useUISounds } from '../../hooks/useUiAudio';
 import { useServerLatencyProbe } from '../../hooks/useServerLatencyProbe';
 import { config } from '../../config/environment';
 import {
   ALL_HERO_IDS,
   DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_GAME_CONFIG,
   DEFAULT_RANKED_SEASON_NUMBER,
   HERO_DEFINITIONS,
   getGameplayModeLabel,
   getRankedSeasonLabel,
 } from '@voxel-strike/shared';
-import type { GameplayMode, HeroId, RankedSeasonSnapshot } from '@voxel-strike/shared';
+import type { GameplayMode, HeroId, PartyMemberSnapshot, PartyMode, PartyStateSnapshot, RankedSeasonSnapshot } from '@voxel-strike/shared';
 import { DISCORD_AUTH_COLORS, HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 import { PwaInstallToast } from './PwaInstallToast';
 import { MAP_SEED_PLACEHOLDER, isAllowedMapSeedInput, parseOptionalMapSeedInput } from '../../utils/mapSeedInput';
@@ -43,6 +50,8 @@ const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((mod
 })));
 const HERO_SHOWCASE_ANIMATION_MODE: HeroPreviewAnimationMode = 'showcaseLoop';
 const CUSTOM_GAMEPLAY_MODE_OPTIONS: GameplayMode[] = ['capture_the_flag', 'team_deathmatch'];
+const PLAY_MODE_OPTIONS: PartyMode[] = ['ranked', 'quick_play', 'custom', 'practice'];
+const PLAY_PARTY_SLOT_COUNT = DEFAULT_GAME_CONFIG.teamSize;
 
 function DiscordIcon({ className, style }: { className?: string; style?: CSSProperties }) {
   return (
@@ -119,26 +128,8 @@ function formatRankedUsdCents(usdCents: number): string {
   return cents === 0 ? `$${dollars}` : `$${dollars}.${cents.toString().padStart(2, '0')}`;
 }
 
-function formatRankedTokenLabel(status: RankedTokenHoldStatus): string {
-  const symbol = status.tokenSymbol?.trim().replace(/^\$/, '').toUpperCase();
-  if (symbol) return `$${symbol}`;
-  if (status.tokenAddress === RANKED_NATIVE_SOL_ADDRESS) return '$SOL';
-  return `$${status.tokenAddress.slice(0, 4)}...${status.tokenAddress.slice(-4)}`;
-}
-
 function rankedTokenHoldRequirement(status: RankedTokenHoldStatus): string {
   return `${formatRankedUsdCents(status.usdCents)} hold`;
-}
-
-function formatRankedPreseasonSubtitle(season: RankedSeasonSnapshot): string {
-  const fallback = 'Ranked queue opens next season';
-  if (!season.endsAt) return fallback;
-
-  const date = new Date(season.endsAt);
-  if (Number.isNaN(date.getTime()) || date.getTime() <= Date.now()) return fallback;
-
-  const formattedDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  return `Ranked queue opens ${formattedDate}`;
 }
 
 function formatSeasonBoundaryDate(season: RankedSeasonSnapshot): string {
@@ -184,6 +175,11 @@ export function MainLobby() {
     getRankedTokenHoldStatus,
     startPracticeGame,
     startTutorialGame,
+    setPartyHero,
+    setPartyMode,
+    setPartyReady,
+    startParty,
+    leaveParty,
     getRunningGameReconnect,
     reconnectRunningGame,
   } = useNetwork();
@@ -208,10 +204,10 @@ export function MainLobby() {
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showSocial, setShowSocial] = useState(false);
-  const [showPlayDialog, setShowPlayDialog] = useState(false);
   const [showCreateLobby, setShowCreateLobby] = useState(false);
   const [showPracticeSetup, setShowPracticeSetup] = useState(false);
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
+  const [selectedPlayMode, setSelectedPlayMode] = useState<PartyMode>('quick_play');
   const [rankedTokenHoldStatus, setRankedTokenHoldStatus] = useState<RankedTokenHoldStatus | null>(null);
   const [isRankedTokenHoldLoading, setIsRankedTokenHoldLoading] = useState(false);
   const [rankedTokenHoldError, setRankedTokenHoldError] = useState<string | null>(null);
@@ -226,7 +222,30 @@ export function MainLobby() {
   const [isRegistering, setIsRegistering] = useState(false);
   const [isLinkingPhantom, setIsLinkingPhantom] = useState(false);
   const socialBadgeCount = useSocialBadgeCount();
+  const { party, localPartyUserId, partyLaunchError } = usePartyStore(
+    useShallow((state) => ({
+      party: state.party,
+      localPartyUserId: state.localUserId,
+      partyLaunchError: state.launchError,
+    }))
+  );
+  const localPartyMember = getPartyMember(party, localPartyUserId);
+  const isInParty = Boolean(party);
+  const isPartyLeader = isPartyLeaderForUser(party, localPartyUserId);
+  const isPartyReadyToStart = arePartyMembersReady(party);
+  const activePlayMode = party?.selectedMode ?? selectedPlayMode;
   const currentRank = getRankForStats(userStats);
+  const soloPartyMember: PartyMemberSnapshot | null = isAuthenticated
+    ? {
+        userId: user?.id ?? 'local-player',
+        displayName: playerName || user?.name || 'Player',
+        heroId: featuredHero,
+        ready: false,
+        connected: true,
+        leader: true,
+        rank: currentRank,
+      }
+    : null;
   const isRankedPreseason = rankedSeason.mode === 'preseason';
   const serverLatency = useServerLatencyProbe(activeTab === 'play');
   const devTutorialOverride = useSettingsStore((state) => state.settings.devTutorialOverride);
@@ -284,7 +303,7 @@ export function MainLobby() {
   }, [isAuthenticated]);
 
   useEffect(() => {
-    if (!showPlayDialog || !isAuthenticated || !hasPhantomAccount || isRankedPreseason) {
+    if (activePlayMode !== 'ranked' || !isAuthenticated || !hasPhantomAccount || isRankedPreseason) {
       setRankedTokenHoldStatus(null);
       setRankedTokenHoldError(null);
       setIsRankedTokenHoldLoading(false);
@@ -313,7 +332,7 @@ export function MainLobby() {
     return () => {
       isCurrent = false;
     };
-  }, [getRankedTokenHoldStatus, hasPhantomAccount, isAuthenticated, isRankedPreseason, showPlayDialog, user?.walletAddress, walletAddress]);
+  }, [activePlayMode, getRankedTokenHoldStatus, hasPhantomAccount, isAuthenticated, isRankedPreseason, user?.walletAddress, walletAddress]);
 
   const refreshRunningGameReconnect = useCallback(() => {
     if (!isAuthenticated) {
@@ -441,7 +460,6 @@ export function MainLobby() {
     activeTab === 'play' &&
     !showSettings &&
     !showSocial &&
-    !showPlayDialog &&
     !showCreateLobby &&
     !showPracticeSetup &&
     !showProfileModal
@@ -468,6 +486,9 @@ export function MainLobby() {
 
   const handleSelectHero = (heroId: HeroId) => {
     setFeaturedHero(heroId);
+    if (isInParty) {
+      setPartyHero(heroId);
+    }
   };
 
   const handleCreateLobby = async (
@@ -517,7 +538,6 @@ export function MainLobby() {
       await getRunningGameReconnect();
       setRunningGameSession(null);
       setError(err instanceof Error ? err.message : 'Failed to reconnect');
-      setShowPlayDialog(true);
     }
   };
 
@@ -529,7 +549,6 @@ export function MainLobby() {
 
   const handleStartTutorial = () => {
     setError(null);
-    setShowPlayDialog(false);
     setShowCreateLobby(false);
     setShowPracticeSetup(false);
     startTutorialGame(playerName);
@@ -566,6 +585,50 @@ export function MainLobby() {
       await rankedPlay(playerName);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to enter ranked');
+    }
+  };
+
+  const handleSelectPlayMode = (mode: PartyMode) => {
+    if (isInParty) {
+      if (isPartyLeader) {
+        setPartyMode(mode, DEFAULT_GAMEPLAY_MODE);
+      }
+      return;
+    }
+
+    setSelectedPlayMode(mode);
+  };
+
+  const handleSelectedPlayAction = () => {
+    if (isInParty) {
+      if (isPartyLeader) {
+        startParty();
+      } else {
+        setPartyReady(!localPartyMember?.ready);
+      }
+      return;
+    }
+
+    switch (selectedPlayMode) {
+      case 'ranked':
+        void handleRankedPlay();
+        break;
+      case 'custom':
+        setError(null);
+        if (tutorialRequired) {
+          handleStartTutorial();
+          return;
+        }
+        setShowCreateLobby(true);
+        break;
+      case 'practice':
+        setError(null);
+        setShowPracticeSetup(true);
+        break;
+      case 'quick_play':
+      default:
+        void handleQuickPlay();
+        break;
     }
   };
 
@@ -659,11 +722,24 @@ export function MainLobby() {
             heroAnimationMode={heroAnimationMode}
             rankedSeason={rankedSeason}
             isAuthenticated={isAuthenticated}
+            hasPhantomAccount={hasPhantomAccount}
             requiresTutorial={tutorialRequired}
+            error={error ?? partyLaunchError}
+            party={party}
+            soloPartyMember={soloPartyMember}
+            localPartyUserId={localPartyUserId}
+            isPartyLeader={isPartyLeader}
+            isPartyReadyToStart={isPartyReadyToStart}
+            selectedPlayMode={activePlayMode}
+            rankedTokenHoldStatus={rankedTokenHoldStatus}
+            rankedTokenHoldError={rankedTokenHoldError}
             runningGameSession={runningGameSession}
             isReconnectChecking={isReconnectChecking}
             serverLatency={serverLatency}
-            onOpenPlayDialog={() => setShowPlayDialog(true)}
+            onSelectPlayMode={handleSelectPlayMode}
+            onPlayAction={handleSelectedPlayAction}
+            onLeaveParty={leaveParty}
+            onOpenSocial={() => setShowSocial(true)}
             onStartTutorial={handleStartTutorial}
             onReconnect={handleReconnectGame}
             onDiscordSignIn={handleDiscordSignIn}
@@ -698,35 +774,12 @@ export function MainLobby() {
 
       {/* Modals */}
       {showSocial && isAuthenticated && (
-        <SocialBox onClose={() => setShowSocial(false)} />
-      )}
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-      {showPlayDialog && (
-        <PlayDialog
-          error={error}
-          heroColor={heroColor}
-          isLoading={isLoading}
-          isAuthenticated={isAuthenticated}
-          hasPhantomAccount={hasPhantomAccount}
-          isLinkingPhantom={isLinkingPhantom}
-          rankedTokenHoldStatus={rankedTokenHoldStatus}
-          isRankedTokenHoldLoading={isRankedTokenHoldLoading}
-          rankedTokenHoldError={rankedTokenHoldError}
-          rankedSeason={rankedSeason}
-          requiresTutorial={tutorialRequired}
-          onQuickPlay={handleQuickPlay}
-          onRankedPlay={handleRankedPlay}
-          onOpenPracticeSetup={() => {
-            setShowPlayDialog(false);
-            setShowPracticeSetup(true);
-          }}
-          onOpenCreateLobby={() => {
-            setShowPlayDialog(false);
-            setShowCreateLobby(true);
-          }}
-          onClose={() => setShowPlayDialog(false)}
+        <SocialBox
+          selectedHero={featuredHero}
+          onClose={() => setShowSocial(false)}
         />
       )}
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {showCreateLobby && (
         <CreateLobbyModal
           playerName={playerName}
@@ -771,11 +824,24 @@ interface PlayTabProps {
   heroAnimationMode: HeroPreviewAnimationMode;
   rankedSeason: RankedSeasonSnapshot;
   isAuthenticated: boolean;
+  hasPhantomAccount: boolean;
   requiresTutorial: boolean;
+  error: string | null;
+  party: PartyStateSnapshot | null;
+  soloPartyMember: PartyMemberSnapshot | null;
+  localPartyUserId: string | null;
+  isPartyLeader: boolean;
+  isPartyReadyToStart: boolean;
+  selectedPlayMode: PartyMode;
+  rankedTokenHoldStatus: RankedTokenHoldStatus | null;
+  rankedTokenHoldError: string | null;
   runningGameSession: RunningGameSession | null;
   isReconnectChecking: boolean;
   serverLatency: ServerLatencyProbeSnapshot | null;
-  onOpenPlayDialog: () => void;
+  onSelectPlayMode: (mode: PartyMode) => void;
+  onPlayAction: () => void;
+  onLeaveParty: () => void;
+  onOpenSocial: () => void;
   onStartTutorial: () => void;
   onReconnect: () => void;
   onDiscordSignIn: () => void;
@@ -792,11 +858,24 @@ function PlayTab({
   heroAnimationMode,
   rankedSeason,
   isAuthenticated,
+  hasPhantomAccount,
   requiresTutorial,
+  error,
+  party,
+  soloPartyMember,
+  localPartyUserId,
+  isPartyLeader,
+  isPartyReadyToStart,
+  selectedPlayMode,
+  rankedTokenHoldStatus,
+  rankedTokenHoldError,
   runningGameSession,
   isReconnectChecking,
   serverLatency,
-  onOpenPlayDialog,
+  onSelectPlayMode,
+  onPlayAction,
+  onLeaveParty,
+  onOpenSocial,
   onStartTutorial,
   onReconnect,
   onDiscordSignIn,
@@ -804,8 +883,9 @@ function PlayTab({
   onNextHero,
   onSelectHero,
 }: PlayTabProps) {
-  const { playButtonClick } = useUISounds();
   const canReconnect = isAuthenticated && Boolean(runningGameSession);
+  const localPartyMember = getPartyMember(party, localPartyUserId);
+  const isInParty = Boolean(party);
   const mainPlayLabel = isReconnectChecking
     ? 'CHECKING...'
     : canReconnect
@@ -814,12 +894,76 @@ function PlayTab({
         ? isLoading
           ? 'STARTING...'
           : 'START TUTORIAL'
-        : 'PLAY';
+        : isInParty
+          ? isPartyLeader
+            ? isLoading
+              ? 'STARTING...'
+              : 'START'
+            : localPartyMember?.ready
+              ? 'UNREADY'
+              : 'READY UP'
+            : getPlayModeActionLabel(selectedPlayMode, isLoading);
+  const isRankedEligibilityBlocked = selectedPlayMode === 'ranked' &&
+    !requiresTutorial &&
+    rankedTokenHoldStatus?.eligible === false;
+  const primaryDisabled = isLoading || isReconnectChecking || (
+    isInParty && isPartyLeader && !isPartyReadyToStart
+  ) || (
+    selectedPlayMode === 'ranked' &&
+    !requiresTutorial &&
+    rankedSeason.mode === 'preseason'
+  ) || isRankedEligibilityBlocked;
+  const primaryDisabledReason = getPrimaryDisabledReason({
+    isLoading,
+    isReconnectChecking,
+    isInParty,
+    isPartyLeader,
+    isPartyReadyToStart,
+    requiresTutorial,
+    selectedPlayMode,
+    rankedSeason,
+    rankedTokenHoldStatus,
+  });
 
   return (
     <div className="play-tab-shell h-full menu-content">
-      <RankedSeasonPlate season={rankedSeason} />
+      <PlayActionStack
+        error={error}
+        heroColor={heroColor}
+        isLoading={isLoading}
+        isAuthenticated={isAuthenticated}
+        hasPhantomAccount={hasPhantomAccount}
+        requiresTutorial={requiresTutorial}
+        rankedSeason={rankedSeason}
+        selectedPlayMode={selectedPlayMode}
+        rankedTokenHoldStatus={rankedTokenHoldStatus}
+        rankedTokenHoldError={rankedTokenHoldError}
+        party={party}
+        soloPartyMember={soloPartyMember}
+        isPartyLeader={isPartyLeader}
+        canReconnect={canReconnect}
+        isReconnectChecking={isReconnectChecking}
+        mainPlayLabel={mainPlayLabel}
+        primaryDisabled={primaryDisabled}
+        primaryDisabledReason={primaryDisabledReason}
+        onSelectPlayMode={onSelectPlayMode}
+        onLeaveParty={onLeaveParty}
+        onOpenSocial={onOpenSocial}
+        onDiscordSignIn={onDiscordSignIn}
+        onReconnect={onReconnect}
+        onStartTutorial={onStartTutorial}
+        onPlayAction={onPlayAction}
+      />
       <div className="play-tab-stage menu-compact-scale relative">
+        {party ? (
+          <PartyLineup
+            party={party}
+            localUserId={localPartyUserId}
+            featuredHero={featuredHero}
+            heroAnimationMode={heroAnimationMode}
+            onSelectHero={onSelectHero}
+          />
+        ) : (
         <div className="play-hero-column flex flex-col items-center justify-center">
           {/* Hero Visual with Carousel Controls */}
         <div className="play-hero-nav relative flex items-center gap-3 lg:gap-4 2xl:gap-6">
@@ -868,7 +1012,7 @@ function PlayTab({
           <p className="text-white/50 font-body text-[10px] sm:text-xs xl:text-sm max-w-sm mx-auto leading-relaxed">{heroInfo.description}</p>
 
           {/* Carousel Dot Indicators */}
-          <div className="play-carousel-dots flex items-center justify-center gap-1.5 sm:gap-2 mt-1 sm:mt-1.5 lg:mt-2 xl:mt-3 2xl:mt-4 mb-1 sm:mb-1.5 lg:mb-2 xl:mb-3 2xl:mb-4">
+          <div className="play-carousel-dots flex items-center justify-center gap-1.5 sm:gap-2 mt-1 sm:mt-1.5 lg:mt-2 xl:mt-3 2xl:mt-4">
             {ALL_HERO_IDS.map((heroId) => {
               const isActive = heroId === featuredHero;
               const dotColor = HERO_COLORS[heroId];
@@ -894,59 +1038,499 @@ function PlayTab({
               );
             })}
           </div>
-
-          {isAuthenticated ? (
-            <button
-              type="button"
-              onClick={() => {
-                playButtonClick();
-                if (canReconnect) {
-                  onReconnect();
-                } else if (requiresTutorial) {
-                  onStartTutorial();
-                } else {
-                  onOpenPlayDialog();
-                }
-              }}
-              disabled={isLoading || isReconnectChecking}
-              className="play-main-cta group"
-              style={{
-                background: `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`,
-                boxShadow: `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`,
-              }}
-            >
-              <span
-                className="absolute inset-0 opacity-0 group-hover:opacity-100"
-                style={{ background: WALLET_AUTH_COLORS.shimmer }}
-              />
-              <span className="relative flex items-center justify-center gap-2">
-                <>
-                  {canReconnect ? (
-                    <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4v6h6M20 20v-6h-6M5.5 14a7 7 0 0012.1 2.4M18.5 10A7 7 0 006.4 7.6" />
-                    </svg>
-                  ) : (
-                    <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M8 5v14l11-7z" />
-                    </svg>
-                  )}
-                  {mainPlayLabel}
-                </>
-              </span>
-            </button>
-          ) : (
-            <DiscordSignInButton
-              onClick={() => {
-                playButtonClick();
-                onDiscordSignIn();
-              }}
-              className="play-main-cta play-main-cta-discord group"
-            />
-          )}
         </div>
-      </div>
+        </div>
+        )}
       </div>
       {serverLatency && <ServerLatencyAdvisory snapshot={serverLatency} />}
+    </div>
+  );
+}
+
+function PartyLineup({
+  party,
+  localUserId,
+  featuredHero,
+  heroAnimationMode,
+  onSelectHero,
+}: {
+  party: PartyStateSnapshot;
+  localUserId: string | null;
+  featuredHero: HeroId;
+  heroAnimationMode: HeroPreviewAnimationMode;
+  onSelectHero: (heroId: HeroId) => void;
+}) {
+  const localMember = getPartyMember(party, localUserId);
+  const selectedHero = localMember?.heroId ?? featuredHero;
+
+  return (
+    <div className="party-lineup-stage">
+      <div
+        className="party-lineup-grid"
+        data-count={party.members.length}
+      >
+        {party.members.map((member) => {
+          const heroColor = HERO_COLORS[member.heroId];
+          const hero = HERO_DEFINITIONS[member.heroId];
+          return (
+            <article
+              key={member.userId}
+              className="party-member-card"
+              data-ready={member.leader || member.ready ? 'true' : 'false'}
+              data-local={member.userId === localUserId ? 'true' : 'false'}
+            >
+              <Suspense fallback={null}>
+                <FeaturedHeroPreview
+                  heroId={member.heroId}
+                  accentColor={heroColor}
+                  initialYaw={Math.PI - 0.12}
+                  animationMode={heroAnimationMode}
+                  className="party-member-preview"
+                />
+              </Suspense>
+              <div className="party-member-identity">
+                <span className="party-member-hero-icon" style={{ color: heroColor }}>
+                  <HeroIcon heroId={member.heroId} size={18} />
+                </span>
+                <span className="party-member-name">{member.displayName}</span>
+              </div>
+              <div className="party-member-meta">
+                <span>{hero.name}</span>
+                <span>{member.leader ? 'LEADER' : member.ready ? 'READY' : 'NOT READY'}</span>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+
+      <div className="party-hero-picker" aria-label="Choose party hero">
+        {ALL_HERO_IDS.map((heroId) => {
+          const selected = heroId === selectedHero;
+          const heroColor = HERO_COLORS[heroId];
+          return (
+            <button
+              key={heroId}
+              type="button"
+              aria-pressed={selected}
+              aria-label={`Select ${HERO_DEFINITIONS[heroId].name}`}
+              title={HERO_DEFINITIONS[heroId].name}
+              onClick={() => onSelectHero(heroId)}
+              className={`party-hero-picker-button${selected ? ' is-selected' : ''}`}
+              style={selected ? {
+                '--party-hero-accent': heroColor,
+              } as CSSProperties : undefined}
+            >
+              <HeroIcon heroId={heroId} size={18} />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function getPlayModeLabel(mode: PartyMode): string {
+  switch (mode) {
+    case 'ranked':
+      return 'RANKED';
+    case 'custom':
+      return 'CUSTOM GAME';
+    case 'practice':
+      return 'PRACTICE';
+    case 'quick_play':
+    default:
+      return 'QUICK PLAY';
+  }
+}
+
+function getPlayModeActionLabel(mode: PartyMode, isLoading: boolean): string {
+  if (isLoading) {
+    switch (mode) {
+      case 'ranked':
+        return 'PREPARING...';
+      case 'custom':
+        return 'CREATING...';
+      case 'practice':
+        return 'STARTING...';
+      case 'quick_play':
+      default:
+        return 'MATCHING...';
+    }
+  }
+
+  switch (mode) {
+    case 'ranked':
+      return 'START RANKED';
+    case 'custom':
+      return 'CREATE LOBBY';
+    case 'practice':
+      return 'PRACTICE';
+    case 'quick_play':
+    default:
+      return 'FIND MATCH';
+  }
+}
+
+function getPrimaryDisabledReason(input: {
+  isLoading: boolean;
+  isReconnectChecking: boolean;
+  isInParty: boolean;
+  isPartyLeader: boolean;
+  isPartyReadyToStart: boolean;
+  requiresTutorial: boolean;
+  selectedPlayMode: PartyMode;
+  rankedSeason: RankedSeasonSnapshot;
+  rankedTokenHoldStatus: RankedTokenHoldStatus | null;
+}): string | null {
+  if (input.isLoading) return null;
+  if (input.isReconnectChecking) return 'Checking active match';
+  if (input.isInParty && input.isPartyLeader && !input.isPartyReadyToStart) {
+    return 'Waiting for teammates to ready up';
+  }
+  if (input.selectedPlayMode !== 'ranked' || input.requiresTutorial) return null;
+  if (input.rankedSeason.mode === 'preseason') return 'Ranked is disabled during Pre-season';
+  if (input.rankedTokenHoldStatus?.eligible === false) {
+    return `Ranked requires ${rankedTokenHoldRequirement(input.rankedTokenHoldStatus)}`;
+  }
+  return null;
+}
+
+function PlayModeIcon({ mode }: { mode: PartyMode }) {
+  switch (mode) {
+    case 'ranked':
+      return (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.3 6.8 19l1-5.8L3.6 9.1l5.8-.8L12 3z" />
+        </svg>
+      );
+    case 'custom':
+      return (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v12m6-6H6" />
+        </svg>
+      );
+    case 'practice':
+      return (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3v6m0 0l4 7a3 3 0 01-2.6 4.5H10.6A3 3 0 018 16l4-7zm-3.5 11h7" />
+        </svg>
+      );
+    case 'quick_play':
+    default:
+      return (
+        <svg fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 5v14l11-7z" />
+        </svg>
+      );
+  }
+}
+
+function getModeTitle(input: {
+  mode: PartyMode;
+  isAuthenticated: boolean;
+  hasPhantomAccount: boolean;
+  rankedSeason: RankedSeasonSnapshot;
+  requiresTutorial: boolean;
+  rankedTokenHoldStatus: RankedTokenHoldStatus | null;
+  rankedTokenHoldError: string | null;
+}): string {
+  if (input.requiresTutorial && input.mode !== 'practice') return 'Complete the tutorial before online play';
+
+  if (input.mode !== 'ranked') return getPlayModeLabel(input.mode);
+  if (input.rankedSeason.mode === 'preseason') return 'Ranked is disabled during Pre-season';
+  if (input.isAuthenticated && !input.hasPhantomAccount) return 'Connect Phantom before entering ranked';
+  if (input.rankedTokenHoldStatus?.eligible === false) {
+    return `Ranked requires ${rankedTokenHoldRequirement(input.rankedTokenHoldStatus)}`;
+  }
+  return input.rankedTokenHoldError ?? 'Competitive queue';
+}
+
+function PlayActionStack({
+  error,
+  heroColor,
+  isLoading,
+  isAuthenticated,
+  hasPhantomAccount,
+  requiresTutorial,
+  rankedSeason,
+  selectedPlayMode,
+  rankedTokenHoldStatus,
+  rankedTokenHoldError,
+  party,
+  soloPartyMember,
+  isPartyLeader,
+  canReconnect,
+  isReconnectChecking,
+  mainPlayLabel,
+  primaryDisabled,
+  primaryDisabledReason,
+  onSelectPlayMode,
+  onLeaveParty,
+  onOpenSocial,
+  onDiscordSignIn,
+  onReconnect,
+  onStartTutorial,
+  onPlayAction,
+}: {
+  error: string | null;
+  heroColor: string;
+  isLoading: boolean;
+  isAuthenticated: boolean;
+  hasPhantomAccount: boolean;
+  requiresTutorial: boolean;
+  rankedSeason: RankedSeasonSnapshot;
+  selectedPlayMode: PartyMode;
+  rankedTokenHoldStatus: RankedTokenHoldStatus | null;
+  rankedTokenHoldError: string | null;
+  party: PartyStateSnapshot | null;
+  soloPartyMember: PartyMemberSnapshot | null;
+  isPartyLeader: boolean;
+  canReconnect: boolean;
+  isReconnectChecking: boolean;
+  mainPlayLabel: string;
+  primaryDisabled: boolean;
+  primaryDisabledReason: string | null;
+  onSelectPlayMode: (mode: PartyMode) => void;
+  onLeaveParty: () => void;
+  onOpenSocial: () => void;
+  onDiscordSignIn: () => void;
+  onReconnect: () => void;
+  onStartTutorial: () => void;
+  onPlayAction: () => void;
+}) {
+  const { playButtonClick } = useUISounds();
+  const isInParty = Boolean(party);
+
+  const runPrimaryAction = () => {
+    playButtonClick();
+    if (canReconnect) {
+      onReconnect();
+    } else if (requiresTutorial) {
+      onStartTutorial();
+    } else {
+      onPlayAction();
+    }
+  };
+  const handleInviteSlotClick = () => {
+    playButtonClick();
+    if (isAuthenticated) {
+      onOpenSocial();
+    } else {
+      onDiscordSignIn();
+    }
+  };
+  const teammateMembers = party?.members ?? (soloPartyMember ? [soloPartyMember] : []);
+
+  return (
+    <div className="play-action-stack">
+      <RankedSeasonPlate season={rankedSeason} />
+      <PartyTeammateStrip
+        members={teammateMembers}
+        onInviteClick={handleInviteSlotClick}
+      />
+      <PlayModeSelector
+        heroColor={heroColor}
+        isAuthenticated={isAuthenticated}
+        hasPhantomAccount={hasPhantomAccount}
+        requiresTutorial={requiresTutorial}
+        rankedSeason={rankedSeason}
+        selectedPlayMode={selectedPlayMode}
+        rankedTokenHoldStatus={rankedTokenHoldStatus}
+        rankedTokenHoldError={rankedTokenHoldError}
+        modeReadOnly={isInParty && !isPartyLeader}
+        onSelectMode={(mode) => {
+          playButtonClick();
+          onSelectPlayMode(mode);
+        }}
+      />
+      {error && (
+        <div className="play-action-error" role="status">
+          {error}
+        </div>
+      )}
+      {isAuthenticated ? (
+        <div className="play-main-cta-wrap">
+          <button
+            type="button"
+            onClick={runPrimaryAction}
+            disabled={primaryDisabled}
+            className="play-main-cta group"
+            aria-describedby={primaryDisabledReason ? 'play-main-cta-disabled-reason' : undefined}
+            style={{
+              background: `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`,
+              boxShadow: `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`,
+            }}
+          >
+            <span
+              className="absolute inset-0 opacity-0 group-hover:opacity-100"
+              style={{ background: WALLET_AUTH_COLORS.shimmer }}
+            />
+            <span className="play-main-cta-content relative flex items-center justify-center gap-2">
+              {canReconnect ? (
+                <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4v6h6M20 20v-6h-6M5.5 14a7 7 0 0012.1 2.4M18.5 10A7 7 0 006.4 7.6" />
+                </svg>
+              ) : (
+                <PlayModeIcon mode={selectedPlayMode} />
+              )}
+              {mainPlayLabel}
+            </span>
+          </button>
+          {primaryDisabledReason && (
+            <div
+              id="play-main-cta-disabled-reason"
+              className="play-disabled-reason"
+              role="status"
+            >
+              {primaryDisabledReason}
+            </div>
+          )}
+        </div>
+      ) : (
+        <DiscordSignInButton
+          onClick={() => {
+            playButtonClick();
+            onDiscordSignIn();
+          }}
+          className="play-main-cta play-main-cta-discord group"
+        />
+      )}
+      {isInParty && (
+        <button
+          type="button"
+          className="play-party-leave"
+          onClick={() => {
+            playButtonClick();
+            onLeaveParty();
+          }}
+        >
+          LEAVE PARTY
+        </button>
+      )}
+    </div>
+  );
+}
+
+function PartyTeammateStrip({
+  members,
+  onInviteClick,
+}: {
+  members: PartyMemberSnapshot[];
+  onInviteClick: () => void;
+}) {
+  const visibleMembers = members.slice(0, PLAY_PARTY_SLOT_COUNT);
+  const hasInviteSlot = visibleMembers.length < PLAY_PARTY_SLOT_COUNT;
+
+  return (
+    <div
+      className="play-party-teammates"
+      aria-label="Lobby teammates"
+    >
+      <span className="play-party-teammates-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <circle cx="9" cy="7.25" r="3.15" strokeWidth={1.9} />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.9} d="M3.35 19.25v-1.4A4.85 4.85 0 018.2 13h1.6a4.85 4.85 0 014.85 4.85v1.4" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.9} d="M15.65 4.55a3.1 3.1 0 010 5.4" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.9} d="M18.25 14.15a4.3 4.3 0 012.4 3.85v1.25" />
+        </svg>
+      </span>
+      {visibleMembers.map((member) => (
+        <div
+          key={member.userId}
+          className="play-party-teammate"
+          role="img"
+          tabIndex={0}
+          title={member.displayName}
+          aria-label={`${member.displayName}, ${member.rank.label}`}
+        >
+          <RankIcon rank={member.rank} size={24} />
+          <span className="play-party-teammate-tooltip" role="tooltip">
+            {member.displayName}
+          </span>
+        </div>
+      ))}
+      {hasInviteSlot && (
+        <button
+          type="button"
+          className="play-party-teammate is-empty"
+          title="Invite teammate"
+          aria-label="Open friends to invite a teammate"
+          onClick={onInviteClick}
+        >
+          <svg className="play-party-teammate-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 5v14m7-7H5" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
+function PlayModeSelector({
+  heroColor,
+  isAuthenticated,
+  hasPhantomAccount,
+  requiresTutorial,
+  rankedSeason,
+  selectedPlayMode,
+  rankedTokenHoldStatus,
+  rankedTokenHoldError,
+  modeReadOnly,
+  onSelectMode,
+}: {
+  heroColor: string;
+  isAuthenticated: boolean;
+  hasPhantomAccount: boolean;
+  requiresTutorial: boolean;
+  rankedSeason: RankedSeasonSnapshot;
+  selectedPlayMode: PartyMode;
+  rankedTokenHoldStatus: RankedTokenHoldStatus | null;
+  rankedTokenHoldError: string | null;
+  modeReadOnly: boolean;
+  onSelectMode: (mode: PartyMode) => void;
+}) {
+  return (
+    <div className="play-mode-selector" role="radiogroup" aria-label="Match mode">
+      {PLAY_MODE_OPTIONS.map((mode) => {
+        const selected = mode === selectedPlayMode;
+        const isRanked = mode === 'ranked';
+        const locked = isRanked && (
+          rankedSeason.mode === 'preseason' ||
+          (isAuthenticated && hasPhantomAccount && rankedTokenHoldStatus?.eligible === false)
+        );
+        const title = getModeTitle({
+          mode,
+          isAuthenticated,
+          hasPhantomAccount,
+          rankedSeason,
+          requiresTutorial,
+          rankedTokenHoldStatus,
+          rankedTokenHoldError,
+        });
+
+        return (
+          <button
+            key={mode}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            disabled={modeReadOnly}
+            onClick={() => onSelectMode(mode)}
+            className={`play-mode-option${selected ? ' is-selected' : ''}${locked ? ' is-locked' : ''}`}
+            title={modeReadOnly ? 'Party leader chooses the mode' : title}
+            style={selected ? {
+              '--play-mode-accent': heroColor,
+            } as CSSProperties : undefined}
+          >
+            <span className="play-mode-option-icon">
+              <PlayModeIcon mode={mode} />
+            </span>
+            <span className="play-mode-option-copy">
+              <span className="play-mode-option-title">{getPlayModeLabel(mode)}</span>
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -1000,225 +1584,6 @@ function RankedSeasonPlate({ season }: { season: RankedSeasonSnapshot }) {
       <div className="play-season-plate-end">{formatSeasonBoundaryDate(season)}</div>
       <div className="play-season-plate-detail">{formatSeasonBoundaryDetail(season)}</div>
     </aside>
-  );
-}
-
-interface PlayDialogProps {
-  error: string | null;
-  heroColor: string;
-  isLoading: boolean;
-  isAuthenticated: boolean;
-  hasPhantomAccount: boolean;
-  isLinkingPhantom: boolean;
-  rankedTokenHoldStatus: RankedTokenHoldStatus | null;
-  isRankedTokenHoldLoading: boolean;
-  rankedTokenHoldError: string | null;
-  rankedSeason: RankedSeasonSnapshot;
-  requiresTutorial: boolean;
-  onQuickPlay: () => void;
-  onRankedPlay: () => void;
-  onOpenPracticeSetup: () => void;
-  onOpenCreateLobby: () => void;
-  onClose: () => void;
-}
-
-function PlayDialog({
-  error,
-  heroColor,
-  isLoading,
-  isAuthenticated,
-  hasPhantomAccount,
-  isLinkingPhantom,
-  rankedTokenHoldStatus,
-  isRankedTokenHoldLoading,
-  rankedTokenHoldError,
-  rankedSeason,
-  requiresTutorial,
-  onQuickPlay,
-  onRankedPlay,
-  onOpenPracticeSetup,
-  onOpenCreateLobby,
-  onClose,
-}: PlayDialogProps) {
-  const { playButtonClick } = useUISounds();
-  const titleId = useId();
-  const dialogStyle = { '--play-dialog-accent': heroColor } as CSSProperties;
-  const shouldCheckRankedHold = isAuthenticated && hasPhantomAccount;
-  const isRankedPreseason = rankedSeason.mode === 'preseason';
-  const isRankedHoldMissing = shouldCheckRankedHold && rankedTokenHoldStatus?.eligible === false;
-  const isRankedHoldPending = shouldCheckRankedHold && isRankedTokenHoldLoading;
-  const rankedRequirement = rankedTokenHoldStatus ? rankedTokenHoldRequirement(rankedTokenHoldStatus) : null;
-  const rankedTokenLabel = rankedTokenHoldStatus ? formatRankedTokenLabel(rankedTokenHoldStatus) : null;
-  const isRankedLocked = isRankedPreseason || isRankedHoldMissing;
-  const isRankedDisabled = requiresTutorial || isLoading || isLinkingPhantom || isRankedPreseason || isRankedHoldPending || isRankedHoldMissing;
-  const rankedSubtitle = isRankedPreseason
-    ? formatRankedPreseasonSubtitle(rankedSeason)
-    : requiresTutorial
-      ? 'Complete the tutorial first'
-    : isAuthenticated && !hasPhantomAccount
-      ? 'Connect Phantom to enter ranked'
-    : isRankedHoldMissing && rankedTokenHoldStatus && rankedTokenLabel
-      ? `Hold ${formatRankedUsdCents(rankedTokenHoldStatus.usdCents)} worth of ${rankedTokenLabel} to play`
-      : isRankedHoldPending
-        ? 'Checking token hold...'
-        : rankedTokenHoldError
-          ? 'Token check unavailable'
-          : 'Competitive queue';
-  const rankedTitle = isRankedPreseason
-    ? 'Ranked is disabled during Pre-season'
-    : requiresTutorial
-      ? 'Complete the tutorial before entering ranked'
-    : isAuthenticated && !hasPhantomAccount
-      ? 'Connect Phantom before entering ranked'
-    : isRankedHoldMissing && rankedRequirement
-      ? `Ranked requires ${rankedRequirement}`
-      : rankedTokenHoldError ?? 'Competitive queue';
-  const rankedBadge = isRankedPreseason ? null : rankedTokenLabel;
-  const rankedBadgeTitle = rankedTokenHoldStatus
-    ? `Hold token: ${rankedTokenHoldStatus.tokenAddress}`
-    : undefined;
-  const showRankedPhantomBadge = isAuthenticated && !hasPhantomAccount && !isRankedPreseason;
-  const rankedButtonClassName = `play-pay-option play-pay-option-ranked${isRankedLocked || requiresTutorial ? ' play-pay-option-ranked-locked' : ''}`;
-
-  const runAction = (action: () => void) => {
-    playButtonClick();
-    action();
-  };
-
-  return (
-    <div className="play-pay-dialog-root fixed inset-0 z-modal flex items-center justify-center p-[clamp(1rem,2vw,2rem)]">
-      <div className="play-pay-dialog-scrim absolute inset-0" onClick={onClose} />
-
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="play-pay-dialog relative w-full"
-        style={dialogStyle}
-      >
-        <header className="play-pay-dialog-header">
-          <div className="min-w-0">
-            <p className="play-pay-dialog-kicker">MATCH DESK</p>
-            <h2 id={titleId} className="play-pay-dialog-title">Choose a match</h2>
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="play-pay-dialog-close"
-            aria-label="Close play dialog"
-          >
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </header>
-
-        <div className="play-pay-dialog-body">
-          {error && (
-            <div className="play-pay-dialog-error">
-              <p>{error}</p>
-            </div>
-          )}
-
-          <div className="play-pay-dialog-grid">
-            <button
-              type="button"
-              onClick={() => runAction(onRankedPlay)}
-              disabled={isRankedDisabled}
-              className={rankedButtonClassName}
-              title={rankedTitle}
-              style={{
-                background: `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`,
-                boxShadow: `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`,
-              }}
-            >
-              <span
-                className="play-pay-option-shimmer"
-                style={{ background: WALLET_AUTH_COLORS.shimmer }}
-              />
-              <span className="play-pay-option-icon">
-                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.3 6.8 19l1-5.8L3.6 9.1l5.8-.8L12 3z" />
-                </svg>
-              </span>
-              <span className="play-pay-option-copy">
-                <span className="play-pay-option-title">{isLoading ? 'PREPARING...' : 'RANKED'}</span>
-                <span className="play-pay-option-subtitle">{rankedSubtitle}</span>
-              </span>
-              {showRankedPhantomBadge ? (
-                <span
-                  className="play-pay-option-phantom-badge"
-                  title={isLinkingPhantom ? 'Connecting Phantom' : 'Connect Phantom'}
-                  aria-label={isLinkingPhantom ? 'Connecting Phantom' : 'Connect Phantom'}
-                >
-                  <PhantomLogo className="h-5 w-5" />
-                </span>
-              ) : rankedBadge && (
-                <span className="play-pay-option-badge" title={rankedBadgeTitle}>
-                  {rankedBadge}
-                </span>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => runAction(onQuickPlay)}
-              disabled={requiresTutorial || isLoading}
-              className="play-pay-option"
-              title={requiresTutorial ? 'Complete the tutorial before quick play' : undefined}
-            >
-              <span className="play-pay-option-icon">
-                <svg fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-              </span>
-              <span className="play-pay-option-copy">
-                <span className="play-pay-option-title">{isLoading ? 'STARTING...' : 'QUICK PLAY'}</span>
-                <span className="play-pay-option-subtitle">{requiresTutorial ? 'Complete the tutorial first' : 'Instant casual queue'}</span>
-              </span>
-            </button>
-
-            <div className="play-pay-option-row">
-              <button
-                type="button"
-                onClick={() => runAction(onOpenCreateLobby)}
-                disabled={requiresTutorial || isLoading}
-                className="play-pay-option play-pay-option-compact"
-                title={requiresTutorial ? 'Complete the tutorial before custom games' : undefined}
-              >
-                <span className="play-pay-option-icon">
-                  <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                  </svg>
-                </span>
-                <span className="play-pay-option-copy">
-                  <span className="play-pay-option-title">CUSTOM GAME</span>
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => runAction(onOpenPracticeSetup)}
-                disabled={isLoading}
-                className="play-pay-option play-pay-option-compact"
-              >
-                <span className="play-pay-option-icon">
-                  <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3v6m0 0l4 7a3 3 0 01-2.6 4.5H10.6A3 3 0 018 16l4-7zm-3.5 11h7" />
-                  </svg>
-                </span>
-                <span className="play-pay-option-copy">
-                  <span className="play-pay-option-title">PRACTICE</span>
-                </span>
-              </button>
-            </div>
-
-          </div>
-
-        </div>
-      </section>
-    </div>
   );
 }
 

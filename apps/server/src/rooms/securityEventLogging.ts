@@ -66,6 +66,7 @@ const EXPECTED_MOVEMENT_AUTHORITY_BARRIER_REASONS = new Set([
   'respawn',
   'teleport',
   'knockback',
+  'root',
 ]);
 
 export function isExpectedMovementAuthorityBarrier(event: SecurityEventLogInput): boolean {

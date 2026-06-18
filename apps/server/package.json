@@ -42,6 +42,7 @@
     "test:room-chat": "tsx src/scripts/room-chat-runtime.test.ts",
     "test:replication-frame": "tsx src/scripts/replication-frame-runtime.test.ts",
     "test:player-pings": "tsx src/scripts/player-ping-tracker.test.ts",
+    "test:party": "tsx src/scripts/party-runtime.test.ts",
     "test:player-ping-runtime": "tsx src/scripts/player-ping-runtime.test.ts",
     "test:player-replication": "tsx src/scripts/player-replication-state.test.ts",
     "test:player-roots": "tsx src/scripts/player-root-state.test.ts",

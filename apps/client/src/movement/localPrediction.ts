@@ -7,6 +7,8 @@ import {
   CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST,
   CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE,
   CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER,
+  PLAYER_HEIGHT,
+  PLAYER_RADIUS,
   PHANTOM_BLINK_DISTANCE,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
   POWERUP_MOVEMENT_SPEED_MULTIPLIER,
@@ -203,6 +205,23 @@ function getClientCollisionWorld(terrain = getClientTerrainAdapter()): MovementC
   const world = createVoxelCollisionWorld(terrain);
   cachedCollisionWorld = { mapId, revision, world };
   return world;
+}
+
+export function prewarmLocalMovementCollisionWorld(): boolean {
+  if (!getActiveProceduralMap()) return false;
+  const terrain = getClientTerrainAdapter();
+  const world = getClientCollisionWorld(terrain);
+  const localPlayer = useGameStore.getState().localPlayer;
+  const origin = terrain.origin ?? { x: 0, y: 0, z: 0 };
+  const originGroundY = terrain.getGroundY(origin) ?? origin.y;
+  const probePosition = localPlayer?.position ?? {
+    x: origin.x,
+    y: originGroundY + PLAYER_HEIGHT / 2,
+    z: origin.z,
+  };
+  world.findGround(probePosition, 0.75, PLAYER_RADIUS, PLAYER_HEIGHT);
+  world.sweepCapsule(probePosition, { x: 0, y: -0.05, z: 0 }, PLAYER_HEIGHT, PLAYER_RADIUS);
+  return true;
 }
 
 function clampClientPosition(position: Vec3): { position: Vec3; clampedY: boolean } {
