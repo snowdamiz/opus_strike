@@ -4397,25 +4397,8 @@ input[type="color"]::-webkit-color-swatch {
   transition: background-color 180ms ease-out;
 }
 
-.hero-preview-shell::before {
-  content: '';
-  position: absolute;
-  inset: 8%;
-  border-radius: 999px;
-  background: radial-gradient(ellipse at center, var(--hero-preview-accent) 0%, transparent 68%);
-  opacity: 0;
-  filter: blur(18px);
-  transform: scale(0.86);
-  transition: opacity 180ms ease-out;
-  pointer-events: none;
-}
-
 .hero-preview-shell[data-ready="false"] {
   background: transparent;
-}
-
-.hero-preview-shell[data-ready="false"]::before {
-  opacity: 0;
 }
 
 .hero-preview-shell canvas {

@@ -35,6 +35,12 @@ export const HERO_COLOR_SCHEMES = {
   chronos: { primary: palette.chronos.hex, secondary: palette.chronosDeep.hex, glow: rgba(palette.chronos.rgb, 0.62) },
 } satisfies Record<HeroId, { primary: string; secondary: string; glow: string }>;
 
+export const HERO_PREVIEW_COLORS = {
+  neutralShadow: '#05070a',
+  platformBase: '#151922',
+  platformDeck: '#222936',
+} as const;
+
 export const HUD_HERO_COLORS = {
   phantom: { primary: palette.phantom.hex, glow: rgba(palette.phantom.rgb, 0.4), bg: rgba(palette.phantom.rgb, 0.15) },
   hookshot: { primary: palette.cyan.hex, glow: rgba(palette.cyan.rgb, 0.4), bg: rgba(palette.cyan.rgb, 0.15) },

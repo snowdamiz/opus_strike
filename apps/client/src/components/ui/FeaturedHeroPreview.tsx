@@ -96,13 +96,6 @@ export function FeaturedHeroPreview({
 
   return (
     <div className="play-hero-preview-wrap relative">
-      <div
-        className="absolute inset-0 opacity-20 -z-10"
-        style={{
-          background: `radial-gradient(ellipse at center, ${accentColor} 0%, transparent 60%)`,
-          transform: 'scale(1.4)',
-        }}
-      />
       {preview}
     </div>
   );
