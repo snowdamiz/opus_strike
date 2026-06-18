@@ -110,6 +110,18 @@ botParty.addBot(botLeader.userId, { difficulty: 'normal' });
 botParty.addBot(botLeader.userId, { difficulty: 'hard' });
 assert.throws(() => botParty.addBot(botLeader.userId, { difficulty: 'normal' }), /Party is full/);
 
+const battleRoyalParty = new PartyRosterRuntime('party-br-limit', 4);
+const battleRoyalLeader = addMember(battleRoyalParty, 'br-leader', 'session-br-leader', 900);
+battleRoyalParty.setMode(battleRoyalLeader.userId, 'quick_play', 'battle_royal');
+battleRoyalParty.addBot(battleRoyalLeader.userId, { difficulty: 'easy' });
+battleRoyalParty.addBot(battleRoyalLeader.userId, { difficulty: 'normal' });
+assert.equal(battleRoyalParty.validateStart().ok, true);
+battleRoyalParty.addBot(battleRoyalLeader.userId, { difficulty: 'hard' });
+assert.deepEqual(
+  battleRoyalParty.validateStart(),
+  { ok: false, message: 'Battle Royal squads are limited to 3 players' }
+);
+
 const botOnlyParty = new PartyRosterRuntime('party-bot-only', 4);
 const botOnlyLeader = addMember(botOnlyParty, 'solo-leader', 'session-solo-leader', 900);
 botOnlyParty.addBot(botOnlyLeader.userId);

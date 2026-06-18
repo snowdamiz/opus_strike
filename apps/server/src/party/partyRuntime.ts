@@ -3,6 +3,7 @@ import {
   DEFAULT_GAMEPLAY_MODE,
   PARTY_MAX_MEMBERS,
   createDefaultPartyBotFillSettings,
+  getGameplayModeRules,
   getHumanPartyHeroIds,
   getRankDivisionIndex,
   getRankFromRating,
@@ -385,6 +386,13 @@ export class PartyRosterRuntime {
   validateStart(): { ok: true } | { ok: false; message: string } {
     if (!this.leaderUserId || this.members.size === 0) {
       return { ok: false, message: 'Party is empty' };
+    }
+
+    if (this.gameplayMode === 'battle_royal') {
+      const maxSquadSize = getGameplayModeRules('battle_royal').maxTeamSize;
+      if (this.members.size > maxSquadSize) {
+        return { ok: false, message: `Battle Royal squads are limited to ${maxSquadSize} players` };
+      }
     }
 
     const notReady = this.getMembers().find((member) => !member.isBot && member.userId !== this.leaderUserId && !member.ready);

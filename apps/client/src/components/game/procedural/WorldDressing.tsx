@@ -188,11 +188,14 @@ function worldPositionForSurface(
 }
 
 function createProtectedSurfaceZones(manifest: VoxelMapManifest): ProtectedSurfaceZone[] {
+  const spawnZones = Object.values(manifest.spawnPoints).flatMap((spawnPoints) => (
+    spawnPoints.map((spawn) => ({ x: spawn.x, z: spawn.z, radiusSq: 5.8 ** 2 }))
+  ));
+
   return [
     { x: manifest.flagZones.red.x, z: manifest.flagZones.red.z, radiusSq: 7.5 ** 2 },
     { x: manifest.flagZones.blue.x, z: manifest.flagZones.blue.z, radiusSq: 7.5 ** 2 },
-    ...manifest.spawnPoints.red.map((spawn) => ({ x: spawn.x, z: spawn.z, radiusSq: 5.8 ** 2 })),
-    ...manifest.spawnPoints.blue.map((spawn) => ({ x: spawn.x, z: spawn.z, radiusSq: 5.8 ** 2 })),
+    ...spawnZones,
   ];
 }
 

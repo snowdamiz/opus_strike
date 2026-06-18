@@ -28,6 +28,7 @@ import {
   DEFAULT_RANKED_SEASON_NUMBER,
   HERO_DEFINITIONS,
   PARTY_MAX_MEMBERS,
+  getGameplayModeRules,
   getGameplayModeLabel,
   getHumanPartyHeroIds,
   getRankedSeasonLabel,
@@ -57,6 +58,7 @@ const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((mod
 })));
 const HERO_IDLE_ANIMATION_MODE: HeroPreviewAnimationMode = 'idle';
 const PLAY_PARTY_SLOT_COUNT = PARTY_MAX_MEMBERS;
+const BATTLE_ROYAL_MAX_SQUAD_SIZE = getGameplayModeRules('battle_royal').maxTeamSize;
 const PING_ADVISORY_VISIBLE_MIN_MS = 100;
 
 function DiscordIcon({ className, style }: { className?: string; style?: CSSProperties }) {
@@ -1010,9 +1012,12 @@ function PlayTab({
   const isRankedEligibilityBlocked = selectedPlayMode === 'ranked' &&
     !requiresTutorial &&
     rankedTokenHoldStatus?.eligible === false;
+  const partySize = party?.members.length ?? 1;
+  const isBattleRoyalPartyTooLarge = selectedPlayMode === 'battle_royal' &&
+    partySize > BATTLE_ROYAL_MAX_SQUAD_SIZE;
   const primaryDisabled = isLoading || isReconnectChecking || (
     isInParty && isPartyLeader && !isPartyReadyToStart
-  ) || (
+  ) || isBattleRoyalPartyTooLarge || (
     selectedPlayMode === 'ranked' &&
     !requiresTutorial &&
     rankedSeason.mode === 'preseason'
@@ -1025,6 +1030,7 @@ function PlayTab({
     isPartyReadyToStart,
     requiresTutorial,
     selectedPlayMode,
+    partySize,
     rankedSeason,
     rankedTokenHoldStatus,
   });
@@ -1282,11 +1288,15 @@ function getPrimaryDisabledReason(input: {
   isPartyReadyToStart: boolean;
   requiresTutorial: boolean;
   selectedPlayMode: PlayMenuMode;
+  partySize: number;
   rankedSeason: RankedSeasonSnapshot;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
 }): string | null {
   if (input.isLoading) return null;
   if (input.isReconnectChecking) return 'Checking active match';
+  if (input.selectedPlayMode === 'battle_royal' && input.partySize > BATTLE_ROYAL_MAX_SQUAD_SIZE) {
+    return `Battle Royal squads are limited to ${BATTLE_ROYAL_MAX_SQUAD_SIZE} players`;
+  }
   if (input.isInParty && input.isPartyLeader && !input.isPartyReadyToStart) {
     return 'Waiting for teammates to ready up';
   }

@@ -188,6 +188,23 @@ export function getMatchmakingBotFillRequiredParticipants(input: {
   );
 }
 
+export function getMatchmakingBotFillPriorityTeams(input: {
+  gameplayMode: GameplayMode;
+  partyTeam: Team | null;
+  partyTeamCount: number;
+  maxTeamSize: number;
+  missingParticipants: number;
+}): Team[] {
+  if (input.gameplayMode !== 'battle_royal' || !input.partyTeam || input.missingParticipants <= 0) {
+    return [];
+  }
+
+  const partyTeam = input.partyTeam;
+  const openSquadSlots = Math.max(0, Math.floor(input.maxTeamSize) - Math.max(0, Math.floor(input.partyTeamCount)));
+  const fillCount = Math.min(openSquadSlots, Math.floor(input.missingParticipants));
+  return Array.from({ length: fillCount }, () => partyTeam);
+}
+
 export class LobbyRoom extends Room<LobbyState> {
   maxClients = DEFAULT_GAME_CONFIG.maxPlayers;
   private botIdCounter = 0;
@@ -1323,6 +1340,25 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!this.isBotFillMatchmakingQueue()) return;
 
     let missingParticipants = Math.max(0, requiredPlayers - this.getCombatParticipantCount());
+    const partyTeam = this.matchmakingPartyTeam && this.isTeam(this.matchmakingPartyTeam)
+      ? this.matchmakingPartyTeam
+      : null;
+    const priorityTeams = getMatchmakingBotFillPriorityTeams({
+      gameplayMode: this.gameplayMode,
+      partyTeam,
+      partyTeamCount: partyTeam ? this.getTeamCount(partyTeam) : 0,
+      maxTeamSize: this.gameplayRules.maxTeamSize,
+      missingParticipants,
+    });
+    for (const team of priorityTeams) {
+      const result = this.createBot({
+        difficulty: this.state.defaultBotDifficulty as BotDifficulty,
+        team,
+      });
+      if (!result.ok) break;
+      missingParticipants--;
+    }
+
     while (missingParticipants > 0) {
       const result = this.createBot({
         difficulty: this.state.defaultBotDifficulty as BotDifficulty,

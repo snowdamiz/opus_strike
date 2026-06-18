@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { getGameplayModeRules } from '@voxel-strike/shared';
-import { getMatchmakingBotFillRequiredParticipants } from '../rooms/LobbyRoom';
+import {
+  getMatchmakingBotFillPriorityTeams,
+  getMatchmakingBotFillRequiredParticipants,
+} from '../rooms/LobbyRoom';
 
 {
   const requiredParticipants = getMatchmakingBotFillRequiredParticipants({
@@ -34,5 +37,49 @@ import { getMatchmakingBotFillRequiredParticipants } from '../rooms/LobbyRoom';
 
   assert.equal(requiredParticipants, getGameplayModeRules('battle_royal').minPlayers);
 }
+
+assert.deepEqual(
+  getMatchmakingBotFillPriorityTeams({
+    gameplayMode: 'battle_royal',
+    partyTeam: 'br_01',
+    partyTeamCount: 1,
+    maxTeamSize: 3,
+    missingParticipants: 9,
+  }),
+  ['br_01', 'br_01']
+);
+
+assert.deepEqual(
+  getMatchmakingBotFillPriorityTeams({
+    gameplayMode: 'battle_royal',
+    partyTeam: 'br_01',
+    partyTeamCount: 2,
+    maxTeamSize: 3,
+    missingParticipants: 1,
+  }),
+  ['br_01']
+);
+
+assert.deepEqual(
+  getMatchmakingBotFillPriorityTeams({
+    gameplayMode: 'battle_royal',
+    partyTeam: 'br_01',
+    partyTeamCount: 3,
+    maxTeamSize: 3,
+    missingParticipants: 7,
+  }),
+  []
+);
+
+assert.deepEqual(
+  getMatchmakingBotFillPriorityTeams({
+    gameplayMode: 'team_deathmatch',
+    partyTeam: 'red',
+    partyTeamCount: 1,
+    maxTeamSize: 4,
+    missingParticipants: 3,
+  }),
+  []
+);
 
 console.log('lobby matchmaking bot fill tests passed');
