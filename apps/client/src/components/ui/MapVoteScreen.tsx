@@ -2,14 +2,14 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/shallow';
 import * as THREE from 'three';
-import { GOLDEN_VOXEL_MAP_THEME_ID, generateProceduralVoxelMap, getTeamCatalogEntry } from '@voxel-strike/shared';
+import { GOLDEN_VOXEL_MAP_THEME_ID, generateProceduralVoxelMap } from '@voxel-strike/shared';
 import type { VoxelMapManifest } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import type { LobbyPlayer, MapVoteOption } from '../../store/types';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useUISounds } from '../../hooks/useUiAudio';
-import { FACTIONS, MAP_VOTE_COLORS } from '../../styles/colorTokens';
+import { FACTIONS } from '../../styles/colorTokens';
 import { VoxelMap } from '../game/procedural';
 import { suppressExpectedContextLossLog } from '../game/webglLifecycle';
 import { PhaseCountdownTimer } from './PhaseCountdownTimer';
@@ -197,98 +197,6 @@ function MapPreviewCanvas({
   );
 }
 
-function BlueprintPreviewImage({
-  option,
-}: {
-  option: MapVoteOption;
-}) {
-  const silhouette = option.preview?.thumbnailSilhouette;
-  if (!silhouette) return <GeneratingMapPanel />;
-
-  const width = Math.max(1, silhouette.bounds.maxX - silhouette.bounds.minX);
-  const depth = Math.max(1, silhouette.bounds.maxZ - silhouette.bounds.minZ);
-  const project = (point: { x: number; z: number }) => ({
-    x: ((point.x - silhouette.bounds.minX) / width) * 1000,
-    y: ((point.z - silhouette.bounds.minZ) / depth) * 525,
-  });
-  const boundaryPoints = silhouette.boundary
-    .map((point) => project(point))
-    .map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`)
-    .join(' ');
-
-  return (
-    <div className="absolute inset-0 overflow-hidden" style={{ backgroundColor: MAP_VOTE_COLORS.blueprintBackground }}>
-      <div
-        className="absolute inset-0"
-        style={{
-          background: MAP_VOTE_COLORS.blueprintGradient,
-        }}
-      />
-      <svg className="absolute inset-0 h-full w-full" viewBox="0 0 1000 525" role="img" aria-label={`${option.name} map preview`}>
-        <defs>
-          <filter id={`br-map-glow-${option.id}`} x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="5" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-        </defs>
-        <polygon points={boundaryPoints} fill="rgba(15, 23, 42, 0.72)" stroke="rgba(226, 232, 240, 0.72)" strokeWidth="4" />
-        {silhouette.routes.map((route) => {
-          const points = route.points.map((point) => {
-            const projected = project(point);
-            return `${projected.x.toFixed(1)},${projected.y.toFixed(1)}`;
-          }).join(' ');
-          return (
-            <polyline
-              key={route.id}
-              points={points}
-              fill="none"
-              stroke="rgba(226, 232, 240, 0.24)"
-              strokeWidth={Math.max(3, route.width * 1.8)}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          );
-        })}
-        {silhouette.landmarks.map((landmark) => {
-          const center = project(landmark.position);
-          return (
-            <circle
-              key={landmark.id}
-              cx={center.x}
-              cy={center.y}
-              r={Math.max(12, landmark.radius * 2.6)}
-              fill={MAP_VOTE_COLORS.landmarkFill}
-              stroke={MAP_VOTE_COLORS.landmarkStroke}
-              strokeWidth="3"
-              filter={`url(#br-map-glow-${option.id})`}
-            />
-          );
-        })}
-        {Object.entries(silhouette.objectives.spawns).map(([team, position]) => {
-          const center = project(position);
-          const color = getTeamCatalogEntry(team)?.color ?? MAP_VOTE_COLORS.spawnFallback;
-          return (
-            <g key={team}>
-              <circle cx={center.x} cy={center.y} r="13" fill={color} opacity="0.95" />
-              <circle cx={center.x} cy={center.y} r="22" fill="none" stroke={color} strokeOpacity="0.28" strokeWidth="5" />
-            </g>
-          );
-        })}
-      </svg>
-      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 px-3 pb-3">
-        {(option.preview?.labelTags ?? []).slice(0, 3).map((tag) => (
-          <span key={tag} className="rounded-md border border-white/10 bg-black/25 px-2 py-1 font-display text-[9px] uppercase tracking-wide text-white/58 backdrop-blur">
-            {tag}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function MapPreviewImage({
   active,
   option,
@@ -307,12 +215,6 @@ function MapPreviewImage({
     setImageVisible(false);
     didReportReadyRef.current = false;
   }, [option.id, option.mapProfileId, option.mapSize, option.mapThemeId, option.seed]);
-
-  useEffect(() => {
-    if (option.mapProfileId !== 'battle_royal_large' || didReportReadyRef.current) return;
-    didReportReadyRef.current = true;
-    onReady(option.id);
-  }, [onReady, option.id, option.mapProfileId]);
 
   useEffect(() => {
     if (!image) {
@@ -340,9 +242,6 @@ function MapPreviewImage({
   return (
     <div className="absolute inset-0">
       <div className={`pointer-events-none absolute inset-0 bg-black/[0.08] transition-opacity duration-300 ease-out ${hasVisibleImage ? 'opacity-100' : 'opacity-0'}`} />
-      {option.mapProfileId === 'battle_royal_large' && (
-        <BlueprintPreviewImage option={option} />
-      )}
       {image && (
         <img
           src={image}
@@ -351,15 +250,15 @@ function MapPreviewImage({
           draggable={false}
         />
       )}
-      {!image && active && option.mapProfileId !== 'battle_royal_large' && (
+      {!image && active && (
         <div className="pointer-events-none absolute inset-0 opacity-0">
           <MapPreviewCanvas option={option} onCapture={handleCapture} />
         </div>
       )}
-      <div className={`pointer-events-none absolute inset-0 transition-opacity duration-200 ease-out ${hasVisibleImage || option.mapProfileId === 'battle_royal_large' ? 'opacity-0' : 'opacity-100'}`}>
+      <div className={`pointer-events-none absolute inset-0 transition-opacity duration-200 ease-out ${hasVisibleImage ? 'opacity-0' : 'opacity-100'}`}>
         <GeneratingMapPanel />
       </div>
-      <div className={`pointer-events-none absolute inset-0 bg-gradient-to-t from-black/[0.36] via-black/[0.05] to-black/[0.025] transition-opacity duration-300 ease-out ${hasVisibleImage || option.mapProfileId === 'battle_royal_large' ? 'opacity-100' : 'opacity-0'}`} />
+      <div className={`pointer-events-none absolute inset-0 bg-gradient-to-t from-black/[0.36] via-black/[0.05] to-black/[0.025] transition-opacity duration-300 ease-out ${hasVisibleImage ? 'opacity-100' : 'opacity-0'}`} />
     </div>
   );
 }
@@ -506,6 +405,7 @@ export function MapVoteScreen() {
     mapVotePhaseEndTime,
     selectedMapOptionId,
     userStats,
+    gameplayMode,
   } = useGameStore(
     useShallow((state) => ({
       playerName: state.playerName,
@@ -517,6 +417,7 @@ export function MapVoteScreen() {
       mapVotePhaseEndTime: state.mapVotePhaseEndTime,
       selectedMapOptionId: state.selectedMapOptionId,
       userStats: state.userStats,
+      gameplayMode: state.gameplayMode,
     }))
   );
   const { leaveLobby, voteMap, reportMapVotePreviewsReady, finalizeMapVote } = useNetwork();
@@ -541,6 +442,9 @@ export function MapVoteScreen() {
   const localVote = playerId ? mapVotes.get(playerId) ?? null : null;
   const isFinalized = Boolean(selectedMapOptionId);
   const isPreparingMaps = mapVoteOptions.length === 0;
+  const isBattleRoyalMapVote = gameplayMode === 'battle_royal'
+    || mapVoteOptions.some((option) => option.mapProfileId === 'battle_royal_large');
+  const expectedMapOptionCount = isBattleRoyalMapVote ? 2 : 3;
   const areMapPreviewsReady = mapVoteOptions.length > 0 && readyPreviewIds.size >= mapVoteOptions.length;
   const isVoteTimerStarted = Boolean(mapVotePhaseEndTime);
 
@@ -672,8 +576,8 @@ export function MapVoteScreen() {
             </h2>
           </div>
 
-          <div className="map-vote-grid mx-auto grid w-full max-w-[72rem] min-h-0 grid-cols-1 gap-3 lg:grid-cols-3 xl:gap-4">
-            {isPreparingMaps && [0, 1, 2].map((index) => (
+          <div className={`map-vote-grid mx-auto grid w-full min-h-0 grid-cols-1 gap-3 xl:gap-4 ${expectedMapOptionCount === 2 ? 'max-w-[48rem] lg:grid-cols-2' : 'max-w-[72rem] lg:grid-cols-3'}`}>
+            {isPreparingMaps && Array.from({ length: expectedMapOptionCount }, (_, index) => (
               <PreparingMapCard key={index} />
             ))}
 

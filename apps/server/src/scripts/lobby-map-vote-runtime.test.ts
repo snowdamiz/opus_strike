@@ -36,8 +36,8 @@ function option(id: string): MapVoteOption {
     source: 0x51f15eed,
   });
 
-  assert.equal(options.length, 3);
-  assert.deepEqual(options.map((mapOption) => mapOption.mapSize), ['large', 'large', 'large']);
+  assert.equal(options.length, 2);
+  assert.deepEqual(options.map((mapOption) => mapOption.mapSize), ['large', 'large']);
   assert.equal(options.every((mapOption) => mapOption.mapProfileId === 'battle_royal_large'), true);
   assert.equal(options.every((mapOption) => mapOption.preview.labelTags.includes('Battle Royal')), true);
   assert.equal(Object.keys(options[0].preview.thumbnailSilhouette.objectives.spawns).length, 10);

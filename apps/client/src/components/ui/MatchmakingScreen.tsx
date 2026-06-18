@@ -1,7 +1,7 @@
 import {
   DEFAULT_GAMEPLAY_MODE,
-  DEFAULT_GAME_CONFIG,
   getGameplayModeLabel,
+  getGameplayModeRules,
   isGameplayMode,
 } from '@voxel-strike/shared';
 import { useEffect, useState } from 'react';
@@ -60,9 +60,12 @@ export function MatchmakingScreen() {
   const provisionalHumanCount = isRanked
     ? Math.max(0, matchmakingStatus.provisionalHumanCount ?? 0)
     : 0;
-  const requiredPlayers = matchmakingStatus.requiredPlayers ?? DEFAULT_GAME_CONFIG.maxPlayers;
+  const requiredPlayers = matchmakingStatus.requiredPlayers ?? getGameplayModeRules(queuedGameplayMode).maxPlayers;
   const rankedParticipantCount = Math.max(matchmakingStatus.queuedHumanCount ?? 0, combatParticipantCount);
   const filledSlots = Math.min(isRanked ? rankedParticipantCount : combatParticipantCount, requiredPlayers);
+  const slotColumnCount = requiredPlayers >= 20
+    ? 10
+    : Math.max(2, Math.min(requiredPlayers, 10));
   const [totalPlayersInQueue, setTotalPlayersInQueue] = useState(filledSlots);
   const displayedQueueCount = Math.max(totalPlayersInQueue, filledSlots);
   const queuePlayerLabel = displayedQueueCount === 1 ? 'player' : 'players';
@@ -211,7 +214,10 @@ export function MatchmakingScreen() {
               )}
             </div>
 
-            <div className="grid grid-cols-8 gap-2">
+            <div
+              className="grid gap-2"
+              style={{ gridTemplateColumns: `repeat(${slotColumnCount}, minmax(0, 1fr))` }}
+            >
               {Array.from({ length: requiredPlayers }, (_, index) => {
                 const filled = index < filledSlots;
                 const isSearchingSlot = index === filledSlots && filledSlots < requiredPlayers;

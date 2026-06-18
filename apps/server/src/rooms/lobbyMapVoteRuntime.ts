@@ -62,7 +62,7 @@ const MAP_NAME_SUFFIXES = [
   'Gate',
 ];
 
-const MAP_VOTE_OPTION_COUNT = VOXEL_MAP_SIZE_IDS.length;
+const BATTLE_ROYAL_MAP_VOTE_SIZES = ['large', 'large'] as const satisfies readonly VoxelMapSizeId[];
 
 function getShuffledThemeIndices(source: number): number[] {
   const themeIndices = VOXEL_MAP_THEMES.map((_, index) => index);
@@ -125,7 +125,7 @@ export function createMapVoteOptions(input: CreateMapVoteOptionsInput): MapVoteO
   const rules = getGameplayModeRules(input.gameplayMode);
   const mapProfileId = rules.mapProfileId;
   const mapSizes = mapProfileId === 'battle_royal_large'
-    ? (['large', 'large', 'large'] as const)
+    ? BATTLE_ROYAL_MAP_VOTE_SIZES
     : VOXEL_MAP_SIZE_IDS;
 
   const themeIndices = getShuffledThemeIndices(input.source);

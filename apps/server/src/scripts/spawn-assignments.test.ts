@@ -17,12 +17,13 @@ import {
 
 const players = new Map<string, CombatTeamMember>([
   ['red-a', { team: 'red' }],
+  ['red-observer', { team: 'red' }],
   ['blue-a', { team: 'blue' }],
   ['blue-b', { team: 'blue' }],
   ['unassigned', { team: '' }],
 ]);
 
-assert.equal(countCombatTeamMembers(players.values(), 'red'), 1);
+assert.equal(countCombatTeamMembers(players.values(), 'red'), 2);
 assert.equal(countCombatTeamMembers(players.values(), 'blue'), 2);
 assert.equal(countCombatTeamMembersExcluding(players, 'blue', 'blue-b'), 1);
 
