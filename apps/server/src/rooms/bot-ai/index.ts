@@ -1392,6 +1392,34 @@ function nearestPlayer(
   return best;
 }
 
+function isCaptureTheFlagGameplayMode(mode: GameplayMode): boolean {
+  return mode === 'capture_the_flag';
+}
+
+function isEnemyForGameplayMode(mode: GameplayMode, playerTeam: Team, ownTeam: Team): boolean {
+  if (playerTeam === ownTeam) return false;
+  return !isCaptureTheFlagGameplayMode(mode) || playerTeam === otherTeam(ownTeam);
+}
+
+function createNeutralFlagSnapshot(team: Team, position: PlainVec3): BotFlagSnapshot {
+  return {
+    team,
+    position: { ...position },
+    basePosition: { ...position },
+    carrierId: '',
+    isAtBase: true,
+    droppedAt: 0,
+  };
+}
+
+function getFlagSnapshotOrFallback(
+  flags: Record<Team, BotFlagSnapshot>,
+  team: Team,
+  fallbackPosition: PlainVec3
+): BotFlagSnapshot {
+  return flags[team] ?? createNeutralFlagSnapshot(team, fallbackPosition);
+}
+
 function createThreatClusters(team: Team, enemies: readonly BotPlayerSnapshot[]): BotThreatCluster[] {
   const clusters: BotThreatCluster[] = [];
   const consumed = new Set<string>();
@@ -1535,7 +1563,7 @@ function assignBestBot(
   return best;
 }
 
-function buildTeamDeathmatchTacticsForTeam(input: BotTeamTacticsInput, team: Team): BotTeamTactics {
+function buildEliminationTacticsForTeam(input: BotTeamTacticsInput, team: Team): BotTeamTactics {
   const enemyTeam = otherTeam(team);
   const allies: BotPlayerSnapshot[] = [];
   const enemies: BotPlayerSnapshot[] = [];
@@ -1545,7 +1573,7 @@ function buildTeamDeathmatchTacticsForTeam(input: BotTeamTacticsInput, team: Tea
     if (player.team === team) {
       allies.push(player);
       if (player.isBot) bots.push(player);
-    } else if (player.team === enemyTeam) {
+    } else if (isEnemyForGameplayMode(input.gameplayMode, player.team, team)) {
       enemies.push(player);
     }
   }
@@ -1585,14 +1613,19 @@ function buildTeamDeathmatchTacticsForTeam(input: BotTeamTacticsInput, team: Tea
     const nearestEnemy = nearestPlayer(enemies, bot.position);
     const targetPosition = nearestEnemy?.position
       ?? threatClusters[0]?.center
-      ?? input.flags[enemyTeam].basePosition;
+      ?? input.flags[enemyTeam]?.basePosition
+      ?? bot.position;
     assignments[bot.id] = {
       botId: bot.id,
       role: bot.heroId === 'chronos' && roleDemand.support > 0 ? 'support' : 'fighter',
       job: 'fight',
       targetPosition: { ...targetPosition },
       targetPlayerId: nearestEnemy?.id,
-      reason: nearestEnemy ? 'nearest enemy pressure' : 'team deathmatch pressure',
+      reason: nearestEnemy
+        ? 'nearest enemy pressure'
+        : input.gameplayMode === 'battle_royal'
+          ? 'battle royal pressure'
+          : 'team deathmatch pressure',
       priority: 420,
     };
   }
@@ -1612,8 +1645,8 @@ function buildTeamDeathmatchTacticsForTeam(input: BotTeamTacticsInput, team: Tea
 }
 
 function buildTeamTacticsForTeam(input: BotTeamTacticsInput, team: Team): BotTeamTactics {
-  if (input.gameplayMode === 'team_deathmatch') {
-    return buildTeamDeathmatchTacticsForTeam(input, team);
+  if (!isCaptureTheFlagGameplayMode(input.gameplayMode)) {
+    return buildEliminationTacticsForTeam(input, team);
   }
 
   const enemyTeam = otherTeam(team);
@@ -1873,10 +1906,14 @@ function getDefaultRole(bot: BotPlayerSnapshot, demand: BotRoleDemand): BotStrat
 }
 
 export function buildTeamTactics(input: BotTeamTacticsInput): BotTeamTacticsByTeam {
-  return {
-    red: buildTeamTacticsForTeam(input, 'red'),
-    blue: buildTeamTacticsForTeam(input, 'blue'),
-  };
+  const teams = input.gameplayMode === 'battle_royal'
+    ? Array.from(new Set(input.players.map((player) => player.team))).sort((a, b) => a.localeCompare(b))
+    : ['red', 'blue'];
+  const tactics: BotTeamTacticsByTeam = {};
+  for (const team of teams) {
+    tactics[team] = buildTeamTacticsForTeam(input, team);
+  }
+  return tactics;
 }
 
 function getAbilityState(bot: BotPlayerSnapshot, abilityId: string): BotAbilitySnapshot | null {
@@ -2001,8 +2038,9 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
   const bot = input.bot;
   const team = bot.team;
   const enemyTeam = otherTeam(team);
-  const ownFlag = input.flags[team];
-  const enemyFlag = input.flags[enemyTeam];
+  const isCaptureTheFlag = isCaptureTheFlagGameplayMode(input.gameplayMode);
+  const ownFlag = getFlagSnapshotOrFallback(input.flags, team, bot.position);
+  const enemyFlag = getFlagSnapshotOrFallback(input.flags, enemyTeam, bot.position);
   const allies: BotPlayerSnapshot[] = [];
   const enemyPlayers: BotPlayerSnapshot[] = [];
   let alliedCarrier: BotPlayerSnapshot | null = null;
@@ -2014,15 +2052,15 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
     if (player.team === team) {
       if (player.id !== bot.id) {
         allies.push(player);
-        if (input.gameplayMode === 'capture_the_flag' && player.hasFlag) alliedCarrier = player;
+        if (isCaptureTheFlag && player.hasFlag) alliedCarrier = player;
       }
-    } else if (player.team === enemyTeam) {
+    } else if (isEnemyForGameplayMode(input.gameplayMode, player.team, team)) {
       enemyPlayers.push(player);
-      if (input.gameplayMode === 'capture_the_flag' && (player.hasFlag || ownFlag.carrierId === player.id)) {
+      if (isCaptureTheFlag && (player.hasFlag || ownFlag.carrierId === player.id)) {
         enemyCarrierPlayer = player;
       }
     }
-    if (input.gameplayMode === 'capture_the_flag' && enemyFlag.carrierId && player.id === enemyFlag.carrierId) {
+    if (isCaptureTheFlag && enemyFlag.carrierId && player.id === enemyFlag.carrierId) {
       enemyFlagCarrierPosition = player.position;
     }
   }
@@ -2148,8 +2186,8 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
     enemyCarrier,
     nearestAlly,
     alliedCarrier,
-    droppedFriendlyFlag: input.gameplayMode === 'capture_the_flag' && !ownFlag.isAtBase && !ownFlag.carrierId ? { ...ownFlag.position } : null,
-    droppedEnemyFlag: input.gameplayMode === 'capture_the_flag' && !enemyFlag.isAtBase && !enemyFlag.carrierId ? { ...enemyFlag.position } : null,
+    droppedFriendlyFlag: isCaptureTheFlag && !ownFlag.isAtBase && !ownFlag.carrierId ? { ...ownFlag.position } : null,
+    droppedEnemyFlag: isCaptureTheFlag && !enemyFlag.isAtBase && !enemyFlag.carrierId ? { ...enemyFlag.position } : null,
     enemyFlagPosition: enemyFlag.carrierId
       ? { ...(enemyFlagCarrierPosition ?? enemyFlag.position) }
       : { ...enemyFlag.position },

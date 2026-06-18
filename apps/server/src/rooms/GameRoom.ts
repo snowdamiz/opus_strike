@@ -6167,14 +6167,17 @@ export class GameRoom extends Room<GameState> {
 
     const flags = getBotFlagSnapshots(this.state);
     const teamTactics = this.refreshBotTeamTactics(now, snapshots, flags);
-    const protectedEnemyIdsByTeam: Record<Team, Set<string>> = {
-      red: new Set<string>(),
-      blue: new Set<string>(),
-    };
+    const protectedEnemyIdsByTeam: Record<Team, Set<string>> = {};
+    for (const snapshot of snapshots) {
+      protectedEnemyIdsByTeam[snapshot.team] ??= new Set<string>();
+    }
     this.state.players.forEach((player) => {
       if (!isTeam(player.team) || !this.isProtectedSpawnTarget(player, now)) return;
-      const enemyTeam = getEnemyTeam(player.team);
-      protectedEnemyIdsByTeam[enemyTeam].add(player.id);
+      for (const team of Object.keys(protectedEnemyIdsByTeam) as Team[]) {
+        if (team !== player.team) {
+          protectedEnemyIdsByTeam[team].add(player.id);
+        }
+      }
     });
 
     return {
@@ -6368,7 +6371,7 @@ export class GameRoom extends Room<GameState> {
     candidates.length = 0;
     candidateIds.clear();
 
-    if (!isTeam(bot.team)) {
+    if (!isCaptureTheFlagMode(this.gameplayMode) || !isTeam(bot.team)) {
       for (const snapshot of frameContext.snapshots) {
         if (snapshot.team === bot.team || snapshot.state !== 'alive') continue;
         const enemy = this.state.players.get(snapshot.id);
@@ -6659,7 +6662,7 @@ export class GameRoom extends Room<GameState> {
       blackboard,
       skill,
       primaryRange: this.getBotAttackRange(bot),
-      protectedEnemyIds: frameContext.protectedEnemyIdsByTeam[botSnapshot.team],
+      protectedEnemyIds: frameContext.protectedEnemyIdsByTeam[botSnapshot.team] ?? EMPTY_BOT_PERCEPTION_IDS,
     });
     const combatTarget = combatPlan.targetId ? this.state.players.get(combatPlan.targetId) ?? null : null;
     const combatTargetSnapshot = combatPlan.targetId
@@ -8998,13 +9001,13 @@ export class GameRoom extends Room<GameState> {
   }
 
   private isServerOwnedBotNearEnemyHuman(bot: Player, distanceSq: number): boolean {
-    if (!isTeam(bot.team)) return true;
+    const radius = Math.sqrt(distanceSq);
     const candidates = this.botMovementLodEnemyHumanScratch;
     this.playerSpatialIndex.queryRadius(
       bot.position,
-      BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE,
+      radius,
       candidates,
-      { team: getEnemyTeam(bot.team), excludeId: bot.id }
+      { excludeTeam: bot.team, excludeId: bot.id }
     );
 
     for (const player of candidates) {

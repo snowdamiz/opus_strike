@@ -9,6 +9,7 @@ import {
   PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
   PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
   PHANTOM_VOID_RAY_SOCKET,
+  TEAM_CATALOG,
   type HeroId,
   type Team,
 } from '@voxel-strike/shared';
@@ -33,10 +34,9 @@ function easeInOutSine(value: number): number {
   return 0.5 - Math.cos(t * Math.PI) * 0.5;
 }
 
-export const TEAM_COLORS: Record<Team, string> = {
-  red: '#ef4444',
-  blue: '#06b6d4',
-};
+export const TEAM_COLORS: Record<Team, string> = Object.fromEntries(
+  TEAM_CATALOG.map((team) => [team.id, team.color])
+) as Record<Team, string>;
 
 export const TEAM_BODY_GLOW_OUTLINE_SCALE = 1.11;
 export const TEAM_BODY_GLOW_OUTLINE_OPACITY = 0.64;

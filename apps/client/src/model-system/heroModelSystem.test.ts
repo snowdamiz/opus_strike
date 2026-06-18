@@ -8,11 +8,13 @@ import {
   HOOKSHOT_HOOK_SOCKET_NAMES,
   PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
   PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
+  TEAM_CATALOG,
   validateHeroModelDocument,
   type HeroId,
 } from '@voxel-strike/shared';
 import {
   HERO_BODY_MANIFESTS,
+  TEAM_COLORS,
 } from './heroBodyManifests';
 import { getHeroBodyRenderParts } from './heroBodyRenderParts';
 import { HERO_MODEL_DOCUMENTS } from './heroModelDocuments';
@@ -64,6 +66,10 @@ const heroIds = Object.keys(HERO_DEFINITIONS).sort() as HeroId[];
 
 assert.deepEqual(Object.keys(HERO_BODY_MANIFESTS).sort(), heroIds);
 assert.deepEqual(Object.keys(HERO_MODEL_DOCUMENTS).sort(), heroIds);
+
+for (const team of TEAM_CATALOG) {
+  assert.equal(TEAM_COLORS[team.id], team.color, `${team.id} body color must match the shared team catalog`);
+}
 
 const expectedRemoteSockets: Record<HeroId, readonly string[]> = {
   phantom: [

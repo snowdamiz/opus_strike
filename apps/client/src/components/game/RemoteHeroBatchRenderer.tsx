@@ -196,11 +196,8 @@ const REMOTE_ATTACK_STATE_CLEANUP_MS = 5000;
 const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
 const PHANTOM_PERSONAL_SHIELD_ABILITY_ID = 'phantom_personal_shield';
 const INSTANCE_EMISSIVE_ATTRIBUTE = 'instanceEmissiveBoost';
-const ALL_HERO_IDS = Object.keys(HERO_BODY_MANIFESTS) as HeroId[];
-const ALL_TEAMS: readonly Team[] = ['red', 'blue'];
 const WORLD_UP_AXIS = new THREE.Vector3(0, 1, 0);
 const WORLD_UNIT_SCALE = new THREE.Vector3(1, 1, 1);
-const EMPTY_REMOTE_PLAYERS: readonly Player[] = Object.freeze([]);
 const REMOTE_BATCH_PREWARM_PLAYER_CAPACITY = 4;
 const REMOTE_BATCH_CAPACITY_GROWTH_PADDING = 2;
 
@@ -1494,22 +1491,6 @@ export const RemoteHeroBatchRenderer = memo(function RemoteHeroBatchRenderer({
   players,
   config,
 }: RemoteHeroBatchRendererProps) {
-  const resources = useMemo(() => {
-    const nextResources = new Map<string, RemoteBatchResources>();
-    for (const heroId of ALL_HERO_IDS) {
-      for (const team of ALL_TEAMS) {
-        nextResources.set(`${heroId}:${team}`, createRemoteBatchResources(heroId, team));
-      }
-    }
-    return nextResources;
-  }, []);
-
-  useEffect(() => () => {
-    for (const resource of resources.values()) {
-      resource.dispose();
-    }
-  }, [resources]);
-
   const groupedPlayers = useMemo<Array<{ key: string; players: readonly Player[] }>>(() => {
     const groups = new Map<string, Player[]>();
     for (const player of players) {
@@ -1522,11 +1503,34 @@ export const RemoteHeroBatchRenderer = memo(function RemoteHeroBatchRenderer({
         groups.set(key, groupPlayers);
       }
     }
-    return Array.from(resources.keys(), (key) => ({
+    return Array.from(groups, ([key, groupPlayers]) => ({
       key,
-      players: groups.get(key) ?? EMPTY_REMOTE_PLAYERS,
+      players: groupPlayers,
     }));
-  }, [players, resources]);
+  }, [players]);
+
+  const resourceKeySignature = useMemo(
+    () => groupedPlayers.map((group) => group.key).sort().join('|'),
+    [groupedPlayers]
+  );
+
+  const resources = useMemo(() => {
+    const nextResources = new Map<string, RemoteBatchResources>();
+    if (!resourceKeySignature) return nextResources;
+    for (const key of resourceKeySignature.split('|')) {
+      const separatorIndex = key.indexOf(':');
+      const heroId = key.slice(0, separatorIndex) as HeroId;
+      const team = key.slice(separatorIndex + 1) as Team;
+      nextResources.set(key, createRemoteBatchResources(heroId, team));
+    }
+    return nextResources;
+  }, [resourceKeySignature]);
+
+  useEffect(() => () => {
+    for (const resource of resources.values()) {
+      resource.dispose();
+    }
+  }, [resources]);
 
   return (
     <>

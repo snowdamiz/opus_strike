@@ -273,6 +273,46 @@ function testTeamTacticsAssignments() {
   assert.ok(Object.values(tactics.assignments).some((assignment) => assignment.job === 'defend_base'));
 }
 
+function testBattleRoyalTacticsUseAllEnemySquads() {
+  const alphaBot = player({ id: 'alpha-bot', team: 'br_01', heroId: 'hookshot', x: 0, z: 0 });
+  const alphaAlly = player({ id: 'alpha-ally', team: 'br_01', heroId: 'chronos', x: 3, z: 0 });
+  const bravoEnemy = player({ id: 'bravo-enemy', team: 'br_02', heroId: 'phantom', x: 24, z: 0, isBot: false });
+  const charlieEnemy = player({ id: 'charlie-enemy', team: 'br_03', heroId: 'blaze', x: 10, z: 0 });
+  const players = [alphaBot, alphaAlly, bravoEnemy, charlieEnemy];
+  const tactics = buildTeamTactics({
+    gameplayMode: 'battle_royal',
+    now: NOW,
+    revision: 1,
+    players,
+    flags: flags(),
+  });
+
+  assert.ok(tactics[alphaBot.team], 'battle royal tactics should be keyed by BR team id');
+  assert.equal(tactics[alphaBot.team].assignments[alphaBot.id].targetPlayerId, charlieEnemy.id);
+
+  const blackboard = buildBotBlackboard({
+    now: NOW,
+    gameplayMode: 'battle_royal',
+    bot: alphaBot,
+    players,
+    flags: flags(),
+    visibleEnemyIds: new Set([bravoEnemy.id, charlieEnemy.id]),
+    enemyLineOfSightIds: new Set([charlieEnemy.id]),
+    recentDamageSources: [],
+    teamTactics: tactics[alphaBot.team],
+    enemyMemory: new Map(),
+    skill: getBotSkillProfile('normal'),
+  });
+  const enemyIds = blackboard.enemies.map((enemy) => enemy.player.id).sort();
+  assert.deepEqual(enemyIds, [bravoEnemy.id, charlieEnemy.id].sort());
+  assert.equal(blackboard.allies.length, 1);
+  assert.equal(blackboard.nearestEnemy?.player.id, charlieEnemy.id);
+
+  const intent = scoreBotIntents(alphaBot, blackboard, getBotSkillProfile('normal'));
+  assert.equal(intent.type, 'fight_local_enemy');
+  assert.equal(intent.targetPlayerId, charlieEnemy.id);
+}
+
 function testIntentScoring() {
   const bot = player({ id: 'red-hook', team: 'red', heroId: 'hookshot', x: -20, z: 0 });
   const carrier = player({ id: 'blue-carrier', team: 'blue', heroId: 'phantom', x: -5, z: 0, hasFlag: true });
@@ -1351,6 +1391,7 @@ function testContestedObjectiveStillSpendsControlUltimate() {
 }
 
 testTeamTacticsAssignments();
+testBattleRoyalTacticsUseAllEnemySquads();
 testIntentScoring();
 testRoutePlannerAvoidsBlockedEdge();
 testBotPlanningStateRefreshesAndReusesCachedState();
