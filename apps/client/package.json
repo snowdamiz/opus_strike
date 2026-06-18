@@ -14,6 +14,7 @@
     "test:movement": "tsx src/movement/localPrediction.test.ts && tsx src/components/game/PlayerController.frame.test.ts",
     "test:player-frame": "tsx src/components/game/PlayerController.frame.test.ts",
     "test:visual-store": "tsx src/store/visualStore.test.ts && tsx src/store/gameTimingStore.test.ts && tsx src/store/projectileSlicePerformance.test.ts && tsx src/components/game/performanceUtils.test.ts && tsx src/components/game/RemoteMovementEffects.test.ts && tsx src/components/game/playerWorldAnchors.test.ts",
+    "bench:br-combat-canvas": "tsx src/scripts/br-combat-canvas-benchmark.ts",
     "test:party-store": "tsx src/store/partyStore.test.ts",
     "test:model-system": "tsx src/model-system/heroModelSystem.test.ts",
     "test:terrain-textures": "tsx src/components/game/procedural/proceduralTerrainTexturePlan.test.ts",

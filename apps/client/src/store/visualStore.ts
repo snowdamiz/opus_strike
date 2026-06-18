@@ -189,7 +189,7 @@ export interface CombatVisualFrameCache {
   builtAtMs: number;
   sourceSize: number;
   alivePlayers: CombatVisualPlayer[];
-  byTeam: Record<Team, CombatVisualPlayer[]>;
+  byTeam: Map<Team, CombatVisualPlayer[]>;
   buckets: Map<number, Map<number, CombatVisualPlayer[]>>;
   activeBuckets: CombatVisualPlayer[][];
   activeBucketSet: Set<CombatVisualPlayer[]>;
@@ -235,10 +235,7 @@ const createCombatFrameCache = (): CombatVisualFrameCache => ({
   builtAtMs: 0,
   sourceSize: 0,
   alivePlayers: [],
-  byTeam: {
-    red: [],
-    blue: [],
-  },
+  byTeam: new Map(),
   buckets: new Map(),
   activeBuckets: [],
   activeBucketSet: new Set(),
@@ -730,6 +727,24 @@ function getCombatBucket(
   return bucket;
 }
 
+function getCombatTeamBucket(
+  cache: CombatVisualFrameCache,
+  team: Team
+): CombatVisualPlayer[] {
+  let bucket = cache.byTeam.get(team);
+  if (!bucket) {
+    bucket = [];
+    cache.byTeam.set(team, bucket);
+  }
+  return bucket;
+}
+
+function clearCombatTeamBuckets(cache: CombatVisualFrameCache): void {
+  for (const bucket of cache.byTeam.values()) {
+    bucket.length = 0;
+  }
+}
+
 export const rebuildCombatVisualFrameCache = (
   players: Iterable<Player>,
   frameKey: number,
@@ -745,8 +760,7 @@ export const rebuildCombatVisualFrameCache = (
   cache.builtAtMs = nowMs;
   cache.sourceSize = sourceSize;
   cache.alivePlayers.length = 0;
-  cache.byTeam.red.length = 0;
-  cache.byTeam.blue.length = 0;
+  clearCombatTeamBuckets(cache);
   clearActiveCombatBuckets(cache);
 
   let entryIndex = 0;
@@ -774,7 +788,7 @@ export const rebuildCombatVisualFrameCache = (
     }
     entryIndex++;
     cache.alivePlayers.push(visualPlayer);
-    cache.byTeam[player.team].push(visualPlayer);
+    getCombatTeamBucket(cache, player.team).push(visualPlayer);
 
     const bucket = getCombatBucket(
       cache,
@@ -852,12 +866,8 @@ export const fillCombatVisualEnemyPlayers = (
     return target;
   }
 
-  const source = ownerTeam
-    ? (ownerTeam === 'red' ? cache.byTeam.blue : cache.byTeam.red)
-    : cache.alivePlayers;
-
-  for (let i = 0; i < source.length; i++) {
-    const visualPlayer = source[i];
+  for (let i = 0; i < cache.alivePlayers.length; i++) {
+    const visualPlayer = cache.alivePlayers[i];
     if (isEnemyCombatVisualPlayer(visualPlayer, ownerTeam, ownerId)) {
       target.push(visualPlayer.player);
     }
@@ -905,12 +915,8 @@ export const findCombatVisualPlayerHit = (
     return null;
   }
 
-  const source = ownerTeam && targetTeam === 'enemy'
-    ? (ownerTeam === 'red' ? cache.byTeam.blue : cache.byTeam.red)
-    : cache.alivePlayers;
-
-  for (let i = 0; i < source.length; i++) {
-    const visualPlayer = source[i];
+  for (let i = 0; i < cache.alivePlayers.length; i++) {
+    const visualPlayer = cache.alivePlayers[i];
     if (!isCombatVisualTargetPlayer(visualPlayer, ownerTeam, ownerId, targetTeam)) continue;
     if (doesSegmentHitPlayerCombatHitbox(start, direction, distance, visualPlayer.player, extraRadius)) {
       return visualPlayer.player;
@@ -949,8 +955,7 @@ export const clearCombatVisualFrameCache = (): void => {
   cache.builtAtMs = 0;
   cache.sourceSize = 0;
   cache.alivePlayers.length = 0;
-  cache.byTeam.red.length = 0;
-  cache.byTeam.blue.length = 0;
+  cache.byTeam.clear();
   cache.activeBuckets.length = 0;
   cache.activeBucketSet.clear();
   cache.buckets.clear();

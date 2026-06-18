@@ -314,4 +314,39 @@ assert.equal(
 const rebuiltCombatCache = rebuildCombatVisualFrameCache(combatPlayers, 2001, 2001, combatPlayers.length);
 assert.equal(rebuiltCombatCache.buckets.get(0)?.get(0), firstCombatBucket);
 
+const brCombatPlayers = [
+  makePlayer('br-owner', 'br_01', 0, 0),
+  makePlayer('br-near-enemy', 'br_02', 1, 1),
+  makePlayer('br-squadmate', 'br_01', 1, 0),
+  makePlayer('br-far-enemy', 'br_03', 48, 0),
+  makePlayer('br-hidden-enemy', 'br_04', 2, 0),
+];
+brCombatPlayers[4].visibility = 'hidden';
+const brCombatCache = rebuildCombatVisualFrameCache(brCombatPlayers, 3000, 3000, brCombatPlayers.length);
+assert.equal(brCombatCache.byTeam.get('br_01')?.length, 2);
+assert.equal(brCombatCache.byTeam.get('br_02')?.length, 1);
+assert.equal(brCombatCache.byTeam.get('br_03')?.length, 1);
+assert.equal(brCombatCache.byTeam.has('br_04'), false);
+
+const brNearbyEnemies: Player[] = [];
+fillCombatVisualEnemyPlayers(brCombatCache, 'br_01', 'br-owner', brNearbyEnemies, { x: 0, z: 0 }, 4);
+assert.deepEqual(brNearbyEnemies.map((player) => player.id), ['br-near-enemy']);
+
+const brAllEnemies: Player[] = [];
+fillCombatVisualEnemyPlayers(brCombatCache, 'br_01', 'br-owner', brAllEnemies);
+assert.deepEqual(brAllEnemies.map((player) => player.id), ['br-near-enemy', 'br-far-enemy']);
+
+const brHitEnemy = findCombatVisualEnemyPlayerHit(
+  brCombatCache,
+  'br_01',
+  'br-owner',
+  { x: 0, y: 1, z: 0 },
+  { x: Math.SQRT1_2, y: 0, z: Math.SQRT1_2 },
+  3,
+  0.21,
+  { x: 0, z: 0 },
+  4
+);
+assert.equal(brHitEnemy?.id, 'br-near-enemy');
+
 console.log('visualStore remote transform tests passed');
