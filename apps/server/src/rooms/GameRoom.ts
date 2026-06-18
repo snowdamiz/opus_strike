@@ -409,7 +409,6 @@ import {
   isTeam,
   validateChatPayload,
   validateHeroPayload,
-  validateReadyPayload,
   validateTeamPayload,
 } from './protocolValidation';
 import {
@@ -1205,27 +1204,10 @@ export class GameRoom extends Room<GameState> {
       this.handleMovementCommandPacket(client, packet);
     });
 
-    this.onRateLimitedMessage('selectHero', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
-      try {
-        const heroId = validateHeroPayload(data);
-        if (!heroId) return;
-        this.handleHeroSelect(client, heroId);
-      } catch (error) {
-        loggers.room.error('Failed to apply hero selection:', error);
-        client.send('devCommandError', { message: 'Failed to switch hero' });
-      }
-    });
-
     this.onRateLimitedMessage('selectTeam', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
       const team = validateTeamPayload(data);
       if (!team) return;
       this.handleTeamSelect(client, team);
-    });
-
-    this.onRateLimitedMessage('ready', GAME_MESSAGE_RATE_LIMITS.selection, (client, data: unknown) => {
-      const ready = validateReadyPayload(data);
-      if (ready === null) return;
-      this.handleReady(client, ready);
     });
 
     this.onRateLimitedMessage('matchSceneReady', GAME_MESSAGE_RATE_LIMITS.matchSceneReady, (client, data: unknown) => {
@@ -7001,52 +6983,6 @@ export class GameRoom extends Room<GameState> {
     this.playerPressStates.reset(playerId);
   }
 
-  private handleHeroSelect(client: Client, heroId: HeroId) {
-    const player = this.state.players.get(client.sessionId);
-    if (!player) return;
-
-    const isSelectionPhase = this.state.phase === 'hero_select' || this.state.phase === 'waiting';
-    const isActiveDevRoom = this.isDevelopmentMode()
-      && (this.state.phase === 'countdown' || this.state.phase === 'playing' || this.state.phase === 'round_end');
-
-    if (!isSelectionPhase && !isActiveDevRoom) return;
-
-    const heroDef = HERO_DEFINITIONS[heroId];
-    if (!heroDef) {
-      if (this.isDevelopmentMode()) {
-        client.send('devCommandError', { message: `Invalid hero: ${heroId}` });
-      }
-      return;
-    }
-
-    if (!this.isPlayerTeamHeroAvailable(player, heroId)) {
-      const message = 'Hero is already picked on your team';
-      client.send('error', { message });
-      if (this.isDevelopmentMode()) {
-        client.send('devCommandError', { message });
-      }
-      return;
-    }
-
-    const heroChanged = player.heroId !== heroId;
-    if (heroChanged && !this.setPlayerHero(player, heroId)) return;
-
-    if (isSelectionPhase) {
-      if (heroChanged) {
-        this.resetCountdownStartGate();
-      }
-      this.checkPhaseTransition();
-    }
-
-    if (isActiveDevRoom) {
-      client.send('devHeroChanged', {
-        heroId,
-        health: player.health,
-        maxHealth: player.maxHealth,
-      });
-    }
-  }
-
   private handleDevSetHero(client: Client, heroId: HeroId) {
     if (!this.requireDevelopmentMode(client)) return;
 
@@ -7135,6 +7071,19 @@ export class GameRoom extends Room<GameState> {
 
   private selectAvailableHeroForPlayer(player: Player): HeroId {
     return this.selectRandomBotHero(player.team, player.id);
+  }
+
+  private commitPreselectedHeroForMatchStart(player: Player): void {
+    if (!isHeroId(player.heroId) || !this.isPlayerTeamHeroAvailable(player, player.heroId)) {
+      const committed = this.setPlayerHero(player, this.selectAvailableHeroForPlayer(player));
+      if (!committed) {
+        player.heroId = '';
+        player.abilities.clear();
+        this.disablePlayerSkills(player);
+      }
+    }
+
+    player.isReady = Boolean(player.heroId);
   }
 
   private isDevelopmentMode(): boolean {
@@ -7594,19 +7543,6 @@ export class GameRoom extends Room<GameState> {
     client.send('voiceToken', response);
   }
 
-  private handleReady(client: Client, ready: boolean) {
-    if (this.matchCancelled) return;
-
-    const player = this.state.players.get(client.sessionId);
-    if (!player) return;
-
-    player.isReady = ready;
-    if (!ready) {
-      this.resetCountdownStartGate();
-    }
-    this.checkPhaseTransition();
-  }
-
   private handleMatchSceneReady(client: Client, data: unknown): void {
     if (this.matchCancelled) return;
     if (this.state.phase !== 'hero_select' || !this.matchStartGate.isOpen()) return;
@@ -7798,20 +7734,17 @@ export class GameRoom extends Room<GameState> {
     this.updateMetadata();
 
     this.state.players.forEach(player => {
-      if (player.isBot) {
-        player.state = 'selecting';
-        player.isReady = false;
-        const preferredHero = this.botRuntime.getPreferredHero(player.id);
-        if (!preferredHero || !this.setPlayerHero(player, preferredHero)) {
-          player.heroId = '';
-          player.abilities.clear();
-          this.disablePlayerSkills(player);
-        }
+      player.state = 'selecting';
+      const preferredHero = player.isBot ? this.botRuntime.getPreferredHero(player.id) : null;
+      if (preferredHero) {
+        this.setPlayerHero(player, preferredHero);
       }
+      this.commitPreselectedHeroForMatchStart(player);
     });
 
     this.broadcastPhaseChange('hero_select');
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
+    this.checkPhaseTransition();
   }
 
   private startCountdown() {

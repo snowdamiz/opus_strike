@@ -2906,10 +2906,6 @@ body,
   }
 }
 
-.hero-select-stage {
-  width: min(100%, 76rem, calc((100vh - var(--menu-nav-h) - 4.5rem) * 2.9));
-}
-
 .heroes-page-layout {
   display: grid;
   grid-template-columns:
@@ -3769,10 +3765,6 @@ body,
     font-size: clamp(2rem, 7.5vw, 3rem);
   }
 
-  .hero-select-stage {
-    width: min(100%, 44rem);
-  }
-
   .heroes-page-layout,
   .lobby-layout {
     height: 100%;
@@ -4163,10 +4155,6 @@ body,
 
   .menu-main {
     padding-top: calc(var(--menu-nav-h) + var(--global-notification-offset));
-  }
-
-  .hero-select-stage {
-    width: min(100%, 58rem);
   }
 
   .lobby-team-panel {

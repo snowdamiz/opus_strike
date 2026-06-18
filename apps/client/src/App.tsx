@@ -4,6 +4,7 @@ import { useSettingsStore } from './store/settingsStore';
 import { MainLobby } from './components/ui/MainLobby';
 import { Lobby } from './components/ui/Lobby';
 import { MatchmakingScreen } from './components/ui/MatchmakingScreen';
+import { MapVoteScreen } from './components/ui/MapVoteScreen';
 import { HUD } from './components/ui/HUD';
 import { LoadingScreen } from './components/ui/LoadingScreen';
 import { PracticeLoadingScreen } from './components/ui/PracticeLoadingScreen';
@@ -23,11 +24,9 @@ import { config } from './config/environment';
 import type { MapWarmupSnapshot } from './utils/mapWarmup/mapWarmupCoordinator';
 
 const GameCanvas = lazy(() => import('./components/game/GameCanvas').then((module) => ({ default: module.GameCanvas })));
-const HeroSelect = lazy(() => import('./components/ui/HeroSelect').then((module) => ({ default: module.HeroSelect })));
 const Scoreboard = lazy(() => import('./components/ui/Scoreboard').then((module) => ({ default: module.Scoreboard })));
 const InGameMenu = lazy(() => import('./components/ui/InGameMenu').then((module) => ({ default: module.InGameMenu })));
 const GameConsole = lazy(() => import('./components/ui/GameConsole').then((module) => ({ default: module.GameConsole })));
-const MapVoteScreen = lazy(() => import('./components/ui/MapVoteScreen').then((module) => ({ default: module.MapVoteScreen })));
 const MatchSummaryScreen = lazy(() => import('./components/ui/MatchSummaryScreen').then((module) => ({ default: module.MatchSummaryScreen })));
 const PerfMonitorOverlay = lazy(() => import('./components/game/PerfMonitor').then((module) => ({ default: module.PerfMonitorOverlay })));
 const PREMATCH_COUNTDOWN_EFFECT_FADE_MS = 3000;
@@ -92,7 +91,6 @@ export function App() {
   const { preloadSoundGroup } = useAudio();
   const { matchStartGateKey, reportMatchSceneReady } = useNetwork();
   useGlobalButtonSounds();
-  const isPreGame = gamePhase === 'waiting' || gamePhase === 'hero_select' || !gamePhase;
   const isActiveGame = gamePhase === 'playing' || gamePhase === 'countdown';
   const shouldPrepareMatchWorld = (
     appPhase === 'in_game' &&
@@ -291,7 +289,7 @@ export function App() {
       setIsStartupRampActive(false);
     }
 
-    if (isActiveGame && !isMatchSceneReady) {
+    if (!isMatchSceneReady) {
       setIsMatchLoadingVisible(true);
     }
 
@@ -316,7 +314,6 @@ export function App() {
     };
   }, [
     areMatchResourcesReady,
-    isActiveGame,
     isMatchSceneReady,
     shouldMountMatchWorld,
     shouldPrepareMatchWorld,
@@ -413,11 +410,7 @@ export function App() {
   }
 
   if (appPhase === 'map_vote') {
-    return (
-      <Suspense fallback={null}>
-        <MapVoteScreen />
-      </Suspense>
-    );
+    return <MapVoteScreen />;
   }
 
   // In game
@@ -443,14 +436,7 @@ export function App() {
           )}
         </Suspense>
 
-        {/* Show hero select during pre-game phases */}
-        {isPreGame && (
-          <Suspense fallback={null}>
-            <HeroSelect />
-          </Suspense>
-        )}
-
-        {!isPreGame && isMatchLoadingVisible && (
+        {isMatchLoadingVisible && (
           <MatchLoadingScreen
             key={warmupKey}
             isComplete={isMatchSceneReady}

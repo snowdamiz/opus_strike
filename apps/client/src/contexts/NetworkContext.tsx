@@ -136,7 +136,6 @@ interface NetworkContextType {
   leaveGame: () => void;
   disconnect: () => void;
   sendMovementCommands: (packet: MovementCommandPacket) => void;
-  selectHero: (heroId: HeroId) => void;
   devSetHero: (heroId: HeroId) => void;
   devFillUltimate: () => void;
   devEndGame: () => void;
@@ -148,7 +147,6 @@ interface NetworkContextType {
   devBotSkill: (heroId: HeroId, team: Team, skillKey: string) => void;
   devBotLook: (heroId: HeroId, team: Team, direction: 'up' | 'down') => void;
   selectTeam: (team: Team) => void;
-  setReady: (ready: boolean) => void;
   matchStartGateKey: number | null;
   reportMatchSceneReady: () => void;
   reportPlayer: (targetPlayerId: string, reason?: string, details?: string) => Promise<void>;
@@ -359,26 +357,27 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           : spawnPoints[Math.floor(Math.random() * spawnPoints.length)] ?? { x: 0, y: 1, z: 0 };
         const playerId = createPracticePlayerId();
         const player = createDefaultLocalPlayer(playerId, name);
-        const tutorialHeroStats = isTutorial ? getHeroStats(TUTORIAL_HERO_ID) : null;
+        const practiceHeroId = isTutorial ? TUTORIAL_HERO_ID : options?.heroId ?? 'blaze';
+        const practiceHeroStats = getHeroStats(practiceHeroId);
 
-        player.state = isTutorial ? 'alive' : 'selecting';
+        player.state = 'alive';
         player.position = { ...spawn };
         player.team = 'red';
         if (isTutorial) {
           player.lookYaw = facingToLookYaw(preparedMap.manifest.gameplay.spawns.red.facing);
           player.lookPitch = 0;
         }
-        player.isReady = isTutorial;
-        player.heroId = isTutorial ? TUTORIAL_HERO_ID : options?.heroId ?? null;
-        if (tutorialHeroStats) {
-          player.maxHealth = tutorialHeroStats.maxHealth;
-          player.health = Math.max(
+        player.isReady = true;
+        player.heroId = practiceHeroId;
+        player.maxHealth = practiceHeroStats.maxHealth;
+        player.health = isTutorial
+          ? Math.max(
             1,
-            tutorialHeroStats.maxHealth - Math.max(1, Math.round(tutorialHeroStats.maxHealth * POWERUP_HEALTH_RESTORE_RATIO))
-          );
-          player.ultimateCharge = 100;
-          player.abilities = createPracticeAbilityStates(TUTORIAL_HERO_ID);
-        }
+            practiceHeroStats.maxHealth - Math.max(1, Math.round(practiceHeroStats.maxHealth * POWERUP_HEALTH_RESTORE_RATIO))
+          )
+          : practiceHeroStats.maxHealth;
+        player.ultimateCharge = 100;
+        player.abilities = createPracticeAbilityStates(practiceHeroId);
         player.hasFlag = false;
 
         useGameStore.setState({
@@ -392,7 +391,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           playerId,
           appPhase: 'in_game',
           gameplayMode: DEFAULT_GAMEPLAY_MODE,
-          gamePhase: isTutorial ? 'playing' : 'hero_select',
+          gamePhase: 'playing',
           matchSummary: null,
           appliedExperienceMatchId: null,
           mapSeed: seed,
@@ -1169,28 +1168,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const selectHero = useCallback((heroId: HeroId) => {
-    const store = useGameStore.getState();
-    if (store.isPracticeMode) {
-      const localPlayer = store.localPlayer;
-      if (!localPlayer) return;
-
-      const heroStats = getHeroStats(heroId);
-      store.updateLocalPlayer({
-        heroId,
-        health: heroStats.maxHealth,
-        maxHealth: heroStats.maxHealth,
-        ultimateCharge: 100,
-        abilities: createPracticeAbilityStates(heroId),
-        isReady: false,
-      });
-      return;
-    }
-
-    loggers.network.debug('sending selectHero', heroId);
-    gameRoomRef.current?.send('selectHero', { heroId });
-  }, []);
-
   const devSetHero = useCallback((heroId: HeroId) => {
     if (!config.isDev) return;
     loggers.network.debug('sending development selectHero', heroId);
@@ -1249,40 +1226,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('selectTeam', { team });
   }, []);
 
-  const setReady = useCallback((ready: boolean) => {
-    const store = useGameStore.getState();
-    if (store.isPracticeMode) {
-      const localPlayer = store.localPlayer;
-      if (!localPlayer) return;
-
-      const heroId = localPlayer.heroId ?? 'phantom';
-      const heroStats = getHeroStats(heroId);
-      const nextPlayer = {
-        ...localPlayer,
-        heroId,
-        isReady: ready,
-        state: ready ? 'alive' as const : 'selecting' as const,
-        health: heroStats.maxHealth,
-        maxHealth: heroStats.maxHealth,
-        ultimateCharge: 100,
-        abilities: createPracticeAbilityStates(heroId),
-      };
-
-      store.setLocalPlayer(nextPlayer);
-      if (ready) {
-        resetLocalMovementPrediction(movementStateFromPlayer(nextPlayer), 0, nextPlayer.id);
-        setGamePhase('playing');
-      } else {
-        setGamePhase('hero_select');
-      }
-      setPhaseEndTime(null);
-      return;
-    }
-
-    loggers.network.debug('sending ready', ready);
-    gameRoomRef.current?.send('ready', { ready });
-  }, [setGamePhase, setPhaseEndTime]);
-
   const reportMatchSceneReady = useCallback(() => {
     const key = matchStartGateKeyRef.current;
     if (key === null || useGameStore.getState().isPracticeMode) return;
@@ -1329,7 +1272,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     leaveGame,
     disconnect,
     sendMovementCommands,
-    selectHero,
     devSetHero,
     devFillUltimate,
     devEndGame,
@@ -1341,7 +1283,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     devBotSkill,
     devBotLook,
     selectTeam,
-    setReady,
     matchStartGateKey,
     reportMatchSceneReady,
     reportPlayer,
@@ -1380,7 +1321,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     reportPlayer,
     requestVoiceToken,
     restoreParty,
-    selectHero,
     selectTeam,
     sendMovementCommands,
     setDevBotBrainEnabled,
@@ -1393,7 +1333,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setPartyBotFill,
     setPartyMode,
     setPartyReady,
-    setReady,
     startGame,
     startParty,
     startPracticeGame,
