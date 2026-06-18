@@ -2,7 +2,7 @@ import { useEffect, useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
-import { PHANTOM_VOID_RAY_COLLISION_RADIUS } from '@voxel-strike/shared';
+import { PHANTOM_VOID_RAY_COLLISION_RADIUS, type Team } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import type { VoidRayData } from '../../../store/types';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
@@ -17,7 +17,7 @@ interface VoidRayProps {
   direction: { x: number; y: number; z: number };
   startTime: number;
   ownerId: string;
-  ownerTeam: 'red' | 'blue';
+  ownerTeam: Team;
   impactPosition?: { x: number; y: number; z: number };
   interceptedByChronosAegis?: boolean;
 }

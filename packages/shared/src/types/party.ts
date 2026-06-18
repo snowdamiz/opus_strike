@@ -1,8 +1,11 @@
-import type { GameplayMode } from './gameplayMode.js';
+import { DEFAULT_GAME_CONFIG } from '../constants/game.js';
+import { GAMEPLAY_MODES, type GameplayMode } from './gameplayMode.js';
 import type { HeroId } from './hero.js';
+import type { BotDifficulty } from './player.js';
 import type { RankSummary } from '../progression/ranking.js';
 
 export const PARTY_MODES = ['quick_play', 'ranked', 'custom', 'practice'] as const;
+export const PARTY_MAX_MEMBERS = DEFAULT_GAME_CONFIG.teamSize;
 
 export type PartyMode = typeof PARTY_MODES[number];
 
@@ -17,7 +20,23 @@ export interface PartyMemberSnapshot {
   ready: boolean;
   connected: boolean;
   leader: boolean;
+  isBot: boolean;
+  botDifficulty?: BotDifficulty;
   rank: RankSummary;
+}
+
+export interface PartyBotLaunchDescriptor {
+  displayName: string;
+  heroId: HeroId;
+  difficulty: BotDifficulty;
+}
+
+export type PartyBotFillSettings = Record<GameplayMode, boolean>;
+
+export function createDefaultPartyBotFillSettings(): PartyBotFillSettings {
+  return Object.fromEntries(
+    GAMEPLAY_MODES.map((mode) => [mode, false])
+  ) as PartyBotFillSettings;
 }
 
 export interface PartyStateSnapshot {
@@ -25,6 +44,7 @@ export interface PartyStateSnapshot {
   leaderUserId: string;
   selectedMode: PartyMode;
   gameplayMode: GameplayMode;
+  botFillEnabledByMode: PartyBotFillSettings;
   members: PartyMemberSnapshot[];
   launchError: string | null;
 }

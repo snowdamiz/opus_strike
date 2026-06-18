@@ -44,7 +44,6 @@ import {
       requiredHumanPlayers: 4,
       connectedHumanPlayers: 3,
       deadlineAt: 10_000,
-      refundedWager: true,
       serverTime: 12_345,
     }),
     {
@@ -54,7 +53,6 @@ import {
       requiredHumanPlayers: 4,
       connectedHumanPlayers: 3,
       deadlineAt: 10_000,
-      refundedWager: true,
       serverTime: 12_345,
       blockedPlayerId: undefined,
       blockedPlayerName: undefined,
@@ -74,7 +72,7 @@ import {
     buildMatchCancelledPayload({
       notice: {
         reason: 'network_quality',
-        message: "Match canceled because Red's connection is not stable enough for ranked or wager play.",
+        message: "Match canceled because Red's connection is not stable enough for ranked play.",
         blockedPlayerId: 'red-player',
         blockedPlayerName: 'Red',
         networkQuality,
@@ -83,17 +81,15 @@ import {
       requiredHumanPlayers: 2,
       connectedHumanPlayers: 2,
       deadlineAt: 20_000,
-      refundedWager: false,
       serverTime: 22_222,
     }),
     {
       reason: 'network_quality',
-      message: "Match canceled because Red's connection is not stable enough for ranked or wager play.",
+      message: "Match canceled because Red's connection is not stable enough for ranked play.",
       roomId: 'room-2',
       requiredHumanPlayers: 2,
       connectedHumanPlayers: 2,
       deadlineAt: 20_000,
-      refundedWager: false,
       serverTime: 22_222,
       blockedPlayerId: 'red-player',
       blockedPlayerName: 'Red',

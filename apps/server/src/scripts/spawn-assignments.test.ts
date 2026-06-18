@@ -17,7 +17,6 @@ import {
 
 const players = new Map<string, CombatTeamMember>([
   ['red-a', { team: 'red' }],
-  ['red-observer', { team: 'red', isObserver: true }],
   ['blue-a', { team: 'blue' }],
   ['blue-b', { team: 'blue' }],
   ['unassigned', { team: '' }],
@@ -26,12 +25,22 @@ const players = new Map<string, CombatTeamMember>([
 assert.equal(countCombatTeamMembers(players.values(), 'red'), 1);
 assert.equal(countCombatTeamMembers(players.values(), 'blue'), 2);
 assert.equal(countCombatTeamMembersExcluding(players, 'blue', 'blue-b'), 1);
-assert.equal(countCombatTeamMembersExcluding(players, 'red', 'red-observer'), 1);
 
 assert.equal(assignBalancedTeam({ redCount: 1, blueCount: 2 }), 'red');
 assert.equal(assignBalancedTeam({ redCount: 2, blueCount: 1 }), 'blue');
 assert.equal(assignBalancedTeam({ redCount: 1, blueCount: 1, preferredTeam: 'blue' }), 'blue');
 assert.equal(assignBalancedTeam({ redCount: 3, blueCount: 1, preferredTeam: 'red' }), 'blue');
+assert.equal(assignBalancedTeam({
+  players: [
+    { team: 'br_01' },
+    { team: 'br_01' },
+    { team: 'br_01' },
+    { team: 'br_02' },
+  ],
+  teamIds: ['br_01', 'br_02', 'br_03'],
+  maxTeamSize: 3,
+  preferredTeam: 'br_01',
+}), 'br_03');
 
 assert.deepEqual(
   collectTeamSpawnParticipants(players),
@@ -219,5 +228,29 @@ assert.deepEqual(
     { playerId: 'blue-a', team: 'blue', spawnIndex: 1 },
   ]
 );
+
+{
+  const battleRoyalPlan = createTeamSpawnPlan({
+    manifest: {
+      spawnPoints: {
+        br_01: [{ x: 10, y: 1, z: 0 }, { x: 11, y: 1, z: 0 }, { x: 12, y: 1, z: 0 }],
+        br_02: [{ x: -10, y: 1, z: 0 }, { x: -11, y: 1, z: 0 }, { x: -12, y: 1, z: 0 }],
+      },
+    },
+    players: new Map([
+      ['alpha-a', { team: 'br_01' }],
+      ['alpha-b', { team: 'br_01' }],
+      ['bravo-a', { team: 'br_02' }],
+    ]),
+    random: () => 0,
+  });
+
+  assert.deepEqual(Object.keys(battleRoyalPlan.spawnPointsByTeam).sort(), ['br_01', 'br_02']);
+  assert.deepEqual(battleRoyalPlan.assignments, [
+    { playerId: 'alpha-a', team: 'br_01', spawnIndex: 0 },
+    { playerId: 'alpha-b', team: 'br_01', spawnIndex: 1 },
+    { playerId: 'bravo-a', team: 'br_02', spawnIndex: 0 },
+  ]);
+}
 
 console.log('spawn assignment tests passed');

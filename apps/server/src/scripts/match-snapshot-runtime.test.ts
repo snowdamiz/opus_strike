@@ -46,6 +46,8 @@ const runtime = new MatchSnapshotRuntime();
   assert.equal(snapshot.phase, 'playing');
   assert.equal(snapshot.mapThemeId, 'verdant');
   assert.equal(snapshot.mapSize, 'small');
+  assert.equal(snapshot.mapProfileId, null);
+  assert.equal(snapshot.safeZone, null);
   assert.equal(snapshot.phaseEndTime, null);
   assert.equal(snapshot.redFlag, redFlag);
   assert.equal(snapshot.blueFlag, blueFlag);
@@ -61,6 +63,7 @@ const runtime = new MatchSnapshotRuntime();
     mapSeed: 321,
     mapThemeId: null,
     mapSize: null,
+    mapProfileId: null,
     redScore: 5,
     blueScore: 4,
     redFlag: flag({ position: { x: 1.234, y: 2.345, z: 3.456 }, carrierId: 'red-carrier', isAtBase: false }),
@@ -68,6 +71,7 @@ const runtime = new MatchSnapshotRuntime();
     roundTimeRemaining: 12,
     phaseEndTime: null,
     gameClockFrozen: false,
+    safeZone: null,
   };
   const signature = runtime.getSignature(snapshot);
 
@@ -75,9 +79,16 @@ const runtime = new MatchSnapshotRuntime();
     'countdown',
     321,
     DEFAULT_VOXEL_MAP_SIZE_ID,
+    '',
     'team_deathmatch',
     5,
     4,
+    0,
+    0,
+    -1,
+    0,
+    0,
+    0,
     0,
     0,
     'red-carrier',
@@ -98,6 +109,44 @@ const runtime = new MatchSnapshotRuntime();
   };
   assert.notEqual(runtime.getSignature(moved), signature);
   assert.equal(runtime.getSignature({ ...snapshot, tick: 2, serverTime: 2000 }), signature);
+}
+
+{
+  const safeZone = {
+    enabled: true,
+    phaseIndex: 2,
+    center: { x: 12.34, y: 0, z: -56.78 },
+    radius: 42.5,
+    nextCenter: { x: 10, y: 0, z: -40 },
+    nextRadius: 20,
+    shrinkStartsAt: 2_000,
+    phaseEndsAt: 3_000,
+    damagePerSecond: 8,
+    warning: true,
+    shrinking: false,
+  };
+  const snapshot = runtime.buildSnapshot({
+    tick: 2,
+    serverTime: 2000,
+    phase: 'playing',
+    gameplayMode: 'battle_royal',
+    mapSeed: 0x51f15eed,
+    mapThemeId: 'verdant',
+    mapSize: 'large',
+    mapProfileId: 'battle_royal_large',
+    redScore: 0,
+    blueScore: 0,
+    redFlag: flag(),
+    blueFlag: flag(),
+    roundTimeRemaining: 800,
+    phaseEndTime: null,
+    gameClockFrozen: false,
+    safeZone,
+  });
+
+  assert.equal(snapshot.mapProfileId, 'battle_royal_large');
+  assert.equal(snapshot.safeZone, safeZone);
+  assert.match(runtime.getSignature(snapshot), /battle_royal_large:battle_royal/);
 }
 
 console.log('match snapshot runtime tests passed');

@@ -39,7 +39,7 @@ export interface RoomDamageRuntimeDeps {
   getPlayerById(playerId: string): Player | null;
   isDevelopmentMode(): boolean;
   isPlayerDevImmune(playerId: string): boolean;
-  getRespawnDelayMs(): number;
+  getRespawnDelayMs(): number | null;
   vec3ToPlain(value: { x: number; y: number; z: number }): PlainVec3;
   normalize3D(value: PlainVec3): PlainVec3 | null;
   getPlayerEyePosition(player: Player): PlainVec3;

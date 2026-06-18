@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useShallow } from 'zustand/shallow';
-import type { Player, VoxelMapManifest } from '@voxel-strike/shared';
+import { getTeamCatalogEntry, type Player, type VoxelMapManifest } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { visualStore } from '../../../store/visualStore';
 import { measureFrameWork } from '../../../movement/networkDiagnostics';
@@ -29,19 +29,20 @@ export function Minimap() {
   const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const size = useMeasuredSquareSize(containerRef, DEFAULT_MINIMAP_SIZE);
   const devicePixelRatio = useDevicePixelRatio();
-  const { localPlayer, mapSeed, mapThemeId, mapSize } = useGameStore(
+  const { localPlayer, mapSeed, mapThemeId, mapSize, mapProfileId } = useGameStore(
     useShallow((state) => ({
       localPlayer: state.localPlayer,
       mapSeed: state.mapSeed,
       mapThemeId: state.mapThemeId,
       mapSize: state.mapSize,
+      mapProfileId: state.mapProfileId,
     }))
   );
 
   const preparedMap = useMemo(() => (
-    getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize })
-    ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, source: 'match' })
-  ), [mapSeed, mapThemeId, mapSize]);
+    getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId })
+    ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, source: 'match' })
+  ), [mapSeed, mapThemeId, mapSize, mapProfileId]);
   const manifest = preparedMap.manifest;
   const localPlayerId = localPlayer?.id ?? null;
   const projection = useMemo(() => (
@@ -144,6 +145,10 @@ function drawLiveOverlay(
   const visualState = visualStore.getState();
   const teammates = selectVisibleTeammates(localPlayer, store.players.values(), liveOverlayTeammatesScratch);
   const teamColor = store.isPracticeMode ? MINIMAP_COLORS.live.practiceTeam : getTeamColor(localPlayer.team);
+
+  if (store.safeZone?.enabled) {
+    drawSafeZone(ctx, projection, store.safeZone);
+  }
 
   for (const teammate of teammates) {
     const position = visualState.playerPositions.get(teammate.id) ?? teammate.position;
@@ -277,6 +282,40 @@ function drawLocalMarker(
   ctx.restore();
 }
 
+function drawSafeZone(
+  ctx: CanvasRenderingContext2D,
+  projection: MinimapProjection,
+  safeZone: NonNullable<ReturnType<typeof useGameStore.getState>['safeZone']>
+): void {
+  const center = worldToMinimap(projection, safeZone.center);
+  const nextCenter = worldToMinimap(projection, safeZone.nextCenter);
+  const radius = Math.max(1, safeZone.radius * projection.scale);
+  const nextRadius = Math.max(1, safeZone.nextRadius * projection.scale);
+
+  ctx.save();
+  ctx.globalAlpha = safeZone.warning ? 0.95 : 0.74;
+  ctx.strokeStyle = safeZone.warning ? MINIMAP_COLORS.safeZone.warningStroke : MINIMAP_COLORS.safeZone.stableStroke;
+  ctx.fillStyle = safeZone.warning ? MINIMAP_COLORS.safeZone.warningFill : MINIMAP_COLORS.safeZone.stableFill;
+  ctx.lineWidth = safeZone.shrinking ? 2.1 : 1.6;
+  ctx.shadowColor = safeZone.warning ? MINIMAP_COLORS.safeZone.warningShadow : MINIMAP_COLORS.safeZone.stableShadow;
+  ctx.shadowBlur = 6;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.setLineDash([4, 4]);
+  ctx.globalAlpha = 0.64;
+  ctx.lineWidth = 1.2;
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+  ctx.beginPath();
+  ctx.arc(nextCenter.x, nextCenter.y, nextRadius, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
 function directionFromYaw(yaw: number): { x: number; y: number } {
   return {
     x: -Math.sin(yaw),
@@ -285,7 +324,8 @@ function directionFromYaw(yaw: number): { x: number; y: number } {
 }
 
 function getTeamColor(team: Player['team']): string {
-  return team === 'red' ? MINIMAP_COLORS.team.red : MINIMAP_COLORS.team.blue;
+  return getTeamCatalogEntry(team)?.color
+    ?? (team === 'red' ? MINIMAP_COLORS.team.red : MINIMAP_COLORS.team.blue);
 }
 
 function useDevicePixelRatio(): number {

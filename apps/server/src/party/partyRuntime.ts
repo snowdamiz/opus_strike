@@ -1,12 +1,17 @@
 import {
+  ALL_HERO_IDS,
   DEFAULT_GAMEPLAY_MODE,
-  DEFAULT_GAME_CONFIG,
+  PARTY_MAX_MEMBERS,
+  createDefaultPartyBotFillSettings,
+  getHumanPartyHeroIds,
   getRankDivisionIndex,
   getRankFromRating,
   isGameplayMode,
   isPartyMode,
   type GameplayMode,
+  type BotDifficulty,
   type HeroId,
+  type PartyBotFillSettings,
   type PartyMemberSnapshot,
   type PartyMode,
   type PartyStateSnapshot,
@@ -15,11 +20,13 @@ import {
 
 export interface PartyRuntimeMember {
   userId: string;
-  sessionId: string;
+  sessionId: string | null;
   displayName: string;
   heroId: HeroId;
   ready: boolean;
   connected: boolean;
+  isBot: boolean;
+  botDifficulty?: BotDifficulty;
   rank: RankSummary;
   competitiveRating: number;
   rankDivisionIndex: number;
@@ -43,6 +50,12 @@ export interface AddPartyMemberInput {
   devTutorialBypass?: boolean;
 }
 
+export interface AddPartyBotInput {
+  displayName?: string;
+  heroId?: HeroId;
+  difficulty?: BotDifficulty;
+}
+
 export interface PartyMemberChange {
   member: PartyRuntimeMember;
   replacedSessionId: string | null;
@@ -55,11 +68,13 @@ export class PartyRosterRuntime {
   private leaderUserId: string | null = null;
   private selectedMode: PartyMode = 'quick_play';
   private gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE;
+  private botFillEnabledByMode: PartyBotFillSettings = createDefaultPartyBotFillSettings();
   private launchError: string | null = null;
   private readonly members = new Map<string, PartyRuntimeMember>();
   private readonly sessionToUserId = new Map<string, string>();
+  private botCounter = 0;
 
-  constructor(partyId: string, maxMembers = DEFAULT_GAME_CONFIG.teamSize) {
+  constructor(partyId: string, maxMembers = PARTY_MAX_MEMBERS) {
     this.partyId = partyId;
     this.maxMembers = maxMembers;
   }
@@ -80,6 +95,10 @@ export class PartyRosterRuntime {
     return this.gameplayMode;
   }
 
+  getBotFillEnabled(gameplayMode: GameplayMode): boolean {
+    return this.botFillEnabledByMode[gameplayMode] === true;
+  }
+
   addMember(input: AddPartyMemberInput): PartyMemberChange {
     const existing = this.members.get(input.userId);
     if (!existing && this.members.size >= this.maxMembers) {
@@ -87,13 +106,17 @@ export class PartyRosterRuntime {
     }
 
     const competitiveRating = input.competitiveRating ?? existing?.competitiveRating ?? 800;
+    const heroId = this.resolveHumanHero(input.userId, input.heroId);
+    const ready = existing?.heroId === heroId ? existing.ready : false;
     const member: PartyRuntimeMember = {
       userId: input.userId,
       sessionId: input.sessionId,
       displayName: input.displayName,
-      heroId: input.heroId,
-      ready: existing?.ready ?? false,
+      heroId,
+      ready,
       connected: true,
+      isBot: false,
+      botDifficulty: undefined,
       rank: input.rank ?? existing?.rank ?? getRankFromRating(competitiveRating, 0),
       competitiveRating,
       rankDivisionIndex: input.rankDivisionIndex ?? getRankDivisionIndex(competitiveRating),
@@ -112,6 +135,7 @@ export class PartyRosterRuntime {
 
     this.members.set(input.userId, member);
     this.sessionToUserId.set(input.sessionId, input.userId);
+    this.reassignBotHeroes();
 
     let leaderChanged = false;
     if (!this.leaderUserId) {
@@ -121,6 +145,55 @@ export class PartyRosterRuntime {
 
     this.launchError = null;
     return { member, replacedSessionId, leaderChanged };
+  }
+
+  addBot(leaderUserId: string, input: AddPartyBotInput = {}): PartyRuntimeMember {
+    this.assertLeader(leaderUserId);
+    if (this.members.size >= this.maxMembers) {
+      throw new Error('Party is full');
+    }
+
+    const botIndex = this.botCounter++;
+    const competitiveRating = 800;
+    const difficulty = input.difficulty ?? 'normal';
+    const member: PartyRuntimeMember = {
+      userId: `party-bot:${this.partyId}:${botIndex}`,
+      sessionId: null,
+      displayName: (input.displayName?.trim() || `Bot ${botIndex + 1}`).slice(0, 24),
+      heroId: input.heroId ?? 'blaze',
+      ready: true,
+      connected: true,
+      isBot: true,
+      botDifficulty: difficulty,
+      rank: getRankFromRating(competitiveRating, 0),
+      competitiveRating,
+      rankDivisionIndex: getRankDivisionIndex(competitiveRating),
+      walletAddress: null,
+      tutorialCompletedAt: null,
+      rankedPlacementsRemaining: 0,
+      devTutorialBypass: true,
+    };
+
+    this.members.set(member.userId, member);
+    this.reassignBotHeroes();
+    this.launchError = null;
+    return member;
+  }
+
+  kickMember(leaderUserId: string, targetUserId: string): PartyRuntimeMember | null {
+    this.assertLeader(leaderUserId);
+    if (leaderUserId === targetUserId) {
+      throw new Error('Cannot kick yourself');
+    }
+
+    const member = this.members.get(targetUserId);
+    if (!member) return null;
+    this.members.delete(targetUserId);
+    if (member.sessionId) {
+      this.sessionToUserId.delete(member.sessionId);
+    }
+    this.launchError = null;
+    return member;
   }
 
   removeSession(sessionId: string): PartyMemberChange | null {
@@ -135,7 +208,7 @@ export class PartyRosterRuntime {
 
     let leaderChanged = false;
     if (this.leaderUserId === userId) {
-      this.leaderUserId = this.members.keys().next().value ?? null;
+      this.leaderUserId = this.getMembers().find((candidate) => !candidate.isBot)?.userId ?? null;
       leaderChanged = true;
     }
 
@@ -156,11 +229,23 @@ export class PartyRosterRuntime {
     return Array.from(this.members.values());
   }
 
+  getHumanMembers(): PartyRuntimeMember[] {
+    return this.getMembers().filter((member) => !member.isBot);
+  }
+
+  getBotMembers(): PartyRuntimeMember[] {
+    return this.getMembers().filter((member) => member.isBot);
+  }
+
   updateHero(userId: string, heroId: HeroId): PartyRuntimeMember | null {
     const member = this.members.get(userId);
     if (!member) return null;
+    if (!member.isBot && !this.isHumanHeroAvailable(heroId, userId)) {
+      throw new Error('Hero is already picked by a party member');
+    }
     member.heroId = heroId;
     member.ready = false;
+    this.reassignBotHeroes();
     this.launchError = null;
     return member;
   }
@@ -188,7 +273,31 @@ export class PartyRosterRuntime {
       this.gameplayMode = gameplayMode;
     }
     for (const member of this.members.values()) {
-      if (member.userId !== this.leaderUserId) {
+      if (!member.isBot && member.userId !== this.leaderUserId) {
+        member.ready = false;
+      }
+    }
+    this.launchError = null;
+    return this.snapshot();
+  }
+
+  setBotFillEnabled(userId: string, gameplayMode: unknown, enabled: unknown): PartyStateSnapshot {
+    if (this.leaderUserId !== userId) {
+      throw new Error('Only the party leader can choose bot fill');
+    }
+    if (!isGameplayMode(gameplayMode)) {
+      throw new Error('Invalid gameplay mode');
+    }
+    if (typeof enabled !== 'boolean') {
+      throw new Error('Invalid bot fill value');
+    }
+
+    this.botFillEnabledByMode = {
+      ...this.botFillEnabledByMode,
+      [gameplayMode]: enabled,
+    };
+    for (const member of this.members.values()) {
+      if (!member.isBot && member.userId !== this.leaderUserId) {
         member.ready = false;
       }
     }
@@ -206,9 +315,17 @@ export class PartyRosterRuntime {
       return { ok: false, message: 'Party is empty' };
     }
 
-    const notReady = this.getMembers().find((member) => member.userId !== this.leaderUserId && !member.ready);
+    const notReady = this.getMembers().find((member) => !member.isBot && member.userId !== this.leaderUserId && !member.ready);
     if (notReady) {
       return { ok: false, message: `${notReady.displayName} is not ready` };
+    }
+
+    const pickedHeroIds = new Set<HeroId>();
+    for (const member of this.members.values()) {
+      if (pickedHeroIds.has(member.heroId)) {
+        return { ok: false, message: 'Each party member needs a unique hero' };
+      }
+      pickedHeroIds.add(member.heroId);
     }
 
     return { ok: true };
@@ -220,6 +337,7 @@ export class PartyRosterRuntime {
       leaderUserId: this.leaderUserId ?? '',
       selectedMode: this.selectedMode,
       gameplayMode: this.gameplayMode,
+      botFillEnabledByMode: { ...this.botFillEnabledByMode },
       members: this.getMembers().map((member): PartyMemberSnapshot => ({
         userId: member.userId,
         displayName: member.displayName,
@@ -227,9 +345,66 @@ export class PartyRosterRuntime {
         ready: member.ready,
         connected: member.connected,
         leader: member.userId === this.leaderUserId,
+        isBot: member.isBot,
+        botDifficulty: member.botDifficulty,
         rank: member.rank,
       })),
       launchError: this.launchError,
     };
+  }
+
+  private assertLeader(userId: string): void {
+    if (!this.leaderUserId || this.leaderUserId !== userId) {
+      throw new Error('Only the party leader can manage bots');
+    }
+  }
+
+  private isHumanHeroAvailable(heroId: HeroId, exceptUserId?: string | null): boolean {
+    return !getHumanPartyHeroIds(this.members.values(), exceptUserId).has(heroId);
+  }
+
+  private resolveHumanHero(userId: string, requestedHeroId: HeroId): HeroId {
+    if (this.isHumanHeroAvailable(requestedHeroId, userId)) {
+      return requestedHeroId;
+    }
+
+    return this.getFirstAvailableHero(userId) ?? requestedHeroId;
+  }
+
+  private getFirstAvailableHero(exceptUserId?: string | null): HeroId | null {
+    const occupied = new Set<HeroId>();
+
+    for (const member of this.members.values()) {
+      if (member.userId === exceptUserId) continue;
+      occupied.add(member.heroId);
+    }
+
+    return ALL_HERO_IDS.find((heroId) => !occupied.has(heroId)) ?? null;
+  }
+
+  private reassignBotHeroes(): void {
+    const occupied = new Set<HeroId>();
+    const bots: PartyRuntimeMember[] = [];
+
+    for (const member of this.members.values()) {
+      if (member.isBot) {
+        bots.push(member);
+        continue;
+      }
+      occupied.add(member.heroId);
+    }
+
+    for (const bot of bots) {
+      if (!occupied.has(bot.heroId)) {
+        occupied.add(bot.heroId);
+        continue;
+      }
+
+      const replacement = ALL_HERO_IDS.find((heroId) => !occupied.has(heroId));
+      if (replacement) {
+        bot.heroId = replacement;
+      }
+      occupied.add(bot.heroId);
+    }
   }
 }

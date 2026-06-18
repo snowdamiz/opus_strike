@@ -33,6 +33,7 @@ import {
   getRoomRoundTimeRemaining,
   hasPhaseDeadlineElapsed,
   shouldAutoReadyHeroSelectPhase,
+  shouldRunHeroSelectPhaseTransitionCheck,
   shouldStartHeroSelectPhase,
   type RoomPhaseStatePatch,
 } from './roomPhaseRuntime';
@@ -58,6 +59,12 @@ import { buildRoomChatPayload, getRoomChatRecipientIds } from './roomChatRuntime
 import { RoomNpcRegistry } from './roomNpcRegistry';
 import { RoomParticipantRegistry } from './roomParticipantRegistry';
 import { RoomMapRuntime } from './roomMapRuntime';
+import {
+  createBattleRoyalSafeZoneState,
+  isOutsideBattleRoyalSafeZone,
+  updateBattleRoyalSafeZoneState,
+  type BattleRoyalSafeZoneState,
+} from './battleRoyalSafeZone';
 import {
   MatchLedgerRuntime,
   type MatchPersistenceLedger,
@@ -208,6 +215,7 @@ import {
   DEFAULT_GAMEPLAY_MODE,
   TICK_INTERVAL_MS,
   createGameConfigForGameplayMode,
+  getGameplayModeRules,
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
   getHeroStats,
@@ -215,7 +223,6 @@ import {
   getVoxelMapTheme,
   isGameplayMode,
   normalizeVoxelMapSizeId,
-  GOLDEN_VOXEL_MAP_THEME_ID,
   toPublicRankSnapshot,
   isInsideBoundaryPolygon,
   isCollisionBlock,
@@ -309,6 +316,7 @@ import {
   getChronosAegisForward as getSharedChronosAegisForward,
   getChronosAegisForwardDot as getSharedChronosAegisForwardDot,
   getBlazeMeteorPath,
+  getTeamIdsForGameplayMode,
   getPlayerBodyAimPosition as getSharedPlayerBodyAimPosition,
   getPlayerEyePosition as getSharedPlayerEyePosition,
   getAimConeHitAgainstPlayerCombatHitbox,
@@ -330,6 +338,7 @@ import type {
   MovementCorrectionReason,
   GameEndEvent,
   GameplayMode,
+  MapProfileId,
   MatchMode,
   SelfMovementAuthority,
   MatchSnapshotMessage,
@@ -369,7 +378,6 @@ import {
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
 import { verifyGameEntryTicket, type GameEntryTicketClaims } from '../security/entryTickets';
 import { voiceService } from '../voice/VoiceService';
-import { wagerService, type LockedWagerContext } from '../wagers/service';
 import type { MatchParticipantSnapshot } from '../persistence/matchPersistence';
 import { createPlayerReport } from '../reports/playerReportService';
 import {
@@ -549,8 +557,10 @@ import {
 import {
   getWinningTeam,
   hasTeamReachedScoreLimit,
+  isBattleRoyalMode,
   isCaptureTheFlagMode,
   isTeamDeathmatchMode,
+  resolveBattleRoyalMatchEnd,
 } from './gameModeRules';
 import {
   CTF_TEAMS,
@@ -601,12 +611,12 @@ interface CreateOptions {
   mapSeed?: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
+  mapProfileId?: MapProfileId | null;
   botAssignments?: BotAssignment[];
-  observerCount?: number;
-  wagerContext?: LockedWagerContext | null;
   rankedEligible?: boolean;
   requiredHumanPlayers?: number;
   reservedHumanPlayers?: number;
+  capacityPlayerCost?: number;
 }
 
 interface JoinOptions {
@@ -729,6 +739,15 @@ const MATCH_SNAPSHOT_DRIFT_SYNC_INTERVAL_MS = 2000;
 const LOW_FREQUENCY_STATE_INTERVAL_MS = 250;
 const PLAYER_PING_BROADCAST_INTERVAL_MS = 250;
 const ROOM_MOVEMENT_EXTRA_CATCHUP_SUBSTEPS_PER_TICK = SERVER_MOVEMENT_SUBSTEPS_PER_TICK * 4;
+const MOVEMENT_GAMEPLAY_COMMAND_BUTTON_MASK =
+  MOVEMENT_BUTTON_PRIMARY_FIRE |
+  MOVEMENT_BUTTON_SECONDARY_FIRE |
+  MOVEMENT_BUTTON_RELOAD |
+  MOVEMENT_BUTTON_ABILITY_1 |
+  MOVEMENT_BUTTON_ABILITY_2 |
+  MOVEMENT_BUTTON_ULTIMATE |
+  MOVEMENT_BUTTON_INTERACT |
+  MOVEMENT_BUTTON_CROUCH_PRESSED;
 const BOT_URGENT_PLANNING_BUDGET_PER_TICK = 8;
 const BOT_DEFERRED_PLANNING_BUDGET_PER_TICK = 4;
 const BOT_FULL_RATE_PLANNING_COUNT = 6;
@@ -833,6 +852,7 @@ export class GameRoom extends Room<GameState> {
       mapSeed: this.state.mapSeed,
       mapThemeId: this.state.mapThemeId as VoxelMapTheme['id'] | null,
       mapSize: this.state.mapSize as VoxelMapSizeId | null,
+      mapProfileId: this.state.mapProfileId as MapProfileId | null,
     }),
     getCollisionAabbs: (bounds) => this.hookshotRuntime.getAnchorWallAabbs(this.state.serverTime || Date.now(), bounds),
   });
@@ -924,7 +944,9 @@ export class GameRoom extends Room<GameState> {
     getPlayerById: (playerId) => this.state.players.get(playerId) ?? null,
     isDevelopmentMode: () => this.isDevelopmentMode(),
     isPlayerDevImmune: (playerId) => this.devRuntime.isPlayerImmune(playerId),
-    getRespawnDelayMs: () => this.config.respawnTimeSeconds * 1000,
+    getRespawnDelayMs: () => isBattleRoyalMode(this.gameplayMode) && this.state.phase === 'playing'
+      ? null
+      : this.config.respawnTimeSeconds * 1000,
     vec3ToPlain: vec3SchemaToPlain,
     normalize3D: (value) => this.normalize3D(value),
     getPlayerEyePosition: (player) => this.getPlayerEyePosition(player),
@@ -961,14 +983,15 @@ export class GameRoom extends Room<GameState> {
     getDurableUserId: (playerId) => this.getDurableUserId(playerId),
     isNpc: (playerId) => this.npcs.has(playerId),
   });
-  private wagerContext: LockedWagerContext | null = null;
   private rankedEligibilityCandidate = false;
   private requiredHumanPlayers = 1;
   private rankedRequiredHumanPlayers = DEFAULT_GAME_CONFIG.maxPlayers;
   private reservedHumanPlayers = 0;
+  private capacityPlayerCost = 0;
+  private battleRoyalSafeZone: BattleRoyalSafeZoneState | null = null;
+  private nextBattleRoyalSafeZoneDamageAt = 0;
   private matchMode: MatchMode = 'custom';
   private gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE;
-  private wagerSettlementRequested = false;
   private readonly matchStartGate = new MatchStartGateTracker();
   private matchStartDeadlineAt = 0;
   private matchCancelled = false;
@@ -1120,10 +1143,9 @@ export class GameRoom extends Room<GameState> {
     this.eventLoopDelay.enable();
     this.lobbyId = options.lobbyId || null;
     this.lobbyName = options.lobbyName || null;
-    this.matchMode = options.matchMode ?? options.wagerContext?.matchMode ?? (options.wagerContext ? 'custom_wager' : 'custom');
+    this.matchMode = options.matchMode ?? 'custom';
     this.gameplayMode = isGameplayMode(options.gameplayMode) ? options.gameplayMode : DEFAULT_GAMEPLAY_MODE;
     this.config = createGameConfigForGameplayMode(this.gameplayMode);
-    this.wagerContext = options.wagerContext || null;
     this.rankedEligibilityCandidate = options.rankedEligible === true;
     this.requiredHumanPlayers = Math.max(
       0,
@@ -1131,7 +1153,11 @@ export class GameRoom extends Room<GameState> {
     );
     this.rankedRequiredHumanPlayers = this.requiredHumanPlayers;
     this.reservedHumanPlayers = Math.max(0, Math.floor(options.reservedHumanPlayers ?? this.requiredHumanPlayers));
-    this.maxClients = this.config.maxPlayers + Math.max(0, Math.floor(options.observerCount ?? 0));
+    this.capacityPlayerCost = Math.max(
+      this.reservedHumanPlayers,
+      Math.floor(options.capacityPlayerCost ?? this.reservedHumanPlayers)
+    );
+    this.maxClients = this.config.maxPlayers;
     this.antiCheat = new AntiCheatRoomRuntime({
       roomId: this.roomId,
       lobbyId: this.lobbyId,
@@ -1156,6 +1182,7 @@ export class GameRoom extends Room<GameState> {
       : createRandomSeed();
     this.state.mapThemeId = options.mapThemeId ?? getVoxelMapTheme(this.state.mapSeed).id;
     this.state.mapSize = normalizeVoxelMapSizeId(options.mapSize);
+    this.state.mapProfileId = options.mapProfileId ?? getGameplayModeRules(this.gameplayMode).mapProfileId;
     this.refreshMapManifest();
     this.initializeStreamSchedule(Date.now());
     loggers.room.info('Map seed', this.state.mapSeed);
@@ -1257,7 +1284,6 @@ export class GameRoom extends Room<GameState> {
     });
     this.onDevClientCommand('devFillUltimate', (client) => this.handleDevFillUltimate(client));
     this.onDevClientCommand('devEndGame', (client) => this.handleDevEndGame(client));
-    this.onDevClientCommand('devSetObserver', (client) => this.handleDevSetObserver(client));
     this.onDevFlagCommand('setDevTimeFrozen', (client, enabled) => {
       this.handleSetDevTimeFrozen(client, enabled);
     });
@@ -1295,7 +1321,6 @@ export class GameRoom extends Room<GameState> {
       return;
     }
     const entryTicket = authBundle?.ticket ?? null;
-    const joinsAsObserver = entryTicket?.observer === true;
 
     this.participantRegistry.setSession(client.sessionId, authContext, entryTicket);
 
@@ -1305,7 +1330,6 @@ export class GameRoom extends Room<GameState> {
     }
 
     if (shouldRejectRoomJoinForCapacity({
-      joinsAsObserver,
       playerCount: this.state.players.size,
       maxPlayers: this.config.maxPlayers,
     })) {
@@ -1313,11 +1337,6 @@ export class GameRoom extends Room<GameState> {
       this.participantRegistry.clearSession(client.sessionId);
       this.clientRegistry.clearIdentityForSession(client.sessionId);
       client.leave();
-      return;
-    }
-
-    if (joinsAsObserver) {
-      this.joinObserver(client);
       return;
     }
 
@@ -1360,22 +1379,6 @@ export class GameRoom extends Room<GameState> {
     this.checkPhaseTransition();
   }
 
-  private joinObserver(client: Client): void {
-    this.clientRegistry.addObserver(client.sessionId, client);
-    this.playerPings.markDirty();
-    this.updateMetadata();
-    this.state.players.forEach((existingPlayer) => {
-      this.sendPlayerJoinedSnapshot(client, existingPlayer, null);
-    });
-    this.sendCurrentSnapshots(client);
-    this.requestPlayerPing(client, Date.now());
-    loggers.room.info('Observer join complete', {
-      sessionId: client.sessionId,
-      totalObservers: this.clientRegistry.getObserverCount(),
-    });
-    this.checkPhaseTransition();
-  }
-
   private createJoinedHumanPlayer(
     sessionId: string,
     authContext: RoomAuthContext,
@@ -1393,6 +1396,8 @@ export class GameRoom extends Room<GameState> {
     });
     player.team = resolveRoomJoinTeam({
       players: this.state.players.values(),
+      teamIds: this.getAssignableTeamIds(),
+      maxTeamSize: this.config.teamSize,
       assignedTeam: entryTicket?.assignedTeam,
       preferredTeam: options.preferredTeam,
     });
@@ -1459,17 +1464,6 @@ export class GameRoom extends Room<GameState> {
     loggers.room.info('Player left', client.sessionId, 'consented', consented);
 
     const player = this.state.players.get(client.sessionId);
-    if (!player && this.clientRegistry.isObserver(client.sessionId)) {
-      this.clientRegistry.clearSession(client.sessionId);
-      this.clearPlayerReplicationState(client.sessionId);
-      this.participantRegistry.clearSession(client.sessionId);
-      this.rateLimiter.clearScope(client.sessionId);
-      this.matchStartGate.clearPlayer(client.sessionId);
-      this.playerPings.markDirty();
-
-      this.updateMetadata();
-      return;
-    }
 
     void this.removeVoiceParticipantForPlayer(client.sessionId, normalizeVoiceTeam(player?.team), consented ? 'leave' : 'disconnect');
 
@@ -1539,7 +1533,6 @@ export class GameRoom extends Room<GameState> {
       this.tickInterval = null;
     }
     this.blazeFlamethrowers.clearDamageTicks();
-    this.settleWagerNoContest('room_dispose');
   }
 
   private startMatchStartCancelTimer(): void {
@@ -1598,7 +1591,6 @@ export class GameRoom extends Room<GameState> {
       requiredHumanPlayers: this.requiredHumanPlayers,
       connectedHumanPlayers: this.getConnectedHumanPlayerCount(),
       deadlineAt: this.matchStartDeadlineAt,
-      refundedWager: Boolean(this.wagerContext),
       serverTime: Date.now(),
     });
   }
@@ -1622,14 +1614,12 @@ export class GameRoom extends Room<GameState> {
       requiredHumanPlayers: this.requiredHumanPlayers,
       connectedHumanPlayers,
       deadlineAt: this.matchStartDeadlineAt,
-      wageredLobbyId: this.wagerContext?.wageredLobbyId,
       blockedPlayerId: this.matchCancelNotice.blockedPlayerId,
       networkQuality: this.matchCancelNotice.networkQuality,
     });
 
     this.broadcastTracked('matchCancelled', this.buildMatchCancelledPayload(this.matchCancelNotice));
 
-    this.settleWagerNoContest(reason);
     this.matchCancelDisconnectTimeout = setTimeout(() => {
       this.disconnect();
     }, MATCH_CANCEL_DISCONNECT_DELAY_MS);
@@ -1650,13 +1640,23 @@ export class GameRoom extends Room<GameState> {
       switch (this.state.phase) {
         case 'hero_select':
           let shouldBroadcastHeroSelectState = false;
+          let shouldCheckHeroSelectTransition = false;
           this.measureTickSpan('phase_gameplay_update', () => {
-            if (this.state.serverTime - this.lastLowFrequencyStateAt >= LOW_FREQUENCY_STATE_INTERVAL_MS) {
+            const lowFrequencyStateDue = this.state.serverTime - this.lastLowFrequencyStateAt >= LOW_FREQUENCY_STATE_INTERVAL_MS;
+            shouldCheckHeroSelectTransition = shouldRunHeroSelectPhaseTransitionCheck({
+              lowFrequencyStateDue,
+              phaseEndTime: this.state.phaseEndTime,
+              now: this.state.serverTime,
+            });
+            if (lowFrequencyStateDue) {
               this.lastLowFrequencyStateAt = this.state.serverTime;
               shouldBroadcastHeroSelectState = true;
             }
           });
-          if (shouldBroadcastHeroSelectState) {
+          if (shouldCheckHeroSelectTransition) {
+            this.checkPhaseTransition();
+          }
+          if (shouldBroadcastHeroSelectState && this.state.phase === 'hero_select') {
             this.broadcastStateStreams({ transforms: false });
           }
           break;
@@ -1726,6 +1726,10 @@ export class GameRoom extends Room<GameState> {
       this.state.players.forEach(player => {
         // Handle respawns
         if (player.state === 'dead') {
+          if (isBattleRoyalMode(this.gameplayMode) && this.state.phase === 'playing') {
+            player.respawnTime = 0;
+            return;
+          }
           if (!Number.isFinite(player.respawnTime) || player.respawnTime <= 0) {
             player.respawnTime = now + this.config.respawnTimeSeconds * 1000;
           }
@@ -1785,6 +1789,9 @@ export class GameRoom extends Room<GameState> {
         this.updateCTFObjectives(now);
       }
     });
+
+    this.updateBattleRoyalSafeZone(now);
+    this.checkBattleRoyalWinCondition();
 
     this.broadcastStateStreams();
   }
@@ -1882,6 +1889,7 @@ export class GameRoom extends Room<GameState> {
     if (!recipient) return true;
     if (recipient.id === targetId) return true;
     if (recipient.team === target.team) return true;
+    if (isBattleRoyalMode(this.gameplayMode) && recipient.state === 'dead') return false;
     return (interest ?? this.getRecipientInterest(recipient, target, now)).state === 'visible';
   }
 
@@ -2008,8 +2016,15 @@ export class GameRoom extends Room<GameState> {
     interest?: RecipientInterestDecision,
     frameContext?: ReplicationFrameContext
   ): PlayerVitalsSnapshot {
+    const shouldRestrictBattleRoyalSpectator = recipient
+      && isBattleRoyalMode(this.gameplayMode)
+      && recipient.state === 'dead'
+      && recipient.id !== id
+      && recipient.team !== player.team;
     const shouldResolveInterest = recipient && recipient.id !== id && recipient.team !== player.team;
-    const visibility = shouldResolveInterest
+    const visibility = shouldRestrictBattleRoyalSpectator
+      ? 'hidden'
+      : shouldResolveInterest
       ? (interest ?? this.getRecipientInterest(recipient, player, now, frameContext)).state
       : 'visible';
 
@@ -2035,6 +2050,7 @@ export class GameRoom extends Room<GameState> {
       mapSeed: this.state.mapSeed,
       mapThemeId: this.state.mapThemeId as VoxelMapTheme['id'],
       mapSize: this.state.mapSize as VoxelMapSizeId,
+      mapProfileId: this.state.mapProfileId as MapProfileId,
       redScore: this.state.redTeam.score,
       blueScore: this.state.blueTeam.score,
       redFlag: getFlagSync(this.state, 'red'),
@@ -2042,6 +2058,7 @@ export class GameRoom extends Room<GameState> {
       roundTimeRemaining: this.state.roundTimeRemaining,
       phaseEndTime: this.state.phaseEndTime || null,
       gameClockFrozen: this.devRuntime.isGameClockFrozen(),
+      safeZone: this.battleRoyalSafeZone,
     });
   }
 
@@ -2056,7 +2073,6 @@ export class GameRoom extends Room<GameState> {
       ?? (this.state.roundStartTime || endedAt);
     const integrityGate = this.antiCheat?.buildIntegrityGate({
       rankedEligible: ledger?.rankedEligible === true,
-      wagered: Boolean(this.wagerContext),
     });
     let rankedPreview: RankedSummaryPreviewInput | undefined;
     if (ledger && ledger.state === 'active') {
@@ -2085,9 +2101,7 @@ export class GameRoom extends Room<GameState> {
       players: this.state.players,
       integrityGate,
       mapThemeId: this.state.mapThemeId,
-      goldenBiomeRewardUsdCents: this.state.mapThemeId === GOLDEN_VOXEL_MAP_THEME_ID && this.matchMode === 'ranked'
-        ? wagerService.getConfig().goldenBiomeWinnerRewardUsdCents
-        : 0,
+      goldenBiomeRewardUsdCents: 0,
       rankedPreview,
     });
   }
@@ -2096,9 +2110,9 @@ export class GameRoom extends Room<GameState> {
     const counts = getRoomPopulationCounts({
       players: this.state.players.values(),
       npcIds: this.npcs.ids,
-      observerCount: this.clientRegistry.getObserverCount(),
     });
     const load = this.getRoomLoadSnapshot();
+    const mapStats = this.getMapManifest().stats;
     this.setMetadata(buildGameRoomMetadata({
       roomId: this.roomId,
       lobbyName: this.lobbyName,
@@ -2109,13 +2123,17 @@ export class GameRoom extends Room<GameState> {
       mapSeed: this.state.mapSeed,
       mapThemeId: this.state.mapThemeId,
       mapSize: this.state.mapSize,
+      mapProfileId: this.state.mapProfileId,
       counts,
       maxPlayers: this.config.maxPlayers,
+      mapRenderableChunkCount: mapStats.renderableChunkCount,
+      mapColliderCount: mapStats.colliderCount,
+      mapSolidBlockCount: mapStats.solidBlocks,
       reservedHumanPlayers: this.reservedHumanPlayers,
+      capacityPlayerCost: this.capacityPlayerCost,
       rankedEligibilityCandidate: this.rankedEligibilityCandidate,
       rankedRequiredHumanPlayers: this.rankedRequiredHumanPlayers,
       reconnectIdentityKeys: this.participantRegistry.getReconnectIdentityKeys(),
-      wagerEnabled: Boolean(this.wagerContext),
       load,
     }));
   }
@@ -2165,6 +2183,7 @@ export class GameRoom extends Room<GameState> {
       mapSeed: this.state.mapSeed,
       mapThemeId: this.state.mapThemeId,
       mapSize: this.state.mapSize as VoxelMapSizeId,
+      mapProfileId: this.state.mapProfileId as MapProfileId,
     }));
   }
 
@@ -2459,7 +2478,6 @@ export class GameRoom extends Room<GameState> {
       players: this.state.players,
       now: Date.now(),
       matchMode: this.matchMode,
-      wagered: Boolean(this.wagerContext),
       cancelPending: options.cancelPending,
     });
     if (result.ready) return true;
@@ -2982,7 +3000,6 @@ export class GameRoom extends Room<GameState> {
       status: 'clean',
       reviewRequired: false,
       rankedHoldRequired: false,
-      payoutHoldRequired: false,
       observedOnly: getAntiCheatConfig().mode === 'observe',
       reason: null,
       affectedUserIds: [],
@@ -3019,74 +3036,12 @@ export class GameRoom extends Room<GameState> {
     const rankedEligible = this.isFinalRankedEligible(ledger, participants, forcedByPlayerId);
     const integrityGate = this.antiCheat?.buildIntegrityGate({
       rankedEligible,
-      wagered: Boolean(this.wagerContext),
     }) ?? this.cleanAntiCheatGate();
 
     void this.matchFinalization.persistLedger({
       ledger,
       finalScore,
       winningTeam,
-      participants,
-      rankedEligible,
-      integrityGate,
-      wagered: Boolean(this.wagerContext),
-    });
-  }
-
-  private settleWagerAfterGame(winningTeam: Team | null): void {
-    if (!this.wagerContext) return;
-
-    const integrityGate = this.antiCheat?.buildIntegrityGate({
-      rankedEligible: this.matchLedger.getLedger()?.rankedEligible === true,
-      wagered: true,
-    }) ?? this.cleanAntiCheatGate();
-    const requested = this.matchFinalization.settleWagerAfterGame({
-      roomId: this.roomId,
-      lobbyId: this.lobbyId,
-      wagerContext: this.wagerContext,
-      matchId: this.matchLedger.getMatchId(),
-      winningTeam,
-      integrityGate,
-    });
-    if (requested) {
-      this.wagerSettlementRequested = true;
-    }
-  }
-
-  private settleWagerNoContest(reason: string): void {
-    const requested = this.matchFinalization.settleWagerNoContest({
-      roomId: this.roomId,
-      lobbyId: this.lobbyId,
-      wagerContext: this.wagerContext,
-      settlementAlreadyRequested: this.wagerSettlementRequested,
-      matchId: this.matchLedger.getMatchId(),
-      reason,
-    });
-    if (requested) {
-      this.wagerSettlementRequested = true;
-    }
-  }
-
-  private settleGoldenBiomeRewardAfterGame(winningTeam: Team | null, forcedByPlayerId?: string): void {
-    const ledger = this.matchLedger.getLedger();
-    if (this.state.mapThemeId !== GOLDEN_VOXEL_MAP_THEME_ID || !ledger || ledger.state !== 'active') return;
-    if (this.matchMode !== 'ranked' || !winningTeam || forcedByPlayerId) return;
-
-    const participants = this.buildMatchParticipantSnapshots(ledger);
-    const rankedEligible = this.isFinalRankedEligible(ledger, participants, forcedByPlayerId);
-    const integrityGate = this.antiCheat?.buildIntegrityGate({
-      rankedEligible,
-      wagered: true,
-    }) ?? this.cleanAntiCheatGate();
-    this.matchFinalization.settleGoldenBiomeReward({
-      ledger,
-      roomId: this.roomId,
-      lobbyId: this.lobbyId,
-      mapThemeId: this.state.mapThemeId,
-      mapSeed: this.state.mapSeed,
-      matchMode: this.matchMode,
-      winningTeam,
-      forcedByPlayerId,
       participants,
       rankedEligible,
       integrityGate,
@@ -3977,7 +3932,7 @@ export class GameRoom extends Room<GameState> {
       getTargets: (storm) => this.playerSpatialQueries.queryRadius(
         storm.position,
         storm.radius,
-        { team: storm.ownerTeam === 'red' ? 'blue' : 'red' }
+        { excludeTeam: storm.ownerTeam }
       ),
       applyDamage: (storm, target, distance) => {
         this.applyDamage(
@@ -3996,12 +3951,11 @@ export class GameRoom extends Room<GameState> {
 
   private applyHookshotGroundHooksRoot(caster: Player, now: number): HookshotGroundHooksTarget[] {
     const ownerTeam = caster.team as Team;
-    const enemyTeam = ownerTeam === 'red' ? 'blue' : 'red';
     const rootUntil = now + HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS * 1000;
     const targets = this.playerSpatialQueries.queryRadius(
       caster.position,
       HOOKSHOT_GROUND_HOOKS_RADIUS,
-      { team: enemyTeam }
+      { excludeTeam: ownerTeam }
     );
     const rootedTargets: HookshotGroundHooksTarget[] = [];
 
@@ -5138,13 +5092,13 @@ export class GameRoom extends Room<GameState> {
     let bestTargetHit: AimTargetHit | null = null;
     let bestDistance = range;
     const candidateRange = range + extraRadius + PLAYER_RADIUS + PLAYER_COMBAT_HITBOX_PADDING;
-    const targetTeamFilter = targetTeam === 'enemy'
-      ? (source.team === 'red' ? 'blue' : 'red')
-      : undefined;
     const candidates = this.playerSpatialQueries.queryConeCandidates(
       origin,
       candidateRange,
-      { team: targetTeamFilter, excludeId: source.id }
+      {
+        excludeTeam: targetTeam === 'enemy' ? source.team as Team : undefined,
+        excludeId: source.id,
+      }
     );
 
     for (const target of candidates) {
@@ -5208,7 +5162,7 @@ export class GameRoom extends Room<GameState> {
     const targets = this.playerSpatialQueries.queryRadius(
       center,
       radius,
-      { team: source.team === 'red' ? 'blue' : 'red', excludeId: source.id }
+      { excludeTeam: source.team as Team, excludeId: source.id }
     );
     for (const target of targets) {
       if (target.id === source.id) continue;
@@ -5275,13 +5229,16 @@ export class GameRoom extends Room<GameState> {
       targetPoint?: PlainVec3;
     } = {}
   ): ChronosAegisSkillHit | null {
-    const shieldTeam = options.shieldTeam ?? (source.team === 'red' ? 'blue' : 'red');
+    const sourceTeam = source.team as Team;
+    const shieldTeam = options.shieldTeam;
     let bestHit: ChronosAegisSkillHit | null = null;
-    const aegisCandidates = this.playerSpatialIndex.getTeamPlayers(shieldTeam);
+    const aegisCandidates = shieldTeam
+      ? this.playerSpatialIndex.getTeamPlayers(shieldTeam)
+      : this.playerSpatialIndex.getEnemyPlayers(sourceTeam);
     const playersToCheck = aegisCandidates.length > 0 ? aegisCandidates : this.state.players.values();
 
     for (const aegisPlayer of playersToCheck) {
-      if (aegisPlayer.team !== shieldTeam) continue;
+      if (shieldTeam ? aegisPlayer.team !== shieldTeam : aegisPlayer.team === sourceTeam) continue;
       if (aegisPlayer.id === source.id) continue;
       if (!this.isChronosAegisActive(aegisPlayer)) continue;
 
@@ -7071,10 +7028,13 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    this.setPlayerHero(player, heroId);
+    const heroChanged = player.heroId !== heroId;
+    if (heroChanged && !this.setPlayerHero(player, heroId)) return;
 
     if (isSelectionPhase) {
-      this.resetCountdownStartGate();
+      if (heroChanged) {
+        this.resetCountdownStartGate();
+      }
       this.checkPhaseTransition();
     }
 
@@ -7216,49 +7176,6 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.endGame(client.sessionId);
-  }
-
-  private handleDevSetObserver(client: Client): void {
-    if (!this.requireDevelopmentMode(client)) return;
-
-    if (this.matchMode !== 'custom') {
-      client.send('devCommandError', { message: 'Observer command is only available in custom games' });
-      return;
-    }
-
-    if (this.clientRegistry.isObserver(client.sessionId)) {
-      client.send('observerModeStarted', { playerId: client.sessionId });
-      return;
-    }
-
-    const player = this.state.players.get(client.sessionId);
-    if (!player || player.isBot) {
-      client.send('devCommandError', { message: 'No active player to observe from' });
-      return;
-    }
-
-    void this.removeVoiceParticipantForPlayer(client.sessionId, normalizeVoiceTeam(player.team), 'observe');
-
-    if (player.hasFlag) {
-      this.dropFlag(player);
-    }
-    this.markMatchParticipantLeft(player);
-
-    this.state.players.delete(client.sessionId);
-    this.clearCombatPlayerRuntimeState(client.sessionId);
-    this.clearPlayerReplicationState(client.sessionId);
-    this.clientRegistry.addObserver(client.sessionId, client);
-    this.playerPings.markDirty();
-
-    if (this.state.phase === 'waiting' || this.state.phase === 'hero_select' || this.state.phase === 'countdown') {
-      this.resetCountdownStartGate();
-    }
-
-    this.updateMetadata();
-    client.send('observerModeStarted', { playerId: client.sessionId });
-    this.broadcastTracked('playerLeft', { playerId: client.sessionId });
-    this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
-    this.checkPhaseTransition();
   }
 
   private handleSetDevTimeFrozen(client: Client, enabled: boolean): void {
@@ -7540,12 +7457,15 @@ export class GameRoom extends Room<GameState> {
     const mapManifest = this.mapRuntime.refreshMap();
     this.state.mapThemeId = mapManifest.themeId;
     this.state.mapSize = mapManifest.mapSize;
+    this.state.mapProfileId = mapManifest.profileId ?? getGameplayModeRules(this.gameplayMode).mapProfileId;
     this.powerupBoosts.clearAll();
     this.powerupPickups.reset(mapManifest, 0);
     this.hookshotRuntime.clearAnchorWalls();
     this.botSteeringPathCache.clear();
     this.lineOfSightCache.clear();
     this.visibilityInterest.clearAll();
+    this.battleRoyalSafeZone = null;
+    this.nextBattleRoyalSafeZoneDamageAt = 0;
     this.forceTransformFullSync();
   }
 
@@ -7621,11 +7541,15 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
+    const assignableTeamIds = this.getAssignableTeamIds();
+    if (!assignableTeamIds.includes(team)) return;
+
     const teamSelection = getRoomTeamSelectionDecision({
       players: this.state.players,
       playerId: client.sessionId,
       requestedTeam: team,
       teamSize: this.config.teamSize,
+      teamIds: assignableTeamIds,
     });
     if (!teamSelection.canSelect) return;
 
@@ -7792,6 +7716,7 @@ export class GameRoom extends Room<GameState> {
     this.state.mapSeed = patch.mapSeed;
     this.state.mapThemeId = patch.mapThemeId;
     this.state.mapSize = patch.mapSize;
+    this.state.mapProfileId = getGameplayModeRules(this.gameplayMode).mapProfileId;
     this.state.redTeam.score = patch.redScore;
     this.state.blueTeam.score = patch.blueScore;
   }
@@ -7853,6 +7778,7 @@ export class GameRoom extends Room<GameState> {
         mapSeed: this.state.mapSeed,
         mapThemeId: this.state.mapThemeId,
         mapSize: this.state.mapSize as VoxelMapSizeId,
+        mapProfileId: this.state.mapProfileId as MapProfileId,
         position: vec3SchemaToPlain(player.position),
         movementEpoch: authority.movementEpoch,
         ackSeq: authority.lastProcessedSeq,
@@ -7928,12 +7854,6 @@ export class GameRoom extends Room<GameState> {
     }));
     this.updateMetadata();
     const ledger = this.ensureMatchPersistenceLedger(this.state.roundStartTime);
-    this.matchFinalization.attachWagerMatchId({
-      roomId: this.roomId,
-      lobbyId: this.lobbyId,
-      wagerContext: this.wagerContext,
-      matchId: ledger.matchId,
-    });
 
     this.blazeBurns.clearAll();
 
@@ -7969,6 +7889,10 @@ export class GameRoom extends Room<GameState> {
     resetFlagsFromManifest(this.state, mapManifest);
     this.powerupBoosts.clearAll();
     this.powerupPickups.reset(mapManifest, 0);
+    this.battleRoyalSafeZone = isBattleRoyalMode(this.gameplayMode)
+      ? createBattleRoyalSafeZoneState(mapManifest, now)
+      : null;
+    this.nextBattleRoyalSafeZoneDamageAt = now + 1000;
 
     this.broadcastPhaseChange('playing');
     this.broadcastTracked('powerupState', this.powerupPickups.buildStateMessage(
@@ -7992,13 +7916,51 @@ export class GameRoom extends Room<GameState> {
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
   }
 
-  private endGame(forcedByPlayerId?: string) {
+  private checkBattleRoyalWinCondition(): void {
+    if (!isBattleRoyalMode(this.gameplayMode) || this.state.phase !== 'playing') return;
+
+    const decision = resolveBattleRoyalMatchEnd(this.state.players.values());
+    if (!decision.shouldEnd) return;
+
+    this.endGame(undefined, decision.winningTeam);
+  }
+
+  private updateBattleRoyalSafeZone(now: number): void {
+    if (!isBattleRoyalMode(this.gameplayMode) || this.state.phase !== 'playing') return;
+    const current = this.battleRoyalSafeZone
+      ?? createBattleRoyalSafeZoneState(this.getMapManifest(), this.state.roundStartTime || now);
+    const safeZone = updateBattleRoyalSafeZoneState(current, now);
+    this.battleRoyalSafeZone = safeZone;
+
+    if (now < this.nextBattleRoyalSafeZoneDamageAt) return;
+    const elapsedTicks = Math.max(1, Math.floor((now - this.nextBattleRoyalSafeZoneDamageAt) / 1000) + 1);
+    this.nextBattleRoyalSafeZoneDamageAt = now + 1000;
+    const damage = safeZone.damagePerSecond * elapsedTicks;
+
+    this.state.players.forEach((player) => {
+      if (player.state !== 'alive') return;
+      if (!isOutsideBattleRoyalSafeZone(safeZone, player.position)) return;
+      this.applyDamage(player, damage, null, 'safe_zone', {
+        sourcePosition: {
+          x: safeZone.center.x,
+          y: player.position.y,
+          z: safeZone.center.z,
+        },
+        bypassPersonalShield: true,
+        skipDamageBudget: true,
+      });
+    });
+  }
+
+  private endGame(forcedByPlayerId?: string, winningTeamOverride?: Team | null) {
     if (this.state.phase === 'game_end') return;
 
     this.applyPhaseStatePatch(buildGameEndPhaseStatePatch());
     this.updateMetadata();
 
-    const winningTeam = getWinningTeam(this.state.redTeam.score, this.state.blueTeam.score);
+    const winningTeam = winningTeamOverride !== undefined
+      ? winningTeamOverride
+      : getWinningTeam(this.state.redTeam.score, this.state.blueTeam.score);
     const finalScore = {
       red: this.state.redTeam.score,
       blue: this.state.blueTeam.score,
@@ -8008,9 +7970,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcastTracked('gameEnd', this.buildGameEndEvent(finalScore, winningTeam, endedAt, forcedByPlayerId));
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
 
-    this.settleGoldenBiomeRewardAfterGame(winningTeam, forcedByPlayerId);
     this.persistMatchLedger(finalScore, winningTeam, forcedByPlayerId);
-    this.settleWagerAfterGame(forcedByPlayerId ? null : winningTeam);
 
     this.roomTimeouts.schedule(() => this.resetAfterGame(), POST_GAME_RESET_DELAY_MS);
   }
@@ -8033,7 +7993,7 @@ export class GameRoom extends Room<GameState> {
       getTargets: (zone) => this.playerSpatialQueries.queryRadius(
         zone.position,
         zone.radius,
-        { team: zone.ownerTeam === 'red' ? 'blue' : 'red', excludeId: zone.ownerId }
+        { excludeTeam: zone.ownerTeam, excludeId: zone.ownerId }
       ),
       applyDamage: (zone, player) => {
         this.applyDamage(player, zone.damage, zone.ownerId, 'void_zone', {
@@ -8166,7 +8126,7 @@ export class GameRoom extends Room<GameState> {
     const candidates = this.playerSpatialQueries.queryConeCandidates(
       origin,
       damageFrame.candidateRange,
-      { team: source.team === 'red' ? 'blue' : 'red', excludeId: source.id }
+      { excludeTeam: source.team as Team, excludeId: source.id }
     );
 
     const hitCandidates: Array<{
@@ -8276,7 +8236,7 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private createVoidZone(position: { x: number; y: number; z: number }, ownerId: string, ownerTeam: 'red' | 'blue') {
+  private createVoidZone(position: { x: number; y: number; z: number }, ownerId: string, ownerTeam: Team) {
     const zone = this.voidZones.add({
       id: this.abilityIds.nextVoidZoneId(),
       position: { ...position },
@@ -8436,6 +8396,7 @@ export class GameRoom extends Room<GameState> {
 
       const drainDecision = getMovementCommandDrainDecision(queuedCommandCount, {
         hasAuthorityBarrier: Boolean(authority.correctionReason),
+        hasGameplayInput: this.hasQueuedMovementGameplayInput(player, authority),
       });
       const baseBudget = Math.min(drainDecision.budget, SERVER_MOVEMENT_SUBSTEPS_PER_TICK);
       const requestedExtraSubsteps = Math.max(0, drainDecision.budget - baseBudget);
@@ -8674,6 +8635,31 @@ export class GameRoom extends Room<GameState> {
     return this.shouldProcessMovementGameplayInput(player, input);
   }
 
+  private hasPressedGameplayState(previous: PlayerPressState | undefined): boolean {
+    return Boolean(
+      previous?.primaryFire ||
+      previous?.secondaryFire ||
+      previous?.reload ||
+      previous?.ability1 ||
+      previous?.ability2 ||
+      previous?.ultimate
+    );
+  }
+
+  private hasQueuedMovementGameplayInput(player: Player, authority: ServerMovementAuthorityState): boolean {
+    if (this.hasPressedGameplayState(this.playerPressStates.get(player.id))) {
+      return true;
+    }
+
+    for (const command of authority.pendingCommands) {
+      if ((sanitizeMovementButtons(command.buttons) & MOVEMENT_GAMEPLAY_COMMAND_BUTTON_MASK) !== 0) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private suppressServerOwnedBotSkippedFullStepGameplayInput(input: PlayerInput): void {
     const suppressesGameplay =
       input.primaryFire ||
@@ -8723,15 +8709,7 @@ export class GameRoom extends Room<GameState> {
       return true;
     }
 
-    const previous = this.playerPressStates.get(player.id);
-    return Boolean(
-      previous?.primaryFire ||
-      previous?.secondaryFire ||
-      previous?.reload ||
-      previous?.ability1 ||
-      previous?.ability2 ||
-      previous?.ultimate
-    );
+    return this.hasPressedGameplayState(this.playerPressStates.get(player.id));
   }
 
   private shouldRunServerOwnedBotFullMovementStep(
@@ -9163,6 +9141,10 @@ export class GameRoom extends Room<GameState> {
   private placePlayerAtSpawn(player: Player, reason: MovementCorrectionReason = 'spawn'): void {
     this.assignPlayerSpawnPosition(player);
     this.markMovementBarrier(player.id, reason);
+  }
+
+  private getAssignableTeamIds(): readonly Team[] {
+    return getTeamIdsForGameplayMode(this.gameplayMode).slice(0, this.config.maxTeams);
   }
 
   private placeTeamsAtUniqueSpawns(reason: MovementCorrectionReason = 'spawn'): void {

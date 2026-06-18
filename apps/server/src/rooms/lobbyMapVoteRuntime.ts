@@ -1,14 +1,16 @@
 import {
   DEFAULT_VOXEL_MAP_SIZE_ID,
-  GOLDEN_VOXEL_MAP_THEME_ID,
   VOXEL_MAP_SIZE_IDS,
   VOXEL_MAP_THEMES,
   createProceduralMapPreview,
   createRandomSeed,
   getVoxelMapSizeDefinition,
   getVoxelMapTheme,
+  getGameplayModeRules,
   hashSeed,
   type BlueprintPreview,
+  type GameplayMode,
+  type MapProfileId,
   type MapTopologyId,
   type VoxelMapSizeId,
   type VoxelMapTheme,
@@ -20,6 +22,7 @@ export interface MapVoteOption {
   name: string;
   mapSize: VoxelMapSizeId;
   mapSizeLabel: string;
+  mapProfileId: MapProfileId;
   themeId: string;
   themeName: string;
   mapThemeId?: VoxelMapTheme['id'] | null;
@@ -44,8 +47,7 @@ export interface MapVoteUpdatedPayload {
 }
 
 export interface CreateMapVoteOptionsInput {
-  customMapSeed: number | null;
-  forceGoldenMapOption: boolean;
+  gameplayMode?: GameplayMode;
   source: number;
 }
 
@@ -93,11 +95,12 @@ export function createMapVoteOption(
   seed: number,
   index: number,
   mapThemeId: VoxelMapTheme['id'] | null = null,
-  mapSize: VoxelMapSizeId = DEFAULT_VOXEL_MAP_SIZE_ID
+  mapSize: VoxelMapSizeId = DEFAULT_VOXEL_MAP_SIZE_ID,
+  mapProfileId: MapProfileId = 'ctf_arena'
 ): MapVoteOption {
   const normalizedSeed = seed >>> 0;
   const theme = getVoxelMapTheme(normalizedSeed, mapThemeId);
-  const preview = createProceduralMapPreview(normalizedSeed, mapSize);
+  const preview = createProceduralMapPreview(normalizedSeed, mapSize, { profileId: mapProfileId, themeId: mapThemeId });
   const mapSizeDefinition = getVoxelMapSizeDefinition(mapSize);
   const suffix = MAP_NAME_SUFFIXES[hashSeed(normalizedSeed ^ index) % MAP_NAME_SUFFIXES.length];
   const themeName = mapThemeId ? theme.name : preview.themeName || theme.name;
@@ -108,6 +111,7 @@ export function createMapVoteOption(
     name: `${themeName} ${suffix}`,
     mapSize: mapSizeDefinition.id,
     mapSizeLabel: mapSizeDefinition.label,
+    mapProfileId,
     themeId: theme.id,
     themeName,
     mapThemeId,
@@ -118,22 +122,19 @@ export function createMapVoteOption(
 }
 
 export function createMapVoteOptions(input: CreateMapVoteOptionsInput): MapVoteOption[] {
-  if (input.customMapSeed !== null) {
-    const mapThemeId = input.forceGoldenMapOption ? GOLDEN_VOXEL_MAP_THEME_ID : null;
-    return [createMapVoteOption(input.customMapSeed, 0, mapThemeId, DEFAULT_VOXEL_MAP_SIZE_ID)];
-  }
+  const rules = getGameplayModeRules(input.gameplayMode);
+  const mapProfileId = rules.mapProfileId;
+  const mapSizes = mapProfileId === 'battle_royal_large'
+    ? (['large', 'large', 'large'] as const)
+    : VOXEL_MAP_SIZE_IDS;
 
   const themeIndices = getShuffledThemeIndices(input.source);
-  const forcedGoldenIndex = input.forceGoldenMapOption
-    ? hashSeed(input.source ^ 0x676f6c64) % MAP_VOTE_OPTION_COUNT
-    : -1;
 
-  return Array.from({ length: MAP_VOTE_OPTION_COUNT }, (_, index) => {
+  return Array.from({ length: mapSizes.length }, (_, index) => {
     const themeIndex = themeIndices[index % themeIndices.length];
     const seed = createSeedForTheme(themeIndex, input.source ^ Math.imul(index + 1, 0x85ebca6b));
-    const mapThemeId = index === forcedGoldenIndex ? GOLDEN_VOXEL_MAP_THEME_ID : null;
-    const mapSize = VOXEL_MAP_SIZE_IDS[index % VOXEL_MAP_SIZE_IDS.length];
-    return createMapVoteOption(seed, index, mapThemeId, mapSize);
+    const mapSize = mapSizes[index % mapSizes.length];
+    return createMapVoteOption(seed, index, null, mapSize, mapProfileId);
   });
 }
 

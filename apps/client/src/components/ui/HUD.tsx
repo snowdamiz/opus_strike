@@ -6,6 +6,7 @@ import {
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
   VOID_RAY_CHARGE_TIME,
+  type SafeZoneSnapshot,
 } from '@voxel-strike/shared';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
 import { useCombatFeedbackStore, type KillFeedEvent } from '../../store/combatFeedbackStore';
@@ -335,6 +336,27 @@ function RoundTimer({
       }`}>
       {formatHudTime(displayedRoundTimeRemaining)}
     </span>
+  );
+}
+
+function SafeZoneStatus({ safeZone }: { safeZone: SafeZoneSnapshot | null }) {
+  const now = useHudNow();
+  if (!safeZone?.enabled) return null;
+
+  const targetTime = safeZone.shrinking ? safeZone.phaseEndsAt : safeZone.shrinkStartsAt;
+  const secondsRemaining = Math.max(0, Math.ceil((targetTime - now) / 1000));
+  const label = safeZone.shrinking ? 'ZONE CLOSING' : safeZone.warning ? 'ZONE WARNING' : 'NEXT ZONE';
+  const toneClass = safeZone.shrinking
+    ? 'border-red-300/40 bg-red-950/36 text-red-100'
+    : safeZone.warning
+      ? 'border-amber-200/40 bg-amber-950/34 text-amber-100'
+      : 'border-cyan-200/24 bg-slate-950/46 text-cyan-100';
+
+  return (
+    <div className={`absolute left-1/2 top-[clamp(2.8rem,4.2vw,4rem)] z-[124] -translate-x-1/2 rounded-md border px-3 py-1.5 text-center shadow-2xl backdrop-blur-md ${toneClass}`}>
+      <div className="font-display text-[0.62rem] tracking-[0.22em]">{label}</div>
+      <div className="font-mono text-sm font-bold tabular-nums">{formatHudTime(secondsRemaining)}</div>
+    </div>
   );
 }
 
@@ -682,6 +704,7 @@ export function HUD() {
     roundTimeRemaining,
     phaseEndTime,
     gameClockFrozen,
+    safeZone,
     clientCooldowns,
     clientCharges,
     ultimateEffectActive,
@@ -708,6 +731,7 @@ export function HUD() {
       roundTimeRemaining: state.roundTimeRemaining,
       phaseEndTime: state.phaseEndTime,
       gameClockFrozen: state.gameClockFrozen,
+      safeZone: state.safeZone,
       clientCooldowns: state.clientCooldowns,
       clientCharges: state.clientCharges,
       ultimateEffectActive: state.ultimateEffectActive,
@@ -812,6 +836,7 @@ export function HUD() {
 
       {showKillFeed && <KillFeed events={killFeed} />}
       {!isTutorialMode && <Minimap />}
+      {gameplayMode === 'battle_royal' && <SafeZoneStatus safeZone={safeZone} />}
       {!isPracticeMode && <VoiceHud />}
 
       {/* Meteor Strike targeting instructions */}

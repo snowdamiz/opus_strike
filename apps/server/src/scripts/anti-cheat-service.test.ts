@@ -93,8 +93,6 @@ withEnv({ ANTICHEAT_MODE: 'observe' }, () => {
 withEnv({
   ANTICHEAT_MODE: 'observe',
   ANTICHEAT_RANKED_SCORE_THRESHOLD: '50',
-  ANTICHEAT_PAYOUT_HOLD_SCORE_THRESHOLD: '50',
-  ANTICHEAT_PAYOUT_HOLDS_ENABLED: 'true',
 }, () => {
   const config = getAntiCheatConfig();
   const signal = normalizeAntiCheatSignal({
@@ -103,7 +101,7 @@ withEnv({
     source: 'test',
     roomId: 'room-a',
     matchId: 'match-a',
-    matchMode: 'custom_wager',
+    matchMode: 'ranked',
     userId: 'user-a',
     team: 'red',
     severity: 'high',
@@ -113,18 +111,15 @@ withEnv({
   const matchRisk = createCleanMatchRisk();
   const { change } = applySignalToRisk(signal, null, config);
   updateMatchRisk(matchRisk, signal, change);
-  const gate = buildIntegrityGate(matchRisk, config, { matchMode: 'custom_wager', rankedEligible: true, wagered: true });
+  const gate = buildIntegrityGate(matchRisk, config, { matchMode: 'ranked', rankedEligible: true });
   assert.equal(gate.reviewRequired, true);
   assert.equal(gate.observedOnly, true);
   assert.equal(gate.rankedHoldRequired, false);
-  assert.equal(gate.payoutHoldRequired, false);
 });
 
 withEnv({
   ANTICHEAT_MODE: 'ranked_review',
   ANTICHEAT_RANKED_SCORE_THRESHOLD: '50',
-  ANTICHEAT_PAYOUT_HOLD_SCORE_THRESHOLD: '50',
-  ANTICHEAT_PAYOUT_HOLDS_ENABLED: 'true',
 }, () => {
   const config = getAntiCheatConfig();
   const signal = normalizeAntiCheatSignal({
@@ -143,11 +138,10 @@ withEnv({
   const matchRisk = createCleanMatchRisk();
   const { change } = applySignalToRisk(signal, null, config);
   updateMatchRisk(matchRisk, signal, change);
-  const gate = buildIntegrityGate(matchRisk, config, { matchMode: 'ranked', rankedEligible: true, wagered: true });
+  const gate = buildIntegrityGate(matchRisk, config, { matchMode: 'ranked', rankedEligible: true });
   assert.equal(gate.reviewRequired, true);
   assert.equal(gate.observedOnly, false);
   assert.equal(gate.rankedHoldRequired, true);
-  assert.equal(gate.payoutHoldRequired, true);
 });
 
 withEnv({
@@ -208,7 +202,7 @@ withEnv({ ANTICHEAT_ENABLED: 'true' }, () => {
       integrityStatus: 'clean' as const,
       casePriority: null,
       shouldCreateCase: false,
-      affectsRankedOrWager: false,
+      affectsRanked: false,
     },
     queuedAt: Date.now(),
     resolve: () => undefined,

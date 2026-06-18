@@ -18,6 +18,7 @@ import {
   BLAZE_FLAMETHROWER_SOCKET,
   BLAZE_BOMB_SPLASH_RADIUS,
   BLAZE_ROCKET_STAFF_SOCKET,
+  type Team,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import {
@@ -197,6 +198,8 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
 
   const actionLockUntilRef = useRef(0);
 
+  const getOwnerTeam = (team?: string | null): Team => team || 'red';
+
   const lockActions = useCallback((durationMs: number, timestampMs = Date.now()) => {
     actionLockUntilRef.current = Math.max(
       actionLockUntilRef.current,
@@ -284,7 +287,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       },
       startTime: now,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: getOwnerTeam(ctx.localPlayer.team),
     });
     if (store.isTutorialMode) {
       store.recordPrimaryFire(now);
@@ -326,7 +329,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
         impactTime: meteorStartTime + BLAZE_BOMB_FALL_DURATION,
         radius: BLAZE_BOMB_SPLASH_RADIUS,
         ownerId: store.localPlayer.id,
-        ownerTeam: (store.localPlayer.team || 'red') as 'red' | 'blue',
+        ownerTeam: getOwnerTeam(store.localPlayer.team),
         hasExploded: false,
       });
       window.setTimeout(() => {

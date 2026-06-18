@@ -98,7 +98,7 @@ function cleanShortText(value: unknown, maxLength: number): string | null {
 }
 
 function parseMatchMode(value: unknown): MatchMode | null {
-  return value === 'quick_play' || value === 'ranked' || value === 'custom' || value === 'custom_wager'
+  return value === 'quick_play' || value === 'ranked' || value === 'custom'
     ? value
     : null;
 }

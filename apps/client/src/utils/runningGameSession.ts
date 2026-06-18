@@ -4,7 +4,6 @@ export interface RunningGameSession {
   roomId: string;
   playerName: string;
   team?: Team;
-  observer: boolean;
   savedAt: number;
 }
 
@@ -39,7 +38,6 @@ function parseSession(value: string | null): RunningGameSession | null {
       roomId: parsed.roomId,
       playerName,
       team: normalizeTeam(parsed.team),
-      observer: parsed.observer === true,
       savedAt: Number.isFinite(parsed.savedAt) ? Number(parsed.savedAt) : Date.now(),
     };
   } catch {
@@ -59,7 +57,6 @@ export function saveRunningGameSession(input: Omit<RunningGameSession, 'savedAt'
     roomId: input.roomId,
     playerName: input.playerName.trim().slice(0, 24),
     team: input.team,
-    observer: input.observer,
     savedAt: Date.now(),
   };
 

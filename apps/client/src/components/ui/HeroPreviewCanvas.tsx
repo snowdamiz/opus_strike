@@ -13,8 +13,8 @@ import { useHeroPreviewRotation } from './useHeroPreviewRotation';
 
 type HeroPreviewSize = 'featured' | 'detail' | 'compact' | 'card';
 type HeroPreviewActionMode = Exclude<HeroAnimationMode, 'crouchWalkLoop'>;
-export type HeroPreviewAnimationMode = HeroAnimationMode | 'showcaseLoop';
-type HeroPreviewLoopMode = Extract<HeroPreviewAnimationMode, 'crouchWalkLoop' | 'slide' | 'showcaseLoop'>;
+export type HeroPreviewAnimationMode = HeroAnimationMode;
+type HeroPreviewLoopMode = Extract<HeroPreviewAnimationMode, 'crouchWalkLoop' | 'slide'>;
 type HeroPreviewLoopStep = {
   mode: HeroPreviewActionMode;
   duration: number;
@@ -141,11 +141,6 @@ const PREVIEW_CONFIG: Record<HeroPreviewSize, PreviewConfig> = {
 };
 
 const PREVIEW_FORWARD_DIRECTION: HeroWalkDirection = { forward: 1, right: 0 };
-const PREVIEW_BACKPEDAL_DIRECTION: HeroWalkDirection = { forward: -1, right: 0 };
-const PREVIEW_STRAFE_RIGHT_DIRECTION: HeroWalkDirection = { forward: 0, right: 1 };
-const PREVIEW_STRAFE_LEFT_DIRECTION: HeroWalkDirection = { forward: 0, right: -1 };
-const PREVIEW_RUN_STRAFE_RIGHT_DIRECTION: HeroWalkDirection = { forward: 0.55, right: 0.83 };
-const PREVIEW_RUN_STRAFE_LEFT_DIRECTION: HeroWalkDirection = { forward: 0.55, right: -0.83 };
 
 const CROUCH_WALK_LOOP_SEQUENCE: HeroPreviewLoopStep[] = [
   { mode: 'idle', duration: 0.85 },
@@ -161,28 +156,6 @@ const RUN_SLIDE_LOOP_SEQUENCE: HeroPreviewLoopStep[] = [
   { mode: 'run', duration: 0.7, walkDirection: PREVIEW_FORWARD_DIRECTION },
 ];
 const RUN_SLIDE_LOOP_DURATION = RUN_SLIDE_LOOP_SEQUENCE.reduce((total, step) => total + step.duration, 0);
-const SHOWCASE_LOOP_SEQUENCE: HeroPreviewLoopStep[] = [
-  { mode: 'idle', duration: 0.85 },
-  { mode: 'walk', duration: 0.65, walkDirection: PREVIEW_FORWARD_DIRECTION },
-  { mode: 'walk', duration: 1.18, walkDirection: PREVIEW_STRAFE_RIGHT_DIRECTION },
-  { mode: 'walk', duration: 0.86, walkDirection: PREVIEW_BACKPEDAL_DIRECTION },
-  { mode: 'walk', duration: 1.18, walkDirection: PREVIEW_STRAFE_LEFT_DIRECTION },
-  { mode: 'walk', duration: 0.44, walkDirection: PREVIEW_FORWARD_DIRECTION },
-  { mode: 'crouchWalk', duration: 1.2 },
-  { mode: 'crouch', duration: 0.55 },
-  { mode: 'walk', duration: 0.7, walkDirection: PREVIEW_FORWARD_DIRECTION },
-  { mode: 'run', duration: 0.5, walkDirection: PREVIEW_FORWARD_DIRECTION },
-  { mode: 'run', duration: 0.92, walkDirection: PREVIEW_RUN_STRAFE_RIGHT_DIRECTION },
-  { mode: 'run', duration: 0.92, walkDirection: PREVIEW_RUN_STRAFE_LEFT_DIRECTION },
-  { mode: 'run', duration: 0.36, walkDirection: PREVIEW_FORWARD_DIRECTION },
-  { mode: 'slide', duration: 1.2 },
-  { mode: 'run', duration: 0.65, walkDirection: PREVIEW_FORWARD_DIRECTION },
-  { mode: 'jump', duration: 1.25 },
-  { mode: 'idle', duration: 0.6 },
-  { mode: 'attack', duration: 1.45 },
-  { mode: 'idle', duration: 0.9 },
-];
-const SHOWCASE_LOOP_DURATION = SHOWCASE_LOOP_SEQUENCE.reduce((total, step) => total + step.duration, 0);
 const PREVIEW_LOOP_CONFIG: Record<
   HeroPreviewLoopMode,
   {
@@ -203,12 +176,6 @@ const PREVIEW_LOOP_CONFIG: Record<
     duration: RUN_SLIDE_LOOP_DURATION,
     initialMode: 'run',
     fallbackMode: 'run',
-  },
-  showcaseLoop: {
-    sequence: SHOWCASE_LOOP_SEQUENCE,
-    duration: SHOWCASE_LOOP_DURATION,
-    initialMode: 'idle',
-    fallbackMode: 'idle',
   },
 };
 const SLIDE_PREVIEW_YAW = -Math.PI / 2;
@@ -313,7 +280,7 @@ function isSameLoopStep(a: HeroPreviewLoopStep, b: HeroPreviewLoopStep): boolean
 }
 
 function isPreviewLoopMode(animationMode: HeroPreviewAnimationMode): animationMode is HeroPreviewLoopMode {
-  return animationMode === 'crouchWalkLoop' || animationMode === 'slide' || animationMode === 'showcaseLoop';
+  return animationMode === 'crouchWalkLoop' || animationMode === 'slide';
 }
 
 export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({

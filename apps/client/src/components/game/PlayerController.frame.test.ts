@@ -566,6 +566,23 @@ assert.equal(
   false
 );
 
+for (const skillEdge of [
+  { label: 'secondaryFire', serverCombatInput: combatInput({ secondaryFire: true }) },
+  { label: 'ability1', serverCombatInput: combatInput({ ability1: true }) },
+  { label: 'ability2', serverCombatInput: combatInput({ ability2: true }) },
+  { label: 'ultimate', serverCombatInput: combatInput({ ultimate: true }) },
+] as const) {
+  const edgeCommand = runCommandPhase({
+    player: makePlayer('hookshot'),
+    frameInput: input(skillEdge.serverCombatInput),
+    serverCombatInput: skillEdge.serverCombatInput,
+  });
+  const decodedInput = movementButtonsToInputState(edgeCommand.ctx.__sentPackets[0].commands[0].buttons);
+  assert.deepEqual(edgeCommand.result.commandScheduleReasons, ['combat_edge']);
+  assert.equal(edgeCommand.ctx.__sentPackets.length, 1);
+  assert.equal(decodedInput[skillEdge.label], true);
+}
+
 const slideStartCommand = runCommandPhase({
   player: makePlayer('phantom'),
   frameInput: input({ crouch: true, sprint: true, moveForward: true }),

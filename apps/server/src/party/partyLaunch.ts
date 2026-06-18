@@ -1,7 +1,10 @@
 import { matchMaker } from 'colyseus';
 import {
   DEFAULT_GAMEPLAY_MODE,
+  getGameplayModeLabel,
   getRankDivisionIndex,
+  type GameplayMode,
+  type PartyBotLaunchDescriptor,
   type PartyLaunchPayload,
 } from '@voxel-strike/shared';
 import type { MatchMode } from '@voxel-strike/shared';
@@ -18,6 +21,8 @@ import {
   type MatchmakingUserContext,
 } from '../matchmaking/service';
 import type { PartyRosterRuntime, PartyRuntimeMember } from './partyRuntime';
+
+type MatchmakingBotFillMode = 'manual' | 'fill_even';
 
 interface PartyLaunchResult {
   lobbyId: string;
@@ -52,22 +57,39 @@ function assertPartyTutorialComplete(member: PartyRuntimeMember): void {
   });
 }
 
+function toPartyBotDescriptor(member: PartyRuntimeMember): PartyBotLaunchDescriptor {
+  return {
+    displayName: member.displayName,
+    heroId: member.heroId,
+    difficulty: member.botDifficulty ?? 'normal',
+  };
+}
+
 async function createMatchmakingLobby(input: {
   mode: 'quick_play' | 'ranked';
   lobbyName: string;
+  gameplayMode: GameplayMode;
   matchmakingTicket: string;
   rankBandId: number;
+  partyBots: PartyBotLaunchDescriptor[];
+  botFillMode: MatchmakingBotFillMode;
+  expectedHumanPlayers: number;
+  expectedHumanUserIds: string[];
 }) {
   return matchMaker.createRoom('lobby_room', {
     lobbyName: input.lobbyName,
     isPrivate: false,
     matchmakingMode: true,
     matchMode: input.mode,
+    gameplayMode: input.gameplayMode,
     matchmakingTicket: input.matchmakingTicket,
     rankBandId: input.rankBandId,
+    expectedHumanPlayers: input.expectedHumanPlayers,
+    expectedHumanUserIds: input.expectedHumanUserIds,
     initialBotCount: 0,
-    botFillMode: 'manual',
+    botFillMode: input.botFillMode,
     defaultBotDifficulty: 'normal',
+    partyBots: input.partyBots,
   });
 }
 
@@ -75,13 +97,15 @@ export async function launchPartyToMatchmaking(
   party: PartyRosterRuntime,
   mode: 'quick_play' | 'ranked'
 ): Promise<PartyLaunchResult> {
-  const members = party.getMembers();
-  if (members.length === 0) {
+  const humanMembers = party.getHumanMembers();
+  const partyBots = party.getBotMembers().map(toPartyBotDescriptor);
+  if (humanMembers.length === 0) {
     throw new Error('Party is empty');
   }
 
-  members.forEach(assertPartyTutorialComplete);
-  const contexts = members.map(toMatchmakingContext);
+  humanMembers.forEach(assertPartyTutorialComplete);
+  const contexts = humanMembers.map(toMatchmakingContext);
+  const gameplayMode = mode === 'ranked' ? DEFAULT_GAMEPLAY_MODE : party.selectedGameplayMode;
   const targetRankDivisionIndex = await chooseMatchmakingRankBand(
     averageMatchmakingContext(contexts, mode)
   );
@@ -90,7 +114,7 @@ export async function launchPartyToMatchmaking(
   if (mode === 'ranked') {
     for (const context of contexts) {
       if (!context.walletAddress) {
-        const member = members.find((candidate) => candidate.userId === context.userId);
+        const member = humanMembers.find((candidate) => candidate.userId === context.userId);
         throw new Error(`${member?.displayName ?? 'A party member'} needs a linked Solana wallet for ranked`);
       }
       const tokenHold = await assertRankedTokenHoldingEligibility(context.walletAddress);
@@ -109,20 +133,31 @@ export async function launchPartyToMatchmaking(
 
   const room = await createMatchmakingLobby({
     mode,
-    lobbyName: mode === 'ranked' ? 'Ranked' : 'Quick Play',
+    lobbyName: mode === 'ranked'
+      ? 'Ranked'
+      : gameplayMode === DEFAULT_GAMEPLAY_MODE
+        ? getGameplayModeLabel(DEFAULT_GAMEPLAY_MODE)
+        : getGameplayModeLabel(gameplayMode),
+    gameplayMode,
     matchmakingTicket: firstTicket.ticket,
     rankBandId: targetRankDivisionIndex,
+    partyBots,
+    botFillMode: mode === 'quick_play' && party.getBotFillEnabled(gameplayMode)
+      ? 'fill_even'
+      : 'manual',
+    expectedHumanPlayers: humanMembers.length,
+    expectedHumanUserIds: humanMembers.map((member) => member.userId),
   });
 
   const payloadsByUserId = new Map<string, PartyLaunchPayload>();
-  for (const member of members) {
+  for (const member of humanMembers) {
     const issued = tickets.get(member.userId);
     if (!issued) continue;
     payloadsByUserId.set(member.userId, {
       mode,
       lobbyId: room.roomId,
       matchMode: mode,
-      gameplayMode: DEFAULT_GAMEPLAY_MODE,
+      gameplayMode,
       matchmakingTicket: issued.ticket,
       targetRankDivisionIndex,
       targetRankLabel: issued.targetRankLabel,
@@ -156,12 +191,13 @@ async function createAcceptedLobbyInvites(input: {
 }
 
 export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promise<PartyLaunchResult> {
-  const members = party.getMembers();
-  if (members.length === 0 || !party.leaderId) {
+  const humanMembers = party.getHumanMembers();
+  const partyBots = party.getBotMembers().map(toPartyBotDescriptor);
+  if (humanMembers.length === 0 || !party.leaderId) {
     throw new Error('Party is empty');
   }
 
-  members.forEach(assertPartyTutorialComplete);
+  humanMembers.forEach(assertPartyTutorialComplete);
 
   const lobbyName = party.mode === 'practice' ? 'Party Practice' : 'Party Custom';
   const room = await matchMaker.createRoom('lobby_room', {
@@ -170,6 +206,7 @@ export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promi
     initialBotCount: 0,
     botFillMode: 'manual',
     defaultBotDifficulty: 'normal',
+    partyBots,
     gameplayMode: party.selectedGameplayMode,
   });
 
@@ -178,11 +215,11 @@ export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promi
     lobbyName,
     matchMode: 'custom',
     leaderUserId: party.leaderId,
-    members,
+    members: humanMembers,
   });
 
   const payloadsByUserId = new Map<string, PartyLaunchPayload>();
-  for (const member of members) {
+  for (const member of humanMembers) {
     payloadsByUserId.set(member.userId, {
       mode: party.mode,
       lobbyId: room.roomId,

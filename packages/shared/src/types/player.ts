@@ -2,8 +2,9 @@ import type { Vec3, Quaternion } from './vector.js';
 import type { HeroId } from './hero.js';
 import type { AbilityCastOriginHint, AbilityState } from './ability.js';
 import type { PublicRankSnapshot } from '../progression/ranking.js';
+import type { Team } from './team.js';
 
-export type Team = 'red' | 'blue';
+export type { Team } from './team.js';
 
 export type BotDifficulty = 'easy' | 'normal' | 'hard';
 

@@ -1,10 +1,6 @@
 import { createContext, useContext, useRef, useCallback, useMemo, useState, type ReactNode } from 'react';
 import { Client, Room } from 'colyseus.js';
 import { useGameStore } from '../store/gameStore';
-import type {
-  WagerPaymentIntent,
-  WagerPaymentTransaction,
-} from '../store/types';
 import { config } from '../config/environment';
 import {
   createRandomSeed,
@@ -12,6 +8,7 @@ import {
   DEFAULT_VOXEL_MAP_SIZE_ID,
   TUTORIAL_MAP_SEED,
   createTutorialVoxelMapManifest,
+  getGameplayModeLabel,
   getHeroStats,
   isGameplayMode,
   MOVEMENT_PROTOCOL_VERSION,
@@ -37,13 +34,10 @@ import {
 } from '../utils/runningGameSession';
 import {
   getDevTutorialBypassRoomOptions,
-  preflightWageredLobby,
   requestQuickPlayTicket,
   requestRankedTicket,
   requestRankedTokenHoldStatus,
   requestRunningGameStatus,
-  wagerApiRequest,
-  type CreateLobbyWagerOptions,
   type RankedTokenHoldStatus,
 } from './networkApi';
 import { setupLobbyListeners as setupLobbyRoomListeners } from './lobbyListeners';
@@ -52,8 +46,6 @@ import { setupGameRoomListeners } from './gameRoomListeners';
 // Import extracted handlers
 import {
   createDefaultLocalPlayer,
-  forgetPlayerNetId,
-  stopRemotePhantomCharge,
 } from './gameMessageHandlers';
 import { loggers } from '../utils/logger';
 import {
@@ -67,16 +59,6 @@ import { usePartyStore } from '../store/partyStore';
 
 export type { RankedTokenHoldStatus } from './networkApi';
 
-type CreateLobbyOptions = {
-  initialBotCount?: number;
-  botFillMode?: 'manual' | 'fill_even' | 'fill_empty';
-  defaultBotDifficulty?: BotDifficulty;
-  wager?: CreateLobbyWagerOptions;
-  gameplayMode?: GameplayMode;
-  mapSeed?: number;
-  forceGoldenMapOption?: boolean;
-  observersEnabled?: boolean;
-};
 type StartPracticeGameOptions = { mapSeed?: number; tutorial?: boolean };
 const TUTORIAL_HERO_ID: HeroId = 'blaze';
 
@@ -105,12 +87,7 @@ export interface RunningGameReconnectStatus {
 
 interface NetworkContextType {
   // Lobby operations
-  createLobby: (
-    playerName: string,
-    lobbyName?: string,
-    options?: CreateLobbyOptions
-  ) => Promise<void>;
-  quickPlay: (playerName: string) => Promise<void>;
+  quickPlay: (playerName: string, gameplayMode?: GameplayMode, botFillEnabled?: boolean) => Promise<void>;
   rankedPlay: (playerName: string) => Promise<void>;
   getRankedTokenHoldStatus: () => Promise<RankedTokenHoldStatus>;
   startPracticeGame: (playerName?: string, options?: StartPracticeGameOptions) => void;
@@ -124,11 +101,12 @@ interface NetworkContextType {
   setPartyHero: (heroId: HeroId) => void;
   setPartyReady: (ready: boolean) => void;
   setPartyMode: (mode: PartyMode, gameplayMode?: GameplayMode) => void;
+  setPartyBotFill: (gameplayMode: GameplayMode, enabled: boolean) => void;
+  addPartyBot: (options?: { difficulty?: BotDifficulty; displayName?: string; heroId?: HeroId }) => void;
+  kickPartyMember: (userId: string) => void;
   startParty: () => void;
   setLobbyReady: (ready: boolean) => void;
   setLobbyTeam: (team: string) => void;
-  setLobbyObserver: (observer: boolean) => void;
-  devSetLobbyObserver: (observer: boolean) => void;
   addLobbyBot: (options?: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }) => void;
   removeLobbyBot: (botId: string) => void;
   updateLobbyBotTeam: (botId: string, team: string) => void;
@@ -139,10 +117,6 @@ interface NetworkContextType {
   reportMapVotePreviewsReady: () => void;
   finalizeMapVote: () => void;
   kickPlayer: (playerId: string) => void;
-  createWagerPaymentIntent: (lobbyId: string, walletAddress: string, lobbyPlayerId?: string | null, rankedEntryQuoteId?: string | null) => Promise<WagerPaymentIntent>;
-  createWagerPaymentTransaction: (intentId: string) => Promise<WagerPaymentTransaction>;
-  submitWagerSignedPaymentTransaction: (intentId: string, signedTransactionBase64: string) => Promise<WagerPaymentIntent>;
-  submitWagerPaymentSignature: (intentId: string, signature: string) => Promise<WagerPaymentIntent>;
 
   // Game operations
   joinGameRoom: (
@@ -150,7 +124,6 @@ interface NetworkContextType {
     playerName: string,
     team?: string,
     entryTicket?: string,
-    observer?: boolean,
     reconnectToRunningGame?: boolean
   ) => Promise<void>;
   getRunningGameReconnect: () => Promise<RunningGameReconnectStatus>;
@@ -162,7 +135,6 @@ interface NetworkContextType {
   devSetHero: (heroId: HeroId) => void;
   devFillUltimate: () => void;
   devEndGame: () => void;
-  devSetGameObserver: () => void;
   setDevImmune: (enabled: boolean) => void;
   setDevTimeFrozen: (enabled: boolean) => void;
   setDevBotsRooted: (enabled: boolean) => void;
@@ -262,12 +234,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setGamePhase,
     setPhaseEndTime,
     setLocalPlayer,
-    removePlayer,
-    setCurrentLobby,
-    setCurrentLobbyWager,
     setIsLobbyHost,
     setLobbyError,
-    setObserverMode,
     setMatchmakingStatus,
     clearMatchSummary,
     reset,
@@ -312,8 +280,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     disconnectVoice('network_cleanup');
     rejectPendingVoiceTokenRequests('connection cleaned up before voice token response');
     rejectPendingPlayerReportRequests('connection cleaned up before report response');
-    setObserverMode(false);
-
     if (partyRoomRef.current) {
       try {
         partyRoomRef.current.leave(false);
@@ -339,7 +305,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       }
       gameRoomRef.current = null;
     }
-  }, [rejectPendingPlayerReportRequests, rejectPendingVoiceTokenRequests, setObserverMode]);
+  }, [rejectPendingPlayerReportRequests, rejectPendingVoiceTokenRequests]);
 
   const startPracticeGame = useCallback((playerName?: string, options?: StartPracticeGameOptions) => {
     const name = resolvePracticePlayerName(playerName);
@@ -372,6 +338,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           manifest: tutorialManifest ?? undefined,
           mapSize: tutorialManifest?.mapSize ?? DEFAULT_VOXEL_MAP_SIZE_ID,
           themeId: tutorialManifest?.themeId ?? null,
+          mapProfileId: tutorialManifest?.profileId ?? null,
           source: 'match',
         });
         prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'practice-start' });
@@ -425,6 +392,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           mapSeed: seed,
           mapThemeId: preparedMap.manifest.themeId,
           mapSize: preparedMap.manifest.mapSize,
+          mapProfileId: preparedMap.manifest.profileId ?? null,
           redScore: 0,
           blueScore: 0,
           redFlag: isTutorial
@@ -451,7 +419,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           lastSkillCastAt: 0,
           lastPrimaryFireAt: 0,
           slideIntensity: 0,
-          isObserverMode: false,
         });
         resetGameTiming(Date.now());
         resetLocalMovementPrediction(movementStateFromPlayer(player), 0, player.id);
@@ -504,56 +471,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const createLobby = useCallback(async (
+  const quickPlay = useCallback(async (
     playerName: string,
-    lobbyName?: string,
-    options?: CreateLobbyOptions
+    gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE,
+    botFillEnabled = false
   ) => {
-    setLoading(true);
-
-    try {
-      await preflightWageredLobby(options?.wager);
-      cleanupExistingConnections();
-      clearRunningGameSession();
-      setPracticeMode(false);
-
-      const client = getClient();
-
-      lobbyRoomRef.current = await client.create('lobby_room', {
-        playerName,
-        lobbyName: lobbyName || `${playerName}'s Lobby`,
-        ...getDevTutorialBypassRoomOptions(),
-        isPrivate: true,
-        initialBotCount: options?.initialBotCount || 0,
-        botFillMode: options?.botFillMode || 'manual',
-        defaultBotDifficulty: options?.defaultBotDifficulty || 'normal',
-        wager: options?.wager,
-        gameplayMode: options?.gameplayMode ?? DEFAULT_GAMEPLAY_MODE,
-        mapSeed: config.isDev && typeof options?.mapSeed === 'number'
-          ? options.mapSeed >>> 0
-          : undefined,
-        forceGoldenMapOption: config.isDev && options?.forceGoldenMapOption === true,
-        observersEnabled: config.isDev && options?.observersEnabled === true,
-      });
-
-      setupLobbyListeners(lobbyRoomRef.current, playerName);
-
-      setPlayerId(lobbyRoomRef.current.sessionId);
-      setCurrentLobby(lobbyRoomRef.current.id, lobbyName || `${playerName}'s Lobby`);
-      setIsLobbyHost(true);
-      setAppPhase('in_lobby');
-      setConnected(true);
-      setLoading(false);
-
-      loggers.network.info('created lobby', lobbyRoomRef.current.id);
-    } catch (error) {
-      loggers.network.error('failed to create lobby', error);
-      setLoading(false);
-      throw error;
-    }
-  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setCurrentLobby, setIsLobbyHost, setAppPhase, setConnected, setPracticeMode]);
-
-  const quickPlay = useCallback(async (playerName: string) => {
     setLoading(true);
 
     try {
@@ -566,23 +488,44 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
       loggers.network.debug('quick play matchmaking', matchmakingTicket.targetRankLabel);
 
+      const lobbyName = gameplayMode === DEFAULT_GAMEPLAY_MODE
+        ? getGameplayModeLabel(DEFAULT_GAMEPLAY_MODE)
+        : getGameplayModeLabel(gameplayMode);
       lobbyRoomRef.current = await client.joinOrCreate('lobby_room', {
         playerName,
-        lobbyName: 'Quick Play',
+        lobbyName,
         ...getDevTutorialBypassRoomOptions(),
         isPrivate: false,
         matchmakingMode: true,
         matchMode: 'quick_play',
+        gameplayMode,
         matchmakingTicket: matchmakingTicket.ticket,
         rankBandId: matchmakingTicket.targetRankDivisionIndex,
         initialBotCount: 0,
-        botFillMode: 'manual',
+        botFillMode: botFillEnabled ? 'fill_even' : 'manual',
         defaultBotDifficulty: 'normal',
       });
 
       setupLobbyListeners(lobbyRoomRef.current, playerName);
 
       setPlayerId(lobbyRoomRef.current.sessionId);
+      useGameStore.setState({ gameplayMode });
+      setMatchmakingStatus({
+        matchMode: 'quick_play',
+        gameplayMode,
+        rankBandId: matchmakingTicket.targetRankDivisionIndex,
+        rankBandLabel: matchmakingTicket.targetRankLabel,
+        averageCompetitiveRating: matchmakingTicket.competitiveRating,
+        averageVisibleRank: null,
+        rankSearchDistance: null,
+        queuedHumanCount: 0,
+        provisionalHumanCount: 1,
+        requiredPlayers: null,
+        capacityBlocked: false,
+        capacityMaxPlayers: null,
+        rankedCoverChargeLamports: null,
+        rankedEntryQuoteId: null,
+      });
       setAppPhase('matchmaking');
       setConnected(true);
       setLoading(false);
@@ -593,7 +536,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       throw error;
     }
-  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected, setPracticeMode]);
+  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setMatchmakingStatus, setAppPhase, setConnected, setPracticeMode]);
 
   const rankedPlay = useCallback(async (playerName: string) => {
     setLoading(true);
@@ -625,13 +568,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setupLobbyListeners(lobbyRoomRef.current, playerName);
 
       setPlayerId(lobbyRoomRef.current.sessionId);
-      setCurrentLobbyWager({
-        enabled: false,
-        matchMode: 'ranked',
-        token: 'SOL',
-      });
       setMatchmakingStatus({
         matchMode: 'ranked',
+        gameplayMode: DEFAULT_GAMEPLAY_MODE,
         rankBandId: rankedTicket.targetRankDivisionIndex,
         rankBandLabel: rankedTicket.targetRankLabel,
         averageCompetitiveRating: rankedTicket.competitiveRating,
@@ -655,7 +594,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       throw error;
     }
-  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setCurrentLobbyWager, setMatchmakingStatus, setAppPhase, setConnected, setPracticeMode]);
+  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setMatchmakingStatus, setAppPhase, setConnected, setPracticeMode]);
 
   const getRankedTokenHoldStatus = useCallback(() => requestRankedTokenHoldStatus(), []);
 
@@ -711,14 +650,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setupLobbyListeners(lobbyRoomRef.current, playerName);
 
       setPlayerId(lobbyRoomRef.current.sessionId);
-      if (launch.matchMode === 'ranked') {
-        setCurrentLobbyWager({
-          enabled: false,
-          matchMode: 'ranked',
-          token: 'SOL',
-        });
+      if (launch.matchMode === 'ranked' || launch.matchMode === 'quick_play') {
         setMatchmakingStatus({
-          matchMode: 'ranked',
+          matchMode: launch.matchMode,
+          gameplayMode: launch.gameplayMode,
           rankBandId: launch.targetRankDivisionIndex ?? null,
           rankBandLabel: launch.targetRankLabel ?? null,
           averageCompetitiveRating: null,
@@ -748,7 +683,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     getClient,
     setAppPhase,
     setConnected,
-    setCurrentLobbyWager,
     setLoading,
     setMatchmakingStatus,
     setPlayerId,
@@ -760,8 +694,31 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     const localUserId = useGameStore.getState().userId;
     usePartyStore.getState().setLocalUserId(localUserId);
 
+    const logPartyNotification = (type: string, payload: unknown) => {
+      loggers.network.debug(type, payload);
+    };
+
     room.onMessage('partyState', (partyState: unknown) => {
       usePartyStore.getState().setPartyState(partyState as PartyStateSnapshot, useGameStore.getState().userId);
+    });
+    room.onMessage('partyMemberJoined', (payload: unknown) => {
+      logPartyNotification('party member joined', payload);
+    });
+    room.onMessage('partyMemberLeft', (payload: unknown) => {
+      logPartyNotification('party member left', payload);
+    });
+    room.onMessage('partyMemberUpdated', (payload: unknown) => {
+      logPartyNotification('party member updated', payload);
+    });
+    room.onMessage('partyLeaderChanged', (payload: unknown) => {
+      logPartyNotification('party leader changed', payload);
+    });
+    room.onMessage('partyKicked', (payload: unknown) => {
+      const message = typeof payload === 'object' && payload && 'reason' in payload
+        ? String((payload as { reason?: unknown }).reason || 'Kicked from party')
+        : 'Kicked from party';
+      usePartyStore.getState().clearParty();
+      usePartyStore.getState().setLaunchError(message);
     });
     room.onMessage('partyLaunch', (launch: unknown) => {
       joinMatchmakingLobby(playerNameForLaunch, launch as PartyLaunchPayload).catch((error) => {
@@ -841,6 +798,18 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     partyRoomRef.current?.send('setMode', { mode, gameplayMode });
   }, []);
 
+  const setPartyBotFill = useCallback((gameplayMode: GameplayMode, enabled: boolean) => {
+    partyRoomRef.current?.send('setBotFill', { gameplayMode, enabled });
+  }, []);
+
+  const addPartyBot = useCallback((options?: { difficulty?: BotDifficulty; displayName?: string; heroId?: HeroId }) => {
+    partyRoomRef.current?.send('addBot', options || {});
+  }, []);
+
+  const kickPartyMember = useCallback((userId: string) => {
+    partyRoomRef.current?.send('kickMember', { userId });
+  }, []);
+
   const startParty = useCallback(() => {
     partyRoomRef.current?.send('start');
   }, []);
@@ -863,15 +832,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const setLobbyTeam = useCallback((team: string) => {
     lobbyRoomRef.current?.send('setTeam', { team });
-  }, []);
-
-  const setLobbyObserver = useCallback((observer: boolean) => {
-    lobbyRoomRef.current?.send('setObserver', { observer });
-  }, []);
-
-  const devSetLobbyObserver = useCallback((observer: boolean) => {
-    if (!config.isDev) return;
-    lobbyRoomRef.current?.send('devSetObserver', { observer });
   }, []);
 
   const addLobbyBot = useCallback((options?: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }) => {
@@ -919,84 +879,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     lobbyRoomRef.current?.send('kick', { playerId });
   }, []);
 
-  const createWagerPaymentIntent = useCallback(async (
-    lobbyId: string,
-    walletAddress: string,
-    lobbyPlayerId?: string | null,
-    rankedEntryQuoteId?: string | null
-  ): Promise<WagerPaymentIntent> => {
-    const response = await wagerApiRequest<{ intent: WagerPaymentIntent }>(
-      `/wagers/lobbies/${encodeURIComponent(lobbyId)}/intents`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ walletAddress, lobbyPlayerId, rankedEntryQuoteId }),
-      }
-    );
-    return response.intent;
-  }, []);
-
-  const submitWagerPaymentSignature = useCallback(async (
-    intentId: string,
-    signature: string
-  ): Promise<WagerPaymentIntent> => {
-    const response = await wagerApiRequest<{ intent: WagerPaymentIntent }>(
-      `/wagers/intents/${encodeURIComponent(intentId)}/signature`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ signature }),
-      }
-    );
-    return response.intent;
-  }, []);
-
-  const createWagerPaymentTransaction = useCallback(async (
-    intentId: string
-  ): Promise<WagerPaymentTransaction> => {
-    const response = await wagerApiRequest<{ transaction: WagerPaymentTransaction }>(
-      `/wagers/intents/${encodeURIComponent(intentId)}/transaction`,
-      { method: 'POST' }
-    );
-    return response.transaction;
-  }, []);
-
-  const submitWagerSignedPaymentTransaction = useCallback(async (
-    intentId: string,
-    signedTransactionBase64: string
-  ): Promise<WagerPaymentIntent> => {
-    const response = await wagerApiRequest<{ intent: WagerPaymentIntent }>(
-      `/wagers/intents/${encodeURIComponent(intentId)}/signed-transaction`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ signedTransactionBase64 }),
-      }
-    );
-    return response.intent;
-  }, []);
-
   // ==================== GAME ROOM OPERATIONS ====================
 
-  const enterObserverMode = useCallback((sessionId: string) => {
-    stopRemotePhantomCharge(sessionId);
-    forgetPlayerNetId(sessionId);
-    removePlayer(sessionId);
-    resetLocalMovementPrediction();
-    setObserverMode(true);
-    setMatchStartGateKey(null);
-    useGameStore.setState({
-      playerId: sessionId,
-      localPlayer: null,
-      clientCooldowns: {},
-      clientCharges: {},
-      lastSkillCastAt: 0,
-      lastPrimaryFireAt: 0,
-      slideIntensity: 0,
-    });
-  }, [removePlayer, setMatchStartGateKey, setObserverMode]);
-
-  const setupGameListeners = useCallback((room: Room, playerName: string, observer = false) => {
+  const setupGameListeners = useCallback((room: Room, playerName: string) => {
     setupGameRoomListeners(room, {
       playerName,
-      observer,
       gameRoomRef,
       isJoiningGameRef,
       voiceTokenRequestsRef,
@@ -1004,9 +891,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       rejectPendingVoiceTokenRequests,
       rejectPendingPlayerReportRequests,
       setMatchStartGateKey,
-      enterObserverMode,
     });
-  }, [rejectPendingVoiceTokenRequests, rejectPendingPlayerReportRequests, setMatchStartGateKey, enterObserverMode]);
+  }, [rejectPendingVoiceTokenRequests, rejectPendingPlayerReportRequests, setMatchStartGateKey]);
 
   const getRunningGameReconnect = useCallback(async (): Promise<RunningGameReconnectStatus> => {
     const session = loadRunningGameSession();
@@ -1031,7 +917,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     playerName: string,
     team?: string,
     entryTicket?: string,
-    observer = false,
     reconnectToRunningGame = false
   ) => {
     if (isJoiningGameRef.current) {
@@ -1057,7 +942,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       clearMatchSummary();
       setPracticeMode(false);
       setMatchStartGateKey(null);
-      setObserverMode(observer);
       setGamePhase('waiting');
       setPhaseEndTime(null);
 
@@ -1072,7 +956,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         movementProtocolVersion: MOVEMENT_PROTOCOL_VERSION,
       });
 
-      setupGameListeners(gameRoomRef.current, playerName, observer);
+      setupGameListeners(gameRoomRef.current, playerName);
 
       setRoomId(gameRoomRef.current.id);
       setPlayerId(gameRoomRef.current.sessionId);
@@ -1082,18 +966,16 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         roomId: gameRoomRef.current.id,
         playerName,
         team: team === 'red' || team === 'blue' ? team : undefined,
-        observer,
       });
 
       loggers.network.info('joined game room', gameRoomRef.current.id);
     } catch (error) {
       loggers.network.error('failed to join game room', error);
       setLoading(false);
-      setObserverMode(false);
       isJoiningGameRef.current = false;
       throw error;
     }
-  }, [getClient, setupGameListeners, setLoading, setRoomId, setPlayerId, setAppPhase, clearMatchSummary, setPracticeMode, setMatchStartGateKey, setObserverMode, setGamePhase, setPhaseEndTime]);
+  }, [getClient, setupGameListeners, setLoading, setRoomId, setPlayerId, setAppPhase, clearMatchSummary, setPracticeMode, setMatchStartGateKey, setGamePhase, setPhaseEndTime]);
 
   joinGameRoomRef.current = joinGameRoom;
   leaveLobbyRef.current = leaveLobby;
@@ -1110,7 +992,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       status.session.playerName || fallbackName,
       status.session.team,
       undefined,
-      status.session.observer,
       true
     );
   }, [getRunningGameReconnect, joinGameRoom]);
@@ -1136,6 +1017,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       blueScore: 0,
       mapThemeId: null,
       mapSize: DEFAULT_VOXEL_MAP_SIZE_ID,
+      mapProfileId: null,
       gameplayMode: DEFAULT_GAMEPLAY_MODE,
       redFlag: null,
       blueFlag: null,
@@ -1152,7 +1034,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       lastSkillCastAt: 0,
       lastPrimaryFireAt: 0,
       slideIntensity: 0,
-      isObserverMode: false,
     });
     resetLocalMovementPrediction();
     resetLobby();
@@ -1280,11 +1161,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('devEndGame', {});
   }, []);
 
-  const devSetGameObserver = useCallback(() => {
-    if (!config.isDev) return;
-    gameRoomRef.current?.send('devSetObserver', {});
-  }, []);
-
   const setDevImmune = useCallback((enabled: boolean) => {
     if (!config.isDev) return;
     gameRoomRef.current?.send('setDevImmune', { enabled });
@@ -1367,7 +1243,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const contextValue = useMemo<NetworkContextType>(() => ({
-    createLobby,
     quickPlay,
     rankedPlay,
     getRankedTokenHoldStatus,
@@ -1381,6 +1256,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setPartyHero,
     setPartyReady,
     setPartyMode,
+    setPartyBotFill,
+    addPartyBot,
+    kickPartyMember,
     startParty,
     leaveLobby,
     setLobbyReady,
@@ -1395,10 +1273,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     reportMapVotePreviewsReady,
     finalizeMapVote,
     kickPlayer,
-    createWagerPaymentIntent,
-    createWagerPaymentTransaction,
-    submitWagerSignedPaymentTransaction,
-    submitWagerPaymentSignature,
     joinGameRoom,
     getRunningGameReconnect,
     reconnectRunningGame,
@@ -1409,7 +1283,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     devSetHero,
     devFillUltimate,
     devEndGame,
-    devSetGameObserver,
     setDevImmune,
     setDevTimeFrozen,
     setDevBotsRooted,
@@ -1419,8 +1292,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     devBotLook,
     selectTeam,
     setReady,
-    setLobbyObserver,
-    devSetLobbyObserver,
     matchStartGateKey,
     reportMatchSceneReady,
     reportPlayer,
@@ -1428,16 +1299,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }), [
     addGameBot,
     addLobbyBot,
-    createLobby,
-    createWagerPaymentIntent,
-    createWagerPaymentTransaction,
+    addPartyBot,
     devBotLook,
     devBotSkill,
     devEndGame,
     devFillUltimate,
-    devSetGameObserver,
     devSetHero,
-    devSetLobbyObserver,
     disconnect,
     finalizeMapVote,
     getRankedTokenHoldStatus,
@@ -1447,6 +1314,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     joinLobby,
     joinMatchmakingLobby,
     joinParty,
+    kickPartyMember,
     kickPlayer,
     leaveGame,
     leaveLobby,
@@ -1467,10 +1335,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setDevBotsRooted,
     setDevImmune,
     setDevTimeFrozen,
-    setLobbyObserver,
     setLobbyReady,
     setLobbyTeam,
     setPartyHero,
+    setPartyBotFill,
     setPartyMode,
     setPartyReady,
     setReady,
@@ -1478,8 +1346,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     startParty,
     startPracticeGame,
     startTutorialGame,
-    submitWagerPaymentSignature,
-    submitWagerSignedPaymentTransaction,
     updateLobbyBotDifficulty,
     updateLobbyBotHero,
     updateLobbyBotTeam,

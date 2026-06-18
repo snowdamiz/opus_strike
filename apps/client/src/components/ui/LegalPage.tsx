@@ -32,7 +32,7 @@ const LEGAL_COPY: Record<LegalPageKind, LegalPageCopy> = {
       {
         title: 'Accounts and Authentication',
         body: [
-          'Discord is the required login provider for Slop Heroes. Ranked or wager modes may require a Phantom wallet connection before entry.',
+          'Discord is the required login provider for Slop Heroes. Ranked modes may require a Phantom wallet connection before entry.',
           'You may not impersonate another person, sell or transfer your account, bypass eligibility checks, or attempt to link accounts or wallets that you do not control.',
         ],
       },
@@ -44,7 +44,7 @@ const LEGAL_COPY: Record<LegalPageKind, LegalPageCopy> = {
         ],
       },
       {
-        title: 'Wallets and Wager Modes',
+        title: 'Wallets',
         body: [
           'If wallet-enabled features are available, you are responsible for reviewing wallet prompts, transaction details, network fees, eligibility requirements, and local laws before participating.',
           'Blockchain transactions may be irreversible. Slop Heroes does not control Phantom, Discord, wallet software, blockchain networks, or third-party infrastructure.',

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_GAMEPLAY_MODE,
   type Team,
+  type MapProfileId,
   type VoxelMapSizeId,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
@@ -62,6 +63,25 @@ const players: BotPlayerSnapshot[] = [];
   assert.ok(redSpawn);
   assert.notEqual(runtime.getProceduralGroundY(redSpawn), null);
   assert.deepEqual(runtime.clampToPlayableMap(redSpawn), redSpawn);
+}
+
+{
+  const previousConfig = config;
+  for (const mapProfileId of ['ctf_arena', 'tdm_arena'] satisfies MapProfileId[]) {
+    config = {
+      mapSeed: 24_680,
+      mapThemeId: null,
+      mapSize: 'small',
+      mapProfileId,
+    };
+    const runtime = createRuntime();
+    const manifest = runtime.refreshMap();
+
+    assert.equal(manifest.profileId, mapProfileId);
+    assert.equal(runtime.getMapManifest(), manifest);
+    assert.equal(runtime.getMapManifest(), manifest);
+  }
+  config = previousConfig;
 }
 
 {

@@ -17,6 +17,7 @@ import {
   PHANTOM_PRIMARY_RELOAD_MS,
   PHANTOM_VOID_RAY_COOLDOWN_MS,
   VOID_RAY_CHARGE_TIME,
+  type Team,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { playSharedSound } from '../../useAudio';
@@ -108,6 +109,8 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   const voidRayIdRef = useRef(0);
   const phantomPrimaryHoldStartedAtRef = useRef(0);
   const localVoidRayLastReleaseAtRef = useRef(0);
+
+  const getOwnerTeam = (ctx: AbilityContext): Team => ctx.localPlayer.team || 'red';
 
   function samplePhantomPrimarySpawn(
     ctx: AbilityContext,
@@ -263,7 +266,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
       },
       startTime: now - PHANTOM_PRIMARY_VISUAL_FIRE_LEAD_SECONDS * 1000,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: getOwnerTeam(ctx),
       launchSide,
       launchYaw: ctx.yaw,
       viewmodelEventId: visualId,
@@ -327,7 +330,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
       direction,
       startTime: now,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: getOwnerTeam(ctx),
     });
     if (store.isPracticeMode && store.localPlayer?.id === ctx.localPlayer.id) {
       store.setClientCooldown('phantom_void_ray', now + cooldownMs);

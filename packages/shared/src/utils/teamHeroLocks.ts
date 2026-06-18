@@ -6,7 +6,6 @@ export interface TeamHeroLockPlayer {
   id: string;
   team?: string | null;
   heroId?: string | null;
-  isObserver?: boolean | null;
 }
 
 export function isKnownHeroId(heroId: string | null | undefined): heroId is HeroId {
@@ -21,7 +20,7 @@ export function getPickedTeamHeroIds(
   const picked = new Set<HeroId>();
 
   for (const player of players) {
-    if (player.isObserver || player.id === exceptPlayerId || player.team !== team) continue;
+    if (player.id === exceptPlayerId || player.team !== team) continue;
     if (isKnownHeroId(player.heroId)) {
       picked.add(player.heroId);
     }

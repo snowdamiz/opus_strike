@@ -38,6 +38,11 @@ assert.deepEqual(radiusResults.map((player) => player.id), ['red-b']);
 index.queryConeCandidates({ x: 0, z: 0 }, 20, radiusResults, { team: 'blue' });
 assert.deepEqual(radiusResults.map((player) => player.id).sort(), ['blue-a', 'blue-b']);
 
+players.push(makePlayer('br-a', 'br_01', 5, 0));
+index.rebuild(players);
+index.queryRadius({ x: 0, z: 0 }, 9, radiusResults, { excludeTeam: 'red' });
+assert.deepEqual(radiusResults.map((player) => player.id).sort(), ['blue-a', 'br-a']);
+
 players[2].position.x = 40;
 index.rebuild(players);
 index.queryRadius({ x: 0, z: 0 }, 9, radiusResults, { team: 'blue' });

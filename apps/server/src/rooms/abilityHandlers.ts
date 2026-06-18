@@ -15,7 +15,7 @@ import {
   calculateBlazeRocketJumpVelocity,
   calculateLookDirection,
 } from '@voxel-strike/shared';
-import type { HeroId } from '@voxel-strike/shared';
+import type { HeroId, Team } from '@voxel-strike/shared';
 
 const COOLDOWN_AFTER_ACTIVE_ABILITIES = new Set<string>([
   'phantom_personal_shield',
@@ -52,7 +52,7 @@ export interface VoidZone {
   duration: number;
   startTime: number;
   ownerId: string;
-  ownerTeam: 'red' | 'blue';
+  ownerTeam: Team;
   lastDamageTick: Map<string, number>;
 }
 
@@ -209,7 +209,7 @@ export function tryUseAbility(
 // ============================================================================
 
 export interface AbilityExecutionContext {
-  createVoidZone: (position: { x: number; y: number; z: number }, ownerId: string, ownerTeam: 'red' | 'blue') => void;
+  createVoidZone: (position: { x: number; y: number; z: number }, ownerId: string, ownerTeam: Team) => void;
   resolvePhantomBlinkDestination?: (
     player: Player,
     distance: number
@@ -280,7 +280,7 @@ export function executeAbility(
       context.createVoidZone(
         { x: destination.x, y: destination.y - 0.9, z: destination.z },
         player.id,
-        player.team as 'red' | 'blue'
+        player.team as Team
       );
       break;
     }

@@ -29,7 +29,6 @@ export interface ReconnectParticipantSyncPayload {
   displayName?: string | null;
   assignedTeam: Team;
   selectedHero?: HeroId;
-  observer: false;
 }
 
 export function canAcceptRunningGameReconnect(state: RunningGameReconnectState): boolean {
@@ -63,6 +62,5 @@ export function buildReconnectParticipantSyncPayload(
     displayName: player.name,
     assignedTeam: player.team as Team,
     selectedHero: isHeroId(player.heroId) ? player.heroId : undefined,
-    observer: false,
   };
 }

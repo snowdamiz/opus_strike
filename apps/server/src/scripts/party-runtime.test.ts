@@ -1,18 +1,19 @@
 import assert from 'node:assert/strict';
-import { DEFAULT_GAME_CONFIG, getRankFromRating } from '@voxel-strike/shared';
+import { PARTY_MAX_MEMBERS, getRankFromRating, type HeroId } from '@voxel-strike/shared';
 import { PartyRosterRuntime } from '../party/partyRuntime';
 
 function addMember(
   party: PartyRosterRuntime,
   userId: string,
   sessionId: string,
-  rating: number
+  rating: number,
+  heroId: HeroId = 'blaze'
 ) {
   const result = party.addMember({
     userId,
     sessionId,
     displayName: userId,
-    heroId: 'blaze',
+    heroId,
     rank: getRankFromRating(rating, 0),
     competitiveRating: rating,
     rankDivisionIndex: 0,
@@ -21,7 +22,7 @@ function addMember(
 }
 
 const defaultParty = new PartyRosterRuntime('party-default');
-assert.equal(defaultParty.maxMembers, DEFAULT_GAME_CONFIG.teamSize);
+assert.equal(defaultParty.maxMembers, PARTY_MAX_MEMBERS);
 
 const party = new PartyRosterRuntime('party-test', 4);
 const leader = addMember(party, 'leader', 'session-a', 900);
@@ -29,12 +30,14 @@ assert.equal(party.leaderId, leader.userId);
 assert.equal(party.snapshot().members[0].leader, true);
 
 const member = addMember(party, 'member', 'session-b', 1000);
+assert.notEqual(member.heroId, leader.heroId);
 assert.equal(party.validateStart().ok, false);
 
 party.setReady(member.userId, true);
 assert.equal(party.validateStart().ok, true);
 assert.equal(party.snapshot().members.find((snapshot) => snapshot.userId === member.userId)?.ready, true);
 
+assert.throws(() => party.updateHero(member.userId, leader.heroId), /Hero is already picked/);
 party.updateHero(member.userId, 'phantom');
 assert.equal(party.snapshot().members.find((snapshot) => snapshot.userId === member.userId)?.heroId, 'phantom');
 assert.equal(party.snapshot().members.find((snapshot) => snapshot.userId === member.userId)?.ready, false);
@@ -43,6 +46,16 @@ party.setReady(member.userId, true);
 party.setMode(leader.userId, 'ranked');
 assert.equal(party.mode, 'ranked');
 assert.equal(party.snapshot().members.find((snapshot) => snapshot.userId === member.userId)?.ready, false);
+
+party.setReady(member.userId, true);
+party.setBotFillEnabled(leader.userId, 'team_deathmatch', true);
+assert.equal(party.getBotFillEnabled('team_deathmatch'), true);
+assert.equal(party.snapshot().botFillEnabledByMode.team_deathmatch, true);
+assert.equal(party.snapshot().members.find((snapshot) => snapshot.userId === member.userId)?.ready, false);
+assert.throws(
+  () => party.setBotFillEnabled(member.userId, 'team_deathmatch', false),
+  /Only the party leader/
+);
 
 party.setReady(member.userId, true);
 party.removeSession('session-a');
@@ -62,5 +75,57 @@ const replacement = party.addMember({
 assert.equal(replacement.replacedSessionId, 'session-b');
 assert.equal(party.getMemberBySession('session-b'), null);
 assert.equal(party.getMemberBySession('session-c')?.userId, member.userId);
+assert.equal(replacement.member.ready, false);
+
+const botParty = new PartyRosterRuntime('party-bots', 4);
+const botLeader = addMember(botParty, 'bot-leader', 'session-bot-leader', 900);
+const bot = botParty.addBot(botLeader.userId, {
+  displayName: 'Hard Bot',
+  difficulty: 'hard',
+  heroId: botLeader.heroId,
+});
+assert.equal(bot.isBot, true);
+assert.equal(bot.ready, true);
+assert.equal(bot.botDifficulty, 'hard');
+assert.notEqual(bot.heroId, botLeader.heroId);
+assert.equal(botParty.validateStart().ok, true);
+assert.equal(botParty.snapshot().members.find((snapshot) => snapshot.userId === bot.userId)?.isBot, true);
+
+const botOccupiedHero = bot.heroId;
+botParty.updateHero(botLeader.userId, botOccupiedHero);
+assert.equal(botLeader.heroId, botOccupiedHero);
+assert.notEqual(bot.heroId, botOccupiedHero);
+assert.equal(new Set(botParty.getMembers().map((candidate) => candidate.heroId)).size, botParty.size);
+
+botParty.setMode(botLeader.userId, 'custom');
+assert.equal(botParty.snapshot().members.find((snapshot) => snapshot.userId === bot.userId)?.ready, true);
+assert.throws(() => botParty.addBot('not-leader', { difficulty: 'easy' }), /Only the party leader/);
+
+const removedBot = botParty.kickMember(botLeader.userId, bot.userId);
+assert.equal(removedBot?.userId, bot.userId);
+assert.equal(botParty.getBotMembers().length, 0);
+
+botParty.addBot(botLeader.userId, { difficulty: 'easy' });
+botParty.addBot(botLeader.userId, { difficulty: 'normal' });
+botParty.addBot(botLeader.userId, { difficulty: 'hard' });
+assert.throws(() => botParty.addBot(botLeader.userId, { difficulty: 'normal' }), /Party is full/);
+
+const botOnlyParty = new PartyRosterRuntime('party-bot-only', 4);
+const botOnlyLeader = addMember(botOnlyParty, 'solo-leader', 'session-solo-leader', 900);
+botOnlyParty.addBot(botOnlyLeader.userId);
+botOnlyParty.removeSession('session-solo-leader');
+assert.equal(botOnlyParty.leaderId, null);
+
+const kickParty = new PartyRosterRuntime('party-kick', 4);
+const kickLeader = addMember(kickParty, 'kick-leader', 'session-kick-leader', 900);
+const kickedMember = addMember(kickParty, 'kicked-member', 'session-kicked-member', 950);
+const kickedBot = kickParty.addBot(kickLeader.userId, { difficulty: 'easy' });
+assert.throws(() => kickParty.kickMember(kickedMember.userId, kickedBot.userId), /Only the party leader/);
+assert.throws(() => kickParty.kickMember(kickLeader.userId, kickLeader.userId), /Cannot kick yourself/);
+assert.equal(kickParty.kickMember(kickLeader.userId, kickedMember.userId)?.userId, kickedMember.userId);
+assert.equal(kickParty.getMember(kickedMember.userId), null);
+assert.equal(kickParty.getMemberBySession('session-kicked-member'), null);
+assert.equal(kickParty.kickMember(kickLeader.userId, kickedBot.userId)?.isBot, true);
+assert.equal(kickParty.getMember(kickedBot.userId), null);
 
 console.log('party-runtime tests passed');

@@ -66,7 +66,6 @@ function gate(input: Partial<AntiCheatIntegrityGate> = {}): AntiCheatIntegrityGa
     status: 'clean',
     reviewRequired: false,
     rankedHoldRequired: false,
-    payoutHoldRequired: false,
     observedOnly: false,
     reason: null,
     affectedUserIds: [],

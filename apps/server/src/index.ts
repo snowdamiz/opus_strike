@@ -12,9 +12,7 @@ import authRoutes from './auth/routes';
 import createAdminRouter from './admin/routes';
 import matchmakingRoutes from './matchmaking/routes';
 import socialRoutes from './social/routes';
-import wagerRoutes from './wagers/routes';
 import { voiceService } from './voice/VoiceService';
-import { wagerService } from './wagers/service';
 import {
   createDistributedColyseusOptions,
   getColyseusRuntimeConfig,
@@ -96,7 +94,7 @@ gameServer
   .enableRealtimeListing();
 gameServer
   .define('lobby_room', LobbyRoom)
-  .filterBy(['isPrivate', 'matchmakingMode', 'matchMode', 'rankBandId'])
+  .filterBy(['isPrivate', 'matchmakingMode', 'matchMode', 'rankBandId', 'gameplayMode'])
   .sortBy({ clients: -1 })
   .enableRealtimeListing();
 
@@ -120,7 +118,7 @@ app.use((_req, res, next) => {
   }
 
   res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-CSRF-Token, X-Internal-Status-Token, X-Wager-Admin-Token');
+  res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-CSRF-Token, X-Internal-Status-Token');
   res.header('Access-Control-Allow-Credentials', 'true');
 
   // Handle preflight requests
@@ -141,7 +139,6 @@ app.use(express.json());
 app.use('/auth', authRoutes);
 app.use('/matchmaking', matchmakingRoutes);
 app.use('/social', socialRoutes);
-app.use('/wagers', wagerRoutes);
 app.use('/admin', createAdminRouter({
   config: colyseusRuntime,
   matchMaker,
@@ -312,17 +309,6 @@ interface LobbySummary {
   status: string;
   queuedHumanCount?: number;
   requiredPlayers?: number;
-  wager?: {
-    enabled: boolean;
-    matchMode?: string;
-    rankedEntryQuoteId?: string | null;
-    status?: string;
-    token?: string;
-    coverChargeLamports?: string;
-    potLamports?: string;
-    paidPlayerCount?: number;
-    treasuryWallet?: string;
-  };
 }
 
 async function getPublicLobbies(): Promise<LobbySummary[]> {
@@ -342,17 +328,6 @@ async function getPublicLobbies(): Promise<LobbySummary[]> {
       status: room.metadata?.status || 'waiting',
       queuedHumanCount: room.metadata?.queuedHumanCount,
       requiredPlayers: room.metadata?.requiredPlayers,
-      wager: {
-        enabled: room.metadata?.wagerEnabled === true,
-        matchMode: room.metadata?.matchMode,
-        rankedEntryQuoteId: room.metadata?.rankedEntryQuoteId,
-        status: room.metadata?.wagerStatus,
-        token: room.metadata?.wagerToken,
-        coverChargeLamports: room.metadata?.wagerCoverChargeLamports,
-        potLamports: room.metadata?.wagerPotLamports,
-        paidPlayerCount: room.metadata?.wagerPaidPlayerCount,
-        treasuryWallet: room.metadata?.wagerTreasuryWallet,
-      },
     }));
 }
 
@@ -452,7 +427,6 @@ async function startServer(): Promise<void> {
     });
   }
 
-  wagerService.startBackgroundJobs();
 }
 
 let shutdownStarted = false;
@@ -468,7 +442,6 @@ async function shutdown(signal: string): Promise<void> {
   });
 
   try {
-    wagerService.stopBackgroundJobs();
     await adminMachineHeartbeatHandle?.close();
     adminMachineHeartbeatHandle = null;
     await flyReplayRouteHandle?.close();

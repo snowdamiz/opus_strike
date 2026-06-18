@@ -13,6 +13,7 @@ import {
   getRoomRoundTimeRemaining,
   hasPhaseDeadlineElapsed,
   shouldAutoReadyHeroSelectPhase,
+  shouldRunHeroSelectPhaseTransitionCheck,
   shouldStartHeroSelectPhase,
 } from '../rooms/roomPhaseRuntime';
 
@@ -46,6 +47,27 @@ import {
     now: 1_000,
   }), false);
   assert.equal(shouldAutoReadyHeroSelectPhase({
+    phaseEndTime: 1_000,
+    now: 1_000,
+  }), true);
+
+  assert.equal(shouldRunHeroSelectPhaseTransitionCheck({
+    lowFrequencyStateDue: false,
+    phaseEndTime: 1_001,
+    now: 1_000,
+  }), false);
+  assert.equal(shouldRunHeroSelectPhaseTransitionCheck({
+    lowFrequencyStateDue: true,
+    phaseEndTime: 1_001,
+    now: 1_000,
+  }), false);
+  assert.equal(shouldRunHeroSelectPhaseTransitionCheck({
+    lowFrequencyStateDue: false,
+    phaseEndTime: 1_000,
+    now: 1_000,
+  }), false);
+  assert.equal(shouldRunHeroSelectPhaseTransitionCheck({
+    lowFrequencyStateDue: true,
     phaseEndTime: 1_000,
     now: 1_000,
   }), true);
@@ -215,6 +237,7 @@ import {
       mapSeed: 99,
       mapThemeId: 'verdant',
       mapSize: 'medium',
+      mapProfileId: 'ctf_arena',
     }
   );
 }

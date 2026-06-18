@@ -5,7 +5,7 @@ import {
   getRankFromRating,
 } from '@voxel-strike/shared';
 import { config } from '../../config/environment';
-import { lamportsToSolDisplay } from '../../utils/wagerPayments';
+import { lamportsToSolDisplay } from '../../utils/sol';
 import { RankBadge } from './RankBadge';
 
 interface MachineProcess {

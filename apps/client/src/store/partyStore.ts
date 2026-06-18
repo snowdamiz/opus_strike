@@ -28,6 +28,7 @@ export function isPartyLeader(
 
 export function arePartyMembersReady(party: PartyStateSnapshot | null): boolean {
   if (!party) return false;
+  if (!party.leaderUserId) return false;
   return party.members.every((member) => member.leader || member.ready);
 }
 

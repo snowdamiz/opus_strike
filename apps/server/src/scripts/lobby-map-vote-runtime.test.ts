@@ -1,7 +1,5 @@
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_VOXEL_MAP_SIZE_ID,
-  GOLDEN_VOXEL_MAP_THEME_ID,
   VOXEL_MAP_SIZE_IDS,
 } from '@voxel-strike/shared';
 import {
@@ -23,29 +21,26 @@ function option(id: string): MapVoteOption {
 
 {
   const options = createMapVoteOptions({
-    customMapSeed: -1,
-    forceGoldenMapOption: true,
     source: 123,
-  });
-
-  assert.equal(options.length, 1);
-  assert.equal(options[0].id, 'map_1');
-  assert.equal(options[0].seed, 0xffffffff);
-  assert.equal(options[0].mapThemeId, GOLDEN_VOXEL_MAP_THEME_ID);
-  assert.equal(options[0].mapSize, DEFAULT_VOXEL_MAP_SIZE_ID);
-}
-
-{
-  const options = createMapVoteOptions({
-    customMapSeed: null,
-    forceGoldenMapOption: true,
-    source: 0x12345678,
   });
 
   assert.equal(options.length, VOXEL_MAP_SIZE_IDS.length);
   assert.deepEqual(options.map((mapOption) => mapOption.id), VOXEL_MAP_SIZE_IDS.map((_, index) => `map_${index + 1}`));
   assert.deepEqual(options.map((mapOption) => mapOption.mapSize), VOXEL_MAP_SIZE_IDS);
-  assert.equal(options.filter((mapOption) => mapOption.mapThemeId === GOLDEN_VOXEL_MAP_THEME_ID).length, 1);
+  assert.equal(options.every((mapOption) => mapOption.mapThemeId === null), true);
+}
+
+{
+  const options = createMapVoteOptions({
+    gameplayMode: 'battle_royal',
+    source: 0x51f15eed,
+  });
+
+  assert.equal(options.length, 3);
+  assert.deepEqual(options.map((mapOption) => mapOption.mapSize), ['large', 'large', 'large']);
+  assert.equal(options.every((mapOption) => mapOption.mapProfileId === 'battle_royal_large'), true);
+  assert.equal(options.every((mapOption) => mapOption.preview.labelTags.includes('Battle Royal')), true);
+  assert.equal(Object.keys(options[0].preview.thumbnailSilhouette.objectives.spawns).length, 10);
 }
 
 {

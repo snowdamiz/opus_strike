@@ -124,12 +124,15 @@ export async function chooseMatchmakingRankBand(input: {
     const createdAt = typeof metadata.matchmakingCreatedAt === 'number' ? metadata.matchmakingCreatedAt : now;
     const waitMs = Math.max(0, now - createdAt);
     const humanCount = typeof metadata.humanCount === 'number' ? metadata.humanCount : room.clients ?? 0;
+    const participantCount = typeof metadata.participantCount === 'number'
+      ? metadata.participantCount
+      : humanCount;
     const queuedHumanCount = typeof metadata.queuedHumanCount === 'number'
       ? metadata.queuedHumanCount
       : humanCount;
     const requiredPlayers = typeof metadata.requiredPlayers === 'number' ? metadata.requiredPlayers : room.maxClients ?? 0;
 
-    if (humanCount >= requiredPlayers) return [];
+    if (participantCount >= requiredPlayers) return [];
     if (distance > getAllowedRankDivisionDistance(waitMs)) return [];
 
     return [{

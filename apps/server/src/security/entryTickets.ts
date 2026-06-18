@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import type { HeroId, Team } from '@voxel-strike/shared';
+import { isTeamId, type HeroId, type Team } from '@voxel-strike/shared';
 import { createSignedTicket, readSignedTicketClaims } from './signedTicket';
 
 export interface GameEntryTicketClaims {
@@ -11,7 +11,6 @@ export interface GameEntryTicketClaims {
   displayName: string;
   assignedTeam?: Team;
   selectedHero?: HeroId;
-  observer?: boolean;
   issuedAt: number;
   expiresAt: number;
   nonce: string;
@@ -25,7 +24,6 @@ export interface CreateGameEntryTicketInput {
   displayName: string;
   assignedTeam?: Team;
   selectedHero?: HeroId;
-  observer?: boolean;
   ttlMs?: number;
 }
 
@@ -42,7 +40,6 @@ export function createGameEntryTicket(input: CreateGameEntryTicketInput): string
     displayName: input.displayName,
     assignedTeam: input.assignedTeam,
     selectedHero: input.selectedHero,
-    observer: input.observer === true ? true : undefined,
     issuedAt: now,
     expiresAt: now + (input.ttlMs ?? DEFAULT_TICKET_TTL_MS),
     nonce: crypto.randomBytes(16).toString('hex'),
@@ -63,9 +60,7 @@ export function verifyGameEntryTicket(
   if (expected.lobbyId && claims.lobbyId !== expected.lobbyId) return null;
   if (claims.expiresAt < now) return null;
   if (claims.issuedAt > now + 5_000) return null;
-  const isObserver = claims.observer === true;
-  if (!isObserver && claims.assignedTeam !== 'red' && claims.assignedTeam !== 'blue') return null;
-  if (isObserver && claims.assignedTeam !== undefined && claims.assignedTeam !== 'red' && claims.assignedTeam !== 'blue') return null;
+  if (!isTeamId(claims.assignedTeam)) return null;
   if (!claims.userId || !claims.lobbyPlayerId || !claims.displayName || !claims.nonce) return null;
 
   return claims;

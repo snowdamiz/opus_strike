@@ -391,6 +391,11 @@ const warmupDrain = getMovementCommandDrainDecision(SERVER_MOVEMENT_TARGET_PENDI
 assert.equal(warmupDrain.budget, 0);
 assert.equal(warmupDrain.underflow, true);
 
+const gameplayDrain = getMovementCommandDrainDecision(1, { hasGameplayInput: true });
+assert.equal(gameplayDrain.budget, 1);
+assert.equal(gameplayDrain.underflow, false);
+assert.equal(gameplayDrain.catchup, false);
+
 const steadyDrain = getMovementCommandDrainDecision(SERVER_MOVEMENT_TARGET_PENDING_COMMANDS);
 assert.equal(steadyDrain.budget, SERVER_MOVEMENT_SUBSTEPS_PER_TICK);
 assert.equal(steadyDrain.underflow, false);

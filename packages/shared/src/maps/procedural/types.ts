@@ -1,3 +1,4 @@
+import type { Team } from '../../types/team.js';
 import type { Vec3 } from '../../types/vector.js';
 
 export const DEFAULT_PROCEDURAL_MAP_SEED = 0x57564f58;
@@ -70,10 +71,11 @@ export interface VoxelCollider {
   material: 'default' | 'ice' | 'bounce' | 'barrier';
 }
 
-export type MapTeam = 'red' | 'blue';
+export type MapTeam = Team;
 export type TeamMap<T> = Record<MapTeam, T>;
-export type MapGameMode = 'ctf';
-export type MapFamilyId = 'ctf_semantic_arena';
+export type MapGameMode = 'ctf' | 'battle_royal';
+export type MapFamilyId = 'ctf_semantic_arena' | 'battle_royal_large';
+export type MapProfileId = 'ctf_arena' | 'tdm_arena' | 'battle_royal_large';
 export type MapTopologyId = 'lane_triad' | 'diamond' | 'hourglass' | 'ring' | 'split_level';
 export type MapSymmetryLevel = 'mirrored' | 'rotational' | 'asymmetric_balanced';
 
@@ -88,6 +90,7 @@ export interface MapDesignBrief {
   seed: number;
   mapSize: VoxelMapSizeId;
   gameMode: MapGameMode;
+  profileId?: MapProfileId;
   teamSize: number;
   familyId: MapFamilyId;
   themeId: VoxelMapTheme['id'];
@@ -478,6 +481,7 @@ export interface VoxelMapManifest {
   version: number;
   seed: number;
   mapSize: VoxelMapSizeId;
+  profileId?: MapProfileId;
   familyId: MapFamilyId;
   topologyId: MapTopologyId;
   themeId: VoxelMapTheme['id'];
@@ -486,8 +490,8 @@ export interface VoxelMapManifest {
   voxelSize: VoxelSize;
   size: VoxelSize;
   chunkSize: VoxelSize;
-  spawnPoints: { red: Vec3[]; blue: Vec3[] };
-  flagZones: { red: Vec3; blue: Vec3 };
+  spawnPoints: Record<MapTeam, Vec3[]>;
+  flagZones: Record<MapTeam, Vec3>;
   boundary: BoundaryPoint[];
   heightfield: VoxelHeightfield;
   chunks: VoxelChunk[];

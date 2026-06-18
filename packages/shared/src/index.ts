@@ -11,6 +11,7 @@ export * from './types/antiCheatTrace.js';
 export * from './types/voice.js';
 export * from './types/matchMode.js';
 export * from './types/gameplayMode.js';
+export * from './types/team.js';
 export * from './types/party.js';
 export * from './types/modelSystem.js';
 
@@ -28,6 +29,7 @@ export * from './utils/blazeMeteor.js';
 export * from './utils/blazeRocketJump.js';
 export * from './utils/movementDirection.js';
 export * from './utils/teamHeroLocks.js';
+export * from './utils/partyHeroLocks.js';
 
 // Combat
 export * from './combat/damageEngine.js';

@@ -8,6 +8,7 @@ import {
   CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
   CHRONOS_VERDANT_PULSE_FIRE_READY_MS,
   CHRONOS_VERDANT_PULSE_SPEED,
+  type Team,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { predictLocalChronosAscendantParadox } from '../../../movement/localPrediction';
@@ -67,6 +68,7 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
   const lastPulseTimeRef = useRef(0);
   const pulseIdRef = useRef(0);
   const timebreakIdRef = useRef(0);
+  const getOwnerTeam = (ctx: AbilityContext): Team => ctx.localPlayer.team || 'red';
   const primaryHoldStartedAtRef = useRef(0);
 
   function sampleChronosPrimarySpawn(ctx: AbilityContext, now: number): ResolvedAbilitySocketOrigin | null {
@@ -213,7 +215,7 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
       },
       startTime: now,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: getOwnerTeam(ctx),
       supercharged,
       radius: supercharged ? CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS : undefined,
     });

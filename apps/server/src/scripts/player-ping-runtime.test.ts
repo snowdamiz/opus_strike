@@ -121,7 +121,6 @@ const clients: TestClient[] = [
       players: participants(),
       now: 5_000,
       matchMode: 'custom',
-      wagered: false,
     }),
     {
       ready: true,
@@ -133,7 +132,6 @@ const clients: TestClient[] = [
     players: new Map([['red-human', participants().get('red-human')!]]),
     now: 5_000,
     matchMode: 'ranked',
-    wagered: false,
   });
   assert.equal(pending.ready, false);
   assert.equal(pending.gate.status, 'pending');
@@ -143,7 +141,6 @@ const clients: TestClient[] = [
     players: new Map([['red-human', participants().get('red-human')!]]),
     now: 5_000,
     matchMode: 'ranked',
-    wagered: false,
     cancelPending: true,
   });
   assert.equal(cancelledPending.ready, false);
@@ -167,7 +164,6 @@ const clients: TestClient[] = [
     players: rankedPlayers,
     now: 8_000,
     matchMode: 'ranked',
-    wagered: false,
   });
 
   assert.equal(result.ready, false);

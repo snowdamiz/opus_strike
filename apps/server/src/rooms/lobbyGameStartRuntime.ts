@@ -1,9 +1,11 @@
 import {
   ALL_HERO_IDS,
   HERO_DEFINITIONS,
+  isTeamId,
   type BotDifficulty,
   type GameplayMode,
   type HeroId,
+  type MapProfileId,
   type Team,
   type VoxelMapSizeId,
   type VoxelMapTheme,
@@ -14,7 +16,6 @@ export interface LobbyGameStartPlayer {
   id: string;
   name: string;
   team: string;
-  isObserver: boolean;
   isBot: boolean;
   heroId: string;
   botDifficulty: string;
@@ -36,35 +37,21 @@ export interface ParticipantAssignment {
   botProfileId?: string;
 }
 
-export interface ObserverAssignment {
-  playerId: string;
-  playerName: string;
-  isBot: false;
-  isObserver: true;
-}
-
-export type GameStartingAssignment = ParticipantAssignment | ObserverAssignment;
-
 export interface LobbyGameStartAssignments {
   playerAssignments: ParticipantAssignment[];
-  observerAssignments: ObserverAssignment[];
-  gameStartingAssignments: GameStartingAssignment[];
+  gameStartingAssignments: ParticipantAssignment[];
   botAssignments: ParticipantAssignment[];
   reservedHumanPlayers: number;
 }
 
 export interface GameStartingPayload {
   gameRoomId: string;
-  players: GameStartingAssignment[];
+  players: ParticipantAssignment[];
   entryTicket?: string;
   gameplayMode: GameplayMode;
   mapThemeId: VoxelMapTheme['id'];
   mapSize: VoxelMapSizeId;
-  wager: unknown;
-}
-
-function isTeamValue(team: string): team is Team {
-  return team === 'red' || team === 'blue';
+  mapProfileId: MapProfileId;
 }
 
 function normalizeHeroId(heroId?: string): HeroId | '' {
@@ -87,33 +74,22 @@ export function createLobbyGameStartAssignments(input: {
   const heroIds = input.heroIds ?? ALL_HERO_IDS;
   const participants: LobbyGameStartPlayer[] = [];
   const playerAssignments: ParticipantAssignment[] = [];
-  const observerAssignments: ObserverAssignment[] = [];
-  const claimedHeroesByTeam: Record<Team, Map<HeroId, string>> = {
-    red: new Map(),
-    blue: new Map(),
-  };
+  const claimedHeroesByTeam = new Map<Team, Map<HeroId, string>>();
 
   for (const player of input.players) {
-    if (player.isObserver) {
-      if (!player.isBot) {
-        observerAssignments.push({
-          playerId: player.id,
-          playerName: player.name,
-          isBot: false,
-          isObserver: true,
-        });
-      }
-      continue;
-    }
-
-    if (!isTeamValue(player.team)) {
+    if (!isTeamId(player.team)) {
       throw new Error('Cannot create assignments with unassigned players');
     }
 
     participants.push(player);
     const heroId = normalizeHeroId(player.heroId);
-    if (heroId && !claimedHeroesByTeam[player.team].has(heroId)) {
-      claimedHeroesByTeam[player.team].set(heroId, player.id);
+    let claimed = claimedHeroesByTeam.get(player.team);
+    if (!claimed) {
+      claimed = new Map();
+      claimedHeroesByTeam.set(player.team, claimed);
+    }
+    if (heroId && !claimed.has(heroId)) {
+      claimed.set(heroId, player.id);
     }
   }
 
@@ -121,12 +97,16 @@ export function createLobbyGameStartAssignments(input: {
     const team = player.team as Team;
     const normalizedHeroId = normalizeHeroId(player.heroId);
     let heroId: HeroId | undefined = normalizedHeroId || undefined;
-    if (heroId && claimedHeroesByTeam[team].get(heroId) !== player.id) {
+    let claimed = claimedHeroesByTeam.get(team);
+    if (!claimed) {
+      claimed = new Map();
+      claimedHeroesByTeam.set(team, claimed);
+    }
+    if (heroId && claimed.get(heroId) !== player.id) {
       heroId = undefined;
     }
 
     if (player.isBot && !heroId) {
-      const claimed = claimedHeroesByTeam[team];
       const availableHeroes = heroIds.filter((candidate) => !claimed.has(candidate));
       const randomIndex = Math.floor(random() * availableHeroes.length);
       heroId = availableHeroes[randomIndex];
@@ -150,8 +130,7 @@ export function createLobbyGameStartAssignments(input: {
   const reservedHumanPlayers = playerAssignments.length - botAssignments.length;
   return {
     playerAssignments,
-    observerAssignments,
-    gameStartingAssignments: [...playerAssignments, ...observerAssignments],
+    gameStartingAssignments: playerAssignments,
     botAssignments,
     reservedHumanPlayers,
   };
@@ -161,7 +140,6 @@ export function buildGameEntryTicketInputs(input: {
   lobbyId: string;
   gameRoomId: string;
   playerAssignments: readonly ParticipantAssignment[];
-  observerAssignments: readonly ObserverAssignment[];
   authContexts: ReadonlyMap<string, LobbyGameStartAuthContext>;
 }): Map<string, CreateGameEntryTicketInput> {
   const ticketInputs = new Map<string, CreateGameEntryTicketInput>();
@@ -184,33 +162,17 @@ export function buildGameEntryTicketInputs(input: {
     });
   }
 
-  for (const assignment of input.observerAssignments) {
-    const authContext = input.authContexts.get(assignment.playerId);
-    if (!authContext) {
-      throw new Error('Authenticated observer context missing');
-    }
-
-    ticketInputs.set(assignment.playerId, {
-      lobbyId: input.lobbyId,
-      gameRoomId: input.gameRoomId,
-      lobbyPlayerId: assignment.playerId,
-      userId: authContext.userId,
-      displayName: authContext.displayName || assignment.playerName,
-      observer: true,
-    });
-  }
-
   return ticketInputs;
 }
 
 export function buildGameStartingPayload(input: {
   gameRoomId: string;
-  players: GameStartingAssignment[];
+  players: ParticipantAssignment[];
   entryTicket?: string;
   gameplayMode: GameplayMode;
   mapThemeId: VoxelMapTheme['id'];
   mapSize: VoxelMapSizeId;
-  wager: unknown;
+  mapProfileId?: MapProfileId;
 }): GameStartingPayload {
   return {
     gameRoomId: input.gameRoomId,
@@ -219,6 +181,6 @@ export function buildGameStartingPayload(input: {
     gameplayMode: input.gameplayMode,
     mapThemeId: input.mapThemeId,
     mapSize: input.mapSize,
-    wager: input.wager,
+    mapProfileId: input.mapProfileId ?? 'ctf_arena',
   };
 }

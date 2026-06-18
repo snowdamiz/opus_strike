@@ -7,15 +7,18 @@ import type {
   PlayerInput,
   BotDifficulty,
   BlueprintPreview,
+  MapProfileId,
   MapTopologyId,
-  PublicRankSnapshot,
   MatchMode,
+  PublicRankSnapshot,
   PowerupPickupRuntimeState,
+  SafeZoneSnapshot,
   VoxelMapSizeId,
   VoxelMapTheme,
+  GameplayMode,
 } from '@voxel-strike/shared';
 
-export type { PowerupPickupRuntimeState };
+export type { PowerupPickupRuntimeState, SafeZoneSnapshot };
 
 // Re-export VisualState from visualStore for central type access
 import type { VisualState } from './visualStore';
@@ -27,44 +30,11 @@ export interface LobbyPlayer {
   isHost: boolean;
   isReady: boolean;
   team: string;
-  isObserver?: boolean;
   heroId?: HeroId | '';
   isBot?: boolean;
   botDifficulty?: BotDifficulty | '';
   botProfileId?: string;
-  paymentStatus?: WagerPaymentStatus;
-  paymentWalletAddress?: string;
-  depositSignature?: string;
-  refundSignature?: string;
   rank?: PublicRankSnapshot;
-}
-
-export type WagerPaymentStatus =
-  | ''
-  | 'not_required'
-  | 'unpaid'
-  | 'intent_created'
-  | 'submitted'
-  | 'confirmed'
-  | 'credited'
-  | 'refunding'
-  | 'refunded'
-  | 'settled'
-  | 'failed'
-  | 'expired';
-
-export interface LobbyWagerState {
-  enabled: boolean;
-  matchMode?: MatchMode;
-  rankedEntryQuoteId?: string | null;
-  rankedEntryQuoteExpiresAt?: string | null;
-  status?: string;
-  token?: 'SOL' | string;
-  coverChargeLamports?: string;
-  treasuryWallet?: string;
-  platformFeeBps?: number;
-  potLamports?: string;
-  paidPlayerCount?: number;
 }
 
 export interface RankedEntryQuote {
@@ -78,32 +48,13 @@ export interface RankedEntryQuote {
   cluster: string;
 }
 
-export interface WagerPaymentIntent {
-  intentId: string;
-  lobbyId: string;
-  status: WagerPaymentStatus;
-  token: 'SOL';
-  amountLamports: string;
-  treasuryWallet: string;
-  walletAddress: string;
-  memo: string;
-  expiresAt: string;
-  cluster: string;
-}
-
-export interface WagerPaymentTransaction {
-  intentId: string;
-  transactionBase64: string;
-  lastValidBlockHeight: number;
-  cluster: string;
-}
-
 export interface MapVoteOption {
   id: string;
   seed: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize: VoxelMapSizeId;
   mapSizeLabel?: string;
+  mapProfileId?: MapProfileId | null;
   name: string;
   themeId: string;
   themeName: string;
@@ -148,6 +99,7 @@ export interface UserStats {
 
 export interface MatchmakingStatus {
   matchMode: MatchMode | null;
+  gameplayMode: GameplayMode | null;
   rankBandId: number | null;
   rankBandLabel: string | null;
   averageCompetitiveRating: number | null;
@@ -175,7 +127,7 @@ export interface VoidZoneData {
   duration: number;
   startTime: number;
   ownerId: string;
-  ownerTeam: 'red' | 'blue';
+  ownerTeam: Team;
 }
 
 export interface DireBallData {
@@ -200,7 +152,7 @@ export interface VoidRayData {
   interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
-  ownerTeam: 'red' | 'blue';
+  ownerTeam: Team;
 }
 
 // ============================================================================
@@ -215,7 +167,7 @@ export interface RocketData {
   interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
-  ownerTeam: 'red' | 'blue';
+  ownerTeam: Team;
 }
 
 export interface BombData {
@@ -230,7 +182,7 @@ export interface BombData {
   impactTime: number; // When the bomb lands
   radius: number;
   ownerId: string;
-  ownerTeam: 'red' | 'blue';
+  ownerTeam: Team;
   hasExploded: boolean;
 }
 
@@ -246,7 +198,7 @@ export interface ChronosPulseData {
   interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
-  ownerTeam: 'red' | 'blue';
+  ownerTeam: Team;
   supercharged?: boolean;
   radius?: number;
 }
@@ -263,7 +215,7 @@ export interface HookProjectileData {
   interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
-  ownerTeam: 'red' | 'blue';
+  ownerTeam: Team;
   state: 'extending' | 'retracting';
   maxDistance: number;
   startPosition: { x: number; y: number; z: number };
@@ -279,7 +231,7 @@ export interface DragHookData {
   interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
-  ownerTeam: 'red' | 'blue';
+  ownerTeam: Team;
   state: 'flying' | 'attached' | 'pulling';
   targetId?: string; // Player ID if hooked
   startPosition: { x: number; y: number; z: number };
@@ -299,7 +251,7 @@ export interface HookshotGroundHooksData {
   startTime: number;
   duration: number;
   ownerId: string;
-  ownerTeam: 'red' | 'blue';
+  ownerTeam: Team;
   radius: number;
   rootUntil: number;
   targets: HookshotGroundHooksTargetData[];
@@ -323,7 +275,7 @@ export interface EarthWallData {
   startTime: number;
   duration: number; // How long the anchor wall stays solid
   ownerId: string;
-  ownerTeam: 'red' | 'blue';
+  ownerTeam: Team;
   maxDistance: number; // How far the hook travels
   hookProgress: number; // 0-1, how far the hook has traveled
 }

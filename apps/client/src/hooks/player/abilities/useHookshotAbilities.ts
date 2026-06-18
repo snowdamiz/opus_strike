@@ -13,6 +13,7 @@ import { useRef, useCallback } from 'react';
 import {
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
+  type Team,
 } from '@voxel-strike/shared';
 import {
   createHookshotSwingState,
@@ -167,7 +168,7 @@ function resolveHookshotGrapplePoint(ctx: AbilityContext): { x: number; y: numbe
 }
 
 function resolveGroundHookTargets(ctx: AbilityContext, rootUntil: number) {
-  const ownerTeam = (ctx.localPlayer.team || 'red') as 'red' | 'blue';
+  const ownerTeam: Team = ctx.localPlayer.team || 'red';
   const radiusSq = HOOKSHOT_GROUND_HOOKS_RADIUS * HOOKSHOT_GROUND_HOOKS_RADIUS;
   const targets: Array<{
     targetId: string;
@@ -250,7 +251,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       },
       startTime: now,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: ctx.localPlayer.team || 'red',
       state: 'extending',
       maxDistance: HOOKSHOT_MAX_DISTANCE,
       startPosition: spawnPos,
@@ -292,7 +293,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       },
       startTime: now,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: ctx.localPlayer.team || 'red',
       state: 'flying',
       startPosition: spawnPos,
       launchSide,
@@ -374,7 +375,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       startTime: Date.now(),
       duration: 6.25,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: ctx.localPlayer.team || 'red',
       maxDistance: 24.35,
       hookProgress: 0,
     });
@@ -400,7 +401,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       startTime: now,
       duration: HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: ctx.localPlayer.team || 'red',
       radius: HOOKSHOT_GROUND_HOOKS_RADIUS,
       rootUntil,
       targets,

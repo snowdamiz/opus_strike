@@ -31,7 +31,9 @@ export interface TeamState {
 export interface GameConfig {
   gameplayMode: GameplayMode;
   maxPlayers: number;
+  minPlayers: number;
   teamSize: number;
+  maxTeams: number;
   scoreToWin: number;
   roundTimeSeconds: number;
   respawnTimeSeconds: number;

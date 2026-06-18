@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { type HeroId, type MatchMode } from '@voxel-strike/shared';
+import { PARTY_MAX_MEMBERS, type BotDifficulty, type HeroId, type MatchMode, type PartyMemberSnapshot } from '@voxel-strike/shared';
 import { config } from '../../config/environment';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
 import { useGameStore } from '../../store/gameStore';
+import { isPartyLeader as isPartyLeaderForUser, usePartyStore } from '../../store/partyStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { requiresTutorial } from '../../utils/tutorialAccess';
 import { GameDialog } from './GameDialog';
@@ -87,6 +88,11 @@ const emptySocialState: SocialState = {
   discordPlayers: [],
 };
 const SOCIAL_REFRESH_INTERVAL_MS = 10000;
+const PARTY_BOT_OPTIONS: { difficulty: BotDifficulty; label: string }[] = [
+  { difficulty: 'easy', label: 'Easy' },
+  { difficulty: 'normal', label: 'Normal' },
+  { difficulty: 'hard', label: 'Hard' },
+];
 
 function actionableSocialCount(social: SocialState): number {
   return social.incomingRequests.length + social.lobbyInvites.length + social.partyInvites.length;
@@ -184,9 +190,7 @@ function matchModeLabel(mode: MatchMode | null): string {
     case 'ranked':
       return 'RANKED';
     case 'quick_play':
-      return 'QUICK PLAY';
-    case 'custom_wager':
-      return 'SOL POT';
+      return 'CAPTURE THE FLAG';
     case 'custom':
       return 'CUSTOM';
     default:
@@ -286,6 +290,38 @@ function FriendCard({
   );
 }
 
+function PartyBotCard({
+  bot,
+  canManage,
+  pendingAction,
+  onRemove,
+}: {
+  bot: PartyMemberSnapshot;
+  canManage: boolean;
+  pendingAction: string | null;
+  onRemove: (bot: PartyMemberSnapshot) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg bg-white/5 px-3.5 py-3">
+      <div className="min-w-0">
+        <p className="truncate font-display text-sm leading-none text-white">{bot.displayName}</p>
+        <p className="mt-1 truncate text-xs font-body text-white/40">
+          {(bot.botDifficulty ?? 'normal').toUpperCase()} BOT
+        </p>
+      </div>
+      <IconButton
+        label={`Remove ${bot.displayName}`}
+        title={canManage ? `Remove ${bot.displayName}` : 'Only the party leader can remove bots'}
+        tone="danger"
+        disabled={!canManage || Boolean(pendingAction)}
+        onClick={() => onRemove(bot)}
+      >
+        <XIcon className="h-4 w-4" />
+      </IconButton>
+    </div>
+  );
+}
+
 export function SocialButton({
   onClick,
   badgeCount = 0,
@@ -345,13 +381,15 @@ export function SocialBox({
   selectedHero?: HeroId;
 }) {
   const { isAuthenticated, user } = useWallet();
-  const { ensureParty, joinLobby, joinParty, startTutorialGame } = useNetwork();
+  const { addPartyBot, ensureParty, joinLobby, joinParty, kickPartyMember, startTutorialGame } = useNetwork();
   const playerName = useGameStore((state) => state.playerName);
   const appPhase = useGameStore((state) => state.appPhase);
   const currentLobbyId = useGameStore((state) => state.currentLobbyId);
   const currentLobbyName = useGameStore((state) => state.currentLobbyName);
-  const currentLobbyMatchMode = useGameStore((state) => state.currentLobbyWager.matchMode ?? null);
+  const currentLobbyMatchMode = useGameStore((state) => state.matchmakingStatus.matchMode ?? null);
   const devTutorialOverride = useSettingsStore((state) => state.settings.devTutorialOverride);
+  const party = usePartyStore((state) => state.party);
+  const localPartyUserId = usePartyStore((state) => state.localUserId);
 
   const [activeTab, setActiveTab] = useState<SocialTab>('friends');
   const [social, setSocial] = useState<SocialState>(emptySocialState);
@@ -366,6 +404,12 @@ export function SocialBox({
   const canInviteFromLobby = isAuthenticated && appPhase === 'in_lobby' && Boolean(currentLobbyId);
   const canInviteFromMenu = isAuthenticated && appPhase === 'menu';
   const canInviteFriend = canInviteFromLobby || canInviteFromMenu;
+  const isPartyLeader = !party || isPartyLeaderForUser(party, localPartyUserId);
+  const partyBotMembers = party?.members.filter((member) => member.isBot) ?? [];
+  const assumedPartyMemberCount = party ? party.members.length : canInviteFromMenu ? 1 : 0;
+  const partySlotsRemaining = Math.max(0, PARTY_MAX_MEMBERS - assumedPartyMemberCount);
+  const canManagePartyBots = canInviteFromMenu && isPartyLeader;
+  const canAddPartyBot = canManagePartyBots && partySlotsRemaining > 0;
   const tutorialRequired = requiresTutorial(user?.tutorialCompletedAt, devTutorialOverride);
   const requestCount = social.incomingRequests.length + social.outgoingRequests.length;
   const inviteCount = social.lobbyInvites.length + social.partyInvites.length;
@@ -540,6 +584,40 @@ export function SocialBox({
     });
   };
 
+  const invitePartyBot = (difficulty: BotDifficulty) => {
+    const option = PARTY_BOT_OPTIONS.find((candidate) => candidate.difficulty === difficulty);
+    const label = option?.label ?? 'Normal';
+    runAction(`invite-party-bot:${difficulty}`, async () => {
+      if (!canInviteFromMenu) {
+        throw new Error('Open Play before inviting party bots');
+      }
+      if (!isPartyLeader) {
+        throw new Error('Only the party leader can invite bots');
+      }
+      if (partySlotsRemaining <= 0) {
+        throw new Error('Party is full');
+      }
+
+      await ensureParty(playerName || user?.name || 'Player', selectedHero);
+      addPartyBot({
+        difficulty,
+        displayName: `${label} Bot`,
+        heroId: selectedHero,
+      });
+      setNotice(`${label} bot invited.`);
+    });
+  };
+
+  const removePartyBotMember = (bot: PartyMemberSnapshot) => {
+    runAction(`remove-party-bot:${bot.userId}`, async () => {
+      if (!isPartyLeader) {
+        throw new Error('Only the party leader can remove bots');
+      }
+      kickPartyMember(bot.userId);
+      setNotice(`${bot.displayName} removed.`);
+    });
+  };
+
   const acceptLobbyInvite = (invite: LobbyInvite) => {
     runAction(`accept-invite:${invite.inviteId}`, async () => {
       if (tutorialRequired) {
@@ -703,6 +781,48 @@ export function SocialBox({
                           </div>
                         )}
                       </section>
+
+                      {canInviteFromMenu && (
+                        <section className="space-y-3 border-t border-white/5 pt-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <h3 className="font-display text-base text-white">Party Bots</h3>
+                              <p className="text-xs font-body text-white/40">
+                                {partySlotsRemaining > 0 ? `${partySlotsRemaining} slots open` : 'Party full'}
+                              </p>
+                            </div>
+                            <span className="shrink-0 rounded-full border border-white/10 px-2 py-1 text-[10px] font-display text-white/40">
+                              {assumedPartyMemberCount}/{PARTY_MAX_MEMBERS}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            {PARTY_BOT_OPTIONS.map((option) => (
+                              <button
+                                key={option.difficulty}
+                                type="button"
+                                disabled={!canAddPartyBot || Boolean(pendingAction)}
+                                onClick={() => invitePartyBot(option.difficulty)}
+                                className="h-10 rounded-lg border border-orange-300/20 bg-orange-500/[0.12] px-2 font-display text-xs text-orange-100 transition hover:border-orange-200/45 hover:bg-orange-500/[0.22] disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-white/25"
+                              >
+                                {option.label.toUpperCase()}
+                              </button>
+                            ))}
+                          </div>
+                          {partyBotMembers.length > 0 && (
+                            <div className="space-y-2">
+                              {partyBotMembers.map((bot) => (
+                                <PartyBotCard
+                                  key={bot.userId}
+                                  bot={bot}
+                                  canManage={canManagePartyBots}
+                                  pendingAction={pendingAction}
+                                  onRemove={removePartyBotMember}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </section>
+                      )}
 
                       {social.discordPlayers.length > 0 && (
                         <section className="space-y-2 border-t border-white/5 pt-4">

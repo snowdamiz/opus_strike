@@ -47,7 +47,7 @@ export interface RoomMovementCatchupBudgetAllocation {
 
 export function getMovementCommandDrainDecision(
   queueLength: number,
-  options: { hasAuthorityBarrier?: boolean } = {}
+  options: { hasAuthorityBarrier?: boolean; hasGameplayInput?: boolean } = {}
 ): MovementCommandDrainDecision {
   const commandCount = Math.max(0, Math.trunc(queueLength));
   if (commandCount === 0) {
@@ -59,7 +59,11 @@ export function getMovementCommandDrainDecision(
     };
   }
 
-  if (!options.hasAuthorityBarrier && commandCount < SERVER_MOVEMENT_TARGET_PENDING_COMMANDS) {
+  if (
+    !options.hasAuthorityBarrier &&
+    !options.hasGameplayInput &&
+    commandCount < SERVER_MOVEMENT_TARGET_PENDING_COMMANDS
+  ) {
     return {
       budget: 0,
       underflow: true,

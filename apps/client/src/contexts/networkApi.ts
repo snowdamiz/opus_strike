@@ -3,12 +3,6 @@ import { config } from '../config/environment';
 import { useSettingsStore } from '../store/settingsStore';
 import { DEV_TUTORIAL_BYPASS_HEADER, shouldBypassTutorialForDev } from '../utils/tutorialAccess';
 
-export type CreateLobbyWagerOptions = {
-  enabled: boolean;
-  coverChargeLamports?: string;
-  token?: 'SOL';
-};
-
 export interface QuickPlayTicketResponse {
   ticket: string;
   mode: 'quick_play';
@@ -129,29 +123,4 @@ export async function requestRunningGameStatus(roomId: string): Promise<RunningG
   }
 
   return response.json();
-}
-
-export async function wagerApiRequest<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${getHttpUrl()}${endpoint}`, {
-    ...options,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response, 'Wager request failed'));
-  }
-
-  return response.json();
-}
-
-export async function preflightWageredLobby(wager: CreateLobbyWagerOptions | undefined): Promise<void> {
-  if (!wager?.enabled) return;
-  await wagerApiRequest('/wagers/lobbies/preflight', {
-    method: 'POST',
-    body: JSON.stringify({ wager }),
-  });
 }

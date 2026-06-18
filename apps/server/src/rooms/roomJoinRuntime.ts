@@ -1,5 +1,4 @@
 export interface RoomJoinCapacityInput {
-  joinsAsObserver: boolean;
   playerCount: number;
   maxPlayers: number;
 }
@@ -16,7 +15,7 @@ export interface JoinedPlayerActivationInput {
 }
 
 export function shouldRejectRoomJoinForCapacity(input: RoomJoinCapacityInput): boolean {
-  return !input.joinsAsObserver && input.playerCount >= input.maxPlayers;
+  return input.playerCount >= input.maxPlayers;
 }
 
 export function resolveRoomJoinPlayerName(input: RoomJoinPlayerNameInput): string {

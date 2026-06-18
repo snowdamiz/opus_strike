@@ -3,6 +3,7 @@ import {
   DEFAULT_VOXEL_MAP_SIZE_ID,
   isGameplayMode,
   normalizeVoxelMapSizeId,
+  type MapProfileId,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
@@ -28,6 +29,9 @@ export function setupPollingSync(
     const nextMapSize = normalizeVoxelMapSizeId(
       typeof room.state.mapSize === 'string' ? room.state.mapSize : DEFAULT_VOXEL_MAP_SIZE_ID
     );
+    const nextMapProfileId = typeof room.state.mapProfileId === 'string'
+      ? room.state.mapProfileId as MapProfileId
+      : null;
 
     if (
       typeof room.state.mapSeed === 'number'
@@ -35,16 +39,19 @@ export function setupPollingSync(
         room.state.mapSeed !== store.mapSeed
         || nextMapThemeId !== store.mapThemeId
         || nextMapSize !== store.mapSize
+        || nextMapProfileId !== store.mapProfileId
       )
     ) {
       store.setMapSeed(room.state.mapSeed);
       store.setMapThemeId(nextMapThemeId);
       store.setMapSize(nextMapSize);
+      store.setMapProfileId(nextMapProfileId);
       try {
         const preparedMap = prepareVoxelMapCpu({
           seed: room.state.mapSeed,
           themeId: nextMapThemeId,
           mapSize: nextMapSize,
+          mapProfileId: nextMapProfileId,
           source: 'match',
         });
         prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'fallback-poll' });

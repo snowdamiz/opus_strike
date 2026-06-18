@@ -6,6 +6,7 @@ import {
   isCollisionBlock,
   normalizeVoxelMapSizeId,
   type GameplayMode,
+  type MapProfileId,
   type Team,
   type VoxelMapManifest,
   type VoxelMapSizeId,
@@ -31,6 +32,7 @@ export interface RoomMapRuntimeConfig {
   mapSeed: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
+  mapProfileId?: MapProfileId | null;
 }
 
 export interface RoomMapRuntimeOptions {
@@ -75,6 +77,7 @@ export class RoomMapRuntime {
     const manifest = generateProceduralVoxelMap(config.mapSeed, {
       themeId: config.mapThemeId,
       mapSize: config.mapSize,
+      profileId: config.mapProfileId,
     });
     this.mapManifest = manifest;
     this.proceduralTerrainLookup = createProceduralTerrainLookup(manifest);
@@ -94,6 +97,7 @@ export class RoomMapRuntime {
       || this.mapManifest.seed !== config.mapSeed
       || this.mapManifest.themeId !== config.mapThemeId
       || this.mapManifest.mapSize !== config.mapSize
+      || (this.mapManifest.profileId ?? null) !== config.mapProfileId
     ) {
       return this.refreshMap();
     }
@@ -208,7 +212,8 @@ export class RoomMapRuntime {
     const mapSeed = config.mapSeed;
     const mapThemeId = config.mapThemeId ?? getVoxelMapTheme(mapSeed).id;
     const mapSize = normalizeVoxelMapSizeId(config.mapSize || DEFAULT_VOXEL_MAP_SIZE_ID);
-    return { mapSeed, mapThemeId, mapSize };
+    const mapProfileId = config.mapProfileId ?? 'ctf_arena';
+    return { mapSeed, mapThemeId, mapSize, mapProfileId };
   }
 
   private clearBotTeamTactics(): void {

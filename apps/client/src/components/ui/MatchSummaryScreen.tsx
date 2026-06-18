@@ -1,14 +1,17 @@
 import { useMemo } from 'react';
-import { FACTIONS } from '../../styles/colorTokens';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import {
   getLevelProgress,
   getGameplayModeLabel,
+  getTeamCatalogEntry,
+  getTeamCatalogForGameplayMode,
   HERO_DEFINITIONS,
+  type GameEndEvent,
   type MatchSummaryPlayer,
   type Team,
 } from '@voxel-strike/shared';
+import { TEAM_FALLBACK_COLORS } from '../../styles/colorTokens';
 import { RankBadge, RankChangeSummary } from './RankBadge';
 
 function formatNumber(value: number): string {
@@ -22,19 +25,34 @@ function formatDuration(durationMs: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
-function formatUsdCents(usdCents: number): string {
-  const dollars = Math.floor(usdCents / 100);
-  const cents = usdCents % 100;
-  return cents === 0 ? `$${dollars}` : `$${dollars}.${cents.toString().padStart(2, '0')}`;
-}
-
 function getHeroLabel(player: MatchSummaryPlayer): string {
   if (!player.heroId) return 'No Hero';
   return HERO_DEFINITIONS[player.heroId]?.name ?? player.heroId;
 }
 
 function getFactionLabel(team: Team): string {
-  return FACTIONS[team].name;
+  return getTeamCatalogEntry(team)?.label ?? team;
+}
+
+type TeamPresentation = {
+  id: Team;
+  name: string;
+  fullName: string;
+  primaryColor: string;
+  secondaryColor: string;
+  bgColor: string;
+};
+
+function getTeamPresentation(team: Team): TeamPresentation {
+  const entry = getTeamCatalogEntry(team);
+  return {
+    id: team,
+    name: entry?.compactLabel ?? team.toUpperCase(),
+    fullName: entry?.label ?? team,
+    primaryColor: entry?.color ?? TEAM_FALLBACK_COLORS.primaryColor,
+    secondaryColor: entry?.accentColor ?? TEAM_FALLBACK_COLORS.secondaryColor,
+    bgColor: entry ? `${entry.color}14` : TEAM_FALLBACK_COLORS.bgColor,
+  };
 }
 
 export function MatchSummaryScreen() {
@@ -49,10 +67,19 @@ export function MatchSummaryScreen() {
     [playerId, summary]
   );
 
-  const playersByTeam = useMemo(() => ({
-    red: summary?.players.filter((player) => player.team === 'red') ?? [],
-    blue: summary?.players.filter((player) => player.team === 'blue') ?? [],
-  }), [summary]);
+  const teamEntries = useMemo(
+    () => getTeamCatalogForGameplayMode(summary?.gameplayMode ?? 'capture_the_flag'),
+    [summary?.gameplayMode]
+  );
+  const playersByTeam = useMemo(() => {
+    const groups = new Map<Team, MatchSummaryPlayer[]>();
+    for (const entry of teamEntries) groups.set(entry.id, []);
+    for (const player of summary?.players ?? []) {
+      const group = groups.get(player.team);
+      if (group) group.push(player);
+    }
+    return groups;
+  }, [summary, teamEntries]);
 
   if (!summary) return null;
 
@@ -65,12 +92,8 @@ export function MatchSummaryScreen() {
   const resultLabel = localOutcome === 'win' ? 'Victory' : localOutcome === 'loss' ? 'Defeat' : 'Draw';
   const winnerLabel = summary.winningTeam ? `${getFactionLabel(summary.winningTeam)} Wins` : 'Draw';
   const isCaptureTheFlag = summary.gameplayMode === 'capture_the_flag';
+  const isBattleRoyal = summary.gameplayMode === 'battle_royal';
   const showRankChange = summary.matchMode === 'ranked';
-  const showGoldenReward = Boolean(
-    summary.goldenBiomeReward
-    && localPlayer
-    && summary.goldenBiomeReward.eligiblePlayerIds.includes(localPlayer.playerId)
-  );
 
   const handleReturn = () => {
     clearMatchSummary();
@@ -107,11 +130,15 @@ export function MatchSummaryScreen() {
               )}
             </div>
 
-            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border border-white/10 bg-black/35 p-3 backdrop-blur-sm">
-              <TeamScore team="red" score={summary.finalScore.red} />
-              <span className="font-display text-xl text-white/30">VS</span>
-              <TeamScore team="blue" score={summary.finalScore.blue} align="right" />
-            </div>
+            {isBattleRoyal ? (
+              <BattleRoyalSummaryHeader summary={summary} />
+            ) : (
+              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border border-white/10 bg-black/35 p-3 backdrop-blur-sm">
+                <TeamScore team="red" score={summary.finalScore.red} />
+                <span className="font-display text-xl text-white/30">VS</span>
+                <TeamScore team="blue" score={summary.finalScore.blue} align="right" />
+              </div>
+            )}
           </header>
 
           <section className="grid gap-5 lg:grid-cols-[20rem_minmax(0,1fr)]">
@@ -134,18 +161,6 @@ export function MatchSummaryScreen() {
                 />
               )}
 
-              {showGoldenReward && summary.goldenBiomeReward && (
-                <section className="border border-amber-200/35 bg-amber-300/10 p-4 text-amber-50 backdrop-blur-sm">
-                  <p className="font-body text-xs uppercase text-amber-100/70">Golden Biome Reward</p>
-                  <p className="mt-1 font-display text-3xl leading-none">
-                    {formatUsdCents(summary.goldenBiomeReward.rewardUsdCents)} SOL
-                  </p>
-                  <p className="mt-2 font-body text-sm text-amber-50/65">
-                    Reward settlement is pending treasury confirmation.
-                  </p>
-                </section>
-              )}
-
               <LocalStatsPanel player={localPlayer} isCaptureTheFlag={isCaptureTheFlag} />
 
               <button
@@ -157,9 +172,16 @@ export function MatchSummaryScreen() {
               </button>
             </div>
 
-            <div className="min-w-0 space-y-5">
-              <TeamScoreboard team="red" players={playersByTeam.red} localPlayerId={playerId} isCaptureTheFlag={isCaptureTheFlag} />
-              <TeamScoreboard team="blue" players={playersByTeam.blue} localPlayerId={playerId} isCaptureTheFlag={isCaptureTheFlag} />
+            <div className={isBattleRoyal ? 'grid min-w-0 gap-5 xl:grid-cols-2' : 'min-w-0 space-y-5'}>
+              {teamEntries.map((entry) => (
+                <TeamScoreboard
+                  key={entry.id}
+                  team={entry.id}
+                  players={playersByTeam.get(entry.id) ?? []}
+                  localPlayerId={playerId}
+                  isCaptureTheFlag={isCaptureTheFlag}
+                />
+              ))}
             </div>
           </section>
         </div>
@@ -169,13 +191,33 @@ export function MatchSummaryScreen() {
 }
 
 function TeamScore({ team, score, align = 'left' }: { team: Team; score: number; align?: 'left' | 'right' }) {
-  const faction = FACTIONS[team];
+  const faction = getTeamPresentation(team);
 
   return (
     <div className={`min-w-0 ${align === 'right' ? 'text-right' : ''}`}>
       <p className="font-body text-xs uppercase text-white/35">{faction.name}</p>
       <p className="mt-1 font-display text-5xl leading-none" style={{ color: faction.primaryColor }}>
         {score}
+      </p>
+    </div>
+  );
+}
+
+function BattleRoyalSummaryHeader({ summary }: { summary: GameEndEvent }) {
+  const aliveTeams = new Set(
+    summary.players
+      .filter((player) => player.outcome === 'win' || player.team === summary.winningTeam)
+      .map((player) => player.team)
+  );
+
+  return (
+    <div className="border border-white/10 bg-black/35 p-3 backdrop-blur-sm">
+      <p className="font-body text-xs uppercase text-white/35">Battle Royal Result</p>
+      <p className="mt-1 truncate font-display text-3xl leading-none text-white">
+        {summary.winningTeam ? getFactionLabel(summary.winningTeam) : 'No Contest'}
+      </p>
+      <p className="mt-2 font-body text-sm text-white/45">
+        {summary.players.length} players - {aliveTeams.size || 0} final team
       </p>
     </div>
   );
@@ -281,7 +323,7 @@ function TeamScoreboard({
   localPlayerId: string | null;
   isCaptureTheFlag: boolean;
 }) {
-  const faction = FACTIONS[team];
+  const faction = getTeamPresentation(team);
   const objectiveLabel = isCaptureTheFlag ? 'Caps' : 'Elims';
 
   return (
@@ -335,7 +377,7 @@ function ScoreboardRow({
 }: {
   player: MatchSummaryPlayer;
   isLocal: boolean;
-  faction: typeof FACTIONS.red | typeof FACTIONS.blue;
+  faction: TeamPresentation;
   isCaptureTheFlag: boolean;
 }) {
   const objectiveValue = isCaptureTheFlag ? player.stats.flagCaptures : player.stats.kills;

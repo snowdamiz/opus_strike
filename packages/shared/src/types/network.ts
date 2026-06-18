@@ -8,7 +8,7 @@ import type { VoiceTokenRequest, VoiceTokenResponse, VoiceTeamChangedMessage } f
 import type { PublicRankSnapshot } from '../progression/ranking.js';
 import type { MatchMode } from './matchMode.js';
 import type { GameplayMode } from './gameplayMode.js';
-import type { MapPowerupKind, VoxelMapSizeId, VoxelMapTheme } from '../maps/procedural/types.js';
+import type { MapPowerupKind, MapProfileId, VoxelMapSizeId, VoxelMapTheme } from '../maps/procedural/types.js';
 
 // Client -> Server Messages
 export type ClientMessage = 
@@ -214,6 +214,7 @@ export interface MatchStartGateMessage {
   mapSeed: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
+  mapProfileId?: MapProfileId | null;
   position: Vec3;
   movementEpoch: number;
   ackSeq: number;
@@ -227,7 +228,6 @@ export interface MatchCancelledMessage {
   requiredHumanPlayers: number;
   connectedHumanPlayers: number;
   deadlineAt: number;
-  refundedWager: boolean;
   serverTime: number;
   blockedPlayerId?: string;
   blockedPlayerName?: string;
@@ -256,6 +256,20 @@ export interface PlayerPingsMessage {
   players: PlayerPingSnapshot[];
 }
 
+export interface SafeZoneSnapshot {
+  enabled: boolean;
+  phaseIndex: number;
+  center: Vec3;
+  radius: number;
+  nextCenter: Vec3;
+  nextRadius: number;
+  shrinkStartsAt: number;
+  phaseEndsAt: number;
+  damagePerSecond: number;
+  warning: boolean;
+  shrinking: boolean;
+}
+
 export interface MatchSnapshotMessage {
   tick: number;
   serverTime: number;
@@ -264,6 +278,7 @@ export interface MatchSnapshotMessage {
   mapSeed: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
+  mapProfileId?: MapProfileId | null;
   redScore: number;
   blueScore: number;
   redFlag: FlagSync;
@@ -271,6 +286,7 @@ export interface MatchSnapshotMessage {
   roundTimeRemaining: number;
   phaseEndTime: number | null;
   gameClockFrozen?: boolean;
+  safeZone?: SafeZoneSnapshot | null;
 }
 
 export interface PowerupPickupRuntimeState {
@@ -354,7 +370,6 @@ export interface MatchIntegritySummary {
   status: 'clean' | 'suspicious' | 'compromised' | 'no_contest';
   reviewRequired: boolean;
   rankedOutcome: 'normal' | 'review_required';
-  wagerOutcome: 'normal' | 'review_required';
   message: string;
 }
 

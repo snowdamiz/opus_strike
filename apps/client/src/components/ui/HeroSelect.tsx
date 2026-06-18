@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { HERO_DEFINITIONS, ALL_HERO_IDS, getPickedTeamHeroIds } from '@voxel-strike/shared';
+import { HERO_DEFINITIONS, ALL_HERO_IDS, getPickedTeamHeroIds, isTeamId } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
@@ -44,7 +44,7 @@ export function HeroSelect() {
   }, [localIsReady]);
 
   const lockedHeroIds = useMemo(() => {
-    if (isPracticeMode || !localPlayerId || (localTeam !== 'red' && localTeam !== 'blue')) {
+    if (isPracticeMode || !localPlayerId || !isTeamId(localTeam)) {
       return EMPTY_HERO_LOCKS;
     }
 

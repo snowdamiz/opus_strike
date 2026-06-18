@@ -2,20 +2,23 @@ import { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
-import { useWallet } from '../../contexts/WalletContext';
 import { useUISounds } from '../../hooks/useUiAudio';
 import {
   ALL_HERO_IDS,
   DEFAULT_GAME_CONFIG,
   HERO_DEFINITIONS,
   getGameplayModeLabel,
+  getGameplayModeRules,
   getPickedTeamHeroIds,
+  getTeamCatalogForGameplayMode,
+  getTeamCatalogEntry,
+  isTeamIdForGameplayMode,
   type BotDifficulty,
   type HeroId,
+  type Team,
 } from '@voxel-strike/shared';
 import type { LobbyPlayer } from '../../store/types';
-import { FACTIONS, HERO_COLORS } from '../../styles/colorTokens';
-import { deserializeWagerPaymentTransaction, lamportsToSolDisplay } from '../../utils/wagerPayments';
+import { FACTIONS, HERO_COLORS, TEAM_FALLBACK_COLORS } from '../../styles/colorTokens';
 import { RankIcon, getRankForStats } from './RankBadge';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
 
@@ -38,6 +41,15 @@ function VoidIcon({ className, style }: { className?: string; style?: React.CSSP
       <circle cx="12" cy="12" r="4" fill="currentColor" />
       <path d="M12 2C6.48 2 2 6.48 2 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray="4 2" />
       <path d="M22 12C22 17.52 17.52 22 12 22" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray="4 2" />
+    </svg>
+  );
+}
+
+function SquadIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
+  return (
+    <svg className={className} style={style} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M8 10a3 3 0 100-6 3 3 0 000 6zM16 10a3 3 0 100-6 3 3 0 000 6z" fill="currentColor" opacity="0.82" />
+      <path d="M4 20a4 4 0 018 0M12 20a4 4 0 018 0" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   );
 }
@@ -71,17 +83,33 @@ function InvitePlayerIcon({ className }: { className?: string }) {
   );
 }
 
-function ObserverIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M2.25 12s3.75-6.75 9.75-6.75S21.75 12 21.75 12 18 18.75 12 18.75 2.25 12 2.25 12z" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 15.25A3.25 3.25 0 1012 8.75a3.25 3.25 0 000 6.5z" />
-    </svg>
-  );
-}
-
-type LobbyTeam = 'red' | 'blue';
+type LobbyTeam = Team;
 type LobbyBotHero = HeroId | '';
+
+type LobbyFaction = {
+  id: Team;
+  name: string;
+  fullName: string;
+  primaryColor: string;
+  secondaryColor: string;
+  glowColor: string;
+  bgColor: string;
+};
+
+function factionFromCatalog(team: Team): LobbyFaction {
+  if (team === 'red') return FACTIONS.red;
+  if (team === 'blue') return FACTIONS.blue;
+  const entry = getTeamCatalogEntry(team);
+  return {
+    id: team,
+    name: entry?.compactLabel ?? team.toUpperCase(),
+    fullName: entry?.label ?? team,
+    primaryColor: entry?.color ?? TEAM_FALLBACK_COLORS.primaryColor,
+    secondaryColor: entry?.accentColor ?? TEAM_FALLBACK_COLORS.secondaryColor,
+    glowColor: entry ? `${entry.color}66` : TEAM_FALLBACK_COLORS.glowColor,
+    bgColor: entry ? `${entry.color}1a` : TEAM_FALLBACK_COLORS.bgColor,
+  };
+}
 
 type InlinePickerOption<T extends string> = {
   value: T;
@@ -108,6 +136,7 @@ const BOT_HERO_OPTIONS: readonly InlinePickerOption<LobbyBotHero>[] = [
     label: HERO_DEFINITIONS[heroId].name,
   })),
 ];
+const EMPTY_HERO_LOCKS = new Set<HeroId>();
 
 function isHeroId(value: string | undefined): value is HeroId {
   return ALL_HERO_IDS.includes(value as HeroId);
@@ -209,14 +238,12 @@ export function Lobby() {
     currentLobbyId,
     currentLobbyName, 
     gameplayMode,
-    currentLobbyWager,
     lobbyPlayers, 
     isLobbyHost,
-    lobbyObserversEnabled,
-    maxLobbyObservers,
     lobbyError,
     isLoading,
     userStats,
+    userId,
     matchmakingStatus,
     setAppPhase,
     clearMapVote,
@@ -228,14 +255,12 @@ export function Lobby() {
       currentLobbyId: state.currentLobbyId,
       currentLobbyName: state.currentLobbyName,
       gameplayMode: state.gameplayMode,
-      currentLobbyWager: state.currentLobbyWager,
       lobbyPlayers: state.lobbyPlayers,
       isLobbyHost: state.isLobbyHost,
-      lobbyObserversEnabled: state.lobbyObserversEnabled,
-      maxLobbyObservers: state.maxLobbyObservers,
       lobbyError: state.lobbyError,
       isLoading: state.isLoading,
       userStats: state.userStats,
+      userId: state.userId,
       matchmakingStatus: state.matchmakingStatus,
       setAppPhase: state.setAppPhase,
       clearMapVote: state.clearMapVote,
@@ -246,7 +271,6 @@ export function Lobby() {
     leaveLobby,
     setLobbyReady,
     setLobbyTeam,
-    setLobbyObserver,
     addLobbyBot,
     removeLobbyBot,
     updateLobbyBotTeam,
@@ -254,125 +278,78 @@ export function Lobby() {
     updateLobbyBotHero,
     startGame,
     kickPlayer,
-    createWagerPaymentIntent,
-    createWagerPaymentTransaction,
-    submitWagerSignedPaymentTransaction,
   } = useNetwork();
-  const {
-    walletAddress,
-    isAuthenticated,
-    isConnected: isWalletConnected,
-    connect: connectWallet,
-    signTransaction,
-  } = useWallet();
   const { playButtonClick } = useUISounds();
-  const [paymentError, setPaymentError] = useState<string | null>(null);
-  const [isPaying, setIsPaying] = useState(false);
   const [showSocial, setShowSocial] = useState(false);
   const socialBadgeCount = useSocialBadgeCount();
+  const isAuthenticated = Boolean(userId);
 
   const currentPlayer = playerId ? lobbyPlayers.get(playerId) : null;
-  const isLocalObserver = currentPlayer?.isObserver === true;
-  const currentTeam = isLocalObserver ? '' : currentPlayer?.team;
-  const hasChosenTeam = currentTeam === 'red' || currentTeam === 'blue';
+  const currentTeam = currentPlayer?.team;
+  const teamEntries = useMemo(() => getTeamCatalogForGameplayMode(gameplayMode), [gameplayMode]);
+  const gameplayRules = getGameplayModeRules(gameplayMode);
+  const isBattleRoyal = gameplayMode === 'battle_royal';
+  const hasChosenTeam = isTeamIdForGameplayMode(currentTeam, gameplayMode);
   const isReady = currentPlayer?.isReady || false;
   const currentRank = currentPlayer?.rank ?? getRankForStats(userStats);
   const {
     combatPlayers,
-    observerPlayers,
     readyCount,
     assignedCount,
-    unpaidHumanPlayers,
-    paidRedHumans,
-    paidBlueHumans,
     solarPlayers,
     voidPlayers,
+    teamPlayers,
     pickedHeroIdsByTeam,
+    pickedHeroIdsByTeamMap,
   } = useMemo(() => {
     const nextCombatPlayers: LobbyPlayer[] = [];
-    const nextObserverPlayers: LobbyPlayer[] = [];
-    const nextUnpaidHumanPlayers: LobbyPlayer[] = [];
-    const nextSolarPlayers: LobbyPlayer[] = [];
-    const nextVoidPlayers: LobbyPlayer[] = [];
+    const nextTeamPlayers = new Map<Team, LobbyPlayer[]>(teamEntries.map((entry) => [entry.id, []]));
     let nextReadyCount = 0;
     let nextAssignedCount = 0;
-    let nextPaidRedHumans = 0;
-    let nextPaidBlueHumans = 0;
 
     for (const player of lobbyPlayers.values()) {
-      if (player.isObserver) {
-        nextObserverPlayers.push(player);
-        continue;
-      }
-
       nextCombatPlayers.push(player);
 
       if (player.isReady || player.isHost) {
         nextReadyCount += 1;
       }
 
-      const isAssigned = player.team === 'red' || player.team === 'blue';
+      const teamGroup = nextTeamPlayers.get(player.team);
+      const isAssigned = Boolean(teamGroup);
       if (!isAssigned) {
         continue;
       }
 
       nextAssignedCount += 1;
-
-      if (player.team === 'red') {
-        nextSolarPlayers.push(player);
-      } else {
-        nextVoidPlayers.push(player);
-      }
-
-      if (player.isBot) {
-        continue;
-      }
-
-      const isPaid = player.paymentStatus === 'credited' || player.paymentStatus === 'settled';
-      if (!isPaid) {
-        nextUnpaidHumanPlayers.push(player);
-      } else if (player.team === 'red') {
-        nextPaidRedHumans += 1;
-      } else {
-        nextPaidBlueHumans += 1;
-      }
+      teamGroup?.push(player);
+    }
+    const nextSolarPlayers = nextTeamPlayers.get('red') ?? [];
+    const nextVoidPlayers = nextTeamPlayers.get('blue') ?? [];
+    const nextPickedHeroIdsByTeamMap = new Map<Team, ReadonlySet<HeroId>>();
+    for (const [team, players] of nextTeamPlayers) {
+      nextPickedHeroIdsByTeamMap.set(team, getPickedTeamHeroIds(players, team));
     }
 
     return {
       combatPlayers: nextCombatPlayers,
-      observerPlayers: nextObserverPlayers,
       readyCount: nextReadyCount,
       assignedCount: nextAssignedCount,
-      unpaidHumanPlayers: nextUnpaidHumanPlayers,
-      paidRedHumans: nextPaidRedHumans,
-      paidBlueHumans: nextPaidBlueHumans,
       solarPlayers: nextSolarPlayers,
       voidPlayers: nextVoidPlayers,
+      teamPlayers: nextTeamPlayers,
       pickedHeroIdsByTeam: {
-        red: getPickedTeamHeroIds(nextCombatPlayers, 'red'),
-        blue: getPickedTeamHeroIds(nextCombatPlayers, 'blue'),
+        red: getPickedTeamHeroIds(nextSolarPlayers, 'red'),
+        blue: getPickedTeamHeroIds(nextVoidPlayers, 'blue'),
       },
+      pickedHeroIdsByTeamMap: nextPickedHeroIdsByTeamMap,
     };
-  }, [lobbyPlayers]);
-  const observerSlotCapacity = Math.max(0, maxLobbyObservers);
-  const observerSlotAvailable = lobbyObserversEnabled && observerPlayers.length < observerSlotCapacity;
-  const wagerEnabled = currentLobbyWager.enabled;
-  const currentMatchMode = matchmakingStatus.matchMode ?? currentLobbyWager.matchMode ?? null;
-  const botsAllowed = !wagerEnabled && currentMatchMode === 'custom';
-  const invitesAllowed = currentMatchMode === 'custom' || currentMatchMode === 'custom_wager';
-  const localPaymentStatus = currentPlayer?.paymentStatus || '';
-  const localPlayerPaid = localPaymentStatus === 'credited' || localPaymentStatus === 'settled';
-  const localPaymentConfirming = localPaymentStatus === 'intent_created' || localPaymentStatus === 'submitted' || localPaymentStatus === 'confirmed';
-  const localPaymentRefunding = localPaymentStatus === 'refunding';
-  const showPayEntry = wagerEnabled
-    && Boolean(currentPlayer)
-    && !currentPlayer?.isBot
-    && !isLocalObserver
-    && !localPlayerPaid
-    && !localPaymentRefunding;
+  }, [lobbyPlayers, teamEntries]);
+  const currentMatchMode = matchmakingStatus.matchMode ?? null;
+  const botsAllowed = currentMatchMode === 'custom';
+  const invitesAllowed = currentMatchMode === 'custom';
 
   const handleToggleReady = () => {
-    if (!hasChosenTeam || isLocalObserver) return;
+    if (!hasChosenTeam) return;
     setLobbyError(null);
     setLobbyReady(!isReady);
   };
@@ -380,11 +357,6 @@ export function Lobby() {
     if (currentTeam === team) return;
     setLobbyError(null);
     setLobbyTeam(team);
-  };
-  const handleObserverToggle = () => {
-    if (!lobbyObserversEnabled) return;
-    setLobbyError(null);
-    setLobbyObserver(!isLocalObserver);
   };
   const handleStartGame = () => {
     setLobbyError(null);
@@ -396,18 +368,19 @@ export function Lobby() {
 
   const allPlayersAssigned = combatPlayers.length > 0 && assignedCount === combatPlayers.length;
   const isProductionCustomLobby = import.meta.env.PROD
-    && (currentMatchMode === 'custom' || currentMatchMode === 'custom_wager');
-  const minimumParticipantsToStart = isProductionCustomLobby ? 2 : 1;
+    && currentMatchMode === 'custom';
+  const minimumParticipantsToStart = isBattleRoyal
+    ? gameplayRules.minPlayers
+    : isProductionCustomLobby
+      ? gameplayRules.minPlayers
+      : 1;
   const hasMinimumParticipants = combatPlayers.length >= minimumParticipantsToStart;
-  const wagerStartReady = !wagerEnabled || (unpaidHumanPlayers.length === 0 && paidRedHumans > 0 && paidBlueHumans > 0);
-  const canStart = isLobbyHost && hasMinimumParticipants && allPlayersAssigned && wagerStartReady && (combatPlayers.length === 1 || readyCount === combatPlayers.length);
+  const canStart = isLobbyHost && hasMinimumParticipants && allPlayersAssigned && (combatPlayers.length === 1 || readyCount === combatPlayers.length);
 
-  const currentFaction = currentPlayer?.team === 'red' ? FACTIONS.red : currentPlayer?.team === 'blue' ? FACTIONS.blue : null;
-  const currentRoleLabel = isLocalObserver ? 'Observer' : currentFaction?.fullName || 'Unassigned';
+  const currentFaction = currentPlayer?.team ? factionFromCatalog(currentPlayer.team) : null;
+  const currentRoleLabel = currentFaction?.fullName || 'Unassigned';
   const gameplayModeLabel = getGameplayModeLabel(gameplayMode);
-  const currentRoleColor = isLocalObserver
-    ? 'rgb(var(--color-accent-secondary))'
-    : currentFaction?.primaryColor || 'rgb(var(--color-strike-border) / 0.4)';
+  const currentRoleColor = currentFaction?.primaryColor || 'rgb(var(--color-strike-border) / 0.4)';
 
   const handleBack = () => {
     leaveLobby();
@@ -438,32 +411,6 @@ export function Lobby() {
 
   const handleBotHeroChange = (botId: string, heroId: LobbyBotHero) => {
     updateLobbyBotHero(botId, heroId);
-  };
-
-  const handlePayEntry = async () => {
-    if (!currentLobbyId || !currentPlayer || !wagerEnabled || isPaying) return;
-    setPaymentError(null);
-    setIsPaying(true);
-
-    try {
-      let payerWallet = walletAddress;
-      if (!isWalletConnected || !walletAddress) {
-        payerWallet = await connectWallet();
-      }
-      if (!payerWallet) {
-        throw new Error('Connect Phantom before paying');
-      }
-
-      const intent = await createWagerPaymentIntent(currentLobbyId, payerWallet, currentPlayer.id);
-      const paymentTransaction = await createWagerPaymentTransaction(intent.intentId);
-      const transaction = await deserializeWagerPaymentTransaction(paymentTransaction.transactionBase64);
-      const signedTransactionBase64 = await signTransaction(transaction);
-      await submitWagerSignedPaymentTransaction(intent.intentId, signedTransactionBase64);
-    } catch (err) {
-      setPaymentError(err instanceof Error ? err.message : 'Payment failed');
-    } finally {
-      setIsPaying(false);
-    }
   };
 
   return (
@@ -549,19 +496,6 @@ export function Lobby() {
                 }}
               />
             )}
-            {wagerEnabled && (
-              <div className="hidden sm:flex items-center gap-3 rounded-xl border border-cyan-300/15 bg-cyan-500/[0.055] px-3 py-2">
-                <div>
-                  <p className="font-body text-[9px] uppercase tracking-widest text-cyan-100/45">Entry</p>
-                  <p className="font-display text-sm text-cyan-100">{lamportsToSolDisplay(currentLobbyWager.coverChargeLamports)} SOL</p>
-                </div>
-                <div className="h-7 w-px bg-cyan-100/10" />
-                <div>
-                  <p className="font-body text-[9px] uppercase tracking-widest text-cyan-100/45">Pot</p>
-                  <p className="font-display text-sm text-cyan-100">{lamportsToSolDisplay(currentLobbyWager.potLamports)} SOL</p>
-                </div>
-              </div>
-            )}
             <div 
               className="flex items-center gap-3"
             >
@@ -579,80 +513,88 @@ export function Lobby() {
 
       {/* Main Content */}
       <div className="team-select-main menu-main menu-main-play">
-        <div className="team-select-layout lobby-layout menu-content-wide">
-          <div className="lobby-team-header-row">
-            <FactionHeader
-              faction={FACTIONS.red}
-              players={solarPlayers}
-              isSelected={currentTeam === 'red'}
-            />
-
-            {lobbyObserversEnabled ? (
-              <ObserverSlot
-                observers={observerPlayers}
-                playerId={playerId}
-                isLocalObserver={isLocalObserver}
-                canJoin={observerSlotAvailable || isLocalObserver}
-                capacity={observerSlotCapacity}
-                onToggle={handleObserverToggle}
+        {isBattleRoyal ? (
+          <BattleRoyalLobbyGrid
+            teamEntries={teamEntries}
+            teamPlayers={teamPlayers}
+            currentTeam={currentTeam}
+            playerId={playerId}
+            isLobbyHost={isLobbyHost}
+            invitesAllowed={invitesAllowed}
+            maxPlayersPerTeam={gameplayRules.maxTeamSize}
+            combatPlayerCount={combatPlayers.length}
+            maxCombatPlayers={gameplayRules.maxPlayers}
+            onTeamChange={handleTeamChange}
+            onInvite={handleInvitePlayer}
+            onKick={handleKick}
+            onRemoveBot={handleRemoveBot}
+            pickedHeroIdsByTeam={pickedHeroIdsByTeamMap}
+          />
+        ) : (
+          <div className="team-select-layout lobby-layout menu-content-wide">
+            <div className="lobby-team-header-row">
+              <FactionHeader
+                faction={FACTIONS.red}
+                players={solarPlayers}
+                isSelected={currentTeam === 'red'}
               />
-            ) : (
+
               <div aria-hidden="true" />
-            )}
 
-            <FactionHeader
-              faction={FACTIONS.blue}
-              players={voidPlayers}
-              isSelected={currentTeam === 'blue'}
-              reverse
-            />
-          </div>
+              <FactionHeader
+                faction={FACTIONS.blue}
+                players={voidPlayers}
+                isSelected={currentTeam === 'blue'}
+                reverse
+              />
+            </div>
 
-          {/* Solar Vanguard Panel */}
-          <div className="lobby-team-panel">
-            <FactionPanel
-              faction={FACTIONS.red}
-              players={solarPlayers}
-              playerId={playerId}
-              isSelected={currentTeam === 'red'}
-              isLobbyHost={isLobbyHost}
-              botsAllowed={botsAllowed}
-              invitesAllowed={invitesAllowed}
-              onSelect={() => handleTeamChange('red')}
-              onAddBot={handleAddBot}
-              onInvite={handleInvitePlayer}
-              onKick={handleKick}
-              onRemoveBot={handleRemoveBot}
-              onBotTeamChange={handleBotTeamChange}
-              onBotDifficultyChange={handleBotDifficultyChange}
-              onBotHeroChange={handleBotHeroChange}
-              pickedHeroIds={pickedHeroIdsByTeam.red}
-            />
-          </div>
+            {/* Solar Vanguard Panel */}
+            <div className="lobby-team-panel">
+              <FactionPanel
+                faction={FACTIONS.red}
+                players={solarPlayers}
+                playerId={playerId}
+                isSelected={currentTeam === 'red'}
+                isLobbyHost={isLobbyHost}
+                botsAllowed={botsAllowed}
+                invitesAllowed={invitesAllowed}
+                onSelect={() => handleTeamChange('red')}
+                onAddBot={handleAddBot}
+                onInvite={handleInvitePlayer}
+                onKick={handleKick}
+                onRemoveBot={handleRemoveBot}
+                onBotTeamChange={handleBotTeamChange}
+                onBotDifficultyChange={handleBotDifficultyChange}
+                onBotHeroChange={handleBotHeroChange}
+                pickedHeroIds={pickedHeroIdsByTeam.red}
+              />
+            </div>
 
-          {/* Void Legion Panel */}
-          <div className="lobby-team-panel">
-            <FactionPanel
-              faction={FACTIONS.blue}
-              players={voidPlayers}
-              playerId={playerId}
-              isSelected={currentTeam === 'blue'}
-              isLobbyHost={isLobbyHost}
-              botsAllowed={botsAllowed}
-              invitesAllowed={invitesAllowed}
-              onSelect={() => handleTeamChange('blue')}
-              onAddBot={handleAddBot}
-              onInvite={handleInvitePlayer}
-              onKick={handleKick}
-              onRemoveBot={handleRemoveBot}
-              onBotTeamChange={handleBotTeamChange}
-              onBotDifficultyChange={handleBotDifficultyChange}
-              onBotHeroChange={handleBotHeroChange}
-              pickedHeroIds={pickedHeroIdsByTeam.blue}
-              reverse
-            />
+            {/* Void Legion Panel */}
+            <div className="lobby-team-panel">
+              <FactionPanel
+                faction={FACTIONS.blue}
+                players={voidPlayers}
+                playerId={playerId}
+                isSelected={currentTeam === 'blue'}
+                isLobbyHost={isLobbyHost}
+                botsAllowed={botsAllowed}
+                invitesAllowed={invitesAllowed}
+                onSelect={() => handleTeamChange('blue')}
+                onAddBot={handleAddBot}
+                onInvite={handleInvitePlayer}
+                onKick={handleKick}
+                onRemoveBot={handleRemoveBot}
+                onBotTeamChange={handleBotTeamChange}
+                onBotDifficultyChange={handleBotDifficultyChange}
+                onBotHeroChange={handleBotHeroChange}
+                pickedHeroIds={pickedHeroIdsByTeam.blue}
+                reverse
+              />
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Bottom Status Bar */}
@@ -667,44 +609,33 @@ export function Lobby() {
             {lobbyError}
           </div>
         )}
-        {paymentError && (
-          <div className="mx-auto mb-2 max-w-xl rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-center text-sm text-red-200">
-            {paymentError}
-          </div>
-        )}
         <div className="flex items-center justify-center py-2 xl:py-4">
           <div className="flex items-center gap-3 xl:gap-4 px-4 xl:px-5 py-2 rounded-full bg-white/[0.035] border border-white/5 backdrop-blur-xl shadow-2xl shadow-black/30">
-            {/* Solar count */}
-            <div className="flex items-center gap-2.5">
-              <div 
-                className="w-7 h-7 rounded-lg flex items-center justify-center"
-                style={{ background: `${FACTIONS.red.primaryColor}20` }}
-              >
-                <SolarIcon className="w-4 h-4" style={{ color: FACTIONS.red.primaryColor }} />
+            {isBattleRoyal ? (
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-orange-500/15">
+                  <SquadIcon className="h-4 w-4 text-orange-300" />
+                </div>
+                <div>
+                  <span className="font-display text-sm text-orange-200">{combatPlayers.length}</span>
+                  <span className="ml-1.5 font-body text-[9px] text-white/30">PLAYERS</span>
+                </div>
               </div>
-              <div>
-                <span className="font-display text-sm" style={{ color: FACTIONS.red.primaryColor }}>{solarPlayers.length}</span>
-                <span className="text-[9px] text-white/30 font-body ml-1.5">SOLAR</span>
+            ) : (
+              <div className="flex items-center gap-2.5">
+                <div
+                  className="w-7 h-7 rounded-lg flex items-center justify-center"
+                  style={{ background: `${FACTIONS.red.primaryColor}20` }}
+                >
+                  <SolarIcon className="w-4 h-4" style={{ color: FACTIONS.red.primaryColor }} />
+                </div>
+                <div>
+                  <span className="font-display text-sm" style={{ color: FACTIONS.red.primaryColor }}>{solarPlayers.length}</span>
+                  <span className="text-[9px] text-white/30 font-body ml-1.5">SOLAR</span>
+                </div>
               </div>
-            </div>
-
-            {wagerEnabled && (
-              <button
-                type="button"
-                onClick={() => { playButtonClick(); handlePayEntry(); }}
-                disabled={!showPayEntry || localPaymentConfirming || isPaying}
-                className={`h-10 min-w-[8.5rem] rounded-full px-4 font-display text-xs uppercase tracking-wide transition-all ${
-                  localPlayerPaid
-                    ? 'bg-cyan-500/15 text-cyan-100 border border-cyan-300/20'
-                    : showPayEntry && !localPaymentConfirming
-                      ? 'text-white bg-cyan-500 hover:bg-cyan-400 active:scale-[0.98]'
-                      : 'bg-white/[0.055] text-white/30 cursor-not-allowed'
-                }`}
-              >
-                {isPaying || localPaymentConfirming ? 'Confirming' : localPlayerPaid ? 'Paid' : 'Pay Entry'}
-              </button>
             )}
-            
+
             {isLobbyHost ? (
               <button
                 type="button"
@@ -736,13 +667,6 @@ export function Lobby() {
                       </svg>
                       Awaiting Teams
                     </>
-                  ) : !wagerStartReady ? (
-                    <>
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v18m5-14H9.5a3.5 3.5 0 000 7H14a3.5 3.5 0 010 7H6" />
-                      </svg>
-                      Awaiting Payments
-                    </>
                   ) : !canStart ? (
                     <>
                       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -764,15 +688,13 @@ export function Lobby() {
               <button
                 type="button"
                 onClick={() => { playButtonClick(); handleToggleReady(); }}
-                disabled={!hasChosenTeam || isLoading || isLocalObserver}
+                disabled={!hasChosenTeam || isLoading}
                 className={`h-10 min-w-[12.5rem] rounded-full px-5 font-display text-xs uppercase tracking-wide transition-all ${
-                  isLocalObserver
-                    ? 'bg-sky-500/15 text-sky-100 border border-sky-300/20 cursor-default'
-                    : hasChosenTeam
+                  hasChosenTeam
                     ? 'text-white hover:brightness-110 active:scale-[0.98]'
                     : 'bg-white/[0.055] text-white/30 cursor-not-allowed'
                 }`}
-                style={!isLocalObserver && hasChosenTeam ? {
+                style={hasChosenTeam ? {
                   background: isReady
                     ? 'linear-gradient(135deg, rgb(var(--color-ui-success)) 0%, rgb(var(--color-ui-success-deep)) 100%)'
                     : 'linear-gradient(135deg, rgb(var(--color-accent-primary)) 0%, rgb(var(--color-accent-primary-deep)) 100%)',
@@ -782,12 +704,7 @@ export function Lobby() {
                 } : undefined}
               >
                 <span className="flex items-center justify-center gap-2">
-                  {isLocalObserver ? (
-                    <>
-                      <ObserverIcon className="h-4 w-4" />
-                      Observer Mode
-                    </>
-                  ) : !hasChosenTeam ? (
+                  {!hasChosenTeam ? (
                     <>
                       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l7 4v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V7l7-4z" />
@@ -813,19 +730,32 @@ export function Lobby() {
               </button>
             )}
             
-            {/* Void count */}
-            <div className="flex items-center gap-2.5">
-              <div>
-                <span className="text-[9px] text-white/30 font-body mr-1.5">VOID</span>
-                <span className="font-display text-sm" style={{ color: FACTIONS.blue.primaryColor }}>{voidPlayers.length}</span>
+            {isBattleRoyal ? (
+              <div className="flex items-center gap-2.5">
+                <div>
+                  <span className="mr-1.5 font-body text-[9px] text-white/30">SQUADS</span>
+                  <span className="font-display text-sm text-cyan-200">
+                    {Array.from(teamPlayers.values()).filter((players) => players.length > 0).length}/{teamEntries.length}
+                  </span>
+                </div>
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-500/15">
+                  <SquadIcon className="h-4 w-4 text-cyan-200" />
+                </div>
               </div>
-              <div 
-                className="w-7 h-7 rounded-lg flex items-center justify-center"
-                style={{ background: `${FACTIONS.blue.primaryColor}20` }}
-              >
-                <VoidIcon className="w-4 h-4" style={{ color: FACTIONS.blue.primaryColor }} />
+            ) : (
+              <div className="flex items-center gap-2.5">
+                <div>
+                  <span className="text-[9px] text-white/30 font-body mr-1.5">VOID</span>
+                  <span className="font-display text-sm" style={{ color: FACTIONS.blue.primaryColor }}>{voidPlayers.length}</span>
+                </div>
+                <div
+                  className="w-7 h-7 rounded-lg flex items-center justify-center"
+                  style={{ background: `${FACTIONS.blue.primaryColor}20` }}
+                >
+                  <VoidIcon className="w-4 h-4" style={{ color: FACTIONS.blue.primaryColor }} />
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
@@ -837,68 +767,107 @@ export function Lobby() {
   );
 }
 
-interface ObserverSlotProps {
-  observers: LobbyPlayer[];
+interface BattleRoyalLobbyGridProps {
+  teamEntries: ReturnType<typeof getTeamCatalogForGameplayMode>;
+  teamPlayers: ReadonlyMap<Team, LobbyPlayer[]>;
+  currentTeam: string | undefined;
   playerId: string | null;
-  isLocalObserver: boolean;
-  canJoin: boolean;
-  capacity: number;
-  onToggle: () => void;
+  isLobbyHost: boolean;
+  invitesAllowed: boolean;
+  maxPlayersPerTeam: number;
+  combatPlayerCount: number;
+  maxCombatPlayers: number;
+  onTeamChange: (team: LobbyTeam) => void;
+  onInvite: () => void;
+  onKick: (id: string) => void;
+  onRemoveBot: (id: string) => void;
+  pickedHeroIdsByTeam: ReadonlyMap<Team, ReadonlySet<HeroId>>;
 }
 
-function ObserverSlot({
-  observers,
+function BattleRoyalLobbyGrid({
+  teamEntries,
+  teamPlayers,
+  currentTeam,
   playerId,
-  isLocalObserver,
-  canJoin,
-  capacity,
-  onToggle,
-}: ObserverSlotProps) {
-  const { playButtonClick } = useUISounds();
-  const observer = observers[0] ?? null;
-  const isClaimable = canJoin && !isLocalObserver;
-  const statusLabel = observer ? `${observers.length}/${Math.max(1, capacity)}` : `0/${Math.max(1, capacity)}`;
-
+  isLobbyHost,
+  invitesAllowed,
+  maxPlayersPerTeam,
+  combatPlayerCount,
+  maxCombatPlayers,
+  onTeamChange,
+  onInvite,
+  onKick,
+  onRemoveBot,
+  pickedHeroIdsByTeam,
+}: BattleRoyalLobbyGridProps) {
   return (
-    <div className="lobby-observer-slot">
-      <button
-        type="button"
-        aria-pressed={isLocalObserver}
-        disabled={!isClaimable}
-        onClick={() => {
-          if (!isClaimable) return;
-          playButtonClick();
-          onToggle();
-        }}
-        className={`group lobby-observer-chip ${
-          isLocalObserver
-            ? 'lobby-observer-chip-active'
-            : isClaimable
-              ? 'lobby-observer-chip-claimable'
-              : 'lobby-observer-chip-disabled'
-        }`}
-      >
-        <ObserverIcon className="h-4 w-4 shrink-0" />
-        <span className="truncate">Observer</span>
-        <span className="lobby-observer-count">{statusLabel}</span>
-      </button>
-      <p className="lobby-observer-caption">
-        {isLocalObserver ? 'Watching' : observer ? (observer.id === playerId ? 'You' : observer.name) : 'Ghost slot'}
-      </p>
+    <div className="menu-content-wide flex h-full min-h-0 flex-col gap-3 px-2 py-2 xl:gap-4">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/25 px-3 py-2 backdrop-blur-xl">
+        <div className="min-w-0">
+          <p className="font-body text-[10px] uppercase tracking-widest text-white/35">Battle Royal Squads</p>
+          <p className="mt-1 font-display text-lg leading-none text-white">
+            {combatPlayerCount}/{maxCombatPlayers} combat players
+          </p>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {teamEntries.map((entry) => {
+            const faction = factionFromCatalog(entry.id);
+            const players = teamPlayers.get(entry.id) ?? [];
+            return (
+              <section
+                key={entry.id}
+                className="min-h-[15rem] rounded-lg border border-white/10 bg-black/20 p-2 backdrop-blur-xl"
+                style={{ boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04), 0 12px 28px ${faction.primaryColor}10` }}
+              >
+                <FactionHeader
+                  faction={faction}
+                  players={players}
+                  isSelected={currentTeam === entry.id}
+                  maxPlayers={maxPlayersPerTeam}
+                />
+                <div className="mt-2">
+                  <FactionPanel
+                    faction={faction}
+                    players={players}
+                    playerId={playerId}
+                    isSelected={currentTeam === entry.id}
+                    isLobbyHost={isLobbyHost}
+                    botsAllowed={false}
+                    invitesAllowed={invitesAllowed}
+                    maxPlayers={maxPlayersPerTeam}
+                    onSelect={() => onTeamChange(entry.id)}
+                    onAddBot={() => undefined}
+                    onInvite={onInvite}
+                    onKick={onKick}
+                    onRemoveBot={onRemoveBot}
+                    onBotTeamChange={() => undefined}
+                    onBotDifficultyChange={() => undefined}
+                    onBotHeroChange={() => undefined}
+                    pickedHeroIds={pickedHeroIdsByTeam.get(entry.id) ?? EMPTY_HERO_LOCKS}
+                  />
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
 
 interface FactionHeaderProps {
-  faction: typeof FACTIONS.red | typeof FACTIONS.blue;
+  faction: LobbyFaction;
   players: LobbyPlayer[];
   isSelected: boolean;
+  maxPlayers?: number;
   reverse?: boolean;
 }
 
-function FactionHeader({ faction, players, isSelected, reverse }: FactionHeaderProps) {
-  const maxPlayers = DEFAULT_GAME_CONFIG.teamSize;
-  const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
+function FactionHeader({ faction, players, isSelected, maxPlayers = DEFAULT_GAME_CONFIG.teamSize, reverse }: FactionHeaderProps) {
+  const Icon = faction.id === 'red' ? SolarIcon : faction.id === 'blue' ? VoidIcon : SquadIcon;
 
   return (
     <div className={`lobby-faction-header flex items-center gap-2 xl:gap-3 ${reverse ? 'flex-row-reverse' : ''}`}>
@@ -942,13 +911,14 @@ function FactionHeader({ faction, players, isSelected, reverse }: FactionHeaderP
 
 // Faction Panel Component
 interface FactionPanelProps {
-  faction: typeof FACTIONS.red | typeof FACTIONS.blue;
+  faction: LobbyFaction;
   players: LobbyPlayer[];
   playerId: string | null;
   isSelected: boolean;
   isLobbyHost: boolean;
   botsAllowed: boolean;
   invitesAllowed: boolean;
+  maxPlayers?: number;
   onSelect: () => void;
   onAddBot: (team: LobbyTeam) => void;
   onInvite: () => void;
@@ -969,6 +939,7 @@ function FactionPanel({
   isLobbyHost,
   botsAllowed,
   invitesAllowed,
+  maxPlayers = DEFAULT_GAME_CONFIG.teamSize,
   onSelect,
   onAddBot,
   onInvite,
@@ -980,7 +951,6 @@ function FactionPanel({
   pickedHeroIds,
   reverse,
 }: FactionPanelProps) {
-  const maxPlayers = DEFAULT_GAME_CONFIG.teamSize;
   const emptySlots = Math.max(0, maxPlayers - players.length);
   const canJoin = !isSelected && emptySlots > 0;
   const canAddBot = botsAllowed && isLobbyHost && emptySlots > 0;
@@ -1027,7 +997,7 @@ function FactionPanel({
 }
 
 interface JoinTeamCardProps {
-  faction: typeof FACTIONS.red | typeof FACTIONS.blue;
+  faction: LobbyFaction;
   reverse?: boolean;
   canJoin: boolean;
   canAddBot: boolean;
@@ -1039,7 +1009,7 @@ interface JoinTeamCardProps {
 }
 
 function JoinTeamCard({ faction, reverse, canJoin, canAddBot, canInvite, onJoin, onAddBot, onInvite, compact }: JoinTeamCardProps) {
-  const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
+  const Icon = faction.id === 'red' ? SolarIcon : faction.id === 'blue' ? VoidIcon : SquadIcon;
   const { playButtonClick } = useUISounds();
   const containerClass = compact ? 'h-14 gap-2' : 'h-16 gap-2.5';
   const iconClass = compact ? 'h-10 w-10' : 'h-11 w-11';
@@ -1114,29 +1084,6 @@ function JoinTeamCard({ faction, reverse, canJoin, canAddBot, canInvite, onJoin,
   );
 }
 
-// Player Card Component
-function PaymentBadge({ status }: { status: LobbyPlayer['paymentStatus'] }) {
-  if (!status || status === 'not_required') return null;
-  const paid = status === 'credited' || status === 'settled';
-  const pending = status === 'intent_created' || status === 'submitted' || status === 'confirmed';
-  const refunding = status === 'refunding' || status === 'refunded';
-  const failed = status === 'failed' || status === 'expired';
-  const label = paid ? 'Paid' : pending ? 'Pending' : refunding ? 'Refund' : failed ? 'Due' : 'Due';
-  const className = paid
-    ? 'border-cyan-300/25 bg-cyan-500/15 text-cyan-100'
-    : pending
-      ? 'border-amber-300/25 bg-amber-500/15 text-amber-100'
-      : refunding
-        ? 'border-sky-300/25 bg-sky-500/15 text-sky-100'
-        : 'border-white/10 bg-white/[0.055] text-white/45';
-
-  return (
-    <span className={`flex h-5 shrink-0 items-center rounded-md border px-1.5 font-display text-[8px] uppercase ${className}`}>
-      {label}
-    </span>
-  );
-}
-
 interface PlayerCardProps {
   player: LobbyPlayer;
   isCurrentPlayer: boolean;
@@ -1148,7 +1095,7 @@ interface PlayerCardProps {
   onBotDifficultyChange?: (difficulty: BotDifficulty) => void;
   onBotHeroChange?: (heroId: LobbyBotHero) => void;
   pickedHeroIds: ReadonlySet<HeroId>;
-  faction?: typeof FACTIONS.red | typeof FACTIONS.blue;
+  faction?: LobbyFaction;
   compact?: boolean;
 }
 
@@ -1249,7 +1196,6 @@ function PlayerCard({
               You
             </span>
           )}
-          {!player.isBot && <PaymentBadge status={player.paymentStatus} />}
         </div>
         {showBotControls && (
           <div className={`flex min-w-0 items-center ${compact ? 'mt-0 gap-0.5' : 'mt-0.5 gap-1'}`}>

@@ -11,7 +11,6 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
     id: 'player-a',
     name: 'Player A',
     team: 'red',
-    isObserver: false,
     isBot: false,
     heroId: '',
     botDifficulty: '',
@@ -42,19 +41,6 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
         heroId: '',
         botDifficulty: 'hard',
         botProfileId: 'atlas',
-      }),
-      player({
-        id: 'observer-a',
-        name: 'Observer A',
-        team: '',
-        isObserver: true,
-      }),
-      player({
-        id: 'observer-bot',
-        name: 'Observer Bot',
-        team: '',
-        isObserver: true,
-        isBot: true,
       }),
     ],
     heroIds: ['phantom', 'hookshot'],
@@ -90,37 +76,23 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
       botProfileId: 'atlas',
     },
   ]);
-  assert.deepEqual(assignments.observerAssignments, [
-    {
-      playerId: 'observer-a',
-      playerName: 'Observer A',
-      isBot: false,
-      isObserver: true,
-    },
-  ]);
   assert.deepEqual(assignments.botAssignments, [assignments.playerAssignments[2]]);
   assert.equal(assignments.reservedHumanPlayers, 2);
-  assert.deepEqual(assignments.gameStartingAssignments, [
-    ...assignments.playerAssignments,
-    ...assignments.observerAssignments,
-  ]);
+  assert.deepEqual(assignments.gameStartingAssignments, assignments.playerAssignments);
 }
 
 {
   const assignments = createLobbyGameStartAssignments({
     players: [
       player({ id: 'red-a', name: 'Red A', team: 'red', heroId: 'phantom' }),
-      player({ id: 'observer-a', name: 'Observer A', team: '', isObserver: true }),
     ],
   });
   const ticketInputs = buildGameEntryTicketInputs({
     lobbyId: 'lobby-a',
     gameRoomId: 'game-a',
     playerAssignments: assignments.playerAssignments,
-    observerAssignments: assignments.observerAssignments,
     authContexts: new Map([
       ['red-a', { userId: 'user-red', displayName: '' }],
-      ['observer-a', { userId: 'user-observer', displayName: 'Spectator' }],
     ]),
   });
 
@@ -133,14 +105,7 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
     assignedTeam: 'red',
     selectedHero: 'phantom',
   });
-  assert.deepEqual(ticketInputs.get('observer-a'), {
-    lobbyId: 'lobby-a',
-    gameRoomId: 'game-a',
-    lobbyPlayerId: 'observer-a',
-    userId: 'user-observer',
-    displayName: 'Spectator',
-    observer: true,
-  });
+  assert.equal(ticketInputs.size, 1);
 }
 
 {
@@ -153,7 +118,6 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
       lobbyId: 'lobby-a',
       gameRoomId: 'game-a',
       playerAssignments: assignments.playerAssignments,
-      observerAssignments: [],
       authContexts: new Map(),
     }),
     /Authenticated player context missing/
@@ -175,7 +139,6 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
     gameplayMode: 'capture_the_flag',
     mapThemeId: 'golden',
     mapSize: 'small',
-    wager: { locked: true },
   });
 
   assert.deepEqual(payload, {
@@ -192,7 +155,7 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
     gameplayMode: 'capture_the_flag',
     mapThemeId: 'golden',
     mapSize: 'small',
-    wager: { locked: true },
+    mapProfileId: 'ctf_arena',
   });
 }
 

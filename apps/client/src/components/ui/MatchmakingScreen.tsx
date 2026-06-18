@@ -1,4 +1,9 @@
-import { DEFAULT_GAME_CONFIG } from '@voxel-strike/shared';
+import {
+  DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_GAME_CONFIG,
+  getGameplayModeLabel,
+  isGameplayMode,
+} from '@voxel-strike/shared';
 import { useEffect, useState } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { config } from '../../config/environment';
@@ -14,6 +19,16 @@ function getHttpUrl(): string {
   return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
 }
 
+function buildQueueStatusUrl(isRanked: boolean, gameplayMode: string): string {
+  const params = new URLSearchParams({
+    mode: isRanked ? 'ranked' : 'quick_play',
+  });
+  if (!isRanked) {
+    params.set('gameplayMode', gameplayMode);
+  }
+  return `${getHttpUrl()}/matchmaking/queue-status?${params.toString()}`;
+}
+
 const MIN_RANK_SEARCH_DISTANCE = 2;
 const RANKED_TOKEN_HOLD_LABEL = '$20 SOL';
 
@@ -24,11 +39,10 @@ interface MatchmakingTeammate {
 }
 
 export function MatchmakingScreen() {
-  const { playerId, playerName, currentLobbyWager, lobbyPlayers, userStats, matchmakingStatus } = useGameStore(
+  const { playerId, playerName, lobbyPlayers, userStats, matchmakingStatus } = useGameStore(
     useShallow((state) => ({
       playerId: state.playerId,
       playerName: state.playerName,
-      currentLobbyWager: state.currentLobbyWager,
       lobbyPlayers: state.lobbyPlayers,
       userStats: state.userStats,
       matchmakingStatus: state.matchmakingStatus,
@@ -37,20 +51,24 @@ export function MatchmakingScreen() {
   const { leaveLobby } = useNetwork();
   const { playButtonClick } = useUISounds();
   const { preloadSoundGroup } = useAudio();
-  const isRanked = matchmakingStatus.matchMode === 'ranked' || currentLobbyWager.matchMode === 'ranked';
-  const humanCount = Array.from(lobbyPlayers.values()).filter((player) => !player.isBot).length;
+  const isRanked = matchmakingStatus.matchMode === 'ranked';
+  const queuedGameplayMode = isGameplayMode(matchmakingStatus.gameplayMode)
+    ? matchmakingStatus.gameplayMode
+    : DEFAULT_GAMEPLAY_MODE;
+  const matchmakingLabel = isRanked ? 'Ranked' : getGameplayModeLabel(queuedGameplayMode);
+  const combatParticipantCount = lobbyPlayers.size;
   const provisionalHumanCount = isRanked
     ? Math.max(0, matchmakingStatus.provisionalHumanCount ?? 0)
     : 0;
   const requiredPlayers = matchmakingStatus.requiredPlayers ?? DEFAULT_GAME_CONFIG.maxPlayers;
-  const filledSlots = Math.min(isRanked ? (matchmakingStatus.queuedHumanCount ?? humanCount) : humanCount, requiredPlayers);
+  const rankedParticipantCount = Math.max(matchmakingStatus.queuedHumanCount ?? 0, combatParticipantCount);
+  const filledSlots = Math.min(isRanked ? rankedParticipantCount : combatParticipantCount, requiredPlayers);
   const [totalPlayersInQueue, setTotalPlayersInQueue] = useState(filledSlots);
   const displayedQueueCount = Math.max(totalPlayersInQueue, filledSlots);
   const queuePlayerLabel = displayedQueueCount === 1 ? 'player' : 'players';
   const capacityBlocked = matchmakingStatus.capacityBlocked;
   const currentRank = getRankForStats(userStats);
   const lobbyTeammates: MatchmakingTeammate[] = Array.from(lobbyPlayers.values())
-    .filter((player) => !player.isBot && !player.isObserver)
     .map((player) => ({
       id: player.id,
       name: player.name,
@@ -97,7 +115,7 @@ export function MatchmakingScreen() {
       const timeoutId = window.setTimeout(() => controller.abort(), 4000);
 
       try {
-        const response = await fetch(`${getHttpUrl()}/matchmaking/queue-status${isRanked ? '?mode=ranked' : ''}`, {
+        const response = await fetch(buildQueueStatusUrl(isRanked, queuedGameplayMode), {
           credentials: 'include',
           signal: controller.signal,
         });
@@ -126,7 +144,7 @@ export function MatchmakingScreen() {
       activeController?.abort();
       window.clearInterval(intervalId);
     };
-  }, [isRanked]);
+  }, [isRanked, queuedGameplayMode]);
 
   const handleCancel = () => {
     playButtonClick();
@@ -149,7 +167,7 @@ export function MatchmakingScreen() {
         <section className="w-full max-w-xl text-center">
           <MatchmakingTeammateRow teammates={matchmakingTeammates} />
           <p className="mb-3 font-body text-xs uppercase tracking-[0.32em] text-orange-200/70">
-            {isRanked ? 'Ranked' : 'Quick Play'}
+            {matchmakingLabel}
           </p>
           <h1 className="font-display text-4xl leading-none text-white sm:text-5xl lg:text-6xl">
             MATCHMAKING

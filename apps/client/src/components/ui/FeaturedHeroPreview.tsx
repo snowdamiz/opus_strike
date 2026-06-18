@@ -3,20 +3,19 @@ import { HERO_DEFINITIONS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 import { HeroPreviewCanvas, type HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 
-export const HERO_SHOWCASE_ANIMATION_MODE: HeroPreviewAnimationMode = 'showcaseLoop';
-
 type FeaturedHeroPreviewScale = 'default' | 'large';
+
+const FEATURED_IDLE_PREVIEW_CLASS_BY_SCALE: Record<FeaturedHeroPreviewScale, string> = {
+  default: 'relative -mt-[clamp(1.6rem,5vh,4rem)] h-[clamp(16rem,40vh,29rem)] w-[clamp(14.5rem,29vw,27rem)]',
+  large: 'relative -mt-[clamp(2rem,5.6vh,4.5rem)] h-[clamp(18rem,44vh,31.5rem)] w-[clamp(16rem,32vw,29.5rem)]',
+};
 
 function getFeaturedHeroPreviewClassName(
   animationMode: HeroPreviewAnimationMode,
   scale: FeaturedHeroPreviewScale
 ): string {
-  if (animationMode === 'showcaseLoop') {
-    if (scale === 'large') {
-      return 'relative -mt-[clamp(2rem,5.6vh,4.5rem)] h-[clamp(18rem,44vh,31.5rem)] w-[clamp(16rem,32vw,29.5rem)]';
-    }
-
-    return 'relative -mt-[clamp(1.6rem,5vh,4rem)] h-[clamp(16rem,40vh,29rem)] w-[clamp(14.5rem,29vw,27rem)]';
+  if (animationMode === 'idle') {
+    return FEATURED_IDLE_PREVIEW_CLASS_BY_SCALE[scale];
   }
 
   if (animationMode === 'jump') {

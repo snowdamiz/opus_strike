@@ -7,18 +7,11 @@ import {
 
 {
   assert.equal(shouldRejectRoomJoinForCapacity({
-    joinsAsObserver: false,
     playerCount: 8,
     maxPlayers: 8,
   }), true);
   assert.equal(shouldRejectRoomJoinForCapacity({
-    joinsAsObserver: false,
     playerCount: 7,
-    maxPlayers: 8,
-  }), false);
-  assert.equal(shouldRejectRoomJoinForCapacity({
-    joinsAsObserver: true,
-    playerCount: 8,
     maxPlayers: 8,
   }), false);
 }

@@ -140,6 +140,7 @@ export function Powerups() {
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
+  const mapProfileId = useGameStore((state) => state.mapProfileId);
   const powerupPickups = useGameStore((state) => state.powerupPickups);
   const powerupPickupCollections = useGameStore((state) => state.powerupPickupCollections);
   const [now, setNow] = useState(() => Date.now());
@@ -151,10 +152,10 @@ export function Powerups() {
 
   const manifest = useMemo(() => {
     return (
-      getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize })
-      ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, source: 'match' })
+      getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId })
+      ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, source: 'match' })
     ).manifest;
-  }, [mapSeed, mapThemeId, mapSize]);
+  }, [mapSeed, mapThemeId, mapSize, mapProfileId]);
 
   const visiblePickups = useMemo(() => {
     return manifest.gameplay.powerups.flatMap((pickup) => {

@@ -117,10 +117,9 @@ export class MatchSummaryRuntime {
     if (input.integrityGate?.reviewRequired) {
       event.matchIntegrity = {
         status: input.integrityGate.status,
-        reviewRequired: input.integrityGate.rankedHoldRequired || input.integrityGate.payoutHoldRequired,
+        reviewRequired: input.integrityGate.rankedHoldRequired,
         rankedOutcome: input.integrityGate.rankedHoldRequired ? 'review_required' : 'normal',
-        wagerOutcome: input.integrityGate.payoutHoldRequired ? 'review_required' : 'normal',
-        message: input.integrityGate.rankedHoldRequired || input.integrityGate.payoutHoldRequired
+        message: input.integrityGate.rankedHoldRequired
           ? 'Match rewards are pending integrity review.'
           : 'Match integrity telemetry has been recorded.',
       };

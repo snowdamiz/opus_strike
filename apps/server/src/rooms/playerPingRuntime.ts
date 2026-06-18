@@ -47,7 +47,6 @@ export interface EnsureCompetitiveNetworkQualityInput {
   players: Iterable<[string, PlayerPingParticipant]>;
   now: number;
   matchMode: MatchMode;
-  wagered: boolean;
   cancelPending?: boolean;
 }
 
@@ -63,7 +62,7 @@ export function buildNetworkQualityCancelNotice(
 ): NetworkQualityCancelNoticeDetails {
   const playerName = evaluation?.playerName || 'A player';
   return {
-    message: `Match canceled because ${playerName}'s connection is not stable enough for ranked or wager play.`,
+    message: `Match canceled because ${playerName}'s connection is not stable enough for ranked play.`,
     blockedPlayerId: evaluation?.playerId,
     blockedPlayerName: evaluation?.playerName,
     networkQuality: {
@@ -138,7 +137,7 @@ export class PlayerPingRuntime {
     };
   }
 
-  isCompetitiveGateRequired(input: { matchMode: MatchMode; wagered: boolean }): boolean {
+  isCompetitiveGateRequired(input: { matchMode: MatchMode }): boolean {
     return isNetworkQualityGateRequiredForMatch(input);
   }
 
@@ -146,7 +145,6 @@ export class PlayerPingRuntime {
     players: Iterable<[string, PlayerPingParticipant]>;
     now: number;
     matchMode: MatchMode;
-    wagered: boolean;
   }): CompetitiveNetworkQualityGateResult {
     return this.tracker.evaluateCompetitiveGate(
       input.players,

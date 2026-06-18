@@ -1,20 +1,15 @@
 import assert from 'node:assert/strict';
 import {
-  getOpposingTeam,
   getRoomAutoAssignedTeam,
   getRoomTeamSelectionDecision,
   resolveRoomJoinTeam,
 } from '../rooms/roomTeamSelection';
 import type { CombatTeamMember } from '../rooms/spawnAssignments';
 
-assert.equal(getOpposingTeam('red'), 'blue');
-assert.equal(getOpposingTeam('blue'), 'red');
-
 const players = new Map<string, CombatTeamMember>([
   ['red-a', { team: 'red' }],
   ['red-b', { team: 'red' }],
   ['blue-a', { team: 'blue' }],
-  ['red-observer', { team: 'red', isObserver: true }],
 ]);
 
 assert.equal(getRoomAutoAssignedTeam({
@@ -35,6 +30,44 @@ assert.equal(getRoomAutoAssignedTeam({
   ],
   preferredTeam: 'red',
 }), 'red');
+
+{
+  const battleRoyalPlayers: CombatTeamMember[] = [
+    { team: 'br_01' },
+    { team: 'br_01' },
+    { team: 'br_01' },
+    { team: 'br_02' },
+    { team: 'br_02' },
+  ];
+  const teamIds = ['br_01', 'br_02', 'br_03'] as const;
+
+  assert.equal(getRoomAutoAssignedTeam({
+    players: battleRoyalPlayers,
+    teamIds,
+    maxTeamSize: 3,
+  }), 'br_03');
+  assert.equal(resolveRoomJoinTeam({
+    players: battleRoyalPlayers,
+    teamIds,
+    maxTeamSize: 3,
+    preferredTeam: 'br_02',
+  }), 'br_02');
+  assert.deepEqual(
+    getRoomTeamSelectionDecision({
+      players: new Map(battleRoyalPlayers.map((player, index) => [`br-player-${index}`, player])),
+      playerId: 'new-player',
+      requestedTeam: 'br_01',
+      teamSize: 3,
+      teamIds,
+    }),
+    {
+      canSelect: false,
+      requestedTeamCount: 3,
+      opposingTeamCount: 0,
+      blockedReason: 'team_full',
+    }
+  );
+}
 
 assert.equal(resolveRoomJoinTeam({
   players: players.values(),

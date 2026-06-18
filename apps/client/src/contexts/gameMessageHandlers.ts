@@ -18,7 +18,7 @@ import {
   type PublicRankSnapshot,
   type PlayerDamagedEvent,
 } from '@voxel-strike/shared';
-import { useGameStore } from '../store/gameStore';
+import { normalizeMapProfileId, useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import { setGameTiming } from '../store/gameTimingStore';
 import {
@@ -1007,16 +1007,6 @@ export function setupPlayerVitalsHandler(
       rememberPlayerNetId(vitals);
 
       if (vitals.id === sessionId) {
-        if (useGameStore.getState().isObserverMode) {
-          if (nextPlayers.has(vitals.id)) {
-            writablePlayers().delete(vitals.id);
-          }
-          nextLocalPlayer = null;
-          removedVisuals.push(vitals.id);
-          shouldPublishTiming = true;
-          continue;
-        }
-
         const existing = nextLocalPlayer || nextPlayers.get(vitals.id);
         const existingPlayer = existing || undefined;
         const previousHeroId = existingPlayer?.heroId ?? null;
@@ -1098,6 +1088,7 @@ export function setupMatchSnapshotHandler(room: Room) {
       gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : store.gameplayMode ?? DEFAULT_GAMEPLAY_MODE,
       mapThemeId: data.mapThemeId ?? null,
       mapSize: normalizeVoxelMapSizeId(data.mapSize),
+      mapProfileId: normalizeMapProfileId(data.mapProfileId),
       gamePhase: data.phase,
       redScore: data.redScore,
       blueScore: data.blueScore,
@@ -1106,6 +1097,7 @@ export function setupMatchSnapshotHandler(room: Room) {
       roundTimeRemaining: data.roundTimeRemaining,
       phaseEndTime: data.phaseEndTime,
       gameClockFrozen: data.gameClockFrozen === true,
+      safeZone: data.safeZone ?? null,
     });
   }));
 }
@@ -1161,7 +1153,7 @@ export function setupVoidZoneHandlers(room: Room, sessionId: string) {
     duration: number;
     startTime: number;
     ownerId: string;
-    ownerTeam: 'red' | 'blue';
+    ownerTeam: Team;
   }) => {
     useGameStore.getState().addVoidZone(data);
   }));

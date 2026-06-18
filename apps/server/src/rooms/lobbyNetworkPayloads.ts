@@ -12,16 +12,11 @@ export interface LobbyPlayerJoinedPayload {
   isHost: boolean;
   isReady: boolean;
   team: string;
-  isObserver: boolean;
   heroId: string;
   isBot: boolean;
   botDifficulty: string;
   botProfileId: string;
   rank: ReturnType<typeof buildRoomRankSnapshot>;
-  paymentStatus: string;
-  paymentWalletAddress?: string;
-  depositSignature?: string;
-  refundSignature?: string;
 }
 
 export interface LobbyStatePayload {
@@ -34,12 +29,8 @@ export interface LobbyStatePayload {
   players: LobbyPlayerSnapshot[];
   maxPlayers: number;
   maxParticipants: number;
-  observersEnabled: boolean;
-  maxObservers: number;
-  observerCount: number;
   humanCount: number;
   botCount: number;
-  wager: Record<string, unknown>;
   requiredPlayers: number | undefined;
   [key: string]: unknown;
 }
@@ -54,41 +45,26 @@ export interface BuildLobbyStatePayloadInput {
   players: Iterable<readonly [string, LobbyRosterPlayer]>;
   maxPlayers: number;
   maxParticipants: number;
-  observersEnabled: boolean;
-  maxObservers: number;
-  wager: Record<string, unknown>;
   requiredPlayers: number | undefined;
   matchmakingStatus?: Record<string, unknown>;
 }
 
 export function buildLobbyPlayerJoinedPayload(
   playerId: string,
-  player: LobbyRosterPlayer,
-  options: { includePaymentDetails?: boolean } = {}
+  player: LobbyRosterPlayer
 ): LobbyPlayerJoinedPayload {
-  const includePaymentDetails = options.includePaymentDetails ?? true;
-  const payload: LobbyPlayerJoinedPayload = {
+  return {
     playerId,
     playerName: player.name,
     isHost: player.isHost,
     isReady: player.isReady,
     team: player.team,
-    isObserver: player.isObserver,
     heroId: player.heroId,
     isBot: player.isBot,
     botDifficulty: player.botDifficulty,
     botProfileId: player.botProfileId,
     rank: buildRoomRankSnapshot(player),
-    paymentStatus: player.paymentStatus,
   };
-
-  if (includePaymentDetails) {
-    payload.paymentWalletAddress = player.paymentWalletAddress;
-    payload.depositSignature = player.depositSignature;
-    payload.refundSignature = player.refundSignature;
-  }
-
-  return payload;
 }
 
 export function buildLobbyStatePayload(
@@ -106,12 +82,8 @@ export function buildLobbyStatePayload(
     players: buildLobbyPlayerSnapshots(playerEntries),
     maxPlayers: input.maxPlayers,
     maxParticipants: input.maxParticipants,
-    observersEnabled: input.observersEnabled,
-    maxObservers: input.maxObservers,
-    observerCount: rosterCounts.observer,
     humanCount: rosterCounts.human,
     botCount: rosterCounts.bot,
-    wager: input.wager,
     requiredPlayers: input.requiredPlayers,
     ...input.matchmakingStatus,
   };

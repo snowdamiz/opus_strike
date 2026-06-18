@@ -81,20 +81,23 @@ const load: RoomLoadSnapshot = {
       mapSeed: 12345,
       mapThemeId: 'verdant',
       mapSize: 'standard',
+      mapProfileId: 'ctf_arena',
       counts: {
         humanCount: 2,
         botCount: 3,
-        observerCount: 4,
         npcCount: 5,
         participantCount: 6,
         entityCount: 11,
       },
       maxPlayers: 8,
+      mapRenderableChunkCount: 34,
+      mapColliderCount: 56,
+      mapSolidBlockCount: 78,
       reservedHumanPlayers: 2,
+      capacityPlayerCost: 2,
       rankedEligibilityCandidate: true,
       rankedRequiredHumanPlayers: 4,
       reconnectIdentityKeys: ['auth:a', 'auth:b'],
-      wagerEnabled: true,
       load,
     }),
     {
@@ -107,18 +110,22 @@ const load: RoomLoadSnapshot = {
       mapSeed: 12345,
       mapThemeId: 'verdant',
       mapSize: 'standard',
+      mapProfileId: 'ctf_arena',
       humanCount: 2,
       botCount: 3,
-      observerCount: 4,
       npcCount: 5,
       participantCount: 6,
       entityCount: 11,
       maxPlayers: 8,
+      mapRenderableChunkCount: 34,
+      mapColliderCount: 56,
+      mapSolidBlockCount: 78,
       reservedHumanPlayers: 2,
+      capacityPlayerCost: 2,
+      playerCap: 8,
       rankedEligibleCandidate: true,
       rankedRequiredHumanPlayers: 4,
       reconnectIdentityKeys: ['auth:a', 'auth:b'],
-      wagerEnabled: true,
       tickDurationP95Ms: 2,
       tickDurationP99Ms: 3,
       eventLoopDelayP95Ms: 4,
@@ -175,7 +182,6 @@ const load: RoomLoadSnapshot = {
     counts: {
       humanCount: 0,
       botCount: 0,
-      observerCount: 0,
       npcCount: 0,
       participantCount: 0,
       entityCount: 0,
@@ -185,12 +191,53 @@ const load: RoomLoadSnapshot = {
     rankedEligibilityCandidate: false,
     rankedRequiredHumanPlayers: 6,
     reconnectIdentityKeys: [],
-    wagerEnabled: false,
     load,
   });
 
   assert.equal(metadata.name, 'Game roomab');
   assert.equal(metadata.lobbyId, undefined);
+  assert.equal(metadata.mapProfileId, 'ctf_arena');
+  assert.equal(metadata.capacityPlayerCost, 0);
+}
+
+{
+  const metadata = buildGameRoomMetadata({
+    roomId: 'battleabcdef',
+    lobbyName: 'Battle Test',
+    phase: 'playing',
+    lobbyId: 'lobby-br',
+    matchMode: 'custom',
+    gameplayMode: 'battle_royal',
+    mapSeed: 0x51f15eed,
+    mapThemeId: 'verdant',
+    mapSize: 'large',
+    mapProfileId: 'battle_royal_large',
+    counts: {
+      humanCount: 10,
+      botCount: 0,
+      npcCount: 0,
+      participantCount: 11,
+      entityCount: 10,
+    },
+    maxPlayers: 30,
+    mapRenderableChunkCount: 3000,
+    mapColliderCount: 80000,
+    mapSolidBlockCount: 2200000,
+    reservedHumanPlayers: 10,
+    capacityPlayerCost: 38,
+    rankedEligibilityCandidate: false,
+    rankedRequiredHumanPlayers: 10,
+    reconnectIdentityKeys: [],
+    load,
+  });
+
+  assert.equal(metadata.gameplayMode, 'battle_royal');
+  assert.equal(metadata.mapProfileId, 'battle_royal_large');
+  assert.equal(metadata.playerCap, 30);
+  assert.equal(metadata.capacityPlayerCost, 38);
+  assert.equal(metadata.mapRenderableChunkCount, 3000);
+  assert.equal(metadata.mapColliderCount, 80000);
+  assert.equal(metadata.mapSolidBlockCount, 2200000);
 }
 
 console.log('room metadata snapshot tests passed');

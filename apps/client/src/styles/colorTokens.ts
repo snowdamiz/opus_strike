@@ -75,6 +75,25 @@ export const FACTIONS = {
   },
 } as const;
 
+export const TEAM_FALLBACK_COLORS = {
+  primaryColor: 'rgb(var(--color-text-primary))',
+  secondaryColor: 'rgb(var(--color-text-strong))',
+  glowColor: 'rgb(255 255 255 / 0.32)',
+  bgColor: 'rgb(255 255 255 / 0.08)',
+} as const;
+
+export const MAP_VOTE_COLORS = {
+  blueprintBackground: 'rgb(8 16 22)',
+  blueprintGradient: `radial-gradient(circle at 50% 48%, ${rgba(palette.orange.rgb, 0.22)}, transparent 34%), linear-gradient(135deg, ${rgba(palette.hookshotDeep.rgb, 0.22)}, rgba(17,24,39,0.9) 52%, ${rgba(palette.redDeep.rgb, 0.18)})`,
+  landmarkFill: rgba(palette.orange.rgb, 0.28),
+  landmarkStroke: 'rgba(253, 186, 116, 0.78)',
+  spawnFallback: 'rgb(var(--color-text-strong))',
+} as const;
+
+export const SCOREBOARD_COLORS = {
+  battleRoyalHeaderBackground: 'linear-gradient(90deg, rgb(var(--color-accent-primary) / 0.16), rgb(var(--color-strike-elevated) / 0.88), rgb(var(--color-accent-primary) / 0.14))',
+} as const;
+
 export const WALLET_AUTH_COLORS = {
   gradient: 'linear-gradient(135deg, rgb(var(--color-accent-primary)) 0%, rgb(var(--color-accent-primary-deep)) 100%)',
   glow: '0 0 40px rgb(var(--color-accent-primary) / 0.3), inset 0 1px 0 rgb(255 255 255 / 0.2)',
@@ -141,6 +160,14 @@ export const MINIMAP_COLORS = {
     moduleStroke: 'rgba(226, 242, 255, 0.22)',
     objectiveOutline: 'rgba(255, 255, 255, 0.78)',
     scanGrid: 'rgba(148, 163, 184, 0.08)',
+  },
+  safeZone: {
+    warningStroke: 'rgba(250, 204, 21, 0.92)',
+    stableStroke: 'rgba(125, 211, 252, 0.92)',
+    warningFill: 'rgba(250, 204, 21, 0.07)',
+    stableFill: 'rgba(56, 189, 248, 0.06)',
+    warningShadow: 'rgba(250, 204, 21, 0.7)',
+    stableShadow: 'rgba(56, 189, 248, 0.7)',
   },
   surface: {
     barrier: 'rgba(184, 197, 213, 0.66)',

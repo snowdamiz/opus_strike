@@ -6,7 +6,6 @@ export interface RoomPopulationPlayer {
 export interface RoomPopulationCounts {
   humanCount: number;
   botCount: number;
-  observerCount: number;
   npcCount: number;
   participantCount: number;
   entityCount: number;
@@ -15,7 +14,6 @@ export interface RoomPopulationCounts {
 export function getRoomPopulationCounts(input: {
   players: Iterable<RoomPopulationPlayer>;
   npcIds: ReadonlySet<string>;
-  observerCount: number;
 }): RoomPopulationCounts {
   let humanCount = 0;
   let botCount = 0;
@@ -34,7 +32,6 @@ export function getRoomPopulationCounts(input: {
   return {
     humanCount,
     botCount,
-    observerCount: Math.max(0, Math.floor(input.observerCount)),
     npcCount,
     participantCount: humanCount + botCount,
     entityCount: humanCount + botCount + npcCount,

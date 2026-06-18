@@ -3,7 +3,9 @@ import {
   TRANSFORM_POSITION_SCALE,
   type FlagSync,
   type GameplayMode,
+  type MapProfileId,
   type MatchSnapshotMessage,
+  type SafeZoneSnapshot,
   type VoxelMapSizeId,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
@@ -16,6 +18,7 @@ export interface BuildMatchSnapshotInput {
   mapSeed: number;
   mapThemeId: VoxelMapTheme['id'] | null;
   mapSize: VoxelMapSizeId | null;
+  mapProfileId?: MapProfileId | null;
   redScore: number;
   blueScore: number;
   redFlag: FlagSync;
@@ -23,6 +26,7 @@ export interface BuildMatchSnapshotInput {
   roundTimeRemaining: number;
   phaseEndTime: number | null | undefined;
   gameClockFrozen: boolean;
+  safeZone?: SafeZoneSnapshot | null;
 }
 
 export class MatchSnapshotRuntime {
@@ -35,6 +39,7 @@ export class MatchSnapshotRuntime {
       mapSeed: input.mapSeed,
       mapThemeId: input.mapThemeId,
       mapSize: input.mapSize,
+      mapProfileId: input.mapProfileId ?? null,
       redScore: input.redScore,
       blueScore: input.blueScore,
       redFlag: input.redFlag,
@@ -42,6 +47,7 @@ export class MatchSnapshotRuntime {
       roundTimeRemaining: input.roundTimeRemaining,
       phaseEndTime: input.phaseEndTime || null,
       gameClockFrozen: input.gameClockFrozen,
+      safeZone: input.safeZone ?? null,
     };
   }
 
@@ -50,11 +56,18 @@ export class MatchSnapshotRuntime {
       snapshot.phase,
       snapshot.mapSeed,
       snapshot.mapSize ?? DEFAULT_VOXEL_MAP_SIZE_ID,
+      snapshot.mapProfileId ?? '',
       snapshot.gameplayMode,
       snapshot.redScore,
       snapshot.blueScore,
       snapshot.phaseEndTime ?? 0,
       snapshot.gameClockFrozen ? 1 : 0,
+      snapshot.safeZone?.phaseIndex ?? -1,
+      snapshot.safeZone ? this.quantizePosition(snapshot.safeZone.radius) : 0,
+      snapshot.safeZone ? this.quantizePosition(snapshot.safeZone.center.x) : 0,
+      snapshot.safeZone ? this.quantizePosition(snapshot.safeZone.center.z) : 0,
+      snapshot.safeZone?.warning ? 1 : 0,
+      snapshot.safeZone?.shrinking ? 1 : 0,
       snapshot.redFlag.carrierId ?? '',
       snapshot.redFlag.isAtBase ? 1 : 0,
       this.quantizePosition(snapshot.redFlag.position.x),

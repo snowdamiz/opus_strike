@@ -39,7 +39,6 @@ export function buildMatchCancelledPayload(input: {
   requiredHumanPlayers: number;
   connectedHumanPlayers: number;
   deadlineAt: number;
-  refundedWager: boolean;
   serverTime: number;
 }): Record<string, unknown> {
   const { notice } = input;
@@ -50,7 +49,6 @@ export function buildMatchCancelledPayload(input: {
     requiredHumanPlayers: input.requiredHumanPlayers,
     connectedHumanPlayers: input.connectedHumanPlayers,
     deadlineAt: input.deadlineAt,
-    refundedWager: input.refundedWager,
     serverTime: input.serverTime,
     blockedPlayerId: notice.blockedPlayerId,
     blockedPlayerName: notice.blockedPlayerName,

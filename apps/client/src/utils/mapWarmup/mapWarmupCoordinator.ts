@@ -199,3 +199,10 @@ export function reduceMapWarmup(
 export function isTerminalMapWarmupState(state: MapWarmupState): boolean {
   return state === 'ready' || state === 'failedWithFallback';
 }
+
+export function isMapWarmupReadyForMatchStart(snapshot: MapWarmupSnapshot, key: string): boolean {
+  return snapshot.key === key
+    && snapshot.stages.map.done
+    && snapshot.stages.colliders.done
+    && snapshot.stages.meshes.done;
+}

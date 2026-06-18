@@ -11,13 +11,17 @@ export interface GameRoomMetadataInput {
   mapSeed: number;
   mapThemeId: string;
   mapSize: string;
+  mapProfileId?: string;
   counts: RoomPopulationCounts;
   maxPlayers: number;
+  mapRenderableChunkCount?: number;
+  mapColliderCount?: number;
+  mapSolidBlockCount?: number;
   reservedHumanPlayers: number;
+  capacityPlayerCost?: number;
   rankedEligibilityCandidate: boolean;
   rankedRequiredHumanPlayers: number;
   reconnectIdentityKeys: string[];
-  wagerEnabled: boolean;
   load: RoomLoadSnapshot;
 }
 
@@ -33,18 +37,22 @@ export function buildGameRoomMetadata(input: GameRoomMetadataInput): Record<stri
     mapSeed: input.mapSeed,
     mapThemeId: input.mapThemeId,
     mapSize: input.mapSize,
+    mapProfileId: input.mapProfileId ?? 'ctf_arena',
     humanCount: counts.humanCount,
     botCount: counts.botCount,
-    observerCount: counts.observerCount,
     npcCount: counts.npcCount,
     participantCount: counts.participantCount,
     entityCount: counts.entityCount,
     maxPlayers: input.maxPlayers,
+    mapRenderableChunkCount: input.mapRenderableChunkCount ?? 0,
+    mapColliderCount: input.mapColliderCount ?? 0,
+    mapSolidBlockCount: input.mapSolidBlockCount ?? 0,
     reservedHumanPlayers: input.reservedHumanPlayers,
+    capacityPlayerCost: input.capacityPlayerCost ?? input.reservedHumanPlayers,
+    playerCap: input.maxPlayers,
     rankedEligibleCandidate: input.rankedEligibilityCandidate,
     rankedRequiredHumanPlayers: input.rankedRequiredHumanPlayers,
     reconnectIdentityKeys: input.reconnectIdentityKeys,
-    wagerEnabled: input.wagerEnabled,
     tickDurationP95Ms: load.tickDurationP95Ms,
     tickDurationP99Ms: load.tickDurationP99Ms,
     eventLoopDelayP95Ms: load.eventLoopDelayP95Ms,

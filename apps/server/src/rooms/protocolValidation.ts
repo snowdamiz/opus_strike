@@ -1,5 +1,6 @@
 import {
   ALL_HERO_IDS,
+  isTeamId,
 } from '@voxel-strike/shared';
 import type { BotDifficulty, HeroId, Team } from '@voxel-strike/shared';
 
@@ -13,7 +14,7 @@ export function isRecord(value: unknown): value is RecordValue {
 }
 
 export function isTeam(value: unknown): value is Team {
-  return value === 'red' || value === 'blue';
+  return isTeamId(value);
 }
 
 export function isHeroId(value: unknown): value is HeroId {
@@ -56,10 +57,6 @@ export function validateVec3(value: unknown): { x: number; y: number; z: number 
 
 export function validateReadyPayload(value: unknown): boolean | null {
   return isRecord(value) ? booleanValue(value.ready) : null;
-}
-
-export function validateObserverPayload(value: unknown): boolean | null {
-  return isRecord(value) ? booleanValue(value.observer) : null;
 }
 
 export function validateTeamPayload(value: unknown): Team | null {

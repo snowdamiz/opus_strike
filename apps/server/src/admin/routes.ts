@@ -9,7 +9,6 @@ import {
   DEFAULT_COMPETITIVE_RATING,
   RANK_DEFINITIONS,
   getRankFromRating,
-  type Team,
 } from '@voxel-strike/shared';
 import type { ColyseusRuntimeConfig } from '../config/colyseus';
 import { loggers } from '../utils/logger';
@@ -141,10 +140,6 @@ function notFound(res: Response): void {
 function noStore(res: Response): void {
   res.setHeader('Cache-Control', 'no-store, private, max-age=0');
   res.setHeader('Pragma', 'no-cache');
-}
-
-function isValidTeam(value: unknown): value is Team {
-  return value === 'red' || value === 'blue';
 }
 
 function timingSafeStringEqual(a: string, b: string): boolean {
@@ -1221,70 +1216,6 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         matchId: req.params.matchId,
         actorUserId: adminUser.id,
         reason,
-      });
-      res.json({ ok: true });
-    } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  router.post('/api/anti-cheat/payout-holds/:holdId/:action', ensureAdmin, ensureAdminMutation, async (req, res) => {
-    noStore(res);
-    const adminUser = res.locals.adminUser as AdminUser;
-    const action = req.params.action;
-    const reason = readRequestString(req.body?.reason);
-    if (!reason) {
-      res.status(400).json({ error: 'Reason is required' });
-      return;
-    }
-    if (action !== 'release' && action !== 'refund' && action !== 'cancel') {
-      res.status(400).json({ error: 'Invalid payout hold action' });
-      return;
-    }
-
-    try {
-      const hold = await prisma.antiCheatPayoutHold.findUniqueOrThrow({
-        where: { id: req.params.holdId },
-      });
-      if (hold.status !== 'open') {
-        throw new Error('Payout hold is already resolved');
-      }
-
-      if (action === 'release' || action === 'refund') {
-        await wagerService.settleWageredLobby({
-          wageredLobbyId: hold.wageredLobbyId,
-          matchId: hold.matchId,
-          winningTeam: action === 'release' && isValidTeam(hold.winningTeam) ? hold.winningTeam : null,
-        });
-      } else {
-        await prisma.wageredLobby.updateMany({
-          where: { id: hold.wageredLobbyId },
-          data: { status: 'failed' },
-        });
-      }
-
-      await prisma.$transaction(async (tx) => {
-        await tx.antiCheatPayoutHold.update({
-          where: { id: hold.id },
-          data: {
-            status: action === 'release' ? 'released' : action === 'refund' ? 'refunded' : 'canceled',
-            resolvedByUserId: adminUser.id,
-            resolvedAt: new Date(),
-            resolution: reason,
-          },
-        });
-        await tx.antiCheatAction.create({
-          data: {
-            actionType: action === 'release' ? 'payout_release' : action === 'refund' ? 'refund_decision' : 'settlement_cancel',
-            matchId: hold.matchId,
-            caseId: hold.caseId,
-            actorUserId: adminUser.id,
-            reason,
-            details: { payoutHoldId: hold.id, wageredLobbyId: hold.wageredLobbyId },
-            observedOnly: false,
-            evidenceEventIds: [],
-          },
-        });
       });
       res.json({ ok: true });
     } catch (error) {

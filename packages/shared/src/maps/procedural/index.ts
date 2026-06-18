@@ -7,6 +7,7 @@ export * from './ctfLayout.js';
 export * from './boundaries.js';
 export * from './colliders.js';
 export * from './construction.js';
+export * from './battleRoyalGenerator.js';
 export * from './generator.js';
 export * from './terrain.js';
 export * from './tutorial.js';

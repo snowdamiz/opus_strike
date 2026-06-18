@@ -141,6 +141,7 @@ assert.deepEqual(
     mapSeed: 99,
     mapThemeId: 'verdant',
     mapSize: 'medium',
+    mapProfileId: 'battle_royal_large',
     position: { x: 1, y: 2, z: 3 },
     movementEpoch: 4,
     ackSeq: 5,
@@ -152,11 +153,27 @@ assert.deepEqual(
     mapSeed: 99,
     mapThemeId: 'verdant',
     mapSize: 'medium',
+    mapProfileId: 'battle_royal_large',
     position: { x: 1, y: 2, z: 3 },
     movementEpoch: 4,
     ackSeq: 5,
     collisionRevision: 6,
   }
+);
+
+assert.equal(
+  buildMatchStartGatePayload({
+    key: 8,
+    serverTime: 12_345,
+    mapSeed: 99,
+    mapThemeId: 'verdant',
+    mapSize: 'medium',
+    position: { x: 1, y: 2, z: 3 },
+    movementEpoch: 4,
+    ackSeq: 5,
+    collisionRevision: 6,
+  }).mapProfileId,
+  'ctf_arena'
 );
 
 {

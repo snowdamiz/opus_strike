@@ -247,9 +247,7 @@ function pingBandMs(ping: number | null | undefined): string {
 
 function resolveTraceMatchMode(): MatchMode {
   const store = useGameStore.getState();
-  return store.matchmakingStatus.matchMode ??
-    store.currentLobbyWager.matchMode ??
-    (store.currentLobbyWager.enabled ? 'custom_wager' : 'custom');
+  return store.matchmakingStatus.matchMode ?? 'custom';
 }
 
 function writeActiveAbilityIdsForTrace(
@@ -2256,7 +2254,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                     duration: PHANTOM_VOID_ZONE_DURATION_SECONDS,
                     startTime: now,
                     ownerId: localPlayer.id,
-                    ownerTeam: (localPlayer.team || 'red') as 'red' | 'blue',
+                    ownerTeam: localPlayer.team || 'red',
                   });
                   lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
                 }

@@ -1,8 +1,13 @@
-import type { Team } from '@voxel-strike/shared';
+import {
+  assignTeamByCapacity,
+  countTeamMembers,
+  countTeamMembersExcluding,
+  isTeamId,
+  type Team,
+} from '@voxel-strike/shared';
 
 export interface CombatTeamMember {
   team?: string | null;
-  isObserver?: boolean | null;
 }
 
 export interface TeamSpawnPosition {
@@ -18,12 +23,12 @@ export interface TeamSpawnFacing {
 
 export interface TeamSpawnManifest {
   gameplay?: {
-    spawns?: Partial<Record<Team, {
+    spawns?: Record<string, {
       points?: readonly TeamSpawnPosition[];
       facing?: TeamSpawnFacing | null;
-    }>>;
+    }>;
   } | null;
-  spawnPoints: Record<Team, readonly TeamSpawnPosition[]>;
+  spawnPoints: Record<string, readonly TeamSpawnPosition[]>;
 }
 
 export interface TeamSpawnParticipant {
@@ -66,19 +71,11 @@ function normalizeSpawnOffset(offset: number, spawnPointCount: number): number {
   return ((Math.floor(offset) % spawnPointCount) + spawnPointCount) % spawnPointCount;
 }
 
-function isSpawnTeam(team: unknown): team is Team {
-  return team === 'red' || team === 'blue';
-}
-
 export function countCombatTeamMembers(
   players: Iterable<CombatTeamMember>,
   team: Team
 ): number {
-  let count = 0;
-  for (const player of players) {
-    if (!player.isObserver && player.team === team) count++;
-  }
-  return count;
+  return countTeamMembers(players, team);
 }
 
 export function countCombatTeamMembersExcluding(
@@ -86,29 +83,31 @@ export function countCombatTeamMembersExcluding(
   team: Team,
   excludedPlayerId: string
 ): number {
-  let count = 0;
-  for (const [playerId, player] of players) {
-    if (playerId !== excludedPlayerId && !player.isObserver && player.team === team) {
-      count++;
-    }
-  }
-  return count;
+  return countTeamMembersExcluding(players, team, excludedPlayerId);
 }
 
 export function assignBalancedTeam(input: {
-  redCount: number;
-  blueCount: number;
+  players?: Iterable<CombatTeamMember>;
+  teamIds?: readonly Team[];
+  maxTeamSize?: number;
+  redCount?: number;
+  blueCount?: number;
   preferredTeam?: Team | null;
 }): Team {
-  if (input.preferredTeam) {
-    const preferredCount = input.preferredTeam === 'red' ? input.redCount : input.blueCount;
-    const otherCount = input.preferredTeam === 'red' ? input.blueCount : input.redCount;
-    if (preferredCount <= otherCount) {
-      return input.preferredTeam;
-    }
+  if (input.players && input.teamIds) {
+    return assignTeamByCapacity({
+      players: input.players,
+      teamIds: input.teamIds,
+      maxTeamSize: input.maxTeamSize ?? Number.POSITIVE_INFINITY,
+      preferredTeam: input.preferredTeam,
+    });
   }
 
-  return input.redCount <= input.blueCount ? 'red' : 'blue';
+  const redCount = input.redCount ?? 0;
+  const blueCount = input.blueCount ?? 0;
+  if (input.preferredTeam === 'red' && redCount <= blueCount) return 'red';
+  if (input.preferredTeam === 'blue' && blueCount <= redCount) return 'blue';
+  return redCount <= blueCount ? 'red' : 'blue';
 }
 
 export function collectTeamSpawnParticipants(
@@ -116,7 +115,7 @@ export function collectTeamSpawnParticipants(
 ): TeamSpawnParticipant[] {
   const participants: TeamSpawnParticipant[] = [];
   for (const [playerId, player] of players) {
-    if (isSpawnTeam(player.team)) {
+    if (isTeamId(player.team)) {
       participants.push({ playerId, team: player.team });
     }
   }
@@ -132,7 +131,7 @@ export function getTeamSpawnPoints(
     return gameplayPoints;
   }
 
-  const fallbackPoints = manifest.spawnPoints[team];
+  const fallbackPoints = manifest.spawnPoints[team] ?? manifest.spawnPoints.red ?? manifest.spawnPoints.blue ?? [];
   return fallbackPoints.length > 0 ? fallbackPoints : [DEFAULT_TEAM_SPAWN_POSITION];
 }
 
@@ -173,7 +172,7 @@ export function resolveTeamSpawnPlacement(input: {
   spawn?: TeamSpawnPosition;
   random?: () => number;
 }): TeamSpawnPlacement {
-  const team = isSpawnTeam(input.team) ? input.team : 'red';
+  const team = isTeamId(input.team) ? input.team : 'red';
   const position = input.spawn
     ? {
       x: input.spawn.x,
@@ -193,10 +192,11 @@ export function createRandomTeamSpawnOffsets(
   spawnPointCounts: Record<Team, number>,
   random = Math.random
 ): Record<Team, number> {
-  return {
-    red: Math.floor(random() * spawnPointCounts.red),
-    blue: Math.floor(random() * spawnPointCounts.blue),
-  };
+  const offsets: Record<Team, number> = {};
+  for (const [team, count] of Object.entries(spawnPointCounts)) {
+    offsets[team] = Math.floor(random() * Math.max(1, count));
+  }
+  return offsets;
 }
 
 export function createTeamSpawnPlan(input: {
@@ -204,19 +204,20 @@ export function createTeamSpawnPlan(input: {
   players: Iterable<readonly [string, TeamSpawnParticipantSource]>;
   random?: () => number;
 }): TeamSpawnPlan {
-  const spawnPointsByTeam: Record<Team, readonly TeamSpawnPosition[]> = {
-    red: getTeamSpawnPoints(input.manifest, 'red'),
-    blue: getTeamSpawnPoints(input.manifest, 'blue'),
-  };
-  const spawnPointCounts: Record<Team, number> = {
-    red: spawnPointsByTeam.red.length,
-    blue: spawnPointsByTeam.blue.length,
-  };
+  const participants = collectTeamSpawnParticipants(input.players);
+  const teamIds = Array.from(new Set(participants.map((participant) => participant.team)));
+  const spawnPointsByTeam: Record<Team, readonly TeamSpawnPosition[]> = {};
+  const spawnPointCounts: Record<Team, number> = {};
+  for (const team of teamIds) {
+    const spawnPoints = getTeamSpawnPoints(input.manifest, team);
+    spawnPointsByTeam[team] = spawnPoints;
+    spawnPointCounts[team] = spawnPoints.length;
+  }
 
   return {
     spawnPointsByTeam,
     assignments: createTeamSpawnAssignments(
-      collectTeamSpawnParticipants(input.players),
+      participants,
       spawnPointCounts,
       createRandomTeamSpawnOffsets(spawnPointCounts, input.random)
     ),
@@ -245,7 +246,7 @@ export function createTeamSpawnAssignments(
   spawnPointCounts: Record<Team, number>,
   offsetByTeam: Partial<Record<Team, number>> = {}
 ): TeamSpawnAssignment[] {
-  const nextTeamIndex: Record<Team, number> = { red: 0, blue: 0 };
+  const nextTeamIndex: Record<Team, number> = {};
   const assignments: TeamSpawnAssignment[] = [];
 
   for (const participant of participants) {
@@ -253,7 +254,8 @@ export function createTeamSpawnAssignments(
     if (spawnPointCount === 0) continue;
 
     const offset = normalizeSpawnOffset(offsetByTeam[participant.team] ?? 0, spawnPointCount);
-    const teamIndex = nextTeamIndex[participant.team]++;
+    const teamIndex = nextTeamIndex[participant.team] ?? 0;
+    nextTeamIndex[participant.team] = teamIndex + 1;
     assignments.push({
       playerId: participant.playerId,
       team: participant.team,

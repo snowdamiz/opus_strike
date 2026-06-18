@@ -1,6 +1,7 @@
 import type {
   GamePhase,
   GameplayMode,
+  MapProfileId,
   RoundEndEvent,
   VoxelMapSizeId,
 } from '@voxel-strike/shared';
@@ -34,6 +35,14 @@ export function shouldAutoReadyHeroSelectPhase(input: {
   now: number;
 }): boolean {
   return hasPhaseDeadlineElapsed(input.phaseEndTime, input.now);
+}
+
+export function shouldRunHeroSelectPhaseTransitionCheck(input: {
+  lowFrequencyStateDue: boolean;
+  phaseEndTime: number;
+  now: number;
+}): boolean {
+  return input.lowFrequencyStateDue && shouldAutoReadyHeroSelectPhase(input);
 }
 
 export function getRoomRoundTimeRemaining(input: {
@@ -141,12 +150,14 @@ export function buildPhaseChangePayload(input: {
   mapSeed: number;
   mapThemeId: string;
   mapSize: VoxelMapSizeId;
+  mapProfileId?: MapProfileId;
 }): {
   phase: GamePhase;
   endTime: number;
   mapSeed: number;
   mapThemeId: string;
   mapSize: VoxelMapSizeId;
+  mapProfileId: MapProfileId;
 } {
   return {
     phase: input.phase,
@@ -154,6 +165,7 @@ export function buildPhaseChangePayload(input: {
     mapSeed: input.mapSeed,
     mapThemeId: input.mapThemeId,
     mapSize: input.mapSize,
+    mapProfileId: input.mapProfileId ?? 'ctf_arena',
   };
 }
 

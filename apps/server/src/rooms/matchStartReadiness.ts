@@ -102,6 +102,7 @@ export function buildMatchStartGatePayload(input: {
   mapSeed: number;
   mapThemeId: string;
   mapSize: NonNullable<MatchStartGateMessage['mapSize']>;
+  mapProfileId?: NonNullable<MatchStartGateMessage['mapProfileId']>;
   position: MatchStartGateMessage['position'];
   movementEpoch: number;
   ackSeq: number;
@@ -113,6 +114,7 @@ export function buildMatchStartGatePayload(input: {
     mapSeed: input.mapSeed,
     mapThemeId: input.mapThemeId as MatchStartGateMessage['mapThemeId'],
     mapSize: input.mapSize,
+    mapProfileId: input.mapProfileId ?? 'ctf_arena',
     position: input.position,
     movementEpoch: input.movementEpoch,
     ackSeq: input.ackSeq,

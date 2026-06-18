@@ -436,7 +436,7 @@ function runAntiCheatQueueBenchmark(): Record<string, number | string> {
     integrityStatus: 'clean' as const,
     casePriority: null,
     shouldCreateCase: false,
-    affectsRankedOrWager: false,
+    affectsRanked: false,
   };
 
   for (let iteration = 0; iteration < 600; iteration++) {
@@ -805,7 +805,6 @@ function createBenchmarkRoomScenario(
     gameplayMode: DEFAULT_GAMEPLAY_MODE,
     requiredHumanPlayers: 0,
     reservedHumanPlayers: options.humanCount,
-    observerCount: 0,
   });
   cleanupBenchmarkRoom(room);
 

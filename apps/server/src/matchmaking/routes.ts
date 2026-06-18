@@ -12,7 +12,12 @@ import {
   getRankedTokenHoldingStatus,
 } from './rankedTokenHold';
 import { collectInGameCapacitySnapshot, type InGameCapacitySnapshot } from './playerCapacity';
-import type { MatchMode } from '@voxel-strike/shared';
+import {
+  DEFAULT_GAMEPLAY_MODE,
+  isGameplayMode,
+  type GameplayMode,
+  type MatchMode,
+} from '@voxel-strike/shared';
 import {
   chooseMatchmakingRankBand,
   getMatchmakingUserContext,
@@ -32,6 +37,7 @@ const MATCHMAKING_RATE_LIMITS = {
 
 interface MatchmakingQueueStatus {
   mode: MatchMode;
+  gameplayMode?: GameplayMode;
   totalPlayersInQueue: number;
   queueCount: number;
   provisionalPlayerCount?: number;
@@ -47,7 +53,7 @@ interface QueueStatusCacheEntry {
 
 const RUNNING_GAME_PHASES = new Set(['waiting', 'hero_select', 'countdown', 'playing', 'round_end']);
 const QUEUE_STATUS_CACHE_TTL_MS = 750;
-const queueStatusCache = new Map<MatchMode, QueueStatusCacheEntry>();
+const queueStatusCache = new Map<string, QueueStatusCacheEntry>();
 
 function sendRouteError(res: Response, error: unknown, fallbackMessage: string): void {
   const statusCode = typeof error === 'object' && error && 'statusCode' in error
@@ -81,7 +87,11 @@ function readRoomIdParam(req: Request): string | null {
   return /^[a-zA-Z0-9_-]+$/.test(value) ? value : null;
 }
 
-async function getQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> {
+function getQueueStatusCacheKey(mode: MatchMode, gameplayMode: GameplayMode): string {
+  return mode === 'ranked' ? 'ranked' : `quick_play:${gameplayMode}`;
+}
+
+async function getQueueStatus(mode: MatchMode, gameplayMode: GameplayMode): Promise<MatchmakingQueueStatus> {
   const [rooms, capacity] = await Promise.all([
     matchMaker.query({ name: 'lobby_room' }),
     collectInGameCapacitySnapshot(matchMaker),
@@ -96,14 +106,18 @@ async function getQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> 
     if (metadata.matchmakingMode !== true || metadata.status !== 'matchmaking') continue;
     const roomMode: MatchMode = metadata.matchMode === 'ranked' ? 'ranked' : 'quick_play';
     if (roomMode !== mode) continue;
+    if (roomMode === 'quick_play' && metadata.gameplayMode !== gameplayMode) continue;
 
     const humanCount = Math.max(0, typeof metadata.humanCount === 'number' ? metadata.humanCount : room.clients ?? 0);
+    const participantCount = Math.max(0, typeof metadata.participantCount === 'number'
+      ? metadata.participantCount
+      : humanCount);
     const queuedHumanCount = Math.max(0, typeof metadata.queuedHumanCount === 'number'
       ? metadata.queuedHumanCount
       : humanCount);
     const roomRequiredPlayers = typeof metadata.requiredPlayers === 'number' ? metadata.requiredPlayers : room.maxClients ?? 0;
     requiredPlayers = roomRequiredPlayers || requiredPlayers;
-    if (roomRequiredPlayers > 0 && queuedHumanCount >= roomRequiredPlayers && metadata.capacityBlocked !== true) continue;
+    if (roomRequiredPlayers > 0 && participantCount >= roomRequiredPlayers && metadata.capacityBlocked !== true) continue;
 
     totalPlayersInQueue += queuedHumanCount;
     provisionalPlayerCount += Math.max(0, humanCount - queuedHumanCount);
@@ -112,6 +126,7 @@ async function getQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> 
 
   return {
     mode,
+    gameplayMode: mode === 'quick_play' ? gameplayMode : undefined,
     totalPlayersInQueue,
     queueCount,
     provisionalPlayerCount,
@@ -120,9 +135,10 @@ async function getQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> 
   };
 }
 
-function getCachedQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> {
+function getCachedQueueStatus(mode: MatchMode, gameplayMode: GameplayMode): Promise<MatchmakingQueueStatus> {
   const now = Date.now();
-  const cached = queueStatusCache.get(mode);
+  const cacheKey = getQueueStatusCacheKey(mode, gameplayMode);
+  const cached = queueStatusCache.get(cacheKey);
   if (cached?.value && cached.expiresAt > now) {
     return Promise.resolve(cached.value);
   }
@@ -130,30 +146,30 @@ function getCachedQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> 
     return cached.inFlight;
   }
 
-  const inFlight = getQueueStatus(mode)
+  const inFlight = getQueueStatus(mode, gameplayMode)
     .then((value) => {
-      queueStatusCache.set(mode, {
+      queueStatusCache.set(cacheKey, {
         value,
         expiresAt: Date.now() + QUEUE_STATUS_CACHE_TTL_MS,
       });
       return value;
     })
     .catch((error) => {
-      const current = queueStatusCache.get(mode);
+      const current = queueStatusCache.get(cacheKey);
       if (current?.inFlight === inFlight) {
         if (current.value) {
-          queueStatusCache.set(mode, {
+          queueStatusCache.set(cacheKey, {
             value: current.value,
             expiresAt: current.expiresAt,
           });
         } else {
-          queueStatusCache.delete(mode);
+          queueStatusCache.delete(cacheKey);
         }
       }
       throw error;
     });
 
-  queueStatusCache.set(mode, {
+  queueStatusCache.set(cacheKey, {
     value: cached?.value,
     expiresAt: cached?.expiresAt ?? 0,
     inFlight,
@@ -166,8 +182,11 @@ router.get('/queue-status', async (req: Request, res: Response) => {
 
   try {
     const requestedMode = req.query.mode === 'ranked' ? 'ranked' : 'quick_play';
+    const requestedGameplayMode = isGameplayMode(req.query.gameplayMode)
+      ? req.query.gameplayMode
+      : DEFAULT_GAMEPLAY_MODE;
     res.set('Cache-Control', 'private, max-age=1');
-    res.json(await getCachedQueueStatus(requestedMode));
+    res.json(await getCachedQueueStatus(requestedMode, requestedGameplayMode));
   } catch (error) {
     console.error('[matchmaking] Failed to get queue status:', error);
     res.status(500).json({ error: 'Failed to get queue status' });

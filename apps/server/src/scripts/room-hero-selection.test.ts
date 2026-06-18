@@ -73,6 +73,33 @@ const thirdHero = ALL_HERO_IDS[2] as HeroId;
 
 {
   const players = [
+    participant('br-01-phantom', 'br_01', firstHero),
+    participant('br-01-blaze', 'br_01', secondHero),
+    participant('br-02-phantom', 'br_02', firstHero),
+  ];
+
+  assert.equal(isPlayerTeamHeroAvailable({
+    players,
+    team: 'br_01',
+    heroId: firstHero,
+    playerId: 'new-br-01',
+  }), false);
+  assert.equal(isPlayerTeamHeroAvailable({
+    players,
+    team: 'br_02',
+    heroId: secondHero,
+    playerId: 'new-br-02',
+  }), true);
+  assert.equal(selectAvailableRoomHero({
+    players,
+    team: 'br_01',
+    playerId: 'new-br-01',
+    random: () => 0,
+  }), thirdHero);
+}
+
+{
+  const players = [
     participant('red-first', 'red', firstHero),
     participant('red-third', 'red', thirdHero),
   ];

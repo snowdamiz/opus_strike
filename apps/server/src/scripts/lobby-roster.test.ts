@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createTeamCountMap } from '@voxel-strike/shared';
 import {
   buildLobbyPlayerSnapshots,
   countLobbyRoster,
@@ -14,7 +15,6 @@ function lobbyPlayer(overrides: Partial<LobbyRosterPlayer> = {}): LobbyRosterPla
     isHost: false,
     isReady: false,
     team: '',
-    isObserver: false,
     heroId: '',
     isBot: false,
     botDifficulty: '',
@@ -27,10 +27,6 @@ function lobbyPlayer(overrides: Partial<LobbyRosterPlayer> = {}): LobbyRosterPla
     rankIconKey: 'unranked',
     rankIsRanked: false,
     rankPlacementRemaining: 5,
-    paymentStatus: '',
-    paymentWalletAddress: '',
-    depositSignature: '',
-    refundSignature: '',
     ...overrides,
   };
 }
@@ -51,9 +47,6 @@ const roster = new Map<string, LobbyRosterPlayer>([
     rankIconKey: 'bronze',
     rankIsRanked: true,
     rankPlacementRemaining: 0,
-    paymentStatus: 'credited',
-    paymentWalletAddress: 'wallet-a',
-    depositSignature: 'deposit-a',
   })],
   ['red-bot', lobbyPlayer({
     id: 'red-bot',
@@ -67,34 +60,18 @@ const roster = new Map<string, LobbyRosterPlayer>([
     id: 'blue-human',
     name: 'Blue Human',
     team: 'blue',
-    paymentStatus: 'settled',
-    refundSignature: 'refund-b',
-  })],
-  ['observer-human', lobbyPlayer({
-    id: 'observer-human',
-    name: 'Observer Human',
-    isObserver: true,
-    paymentStatus: 'credited',
-  })],
-  ['spectator-bot', lobbyPlayer({
-    id: 'spectator-bot',
-    name: 'Spectator Bot',
-    isBot: true,
-    isObserver: true,
   })],
 ]);
 
 {
   const snapshots = buildLobbyPlayerSnapshots(roster);
 
-  assert.equal(snapshots.length, 5);
+  assert.equal(snapshots.length, 3);
   assert.equal(snapshots[0].id, 'red-human');
   assert.equal(snapshots[0].name, 'Red Human');
   assert.equal(snapshots[0].isHost, true);
   assert.equal(snapshots[0].rank.tier, 'bronze');
   assert.equal(snapshots[0].rank.division, 2);
-  assert.equal(snapshots[0].paymentWalletAddress, 'wallet-a');
-  assert.equal(snapshots[0].depositSignature, 'deposit-a');
 }
 
 {
@@ -102,13 +79,10 @@ const roster = new Map<string, LobbyRosterPlayer>([
 
   assert.deepEqual(counts, {
     human: 2,
-    lobbyHuman: 3,
-    bot: 2,
-    observer: 2,
+    lobbyHuman: 2,
+    bot: 1,
     combatParticipant: 3,
-    team: { red: 2, blue: 1 },
-    paidHuman: 2,
-    paidHumanByTeam: { red: 1, blue: 1 },
+    team: { ...createTeamCountMap(), red: 2, blue: 1 },
   });
 }
 

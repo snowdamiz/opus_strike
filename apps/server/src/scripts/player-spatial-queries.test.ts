@@ -36,6 +36,13 @@ const coneCandidates = queries.queryConeCandidates({ x: 0, z: 0 }, 20, { team: '
 assert.equal(coneCandidates, firstRadiusResults);
 assert.deepEqual(coneCandidates.map((player) => player.id).sort(), ['blue-a', 'blue-b']);
 
+players.push(makePlayer('br-a', 'br_01', 5, 0));
+index.rebuild(players);
+assert.deepEqual(
+  queries.queryRadius({ x: 0, z: 0 }, 8, { excludeTeam: 'red' }).map((player) => player.id).sort(),
+  ['blue-a', 'br-a']
+);
+
 players[2].position.x = 40;
 index.rebuild(players);
 assert.deepEqual(queries.queryRadius({ x: 0, z: 0 }, 8, { team: 'blue' }), []);

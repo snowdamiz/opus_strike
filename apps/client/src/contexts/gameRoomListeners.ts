@@ -4,6 +4,7 @@ import {
   isGameplayMode,
   type GameEndEvent,
   type HeroId,
+  type MapProfileId,
   type PlayerPingRequestMessage,
   type PlayerPingsMessage,
   type VoxelMapSizeId,
@@ -63,7 +64,6 @@ interface PendingPlayerReportRequest {
 
 interface SetupGameListenersOptions {
   playerName: string;
-  observer?: boolean;
   gameRoomRef: MutableRef<Room | null>;
   isJoiningGameRef: MutableRef<boolean>;
   voiceTokenRequestsRef: MutableRef<Map<string, PendingVoiceTokenRequest>>;
@@ -71,7 +71,6 @@ interface SetupGameListenersOptions {
   rejectPendingVoiceTokenRequests: (message: string) => void;
   rejectPendingPlayerReportRequests: (message: string) => void;
   setMatchStartGateKey: (key: number | null) => void;
-  enterObserverMode: (sessionId: string) => void;
 }
 
 interface PlayerReportResultMessage {
@@ -87,6 +86,7 @@ interface MatchStartGateMessage {
   mapSeed?: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
+  mapProfileId?: MapProfileId | null;
   position?: { x: number; y: number; z: number };
   movementEpoch?: number;
   ackSeq?: number;
@@ -99,7 +99,6 @@ interface MatchCancelledMessage {
   roomId?: string;
   requiredHumanPlayers?: number;
   connectedHumanPlayers?: number;
-  refundedWager?: boolean;
   serverTime?: number;
   blockedPlayerId?: string;
   blockedPlayerName?: string;
@@ -122,7 +121,6 @@ export function setupGameRoomListeners(
   room: Room,
   {
     playerName,
-    observer = false,
     gameRoomRef,
     isJoiningGameRef,
     voiceTokenRequestsRef,
@@ -130,7 +128,6 @@ export function setupGameRoomListeners(
     rejectPendingVoiceTokenRequests,
     rejectPendingPlayerReportRequests,
     setMatchStartGateKey,
-    enterObserverMode,
   }: SetupGameListenersOptions
 ): void {
   const {
@@ -147,23 +144,16 @@ export function setupGameRoomListeners(
     setLocalPlayer,
     updatePlayer,
     removePlayer,
-    setObserverMode,
     setMatchSummary,
     setPlayerPings,
     clearMatchSummary,
     resetLobby,
   } = useGameStore.getState();
   const sessionId = room.sessionId;
-  let localPlayerName = observer ? '' : playerName;
+  const localPlayerName = playerName;
 
-  setObserverMode(observer);
-
-  if (observer) {
-    enterObserverMode(sessionId);
-  } else {
-    setLocalPlayer(createDefaultLocalPlayer(sessionId, playerName));
-    useGameStore.getState().cleanupGhostPlayers();
-  }
+  setLocalPlayer(createDefaultLocalPlayer(sessionId, playerName));
+  useGameStore.getState().cleanupGhostPlayers();
 
   const playersMap = room.state.players as SchemaPlayerCollection | undefined;
   if (playersMap && typeof playersMap.onAdd === 'function' && typeof playersMap.onRemove === 'function') {
@@ -198,17 +188,20 @@ export function setupGameRoomListeners(
     mapSeed?: number;
     mapThemeId?: VoxelMapTheme['id'] | null;
     mapSize?: VoxelMapSizeId | null;
+    mapProfileId?: MapProfileId | null;
   }) => {
     loggers.network.debug('phase change message', data.phase);
     if (typeof data.mapSeed === 'number') {
       setMapSeed(data.mapSeed);
       setMapThemeId(data.mapThemeId ?? null);
       setMapSize(data.mapSize);
+      useGameStore.getState().setMapProfileId(data.mapProfileId);
       try {
         const preparedMap = prepareVoxelMapCpu({
           seed: data.mapSeed,
           themeId: data.mapThemeId ?? null,
           mapSize: data.mapSize,
+          mapProfileId: data.mapProfileId,
           source: 'match',
         });
         prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'phase-change' });
@@ -231,6 +224,7 @@ export function setupGameRoomListeners(
       setMapSeed(data.mapSeed);
       setMapThemeId(data.mapThemeId ?? null);
       setMapSize(data.mapSize);
+      useGameStore.getState().setMapProfileId(data.mapProfileId);
     }
 
     const position = data.position;
@@ -286,7 +280,6 @@ export function setupGameRoomListeners(
       roomId: data.roomId,
       requiredHumanPlayers: data.requiredHumanPlayers,
       connectedHumanPlayers: data.connectedHumanPlayers,
-      refundedWager: data.refundedWager,
       blockedPlayerId: data.blockedPlayerId,
       blockedPlayerName: data.blockedPlayerName,
       networkQuality: data.networkQuality,
@@ -382,13 +375,6 @@ export function setupGameRoomListeners(
     }
   }));
 
-  room.onMessage('observerModeStarted', measureNetworkMessage('observerModeStarted', (data: { playerId?: string }) => {
-    const observerPlayerId = data.playerId || sessionId;
-    loggers.network.debug('observer mode started', observerPlayerId);
-    localPlayerName = '';
-    enterObserverMode(observerPlayerId);
-  }));
-
   room.onMessage('devCommandError', (data: { message: string }) => {
     loggers.network.error('developer command error:', data.message);
   });
@@ -412,7 +398,6 @@ export function setupGameRoomListeners(
     setRoomId(null);
     setPracticeMode(false);
     setMatchStartGateKey(null);
-    setObserverMode(false);
     setGamePhase('waiting');
     resetLobby();
     setAppPhase('menu');

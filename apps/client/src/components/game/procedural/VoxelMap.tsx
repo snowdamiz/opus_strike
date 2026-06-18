@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, type RootState } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { VoxelMapManifest, VoxelMapSizeId, VoxelMapTheme } from '@voxel-strike/shared';
+import type { MapProfileId, VoxelMapManifest, VoxelMapSizeId, VoxelMapTheme } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { areProceduralMapCollidersLoaded, isPhysicsReady, loadProceduralMapColliders } from '../../../hooks/usePhysics';
 import { setMapBoundaryPolygon } from '../../../config/mapBoundaries';
@@ -36,6 +36,7 @@ interface VoxelMapProps {
   seed?: number;
   themeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
+  mapProfileId?: MapProfileId | null;
   manifest?: VoxelMapManifest;
   enablePhysics?: boolean;
   shadowsEnabled: boolean;
@@ -67,6 +68,7 @@ export function VoxelMap({
   seed,
   themeId: providedThemeId,
   mapSize: providedMapSize,
+  mapProfileId: providedMapProfileId,
   manifest: providedManifest,
   enablePhysics = true,
   shadowsEnabled,
@@ -85,18 +87,21 @@ export function VoxelMap({
   const storeMapSeed = useGameStore((state) => state.mapSeed);
   const storeMapThemeId = useGameStore((state) => state.mapThemeId);
   const storeMapSize = useGameStore((state) => state.mapSize);
+  const storeMapProfileId = useGameStore((state) => state.mapProfileId);
   const mapSeed = seed ?? storeMapSeed;
   const mapThemeId = providedThemeId ?? storeMapThemeId;
   const mapSize = providedMapSize ?? providedManifest?.mapSize ?? storeMapSize;
+  const mapProfileId = providedMapProfileId ?? providedManifest?.profileId ?? storeMapProfileId;
   const preparedMap = useMemo(() => {
     return prepareVoxelMapCpu({
       seed: mapSeed,
       themeId: mapThemeId,
       mapSize,
+      mapProfileId,
       manifest: providedManifest,
       source: providedManifest ? 'mapVotePreview' : 'match',
     });
-  }, [mapSeed, mapThemeId, mapSize, providedManifest]);
+  }, [mapSeed, mapThemeId, mapSize, mapProfileId, providedManifest]);
   const manifest = preparedMap.manifest;
   const renderableRegions = preparedMap.renderableRegions;
   const material = useVoxelMaterial(manifest.theme, materialQuality);

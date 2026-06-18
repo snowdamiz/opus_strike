@@ -7,7 +7,7 @@ import { VoxelWorld } from './VoxelWorld';
 import type { VoxelMapWarmupStatus } from './procedural/VoxelMap';
 import { WorldAtmosphere } from './WorldAtmosphere';
 import { PlayerController } from './PlayerController';
-import { ObserverCameraController } from './ObserverCameraController';
+import { BattleRoyalTeamSpectatorCameraController } from './BattleRoyalTeamSpectatorCameraController';
 import { OtherPlayers } from './OtherPlayers';
 import { RagdollManager } from './RagdollManager';
 import { Flags } from './Flags';
@@ -33,6 +33,7 @@ import {
 } from '../../utils/mapWarmup/mapPrepCache';
 import {
   createMapWarmupSnapshot,
+  isMapWarmupReadyForMatchStart,
   reduceMapWarmup,
   type MapWarmupSnapshot,
   type MapWarmupStageId,
@@ -775,12 +776,14 @@ function ReflectionEnvironment({
 }
 
 interface GameCanvasProps {
+  onMatchStartReady?: () => void;
   onReady?: () => void;
   onWarmupUpdate?: (snapshot: MapWarmupSnapshot) => void;
   startupRampActive?: boolean;
 }
 
 export function GameCanvas({
+  onMatchStartReady,
   onReady,
   onWarmupUpdate,
   startupRampActive = false,
@@ -788,16 +791,18 @@ export function GameCanvas({
   const gamePhase = useGameStore((state) => state.gamePhase);
   const isPracticeMode = useGameStore((state) => state.isPracticeMode);
   const isTutorialMode = useGameStore((state) => state.isTutorialMode);
-  const isObserverMode = useGameStore((state) => state.isObserverMode);
+  const gameplayMode = useGameStore((state) => state.gameplayMode);
+  const localPlayerState = useGameStore((state) => state.localPlayer?.state ?? null);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
+  const mapProfileId = useGameStore((state) => state.mapProfileId);
   const settings = useSettingsStore(state => state.settings);
   const qualityConfig = useMemo(() => getVisualQualityConfig(settings), [settings]);
   const canvasAntialiasRef = useRef(qualityConfig.render.antialias);
   const warmupKey = useMemo(
-    () => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId, mapSize }),
-    [mapSeed, mapThemeId, mapSize]
+    () => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId }),
+    [mapSeed, mapThemeId, mapSize, mapProfileId]
   );
   const [warmupSnapshot, dispatchWarmup] = useReducer(
     reduceMapWarmup,
@@ -815,7 +820,9 @@ export function GameCanvas({
     [mapTheme]
   );
   const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
+  const isBattleRoyalEliminated = gameplayMode === 'battle_royal' && localPlayerState === 'dead';
   const isWorldReady = warmupSnapshot.key === warmupKey && warmupSnapshot.canAcceptInput;
+  const isReadyForMatchStart = isMapWarmupReadyForMatchStart(warmupSnapshot, warmupKey);
   const shouldMountGameplayObjects = isPlaying || warmupSnapshot.canShowGameplayObjects;
   const effectiveEnvironmentConfig = useMemo(
     () => startupRampActive
@@ -872,6 +879,8 @@ export function GameCanvas({
   ]);
 
   const handleVoxelWarmupStatus = useCallback((status: VoxelMapWarmupStatus) => {
+    if (status.preparedMap.key !== warmupKey) return;
+
     markWarmupStageDone('map', status.preparedMap.source === 'match' ? undefined : 0);
 
     if (status.collidersReady) {
@@ -968,6 +977,7 @@ export function GameCanvas({
           materialQuality={qualityConfig.materials.terrainTextureQuality}
           performanceBudget={qualityConfig.budgets}
           themeId={mapThemeId}
+          mapProfileId={mapProfileId}
           prebuildRegions
           onWarmupStatus={handleVoxelWarmupStatus}
         />
@@ -987,9 +997,8 @@ export function GameCanvas({
           followCamera={false}
         />
 
-        {/* Physics boots immediately; observer camera can fly while player simulation waits for terrain readiness. */}
-        {isObserverMode ? (
-          <ObserverCameraController enabled />
+        {isBattleRoyalEliminated ? (
+          <BattleRoyalTeamSpectatorCameraController enabled />
         ) : (
           <PlayerController enabled={isWorldReady} />
         )}
@@ -1011,7 +1020,7 @@ export function GameCanvas({
             {isTutorialMode && <TutorialTargetRange />}
             <Effects />
             <CombatTextLayer enabled={settings.showDamageNumbers} />
-            {!isObserverMode && <HeroViewmodel config={qualityConfig.viewmodel} />}
+            <HeroViewmodel config={qualityConfig.viewmodel} />
             <VoidZonesManager />
             <DireBallsManager />
             <PhantomPersonalShieldsManager />
@@ -1043,10 +1052,15 @@ export function GameCanvas({
         />
 
         {/* Orbit controls when not playing for looking around */}
-        {!isPlaying && !isObserverMode && <OrbitControls target={[0, 0, 0]} enablePan={false} />}
+        {!isPlaying && <OrbitControls target={[0, 0, 0]} enablePan={false} />}
 
         <SceneAtmosphereColors theme={mapTheme} />
-        <SceneReadySignal onReady={onReady} ready={isWorldReady} readyKey={warmupKey} />
+        <SceneReadySignal
+          onReady={onMatchStartReady}
+          ready={isReadyForMatchStart}
+          readyKey={`${warmupKey}:match-start`}
+        />
+        <SceneReadySignal onReady={onReady} ready={isWorldReady} readyKey={`${warmupKey}:interactive`} />
         <GameplayFrameWorkBoundary />
       </Suspense>
     </Canvas>

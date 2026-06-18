@@ -2,6 +2,7 @@ import {
   ALL_HERO_IDS,
   pickAvailableTeamHero,
   isTeamHeroAvailable as isSharedTeamHeroAvailable,
+  isTeamId,
   type HeroId,
   type Team,
 } from '@voxel-strike/shared';
@@ -10,11 +11,10 @@ export interface RoomHeroLockParticipant {
   id: string;
   team?: string | null;
   heroId?: string | null;
-  isObserver?: boolean | null;
 }
 
 function isRoomHeroTeam(team: string | null | undefined): team is Team {
-  return team === 'red' || team === 'blue';
+  return isTeamId(team);
 }
 
 export function getRoomHeroLockParticipants(

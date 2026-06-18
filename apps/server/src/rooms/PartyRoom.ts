@@ -1,7 +1,9 @@
 import type { IncomingMessage } from 'http';
 import { Room, Client } from 'colyseus';
 import {
-  DEFAULT_GAME_CONFIG,
+  PARTY_MAX_MEMBERS,
+  isGameplayMode,
+  type BotDifficulty,
   type GameplayMode,
   type HeroId,
   type PartyMode,
@@ -10,7 +12,7 @@ import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
 import { assertGameplayAccountEligible } from '../auth/accountEligibility';
 import prisma from '../db';
 import { MessageRateLimiter, type RateLimitRule } from './rateLimiter';
-import { isHeroId, isRecord } from './protocolValidation';
+import { isBotDifficulty, isHeroId, isRecord, sanitizeShortText } from './protocolValidation';
 import { PartyRosterRuntime } from '../party/partyRuntime';
 import {
   launchPartyToCustomLobby,
@@ -27,6 +29,9 @@ const PARTY_MESSAGE_RATE_LIMITS = {
   hero: { limit: 8, intervalMs: 5000 },
   ready: { limit: 10, intervalMs: 5000 },
   mode: { limit: 8, intervalMs: 5000 },
+  botFill: { limit: 12, intervalMs: 5000 },
+  bot: { limit: 8, intervalMs: 5000 },
+  kick: { limit: 8, intervalMs: 5000 },
   start: { limit: 4, intervalMs: 8000 },
 } satisfies Record<string, RateLimitRule>;
 
@@ -49,11 +54,7 @@ function validateModePayload(value: unknown): {
   const mode = value.mode;
   if (mode !== 'quick_play' && mode !== 'ranked' && mode !== 'custom' && mode !== 'practice') return null;
   const gameplayMode = value.gameplayMode;
-  if (
-    gameplayMode !== undefined &&
-    gameplayMode !== 'capture_the_flag' &&
-    gameplayMode !== 'team_deathmatch'
-  ) {
+  if (gameplayMode !== undefined && !isGameplayMode(gameplayMode)) {
     return null;
   }
   return {
@@ -62,12 +63,54 @@ function validateModePayload(value: unknown): {
   };
 }
 
+function validateBotFillPayload(value: unknown): {
+  gameplayMode: GameplayMode;
+  enabled: boolean;
+} | null {
+  if (!isRecord(value) || !isGameplayMode(value.gameplayMode)) return null;
+  const enabled = booleanValue(value.enabled);
+  if (enabled === null) return null;
+  return {
+    gameplayMode: value.gameplayMode,
+    enabled,
+  };
+}
+
+function validatePartyBotPayload(value: unknown): {
+  difficulty?: BotDifficulty;
+  displayName?: string;
+  heroId?: HeroId;
+} | null {
+  if (value === undefined) return {};
+  if (!isRecord(value)) return null;
+  const difficulty = value.difficulty === undefined
+    ? undefined
+    : isBotDifficulty(value.difficulty) ? value.difficulty : null;
+  const displayName = value.displayName === undefined
+    ? undefined
+    : sanitizeShortText(value.displayName, 24);
+  const heroId = value.heroId === undefined
+    ? undefined
+    : isHeroId(value.heroId) ? value.heroId : null;
+  if (difficulty === null || heroId === null) return null;
+  return {
+    difficulty,
+    displayName: displayName ?? undefined,
+    heroId,
+  };
+}
+
+function validatePartyMemberIdPayload(value: unknown): string | null {
+  if (!isRecord(value)) return null;
+  return sanitizeShortText(value.userId, 96);
+}
+
 function isDevTutorialBypassEnabled(value: unknown): boolean {
   return value === true || value === 'true' || value === '1';
 }
 
 export class PartyRoom extends Room {
-  maxClients = DEFAULT_GAME_CONFIG.teamSize;
+  maxClients = PARTY_MAX_MEMBERS;
   override get autoDispose(): boolean {
     return true;
   }
@@ -83,7 +126,7 @@ export class PartyRoom extends Room {
   }
 
   onCreate() {
-    this.party = new PartyRosterRuntime(this.roomId, DEFAULT_GAME_CONFIG.teamSize);
+    this.party = new PartyRosterRuntime(this.roomId, PARTY_MAX_MEMBERS);
 
     this.onMessage('setHero', (client, data: unknown) => {
       if (!this.consumePartyMessage(client, 'setHero', PARTY_MESSAGE_RATE_LIMITS.hero)) return;
@@ -103,6 +146,27 @@ export class PartyRoom extends Room {
       const payload = validateModePayload(data);
       if (!payload) return;
       this.handleSetMode(client, payload.mode, payload.gameplayMode);
+    });
+
+    this.onMessage('setBotFill', (client, data: unknown) => {
+      if (!this.consumePartyMessage(client, 'setBotFill', PARTY_MESSAGE_RATE_LIMITS.botFill)) return;
+      const payload = validateBotFillPayload(data);
+      if (!payload) return;
+      this.handleSetBotFill(client, payload.gameplayMode, payload.enabled);
+    });
+
+    this.onMessage('addBot', (client, data: unknown = {}) => {
+      if (!this.consumePartyMessage(client, 'addBot', PARTY_MESSAGE_RATE_LIMITS.bot)) return;
+      const payload = validatePartyBotPayload(data);
+      if (!payload) return;
+      this.handleAddBot(client, payload);
+    });
+
+    this.onMessage('kickMember', (client, data: unknown) => {
+      if (!this.consumePartyMessage(client, 'kickMember', PARTY_MESSAGE_RATE_LIMITS.kick)) return;
+      const targetUserId = validatePartyMemberIdPayload(data);
+      if (!targetUserId) return;
+      this.handleKickMember(client, targetUserId);
     });
 
     this.onMessage('start', (client) => {
@@ -133,19 +197,26 @@ export class PartyRoom extends Room {
     }
 
     this.authBySessionId.set(client.sessionId, authContext);
-    const change = this.party.addMember({
-      userId: authContext.userId,
-      sessionId: client.sessionId,
-      displayName: authContext.displayName,
-      heroId: isHeroId(options.heroId) ? options.heroId : 'blaze',
-      rank: authContext.rank,
-      competitiveRating: authContext.competitiveRating,
-      rankDivisionIndex: authContext.rankDivisionIndex,
-      walletAddress: authContext.walletAddress ?? null,
-      tutorialCompletedAt: authContext.tutorialCompletedAt,
-      rankedPlacementsRemaining: authContext.rankedPlacementsRemaining,
-      devTutorialBypass: isDevTutorialBypassEnabled(options.devTutorialBypass),
-    });
+    let change;
+    try {
+      change = this.party.addMember({
+        userId: authContext.userId,
+        sessionId: client.sessionId,
+        displayName: authContext.displayName,
+        heroId: isHeroId(options.heroId) ? options.heroId : 'blaze',
+        rank: authContext.rank,
+        competitiveRating: authContext.competitiveRating,
+        rankDivisionIndex: authContext.rankDivisionIndex,
+        walletAddress: authContext.walletAddress ?? null,
+        tutorialCompletedAt: authContext.tutorialCompletedAt,
+        rankedPlacementsRemaining: authContext.rankedPlacementsRemaining,
+        devTutorialBypass: isDevTutorialBypassEnabled(options.devTutorialBypass),
+      });
+    } catch (error) {
+      client.send('error', { message: error instanceof Error ? error.message : 'Failed to join party' });
+      client.leave();
+      return;
+    }
 
     if (change.replacedSessionId) {
       const oldClient = this.clients.find((candidate) => candidate.sessionId === change.replacedSessionId);
@@ -212,14 +283,18 @@ export class PartyRoom extends Room {
   private handleSetHero(client: Client, heroId: HeroId): void {
     const member = this.memberForClient(client);
     if (!member) return;
-    const updated = this.party.updateHero(member.userId, heroId);
-    if (!updated) return;
-    this.broadcast('partyMemberUpdated', {
-      userId: updated.userId,
-      heroId: updated.heroId,
-      ready: updated.ready,
-    });
-    this.broadcastPartyState();
+    try {
+      const updated = this.party.updateHero(member.userId, heroId);
+      if (!updated) return;
+      this.broadcast('partyMemberUpdated', {
+        userId: updated.userId,
+        heroId: updated.heroId,
+        ready: updated.ready,
+      });
+      this.broadcastPartyState();
+    } catch (error) {
+      client.send('error', { message: error instanceof Error ? error.message : 'Failed to set party hero' });
+    }
   }
 
   private handleSetReady(client: Client, ready: boolean): void {
@@ -242,6 +317,58 @@ export class PartyRoom extends Room {
       this.broadcastPartyState();
     } catch (error) {
       client.send('error', { message: error instanceof Error ? error.message : 'Failed to set party mode' });
+    }
+  }
+
+  private handleSetBotFill(client: Client, gameplayMode: GameplayMode, enabled: boolean): void {
+    const member = this.memberForClient(client);
+    if (!member) return;
+    try {
+      this.party.setBotFillEnabled(member.userId, gameplayMode, enabled);
+      this.broadcastPartyState();
+    } catch (error) {
+      client.send('error', { message: error instanceof Error ? error.message : 'Failed to set party bot fill' });
+    }
+  }
+
+  private handleAddBot(
+    client: Client,
+    payload: { difficulty?: BotDifficulty; displayName?: string; heroId?: HeroId }
+  ): void {
+    const member = this.memberForClient(client);
+    if (!member) return;
+    try {
+      const bot = this.party.addBot(member.userId, payload);
+      this.broadcast('partyMemberJoined', {
+        userId: bot.userId,
+        displayName: bot.displayName,
+        isBot: true,
+      });
+      this.broadcastPartyState();
+    } catch (error) {
+      client.send('error', { message: error instanceof Error ? error.message : 'Failed to add bot' });
+    }
+  }
+
+  private handleKickMember(client: Client, targetUserId: string): void {
+    const member = this.memberForClient(client);
+    if (!member) return;
+    try {
+      const removed = this.party.kickMember(member.userId, targetUserId);
+      if (!removed) return;
+      this.broadcast('partyMemberLeft', {
+        userId: removed.userId,
+        displayName: removed.displayName,
+        isBot: removed.isBot,
+      });
+      if (removed.sessionId) {
+        const targetClient = this.clients.find((candidate) => candidate.sessionId === removed.sessionId);
+        targetClient?.send('partyKicked', { reason: 'Kicked by party leader' });
+        targetClient?.leave(4001);
+      }
+      this.broadcastPartyState();
+    } catch (error) {
+      client.send('error', { message: error instanceof Error ? error.message : 'Failed to kick party member' });
     }
   }
 

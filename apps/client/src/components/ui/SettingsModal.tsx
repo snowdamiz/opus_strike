@@ -703,7 +703,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 {hasAccount && !hasPhantomAccount && (
                   <div className="mb-2 rounded-lg border border-amber-400/20 bg-amber-500/10 px-3 py-2">
                     <p className="text-amber-200 text-xs font-body">
-                      Phantom is required for ranked and wager modes. Connect a wallet before entering those games.
+                      Phantom is required for ranked. Connect a wallet before entering ranked games.
                     </p>
                   </div>
                 )}
@@ -740,7 +740,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   </div>
                 </SettingRow>
 
-                <SettingRow label="Restricted Modes" description={hasPhantomAccount ? 'Ranked and wager access ready' : 'Phantom wallet required for ranked and wager'}>
+                <SettingRow label="Restricted Modes" description={hasPhantomAccount ? 'Ranked access ready' : 'Phantom wallet required for ranked'}>
                   <AccountValue value={hasPhantomAccount ? 'READY' : hasAccount ? 'WALLET NEEDED' : 'SIGNED OUT'} />
                 </SettingRow>
 
@@ -763,7 +763,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   )}
                 </SettingRow>
 
-                <SettingRow label="Phantom" description={hasPhantomAccount ? 'Connected wallet provider' : 'Required for ranked and wager modes'}>
+                <SettingRow label="Phantom" description={hasPhantomAccount ? 'Connected wallet provider' : 'Required for ranked'}>
                   {hasPhantomAccount ? (
                     <AccountValue value={formatAccountAddress(displayWalletAddress)} />
                   ) : (

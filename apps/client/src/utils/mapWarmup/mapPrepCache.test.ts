@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { CONSTRUCTED_MAP_MANIFEST_VERSION } from '@voxel-strike/shared';
 import {
   clearPreparedVoxelMapCache,
+  getPreparedVoxelMap,
   getMapPrepCacheKey,
   prepareVoxelMapCpu,
 } from './mapPrepCache';
@@ -19,6 +20,10 @@ assert.equal(
 assert.equal(
   getMapPrepCacheKey({ seed: 123, mapSize: 'large' }),
   `procedural-v${CONSTRUCTED_MAP_MANIFEST_VERSION}:123:large`
+);
+assert.equal(
+  getMapPrepCacheKey({ seed: 123, mapSize: 'large', mapProfileId: 'battle_royal_large' }),
+  `procedural-v${CONSTRUCTED_MAP_MANIFEST_VERSION}:123:battle_royal_large:large`
 );
 
 const first = prepareVoxelMapCpu({ seed: 20260611, source: 'test' });
@@ -40,3 +45,38 @@ assert.ok(small.manifest.gameplay.powerups.length < first.manifest.gameplay.powe
 assert.ok(first.manifest.gameplay.powerups.length < large.manifest.gameplay.powerups.length);
 
 clearPreparedVoxelMapCache();
+
+const fakeBattleRoyalManifest = {
+  ...large.manifest,
+  profileId: 'battle_royal_large' as const,
+  mapSize: 'large' as const,
+  chunks: [],
+};
+const battleRoyalOne = prepareVoxelMapCpu({
+  seed: 1001,
+  manifest: { ...fakeBattleRoyalManifest, seed: 1001, id: 'br-one' },
+  source: 'test',
+});
+const battleRoyalTwo = prepareVoxelMapCpu({
+  seed: 1002,
+  manifest: { ...fakeBattleRoyalManifest, seed: 1002, id: 'br-two' },
+  source: 'test',
+});
+
+assert.equal(battleRoyalOne.manifest.profileId, 'battle_royal_large');
+assert.equal(battleRoyalTwo.manifest.profileId, 'battle_royal_large');
+assert.equal(getPreparedVoxelMap({
+  seed: 1001,
+  themeId: fakeBattleRoyalManifest.themeId,
+  mapSize: 'large',
+  mapProfileId: 'battle_royal_large',
+}), null);
+assert.equal(
+  getPreparedVoxelMap({
+    seed: 1002,
+    themeId: fakeBattleRoyalManifest.themeId,
+    mapSize: 'large',
+    mapProfileId: 'battle_royal_large',
+  })?.manifest.id,
+  'br-two'
+);

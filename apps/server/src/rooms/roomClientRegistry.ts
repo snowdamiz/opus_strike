@@ -1,6 +1,5 @@
 export class RoomClientRegistry<TClient> {
   private readonly clientsBySessionId = new Map<string, TClient>();
-  private readonly observerClientIds = new Set<string>();
   private readonly identityToSessionId = new Map<string, string>();
   private readonly sessionIdToIdentity = new Map<string, string>();
 
@@ -18,23 +17,6 @@ export class RoomClientRegistry<TClient> {
 
   getConnectedClientIds(): ReadonlyMap<string, TClient> {
     return this.clientsBySessionId;
-  }
-
-  addObserver(sessionId: string, client: TClient): void {
-    this.setClient(sessionId, client);
-    this.observerClientIds.add(sessionId);
-  }
-
-  deleteObserver(sessionId: string): boolean {
-    return this.observerClientIds.delete(sessionId);
-  }
-
-  isObserver(sessionId: string): boolean {
-    return this.observerClientIds.has(sessionId);
-  }
-
-  getObserverCount(): number {
-    return this.observerClientIds.size;
   }
 
   getSessionIdForIdentity(identity: string): string | undefined {
@@ -59,7 +41,6 @@ export class RoomClientRegistry<TClient> {
 
   clearSession(sessionId: string): void {
     this.deleteClient(sessionId);
-    this.deleteObserver(sessionId);
     this.clearIdentityForSession(sessionId);
   }
 }

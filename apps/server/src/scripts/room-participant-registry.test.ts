@@ -72,7 +72,6 @@ function ticket(input: Partial<GameEntryTicketClaims> = {}): GameEntryTicketClai
       displayName: 'User A',
       assignedTeam: 'red',
       selectedHero: 'phantom',
-      observer: undefined,
       issuedAt: 5_000,
       expiresAt: 65_000,
       nonce: 'reconnect:user-a:5000',
@@ -91,14 +90,13 @@ function ticket(input: Partial<GameEntryTicketClaims> = {}): GameEntryTicketClai
 {
   const registry = new RoomParticipantRegistry();
 
-  registry.rememberReconnectParticipant(ticket({ observer: true }));
+  registry.rememberReconnectParticipant(ticket());
   registry.setSession('session-a', auth('user-a'));
   registry.syncReconnectParticipant({
     sessionId: 'session-a',
     displayName: 'Renamed',
     assignedTeam: 'blue',
     selectedHero: 'hookshot',
-    observer: false,
   });
 
   const reconnectTicket = registry.createRunningGameReconnectTicket({
@@ -112,7 +110,6 @@ function ticket(input: Partial<GameEntryTicketClaims> = {}): GameEntryTicketClai
   assert.equal(reconnectTicket?.displayName, 'Renamed');
   assert.equal(reconnectTicket?.assignedTeam, 'blue');
   assert.equal(reconnectTicket?.selectedHero, 'hookshot');
-  assert.equal(reconnectTicket?.observer, undefined);
 }
 
 console.log('room participant registry tests passed');

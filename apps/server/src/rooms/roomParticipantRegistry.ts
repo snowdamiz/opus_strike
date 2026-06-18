@@ -8,7 +8,6 @@ export interface ReconnectParticipant {
   displayName: string;
   assignedTeam?: Team;
   selectedHero?: HeroId;
-  observer: boolean;
 }
 
 export class RoomParticipantRegistry {
@@ -55,7 +54,6 @@ export class RoomParticipantRegistry {
       displayName: ticket.displayName,
       assignedTeam: ticket.assignedTeam,
       selectedHero: ticket.selectedHero,
-      observer: ticket.observer === true,
     });
   }
 
@@ -82,7 +80,6 @@ export class RoomParticipantRegistry {
       displayName: participant.displayName,
       assignedTeam: participant.assignedTeam,
       selectedHero: participant.selectedHero,
-      observer: participant.observer ? true : undefined,
       issuedAt: input.issuedAt,
       expiresAt: input.issuedAt + input.ttlMs,
       nonce: `reconnect:${participant.userId}:${input.issuedAt}`,
@@ -94,7 +91,6 @@ export class RoomParticipantRegistry {
     displayName?: string | null;
     assignedTeam?: Team;
     selectedHero?: HeroId;
-    observer?: boolean;
   }): void {
     const userId = this.getDurableUserId(input.sessionId);
     if (!userId) return;
@@ -105,6 +101,5 @@ export class RoomParticipantRegistry {
     participant.displayName = input.displayName || participant.displayName;
     participant.assignedTeam = input.assignedTeam ?? participant.assignedTeam;
     participant.selectedHero = input.selectedHero ?? participant.selectedHero;
-    participant.observer = input.observer ?? participant.observer;
   }
 }
