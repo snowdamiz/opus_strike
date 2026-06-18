@@ -74,6 +74,7 @@ import {
   type VisualState,
   visualStore,
 } from '../../store/visualStore';
+import { recordFrameAllocation } from '../../movement/networkDiagnostics';
 import { registerRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
 import {
   getPlayerBodyPostureScaleY,
@@ -89,6 +90,8 @@ type PlayerFilter = 'all' | 'bot' | 'nonBot';
 
 interface RemoteHeroBatchRendererProps {
   players: readonly Player[];
+  resourcePlayers?: readonly Player[];
+  isBattleRoyal?: boolean;
   config: RemotePlayerQualityConfig;
 }
 
@@ -200,6 +203,11 @@ const WORLD_UP_AXIS = new THREE.Vector3(0, 1, 0);
 const WORLD_UNIT_SCALE = new THREE.Vector3(1, 1, 1);
 const REMOTE_BATCH_PREWARM_PLAYER_CAPACITY = 4;
 const REMOTE_BATCH_CAPACITY_GROWTH_PADDING = 2;
+const BATTLE_ROYAL_MAX_REMOTE_FULL_BODY_DISTANCE = 88;
+const BATTLE_ROYAL_MAX_REMOTE_OUTLINE_DISTANCE = 112;
+const BATTLE_ROYAL_REMOTE_ACTIVITY_BODY_DISTANCE = 96;
+const BATTLE_ROYAL_REMOTE_ACTIVITY_OUTLINE_DISTANCE = 128;
+const EMPTY_REMOTE_PLAYER_GROUP: readonly Player[] = Object.freeze([]);
 
 function isHeroId(value: string | null | undefined): value is HeroId {
   return Boolean(value && HERO_BODY_MANIFESTS[value as HeroId]);
@@ -207,6 +215,18 @@ function isHeroId(value: string | null | undefined): value is HeroId {
 
 function resolveHeroId(player: Player): HeroId {
   return isHeroId(player.heroId) ? player.heroId : 'phantom';
+}
+
+function getRemoteHeroResourceKey(player: Player): string {
+  return `${resolveHeroId(player)}:${player.team as Team}`;
+}
+
+function createRemoteBatchResourcesForKey(key: string): RemoteBatchResources {
+  const separatorIndex = key.indexOf(':');
+  const heroId = key.slice(0, separatorIndex) as HeroId;
+  const team = key.slice(separatorIndex + 1) as Team;
+  recordFrameAllocation('remoteHeroBatch.resourceCreated');
+  return createRemoteBatchResources(heroId, team);
 }
 
 function getHorizontalSpeed(velocity: { x: number; z: number }): number {
@@ -312,14 +332,21 @@ function hasActiveRemoteBodyEffect(player: Player, visualState: VisualState, fra
   );
 }
 
-function isHighPriorityRemoteBody(player: Player, visualState: VisualState, frameNowMs: number): boolean {
+function isObjectivePriorityRemoteBody(player: Player): boolean {
+  return player.hasFlag;
+}
+
+function isActivityPriorityRemoteBody(player: Player, visualState: VisualState, frameNowMs: number): boolean {
   return (
-    player.hasFlag ||
     hasActivePhantomVeil(player) ||
     getActivePhantomShieldStartedAt(player) !== null ||
     hasRecentRemoteAttack(player, visualState, frameNowMs) ||
     hasActiveRemoteBodyEffect(player, visualState, frameNowMs)
   );
+}
+
+function getBattleRoyalDistanceCap(distance: number, cap: number): number {
+  return Number.isFinite(distance) ? Math.min(distance, cap) : cap;
 }
 
 function isWithinDistance(camera: THREE.Camera, position: THREE.Vector3, maxDistance: number): boolean {
@@ -1297,11 +1324,15 @@ function RemoteHeroOutlineBatch({
 
 function RemoteHeroBatchGroup({
   players,
+  resourcePlayerCount,
   resources,
+  isBattleRoyal,
   config,
 }: {
   players: readonly Player[];
+  resourcePlayerCount: number;
   resources: RemoteBatchResources;
+  isBattleRoyal: boolean;
   config: RemotePlayerQualityConfig;
 }) {
   const camera = useThree((state) => state.camera);
@@ -1311,7 +1342,13 @@ function RemoteHeroBatchGroup({
   const outlineMeshesRef = useRef<Array<THREE.InstancedMesh | null>>([]);
   const countsRef = useRef<Uint32Array>(new Uint32Array(resources.batches.length));
   const outlineCountsRef = useRef<Uint32Array>(new Uint32Array(resources.outlineBatches.length));
-  const capacityPlayersRef = useRef(Math.max(REMOTE_BATCH_PREWARM_PLAYER_CAPACITY, players.length));
+  const playersRef = useRef(players);
+  const configRef = useRef(config);
+  const capacityPlayersRef = useRef(Math.max(
+    REMOTE_BATCH_PREWARM_PLAYER_CAPACITY,
+    players.length,
+    resourcePlayerCount
+  ));
   const playerIds = useMemo(() => {
     const ids = new Set<string>();
     for (const player of players) {
@@ -1322,6 +1359,9 @@ function RemoteHeroBatchGroup({
   if (players.length > capacityPlayersRef.current) {
     capacityPlayersRef.current = players.length + REMOTE_BATCH_CAPACITY_GROWTH_PADDING;
   }
+  if (resourcePlayerCount > capacityPlayersRef.current) {
+    capacityPlayersRef.current = resourcePlayerCount + REMOTE_BATCH_CAPACITY_GROWTH_PADDING;
+  }
   const capacity = capacityPlayersRef.current;
 
   if (countsRef.current.length !== resources.batches.length) {
@@ -1330,6 +1370,9 @@ function RemoteHeroBatchGroup({
   if (outlineCountsRef.current.length !== resources.outlineBatches.length) {
     outlineCountsRef.current = new Uint32Array(resources.outlineBatches.length);
   }
+
+  playersRef.current = players;
+  configRef.current = config;
 
   useLayoutEffect(() => {
     const runtimes = runtimeByPlayerIdRef.current;
@@ -1363,14 +1406,22 @@ function RemoteHeroBatchGroup({
     system: 'remoteHeroBatch',
     label: 'frame.remoteHeroBatch',
     callback: ({ deltaSeconds, elapsedSeconds, nowMs }) => {
+      const framePlayers = playersRef.current;
+      const frameConfig = configRef.current;
       const runtimes = runtimeByPlayerIdRef.current;
       const counts = countsRef.current;
       const outlineCounts = outlineCountsRef.current;
       const visualState = visualStore.getState();
+      const fullBodyDistance = isBattleRoyal
+        ? getBattleRoyalDistanceCap(frameConfig.fullBodyDistance, BATTLE_ROYAL_MAX_REMOTE_FULL_BODY_DISTANCE)
+        : frameConfig.fullBodyDistance;
+      const outlineDistance = isBattleRoyal
+        ? getBattleRoyalDistanceCap(frameConfig.outlineDistance, BATTLE_ROYAL_MAX_REMOTE_OUTLINE_DISTANCE)
+        : frameConfig.outlineDistance;
       counts.fill(0);
       outlineCounts.fill(0);
 
-      for (const player of players) {
+      for (const player of framePlayers) {
         let runtime = runtimes.get(player.id);
         if (!runtime) {
           runtime = createRemoteRuntime(player);
@@ -1380,10 +1431,15 @@ function RemoteHeroBatchGroup({
         if (runtime.heroId !== resources.heroId) continue;
 
         const visualHorizontalSpeed = updateRemoteTransform(runtime, player, deltaSeconds, visualState, nowMs);
-        const isHighPriority = isHighPriorityRemoteBody(player, visualState, nowMs);
+        const isObjectivePriority = isObjectivePriorityRemoteBody(player);
+        const isActivityPriority = isActivityPriorityRemoteBody(player, visualState, nowMs);
+        const forceBodyForPriority = isObjectivePriority || (
+          isActivityPriority &&
+          (!isBattleRoyal || isWithinDistance(camera, runtime.currentPosition, BATTLE_ROYAL_REMOTE_ACTIVITY_BODY_DISTANCE))
+        );
         const renderBody = !hasActivePhantomVeil(player) && (
-          isHighPriority ||
-          isWithinDistance(camera, runtime.currentPosition, config.fullBodyDistance)
+          forceBodyForPriority ||
+          isWithinDistance(camera, runtime.currentPosition, fullBodyDistance)
         );
         if (!renderBody) continue;
 
@@ -1413,9 +1469,13 @@ function RemoteHeroBatchGroup({
           counts[batchIndex] = writeIndex;
         }
 
-        const renderOutline = config.outlineDistance > 0 && (
-          isHighPriority ||
-          isWithinDistance(camera, runtime.currentPosition, config.outlineDistance)
+        const forceOutlineForPriority = isObjectivePriority || (
+          isActivityPriority &&
+          (!isBattleRoyal || isWithinDistance(camera, runtime.currentPosition, BATTLE_ROYAL_REMOTE_ACTIVITY_OUTLINE_DISTANCE))
+        );
+        const renderOutline = frameConfig.outlineDistance > 0 && (
+          forceOutlineForPriority ||
+          isWithinDistance(camera, runtime.currentPosition, outlineDistance)
         );
         if (!renderOutline) continue;
 
@@ -1455,7 +1515,7 @@ function RemoteHeroBatchGroup({
         }
       }
     },
-  }), [camera, config, players, resources]);
+  }), [camera, isBattleRoyal, resources]);
 
   return (
     <>
@@ -1489,13 +1549,14 @@ function RemoteHeroBatchGroup({
 
 export const RemoteHeroBatchRenderer = memo(function RemoteHeroBatchRenderer({
   players,
+  resourcePlayers = players,
+  isBattleRoyal = false,
   config,
 }: RemoteHeroBatchRendererProps) {
   const groupedPlayers = useMemo<Array<{ key: string; players: readonly Player[] }>>(() => {
     const groups = new Map<string, Player[]>();
     for (const player of players) {
-      const heroId = resolveHeroId(player);
-      const key = `${heroId}:${player.team as Team}`;
+      const key = getRemoteHeroResourceKey(player);
       const group = groups.get(key);
       if (group) group.push(player);
       else {
@@ -1509,43 +1570,76 @@ export const RemoteHeroBatchRenderer = memo(function RemoteHeroBatchRenderer({
     }));
   }, [players]);
 
-  const resourceKeySignature = useMemo(
-    () => groupedPlayers.map((group) => group.key).sort().join('|'),
-    [groupedPlayers]
-  );
+  const groupedPlayersByKey = useMemo(() => (
+    new Map(groupedPlayers.map((group) => [group.key, group.players] as const))
+  ), [groupedPlayers]);
 
-  const resources = useMemo(() => {
-    const nextResources = new Map<string, RemoteBatchResources>();
-    if (!resourceKeySignature) return nextResources;
-    for (const key of resourceKeySignature.split('|')) {
-      const separatorIndex = key.indexOf(':');
-      const heroId = key.slice(0, separatorIndex) as HeroId;
-      const team = key.slice(separatorIndex + 1) as Team;
-      nextResources.set(key, createRemoteBatchResources(heroId, team));
+  const resourcePlayerCountsByKey = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const player of resourcePlayers) {
+      const key = getRemoteHeroResourceKey(player);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
     }
-    return nextResources;
-  }, [resourceKeySignature]);
+    for (const group of groupedPlayers) {
+      counts.set(group.key, Math.max(counts.get(group.key) ?? 0, group.players.length));
+    }
+    return counts;
+  }, [groupedPlayers, resourcePlayers]);
+
+  const resourceKeys = useMemo(() => {
+    const keys = new Set<string>(resourcePlayerCountsByKey.keys());
+    return Array.from(keys).sort();
+  }, [resourcePlayerCountsByKey]);
+
+  const resourceKeySignature = useMemo(() => resourceKeys.join('|'), [resourceKeys]);
+  const resourceCacheRef = useRef<Map<string, RemoteBatchResources>>(new Map());
+
+  const renderGroups = useMemo(() => {
+    const cache = resourceCacheRef.current;
+    const groups: Array<{
+      key: string;
+      players: readonly Player[];
+      resourcePlayerCount: number;
+      resource: RemoteBatchResources;
+    }> = [];
+
+    for (const key of resourceKeys) {
+      const groupPlayers = groupedPlayersByKey.get(key) ?? EMPTY_REMOTE_PLAYER_GROUP;
+      let resource = cache.get(key);
+      if (!resource) {
+        resource = createRemoteBatchResourcesForKey(key);
+        cache.set(key, resource);
+      }
+      groups.push({
+        key,
+        players: groupPlayers,
+        resourcePlayerCount: Math.max(resourcePlayerCountsByKey.get(key) ?? 0, groupPlayers.length),
+        resource,
+      });
+    }
+
+    return groups;
+  }, [groupedPlayersByKey, resourceKeySignature, resourceKeys, resourcePlayerCountsByKey]);
 
   useEffect(() => () => {
-    for (const resource of resources.values()) {
+    for (const resource of resourceCacheRef.current.values()) {
       resource.dispose();
     }
-  }, [resources]);
+    resourceCacheRef.current.clear();
+  }, []);
 
   return (
     <>
-      {groupedPlayers.map(({ key, players: groupPlayers }) => {
-        const resource = resources.get(key);
-        if (!resource) return null;
-        return (
-          <RemoteHeroBatchGroup
-            key={key}
-            players={groupPlayers}
-            resources={resource}
-            config={config}
-          />
-        );
-      })}
+      {renderGroups.map(({ key, players: groupPlayers, resourcePlayerCount, resource }) => (
+        <RemoteHeroBatchGroup
+          key={key}
+          players={groupPlayers}
+          resourcePlayerCount={resourcePlayerCount}
+          resources={resource}
+          isBattleRoyal={isBattleRoyal}
+          config={config}
+        />
+      ))}
     </>
   );
 });

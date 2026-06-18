@@ -35,12 +35,13 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
   // v2 transform position updates because remote player entries are mutated in-place.
   // The Map reference only changes when players are added/removed. Position interpolation
   // reads from visualStore in the frame scheduler (non-reactive, 60fps).
-  const { players, playerId, localPlayerId, gamePhase } = useGameStore(
+  const { players, playerId, localPlayerId, gamePhase, gameplayMode } = useGameStore(
     useShallow(state => ({
       players: state.players,
       playerId: state.playerId,
       localPlayerId: state.localPlayer?.id ?? null,
       gamePhase: state.gamePhase,
+      gameplayMode: state.gameplayMode,
     }))
   );
 
@@ -58,17 +59,36 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
     return nextPlayers;
   }, [gamePhase, localPlayerId, playerId, players]);
 
-  useEffect(() => {
-    if (!config.showNameplates) return;
+  const remoteBatchResourcePlayers = useMemo(() => {
+    if (gameplayMode !== 'battle_royal') return otherPlayers;
+
+    const nextPlayers: Player[] = [];
+    const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown';
+
     for (const player of players.values()) {
       if (player.id === playerId || player.id === localPlayerId) continue;
+      if (hideDeadPlayers && player.state === 'dead') continue;
+      nextPlayers.push(player);
+    }
+
+    return nextPlayers;
+  }, [gamePhase, gameplayMode, localPlayerId, otherPlayers, playerId, players]);
+
+  useEffect(() => {
+    if (!config.showNameplates) return;
+    for (const player of otherPlayers) {
       prewarmNameplateTexture(player.name, player.health, player.maxHealth);
     }
-  }, [config.showNameplates, localPlayerId, playerId, players]);
+  }, [config.showNameplates, otherPlayers]);
 
   return (
     <group>
-      <RemoteHeroBatchRenderer players={otherPlayers} config={config} />
+      <RemoteHeroBatchRenderer
+        players={otherPlayers}
+        resourcePlayers={remoteBatchResourcePlayers}
+        isBattleRoyal={gameplayMode === 'battle_royal'}
+        config={config}
+      />
       <RemoteMovementEffects players={otherPlayers} theme={theme} config={effectConfig} />
       {otherPlayers.map((player) => shouldRenderRemotePlayerFallback(player, config) ? (
         <OtherPlayer

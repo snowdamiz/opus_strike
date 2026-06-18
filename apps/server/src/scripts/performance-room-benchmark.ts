@@ -1,6 +1,8 @@
 import { performance } from 'node:perf_hooks';
 import {
   DEFAULT_GAMEPLAY_MODE,
+  getGameplayModeRules,
+  getTeamIdsForGameplayMode,
   HERO_DEFINITIONS,
   MOVEMENT_BUTTON_MOVE_FORWARD,
   MOVEMENT_BUTTON_MOVE_LEFT,
@@ -13,10 +15,13 @@ import {
   type PlayerMovementState,
   type MovementCommand,
   type BotDifficulty,
+  type GameplayMode,
   type HeroId,
+  type MapProfileId,
   type PackedPlayerTransform,
   type SelfMovementAuthority,
   type Team,
+  type VoxelMapSizeId,
   type VoxelMapManifest,
 } from '@voxel-strike/shared';
 import {
@@ -635,6 +640,9 @@ interface GameRoomTickScenarioOptions {
   name: string;
   humanCount: number;
   botCount: number;
+  gameplayMode?: GameplayMode;
+  mapProfileId?: MapProfileId;
+  mapSize?: VoxelMapSizeId;
   burstMovement?: boolean;
 }
 
@@ -644,6 +652,18 @@ const ROOM_TICK_BUDGET_MAX_MS = 50;
 const ROOM_TICK_WARMUP_ITERATIONS = 40;
 const ROOM_TICK_SAMPLE_ITERATIONS = 220;
 const ROOM_TICK_HEROES: HeroId[] = ['phantom', 'hookshot', 'blaze', 'chronos'];
+
+function getBenchmarkTeamForPlayer(gameplayMode: GameplayMode, playerIndex: number): Team {
+  const rules = getGameplayModeRules(gameplayMode);
+  const teamIds = getTeamIdsForGameplayMode(gameplayMode).slice(0, rules.maxTeams);
+  if (teamIds.length === 0) return 'red';
+
+  if (gameplayMode === 'battle_royal') {
+    return teamIds[Math.floor(playerIndex / rules.maxTeamSize) % teamIds.length] ?? teamIds[0] ?? 'red';
+  }
+
+  return teamIds[playerIndex % teamIds.length] ?? 'red';
+}
 
 function createBenchmarkClient(sessionId: string): BenchmarkClient {
   return {
@@ -798,11 +818,15 @@ function createBenchmarkRoomScenario(
   options: GameRoomTickScenarioOptions,
   now: number
 ): { room: GameRoom; clientsById: Map<string, BenchmarkClient>; humanIds: string[]; invalidSpawnCount: number } {
+  const gameplayMode = options.gameplayMode ?? DEFAULT_GAMEPLAY_MODE;
+  const rules = getGameplayModeRules(gameplayMode);
   const room = new GameRoom();
   installBenchmarkRoomHost(room, `benchmark-${options.name}`);
   room.onCreate({
     mapSeed: 424242,
-    gameplayMode: DEFAULT_GAMEPLAY_MODE,
+    gameplayMode,
+    mapProfileId: options.mapProfileId ?? rules.mapProfileId,
+    mapSize: options.mapSize,
     requiredHumanPlayers: 0,
     reservedHumanPlayers: options.humanCount,
   });
@@ -811,8 +835,8 @@ function createBenchmarkRoomScenario(
   room.state.phase = 'playing';
   room.state.serverTime = now;
   room.state.roundStartTime = now;
-  room.state.roundTimeRemaining = 600;
-  room.state.phaseEndTime = now + 600_000;
+  room.state.roundTimeRemaining = rules.roundTimeSeconds;
+  room.state.phaseEndTime = now + rules.roundTimeSeconds * 1000;
 
   const clientsById = new Map<string, BenchmarkClient>();
   const humanIds: string[] = [];
@@ -820,7 +844,7 @@ function createBenchmarkRoomScenario(
   const totalPlayers = options.humanCount + options.botCount;
   for (let index = 0; index < totalPlayers; index++) {
     const isBot = index >= options.humanCount;
-    const team: Team = index % 2 === 0 ? 'red' : 'blue';
+    const team = getBenchmarkTeamForPlayer(gameplayMode, index);
     const heroId = ROOM_TICK_HEROES[index % ROOM_TICK_HEROES.length];
     const id = isBot ? `bot-${index - options.humanCount}` : `human-${index}`;
     const player = addBenchmarkPlayer({
@@ -1056,6 +1080,29 @@ const benchmarkCases: BenchmarkCase[] = [
   {
     name: 'game_room_tick_40_players_burst',
     run: () => runGameRoomTickBenchmark({ name: 'game_room_tick_40_players_burst', humanCount: 40, botCount: 0, burstMovement: true }),
+  },
+  {
+    name: 'game_room_tick_br_30_players',
+    run: () => runGameRoomTickBenchmark({
+      name: 'game_room_tick_br_30_players',
+      gameplayMode: 'battle_royal',
+      mapProfileId: 'battle_royal_large',
+      mapSize: 'large',
+      humanCount: 30,
+      botCount: 0,
+    }),
+  },
+  {
+    name: 'game_room_tick_br_30_players_burst',
+    run: () => runGameRoomTickBenchmark({
+      name: 'game_room_tick_br_30_players_burst',
+      gameplayMode: 'battle_royal',
+      mapProfileId: 'battle_royal_large',
+      mapSize: 'large',
+      humanCount: 30,
+      botCount: 0,
+      burstMovement: true,
+    }),
   },
   {
     name: 'game_room_tick_8_players_8_bots',

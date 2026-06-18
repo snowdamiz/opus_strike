@@ -1866,13 +1866,14 @@ export class GameRoom extends Room<GameState> {
     targetId: string,
     target: Player,
     now: number,
-    interest?: RecipientInterestDecision
+    interest?: RecipientInterestDecision,
+    frameContext?: ReplicationFrameContext
   ): boolean {
     if (!recipient) return true;
     if (recipient.id === targetId) return true;
     if (recipient.team === target.team) return true;
     if (isBattleRoyalMode(this.gameplayMode) && recipient.state === 'dead') return false;
-    return (interest ?? this.getRecipientInterest(recipient, target, now)).state === 'visible';
+    return (interest ?? this.getRecipientInterest(recipient, target, now, frameContext)).state === 'visible';
   }
 
   private isVisibleAbilityActive(player: Player): boolean {
@@ -2171,10 +2172,10 @@ export class GameRoom extends Room<GameState> {
 
   private broadcastExactPlayerEvent(type: string, player: Player, payload: Record<string, unknown>): void {
     const now = this.state.serverTime || Date.now();
+    const frameContext = this.buildReplicationFrameContext(now);
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
-      const interest = recipient ? this.getRecipientInterest(recipient, player, now) : undefined;
-      if (!this.shouldSendExactEnemyState(recipient, player.id, player, now, interest)) continue;
+      if (!this.shouldSendExactEnemyState(recipient, player.id, player, now, undefined, frameContext)) continue;
       this.sendTracked(client, type, payload);
     }
   }
@@ -2185,13 +2186,12 @@ export class GameRoom extends Room<GameState> {
     payload: PlayerDamagedEvent
   ): void {
     const now = this.state.serverTime || Date.now();
+    const frameContext = this.buildReplicationFrameContext(now);
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
-      const targetInterest = recipient ? this.getRecipientInterest(recipient, target, now) : undefined;
-      const sourceInterest = source && recipient ? this.getRecipientInterest(recipient, source, now) : undefined;
-      const canKnowTarget = this.shouldSendExactEnemyState(recipient, target.id, target, now, targetInterest);
+      const canKnowTarget = this.shouldSendExactEnemyState(recipient, target.id, target, now, undefined, frameContext);
       const canKnowSource = source
-        ? this.shouldSendExactEnemyState(recipient, source.id, source, now, sourceInterest)
+        ? this.shouldSendExactEnemyState(recipient, source.id, source, now, undefined, frameContext)
         : true;
       const isParticipant = recipient?.id === target.id || (source && recipient?.id === source.id);
       const eventPayload = buildPlayerDamagedPayload(payload, {
@@ -2221,13 +2221,12 @@ export class GameRoom extends Room<GameState> {
     }
   ): void {
     const now = this.state.serverTime || Date.now();
+    const frameContext = this.buildReplicationFrameContext(now);
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
-      const blockerInterest = recipient ? this.getRecipientInterest(recipient, blocker, now) : undefined;
-      const sourceInterest = source && recipient ? this.getRecipientInterest(recipient, source, now) : undefined;
-      const canKnowBlocker = this.shouldSendExactEnemyState(recipient, blocker.id, blocker, now, blockerInterest);
+      const canKnowBlocker = this.shouldSendExactEnemyState(recipient, blocker.id, blocker, now, undefined, frameContext);
       const canKnowSource = source
-        ? this.shouldSendExactEnemyState(recipient, source.id, source, now, sourceInterest)
+        ? this.shouldSendExactEnemyState(recipient, source.id, source, now, undefined, frameContext)
         : true;
       const isParticipant = recipient?.id === blocker.id || (source && recipient?.id === source.id);
       const eventPayload = buildChronosAegisDamagedPayload(payload, {
@@ -2247,10 +2246,10 @@ export class GameRoom extends Room<GameState> {
     payload: PhantomShieldBrokenEvent
   ): void {
     const now = this.state.serverTime || Date.now();
+    const frameContext = this.buildReplicationFrameContext(now);
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
-      const targetInterest = recipient ? this.getRecipientInterest(recipient, target, now) : undefined;
-      const canKnowTarget = this.shouldSendExactEnemyState(recipient, target.id, target, now, targetInterest);
+      const canKnowTarget = this.shouldSendExactEnemyState(recipient, target.id, target, now, undefined, frameContext);
       const isParticipant = recipient?.id === target.id || (source && recipient?.id === source.id);
       const eventPayload = buildPhantomShieldBrokenPayload(payload, {
         isParticipant: Boolean(isParticipant),
@@ -2264,17 +2263,16 @@ export class GameRoom extends Room<GameState> {
 
   private broadcastPlayerHealed(source: Player, payload: PlayerHealedEvent): void {
     const now = this.state.serverTime || Date.now();
+    const frameContext = this.buildReplicationFrameContext(now);
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
-      const sourceInterest = recipient ? this.getRecipientInterest(recipient, source, now) : undefined;
-      if (!this.shouldSendExactEnemyState(recipient, source.id, source, now, sourceInterest)) continue;
+      if (!this.shouldSendExactEnemyState(recipient, source.id, source, now, undefined, frameContext)) continue;
 
       const visibleTargetIds = new Set<string>();
       for (const targetPayload of payload.targets) {
         const target = this.state.players.get(targetPayload.targetId);
         if (!target) continue;
-        const targetInterest = recipient ? this.getRecipientInterest(recipient, target, now) : undefined;
-        if (this.shouldSendExactEnemyState(recipient, target.id, target, now, targetInterest)) {
+        if (this.shouldSendExactEnemyState(recipient, target.id, target, now, undefined, frameContext)) {
           visibleTargetIds.add(targetPayload.targetId);
         }
       }
@@ -2290,10 +2288,10 @@ export class GameRoom extends Room<GameState> {
     payload: PowerupCollectedMessage
   ): void {
     const now = this.state.serverTime || Date.now();
+    const frameContext = this.buildReplicationFrameContext(now);
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
-      const interest = recipient ? this.getRecipientInterest(recipient, collector, now) : undefined;
-      const canKnowCollector = this.shouldSendExactEnemyState(recipient, collector.id, collector, now, interest);
+      const canKnowCollector = this.shouldSendExactEnemyState(recipient, collector.id, collector, now, undefined, frameContext);
       this.sendTracked(client, 'powerupCollected', buildPowerupCollectedPayload(payload, canKnowCollector));
     }
   }
@@ -2301,13 +2299,12 @@ export class GameRoom extends Room<GameState> {
   private broadcastPlayerKilled(victim: Player, killer: Player | null, payload: PlayerDeathEvent): void {
     const now = this.state.serverTime || Date.now();
     const exactPosition = payload.position;
+    const frameContext = this.buildReplicationFrameContext(now);
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
-      const victimInterest = recipient ? this.getRecipientInterest(recipient, victim, now) : undefined;
-      const killerInterest = killer && recipient ? this.getRecipientInterest(recipient, killer, now) : undefined;
-      const canKnowVictim = this.shouldSendExactEnemyState(recipient, victim.id, victim, now, victimInterest);
+      const canKnowVictim = this.shouldSendExactEnemyState(recipient, victim.id, victim, now, undefined, frameContext);
       const canKnowKiller = killer
-        ? this.shouldSendExactEnemyState(recipient, killer.id, killer, now, killerInterest)
+        ? this.shouldSendExactEnemyState(recipient, killer.id, killer, now, undefined, frameContext)
         : true;
       const isParticipant = recipient?.id === victim.id || (killer && recipient?.id === killer.id);
 
@@ -7421,17 +7418,19 @@ export class GameRoom extends Room<GameState> {
     this.forceTransformFullSync();
   }
 
-  private bumpMovementCollisionRevision(): void {
+  private bumpMovementCollisionRevision(options: { forceTransformSync?: boolean } = {}): void {
     this.mapRuntime.bumpMovementCollisionRevision();
     this.botSteeringPathCache.clear();
     this.lineOfSightCache.clear();
     this.visibilityInterest.clearLineOfSightCache();
-    this.forceTransformFullSync();
+    if (options.forceTransformSync !== false) {
+      this.forceTransformFullSync();
+    }
   }
 
   private pruneExpiredHookshotAnchorWalls(now = Date.now()): void {
     if (this.hookshotRuntime.pruneExpiredAnchorWalls(now)) {
-      this.bumpMovementCollisionRevision();
+      this.bumpMovementCollisionRevision({ forceTransformSync: false });
     }
   }
 
@@ -7447,7 +7446,7 @@ export class GameRoom extends Room<GameState> {
 
   private createHookshotAnchorWall(instance: HookshotAnchorWallInstance): void {
     this.hookshotRuntime.addAnchorWall(instance);
-    this.bumpMovementCollisionRevision();
+    this.bumpMovementCollisionRevision({ forceTransformSync: false });
   }
 
   private getMapManifest(): VoxelMapManifest {
