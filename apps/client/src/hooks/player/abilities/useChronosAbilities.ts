@@ -5,6 +5,7 @@ import {
   CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED,
+  CHRONOS_VERDANT_PULSE_AIM_DISTANCE,
   CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
   CHRONOS_VERDANT_PULSE_FIRE_READY_MS,
   CHRONOS_VERDANT_PULSE_SPEED,
@@ -14,9 +15,9 @@ import { useGameStore } from '../../../store/gameStore';
 import { predictLocalChronosAscendantParadox } from '../../../movement/localPrediction';
 import {
   CHRONOS_PRIMARY_ORB_SOCKET,
-  calculateLookDirection,
   calculatePlayerSocketPosition,
 } from '../constants';
+import { resolveAbilityAimDirection } from '../abilityAim';
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import {
   triggerChronosAscendantParadoxPose,
@@ -188,7 +189,6 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
 
     lastPulseTimeRef.current = now;
     pulseIdRef.current += 1;
-    const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
     const sampledSpawn = sampleChronosPrimarySpawn(ctx, now);
     const socketPosition = sampledSpawn
       ? {
@@ -197,6 +197,7 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
         z: sampledSpawn.position.z,
       }
       : calculatePlayerSocketPosition(ctx.position, ctx.yaw, CHRONOS_PRIMARY_ORB_SOCKET);
+    const direction = resolveAbilityAimDirection(ctx, socketPosition, CHRONOS_VERDANT_PULSE_AIM_DISTANCE);
     const startPosition = offsetChronosOrbVisualPlainPosition(
       socketPosition,
       direction,

@@ -83,6 +83,33 @@ function readHookshotHookSocketPosition(
   }) ? origin : null;
 }
 
+function normalizeDelta(
+  from: { x: number; y: number; z: number },
+  to: { x: number; y: number; z: number }
+): { x: number; y: number; z: number } | null {
+  const x = to.x - from.x;
+  const y = to.y - from.y;
+  const z = to.z - from.z;
+  const length = Math.sqrt(x * x + y * y + z * z);
+  if (length <= 0.0001) return null;
+  return {
+    x: x / length,
+    y: y / length,
+    z: z / length,
+  };
+}
+
+function isNearPoint(
+  a: { x: number; y: number; z: number },
+  b: { x: number; y: number; z: number },
+  maxDistance: number
+): boolean {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const dz = a.z - b.z;
+  return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
+}
+
 function calculateHookshotLaunch(
   ctx: AbilityContext,
   launchSide: -1 | 1,
@@ -106,7 +133,11 @@ function calculateHookshotLaunch(
     z: aimOrigin.z + lookDirection.z * maxDistance,
   };
 
-  if (isPhysicsReady()) {
+  if (ctx.aimPoint) {
+    aimPoint.x = ctx.aimPoint.x;
+    aimPoint.y = ctx.aimPoint.y;
+    aimPoint.z = ctx.aimPoint.z;
+  } else if (isPhysicsReady()) {
     const hit = raycastDirection(
       aimOrigin.x, aimOrigin.y, aimOrigin.z,
       lookDirection.x, lookDirection.y, lookDirection.z,
@@ -147,6 +178,31 @@ function resolveHookshotGrapplePoint(ctx: AbilityContext): { x: number; y: numbe
     y: ctx.position.y + EYE_HEIGHT,
     z: ctx.position.z,
   };
+
+  if (ctx.aimPoint) {
+    const hintedDirection = normalizeDelta(aimOrigin, ctx.aimPoint);
+    const hintedDistance = hintedDirection
+      ? Math.min(
+        GRAPPLE_MAX_RANGE,
+        Math.sqrt(
+          (ctx.aimPoint.x - aimOrigin.x) ** 2 +
+          (ctx.aimPoint.y - aimOrigin.y) ** 2 +
+          (ctx.aimPoint.z - aimOrigin.z) ** 2
+        ) + 0.75
+      )
+      : 0;
+    const hintedHit = hintedDirection && hintedDistance > 0
+      ? raycastDirection(
+        aimOrigin.x, aimOrigin.y, aimOrigin.z,
+        hintedDirection.x, hintedDirection.y, hintedDirection.z,
+        hintedDistance
+      )
+      : null;
+
+    if (hintedHit?.hit && isNearPoint(hintedHit.point, ctx.aimPoint, 1.25)) {
+      return hintedHit.point;
+    }
+  }
 
   let hit = raycastDirection(
     aimOrigin.x, aimOrigin.y, aimOrigin.z,

@@ -15,6 +15,7 @@ import {
   BLAZE_FLAMETHROWER_FUEL_DRAIN,
   BLAZE_FLAMETHROWER_FUEL_REGEN,
   BLAZE_FLAMETHROWER_MAX_FUEL,
+  BLAZE_FLAMETHROWER_RANGE,
   BLAZE_FLAMETHROWER_SOCKET,
   BLAZE_BOMB_SPLASH_RADIUS,
   BLAZE_ROCKET_STAFF_SOCKET,
@@ -29,8 +30,8 @@ import {
   BLAZE_BOMB_WARNING_LEAD,
   FUEL_UPDATE_THRESHOLD,
   calculatePlayerSocketPosition,
-  calculateLookDirection,
 } from '../constants';
+import { resolveAbilityAimDirection } from '../abilityAim';
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import { setFlamethrowerVisualPose } from '../../../store/visualStore';
 import {
@@ -131,9 +132,10 @@ function calculateBlazeFlamethrowerPose(
   ctx: AbilityContext,
   originOverride?: { x: number; y: number; z: number }
 ) {
+  const origin = originOverride ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_FLAMETHROWER_SOCKET);
   return {
-    origin: originOverride ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_FLAMETHROWER_SOCKET),
-    direction: calculateLookDirection(ctx.yaw, ctx.pitch),
+    origin,
+    direction: resolveAbilityAimDirection(ctx, origin, BLAZE_FLAMETHROWER_RANGE),
   };
 }
 
@@ -269,12 +271,12 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
 
     lastRocketTimeRef.current = now;
     rocketIdRef.current += 1;
-    const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
     const holdBlend = 1;
     const staffTipPose = sampleBlazeStaffTipPose(ctx, 'blaze_rocket', now, holdBlend);
     const startPosition = staffTipPose
       ? vectorToPlainPosition(staffTipPose.position)
       : calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_ROCKET_STAFF_SOCKET);
+    const direction = resolveAbilityAimDirection(ctx, startPosition);
     const visualId = `predicted_blaze_rocket_${ctx.localPlayer.id}_${rocketIdRef.current}`;
 
     store.addRocket({

@@ -1739,19 +1739,19 @@ body,
   appearance: none;
   position: absolute;
   top: 50%;
-  right: 0.34rem;
+  right: 0.42rem;
   z-index: 4;
   display: grid;
   width: 1.62rem;
   height: 1.62rem;
   place-items: center;
-  border: 1px solid rgb(255 255 255 / 0.1);
-  border-radius: 0.38rem;
-  background: rgb(255 255 255 / 0.035);
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
   padding: 0;
-  color: rgb(255 255 255 / 0.54);
+  color: rgb(255 255 255 / 0.74);
   transform: translateY(-50%);
-  transition: border-color 160ms ease, background 160ms ease, color 160ms ease, box-shadow 160ms ease;
+  transition: color 160ms ease, filter 160ms ease, transform 160ms ease;
 }
 
 .play-mode-settings-button:disabled {
@@ -1762,7 +1762,6 @@ body,
 .play-mode-settings-button:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--play-mode-accent) 62%, white 12%);
   outline-offset: 2px;
-  border-radius: 0.42rem;
 }
 
 .play-mode-settings-button svg {
@@ -1771,19 +1770,18 @@ body,
 }
 
 .play-mode-settings-button:hover:not(:disabled) {
-  border-color: rgb(255 255 255 / 0.22);
-  background: rgb(255 255 255 / 0.075);
   color: white;
+  filter: drop-shadow(0 0 0.46rem color-mix(in srgb, var(--play-mode-accent) 42%, transparent));
+  transform: translateY(-50%) scale(1.06);
 }
 
 .play-mode-settings-button.has-bots-enabled,
 .play-mode-settings-button.has-third-person {
-  border-color: color-mix(in srgb, var(--play-mode-accent) 42%, white 10%);
-  color: white;
+  color: color-mix(in srgb, var(--play-mode-accent) 74%, white 22%);
 }
 
 .play-mode-settings-button.has-third-person {
-  box-shadow: 0 0 0.7rem color-mix(in srgb, var(--play-mode-accent) 22%, transparent);
+  filter: drop-shadow(0 0 0.42rem color-mix(in srgb, var(--play-mode-accent) 28%, transparent));
 }
 
 .match-settings-panel {

@@ -33,6 +33,7 @@ import {
   runAuthorityPhase,
   runPredictionAndCommandPhase,
   shouldForceImmediateCombatCommand,
+  suppressJumpInputUntilReleased,
   withCastActionFields,
   type CommandScheduleReason,
   type LocalPlayerFrameContext,
@@ -363,6 +364,17 @@ assert.deepEqual(continuedSecondary, { secondaryFire: true });
 const sameInput = input();
 assert.equal(withCastActionFields(sameInput), sameInput);
 assert.equal(withCastActionFields(input({ primaryFire: true })).primaryFire, false);
+
+const suppressJumpRef = ref(true);
+const suppressedJumpInput = suppressJumpInputUntilReleased(input({ jump: true, moveForward: true }), suppressJumpRef);
+assert.equal(suppressedJumpInput.jump, false);
+assert.equal(suppressedJumpInput.moveForward, true);
+assert.equal(suppressJumpRef.current, true);
+const releasedJumpInput = input();
+assert.equal(suppressJumpInputUntilReleased(releasedJumpInput, suppressJumpRef), releasedJumpInput);
+assert.equal(suppressJumpRef.current, false);
+const resumedJumpInput = suppressJumpInputUntilReleased(input({ jump: true }), suppressJumpRef);
+assert.equal(resumedJumpInput.jump, true);
 
 useGameStore.setState({ bombTargeting: true });
 const blazeBombInput = runInputPhase(

@@ -92,14 +92,69 @@ const DEATH_FOV_PULSE = 7;
 const DEATH_TARGET_EYE_HEIGHT = 0.36;
 const DEATH_ROLL_RADIANS = THREE.MathUtils.degToRad(86);
 const DEATH_PITCH_DOWN = 0.24;
-const THIRD_PERSON_CAMERA_DISTANCE = 3.65;
-const THIRD_PERSON_CAMERA_HEIGHT = 0.48;
+const THIRD_PERSON_CAMERA_DISTANCE = 4.15;
+const THIRD_PERSON_CAMERA_HEIGHT = 1.15;
+const THIRD_PERSON_CAMERA_SHOULDER_OFFSET = 0.82;
+const THIRD_PERSON_COLLISION_ANCHOR_HEIGHT = 0.24;
 const THIRD_PERSON_COLLISION_PADDING = 0.3;
 const THIRD_PERSON_MIN_DISTANCE = 0.85;
 
 const thirdPersonFocus = new THREE.Vector3();
-const thirdPersonDesired = new THREE.Vector3();
 const thirdPersonDirection = new THREE.Vector3();
+
+interface ThirdPersonCameraPositionOptions {
+  bodyPosition: { x: number; y: number; z: number };
+  yaw: number;
+  eyeHeight: number;
+  collision?: CameraCollisionResolver;
+}
+
+export function writeThirdPersonCameraPosition(
+  outPosition: THREE.Vector3,
+  collisionAnchor: THREE.Vector3,
+  cameraDirection: THREE.Vector3,
+  options: ThirdPersonCameraPositionOptions
+): THREE.Vector3 {
+  const { bodyPosition, yaw, eyeHeight } = options;
+  const forwardX = -Math.sin(yaw);
+  const forwardZ = -Math.cos(yaw);
+  const rightX = Math.cos(yaw);
+  const rightZ = -Math.sin(yaw);
+
+  collisionAnchor.set(
+    bodyPosition.x,
+    bodyPosition.y + eyeHeight + THIRD_PERSON_COLLISION_ANCHOR_HEIGHT,
+    bodyPosition.z
+  );
+  outPosition.set(
+    bodyPosition.x - forwardX * THIRD_PERSON_CAMERA_DISTANCE + rightX * THIRD_PERSON_CAMERA_SHOULDER_OFFSET,
+    bodyPosition.y + eyeHeight + THIRD_PERSON_CAMERA_HEIGHT,
+    bodyPosition.z - forwardZ * THIRD_PERSON_CAMERA_DISTANCE + rightZ * THIRD_PERSON_CAMERA_SHOULDER_OFFSET
+  );
+
+  cameraDirection.copy(outPosition).sub(collisionAnchor);
+  const desiredDistance = cameraDirection.length();
+  if (desiredDistance <= 0.001) {
+    outPosition.copy(collisionAnchor);
+    return outPosition;
+  }
+
+  cameraDirection.multiplyScalar(1 / desiredDistance);
+  const hitDistance = options.collision?.(
+    collisionAnchor,
+    cameraDirection,
+    desiredDistance
+  );
+  const cameraDistance = typeof hitDistance === 'number'
+    ? THREE.MathUtils.clamp(
+      hitDistance - THIRD_PERSON_COLLISION_PADDING,
+      THIRD_PERSON_MIN_DISTANCE,
+      desiredDistance
+    )
+    : desiredDistance;
+
+  return outPosition.copy(collisionAnchor).addScaledVector(cameraDirection, cameraDistance);
+}
 
 export function useCamera(options: UseCameraOptions): UseCameraReturn {
   const { isPointerLocked } = options;
@@ -328,38 +383,12 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
       return;
     }
 
-    thirdPersonFocus.set(
-      bodyPosition.x,
-      bodyPosition.y + eyeHeight + 0.12,
-      bodyPosition.z
-    );
-    thirdPersonDesired.set(
-      bodyPosition.x + Math.sin(yawRef.current) * THIRD_PERSON_CAMERA_DISTANCE,
-      bodyPosition.y + eyeHeight + THIRD_PERSON_CAMERA_HEIGHT,
-      bodyPosition.z + Math.cos(yawRef.current) * THIRD_PERSON_CAMERA_DISTANCE
-    );
-    thirdPersonDirection.copy(thirdPersonDesired).sub(thirdPersonFocus);
-    const desiredDistance = thirdPersonDirection.length();
-    if (desiredDistance <= 0.001) {
-      camera.position.copy(thirdPersonFocus);
-      return;
-    }
-
-    thirdPersonDirection.multiplyScalar(1 / desiredDistance);
-    const hitDistance = positionOptions.collision?.(
-      thirdPersonFocus,
-      thirdPersonDirection,
-      desiredDistance
-    );
-    const cameraDistance = typeof hitDistance === 'number'
-      ? THREE.MathUtils.clamp(
-        hitDistance - THIRD_PERSON_COLLISION_PADDING,
-        THIRD_PERSON_MIN_DISTANCE,
-        desiredDistance
-      )
-      : desiredDistance;
-
-    camera.position.copy(thirdPersonFocus).addScaledVector(thirdPersonDirection, cameraDistance);
+    writeThirdPersonCameraPosition(camera.position, thirdPersonFocus, thirdPersonDirection, {
+      bodyPosition,
+      yaw: yawRef.current,
+      eyeHeight,
+      collision: positionOptions.collision,
+    });
   }, []);
 
   // Get camera position with eye height and crouch offset

@@ -936,17 +936,19 @@ export function setupSelfMovementAuthorityHandler(room: Room) {
     recordMovementTraceAuthorityAck(authority);
     recordAuthorityAckReceived(authority);
     enqueueSelfMovementAuthority(authority);
-    const localPlayer = useGameStore.getState().localPlayer;
+    const store = useGameStore.getState();
+    const localPlayer = store.localPlayer;
     if (localPlayer?.heroId === 'chronos') {
       setChronosAegisVisualState(
         localPlayer.id,
         Boolean(authority.chronosAegisActive),
         Date.now(),
-        authority.chronosAegisShieldRatio
+        authority.chronosAegisShieldRatio,
+        { renderWorldEffect: store.matchPerspective === 'third_person' }
       );
     }
     if (localPlayer && authority.powerupBoostUntil !== undefined) {
-      useGameStore.getState().updateLocalPlayer({ powerupBoostUntil: authority.powerupBoostUntil ?? null });
+      store.updateLocalPlayer({ powerupBoostUntil: authority.powerupBoostUntil ?? null });
     }
   }));
 }
@@ -1323,7 +1325,12 @@ function triggerObservedRemoteAttack(
   localPlayerId: string | null,
   side: -1 | 1 | undefined = data.launchSide
 ): void {
-  if (data.playerId === localPlayerId) return;
+  if (
+    data.playerId === localPlayerId &&
+    useGameStore.getState().matchPerspective !== 'third_person'
+  ) {
+    return;
+  }
 
   triggerRemotePlayerAttack(data.playerId, data.abilityId, {
     side: side ?? 1,
@@ -2428,7 +2435,7 @@ export function setupCombatHandlers(room: Room) {
     const store = useGameStore.getState();
     const localPlayerId = store.localPlayer?.id ?? store.playerId;
     setChronosAegisVisualState(data.playerId, true, now, data.shieldRatio, {
-      renderWorldEffect: data.playerId !== localPlayerId,
+      renderWorldEffect: data.playerId !== localPlayerId || store.matchPerspective === 'third_person',
     });
     useCombatFeedbackStore.getState().addCombatTextEvent({
       kind: 'shieldDamage',

@@ -8,7 +8,7 @@ import {
   visualStore,
 } from '../../store/visualStore';
 import { useShallow } from 'zustand/shallow';
-import type { Player, Team, VoxelMapTheme } from '@voxel-strike/shared';
+import type { Player, PlayerMovementState, Team, VoxelMapTheme } from '@voxel-strike/shared';
 import { HeroVoxelBody } from './HeroVoxelBody';
 import type { HeroMovementPose, HeroWalkDirection } from './HeroVoxelBody';
 import type { EffectQualityConfig, RemotePlayerQualityConfig } from './visualQuality';
@@ -102,6 +102,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
         players={otherPlayers}
         resourcePlayers={remoteBatchResourcePlayers}
         isBattleRoyal={isBattleRoyal}
+        localPlayerId={showLocalPlayerBody ? (localPlayerId ?? playerId) : null}
         config={config}
       />
       <RemoteMovementEffects players={otherPlayers} theme={theme} config={effectConfig} />
@@ -113,6 +114,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
           <OtherPlayer
             key={player.id}
             player={player}
+            localPlayerId={showLocalPlayerBody ? (localPlayerId ?? playerId) : null}
             config={config}
             showNameplate={showNameplate}
           />
@@ -124,6 +126,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
 
 interface OtherPlayerProps {
   player: Player;
+  localPlayerId?: string | null;
   config: RemotePlayerQualityConfig;
   showNameplate: boolean;
 }
@@ -185,11 +188,14 @@ function setWalkDirectionFromComponents(
   target.right = (velocityX * rightX + velocityZ * rightZ) / speed;
 }
 
-function isPlayerMovingForAnimation(player: Player, visualHorizontalSpeed = 0): boolean {
+function isPlayerMovingForAnimation(
+  player: Player,
+  visualHorizontalSpeed = 0,
+  movement: PlayerMovementState = player.movement
+): boolean {
   if (player.state !== 'alive') return false;
 
   const networkHorizontalSpeed = getHorizontalSpeed(player.velocity);
-  const movement = player.movement;
 
   return (
     networkHorizontalSpeed > NETWORK_MOVING_SPEED ||
@@ -202,10 +208,15 @@ function isPlayerMovingForAnimation(player: Player, visualHorizontalSpeed = 0): 
   );
 }
 
-function getPlayerMovementPose(player: Player, hasLoweredPosture: boolean, isMoving: boolean): HeroMovementPose {
-  if (player.movement.isSliding) return 'run';
+function getPlayerMovementPose(
+  player: Player,
+  hasLoweredPosture: boolean,
+  isMoving: boolean,
+  movement: PlayerMovementState = player.movement
+): HeroMovementPose {
+  if (movement.isSliding) return 'run';
   if (hasLoweredPosture && isMoving) return 'crouchWalk';
-  return player.movement.isSprinting ? 'run' : 'walk';
+  return movement.isSprinting ? 'run' : 'walk';
 }
 
 function hasActivePhantomVeil(player: Player): boolean {
@@ -232,21 +243,29 @@ function shouldRenderRemotePlayerFallback(
   return player.heroId === 'phantom' || player.hasFlag || showNameplate || config.showBeacons;
 }
 
-const OtherPlayer = memo(function OtherPlayer({ player, config, showNameplate }: OtherPlayerProps) {
+function getPlayerRenderMovement(
+  player: Player,
+  localPlayerId: string | null | undefined
+): PlayerMovementState {
+  return player.id === localPlayerId ? visualStore.getState().localMovement : player.movement;
+}
+
+const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, showNameplate }: OtherPlayerProps) {
   const groupRef = useRef<THREE.Group>(null);
   const [isVeiled, setIsVeiled] = useState(() => hasActivePhantomVeil(player));
   const playerHeight = getPlayerHeight(player.heroId);
-  const hasLoweredPosture = hasLoweredPlayerPosture(player.movement);
-  const visibleHeight = getVisiblePlayerHeight(player.heroId, player.movement);
-  const postureScaleY = getPlayerBodyPostureScaleY(player.movement);
-  const initialIsMoving = isPlayerMovingForAnimation(player);
-  const initialMovementPose = getPlayerMovementPose(player, hasLoweredPosture, initialIsMoving);
+  const initialMovement = getPlayerRenderMovement(player, localPlayerId);
+  const hasLoweredPosture = hasLoweredPlayerPosture(initialMovement);
+  const visibleHeight = getVisiblePlayerHeight(player.heroId, initialMovement);
+  const postureScaleY = getPlayerBodyPostureScaleY(initialMovement);
+  const initialIsMoving = isPlayerMovingForAnimation(player, 0, initialMovement);
+  const initialMovementPose = getPlayerMovementPose(player, hasLoweredPosture, initialIsMoving, initialMovement);
   const targetPosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
   const currentPosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
   const previousFramePosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
   const isMovingRef = useRef(initialIsMoving);
-  const isCrouchingRef = useRef(player.movement.isCrouching);
-  const isSlidingRef = useRef(player.movement.isSliding);
+  const isCrouchingRef = useRef(initialMovement.isCrouching);
+  const isSlidingRef = useRef(initialMovement.isSliding);
   const isAttackingRef = useRef(false);
   const attackStartedAtMsRef = useRef<number | null>(null);
   const attackSideRef = useRef<-1 | 1>(1);
@@ -407,15 +426,16 @@ const OtherPlayer = memo(function OtherPlayer({ player, config, showNameplate }:
         );
       }
 
-      const frameHasLoweredPosture = hasLoweredPlayerPosture(player.movement);
-      const frameIsMoving = isPlayerMovingForAnimation(player, visualHorizontalSpeed);
-      postureScaleYRef.current = getPlayerBodyPostureScaleY(player.movement);
-      isCrouchingRef.current = player.movement.isCrouching;
-      isSlidingRef.current = player.movement.isSliding;
-      movementPoseRef.current = getPlayerMovementPose(player, frameHasLoweredPosture, frameIsMoving);
+      const frameMovement = getPlayerRenderMovement(player, localPlayerId);
+      const frameHasLoweredPosture = hasLoweredPlayerPosture(frameMovement);
+      const frameIsMoving = isPlayerMovingForAnimation(player, visualHorizontalSpeed, frameMovement);
+      postureScaleYRef.current = getPlayerBodyPostureScaleY(frameMovement);
+      isCrouchingRef.current = frameMovement.isCrouching;
+      isSlidingRef.current = frameMovement.isSliding;
+      movementPoseRef.current = getPlayerMovementPose(player, frameHasLoweredPosture, frameIsMoving, frameMovement);
       isMovingRef.current = frameIsMoving;
     },
-  }), [player, playerHeight]);
+  }), [localPlayerId, player, playerHeight]);
 
   return (
     <group ref={groupRef}>
@@ -431,9 +451,9 @@ const OtherPlayer = memo(function OtherPlayer({ player, config, showNameplate }:
           isBot={player.isBot}
           isMoving={initialIsMoving}
           isMovingRef={isMovingRef}
-          isCrouching={player.movement.isCrouching}
+          isCrouching={initialMovement.isCrouching}
           isCrouchingRef={isCrouchingRef}
-          isSliding={player.movement.isSliding}
+          isSliding={initialMovement.isSliding}
           isSlidingRef={isSlidingRef}
           isAttackingRef={isAttackingRef}
           attackStartedAtMsRef={attackStartedAtMsRef}

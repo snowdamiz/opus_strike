@@ -743,6 +743,9 @@ const BLAZE_BOMB_WARNING_LEAD_MS = 350;
 const ABILITY_CAST_HINT_MAX_DISTANCE_FROM_FALLBACK = 1.15;
 const ABILITY_CAST_HINT_MAX_DISTANCE_FROM_PLAYER_CENTER = 1.7;
 const ABILITY_CAST_HINT_MAX_VERTICAL_FROM_PLAYER_CENTER = 1.15;
+const ABILITY_CAST_HINT_AIM_POINT_MAX_RANGE_GRACE = 2.5;
+const ABILITY_CAST_HINT_MIN_AIM_FORWARD_DOT = 0.65;
+const HOOKSHOT_GRAPPLE_HINT_SURFACE_PROBE_DISTANCE = 0.65;
 
 const BLAZE_FLAMETHROWER_CONE_DOT = Math.cos(BLAZE_FLAMETHROWER_CONE_HALF_ANGLE);
 const PLAYER_VITALS_INTERVAL_MS = 125;
@@ -3840,6 +3843,79 @@ export class GameRoom extends Room<GameState> {
     return this.hasLineOfSight(fallbackOrigin, origin) ? origin : fallbackOrigin;
   }
 
+  private getAbilityCastAimPointHint(player: Player, abilityId: string | null): PlainVec3 | null {
+    if (!abilityId) return null;
+    const hints = player.lastInput?.abilityCastHints;
+    if (!hints || hints.length === 0) return null;
+
+    const hint = hints.find((candidate) => {
+      const aimPoint = candidate.aimPoint;
+      if (!aimPoint) return false;
+      return candidate.abilityId === abilityId && this.isFiniteVec3(aimPoint);
+    });
+
+    return hint?.aimPoint ?? null;
+  }
+
+  private resolveValidatedCastAimPoint(
+    player: Player,
+    abilityId: string | null,
+    aimOrigin: PlainVec3,
+    fallbackForward: PlainVec3,
+    maxDistance: number,
+    fallbackAimPoint: PlainVec3
+  ): PlainVec3 {
+    const hintAimPoint = this.getAbilityCastAimPointHint(player, abilityId);
+    if (!hintAimPoint) return fallbackAimPoint;
+
+    const hintDistance = distance3D(aimOrigin, hintAimPoint);
+    if (
+      hintDistance <= 0.05 ||
+      hintDistance > maxDistance + ABILITY_CAST_HINT_AIM_POINT_MAX_RANGE_GRACE
+    ) {
+      return fallbackAimPoint;
+    }
+
+    const hintDirection = this.normalize3D({
+      x: hintAimPoint.x - aimOrigin.x,
+      y: hintAimPoint.y - aimOrigin.y,
+      z: hintAimPoint.z - aimOrigin.z,
+    });
+    const forward = this.normalize3D(fallbackForward);
+    if (!hintDirection || !forward) return fallbackAimPoint;
+
+    const forwardDot =
+      hintDirection.x * forward.x +
+      hintDirection.y * forward.y +
+      hintDirection.z * forward.z;
+    if (forwardDot < ABILITY_CAST_HINT_MIN_AIM_FORWARD_DOT) return fallbackAimPoint;
+
+    return this.hasLineOfSight(aimOrigin, hintAimPoint) ? hintAimPoint : fallbackAimPoint;
+  }
+
+  private resolveValidatedCastAimDirection(
+    player: Player,
+    abilityId: string | null,
+    aimOrigin: PlainVec3,
+    fallbackForward: PlainVec3,
+    maxDistance: number
+  ): PlainVec3 {
+    const fallbackAimPoint = this.addScaled3D(aimOrigin, fallbackForward, maxDistance);
+    const aimPoint = this.resolveValidatedCastAimPoint(
+      player,
+      abilityId,
+      aimOrigin,
+      fallbackForward,
+      maxDistance,
+      fallbackAimPoint
+    );
+    return this.normalize3D({
+      x: aimPoint.x - aimOrigin.x,
+      y: aimPoint.y - aimOrigin.y,
+      z: aimPoint.z - aimOrigin.z,
+    }) ?? fallbackForward;
+  }
+
   private getAbilitySocketCastOrigin(
     player: Player,
     abilityId: string,
@@ -3902,6 +3978,24 @@ export class GameRoom extends Room<GameState> {
     return null;
   }
 
+  private isNearCollisionSurface(point: PlainVec3, radius = HOOKSHOT_GRAPPLE_HINT_SURFACE_PROBE_DISTANCE): boolean {
+    const probes = [
+      { x: 0, y: 0, z: 0 },
+      { x: radius, y: 0, z: 0 },
+      { x: -radius, y: 0, z: 0 },
+      { x: 0, y: radius, z: 0 },
+      { x: 0, y: -radius, z: 0 },
+      { x: 0, y: 0, z: radius },
+      { x: 0, y: 0, z: -radius },
+    ];
+
+    return probes.some((probe) => isCollisionBlock(this.getBlockAtWorld({
+      x: point.x + probe.x,
+      y: point.y + probe.y,
+      z: point.z + probe.z,
+    })));
+  }
+
   private getNextHookshotPrimaryLaunchSide(playerId: string): -1 | 1 {
     return this.hookshotPrimaryLaunchSide.next(playerId);
   }
@@ -3919,8 +4013,16 @@ export class GameRoom extends Room<GameState> {
     const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
     const startPosition = this.getAbilitySocketCastOrigin(player, abilityId, launchSide);
     const aimOrigin = this.getHookshotAimOrigin(player);
-    const aimPoint = this.raycastTerrain(aimOrigin, lookDirection, maxDistance)
+    const fallbackAimPoint = this.raycastTerrain(aimOrigin, lookDirection, maxDistance)
       ?? this.addScaled3D(aimOrigin, lookDirection, maxDistance);
+    const aimPoint = this.resolveValidatedCastAimPoint(
+      player,
+      abilityId,
+      aimOrigin,
+      lookDirection,
+      maxDistance,
+      fallbackAimPoint
+    );
     const fromHook = this.normalize3D({
       x: aimPoint.x - startPosition.x,
       y: aimPoint.y - startPosition.y,
@@ -3937,16 +4039,32 @@ export class GameRoom extends Room<GameState> {
     const aimOrigin = this.getHookshotAimOrigin(player);
     const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
     const directHit = this.raycastTerrain(aimOrigin, lookDirection, GRAPPLE_MAX_DISTANCE);
-    if (directHit) return directHit;
 
     const downwardDirection = this.normalize3D({
       x: lookDirection.x,
       y: Math.min(lookDirection.y, -0.1),
       z: lookDirection.z,
     });
-    return downwardDirection
+    const fallbackHit = directHit ?? (downwardDirection
       ? this.raycastTerrain(aimOrigin, downwardDirection, GRAPPLE_MAX_DISTANCE)
-      : null;
+      : null);
+    const hintedPoint = this.getAbilityCastAimPointHint(player, 'hookshot_grapple');
+    if (hintedPoint) {
+      const hintFallback = fallbackHit ?? this.addScaled3D(aimOrigin, lookDirection, GRAPPLE_MAX_DISTANCE);
+      const validatedHint = this.resolveValidatedCastAimPoint(
+        player,
+        'hookshot_grapple',
+        aimOrigin,
+        lookDirection,
+        GRAPPLE_MAX_DISTANCE,
+        hintFallback
+      );
+      if (distance3D(validatedHint, hintedPoint) <= 0.001 && this.isNearCollisionSurface(validatedHint)) {
+        return validatedHint;
+      }
+    }
+
+    return fallbackHit;
   }
 
   private resolveHookshotAnchorWall(player: Player): { startPosition: PlainVec3; direction: PlainVec3 } {
@@ -4078,19 +4196,43 @@ export class GameRoom extends Room<GameState> {
     const aimOrigin = this.getBlazeAimOrigin(player);
     const startPosition = this.getAbilitySocketCastOrigin(player, 'blaze_rocket');
     const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, BLAZE_ROCKET_AIM_DISTANCE);
-    const targetHit = this.findTargetHitInAimCone(player, attack.range, attack.coneDot, attack.collisionRadius ?? 0);
-    const targetPoint = targetHit?.hit.targetPoint ?? null;
-    const terrainDistance = terrainHit ? distance3D(aimOrigin, terrainHit) : Infinity;
-    const targetDistance = targetPoint ? distance3D(aimOrigin, targetPoint) : Infinity;
     const fallbackImpact = this.addScaled3D(aimOrigin, lookDirection, BLAZE_ROCKET_AIM_DISTANCE);
-    const intendedImpactPosition = targetPoint && targetDistance <= terrainDistance
-      ? targetPoint
-      : terrainHit ?? fallbackImpact;
+    const rawAimPoint = terrainHit ?? fallbackImpact;
+    let intendedImpactPosition = this.resolveValidatedCastAimPoint(
+      player,
+      'blaze_rocket',
+      aimOrigin,
+      lookDirection,
+      BLAZE_ROCKET_AIM_DISTANCE,
+      rawAimPoint
+    );
+    const correctedForward = this.normalize3D({
+      x: intendedImpactPosition.x - aimOrigin.x,
+      y: intendedImpactPosition.y - aimOrigin.y,
+      z: intendedImpactPosition.z - aimOrigin.z,
+    }) ?? lookDirection;
+    const targetHit = this.findTargetHitInAimCone(
+      player,
+      attack.range,
+      attack.coneDot,
+      attack.collisionRadius ?? 0,
+      'enemy',
+      { origin: aimOrigin, forward: correctedForward }
+    );
+    const targetPoint = targetHit?.hit.targetPoint ?? null;
+    if (targetPoint && distance3D(aimOrigin, targetPoint) <= distance3D(aimOrigin, intendedImpactPosition)) {
+      intendedImpactPosition = targetPoint;
+    }
     const intendedImpactDistance = Math.min(
       BLAZE_ROCKET_AIM_DISTANCE,
       distance3D(aimOrigin, intendedImpactPosition)
     );
-    const aegisHit = this.getChronosAegisSkillHit(player, aimOrigin, lookDirection, intendedImpactDistance, {
+    const shieldDirection = this.normalize3D({
+      x: intendedImpactPosition.x - aimOrigin.x,
+      y: intendedImpactPosition.y - aimOrigin.y,
+      z: intendedImpactPosition.z - aimOrigin.z,
+    }) ?? correctedForward;
+    const aegisHit = this.getChronosAegisSkillHit(player, aimOrigin, shieldDirection, intendedImpactDistance, {
       projectileRadius: getChronosAegisCollisionRadiusForAttack(attack),
     });
     const impactPosition = aegisHit?.point ?? intendedImpactPosition;
@@ -4175,14 +4317,32 @@ export class GameRoom extends Room<GameState> {
     const aimOrigin = this.getChronosAimOrigin(player);
     const socketPosition = this.getAbilitySocketCastOrigin(player, 'chronos_verdant_pulse');
     const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, CHRONOS_VERDANT_PULSE_AIM_DISTANCE);
-    const targetHit = this.findTargetHitInAimCone(player, attack.range, attack.coneDot, attack.collisionRadius ?? 0);
-    const targetPoint = targetHit?.hit.targetPoint ?? null;
-    const terrainDistance = terrainHit ? distance3D(aimOrigin, terrainHit) : Infinity;
-    const targetDistance = targetPoint ? distance3D(aimOrigin, targetPoint) : Infinity;
     const fallbackAimPoint = this.addScaled3D(aimOrigin, lookDirection, CHRONOS_VERDANT_PULSE_AIM_DISTANCE);
-    const aimPoint = targetPoint && targetDistance <= terrainDistance
-      ? targetPoint
-      : terrainHit ?? fallbackAimPoint;
+    let aimPoint = this.resolveValidatedCastAimPoint(
+      player,
+      'chronos_verdant_pulse',
+      aimOrigin,
+      lookDirection,
+      CHRONOS_VERDANT_PULSE_AIM_DISTANCE,
+      terrainHit ?? fallbackAimPoint
+    );
+    const correctedForward = this.normalize3D({
+      x: aimPoint.x - aimOrigin.x,
+      y: aimPoint.y - aimOrigin.y,
+      z: aimPoint.z - aimOrigin.z,
+    }) ?? lookDirection;
+    const targetHit = this.findTargetHitInAimCone(
+      player,
+      attack.range,
+      attack.coneDot,
+      attack.collisionRadius ?? 0,
+      'enemy',
+      { origin: aimOrigin, forward: correctedForward }
+    );
+    const targetPoint = targetHit?.hit.targetPoint ?? null;
+    if (targetPoint && distance3D(aimOrigin, targetPoint) <= distance3D(aimOrigin, aimPoint)) {
+      aimPoint = targetPoint;
+    }
     const aimDirection = this.normalize3D({
       x: aimPoint.x - socketPosition.x,
       y: aimPoint.y - socketPosition.y,
@@ -4234,7 +4394,14 @@ export class GameRoom extends Room<GameState> {
     const aimOrigin = this.getBlazeAimOrigin(player);
     const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
     const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, BLAZE_BOMB_MAX_RANGE);
-    let targetPosition = terrainHit ?? this.addScaled3D(aimOrigin, lookDirection, BLAZE_BOMB_MAX_RANGE);
+    let targetPosition = this.resolveValidatedCastAimPoint(
+      player,
+      'blaze_bomb',
+      aimOrigin,
+      lookDirection,
+      BLAZE_BOMB_MAX_RANGE,
+      terrainHit ?? this.addScaled3D(aimOrigin, lookDirection, BLAZE_BOMB_MAX_RANGE)
+    );
 
     const horizontalDistance = distance2D(aimOrigin, targetPosition);
     if (horizontalDistance < BLAZE_BOMB_MIN_RANGE) {
@@ -4327,13 +4494,28 @@ export class GameRoom extends Room<GameState> {
     player: Player,
     abilityId: 'phantom_dire_ball' | 'phantom_void_ray',
     now: number,
+    range: number,
     impactHint: SkillImpactHint = {}
   ): void {
-    const aimDirection = getForwardVector(player.lookYaw, player.lookPitch);
+    const lookDirection = getForwardVector(player.lookYaw, player.lookPitch);
+    const aimOrigin = this.getPlayerEyePosition(player);
     const launchSide = abilityId === 'phantom_dire_ball'
       ? this.getNextPhantomPrimaryLaunchSide(player.id)
       : 1;
     const startPosition = this.getAbilitySocketCastOrigin(player, abilityId, launchSide);
+    const aimPoint = impactHint.impactPosition ?? this.resolveValidatedCastAimPoint(
+      player,
+      abilityId,
+      aimOrigin,
+      lookDirection,
+      range,
+      this.addScaled3D(aimOrigin, lookDirection, range)
+    );
+    const aimDirection = this.normalize3D({
+      x: aimPoint.x - startPosition.x,
+      y: aimPoint.y - startPosition.y,
+      z: aimPoint.z - startPosition.z,
+    }) ?? lookDirection;
     const magazine = abilityId === 'phantom_dire_ball'
       ? this.getOrCreatePhantomPrimaryMagazine(player)
       : null;
@@ -5008,13 +5190,22 @@ export class GameRoom extends Room<GameState> {
     }
 
     const origin = this.getPlayerEyePosition(player);
-    const forward = getForwardVector(player.lookYaw, player.lookPitch);
+    const rawForward = getForwardVector(player.lookYaw, player.lookPitch);
+    const castKind = getAttackCastKind({ heroId, mode });
+    const forward = this.resolveValidatedCastAimDirection(
+      player,
+      castKind,
+      origin,
+      rawForward,
+      attack.range
+    );
     const primaryTargetHit = this.findTargetHitInAimCone(
       player,
       attack.range,
       attack.coneDot,
       attack.collisionRadius ?? 0,
-      attack.targetTeam ?? 'enemy'
+      attack.targetTeam ?? 'enemy',
+      { origin, forward }
     );
     const aegisHit = this.getChronosAegisSkillHit(player, origin, forward, attack.range, {
       projectileRadius: getChronosAegisCollisionRadiusForAttack(attack),
@@ -5024,9 +5215,8 @@ export class GameRoom extends Room<GameState> {
       aegisBlocksAttack,
       aegisPoint: aegisHit?.point,
     });
-    const castKind = getAttackCastKind({ heroId, mode });
     if (castKind === 'phantom_dire_ball' || castKind === 'phantom_void_ray') {
-      this.broadcastPhantomAttackCast(player, castKind, now, impactHint);
+      this.broadcastPhantomAttackCast(player, castKind, now, attack.range, impactHint);
     } else if (castKind === 'hookshot_basic_attack' || castKind === 'hookshot_heavy_attack') {
       this.broadcastHookshotAttackCast(player, castKind, now, withHookshotHeavyAttackTargetHint({
         impactHint,
@@ -5168,10 +5358,11 @@ export class GameRoom extends Room<GameState> {
     range: number,
     minDot: number,
     extraRadius = 0,
-    targetTeam: AttackTargetTeam = 'enemy'
+    targetTeam: AttackTargetTeam = 'enemy',
+    aimOverride: { origin?: PlainVec3; forward?: PlainVec3 } = {}
   ): AimTargetHit | null {
-    const origin = this.getPlayerEyePosition(source);
-    const forward = getForwardVector(source.lookYaw, source.lookPitch);
+    const origin = aimOverride.origin ?? this.getPlayerEyePosition(source);
+    const forward = aimOverride.forward ?? getForwardVector(source.lookYaw, source.lookPitch);
     let bestTargetHit: AimTargetHit | null = null;
     let bestDistance = range;
     const candidateRange = range + extraRadius + PLAYER_RADIUS + PLAYER_COMBAT_HITBOX_PADDING;
@@ -8319,17 +8510,26 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getBlazeFlamethrowerPose(player: Player): { origin: PlainVec3; direction: PlainVec3 } {
-    const pitch = player.lookPitch;
-    const cosPitch = Math.cos(pitch);
-    const forward = {
-      x: -Math.sin(player.lookYaw) * cosPitch,
-      y: Math.sin(pitch),
-      z: -Math.cos(player.lookYaw) * cosPitch,
-    };
+    const forward = getForwardVector(player.lookYaw, player.lookPitch);
+    const origin = this.getAbilitySocketCastOrigin(player, 'blaze_flamethrower');
+    const aimOrigin = this.getBlazeAimOrigin(player);
+    const aimPoint = this.resolveValidatedCastAimPoint(
+      player,
+      'blaze_flamethrower',
+      aimOrigin,
+      forward,
+      BLAZE_FLAMETHROWER_RANGE,
+      this.addScaled3D(aimOrigin, forward, BLAZE_FLAMETHROWER_RANGE)
+    );
+    const direction = this.normalize3D({
+      x: aimPoint.x - origin.x,
+      y: aimPoint.y - origin.y,
+      z: aimPoint.z - origin.z,
+    }) ?? forward;
 
     return {
-      origin: this.getAbilitySocketCastOrigin(player, 'blaze_flamethrower'),
-      direction: forward,
+      origin,
+      direction,
     };
   }
 

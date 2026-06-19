@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { HeroId, Player, Team } from '@voxel-strike/shared';
+import type { HeroId, Player, PlayerMovementState, Team } from '@voxel-strike/shared';
 import {
   DEFAULT_WALK_DIRECTION,
   EMPTY_TEAM_ACCENT_PARTS,
@@ -92,6 +92,7 @@ interface RemoteHeroBatchRendererProps {
   players: readonly Player[];
   resourcePlayers?: readonly Player[];
   isBattleRoyal?: boolean;
+  localPlayerId?: string | null;
   config: RemotePlayerQualityConfig;
 }
 
@@ -276,11 +277,14 @@ function setWalkDirectionFromVelocity(
   setWalkDirectionFromComponents(target, velocity.x, velocity.z, yaw);
 }
 
-function isPlayerMovingForAnimation(player: Player, visualHorizontalSpeed = 0): boolean {
+function isPlayerMovingForAnimation(
+  player: Player,
+  visualHorizontalSpeed = 0,
+  movement: PlayerMovementState = player.movement
+): boolean {
   if (player.state !== 'alive') return false;
 
   const networkHorizontalSpeed = getHorizontalSpeed(player.velocity);
-  const movement = player.movement;
 
   return (
     networkHorizontalSpeed > NETWORK_MOVING_SPEED ||
@@ -293,10 +297,15 @@ function isPlayerMovingForAnimation(player: Player, visualHorizontalSpeed = 0): 
   );
 }
 
-function getPlayerMovementPose(player: Player, hasLoweredPosture: boolean, isMoving: boolean): HeroMovementPose {
-  if (player.movement.isSliding) return 'run';
+function getPlayerMovementPose(
+  player: Player,
+  hasLoweredPosture: boolean,
+  isMoving: boolean,
+  movement: PlayerMovementState = player.movement
+): HeroMovementPose {
+  if (movement.isSliding) return 'run';
   if (hasLoweredPosture && isMoving) return 'crouchWalk';
-  return player.movement.isSprinting ? 'run' : 'walk';
+  return movement.isSprinting ? 'run' : 'walk';
 }
 
 function hasActivePhantomVeil(player: Player): boolean {
@@ -346,6 +355,14 @@ function isActivityPriorityRemoteBody(player: Player, visualState: VisualState, 
     hasRecentRemoteAttack(player, visualState, frameNowMs) ||
     hasActiveRemoteBodyEffect(player, visualState, frameNowMs)
   );
+}
+
+function getPlayerRenderMovement(
+  player: Player,
+  visualState: VisualState,
+  localPlayerId: string | null | undefined
+): PlayerMovementState {
+  return player.id === localPlayerId ? visualState.localMovement : player.movement;
 }
 
 function getBattleRoyalDistanceCap(distance: number, cap: number): number {
@@ -669,6 +686,7 @@ function updateRemoteTransform(
 function updateRemotePose(
   runtime: RemoteHeroRuntime,
   player: Player,
+  movement: PlayerMovementState,
   delta: number,
   elapsedSeconds: number,
   visualHorizontalSpeed: number,
@@ -680,7 +698,7 @@ function updateRemotePose(
   const manifest = HERO_BODY_MANIFESTS[heroId];
   const playerHeight = getRemotePlayerHeight(player);
   const scale = playerHeight / 1.8;
-  const targetPostureScaleY = getPlayerBodyPostureScaleY(player.movement);
+  const targetPostureScaleY = getPlayerBodyPostureScaleY(movement);
   runtime.postureScaleY = THREE.MathUtils.damp(
     runtime.postureScaleY,
     targetPostureScaleY,
@@ -688,10 +706,10 @@ function updateRemotePose(
     frameDelta
   );
   const baseScaleY = scale * runtime.postureScaleY;
-  const moving = isPlayerMovingForAnimation(player, visualHorizontalSpeed);
-  const jumping = !player.movement.isGrounded && !player.movement.isSliding;
-  const crouching = player.movement.isCrouching;
-  const sliding = player.movement.isSliding;
+  const moving = isPlayerMovingForAnimation(player, visualHorizontalSpeed, movement);
+  const jumping = !movement.isGrounded && !movement.isSliding;
+  const crouching = movement.isCrouching;
+  const sliding = movement.isSliding;
   let attacking = false;
   let attackStartedAtMs: number | null = null;
   let attackSide: -1 | 1 = 1;
@@ -724,7 +742,7 @@ function updateRemotePose(
     }
   }
 
-  const movementPose = getPlayerMovementPose(player, crouching || sliding, moving);
+  const movementPose = getPlayerMovementPose(player, crouching || sliding, moving, movement);
   if (runtime.targetMovementPose !== movementPose) {
     runtime.previousMovementProfile = runtime.currentMovementProfile;
     runtime.targetMovementPose = movementPose;
@@ -1364,12 +1382,14 @@ function RemoteHeroBatchGroup({
   resourcePlayerCount,
   resources,
   isBattleRoyal,
+  localPlayerId,
   config,
 }: {
   players: readonly Player[];
   resourcePlayerCount: number;
   resources: RemoteBatchResources;
   isBattleRoyal: boolean;
+  localPlayerId?: string | null;
   config: RemotePlayerQualityConfig;
 }) {
   const camera = useThree((state) => state.camera);
@@ -1467,6 +1487,7 @@ function RemoteHeroBatchGroup({
         updateRuntimeHero(runtime, player);
         if (runtime.heroId !== resources.heroId) continue;
 
+        const movement = getPlayerRenderMovement(player, visualState, localPlayerId);
         const visualHorizontalSpeed = updateRemoteTransform(runtime, player, deltaSeconds, visualState, nowMs);
         const isObjectivePriority = isObjectivePriorityRemoteBody(player);
         const isActivityPriority = isActivityPriorityRemoteBody(player, visualState, nowMs);
@@ -1483,6 +1504,7 @@ function RemoteHeroBatchGroup({
         updateRemotePose(
           runtime,
           player,
+          movement,
           deltaSeconds,
           elapsedSeconds,
           visualHorizontalSpeed,
@@ -1555,7 +1577,7 @@ function RemoteHeroBatchGroup({
         }
       }
     },
-  }), [camera, isBattleRoyal, resources]);
+  }), [camera, isBattleRoyal, localPlayerId, resources]);
 
   return (
     <>
@@ -1592,6 +1614,7 @@ export const RemoteHeroBatchRenderer = memo(function RemoteHeroBatchRenderer({
   players,
   resourcePlayers = players,
   isBattleRoyal = false,
+  localPlayerId = null,
   config,
 }: RemoteHeroBatchRendererProps) {
   const groupedPlayers = useMemo<Array<{ key: string; players: readonly Player[] }>>(() => {
@@ -1678,6 +1701,7 @@ export const RemoteHeroBatchRenderer = memo(function RemoteHeroBatchRenderer({
           resourcePlayerCount={resourcePlayerCount}
           resources={resource}
           isBattleRoyal={isBattleRoyal}
+          localPlayerId={localPlayerId}
           config={config}
         />
       ))}

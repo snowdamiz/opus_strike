@@ -79,6 +79,7 @@ import {
   CHRONOS_PRIMARY_ORB_SOCKET,
   PLAYER_HEIGHT,
   EYE_HEIGHT,
+  calculateLookDirection,
   calculatePlayerSocketPosition,
   type AbilityContext,
   type MovementSounds,
@@ -91,6 +92,8 @@ import {
   type UseMovementReturn,
   type UsePhantomAbilitiesReturn,
 } from '../../hooks/player';
+import { THIRD_PERSON_CROSSHAIR_AIM_DISTANCE } from '../../hooks/player/abilityAim';
+import { writeThirdPersonCameraPosition } from '../../hooks/player/useCamera';
 import {
   HERO_ACTION_OVERLAP_GRACE_MS,
   isActionLockBlocking,
@@ -124,6 +127,7 @@ import {
   HERO_DEFINITIONS,
   type HeroId,
   type MatchMode,
+  type MatchPerspective,
   type AbilityCastOriginHint,
   type InputState,
   type MovementCommand,
@@ -239,6 +243,9 @@ const authorityMetricsScratch: PredictionCorrectionMetrics[] = [];
 const battleRoyalDeploymentVisualPosition = new THREE.Vector3();
 const battleRoyalDeploymentCameraPosition = new THREE.Vector3();
 const battleRoyalDeploymentLookTarget = new THREE.Vector3();
+const thirdPersonAimCameraPosition = new THREE.Vector3();
+const thirdPersonAimCollisionAnchor = new THREE.Vector3();
+const thirdPersonAimCameraDirection = new THREE.Vector3();
 const battleRoyalDeploymentCameraTarget: BattleRoyalDeploymentCameraTarget = {
   mode: 'ship',
   position: new THREE.Vector3(),
@@ -257,6 +264,49 @@ function resolveThirdPersonCameraCollision(
     priority: 'visual',
     feature: 'third-person-camera',
   })?.distance ?? null;
+}
+
+export function resolveThirdPersonCrosshairAimPoint({
+  bodyPosition,
+  yaw,
+  pitch,
+  eyeHeight,
+  matchPerspective,
+}: {
+  bodyPosition: { x: number; y: number; z: number };
+  yaw: number;
+  pitch: number;
+  eyeHeight: number;
+  matchPerspective: MatchPerspective;
+}): MutableVec3 | null {
+  if (matchPerspective !== 'third_person') return null;
+
+  writeThirdPersonCameraPosition(
+    thirdPersonAimCameraPosition,
+    thirdPersonAimCollisionAnchor,
+    thirdPersonAimCameraDirection,
+    {
+      bodyPosition,
+      yaw,
+      eyeHeight,
+      collision: resolveThirdPersonCameraCollision,
+    }
+  );
+
+  const direction = calculateLookDirection(yaw, pitch);
+  const world = isPhysicsReady() ? getPhysicsWorld() : null;
+  const hit = world
+    ? raycast(world, thirdPersonAimCameraPosition, direction, THIRD_PERSON_CROSSHAIR_AIM_DISTANCE, {
+      priority: 'visual',
+      feature: 'third-person-crosshair-aim',
+    })
+    : null;
+
+  return hit?.point ?? {
+    x: thirdPersonAimCameraPosition.x + direction.x * THIRD_PERSON_CROSSHAIR_AIM_DISTANCE,
+    y: thirdPersonAimCameraPosition.y + direction.y * THIRD_PERSON_CROSSHAIR_AIM_DISTANCE,
+    z: thirdPersonAimCameraPosition.z + direction.z * THIRD_PERSON_CROSSHAIR_AIM_DISTANCE,
+  };
 }
 
 function frameRateBand(deltaSeconds: number): string {
@@ -465,6 +515,7 @@ interface LocalPlayerFrameRefs {
   chronosLifelineBlockPrimaryRef: MutableRefObject<boolean>;
   chronosLifelineBlockSecondaryRef: MutableRefObject<boolean>;
   chronosLifelineCommitHeldRef: MutableRefObject<boolean>;
+  suppressJumpUntilReleaseRef: MutableRefObject<boolean>;
   positionRef: MutableRefObject<THREE.Vector3>;
   audioForwardRef: MutableRefObject<THREE.Vector3>;
   audioUpRef: MutableRefObject<THREE.Vector3>;
@@ -565,6 +616,21 @@ interface PresentationPhaseResult {
   localMovementForTrace: PlayerMovementState;
   isSliding: boolean;
   wasSlidingBeforeFrame: boolean;
+}
+
+export function suppressJumpInputUntilReleased(
+  input: InputState,
+  suppressJumpUntilReleaseRef: MutableRefObject<boolean>
+): InputState {
+  if (!suppressJumpUntilReleaseRef.current) return input;
+  if (!input.jump) {
+    suppressJumpUntilReleaseRef.current = false;
+    return input;
+  }
+  return {
+    ...input,
+    jump: false,
+  };
 }
 
 function runPresentationPhase(input: {
@@ -1571,6 +1637,7 @@ function runBattleRoyalDeploymentFrame(
     primaryFire: false,
     secondaryFire: false,
     reload: false,
+    jump: false,
     ability1: false,
     ability2: false,
     ultimate: isDropping ? frameInput.ultimate : false,
@@ -1732,6 +1799,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const chronosLifelineBlockPrimaryRef = useRef(false);
   const chronosLifelineBlockSecondaryRef = useRef(false);
   const chronosLifelineCommitHeldRef = useRef(false);
+  const suppressJumpUntilReleaseRef = useRef(false);
   const positionRef = useRef(new THREE.Vector3());
   const audioForwardRef = useRef(new THREE.Vector3());
   const audioUpRef = useRef(new THREE.Vector3(0, 1, 0));
@@ -2115,6 +2183,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         chronosLifelineBlockPrimaryRef,
         chronosLifelineBlockSecondaryRef,
         chronosLifelineCommitHeldRef,
+        suppressJumpUntilReleaseRef,
         positionRef,
         audioForwardRef,
         audioUpRef,
@@ -2235,8 +2304,11 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       }, cameraControl.refs.yaw.current);
       updateLocalPlayer(landedUpdates);
       setPlayerVisualTransform(localPlayer.id, localDropPlayer.position, cameraControl.refs.yaw.current);
+      resetMovementCommandBuffer();
+      frameCtx.refs.suppressJumpUntilReleaseRef.current = rawFrameInput.jump;
       localPlayer = { ...localPlayer, ...landedUpdates };
     }
+    frameInput = suppressJumpInputUntilReleased(frameInput, frameCtx.refs.suppressJumpUntilReleaseRef);
     const isLocalStillDeploying = localDropPlayer
       ? localDropPlayer.status !== 'landed'
       : localPlayer.state === 'dropping';
@@ -2359,11 +2431,21 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     } = inputPhase;
     frameInput = inputPhase.frameInput;
 
+    const aimYaw = cameraControl.refs.yaw.current;
+    const aimPitch = cameraControl.refs.pitch.current + cameraControl.refs.slidePitch.current;
+    const thirdPersonAimPoint = resolveThirdPersonCrosshairAimPoint({
+      bodyPosition: position,
+      yaw: aimYaw,
+      pitch: aimPitch,
+      eyeHeight: EYE_HEIGHT + cameraControl.refs.crouchHeight.current,
+      matchPerspective: storeSnapshot.matchPerspective,
+    });
+
     // Create ability context
     const abilityCtx = {
       position,
       velocity,
-      yaw: cameraControl.refs.yaw.current,
+      yaw: aimYaw,
       pitch: cameraControl.refs.pitch.current,
       heroId,
       localPlayer: {
@@ -2378,6 +2460,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       camera,
       viewmodelElapsedSeconds: frameState.clock.elapsedTime,
       viewmodelNowMs: now,
+      aimPoint: thirdPersonAimPoint,
     };
 
     setPhantomPrimaryHeld(phantomPrimaryHeldForPose, now);
@@ -2398,7 +2481,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         frameInput.secondaryFire &&
         !chronosLifelineCommitActive &&
         chronosAegisDurability > 0.005,
-      now
+      now,
+      undefined,
+      { renderWorldEffect: storeSnapshot.matchPerspective === 'third_person' }
     );
     if (heroDef) {
       updatePredictedAbilitySounds({

@@ -27,9 +27,9 @@ import {
   PHANTOM_FIRE_INTERVAL,
   PHANTOM_PROJECTILE_SPEED,
   PHANTOM_VOID_RAY_SOCKET,
-  calculateLookDirection,
   calculatePlayerSocketPosition,
 } from '../constants';
+import { resolveAbilityAimDirection } from '../abilityAim';
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import {
   PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
@@ -241,7 +241,6 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     lastFireTimeRef.current = now;
     direBallIdRef.current += 1;
     const launchSide = direBallIdRef.current % 2 === 1 ? 1 : -1;
-    const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
     const sampledSpawn = samplePhantomPrimarySpawn(ctx, launchSide, now);
     const spawnPosition = sampledSpawn
       ? vectorToPlainPosition(sampledSpawn.position)
@@ -249,6 +248,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
         ...PHANTOM_DIRE_BALL_SOCKET,
         sideOffset: PHANTOM_DIRE_BALL_SOCKET.sideOffset * launchSide,
       });
+    const direction = resolveAbilityAimDirection(ctx, spawnPosition);
     const visualId = `predicted_phantom_dire_ball_${ctx.localPlayer.id}_${direBallIdRef.current}`;
 
     phantomPrimaryAmmoRef.current = Math.max(0, phantomPrimaryAmmoRef.current - 1);
@@ -318,11 +318,11 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     store.setVoidRayCharging(false, 0);
 
     voidRayIdRef.current += 1;
-    const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
     const sampledSpawn = samplePhantomVoidRaySpawn(ctx, now);
     const startPosition = sampledSpawn
       ? vectorToPlainPosition(sampledSpawn.position)
       : calculatePlayerSocketPosition(ctx.position, ctx.yaw, PHANTOM_VOID_RAY_SOCKET);
+    const direction = resolveAbilityAimDirection(ctx, startPosition);
     const visualId = `predicted_phantom_void_ray_${ctx.localPlayer.id}_${voidRayIdRef.current}`;
     store.addVoidRay({
       id: visualId,

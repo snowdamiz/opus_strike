@@ -36,6 +36,7 @@ function plainOrigin(origin: ResolvedAbilitySocketOrigin): { x: number; y: numbe
 }
 
 function hintFromOrigin(
+  ctx: AbilityContext,
   abilityId: string,
   origin: ResolvedAbilitySocketOrigin | null
 ): AbilityCastOriginHint | null {
@@ -45,6 +46,7 @@ function hintFromOrigin(
     abilityId,
     socketName: origin.socketName,
     origin: plainOrigin(origin),
+    aimPoint: ctx.aimPoint ?? undefined,
     sampledAtMs: origin.timestampMs,
   });
 }
@@ -74,6 +76,10 @@ function resolveBlazeStaffOrigin(
   return resolveAbilitySocketOrigin({
     ownerScope: 'localViewmodel',
     abilityId,
+    fallback: {
+      position: ctx.position,
+      yaw: ctx.yaw,
+    },
     sampledContext: {
       camera: ctx.camera,
       elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
@@ -97,6 +103,10 @@ function resolvePhantomPrimaryOrigin(
     ownerScope: 'localViewmodel',
     abilityId,
     side,
+    fallback: {
+      position: ctx.position,
+      yaw: ctx.yaw,
+    },
     sampledContext: {
       camera: ctx.camera,
       elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
@@ -119,6 +129,10 @@ function resolvePhantomVoidRayOrigin(
   return resolveAbilitySocketOrigin({
     ownerScope: 'localViewmodel',
     abilityId,
+    fallback: {
+      position: ctx.position,
+      yaw: ctx.yaw,
+    },
     sampledContext: {
       camera: ctx.camera,
       elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
@@ -139,6 +153,10 @@ function resolveChronosPrimaryOrigin(
   const origin = resolveAbilitySocketOrigin({
     ownerScope: 'localViewmodel',
     abilityId,
+    fallback: {
+      position: ctx.position,
+      yaw: ctx.yaw,
+    },
     sampledContext: {
       camera: ctx.camera,
       elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
@@ -155,6 +173,7 @@ function resolveChronosPrimaryOrigin(
 }
 
 function resolveLiveLocalOrigin(
+  ctx: AbilityContext,
   abilityId: string,
   side?: -1 | 1
 ): ResolvedAbilitySocketOrigin | null {
@@ -162,6 +181,10 @@ function resolveLiveLocalOrigin(
     ownerScope: 'localViewmodel',
     abilityId,
     side,
+    fallback: {
+      position: ctx.position,
+      yaw: ctx.yaw,
+    },
   });
 }
 
@@ -210,6 +233,7 @@ export function buildAbilityCastOriginHints(
           hints,
           seen,
           hintFromOrigin(
+            ctx,
             'phantom_dire_ball',
             resolvePhantomPrimaryOrigin(ctx, 'phantom_dire_ball', side, now)
           )
@@ -222,6 +246,7 @@ export function buildAbilityCastOriginHints(
         hints,
         seen,
         hintFromOrigin(
+          ctx,
           'phantom_void_ray_charge',
           resolvePhantomVoidRayOrigin(ctx, 'phantom_void_ray_charge', now)
         )
@@ -230,6 +255,7 @@ export function buildAbilityCastOriginHints(
         hints,
         seen,
         hintFromOrigin(
+          ctx,
           'phantom_void_ray',
           resolvePhantomVoidRayOrigin(ctx, 'phantom_void_ray', now)
         )
@@ -244,8 +270,9 @@ export function buildAbilityCastOriginHints(
           hints,
           seen,
           hintFromOrigin(
+            ctx,
             'hookshot_basic_attack',
-            resolveLiveLocalOrigin('hookshot_basic_attack', side)
+            resolveLiveLocalOrigin(ctx, 'hookshot_basic_attack', side)
           )
         );
       }
@@ -256,8 +283,9 @@ export function buildAbilityCastOriginHints(
         hints,
         seen,
         hintFromOrigin(
+          ctx,
           'hookshot_heavy_attack',
-          resolveLiveLocalOrigin('hookshot_heavy_attack')
+          resolveLiveLocalOrigin(ctx, 'hookshot_heavy_attack')
         )
       );
     }
@@ -267,8 +295,9 @@ export function buildAbilityCastOriginHints(
         hints,
         seen,
         hintFromOrigin(
+          ctx,
           'hookshot_grapple',
-          resolveLiveLocalOrigin('hookshot_grapple')
+          resolveLiveLocalOrigin(ctx, 'hookshot_grapple')
         )
       );
     }
@@ -281,6 +310,7 @@ export function buildAbilityCastOriginHints(
         hints,
         seen,
         hintFromOrigin(
+          ctx,
           'blaze_rocket',
           resolveBlazeStaffOrigin(ctx, 'blaze_rocket', now, 1)
         )
@@ -292,6 +322,7 @@ export function buildAbilityCastOriginHints(
         hints,
         seen,
         hintFromOrigin(
+          ctx,
           'blaze_flamethrower',
           resolveBlazeStaffOrigin(ctx, 'blaze_flamethrower', now, getBlazeFlamethrowerHeldBlend(now))
         )
@@ -303,6 +334,7 @@ export function buildAbilityCastOriginHints(
         hints,
         seen,
         hintFromOrigin(
+          ctx,
           'blaze_bomb',
           resolveBlazeStaffOrigin(ctx, 'blaze_bomb', now, getBlazeBombTargetHeldBlend(now))
         )
@@ -314,6 +346,7 @@ export function buildAbilityCastOriginHints(
         hints,
         seen,
         hintFromOrigin(
+          ctx,
           'blaze_rocketjump',
           resolveBlazeStaffOrigin(ctx, 'blaze_rocketjump', now + BLAZE_ROCKET_JUMP_IMPACT_DELAY_MS, 1)
         )
@@ -327,6 +360,7 @@ export function buildAbilityCastOriginHints(
         hints,
         seen,
         hintFromOrigin(
+          ctx,
           'chronos_verdant_pulse',
           resolveChronosPrimaryOrigin(ctx, 'chronos_verdant_pulse', now)
         )
@@ -338,6 +372,7 @@ export function buildAbilityCastOriginHints(
         hints,
         seen,
         hintFromOrigin(
+          ctx,
           'chronos_lifeline_conduit',
           resolveChronosPrimaryOrigin(ctx, 'chronos_lifeline_conduit', now)
         )
@@ -349,6 +384,7 @@ export function buildAbilityCastOriginHints(
         hints,
         seen,
         hintFromOrigin(
+          ctx,
           'chronos_timebreak',
           resolveChronosPrimaryOrigin(ctx, 'chronos_timebreak', now)
         )

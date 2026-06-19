@@ -60,6 +60,27 @@ assert.equal(command.seq, 43);
 assert.equal(command.collisionRevision, 3);
 assert.equal(getLocalMovementCollisionRevision(), 3);
 
+const hintedCommand = createLocalMovementCommand(createEmptyInputState(), {
+  lookYaw: 0,
+  lookPitch: 0,
+  clientTimeMs: 1100,
+  abilityCastHints: [{
+    abilityId: 'phantom_dire_ball',
+    socketName: 'phantom.primary.right',
+    origin: { x: 1.234, y: 2.345, z: -3.456 },
+    aimPoint: { x: 10.123, y: 4.567, z: -20.891 },
+    sampledAtMs: 1099.6,
+  }],
+});
+assert.equal(hintedCommand.abilityCastHints?.length, 1);
+assert.deepEqual(hintedCommand.abilityCastHints?.[0], {
+  abilityId: 'phantom_dire_ball',
+  socketName: 'phantom.primary.right',
+  origin: { x: 1.23, y: 2.35, z: -3.46 },
+  aimPoint: { x: 10.120000000000001, y: 4.57, z: -20.89 },
+  sampledAtMs: 1100,
+});
+
 setLocalMovementRootedUntil(2000, 1000);
 const rootedInput = createEmptyInputState();
 rootedInput.moveForward = true;

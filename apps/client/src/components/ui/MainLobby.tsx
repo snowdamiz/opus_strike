@@ -1882,7 +1882,7 @@ function PlayModeSelector({
         const perspective = perspectiveSettingMode
           ? perspectiveByMode[perspectiveSettingMode]
           : DEFAULT_MATCH_PERSPECTIVE;
-        const showSettingsButton = Boolean(perspectiveSettingMode);
+        const showSettingsButton = selected && Boolean(perspectiveSettingMode);
         const isRanked = mode === 'ranked';
         const locked = isRanked && (
           rankedSeason.mode === 'preseason' ||
