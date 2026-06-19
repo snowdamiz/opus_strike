@@ -3,6 +3,7 @@ import {
   buildGameEntryTicketInputs,
   buildGameStartingPayload,
   createLobbyGameStartAssignments,
+  serializeGameSeatReservation,
   type LobbyGameStartPlayer,
 } from '../rooms/lobbyGameStartRuntime';
 
@@ -139,6 +140,15 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
       },
     ],
     entryTicket: 'ticket-a',
+    seatReservation: {
+      sessionId: 'seat-a',
+      room: {
+        name: 'game_room',
+        roomId: 'game-a',
+        processId: 'process-a',
+        publicAddress: 'localhost:2567',
+      },
+    },
     gameplayMode: 'capture_the_flag',
     matchPerspective: 'third_person',
     mapThemeId: 'golden',
@@ -156,12 +166,56 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
       },
     ],
     entryTicket: 'ticket-a',
+    seatReservation: {
+      sessionId: 'seat-a',
+      room: {
+        name: 'game_room',
+        roomId: 'game-a',
+        processId: 'process-a',
+        publicAddress: 'localhost:2567',
+      },
+    },
     gameplayMode: 'capture_the_flag',
     matchPerspective: 'third_person',
     mapThemeId: 'golden',
     mapSize: 'small',
     mapProfileId: 'ctf_arena',
   });
+}
+
+{
+  assert.deepEqual(serializeGameSeatReservation({
+    sessionId: 'seat-a',
+    devMode: true,
+    room: {
+      name: 'game_room',
+      roomId: 'game-a',
+      processId: 'process-a',
+      publicAddress: 'localhost:2567',
+    },
+  }), {
+    sessionId: 'seat-a',
+    devMode: true,
+    room: {
+      name: 'game_room',
+      roomId: 'game-a',
+      processId: 'process-a',
+      publicAddress: 'localhost:2567',
+    },
+  });
+}
+
+{
+  assert.throws(
+    () => serializeGameSeatReservation({
+      sessionId: 'seat-a',
+      room: {
+        roomId: 'game-a',
+        processId: 'process-a',
+      },
+    }),
+    /Cannot serialize incomplete game seat reservation/
+  );
 }
 
 console.log('lobby game start runtime tests passed');

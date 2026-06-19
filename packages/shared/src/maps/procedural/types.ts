@@ -2,7 +2,7 @@ import type { Team } from '../../types/team.js';
 import type { Vec3 } from '../../types/vector.js';
 
 export const DEFAULT_PROCEDURAL_MAP_SEED = 0x57564f58;
-export const CONSTRUCTED_MAP_MANIFEST_VERSION = 8;
+export const CONSTRUCTED_MAP_MANIFEST_VERSION = 10;
 
 export type VoxelMapSizeId = 'small' | 'medium' | 'large';
 export const DEFAULT_VOXEL_MAP_SIZE_ID: VoxelMapSizeId = 'medium';
@@ -215,6 +215,26 @@ export interface MapPowerupPickup {
   routeNodeId?: string;
   laneId?: string;
   teamBias?: MapTeam;
+}
+
+export type MapNamedLocationKind =
+  | 'city'
+  | 'town'
+  | 'industrial'
+  | 'hamlet'
+  | 'outpost'
+  | 'open_area'
+  | 'wildland'
+  | 'landmark';
+
+export interface MapNamedLocation {
+  id: string;
+  name: string;
+  kind: MapNamedLocationKind;
+  position: Vec3;
+  radius: number;
+  priority: number;
+  tags: string[];
 }
 
 export interface SightlineSample {
@@ -507,6 +527,7 @@ export interface VoxelMapManifest {
     lanes: LaneDescriptor[];
     routeGraph: RouteGraph;
     powerups: MapPowerupPickup[];
+    namedLocations?: MapNamedLocation[];
     sightlineSamples: SightlineSample[];
   };
   construction: {

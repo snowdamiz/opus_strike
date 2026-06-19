@@ -71,6 +71,7 @@ function clampToBoundary(position: Vec3): Vec3 {
 }
 
 const startedAt = 1_000;
+const expectedDropShipAltitude = 180;
 const state = createBattleRoyalDropState(
   manifest,
   [
@@ -86,7 +87,8 @@ assert.equal(state.players.get('red-1')?.status, 'aboard');
 assert.equal(state.players.get('blue-1')?.status, 'aboard');
 assert.equal(Math.hypot(state.ship.end.x - state.ship.start.x, state.ship.end.z - state.ship.start.z) > 100, true);
 assert.equal(state.ship.start.y, state.ship.end.y);
-assert.equal(state.ship.start.y >= 200, true);
+assert.equal(state.ship.altitude, expectedDropShipAltitude);
+assert.equal(state.ship.start.y, expectedDropShipAltitude);
 assert.equal(isBattleRoyalDropShipDroppable(state, startedAt), false);
 assert.equal(startBattleRoyalTeamDrop(state, 'red', startedAt + 1_000), false);
 

@@ -28,7 +28,7 @@ import { assertUsableEntryTicketSecret } from '../config/security';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
 import { assertGameplayAccountEligible } from '../auth/accountEligibility';
 import { assertTutorialCompleted } from '../auth/tutorialCompletion';
-import { createGameEntryTicket } from '../security/entryTickets';
+import { createGameEntryTicket, verifyGameEntryTicket } from '../security/entryTickets';
 import { verifyMatchmakingTicket, type MatchmakingTicketClaims } from '../security/matchmakingTickets';
 import { consumeReplayNonce } from '../security/replayNonceStore';
 import {
@@ -78,12 +78,15 @@ import {
   createMapVoteOptions,
   getMapVoteRecords,
   getWinningMapOption,
+  haveAllHumanPlayersVoted,
   type MapVoteOption,
+  type MapVotePlayer,
 } from './lobbyMapVoteRuntime';
 import {
   buildGameEntryTicketInputs,
   buildGameStartingPayload,
   createLobbyGameStartAssignments,
+  serializeGameSeatReservation,
   type ParticipantAssignment,
 } from './lobbyGameStartRuntime';
 import {
@@ -212,6 +215,7 @@ export class LobbyRoom extends Room<LobbyState> {
   maxClients = DEFAULT_GAME_CONFIG.maxPlayers;
   private botIdCounter = 0;
   private mapVoteSession: MapVoteSession | null = null;
+  private isFinalizingMapVote = false;
   private mapVoteFinalizeTimeout: ReturnType<typeof setTimeout> | null = null;
   private readonly rateLimiter = new MessageRateLimiter();
   private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
@@ -318,11 +322,6 @@ export class LobbyRoom extends Room<LobbyState> {
     this.onMessage('mapVotePreviewsReady', (client) => {
       if (!this.rateLimiter.consume(client.sessionId, 'mapVotePreviewsReady', LOBBY_MESSAGE_RATE_LIMITS.mapVote)) return;
       this.handleMapVotePreviewsReady(client);
-    });
-
-    this.onMessage('finalizeMapVote', (client) => {
-      if (!this.consumeLobbyMessage(client, 'finalizeMapVote', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
-      this.handleFinalizeMapVote(client);
     });
 
     this.onMessage('kick', (client, data: unknown) => {
@@ -811,6 +810,7 @@ export class LobbyRoom extends Room<LobbyState> {
     session.phaseEndTime = Date.now() + MAP_VOTE_DURATION_MS;
     this.broadcast('mapVoteTimerStarted', {
       phaseEndTime: session.phaseEndTime,
+      gameplayMode: this.gameplayMode,
     });
 
     this.clearMapVoteTimer();
@@ -843,54 +843,50 @@ export class LobbyRoom extends Room<LobbyState> {
 
     this.mapVoteSession.votes.set(client.sessionId, optionId);
     this.broadcastMapVoteUpdated();
+    this.finalizeMapVoteIfAllHumansVoted();
   }
 
-  private handleFinalizeMapVote(client: Client): void {
-    if (this.isRankedQueue) {
-      client.send('error', { message: 'Ranked map voting finalizes automatically' });
-      return;
-    }
+  private finalizeMapVoteIfAllHumansVoted(): void {
+    const session = this.mapVoteSession;
+    if (!session || this.state.status !== 'map_vote' || !session.phaseEndTime) return;
 
-    const player = this.state.players.get(client.sessionId);
-    if (!player?.isHost) {
-      client.send('error', { message: 'Only the host can lock the map vote' });
-      return;
-    }
+    const players: MapVotePlayer[] = [];
+    this.state.players.forEach((player, playerId) => {
+      players.push({ id: playerId, isBot: player.isBot });
+    });
 
-    if (!this.mapVoteSession?.phaseEndTime) {
-      client.send('error', { message: 'Map vote is still preparing' });
-      return;
-    }
+    if (!haveAllHumanPlayersVoted({ players, votes: session.votes })) return;
 
-    this.finalizeMapVote(client).catch((error) => {
-      console.error('Failed to finalize map vote:', error);
-      client.send('error', { message: 'Failed to start game' });
+    this.finalizeMapVote().catch((error) => {
+      console.error('Failed to finalize completed map vote:', error);
     });
   }
 
   private async finalizeMapVote(errorClient?: Client): Promise<void> {
-    if (!this.mapVoteSession || this.state.status !== 'map_vote') return;
+    if (!this.mapVoteSession || this.state.status !== 'map_vote' || this.isFinalizingMapVote) return;
 
-    const selectedOption = getWinningMapOption({
-      options: this.mapVoteSession.options,
-      votes: this.mapVoteSession.votes,
-      hostId: this.state.hostId,
-    });
-    const selectedMapThemeId = selectedOption.mapThemeId ?? await this.resolveSelectedMapThemeId(selectedOption.seed);
-    this.clearMapVoteTimer();
-    this.state.status = 'starting';
-    this.updateMetadata({ status: 'starting' });
-
-    this.broadcast('mapVoteFinalized', {
-      selectedOptionId: selectedOption.id,
-      mapSeed: selectedOption.seed,
-      mapThemeId: selectedMapThemeId,
-      mapSize: selectedOption.mapSize,
-      mapProfileId: selectedOption.mapProfileId,
-      votes: getMapVoteRecords(this.mapVoteSession.votes),
-    });
-
+    this.isFinalizingMapVote = true;
     try {
+      const selectedOption = getWinningMapOption({
+        options: this.mapVoteSession.options,
+        votes: this.mapVoteSession.votes,
+        hostId: this.state.hostId,
+      });
+      const selectedMapThemeId = selectedOption.mapThemeId ?? await this.resolveSelectedMapThemeId(selectedOption.seed);
+      this.clearMapVoteTimer();
+      this.state.status = 'starting';
+      this.updateMetadata({ status: 'starting' });
+
+      this.broadcast('mapVoteFinalized', {
+        selectedOptionId: selectedOption.id,
+        mapSeed: selectedOption.seed,
+        mapThemeId: selectedMapThemeId,
+        mapSize: selectedOption.mapSize,
+        mapProfileId: selectedOption.mapProfileId,
+        gameplayMode: this.gameplayMode,
+        votes: getMapVoteRecords(this.mapVoteSession.votes),
+      });
+
       await this.createGameFromLobby(selectedOption.seed, selectedMapThemeId, selectedOption.mapSize, selectedOption.mapProfileId);
     } catch (error) {
       console.error('Failed to create game room:', error);
@@ -906,9 +902,11 @@ export class LobbyRoom extends Room<LobbyState> {
         this.scheduleCapacityRetry();
       }
       this.updateMetadata({ status: this.state.status });
-      this.broadcast('mapVoteCancelled', { reason, status: this.state.status });
+      this.broadcast('mapVoteCancelled', { reason, status: this.state.status, gameplayMode: this.gameplayMode });
       this.broadcastLobbyState();
       errorClient?.send('error', { message: reason });
+    } finally {
+      this.isFinalizingMapVote = false;
     }
   }
 
@@ -974,23 +972,60 @@ export class LobbyRoom extends Room<LobbyState> {
         playerAssignments,
         authContexts: this.playerAuthContexts,
       });
-      const ticketsByPlayerId = new Map<string, string>();
+      const ticketsByPlayerId = new Map<string, {
+        entryTicket: string;
+        ticket: NonNullable<ReturnType<typeof verifyGameEntryTicket>>;
+      }>();
       for (const [playerId, ticketInput] of ticketInputsByPlayerId) {
-        ticketsByPlayerId.set(playerId, createGameEntryTicket(ticketInput));
+        const entryTicket = createGameEntryTicket(ticketInput);
+        const ticket = verifyGameEntryTicket(entryTicket, {
+          lobbyId: this.state.lobbyId,
+          gameRoomId: gameRoom.roomId,
+        });
+        if (!ticket) {
+          throw new Error(`Failed to verify game entry ticket for ${playerId}`);
+        }
+        ticketsByPlayerId.set(playerId, { entryTicket, ticket });
       }
 
-      // Tell each human client to join with only their own entry ticket.
+      const launchPayloads: Array<{
+        client: Client;
+        payload: ReturnType<typeof buildGameStartingPayload>;
+      }> = [];
       for (const client of this.clients) {
-        client.send('gameStarting', buildGameStartingPayload({
-          gameRoomId: gameRoom.roomId,
-          players: gameStartingAssignments,
-          entryTicket: ticketsByPlayerId.get(client.sessionId),
-          gameplayMode: this.gameplayMode,
-          matchPerspective: this.matchPerspective,
-          mapThemeId,
-          mapSize,
-          mapProfileId,
-        }));
+        const ticketBundle = ticketsByPlayerId.get(client.sessionId);
+        const authContext = this.playerAuthContexts.get(client.sessionId);
+        if (!ticketBundle || !authContext) {
+          throw new Error(`Cannot reserve game seat for missing lobby client ${client.sessionId}`);
+        }
+
+        const seatReservation = await matchMaker.reserveSeatFor(gameRoom, {
+          playerName: ticketBundle.ticket.displayName,
+          preferredTeam: ticketBundle.ticket.assignedTeam,
+          entryTicket: ticketBundle.entryTicket,
+        }, {
+          auth: authContext,
+          ticket: ticketBundle.ticket,
+        });
+
+        launchPayloads.push({
+          client,
+          payload: buildGameStartingPayload({
+            gameRoomId: gameRoom.roomId,
+            players: gameStartingAssignments,
+            entryTicket: ticketBundle.entryTicket,
+            seatReservation: serializeGameSeatReservation(seatReservation),
+            gameplayMode: this.gameplayMode,
+            matchPerspective: this.matchPerspective,
+            mapThemeId,
+            mapSize,
+            mapProfileId,
+          }),
+        });
+      }
+
+      for (const { client, payload } of launchPayloads) {
+        client.send('gameStarting', payload);
       }
 
       // Dispose this lobby after a short delay
@@ -1226,12 +1261,18 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private sendMapVoteStarted(client: Client): void {
     if (!this.mapVoteSession) return;
-    client.send('mapVoteStarted', buildMapVoteStartedPayload(this.mapVoteSession));
+    client.send('mapVoteStarted', buildMapVoteStartedPayload({
+      ...this.mapVoteSession,
+      gameplayMode: this.gameplayMode,
+    }));
   }
 
   private broadcastMapVoteStarted(): void {
     if (!this.mapVoteSession) return;
-    this.broadcast('mapVoteStarted', buildMapVoteStartedPayload(this.mapVoteSession));
+    this.broadcast('mapVoteStarted', buildMapVoteStartedPayload({
+      ...this.mapVoteSession,
+      gameplayMode: this.gameplayMode,
+    }));
   }
 
   private broadcastMapVoteUpdated(): void {

@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import express, { type Request, type Response } from 'express';
 import cookieParser from 'cookie-parser';
 import { createServer } from 'http';
-import { Server, matchMaker } from 'colyseus';
+import { Server, matchMaker, type ServerOptions } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { GameRoom } from './rooms/GameRoom';
 import { LobbyRoom } from './rooms/LobbyRoom';
@@ -16,6 +16,8 @@ import { voiceService } from './voice/VoiceService';
 import {
   createDistributedColyseusOptions,
   getColyseusRuntimeConfig,
+  selectLeastLoadedColyseusProcess,
+  shouldCreateRoomOnLocalColyseusProcess,
   validateColyseusRuntimeConfig,
 } from './config/colyseus';
 import { closeSharedRedisClient, getSharedRedisClient, pingRedis } from './config/redis';
@@ -73,12 +75,25 @@ function configureTrustProxy(): void {
 
 configureTrustProxy();
 
+const selectProcessIdToCreateRoom: NonNullable<ServerOptions['selectProcessIdToCreateRoom']> = async (
+  roomName,
+  clientOptions
+) => {
+  if (shouldCreateRoomOnLocalColyseusProcess({
+    roomName,
+    clientOptions,
+    roomCreateStrategy: colyseusRuntime.roomCreateStrategy,
+  })) {
+    return matchMaker.processId;
+  }
+
+  return selectLeastLoadedColyseusProcess(await matchMaker.stats.fetchAll(), matchMaker.processId);
+};
+
 // Create Colyseus server
 const gameServer = new Server({
   ...createDistributedColyseusOptions(colyseusRuntime),
-  selectProcessIdToCreateRoom: colyseusRuntime.roomCreateStrategy === 'local'
-    ? async () => matchMaker.processId
-    : undefined,
+  selectProcessIdToCreateRoom,
   gracefullyShutdown: false,
   transport: new WebSocketTransport({
     server: httpServer,

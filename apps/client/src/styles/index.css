@@ -3102,7 +3102,6 @@ body,
 }
 
 .map-vote-action-bar,
-.map-vote-lock-button,
 .map-vote-lock-status {
   pointer-events: auto;
 }
@@ -3266,7 +3265,6 @@ body,
     height: clamp(2.35rem, 7.5dvh, 2.85rem);
   }
 
-  .map-vote-lock-button,
   .map-vote-lock-status {
     min-width: clamp(9.25rem, 25vw, 12rem);
     height: clamp(2.55rem, 8dvh, 3.05rem);
@@ -3374,7 +3372,6 @@ body,
     padding: 0.48rem 0.62rem;
   }
 
-  .map-vote-lock-button,
   .map-vote-lock-status {
     min-width: 0;
     flex: 1;

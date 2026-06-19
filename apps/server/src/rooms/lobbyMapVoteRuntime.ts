@@ -36,10 +36,16 @@ export interface MapVoteRecord {
   optionId: string;
 }
 
+export interface MapVotePlayer {
+  id: string;
+  isBot?: boolean;
+}
+
 export interface MapVoteStartedPayload {
   options: MapVoteOption[];
   votes: MapVoteRecord[];
   phaseEndTime: number | null;
+  gameplayMode: GameplayMode;
 }
 
 export interface MapVoteUpdatedPayload {
@@ -144,6 +150,22 @@ export function getMapVoteRecords(
   return Array.from(votes, ([playerId, optionId]) => ({ playerId, optionId }));
 }
 
+export function haveAllHumanPlayersVoted(input: {
+  players: Iterable<MapVotePlayer>;
+  votes: Iterable<readonly [string, string]>;
+}): boolean {
+  const votedPlayerIds = new Set(Array.from(input.votes, ([playerId]) => playerId));
+  let hasHumanPlayer = false;
+
+  for (const player of input.players) {
+    if (player.isBot) continue;
+    hasHumanPlayer = true;
+    if (!votedPlayerIds.has(player.id)) return false;
+  }
+
+  return hasHumanPlayer;
+}
+
 export function getWinningMapOption(input: {
   options: readonly MapVoteOption[];
   votes: Iterable<readonly [string, string]>;
@@ -183,11 +205,13 @@ export function buildMapVoteStartedPayload(input: {
   options: MapVoteOption[];
   votes: Iterable<readonly [string, string]>;
   phaseEndTime: number | null;
+  gameplayMode: GameplayMode;
 }): MapVoteStartedPayload {
   return {
     options: input.options,
     votes: getMapVoteRecords(input.votes),
     phaseEndTime: input.phaseEndTime,
+    gameplayMode: input.gameplayMode,
   };
 }
 

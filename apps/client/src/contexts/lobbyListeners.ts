@@ -19,8 +19,9 @@ import type {
   MapVoteOption,
   MapVoteRecord,
 } from '../store/types';
-import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
+import { seedMapPrepCacheFromManifest } from '../utils/mapWarmup/mapPrepCache';
 import { prebuildPreparedVoxelMapGeometry } from '../utils/mapWarmup/mapGeometryWarmup';
+import { requestMapPreviewManifest } from '../utils/mapPreview/mapPreviewManifestClient';
 import { disconnectVoice } from '../voice/voiceControls';
 import { loggers } from '../utils/logger';
 
@@ -31,8 +32,13 @@ type JoinGameRoomFromLobby = (
   gameRoomId: string,
   playerName: string,
   team?: string,
-  entryTicket?: string
+  entryTicket?: string,
+  reconnectToRunningGame?: boolean,
+  seatReservation?: unknown
 ) => Promise<void>;
+
+const GAME_START_TIMEOUT_MS = 90_000;
+const GAME_JOIN_RETRY_DELAYS_MS = [450, 1_200] as const;
 
 interface SetupLobbyListenersOptions {
   playerName: string;
@@ -99,6 +105,7 @@ interface GameStartingMessage {
   gameRoomId: string;
   players: { playerId: string; playerName: string; team?: string; isBot?: boolean }[];
   entryTicket?: string;
+  seatReservation?: unknown;
   gameplayMode?: GameplayMode;
   matchPerspective?: MatchPerspective;
   mapSize?: VoxelMapSizeId | null;
@@ -156,6 +163,18 @@ function toJoinedLobbyPlayer(data: PlayerJoinedMessage): LobbyPlayer {
   });
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === 'string' && error.trim()) return error;
+  return 'Unknown error';
+}
+
+function waitForRetry(delayMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, delayMs);
+  });
+}
+
 export function setupLobbyListeners(
   room: Room,
   { playerName, joinGameRoom, leaveLobby }: SetupLobbyListenersOptions
@@ -183,6 +202,74 @@ export function setupLobbyListeners(
     if (player) {
       updateLobbyPlayer(playerId, { ...player, ...patch });
     }
+  };
+
+  let isAwaitingGameStart = false;
+  let isJoiningGame = false;
+  let hasJoinedGame = false;
+  let hasFailedGameStart = false;
+  let gameStartTimeout: number | null = null;
+
+  const clearGameStartTimeout = () => {
+    if (gameStartTimeout === null) return;
+    window.clearTimeout(gameStartTimeout);
+    gameStartTimeout = null;
+  };
+
+  const failPendingGameStart = (message: string) => {
+    isAwaitingGameStart = false;
+    isJoiningGame = false;
+    hasJoinedGame = false;
+    hasFailedGameStart = true;
+    clearGameStartTimeout();
+    resetLobby();
+    setLobbyError(message);
+    setAppPhase('menu');
+  };
+
+  const armGameStartTimeout = () => {
+    clearGameStartTimeout();
+    gameStartTimeout = window.setTimeout(() => {
+      if (useGameStore.getState().appPhase === 'in_game') {
+        clearGameStartTimeout();
+        return;
+      }
+      failPendingGameStart('Game start timed out. Please try queueing again.');
+    }, GAME_START_TIMEOUT_MS);
+  };
+
+  const joinGameRoomWithRetry = async (
+    gameRoomId: string,
+    team: string,
+    entryTicket?: string,
+    seatReservation?: unknown
+  ) => {
+    if (seatReservation) {
+      await joinGameRoom(gameRoomId, playerName, team, entryTicket, false, seatReservation);
+      return;
+    }
+
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt <= GAME_JOIN_RETRY_DELAYS_MS.length; attempt += 1) {
+      try {
+        await joinGameRoom(gameRoomId, playerName, team, entryTicket);
+        return;
+      } catch (error) {
+        lastError = error;
+        const retryDelay = GAME_JOIN_RETRY_DELAYS_MS[attempt];
+        if (retryDelay === undefined) break;
+        loggers.network.warn('game room join failed; retrying launch handoff', {
+          gameRoomId,
+          attempt: attempt + 1,
+          retryDelay,
+          error,
+        });
+        await waitForRetry(retryDelay);
+      }
+    }
+
+    throw lastError ?? new Error('Failed to join game room');
   };
 
   room.onMessage('lobbyState', (data: LobbyStateMessage) => {
@@ -218,13 +305,20 @@ export function setupLobbyListeners(
     options: MapVoteOption[];
     votes: MapVoteRecord[];
     phaseEndTime: number | null;
+    gameplayMode?: GameplayMode;
   }) => {
     loggers.network.info('map vote started', data.options.map((option) => option.seed));
+    if (isGameplayMode(data.gameplayMode)) {
+      useGameStore.setState({ gameplayMode: data.gameplayMode });
+    }
     setMapVoteState(data.options, data.votes, data.phaseEndTime);
     setAppPhase('map_vote');
   });
 
-  room.onMessage('mapVoteTimerStarted', (data: { phaseEndTime: number }) => {
+  room.onMessage('mapVoteTimerStarted', (data: { phaseEndTime: number; gameplayMode?: GameplayMode }) => {
+    if (isGameplayMode(data.gameplayMode)) {
+      useGameStore.setState({ gameplayMode: data.gameplayMode });
+    }
     useGameStore.setState({ mapVotePhaseEndTime: data.phaseEndTime });
   });
 
@@ -238,30 +332,51 @@ export function setupLobbyListeners(
     mapThemeId?: VoxelMapTheme['id'] | null;
     mapSize?: VoxelMapSizeId | null;
     mapProfileId?: MapProfileId | null;
+    gameplayMode?: GameplayMode;
     votes: MapVoteRecord[];
   }) => {
     loggers.network.info('map vote finalized', data.mapSeed);
+    if (isGameplayMode(data.gameplayMode)) {
+      useGameStore.setState({ gameplayMode: data.gameplayMode });
+    }
+    isAwaitingGameStart = true;
+    hasJoinedGame = false;
+    hasFailedGameStart = false;
+    armGameStartTimeout();
     setMapVotes(data.votes, data.selectedOptionId);
     setMapSeed(data.mapSeed);
     setMapThemeId(data.mapThemeId ?? null);
     setMapSize(data.mapSize);
     useGameStore.getState().setMapProfileId(data.mapProfileId);
-    try {
-      const preparedMap = prepareVoxelMapCpu({
-        seed: data.mapSeed,
-        themeId: data.mapThemeId ?? null,
-        mapSize: data.mapSize,
-        mapProfileId: data.mapProfileId,
-        source: 'mapVoteFinalized',
+    void requestMapPreviewManifest({
+      seed: data.mapSeed,
+      themeId: data.mapThemeId ?? null,
+      mapSize: data.mapSize,
+      mapProfileId: data.mapProfileId,
+    })
+      .then((manifest) => {
+        const preparedMap = seedMapPrepCacheFromManifest(
+          data.mapSeed,
+          manifest,
+          'mapVoteFinalized'
+        );
+        prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 3, label: 'map-vote-finalized' });
+      })
+      .catch((error) => {
+        loggers.network.warn('selected map worker prep failed', error);
       });
-      prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 3, label: 'map-vote-finalized' });
-    } catch (error) {
-      loggers.network.warn('selected map CPU prep failed', error);
-    }
   });
 
-  room.onMessage('mapVoteCancelled', (data: { reason?: string; status?: string }) => {
+  room.onMessage('mapVoteCancelled', (data: { reason?: string; status?: string; gameplayMode?: GameplayMode }) => {
     loggers.network.warn('map vote cancelled', data.reason || 'unknown');
+    if (isGameplayMode(data.gameplayMode)) {
+      useGameStore.setState({ gameplayMode: data.gameplayMode });
+    }
+    isAwaitingGameStart = false;
+    isJoiningGame = false;
+    hasJoinedGame = false;
+    hasFailedGameStart = false;
+    clearGameStartTimeout();
     clearMapVote();
     setAppPhase(data.status === 'matchmaking' ? 'matchmaking' : 'in_lobby');
   });
@@ -303,13 +418,13 @@ export function setupLobbyListeners(
     setLobbyPlayers(updatedPlayers);
   });
 
-  let isJoiningGame = false;
   room.onMessage('gameStarting', async (data: GameStartingMessage) => {
     if (isJoiningGame) {
       loggers.network.debug('ignoring duplicate gameStarting message');
       return;
     }
     isJoiningGame = true;
+    isAwaitingGameStart = false;
 
     loggers.network.info('game starting', data.gameRoomId);
     const myAssignment = data.players.find((player) => player.playerId === room.sessionId);
@@ -322,15 +437,24 @@ export function setupLobbyListeners(
     useGameStore.getState().setMapProfileId(data.mapProfileId);
 
     try {
-      await joinGameRoom(data.gameRoomId, playerName, myTeam, data.entryTicket);
+      await joinGameRoomWithRetry(data.gameRoomId, myTeam, data.entryTicket, data.seatReservation);
+      hasJoinedGame = true;
+      hasFailedGameStart = false;
+      isJoiningGame = false;
+      clearGameStartTimeout();
     } catch (error) {
       loggers.network.error('failed to join game room', error);
-      isJoiningGame = false;
+      failPendingGameStart(`Failed to join game: ${getErrorMessage(error)}`);
     }
   });
 
   room.onMessage('kicked', (data: { reason: string }) => {
     loggers.network.warn('kicked from lobby', data.reason);
+    isAwaitingGameStart = false;
+    isJoiningGame = false;
+    hasJoinedGame = false;
+    hasFailedGameStart = false;
+    clearGameStartTimeout();
     disconnectVoice('lobby_kicked');
     leaveLobby();
   });
@@ -351,7 +475,17 @@ export function setupLobbyListeners(
 
   room.onLeave((code) => {
     loggers.network.debug('left lobby room', code);
+    if (hasJoinedGame || hasFailedGameStart) return;
+    if (isJoiningGame || isAwaitingGameStart) {
+      armGameStartTimeout();
+      return;
+    }
     disconnectVoice('left_lobby');
+    clearGameStartTimeout();
     resetLobby();
+    const phase = useGameStore.getState().appPhase;
+    if (phase === 'map_vote' || phase === 'in_lobby' || phase === 'matchmaking') {
+      setAppPhase('menu');
+    }
   });
 }

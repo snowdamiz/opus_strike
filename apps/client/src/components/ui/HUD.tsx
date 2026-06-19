@@ -519,8 +519,8 @@ function BattleRoyalDropPrompt({
 
   const isAboard = status === 'aboard';
   const isAttachedFollower = status === 'dropping' && attachedToPlayerId !== null;
-  const showKeycap = isAttachedFollower || !isAboard || canDrop;
-  const keyLabel = isAttachedFollower ? detachKeyLabel : isAboard ? interactKeyLabel : 'WASD';
+  const showInputLabel = isAttachedFollower || !isAboard || canDrop;
+  const inputLabel = isAttachedFollower ? detachKeyLabel : isAboard ? interactKeyLabel : 'WASD';
   const statusLabel = isAboard
     ? (canDrop ? 'READY' : 'STANDBY')
     : isAttachedFollower ? 'SQUAD DROP' : 'DESCENT';
@@ -545,9 +545,9 @@ function BattleRoyalDropPrompt({
         </div>
 
         <div className="flex items-center justify-center gap-[clamp(0.85rem,1.8vw,1.35rem)]">
-          {showKeycap ? (
-            <span className="inline-flex h-[clamp(2.2rem,4.4vh,3rem)] min-w-[clamp(2.2rem,4.4vh,3rem)] items-center justify-center border border-white/70 border-b-white/40 bg-white/[0.055] px-[clamp(0.7rem,1.3vw,0.95rem)] font-mono text-[clamp(0.95rem,1.7vw,1.22rem)] font-black leading-none text-white shadow-[0_0_18px_rgba(125,211,252,0.22),0_3px_10px_rgba(0,0,0,0.56),inset_0_1px_0_rgba(255,255,255,0.24)]">
-              {keyLabel}
+          {showInputLabel ? (
+            <span className="font-mono text-[clamp(1rem,1.8vw,1.35rem)] font-black leading-none tracking-[0.18em] text-cyan-100 drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]">
+              {inputLabel}
             </span>
           ) : null}
           <span className="font-display text-[clamp(1.85rem,3.8vw,3.25rem)] font-black leading-none tracking-[0.12em] text-white drop-shadow-[0_3px_10px_rgba(0,0,0,0.95)]">

@@ -1,12 +1,15 @@
 import { memo, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
+import { Billboard, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import {
   MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
   type BattleRoyalDropPlayerSnapshot,
   type BattleRoyalDropSnapshot,
+  type MapNamedLocation,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
+import { getPreparedVoxelMap } from '../../utils/mapWarmup/mapPrepCache';
 import {
   sampleRemoteTransformInto,
   visualStore,
@@ -28,6 +31,7 @@ const POD_SNAP_DISTANCE = 80;
 const POD_SNAP_DISTANCE_SQ = POD_SNAP_DISTANCE * POD_SNAP_DISTANCE;
 const POD_MODEL_FORWARD = new THREE.Vector3(0, 1, 0);
 const POD_SNAPSHOT_EXTRAPOLATION_CAP_MS = 10_000;
+const LOCATION_LABEL_MAX_COUNT = 18;
 
 function createSampledRemoteTransform(): SampledRemoteTransform {
   return {
@@ -50,6 +54,12 @@ export function BattleRoyalDropDeployment() {
   });
   const frozen = useGameStore((state) => state.gamePhase === 'countdown');
   const localPlayerId = useGameStore((state) => state.localPlayer?.id ?? state.playerId);
+  const mapSeed = useGameStore((state) => state.mapSeed);
+  const mapThemeId = useGameStore((state) => state.mapThemeId);
+  const mapSize = useGameStore((state) => state.mapSize);
+  const mapProfileId = useGameStore((state) => state.mapProfileId);
+  const preparedMap = getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId });
+  const namedLocations = preparedMap?.manifest.gameplay.namedLocations ?? [];
 
   const podPlayers = useMemo(
     () => drop?.players.filter((player) => player.status === 'dropping') ?? [],
@@ -61,6 +71,7 @@ export function BattleRoyalDropDeployment() {
   return (
     <group>
       <DropShipVisual drop={drop} frozen={frozen} />
+      <BattleRoyalLocationLabels locations={namedLocations} />
       {podPlayers.map((player) => (
         <DropPodVisual
           key={player.playerId}
@@ -69,6 +80,91 @@ export function BattleRoyalDropDeployment() {
           isLocal={player.playerId === localPlayerId}
         />
       ))}
+    </group>
+  );
+}
+
+function getLocationLabelStyle(location: MapNamedLocation): {
+  fontSize: number;
+  yOffset: number;
+  color: string;
+  accent: string;
+  typeLabel: string;
+} {
+  switch (location.kind) {
+    case 'city':
+      return { fontSize: 5.8, yOffset: 36, color: '#f8fbff', accent: '#67e8f9', typeLabel: 'CITY' };
+    case 'town':
+      return { fontSize: 4.6, yOffset: 30, color: '#f4f7ff', accent: '#fbbf24', typeLabel: 'TOWN' };
+    case 'industrial':
+      return { fontSize: 4.4, yOffset: 30, color: '#f2f5ff', accent: '#fb923c', typeLabel: 'INDUSTRIAL' };
+    case 'hamlet':
+      return { fontSize: 3.6, yOffset: 25, color: '#eef6ff', accent: '#86efac', typeLabel: 'HAMLET' };
+    case 'outpost':
+      return { fontSize: 3.8, yOffset: 27, color: '#f0f8ff', accent: '#93c5fd', typeLabel: 'OUTPOST' };
+    case 'open_area':
+      return { fontSize: 3.2, yOffset: 23, color: '#edf7ff', accent: '#c4b5fd', typeLabel: 'OPEN AREA' };
+    case 'wildland':
+      return { fontSize: 3.2, yOffset: 23, color: '#edf7ff', accent: '#5eead4', typeLabel: 'WILDS' };
+    default:
+      return { fontSize: 3.4, yOffset: 24, color: '#f4f7ff', accent: '#bae6fd', typeLabel: 'LANDMARK' };
+  }
+}
+
+function BattleRoyalLocationLabels({ locations }: { locations: MapNamedLocation[] }) {
+  const visibleLocations = useMemo(
+    () => locations.slice().sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name)).slice(0, LOCATION_LABEL_MAX_COUNT),
+    [locations]
+  );
+
+  return (
+    <group name="battle-royal-location-labels">
+      {visibleLocations.map((location) => {
+        const style = getLocationLabelStyle(location);
+        const beamHeight = Math.max(12, style.yOffset - 6);
+        const labelY = location.position.y + style.yOffset;
+        const beamY = location.position.y + beamHeight * 0.5 + 1.2;
+
+        return (
+          <group key={location.id} position={[location.position.x, 0, location.position.z]}>
+            <mesh position={[0, beamY, 0]} renderOrder={18}>
+              <cylinderGeometry args={[0.1, 0.22, beamHeight, 8]} />
+              <meshBasicMaterial color={style.accent} transparent opacity={0.22} depthWrite={false} />
+            </mesh>
+            <mesh position={[0, location.position.y + 0.35, 0]} rotation={[Math.PI / 2, 0, 0]} renderOrder={17}>
+              <ringGeometry args={[Math.max(3.5, location.radius * 0.18), Math.max(4.4, location.radius * 0.18 + 0.8), 48]} />
+              <meshBasicMaterial color={style.accent} transparent opacity={0.36} depthWrite={false} />
+            </mesh>
+            <Billboard position={[0, labelY, 0]} follow>
+              <Text
+                anchorX="center"
+                anchorY="middle"
+                color={style.color}
+                fontSize={style.fontSize}
+                outlineColor="#06111d"
+                outlineWidth={0.18}
+                renderOrder={20}
+                textAlign="center"
+              >
+                {location.name.toUpperCase()}
+              </Text>
+              <Text
+                position={[0, -style.fontSize * 0.74, 0]}
+                anchorX="center"
+                anchorY="middle"
+                color={style.accent}
+                fontSize={Math.max(1.1, style.fontSize * 0.28)}
+                outlineColor="#06111d"
+                outlineWidth={0.08}
+                renderOrder={20}
+                textAlign="center"
+              >
+                {style.typeLabel}
+              </Text>
+            </Billboard>
+          </group>
+        );
+      })}
     </group>
   );
 }

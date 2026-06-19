@@ -9,7 +9,8 @@ import {
 import { useGameStore } from '../store/gameStore';
 import { loggers } from '../utils/logger';
 import { prebuildPreparedVoxelMapGeometry } from '../utils/mapWarmup/mapGeometryWarmup';
-import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
+import { seedMapPrepCacheFromManifest } from '../utils/mapWarmup/mapPrepCache';
+import { requestMapPreviewManifest } from '../utils/mapPreview/mapPreviewManifestClient';
 import { normalizeGamePhase } from './gamePhase';
 import type { GameStoreActions } from './gameMessageHandlers';
 
@@ -46,18 +47,19 @@ export function setupPollingSync(
       store.setMapThemeId(nextMapThemeId);
       store.setMapSize(nextMapSize);
       store.setMapProfileId(nextMapProfileId);
-      try {
-        const preparedMap = prepareVoxelMapCpu({
-          seed: room.state.mapSeed,
-          themeId: nextMapThemeId,
-          mapSize: nextMapSize,
-          mapProfileId: nextMapProfileId,
-          source: 'match',
+      void requestMapPreviewManifest({
+        seed: room.state.mapSeed,
+        themeId: nextMapThemeId,
+        mapSize: nextMapSize,
+        mapProfileId: nextMapProfileId,
+      })
+        .then((manifest) => {
+          const preparedMap = seedMapPrepCacheFromManifest(room.state.mapSeed, manifest, 'match');
+          prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'fallback-poll' });
+        })
+        .catch((error) => {
+          loggers.network.warn('fallback poll map worker prep failed', error);
         });
-        prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'fallback-poll' });
-      } catch (error) {
-        loggers.network.warn('fallback poll map CPU prep failed', error);
-      }
     }
 
     if (room.state.phase !== store.gamePhase) {

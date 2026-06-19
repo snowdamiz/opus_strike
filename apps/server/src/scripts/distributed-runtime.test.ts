@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import type { IncomingMessage } from 'node:http';
 import { PassThrough } from 'node:stream';
-import { getColyseusRuntimeConfig, validateColyseusRuntimeConfig } from '../config/colyseus';
+import {
+  getColyseusRuntimeConfig,
+  selectLeastLoadedColyseusProcess,
+  shouldCreateRoomOnLocalColyseusProcess,
+  validateColyseusRuntimeConfig,
+} from '../config/colyseus';
 import {
   buildFlyReplayHeader,
   handleFlyReplayUpgradeRequest,
@@ -301,6 +306,32 @@ function runConfigTests(): void {
     }),
     /Unsupported COLYSEUS_ROOM_CREATE_STRATEGY/
   );
+
+  assert.equal(shouldCreateRoomOnLocalColyseusProcess({
+    roomName: 'game_room',
+    clientOptions: { lobbyId: 'lobby-a' },
+    roomCreateStrategy: 'least_loaded',
+  }), true);
+  assert.equal(shouldCreateRoomOnLocalColyseusProcess({
+    roomName: 'game_room',
+    clientOptions: {},
+    roomCreateStrategy: 'least_loaded',
+  }), false);
+  assert.equal(shouldCreateRoomOnLocalColyseusProcess({
+    roomName: 'lobby_room',
+    clientOptions: { lobbyId: 'lobby-a' },
+    roomCreateStrategy: 'least_loaded',
+  }), false);
+  assert.equal(shouldCreateRoomOnLocalColyseusProcess({
+    roomName: 'lobby_room',
+    clientOptions: {},
+    roomCreateStrategy: 'local',
+  }), true);
+  assert.equal(selectLeastLoadedColyseusProcess([
+    { processId: 'process-b', roomCount: 3 },
+    { processId: 'process-a', roomCount: 1 },
+  ], 'local-process'), 'process-a');
+  assert.equal(selectLeastLoadedColyseusProcess([], 'local-process'), 'local-process');
 }
 
 async function runEventBusTests(): Promise<void> {

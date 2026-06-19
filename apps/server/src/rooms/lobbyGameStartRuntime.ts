@@ -49,11 +49,34 @@ export interface GameStartingPayload {
   gameRoomId: string;
   players: ParticipantAssignment[];
   entryTicket?: string;
+  seatReservation?: GameSeatReservationPayload;
   gameplayMode: GameplayMode;
   matchPerspective: MatchPerspective;
   mapThemeId: VoxelMapTheme['id'];
   mapSize: VoxelMapSizeId;
   mapProfileId: MapProfileId;
+}
+
+export interface GameSeatReservationPayload {
+  sessionId: string;
+  room: {
+    name: string;
+    roomId: string;
+    processId: string;
+    publicAddress?: string;
+  };
+  devMode?: boolean;
+}
+
+export interface GameSeatReservationLike {
+  sessionId: string;
+  room: {
+    name?: string;
+    roomId?: string;
+    processId?: string;
+    publicAddress?: string;
+  };
+  devMode?: boolean;
 }
 
 function normalizeHeroId(heroId?: string): HeroId | '' {
@@ -173,6 +196,7 @@ export function buildGameStartingPayload(input: {
   gameRoomId: string;
   players: ParticipantAssignment[];
   entryTicket?: string;
+  seatReservation?: GameSeatReservationPayload;
   gameplayMode: GameplayMode;
   matchPerspective: MatchPerspective;
   mapThemeId: VoxelMapTheme['id'];
@@ -183,10 +207,33 @@ export function buildGameStartingPayload(input: {
     gameRoomId: input.gameRoomId,
     players: input.players,
     entryTicket: input.entryTicket,
+    seatReservation: input.seatReservation,
     gameplayMode: input.gameplayMode,
     matchPerspective: input.matchPerspective,
     mapThemeId: input.mapThemeId,
     mapSize: input.mapSize,
     mapProfileId: input.mapProfileId ?? 'ctf_arena',
+  };
+}
+
+export function serializeGameSeatReservation(
+  reservation: GameSeatReservationLike
+): GameSeatReservationPayload {
+  const roomName = reservation.room.name;
+  const roomId = reservation.room.roomId;
+  const processId = reservation.room.processId;
+  if (!roomName || !roomId || !processId) {
+    throw new Error('Cannot serialize incomplete game seat reservation');
+  }
+
+  return {
+    sessionId: reservation.sessionId,
+    room: {
+      name: roomName,
+      roomId,
+      processId,
+      ...(reservation.room.publicAddress ? { publicAddress: reservation.room.publicAddress } : {}),
+    },
+    ...(reservation.devMode ? { devMode: true } : {}),
   };
 }

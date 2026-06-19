@@ -42,6 +42,7 @@ export const SOUND_EFFECTS = {
 
   chronosPulse: { path: '/sounds/chronos_charge.mp3', volume: 0 },
   chronosAegis: { path: '/sounds/chronos_shield.mp3', volume: 0.8352 },
+  chronosLifelineActive: { path: '/sounds/chronos_E_active.mp3', volume: 0.55 },
   chronosLifeline: { path: '/sounds/choronos_heal.mp3', volume: 0.5 },
   chronosTimebreakCharge: { path: '/sounds/chronos_charge.mp3', volume: 0.72 },
   chronosPush: { path: '/sounds/chronos_push.mp3', volume: 0.72 },
@@ -150,6 +151,7 @@ export const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
     'phantomBasic',
     'chronosPulse',
     'chronosAegis',
+    'chronosLifelineActive',
     'chronosLifeline',
     'chronosTimebreakCharge',
     'chronosTimebreak',

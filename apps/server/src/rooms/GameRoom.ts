@@ -1172,6 +1172,9 @@ export class GameRoom extends Room<GameState> {
     this.eventLoopDelay.enable();
     this.lobbyId = options.lobbyId || null;
     this.lobbyName = options.lobbyName || null;
+    if (this.lobbyId) {
+      this.autoDispose = false;
+    }
     this.matchMode = options.matchMode ?? 'custom';
     this.gameplayMode = isGameplayMode(options.gameplayMode) ? options.gameplayMode : DEFAULT_GAMEPLAY_MODE;
     this.matchPerspective = this.matchMode === 'ranked'
@@ -1226,13 +1229,15 @@ export class GameRoom extends Room<GameState> {
     this.updateMetadata();
     this.startMatchStartCancelTimer();
 
-    // Set up tick loop
-    this.tickInterval = setInterval(() => this.tick(), TICK_INTERVAL_MS);
-
     this.registerCoreMessageHandlers();
     if (this.isDevelopmentMode()) {
       this.registerDevelopmentMessageHandlers();
     }
+  }
+
+  private ensureTickLoopStarted(): void {
+    if (this.tickInterval) return;
+    this.tickInterval = setInterval(() => this.tick(), TICK_INTERVAL_MS);
   }
 
   private registerCoreMessageHandlers(): void {
@@ -1338,6 +1343,9 @@ export class GameRoom extends Room<GameState> {
       client.leave();
       return;
     }
+    if (this.lobbyId && !this.autoDispose) {
+      this.autoDispose = true;
+    }
     const entryTicket = authBundle?.ticket ?? null;
 
     this.participantRegistry.setSession(client.sessionId, authContext, entryTicket);
@@ -1378,6 +1386,7 @@ export class GameRoom extends Room<GameState> {
       this.ensureMatchPersistenceLedger();
     }
     this.registerMatchParticipant(player);
+    this.ensureTickLoopStarted();
 
     // Broadcast join to all clients (including the new one) with recipient-scoped position data.
     for (const joinedClient of this.clients) {

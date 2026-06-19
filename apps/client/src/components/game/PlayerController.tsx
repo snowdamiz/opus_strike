@@ -1853,12 +1853,16 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     timestampMs = Date.now(),
     input?: Pick<InputState, 'primaryFire' | 'secondaryFire'>
   ) => {
+    const wasQueued = chronosLifelineQueuedRef.current;
     chronosLifelineQueuedRef.current = queued;
     chronosLifelineBlockPrimaryRef.current = queued && Boolean(input?.primaryFire);
     chronosLifelineBlockSecondaryRef.current = queued && Boolean(input?.secondaryFire);
     chronosLifelineCommitHeldRef.current = false;
     useGameStore.getState().setChronosLifelineQueuedHud(queued);
     setChronosLifelineQueued(queued, timestampMs);
+    if (queued && !wasQueued) {
+      void playSharedSound('chronosLifelineActive');
+    }
   }, []);
 
   const isHeroActionLocked = useCallback((heroId: HeroId, timestampMs = Date.now(), overlapGraceMs = 0) => (

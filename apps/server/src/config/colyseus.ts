@@ -16,6 +16,11 @@ export interface ColyseusRuntimeConfig {
 export type ColyseusRoutingStrategy = 'direct' | 'fly_replay';
 export type ColyseusRoomCreateStrategy = 'least_loaded' | 'local';
 
+export interface ColyseusProcessLoadSnapshot {
+  processId?: string;
+  roomCount?: number;
+}
+
 export interface FlyReplayRuntimeConfig {
   enabled: boolean;
   appName: string | undefined;
@@ -181,4 +186,29 @@ export function createDistributedColyseusOptions(config: ColyseusRuntimeConfig):
     driver: new RedisDriver(config.redisUrl!),
     publicAddress: config.publicAddress,
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+export function shouldCreateRoomOnLocalColyseusProcess(input: {
+  roomName: string;
+  clientOptions: unknown;
+  roomCreateStrategy: ColyseusRoomCreateStrategy;
+}): boolean {
+  if (input.roomCreateStrategy === 'local') return true;
+  if (input.roomName !== 'game_room' || !isRecord(input.clientOptions)) return false;
+
+  const lobbyId = input.clientOptions.lobbyId;
+  return typeof lobbyId === 'string' && lobbyId.length > 0;
+}
+
+export function selectLeastLoadedColyseusProcess(
+  processes: readonly ColyseusProcessLoadSnapshot[],
+  localProcessId: string
+): string {
+  return [...processes]
+    .sort((left, right) => (left.roomCount ?? 0) - (right.roomCount ?? 0))
+    .find((process) => process.processId)?.processId ?? localProcessId;
 }

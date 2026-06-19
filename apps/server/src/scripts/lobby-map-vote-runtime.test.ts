@@ -9,6 +9,7 @@ import {
   createMapVoteOptions,
   getMapVoteRecords,
   getWinningMapOption,
+  haveAllHumanPlayersVoted,
   type MapVoteOption,
 } from '../rooms/lobbyMapVoteRuntime';
 
@@ -56,6 +57,48 @@ function option(id: string): MapVoteOption {
 }
 
 {
+  assert.equal(haveAllHumanPlayersVoted({
+    players: [
+      { id: 'player-a' },
+      { id: 'player-b' },
+      { id: 'bot-a', isBot: true },
+    ],
+    votes: new Map<string, string>([
+      ['player-a', 'map_1'],
+      ['player-b', 'map_2'],
+      ['bot-a', 'map_2'],
+    ]),
+  }), true);
+}
+
+{
+  assert.equal(haveAllHumanPlayersVoted({
+    players: [
+      { id: 'player-a' },
+      { id: 'player-b' },
+      { id: 'bot-a', isBot: true },
+    ],
+    votes: new Map<string, string>([
+      ['player-a', 'map_1'],
+      ['bot-a', 'map_2'],
+    ]),
+  }), false);
+}
+
+{
+  assert.equal(haveAllHumanPlayersVoted({
+    players: [
+      { id: 'bot-a', isBot: true },
+      { id: 'bot-b', isBot: true },
+    ],
+    votes: new Map<string, string>([
+      ['bot-a', 'map_1'],
+      ['bot-b', 'map_2'],
+    ]),
+  }), false);
+}
+
+{
   const options = [option('map_1'), option('map_2'), option('map_3')];
   const votes = new Map<string, string>([
     ['host', 'map_2'],
@@ -90,6 +133,7 @@ function option(id: string): MapVoteOption {
     options,
     votes,
     phaseEndTime: 12345,
+    gameplayMode: 'battle_royal',
   });
   const updated = buildMapVoteUpdatedPayload(votes);
 
@@ -97,6 +141,7 @@ function option(id: string): MapVoteOption {
     options,
     votes: [{ playerId: 'player-a', optionId: 'map_2' }],
     phaseEndTime: 12345,
+    gameplayMode: 'battle_royal',
   });
   assert.deepEqual(updated, {
     votes: [{ playerId: 'player-a', optionId: 'map_2' }],

@@ -101,6 +101,14 @@ export function App() {
     () => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId }),
     [mapSeed, mapThemeId, mapSize, mapProfileId]
   );
+  const shouldShowMatchLoading = (
+    shouldPrepareMatchWorld &&
+    (
+      isMatchLoadingVisible ||
+      !shouldMountMatchWorld ||
+      !isMatchSceneReady
+    )
+  );
 
   useEffect(() => {
     installLocalCombatStressScenario();
@@ -436,7 +444,7 @@ export function App() {
           )}
         </Suspense>
 
-        {isMatchLoadingVisible && (
+        {shouldShowMatchLoading && (
           <MatchLoadingScreen
             key={warmupKey}
             isComplete={isMatchSceneReady}

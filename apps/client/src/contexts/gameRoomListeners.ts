@@ -15,8 +15,9 @@ import {
 import { useGameStore } from '../store/gameStore';
 import type { VoiceTokenResponse } from '../voice/types';
 import { disconnectVoice } from '../voice/voiceControls';
-import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
+import { seedMapPrepCacheFromManifest } from '../utils/mapWarmup/mapPrepCache';
 import { prebuildPreparedVoxelMapGeometry } from '../utils/mapWarmup/mapGeometryWarmup';
+import { requestMapPreviewManifest } from '../utils/mapPreview/mapPreviewManifestClient';
 import { clearRunningGameSession } from '../utils/runningGameSession';
 import {
   movementStateFromPlayer,
@@ -194,22 +195,28 @@ export function setupGameRoomListeners(
   }) => {
     loggers.network.debug('phase change message', data.phase);
     if (typeof data.mapSeed === 'number') {
-      setMapSeed(data.mapSeed);
+      const mapSeed = data.mapSeed;
+      setMapSeed(mapSeed);
       setMapThemeId(data.mapThemeId ?? null);
       setMapSize(data.mapSize);
       useGameStore.getState().setMapProfileId(data.mapProfileId);
-      try {
-        const preparedMap = prepareVoxelMapCpu({
-          seed: data.mapSeed,
-          themeId: data.mapThemeId ?? null,
-          mapSize: data.mapSize,
-          mapProfileId: data.mapProfileId,
-          source: 'match',
+      void requestMapPreviewManifest({
+        seed: mapSeed,
+        themeId: data.mapThemeId ?? null,
+        mapSize: data.mapSize,
+        mapProfileId: data.mapProfileId,
+      })
+        .then((manifest) => {
+          const preparedMap = seedMapPrepCacheFromManifest(
+            mapSeed,
+            manifest,
+            'match'
+          );
+          prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'phase-change' });
+        })
+        .catch((error) => {
+          loggers.network.warn('phase map worker prep failed', error);
         });
-        prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'phase-change' });
-      } catch (error) {
-        loggers.network.warn('phase map CPU prep failed', error);
-      }
     }
     const nextPhase = normalizeGamePhase(data.phase);
     setGamePhase(nextPhase);

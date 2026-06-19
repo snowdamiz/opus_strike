@@ -52,10 +52,6 @@ export function getBattleRoyalDropShipYaw(drop: BattleRoyalDropSnapshot): number
   );
 }
 
-function writeShipForwardFromYaw(yaw: number, target: THREE.Vector3): THREE.Vector3 {
-  return target.set(Math.sin(yaw), 0, Math.cos(yaw));
-}
-
 function writeViewForwardFromYaw(yaw: number, target: THREE.Vector3): THREE.Vector3 {
   return target.set(-Math.sin(yaw), 0, -Math.cos(yaw));
 }
@@ -133,15 +129,14 @@ export function applyBattleRoyalDeploymentCamera(input: {
   const { cameraTarget } = input;
   const distance = cameraTarget.mode === 'ship' ? DROP_SHIP_CAMERA_DISTANCE : DROP_POD_CAMERA_DISTANCE;
   const lookAhead = cameraTarget.mode === 'ship' ? DROP_SHIP_CAMERA_LOOK_AHEAD : DROP_POD_CAMERA_LOOK_AHEAD;
-  const forward = cameraTarget.mode === 'ship'
-    ? writeShipForwardFromYaw(cameraTarget.yaw, input.lookTarget)
-    : writeViewForwardFromYawPitch(input.localYaw, input.localPitch, input.lookTarget);
+  const forward = writeViewForwardFromYawPitch(input.localYaw, input.localPitch, input.lookTarget);
 
   if (cameraTarget.mode === 'ship') {
+    const horizontalForward = writeViewForwardFromYaw(input.localYaw, input.currentPosition);
     input.currentPosition.set(
-      cameraTarget.position.x - forward.x * distance,
+      cameraTarget.position.x - horizontalForward.x * distance,
       cameraTarget.position.y + DROP_SHIP_CAMERA_HEIGHT,
-      cameraTarget.position.z - forward.z * distance
+      cameraTarget.position.z - horizontalForward.z * distance
     );
   } else {
     const cameraPitch = Math.min(input.localPitch, DROP_POD_CAMERA_MAX_UP_PITCH);

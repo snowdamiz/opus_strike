@@ -125,7 +125,6 @@ interface NetworkContextType {
   startGame: () => void;
   voteMap: (optionId: string) => void;
   reportMapVotePreviewsReady: () => void;
-  finalizeMapVote: () => void;
   kickPlayer: (playerId: string) => void;
 
   // Game operations
@@ -134,7 +133,8 @@ interface NetworkContextType {
     playerName: string,
     team?: string,
     entryTicket?: string,
-    reconnectToRunningGame?: boolean
+    reconnectToRunningGame?: boolean,
+    seatReservation?: unknown
   ) => Promise<void>;
   getRunningGameReconnect: () => Promise<RunningGameReconnectStatus>;
   reconnectRunningGame: () => Promise<void>;
@@ -954,10 +954,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     lobbyRoomRef.current?.send('mapVotePreviewsReady');
   }, []);
 
-  const finalizeMapVote = useCallback(() => {
-    lobbyRoomRef.current?.send('finalizeMapVote');
-  }, []);
-
   const kickPlayer = useCallback((playerId: string) => {
     lobbyRoomRef.current?.send('kick', { playerId });
   }, []);
@@ -1004,7 +1000,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     playerName: string,
     team?: string,
     entryTicket?: string,
-    reconnectToRunningGame = false
+    reconnectToRunningGame = false,
+    seatReservation?: unknown
   ) => {
     if (isJoiningGameRef.current) {
       loggers.network.debug('already joining a game room, ignoring duplicate call');
@@ -1034,14 +1031,16 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
       const client = getClient();
 
-      gameRoomRef.current = await client.joinById(gameRoomId, {
-        playerName,
-        preferredTeam: team,
-        entryTicket,
-        reconnectToRunningGame,
-        clientBuildId: config.buildId,
-        movementProtocolVersion: MOVEMENT_PROTOCOL_VERSION,
-      });
+      gameRoomRef.current = seatReservation
+        ? await client.consumeSeatReservation(seatReservation)
+        : await client.joinById(gameRoomId, {
+          playerName,
+          preferredTeam: team,
+          entryTicket,
+          reconnectToRunningGame,
+          clientBuildId: config.buildId,
+          movementProtocolVersion: MOVEMENT_PROTOCOL_VERSION,
+        });
 
       setupGameListeners(gameRoomRef.current, playerName);
 
@@ -1307,7 +1306,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     startGame,
     voteMap,
     reportMapVotePreviewsReady,
-    finalizeMapVote,
     kickPlayer,
     joinGameRoom,
     getRunningGameReconnect,
@@ -1340,7 +1338,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     devFillUltimate,
     devSetHero,
     disconnect,
-    finalizeMapVote,
     getActivePartySession,
     getRankedTokenHoldStatus,
     ensureParty,

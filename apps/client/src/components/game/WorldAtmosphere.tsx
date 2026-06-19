@@ -64,6 +64,7 @@ interface DustDevilConfig {
 }
 
 const ATMOSPHERE_MAX_STEP = 1 / 12;
+const SKY_DOME_RADIUS = 760;
 const SUN_POSITION: [number, number, number] = [92, 118, -76];
 const SUN_DIRECTION = new THREE.Vector3(...SUN_POSITION).normalize();
 const BLAZE_SUN_CORE_COLOR = new THREE.Color('#ffd36a');
@@ -1331,7 +1332,7 @@ export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
   return (
     <group name="world-atmosphere">
       <mesh frustumCulled={false} matrixAutoUpdate={false} renderOrder={-100}>
-        <sphereGeometry args={[420, ...config.skySegments]} />
+        <sphereGeometry args={[SKY_DOME_RADIUS, ...config.skySegments]} />
         <primitive object={skyMaterial} attach="material" />
       </mesh>
       <group ref={sunGroupRef} position={SUN_POSITION} frustumCulled={false}>

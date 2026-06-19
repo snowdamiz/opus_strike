@@ -100,4 +100,22 @@ writeBattleRoyalDeploymentCameraTarget({
 assert.equal(target.mode, 'ship');
 assert.deepEqual(target.position.toArray(), [0, 132, 10]);
 
+const shipCamera = new THREE.PerspectiveCamera();
+const shipCameraPosition = new THREE.Vector3();
+const shipLookTarget = new THREE.Vector3();
+shipCamera.position.copy(target.position);
+applyBattleRoyalDeploymentCamera({
+  camera: shipCamera,
+  currentPosition: shipCameraPosition,
+  lookTarget: shipLookTarget,
+  cameraTarget: target,
+  localYaw: 0,
+  localPitch: 0,
+  delta: 1,
+});
+assert.equal(Math.abs(shipLookTarget.x - target.position.x) < 0.001, true);
+assert.equal(shipLookTarget.z < target.position.z, true);
+assert.equal(Math.abs(shipCameraPosition.x - target.position.x) < 0.001, true);
+assert.equal(shipCameraPosition.z > target.position.z, true);
+
 console.log('battle royal drop view tests passed');
