@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
-import { calculateLookDirection } from './constants';
+import * as THREE from 'three';
+import {
+  CHRONOS_PRIMARY_ORB_SOCKET,
+  calculateLookDirection,
+  calculatePlayerSocketPosition,
+} from './constants';
 import { resolveAbilityAimDirection } from './abilityAim';
+import { buildAbilityCastOriginHints } from './abilityCastOriginHints';
 import type { AbilityContext } from './types';
 
 function makeContext(overrides: Partial<AbilityContext> = {}): AbilityContext {
@@ -64,5 +70,33 @@ const degenerateDirection = resolveAbilityAimDirection(
   { x: 1, y: 1, z: 1 }
 );
 assert.deepEqual(degenerateDirection, rawDirection);
+
+const chronosCamera = new THREE.PerspectiveCamera();
+chronosCamera.updateMatrixWorld();
+const chronosContext = makeContext({
+  heroId: 'chronos',
+  yaw: 0,
+  pitch: 0,
+  camera: chronosCamera,
+  position: new THREE.Vector3(0, 1, 0),
+  aimPoint: { x: 0, y: 12, z: -8 },
+  viewmodelElapsedSeconds: 0,
+  viewmodelNowMs: 1000,
+});
+const chronosHints = buildAbilityCastOriginHints(chronosContext, {
+  ...chronosContext.inputState,
+  primaryFire: true,
+});
+assert.ok(chronosHints);
+const chronosHint = chronosHints.find((hint) => hint.abilityId === 'chronos_verdant_pulse');
+assert.ok(chronosHint);
+const rawChronosOrigin = calculatePlayerSocketPosition(
+  chronosContext.position,
+  chronosContext.yaw,
+  CHRONOS_PRIMARY_ORB_SOCKET
+);
+assert.ok(rawChronosOrigin);
+assert.equal(chronosHint.aimPoint?.y, 12);
+assert.equal(chronosHint.origin.y > rawChronosOrigin.y + 0.2, true);
 
 console.log('ability aim tests passed');

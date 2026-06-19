@@ -68,6 +68,7 @@ import type {
   VoxelPart,
 } from '../../model-system/heroBodyTypes';
 import {
+  getPlayerVisualLookPitch,
   sampleRemoteTransformHistoryInto,
   setRenderedPlayerVisualTransform,
   type SampledRemoteTransform,
@@ -626,7 +627,9 @@ function updateRemoteTransform(
 
   const targetRot = visualState.playerRotations.get(player.id);
   const renderYaw = hasSampledTransform ? sampledTransform.lookYaw : targetRot ?? player.lookYaw;
-  const renderPitch = hasSampledTransform ? sampledTransform.lookPitch : player.lookPitch;
+  const renderPitch = hasSampledTransform
+    ? sampledTransform.lookPitch
+    : getPlayerVisualLookPitch(visualState, player);
   if (hasSampledTransform && !snappedToSample) {
     runtime.renderYaw = lerpAngle(
       runtime.renderYaw,

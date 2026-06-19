@@ -235,7 +235,7 @@ function TutorialTrainingHeroes() {
     for (const definition of TRAINING_HEROES) {
       runtimesRef.current.set(definition.id, createTrainingRuntime(definition, now));
       store.updatePlayer(definition.id, createTrainingHero(definition, now));
-      setPlayerVisualTransform(definition.id, definition.base, Math.PI);
+      setPlayerVisualTransform(definition.id, definition.base, Math.PI, 0);
     }
 
     return () => {
@@ -272,7 +272,7 @@ function TutorialTrainingHeroes() {
           const respawned = createTrainingHero(definition, now);
           runtimesRef.current.set(definition.id, createTrainingRuntime(definition, now));
           store.updatePlayer(definition.id, respawned);
-          setPlayerVisualTransform(definition.id, respawned.position, respawned.lookYaw);
+          setPlayerVisualTransform(definition.id, respawned.position, respawned.lookYaw, respawned.lookPitch);
         }
         continue;
       }

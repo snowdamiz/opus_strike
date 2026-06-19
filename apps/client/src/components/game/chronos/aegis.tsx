@@ -6,7 +6,7 @@ import {
   getChronosAegisForward,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
-import { visualStore } from '../../../store/visualStore';
+import { getPlayerVisualLookPitch, visualStore } from '../../../store/visualStore';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import {
@@ -204,9 +204,10 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
         return;
       }
 
-      const visualPosition = visualStore.getState().playerPositions.get(playerId) ?? player.position;
-      const visualYaw = visualStore.getState().playerRotations.get(playerId) ?? player.lookYaw;
-      const visualPitch = player.lookPitch ?? 0;
+      const visual = visualStore.getState();
+      const visualPosition = visual.playerPositions.get(playerId) ?? player.position;
+      const visualYaw = visual.playerRotations.get(playerId) ?? player.lookYaw;
+      const visualPitch = getPlayerVisualLookPitch(visual, player);
       const center = getChronosAegisCenter({
         playerId,
         position: visualPosition,

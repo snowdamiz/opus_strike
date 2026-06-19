@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import {
+  getPlayerVisualLookPitch,
   sampleRemoteTransformInto,
   type SampledRemoteTransform,
   visualStore,
@@ -255,6 +256,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
   const [isVeiled, setIsVeiled] = useState(() => hasActivePhantomVeil(player));
   const playerHeight = getPlayerHeight(player.heroId);
   const initialMovement = getPlayerRenderMovement(player, localPlayerId);
+  const initialLookPitch = getPlayerVisualLookPitch(visualStore.getState(), player);
   const hasLoweredPosture = hasLoweredPlayerPosture(initialMovement);
   const visibleHeight = getVisiblePlayerHeight(player.heroId, initialMovement);
   const postureScaleY = getPlayerBodyPostureScaleY(initialMovement);
@@ -273,7 +275,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
   const postureScaleYRef = useRef(postureScaleY);
   const bodyOpacityRef = useRef(isVeiled ? PHANTOM_VEIL_BODY_OPACITY : 1);
   const isVeiledRef = useRef(isVeiled);
-  const lookPitchRef = useRef(player.lookPitch);
+  const lookPitchRef = useRef(initialLookPitch);
   const walkDirectionRef = useRef<HeroWalkDirection>({ forward: 1, right: 0 });
   const initializedRef = useRef(false);
   const remoteEpochRef = useRef<number | null>(null);
@@ -330,7 +332,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
         groupRef.current.rotation.y = visualState.renderedPlayerRotations.get(player.id) ??
           visualState.playerRotations.get(player.id) ??
           player.lookYaw;
-        lookPitchRef.current = player.lookPitch;
+        lookPitchRef.current = getPlayerVisualLookPitch(visualState, player);
         previousFramePosition.current.copy(currentPosition.current);
         return;
       }
@@ -387,7 +389,9 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
         // Fallback to prop rotation if visualStore doesn't have data yet
         groupRef.current.rotation.y = player.lookYaw;
       }
-      lookPitchRef.current = hasSampledTransform ? sampledTransform.lookPitch : player.lookPitch;
+      lookPitchRef.current = hasSampledTransform
+        ? sampledTransform.lookPitch
+        : getPlayerVisualLookPitch(visualState, player);
 
       previousFramePosition.current.copy(currentPosition.current);
       if (!frameIsVeiled || player.heroId !== 'phantom') return;
@@ -446,7 +450,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
           height={playerHeight}
           postureScaleY={postureScaleY}
           postureScaleYRef={postureScaleYRef}
-          lookPitch={player.lookPitch}
+          lookPitch={initialLookPitch}
           lookPitchRef={lookPitchRef}
           isBot={player.isBot}
           isMoving={initialIsMoving}

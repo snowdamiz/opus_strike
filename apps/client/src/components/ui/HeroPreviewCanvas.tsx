@@ -181,6 +181,7 @@ const PREVIEW_LOOP_CONFIG: Record<
   },
 };
 const SLIDE_PREVIEW_YAW = -Math.PI / 2;
+const HERO_PREVIEW_IDLE_YAW_LIMIT = Math.PI / 4;
 const PREVIEW_CLEAR_COLOR_VAR = '--color-strike-canvas';
 const PREVIEW_OFFSCREEN_ROOT_ID = 'hero-preview-offscreen-root';
 const PREVIEW_SAMPLE_SIZE = 24;
@@ -556,6 +557,7 @@ function HeroPreviewScene({
 }: HeroPreviewSceneProps) {
   const heroHeight = HERO_DEFINITIONS[heroId].stats.size.height;
   const rootRef = useRef<THREE.Group>(null);
+  const idlePhaseRef = useRef(0);
   const idleYawRef = useRef(0);
   const loopStartedAtRef = useRef<number | null>(null);
   const isLoopingPreview = isPreviewLoopMode(animationMode);
@@ -589,6 +591,7 @@ function HeroPreviewScene({
       : 'walk';
 
   useEffect(() => {
+    idlePhaseRef.current = 0;
     idleYawRef.current = 0;
   }, [animationMode, heroId]);
 
@@ -616,9 +619,15 @@ function HeroPreviewScene({
       setLoopStep((currentStep) => isSameLoopStep(currentStep, nextLoopStep) ? currentStep : nextLoopStep);
     }
 
-    if (bodyAnimationMode !== 'slide' && idleRotation && !isDragging && config.idleSpeed > 0) {
-      idleYawRef.current += delta * config.idleSpeed;
+    const canIdleRotate = bodyAnimationMode !== 'slide' && idleRotation && config.idleSpeed > 0;
+    if (canIdleRotate && !isDragging) {
+      idlePhaseRef.current += delta * (config.idleSpeed / HERO_PREVIEW_IDLE_YAW_LIMIT);
+      idleYawRef.current = Math.sin(idlePhaseRef.current) * HERO_PREVIEW_IDLE_YAW_LIMIT;
+    } else if (!canIdleRotate) {
+      idlePhaseRef.current = 0;
+      idleYawRef.current = 0;
     }
+
     rootRef.current.rotation.y = yaw + idleYawRef.current;
   });
 

@@ -310,7 +310,7 @@ function shouldSyncLocalPosition(localPlayer: Player, nextState: string, nextPos
 }
 
 function syncLocalVisualPosition(player: Player): void {
-  setPlayerVisualTransform(player.id, player.position, player.lookYaw);
+  setPlayerVisualTransform(player.id, player.position, player.lookYaw, player.lookPitch);
 }
 
 function shouldHideLiveVisuals(visibility?: PlayerVisibilityState): boolean {
@@ -839,7 +839,7 @@ export function setupPlayerTransformsHandler(
       wallRunSide: transform.wallRunSide,
       movementEpoch: transform.movementEpoch,
     });
-    setPlayerVisualRotation(playerId, decoded.lookYaw);
+    setPlayerVisualRotation(playerId, decoded.lookYaw, decoded.lookPitch);
     const chronosAegisActive = remotePlayer.heroId === 'chronos' && Boolean(transform.movementBits & MOVEMENT_BIT_CHRONOS_AEGIS);
     const previousChronosAegis = visualStore.getState().chronosAegisStates.get(playerId);
     if (chronosAegisActive && !previousChronosAegis?.active) {
@@ -1073,7 +1073,7 @@ export function setupPlayerVitalsHandler(
       clearHiddenLiveVisuals(playerId);
     }
     for (const player of liveVisualUpdates) {
-      setPlayerVisualTransform(player.id, player.position, player.lookYaw);
+      setPlayerVisualTransform(player.id, player.position, player.lookYaw, player.lookPitch);
     }
     for (const player of localVisualSyncs) {
       syncLocalVisualPosition(player);

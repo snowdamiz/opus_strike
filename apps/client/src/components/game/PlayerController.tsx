@@ -480,6 +480,19 @@ function getAbility1ReleaseLockMs(heroId: HeroId): number {
   return heroId === 'blaze' ? BLAZE_STAFF_RETURN_TO_IDLE_MS : 0;
 }
 
+function setLocalPlayerVisualTransformFromCamera(
+  playerId: string,
+  position: { x: number; y: number; z: number },
+  cameraControl: UseCameraReturn
+): void {
+  setPlayerVisualTransform(
+    playerId,
+    position,
+    cameraControl.refs.yaw.current,
+    cameraControl.refs.pitch.current
+  );
+}
+
 // ============================================================================
 // PLAYER CONTROLLER COMPONENT
 // ============================================================================
@@ -764,7 +777,7 @@ function runPresentationPhase(input: {
   };
 
   setLocalVisualMovement(localMovementForTrace);
-  setPlayerVisualTransform(localPlayer.id, smoothedVisualPosition, cameraControl.refs.yaw.current);
+  setLocalPlayerVisualTransformFromCamera(localPlayer.id, smoothedVisualPosition, cameraControl);
 
   const slideIntensity = isSliding
     ? Math.min(1, Math.max(0.25, predictedState.movement.slideTimeRemaining / 0.8))
@@ -1496,7 +1509,7 @@ function runDisabledLifecycleFrame(
     perspective: useGameStore.getState().matchPerspective,
     collision: resolveThirdPersonCameraCollision,
   });
-  setPlayerVisualTransform(localPlayer.id, visualPos, cameraControl.refs.yaw.current);
+  setLocalPlayerVisualTransformFromCamera(localPlayer.id, visualPos, cameraControl);
   return { kind: 'disabled', authorityApplied, substeps: 0 };
 }
 
@@ -1572,7 +1585,7 @@ function runInactiveLifecycleFrame(
   camera.getWorldDirection(refs.audioForwardRef.current);
   refs.audioUpRef.current.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
   setAudioListenerTransform(camera.position, refs.audioForwardRef.current, refs.audioUpRef.current);
-  setPlayerVisualTransform(localPlayer.id, visualPos, cameraControl.refs.yaw.current);
+  setLocalPlayerVisualTransformFromCamera(localPlayer.id, visualPos, cameraControl);
   return { kind: 'inactive', authorityApplied, substeps: 0, deathCamera: shouldUseDeathCamera };
 }
 
@@ -1683,7 +1696,7 @@ function runBattleRoyalDeploymentFrame(
   camera.getWorldDirection(refs.audioForwardRef.current);
   refs.audioUpRef.current.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
   setAudioListenerTransform(camera.position, refs.audioForwardRef.current, refs.audioUpRef.current);
-  setPlayerVisualTransform(localPlayer.id, battleRoyalDeploymentVisualPosition, cameraControl.refs.yaw.current);
+  setLocalPlayerVisualTransformFromCamera(localPlayer.id, battleRoyalDeploymentVisualPosition, cameraControl);
 
   if (!sendDropCommands) {
     resetMovementCommandBuffer();
@@ -2303,7 +2316,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         movement: landedMovement,
       }, cameraControl.refs.yaw.current);
       updateLocalPlayer(landedUpdates);
-      setPlayerVisualTransform(localPlayer.id, localDropPlayer.position, cameraControl.refs.yaw.current);
+      setLocalPlayerVisualTransformFromCamera(localPlayer.id, localDropPlayer.position, cameraControl);
       resetMovementCommandBuffer();
       frameCtx.refs.suppressJumpUntilReleaseRef.current = rawFrameInput.jump;
       localPlayer = { ...localPlayer, ...landedUpdates };

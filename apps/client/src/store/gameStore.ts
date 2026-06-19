@@ -511,7 +511,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     // Update visual store for bulk player updates (initial sync)
     players.forEach((player, id) => {
       if (shouldKeepPlayerLiveVisual(player)) {
-        setPlayerVisualTransform(id, player.position, player.lookYaw);
+        setPlayerVisualTransform(id, player.position, player.lookYaw, player.lookPitch);
       } else {
         removePlayerLiveVisualState(id);
       }
@@ -534,7 +534,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
     // Update visual store for individual player updates
     if (shouldKeepPlayerLiveVisual(player)) {
-      setPlayerVisualTransform(playerId, player.position, player.lookYaw);
+      setPlayerVisualTransform(playerId, player.position, player.lookYaw, player.lookPitch);
     } else {
       removePlayerLiveVisualState(playerId);
     }

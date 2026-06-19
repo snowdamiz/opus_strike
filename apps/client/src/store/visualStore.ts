@@ -37,6 +37,9 @@ export interface VisualState {
   /** Player rotations for lookYaw interpolation (playerId -> rotation in radians) */
   playerRotations: Map<string, number>;
 
+  /** Player look pitch for high-frequency local aiming effects (playerId -> pitch in radians). */
+  playerLookPitches: Map<string, number>;
+
   /** Last rendered remote player positions for non-reactive attachments like labels/beacons. */
   renderedPlayerPositions: Map<string, { x: number; y: number; z: number }>;
 
@@ -246,6 +249,7 @@ const createCombatFrameCache = (): CombatVisualFrameCache => ({
 const initialVisualState: VisualState = {
   playerPositions: new Map(),
   playerRotations: new Map(),
+  playerLookPitches: new Map(),
   renderedPlayerPositions: new Map(),
   renderedPlayerRotations: new Map(),
   cameraShake: { intensity: 0, time: 0 },
@@ -380,14 +384,23 @@ export const setPlayerVisualPosition = (
  * @param playerId - The player's unique ID
  * @param rotation - LookYaw rotation in radians
  */
-export const setPlayerVisualRotation = (playerId: string, rotation: number): void => {
-  visualStore.getState().playerRotations.set(playerId, rotation);
+export const setPlayerVisualRotation = (
+  playerId: string,
+  rotation: number,
+  lookPitch?: number
+): void => {
+  const state = visualStore.getState();
+  state.playerRotations.set(playerId, rotation);
+  if (typeof lookPitch === 'number') {
+    state.playerLookPitches.set(playerId, lookPitch);
+  }
 };
 
 export const setPlayerVisualTransform = (
   playerId: string,
   position: { x: number; y: number; z: number },
-  rotation: number
+  rotation: number,
+  lookPitch?: number
 ): void => {
   const state = visualStore.getState();
   const current = state.playerPositions.get(playerId);
@@ -402,7 +415,17 @@ export const setPlayerVisualTransform = (
   if (state.playerRotations.get(playerId) !== rotation) {
     state.playerRotations.set(playerId, rotation);
   }
+  if (typeof lookPitch === 'number' && state.playerLookPitches.get(playerId) !== lookPitch) {
+    state.playerLookPitches.set(playerId, lookPitch);
+  }
 };
+
+export function getPlayerVisualLookPitch(
+  state: Pick<VisualState, 'playerLookPitches'>,
+  player: Pick<Player, 'id' | 'lookPitch'>
+): number {
+  return state.playerLookPitches.get(player.id) ?? player.lookPitch ?? 0;
+}
 
 export const setRenderedPlayerVisualTransform = (
   playerId: string,
@@ -584,6 +607,7 @@ export const pruneRemoteTransformHistories = (activePlayerIds: ReadonlySet<strin
       state.interpolationTargets.delete(playerId);
       state.playerPositions.delete(playerId);
       state.playerRotations.delete(playerId);
+      state.playerLookPitches.delete(playerId);
       state.renderedPlayerPositions.delete(playerId);
       state.renderedPlayerRotations.delete(playerId);
     }
@@ -1040,6 +1064,7 @@ export const removePlayerLiveVisualState = (playerId: string): void => {
   const state = visualStore.getState();
   state.playerPositions.delete(playerId);
   state.playerRotations.delete(playerId);
+  state.playerLookPitches.delete(playerId);
   state.renderedPlayerPositions.delete(playerId);
   state.renderedPlayerRotations.delete(playerId);
   state.interpolationTargets.delete(playerId);
@@ -1291,6 +1316,7 @@ export const clearVisualState = (): void => {
   visualStore.setState((state) => ({
     playerPositions: new Map(),
     playerRotations: new Map(),
+    playerLookPitches: new Map(),
     renderedPlayerPositions: new Map(),
     renderedPlayerRotations: new Map(),
     cameraShake: { intensity: 0, time: 0 },

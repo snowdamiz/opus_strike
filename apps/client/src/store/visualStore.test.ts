@@ -14,12 +14,14 @@ import {
   fillCombatVisualEnemyPlayers,
   findCombatVisualEnemyPlayerHit,
   findCombatVisualPlayerHit,
+  getPlayerVisualLookPitch,
   getDeathVisualForPlayer,
   pruneRemoteTransformHistories,
   rebuildCombatVisualFrameCache,
   removeDeathVisual,
   sampleRemoteTransformInto,
   setLocalSlideIntensity,
+  setPlayerVisualRotation,
   setPlayerVisualTransform,
   updateDeathVisualExpirationForPlayer,
   visualStore,
@@ -211,6 +213,13 @@ assert.equal(jitteryHistory.arrivalJitterMs, 0);
 setPlayerVisualTransform('remote-a', { x: 3, y: 4, z: 5 }, 1.25);
 assert.deepEqual(visualStore.getState().playerPositions.get('remote-a'), { x: 3, y: 4, z: 5 });
 assert.equal(visualStore.getState().playerRotations.get('remote-a'), 1.25);
+assert.equal(visualStore.getState().playerLookPitches.has('remote-a'), false);
+setPlayerVisualTransform('remote-a', { x: 3, y: 4, z: 5 }, 1.25, -0.4);
+assert.equal(visualStore.getState().playerLookPitches.get('remote-a'), -0.4);
+assert.equal(getPlayerVisualLookPitch(visualStore.getState(), makePlayer('remote-a', 'red', 0, 0)), -0.4);
+setPlayerVisualRotation('remote-a', 0.5, 0.3);
+assert.equal(visualStore.getState().playerRotations.get('remote-a'), 0.5);
+assert.equal(visualStore.getState().playerLookPitches.get('remote-a'), 0.3);
 
 setLocalSlideIntensity(1.5, { x: 3, y: 0, z: -4 }, 0.75);
 assert.equal(visualStore.getState().slideIntensity, 1);

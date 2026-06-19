@@ -28,7 +28,6 @@ import {
   DEFAULT_MATCH_PERSPECTIVE,
   DEFAULT_RANKED_SEASON_NUMBER,
   HERO_DEFINITIONS,
-  MATCH_PERSPECTIVES,
   PARTY_MAX_MEMBERS,
   getMatchPerspectiveSettingMode,
   getGameplayModeRules,
@@ -965,6 +964,7 @@ export function MainLobby() {
       {matchSettingsMode && (
         <MatchSettingsDialog
           mode={matchSettingsMode}
+          heroColor={heroColor}
           botFillEnabledByMode={activeBotFillEnabledByMode}
           perspectiveByMode={activePerspectiveByMode}
           settingsDisabled={isInParty && !isPartyLeader}
@@ -1067,6 +1067,11 @@ function PlayTab({
   const isInParty = Boolean(party);
   const lineupMembers = party?.members ?? (soloPartyMember ? [soloPartyMember] : []);
   const lineupLocalUserId = party ? localPartyUserId : soloPartyMember?.userId ?? null;
+  const lineupLocalMember = lineupLocalUserId
+    ? lineupMembers.find((member) => member.userId === lineupLocalUserId) ?? null
+    : null;
+  const lineupSelectedHero = lineupLocalMember?.heroId ?? featuredHero;
+  const lineupLockedHeroIds = getHumanPartyHeroIds(lineupMembers, lineupLocalUserId);
   const mainPlayLabel = isReconnectChecking
     ? 'CHECKING...'
     : canReconnect
@@ -1117,6 +1122,14 @@ function PlayTab({
       onDiscordSignIn();
     }
   };
+  const handleLineupKickMember = isInParty && isPartyLeader ? (userId: string) => {
+    playButtonClick();
+    onKickPartyMember(userId);
+  } : undefined;
+  const handleLineupLeaveParty = isInParty ? () => {
+    playButtonClick();
+    onLeaveParty();
+  } : undefined;
 
   return (
     <div className={`play-tab-shell h-full menu-content ${party ? 'is-party-mode' : 'is-solo-mode'}`}>
@@ -1133,10 +1146,8 @@ function PlayTab({
         perspectiveByMode={perspectiveByMode}
         rankedTokenHoldStatus={rankedTokenHoldStatus}
         rankedTokenHoldError={rankedTokenHoldError}
-        party={party}
-        soloPartyMember={soloPartyMember}
+        isInParty={isInParty}
         isPartyLeader={isPartyLeader}
-        localPartyUserId={localPartyUserId}
         canReconnect={canReconnect}
         isReconnectChecking={isReconnectChecking}
         mainPlayLabel={mainPlayLabel}
@@ -1144,9 +1155,6 @@ function PlayTab({
         primaryDisabledReason={primaryDisabledReason}
         onSelectPlayMode={onSelectPlayMode}
         onOpenMatchSettings={onOpenMatchSettings}
-        onKickPartyMember={onKickPartyMember}
-        onLeaveParty={onLeaveParty}
-        onOpenSocial={onOpenSocial}
         onDiscordSignIn={onDiscordSignIn}
         onReconnect={onReconnect}
         onStartTutorial={onStartTutorial}
@@ -1156,12 +1164,22 @@ function PlayTab({
         <PartyLineup
           members={lineupMembers}
           localUserId={lineupLocalUserId}
-          featuredHero={featuredHero}
           heroAnimationMode={heroAnimationMode}
-          onSelectHero={onSelectHero}
           onAddMember={handleLineupAddMember}
+          onKickMember={handleLineupKickMember}
+          onLeaveParty={handleLineupLeaveParty}
         />
       </div>
+      {lineupLocalMember && (
+        <div className="party-lineup-controls">
+          <span className="party-lineup-controls-label">HEROES</span>
+          <PartyHeroPicker
+            selectedHero={lineupSelectedHero}
+            lockedHeroIds={lineupLockedHeroIds}
+            onSelectHero={onSelectHero}
+          />
+        </div>
+      )}
       {serverLatency && shouldShowServerLatencyAdvisory(serverLatency) && (
         <ServerLatencyAdvisory snapshot={serverLatency} />
       )}
@@ -1173,25 +1191,30 @@ function PlayTab({
 function PartyLineup({
   members,
   localUserId,
-  featuredHero,
   heroAnimationMode,
-  onSelectHero,
   onAddMember,
+  onKickMember,
+  onLeaveParty,
 }: {
   members: PartyMemberSnapshot[];
   localUserId: string | null;
-  featuredHero: HeroId;
   heroAnimationMode: HeroPreviewAnimationMode;
-  onSelectHero: (heroId: HeroId) => void;
   onAddMember: () => void;
+  onKickMember?: (userId: string) => void;
+  onLeaveParty?: () => void;
 }) {
   const visibleMembers = members.slice(0, PLAY_PARTY_SLOT_COUNT);
   const emptySlotCount = Math.max(0, PLAY_PARTY_SLOT_COUNT - visibleMembers.length);
   const localMember = localUserId
     ? visibleMembers.find((member) => member.userId === localUserId) ?? null
     : null;
-  const selectedHero = localMember?.heroId ?? featuredHero;
-  const lockedHeroIds = getHumanPartyHeroIds(visibleMembers, localUserId);
+  const localLeaveAction = localMember && onLeaveParty
+    ? {
+        ariaLabel: 'Leave party',
+        title: 'Leave party',
+        onClick: onLeaveParty,
+      }
+    : null;
 
   return (
     <div className="party-lineup-stage">
@@ -1203,6 +1226,15 @@ function PartyLineup({
           const heroColor = HERO_COLORS[member.heroId];
           const hero = HERO_DEFINITIONS[member.heroId];
           const isLocalMember = member.userId === localUserId;
+          const kickAction = !isLocalMember && onKickMember
+            ? {
+                ariaLabel: `Kick ${member.displayName} from party`,
+                title: `Kick ${member.displayName}`,
+                onClick: () => onKickMember(member.userId),
+              }
+            : null;
+          const playerAction = kickAction ?? (isLocalMember ? localLeaveAction : null);
+
           return (
             <article
               key={member.userId}
@@ -1222,8 +1254,8 @@ function PartyLineup({
               </Suspense>
               <div className="party-member-labels">
                 <div className="party-member-identity">
-                  <span className="party-member-hero-icon" style={{ color: heroColor }}>
-                    <HeroIcon heroId={member.heroId} size={18} />
+                  <span className="party-member-rank-icon">
+                    <RankIcon rank={member.rank} size={22} labelled />
                   </span>
                   <span className="party-member-name">{member.displayName}</span>
                 </div>
@@ -1231,16 +1263,15 @@ function PartyLineup({
                   <span>{hero.name}</span>
                   <span>{member.leader ? 'LEADER' : member.ready ? 'READY' : 'NOT READY'}</span>
                 </div>
+                {playerAction && (
+                  <div className="party-member-action-slot">
+                    <PartyMemberActionButton action={playerAction} />
+                  </div>
+                )}
+                {!playerAction && (
+                  <div className="party-member-action-slot is-placeholder" aria-hidden="true" />
+                )}
               </div>
-              {isLocalMember ? (
-                <PartyHeroPicker
-                  selectedHero={selectedHero}
-                  lockedHeroIds={lockedHeroIds}
-                  onSelectHero={onSelectHero}
-                />
-              ) : (
-                <div className="party-hero-picker-placeholder" aria-hidden="true" />
-              )}
             </article>
           );
         })}
@@ -1268,6 +1299,28 @@ function PartyLineup({
         ))}
       </div>
     </div>
+  );
+}
+
+interface PartyMemberAction {
+  ariaLabel: string;
+  title: string;
+  onClick: () => void;
+}
+
+function PartyMemberActionButton({ action }: { action: PartyMemberAction }) {
+  return (
+    <button
+      type="button"
+      className="party-member-action-button"
+      title={action.title}
+      aria-label={action.ariaLabel}
+      onClick={action.onClick}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M6 6l12 12M18 6L6 18" />
+      </svg>
+    </button>
   );
 }
 
@@ -1303,7 +1356,7 @@ function PartyHeroPicker({
               '--party-hero-accent': heroColor,
             } as CSSProperties : undefined}
           >
-            <HeroIcon heroId={heroId} size={18} />
+            <HeroIcon heroId={heroId} size={21} />
           </button>
         );
       })}
@@ -1423,17 +1476,6 @@ function PlayModeIcon({ mode }: { mode: PlayMenuMode }) {
   }
 }
 
-function BotFillIcon() {
-  return (
-    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.5v2.2" />
-      <rect x="5.8" y="7.2" width="12.4" height="9" rx="3" strokeWidth={2} />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.4 19h7.2" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.6} d="M9.2 11.7h.01M14.8 11.7h.01" />
-    </svg>
-  );
-}
-
 function SettingsCogIcon() {
   return (
     <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -1465,6 +1507,7 @@ function getModeTitle(input: {
 
 function MatchSettingsDialog({
   mode,
+  heroColor,
   botFillEnabledByMode,
   perspectiveByMode,
   settingsDisabled,
@@ -1473,6 +1516,7 @@ function MatchSettingsDialog({
   onClose,
 }: {
   mode: PlayMenuMode;
+  heroColor: string;
   botFillEnabledByMode: PartyBotFillSettings;
   perspectiveByMode: MatchPerspectiveSettings;
   settingsDisabled: boolean;
@@ -1489,61 +1533,76 @@ function MatchSettingsDialog({
     : false;
   const selectedPerspective = perspectiveByMode[perspectiveMode] ?? DEFAULT_MATCH_PERSPECTIVE;
   const disabledTitle = settingsDisabled ? 'Party leader chooses match settings' : undefined;
+  const botFillStatus = botFillEnabled ? 'Enabled' : 'Disabled';
+  const perspectiveIsThirdPerson = selectedPerspective === 'third_person';
+  const nextPerspective: MatchPerspective = perspectiveIsThirdPerson ? 'first_person' : 'third_person';
+  const selectedPerspectiveLabel = getPerspectiveLabel(selectedPerspective);
+  const nextPerspectiveLabel = getPerspectiveLabel(nextPerspective);
 
   return (
     <GameDialog
       title={`${getPlayModeLabel(mode)} SETTINGS`}
       size="sm"
       icon={<SettingsCogIcon />}
-      iconClassName="bg-white/10 text-white/80"
+      iconClassName="match-settings-dialog-icon"
+      panelClassName="match-settings-dialog"
       bodyClassName="p-0"
+      style={{ '--match-settings-accent': heroColor } as CSSProperties}
       onClose={onClose}
     >
       <div className="match-settings-panel">
         {botFillGameplayMode && (
           <section className="match-settings-row">
             <div className="match-settings-row-copy">
-              <span className="match-settings-row-title">Bots</span>
+              <span className="match-settings-row-title">Bot Fill</span>
+              <span className={`match-settings-row-status${botFillEnabled ? ' is-enabled' : ''}`}>
+                {botFillStatus}
+              </span>
             </div>
             <button
               type="button"
               role="switch"
               aria-checked={botFillEnabled}
+              aria-label={`${botFillEnabled ? 'Disable' : 'Enable'} bot fill`}
               disabled={settingsDisabled}
-              className={`match-settings-switch${botFillEnabled ? ' is-enabled' : ''}`}
+              className={`match-settings-toggle${botFillEnabled ? ' is-enabled' : ''}`}
               title={disabledTitle ?? `${botFillEnabled ? 'Disable' : 'Enable'} bots`}
               onClick={() => onSetBotFillEnabled(botFillGameplayMode, !botFillEnabled)}
             >
-              <span className="match-settings-switch-icon" aria-hidden="true">
-                <BotFillIcon />
+              <span className="match-settings-toggle-indicator" aria-hidden="true" />
+              <span className={`match-settings-toggle-option${!botFillEnabled ? ' is-active' : ''}`} aria-hidden="true">
+                Off
               </span>
-              <span className="match-settings-switch-track" aria-hidden="true">
-                <span className="match-settings-switch-thumb" />
+              <span className={`match-settings-toggle-option${botFillEnabled ? ' is-active' : ''}`} aria-hidden="true">
+                On
               </span>
             </button>
           </section>
         )}
 
-        <section className="match-settings-row is-stacked">
+        <section className="match-settings-row">
           <div className="match-settings-row-copy">
             <span className="match-settings-row-title">Perspective</span>
+            <span className="match-settings-row-status">{selectedPerspectiveLabel}</span>
           </div>
-          <div className="match-settings-segmented" role="radiogroup" aria-label="Perspective">
-            {MATCH_PERSPECTIVES.map((perspective) => (
-              <button
-                key={perspective}
-                type="button"
-                role="radio"
-                aria-checked={selectedPerspective === perspective}
-                disabled={settingsDisabled}
-                className={`match-settings-segment${selectedPerspective === perspective ? ' is-selected' : ''}`}
-                title={disabledTitle}
-                onClick={() => onSetMatchPerspective(perspectiveMode, perspective)}
-              >
-                {getPerspectiveLabel(perspective)}
-              </button>
-            ))}
-          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={perspectiveIsThirdPerson}
+            aria-label={`Switch to ${nextPerspectiveLabel}`}
+            disabled={settingsDisabled}
+            className={`match-settings-toggle is-wide${perspectiveIsThirdPerson ? ' is-enabled' : ''}`}
+            title={disabledTitle ?? `Switch to ${nextPerspectiveLabel}`}
+            onClick={() => onSetMatchPerspective(perspectiveMode, nextPerspective)}
+          >
+            <span className="match-settings-toggle-indicator" aria-hidden="true" />
+            <span className={`match-settings-toggle-option${!perspectiveIsThirdPerson ? ' is-active' : ''}`} aria-hidden="true">
+              First
+            </span>
+            <span className={`match-settings-toggle-option${perspectiveIsThirdPerson ? ' is-active' : ''}`} aria-hidden="true">
+              Third
+            </span>
+          </button>
         </section>
       </div>
     </GameDialog>
@@ -1563,10 +1622,8 @@ function PlayActionStack({
   perspectiveByMode,
   rankedTokenHoldStatus,
   rankedTokenHoldError,
-  party,
-  soloPartyMember,
+  isInParty,
   isPartyLeader,
-  localPartyUserId,
   canReconnect,
   isReconnectChecking,
   mainPlayLabel,
@@ -1574,9 +1631,6 @@ function PlayActionStack({
   primaryDisabledReason,
   onSelectPlayMode,
   onOpenMatchSettings,
-  onKickPartyMember,
-  onLeaveParty,
-  onOpenSocial,
   onDiscordSignIn,
   onReconnect,
   onStartTutorial,
@@ -1594,10 +1648,8 @@ function PlayActionStack({
   perspectiveByMode: MatchPerspectiveSettings;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
   rankedTokenHoldError: string | null;
-  party: PartyStateSnapshot | null;
-  soloPartyMember: PartyMemberSnapshot | null;
+  isInParty: boolean;
   isPartyLeader: boolean;
-  localPartyUserId: string | null;
   canReconnect: boolean;
   isReconnectChecking: boolean;
   mainPlayLabel: string;
@@ -1605,16 +1657,12 @@ function PlayActionStack({
   primaryDisabledReason: string | null;
   onSelectPlayMode: (mode: PlayMenuMode) => void;
   onOpenMatchSettings: (mode: PlayMenuMode) => void;
-  onKickPartyMember: (userId: string) => void;
-  onLeaveParty: () => void;
-  onOpenSocial: () => void;
   onDiscordSignIn: () => void;
   onReconnect: () => void;
   onStartTutorial: () => void;
   onPlayAction: () => void;
 }) {
   const { playButtonClick } = useUISounds();
-  const isInParty = Boolean(party);
 
   const runPrimaryAction = () => {
     playButtonClick();
@@ -1626,35 +1674,10 @@ function PlayActionStack({
       onPlayAction();
     }
   };
-  const handleInviteSlotClick = () => {
-    playButtonClick();
-    if (isAuthenticated) {
-      onOpenSocial();
-    } else {
-      onDiscordSignIn();
-    }
-  };
-  const teammateMembers = party?.members ?? (soloPartyMember ? [soloPartyMember] : []);
-  const handleLeavePartyClick = isInParty ? () => {
-    playButtonClick();
-    onLeaveParty();
-  } : undefined;
-  const handleKickMember = isInParty && isPartyLeader ? (userId: string) => {
-    playButtonClick();
-    onKickPartyMember(userId);
-  } : undefined;
 
   return (
     <div className="play-action-stack">
       <PlayPanelHeading />
-      <PartyTeammateStrip
-        members={teammateMembers}
-        localUserId={localPartyUserId}
-        canKickMembers={isInParty && isPartyLeader}
-        onInviteClick={handleInviteSlotClick}
-        onKickMember={handleKickMember}
-        onLeaveClick={handleLeavePartyClick}
-      />
       <PlayModeSelector
         heroColor={heroColor}
         isAuthenticated={isAuthenticated}
@@ -1727,115 +1750,6 @@ function PlayActionStack({
           }}
           className="play-main-cta play-main-cta-discord group"
         />
-      )}
-    </div>
-  );
-}
-
-function PartyTeammateStrip({
-  members,
-  localUserId,
-  canKickMembers,
-  onInviteClick,
-  onKickMember,
-  onLeaveClick,
-}: {
-  members: PartyMemberSnapshot[];
-  localUserId: string | null;
-  canKickMembers: boolean;
-  onInviteClick: () => void;
-  onKickMember?: (userId: string) => void;
-  onLeaveClick?: () => void;
-}) {
-  const visibleMembers = members.slice(0, PLAY_PARTY_SLOT_COUNT);
-  const hasInviteSlot = visibleMembers.length < PLAY_PARTY_SLOT_COUNT;
-
-  return (
-    <div
-      className={`play-party-teammates${onLeaveClick ? ' has-leave-action' : ''}`}
-      aria-label="Lobby teammates"
-    >
-      <span className="play-party-teammates-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-          <circle cx="9" cy="7.25" r="3.15" strokeWidth={1.9} />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.9} d="M3.35 19.25v-1.4A4.85 4.85 0 018.2 13h1.6a4.85 4.85 0 014.85 4.85v1.4" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.9} d="M15.65 4.55a3.1 3.1 0 010 5.4" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.9} d="M18.25 14.15a4.3 4.3 0 012.4 3.85v1.25" />
-        </svg>
-      </span>
-      {visibleMembers.map((member) => {
-        const canKickMember = canKickMembers && member.userId !== localUserId;
-        const label = canKickMember ? `Kick ${member.displayName}` : member.displayName;
-        const content = (
-          <>
-            <span className="play-party-teammate-rank">
-              <RankIcon rank={member.rank} size={24} />
-            </span>
-            {canKickMember && (
-              <span className="play-party-teammate-kick-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.6} d="M6 6l12 12M18 6L6 18" />
-                </svg>
-              </span>
-            )}
-            <span className="play-party-teammate-tooltip" role="tooltip">
-              {label}
-            </span>
-          </>
-        );
-
-        return canKickMember ? (
-          <button
-            key={member.userId}
-            type="button"
-            className="play-party-teammate is-kickable"
-            title={label}
-            aria-label={`Kick ${member.displayName} from party`}
-            onClick={() => onKickMember?.(member.userId)}
-          >
-            {content}
-          </button>
-        ) : (
-          <div
-            key={member.userId}
-            className="play-party-teammate"
-            role="img"
-            tabIndex={0}
-            title={member.displayName}
-            aria-label={`${member.displayName}, ${member.rank.label}`}
-          >
-            {content}
-          </div>
-        );
-      })}
-      {hasInviteSlot && (
-        <button
-          type="button"
-          className="play-party-teammate is-empty"
-          title="Invite teammate"
-          aria-label="Open friends to invite a teammate"
-          onClick={onInviteClick}
-        >
-          <svg className="play-party-teammate-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 5v14m7-7H5" />
-          </svg>
-        </button>
-      )}
-      {onLeaveClick && (
-        <>
-          <span className="play-party-leave-divider" aria-hidden="true" />
-          <button
-            type="button"
-            className="play-party-leave-button"
-            title="Leave party"
-            aria-label="Leave party"
-            onClick={onLeaveClick}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M6 6l12 12M18 6L6 18" />
-            </svg>
-          </button>
-        </>
       )}
     </div>
   );

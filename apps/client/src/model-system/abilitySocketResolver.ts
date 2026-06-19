@@ -95,7 +95,7 @@ function warnIfDrifted({
   sampledPose: ViewmodelSocketPose | null;
   tolerance: number;
 }): void {
-  if (!import.meta.env.DEV || !livePose || !sampledPose) return;
+  if (!import.meta.env?.DEV || !livePose || !sampledPose) return;
   const distance = livePose.position.distanceTo(sampledPose.position);
   if (distance <= tolerance) return;
 

@@ -402,6 +402,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       (localPlayer.movement?.isJetpacking || (canUsePracticeFuel && isHoldingFlamethrower)) &&
       fuel > 0
     );
+    const visualActive = isHoldingFlamethrower || serverActive;
     const shouldPlayLocalFlamethrowerSound = isHoldingFlamethrower;
 
     flamethrowerFuelRef.current = fuel;
@@ -412,7 +413,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     ) {
       setFlamethrowerFuel(fuel);
     }
-    setBlazeFlamethrowerHeld(isHoldingFlamethrower || serverActive, timestampMs);
+    setBlazeFlamethrowerHeld(visualActive, timestampMs);
 
     if (shouldPlayLocalFlamethrowerSound && !flamethrowerActiveRef.current) {
       flamethrowerActiveRef.current = true;
@@ -423,7 +424,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       sounds.stopFlamethrowerSound();
     }
 
-    if (serverActive) {
+    if (visualActive) {
       setFlamethrowerActive(true);
 
       const holdBlend = getBlazeFlamethrowerHeldBlend(timestampMs);

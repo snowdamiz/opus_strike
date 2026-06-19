@@ -20,7 +20,7 @@ import {
   type ResolvedAbilitySocketOrigin,
 } from '../../model-system/abilitySocketResolver';
 import { offsetResolvedChronosOrbVisualOrigin } from '../../model-system/chronosOrbVisualOrigin';
-import { calculateLookDirection } from './constants';
+import { resolveAbilityAimDirection } from './abilityAim';
 import type { AbilityContext } from './types';
 
 interface BuildAbilityCastOriginHintOptions {
@@ -165,9 +165,11 @@ function resolveChronosPrimaryOrigin(
     preferSampled: true,
     warnOnSampleDrift: true,
   });
+  if (!origin) return null;
+
   return offsetResolvedChronosOrbVisualOrigin(
     origin,
-    calculateLookDirection(ctx.yaw, ctx.pitch),
+    resolveAbilityAimDirection(ctx, plainOrigin(origin)),
     abilityId
   );
 }
