@@ -75,6 +75,7 @@ import {
 import {
   buildMapVoteStartedPayload,
   buildMapVoteUpdatedPayload,
+  createMapLaunchSelection,
   createMapVoteOptions,
   getMapVoteRecords,
   getWinningMapOption,
@@ -180,7 +181,7 @@ export function getMatchmakingBotFillRequiredParticipants(input: {
   largestTeamCount: number;
 }): number {
   if (input.gameplayMode === 'battle_royal') {
-    return input.rules.minPlayers;
+    return Math.min(input.rules.maxPlayers, input.rules.maxTeams * input.rules.maxTeamSize);
   }
 
   const sideSize = Math.max(
@@ -736,7 +737,77 @@ export class LobbyRoom extends Room<LobbyState> {
     const capacityAvailable = await this.ensureInGameCapacityAvailableForRoster(client);
     if (!capacityAvailable) return;
 
+    await this.startMapSelection(client);
+  }
+
+  private createMapSelectionSource(): number {
+    return hashSeed(Date.now() ^ Math.imul(this.botIdCounter + 1, 0x632be59b));
+  }
+
+  private async startMapSelection(errorClient?: Client): Promise<void> {
+    if (this.gameplayMode === 'battle_royal') {
+      await this.startBattleRoyalMapGeneration(errorClient);
+      return;
+    }
+
     this.beginMapVote();
+  }
+
+  private async startBattleRoyalMapGeneration(errorClient?: Client): Promise<void> {
+    if (this.isFinalizingMapVote || this.state.status === 'starting' || this.state.status === 'in_game') return;
+
+    this.isFinalizingMapVote = true;
+    try {
+      this.clearMapVoteTimer();
+      this.clearCapacityRetry();
+      this.setMatchmakingCapacityBlocked(false);
+      this.mapVoteSession = null;
+
+      const selection = createMapLaunchSelection({
+        gameplayMode: this.gameplayMode,
+        source: this.createMapSelectionSource(),
+        participantCount: this.getCombatParticipantCount(),
+      });
+      const selectedMapThemeId = await this.resolveSelectedMapThemeId(selection.seed);
+
+      this.state.status = 'starting';
+      this.setMatchmakingLocked(true);
+      this.updateMetadata({ status: 'starting' });
+
+      this.broadcast('mapGenerationStarted', {
+        mapSeed: selection.seed,
+        mapThemeId: selectedMapThemeId,
+        mapSize: selection.mapSize,
+        mapProfileId: selection.mapProfileId,
+        gameplayMode: this.gameplayMode,
+      });
+
+      await this.createGameFromLobby(
+        selection.seed,
+        selectedMapThemeId,
+        selection.mapSize,
+        selection.mapProfileId
+      );
+    } catch (error) {
+      console.error('Failed to create battle royal game room:', error);
+      const capacityError = isInGameCapacityAdmissionError(error) ? error : null;
+      const reason = capacityError
+        ? this.getCapacityBlockedMessage(capacityError)
+        : 'Failed to start game';
+      this.state.status = this.isMatchmakingQueue() ? 'matchmaking' : 'waiting';
+      this.mapVoteSession = null;
+      this.setMatchmakingLocked(false);
+      if (capacityError && this.isMatchmakingQueue()) {
+        this.setMatchmakingCapacityBlocked(capacityError.reason === 'full');
+        this.scheduleCapacityRetry();
+      }
+      this.updateMetadata({ status: this.state.status });
+      this.broadcast('mapGenerationCancelled', { reason, status: this.state.status, gameplayMode: this.gameplayMode });
+      this.broadcastLobbyState();
+      errorClient?.send('error', { message: reason });
+    } finally {
+      this.isFinalizingMapVote = false;
+    }
   }
 
   private beginMapVote(): void {
@@ -745,7 +816,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.setMatchmakingCapacityBlocked(false);
     this.state.status = 'map_vote';
     this.setMatchmakingLocked(true);
-    const mapVoteSource = hashSeed(Date.now() ^ Math.imul(this.botIdCounter + 1, 0x632be59b));
+    const mapVoteSource = this.createMapSelectionSource();
     this.mapVoteSession = {
       options: createMapVoteOptions({
         gameplayMode: this.gameplayMode,
@@ -1555,12 +1626,7 @@ export class LobbyRoom extends Room<LobbyState> {
     const capacityAvailable = await this.ensureInGameCapacityAvailableForRoster();
     if (!capacityAvailable || this.state.status !== 'matchmaking') return;
 
-    if (!this.isRankedQueue) {
-      this.beginMapVote();
-      return;
-    }
-
-    this.beginMapVote();
+    await this.startMapSelection();
   }
 
   private clearCapacityRetry(): void {

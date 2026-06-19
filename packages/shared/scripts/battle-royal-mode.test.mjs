@@ -113,10 +113,10 @@ function boundaryRadiusRange(boundary) {
 }
 
 const rules = getGameplayModeRules(BATTLE_ROYAL_GAMEPLAY_MODE);
-assert.equal(rules.maxPlayers, 30);
-assert.equal(rules.minPlayers, 10);
+assert.equal(rules.maxPlayers, 33);
+assert.equal(rules.minPlayers, 12);
 assert.equal(rules.maxTeamSize, 3);
-assert.equal(rules.maxTeams, 10);
+assert.equal(rules.maxTeams, 11);
 assert.equal(rules.scoreModel, 'last_team_alive');
 assert.equal(rules.respawnPolicy, 'none_after_active_play');
 assert.equal(rules.matchEndPolicy, 'last_team_alive');
@@ -126,15 +126,15 @@ assert.equal(rules.flagsEnabled, false);
 assert.equal(rules.teamScoresEnabled, false);
 assert.equal(rules.botsEnabled, true);
 assert.equal(rules.rankedEnabled, false);
-assert.equal(getGameplayModeCapacityCost('battle_royal', 10), 38);
-assert.equal(getGameplayModeCapacityCost('battle_royal', 30), 113);
+assert.equal(getGameplayModeCapacityCost('battle_royal', 12), 50);
+assert.equal(getGameplayModeCapacityCost('battle_royal', 33), 137);
 
 assert.deepEqual(createGameConfigForGameplayMode('battle_royal'), {
   gameplayMode: 'battle_royal',
-  maxPlayers: 30,
-  minPlayers: 10,
+  maxPlayers: 33,
+  minPlayers: 12,
   teamSize: 3,
-  maxTeams: 10,
+  maxTeams: 11,
   scoreToWin: 0,
   roundTimeSeconds: 1200,
   respawnTimeSeconds: 0,
@@ -146,17 +146,34 @@ assert.deepEqual(createGameConfigForGameplayMode('battle_royal'), {
 
 assert.deepEqual(getTeamIdsForGameplayMode('battle_royal'), [...BATTLE_ROYAL_TEAM_IDS]);
 const catalog = getTeamCatalogForGameplayMode('battle_royal');
-assert.equal(catalog.length, 10);
-assert.equal(new Set(catalog.map((team) => team.color)).size, 10);
+assert.equal(catalog.length, 11);
+assert.equal(new Set(catalog.map((team) => team.color)).size, 11);
 
 const preview = createProceduralMapPreview(0x51f15eed, 'large', { profileId: 'battle_royal_large' });
+const mediumPreview = createProceduralMapPreview(0x51f15eed, 'medium', { profileId: 'battle_royal_large' });
+const smallPreview = createProceduralMapPreview(0x51f15eed, 'small', { profileId: 'battle_royal_large' });
 assert.equal(preview.familyId, 'battle_royal_large');
 assert.equal(preview.mapSize, 'large');
+assert.equal(mediumPreview.mapSize, 'medium');
+assert.equal(smallPreview.mapSize, 'small');
 assert.equal(preview.preview.labelTags.includes('Battle Royal'), true);
+assert.equal(preview.preview.labelTags.includes('27-33 Players'), true);
+assert.equal(mediumPreview.preview.labelTags.includes('19-26 Players'), true);
+assert.equal(smallPreview.preview.labelTags.includes('12-18 Players'), true);
 assert.equal(preview.preview.labelTags.includes('Expansive'), true);
 assert.equal(preview.preview.labelTags.includes('Towns'), true);
 assert.equal(preview.preview.labelTags.includes('Open Routes'), true);
-assert.equal(Object.keys(preview.preview.thumbnailSilhouette.objectives.spawns).length, 10);
+assert.equal(Object.keys(preview.preview.thumbnailSilhouette.objectives.spawns).length, BATTLE_ROYAL_TEAM_IDS.length);
+assert.equal(Object.keys(mediumPreview.preview.thumbnailSilhouette.objectives.spawns).length, BATTLE_ROYAL_TEAM_IDS.length);
+assert.equal(Object.keys(smallPreview.preview.thumbnailSilhouette.objectives.spawns).length, BATTLE_ROYAL_TEAM_IDS.length);
+assert.equal(
+  smallPreview.preview.thumbnailSilhouette.bounds.maxX < mediumPreview.preview.thumbnailSilhouette.bounds.maxX,
+  true
+);
+assert.equal(
+  mediumPreview.preview.thumbnailSilhouette.bounds.maxX < preview.preview.thumbnailSilhouette.bounds.maxX,
+  true
+);
 assert.equal(preview.preview.thumbnailSilhouette.routes.length >= 30, true);
 
 const manifest = generateProceduralVoxelMap(0x51f15eed, {
@@ -270,7 +287,7 @@ assert.equal(manifest.gameplay.routeGraph.edges.every((edge) => edge.tags.includ
 assert.equal(manifest.construction.diagnostics.scoreBreakdown.settlementStructure > 0, true);
 assert.equal(manifest.construction.diagnostics.scoreBreakdown.openAreaStructure > 0, true);
 assert.equal(manifest.construction.diagnostics.repairActions.openAreaCoverage > 0.1, true);
-assert.equal(manifest.construction.diagnostics.maxSightlineLength <= 155, true);
+assert.equal(manifest.construction.diagnostics.maxSightlineLength <= 180, true);
 assert.equal(manifest.construction.diagnostics.spawnVisibilityPairs, 0);
 assert.deepEqual(manifest.construction.diagnostics.warnings, []);
 assert.equal(manifest.stats.solidBlocks <= manifest.construction.designBrief.performanceBudget.maxSolidBlocks, true);

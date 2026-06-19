@@ -217,28 +217,28 @@ const load: RoomLoadSnapshot = {
     mapSize: 'large',
     mapProfileId: 'battle_royal_large',
     counts: {
-      humanCount: 10,
+      humanCount: 12,
       botCount: 0,
       npcCount: 0,
-      participantCount: 11,
-      entityCount: 10,
+      participantCount: 12,
+      entityCount: 12,
     },
-    maxPlayers: 30,
+    maxPlayers: 33,
     mapRenderableChunkCount: 3000,
     mapColliderCount: 80000,
     mapSolidBlockCount: 2200000,
-    reservedHumanPlayers: 10,
-    capacityPlayerCost: 38,
+    reservedHumanPlayers: 12,
+    capacityPlayerCost: 50,
     rankedEligibilityCandidate: false,
-    rankedRequiredHumanPlayers: 10,
+    rankedRequiredHumanPlayers: 12,
     reconnectIdentityKeys: [],
     load,
   });
 
   assert.equal(metadata.gameplayMode, 'battle_royal');
   assert.equal(metadata.mapProfileId, 'battle_royal_large');
-  assert.equal(metadata.playerCap, 30);
-  assert.equal(metadata.capacityPlayerCost, 38);
+  assert.equal(metadata.playerCap, 33);
+  assert.equal(metadata.capacityPlayerCost, 50);
   assert.equal(metadata.mapRenderableChunkCount, 3000);
   assert.equal(metadata.mapColliderCount, 80000);
   assert.equal(metadata.mapSolidBlockCount, 2200000);

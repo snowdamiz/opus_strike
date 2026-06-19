@@ -19,7 +19,7 @@ import type {
   MapVoteOption,
   MapVoteRecord,
 } from '../store/types';
-import { seedMapPrepCacheFromManifest } from '../utils/mapWarmup/mapPrepCache';
+import { seedMapPrepCacheFromManifest, type PrepareVoxelMapOptions } from '../utils/mapWarmup/mapPrepCache';
 import { prebuildPreparedVoxelMapGeometry } from '../utils/mapWarmup/mapGeometryWarmup';
 import { requestMapPreviewManifest } from '../utils/mapPreview/mapPreviewManifestClient';
 import { disconnectVoice } from '../voice/voiceControls';
@@ -110,6 +110,14 @@ interface GameStartingMessage {
   matchPerspective?: MatchPerspective;
   mapSize?: VoxelMapSizeId | null;
   mapProfileId?: MapProfileId | null;
+}
+
+interface SelectedMapMessage {
+  mapSeed: number;
+  mapThemeId?: VoxelMapTheme['id'] | null;
+  mapSize?: VoxelMapSizeId | null;
+  mapProfileId?: MapProfileId | null;
+  gameplayMode?: GameplayMode;
 }
 
 function toMatchmakingStatus(data: MatchmakingStatusMessage): MatchmakingStatusState {
@@ -272,6 +280,54 @@ export function setupLobbyListeners(
     throw lastError ?? new Error('Failed to join game room');
   };
 
+  const prepareSelectedMap = (
+    data: SelectedMapMessage,
+    cacheLabel: NonNullable<PrepareVoxelMapOptions['source']>
+  ) => {
+    if (isGameplayMode(data.gameplayMode)) {
+      useGameStore.setState({ gameplayMode: data.gameplayMode });
+    }
+    isAwaitingGameStart = true;
+    hasJoinedGame = false;
+    hasFailedGameStart = false;
+    armGameStartTimeout();
+    setMapSeed(data.mapSeed);
+    setMapThemeId(data.mapThemeId ?? null);
+    setMapSize(data.mapSize);
+    useGameStore.getState().setMapProfileId(data.mapProfileId);
+    setAppPhase('match_loading');
+    void requestMapPreviewManifest({
+      seed: data.mapSeed,
+      themeId: data.mapThemeId ?? null,
+      mapSize: data.mapSize,
+      mapProfileId: data.mapProfileId,
+    })
+      .then((manifest) => {
+        const preparedMap = seedMapPrepCacheFromManifest(
+          data.mapSeed,
+          manifest,
+          cacheLabel
+        );
+        prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 3, label: cacheLabel });
+      })
+      .catch((error) => {
+        loggers.network.warn('selected map worker prep failed', error);
+      });
+  };
+
+  const cancelPendingMapStart = (data: { reason?: string; status?: string; gameplayMode?: GameplayMode }) => {
+    if (isGameplayMode(data.gameplayMode)) {
+      useGameStore.setState({ gameplayMode: data.gameplayMode });
+    }
+    isAwaitingGameStart = false;
+    isJoiningGame = false;
+    hasJoinedGame = false;
+    hasFailedGameStart = false;
+    clearGameStartTimeout();
+    clearMapVote();
+    setAppPhase(data.status === 'matchmaking' ? 'matchmaking' : 'in_lobby');
+  };
+
   room.onMessage('lobbyState', (data: LobbyStateMessage) => {
     loggers.network.debug('received lobby state', data);
     setCurrentLobby(data.lobbyId, data.name);
@@ -336,50 +392,28 @@ export function setupLobbyListeners(
     votes: MapVoteRecord[];
   }) => {
     loggers.network.info('map vote finalized', data.mapSeed);
-    if (isGameplayMode(data.gameplayMode)) {
-      useGameStore.setState({ gameplayMode: data.gameplayMode });
-    }
-    isAwaitingGameStart = true;
-    hasJoinedGame = false;
-    hasFailedGameStart = false;
-    armGameStartTimeout();
     setMapVotes(data.votes, data.selectedOptionId);
-    setMapSeed(data.mapSeed);
-    setMapThemeId(data.mapThemeId ?? null);
-    setMapSize(data.mapSize);
-    useGameStore.getState().setMapProfileId(data.mapProfileId);
-    setAppPhase('match_loading');
-    void requestMapPreviewManifest({
+    prepareSelectedMap(data, 'mapVoteFinalized');
+  });
+
+  room.onMessage('mapGenerationStarted', (data: SelectedMapMessage) => {
+    loggers.network.info('map generation started', {
       seed: data.mapSeed,
-      themeId: data.mapThemeId ?? null,
       mapSize: data.mapSize,
       mapProfileId: data.mapProfileId,
-    })
-      .then((manifest) => {
-        const preparedMap = seedMapPrepCacheFromManifest(
-          data.mapSeed,
-          manifest,
-          'mapVoteFinalized'
-        );
-        prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 3, label: 'map-vote-finalized' });
-      })
-      .catch((error) => {
-        loggers.network.warn('selected map worker prep failed', error);
-      });
+    });
+    clearMapVote();
+    prepareSelectedMap(data, 'mapGenerationStarted');
   });
 
   room.onMessage('mapVoteCancelled', (data: { reason?: string; status?: string; gameplayMode?: GameplayMode }) => {
     loggers.network.warn('map vote cancelled', data.reason || 'unknown');
-    if (isGameplayMode(data.gameplayMode)) {
-      useGameStore.setState({ gameplayMode: data.gameplayMode });
-    }
-    isAwaitingGameStart = false;
-    isJoiningGame = false;
-    hasJoinedGame = false;
-    hasFailedGameStart = false;
-    clearGameStartTimeout();
-    clearMapVote();
-    setAppPhase(data.status === 'matchmaking' ? 'matchmaking' : 'in_lobby');
+    cancelPendingMapStart(data);
+  });
+
+  room.onMessage('mapGenerationCancelled', (data: { reason?: string; status?: string; gameplayMode?: GameplayMode }) => {
+    loggers.network.warn('map generation cancelled', data.reason || 'unknown');
+    cancelPendingMapStart(data);
   });
 
   room.onMessage('playerJoined', (data: PlayerJoinedMessage) => {

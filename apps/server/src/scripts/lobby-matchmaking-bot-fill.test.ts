@@ -28,14 +28,15 @@ import {
 }
 
 {
+  const rules = getGameplayModeRules('battle_royal');
   const requiredParticipants = getMatchmakingBotFillRequiredParticipants({
     gameplayMode: 'battle_royal',
-    rules: getGameplayModeRules('battle_royal'),
+    rules,
     expectedPartyParticipantCount: 2,
     largestTeamCount: 2,
   });
 
-  assert.equal(requiredParticipants, getGameplayModeRules('battle_royal').minPlayers);
+  assert.equal(requiredParticipants, Math.min(rules.maxPlayers, rules.maxTeams * rules.maxTeamSize));
 }
 
 assert.deepEqual(

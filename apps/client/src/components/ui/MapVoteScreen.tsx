@@ -449,8 +449,6 @@ export function MapVoteScreen() {
     mapVotePhaseEndTime,
     selectedMapOptionId,
     userStats,
-    gameplayMode,
-    matchmakingGameplayMode,
   } = useGameStore(
     useShallow((state) => ({
       playerName: state.playerName,
@@ -461,8 +459,6 @@ export function MapVoteScreen() {
       mapVotePhaseEndTime: state.mapVotePhaseEndTime,
       selectedMapOptionId: state.selectedMapOptionId,
       userStats: state.userStats,
-      gameplayMode: state.gameplayMode,
-      matchmakingGameplayMode: state.matchmakingStatus.gameplayMode,
     }))
   );
   const { leaveLobby, voteMap, reportMapVotePreviewsReady } = useNetwork();
@@ -489,10 +485,7 @@ export function MapVoteScreen() {
   const visibleVoteOptionId = pendingVoteOptionId ?? localVote;
   const isFinalized = Boolean(selectedMapOptionId);
   const isPreparingMaps = mapVoteOptions.length === 0;
-  const isBattleRoyalMapVote = gameplayMode === 'battle_royal'
-    || matchmakingGameplayMode === 'battle_royal'
-    || mapVoteOptions.some((option) => option.mapProfileId === 'battle_royal_large');
-  const expectedMapOptionCount = isBattleRoyalMapVote ? 2 : 3;
+  const expectedMapOptionCount = 3;
   const areMapPreviewsReady = mapVoteOptions.length > 0 && readyPreviewIds.size >= mapVoteOptions.length;
   const isVoteTimerStarted = Boolean(mapVotePhaseEndTime);
   const canSubmitVote = Boolean(
@@ -642,7 +635,7 @@ export function MapVoteScreen() {
             </h2>
           </div>
 
-          <div className={`map-vote-grid mx-auto grid w-full min-h-0 grid-cols-1 gap-3 xl:gap-4 ${expectedMapOptionCount === 2 ? 'max-w-[48rem] lg:grid-cols-2' : 'max-w-[72rem] lg:grid-cols-3'}`}>
+          <div className="map-vote-grid mx-auto grid w-full min-h-0 max-w-[72rem] grid-cols-1 gap-3 lg:grid-cols-3 xl:gap-4">
             {isPreparingMaps && Array.from({ length: expectedMapOptionCount }, (_, index) => (
               <PreparingMapCard key={index} />
             ))}

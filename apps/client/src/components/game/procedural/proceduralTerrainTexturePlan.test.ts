@@ -40,7 +40,7 @@ assert.ok(uniqueLayers.has(getTextureLayerForBlock('grass', 'bottom').layer));
 assert.ok(uniqueLayers.has(getTextureLayerForBlock('stone', 'side').layer));
 assert.equal(getTextureLayerForBlock('grass', 'bottom').layer, getTextureLayerForBlock('dirt', 'side').layer);
 
-assert.equal(TERRAIN_TEXTURE_LAYER_COUNT, 30);
+assert.equal(TERRAIN_TEXTURE_LAYER_COUNT, 36);
 assert.deepEqual(TERRAIN_TEXTURE_ANISOTROPY_BY_QUALITY, {
   off: 4,
   minimum: 4,

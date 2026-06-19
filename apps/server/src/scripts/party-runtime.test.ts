@@ -24,6 +24,15 @@ function addMember(
 const defaultParty = new PartyRosterRuntime('party-default');
 assert.equal(defaultParty.maxMembers, PARTY_MAX_MEMBERS);
 
+const initializedParty = new PartyRosterRuntime('party-initialized');
+initializedParty.initializeSelection({
+  selectedMode: 'quick_play',
+  gameplayMode: 'battle_royal',
+});
+assert.equal(initializedParty.mode, 'quick_play');
+assert.equal(initializedParty.selectedGameplayMode, 'battle_royal');
+assert.equal(initializedParty.snapshot().gameplayMode, 'battle_royal');
+
 const party = new PartyRosterRuntime('party-test', 4);
 const leader = addMember(party, 'leader', 'session-a', 900);
 assert.equal(party.leaderId, leader.userId);

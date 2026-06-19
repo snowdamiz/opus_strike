@@ -10,6 +10,7 @@ import {
   hashSeed,
   type BlueprintPreview,
   type GameplayMode,
+  type GameplayModeRules,
   type MapProfileId,
   type MapTopologyId,
   type VoxelMapSizeId,
@@ -55,6 +56,14 @@ export interface MapVoteUpdatedPayload {
 export interface CreateMapVoteOptionsInput {
   gameplayMode?: GameplayMode;
   source: number;
+  participantCount?: number;
+}
+
+export interface MapLaunchSelection {
+  id: string;
+  seed: number;
+  mapSize: VoxelMapSizeId;
+  mapProfileId: MapProfileId;
 }
 
 const MAP_NAME_SUFFIXES = [
@@ -67,8 +76,6 @@ const MAP_NAME_SUFFIXES = [
   'Ridge',
   'Gate',
 ];
-
-const BATTLE_ROYAL_MAP_VOTE_SIZES = ['large', 'large'] as const satisfies readonly VoxelMapSizeId[];
 
 function getShuffledThemeIndices(source: number): number[] {
   const themeIndices = VOXEL_MAP_THEMES.map((_, index) => index);
@@ -130,9 +137,9 @@ export function createMapVoteOption(
 export function createMapVoteOptions(input: CreateMapVoteOptionsInput): MapVoteOption[] {
   const rules = getGameplayModeRules(input.gameplayMode);
   const mapProfileId = rules.mapProfileId;
-  const mapSizes = mapProfileId === 'battle_royal_large'
-    ? BATTLE_ROYAL_MAP_VOTE_SIZES
-    : VOXEL_MAP_SIZE_IDS;
+  if (mapProfileId === 'battle_royal_large') return [];
+
+  const mapSizes = VOXEL_MAP_SIZE_IDS;
 
   const themeIndices = getShuffledThemeIndices(input.source);
 
@@ -142,6 +149,39 @@ export function createMapVoteOptions(input: CreateMapVoteOptionsInput): MapVoteO
     const mapSize = mapSizes[index % mapSizes.length];
     return createMapVoteOption(seed, index, null, mapSize, mapProfileId);
   });
+}
+
+export function getBattleRoyalMapSizeForParticipantCount(input: {
+  participantCount: number;
+  rules?: GameplayModeRules;
+}): VoxelMapSizeId {
+  const rules = input.rules ?? getGameplayModeRules('battle_royal');
+  const participantCount = Math.max(0, Math.floor(input.participantCount));
+  const mapSizeBandWidth = Math.max(1, Math.floor((rules.maxPlayers - rules.minPlayers + 1) / 3));
+  const smallMaxPlayers = rules.minPlayers + mapSizeBandWidth - 1;
+  const largeMinPlayers = rules.maxPlayers - mapSizeBandWidth + 1;
+  if (participantCount <= smallMaxPlayers) return 'small';
+  if (participantCount >= largeMinPlayers) return 'large';
+  return 'medium';
+}
+
+export function createMapLaunchSelection(input: CreateMapVoteOptionsInput): MapLaunchSelection {
+  const rules = getGameplayModeRules(input.gameplayMode);
+  const themeIndex = getShuffledThemeIndices(input.source)[0] ?? 0;
+  const seed = createSeedForTheme(themeIndex, input.source ^ 0x85ebca6b);
+  const mapSize = rules.mapProfileId === 'battle_royal_large'
+    ? getBattleRoyalMapSizeForParticipantCount({
+      participantCount: input.participantCount ?? rules.maxPlayers,
+      rules,
+    })
+    : DEFAULT_VOXEL_MAP_SIZE_ID;
+
+  return {
+    id: 'map_1',
+    seed,
+    mapSize,
+    mapProfileId: rules.mapProfileId,
+  };
 }
 
 export function getMapVoteRecords(

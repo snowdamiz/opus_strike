@@ -74,6 +74,7 @@ export function App() {
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
   const mapProfileId = useGameStore((state) => state.mapProfileId);
+  const gameplayMode = useGameStore((state) => state.gameplayMode);
   const scoreboardKeybind = useSettingsStore((state) => state.settings.keybindings.scoreboard);
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showInGameMenu, setShowInGameMenu] = useState(false);
@@ -112,6 +113,9 @@ export function App() {
     )
   );
   const shouldTrackMatchLoadingProgress = appPhase === 'match_loading' || shouldPrepareMatchWorld;
+  const isBattleRoyalLoading = gameplayMode === 'battle_royal' || mapProfileId === 'battle_royal_large';
+  const matchLoadingTitle = isBattleRoyalLoading ? 'GENERATING MAP' : 'LOADING ARENA';
+  const matchLoadingEyebrow = isBattleRoyalLoading ? 'Battle Royal' : 'Match';
 
   useEffect(() => {
     installLocalCombatStressScenario();
@@ -453,7 +457,9 @@ export function App() {
       <MatchLoadingScreen
         key={warmupKey}
         initialProgress={matchLoadingProgressRef.current}
-        label="Preparing"
+        eyebrow={matchLoadingEyebrow}
+        title={matchLoadingTitle}
+        label={isBattleRoyalLoading ? mapSize : 'Preparing'}
         onProgressChange={handleMatchLoadingProgressChange}
       />
     );
@@ -488,6 +494,8 @@ export function App() {
             isComplete={isMatchSceneReady}
             initialProgress={matchLoadingProgressRef.current}
             progress={matchWarmupSnapshot?.progress}
+            eyebrow={matchLoadingEyebrow}
+            title={matchLoadingTitle}
             label={matchWarmupSnapshot?.label}
             onProgressChange={handleMatchLoadingProgressChange}
           />

@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import {
+  getGameplayModeRules,
   VOXEL_MAP_SIZE_IDS,
 } from '@voxel-strike/shared';
 import {
   buildMapVoteStartedPayload,
   buildMapVoteUpdatedPayload,
+  createMapLaunchSelection,
   createMapVoteOption,
   createMapVoteOptions,
+  getBattleRoyalMapSizeForParticipantCount,
   getMapVoteRecords,
   getWinningMapOption,
   haveAllHumanPlayersVoted,
@@ -37,11 +40,38 @@ function option(id: string): MapVoteOption {
     source: 0x51f15eed,
   });
 
-  assert.equal(options.length, 2);
-  assert.deepEqual(options.map((mapOption) => mapOption.mapSize), ['large', 'large']);
-  assert.equal(options.every((mapOption) => mapOption.mapProfileId === 'battle_royal_large'), true);
-  assert.equal(options.every((mapOption) => mapOption.preview.labelTags.includes('Battle Royal')), true);
-  assert.equal(Object.keys(options[0].preview.thumbnailSilhouette.objectives.spawns).length, 10);
+  assert.deepEqual(options, []);
+}
+
+{
+  const rules = getGameplayModeRules('battle_royal');
+  const smallMaxPlayers = 18;
+  const mediumMinPlayers = 19;
+  const mediumMaxPlayers = 26;
+  const largeMinPlayers = 27;
+
+  assert.equal(getBattleRoyalMapSizeForParticipantCount({ participantCount: rules.minPlayers, rules }), 'small');
+  assert.equal(getBattleRoyalMapSizeForParticipantCount({ participantCount: smallMaxPlayers, rules }), 'small');
+  assert.equal(getBattleRoyalMapSizeForParticipantCount({ participantCount: mediumMinPlayers, rules }), 'medium');
+  assert.equal(getBattleRoyalMapSizeForParticipantCount({ participantCount: mediumMaxPlayers, rules }), 'medium');
+  assert.equal(getBattleRoyalMapSizeForParticipantCount({ participantCount: largeMinPlayers, rules }), 'large');
+  assert.equal(getBattleRoyalMapSizeForParticipantCount({ participantCount: rules.maxPlayers, rules }), 'large');
+
+  assert.equal(createMapLaunchSelection({
+    gameplayMode: 'battle_royal',
+    source: 0x51f15eed,
+    participantCount: smallMaxPlayers,
+  }).mapSize, 'small');
+  assert.equal(createMapLaunchSelection({
+    gameplayMode: 'battle_royal',
+    source: 0x51f15eed,
+    participantCount: Math.ceil((rules.minPlayers + rules.maxPlayers) / 2),
+  }).mapSize, 'medium');
+  assert.equal(createMapLaunchSelection({
+    gameplayMode: 'battle_royal',
+    source: 0x51f15eed,
+    participantCount: largeMinPlayers,
+  }).mapSize, 'large');
 }
 
 {

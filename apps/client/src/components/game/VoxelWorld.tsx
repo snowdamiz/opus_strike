@@ -1,7 +1,7 @@
 import { VoxelMap } from './procedural';
 import type { MapProfileId, VoxelMapTheme } from '@voxel-strike/shared';
 import type { VoxelMapWarmupStatus } from './procedural/VoxelMap';
-import type { MaterialQualityConfig, WorldPerformanceBudget } from './visualQuality';
+import type { BattleRoyalVisibilityConfig, MaterialQualityConfig, WorldPerformanceBudget } from './visualQuality';
 
 interface VoxelWorldProps {
   seed?: number;
@@ -14,6 +14,7 @@ interface VoxelWorldProps {
   reflectionIntensity: number;
   materialQuality: MaterialQualityConfig['terrainTextureQuality'];
   performanceBudget: WorldPerformanceBudget;
+  battleRoyalVisibility?: BattleRoyalVisibilityConfig;
   prebuildRegions?: boolean;
   onWarmupStatus?: (status: VoxelMapWarmupStatus) => void;
   onReady?: () => void;
@@ -30,6 +31,7 @@ export function VoxelWorld({
   reflectionIntensity,
   materialQuality,
   performanceBudget,
+  battleRoyalVisibility,
   prebuildRegions = false,
   onWarmupStatus,
   onReady,
@@ -47,6 +49,7 @@ export function VoxelWorld({
         reflectionIntensity={reflectionIntensity}
         materialQuality={materialQuality}
         performanceBudget={performanceBudget}
+        battleRoyalVisibility={battleRoyalVisibility}
         prebuildRegions={prebuildRegions}
         onWarmupStatus={onWarmupStatus}
         onReady={onReady}

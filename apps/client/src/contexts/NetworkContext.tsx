@@ -67,6 +67,7 @@ import { clearActivePartySession, saveActivePartySession } from '../utils/active
 export type { RankedTokenHoldStatus } from './networkApi';
 
 type StartPracticeGameOptions = { mapSeed?: number; tutorial?: boolean; heroId?: HeroId; matchPerspective?: MatchPerspective };
+type EnsurePartyOptions = { selectedMode?: PartyMode; gameplayMode?: GameplayMode };
 const TUTORIAL_HERO_ID: HeroId = 'blaze';
 
 function facingToLookYaw(facing: { x: number; z: number } | null | undefined): number {
@@ -102,7 +103,7 @@ interface NetworkContextType {
   joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
   joinMatchmakingLobby: (playerName: string, launch: PartyLaunchPayload) => Promise<void>;
   leaveLobby: () => void;
-  ensureParty: (playerName: string, heroId?: HeroId) => Promise<string>;
+  ensureParty: (playerName: string, heroId?: HeroId, options?: EnsurePartyOptions) => Promise<string>;
   joinParty: (playerName: string, partyId: string, heroId?: HeroId) => Promise<void>;
   restoreParty: (playerName: string, persistentPartyId: string, heroId?: HeroId) => Promise<void>;
   getActivePartySession: () => Promise<ActivePartySessionResponse>;
@@ -841,7 +842,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const getActivePartySession = useCallback(() => requestActivePartySession(), []);
 
-  const ensureParty = useCallback(async (playerName: string, heroId?: HeroId): Promise<string> => {
+  const ensureParty = useCallback(async (playerName: string, heroId?: HeroId, options?: EnsurePartyOptions): Promise<string> => {
     const existingParty = usePartyStore.getState().party;
     if (partyRoomRef.current && existingParty) return existingParty.partyId;
 
@@ -849,6 +850,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     partyRoomRef.current = await client.create('party_room', {
       playerName,
       heroId,
+      selectedMode: options?.selectedMode,
+      gameplayMode: options?.gameplayMode,
       ...getDevTutorialBypassRoomOptions(),
     });
     setupPartyListeners(partyRoomRef.current, playerName);

@@ -9,6 +9,8 @@ interface MatchLoadingScreenProps {
   isComplete?: boolean;
   progress?: number;
   label?: string;
+  eyebrow?: string;
+  title?: string;
   initialProgress?: number;
   onProgressChange?: (progress: number) => void;
 }
@@ -22,6 +24,8 @@ export function MatchLoadingScreen({
   isComplete = false,
   progress: coordinatorProgress,
   label = 'Systems',
+  eyebrow = 'Match',
+  title = 'LOADING ARENA',
   initialProgress = MATCH_LOADING_INITIAL_PROGRESS,
   onProgressChange,
 }: MatchLoadingScreenProps) {
@@ -72,10 +76,10 @@ export function MatchLoadingScreen({
           <div className="mb-6 flex items-end justify-between gap-4">
             <div className="min-w-0">
               <p className="font-body text-[11px] uppercase tracking-[0.34em] text-white/35">
-                Match
+                {eyebrow}
               </p>
               <h1 className="mt-2 font-display text-5xl leading-none text-white sm:text-6xl">
-                LOADING ARENA
+                {title}
               </h1>
             </div>
             <div className="shrink-0 font-mono text-2xl font-semibold tabular-nums text-orange-400 sm:text-3xl">

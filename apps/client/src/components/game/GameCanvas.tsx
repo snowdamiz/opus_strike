@@ -30,9 +30,7 @@ import { BudgetedPointLight, DynamicLightBudgetSystem } from './systems/DynamicL
 import { CombatTextLayer } from './CombatText';
 import { useGameStore } from '../../store/gameStore';
 import { graphicsPresetSettings, useSettingsStore } from '../../store/settingsStore';
-import {
-  getMapPrepCacheKey,
-} from '../../utils/mapWarmup/mapPrepCache';
+import { getMapPrepCacheKey } from '../../utils/mapWarmup/mapPrepCache';
 import {
   createMapWarmupSnapshot,
   isMapWarmupReadyForMatchStart,
@@ -42,9 +40,11 @@ import {
 } from '../../utils/mapWarmup/mapWarmupCoordinator';
 import {
   getVisualQualityConfig,
+  DEFAULT_CAMERA_FAR,
   type ReflectionQualityConfig,
   type ShadowQualityConfig,
 } from './visualQuality';
+import { getBattleRoyalVisibilityMode } from './battleRoyalVisibilityMode';
 import { FrameTimeHistogram } from './adaptiveQualityHistogram';
 import { configureVisualPhysicsQueryBudget } from '../../hooks/usePhysics';
 import { prewarmLocalMovementCollisionWorld } from '../../movement/localPrediction';
@@ -66,18 +66,20 @@ const PHANTOM_NIGHT_HEMISPHERE_SKY_COLOR = new THREE.Color('#3b1c64');
 const PHANTOM_NIGHT_HEMISPHERE_GROUND_COLOR = new THREE.Color('#171120');
 const PHANTOM_NIGHT_SUN_COLOR = new THREE.Color('#8f83c9');
 const PHANTOM_NIGHT_RIM_COLOR = new THREE.Color('#a78bfa');
+const DEFAULT_SCENE_FOG_DENSITY = 0.0062;
 
 type GameMapTheme = ReturnType<typeof getVoxelMapTheme>;
 
-function CameraSettingsApplier({ fov }: { fov: number }) {
+function CameraSettingsApplier({ far, fov }: { far: number; fov: number }) {
   const { camera } = useThree();
 
   useEffect(() => {
     if ('fov' in camera) {
       (camera as THREE.PerspectiveCamera).fov = fov;
+      (camera as THREE.PerspectiveCamera).far = far;
       (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
     }
-  }, [camera, fov]);
+  }, [camera, far, fov]);
 
   return null;
 }
@@ -110,7 +112,13 @@ function PhysicsBudgetApplier({ maxVisualQueriesPerFrame }: { maxVisualQueriesPe
   return null;
 }
 
-function SceneAtmosphereColors({ theme }: { theme: GameMapTheme }) {
+function SceneAtmosphereColors({
+  fogDensity,
+  theme,
+}: {
+  fogDensity: number;
+  theme: GameMapTheme;
+}) {
   const { gl, scene } = useThree();
   const fogRef = useRef<THREE.FogExp2>(null);
   const backgroundColorRef = useRef(new THREE.Color(theme.skyColor));
@@ -132,9 +140,9 @@ function SceneAtmosphereColors({ theme }: { theme: GameMapTheme }) {
 
     if (fogRef.current) {
       fogRef.current.color.copy(baseFogColor);
-      fogRef.current.density = 0.0062;
+      fogRef.current.density = fogDensity;
     }
-  }, [baseFogColor, baseSkyColor, gl, scene]);
+  }, [baseFogColor, baseSkyColor, fogDensity, gl, scene]);
 
   useFrame(({ clock }) => {
     const fireIntensity = getBlazeGearstormSkyIntensity();
@@ -153,15 +161,17 @@ function SceneAtmosphereColors({ theme }: { theme: GameMapTheme }) {
         .copy(baseFogColor)
         .lerp(fireFogColor, fireIntensity)
         .lerp(PHANTOM_NIGHT_FOG_COLOR, phantomIntensity);
+      const fireFogDensity = Math.max(fogDensity * 1.28, 0.009);
+      const phantomFogDensity = Math.max(fogDensity * 1.08, 0.0074);
       fogRef.current.density = THREE.MathUtils.lerp(
-        THREE.MathUtils.lerp(0.0062, 0.009, fireIntensity),
-        0.0074,
+        THREE.MathUtils.lerp(fogDensity, fireFogDensity, fireIntensity),
+        phantomFogDensity,
         phantomIntensity
       );
     }
   });
 
-  return <fogExp2 ref={fogRef} attach="fog" args={[theme.fogColor, 0.0062]} />;
+  return <fogExp2 ref={fogRef} attach="fog" args={[theme.fogColor, fogDensity]} />;
 }
 
 function ThemedWorldLighting({
@@ -795,6 +805,8 @@ export function GameCanvas({
   const isTutorialMode = useGameStore((state) => state.isTutorialMode);
   const gameplayMode = useGameStore((state) => state.gameplayMode);
   const localPlayerState = useGameStore((state) => state.localPlayer?.state ?? null);
+  const localPlayerId = useGameStore((state) => state.localPlayer?.id ?? state.playerId);
+  const battleRoyalDrop = useGameStore((state) => state.battleRoyalDrop);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
@@ -822,32 +834,71 @@ export function GameCanvas({
     [mapTheme]
   );
   const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
-  const isBattleRoyalEliminated = gameplayMode === 'battle_royal' && localPlayerState === 'dead';
+  const isBattleRoyal = gameplayMode === 'battle_royal';
+  const battleRoyalVisibilityMode = isBattleRoyal
+    ? getBattleRoyalVisibilityMode({
+      gamePhase,
+      drop: battleRoyalDrop,
+      localPlayerId,
+    })
+    : 'runtime';
+  const battleRoyalVisibility = isBattleRoyal
+    ? (
+      battleRoyalVisibilityMode === 'deployment'
+        ? qualityConfig.battleRoyalDeploymentVisibility
+        : qualityConfig.battleRoyalVisibility
+    )
+    : undefined;
+  const effectiveCameraFar = battleRoyalVisibility?.cameraFar ?? DEFAULT_CAMERA_FAR;
+  const isBattleRoyalEliminated = isBattleRoyal && localPlayerState === 'dead';
   const isWorldReady = warmupSnapshot.key === warmupKey && warmupSnapshot.canAcceptInput;
   const isReadyForMatchStart = isMapWarmupReadyForMatchStart(warmupSnapshot, warmupKey);
   const shouldMountGameplayObjects = isPlaying || warmupSnapshot.canShowGameplayObjects;
   const effectiveEnvironmentConfig = useMemo(
-    () => startupRampActive
-      ? {
-        ...qualityConfig.environment,
-        particleDensity: Math.min(qualityConfig.environment.particleDensity, 0.35),
-        dustDevilDensity: 0,
-        dressingDensity: Math.min(qualityConfig.environment.dressingDensity, 0.55),
-        maxParticles: Math.min(qualityConfig.environment.maxParticles, 120),
-      }
-      : qualityConfig.environment,
-    [qualityConfig.environment, startupRampActive]
+    () => {
+      const environmentConfig = startupRampActive
+        ? {
+          ...qualityConfig.environment,
+          particleDensity: Math.min(qualityConfig.environment.particleDensity, 0.35),
+          dustDevilDensity: 0,
+          dressingDensity: Math.min(qualityConfig.environment.dressingDensity, 0.55),
+          maxParticles: Math.min(qualityConfig.environment.maxParticles, 120),
+        }
+        : qualityConfig.environment;
+
+      if (!battleRoyalVisibility) return environmentConfig;
+
+      return {
+        ...environmentConfig,
+        dressingDensity: Math.min(environmentConfig.dressingDensity, 0.62),
+        maxParticles: Math.min(environmentConfig.maxParticles, 260),
+      };
+    },
+    [battleRoyalVisibility, qualityConfig.environment, startupRampActive]
   );
   const effectiveEffectsConfig = useMemo(
-    () => startupRampActive
-      ? {
-        ...qualityConfig.effects,
-        enableDecorativeLights: false,
-        maxActiveParticles: Math.min(qualityConfig.effects.maxActiveParticles, 80),
-        maxActiveTrails: Math.min(qualityConfig.effects.maxActiveTrails, 8),
-      }
-      : qualityConfig.effects,
-    [qualityConfig.effects, startupRampActive]
+    () => {
+      const effectsConfig = startupRampActive
+        ? {
+          ...qualityConfig.effects,
+          enableDecorativeLights: false,
+          maxActiveParticles: Math.min(qualityConfig.effects.maxActiveParticles, 80),
+          maxActiveTrails: Math.min(qualityConfig.effects.maxActiveTrails, 8),
+        }
+        : qualityConfig.effects;
+
+      if (!battleRoyalVisibility) return effectsConfig;
+
+      return {
+        ...effectsConfig,
+        maxActiveParticles: Math.min(effectsConfig.maxActiveParticles, 220),
+        maxActiveTrails: Math.min(effectsConfig.maxActiveTrails, 28),
+        maxVisibleRemoteAbilityEffects: Math.min(effectsConfig.maxVisibleRemoteAbilityEffects, 18),
+        maxRemoteMovementEffectDistance: battleRoyalVisibility.remoteMovementEffectDistance,
+        maxTerrainImpactRenderDistance: battleRoyalVisibility.terrainImpactDistance,
+      };
+    },
+    [battleRoyalVisibility, qualityConfig.effects, startupRampActive]
   );
   const effectiveDynamicLights = useMemo(
     () => startupRampActive
@@ -920,10 +971,10 @@ export function GameCanvas({
     <Canvas
       shadows={qualityConfig.shadows.enabled}
       dpr={qualityConfig.render.dpr}
-      camera={{ 
+      camera={{
         fov: settings.fov,
-        near: 0.1, 
-        far: 1000,
+        near: 0.1,
+        far: effectiveCameraFar,
         position: [0, 2, 10], // Start at a reasonable height
       }}
       gl={{ 
@@ -951,7 +1002,7 @@ export function GameCanvas({
       }}
     >
       <Suspense fallback={null}>
-        <CameraSettingsApplier fov={settings.fov} />
+        <CameraSettingsApplier far={effectiveCameraFar} fov={settings.fov} />
         <RendererSettingsApplier exposure={qualityConfig.render.exposure} shadows={qualityConfig.shadows} />
         <PhysicsBudgetApplier maxVisualQueriesPerFrame={qualityConfig.budgets.maxVisualPhysicsQueriesPerFrame} />
         <GameplayFrameSystems />
@@ -978,6 +1029,7 @@ export function GameCanvas({
           reflectionIntensity={qualityConfig.reflections.materialIntensity}
           materialQuality={qualityConfig.materials.terrainTextureQuality}
           performanceBudget={qualityConfig.budgets}
+          battleRoyalVisibility={battleRoyalVisibility}
           themeId={mapThemeId}
           mapProfileId={mapProfileId}
           prebuildRegions
@@ -997,7 +1049,7 @@ export function GameCanvas({
           sectionSize={10}
           sectionThickness={0.55}
           sectionColor={gridSectionColor}
-          fadeDistance={78}
+          fadeDistance={battleRoyalVisibility?.gridFadeDistance ?? 78}
           fadeStrength={1.45}
           followCamera={false}
         />
@@ -1059,7 +1111,10 @@ export function GameCanvas({
         {/* Orbit controls when not playing for looking around */}
         {!isPlaying && <OrbitControls target={[0, 0, 0]} enablePan={false} />}
 
-        <SceneAtmosphereColors theme={mapTheme} />
+        <SceneAtmosphereColors
+          fogDensity={battleRoyalVisibility?.fogDensity ?? DEFAULT_SCENE_FOG_DENSITY}
+          theme={mapTheme}
+        />
         <SceneReadySignal
           onReady={onMatchStartReady}
           ready={isReadyForMatchStart}

@@ -2118,7 +2118,6 @@ body,
 }
 
 .party-lineup-controls {
-  --party-lineup-label-y: 0.16rem;
   position: fixed;
   left: 50%;
   bottom: max(0.32rem, env(safe-area-inset-bottom));
@@ -2126,25 +2125,7 @@ body,
   display: grid;
   max-width: calc(100vw - (var(--play-corner-inset) * 2));
   justify-items: center;
-  gap: 0.58rem;
   transform: translateX(-50%);
-}
-
-.party-lineup-controls-label {
-  position: absolute;
-  top: 50%;
-  right: calc(100% + 0.9rem);
-  color: white;
-  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
-  font-size: clamp(1.55rem, 1.1rem + 1.05vw, 2.45rem);
-  letter-spacing: 0;
-  line-height: 0.9;
-  pointer-events: none;
-  text-shadow:
-    0 0 1.35rem rgb(var(--color-accent-primary) / 0.28),
-    0 0.18rem 0.45rem rgb(0 0 0 / 0.42);
-  transform: translateY(calc(-50% + var(--party-lineup-label-y)));
-  white-space: nowrap;
 }
 
 .party-hero-picker {
@@ -4048,14 +4029,7 @@ body,
   }
 
   .party-lineup-controls {
-    --party-lineup-label-y: 0.1rem;
     bottom: max(0.24rem, env(safe-area-inset-bottom));
-    gap: 0.42rem;
-  }
-
-  .party-lineup-controls-label {
-    right: calc(100% + 0.52rem);
-    font-size: clamp(1.2rem, 4.8vw, 1.8rem);
   }
 
   .party-hero-picker {

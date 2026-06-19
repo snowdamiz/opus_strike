@@ -5,6 +5,7 @@ import {
   isGameplayMode,
   isMatchPerspective,
   isMatchPerspectiveSettingMode,
+  isPartyMode,
   type BotDifficulty,
   type GameplayMode,
   type HeroId,
@@ -31,6 +32,8 @@ import { loggers } from '../utils/logger';
 
 interface PartyJoinOptions {
   heroId?: HeroId;
+  selectedMode?: PartyMode;
+  gameplayMode?: GameplayMode;
   authToken?: string;
   devTutorialBypass?: boolean;
   restorePartyId?: string;
@@ -65,7 +68,7 @@ function validateModePayload(value: unknown): {
 } | null {
   if (!isRecord(value)) return null;
   const mode = value.mode;
-  if (mode !== 'quick_play' && mode !== 'ranked' && mode !== 'custom' && mode !== 'practice') return null;
+  if (!isPartyMode(mode)) return null;
   const gameplayMode = value.gameplayMode;
   if (gameplayMode !== undefined && !isGameplayMode(gameplayMode)) {
     return null;
@@ -165,6 +168,10 @@ export class PartyRoom extends Room {
 
   onCreate(options: PartyJoinOptions = {}) {
     this.party = new PartyRosterRuntime(this.roomId, PARTY_MAX_MEMBERS);
+    this.party.initializeSelection({
+      selectedMode: options.selectedMode,
+      gameplayMode: options.gameplayMode,
+    });
     this.restorePartyId = sanitizePersistentPartyId(options.restorePartyId);
     this.persistentPartyId = this.restorePartyId ?? this.roomId;
 

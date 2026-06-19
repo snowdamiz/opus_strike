@@ -1391,7 +1391,7 @@ export function createProceduralMapPreview(
 ): ProceduralMapPreview {
   const normalizedSeed = seed >>> 0;
   if (options.profileId === 'battle_royal_large') {
-    return createBattleRoyalMapPreview(normalizedSeed, { themeId: options.themeId });
+    return createBattleRoyalMapPreview(normalizedSeed, { themeId: options.themeId, mapSize });
   }
 
   const theme = getVoxelMapTheme(normalizedSeed, options.themeId);

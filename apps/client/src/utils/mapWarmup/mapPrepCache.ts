@@ -40,7 +40,7 @@ export interface MapPrepCacheKeyInput {
 
 export interface PrepareVoxelMapOptions extends MapPrepCacheKeyInput {
   manifest?: VoxelMapManifest;
-  source?: 'match' | 'mapVotePreview' | 'mapVoteFinalized' | 'test';
+  source?: 'match' | 'mapVotePreview' | 'mapVoteFinalized' | 'mapGenerationStarted' | 'test';
 }
 
 export interface PreparedVoxelMap {

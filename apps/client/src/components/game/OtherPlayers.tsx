@@ -27,7 +27,7 @@ import { gameplayFrameScheduler } from './systems/gameplayFrameScheduler';
 
 interface OtherPlayersProps {
   config: RemotePlayerQualityConfig;
-  effectConfig: Pick<EffectQualityConfig, 'maxActiveParticles'>;
+  effectConfig: Pick<EffectQualityConfig, 'maxActiveParticles' | 'maxRemoteMovementEffectDistance'>;
   theme: VoxelMapTheme;
 }
 

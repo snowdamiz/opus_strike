@@ -67,7 +67,10 @@ let activeImpactConfig: EffectQualityConfig = {
   maxActiveParticles: 620,
   maxVisibleRemoteAbilityEffects: 48,
   enableDecorativeLights: true,
+  maxRemoteMovementEffectDistance: Number.POSITIVE_INFINITY,
+  maxTerrainImpactRenderDistance: Number.POSITIVE_INFINITY,
 };
+const activeImpactCameraPosition = new THREE.Vector3(Number.NaN, Number.NaN, Number.NaN);
 const PHANTOM_DIRE_IMPACT_CAPACITY = 48;
 const PHANTOM_DIRE_IMPACT_PARTICLES = 10;
 const PHANTOM_DIRE_IMPACT_SMOKE = 1;
@@ -582,12 +585,22 @@ function claimGenericImpact(
   slot.seed = Math.random() * Math.PI * 2;
 }
 
+function isImpactWithinRenderDistance(position: { x: number; y: number; z: number }): boolean {
+  const maxDistance = activeImpactConfig.maxTerrainImpactRenderDistance;
+  if (!Number.isFinite(maxDistance) || !Number.isFinite(activeImpactCameraPosition.x)) return true;
+  const dx = position.x - activeImpactCameraPosition.x;
+  const dy = position.y - activeImpactCameraPosition.y;
+  const dz = position.z - activeImpactCameraPosition.z;
+  return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
+}
+
 export function triggerTerrainImpact(
   kind: TerrainImpactKind,
   position: { x: number; y: number; z: number },
   options: TerrainImpactOptions = {}
 ): void {
   if (activeImpactConfig.maxActiveImpacts <= 0) return;
+  if (!isImpactWithinRenderDistance(position)) return;
 
   const style = getImpactStyle(kind);
   const normal = options.normal ?? UP;
@@ -610,7 +623,8 @@ export function TerrainImpactEffectsManager({ config }: { config: EffectQualityC
     activeImpactConfig = config;
   }, [config]);
 
-  useFrame(() => {
+  useFrame(({ camera }) => {
+    activeImpactCameraPosition.copy(camera.position);
     const frameNow = getFrameClock().nowMs;
     measureFrameWork('frame.effects.terrainImpacts', () => {
       updatePooledPhantomDireImpacts(phantomRenderSlotsRef.current, frameNow);

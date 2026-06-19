@@ -122,6 +122,15 @@ export class PartyRosterRuntime {
     return modeKey ? this.perspectiveByMode[modeKey] : DEFAULT_MATCH_PERSPECTIVE;
   }
 
+  initializeSelection(input: Pick<PersistentPartySnapshotInput, 'selectedMode' | 'gameplayMode'>): void {
+    if (isPartyMode(input.selectedMode)) {
+      this.selectedMode = input.selectedMode;
+    }
+    if (isGameplayMode(input.gameplayMode)) {
+      this.gameplayMode = input.gameplayMode;
+    }
+  }
+
   addMember(input: AddPartyMemberInput): PartyMemberChange {
     const existing = this.members.get(input.userId);
     if (!existing && this.members.size >= this.maxMembers) {
@@ -263,12 +272,7 @@ export class PartyRosterRuntime {
   restorePersistentSnapshot(snapshot: PersistentPartySnapshotInput | null | undefined): void {
     if (!snapshot || typeof snapshot !== 'object') return;
 
-    if (isPartyMode(snapshot.selectedMode)) {
-      this.selectedMode = snapshot.selectedMode;
-    }
-    if (isGameplayMode(snapshot.gameplayMode)) {
-      this.gameplayMode = snapshot.gameplayMode;
-    }
+    this.initializeSelection(snapshot);
 
     const botFill = createDefaultPartyBotFillSettings();
     if (snapshot.botFillEnabledByMode && typeof snapshot.botFillEnabledByMode === 'object') {

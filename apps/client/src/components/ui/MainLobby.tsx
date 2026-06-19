@@ -957,6 +957,8 @@ export function MainLobby() {
       {showSocial && isAuthenticated && (
         <SocialBox
           selectedHero={featuredHero}
+          initialPartyMode={getPartyModeForPlayMode(activePlayMode)}
+          initialGameplayMode={getGameplayModeForPlayMode(activePlayMode)}
           onClose={() => setShowSocial(false)}
         />
       )}
@@ -1172,7 +1174,6 @@ function PlayTab({
       </div>
       {lineupLocalMember && (
         <div className="party-lineup-controls">
-          <span className="party-lineup-controls-label">HEROES</span>
           <PartyHeroPicker
             selectedHero={lineupSelectedHero}
             lockedHeroIds={lineupLockedHeroIds}

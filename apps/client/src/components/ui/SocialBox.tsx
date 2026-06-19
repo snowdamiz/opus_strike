@@ -1,6 +1,6 @@
 import * as SelectPrimitive from '@radix-ui/react-select';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { PARTY_MAX_MEMBERS, type BotDifficulty, type HeroId, type MatchMode, type PartyMemberSnapshot } from '@voxel-strike/shared';
+import { PARTY_MAX_MEMBERS, type BotDifficulty, type GameplayMode, type HeroId, type MatchMode, type PartyMemberSnapshot, type PartyMode } from '@voxel-strike/shared';
 import { config } from '../../config/environment';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
@@ -525,9 +525,13 @@ export function useSocialBadgeCount(): number {
 export function SocialBox({
   onClose,
   selectedHero = 'blaze',
+  initialPartyMode,
+  initialGameplayMode,
 }: {
   onClose: () => void;
   selectedHero?: HeroId;
+  initialPartyMode?: PartyMode;
+  initialGameplayMode?: GameplayMode;
 }) {
   const { isAuthenticated, user } = useWallet();
   const { addPartyBot, ensureParty, joinLobby, joinParty, kickPartyMember, startTutorialGame } = useNetwork();
@@ -749,7 +753,10 @@ export function SocialBox({
         throw new Error('Open Play or join a lobby before inviting friends');
       }
 
-      const partyId = await ensureParty(playerName || user?.name || 'Player', selectedHero);
+      const partyId = await ensureParty(playerName || user?.name || 'Player', selectedHero, {
+        selectedMode: initialPartyMode,
+        gameplayMode: initialGameplayMode,
+      });
       await socialApi('/social/party-invites', {
         method: 'POST',
         body: JSON.stringify({
@@ -776,7 +783,10 @@ export function SocialBox({
         throw new Error('Party is full');
       }
 
-      await ensureParty(playerName || user?.name || 'Player', selectedHero);
+      await ensureParty(playerName || user?.name || 'Player', selectedHero, {
+        selectedMode: initialPartyMode,
+        gameplayMode: initialGameplayMode,
+      });
       addPartyBot({
         difficulty,
         displayName: `${label} Bot`,

@@ -3127,7 +3127,7 @@ export function generateProceduralVoxelMap(
   }
 
   if (options.profileId === 'battle_royal_large') {
-    return generateBattleRoyalVoxelMap(seed, { themeId: options.themeId });
+    return generateBattleRoyalVoxelMap(seed, { themeId: options.themeId, mapSize: options.mapSize });
   }
 
   return generateProceduralVoxelMapInternal(seed, undefined, options);
@@ -3155,7 +3155,7 @@ export function generateProceduralVoxelMapWithDiagnostics(
 
   const normalizedSeed = seed >>> 0;
   if (options.profileId === 'battle_royal_large') {
-    const manifest = generateBattleRoyalVoxelMap(normalizedSeed, { themeId: options.themeId });
+    const manifest = generateBattleRoyalVoxelMap(normalizedSeed, { themeId: options.themeId, mapSize: options.mapSize });
     return {
       manifest,
       diagnostics: {

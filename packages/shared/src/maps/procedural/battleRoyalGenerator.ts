@@ -24,6 +24,7 @@ import {
   type MapDesignBrief,
   type MapNamedLocation,
   type MapNamedLocationKind,
+  type MapPerformanceBudget,
   type MapPowerupPickup,
   type ProtectedZone,
   type RouteGraph,
@@ -36,6 +37,7 @@ import {
   type VoxelMapManifest,
   type VoxelMapStats,
   type VoxelMapTheme,
+  type VoxelMapSizeId,
   type VoxelSize,
 } from './types.js';
 
@@ -44,7 +46,6 @@ const WORLD_SIZE = 376;
 const WORLD_HEIGHT = 96;
 const CHUNK_SIZE: VoxelSize = { x: 16, y: 16, z: 16 };
 const BASE_RADIUS = 173;
-const SPAWN_CLUSTER_RADIUS = BASE_RADIUS * 0.86;
 const SPAWN_CLUSTER_POINT_RADIUS = 2.75;
 const SPAWN_FLATTEN_RADIUS = 11.5;
 const POWERUP_FLATTEN_RADIUS = 3.2;
@@ -55,6 +56,7 @@ const MAX_TERRAIN_ROWS = 70;
 const TERRAIN_SHELL_DEPTH_ROWS = 5;
 const TERRAIN_SIDE_ROWS = 3;
 const BOUNDARY_WALL_THICKNESS = 3.4;
+const SPAWN_BOUNDARY_PADDING = SPAWN_CLUSTER_POINT_RADIUS + BOUNDARY_WALL_THICKNESS + 1.5;
 const BOUNDARY_WALL_ROWS = 72;
 const ROAD_FLATTEN_SAMPLE_SPACING = 14;
 const SIGHTLINE_EYE_ROWS = 4.2;
@@ -62,6 +64,7 @@ const SIGHTLINE_SAMPLE_GRID_SPACING = 42;
 const SIGHTLINE_SAMPLE_STEP_DISTANCE = 2.25;
 const SIGHTLINE_MIN_REPORTED_DISTANCE = 45;
 const SIGHTLINE_OCCLUSION_TARGET_DISTANCE = 155;
+const SIGHTLINE_WARNING_MAX_DISTANCE = 180;
 const SIGHTLINE_REPAIR_MAX_PASSES = 30;
 const HEALTH_PACK_COUNT = 42;
 const STRATEGIC_POWERUP_COUNT = 24;
@@ -78,6 +81,100 @@ type RoadSegmentKind = 'primary' | 'loop' | 'spur' | 'wild';
 type CoverRole = 'settlement' | 'roadside' | 'natural' | 'spawn_shelter';
 type CoverMaterial = 'terrain' | 'metal' | 'glass';
 type TerrainFeatureKind = 'mountain' | 'ridge';
+
+function createBattleRoyalSizeProfile(
+  mapSize: VoxelMapSizeId,
+  scale: number,
+  overrides: Pick<
+    BattleRoyalSizeProfile,
+    | 'healthPackCount'
+    | 'strategicPowerupCount'
+    | 'sightlineOcclusionTargetDistance'
+    | 'sightlineWarningMaxDistance'
+    | 'performanceBudget'
+    | 'labelTags'
+  >
+): BattleRoyalSizeProfile {
+  const worldSize = Math.round((WORLD_SIZE * scale) / VOXEL_SIZE.x) * VOXEL_SIZE.x;
+  const baseRadius = BASE_RADIUS * scale;
+
+  return {
+    mapSize,
+    scale,
+    worldSize,
+    worldHeight: WORLD_HEIGHT,
+    baseRadius,
+    spawnClusterRadius: baseRadius * 0.86,
+    sightlineSampleGridSpacing: SIGHTLINE_SAMPLE_GRID_SPACING * scale,
+    ...overrides,
+  };
+}
+
+interface BattleRoyalSizeProfile {
+  mapSize: VoxelMapSizeId;
+  scale: number;
+  worldSize: number;
+  worldHeight: number;
+  baseRadius: number;
+  spawnClusterRadius: number;
+  healthPackCount: number;
+  strategicPowerupCount: number;
+  sightlineSampleGridSpacing: number;
+  sightlineOcclusionTargetDistance: number;
+  sightlineWarningMaxDistance: number;
+  performanceBudget: MapPerformanceBudget;
+  labelTags: string[];
+}
+
+const BATTLE_ROYAL_SIZE_PROFILES: Record<VoxelMapSizeId, BattleRoyalSizeProfile> = {
+  small: createBattleRoyalSizeProfile('small', 0.72, {
+    healthPackCount: 22,
+    strategicPowerupCount: 12,
+    sightlineOcclusionTargetDistance: 112,
+    sightlineWarningMaxDistance: 132,
+    labelTags: ['Battle Royal', '12-18 Players', 'Compact', 'Towns', 'Fast Routes'],
+    performanceBudget: {
+      maxSolidBlocks: 4_600_000,
+      maxColliders: 150_000,
+      maxRenderableChunks: 4_300,
+      maxGenerationMs: 6_000,
+    },
+  }),
+  medium: createBattleRoyalSizeProfile('medium', 0.86, {
+    healthPackCount: 32,
+    strategicPowerupCount: 18,
+    sightlineOcclusionTargetDistance: 132,
+    sightlineWarningMaxDistance: 155,
+    labelTags: ['Battle Royal', '19-26 Players', 'Balanced', 'Towns', 'Open Routes'],
+    performanceBudget: {
+      maxSolidBlocks: 6_400_000,
+      maxColliders: 215_000,
+      maxRenderableChunks: 5_900,
+      maxGenerationMs: 7_500,
+    },
+  }),
+  large: createBattleRoyalSizeProfile('large', 1, {
+    healthPackCount: HEALTH_PACK_COUNT,
+    strategicPowerupCount: STRATEGIC_POWERUP_COUNT,
+    sightlineOcclusionTargetDistance: SIGHTLINE_OCCLUSION_TARGET_DISTANCE,
+    sightlineWarningMaxDistance: SIGHTLINE_WARNING_MAX_DISTANCE,
+    labelTags: ['Battle Royal', '27-33 Players', 'Expansive', 'Towns', 'Open Routes'],
+    performanceBudget: {
+      maxSolidBlocks: 8_750_000,
+      maxColliders: 280_000,
+      maxRenderableChunks: 7600,
+      maxGenerationMs: 9000,
+    },
+  }),
+};
+
+function normalizeBattleRoyalMapSize(mapSize?: VoxelMapSizeId | null): VoxelMapSizeId {
+  return mapSize === 'small' || mapSize === 'medium' || mapSize === 'large' ? mapSize : 'large';
+}
+
+function getBattleRoyalSizeProfile(mapSize?: VoxelMapSizeId | null): BattleRoyalSizeProfile {
+  return BATTLE_ROYAL_SIZE_PROFILES[normalizeBattleRoyalMapSize(mapSize)];
+}
 
 interface FlattenZone {
   center: { x: number; z: number };
@@ -180,6 +277,7 @@ interface SightlinePair {
 
 interface BattleRoyalLayout {
   seed: number;
+  profile: BattleRoyalSizeProfile;
   theme: VoxelMapTheme;
   origin: Vec3;
   size: VoxelSize;
@@ -272,6 +370,21 @@ function clampPointToBoundary(point: { x: number; z: number }, boundary: Boundar
   };
 }
 
+function insetPointFromBoundary(point: { x: number; z: number }, boundary: BoundaryPoint[], padding: number): { x: number; z: number } {
+  if (boundary.length < 3) return { x: point.x, z: point.z };
+
+  const { point: closest, normal } = getClosestBoundaryPoint(point.x, point.z, boundary);
+  const distance = distance2D(point, closest);
+  if (isInsideBoundaryPolygon(point.x, point.z, boundary) && distance >= padding) {
+    return { x: point.x, z: point.z };
+  }
+
+  return {
+    x: closest.x + normal.x * padding,
+    z: closest.z + normal.z * padding,
+  };
+}
+
 function isClearOfCircles(
   position: { x: number; z: number },
   reserved: readonly { x: number; z: number; radius: number }[],
@@ -340,7 +453,7 @@ function featureFalloff(feature: TerrainFeature, worldX: number, worldZ: number)
   return normalized >= 1 ? 0 : smoothstep(1 - normalized);
 }
 
-function createBoundary(seed: number): BoundaryPoint[] {
+function createBoundary(seed: number, profile: BattleRoyalSizeProfile): BoundaryPoint[] {
   const random = mulberry32(seed ^ 0xb417e);
   const points: BoundaryPoint[] = [];
   const pointCount = 64;
@@ -357,7 +470,7 @@ function createBoundary(seed: number): BoundaryPoint[] {
       Math.sin(angle * 9 + phaseC) * 0.034 +
       Math.sin(angle * 15 + phaseD) * 0.018 +
       lerp(-0.035, 0.035, random());
-    const radius = BASE_RADIUS * clamp(0.93 + wave, 0.78, 1.08);
+    const radius = profile.baseRadius * clamp(0.93 + wave, 0.78, 1.08);
     points.push({
       x: Math.cos(angle) * radius,
       z: Math.sin(angle) * radius,
@@ -372,9 +485,10 @@ function terrainRows(
   worldX: number,
   worldZ: number,
   flattenZones: readonly FlattenZone[],
-  terrainFeatures: readonly TerrainFeature[]
+  terrainFeatures: readonly TerrainFeature[],
+  profile: BattleRoyalSizeProfile
 ): number {
-  const radial = Math.hypot(worldX, worldZ) / BASE_RADIUS;
+  const radial = Math.hypot(worldX, worldZ) / profile.baseRadius;
   const centerRise = Math.max(0, 1 - radial) * 1.8;
   const outerShoulder = radial > 0.76 ? smoothstep((radial - 0.76) / 0.2) * 4.5 : 0;
   const broad = (fractalNoise2(seed ^ 0x514f, worldX * 0.0065, worldZ * 0.0065, 5) - 0.5) * 9;
@@ -410,7 +524,7 @@ function terrainRows(
   return Math.round(clamp(rows, MIN_TERRAIN_ROWS, MAX_TERRAIN_ROWS));
 }
 
-function createSpawnClusters(seed: number, boundary: BoundaryPoint[]): {
+function createSpawnClusters(seed: number, boundary: BoundaryPoint[], profile: BattleRoyalSizeProfile): {
   spawns: TeamMap<SpawnCluster>;
   spawnPoints: Record<string, Vec3[]>;
   flattenZones: FlattenZone[];
@@ -425,11 +539,11 @@ function createSpawnClusters(seed: number, boundary: BoundaryPoint[]): {
     const angle = angleOffset + (index / BATTLE_ROYAL_TEAM_IDS.length) * Math.PI * 2;
     const radiusJitter = lerp(-3.5, 2.5, random());
     const unclampedCenter = {
-      x: Math.cos(angle) * (SPAWN_CLUSTER_RADIUS + radiusJitter),
+      x: Math.cos(angle) * (profile.spawnClusterRadius + radiusJitter),
       y: 0,
-      z: Math.sin(angle) * (SPAWN_CLUSTER_RADIUS + radiusJitter),
+      z: Math.sin(angle) * (profile.spawnClusterRadius + radiusJitter),
     };
-    const clampedCenter = clampPointToBoundary(unclampedCenter, boundary, SPAWN_FLATTEN_RADIUS + 5);
+    const clampedCenter = insetPointFromBoundary(unclampedCenter, boundary, SPAWN_BOUNDARY_PADDING);
     const center = { x: clampedCenter.x, y: 0, z: clampedCenter.z };
     const facing = normalize2D({ x: -center.x, z: -center.z });
     const tangent = { x: -facing.z, z: facing.x };
@@ -473,14 +587,17 @@ function getSpawnProtectedPositions(spawns: TeamMap<SpawnCluster>): Array<{ x: n
 function createDistricts(
   seed: number,
   boundary: BoundaryPoint[],
-  spawns: TeamMap<SpawnCluster>
+  spawns: TeamMap<SpawnCluster>,
+  profile: BattleRoyalSizeProfile
 ): BattleRoyalDistrict[] {
   const random = mulberry32(seed ^ 0xd157c7);
+  const baseRadius = profile.baseRadius;
+  const scale = profile.scale;
   const districts: BattleRoyalDistrict[] = [];
   const reserved = getSpawnProtectedPositions(spawns).map((position) => ({
     x: position.x,
     z: position.z,
-    radius: 18,
+    radius: 18 * profile.scale,
   }));
   const angleOffset = random() * Math.PI * 2;
 
@@ -547,8 +664,8 @@ function createDistricts(
   addDistrict(
     'city_core',
     1,
-    sampleAnnulusPoint(random, 0, 9),
-    lerp(32, 38, random()),
+    sampleAnnulusPoint(random, 0, 9 * scale),
+    lerp(32, 38, random()) * scale,
     6,
     random() * Math.PI * 2
   );
@@ -557,8 +674,8 @@ function createDistricts(
     placeDistrict(
       'town',
       index + 1,
-      { min: BASE_RADIUS * 0.34, max: BASE_RADIUS * 0.6 },
-      { min: 23, max: 30 },
+      { min: baseRadius * 0.34, max: baseRadius * 0.6 },
+      { min: 23 * scale, max: 30 * scale },
       3,
       angleOffset + (index / 3) * Math.PI * 2
     );
@@ -567,8 +684,8 @@ function createDistricts(
   placeDistrict(
     'industrial',
     1,
-    { min: BASE_RADIUS * 0.48, max: BASE_RADIUS * 0.72 },
-    { min: 28, max: 35 },
+    { min: baseRadius * 0.48, max: baseRadius * 0.72 },
+    { min: 28 * scale, max: 35 * scale },
     2,
     angleOffset + Math.PI * 0.72
   );
@@ -577,8 +694,8 @@ function createDistricts(
     placeDistrict(
       'hamlet',
       index + 1,
-      { min: BASE_RADIUS * 0.28, max: BASE_RADIUS * 0.7 },
-      { min: 15, max: 20 },
+      { min: baseRadius * 0.28, max: baseRadius * 0.7 },
+      { min: 15 * scale, max: 20 * scale },
       1,
       angleOffset + Math.PI * (0.45 + index)
     );
@@ -588,8 +705,8 @@ function createDistricts(
     placeDistrict(
       'outpost',
       index + 1,
-      { min: BASE_RADIUS * 0.68, max: BASE_RADIUS * 0.9 },
-      { min: 15, max: 21 },
+      { min: baseRadius * 0.68, max: baseRadius * 0.9 },
+      { min: 15 * scale, max: 21 * scale },
       1,
       angleOffset + Math.PI * (0.2 + index * 0.66)
     );
@@ -599,8 +716,8 @@ function createDistricts(
     placeDistrict(
       'open_field',
       index + 1,
-      { min: BASE_RADIUS * 0.24, max: BASE_RADIUS * 0.82 },
-      { min: 24, max: 36 },
+      { min: baseRadius * 0.24, max: baseRadius * 0.82 },
+      { min: 24 * scale, max: 36 * scale },
       random() > 0.5 ? 1 : 0
     );
   }
@@ -609,8 +726,8 @@ function createDistricts(
     placeDistrict(
       'wildland',
       index + 1,
-      { min: BASE_RADIUS * 0.42, max: BASE_RADIUS * 0.9 },
-      { min: 22, max: 34 },
+      { min: baseRadius * 0.42, max: baseRadius * 0.9 },
+      { min: 22 * scale, max: 34 * scale },
       0
     );
   }
@@ -841,9 +958,12 @@ function createTerrainFeatures(
   seed: number,
   boundary: BoundaryPoint[],
   spawns: TeamMap<SpawnCluster>,
-  districts: readonly BattleRoyalDistrict[]
+  districts: readonly BattleRoyalDistrict[],
+  profile: BattleRoyalSizeProfile
 ): TerrainFeature[] {
   const random = mulberry32(seed ^ 0x7e44a11);
+  const baseRadius = profile.baseRadius;
+  const scale = profile.scale;
   const protectedPositions = [
     ...getSpawnProtectedPositions(spawns).map((position) => ({ ...position, radius: 16 })),
     ...districts
@@ -907,9 +1027,9 @@ function createTerrainFeatures(
     addFeature(
       'mountain',
       index,
-      { min: BASE_RADIUS * 0.28, max: BASE_RADIUS * 0.9 },
-      { min: 32, max: 58 },
-      { min: 42, max: 78 },
+      { min: baseRadius * 0.28, max: baseRadius * 0.9 },
+      { min: 32 * scale, max: 58 * scale },
+      { min: 42 * scale, max: 78 * scale },
       { min: 9, max: 16 },
       18
     );
@@ -919,9 +1039,9 @@ function createTerrainFeatures(
     addFeature(
       'ridge',
       index,
-      { min: BASE_RADIUS * 0.18, max: BASE_RADIUS * 0.86 },
-      { min: 58, max: 96 },
-      { min: 18, max: 30 },
+      { min: baseRadius * 0.18, max: baseRadius * 0.86 },
+      { min: 58 * scale, max: 96 * scale },
+      { min: 18 * scale, max: 30 * scale },
       { min: 7, max: 12 },
       14,
       random() > 0.5 ? 0 : Math.PI * 0.5
@@ -931,15 +1051,15 @@ function createTerrainFeatures(
   const occlusionPhase = random() * Math.PI * 2;
   for (let index = 0; index < 6; index++) {
     const angle = occlusionPhase + (index / 6) * Math.PI * 2;
-    const radialDistance = BASE_RADIUS * lerp(0.36, 0.54, random());
+    const radialDistance = baseRadius * lerp(0.36, 0.54, random());
     addOcclusionRidge(
       `sector_screen_${index + 1}`,
       {
         x: Math.cos(angle) * radialDistance,
         z: Math.sin(angle) * radialDistance,
       },
-      lerp(112, 156, random()),
-      lerp(22, 34, random()),
+      lerp(112 * scale, 156 * scale, random()),
+      lerp(22 * scale, 34 * scale, random()),
       angle,
       lerp(30, 44, random()),
       Math.imul(index + 11, 0x5bd1e995)
@@ -948,15 +1068,15 @@ function createTerrainFeatures(
 
   for (let index = 0; index < 6; index++) {
     const angle = occlusionPhase + Math.PI / 6 + (index / 6) * Math.PI * 2;
-    const radialDistance = BASE_RADIUS * lerp(0.52, 0.76, random());
+    const radialDistance = baseRadius * lerp(0.52, 0.76, random());
     addOcclusionRidge(
       `horizon_break_${index + 1}`,
       {
         x: Math.cos(angle) * radialDistance,
         z: Math.sin(angle) * radialDistance,
       },
-      lerp(98, 132, random()),
-      lerp(20, 32, random()),
+      lerp(98 * scale, 132 * scale, random()),
+      lerp(20 * scale, 32 * scale, random()),
       angle + Math.PI * 0.5,
       lerp(28, 40, random()),
       Math.imul(index + 29, 0x27d4eb2d)
@@ -968,11 +1088,11 @@ function createTerrainFeatures(
     addOcclusionRidge(
       `midfield_lip_${index + 1}`,
       {
-        x: Math.cos(angle) * BASE_RADIUS * lerp(0.24, 0.36, random()),
-        z: Math.sin(angle) * BASE_RADIUS * lerp(0.24, 0.36, random()),
+        x: Math.cos(angle) * baseRadius * lerp(0.24, 0.36, random()),
+        z: Math.sin(angle) * baseRadius * lerp(0.24, 0.36, random()),
       },
-      lerp(68, 96, random()),
-      lerp(18, 28, random()),
+      lerp(68 * scale, 96 * scale, random()),
+      lerp(18 * scale, 28 * scale, random()),
       angle + Math.PI * 0.5,
       lerp(21, 32, random()),
       Math.imul(index + 37, 0x85ebca6b)
@@ -987,7 +1107,7 @@ function createTerrainFeatures(
         distance: distance2D(district.center, other.center),
       }))
     ))
-    .filter((pair) => pair.distance >= BASE_RADIUS * 0.62)
+    .filter((pair) => pair.distance >= baseRadius * 0.62)
     .sort((a, b) => b.distance - a.distance);
   for (let index = 0; index < Math.min(38, districtPairs.length); index++) {
     const { a, b, distance } = districtPairs[index];
@@ -1000,8 +1120,8 @@ function createTerrainFeatures(
     addOcclusionRidge(
       `district_screen_${index + 1}`,
       offsetMidpoint,
-      clamp(distance * lerp(openAreaPair ? 0.2 : 0.18, openAreaPair ? 0.3 : 0.26, random()), 52, openAreaPair ? 104 : 88),
-      lerp(openAreaPair ? 22 : 18, openAreaPair ? 36 : 30, random()),
+      clamp(distance * lerp(openAreaPair ? 0.2 : 0.18, openAreaPair ? 0.3 : 0.26, random()), 52 * scale, (openAreaPair ? 104 : 88) * scale),
+      lerp((openAreaPair ? 22 : 18) * scale, (openAreaPair ? 36 : 30) * scale, random()),
       Math.atan2(normal.z, normal.x),
       lerp(openAreaPair ? 30 : 25, openAreaPair ? 44 : 38, random()),
       Math.imul(index + 73, 0xc2b2ae35)
@@ -1013,11 +1133,11 @@ function createTerrainFeatures(
     addOcclusionRidge(
       `outer_bowl_${index + 1}`,
       {
-        x: Math.cos(angle) * BASE_RADIUS * 0.82,
-        z: Math.sin(angle) * BASE_RADIUS * 0.82,
+        x: Math.cos(angle) * baseRadius * 0.82,
+        z: Math.sin(angle) * baseRadius * 0.82,
       },
-      lerp(76, 104, random()),
-      lerp(20, 32, random()),
+      lerp(76 * scale, 104 * scale, random()),
+      lerp(20 * scale, 32 * scale, random()),
       angle + Math.PI * 0.5,
       lerp(26, 38, random()),
       Math.imul(index + 43, 0x165667b1)
@@ -1038,8 +1158,8 @@ function createTerrainFeatures(
     addOcclusionRidge(
       `spawn_separator_${index + 1}`,
       midpoint,
-      lerp(48, 68, random()),
-      lerp(16, 24, random()),
+      lerp(48 * scale, 68 * scale, random()),
+      lerp(16 * scale, 24 * scale, random()),
       radialAngle,
       lerp(15, 25, random()),
       Math.imul(index + 61, 0x9e3779b1)
@@ -1260,7 +1380,8 @@ function createPowerups(
   spawns: TeamMap<SpawnCluster>,
   districts: readonly BattleRoyalDistrict[],
   roadSegments: readonly RoadSegment[],
-  pois: readonly BattleRoyalPoi[]
+  pois: readonly BattleRoyalPoi[],
+  profile: BattleRoyalSizeProfile
 ): { powerups: MapPowerupPickup[]; flattenZones: FlattenZone[] } {
   const random = mulberry32(seed ^ 0x9f2d);
   const powerups: MapPowerupPickup[] = [];
@@ -1360,7 +1481,7 @@ function createPowerups(
   }
 
   let anchorIndex = 0;
-  while (powerups.filter((pickup) => pickup.kind === 'powerup').length < STRATEGIC_POWERUP_COUNT) {
+  while (powerups.filter((pickup) => pickup.kind === 'powerup').length < profile.strategicPowerupCount) {
     const anchors = [
       ...settlementAnchors.filter((anchor) => anchor.kind !== 'city_core'),
       ...wildAnchors,
@@ -1378,7 +1499,7 @@ function createPowerups(
   }
 
   anchorIndex = 0;
-  while (powerups.filter((pickup) => pickup.kind === 'health_pack').length < HEALTH_PACK_COUNT) {
+  while (powerups.filter((pickup) => pickup.kind === 'health_pack').length < profile.healthPackCount) {
     const anchors = [
       ...pois.filter((poi) => poi.role !== 'citadel').map((poi) => ({
         position: poi.position,
@@ -1575,28 +1696,33 @@ function createCoverPieces(
   return pieces;
 }
 
-function createBattleRoyalLayout(seed: number, themeId?: VoxelMapTheme['id'] | null): BattleRoyalLayout {
+function createBattleRoyalLayout(
+  seed: number,
+  themeId?: VoxelMapTheme['id'] | null,
+  mapSize?: VoxelMapSizeId | null
+): BattleRoyalLayout {
   const theme = getVoxelMapTheme(seed, themeId);
+  const profile = getBattleRoyalSizeProfile(mapSize);
   const size = {
-    x: Math.round(WORLD_SIZE / VOXEL_SIZE.x),
-    y: Math.round(WORLD_HEIGHT / VOXEL_SIZE.y),
-    z: Math.round(WORLD_SIZE / VOXEL_SIZE.z),
+    x: Math.round(profile.worldSize / VOXEL_SIZE.x),
+    y: Math.round(profile.worldHeight / VOXEL_SIZE.y),
+    z: Math.round(profile.worldSize / VOXEL_SIZE.z),
   };
   const origin = {
     x: -(size.x * VOXEL_SIZE.x) / 2,
     y: 0,
     z: -(size.z * VOXEL_SIZE.z) / 2,
   };
-  const boundary = createBoundary(seed);
-  const spawnLayout = createSpawnClusters(seed, boundary);
-  const districts = createDistricts(seed, boundary, spawnLayout.spawns);
+  const boundary = createBoundary(seed, profile);
+  const spawnLayout = createSpawnClusters(seed, boundary, profile);
+  const districts = createDistricts(seed, boundary, spawnLayout.spawns, profile);
   const roadLayout = createRoadNetwork({
     seed,
     boundary,
     spawns: spawnLayout.spawns,
     districts,
   });
-  const terrainFeatures = createTerrainFeatures(seed, boundary, spawnLayout.spawns, districts);
+  const terrainFeatures = createTerrainFeatures(seed, boundary, spawnLayout.spawns, districts, profile);
   const poiLayout = createPois(seed, boundary, spawnLayout.spawns, districts);
   const pickupLayout = createPowerups(
     seed,
@@ -1604,7 +1730,8 @@ function createBattleRoyalLayout(seed: number, themeId?: VoxelMapTheme['id'] | n
     spawnLayout.spawns,
     districts,
     roadLayout.roadSegments,
-    poiLayout.pois
+    poiLayout.pois,
+    profile
   );
   const flattenZones = [
     ...createDistrictFlattenZones(districts),
@@ -1615,6 +1742,7 @@ function createBattleRoyalLayout(seed: number, themeId?: VoxelMapTheme['id'] | n
   ];
   const layout: BattleRoyalLayout = {
     seed,
+    profile,
     theme,
     origin,
     size,
@@ -1646,7 +1774,7 @@ function gridRowsToWorldY(row: number, originY: number, voxelY: number): number 
 }
 
 function getSurfaceRow(layout: BattleRoyalLayout, point: { x: number; z: number }): number {
-  return terrainRows(layout.seed, point.x, point.z, layout.flattenZones, layout.terrainFeatures);
+  return terrainRows(layout.seed, point.x, point.z, layout.flattenZones, layout.terrainFeatures, layout.profile);
 }
 
 function getSurfacePosition(layout: BattleRoyalLayout, point: Vec3, yOffset = 0.25): Vec3 {
@@ -1750,7 +1878,7 @@ function buildBlocks(layout: BattleRoyalLayout): {
 } {
   const blocks = new Uint8Array(layout.size.x * layout.size.y * layout.size.z);
   const terrain = getThemeTerrainBlocks(layout.theme);
-  const halfSize = WORLD_SIZE / 2;
+  const halfSize = layout.profile.worldSize / 2;
   let solidBlockCount = 0;
 
   for (let z = 0; z < layout.size.z; z++) {
@@ -1763,8 +1891,8 @@ function buildBlocks(layout: BattleRoyalLayout): {
       let rows = 0;
 
       if (insidePlayable) {
-        rows = terrainRows(layout.seed, worldX, worldZ, layout.flattenZones, layout.terrainFeatures);
-      } else if (radial <= halfSize - 1 && radial >= BASE_RADIUS * 0.78) {
+        rows = terrainRows(layout.seed, worldX, worldZ, layout.flattenZones, layout.terrainFeatures, layout.profile);
+      } else if (radial <= halfSize - 1 && radial >= layout.profile.baseRadius * 0.78) {
         const closest = getClosestBoundaryPoint(worldX, worldZ, layout.boundary).point;
         boundaryWall = distance2D({ x: worldX, z: worldZ }, closest) <= BOUNDARY_WALL_THICKNESS;
         rows = boundaryWall
@@ -1797,7 +1925,7 @@ function buildBlocks(layout: BattleRoyalLayout): {
     const repairPair = findLongestVisibleSightline(
       heightfield,
       sightlineSamplePoints,
-      SIGHTLINE_OCCLUSION_TARGET_DISTANCE
+      layout.profile.sightlineOcclusionTargetDistance
     );
     if (!repairPair) break;
     stampSightlineMountainRidge(layout, blocks, repairPair, terrain.side, pass);
@@ -2297,7 +2425,7 @@ function stampStrategicLandmarkScreens(
         };
       })
     ))
-    .filter((pair) => pair.distance >= SIGHTLINE_OCCLUSION_TARGET_DISTANCE * 0.92)
+    .filter((pair) => pair.distance >= layout.profile.sightlineOcclusionTargetDistance * 0.92)
     .sort((a, b) => b.score - a.score)
     .slice(0, 34);
 
@@ -2629,14 +2757,14 @@ function createSightlineSamplePoints(layout: BattleRoyalLayout, routeGraph: Rout
   }
 
   for (
-    let z = -BASE_RADIUS + SIGHTLINE_SAMPLE_GRID_SPACING * 0.5;
-    z <= BASE_RADIUS - SIGHTLINE_SAMPLE_GRID_SPACING * 0.5;
-    z += SIGHTLINE_SAMPLE_GRID_SPACING
+    let z = -layout.profile.baseRadius + layout.profile.sightlineSampleGridSpacing * 0.5;
+    z <= layout.profile.baseRadius - layout.profile.sightlineSampleGridSpacing * 0.5;
+    z += layout.profile.sightlineSampleGridSpacing
   ) {
     for (
-      let x = -BASE_RADIUS + SIGHTLINE_SAMPLE_GRID_SPACING * 0.5;
-      x <= BASE_RADIUS - SIGHTLINE_SAMPLE_GRID_SPACING * 0.5;
-      x += SIGHTLINE_SAMPLE_GRID_SPACING
+      let x = -layout.profile.baseRadius + layout.profile.sightlineSampleGridSpacing * 0.5;
+      x <= layout.profile.baseRadius - layout.profile.sightlineSampleGridSpacing * 0.5;
+      x += layout.profile.sightlineSampleGridSpacing
     ) {
       addPoint(`grid_${Math.round(x)}_${Math.round(z)}`, { x, z });
     }
@@ -2705,14 +2833,14 @@ function createLayoutSightlineSamplePoints(layout: BattleRoyalLayout): Sightline
   }
 
   for (
-    let z = -BASE_RADIUS + SIGHTLINE_SAMPLE_GRID_SPACING * 0.5;
-    z <= BASE_RADIUS - SIGHTLINE_SAMPLE_GRID_SPACING * 0.5;
-    z += SIGHTLINE_SAMPLE_GRID_SPACING
+    let z = -layout.profile.baseRadius + layout.profile.sightlineSampleGridSpacing * 0.5;
+    z <= layout.profile.baseRadius - layout.profile.sightlineSampleGridSpacing * 0.5;
+    z += layout.profile.sightlineSampleGridSpacing
   ) {
     for (
-      let x = -BASE_RADIUS + SIGHTLINE_SAMPLE_GRID_SPACING * 0.5;
-      x <= BASE_RADIUS - SIGHTLINE_SAMPLE_GRID_SPACING * 0.5;
-      x += SIGHTLINE_SAMPLE_GRID_SPACING
+      let x = -layout.profile.baseRadius + layout.profile.sightlineSampleGridSpacing * 0.5;
+      x <= layout.profile.baseRadius - layout.profile.sightlineSampleGridSpacing * 0.5;
+      x += layout.profile.sightlineSampleGridSpacing
     ) {
       addPoint(`grid_${Math.round(x)}_${Math.round(z)}`, { x, z });
     }
@@ -2767,7 +2895,7 @@ function createDiagnostics(input: {
     (districtCounts.hamlet ?? 0) +
     (districtCounts.outpost ?? 0);
   const openAreaCount = (districtCounts.open_field ?? 0) + (districtCounts.wildland ?? 0);
-  const playableArea = Math.PI * BASE_RADIUS * BASE_RADIUS;
+  const playableArea = Math.PI * input.layout.profile.baseRadius * input.layout.profile.baseRadius;
   const settlementCoverage = input.layout.districts
     .filter((district) => district.kind !== 'open_field' && district.kind !== 'wildland')
     .reduce((total, district) => total + Math.PI * district.radius * district.radius, 0) / playableArea;
@@ -2796,7 +2924,7 @@ function createDiagnostics(input: {
   if ((districtCounts.city_core ?? 0) < 1 || (districtCounts.town ?? 0) < 3) warnings.push('settlement structure below target');
   if (openAreaCount < 7) warnings.push('open area structure below target');
   if (input.layout.roadSegments.length < 22) warnings.push('road network below target');
-  if (sightlineMetrics.maxSightlineLength > SIGHTLINE_OCCLUSION_TARGET_DISTANCE) {
+  if (sightlineMetrics.maxSightlineLength > input.layout.profile.sightlineWarningMaxDistance) {
     warnings.push('sightline occlusion below battle royal target');
   }
   if (sightlineMetrics.spawnVisibilityPairs > 0) warnings.push('spawn sightlines exposed');
@@ -2901,7 +3029,12 @@ function createPreview(layout: BattleRoyalLayout): MapBlueprint['preview'] {
       far: 720,
     },
     thumbnailSilhouette: {
-      bounds: { minX: -BASE_RADIUS, maxX: BASE_RADIUS, minZ: -BASE_RADIUS, maxZ: BASE_RADIUS },
+      bounds: {
+        minX: -layout.profile.baseRadius,
+        maxX: layout.profile.baseRadius,
+        minZ: -layout.profile.baseRadius,
+        maxZ: layout.profile.baseRadius,
+      },
       boundary: layout.boundary,
       routes,
       landmarks,
@@ -2910,13 +3043,13 @@ function createPreview(layout: BattleRoyalLayout): MapBlueprint['preview'] {
         spawns,
       },
     },
-    labelTags: ['Battle Royal', '30 Players', 'Expansive', 'Towns', 'Open Routes'],
+    labelTags: layout.profile.labelTags,
   };
 }
 
 export interface BattleRoyalMapPreview {
   seed: number;
-  mapSize: 'large';
+  mapSize: VoxelMapSizeId;
   familyId: 'battle_royal_large';
   topologyId: MapTopologyId;
   themeId: VoxelMapTheme['id'];
@@ -2928,10 +3061,10 @@ export interface BattleRoyalMapPreview {
 
 export function createBattleRoyalMapPreview(
   seed = 0,
-  options: { themeId?: VoxelMapTheme['id'] | null } = {}
+  options: { themeId?: VoxelMapTheme['id'] | null; mapSize?: VoxelMapSizeId | null } = {}
 ): BattleRoyalMapPreview {
   const normalizedSeed = seed >>> 0;
-  const layout = createBattleRoyalLayout(normalizedSeed, options.themeId);
+  const layout = createBattleRoyalLayout(normalizedSeed, options.themeId, options.mapSize);
   const routeGraph = createRouteGraph(layout);
   const preview = createPreview(layout);
   const districtCounts = countBy(layout.districts.map((district) => district.kind));
@@ -2942,7 +3075,7 @@ export function createBattleRoyalMapPreview(
 
   return {
     seed: normalizedSeed,
-    mapSize: 'large',
+    mapSize: layout.profile.mapSize,
     familyId: 'battle_royal_large',
     topologyId: 'ring',
     themeId: layout.theme.id,
@@ -2968,11 +3101,11 @@ export function createBattleRoyalMapPreview(
 
 export function generateBattleRoyalVoxelMap(
   seed = 0,
-  options: { themeId?: VoxelMapTheme['id'] | null } = {}
+  options: { themeId?: VoxelMapTheme['id'] | null; mapSize?: VoxelMapSizeId | null } = {}
 ): VoxelMapManifest {
   const startedAt = Date.now();
   const normalizedSeed = seed >>> 0;
-  const layout = createBattleRoyalLayout(normalizedSeed, options.themeId);
+  const layout = createBattleRoyalLayout(normalizedSeed, options.themeId, options.mapSize);
   const blockResult = buildBlocks(layout);
   const chunks = createChunks(layout, blockResult.blocks);
   const colliders = generateVoxelColliders({
@@ -3004,7 +3137,7 @@ export function generateBattleRoyalVoxelMap(
   const preview = createPreview(layout);
   const designBrief: MapDesignBrief = {
     seed: normalizedSeed,
-    mapSize: 'large',
+    mapSize: layout.profile.mapSize,
     gameMode: 'battle_royal',
     profileId: 'battle_royal_large',
     teamSize: 3,
@@ -3013,12 +3146,7 @@ export function generateBattleRoyalVoxelMap(
     targetMatchLengthSeconds: 1200,
     desiredTopology: 'ring',
     desiredSymmetry: 'asymmetric_balanced',
-    performanceBudget: {
-      maxSolidBlocks: 8_750_000,
-      maxColliders: 280_000,
-      maxRenderableChunks: 7600,
-      maxGenerationMs: 9000,
-    },
+    performanceBudget: layout.profile.performanceBudget,
     rngStreams: {
       boundary: hashSeed(normalizedSeed ^ 0xb417e),
       spawns: hashSeed(normalizedSeed ^ 0x51a7),
@@ -3096,10 +3224,10 @@ export function generateBattleRoyalVoxelMap(
   }
 
   const manifest: VoxelMapManifest = {
-    id: `battle_royal_large_${normalizedSeed.toString(16).padStart(8, '0')}`,
+    id: `battle_royal_${layout.profile.mapSize}_${normalizedSeed.toString(16).padStart(8, '0')}`,
     version: CONSTRUCTED_MAP_MANIFEST_VERSION,
     seed: normalizedSeed,
-    mapSize: 'large',
+    mapSize: layout.profile.mapSize,
     profileId: 'battle_royal_large',
     familyId: 'battle_royal_large',
     topologyId: 'ring',
