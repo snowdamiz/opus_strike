@@ -11,9 +11,14 @@ import {
   normalizeRankDivisionIndex,
 } from './skill';
 import { getRankDivisionIndex } from '@voxel-strike/shared';
-import type { MatchMode } from '@voxel-strike/shared';
+import type { GameplayMode, MatchMode, MatchPerspective } from '@voxel-strike/shared';
 import { serializeRankPayload, type PublicRankPayload } from '../ranking/serialization';
 import type { RankedTokenHoldingStatus } from './rankedTokenHold';
+import {
+  createMatchmakingSettings,
+  doesMatchmakingMetadataMatchSettings,
+  type MatchmakingBotFillMode,
+} from './matchSettings';
 
 export interface MatchmakingUserContext {
   userId: string;
@@ -36,6 +41,9 @@ interface QueueCandidate {
 export interface IssuedMatchmakingTicket {
   ticket: string;
   mode: 'quick_play' | 'ranked';
+  gameplayMode: GameplayMode;
+  botFillMode: MatchmakingBotFillMode;
+  matchPerspective: MatchPerspective;
   expiresAt: number;
   competitiveRating: number;
   rankDivisionIndex: number;
@@ -105,15 +113,23 @@ export async function chooseMatchmakingRankBand(input: {
   mode: 'quick_play' | 'ranked';
   playerRating: number;
   playerDivisionIndex: number;
+  gameplayMode?: GameplayMode;
+  botFillMode?: MatchmakingBotFillMode;
+  matchPerspective?: MatchPerspective;
 }): Promise<number> {
   const now = Date.now();
   const rooms = await matchMaker.query({ name: 'lobby_room' });
+  const settings = createMatchmakingSettings({
+    matchMode: input.mode,
+    gameplayMode: input.gameplayMode,
+    botFillMode: input.botFillMode,
+    matchPerspective: input.matchPerspective,
+  });
 
   const candidates: QueueCandidate[] = rooms.flatMap((room: any) => {
     const metadata = room.metadata ?? {};
     if (room.locked || metadata.matchmakingMode !== true || metadata.status !== 'matchmaking') return [];
-    const mode = metadata.matchMode === 'ranked' ? 'ranked' : 'quick_play';
-    if (mode !== input.mode) return [];
+    if (!doesMatchmakingMetadataMatchSettings(metadata, settings)) return [];
     const rankBandId = normalizeRankDivisionIndex(metadata.rankBandId);
     const averageCompetitiveRating = typeof metadata.averageCompetitiveRating === 'number'
       ? metadata.averageCompetitiveRating
@@ -157,10 +173,18 @@ export async function chooseMatchmakingRankBand(input: {
 
 export function issueQuickPlayTicket(
   context: MatchmakingUserContext,
-  targetRankDivisionIndex: number
+  targetRankDivisionIndex: number,
+  settings: {
+    gameplayMode: GameplayMode;
+    botFillMode: MatchmakingBotFillMode;
+    matchPerspective: MatchPerspective;
+  }
 ): IssuedMatchmakingTicket {
   const { ticket, claims } = createMatchmakingTicket({
     mode: 'quick_play',
+    gameplayMode: settings.gameplayMode,
+    botFillMode: settings.botFillMode,
+    matchPerspective: settings.matchPerspective,
     userId: context.userId,
     competitiveRating: context.competitiveRating,
     rankDivisionIndex: context.rankDivisionIndex,
@@ -171,6 +195,9 @@ export function issueQuickPlayTicket(
   return {
     ticket,
     mode: 'quick_play',
+    gameplayMode: claims.gameplayMode,
+    botFillMode: claims.botFillMode,
+    matchPerspective: claims.matchPerspective,
     expiresAt: claims.expiresAt,
     competitiveRating: context.competitiveRating,
     rankDivisionIndex: context.rankDivisionIndex,
@@ -203,6 +230,9 @@ export function issueRankedTicket(
   return {
     ticket,
     mode: 'ranked',
+    gameplayMode: claims.gameplayMode,
+    botFillMode: claims.botFillMode,
+    matchPerspective: claims.matchPerspective,
     expiresAt: claims.expiresAt,
     competitiveRating: context.competitiveRating,
     rankDivisionIndex: context.rankDivisionIndex,

@@ -6,6 +6,7 @@ import {
   type GameplayMode,
   type HeroId,
   type MapProfileId,
+  type MatchPerspective,
   type Team,
   type VoxelMapSizeId,
   type VoxelMapTheme,
@@ -49,6 +50,7 @@ export interface GameStartingPayload {
   players: ParticipantAssignment[];
   entryTicket?: string;
   gameplayMode: GameplayMode;
+  matchPerspective: MatchPerspective;
   mapThemeId: VoxelMapTheme['id'];
   mapSize: VoxelMapSizeId;
   mapProfileId: MapProfileId;
@@ -139,6 +141,7 @@ export function createLobbyGameStartAssignments(input: {
 export function buildGameEntryTicketInputs(input: {
   lobbyId: string;
   gameRoomId: string;
+  matchPerspective: MatchPerspective;
   playerAssignments: readonly ParticipantAssignment[];
   authContexts: ReadonlyMap<string, LobbyGameStartAuthContext>;
 }): Map<string, CreateGameEntryTicketInput> {
@@ -157,6 +160,7 @@ export function buildGameEntryTicketInputs(input: {
       lobbyPlayerId: assignment.playerId,
       userId: authContext.userId,
       displayName: authContext.displayName || assignment.playerName,
+      matchPerspective: input.matchPerspective,
       assignedTeam: assignment.team,
       selectedHero: assignment.heroId,
     });
@@ -170,6 +174,7 @@ export function buildGameStartingPayload(input: {
   players: ParticipantAssignment[];
   entryTicket?: string;
   gameplayMode: GameplayMode;
+  matchPerspective: MatchPerspective;
   mapThemeId: VoxelMapTheme['id'];
   mapSize: VoxelMapSizeId;
   mapProfileId?: MapProfileId;
@@ -179,6 +184,7 @@ export function buildGameStartingPayload(input: {
     players: input.players,
     entryTicket: input.entryTicket,
     gameplayMode: input.gameplayMode,
+    matchPerspective: input.matchPerspective,
     mapThemeId: input.mapThemeId,
     mapSize: input.mapSize,
     mapProfileId: input.mapProfileId ?? 'ctf_arena',

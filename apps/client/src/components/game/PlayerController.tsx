@@ -28,7 +28,7 @@ import {
   setFlamethrowerVisualPose,
 } from '../../store/visualStore';
 import { useInput } from '../../hooks/useInput';
-import { usePhysics } from '../../hooks/usePhysics';
+import { getPhysicsWorld, isPhysicsReady, raycast, usePhysics } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
 import {
   playSharedBlazeAirstrikeSound,
@@ -244,6 +244,20 @@ const battleRoyalDeploymentCameraTarget: BattleRoyalDeploymentCameraTarget = {
   position: new THREE.Vector3(),
   yaw: 0,
 };
+
+function resolveThirdPersonCameraCollision(
+  origin: { x: number; y: number; z: number },
+  direction: { x: number; y: number; z: number },
+  maxDistance: number
+): number | null {
+  if (!isPhysicsReady()) return null;
+  const world = getPhysicsWorld();
+  if (!world) return null;
+  return raycast(world, origin, direction, maxDistance, {
+    priority: 'visual',
+    feature: 'third-person-camera',
+  })?.distance ?? null;
+}
 
 function frameRateBand(deltaSeconds: number): string {
   if (deltaSeconds <= 1 / 90) return '90fps+';
@@ -651,7 +665,14 @@ function runPresentationPhase(input: {
 
   cameraControl.updateCameraRotation(camera, isSliding, movement.refs.isCrouching.current, dt);
   const cameraBodyY = movement.refs.smoothedY.current ?? smoothedVisualPosition.y;
-  camera.position.set(smoothedVisualPosition.x, cameraBodyY + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, smoothedVisualPosition.z);
+  cameraControl.updateCameraPosition(camera, {
+    x: smoothedVisualPosition.x,
+    y: cameraBodyY,
+    z: smoothedVisualPosition.z,
+  }, {
+    perspective: useGameStore.getState().matchPerspective,
+    collision: resolveThirdPersonCameraCollision,
+  });
   camera.updateMatrixWorld();
   camera.getWorldDirection(refs.audioForwardRef.current);
   refs.audioUpRef.current.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
@@ -1405,7 +1426,10 @@ function runDisabledLifecycleFrame(
 
   const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
   cameraControl.updateCameraRotation(camera, false, false, dt);
-  camera.position.set(visualPos.x, visualPos.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, visualPos.z);
+  cameraControl.updateCameraPosition(camera, visualPos, {
+    perspective: useGameStore.getState().matchPerspective,
+    collision: resolveThirdPersonCameraCollision,
+  });
   setPlayerVisualTransform(localPlayer.id, visualPos, cameraControl.refs.yaw.current);
   return { kind: 'disabled', authorityApplied, substeps: 0 };
 }
@@ -1473,7 +1497,10 @@ function runInactiveLifecycleFrame(
     cameraControl.updateDeathCamera(camera, visualPos, dt, now);
   } else {
     cameraControl.updateCameraRotation(camera, false, false, dt);
-    camera.position.set(visualPos.x, visualPos.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, visualPos.z);
+    cameraControl.updateCameraPosition(camera, visualPos, {
+      perspective: useGameStore.getState().matchPerspective,
+      collision: resolveThirdPersonCameraCollision,
+    });
   }
   camera.updateMatrixWorld();
   camera.getWorldDirection(refs.audioForwardRef.current);

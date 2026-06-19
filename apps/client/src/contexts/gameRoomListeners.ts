@@ -1,7 +1,9 @@
 import type { Room } from 'colyseus.js';
 import {
   DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_MATCH_PERSPECTIVE,
   isGameplayMode,
+  isMatchPerspective,
   type GameEndEvent,
   type HeroId,
   type MapProfileId,
@@ -267,6 +269,7 @@ export function setupGameRoomListeners(
     clearRunningGameSession(room.id);
     useGameStore.setState({
       gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : DEFAULT_GAMEPLAY_MODE,
+      matchPerspective: isMatchPerspective(data.matchPerspective) ? data.matchPerspective : DEFAULT_MATCH_PERSPECTIVE,
     });
     setMatchSummary(data);
     setGamePhase('game_end');

@@ -1,7 +1,12 @@
 import {
   GAMEPLAY_MODES,
+  MATCH_PERSPECTIVE_SETTING_MODES,
+  createDefaultMatchPerspectiveSettings,
   createDefaultPartyBotFillSettings,
+  isMatchPerspective,
   type GameplayMode,
+  type MatchPerspectiveSettingMode,
+  type MatchPerspectiveSettings,
   type PartyBotFillSettings,
   type PartyMode,
 } from '@voxel-strike/shared';
@@ -11,6 +16,7 @@ export type PlayMenuMode = Exclude<PartyMode, 'custom'> | 'team_deathmatch' | 'b
 export interface PlayMenuPreferences {
   selectedPlayMode: PlayMenuMode;
   botFillEnabledByMode: PartyBotFillSettings;
+  perspectiveByMode: MatchPerspectiveSettings;
 }
 
 export const PLAY_MODE_OPTIONS: PlayMenuMode[] = ['ranked', 'quick_play', 'team_deathmatch', 'battle_royal', 'practice'];
@@ -31,10 +37,22 @@ export function sanitizeBotFillSettings(value: unknown): PartyBotFillSettings {
   return next;
 }
 
+export function sanitizeMatchPerspectiveSettings(value: unknown): MatchPerspectiveSettings {
+  const next = createDefaultMatchPerspectiveSettings();
+  if (!value || typeof value !== 'object') return next;
+
+  const raw = value as Partial<Record<MatchPerspectiveSettingMode, unknown>>;
+  for (const mode of MATCH_PERSPECTIVE_SETTING_MODES) {
+    next[mode] = isMatchPerspective(raw[mode]) ? raw[mode] : next[mode];
+  }
+  return next;
+}
+
 export function createDefaultPlayMenuPreferences(): PlayMenuPreferences {
   return {
     selectedPlayMode: 'quick_play',
     botFillEnabledByMode: createDefaultPartyBotFillSettings(),
+    perspectiveByMode: createDefaultMatchPerspectiveSettings(),
   };
 }
 
@@ -47,10 +65,12 @@ export function sanitizePlayMenuPreferences(value: unknown): PlayMenuPreferences
     ? raw.selectedPlayMode
     : defaults.selectedPlayMode;
   const botFillEnabledByMode = sanitizeBotFillSettings(raw.botFillEnabledByMode);
+  const perspectiveByMode = sanitizeMatchPerspectiveSettings(raw.perspectiveByMode);
 
   return {
     selectedPlayMode,
     botFillEnabledByMode,
+    perspectiveByMode,
   };
 }
 

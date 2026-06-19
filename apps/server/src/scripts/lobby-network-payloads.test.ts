@@ -112,6 +112,7 @@ const rankedHuman = lobbyPlayer({
     name: 'Lobby A',
     matchMode: 'ranked',
     gameplayMode: 'capture_the_flag',
+    matchPerspective: 'first_person',
     hostId: 'session-a',
     status: 'matchmaking',
     players: roster,
@@ -128,6 +129,7 @@ const rankedHuman = lobbyPlayer({
   assert.equal(payload.lobbyId, 'lobby-a');
   assert.equal(payload.matchMode, 'ranked');
   assert.equal(payload.gameplayMode, 'capture_the_flag');
+  assert.equal(payload.matchPerspective, 'first_person');
   assert.equal(payload.humanCount, 1);
   assert.equal(payload.botCount, 1);
   assert.equal(payload.requiredPlayers, 6);
@@ -143,6 +145,7 @@ const rankedHuman = lobbyPlayer({
     name: 'Custom',
     matchMode: 'custom',
     gameplayMode: 'team_deathmatch',
+    matchPerspective: 'third_person',
     hostId: 'host-a',
     status: 'waiting',
     players: [],

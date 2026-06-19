@@ -13,7 +13,9 @@ import {
   VOID_RAY_CHARGE_TIME,
   createDefaultPlayerMovementState,
   DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_MATCH_PERSPECTIVE,
   isGameplayMode,
+  isMatchPerspective,
   normalizeVoxelMapSizeId,
   type PublicRankSnapshot,
   type PlayerDamagedEvent,
@@ -1087,6 +1089,9 @@ export function setupMatchSnapshotHandler(room: Room) {
     useGameStore.setState({
       mapSeed: data.mapSeed,
       gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : store.gameplayMode ?? DEFAULT_GAMEPLAY_MODE,
+      matchPerspective: isMatchPerspective(data.matchPerspective)
+        ? data.matchPerspective
+        : store.matchPerspective ?? DEFAULT_MATCH_PERSPECTIVE,
       mapThemeId: data.mapThemeId ?? null,
       mapSize: normalizeVoxelMapSizeId(data.mapSize),
       mapProfileId: normalizeMapProfileId(data.mapProfileId),

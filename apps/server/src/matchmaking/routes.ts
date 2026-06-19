@@ -14,9 +14,12 @@ import {
 import { collectInGameCapacitySnapshot, type InGameCapacitySnapshot } from './playerCapacity';
 import {
   DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_MATCH_PERSPECTIVE,
   isGameplayMode,
+  isMatchPerspective,
   type GameplayMode,
   type MatchMode,
+  type MatchPerspective,
 } from '@voxel-strike/shared';
 import {
   chooseMatchmakingRankBand,
@@ -24,6 +27,13 @@ import {
   issueQuickPlayTicket,
   issueRankedTicket,
 } from './service';
+import {
+  createMatchmakingSettings,
+  doesMatchmakingMetadataMatchSettings,
+  getQueueStatusCacheKey,
+  normalizeMatchmakingBotFillMode,
+  type MatchmakingBotFillMode,
+} from './matchSettings';
 
 const router: RouterType = Router();
 
@@ -38,6 +48,8 @@ const MATCHMAKING_RATE_LIMITS = {
 interface MatchmakingQueueStatus {
   mode: MatchMode;
   gameplayMode?: GameplayMode;
+  botFillMode?: MatchmakingBotFillMode;
+  matchPerspective: MatchPerspective;
   totalPlayersInQueue: number;
   queueCount: number;
   provisionalPlayerCount?: number;
@@ -87,11 +99,12 @@ function readRoomIdParam(req: Request): string | null {
   return /^[a-zA-Z0-9_-]+$/.test(value) ? value : null;
 }
 
-function getQueueStatusCacheKey(mode: MatchMode, gameplayMode: GameplayMode): string {
-  return mode === 'ranked' ? 'ranked' : `quick_play:${gameplayMode}`;
-}
-
-async function getQueueStatus(mode: MatchMode, gameplayMode: GameplayMode): Promise<MatchmakingQueueStatus> {
+async function getQueueStatus(
+  mode: MatchMode,
+  gameplayMode: GameplayMode,
+  botFillMode: MatchmakingBotFillMode,
+  matchPerspective: MatchPerspective
+): Promise<MatchmakingQueueStatus> {
   const [rooms, capacity] = await Promise.all([
     matchMaker.query({ name: 'lobby_room' }),
     collectInGameCapacitySnapshot(matchMaker),
@@ -104,9 +117,13 @@ async function getQueueStatus(mode: MatchMode, gameplayMode: GameplayMode): Prom
   for (const room of rooms as any[]) {
     const metadata = room.metadata ?? {};
     if (metadata.matchmakingMode !== true || metadata.status !== 'matchmaking') continue;
-    const roomMode: MatchMode = metadata.matchMode === 'ranked' ? 'ranked' : 'quick_play';
-    if (roomMode !== mode) continue;
-    if (roomMode === 'quick_play' && metadata.gameplayMode !== gameplayMode) continue;
+    const settings = createMatchmakingSettings({
+      matchMode: mode,
+      gameplayMode,
+      botFillMode,
+      matchPerspective,
+    });
+    if (!doesMatchmakingMetadataMatchSettings(metadata, settings)) continue;
 
     const humanCount = Math.max(0, typeof metadata.humanCount === 'number' ? metadata.humanCount : room.clients ?? 0);
     const participantCount = Math.max(0, typeof metadata.participantCount === 'number'
@@ -127,6 +144,8 @@ async function getQueueStatus(mode: MatchMode, gameplayMode: GameplayMode): Prom
   return {
     mode,
     gameplayMode: mode === 'quick_play' ? gameplayMode : undefined,
+    botFillMode: mode === 'quick_play' ? botFillMode : undefined,
+    matchPerspective: mode === 'ranked' ? DEFAULT_MATCH_PERSPECTIVE : matchPerspective,
     totalPlayersInQueue,
     queueCount,
     provisionalPlayerCount,
@@ -135,9 +154,14 @@ async function getQueueStatus(mode: MatchMode, gameplayMode: GameplayMode): Prom
   };
 }
 
-function getCachedQueueStatus(mode: MatchMode, gameplayMode: GameplayMode): Promise<MatchmakingQueueStatus> {
+function getCachedQueueStatus(
+  mode: MatchMode,
+  gameplayMode: GameplayMode,
+  botFillMode: MatchmakingBotFillMode,
+  matchPerspective: MatchPerspective
+): Promise<MatchmakingQueueStatus> {
   const now = Date.now();
-  const cacheKey = getQueueStatusCacheKey(mode, gameplayMode);
+  const cacheKey = getQueueStatusCacheKey(mode, gameplayMode, botFillMode, matchPerspective);
   const cached = queueStatusCache.get(cacheKey);
   if (cached?.value && cached.expiresAt > now) {
     return Promise.resolve(cached.value);
@@ -146,7 +170,7 @@ function getCachedQueueStatus(mode: MatchMode, gameplayMode: GameplayMode): Prom
     return cached.inFlight;
   }
 
-  const inFlight = getQueueStatus(mode, gameplayMode)
+  const inFlight = getQueueStatus(mode, gameplayMode, botFillMode, matchPerspective)
     .then((value) => {
       queueStatusCache.set(cacheKey, {
         value,
@@ -185,8 +209,17 @@ router.get('/queue-status', async (req: Request, res: Response) => {
     const requestedGameplayMode = isGameplayMode(req.query.gameplayMode)
       ? req.query.gameplayMode
       : DEFAULT_GAMEPLAY_MODE;
+    const requestedBotFillMode = normalizeMatchmakingBotFillMode(req.query.botFillMode);
+    const requestedPerspective = isMatchPerspective(req.query.perspective)
+      ? req.query.perspective
+      : DEFAULT_MATCH_PERSPECTIVE;
     res.set('Cache-Control', 'private, max-age=1');
-    res.json(await getCachedQueueStatus(requestedMode, requestedGameplayMode));
+    res.json(await getCachedQueueStatus(
+      requestedMode,
+      requestedGameplayMode,
+      requestedBotFillMode,
+      requestedPerspective
+    ));
   } catch (error) {
     console.error('[matchmaking] Failed to get queue status:', error);
     res.status(500).json({ error: 'Failed to get queue status' });
@@ -225,6 +258,7 @@ router.get('/running-game/:roomId', async (req: Request, res: Response) => {
       roomId: canReconnect ? roomId : undefined,
       status: canReconnect ? status : undefined,
       matchMode: canReconnect ? metadata.matchMode : undefined,
+      matchPerspective: canReconnect ? metadata.matchPerspective : undefined,
       mapSeed: canReconnect ? metadata.mapSeed : undefined,
       mapThemeId: canReconnect ? metadata.mapThemeId : undefined,
       mapSize: canReconnect ? metadata.mapSize : undefined,
@@ -245,12 +279,26 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
       devBypass: req.headers[DEV_TUTORIAL_BYPASS_HEADER],
     });
 
+    const gameplayMode = isGameplayMode(req.query.gameplayMode)
+      ? req.query.gameplayMode
+      : DEFAULT_GAMEPLAY_MODE;
+    const botFillMode = normalizeMatchmakingBotFillMode(req.query.botFillMode);
+    const matchPerspective = isMatchPerspective(req.query.perspective)
+      ? req.query.perspective
+      : DEFAULT_MATCH_PERSPECTIVE;
     const targetRankDivisionIndex = await chooseMatchmakingRankBand({
       mode: 'quick_play',
       playerRating: context.competitiveRating,
       playerDivisionIndex: context.rankDivisionIndex,
+      gameplayMode,
+      botFillMode,
+      matchPerspective,
     });
-    res.json(issueQuickPlayTicket(context, targetRankDivisionIndex));
+    res.json(issueQuickPlayTicket(context, targetRankDivisionIndex, {
+      gameplayMode,
+      botFillMode,
+      matchPerspective,
+    }));
   } catch (error) {
     console.error('[matchmaking] Failed to issue quick-play ticket:', error);
     sendRouteError(res, error, 'Failed to issue matchmaking ticket');
@@ -292,6 +340,7 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
       mode: 'ranked',
       playerRating: context.competitiveRating,
       playerDivisionIndex: context.rankDivisionIndex,
+      matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
     });
     res.json(issueRankedTicket(context, targetRankDivisionIndex, tokenHold));
   } catch (error) {

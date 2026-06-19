@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   getHumanPartyHeroIds,
   getRankFromRating,
+  createDefaultMatchPerspectiveSettings,
   createDefaultPartyBotFillSettings,
   isHumanPartyHeroAvailable,
   type PartyStateSnapshot,
@@ -49,6 +50,7 @@ const party: PartyStateSnapshot = {
   selectedMode: 'quick_play',
   gameplayMode: 'capture_the_flag',
   botFillEnabledByMode: createDefaultPartyBotFillSettings(),
+  perspectiveByMode: createDefaultMatchPerspectiveSettings(),
   launchError: null,
   members: [
     {
@@ -111,12 +113,17 @@ assert.equal(usePartyStore.getState().localUserId, null);
 
 const botFillEnabledByMode = createDefaultPartyBotFillSettings();
 botFillEnabledByMode.battle_royal = true;
+const perspectiveByMode = createDefaultMatchPerspectiveSettings();
+perspectiveByMode.battle_royal = 'third_person';
 savePlayMenuPreferences({
   selectedPlayMode: 'battle_royal',
   botFillEnabledByMode,
+  perspectiveByMode,
 });
 assert.equal(loadPlayMenuPreferences().selectedPlayMode, 'battle_royal');
 assert.equal(loadPlayMenuPreferences().botFillEnabledByMode.battle_royal, true);
+assert.equal(loadPlayMenuPreferences().perspectiveByMode.battle_royal, 'third_person');
+assert.equal(loadPlayMenuPreferences().perspectiveByMode.quick_play, 'first_person');
 
 saveActivePartySession({
   partyId: 'party-a',

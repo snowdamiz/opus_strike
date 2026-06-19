@@ -8,6 +8,7 @@ import type { VoiceTokenRequest, VoiceTokenResponse, VoiceTeamChangedMessage } f
 import type { PublicRankSnapshot } from '../progression/ranking.js';
 import type { MatchMode } from './matchMode.js';
 import type { GameplayMode } from './gameplayMode.js';
+import type { MatchPerspective } from './matchPerspective.js';
 import type { MapPowerupKind, MapProfileId, VoxelMapSizeId, VoxelMapTheme } from '../maps/procedural/types.js';
 
 // Client -> Server Messages
@@ -310,6 +311,7 @@ export interface MatchSnapshotMessage {
   serverTime: number;
   phase: GamePhase;
   gameplayMode: GameplayMode;
+  matchPerspective: MatchPerspective;
   mapSeed: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
@@ -383,6 +385,7 @@ export interface RoundEndEvent {
 export interface GameEndEvent {
   matchMode: MatchMode;
   gameplayMode: GameplayMode;
+  matchPerspective: MatchPerspective;
   winningTeam: Team | null;
   finalScore: { red: number; blue: number };
   matchId: string | null;

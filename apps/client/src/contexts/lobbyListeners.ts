@@ -1,11 +1,14 @@
 import type { Room } from 'colyseus.js';
 import {
   DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_MATCH_PERSPECTIVE,
   isGameplayMode,
+  isMatchPerspective,
   type BotDifficulty,
   type GameplayMode,
   type HeroId,
   type MapProfileId,
+  type MatchPerspective,
   type PublicRankSnapshot,
   type VoxelMapSizeId,
   type VoxelMapTheme,
@@ -40,6 +43,8 @@ interface SetupLobbyListenersOptions {
 interface MatchmakingStatusMessage {
   matchMode?: 'quick_play' | 'ranked' | 'custom';
   gameplayMode?: GameplayMode;
+  botFillMode?: 'manual' | 'fill_even';
+  matchPerspective?: MatchPerspective;
   rankBandId?: number;
   rankBandLabel?: string;
   averageCompetitiveRating?: number;
@@ -71,6 +76,7 @@ interface LobbyStateMessage extends MatchmakingStatusMessage {
   lobbyId: string;
   name: string;
   gameplayMode?: GameplayMode;
+  matchPerspective?: MatchPerspective;
   hostId: string;
   status: string;
   players: LobbyPlayerWire[];
@@ -94,6 +100,7 @@ interface GameStartingMessage {
   players: { playerId: string; playerName: string; team?: string; isBot?: boolean }[];
   entryTicket?: string;
   gameplayMode?: GameplayMode;
+  matchPerspective?: MatchPerspective;
   mapSize?: VoxelMapSizeId | null;
   mapProfileId?: MapProfileId | null;
 }
@@ -102,6 +109,8 @@ function toMatchmakingStatus(data: MatchmakingStatusMessage): MatchmakingStatusS
   return {
     matchMode: data.matchMode ?? null,
     gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : null,
+    botFillMode: data.botFillMode === 'fill_even' ? 'fill_even' : data.botFillMode === 'manual' ? 'manual' : null,
+    matchPerspective: isMatchPerspective(data.matchPerspective) ? data.matchPerspective : null,
     rankBandId: typeof data.rankBandId === 'number' ? data.rankBandId : null,
     rankBandLabel: data.rankBandLabel ?? null,
     averageCompetitiveRating: typeof data.averageCompetitiveRating === 'number' ? data.averageCompetitiveRating : null,
@@ -181,6 +190,7 @@ export function setupLobbyListeners(
     setCurrentLobby(data.lobbyId, data.name);
     useGameStore.setState({
       gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : DEFAULT_GAMEPLAY_MODE,
+      matchPerspective: isMatchPerspective(data.matchPerspective) ? data.matchPerspective : DEFAULT_MATCH_PERSPECTIVE,
     });
     setIsLobbyHost(data.hostId === room.sessionId);
     setMatchmakingStatus(toMatchmakingStatus({
@@ -306,6 +316,7 @@ export function setupLobbyListeners(
     const myTeam = myAssignment?.team || 'red';
     useGameStore.setState({
       gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : DEFAULT_GAMEPLAY_MODE,
+      matchPerspective: isMatchPerspective(data.matchPerspective) ? data.matchPerspective : DEFAULT_MATCH_PERSPECTIVE,
     });
     setMapSize(data.mapSize);
     useGameStore.getState().setMapProfileId(data.mapProfileId);

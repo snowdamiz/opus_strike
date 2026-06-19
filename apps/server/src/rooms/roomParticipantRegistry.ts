@@ -1,4 +1,4 @@
-import type { HeroId, Team } from '@voxel-strike/shared';
+import type { HeroId, MatchPerspective, Team } from '@voxel-strike/shared';
 import type { RoomAuthContext } from '../auth/session';
 import type { GameEntryTicketClaims } from '../security/entryTickets';
 
@@ -6,6 +6,7 @@ export interface ReconnectParticipant {
   userId: string;
   lobbyPlayerId: string;
   displayName: string;
+  matchPerspective?: MatchPerspective;
   assignedTeam?: Team;
   selectedHero?: HeroId;
 }
@@ -52,6 +53,7 @@ export class RoomParticipantRegistry {
       userId: ticket.userId,
       lobbyPlayerId: ticket.lobbyPlayerId,
       displayName: ticket.displayName,
+      matchPerspective: ticket.matchPerspective,
       assignedTeam: ticket.assignedTeam,
       selectedHero: ticket.selectedHero,
     });
@@ -78,6 +80,7 @@ export class RoomParticipantRegistry {
       lobbyPlayerId: participant.lobbyPlayerId,
       userId: participant.userId,
       displayName: participant.displayName,
+      matchPerspective: participant.matchPerspective,
       assignedTeam: participant.assignedTeam,
       selectedHero: participant.selectedHero,
       issuedAt: input.issuedAt,

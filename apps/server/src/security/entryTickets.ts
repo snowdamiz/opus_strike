@@ -1,5 +1,12 @@
 import crypto from 'crypto';
-import { isTeamId, type HeroId, type Team } from '@voxel-strike/shared';
+import {
+  DEFAULT_MATCH_PERSPECTIVE,
+  isMatchPerspective,
+  isTeamId,
+  type HeroId,
+  type MatchPerspective,
+  type Team,
+} from '@voxel-strike/shared';
 import { createSignedTicket, readSignedTicketClaims } from './signedTicket';
 
 export interface GameEntryTicketClaims {
@@ -9,6 +16,7 @@ export interface GameEntryTicketClaims {
   lobbyPlayerId: string;
   userId: string;
   displayName: string;
+  matchPerspective?: MatchPerspective;
   assignedTeam?: Team;
   selectedHero?: HeroId;
   issuedAt: number;
@@ -22,6 +30,7 @@ export interface CreateGameEntryTicketInput {
   lobbyPlayerId: string;
   userId: string;
   displayName: string;
+  matchPerspective?: MatchPerspective;
   assignedTeam?: Team;
   selectedHero?: HeroId;
   ttlMs?: number;
@@ -38,6 +47,7 @@ export function createGameEntryTicket(input: CreateGameEntryTicketInput): string
     lobbyPlayerId: input.lobbyPlayerId,
     userId: input.userId,
     displayName: input.displayName,
+    matchPerspective: input.matchPerspective ?? DEFAULT_MATCH_PERSPECTIVE,
     assignedTeam: input.assignedTeam,
     selectedHero: input.selectedHero,
     issuedAt: now,
@@ -63,5 +73,10 @@ export function verifyGameEntryTicket(
   if (!isTeamId(claims.assignedTeam)) return null;
   if (!claims.userId || !claims.lobbyPlayerId || !claims.displayName || !claims.nonce) return null;
 
-  return claims;
+  return {
+    ...claims,
+    matchPerspective: isMatchPerspective(claims.matchPerspective)
+      ? claims.matchPerspective
+      : DEFAULT_MATCH_PERSPECTIVE,
+  };
 }

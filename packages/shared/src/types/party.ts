@@ -1,6 +1,7 @@
 import { DEFAULT_GAME_CONFIG } from '../constants/game.js';
 import { GAMEPLAY_MODES, type GameplayMode } from './gameplayMode.js';
 import type { HeroId } from './hero.js';
+import type { MatchPerspective, MatchPerspectiveSettings } from './matchPerspective.js';
 import type { BotDifficulty } from './player.js';
 import type { RankSummary } from '../progression/ranking.js';
 
@@ -45,6 +46,7 @@ export interface PartyStateSnapshot {
   selectedMode: PartyMode;
   gameplayMode: GameplayMode;
   botFillEnabledByMode: PartyBotFillSettings;
+  perspectiveByMode: MatchPerspectiveSettings;
   members: PartyMemberSnapshot[];
   launchError: string | null;
 }
@@ -54,6 +56,8 @@ export interface PartyLaunchPayload {
   lobbyId: string;
   matchMode: 'quick_play' | 'ranked' | 'custom';
   gameplayMode: GameplayMode;
+  botFillMode?: 'manual' | 'fill_even';
+  matchPerspective: MatchPerspective;
   matchmakingTicket?: string;
   targetRankDivisionIndex?: number;
   targetRankLabel?: string;

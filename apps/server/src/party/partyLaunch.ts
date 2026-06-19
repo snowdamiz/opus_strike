@@ -1,9 +1,11 @@
 import { matchMaker } from 'colyseus';
 import {
   DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_MATCH_PERSPECTIVE,
   getGameplayModeLabel,
   getRankDivisionIndex,
   type GameplayMode,
+  type MatchPerspective,
   type PartyBotLaunchDescriptor,
   type PartyLaunchPayload,
 } from '@voxel-strike/shared';
@@ -20,9 +22,8 @@ import {
   issueRankedTicket,
   type MatchmakingUserContext,
 } from '../matchmaking/service';
+import type { MatchmakingBotFillMode } from '../matchmaking/matchSettings';
 import type { PartyRosterRuntime, PartyRuntimeMember } from './partyRuntime';
-
-type MatchmakingBotFillMode = 'manual' | 'fill_even';
 
 interface PartyLaunchResult {
   lobbyId: string;
@@ -73,6 +74,7 @@ async function createMatchmakingLobby(input: {
   rankBandId: number;
   partyBots: PartyBotLaunchDescriptor[];
   botFillMode: MatchmakingBotFillMode;
+  matchPerspective: MatchPerspective;
   expectedHumanPlayers: number;
   expectedHumanUserIds: string[];
 }) {
@@ -88,6 +90,7 @@ async function createMatchmakingLobby(input: {
     expectedHumanUserIds: input.expectedHumanUserIds,
     initialBotCount: 0,
     botFillMode: input.botFillMode,
+    matchPerspective: input.matchPerspective,
     defaultBotDifficulty: 'normal',
     partyBots: input.partyBots,
   });
@@ -106,9 +109,18 @@ export async function launchPartyToMatchmaking(
   humanMembers.forEach(assertPartyTutorialComplete);
   const contexts = humanMembers.map(toMatchmakingContext);
   const gameplayMode = mode === 'ranked' ? DEFAULT_GAMEPLAY_MODE : party.selectedGameplayMode;
-  const targetRankDivisionIndex = await chooseMatchmakingRankBand(
-    averageMatchmakingContext(contexts, mode)
-  );
+  const botFillMode: MatchmakingBotFillMode = mode === 'quick_play' && party.getBotFillEnabled(gameplayMode)
+    ? 'fill_even'
+    : 'manual';
+  const matchPerspective = mode === 'ranked'
+    ? DEFAULT_MATCH_PERSPECTIVE
+    : party.getActiveMatchPerspective('quick_play', gameplayMode);
+  const targetRankDivisionIndex = await chooseMatchmakingRankBand({
+    ...averageMatchmakingContext(contexts, mode),
+    gameplayMode,
+    botFillMode,
+    matchPerspective,
+  });
 
   const tickets = new Map<string, ReturnType<typeof issueQuickPlayTicket> | ReturnType<typeof issueRankedTicket>>();
   if (mode === 'ranked') {
@@ -122,7 +134,11 @@ export async function launchPartyToMatchmaking(
     }
   } else {
     for (const context of contexts) {
-      tickets.set(context.userId, issueQuickPlayTicket(context, targetRankDivisionIndex));
+      tickets.set(context.userId, issueQuickPlayTicket(context, targetRankDivisionIndex, {
+        gameplayMode,
+        botFillMode,
+        matchPerspective,
+      }));
     }
   }
 
@@ -142,9 +158,8 @@ export async function launchPartyToMatchmaking(
     matchmakingTicket: firstTicket.ticket,
     rankBandId: targetRankDivisionIndex,
     partyBots,
-    botFillMode: mode === 'quick_play' && party.getBotFillEnabled(gameplayMode)
-      ? 'fill_even'
-      : 'manual',
+    botFillMode,
+    matchPerspective,
     expectedHumanPlayers: humanMembers.length,
     expectedHumanUserIds: humanMembers.map((member) => member.userId),
   });
@@ -158,6 +173,8 @@ export async function launchPartyToMatchmaking(
       lobbyId: room.roomId,
       matchMode: mode,
       gameplayMode,
+      botFillMode,
+      matchPerspective,
       matchmakingTicket: issued.ticket,
       targetRankDivisionIndex,
       targetRankLabel: issued.targetRankLabel,
@@ -200,6 +217,9 @@ export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promi
   humanMembers.forEach(assertPartyTutorialComplete);
 
   const lobbyName = party.mode === 'practice' ? 'Party Practice' : 'Party Custom';
+  const matchPerspective = party.mode === 'practice'
+    ? party.getActiveMatchPerspective('practice', party.selectedGameplayMode)
+    : DEFAULT_MATCH_PERSPECTIVE;
   const room = await matchMaker.createRoom('lobby_room', {
     lobbyName,
     isPrivate: true,
@@ -208,6 +228,7 @@ export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promi
     defaultBotDifficulty: 'normal',
     partyBots,
     gameplayMode: party.selectedGameplayMode,
+    matchPerspective,
   });
 
   await createAcceptedLobbyInvites({
@@ -225,6 +246,8 @@ export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promi
       lobbyId: room.roomId,
       matchMode: 'custom',
       gameplayMode: party.selectedGameplayMode,
+      botFillMode: 'manual',
+      matchPerspective,
     });
   }
 

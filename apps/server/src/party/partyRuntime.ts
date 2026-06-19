@@ -1,17 +1,25 @@
 import {
   ALL_HERO_IDS,
   DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_MATCH_PERSPECTIVE,
   PARTY_MAX_MEMBERS,
+  createDefaultMatchPerspectiveSettings,
   createDefaultPartyBotFillSettings,
+  getMatchPerspectiveSettingMode,
   getGameplayModeRules,
   getHumanPartyHeroIds,
   getRankDivisionIndex,
   getRankFromRating,
   isGameplayMode,
+  isMatchPerspective,
+  isMatchPerspectiveSettingMode,
   isPartyMode,
   type GameplayMode,
   type BotDifficulty,
   type HeroId,
+  type MatchPerspective,
+  type MatchPerspectiveSettingMode,
+  type MatchPerspectiveSettings,
   type PartyBotFillSettings,
   type PartyMemberSnapshot,
   type PartyMode,
@@ -61,6 +69,7 @@ export interface PersistentPartySnapshotInput {
   selectedMode?: unknown;
   gameplayMode?: unknown;
   botFillEnabledByMode?: unknown;
+  perspectiveByMode?: unknown;
   members?: unknown;
 }
 
@@ -77,6 +86,7 @@ export class PartyRosterRuntime {
   private selectedMode: PartyMode = 'quick_play';
   private gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE;
   private botFillEnabledByMode: PartyBotFillSettings = createDefaultPartyBotFillSettings();
+  private perspectiveByMode: MatchPerspectiveSettings = createDefaultMatchPerspectiveSettings();
   private launchError: string | null = null;
   private readonly members = new Map<string, PartyRuntimeMember>();
   private readonly sessionToUserId = new Map<string, string>();
@@ -105,6 +115,11 @@ export class PartyRosterRuntime {
 
   getBotFillEnabled(gameplayMode: GameplayMode): boolean {
     return this.botFillEnabledByMode[gameplayMode] === true;
+  }
+
+  getActiveMatchPerspective(partyMode: PartyMode, gameplayMode: GameplayMode): MatchPerspective {
+    const modeKey = getMatchPerspectiveSettingMode(partyMode, gameplayMode);
+    return modeKey ? this.perspectiveByMode[modeKey] : DEFAULT_MATCH_PERSPECTIVE;
   }
 
   addMember(input: AddPartyMemberInput): PartyMemberChange {
@@ -264,6 +279,15 @@ export class PartyRosterRuntime {
     }
     this.botFillEnabledByMode = botFill;
 
+    const perspectives = createDefaultMatchPerspectiveSettings();
+    if (snapshot.perspectiveByMode && typeof snapshot.perspectiveByMode === 'object') {
+      const rawPerspectives = snapshot.perspectiveByMode as Partial<Record<MatchPerspectiveSettingMode, unknown>>;
+      for (const mode of Object.keys(perspectives) as MatchPerspectiveSettingMode[]) {
+        perspectives[mode] = isMatchPerspective(rawPerspectives[mode]) ? rawPerspectives[mode] : perspectives[mode];
+      }
+    }
+    this.perspectiveByMode = perspectives;
+
     const members = Array.isArray(snapshot.members) ? snapshot.members : [];
     for (const member of Array.from(this.members.values())) {
       if (member.isBot) {
@@ -345,11 +369,7 @@ export class PartyRosterRuntime {
       }
       this.gameplayMode = gameplayMode;
     }
-    for (const member of this.members.values()) {
-      if (!member.isBot && member.userId !== this.leaderUserId) {
-        member.ready = false;
-      }
-    }
+    this.clearNonLeaderReady();
     this.launchError = null;
     return this.snapshot();
   }
@@ -369,11 +389,27 @@ export class PartyRosterRuntime {
       ...this.botFillEnabledByMode,
       [gameplayMode]: enabled,
     };
-    for (const member of this.members.values()) {
-      if (!member.isBot && member.userId !== this.leaderUserId) {
-        member.ready = false;
-      }
+    this.clearNonLeaderReady();
+    this.launchError = null;
+    return this.snapshot();
+  }
+
+  setMatchPerspective(userId: string, modeKey: unknown, perspective: unknown): PartyStateSnapshot {
+    if (this.leaderUserId !== userId) {
+      throw new Error('Only the party leader can choose match perspective');
     }
+    if (!isMatchPerspectiveSettingMode(modeKey)) {
+      throw new Error('Invalid match settings mode');
+    }
+    if (!isMatchPerspective(perspective)) {
+      throw new Error('Invalid match perspective');
+    }
+
+    this.perspectiveByMode = {
+      ...this.perspectiveByMode,
+      [modeKey]: perspective,
+    };
+    this.clearNonLeaderReady();
     this.launchError = null;
     return this.snapshot();
   }
@@ -418,6 +454,7 @@ export class PartyRosterRuntime {
       selectedMode: this.selectedMode,
       gameplayMode: this.gameplayMode,
       botFillEnabledByMode: { ...this.botFillEnabledByMode },
+      perspectiveByMode: { ...this.perspectiveByMode },
       members: this.getMembers().map((member): PartyMemberSnapshot => ({
         userId: member.userId,
         displayName: member.displayName,
@@ -436,6 +473,14 @@ export class PartyRosterRuntime {
   private assertLeader(userId: string): void {
     if (!this.leaderUserId || this.leaderUserId !== userId) {
       throw new Error('Only the party leader can manage bots');
+    }
+  }
+
+  private clearNonLeaderReady(): void {
+    for (const member of this.members.values()) {
+      if (!member.isBot && member.userId !== this.leaderUserId) {
+        member.ready = false;
+      }
     }
   }
 

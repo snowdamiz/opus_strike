@@ -4398,6 +4398,7 @@ export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
     actionActive,
     actionCharging,
     actionTargeting,
+    matchPerspective,
   } = useGameStore(
     useShallow(state => {
       const currentHeroId = state.localPlayer?.heroId ?? null;
@@ -4408,6 +4409,7 @@ export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
         heroId: viewmodelHeroId,
         playerState: state.localPlayer?.state ?? 'dead',
         gamePhase: state.gamePhase,
+        matchPerspective: state.matchPerspective,
         actionActive: isViewmodelActionActive(viewmodelHeroId, state, localPlayerId),
         actionCharging: viewmodelHeroId === 'phantom' && state.voidRayCharging,
         actionTargeting: Boolean(
@@ -4420,7 +4422,7 @@ export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
   );
 
   const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
-  if (!heroId || !isPlaying || playerState !== 'alive') return null;
+  if (!heroId || !isPlaying || playerState !== 'alive' || matchPerspective === 'third_person') return null;
 
   return (
     <HeroViewmodelInner

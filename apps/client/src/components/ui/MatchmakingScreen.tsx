@@ -1,8 +1,10 @@
 import {
   DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_MATCH_PERSPECTIVE,
   getGameplayModeLabel,
   getGameplayModeRules,
   isGameplayMode,
+  isMatchPerspective,
 } from '@voxel-strike/shared';
 import { useEffect, useState } from 'react';
 import { useShallow } from 'zustand/shallow';
@@ -19,12 +21,19 @@ function getHttpUrl(): string {
   return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
 }
 
-function buildQueueStatusUrl(isRanked: boolean, gameplayMode: string): string {
+function buildQueueStatusUrl(
+  isRanked: boolean,
+  gameplayMode: string,
+  botFillMode: 'manual' | 'fill_even',
+  matchPerspective: string
+): string {
   const params = new URLSearchParams({
     mode: isRanked ? 'ranked' : 'quick_play',
   });
   if (!isRanked) {
     params.set('gameplayMode', gameplayMode);
+    params.set('botFillMode', botFillMode);
+    params.set('perspective', matchPerspective);
   }
   return `${getHttpUrl()}/matchmaking/queue-status?${params.toString()}`;
 }
@@ -55,6 +64,10 @@ export function MatchmakingScreen() {
   const queuedGameplayMode = isGameplayMode(matchmakingStatus.gameplayMode)
     ? matchmakingStatus.gameplayMode
     : DEFAULT_GAMEPLAY_MODE;
+  const queuedBotFillMode = matchmakingStatus.botFillMode ?? 'manual';
+  const queuedMatchPerspective = isMatchPerspective(matchmakingStatus.matchPerspective)
+    ? matchmakingStatus.matchPerspective
+    : DEFAULT_MATCH_PERSPECTIVE;
   const matchmakingLabel = isRanked ? 'Ranked' : getGameplayModeLabel(queuedGameplayMode);
   const combatParticipantCount = lobbyPlayers.size;
   const provisionalHumanCount = isRanked
@@ -118,7 +131,12 @@ export function MatchmakingScreen() {
       const timeoutId = window.setTimeout(() => controller.abort(), 4000);
 
       try {
-        const response = await fetch(buildQueueStatusUrl(isRanked, queuedGameplayMode), {
+        const response = await fetch(buildQueueStatusUrl(
+          isRanked,
+          queuedGameplayMode,
+          queuedBotFillMode,
+          queuedMatchPerspective
+        ), {
           credentials: 'include',
           signal: controller.signal,
         });
@@ -147,7 +165,7 @@ export function MatchmakingScreen() {
       activeController?.abort();
       window.clearInterval(intervalId);
     };
-  }, [isRanked, queuedGameplayMode]);
+  }, [isRanked, queuedGameplayMode, queuedBotFillMode, queuedMatchPerspective]);
 
   const handleCancel = () => {
     playButtonClick();

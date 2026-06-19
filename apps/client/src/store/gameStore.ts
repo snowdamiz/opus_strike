@@ -1,10 +1,12 @@
 import { create } from 'zustand';
 import {
   DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_MATCH_PERSPECTIVE,
   DEFAULT_VOXEL_MAP_SIZE_ID,
   createRandomSeed,
   normalizeVoxelMapSizeId,
   type GameplayMode,
+  type MatchPerspective,
   type GameEndEvent,
   type PlayerPingsMessage,
   type PowerupPickupRuntimeState,
@@ -87,6 +89,7 @@ interface CoreState {
 
   // Game state
   gameplayMode: GameplayMode;
+  matchPerspective: MatchPerspective;
   gamePhase: GamePhase;
   matchSummary: GameEndEvent | null;
   appliedExperienceMatchId: string | null;
@@ -240,9 +243,12 @@ const coreInitialState: CoreState = {
   mapVotePhaseEndTime: null,
   selectedMapOptionId: null,
   gameplayMode: DEFAULT_GAMEPLAY_MODE,
+  matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
   matchmakingStatus: {
     matchMode: null,
     gameplayMode: null,
+    botFillMode: null,
+    matchPerspective: null,
     rankBandId: null,
     rankBandLabel: null,
     averageCompetitiveRating: null,
@@ -707,6 +713,8 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     matchmakingStatus: {
       matchMode: null,
       gameplayMode: null,
+      botFillMode: null,
+      matchPerspective: null,
       rankBandId: null,
       rankBandLabel: null,
       averageCompetitiveRating: null,
@@ -721,5 +729,6 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       rankedEntryQuoteId: null,
     },
     gameplayMode: DEFAULT_GAMEPLAY_MODE,
+    matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
   }),
 }));

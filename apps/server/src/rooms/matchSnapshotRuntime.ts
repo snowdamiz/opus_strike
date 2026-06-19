@@ -5,6 +5,7 @@ import {
   type FlagSync,
   type GameplayMode,
   type MapProfileId,
+  type MatchPerspective,
   type MatchSnapshotMessage,
   type SafeZoneSnapshot,
   type VoxelMapSizeId,
@@ -16,6 +17,7 @@ export interface BuildMatchSnapshotInput {
   serverTime: number;
   phase: MatchSnapshotMessage['phase'];
   gameplayMode: GameplayMode;
+  matchPerspective: MatchPerspective;
   mapSeed: number;
   mapThemeId: VoxelMapTheme['id'] | null;
   mapSize: VoxelMapSizeId | null;
@@ -38,6 +40,7 @@ export class MatchSnapshotRuntime {
       serverTime: input.serverTime,
       phase: input.phase,
       gameplayMode: input.gameplayMode,
+      matchPerspective: input.matchPerspective,
       mapSeed: input.mapSeed,
       mapThemeId: input.mapThemeId,
       mapSize: input.mapSize,
@@ -61,6 +64,7 @@ export class MatchSnapshotRuntime {
       snapshot.mapSize ?? DEFAULT_VOXEL_MAP_SIZE_ID,
       snapshot.mapProfileId ?? '',
       snapshot.gameplayMode,
+      snapshot.matchPerspective,
       snapshot.redScore,
       snapshot.blueScore,
       snapshot.phaseEndTime ?? 0,

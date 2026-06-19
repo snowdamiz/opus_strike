@@ -4,6 +4,7 @@ import { LobbyState, LobbyPlayer } from './schema/LobbyState';
 import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_GAME_CONFIG,
+  DEFAULT_MATCH_PERSPECTIVE,
   HERO_DEFINITIONS,
   assignTeamByCapacity,
   getGameplayModeCapacityCost,
@@ -15,12 +16,13 @@ import {
   hashSeed,
   isGameplayMode,
   isMatchMode,
+  isMatchPerspective,
   isTeamHeroAvailable,
   isTeamIdForGameplayMode,
   toPublicRankSnapshot,
   type GameplayModeRules,
 } from '@voxel-strike/shared';
-import type { MatchMode, PartyBotLaunchDescriptor } from '@voxel-strike/shared';
+import type { MatchMode, MatchPerspective, PartyBotLaunchDescriptor } from '@voxel-strike/shared';
 import type { BotDifficulty, GameplayMode, HeroId, MapProfileId, Team, VoxelMapSizeId, VoxelMapTheme } from '@voxel-strike/shared';
 import { assertUsableEntryTicketSecret } from '../config/security';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
@@ -100,6 +102,7 @@ interface JoinOptions {
   matchMode?: MatchMode;
   gameplayMode?: GameplayMode;
   matchmakingTicket?: string;
+  matchPerspective?: MatchPerspective;
   rankBandId?: number;
   rankedEntryQuoteId?: string;
   authToken?: string;
@@ -217,6 +220,7 @@ export class LobbyRoom extends Room<LobbyState> {
   private disposed = false;
   private matchMode: MatchMode = 'custom';
   private gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE;
+  private matchPerspective: MatchPerspective = DEFAULT_MATCH_PERSPECTIVE;
   private gameplayRules: GameplayModeRules = getGameplayModeRules(DEFAULT_GAMEPLAY_MODE);
   private isQuickPlayQueue = false;
   private isRankedQueue = false;
@@ -251,9 +255,10 @@ export class LobbyRoom extends Room<LobbyState> {
     const initialMatchmakingTicket = options.matchmakingMode === true
       ? verifyMatchmakingTicket(options.matchmakingTicket)
       : null;
-    this.gameplayMode = this.resolveRoomGameplayMode(options);
-    this.gameplayRules = getGameplayModeRules(this.gameplayMode);
     this.matchMode = this.resolveRoomMatchMode(options, initialMatchmakingTicket);
+    this.gameplayMode = this.resolveRoomGameplayMode(options, initialMatchmakingTicket);
+    this.matchPerspective = this.resolveRoomMatchPerspective(options, initialMatchmakingTicket);
+    this.gameplayRules = getGameplayModeRules(this.gameplayMode);
     this.isQuickPlayQueue = this.matchMode === 'quick_play';
     this.isRankedQueue = this.matchMode === 'ranked';
     this.rankBandId = this.resolveRoomRankBand(options, initialMatchmakingTicket);
@@ -263,6 +268,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.state.lobbyId = this.roomId;
     this.state.matchMode = this.matchMode;
     this.state.gameplayMode = this.gameplayMode;
+    this.state.matchPerspective = this.matchPerspective;
     this.state.name = options.lobbyName || (this.isQuickPlayQueue ? getGameplayModeLabel(this.gameplayMode) : this.isRankedQueue ? 'Ranked' : `Lobby ${this.roomId.slice(0, 6)}`);
     this.state.maxPlayers = this.maxClients;
     this.state.maxParticipants = this.gameplayRules.maxPlayers;
@@ -276,7 +282,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.state.status = this.isMatchmakingQueue() ? 'matchmaking' : 'waiting';
     this.state.defaultBotDifficulty = this.normalizeDifficulty(options.defaultBotDifficulty);
     this.state.botFillMode = this.gameplayRules.botsEnabled
-      ? this.normalizeBotFillMode(options.botFillMode)
+      ? this.resolveRoomBotFillMode(options, initialMatchmakingTicket)
       : 'manual';
 
     // Set metadata for lobby listing
@@ -409,18 +415,36 @@ export class LobbyRoom extends Room<LobbyState> {
     if (isNewRoom || options.matchmakingMode !== true) return true;
     if (!this.isMatchmakingQueue()) return false;
 
-    const requestedMatchMode: MatchMode = options.matchMode === 'ranked' ? 'ranked' : 'quick_play';
+    const requestedTicket = options.matchmakingTicket
+      ? verifyMatchmakingTicket(options.matchmakingTicket)
+      : null;
+    const requestedTicketMode = requestedTicket?.mode === 'ranked' ? 'ranked' : requestedTicket?.mode === 'quick_play' ? 'quick_play' : null;
+    const requestedMatchMode: MatchMode = requestedTicketMode ?? (options.matchMode === 'ranked' ? 'ranked' : 'quick_play');
     if (requestedMatchMode !== this.matchMode) return false;
 
     const requestedGameplayMode = requestedMatchMode === 'ranked'
       ? DEFAULT_GAMEPLAY_MODE
-      : isGameplayMode(options.gameplayMode)
+      : isGameplayMode(requestedTicket?.gameplayMode)
+        ? requestedTicket.gameplayMode
+        : isGameplayMode(options.gameplayMode)
         ? options.gameplayMode
         : DEFAULT_GAMEPLAY_MODE;
     if (requestedGameplayMode !== this.gameplayMode) return false;
 
+    const requestedPerspective = requestedMatchMode === 'ranked'
+      ? DEFAULT_MATCH_PERSPECTIVE
+      : isMatchPerspective(requestedTicket?.matchPerspective)
+        ? requestedTicket.matchPerspective
+        : isMatchPerspective(options.matchPerspective)
+          ? options.matchPerspective
+          : DEFAULT_MATCH_PERSPECTIVE;
+    if (requestedPerspective !== this.matchPerspective) return false;
+
     if (typeof options.rankBandId === 'number' && options.rankBandId !== this.rankBandId) return false;
-    if (this.normalizeBotFillMode(options.botFillMode) !== this.state.botFillMode) return false;
+    const requestedBotFillMode = requestedMatchMode === 'quick_play' && requestedTicket
+      ? requestedTicket.botFillMode
+      : this.normalizeBotFillMode(options.botFillMode);
+    if (requestedBotFillMode !== this.state.botFillMode) return false;
     if (this.shouldReserveExpectedHumanSlot(this.getRequestedMatchmakingUserId(options))) return false;
     if (this.getCombatParticipantCount() >= this.getMatchmakingRequiredPlayers()) return false;
     return true;
@@ -918,6 +942,7 @@ export class LobbyRoom extends Room<LobbyState> {
         lobbyName: this.state.name,
         matchMode: this.matchMode,
         gameplayMode: this.gameplayMode,
+        matchPerspective: this.matchPerspective,
         mapSeed,
         mapThemeId,
         mapSize,
@@ -945,6 +970,7 @@ export class LobbyRoom extends Room<LobbyState> {
       const ticketInputsByPlayerId = buildGameEntryTicketInputs({
         lobbyId: this.state.lobbyId,
         gameRoomId: gameRoom.roomId,
+        matchPerspective: this.matchPerspective,
         playerAssignments,
         authContexts: this.playerAuthContexts,
       });
@@ -960,6 +986,7 @@ export class LobbyRoom extends Room<LobbyState> {
           players: gameStartingAssignments,
           entryTicket: ticketsByPlayerId.get(client.sessionId),
           gameplayMode: this.gameplayMode,
+          matchPerspective: this.matchPerspective,
           mapThemeId,
           mapSize,
           mapProfileId,
@@ -1413,6 +1440,12 @@ export class LobbyRoom extends Room<LobbyState> {
     return botFillMode === 'fill_even' ? 'fill_even' : 'manual';
   }
 
+  private resolveRoomBotFillMode(options: JoinOptions, ticket: MatchmakingTicketClaims | null): BotFillMode {
+    if (this.matchMode === 'ranked') return 'manual';
+    if (this.matchMode === 'quick_play' && ticket) return ticket.botFillMode;
+    return this.normalizeBotFillMode(options.botFillMode);
+  }
+
   private normalizeHeroId(heroId?: HeroId | string): HeroId | '' {
     return heroId && HERO_DEFINITIONS[heroId as HeroId] ? (heroId as HeroId) : '';
   }
@@ -1441,6 +1474,7 @@ export class LobbyRoom extends Room<LobbyState> {
       name: this.state.name,
       matchMode: this.matchMode,
       gameplayMode: this.gameplayMode,
+      matchPerspective: this.matchPerspective,
       hostId: this.state.hostId,
       status: this.state.status,
       players: this.state.players,
@@ -1567,13 +1601,23 @@ export class LobbyRoom extends Room<LobbyState> {
     return 'custom';
   }
 
-  private resolveRoomGameplayMode(options: JoinOptions): GameplayMode {
+  private resolveRoomGameplayMode(options: JoinOptions, ticket: MatchmakingTicketClaims | null): GameplayMode {
     if (options.matchmakingMode === true) {
-      const requestedMode = isMatchMode(options.matchMode) ? options.matchMode : null;
+      const requestedMode = ticket?.mode ?? (isMatchMode(options.matchMode) ? options.matchMode : null);
       if (requestedMode === 'ranked') return DEFAULT_GAMEPLAY_MODE;
+      if (isGameplayMode(ticket?.gameplayMode)) return ticket.gameplayMode;
       return isGameplayMode(options.gameplayMode) ? options.gameplayMode : DEFAULT_GAMEPLAY_MODE;
     }
     return isGameplayMode(options.gameplayMode) ? options.gameplayMode : DEFAULT_GAMEPLAY_MODE;
+  }
+
+  private resolveRoomMatchPerspective(options: JoinOptions, ticket: MatchmakingTicketClaims | null): MatchPerspective {
+    if (options.matchmakingMode === true) {
+      const requestedMode = ticket?.mode ?? (isMatchMode(options.matchMode) ? options.matchMode : null);
+      if (requestedMode === 'ranked') return DEFAULT_MATCH_PERSPECTIVE;
+      if (isMatchPerspective(ticket?.matchPerspective)) return ticket.matchPerspective;
+    }
+    return isMatchPerspective(options.matchPerspective) ? options.matchPerspective : DEFAULT_MATCH_PERSPECTIVE;
   }
 
   private resolveRoomRankBand(options: JoinOptions, ticket: MatchmakingTicketClaims | null): number {
@@ -1664,6 +1708,9 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!ticket) return false;
     if (ticket.mode !== this.matchMode) return false;
     if (ticket.targetRankDivisionIndex !== this.rankBandId) return false;
+    if (ticket.gameplayMode !== this.gameplayMode) return false;
+    if (ticket.botFillMode !== this.state.botFillMode) return false;
+    if (ticket.matchPerspective !== this.matchPerspective) return false;
 
     return ticket.userId === authContext.userId;
   }
@@ -1698,6 +1745,7 @@ export class LobbyRoom extends Room<LobbyState> {
     return {
       matchMode: this.matchMode,
       gameplayMode: this.gameplayMode,
+      matchPerspective: this.matchPerspective,
       botFillMode: this.state.botFillMode,
       rankBandId: this.rankBandId,
       rankBandLabel: getRankDivisionLabel(this.rankBandId),
@@ -1735,6 +1783,7 @@ export class LobbyRoom extends Room<LobbyState> {
       maxPlayers: this.state.maxPlayers,
       matchMode: this.matchMode,
       gameplayMode: this.gameplayMode,
+      matchPerspective: this.matchPerspective,
       botFillMode: this.state.botFillMode,
       matchmakingMode: this.isMatchmakingQueue(),
       rankBandId: this.isMatchmakingQueue() ? this.rankBandId : undefined,

@@ -5,17 +5,21 @@ import { config } from '../config/environment';
 import {
   createRandomSeed,
   DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_MATCH_PERSPECTIVE,
   DEFAULT_VOXEL_MAP_SIZE_ID,
   TUTORIAL_MAP_SEED,
   createTutorialVoxelMapManifest,
   getGameplayModeLabel,
   getHeroStats,
   isGameplayMode,
+  isMatchPerspective,
   MOVEMENT_PROTOCOL_VERSION,
   POWERUP_HEALTH_RESTORE_RATIO,
   type BotDifficulty,
   type GameplayMode,
   type HeroId,
+  type MatchPerspective,
+  type MatchPerspectiveSettingMode,
   type PartyLaunchPayload,
   type PartyMode,
   type PartyStateSnapshot,
@@ -62,7 +66,7 @@ import { clearActivePartySession, saveActivePartySession } from '../utils/active
 
 export type { RankedTokenHoldStatus } from './networkApi';
 
-type StartPracticeGameOptions = { mapSeed?: number; tutorial?: boolean; heroId?: HeroId };
+type StartPracticeGameOptions = { mapSeed?: number; tutorial?: boolean; heroId?: HeroId; matchPerspective?: MatchPerspective };
 const TUTORIAL_HERO_ID: HeroId = 'blaze';
 
 function facingToLookYaw(facing: { x: number; z: number } | null | undefined): number {
@@ -90,7 +94,7 @@ export interface RunningGameReconnectStatus {
 
 interface NetworkContextType {
   // Lobby operations
-  quickPlay: (playerName: string, gameplayMode?: GameplayMode, botFillEnabled?: boolean, selectedHero?: HeroId) => Promise<void>;
+  quickPlay: (playerName: string, gameplayMode?: GameplayMode, botFillEnabled?: boolean, selectedHero?: HeroId, matchPerspective?: MatchPerspective) => Promise<void>;
   rankedPlay: (playerName: string, selectedHero?: HeroId) => Promise<void>;
   getRankedTokenHoldStatus: () => Promise<RankedTokenHoldStatus>;
   startPracticeGame: (playerName?: string, options?: StartPracticeGameOptions) => void;
@@ -107,6 +111,7 @@ interface NetworkContextType {
   setPartyReady: (ready: boolean) => void;
   setPartyMode: (mode: PartyMode, gameplayMode?: GameplayMode) => void;
   setPartyBotFill: (gameplayMode: GameplayMode, enabled: boolean) => void;
+  setPartyPerspective: (modeKey: MatchPerspectiveSettingMode, perspective: MatchPerspective) => void;
   addPartyBot: (options?: { difficulty?: BotDifficulty; displayName?: string; heroId?: HeroId }) => void;
   kickPartyMember: (userId: string) => void;
   startParty: () => void;
@@ -314,6 +319,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const startPracticeGame = useCallback((playerName?: string, options?: StartPracticeGameOptions) => {
     const name = resolvePracticePlayerName(playerName);
     const isTutorial = options?.tutorial === true;
+    const matchPerspective = isTutorial
+      ? DEFAULT_MATCH_PERSPECTIVE
+      : options?.matchPerspective ?? DEFAULT_MATCH_PERSPECTIVE;
 
     cleanupExistingConnections();
     clearRunningGameSession();
@@ -391,6 +399,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           playerId,
           appPhase: 'in_game',
           gameplayMode: DEFAULT_GAMEPLAY_MODE,
+          matchPerspective,
           gamePhase: 'playing',
           matchSummary: null,
           appliedExperienceMatchId: null,
@@ -480,7 +489,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     playerName: string,
     gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE,
     botFillEnabled = false,
-    selectedHero?: HeroId
+    selectedHero?: HeroId,
+    matchPerspective: MatchPerspective = DEFAULT_MATCH_PERSPECTIVE
   ) => {
     setLoading(true);
 
@@ -490,7 +500,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setPracticeMode(false);
 
       const client = getClient();
-      const matchmakingTicket = await requestQuickPlayTicket();
+      const botFillMode = botFillEnabled ? 'fill_even' : 'manual';
+      const matchmakingTicket = await requestQuickPlayTicket({
+        gameplayMode,
+        botFillMode,
+        matchPerspective,
+      });
 
       loggers.network.debug('quick play matchmaking', matchmakingTicket.targetRankLabel);
 
@@ -505,10 +520,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         matchmakingMode: true,
         matchMode: 'quick_play',
         gameplayMode,
+        matchPerspective,
         matchmakingTicket: matchmakingTicket.ticket,
         rankBandId: matchmakingTicket.targetRankDivisionIndex,
         initialBotCount: 0,
-        botFillMode: botFillEnabled ? 'fill_even' : 'manual',
+        botFillMode,
         defaultBotDifficulty: 'normal',
         selectedHero,
       });
@@ -516,10 +532,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setupLobbyListeners(lobbyRoomRef.current, playerName);
 
       setPlayerId(lobbyRoomRef.current.sessionId);
-      useGameStore.setState({ gameplayMode });
+      useGameStore.setState({ gameplayMode, matchPerspective });
       setMatchmakingStatus({
         matchMode: 'quick_play',
         gameplayMode,
+        botFillMode,
+        matchPerspective,
         rankBandId: matchmakingTicket.targetRankDivisionIndex,
         rankBandLabel: matchmakingTicket.targetRankLabel,
         averageCompetitiveRating: matchmakingTicket.competitiveRating,
@@ -566,6 +584,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         matchmakingMode: true,
         matchMode: 'ranked',
         matchmakingTicket: rankedTicket.ticket,
+        matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
         rankBandId: rankedTicket.targetRankDivisionIndex,
         initialBotCount: 0,
         botFillMode: 'manual',
@@ -576,9 +595,15 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setupLobbyListeners(lobbyRoomRef.current, playerName);
 
       setPlayerId(lobbyRoomRef.current.sessionId);
+      useGameStore.setState({
+        gameplayMode: DEFAULT_GAMEPLAY_MODE,
+        matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
+      });
       setMatchmakingStatus({
         matchMode: 'ranked',
         gameplayMode: DEFAULT_GAMEPLAY_MODE,
+        botFillMode: 'manual',
+        matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
         rankBandId: rankedTicket.targetRankDivisionIndex,
         rankBandLabel: rankedTicket.targetRankLabel,
         averageCompetitiveRating: rankedTicket.competitiveRating,
@@ -652,6 +677,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       if (launch.matchmakingTicket) {
         joinOptions.matchmakingTicket = launch.matchmakingTicket;
       }
+      joinOptions.matchPerspective = launch.matchPerspective;
 
       lobbyRoomRef.current = await client.joinById(launch.lobbyId, joinOptions);
 
@@ -662,6 +688,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         setMatchmakingStatus({
           matchMode: launch.matchMode,
           gameplayMode: launch.gameplayMode,
+          botFillMode: launch.botFillMode ?? 'manual',
+          matchPerspective: launch.matchPerspective,
           rankBandId: launch.targetRankDivisionIndex ?? null,
           rankBandLabel: launch.targetRankLabel ?? null,
           averageCompetitiveRating: null,
@@ -676,6 +704,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           rankedEntryQuoteId: null,
         });
       }
+      useGameStore.setState({
+        gameplayMode: launch.gameplayMode,
+        matchPerspective: launch.matchPerspective,
+      });
       setAppPhase(launch.matchMode === 'custom' ? 'in_lobby' : 'matchmaking');
       setConnected(true);
       setLoading(false);
@@ -849,6 +881,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     partyRoomRef.current?.send('setBotFill', { gameplayMode, enabled });
   }, []);
 
+  const setPartyPerspective = useCallback((modeKey: MatchPerspectiveSettingMode, perspective: MatchPerspective) => {
+    partyRoomRef.current?.send('setPerspective', { modeKey, perspective });
+  }, []);
+
   const addPartyBot = useCallback((options?: { difficulty?: BotDifficulty; displayName?: string; heroId?: HeroId }) => {
     partyRoomRef.current?.send('addBot', options || {});
   }, []);
@@ -952,7 +988,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         return { available: false, session: null, reason: status.reason ?? 'unavailable' };
       }
 
-      return { available: true, session };
+      const matchPerspective = isMatchPerspective(status.matchPerspective)
+        ? status.matchPerspective
+        : session.matchPerspective;
+      useGameStore.setState({ matchPerspective });
+      return { available: true, session: { ...session, matchPerspective } };
     } catch (error) {
       loggers.network.warn('running game reconnect check failed', error);
       return { available: false, session: null, reason: 'check_failed' };
@@ -1013,6 +1053,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         roomId: gameRoomRef.current.id,
         playerName,
         team: team === 'red' || team === 'blue' ? team : undefined,
+        matchPerspective: useGameStore.getState().matchPerspective,
       });
 
       loggers.network.info('joined game room', gameRoomRef.current.id);
@@ -1066,6 +1107,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       mapSize: DEFAULT_VOXEL_MAP_SIZE_ID,
       mapProfileId: null,
       gameplayMode: DEFAULT_GAMEPLAY_MODE,
+      matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
       redFlag: null,
       blueFlag: null,
       players: new Map(),
@@ -1250,6 +1292,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setPartyReady,
     setPartyMode,
     setPartyBotFill,
+    setPartyPerspective,
     addPartyBot,
     kickPartyMember,
     startParty,
@@ -1332,6 +1375,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setPartyHero,
     setPartyBotFill,
     setPartyMode,
+    setPartyPerspective,
     setPartyReady,
     startGame,
     startParty,

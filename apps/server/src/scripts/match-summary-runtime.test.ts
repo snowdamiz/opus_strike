@@ -178,6 +178,7 @@ const runtime = new MatchSummaryRuntime({
   const event = runtime.buildGameEndEvent({
     matchMode: 'ranked',
     gameplayMode: 'capture_the_flag',
+    matchPerspective: 'first_person',
     winningTeam: 'red',
     finalScore: { red: 3, blue: 1 },
     matchId: 'match-a',
@@ -220,6 +221,7 @@ const runtime = new MatchSummaryRuntime({
   const event = runtime.buildGameEndEvent({
     matchMode: 'ranked',
     gameplayMode: 'team_deathmatch',
+    matchPerspective: 'third_person',
     winningTeam: 'red',
     finalScore: { red: 10, blue: 8 },
     matchId: 'match-ranked',
@@ -259,6 +261,7 @@ const runtime = new MatchSummaryRuntime({
   const event = runtime.buildGameEndEvent({
     matchMode: 'ranked',
     gameplayMode: 'team_deathmatch',
+    matchPerspective: 'first_person',
     winningTeam: 'red',
     finalScore: { red: 1, blue: 0 },
     matchId: 'match-held',

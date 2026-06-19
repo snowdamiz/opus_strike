@@ -16,6 +16,7 @@ import type {
   VoxelMapSizeId,
   VoxelMapTheme,
   GameplayMode,
+  MatchPerspective,
 } from '@voxel-strike/shared';
 
 export type { PowerupPickupRuntimeState, SafeZoneSnapshot };
@@ -100,6 +101,8 @@ export interface UserStats {
 export interface MatchmakingStatus {
   matchMode: MatchMode | null;
   gameplayMode: GameplayMode | null;
+  botFillMode: 'manual' | 'fill_even' | null;
+  matchPerspective: MatchPerspective | null;
   rankBandId: number | null;
   rankBandLabel: string | null;
   averageCompetitiveRating: number | null;

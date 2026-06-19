@@ -3,9 +3,13 @@ import { Room, Client } from 'colyseus';
 import {
   PARTY_MAX_MEMBERS,
   isGameplayMode,
+  isMatchPerspective,
+  isMatchPerspectiveSettingMode,
   type BotDifficulty,
   type GameplayMode,
   type HeroId,
+  type MatchPerspective,
+  type MatchPerspectiveSettingMode,
   type PartyMode,
 } from '@voxel-strike/shared';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
@@ -37,6 +41,7 @@ const PARTY_MESSAGE_RATE_LIMITS = {
   ready: { limit: 10, intervalMs: 5000 },
   mode: { limit: 8, intervalMs: 5000 },
   botFill: { limit: 12, intervalMs: 5000 },
+  perspective: { limit: 12, intervalMs: 5000 },
   bot: { limit: 8, intervalMs: 5000 },
   kick: { limit: 8, intervalMs: 5000 },
   start: { limit: 4, intervalMs: 8000 },
@@ -81,6 +86,18 @@ function validateBotFillPayload(value: unknown): {
   return {
     gameplayMode: value.gameplayMode,
     enabled,
+  };
+}
+
+function validatePerspectivePayload(value: unknown): {
+  modeKey: MatchPerspectiveSettingMode;
+  perspective: MatchPerspective;
+} | null {
+  if (!isRecord(value)) return null;
+  if (!isMatchPerspectiveSettingMode(value.modeKey) || !isMatchPerspective(value.perspective)) return null;
+  return {
+    modeKey: value.modeKey,
+    perspective: value.perspective,
   };
 }
 
@@ -176,6 +193,13 @@ export class PartyRoom extends Room {
       const payload = validateBotFillPayload(data);
       if (!payload) return;
       this.handleSetBotFill(client, payload.gameplayMode, payload.enabled);
+    });
+
+    this.onMessage('setPerspective', (client, data: unknown) => {
+      if (!this.consumePartyMessage(client, 'setPerspective', PARTY_MESSAGE_RATE_LIMITS.perspective)) return;
+      const payload = validatePerspectivePayload(data);
+      if (!payload) return;
+      this.handleSetPerspective(client, payload.modeKey, payload.perspective);
     });
 
     this.onMessage('addBot', (client, data: unknown = {}) => {
@@ -404,6 +428,17 @@ export class PartyRoom extends Room {
       this.broadcastPartyState();
     } catch (error) {
       client.send('error', { message: error instanceof Error ? error.message : 'Failed to set party bot fill' });
+    }
+  }
+
+  private handleSetPerspective(client: Client, modeKey: MatchPerspectiveSettingMode, perspective: MatchPerspective): void {
+    const member = this.memberForClient(client);
+    if (!member) return;
+    try {
+      this.party.setMatchPerspective(member.userId, modeKey, perspective);
+      this.broadcastPartyState();
+    } catch (error) {
+      client.send('error', { message: error instanceof Error ? error.message : 'Failed to set match perspective' });
     }
   }
 

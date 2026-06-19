@@ -24,6 +24,7 @@ export interface LobbyStatePayload {
   name: string;
   matchMode: string;
   gameplayMode: string;
+  matchPerspective: string;
   hostId: string;
   status: string;
   players: LobbyPlayerSnapshot[];
@@ -40,6 +41,7 @@ export interface BuildLobbyStatePayloadInput {
   name: string;
   matchMode: string;
   gameplayMode: string;
+  matchPerspective: string;
   hostId: string;
   status: string;
   players: Iterable<readonly [string, LobbyRosterPlayer]>;
@@ -77,6 +79,7 @@ export function buildLobbyStatePayload(
     name: input.name,
     matchMode: input.matchMode,
     gameplayMode: input.gameplayMode,
+    matchPerspective: input.matchPerspective,
     hostId: input.hostId,
     status: input.status,
     players: buildLobbyPlayerSnapshots(playerEntries),

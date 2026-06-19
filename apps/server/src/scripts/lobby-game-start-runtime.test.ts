@@ -90,6 +90,7 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
   const ticketInputs = buildGameEntryTicketInputs({
     lobbyId: 'lobby-a',
     gameRoomId: 'game-a',
+    matchPerspective: 'third_person',
     playerAssignments: assignments.playerAssignments,
     authContexts: new Map([
       ['red-a', { userId: 'user-red', displayName: '' }],
@@ -102,6 +103,7 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
     lobbyPlayerId: 'red-a',
     userId: 'user-red',
     displayName: 'Red A',
+    matchPerspective: 'third_person',
     assignedTeam: 'red',
     selectedHero: 'phantom',
   });
@@ -117,6 +119,7 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
     () => buildGameEntryTicketInputs({
       lobbyId: 'lobby-a',
       gameRoomId: 'game-a',
+      matchPerspective: 'first_person',
       playerAssignments: assignments.playerAssignments,
       authContexts: new Map(),
     }),
@@ -137,6 +140,7 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
     ],
     entryTicket: 'ticket-a',
     gameplayMode: 'capture_the_flag',
+    matchPerspective: 'third_person',
     mapThemeId: 'golden',
     mapSize: 'small',
   });
@@ -153,6 +157,7 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
     ],
     entryTicket: 'ticket-a',
     gameplayMode: 'capture_the_flag',
+    matchPerspective: 'third_person',
     mapThemeId: 'golden',
     mapSize: 'small',
     mapProfileId: 'ctf_arena',

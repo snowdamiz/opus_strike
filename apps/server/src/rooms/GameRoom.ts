@@ -226,6 +226,7 @@ import {
 import {
   DEFAULT_GAME_CONFIG,
   DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_MATCH_PERSPECTIVE,
   TICK_INTERVAL_MS,
   createGameConfigForGameplayMode,
   getGameplayModeRules,
@@ -235,6 +236,7 @@ import {
   createRandomSeed,
   getVoxelMapTheme,
   isGameplayMode,
+  isMatchPerspective,
   normalizeVoxelMapSizeId,
   toPublicRankSnapshot,
   isInsideBoundaryPolygon,
@@ -353,6 +355,7 @@ import type {
   GameplayMode,
   MapProfileId,
   MatchMode,
+  MatchPerspective,
   SelfMovementAuthority,
   MatchSnapshotMessage,
   PhantomShieldBrokenEvent,
@@ -620,6 +623,7 @@ interface CreateOptions {
   lobbyName?: string;
   matchMode?: MatchMode;
   gameplayMode?: GameplayMode;
+  matchPerspective?: MatchPerspective;
   mapSeed?: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
@@ -1005,6 +1009,7 @@ export class GameRoom extends Room<GameState> {
   private nextBattleRoyalSafeZoneDamageAt = 0;
   private matchMode: MatchMode = 'custom';
   private gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE;
+  private matchPerspective: MatchPerspective = DEFAULT_MATCH_PERSPECTIVE;
   private readonly matchStartGate = new MatchStartGateTracker();
   private matchStartDeadlineAt = 0;
   private matchCancelled = false;
@@ -1048,6 +1053,14 @@ export class GameRoom extends Room<GameState> {
             ticketUserId: ticket.userId,
           });
           throw new Error('Game entry ticket does not match authenticated user');
+        }
+        if (ticket.matchPerspective !== this.matchPerspective) {
+          this.recordAuthReject(client, 'entry_ticket_perspective_mismatch', {
+            lobbyId: this.lobbyId,
+            ticketPerspective: ticket.matchPerspective,
+            roomPerspective: this.matchPerspective,
+          });
+          throw new Error('Game entry ticket does not match room perspective');
         }
         this.participantRegistry.rememberReconnectParticipant(ticket);
       }
@@ -1158,6 +1171,11 @@ export class GameRoom extends Room<GameState> {
     this.lobbyName = options.lobbyName || null;
     this.matchMode = options.matchMode ?? 'custom';
     this.gameplayMode = isGameplayMode(options.gameplayMode) ? options.gameplayMode : DEFAULT_GAMEPLAY_MODE;
+    this.matchPerspective = this.matchMode === 'ranked'
+      ? DEFAULT_MATCH_PERSPECTIVE
+      : isMatchPerspective(options.matchPerspective)
+        ? options.matchPerspective
+        : DEFAULT_MATCH_PERSPECTIVE;
     this.config = createGameConfigForGameplayMode(this.gameplayMode);
     this.rankedEligibilityCandidate = options.rankedEligible === true;
     this.requiredHumanPlayers = Math.max(
@@ -1190,6 +1208,7 @@ export class GameRoom extends Room<GameState> {
     this.state.roomId = this.roomId;
     this.state.config = this.config;
     this.state.gameplayMode = this.gameplayMode;
+    this.state.matchPerspective = this.matchPerspective;
     this.state.mapSeed = typeof options.mapSeed === 'number'
       ? options.mapSeed >>> 0
       : createRandomSeed();
@@ -2061,6 +2080,7 @@ export class GameRoom extends Room<GameState> {
       serverTime: this.state.serverTime,
       phase: this.state.phase as MatchSnapshotMessage['phase'],
       gameplayMode: this.gameplayMode,
+      matchPerspective: this.matchPerspective,
       mapSeed: this.state.mapSeed,
       mapThemeId: this.state.mapThemeId as VoxelMapTheme['id'],
       mapSize: this.state.mapSize as VoxelMapSizeId,
@@ -2109,6 +2129,7 @@ export class GameRoom extends Room<GameState> {
     return this.matchSummary.buildGameEndEvent({
       matchMode: this.matchMode,
       gameplayMode: this.gameplayMode,
+      matchPerspective: this.matchPerspective,
       winningTeam,
       finalScore,
       matchId: this.matchLedger.getMatchId(),
@@ -2137,6 +2158,7 @@ export class GameRoom extends Room<GameState> {
       lobbyId: this.lobbyId,
       matchMode: this.matchMode,
       gameplayMode: this.gameplayMode,
+      matchPerspective: this.matchPerspective,
       mapSeed: this.state.mapSeed,
       mapThemeId: this.state.mapThemeId,
       mapSize: this.state.mapSize,

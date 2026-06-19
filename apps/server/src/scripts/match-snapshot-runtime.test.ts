@@ -30,6 +30,7 @@ const runtime = new MatchSnapshotRuntime();
     serverTime: 123456,
     phase: 'playing',
     gameplayMode: 'capture_the_flag',
+    matchPerspective: 'third_person',
     mapSeed: 777,
     mapThemeId: 'verdant',
     mapSize: 'small',
@@ -44,6 +45,7 @@ const runtime = new MatchSnapshotRuntime();
 
   assert.equal(snapshot.tick, 42);
   assert.equal(snapshot.phase, 'playing');
+  assert.equal(snapshot.matchPerspective, 'third_person');
   assert.equal(snapshot.mapThemeId, 'verdant');
   assert.equal(snapshot.mapSize, 'small');
   assert.equal(snapshot.mapProfileId, null);
@@ -61,6 +63,7 @@ const runtime = new MatchSnapshotRuntime();
     serverTime: 1000,
     phase: 'countdown',
     gameplayMode: 'team_deathmatch',
+    matchPerspective: 'first_person',
     mapSeed: 321,
     mapThemeId: null,
     mapSize: null,
@@ -83,6 +86,7 @@ const runtime = new MatchSnapshotRuntime();
     DEFAULT_VOXEL_MAP_SIZE_ID,
     '',
     'team_deathmatch',
+    'first_person',
     5,
     4,
     0,
@@ -135,6 +139,7 @@ const runtime = new MatchSnapshotRuntime();
     serverTime: 2000,
     phase: 'playing',
     gameplayMode: 'battle_royal',
+    matchPerspective: 'third_person',
     mapSeed: 0x51f15eed,
     mapThemeId: 'verdant',
     mapSize: 'large',

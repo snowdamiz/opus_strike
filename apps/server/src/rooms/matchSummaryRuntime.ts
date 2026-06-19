@@ -5,6 +5,7 @@ import {
   type GameEndEvent,
   type GameplayMode,
   type MatchMode,
+  type MatchPerspective,
   type MatchOutcome,
   type MatchSummaryPlayer,
   type PublicRankSnapshot,
@@ -46,6 +47,7 @@ export interface RankedSummaryPreviewInput {
 export interface BuildGameEndEventInput {
   matchMode: MatchMode;
   gameplayMode: GameplayMode;
+  matchPerspective: MatchPerspective;
   winningTeam: Team | null;
   finalScore: { red: number; blue: number };
   matchId: string | null;
@@ -105,6 +107,7 @@ export class MatchSummaryRuntime {
     const event: GameEndEvent = {
       matchMode: input.matchMode,
       gameplayMode: input.gameplayMode,
+      matchPerspective: input.matchPerspective,
       winningTeam: input.winningTeam,
       finalScore: input.finalScore,
       matchId: input.matchId,

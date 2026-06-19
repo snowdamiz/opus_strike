@@ -1,4 +1,4 @@
-import type { VoxelMapSizeId, VoxelMapTheme } from '@voxel-strike/shared';
+import type { GameplayMode, MatchPerspective, VoxelMapSizeId, VoxelMapTheme } from '@voxel-strike/shared';
 import { config } from '../config/environment';
 import { useSettingsStore } from '../store/settingsStore';
 import { DEV_TUTORIAL_BYPASS_HEADER, shouldBypassTutorialForDev } from '../utils/tutorialAccess';
@@ -6,6 +6,9 @@ import { DEV_TUTORIAL_BYPASS_HEADER, shouldBypassTutorialForDev } from '../utils
 export interface QuickPlayTicketResponse {
   ticket: string;
   mode: 'quick_play';
+  gameplayMode: GameplayMode;
+  botFillMode: 'manual' | 'fill_even';
+  matchPerspective: MatchPerspective;
   competitiveRating: number;
   rankDivisionIndex: number;
   rank: unknown;
@@ -31,6 +34,9 @@ export interface RankedTokenHoldStatus {
 export interface RankedTicketResponse {
   ticket: string;
   mode: 'ranked';
+  gameplayMode: GameplayMode;
+  botFillMode: 'manual' | 'fill_even';
+  matchPerspective: MatchPerspective;
   competitiveRating: number;
   rankDivisionIndex: number;
   rank: unknown;
@@ -42,6 +48,7 @@ export interface RankedTicketResponse {
 export interface RunningGameStatusResponse {
   available: boolean;
   reason?: string;
+  matchPerspective?: MatchPerspective;
   mapSeed?: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
@@ -76,9 +83,18 @@ async function readErrorMessage(response: Response, fallback: string): Promise<s
   return typeof payload?.error === 'string' && payload.error ? payload.error : fallback;
 }
 
-export async function requestQuickPlayTicket(): Promise<QuickPlayTicketResponse> {
+export async function requestQuickPlayTicket(input: {
+  gameplayMode: GameplayMode;
+  botFillMode: 'manual' | 'fill_even';
+  matchPerspective: MatchPerspective;
+}): Promise<QuickPlayTicketResponse> {
   const devTutorialBypassHeaders = getDevTutorialBypassHeaders();
-  const response = await fetch(`${getHttpUrl()}/matchmaking/quick-play-ticket`, {
+  const params = new URLSearchParams({
+    gameplayMode: input.gameplayMode,
+    botFillMode: input.botFillMode,
+    perspective: input.matchPerspective,
+  });
+  const response = await fetch(`${getHttpUrl()}/matchmaking/quick-play-ticket?${params.toString()}`, {
     credentials: 'include',
     ...(devTutorialBypassHeaders ? { headers: devTutorialBypassHeaders } : {}),
   });

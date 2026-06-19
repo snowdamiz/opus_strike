@@ -8,6 +8,7 @@ export interface GameRoomMetadataInput {
   lobbyId: string | null;
   matchMode: string;
   gameplayMode: string;
+  matchPerspective: string;
   mapSeed: number;
   mapThemeId: string;
   mapSize: string;
@@ -34,6 +35,7 @@ export function buildGameRoomMetadata(input: GameRoomMetadataInput): Record<stri
     lobbyId: input.lobbyId || undefined,
     matchMode: input.matchMode,
     gameplayMode: input.gameplayMode,
+    matchPerspective: input.matchPerspective,
     mapSeed: input.mapSeed,
     mapThemeId: input.mapThemeId,
     mapSize: input.mapSize,

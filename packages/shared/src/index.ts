@@ -11,6 +11,7 @@ export * from './types/antiCheatTrace.js';
 export * from './types/voice.js';
 export * from './types/matchMode.js';
 export * from './types/gameplayMode.js';
+export * from './types/matchPerspective.js';
 export * from './types/team.js';
 export * from './types/party.js';
 export * from './types/modelSystem.js';

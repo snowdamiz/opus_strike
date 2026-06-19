@@ -35,7 +35,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
   // v2 transform position updates because remote player entries are mutated in-place.
   // The Map reference only changes when players are added/removed. Position interpolation
   // reads from visualStore in the frame scheduler (non-reactive, 60fps).
-  const { players, playerId, localPlayerId, localPlayerTeam, gamePhase, gameplayMode } = useGameStore(
+  const { players, playerId, localPlayerId, localPlayerTeam, gamePhase, gameplayMode, matchPerspective } = useGameStore(
     useShallow(state => ({
       players: state.players,
       playerId: state.playerId,
@@ -43,16 +43,19 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
       localPlayerTeam: state.localPlayer?.team ?? null,
       gamePhase: state.gamePhase,
       gameplayMode: state.gameplayMode,
+      matchPerspective: state.matchPerspective,
     }))
   );
   const isBattleRoyal = gameplayMode === 'battle_royal';
+  const showLocalPlayerBody = matchPerspective === 'third_person';
 
   const otherPlayers = useMemo(() => {
     const nextPlayers: Player[] = [];
     const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
 
     for (const player of players.values()) {
-      if (player.id === playerId || player.id === localPlayerId) continue;
+      const isLocalPlayer = player.id === playerId || player.id === localPlayerId;
+      if (isLocalPlayer && !showLocalPlayerBody) continue;
       if (hideDeadPlayers && player.state === 'dead') continue;
       if (isBattleRoyal && gamePhase === 'countdown' && player.state === 'spawning') continue;
       if (player.state === 'dropping') continue;
@@ -61,7 +64,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
     }
 
     return nextPlayers;
-  }, [gamePhase, isBattleRoyal, localPlayerId, playerId, players]);
+  }, [gamePhase, isBattleRoyal, localPlayerId, playerId, players, showLocalPlayerBody]);
 
   const remoteBatchResourcePlayers = useMemo(() => {
     if (!isBattleRoyal) return otherPlayers;
@@ -70,18 +73,20 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
     const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
 
     for (const player of players.values()) {
-      if (player.id === playerId || player.id === localPlayerId) continue;
+      const isLocalPlayer = player.id === playerId || player.id === localPlayerId;
+      if (isLocalPlayer && !showLocalPlayerBody) continue;
       if (hideDeadPlayers && player.state === 'dead') continue;
       if (gamePhase === 'countdown' && player.state === 'spawning') continue;
       nextPlayers.push(player);
     }
 
     return nextPlayers;
-  }, [gamePhase, isBattleRoyal, localPlayerId, otherPlayers, playerId, players]);
+  }, [gamePhase, isBattleRoyal, localPlayerId, otherPlayers, playerId, players, showLocalPlayerBody]);
 
   useEffect(() => {
     if (!config.showNameplates) return;
     for (const player of otherPlayers) {
+      if (player.id === playerId || player.id === localPlayerId) continue;
       if (!shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam)) continue;
       prewarmNameplateTexture(
         player.name,
@@ -89,7 +94,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
         player.maxHealth
       );
     }
-  }, [config.showNameplates, isBattleRoyal, localPlayerTeam, otherPlayers]);
+  }, [config.showNameplates, isBattleRoyal, localPlayerId, localPlayerTeam, otherPlayers, playerId]);
 
   return (
     <group>
@@ -101,7 +106,9 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
       />
       <RemoteMovementEffects players={otherPlayers} theme={theme} config={effectConfig} />
       {otherPlayers.map((player) => {
-        const showNameplate = shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam);
+        const showNameplate = player.id !== playerId
+          && player.id !== localPlayerId
+          && shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam);
         return shouldRenderRemotePlayerFallback(player, config, showNameplate) ? (
           <OtherPlayer
             key={player.id}

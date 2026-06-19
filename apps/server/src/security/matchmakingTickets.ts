@@ -5,12 +5,29 @@ import {
   DEFAULT_RANK_DIVISION_INDEX,
   normalizeRankDivisionIndex,
 } from '../matchmaking/skill';
-import { isMatchMode, type MatchMode } from '@voxel-strike/shared';
+import {
+  DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_MATCH_PERSPECTIVE,
+  isGameplayMode,
+  isMatchMode,
+  isMatchPerspective,
+  type GameplayMode,
+  type MatchMode,
+  type MatchPerspective,
+} from '@voxel-strike/shared';
 import { createSignedTicket, readSignedTicketClaims } from './signedTicket';
+import {
+  isMatchmakingBotFillMode,
+  normalizeMatchmakingBotFillMode,
+  type MatchmakingBotFillMode,
+} from '../matchmaking/matchSettings';
 
 export interface MatchmakingTicketClaims {
   version: 2;
   mode: MatchMode;
+  gameplayMode: GameplayMode;
+  botFillMode: MatchmakingBotFillMode;
+  matchPerspective: MatchPerspective;
   userId: string;
   competitiveRating: number;
   rankDivisionIndex: number;
@@ -32,6 +49,9 @@ export interface MatchmakingTicketClaims {
 
 export interface CreateMatchmakingTicketInput {
   mode: MatchMode;
+  gameplayMode?: GameplayMode;
+  botFillMode?: MatchmakingBotFillMode;
+  matchPerspective?: MatchPerspective;
   userId: string;
   competitiveRating: number;
   rankDivisionIndex: number;
@@ -68,6 +88,15 @@ export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
   const claims: MatchmakingTicketClaims = {
     version: 2,
     mode: input.mode,
+    gameplayMode: input.mode === 'quick_play' && isGameplayMode(input.gameplayMode)
+      ? input.gameplayMode
+      : DEFAULT_GAMEPLAY_MODE,
+    botFillMode: input.mode === 'quick_play'
+      ? normalizeMatchmakingBotFillMode(input.botFillMode)
+      : 'manual',
+    matchPerspective: input.mode === 'quick_play' && isMatchPerspective(input.matchPerspective)
+      ? input.matchPerspective
+      : DEFAULT_MATCH_PERSPECTIVE,
     userId: input.userId,
     competitiveRating: Math.round(Number.isFinite(input.competitiveRating) ? input.competitiveRating : DEFAULT_MATCHMAKING_RATING),
     rankDivisionIndex: normalizeRankDivisionIndex(input.rankDivisionIndex),
@@ -99,6 +128,15 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
 
   if (claims.version !== 2) return null;
   const mode = isMatchMode(claims.mode) ? claims.mode : 'quick_play';
+  const gameplayMode = mode === 'quick_play' && isGameplayMode(claims.gameplayMode)
+    ? claims.gameplayMode
+    : DEFAULT_GAMEPLAY_MODE;
+  const botFillMode = mode === 'quick_play' && isMatchmakingBotFillMode(claims.botFillMode)
+    ? claims.botFillMode
+    : 'manual';
+  const matchPerspective = mode === 'quick_play' && isMatchPerspective(claims.matchPerspective)
+    ? claims.matchPerspective
+    : DEFAULT_MATCH_PERSPECTIVE;
   if (!claims.userId || !claims.nonce) return null;
   if (claims.expiresAt < now || claims.issuedAt > now + 5_000) return null;
   if (!Number.isFinite(claims.competitiveRating)) return null;
@@ -142,6 +180,9 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
   return {
     ...claims,
     mode,
+    gameplayMode,
+    botFillMode,
+    matchPerspective,
     competitiveRating: Math.round(claims.competitiveRating),
     rankDivisionIndex: claims.rankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,
     targetRankDivisionIndex: claims.targetRankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,
