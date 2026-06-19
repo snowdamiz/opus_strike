@@ -505,25 +505,32 @@ function BattleRoyalDropPrompt({
   status,
   canDrop,
   interactKeyLabel,
+  detachKeyLabel,
+  attachedToPlayerId,
 }: {
   gamePhase: string;
   status: BattleRoyalDropPlayerStatus | null;
   canDrop: boolean;
   interactKeyLabel: string;
+  detachKeyLabel: string;
+  attachedToPlayerId: string | null;
 }) {
   if (gamePhase !== 'deployment' || status === null || status === 'landed') return null;
 
   const isAboard = status === 'aboard';
-  const showKeycap = !isAboard || canDrop;
-  const keyLabel = isAboard ? interactKeyLabel : 'WASD';
+  const isAttachedFollower = status === 'dropping' && attachedToPlayerId !== null;
+  const showKeycap = isAttachedFollower || !isAboard || canDrop;
+  const keyLabel = isAttachedFollower ? detachKeyLabel : isAboard ? interactKeyLabel : 'WASD';
   const statusLabel = isAboard
     ? (canDrop ? 'READY' : 'STANDBY')
-    : 'DESCENT';
+    : isAttachedFollower ? 'SQUAD DROP' : 'DESCENT';
   const primaryText = isAboard
     ? (canDrop ? 'DROP' : 'DROP OPENS')
+    : isAttachedFollower ? 'DETACH'
     : 'STEER POD';
   const secondaryText = isAboard
     ? (canDrop ? 'deploy with squad' : 'over island')
+    : isAttachedFollower ? 'following leader'
     : 'mouse to guide';
 
   return (
@@ -953,12 +960,14 @@ export function HUD() {
     crosshairColor,
     showKillFeed,
     interactKeybind,
+    ultimateKeybind,
   } = useSettingsStore(
     useShallow(state => ({
       crosshairStyle: state.settings.crosshairStyle,
       crosshairColor: state.settings.crosshairColor,
       showKillFeed: state.settings.showKillFeed,
       interactKeybind: state.settings.keybindings.interact,
+      ultimateKeybind: state.settings.keybindings.ultimate,
     }))
   );
   const killFeed = useCombatFeedbackStore((state) => state.killFeed);
@@ -980,9 +989,11 @@ export function HUD() {
   const scoreLabel = gameplayMode === 'team_deathmatch' ? 'KILLS' : 'BATTLE';
   const battleRoyalEliminations = localPlayer.stats.kills;
   const battleRoyalRemainingPlayers = getBattleRoyalRemainingPlayerCount(players.values(), localPlayer);
-  const battleRoyalDropStatus = battleRoyalDrop?.players.find((player) => (
+  const battleRoyalDropPlayer = battleRoyalDrop?.players.find((player) => (
     player.playerId === localPlayer.id
-  ))?.status ?? null;
+  )) ?? null;
+  const battleRoyalDropStatus = battleRoyalDropPlayer?.status ?? null;
+  const battleRoyalDropAttachedToPlayerId = battleRoyalDropPlayer?.attachedToPlayerId ?? null;
   const battleRoyalDropCanDrop = battleRoyalDrop?.ship.canDrop === true;
   const isBattleRoyalPreLanding = gameplayMode === 'battle_royal' && (
     battleRoyalDropStatus === 'aboard' ||
@@ -1057,6 +1068,8 @@ export function HUD() {
           status={battleRoyalDropStatus}
           canDrop={battleRoyalDropCanDrop}
           interactKeyLabel={formatKeybind(interactKeybind)}
+          detachKeyLabel={formatKeybind(ultimateKeybind)}
+          attachedToPlayerId={battleRoyalDropAttachedToPlayerId}
         />
       )}
       {!isPracticeMode && <VoiceHud />}

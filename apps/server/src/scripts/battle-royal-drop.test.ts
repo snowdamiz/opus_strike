@@ -86,7 +86,7 @@ assert.equal(state.players.get('red-1')?.status, 'aboard');
 assert.equal(state.players.get('blue-1')?.status, 'aboard');
 assert.equal(Math.hypot(state.ship.end.x - state.ship.start.x, state.ship.end.z - state.ship.start.z) > 100, true);
 assert.equal(state.ship.start.y, state.ship.end.y);
-assert.equal(state.ship.start.y >= 120, true);
+assert.equal(state.ship.start.y >= 200, true);
 assert.equal(isBattleRoyalDropShipDroppable(state, startedAt), false);
 assert.equal(startBattleRoyalTeamDrop(state, 'red', startedAt + 1_000), false);
 
@@ -95,6 +95,8 @@ assert.equal(initialSnapshot.enabled, true);
 assert.equal(initialSnapshot.serverTime, startedAt);
 assert.equal(initialSnapshot.players.length, 3);
 assert.equal(initialSnapshot.players.every((player) => player.status === 'aboard'), true);
+assert.equal(initialSnapshot.players.find((player) => player.playerId === 'red-1')?.attachedToPlayerId, null);
+assert.equal(initialSnapshot.players.find((player) => player.playerId === 'red-2')?.attachedToPlayerId, 'red-1');
 assert.equal(initialSnapshot.ship.canDrop, false);
 
 const redAutoDropAt = state.teamAutoDropAt.get('red') ?? state.autoDropAt;
@@ -151,6 +153,54 @@ advanceBattleRoyalDropState({
 });
 assert.equal(mouseGuidedPlayer.position.x > mouseGuidedStart.x + 1, true);
 assert.equal(mouseGuidedPlayer.position.y < mouseGuidedStart.y, true);
+
+const squadFollowState = createBattleRoyalDropState(
+  manifest,
+  [
+    { playerId: 'leader-red', team: 'red' },
+    { playerId: 'wing-red', team: 'red' },
+  ],
+  startedAt
+);
+startBattleRoyalTeamDrop(squadFollowState, 'red', squadFollowState.dropStartsAt + 100);
+const squadLeader = squadFollowState.players.get('leader-red');
+const squadWing = squadFollowState.players.get('wing-red');
+assert.ok(squadLeader);
+assert.ok(squadWing);
+assert.equal(squadLeader.attachedToPlayerId, null);
+assert.equal(squadWing.attachedToPlayerId, 'leader-red');
+const followOffset = { ...squadWing.followOffset };
+setBattleRoyalDropPlayerInput(squadFollowState, 'leader-red', playerInput({
+  moveForward: true,
+  lookYaw: -Math.PI / 2,
+}));
+setBattleRoyalDropPlayerInput(squadFollowState, 'wing-red', playerInput({
+  moveBackward: true,
+  lookYaw: Math.PI / 2,
+}));
+advanceBattleRoyalDropState({
+  state: squadFollowState,
+  now: squadFollowState.dropStartsAt + 600,
+  dt: 0.5,
+  getGroundY: flatGroundY,
+  clampToPlayableMap: unclamped,
+});
+assert.equal(Math.abs((squadWing.position.x - squadLeader.position.x) - followOffset.x) < 0.001, true);
+assert.equal(Math.abs((squadWing.position.z - squadLeader.position.z) - followOffset.z) < 0.001, true);
+setBattleRoyalDropPlayerInput(squadFollowState, 'wing-red', playerInput({
+  ultimate: true,
+  moveBackward: true,
+  lookYaw: -Math.PI / 2,
+}));
+advanceBattleRoyalDropState({
+  state: squadFollowState,
+  now: squadFollowState.dropStartsAt + 1_100,
+  dt: 0.5,
+  getGroundY: flatGroundY,
+  clampToPlayableMap: unclamped,
+});
+assert.equal(squadWing.attachedToPlayerId, null);
+assert.equal(Math.abs((squadWing.position.x - squadLeader.position.x) - followOffset.x) > 0.5, true);
 
 const pitchGuidedState = createBattleRoyalDropState(
   manifest,

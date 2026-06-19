@@ -293,6 +293,7 @@ export interface BattleRoyalDropPlayerSnapshot {
   velocity: Vec3;
   droppedAt: number | null;
   landedAt: number | null;
+  attachedToPlayerId: string | null;
 }
 
 export interface BattleRoyalDropSnapshot {

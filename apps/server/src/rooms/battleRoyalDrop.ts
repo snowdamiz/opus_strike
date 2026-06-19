@@ -16,9 +16,9 @@ import {
 
 export const BATTLE_ROYAL_DEPLOYMENT_PHASE_MS = 60_000;
 
-const DROP_SHIP_ALTITUDE = 132;
+const DROP_SHIP_ALTITUDE = 210;
 const DROP_SHIP_EDGE_PADDING = 88;
-const DROP_SHIP_AUTO_DROP_LEAD_MS = 5_500;
+const DROP_SHIP_AUTO_DROP_LEAD_MS = 16_000;
 const DROP_SHIP_DROP_WINDOW_MARGIN_MS = 1_000;
 const DROP_SHIP_DROP_WINDOW_SAMPLES = 160;
 const DROP_SHIP_DROP_WINDOW_REFINEMENT_STEPS = 20;
@@ -39,6 +39,8 @@ export interface BattleRoyalDropPlayerState {
   droppedAt: number | null;
   landedAt: number | null;
   slotOffset: Vec3;
+  followOffset: Vec3;
+  attachedToPlayerId: string | null;
   latestInput: PlayerInput | null;
 }
 
@@ -58,6 +60,7 @@ export interface BattleRoyalDropState {
   players: Map<string, BattleRoyalDropPlayerState>;
   teamAutoDropAt: Map<Team, number>;
   teamDroppedAt: Map<Team, number>;
+  teamLeaderIds: Map<Team, string>;
 }
 
 interface BoundarySummary {
@@ -253,6 +256,33 @@ function createSlotOffset(index: number): Vec3 {
   };
 }
 
+function selectBattleRoyalDropTeamLeaders(
+  participants: readonly BattleRoyalDropParticipant[]
+): Map<Team, string> {
+  const leaders = new Map<Team, string>();
+
+  for (const participant of participants) {
+    if (leaders.has(participant.team) || participant.isBot) continue;
+    leaders.set(participant.team, participant.playerId);
+  }
+
+  for (const participant of participants) {
+    if (leaders.has(participant.team)) continue;
+    leaders.set(participant.team, participant.playerId);
+  }
+
+  return leaders;
+}
+
+function getFollowOffset(slotOffset: Vec3, leaderSlotOffset: Vec3 | null): Vec3 {
+  if (!leaderSlotOffset) return { x: 0, y: 0, z: 0 };
+  return {
+    x: slotOffset.x - leaderSlotOffset.x,
+    y: slotOffset.y - leaderSlotOffset.y,
+    z: slotOffset.z - leaderSlotOffset.z,
+  };
+}
+
 function getTeamAutoDropAt(input: {
   phaseStartedAt: number;
   phaseEndsAt: number;
@@ -326,10 +356,12 @@ export function createBattleRoyalDropState(
     players: new Map(),
     teamAutoDropAt: new Map(),
     teamDroppedAt: new Map(),
+    teamLeaderIds: new Map(),
   });
   const players = new Map<string, BattleRoyalDropPlayerState>();
   const teamAutoDropAt = new Map<Team, number>();
   const teamSlotCounts = new Map<Team, number>();
+  const teamLeaderIds = selectBattleRoyalDropTeamLeaders(participants);
 
   for (const participant of participants) {
     if (!teamAutoDropAt.has(participant.team)) {
@@ -347,6 +379,7 @@ export function createBattleRoyalDropState(
     const teamSlot = teamSlotCounts.get(participant.team) ?? 0;
     teamSlotCounts.set(participant.team, teamSlot + 1);
     const slotOffset = createSlotOffset(teamSlot);
+    const attachedToPlayerId = teamLeaderIds.get(participant.team) ?? null;
     players.set(participant.playerId, {
       playerId: participant.playerId,
       team: participant.team,
@@ -361,8 +394,16 @@ export function createBattleRoyalDropState(
       droppedAt: null,
       landedAt: null,
       slotOffset,
+      followOffset: { x: 0, y: 0, z: 0 },
+      attachedToPlayerId: attachedToPlayerId === participant.playerId ? null : attachedToPlayerId,
       latestInput: null,
     });
+  }
+
+  for (const player of players.values()) {
+    const leaderId = teamLeaderIds.get(player.team);
+    const leader = leaderId ? players.get(leaderId) ?? null : null;
+    player.followOffset = getFollowOffset(player.slotOffset, leader?.slotOffset ?? null);
   }
 
   return {
@@ -375,6 +416,7 @@ export function createBattleRoyalDropState(
     players,
     teamAutoDropAt,
     teamDroppedAt: new Map(),
+    teamLeaderIds,
   };
 }
 
@@ -386,6 +428,9 @@ export function setBattleRoyalDropPlayerInput(
   const player = state.players.get(playerId);
   if (!player) return;
   player.latestInput = input;
+  if (player.status === 'dropping' && input.ultimate) {
+    player.attachedToPlayerId = null;
+  }
 }
 
 export function addBattleRoyalDropParticipant(
@@ -400,6 +445,9 @@ export function addBattleRoyalDropParticipant(
   const shipPosition = getBattleRoyalDropShipPosition(state, now);
   const shipVelocity = getBattleRoyalDropShipVelocity(state);
   const alreadyDropped = state.teamDroppedAt.has(participant.team);
+  const leaderId = state.teamLeaderIds.get(participant.team);
+  const leader = leaderId ? state.players.get(leaderId) ?? null : null;
+  const attachedToPlayerId = leaderId && leaderId !== participant.playerId ? leaderId : null;
   const player: BattleRoyalDropPlayerState = {
     playerId: participant.playerId,
     team: participant.team,
@@ -416,10 +464,16 @@ export function addBattleRoyalDropParticipant(
     droppedAt: alreadyDropped ? now : null,
     landedAt: null,
     slotOffset,
+    followOffset: getFollowOffset(slotOffset, leader?.slotOffset ?? null),
+    attachedToPlayerId,
     latestInput: null,
   };
 
   state.players.set(participant.playerId, player);
+  if (!state.teamLeaderIds.has(participant.team)) {
+    state.teamLeaderIds.set(participant.team, participant.playerId);
+    player.attachedToPlayerId = null;
+  }
   if (!state.teamAutoDropAt.has(participant.team)) {
     state.teamAutoDropAt.set(participant.team, state.autoDropAt);
   }
@@ -506,6 +560,33 @@ function advanceDroppingPlayer(
   }
 }
 
+function advanceAttachedDroppingPlayer(
+  input: AdvanceBattleRoyalDropInput,
+  player: BattleRoyalDropPlayerState,
+  leader: BattleRoyalDropPlayerState
+): void {
+  const proposed = input.clampToPlayableMap({
+    x: leader.position.x + player.followOffset.x,
+    y: leader.position.y + player.followOffset.y,
+    z: leader.position.z + player.followOffset.z,
+  });
+  const groundY = input.getGroundY(proposed) ?? 0;
+  const landingY = groundY + BATTLE_ROYAL_DROP_POD_LANDING_CLEARANCE;
+  const nextY = Math.max(landingY, proposed.y);
+  const landed = leader.status === 'landed' || nextY <= landingY + 0.001;
+  player.position = {
+    x: proposed.x,
+    y: landed ? landingY : nextY,
+    z: proposed.z,
+  };
+  player.velocity = landed ? { x: 0, y: 0, z: 0 } : { ...leader.velocity };
+  if (landed) {
+    player.status = 'landed';
+    player.landedAt = input.now;
+    player.attachedToPlayerId = null;
+  }
+}
+
 export function advanceBattleRoyalDropState(input: AdvanceBattleRoyalDropInput): void {
   for (const team of new Set(Array.from(input.state.players.values()).map((player) => player.team))) {
     if (shouldAutoDropBattleRoyalTeam(input.state, team, input.now)) {
@@ -516,9 +597,20 @@ export function advanceBattleRoyalDropState(input: AdvanceBattleRoyalDropInput):
   for (const player of input.state.players.values()) {
     if (player.status === 'aboard') {
       advanceAboardPlayer(input.state, player, input.now);
-    } else if (player.status === 'dropping') {
+    } else if (player.status === 'dropping' && !player.attachedToPlayerId) {
       advanceDroppingPlayer(input, player);
     }
+  }
+
+  for (const player of input.state.players.values()) {
+    if (player.status !== 'dropping' || !player.attachedToPlayerId) continue;
+    const leader = input.state.players.get(player.attachedToPlayerId);
+    if (!leader || (leader.status !== 'dropping' && leader.status !== 'landed')) {
+      player.attachedToPlayerId = null;
+      advanceDroppingPlayer(input, player);
+      continue;
+    }
+    advanceAttachedDroppingPlayer(input, player, leader);
   }
 }
 
@@ -539,6 +631,7 @@ export function forceLandBattleRoyalDropState(input: AdvanceBattleRoyalDropInput
     player.velocity = { x: 0, y: 0, z: 0 };
     player.status = 'landed';
     player.landedAt = input.now;
+    player.attachedToPlayerId = null;
   }
 }
 
@@ -579,6 +672,7 @@ export function buildBattleRoyalDropSnapshot(
       velocity: { ...player.velocity },
       droppedAt: player.droppedAt,
       landedAt: player.landedAt,
+      attachedToPlayerId: player.attachedToPlayerId,
     })),
   };
 }

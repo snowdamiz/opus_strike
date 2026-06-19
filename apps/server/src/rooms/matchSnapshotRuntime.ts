@@ -74,7 +74,7 @@ export class MatchSnapshotRuntime {
       snapshot.battleRoyalDrop?.phaseStartedAt ?? 0,
       snapshot.battleRoyalDrop?.phaseEndsAt ?? 0,
       snapshot.battleRoyalDrop?.players.map((player) => (
-        `${player.playerId}.${player.status}.${player.droppedAt ?? 0}.${player.landedAt ?? 0}`
+        `${player.playerId}.${player.status}.${player.droppedAt ?? 0}.${player.landedAt ?? 0}.${player.attachedToPlayerId ?? ''}`
       )).join(',') ?? '',
       snapshot.redFlag.carrierId ?? '',
       snapshot.redFlag.isAtBase ? 1 : 0,

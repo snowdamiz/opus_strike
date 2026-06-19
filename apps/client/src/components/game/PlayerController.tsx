@@ -1546,10 +1546,11 @@ function runBattleRoyalDeploymentFrame(
     reload: false,
     ability1: false,
     ability2: false,
-    ultimate: false,
+    ultimate: isDropping ? frameInput.ultimate : false,
   };
   cameraControl.updateCameraRotation(camera, false, false, dt);
-  const predictedDropState = sendDropCommands && isDropping
+  const isAttachedDropFollower = Boolean(dropPlayer?.attachedToPlayerId);
+  const predictedDropState = sendDropCommands && isDropping && (!isAttachedDropFollower || commandInput.ultimate)
     ? predictLocalBattleRoyalDrop(localPlayer, commandInput, {
       lookYaw: cameraControl.refs.yaw.current,
       lookPitch: cameraControl.refs.pitch.current,
@@ -2212,13 +2213,14 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     const isLocalStillDeploying = localDropPlayer
       ? localDropPlayer.status !== 'landed'
       : localPlayer.state === 'dropping';
+    const hasActiveLocalDropSnapshot = Boolean(localDropPlayer && localDropPlayer.status !== 'landed');
     const shouldUseBattleRoyalDeploymentCamera = (
       storeSnapshot.gameplayMode === 'battle_royal' &&
       Boolean(storeSnapshot.battleRoyalDrop) &&
       !hasLocalDeathVisual &&
       (
-        (gamePhase === 'countdown' && localPlayer.state === 'spawning') ||
-        (gamePhase === 'deployment' && localPlayer.state === 'dropping' && isLocalStillDeploying)
+        (gamePhase === 'countdown' && (localPlayer.state === 'spawning' || hasActiveLocalDropSnapshot)) ||
+        (gamePhase === 'deployment' && (hasActiveLocalDropSnapshot || (localPlayer.state === 'dropping' && isLocalStillDeploying)))
       )
     );
     if (shouldUseBattleRoyalDeploymentCamera) {

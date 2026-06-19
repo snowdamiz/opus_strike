@@ -37,6 +37,7 @@ function makeDrop(status: BattleRoyalDropSnapshot['players'][number]['status']):
       velocity: { x: 3, y: -BATTLE_ROYAL_DROP_POD_VERTICAL_SPEED, z: -4 },
       droppedAt: status === 'aboard' ? null : 1_000,
       landedAt: status === 'landed' ? 3_000 : null,
+      attachedToPlayerId: null,
     }],
   };
 }
