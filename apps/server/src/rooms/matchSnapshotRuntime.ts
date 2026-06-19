@@ -1,6 +1,7 @@
 import {
   DEFAULT_VOXEL_MAP_SIZE_ID,
   TRANSFORM_POSITION_SCALE,
+  type BattleRoyalDropSnapshot,
   type FlagSync,
   type GameplayMode,
   type MapProfileId,
@@ -27,6 +28,7 @@ export interface BuildMatchSnapshotInput {
   phaseEndTime: number | null | undefined;
   gameClockFrozen: boolean;
   safeZone?: SafeZoneSnapshot | null;
+  battleRoyalDrop?: BattleRoyalDropSnapshot | null;
 }
 
 export class MatchSnapshotRuntime {
@@ -48,6 +50,7 @@ export class MatchSnapshotRuntime {
       phaseEndTime: input.phaseEndTime || null,
       gameClockFrozen: input.gameClockFrozen,
       safeZone: input.safeZone ?? null,
+      battleRoyalDrop: input.battleRoyalDrop ?? null,
     };
   }
 
@@ -68,6 +71,11 @@ export class MatchSnapshotRuntime {
       snapshot.safeZone ? this.quantizePosition(snapshot.safeZone.center.z) : 0,
       snapshot.safeZone?.warning ? 1 : 0,
       snapshot.safeZone?.shrinking ? 1 : 0,
+      snapshot.battleRoyalDrop?.phaseStartedAt ?? 0,
+      snapshot.battleRoyalDrop?.phaseEndsAt ?? 0,
+      snapshot.battleRoyalDrop?.players.map((player) => (
+        `${player.playerId}.${player.status}.${player.droppedAt ?? 0}.${player.landedAt ?? 0}`
+      )).join(',') ?? '',
       snapshot.redFlag.carrierId ?? '',
       snapshot.redFlag.isAtBase ? 1 : 0,
       this.quantizePosition(snapshot.redFlag.position.x),

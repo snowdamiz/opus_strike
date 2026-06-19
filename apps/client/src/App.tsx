@@ -91,7 +91,7 @@ export function App() {
   const { preloadSoundGroup } = useAudio();
   const { matchStartGateKey, reportMatchSceneReady } = useNetwork();
   useGlobalButtonSounds();
-  const isActiveGame = gamePhase === 'playing' || gamePhase === 'countdown';
+  const isActiveGame = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
   const shouldPrepareMatchWorld = (
     appPhase === 'in_game' &&
     !matchSummary &&
@@ -154,24 +154,24 @@ export function App() {
     if (isLoading) return;
 
     // Play game music during active gameplay, lobby music otherwise
-    if (appPhase === 'in_game' && (gamePhase === 'playing' || gamePhase === 'countdown')) {
+    if (appPhase === 'in_game' && isActiveGame) {
       playGameMusic();
     } else {
       playLobbyMusic();
     }
-  }, [appPhase, gamePhase, isLoading, playLobbyMusic, playGameMusic]);
+  }, [appPhase, isActiveGame, isLoading, playLobbyMusic, playGameMusic]);
 
   // Pause/resume music when in-game menu opens/closes (only during active game)
   useEffect(() => {
     // Only manage pause/resume when actually in a playing game
-    if (appPhase === 'in_game' && (gamePhase === 'playing' || gamePhase === 'countdown')) {
+    if (appPhase === 'in_game' && isActiveGame) {
       if (showInGameMenu) {
         pauseMusic();
       } else {
         resumeMusic();
       }
     }
-  }, [showInGameMenu, appPhase, gamePhase, pauseMusic, resumeMusic]);
+  }, [showInGameMenu, appPhase, isActiveGame, pauseMusic, resumeMusic]);
 
   useEffect(() => {
     const showScoreboardForCode = (code: string) => {

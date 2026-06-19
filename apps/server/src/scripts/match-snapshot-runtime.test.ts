@@ -48,6 +48,7 @@ const runtime = new MatchSnapshotRuntime();
   assert.equal(snapshot.mapSize, 'small');
   assert.equal(snapshot.mapProfileId, null);
   assert.equal(snapshot.safeZone, null);
+  assert.equal(snapshot.battleRoyalDrop, null);
   assert.equal(snapshot.phaseEndTime, null);
   assert.equal(snapshot.redFlag, redFlag);
   assert.equal(snapshot.blueFlag, blueFlag);
@@ -72,6 +73,7 @@ const runtime = new MatchSnapshotRuntime();
     phaseEndTime: null,
     gameClockFrozen: false,
     safeZone: null,
+    battleRoyalDrop: null,
   };
   const signature = runtime.getSignature(snapshot);
 
@@ -91,6 +93,9 @@ const runtime = new MatchSnapshotRuntime();
     0,
     0,
     0,
+    0,
+    0,
+    '',
     'red-carrier',
     0,
     Math.round(1.234 * TRANSFORM_POSITION_SCALE),

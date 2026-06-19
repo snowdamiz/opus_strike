@@ -6,6 +6,8 @@ import {
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
   VOID_RAY_CHARGE_TIME,
+  type BattleRoyalDropPlayerStatus,
+  type Player,
   type SafeZoneSnapshot,
 } from '@voxel-strike/shared';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
@@ -15,6 +17,7 @@ import { useHudNow } from '../../store/hudSignals';
 import { FACTIONS, HUD_HERO_COLORS as HERO_COLORS } from '../../styles/colorTokens';
 import { Minimap } from './minimap/Minimap';
 import { VoiceHud } from './VoiceHud';
+import { formatKeybind } from '../../utils/keybindings';
 import {
   getAbilityCooldownSeconds,
   getAbilityMaxCharges,
@@ -339,6 +342,143 @@ function RoundTimer({
   );
 }
 
+function BattleRoyalEliminationsIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="7.5" stroke="currentColor" strokeWidth="1.8" opacity="0.78" />
+      <path d="M12 4.5v4.1M12 15.4v4.1M4.5 12h4.1M15.4 12h4.1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="12" cy="12" r="2.1" fill="currentColor" />
+    </svg>
+  );
+}
+
+function BattleRoyalRemainingIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 3.4 18.7 7.2v6.1c0 3.3-2.6 6.1-6.7 7.3-4.1-1.2-6.7-4-6.7-7.3V7.2L12 3.4Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M8.5 12.2h7M12 8.7v7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" opacity="0.82" />
+    </svg>
+  );
+}
+
+function isBattleRoyalRemainingPlayer(player: Player): boolean {
+  return player.state === 'alive' || player.state === 'dropping' || player.state === 'spawning';
+}
+
+function getBattleRoyalRemainingPlayerCount(players: Iterable<Player>, localPlayer: Player): number {
+  const seenPlayerIds = new Set<string>();
+  let remaining = 0;
+
+  for (const player of players) {
+    if (seenPlayerIds.has(player.id)) continue;
+    seenPlayerIds.add(player.id);
+    if (isBattleRoyalRemainingPlayer(player)) remaining += 1;
+  }
+
+  if (!seenPlayerIds.has(localPlayer.id) && isBattleRoyalRemainingPlayer(localPlayer)) {
+    remaining += 1;
+  }
+
+  return remaining;
+}
+
+function BattleRoyalTopHud({
+  eliminations,
+  remainingPlayers,
+  gamePhase,
+  phaseEndTime,
+  roundTimeRemaining,
+  gameClockFrozen,
+}: {
+  eliminations: number;
+  remainingPlayers: number;
+  gamePhase: string;
+  phaseEndTime: number | null;
+  roundTimeRemaining: number;
+  gameClockFrozen: boolean;
+}) {
+  return (
+    <div
+      className="flex items-stretch overflow-hidden rounded-b-xl backdrop-blur-md"
+      style={{
+        background: 'linear-gradient(180deg, rgba(8, 11, 16, 0.95) 0%, rgba(20, 24, 31, 0.9) 100%)',
+        boxShadow: '0 6px 24px rgba(0, 0, 0, 0.46), inset 0 -1px 0 rgba(255,255,255,0.06)',
+      }}
+      aria-label={`Battle Royal status: ${eliminations} eliminations, ${remainingPlayers} players remaining`}
+    >
+      <div className="relative">
+        <div
+          className="relative flex h-[clamp(2.25rem,3.4vw,3.25rem)] w-[clamp(4.35rem,6.3vw,6.4rem)] items-center justify-center gap-1.5 overflow-hidden"
+          style={{
+            background: 'linear-gradient(135deg, rgba(180, 83, 9, 0.88), rgba(234, 88, 12, 0.72))',
+          }}
+        >
+          <div
+            className="absolute inset-0 opacity-70"
+            style={{
+              background: 'radial-gradient(ellipse at 50% 100%, rgba(251, 191, 36, 0.42) 0%, transparent 72%)',
+            }}
+          />
+          <BattleRoyalEliminationsIcon className="relative z-10 h-3.5 w-3.5 text-orange-100/82 sm:h-4 sm:w-4 lg:h-[18px] lg:w-[18px]" />
+          <span className="relative z-10 font-display text-xl leading-none text-white tabular-nums drop-shadow-lg sm:text-2xl lg:text-3xl">
+            {eliminations}
+          </span>
+        </div>
+        <div className="absolute -bottom-3 left-0 right-0 flex h-3 items-center justify-center bg-gradient-to-b from-orange-500/18 to-transparent">
+          <span className="font-display text-[6px] tracking-[0.2em] text-orange-200/72 sm:text-[7px]">ELIMS</span>
+        </div>
+      </div>
+
+      <div className="relative flex items-center">
+        <div
+          className="absolute -left-2 bottom-0 top-0 z-10 w-4"
+          style={{
+            background: 'linear-gradient(135deg, transparent 45%, rgba(8, 10, 14, 0.95) 45%, rgba(8, 10, 14, 0.95) 55%, transparent 55%)',
+          }}
+        />
+        <div
+          className="absolute -right-2 bottom-0 top-0 z-10 w-4"
+          style={{
+            background: 'linear-gradient(-135deg, transparent 45%, rgba(8, 10, 14, 0.95) 45%, rgba(8, 10, 14, 0.95) 55%, transparent 55%)',
+          }}
+        />
+        <div className="relative z-20 flex h-[clamp(2.25rem,3.4vw,3.25rem)] min-w-[clamp(4.75rem,6.5vw,6.25rem)] flex-col items-center justify-center px-3 sm:px-4 lg:px-5">
+          <RoundTimer
+            gamePhase={gamePhase}
+            phaseEndTime={phaseEndTime}
+            roundTimeRemaining={roundTimeRemaining}
+            gameClockFrozen={gameClockFrozen}
+          />
+          <span className="-mt-0.5 font-display text-[6px] tracking-[0.24em] text-white/30 sm:text-[7px]">SURVIVE</span>
+        </div>
+      </div>
+
+      <div className="relative">
+        <div
+          className="relative flex h-[clamp(2.25rem,3.4vw,3.25rem)] w-[clamp(5rem,7vw,7rem)] items-center justify-center gap-1.5 overflow-hidden"
+          style={{
+            background: 'linear-gradient(135deg, rgba(8, 145, 178, 0.76), rgba(20, 184, 166, 0.64))',
+          }}
+        >
+          <div
+            className="absolute inset-0 opacity-65"
+            style={{
+              background: 'radial-gradient(ellipse at 50% 100%, rgba(103, 232, 249, 0.38) 0%, transparent 72%)',
+            }}
+          />
+          <span className="relative z-10 font-display text-xl leading-none text-white tabular-nums drop-shadow-lg sm:text-2xl lg:text-3xl">
+            {remainingPlayers}
+          </span>
+          <BattleRoyalRemainingIcon className="relative z-10 h-3.5 w-3.5 text-cyan-50/82 sm:h-4 sm:w-4 lg:h-[18px] lg:w-[18px]" />
+        </div>
+        <div className="absolute -bottom-3 left-0 right-0 flex h-3 items-center justify-center bg-gradient-to-b from-cyan-400/16 to-transparent">
+          <span className="font-display text-[6px] tracking-[0.18em] text-cyan-100/72 sm:text-[7px]">REMAINING</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SafeZoneStatus({ safeZone }: { safeZone: SafeZoneSnapshot | null }) {
   const now = useHudNow();
   if (!safeZone?.enabled) return null;
@@ -356,6 +496,62 @@ function SafeZoneStatus({ safeZone }: { safeZone: SafeZoneSnapshot | null }) {
     <div className={`absolute left-1/2 top-[clamp(2.8rem,4.2vw,4rem)] z-[124] -translate-x-1/2 rounded-md border px-3 py-1.5 text-center shadow-2xl backdrop-blur-md ${toneClass}`}>
       <div className="font-display text-[0.62rem] tracking-[0.22em]">{label}</div>
       <div className="font-mono text-sm font-bold tabular-nums">{formatHudTime(secondsRemaining)}</div>
+    </div>
+  );
+}
+
+function BattleRoyalDropPrompt({
+  gamePhase,
+  status,
+  canDrop,
+  interactKeyLabel,
+}: {
+  gamePhase: string;
+  status: BattleRoyalDropPlayerStatus | null;
+  canDrop: boolean;
+  interactKeyLabel: string;
+}) {
+  if (gamePhase !== 'deployment' || status === null || status === 'landed') return null;
+
+  const isAboard = status === 'aboard';
+  const showKeycap = !isAboard || canDrop;
+  const keyLabel = isAboard ? interactKeyLabel : 'WASD';
+  const statusLabel = isAboard
+    ? (canDrop ? 'READY' : 'STANDBY')
+    : 'DESCENT';
+  const primaryText = isAboard
+    ? (canDrop ? 'DROP' : 'DROP OPENS')
+    : 'STEER POD';
+  const secondaryText = isAboard
+    ? (canDrop ? 'deploy with squad' : 'over island')
+    : 'mouse to guide';
+
+  return (
+    <div className="absolute bottom-[clamp(6.25rem,14vh,8.75rem)] left-1/2 z-[126] -translate-x-1/2 text-center uppercase text-white">
+      <div className="relative grid justify-items-center">
+        <div className="mb-1.5 flex items-center justify-center gap-3">
+          <span className="h-px w-[clamp(2.75rem,8vw,6.5rem)] bg-gradient-to-r from-transparent via-white/40 to-white/10" />
+          <span className="font-mono text-[clamp(0.66rem,1vw,0.82rem)] font-black tracking-[0.38em] text-cyan-100/[0.72] drop-shadow-[0_2px_5px_rgba(0,0,0,0.88)]">
+            {statusLabel}
+          </span>
+          <span className="h-px w-[clamp(2.75rem,8vw,6.5rem)] bg-gradient-to-l from-transparent via-white/40 to-white/10" />
+        </div>
+
+        <div className="flex items-center justify-center gap-[clamp(0.85rem,1.8vw,1.35rem)]">
+          {showKeycap ? (
+            <span className="inline-flex h-[clamp(2.2rem,4.4vh,3rem)] min-w-[clamp(2.2rem,4.4vh,3rem)] items-center justify-center border border-white/70 border-b-white/40 bg-white/[0.055] px-[clamp(0.7rem,1.3vw,0.95rem)] font-mono text-[clamp(0.95rem,1.7vw,1.22rem)] font-black leading-none text-white shadow-[0_0_18px_rgba(125,211,252,0.22),0_3px_10px_rgba(0,0,0,0.56),inset_0_1px_0_rgba(255,255,255,0.24)]">
+              {keyLabel}
+            </span>
+          ) : null}
+          <span className="font-display text-[clamp(1.85rem,3.8vw,3.25rem)] font-black leading-none tracking-[0.12em] text-white drop-shadow-[0_3px_10px_rgba(0,0,0,0.95)]">
+            {primaryText}
+          </span>
+        </div>
+
+        <span className="mt-1.5 font-mono text-[clamp(0.72rem,1.16vw,0.92rem)] font-black tracking-[0.28em] text-white/[0.74] drop-shadow-[0_2px_5px_rgba(0,0,0,0.88)]">
+          {secondaryText}
+        </span>
+      </div>
     </div>
   );
 }
@@ -705,6 +901,8 @@ export function HUD() {
     phaseEndTime,
     gameClockFrozen,
     safeZone,
+    battleRoyalDrop,
+    players,
     clientCooldowns,
     clientCharges,
     ultimateEffectActive,
@@ -732,6 +930,8 @@ export function HUD() {
       phaseEndTime: state.phaseEndTime,
       gameClockFrozen: state.gameClockFrozen,
       safeZone: state.safeZone,
+      battleRoyalDrop: state.battleRoyalDrop,
+      players: state.players,
       clientCooldowns: state.clientCooldowns,
       clientCharges: state.clientCharges,
       ultimateEffectActive: state.ultimateEffectActive,
@@ -752,11 +952,13 @@ export function HUD() {
     crosshairStyle,
     crosshairColor,
     showKillFeed,
+    interactKeybind,
   } = useSettingsStore(
     useShallow(state => ({
       crosshairStyle: state.settings.crosshairStyle,
       crosshairColor: state.settings.crosshairColor,
       showKillFeed: state.settings.showKillFeed,
+      interactKeybind: state.settings.keybindings.interact,
     }))
   );
   const killFeed = useCombatFeedbackStore((state) => state.killFeed);
@@ -776,6 +978,16 @@ export function HUD() {
     ? 'clamp(3.25rem, 8vh, 4.75rem)'
     : 'calc(clamp(2.25rem, 3.4vw, 3.25rem) + 0.5rem)';
   const scoreLabel = gameplayMode === 'team_deathmatch' ? 'KILLS' : 'BATTLE';
+  const battleRoyalEliminations = localPlayer.stats.kills;
+  const battleRoyalRemainingPlayers = getBattleRoyalRemainingPlayerCount(players.values(), localPlayer);
+  const battleRoyalDropStatus = battleRoyalDrop?.players.find((player) => (
+    player.playerId === localPlayer.id
+  ))?.status ?? null;
+  const battleRoyalDropCanDrop = battleRoyalDrop?.ship.canDrop === true;
+  const isBattleRoyalPreLanding = gameplayMode === 'battle_royal' && (
+    battleRoyalDropStatus === 'aboard' ||
+    battleRoyalDropStatus === 'dropping'
+  );
   const healthColor = healthPercent <= 15
     ? '#ef4444'
     : healthPercent <= 30
@@ -797,46 +1009,56 @@ export function HUD() {
       )}
 
       {/* Crosshair - changes for Meteor Strike targeting mode */}
-      <div className="crosshair">
-        {bombTargeting ? (
-          // Meteor Strike targeting crosshair - larger, orange, with explosion radius indicator
-          <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-            {/* Outer blast radius ring */}
-            <circle
-              cx="24" cy="24" r="20"
-              stroke={bombTargetValid ? "#ff6600" : "#ff3333"}
-              strokeWidth="2"
-              strokeDasharray="6 3"
-              opacity="0.6"
-              style={{ animation: 'spin 4s linear infinite' }}
-            />
-            {/* Inner targeting ring */}
-            <circle
-              cx="24" cy="24" r="12"
-              stroke={bombTargetValid ? "#ff8800" : "#ff4444"}
-              strokeWidth="2"
-              opacity="0.8"
-            />
-            {/* Center dot */}
-            <circle
-              cx="24" cy="24" r="3"
-              fill={bombTargetValid ? "#ffaa00" : "#ff5555"}
-              opacity="0.95"
-            />
-            {/* Crosshair lines */}
-            <line x1="24" y1="6" x2="24" y2="14" stroke={bombTargetValid ? "#ff6600" : "#ff3333"} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
-            <line x1="24" y1="34" x2="24" y2="42" stroke={bombTargetValid ? "#ff6600" : "#ff3333"} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
-            <line x1="6" y1="24" x2="14" y2="24" stroke={bombTargetValid ? "#ff6600" : "#ff3333"} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
-            <line x1="34" y1="24" x2="42" y2="24" stroke={bombTargetValid ? "#ff6600" : "#ff3333"} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
-          </svg>
-        ) : (
-          <NormalCrosshair crosshairStyle={crosshairStyle} color={crosshairColor} />
-        )}
-      </div>
+      {!isBattleRoyalPreLanding && (
+        <div className="crosshair">
+          {bombTargeting ? (
+            // Meteor Strike targeting crosshair - larger, orange, with explosion radius indicator
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+              {/* Outer blast radius ring */}
+              <circle
+                cx="24" cy="24" r="20"
+                stroke={bombTargetValid ? "#ff6600" : "#ff3333"}
+                strokeWidth="2"
+                strokeDasharray="6 3"
+                opacity="0.6"
+                style={{ animation: 'spin 4s linear infinite' }}
+              />
+              {/* Inner targeting ring */}
+              <circle
+                cx="24" cy="24" r="12"
+                stroke={bombTargetValid ? "#ff8800" : "#ff4444"}
+                strokeWidth="2"
+                opacity="0.8"
+              />
+              {/* Center dot */}
+              <circle
+                cx="24" cy="24" r="3"
+                fill={bombTargetValid ? "#ffaa00" : "#ff5555"}
+                opacity="0.95"
+              />
+              {/* Crosshair lines */}
+              <line x1="24" y1="6" x2="24" y2="14" stroke={bombTargetValid ? "#ff6600" : "#ff3333"} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
+              <line x1="24" y1="34" x2="24" y2="42" stroke={bombTargetValid ? "#ff6600" : "#ff3333"} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
+              <line x1="6" y1="24" x2="14" y2="24" stroke={bombTargetValid ? "#ff6600" : "#ff3333"} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
+              <line x1="34" y1="24" x2="42" y2="24" stroke={bombTargetValid ? "#ff6600" : "#ff3333"} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
+            </svg>
+          ) : (
+            <NormalCrosshair crosshairStyle={crosshairStyle} color={crosshairColor} />
+          )}
+        </div>
+      )}
 
       {showKillFeed && <KillFeed events={killFeed} />}
       {!isTutorialMode && <Minimap />}
       {gameplayMode === 'battle_royal' && <SafeZoneStatus safeZone={safeZone} />}
+      {gameplayMode === 'battle_royal' && (
+        <BattleRoyalDropPrompt
+          gamePhase={gamePhase}
+          status={battleRoyalDropStatus}
+          canDrop={battleRoyalDropCanDrop}
+          interactKeyLabel={formatKeybind(interactKeybind)}
+        />
+      )}
       {!isPracticeMode && <VoiceHud />}
 
       {/* Meteor Strike targeting instructions */}
@@ -866,115 +1088,125 @@ export function HUD() {
       {!isPracticeMode && (
         <div className="absolute top-0 left-1/2 -translate-x-1/2 max-w-[92vw]">
           <div className="relative">
-            {/* Main score container */}
-            <div
-              className="flex items-stretch rounded-b-xl overflow-hidden backdrop-blur-md"
-              style={{
-                background: 'linear-gradient(180deg, rgb(var(--color-strike-bg) / 0.95) 0%, rgb(var(--color-strike-elevated) / 0.9) 100%)',
-                boxShadow: '0 6px 24px rgba(0, 0, 0, 0.46), inset 0 -1px 0 rgba(255,255,255,0.05)',
-              }}
-            >
-              {/* Solar Vanguard Side */}
-              <div className="relative group">
-                <div
-                  className="w-[clamp(3rem,5.5vw,5.75rem)] h-[clamp(2.25rem,3.4vw,3.25rem)] flex items-center justify-center gap-1 sm:gap-1.5 relative overflow-hidden"
-                  style={{
-                    background: FACTIONS.red.gradient,
-                  }}
-                >
-                  {/* Animated glow effect */}
+            {gameplayMode === 'battle_royal' ? (
+              <BattleRoyalTopHud
+                eliminations={battleRoyalEliminations}
+                remainingPlayers={battleRoyalRemainingPlayers}
+                gamePhase={gamePhase}
+                phaseEndTime={phaseEndTime}
+                roundTimeRemaining={roundTimeRemaining}
+                gameClockFrozen={gameClockFrozen}
+              />
+            ) : (
+              <div
+                className="flex items-stretch rounded-b-xl overflow-hidden backdrop-blur-md"
+                style={{
+                  background: 'linear-gradient(180deg, rgb(var(--color-strike-bg) / 0.95) 0%, rgb(var(--color-strike-elevated) / 0.9) 100%)',
+                  boxShadow: '0 6px 24px rgba(0, 0, 0, 0.46), inset 0 -1px 0 rgba(255,255,255,0.05)',
+                }}
+              >
+                {/* Solar Vanguard Side */}
+                <div className="relative group">
                   <div
-                    className="absolute inset-0 opacity-50"
+                    className="w-[clamp(3rem,5.5vw,5.75rem)] h-[clamp(2.25rem,3.4vw,3.25rem)] flex items-center justify-center gap-1 sm:gap-1.5 relative overflow-hidden"
                     style={{
-                      background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.red.hudGlowColor} 0%, transparent 70%)`,
+                      background: FACTIONS.red.gradient,
+                    }}
+                  >
+                    {/* Animated glow effect */}
+                    <div
+                      className="absolute inset-0 opacity-50"
+                      style={{
+                        background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.red.hudGlowColor} 0%, transparent 70%)`,
+                      }}
+                    />
+
+                    <SolarIconSmall className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-[18px] lg:h-[18px] text-white/80 relative z-10" />
+                    <span
+                      className="font-display text-xl sm:text-2xl lg:text-3xl text-white tabular-nums drop-shadow-lg relative z-10"
+                      style={{ textShadow: `0 0 20px ${FACTIONS.red.hudGlowColor}` }}
+                    >
+                      {redScore}
+                    </span>
+                  </div>
+
+                  {/* Faction label */}
+                  <div
+                    className="absolute -bottom-3 left-0 right-0 h-3 flex items-center justify-center"
+                    style={{ background: `linear-gradient(180deg, ${FACTIONS.red.primaryColor}30, transparent)` }}
+                  >
+                    <span
+                      className="text-[6px] sm:text-[7px] font-display tracking-[0.2em]"
+                      style={{ color: `${FACTIONS.red.primaryColor}b3` }}
+                    >
+                      SOLAR
+                    </span>
+                  </div>
+                </div>
+
+                {/* Center Divider + Timer */}
+                <div className="relative flex items-center">
+                  {/* Diagonal dividers */}
+                  <div
+                    className="absolute -left-2 top-0 bottom-0 w-4 z-10"
+                    style={{
+                      background: 'linear-gradient(135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
+                    }}
+                  />
+                  <div
+                    className="absolute -right-2 top-0 bottom-0 w-4 z-10"
+                    style={{
+                      background: 'linear-gradient(-135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
                     }}
                   />
 
-                  <SolarIconSmall className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-[18px] lg:h-[18px] text-white/80 relative z-10" />
-                  <span
-                    className="font-display text-xl sm:text-2xl lg:text-3xl text-white tabular-nums drop-shadow-lg relative z-10"
-                    style={{ textShadow: `0 0 20px ${FACTIONS.red.hudGlowColor}` }}
-                  >
-                    {redScore}
-                  </span>
+                  {/* Timer */}
+                  <div className="relative px-3 sm:px-4 lg:px-5 h-[clamp(2.25rem,3.4vw,3.25rem)] flex flex-col items-center justify-center z-20 min-w-[clamp(4.5rem,6vw,5.75rem)]">
+                    <RoundTimer
+                      gamePhase={gamePhase}
+                      phaseEndTime={phaseEndTime}
+                      roundTimeRemaining={roundTimeRemaining}
+                      gameClockFrozen={gameClockFrozen}
+                    />
+                    <span className="text-[6px] sm:text-[7px] font-display text-white/30 tracking-[0.24em] -mt-0.5">{scoreLabel}</span>
+                  </div>
                 </div>
 
-                {/* Faction label */}
-                <div
-                  className="absolute -bottom-3 left-0 right-0 h-3 flex items-center justify-center"
-                  style={{ background: `linear-gradient(180deg, ${FACTIONS.red.primaryColor}30, transparent)` }}
-                >
-                  <span
-                    className="text-[6px] sm:text-[7px] font-display tracking-[0.2em]"
-                    style={{ color: `${FACTIONS.red.primaryColor}b3` }}
-                  >
-                    SOLAR
-                  </span>
-                </div>
-              </div>
-
-              {/* Center Divider + Timer */}
-              <div className="relative flex items-center">
-                {/* Diagonal dividers */}
-                <div
-                  className="absolute -left-2 top-0 bottom-0 w-4 z-10"
-                  style={{
-                    background: 'linear-gradient(135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
-                  }}
-                />
-                <div
-                  className="absolute -right-2 top-0 bottom-0 w-4 z-10"
-                  style={{
-                    background: 'linear-gradient(-135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
-                  }}
-                />
-
-                {/* Timer */}
-                <div className="relative px-3 sm:px-4 lg:px-5 h-[clamp(2.25rem,3.4vw,3.25rem)] flex flex-col items-center justify-center z-20 min-w-[clamp(4.5rem,6vw,5.75rem)]">
-                  <RoundTimer
-                    gamePhase={gamePhase}
-                    phaseEndTime={phaseEndTime}
-                    roundTimeRemaining={roundTimeRemaining}
-                    gameClockFrozen={gameClockFrozen}
-                  />
-                  <span className="text-[6px] sm:text-[7px] font-display text-white/30 tracking-[0.24em] -mt-0.5">{scoreLabel}</span>
-                </div>
-              </div>
-
-              {/* Void Legion Side */}
-              <div className="relative group">
-                <div
-                  className="w-[clamp(3rem,5.5vw,5.75rem)] h-[clamp(2.25rem,3.4vw,3.25rem)] flex items-center justify-center gap-1 sm:gap-1.5 relative overflow-hidden"
-                  style={{
-                    background: FACTIONS.blue.gradient,
-                  }}
-                >
-                  {/* Animated glow effect */}
+                {/* Void Legion Side */}
+                <div className="relative group">
                   <div
-                    className="absolute inset-0 opacity-50"
+                    className="w-[clamp(3rem,5.5vw,5.75rem)] h-[clamp(2.25rem,3.4vw,3.25rem)] flex items-center justify-center gap-1 sm:gap-1.5 relative overflow-hidden"
                     style={{
-                      background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.blue.hudGlowColor} 0%, transparent 70%)`,
+                      background: FACTIONS.blue.gradient,
                     }}
-                  />
-
-                  <span
-                    className="font-display text-xl sm:text-2xl lg:text-3xl text-white tabular-nums drop-shadow-lg relative z-10"
-                    style={{ textShadow: `0 0 20px ${FACTIONS.blue.hudGlowColor}` }}
                   >
-                    {blueScore}
-                  </span>
-                  <VoidIconSmall className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-[18px] lg:h-[18px] text-white/80 relative z-10" />
-                </div>
+                    {/* Animated glow effect */}
+                    <div
+                      className="absolute inset-0 opacity-50"
+                      style={{
+                        background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.blue.hudGlowColor} 0%, transparent 70%)`,
+                      }}
+                    />
 
-                {/* Faction label */}
-                <div
-                  className="absolute -bottom-3 left-0 right-0 h-3 flex items-center justify-center"
-                  style={{ background: `linear-gradient(180deg, ${FACTIONS.blue.primaryColor}30, transparent)` }}
-                >
-                  <span className="text-[6px] sm:text-[7px] font-display tracking-[0.2em] text-cyan-300/70">VOID</span>
+                    <span
+                      className="font-display text-xl sm:text-2xl lg:text-3xl text-white tabular-nums drop-shadow-lg relative z-10"
+                      style={{ textShadow: `0 0 20px ${FACTIONS.blue.hudGlowColor}` }}
+                    >
+                      {blueScore}
+                    </span>
+                    <VoidIconSmall className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-[18px] lg:h-[18px] text-white/80 relative z-10" />
+                  </div>
+
+                  {/* Faction label */}
+                  <div
+                    className="absolute -bottom-3 left-0 right-0 h-3 flex items-center justify-center"
+                    style={{ background: `linear-gradient(180deg, ${FACTIONS.blue.primaryColor}30, transparent)` }}
+                  >
+                    <span className="text-[6px] sm:text-[7px] font-display tracking-[0.2em] text-cyan-300/70">VOID</span>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* Bottom accent line */}
             <div
@@ -1031,7 +1263,7 @@ export function HUD() {
       </div>
 
       {/* ===== BOTTOM CENTER - Skill Bar ===== */}
-      {heroSkillItems.length > 0 && (
+      {heroSkillItems.length > 0 && !isBattleRoyalPreLanding && (
         <div className="absolute bottom-[clamp(0.45rem,1vw,0.875rem)] left-1/2 flex max-w-[94vw] -translate-x-1/2 flex-col items-center gap-2 hud-skill-bar">
           {showChronosLifelineHelper && (
             <ChronosLifelineHelper />

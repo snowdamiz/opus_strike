@@ -114,6 +114,16 @@ export function buildCountdownPhaseStatePatch(input: {
   };
 }
 
+export function buildBattleRoyalDeploymentPhaseStatePatch(input: {
+  now: number;
+  durationMs: number;
+}): RoomPhaseStatePatch {
+  return {
+    phase: 'deployment',
+    phaseEndTime: input.now + input.durationMs,
+  };
+}
+
 export function buildPlayingPhaseStatePatch(input: {
   now: number;
   roundTimeSeconds: number;

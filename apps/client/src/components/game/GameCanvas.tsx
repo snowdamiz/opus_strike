@@ -8,6 +8,7 @@ import type { VoxelMapWarmupStatus } from './procedural/VoxelMap';
 import { WorldAtmosphere } from './WorldAtmosphere';
 import { PlayerController } from './PlayerController';
 import { BattleRoyalTeamSpectatorCameraController } from './BattleRoyalTeamSpectatorCameraController';
+import { BattleRoyalDropDeployment } from './BattleRoyalDropDeployment';
 import { OtherPlayers } from './OtherPlayers';
 import { RagdollManager } from './RagdollManager';
 import { Flags } from './Flags';
@@ -819,7 +820,7 @@ export function GameCanvas({
     () => new THREE.Color(mapTheme.structures.accent).lerp(new THREE.Color('#ffffff'), 0.18).getStyle(),
     [mapTheme]
   );
-  const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
+  const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
   const isBattleRoyalEliminated = gameplayMode === 'battle_royal' && localPlayerState === 'dead';
   const isWorldReady = warmupSnapshot.key === warmupKey && warmupSnapshot.canAcceptInput;
   const isReadyForMatchStart = isMapWarmupReadyForMatchStart(warmupSnapshot, warmupKey);
@@ -981,6 +982,8 @@ export function GameCanvas({
           prebuildRegions
           onWarmupStatus={handleVoxelWarmupStatus}
         />
+
+        <BattleRoyalDropDeployment />
 
         {/* Grid helper for visibility */}
         <Grid

@@ -109,6 +109,7 @@ interface RemotePartDescriptor {
   paletteKind?: MaterialKind;
   trimEmissiveIntensity?: number;
   fixedEmissiveIntensity?: number;
+  battleRoyalLocalMatrix?: THREE.Matrix4;
 }
 
 interface RemotePartBatch {
@@ -207,6 +208,8 @@ const BATTLE_ROYAL_MAX_REMOTE_FULL_BODY_DISTANCE = 88;
 const BATTLE_ROYAL_MAX_REMOTE_OUTLINE_DISTANCE = 112;
 const BATTLE_ROYAL_REMOTE_ACTIVITY_BODY_DISTANCE = 96;
 const BATTLE_ROYAL_REMOTE_ACTIVITY_OUTLINE_DISTANCE = 128;
+const BATTLE_ROYAL_TEAM_SILHOUETTE_OUTLINE_SCALE = 1.22;
+const BATTLE_ROYAL_TEAM_SILHOUETTE_OUTLINE_OPACITY = 0.92;
 const EMPTY_REMOTE_PLAYER_GROUP: readonly Player[] = Object.freeze([]);
 
 function isHeroId(value: string | null | undefined): value is HeroId {
@@ -363,20 +366,32 @@ function getRemotePlayerHeight(player: Player): number {
   return getPlayerHeight(player.heroId);
 }
 
-function getOutlineScale(scale: VoxelPart['scale']): VoxelPart['scale'] {
+function getOutlineScale(
+  scale: VoxelPart['scale'],
+  outlineScale = TEAM_BODY_GLOW_OUTLINE_SCALE
+): VoxelPart['scale'] {
   return [
-    scale[0] * TEAM_BODY_GLOW_OUTLINE_SCALE,
-    scale[1] * TEAM_BODY_GLOW_OUTLINE_SCALE,
-    scale[2] * TEAM_BODY_GLOW_OUTLINE_SCALE,
+    scale[0] * outlineScale,
+    scale[1] * outlineScale,
+    scale[2] * outlineScale,
   ];
 }
 
 function createOutlineDescriptor(descriptor: RemotePartDescriptor): RemotePartDescriptor {
   const scale = getOutlineScale(descriptor.scale);
+  const battleRoyalScale = getOutlineScale(
+    descriptor.scale,
+    BATTLE_ROYAL_TEAM_SILHOUETTE_OUTLINE_SCALE
+  );
   return {
     ...descriptor,
     scale,
     localMatrix: createPartLocalMatrix(descriptor.meshOffset, scale, descriptor.rotation),
+    battleRoyalLocalMatrix: createPartLocalMatrix(
+      descriptor.meshOffset,
+      battleRoyalScale,
+      descriptor.rotation
+    ),
   };
 }
 
@@ -938,11 +953,15 @@ function updateBodyWorldMatrix(runtime: RemoteHeroRuntime): void {
   runtime.bodyRoot.updateMatrixWorld(true);
 }
 
-function setPartMatrix(runtime: RemoteHeroRuntime, descriptor: RemotePartDescriptor): THREE.Matrix4 {
+function setPartMatrix(
+  runtime: RemoteHeroRuntime,
+  descriptor: RemotePartDescriptor,
+  localMatrix = descriptor.localMatrix
+): THREE.Matrix4 {
   const parentMatrix = descriptor.bone === 'root'
     ? runtime.bodyRoot.matrixWorld
     : runtime.bones[descriptor.bone].matrixWorld;
-  runtime.finalMatrix.multiplyMatrices(parentMatrix, descriptor.localMatrix);
+  runtime.finalMatrix.multiplyMatrices(parentMatrix, localMatrix);
   return runtime.finalMatrix;
 }
 
@@ -1256,6 +1275,18 @@ function getDescriptorEmissiveBoost(
   return descriptor.fixedEmissiveIntensity ?? 0;
 }
 
+function getOutlineLocalMatrix(descriptor: RemotePartDescriptor, isBattleRoyal: boolean): THREE.Matrix4 {
+  return isBattleRoyal && descriptor.battleRoyalLocalMatrix
+    ? descriptor.battleRoyalLocalMatrix
+    : descriptor.localMatrix;
+}
+
+function getOutlineOpacity(isBattleRoyal: boolean): number {
+  return isBattleRoyal
+    ? BATTLE_ROYAL_TEAM_SILHOUETTE_OUTLINE_OPACITY
+    : TEAM_BODY_GLOW_OUTLINE_OPACITY;
+}
+
 function assignDynamicInstancedMesh(
   mesh: THREE.InstancedMesh | null,
   onMesh: (mesh: THREE.InstancedMesh | null) => void
@@ -1305,12 +1336,18 @@ function RemoteHeroInstancedBatch({
 function RemoteHeroOutlineBatch({
   batch,
   capacity,
+  isBattleRoyal,
   onMesh,
 }: {
   batch: RemoteOutlineBatch;
   capacity: number;
+  isBattleRoyal: boolean;
   onMesh: (mesh: THREE.InstancedMesh | null) => void;
 }) {
+  useLayoutEffect(() => {
+    batch.material.opacity = getOutlineOpacity(isBattleRoyal);
+  }, [batch.material, isBattleRoyal]);
+
   return (
     <instancedMesh
       ref={(mesh) => assignDynamicInstancedMesh(mesh, onMesh)}
@@ -1486,7 +1523,10 @@ function RemoteHeroBatchGroup({
           if (!mesh) continue;
           let writeIndex = outlineCounts[batchIndex];
           for (const descriptor of batch.descriptors) {
-            mesh.setMatrixAt(writeIndex, setPartMatrix(runtime, descriptor));
+            mesh.setMatrixAt(
+              writeIndex,
+              setPartMatrix(runtime, descriptor, getOutlineLocalMatrix(descriptor, isBattleRoyal))
+            );
             writeIndex++;
           }
           outlineCounts[batchIndex] = writeIndex;
@@ -1538,6 +1578,7 @@ function RemoteHeroBatchGroup({
           key={batch.key}
           batch={batch}
           capacity={Math.max(1, capacity * batch.capacityPerPlayer)}
+          isBattleRoyal={isBattleRoyal}
           onMesh={(mesh) => {
             outlineMeshesRef.current[batchIndex] = mesh;
           }}

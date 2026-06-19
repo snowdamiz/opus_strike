@@ -44,6 +44,10 @@ import {
     heroId: 'blaze',
   }), true);
   assert.equal(shouldActivateJoinedPlayer({
+    phase: 'deployment',
+    heroId: 'chronos',
+  }), true);
+  assert.equal(shouldActivateJoinedPlayer({
     phase: 'hero_select',
     heroId: 'phantom',
   }), false);

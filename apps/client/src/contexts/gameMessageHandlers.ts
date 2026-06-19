@@ -136,6 +136,7 @@ const PLAYER_STATES = new Set<string>([
   'spectating',
   'selecting',
   'spawning',
+  'dropping',
   'alive',
   'dead',
 ]);
@@ -292,7 +293,7 @@ function shouldSyncLocalPosition(localPlayer: Player, nextState: string, nextPos
 
   if (!visualPosition) return true;
   if (nextState !== 'alive') return true;
-  if (localPlayer.state !== nextState && ['dead', 'spawning', 'selecting'].includes(localPlayer.state)) return true;
+  if (localPlayer.state !== nextState && ['dead', 'dropping', 'spawning', 'selecting'].includes(localPlayer.state)) return true;
 
   const isDefaultLocalPosition =
     localPlayer.position.x === 0 &&
@@ -1079,7 +1080,7 @@ export function setupPlayerVitalsHandler(
 export function setupMatchSnapshotHandler(room: Room) {
   room.onMessage('matchSnapshot', measureNetworkMessage('matchSnapshot', (data: MatchSnapshotMessage) => {
     const store = useGameStore.getState();
-    if (data.phase !== 'playing' && data.phase !== 'countdown') {
+    if (data.phase !== 'playing' && data.phase !== 'countdown' && data.phase !== 'deployment') {
       clearAllDeathVisuals();
     }
     setGameTiming(data.tick, data.serverTime);
@@ -1098,6 +1099,7 @@ export function setupMatchSnapshotHandler(room: Room) {
       phaseEndTime: data.phaseEndTime,
       gameClockFrozen: data.gameClockFrozen === true,
       safeZone: data.safeZone ?? null,
+      battleRoyalDrop: data.battleRoyalDrop ?? null,
     });
   }));
 }

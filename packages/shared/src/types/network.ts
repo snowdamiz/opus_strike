@@ -270,6 +270,40 @@ export interface SafeZoneSnapshot {
   shrinking: boolean;
 }
 
+export type BattleRoyalDropPlayerStatus = 'aboard' | 'dropping' | 'landed';
+
+export interface BattleRoyalDropShipSnapshot {
+  start: Vec3;
+  end: Vec3;
+  position: Vec3;
+  altitude: number;
+  startedAt: number;
+  endsAt: number;
+  autoDropAt: number;
+  dropStartsAt: number;
+  dropEndsAt: number;
+  canDrop: boolean;
+}
+
+export interface BattleRoyalDropPlayerSnapshot {
+  playerId: string;
+  team: Team;
+  status: BattleRoyalDropPlayerStatus;
+  position: Vec3;
+  velocity: Vec3;
+  droppedAt: number | null;
+  landedAt: number | null;
+}
+
+export interface BattleRoyalDropSnapshot {
+  enabled: boolean;
+  phaseStartedAt: number;
+  phaseEndsAt: number;
+  serverTime: number;
+  ship: BattleRoyalDropShipSnapshot;
+  players: BattleRoyalDropPlayerSnapshot[];
+}
+
 export interface MatchSnapshotMessage {
   tick: number;
   serverTime: number;
@@ -287,6 +321,7 @@ export interface MatchSnapshotMessage {
   phaseEndTime: number | null;
   gameClockFrozen?: boolean;
   safeZone?: SafeZoneSnapshot | null;
+  battleRoyalDrop?: BattleRoyalDropSnapshot | null;
 }
 
 export interface PowerupPickupRuntimeState {

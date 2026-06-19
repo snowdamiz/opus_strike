@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   ROUND_END_INTERMISSION_MS,
+  buildBattleRoyalDeploymentPhaseStatePatch,
   buildCountdownPhaseStatePatch,
   buildDevTimeFreezeStatePatch,
   buildGameEndPhaseStatePatch,
@@ -187,6 +188,16 @@ import {
     {
       phase: 'countdown',
       phaseEndTime: 25_000,
+    }
+  );
+  assert.deepEqual(
+    buildBattleRoyalDeploymentPhaseStatePatch({
+      now: 25_000,
+      durationMs: 60_000,
+    }),
+    {
+      phase: 'deployment',
+      phaseEndTime: 85_000,
     }
   );
   assert.deepEqual(

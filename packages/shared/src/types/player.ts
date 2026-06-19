@@ -12,6 +12,7 @@ export type PlayerState =
   | 'spectating'
   | 'selecting'     // Hero select
   | 'spawning'
+  | 'dropping'
   | 'alive'
   | 'dead';
 

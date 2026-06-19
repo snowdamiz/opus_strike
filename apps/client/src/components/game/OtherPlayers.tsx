@@ -35,68 +35,82 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
   // v2 transform position updates because remote player entries are mutated in-place.
   // The Map reference only changes when players are added/removed. Position interpolation
   // reads from visualStore in the frame scheduler (non-reactive, 60fps).
-  const { players, playerId, localPlayerId, gamePhase, gameplayMode } = useGameStore(
+  const { players, playerId, localPlayerId, localPlayerTeam, gamePhase, gameplayMode } = useGameStore(
     useShallow(state => ({
       players: state.players,
       playerId: state.playerId,
       localPlayerId: state.localPlayer?.id ?? null,
+      localPlayerTeam: state.localPlayer?.team ?? null,
       gamePhase: state.gamePhase,
       gameplayMode: state.gameplayMode,
     }))
   );
+  const isBattleRoyal = gameplayMode === 'battle_royal';
 
   const otherPlayers = useMemo(() => {
     const nextPlayers: Player[] = [];
-    const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown';
+    const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
 
     for (const player of players.values()) {
       if (player.id === playerId || player.id === localPlayerId) continue;
       if (hideDeadPlayers && player.state === 'dead') continue;
+      if (isBattleRoyal && gamePhase === 'countdown' && player.state === 'spawning') continue;
+      if (player.state === 'dropping') continue;
       if (player.visibility === 'hidden' || player.visibility === 'last_known' || player.visibility === 'audible') continue;
       nextPlayers.push(player);
     }
 
     return nextPlayers;
-  }, [gamePhase, localPlayerId, playerId, players]);
+  }, [gamePhase, isBattleRoyal, localPlayerId, playerId, players]);
 
   const remoteBatchResourcePlayers = useMemo(() => {
-    if (gameplayMode !== 'battle_royal') return otherPlayers;
+    if (!isBattleRoyal) return otherPlayers;
 
     const nextPlayers: Player[] = [];
-    const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown';
+    const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
 
     for (const player of players.values()) {
       if (player.id === playerId || player.id === localPlayerId) continue;
       if (hideDeadPlayers && player.state === 'dead') continue;
+      if (gamePhase === 'countdown' && player.state === 'spawning') continue;
       nextPlayers.push(player);
     }
 
     return nextPlayers;
-  }, [gamePhase, gameplayMode, localPlayerId, otherPlayers, playerId, players]);
+  }, [gamePhase, isBattleRoyal, localPlayerId, otherPlayers, playerId, players]);
 
   useEffect(() => {
     if (!config.showNameplates) return;
     for (const player of otherPlayers) {
-      prewarmNameplateTexture(player.name, player.health, player.maxHealth);
+      if (!shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam)) continue;
+      prewarmNameplateTexture(
+        player.name,
+        player.health,
+        player.maxHealth
+      );
     }
-  }, [config.showNameplates, otherPlayers]);
+  }, [config.showNameplates, isBattleRoyal, localPlayerTeam, otherPlayers]);
 
   return (
     <group>
       <RemoteHeroBatchRenderer
         players={otherPlayers}
         resourcePlayers={remoteBatchResourcePlayers}
-        isBattleRoyal={gameplayMode === 'battle_royal'}
+        isBattleRoyal={isBattleRoyal}
         config={config}
       />
       <RemoteMovementEffects players={otherPlayers} theme={theme} config={effectConfig} />
-      {otherPlayers.map((player) => shouldRenderRemotePlayerFallback(player, config) ? (
-        <OtherPlayer
-          key={player.id}
-          player={player}
-          config={config}
-        />
-      ) : null)}
+      {otherPlayers.map((player) => {
+        const showNameplate = shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam);
+        return shouldRenderRemotePlayerFallback(player, config, showNameplate) ? (
+          <OtherPlayer
+            key={player.id}
+            player={player}
+            config={config}
+            showNameplate={showNameplate}
+          />
+        ) : null;
+      })}
     </group>
   );
 }
@@ -104,6 +118,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
 interface OtherPlayerProps {
   player: Player;
   config: RemotePlayerQualityConfig;
+  showNameplate: boolean;
 }
 
 const NETWORK_MOVING_SPEED = 0.45;
@@ -192,11 +207,25 @@ function hasActivePhantomVeil(player: Player): boolean {
   return Boolean(veil?.isActive);
 }
 
-function shouldRenderRemotePlayerFallback(player: Player, config: RemotePlayerQualityConfig): boolean {
-  return player.heroId === 'phantom' || player.hasFlag || config.showNameplates || config.showBeacons;
+function shouldShowRemoteNameplate(
+  player: Player,
+  config: RemotePlayerQualityConfig,
+  isBattleRoyal: boolean,
+  localPlayerTeam: Team | null
+): boolean {
+  if (!config.showNameplates) return false;
+  return !isBattleRoyal || player.team === localPlayerTeam;
 }
 
-const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerProps) {
+function shouldRenderRemotePlayerFallback(
+  player: Player,
+  config: RemotePlayerQualityConfig,
+  showNameplate: boolean
+): boolean {
+  return player.heroId === 'phantom' || player.hasFlag || showNameplate || config.showBeacons;
+}
+
+const OtherPlayer = memo(function OtherPlayer({ player, config, showNameplate }: OtherPlayerProps) {
   const groupRef = useRef<THREE.Group>(null);
   const [isVeiled, setIsVeiled] = useState(() => hasActivePhantomVeil(player));
   const playerHeight = getPlayerHeight(player.heroId);
@@ -414,7 +443,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
       )}
 
       {/* Nameplate */}
-      {!isVeiled && config.showNameplates && (
+      {!isVeiled && showNameplate && (
         <Nameplate
           name={player.name}
           health={player.health}
@@ -451,6 +480,7 @@ const NAMEPLATE_CANVAS_WIDTH = 256;
 const NAMEPLATE_CANVAS_HEIGHT = 72;
 const NAMEPLATE_HEALTH_BUCKETS = 40;
 const NAMEPLATE_TEXTURE_CACHE_LIMIT = 192;
+const NAMEPLATE_FULL_SPRITE_HEIGHT = 0.68;
 
 interface NameplateTextureEntry {
   texture: THREE.CanvasTexture;
@@ -516,13 +546,19 @@ function drawNameplateTexture(
   const barY = 52;
   const barWidth = 188;
   const barHeight = 6;
-  roundedRectPath(ctx, barX, barY, barWidth, barHeight, 3);
+  const barRadius = 3;
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+  roundedRectPath(ctx, barX, barY, barWidth, barHeight, barRadius);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
   ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
 
   const fillWidth = Math.max(0, Math.min(barWidth, barWidth * healthPercent));
   if (fillWidth > 0) {
-    roundedRectPath(ctx, barX, barY, fillWidth, barHeight, 3);
+    roundedRectPath(ctx, barX, barY, fillWidth, barHeight, barRadius);
     const gradient = ctx.createLinearGradient(barX, 0, barX + barWidth, 0);
     if (healthPercent > 0.3) {
       gradient.addColorStop(0, '#22c55e');
@@ -541,11 +577,17 @@ function getQuantizedNameplateHealthPercent(health: number, maxHealth: number): 
   return Math.round(healthPercent * NAMEPLATE_HEALTH_BUCKETS) / NAMEPLATE_HEALTH_BUCKETS;
 }
 
-function getNameplateTextureKey(name: string, healthPercent: number): string {
-  return `${name}:${healthPercent}`;
+function getNameplateTextureKey(
+  name: string,
+  healthPercent: number
+): string {
+  return `full:${name}:${healthPercent}`;
 }
 
-function createNameplateTexture(name: string, healthPercent: number): THREE.CanvasTexture {
+function createNameplateTexture(
+  name: string,
+  healthPercent: number
+): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = NAMEPLATE_CANVAS_WIDTH;
   canvas.height = NAMEPLATE_CANVAS_HEIGHT;
@@ -573,7 +615,10 @@ function evictUnusedNameplateTextures(): void {
   }
 }
 
-function acquireNameplateTexture(name: string, healthPercent: number): THREE.CanvasTexture {
+function acquireNameplateTexture(
+  name: string,
+  healthPercent: number
+): THREE.CanvasTexture {
   const key = getNameplateTextureKey(name, healthPercent);
   let entry = nameplateTextureCache.get(key);
   if (!entry) {
@@ -591,7 +636,10 @@ function acquireNameplateTexture(name: string, healthPercent: number): THREE.Can
   return entry.texture;
 }
 
-function releaseNameplateTexture(name: string, healthPercent: number): void {
+function releaseNameplateTexture(
+  name: string,
+  healthPercent: number
+): void {
   const entry = nameplateTextureCache.get(getNameplateTextureKey(name, healthPercent));
   if (!entry) return;
   entry.refCount = Math.max(0, entry.refCount - 1);
@@ -599,7 +647,11 @@ function releaseNameplateTexture(name: string, healthPercent: number): void {
   evictUnusedNameplateTextures();
 }
 
-function prewarmNameplateTexture(name: string, health: number, maxHealth: number): void {
+function prewarmNameplateTexture(
+  name: string,
+  health: number,
+  maxHealth: number
+): void {
   if (typeof document === 'undefined') return;
   const healthPercent = getQuantizedNameplateHealthPercent(health, maxHealth);
   const texture = acquireNameplateTexture(name, healthPercent);
@@ -614,12 +666,15 @@ const Nameplate = memo(function Nameplate({ name, health, maxHealth, height }: N
     [name, quantizedHealthPercent]
   );
 
-  useEffect(() => () => releaseNameplateTexture(name, quantizedHealthPercent), [name, quantizedHealthPercent]);
+  useEffect(
+    () => () => releaseNameplateTexture(name, quantizedHealthPercent),
+    [name, quantizedHealthPercent]
+  );
 
   const width = Math.max(1.75, Math.min(2.7, 1.55 + name.length * 0.045));
 
   return (
-    <sprite position={[0, height + NAMEPLATE_WORLD_OFFSET_Y, 0]} scale={[width, 0.68, 1]} renderOrder={30}>
+    <sprite position={[0, height + NAMEPLATE_WORLD_OFFSET_Y, 0]} scale={[width, NAMEPLATE_FULL_SPRITE_HEIGHT, 1]} renderOrder={30}>
       <spriteMaterial map={texture} transparent depthTest depthWrite={false} toneMapped={false} />
     </sprite>
   );

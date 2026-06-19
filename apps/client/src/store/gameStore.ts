@@ -8,6 +8,7 @@ import {
   type GameEndEvent,
   type PlayerPingsMessage,
   type PowerupPickupRuntimeState,
+  type BattleRoyalDropSnapshot,
   type SafeZoneSnapshot,
   type MapProfileId,
   type VoxelMapSizeId,
@@ -94,6 +95,7 @@ interface CoreState {
   mapSize: VoxelMapSizeId;
   mapProfileId: MapProfileId | null;
   safeZone: SafeZoneSnapshot | null;
+  battleRoyalDrop: BattleRoyalDropSnapshot | null;
   powerupPickups: Map<string, PowerupPickupRuntimeState>;
   powerupPickupCollections: Map<string, PowerupPickupCollectionState>;
 
@@ -262,6 +264,7 @@ const coreInitialState: CoreState = {
   mapSize: DEFAULT_VOXEL_MAP_SIZE_ID,
   mapProfileId: null,
   safeZone: null,
+  battleRoyalDrop: null,
   powerupPickups: new Map(),
   powerupPickupCollections: new Map(),
   redScore: 0,
@@ -345,7 +348,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   setAppPhase: (phase) => set((state) => state.appPhase === phase ? state : { appPhase: phase }),
   setMatchmakingStatus: (status) => set({ matchmakingStatus: status }),
   setGamePhase: (phase) => {
-    if (phase !== 'playing' && phase !== 'countdown') {
+    if (phase !== 'playing' && phase !== 'countdown' && phase !== 'deployment') {
       clearAllDeathVisuals();
     }
     set((state) => state.gamePhase === phase ? state : { gamePhase: phase });

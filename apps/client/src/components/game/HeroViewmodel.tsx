@@ -4419,7 +4419,7 @@ export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
     })
   );
 
-  const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
+  const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
   if (!heroId || !isPlaying || playerState !== 'alive') return null;
 
   return (

@@ -147,6 +147,12 @@ export const MINIMAP_COLORS = {
     teammateOutline: 'rgba(255, 255, 255, 0.72)',
     localFlagRing: 'rgba(250, 204, 21, 0.92)',
     localFill: 'rgba(248, 250, 252, 0.98)',
+    dropPath: 'rgba(226, 242, 255, 0.42)',
+    dropPathShadow: 'rgba(125, 211, 252, 0.42)',
+    dropSegment: 'rgba(103, 232, 249, 0.96)',
+    dropSegmentShadow: 'rgba(34, 211, 238, 0.76)',
+    dropShipFill: 'rgba(251, 146, 60, 0.98)',
+    dropShipStroke: 'rgba(255, 247, 237, 0.92)',
   },
   team: {
     red: '#fb7185',

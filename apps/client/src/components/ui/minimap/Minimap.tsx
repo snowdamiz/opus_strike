@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useShallow } from 'zustand/shallow';
-import { getTeamCatalogEntry, type Player, type VoxelMapManifest } from '@voxel-strike/shared';
+import {
+  getTeamCatalogEntry,
+  type BattleRoyalDropSnapshot,
+  type Player,
+  type VoxelMapManifest,
+} from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { visualStore } from '../../../store/visualStore';
 import { measureFrameWork } from '../../../movement/networkDiagnostics';
@@ -150,6 +155,11 @@ function drawLiveOverlay(
     drawSafeZone(ctx, projection, store.safeZone);
   }
 
+  if (store.gameplayMode === 'battle_royal' && store.battleRoyalDrop?.enabled) {
+    const dropPathTime = store.gamePhase === 'countdown' ? store.battleRoyalDrop.ship.startedAt : Date.now();
+    drawBattleRoyalDropFlightPath(ctx, projection, store.battleRoyalDrop, dropPathTime);
+  }
+
   for (const teammate of teammates) {
     const position = visualState.playerPositions.get(teammate.id) ?? teammate.position;
     if (!isWorldPointInsideBoundary(position, manifest.boundary)) continue;
@@ -204,6 +214,88 @@ function createBoundaryClipPath(
   });
   path.closePath();
   return path;
+}
+
+function drawBattleRoyalDropFlightPath(
+  ctx: CanvasRenderingContext2D,
+  projection: MinimapProjection,
+  drop: BattleRoyalDropSnapshot,
+  now: number
+): void {
+  const pathStart = worldToMinimap(projection, drop.ship.start);
+  const pathEnd = worldToMinimap(projection, drop.ship.end);
+  const dropStart = worldToMinimap(
+    projection,
+    getBattleRoyalDropPathPoint(drop, getBattleRoyalDropPathProgress(drop, drop.ship.dropStartsAt))
+  );
+  const dropEnd = worldToMinimap(
+    projection,
+    getBattleRoyalDropPathPoint(drop, getBattleRoyalDropPathProgress(drop, drop.ship.dropEndsAt))
+  );
+  const shipPoint = worldToMinimap(
+    projection,
+    getBattleRoyalDropPathPoint(drop, getBattleRoyalDropPathProgress(drop, now))
+  );
+  const yaw = Math.atan2(
+    drop.ship.end.x - drop.ship.start.x,
+    drop.ship.end.z - drop.ship.start.z
+  );
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.shadowColor = MINIMAP_COLORS.live.dropPathShadow;
+  ctx.shadowBlur = 4;
+  ctx.strokeStyle = MINIMAP_COLORS.live.dropPath;
+  ctx.lineWidth = 1.2;
+  ctx.setLineDash([3, 4]);
+  ctx.beginPath();
+  ctx.moveTo(pathStart.x, pathStart.y);
+  ctx.lineTo(pathEnd.x, pathEnd.y);
+  ctx.stroke();
+
+  ctx.setLineDash([]);
+  ctx.shadowColor = MINIMAP_COLORS.live.dropSegmentShadow;
+  ctx.shadowBlur = 7;
+  ctx.strokeStyle = MINIMAP_COLORS.live.dropSegment;
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.moveTo(dropStart.x, dropStart.y);
+  ctx.lineTo(dropEnd.x, dropEnd.y);
+  ctx.stroke();
+
+  ctx.translate(shipPoint.x, shipPoint.y);
+  ctx.rotate(-yaw);
+  ctx.beginPath();
+  ctx.moveTo(0, -6.2);
+  ctx.lineTo(4.4, 4.4);
+  ctx.lineTo(0, 2.2);
+  ctx.lineTo(-4.4, 4.4);
+  ctx.closePath();
+  ctx.fillStyle = MINIMAP_COLORS.live.dropShipFill;
+  ctx.strokeStyle = MINIMAP_COLORS.live.dropShipStroke;
+  ctx.lineWidth = 1.3;
+  ctx.shadowBlur = 6;
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function getBattleRoyalDropPathProgress(drop: BattleRoyalDropSnapshot, time: number): number {
+  return Math.max(
+    0,
+    Math.min(1, (time - drop.ship.startedAt) / Math.max(1, drop.ship.endsAt - drop.ship.startedAt))
+  );
+}
+
+function getBattleRoyalDropPathPoint(
+  drop: BattleRoyalDropSnapshot,
+  progress: number
+): Pick<BattleRoyalDropSnapshot['ship']['start'], 'x' | 'z'> {
+  return {
+    x: drop.ship.start.x + (drop.ship.end.x - drop.ship.start.x) * progress,
+    z: drop.ship.start.z + (drop.ship.end.z - drop.ship.start.z) * progress,
+  };
 }
 
 function drawTeammateMarker(

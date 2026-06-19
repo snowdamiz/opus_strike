@@ -23,6 +23,11 @@ const TERRAIN_CULL_UPDATE_INTERVAL_MS = 180;
 const TERRAIN_CULL_HYSTERESIS = 18;
 const TERRAIN_CULL_CAMERA_MOVE_EPSILON_SQ = 0.45 * 0.45;
 const TERRAIN_CULL_CAMERA_ROTATE_EPSILON = 0.00008;
+const BATTLE_ROYAL_OUTER_FILL_SCALE = 2.75;
+const BATTLE_ROYAL_OUTER_FILL_HEIGHT_ROWS = 44;
+const BATTLE_ROYAL_OUTER_FILL_Y_OFFSET = 0.06;
+const BATTLE_ROYAL_OUTER_FILL_BOUNDARY_PADDING = 2.4;
+const BATTLE_ROYAL_OUTER_FILL_FOG_BLEND = 0.42;
 
 function getRuntimeTerrainCullDistance(performanceBudget?: WorldPerformanceBudget): number {
   const drawCalls = performanceBudget?.drawCalls ?? Number.POSITIVE_INFINITY;
@@ -415,6 +420,9 @@ export function VoxelMap({
 
   return (
     <group name="procedural-voxel-map">
+      {manifest.gameplay.mode === 'battle_royal' ? (
+        <BattleRoyalOuterFill manifest={manifest} />
+      ) : null}
       {visibleRegions.map((region) => (
         <group
           key={`${manifest.id}:${region.id}`}
@@ -438,5 +446,67 @@ export function VoxelMap({
         reflectionIntensity={reflectionIntensity}
       />
     </group>
+  );
+}
+
+function BattleRoyalOuterFill({ manifest }: { manifest: VoxelMapManifest }) {
+  const worldWidth = manifest.size.x * manifest.voxelSize.x;
+  const worldDepth = manifest.size.z * manifest.voxelSize.z;
+  const centerX = manifest.origin.x + worldWidth / 2;
+  const centerZ = manifest.origin.z + worldDepth / 2;
+  const outerFillSize = Math.max(worldWidth, worldDepth) * BATTLE_ROYAL_OUTER_FILL_SCALE;
+  const outerFillY = manifest.origin.y +
+    manifest.voxelSize.y * BATTLE_ROYAL_OUTER_FILL_HEIGHT_ROWS -
+    BATTLE_ROYAL_OUTER_FILL_Y_OFFSET;
+
+  const outerFillColor = useMemo(() => {
+    const color = new THREE.Color(manifest.theme.ground.side);
+    color.lerp(new THREE.Color(manifest.theme.fogColor), BATTLE_ROYAL_OUTER_FILL_FOG_BLEND);
+    return `#${color.getHexString()}`;
+  }, [manifest.theme.fogColor, manifest.theme.ground.side]);
+
+  const outerFillShape = useMemo(() => {
+    const halfSize = outerFillSize / 2;
+    const shape = new THREE.Shape([
+      new THREE.Vector2(centerX - halfSize, centerZ - halfSize),
+      new THREE.Vector2(centerX + halfSize, centerZ - halfSize),
+      new THREE.Vector2(centerX + halfSize, centerZ + halfSize),
+      new THREE.Vector2(centerX - halfSize, centerZ + halfSize),
+    ]);
+
+    if (manifest.boundary.length < 3) return shape;
+
+    const holeCenter = manifest.boundary.reduce(
+      (total, point) => ({ x: total.x + point.x, z: total.z + point.z }),
+      { x: 0, z: 0 }
+    );
+    holeCenter.x /= manifest.boundary.length;
+    holeCenter.z /= manifest.boundary.length;
+
+    const holePoints = manifest.boundary.map((point) => {
+      const dx = point.x - holeCenter.x;
+      const dz = point.z - holeCenter.z;
+      const distance = Math.hypot(dx, dz);
+      if (distance <= 0.0001) return new THREE.Vector2(point.x, point.z);
+      const paddedDistance = distance + BATTLE_ROYAL_OUTER_FILL_BOUNDARY_PADDING;
+      return new THREE.Vector2(
+        holeCenter.x + (dx / distance) * paddedDistance,
+        holeCenter.z + (dz / distance) * paddedDistance
+      );
+    });
+    shape.holes.push(new THREE.Path(holePoints));
+    return shape;
+  }, [centerX, centerZ, manifest.boundary, outerFillSize]);
+
+  return (
+    <mesh
+      name="battle-royal-outer-fill"
+      position={[0, outerFillY, 0]}
+      rotation={[Math.PI / 2, 0, 0]}
+      receiveShadow={false}
+    >
+      <shapeGeometry key={`${manifest.id}:battle-royal-outer-fill`} args={[outerFillShape]} />
+      <meshBasicMaterial color={outerFillColor} depthWrite />
+    </mesh>
   );
 }

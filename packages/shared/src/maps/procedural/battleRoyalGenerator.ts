@@ -5,6 +5,7 @@ import {
 import { PLAYER_HEIGHT } from '../../constants/physics.js';
 import { BATTLE_ROYAL_TEAM_IDS } from '../../types/team.js';
 import type { Vec3 } from '../../types/vector.js';
+import { isInsideBoundaryPolygon } from './boundaries.js';
 import { getBlockNumericId } from './blocks.js';
 import { generateVoxelColliders } from './colliders.js';
 import { fractalNoise2 } from './noise.js';
@@ -37,21 +38,26 @@ import {
 } from './types.js';
 
 const VOXEL_SIZE: VoxelSize = { x: 0.5, y: 0.5, z: 0.5 };
-const WORLD_SIZE = 176;
-const WORLD_HEIGHT = 44;
+const WORLD_SIZE = 336;
+const WORLD_HEIGHT = 64;
 const CHUNK_SIZE: VoxelSize = { x: 16, y: 16, z: 16 };
-const BASE_RADIUS = 80;
-const SPAWN_CLUSTER_RADIUS = BASE_RADIUS * 0.78;
-const SPAWN_CLUSTER_POINT_RADIUS = 2.45;
-const SPAWN_FLATTEN_RADIUS = 8.5;
-const POWERUP_FLATTEN_RADIUS = 2.8;
-const POI_FLATTEN_RADIUS = 7.5;
-const BASE_TERRAIN_ROWS = 12;
-const MIN_TERRAIN_ROWS = 6;
-const MAX_TERRAIN_ROWS = 34;
+const BASE_RADIUS = 154;
+const SPAWN_CLUSTER_RADIUS = BASE_RADIUS * 0.84;
+const SPAWN_CLUSTER_POINT_RADIUS = 2.75;
+const SPAWN_FLATTEN_RADIUS = 11.5;
+const POWERUP_FLATTEN_RADIUS = 3.2;
+const POI_FLATTEN_RADIUS = 9.5;
+const BASE_TERRAIN_ROWS = 13;
+const MIN_TERRAIN_ROWS = 5;
+const MAX_TERRAIN_ROWS = 56;
+const HEALTH_PACK_COUNT = 42;
+const STRATEGIC_POWERUP_COUNT = 24;
+const BUILDING_POI_COUNT = 30;
+const ROUTE_COVER_COUNT = 148;
 
-type PoiRole = 'citadel' | 'watchtower' | 'bunker' | 'depot';
+type PoiRole = 'citadel' | 'watchtower' | 'bunker' | 'depot' | 'highrise' | 'hangar' | 'relay' | 'compound';
 type CoverMaterial = 'terrain' | 'metal' | 'glass';
+type TerrainFeatureKind = 'mountain' | 'valley' | 'ridge';
 
 interface FlattenZone {
   center: { x: number; z: number };
@@ -67,6 +73,8 @@ interface BattleRoyalPoi {
   radius: number;
   heightRows: number;
   flattenRows: number;
+  rotation: number;
+  variant: number;
 }
 
 interface CoverPiece {
@@ -75,6 +83,18 @@ interface CoverPiece {
   halfExtents: { x: number; z: number };
   heightRows: number;
   material: CoverMaterial;
+  rotation: number;
+}
+
+interface TerrainFeature {
+  id: string;
+  kind: TerrainFeatureKind;
+  center: { x: number; z: number };
+  radiusX: number;
+  radiusZ: number;
+  rotation: number;
+  amplitudeRows: number;
+  noiseSeed: number;
 }
 
 interface BattleRoyalLayout {
@@ -86,6 +106,7 @@ interface BattleRoyalLayout {
   spawns: TeamMap<SpawnCluster>;
   spawnPoints: Record<string, Vec3[]>;
   flattenZones: FlattenZone[];
+  terrainFeatures: TerrainFeature[];
   powerups: MapPowerupPickup[];
   pois: BattleRoyalPoi[];
   coverPieces: CoverPiece[];
@@ -125,20 +146,56 @@ function normalize2D(vector: { x: number; z: number }): { x: number; z: number }
   return length <= 0.001 ? { x: 0, z: 1 } : { x: vector.x / length, z: vector.z / length };
 }
 
+function rotatePoint2D(
+  point: { x: number; z: number },
+  center: { x: number; z: number },
+  rotation: number
+): { x: number; z: number } {
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  const dx = point.x - center.x;
+  const dz = point.z - center.z;
+  return {
+    x: dx * cos + dz * sin,
+    z: -dx * sin + dz * cos,
+  };
+}
+
+function sampleAnnulusPoint(
+  random: () => number,
+  minRadius: number,
+  maxRadius: number
+): { x: number; z: number } {
+  const angle = random() * Math.PI * 2;
+  const radius = Math.sqrt(lerp(minRadius * minRadius, maxRadius * maxRadius, random()));
+  return {
+    x: Math.cos(angle) * radius,
+    z: Math.sin(angle) * radius,
+  };
+}
+
+function featureFalloff(feature: TerrainFeature, worldX: number, worldZ: number): number {
+  const local = rotatePoint2D({ x: worldX, z: worldZ }, feature.center, feature.rotation);
+  const normalized = Math.hypot(local.x / feature.radiusX, local.z / feature.radiusZ);
+  return normalized >= 1 ? 0 : smoothstep(1 - normalized);
+}
+
 function createBoundary(seed: number): BoundaryPoint[] {
   const random = mulberry32(seed ^ 0xb417e);
   const points: BoundaryPoint[] = [];
-  const pointCount = 36;
+  const pointCount = 52;
   const phaseA = random() * Math.PI * 2;
   const phaseB = random() * Math.PI * 2;
+  const phaseC = random() * Math.PI * 2;
 
   for (let index = 0; index < pointCount; index++) {
     const angle = (index / pointCount) * Math.PI * 2;
     const wave =
-      Math.sin(angle * 3 + phaseA) * 0.035 +
-      Math.sin(angle * 8 + phaseB) * 0.022 +
-      lerp(-0.014, 0.014, random());
-    const radius = BASE_RADIUS * clamp(0.95 + wave, 0.9, 1.03);
+      Math.sin(angle * 3 + phaseA) * 0.04 +
+      Math.sin(angle * 7 + phaseB) * 0.03 +
+      Math.sin(angle * 13 + phaseC) * 0.015 +
+      lerp(-0.02, 0.02, random());
+    const radius = BASE_RADIUS * clamp(0.96 + wave, 0.9, 1.04);
     points.push({
       x: Math.cos(angle) * radius,
       z: Math.sin(angle) * radius,
@@ -148,19 +205,32 @@ function createBoundary(seed: number): BoundaryPoint[] {
   return points;
 }
 
-function terrainRows(seed: number, worldX: number, worldZ: number, flattenZones: readonly FlattenZone[]): number {
+function terrainRows(
+  seed: number,
+  worldX: number,
+  worldZ: number,
+  flattenZones: readonly FlattenZone[],
+  terrainFeatures: readonly TerrainFeature[]
+): number {
   const radial = Math.hypot(worldX, worldZ) / BASE_RADIUS;
-  const angle = Math.atan2(worldZ, worldX);
-  const phaseA = (seed & 0xffff) * 0.00012;
-  const phaseB = ((seed >>> 8) & 0xffff) * 0.00015;
-  const highlands = Math.max(0, 1 - radial) * 5.6;
-  const outerDrop = radial > 0.82 ? -(radial - 0.82) * 14 : 0;
-  const terraces = Math.sin(radial * Math.PI * 7.5 + phaseA) * 2.5;
-  const spokeRidges = Math.max(0, Math.sin(angle * 7 + phaseB)) * (3.8 - radial * 1.6);
-  const broad = (fractalNoise2(seed ^ 0x514f, worldX * 0.01, worldZ * 0.01, 5) - 0.5) * 17;
-  const medium = (fractalNoise2(seed ^ 0x2d7, worldX * 0.028, worldZ * 0.028, 4) - 0.5) * 7;
-  const detail = (fractalNoise2(seed ^ 0xf00d, worldX * 0.072, worldZ * 0.072, 2) - 0.5) * 2.6;
-  let rows = BASE_TERRAIN_ROWS + highlands + terraces + spokeRidges + broad + medium + detail + outerDrop;
+  const centerBasin = Math.max(0, 1 - radial) * 3.4;
+  const outerDrop = radial > 0.88 ? -(radial - 0.88) * 18 : 0;
+  const broad = (fractalNoise2(seed ^ 0x514f, worldX * 0.0065, worldZ * 0.0065, 5) - 0.5) * 19;
+  const medium = (fractalNoise2(seed ^ 0x2d7, worldX * 0.019, worldZ * 0.019, 4) - 0.5) * 9;
+  const detail = (fractalNoise2(seed ^ 0xf00d, worldX * 0.055, worldZ * 0.055, 2) - 0.5) * 2.8;
+  let rows = BASE_TERRAIN_ROWS + centerBasin + broad + medium + detail + outerDrop;
+
+  for (const feature of terrainFeatures) {
+    const falloff = featureFalloff(feature, worldX, worldZ);
+    if (falloff <= 0) continue;
+    const roughness = lerp(
+      0.82,
+      1.18,
+      fractalNoise2(feature.noiseSeed, worldX * 0.024, worldZ * 0.024, 3)
+    );
+    const influence = feature.amplitudeRows * falloff * roughness;
+    rows += feature.kind === 'valley' ? -influence : influence;
+  }
 
   for (const zone of flattenZones) {
     const distance = distance2D({ x: worldX, z: worldZ }, zone.center);
@@ -237,129 +307,270 @@ function isClearOfPositions(
   return protectedPositions.every((protectedPosition) => distance2D(position, protectedPosition) >= clearance);
 }
 
+function createTerrainFeatures(seed: number, spawns: TeamMap<SpawnCluster>): TerrainFeature[] {
+  const random = mulberry32(seed ^ 0x7e44a11);
+  const protectedSpawnPositions = getSpawnProtectedPositions(spawns);
+  const features: TerrainFeature[] = [];
+
+  const addFeature = (
+    kind: TerrainFeatureKind,
+    index: number,
+    radiusRange: { min: number; max: number },
+    radiusX: { min: number; max: number },
+    radiusZ: { min: number; max: number },
+    amplitudeRows: { min: number; max: number },
+    clearance: number,
+    rotationBias?: number
+  ): void => {
+    for (let attempt = 0; attempt < 96; attempt++) {
+      const center = sampleAnnulusPoint(random, radiusRange.min, radiusRange.max);
+      if (!isClearOfPositions(center, protectedSpawnPositions, clearance)) continue;
+      const radialAngle = Math.atan2(center.z, center.x);
+      features.push({
+        id: `${kind}_${index}`,
+        kind,
+        center,
+        radiusX: lerp(radiusX.min, radiusX.max, random()),
+        radiusZ: lerp(radiusZ.min, radiusZ.max, random()),
+        rotation: rotationBias === undefined
+          ? random() * Math.PI * 2
+          : radialAngle + rotationBias + lerp(-0.36, 0.36, random()),
+        amplitudeRows: lerp(amplitudeRows.min, amplitudeRows.max, random()),
+        noiseSeed: hashSeed(seed ^ Math.imul(index + 1, kind === 'mountain' ? 0x45d9f3b : kind === 'valley' ? 0x119de1f3 : 0x27d4eb2d)),
+      });
+      return;
+    }
+  };
+
+  for (let index = 0; index < 7; index++) {
+    addFeature(
+      'mountain',
+      index,
+      { min: BASE_RADIUS * 0.22, max: BASE_RADIUS * 0.88 },
+      { min: 16, max: 34 },
+      { min: 18, max: 42 },
+      { min: 13, max: 28 },
+      16
+    );
+  }
+
+  for (let index = 0; index < 8; index++) {
+    addFeature(
+      'valley',
+      index,
+      { min: BASE_RADIUS * 0.12, max: BASE_RADIUS * 0.78 },
+      { min: 48, max: 92 },
+      { min: 9, max: 19 },
+      { min: 8, max: 16 },
+      10,
+      Math.PI * 0.5
+    );
+  }
+
+  for (let index = 0; index < 10; index++) {
+    addFeature(
+      'ridge',
+      index,
+      { min: BASE_RADIUS * 0.18, max: BASE_RADIUS * 0.86 },
+      { min: 34, max: 76 },
+      { min: 5, max: 12 },
+      { min: 6, max: 14 },
+      12,
+      random() > 0.5 ? 0 : Math.PI * 0.5
+    );
+  }
+
+  return features;
+}
+
+const POI_ROLE_SPECS: Record<
+  Exclude<PoiRole, 'citadel'>,
+  {
+    radius: { min: number; max: number };
+    heightRows: { min: number; max: number };
+    flattenOffsetRows: { min: number; max: number };
+    radial: { min: number; max: number };
+    clearance: number;
+  }
+> = {
+  highrise: {
+    radius: { min: 6.5, max: 10 },
+    heightRows: { min: 26, max: 42 },
+    flattenOffsetRows: { min: 5, max: 9 },
+    radial: { min: BASE_RADIUS * 0.08, max: BASE_RADIUS * 0.58 },
+    clearance: 20,
+  },
+  compound: {
+    radius: { min: 10, max: 15 },
+    heightRows: { min: 12, max: 20 },
+    flattenOffsetRows: { min: 3, max: 6 },
+    radial: { min: BASE_RADIUS * 0.18, max: BASE_RADIUS * 0.76 },
+    clearance: 22,
+  },
+  hangar: {
+    radius: { min: 9, max: 14 },
+    heightRows: { min: 8, max: 14 },
+    flattenOffsetRows: { min: 1, max: 4 },
+    radial: { min: BASE_RADIUS * 0.35, max: BASE_RADIUS * 0.88 },
+    clearance: 20,
+  },
+  relay: {
+    radius: { min: 5.5, max: 8.5 },
+    heightRows: { min: 22, max: 34 },
+    flattenOffsetRows: { min: 3, max: 7 },
+    radial: { min: BASE_RADIUS * 0.24, max: BASE_RADIUS * 0.82 },
+    clearance: 17,
+  },
+  watchtower: {
+    radius: { min: 5.5, max: 8 },
+    heightRows: { min: 18, max: 30 },
+    flattenOffsetRows: { min: 2, max: 5 },
+    radial: { min: BASE_RADIUS * 0.22, max: BASE_RADIUS * 0.86 },
+    clearance: 16,
+  },
+  bunker: {
+    radius: { min: 8, max: 12 },
+    heightRows: { min: 8, max: 15 },
+    flattenOffsetRows: { min: 1, max: 4 },
+    radial: { min: BASE_RADIUS * 0.28, max: BASE_RADIUS * 0.9 },
+    clearance: 18,
+  },
+  depot: {
+    radius: { min: 6, max: 10 },
+    heightRows: { min: 6, max: 12 },
+    flattenOffsetRows: { min: 0, max: 3 },
+    radial: { min: BASE_RADIUS * 0.42, max: BASE_RADIUS * 0.92 },
+    clearance: 16,
+  },
+};
+
 function createPois(seed: number, spawns: TeamMap<SpawnCluster>): { pois: BattleRoyalPoi[]; flattenZones: FlattenZone[] } {
   const random = mulberry32(seed ^ 0xc17ade1);
-  const protectedSpawnPositions = getSpawnProtectedPositions(spawns);
+  const protectedPositions = getSpawnProtectedPositions(spawns);
+  const center = sampleAnnulusPoint(random, 0, 8);
   const pois: BattleRoyalPoi[] = [{
     id: 'center_citadel',
     role: 'citadel',
-    position: { x: 0, y: 0, z: 0 },
-    radius: 12,
-    heightRows: 24,
+    position: { x: center.x, y: 0, z: center.z },
+    radius: 17,
+    heightRows: 34,
     flattenRows: BASE_TERRAIN_ROWS + 6,
+    rotation: random() * Math.PI * 2,
+    variant: Math.floor(random() * 4),
   }];
   const flattenZones: FlattenZone[] = [{
-    center: { x: 0, z: 0 },
-    radius: 17,
+    center,
+    radius: 24,
     rows: BASE_TERRAIN_ROWS + 5,
     strength: 0.95,
   }];
 
-  const majorOffset = random() * Math.PI * 2;
-  for (let index = 0; index < 6; index++) {
-    const role: PoiRole = index % 2 === 0 ? 'watchtower' : 'bunker';
+  const rolePool: Array<Exclude<PoiRole, 'citadel'>> = [
+    'highrise',
+    'compound',
+    'hangar',
+    'relay',
+    'watchtower',
+    'bunker',
+    'depot',
+    'highrise',
+    'compound',
+    'watchtower',
+    'bunker',
+    'depot',
+  ];
+
+  for (let index = 0; index < BUILDING_POI_COUNT; index++) {
+    const role = rolePool[Math.floor(random() * rolePool.length)] ?? 'depot';
+    const spec = POI_ROLE_SPECS[role];
     let poi: BattleRoyalPoi | null = null;
-    for (let attempt = 0; attempt < 16; attempt++) {
-      const angle = majorOffset + (index / 6) * Math.PI * 2 + lerp(-0.16, 0.16, random()) + attempt * 0.17;
-      const radius = lerp(28, 44, random());
+    let fallbackPoi: BattleRoyalPoi | null = null;
+    for (let attempt = 0; attempt < 160; attempt++) {
+      const point = sampleAnnulusPoint(random, spec.radial.min, spec.radial.max);
+      const radius = lerp(spec.radius.min, spec.radius.max, random());
       const candidate: BattleRoyalPoi = {
         id: `${role}_${index + 1}`,
         role,
-        position: { x: Math.cos(angle) * radius, y: 0, z: Math.sin(angle) * radius },
-        radius: role === 'watchtower' ? 6.5 : 8.5,
-        heightRows: role === 'watchtower' ? 17 : 9,
-        flattenRows: BASE_TERRAIN_ROWS + 2 + (index % 3),
+        position: { x: point.x, y: 0, z: point.z },
+        radius,
+        heightRows: Math.round(lerp(spec.heightRows.min, spec.heightRows.max, random())),
+        flattenRows: BASE_TERRAIN_ROWS + Math.round(lerp(spec.flattenOffsetRows.min, spec.flattenOffsetRows.max, random())),
+        rotation: random() * Math.PI * 2,
+        variant: Math.floor(random() * 5),
       };
-      if (isClearOfPositions(candidate.position, protectedSpawnPositions, candidate.radius + SPAWN_FLATTEN_RADIUS + 3)) {
+      fallbackPoi = candidate;
+      if (isClearOfPositions(candidate.position, protectedPositions, spec.clearance + candidate.radius)) {
         poi = candidate;
         break;
       }
     }
+    if (poi === null) poi = fallbackPoi;
     if (poi === null) continue;
     pois.push(poi);
+    protectedPositions.push(poi.position);
     flattenZones.push({
       center: poi.position,
       radius: poi.radius + POI_FLATTEN_RADIUS,
       rows: poi.flattenRows,
-      strength: 0.88,
-    });
-  }
-
-  const outerOffset = random() * Math.PI * 2;
-  for (let index = 0; index < 8; index++) {
-    let poi: BattleRoyalPoi | null = null;
-    for (let attempt = 0; attempt < 64; attempt++) {
-      const angle = outerOffset + (index / 8) * Math.PI * 2 + lerp(-0.22, 0.22, random()) + attempt * 0.19;
-      const radius = lerp(36, 60, random());
-      const candidate: BattleRoyalPoi = {
-        id: `depot_${index + 1}`,
-        role: 'depot',
-        position: { x: Math.cos(angle) * radius, y: 0, z: Math.sin(angle) * radius },
-        radius: 6,
-        heightRows: 6,
-        flattenRows: BASE_TERRAIN_ROWS + 1,
-      };
-      if (isClearOfPositions(candidate.position, protectedSpawnPositions, candidate.radius + SPAWN_FLATTEN_RADIUS + 3)) {
-        poi = candidate;
-        break;
-      }
-    }
-    if (poi === null) continue;
-    pois.push(poi);
-    flattenZones.push({
-      center: poi.position,
-      radius: poi.radius + 5,
-      rows: poi.flattenRows,
-      strength: 0.82,
+      strength: poi.role === 'highrise' || poi.role === 'compound' ? 0.9 : 0.82,
     });
   }
 
   return { pois, flattenZones };
 }
 
-function createPowerups(seed: number): { powerups: MapPowerupPickup[]; flattenZones: FlattenZone[] } {
+function createPowerups(
+  seed: number,
+  spawns: TeamMap<SpawnCluster>,
+  pois: readonly BattleRoyalPoi[]
+): { powerups: MapPowerupPickup[]; flattenZones: FlattenZone[] } {
   const random = mulberry32(seed ^ 0x9f2d);
   const powerups: MapPowerupPickup[] = [];
   const flattenZones: FlattenZone[] = [];
-  const rings = [
-    { radius: 0, count: 1, kind: 'powerup' as const },
-    { radius: 20, count: 6, kind: 'powerup' as const },
-    { radius: 36, count: 10, kind: 'powerup' as const },
-    { radius: 50, count: 10, kind: 'health_pack' as const },
-    { radius: 66, count: 12, kind: 'health_pack' as const },
+  const protectedPositions = [
+    ...getSpawnProtectedPositions(spawns),
+    ...pois.map((poi) => poi.position),
   ];
 
   let id = 0;
-  for (const ring of rings) {
-    const angleOffset = random() * Math.PI * 2;
-    for (let index = 0; index < ring.count; index++) {
-      const angle = angleOffset + (index / ring.count) * Math.PI * 2 + lerp(-0.08, 0.08, random());
-      const jitter = ring.radius === 0 ? 0 : lerp(-4.5, 4.5, random());
-      const radius = ring.radius + jitter;
-      const position = {
-        x: Math.cos(angle) * radius,
-        y: 0,
-        z: Math.sin(angle) * radius,
-      };
-      flattenZones.push({
-        center: position,
-        radius: POWERUP_FLATTEN_RADIUS,
-        rows: BASE_TERRAIN_ROWS + (ring.radius < 25 ? 3 : 1),
-        strength: 0.7,
-      });
-      powerups.push({
-        id: `br_pickup_${++id}`,
-        kind: ring.kind,
-        position,
-        radius: POWERUP_PICKUP_RADIUS,
-        respawnSeconds: POWERUP_RESPAWN_SECONDS,
-        strategicRole: ring.radius === 0
-          ? 'midfield_contest'
-          : ring.kind === 'powerup'
-            ? 'route_bridge'
-            : 'flank_reward',
-      });
+  const placePickup = (
+    kind: MapPowerupPickup['kind'],
+    strategicRole: MapPowerupPickup['strategicRole'],
+    minRadius: number,
+    maxRadius: number
+  ): void => {
+    let position: Vec3 | null = null;
+    for (let attempt = 0; attempt < 128; attempt++) {
+      const point = sampleAnnulusPoint(random, minRadius, maxRadius);
+      position = { x: point.x, y: 0, z: point.z };
+      if (isClearOfPositions(point, protectedPositions, kind === 'health_pack' ? 8.5 : 10.5)) break;
     }
+    if (position === null) return;
+    protectedPositions.push(position);
+    flattenZones.push({
+      center: position,
+      radius: POWERUP_FLATTEN_RADIUS,
+      rows: BASE_TERRAIN_ROWS + (maxRadius < BASE_RADIUS * 0.3 ? 3 : 1),
+      strength: 0.7,
+    });
+    powerups.push({
+      id: `br_pickup_${++id}`,
+      kind,
+      position,
+      radius: POWERUP_PICKUP_RADIUS,
+      respawnSeconds: POWERUP_RESPAWN_SECONDS,
+      strategicRole,
+    });
+  };
+
+  for (let index = 0; index < 4; index++) {
+    placePickup('powerup', 'midfield_contest', 4, BASE_RADIUS * 0.2);
+  }
+  for (let index = 4; index < STRATEGIC_POWERUP_COUNT; index++) {
+    placePickup('powerup', 'route_bridge', BASE_RADIUS * 0.2, BASE_RADIUS * 0.78);
+  }
+  for (let index = 0; index < HEALTH_PACK_COUNT; index++) {
+    placePickup('health_pack', random() > 0.55 ? 'flank_reward' : 'route_bridge', BASE_RADIUS * 0.18, BASE_RADIUS * 0.9);
   }
 
   return { powerups, flattenZones };
@@ -369,31 +580,20 @@ function createCoverPieces(seed: number, spawns: TeamMap<SpawnCluster>): CoverPi
   const random = mulberry32(seed ^ 0xc0a7e);
   const pieces: CoverPiece[] = [];
   const protectedSpawnPositions = getSpawnProtectedPositions(spawns);
-  const rings = [
-    { radius: 24, count: 10 },
-    { radius: 38, count: 14 },
-    { radius: 54, count: 18 },
-    { radius: 67, count: 16 },
-  ];
 
   let id = 0;
-  for (const ring of rings) {
-    const angleOffset = random() * Math.PI * 2;
-    for (let index = 0; index < ring.count; index++) {
-      const angle = angleOffset + (index / ring.count) * Math.PI * 2 + lerp(-0.11, 0.11, random());
-      const radius = ring.radius + lerp(-3.2, 3.2, random());
-      const position = { x: Math.cos(angle) * radius, z: Math.sin(angle) * radius };
-      if (!isClearOfPositions(position, protectedSpawnPositions, 7.5)) {
-        continue;
-      }
-      pieces.push({
-        id: `route_cover_${++id}`,
-        position,
-        halfExtents: { x: lerp(1.2, 2.9, random()), z: lerp(0.55, 1.25, random()) },
-        heightRows: Math.floor(lerp(2, 5, random())),
-        material: random() > 0.64 ? 'metal' : 'terrain',
-      });
-    }
+  for (let index = 0; index < ROUTE_COVER_COUNT; index++) {
+    const position = sampleAnnulusPoint(random, BASE_RADIUS * 0.12, BASE_RADIUS * 0.92);
+    if (!isClearOfPositions(position, protectedSpawnPositions, 8.5)) continue;
+    const materialRoll = random();
+    pieces.push({
+      id: `route_cover_${++id}`,
+      position,
+      halfExtents: { x: lerp(1.3, 4.2, random()), z: lerp(0.55, 1.85, random()) },
+      heightRows: Math.floor(lerp(2, 7, random())),
+      material: materialRoll > 0.76 ? 'metal' : materialRoll > 0.68 ? 'glass' : 'terrain',
+      rotation: random() * Math.PI * 2,
+    });
   }
 
   for (const [team, spawn] of Object.entries(spawns)) {
@@ -409,6 +609,7 @@ function createCoverPieces(seed: number, spawns: TeamMap<SpawnCluster>): CoverPi
         halfExtents: { x: 2.3, z: 0.8 },
         heightRows: 4,
         material: 'metal',
+        rotation: Math.atan2(facing.z, facing.x),
       });
     }
   }
@@ -430,8 +631,9 @@ function createBattleRoyalLayout(seed: number, themeId?: VoxelMapTheme['id'] | n
   };
   const boundary = createBoundary(seed);
   const spawnLayout = createSpawnClusters(seed);
+  const terrainFeatures = createTerrainFeatures(seed, spawnLayout.spawns);
   const poiLayout = createPois(seed, spawnLayout.spawns);
-  const pickupLayout = createPowerups(seed);
+  const pickupLayout = createPowerups(seed, spawnLayout.spawns, poiLayout.pois);
   const flattenZones = [
     ...spawnLayout.flattenZones,
     ...poiLayout.flattenZones,
@@ -446,6 +648,7 @@ function createBattleRoyalLayout(seed: number, themeId?: VoxelMapTheme['id'] | n
     spawns: spawnLayout.spawns,
     spawnPoints: spawnLayout.spawnPoints,
     flattenZones,
+    terrainFeatures,
     powerups: pickupLayout.powerups,
     pois: poiLayout.pois,
     coverPieces: createCoverPieces(seed, spawnLayout.spawns),
@@ -459,7 +662,7 @@ function gridRowsToWorldY(row: number, originY: number, voxelY: number): number 
 }
 
 function getSurfaceRow(layout: BattleRoyalLayout, point: { x: number; z: number }): number {
-  return terrainRows(layout.seed, point.x, point.z, layout.flattenZones);
+  return terrainRows(layout.seed, point.x, point.z, layout.flattenZones, layout.terrainFeatures);
 }
 
 function getSurfacePosition(layout: BattleRoyalLayout, point: Vec3, yOffset = 0.25): Vec3 {
@@ -559,12 +762,12 @@ function buildBlocks(layout: BattleRoyalLayout): {
     for (let x = 0; x < layout.size.x; x++) {
       const worldX = layout.origin.x + (x + 0.5) * VOXEL_SIZE.x;
       const radial = Math.hypot(worldX, worldZ);
-      const insidePlayable = radial <= BASE_RADIUS;
-      const boundaryBand = radial > BASE_RADIUS && radial <= halfSize - 1;
+      const insidePlayable = isInsideBoundaryPolygon(worldX, worldZ, layout.boundary);
+      const boundaryBand = !insidePlayable && radial <= halfSize - 1;
       const rows = insidePlayable
-        ? terrainRows(layout.seed, worldX, worldZ, layout.flattenZones)
+        ? terrainRows(layout.seed, worldX, worldZ, layout.flattenZones, layout.terrainFeatures)
         : boundaryBand
-          ? Math.round(32 + (fractalNoise2(layout.seed ^ 0x777, worldX * 0.045, worldZ * 0.045, 2) - 0.5) * 5)
+          ? Math.round(44 + (fractalNoise2(layout.seed ^ 0x777, worldX * 0.032, worldZ * 0.032, 2) - 0.5) * 8)
           : 0;
 
       for (let y = 0; y < rows; y++) {
@@ -651,16 +854,23 @@ function stampRectPrism(
   halfExtents: { x: number; z: number },
   heightRows: number,
   block: number,
-  perimeterOnly = false
+  perimeterOnly = false,
+  rotation = 0
 ): void {
-  const minX = Math.floor((center.x - halfExtents.x - layout.origin.x) / VOXEL_SIZE.x);
-  const maxX = Math.ceil((center.x + halfExtents.x - layout.origin.x) / VOXEL_SIZE.x);
-  const minZ = Math.floor((center.z - halfExtents.z - layout.origin.z) / VOXEL_SIZE.z);
-  const maxZ = Math.ceil((center.z + halfExtents.z - layout.origin.z) / VOXEL_SIZE.z);
+  const boundsRadius = Math.hypot(halfExtents.x, halfExtents.z);
+  const minX = Math.floor((center.x - boundsRadius - layout.origin.x) / VOXEL_SIZE.x);
+  const maxX = Math.ceil((center.x + boundsRadius - layout.origin.x) / VOXEL_SIZE.x);
+  const minZ = Math.floor((center.z - boundsRadius - layout.origin.z) / VOXEL_SIZE.z);
+  const maxZ = Math.ceil((center.z + boundsRadius - layout.origin.z) / VOXEL_SIZE.z);
+  const edgeWidth = Math.max(VOXEL_SIZE.x, VOXEL_SIZE.z) * 1.5;
 
   for (let z = minZ; z <= maxZ; z++) {
     for (let x = minX; x <= maxX; x++) {
-      const edge = x === minX || x === maxX || z === minZ || z === maxZ;
+      const worldX = layout.origin.x + (x + 0.5) * VOXEL_SIZE.x;
+      const worldZ = layout.origin.z + (z + 0.5) * VOXEL_SIZE.z;
+      const local = rotatePoint2D({ x: worldX, z: worldZ }, center, rotation);
+      if (Math.abs(local.x) > halfExtents.x || Math.abs(local.z) > halfExtents.z) continue;
+      const edge = Math.abs(local.x) > halfExtents.x - edgeWidth || Math.abs(local.z) > halfExtents.z - edgeWidth;
       if (perimeterOnly && !edge) continue;
       stampColumn(layout, blocks, x, z, heightRows, block);
     }
@@ -690,25 +900,57 @@ function stampCylinder(
   }
 }
 
+function offsetByRotation(center: { x: number; z: number }, rotation: number, local: { x: number; z: number }): { x: number; z: number } {
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  return {
+    x: center.x + local.x * cos - local.z * sin,
+    z: center.z + local.x * sin + local.z * cos,
+  };
+}
+
 function stampPoi(layout: BattleRoyalLayout, blocks: Uint8Array, poi: BattleRoyalPoi): void {
+  const center = { x: poi.position.x, z: poi.position.z };
+  const angle = poi.rotation;
   switch (poi.role) {
     case 'citadel':
       stampCylinder(layout, blocks, poi.position, poi.radius, 3, METAL, GLASS);
-      stampCylinder(layout, blocks, poi.position, 4.2, poi.heightRows, METAL, GLASS);
-      stampRectPrism(layout, blocks, { x: poi.position.x, z: poi.position.z }, { x: 13, z: 1.2 }, 4, METAL);
-      stampRectPrism(layout, blocks, { x: poi.position.x, z: poi.position.z }, { x: 1.2, z: 13 }, 4, METAL);
+      stampCylinder(layout, blocks, poi.position, 5.2, poi.heightRows, METAL, GLASS);
+      stampRectPrism(layout, blocks, center, { x: 17, z: 1.4 }, 5, METAL, false, angle);
+      stampRectPrism(layout, blocks, center, { x: 1.4, z: 17 }, 5, METAL, false, angle);
       break;
     case 'watchtower':
-      stampCylinder(layout, blocks, poi.position, 3.2, poi.heightRows, METAL, GLASS);
-      stampRectPrism(layout, blocks, poi.position, { x: 5.5, z: 5.5 }, 2, GLASS, true);
+      stampCylinder(layout, blocks, poi.position, Math.max(2.8, poi.radius * 0.5), poi.heightRows, METAL, GLASS);
+      stampRectPrism(layout, blocks, center, { x: poi.radius, z: poi.radius }, 3, GLASS, true, angle);
       break;
     case 'bunker':
-      stampRectPrism(layout, blocks, poi.position, { x: poi.radius, z: poi.radius * 0.72 }, poi.heightRows, METAL, true);
-      stampRectPrism(layout, blocks, { x: poi.position.x, z: poi.position.z }, { x: poi.radius * 0.52, z: poi.radius * 0.4 }, 3, GLASS);
+      stampRectPrism(layout, blocks, center, { x: poi.radius, z: poi.radius * 0.72 }, poi.heightRows, METAL, true, angle);
+      stampRectPrism(layout, blocks, center, { x: poi.radius * 0.52, z: poi.radius * 0.4 }, 3, GLASS, false, angle);
       break;
     case 'depot':
-      stampRectPrism(layout, blocks, poi.position, { x: poi.radius, z: poi.radius * 0.58 }, poi.heightRows, METAL, true);
-      stampRectPrism(layout, blocks, { x: poi.position.x + 2, z: poi.position.z - 2 }, { x: 2.6, z: 2.6 }, 4, GLASS);
+      stampRectPrism(layout, blocks, center, { x: poi.radius, z: poi.radius * 0.58 }, poi.heightRows, METAL, true, angle);
+      stampRectPrism(layout, blocks, offsetByRotation(center, angle, { x: 2.2, z: -2.2 }), { x: 2.7, z: 2.7 }, 4, GLASS, false, angle);
+      break;
+    case 'highrise':
+      stampRectPrism(layout, blocks, center, { x: poi.radius * 0.9, z: poi.radius * 0.9 }, 5, METAL, false, angle);
+      stampRectPrism(layout, blocks, center, { x: poi.radius * 0.48, z: poi.radius * 0.55 }, poi.heightRows, METAL, false, angle);
+      stampRectPrism(layout, blocks, offsetByRotation(center, angle, { x: 0, z: poi.radius * 0.58 }), { x: poi.radius * 0.5, z: 0.7 }, poi.heightRows - 4, GLASS, false, angle);
+      stampRectPrism(layout, blocks, offsetByRotation(center, angle, { x: 0, z: -poi.radius * 0.58 }), { x: poi.radius * 0.5, z: 0.7 }, poi.heightRows - 6, GLASS, false, angle);
+      break;
+    case 'hangar':
+      stampRectPrism(layout, blocks, center, { x: poi.radius * 1.25, z: poi.radius * 0.55 }, poi.heightRows, METAL, true, angle);
+      stampRectPrism(layout, blocks, offsetByRotation(center, angle, { x: -poi.radius * 0.45, z: 0 }), { x: poi.radius * 0.35, z: poi.radius * 0.42 }, Math.max(4, poi.heightRows - 3), GLASS, false, angle);
+      stampRectPrism(layout, blocks, offsetByRotation(center, angle, { x: poi.radius * 0.72, z: 0 }), { x: 1.2, z: poi.radius * 0.5 }, Math.max(3, poi.heightRows - 5), METAL, false, angle);
+      break;
+    case 'relay':
+      stampRectPrism(layout, blocks, center, { x: poi.radius, z: poi.radius * 0.72 }, 4, METAL, false, angle);
+      stampCylinder(layout, blocks, poi.position, Math.max(2, poi.radius * 0.34), poi.heightRows, METAL, GLASS);
+      stampRectPrism(layout, blocks, offsetByRotation(center, angle, { x: 0, z: poi.radius * 0.52 }), { x: poi.radius * 0.85, z: 0.7 }, Math.max(4, poi.heightRows - 8), GLASS, false, angle);
+      break;
+    case 'compound':
+      stampRectPrism(layout, blocks, center, { x: poi.radius * 0.95, z: poi.radius * 0.42 }, poi.heightRows, METAL, true, angle);
+      stampRectPrism(layout, blocks, offsetByRotation(center, angle, { x: -poi.radius * 0.42, z: poi.radius * 0.58 }), { x: poi.radius * 0.42, z: poi.radius * 0.36 }, Math.max(5, poi.heightRows - 5), METAL, false, angle);
+      stampRectPrism(layout, blocks, offsetByRotation(center, angle, { x: poi.radius * 0.46, z: -poi.radius * 0.56 }), { x: poi.radius * 0.36, z: poi.radius * 0.4 }, Math.max(5, poi.heightRows - 7), GLASS, false, angle + Math.PI * 0.5);
       break;
   }
 }
@@ -728,7 +970,7 @@ function stampBattleRoyalContent(
       : cover.material === 'glass'
         ? GLASS
         : terrain.side;
-    stampRectPrism(layout, blocks, cover.position, cover.halfExtents, cover.heightRows, block);
+    stampRectPrism(layout, blocks, cover.position, cover.halfExtents, cover.heightRows, block, false, cover.rotation);
   }
 }
 
@@ -891,17 +1133,17 @@ function createDiagnostics(input: {
     rejectedCandidates: [],
     score: 91,
     scoreBreakdown: {
-      spawnSeparation: clamp(minSpawnSeparation / 25, 0, 1) * 24,
+      spawnSeparation: clamp(minSpawnSeparation / 44, 0, 1) * 24,
       routeConnectivity: 24,
       verticality: 20,
       contentDensity: 15,
-      budget: input.stats.solidBlocks < 2_500_000 ? 8 : 4,
+      budget: input.stats.solidBlocks < 8_500_000 ? 8 : 4,
     },
     stageTimingsMs: { total: input.generationMs },
     laneLengths: {
       radial_routes: SPAWN_CLUSTER_RADIUS,
-      outer_routes: 18,
-      poi_ring: 28,
+      outer_routes: 42,
+      poi_ring: 54,
     },
     laneWidths: {
       radial_routes: 10,
@@ -914,7 +1156,7 @@ function createDiagnostics(input: {
       outer_routes: 0.62,
       poi_ring: 0.55,
     },
-    maxSightlineLength: 36,
+    maxSightlineLength: 58,
     spawnVisibilityPairs: 0,
     flagApproachClearances: {},
     colliderCount: input.stats.colliderCount,
@@ -927,7 +1169,7 @@ function createDiagnostics(input: {
       spawn_cluster: BATTLE_ROYAL_TEAM_IDS.length,
     },
     repairActions: {},
-    warnings: minSpawnSeparation < 24 ? ['spawn separation below target'] : [],
+    warnings: minSpawnSeparation < 42 ? ['spawn separation below target'] : [],
   };
 }
 
@@ -950,11 +1192,11 @@ function createPreview(layout: BattleRoyalLayout): MapBlueprint['preview'] {
 
   return {
     camera: {
-      position: { x: 0, y: 118, z: 112 },
-      target: { x: 0, y: 5, z: 0 },
+      position: { x: 0, y: 218, z: 214 },
+      target: { x: 0, y: 8, z: 0 },
       fov: 48,
       near: 0.5,
-      far: 280,
+      far: 560,
     },
     thumbnailSilhouette: {
       bounds: { minX: -BASE_RADIUS, maxX: BASE_RADIUS, minZ: -BASE_RADIUS, maxZ: BASE_RADIUS },
@@ -971,7 +1213,7 @@ function createPreview(layout: BattleRoyalLayout): MapBlueprint['preview'] {
         spawns,
       },
     },
-    labelTags: ['Battle Royal', '30 Players', 'Large'],
+    labelTags: ['Battle Royal', '30 Players', 'Expansive'],
   };
 }
 
@@ -1002,7 +1244,7 @@ export function createBattleRoyalMapPreview(
     topologyId: 'ring',
     themeId: layout.theme.id,
     themeName: layout.theme.name,
-    name: `${layout.theme.name} Last Ring`,
+    name: `${layout.theme.name} Wilds`,
     preview,
     diagnostics: {
       score: 91,
@@ -1013,7 +1255,7 @@ export function createBattleRoyalMapPreview(
         contentDensity: 15,
         budget: 8,
       },
-      laneLengths: { radial_routes: SPAWN_CLUSTER_RADIUS, outer_routes: 18, poi_ring: 28 },
+      laneLengths: { radial_routes: SPAWN_CLUSTER_RADIUS, outer_routes: 42, poi_ring: 54 },
       routeChoiceCount: BATTLE_ROYAL_TEAM_IDS.length + layout.pois.length,
       warnings: [],
     },
@@ -1061,10 +1303,10 @@ export function generateBattleRoyalVoxelMap(
     desiredTopology: 'ring',
     desiredSymmetry: 'asymmetric_balanced',
     performanceBudget: {
-      maxSolidBlocks: 2_700_000,
-      maxColliders: 150_000,
-      maxRenderableChunks: 3600,
-      maxGenerationMs: 4000,
+      maxSolidBlocks: 8_750_000,
+      maxColliders: 280_000,
+      maxRenderableChunks: 7600,
+      maxGenerationMs: 9000,
     },
     rngStreams: {
       boundary: hashSeed(normalizedSeed ^ 0xb417e),
@@ -1072,6 +1314,7 @@ export function generateBattleRoyalVoxelMap(
       pois: hashSeed(normalizedSeed ^ 0xc17ade1),
       pickups: hashSeed(normalizedSeed ^ 0x9f2d),
       cover: hashSeed(normalizedSeed ^ 0xc0a7e),
+      terrainFeatures: hashSeed(normalizedSeed ^ 0x7e44a11),
       terrain: hashSeed(normalizedSeed ^ 0x514f),
     },
   };
@@ -1092,7 +1335,7 @@ export function generateBattleRoyalVoxelMap(
       expectedDistance: SPAWN_CLUSTER_RADIUS,
       expectedTravelTimeSeconds: SPAWN_CLUSTER_RADIUS / 7.6,
       coverDensityTarget: 0.58,
-      verticalityBand: { minY: 3, maxY: 18 },
+      verticalityBand: { minY: 3, maxY: 31 },
     },
     {
       id: 'outer_routes',
@@ -1100,10 +1343,10 @@ export function generateBattleRoyalVoxelMap(
       kind: 'flank',
       nodeIds: routeGraph.nodes.filter((node) => node.laneIds.includes('outer_routes')).map((node) => node.id),
       width: 9,
-      expectedDistance: 22,
-      expectedTravelTimeSeconds: 22 / 7.4,
+      expectedDistance: 42,
+      expectedTravelTimeSeconds: 42 / 7.4,
       coverDensityTarget: 0.62,
-      verticalityBand: { minY: 3, maxY: 16 },
+      verticalityBand: { minY: 3, maxY: 28 },
     },
     {
       id: 'poi_ring',
@@ -1111,10 +1354,10 @@ export function generateBattleRoyalVoxelMap(
       kind: 'access',
       nodeIds: routeGraph.nodes.filter((node) => node.laneIds.includes('poi_ring')).map((node) => node.id),
       width: 8,
-      expectedDistance: 28,
-      expectedTravelTimeSeconds: 28 / 7.2,
+      expectedDistance: 54,
+      expectedTravelTimeSeconds: 54 / 7.2,
       coverDensityTarget: 0.55,
-      verticalityBand: { minY: 4, maxY: 20 },
+      verticalityBand: { minY: 4, maxY: 34 },
     },
   ];
   const bases: TeamMap<BaseZone> = {};

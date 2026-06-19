@@ -1303,7 +1303,7 @@ body,
 
 .play-tab-shell {
   --play-corner-inset: var(--main-lobby-edge-x);
-  --play-stage-x-offset: clamp(5rem, 6vw, 7.5rem);
+  --play-stage-x-offset: 0px;
   --play-stage-y-offset: clamp(1.5rem, 4vh, 3rem);
   position: static;
   display: flex;
@@ -1373,13 +1373,12 @@ body,
   --play-mode-accent: rgb(var(--color-accent-primary));
   position: absolute;
   left: var(--play-corner-inset);
-  top: calc(50% + var(--play-stage-y-offset));
+  bottom: max(var(--play-corner-inset), env(safe-area-inset-bottom));
   z-index: 4;
   display: grid;
   width: clamp(12.25rem, 15vw, 15.75rem);
   gap: 0.44rem;
   pointer-events: auto;
-  transform: translateY(-50%);
 }
 
 .play-season-plate {
@@ -1872,14 +1871,14 @@ body,
 
 .party-lineup-stage {
   display: grid;
-  width: clamp(46rem, 76vw, 96rem);
+  width: clamp(44rem, 70vw, 88rem);
   max-width: calc(100vw - (var(--play-corner-inset) * 2));
   gap: clamp(0.55rem, 1.3vh, 0.95rem);
   transform: translateY(var(--play-stage-y-offset));
 }
 
 .party-lineup-grid {
-  --party-member-slot-width: clamp(10.4rem, 17.5vw, 18.5rem);
+  --party-member-slot-width: clamp(10rem, 16vw, 17rem);
   --party-member-preview-height: clamp(14.4rem, 37vh, 26rem);
   --party-lineup-columns: 4;
   display: grid;
@@ -1887,7 +1886,7 @@ body,
   column-gap: 0;
   align-items: end;
   justify-content: space-between;
-  width: min(100%, clamp(68rem, calc(76vw - 45px), 96rem));
+  width: min(100%, clamp(60rem, calc(68vw - 32px), 86rem));
   margin-inline: auto;
 }
 

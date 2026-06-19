@@ -22,6 +22,7 @@ import { getRoomPopulationCounts } from './roomPopulation';
 import { applyRoomRankState, buildRoomRankSnapshot } from './roomRankSnapshot';
 import {
   buildDevTimeFreezeStatePatch,
+  buildBattleRoyalDeploymentPhaseStatePatch,
   buildCountdownPhaseStatePatch,
   buildGameEndPhaseStatePatch,
   buildHeroSelectPhaseStatePatch,
@@ -65,6 +66,18 @@ import {
   updateBattleRoyalSafeZoneState,
   type BattleRoyalSafeZoneState,
 } from './battleRoyalSafeZone';
+import {
+  BATTLE_ROYAL_DEPLOYMENT_PHASE_MS,
+  addBattleRoyalDropParticipant,
+  advanceBattleRoyalDropState,
+  areAllBattleRoyalDropPlayersLanded,
+  buildBattleRoyalDropSnapshot,
+  createBattleRoyalDropState,
+  forceLandBattleRoyalDropState,
+  setBattleRoyalDropPlayerInput,
+  startBattleRoyalTeamDrop,
+  type BattleRoyalDropState,
+} from './battleRoyalDrop';
 import {
   MatchLedgerRuntime,
   type MatchPersistenceLedger,
@@ -988,6 +1001,7 @@ export class GameRoom extends Room<GameState> {
   private reservedHumanPlayers = 0;
   private capacityPlayerCost = 0;
   private battleRoyalSafeZone: BattleRoyalSafeZoneState | null = null;
+  private battleRoyalDrop: BattleRoyalDropState | null = null;
   private nextBattleRoyalSafeZoneDamageAt = 0;
   private matchMode: MatchMode = 'custom';
   private gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE;
@@ -1393,6 +1407,15 @@ export class GameRoom extends Room<GameState> {
     if (entryTicket?.selectedHero && isHeroId(entryTicket.selectedHero)) {
       this.setPlayerHero(player, entryTicket.selectedHero);
     }
+    if (
+      this.state.phase === 'deployment' &&
+      isBattleRoyalMode(this.gameplayMode) &&
+      player.heroId
+    ) {
+      player.state = 'dropping';
+      this.addPlayerToBattleRoyalDeployment(player);
+      return player;
+    }
     if (shouldActivateJoinedPlayer({
       phase: this.state.phase,
       heroId: player.heroId,
@@ -1495,6 +1518,7 @@ export class GameRoom extends Room<GameState> {
     this.playerCombatActivity.clear(playerId);
     this.devRuntime.clearPlayer(playerId);
     this.matchStartGate.clearPlayer(playerId);
+    this.battleRoyalDrop?.players.delete(playerId);
   }
 
   onDispose() {
@@ -1647,6 +1671,9 @@ export class GameRoom extends Room<GameState> {
           this.updatePhysics();
           this.broadcastStateStreams({ transforms: true });
           break;
+        case 'deployment':
+          this.updateBattleRoyalDeployment();
+          break;
         case 'playing':
           this.updatePlaying();
           break;
@@ -1681,6 +1708,10 @@ export class GameRoom extends Room<GameState> {
 
   private updateCountdown() {
     if (hasPhaseDeadlineElapsed(this.state.phaseEndTime, Date.now())) {
+      if (isBattleRoyalMode(this.gameplayMode)) {
+        this.startBattleRoyalDeployment();
+        return;
+      }
       this.startPlaying();
     }
   }
@@ -2042,6 +2073,9 @@ export class GameRoom extends Room<GameState> {
       phaseEndTime: this.state.phaseEndTime || null,
       gameClockFrozen: this.devRuntime.isGameClockFrozen(),
       safeZone: this.battleRoyalSafeZone,
+      battleRoyalDrop: this.battleRoyalDrop
+        ? buildBattleRoyalDropSnapshot(this.battleRoyalDrop, this.state.serverTime || Date.now())
+        : null,
     });
   }
 
@@ -2504,7 +2538,7 @@ export class GameRoom extends Room<GameState> {
       ? this.getTransformReplicationState(options.recipientId)
       : this.replicationState.getGlobalTransformState();
     this.state.players.forEach((player, id) => {
-      if (player.state !== 'alive' && player.state !== 'spawning') return;
+      if (player.state !== 'alive' && player.state !== 'spawning' && player.state !== 'dropping') return;
       if (!force && options.recipientId && id === options.recipientId) return;
       const interest = options.recipient
         ? this.getRecipientInterest(options.recipient, player, now, options.frameContext)
@@ -2745,7 +2779,11 @@ export class GameRoom extends Room<GameState> {
       () => this.buildReplicationFrameContext()
     );
 
-    const shouldBroadcastTransforms = options.transforms ?? (this.state.phase === 'playing' || this.state.phase === 'countdown');
+    const shouldBroadcastTransforms = options.transforms ?? (
+      this.state.phase === 'playing' ||
+      this.state.phase === 'countdown' ||
+      this.state.phase === 'deployment'
+    );
     this.measureTickSpan('player_state_stream_fanout', () => this.broadcastPlayerStateStreams({
       transforms: shouldBroadcastTransforms,
       vitals: options.vitals ?? true,
@@ -3238,7 +3276,12 @@ export class GameRoom extends Room<GameState> {
 
   private handleMovementCommandPacket(client: Client, packet: MovementCommandPacket): void {
     const player = this.state.players.get(client.sessionId);
-    if (!player || player.state !== 'alive' || player.isBot) return;
+    if (!player || player.isBot) return;
+    if (this.isBattleRoyalDeploymentPlayer(player)) {
+      this.handleBattleRoyalDropCommandPacket(client, player, packet);
+      return;
+    }
+    if (player.state !== 'alive') return;
 
     const authority = this.getMovementAuthority(client.sessionId);
     const position = vec3SchemaToPlain(player.position);
@@ -3254,6 +3297,45 @@ export class GameRoom extends Room<GameState> {
         playerId: client.sessionId,
         userId: this.getPlayerUserId(client.sessionId),
         ...(event.type === 'movement_command_reject' ? {} : { position }),
+      });
+    }
+
+    if (result.shouldMarkQueueOverflowBarrier) {
+      this.markMovementBarrier(client.sessionId, 'queue_overflow');
+    }
+  }
+
+  private isBattleRoyalDeploymentPlayer(player: Player): boolean {
+    return (
+      isBattleRoyalMode(this.gameplayMode) &&
+      this.state.phase === 'deployment' &&
+      player.state === 'dropping'
+    );
+  }
+
+  private handleBattleRoyalDropCommandPacket(
+    client: Client,
+    player: Player,
+    packet: MovementCommandPacket
+  ): void {
+    const authority = this.getMovementAuthority(client.sessionId);
+    const position = vec3SchemaToPlain(player.position);
+    const result = ingestMovementCommandPacket({
+      authority,
+      packet,
+      now: Date.now(),
+      currentCollisionRevision: this.getMovementCollisionRevision(),
+    });
+    for (const event of result.events) {
+      this.recordSecurityEvent({
+        ...event,
+        playerId: client.sessionId,
+        userId: this.getPlayerUserId(client.sessionId),
+        ...(event.type === 'movement_command_reject' ? {} : { position }),
+        detail: {
+          ...(event.detail ?? {}),
+          phase: 'deployment',
+        },
       });
     }
 
@@ -7414,6 +7496,7 @@ export class GameRoom extends Room<GameState> {
     this.lineOfSightCache.clear();
     this.visibilityInterest.clearAll();
     this.battleRoyalSafeZone = null;
+    this.battleRoyalDrop = null;
     this.nextBattleRoyalSafeZoneDamageAt = 0;
     this.forceTransformFullSync();
   }
@@ -7697,7 +7780,12 @@ export class GameRoom extends Room<GameState> {
     this.state.players.forEach((player) => {
       player.state = 'spawning';
     });
-    this.placeTeamsAtUniqueSpawns('spawn');
+    if (isBattleRoyalMode(this.gameplayMode)) {
+      this.battleRoyalDrop = this.placePlayersAtBattleRoyalDropShipStart(now, 'spawn');
+    } else {
+      this.battleRoyalDrop = null;
+      this.placeTeamsAtUniqueSpawns('spawn');
+    }
 
     this.forceTransformFullSync();
     this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
@@ -7733,6 +7821,7 @@ export class GameRoom extends Room<GameState> {
       durationSeconds: this.config.heroSelectTimeSeconds,
     }));
     this.resetCountdownStartGate();
+    this.battleRoyalDrop = null;
     this.updateMetadata();
 
     this.state.players.forEach(player => {
@@ -7777,12 +7866,59 @@ export class GameRoom extends Room<GameState> {
     this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
   }
 
-  private startPlaying() {
+  private startBattleRoyalDeployment(): void {
+    if (this.matchCancelled) return;
+    if (!isBattleRoyalMode(this.gameplayMode)) {
+      this.startPlaying();
+      return;
+    }
+
+    this.clearMatchStartCancelTimer();
+    const now = Date.now();
+    const participants = Array.from(this.state.players.values()).map((player) => ({
+      playerId: player.id,
+      team: player.team as Team,
+      isBot: player.isBot,
+    }));
+    this.battleRoyalDrop = createBattleRoyalDropState(this.getMapManifest(), participants, now);
+    this.applyPhaseStatePatch(buildBattleRoyalDeploymentPhaseStatePatch({
+      now,
+      durationMs: BATTLE_ROYAL_DEPLOYMENT_PHASE_MS,
+    }));
+    this.updateMetadata();
+
+    this.state.players.forEach((player) => {
+      const dropPlayer = this.battleRoyalDrop?.players.get(player.id);
+      if (!dropPlayer) return;
+      this.resetPlayerLifeRuntime(player, now);
+      player.state = 'dropping';
+      player.health = player.maxHealth;
+      player.respawnTime = 0;
+      player.spawnProtectionUntil = 0;
+      this.applyBattleRoyalDropTransform(player, dropPlayer);
+      this.markMovementBarrier(player.id, 'spawn');
+    });
+
+    this.broadcastPhaseChange('deployment');
+    this.forceTransformFullSync();
+    this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
+
+    this.state.players.forEach((player, playerId) => {
+      if (player.isBot) return;
+      const client = this.clientRegistry.getClient(playerId);
+      if (client) {
+        this.sendSelfMovementAuthority(player, client, 'spawn');
+      }
+    });
+  }
+
+  private startPlaying(options: { preserveAlivePlayers?: boolean } = {}) {
     if (this.matchCancelled) return;
     if (!this.ensureCompetitiveNetworkQualityForStart({ cancelPending: true })) return;
 
     this.clearMatchStartCancelTimer();
     const now = Date.now();
+    this.battleRoyalDrop = null;
     this.applyPhaseStatePatch(buildPlayingPhaseStatePatch({
       now,
       roundTimeSeconds: this.config.roundTimeSeconds,
@@ -7793,6 +7929,13 @@ export class GameRoom extends Room<GameState> {
     this.blazeBurns.clearAll();
 
     this.state.players.forEach(player => {
+      if (options.preserveAlivePlayers && player.state === 'alive') {
+        if (ledger.state === 'active') {
+          this.registerMatchParticipant(player, this.state.roundStartTime);
+        }
+        return;
+      }
+
       const resetPlan = applyPlayerAliveRuntimeReset(player, {
         now,
         spawnProtectionMs: this.config.spawnProtectionSeconds * 1000,
@@ -7836,6 +7979,13 @@ export class GameRoom extends Room<GameState> {
     ));
     this.forceTransformFullSync();
     this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
+    this.state.players.forEach((player) => {
+      if (player.isBot) return;
+      const client = this.clientRegistry.getClient(player.id);
+      if (client) {
+        this.sendSelfMovementAuthority(player, client, this.getMovementAuthority(player.id).correctionReason);
+      }
+    });
   }
 
   private endRound() {
@@ -7885,6 +8035,213 @@ export class GameRoom extends Room<GameState> {
         skipDamageBudget: true,
       });
     });
+  }
+
+  private applyBattleRoyalDropTransform(
+    player: Player,
+    dropPlayer: { position: PlainVec3; velocity: PlainVec3; status: string; latestInput?: PlayerInput | null }
+  ): void {
+    player.position.x = dropPlayer.position.x;
+    player.position.y = dropPlayer.position.y;
+    player.position.z = dropPlayer.position.z;
+    player.velocity.x = dropPlayer.velocity.x;
+    player.velocity.y = dropPlayer.velocity.y;
+    player.velocity.z = dropPlayer.velocity.z;
+    player.movement.isGrounded = dropPlayer.status === 'landed';
+    player.movement.isSprinting = false;
+    player.movement.isCrouching = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    player.movement.isGrappling = false;
+    player.movement.isJetpacking = dropPlayer.status === 'dropping';
+    player.movement.isGliding = false;
+    if (dropPlayer.latestInput) {
+      player.lookYaw = normalizeLookYaw(dropPlayer.latestInput.lookYaw);
+      player.lookPitch = clampLookPitch(dropPlayer.latestInput.lookPitch);
+    }
+  }
+
+  private drainBattleRoyalDropInputs(now: number): void {
+    const drop = this.battleRoyalDrop;
+    if (!drop) return;
+
+    this.state.players.forEach((player) => {
+      if (player.isBot || player.state !== 'dropping') return;
+      const authority = this.getMovementAuthority(player.id);
+      const queuedCommandCount = authority.pendingCommands.length;
+      authority.metrics.queueLengthBeforeTick = queuedCommandCount;
+      authority.metrics.commandsProcessedLastTick = 0;
+      if (queuedCommandCount <= 0) return;
+
+      let latestInput = player.lastInput ?? createEmptyPlayerInput(this.state.tick, player, now);
+      let processedThisTick = 0;
+      const budget = Math.min(queuedCommandCount, MOVEMENT_MAX_PACKET_COMMANDS);
+      for (let index = 0; index < budget; index++) {
+        const command = this.movementAuthorities.getNextMovementCommand(authority);
+        if (!command) break;
+        latestInput = this.writeMovementCommandToInput(command, latestInput, now);
+        processedThisTick++;
+      }
+
+      player.lastInput = latestInput;
+      setBattleRoyalDropPlayerInput(drop, player.id, latestInput);
+      if (latestInput.interact) {
+        startBattleRoyalTeamDrop(drop, player.team as Team, now);
+      }
+
+      authority.metrics.commandsProcessed += processedThisTick;
+      authority.metrics.commandsProcessedLastTick = processedThisTick;
+      authority.metrics.queueLength = authority.pendingCommands.length;
+      authority.metrics.queueLengthAfterTick = authority.pendingCommands.length;
+      authority.metrics.lastAckSeq = authority.lastProcessedSeq;
+    });
+  }
+
+  private syncBattleRoyalDropPlayers(now: number): void {
+    const drop = this.battleRoyalDrop;
+    if (!drop) return;
+
+    drop.players.forEach((dropPlayer, playerId) => {
+      const player = this.state.players.get(playerId);
+      if (!player) return;
+      if (dropPlayer.status === 'landed' && player.state === 'alive') return;
+      this.applyBattleRoyalDropTransform(player, dropPlayer);
+      this.updateLastSafeMovement(player, this.getMovementAuthority(player.id).lastProcessedSeq, now);
+    });
+  }
+
+  private activateLandedBattleRoyalDropPlayers(now: number): void {
+    const drop = this.battleRoyalDrop;
+    if (!drop) return;
+
+    drop.players.forEach((dropPlayer, playerId) => {
+      if (dropPlayer.status !== 'landed') return;
+      const player = this.state.players.get(playerId);
+      if (!player || player.state === 'alive') return;
+
+      this.applyBattleRoyalDropTransform(player, dropPlayer);
+      const resetPlan = applyPlayerAliveRuntimeReset(player, {
+        now,
+        spawnProtectionMs: this.config.spawnProtectionSeconds * 1000,
+        resetRespawnTime: true,
+      });
+      this.resetPlayerLifeRuntime(player, now);
+      this.markMovementBarrier(player.id, 'spawn');
+
+      if (resetPlan.resetPhantomPrimaryMagazine) {
+        this.resetPhantomPrimaryMagazine(player.id);
+      }
+      if (resetPlan.clearChronosAegisShield) {
+        this.chronosAegisShields.clear(player.id);
+      }
+      if (resetPlan.resetBotBrain) {
+        this.botRuntime.setBrain(player.id, this.createBotBrain(player, hashString(player.id), {
+          now,
+          staggerInitialSchedule: true,
+        }));
+      }
+      if (resetPlan.resetAbilityCooldowns) {
+        resetAbilityCooldowns(player);
+      }
+
+      if (!player.isBot) {
+        const client = this.clientRegistry.getClient(player.id);
+        if (client) {
+          this.sendSelfMovementAuthority(player, client, 'spawn');
+        }
+      }
+    });
+  }
+
+  private addPlayerToBattleRoyalDeployment(player: Player, now = Date.now()): void {
+    if (!this.battleRoyalDrop) {
+      this.battleRoyalDrop = this.placePlayersAtBattleRoyalDropShipStart(now, 'spawn');
+      return;
+    }
+
+    const dropPlayer = addBattleRoyalDropParticipant(this.battleRoyalDrop, {
+      playerId: player.id,
+      team: player.team as Team,
+      isBot: player.isBot,
+    }, now);
+    this.applyBattleRoyalDropTransform(player, dropPlayer);
+    this.markMovementBarrier(player.id, 'spawn');
+  }
+
+  private sendBattleRoyalDropAuthorities(now: number): void {
+    this.state.players.forEach((player) => {
+      if (player.isBot || player.state !== 'dropping') return;
+      const client = this.clientRegistry.getClient(player.id);
+      if (!client) return;
+      const authority = this.getMovementAuthority(player.id);
+      if (
+        authority.correctionReason ||
+        authority.metrics.commandsProcessedLastTick ||
+        authority.lastAuthoritySentAt === 0 ||
+        now - authority.lastAuthoritySentAt >= 100
+      ) {
+        this.sendSelfMovementAuthority(player, client, authority.correctionReason);
+      }
+    });
+  }
+
+  private finishBattleRoyalDeployment(now = Date.now()): void {
+    const drop = this.battleRoyalDrop;
+    if (!drop) {
+      this.startPlaying();
+      return;
+    }
+
+    forceLandBattleRoyalDropState({
+      state: drop,
+      now,
+      dt: TICK_INTERVAL_MS / 1000,
+      getGroundY: (position) => this.getProceduralGroundY(position),
+      clampToPlayableMap: (position) => this.clampToPlayableMap(position),
+    });
+    this.syncBattleRoyalDropPlayers(now);
+    this.state.players.forEach((player) => {
+      this.markMovementBarrier(player.id, 'spawn');
+    });
+    this.startPlaying({ preserveAlivePlayers: true });
+  }
+
+  private updateBattleRoyalDeployment(): void {
+    if (!isBattleRoyalMode(this.gameplayMode) || this.state.phase !== 'deployment') return;
+    const drop = this.battleRoyalDrop;
+    if (!drop) {
+      this.startPlaying();
+      return;
+    }
+
+    const now = Date.now();
+    this.measureTickSpan('phase_gameplay_update', () => {
+      this.drainBattleRoyalDropInputs(now);
+      advanceBattleRoyalDropState({
+        state: drop,
+        now,
+        dt: TICK_INTERVAL_MS / 1000,
+        getGroundY: (position) => this.getProceduralGroundY(position),
+        clampToPlayableMap: (position) => this.clampToPlayableMap(position),
+      });
+      this.syncBattleRoyalDropPlayers(now);
+      this.activateLandedBattleRoyalDropPlayers(now);
+    });
+
+    this.updatePhysics();
+    this.sendBattleRoyalDropAuthorities(now);
+
+    if (
+      areAllBattleRoyalDropPlayersLanded(drop) ||
+      hasPhaseDeadlineElapsed(this.state.phaseEndTime, now)
+    ) {
+      this.finishBattleRoyalDeployment(now);
+      return;
+    }
+
+    this.broadcastStateStreams({ transforms: true });
   }
 
   private endGame(forcedByPlayerId?: string, winningTeamOverride?: Team | null) {
@@ -9076,6 +9433,29 @@ export class GameRoom extends Room<GameState> {
   private placePlayerAtSpawn(player: Player, reason: MovementCorrectionReason = 'spawn'): void {
     this.assignPlayerSpawnPosition(player);
     this.markMovementBarrier(player.id, reason);
+  }
+
+  private placePlayersAtBattleRoyalDropShipStart(
+    now: number,
+    reason: MovementCorrectionReason = 'spawn'
+  ): BattleRoyalDropState {
+    const previewDrop = createBattleRoyalDropState(
+      this.getMapManifest(),
+      Array.from(this.state.players.values()).map((player) => ({
+        playerId: player.id,
+        team: player.team as Team,
+        isBot: player.isBot,
+      })),
+      now
+    );
+
+    previewDrop.players.forEach((dropPlayer, playerId) => {
+      const player = this.state.players.get(playerId);
+      if (!player) return;
+      this.applyBattleRoyalDropTransform(player, dropPlayer);
+      this.markMovementBarrier(player.id, reason);
+    });
+    return previewDrop;
   }
 
   private getAssignableTeamIds(): readonly Team[] {

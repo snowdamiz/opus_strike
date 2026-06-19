@@ -4,6 +4,7 @@ const GAME_PHASES = new Set<string>([
   'waiting',
   'hero_select',
   'countdown',
+  'deployment',
   'playing',
   'round_end',
   'game_end',

@@ -12,6 +12,7 @@ import {
   PHANTOM_BLINK_DISTANCE,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
   POWERUP_MOVEMENT_SPEED_MULTIPLIER,
+  advanceBattleRoyalDropPodMotion,
   calculateBlazeRocketJumpVelocity,
   calculateLookDirection,
   inputStateToMovementButtons,
@@ -68,6 +69,7 @@ export interface AppliedSelfMovementAuthority {
 
 export interface SelfMovementAuthorityApplyOptions {
   visualLookYaw?: number;
+  includeDuplicateAckAuthorities?: boolean;
 }
 
 const fallbackTerrain: MovementTerrainAdapter = {
@@ -451,6 +453,81 @@ export function predictLocalChronosAscendantParadox(player: Player, lookYaw: num
   }, lookYaw);
 }
 
+export function predictLocalBattleRoyalDrop(
+  player: Player,
+  input: InputState,
+  options: {
+    lookYaw: number;
+    lookPitch: number;
+    deltaTime: number;
+    nowMs?: number;
+  }
+): MovementSimulationState {
+  ensureLocalPredictionInitialized(player);
+  const current = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
+  if (current.movement.isGrounded) {
+    const groundedState: MovementSimulationState = {
+      position: current.position,
+      velocity: { x: 0, y: 0, z: 0 },
+      movement: {
+        ...current.movement,
+        isSprinting: false,
+        isCrouching: false,
+        isSliding: false,
+        slideTimeRemaining: 0,
+        isWallRunning: false,
+        wallRunSide: null,
+        isGrappling: false,
+        grapplePoint: null,
+        isJetpacking: false,
+        isGliding: false,
+      },
+    };
+    localMovementPrediction.overwriteState(groundedState, { updateLatestCommandRecord: false });
+    setPredictedVisuals(player.id, groundedState.position, options.lookYaw, options.nowMs);
+    return groundedState;
+  }
+
+  const lookup = getClientProceduralTerrainLookup();
+  const nextPod = advanceBattleRoyalDropPodMotion({
+    position: current.position,
+    input: {
+      moveForward: input.moveForward,
+      moveBackward: input.moveBackward,
+      moveLeft: input.moveLeft,
+      moveRight: input.moveRight,
+      sprint: input.sprint,
+      lookYaw: options.lookYaw,
+      lookPitch: options.lookPitch,
+    },
+    dt: Math.min(Math.max(0, options.deltaTime), 0.08),
+    getGroundY: lookup ? (position) => lookup.getGroundY(position) : () => 0,
+    clampToPlayableMap: lookup ? (position) => lookup.clampToPlayableMap(position) : (position) => ({ ...position }),
+  });
+  const nextState: MovementSimulationState = {
+    position: nextPod.position,
+    velocity: nextPod.velocity,
+    movement: {
+      ...current.movement,
+      isGrounded: nextPod.landed,
+      isSprinting: false,
+      isCrouching: false,
+      isSliding: false,
+      slideTimeRemaining: 0,
+      isWallRunning: false,
+      wallRunSide: null,
+      isGrappling: false,
+      grapplePoint: null,
+      isJetpacking: !nextPod.landed,
+      isGliding: false,
+    },
+  };
+
+  localMovementPrediction.overwriteState(nextState, { updateLatestCommandRecord: false });
+  setPredictedVisuals(player.id, nextState.position, options.lookYaw, options.nowMs);
+  return nextState;
+}
+
 export function confirmLocalMovementTransform(
   player: Player,
   transform: {
@@ -546,7 +623,7 @@ export function drainSelfMovementAuthorities(
       authority.movementEpoch === predictionEpoch &&
       compareMovementSeq(authority.ackSeq, localMovementPrediction.getLastAckSeq()) <= 0;
 
-    if ((staleEpoch || staleAck) && !isSelfAuthorityBarrier(authority)) {
+    if ((staleEpoch || (staleAck && !options.includeDuplicateAckAuthorities)) && !isSelfAuthorityBarrier(authority)) {
       continue;
     }
 

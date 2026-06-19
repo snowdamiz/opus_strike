@@ -144,6 +144,7 @@ import {
   getLocalMovementCollisionRevision,
   getPendingSelfMovementAuthorityCount,
   movementStateFromPlayer,
+  predictLocalBattleRoyalDrop,
   predictLocalBlazeRocketJump,
   predictLocalPhantomBlink,
   stepLocalMovementPrediction,
@@ -195,6 +196,12 @@ import {
   type ExclusiveHoldInput,
   type ServerCombatInput,
 } from './playerControllerInput';
+import {
+  applyBattleRoyalDeploymentCamera,
+  findBattleRoyalDropPlayer,
+  writeBattleRoyalDeploymentCameraTarget,
+  type BattleRoyalDeploymentCameraTarget,
+} from './battleRoyalDropView';
 export {
   deriveServerCombatInput,
   getContinuingHeroHoldInput,
@@ -229,6 +236,14 @@ const INACTIVE_LOCAL_MOVEMENT: PlayerMovementState = {
 };
 
 const authorityMetricsScratch: PredictionCorrectionMetrics[] = [];
+const battleRoyalDeploymentVisualPosition = new THREE.Vector3();
+const battleRoyalDeploymentCameraPosition = new THREE.Vector3();
+const battleRoyalDeploymentLookTarget = new THREE.Vector3();
+const battleRoyalDeploymentCameraTarget: BattleRoyalDeploymentCameraTarget = {
+  mode: 'ship',
+  position: new THREE.Vector3(),
+  yaw: 0,
+};
 
 function frameRateBand(deltaSeconds: number): string {
   if (deltaSeconds <= 1 / 90) return '90fps+';
@@ -1215,6 +1230,7 @@ export function runAuthorityPhase(
   const authorityDrainStartedAt = shouldMeasureAuthorityDrain ? performance.now() : 0;
   const appliedAuthorities = drainSelfMovementAuthorities(localPlayer, frameNowMs, {
     visualLookYaw: localLook.lookYaw,
+    includeDuplicateAckAuthorities: localPlayer.state === 'dropping',
   });
   if (shouldMeasureAuthorityDrain) {
     recordAuthorityDrainFrame({
@@ -1245,6 +1261,34 @@ export function runAuthorityPhase(
     application.authority.correctionReason !== 'normal'
   ))) {
     resetMovementCommandBuffer();
+  }
+
+  if (localPlayer.state === 'dropping') {
+    const latestAuthority = appliedAuthorities[appliedAuthorities.length - 1];
+    const movement = {
+      ...latestAuthority.authority.movement,
+      grapplePoint: latestAuthority.authority.movement.grapplePoint
+        ? { ...latestAuthority.authority.movement.grapplePoint }
+        : null,
+    };
+    const updates = {
+      position: { ...latestAuthority.authority.position },
+      velocity: { ...latestAuthority.authority.velocity },
+      lookYaw: localLook.lookYaw,
+      lookPitch: localLook.lookPitch,
+      movement,
+    };
+    confirmLocalMovementTransform(localPlayer, {
+      position: updates.position,
+      velocity: updates.velocity,
+      movement,
+    }, localLook.lookYaw);
+    updateLocalPlayer(updates);
+    recordLocalReactiveUpdate('selfAuthority');
+    return {
+      localPlayer: { ...localPlayer, ...updates },
+      authorityApplied: appliedAuthorities.length,
+    };
   }
 
   const reactiveAuthority = selectReactiveAuthority(appliedAuthorities);
@@ -1437,6 +1481,150 @@ function runInactiveLifecycleFrame(
   setAudioListenerTransform(camera.position, refs.audioForwardRef.current, refs.audioUpRef.current);
   setPlayerVisualTransform(localPlayer.id, visualPos, cameraControl.refs.yaw.current);
   return { kind: 'inactive', authorityApplied, substeps: 0, deathCamera: shouldUseDeathCamera };
+}
+
+function runBattleRoyalDeploymentFrame(
+  ctx: LocalPlayerFrameContext,
+  localPlayer: Player,
+  timing: FrameTiming,
+  frameInput: InputState,
+  authorityApplied: number,
+  sendDropCommands: boolean
+): LocalPlayerFrameResult {
+  const {
+    camera,
+    cameraControl,
+    flushMovementCommands,
+    movement,
+    resetBlazeFlamethrower,
+    resetPredictedAbilitySounds,
+    resetViewmodelPoseState,
+    clearHeroActionLock,
+    resetMovementCommandBuffer,
+    refs,
+  } = ctx;
+  const { dt, now } = timing;
+  const drop = useGameStore.getState().battleRoyalDrop;
+  const dropPlayer = findBattleRoyalDropPlayer(drop, localPlayer.id);
+  const isLanded = dropPlayer?.status === 'landed' || localPlayer.movement.isGrounded;
+  const isDropping = (dropPlayer ? dropPlayer.status === 'dropping' : localPlayer.state === 'dropping') && !isLanded;
+
+  setLocalViewmodelMovement({
+    hasMovementInput: false,
+    isSprinting: false,
+    horizontalSpeed: 0,
+    updatedAtMs: now,
+  });
+  resetViewmodelPoseState('battle-royal-deployment', localPlayer.heroId as HeroId, now);
+  setChronosAegisVisualState(localPlayer.id, false, now);
+  resetBlazeFlamethrower(now);
+  resetPredictedAbilitySounds();
+  clearHeroActionLock();
+  movement.refs.slideIntensity.current = 0;
+  setLocalSlideIntensity(0);
+  const deploymentMovement: PlayerMovementState = {
+    ...localPlayer.movement,
+    isGrounded: isLanded,
+    isSprinting: false,
+    isCrouching: false,
+    isSliding: false,
+    slideTimeRemaining: 0,
+    isWallRunning: false,
+    wallRunSide: null,
+    isGrappling: false,
+    grapplePoint: null,
+    isJetpacking: isDropping,
+    isGliding: false,
+  };
+  const canSendDropInteract = dropPlayer?.status !== 'aboard' || drop?.ship.canDrop === true;
+
+  const commandInput: InputState = {
+    ...frameInput,
+    interact: frameInput.interact && canSendDropInteract,
+    primaryFire: false,
+    secondaryFire: false,
+    reload: false,
+    ability1: false,
+    ability2: false,
+    ultimate: false,
+  };
+  cameraControl.updateCameraRotation(camera, false, false, dt);
+  const predictedDropState = sendDropCommands && isDropping
+    ? predictLocalBattleRoyalDrop(localPlayer, commandInput, {
+      lookYaw: cameraControl.refs.yaw.current,
+      lookPitch: cameraControl.refs.pitch.current,
+      deltaTime: dt,
+      nowMs: now,
+    })
+    : null;
+  setLocalVisualMovement(predictedDropState?.movement ?? deploymentMovement);
+  const visualPos = predictedDropState?.position ?? visualStore.getState().playerPositions.get(localPlayer.id) ?? localPlayer.position;
+  battleRoyalDeploymentVisualPosition.set(visualPos.x, visualPos.y, visualPos.z);
+  if (drop) {
+    writeBattleRoyalDeploymentCameraTarget({
+      drop,
+      playerId: localPlayer.id,
+      now: sendDropCommands ? now : drop.ship.startedAt,
+      livePodPosition: battleRoyalDeploymentVisualPosition,
+      target: battleRoyalDeploymentCameraTarget,
+    });
+    applyBattleRoyalDeploymentCamera({
+      camera,
+      currentPosition: battleRoyalDeploymentCameraPosition,
+      lookTarget: battleRoyalDeploymentLookTarget,
+      cameraTarget: battleRoyalDeploymentCameraTarget,
+      localYaw: cameraControl.refs.yaw.current,
+      localPitch: cameraControl.refs.pitch.current,
+      delta: dt,
+    });
+  } else {
+    camera.position.set(
+      battleRoyalDeploymentVisualPosition.x,
+      battleRoyalDeploymentVisualPosition.y + EYE_HEIGHT * 0.82,
+      battleRoyalDeploymentVisualPosition.z
+    );
+  }
+  camera.updateMatrixWorld();
+  camera.getWorldDirection(refs.audioForwardRef.current);
+  refs.audioUpRef.current.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+  setAudioListenerTransform(camera.position, refs.audioForwardRef.current, refs.audioUpRef.current);
+  setPlayerVisualTransform(localPlayer.id, battleRoyalDeploymentVisualPosition, cameraControl.refs.yaw.current);
+
+  if (!sendDropCommands) {
+    resetMovementCommandBuffer();
+    return { kind: 'inactive', authorityApplied, substeps: 0, deathCamera: false };
+  }
+
+  refs.movementCommandAccumulatorRef.current = Math.min(
+    refs.movementCommandAccumulatorRef.current + dt,
+    MOVEMENT_SUBSTEP_SECONDS * MOVEMENT_MAX_PACKET_COMMANDS
+  );
+  if (commandInput.interact) {
+    refs.movementCommandAccumulatorRef.current = Math.max(
+      refs.movementCommandAccumulatorRef.current,
+      MOVEMENT_SUBSTEP_SECONDS
+    );
+  }
+
+  let substepsThisFrame = 0;
+  while (
+    refs.movementCommandAccumulatorRef.current >= MOVEMENT_SUBSTEP_SECONDS &&
+    substepsThisFrame < MOVEMENT_MAX_PACKET_COMMANDS
+  ) {
+    const command = createLocalMovementCommand(commandInput, {
+      lookYaw: cameraControl.refs.yaw.current,
+      lookPitch: cameraControl.refs.pitch.current,
+      clientTimeMs: now,
+    });
+    recordMovementCommandGenerated();
+    refs.pendingMovementCommandsRef.current.push(command);
+    refs.movementCommandAccumulatorRef.current -= MOVEMENT_SUBSTEP_SECONDS;
+    refs.tickRef.current = command.seq;
+    substepsThisFrame++;
+  }
+  flushMovementCommands(now, commandInput.interact);
+
+  return { kind: 'live', authorityApplied, substeps: substepsThisFrame };
 }
 
 export function PlayerController({ enabled = true }: PlayerControllerProps) {
@@ -1949,7 +2137,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       frameCtx.resetBlazeFlamethrower = resetBlazeFlamethrower;
     }
     let localPlayer = useGameStore.getState().localPlayer;
-    const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
+    const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
     const frameClock = getFrameClock();
     const now = frameClock.epochNowMs;
     const frameNowMs = frameClock.nowMs;
@@ -1988,6 +2176,62 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       rawFrameInput.moveLeft ||
       rawFrameInput.moveRight
     );
+
+    const storeSnapshot = useGameStore.getState();
+    const localDropPlayer = findBattleRoyalDropPlayer(storeSnapshot.battleRoyalDrop, localPlayer.id);
+    if (storeSnapshot.gameplayMode === 'battle_royal' && localDropPlayer?.status === 'landed' && localPlayer.state === 'dropping') {
+      const landedMovement: PlayerMovementState = {
+        ...localPlayer.movement,
+        isGrounded: true,
+        isSprinting: false,
+        isCrouching: false,
+        isSliding: false,
+        slideTimeRemaining: 0,
+        isWallRunning: false,
+        wallRunSide: null,
+        isGrappling: false,
+        grapplePoint: null,
+        isJetpacking: false,
+        isGliding: false,
+      };
+      const landedUpdates: Partial<Player> = {
+        state: 'alive',
+        position: { ...localDropPlayer.position },
+        velocity: { ...localDropPlayer.velocity },
+        movement: landedMovement,
+      };
+      confirmLocalMovementTransform(localPlayer, {
+        position: landedUpdates.position,
+        velocity: landedUpdates.velocity,
+        movement: landedMovement,
+      }, cameraControl.refs.yaw.current);
+      updateLocalPlayer(landedUpdates);
+      setPlayerVisualTransform(localPlayer.id, localDropPlayer.position, cameraControl.refs.yaw.current);
+      localPlayer = { ...localPlayer, ...landedUpdates };
+    }
+    const isLocalStillDeploying = localDropPlayer
+      ? localDropPlayer.status !== 'landed'
+      : localPlayer.state === 'dropping';
+    const shouldUseBattleRoyalDeploymentCamera = (
+      storeSnapshot.gameplayMode === 'battle_royal' &&
+      Boolean(storeSnapshot.battleRoyalDrop) &&
+      !hasLocalDeathVisual &&
+      (
+        (gamePhase === 'countdown' && localPlayer.state === 'spawning') ||
+        (gamePhase === 'deployment' && localPlayer.state === 'dropping' && isLocalStillDeploying)
+      )
+    );
+    if (shouldUseBattleRoyalDeploymentCamera) {
+      runBattleRoyalDeploymentFrame(
+        frameCtx,
+        localPlayer,
+        timing,
+        frameInput,
+        authority.authorityApplied,
+        gamePhase === 'deployment'
+      );
+      return;
+    }
 
     if (!isPlaying || localPlayer.state !== 'alive' || hasLocalDeathVisual) {
       runInactiveLifecycleFrame(

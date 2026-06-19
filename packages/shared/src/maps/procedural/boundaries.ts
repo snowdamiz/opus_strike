@@ -100,8 +100,23 @@ export function clampToBoundaryPolygon(x: number, z: number, polygon: BoundaryPo
   }
 
   const { point: closest, normal } = getClosestBoundaryPoint(x, z, polygon);
-  return {
+  const nudged = {
     x: closest.x + normal.x * 0.2,
     z: closest.z + normal.z * 0.2,
+  };
+  if (isInsideBoundaryPolygon(nudged.x, nudged.z, polygon)) {
+    return nudged;
+  }
+
+  const centroid = polygon.reduce(
+    (sum, point) => ({ x: sum.x + point.x / polygon.length, z: sum.z + point.z / polygon.length }),
+    { x: 0, z: 0 }
+  );
+  const inwardX = centroid.x - closest.x;
+  const inwardZ = centroid.z - closest.z;
+  const inwardLength = Math.hypot(inwardX, inwardZ) || 1;
+  return {
+    x: closest.x + (inwardX / inwardLength) * 0.35,
+    z: closest.z + (inwardZ / inwardLength) * 0.35,
   };
 }

@@ -23,5 +23,9 @@ export function resolveRoomJoinPlayerName(input: RoomJoinPlayerNameInput): strin
 }
 
 export function shouldActivateJoinedPlayer(input: JoinedPlayerActivationInput): boolean {
-  return (input.phase === 'countdown' || input.phase === 'playing') && Boolean(input.heroId);
+  return (
+    input.phase === 'countdown' ||
+    input.phase === 'deployment' ||
+    input.phase === 'playing'
+  ) && Boolean(input.heroId);
 }

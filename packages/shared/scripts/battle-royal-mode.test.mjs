@@ -87,6 +87,7 @@ const preview = createProceduralMapPreview(0x51f15eed, 'large', { profileId: 'ba
 assert.equal(preview.familyId, 'battle_royal_large');
 assert.equal(preview.mapSize, 'large');
 assert.equal(preview.preview.labelTags.includes('Battle Royal'), true);
+assert.equal(preview.preview.labelTags.includes('Expansive'), true);
 assert.equal(Object.keys(preview.preview.thumbnailSilhouette.objectives.spawns).length, 10);
 
 const manifest = generateProceduralVoxelMap(0x51f15eed, {
@@ -101,8 +102,8 @@ const manifestAgain = generateProceduralVoxelMap(0x51f15eed, {
 assert.equal(manifest.profileId, 'battle_royal_large');
 assert.equal(manifest.mapSize, 'large');
 assert.equal(manifest.gameplay.mode, 'battle_royal');
-assert.equal(manifest.size.x > 300, true);
-assert.equal(manifest.size.z > 300, true);
+assert.equal(manifest.size.x >= 640, true);
+assert.equal(manifest.size.z >= 640, true);
 assert.equal(manifest.spawnPoints.red.length, 0);
 assert.equal(manifest.spawnPoints.blue.length, 0);
 assert.deepEqual(manifestAgain.boundary, manifest.boundary);
@@ -115,7 +116,7 @@ for (const teamId of BATTLE_ROYAL_TEAM_IDS) {
   const spawn = manifest.gameplay.spawns[teamId];
   assert.equal(Boolean(spawn), true);
   assert.equal(spawn.points.length, 3);
-  assert.equal(distance2D(spawn.center, { x: 0, z: 0 }) > 45, true);
+  assert.equal(distance2D(spawn.center, { x: 0, z: 0 }) > 100, true);
   for (const point of spawnPoints) {
     assert.equal(point.y - surfaceYAt(manifest, point) > 1, true, `${teamId} spawn should sit above generated surface`);
   }
@@ -128,14 +129,28 @@ for (let a = 0; a < spawnCenters.length; a++) {
     minSpawnSeparation = Math.min(minSpawnSeparation, distance2D(spawnCenters[a], spawnCenters[b]));
   }
 }
-assert.equal(minSpawnSeparation > 20, true);
+assert.equal(minSpawnSeparation > 65, true);
 
-const playableRows = playableHeightRows(manifest, 74);
-assert.equal(percentile(playableRows, 0.9) - percentile(playableRows, 0.1) >= 8, true);
-assert.equal(manifest.gameplay.powerups.length, 39);
-assert.equal(manifest.construction.diagnostics.routeChoiceCount, 25);
-assert.equal(manifest.construction.diagnostics.moduleCountsByRole.medium_landmark, 14);
-assert.equal(manifest.construction.diagnostics.moduleCountsByRole.cover_cluster >= 60, true);
+const playableRows = playableHeightRows(manifest, 145);
+assert.equal(percentile(playableRows, 0.9) - percentile(playableRows, 0.1) >= 12, true);
+assert.equal(percentile(playableRows, 0.98) - percentile(playableRows, 0.02) >= 28, true);
+const pickupCounts = manifest.gameplay.powerups.reduce((counts, pickup) => {
+  counts[pickup.kind] = (counts[pickup.kind] ?? 0) + 1;
+  return counts;
+}, {});
+assert.equal(pickupCounts.health_pack, 42);
+assert.equal(pickupCounts.powerup, 24);
+assert.equal(manifest.gameplay.powerups.length, 66);
+assert.equal(manifest.construction.diagnostics.routeChoiceCount, 41);
+assert.equal(manifest.construction.diagnostics.moduleCountsByRole.medium_landmark, 30);
+const landmarkRoleTags = new Set(
+  manifest.gameplay.routeGraph.nodes
+    .filter((node) => node.kind === 'landmark')
+    .flatMap((node) => node.tags)
+);
+assert.equal(['highrise', 'compound', 'hangar', 'relay', 'watchtower', 'bunker', 'depot']
+  .filter((role) => landmarkRoleTags.has(role)).length >= 5, true);
+assert.equal(manifest.construction.diagnostics.moduleCountsByRole.cover_cluster >= 140, true);
 assert.equal(manifest.construction.diagnostics.spawnVisibilityPairs, 0);
 assert.deepEqual(manifest.construction.diagnostics.warnings, []);
 assert.equal(manifest.stats.solidBlocks <= manifest.construction.designBrief.performanceBudget.maxSolidBlocks, true);
