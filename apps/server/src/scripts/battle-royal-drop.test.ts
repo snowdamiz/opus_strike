@@ -14,6 +14,7 @@ import {
   buildBattleRoyalDropSnapshot,
   createBattleRoyalDropState,
   forceLandBattleRoyalDropState,
+  isBattleRoyalDropTeamLeader,
   isBattleRoyalDropShipDroppable,
   setBattleRoyalDropPlayerInput,
   shouldAutoDropBattleRoyalTeam,
@@ -99,6 +100,8 @@ assert.equal(initialSnapshot.players.length, 3);
 assert.equal(initialSnapshot.players.every((player) => player.status === 'aboard'), true);
 assert.equal(initialSnapshot.players.find((player) => player.playerId === 'red-1')?.attachedToPlayerId, null);
 assert.equal(initialSnapshot.players.find((player) => player.playerId === 'red-2')?.attachedToPlayerId, 'red-1');
+assert.equal(isBattleRoyalDropTeamLeader(state, 'red-1'), true);
+assert.equal(isBattleRoyalDropTeamLeader(state, 'red-2'), false);
 assert.equal(initialSnapshot.ship.canDrop, false);
 
 const redAutoDropAt = state.teamAutoDropAt.get('red') ?? state.autoDropAt;
@@ -106,6 +109,7 @@ assert.equal(shouldAutoDropBattleRoyalTeam(state, 'red', redAutoDropAt), false);
 const legalDropAt = state.dropStartsAt + 100;
 assert.equal(isBattleRoyalDropShipDroppable(state, legalDropAt), true);
 assert.equal(buildBattleRoyalDropSnapshot(state, legalDropAt).ship.canDrop, true);
+assert.equal(startBattleRoyalTeamDrop(state, 'red', legalDropAt, 'red-2'), false);
 assert.equal(startBattleRoyalTeamDrop(state, 'red', legalDropAt), true);
 assert.equal(startBattleRoyalTeamDrop(state, 'red', legalDropAt + 1), false);
 assert.equal(state.players.get('red-1')?.status, 'dropping');
@@ -171,7 +175,6 @@ assert.ok(squadLeader);
 assert.ok(squadWing);
 assert.equal(squadLeader.attachedToPlayerId, null);
 assert.equal(squadWing.attachedToPlayerId, 'leader-red');
-const followOffset = { ...squadWing.followOffset };
 setBattleRoyalDropPlayerInput(squadFollowState, 'leader-red', playerInput({
   moveForward: true,
   lookYaw: -Math.PI / 2,
@@ -187,8 +190,9 @@ advanceBattleRoyalDropState({
   getGroundY: flatGroundY,
   clampToPlayableMap: unclamped,
 });
-assert.equal(Math.abs((squadWing.position.x - squadLeader.position.x) - followOffset.x) < 0.001, true);
-assert.equal(Math.abs((squadWing.position.z - squadLeader.position.z) - followOffset.z) < 0.001, true);
+assert.equal(Math.abs(squadWing.position.x - squadLeader.position.x) < 0.001, true);
+assert.equal(Math.abs(squadWing.position.y - squadLeader.position.y) < 0.001, true);
+assert.equal(Math.abs(squadWing.position.z - squadLeader.position.z) < 0.001, true);
 setBattleRoyalDropPlayerInput(squadFollowState, 'wing-red', playerInput({
   ultimate: true,
   moveBackward: true,
@@ -201,8 +205,9 @@ advanceBattleRoyalDropState({
   getGroundY: flatGroundY,
   clampToPlayableMap: unclamped,
 });
-assert.equal(squadWing.attachedToPlayerId, null);
-assert.equal(Math.abs((squadWing.position.x - squadLeader.position.x) - followOffset.x) > 0.5, true);
+assert.equal(squadWing.attachedToPlayerId, 'leader-red');
+assert.equal(Math.abs(squadWing.position.x - squadLeader.position.x) < 0.001, true);
+assert.equal(Math.abs(squadWing.position.z - squadLeader.position.z) < 0.001, true);
 
 const pitchGuidedState = createBattleRoyalDropState(
   manifest,

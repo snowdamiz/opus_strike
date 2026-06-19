@@ -79,6 +79,7 @@ export interface ApplyDamageInput<TPlayer> {
   sourcePosition?: Vec3 | null;
   sourceDirection?: Vec3 | null;
   allowFriendlyFire?: boolean;
+  bypassSpawnProtection?: boolean;
   bypassPersonalShield?: boolean;
   skipDamageBudget?: boolean;
   absorbDamage?: (damage: number, context: DamageAbsorptionContext<TPlayer>) => DamageAbsorptionResult;
@@ -300,7 +301,7 @@ export function applyDamage<TPlayer>(
     return rejected('friendly_fire');
   }
   const spawnProtectionUntil = adapter.getSpawnProtectionUntil(target) ?? 0;
-  if (spawnProtectionUntil > 0 && runtime.now < spawnProtectionUntil) {
+  if (!input.bypassSpawnProtection && spawnProtectionUntil > 0 && runtime.now < spawnProtectionUntil) {
     return rejected('spawn_protection');
   }
   if (adapter.isDamageImmune?.(target)) return rejected('immune');

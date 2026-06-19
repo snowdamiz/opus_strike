@@ -73,6 +73,7 @@ export class MatchSnapshotRuntime {
       snapshot.safeZone ? this.quantizePosition(snapshot.safeZone.radius) : 0,
       snapshot.safeZone ? this.quantizePosition(snapshot.safeZone.center.x) : 0,
       snapshot.safeZone ? this.quantizePosition(snapshot.safeZone.center.z) : 0,
+      snapshot.safeZone?.nextZoneRevealsAt ?? 0,
       snapshot.safeZone?.warning ? 1 : 0,
       snapshot.safeZone?.shrinking ? 1 : 0,
       snapshot.battleRoyalDrop?.phaseStartedAt ?? 0,

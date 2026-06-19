@@ -32,7 +32,9 @@ import { getPhysicsWorld, isPhysicsReady, raycast, usePhysics } from '../../hook
 import { useNetwork } from '../../contexts/NetworkContext';
 import {
   playSharedBlazeAirstrikeSound,
+  playSharedLoop,
   playSharedSound,
+  stopSharedLoop,
   setAudioListenerTransform,
   useAbilitySounds,
   useMovementSounds,
@@ -221,6 +223,8 @@ export type {
 
 const INACTIVE_INPUT_STATE = createEmptyInputState();
 const DEFAULT_FLAMETHROWER_DIRECTION = { x: 0, y: 0, z: -1 };
+const CHRONOS_LIFELINE_READY_LOOP_ID = 'local-chronos-lifeline-ready';
+const CHRONOS_LIFELINE_READY_FADE_IN_MS = 40;
 const CHRONOS_TIMEBREAK_CHARGE_FADE_OUT_MS = 110;
 const MOVEMENT_COMMAND_TARGET_PACKET_SIZE = 3;
 const MOVEMENT_COMMAND_MAX_FLUSH_AGE_MS = 1000 / TICK_RATE;
@@ -1642,7 +1646,12 @@ function runBattleRoyalDeploymentFrame(
     isJetpacking: isDropping,
     isGliding: false,
   };
-  const canSendDropInteract = dropPlayer?.status !== 'aboard' || drop?.ship.canDrop === true;
+  const isDropMaster = Boolean(dropPlayer && dropPlayer.attachedToPlayerId === null);
+  const canSendDropInteract = Boolean(
+    dropPlayer?.status === 'aboard' &&
+    isDropMaster &&
+    drop?.ship.canDrop === true
+  );
 
   const commandInput: InputState = {
     ...frameInput,
@@ -1653,11 +1662,10 @@ function runBattleRoyalDeploymentFrame(
     jump: false,
     ability1: false,
     ability2: false,
-    ultimate: isDropping ? frameInput.ultimate : false,
+    ultimate: false,
   };
   cameraControl.updateCameraRotation(camera, false, false, dt);
-  const isAttachedDropFollower = Boolean(dropPlayer?.attachedToPlayerId);
-  const predictedDropState = sendDropCommands && isDropping && (!isAttachedDropFollower || commandInput.ultimate)
+  const predictedDropState = sendDropCommands && isDropping && isDropMaster
     ? predictLocalBattleRoyalDrop(localPlayer, commandInput, {
       lookYaw: cameraControl.refs.yaw.current,
       lookPitch: cameraControl.refs.pitch.current,
@@ -1861,7 +1869,11 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     useGameStore.getState().setChronosLifelineQueuedHud(queued);
     setChronosLifelineQueued(queued, timestampMs);
     if (queued && !wasQueued) {
-      void playSharedSound('chronosLifelineActive');
+      void playSharedLoop(CHRONOS_LIFELINE_READY_LOOP_ID, 'chronosLifelineActive', {
+        fadeInMs: CHRONOS_LIFELINE_READY_FADE_IN_MS,
+      });
+    } else if (!queued) {
+      stopSharedLoop(CHRONOS_LIFELINE_READY_LOOP_ID);
     }
   }, []);
 

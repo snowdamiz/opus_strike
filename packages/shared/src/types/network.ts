@@ -264,6 +264,7 @@ export interface SafeZoneSnapshot {
   radius: number;
   nextCenter: Vec3;
   nextRadius: number;
+  nextZoneRevealsAt: number;
   shrinkStartsAt: number;
   phaseEndsAt: number;
   damagePerSecond: number;

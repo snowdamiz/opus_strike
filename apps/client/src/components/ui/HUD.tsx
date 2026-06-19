@@ -505,32 +505,31 @@ function BattleRoyalDropPrompt({
   status,
   canDrop,
   interactKeyLabel,
-  detachKeyLabel,
   attachedToPlayerId,
 }: {
   gamePhase: string;
   status: BattleRoyalDropPlayerStatus | null;
   canDrop: boolean;
   interactKeyLabel: string;
-  detachKeyLabel: string;
   attachedToPlayerId: string | null;
 }) {
   if (gamePhase !== 'deployment' || status === null || status === 'landed') return null;
 
   const isAboard = status === 'aboard';
-  const isAttachedFollower = status === 'dropping' && attachedToPlayerId !== null;
-  const showInputLabel = isAttachedFollower || !isAboard || canDrop;
-  const inputLabel = isAttachedFollower ? detachKeyLabel : isAboard ? interactKeyLabel : 'WASD';
+  const isDropMaster = attachedToPlayerId === null;
+  const isSquadPassenger = !isDropMaster;
+  const showInputLabel = isDropMaster && (!isAboard || canDrop);
+  const inputLabel = isAboard ? interactKeyLabel : 'WASD';
   const statusLabel = isAboard
-    ? (canDrop ? 'READY' : 'STANDBY')
-    : isAttachedFollower ? 'SQUAD DROP' : 'DESCENT';
+    ? (isDropMaster && canDrop ? 'DROP MASTER' : 'STANDBY')
+    : isSquadPassenger ? 'SQUAD POD' : 'DROP MASTER';
   const primaryText = isAboard
-    ? (canDrop ? 'DROP' : 'DROP OPENS')
-    : isAttachedFollower ? 'DETACH'
+    ? (isDropMaster ? (canDrop ? 'DROP' : 'DROP OPENS') : 'WAIT FOR DROP')
+    : isSquadPassenger ? 'RIDING POD'
     : 'STEER POD';
   const secondaryText = isAboard
-    ? (canDrop ? 'deploy with squad' : 'over island')
-    : isAttachedFollower ? 'following leader'
+    ? (isDropMaster ? (canDrop ? 'deploy squad' : 'over island') : 'drop master controls launch')
+    : isSquadPassenger ? 'drop master steering'
     : 'mouse to guide';
 
   return (
@@ -960,14 +959,12 @@ export function HUD() {
     crosshairColor,
     showKillFeed,
     interactKeybind,
-    ultimateKeybind,
   } = useSettingsStore(
     useShallow(state => ({
       crosshairStyle: state.settings.crosshairStyle,
       crosshairColor: state.settings.crosshairColor,
       showKillFeed: state.settings.showKillFeed,
       interactKeybind: state.settings.keybindings.interact,
-      ultimateKeybind: state.settings.keybindings.ultimate,
     }))
   );
   const killFeed = useCombatFeedbackStore((state) => state.killFeed);
@@ -994,7 +991,8 @@ export function HUD() {
   )) ?? null;
   const battleRoyalDropStatus = battleRoyalDropPlayer?.status ?? null;
   const battleRoyalDropAttachedToPlayerId = battleRoyalDropPlayer?.attachedToPlayerId ?? null;
-  const battleRoyalDropCanDrop = battleRoyalDrop?.ship.canDrop === true;
+  const battleRoyalDropCanDrop = battleRoyalDrop?.ship.canDrop === true &&
+    battleRoyalDropAttachedToPlayerId === null;
   const isBattleRoyalPreLanding = gameplayMode === 'battle_royal' && (
     battleRoyalDropStatus === 'aboard' ||
     battleRoyalDropStatus === 'dropping'
@@ -1068,7 +1066,6 @@ export function HUD() {
           status={battleRoyalDropStatus}
           canDrop={battleRoyalDropCanDrop}
           interactKeyLabel={formatKeybind(interactKeybind)}
-          detachKeyLabel={formatKeybind(ultimateKeybind)}
           attachedToPlayerId={battleRoyalDropAttachedToPlayerId}
         />
       )}

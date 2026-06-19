@@ -122,6 +122,7 @@ function createPhaseState(input: {
   baseRadius: number;
   phaseIndex: number;
   now: number;
+  nextZoneRevealsAt?: number;
 }): BattleRoyalSafeZoneState {
   const phase = SAFE_ZONE_PHASES[Math.min(input.phaseIndex, SAFE_ZONE_PHASES.length - 1)];
   const fromCenter = input.previous?.nextCenter ?? input.baseCenter;
@@ -152,6 +153,7 @@ function createPhaseState(input: {
     radius: fromRadius,
     nextCenter,
     nextRadius,
+    nextZoneRevealsAt: input.nextZoneRevealsAt ?? input.now,
     shrinkStartsAt,
     phaseEndsAt,
     damagePerSecond: phase.damagePerSecond,
@@ -162,7 +164,8 @@ function createPhaseState(input: {
 
 export function createBattleRoyalSafeZoneState(
   manifest: VoxelMapManifest,
-  now: number
+  now: number,
+  options: { firstNextZoneRevealsAt?: number } = {}
 ): BattleRoyalSafeZoneState {
   const baseCenter = getBoundaryCenter(manifest);
   const baseRadius = getBoundaryRadius(manifest, baseCenter);
@@ -173,6 +176,7 @@ export function createBattleRoyalSafeZoneState(
     baseRadius,
     phaseIndex: 0,
     now,
+    nextZoneRevealsAt: options.firstNextZoneRevealsAt,
   });
 }
 

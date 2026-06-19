@@ -348,6 +348,7 @@ export function setupLobbyListeners(
     setMapThemeId(data.mapThemeId ?? null);
     setMapSize(data.mapSize);
     useGameStore.getState().setMapProfileId(data.mapProfileId);
+    setAppPhase('match_loading');
     void requestMapPreviewManifest({
       seed: data.mapSeed,
       themeId: data.mapThemeId ?? null,

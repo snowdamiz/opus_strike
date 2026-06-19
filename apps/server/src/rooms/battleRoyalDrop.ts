@@ -39,7 +39,7 @@ export interface BattleRoyalDropPlayerState {
   droppedAt: number | null;
   landedAt: number | null;
   slotOffset: Vec3;
-  followOffset: Vec3;
+  landingOffset: Vec3;
   attachedToPlayerId: string | null;
   latestInput: PlayerInput | null;
 }
@@ -256,6 +256,17 @@ function createSlotOffset(index: number): Vec3 {
   };
 }
 
+function createLandingOffset(index: number): Vec3 {
+  if (index === 0) return { x: 0, y: 0, z: 0 };
+  const angle = -Math.PI / 2 + ((index - 1) / 3) * Math.PI * 2;
+  const radius = 1.45;
+  return {
+    x: Math.cos(angle) * radius,
+    y: 0,
+    z: Math.sin(angle) * radius,
+  };
+}
+
 function selectBattleRoyalDropTeamLeaders(
   participants: readonly BattleRoyalDropParticipant[]
 ): Map<Team, string> {
@@ -272,15 +283,6 @@ function selectBattleRoyalDropTeamLeaders(
   }
 
   return leaders;
-}
-
-function getFollowOffset(slotOffset: Vec3, leaderSlotOffset: Vec3 | null): Vec3 {
-  if (!leaderSlotOffset) return { x: 0, y: 0, z: 0 };
-  return {
-    x: slotOffset.x - leaderSlotOffset.x,
-    y: slotOffset.y - leaderSlotOffset.y,
-    z: slotOffset.z - leaderSlotOffset.z,
-  };
 }
 
 function getTeamAutoDropAt(input: {
@@ -321,6 +323,39 @@ export function getBattleRoyalDropShipVelocity(state: BattleRoyalDropState): Vec
     y: 0,
     z: (state.ship.end.z - state.ship.start.z) / seconds,
   };
+}
+
+export function isBattleRoyalDropTeamLeader(
+  state: BattleRoyalDropState,
+  playerId: string
+): boolean {
+  const player = state.players.get(playerId);
+  return Boolean(player && state.teamLeaderIds.get(player.team) === playerId);
+}
+
+function ensureBattleRoyalDropTeamLeader(
+  state: BattleRoyalDropState,
+  team: Team
+): BattleRoyalDropPlayerState | null {
+  const currentLeaderId = state.teamLeaderIds.get(team);
+  const currentLeader = currentLeaderId ? state.players.get(currentLeaderId) ?? null : null;
+  if (currentLeader) {
+    currentLeader.attachedToPlayerId = null;
+    return currentLeader;
+  }
+
+  const nextLeader = Array.from(state.players.values()).find((player) => (
+    player.team === team && !player.isBot
+  )) ?? Array.from(state.players.values()).find((player) => player.team === team) ?? null;
+  if (!nextLeader) return null;
+
+  state.teamLeaderIds.set(team, nextLeader.playerId);
+  nextLeader.attachedToPlayerId = null;
+  for (const player of state.players.values()) {
+    if (player.team !== team || player.playerId === nextLeader.playerId || player.status === 'landed') continue;
+    player.attachedToPlayerId = nextLeader.playerId;
+  }
+  return nextLeader;
 }
 
 export function createBattleRoyalDropState(
@@ -379,6 +414,7 @@ export function createBattleRoyalDropState(
     const teamSlot = teamSlotCounts.get(participant.team) ?? 0;
     teamSlotCounts.set(participant.team, teamSlot + 1);
     const slotOffset = createSlotOffset(teamSlot);
+    const landingOffset = createLandingOffset(teamSlot);
     const attachedToPlayerId = teamLeaderIds.get(participant.team) ?? null;
     players.set(participant.playerId, {
       playerId: participant.playerId,
@@ -394,16 +430,10 @@ export function createBattleRoyalDropState(
       droppedAt: null,
       landedAt: null,
       slotOffset,
-      followOffset: { x: 0, y: 0, z: 0 },
+      landingOffset,
       attachedToPlayerId: attachedToPlayerId === participant.playerId ? null : attachedToPlayerId,
       latestInput: null,
     });
-  }
-
-  for (const player of players.values()) {
-    const leaderId = teamLeaderIds.get(player.team);
-    const leader = leaderId ? players.get(leaderId) ?? null : null;
-    player.followOffset = getFollowOffset(player.slotOffset, leader?.slotOffset ?? null);
   }
 
   return {
@@ -428,9 +458,6 @@ export function setBattleRoyalDropPlayerInput(
   const player = state.players.get(playerId);
   if (!player) return;
   player.latestInput = input;
-  if (player.status === 'dropping' && input.ultimate) {
-    player.attachedToPlayerId = null;
-  }
 }
 
 export function addBattleRoyalDropParticipant(
@@ -442,29 +469,37 @@ export function addBattleRoyalDropParticipant(
     .filter((player) => player.team === participant.team)
     .length;
   const slotOffset = createSlotOffset(teamSlot);
+  const landingOffset = createLandingOffset(teamSlot);
   const shipPosition = getBattleRoyalDropShipPosition(state, now);
   const shipVelocity = getBattleRoyalDropShipVelocity(state);
   const alreadyDropped = state.teamDroppedAt.has(participant.team);
-  const leaderId = state.teamLeaderIds.get(participant.team);
-  const leader = leaderId ? state.players.get(leaderId) ?? null : null;
+  const leader = ensureBattleRoyalDropTeamLeader(state, participant.team);
+  const leaderId = leader?.playerId ?? null;
   const attachedToPlayerId = leaderId && leaderId !== participant.playerId ? leaderId : null;
+  const initialPosition = alreadyDropped && leader
+    ? {
+      x: leader.position.x + landingOffset.x,
+      y: leader.position.y + landingOffset.y,
+      z: leader.position.z + landingOffset.z,
+    }
+    : {
+      x: shipPosition.x + slotOffset.x,
+      y: shipPosition.y + slotOffset.y,
+      z: shipPosition.z + slotOffset.z,
+    };
   const player: BattleRoyalDropPlayerState = {
     playerId: participant.playerId,
     team: participant.team,
     isBot: participant.isBot === true,
     status: alreadyDropped ? 'dropping' : 'aboard',
-    position: {
-      x: shipPosition.x + slotOffset.x,
-      y: shipPosition.y + slotOffset.y,
-      z: shipPosition.z + slotOffset.z,
-    },
+    position: initialPosition,
     velocity: alreadyDropped
       ? { x: shipVelocity.x, y: -BATTLE_ROYAL_DROP_POD_VERTICAL_SPEED, z: shipVelocity.z }
       : shipVelocity,
     droppedAt: alreadyDropped ? now : null,
     landedAt: null,
     slotOffset,
-    followOffset: getFollowOffset(slotOffset, leader?.slotOffset ?? null),
+    landingOffset,
     attachedToPlayerId,
     latestInput: null,
   };
@@ -495,23 +530,28 @@ export function shouldAutoDropBattleRoyalTeam(
 export function startBattleRoyalTeamDrop(
   state: BattleRoyalDropState,
   team: Team,
-  now: number
+  now: number,
+  requestedByPlayerId?: string
 ): boolean {
   if (state.teamDroppedAt.has(team)) return false;
   if (!isBattleRoyalDropShipDroppable(state, now)) return false;
+  const leader = ensureBattleRoyalDropTeamLeader(state, team);
+  if (!leader) return false;
+  if (requestedByPlayerId && requestedByPlayerId !== leader.playerId) return false;
 
   const shipPosition = getBattleRoyalDropShipPosition(state, now);
   const shipVelocity = getBattleRoyalDropShipVelocity(state);
+  const leaderDropPosition = {
+    x: shipPosition.x + leader.slotOffset.x,
+    y: shipPosition.y + leader.slotOffset.y,
+    z: shipPosition.z + leader.slotOffset.z,
+  };
   let droppedAny = false;
   for (const player of state.players.values()) {
     if (player.team !== team || player.status !== 'aboard') continue;
     player.status = 'dropping';
     player.droppedAt = now;
-    player.position = {
-      x: shipPosition.x + player.slotOffset.x,
-      y: shipPosition.y + player.slotOffset.y,
-      z: shipPosition.z + player.slotOffset.z,
-    };
+    player.position = { ...leaderDropPosition };
     player.velocity = {
       x: shipVelocity.x,
       y: -BATTLE_ROYAL_DROP_POD_VERTICAL_SPEED,
@@ -565,30 +605,33 @@ function advanceAttachedDroppingPlayer(
   player: BattleRoyalDropPlayerState,
   leader: BattleRoyalDropPlayerState
 ): void {
+  if (leader.status !== 'landed') {
+    player.position = { ...leader.position };
+    player.velocity = { ...leader.velocity };
+    return;
+  }
+
   const proposed = input.clampToPlayableMap({
-    x: leader.position.x + player.followOffset.x,
-    y: leader.position.y + player.followOffset.y,
-    z: leader.position.z + player.followOffset.z,
+    x: leader.position.x + player.landingOffset.x,
+    y: leader.position.y + player.landingOffset.y,
+    z: leader.position.z + player.landingOffset.z,
   });
   const groundY = input.getGroundY(proposed) ?? 0;
   const landingY = groundY + BATTLE_ROYAL_DROP_POD_LANDING_CLEARANCE;
-  const nextY = Math.max(landingY, proposed.y);
-  const landed = leader.status === 'landed' || nextY <= landingY + 0.001;
   player.position = {
     x: proposed.x,
-    y: landed ? landingY : nextY,
+    y: landingY,
     z: proposed.z,
   };
-  player.velocity = landed ? { x: 0, y: 0, z: 0 } : { ...leader.velocity };
-  if (landed) {
-    player.status = 'landed';
-    player.landedAt = input.now;
-    player.attachedToPlayerId = null;
-  }
+  player.velocity = { x: 0, y: 0, z: 0 };
+  player.status = 'landed';
+  player.landedAt = input.now;
+  player.attachedToPlayerId = null;
 }
 
 export function advanceBattleRoyalDropState(input: AdvanceBattleRoyalDropInput): void {
   for (const team of new Set(Array.from(input.state.players.values()).map((player) => player.team))) {
+    ensureBattleRoyalDropTeamLeader(input.state, team);
     if (shouldAutoDropBattleRoyalTeam(input.state, team, input.now)) {
       startBattleRoyalTeamDrop(input.state, team, input.now);
     }
@@ -604,10 +647,8 @@ export function advanceBattleRoyalDropState(input: AdvanceBattleRoyalDropInput):
 
   for (const player of input.state.players.values()) {
     if (player.status !== 'dropping' || !player.attachedToPlayerId) continue;
-    const leader = input.state.players.get(player.attachedToPlayerId);
+    const leader = ensureBattleRoyalDropTeamLeader(input.state, player.team);
     if (!leader || (leader.status !== 'dropping' && leader.status !== 'landed')) {
-      player.attachedToPlayerId = null;
-      advanceDroppingPlayer(input, player);
       continue;
     }
     advanceAttachedDroppingPlayer(input, player, leader);
@@ -621,7 +662,17 @@ export function forceLandBattleRoyalDropState(input: AdvanceBattleRoyalDropInput
 
   for (const player of input.state.players.values()) {
     if (player.status === 'landed') continue;
-    const clamped = input.clampToPlayableMap(player.position);
+    const leader = player.attachedToPlayerId
+      ? input.state.players.get(player.attachedToPlayerId) ?? null
+      : null;
+    const basePosition = leader
+      ? {
+        x: leader.position.x + player.landingOffset.x,
+        y: leader.position.y + player.landingOffset.y,
+        z: leader.position.z + player.landingOffset.z,
+      }
+      : player.position;
+    const clamped = input.clampToPlayableMap(basePosition);
     const groundY = input.getGroundY(clamped) ?? 0;
     player.position = {
       x: clamped.x,

@@ -4,9 +4,9 @@ import type {
   BattleRoyalDropSnapshot,
 } from '@voxel-strike/shared';
 
-const DROP_SHIP_CAMERA_DISTANCE = 44;
-const DROP_SHIP_CAMERA_HEIGHT = 18;
-const DROP_SHIP_CAMERA_LOOK_AHEAD = 7;
+const DROP_SHIP_CAMERA_DISTANCE = 36;
+const DROP_SHIP_CAMERA_HEIGHT = 16;
+const DROP_SHIP_CAMERA_LOOK_AHEAD = 10;
 const DROP_POD_CAMERA_DISTANCE = 13;
 const DROP_POD_CAMERA_HEIGHT = 2.4;
 const DROP_POD_CAMERA_LOOK_AHEAD = 6;
@@ -105,14 +105,18 @@ export function writeBattleRoyalDeploymentCameraTarget(input: {
     return input.target;
   }
 
-  if (input.livePodPosition) {
+  const podPlayer = dropPlayer.attachedToPlayerId
+    ? findBattleRoyalDropPlayer(input.drop, dropPlayer.attachedToPlayerId) ?? dropPlayer
+    : dropPlayer;
+
+  if (!dropPlayer.attachedToPlayerId && input.livePodPosition) {
     input.target.position.copy(input.livePodPosition);
   } else {
-    writeBattleRoyalDropPlayerSnapshotPosition(dropPlayer, input.target.position);
+    writeBattleRoyalDropPlayerSnapshotPosition(podPlayer, input.target.position);
   }
-  input.target.yaw = dropPlayer.status === 'landed'
+  input.target.yaw = podPlayer.status === 'landed'
     ? input.target.yaw
-    : getBattleRoyalDropPodYaw(dropPlayer);
+    : getBattleRoyalDropPodYaw(podPlayer);
   input.target.mode = 'pod';
   return input.target;
 }

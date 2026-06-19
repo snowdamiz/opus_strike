@@ -42,6 +42,33 @@ function makeDrop(status: BattleRoyalDropSnapshot['players'][number]['status']):
   };
 }
 
+function makeAttachedSquadDrop(): BattleRoyalDropSnapshot {
+  const drop = makeDrop('dropping');
+  drop.players = [
+    {
+      playerId: 'leader-player',
+      team: 'red',
+      status: 'dropping',
+      position: { x: 30, y: 72, z: -24 },
+      velocity: { x: 6, y: -BATTLE_ROYAL_DROP_POD_VERTICAL_SPEED, z: -2 },
+      droppedAt: 1_000,
+      landedAt: null,
+      attachedToPlayerId: null,
+    },
+    {
+      playerId: 'local-player',
+      team: 'red',
+      status: 'dropping',
+      position: { x: 10, y: 68, z: -8 },
+      velocity: { x: -3, y: -BATTLE_ROYAL_DROP_POD_VERTICAL_SPEED, z: 5 },
+      droppedAt: 1_000,
+      landedAt: null,
+      attachedToPlayerId: 'leader-player',
+    },
+  ];
+  return drop;
+}
+
 const target: BattleRoyalDeploymentCameraTarget = {
   mode: 'ship',
   position: new THREE.Vector3(999, 999, 999),
@@ -60,6 +87,19 @@ writeBattleRoyalDeploymentCameraTarget({
 assert.equal(target.mode, 'pod');
 assert.deepEqual(target.position.toArray(), [21, 70, -9]);
 assert.equal(target.yaw, Math.atan2(3, -4));
+
+target.position.set(999, 999, 999);
+writeBattleRoyalDeploymentCameraTarget({
+  drop: makeAttachedSquadDrop(),
+  playerId: 'local-player',
+  now: 2_000,
+  livePodPosition,
+  target,
+});
+
+assert.equal(target.mode, 'pod');
+assert.deepEqual(target.position.toArray(), [30, 72, -24]);
+assert.equal(target.yaw, Math.atan2(6, -2));
 
 const camera = new THREE.PerspectiveCamera();
 const cameraPosition = new THREE.Vector3();

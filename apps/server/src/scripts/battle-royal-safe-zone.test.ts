@@ -28,6 +28,8 @@ assert.equal(initial.seed, manifest.seed);
 assert.deepEqual(initial.baseCenter, { x: 0, y: 0, z: 0 });
 assert.equal(initial.radius, initial.baseRadius);
 assert.equal(initial.nextRadius < initial.radius, true);
+assert.equal(initial.nextZoneRevealsAt, startedAt);
+assert.equal(initial.damagePerSecond, 3);
 assert.equal(initial.shrinking, false);
 assert.equal(initial.warning, false);
 assert.equal(isOutsideBattleRoyalSafeZone(initial, { x: 0, z: 0 }), false);
@@ -52,9 +54,20 @@ assert.equal(nextPhase.phaseIndex, 1);
 assert.equal(nextPhase.fromRadius, initial.nextRadius);
 assert.deepEqual(nextPhase.fromCenter, initial.nextCenter);
 assert.equal(nextPhase.nextRadius < initial.nextRadius, true);
+assert.equal(nextPhase.nextZoneRevealsAt, initial.phaseEndsAt);
+assert.equal(nextPhase.damagePerSecond, 5);
+
+const delayedRevealAt = startedAt + 45_000;
+const delayedInitial = createBattleRoyalSafeZoneState(manifest, delayedRevealAt, {
+  firstNextZoneRevealsAt: delayedRevealAt,
+});
+assert.equal(delayedInitial.phaseStartedAt, delayedRevealAt);
+assert.equal(delayedInitial.nextZoneRevealsAt, delayedRevealAt);
+assert.equal(delayedInitial.shrinkStartsAt, delayedRevealAt + 90_000);
 
 const late = updateBattleRoyalSafeZoneState(initial, initial.phaseEndsAt + 1_000_000);
 assert.equal(late.phaseIndex > 1, true);
 assert.equal(late.radius >= 4, true);
+assert.equal(late.damagePerSecond > nextPhase.damagePerSecond, true);
 
 console.log('battle royal safe zone tests passed');

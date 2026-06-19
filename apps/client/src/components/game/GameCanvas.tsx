@@ -9,6 +9,7 @@ import { WorldAtmosphere } from './WorldAtmosphere';
 import { PlayerController } from './PlayerController';
 import { BattleRoyalTeamSpectatorCameraController } from './BattleRoyalTeamSpectatorCameraController';
 import { BattleRoyalDropDeployment } from './BattleRoyalDropDeployment';
+import { BattleRoyalSafeZone } from './BattleRoyalSafeZone';
 import { OtherPlayers } from './OtherPlayers';
 import { RagdollManager } from './RagdollManager';
 import { Flags } from './Flags';
@@ -984,6 +985,7 @@ export function GameCanvas({
         />
 
         <BattleRoyalDropDeployment />
+        <BattleRoyalSafeZone />
 
         {/* Grid helper for visibility */}
         <Grid

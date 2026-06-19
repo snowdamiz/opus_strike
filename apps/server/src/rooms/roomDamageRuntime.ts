@@ -24,6 +24,7 @@ export interface RoomDamageContext {
   sourcePosition?: PlainVec3 | null;
   sourceDirection?: PlainVec3 | null;
   allowFriendlyFire?: boolean;
+  bypassSpawnProtection?: boolean;
   bypassPersonalShield?: boolean;
   skipDamageBudget?: boolean;
 }
@@ -194,6 +195,7 @@ export class RoomDamageRuntime {
       sourcePosition,
       sourceDirection,
       allowFriendlyFire: context.allowFriendlyFire,
+      bypassSpawnProtection: context.bypassSpawnProtection,
       bypassPersonalShield: context.bypassPersonalShield,
       skipDamageBudget: context.skipDamageBudget,
       absorbDamage: (damageToApply) => {

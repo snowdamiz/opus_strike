@@ -757,6 +757,7 @@ const PLAYER_INTEREST_INTERVAL_MS = 200;
 const MATCH_SNAPSHOT_DRIFT_SYNC_INTERVAL_MS = 2000;
 const LOW_FREQUENCY_STATE_INTERVAL_MS = 250;
 const PLAYER_PING_BROADCAST_INTERVAL_MS = 250;
+const BATTLE_ROYAL_FIRST_SAFE_ZONE_REVEAL_BUFFER_MS = 3_000;
 const ROOM_MOVEMENT_EXTRA_CATCHUP_SUBSTEPS_PER_TICK = SERVER_MOVEMENT_SUBSTEPS_PER_TICK * 4;
 const MOVEMENT_GAMEPLAY_COMMAND_BUTTON_MASK =
   MOVEMENT_BUTTON_PRIMARY_FIRE |
@@ -8134,7 +8135,7 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private startPlaying(options: { preserveAlivePlayers?: boolean } = {}) {
+  private startPlaying(options: { preserveAlivePlayers?: boolean; firstSafeZoneRevealsAt?: number } = {}) {
     if (this.matchCancelled) return;
     if (!this.ensureCompetitiveNetworkQualityForStart({ cancelPending: true })) return;
 
@@ -8189,10 +8190,13 @@ export class GameRoom extends Room<GameState> {
     resetFlagsFromManifest(this.state, mapManifest);
     this.powerupBoosts.clearAll();
     this.powerupPickups.reset(mapManifest, 0);
+    const firstSafeZoneRevealsAt = Math.max(now, options.firstSafeZoneRevealsAt ?? now);
     this.battleRoyalSafeZone = isBattleRoyalMode(this.gameplayMode)
-      ? createBattleRoyalSafeZoneState(mapManifest, now)
+      ? createBattleRoyalSafeZoneState(mapManifest, firstSafeZoneRevealsAt, {
+        firstNextZoneRevealsAt: firstSafeZoneRevealsAt,
+      })
       : null;
-    this.nextBattleRoyalSafeZoneDamageAt = now + 1000;
+    this.nextBattleRoyalSafeZoneDamageAt = (this.battleRoyalSafeZone?.phaseStartedAt ?? now) + 1000;
 
     this.broadcastPhaseChange('playing');
     this.broadcastTracked('powerupState', this.powerupPickups.buildStateMessage(
@@ -8253,6 +8257,7 @@ export class GameRoom extends Room<GameState> {
           y: player.position.y,
           z: safeZone.center.z,
         },
+        bypassSpawnProtection: true,
         bypassPersonalShield: true,
         skipDamageBudget: true,
       });
@@ -8310,7 +8315,7 @@ export class GameRoom extends Room<GameState> {
       player.lastInput = latestInput;
       setBattleRoyalDropPlayerInput(drop, player.id, latestInput);
       if (latestInput.interact) {
-        startBattleRoyalTeamDrop(drop, player.team as Team, now);
+        startBattleRoyalTeamDrop(drop, player.team as Team, now, player.id);
       }
 
       authority.metrics.commandsProcessed += processedThisTick;
@@ -8427,7 +8432,10 @@ export class GameRoom extends Room<GameState> {
     this.state.players.forEach((player) => {
       this.markMovementBarrier(player.id, 'spawn');
     });
-    this.startPlaying({ preserveAlivePlayers: true });
+    this.startPlaying({
+      preserveAlivePlayers: true,
+      firstSafeZoneRevealsAt: Math.max(now, drop.phaseEndsAt) + BATTLE_ROYAL_FIRST_SAFE_ZONE_REVEAL_BUFFER_MS,
+    });
   }
 
   private updateBattleRoyalDeployment(): void {

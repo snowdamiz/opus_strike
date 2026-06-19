@@ -10,6 +10,7 @@ import { useGameStore } from '../../../store/gameStore';
 import { visualStore } from '../../../store/visualStore';
 import { measureFrameWork } from '../../../movement/networkDiagnostics';
 import { MINIMAP_COLORS } from '../../../styles/colorTokens';
+import { isSafeZoneTargetRevealed } from '../../../utils/battleRoyalSafeZoneReveal';
 import { getPreparedVoxelMap, prepareVoxelMapCpu } from '../../../utils/mapWarmup/mapPrepCache';
 import { getStaticMinimapLayer, resizeCanvas } from './minimapCanvas';
 import {
@@ -152,7 +153,7 @@ function drawLiveOverlay(
   const teamColor = store.isPracticeMode ? MINIMAP_COLORS.live.practiceTeam : getTeamColor(localPlayer.team);
 
   if (store.safeZone?.enabled) {
-    drawSafeZone(ctx, projection, store.safeZone);
+    drawSafeZone(ctx, projection, store.safeZone, isSafeZoneTargetRevealed(store.safeZone));
   }
 
   if (store.gameplayMode === 'battle_royal' && store.battleRoyalDrop?.enabled) {
@@ -377,12 +378,11 @@ function drawLocalMarker(
 function drawSafeZone(
   ctx: CanvasRenderingContext2D,
   projection: MinimapProjection,
-  safeZone: NonNullable<ReturnType<typeof useGameStore.getState>['safeZone']>
+  safeZone: NonNullable<ReturnType<typeof useGameStore.getState>['safeZone']>,
+  showNextZone: boolean
 ): void {
   const center = worldToMinimap(projection, safeZone.center);
-  const nextCenter = worldToMinimap(projection, safeZone.nextCenter);
   const radius = Math.max(1, safeZone.radius * projection.scale);
-  const nextRadius = Math.max(1, safeZone.nextRadius * projection.scale);
 
   ctx.save();
   ctx.globalAlpha = safeZone.warning ? 0.95 : 0.74;
@@ -396,15 +396,19 @@ function drawSafeZone(
   ctx.fill();
   ctx.stroke();
 
-  ctx.setLineDash([4, 4]);
-  ctx.globalAlpha = 0.64;
-  ctx.lineWidth = 1.2;
-  ctx.shadowBlur = 0;
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
-  ctx.beginPath();
-  ctx.arc(nextCenter.x, nextCenter.y, nextRadius, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.setLineDash([]);
+  if (showNextZone) {
+    const nextCenter = worldToMinimap(projection, safeZone.nextCenter);
+    const nextRadius = Math.max(1, safeZone.nextRadius * projection.scale);
+    ctx.setLineDash([4, 4]);
+    ctx.globalAlpha = 0.64;
+    ctx.lineWidth = 1.2;
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.beginPath();
+    ctx.arc(nextCenter.x, nextCenter.y, nextRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
   ctx.restore();
 }
 

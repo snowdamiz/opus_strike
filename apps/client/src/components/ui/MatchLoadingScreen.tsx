@@ -1,23 +1,36 @@
 import { useEffect, useState } from 'react';
 import { LobbyBackdrop } from './LobbyBackdrop';
 
+export const MATCH_LOADING_INITIAL_PROGRESS = 8;
+const MATCH_LOADING_MAX_IN_PROGRESS = 99;
+const MATCH_LOADING_FAKE_TARGET_PROGRESS = 92;
+
 interface MatchLoadingScreenProps {
   isComplete?: boolean;
   progress?: number;
   label?: string;
+  initialProgress?: number;
+  onProgressChange?: (progress: number) => void;
+}
+
+function clampLoadingProgress(progress: number): number {
+  if (!Number.isFinite(progress)) return MATCH_LOADING_INITIAL_PROGRESS;
+  return Math.min(100, Math.max(MATCH_LOADING_INITIAL_PROGRESS, progress));
 }
 
 export function MatchLoadingScreen({
   isComplete = false,
   progress: coordinatorProgress,
   label = 'Systems',
+  initialProgress = MATCH_LOADING_INITIAL_PROGRESS,
+  onProgressChange,
 }: MatchLoadingScreenProps) {
-  const [progress, setProgress] = useState(8);
+  const [progress, setProgress] = useState(() => clampLoadingProgress(initialProgress));
   const targetProgress = isComplete
     ? 100
     : typeof coordinatorProgress === 'number'
-      ? Math.min(99, Math.max(8, coordinatorProgress * 100))
-      : 92;
+      ? Math.min(MATCH_LOADING_MAX_IN_PROGRESS, clampLoadingProgress(coordinatorProgress * 100))
+      : MATCH_LOADING_FAKE_TARGET_PROGRESS;
 
   useEffect(() => {
     if (isComplete) {
@@ -39,6 +52,14 @@ export function MatchLoadingScreen({
   useEffect(() => {
     setProgress((current) => Math.max(current, Math.min(targetProgress, current + 0.01)));
   }, [targetProgress]);
+
+  useEffect(() => {
+    setProgress((current) => Math.max(current, clampLoadingProgress(initialProgress)));
+  }, [initialProgress]);
+
+  useEffect(() => {
+    onProgressChange?.(progress);
+  }, [onProgressChange, progress]);
 
   const percent = Math.round(progress);
 

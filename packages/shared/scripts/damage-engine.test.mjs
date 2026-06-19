@@ -142,6 +142,44 @@ function adapter(players) {
 }
 
 {
+  const target = player('target', 'blue', { spawnProtectionUntil: 10_000 });
+  const players = new Map([[target.id, target]]);
+  const protectedResult = applyDamage({
+    adapter: adapter(players),
+    damageHistory: new Map(),
+    now: 1_000,
+    assistWindowMs: 10_000,
+  }, {
+    target,
+    source: null,
+    rawDamage: 10,
+    damageType: 'safe_zone',
+  });
+
+  assert.equal(protectedResult.applied, false);
+  assert.equal(protectedResult.rejectedReason, 'spawn_protection');
+  assert.equal(target.health, 100);
+
+  const bypassResult = applyDamage({
+    adapter: adapter(players),
+    damageHistory: new Map(),
+    now: 2_000,
+    assistWindowMs: 10_000,
+  }, {
+    target,
+    source: null,
+    rawDamage: 10,
+    damageType: 'safe_zone',
+    bypassSpawnProtection: true,
+    bypassPersonalShield: true,
+  });
+
+  assert.equal(bypassResult.applied, true);
+  assert.equal(bypassResult.damage, 10);
+  assert.equal(target.health, 90);
+}
+
+{
   assert.equal(calculateFalloffDamage(50, 0, 10, 0.5), 50);
   assert.equal(calculateFalloffDamage(50, 10, 10, 0.5), 25);
 

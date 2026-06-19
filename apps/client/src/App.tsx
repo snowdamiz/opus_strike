@@ -8,7 +8,7 @@ import { MapVoteScreen } from './components/ui/MapVoteScreen';
 import { HUD } from './components/ui/HUD';
 import { LoadingScreen } from './components/ui/LoadingScreen';
 import { PracticeLoadingScreen } from './components/ui/PracticeLoadingScreen';
-import { MatchLoadingScreen } from './components/ui/MatchLoadingScreen';
+import { MATCH_LOADING_INITIAL_PROGRESS, MatchLoadingScreen } from './components/ui/MatchLoadingScreen';
 import { TeleportEffects } from './components/ui/TeleportEffects';
 import { UltimateEffects } from './components/ui/UltimateEffects';
 import { SlideEffects } from './components/ui/SlideEffects';
@@ -86,6 +86,8 @@ export function App() {
   const [isStartupRampActive, setIsStartupRampActive] = useState(false);
   const mountedWarmupKeyRef = useRef<string | null>(null);
   const revealedWarmupKeyRef = useRef<string | null>(null);
+  const matchLoadingProgressRef = useRef(MATCH_LOADING_INITIAL_PROGRESS);
+  const wasTrackingMatchLoadingRef = useRef(false);
   const reportedMatchStartGateRef = useRef<number | null>(null);
   const { playLobbyMusic, playGameMusic, pauseMusic, resumeMusic } = useMusic();
   const { preloadSoundGroup } = useAudio();
@@ -109,13 +111,34 @@ export function App() {
       !isMatchSceneReady
     )
   );
+  const shouldTrackMatchLoadingProgress = appPhase === 'match_loading' || shouldPrepareMatchWorld;
 
   useEffect(() => {
     installLocalCombatStressScenario();
   }, []);
 
   useEffect(() => {
-    preloadSoundGroup(appPhase === 'matchmaking' || appPhase === 'in_lobby' || appPhase === 'map_vote' ? 'lobby' : 'menu');
+    if (!shouldTrackMatchLoadingProgress) {
+      wasTrackingMatchLoadingRef.current = false;
+      matchLoadingProgressRef.current = MATCH_LOADING_INITIAL_PROGRESS;
+      return;
+    }
+
+    if (!wasTrackingMatchLoadingRef.current) {
+      wasTrackingMatchLoadingRef.current = true;
+      matchLoadingProgressRef.current = MATCH_LOADING_INITIAL_PROGRESS;
+    }
+  }, [shouldTrackMatchLoadingProgress]);
+
+  useEffect(() => {
+    const shouldPreloadLobbyAudio = (
+      appPhase === 'matchmaking' ||
+      appPhase === 'in_lobby' ||
+      appPhase === 'map_vote' ||
+      appPhase === 'match_loading'
+    );
+
+    preloadSoundGroup(shouldPreloadLobbyAudio ? 'lobby' : 'menu');
   }, [appPhase, preloadSoundGroup]);
 
   useEffect(() => {
@@ -350,6 +373,10 @@ export function App() {
     setMatchWarmupSnapshot(snapshot);
   }, []);
 
+  const handleMatchLoadingProgressChange = useCallback((progress: number) => {
+    matchLoadingProgressRef.current = progress;
+  }, []);
+
   useEffect(() => {
     if (matchStartGateKey === null) {
       reportedMatchStartGateRef.current = null;
@@ -421,6 +448,17 @@ export function App() {
     return <MapVoteScreen />;
   }
 
+  if (appPhase === 'match_loading') {
+    return (
+      <MatchLoadingScreen
+        key={warmupKey}
+        initialProgress={matchLoadingProgressRef.current}
+        label="Preparing"
+        onProgressChange={handleMatchLoadingProgressChange}
+      />
+    );
+  }
+
   // In game
   if (appPhase === 'in_game') {
     if (matchSummary) {
@@ -448,8 +486,10 @@ export function App() {
           <MatchLoadingScreen
             key={warmupKey}
             isComplete={isMatchSceneReady}
+            initialProgress={matchLoadingProgressRef.current}
             progress={matchWarmupSnapshot?.progress}
             label={matchWarmupSnapshot?.label}
+            onProgressChange={handleMatchLoadingProgressChange}
           />
         )}
 
