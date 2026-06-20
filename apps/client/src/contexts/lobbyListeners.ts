@@ -183,6 +183,10 @@ function waitForRetry(delayMs: number): Promise<void> {
   });
 }
 
+function shouldDeferSelectedMapWarmup(data: SelectedMapMessage): boolean {
+  return data.mapProfileId === 'battle_royal_large';
+}
+
 export function setupLobbyListeners(
   room: Room,
   { playerName, joinGameRoom, leaveLobby }: SetupLobbyListenersOptions
@@ -296,6 +300,8 @@ export function setupLobbyListeners(
     setMapSize(data.mapSize);
     useGameStore.getState().setMapProfileId(data.mapProfileId);
     setAppPhase('match_loading');
+    if (shouldDeferSelectedMapWarmup(data)) return;
+
     void requestMapPreviewManifest({
       seed: data.mapSeed,
       themeId: data.mapThemeId ?? null,

@@ -1059,11 +1059,7 @@ export class LobbyRoom extends Room<LobbyState> {
         ticketsByPlayerId.set(playerId, { entryTicket, ticket });
       }
 
-      const launchPayloads: Array<{
-        client: Client;
-        payload: ReturnType<typeof buildGameStartingPayload>;
-      }> = [];
-      for (const client of this.clients) {
+      const launchPayloads = await Promise.all(this.clients.map(async (client) => {
         const ticketBundle = ticketsByPlayerId.get(client.sessionId);
         const authContext = this.playerAuthContexts.get(client.sessionId);
         if (!ticketBundle || !authContext) {
@@ -1079,7 +1075,7 @@ export class LobbyRoom extends Room<LobbyState> {
           ticket: ticketBundle.ticket,
         });
 
-        launchPayloads.push({
+        return {
           client,
           payload: buildGameStartingPayload({
             gameRoomId: gameRoom.roomId,
@@ -1092,8 +1088,8 @@ export class LobbyRoom extends Room<LobbyState> {
             mapSize,
             mapProfileId,
           }),
-        });
-      }
+        };
+      }));
 
       for (const { client, payload } of launchPayloads) {
         client.send('gameStarting', payload);

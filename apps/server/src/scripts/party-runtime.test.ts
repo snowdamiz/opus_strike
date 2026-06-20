@@ -77,7 +77,7 @@ assert.throws(
 );
 
 party.setReady(member.userId, true);
-party.removeSession('session-a');
+party.removeSession('session-a', { removeMember: true });
 assert.equal(party.leaderId, member.userId);
 assert.equal(party.snapshot().members[0].leader, true);
 assert.equal(party.validateStart().ok, true);
@@ -144,7 +144,7 @@ assert.deepEqual(
 const botOnlyParty = new PartyRosterRuntime('party-bot-only', 4);
 const botOnlyLeader = addMember(botOnlyParty, 'solo-leader', 'session-solo-leader', 900);
 botOnlyParty.addBot(botOnlyLeader.userId);
-botOnlyParty.removeSession('session-solo-leader');
+botOnlyParty.removeSession('session-solo-leader', { removeMember: true });
 assert.equal(botOnlyParty.leaderId, null);
 
 const rejoinParty = new PartyRosterRuntime('party-rejoin', 4);
@@ -154,22 +154,29 @@ rejoinParty.setBotFillEnabled(rejoinLeader.userId, 'battle_royal', true);
 rejoinParty.setMatchPerspective(rejoinLeader.userId, 'battle_royal', 'third_person');
 const rejoinBot = rejoinParty.addBot(rejoinLeader.userId, { difficulty: 'hard' });
 rejoinParty.removeSession('session-rejoin-a');
-assert.equal(rejoinParty.leaderId, null);
+assert.equal(rejoinParty.leaderId, 'rejoin-leader');
 assert.equal(rejoinParty.getBotMembers().length, 1);
+assert.equal(rejoinParty.snapshot().members.find((snapshot) => snapshot.userId === rejoinLeader.userId)?.connected, false);
 assert.equal(rejoinParty.snapshot().members.find((snapshot) => snapshot.userId === rejoinBot.userId)?.isBot, true);
 assert.equal(rejoinParty.snapshot().gameplayMode, 'battle_royal');
 assert.equal(rejoinParty.snapshot().botFillEnabledByMode.battle_royal, true);
 assert.equal(rejoinParty.snapshot().perspectiveByMode.battle_royal, 'third_person');
+assert.deepEqual(
+  rejoinParty.validateStart(),
+  { ok: false, message: 'rejoin-leader is disconnected' }
+);
 addMember(rejoinParty, 'rejoin-leader', 'session-rejoin-b', 900);
 assert.equal(rejoinParty.leaderId, 'rejoin-leader');
+assert.equal(rejoinParty.snapshot().members.find((snapshot) => snapshot.userId === rejoinLeader.userId)?.connected, true);
 assert.equal(rejoinParty.getBotMembers().length, 1);
 assert.equal(rejoinParty.snapshot().gameplayMode, 'battle_royal');
 assert.equal(rejoinParty.snapshot().botFillEnabledByMode.battle_royal, true);
 assert.equal(rejoinParty.snapshot().perspectiveByMode.battle_royal, 'third_person');
 
 const restoredParty = new PartyRosterRuntime('party-restored', 4);
-restoredParty.restorePersistentSnapshot(rejoinParty.snapshot());
+restoredParty.restorePersistentSnapshot(rejoinParty.persistentSnapshot());
 assert.equal(restoredParty.getBotMembers().length, 1);
+assert.equal(restoredParty.leaderId, 'rejoin-leader');
 assert.equal(restoredParty.snapshot().gameplayMode, 'battle_royal');
 assert.equal(restoredParty.snapshot().botFillEnabledByMode.battle_royal, true);
 assert.equal(restoredParty.snapshot().perspectiveByMode.battle_royal, 'third_person');
@@ -177,6 +184,46 @@ addMember(restoredParty, 'rejoin-leader', 'session-restored-leader', 900);
 assert.equal(restoredParty.leaderId, 'rejoin-leader');
 assert.equal(restoredParty.getBotMembers().length, 1);
 assert.equal(restoredParty.validateStart().ok, true);
+
+const readyReloadParty = new PartyRosterRuntime('party-ready-reload', 4);
+const readyReloadLeader = addMember(readyReloadParty, 'ready-leader', 'session-ready-leader-a', 900, 'blaze');
+const readyReloadMember = addMember(readyReloadParty, 'ready-member', 'session-ready-member-a', 950, 'phantom');
+readyReloadParty.setReady(readyReloadMember.userId, true);
+readyReloadParty.removeSession('session-ready-member-a');
+assert.equal(readyReloadParty.snapshot().members.find((snapshot) => snapshot.userId === readyReloadMember.userId)?.ready, true);
+assert.equal(readyReloadParty.snapshot().members.find((snapshot) => snapshot.userId === readyReloadMember.userId)?.connected, false);
+addMember(readyReloadParty, readyReloadMember.userId, 'session-ready-member-b', 950, 'phantom');
+assert.equal(readyReloadParty.snapshot().members.find((snapshot) => snapshot.userId === readyReloadMember.userId)?.ready, true);
+assert.equal(readyReloadParty.validateStart().ok, true);
+readyReloadParty.removeSession('session-ready-leader-a');
+assert.equal(readyReloadParty.leaderId, readyReloadLeader.userId);
+addMember(readyReloadParty, readyReloadLeader.userId, 'session-ready-leader-b', 900, 'blaze');
+assert.equal(readyReloadParty.leaderId, readyReloadLeader.userId);
+
+const launchCatchupParty = new PartyRosterRuntime('party-launch-catchup', 4);
+addMember(launchCatchupParty, 'launch-leader', 'session-launch-leader', 900, 'blaze');
+addMember(launchCatchupParty, 'launch-member', 'session-launch-member', 950, 'phantom');
+const launchPayload = {
+  mode: 'quick_play' as const,
+  lobbyId: 'lobby-catchup',
+  matchMode: 'quick_play' as const,
+  gameplayMode: 'capture_the_flag' as const,
+  botFillMode: 'manual' as const,
+  matchPerspective: 'first_person' as const,
+  matchmakingTicket: 'ticket-member',
+  targetRankDivisionIndex: 1,
+  targetRankLabel: 'Bronze I',
+};
+launchCatchupParty.setPendingLaunchPayloads(new Map([
+  ['launch-member', launchPayload],
+]));
+assert.deepEqual(launchCatchupParty.getPendingLaunchPayload('launch-member'), launchPayload);
+assert.equal(launchCatchupParty.hasPendingLaunchPayloads(), true);
+const restoredLaunchCatchupParty = new PartyRosterRuntime('party-launch-catchup-restored', 4);
+restoredLaunchCatchupParty.restorePersistentSnapshot(launchCatchupParty.persistentSnapshot());
+assert.deepEqual(restoredLaunchCatchupParty.getPendingLaunchPayload('launch-member'), launchPayload);
+restoredLaunchCatchupParty.clearPendingLaunchPayload('launch-member');
+assert.equal(restoredLaunchCatchupParty.hasPendingLaunchPayloads(), false);
 
 const kickParty = new PartyRosterRuntime('party-kick', 4);
 const kickLeader = addMember(kickParty, 'kick-leader', 'session-kick-leader', 900);
