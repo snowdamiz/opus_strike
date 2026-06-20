@@ -123,10 +123,13 @@ export interface PackedTransformSnapshot {
 export function selectPackedTransformDelta(input: {
   state: PackedTransformReplicationState;
   playerId: string;
-  getSnapshot: () => PackedTransformSnapshot;
+  transform?: PackedPlayerTransform;
+  signature?: PackedPlayerTransform;
+  getSnapshot?: () => PackedTransformSnapshot;
   exactStateVisible: boolean;
   force: boolean;
-  getHighRelevance: () => boolean;
+  highRelevance?: boolean;
+  getHighRelevance?: () => boolean;
   now: number;
 }): PackedTransformDelta {
   if (!input.exactStateVisible) {
@@ -137,21 +140,30 @@ export function selectPackedTransformDelta(input: {
       : null;
   }
 
-  const snapshot = input.getSnapshot();
+  let transform = input.transform;
+  let signature = input.signature;
+  if (!transform || !signature) {
+    const snapshot = input.getSnapshot?.();
+    if (!snapshot) {
+      throw new Error(`Missing packed transform snapshot for visible player ${input.playerId}`);
+    }
+    transform = snapshot.transform;
+    signature = snapshot.signature;
+  }
   const previousSignature = input.state.signatures.get(input.playerId);
   const lastHeartbeatAt = input.state.heartbeatAt.get(input.playerId) ?? 0;
   if (!shouldSendPackedTransformUpdate({
     force: input.force,
-    highRelevance: input.getHighRelevance(),
+    highRelevance: input.highRelevance ?? input.getHighRelevance?.() ?? false,
     previousSignature,
-    signature: snapshot.signature,
+    signature,
     lastHeartbeatAt,
     now: input.now,
   })) {
     return null;
   }
 
-  input.state.signatures.set(input.playerId, snapshot.signature);
+  input.state.signatures.set(input.playerId, signature);
   input.state.heartbeatAt.set(input.playerId, input.now);
-  return { kind: 'visible', transform: snapshot.transform };
+  return { kind: 'visible', transform };
 }

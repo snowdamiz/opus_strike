@@ -2583,17 +2583,22 @@ export class GameRoom extends Room<GameState> {
         ? this.getRecipientInterest(options.recipient, player, now, options.frameContext)
         : undefined;
       const exactStateVisible = this.shouldSendExactEnemyState(options.recipient ?? null, id, player, now, interest);
+      let transform: PackedPlayerTransform | undefined;
+      let signature: PackedPlayerTransform | undefined;
+      let highRelevance = false;
+      if (exactStateVisible) {
+        transform = options.frameContext?.packedTransforms.get(id) ?? this.buildPackedTransform(id, player);
+        signature = options.frameContext?.packedTransformSignatures.get(id) ?? getPackedTransformSignature(transform);
+        highRelevance = this.isHighRelevanceTransform(options.recipient ?? null, id, player, now);
+      }
       const delta = selectPackedTransformDelta({
         state: replicationState,
         playerId: id,
-        getSnapshot: () => {
-          const transform = options.frameContext?.packedTransforms.get(id) ?? this.buildPackedTransform(id, player);
-          const signature = options.frameContext?.packedTransformSignatures.get(id) ?? getPackedTransformSignature(transform);
-          return { transform, signature };
-        },
+        transform,
+        signature,
         exactStateVisible,
         force,
-        getHighRelevance: () => this.isHighRelevanceTransform(options.recipient ?? null, id, player, now),
+        highRelevance,
         now,
       });
       if (delta?.kind === 'visible') players.push(delta.transform);

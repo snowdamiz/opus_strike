@@ -1125,11 +1125,18 @@ export const triggerRemotePlayerAttack = (
   abilityId: string,
   options: { side?: -1 | 1; startedAtMs?: number } = {}
 ): void => {
-  visualStore.getState().remotePlayerAttackStates.set(playerId, {
-    abilityId,
-    startedAtMs: options.startedAtMs ?? Date.now(),
-    side: options.side ?? 1,
-  });
+  const attacks = visualStore.getState().remotePlayerAttackStates;
+  const current = attacks.get(playerId);
+  const startedAtMs = options.startedAtMs ?? Date.now();
+  const side = options.side ?? 1;
+  if (current) {
+    current.abilityId = abilityId;
+    current.startedAtMs = startedAtMs;
+    current.side = side;
+    return;
+  }
+
+  attacks.set(playerId, { abilityId, startedAtMs, side });
 };
 
 function cloneMovementState(movement: PlayerMovementState): PlayerMovementState {

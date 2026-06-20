@@ -20,11 +20,11 @@ import {
 } from './playerTransformPacking';
 import {
   buildPlayerInterestSnapshot,
-  removeMissingPlayerInterestSignatures,
+  pruneMissingPlayerInterestSignatures,
   selectChangedPlayerInterestSnapshot,
 } from './playerInterestSnapshot';
 import {
-  removeMissingKnownPlayerVitals,
+  pruneMissingKnownPlayerVitals,
   selectChangedPlayerVitalsSnapshot,
 } from './playerVitals';
 import {
@@ -387,17 +387,22 @@ export function collectRecipientPlayerStateStreams(
         now,
         transformInterest
       );
+      let transform: PackedPlayerTransform | undefined;
+      let signature: PackedPlayerTransform | undefined;
+      let highRelevance = false;
+      if (exactStateVisible) {
+        transform = input.frameContext.packedTransforms.get(id) ?? input.buildPackedTransform(id, player);
+        signature = input.frameContext.packedTransformSignatures.get(id) ?? getPackedTransformSignature(transform);
+        highRelevance = input.isHighRelevanceTransform(recipient, id, player, now);
+      }
       const delta = selectPackedTransformDelta({
         state: input.transformState,
         playerId: id,
-        getSnapshot: () => {
-          const transform = input.frameContext.packedTransforms.get(id) ?? input.buildPackedTransform(id, player);
-          const signature = input.frameContext.packedTransformSignatures.get(id) ?? getPackedTransformSignature(transform);
-          return { transform, signature };
-        },
+        transform,
+        signature,
         exactStateVisible,
         force: input.forceTransforms,
-        getHighRelevance: () => input.isHighRelevanceTransform(recipient, id, player, now),
+        highRelevance,
         now,
       });
       if (delta?.kind === 'visible') {
@@ -412,20 +417,18 @@ export function collectRecipientPlayerStateStreams(
   });
 
   if (input.vitalsState) {
-    const missingVitalsPlayerIds = removeMissingKnownPlayerVitals(
-      input.vitalsState,
-      input.frameContext.currentIds
-    );
-    if (input.globallyRemovedPlayerIds.length > 0 || missingVitalsPlayerIds.length > 0) {
-      removedPlayerIds = input.globallyRemovedPlayerIds.length > 0
-        ? [...input.globallyRemovedPlayerIds]
-        : [];
-      removedPlayerIds.push(...missingVitalsPlayerIds);
+    if (input.globallyRemovedPlayerIds.length > 0) {
+      removedPlayerIds = [...input.globallyRemovedPlayerIds];
     }
+    removedPlayerIds = pruneMissingKnownPlayerVitals(
+      input.vitalsState,
+      input.frameContext.currentIds,
+      removedPlayerIds ?? undefined
+    ) ?? removedPlayerIds;
   }
 
   if (input.interestSignatures) {
-    removeMissingPlayerInterestSignatures(input.interestSignatures, input.frameContext.currentIds);
+    pruneMissingPlayerInterestSignatures(input.interestSignatures, input.frameContext.currentIds);
   }
 
   return {

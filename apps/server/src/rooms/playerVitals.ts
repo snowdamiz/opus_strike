@@ -328,14 +328,25 @@ export function removeMissingKnownPlayerVitals(
   currentPlayerIds: ReadonlySet<string>
 ): string[] {
   const removedPlayerIds: string[] = [];
+  pruneMissingKnownPlayerVitals(state, currentPlayerIds, removedPlayerIds);
+  return removedPlayerIds;
+}
+
+export function pruneMissingKnownPlayerVitals(
+  state: PlayerVitalsReplicationStateLike,
+  currentPlayerIds: ReadonlySet<string>,
+  removedPlayerIds?: string[]
+): string[] | null {
+  let removed = removedPlayerIds ?? null;
   for (const playerId of state.knownPlayerIds) {
     if (currentPlayerIds.has(playerId)) continue;
-    removedPlayerIds.push(playerId);
+    if (!removed) removed = [];
+    removed.push(playerId);
     state.knownPlayerIds.delete(playerId);
     state.signatures.delete(playerId);
     state.reconcileAt.delete(playerId);
   }
-  return removedPlayerIds;
+  return removed;
 }
 
 function haveMovementVitalsChanged(

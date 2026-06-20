@@ -54,10 +54,21 @@ export function removeMissingPlayerInterestSignatures(
   currentPlayerIds: ReadonlySet<string>
 ): string[] {
   const removedPlayerIds: string[] = [];
+  pruneMissingPlayerInterestSignatures(signatures, currentPlayerIds, removedPlayerIds);
+  return removedPlayerIds;
+}
+
+export function pruneMissingPlayerInterestSignatures(
+  signatures: Map<string, string>,
+  currentPlayerIds: ReadonlySet<string>,
+  removedPlayerIds?: string[]
+): string[] | null {
+  let removed = removedPlayerIds ?? null;
   for (const playerId of signatures.keys()) {
     if (currentPlayerIds.has(playerId)) continue;
     signatures.delete(playerId);
-    removedPlayerIds.push(playerId);
+    if (!removed) removed = [];
+    removed.push(playerId);
   }
-  return removedPlayerIds;
+  return removed;
 }
