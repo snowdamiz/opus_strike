@@ -159,6 +159,7 @@ export class PartyRoom extends Room {
   private restoreAttempted = false;
   private hasHadHumanMember = false;
   private disposed = false;
+  private launchStarted = false;
 
   async onAuth(client: Client, options: PartyJoinOptions, request?: IncomingMessage): Promise<RoomAuthContext> {
     const authContext = await resolveRoomAuthContext(options as Record<string, unknown>, request);
@@ -230,6 +231,10 @@ export class PartyRoom extends Room {
       });
     });
 
+    this.onMessage('partyLaunchAck', (client) => {
+      this.handlePartyLaunchAck(client);
+    });
+
     this.onMessage('leave', (client) => {
       client.leave();
     });
@@ -295,12 +300,16 @@ export class PartyRoom extends Room {
       this.broadcast('partyLeaderChanged', { leaderUserId: this.party.leaderId });
     }
     this.broadcastPartyState();
+    const pendingLaunchPayload = this.party.getPendingLaunchPayload(authContext.userId);
+    if (pendingLaunchPayload) {
+      client.send('partyLaunch', pendingLaunchPayload);
+    }
   }
 
   onLeave(client: Client, consented?: boolean) {
     this.rateLimiter.clearScope(client.sessionId);
     this.authBySessionId.delete(client.sessionId);
-    const change = this.party.removeSession(client.sessionId);
+    const change = this.party.removeSession(client.sessionId, { removeMember: consented === true });
     const hasRemainingClients = this.clients.filter((candidate) => candidate.sessionId !== client.sessionId).length > 0;
     if (!change) {
       if (!hasRemainingClients) {
@@ -312,10 +321,18 @@ export class PartyRoom extends Room {
     if (consented === true && !change.member.isBot) {
       this.allowedHumanUserIds.delete(change.member.userId);
     }
-    this.broadcast('partyMemberLeft', {
-      userId: change.member.userId,
-      displayName: change.member.displayName,
-    });
+    if (change.removed) {
+      this.broadcast('partyMemberLeft', {
+        userId: change.member.userId,
+        displayName: change.member.displayName,
+      });
+    } else {
+      this.broadcast('partyMemberUpdated', {
+        userId: change.member.userId,
+        connected: change.member.connected,
+        ready: change.member.ready,
+      });
+    }
     if (change.leaderChanged) {
       this.broadcast('partyLeaderChanged', { leaderUserId: this.party.leaderId });
     }
@@ -348,6 +365,7 @@ export class PartyRoom extends Room {
     }
     this.hasHadHumanMember = true;
     this.party.restorePersistentSnapshot(isRecord(persistentParty.snapshot) ? persistentParty.snapshot : null);
+    this.launchStarted = this.party.hasPendingLaunchPayloads();
     return true;
   }
 
@@ -511,12 +529,30 @@ export class PartyRoom extends Room {
       ? await launchPartyToMatchmaking(this.party, this.party.mode)
       : await launchPartyToCustomLobby(this.party);
 
+    this.launchStarted = true;
+    this.party.setPendingLaunchPayloads(result.payloadsByUserId);
+    this.broadcastPartyState({ persist: false });
+    await this.persistPartyStateNow();
+
     for (const partyMember of this.party.getMembers()) {
       const payload = result.payloadsByUserId.get(partyMember.userId);
       if (!payload) continue;
       const target = this.clients.find((candidate) => candidate.sessionId === partyMember.sessionId);
       target?.send('partyLaunch', payload);
     }
+  }
+
+  private handlePartyLaunchAck(client: Client): void {
+    const member = this.memberForClient(client);
+    if (!member) return;
+    if (!this.party.getPendingLaunchPayload(member.userId)) return;
+
+    this.party.clearPendingLaunchPayload(member.userId);
+    if (this.party.hasPendingLaunchPayloads()) {
+      this.persistPartyState();
+      return;
+    }
+
     this.deletePersistentPartyRecord();
   }
 
@@ -526,32 +562,43 @@ export class PartyRoom extends Room {
     this.broadcastPartyState();
   }
 
-  private broadcastPartyState(): void {
+  private broadcastPartyState(options: { persist?: boolean } = {}): void {
     this.updateMetadata();
     this.broadcast('partyState', this.party.snapshot());
-    this.persistPartyState();
+    if (options.persist !== false) {
+      this.persistPartyState();
+    }
   }
 
   private persistPartyState(): void {
+    this.persistPartyStateNow().catch((error) => {
+      loggers.room.warn('Failed to persist party state', error);
+    });
+  }
+
+  private async persistPartyStateNow(): Promise<void> {
     const persistentPartyId = this.persistentPartyId ?? this.roomId;
     this.persistentPartyId = persistentPartyId;
     const allowedUserIds = Array.from(this.allowedHumanUserIds);
     const ownerUserId = this.party.leaderId ?? allowedUserIds[0] ?? null;
 
-    if (!ownerUserId) {
-      this.deletePersistentPartyRecord();
+    if (this.launchStarted && !this.party.hasPendingLaunchPayloads()) {
+      await deletePersistentParty(persistentPartyId);
       return;
     }
 
-    savePersistentParty({
+    if (!ownerUserId) {
+      await deletePersistentParty(persistentPartyId);
+      return;
+    }
+
+    await savePersistentParty({
       persistentPartyId,
       roomId: this.roomId,
       ownerUserId,
       leaderUserId: this.party.leaderId,
       allowedUserIds,
       party: this.party,
-    }).catch((error) => {
-      loggers.room.warn('Failed to persist party state', error);
     });
   }
 

@@ -68,6 +68,7 @@ export type { RankedTokenHoldStatus } from './networkApi';
 
 type StartPracticeGameOptions = { mapSeed?: number; tutorial?: boolean; heroId?: HeroId; matchPerspective?: MatchPerspective };
 type EnsurePartyOptions = { selectedMode?: PartyMode; gameplayMode?: GameplayMode };
+type PartyLaunchJoinOptions = { preservePartyRoom?: Room | null };
 const TUTORIAL_HERO_ID: HeroId = 'blaze';
 
 function facingToLookYaw(facing: { x: number; z: number } | null | undefined): number {
@@ -101,7 +102,7 @@ interface NetworkContextType {
   startPracticeGame: (playerName?: string, options?: StartPracticeGameOptions) => void;
   startTutorialGame: (playerName?: string) => void;
   joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
-  joinMatchmakingLobby: (playerName: string, launch: PartyLaunchPayload) => Promise<void>;
+  joinMatchmakingLobby: (playerName: string, launch: PartyLaunchPayload, options?: PartyLaunchJoinOptions) => Promise<void>;
   leaveLobby: () => void;
   ensureParty: (playerName: string, heroId?: HeroId, options?: EnsurePartyOptions) => Promise<string>;
   joinParty: (playerName: string, partyId: string, heroId?: HeroId) => Promise<void>;
@@ -283,13 +284,13 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     playerReportRequestsRef.current.clear();
   }, []);
 
-  const cleanupExistingConnections = useCallback(() => {
+  const cleanupExistingConnections = useCallback((options: { preservePartyRoom?: Room | null } = {}) => {
     practiceStartTokenRef.current += 1;
     isJoiningGameRef.current = false;
     disconnectVoice('network_cleanup');
     rejectPendingVoiceTokenRequests('connection cleaned up before voice token response');
     rejectPendingPlayerReportRequests('connection cleaned up before report response');
-    if (partyRoomRef.current) {
+    if (partyRoomRef.current && partyRoomRef.current !== options.preservePartyRoom) {
       clearActivePartySession(partyRoomRef.current.id);
       try {
         partyRoomRef.current.leave(false);
@@ -662,11 +663,15 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     }
   }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected, setPracticeMode]);
 
-  const joinMatchmakingLobby = useCallback(async (playerName: string, launch: PartyLaunchPayload) => {
+  const joinMatchmakingLobby = useCallback(async (
+    playerName: string,
+    launch: PartyLaunchPayload,
+    options: PartyLaunchJoinOptions = {}
+  ) => {
     setLoading(true);
 
     try {
-      cleanupExistingConnections();
+      cleanupExistingConnections({ preservePartyRoom: options.preservePartyRoom ?? null });
       clearRunningGameSession();
       setPracticeMode(false);
 
@@ -712,6 +717,17 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setAppPhase(launch.matchMode === 'custom' ? 'in_lobby' : 'matchmaking');
       setConnected(true);
       setLoading(false);
+
+      if (options.preservePartyRoom && partyRoomRef.current === options.preservePartyRoom) {
+        clearActivePartySession(options.preservePartyRoom.id);
+        try {
+          options.preservePartyRoom.leave(false);
+        } catch (error) {
+          loggers.network.debug('error leaving launched party room', error);
+        }
+        partyRoomRef.current = null;
+        usePartyStore.getState().clearParty();
+      }
 
       loggers.network.info('joined party launch lobby', launch.lobbyId);
     } catch (error) {
@@ -774,7 +790,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       usePartyStore.getState().setLaunchError(message);
     });
     room.onMessage('partyLaunch', (launch: unknown) => {
-      joinMatchmakingLobby(playerNameForLaunch, launch as PartyLaunchPayload).catch((error) => {
+      const launchPayload = launch as PartyLaunchPayload;
+      room.send('partyLaunchAck', { lobbyId: launchPayload.lobbyId });
+      joinMatchmakingLobby(playerNameForLaunch, launchPayload, { preservePartyRoom: room }).catch((error) => {
         usePartyStore.getState().setLaunchError(error instanceof Error ? error.message : 'Failed to join party launch');
       });
     });

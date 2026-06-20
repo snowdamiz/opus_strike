@@ -24,7 +24,7 @@ function dedupeUserIds(userIds: Iterable<string>): string[] {
 }
 
 function serializeSnapshot(party: PartyRosterRuntime): Prisma.InputJsonValue {
-  return JSON.parse(JSON.stringify(party.snapshot())) as Prisma.InputJsonValue;
+  return JSON.parse(JSON.stringify(party.persistentSnapshot())) as Prisma.InputJsonValue;
 }
 
 export async function savePersistentParty(input: SavePersistentPartyInput): Promise<PersistentPartyRecord> {

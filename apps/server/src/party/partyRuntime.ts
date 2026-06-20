@@ -8,6 +8,7 @@ import {
   getMatchPerspectiveSettingMode,
   getGameplayModeRules,
   getHumanPartyHeroIds,
+  isMatchMode,
   getRankDivisionIndex,
   getRankFromRating,
   isGameplayMode,
@@ -20,6 +21,7 @@ import {
   type MatchPerspective,
   type MatchPerspectiveSettingMode,
   type MatchPerspectiveSettings,
+  type PartyLaunchPayload,
   type PartyBotFillSettings,
   type PartyMemberSnapshot,
   type PartyMode,
@@ -68,15 +70,22 @@ export interface AddPartyBotInput {
 export interface PersistentPartySnapshotInput {
   selectedMode?: unknown;
   gameplayMode?: unknown;
+  leaderUserId?: unknown;
   botFillEnabledByMode?: unknown;
   perspectiveByMode?: unknown;
   members?: unknown;
+  pendingLaunchPayloadsByUserId?: unknown;
 }
 
 export interface PartyMemberChange {
   member: PartyRuntimeMember;
   replacedSessionId: string | null;
   leaderChanged: boolean;
+  removed: boolean;
+}
+
+export interface PartyPersistentSnapshot extends PartyStateSnapshot {
+  pendingLaunchPayloadsByUserId?: Record<string, PartyLaunchPayload>;
 }
 
 export class PartyRosterRuntime {
@@ -90,6 +99,7 @@ export class PartyRosterRuntime {
   private launchError: string | null = null;
   private readonly members = new Map<string, PartyRuntimeMember>();
   private readonly sessionToUserId = new Map<string, string>();
+  private pendingLaunchPayloadsByUserId = new Map<string, PartyLaunchPayload>();
   private botCounter = 0;
 
   constructor(partyId: string, maxMembers = PARTY_MAX_MEMBERS) {
@@ -176,7 +186,7 @@ export class PartyRosterRuntime {
     }
 
     this.launchError = null;
-    return { member, replacedSessionId, leaderChanged };
+    return { member, replacedSessionId, leaderChanged, removed: false };
   }
 
   addBot(leaderUserId: string, input: AddPartyBotInput = {}): PartyRuntimeMember {
@@ -228,7 +238,7 @@ export class PartyRosterRuntime {
     return member;
   }
 
-  removeSession(sessionId: string): PartyMemberChange | null {
+  removeSession(sessionId: string, options: { removeMember?: boolean } = {}): PartyMemberChange | null {
     const userId = this.sessionToUserId.get(sessionId);
     if (!userId) return null;
 
@@ -236,16 +246,25 @@ export class PartyRosterRuntime {
     const member = this.members.get(userId);
     if (!member) return null;
 
-    this.members.delete(userId);
+    if (member.sessionId === sessionId) {
+      member.sessionId = null;
+    }
 
     let leaderChanged = false;
-    if (this.leaderUserId === userId) {
-      this.leaderUserId = this.getMembers().find((candidate) => !candidate.isBot)?.userId ?? null;
-      leaderChanged = true;
+    const shouldRemoveMember = options.removeMember === true;
+    if (shouldRemoveMember) {
+      this.members.delete(userId);
+      this.pendingLaunchPayloadsByUserId.delete(userId);
+      if (this.leaderUserId === userId) {
+        this.leaderUserId = this.chooseReplacementLeader();
+        leaderChanged = true;
+      }
+    } else {
+      member.connected = false;
     }
 
     this.launchError = null;
-    return { member, replacedSessionId: null, leaderChanged };
+    return { member, replacedSessionId: null, leaderChanged, removed: shouldRemoveMember };
   }
 
   getMemberBySession(sessionId: string): PartyRuntimeMember | null {
@@ -273,6 +292,10 @@ export class PartyRosterRuntime {
     if (!snapshot || typeof snapshot !== 'object') return;
 
     this.initializeSelection(snapshot);
+    this.members.clear();
+    this.sessionToUserId.clear();
+    this.pendingLaunchPayloadsByUserId.clear();
+    this.leaderUserId = null;
 
     const botFill = createDefaultPartyBotFillSettings();
     if (snapshot.botFillEnabledByMode && typeof snapshot.botFillEnabledByMode === 'object') {
@@ -293,32 +316,49 @@ export class PartyRosterRuntime {
     this.perspectiveByMode = perspectives;
 
     const members = Array.isArray(snapshot.members) ? snapshot.members : [];
-    for (const member of Array.from(this.members.values())) {
-      if (member.isBot) {
-        this.members.delete(member.userId);
-      }
-    }
+    const restoredLeaderUserId = normalizeUserId(snapshot.leaderUserId);
 
     for (const member of members) {
       if (this.members.size >= this.maxMembers) break;
       if (!member || typeof member !== 'object') continue;
       const rawMember = member as Partial<PartyMemberSnapshot>;
-      if (rawMember.isBot !== true) continue;
-
-      const botIndex = this.botCounter++;
       const competitiveRating = 800;
       const heroId = typeof rawMember.heroId === 'string' && ALL_HERO_IDS.includes(rawMember.heroId as HeroId)
         ? rawMember.heroId as HeroId
         : 'blaze';
-      const difficulty = normalizeBotDifficulty(rawMember.botDifficulty);
       const displayName = typeof rawMember.displayName === 'string' && rawMember.displayName.trim()
         ? rawMember.displayName.trim().slice(0, 24)
-        : `Bot ${botIndex + 1}`;
+        : null;
 
+      if (rawMember.isBot !== true) {
+        const userId = normalizeUserId(rawMember.userId);
+        if (!userId) continue;
+        this.members.set(userId, {
+          userId,
+          sessionId: null,
+          displayName: displayName ?? userId,
+          heroId,
+          ready: rawMember.ready === true,
+          connected: false,
+          isBot: false,
+          botDifficulty: undefined,
+          rank: normalizeRankSummary(rawMember.rank),
+          competitiveRating,
+          rankDivisionIndex: getRankDivisionIndex(competitiveRating),
+          walletAddress: null,
+          tutorialCompletedAt: null,
+          rankedPlacementsRemaining: 0,
+          devTutorialBypass: false,
+        });
+        continue;
+      }
+
+      const botIndex = this.botCounter++;
+      const difficulty = normalizeBotDifficulty(rawMember.botDifficulty);
       this.members.set(`party-bot:${this.partyId}:restored:${botIndex}`, {
         userId: `party-bot:${this.partyId}:restored:${botIndex}`,
         sessionId: null,
-        displayName,
+        displayName: displayName ?? `Bot ${botIndex + 1}`,
         heroId,
         ready: true,
         connected: true,
@@ -334,6 +374,11 @@ export class PartyRosterRuntime {
       });
     }
 
+    const restoredLeader = restoredLeaderUserId ? this.members.get(restoredLeaderUserId) : null;
+    this.leaderUserId = restoredLeader && !restoredLeader.isBot
+      ? restoredLeader.userId
+      : this.chooseReplacementLeader();
+    this.restorePendingLaunchPayloads(snapshot.pendingLaunchPayloadsByUserId);
     this.reassignBotHeroes();
     this.launchError = null;
   }
@@ -423,6 +468,23 @@ export class PartyRosterRuntime {
     return this.snapshot();
   }
 
+  setPendingLaunchPayloads(payloadsByUserId: Map<string, PartyLaunchPayload>): void {
+    this.pendingLaunchPayloadsByUserId = new Map(payloadsByUserId);
+    this.launchError = null;
+  }
+
+  getPendingLaunchPayload(userId: string): PartyLaunchPayload | null {
+    return this.pendingLaunchPayloadsByUserId.get(userId) ?? null;
+  }
+
+  clearPendingLaunchPayload(userId: string): void {
+    this.pendingLaunchPayloadsByUserId.delete(userId);
+  }
+
+  hasPendingLaunchPayloads(): boolean {
+    return this.pendingLaunchPayloadsByUserId.size > 0;
+  }
+
   validateStart(): { ok: true } | { ok: false; message: string } {
     if (!this.leaderUserId || this.members.size === 0) {
       return { ok: false, message: 'Party is empty' };
@@ -438,6 +500,11 @@ export class PartyRosterRuntime {
     const notReady = this.getMembers().find((member) => !member.isBot && member.userId !== this.leaderUserId && !member.ready);
     if (notReady) {
       return { ok: false, message: `${notReady.displayName} is not ready` };
+    }
+
+    const disconnected = this.getMembers().find((member) => !member.isBot && !member.connected);
+    if (disconnected) {
+      return { ok: false, message: `${disconnected.displayName} is disconnected` };
     }
 
     const pickedHeroIds = new Set<HeroId>();
@@ -474,6 +541,16 @@ export class PartyRosterRuntime {
     };
   }
 
+  persistentSnapshot(): PartyPersistentSnapshot {
+    const snapshot: PartyPersistentSnapshot = this.snapshot();
+    if (this.pendingLaunchPayloadsByUserId.size === 0) {
+      return snapshot;
+    }
+
+    snapshot.pendingLaunchPayloadsByUserId = Object.fromEntries(this.pendingLaunchPayloadsByUserId);
+    return snapshot;
+  }
+
   private assertLeader(userId: string): void {
     if (!this.leaderUserId || this.leaderUserId !== userId) {
       throw new Error('Only the party leader can manage bots');
@@ -486,6 +563,12 @@ export class PartyRosterRuntime {
         member.ready = false;
       }
     }
+  }
+
+  private chooseReplacementLeader(): string | null {
+    return this.getMembers().find((candidate) => !candidate.isBot && candidate.connected)?.userId
+      ?? this.getMembers().find((candidate) => !candidate.isBot)?.userId
+      ?? null;
   }
 
   private isHumanHeroAvailable(heroId: HeroId, exceptUserId?: string | null): boolean {
@@ -536,8 +619,62 @@ export class PartyRosterRuntime {
       occupied.add(bot.heroId);
     }
   }
+
+  private restorePendingLaunchPayloads(value: unknown): void {
+    if (!value || typeof value !== 'object') return;
+
+    for (const [userId, payload] of Object.entries(value as Record<string, unknown>)) {
+      if (!this.members.has(userId)) continue;
+      const normalizedPayload = normalizePartyLaunchPayload(payload);
+      if (normalizedPayload) {
+        this.pendingLaunchPayloadsByUserId.set(userId, normalizedPayload);
+      }
+    }
+  }
 }
 
 function normalizeBotDifficulty(value: unknown): BotDifficulty {
   return value === 'easy' || value === 'normal' || value === 'hard' ? value : 'normal';
+}
+
+function normalizeUserId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return /^[a-zA-Z0-9:_-]{2,160}$/.test(trimmed) ? trimmed : null;
+}
+
+function normalizeRankSummary(value: unknown): RankSummary {
+  if (
+    value
+    && typeof value === 'object'
+    && typeof (value as Partial<RankSummary>).label === 'string'
+    && typeof (value as Partial<RankSummary>).rating === 'number'
+  ) {
+    return value as RankSummary;
+  }
+
+  return getRankFromRating(800, 0);
+}
+
+function normalizePartyLaunchPayload(value: unknown): PartyLaunchPayload | null {
+  if (!value || typeof value !== 'object') return null;
+  const payload = value as Partial<PartyLaunchPayload>;
+  if (!isPartyMode(payload.mode) || !isMatchMode(payload.matchMode)) return null;
+  if (typeof payload.lobbyId !== 'string' || !payload.lobbyId.trim()) return null;
+  if (!isGameplayMode(payload.gameplayMode) || !isMatchPerspective(payload.matchPerspective)) return null;
+  if (payload.botFillMode !== undefined && payload.botFillMode !== 'manual' && payload.botFillMode !== 'fill_even') {
+    return null;
+  }
+
+  return {
+    mode: payload.mode,
+    lobbyId: payload.lobbyId.trim(),
+    matchMode: payload.matchMode,
+    gameplayMode: payload.gameplayMode,
+    botFillMode: payload.botFillMode,
+    matchPerspective: payload.matchPerspective,
+    matchmakingTicket: typeof payload.matchmakingTicket === 'string' ? payload.matchmakingTicket : undefined,
+    targetRankDivisionIndex: typeof payload.targetRankDivisionIndex === 'number' ? payload.targetRankDivisionIndex : undefined,
+    targetRankLabel: typeof payload.targetRankLabel === 'string' ? payload.targetRankLabel : undefined,
+  };
 }
