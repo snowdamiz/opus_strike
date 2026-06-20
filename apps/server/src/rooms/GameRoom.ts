@@ -831,6 +831,17 @@ const MAX_SECURITY_LOG_SAMPLE_KEYS = 1024;
 const DEV_COMMANDS_DISABLED_MESSAGE = 'Developer commands are disabled';
 const HOOKSHOT_SPEED = 38;
 const DRAG_HOOK_SPEED = 50;
+const DEFAULT_GAME_ROOM_SEAT_RESERVATION_SECONDS = 60;
+
+function readGameRoomSeatReservationSeconds(): number {
+  const raw = process.env.GAME_ROOM_SEAT_RESERVATION_SECONDS
+    ?? process.env.COLYSEUS_GAME_ROOM_SEAT_RESERVATION_TIME;
+  const parsed = raw ? Number(raw) : DEFAULT_GAME_ROOM_SEAT_RESERVATION_SECONDS;
+  return Number.isFinite(parsed) && parsed >= 15
+    ? Math.min(180, Math.floor(parsed))
+    : DEFAULT_GAME_ROOM_SEAT_RESERVATION_SECONDS;
+}
+
 export class GameRoom extends Room<GameState> {
   maxClients = DEFAULT_GAME_CONFIG.maxPlayers;
 
@@ -1172,7 +1183,7 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  onCreate(options: CreateOptions) {
+  async onCreate(options: CreateOptions) {
     this.eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
     this.eventLoopDelay.enable();
     this.lobbyId = options.lobbyId || null;
@@ -1188,6 +1199,7 @@ export class GameRoom extends Room<GameState> {
         ? options.matchPerspective
         : DEFAULT_MATCH_PERSPECTIVE;
     this.config = createGameConfigForGameplayMode(this.gameplayMode);
+    this.setSeatReservationTime(readGameRoomSeatReservationSeconds());
     this.rankedEligibilityCandidate = options.rankedEligible === true;
     this.requiredHumanPlayers = Math.max(
       0,
@@ -1226,7 +1238,7 @@ export class GameRoom extends Room<GameState> {
     this.state.mapThemeId = options.mapThemeId ?? getVoxelMapTheme(this.state.mapSeed).id;
     this.state.mapSize = normalizeVoxelMapSizeId(options.mapSize);
     this.state.mapProfileId = options.mapProfileId ?? getGameplayModeRules(this.gameplayMode).mapProfileId;
-    this.refreshMapManifest();
+    await this.refreshMapManifestAsync();
     this.initializeStreamSchedule(Date.now());
     loggers.room.info('Map seed', this.state.mapSeed);
     resetFlagsFromManifest(this.state, this.getMapManifest());
@@ -7724,6 +7736,15 @@ export class GameRoom extends Room<GameState> {
 
   private refreshMapManifest(): void {
     const mapManifest = this.mapRuntime.refreshMap();
+    this.applyMapManifestRefresh(mapManifest);
+  }
+
+  private async refreshMapManifestAsync(): Promise<void> {
+    const mapManifest = await this.mapRuntime.refreshMapAsync();
+    this.applyMapManifestRefresh(mapManifest);
+  }
+
+  private applyMapManifestRefresh(mapManifest: VoxelMapManifest): void {
     this.state.mapThemeId = mapManifest.themeId;
     this.state.mapSize = mapManifest.mapSize;
     this.state.mapProfileId = mapManifest.profileId ?? getGameplayModeRules(this.gameplayMode).mapProfileId;

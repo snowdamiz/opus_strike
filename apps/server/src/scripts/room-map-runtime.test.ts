@@ -44,6 +44,21 @@ const flags: Record<Team, BotFlagSnapshot> = {
 
 const players: BotPlayerSnapshot[] = [];
 
+async function runAsyncTests(): Promise<void> {
+  config = {
+    mapSeed: 33_333,
+    mapThemeId: null,
+    mapSize: 'small',
+    mapProfileId: 'ctf_arena',
+  };
+  const runtime = createRuntime();
+  const manifest = await runtime.refreshMapAsync();
+
+  assert.equal(manifest.seed, config.mapSeed);
+  assert.equal(runtime.getMapManifest(), manifest);
+  assert.notEqual(runtime.getBotRouteGraph(), null);
+}
+
 {
   const runtime = createRuntime();
   assert.doesNotThrow(() => runtime.getMovementCollisionWorld());
@@ -153,4 +168,11 @@ const players: BotPlayerSnapshot[] = [];
   }), cachedTactics);
 }
 
-console.log('room map runtime tests passed');
+runAsyncTests()
+  .then(() => {
+    console.log('room map runtime tests passed');
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });

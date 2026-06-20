@@ -27,6 +27,7 @@ import {
   type BotTeamTacticsByTeam,
 } from './bot-ai';
 import { VoxelChunkLookup, worldToVoxelGrid } from './voxelChunkLookup';
+import { generateRoomMapManifest } from './roomMapGeneration';
 
 export interface RoomMapRuntimeConfig {
   mapSeed: number;
@@ -79,6 +80,15 @@ export class RoomMapRuntime {
       mapSize: config.mapSize,
       profileId: config.mapProfileId,
     });
+    return this.applyMapManifest(manifest);
+  }
+
+  async refreshMapAsync(): Promise<VoxelMapManifest> {
+    const manifest = await generateRoomMapManifest(this.resolveMapConfig());
+    return this.applyMapManifest(manifest);
+  }
+
+  private applyMapManifest(manifest: VoxelMapManifest): VoxelMapManifest {
     this.mapManifest = manifest;
     this.proceduralTerrainLookup = createProceduralTerrainLookup(manifest);
     this.mapChunks.reset(manifest);
