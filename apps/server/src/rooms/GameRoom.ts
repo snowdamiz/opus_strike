@@ -134,6 +134,7 @@ import {
   getMovementBacklogTrimCount,
   getMovementCommandDrainDecision,
   type MovementCommandDrainDecision,
+  type RoomMovementCatchupBudgetRequest,
 } from './movementCommandDrain';
 import { ingestMovementCommandPacket } from './movementCommandIngress';
 import {
@@ -905,6 +906,9 @@ export class GameRoom extends Room<GameState> {
   private lastPingProbeAt = 0;
   private lastPingBroadcastAt = 0;
   private movementCatchupBudgetCursor = 0;
+  private readonly movementPhysicsFrameEntries: MovementPhysicsFrameEntry[] = [];
+  private readonly movementCatchupRequests: RoomMovementCatchupBudgetRequest[] = [];
+  private readonly movementCatchupFrameEntries: MovementPhysicsFrameEntry[] = [];
   private botMovementLodCountTick = -1;
   private aliveBotMovementLodCount = 0;
   private botMovementFullStepBudgetTick = -1;
@@ -8860,7 +8864,7 @@ export class GameRoom extends Room<GameState> {
   private updatePhysics() {
     const tickTime = this.state.serverTime || Date.now();
     let collisionWorld: MovementCollisionWorld | null = null;
-    let frameEntries: MovementPhysicsFrameEntry[] = [];
+    let frameEntries = this.movementPhysicsFrameEntries;
 
     this.measureTickSpan('movement_frame_build', () => {
       collisionWorld = this.getMovementCollisionWorld(tickTime);
@@ -8877,14 +8881,12 @@ export class GameRoom extends Room<GameState> {
   }
 
   private buildMovementPhysicsFrame(tickTime: number): MovementPhysicsFrameEntry[] {
-    const entries: MovementPhysicsFrameEntry[] = [];
-    const catchupRequests: Array<{
-      playerId: string;
-      requestedExtraSubsteps: number;
-      backlogCommands: number;
-      oldestCommandClientTimeMs: number;
-      skippedCatchupSubsteps: number;
-    }> = [];
+    const entries = this.movementPhysicsFrameEntries;
+    const catchupRequests = this.movementCatchupRequests;
+    const catchupFrameEntries = this.movementCatchupFrameEntries;
+    entries.length = 0;
+    catchupRequests.length = 0;
+    catchupFrameEntries.length = 0;
 
     this.state.players.forEach((player) => {
       if (player.state !== 'alive') return;
@@ -8912,7 +8914,7 @@ export class GameRoom extends Room<GameState> {
         authority.metrics.queueLength = 0;
         authority.metrics.queueLengthBeforeTick = 0;
         authority.metrics.queueLengthAfterTick = 0;
-        entries.push({
+        const entry: MovementPhysicsFrameEntry = {
           player,
           authority,
           queuedCommandCount,
@@ -8925,7 +8927,8 @@ export class GameRoom extends Room<GameState> {
           grantedExtraSubsteps: 0,
           skippedExtraSubsteps: 0,
           serverOwnedInput: player.lastInput ?? createEmptyBotInput(this.state.tick, player, tickTime),
-        });
+        };
+        entries.push(entry);
         this.tickProfiler.recordCounter('movement_frame_entries');
         this.tickProfiler.recordCounter('movement_bot_entries');
         return;
@@ -8938,14 +8941,15 @@ export class GameRoom extends Room<GameState> {
       const baseBudget = Math.min(drainDecision.budget, SERVER_MOVEMENT_SUBSTEPS_PER_TICK);
       const requestedExtraSubsteps = Math.max(0, drainDecision.budget - baseBudget);
 
-      entries.push({
+      const entry: MovementPhysicsFrameEntry = {
         player,
         authority,
         queuedCommandCount,
         drainDecision,
         grantedExtraSubsteps: requestedExtraSubsteps,
         skippedExtraSubsteps: 0,
-      });
+      };
+      entries.push(entry);
       this.tickProfiler.recordCounter('movement_frame_entries');
       if (this.npcs.has(player.id)) {
         this.tickProfiler.recordCounter('movement_npc_entries');
@@ -8955,6 +8959,7 @@ export class GameRoom extends Room<GameState> {
 
       if (requestedExtraSubsteps > 0) {
         this.tickProfiler.recordCounter('movement_catchup_entries');
+        catchupFrameEntries.push(entry);
         catchupRequests.push({
           playerId: player.id,
           requestedExtraSubsteps,
@@ -8975,14 +8980,10 @@ export class GameRoom extends Room<GameState> {
       this.movementCatchupBudgetCursor
     );
     this.movementCatchupBudgetCursor = allocation.nextCursor;
-    const grantsByPlayerId = new Map<string, (typeof allocation.grants)[number]>();
-    for (const grant of allocation.grants) {
-      grantsByPlayerId.set(grant.playerId, grant);
-    }
-
-    for (const entry of entries) {
-      const grant = grantsByPlayerId.get(entry.player.id);
-      if (!grant) continue;
+    for (let index = 0; index < allocation.grants.length; index++) {
+      const grant = allocation.grants[index];
+      const entry = catchupFrameEntries[index];
+      if (!grant || !entry) continue;
 
       entry.grantedExtraSubsteps = grant.grantedExtraSubsteps;
       entry.skippedExtraSubsteps = grant.skippedExtraSubsteps;

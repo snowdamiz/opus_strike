@@ -47,12 +47,15 @@ export class RoomMetrics {
   recordCustomMessage(type: string, payload: unknown, recipients: number): void {
     if (recipients <= 0) return;
 
-    const metric = this.customMessageMetrics.get(type) ?? { messages: 0, recipients: 0, bytes: 0 };
+    let metric = this.customMessageMetrics.get(type);
+    if (!metric) {
+      metric = { messages: 0, recipients: 0, bytes: 0 };
+      this.customMessageMetrics.set(type, metric);
+    }
     const bytes = estimateCustomMessageBytes(type, payload);
     metric.messages++;
     metric.recipients += recipients;
     metric.bytes += bytes * recipients;
-    this.customMessageMetrics.set(type, metric);
   }
 
   getCustomMessageMetricsSnapshot(): Record<string, RoomCustomMessageMetric> {

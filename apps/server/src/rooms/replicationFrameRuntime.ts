@@ -302,37 +302,35 @@ export function collectRecipientPlayerStateStreams(
   input: RecipientPlayerStateStreamCollectionInput
 ): RecipientPlayerStateStreamCollection {
   const now = input.frameContext.now;
-  const vitalsPlayers: PlayerVitalsSnapshot[] | null = input.vitalsState ? [] : null;
-  const removedPlayerIds: string[] | null = input.vitalsState
-    ? input.globallyRemovedPlayerIds.length > 0
-      ? [...input.globallyRemovedPlayerIds]
-      : []
-    : null;
-  const interestPlayers: PlayerInterestSnapshot[] | null = input.interestSignatures ? [] : null;
-  const transformPlayers: PackedPlayerTransform[] | null = input.transformState ? [] : null;
-  const hiddenPlayerIds: string[] | null = input.transformState ? [] : null;
+  const recipient = input.recipient;
+  let vitalsPlayers: PlayerVitalsSnapshot[] | null = null;
+  let removedPlayerIds: string[] | null = null;
+  let interestPlayers: PlayerInterestSnapshot[] | null = null;
+  let transformPlayers: PackedPlayerTransform[] | null = null;
+  let hiddenPlayerIds: string[] | null = null;
 
   input.players.forEach((player, id) => {
     let interest: RecipientInterestDecision | undefined;
     let interestResolved = false;
-    const getInterest = (): RecipientInterestDecision | undefined => {
-      if (!input.recipient) return undefined;
-      if (!interestResolved) {
-        interest = input.getRecipientInterest(input.recipient, player, now, input.frameContext);
-        interestResolved = true;
-      }
-      return interest;
-    };
+    const isEnemyForRecipient = Boolean(
+      recipient && recipient.id !== id && recipient.team !== player.team
+    );
 
-    if (input.vitalsState && vitalsPlayers) {
+    if (input.vitalsState) {
+      let vitalsInterest: RecipientInterestDecision | undefined;
+      if (isEnemyForRecipient && recipient) {
+        if (!interestResolved) {
+          interest = input.getRecipientInterest(recipient, player, now, input.frameContext);
+          interestResolved = true;
+        }
+        vitalsInterest = interest;
+      }
       const vitals = input.buildPlayerVitalsForRecipient(
         id,
         player,
-        input.recipient,
+        recipient,
         now,
-        input.recipient && input.recipient.id !== id && input.recipient.team !== player.team
-          ? getInterest()
-          : undefined,
+        vitalsInterest,
         input.frameContext
       );
       const changedVitals = selectChangedPlayerVitalsSnapshot({
@@ -343,11 +341,18 @@ export function collectRecipientPlayerStateStreams(
         force: input.forceVitals,
         reconcileIntervalMs: input.vitalsReconcileIntervalMs,
       });
-      if (changedVitals) vitalsPlayers.push(changedVitals);
+      if (changedVitals) {
+        if (!vitalsPlayers) vitalsPlayers = [];
+        vitalsPlayers.push(changedVitals);
+      }
     }
 
-    if (input.interestSignatures && interestPlayers) {
-      const decision = getInterest();
+    if (input.interestSignatures) {
+      if (!interestResolved && recipient) {
+        interest = input.getRecipientInterest(recipient, player, now, input.frameContext);
+        interestResolved = true;
+      }
+      const decision = interest;
       if (decision) {
         const snapshot = buildPlayerInterestSnapshot(id, decision);
         const changedSnapshot = selectChangedPlayerInterestSnapshot({
@@ -356,19 +361,27 @@ export function collectRecipientPlayerStateStreams(
           snapshot,
           force: input.forceVitals,
         });
-        if (changedSnapshot) interestPlayers.push(changedSnapshot);
+        if (changedSnapshot) {
+          if (!interestPlayers) interestPlayers = [];
+          interestPlayers.push(changedSnapshot);
+        }
       }
     }
 
-    if (input.transformState && transformPlayers && hiddenPlayerIds) {
+    if (input.transformState) {
       if (player.state !== 'alive' && player.state !== 'spawning') return;
       if (!input.forceTransforms && id === input.recipientId) return;
 
-      const transformInterest = input.recipient && input.recipient.id !== id && input.recipient.team !== player.team
-        ? getInterest()
-        : undefined;
+      let transformInterest: RecipientInterestDecision | undefined;
+      if (isEnemyForRecipient && recipient) {
+        if (!interestResolved) {
+          interest = input.getRecipientInterest(recipient, player, now, input.frameContext);
+          interestResolved = true;
+        }
+        transformInterest = interest;
+      }
       const exactStateVisible = input.shouldSendExactEnemyState(
-        input.recipient,
+        recipient,
         id,
         player,
         now,
@@ -384,16 +397,31 @@ export function collectRecipientPlayerStateStreams(
         },
         exactStateVisible,
         force: input.forceTransforms,
-        getHighRelevance: () => input.isHighRelevanceTransform(input.recipient, id, player, now),
+        getHighRelevance: () => input.isHighRelevanceTransform(recipient, id, player, now),
         now,
       });
-      if (delta?.kind === 'visible') transformPlayers.push(delta.transform);
-      if (delta?.kind === 'hidden') hiddenPlayerIds.push(delta.playerId);
+      if (delta?.kind === 'visible') {
+        if (!transformPlayers) transformPlayers = [];
+        transformPlayers.push(delta.transform);
+      }
+      if (delta?.kind === 'hidden') {
+        if (!hiddenPlayerIds) hiddenPlayerIds = [];
+        hiddenPlayerIds.push(delta.playerId);
+      }
     }
   });
 
-  if (input.vitalsState && removedPlayerIds) {
-    removedPlayerIds.push(...removeMissingKnownPlayerVitals(input.vitalsState, input.frameContext.currentIds));
+  if (input.vitalsState) {
+    const missingVitalsPlayerIds = removeMissingKnownPlayerVitals(
+      input.vitalsState,
+      input.frameContext.currentIds
+    );
+    if (input.globallyRemovedPlayerIds.length > 0 || missingVitalsPlayerIds.length > 0) {
+      removedPlayerIds = input.globallyRemovedPlayerIds.length > 0
+        ? [...input.globallyRemovedPlayerIds]
+        : [];
+      removedPlayerIds.push(...missingVitalsPlayerIds);
+    }
   }
 
   if (input.interestSignatures) {

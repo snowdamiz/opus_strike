@@ -443,15 +443,6 @@ function randomSigned(amount: number): number {
   return (Math.random() * 2 - 1) * amount;
 }
 
-function randomInRadius(radius: number): { x: number; z: number } {
-  const angle = Math.random() * Math.PI * 2;
-  const distance = Math.sqrt(Math.random()) * radius;
-  return {
-    x: Math.cos(angle) * distance,
-    z: Math.sin(angle) * distance,
-  };
-}
-
 function resolveGroundY(x: number, z: number, fallbackY: number): number {
   if (!isPhysicsReady()) return fallbackY;
 
@@ -535,9 +526,10 @@ function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }
   }
 
   for (let i = 0; i < GEARSTORM_BURN_PATCH_COUNT; i++) {
-    const offset = randomInRadius(GEARSTORM_RADIUS * 0.96);
-    const x = position.x + offset.x;
-    const z = position.z + offset.z;
+    const angle = Math.random() * Math.PI * 2;
+    const distance = Math.sqrt(Math.random()) * GEARSTORM_RADIUS * 0.96;
+    const x = position.x + Math.cos(angle) * distance;
+    const z = position.z + Math.sin(angle) * distance;
 
     burnPatches[i] = {
       x,
@@ -552,9 +544,10 @@ function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }
   }
 
   for (let i = 0; i < GEARSTORM_GROUND_FLAME_COUNT; i++) {
-    const offset = randomInRadius(GEARSTORM_RADIUS * 0.94);
-    const x = position.x + offset.x;
-    const z = position.z + offset.z;
+    const angle = Math.random() * Math.PI * 2;
+    const distance = Math.sqrt(Math.random()) * GEARSTORM_RADIUS * 0.94;
+    const x = position.x + Math.cos(angle) * distance;
+    const z = position.z + Math.sin(angle) * distance;
 
     groundFlames[i] = {
       x,
