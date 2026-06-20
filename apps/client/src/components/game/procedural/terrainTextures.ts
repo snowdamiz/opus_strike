@@ -800,14 +800,21 @@ function disposeVoxelTerrainTextures(textures: VoxelTerrainTextures): void {
 function enforceTerrainTextureCacheBudget(): void {
   if (terrainTextureCache.size <= TERRAIN_TEXTURE_CACHE_MAX_ENTRIES) return;
 
-  const candidates = Array.from(terrainTextureCache.entries())
-    .filter(([, entry]) => entry.retainCount === 0)
-    .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+  while (terrainTextureCache.size > TERRAIN_TEXTURE_CACHE_MAX_ENTRIES) {
+    let oldestCacheKey: string | null = null;
+    let oldestEntry: CachedTerrainTextures | null = null;
 
-  for (const [cacheKey, entry] of candidates) {
-    if (terrainTextureCache.size <= TERRAIN_TEXTURE_CACHE_MAX_ENTRIES) return;
-    terrainTextureCache.delete(cacheKey);
-    disposeVoxelTerrainTextures(entry.textures);
+    for (const [cacheKey, entry] of terrainTextureCache) {
+      if (entry.retainCount !== 0) continue;
+      if (!oldestEntry || entry.lastUsedAt < oldestEntry.lastUsedAt) {
+        oldestCacheKey = cacheKey;
+        oldestEntry = entry;
+      }
+    }
+
+    if (!oldestCacheKey || !oldestEntry) return;
+    terrainTextureCache.delete(oldestCacheKey);
+    disposeVoxelTerrainTextures(oldestEntry.textures);
   }
 }
 

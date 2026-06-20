@@ -77,7 +77,7 @@
     "test:matchmaking-settings": "tsx src/scripts/matchmaking-settings.test.ts",
     "test:persistence": "tsx src/scripts/match-persistence.test.ts",
     "test:ranking": "tsx src/scripts/ranking-service.test.ts",
-    "test:spawns": "tsx src/scripts/spawn-assignments.test.ts",
+    "test:spawns": "tsx src/scripts/spawn-assignments.test.ts && tsx src/scripts/battle-royal-spawns.test.ts",
     "test:movement-parity": "tsx src/scripts/anti-cheat-movement-parity-gate.ts --corpus=smoke",
     "test:movement-parity:full": "tsx src/scripts/anti-cheat-movement-parity-gate.ts --corpus=full",
     "test:movement-authority": "tsx src/scripts/movement-authority-registry.test.ts",

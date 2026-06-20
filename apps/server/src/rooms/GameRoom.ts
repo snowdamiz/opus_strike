@@ -6900,7 +6900,13 @@ export class GameRoom extends Room<GameState> {
       ? this.consumeBotSteeringProbeFrameBudget(frameContext) &&
         this.isBotPathClear(bot, desiredMove ?? forward, 6.5)
       : true;
-    const blinkDangerous = blackboard.visibleEnemies.filter((enemy) => enemy.distance <= 12).length >= 2;
+    let nearbyEnemyCount = 0;
+    for (const enemy of blackboard.visibleEnemies) {
+      if (enemy.distance > 12) continue;
+      nearbyEnemyCount++;
+      if (nearbyEnemyCount >= 2) break;
+    }
+    const blinkDangerous = nearbyEnemyCount >= 2;
     const grappleAnchorAvailable = canUseBotAbility(botSnapshot, 'hookshot_grapple', 'ability1') &&
       this.resolveHookshotGrappleTarget(bot) !== null;
     const objectiveZone = blackboard.droppedFriendlyFlag ?? blackboard.droppedEnemyFlag ?? routePlan.targetPosition;
@@ -8969,7 +8975,10 @@ export class GameRoom extends Room<GameState> {
       this.movementCatchupBudgetCursor
     );
     this.movementCatchupBudgetCursor = allocation.nextCursor;
-    const grantsByPlayerId = new Map(allocation.grants.map((grant) => [grant.playerId, grant]));
+    const grantsByPlayerId = new Map<string, (typeof allocation.grants)[number]>();
+    for (const grant of allocation.grants) {
+      grantsByPlayerId.set(grant.playerId, grant);
+    }
 
     for (const entry of entries) {
       const grant = grantsByPlayerId.get(entry.player.id);

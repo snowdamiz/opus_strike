@@ -128,6 +128,12 @@ export interface RecipientPlayerStateStreamCollection {
   hiddenPlayerIds: string[];
 }
 
+const EMPTY_VITALS_PLAYERS: PlayerVitalsSnapshot[] = [];
+const EMPTY_REMOVED_PLAYER_IDS: string[] = [];
+const EMPTY_INTEREST_PLAYERS: PlayerInterestSnapshot[] = [];
+const EMPTY_TRANSFORM_PLAYERS: PackedPlayerTransform[] = [];
+const EMPTY_HIDDEN_PLAYER_IDS: string[] = [];
+
 export interface PlayerVitalsStreamMessageInput {
   tick: number;
   serverTime: number;
@@ -296,11 +302,15 @@ export function collectRecipientPlayerStateStreams(
   input: RecipientPlayerStateStreamCollectionInput
 ): RecipientPlayerStateStreamCollection {
   const now = input.frameContext.now;
-  const vitalsPlayers: PlayerVitalsSnapshot[] = [];
-  const removedPlayerIds = input.vitalsState ? [...input.globallyRemovedPlayerIds] : [];
-  const interestPlayers: PlayerInterestSnapshot[] = [];
-  const transformPlayers: PackedPlayerTransform[] = [];
-  const hiddenPlayerIds: string[] = [];
+  const vitalsPlayers: PlayerVitalsSnapshot[] | null = input.vitalsState ? [] : null;
+  const removedPlayerIds: string[] | null = input.vitalsState
+    ? input.globallyRemovedPlayerIds.length > 0
+      ? [...input.globallyRemovedPlayerIds]
+      : []
+    : null;
+  const interestPlayers: PlayerInterestSnapshot[] | null = input.interestSignatures ? [] : null;
+  const transformPlayers: PackedPlayerTransform[] | null = input.transformState ? [] : null;
+  const hiddenPlayerIds: string[] | null = input.transformState ? [] : null;
 
   input.players.forEach((player, id) => {
     let interest: RecipientInterestDecision | undefined;
@@ -314,7 +324,7 @@ export function collectRecipientPlayerStateStreams(
       return interest;
     };
 
-    if (input.vitalsState) {
+    if (input.vitalsState && vitalsPlayers) {
       const vitals = input.buildPlayerVitalsForRecipient(
         id,
         player,
@@ -336,7 +346,7 @@ export function collectRecipientPlayerStateStreams(
       if (changedVitals) vitalsPlayers.push(changedVitals);
     }
 
-    if (input.interestSignatures) {
+    if (input.interestSignatures && interestPlayers) {
       const decision = getInterest();
       if (decision) {
         const snapshot = buildPlayerInterestSnapshot(id, decision);
@@ -350,7 +360,7 @@ export function collectRecipientPlayerStateStreams(
       }
     }
 
-    if (input.transformState) {
+    if (input.transformState && transformPlayers && hiddenPlayerIds) {
       if (player.state !== 'alive' && player.state !== 'spawning') return;
       if (!input.forceTransforms && id === input.recipientId) return;
 
@@ -382,7 +392,7 @@ export function collectRecipientPlayerStateStreams(
     }
   });
 
-  if (input.vitalsState) {
+  if (input.vitalsState && removedPlayerIds) {
     removedPlayerIds.push(...removeMissingKnownPlayerVitals(input.vitalsState, input.frameContext.currentIds));
   }
 
@@ -391,11 +401,11 @@ export function collectRecipientPlayerStateStreams(
   }
 
   return {
-    vitalsPlayers,
-    removedPlayerIds,
-    interestPlayers,
-    transformPlayers,
-    hiddenPlayerIds,
+    vitalsPlayers: vitalsPlayers ?? EMPTY_VITALS_PLAYERS,
+    removedPlayerIds: removedPlayerIds ?? EMPTY_REMOVED_PLAYER_IDS,
+    interestPlayers: interestPlayers ?? EMPTY_INTEREST_PLAYERS,
+    transformPlayers: transformPlayers ?? EMPTY_TRANSFORM_PLAYERS,
+    hiddenPlayerIds: hiddenPlayerIds ?? EMPTY_HIDDEN_PLAYER_IDS,
   };
 }
 

@@ -239,18 +239,23 @@ function enforceVoxelGeometryCacheBudget(activeManifestId: string): void {
     return;
   }
 
-  const candidates = Array.from(geometryCache.entries())
-    .filter(([, entry]) => entry.manifestId !== activeManifestId)
-    .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+  while (
+    geometryCache.size > VOXEL_GEOMETRY_CACHE_MAX_ENTRIES ||
+    geometryCacheBytes > VOXEL_GEOMETRY_CACHE_MAX_BYTES
+  ) {
+    let oldestCacheKey: string | null = null;
+    let oldestEntry: CachedVoxelGeometry | null = null;
 
-  for (const [cacheKey, entry] of candidates) {
-    if (
-      geometryCache.size <= VOXEL_GEOMETRY_CACHE_MAX_ENTRIES &&
-      geometryCacheBytes <= VOXEL_GEOMETRY_CACHE_MAX_BYTES
-    ) {
-      break;
+    for (const [cacheKey, entry] of geometryCache) {
+      if (entry.manifestId === activeManifestId) continue;
+      if (!oldestEntry || entry.lastUsedAt < oldestEntry.lastUsedAt) {
+        oldestCacheKey = cacheKey;
+        oldestEntry = entry;
+      }
     }
-    evictCachedGeometry(cacheKey, entry);
+
+    if (!oldestCacheKey || !oldestEntry) return;
+    evictCachedGeometry(oldestCacheKey, oldestEntry);
   }
 }
 

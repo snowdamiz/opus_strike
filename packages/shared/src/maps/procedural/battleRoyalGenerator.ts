@@ -2,7 +2,7 @@ import {
   POWERUP_PICKUP_RADIUS,
   POWERUP_RESPAWN_SECONDS,
 } from '../../constants/game.js';
-import { PLAYER_HEIGHT } from '../../constants/physics.js';
+import { PLAYER_HEIGHT, PLAYER_RADIUS } from '../../constants/physics.js';
 import { BATTLE_ROYAL_TEAM_IDS, type Team } from '../../types/team.js';
 import type { Vec3 } from '../../types/vector.js';
 import { getClosestBoundaryPoint, isInsideBoundaryPolygon } from './boundaries.js';
@@ -48,6 +48,7 @@ const CHUNK_SIZE: VoxelSize = { x: 16, y: 16, z: 16 };
 const BASE_RADIUS = 173;
 const SPAWN_CLUSTER_POINT_RADIUS = 2.75;
 const SPAWN_FLATTEN_RADIUS = 11.5;
+const SPAWN_CAPSULE_CLEARANCE_RADIUS = PLAYER_RADIUS + 0.04;
 const POWERUP_FLATTEN_RADIUS = 3.2;
 const POI_FLATTEN_RADIUS = 9.5;
 const BASE_TERRAIN_ROWS = 13;
@@ -1932,6 +1933,9 @@ function buildBlocks(layout: BattleRoyalLayout): {
     heightfield = createHeightfield({ blocks, size: layout.size, origin: layout.origin });
   }
 
+  clearSpawnCapsuleVolumes(layout, blocks);
+  heightfield = createHeightfield({ blocks, size: layout.size, origin: layout.origin });
+
   solidBlockCount = blocks.reduce((count, block) => count + (block === AIR ? 0 : 1), 0);
   return { blocks, heightfield, solidBlockCount };
 }
@@ -1947,6 +1951,49 @@ function worldToGrid(layout: BattleRoyalLayout, value: Vec3): { x: number; y: nu
 function setBlock(layout: BattleRoyalLayout, blocks: Uint8Array, x: number, y: number, z: number, block: number): void {
   if (x < 0 || y < 0 || z < 0 || x >= layout.size.x || y >= layout.size.y || z >= layout.size.z) return;
   blocks[index(x, y, z, layout.size)] = block;
+}
+
+function closestIntervalDelta(value: number, min: number, max: number): number {
+  if (value < min) return value - min;
+  if (value > max) return value - max;
+  return 0;
+}
+
+function clearSpawnCapsuleVolumes(layout: BattleRoyalLayout, blocks: Uint8Array): void {
+  const clearanceRadiusSq = SPAWN_CAPSULE_CLEARANCE_RADIUS * SPAWN_CAPSULE_CLEARANCE_RADIUS;
+
+  for (const points of Object.values(layout.spawnPoints)) {
+    for (const point of points) {
+      const feetY = point.y - PLAYER_HEIGHT / 2;
+      const headY = feetY + PLAYER_HEIGHT;
+      const minX = Math.floor((point.x - SPAWN_CAPSULE_CLEARANCE_RADIUS - layout.origin.x) / VOXEL_SIZE.x);
+      const maxX = Math.ceil((point.x + SPAWN_CAPSULE_CLEARANCE_RADIUS - layout.origin.x) / VOXEL_SIZE.x);
+      const minZ = Math.floor((point.z - SPAWN_CAPSULE_CLEARANCE_RADIUS - layout.origin.z) / VOXEL_SIZE.z);
+      const maxZ = Math.ceil((point.z + SPAWN_CAPSULE_CLEARANCE_RADIUS - layout.origin.z) / VOXEL_SIZE.z);
+      const minY = Math.floor((feetY - layout.origin.y) / VOXEL_SIZE.y);
+      const maxY = Math.floor((headY - layout.origin.y) / VOXEL_SIZE.y);
+
+      for (let z = minZ; z <= maxZ; z++) {
+        if (z < 0 || z >= layout.size.z) continue;
+        const cellMinZ = layout.origin.z + z * VOXEL_SIZE.z;
+        const cellMaxZ = cellMinZ + VOXEL_SIZE.z;
+        const deltaZ = closestIntervalDelta(point.z, cellMinZ, cellMaxZ);
+
+        for (let x = minX; x <= maxX; x++) {
+          if (x < 0 || x >= layout.size.x) continue;
+          const cellMinX = layout.origin.x + x * VOXEL_SIZE.x;
+          const cellMaxX = cellMinX + VOXEL_SIZE.x;
+          const deltaX = closestIntervalDelta(point.x, cellMinX, cellMaxX);
+          if (deltaX * deltaX + deltaZ * deltaZ > clearanceRadiusSq) continue;
+
+          for (let y = minY; y <= maxY; y++) {
+            if (y < 0 || y >= layout.size.y) continue;
+            setBlock(layout, blocks, x, y, z, AIR);
+          }
+        }
+      }
+    }
+  }
 }
 
 function stampDisc(layout: BattleRoyalLayout, blocks: Uint8Array, center: Vec3, radius: number, block: number): void {

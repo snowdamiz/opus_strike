@@ -140,6 +140,13 @@ interface RemoteBatchResources {
   dispose: () => void;
 }
 
+interface RemoteHeroRenderGroup {
+  key: string;
+  players: readonly Player[];
+  resourcePlayerCount: number;
+  resource: RemoteBatchResources;
+}
+
 interface RemoteSocketRegistration {
   object: THREE.Object3D;
   cleanup: () => void;
@@ -150,6 +157,7 @@ type CompleteBoneRefs = Record<HeroBoneName, THREE.Group>;
 interface RemoteHeroRuntime {
   playerId: string;
   heroId: HeroId;
+  seenGeneration: number;
   bodyRoot: THREE.Group;
   bones: CompleteBoneRefs;
   sockets: Map<string, RemoteSocketRegistration>;
@@ -232,6 +240,67 @@ function createRemoteBatchResourcesForKey(key: string): RemoteBatchResources {
   const team = key.slice(separatorIndex + 1) as Team;
   recordFrameAllocation('remoteHeroBatch.resourceCreated');
   return createRemoteBatchResources(heroId, team);
+}
+
+function getCachedRemoteBatchResources(
+  cache: Map<string, RemoteBatchResources>,
+  key: string
+): RemoteBatchResources {
+  let resource = cache.get(key);
+  if (!resource) {
+    resource = createRemoteBatchResourcesForKey(key);
+    cache.set(key, resource);
+  }
+  return resource;
+}
+
+function buildRemoteHeroRenderGroups(
+  players: readonly Player[],
+  resourcePlayers: readonly Player[],
+  cache: Map<string, RemoteBatchResources>
+): RemoteHeroRenderGroup[] {
+  const playerGroupsByKey = new Map<string, Player[]>();
+  const resourcePlayerCountsByKey = new Map<string, number>();
+  const resourceKeys: string[] = [];
+
+  const ensureResourceKey = (key: string): void => {
+    if (resourcePlayerCountsByKey.has(key)) return;
+    resourcePlayerCountsByKey.set(key, 0);
+    resourceKeys.push(key);
+  };
+
+  for (const player of resourcePlayers) {
+    const key = getRemoteHeroResourceKey(player);
+    ensureResourceKey(key);
+    resourcePlayerCountsByKey.set(key, resourcePlayerCountsByKey.get(key)! + 1);
+  }
+
+  for (const player of players) {
+    const key = getRemoteHeroResourceKey(player);
+    ensureResourceKey(key);
+    let groupPlayers = playerGroupsByKey.get(key);
+    if (!groupPlayers) {
+      groupPlayers = [];
+      playerGroupsByKey.set(key, groupPlayers);
+    }
+    groupPlayers.push(player);
+    if (groupPlayers.length > resourcePlayerCountsByKey.get(key)!) {
+      resourcePlayerCountsByKey.set(key, groupPlayers.length);
+    }
+  }
+
+  resourceKeys.sort();
+  const groups: RemoteHeroRenderGroup[] = [];
+  for (const key of resourceKeys) {
+    const groupPlayers = playerGroupsByKey.get(key) ?? EMPTY_REMOTE_PLAYER_GROUP;
+    groups.push({
+      key,
+      players: groupPlayers,
+      resourcePlayerCount: Math.max(resourcePlayerCountsByKey.get(key) ?? 0, groupPlayers.length),
+      resource: getCachedRemoteBatchResources(cache, key),
+    });
+  }
+  return groups;
 }
 
 function getHorizontalSpeed(velocity: { x: number; z: number }): number {
@@ -370,14 +439,19 @@ function getBattleRoyalDistanceCap(distance: number, cap: number): number {
   return Number.isFinite(distance) ? Math.min(distance, cap) : cap;
 }
 
-function isWithinDistance(camera: THREE.Camera, position: THREE.Vector3, maxDistance: number): boolean {
-  if (!Number.isFinite(maxDistance)) return true;
-  if (maxDistance <= 0) return false;
+function getDistanceLimitSq(distance: number): number {
+  if (!Number.isFinite(distance)) return Number.POSITIVE_INFINITY;
+  return distance > 0 ? distance * distance : -1;
+}
+
+function isWithinDistanceLimitSq(camera: THREE.Camera, position: THREE.Vector3, maxDistanceSq: number): boolean {
+  if (maxDistanceSq === Number.POSITIVE_INFINITY) return true;
+  if (maxDistanceSq < 0) return false;
 
   const dx = camera.position.x - position.x;
   const dy = camera.position.y - position.y;
   const dz = camera.position.z - position.z;
-  return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
+  return dx * dx + dy * dy + dz * dz <= maxDistanceSq;
 }
 
 function getRemotePlayerHeight(player: Player): number {
@@ -509,6 +583,7 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
   const runtime: RemoteHeroRuntime = {
     playerId: player.id,
     heroId,
+    seenGeneration: 0,
     bodyRoot,
     bones,
     sockets: new Map(),
@@ -1404,18 +1479,12 @@ function RemoteHeroBatchGroup({
   const outlineCountsRef = useRef<Uint32Array>(new Uint32Array(resources.outlineBatches.length));
   const playersRef = useRef(players);
   const configRef = useRef(config);
+  const playerGenerationRef = useRef(0);
   const capacityPlayersRef = useRef(Math.max(
     REMOTE_BATCH_PREWARM_PLAYER_CAPACITY,
     players.length,
     resourcePlayerCount
   ));
-  const playerIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const player of players) {
-      ids.add(player.id);
-    }
-    return ids;
-  }, [players]);
   if (players.length > capacityPlayersRef.current) {
     capacityPlayersRef.current = players.length + REMOTE_BATCH_CAPACITY_GROWTH_PADDING;
   }
@@ -1436,24 +1505,27 @@ function RemoteHeroBatchGroup({
 
   useLayoutEffect(() => {
     const runtimes = runtimeByPlayerIdRef.current;
+    const generation = playerGenerationRef.current + 1;
+    playerGenerationRef.current = generation;
+
     for (const player of players) {
       const runtime = runtimes.get(player.id);
       if (runtime) {
+        runtime.seenGeneration = generation;
         updateRuntimeHero(runtime, player);
       } else {
-        runtimes.set(player.id, createRemoteRuntime(player));
+        const nextRuntime = createRemoteRuntime(player);
+        nextRuntime.seenGeneration = generation;
+        runtimes.set(player.id, nextRuntime);
       }
     }
-  }, [players]);
 
-  useEffect(() => {
-    const runtimes = runtimeByPlayerIdRef.current;
     for (const [playerId, runtime] of runtimes) {
-      if (playerIds.has(playerId)) continue;
+      if (runtime.seenGeneration === generation) continue;
       disposeRemoteRuntime(runtime);
       runtimes.delete(playerId);
     }
-  }, [playerIds]);
+  }, [players]);
 
   useEffect(() => () => {
     for (const runtime of runtimeByPlayerIdRef.current.values()) {
@@ -1478,6 +1550,14 @@ function RemoteHeroBatchGroup({
       const outlineDistance = isBattleRoyal
         ? getBattleRoyalDistanceCap(frameConfig.outlineDistance, BATTLE_ROYAL_MAX_REMOTE_OUTLINE_DISTANCE)
         : frameConfig.outlineDistance;
+      const fullBodyDistanceSq = getDistanceLimitSq(fullBodyDistance);
+      const outlineDistanceSq = getDistanceLimitSq(outlineDistance);
+      const activityBodyDistanceSq = isBattleRoyal
+        ? getDistanceLimitSq(BATTLE_ROYAL_REMOTE_ACTIVITY_BODY_DISTANCE)
+        : Number.POSITIVE_INFINITY;
+      const activityOutlineDistanceSq = isBattleRoyal
+        ? getDistanceLimitSq(BATTLE_ROYAL_REMOTE_ACTIVITY_OUTLINE_DISTANCE)
+        : Number.POSITIVE_INFINITY;
       counts.fill(0);
       outlineCounts.fill(0);
 
@@ -1496,11 +1576,11 @@ function RemoteHeroBatchGroup({
         const isActivityPriority = isActivityPriorityRemoteBody(player, visualState, nowMs);
         const forceBodyForPriority = isObjectivePriority || (
           isActivityPriority &&
-          (!isBattleRoyal || isWithinDistance(camera, runtime.currentPosition, BATTLE_ROYAL_REMOTE_ACTIVITY_BODY_DISTANCE))
+          isWithinDistanceLimitSq(camera, runtime.currentPosition, activityBodyDistanceSq)
         );
         const renderBody = !hasActivePhantomVeil(player) && (
           forceBodyForPriority ||
-          isWithinDistance(camera, runtime.currentPosition, fullBodyDistance)
+          isWithinDistanceLimitSq(camera, runtime.currentPosition, fullBodyDistanceSq)
         );
         if (!renderBody) continue;
 
@@ -1533,11 +1613,11 @@ function RemoteHeroBatchGroup({
 
         const forceOutlineForPriority = isObjectivePriority || (
           isActivityPriority &&
-          (!isBattleRoyal || isWithinDistance(camera, runtime.currentPosition, BATTLE_ROYAL_REMOTE_ACTIVITY_OUTLINE_DISTANCE))
+          isWithinDistanceLimitSq(camera, runtime.currentPosition, activityOutlineDistanceSq)
         );
         const renderOutline = frameConfig.outlineDistance > 0 && (
           forceOutlineForPriority ||
-          isWithinDistance(camera, runtime.currentPosition, outlineDistance)
+          isWithinDistanceLimitSq(camera, runtime.currentPosition, outlineDistanceSq)
         );
         if (!renderOutline) continue;
 
@@ -1620,73 +1700,11 @@ export const RemoteHeroBatchRenderer = memo(function RemoteHeroBatchRenderer({
   localPlayerId = null,
   config,
 }: RemoteHeroBatchRendererProps) {
-  const groupedPlayers = useMemo<Array<{ key: string; players: readonly Player[] }>>(() => {
-    const groups = new Map<string, Player[]>();
-    for (const player of players) {
-      const key = getRemoteHeroResourceKey(player);
-      const group = groups.get(key);
-      if (group) group.push(player);
-      else {
-        const groupPlayers = [player];
-        groups.set(key, groupPlayers);
-      }
-    }
-    return Array.from(groups, ([key, groupPlayers]) => ({
-      key,
-      players: groupPlayers,
-    }));
-  }, [players]);
-
-  const groupedPlayersByKey = useMemo(() => (
-    new Map(groupedPlayers.map((group) => [group.key, group.players] as const))
-  ), [groupedPlayers]);
-
-  const resourcePlayerCountsByKey = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const player of resourcePlayers) {
-      const key = getRemoteHeroResourceKey(player);
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
-    for (const group of groupedPlayers) {
-      counts.set(group.key, Math.max(counts.get(group.key) ?? 0, group.players.length));
-    }
-    return counts;
-  }, [groupedPlayers, resourcePlayers]);
-
-  const resourceKeys = useMemo(() => {
-    const keys = new Set<string>(resourcePlayerCountsByKey.keys());
-    return Array.from(keys).sort();
-  }, [resourcePlayerCountsByKey]);
-
-  const resourceKeySignature = useMemo(() => resourceKeys.join('|'), [resourceKeys]);
   const resourceCacheRef = useRef<Map<string, RemoteBatchResources>>(new Map());
-
-  const renderGroups = useMemo(() => {
-    const cache = resourceCacheRef.current;
-    const groups: Array<{
-      key: string;
-      players: readonly Player[];
-      resourcePlayerCount: number;
-      resource: RemoteBatchResources;
-    }> = [];
-
-    for (const key of resourceKeys) {
-      const groupPlayers = groupedPlayersByKey.get(key) ?? EMPTY_REMOTE_PLAYER_GROUP;
-      let resource = cache.get(key);
-      if (!resource) {
-        resource = createRemoteBatchResourcesForKey(key);
-        cache.set(key, resource);
-      }
-      groups.push({
-        key,
-        players: groupPlayers,
-        resourcePlayerCount: Math.max(resourcePlayerCountsByKey.get(key) ?? 0, groupPlayers.length),
-        resource,
-      });
-    }
-
-    return groups;
-  }, [groupedPlayersByKey, resourceKeySignature, resourceKeys, resourcePlayerCountsByKey]);
+  const renderGroups = useMemo(
+    () => buildRemoteHeroRenderGroups(players, resourcePlayers, resourceCacheRef.current),
+    [players, resourcePlayers]
+  );
 
   useEffect(() => () => {
     for (const resource of resourceCacheRef.current.values()) {

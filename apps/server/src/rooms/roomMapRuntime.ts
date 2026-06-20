@@ -138,12 +138,12 @@ export class RoomMapRuntime {
   }
 
   getBlockAtWorld(position: { x: number; y: number; z: number }): number {
-    const manifest = this.getMapManifest();
+    const manifest = this.getLoadedMapManifest();
     return this.mapChunks.getBlockAtWorld(manifest, position);
   }
 
   getProceduralGroundY(position: { x: number; y: number; z: number }): number | null {
-    const manifest = this.getMapManifest();
+    const manifest = this.getLoadedMapManifest();
     const gx = worldToVoxelGrid(position.x, manifest.origin.x, manifest.voxelSize.x);
     const gz = worldToVoxelGrid(position.z, manifest.origin.z, manifest.voxelSize.z);
 
@@ -200,11 +200,14 @@ export class RoomMapRuntime {
   }
 
   private getProceduralTerrainLookup(): ReturnType<typeof createProceduralTerrainLookup> {
-    this.getMapManifest();
-    if (!this.proceduralTerrainLookup) {
-      this.proceduralTerrainLookup = createProceduralTerrainLookup(this.mapManifest!);
-    }
+    if (this.proceduralTerrainLookup) return this.proceduralTerrainLookup;
+    const manifest = this.getLoadedMapManifest();
+    this.proceduralTerrainLookup = createProceduralTerrainLookup(manifest);
     return this.proceduralTerrainLookup;
+  }
+
+  private getLoadedMapManifest(): VoxelMapManifest {
+    return this.mapManifest ?? this.refreshMap();
   }
 
   private resolveMapConfig(): Required<RoomMapRuntimeConfig> {

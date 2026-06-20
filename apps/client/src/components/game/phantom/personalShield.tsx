@@ -378,7 +378,7 @@ function getShieldPlayer(playerId: string): Player | null {
 }
 
 function syncShieldAudioLoopPositions(activeAudioIds: Set<string>, now: number): void {
-  for (const playerId of Array.from(activeAudioIds)) {
+  for (const playerId of activeAudioIds) {
     const player = getShieldPlayer(playerId);
     if (!player || !hasActivePersonalShield(player, now)) {
       activeAudioIds.delete(playerId);
@@ -390,10 +390,16 @@ function syncShieldAudioLoopPositions(activeAudioIds: Set<string>, now: number):
   }
 }
 
+function includesShieldId(activeShieldIds: readonly string[], playerId: string): boolean {
+  for (const activeShieldId of activeShieldIds) {
+    if (activeShieldId === playerId) return true;
+  }
+  return false;
+}
+
 function syncShieldAudioLoops(activeAudioIds: Set<string>, activeShieldIds: readonly string[]): void {
-  const activeShieldIdSet = new Set(activeShieldIds);
-  for (const playerId of Array.from(activeAudioIds)) {
-    if (activeShieldIdSet.has(playerId)) continue;
+  for (const playerId of activeAudioIds) {
+    if (includesShieldId(activeShieldIds, playerId)) continue;
 
     activeAudioIds.delete(playerId);
     stopShieldAudioLoop(playerId);

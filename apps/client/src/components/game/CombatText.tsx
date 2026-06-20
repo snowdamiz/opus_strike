@@ -252,14 +252,21 @@ function createCombatTextTexture(kind: CombatTextKind, amount: number): THREE.Ca
 function evictUnusedCombatTextTextures(): void {
   if (combatTextTextureCache.size <= COMBAT_TEXT_TEXTURE_CACHE_LIMIT) return;
 
-  const unusedEntries = Array.from(combatTextTextureCache)
-    .filter(([, entry]) => entry.refCount <= 0)
-    .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+  while (combatTextTextureCache.size > COMBAT_TEXT_TEXTURE_CACHE_LIMIT) {
+    let oldestKey: string | null = null;
+    let oldestEntry: CombatTextTextureEntry | null = null;
 
-  for (const [key, entry] of unusedEntries) {
-    if (combatTextTextureCache.size <= COMBAT_TEXT_TEXTURE_CACHE_LIMIT) break;
-    entry.texture.dispose();
-    combatTextTextureCache.delete(key);
+    for (const [key, entry] of combatTextTextureCache) {
+      if (entry.refCount > 0) continue;
+      if (!oldestEntry || entry.lastUsedAt < oldestEntry.lastUsedAt) {
+        oldestKey = key;
+        oldestEntry = entry;
+      }
+    }
+
+    if (oldestKey === null || oldestEntry === null) return;
+    oldestEntry.texture.dispose();
+    combatTextTextureCache.delete(oldestKey);
   }
 }
 

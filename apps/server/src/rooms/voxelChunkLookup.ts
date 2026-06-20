@@ -9,8 +9,15 @@ export function worldToVoxelGrid(value: number, origin: number, voxelSize: numbe
   return Math.floor((value - origin) / voxelSize);
 }
 
+type ChunkLookupKey = number | string;
+
+const CHUNK_KEY_OFFSET = 1 << 16;
+const CHUNK_KEY_STRIDE = 1 << 17;
+const CHUNK_KEY_MIN = -CHUNK_KEY_OFFSET;
+const CHUNK_KEY_MAX = CHUNK_KEY_OFFSET - 1;
+
 export class VoxelChunkLookup {
-  private readonly chunks = new Map<string, VoxelChunk>();
+  private readonly chunks = new Map<ChunkLookupKey, VoxelChunk>();
 
   reset(manifest: VoxelChunkLookupManifest): void {
     this.chunks.clear();
@@ -51,7 +58,19 @@ export class VoxelChunkLookup {
     return chunk.blocks[lx + chunk.size.x * (lz + chunk.size.z * ly)] || 0;
   }
 
-  private getChunkKey(x: number, y: number, z: number): string {
+  private getChunkKey(x: number, y: number, z: number): ChunkLookupKey {
+    if (
+      x >= CHUNK_KEY_MIN && x <= CHUNK_KEY_MAX &&
+      y >= CHUNK_KEY_MIN && y <= CHUNK_KEY_MAX &&
+      z >= CHUNK_KEY_MIN && z <= CHUNK_KEY_MAX
+    ) {
+      return (
+        (x + CHUNK_KEY_OFFSET) * CHUNK_KEY_STRIDE * CHUNK_KEY_STRIDE +
+        (y + CHUNK_KEY_OFFSET) * CHUNK_KEY_STRIDE +
+        (z + CHUNK_KEY_OFFSET)
+      );
+    }
+
     return `${x}:${y}:${z}`;
   }
 }

@@ -100,21 +100,24 @@ export function allocateRoomMovementCatchupBudget(
   extraSubstepBudget: number,
   cursor = 0
 ): RoomMovementCatchupBudgetAllocation {
-  const grants = requests.map((request) => ({
-    playerId: request.playerId,
-    grantedExtraSubsteps: 0,
-    skippedExtraSubsteps: Math.max(0, Math.trunc(request.requestedExtraSubsteps)),
-  }));
+  const grants: RoomMovementCatchupBudgetGrant[] = new Array(requests.length);
   const contenders: Array<{
     request: RoomMovementCatchupBudgetRequest;
     grant: RoomMovementCatchupBudgetGrant;
     index: number;
   }> = [];
-  requests.forEach((request, index) => {
-    const grant = grants[index];
-    if (!grant || request.requestedExtraSubsteps <= 0) return;
-    contenders.push({ request, grant, index });
-  });
+  for (let index = 0; index < requests.length; index++) {
+    const request = requests[index];
+    const grant: RoomMovementCatchupBudgetGrant = {
+      playerId: request.playerId,
+      grantedExtraSubsteps: 0,
+      skippedExtraSubsteps: Math.max(0, Math.trunc(request.requestedExtraSubsteps)),
+    };
+    grants[index] = grant;
+    if (request.requestedExtraSubsteps > 0) {
+      contenders.push({ request, grant, index });
+    }
+  }
   contenders.sort((a, b) => {
     const skippedDelta = b.request.skippedCatchupSubsteps - a.request.skippedCatchupSubsteps;
     if (skippedDelta !== 0) return skippedDelta;

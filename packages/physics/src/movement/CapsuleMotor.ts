@@ -163,6 +163,7 @@ const DEFAULT_VOXEL_SIZE: Vec3 = {
 const EPSILON = 0.00001;
 const STATIC_AABB_CACHE_LIMIT = 512;
 const EMPTY_MOVEMENT_CONTACTS: MovementContact[] = [];
+const EMPTY_MOVEMENT_AABBS: readonly MovementAabb[] = [];
 const SKIN_WIDTH_EXPANSION: Vec3 = { x: SKIN_WIDTH, y: SKIN_WIDTH, z: SKIN_WIDTH };
 const SLIDE_EXIT_PROBE_DISTANCES = [0, 0.08, 0.16, 0.24] as const;
 
@@ -504,6 +505,7 @@ function collectVoxelAabbs(
 
   const aabbs: MovementAabb[] = [];
   const sample = { x: 0, y: 0, z: 0 };
+  const groundProbe = { x: 0, y: 0, z: 0 };
   for (let y = gy0; y <= gy1; y++) {
     for (let z = gz0; z <= gz1; z++) {
       let runStart: number | null = null;
@@ -517,20 +519,26 @@ function collectVoxelAabbs(
           solid = isCollisionBlock(block);
 
           if (solid && terrain.getGroundY && getBlockDefinition(block).walkable) {
-            const groundY = terrain.getGroundY({
-              x: sample.x,
-              y: bounds.max.y + STEP_HEIGHT + SKIN_WIDTH,
-              z: sample.z,
-            });
+            groundProbe.x = sample.x;
+            groundProbe.y = bounds.max.y + STEP_HEIGHT + SKIN_WIDTH;
+            groundProbe.z = sample.z;
+            const groundY = terrain.getGroundY(groundProbe);
             const neighborDistance = Math.max(PLAYER_RADIUS, voxelSize.x, voxelSize.z);
             let lowestNeighborGroundY = groundY;
-            const leftGroundY = terrain.getGroundY({ x: sample.x - neighborDistance, y: sample.y, z: sample.z });
+            groundProbe.x = sample.x - neighborDistance;
+            groundProbe.y = sample.y;
+            groundProbe.z = sample.z;
+            const leftGroundY = terrain.getGroundY(groundProbe);
             if (leftGroundY !== null) lowestNeighborGroundY = lowestNeighborGroundY === null ? leftGroundY : Math.min(lowestNeighborGroundY, leftGroundY);
-            const rightGroundY = terrain.getGroundY({ x: sample.x + neighborDistance, y: sample.y, z: sample.z });
+            groundProbe.x = sample.x + neighborDistance;
+            const rightGroundY = terrain.getGroundY(groundProbe);
             if (rightGroundY !== null) lowestNeighborGroundY = lowestNeighborGroundY === null ? rightGroundY : Math.min(lowestNeighborGroundY, rightGroundY);
-            const backGroundY = terrain.getGroundY({ x: sample.x, y: sample.y, z: sample.z - neighborDistance });
+            groundProbe.x = sample.x;
+            groundProbe.z = sample.z - neighborDistance;
+            const backGroundY = terrain.getGroundY(groundProbe);
             if (backGroundY !== null) lowestNeighborGroundY = lowestNeighborGroundY === null ? backGroundY : Math.min(lowestNeighborGroundY, backGroundY);
-            const forwardGroundY = terrain.getGroundY({ x: sample.x, y: sample.y, z: sample.z + neighborDistance });
+            groundProbe.z = sample.z + neighborDistance;
+            const forwardGroundY = terrain.getGroundY(groundProbe);
             if (forwardGroundY !== null) lowestNeighborGroundY = lowestNeighborGroundY === null ? forwardGroundY : Math.min(lowestNeighborGroundY, forwardGroundY);
             const localRise = groundY !== null && lowestNeighborGroundY !== null
               ? groundY - lowestNeighborGroundY
@@ -579,7 +587,7 @@ function sameInterval(aMin: number, aMax: number, bMin: number, bMax: number): b
 
 function mergeAabbRuns(aabbs: MovementAabb[]): MovementAabb[] {
   const zMerged: MovementAabb[] = [];
-  const byZ = [...aabbs].sort((a, b) =>
+  const byZ = aabbs.sort((a, b) =>
     a.min.y - b.min.y ||
     a.min.x - b.min.x ||
     a.max.x - b.max.x ||
@@ -661,7 +669,7 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
   }
 
   function collectStaticAabbs(expanded: MovementCollisionBounds): readonly MovementAabb[] {
-    if (!terrain.getBlockAtWorld) return [];
+    if (!terrain.getBlockAtWorld) return EMPTY_MOVEMENT_AABBS;
 
     const cacheKey = staticAabbCacheKey(expanded);
     const cached = staticAabbCache.get(cacheKey);
@@ -680,9 +688,11 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
 
   function collectAabbs(bounds: MovementCollisionBounds): readonly MovementAabb[] {
     const expanded = expandBounds(bounds, SKIN_WIDTH_EXPANSION);
-    const staticAabbs = terrain.cacheStaticAabbs
-      ? collectStaticAabbs(expanded)
-      : mergeAabbRuns(collectVoxelAabbs(terrain, expanded, origin, voxelSize));
+    const staticAabbs = terrain.getBlockAtWorld
+      ? terrain.cacheStaticAabbs
+        ? collectStaticAabbs(expanded)
+        : mergeAabbRuns(collectVoxelAabbs(terrain, expanded, origin, voxelSize))
+      : EMPTY_MOVEMENT_AABBS;
     const dynamicAabbs = terrain.getCollisionAabbs?.(expanded) ?? [];
     if (dynamicAabbs.length === 0) return staticAabbs;
 

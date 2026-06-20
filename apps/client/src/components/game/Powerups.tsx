@@ -11,8 +11,12 @@ const POWERUP_CORE_COLOR = '#40d7ff';
 const POWERUP_TRIM_COLOR = '#ffd35a';
 const POWERUP_RING_COLOR = '#7cf7c8';
 const PICKUP_POP_DURATION_MS = 520;
-const POWERUP_REFRESH_MS = 100;
 const BURST_SPARK_ANGLES = [0, Math.PI / 3, (Math.PI * 2) / 3, Math.PI, (Math.PI * 4) / 3, (Math.PI * 5) / 3] as const;
+
+interface VisiblePowerupPickup {
+  pickup: MapPowerupPickup;
+  collectedAt?: number;
+}
 
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
@@ -27,6 +31,56 @@ function getPickupPopProgress(collectedAt: number | undefined, now = Date.now())
   if (collectedAt === undefined) return null;
   const progress = (now - collectedAt) / PICKUP_POP_DURATION_MS;
   return progress < 1 ? clamp01(progress) : null;
+}
+
+function getNextPowerupVisualRefreshAt(
+  pickups: MapPowerupPickup[],
+  pickupStates: ReadonlyMap<string, { availableAt: number }>,
+  collectionStates: ReadonlyMap<string, { collectedAt: number }>,
+  now: number
+): number | null {
+  let nextRefreshAt = Number.POSITIVE_INFINITY;
+
+  for (const pickup of pickups) {
+    const state = pickupStates.get(pickup.id);
+    if (state && state.availableAt > now) {
+      nextRefreshAt = Math.min(nextRefreshAt, state.availableAt);
+    }
+
+    const collection = collectionStates.get(pickup.id);
+    if (collection) {
+      const popEndsAt = collection.collectedAt + PICKUP_POP_DURATION_MS;
+      if (popEndsAt > now) {
+        nextRefreshAt = Math.min(nextRefreshAt, popEndsAt);
+      }
+    }
+  }
+
+  return Number.isFinite(nextRefreshAt) ? nextRefreshAt : null;
+}
+
+function getVisiblePowerupPickups(
+  pickups: MapPowerupPickup[],
+  pickupStates: ReadonlyMap<string, { availableAt: number }>,
+  collectionStates: ReadonlyMap<string, { collectedAt: number }>,
+  now: number
+): VisiblePowerupPickup[] {
+  const visiblePickups: VisiblePowerupPickup[] = [];
+
+  for (const pickup of pickups) {
+    const state = pickupStates.get(pickup.id);
+    const collection = collectionStates.get(pickup.id);
+    const popProgress = getPickupPopProgress(collection?.collectedAt, now);
+    const isRespawning = state !== undefined && state.availableAt > now;
+
+    if (isRespawning && popProgress === null) continue;
+    visiblePickups.push({
+      pickup,
+      collectedAt: popProgress === null ? undefined : collection?.collectedAt,
+    });
+  }
+
+  return visiblePickups;
 }
 
 function PowerupMesh({ pickup, collectedAt }: { pickup: MapPowerupPickup; collectedAt?: number }) {
@@ -145,11 +199,6 @@ export function Powerups() {
   const powerupPickupCollections = useGameStore((state) => state.powerupPickupCollections);
   const [now, setNow] = useState(() => Date.now());
 
-  useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), POWERUP_REFRESH_MS);
-    return () => window.clearInterval(interval);
-  }, []);
-
   const manifest = useMemo(() => {
     return (
       getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId })
@@ -157,19 +206,33 @@ export function Powerups() {
     ).manifest;
   }, [mapSeed, mapThemeId, mapSize, mapProfileId]);
 
-  const visiblePickups = useMemo(() => {
-    return manifest.gameplay.powerups.flatMap((pickup) => {
-      const state = powerupPickups.get(pickup.id);
-      const collection = powerupPickupCollections.get(pickup.id);
-      const popProgress = getPickupPopProgress(collection?.collectedAt, now);
-      const isRespawning = state !== undefined && state.availableAt > now;
+  useEffect(() => {
+    setNow(Date.now());
+  }, [powerupPickupCollections, powerupPickups]);
 
-      if (isRespawning && popProgress === null) return [];
-      return [{
-        pickup,
-        collectedAt: popProgress === null ? undefined : collection?.collectedAt,
-      }];
-    });
+  useEffect(() => {
+    const nextRefreshAt = getNextPowerupVisualRefreshAt(
+      manifest.gameplay.powerups,
+      powerupPickups,
+      powerupPickupCollections,
+      now
+    );
+    if (nextRefreshAt === null) return undefined;
+
+    const timeout = window.setTimeout(
+      () => setNow(Date.now()),
+      Math.max(16, nextRefreshAt - Date.now())
+    );
+    return () => window.clearTimeout(timeout);
+  }, [manifest.gameplay.powerups, now, powerupPickupCollections, powerupPickups]);
+
+  const visiblePickups = useMemo(() => {
+    return getVisiblePowerupPickups(
+      manifest.gameplay.powerups,
+      powerupPickups,
+      powerupPickupCollections,
+      now
+    );
   }, [manifest, now, powerupPickupCollections, powerupPickups]);
 
   if (visiblePickups.length === 0) return null;

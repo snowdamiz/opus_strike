@@ -63,6 +63,7 @@ const dressingSetCache = new Map<string, CachedDressingSet>();
 const DRESSING_SET_CACHE_MAX_ENTRIES = 8;
 const DRESSING_SET_CACHE_MAX_INSTANCES = 5200;
 const DRESSING_CULL_UPDATE_INTERVAL_SECONDS = 0.2;
+const DRESSING_CULL_CAMERA_MOVE_EPSILON_SQ = 1.6 * 1.6;
 let dressingSetCacheInstances = 0;
 
 function chunkIndex(x: number, y: number, z: number, chunk: VoxelChunk): number {
@@ -452,39 +453,34 @@ function enforceDressingSetCacheBudget(activeCacheKey: string): void {
     return;
   }
 
-  const candidates = Array.from(dressingSetCache.entries())
-    .filter(([cacheKey]) => cacheKey !== activeCacheKey)
-    .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+  while (
+    dressingSetCache.size > DRESSING_SET_CACHE_MAX_ENTRIES ||
+    dressingSetCacheInstances > DRESSING_SET_CACHE_MAX_INSTANCES
+  ) {
+    let oldestCacheKey: string | null = null;
+    let oldestEntry: CachedDressingSet | null = null;
 
-  for (const [cacheKey, entry] of candidates) {
-    if (
-      dressingSetCache.size <= DRESSING_SET_CACHE_MAX_ENTRIES &&
-      dressingSetCacheInstances <= DRESSING_SET_CACHE_MAX_INSTANCES
-    ) {
-      break;
+    for (const [cacheKey, entry] of dressingSetCache) {
+      if (cacheKey === activeCacheKey) continue;
+      if (!oldestEntry || entry.lastUsedAt < oldestEntry.lastUsedAt) {
+        oldestCacheKey = cacheKey;
+        oldestEntry = entry;
+      }
     }
-    dressingSetCache.delete(cacheKey);
-    dressingSetCacheInstances = Math.max(0, dressingSetCacheInstances - entry.instanceCount);
+
+    if (!oldestCacheKey || !oldestEntry) return;
+    dressingSetCache.delete(oldestCacheKey);
+    dressingSetCacheInstances = Math.max(0, dressingSetCacheInstances - oldestEntry.instanceCount);
   }
 }
 
 function writeDressingInstanceMatrix(mesh: THREE.InstancedMesh, instance: DressingInstance, index: number): void {
-  dressingMatrixDummy.position.set(...instance.position);
-  dressingMatrixDummy.rotation.set(...instance.rotation);
-  dressingMatrixDummy.scale.set(...instance.scale);
+  const { position, rotation, scale } = instance;
+  dressingMatrixDummy.position.set(position[0], position[1], position[2]);
+  dressingMatrixDummy.rotation.set(rotation[0], rotation[1], rotation[2]);
+  dressingMatrixDummy.scale.set(scale[0], scale[1], scale[2]);
   dressingMatrixDummy.updateMatrix();
   mesh.setMatrixAt(index, dressingMatrixDummy.matrix);
-}
-
-function isDressingInstanceVisible(
-  instance: DressingInstance,
-  cameraPosition: THREE.Vector3,
-  maxRenderDistance: number
-): boolean {
-  if (!Number.isFinite(maxRenderDistance)) return true;
-  const dx = instance.position[0] - cameraPosition.x;
-  const dz = instance.position[2] - cameraPosition.z;
-  return dx * dx + dz * dz <= maxRenderDistance * maxRenderDistance;
 }
 
 function writeVisibleDressingMatrices(
@@ -494,8 +490,17 @@ function writeVisibleDressingMatrices(
   maxRenderDistance: number
 ): number {
   let writeIndex = 0;
+  const maxRenderDistanceSq = Number.isFinite(maxRenderDistance)
+    ? maxRenderDistance * maxRenderDistance
+    : Number.POSITIVE_INFINITY;
+
   for (const instance of instances) {
-    if (!isDressingInstanceVisible(instance, cameraPosition, maxRenderDistance)) continue;
+    if (Number.isFinite(maxRenderDistanceSq)) {
+      const position = instance.position;
+      const dx = position[0] - cameraPosition.x;
+      const dz = position[2] - cameraPosition.z;
+      if (dx * dx + dz * dz > maxRenderDistanceSq) continue;
+    }
     writeDressingInstanceMatrix(mesh, instance, writeIndex++);
   }
 
@@ -512,6 +517,8 @@ function useInstancedMatrices(
   const { camera } = useThree();
   const cullAccumulatorRef = useRef(0);
   const visibleCountRef = useRef(-1);
+  const lastCullCameraXRef = useRef(Number.NaN);
+  const lastCullCameraZRef = useRef(Number.NaN);
 
   useLayoutEffect(() => {
     const mesh = ref.current;
@@ -519,6 +526,8 @@ function useInstancedMatrices(
 
     mesh.instanceMatrix.setUsage(Number.isFinite(maxRenderDistance) ? THREE.DynamicDrawUsage : THREE.StaticDrawUsage);
     visibleCountRef.current = writeVisibleDressingMatrices(mesh, instances, camera.position, maxRenderDistance);
+    lastCullCameraXRef.current = camera.position.x;
+    lastCullCameraZRef.current = camera.position.z;
     if (!Number.isFinite(maxRenderDistance)) {
       mesh.count = instances.length;
     }
@@ -540,7 +549,19 @@ function useInstancedMatrices(
       return;
     }
 
+    const dx = camera.position.x - lastCullCameraXRef.current;
+    const dz = camera.position.z - lastCullCameraZRef.current;
+    if (
+      Number.isFinite(lastCullCameraXRef.current) &&
+      dx * dx + dz * dz < DRESSING_CULL_CAMERA_MOVE_EPSILON_SQ
+    ) {
+      cullAccumulatorRef.current = 0;
+      return;
+    }
+
     cullAccumulatorRef.current = 0;
+    lastCullCameraXRef.current = camera.position.x;
+    lastCullCameraZRef.current = camera.position.z;
     visibleCountRef.current = writeVisibleDressingMatrices(mesh, instances, camera.position, maxRenderDistance);
   });
 }

@@ -11,6 +11,7 @@ export class PlayerSpatialIndex {
   private readonly buckets = new Map<number, Player[]>();
   private readonly alivePlayers: Player[] = [];
   private readonly alivePlayersByTeam = new Map<Team, Player[]>();
+  private readonly enemyPlayersByTeam = new Map<Team, Player[]>();
   private readonly emptyTeamPlayers: Player[] = [];
 
   constructor(private readonly cellSize = 8) {}
@@ -19,13 +20,17 @@ export class PlayerSpatialIndex {
     this.buckets.clear();
     this.alivePlayers.length = 0;
     this.alivePlayersByTeam.clear();
+    this.enemyPlayersByTeam.clear();
 
     for (const player of players) {
       if (player.state !== 'alive') continue;
       this.alivePlayers.push(player);
-      const teamPlayers = this.alivePlayersByTeam.get(player.team) ?? [];
+      let teamPlayers = this.alivePlayersByTeam.get(player.team);
+      if (!teamPlayers) {
+        teamPlayers = [];
+        this.alivePlayersByTeam.set(player.team, teamPlayers);
+      }
       teamPlayers.push(player);
-      this.alivePlayersByTeam.set(player.team, teamPlayers);
 
       const key = this.getBucketKey(player.position.x, player.position.z);
       let bucket = this.buckets.get(key);
@@ -46,7 +51,20 @@ export class PlayerSpatialIndex {
   }
 
   getEnemyPlayers(team: Team): Player[] {
-    return this.alivePlayers.filter((player) => player.team !== team);
+    let enemyPlayers = this.enemyPlayersByTeam.get(team);
+    if (enemyPlayers) return enemyPlayers;
+
+    enemyPlayers = [];
+    for (const player of this.alivePlayers) {
+      if (player.team !== team) enemyPlayers.push(player);
+    }
+    if (enemyPlayers.length === 0) {
+      this.enemyPlayersByTeam.set(team, this.emptyTeamPlayers);
+      return this.emptyTeamPlayers;
+    }
+
+    this.enemyPlayersByTeam.set(team, enemyPlayers);
+    return enemyPlayers;
   }
 
   getTeamPlayers(team: Team): Player[] {

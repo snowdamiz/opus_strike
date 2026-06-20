@@ -345,7 +345,6 @@ function writeActiveAbilityIdsForTrace(
       target.push(abilityId);
     }
   }
-  target.sort();
   return target;
 }
 

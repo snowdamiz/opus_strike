@@ -541,7 +541,11 @@ export function RemoteMovementEffects({
   }, [capacity]);
 
   useEffect(() => {
-    const activePlayerIds = new Set(players.map((player) => player.id));
+    const activePlayerIds = new Set<string>();
+    for (const player of players) {
+      activePlayerIds.add(player.id);
+    }
+
     for (const playerId of emitterStatesRef.current.keys()) {
       if (!activePlayerIds.has(playerId)) {
         emitterStatesRef.current.delete(playerId);
@@ -566,8 +570,9 @@ export function RemoteMovementEffects({
           shouldSuppressRemoteMovementEffects(player) ||
           !isWithinDistanceSq(effectPosition, camera.position, config.maxRemoteMovementEffectDistance)
         ) {
-          emitterStatesRef.current.delete(player.id);
-          deactivateParticlesForOwner(particles, player.id);
+          if (emitterStatesRef.current.delete(player.id)) {
+            deactivateParticlesForOwner(particles, player.id);
+          }
           continue;
         }
 

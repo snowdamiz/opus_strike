@@ -27,7 +27,7 @@ export class PlayerReplicationStateTracker {
   };
   private readonly transformRecipientStates = new Map<string, TransformReplicationState>();
   private readonly recentCombatTransformUntil = new Map<string, number>();
-  private readonly recentCombatInterestUntil = new Map<string, number>();
+  private readonly recentCombatInterestUntil = new Map<string, Map<string, number>>();
 
   getStreamEpoch(): number {
     return this.transformStreamEpoch;
@@ -89,10 +89,9 @@ export class PlayerReplicationStateTracker {
     }
 
     this.recentCombatTransformUntil.delete(playerId);
-    for (const key of Array.from(this.recentCombatInterestUntil.keys())) {
-      if (key.startsWith(`${playerId}:`) || key.endsWith(`:${playerId}`)) {
-        this.recentCombatInterestUntil.delete(key);
-      }
+    this.recentCombatInterestUntil.delete(playerId);
+    for (const targets of this.recentCombatInterestUntil.values()) {
+      targets.delete(playerId);
     }
 
     this.playerNetIds.delete(playerId);
@@ -146,16 +145,21 @@ export class PlayerReplicationStateTracker {
   }
 
   getRecentCombatInterestUntil(recipientId: string, targetId: string): number {
-    return this.recentCombatInterestUntil.get(this.getRecentCombatInterestKey(recipientId, targetId)) ?? 0;
+    return this.recentCombatInterestUntil.get(recipientId)?.get(targetId) ?? 0;
   }
 
   markRecentCombatInterest(sourceId: string, targetId: string, now: number, durationMs: number): void {
     const until = now + durationMs;
-    this.recentCombatInterestUntil.set(this.getRecentCombatInterestKey(sourceId, targetId), until);
-    this.recentCombatInterestUntil.set(this.getRecentCombatInterestKey(targetId, sourceId), until);
+    this.setRecentCombatInterestUntil(sourceId, targetId, until);
+    this.setRecentCombatInterestUntil(targetId, sourceId, until);
   }
 
-  private getRecentCombatInterestKey(recipientId: string, targetId: string): string {
-    return `${recipientId}:${targetId}`;
+  private setRecentCombatInterestUntil(recipientId: string, targetId: string, until: number): void {
+    let targets = this.recentCombatInterestUntil.get(recipientId);
+    if (!targets) {
+      targets = new Map<string, number>();
+      this.recentCombatInterestUntil.set(recipientId, targets);
+    }
+    targets.set(targetId, until);
   }
 }

@@ -635,14 +635,21 @@ function createNameplateTexture(
 function evictUnusedNameplateTextures(): void {
   if (nameplateTextureCache.size <= NAMEPLATE_TEXTURE_CACHE_LIMIT) return;
 
-  const unusedEntries = Array.from(nameplateTextureCache)
-    .filter(([, entry]) => entry.refCount <= 0)
-    .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+  while (nameplateTextureCache.size > NAMEPLATE_TEXTURE_CACHE_LIMIT) {
+    let oldestKey: string | null = null;
+    let oldestEntry: NameplateTextureEntry | null = null;
 
-  for (const [key, entry] of unusedEntries) {
-    if (nameplateTextureCache.size <= NAMEPLATE_TEXTURE_CACHE_LIMIT) break;
-    entry.texture.dispose();
-    nameplateTextureCache.delete(key);
+    for (const [key, entry] of nameplateTextureCache) {
+      if (entry.refCount > 0) continue;
+      if (!oldestEntry || entry.lastUsedAt < oldestEntry.lastUsedAt) {
+        oldestKey = key;
+        oldestEntry = entry;
+      }
+    }
+
+    if (oldestKey === null || oldestEntry === null) return;
+    oldestEntry.texture.dispose();
+    nameplateTextureCache.delete(oldestKey);
   }
 }
 

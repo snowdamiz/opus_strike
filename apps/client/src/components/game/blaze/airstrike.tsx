@@ -507,9 +507,9 @@ function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }
   const fallbackGroundY = position.y - 1;
   const resolveGearstormGroundY = createGearstormGroundResolver(position.x, position.z, fallbackGroundY);
   const groundY = resolveGearstormGroundY(position.x, position.z);
-  const cogs: BurningCogData[] = [];
-  const burnPatches: BurnPatchData[] = [];
-  const groundFlames: GroundFlameData[] = [];
+  const cogs = new Array<BurningCogData>(GEARSTORM_COG_COUNT);
+  const burnPatches = new Array<BurnPatchData>(GEARSTORM_BURN_PATCH_COUNT);
+  const groundFlames = new Array<GroundFlameData>(GEARSTORM_GROUND_FLAME_COUNT);
 
   for (let i = 0; i < GEARSTORM_COG_COUNT; i++) {
     const angle = Math.random() * Math.PI * 2;
@@ -517,7 +517,7 @@ function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }
     const x = position.x + Math.cos(angle) * radius;
     const z = position.z + Math.sin(angle) * radius;
 
-    cogs.push({
+    cogs[i] = {
       angle,
       radius,
       groundY: resolveGearstormGroundY(x, z),
@@ -531,7 +531,7 @@ function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }
       tiltX: randomSigned(0.7),
       tiltY: randomSigned(0.55),
       phase: Math.random() * Math.PI * 2,
-    });
+    };
   }
 
   for (let i = 0; i < GEARSTORM_BURN_PATCH_COUNT; i++) {
@@ -539,7 +539,7 @@ function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }
     const x = position.x + offset.x;
     const z = position.z + offset.z;
 
-    burnPatches.push({
+    burnPatches[i] = {
       x,
       z,
       groundY: resolveGearstormGroundY(x, z),
@@ -548,7 +548,7 @@ function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }
       phase: Math.random() * Math.PI * 2,
       opacity: 0.18 + Math.random() * 0.24,
       color: Math.random() > 0.45 ? 0xff4a00 : 0xffaa00,
-    });
+    };
   }
 
   for (let i = 0; i < GEARSTORM_GROUND_FLAME_COUNT; i++) {
@@ -556,7 +556,7 @@ function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }
     const x = position.x + offset.x;
     const z = position.z + offset.z;
 
-    groundFlames.push({
+    groundFlames[i] = {
       x,
       z,
       groundY: resolveGearstormGroundY(x, z),
@@ -568,7 +568,7 @@ function triggerAirStrikeImmediate(position: { x: number; y: number; z: number }
       yaw: Math.random() * Math.PI * 2,
       leanX: randomSigned(0.16),
       leanZ: randomSigned(0.16),
-    });
+    };
   }
 
   airStrikes.push({
