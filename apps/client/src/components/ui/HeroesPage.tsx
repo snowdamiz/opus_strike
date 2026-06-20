@@ -9,7 +9,7 @@ import { ABILITY_COLORS, HERO_COLORS } from '../../styles/colorTokens';
 const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((module) => ({
   default: module.FeaturedHeroPreview,
 })));
-const HERO_SHOWCASE_ANIMATION_MODE: HeroPreviewAnimationMode = 'showcaseLoop';
+const HERO_IDLE_ANIMATION_MODE: HeroPreviewAnimationMode = 'idle';
 
 const SIDE_STACK_CLASS = 'flex flex-col gap-1.5 xl:gap-2';
 const GLASS_CARD_STYLE = {
@@ -101,7 +101,7 @@ export function HeroesPage({ selectedHero, onSelectHero }: HeroesPageProps) {
               heroId={selectedHero}
               accentColor={heroColor}
               initialYaw={Math.PI - 0.18}
-              animationMode={HERO_SHOWCASE_ANIMATION_MODE}
+              animationMode={HERO_IDLE_ANIMATION_MODE}
             />
           </Suspense>
 

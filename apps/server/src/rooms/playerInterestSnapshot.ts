@@ -24,17 +24,40 @@ export function buildPlayerInterestSnapshot(
 }
 
 export function getPlayerInterestSignature(snapshot: PlayerInterestSnapshot): string {
-  const lastKnown = snapshot.lastKnownPosition
-    ? [
-      Math.round(snapshot.lastKnownPosition.x * 10),
-      Math.round(snapshot.lastKnownPosition.y * 10),
-      Math.round(snapshot.lastKnownPosition.z * 10),
-    ].join(',')
-    : '';
+  if (!snapshot.lastKnownPosition) {
+    return `${snapshot.state}:${snapshot.reason ?? ''}:`;
+  }
 
-  return [
-    snapshot.state,
-    snapshot.reason ?? '',
-    lastKnown,
-  ].join(':');
+  const x = Math.round(snapshot.lastKnownPosition.x * 10);
+  const y = Math.round(snapshot.lastKnownPosition.y * 10);
+  const z = Math.round(snapshot.lastKnownPosition.z * 10);
+  return `${snapshot.state}:${snapshot.reason ?? ''}:${x},${y},${z}`;
+}
+
+export function selectChangedPlayerInterestSnapshot(input: {
+  signatures: Map<string, string>;
+  playerId: string;
+  snapshot: PlayerInterestSnapshot;
+  force: boolean;
+}): PlayerInterestSnapshot | null {
+  const signature = getPlayerInterestSignature(input.snapshot);
+  if (!input.force && input.signatures.get(input.playerId) === signature) {
+    return null;
+  }
+
+  input.signatures.set(input.playerId, signature);
+  return input.snapshot;
+}
+
+export function removeMissingPlayerInterestSignatures(
+  signatures: Map<string, string>,
+  currentPlayerIds: ReadonlySet<string>
+): string[] {
+  const removedPlayerIds: string[] = [];
+  for (const playerId of signatures.keys()) {
+    if (currentPlayerIds.has(playerId)) continue;
+    signatures.delete(playerId);
+    removedPlayerIds.push(playerId);
+  }
+  return removedPlayerIds;
 }

@@ -62,7 +62,7 @@ interface ChronosTimebreakEffectData {
   duration: number;
   radius: number;
   ownerId: string;
-  ownerTeam: 'red' | 'blue';
+  ownerTeam: Team;
   active: boolean;
 }
 
@@ -116,7 +116,7 @@ export function addChronosTimebreakEffect({
     duration,
     radius,
     ownerId,
-    ownerTeam: (ownerTeam || 'red') as 'red' | 'blue',
+    ownerTeam: ownerTeam || 'red',
     active: true,
   };
 

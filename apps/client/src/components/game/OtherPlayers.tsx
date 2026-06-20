@@ -3,12 +3,13 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import {
+  getPlayerVisualLookPitch,
   sampleRemoteTransformInto,
   type SampledRemoteTransform,
   visualStore,
 } from '../../store/visualStore';
 import { useShallow } from 'zustand/shallow';
-import type { Player, Team, VoxelMapTheme } from '@voxel-strike/shared';
+import type { Player, PlayerMovementState, Team, VoxelMapTheme } from '@voxel-strike/shared';
 import { HeroVoxelBody } from './HeroVoxelBody';
 import type { HeroMovementPose, HeroWalkDirection } from './HeroVoxelBody';
 import type { EffectQualityConfig, RemotePlayerQualityConfig } from './visualQuality';
@@ -26,7 +27,7 @@ import { gameplayFrameScheduler } from './systems/gameplayFrameScheduler';
 
 interface OtherPlayersProps {
   config: RemotePlayerQualityConfig;
-  effectConfig: Pick<EffectQualityConfig, 'maxActiveParticles'>;
+  effectConfig: Pick<EffectQualityConfig, 'maxActiveParticles' | 'maxRemoteMovementEffectDistance'>;
   theme: VoxelMapTheme;
 }
 
@@ -35,47 +36,100 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
   // v2 transform position updates because remote player entries are mutated in-place.
   // The Map reference only changes when players are added/removed. Position interpolation
   // reads from visualStore in the frame scheduler (non-reactive, 60fps).
-  const { players, playerId, localPlayerId, gamePhase } = useGameStore(
+  const { players, playerId, localPlayerId, localPlayerTeam, gamePhase, gameplayMode, matchPerspective } = useGameStore(
     useShallow(state => ({
       players: state.players,
       playerId: state.playerId,
       localPlayerId: state.localPlayer?.id ?? null,
+      localPlayerTeam: state.localPlayer?.team ?? null,
       gamePhase: state.gamePhase,
+      gameplayMode: state.gameplayMode,
+      matchPerspective: state.matchPerspective,
     }))
   );
+  const isBattleRoyal = gameplayMode === 'battle_royal';
+  const showLocalPlayerBody = matchPerspective === 'third_person';
 
   const otherPlayers = useMemo(() => {
     const nextPlayers: Player[] = [];
-    const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown';
+    const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
 
     for (const player of players.values()) {
-      if (player.id === playerId || player.id === localPlayerId) continue;
+      const isLocalPlayer = player.id === playerId || player.id === localPlayerId;
+      if (isLocalPlayer && !showLocalPlayerBody) continue;
       if (hideDeadPlayers && player.state === 'dead') continue;
+      if (isBattleRoyal && gamePhase === 'countdown' && player.state === 'spawning') continue;
+      if (player.state === 'dropping') continue;
       if (player.visibility === 'hidden' || player.visibility === 'last_known' || player.visibility === 'audible') continue;
       nextPlayers.push(player);
     }
 
     return nextPlayers;
-  }, [gamePhase, localPlayerId, playerId, players]);
+  }, [gamePhase, isBattleRoyal, localPlayerId, playerId, players, showLocalPlayerBody]);
+
+  const remoteBatchResourcePlayers = useMemo(() => {
+    if (!isBattleRoyal) return otherPlayers;
+
+    const nextPlayers: Player[] = [];
+    const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
+
+    for (const player of players.values()) {
+      const isLocalPlayer = player.id === playerId || player.id === localPlayerId;
+      if (isLocalPlayer && !showLocalPlayerBody) continue;
+      if (hideDeadPlayers && player.state === 'dead') continue;
+      if (gamePhase === 'countdown' && player.state === 'spawning') continue;
+      nextPlayers.push(player);
+    }
+
+    return nextPlayers;
+  }, [gamePhase, isBattleRoyal, localPlayerId, otherPlayers, playerId, players, showLocalPlayerBody]);
+
+  useEffect(() => {
+    if (!config.showNameplates) return;
+    for (const player of otherPlayers) {
+      if (player.id === playerId || player.id === localPlayerId) continue;
+      if (!shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam)) continue;
+      prewarmNameplateTexture(
+        player.name,
+        player.health,
+        player.maxHealth
+      );
+    }
+  }, [config.showNameplates, isBattleRoyal, localPlayerId, localPlayerTeam, otherPlayers, playerId]);
 
   return (
     <group>
-      <RemoteHeroBatchRenderer players={otherPlayers} config={config} />
+      <RemoteHeroBatchRenderer
+        players={otherPlayers}
+        resourcePlayers={remoteBatchResourcePlayers}
+        isBattleRoyal={isBattleRoyal}
+        localPlayerId={showLocalPlayerBody ? (localPlayerId ?? playerId) : null}
+        config={config}
+      />
       <RemoteMovementEffects players={otherPlayers} theme={theme} config={effectConfig} />
-      {otherPlayers.map((player) => shouldRenderRemotePlayerFallback(player, config) ? (
-        <OtherPlayer
-          key={player.id}
-          player={player}
-          config={config}
-        />
-      ) : null)}
+      {otherPlayers.map((player) => {
+        const showNameplate = player.id !== playerId
+          && player.id !== localPlayerId
+          && shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam);
+        return shouldRenderRemotePlayerFallback(player, config, showNameplate) ? (
+          <OtherPlayer
+            key={player.id}
+            player={player}
+            localPlayerId={showLocalPlayerBody ? (localPlayerId ?? playerId) : null}
+            config={config}
+            showNameplate={showNameplate}
+          />
+        ) : null;
+      })}
     </group>
   );
 }
 
 interface OtherPlayerProps {
   player: Player;
+  localPlayerId?: string | null;
   config: RemotePlayerQualityConfig;
+  showNameplate: boolean;
 }
 
 const NETWORK_MOVING_SPEED = 0.45;
@@ -135,11 +189,14 @@ function setWalkDirectionFromComponents(
   target.right = (velocityX * rightX + velocityZ * rightZ) / speed;
 }
 
-function isPlayerMovingForAnimation(player: Player, visualHorizontalSpeed = 0): boolean {
+function isPlayerMovingForAnimation(
+  player: Player,
+  visualHorizontalSpeed = 0,
+  movement: PlayerMovementState = player.movement
+): boolean {
   if (player.state !== 'alive') return false;
 
   const networkHorizontalSpeed = getHorizontalSpeed(player.velocity);
-  const movement = player.movement;
 
   return (
     networkHorizontalSpeed > NETWORK_MOVING_SPEED ||
@@ -152,10 +209,15 @@ function isPlayerMovingForAnimation(player: Player, visualHorizontalSpeed = 0): 
   );
 }
 
-function getPlayerMovementPose(player: Player, hasLoweredPosture: boolean, isMoving: boolean): HeroMovementPose {
-  if (player.movement.isSliding) return 'run';
+function getPlayerMovementPose(
+  player: Player,
+  hasLoweredPosture: boolean,
+  isMoving: boolean,
+  movement: PlayerMovementState = player.movement
+): HeroMovementPose {
+  if (movement.isSliding) return 'run';
   if (hasLoweredPosture && isMoving) return 'crouchWalk';
-  return player.movement.isSprinting ? 'run' : 'walk';
+  return movement.isSprinting ? 'run' : 'walk';
 }
 
 function hasActivePhantomVeil(player: Player): boolean {
@@ -164,25 +226,48 @@ function hasActivePhantomVeil(player: Player): boolean {
   return Boolean(veil?.isActive);
 }
 
-function shouldRenderRemotePlayerFallback(player: Player, config: RemotePlayerQualityConfig): boolean {
-  return player.heroId === 'phantom' || player.hasFlag || config.showNameplates || config.showBeacons;
+function shouldShowRemoteNameplate(
+  player: Player,
+  config: RemotePlayerQualityConfig,
+  isBattleRoyal: boolean,
+  localPlayerTeam: Team | null
+): boolean {
+  if (!config.showNameplates) return false;
+  return !isBattleRoyal || player.team === localPlayerTeam;
 }
 
-const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerProps) {
+function shouldRenderRemotePlayerFallback(
+  player: Player,
+  config: RemotePlayerQualityConfig,
+  showNameplate: boolean
+): boolean {
+  return player.heroId === 'phantom' || player.hasFlag || showNameplate || config.showBeacons;
+}
+
+function getPlayerRenderMovement(
+  player: Player,
+  localPlayerId: string | null | undefined
+): PlayerMovementState {
+  return player.id === localPlayerId ? visualStore.getState().localMovement : player.movement;
+}
+
+const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, showNameplate }: OtherPlayerProps) {
   const groupRef = useRef<THREE.Group>(null);
   const [isVeiled, setIsVeiled] = useState(() => hasActivePhantomVeil(player));
   const playerHeight = getPlayerHeight(player.heroId);
-  const hasLoweredPosture = hasLoweredPlayerPosture(player.movement);
-  const visibleHeight = getVisiblePlayerHeight(player.heroId, player.movement);
-  const postureScaleY = getPlayerBodyPostureScaleY(player.movement);
-  const initialIsMoving = isPlayerMovingForAnimation(player);
-  const initialMovementPose = getPlayerMovementPose(player, hasLoweredPosture, initialIsMoving);
+  const initialMovement = getPlayerRenderMovement(player, localPlayerId);
+  const initialLookPitch = getPlayerVisualLookPitch(visualStore.getState(), player);
+  const hasLoweredPosture = hasLoweredPlayerPosture(initialMovement);
+  const visibleHeight = getVisiblePlayerHeight(player.heroId, initialMovement);
+  const postureScaleY = getPlayerBodyPostureScaleY(initialMovement);
+  const initialIsMoving = isPlayerMovingForAnimation(player, 0, initialMovement);
+  const initialMovementPose = getPlayerMovementPose(player, hasLoweredPosture, initialIsMoving, initialMovement);
   const targetPosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
   const currentPosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
   const previousFramePosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
   const isMovingRef = useRef(initialIsMoving);
-  const isCrouchingRef = useRef(player.movement.isCrouching);
-  const isSlidingRef = useRef(player.movement.isSliding);
+  const isCrouchingRef = useRef(initialMovement.isCrouching);
+  const isSlidingRef = useRef(initialMovement.isSliding);
   const isAttackingRef = useRef(false);
   const attackStartedAtMsRef = useRef<number | null>(null);
   const attackSideRef = useRef<-1 | 1>(1);
@@ -190,7 +275,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
   const postureScaleYRef = useRef(postureScaleY);
   const bodyOpacityRef = useRef(isVeiled ? PHANTOM_VEIL_BODY_OPACITY : 1);
   const isVeiledRef = useRef(isVeiled);
-  const lookPitchRef = useRef(player.lookPitch);
+  const lookPitchRef = useRef(initialLookPitch);
   const walkDirectionRef = useRef<HeroWalkDirection>({ forward: 1, right: 0 });
   const initializedRef = useRef(false);
   const remoteEpochRef = useRef<number | null>(null);
@@ -247,7 +332,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
         groupRef.current.rotation.y = visualState.renderedPlayerRotations.get(player.id) ??
           visualState.playerRotations.get(player.id) ??
           player.lookYaw;
-        lookPitchRef.current = player.lookPitch;
+        lookPitchRef.current = getPlayerVisualLookPitch(visualState, player);
         previousFramePosition.current.copy(currentPosition.current);
         return;
       }
@@ -304,7 +389,9 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
         // Fallback to prop rotation if visualStore doesn't have data yet
         groupRef.current.rotation.y = player.lookYaw;
       }
-      lookPitchRef.current = hasSampledTransform ? sampledTransform.lookPitch : player.lookPitch;
+      lookPitchRef.current = hasSampledTransform
+        ? sampledTransform.lookPitch
+        : getPlayerVisualLookPitch(visualState, player);
 
       previousFramePosition.current.copy(currentPosition.current);
       if (!frameIsVeiled || player.heroId !== 'phantom') return;
@@ -343,15 +430,16 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
         );
       }
 
-      const frameHasLoweredPosture = hasLoweredPlayerPosture(player.movement);
-      const frameIsMoving = isPlayerMovingForAnimation(player, visualHorizontalSpeed);
-      postureScaleYRef.current = getPlayerBodyPostureScaleY(player.movement);
-      isCrouchingRef.current = player.movement.isCrouching;
-      isSlidingRef.current = player.movement.isSliding;
-      movementPoseRef.current = getPlayerMovementPose(player, frameHasLoweredPosture, frameIsMoving);
+      const frameMovement = getPlayerRenderMovement(player, localPlayerId);
+      const frameHasLoweredPosture = hasLoweredPlayerPosture(frameMovement);
+      const frameIsMoving = isPlayerMovingForAnimation(player, visualHorizontalSpeed, frameMovement);
+      postureScaleYRef.current = getPlayerBodyPostureScaleY(frameMovement);
+      isCrouchingRef.current = frameMovement.isCrouching;
+      isSlidingRef.current = frameMovement.isSliding;
+      movementPoseRef.current = getPlayerMovementPose(player, frameHasLoweredPosture, frameIsMoving, frameMovement);
       isMovingRef.current = frameIsMoving;
     },
-  }), [player, playerHeight]);
+  }), [localPlayerId, player, playerHeight]);
 
   return (
     <group ref={groupRef}>
@@ -362,14 +450,14 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
           height={playerHeight}
           postureScaleY={postureScaleY}
           postureScaleYRef={postureScaleYRef}
-          lookPitch={player.lookPitch}
+          lookPitch={initialLookPitch}
           lookPitchRef={lookPitchRef}
           isBot={player.isBot}
           isMoving={initialIsMoving}
           isMovingRef={isMovingRef}
-          isCrouching={player.movement.isCrouching}
+          isCrouching={initialMovement.isCrouching}
           isCrouchingRef={isCrouchingRef}
-          isSliding={player.movement.isSliding}
+          isSliding={initialMovement.isSliding}
           isSlidingRef={isSlidingRef}
           isAttackingRef={isAttackingRef}
           attackStartedAtMsRef={attackStartedAtMsRef}
@@ -386,7 +474,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
       )}
 
       {/* Nameplate */}
-      {!isVeiled && config.showNameplates && (
+      {!isVeiled && showNameplate && (
         <Nameplate
           name={player.name}
           health={player.health}
@@ -422,6 +510,17 @@ interface NameplateProps {
 const NAMEPLATE_CANVAS_WIDTH = 256;
 const NAMEPLATE_CANVAS_HEIGHT = 72;
 const NAMEPLATE_HEALTH_BUCKETS = 40;
+const NAMEPLATE_TEXTURE_CACHE_LIMIT = 192;
+const NAMEPLATE_FULL_SPRITE_HEIGHT = 0.68;
+
+interface NameplateTextureEntry {
+  texture: THREE.CanvasTexture;
+  refCount: number;
+  lastUsedAt: number;
+}
+
+const nameplateTextureCache = new Map<string, NameplateTextureEntry>();
+let nameplateTextureUseCounter = 0;
 
 function roundedRectPath(
   ctx: CanvasRenderingContext2D,
@@ -478,13 +577,19 @@ function drawNameplateTexture(
   const barY = 52;
   const barWidth = 188;
   const barHeight = 6;
-  roundedRectPath(ctx, barX, barY, barWidth, barHeight, 3);
+  const barRadius = 3;
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+  roundedRectPath(ctx, barX, barY, barWidth, barHeight, barRadius);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
   ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
 
   const fillWidth = Math.max(0, Math.min(barWidth, barWidth * healthPercent));
   if (fillWidth > 0) {
-    roundedRectPath(ctx, barX, barY, fillWidth, barHeight, 3);
+    roundedRectPath(ctx, barX, barY, fillWidth, barHeight, barRadius);
     const gradient = ctx.createLinearGradient(barX, 0, barX + barWidth, 0);
     if (healthPercent > 0.3) {
       gradient.addColorStop(0, '#22c55e');
@@ -498,32 +603,116 @@ function drawNameplateTexture(
   }
 }
 
-const Nameplate = memo(function Nameplate({ name, health, maxHealth, height }: NameplateProps) {
+function getQuantizedNameplateHealthPercent(health: number, maxHealth: number): number {
   const healthPercent = Math.max(0, Math.min(1, health / Math.max(1, maxHealth)));
-  const quantizedHealthPercent = Math.round(healthPercent * NAMEPLATE_HEALTH_BUCKETS) / NAMEPLATE_HEALTH_BUCKETS;
-  const texture = useMemo(() => {
-    const canvas = document.createElement('canvas');
-    canvas.width = NAMEPLATE_CANVAS_WIDTH;
-    canvas.height = NAMEPLATE_CANVAS_HEIGHT;
-    const nextTexture = new THREE.CanvasTexture(canvas);
-    nextTexture.colorSpace = THREE.SRGBColorSpace;
-    nextTexture.minFilter = THREE.LinearFilter;
-    nextTexture.magFilter = THREE.LinearFilter;
-    nextTexture.generateMipmaps = false;
-    return nextTexture;
-  }, []);
+  return Math.round(healthPercent * NAMEPLATE_HEALTH_BUCKETS) / NAMEPLATE_HEALTH_BUCKETS;
+}
 
-  useEffect(() => {
-    drawNameplateTexture(texture.image as HTMLCanvasElement, name, quantizedHealthPercent);
-    texture.needsUpdate = true;
-  }, [name, quantizedHealthPercent, texture]);
+function getNameplateTextureKey(
+  name: string,
+  healthPercent: number
+): string {
+  return `full:${name}:${healthPercent}`;
+}
 
-  useEffect(() => () => texture.dispose(), [texture]);
+function createNameplateTexture(
+  name: string,
+  healthPercent: number
+): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = NAMEPLATE_CANVAS_WIDTH;
+  canvas.height = NAMEPLATE_CANVAS_HEIGHT;
+  drawNameplateTexture(canvas, name, healthPercent);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  return texture;
+}
+
+function evictUnusedNameplateTextures(): void {
+  if (nameplateTextureCache.size <= NAMEPLATE_TEXTURE_CACHE_LIMIT) return;
+
+  while (nameplateTextureCache.size > NAMEPLATE_TEXTURE_CACHE_LIMIT) {
+    let oldestKey: string | null = null;
+    let oldestEntry: NameplateTextureEntry | null = null;
+
+    for (const [key, entry] of nameplateTextureCache) {
+      if (entry.refCount > 0) continue;
+      if (!oldestEntry || entry.lastUsedAt < oldestEntry.lastUsedAt) {
+        oldestKey = key;
+        oldestEntry = entry;
+      }
+    }
+
+    if (oldestKey === null || oldestEntry === null) return;
+    oldestEntry.texture.dispose();
+    nameplateTextureCache.delete(oldestKey);
+  }
+}
+
+function acquireNameplateTexture(
+  name: string,
+  healthPercent: number
+): THREE.CanvasTexture {
+  const key = getNameplateTextureKey(name, healthPercent);
+  let entry = nameplateTextureCache.get(key);
+  if (!entry) {
+    entry = {
+      texture: createNameplateTexture(name, healthPercent),
+      refCount: 0,
+      lastUsedAt: 0,
+    };
+    nameplateTextureCache.set(key, entry);
+  }
+
+  entry.refCount++;
+  entry.lastUsedAt = ++nameplateTextureUseCounter;
+  evictUnusedNameplateTextures();
+  return entry.texture;
+}
+
+function releaseNameplateTexture(
+  name: string,
+  healthPercent: number
+): void {
+  const entry = nameplateTextureCache.get(getNameplateTextureKey(name, healthPercent));
+  if (!entry) return;
+  entry.refCount = Math.max(0, entry.refCount - 1);
+  entry.lastUsedAt = ++nameplateTextureUseCounter;
+  evictUnusedNameplateTextures();
+}
+
+function prewarmNameplateTexture(
+  name: string,
+  health: number,
+  maxHealth: number
+): void {
+  if (typeof document === 'undefined') return;
+  const healthPercent = getQuantizedNameplateHealthPercent(health, maxHealth);
+  const texture = acquireNameplateTexture(name, healthPercent);
+  releaseNameplateTexture(name, healthPercent);
+  texture.needsUpdate = true;
+}
+
+const Nameplate = memo(function Nameplate({ name, health, maxHealth, height }: NameplateProps) {
+  const quantizedHealthPercent = getQuantizedNameplateHealthPercent(health, maxHealth);
+  const texture = useMemo(
+    () => acquireNameplateTexture(name, quantizedHealthPercent),
+    [name, quantizedHealthPercent]
+  );
+
+  useEffect(
+    () => () => releaseNameplateTexture(name, quantizedHealthPercent),
+    [name, quantizedHealthPercent]
+  );
 
   const width = Math.max(1.75, Math.min(2.7, 1.55 + name.length * 0.045));
 
   return (
-    <sprite position={[0, height + NAMEPLATE_WORLD_OFFSET_Y, 0]} scale={[width, 0.68, 1]} renderOrder={30}>
+    <sprite position={[0, height + NAMEPLATE_WORLD_OFFSET_Y, 0]} scale={[width, NAMEPLATE_FULL_SPRITE_HEIGHT, 1]} renderOrder={30}>
       <spriteMaterial map={texture} transparent depthTest depthWrite={false} toneMapped={false} />
     </sprite>
   );

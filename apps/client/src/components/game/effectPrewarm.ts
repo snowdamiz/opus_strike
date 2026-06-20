@@ -45,7 +45,7 @@ import {
 import {
   getHeroViewmodelGpuPrewarmMaterials,
   prewarmHeroViewmodelResources,
-} from './HeroViewmodel';
+} from './heroViewmodelMaterials';
 
 export interface GameplayEffectGpuPrewarmBundle {
   scene: THREE.Scene;

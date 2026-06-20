@@ -1,9 +1,9 @@
 import * as SelectPrimitive from '@radix-ui/react-select';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useGameStore, type UserStats } from '../../store/gameStore';
+import { useGameStore } from '../../store/gameStore';
+import type { UserStats } from '../../store/types';
 import { config } from '../../config/environment';
 import { getLevelProgress } from '@voxel-strike/shared';
-import { lamportsToSolDisplay } from '../../utils/wagerPayments';
 import { RankBadge, RankInlineLabel, RankProgress, getRankForStats } from './RankBadge';
 
 interface LeaderboardPlayer {
@@ -50,20 +50,6 @@ function formatRatio(kills: number, deaths: number): string {
   if (kills <= 0 && deaths <= 0) return '0.0';
   const ratio = deaths > 0 ? kills / deaths : kills;
   return ratio.toFixed(1);
-}
-
-function parseLamports(value: string | undefined): bigint {
-  return typeof value === 'string' && /^[0-9]+$/.test(value) ? BigInt(value) : 0n;
-}
-
-function formatLamports(value: string | bigint): string {
-  return `${lamportsToSolDisplay(value)} SOL`;
-}
-
-function formatSignedLamports(value: bigint): string {
-  const sign = value > 0n ? '+' : value < 0n ? '-' : '';
-  const absoluteValue = value < 0n ? -value : value;
-  return `${sign}${lamportsToSolDisplay(absoluteValue)} SOL`;
 }
 
 function getLocalPersonalStats(playerName: string, userStats: UserStats | null): PersonalLeaderboardPlayer | null {
@@ -267,7 +253,6 @@ function PersonalStatsBand({ player }: { player: PersonalLeaderboardPlayer | nul
           <div className="stats-rank-progress-row">
             <RankProgress stats={player.stats} />
           </div>
-          <WagerStatsStrip stats={player.stats} />
         </>
       ) : (
         <div className="stats-empty-profile">
@@ -281,44 +266,6 @@ function PersonalStatsBand({ player }: { player: PersonalLeaderboardPlayer | nul
         </div>
       )}
     </StatsPanel>
-  );
-}
-
-function WagerStatsStrip({ stats }: { stats: UserStats }) {
-  const wonLamports = parseLamports(stats.totalWagerWonLamports);
-  const lostLamports = parseLamports(stats.totalWagerLostLamports);
-  const netLamports = wonLamports - lostLamports;
-  const netTone = netLamports > 0n
-    ? 'text-emerald-300'
-    : netLamports < 0n
-      ? 'text-red-300'
-      : 'text-white/75';
-  const wagerStats = [
-    { label: 'Games', value: formatNumber(stats.totalWagerGames) },
-    { label: 'W/L/D', value: `${stats.totalWagerWins}/${stats.totalWagerLosses}/${stats.totalWagerDraws}` },
-    { label: 'Wagered', value: formatLamports(stats.totalWageredLamports) },
-    { label: 'Won', value: formatLamports(stats.totalWagerWonLamports), tone: 'text-emerald-300' },
-    { label: 'Lost', value: formatLamports(stats.totalWagerLostLamports), tone: 'text-red-300' },
-    { label: 'Net', value: formatSignedLamports(netLamports), tone: netTone },
-  ];
-
-  return (
-    <div className="stats-wager-strip">
-      <div className="stats-wager-grid">
-        {wagerStats.map((stat) => (
-          <WagerStat key={stat.label} label={stat.label} value={stat.value} tone={stat.tone} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function WagerStat({ label, value, tone = 'text-white/80' }: { label: string; value: string; tone?: string }) {
-  return (
-    <div className="stats-wager-item">
-      <p className="stats-tile-label">{label}</p>
-      <p className={`stats-wager-value ${tone}`}>{value}</p>
-    </div>
   );
 }
 

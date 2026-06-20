@@ -22,7 +22,7 @@ import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
 import { measureFrameWork } from '../../../movement/networkDiagnostics';
-import { applyTutorialTrainingConeDamage } from '../../../utils/tutorialTrainingHeroes';
+import { applyTutorialOfflineTrainingConeDamage } from '../../../utils/tutorialOfflineCombatRuntime';
 import {
   PLIABLE_ROPE_SEGMENT_COUNT,
   ROPE_SEGMENT_INDICES,
@@ -260,7 +260,7 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider, ownerId,
       : BLAZE_FLAMETHROWER_RANGE;
 
     if (hasLivePose && rampRef.current > 0.35) {
-      applyTutorialTrainingConeDamage({
+      applyTutorialOfflineTrainingConeDamage({
         origin: { x: _origin.x, y: _origin.y, z: _origin.z },
         direction: { x: _direction.x, y: _direction.y, z: _direction.z },
         range: collisionRange,

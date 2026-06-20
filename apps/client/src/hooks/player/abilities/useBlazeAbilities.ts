@@ -15,9 +15,11 @@ import {
   BLAZE_FLAMETHROWER_FUEL_DRAIN,
   BLAZE_FLAMETHROWER_FUEL_REGEN,
   BLAZE_FLAMETHROWER_MAX_FUEL,
+  BLAZE_FLAMETHROWER_RANGE,
   BLAZE_FLAMETHROWER_SOCKET,
   BLAZE_BOMB_SPLASH_RADIUS,
   BLAZE_ROCKET_STAFF_SOCKET,
+  type Team,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import {
@@ -28,8 +30,8 @@ import {
   BLAZE_BOMB_WARNING_LEAD,
   FUEL_UPDATE_THRESHOLD,
   calculatePlayerSocketPosition,
-  calculateLookDirection,
 } from '../constants';
+import { resolveAbilityAimDirection } from '../abilityAim';
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import { setFlamethrowerVisualPose } from '../../../store/visualStore';
 import {
@@ -49,6 +51,7 @@ import {
   type ResolvedAbilitySocketOrigin,
 } from '../../../model-system/abilitySocketResolver';
 import type { AbilityContext, PlayerSounds } from '../types';
+import { isActionLockBlocking } from '../actionLock';
 import { markPredictedLocalAbilitySound } from '../useLocalAbilityAudioPrediction';
 import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
 
@@ -129,9 +132,10 @@ function calculateBlazeFlamethrowerPose(
   ctx: AbilityContext,
   originOverride?: { x: number; y: number; z: number }
 ) {
+  const origin = originOverride ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_FLAMETHROWER_SOCKET);
   return {
-    origin: originOverride ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_FLAMETHROWER_SOCKET),
-    direction: calculateLookDirection(ctx.yaw, ctx.pitch),
+    origin,
+    direction: resolveAbilityAimDirection(ctx, origin, BLAZE_FLAMETHROWER_RANGE),
   };
 }
 
@@ -151,7 +155,7 @@ export interface UseBlazeAbilitiesReturn {
   // Methods
   lockActions: (durationMs: number, timestampMs?: number) => void;
   clearActionLock: () => void;
-  isActionLocked: (timestampMs?: number) => boolean;
+  isActionLocked: (timestampMs?: number, overlapGraceMs?: number) => boolean;
   handleBombTargeting: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   fireRocket: (ctx: AbilityContext) => void;
   executeBombDrop: (sounds: PlayerSounds) => void;
@@ -196,6 +200,8 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
 
   const actionLockUntilRef = useRef(0);
 
+  const getOwnerTeam = (team?: string | null): Team => team || 'red';
+
   const lockActions = useCallback((durationMs: number, timestampMs = Date.now()) => {
     actionLockUntilRef.current = Math.max(
       actionLockUntilRef.current,
@@ -207,8 +213,8 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     actionLockUntilRef.current = 0;
   }, []);
 
-  const isActionLocked = useCallback((timestampMs = Date.now()) => (
-    actionLockUntilRef.current > timestampMs
+  const isActionLocked = useCallback((timestampMs = Date.now(), overlapGraceMs = 0) => (
+    isActionLockBlocking(actionLockUntilRef.current, timestampMs, overlapGraceMs)
   ), []);
 
   // Handle Meteor Strike targeting mode
@@ -265,12 +271,12 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
 
     lastRocketTimeRef.current = now;
     rocketIdRef.current += 1;
-    const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
     const holdBlend = 1;
     const staffTipPose = sampleBlazeStaffTipPose(ctx, 'blaze_rocket', now, holdBlend);
     const startPosition = staffTipPose
       ? vectorToPlainPosition(staffTipPose.position)
       : calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_ROCKET_STAFF_SOCKET);
+    const direction = resolveAbilityAimDirection(ctx, startPosition);
     const visualId = `predicted_blaze_rocket_${ctx.localPlayer.id}_${rocketIdRef.current}`;
 
     store.addRocket({
@@ -283,7 +289,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       },
       startTime: now,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: getOwnerTeam(ctx.localPlayer.team),
     });
     if (store.isTutorialMode) {
       store.recordPrimaryFire(now);
@@ -325,7 +331,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
         impactTime: meteorStartTime + BLAZE_BOMB_FALL_DURATION,
         radius: BLAZE_BOMB_SPLASH_RADIUS,
         ownerId: store.localPlayer.id,
-        ownerTeam: (store.localPlayer.team || 'red') as 'red' | 'blue',
+        ownerTeam: getOwnerTeam(store.localPlayer.team),
         hasExploded: false,
       });
       window.setTimeout(() => {
@@ -396,6 +402,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       (localPlayer.movement?.isJetpacking || (canUsePracticeFuel && isHoldingFlamethrower)) &&
       fuel > 0
     );
+    const visualActive = isHoldingFlamethrower || serverActive;
     const shouldPlayLocalFlamethrowerSound = isHoldingFlamethrower;
 
     flamethrowerFuelRef.current = fuel;
@@ -406,7 +413,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     ) {
       setFlamethrowerFuel(fuel);
     }
-    setBlazeFlamethrowerHeld(isHoldingFlamethrower || serverActive, timestampMs);
+    setBlazeFlamethrowerHeld(visualActive, timestampMs);
 
     if (shouldPlayLocalFlamethrowerSound && !flamethrowerActiveRef.current) {
       flamethrowerActiveRef.current = true;
@@ -417,7 +424,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       sounds.stopFlamethrowerSound();
     }
 
-    if (serverActive) {
+    if (visualActive) {
       setFlamethrowerActive(true);
 
       const holdBlend = getBlazeFlamethrowerHeldBlend(timestampMs);

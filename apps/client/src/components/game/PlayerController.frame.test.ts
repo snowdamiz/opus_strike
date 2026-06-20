@@ -25,23 +25,30 @@ import { createPracticeAbilityStates } from '../../contexts/practiceAbilities';
 import { useGameStore } from '../../store/gameStore';
 import { removePlayerVisualState, visualStore } from '../../store/visualStore';
 import {
-  createLocalVisualInterpolationState,
   deriveServerCombatInput,
   getContinuingHeroHoldInput,
   getExclusiveHeroInput,
   movementClassForTrace,
-  recordLocalVisualFixedStep,
   runInputPhase,
   runAuthorityPhase,
   runPredictionAndCommandPhase,
-  sampleLocalVisualInterpolatedPosition,
   shouldForceImmediateCombatCommand,
-  smoothTerrainVisualY,
+  suppressJumpInputUntilReleased,
   withCastActionFields,
   type CommandScheduleReason,
   type LocalPlayerFrameContext,
   type ServerCombatInput,
 } from './PlayerController';
+import {
+  createLocalVisualInterpolationState,
+  recordLocalVisualFixedStep,
+  sampleLocalVisualInterpolatedPosition,
+  smoothTerrainVisualY,
+} from './localVisualInterpolation';
+import {
+  HERO_ACTION_OVERLAP_GRACE_MS,
+  isActionLockBlocking,
+} from '../../hooks/player/actionLock';
 
 function ref<T>(current: T): { current: T } {
   return { current };
@@ -141,6 +148,7 @@ function makeAbilityContext(player: Player, heroId: HeroId, inputState: InputSta
 
 function makeInputPhaseContext(options: {
   actionLocked?: boolean;
+  actionLockUntil?: number;
   previousHold?: { primaryFire: boolean; secondaryFire: boolean; ability1: boolean };
   chronosQueued?: boolean;
   abilityPressed?: { ability1: boolean; ability2: boolean; ultimate: boolean };
@@ -177,7 +185,11 @@ function makeInputPhaseContext(options: {
       })),
     },
     lockHeroActions: () => undefined,
-    isHeroActionLocked: () => Boolean(options.actionLocked),
+    isHeroActionLocked: (_heroId: HeroId, timestampMs = Date.now(), overlapGraceMs = 0) => (
+      options.actionLockUntil === undefined
+        ? Boolean(options.actionLocked)
+        : isActionLockBlocking(options.actionLockUntil, timestampMs, overlapGraceMs)
+    ),
     flushMovementCommands: () => undefined,
   } as unknown as LocalPlayerFrameContext;
 }
@@ -353,6 +365,17 @@ const sameInput = input();
 assert.equal(withCastActionFields(sameInput), sameInput);
 assert.equal(withCastActionFields(input({ primaryFire: true })).primaryFire, false);
 
+const suppressJumpRef = ref(true);
+const suppressedJumpInput = suppressJumpInputUntilReleased(input({ jump: true, moveForward: true }), suppressJumpRef);
+assert.equal(suppressedJumpInput.jump, false);
+assert.equal(suppressedJumpInput.moveForward, true);
+assert.equal(suppressJumpRef.current, true);
+const releasedJumpInput = input();
+assert.equal(suppressJumpInputUntilReleased(releasedJumpInput, suppressJumpRef), releasedJumpInput);
+assert.equal(suppressJumpRef.current, false);
+const resumedJumpInput = suppressJumpInputUntilReleased(input({ jump: true }), suppressJumpRef);
+assert.equal(resumedJumpInput.jump, true);
+
 useGameStore.setState({ bombTargeting: true });
 const blazeBombInput = runInputPhase(
   makeInputPhaseContext(),
@@ -378,6 +401,37 @@ const lockedPhantomInput = runInputPhase(
 assert.equal(lockedPhantomInput.frameInput.primaryFire, false);
 assert.equal(lockedPhantomInput.frameInput.secondaryFire, false);
 assert.equal(lockedPhantomInput.frameInput.ultimate, false);
+
+const lockBeyondGraceInput = runInputPhase(
+  makeInputPhaseContext({ actionLockUntil: 1000 + HERO_ACTION_OVERLAP_GRACE_MS + 1 }),
+  makePlayer('phantom'),
+  'phantom',
+  input({ ability2: true }),
+  input({ ability2: true }),
+  1000
+);
+assert.equal(lockBeyondGraceInput.frameInput.ability2, false);
+
+const lockGraceInput = runInputPhase(
+  makeInputPhaseContext({ actionLockUntil: 1000 + HERO_ACTION_OVERLAP_GRACE_MS }),
+  makePlayer('phantom'),
+  'phantom',
+  input({ ability2: true }),
+  input({ ability2: true }),
+  1000
+);
+assert.equal(lockGraceInput.frameInput.ability2, true);
+
+const lockGraceBlinkInput = runInputPhase(
+  makeInputPhaseContext({ actionLockUntil: 1000 + HERO_ACTION_OVERLAP_GRACE_MS }),
+  makePlayer('phantom'),
+  'phantom',
+  input({ ability1: true }),
+  input({ ability1: true }),
+  1000
+);
+assert.deepEqual(lockGraceBlinkInput.serverCombatInput, combatInput({ ability1: true }));
+assert.deepEqual(lockGraceBlinkInput.requestedCommandScheduleReasons, ['movement_barrier']);
 
 const phantomPrimaryCtx = makeInputPhaseContext();
 const phantomPrimaryInput = runInputPhase(
@@ -523,6 +577,23 @@ assert.equal(
   movementButtonsToInputState(blazeReleaseCommand.ctx.__sentPackets[0].commands[0].buttons).secondaryFire,
   false
 );
+
+for (const skillEdge of [
+  { label: 'secondaryFire', serverCombatInput: combatInput({ secondaryFire: true }) },
+  { label: 'ability1', serverCombatInput: combatInput({ ability1: true }) },
+  { label: 'ability2', serverCombatInput: combatInput({ ability2: true }) },
+  { label: 'ultimate', serverCombatInput: combatInput({ ultimate: true }) },
+] as const) {
+  const edgeCommand = runCommandPhase({
+    player: makePlayer('hookshot'),
+    frameInput: input(skillEdge.serverCombatInput),
+    serverCombatInput: skillEdge.serverCombatInput,
+  });
+  const decodedInput = movementButtonsToInputState(edgeCommand.ctx.__sentPackets[0].commands[0].buttons);
+  assert.deepEqual(edgeCommand.result.commandScheduleReasons, ['combat_edge']);
+  assert.equal(edgeCommand.ctx.__sentPackets.length, 1);
+  assert.equal(decodedInput[skillEdge.label], true);
+}
 
 const slideStartCommand = runCommandPhase({
   player: makePlayer('phantom'),

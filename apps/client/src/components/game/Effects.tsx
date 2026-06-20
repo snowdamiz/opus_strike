@@ -165,16 +165,20 @@ function compactExpiredEffects(now: number): boolean {
   return true;
 }
 
+function isCriticalEffect(effect: Effect): boolean {
+  return (
+    effect.type === 'lifeline' ||
+    effect.type === 'heal' ||
+    effect.type === 'chronosSelfHealPulse' ||
+    effect.type === 'chronosAegisBreak'
+  );
+}
+
 function dropOldestNonCriticalEffect(): void {
   let dropIndex = 0;
   for (let index = 0; index < effects.length; index++) {
     const effect = effects[index];
-    if (
-      effect.type !== 'lifeline' &&
-      effect.type !== 'heal' &&
-      effect.type !== 'chronosSelfHealPulse' &&
-      effect.type !== 'chronosAegisBreak'
-    ) {
+    if (!isCriticalEffect(effect)) {
       dropIndex = index;
       break;
     }
@@ -183,6 +187,34 @@ function dropOldestNonCriticalEffect(): void {
     effects[index - 1] = effects[index];
   }
   effects.length = Math.max(0, effects.length - 1);
+}
+
+function dropOldestNonCriticalEffects(dropCount: number): void {
+  let remainingDrops = Math.min(dropCount, effects.length);
+  if (remainingDrops <= 0) return;
+  if (remainingDrops === 1) {
+    dropOldestNonCriticalEffect();
+    return;
+  }
+
+  let writeIndex = 0;
+  for (let readIndex = 0; readIndex < effects.length; readIndex++) {
+    const effect = effects[readIndex];
+    if (remainingDrops > 0 && !isCriticalEffect(effect)) {
+      remainingDrops--;
+      continue;
+    }
+    effects[writeIndex++] = effect;
+  }
+
+  if (remainingDrops > 0) {
+    for (let index = remainingDrops; index < writeIndex; index++) {
+      effects[index - remainingDrops] = effects[index];
+    }
+    writeIndex = Math.max(0, writeIndex - remainingDrops);
+  }
+
+  effects.length = writeIndex;
 }
 
 export function addEffect(effect: Omit<Effect, 'id' | 'startTime'>) {
@@ -196,6 +228,27 @@ export function addEffect(effect: Omit<Effect, 'id' | 'startTime'>) {
     id: `effect_${effectIdCounter++}`,
     startTime: now,
   });
+}
+
+export function addEffects(newEffects: readonly Omit<Effect, 'id' | 'startTime'>[]): void {
+  if (newEffects.length === 0) return;
+
+  const now = Date.now();
+  compactExpiredEffects(now);
+  const overflowCount = effects.length + newEffects.length - MAX_GLOBAL_EFFECTS;
+  if (overflowCount > 0) {
+    dropOldestNonCriticalEffects(overflowCount);
+  }
+  for (const effect of newEffects) {
+    if (effects.length >= MAX_GLOBAL_EFFECTS) {
+      dropOldestNonCriticalEffect();
+    }
+    effects.push({
+      ...effect,
+      id: `effect_${effectIdCounter++}`,
+      startTime: now,
+    });
+  }
 }
 
 export function getGlobalEffectStats(now = Date.now()): GlobalEffectStats {

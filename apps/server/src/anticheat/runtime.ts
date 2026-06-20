@@ -51,7 +51,7 @@ interface AggregateBucket {
   integrityStatus: AntiCheatScoreChange['integrityStatus'];
   casePriority: AntiCheatCasePriority | null;
   shouldCreateCase: boolean;
-  affectsRankedOrWager: boolean;
+  affectsRanked: boolean;
   maxSeverity: AntiCheatSeverity;
   maxConfidence: number;
   reasons: Set<string>;
@@ -143,12 +143,11 @@ export class AntiCheatRoomRuntime {
     });
   }
 
-  buildIntegrityGate(options: { rankedEligible: boolean; wagered: boolean }): AntiCheatIntegrityGate {
+  buildIntegrityGate(options: { rankedEligible: boolean }): AntiCheatIntegrityGate {
     this.flushAggregates();
     return buildIntegrityGate(this.matchRisk, getAntiCheatConfig(), {
       matchMode: this.options.matchMode,
       rankedEligible: options.rankedEligible,
-      wagered: options.wagered,
     });
   }
 
@@ -200,7 +199,7 @@ export class AntiCheatRoomRuntime {
         integrityStatus: bucket.integrityStatus,
         casePriority: bucket.casePriority,
         shouldCreateCase: bucket.shouldCreateCase,
-        affectsRankedOrWager: bucket.affectsRankedOrWager,
+        affectsRanked: bucket.affectsRanked,
       });
     }
 
@@ -245,7 +244,7 @@ export class AntiCheatRoomRuntime {
         integrityStatus: change.integrityStatus,
         casePriority: change.casePriority,
         shouldCreateCase: change.shouldCreateCase,
-        affectsRankedOrWager: change.affectsRankedOrWager,
+        affectsRanked: change.affectsRanked,
         maxSeverity: signal.severity,
         maxConfidence: signal.confidence,
         reasons: new Set(),
@@ -262,7 +261,7 @@ export class AntiCheatRoomRuntime {
     bucket.integrityStatus = higherIntegrityStatus(bucket.integrityStatus, change.integrityStatus);
     bucket.casePriority = higherCasePriority(bucket.casePriority, change.casePriority);
     bucket.shouldCreateCase ||= change.shouldCreateCase;
-    bucket.affectsRankedOrWager ||= change.affectsRankedOrWager;
+    bucket.affectsRanked ||= change.affectsRanked;
     bucket.maxSeverity = higherSeverity(bucket.maxSeverity, signal.severity);
     bucket.maxConfidence = Math.max(bucket.maxConfidence, signal.confidence);
     if (signal.reason) bucket.reasons.add(signal.reason);

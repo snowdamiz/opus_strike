@@ -34,8 +34,7 @@ function parseMatchModes(value: string | undefined): MatchMode[] {
     .filter((item): item is MatchMode => (
       item === 'quick_play' ||
       item === 'ranked' ||
-      item === 'custom' ||
-      item === 'custom_wager'
+      item === 'custom'
     ));
 }
 
@@ -66,10 +65,7 @@ export function getAntiCheatConfig(): AntiCheatRuntimeConfig {
     lowSignalRetentionDays: envNumber('ANTICHEAT_LOW_SIGNAL_RETENTION_DAYS', 14, { min: 1, max: 365 }),
     maxSignalDetailBytes: envNumber('ANTICHEAT_MAX_SIGNAL_DETAIL_BYTES', 4096, { min: 256, max: 32768 }),
     rankedScoreThreshold: envNumber('ANTICHEAT_RANKED_SCORE_THRESHOLD', 50, { min: 1, max: 100 }),
-    wagerScoreThreshold: envNumber('ANTICHEAT_WAGER_SCORE_THRESHOLD', 50, { min: 1, max: 100 }),
     adminReviewScoreThreshold: envNumber('ANTICHEAT_ADMIN_REVIEW_SCORE_THRESHOLD', 75, { min: 1, max: 100 }),
-    payoutHoldScoreThreshold: envNumber('ANTICHEAT_PAYOUT_HOLD_SCORE_THRESHOLD', 50, { min: 1, max: 100 }),
-    payoutHoldsEnabled: envBool('ANTICHEAT_PAYOUT_HOLDS_ENABLED', false),
     manualAccountActionsEnabled: envBool('ANTICHEAT_MANUAL_ACCOUNT_ACTIONS_ENABLED', false),
     banRequiresElevatedRole: envBool('ANTICHEAT_BAN_REQUIRES_ELEVATED_ROLE', true),
     clientHintsEnabled: envBool('ANTICHEAT_CLIENT_HINTS_ENABLED', true),

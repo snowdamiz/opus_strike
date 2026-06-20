@@ -3,18 +3,18 @@ import { createPortal } from 'react-dom';
 import { ContactShadows } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { HERO_DEFINITIONS } from '@voxel-strike/shared';
-import type { HeroId, Team } from '@voxel-strike/shared';
+import { HERO_DEFINITIONS, getRankTheme } from '@voxel-strike/shared';
+import type { HeroId, PublicRankSnapshot, Team } from '@voxel-strike/shared';
 import { HeroVoxelBody } from '../game/HeroVoxelBody';
 import type { HeroAnimationMode, HeroWalkDirection } from '../game/HeroVoxelBody';
 import { suppressExpectedContextLossLog } from '../game/webglLifecycle';
-import { HERO_COLOR_SCHEMES } from '../../styles/colorTokens';
+import { HERO_COLOR_SCHEMES, HERO_PREVIEW_COLORS } from '../../styles/colorTokens';
 import { useHeroPreviewRotation } from './useHeroPreviewRotation';
 
 type HeroPreviewSize = 'featured' | 'detail' | 'compact' | 'card';
 type HeroPreviewActionMode = Exclude<HeroAnimationMode, 'crouchWalkLoop'>;
-export type HeroPreviewAnimationMode = HeroAnimationMode | 'showcaseLoop';
-type HeroPreviewLoopMode = Extract<HeroPreviewAnimationMode, 'crouchWalkLoop' | 'slide' | 'showcaseLoop'>;
+export type HeroPreviewAnimationMode = HeroAnimationMode;
+type HeroPreviewLoopMode = Extract<HeroPreviewAnimationMode, 'crouchWalkLoop' | 'slide'>;
 type HeroPreviewLoopStep = {
   mode: HeroPreviewActionMode;
   duration: number;
@@ -22,6 +22,7 @@ type HeroPreviewLoopStep = {
 };
 type Vector3Tuple = [number, number, number];
 type DprSetting = number | [number, number];
+export type HeroPreviewRank = Pick<PublicRankSnapshot, 'tier' | 'division' | 'isRanked'>;
 
 interface HeroPreviewCanvasProps {
   heroId: HeroId;
@@ -38,6 +39,7 @@ interface HeroPreviewCanvasProps {
   hasFlag?: boolean;
   postureScaleY?: number;
   animationMode?: HeroPreviewAnimationMode;
+  platformRank?: HeroPreviewRank | null;
   preserveDrawingBuffer?: boolean;
   'aria-label'?: string;
 }
@@ -74,9 +76,9 @@ const PREVIEW_CONFIG: Record<HeroPreviewSize, PreviewConfig> = {
     cameraTarget: [0, 0.22, 0],
     fov: 40,
     dpr: [1, 1.75],
-    bodyScale: 1.04,
+    bodyScale: 1.1,
     floorScale: 3.1,
-    bodyLift: 0,
+    bodyLift: 0.14,
     shadowOpacity: 0.34,
     idleSpeed: 0.18,
     idleIntensity: 0.9,
@@ -141,11 +143,6 @@ const PREVIEW_CONFIG: Record<HeroPreviewSize, PreviewConfig> = {
 };
 
 const PREVIEW_FORWARD_DIRECTION: HeroWalkDirection = { forward: 1, right: 0 };
-const PREVIEW_BACKPEDAL_DIRECTION: HeroWalkDirection = { forward: -1, right: 0 };
-const PREVIEW_STRAFE_RIGHT_DIRECTION: HeroWalkDirection = { forward: 0, right: 1 };
-const PREVIEW_STRAFE_LEFT_DIRECTION: HeroWalkDirection = { forward: 0, right: -1 };
-const PREVIEW_RUN_STRAFE_RIGHT_DIRECTION: HeroWalkDirection = { forward: 0.55, right: 0.83 };
-const PREVIEW_RUN_STRAFE_LEFT_DIRECTION: HeroWalkDirection = { forward: 0.55, right: -0.83 };
 
 const CROUCH_WALK_LOOP_SEQUENCE: HeroPreviewLoopStep[] = [
   { mode: 'idle', duration: 0.85 },
@@ -161,28 +158,6 @@ const RUN_SLIDE_LOOP_SEQUENCE: HeroPreviewLoopStep[] = [
   { mode: 'run', duration: 0.7, walkDirection: PREVIEW_FORWARD_DIRECTION },
 ];
 const RUN_SLIDE_LOOP_DURATION = RUN_SLIDE_LOOP_SEQUENCE.reduce((total, step) => total + step.duration, 0);
-const SHOWCASE_LOOP_SEQUENCE: HeroPreviewLoopStep[] = [
-  { mode: 'idle', duration: 0.85 },
-  { mode: 'walk', duration: 0.65, walkDirection: PREVIEW_FORWARD_DIRECTION },
-  { mode: 'walk', duration: 1.18, walkDirection: PREVIEW_STRAFE_RIGHT_DIRECTION },
-  { mode: 'walk', duration: 0.86, walkDirection: PREVIEW_BACKPEDAL_DIRECTION },
-  { mode: 'walk', duration: 1.18, walkDirection: PREVIEW_STRAFE_LEFT_DIRECTION },
-  { mode: 'walk', duration: 0.44, walkDirection: PREVIEW_FORWARD_DIRECTION },
-  { mode: 'crouchWalk', duration: 1.2 },
-  { mode: 'crouch', duration: 0.55 },
-  { mode: 'walk', duration: 0.7, walkDirection: PREVIEW_FORWARD_DIRECTION },
-  { mode: 'run', duration: 0.5, walkDirection: PREVIEW_FORWARD_DIRECTION },
-  { mode: 'run', duration: 0.92, walkDirection: PREVIEW_RUN_STRAFE_RIGHT_DIRECTION },
-  { mode: 'run', duration: 0.92, walkDirection: PREVIEW_RUN_STRAFE_LEFT_DIRECTION },
-  { mode: 'run', duration: 0.36, walkDirection: PREVIEW_FORWARD_DIRECTION },
-  { mode: 'slide', duration: 1.2 },
-  { mode: 'run', duration: 0.65, walkDirection: PREVIEW_FORWARD_DIRECTION },
-  { mode: 'jump', duration: 1.25 },
-  { mode: 'idle', duration: 0.6 },
-  { mode: 'attack', duration: 1.45 },
-  { mode: 'idle', duration: 0.9 },
-];
-const SHOWCASE_LOOP_DURATION = SHOWCASE_LOOP_SEQUENCE.reduce((total, step) => total + step.duration, 0);
 const PREVIEW_LOOP_CONFIG: Record<
   HeroPreviewLoopMode,
   {
@@ -204,17 +179,15 @@ const PREVIEW_LOOP_CONFIG: Record<
     initialMode: 'run',
     fallbackMode: 'run',
   },
-  showcaseLoop: {
-    sequence: SHOWCASE_LOOP_SEQUENCE,
-    duration: SHOWCASE_LOOP_DURATION,
-    initialMode: 'idle',
-    fallbackMode: 'idle',
-  },
 };
 const SLIDE_PREVIEW_YAW = -Math.PI / 2;
+const HERO_PREVIEW_IDLE_YAW_LIMIT = Math.PI / 4;
 const PREVIEW_CLEAR_COLOR_VAR = '--color-strike-canvas';
 const PREVIEW_OFFSCREEN_ROOT_ID = 'hero-preview-offscreen-root';
 const PREVIEW_SAMPLE_SIZE = 24;
+const RANK_PLATFORM_PREVIEW_LIFT = 0.14;
+const RANK_PLATFORM_FOV_PADDING = 3;
+const RANK_PLATFORM_SEGMENTS = 48;
 
 function getPreviewOffscreenRoot(): HTMLElement | null {
   if (typeof document === 'undefined') return null;
@@ -313,7 +286,7 @@ function isSameLoopStep(a: HeroPreviewLoopStep, b: HeroPreviewLoopStep): boolean
 }
 
 function isPreviewLoopMode(animationMode: HeroPreviewAnimationMode): animationMode is HeroPreviewLoopMode {
-  return animationMode === 'crouchWalkLoop' || animationMode === 'slide' || animationMode === 'showcaseLoop';
+  return animationMode === 'crouchWalkLoop' || animationMode === 'slide';
 }
 
 export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
@@ -331,6 +304,7 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   hasFlag = false,
   postureScaleY = 1,
   animationMode = 'idle',
+  platformRank = null,
   preserveDrawingBuffer = false,
   'aria-label': ariaLabel,
 }: HeroPreviewCanvasProps) {
@@ -345,7 +319,8 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   const shouldIdleRotate = idleRotation ?? interactive;
   const shouldIdleAnimate = idleAnimation && config.idleIntensity > 0;
   const rotationInitialYaw = animationMode === 'slide' ? SLIDE_PREVIEW_YAW : initialYaw;
-  const previewReadyKey = `${heroId}:${team}:${size}:${animationMode}:${isBot}:${hasFlag}:${postureScaleY}`;
+  const platformRankKey = platformRank ? `${platformRank.tier}:${platformRank.division ?? 0}:${platformRank.isRanked}` : 'none';
+  const previewReadyKey = `${heroId}:${team}:${size}:${animationMode}:${isBot}:${hasFlag}:${postureScaleY}:${platformRankKey}`;
   const previewShellStyle = {
     '--hero-preview-accent': resolvedAccentColor,
   } as CSSProperties;
@@ -499,6 +474,7 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
             postureScaleY={postureScaleY}
             idleAnimation={shouldIdleAnimate}
             animationMode={animationMode}
+            platformRank={platformRank}
           />
           <PreviewRenderReadySignal readyKey={previewReadyKey} onReady={handlePreviewRendered} />
         </Canvas>
@@ -560,6 +536,7 @@ interface HeroPreviewSceneProps {
   postureScaleY: number;
   idleAnimation: boolean;
   animationMode: HeroPreviewAnimationMode;
+  platformRank: HeroPreviewRank | null;
 }
 
 function HeroPreviewScene({
@@ -576,9 +553,11 @@ function HeroPreviewScene({
   postureScaleY,
   idleAnimation,
   animationMode,
+  platformRank,
 }: HeroPreviewSceneProps) {
   const heroHeight = HERO_DEFINITIONS[heroId].stats.size.height;
   const rootRef = useRef<THREE.Group>(null);
+  const idlePhaseRef = useRef(0);
   const idleYawRef = useRef(0);
   const loopStartedAtRef = useRef<number | null>(null);
   const isLoopingPreview = isPreviewLoopMode(animationMode);
@@ -596,12 +575,15 @@ function HeroPreviewScene({
       ? config.slideFraming
       : undefined;
   const activePostureScaleY = postureScaleY;
-  const previewFov = actionFraming?.fov ?? config.fov;
+  const previewFov = (actionFraming?.fov ?? config.fov) + (platformRank ? RANK_PLATFORM_FOV_PADDING : 0);
   const previewBodyScale = config.bodyScale * (actionFraming?.bodyScale ?? 1);
-  const previewBodyLift = config.bodyLift + (actionFraming?.bodyLift ?? 0);
+  const previewBodyLift = config.bodyLift + (actionFraming?.bodyLift ?? 0) + (platformRank ? RANK_PLATFORM_PREVIEW_LIFT : 0);
   const previewFloorScale = config.floorScale * (actionFraming?.floorScale ?? 1);
   const scaledHeight = heroHeight * Math.max(0.45, Math.min(1, activePostureScaleY)) * previewBodyScale;
   const bodyCenterOffset = scaledHeight * 0.5;
+  const groundY = previewBodyLift - bodyCenterOffset - (platformRank ? 0.018 : 0.04);
+  const shadowY = platformRank ? groundY + 0.024 : groundY;
+  const shadowScale = platformRank ? Math.min(previewFloorScale, 1.95) : previewFloorScale;
   const previewMovementPose = bodyAnimationMode === 'run' || bodyAnimationMode === 'slide'
     ? 'run'
     : bodyAnimationMode === 'crouchWalk'
@@ -609,6 +591,7 @@ function HeroPreviewScene({
       : 'walk';
 
   useEffect(() => {
+    idlePhaseRef.current = 0;
     idleYawRef.current = 0;
   }, [animationMode, heroId]);
 
@@ -636,9 +619,15 @@ function HeroPreviewScene({
       setLoopStep((currentStep) => isSameLoopStep(currentStep, nextLoopStep) ? currentStep : nextLoopStep);
     }
 
-    if (bodyAnimationMode !== 'slide' && idleRotation && !isDragging && config.idleSpeed > 0) {
-      idleYawRef.current += delta * config.idleSpeed;
+    const canIdleRotate = bodyAnimationMode !== 'slide' && idleRotation && config.idleSpeed > 0;
+    if (canIdleRotate && !isDragging) {
+      idlePhaseRef.current += delta * (config.idleSpeed / HERO_PREVIEW_IDLE_YAW_LIMIT);
+      idleYawRef.current = Math.sin(idlePhaseRef.current) * HERO_PREVIEW_IDLE_YAW_LIMIT;
+    } else if (!canIdleRotate) {
+      idlePhaseRef.current = 0;
+      idleYawRef.current = 0;
     }
+
     rootRef.current.rotation.y = yaw + idleYawRef.current;
   });
 
@@ -657,6 +646,14 @@ function HeroPreviewScene({
       />
       <pointLight color={accentColor} position={[-2.4, 1.4, 2.2]} intensity={2.2} distance={6} />
       <pointLight color={accentColor} position={[2, 2.2, -1.8]} intensity={1.15} distance={5} />
+
+      {platformRank && (
+        <HeroRankPlatform
+          rank={platformRank}
+          topY={groundY}
+          receiveShadow={config.shadows}
+        />
+      )}
 
       <group ref={rootRef} position={[0, previewBodyLift, 0]}>
         <group position={[0, -bodyCenterOffset, 0]} scale={previewBodyScale}>
@@ -683,15 +680,583 @@ function HeroPreviewScene({
 
       {showShadow && (
         <ContactShadows
-          position={[0, previewBodyLift - bodyCenterOffset - 0.04, 0]}
-          opacity={config.shadowOpacity}
-          scale={previewFloorScale}
+          position={[0, shadowY, 0]}
+          opacity={platformRank ? Math.min(0.5, config.shadowOpacity + 0.08) : config.shadowOpacity}
+          scale={shadowScale}
           blur={1.8}
           far={2.2}
-          color={accentColor}
+          color={HERO_PREVIEW_COLORS.neutralShadow}
         />
       )}
     </>
+  );
+}
+
+type HeroPlatformTier = HeroPreviewRank['tier'];
+type PlatformProfile = {
+  baseHeight: number;
+  baseRadius: number;
+  baseFootRadius: number;
+  baseRotation: number;
+  deckHeight: number;
+  deckRadius: number;
+  deckRotation: number;
+  centerRadius: number;
+  centerSegments: number;
+  centerRotation: number;
+  outerRingRadius: number;
+  innerRingRadius: number;
+};
+
+const DEFAULT_PLATFORM_PROFILE: PlatformProfile = {
+  baseHeight: 0.14,
+  baseRadius: 0.82,
+  baseFootRadius: 0.88,
+  baseRotation: Math.PI / 12,
+  deckHeight: 0.05,
+  deckRadius: 0.72,
+  deckRotation: 0,
+  centerRadius: 0.31,
+  centerSegments: 6,
+  centerRotation: Math.PI / 6,
+  outerRingRadius: 0.72,
+  innerRingRadius: 0.37,
+};
+
+const PLATFORM_PROFILES = {
+  unranked: DEFAULT_PLATFORM_PROFILE,
+  plastic: {
+    ...DEFAULT_PLATFORM_PROFILE,
+    baseRotation: Math.PI / 8,
+    centerSegments: 4,
+    centerRotation: Math.PI / 4,
+  },
+  bronze: {
+    ...DEFAULT_PLATFORM_PROFILE,
+    baseRotation: Math.PI / 6,
+    deckRotation: Math.PI / 6,
+    centerSegments: 6,
+  },
+  silver: {
+    ...DEFAULT_PLATFORM_PROFILE,
+    baseRotation: Math.PI / 8,
+    deckRotation: Math.PI / 8,
+    centerSegments: 8,
+  },
+  gold: {
+    ...DEFAULT_PLATFORM_PROFILE,
+    baseRotation: Math.PI / 12,
+    deckRotation: Math.PI / 12,
+    centerSegments: 6,
+  },
+  diamond: {
+    ...DEFAULT_PLATFORM_PROFILE,
+    baseRotation: Math.PI / 4,
+    deckRotation: Math.PI / 4,
+    centerSegments: 4,
+    centerRotation: Math.PI / 4,
+  },
+  unemployed: {
+    ...DEFAULT_PLATFORM_PROFILE,
+    baseRotation: Math.PI / 4,
+    deckRotation: Math.PI / 4,
+    centerSegments: 4,
+    centerRotation: Math.PI / 4,
+  },
+} satisfies Record<NonNullable<HeroPlatformTier>, PlatformProfile>;
+
+function getPlatformProfile(tier: HeroPlatformTier): PlatformProfile {
+  return PLATFORM_PROFILES[tier ?? 'unranked'] ?? DEFAULT_PLATFORM_PROFILE;
+}
+
+function clampPlatformDivision(division: HeroPreviewRank['division']): number {
+  if (typeof division !== 'number' || !Number.isFinite(division)) return 0;
+  return Math.max(0, Math.min(4, Math.floor(division)));
+}
+
+function HeroRankPlatform({
+  rank,
+  topY,
+  receiveShadow,
+}: {
+  rank: HeroPreviewRank;
+  topY: number;
+  receiveShadow: boolean;
+}) {
+  const tier = rank.tier ?? 'unranked';
+  const theme = getRankTheme(tier);
+  const division = clampPlatformDivision(rank.division);
+  const profile = getPlatformProfile(tier);
+  const outerRingTube = 0.018;
+  const lipRingTube = 0.024;
+  const topLocalY = 0;
+  const rankedIntensity = rank.isRanked ? 1 : 0.58;
+
+  return (
+    <group position={[0, topY, 0]}>
+      <pointLight
+        color={theme.primary}
+        position={[0, topLocalY + 0.26, 0.36]}
+        intensity={(0.42 + division * 0.08) * rankedIntensity}
+        distance={2.65}
+      />
+      <mesh
+        position={[0, -profile.baseHeight * 0.52, 0]}
+        rotation={[0, profile.baseRotation, 0]}
+        castShadow={receiveShadow}
+        receiveShadow={receiveShadow}
+      >
+        <cylinderGeometry
+          args={[
+            profile.baseRadius,
+            profile.baseFootRadius,
+            profile.baseHeight,
+            RANK_PLATFORM_SEGMENTS,
+            1,
+            false,
+          ]}
+        />
+        <meshStandardMaterial
+          color={HERO_PREVIEW_COLORS.platformBase}
+          emissive={theme.secondary}
+          emissiveIntensity={0.035 + division * 0.006}
+          metalness={0.38}
+          roughness={0.52}
+        />
+      </mesh>
+      <HeroRankPlatformApronDecorations
+        tier={tier}
+        profile={profile}
+        theme={theme}
+        division={division}
+        receiveShadow={receiveShadow}
+      />
+      <HeroRankPlatformPrestigeRails
+        tier={tier}
+        profile={profile}
+        theme={theme}
+        division={division}
+      />
+      <mesh position={[0, -profile.baseHeight + 0.012, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[profile.baseFootRadius * 0.96, lipRingTube, 10, RANK_PLATFORM_SEGMENTS]} />
+        <meshStandardMaterial
+          color={HERO_PREVIEW_COLORS.platformDeck}
+          emissive={theme.secondary}
+          emissiveIntensity={0.035 + division * 0.006}
+          metalness={0.34}
+          roughness={0.5}
+        />
+      </mesh>
+      <mesh
+        position={[0, -profile.deckHeight * 0.48, 0]}
+        rotation={[0, profile.deckRotation, 0]}
+        castShadow={receiveShadow}
+        receiveShadow={receiveShadow}
+      >
+        <cylinderGeometry
+          args={[
+            profile.deckRadius,
+            profile.deckRadius * 1.06,
+            profile.deckHeight,
+            RANK_PLATFORM_SEGMENTS,
+            1,
+            false,
+          ]}
+        />
+        <meshStandardMaterial
+          color={theme.secondary}
+          emissive={theme.primary}
+          emissiveIntensity={0.06 + division * 0.014}
+          metalness={0.32}
+          roughness={0.5}
+        />
+      </mesh>
+      <mesh position={[0, topLocalY + 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[profile.deckRadius * 0.98, lipRingTube * 0.72, 10, RANK_PLATFORM_SEGMENTS]} />
+        <meshStandardMaterial
+          color={theme.secondary}
+          emissive={theme.primary}
+          emissiveIntensity={0.08 + division * 0.012}
+          metalness={0.36}
+          roughness={0.4}
+        />
+      </mesh>
+      <mesh
+        position={[0, topLocalY + 0.005, 0]}
+        rotation={[-Math.PI / 2, 0, profile.deckRotation]}
+        receiveShadow={receiveShadow}
+      >
+        <circleGeometry args={[profile.deckRadius * 0.96, RANK_PLATFORM_SEGMENTS]} />
+        <meshStandardMaterial
+          color={HERO_PREVIEW_COLORS.platformDeck}
+          emissive={theme.primary}
+          emissiveIntensity={0.025 + division * 0.008}
+          metalness={0.28}
+          roughness={0.56}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      <mesh position={[0, topLocalY + 0.014, 0]} rotation={[-Math.PI / 2, 0, profile.centerRotation]}>
+        <circleGeometry args={[profile.centerRadius, profile.centerSegments]} />
+        <meshStandardMaterial
+          color={theme.primary}
+          emissive={theme.primary}
+          emissiveIntensity={0.05 + division * 0.012}
+          metalness={0.24}
+          roughness={0.44}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      <mesh position={[0, topLocalY + 0.023, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[profile.outerRingRadius, outerRingTube, 10, RANK_PLATFORM_SEGMENTS]} />
+        <meshStandardMaterial
+          color={theme.accent}
+          emissive={theme.primary}
+          emissiveIntensity={0.16 + division * 0.028}
+          metalness={0.36}
+          roughness={0.34}
+        />
+      </mesh>
+      <mesh position={[0, topLocalY + 0.027, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[profile.innerRingRadius, outerRingTube * 0.48, 8, 40]} />
+        <meshStandardMaterial
+          color={theme.foreground}
+          emissive={theme.primary}
+          emissiveIntensity={0.06 + division * 0.016}
+          metalness={0.24}
+          roughness={0.48}
+        />
+      </mesh>
+      <HeroRankPlatformTopDecorations
+        tier={tier}
+        profile={profile}
+        theme={theme}
+        division={division}
+        receiveShadow={receiveShadow}
+      />
+    </group>
+  );
+}
+
+function HeroRankPlatformPrestigeRails({
+  tier,
+  profile,
+  theme,
+  division,
+}: {
+  tier: HeroPlatformTier;
+  profile: PlatformProfile;
+  theme: ReturnType<typeof getRankTheme>;
+  division: number;
+}) {
+  if (tier !== 'gold' && tier !== 'diamond' && tier !== 'unemployed') return null;
+
+  const upperRailY = -profile.baseHeight * 0.28;
+  const lowerRailY = -profile.baseHeight * 0.72;
+  const railTube = tier === 'unemployed' ? 0.017 : 0.014;
+  const railMaterial = (
+    <meshStandardMaterial
+      color={theme.accent}
+      emissive={theme.primary}
+      emissiveIntensity={0.14 + division * 0.024}
+      metalness={0.38}
+      roughness={0.34}
+    />
+  );
+
+  return (
+    <group>
+      <mesh position={[0, upperRailY, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[profile.baseRadius * 0.99, railTube, 8, RANK_PLATFORM_SEGMENTS]} />
+        {railMaterial}
+      </mesh>
+      {(tier === 'diamond' || tier === 'unemployed') && (
+        <mesh position={[0, lowerRailY, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[profile.baseFootRadius * 0.9, railTube * 0.84, 8, RANK_PLATFORM_SEGMENTS]} />
+          {railMaterial}
+        </mesh>
+      )}
+    </group>
+  );
+}
+
+function HeroRankPlatformApronDecorations({
+  tier,
+  profile,
+  theme,
+  division,
+  receiveShadow,
+}: {
+  tier: HeroPlatformTier;
+  profile: PlatformProfile;
+  theme: ReturnType<typeof getRankTheme>;
+  division: number;
+  receiveShadow: boolean;
+}) {
+  const frontZ = profile.baseFootRadius * 0.96;
+  const apronY = -profile.baseHeight * 0.56;
+  const accentMaterial = (
+    <meshStandardMaterial
+      color={theme.accent}
+      emissive={theme.primary}
+      emissiveIntensity={0.16 + division * 0.024}
+      metalness={0.34}
+      roughness={0.36}
+    />
+  );
+  const secondaryMaterial = (
+    <meshStandardMaterial
+      color={theme.primary}
+      emissive={theme.primary}
+      emissiveIntensity={0.1 + division * 0.018}
+      metalness={0.28}
+      roughness={0.4}
+    />
+  );
+
+  if (tier === 'bronze') {
+    return (
+      <group>
+        {[-0.18, 0.18].map((x) => (
+          <mesh key={`bronze-apron:${x}`} position={[x, apronY, frontZ]} rotation={[Math.PI / 2, 0, 0]} castShadow={receiveShadow}>
+            <cylinderGeometry args={[0.03, 0.034, 0.022, 14]} />
+            {accentMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'silver') {
+    return (
+      <group position={[0, apronY, frontZ]}>
+        <mesh castShadow={receiveShadow}>
+          <boxGeometry args={[0.62, 0.034, 0.032]} />
+          {secondaryMaterial}
+        </mesh>
+        {[-0.22, 0.22].map((x) => (
+          <mesh key={`silver-notch:${x}`} position={[x, 0.038, 0]} castShadow={receiveShadow}>
+            <boxGeometry args={[0.13, 0.026, 0.032]} />
+            {accentMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'gold') {
+    return (
+      <group position={[0, apronY + 0.006, frontZ]}>
+        <mesh position={[0, 0.044, 0]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.18, 0.102, 0.038]} />
+          {accentMaterial}
+        </mesh>
+        {[-0.28, -0.14, 0.14, 0.28].map((x) => (
+          <mesh key={`gold-side-tooth:${x}`} position={[x, 0.012, 0]} castShadow={receiveShadow}>
+            <boxGeometry args={[0.1, 0.064, 0.038]} />
+            {accentMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'diamond') {
+    return (
+      <group>
+        <mesh position={[0, apronY + 0.022, frontZ]} rotation={[0, 0, Math.PI / 4]} scale={[1.55, 0.82, 0.42]} castShadow={receiveShadow}>
+          <octahedronGeometry args={[0.15, 0]} />
+          {accentMaterial}
+        </mesh>
+        {[-0.32, 0.32].map((x) => (
+          <mesh key={`diamond-side-chip:${x}`} position={[x, apronY - 0.012, frontZ]} rotation={[0, 0, Math.PI / 4]} scale={[0.7, 0.42, 0.24]} castShadow={receiveShadow}>
+            <octahedronGeometry args={[0.105, 0]} />
+            {secondaryMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'unemployed') {
+    return (
+      <group position={[0, apronY, frontZ]}>
+        <mesh position={[0, 0.012, 0]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.62, 0.096, 0.04]} />
+          {accentMaterial}
+        </mesh>
+        <mesh position={[0, 0.088, 0]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.28, 0.044, 0.044]} />
+          {secondaryMaterial}
+        </mesh>
+        {[-0.27, 0.27].map((x) => (
+          <mesh key={`unemployed-latch:${x}`} position={[x, -0.052, 0]} castShadow={receiveShadow}>
+            <boxGeometry args={[0.12, 0.04, 0.042]} />
+            {secondaryMaterial}
+          </mesh>
+        ))}
+        <mesh position={[0, -0.006, 0.003]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.2, 0.052, 0.044]} />
+          {secondaryMaterial}
+        </mesh>
+      </group>
+    );
+  }
+
+  return (
+    <group position={[0, apronY, frontZ]}>
+      {[-0.16, 0.16].map((x) => (
+        <mesh key={`default-apron:${x}`} position={[x, 0, 0]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.14, 0.034, 0.028]} />
+          {secondaryMaterial}
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function HeroRankPlatformTopDecorations({
+  tier,
+  profile,
+  theme,
+  division,
+  receiveShadow,
+}: {
+  tier: HeroPlatformTier;
+  profile: PlatformProfile;
+  theme: ReturnType<typeof getRankTheme>;
+  division: number;
+  receiveShadow: boolean;
+}) {
+  const decorationY = 0.048;
+  const accentMaterial = (
+    <meshStandardMaterial
+      color={theme.accent}
+      emissive={theme.primary}
+      emissiveIntensity={0.11 + division * 0.018}
+      metalness={0.32}
+      roughness={0.38}
+    />
+  );
+  const foregroundMaterial = (
+    <meshStandardMaterial
+      color={theme.foreground}
+      emissive={theme.primary}
+      emissiveIntensity={0.06 + division * 0.012}
+      metalness={0.28}
+      roughness={0.42}
+    />
+  );
+
+  if (tier === 'bronze') {
+    return (
+      <group>
+        {[-0.62, 0.62].map((angle) => (
+          <mesh
+            key={`bronze-rivet:${angle}`}
+            position={[Math.sin(angle) * profile.deckRadius * 0.62, decorationY, Math.cos(angle) * profile.deckRadius * 0.62]}
+            castShadow={receiveShadow}
+          >
+            <cylinderGeometry args={[0.022, 0.026, 0.018, 12]} />
+            {accentMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'silver') {
+    return (
+      <group>
+        {[-0.82, -0.27, 0.27, 0.82].map((angle) => (
+          <mesh
+            key={`silver-bar:${angle}`}
+            position={[Math.sin(angle) * profile.deckRadius * 0.58, decorationY, Math.cos(angle) * profile.deckRadius * 0.58]}
+            rotation={[0, angle, 0]}
+            castShadow={receiveShadow}
+          >
+            <boxGeometry args={[0.18, 0.022, 0.05]} />
+            {foregroundMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'gold') {
+    return (
+      <group>
+        {[-1.18, -0.7, -0.24, 0.24, 0.7, 1.18].map((angle) => (
+          <mesh
+            key={`gold-tooth:${angle}`}
+            position={[Math.sin(angle) * profile.deckRadius * 0.88, decorationY + 0.026, Math.cos(angle) * profile.deckRadius * 0.88]}
+            rotation={[0, angle + Math.PI / 4, 0]}
+            castShadow={receiveShadow}
+          >
+            <coneGeometry args={[0.048, 0.088, 4]} />
+            {accentMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'diamond') {
+    return (
+      <group>
+        {[-0.9, -0.3, 0.3, 0.9].map((angle) => (
+          <mesh
+            key={`diamond-chip:${angle}`}
+            position={[Math.sin(angle) * profile.deckRadius * 0.72, decorationY + 0.02, Math.cos(angle) * profile.deckRadius * 0.72]}
+            rotation={[0.38, angle + Math.PI / 4, 0.2]}
+            scale={[1.14, 0.48, 1.14]}
+            castShadow={receiveShadow}
+          >
+            <octahedronGeometry args={[0.066, 0]} />
+            {accentMaterial}
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+
+  if (tier === 'unemployed') {
+    return (
+      <group>
+        <mesh position={[0, decorationY, profile.deckRadius * 0.5]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.46, 0.03, 0.066]} />
+          {accentMaterial}
+        </mesh>
+        <mesh position={[0, decorationY, -profile.deckRadius * 0.5]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.46, 0.03, 0.066]} />
+          {accentMaterial}
+        </mesh>
+        <mesh position={[-0.16, decorationY + 0.022, 0]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.11, 0.026, 0.16]} />
+          {foregroundMaterial}
+        </mesh>
+        <mesh position={[0.16, decorationY + 0.022, 0]} castShadow={receiveShadow}>
+          <boxGeometry args={[0.11, 0.026, 0.16]} />
+          {foregroundMaterial}
+        </mesh>
+      </group>
+    );
+  }
+
+  return (
+    <group>
+      {[-0.7, 0.7].map((angle) => (
+        <mesh
+          key={`default-mark:${angle}`}
+          position={[Math.sin(angle) * profile.deckRadius * 0.64, decorationY, Math.cos(angle) * profile.deckRadius * 0.64]}
+          rotation={[0, angle, 0]}
+          castShadow={receiveShadow}
+        >
+          <boxGeometry args={[0.13, 0.018, 0.055]} />
+          {foregroundMaterial}
+        </mesh>
+      ))}
+    </group>
   );
 }
 

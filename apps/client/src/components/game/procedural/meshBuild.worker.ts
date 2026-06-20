@@ -1,5 +1,5 @@
 import type { VoxelChunk, VoxelMapManifest } from '@voxel-strike/shared';
-import { buildVoxelRegionGeometryData } from './meshGeometryData';
+import { buildVoxelRegionGeometryData, type VoxelRegionGeometryDetail } from './meshGeometryData';
 
 type WorkerRequest =
   | {
@@ -11,6 +11,7 @@ type WorkerRequest =
       requestId: number;
       manifestId: string;
       regionId: string;
+      detail?: VoxelRegionGeometryDetail;
       chunkCoords: Array<{ x: number; y: number; z: number }>;
     };
 
@@ -72,7 +73,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       .filter((chunk): chunk is VoxelChunk => Boolean(chunk));
 
     const start = performance.now();
-    const data = buildVoxelRegionGeometryData(activeManifest, chunks);
+    const data = buildVoxelRegionGeometryData(activeManifest, chunks, message.detail ?? 'full');
     const response: WorkerResponse = {
       type: 'regionBuilt',
       requestId: message.requestId,

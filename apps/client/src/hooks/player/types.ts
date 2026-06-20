@@ -144,6 +144,7 @@ export interface AbilityContext {
   dt: number;
   isGrounded: boolean;
   camera?: THREE.Camera;
+  aimPoint?: { x: number; y: number; z: number } | null;
   viewmodelElapsedSeconds?: number;
   viewmodelNowMs?: number;
 }

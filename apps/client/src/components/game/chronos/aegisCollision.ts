@@ -4,7 +4,7 @@ import {
   type Vec3,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
-import { visualStore } from '../../../store/visualStore';
+import { getPlayerVisualLookPitch, visualStore } from '../../../store/visualStore';
 
 const CHRONOS_AEGIS_VISUAL_COLLISION_STALE_MS = 360;
 
@@ -40,7 +40,7 @@ export function getFirstChronosAegisVisualHit(
 
     const position = visual.playerPositions.get(playerId) ?? player.position;
     const lookYaw = visual.playerRotations.get(playerId) ?? player.lookYaw;
-    const lookPitch = player.lookPitch ?? 0;
+    const lookPitch = getPlayerVisualLookPitch(visual, player);
     const hit = getSegmentHitAgainstChronosAegis(
       start,
       direction,

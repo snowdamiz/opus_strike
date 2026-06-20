@@ -1,30 +1,36 @@
 import type { Team } from '@voxel-strike/shared';
 import type { Player } from './schema/Player';
 
-interface QueryOptions {
+export interface PlayerSpatialQueryOptions {
   team?: Team;
+  excludeTeam?: Team;
   excludeId?: string;
 }
 
 export class PlayerSpatialIndex {
   private readonly buckets = new Map<number, Player[]>();
   private readonly alivePlayers: Player[] = [];
-  private readonly alivePlayersByTeam: Record<Team, Player[]> = { red: [], blue: [] };
+  private readonly alivePlayersByTeam = new Map<Team, Player[]>();
+  private readonly enemyPlayersByTeam = new Map<Team, Player[]>();
+  private readonly emptyTeamPlayers: Player[] = [];
 
   constructor(private readonly cellSize = 8) {}
 
   rebuild(players: Iterable<Player>): void {
     this.buckets.clear();
     this.alivePlayers.length = 0;
-    this.alivePlayersByTeam.red.length = 0;
-    this.alivePlayersByTeam.blue.length = 0;
+    this.alivePlayersByTeam.clear();
+    this.enemyPlayersByTeam.clear();
 
     for (const player of players) {
       if (player.state !== 'alive') continue;
       this.alivePlayers.push(player);
-      if (player.team === 'red' || player.team === 'blue') {
-        this.alivePlayersByTeam[player.team].push(player);
+      let teamPlayers = this.alivePlayersByTeam.get(player.team);
+      if (!teamPlayers) {
+        teamPlayers = [];
+        this.alivePlayersByTeam.set(player.team, teamPlayers);
       }
+      teamPlayers.push(player);
 
       const key = this.getBucketKey(player.position.x, player.position.z);
       let bucket = this.buckets.get(key);
@@ -40,19 +46,36 @@ export class PlayerSpatialIndex {
     return this.alivePlayers;
   }
 
-  getAlivePlayersByTeam(): Record<Team, Player[]> {
+  getAlivePlayersByTeam(): ReadonlyMap<Team, Player[]> {
     return this.alivePlayersByTeam;
   }
 
   getEnemyPlayers(team: Team): Player[] {
-    return this.alivePlayersByTeam[team === 'red' ? 'blue' : 'red'];
+    let enemyPlayers = this.enemyPlayersByTeam.get(team);
+    if (enemyPlayers) return enemyPlayers;
+
+    enemyPlayers = [];
+    for (const player of this.alivePlayers) {
+      if (player.team !== team) enemyPlayers.push(player);
+    }
+    if (enemyPlayers.length === 0) {
+      this.enemyPlayersByTeam.set(team, this.emptyTeamPlayers);
+      return this.emptyTeamPlayers;
+    }
+
+    this.enemyPlayersByTeam.set(team, enemyPlayers);
+    return enemyPlayers;
+  }
+
+  getTeamPlayers(team: Team): Player[] {
+    return this.alivePlayersByTeam.get(team) ?? this.emptyTeamPlayers;
   }
 
   queryRadius(
     center: { x: number; z: number },
     radius: number,
     out: Player[],
-    options: QueryOptions = {}
+    options: PlayerSpatialQueryOptions = {}
   ): Player[] {
     out.length = 0;
     const minCellX = Math.floor((center.x - radius) / this.cellSize);
@@ -69,6 +92,7 @@ export class PlayerSpatialIndex {
         for (const player of bucket) {
           if (options.excludeId && player.id === options.excludeId) continue;
           if (options.team && player.team !== options.team) continue;
+          if (options.excludeTeam && player.team === options.excludeTeam) continue;
           const dx = player.position.x - center.x;
           const dz = player.position.z - center.z;
           if (dx * dx + dz * dz <= radiusSq) {
@@ -85,7 +109,7 @@ export class PlayerSpatialIndex {
     origin: { x: number; z: number },
     range: number,
     out: Player[],
-    options: QueryOptions = {}
+    options: PlayerSpatialQueryOptions = {}
   ): Player[] {
     return this.queryRadius(origin, range, out, options);
   }

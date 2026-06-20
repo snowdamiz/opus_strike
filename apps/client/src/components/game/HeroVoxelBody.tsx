@@ -39,6 +39,11 @@ import {
   setBoneBasePose,
 } from '../../model-system/heroBodyPose';
 import {
+  HERO_BODY_BOT_MARKER_PART,
+  type HeroBodyGeneratedRootPart,
+} from '../../model-system/heroBodyGeneratedParts';
+import { groupHeroBodyRenderParts } from '../../model-system/heroBodyRenderParts';
+import {
   EMPTY_REMOTE_SOCKET_MARKERS,
   EMPTY_RIGGED_PARTS,
   HERO_PART_GEOMETRIES,
@@ -234,7 +239,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const manifest = HERO_BODY_MANIFESTS[resolvedHero];
   const parts = manifest.parts;
   const teamAccentParts = showTeamAccents ? manifest.teamAccentParts : EMPTY_TEAM_ACCENT_PARTS;
-  const riggedPartsByBone = useMemo(() => groupRiggedParts(parts), [parts]);
+  const riggedPartsByBone = useMemo(() => groupHeroBodyRenderParts(parts), [parts]);
   const riggedTeamAccentPartsByBone = useMemo(() => groupRiggedParts(teamAccentParts), [teamAccentParts]);
   const socketMarkersByBone = useMemo(() => {
     const grouped: Partial<Record<HeroBoneName, RemoteBodySocketMarker[]>> = {};
@@ -664,7 +669,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const renderPartsForBone = (bone: HeroBoneName) => (
     <>
       {(riggedPartsByBone[bone] ?? EMPTY_RIGGED_PARTS).map((riggedPart, index) => (
-        <Fragment key={`${resolvedHero}-${bone}-${index}`}>
+        <Fragment key={`${resolvedHero}-${riggedPart.part.id ?? `${bone}-${index}`}`}>
           <mesh
             position={riggedPart.meshOffset}
             rotation={riggedPart.part.rotation}
@@ -675,7 +680,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
             <primitive object={materials.get(riggedPart.part.material)!} attach="material" />
           </mesh>
           {renderOutlineMesh(
-            `${resolvedHero}-${bone}-${index}-outline`,
+            `${resolvedHero}-${riggedPart.part.id ?? `${bone}-${index}`}-outline`,
             riggedPart.meshOffset,
             riggedPart.part.scale,
             getPartGeometry(riggedPart.part),
@@ -685,7 +690,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       ))}
 
       {(riggedTeamAccentPartsByBone[bone] ?? EMPTY_RIGGED_PARTS).map((riggedPart, index) => (
-        <Fragment key={`${resolvedHero}-team-${bone}-${index}`}>
+        <Fragment key={`${resolvedHero}-team-${riggedPart.part.id ?? `${bone}-${index}`}`}>
           <mesh
             position={riggedPart.meshOffset}
             rotation={riggedPart.part.rotation}
@@ -699,7 +704,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
             />
           </mesh>
           {renderOutlineMesh(
-            `${resolvedHero}-team-${bone}-${index}-outline`,
+            `${resolvedHero}-team-${riggedPart.part.id ?? `${bone}-${index}`}-outline`,
             riggedPart.meshOffset,
             riggedPart.part.scale,
             getPartGeometry(riggedPart.part),
@@ -722,58 +727,36 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     ))
   );
 
-  const renderKneeJoint = (side: 'left' | 'right') => (
-    <>
-      <mesh
-        key={`${resolvedHero}-${side}-knee-cap`}
-        position={[0, 0.015, -0.185]}
-        scale={[0.18, 0.08, 0.05]}
-        castShadow={castShadow}
-        geometry={HERO_PART_GEOMETRIES.box}
-      >
-        <primitive object={materials.get('edge')!} attach="material" />
-      </mesh>
-      {renderOutlineMesh(
-        `${resolvedHero}-${side}-knee-cap-outline`,
-        [0, 0.015, -0.185],
-        [0.18, 0.08, 0.05],
-        HERO_PART_GEOMETRIES.box
-      )}
-      <mesh
-        key={`${resolvedHero}-${side}-knee-glow`}
-        position={[0, 0.018, -0.222]}
-        scale={[0.105, 0.028, 0.026]}
-        castShadow={castShadow}
-        geometry={HERO_PART_GEOMETRIES.box}
-      >
-        <primitive object={materials.get('accent')!} attach="material" />
-      </mesh>
-      {renderOutlineMesh(
-        `${resolvedHero}-${side}-knee-glow-outline`,
-        [0, 0.018, -0.222],
-        [0.105, 0.028, 0.026],
-        HERO_PART_GEOMETRIES.box
-      )}
-    </>
-  );
+  const renderRootGeneratedPart = (part: HeroBodyGeneratedRootPart) => {
+    const color = part.materialColorSource === 'team' ? teamColor : colors[part.material];
+    const geometry = HERO_PART_GEOMETRIES[part.kind ?? 'box'];
+    const emissiveIntensity = part.fixedEmissiveIntensity ?? getHeroBodyMaterialEmissiveIntensity(part.material, hasFlag);
 
-  const renderUpperLegLink = (side: 'left' | 'right') => (
+    return (
+      <Fragment key={`${resolvedHero}-${part.id}`}>
+        <mesh
+          position={part.position}
+          rotation={part.rotation}
+          scale={part.scale}
+          castShadow={castShadow}
+          geometry={geometry}
+        >
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={emissiveIntensity} />
+        </mesh>
+        {renderOutlineMesh(
+          `${resolvedHero}-${part.id}-outline`,
+          part.position,
+          part.scale,
+          geometry,
+          part.rotation
+        )}
+      </Fragment>
+    );
+  };
+
+  const renderBotMarker = () => (
     <>
-      <mesh
-        key={`${resolvedHero}-${side}-upper-leg-link`}
-        position={[0, -0.15, -0.018]}
-        scale={[0.17, 0.3, 0.13]}
-        castShadow={castShadow}
-        geometry={HERO_PART_GEOMETRIES.box}
-      >
-        <primitive object={materials.get('dark')!} attach="material" />
-      </mesh>
-      {renderOutlineMesh(
-        `${resolvedHero}-${side}-upper-leg-link-outline`,
-        [0, -0.15, -0.018],
-        [0.17, 0.3, 0.13],
-        HERO_PART_GEOMETRIES.box
-      )}
+      {renderRootGeneratedPart(HERO_BODY_BOT_MARKER_PART)}
     </>
   );
 
@@ -804,7 +787,6 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
           }}
           position={getBoneRestPosition('leftLeg')}
         >
-          {renderUpperLegLink('left')}
           {renderPartsForBone('leftLeg')}
           {renderSocketMarkersForBone('leftLeg')}
 
@@ -814,7 +796,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
             }}
             position={getBoneRestPosition('leftKnee')}
           >
-            {renderKneeJoint('left')}
+            {renderPartsForBone('leftKnee')}
             {renderSocketMarkersForBone('leftKnee')}
 
             <group
@@ -835,7 +817,6 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
           }}
           position={getBoneRestPosition('rightLeg')}
         >
-          {renderUpperLegLink('right')}
           {renderPartsForBone('rightLeg')}
           {renderSocketMarkersForBone('rightLeg')}
 
@@ -845,7 +826,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
             }}
             position={getBoneRestPosition('rightKnee')}
           >
-            {renderKneeJoint('right')}
+            {renderPartsForBone('rightKnee')}
             {renderSocketMarkersForBone('rightKnee')}
 
             <group
@@ -921,24 +902,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
         </group>
       </group>
 
-      {isBot && (
-        <>
-          <mesh
-            position={[0, 1.98, 0]}
-            scale={[0.14, 0.04, 0.14]}
-            castShadow={castShadow}
-            geometry={HERO_PART_GEOMETRIES.box}
-          >
-            <meshStandardMaterial color={teamColor} emissive={teamColor} emissiveIntensity={0.75} />
-          </mesh>
-          {renderOutlineMesh(
-            `${resolvedHero}-bot-marker-outline`,
-            [0, 1.98, 0],
-            [0.14, 0.04, 0.14],
-            HERO_PART_GEOMETRIES.box
-          )}
-        </>
-      )}
+      {isBot && renderBotMarker()}
     </group>
   );
 });

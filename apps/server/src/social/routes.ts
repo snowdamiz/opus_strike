@@ -1,17 +1,26 @@
 import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
+import { matchMaker } from 'colyseus';
 import { Prisma, type MatchMode } from '@prisma/client';
 import prisma from '../db';
 import { assertGameplayAccountEligible } from '../auth/accountEligibility';
+import { enforceJsonRateLimit, getRequestAuthToken } from '../auth/http';
 import { verifyAuthToken, type AuthTokenPayload } from '../auth/session';
-import { consumeRateLimit } from '../auth/rateLimit';
+import {
+  canUserAccessPersistentPartyRoom,
+  findActivePersistentPartyForUser,
+} from '../party/persistentParty';
 import {
   SocialServiceError,
   createLobbyInvite,
+  createPartyInvite,
   expireOldLobbyInvites,
+  expireOldPartyInvites,
   getFriendshipPair,
   lobbyInviteInclude,
+  partyInviteInclude,
   serializeLobbyInvite,
+  serializePartyInvite,
   serializeSocialUser,
   socialUserSelect,
 } from './service';
@@ -34,25 +43,8 @@ const friendshipInclude = {
 type FriendshipWithUsers = Prisma.FriendshipGetPayload<{ include: typeof friendshipInclude }>;
 type RelationshipState = 'none' | 'friend' | 'pending_incoming' | 'pending_outgoing';
 
-function enforceJsonRateLimit(req: Request, res: Response, keyPrefix: string, options: {
-  limit: number;
-  windowMs: number;
-}): boolean {
-  const result = consumeRateLimit(req, { keyPrefix, ...options });
-  if (result.ok) return true;
-
-  res.setHeader('Retry-After', result.retryAfterSeconds.toString());
-  res.status(429).json({ error: 'Too many requests' });
-  return false;
-}
-
-function getRequestToken(req: Request): string | null {
-  const token = req.cookies?.auth_token;
-  return typeof token === 'string' && token.length > 0 ? token : null;
-}
-
 async function getAuthenticatedPayload(req: Request): Promise<AuthTokenPayload | null> {
-  const token = getRequestToken(req);
+  const token = getRequestAuthToken(req);
   if (!token) return null;
   return verifyAuthToken(token);
 }
@@ -110,9 +102,19 @@ function cleanShortText(value: unknown, maxLength: number): string | null {
 }
 
 function parseMatchMode(value: unknown): MatchMode | null {
-  return value === 'quick_play' || value === 'ranked' || value === 'custom' || value === 'custom_wager'
+  return value === 'quick_play' || value === 'ranked' || value === 'custom'
     ? value
     : null;
+}
+
+async function canInviteFromParty(partyId: string, userId: string): Promise<boolean> {
+  const rooms = await matchMaker.query({ name: 'party_room' });
+  const room = (rooms as any[]).find((candidate) => candidate.roomId === partyId);
+  if (room) {
+    const memberUserIds = room.metadata?.memberUserIds;
+    if (Array.isArray(memberUserIds) && memberUserIds.includes(userId)) return true;
+  }
+  return canUserAccessPersistentPartyRoom(partyId, userId);
 }
 
 function otherUser(friendship: FriendshipWithUsers, currentUserId: string) {
@@ -201,6 +203,28 @@ function sendSocialError(res: Response, error: unknown): void {
   res.status(500).json({ error: 'Internal server error' });
 }
 
+router.get('/party-session', async (req: Request, res: Response) => {
+  if (!enforceJsonRateLimit(req, res, 'social:read', SOCIAL_RATE_LIMITS.read)) return;
+
+  try {
+    const user = await requireCurrentUser(req, res, { requireGameplayEligible: true });
+    if (!user) return;
+
+    const party = await findActivePersistentPartyForUser(user.id);
+    res.json({
+      party: party
+        ? {
+            partyId: party.roomId,
+            persistentPartyId: party.id,
+            updatedAt: party.updatedAt.toISOString(),
+          }
+        : null,
+    });
+  } catch (error) {
+    sendSocialError(res, error);
+  }
+});
+
 router.get('/', async (req: Request, res: Response) => {
   if (!enforceJsonRateLimit(req, res, 'social:read', SOCIAL_RATE_LIMITS.read)) return;
 
@@ -208,9 +232,12 @@ router.get('/', async (req: Request, res: Response) => {
     const user = await requireCurrentUser(req, res);
     if (!user) return;
 
-    await expireOldLobbyInvites();
+    await Promise.all([
+      expireOldLobbyInvites(),
+      expireOldPartyInvites(),
+    ]);
 
-    const [friendships, incomingRequests, outgoingRequests, lobbyInvites, discordPlayers] = await Promise.all([
+    const [friendships, incomingRequests, outgoingRequests, lobbyInvites, partyInvites, discordPlayers] = await Promise.all([
       prisma.friendship.findMany({
         where: {
           status: 'accepted',
@@ -246,6 +273,16 @@ router.get('/', async (req: Request, res: Response) => {
         orderBy: { createdAt: 'desc' },
         take: 20,
       }),
+      prisma.partyInvite.findMany({
+        where: {
+          toUserId: user.id,
+          status: 'pending',
+          expiresAt: { gt: new Date() },
+        },
+        include: partyInviteInclude,
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      }),
       prisma.user.findMany({
         where: {
           id: { not: user.id },
@@ -272,6 +309,7 @@ router.get('/', async (req: Request, res: Response) => {
       incomingRequests: incomingRequests.map((request) => serializeFriendshipRequest(request, user.id)),
       outgoingRequests: outgoingRequests.map((request) => serializeFriendshipRequest(request, user.id)),
       lobbyInvites: lobbyInvites.map(serializeLobbyInvite),
+      partyInvites: partyInvites.map(serializePartyInvite),
       discordPlayers: discordPlayers
         .map((candidate) => ({
           user: serializeSocialUser(candidate),
@@ -569,6 +607,159 @@ router.delete('/friends/:friendUserId', async (req: Request, res: Response) => {
     });
 
     res.json({ success: true });
+  } catch (error) {
+    sendSocialError(res, error);
+  }
+});
+
+router.post('/party-invites', async (req: Request, res: Response) => {
+  if (!enforceJsonRateLimit(req, res, 'social:invite', SOCIAL_RATE_LIMITS.invite)) return;
+
+  try {
+    const user = await requireCurrentUser(req, res, { requireGameplayEligible: true });
+    if (!user) return;
+
+    const toUserId = cleanShortText(req.body?.toUserId, 96);
+    const partyId = cleanShortText(req.body?.partyId, 96);
+
+    if (!toUserId || !partyId) {
+      res.status(400).json({ error: 'Friend and party are required' });
+      return;
+    }
+
+    if (!(await canInviteFromParty(partyId, user.id))) {
+      res.status(403).json({ error: 'Join the party before inviting friends' });
+      return;
+    }
+
+    const invite = await createPartyInvite({
+      fromUserId: user.id,
+      toUserId,
+      partyId,
+    });
+
+    res.status(201).json({ invite });
+  } catch (error) {
+    sendSocialError(res, error);
+  }
+});
+
+router.post('/party-invites/:inviteId/accept', async (req: Request, res: Response) => {
+  if (!enforceJsonRateLimit(req, res, 'social:invite', SOCIAL_RATE_LIMITS.invite)) return;
+
+  try {
+    const user = await requireCurrentUser(req, res, { requireGameplayEligible: true });
+    if (!user) return;
+
+    await expireOldPartyInvites();
+
+    const inviteId = cleanShortText(req.params.inviteId, 96);
+    if (!inviteId) {
+      res.status(400).json({ error: 'Invite is required' });
+      return;
+    }
+
+    const existing = await prisma.partyInvite.findUnique({
+      where: { id: inviteId },
+      include: partyInviteInclude,
+    });
+
+    if (!existing || existing.toUserId !== user.id || existing.status !== 'pending') {
+      res.status(404).json({ error: 'Party invite not found' });
+      return;
+    }
+
+    if (existing.expiresAt <= new Date()) {
+      res.status(410).json({ error: 'Party invite expired' });
+      return;
+    }
+
+    const invite = await prisma.partyInvite.update({
+      where: { id: existing.id },
+      data: {
+        status: 'accepted',
+        respondedAt: new Date(),
+      },
+      include: partyInviteInclude,
+    });
+
+    res.json({ invite: serializePartyInvite(invite) });
+  } catch (error) {
+    sendSocialError(res, error);
+  }
+});
+
+router.post('/party-invites/:inviteId/decline', async (req: Request, res: Response) => {
+  if (!enforceJsonRateLimit(req, res, 'social:invite', SOCIAL_RATE_LIMITS.invite)) return;
+
+  try {
+    const user = await requireCurrentUser(req, res, { requireGameplayEligible: true });
+    if (!user) return;
+
+    const inviteId = cleanShortText(req.params.inviteId, 96);
+    if (!inviteId) {
+      res.status(400).json({ error: 'Invite is required' });
+      return;
+    }
+
+    const existing = await prisma.partyInvite.findUnique({
+      where: { id: inviteId },
+      include: partyInviteInclude,
+    });
+
+    if (!existing || existing.toUserId !== user.id || existing.status !== 'pending') {
+      res.status(404).json({ error: 'Party invite not found' });
+      return;
+    }
+
+    const invite = await prisma.partyInvite.update({
+      where: { id: existing.id },
+      data: {
+        status: 'declined',
+        respondedAt: new Date(),
+      },
+      include: partyInviteInclude,
+    });
+
+    res.json({ invite: serializePartyInvite(invite) });
+  } catch (error) {
+    sendSocialError(res, error);
+  }
+});
+
+router.post('/party-invites/:inviteId/cancel', async (req: Request, res: Response) => {
+  if (!enforceJsonRateLimit(req, res, 'social:invite', SOCIAL_RATE_LIMITS.invite)) return;
+
+  try {
+    const user = await requireCurrentUser(req, res, { requireGameplayEligible: true });
+    if (!user) return;
+
+    const inviteId = cleanShortText(req.params.inviteId, 96);
+    if (!inviteId) {
+      res.status(400).json({ error: 'Invite is required' });
+      return;
+    }
+
+    const existing = await prisma.partyInvite.findUnique({
+      where: { id: inviteId },
+      include: partyInviteInclude,
+    });
+
+    if (!existing || existing.fromUserId !== user.id || existing.status !== 'pending') {
+      res.status(404).json({ error: 'Party invite not found' });
+      return;
+    }
+
+    const invite = await prisma.partyInvite.update({
+      where: { id: existing.id },
+      data: {
+        status: 'canceled',
+        respondedAt: new Date(),
+      },
+      include: partyInviteInclude,
+    });
+
+    res.json({ invite: serializePartyInvite(invite) });
   } catch (error) {
     sendSocialError(res, error);
   }

@@ -2,6 +2,10 @@
 
 A browser-based 4v4 Capture the Flag game with Minecraft-style voxel graphics and movement-based hero abilities.
 
+## Planning
+
+- [Battle Royal Mode Plan](BATTLE_ROYAL_PLAN.md)
+
 ## Features
 
 - **3 Unique Heroes** with distinct movement abilities:
@@ -53,10 +57,6 @@ voxel-strike/
 ├── package.json
 └── pnpm-workspace.yaml
 ```
-
-## Documentation
-
-- [Game Optimization Log](docs/game-optimization-log.md) - Optimization passes, evidence, verification, and follow-up candidates.
 
 ## Getting Started
 

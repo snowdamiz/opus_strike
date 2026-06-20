@@ -1,10 +1,10 @@
-import type { Team } from '@voxel-strike/shared';
+import { DEFAULT_MATCH_PERSPECTIVE, isMatchPerspective, type MatchPerspective, type Team } from '@voxel-strike/shared';
 
 export interface RunningGameSession {
   roomId: string;
   playerName: string;
   team?: Team;
-  observer: boolean;
+  matchPerspective: MatchPerspective;
   savedAt: number;
 }
 
@@ -39,7 +39,9 @@ function parseSession(value: string | null): RunningGameSession | null {
       roomId: parsed.roomId,
       playerName,
       team: normalizeTeam(parsed.team),
-      observer: parsed.observer === true,
+      matchPerspective: isMatchPerspective(parsed.matchPerspective)
+        ? parsed.matchPerspective
+        : DEFAULT_MATCH_PERSPECTIVE,
       savedAt: Number.isFinite(parsed.savedAt) ? Number(parsed.savedAt) : Date.now(),
     };
   } catch {
@@ -59,7 +61,7 @@ export function saveRunningGameSession(input: Omit<RunningGameSession, 'savedAt'
     roomId: input.roomId,
     playerName: input.playerName.trim().slice(0, 24),
     team: input.team,
-    observer: input.observer,
+    matchPerspective: input.matchPerspective,
     savedAt: Date.now(),
   };
 

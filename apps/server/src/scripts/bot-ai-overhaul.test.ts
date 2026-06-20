@@ -1,15 +1,31 @@
 import assert from 'node:assert/strict';
+import type { PlayerInput } from '@voxel-strike/shared';
 import {
+  applyBotAbilityInputPlan,
   buildBotBlackboard,
   buildTeamTactics,
   chooseBotAbilityPlan,
   chooseBotCombatPlan,
+  composeBotInputMovementState,
   chooseLocalAvoidanceDirection,
   composeBotMovementDirection,
+  createInitialBotBrain,
   createBotRouteGraphAdapter,
+  getBotAimReadinessTrace,
+  getBotCombatEngagementState,
+  getBotPredictedAimPoint,
+  getBotLocomotionActionState,
   getBotSkillProfile,
+  getBotYawPitchTowardPosition,
+  isBotSecondaryFireWindowOpen,
   planBotRoute,
   scoreBotIntents,
+  shouldRefreshBotPlanningState,
+  updateBotAimState,
+  updateBotPrimaryFireDecision,
+  updateBotSecondaryFireDecision,
+  updateBotMovementRecoveryState,
+  updateBotPlanningState,
   type BotAbilityGeometry,
   type BotFlagSnapshot,
   type BotPlayerSnapshot,
@@ -182,6 +198,14 @@ function defaultGeometry(overrides: Partial<BotAbilityGeometry> = {}): BotAbilit
   };
 }
 
+function randomSequence(values: number[]): () => number {
+  return () => values.shift() ?? 0;
+}
+
+function assertClose(actual: number, expected: number, message: string): void {
+  assert.ok(Math.abs(actual - expected) < 0.000001, `${message}: expected ${expected}, got ${actual}`);
+}
+
 function directRoutePlan(targetPosition: PlainVec3): BotRoutePlan {
   return {
     targetPosition,
@@ -249,6 +273,46 @@ function testTeamTacticsAssignments() {
   assert.ok(Object.values(tactics.assignments).some((assignment) => assignment.job === 'defend_base'));
 }
 
+function testBattleRoyalTacticsUseAllEnemySquads() {
+  const alphaBot = player({ id: 'alpha-bot', team: 'br_01', heroId: 'hookshot', x: 0, z: 0 });
+  const alphaAlly = player({ id: 'alpha-ally', team: 'br_01', heroId: 'chronos', x: 3, z: 0 });
+  const bravoEnemy = player({ id: 'bravo-enemy', team: 'br_02', heroId: 'phantom', x: 24, z: 0, isBot: false });
+  const charlieEnemy = player({ id: 'charlie-enemy', team: 'br_03', heroId: 'blaze', x: 10, z: 0 });
+  const players = [alphaBot, alphaAlly, bravoEnemy, charlieEnemy];
+  const tactics = buildTeamTactics({
+    gameplayMode: 'battle_royal',
+    now: NOW,
+    revision: 1,
+    players,
+    flags: flags(),
+  });
+
+  assert.ok(tactics[alphaBot.team], 'battle royal tactics should be keyed by BR team id');
+  assert.equal(tactics[alphaBot.team].assignments[alphaBot.id].targetPlayerId, charlieEnemy.id);
+
+  const blackboard = buildBotBlackboard({
+    now: NOW,
+    gameplayMode: 'battle_royal',
+    bot: alphaBot,
+    players,
+    flags: flags(),
+    visibleEnemyIds: new Set([bravoEnemy.id, charlieEnemy.id]),
+    enemyLineOfSightIds: new Set([charlieEnemy.id]),
+    recentDamageSources: [],
+    teamTactics: tactics[alphaBot.team],
+    enemyMemory: new Map(),
+    skill: getBotSkillProfile('normal'),
+  });
+  const enemyIds = blackboard.enemies.map((enemy) => enemy.player.id).sort();
+  assert.deepEqual(enemyIds, [bravoEnemy.id, charlieEnemy.id].sort());
+  assert.equal(blackboard.allies.length, 1);
+  assert.equal(blackboard.nearestEnemy?.player.id, charlieEnemy.id);
+
+  const intent = scoreBotIntents(alphaBot, blackboard, getBotSkillProfile('normal'));
+  assert.equal(intent.type, 'fight_local_enemy');
+  assert.equal(intent.targetPlayerId, charlieEnemy.id);
+}
+
 function testIntentScoring() {
   const bot = player({ id: 'red-hook', team: 'red', heroId: 'hookshot', x: -20, z: 0 });
   const carrier = player({ id: 'blue-carrier', team: 'blue', heroId: 'phantom', x: -5, z: 0, hasFlag: true });
@@ -286,6 +350,152 @@ function testRoutePlannerAvoidsBlockedEdge() {
   assert.ok(plan.pathNodeIds.includes('flank'), `expected flank route, got ${plan.pathNodeIds.join('>')}`);
 }
 
+function testBotPlanningStateRefreshesAndReusesCachedState() {
+  const bot = player({ id: 'red-runner', team: 'red', heroId: 'phantom', x: -40, z: 0 });
+  const flagState = flags();
+  const brain = createInitialBotBrain(bot.position);
+  const skill = {
+    ...getBotSkillProfile('normal'),
+    thinkIntervalMs: 200,
+    replanIntervalMs: 500,
+  };
+  const graph = routeGraph();
+  const players = [bot];
+  const teamTactics = tacticsFor(bot, players, flagState);
+  assert.equal(shouldRefreshBotPlanningState(brain, NOW), true);
+
+  const planned = updateBotPlanningState({
+    brain,
+    now: NOW,
+    gameplayMode: DEFAULT_GAMEPLAY_MODE,
+    bot,
+    players,
+    flags: flagState,
+    visibleEnemyIds: new Set(),
+    enemyLineOfSightIds: new Set(),
+    recentDamageSources: [],
+    teamTactics,
+    routeGraph: graph,
+    skill,
+    random: randomSequence([0, 0]),
+  });
+
+  assert.equal(planned.blackboard, brain.blackboard);
+  assert.equal(planned.routePlan, brain.routePlan);
+  assert.equal(brain.nextBlackboardAt, NOW + 150);
+  assert.equal(brain.nextThinkAt, NOW + 150);
+  assert.equal(brain.strafeUntil, NOW + 900);
+  assert.equal(brain.intent.type, 'capture_enemy_flag');
+
+  const cachedBlackboard = planned.blackboard;
+  const cachedRoutePlan = planned.routePlan;
+  assert.equal(shouldRefreshBotPlanningState(brain, NOW + 50), false);
+  const reused = updateBotPlanningState({
+    brain,
+    now: NOW + 50,
+    gameplayMode: DEFAULT_GAMEPLAY_MODE,
+    bot,
+    players,
+    flags: flagState,
+    visibleEnemyIds: new Set(),
+    enemyLineOfSightIds: new Set(),
+    recentDamageSources: [],
+    teamTactics,
+    routeGraph: graph,
+    skill,
+    random: randomSequence([1, 1]),
+  });
+
+  assert.equal(reused.blackboard, cachedBlackboard);
+  assert.equal(reused.routePlan, cachedRoutePlan);
+  assert.equal(brain.nextBlackboardAt, NOW + 150);
+  assert.equal(brain.nextThinkAt, NOW + 150);
+  assert.equal(shouldRefreshBotPlanningState(brain, NOW + 150), true);
+}
+
+function testBotMovementRecoveryStateReplansBlockedEdges() {
+  const bot = player({ id: 'red-runner', team: 'red', heroId: 'phantom', x: -40, z: 0 });
+  const blackboard = blackboardFor(bot, [bot]);
+  const brain = createInitialBotBrain(bot.position);
+  const skill = {
+    ...getBotSkillProfile('normal'),
+    replanIntervalMs: 400,
+    blockedEdgeTtlMs: 2_000,
+  };
+  brain.intent = {
+    ...scoreBotIntents(bot, blackboard, skill),
+    type: 'capture_enemy_flag',
+    targetPosition: vec(40, 0),
+    reason: 'test capture route',
+  };
+  brain.routePlan = {
+    ...directRoutePlan(vec(40, 0)),
+    activeEdgeId: 'edge_direct_a',
+    pathNodeIds: ['red_base', 'mid', 'blue_flag'],
+  };
+  brain.movementProgress.desiredTarget = { x: 40, y: 1, z: 0 };
+  brain.movementProgress.lastPosition = { ...bot.position };
+  brain.movementProgress.lastDistanceToTarget = 80;
+  brain.movementProgress.lastProgressAt = NOW - 800;
+
+  const recovered = updateBotMovementRecoveryState({
+    brain,
+    now: NOW,
+    bot,
+    blackboard,
+    routeGraph: routeGraph(),
+    routePlan: brain.routePlan,
+    desiredMove: { x: 1, z: 0 },
+    steeringBlocked: true,
+    skill,
+    random: randomSequence([0]),
+  });
+
+  assert.equal(recovered.stalled, true);
+  assert.equal(recovered.markBlockedEdgeId, 'edge_direct_a');
+  assert.equal(brain.blockedEdges.get('edge_direct_a'), NOW + 2_000);
+  assert.equal(brain.reverseUntil, NOW + 220);
+  assert.ok(brain.routePlan?.pathNodeIds.includes('flank'), `expected flank replan, got ${brain.routePlan?.pathNodeIds.join('>')}`);
+  assert.equal(recovered.routePlan, brain.routePlan);
+}
+
+function testBotMovementRecoveryStateKeepsRouteWhenProgressing() {
+  const bot = player({ id: 'red-runner', team: 'red', heroId: 'phantom', x: -30, z: 0 });
+  const blackboard = blackboardFor(bot, [bot]);
+  const brain = createInitialBotBrain(bot.position);
+  const skill = getBotSkillProfile('normal');
+  brain.intent = {
+    ...scoreBotIntents(bot, blackboard, skill),
+    type: 'capture_enemy_flag',
+    targetPosition: vec(40, 0),
+    reason: 'test capture route',
+  };
+  brain.routePlan = directRoutePlan(vec(40, 0));
+  brain.movementProgress.desiredTarget = { x: 40, y: 1, z: 0 };
+  brain.movementProgress.lastPosition = vec(-40, 0);
+  brain.movementProgress.lastDistanceToTarget = 80;
+  brain.movementProgress.lastProgressAt = NOW - 800;
+
+  const recovered = updateBotMovementRecoveryState({
+    brain,
+    now: NOW,
+    bot,
+    blackboard,
+    routeGraph: routeGraph(),
+    routePlan: brain.routePlan,
+    desiredMove: { x: 1, z: 0 },
+    steeringBlocked: true,
+    skill,
+    random: randomSequence([0]),
+  });
+
+  assert.equal(recovered.stalled, false);
+  assert.equal(recovered.markBlockedEdgeId, null);
+  assert.equal(brain.blockedEdges.size, 0);
+  assert.equal(brain.reverseUntil, 0);
+  assert.equal(recovered.routePlan, brain.routePlan);
+}
+
 function testLocalAvoidance() {
   const choice = chooseLocalAvoidanceDirection(
     { x: 1, z: 0 },
@@ -299,6 +509,581 @@ function testLocalAvoidance() {
 
   assert.equal(choice.blocked, true);
   assert.ok(choice.direction && choice.direction.z < 0, 'expected left tangent recovery');
+}
+
+function testBotPrimaryFireDecisionTiming() {
+  const brain = createInitialBotBrain();
+  const skill = {
+    ...getBotSkillProfile('normal'),
+    fireChance: 0.5,
+    fireDecisionMs: [100, 100] as [number, number],
+    burstDurationMs: [200, 200] as [number, number],
+  };
+
+  const firing = updateBotPrimaryFireDecision({
+    brain,
+    skill,
+    now: NOW,
+    aimReady: true,
+    tempoMultiplier: 2,
+    random: randomSequence([0, 0.2, 0]),
+  });
+
+  assert.equal(firing, true);
+  assert.equal(brain.nextFireDecisionAt, NOW + 50);
+  assert.equal(brain.fireUntil, NOW + 100);
+
+  const notReadyBrain = createInitialBotBrain();
+  const notReady = updateBotPrimaryFireDecision({
+    brain: notReadyBrain,
+    skill,
+    now: NOW,
+    aimReady: false,
+    tempoMultiplier: 1,
+    random: randomSequence([0]),
+  });
+
+  assert.equal(notReady, false);
+  assert.equal(notReadyBrain.nextFireDecisionAt, NOW + 100);
+  assert.equal(notReadyBrain.fireUntil, 0);
+}
+
+function testBotCombatEngagementState() {
+  assert.deepEqual(getBotCombatEngagementState({
+    hasCombatTarget: false,
+    enemyDistance: 10,
+    attackRange: 20,
+    hasClearShot: true,
+    targetProtected: false,
+    primaryAimReady: true,
+  }), {
+    shouldFight: false,
+    aimReady: false,
+  });
+
+  assert.deepEqual(getBotCombatEngagementState({
+    hasCombatTarget: true,
+    enemyDistance: 25,
+    attackRange: 20,
+    hasClearShot: true,
+    targetProtected: false,
+    primaryAimReady: true,
+  }), {
+    shouldFight: false,
+    aimReady: false,
+  });
+
+  assert.deepEqual(getBotCombatEngagementState({
+    hasCombatTarget: true,
+    enemyDistance: 10,
+    attackRange: 20,
+    hasClearShot: false,
+    targetProtected: false,
+    primaryAimReady: true,
+  }), {
+    shouldFight: false,
+    aimReady: false,
+  });
+
+  assert.deepEqual(getBotCombatEngagementState({
+    hasCombatTarget: true,
+    enemyDistance: 10,
+    attackRange: 20,
+    hasClearShot: true,
+    targetProtected: true,
+    primaryAimReady: true,
+  }), {
+    shouldFight: false,
+    aimReady: false,
+  });
+
+  assert.deepEqual(getBotCombatEngagementState({
+    hasCombatTarget: true,
+    enemyDistance: 10,
+    attackRange: 20,
+    hasClearShot: true,
+    targetProtected: false,
+    primaryAimReady: false,
+  }), {
+    shouldFight: true,
+    aimReady: false,
+  });
+
+  assert.deepEqual(getBotCombatEngagementState({
+    hasCombatTarget: true,
+    enemyDistance: 20,
+    attackRange: 20,
+    hasClearShot: true,
+    targetProtected: false,
+    primaryAimReady: true,
+  }), {
+    shouldFight: true,
+    aimReady: true,
+  });
+}
+
+function testBotAimLeadPrediction() {
+  const skill = {
+    ...getBotSkillProfile('normal'),
+    aimLeadSeconds: 0.1,
+    reactionMs: 100,
+  };
+  const aimPoint = getBotPredictedAimPoint({
+    sourcePosition: vec(0, 0, 0),
+    targetPosition: vec(16, 0, 1),
+    targetVelocity: { x: 10, y: 2, z: -5 },
+    targetDistance: 16,
+    skill,
+  });
+
+  const leadSeconds = 0.1 + 16 / 160 - 0.1 * 0.45;
+  assertClose(aimPoint.x, 16 + 10 * leadSeconds, 'predicted x lead');
+  assertClose(aimPoint.y, 1 + 2 * leadSeconds, 'predicted y lead');
+  assertClose(aimPoint.z, -5 * leadSeconds, 'predicted z lead');
+
+  const upperClamp = getBotPredictedAimPoint({
+    sourcePosition: vec(0, 0, 0),
+    targetPosition: vec(0, 0, 0),
+    targetVelocity: { x: 10, y: 0, z: 0 },
+    targetDistance: 1_000,
+    skill: { ...skill, aimLeadSeconds: 0.5, reactionMs: 0 },
+  });
+  assertClose(upperClamp.x, 4.2, 'lead clamps high');
+
+  const lowerClamp = getBotPredictedAimPoint({
+    sourcePosition: vec(0, 0, 0),
+    targetPosition: vec(0, 0, 0),
+    targetVelocity: { x: 0, y: 0, z: 10 },
+    targetDistance: 0,
+    skill: { ...skill, aimLeadSeconds: -0.5, reactionMs: 500 },
+  });
+  assertClose(lowerClamp.z, -2.2, 'lead clamps low');
+}
+
+function testBotYawPitchTowardPosition() {
+  const aim = getBotYawPitchTowardPosition(
+    { x: 0, y: 1, z: 0 },
+    { x: 0, y: 2, z: -10 }
+  );
+  assertClose(aim.yaw, 0, 'yaw faces negative z');
+  assertClose(aim.pitch, Math.atan2(1, 10), 'pitch aims toward elevation');
+
+  const clamped = getBotYawPitchTowardPosition(
+    { x: 0, y: 1, z: 0 },
+    { x: 0, y: 100, z: -1 }
+  );
+  assert.equal(clamped.pitch, 0.8);
+}
+
+function testBotAimStateUpdate() {
+  const skill = {
+    ...getBotSkillProfile('normal'),
+    aimErrorRadians: 0.1,
+    aimJitterRefreshMs: [50, 50] as [number, number],
+    turnRateRadians: 50,
+  };
+  const brain = createInitialBotBrain();
+  brain.aimYaw = Number.NaN;
+  brain.aimPitch = Number.NaN;
+
+  const aimed = updateBotAimState({
+    brain,
+    skill,
+    desiredAim: { yaw: 0.2, pitch: 0.3 },
+    currentYaw: 0,
+    currentPitch: 0,
+    targetDistance: 24,
+    now: NOW,
+    dt: 0.1,
+    random: randomSequence([1, 0.5, 0]),
+  });
+
+  assertClose(brain.aimJitterYaw, 0.1, 'target jitter yaw');
+  assertClose(brain.aimJitterPitch, 0, 'target jitter pitch');
+  assert.equal(brain.nextAimJitterAt, NOW + 50);
+  assertClose(aimed.yaw, 0.3, 'aim yaw includes jitter');
+  assertClose(aimed.pitch, 0.3, 'aim pitch follows desired pitch');
+
+  const idleBrain = createInitialBotBrain();
+  idleBrain.aimJitterYaw = 1;
+  idleBrain.aimJitterPitch = -0.5;
+  const idleAim = updateBotAimState({
+    brain: idleBrain,
+    skill,
+    desiredAim: { yaw: 0, pitch: 0 },
+    currentYaw: 0,
+    currentPitch: 0,
+    targetDistance: null,
+    now: NOW,
+    dt: 0.1,
+  });
+
+  assertClose(idleBrain.aimJitterYaw, 0.82, 'idle yaw jitter decays');
+  assertClose(idleBrain.aimJitterPitch, -0.41, 'idle pitch jitter decays');
+  assertClose(idleAim.yaw, 0.82, 'idle aim keeps decayed yaw jitter');
+  assertClose(idleAim.pitch, -0.41, 'idle aim keeps decayed pitch jitter');
+}
+
+function testBotAimReadinessTrace() {
+  const trace = getBotAimReadinessTrace({
+    origin: { x: 1, y: 2, z: 3 },
+    yaw: 0,
+    pitch: 0,
+    attackRange: 30,
+    attackCollisionRadius: 0.25,
+    hitboxPadding: 0.6,
+    skill: { ...getBotSkillProfile('normal'), aimFireToleranceScale: 1.5 },
+  });
+
+  assert.deepEqual(trace.origin, { x: 1, y: 2, z: 3 });
+  assert.equal(trace.range, 30);
+  assertClose(trace.direction.x, 0, 'trace direction x');
+  assertClose(trace.direction.y, 0, 'trace direction y');
+  assertClose(trace.direction.z, -1, 'trace direction z');
+  assertClose(trace.extraRadius, 0.55, 'readiness trace radius');
+}
+
+function testBotSecondaryFireDecisionTiming() {
+  const skill = {
+    ...getBotSkillProfile('normal'),
+    secondaryChance: 0.5,
+  };
+  const secondaryAttack = { range: 42, cooldownMs: 1000 };
+  const windowBrain = createInitialBotBrain();
+
+  assert.equal(isBotSecondaryFireWindowOpen({
+    brain: windowBrain,
+    now: NOW,
+    shouldFight: true,
+    heroId: 'phantom',
+    secondaryAttack,
+    enemyDistance: 24,
+  }), true);
+
+  windowBrain.nextSecondaryAt = NOW + 1;
+  assert.equal(isBotSecondaryFireWindowOpen({
+    brain: windowBrain,
+    now: NOW,
+    shouldFight: true,
+    heroId: 'phantom',
+    secondaryAttack,
+    enemyDistance: 24,
+  }), false);
+
+  assert.equal(isBotSecondaryFireWindowOpen({
+    brain: createInitialBotBrain(),
+    now: NOW,
+    shouldFight: true,
+    heroId: 'phantom',
+    secondaryAttack,
+    enemyDistance: 43,
+  }), false);
+
+  assert.equal(isBotSecondaryFireWindowOpen({
+    brain: createInitialBotBrain(),
+    now: NOW,
+    shouldFight: true,
+    heroId: 'blaze',
+    secondaryAttack,
+    enemyDistance: 24,
+  }), false);
+
+  const firedBrain = createInitialBotBrain();
+
+  const fired = updateBotSecondaryFireDecision({
+    brain: firedBrain,
+    skill,
+    now: NOW,
+    shouldFight: true,
+    heroId: 'phantom',
+    secondaryAttack,
+    enemyDistance: 24,
+    aimReady: true,
+    tempoMultiplier: 2,
+    random: randomSequence([0.2, 0]),
+  });
+
+  assert.equal(fired, true);
+  assert.equal(firedBrain.nextSecondaryAt, NOW + 425);
+
+  const missedBrain = createInitialBotBrain();
+  const missed = updateBotSecondaryFireDecision({
+    brain: missedBrain,
+    skill,
+    now: NOW,
+    shouldFight: true,
+    heroId: 'phantom',
+    secondaryAttack,
+    enemyDistance: 24,
+    aimReady: true,
+    tempoMultiplier: 1,
+    random: randomSequence([0.8, 0]),
+  });
+
+  assert.equal(missed, false);
+  assert.equal(missedBrain.nextSecondaryAt, NOW + 350);
+
+  const blockedBrain = createInitialBotBrain();
+  blockedBrain.nextSecondaryAt = NOW + 123;
+  const blocked = updateBotSecondaryFireDecision({
+    brain: blockedBrain,
+    skill,
+    now: NOW,
+    shouldFight: true,
+    heroId: 'blaze',
+    secondaryAttack,
+    enemyDistance: 24,
+    aimReady: true,
+    tempoMultiplier: 1,
+    random: randomSequence([0]),
+  });
+
+  assert.equal(blocked, false);
+  assert.equal(blockedBrain.nextSecondaryAt, NOW + 123);
+}
+
+function testBotLocomotionActionState() {
+  assert.deepEqual(getBotLocomotionActionState({
+    botId: 'bot-a',
+    position: vec(0, 0),
+    hasFlag: false,
+    isGrounded: true,
+    previousCrouch: false,
+    intentType: 'fight_local_enemy',
+    steeringTarget: vec(8, 0),
+    steeringJump: false,
+    stalled: false,
+    hasCombatTarget: true,
+    now: 0,
+  }), {
+    sprint: false,
+    jump: false,
+    crouch: false,
+    crouchPressed: false,
+  });
+
+  assert.deepEqual(getBotLocomotionActionState({
+    botId: 'bot-a',
+    position: vec(0, 0),
+    hasFlag: false,
+    isGrounded: true,
+    previousCrouch: false,
+    intentType: 'capture_enemy_flag',
+    steeringTarget: vec(20, 0),
+    steeringJump: false,
+    stalled: false,
+    hasCombatTarget: false,
+    now: 1_500,
+  }), {
+    sprint: true,
+    jump: false,
+    crouch: true,
+    crouchPressed: true,
+  });
+
+  assert.deepEqual(getBotLocomotionActionState({
+    botId: 'bot-a',
+    position: vec(0, 0),
+    hasFlag: true,
+    isGrounded: true,
+    previousCrouch: true,
+    intentType: 'fight_local_enemy',
+    steeringTarget: vec(20, 0),
+    steeringJump: false,
+    stalled: true,
+    hasCombatTarget: false,
+    now: 1_500,
+  }), {
+    sprint: true,
+    jump: true,
+    crouch: true,
+    crouchPressed: false,
+  });
+}
+
+function testBotInputMovementState() {
+  assert.deepEqual(composeBotInputMovementState({
+    botId: 'bot-a',
+    position: vec(0, 0),
+    hasFlag: false,
+    isGrounded: true,
+    previousCrouch: false,
+    intentType: 'fight_local_enemy',
+    steeringTarget: vec(8, 0),
+    steeringJump: false,
+    stalled: false,
+    hasCombatTarget: true,
+    now: 0,
+    lookYaw: 0,
+    desiredMove: { x: 0, z: -1 },
+    recovering: false,
+    strafeDirection: 1,
+  }), {
+    moveForward: true,
+    moveBackward: false,
+    moveLeft: false,
+    moveRight: false,
+    sprint: false,
+    jump: false,
+    crouch: false,
+    crouchPressed: false,
+  });
+
+  assert.deepEqual(composeBotInputMovementState({
+    botId: 'bot-a',
+    position: vec(0, 0),
+    hasFlag: false,
+    isGrounded: true,
+    previousCrouch: false,
+    intentType: 'capture_enemy_flag',
+    steeringTarget: vec(20, 0),
+    steeringJump: false,
+    stalled: false,
+    hasCombatTarget: false,
+    now: 1_500,
+    lookYaw: 0,
+    desiredMove: { x: 1, z: 0 },
+    recovering: true,
+    strafeDirection: -1,
+  }), {
+    moveForward: false,
+    moveBackward: true,
+    moveLeft: true,
+    moveRight: false,
+    sprint: true,
+    jump: false,
+    crouch: true,
+    crouchPressed: true,
+  });
+
+  assert.deepEqual(composeBotInputMovementState({
+    botId: 'bot-a',
+    position: vec(0, 0),
+    hasFlag: false,
+    isGrounded: false,
+    previousCrouch: false,
+    intentType: 'fight_local_enemy',
+    steeringTarget: vec(0, 0),
+    steeringJump: true,
+    stalled: false,
+    hasCombatTarget: false,
+    now: 0,
+    lookYaw: 0,
+    desiredMove: { x: 0.1, z: 0.05 },
+    recovering: false,
+    strafeDirection: 1,
+  }), {
+    moveForward: false,
+    moveBackward: false,
+    moveLeft: false,
+    moveRight: true,
+    sprint: false,
+    jump: true,
+    crouch: false,
+    crouchPressed: false,
+  });
+}
+
+function testBotAbilityInputPlanApplication() {
+  {
+    const brain = createInitialBotBrain();
+    brain.pendingSecondaryMode = 'blaze_bomb';
+    brain.secondaryHoldUntil = NOW + 20;
+    const input = { primaryFire: true } as PlayerInput;
+
+    applyBotAbilityInputPlan({
+      input,
+      brain,
+      plan: { mode: 'none', slot: null, score: 0, reason: 'test' },
+      skill: getBotSkillProfile('normal'),
+      now: NOW,
+      tempoMultiplier: 1,
+    });
+
+    assert.equal(input.primaryFire, false);
+    assert.equal(input.secondaryFire, true);
+    assert.equal(brain.pendingSecondaryMode, 'blaze_bomb');
+  }
+
+  {
+    const brain = createInitialBotBrain();
+    brain.pendingSecondaryMode = 'blaze_bomb';
+    brain.secondaryHoldUntil = NOW - 1;
+    const input = { secondaryFire: true } as PlayerInput;
+
+    applyBotAbilityInputPlan({
+      input,
+      brain,
+      plan: { mode: 'none', slot: null, score: 0, reason: 'test' },
+      skill: getBotSkillProfile('normal'),
+      now: NOW,
+      tempoMultiplier: 1,
+    });
+
+    assert.equal(input.secondaryFire, false);
+    assert.equal(brain.pendingSecondaryMode, '');
+    assert.equal(brain.secondaryHoldUntil, 0);
+  }
+
+  {
+    const brain = createInitialBotBrain();
+    const input = { primaryFire: true } as PlayerInput;
+
+    applyBotAbilityInputPlan({
+      input,
+      brain,
+      plan: { mode: 'blaze_bomb', slot: 'secondary', score: 100, reason: 'test bomb', holdMs: 180 },
+      skill: getBotSkillProfile('normal'),
+      now: NOW,
+      tempoMultiplier: 2,
+      random: randomSequence([0]),
+    });
+
+    assert.equal(input.primaryFire, false);
+    assert.equal(input.secondaryFire, true);
+    assert.equal(brain.pendingSecondaryMode, 'blaze_bomb');
+    assert.equal(brain.secondaryHoldUntil, NOW + 180);
+    assert.equal(brain.nextSecondaryAt, NOW + 450);
+  }
+
+  {
+    const skill = {
+      ...getBotSkillProfile('normal'),
+      abilityScoreThreshold: 80,
+      abilityCadenceMs: [1_000, 1_000] as [number, number],
+    };
+    const gatedBrain = createInitialBotBrain();
+    gatedBrain.nextAbilityAt = NOW + 100;
+    const gatedInput = {} as PlayerInput;
+
+    applyBotAbilityInputPlan({
+      input: gatedInput,
+      brain: gatedBrain,
+      plan: { mode: 'phantom_blink', slot: 'ability1', score: 100, reason: 'below override threshold' },
+      skill,
+      now: NOW,
+      tempoMultiplier: 1,
+    });
+
+    assert.equal(gatedInput.ability1, undefined);
+    assert.equal(gatedBrain.nextAbilityAt, NOW + 100);
+
+    const readyBrain = createInitialBotBrain();
+    const readyInput = { primaryFire: true } as PlayerInput;
+    applyBotAbilityInputPlan({
+      input: readyInput,
+      brain: readyBrain,
+      plan: { mode: 'phantom_blink', slot: 'ability1', score: 100, reason: 'ready' },
+      skill,
+      now: NOW,
+      tempoMultiplier: 1,
+      random: randomSequence([0]),
+    });
+
+    assert.equal(readyInput.ability1, true);
+    assert.equal(readyInput.primaryFire, false);
+    assert.equal(readyBrain.nextAbilityAt, NOW + 1_000);
+  }
 }
 
 function testCombatPlannerHoldsStandoffInsideAttackEnvelope() {
@@ -606,9 +1391,23 @@ function testContestedObjectiveStillSpendsControlUltimate() {
 }
 
 testTeamTacticsAssignments();
+testBattleRoyalTacticsUseAllEnemySquads();
 testIntentScoring();
 testRoutePlannerAvoidsBlockedEdge();
+testBotPlanningStateRefreshesAndReusesCachedState();
+testBotMovementRecoveryStateReplansBlockedEdges();
+testBotMovementRecoveryStateKeepsRouteWhenProgressing();
 testLocalAvoidance();
+testBotPrimaryFireDecisionTiming();
+testBotCombatEngagementState();
+testBotAimLeadPrediction();
+testBotYawPitchTowardPosition();
+testBotAimStateUpdate();
+testBotAimReadinessTrace();
+testBotSecondaryFireDecisionTiming();
+testBotLocomotionActionState();
+testBotInputMovementState();
+testBotAbilityInputPlanApplication();
 testCombatPlannerHoldsStandoffInsideAttackEnvelope();
 testCombatMovementKitesInsideMinimumRange();
 testOutnumberedBotsRegroupBeforeCriticalHealth();

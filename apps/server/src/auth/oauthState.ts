@@ -3,6 +3,7 @@ import type { AuthProviderName } from './types';
 import { sanitizeReturnTo } from './returnTo';
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const MAX_OAUTH_STATE_RECORDS = 2_000;
 
 export type OAuthStateMode = 'login' | 'link';
 
@@ -30,7 +31,18 @@ function cleanupOAuthStates(): void {
   }
 }
 
-setInterval(cleanupOAuthStates, 60 * 1000).unref?.();
+function trimOAuthStates(): void {
+  cleanupOAuthStates();
+
+  while (stateStore.size >= MAX_OAUTH_STATE_RECORDS) {
+    const oldestState = stateStore.keys().next().value as string | undefined;
+    if (!oldestState) break;
+    stateStore.delete(oldestState);
+  }
+}
+
+const cleanupOAuthStateInterval = setInterval(cleanupOAuthStates, 60 * 1000);
+cleanupOAuthStateInterval.unref?.();
 
 export function createOAuthState(options: {
   provider: AuthProviderName;
@@ -38,7 +50,7 @@ export function createOAuthState(options: {
   returnTo?: unknown;
   linkUserId?: string;
 }): OAuthStateRecord {
-  cleanupOAuthStates();
+  trimOAuthStates();
 
   const state = crypto.randomBytes(32).toString('base64url');
   const now = Date.now();

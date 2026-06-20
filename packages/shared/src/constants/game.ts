@@ -1,29 +1,43 @@
 import type { GameConfig } from '../types/game.js';
-import { DEFAULT_GAMEPLAY_MODE, type GameplayMode } from '../types/gameplayMode.js';
+import {
+  DEFAULT_GAMEPLAY_MODE,
+  getGameplayModeRules,
+  type GameplayMode,
+} from '../types/gameplayMode.js';
 
 export const CAPTURE_THE_FLAG_SCORE_TO_WIN = 3;
 export const TEAM_DEATHMATCH_SCORE_TO_WIN = 30;
 
 export const DEFAULT_GAME_CONFIG: GameConfig = {
-  gameplayMode: DEFAULT_GAMEPLAY_MODE,
-  maxPlayers: 8,
-  teamSize: 4,
-  scoreToWin: CAPTURE_THE_FLAG_SCORE_TO_WIN,
-  roundTimeSeconds: 600, // 10 minutes
-  respawnTimeSeconds: 8,
-  spawnProtectionSeconds: 3,
-  flagReturnTimeSeconds: 30,
-  heroSelectTimeSeconds: 30,
-  countdownSeconds: 10,
+  gameplayMode: getGameplayModeRules(DEFAULT_GAMEPLAY_MODE).id,
+  maxPlayers: getGameplayModeRules(DEFAULT_GAMEPLAY_MODE).maxPlayers,
+  minPlayers: getGameplayModeRules(DEFAULT_GAMEPLAY_MODE).minPlayers,
+  teamSize: getGameplayModeRules(DEFAULT_GAMEPLAY_MODE).maxTeamSize,
+  maxTeams: getGameplayModeRules(DEFAULT_GAMEPLAY_MODE).maxTeams,
+  scoreToWin: getGameplayModeRules(DEFAULT_GAMEPLAY_MODE).scoreToWin,
+  roundTimeSeconds: getGameplayModeRules(DEFAULT_GAMEPLAY_MODE).roundTimeSeconds,
+  respawnTimeSeconds: getGameplayModeRules(DEFAULT_GAMEPLAY_MODE).respawnTimeSeconds,
+  spawnProtectionSeconds: getGameplayModeRules(DEFAULT_GAMEPLAY_MODE).spawnProtectionSeconds,
+  flagReturnTimeSeconds: getGameplayModeRules(DEFAULT_GAMEPLAY_MODE).flagReturnTimeSeconds,
+  heroSelectTimeSeconds: getGameplayModeRules(DEFAULT_GAMEPLAY_MODE).heroSelectTimeSeconds,
+  countdownSeconds: getGameplayModeRules(DEFAULT_GAMEPLAY_MODE).countdownSeconds,
 };
 
 export function createGameConfigForGameplayMode(gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE): GameConfig {
+  const rules = getGameplayModeRules(gameplayMode);
   return {
-    ...DEFAULT_GAME_CONFIG,
-    gameplayMode,
-    scoreToWin: gameplayMode === 'team_deathmatch'
-      ? TEAM_DEATHMATCH_SCORE_TO_WIN
-      : CAPTURE_THE_FLAG_SCORE_TO_WIN,
+    gameplayMode: rules.id,
+    maxPlayers: rules.maxPlayers,
+    minPlayers: rules.minPlayers,
+    teamSize: rules.maxTeamSize,
+    maxTeams: rules.maxTeams,
+    scoreToWin: rules.scoreToWin,
+    roundTimeSeconds: rules.roundTimeSeconds,
+    respawnTimeSeconds: rules.respawnTimeSeconds,
+    spawnProtectionSeconds: rules.spawnProtectionSeconds,
+    flagReturnTimeSeconds: rules.flagReturnTimeSeconds,
+    heroSelectTimeSeconds: rules.heroSelectTimeSeconds,
+    countdownSeconds: rules.countdownSeconds,
   };
 }
 

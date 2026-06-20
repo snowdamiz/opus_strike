@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_MATCHMAKING_RATING,
   DEFAULT_RANK_DIVISION_INDEX,
-  calculateMatchmakingRating,
   getAllowedRankDivisionDistance,
   getRankDivisionLabel,
   normalizeRankDivisionIndex,
@@ -64,33 +63,8 @@ assert.throws(
   /RANKED_TOKEN_HOLD_TOKEN_ADDRESS must be a valid Solana token address/
 );
 
-assert.equal(calculateMatchmakingRating(null), DEFAULT_MATCHMAKING_RATING);
 assert.equal(DEFAULT_RANK_DIVISION_INDEX, getRankDivisionIndex(DEFAULT_MATCHMAKING_RATING));
 assert.equal(getRankDivisionLabel(DEFAULT_RANK_DIVISION_INDEX), 'Bronze 1');
-
-const newPlayer = calculateMatchmakingRating({
-  totalGames: 1,
-  totalWins: 0,
-  totalKills: 0,
-  totalDeaths: 4,
-  totalAssists: 0,
-  totalCaptures: 0,
-  totalFlagReturns: 0,
-  totalScore: 100,
-});
-const strongPlayer = calculateMatchmakingRating({
-  totalGames: 35,
-  totalWins: 25,
-  totalKills: 420,
-  totalDeaths: 160,
-  totalAssists: 120,
-  totalCaptures: 25,
-  totalFlagReturns: 40,
-  totalScore: 52000,
-});
-
-assert.ok(newPlayer < DEFAULT_MATCHMAKING_RATING, `expected new player rating below default, got ${newPlayer}`);
-assert.ok(strongPlayer > 1300, `expected strong player rating above Gold 3 threshold, got ${strongPlayer}`);
 
 assert.equal(normalizeRankDivisionIndex(99), 23);
 assert.equal(normalizeRankDivisionIndex('not-real'), DEFAULT_RANK_DIVISION_INDEX);
@@ -98,8 +72,12 @@ assert.equal(getAllowedRankDivisionDistance(0), 2);
 assert.equal(getAllowedRankDivisionDistance(30_000), 2);
 assert.equal(getAllowedRankDivisionDistance(90_000), 6);
 
+const strongPlayer = 1450;
 const { ticket, claims } = createMatchmakingTicket({
   mode: 'quick_play',
+  gameplayMode: 'battle_royal',
+  botFillMode: 'fill_even',
+  matchPerspective: 'third_person',
   userId: 'user_1',
   competitiveRating: strongPlayer,
   rankDivisionIndex: getRankDivisionIndex(strongPlayer),
@@ -112,6 +90,9 @@ assert.ok(verified);
 assert.equal(verified.userId, 'user_1');
 assert.equal(verified.version, 2);
 assert.equal(verified.mode, 'quick_play');
+assert.equal(verified.gameplayMode, 'battle_royal');
+assert.equal(verified.botFillMode, 'fill_even');
+assert.equal(verified.matchPerspective, 'third_person');
 assert.equal(verified.competitiveRating, strongPlayer);
 assert.equal(verified.targetRankDivisionIndex, getRankDivisionIndex(1300));
 
@@ -135,6 +116,9 @@ const ranked = createMatchmakingTicket({
 const rankedVerified = verifyMatchmakingTicket(ranked.ticket, ranked.claims.issuedAt + 1);
 assert.ok(rankedVerified);
 assert.equal(rankedVerified.mode, 'ranked');
+assert.equal(rankedVerified.gameplayMode, 'capture_the_flag');
+assert.equal(rankedVerified.botFillMode, 'manual');
+assert.equal(rankedVerified.matchPerspective, 'first_person');
 assert.equal(rankedVerified.rankedEntryQuoteId, undefined);
 assert.equal(rankedVerified.coverChargeLamports, undefined);
 assert.equal(rankedVerified.rankedTokenAddress, RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS);

@@ -4,6 +4,7 @@ import {
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
   MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+  TICK_INTERVAL_MS,
   doesSegmentHitPlayerCombatHitbox,
   type HeroId,
   type Player,
@@ -35,6 +36,9 @@ export interface VisualState {
 
   /** Player rotations for lookYaw interpolation (playerId -> rotation in radians) */
   playerRotations: Map<string, number>;
+
+  /** Player look pitch for high-frequency local aiming effects (playerId -> pitch in radians). */
+  playerLookPitches: Map<string, number>;
 
   /** Last rendered remote player positions for non-reactive attachments like labels/beacons. */
   renderedPlayerPositions: Map<string, { x: number; y: number; z: number }>;
@@ -158,6 +162,8 @@ export interface RemoteTransformHistory {
   snapshots: RemoteTransformSnapshot[];
   latestServerTime: number;
   latestReceivedAtMs: number;
+  interpolationDelayMs: number;
+  arrivalJitterMs: number;
 }
 
 export interface SampledRemoteTransform {
@@ -186,7 +192,7 @@ export interface CombatVisualFrameCache {
   builtAtMs: number;
   sourceSize: number;
   alivePlayers: CombatVisualPlayer[];
-  byTeam: Record<Team, CombatVisualPlayer[]>;
+  byTeam: Map<Team, CombatVisualPlayer[]>;
   buckets: Map<number, Map<number, CombatVisualPlayer[]>>;
   activeBuckets: CombatVisualPlayer[][];
   activeBucketSet: Set<CombatVisualPlayer[]>;
@@ -232,10 +238,7 @@ const createCombatFrameCache = (): CombatVisualFrameCache => ({
   builtAtMs: 0,
   sourceSize: 0,
   alivePlayers: [],
-  byTeam: {
-    red: [],
-    blue: [],
-  },
+  byTeam: new Map(),
   buckets: new Map(),
   activeBuckets: [],
   activeBucketSet: new Set(),
@@ -246,6 +249,7 @@ const createCombatFrameCache = (): CombatVisualFrameCache => ({
 const initialVisualState: VisualState = {
   playerPositions: new Map(),
   playerRotations: new Map(),
+  playerLookPitches: new Map(),
   renderedPlayerPositions: new Map(),
   renderedPlayerRotations: new Map(),
   cameraShake: { intensity: 0, time: 0 },
@@ -281,8 +285,17 @@ const initialVisualState: VisualState = {
 };
 
 const REMOTE_HISTORY_LIMIT = 32;
+const REMOTE_TRANSFORM_EXPECTED_CADENCE_MS = TICK_INTERVAL_MS;
+const REMOTE_INTERPOLATION_MAX_DELAY_MS =
+  MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS + MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS;
+const REMOTE_INTERPOLATION_JITTER_DECAY_ALPHA = 0.12;
+const REMOTE_INTERPOLATION_JITTER_GAIN = 0.75;
 
 export const DEATH_VISUAL_LIFETIME_MS = 5600;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -292,6 +305,36 @@ function lerpYaw(a: number, b: number, t: number): number {
   const twoPi = Math.PI * 2;
   const delta = ((b - a + Math.PI) % twoPi + twoPi) % twoPi - Math.PI;
   return a + delta * t;
+}
+
+function createRemoteTransformHistory(serverTime: number, receivedAtMs: number): RemoteTransformHistory {
+  return {
+    snapshots: [],
+    latestServerTime: serverTime,
+    latestReceivedAtMs: receivedAtMs,
+    interpolationDelayMs: MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+    arrivalJitterMs: 0,
+  };
+}
+
+function updateRemoteTransformTiming(
+  history: RemoteTransformHistory,
+  previousLatest: RemoteTransformSnapshot,
+  nextLatest: RemoteTransformSnapshot
+): void {
+  const serverGapMs = Math.max(0, nextLatest.serverTime - previousLatest.serverTime);
+  const receiveGapMs = Math.max(0, nextLatest.receivedAtMs - previousLatest.receivedAtMs);
+  const observedGapMs = Math.max(serverGapMs, receiveGapMs);
+  const excessGapMs = Math.max(0, observedGapMs - REMOTE_TRANSFORM_EXPECTED_CADENCE_MS);
+
+  history.arrivalJitterMs = excessGapMs >= history.arrivalJitterMs
+    ? excessGapMs
+    : lerp(history.arrivalJitterMs, excessGapMs, REMOTE_INTERPOLATION_JITTER_DECAY_ALPHA);
+  history.interpolationDelayMs = clamp(
+    MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS + history.arrivalJitterMs * REMOTE_INTERPOLATION_JITTER_GAIN,
+    MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+    REMOTE_INTERPOLATION_MAX_DELAY_MS
+  );
 }
 
 // ============================================================================
@@ -341,14 +384,23 @@ export const setPlayerVisualPosition = (
  * @param playerId - The player's unique ID
  * @param rotation - LookYaw rotation in radians
  */
-export const setPlayerVisualRotation = (playerId: string, rotation: number): void => {
-  visualStore.getState().playerRotations.set(playerId, rotation);
+export const setPlayerVisualRotation = (
+  playerId: string,
+  rotation: number,
+  lookPitch?: number
+): void => {
+  const state = visualStore.getState();
+  state.playerRotations.set(playerId, rotation);
+  if (typeof lookPitch === 'number') {
+    state.playerLookPitches.set(playerId, lookPitch);
+  }
 };
 
 export const setPlayerVisualTransform = (
   playerId: string,
   position: { x: number; y: number; z: number },
-  rotation: number
+  rotation: number,
+  lookPitch?: number
 ): void => {
   const state = visualStore.getState();
   const current = state.playerPositions.get(playerId);
@@ -363,7 +415,17 @@ export const setPlayerVisualTransform = (
   if (state.playerRotations.get(playerId) !== rotation) {
     state.playerRotations.set(playerId, rotation);
   }
+  if (typeof lookPitch === 'number' && state.playerLookPitches.get(playerId) !== lookPitch) {
+    state.playerLookPitches.set(playerId, lookPitch);
+  }
 };
+
+export function getPlayerVisualLookPitch(
+  state: Pick<VisualState, 'playerLookPitches'>,
+  player: Pick<Player, 'id' | 'lookPitch'>
+): number {
+  return state.playerLookPitches.get(player.id) ?? player.lookPitch ?? 0;
+}
 
 export const setRenderedPlayerVisualTransform = (
   playerId: string,
@@ -495,24 +557,21 @@ export const setInterpolationTarget = (
 
 export const addRemoteTransformSnapshot = (
   playerId: string,
-  snapshot: Omit<RemoteTransformSnapshot, 'receivedAtMs'>
+  snapshot: Omit<RemoteTransformSnapshot, 'receivedAtMs'>,
+  receivedAtMs = Date.now()
 ): void => {
   const histories = visualStore.getState().remoteTransformHistories;
-  const receivedAtMs = Date.now();
   let history = histories.get(playerId);
   const last = history?.snapshots[history.snapshots.length - 1] ?? null;
   if (!history || (last && last.movementEpoch !== snapshot.movementEpoch)) {
-    history = {
-      snapshots: [],
-      latestServerTime: snapshot.serverTime,
-      latestReceivedAtMs: receivedAtMs,
-    };
+    history = createRemoteTransformHistory(snapshot.serverTime, receivedAtMs);
     histories.set(playerId, history);
   }
 
   const fullSnapshot = { ...snapshot, receivedAtMs };
   const snapshots = history.snapshots;
   const latest = snapshots[snapshots.length - 1];
+  const isNewestSnapshot = !latest || fullSnapshot.serverTime >= latest.serverTime;
   if (!latest || fullSnapshot.serverTime >= latest.serverTime) {
     snapshots.push(fullSnapshot);
   } else {
@@ -531,8 +590,13 @@ export const addRemoteTransformSnapshot = (
   if (history.snapshots.length > REMOTE_HISTORY_LIMIT) {
     history.snapshots.splice(0, history.snapshots.length - REMOTE_HISTORY_LIMIT);
   }
-  history.latestServerTime = snapshot.serverTime;
-  history.latestReceivedAtMs = receivedAtMs;
+  if (isNewestSnapshot) {
+    if (latest) {
+      updateRemoteTransformTiming(history, latest, fullSnapshot);
+    }
+    history.latestServerTime = snapshot.serverTime;
+    history.latestReceivedAtMs = receivedAtMs;
+  }
 };
 
 export const pruneRemoteTransformHistories = (activePlayerIds: ReadonlySet<string>): void => {
@@ -543,6 +607,7 @@ export const pruneRemoteTransformHistories = (activePlayerIds: ReadonlySet<strin
       state.interpolationTargets.delete(playerId);
       state.playerPositions.delete(playerId);
       state.playerRotations.delete(playerId);
+      state.playerLookPitches.delete(playerId);
       state.renderedPlayerPositions.delete(playerId);
       state.renderedPlayerRotations.delete(playerId);
     }
@@ -559,7 +624,10 @@ export const sampleRemoteTransformHistoryInto = (
   const snapshots = history.snapshots;
   const latest = snapshots[snapshots.length - 1];
   const estimatedServerTime = latest.serverTime + Math.max(0, nowMs - latest.receivedAtMs);
-  const renderServerTime = estimatedServerTime - MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS;
+  const interpolationDelayMs = Number.isFinite(history.interpolationDelayMs)
+    ? history.interpolationDelayMs
+    : MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS;
+  const renderServerTime = estimatedServerTime - interpolationDelayMs;
 
   let low = 0;
   let high = snapshots.length;
@@ -683,6 +751,24 @@ function getCombatBucket(
   return bucket;
 }
 
+function getCombatTeamBucket(
+  cache: CombatVisualFrameCache,
+  team: Team
+): CombatVisualPlayer[] {
+  let bucket = cache.byTeam.get(team);
+  if (!bucket) {
+    bucket = [];
+    cache.byTeam.set(team, bucket);
+  }
+  return bucket;
+}
+
+function clearCombatTeamBuckets(cache: CombatVisualFrameCache): void {
+  for (const bucket of cache.byTeam.values()) {
+    bucket.length = 0;
+  }
+}
+
 export const rebuildCombatVisualFrameCache = (
   players: Iterable<Player>,
   frameKey: number,
@@ -698,8 +784,7 @@ export const rebuildCombatVisualFrameCache = (
   cache.builtAtMs = nowMs;
   cache.sourceSize = sourceSize;
   cache.alivePlayers.length = 0;
-  cache.byTeam.red.length = 0;
-  cache.byTeam.blue.length = 0;
+  clearCombatTeamBuckets(cache);
   clearActiveCombatBuckets(cache);
 
   let entryIndex = 0;
@@ -727,7 +812,7 @@ export const rebuildCombatVisualFrameCache = (
     }
     entryIndex++;
     cache.alivePlayers.push(visualPlayer);
-    cache.byTeam[player.team].push(visualPlayer);
+    getCombatTeamBucket(cache, player.team).push(visualPlayer);
 
     const bucket = getCombatBucket(
       cache,
@@ -805,12 +890,8 @@ export const fillCombatVisualEnemyPlayers = (
     return target;
   }
 
-  const source = ownerTeam
-    ? (ownerTeam === 'red' ? cache.byTeam.blue : cache.byTeam.red)
-    : cache.alivePlayers;
-
-  for (let i = 0; i < source.length; i++) {
-    const visualPlayer = source[i];
+  for (let i = 0; i < cache.alivePlayers.length; i++) {
+    const visualPlayer = cache.alivePlayers[i];
     if (isEnemyCombatVisualPlayer(visualPlayer, ownerTeam, ownerId)) {
       target.push(visualPlayer.player);
     }
@@ -858,12 +939,8 @@ export const findCombatVisualPlayerHit = (
     return null;
   }
 
-  const source = ownerTeam && targetTeam === 'enemy'
-    ? (ownerTeam === 'red' ? cache.byTeam.blue : cache.byTeam.red)
-    : cache.alivePlayers;
-
-  for (let i = 0; i < source.length; i++) {
-    const visualPlayer = source[i];
+  for (let i = 0; i < cache.alivePlayers.length; i++) {
+    const visualPlayer = cache.alivePlayers[i];
     if (!isCombatVisualTargetPlayer(visualPlayer, ownerTeam, ownerId, targetTeam)) continue;
     if (doesSegmentHitPlayerCombatHitbox(start, direction, distance, visualPlayer.player, extraRadius)) {
       return visualPlayer.player;
@@ -902,8 +979,7 @@ export const clearCombatVisualFrameCache = (): void => {
   cache.builtAtMs = 0;
   cache.sourceSize = 0;
   cache.alivePlayers.length = 0;
-  cache.byTeam.red.length = 0;
-  cache.byTeam.blue.length = 0;
+  cache.byTeam.clear();
   cache.activeBuckets.length = 0;
   cache.activeBucketSet.clear();
   cache.buckets.clear();
@@ -988,6 +1064,7 @@ export const removePlayerLiveVisualState = (playerId: string): void => {
   const state = visualStore.getState();
   state.playerPositions.delete(playerId);
   state.playerRotations.delete(playerId);
+  state.playerLookPitches.delete(playerId);
   state.renderedPlayerPositions.delete(playerId);
   state.renderedPlayerRotations.delete(playerId);
   state.interpolationTargets.delete(playerId);
@@ -1239,6 +1316,7 @@ export const clearVisualState = (): void => {
   visualStore.setState((state) => ({
     playerPositions: new Map(),
     playerRotations: new Map(),
+    playerLookPitches: new Map(),
     renderedPlayerPositions: new Map(),
     renderedPlayerRotations: new Map(),
     cameraShake: { intensity: 0, time: 0 },

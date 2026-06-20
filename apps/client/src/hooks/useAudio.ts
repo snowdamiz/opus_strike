@@ -1,6 +1,5 @@
 import { useRef, useCallback, useEffect } from 'react';
-import { BLAZE_GEARSTORM_DURATION_MS } from '@voxel-strike/shared';
-import { loadSettings, type ClientSettings } from '../store/settingsStore';
+import type { ClientSettings } from '../store/settingsStore';
 import {
   recordAudioLoadRequest,
   recordAudioLoadSample,
@@ -10,63 +9,45 @@ import {
   recordAudioPreloadRequest,
   recordAudioRuntimeState,
 } from '../movement/networkDiagnostics';
-
-interface AudioConfig {
-  masterVolume: number;  // 0-100
-  sfxVolume: number;     // 0-100
-  musicVolume: number;   // 0-100
-  muted: boolean;
-}
-
-interface SoundEffect {
-  buffer: AudioBuffer | null;
-  volume: number;
-  playbackDurationRatio?: number;
-}
-
-interface SoundDefinition {
-  path: string;
-  volume: number;
-  playbackDurationRatio?: number;
-}
-
-export interface PlaySoundOptions {
-  volume?: number;
-  pitch?: number;
-  position?: { x: number; y: number; z: number };
-  stretchToDurationMs?: boolean;
-  startOffsetMs?: number;
-  durationMs?: number;
-  fadeInMs?: number;
-  fadeOutMs?: number;
-  signal?: AbortSignal;
-}
-
-export interface SoundPlayback {
-  stop: () => void;
-}
-
-const DEFAULT_CONFIG: AudioConfig = {
-  masterVolume: 80,
-  sfxVolume: 100,
-  musicVolume: 50,
-  muted: false,
-};
-
-// Load settings from localStorage
-function loadAudioSettings(settings: Partial<ClientSettings> = loadSettings()): AudioConfig {
-  try {
-    return {
-      masterVolume: settings.masterVolume ?? DEFAULT_CONFIG.masterVolume,
-      sfxVolume: settings.sfxVolume ?? DEFAULT_CONFIG.sfxVolume,
-      musicVolume: settings.musicVolume ?? DEFAULT_CONFIG.musicVolume,
-      muted: false,
-    };
-  } catch (e) {
-    console.warn('[Audio] Failed to load settings:', e);
-  }
-  return { ...DEFAULT_CONFIG };
-}
+import { loadAudioSettings } from './audioConfig';
+import {
+  BLAZE_AIRSTRIKE_SOUND_DURATION_MS,
+  BLAZE_AIRSTRIKE_SOUND_FADE_IN_MS,
+  BLAZE_AIRSTRIKE_SOUND_FADE_OUT_MS,
+  BLAZE_AIRSTRIKE_SOUND_LAYERS,
+  BLAZE_BOMB_RELEASE_SOUND_DURATION_MS,
+  BLAZE_BOMB_RELEASE_SOUND_FADE_OUT_MS,
+  BLAZE_BOMB_RELEASE_SOUND_START_OFFSET_MS,
+  MUSIC_SOUND_NAMES,
+  SOUND_EFFECTS,
+  SOUND_GROUPS,
+  type SoundGroup,
+  type SoundName,
+} from './audioCatalog';
+import type {
+  AudioConfig,
+  PlaySoundOptions,
+  SoundDefinition,
+  SoundEffect,
+  SoundPlayback,
+} from './audioTypes';
+import {
+  decodeAudioDataLimited,
+  getAudioDecodeQueueSnapshot,
+} from './audioDecodeQueue';
+import { setAudioListenerTransformForContext } from './audioListenerTransform';
+export {
+  BLAZE_AIRSTRIKE_SOUND_DURATION_MS,
+  BLAZE_AIRSTRIKE_SOUND_FADE_IN_MS,
+  BLAZE_AIRSTRIKE_SOUND_FADE_OUT_MS,
+  BLAZE_BOMB_RELEASE_SOUND_DURATION_MS,
+  BLAZE_BOMB_RELEASE_SOUND_FADE_OUT_MS,
+  BLAZE_BOMB_RELEASE_SOUND_START_OFFSET_MS,
+  CHRONOS_VERDANT_PULSE_SHOT_PITCH,
+  CHRONOS_VERDANT_PULSE_SHOT_VOLUME,
+} from './audioCatalog';
+export type { SoundGroup, SoundName } from './audioCatalog';
+export type { PlaySoundOptions, SoundPlayback } from './audioTypes';
 
 // SINGLETON: Shared audio state across all hook instances
 let sharedAudioContext: AudioContext | null = null;
@@ -85,22 +66,6 @@ const sharedLoops = new Map<string, {
   stopTimeout?: number;
 }>();
 const sharedPendingLoops = new Map<string, { cancelled: boolean }>();
-
-const DEFAULT_AUDIO_UP = { x: 0, y: 1, z: 0 };
-const AUDIO_LISTENER_POSITION_EPSILON_SQ = 0.000001;
-const AUDIO_LISTENER_DIRECTION_EPSILON_SQ = 0.00000001;
-let lastAudioListenerContext: AudioContext | null = null;
-let hasLastAudioListenerPosition = false;
-let hasLastAudioListenerOrientation = false;
-let lastAudioListenerPositionX = 0;
-let lastAudioListenerPositionY = 0;
-let lastAudioListenerPositionZ = 0;
-let lastAudioListenerForwardX = 0;
-let lastAudioListenerForwardY = 0;
-let lastAudioListenerForwardZ = -1;
-let lastAudioListenerUpX = 0;
-let lastAudioListenerUpY = 1;
-let lastAudioListenerUpZ = 0;
 
 let hasAudioUserActivation =
   typeof navigator !== 'undefined' && navigator.userActivation?.hasBeenActive === true;
@@ -162,155 +127,10 @@ function getMusicVolume(): number {
   return (sharedConfig.masterVolume / 100) * (sharedConfig.musicVolume / 100);
 }
 
-// Sound effect definitions
-const SOUND_EFFECTS = {
-  // Movement
-  footstep: { path: '/sounds/walk.mp3', volume: 0.3 },
-  walk: { path: '/sounds/walk.mp3', volume: 1.04 },
-  jump: { path: '/sounds/jump.mp3', volume: 0.34 },
-  land: { path: '/sounds/slide.mp3', volume: 0.4 },
-  slide: { path: '/sounds/slide.mp3', volume: 0.32 },
-  wallRun: { path: '/sounds/walk.mp3', volume: 0.4 },
-  
-  // Abilities - Generic
-  blink: { path: '/sounds/blink.mp3', volume: 0.6 },
-  grapple: { path: '/sounds/hookshot_shot.mp3', volume: 0.5 },
-  jetpack: { path: '/sounds/jetpack.mp3', volume: 0.4 },
-  
-  // Phantom Abilities (using shortened clips)
-  phantomBlink: { path: '/sounds/blink_short.mp3', volume: 0.39 },
-  phantomVeil: { path: '/sounds/phantom_veil.mp3', volume: 0.2 },
-  phantomBasic: { path: '/sounds/phantom_basic.mp3', volume: 0.1872 },
-  phantomReload: { path: '/sounds/phantom_reload.mp3', volume: 0.27 },
-  phantomShield: { path: '/sounds/phantom_shield.mp3', volume: 0.336 },
-  phantomShieldCast: { path: '/sounds/phantom_shield_cast.mp3', volume: 0.464 },
-  phantomVoidRay: { path: '/sounds/phantom_strong.mp3', volume: 0.6 },
-  phantomVoidRayCharge: { path: '/sounds/phantom_right_click_charge.mp3', volume: 0.45 },
-  
-  // Blaze Abilities (using existing sounds as fallbacks)
-  blazeRocket: { path: '/sounds/rocket_fire.mp3', volume: 0.4 },
-  blazeBombTarget: { path: '/sounds/button.mp3', volume: 0.75 },
-  blazeBombRelease: { path: '/sounds/blaze_RMB_release.mp3', volume: 0.7 },
-  blazeBombFall: { path: '/sounds/bomb_fall.mp3', volume: 0.8 },
-  blazeBombExplode: { path: '/sounds/bomb_explode.mp3', volume: 1.862 },
-  blazeFlamethrower: { path: '/sounds/jetpack.mp3', volume: 0.3 },
-  blazeRocketJump: { path: '/sounds/rocket_jump.mp3', volume: 0.6 },
-  blazeAirstrikeFire: { path: '/sounds/blaze_F_fire.mp3', volume: 0.5 },
-  blazeAirstrikeGears: { path: '/sounds/blaze_F_gears.mp3', volume: 0.46 },
-
-  // Hookshot Abilities
-  hookshotShot: { path: '/sounds/hookshot_shot.mp3', volume: 0.58 },
-  hookshotPrimary: { path: '/sounds/hookshot_lmb.mp3', volume: 0.48 },
-  hookshotSecondary: { path: '/sounds/hookshot_rmb.mp3', volume: 0.58 },
-  hookshotGrapple: { path: '/sounds/hookshot_lmb.mp3', volume: 0.5 },
-  hookshotAnchorWall: { path: '/sounds/hookshot_q.mp3', volume: 0.6 },
-  hookshotGroundHooks: { path: '/sounds/hookshot_voxel_strike.mp3', volume: 0.58 },
-  hookshotRetract: { path: '/sounds/hookshot_retract.mp3', volume: 0.42 },
-
-  // Chronos Abilities
-  chronosPulse: { path: '/sounds/chronos_charge.mp3', volume: 0 },
-  chronosAegis: { path: '/sounds/chronos_shield.mp3', volume: 0.8352 },
-  chronosLifeline: { path: '/sounds/choronos_heal.mp3', volume: 0.5 },
-  chronosTimebreakCharge: { path: '/sounds/chronos_charge.mp3', volume: 0.72 },
-  chronosPush: { path: '/sounds/chronos_push.mp3', volume: 0.72 },
-  chronosTimebreak: { path: '/sounds/chronos_charge.mp3', volume: 0 },
-  chronosSuperchargedImpact: { path: '/sounds/magic_impact.mp3', volume: 0.72 },
-  
-  // Combat
-  hit: { path: '/sounds/laser_hit.mp3', volume: 0.6 },
-  damage: { path: '/sounds/laser_hit.mp3', volume: 0.5 },
-  death: { path: '/sounds/scream.mp3', volume: 0.6 },
-  kill: { path: '/sounds/magic_impact.mp3', volume: 0.7 },
-  
-  // CTF
-  flagPickup: { path: '/sounds/button_press.mp3', volume: 0.8 },
-  flagDrop: { path: '/sounds/button.mp3', volume: 0.6 },
-  flagCapture: { path: '/sounds/magic_impact.mp3', volume: 1.0 },
-  flagReturn: { path: '/sounds/button_press.mp3', volume: 0.7 },
-
-  // Map pickups
-  healPickup: { path: '/sounds/heal_pickup.mp3', volume: 0.78 },
-  powerupPickup: { path: '/sounds/powerup_pickkup.mp3', volume: 0.82 },
-  
-  // UI
-  buttonHover: { path: '/sounds/button.mp3', volume: 0.4 },
-  buttonClick: { path: '/sounds/button.mp3', volume: 0.1, playbackDurationRatio: 0.15 },
-  countdownTick: { path: '/sounds/tick.mp3', volume: 0.65 },
-  countdown: { path: '/sounds/tick.mp3', volume: 0.6 },
-  matchStart: { path: '/sounds/button_press.mp3', volume: 0.8 },
-  roundEnd: { path: '/sounds/button_press.mp3', volume: 0.8 },
-  victory: { path: '/sounds/magic_impact.mp3', volume: 0.9 },
-  defeat: { path: '/sounds/scream.mp3', volume: 0.7 },
-  
-  // Music (equal base volume, controlled by settings)
-  lobbyMusic: { path: '/sounds/lobby.mp3', volume: 0.3 },
-  gameMusic: { path: '/sounds/game.mp3', volume: 0.3 },
-} as const satisfies Record<string, SoundDefinition>;
-
-export type SoundName = keyof typeof SOUND_EFFECTS;
-export type SoundGroup = 'menu' | 'lobby' | 'commonCombat' | 'phantom' | 'blaze' | 'hookshot' | 'chronos';
-
-export const CHRONOS_VERDANT_PULSE_SHOT_PITCH = 1.28;
-export const CHRONOS_VERDANT_PULSE_SHOT_VOLUME = 0.72;
-export const BLAZE_BOMB_RELEASE_SOUND_START_OFFSET_MS = 260;
-export const BLAZE_BOMB_RELEASE_SOUND_DURATION_MS = 1100;
-export const BLAZE_BOMB_RELEASE_SOUND_FADE_OUT_MS = 80;
-export const BLAZE_AIRSTRIKE_SOUND_DURATION_MS = BLAZE_GEARSTORM_DURATION_MS;
-export const BLAZE_AIRSTRIKE_SOUND_FADE_IN_MS = 420;
-export const BLAZE_AIRSTRIKE_SOUND_FADE_OUT_MS = 950;
-
-const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
-  menu: ['buttonHover', 'buttonClick'],
-  lobby: ['buttonHover', 'buttonClick'],
-  commonCombat: [
-    'footstep',
-    'walk',
-    'jump',
-    'land',
-    'slide',
-    'wallRun',
-    'blink',
-    'grapple',
-    'jetpack',
-    'hit',
-    'damage',
-    'death',
-    'kill',
-    'flagPickup',
-    'flagDrop',
-    'flagCapture',
-    'flagReturn',
-    'healPickup',
-    'powerupPickup',
-    'countdownTick',
-    'countdown',
-    'matchStart',
-    'roundEnd',
-    'victory',
-    'defeat',
-  ],
-  phantom: ['phantomBlink', 'phantomVeil', 'phantomBasic', 'phantomReload', 'phantomShield', 'phantomShieldCast', 'phantomVoidRay', 'phantomVoidRayCharge'],
-  blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombRelease', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrikeFire', 'blazeAirstrikeGears'],
-  hookshot: ['hookshotShot', 'hookshotPrimary', 'hookshotSecondary', 'hookshotGrapple', 'hookshotAnchorWall', 'hookshotGroundHooks', 'hookshotRetract'],
-  chronos: ['phantomBasic', 'chronosAegis', 'chronosLifeline', 'chronosTimebreakCharge', 'chronosPush', 'chronosSuperchargedImpact'],
-};
-
 const pendingAudioPreloadNames = new Set<SoundName>();
 let pendingAudioPreloadFlush: Promise<void> | null = null;
-const BLAZE_AIRSTRIKE_SOUND_LAYERS = ['blazeAirstrikeFire', 'blazeAirstrikeGears'] as const satisfies readonly SoundName[];
-const MUSIC_SOUND_NAMES = new Set<SoundName>(['lobbyMusic', 'gameMusic']);
-const MAX_CONCURRENT_AUDIO_DECODES = 2;
 const SHARED_SOUND_LAYER_START_DELAY_MS = 20;
-const GLOBAL_BUTTON_SOUND_SELECTOR = [
-  'button',
-  '[role="button"]',
-  'input[type="button"]',
-  'input[type="reset"]',
-  'input[type="submit"]',
-].join(',');
-
-let activeAudioDecodes = 0;
-const queuedAudioDecodeJobs: Array<() => void> = [];
+const AUDIO_PRELOAD_FLUSH_BATCH_SIZE = 4;
 
 const sharedStreamedLoops = new Map<string, {
   audio: HTMLAudioElement;
@@ -322,46 +142,30 @@ const sharedStreamedLoops = new Map<string, {
   stopTimeout?: number;
 }>();
 
+function yieldAfterAudioPreloadBatch(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(() => resolve(), { timeout: 60 });
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
+}
+
 function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
 }
 
 function updateAudioDiagnosticsState(): void {
+  const decodeQueue = getAudioDecodeQueueSnapshot();
   recordAudioRuntimeState({
     userActivated: hasUserActivatedAudio(),
     contextState: sharedAudioContext?.state ?? 'none',
     loadedSounds: Array.from(sharedSounds.values()).filter((sound) => Boolean(sound.buffer)).length,
     pendingLoads: sharedSoundLoads.size,
     pendingPreloads: pendingAudioPreloadNames.size,
-    activeDecodes: activeAudioDecodes,
-    queuedDecodes: queuedAudioDecodeJobs.length,
-  });
-}
-
-function pumpAudioDecodeQueue(): void {
-  while (activeAudioDecodes < MAX_CONCURRENT_AUDIO_DECODES) {
-    const next = queuedAudioDecodeJobs.shift();
-    if (!next) return;
-    activeAudioDecodes++;
-    updateAudioDiagnosticsState();
-    next();
-  }
-  updateAudioDiagnosticsState();
-}
-
-function decodeAudioDataLimited(ctx: AudioContext, arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {
-  return new Promise((resolve, reject) => {
-    queuedAudioDecodeJobs.push(() => {
-      ctx.decodeAudioData(arrayBuffer)
-        .then(resolve, reject)
-        .finally(() => {
-          activeAudioDecodes = Math.max(0, activeAudioDecodes - 1);
-          updateAudioDiagnosticsState();
-          pumpAudioDecodeQueue();
-        });
-    });
-    updateAudioDiagnosticsState();
-    pumpAudioDecodeQueue();
+    activeDecodes: decodeQueue.activeDecodes,
+    queuedDecodes: decodeQueue.queuedDecodes,
   });
 }
 
@@ -397,19 +201,6 @@ function createSoundEffect(buffer: AudioBuffer, soundDef: SoundDefinition): Soun
     volume: soundDef.volume,
     playbackDurationRatio: soundDef.playbackDurationRatio,
   };
-}
-
-function getButtonSoundTarget(target: EventTarget | null): Element | null {
-  if (typeof Element === 'undefined') return null;
-  if (!(target instanceof Element)) return null;
-
-  const button = target.closest(GLOBAL_BUTTON_SOUND_SELECTOR);
-  if (!button) return null;
-
-  if (button.hasAttribute('disabled')) return null;
-  if (button.getAttribute('aria-disabled') === 'true') return null;
-
-  return button;
 }
 
 function ensureSharedAudioContext(): AudioContext | null {
@@ -450,29 +241,6 @@ async function ensureRunningAudioContext(): Promise<AudioContext | null> {
   }
 
   return audioContext.state === 'closed' ? null : audioContext;
-}
-
-function setAudioParam(
-  param: AudioParam | undefined,
-  value: number,
-  currentTime: number
-): void {
-  if (!param) return;
-  param.setValueAtTime(value, currentTime);
-}
-
-function vectorDistanceSq(
-  ax: number,
-  ay: number,
-  az: number,
-  bx: number,
-  by: number,
-  bz: number
-): number {
-  const dx = ax - bx;
-  const dy = ay - by;
-  const dz = az - bz;
-  return dx * dx + dy * dy + dz * dz;
 }
 
 function cancelStreamedLoopFade(loop: { fadeRaf?: number; stopTimeout?: number }): void {
@@ -605,103 +373,9 @@ function stopStreamedLoop(id: string, fadeOutMs = 0): void {
 export function setAudioListenerTransform(
   position: { x: number; y: number; z: number },
   forward?: { x: number; y: number; z: number },
-  up: { x: number; y: number; z: number } = DEFAULT_AUDIO_UP
+  up?: { x: number; y: number; z: number }
 ): void {
-  const ctx = sharedAudioContext;
-  if (!ctx) return;
-
-  if (lastAudioListenerContext !== ctx) {
-    lastAudioListenerContext = ctx;
-    hasLastAudioListenerPosition = false;
-    hasLastAudioListenerOrientation = false;
-  }
-
-  const listener = ctx.listener as AudioListener & {
-    positionX?: AudioParam;
-    positionY?: AudioParam;
-    positionZ?: AudioParam;
-    forwardX?: AudioParam;
-    forwardY?: AudioParam;
-    forwardZ?: AudioParam;
-    upX?: AudioParam;
-    upY?: AudioParam;
-    upZ?: AudioParam;
-    setPosition?: (x: number, y: number, z: number) => void;
-    setOrientation?: (fx: number, fy: number, fz: number, ux: number, uy: number, uz: number) => void;
-  };
-
-  const positionChanged = !hasLastAudioListenerPosition || vectorDistanceSq(
-    position.x,
-    position.y,
-    position.z,
-    lastAudioListenerPositionX,
-    lastAudioListenerPositionY,
-    lastAudioListenerPositionZ
-  ) > AUDIO_LISTENER_POSITION_EPSILON_SQ;
-
-  if (positionChanged) {
-    if (listener.positionX && listener.positionY && listener.positionZ) {
-      setAudioParam(listener.positionX, position.x, ctx.currentTime);
-      setAudioParam(listener.positionY, position.y, ctx.currentTime);
-      setAudioParam(listener.positionZ, position.z, ctx.currentTime);
-    } else {
-      listener.setPosition?.(position.x, position.y, position.z);
-    }
-
-    hasLastAudioListenerPosition = true;
-    lastAudioListenerPositionX = position.x;
-    lastAudioListenerPositionY = position.y;
-    lastAudioListenerPositionZ = position.z;
-  }
-
-  if (!forward) return;
-
-  const orientationChanged = !hasLastAudioListenerOrientation || (
-    vectorDistanceSq(
-      forward.x,
-      forward.y,
-      forward.z,
-      lastAudioListenerForwardX,
-      lastAudioListenerForwardY,
-      lastAudioListenerForwardZ
-    ) > AUDIO_LISTENER_DIRECTION_EPSILON_SQ ||
-    vectorDistanceSq(
-      up.x,
-      up.y,
-      up.z,
-      lastAudioListenerUpX,
-      lastAudioListenerUpY,
-      lastAudioListenerUpZ
-    ) > AUDIO_LISTENER_DIRECTION_EPSILON_SQ
-  );
-
-  if (!orientationChanged) return;
-
-  if (
-    listener.forwardX &&
-    listener.forwardY &&
-    listener.forwardZ &&
-    listener.upX &&
-    listener.upY &&
-    listener.upZ
-  ) {
-    setAudioParam(listener.forwardX, forward.x, ctx.currentTime);
-    setAudioParam(listener.forwardY, forward.y, ctx.currentTime);
-    setAudioParam(listener.forwardZ, forward.z, ctx.currentTime);
-    setAudioParam(listener.upX, up.x, ctx.currentTime);
-    setAudioParam(listener.upY, up.y, ctx.currentTime);
-    setAudioParam(listener.upZ, up.z, ctx.currentTime);
-  } else {
-    listener.setOrientation?.(forward.x, forward.y, forward.z, up.x, up.y, up.z);
-  }
-
-  hasLastAudioListenerOrientation = true;
-  lastAudioListenerForwardX = forward.x;
-  lastAudioListenerForwardY = forward.y;
-  lastAudioListenerForwardZ = forward.z;
-  lastAudioListenerUpX = up.x;
-  lastAudioListenerUpY = up.y;
-  lastAudioListenerUpZ = up.z;
+  setAudioListenerTransformForContext(sharedAudioContext, position, forward, up);
 }
 
 async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
@@ -814,7 +488,7 @@ async function loadSharedSoundBuffer(
       const arrayBuffer = await response.arrayBuffer();
       bytes = arrayBuffer.byteLength;
       const decodeStartedAtMs = nowMs();
-      const buffer = await decodeAudioDataLimited(ctx, arrayBuffer);
+      const buffer = await decodeAudioDataLimited(ctx, arrayBuffer, updateAudioDiagnosticsState);
       decodeMs = nowMs() - decodeStartedAtMs;
       sharedSoundBuffersByPath.set(soundDef.path, buffer);
       recordAudioLoadSample({
@@ -865,9 +539,15 @@ async function flushPendingAudioPreloads(): Promise<void> {
       while (pendingAudioPreloadNames.size > 0) {
         const names = Array.from(pendingAudioPreloadNames);
         pendingAudioPreloadNames.clear();
-        flushedSoundCount += names.length;
-        updateAudioDiagnosticsState();
-        await Promise.all(names.map((name) => loadSharedSound(name)));
+        for (let index = 0; index < names.length; index += AUDIO_PRELOAD_FLUSH_BATCH_SIZE) {
+          const batch = names.slice(index, index + AUDIO_PRELOAD_FLUSH_BATCH_SIZE);
+          flushedSoundCount += batch.length;
+          updateAudioDiagnosticsState();
+          await Promise.all(batch.map((name) => loadSharedSound(name)));
+          if (index + AUDIO_PRELOAD_FLUSH_BATCH_SIZE < names.length || pendingAudioPreloadNames.size > 0) {
+            await yieldAfterAudioPreloadBatch();
+          }
+        }
       }
     } finally {
       recordAudioPreloadFlush({
@@ -1640,39 +1320,6 @@ export function useAbilitySounds() {
     startFlamethrowerSound,
     stopFlamethrowerSound,
   } as const;
-}
-
-// UI sound effects hook
-export function useUISounds() {
-  const playButtonHover = useCallback(() => {}, []);
-  const playButtonClick = useCallback(() => {}, []);
-
-  return {
-    playButtonHover,
-    playButtonClick,
-  };
-}
-
-export function useGlobalButtonSounds() {
-  const { preloadSounds } = useAudio();
-
-  useEffect(() => {
-    void preloadSounds(['buttonClick']);
-  }, [preloadSounds]);
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-
-    const handleButtonClick = (event: MouseEvent) => {
-      if (!getButtonSoundTarget(event.target)) return;
-      void playSharedSound('buttonClick');
-    };
-
-    document.addEventListener('click', handleButtonClick, true);
-    return () => {
-      document.removeEventListener('click', handleButtonClick, true);
-    };
-  }, []);
 }
 
 // Music state (shared singleton)

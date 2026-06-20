@@ -9,17 +9,18 @@ import {
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
   CHRONOS_VERDANT_PULSE_SPEED,
+  MOVEMENT_BIT_CHRONOS_AEGIS,
   VOID_RAY_CHARGE_TIME,
   createDefaultPlayerMovementState,
   DEFAULT_GAMEPLAY_MODE,
-  DEFAULT_VOXEL_MAP_SIZE_ID,
+  DEFAULT_MATCH_PERSPECTIVE,
   isGameplayMode,
+  isMatchPerspective,
   normalizeVoxelMapSizeId,
   type PublicRankSnapshot,
-  type VoxelMapSizeId,
-  type VoxelMapTheme,
+  type PlayerDamagedEvent,
 } from '@voxel-strike/shared';
-import { useGameStore } from '../store/gameStore';
+import { normalizeMapProfileId, useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import { setGameTiming } from '../store/gameTimingStore';
 import {
@@ -42,7 +43,6 @@ import {
 } from '../store/visualStore';
 import { confirmLocalMovementTransform, enqueueSelfMovementAuthority, setLocalMovementRootedUntil } from '../movement/localPrediction';
 import {
-  measureFrameWork,
   recordAuthorityAckReceived,
   recordLocalReactiveUpdate,
   recordTransformMessage,
@@ -93,13 +93,21 @@ import {
   type SoundName,
 } from '../hooks/useAudio';
 import { loggers } from '../utils/logger';
-import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
-import { prebuildPreparedVoxelMapGeometry } from '../utils/mapWarmup/mapGeometryWarmup';
+import { normalizeServerAbilityCooldown } from '../abilities/cooldowns';
+import { normalizeGamePhase } from './gamePhase';
+import { measureNetworkMessage } from './networkMessageMetrics';
+import {
+  dequantizeTransform,
+  movementFromBits,
+  unpackPackedTransform,
+  type UnpackedPlayerTransform,
+} from './playerTransformCodec';
 import type {
   BotDifficulty,
   ChronosAegisDamagedEvent,
   ChronosAegisBrokenEvent,
   PhantomShieldBrokenEvent,
+  GamePhase,
   HeroId,
   MatchSnapshotMessage,
   PlayerDeathEvent,
@@ -111,53 +119,32 @@ import type {
   PlayerTransformsV2Message,
   PlayerVitalsMessage,
   PlayerVitalsSnapshot,
-  PackedPlayerTransform,
   PowerupCollectedMessage,
   PowerupStateMessage,
+  PlayerState,
   SelfMovementAuthority,
   Team,
 } from '@voxel-strike/shared';
+import type { AppPhase } from '../store/types';
 
-const TRANSFORM_POSITION_SCALE = 100;
-const TRANSFORM_VELOCITY_SCALE = 100;
-const TRANSFORM_ANGLE_SCALE = 10000;
 const CHRONOS_TIMEBREAK_CHARGE_FADE_OUT_MS = 110;
-const MOVEMENT_BIT_GROUNDED = 1 << 0;
-const MOVEMENT_BIT_SPRINTING = 1 << 1;
-const MOVEMENT_BIT_CROUCHING = 1 << 2;
-const MOVEMENT_BIT_SLIDING = 1 << 3;
-const MOVEMENT_BIT_WALL_RUNNING = 1 << 4;
-const MOVEMENT_BIT_GRAPPLING = 1 << 5;
-const MOVEMENT_BIT_JETPACKING = 1 << 6;
-const MOVEMENT_BIT_GLIDING = 1 << 7;
-const MOVEMENT_BIT_CHRONOS_AEGIS = 1 << 8;
 const remotePhantomChargeControllers = new Map<string, AbortController>();
 const playerIdByNetId = new Map<number, string>();
 const netIdByPlayerId = new Map<string, number>();
 let lastLocalPhantomReloadSoundKey = '';
 let hasReceivedSelfMovementAuthority = false;
 const HOOKSHOT_SHOT_CLIP_MS = 250;
+const PLAYER_STATES = new Set<string>([
+  'spectating',
+  'selecting',
+  'spawning',
+  'dropping',
+  'alive',
+  'dead',
+]);
 
-function measureNetworkMessage<T>(type: string, handler: (data: T) => void): (data: T) => void {
-  return (data) => {
-    measureFrameWork(`network.${type}`, () => handler(data));
-  };
-}
-
-interface UnpackedPlayerTransform {
-  netId: number;
-  px: number;
-  py: number;
-  pz: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  yaw: number;
-  pitch: number;
-  movementBits: number;
-  wallRunSide: -1 | 0 | 1;
-  movementEpoch: number;
-  chronosAegisShieldRatio: number;
+function normalizePlayerState(value: unknown, fallback: PlayerState = 'alive'): PlayerState {
+  return typeof value === 'string' && PLAYER_STATES.has(value) ? value as PlayerState : fallback;
 }
 
 // ============================================================================
@@ -249,7 +236,7 @@ export function createPlayerFromSchema(schemaPlayer: any, id: string): Player {
     name: schemaPlayer.name || 'Unknown',
     team: (schemaPlayer.team || 'red') as Team,
     heroId: (schemaPlayer.heroId || null) as HeroId | null,
-    state: (schemaPlayer.state || 'alive') as any,
+    state: normalizePlayerState(schemaPlayer.state),
     isReady: schemaPlayer.isReady || false,
     isBot: Boolean(schemaPlayer.isBot),
     botDifficulty: schemaPlayer.botDifficulty || undefined,
@@ -308,7 +295,7 @@ function shouldSyncLocalPosition(localPlayer: Player, nextState: string, nextPos
 
   if (!visualPosition) return true;
   if (nextState !== 'alive') return true;
-  if (localPlayer.state !== nextState && ['dead', 'spawning', 'selecting'].includes(localPlayer.state)) return true;
+  if (localPlayer.state !== nextState && ['dead', 'dropping', 'spawning', 'selecting'].includes(localPlayer.state)) return true;
 
   const isDefaultLocalPosition =
     localPlayer.position.x === 0 &&
@@ -323,7 +310,7 @@ function shouldSyncLocalPosition(localPlayer: Player, nextState: string, nextPos
 }
 
 function syncLocalVisualPosition(player: Player): void {
-  setPlayerVisualTransform(player.id, player.position, player.lookYaw);
+  setPlayerVisualTransform(player.id, player.position, player.lookYaw, player.lookPitch);
 }
 
 function shouldHideLiveVisuals(visibility?: PlayerVisibilityState): boolean {
@@ -336,20 +323,49 @@ function clearHiddenLiveVisuals(playerId: string): void {
   removePlayerLiveVisualState(playerId);
 }
 
-function setStoredPlayerVisibility(playerId: string, visibility: PlayerVisibilityState): Player | null {
-  const store = useGameStore.getState();
-  const current = store.players.get(playerId);
-  if (!current) return null;
-  if (current.visibility === visibility) return current;
+interface PlayerVisibilityBatch {
+  getPlayer: (playerId: string) => Player | null;
+  setVisibility: (playerId: string, visibility: PlayerVisibilityState) => Player | null;
+  commit: () => void;
+}
 
-  const nextPlayer = { ...current, visibility };
-  const nextPlayers = new Map(store.players);
-  nextPlayers.set(playerId, nextPlayer);
-  useGameStore.setState({
-    players: nextPlayers,
-    localPlayer: store.localPlayer?.id === playerId ? nextPlayer : store.localPlayer,
-  });
-  return nextPlayer;
+function createPlayerVisibilityBatch(): PlayerVisibilityBatch {
+  const pendingPlayers = new Map<string, Player>();
+
+  return {
+    getPlayer: (playerId) => pendingPlayers.get(playerId) ?? useGameStore.getState().players.get(playerId) ?? null,
+    setVisibility: (playerId, visibility) => {
+      const current = pendingPlayers.get(playerId) ?? useGameStore.getState().players.get(playerId);
+      if (!current) return null;
+
+      if (current.visibility === visibility) {
+        return current;
+      }
+
+      const nextPlayer = { ...current, visibility };
+      pendingPlayers.set(playerId, nextPlayer);
+      return nextPlayer;
+    },
+    commit: () => {
+      if (pendingPlayers.size === 0) return;
+
+      const store = useGameStore.getState();
+      const nextPlayers = new Map(store.players);
+      let nextLocalPlayer = store.localPlayer;
+
+      for (const [playerId, player] of pendingPlayers) {
+        nextPlayers.set(playerId, player);
+        if (nextLocalPlayer?.id === playerId) {
+          nextLocalPlayer = player;
+        }
+      }
+
+      useGameStore.setState({
+        players: nextPlayers,
+        localPlayer: nextLocalPlayer,
+      });
+    },
+  };
 }
 
 function clonePlainVec3(source: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
@@ -470,61 +486,6 @@ function syncDeathVisualForVitals(
   updateDeathVisualExpirationForPlayer(playerId, respawnTime);
 }
 
-type MovementBitsTransform = Pick<UnpackedPlayerTransform, 'movementBits' | 'wallRunSide'>;
-
-function dequantizeTransform(transform: Pick<UnpackedPlayerTransform, 'px' | 'py' | 'pz' | 'vx' | 'vy' | 'vz' | 'yaw' | 'pitch'>) {
-  return {
-    position: {
-      x: transform.px / TRANSFORM_POSITION_SCALE,
-      y: transform.py / TRANSFORM_POSITION_SCALE,
-      z: transform.pz / TRANSFORM_POSITION_SCALE,
-    },
-    velocity: {
-      x: transform.vx / TRANSFORM_VELOCITY_SCALE,
-      y: transform.vy / TRANSFORM_VELOCITY_SCALE,
-      z: transform.vz / TRANSFORM_VELOCITY_SCALE,
-    },
-    lookYaw: transform.yaw / TRANSFORM_ANGLE_SCALE,
-    lookPitch: transform.pitch / TRANSFORM_ANGLE_SCALE,
-  };
-}
-
-function movementFromBits(
-  transform: MovementBitsTransform,
-  fallback: PlayerMovementState
-): PlayerMovementState {
-  return {
-    ...fallback,
-    isGrounded: Boolean(transform.movementBits & MOVEMENT_BIT_GROUNDED),
-    isSprinting: Boolean(transform.movementBits & MOVEMENT_BIT_SPRINTING),
-    isCrouching: Boolean(transform.movementBits & MOVEMENT_BIT_CROUCHING),
-    isSliding: Boolean(transform.movementBits & MOVEMENT_BIT_SLIDING),
-    isWallRunning: Boolean(transform.movementBits & MOVEMENT_BIT_WALL_RUNNING),
-    wallRunSide: transform.wallRunSide === -1 ? 'left' : transform.wallRunSide === 1 ? 'right' : null,
-    isGrappling: Boolean(transform.movementBits & MOVEMENT_BIT_GRAPPLING),
-    isJetpacking: Boolean(transform.movementBits & MOVEMENT_BIT_JETPACKING),
-    isGliding: Boolean(transform.movementBits & MOVEMENT_BIT_GLIDING),
-  };
-}
-
-function unpackPackedTransform(transform: PackedPlayerTransform): UnpackedPlayerTransform {
-  return {
-    netId: transform[0],
-    px: transform[1],
-    py: transform[2],
-    pz: transform[3],
-    vx: transform[4],
-    vy: transform[5],
-    vz: transform[6],
-    yaw: transform[7],
-    pitch: transform[8],
-    movementBits: transform[9],
-    wallRunSide: transform[10],
-    movementEpoch: transform[11],
-    chronosAegisShieldRatio: (transform[12] ?? 255) / 255,
-  };
-}
-
 export function forgetPlayerNetId(playerId: string): void {
   const netId = netIdByPlayerId.get(playerId);
   if (netId !== undefined) {
@@ -552,17 +513,13 @@ function normalizeAbilityVitals(
   if (!abilities) return fallback || {};
 
   const normalized: Player['abilities'] = {};
+  const now = Date.now();
   for (const [abilityId, ability] of Object.entries(abilities)) {
-    const cooldownUntil = Number.isFinite(ability.cooldownUntil)
-      ? ability.cooldownUntil
-      : Number.isFinite(ability.cooldownRemaining)
-        ? serverTime + Math.max(0, ability.cooldownRemaining || 0) * 1000
-        : 0;
-    const cooldownRemainingMs = Math.max(0, cooldownUntil - serverTime);
+    const cooldown = normalizeServerAbilityCooldown(ability, serverTime, now);
     normalized[abilityId] = {
       abilityId: ability.abilityId || abilityId,
-      cooldownRemaining: cooldownRemainingMs / 1000,
-      cooldownUntil: cooldownRemainingMs > 0 ? Date.now() + cooldownRemainingMs : 0,
+      cooldownRemaining: cooldown.cooldownRemaining,
+      cooldownUntil: cooldown.cooldownUntil,
       charges: ability.charges,
       isActive: ability.isActive,
       activatedAt: ability.activatedAt,
@@ -673,12 +630,12 @@ export interface GameStoreActions {
   setLocalPlayer: (player: Player) => void;
   updatePlayer: (playerId: string, player: Player) => void;
   removePlayer: (playerId: string) => void;
-  setGamePhase: (phase: any) => void;
+  setGamePhase: (phase: GamePhase) => void;
   setPhaseEndTime: (time: number | null) => void;
   setMapSeed: (seed: number) => void;
   setConnected: (connected: boolean) => void;
   setRoomId: (roomId: string | null) => void;
-  setAppPhase: (phase: any) => void;
+  setAppPhase: (phase: AppPhase) => void;
   resetLobby: () => void;
 }
 
@@ -818,7 +775,8 @@ export function setupPlayerTransformsHandler(
     transform: UnpackedPlayerTransform,
     tick: number,
     serverTime: number,
-    allowSelfBootstrap: boolean
+    allowSelfBootstrap: boolean,
+    visibilityBatch: PlayerVisibilityBatch
   ): 'remote' | 'self' | 'ignored' => {
     const decoded = dequantizeTransform(transform);
 
@@ -847,15 +805,14 @@ export function setupPlayerTransformsHandler(
       return 'self';
     }
 
-    const store = useGameStore.getState();
-    const existingPlayer = store.players.get(playerId);
+    const existingPlayer = visibilityBatch.getPlayer(playerId);
     if (!existingPlayer) return 'ignored';
     if (existingPlayer.name === localPlayerName) {
       loggers.network.sample('ghost-transform', 5000, 'ignoring ghost transform', playerId);
       return 'ignored';
     }
 
-    const remotePlayer = setStoredPlayerVisibility(playerId, 'visible') ?? existingPlayer;
+    const remotePlayer = visibilityBatch.setVisibility(playerId, 'visible') ?? existingPlayer;
     const wasGrappling = remotePlayer.movement.isGrappling;
     const nextMovement = movementFromBits(transform, remotePlayer.movement);
     remotePlayer.position = decoded.position;
@@ -882,7 +839,7 @@ export function setupPlayerTransformsHandler(
       wallRunSide: transform.wallRunSide,
       movementEpoch: transform.movementEpoch,
     });
-    setPlayerVisualRotation(playerId, decoded.lookYaw);
+    setPlayerVisualRotation(playerId, decoded.lookYaw, decoded.lookPitch);
     const chronosAegisActive = remotePlayer.heroId === 'chronos' && Boolean(transform.movementBits & MOVEMENT_BIT_CHRONOS_AEGIS);
     const previousChronosAegis = visualStore.getState().chronosAegisStates.get(playerId);
     if (chronosAegisActive && !previousChronosAegis?.active) {
@@ -900,12 +857,13 @@ export function setupPlayerTransformsHandler(
   };
 
   room.onMessage('playerTransformsV2', measureNetworkMessage('playerTransformsV2', (data: PlayerTransformsV2Message) => {
+    const visibilityBatch = createPlayerVisibilityBatch();
     const fullSnapshotPlayerIds = data.full ? new Set<string>() : null;
     let selfTransformCount = 0;
     let remoteTransformCount = 0;
     for (const hiddenPlayerId of data.hiddenPlayerIds || []) {
       if (hiddenPlayerId === sessionId) continue;
-      setStoredPlayerVisibility(hiddenPlayerId, 'hidden');
+      visibilityBatch.setVisibility(hiddenPlayerId, 'hidden');
       clearHiddenLiveVisuals(hiddenPlayerId);
     }
     for (const packedTransform of data.players) {
@@ -913,13 +871,14 @@ export function setupPlayerTransformsHandler(
       const playerId = playerIdByNetId.get(transform.netId);
       if (!playerId) continue;
       fullSnapshotPlayerIds?.add(playerId);
-      const result = handleTransform(playerId, transform, data.tick, data.serverTime, data.full === true);
+      const result = handleTransform(playerId, transform, data.tick, data.serverTime, data.full === true, visibilityBatch);
       if (result === 'self') {
         selfTransformCount++;
       } else if (result === 'remote') {
         remoteTransformCount++;
       }
     }
+    visibilityBatch.commit();
     if (remoteTransformCount > 0 || (data.hiddenPlayerIds?.length ?? 0) > 0) {
       setGameTiming(data.tick, data.serverTime);
     }
@@ -977,17 +936,19 @@ export function setupSelfMovementAuthorityHandler(room: Room) {
     recordMovementTraceAuthorityAck(authority);
     recordAuthorityAckReceived(authority);
     enqueueSelfMovementAuthority(authority);
-    const localPlayer = useGameStore.getState().localPlayer;
+    const store = useGameStore.getState();
+    const localPlayer = store.localPlayer;
     if (localPlayer?.heroId === 'chronos') {
       setChronosAegisVisualState(
         localPlayer.id,
         Boolean(authority.chronosAegisActive),
         Date.now(),
-        authority.chronosAegisShieldRatio
+        authority.chronosAegisShieldRatio,
+        { renderWorldEffect: store.matchPerspective === 'third_person' }
       );
     }
     if (localPlayer && authority.powerupBoostUntil !== undefined) {
-      useGameStore.getState().updateLocalPlayer({ powerupBoostUntil: authority.powerupBoostUntil ?? null });
+      store.updateLocalPlayer({ powerupBoostUntil: authority.powerupBoostUntil ?? null });
     }
   }));
 }
@@ -1051,16 +1012,6 @@ export function setupPlayerVitalsHandler(
       rememberPlayerNetId(vitals);
 
       if (vitals.id === sessionId) {
-        if (useGameStore.getState().isObserverMode) {
-          if (nextPlayers.has(vitals.id)) {
-            writablePlayers().delete(vitals.id);
-          }
-          nextLocalPlayer = null;
-          removedVisuals.push(vitals.id);
-          shouldPublishTiming = true;
-          continue;
-        }
-
         const existing = nextLocalPlayer || nextPlayers.get(vitals.id);
         const existingPlayer = existing || undefined;
         const previousHeroId = existingPlayer?.heroId ?? null;
@@ -1122,7 +1073,7 @@ export function setupPlayerVitalsHandler(
       clearHiddenLiveVisuals(playerId);
     }
     for (const player of liveVisualUpdates) {
-      setPlayerVisualTransform(player.id, player.position, player.lookYaw);
+      setPlayerVisualTransform(player.id, player.position, player.lookYaw, player.lookPitch);
     }
     for (const player of localVisualSyncs) {
       syncLocalVisualPosition(player);
@@ -1133,15 +1084,19 @@ export function setupPlayerVitalsHandler(
 export function setupMatchSnapshotHandler(room: Room) {
   room.onMessage('matchSnapshot', measureNetworkMessage('matchSnapshot', (data: MatchSnapshotMessage) => {
     const store = useGameStore.getState();
-    if (data.phase !== 'playing' && data.phase !== 'countdown') {
+    if (data.phase !== 'playing' && data.phase !== 'countdown' && data.phase !== 'deployment') {
       clearAllDeathVisuals();
     }
     setGameTiming(data.tick, data.serverTime);
     useGameStore.setState({
       mapSeed: data.mapSeed,
       gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : store.gameplayMode ?? DEFAULT_GAMEPLAY_MODE,
+      matchPerspective: isMatchPerspective(data.matchPerspective)
+        ? data.matchPerspective
+        : store.matchPerspective ?? DEFAULT_MATCH_PERSPECTIVE,
       mapThemeId: data.mapThemeId ?? null,
       mapSize: normalizeVoxelMapSizeId(data.mapSize),
+      mapProfileId: normalizeMapProfileId(data.mapProfileId),
       gamePhase: data.phase,
       redScore: data.redScore,
       blueScore: data.blueScore,
@@ -1150,6 +1105,8 @@ export function setupMatchSnapshotHandler(room: Room) {
       roundTimeRemaining: data.roundTimeRemaining,
       phaseEndTime: data.phaseEndTime,
       gameClockFrozen: data.gameClockFrozen === true,
+      safeZone: data.safeZone ?? null,
+      battleRoyalDrop: data.battleRoyalDrop ?? null,
     });
   }));
 }
@@ -1205,7 +1162,7 @@ export function setupVoidZoneHandlers(room: Room, sessionId: string) {
     duration: number;
     startTime: number;
     ownerId: string;
-    ownerTeam: 'red' | 'blue';
+    ownerTeam: Team;
   }) => {
     useGameStore.getState().addVoidZone(data);
   }));
@@ -1368,7 +1325,12 @@ function triggerObservedRemoteAttack(
   localPlayerId: string | null,
   side: -1 | 1 | undefined = data.launchSide
 ): void {
-  if (data.playerId === localPlayerId) return;
+  if (
+    data.playerId === localPlayerId &&
+    useGameStore.getState().matchPerspective !== 'third_person'
+  ) {
+    return;
+  }
 
   triggerRemotePlayerAttack(data.playerId, data.abilityId, {
     side: side ?? 1,
@@ -2473,7 +2435,7 @@ export function setupCombatHandlers(room: Room) {
     const store = useGameStore.getState();
     const localPlayerId = store.localPlayer?.id ?? store.playerId;
     setChronosAegisVisualState(data.playerId, true, now, data.shieldRatio, {
-      renderWorldEffect: data.playerId !== localPlayerId,
+      renderWorldEffect: data.playerId !== localPlayerId || store.matchPerspective === 'third_person',
     });
     useCombatFeedbackStore.getState().addCombatTextEvent({
       kind: 'shieldDamage',
@@ -2510,14 +2472,7 @@ export function setupCombatHandlers(room: Room) {
     });
   }));
 
-  room.onMessage('playerDamaged', measureNetworkMessage('playerDamaged', (data: {
-    targetId: string;
-    damage: number;
-    sourceId: string | null;
-    damageType: string;
-    sourcePosition?: { x: number; y: number; z: number } | null;
-    targetPosition?: { x: number; y: number; z: number } | null;
-  }) => {
+  room.onMessage('playerDamaged', measureNetworkMessage('playerDamaged', (data: PlayerDamagedEvent) => {
     loggers.network.sample('playerDamaged', 1000, 'player damaged', data.targetId, data.damage, data.damageType);
 
     const store = useGameStore.getState();
@@ -2683,59 +2638,4 @@ export function setupCombatHandlers(room: Room) {
   }) => {
     pushLocalPlayerImpulse(data.impulse);
   }));
-}
-
-/**
- * Sets up low-rate room metadata polling as a development fallback.
- */
-export function setupPollingSync(
-  room: Room,
-  actions: Pick<GameStoreActions, 'setGamePhase'>
-): ReturnType<typeof setInterval> {
-  const FALLBACK_POLL_INTERVAL_MS = 250;
-
-  return setInterval(() => {
-    if (!room.state) return;
-
-    // Sync phase
-    if (room.state.phase) {
-      const store = useGameStore.getState();
-      const nextMapThemeId = typeof room.state.mapThemeId === 'string'
-        ? room.state.mapThemeId as VoxelMapTheme['id']
-        : null;
-      const nextMapSize = normalizeVoxelMapSizeId(
-        typeof room.state.mapSize === 'string' ? room.state.mapSize : DEFAULT_VOXEL_MAP_SIZE_ID
-      );
-      if (
-        typeof room.state.mapSeed === 'number'
-        && (
-          room.state.mapSeed !== store.mapSeed
-          || nextMapThemeId !== store.mapThemeId
-          || nextMapSize !== store.mapSize
-        )
-      ) {
-        useGameStore.getState().setMapSeed(room.state.mapSeed);
-        useGameStore.getState().setMapThemeId(nextMapThemeId);
-        useGameStore.getState().setMapSize(nextMapSize);
-        try {
-          const preparedMap = prepareVoxelMapCpu({
-            seed: room.state.mapSeed,
-            themeId: nextMapThemeId,
-            mapSize: nextMapSize,
-            source: 'match',
-          });
-          prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'fallback-poll' });
-        } catch (error) {
-          loggers.network.warn('fallback poll map CPU prep failed', error);
-        }
-      }
-
-      if (room.state.phase !== store.gamePhase) {
-        actions.setGamePhase(room.state.phase as any);
-      }
-      if (isGameplayMode(room.state.gameplayMode) && room.state.gameplayMode !== store.gameplayMode) {
-        useGameStore.setState({ gameplayMode: room.state.gameplayMode });
-      }
-    }
-  }, FALLBACK_POLL_INTERVAL_MS);
 }

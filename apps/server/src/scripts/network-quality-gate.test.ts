@@ -31,23 +31,12 @@ function evaluate(samples: Array<number | null>, now = 10_000) {
 {
   assert.equal(isNetworkQualityGateRequiredForMatch({
     matchMode: 'quick_play',
-    wagered: false,
   }), false);
   assert.equal(isNetworkQualityGateRequiredForMatch({
     matchMode: 'custom',
-    wagered: false,
   }), false);
   assert.equal(isNetworkQualityGateRequiredForMatch({
     matchMode: 'ranked',
-    wagered: false,
-  }), true);
-  assert.equal(isNetworkQualityGateRequiredForMatch({
-    matchMode: 'custom_wager',
-    wagered: false,
-  }), true);
-  assert.equal(isNetworkQualityGateRequiredForMatch({
-    matchMode: 'custom',
-    wagered: true,
   }), true);
 }
 

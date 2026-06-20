@@ -8,7 +8,8 @@ import type { VoiceTokenRequest, VoiceTokenResponse, VoiceTeamChangedMessage } f
 import type { PublicRankSnapshot } from '../progression/ranking.js';
 import type { MatchMode } from './matchMode.js';
 import type { GameplayMode } from './gameplayMode.js';
-import type { MapPowerupKind, VoxelMapSizeId, VoxelMapTheme } from '../maps/procedural/types.js';
+import type { MatchPerspective } from './matchPerspective.js';
+import type { MapPowerupKind, MapProfileId, VoxelMapSizeId, VoxelMapTheme } from '../maps/procedural/types.js';
 
 // Client -> Server Messages
 export type ClientMessage = 
@@ -41,7 +42,8 @@ export type ServerMessage =
   | { type: 'matchStartGate'; payload: MatchStartGateMessage }
   | { type: 'matchCancelled'; payload: MatchCancelledMessage }
   | { type: 'playerJoined'; payload: { playerId: string; playerName: string } }
-  | { type: 'playerLeft'; payload: { playerId: string } }
+  | { type: 'playerLeft'; payload: { playerId: string; isNpc?: boolean } }
+  | { type: 'playerDamaged'; payload: PlayerDamagedEvent }
   | { type: 'playerKilled'; payload: PlayerDeathEvent }
   | { type: 'flagPickup'; payload: FlagEvent }
   | { type: 'flagDrop'; payload: FlagEvent }
@@ -59,8 +61,7 @@ export type ServerMessage =
   | { type: 'playerHealed'; payload: PlayerHealedEvent }
   | { type: 'chronosAegisDamaged'; payload: ChronosAegisDamagedEvent }
   | { type: 'chronosAegisBroken'; payload: ChronosAegisBrokenEvent }
-  | { type: 'phantomShieldBroken'; payload: PhantomShieldBrokenEvent }
-  | { type: 'damage'; payload: DamageEvent };
+  | { type: 'phantomShieldBroken'; payload: PhantomShieldBrokenEvent };
 
 export interface ChronosAegisDamagedEvent {
   playerId: string;
@@ -87,6 +88,33 @@ export interface PhantomShieldBrokenEvent {
   direction: Vec3;
   serverTime: number;
 }
+
+export interface PlayerDamagedEvent {
+  targetId: string;
+  damage: number;
+  sourceId: string | null;
+  damageType: string;
+  newHealth?: number;
+  sourcePosition?: Vec3 | null;
+  targetPosition?: Vec3 | null;
+  sourceHeroId?: string | null;
+  targetHeroId?: string | null;
+}
+
+// Shared wire-format constants for packed player transform replication.
+export const TRANSFORM_POSITION_SCALE = 100;
+export const TRANSFORM_VELOCITY_SCALE = 100;
+export const TRANSFORM_ANGLE_SCALE = 10000;
+
+export const MOVEMENT_BIT_GROUNDED = 1 << 0;
+export const MOVEMENT_BIT_SPRINTING = 1 << 1;
+export const MOVEMENT_BIT_CROUCHING = 1 << 2;
+export const MOVEMENT_BIT_SLIDING = 1 << 3;
+export const MOVEMENT_BIT_WALL_RUNNING = 1 << 4;
+export const MOVEMENT_BIT_GRAPPLING = 1 << 5;
+export const MOVEMENT_BIT_JETPACKING = 1 << 6;
+export const MOVEMENT_BIT_GLIDING = 1 << 7;
+export const MOVEMENT_BIT_CHRONOS_AEGIS = 1 << 8;
 
 export type PackedPlayerTransform = [
   netId: number,
@@ -187,6 +215,7 @@ export interface MatchStartGateMessage {
   mapSeed: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
+  mapProfileId?: MapProfileId | null;
   position: Vec3;
   movementEpoch: number;
   ackSeq: number;
@@ -200,7 +229,6 @@ export interface MatchCancelledMessage {
   requiredHumanPlayers: number;
   connectedHumanPlayers: number;
   deadlineAt: number;
-  refundedWager: boolean;
   serverTime: number;
   blockedPlayerId?: string;
   blockedPlayerName?: string;
@@ -229,14 +257,66 @@ export interface PlayerPingsMessage {
   players: PlayerPingSnapshot[];
 }
 
+export interface SafeZoneSnapshot {
+  enabled: boolean;
+  phaseIndex: number;
+  center: Vec3;
+  radius: number;
+  nextCenter: Vec3;
+  nextRadius: number;
+  nextZoneRevealsAt: number;
+  shrinkStartsAt: number;
+  phaseEndsAt: number;
+  damagePerSecond: number;
+  warning: boolean;
+  shrinking: boolean;
+}
+
+export type BattleRoyalDropPlayerStatus = 'aboard' | 'dropping' | 'landed';
+
+export interface BattleRoyalDropShipSnapshot {
+  start: Vec3;
+  end: Vec3;
+  position: Vec3;
+  altitude: number;
+  startedAt: number;
+  endsAt: number;
+  autoDropAt: number;
+  dropStartsAt: number;
+  dropEndsAt: number;
+  canDrop: boolean;
+}
+
+export interface BattleRoyalDropPlayerSnapshot {
+  playerId: string;
+  team: Team;
+  status: BattleRoyalDropPlayerStatus;
+  position: Vec3;
+  velocity: Vec3;
+  droppedAt: number | null;
+  landedAt: number | null;
+  attachedToPlayerId: string | null;
+}
+
+export interface BattleRoyalDropSnapshot {
+  enabled: boolean;
+  phaseStartedAt: number;
+  phaseEndsAt: number;
+  serverTime: number;
+  ship: BattleRoyalDropShipSnapshot;
+  players: BattleRoyalDropPlayerSnapshot[];
+}
+
 export interface MatchSnapshotMessage {
   tick: number;
   serverTime: number;
   phase: GamePhase;
   gameplayMode: GameplayMode;
+  matchPerspective: MatchPerspective;
   mapSeed: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
+  mapProfileId?: MapProfileId | null;
   redScore: number;
   blueScore: number;
   redFlag: FlagSync;
@@ -244,6 +324,8 @@ export interface MatchSnapshotMessage {
   roundTimeRemaining: number;
   phaseEndTime: number | null;
   gameClockFrozen?: boolean;
+  safeZone?: SafeZoneSnapshot | null;
+  battleRoyalDrop?: BattleRoyalDropSnapshot | null;
 }
 
 export interface PowerupPickupRuntimeState {
@@ -285,6 +367,7 @@ export interface PlayerDeathEvent {
   damageType?: string;
   occurredAt?: number;
   respawnTime?: number | null;
+  isNpc?: boolean;
 }
 
 export interface FlagEvent {
@@ -303,6 +386,7 @@ export interface RoundEndEvent {
 export interface GameEndEvent {
   matchMode: MatchMode;
   gameplayMode: GameplayMode;
+  matchPerspective: MatchPerspective;
   winningTeam: Team | null;
   finalScore: { red: number; blue: number };
   matchId: string | null;
@@ -326,7 +410,6 @@ export interface MatchIntegritySummary {
   status: 'clean' | 'suspicious' | 'compromised' | 'no_contest';
   reviewRequired: boolean;
   rankedOutcome: 'normal' | 'review_required';
-  wagerOutcome: 'normal' | 'review_required';
   message: string;
 }
 
@@ -367,14 +450,6 @@ export interface AbilityEffectEvent {
     rootUntil: number;
   }>;
   rootUntil?: number;
-}
-
-export interface DamageEvent {
-  targetId: string;
-  sourceId: string | null;
-  amount: number;
-  abilityId?: string;
-  position: Vec3;
 }
 
 export interface PlayerHealedEvent {

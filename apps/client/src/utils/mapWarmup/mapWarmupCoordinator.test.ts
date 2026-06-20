@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   createMapWarmupSnapshot,
+  isMapWarmupReadyForMatchStart,
   isTerminalMapWarmupState,
   reduceMapWarmup,
 } from './mapWarmupCoordinator';
@@ -17,9 +18,12 @@ assert.equal(snapshot.canShowGameplayObjects, false);
 snapshot = reduceMapWarmup(snapshot, { type: 'stageDone', stage: 'resources', durationMs: 12 });
 snapshot = reduceMapWarmup(snapshot, { type: 'stageDone', stage: 'map', durationMs: 24 });
 snapshot = reduceMapWarmup(snapshot, { type: 'stageDone', stage: 'colliders', durationMs: 6 });
+assert.equal(isMapWarmupReadyForMatchStart(snapshot, initial.key), false);
 snapshot = reduceMapWarmup(snapshot, { type: 'stageDone', stage: 'meshes', durationMs: 42 });
 assert.equal(snapshot.stages.meshes.done, true);
 assert.equal(snapshot.canAcceptInput, false);
+assert.equal(isMapWarmupReadyForMatchStart(snapshot, initial.key), true);
+assert.equal(isMapWarmupReadyForMatchStart(snapshot, 'different-key'), false);
 
 snapshot = reduceMapWarmup(snapshot, { type: 'startGpu' });
 assert.equal(snapshot.state, 'preparingGpu');

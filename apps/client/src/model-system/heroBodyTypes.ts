@@ -1,8 +1,8 @@
 import type * as THREE from 'three';
-import type { HeroId } from '@voxel-strike/shared';
+import type { HeroId, KnownModelMaterialToken, ModelPartKind } from '@voxel-strike/shared';
 
-export type PartKind = 'box' | 'sphere' | 'cylinder' | 'cone';
-export type MaterialKind = 'armor' | 'dark' | 'accent' | 'glow' | 'glass' | 'skin' | 'void' | 'edge' | 'eye' | 'mist';
+export type PartKind = ModelPartKind;
+export type MaterialKind = KnownModelMaterialToken;
 export type HeroBoneName =
   | 'aura'
   | 'hips'
@@ -18,7 +18,6 @@ export type HeroBoneName =
   | 'rightArm'
   | 'leftForearm'
   | 'rightForearm';
-export type HeroBoneOverride = HeroBoneName | 'static';
 
 export type HeroAnimationMode = 'idle' | 'walk' | 'jump' | 'crouch' | 'crouchWalk' | 'crouchWalkLoop' | 'run' | 'slide' | 'attack';
 export type HeroMovementPose = 'walk' | 'crouchWalk' | 'run';
@@ -29,17 +28,24 @@ export interface HeroWalkDirection {
 }
 
 export interface VoxelPart {
+  id: string;
   kind?: PartKind;
   material: MaterialKind;
+  bone: HeroBoneName;
   position: [number, number, number];
   scale: [number, number, number];
   rotation?: [number, number, number];
   emissive?: boolean;
   transparent?: boolean;
-  limb?: HeroBoneOverride;
+  generated?: boolean;
 }
 
-export interface RiggedVoxelPart<TPart extends VoxelPart = VoxelPart> {
+export interface VoxelPartDraft extends Omit<VoxelPart, 'id' | 'bone'> {
+  id?: string;
+  bone?: HeroBoneName;
+}
+
+export interface RiggedVoxelPart<TPart extends VoxelPartDraft = VoxelPart> {
   part: TPart;
   bone: HeroBoneName;
   meshOffset: [number, number, number];
@@ -55,9 +61,11 @@ export interface TeamAccentPart extends VoxelPart {
 }
 
 export interface RemoteBodySocketMarker {
+  id: string;
   socketName: string;
   bone: HeroBoneName;
   position: [number, number, number];
+  rotation?: [number, number, number];
 }
 
 export interface HeroMovementProfile {

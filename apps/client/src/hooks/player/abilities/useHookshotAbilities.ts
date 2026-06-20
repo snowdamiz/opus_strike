@@ -13,6 +13,7 @@ import { useRef, useCallback } from 'react';
 import {
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
+  type Team,
 } from '@voxel-strike/shared';
 import {
   createHookshotSwingState,
@@ -82,6 +83,33 @@ function readHookshotHookSocketPosition(
   }) ? origin : null;
 }
 
+function normalizeDelta(
+  from: { x: number; y: number; z: number },
+  to: { x: number; y: number; z: number }
+): { x: number; y: number; z: number } | null {
+  const x = to.x - from.x;
+  const y = to.y - from.y;
+  const z = to.z - from.z;
+  const length = Math.sqrt(x * x + y * y + z * z);
+  if (length <= 0.0001) return null;
+  return {
+    x: x / length,
+    y: y / length,
+    z: z / length,
+  };
+}
+
+function isNearPoint(
+  a: { x: number; y: number; z: number },
+  b: { x: number; y: number; z: number },
+  maxDistance: number
+): boolean {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const dz = a.z - b.z;
+  return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
+}
+
 function calculateHookshotLaunch(
   ctx: AbilityContext,
   launchSide: -1 | 1,
@@ -105,7 +133,11 @@ function calculateHookshotLaunch(
     z: aimOrigin.z + lookDirection.z * maxDistance,
   };
 
-  if (isPhysicsReady()) {
+  if (ctx.aimPoint) {
+    aimPoint.x = ctx.aimPoint.x;
+    aimPoint.y = ctx.aimPoint.y;
+    aimPoint.z = ctx.aimPoint.z;
+  } else if (isPhysicsReady()) {
     const hit = raycastDirection(
       aimOrigin.x, aimOrigin.y, aimOrigin.z,
       lookDirection.x, lookDirection.y, lookDirection.z,
@@ -147,6 +179,31 @@ function resolveHookshotGrapplePoint(ctx: AbilityContext): { x: number; y: numbe
     z: ctx.position.z,
   };
 
+  if (ctx.aimPoint) {
+    const hintedDirection = normalizeDelta(aimOrigin, ctx.aimPoint);
+    const hintedDistance = hintedDirection
+      ? Math.min(
+        GRAPPLE_MAX_RANGE,
+        Math.sqrt(
+          (ctx.aimPoint.x - aimOrigin.x) ** 2 +
+          (ctx.aimPoint.y - aimOrigin.y) ** 2 +
+          (ctx.aimPoint.z - aimOrigin.z) ** 2
+        ) + 0.75
+      )
+      : 0;
+    const hintedHit = hintedDirection && hintedDistance > 0
+      ? raycastDirection(
+        aimOrigin.x, aimOrigin.y, aimOrigin.z,
+        hintedDirection.x, hintedDirection.y, hintedDirection.z,
+        hintedDistance
+      )
+      : null;
+
+    if (hintedHit?.hit && isNearPoint(hintedHit.point, ctx.aimPoint, 1.25)) {
+      return hintedHit.point;
+    }
+  }
+
   let hit = raycastDirection(
     aimOrigin.x, aimOrigin.y, aimOrigin.z,
     direction.x, direction.y, direction.z,
@@ -167,7 +224,7 @@ function resolveHookshotGrapplePoint(ctx: AbilityContext): { x: number; y: numbe
 }
 
 function resolveGroundHookTargets(ctx: AbilityContext, rootUntil: number) {
-  const ownerTeam = (ctx.localPlayer.team || 'red') as 'red' | 'blue';
+  const ownerTeam: Team = ctx.localPlayer.team || 'red';
   const radiusSq = HOOKSHOT_GROUND_HOOKS_RADIUS * HOOKSHOT_GROUND_HOOKS_RADIUS;
   const targets: Array<{
     targetId: string;
@@ -250,7 +307,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       },
       startTime: now,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: ctx.localPlayer.team || 'red',
       state: 'extending',
       maxDistance: HOOKSHOT_MAX_DISTANCE,
       startPosition: spawnPos,
@@ -292,7 +349,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       },
       startTime: now,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: ctx.localPlayer.team || 'red',
       state: 'flying',
       startPosition: spawnPos,
       launchSide,
@@ -374,7 +431,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       startTime: Date.now(),
       duration: 6.25,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: ctx.localPlayer.team || 'red',
       maxDistance: 24.35,
       hookProgress: 0,
     });
@@ -400,7 +457,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       startTime: now,
       duration: HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: ctx.localPlayer.team || 'red',
       radius: HOOKSHOT_GROUND_HOOKS_RADIUS,
       rootUntil,
       targets,

@@ -1,28 +1,30 @@
-import { createContext, useContext, useRef, useCallback, useState, ReactNode } from 'react';
+import { createContext, useContext, useRef, useCallback, useMemo, useState, type ReactNode } from 'react';
 import { Client, Room } from 'colyseus.js';
-import { useGameStore, LobbyPlayer, LobbyWagerState, MapVoteOption, MapVoteRecord, WagerPaymentIntent, WagerPaymentTransaction } from '../store/gameStore';
+import { useGameStore } from '../store/gameStore';
 import { config } from '../config/environment';
 import {
   createRandomSeed,
   DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_MATCH_PERSPECTIVE,
   DEFAULT_VOXEL_MAP_SIZE_ID,
   TUTORIAL_MAP_SEED,
   createTutorialVoxelMapManifest,
+  getGameplayModeLabel,
   getHeroStats,
   isGameplayMode,
+  isMatchPerspective,
   MOVEMENT_PROTOCOL_VERSION,
   POWERUP_HEALTH_RESTORE_RATIO,
   type BotDifficulty,
-  type GameEndEvent,
   type GameplayMode,
   type HeroId,
+  type MatchPerspective,
+  type MatchPerspectiveSettingMode,
+  type PartyLaunchPayload,
+  type PartyMode,
+  type PartyStateSnapshot,
   type Team,
-  type PublicRankSnapshot,
   type MovementCommandPacket,
-  type PlayerPingRequestMessage,
-  type PlayerPingsMessage,
-  type VoxelMapSizeId,
-  type VoxelMapTheme,
 } from '@voxel-strike/shared';
 import type { VoiceScope, VoiceTokenResponse } from '../voice/types';
 import { disconnectVoice } from '../voice/voiceControls';
@@ -34,46 +36,38 @@ import {
   saveRunningGameSession,
   type RunningGameSession,
 } from '../utils/runningGameSession';
+import {
+  getDevTutorialBypassRoomOptions,
+  requestQuickPlayTicket,
+  requestActivePartySession,
+  requestRankedTicket,
+  requestRankedTokenHoldStatus,
+  requestRunningGameStatus,
+  type ActivePartySessionResponse,
+  type RankedTokenHoldStatus,
+} from './networkApi';
+import { setupLobbyListeners as setupLobbyRoomListeners } from './lobbyListeners';
+import { setupGameRoomListeners } from './gameRoomListeners';
 
 // Import extracted handlers
 import {
   createDefaultLocalPlayer,
-  syncPlayerFromSchema,
-  setupPlayerJoinedHandler,
-  setupPlayerTransformsHandler,
-  setupPlayerInterestHandler,
-  setupSelfMovementAuthorityHandler,
-  setupPlayerVitalsHandler,
-  setupMatchSnapshotHandler,
-  setupPowerupHandlers,
-  setupVoidZoneHandlers,
-  setupCombatHandlers,
-  setupPollingSync,
-  forgetPlayerNetId,
-  stopRemotePhantomCharge,
 } from './gameMessageHandlers';
 import { loggers } from '../utils/logger';
 import {
   movementStateFromPlayer,
   resetLocalMovementPrediction,
 } from '../movement/localPrediction';
-import { measureFrameWork } from '../movement/networkDiagnostics';
 import { projectileInitialState } from '../store/slices/projectiles';
 import { resetGameTiming } from '../store/gameTimingStore';
 import { createPracticeAbilityStates } from './practiceAbilities';
+import { usePartyStore } from '../store/partyStore';
+import { clearActivePartySession, saveActivePartySession } from '../utils/activePartySession';
 
-type CreateLobbyWagerOptions = { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' };
-type CreateLobbyOptions = {
-  initialBotCount?: number;
-  botFillMode?: 'manual' | 'fill_even' | 'fill_empty';
-  defaultBotDifficulty?: BotDifficulty;
-  wager?: CreateLobbyWagerOptions;
-  gameplayMode?: GameplayMode;
-  mapSeed?: number;
-  forceGoldenMapOption?: boolean;
-  observersEnabled?: boolean;
-};
-type StartPracticeGameOptions = { mapSeed?: number; tutorial?: boolean };
+export type { RankedTokenHoldStatus } from './networkApi';
+
+type StartPracticeGameOptions = { mapSeed?: number; tutorial?: boolean; heroId?: HeroId; matchPerspective?: MatchPerspective };
+type EnsurePartyOptions = { selectedMode?: PartyMode; gameplayMode?: GameplayMode };
 const TUTORIAL_HERO_ID: HeroId = 'blaze';
 
 function facingToLookYaw(facing: { x: number; z: number } | null | undefined): number {
@@ -101,22 +95,29 @@ export interface RunningGameReconnectStatus {
 
 interface NetworkContextType {
   // Lobby operations
-  createLobby: (
-    playerName: string,
-    lobbyName?: string,
-    options?: CreateLobbyOptions
-  ) => Promise<void>;
-  quickPlay: (playerName: string) => Promise<void>;
-  rankedPlay: (playerName: string) => Promise<void>;
+  quickPlay: (playerName: string, gameplayMode?: GameplayMode, botFillEnabled?: boolean, selectedHero?: HeroId, matchPerspective?: MatchPerspective) => Promise<void>;
+  rankedPlay: (playerName: string, selectedHero?: HeroId) => Promise<void>;
   getRankedTokenHoldStatus: () => Promise<RankedTokenHoldStatus>;
   startPracticeGame: (playerName?: string, options?: StartPracticeGameOptions) => void;
   startTutorialGame: (playerName?: string) => void;
   joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
+  joinMatchmakingLobby: (playerName: string, launch: PartyLaunchPayload) => Promise<void>;
   leaveLobby: () => void;
+  ensureParty: (playerName: string, heroId?: HeroId, options?: EnsurePartyOptions) => Promise<string>;
+  joinParty: (playerName: string, partyId: string, heroId?: HeroId) => Promise<void>;
+  restoreParty: (playerName: string, persistentPartyId: string, heroId?: HeroId) => Promise<void>;
+  getActivePartySession: () => Promise<ActivePartySessionResponse>;
+  leaveParty: () => void;
+  setPartyHero: (heroId: HeroId) => void;
+  setPartyReady: (ready: boolean) => void;
+  setPartyMode: (mode: PartyMode, gameplayMode?: GameplayMode) => void;
+  setPartyBotFill: (gameplayMode: GameplayMode, enabled: boolean) => void;
+  setPartyPerspective: (modeKey: MatchPerspectiveSettingMode, perspective: MatchPerspective) => void;
+  addPartyBot: (options?: { difficulty?: BotDifficulty; displayName?: string; heroId?: HeroId }) => void;
+  kickPartyMember: (userId: string) => void;
+  startParty: () => void;
   setLobbyReady: (ready: boolean) => void;
   setLobbyTeam: (team: string) => void;
-  setLobbyObserver: (observer: boolean) => void;
-  devSetLobbyObserver: (observer: boolean) => void;
   addLobbyBot: (options?: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }) => void;
   removeLobbyBot: (botId: string) => void;
   updateLobbyBotTeam: (botId: string, team: string) => void;
@@ -125,12 +126,7 @@ interface NetworkContextType {
   startGame: () => void;
   voteMap: (optionId: string) => void;
   reportMapVotePreviewsReady: () => void;
-  finalizeMapVote: () => void;
   kickPlayer: (playerId: string) => void;
-  createWagerPaymentIntent: (lobbyId: string, walletAddress: string, lobbyPlayerId?: string | null, rankedEntryQuoteId?: string | null) => Promise<WagerPaymentIntent>;
-  createWagerPaymentTransaction: (intentId: string) => Promise<WagerPaymentTransaction>;
-  submitWagerSignedPaymentTransaction: (intentId: string, signedTransactionBase64: string) => Promise<WagerPaymentIntent>;
-  submitWagerPaymentSignature: (intentId: string, signature: string) => Promise<WagerPaymentIntent>;
 
   // Game operations
   joinGameRoom: (
@@ -138,19 +134,17 @@ interface NetworkContextType {
     playerName: string,
     team?: string,
     entryTicket?: string,
-    observer?: boolean,
-    reconnectToRunningGame?: boolean
+    reconnectToRunningGame?: boolean,
+    seatReservation?: unknown
   ) => Promise<void>;
   getRunningGameReconnect: () => Promise<RunningGameReconnectStatus>;
   reconnectRunningGame: () => Promise<void>;
   leaveGame: () => void;
   disconnect: () => void;
   sendMovementCommands: (packet: MovementCommandPacket) => void;
-  selectHero: (heroId: HeroId) => void;
   devSetHero: (heroId: HeroId) => void;
   devFillUltimate: () => void;
   devEndGame: () => void;
-  devSetGameObserver: () => void;
   setDevImmune: (enabled: boolean) => void;
   setDevTimeFrozen: (enabled: boolean) => void;
   setDevBotsRooted: (enabled: boolean) => void;
@@ -159,198 +153,13 @@ interface NetworkContextType {
   devBotSkill: (heroId: HeroId, team: Team, skillKey: string) => void;
   devBotLook: (heroId: HeroId, team: Team, direction: 'up' | 'down') => void;
   selectTeam: (team: Team) => void;
-  setReady: (ready: boolean) => void;
   matchStartGateKey: number | null;
   reportMatchSceneReady: () => void;
   reportPlayer: (targetPlayerId: string, reason?: string, details?: string) => Promise<void>;
   requestVoiceToken: (scope?: VoiceScope) => Promise<VoiceTokenResponse>;
-
-  // NPC/Bot operations (for testing)
-  spawnNpc: (heroId: HeroId, team?: Team, position?: { x: number; y: number; z: number }, name?: string) => void;
-  damageNpc: (npcId: string, damage: number) => void;
-  killNpc: (npcId: string) => void;
-  killAllNpcs: () => void;
-}
-
-interface QuickPlayTicketResponse {
-  ticket: string;
-  mode: 'quick_play';
-  competitiveRating: number;
-  rankDivisionIndex: number;
-  rank: unknown;
-  targetRankDivisionIndex: number;
-  targetRankLabel: string;
-}
-
-export interface RankedTokenHoldStatus {
-  eligible: boolean;
-  tokenAddress: string;
-  tokenSymbol?: string;
-  tokenDecimals: number | null;
-  usdCents: number;
-  tokenUsdPrice: string;
-  tokenUsdPriceMicroUsd: string;
-  requiredTokenBaseUnits: string;
-  balanceTokenBaseUnits: string;
-  cluster: string;
-  priceSource: string;
-  checkedAt: string;
-}
-
-interface RankedTicketResponse {
-  ticket: string;
-  mode: 'ranked';
-  competitiveRating: number;
-  rankDivisionIndex: number;
-  rank: unknown;
-  targetRankDivisionIndex: number;
-  targetRankLabel: string;
-  tokenHold: RankedTokenHoldStatus;
-}
-
-interface PlayerReportResultMessage {
-  requestId?: string | null;
-  ok: boolean;
-  reportId?: string;
-  error?: string;
-}
-
-interface MatchStartGateMessage {
-  key: number;
-  serverTime?: number;
-  mapSeed?: number;
-  mapThemeId?: VoxelMapTheme['id'] | null;
-  mapSize?: VoxelMapSizeId | null;
-  position?: { x: number; y: number; z: number };
-  movementEpoch?: number;
-  ackSeq?: number;
-  collisionRevision?: number;
-}
-
-interface MatchCancelledMessage {
-  reason?: string;
-  message?: string;
-  roomId?: string;
-  requiredHumanPlayers?: number;
-  connectedHumanPlayers?: number;
-  refundedWager?: boolean;
-  serverTime?: number;
-  blockedPlayerId?: string;
-  blockedPlayerName?: string;
-  networkQuality?: {
-    reason?: string | null;
-    sampleCount?: number;
-    successfulSamples?: number;
-    timeoutCount?: number;
-    consecutiveTimeouts?: number;
-    timeoutRatio?: number;
-    averagePingMs?: number | null;
-    peakPingMs?: number | null;
-    jitterMs?: number | null;
-    observationMs?: number;
-    windowMs?: number;
-  };
 }
 
 const NetworkContext = createContext<NetworkContextType | null>(null);
-
-function measureNetworkMessage<T>(type: string, handler: (data: T) => void): (data: T) => void {
-  return (data) => {
-    measureFrameWork(`network.${type}`, () => handler(data));
-  };
-}
-
-function getHttpUrl(): string {
-  return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
-}
-
-async function requestQuickPlayTicket(): Promise<QuickPlayTicketResponse> {
-  const response = await fetch(`${getHttpUrl()}/matchmaking/quick-play-ticket`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ error: 'Failed to issue matchmaking ticket' }));
-    throw new Error(payload.error || 'Failed to issue matchmaking ticket');
-  }
-
-  return response.json();
-}
-
-async function requestRankedTicket(): Promise<RankedTicketResponse> {
-  const response = await fetch(`${getHttpUrl()}/matchmaking/ranked-ticket`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
-  });
-
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ error: 'Failed to issue ranked ticket' }));
-    throw new Error(payload.error || 'Failed to issue ranked ticket');
-  }
-
-  return response.json();
-}
-
-async function requestRankedTokenHoldStatus(): Promise<RankedTokenHoldStatus> {
-  const response = await fetch(`${getHttpUrl()}/matchmaking/ranked-token-hold-status`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ error: 'Failed to check ranked token holding' }));
-    throw new Error(payload.error || 'Failed to check ranked token holding');
-  }
-
-  const payload = await response.json() as { tokenHold: RankedTokenHoldStatus };
-  return payload.tokenHold;
-}
-
-async function requestRunningGameStatus(roomId: string): Promise<{
-  available: boolean;
-  reason?: string;
-  mapSeed?: number;
-  mapThemeId?: VoxelMapTheme['id'] | null;
-  mapSize?: VoxelMapSizeId | null;
-}> {
-  const response = await fetch(`${getHttpUrl()}/matchmaking/running-game/${encodeURIComponent(roomId)}`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ error: 'Failed to check running game' }));
-    throw new Error(payload.error || 'Failed to check running game');
-  }
-
-  return response.json();
-}
-
-async function wagerApiRequest<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${getHttpUrl()}${endpoint}`, {
-    ...options,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  });
-
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ error: 'Wager request failed' }));
-    throw new Error(payload.error || 'Wager request failed');
-  }
-
-  return response.json();
-}
-
-async function preflightWageredLobby(wager: CreateLobbyWagerOptions | undefined): Promise<void> {
-  if (!wager?.enabled) return;
-  await wagerApiRequest('/wagers/lobbies/preflight', {
-    method: 'POST',
-    body: JSON.stringify({ wager }),
-  });
-}
 
 function createPracticePlayerId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -401,6 +210,7 @@ function runAfterNextPaint(callback: () => void): void {
 
 export function NetworkProvider({ children }: { children: ReactNode }) {
   const clientRef = useRef<Client | null>(null);
+  const partyRoomRef = useRef<Room | null>(null);
   const lobbyRoomRef = useRef<Room | null>(null);
   const gameRoomRef = useRef<Room | null>(null);
   const isJoiningGameRef = useRef(false);
@@ -417,6 +227,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     reject: (error: Error) => void;
     timeoutId: number;
   }>());
+  const joinGameRoomRef = useRef<NetworkContextType['joinGameRoom'] | null>(null);
+  const leaveLobbyRef = useRef<NetworkContextType['leaveLobby'] | null>(null);
 
   const {
     setConnected,
@@ -430,27 +242,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setAppPhase,
     setGamePhase,
     setPhaseEndTime,
-    setMapSeed,
-    setMapThemeId,
-    setMapSize,
     setLocalPlayer,
-    updatePlayer,
-    removePlayer,
-    setCurrentLobby,
-    setCurrentLobbyWager,
-    setLobbyPlayers,
-    updateLobbyPlayer,
-    removeLobbyPlayer,
     setIsLobbyHost,
-    setLobbyObserverSettings,
     setLobbyError,
-    setObserverMode,
     setMatchmakingStatus,
-    setMatchSummary,
-    setPlayerPings,
-    setMapVoteState,
-    setMapVotes,
-    clearMapVote,
     clearMatchSummary,
     reset,
     resetLobby,
@@ -494,8 +289,16 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     disconnectVoice('network_cleanup');
     rejectPendingVoiceTokenRequests('connection cleaned up before voice token response');
     rejectPendingPlayerReportRequests('connection cleaned up before report response');
-    setObserverMode(false);
-
+    if (partyRoomRef.current) {
+      clearActivePartySession(partyRoomRef.current.id);
+      try {
+        partyRoomRef.current.leave(false);
+      } catch (e) {
+        loggers.network.debug('error leaving old party room', e);
+      }
+      partyRoomRef.current = null;
+      usePartyStore.getState().clearParty();
+    }
     if (lobbyRoomRef.current) {
       try {
         lobbyRoomRef.current.leave(false);
@@ -512,11 +315,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       }
       gameRoomRef.current = null;
     }
-  }, [rejectPendingPlayerReportRequests, rejectPendingVoiceTokenRequests, setObserverMode]);
+  }, [rejectPendingPlayerReportRequests, rejectPendingVoiceTokenRequests]);
 
   const startPracticeGame = useCallback((playerName?: string, options?: StartPracticeGameOptions) => {
     const name = resolvePracticePlayerName(playerName);
     const isTutorial = options?.tutorial === true;
+    const matchPerspective = isTutorial
+      ? DEFAULT_MATCH_PERSPECTIVE
+      : options?.matchPerspective ?? DEFAULT_MATCH_PERSPECTIVE;
 
     cleanupExistingConnections();
     clearRunningGameSession();
@@ -545,6 +351,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           manifest: tutorialManifest ?? undefined,
           mapSize: tutorialManifest?.mapSize ?? DEFAULT_VOXEL_MAP_SIZE_ID,
           themeId: tutorialManifest?.themeId ?? null,
+          mapProfileId: tutorialManifest?.profileId ?? null,
           source: 'match',
         });
         prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'practice-start' });
@@ -559,26 +366,27 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           : spawnPoints[Math.floor(Math.random() * spawnPoints.length)] ?? { x: 0, y: 1, z: 0 };
         const playerId = createPracticePlayerId();
         const player = createDefaultLocalPlayer(playerId, name);
-        const tutorialHeroStats = isTutorial ? getHeroStats(TUTORIAL_HERO_ID) : null;
+        const practiceHeroId = isTutorial ? TUTORIAL_HERO_ID : options?.heroId ?? 'blaze';
+        const practiceHeroStats = getHeroStats(practiceHeroId);
 
-        player.state = isTutorial ? 'alive' : 'selecting';
+        player.state = 'alive';
         player.position = { ...spawn };
         player.team = 'red';
         if (isTutorial) {
           player.lookYaw = facingToLookYaw(preparedMap.manifest.gameplay.spawns.red.facing);
           player.lookPitch = 0;
         }
-        player.isReady = isTutorial;
-        player.heroId = isTutorial ? TUTORIAL_HERO_ID : null;
-        if (tutorialHeroStats) {
-          player.maxHealth = tutorialHeroStats.maxHealth;
-          player.health = Math.max(
+        player.isReady = true;
+        player.heroId = practiceHeroId;
+        player.maxHealth = practiceHeroStats.maxHealth;
+        player.health = isTutorial
+          ? Math.max(
             1,
-            tutorialHeroStats.maxHealth - Math.max(1, Math.round(tutorialHeroStats.maxHealth * POWERUP_HEALTH_RESTORE_RATIO))
-          );
-          player.ultimateCharge = 100;
-          player.abilities = createPracticeAbilityStates(TUTORIAL_HERO_ID);
-        }
+            practiceHeroStats.maxHealth - Math.max(1, Math.round(practiceHeroStats.maxHealth * POWERUP_HEALTH_RESTORE_RATIO))
+          )
+          : practiceHeroStats.maxHealth;
+        player.ultimateCharge = 100;
+        player.abilities = createPracticeAbilityStates(practiceHeroId);
         player.hasFlag = false;
 
         useGameStore.setState({
@@ -592,12 +400,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           playerId,
           appPhase: 'in_game',
           gameplayMode: DEFAULT_GAMEPLAY_MODE,
-          gamePhase: isTutorial ? 'playing' : 'hero_select',
+          matchPerspective,
+          gamePhase: 'playing',
           matchSummary: null,
           appliedExperienceMatchId: null,
           mapSeed: seed,
           mapThemeId: preparedMap.manifest.themeId,
           mapSize: preparedMap.manifest.mapSize,
+          mapProfileId: preparedMap.manifest.profileId ?? null,
           redScore: 0,
           blueScore: 0,
           redFlag: isTutorial
@@ -624,7 +434,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           lastSkillCastAt: 0,
           lastPrimaryFireAt: 0,
           slideIntensity: 0,
-          isObserverMode: false,
         });
         resetGameTiming(Date.now());
         resetLocalMovementPrediction(movementStateFromPlayer(player), 0, player.id);
@@ -662,456 +471,87 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, [startPracticeGame]);
 
   const setupLobbyListeners = useCallback((room: Room, playerName: string) => {
-    room.onMessage('lobbyState', (data: {
-      lobbyId: string;
-      name: string;
-      matchMode?: LobbyWagerState['matchMode'];
-      gameplayMode?: GameplayMode;
-      hostId: string;
-      status: string;
-      players: any[];
-      observersEnabled?: boolean;
-      maxObservers?: number;
-      rankBandId?: number;
-      rankBandLabel?: string;
-      averageCompetitiveRating?: number;
-      averageVisibleRank?: string;
-      rankSearchDistance?: number;
-      queuedHumanCount?: number;
-      provisionalHumanCount?: number;
-      requiredPlayers?: number;
-      capacityBlocked?: boolean;
-      capacityMaxPlayers?: number;
-      rankedCoverChargeLamports?: string;
-      rankedEntryQuoteId?: string;
-      wager?: LobbyWagerState;
-    }) => {
-      loggers.network.debug('received lobby state', data);
-      setCurrentLobby(data.lobbyId, data.name);
-      useGameStore.setState({
-        gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : DEFAULT_GAMEPLAY_MODE,
-      });
-      const currentWager = useGameStore.getState().currentLobbyWager;
-      const nextWager = data.wager ?? { enabled: false };
-      setCurrentLobbyWager({
-        ...nextWager,
-        rankedEntryQuoteExpiresAt: nextWager.rankedEntryQuoteExpiresAt ?? currentWager.rankedEntryQuoteExpiresAt ?? null,
-      });
-      setIsLobbyHost(data.hostId === room.sessionId);
-      setLobbyObserverSettings(Boolean(data.observersEnabled), typeof data.maxObservers === 'number' ? data.maxObservers : 0);
-      setMatchmakingStatus({
-        matchMode: data.matchMode ?? null,
-        rankBandId: typeof data.rankBandId === 'number' ? data.rankBandId : null,
-        rankBandLabel: data.rankBandLabel ?? null,
-        averageCompetitiveRating: typeof data.averageCompetitiveRating === 'number' ? data.averageCompetitiveRating : null,
-        averageVisibleRank: data.averageVisibleRank ?? null,
-        rankSearchDistance: typeof data.rankSearchDistance === 'number' ? data.rankSearchDistance : null,
-        queuedHumanCount: typeof data.queuedHumanCount === 'number' ? data.queuedHumanCount : null,
-        provisionalHumanCount: typeof data.provisionalHumanCount === 'number' ? data.provisionalHumanCount : null,
-        requiredPlayers: typeof data.requiredPlayers === 'number' ? data.requiredPlayers : null,
-        capacityBlocked: data.capacityBlocked === true,
-        capacityMaxPlayers: typeof data.capacityMaxPlayers === 'number' ? data.capacityMaxPlayers : null,
-        rankedCoverChargeLamports: data.rankedCoverChargeLamports ?? null,
-        rankedEntryQuoteId: data.rankedEntryQuoteId ?? data.wager?.rankedEntryQuoteId ?? null,
-      });
-      if (data.status === 'map_vote') {
-        setAppPhase('map_vote');
-      } else if (data.status === 'matchmaking') {
-        setAppPhase('matchmaking');
-      }
-
-      const playersMap = new Map<string, LobbyPlayer>();
-      for (const p of data.players) {
-        playersMap.set(p.id, {
-          id: p.id,
-          name: p.name,
-          isHost: p.isHost,
-          isReady: p.isReady,
-          team: p.team,
-          isObserver: Boolean(p.isObserver),
-          heroId: p.heroId || '',
-          isBot: Boolean(p.isBot),
-          botDifficulty: p.botDifficulty || '',
-          botProfileId: p.botProfileId,
-          paymentStatus: p.paymentStatus || '',
-          paymentWalletAddress: p.paymentWalletAddress || '',
-          depositSignature: p.depositSignature || '',
-          refundSignature: p.refundSignature || '',
-          rank: p.rank,
-        });
-      }
-      setLobbyPlayers(playersMap);
-    });
-
-    room.onMessage('matchmakingStatus', (data: {
-      matchMode?: LobbyWagerState['matchMode'];
-      rankBandId?: number;
-      rankBandLabel?: string;
-      averageCompetitiveRating?: number;
-      averageVisibleRank?: string;
-      rankSearchDistance?: number;
-      queuedHumanCount?: number;
-      provisionalHumanCount?: number;
-      requiredPlayers?: number;
-      capacityBlocked?: boolean;
-      capacityMaxPlayers?: number;
-      rankedCoverChargeLamports?: string;
-      rankedEntryQuoteId?: string;
-    }) => {
-      setMatchmakingStatus({
-        matchMode: data.matchMode ?? null,
-        rankBandId: typeof data.rankBandId === 'number' ? data.rankBandId : null,
-        rankBandLabel: data.rankBandLabel ?? null,
-        averageCompetitiveRating: typeof data.averageCompetitiveRating === 'number' ? data.averageCompetitiveRating : null,
-        averageVisibleRank: data.averageVisibleRank ?? null,
-        rankSearchDistance: typeof data.rankSearchDistance === 'number' ? data.rankSearchDistance : null,
-        queuedHumanCount: typeof data.queuedHumanCount === 'number' ? data.queuedHumanCount : null,
-        provisionalHumanCount: typeof data.provisionalHumanCount === 'number' ? data.provisionalHumanCount : null,
-        requiredPlayers: typeof data.requiredPlayers === 'number' ? data.requiredPlayers : null,
-        capacityBlocked: data.capacityBlocked === true,
-        capacityMaxPlayers: typeof data.capacityMaxPlayers === 'number' ? data.capacityMaxPlayers : null,
-        rankedCoverChargeLamports: data.rankedCoverChargeLamports ?? null,
-        rankedEntryQuoteId: data.rankedEntryQuoteId ?? null,
-      });
-    });
-
-    room.onMessage('mapVoteStarted', (data: {
-      options: MapVoteOption[];
-      votes: MapVoteRecord[];
-      phaseEndTime: number | null;
-    }) => {
-      loggers.network.info('map vote started', data.options.map((option) => option.seed));
-      setMapVoteState(data.options, data.votes, data.phaseEndTime);
-      setAppPhase('map_vote');
-    });
-
-    room.onMessage('mapVoteTimerStarted', (data: { phaseEndTime: number }) => {
-      useGameStore.setState({ mapVotePhaseEndTime: data.phaseEndTime });
-    });
-
-    room.onMessage('mapVoteUpdated', (data: { votes: MapVoteRecord[] }) => {
-      setMapVotes(data.votes);
-    });
-
-    room.onMessage('mapVoteFinalized', (data: {
-      selectedOptionId: string;
-      mapSeed: number;
-      mapThemeId?: VoxelMapTheme['id'] | null;
-      mapSize?: VoxelMapSizeId | null;
-      votes: MapVoteRecord[];
-    }) => {
-      loggers.network.info('map vote finalized', data.mapSeed);
-      setMapVotes(data.votes, data.selectedOptionId);
-      setMapSeed(data.mapSeed);
-      setMapThemeId(data.mapThemeId ?? null);
-      setMapSize(data.mapSize);
-      try {
-        const preparedMap = prepareVoxelMapCpu({
-          seed: data.mapSeed,
-          themeId: data.mapThemeId ?? null,
-          mapSize: data.mapSize,
-          source: 'mapVoteFinalized',
-        });
-        prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 3, label: 'map-vote-finalized' });
-      } catch (error) {
-        loggers.network.warn('selected map CPU prep failed', error);
-      }
-    });
-
-    room.onMessage('mapVoteCancelled', (data: { reason?: string; status?: string }) => {
-      loggers.network.warn('map vote cancelled', data.reason || 'unknown');
-      clearMapVote();
-      setAppPhase(data.status === 'matchmaking' ? 'matchmaking' : 'in_lobby');
-    });
-
-    room.onMessage('playerJoined', (data: {
-      playerId: string;
-      playerName: string;
-      isHost: boolean;
-      isReady?: boolean;
-      team?: string;
-      isObserver?: boolean;
-      heroId?: HeroId | '';
-      isBot?: boolean;
-      botDifficulty?: BotDifficulty | '';
-      botProfileId?: string;
-      paymentStatus?: LobbyPlayer['paymentStatus'];
-      paymentWalletAddress?: string;
-      depositSignature?: string;
-      refundSignature?: string;
-      rank?: PublicRankSnapshot;
-    }) => {
-      loggers.network.debug('player joined lobby', data.playerName);
-      updateLobbyPlayer(data.playerId, {
-        id: data.playerId,
-        name: data.playerName,
-        isHost: data.isHost,
-        isReady: data.isReady ?? false,
-        team: data.team || '',
-        isObserver: Boolean(data.isObserver),
-        heroId: data.heroId || '',
-        isBot: Boolean(data.isBot),
-        botDifficulty: data.botDifficulty || '',
-        botProfileId: data.botProfileId,
-        paymentStatus: data.paymentStatus || '',
-        paymentWalletAddress: data.paymentWalletAddress || '',
-        depositSignature: data.depositSignature || '',
-        refundSignature: data.refundSignature || '',
-        rank: data.rank,
-      });
-    });
-
-    room.onMessage('paymentStatusChanged', (data: {
-      lobbyId: string;
-      userId: string;
-      lobbyPlayerId: string | null;
-      status: LobbyPlayer['paymentStatus'];
-      amountLamports: string;
-      walletAddress: string;
-      depositSignature?: string | null;
-      refundSignature?: string | null;
-      refundReason?: string | null;
-      refundGrossLamports?: string | null;
-      refundOutboundFeeLamports?: string | null;
-      refundNetLamports?: string | null;
-      refundFeeSource?: string | null;
-      potLamports: string;
-    }) => {
-      loggers.network.debug('payment status changed', data.status);
-      if (data.lobbyPlayerId) {
-        const player = useGameStore.getState().lobbyPlayers.get(data.lobbyPlayerId);
-        if (player) {
-          updateLobbyPlayer(data.lobbyPlayerId, {
-            ...player,
-            paymentStatus: data.status,
-            paymentWalletAddress: data.walletAddress,
-            depositSignature: data.depositSignature || '',
-            refundSignature: data.refundSignature || '',
-          });
+    setupLobbyRoomListeners(room, {
+      playerName,
+      joinGameRoom: (...args) => {
+        const joinGameRoom = joinGameRoomRef.current;
+        if (!joinGameRoom) {
+          return Promise.reject(new Error('Game room join handler is not ready'));
         }
-      }
-      const currentWager = useGameStore.getState().currentLobbyWager;
-      if (currentWager.enabled) {
-        setCurrentLobbyWager({
-          ...currentWager,
-          potLamports: data.potLamports,
-        });
-      }
+        return joinGameRoom(...args);
+      },
+      leaveLobby: () => {
+        leaveLobbyRef.current?.();
+      },
     });
+  }, []);
 
-    room.onMessage('paymentIntentCreated', (data: { intent: WagerPaymentIntent }) => {
-      loggers.network.debug('payment intent created', data.intent.intentId);
-    });
-
-    room.onMessage('paymentIntentUpdated', (data: { intent: WagerPaymentIntent }) => {
-      loggers.network.debug('payment intent updated', data.intent.status);
-    });
-
-    room.onMessage('paymentIntentError', (data: { message: string }) => {
-      loggers.network.error('payment intent error', data.message);
-    });
-
-    room.onMessage('wagerStartBlocked', (data: { message: string; unpaidPlayers?: Array<{ name: string }> }) => {
-      loggers.network.warn('wager start blocked', data.message, data.unpaidPlayers?.map((player) => player.name));
-    });
-
-    room.onMessage('playerLeft', (data: { playerId: string }) => {
-      loggers.network.debug('player left lobby', data.playerId);
-      removeLobbyPlayer(data.playerId);
-    });
-
-    room.onMessage('playerReady', (data: { playerId: string; ready: boolean }) => {
-      const store = useGameStore.getState();
-      const player = store.lobbyPlayers.get(data.playerId);
-      if (player) {
-        updateLobbyPlayer(data.playerId, { ...player, isReady: data.ready });
-      }
-    });
-
-    room.onMessage('playerTeamChanged', (data: { playerId: string; team: string }) => {
-      const store = useGameStore.getState();
-      const player = store.lobbyPlayers.get(data.playerId);
-      if (player) {
-        updateLobbyPlayer(data.playerId, { ...player, team: data.team });
-      }
-    });
-
-    room.onMessage('playerObserverChanged', (data: { playerId: string; isObserver: boolean; team?: string; isReady?: boolean }) => {
-      const store = useGameStore.getState();
-      const player = store.lobbyPlayers.get(data.playerId);
-      if (player) {
-        updateLobbyPlayer(data.playerId, {
-          ...player,
-          isObserver: data.isObserver,
-          team: data.team ?? player.team,
-          isReady: data.isReady ?? player.isReady,
-        });
-      }
-    });
-
-    room.onMessage('botDifficultyChanged', (data: { playerId: string; difficulty: BotDifficulty }) => {
-      const store = useGameStore.getState();
-      const player = store.lobbyPlayers.get(data.playerId);
-      if (player) {
-        updateLobbyPlayer(data.playerId, { ...player, botDifficulty: data.difficulty });
-      }
-    });
-
-    room.onMessage('botHeroChanged', (data: { playerId: string; heroId: HeroId | '' }) => {
-      const store = useGameStore.getState();
-      const player = store.lobbyPlayers.get(data.playerId);
-      if (player) {
-        updateLobbyPlayer(data.playerId, { ...player, heroId: data.heroId });
-      }
-    });
-
-    room.onMessage('hostChanged', (data: { newHostId: string; newHostName: string }) => {
-      loggers.network.debug('host changed', data.newHostName);
-      setIsLobbyHost(data.newHostId === room.sessionId);
-
-      const store = useGameStore.getState();
-      const updatedPlayers = new Map<string, LobbyPlayer>();
-      store.lobbyPlayers.forEach((p, id) => {
-        updatedPlayers.set(id, { ...p, isHost: id === data.newHostId });
-      });
-      setLobbyPlayers(updatedPlayers);
-    });
-
-    let isJoiningGame = false;
-    room.onMessage('gameStarting', async (data: {
-      gameRoomId: string;
-      players: { playerId: string; playerName: string; team?: string; isBot?: boolean; isObserver?: boolean }[];
-      entryTicket?: string;
-      gameplayMode?: GameplayMode;
-      mapSize?: VoxelMapSizeId | null;
-    }) => {
-      if (isJoiningGame) {
-        loggers.network.debug('ignoring duplicate gameStarting message');
-        return;
-      }
-      isJoiningGame = true;
-
-      loggers.network.info('game starting', data.gameRoomId);
-      const myAssignment = data.players.find(p => p.playerId === room.sessionId);
-      const isObserver = myAssignment?.isObserver === true;
-      const myTeam = myAssignment?.team || 'red';
-      useGameStore.setState({
-        gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : DEFAULT_GAMEPLAY_MODE,
-      });
-      setMapSize(data.mapSize);
-
-      try {
-        await joinGameRoom(data.gameRoomId, playerName, myTeam, data.entryTicket, isObserver);
-      } catch (error) {
-        loggers.network.error('failed to join game room', error);
-        isJoiningGame = false;
-      }
-    });
-
-    room.onMessage('kicked', (data: { reason: string }) => {
-      loggers.network.warn('kicked from lobby', data.reason);
-      disconnectVoice('lobby_kicked');
-      leaveLobby();
-    });
-
-    room.onMessage('duplicateSession', (data: { reason: string }) => {
-      loggers.network.warn('duplicate session detected in lobby', data.reason);
-      disconnectVoice('duplicate_lobby_session');
-    });
-
-    room.onMessage('error', (data: { message: string }) => {
-      loggers.network.error('lobby error', data.message);
-      setLobbyError(data.message || 'Lobby action failed');
-    });
-
-    room.onError((code, message) => {
-      loggers.network.error('lobby room error', code, message);
-    });
-
-    room.onLeave((code) => {
-      loggers.network.debug('left lobby room', code);
-      disconnectVoice('left_lobby');
-      resetLobby();
-    });
-  }, [setCurrentLobby, setCurrentLobbyWager, setIsLobbyHost, setLobbyObserverSettings, setLobbyError, setMatchmakingStatus, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, setAppPhase, setMapVoteState, setMapVotes, setMapSeed, setMapThemeId, setMapSize, clearMapVote, resetLobby]);
-
-  const createLobby = useCallback(async (
+  const quickPlay = useCallback(async (
     playerName: string,
-    lobbyName?: string,
-    options?: CreateLobbyOptions
+    gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE,
+    botFillEnabled = false,
+    selectedHero?: HeroId,
+    matchPerspective: MatchPerspective = DEFAULT_MATCH_PERSPECTIVE
   ) => {
     setLoading(true);
 
     try {
-      await preflightWageredLobby(options?.wager);
       cleanupExistingConnections();
       clearRunningGameSession();
       setPracticeMode(false);
 
       const client = getClient();
-
-      lobbyRoomRef.current = await client.create('lobby_room', {
-        playerName,
-        lobbyName: lobbyName || `${playerName}'s Lobby`,
-        isPrivate: true,
-        initialBotCount: options?.initialBotCount || 0,
-        botFillMode: options?.botFillMode || 'manual',
-        defaultBotDifficulty: options?.defaultBotDifficulty || 'normal',
-        wager: options?.wager,
-        gameplayMode: options?.gameplayMode ?? DEFAULT_GAMEPLAY_MODE,
-        mapSeed: config.isDev && typeof options?.mapSeed === 'number'
-          ? options.mapSeed >>> 0
-          : undefined,
-        forceGoldenMapOption: config.isDev && options?.forceGoldenMapOption === true,
-        observersEnabled: config.isDev && options?.observersEnabled === true,
+      const botFillMode = botFillEnabled ? 'fill_even' : 'manual';
+      const matchmakingTicket = await requestQuickPlayTicket({
+        gameplayMode,
+        botFillMode,
+        matchPerspective,
       });
-
-      setupLobbyListeners(lobbyRoomRef.current, playerName);
-
-      setPlayerId(lobbyRoomRef.current.sessionId);
-      setCurrentLobby(lobbyRoomRef.current.id, lobbyName || `${playerName}'s Lobby`);
-      setIsLobbyHost(true);
-      setAppPhase('in_lobby');
-      setConnected(true);
-      setLoading(false);
-
-      loggers.network.info('created lobby', lobbyRoomRef.current.id);
-    } catch (error) {
-      loggers.network.error('failed to create lobby', error);
-      setLoading(false);
-      throw error;
-    }
-  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setCurrentLobby, setIsLobbyHost, setAppPhase, setConnected, setPracticeMode]);
-
-  const quickPlay = useCallback(async (playerName: string) => {
-    setLoading(true);
-
-    try {
-      cleanupExistingConnections();
-      clearRunningGameSession();
-      setPracticeMode(false);
-
-      const client = getClient();
-      const matchmakingTicket = await requestQuickPlayTicket();
 
       loggers.network.debug('quick play matchmaking', matchmakingTicket.targetRankLabel);
 
+      const lobbyName = gameplayMode === DEFAULT_GAMEPLAY_MODE
+        ? getGameplayModeLabel(DEFAULT_GAMEPLAY_MODE)
+        : getGameplayModeLabel(gameplayMode);
       lobbyRoomRef.current = await client.joinOrCreate('lobby_room', {
         playerName,
-        lobbyName: 'Quick Play',
+        lobbyName,
+        ...getDevTutorialBypassRoomOptions(),
         isPrivate: false,
         matchmakingMode: true,
         matchMode: 'quick_play',
+        gameplayMode,
+        matchPerspective,
         matchmakingTicket: matchmakingTicket.ticket,
         rankBandId: matchmakingTicket.targetRankDivisionIndex,
         initialBotCount: 0,
-        botFillMode: 'manual',
+        botFillMode,
         defaultBotDifficulty: 'normal',
+        selectedHero,
       });
 
       setupLobbyListeners(lobbyRoomRef.current, playerName);
 
       setPlayerId(lobbyRoomRef.current.sessionId);
+      useGameStore.setState({ gameplayMode, matchPerspective });
+      setMatchmakingStatus({
+        matchMode: 'quick_play',
+        gameplayMode,
+        botFillMode,
+        matchPerspective,
+        rankBandId: matchmakingTicket.targetRankDivisionIndex,
+        rankBandLabel: matchmakingTicket.targetRankLabel,
+        averageCompetitiveRating: matchmakingTicket.competitiveRating,
+        averageVisibleRank: null,
+        rankSearchDistance: null,
+        queuedHumanCount: 0,
+        provisionalHumanCount: 1,
+        requiredPlayers: null,
+        capacityBlocked: false,
+        capacityMaxPlayers: null,
+        rankedCoverChargeLamports: null,
+        rankedEntryQuoteId: null,
+      });
       setAppPhase('matchmaking');
       setConnected(true);
       setLoading(false);
@@ -1122,9 +562,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       throw error;
     }
-  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected, setPracticeMode]);
+  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setMatchmakingStatus, setAppPhase, setConnected, setPracticeMode]);
 
-  const rankedPlay = useCallback(async (playerName: string) => {
+  const rankedPlay = useCallback(async (playerName: string, selectedHero?: HeroId) => {
     setLoading(true);
 
     try {
@@ -1140,26 +580,31 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       lobbyRoomRef.current = await client.joinOrCreate('lobby_room', {
         playerName,
         lobbyName: 'Ranked',
+        ...getDevTutorialBypassRoomOptions(),
         isPrivate: false,
         matchmakingMode: true,
         matchMode: 'ranked',
         matchmakingTicket: rankedTicket.ticket,
+        matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
         rankBandId: rankedTicket.targetRankDivisionIndex,
         initialBotCount: 0,
         botFillMode: 'manual',
         defaultBotDifficulty: 'normal',
+        selectedHero,
       });
 
       setupLobbyListeners(lobbyRoomRef.current, playerName);
 
       setPlayerId(lobbyRoomRef.current.sessionId);
-      setCurrentLobbyWager({
-        enabled: false,
-        matchMode: 'ranked',
-        token: 'SOL',
+      useGameStore.setState({
+        gameplayMode: DEFAULT_GAMEPLAY_MODE,
+        matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
       });
       setMatchmakingStatus({
         matchMode: 'ranked',
+        gameplayMode: DEFAULT_GAMEPLAY_MODE,
+        botFillMode: 'manual',
+        matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
         rankBandId: rankedTicket.targetRankDivisionIndex,
         rankBandLabel: rankedTicket.targetRankLabel,
         averageCompetitiveRating: rankedTicket.competitiveRating,
@@ -1183,7 +628,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       throw error;
     }
-  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setCurrentLobbyWager, setMatchmakingStatus, setAppPhase, setConnected, setPracticeMode]);
+  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setMatchmakingStatus, setAppPhase, setConnected, setPracticeMode]);
 
   const getRankedTokenHoldStatus = useCallback(() => requestRankedTokenHoldStatus(), []);
 
@@ -1199,6 +644,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
       lobbyRoomRef.current = await client.joinById(lobbyId, {
         playerName,
+        ...getDevTutorialBypassRoomOptions(),
       });
 
       setupLobbyListeners(lobbyRoomRef.current, playerName);
@@ -1215,6 +661,244 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       throw error;
     }
   }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected, setPracticeMode]);
+
+  const joinMatchmakingLobby = useCallback(async (playerName: string, launch: PartyLaunchPayload) => {
+    setLoading(true);
+
+    try {
+      cleanupExistingConnections();
+      clearRunningGameSession();
+      setPracticeMode(false);
+
+      const client = getClient();
+      const joinOptions: Record<string, unknown> = {
+        playerName,
+        ...getDevTutorialBypassRoomOptions(),
+      };
+      if (launch.matchmakingTicket) {
+        joinOptions.matchmakingTicket = launch.matchmakingTicket;
+      }
+      joinOptions.matchPerspective = launch.matchPerspective;
+
+      lobbyRoomRef.current = await client.joinById(launch.lobbyId, joinOptions);
+
+      setupLobbyListeners(lobbyRoomRef.current, playerName);
+
+      setPlayerId(lobbyRoomRef.current.sessionId);
+      if (launch.matchMode === 'ranked' || launch.matchMode === 'quick_play') {
+        setMatchmakingStatus({
+          matchMode: launch.matchMode,
+          gameplayMode: launch.gameplayMode,
+          botFillMode: launch.botFillMode ?? 'manual',
+          matchPerspective: launch.matchPerspective,
+          rankBandId: launch.targetRankDivisionIndex ?? null,
+          rankBandLabel: launch.targetRankLabel ?? null,
+          averageCompetitiveRating: null,
+          averageVisibleRank: null,
+          rankSearchDistance: null,
+          queuedHumanCount: 0,
+          provisionalHumanCount: 1,
+          requiredPlayers: null,
+          capacityBlocked: false,
+          capacityMaxPlayers: null,
+          rankedCoverChargeLamports: null,
+          rankedEntryQuoteId: null,
+        });
+      }
+      useGameStore.setState({
+        gameplayMode: launch.gameplayMode,
+        matchPerspective: launch.matchPerspective,
+      });
+      setAppPhase(launch.matchMode === 'custom' ? 'in_lobby' : 'matchmaking');
+      setConnected(true);
+      setLoading(false);
+
+      loggers.network.info('joined party launch lobby', launch.lobbyId);
+    } catch (error) {
+      loggers.network.error('failed to join party launch lobby', error);
+      setLoading(false);
+      throw error;
+    }
+  }, [
+    cleanupExistingConnections,
+    getClient,
+    setAppPhase,
+    setConnected,
+    setLoading,
+    setMatchmakingStatus,
+    setPlayerId,
+    setPracticeMode,
+    setupLobbyListeners,
+  ]);
+
+  const setupPartyListeners = useCallback((room: Room, playerNameForLaunch: string) => {
+    const localUserId = useGameStore.getState().userId;
+    usePartyStore.getState().setLocalUserId(localUserId);
+
+    const logPartyNotification = (type: string, payload: unknown) => {
+      loggers.network.debug(type, payload);
+    };
+
+    room.onMessage('partyState', (partyState: unknown) => {
+      const snapshot = partyState as PartyStateSnapshot;
+      const userId = useGameStore.getState().userId;
+      usePartyStore.getState().setPartyState(snapshot, userId);
+      const localMember = snapshot.members.find((member) => member.userId === userId);
+      if (userId && localMember) {
+        saveActivePartySession({
+          partyId: snapshot.partyId,
+          userId,
+          playerName: playerNameForLaunch,
+          heroId: localMember.heroId,
+        });
+      }
+    });
+    room.onMessage('partyMemberJoined', (payload: unknown) => {
+      logPartyNotification('party member joined', payload);
+    });
+    room.onMessage('partyMemberLeft', (payload: unknown) => {
+      logPartyNotification('party member left', payload);
+    });
+    room.onMessage('partyMemberUpdated', (payload: unknown) => {
+      logPartyNotification('party member updated', payload);
+    });
+    room.onMessage('partyLeaderChanged', (payload: unknown) => {
+      logPartyNotification('party leader changed', payload);
+    });
+    room.onMessage('partyKicked', (payload: unknown) => {
+      const message = typeof payload === 'object' && payload && 'reason' in payload
+        ? String((payload as { reason?: unknown }).reason || 'Kicked from party')
+        : 'Kicked from party';
+      clearActivePartySession(room.id);
+      usePartyStore.getState().clearParty();
+      usePartyStore.getState().setLaunchError(message);
+    });
+    room.onMessage('partyLaunch', (launch: unknown) => {
+      joinMatchmakingLobby(playerNameForLaunch, launch as PartyLaunchPayload).catch((error) => {
+        usePartyStore.getState().setLaunchError(error instanceof Error ? error.message : 'Failed to join party launch');
+      });
+    });
+    room.onMessage('error', (payload: unknown) => {
+      const message = typeof payload === 'object' && payload && 'message' in payload
+        ? String((payload as { message?: unknown }).message || 'Party action failed')
+        : 'Party action failed';
+      usePartyStore.getState().setLaunchError(message);
+    });
+    room.onLeave(() => {
+      if (partyRoomRef.current === room) {
+        partyRoomRef.current = null;
+        usePartyStore.getState().clearParty();
+      }
+    });
+  }, [joinMatchmakingLobby]);
+
+  const joinParty = useCallback(async (playerName: string, partyId: string, heroId?: HeroId) => {
+    const existingParty = usePartyStore.getState().party;
+    if (partyRoomRef.current && existingParty?.partyId === partyId) return;
+
+    if (partyRoomRef.current) {
+      clearActivePartySession(partyRoomRef.current.id);
+      try {
+        partyRoomRef.current.leave(false);
+      } catch (error) {
+        loggers.network.debug('error leaving old party room', error);
+      }
+      partyRoomRef.current = null;
+      usePartyStore.getState().clearParty();
+    }
+
+    const client = getClient();
+    partyRoomRef.current = await client.joinById(partyId, {
+      playerName,
+      heroId,
+      ...getDevTutorialBypassRoomOptions(),
+    });
+    setupPartyListeners(partyRoomRef.current, playerName);
+    setAppPhase('menu');
+  }, [getClient, setAppPhase, setupPartyListeners]);
+
+  const restoreParty = useCallback(async (playerName: string, persistentPartyId: string, heroId?: HeroId) => {
+    if (partyRoomRef.current) {
+      clearActivePartySession(partyRoomRef.current.id);
+      try {
+        partyRoomRef.current.leave(false);
+      } catch (error) {
+        loggers.network.debug('error leaving old party room', error);
+      }
+      partyRoomRef.current = null;
+      usePartyStore.getState().clearParty();
+    }
+
+    const client = getClient();
+    partyRoomRef.current = await client.create('party_room', {
+      playerName,
+      heroId,
+      restorePartyId: persistentPartyId,
+      ...getDevTutorialBypassRoomOptions(),
+    });
+    setupPartyListeners(partyRoomRef.current, playerName);
+    setAppPhase('menu');
+  }, [getClient, setAppPhase, setupPartyListeners]);
+
+  const getActivePartySession = useCallback(() => requestActivePartySession(), []);
+
+  const ensureParty = useCallback(async (playerName: string, heroId?: HeroId, options?: EnsurePartyOptions): Promise<string> => {
+    const existingParty = usePartyStore.getState().party;
+    if (partyRoomRef.current && existingParty) return existingParty.partyId;
+
+    const client = getClient();
+    partyRoomRef.current = await client.create('party_room', {
+      playerName,
+      heroId,
+      selectedMode: options?.selectedMode,
+      gameplayMode: options?.gameplayMode,
+      ...getDevTutorialBypassRoomOptions(),
+    });
+    setupPartyListeners(partyRoomRef.current, playerName);
+    setAppPhase('menu');
+    return partyRoomRef.current.id;
+  }, [getClient, setAppPhase, setupPartyListeners]);
+
+  const leaveParty = useCallback(() => {
+    if (partyRoomRef.current) {
+      clearActivePartySession(partyRoomRef.current.id);
+      partyRoomRef.current.leave();
+      partyRoomRef.current = null;
+    }
+    usePartyStore.getState().clearParty();
+  }, []);
+
+  const setPartyHero = useCallback((heroId: HeroId) => {
+    partyRoomRef.current?.send('setHero', { heroId });
+  }, []);
+
+  const setPartyReady = useCallback((ready: boolean) => {
+    partyRoomRef.current?.send('setReady', { ready });
+  }, []);
+
+  const setPartyMode = useCallback((mode: PartyMode, gameplayMode?: GameplayMode) => {
+    partyRoomRef.current?.send('setMode', { mode, gameplayMode });
+  }, []);
+
+  const setPartyBotFill = useCallback((gameplayMode: GameplayMode, enabled: boolean) => {
+    partyRoomRef.current?.send('setBotFill', { gameplayMode, enabled });
+  }, []);
+
+  const setPartyPerspective = useCallback((modeKey: MatchPerspectiveSettingMode, perspective: MatchPerspective) => {
+    partyRoomRef.current?.send('setPerspective', { modeKey, perspective });
+  }, []);
+
+  const addPartyBot = useCallback((options?: { difficulty?: BotDifficulty; displayName?: string; heroId?: HeroId }) => {
+    partyRoomRef.current?.send('addBot', options || {});
+  }, []);
+
+  const kickPartyMember = useCallback((userId: string) => {
+    partyRoomRef.current?.send('kickMember', { userId });
+  }, []);
+
+  const startParty = useCallback(() => {
+    partyRoomRef.current?.send('start');
+  }, []);
 
   const leaveLobby = useCallback(() => {
     disconnectVoice('leave_lobby');
@@ -1234,15 +918,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const setLobbyTeam = useCallback((team: string) => {
     lobbyRoomRef.current?.send('setTeam', { team });
-  }, []);
-
-  const setLobbyObserver = useCallback((observer: boolean) => {
-    lobbyRoomRef.current?.send('setObserver', { observer });
-  }, []);
-
-  const devSetLobbyObserver = useCallback((observer: boolean) => {
-    if (!config.isDev) return;
-    lobbyRoomRef.current?.send('devSetObserver', { observer });
   }, []);
 
   const addLobbyBot = useCallback((options?: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }) => {
@@ -1282,359 +957,24 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     lobbyRoomRef.current?.send('mapVotePreviewsReady');
   }, []);
 
-  const finalizeMapVote = useCallback(() => {
-    lobbyRoomRef.current?.send('finalizeMapVote');
-  }, []);
-
   const kickPlayer = useCallback((playerId: string) => {
     lobbyRoomRef.current?.send('kick', { playerId });
   }, []);
 
-  const createWagerPaymentIntent = useCallback(async (
-    lobbyId: string,
-    walletAddress: string,
-    lobbyPlayerId?: string | null,
-    rankedEntryQuoteId?: string | null
-  ): Promise<WagerPaymentIntent> => {
-    const response = await wagerApiRequest<{ intent: WagerPaymentIntent }>(
-      `/wagers/lobbies/${encodeURIComponent(lobbyId)}/intents`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ walletAddress, lobbyPlayerId, rankedEntryQuoteId }),
-      }
-    );
-    return response.intent;
-  }, []);
-
-  const submitWagerPaymentSignature = useCallback(async (
-    intentId: string,
-    signature: string
-  ): Promise<WagerPaymentIntent> => {
-    const response = await wagerApiRequest<{ intent: WagerPaymentIntent }>(
-      `/wagers/intents/${encodeURIComponent(intentId)}/signature`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ signature }),
-      }
-    );
-    return response.intent;
-  }, []);
-
-  const createWagerPaymentTransaction = useCallback(async (
-    intentId: string
-  ): Promise<WagerPaymentTransaction> => {
-    const response = await wagerApiRequest<{ transaction: WagerPaymentTransaction }>(
-      `/wagers/intents/${encodeURIComponent(intentId)}/transaction`,
-      { method: 'POST' }
-    );
-    return response.transaction;
-  }, []);
-
-  const submitWagerSignedPaymentTransaction = useCallback(async (
-    intentId: string,
-    signedTransactionBase64: string
-  ): Promise<WagerPaymentIntent> => {
-    const response = await wagerApiRequest<{ intent: WagerPaymentIntent }>(
-      `/wagers/intents/${encodeURIComponent(intentId)}/signed-transaction`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ signedTransactionBase64 }),
-      }
-    );
-    return response.intent;
-  }, []);
-
   // ==================== GAME ROOM OPERATIONS ====================
 
-  const enterObserverMode = useCallback((sessionId: string) => {
-    stopRemotePhantomCharge(sessionId);
-    forgetPlayerNetId(sessionId);
-    removePlayer(sessionId);
-    resetLocalMovementPrediction();
-    setObserverMode(true);
-    setMatchStartGateKey(null);
-    useGameStore.setState({
-      playerId: sessionId,
-      localPlayer: null,
-      clientCooldowns: {},
-      clientCharges: {},
-      lastSkillCastAt: 0,
-      lastPrimaryFireAt: 0,
-      slideIntensity: 0,
+  const setupGameListeners = useCallback((room: Room, playerName: string) => {
+    setupGameRoomListeners(room, {
+      playerName,
+      gameRoomRef,
+      isJoiningGameRef,
+      voiceTokenRequestsRef,
+      playerReportRequestsRef,
+      rejectPendingVoiceTokenRequests,
+      rejectPendingPlayerReportRequests,
+      setMatchStartGateKey,
     });
-  }, [removePlayer, setMatchStartGateKey, setObserverMode]);
-
-  const setupGameListeners = useCallback((room: Room, playerName: string, observer = false) => {
-    const sessionId = room.sessionId;
-    let localPlayerName = observer ? '' : playerName;
-
-    setObserverMode(observer);
-
-    if (observer) {
-      enterObserverMode(sessionId);
-    } else {
-      // Create default local player
-      setLocalPlayer(createDefaultLocalPlayer(sessionId, playerName));
-
-      // Cleanup ghost players
-      useGameStore.getState().cleanupGhostPlayers();
-    }
-
-    // Set up MapSchema callbacks
-    const playersMap = room.state.players as any;
-    if (playersMap && typeof playersMap.onAdd === 'function') {
-      playersMap.onAdd((schemaPlayer: any, id: string) => {
-        loggers.network.debug('player added via schema', id, schemaPlayer?.name);
-        syncPlayerFromSchema(schemaPlayer, id, sessionId, localPlayerName, { setLocalPlayer, updatePlayer });
-
-        if (typeof schemaPlayer?.onChange === 'function') {
-          schemaPlayer.onChange(() => {
-            syncPlayerFromSchema(schemaPlayer, id, sessionId, localPlayerName, { setLocalPlayer, updatePlayer });
-          });
-        }
-      });
-
-      playersMap.onRemove((_schemaPlayer: any, id: string) => {
-        loggers.network.debug('player removed via schema', id);
-        if (id !== sessionId) {
-          removePlayer(id);
-        }
-      });
-    }
-
-    const enableFallbackPolling = import.meta.env.DEV && import.meta.env.VITE_ENABLE_SCHEMA_POLLING === '1';
-    const syncInterval = enableFallbackPolling
-      ? setupPollingSync(room, { setGamePhase })
-      : null;
-
-    // Set up message handlers
-    room.onMessage('phaseChange', measureNetworkMessage('phaseChange', (data: {
-      phase: string;
-      endTime: number;
-      mapSeed?: number;
-      mapThemeId?: VoxelMapTheme['id'] | null;
-      mapSize?: VoxelMapSizeId | null;
-    }) => {
-      loggers.network.debug('phase change message', data.phase);
-      if (typeof data.mapSeed === 'number') {
-        setMapSeed(data.mapSeed);
-        setMapThemeId(data.mapThemeId ?? null);
-        setMapSize(data.mapSize);
-        try {
-          const preparedMap = prepareVoxelMapCpu({
-            seed: data.mapSeed,
-            themeId: data.mapThemeId ?? null,
-            mapSize: data.mapSize,
-            source: 'match',
-          });
-          prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'phase-change' });
-        } catch (error) {
-          loggers.network.warn('phase map CPU prep failed', error);
-        }
-      }
-      setGamePhase(data.phase as any);
-      setPhaseEndTime(data.endTime);
-      if (data.phase !== 'hero_select') {
-        setMatchStartGateKey(null);
-      }
-    }));
-
-    room.onMessage('matchStartGate', measureNetworkMessage('matchStartGate', (data: MatchStartGateMessage) => {
-      if (!data || typeof data.key !== 'number' || !Number.isInteger(data.key)) return;
-
-      if (typeof data.mapSeed === 'number') {
-        setMapSeed(data.mapSeed);
-        setMapThemeId(data.mapThemeId ?? null);
-        setMapSize(data.mapSize);
-      }
-
-      const position = data.position;
-      const hasSpawnPosition = Boolean(
-        position &&
-        Number.isFinite(position.x) &&
-        Number.isFinite(position.y) &&
-        Number.isFinite(position.z)
-      );
-
-      const localPlayer = useGameStore.getState().localPlayer;
-      if (localPlayer && hasSpawnPosition && position) {
-        const movementEpoch = Number.isFinite(data.movementEpoch)
-          ? Math.max(0, Math.trunc(data.movementEpoch as number))
-          : 0;
-        const ackSeq = Number.isFinite(data.ackSeq)
-          ? Math.max(0, Math.trunc(data.ackSeq as number))
-          : 0;
-        const collisionRevision = Number.isFinite(data.collisionRevision)
-          ? Math.max(0, Math.trunc(data.collisionRevision as number))
-          : 0;
-        const nextPlayer = {
-          ...localPlayer,
-          state: 'spawning' as const,
-          position: { ...position },
-          velocity: { x: 0, y: 0, z: 0 },
-        };
-        setLocalPlayer(nextPlayer);
-        resetLocalMovementPrediction(movementStateFromPlayer(nextPlayer), movementEpoch, nextPlayer.id, {
-          lastAckSeq: ackSeq,
-          collisionRevision,
-        });
-      }
-
-      setMatchStartGateKey(data.key);
-    }));
-
-    room.onMessage('gameEnd', measureNetworkMessage('gameEnd', (data: GameEndEvent) => {
-      loggers.network.info('game ended', data.finalScore);
-      clearRunningGameSession(room.id);
-      useGameStore.setState({
-        gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : DEFAULT_GAMEPLAY_MODE,
-      });
-      setMatchSummary(data);
-      setGamePhase('game_end' as any);
-      setPhaseEndTime(null);
-    }));
-
-    room.onMessage('matchCancelled', measureNetworkMessage('matchCancelled', (data: MatchCancelledMessage) => {
-      loggers.network.warn('match cancelled', {
-        reason: data.reason,
-        message: data.message,
-        roomId: data.roomId,
-        requiredHumanPlayers: data.requiredHumanPlayers,
-        connectedHumanPlayers: data.connectedHumanPlayers,
-        refundedWager: data.refundedWager,
-        blockedPlayerId: data.blockedPlayerId,
-        blockedPlayerName: data.blockedPlayerName,
-        networkQuality: data.networkQuality,
-      });
-      disconnectVoice('match_cancelled');
-      clearRunningGameSession(room.id);
-      rejectPendingVoiceTokenRequests(data.message || 'match cancelled before start');
-      rejectPendingPlayerReportRequests(data.message || 'match cancelled before start');
-      setMatchStartGateKey(null);
-      clearMatchSummary();
-      setPhaseEndTime(null);
-      setLoading(false);
-      setPracticeMode(false);
-      setGamePhase('waiting');
-      resetLobby();
-      setAppPhase('menu');
-    }));
-
-    setupPlayerJoinedHandler(room, sessionId, localPlayerName, updatePlayer);
-    setupPlayerTransformsHandler(room, sessionId, localPlayerName, { setLocalPlayer });
-    setupPlayerInterestHandler(room, sessionId);
-    setupSelfMovementAuthorityHandler(room);
-    setupPlayerVitalsHandler(room, sessionId, localPlayerName);
-    setupMatchSnapshotHandler(room);
-    setupPowerupHandlers(room);
-    setupVoidZoneHandlers(room, sessionId);
-    setupCombatHandlers(room);
-
-    room.onMessage('playerPingRequest', measureNetworkMessage('playerPingRequest', (data: PlayerPingRequestMessage) => {
-      if (!data || typeof data.nonce !== 'string') return;
-      room.send('playerPingResponse', { nonce: data.nonce });
-    }));
-
-    room.onMessage('playerPings', measureNetworkMessage('playerPings', (data: PlayerPingsMessage) => {
-      setPlayerPings(data);
-    }));
-
-    room.onMessage('playerLeft', measureNetworkMessage('playerLeft', (data: { playerId: string }) => {
-      loggers.network.debug('player left', data.playerId);
-      stopRemotePhantomCharge(data.playerId);
-      forgetPlayerNetId(data.playerId);
-      removePlayer(data.playerId);
-    }));
-
-    room.onMessage('duplicateSession', (data: { reason: string }) => {
-      loggers.network.warn('duplicate session detected', data.reason);
-      disconnectVoice('duplicate_game_session');
-    });
-
-    room.onMessage('voiceToken', (data: VoiceTokenResponse) => {
-      const pending = voiceTokenRequestsRef.current.get(data.requestId);
-      if (!pending) {
-        loggers.network.debug('received unmatched voice token response', data.requestId);
-        return;
-      }
-
-      window.clearTimeout(pending.timeoutId);
-      voiceTokenRequestsRef.current.delete(data.requestId);
-      pending.resolve(data);
-    });
-
-    room.onMessage('playerReportResult', (data: PlayerReportResultMessage) => {
-      const requestId = typeof data.requestId === 'string' ? data.requestId : '';
-      const pending = requestId ? playerReportRequestsRef.current.get(requestId) : null;
-      if (!pending) {
-        loggers.network.debug('received unmatched player report response', requestId);
-        return;
-      }
-
-      window.clearTimeout(pending.timeoutId);
-      playerReportRequestsRef.current.delete(requestId);
-      if (data.ok) {
-        pending.resolve();
-      } else {
-        pending.reject(new Error(data.error || 'Report failed'));
-      }
-    });
-
-    room.onMessage('voiceTeamChanged', () => {
-      disconnectVoice('voice_team_changed');
-    });
-
-    room.onMessage('devHeroChanged', measureNetworkMessage('devHeroChanged', (data: { heroId: HeroId; health: number; maxHealth: number }) => {
-      loggers.network.debug('developer hero switch confirmed', data.heroId);
-      const store = useGameStore.getState();
-      if (store.localPlayer) {
-        setLocalPlayer({
-          ...store.localPlayer,
-          heroId: data.heroId,
-          health: data.health,
-          maxHealth: data.maxHealth,
-        });
-      }
-    }));
-
-    room.onMessage('observerModeStarted', measureNetworkMessage('observerModeStarted', (data: { playerId?: string }) => {
-      const observerPlayerId = data.playerId || sessionId;
-      loggers.network.debug('observer mode started', observerPlayerId);
-      localPlayerName = '';
-      enterObserverMode(observerPlayerId);
-    }));
-
-    room.onMessage('devCommandError', (data: { message: string }) => {
-      loggers.network.error('developer command error:', data.message);
-    });
-
-    room.onError((code, message) => {
-      loggers.network.error('room error:', code, message);
-    });
-
-    room.onLeave((code) => {
-      loggers.network.debug('left room', code);
-      if (syncInterval) clearInterval(syncInterval);
-      rejectPendingVoiceTokenRequests('game room left before voice token response');
-      rejectPendingPlayerReportRequests('game room left before report response');
-      disconnectVoice('left_game_room');
-      if (gameRoomRef.current === room) {
-        gameRoomRef.current = null;
-      }
-      isJoiningGameRef.current = false;
-      setLoading(false);
-      setConnected(false);
-      setRoomId(null);
-      setPracticeMode(false);
-      setMatchStartGateKey(null);
-      setObserverMode(false);
-      setGamePhase('waiting');
-      resetLobby();
-      setAppPhase('menu');
-    });
-
-    setConnected(true);
-  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setMapThemeId, setMapSize, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, setPracticeMode, resetLobby, rejectPendingVoiceTokenRequests, rejectPendingPlayerReportRequests, setMatchSummary, clearMatchSummary, setPlayerPings, setMatchStartGateKey, setObserverMode, enterObserverMode]);
+  }, [rejectPendingVoiceTokenRequests, rejectPendingPlayerReportRequests, setMatchStartGateKey]);
 
   const getRunningGameReconnect = useCallback(async (): Promise<RunningGameReconnectStatus> => {
     const session = loadRunningGameSession();
@@ -1647,7 +987,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         return { available: false, session: null, reason: status.reason ?? 'unavailable' };
       }
 
-      return { available: true, session };
+      const matchPerspective = isMatchPerspective(status.matchPerspective)
+        ? status.matchPerspective
+        : session.matchPerspective;
+      useGameStore.setState({ matchPerspective });
+      return { available: true, session: { ...session, matchPerspective } };
     } catch (error) {
       loggers.network.warn('running game reconnect check failed', error);
       return { available: false, session: null, reason: 'check_failed' };
@@ -1659,8 +1003,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     playerName: string,
     team?: string,
     entryTicket?: string,
-    observer = false,
-    reconnectToRunningGame = false
+    reconnectToRunningGame = false,
+    seatReservation?: unknown
   ) => {
     if (isJoiningGameRef.current) {
       loggers.network.debug('already joining a game room, ignoring duplicate call');
@@ -1685,22 +1029,23 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       clearMatchSummary();
       setPracticeMode(false);
       setMatchStartGateKey(null);
-      setObserverMode(observer);
       setGamePhase('waiting');
       setPhaseEndTime(null);
 
       const client = getClient();
 
-      gameRoomRef.current = await client.joinById(gameRoomId, {
-        playerName,
-        preferredTeam: team,
-        entryTicket,
-        reconnectToRunningGame,
-        clientBuildId: config.buildId,
-        movementProtocolVersion: MOVEMENT_PROTOCOL_VERSION,
-      });
+      gameRoomRef.current = seatReservation
+        ? await client.consumeSeatReservation(seatReservation)
+        : await client.joinById(gameRoomId, {
+          playerName,
+          preferredTeam: team,
+          entryTicket,
+          reconnectToRunningGame,
+          clientBuildId: config.buildId,
+          movementProtocolVersion: MOVEMENT_PROTOCOL_VERSION,
+        });
 
-      setupGameListeners(gameRoomRef.current, playerName, observer);
+      setupGameListeners(gameRoomRef.current, playerName);
 
       setRoomId(gameRoomRef.current.id);
       setPlayerId(gameRoomRef.current.sessionId);
@@ -1710,18 +1055,20 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         roomId: gameRoomRef.current.id,
         playerName,
         team: team === 'red' || team === 'blue' ? team : undefined,
-        observer,
+        matchPerspective: useGameStore.getState().matchPerspective,
       });
 
       loggers.network.info('joined game room', gameRoomRef.current.id);
     } catch (error) {
       loggers.network.error('failed to join game room', error);
       setLoading(false);
-      setObserverMode(false);
       isJoiningGameRef.current = false;
       throw error;
     }
-  }, [getClient, setupGameListeners, setLoading, setRoomId, setPlayerId, setAppPhase, clearMatchSummary, setPracticeMode, setMatchStartGateKey, setObserverMode, setGamePhase, setPhaseEndTime]);
+  }, [getClient, setupGameListeners, setLoading, setRoomId, setPlayerId, setAppPhase, clearMatchSummary, setPracticeMode, setMatchStartGateKey, setGamePhase, setPhaseEndTime]);
+
+  joinGameRoomRef.current = joinGameRoom;
+  leaveLobbyRef.current = leaveLobby;
 
   const reconnectRunningGame = useCallback(async () => {
     const status = await getRunningGameReconnect();
@@ -1735,7 +1082,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       status.session.playerName || fallbackName,
       status.session.team,
       undefined,
-      status.session.observer,
       true
     );
   }, [getRunningGameReconnect, joinGameRoom]);
@@ -1761,7 +1107,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       blueScore: 0,
       mapThemeId: null,
       mapSize: DEFAULT_VOXEL_MAP_SIZE_ID,
+      mapProfileId: null,
       gameplayMode: DEFAULT_GAMEPLAY_MODE,
+      matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
       redFlag: null,
       blueFlag: null,
       players: new Map(),
@@ -1777,12 +1125,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       lastSkillCastAt: 0,
       lastPrimaryFireAt: 0,
       slideIntensity: 0,
-      isObserverMode: false,
     });
     resetLocalMovementPrediction();
     resetLobby();
     clearMatchSummary();
-    setGamePhase('waiting' as any);
+    setGamePhase('waiting');
     setAppPhase('menu');
   }, [setRoomId, setPlayerId, setConnected, setPracticeMode, setMatchStartGateKey, resetLobby, clearMatchSummary, setGamePhase, setAppPhase, rejectPendingVoiceTokenRequests, rejectPendingPlayerReportRequests]);
 
@@ -1865,28 +1212,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const selectHero = useCallback((heroId: HeroId) => {
-    const store = useGameStore.getState();
-    if (store.isPracticeMode) {
-      const localPlayer = store.localPlayer;
-      if (!localPlayer) return;
-
-      const heroStats = getHeroStats(heroId);
-      store.updateLocalPlayer({
-        heroId,
-        health: heroStats.maxHealth,
-        maxHealth: heroStats.maxHealth,
-        ultimateCharge: 100,
-        abilities: createPracticeAbilityStates(heroId),
-        isReady: false,
-      });
-      return;
-    }
-
-    loggers.network.debug('sending selectHero', heroId);
-    gameRoomRef.current?.send('selectHero', { heroId });
-  }, []);
-
   const devSetHero = useCallback((heroId: HeroId) => {
     if (!config.isDev) return;
     loggers.network.debug('sending development selectHero', heroId);
@@ -1903,11 +1228,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     if (!config.isDev) return;
     loggers.network.debug('sending development game end');
     gameRoomRef.current?.send('devEndGame', {});
-  }, []);
-
-  const devSetGameObserver = useCallback(() => {
-    if (!config.isDev) return;
-    gameRoomRef.current?.send('devSetObserver', {});
   }, []);
 
   const setDevImmune = useCallback((enabled: boolean) => {
@@ -1950,40 +1270,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('selectTeam', { team });
   }, []);
 
-  const setReady = useCallback((ready: boolean) => {
-    const store = useGameStore.getState();
-    if (store.isPracticeMode) {
-      const localPlayer = store.localPlayer;
-      if (!localPlayer) return;
-
-      const heroId = localPlayer.heroId ?? 'phantom';
-      const heroStats = getHeroStats(heroId);
-      const nextPlayer = {
-        ...localPlayer,
-        heroId,
-        isReady: ready,
-        state: ready ? 'alive' as const : 'selecting' as const,
-        health: heroStats.maxHealth,
-        maxHealth: heroStats.maxHealth,
-        ultimateCharge: 100,
-        abilities: createPracticeAbilityStates(heroId),
-      };
-
-      store.setLocalPlayer(nextPlayer);
-      if (ready) {
-        resetLocalMovementPrediction(movementStateFromPlayer(nextPlayer), 0, nextPlayer.id);
-        setGamePhase('playing');
-      } else {
-        setGamePhase('hero_select');
-      }
-      setPhaseEndTime(null);
-      return;
-    }
-
-    loggers.network.debug('sending ready', ready);
-    gameRoomRef.current?.send('ready', { ready });
-  }, [setGamePhase, setPhaseEndTime]);
-
   const reportMatchSceneReady = useCallback(() => {
     const key = matchStartGateKeyRef.current;
     if (key === null || useGameStore.getState().isPracticeMode) return;
@@ -1991,87 +1277,120 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('matchSceneReady', { key });
   }, []);
 
-  // ==================== NPC OPERATIONS ====================
-
-  const spawnNpc = useCallback((heroId: HeroId, team?: Team, position?: { x: number; y: number; z: number }, name?: string) => {
-    if (gameRoomRef.current) {
-      const data: any = { heroId, position, name };
-      if (team) data.team = team;
-      gameRoomRef.current.send('spawnNpc', data);
-    }
-  }, []);
-
-  const damageNpc = useCallback((npcId: string, damage: number) => {
-    gameRoomRef.current?.send('damageNpc', { npcId, damage });
-  }, []);
-
-  const killNpc = useCallback((npcId: string) => {
-    gameRoomRef.current?.send('killNpc', { npcId });
-  }, []);
-
-  const killAllNpcs = useCallback(() => {
-    gameRoomRef.current?.send('killAllNpcs', {});
-  }, []);
+  const contextValue = useMemo<NetworkContextType>(() => ({
+    quickPlay,
+    rankedPlay,
+    getRankedTokenHoldStatus,
+    startPracticeGame,
+    startTutorialGame,
+    joinLobby,
+    joinMatchmakingLobby,
+    ensureParty,
+    joinParty,
+    restoreParty,
+    getActivePartySession,
+    leaveParty,
+    setPartyHero,
+    setPartyReady,
+    setPartyMode,
+    setPartyBotFill,
+    setPartyPerspective,
+    addPartyBot,
+    kickPartyMember,
+    startParty,
+    leaveLobby,
+    setLobbyReady,
+    setLobbyTeam,
+    addLobbyBot,
+    removeLobbyBot,
+    updateLobbyBotTeam,
+    updateLobbyBotDifficulty,
+    updateLobbyBotHero,
+    startGame,
+    voteMap,
+    reportMapVotePreviewsReady,
+    kickPlayer,
+    joinGameRoom,
+    getRunningGameReconnect,
+    reconnectRunningGame,
+    leaveGame,
+    disconnect,
+    sendMovementCommands,
+    devSetHero,
+    devFillUltimate,
+    devEndGame,
+    setDevImmune,
+    setDevTimeFrozen,
+    setDevBotsRooted,
+    setDevBotBrainEnabled,
+    addGameBot,
+    devBotSkill,
+    devBotLook,
+    selectTeam,
+    matchStartGateKey,
+    reportMatchSceneReady,
+    reportPlayer,
+    requestVoiceToken,
+  }), [
+    addGameBot,
+    addLobbyBot,
+    addPartyBot,
+    devBotLook,
+    devBotSkill,
+    devEndGame,
+    devFillUltimate,
+    devSetHero,
+    disconnect,
+    getActivePartySession,
+    getRankedTokenHoldStatus,
+    ensureParty,
+    getRunningGameReconnect,
+    joinGameRoom,
+    joinLobby,
+    joinMatchmakingLobby,
+    joinParty,
+    kickPartyMember,
+    kickPlayer,
+    leaveGame,
+    leaveLobby,
+    leaveParty,
+    matchStartGateKey,
+    quickPlay,
+    rankedPlay,
+    reconnectRunningGame,
+    removeLobbyBot,
+    reportMapVotePreviewsReady,
+    reportMatchSceneReady,
+    reportPlayer,
+    requestVoiceToken,
+    restoreParty,
+    selectTeam,
+    sendMovementCommands,
+    setDevBotBrainEnabled,
+    setDevBotsRooted,
+    setDevImmune,
+    setDevTimeFrozen,
+    setLobbyReady,
+    setLobbyTeam,
+    setPartyHero,
+    setPartyBotFill,
+    setPartyMode,
+    setPartyPerspective,
+    setPartyReady,
+    startGame,
+    startParty,
+    startPracticeGame,
+    startTutorialGame,
+    updateLobbyBotDifficulty,
+    updateLobbyBotHero,
+    updateLobbyBotTeam,
+    voteMap,
+  ]);
 
   // ==================== RENDER ====================
 
   return (
-    <NetworkContext.Provider value={{
-      createLobby,
-      quickPlay,
-      rankedPlay,
-      getRankedTokenHoldStatus,
-      startPracticeGame,
-      startTutorialGame,
-      joinLobby,
-      leaveLobby,
-      setLobbyReady,
-      setLobbyTeam,
-      addLobbyBot,
-      removeLobbyBot,
-      updateLobbyBotTeam,
-      updateLobbyBotDifficulty,
-      updateLobbyBotHero,
-      startGame,
-      voteMap,
-      reportMapVotePreviewsReady,
-      finalizeMapVote,
-      kickPlayer,
-      createWagerPaymentIntent,
-      createWagerPaymentTransaction,
-      submitWagerSignedPaymentTransaction,
-      submitWagerPaymentSignature,
-      joinGameRoom,
-      getRunningGameReconnect,
-      reconnectRunningGame,
-      leaveGame,
-      disconnect,
-      sendMovementCommands,
-      selectHero,
-      devSetHero,
-      devFillUltimate,
-      devEndGame,
-      devSetGameObserver,
-      setDevImmune,
-      setDevTimeFrozen,
-      setDevBotsRooted,
-      setDevBotBrainEnabled,
-      addGameBot,
-      devBotSkill,
-      devBotLook,
-      selectTeam,
-      setReady,
-      setLobbyObserver,
-      devSetLobbyObserver,
-      matchStartGateKey,
-      reportMatchSceneReady,
-      reportPlayer,
-      requestVoiceToken,
-      spawnNpc,
-      damageNpc,
-      killNpc,
-      killAllNpcs,
-    }}>
+    <NetworkContext.Provider value={contextValue}>
       {children}
     </NetworkContext.Provider>
   );

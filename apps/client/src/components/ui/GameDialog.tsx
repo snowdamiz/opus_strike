@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from 'react';
+import { useId, type CSSProperties, type ReactNode } from 'react';
 
 type GameDialogSize = 'sm' | 'md' | 'lg' | 'xl';
 
@@ -15,6 +15,7 @@ interface GameDialogProps {
   panelClassName?: string;
   closeLabel?: string;
   showCloseButton?: boolean;
+  style?: CSSProperties;
 }
 
 const sizeClasses: Record<GameDialogSize, string> = {
@@ -41,6 +42,7 @@ export function GameDialog({
   panelClassName,
   closeLabel = 'Close dialog',
   showCloseButton = true,
+  style,
 }: GameDialogProps) {
   const titleId = useId();
 
@@ -57,6 +59,7 @@ export function GameDialog({
           sizeClasses[size],
           panelClassName,
         )}
+        style={style}
       >
         <header className="flex items-center justify-between gap-4 px-[clamp(1.125rem,1.45vw,1.5rem)] py-[clamp(0.75rem,1vw,1rem)] border-b border-white/5">
           <div className="flex min-w-0 items-center gap-[clamp(0.75rem,1vw,1rem)]">

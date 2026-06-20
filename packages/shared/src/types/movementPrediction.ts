@@ -122,6 +122,9 @@ export interface MovementTelemetrySnapshot {
   queueLengthAfterTick?: number;
   underflowTicks?: number;
   catchupTicks?: number;
+  catchupSubstepsSkipped?: number;
+  catchupSubstepsSkippedLastTick?: number;
+  roomCatchupBudgetExhaustedTicks?: number;
   duplicateCommands: number;
   droppedCommands: number;
   lateCommands: number;
@@ -288,6 +291,11 @@ export function quantizeAbilityCastOriginHint(hint: AbilityCastOriginHint): Abil
       y: quantizeCastOriginValue(hint.origin.y),
       z: quantizeCastOriginValue(hint.origin.z),
     },
+    aimPoint: hint.aimPoint ? {
+      x: quantizeCastOriginValue(hint.aimPoint.x),
+      y: quantizeCastOriginValue(hint.aimPoint.y),
+      z: quantizeCastOriginValue(hint.aimPoint.z),
+    } : undefined,
     sampledAtMs: Number.isFinite(hint.sampledAtMs) ? Math.round(hint.sampledAtMs as number) : undefined,
   };
 }
@@ -309,6 +317,21 @@ export function sanitizeAbilityCastOriginHint(value: unknown): AbilityCastOrigin
   const z = coerceFiniteMovementNumber(rawOrigin.z);
   if (x === null || y === null || z === null) return null;
 
+  let aimPoint: AbilityCastOriginHint['aimPoint'];
+  if (raw.aimPoint !== undefined && raw.aimPoint !== null) {
+    const rawAimPoint = raw.aimPoint;
+    if (rawAimPoint === null || typeof rawAimPoint !== 'object' || Array.isArray(rawAimPoint)) {
+      return null;
+    }
+
+    const rawAim = rawAimPoint as Record<string, unknown>;
+    const aimX = coerceFiniteMovementNumber(rawAim.x);
+    const aimY = coerceFiniteMovementNumber(rawAim.y);
+    const aimZ = coerceFiniteMovementNumber(rawAim.z);
+    if (aimX === null || aimY === null || aimZ === null) return null;
+    aimPoint = { x: aimX, y: aimY, z: aimZ };
+  }
+
   const sampledAtMs = raw.sampledAtMs === undefined || raw.sampledAtMs === null
     ? undefined
     : coerceFiniteMovementNumber(raw.sampledAtMs);
@@ -318,6 +341,7 @@ export function sanitizeAbilityCastOriginHint(value: unknown): AbilityCastOrigin
     abilityId,
     socketName,
     origin: { x, y, z },
+    aimPoint,
     sampledAtMs,
   });
 }

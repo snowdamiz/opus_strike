@@ -1,7 +1,8 @@
+import type { Team } from '../../types/team.js';
 import type { Vec3 } from '../../types/vector.js';
 
 export const DEFAULT_PROCEDURAL_MAP_SEED = 0x57564f58;
-export const CONSTRUCTED_MAP_MANIFEST_VERSION = 7;
+export const CONSTRUCTED_MAP_MANIFEST_VERSION = 10;
 
 export type VoxelMapSizeId = 'small' | 'medium' | 'large';
 export const DEFAULT_VOXEL_MAP_SIZE_ID: VoxelMapSizeId = 'medium';
@@ -70,10 +71,11 @@ export interface VoxelCollider {
   material: 'default' | 'ice' | 'bounce' | 'barrier';
 }
 
-export type MapTeam = 'red' | 'blue';
+export type MapTeam = Team;
 export type TeamMap<T> = Record<MapTeam, T>;
-export type MapGameMode = 'ctf';
-export type MapFamilyId = 'ctf_semantic_arena';
+export type MapGameMode = 'ctf' | 'battle_royal';
+export type MapFamilyId = 'ctf_semantic_arena' | 'battle_royal_large';
+export type MapProfileId = 'ctf_arena' | 'tdm_arena' | 'battle_royal_large';
 export type MapTopologyId = 'lane_triad' | 'diamond' | 'hourglass' | 'ring' | 'split_level';
 export type MapSymmetryLevel = 'mirrored' | 'rotational' | 'asymmetric_balanced';
 
@@ -88,6 +90,7 @@ export interface MapDesignBrief {
   seed: number;
   mapSize: VoxelMapSizeId;
   gameMode: MapGameMode;
+  profileId?: MapProfileId;
   teamSize: number;
   familyId: MapFamilyId;
   themeId: VoxelMapTheme['id'];
@@ -212,6 +215,26 @@ export interface MapPowerupPickup {
   routeNodeId?: string;
   laneId?: string;
   teamBias?: MapTeam;
+}
+
+export type MapNamedLocationKind =
+  | 'city'
+  | 'town'
+  | 'industrial'
+  | 'hamlet'
+  | 'outpost'
+  | 'open_area'
+  | 'wildland'
+  | 'landmark';
+
+export interface MapNamedLocation {
+  id: string;
+  name: string;
+  kind: MapNamedLocationKind;
+  position: Vec3;
+  radius: number;
+  priority: number;
+  tags: string[];
 }
 
 export interface SightlineSample {
@@ -478,6 +501,7 @@ export interface VoxelMapManifest {
   version: number;
   seed: number;
   mapSize: VoxelMapSizeId;
+  profileId?: MapProfileId;
   familyId: MapFamilyId;
   topologyId: MapTopologyId;
   themeId: VoxelMapTheme['id'];
@@ -486,8 +510,8 @@ export interface VoxelMapManifest {
   voxelSize: VoxelSize;
   size: VoxelSize;
   chunkSize: VoxelSize;
-  spawnPoints: { red: Vec3[]; blue: Vec3[] };
-  flagZones: { red: Vec3; blue: Vec3 };
+  spawnPoints: Record<MapTeam, Vec3[]>;
+  flagZones: Record<MapTeam, Vec3>;
   boundary: BoundaryPoint[];
   heightfield: VoxelHeightfield;
   chunks: VoxelChunk[];
@@ -503,6 +527,7 @@ export interface VoxelMapManifest {
     lanes: LaneDescriptor[];
     routeGraph: RouteGraph;
     powerups: MapPowerupPickup[];
+    namedLocations?: MapNamedLocation[];
     sightlineSamples: SightlineSample[];
   };
   construction: {

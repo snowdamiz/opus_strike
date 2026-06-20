@@ -12,7 +12,8 @@ import {
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_RADIUS,
 } from '@voxel-strike/shared';
-import { useGameStore, type ChronosPulseData } from '../../../store/gameStore';
+import { useGameStore } from '../../../store/gameStore';
+import type { ChronosPulseData } from '../../../store/types';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
 import { SHARED_GEOMETRIES } from '../effectResources';
@@ -22,7 +23,7 @@ import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '.
 import { getFirstChronosAegisVisualHit } from './aegisCollision';
 import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 import { playPrimaryImpactSound } from '../primaryImpactSound';
-import { applyTutorialTrainingDamage } from '../../../utils/tutorialTrainingHeroes';
+import { applyTutorialOfflineTrainingDamage } from '../../../utils/tutorialOfflineCombatRuntime';
 
 const CHRONOS_PULSE_CAPACITY = 96;
 const CHRONOS_PULSE_LIFETIME_MS = 3000;
@@ -453,7 +454,7 @@ export function ChronosPulsesManager() {
         moveDistance + collisionRadius + PROJECTILE_COMBAT_QUERY_PADDING
       );
       if (hitPlayer) {
-        applyTutorialTrainingDamage({
+        applyTutorialOfflineTrainingDamage({
           target: hitPlayer,
           damage: slot.supercharged ? CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE : CHRONOS_VERDANT_PULSE_DAMAGE,
           damageType: slot.supercharged ? 'ascendant_verdant_pulse' : 'verdant_pulse',

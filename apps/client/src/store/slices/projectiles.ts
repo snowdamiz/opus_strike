@@ -232,19 +232,24 @@ function getEarthWallExpiresAt(wall: EarthWallData): number {
 }
 
 function appendUnique<T extends { id: string }>(items: T[], item: T, limit: number): T[] {
-  for (const existing of items) {
+  const length = items.length;
+  const capped = length >= limit;
+  const retainStart = capped ? length - limit + 1 : 0;
+  const next = new Array<T>(capped ? limit : length + 1);
+  let writeIndex = 0;
+
+  for (let index = 0; index < length; index++) {
+    const existing = items[index];
     if (existing.id === item.id) return items;
+    if (index >= retainStart) next[writeIndex++] = existing;
   }
 
-  if (items.length >= limit) {
-    return [...items.slice(items.length - limit + 1), item];
-  }
-
-  return [...items, item];
+  next[writeIndex] = item;
+  return next;
 }
 
 function removeById<T extends { id: string }>(items: T[], id: string): T[] {
-  const index = items.findIndex((item) => item.id === id);
+  const index = findIdIndex(items, id);
   if (index < 0) return items;
 
   const next = items.slice();
@@ -273,7 +278,7 @@ function removeByIds<T extends { id: string }>(items: T[], ids: readonly string[
 }
 
 function updateById<T extends { id: string }>(items: T[], id: string, updates: Partial<T>): T[] {
-  const index = items.findIndex((item) => item.id === id);
+  const index = findIdIndex(items, id);
   if (index < 0) return items;
 
   const current = items[index];
@@ -291,6 +296,13 @@ function updateById<T extends { id: string }>(items: T[], id: string, updates: P
   const next = items.slice();
   next[index] = { ...current, ...updates };
   return next;
+}
+
+function findIdIndex<T extends { id: string }>(items: T[], id: string): number {
+  for (let index = items.length - 1; index >= 0; index--) {
+    if (items[index].id === id) return index;
+  }
+  return -1;
 }
 
 function filterExpiredByExpiry<T>(items: T[], expiresAt: (item: T) => number): T[] {

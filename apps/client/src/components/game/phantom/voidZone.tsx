@@ -2,6 +2,7 @@ import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
+import type { Team } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { getFrameClock } from '../../../utils/frameClock';
 
@@ -515,7 +516,7 @@ interface VoidZoneData {
   duration: number;
   startTime: number;
   ownerId: string;
-  ownerTeam: 'red' | 'blue';
+  ownerTeam: Team;
 }
 
 interface VoidZonesProps {

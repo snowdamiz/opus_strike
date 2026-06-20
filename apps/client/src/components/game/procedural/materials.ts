@@ -129,3 +129,26 @@ export function useVoxelMaterial(
 
   return retainedMaterial.material;
 }
+
+export function useVoxelFarMaterial(
+  theme: VoxelMapTheme,
+  fogBlend: number
+): THREE.Material {
+  const material = useMemo(() => {
+    const color = new THREE.Color(theme.ground.side).lerp(
+      new THREE.Color(theme.fogColor),
+      THREE.MathUtils.clamp(fogBlend, 0, 1)
+    );
+    const farMaterial = new THREE.MeshLambertMaterial({
+      color,
+      emissive: color.clone().multiplyScalar(0.16),
+      emissiveIntensity: 0.16,
+    });
+    farMaterial.name = 'procedural-voxel-far-terrain-material';
+    return farMaterial;
+  }, [fogBlend, theme]);
+
+  useEffect(() => () => material.dispose(), [material]);
+
+  return material;
+}

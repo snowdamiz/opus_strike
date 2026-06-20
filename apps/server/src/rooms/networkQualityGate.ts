@@ -58,11 +58,8 @@ export const DEFAULT_COMPETITIVE_NETWORK_QUALITY_GATE: NetworkQualityGateConfig 
 
 export function isNetworkQualityGateRequiredForMatch(input: {
   matchMode: MatchMode;
-  wagered: boolean;
 }): boolean {
-  return input.matchMode === 'ranked'
-    || input.matchMode === 'custom_wager'
-    || input.wagered;
+  return input.matchMode === 'ranked';
 }
 
 export function createNetworkQualityState(now: number): NetworkQualityState {

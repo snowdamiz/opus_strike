@@ -54,14 +54,27 @@ import {
   viewmodelPoseDraftFromMatrix,
   type ViewmodelSocketPoseDraft,
 } from '../../viewmodel/viewmodelKit';
+import { SHARED_VIEWMODEL_ROOT_OFFSET } from '../../viewmodel/viewmodelManifests';
 import { visualStore } from '../../store/visualStore';
 import {
-  BLAZE_COLORS,
-  HOOKSHOT_COLORS,
   PHANTOM_COLORS,
   SHARED_GEOMETRIES,
   getHookshotMaterials,
 } from './effectResources';
+import {
+  HERO_MATERIAL_COLORS,
+  getViewmodelMaterials,
+  isViewmodelHero,
+  type ViewmodelHeroId,
+  type ViewmodelMaterialSet,
+} from './heroViewmodelMaterials';
+import {
+  getActionState,
+  hasOwnedActiveGrappleLineOnSide,
+  hasOwnedProjectileOnSide,
+  isViewmodelActionActive,
+  type ViewmodelActionState,
+} from './heroViewmodelActions';
 import { HookshotViewmodelArrow } from './hookshot/arrowHead';
 import {
   createPhantomVeilSplitMaterial,
@@ -74,32 +87,13 @@ import {
 } from './chronos/aegisGeometry';
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
 import type { ViewmodelQualityConfig } from './visualQuality';
-
-type ViewmodelHeroId = Extract<HeroId, 'phantom' | 'hookshot' | 'blaze' | 'chronos'>;
-
-interface ViewmodelActionState {
-  active: boolean;
-  charging: boolean;
-  targeting: boolean;
-}
-
-interface ViewmodelMaterialSet {
-  armor: THREE.MeshStandardMaterial;
-  dark: THREE.MeshStandardMaterial;
-  metal: THREE.MeshStandardMaterial;
-  accent: THREE.MeshStandardMaterial;
-  glow: THREE.MeshBasicMaterial;
-  glass: THREE.MeshStandardMaterial;
-}
+import { ViewmodelBurnOverlay } from './ViewmodelBurnOverlay';
 
 interface HeroViewmodelProps {
   heroId: ViewmodelHeroId;
   action: ViewmodelActionState;
   config: ViewmodelQualityConfig;
 }
-
-const VIEWMODEL_HEROES = new Set<HeroId>(['phantom', 'hookshot', 'blaze', 'chronos']);
-const materialCache = new Map<ViewmodelHeroId, ViewmodelMaterialSet>();
 
 interface MutableTransformTarget {
   position: THREE.Vector3;
@@ -128,8 +122,6 @@ interface HookshotSecondaryFireState {
   startTimeMs: number;
 }
 
-type GameStoreSnapshot = ReturnType<typeof useGameStore.getState>;
-
 interface PhantomHandPoseTargets {
   closedHand?: MutableTransformTarget;
   arm: MutableTransformTarget;
@@ -146,7 +138,7 @@ function resolveFingerTargets(fingerRefs: (THREE.Group | null)[]): THREE.Group[]
   return fingerRefs as THREE.Group[];
 }
 
-interface PhantomLocomotionPose {
+interface ViewmodelLocomotionPose {
   movementBlend: number;
   runBlend: number;
   slideBlend: number;
@@ -154,7 +146,7 @@ interface PhantomLocomotionPose {
   cycleTime: number;
 }
 
-interface PhantomLocomotionRuntime extends PhantomLocomotionPose {
+interface ViewmodelLocomotionRuntime extends ViewmodelLocomotionPose {
   previousCameraPosition: THREE.Vector3;
   hasPreviousCameraPosition: boolean;
 }
@@ -213,7 +205,7 @@ interface PhantomVoidRayChargePose {
 }
 
 const VIEWMODEL_ROOT_EULER_ORDER = 'XYZ';
-const PHANTOM_VIEWMODEL_OFFSET = new THREE.Vector3(0, 0.28, -0.04);
+const DEFAULT_VIEWMODEL_ROOT_OFFSET = new THREE.Vector3(...SHARED_VIEWMODEL_ROOT_OFFSET);
 const PHANTOM_PALM_SOCKET_OFFSET = new THREE.Vector3(0, 0.012, -0.4);
 const PHANTOM_CLOSED_FINGER_ROWS = [-0.066, -0.022, 0.022, 0.066] as const;
 const PHANTOM_OPEN_FINGER_SLOTS = [-0.056, -0.019, 0.019, 0.056] as const;
@@ -265,25 +257,6 @@ const BLAZE_STAFF_TIP_FLAME_ANGLES = [
   Math.PI * 0.75,
   Math.PI * 1.25,
   Math.PI * 1.75,
-] as const;
-const VIEWMODEL_BURN_FADE_OUT_MS = 500;
-const VIEWMODEL_BURN_OPACITY_SCALE = 0.5;
-const VIEWMODEL_BURN_FLAME_SCALE = 0.72;
-const VIEWMODEL_BURN_EMBER_SCALE = 0.58;
-const VIEWMODEL_BURN_ANCHORS = [
-  { x: -0.34, y: -0.31, z: -0.5, radius: 0.054, phase: 0.08 },
-  { x: 0.34, y: -0.31, z: -0.5, radius: 0.054, phase: 0.31 },
-  { x: -0.31, y: -0.24, z: -0.69, radius: 0.046, phase: 0.54 },
-  { x: 0.31, y: -0.24, z: -0.69, radius: 0.046, phase: 0.77 },
-  { x: 0.06, y: -0.22, z: -0.6, radius: 0.05, phase: 0.95 },
-] as const;
-const VIEWMODEL_BURN_EMBERS = [
-  { x: -0.37, y: -0.27, z: -0.62, phase: 0.12 },
-  { x: -0.25, y: -0.21, z: -0.76, phase: 0.3 },
-  { x: 0.27, y: -0.21, z: -0.76, phase: 0.48 },
-  { x: 0.38, y: -0.27, z: -0.62, phase: 0.66 },
-  { x: 0.03, y: -0.19, z: -0.62, phase: 0.84 },
-  { x: 0.11, y: -0.18, z: -0.53, phase: 0.98 },
 ] as const;
 const CHRONOS_FOREARM_READY_BLEND = 0.52;
 const CHRONOS_HAND_READY_BLEND = 0.62;
@@ -384,16 +357,16 @@ const CHRONOS_STILL_MOVEMENT_BOB: ChronosMovementBobOffset = {
 const matrixPosition = new THREE.Vector3();
 const matrixQuaternion = new THREE.Quaternion();
 const matrixUnitScale = new THREE.Vector3(1, 1, 1);
-const phantomWorldScale = new THREE.Vector3(1, 1, 1);
+const viewmodelWorldScale = new THREE.Vector3(1, 1, 1);
 const matrixEuler = new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER);
 const viewmodelRootMatrix = new THREE.Matrix4();
-const phantomOffsetMatrix = new THREE.Matrix4();
-const phantomArmMatrix = new THREE.Matrix4();
-const phantomWristMatrix = new THREE.Matrix4();
-const phantomPalmMatrix = new THREE.Matrix4();
-const phantomSocketMatrix = new THREE.Matrix4();
-const phantomWorldMatrix = new THREE.Matrix4();
-const phantomWorldQuaternion = new THREE.Quaternion();
+const viewmodelOffsetMatrix = new THREE.Matrix4();
+const viewmodelArmMatrix = new THREE.Matrix4();
+const viewmodelWristMatrix = new THREE.Matrix4();
+const viewmodelPalmMatrix = new THREE.Matrix4();
+const viewmodelSocketMatrix = new THREE.Matrix4();
+const viewmodelWorldMatrix = new THREE.Matrix4();
+const viewmodelWorldQuaternion = new THREE.Quaternion();
 const blazeClosedHandInnerMatrix = new THREE.Matrix4();
 const blazeStaffMatrix = new THREE.Matrix4();
 const blazeStaffTipMatrix = new THREE.Matrix4();
@@ -411,223 +384,13 @@ const blazeStaffPositionScratch = new THREE.Vector3();
 const blazeStaffRotationScratch = new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER);
 const phantomClosedHandPivotOffset = new THREE.Vector3(0, 0, PHANTOM_CLOSED_HAND_WRIST_PIVOT_Z);
 const phantomClosedHandPivotWorldOffset = new THREE.Vector3();
-const PHANTOM_STILL_LOCOMOTION_POSE: PhantomLocomotionPose = {
+const VIEWMODEL_STILL_LOCOMOTION_POSE: ViewmodelLocomotionPose = {
   movementBlend: 0,
   runBlend: 0,
   slideBlend: 0,
   speedBlend: 0,
   cycleTime: 0,
 };
-
-const HERO_MATERIAL_COLORS: Record<ViewmodelHeroId, {
-  armor: number;
-  dark: number;
-  metal: number;
-  accent: number;
-  glow: number;
-  glass: number;
-}> = {
-  phantom: {
-    armor: 0x302447,
-    dark: 0x090612,
-    metal: 0x211833,
-    accent: PHANTOM_COLORS.violet,
-    glow: PHANTOM_COLORS.lightPurple,
-    glass: 0x251a3a,
-  },
-  hookshot: {
-    armor: 0x1f3b4a,
-    dark: 0x10242e,
-    metal: HOOKSHOT_COLORS.metal,
-    accent: HOOKSHOT_COLORS.energy,
-    glow: HOOKSHOT_COLORS.energy,
-    glass: 0x22d3ee,
-  },
-  blaze: {
-    armor: 0x7c2d12,
-    dark: 0x1f130d,
-    metal: BLAZE_COLORS.metal,
-    accent: BLAZE_COLORS.fireOrange,
-    glow: BLAZE_COLORS.fireYellow,
-    glass: 0xfb923c,
-  },
-  chronos: {
-    armor: 0x123b2d,
-    dark: 0x07130f,
-    metal: 0x9b7a34,
-    accent: 0x22c55e,
-    glow: 0xa7f3d0,
-    glass: 0xb91c1c,
-  },
-};
-
-function isViewmodelHero(heroId: HeroId | '' | null | undefined): heroId is ViewmodelHeroId {
-  return Boolean(heroId && VIEWMODEL_HEROES.has(heroId));
-}
-
-function getViewmodelMaterials(heroId: ViewmodelHeroId): ViewmodelMaterialSet {
-  const cached = materialCache.get(heroId);
-  if (cached) return cached;
-
-  const colors = HERO_MATERIAL_COLORS[heroId];
-  const materials: ViewmodelMaterialSet = {
-    armor: new THREE.MeshStandardMaterial({
-      color: colors.armor,
-      metalness: 0.3,
-      roughness: 0.42,
-    }),
-    dark: new THREE.MeshStandardMaterial({
-      color: colors.dark,
-      metalness: 0.24,
-      roughness: 0.6,
-    }),
-    metal: new THREE.MeshStandardMaterial({
-      color: colors.metal,
-      metalness: 0.76,
-      roughness: 0.25,
-    }),
-    accent: new THREE.MeshStandardMaterial({
-      color: colors.accent,
-      emissive: colors.accent,
-      emissiveIntensity: 0.34,
-      metalness: 0.2,
-      roughness: 0.32,
-    }),
-    glow: new THREE.MeshBasicMaterial({
-      color: colors.glow,
-      transparent: true,
-      opacity: 1,
-      toneMapped: false,
-    }),
-    glass: new THREE.MeshStandardMaterial({
-      color: colors.glass,
-      emissive: colors.glass,
-      emissiveIntensity: 0.26,
-      metalness: 0.1,
-      roughness: 0.18,
-    }),
-  };
-
-  materialCache.set(heroId, materials);
-  return materials;
-}
-
-export function getHeroViewmodelGpuPrewarmMaterials(): THREE.Material[] {
-  const materials: THREE.Material[] = [];
-  for (const heroId of VIEWMODEL_HEROES) {
-    if (!isViewmodelHero(heroId)) continue;
-    const materialSet = getViewmodelMaterials(heroId);
-    materials.push(
-      materialSet.armor,
-      materialSet.dark,
-      materialSet.metal,
-      materialSet.accent,
-      materialSet.glow,
-      materialSet.glass
-    );
-  }
-  return materials;
-}
-
-export function prewarmHeroViewmodelResources(): void {
-  getHeroViewmodelGpuPrewarmMaterials();
-  getHookshotMaterials();
-}
-
-function hasOwnedProjectile<T extends { ownerId: string }>(
-  items: readonly T[],
-  ownerId: string | null | undefined
-): boolean {
-  if (!ownerId) return false;
-  for (let index = 0; index < items.length; index++) {
-    if (items[index].ownerId === ownerId) return true;
-  }
-  return false;
-}
-
-function hasOwnedProjectileOnSide<T extends { ownerId: string; launchSide?: -1 | 1 }>(
-  items: readonly T[],
-  ownerId: string | null | undefined,
-  side: -1 | 1
-): boolean {
-  if (!ownerId) return false;
-  for (let index = 0; index < items.length; index++) {
-    const item = items[index];
-    if (item.ownerId === ownerId && (item.launchSide ?? 1) === side) return true;
-  }
-  return false;
-}
-
-function hasOwnedActiveGrappleLineOnSide(
-  state: GameStoreSnapshot,
-  ownerId: string | null | undefined,
-  side: -1 | 1
-): boolean {
-  if (!ownerId) return false;
-  for (let index = 0; index < state.grappleLines.length; index++) {
-    const line = state.grappleLines[index];
-    if (line.ownerId === ownerId && line.state !== 'done' && (line.launchSide ?? 1) === side) return true;
-  }
-  return false;
-}
-
-function hasOwnedGrappleLine(
-  state: GameStoreSnapshot,
-  ownerId: string | null | undefined
-): boolean {
-  return hasOwnedProjectile(state.grappleLines, ownerId);
-}
-
-function isViewmodelActionActive(
-  heroId: ViewmodelHeroId | null,
-  state: GameStoreSnapshot,
-  localPlayerId: string | null | undefined
-): boolean {
-  switch (heroId) {
-    case 'phantom':
-      return hasOwnedProjectile(state.voidRays, localPlayerId);
-    case 'hookshot':
-      return hasOwnedProjectile(state.dragHooks, localPlayerId) ||
-        hasOwnedGrappleLine(state, localPlayerId);
-    case 'blaze':
-      return state.flamethrowerActive || hasOwnedProjectile(state.rockets, localPlayerId);
-    case 'chronos':
-    case null:
-      return false;
-  }
-}
-
-function getActionState(heroId: ViewmodelHeroId): ViewmodelActionState {
-  const store = useGameStore.getState();
-  const localPlayerId = store.localPlayer?.id;
-
-  switch (heroId) {
-    case 'phantom':
-      return {
-        active: isViewmodelActionActive(heroId, store, localPlayerId),
-        charging: store.voidRayCharging,
-        targeting: false,
-      };
-    case 'hookshot':
-      return {
-        active: isViewmodelActionActive(heroId, store, localPlayerId),
-        charging: false,
-        targeting: false,
-      };
-    case 'blaze':
-      return {
-        active: isViewmodelActionActive(heroId, store, localPlayerId),
-        charging: false,
-        targeting: store.bombTargeting,
-      };
-    case 'chronos':
-      return {
-        active: false,
-        charging: false,
-        targeting: false,
-      };
-  }
-}
 
 function writeViewmodelRootTransform(
   target: MutableTransformTarget,
@@ -650,9 +413,9 @@ function writeViewmodelRootTransform(
   );
 }
 
-function createPhantomReloadGlowMaterial(): THREE.MeshBasicMaterial {
+function createAdditiveGlowMaterial(color: number): THREE.MeshBasicMaterial {
   return new THREE.MeshBasicMaterial({
-    color: PHANTOM_COLORS.lightPurple,
+    color,
     transparent: true,
     opacity: 0,
     blending: THREE.AdditiveBlending,
@@ -661,121 +424,8 @@ function createPhantomReloadGlowMaterial(): THREE.MeshBasicMaterial {
   });
 }
 
-function createViewmodelBurnMaterial(
-  color: number,
-  opacity: number
-): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial({
-    color,
-    transparent: true,
-    opacity,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    toneMapped: false,
-  });
-}
-
-function ViewmodelBurnOverlay() {
-  const groupRef = useRef<THREE.Group>(null);
-  const flameRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const emberRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const flameMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireOrange, 0), []);
-  const innerFlameMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireYellow, 0), []);
-  const emberMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireWhite, 0), []);
-  const glowMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireRed, 0), []);
-
-  useEffect(() => () => {
-    flameMaterial.dispose();
-    innerFlameMaterial.dispose();
-    emberMaterial.dispose();
-    glowMaterial.dispose();
-  }, [emberMaterial, flameMaterial, glowMaterial, innerFlameMaterial]);
-
-  useFrame((state) => {
-    const group = groupRef.current;
-    if (!group) return;
-
-    const player = useGameStore.getState().localPlayer;
-    const now = Date.now();
-    const remainingMs = Math.max(0, (player?.onFireUntil ?? 0) - now);
-    const active = Boolean(player && player.state === 'alive' && remainingMs > 0);
-    if (!active) {
-      group.visible = false;
-      flameMaterial.opacity = 0;
-      innerFlameMaterial.opacity = 0;
-      emberMaterial.opacity = 0;
-      glowMaterial.opacity = 0;
-      return;
-    }
-
-    const fade = THREE.MathUtils.smoothstep(Math.min(remainingMs, VIEWMODEL_BURN_FADE_OUT_MS), 0, VIEWMODEL_BURN_FADE_OUT_MS);
-    const t = state.clock.elapsedTime;
-    const flicker = 0.82 + Math.sin(t * 17.2) * 0.08 + Math.sin(t * 37.5) * 0.04;
-    const intensity = fade * flicker;
-
-    group.visible = intensity > 0.01;
-    flameMaterial.opacity = intensity * 0.18 * VIEWMODEL_BURN_OPACITY_SCALE;
-    innerFlameMaterial.opacity = intensity * 0.12 * VIEWMODEL_BURN_OPACITY_SCALE;
-    emberMaterial.opacity = intensity * 0.34 * VIEWMODEL_BURN_OPACITY_SCALE;
-    glowMaterial.opacity = intensity * 0.055 * VIEWMODEL_BURN_OPACITY_SCALE;
-
-    for (let index = 0; index < VIEWMODEL_BURN_ANCHORS.length; index++) {
-      const anchor = VIEWMODEL_BURN_ANCHORS[index];
-      const mesh = flameRefs.current[index];
-      if (!mesh) continue;
-
-      const pulse = Math.sin(t * 8.6 + anchor.phase * Math.PI * 2);
-      const sway = Math.sin(t * 5.4 + anchor.phase * Math.PI * 2) * 0.018;
-      const scale = anchor.radius * intensity * VIEWMODEL_BURN_FLAME_SCALE * (0.82 + Math.max(0, pulse) * 0.24);
-      mesh.visible = intensity > 0.02;
-      mesh.position.set(anchor.x + sway, anchor.y + Math.max(0, pulse) * 0.016, anchor.z);
-      mesh.rotation.set(-0.26 + pulse * 0.08, anchor.phase * Math.PI * 2 + t * 0.22, pulse * 0.16);
-      mesh.scale.set(scale * 0.68, scale * 1.62, scale * 0.68);
-    }
-
-    for (let index = 0; index < VIEWMODEL_BURN_EMBERS.length; index++) {
-      const ember = VIEWMODEL_BURN_EMBERS[index];
-      const mesh = emberRefs.current[index];
-      if (!mesh) continue;
-
-      const cycle = (t * 0.9 + ember.phase) % 1;
-      const drift = Math.sin(t * 3.2 + ember.phase * 8) * 0.016;
-      const scale = (0.012 + cycle * 0.008) * intensity * VIEWMODEL_BURN_EMBER_SCALE;
-      mesh.visible = intensity > 0.02;
-      mesh.position.set(
-        ember.x + drift,
-        ember.y + cycle * 0.105,
-        ember.z + Math.cos(t * 2.6 + ember.phase * 6) * 0.012
-      );
-      mesh.scale.setScalar(scale);
-    }
-  });
-
-  return (
-    <group ref={groupRef} visible={false} renderOrder={24}>
-      <mesh geometry={SHARED_GEOMETRIES.sphere12} material={glowMaterial} position={[0, -0.27, -0.62]} scale={[0.56, 0.18, 0.34]} frustumCulled={false} />
-      {VIEWMODEL_BURN_ANCHORS.map((anchor, index) => (
-        <mesh
-          key={`viewmodel-burn-flame-${index}`}
-          ref={(node) => { flameRefs.current[index] = node; }}
-          geometry={SHARED_GEOMETRIES.cone6}
-          material={index % 2 === 0 ? flameMaterial : innerFlameMaterial}
-          position={[anchor.x, anchor.y, anchor.z]}
-          frustumCulled={false}
-        />
-      ))}
-      {VIEWMODEL_BURN_EMBERS.map((ember, index) => (
-        <mesh
-          key={`viewmodel-burn-ember-${index}`}
-          ref={(node) => { emberRefs.current[index] = node; }}
-          geometry={SHARED_GEOMETRIES.sphere6}
-          material={emberMaterial}
-          position={[ember.x, ember.y, ember.z]}
-          frustumCulled={false}
-        />
-      ))}
-    </group>
-  );
+function createPhantomReloadGlowMaterial(): THREE.MeshBasicMaterial {
+  return createAdditiveGlowMaterial(PHANTOM_COLORS.lightPurple);
 }
 
 function getPhantomReloadPose(nowMs: number, elapsedSeconds: number, side: -1 | 1): PhantomReloadPose {
@@ -1125,7 +775,7 @@ function writePhantomHandPose(
   holdBlend: number,
   shotPulse: number,
   elapsedSeconds: number,
-  locomotion: PhantomLocomotionPose = PHANTOM_STILL_LOCOMOTION_POSE,
+  locomotion: ViewmodelLocomotionPose = VIEWMODEL_STILL_LOCOMOTION_POSE,
   primaryReadyBlend = 0,
   primaryShotExtension = 0
 ): void {
@@ -1279,7 +929,7 @@ function writePhantomForearmPose(
   holdBlend: number,
   shotPulse: number,
   elapsedSeconds: number,
-  locomotion: PhantomLocomotionPose = PHANTOM_STILL_LOCOMOTION_POSE,
+  locomotion: ViewmodelLocomotionPose = VIEWMODEL_STILL_LOCOMOTION_POSE,
   primaryReadyBlend = 0,
   primaryShotExtension = 0
 ): void {
@@ -1512,7 +1162,7 @@ function isLocalHookshotHookDetached(side: -1 | 1): boolean {
   );
 }
 
-function createPhantomLocomotionRuntime(): PhantomLocomotionRuntime {
+function createViewmodelLocomotionRuntime(): ViewmodelLocomotionRuntime {
   return {
     movementBlend: 0,
     runBlend: 0,
@@ -1524,8 +1174,8 @@ function createPhantomLocomotionRuntime(): PhantomLocomotionRuntime {
   };
 }
 
-function updatePhantomLocomotionRuntime(
-  locomotion: PhantomLocomotionRuntime,
+function updateViewmodelLocomotionRuntime(
+  locomotion: ViewmodelLocomotionRuntime,
   camera: THREE.Camera,
   delta: number,
   heroId: ViewmodelHeroId = 'phantom'
@@ -1643,7 +1293,7 @@ function composePhantomPrimaryPalmMatrix({
   primaryReadyBlend?: number;
   primaryShotExtension?: number;
   shieldCastPose?: PhantomShieldCastPose;
-  locomotion?: PhantomLocomotionPose;
+  locomotion?: ViewmodelLocomotionPose;
 }): THREE.Matrix4 {
   const rootTransform = {
     position: matrixPosition,
@@ -1652,9 +1302,9 @@ function composePhantomPrimaryPalmMatrix({
   writeViewmodelRootTransform(rootTransform, elapsedSeconds, actionBlend, targetingBlend);
   composeTransformMatrix(viewmodelRootMatrix, rootTransform.position, rootTransform.rotation);
 
-  matrixPosition.copy(PHANTOM_VIEWMODEL_OFFSET);
+  matrixPosition.copy(DEFAULT_VIEWMODEL_ROOT_OFFSET);
   matrixEuler.set(0, 0, 0);
-  composeTransformMatrix(phantomOffsetMatrix, matrixPosition, matrixEuler);
+  composeTransformMatrix(viewmodelOffsetMatrix, matrixPosition, matrixEuler);
 
   const poseTarget: PhantomHandPoseTargets = {
     arm: { position: matrixPosition, rotation: matrixEuler },
@@ -1680,32 +1330,32 @@ function composePhantomPrimaryPalmMatrix({
     applyPhantomShieldCastHandPose(poseTarget, side, shieldCastPose, elapsedSeconds);
   }
 
-  composeTransformMatrix(phantomArmMatrix, poseTarget.arm.position, poseTarget.arm.rotation);
-  composeTransformMatrix(phantomWristMatrix, poseTarget.wrist.position, poseTarget.wrist.rotation);
-  composeTransformMatrix(phantomPalmMatrix, poseTarget.palm.position, poseTarget.palm.rotation);
+  composeTransformMatrix(viewmodelArmMatrix, poseTarget.arm.position, poseTarget.arm.rotation);
+  composeTransformMatrix(viewmodelWristMatrix, poseTarget.wrist.position, poseTarget.wrist.rotation);
+  composeTransformMatrix(viewmodelPalmMatrix, poseTarget.palm.position, poseTarget.palm.rotation);
 
   matrixPosition.copy(PHANTOM_PALM_SOCKET_OFFSET);
   matrixEuler.set(0, 0, 0);
-  composeTransformMatrix(phantomSocketMatrix, matrixPosition, matrixEuler);
+  composeTransformMatrix(viewmodelSocketMatrix, matrixPosition, matrixEuler);
 
   camera.updateMatrixWorld();
-  phantomWorldMatrix
+  viewmodelWorldMatrix
     .copy(camera.matrixWorld)
     .multiply(viewmodelRootMatrix)
-    .multiply(phantomOffsetMatrix)
-    .multiply(phantomArmMatrix)
-    .multiply(phantomWristMatrix)
-    .multiply(phantomPalmMatrix)
-    .multiply(phantomSocketMatrix);
+    .multiply(viewmodelOffsetMatrix)
+    .multiply(viewmodelArmMatrix)
+    .multiply(viewmodelWristMatrix)
+    .multiply(viewmodelPalmMatrix)
+    .multiply(viewmodelSocketMatrix);
 
-  return phantomWorldMatrix;
+  return viewmodelWorldMatrix;
 }
 
 function samplePhantomPrimaryPalmSocket(
   context: PhantomPrimaryPoseSampleContext,
   actionBlend: number,
   targetingBlend: number,
-  locomotion?: PhantomLocomotionPose
+  locomotion?: ViewmodelLocomotionPose
 ): ViewmodelSocketPoseDraft {
   const attackTimeSeconds = context.actionTimeSeconds ?? PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS;
   const timestampMs = context.timestampMs ?? Date.now();
@@ -1748,22 +1398,22 @@ function composePhantomVoidRayOrbMatrix({
   writeViewmodelRootTransform(rootTransform, elapsedSeconds, actionBlend, targetingBlend);
   composeTransformMatrix(viewmodelRootMatrix, rootTransform.position, rootTransform.rotation);
 
-  matrixPosition.copy(PHANTOM_VIEWMODEL_OFFSET);
+  matrixPosition.copy(DEFAULT_VIEWMODEL_ROOT_OFFSET);
   matrixEuler.set(0, 0, 0);
-  composeTransformMatrix(phantomOffsetMatrix, matrixPosition, matrixEuler);
+  composeTransformMatrix(viewmodelOffsetMatrix, matrixPosition, matrixEuler);
 
   matrixPosition.copy(PHANTOM_VOID_RAY_RELEASE_ORIGIN_POSITION);
   matrixEuler.set(0, 0, 0);
-  composeTransformMatrix(phantomSocketMatrix, matrixPosition, matrixEuler);
+  composeTransformMatrix(viewmodelSocketMatrix, matrixPosition, matrixEuler);
 
   camera.updateMatrixWorld();
-  phantomWorldMatrix
+  viewmodelWorldMatrix
     .copy(camera.matrixWorld)
     .multiply(viewmodelRootMatrix)
-    .multiply(phantomOffsetMatrix)
-    .multiply(phantomSocketMatrix);
+    .multiply(viewmodelOffsetMatrix)
+    .multiply(viewmodelSocketMatrix);
 
-  return phantomWorldMatrix;
+  return viewmodelWorldMatrix;
 }
 
 function samplePhantomVoidRayOrbSocket(
@@ -1793,7 +1443,7 @@ function PhantomAnimatedForearm({
   materials: ViewmodelMaterialSet;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
   voidRayReleaseRef: MutableRefObject<PhantomVoidRayReleaseState | null>;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   const forearmRef = useRef<THREE.Group>(null);
   const length = 0.32;
@@ -1831,7 +1481,7 @@ function PhantomAnimatedForearm({
         0,
         0,
         state.clock.elapsedTime,
-        PHANTOM_STILL_LOCOMOTION_POSE,
+        VIEWMODEL_STILL_LOCOMOTION_POSE,
         0,
         0
       );
@@ -1911,7 +1561,7 @@ function PhantomPoseableHand({
   materials: ViewmodelMaterialSet;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
   voidRayReleaseRef: MutableRefObject<PhantomVoidRayReleaseState | null>;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   const closedVisualRef = useRef<THREE.Group>(null);
   const armRef = useRef<THREE.Group>(null);
@@ -1975,7 +1625,7 @@ function PhantomPoseableHand({
         0,
         0,
         state.clock.elapsedTime,
-        PHANTOM_STILL_LOCOMOTION_POSE,
+        VIEWMODEL_STILL_LOCOMOTION_POSE,
         0,
         0
       );
@@ -2249,14 +1899,7 @@ function PhantomPoseableHand({
 }
 
 function createPhantomVoidRayChargeOrbMaterial(color: number): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial({
-    color,
-    transparent: true,
-    opacity: 0,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    toneMapped: false,
-  });
+  return createAdditiveGlowMaterial(color);
 }
 
 function PhantomVoidRayChargeOrb() {
@@ -2371,13 +2014,13 @@ function PhantomViewmodel({
   materials: ViewmodelMaterialSet;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
   voidRayReleaseRef: MutableRefObject<PhantomVoidRayReleaseState | null>;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   return (
     <group position={[
-      PHANTOM_VIEWMODEL_OFFSET.x,
-      PHANTOM_VIEWMODEL_OFFSET.y,
-      PHANTOM_VIEWMODEL_OFFSET.z,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.x,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.y,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.z,
     ]}>
       <PhantomAnimatedForearm side={-1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
       <PhantomAnimatedForearm side={1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
@@ -2400,7 +2043,7 @@ function HookshotPhantomForearm({
   materials: ViewmodelMaterialSet;
   primaryFireRef: MutableRefObject<HookshotPrimaryFireState | null>;
   secondaryFireRef: MutableRefObject<HookshotSecondaryFireState | null>;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   const forearmRef = useRef<THREE.Group>(null);
   const length = 0.32;
@@ -2460,7 +2103,7 @@ function HookshotSimpleHookHand({
   materials: ViewmodelMaterialSet;
   primaryFireRef: MutableRefObject<HookshotPrimaryFireState | null>;
   secondaryFireRef: MutableRefObject<HookshotSecondaryFireState | null>;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   const armRef = useRef<THREE.Group>(null);
   const wristRef = useRef<THREE.Group>(null);
@@ -2601,13 +2244,13 @@ function HookshotViewmodel({
   materials: ViewmodelMaterialSet;
   primaryFireRef: MutableRefObject<HookshotPrimaryFireState | null>;
   secondaryFireRef: MutableRefObject<HookshotSecondaryFireState | null>;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   return (
     <group position={[
-      PHANTOM_VIEWMODEL_OFFSET.x,
-      PHANTOM_VIEWMODEL_OFFSET.y,
-      PHANTOM_VIEWMODEL_OFFSET.z,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.x,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.y,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.z,
     ]}>
       <HookshotPhantomForearm
         side={-1}
@@ -2845,7 +2488,7 @@ function composeBlazeRocketStaffTipMatrix({
   targetingBlend: number;
   holdBlend: number;
   rocketJumpPose: BlazeRocketJumpStaffSlamPose;
-  locomotion?: PhantomLocomotionPose;
+  locomotion?: ViewmodelLocomotionPose;
 }): THREE.Matrix4 {
   const adjustedHoldBlend = holdBlend * (1 - getBlazeRocketJumpPoseAmount(rocketJumpPose));
   const rootTransform = {
@@ -2855,9 +2498,9 @@ function composeBlazeRocketStaffTipMatrix({
   writeViewmodelRootTransform(rootTransform, elapsedSeconds, actionBlend, targetingBlend);
   composeTransformMatrix(viewmodelRootMatrix, rootTransform.position, rootTransform.rotation);
 
-  matrixPosition.copy(PHANTOM_VIEWMODEL_OFFSET);
+  matrixPosition.copy(DEFAULT_VIEWMODEL_ROOT_OFFSET);
   matrixEuler.set(0, 0, 0);
-  composeTransformMatrix(phantomOffsetMatrix, matrixPosition, matrixEuler);
+  composeTransformMatrix(viewmodelOffsetMatrix, matrixPosition, matrixEuler);
 
   const poseTarget = createBlazeRocketHandPoseTargets();
   writePhantomHandPose(
@@ -2871,7 +2514,7 @@ function composeBlazeRocketStaffTipMatrix({
   applyBlazeRocketPoseToHand(poseTarget, 1, adjustedHoldBlend);
   applyBlazeRocketJumpPoseToHand(poseTarget, 1, rocketJumpPose);
   composeTransformMatrix(
-    phantomArmMatrix,
+    viewmodelArmMatrix,
     poseTarget.closedHand.position,
     poseTarget.closedHand.rotation
   );
@@ -2891,23 +2534,23 @@ function composeBlazeRocketStaffTipMatrix({
   composeTransformMatrix(blazeStaffTipMatrix, matrixPosition, matrixEuler);
 
   camera.updateMatrixWorld();
-  phantomWorldMatrix
+  viewmodelWorldMatrix
     .copy(camera.matrixWorld)
     .multiply(viewmodelRootMatrix)
-    .multiply(phantomOffsetMatrix)
-    .multiply(phantomArmMatrix)
+    .multiply(viewmodelOffsetMatrix)
+    .multiply(viewmodelArmMatrix)
     .multiply(blazeClosedHandInnerMatrix)
     .multiply(blazeStaffMatrix)
     .multiply(blazeStaffTipMatrix);
 
-  return phantomWorldMatrix;
+  return viewmodelWorldMatrix;
 }
 
 function sampleBlazeRocketStaffTipSocket(
   context: BlazeRocketStaffPoseSampleContext,
   actionBlend: number,
   targetingBlend: number,
-  locomotion?: PhantomLocomotionPose
+  locomotion?: ViewmodelLocomotionPose
 ): ViewmodelSocketPoseDraft {
   const timestampMs = context.timestampMs ?? Date.now();
   const holdBlend = context.holdBlend ?? getBlazeStaffHeldBlend(timestampMs);
@@ -2926,14 +2569,7 @@ function sampleBlazeRocketStaffTipSocket(
 }
 
 function createBlazeStaffChargeGlowMaterial(color: number): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial({
-    color,
-    transparent: true,
-    opacity: 0,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    toneMapped: false,
-  });
+  return createAdditiveGlowMaterial(color);
 }
 
 function BlazePhantomForearm({
@@ -2943,7 +2579,7 @@ function BlazePhantomForearm({
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   const forearmRef = useRef<THREE.Group>(null);
   const length = 0.32;
@@ -3223,7 +2859,7 @@ function BlazePhantomHand({
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   const closedVisualRef = useRef<THREE.Group>(null);
   const armRef = useRef<THREE.Group>(null);
@@ -3359,13 +2995,13 @@ function BlazeViewmodel({
   locomotionRef,
 }: {
   materials: ViewmodelMaterialSet;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
 }) {
   return (
     <group position={[
-      PHANTOM_VIEWMODEL_OFFSET.x,
-      PHANTOM_VIEWMODEL_OFFSET.y,
-      PHANTOM_VIEWMODEL_OFFSET.z,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.x,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.y,
+      DEFAULT_VIEWMODEL_ROOT_OFFSET.z,
     ]}>
       <group position={[0.06, -0.035, 0.18]}>
         <BlazePhantomForearm
@@ -3406,7 +3042,7 @@ function createChronosMovementBobRuntime(): ChronosMovementBobRuntime {
 
 function updateChronosMovementBobRuntime(
   runtime: ChronosMovementBobRuntime,
-  locomotion: PhantomLocomotionPose,
+  locomotion: ViewmodelLocomotionPose,
   camera: THREE.Camera,
   delta: number
 ): ChronosMovementBobOffset {
@@ -3520,7 +3156,7 @@ function writeChronosTriangleForearmPose(
     CHRONOS_FOREARM_READY_BLEND,
     0,
     elapsedSeconds,
-    PHANTOM_STILL_LOCOMOTION_POSE
+    VIEWMODEL_STILL_LOCOMOTION_POSE
   );
 
   const breath = Math.sin(elapsedSeconds * 1.2 + side * 0.65) * 0.002;
@@ -3563,7 +3199,7 @@ function writeChronosTriangleHandPose(
     CHRONOS_HAND_READY_BLEND,
     0,
     elapsedSeconds,
-    PHANTOM_STILL_LOCOMOTION_POSE
+    VIEWMODEL_STILL_LOCOMOTION_POSE
   );
 
   const innerSide = -side;
@@ -3690,9 +3326,9 @@ function composeChronosWeaponSocketLocalMatrix({
     aegisPose
   );
 
-  composeTransformMatrix(phantomArmMatrix, poseTarget.arm.position, poseTarget.arm.rotation);
-  composeTransformMatrix(phantomWristMatrix, poseTarget.wrist.position, poseTarget.wrist.rotation);
-  composeTransformMatrix(phantomPalmMatrix, poseTarget.palm.position, poseTarget.palm.rotation);
+  composeTransformMatrix(viewmodelArmMatrix, poseTarget.arm.position, poseTarget.arm.rotation);
+  composeTransformMatrix(viewmodelWristMatrix, poseTarget.wrist.position, poseTarget.wrist.rotation);
+  composeTransformMatrix(viewmodelPalmMatrix, poseTarget.palm.position, poseTarget.palm.rotation);
 
   const innerSide = -side;
   matrixPosition.set(
@@ -3701,13 +3337,13 @@ function composeChronosWeaponSocketLocalMatrix({
     CHRONOS_WEAPON_SOCKET_Z
   );
   matrixEuler.set(0, 0, 0);
-  composeTransformMatrix(phantomSocketMatrix, matrixPosition, matrixEuler);
+  composeTransformMatrix(viewmodelSocketMatrix, matrixPosition, matrixEuler);
 
   targetMatrix
-    .copy(phantomArmMatrix)
-    .multiply(phantomWristMatrix)
-    .multiply(phantomPalmMatrix)
-    .multiply(phantomSocketMatrix);
+    .copy(viewmodelArmMatrix)
+    .multiply(viewmodelWristMatrix)
+    .multiply(viewmodelPalmMatrix)
+    .multiply(viewmodelSocketMatrix);
 
   return targetMatrix;
 }
@@ -3734,9 +3370,9 @@ function composeChronosPrimaryOrbMatrix({
   writeViewmodelRootTransform(rootTransform, elapsedSeconds, actionBlend, targetingBlend);
   composeTransformMatrix(viewmodelRootMatrix, rootTransform.position, rootTransform.rotation);
 
-  matrixPosition.copy(PHANTOM_VIEWMODEL_OFFSET);
+  matrixPosition.copy(DEFAULT_VIEWMODEL_ROOT_OFFSET);
   matrixEuler.set(0, 0, 0);
-  composeTransformMatrix(phantomOffsetMatrix, matrixPosition, matrixEuler);
+  composeTransformMatrix(viewmodelOffsetMatrix, matrixPosition, matrixEuler);
 
   composeChronosWeaponSocketLocalMatrix({
     targetMatrix: chronosLeftSocketMatrix,
@@ -3745,7 +3381,7 @@ function composeChronosPrimaryOrbMatrix({
     movementBob,
     aegisPose,
   });
-  chronosLeftSocketMatrix.decompose(chronosLeftSocketPosition, phantomWorldQuaternion, phantomWorldScale);
+  chronosLeftSocketMatrix.decompose(chronosLeftSocketPosition, viewmodelWorldQuaternion, viewmodelWorldScale);
 
   composeChronosWeaponSocketLocalMatrix({
     targetMatrix: chronosRightSocketMatrix,
@@ -3754,7 +3390,7 @@ function composeChronosPrimaryOrbMatrix({
     movementBob,
     aegisPose,
   });
-  chronosRightSocketMatrix.decompose(chronosRightSocketPosition, phantomWorldQuaternion, phantomWorldScale);
+  chronosRightSocketMatrix.decompose(chronosRightSocketPosition, viewmodelWorldQuaternion, viewmodelWorldScale);
 
   const spread = aegisPose.spread;
   const shield = aegisPose.shield;
@@ -3784,14 +3420,14 @@ function composeChronosPrimaryOrbMatrix({
   chronosRootMatrix
     .copy(camera.matrixWorld)
     .multiply(viewmodelRootMatrix)
-    .multiply(phantomOffsetMatrix);
+    .multiply(viewmodelOffsetMatrix);
 
-  phantomWorldMatrix
+  viewmodelWorldMatrix
     .copy(chronosRootMatrix)
     .multiply(chronosWeaponMatrix)
     .multiply(chronosOrbMatrix);
 
-  return phantomWorldMatrix;
+  return viewmodelWorldMatrix;
 }
 
 function sampleChronosPrimaryOrbSocket(
@@ -4368,7 +4004,7 @@ function ChronosViewmodel({
   targetingBlendRef,
 }: {
   materials: ViewmodelMaterialSet;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
   actionBlendRef: MutableRefObject<number>;
   targetingBlendRef: MutableRefObject<number>;
 }) {
@@ -4455,9 +4091,9 @@ function ChronosViewmodel({
     <group
       ref={rootRef}
       position={[
-        PHANTOM_VIEWMODEL_OFFSET.x,
-        PHANTOM_VIEWMODEL_OFFSET.y,
-        PHANTOM_VIEWMODEL_OFFSET.z,
+        DEFAULT_VIEWMODEL_ROOT_OFFSET.x,
+        DEFAULT_VIEWMODEL_ROOT_OFFSET.y,
+        DEFAULT_VIEWMODEL_ROOT_OFFSET.z,
       ]}
     >
       <ChronosPhantomForearm
@@ -4507,7 +4143,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
   const phantomVoidRayReleaseRef = useRef<PhantomVoidRayReleaseState | null>(null);
   const hookshotPrimaryFireRef = useRef<HookshotPrimaryFireState | null>(null);
   const hookshotSecondaryFireRef = useRef<HookshotSecondaryFireState | null>(null);
-  const phantomLocomotionRef = useRef<PhantomLocomotionRuntime>(createPhantomLocomotionRuntime());
+  const viewmodelLocomotionRef = useRef<ViewmodelLocomotionRuntime>(createViewmodelLocomotionRuntime());
   const processedPhantomPrimaryEventIdRef = useRef<string | null>(null);
   const processedPhantomVoidRayEventIdRef = useRef<string | null>(null);
   const processedHookshotPrimaryEventIdRef = useRef<string | null>(null);
@@ -4532,7 +4168,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
           { ...context, side: -1 },
           actionBlendRef.current,
           targetingBlendRef.current,
-          phantomLocomotionRef.current
+          viewmodelLocomotionRef.current
         ),
       },
       {
@@ -4541,7 +4177,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
           { ...context, side: 1 },
           actionBlendRef.current,
           targetingBlendRef.current,
-          phantomLocomotionRef.current
+          viewmodelLocomotionRef.current
         ),
       },
       {
@@ -4565,7 +4201,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
           context,
           actionBlendRef.current,
           targetingBlendRef.current,
-          phantomLocomotionRef.current
+          viewmodelLocomotionRef.current
         ),
       },
     ]);
@@ -4595,7 +4231,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
     const actionBlend = actionBlendRef.current;
     const targetingBlend = targetingBlendRef.current;
 
-    updatePhantomLocomotionRuntime(phantomLocomotionRef.current, camera, delta, heroId);
+    updateViewmodelLocomotionRuntime(viewmodelLocomotionRef.current, camera, delta, heroId);
 
     if (heroId === 'phantom') {
       const store = useGameStore.getState();
@@ -4723,7 +4359,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
             materials={materials}
             primaryAttackRef={phantomPrimaryAttackRef}
             voidRayReleaseRef={phantomVoidRayReleaseRef}
-            locomotionRef={phantomLocomotionRef}
+            locomotionRef={viewmodelLocomotionRef}
           />
         )}
         {heroId === 'hookshot' && (
@@ -4731,19 +4367,19 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
             materials={materials}
             primaryFireRef={hookshotPrimaryFireRef}
             secondaryFireRef={hookshotSecondaryFireRef}
-            locomotionRef={phantomLocomotionRef}
+            locomotionRef={viewmodelLocomotionRef}
           />
         )}
         {heroId === 'blaze' && (
           <BlazeViewmodel
             materials={materials}
-            locomotionRef={phantomLocomotionRef}
+            locomotionRef={viewmodelLocomotionRef}
           />
         )}
         {heroId === 'chronos' && (
           <ChronosViewmodel
             materials={materials}
-            locomotionRef={phantomLocomotionRef}
+            locomotionRef={viewmodelLocomotionRef}
             actionBlendRef={actionBlendRef}
             targetingBlendRef={targetingBlendRef}
           />
@@ -4762,6 +4398,7 @@ export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
     actionActive,
     actionCharging,
     actionTargeting,
+    matchPerspective,
   } = useGameStore(
     useShallow(state => {
       const currentHeroId = state.localPlayer?.heroId ?? null;
@@ -4772,6 +4409,7 @@ export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
         heroId: viewmodelHeroId,
         playerState: state.localPlayer?.state ?? 'dead',
         gamePhase: state.gamePhase,
+        matchPerspective: state.matchPerspective,
         actionActive: isViewmodelActionActive(viewmodelHeroId, state, localPlayerId),
         actionCharging: viewmodelHeroId === 'phantom' && state.voidRayCharging,
         actionTargeting: Boolean(
@@ -4783,8 +4421,8 @@ export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
     })
   );
 
-  const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
-  if (!heroId || !isPlaying || playerState !== 'alive') return null;
+  const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
+  if (!heroId || !isPlaying || playerState !== 'alive' || matchPerspective === 'third_person') return null;
 
   return (
     <HeroViewmodelInner

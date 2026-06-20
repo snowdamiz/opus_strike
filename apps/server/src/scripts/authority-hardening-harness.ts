@@ -9,7 +9,7 @@ import type { HeroStats, Team, Vec3 } from '@voxel-strike/shared';
 import { createGameEntryTicket, verifyGameEntryTicket } from '../security/entryTickets';
 import { MessageRateLimiter } from '../rooms/rateLimiter';
 import { getCreateBotFailureReason } from '../rooms/LobbyRoom';
-import { createTeamSpawnAssignments } from '../rooms/GameRoom';
+import { createTeamSpawnAssignments } from '../rooms/spawnAssignments';
 import { validateMovementProposal, type MovementBounds } from '../rooms/movementValidation';
 import { validateTeamPayload } from '../rooms/protocolValidation';
 import { shouldResolveGenericSecondaryAttack } from '../rooms/combatInputRouting';
@@ -223,9 +223,7 @@ function runLobbyBotRosterTests(): void {
     combatParticipantCount: number;
     requestedTeam: Team | null;
     requestedTeamCount: number;
-    wageredLobby?: boolean;
   }) => getCreateBotFailureReason({
-    wageredLobby: options.wageredLobby ?? false,
     combatParticipantCount: options.combatParticipantCount,
     maxParticipants: DEFAULT_GAME_CONFIG.maxPlayers,
     requestedTeam: options.requestedTeam,
@@ -256,12 +254,6 @@ function runLobbyBotRosterTests(): void {
     requestedTeamCount: 0,
   }), 'lobby_full');
 
-  assert.equal(createFailureReason({
-    combatParticipantCount: 0,
-    requestedTeam: 'red',
-    requestedTeamCount: 0,
-    wageredLobby: true,
-  }), 'bots_disabled');
 }
 
 function runTeamSpawnAssignmentTests(): void {

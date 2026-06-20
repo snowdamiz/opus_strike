@@ -1,13 +1,18 @@
 import { create } from 'zustand';
 import {
   DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_MATCH_PERSPECTIVE,
   DEFAULT_VOXEL_MAP_SIZE_ID,
   createRandomSeed,
   normalizeVoxelMapSizeId,
   type GameplayMode,
+  type MatchPerspective,
   type GameEndEvent,
   type PlayerPingsMessage,
   type PowerupPickupRuntimeState,
+  type BattleRoyalDropSnapshot,
+  type SafeZoneSnapshot,
+  type MapProfileId,
   type VoxelMapSizeId,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
@@ -26,11 +31,8 @@ import type {
   Player,
   Vec3,
   LobbyPlayer,
-  LobbyWagerState,
   MapVoteOption,
   MapVoteRecord,
-  WagerPaymentIntent,
-  WagerPaymentTransaction,
   RankedEntryQuote,
   UserStats,
   MatchmakingStatus,
@@ -44,54 +46,10 @@ import {
   type ProjectileSlice,
 } from './slices/projectiles';
 
-export type ObserverFlySpeedPreset = 'low' | 'med' | 'high';
-
-export interface ObserverFlySpeed {
-  base: number;
-  sprint: number;
-}
-
 export interface PowerupPickupCollectionState {
   pickupId: string;
   collectedAt: number;
 }
-
-export const OBSERVER_FLY_SPEED_PRESETS = {
-  low: { base: 6, sprint: 12 },
-  med: { base: 12, sprint: 23 },
-  high: { base: 18, sprint: 34 },
-} as const satisfies Record<ObserverFlySpeedPreset, ObserverFlySpeed>;
-
-const DEFAULT_OBSERVER_FLY_SPEED_PRESET: ObserverFlySpeedPreset = 'high';
-
-// Re-export all types for backwards compatibility
-export type {
-  LobbyPlayer,
-  LobbyWagerState,
-  MapVoteOption,
-  MapVoteRecord,
-  WagerPaymentIntent,
-  WagerPaymentTransaction,
-  RankedEntryQuote,
-  UserStats,
-  MatchmakingStatus,
-  AppPhase,
-} from './types';
-
-export type {
-  VoidZoneData,
-  DireBallData,
-  VoidRayData,
-  RocketData,
-  BombData,
-  ChronosPulseData,
-  HookProjectileData,
-  DragHookData,
-  HookshotGroundHooksData,
-  HookshotGroundHooksTargetData,
-  GrappleLineData,
-  EarthWallData,
-} from './types';
 
 // ============================================================================
 // CORE STATE INTERFACE (non-slice state)
@@ -120,11 +78,8 @@ interface CoreState {
   // Lobby state
   currentLobbyId: string | null;
   currentLobbyName: string | null;
-  currentLobbyWager: LobbyWagerState;
   lobbyPlayers: Map<string, LobbyPlayer>;
   isLobbyHost: boolean;
-  lobbyObserversEnabled: boolean;
-  maxLobbyObservers: number;
   lobbyError: string | null;
   mapVoteOptions: MapVoteOption[];
   mapVotes: Map<string, string>;
@@ -134,12 +89,16 @@ interface CoreState {
 
   // Game state
   gameplayMode: GameplayMode;
+  matchPerspective: MatchPerspective;
   gamePhase: GamePhase;
   matchSummary: GameEndEvent | null;
   appliedExperienceMatchId: string | null;
   mapSeed: number;
   mapThemeId: VoxelMapTheme['id'] | null;
   mapSize: VoxelMapSizeId;
+  mapProfileId: MapProfileId | null;
+  safeZone: SafeZoneSnapshot | null;
+  battleRoyalDrop: BattleRoyalDropSnapshot | null;
   powerupPickups: Map<string, PowerupPickupRuntimeState>;
   powerupPickupCollections: Map<string, PowerupPickupCollectionState>;
 
@@ -153,8 +112,6 @@ interface CoreState {
   players: Map<string, Player>;
   localPlayer: Player | null;
   playerPings: Map<string, number | null>;
-  isObserverMode: boolean;
-  observerFlySpeedPreset: ObserverFlySpeedPreset;
 
   // Timing
   roundTimeRemaining: number;
@@ -199,6 +156,7 @@ interface CoreActions {
   setMapSeed: (seed: number) => void;
   setMapThemeId: (themeId: VoxelMapTheme['id'] | null) => void;
   setMapSize: (mapSize: VoxelMapSizeId | string | null | undefined) => void;
+  setMapProfileId: (mapProfileId: MapProfileId | string | null | undefined) => void;
   setPowerupPickups: (pickups: PowerupPickupRuntimeState[]) => void;
   updatePowerupPickup: (pickup: PowerupPickupRuntimeState) => void;
   recordPowerupPickupCollection: (collection: PowerupPickupCollectionState) => void;
@@ -209,17 +167,13 @@ interface CoreActions {
   updatePlayer: (playerId: string, player: Player) => void;
   removePlayer: (playerId: string) => void;
   setPlayerPings: (message: PlayerPingsMessage) => void;
-  setObserverFlySpeedPreset: (preset: ObserverFlySpeedPreset) => void;
   // Lobby actions
   setCurrentLobby: (lobbyId: string | null, lobbyName: string | null) => void;
-  setCurrentLobbyWager: (wager: LobbyWagerState) => void;
   setLobbyPlayers: (players: Map<string, LobbyPlayer>) => void;
   updateLobbyPlayer: (playerId: string, player: LobbyPlayer) => void;
   removeLobbyPlayer: (playerId: string) => void;
   setIsLobbyHost: (isHost: boolean) => void;
-  setLobbyObserverSettings: (enabled: boolean, maxObservers: number) => void;
   setLobbyError: (message: string | null) => void;
-  setObserverMode: (enabled: boolean) => void;
   setMapVoteState: (options: MapVoteOption[], votes: MapVoteRecord[], phaseEndTime: number | null, selectedOptionId?: string | null) => void;
   setMapVotes: (votes: MapVoteRecord[], selectedOptionId?: string | null) => void;
   clearMapVote: () => void;
@@ -281,19 +235,20 @@ const coreInitialState: CoreState = {
   appPhase: 'menu',
   currentLobbyId: null,
   currentLobbyName: null,
-  currentLobbyWager: { enabled: false },
   lobbyPlayers: new Map(),
   isLobbyHost: false,
-  lobbyObserversEnabled: false,
-  maxLobbyObservers: 0,
   lobbyError: null,
   mapVoteOptions: [],
   mapVotes: new Map(),
   mapVotePhaseEndTime: null,
   selectedMapOptionId: null,
   gameplayMode: DEFAULT_GAMEPLAY_MODE,
+  matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
   matchmakingStatus: {
     matchMode: null,
+    gameplayMode: null,
+    botFillMode: null,
+    matchPerspective: null,
     rankBandId: null,
     rankBandLabel: null,
     averageCompetitiveRating: null,
@@ -313,6 +268,9 @@ const coreInitialState: CoreState = {
   mapSeed: createRandomSeed(),
   mapThemeId: null,
   mapSize: DEFAULT_VOXEL_MAP_SIZE_ID,
+  mapProfileId: null,
+  safeZone: null,
+  battleRoyalDrop: null,
   powerupPickups: new Map(),
   powerupPickupCollections: new Map(),
   redScore: 0,
@@ -322,8 +280,6 @@ const coreInitialState: CoreState = {
   players: new Map(),
   localPlayer: null,
   playerPings: new Map(),
-  isObserverMode: false,
-  observerFlySpeedPreset: DEFAULT_OBSERVER_FLY_SPEED_PRESET,
   roundTimeRemaining: 0,
   phaseEndTime: null,
   gameClockFrozen: false,
@@ -342,6 +298,14 @@ const initialState = {
   ...coreInitialState,
   ...projectileInitialState,
 };
+
+export function normalizeMapProfileId(mapProfileId: MapProfileId | string | null | undefined): MapProfileId | null {
+  return mapProfileId === 'battle_royal_large'
+    || mapProfileId === 'ctf_arena'
+    || mapProfileId === 'tdm_arena'
+    ? mapProfileId
+    : null;
+}
 
 // ============================================================================
 // STORE CREATION
@@ -390,7 +354,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   setAppPhase: (phase) => set((state) => state.appPhase === phase ? state : { appPhase: phase }),
   setMatchmakingStatus: (status) => set({ matchmakingStatus: status }),
   setGamePhase: (phase) => {
-    if (phase !== 'playing' && phase !== 'countdown') {
+    if (phase !== 'playing' && phase !== 'countdown' && phase !== 'deployment') {
       clearAllDeathVisuals();
     }
     set((state) => state.gamePhase === phase ? state : { gamePhase: phase });
@@ -467,6 +431,14 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     const normalizedMapSize = normalizeVoxelMapSizeId(mapSize);
     return state.mapSize === normalizedMapSize ? state : { mapSize: normalizedMapSize, powerupPickups: new Map(), powerupPickupCollections: new Map() };
   }),
+  setMapProfileId: (mapProfileId) => set((state) => {
+    const normalizedMapProfileId = normalizeMapProfileId(mapProfileId);
+    return state.mapProfileId === normalizedMapProfileId ? state : {
+      mapProfileId: normalizedMapProfileId,
+      powerupPickups: new Map(),
+      powerupPickupCollections: new Map(),
+    };
+  }),
 
   setPowerupPickups: (pickups) => set({
     powerupPickups: new Map(pickups.map((pickup) => [pickup.pickupId, pickup])),
@@ -539,7 +511,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     // Update visual store for bulk player updates (initial sync)
     players.forEach((player, id) => {
       if (shouldKeepPlayerLiveVisual(player)) {
-        setPlayerVisualTransform(id, player.position, player.lookYaw);
+        setPlayerVisualTransform(id, player.position, player.lookYaw, player.lookPitch);
       } else {
         removePlayerLiveVisualState(id);
       }
@@ -562,7 +534,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
     // Update visual store for individual player updates
     if (shouldKeepPlayerLiveVisual(player)) {
-      setPlayerVisualTransform(playerId, player.position, player.lookYaw);
+      setPlayerVisualTransform(playerId, player.position, player.lookYaw, player.lookPitch);
     } else {
       removePlayerLiveVisualState(playerId);
     }
@@ -639,8 +611,6 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     currentLobbyName: lobbyName,
   }),
 
-  setCurrentLobbyWager: (wager) => set({ currentLobbyWager: wager }),
-
   setLobbyPlayers: (players) => set({ lobbyPlayers: players }),
 
   updateLobbyPlayer: (playerId, player) => {
@@ -659,22 +629,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
   setIsLobbyHost: (isHost) => set((state) => state.isLobbyHost === isHost ? state : { isLobbyHost: isHost }),
 
-  setLobbyObserverSettings: (enabled, maxObservers) => set((state) => {
-    const normalizedMax = Math.max(0, Math.floor(maxObservers));
-    return state.lobbyObserversEnabled === enabled && state.maxLobbyObservers === normalizedMax
-      ? state
-      : { lobbyObserversEnabled: enabled, maxLobbyObservers: normalizedMax };
-  }),
-
   setLobbyError: (message) => set((state) => state.lobbyError === message ? state : { lobbyError: message }),
-
-  setObserverMode: (enabled) => set((state) => (
-    state.isObserverMode === enabled ? state : { isObserverMode: enabled }
-  )),
-
-  setObserverFlySpeedPreset: (preset) => set((state) => (
-    state.observerFlySpeedPreset === preset ? state : { observerFlySpeedPreset: preset }
-  )),
 
   setMapVoteState: (options, votes, phaseEndTime, selectedOptionId = null) => set({
     mapVoteOptions: options,
@@ -748,18 +703,18 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   resetLobby: () => set({
     currentLobbyId: null,
     currentLobbyName: null,
-    currentLobbyWager: { enabled: false },
     lobbyPlayers: new Map(),
     isLobbyHost: false,
-    lobbyObserversEnabled: false,
-    maxLobbyObservers: 0,
     lobbyError: null,
     mapVoteOptions: [],
     mapVotes: new Map(),
     mapVotePhaseEndTime: null,
     selectedMapOptionId: null,
-      matchmakingStatus: {
+    matchmakingStatus: {
       matchMode: null,
+      gameplayMode: null,
+      botFillMode: null,
+      matchPerspective: null,
       rankBandId: null,
       rankBandLabel: null,
       averageCompetitiveRating: null,
@@ -774,5 +729,6 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       rankedEntryQuoteId: null,
     },
     gameplayMode: DEFAULT_GAMEPLAY_MODE,
+    matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
   }),
 }));

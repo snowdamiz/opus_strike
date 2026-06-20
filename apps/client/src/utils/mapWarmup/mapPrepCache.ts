@@ -5,6 +5,7 @@ import {
   generateProceduralVoxelMap,
   isTutorialMapSeed,
   normalizeVoxelMapSizeId,
+  type MapProfileId,
   type VoxelChunk,
   type VoxelMapManifest,
   type VoxelMapSizeId,
@@ -13,6 +14,7 @@ import {
 
 const VOXEL_REGION_CHUNK_SPAN = 4;
 const MAX_PREPARED_MAPS = 4;
+const MAX_PREPARED_BATTLE_ROYAL_MAPS = 1;
 
 export interface VoxelChunkRegionBounds {
   min: { x: number; y: number; z: number };
@@ -32,12 +34,13 @@ export interface MapPrepCacheKeyInput {
   seed: number;
   themeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | string | null;
+  mapProfileId?: MapProfileId | string | null;
   generatorVersion?: number;
 }
 
 export interface PrepareVoxelMapOptions extends MapPrepCacheKeyInput {
   manifest?: VoxelMapManifest;
-  source?: 'match' | 'mapVotePreview' | 'mapVoteFinalized' | 'test';
+  source?: 'match' | 'mapVotePreview' | 'mapVoteFinalized' | 'mapGenerationStarted' | 'test';
 }
 
 export interface PreparedVoxelMap {
@@ -63,6 +66,7 @@ export function getMapPrepCacheKey({
   seed,
   themeId,
   mapSize,
+  mapProfileId,
   generatorVersion = CONSTRUCTED_MAP_MANIFEST_VERSION,
 }: MapPrepCacheKeyInput): string {
   if (isTutorialMapSeed(seed)) {
@@ -70,9 +74,10 @@ export function getMapPrepCacheKey({
   }
 
   const themeSuffix = themeId ? `:${themeId}` : '';
+  const profileSuffix = mapProfileId ? `:${mapProfileId}` : '';
   const normalizedMapSize = normalizeVoxelMapSizeId(mapSize);
   const sizeSuffix = normalizedMapSize === DEFAULT_VOXEL_MAP_SIZE_ID ? '' : `:${normalizedMapSize}`;
-  return `procedural-v${generatorVersion}:${seed >>> 0}${themeSuffix}${sizeSuffix}`;
+  return `procedural-v${generatorVersion}:${seed >>> 0}${themeSuffix}${profileSuffix}${sizeSuffix}`;
 }
 
 function createEmptyRegionBounds(): VoxelChunkRegionBounds {
@@ -150,6 +155,24 @@ export function createVoxelChunkRegions(chunks: VoxelChunk[], manifest: VoxelMap
 }
 
 function evictLeastRecentlyUsedPreparedMap(): void {
+  const battleRoyalEntries = Array.from(preparedMapCache.entries()).filter(([, entry]) => (
+    entry.manifest.profileId === 'battle_royal_large'
+  ));
+  while (battleRoyalEntries.length > MAX_PREPARED_BATTLE_ROYAL_MAPS) {
+    let oldestIndex = 0;
+    let oldestUsedAt = battleRoyalEntries[0]?.[1].lastUsedAtMs ?? Infinity;
+    for (let index = 1; index < battleRoyalEntries.length; index++) {
+      const [, entry] = battleRoyalEntries[index];
+      if (entry.lastUsedAtMs < oldestUsedAt) {
+        oldestIndex = index;
+        oldestUsedAt = entry.lastUsedAtMs;
+      }
+    }
+    const removed = battleRoyalEntries.splice(oldestIndex, 1)[0];
+    if (!removed) break;
+    preparedMapCache.delete(removed[0]);
+  }
+
   if (preparedMapCache.size <= MAX_PREPARED_MAPS) return;
 
   let oldestKey: string | null = null;
@@ -173,6 +196,7 @@ export function prepareVoxelMapCpu(options: PrepareVoxelMapOptions): PreparedVox
     seed: options.seed,
     themeId: options.themeId ?? options.manifest?.themeId ?? null,
     mapSize: options.mapSize ?? options.manifest?.mapSize ?? DEFAULT_VOXEL_MAP_SIZE_ID,
+    mapProfileId: options.mapProfileId ?? options.manifest?.profileId ?? null,
     generatorVersion,
   });
   const cached = preparedMapCache.get(key);
@@ -185,7 +209,12 @@ export function prepareVoxelMapCpu(options: PrepareVoxelMapOptions): PreparedVox
 
   const source = options.source ?? 'match';
   const mapSize = normalizeVoxelMapSizeId(options.mapSize ?? options.manifest?.mapSize ?? DEFAULT_VOXEL_MAP_SIZE_ID);
-  const manifest = options.manifest ?? generateProceduralVoxelMap(options.seed, { themeId: options.themeId, mapSize });
+  const mapProfileId = options.mapProfileId ?? options.manifest?.profileId ?? null;
+  const manifest = options.manifest ?? generateProceduralVoxelMap(options.seed, {
+    themeId: options.themeId,
+    mapSize,
+    profileId: mapProfileId,
+  });
 
   const renderableChunks = manifest.chunks.filter((chunk) => chunk.solidBlockCount > 0);
   const renderableRegions = createVoxelChunkRegions(renderableChunks, manifest);

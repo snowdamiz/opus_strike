@@ -67,7 +67,10 @@ let activeImpactConfig: EffectQualityConfig = {
   maxActiveParticles: 620,
   maxVisibleRemoteAbilityEffects: 48,
   enableDecorativeLights: true,
+  maxRemoteMovementEffectDistance: Number.POSITIVE_INFINITY,
+  maxTerrainImpactRenderDistance: Number.POSITIVE_INFINITY,
 };
+const activeImpactCameraPosition = new THREE.Vector3(Number.NaN, Number.NaN, Number.NaN);
 const PHANTOM_DIRE_IMPACT_CAPACITY = 48;
 const PHANTOM_DIRE_IMPACT_PARTICLES = 10;
 const PHANTOM_DIRE_IMPACT_SMOKE = 1;
@@ -456,18 +459,6 @@ function claimPooledPhantomDireImpact(
   slot.seed = Math.random() * Math.PI * 2;
 }
 
-function countActiveGenericImpacts(frameNow: number): number {
-  let activeCount = 0;
-  for (const slot of genericImpactSlots) {
-    if (slot.active && frameNow - slot.startTime < slot.duration) {
-      activeCount++;
-    } else {
-      slot.active = false;
-    }
-  }
-  return activeCount;
-}
-
 function countActivePhantomDireImpacts(frameNow: number): number {
   let activeCount = 0;
   for (const slot of phantomDireImpactSlots) {
@@ -517,28 +508,34 @@ function recordTerrainImpactDiagnostics(frameNow: number, config: EffectQualityC
 function chooseGenericImpactSlot(frameNow: number, maxActiveImpacts: number): PooledGenericImpactSlot | null {
   if (maxActiveImpacts <= 0) return null;
 
-  const activeCount = countActiveGenericImpacts(frameNow);
-  if (activeCount >= maxActiveImpacts) {
-    let oldestSlot: PooledGenericImpactSlot | null = null;
-    for (const slot of genericImpactSlots) {
-      if (!slot.active) continue;
-      if (!oldestSlot || slot.startTime < oldestSlot.startTime) {
-        oldestSlot = slot;
-      }
-    }
-    return oldestSlot;
-  }
+  let activeCount = 0;
+  let oldestSlot: PooledGenericImpactSlot | null = null;
+  let reusableSlot: PooledGenericImpactSlot | null = null;
+  let reusableSlotIndex = -1;
 
   for (let offset = 0; offset < GENERIC_IMPACT_CAPACITY; offset++) {
     const slotIndex = (nextGenericImpactSlot + offset) % GENERIC_IMPACT_CAPACITY;
     const slot = genericImpactSlots[slotIndex];
-    if (!slot.active) {
-      nextGenericImpactSlot = (slotIndex + 1) % GENERIC_IMPACT_CAPACITY;
-      return slot;
+    if (slot.active && frameNow - slot.startTime < slot.duration) {
+      activeCount++;
+      if (!oldestSlot || slot.startTime < oldestSlot.startTime) {
+        oldestSlot = slot;
+      }
+      continue;
+    }
+
+    slot.active = false;
+    if (!reusableSlot) {
+      reusableSlot = slot;
+      reusableSlotIndex = slotIndex;
     }
   }
 
-  return null;
+  if (activeCount >= maxActiveImpacts) return oldestSlot;
+  if (!reusableSlot) return null;
+
+  nextGenericImpactSlot = (reusableSlotIndex + 1) % GENERIC_IMPACT_CAPACITY;
+  return reusableSlot;
 }
 
 function writeImpactSurfaceTransform(
@@ -582,20 +579,35 @@ function claimGenericImpact(
   slot.seed = Math.random() * Math.PI * 2;
 }
 
+function isImpactWithinRenderDistance(position: { x: number; y: number; z: number }): boolean {
+  const maxDistance = activeImpactConfig.maxTerrainImpactRenderDistance;
+  if (!Number.isFinite(maxDistance) || !Number.isFinite(activeImpactCameraPosition.x)) return true;
+  const dx = position.x - activeImpactCameraPosition.x;
+  const dy = position.y - activeImpactCameraPosition.y;
+  const dz = position.z - activeImpactCameraPosition.z;
+  return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
+}
+
 export function triggerTerrainImpact(
   kind: TerrainImpactKind,
   position: { x: number; y: number; z: number },
   options: TerrainImpactOptions = {}
 ): void {
   if (activeImpactConfig.maxActiveImpacts <= 0) return;
+  if (!isImpactWithinRenderDistance(position)) return;
 
   const style = getImpactStyle(kind);
   const normal = options.normal ?? UP;
   const frameNow = getFrameClock().nowMs;
 
   if (kind === 'phantom_dire_ball') {
-    const activePooledImpacts = phantomDireImpactSlots.reduce((count, slot) => count + (slot.active ? 1 : 0), 0);
-    if (activePooledImpacts >= activeImpactConfig.maxActiveImpacts) return;
+    let activePooledImpacts = 0;
+    for (const slot of phantomDireImpactSlots) {
+      if (!slot.active) continue;
+      activePooledImpacts++;
+      if (activePooledImpacts >= activeImpactConfig.maxActiveImpacts) return;
+    }
+
     claimPooledPhantomDireImpact(position, normal, (options.scale ?? 1) * style.scale, frameNow);
     return;
   }
@@ -610,7 +622,8 @@ export function TerrainImpactEffectsManager({ config }: { config: EffectQualityC
     activeImpactConfig = config;
   }, [config]);
 
-  useFrame(() => {
+  useFrame(({ camera }) => {
+    activeImpactCameraPosition.copy(camera.position);
     const frameNow = getFrameClock().nowMs;
     measureFrameWork('frame.effects.terrainImpacts', () => {
       updatePooledPhantomDireImpacts(phantomRenderSlotsRef.current, frameNow);

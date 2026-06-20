@@ -4,7 +4,7 @@ import {
   CHRONOS_LIFELINE_SOURCE_HEIGHT,
   CHRONOS_LIFELINE_TARGET_HEIGHT,
 } from '@voxel-strike/shared';
-import { addEffect } from '../Effects';
+import { addEffects } from '../Effects';
 
 interface Vec3Like {
   x: number;
@@ -33,28 +33,31 @@ export function addChronosLifelineEffects(
     sourcePosition.y + (options.sourceIsExact ? 0 : CHRONOS_LIFELINE_SOURCE_HEIGHT),
     sourcePosition.z
   );
+  const effects: Array<Parameters<typeof addEffects>[0][number]> = [];
 
   for (const target of targets) {
-    const end = new THREE.Vector3(
+    const lifelineEnd = new THREE.Vector3(
       target.position.x,
       target.position.y + CHRONOS_LIFELINE_TARGET_HEIGHT,
       target.position.z
     );
 
-    addEffect({
+    effects.push({
       type: 'lifeline',
-      position: source.clone(),
-      endPosition: end.clone(),
+      position: source,
+      endPosition: lifelineEnd,
       sourceAbilityId: options.sourceAbilityId,
       sourcePlayerId: options.sourcePlayerId,
       duration: durationMs,
     });
-    addEffect({
+    effects.push({
       type: 'heal',
-      position: end,
+      position: lifelineEnd,
       duration: durationMs + 160,
     });
   }
+
+  addEffects(effects);
 }
 
 export function addChronosSelfHealPulseEffect(
@@ -74,16 +77,18 @@ export function addChronosSelfHealPulseEffect(
     targetPosition.z
   );
 
-  addEffect({
-    type: 'chronosSelfHealPulse',
-    position: source,
-    sourceAbilityId: options.sourceAbilityId,
-    sourcePlayerId: options.sourcePlayerId,
-    duration: durationMs + 140,
-  });
-  addEffect({
-    type: 'heal',
-    position: target,
-    duration: durationMs + 160,
-  });
+  addEffects([
+    {
+      type: 'chronosSelfHealPulse',
+      position: source,
+      sourceAbilityId: options.sourceAbilityId,
+      sourcePlayerId: options.sourcePlayerId,
+      duration: durationMs + 140,
+    },
+    {
+      type: 'heal',
+      position: target,
+      duration: durationMs + 160,
+    },
+  ]);
 }

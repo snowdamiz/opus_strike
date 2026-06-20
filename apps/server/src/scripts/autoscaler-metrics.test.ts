@@ -303,6 +303,24 @@ async function runInGameCapacityPolicyTests(): Promise<void> {
   assert.equal(pressuredSnapshot.machines[0]?.playersPerMachine, 8);
   assert.equal(pressuredSnapshot.machines[0]?.availablePlayers, 0);
 
+  const battleRoyalSnapshot = createInGameCapacitySnapshot([
+    {
+      processId: 'process-1',
+      clients: 12,
+      metadata: {
+        gameplayMode: 'battle_royal',
+        humanCount: 12,
+        reservedHumanPlayers: 12,
+        capacityPlayerCost: 50,
+      },
+    },
+  ]);
+
+  assert.equal(battleRoyalSnapshot.activePlayers, 12);
+  assert.equal(battleRoyalSnapshot.reservedPlayers, 50);
+  assert.equal(battleRoyalSnapshot.availablePlayers, 190);
+  assert.equal(battleRoyalSnapshot.machines[0]?.reservedPlayers, 50);
+
   const fullSnapshot = createInGameCapacitySnapshot(
     Array.from({ length: 30 }, () => ({ clients: 8, metadata: { humanCount: 8, reservedHumanPlayers: 8 } }))
   );

@@ -1,7 +1,8 @@
 import React, { useRef } from 'react';
 import * as THREE from 'three';
 import { HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS } from '@voxel-strike/shared';
-import { useGameStore, type HookProjectileData } from '../../../store/gameStore';
+import { useGameStore } from '../../../store/gameStore';
+import type { HookProjectileData } from '../../../store/types';
 import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';

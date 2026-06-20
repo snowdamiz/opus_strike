@@ -92,6 +92,13 @@ export function getReservedHumanPlayers(room: LoadCapacityRoom): number {
   );
 }
 
+export function getReservedCapacityPlayers(room: LoadCapacityRoom): number {
+  return Math.max(
+    getReservedHumanPlayers(room),
+    readFiniteNumber(room.metadata?.capacityPlayerCost) ?? 0
+  );
+}
+
 function roomTickP99Ms(room: LoadCapacityRoom): number | null {
   const tickP99 = readFiniteNumber(room.metadata?.tickDurationP99Ms);
   return tickP99 && tickP99 > 0 ? tickP99 : null;
@@ -119,7 +126,7 @@ function estimateMachineCapacity(input: {
   const activePlayers = input.rooms.reduce((sum, room) => sum + getActiveHumanPlayers(room), 0);
   const reservedPlayers = Math.max(
     input.machine?.localGamePlayers ?? 0,
-    input.rooms.reduce((sum, room) => sum + getReservedHumanPlayers(room), 0)
+    input.rooms.reduce((sum, room) => sum + getReservedCapacityPlayers(room), 0)
   );
   const tickSamples = input.rooms.map(roomTickP99Ms).filter((value): value is number => value !== null);
   const averageRoomTickP99Ms = tickSamples.length > 0
@@ -218,7 +225,7 @@ export function createServerLoadCapacitySnapshot(
   const cappedEstimates = estimates.slice(0, maxMachines);
   const maxPlayers = cappedEstimates.reduce((sum, machine) => sum + machine.playersPerMachine, 0);
   const activePlayers = options.rooms.reduce((sum, room) => sum + getActiveHumanPlayers(room), 0);
-  const reservedPlayers = options.rooms.reduce((sum, room) => sum + getReservedHumanPlayers(room), 0);
+  const reservedPlayers = options.rooms.reduce((sum, room) => sum + getReservedCapacityPlayers(room), 0);
   const liveEstimates = cappedEstimates.filter((estimate) => estimate.source === 'live');
   const capacityPressure = liveEstimates.length > 0
     ? Math.max(...liveEstimates.map((estimate) => estimate.capacityPressure))

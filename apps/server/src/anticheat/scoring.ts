@@ -68,7 +68,7 @@ export function decayRiskScore(
 ): number {
   if (score <= 0 || now <= lastScoredAt) return clampScore(score);
   const hours = (now - lastScoredAt) / 3_600_000;
-  const pointsPerHour = matchMode === 'ranked' || matchMode === 'custom_wager' ? 4 : 9;
+  const pointsPerHour = matchMode === 'ranked' ? 4 : 9;
   return clampScore(score - hours * pointsPerHour);
 }
 
@@ -105,7 +105,7 @@ export function applySignalToRisk(
     : 0;
   const scoreAfter = clampScore(previous + scoreDelta);
   const priority = priorityFromScore(scoreAfter, signal);
-  const affectsRankedOrWager = signal.matchMode === 'ranked' || signal.matchMode === 'custom_wager';
+  const affectsRanked = signal.matchMode === 'ranked';
 
   const change: AntiCheatScoreChange = {
     userId: signal.userId,
@@ -116,7 +116,7 @@ export function applySignalToRisk(
     integrityStatus: statusFromScore(scoreAfter, signal),
     casePriority: priority,
     shouldCreateCase: Boolean(priority && (scoreAfter >= config.adminReviewScoreThreshold || signal.severity === 'critical')),
-    affectsRankedOrWager,
+    affectsRanked,
   };
 
   if (!signal.userId && !signal.playerSessionId) {
@@ -169,23 +169,20 @@ export function updateMatchRisk(
 export function buildIntegrityGate(
   matchRisk: MatchRiskState,
   config: AntiCheatRuntimeConfig,
-  options: { matchMode: string; rankedEligible: boolean; wagered: boolean }
+  options: { matchMode: string; rankedEligible: boolean }
 ): AntiCheatIntegrityGate {
   const reviewRequired = (
     matchRisk.status === 'compromised' ||
     matchRisk.status === 'no_contest' ||
-    (matchRisk.status === 'suspicious' && matchRisk.score >= Math.min(config.rankedScoreThreshold, config.wagerScoreThreshold))
+    (matchRisk.status === 'suspicious' && matchRisk.score >= config.rankedScoreThreshold)
   );
   const rankedRisk = options.rankedEligible && matchRisk.score >= config.rankedScoreThreshold;
-  const wagerRisk = options.wagered && matchRisk.score >= config.payoutHoldScoreThreshold;
   const rankedHoldRequired = reviewRequired && rankedRisk && config.mode === 'ranked_review';
-  const payoutHoldRequired = reviewRequired && wagerRisk && config.mode === 'ranked_review' && config.payoutHoldsEnabled;
 
   return {
     status: matchRisk.status,
     reviewRequired,
     rankedHoldRequired,
-    payoutHoldRequired,
     observedOnly: config.mode === 'observe',
     reason: matchRisk.reason,
     affectedUserIds: Array.from(matchRisk.affectedUserIds),

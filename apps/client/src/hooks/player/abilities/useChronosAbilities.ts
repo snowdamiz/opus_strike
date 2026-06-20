@@ -5,17 +5,19 @@ import {
   CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED,
+  CHRONOS_VERDANT_PULSE_AIM_DISTANCE,
   CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
   CHRONOS_VERDANT_PULSE_FIRE_READY_MS,
   CHRONOS_VERDANT_PULSE_SPEED,
+  type Team,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { predictLocalChronosAscendantParadox } from '../../../movement/localPrediction';
 import {
   CHRONOS_PRIMARY_ORB_SOCKET,
-  calculateLookDirection,
   calculatePlayerSocketPosition,
 } from '../constants';
+import { resolveAbilityAimDirection } from '../abilityAim';
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import {
   triggerChronosAscendantParadoxPose,
@@ -67,6 +69,7 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
   const lastPulseTimeRef = useRef(0);
   const pulseIdRef = useRef(0);
   const timebreakIdRef = useRef(0);
+  const getOwnerTeam = (ctx: AbilityContext): Team => ctx.localPlayer.team || 'red';
   const primaryHoldStartedAtRef = useRef(0);
 
   function sampleChronosPrimarySpawn(ctx: AbilityContext, now: number): ResolvedAbilitySocketOrigin | null {
@@ -186,7 +189,6 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
 
     lastPulseTimeRef.current = now;
     pulseIdRef.current += 1;
-    const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
     const sampledSpawn = sampleChronosPrimarySpawn(ctx, now);
     const socketPosition = sampledSpawn
       ? {
@@ -195,6 +197,7 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
         z: sampledSpawn.position.z,
       }
       : calculatePlayerSocketPosition(ctx.position, ctx.yaw, CHRONOS_PRIMARY_ORB_SOCKET);
+    const direction = resolveAbilityAimDirection(ctx, socketPosition, CHRONOS_VERDANT_PULSE_AIM_DISTANCE);
     const startPosition = offsetChronosOrbVisualPlainPosition(
       socketPosition,
       direction,
@@ -213,7 +216,7 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
       },
       startTime: now,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: getOwnerTeam(ctx),
       supercharged,
       radius: supercharged ? CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS : undefined,
     });

@@ -1,11 +1,46 @@
 import { useMemo, useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
-import type { Team, Player } from '@voxel-strike/shared';
-import { FACTIONS } from '../../styles/colorTokens';
+import { getTeamCatalogForGameplayMode } from '@voxel-strike/shared';
+import type { Team, Player, TeamCatalogEntry } from '@voxel-strike/shared';
+import { FACTIONS, SCOREBOARD_COLORS } from '../../styles/colorTokens';
 import { useVoiceStore, type VoiceParticipant } from '../../store/voiceStore';
 import { RankBadge } from './RankBadge';
 import { useNetwork } from '../../contexts/NetworkContext';
+
+type TeamPresentation = {
+  id: Team;
+  name: string;
+  fullName: string;
+  primaryColor: string;
+  secondaryColor: string;
+  glowColor: string;
+  bgColor: string;
+};
+
+function factionToPresentation(faction: typeof FACTIONS.red | typeof FACTIONS.blue): TeamPresentation {
+  return {
+    id: faction.id,
+    name: faction.name,
+    fullName: faction.fullName,
+    primaryColor: faction.primaryColor,
+    secondaryColor: faction.secondaryColor,
+    glowColor: faction.glowColor,
+    bgColor: faction.bgColor,
+  };
+}
+
+function teamEntryToPresentation(entry: TeamCatalogEntry): TeamPresentation {
+  return {
+    id: entry.id,
+    name: entry.compactLabel,
+    fullName: entry.label,
+    primaryColor: entry.color,
+    secondaryColor: entry.accentColor,
+    glowColor: `${entry.color}66`,
+    bgColor: `${entry.color}14`,
+  };
+}
 
 // Solar Icon
 function SolarIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -53,11 +88,12 @@ export function Scoreboard() {
   );
 
   const voiceByPlayerId = useMemo(() => new Map(
-    Array.from(participants.values())
-      .filter(participant => participant.playerId)
-      .map(participant => [participant.playerId, participant])
+    Array.from(participants.values()).flatMap((participant): [string, VoiceParticipant][] => (
+      participant.playerId ? [[participant.playerId, participant]] : []
+    ))
   ), [participants]);
   const isCaptureTheFlag = gameplayMode === 'capture_the_flag';
+  const isBattleRoyal = gameplayMode === 'battle_royal';
   const objectiveLabel = isCaptureTheFlag ? 'Flags' : 'Elims';
 
   const solarPlayers: Player[] = [];
@@ -86,6 +122,22 @@ export function Scoreboard() {
       setReportingPlayerId(null);
     }
   };
+
+  if (isBattleRoyal) {
+    return (
+      <BattleRoyalScoreboard
+        players={Array.from(players.values())}
+        localPlayer={localPlayer}
+        playerPings={playerPings}
+        voiceByPlayerId={voiceByPlayerId}
+        mutedPlayerIds={mutedPlayerIds}
+        togglePlayerMute={togglePlayerMute}
+        reportingPlayerId={reportingPlayerId}
+        reportNotice={reportNotice}
+        onReportPlayer={handleReportPlayer}
+      />
+    );
+  }
 
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-md z-40 pointer-events-auto">
@@ -169,7 +221,7 @@ export function Scoreboard() {
         <div className="flex">
           {/* Solar team */}
           <div className="flex-1 border-r border-white/5">
-            <FactionHeader faction={FACTIONS.red} objectiveLabel={objectiveLabel} />
+            <FactionHeader faction={factionToPresentation(FACTIONS.red)} objectiveLabel={objectiveLabel} />
             <div className="divide-y divide-white/5">
               {solarPlayers.map(player => (
                 <PlayerRow 
@@ -184,7 +236,7 @@ export function Scoreboard() {
                   isReporting={reportingPlayerId === player.id}
                   onReport={() => void handleReportPlayer(player)}
                   pingMs={playerPings.get(player.id) ?? null}
-                  faction={FACTIONS.red}
+                  faction={factionToPresentation(FACTIONS.red)}
                   isCaptureTheFlag={isCaptureTheFlag}
                 />
               ))}
@@ -199,7 +251,7 @@ export function Scoreboard() {
 
           {/* Void team */}
           <div className="flex-1">
-            <FactionHeader faction={FACTIONS.blue} objectiveLabel={objectiveLabel} />
+            <FactionHeader faction={factionToPresentation(FACTIONS.blue)} objectiveLabel={objectiveLabel} />
             <div className="divide-y divide-white/5">
               {voidPlayers.map(player => (
                 <PlayerRow 
@@ -214,7 +266,7 @@ export function Scoreboard() {
                   isReporting={reportingPlayerId === player.id}
                   onReport={() => void handleReportPlayer(player)}
                   pingMs={playerPings.get(player.id) ?? null}
-                  faction={FACTIONS.blue}
+                  faction={factionToPresentation(FACTIONS.blue)}
                   isCaptureTheFlag={isCaptureTheFlag}
                 />
               ))}
@@ -245,8 +297,134 @@ export function Scoreboard() {
   );
 }
 
+interface BattleRoyalScoreboardProps {
+  players: Player[];
+  localPlayer: Player | null;
+  playerPings: Map<string, number | null>;
+  voiceByPlayerId: Map<string, VoiceParticipant>;
+  mutedPlayerIds: Set<string>;
+  togglePlayerMute: (playerId: string) => void;
+  reportingPlayerId: string | null;
+  reportNotice: string | null;
+  onReportPlayer: (player: Player) => Promise<void>;
+}
+
+function BattleRoyalScoreboard({
+  players,
+  localPlayer,
+  playerPings,
+  voiceByPlayerId,
+  mutedPlayerIds,
+  togglePlayerMute,
+  reportingPlayerId,
+  reportNotice,
+  onReportPlayer,
+}: BattleRoyalScoreboardProps) {
+  const teamEntries = getTeamCatalogForGameplayMode('battle_royal');
+  const playersByTeam = useMemo(() => {
+    const groups = new Map<Team, Player[]>();
+    for (const entry of teamEntries) groups.set(entry.id, []);
+    for (const player of players) {
+      const group = groups.get(player.team);
+      if (group) group.push(player);
+    }
+    for (const group of groups.values()) {
+      group.sort((a, b) => (b.stats?.kills ?? 0) - (a.stats?.kills ?? 0));
+    }
+    return groups;
+  }, [players, teamEntries]);
+
+  return (
+    <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md pointer-events-auto">
+      <div
+        className="max-h-[90vh] w-full max-w-6xl overflow-hidden rounded-2xl animate-scale-in"
+        style={{
+          background: 'linear-gradient(180deg, rgb(var(--color-strike-elevated) / 0.98) 0%, rgb(var(--color-strike-bg) / 0.98) 100%)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          boxShadow: '0 25px 80px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255,255,255,0.05)',
+        }}
+      >
+        <div
+          className="flex items-center justify-between gap-4 px-5 py-4"
+          style={{
+            background: SCOREBOARD_COLORS.battleRoyalHeaderBackground,
+            borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
+          }}
+        >
+          <div>
+            <p className="font-body text-[10px] uppercase tracking-widest text-white/35">Battle Royal</p>
+            <h2 className="font-display text-2xl leading-none text-white">Squads</h2>
+          </div>
+          <div className="font-body text-xs uppercase tracking-widest text-white/40">
+            {players.filter((player) => player.state === 'alive').length}/{players.length} alive
+          </div>
+        </div>
+
+        <div className="max-h-[calc(90vh-8rem)] overflow-y-auto p-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {teamEntries.map((entry) => {
+              const faction = teamEntryToPresentation(entry);
+              const teamPlayers = playersByTeam.get(entry.id) ?? [];
+              return (
+                <section key={entry.id} className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-white/[0.025]">
+                  <div
+                    className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2"
+                    style={{ background: faction.bgColor }}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-display text-sm leading-none" style={{ color: faction.primaryColor }}>
+                        {faction.fullName}
+                      </p>
+                      <p className="mt-1 font-body text-[10px] uppercase tracking-wider text-white/35">
+                        {teamPlayers.filter((player) => player.state === 'alive').length}/{teamPlayers.length || 3} alive
+                      </p>
+                    </div>
+                    <span
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border font-display text-xs"
+                      style={{ borderColor: `${faction.primaryColor}55`, color: faction.primaryColor, background: `${faction.primaryColor}18` }}
+                    >
+                      {faction.name}
+                    </span>
+                  </div>
+                  <div className="divide-y divide-white/5">
+                    {teamPlayers.length > 0 ? teamPlayers.map((player) => (
+                      <PlayerRow
+                        key={player.id}
+                        player={player}
+                        isLocal={player.id === localPlayer?.id}
+                        canMuteVoice={player.team === localPlayer?.team && player.id !== localPlayer?.id && !player.isBot}
+                        voiceParticipant={voiceByPlayerId.get(player.id) ?? null}
+                        voiceMuted={mutedPlayerIds.has(player.id)}
+                        onToggleVoiceMute={() => togglePlayerMute(player.id)}
+                        canReport={player.id !== localPlayer?.id && !player.isBot}
+                        isReporting={reportingPlayerId === player.id}
+                        onReport={() => void onReportPlayer(player)}
+                        pingMs={playerPings.get(player.id) ?? null}
+                        faction={faction}
+                        isCaptureTheFlag={false}
+                      />
+                    )) : (
+                      <div className="px-3 py-4 text-center font-body text-xs text-white/25">Empty squad</div>
+                    )}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="border-t border-white/5 bg-black/30 px-4 py-3 text-center">
+          <span className="font-body text-xs text-white/30">
+            {reportNotice || <>Press <span className="font-mono text-white/50">TAB</span> to close</>}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface FactionHeaderProps {
-  faction: typeof FACTIONS.red | typeof FACTIONS.blue;
+  faction: TeamPresentation;
   objectiveLabel: string;
 }
 
@@ -271,7 +449,7 @@ function FactionHeader({ faction, objectiveLabel }: FactionHeaderProps) {
 interface PlayerRowProps {
   player: Player;
   isLocal: boolean;
-  faction: typeof FACTIONS.red | typeof FACTIONS.blue;
+  faction: TeamPresentation;
   canMuteVoice: boolean;
   voiceParticipant: VoiceParticipant | null;
   voiceMuted: boolean;

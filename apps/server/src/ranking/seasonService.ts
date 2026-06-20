@@ -13,6 +13,7 @@ import {
 import prisma from '../db';
 
 export const RANKED_SEASON_SETTINGS_ID = 'default';
+const RANKED_SEASON_CACHE_TTL_MS = 60_000;
 
 type RankedSeasonTransaction = Pick<
   Prisma.TransactionClient,
@@ -45,6 +46,8 @@ export interface RankedSeasonUpdateResult {
   season: RankedSeasonAdminView;
   resetRankedStats: boolean;
 }
+
+let rankedSeasonCache: { value: RankedSeasonAdminView; expiresAt: number } | null = null;
 
 function createDefaultSeasonData() {
   return {
@@ -109,8 +112,22 @@ async function ensureRankedSeasonSettings(): Promise<RankedSeasonRow> {
   return ensureRankedSeasonSettingsTx(prisma);
 }
 
+function setRankedSeasonCache(value: RankedSeasonAdminView): void {
+  rankedSeasonCache = {
+    value,
+    expiresAt: Date.now() + RANKED_SEASON_CACHE_TTL_MS,
+  };
+}
+
 export async function getRankedSeason(): Promise<RankedSeasonAdminView> {
-  return toRankedSeasonSnapshot(await ensureRankedSeasonSettings());
+  const now = Date.now();
+  if (rankedSeasonCache && rankedSeasonCache.expiresAt > now) {
+    return rankedSeasonCache.value;
+  }
+
+  const season = toRankedSeasonSnapshot(await ensureRankedSeasonSettings());
+  setRankedSeasonCache(season);
+  return season;
 }
 
 async function archiveCurrentRankedSeason(
@@ -195,7 +212,7 @@ export async function setRankedSeason(
   const endsAt = readSeasonEndsAt(input.endsAt);
   const now = new Date();
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const current = await ensureRankedSeasonSettingsTx(tx);
     const currentMode = current.mode === 'preseason' ? 'preseason' : 'season';
     const currentIdentity = getRankedSeasonIdentity({
@@ -237,4 +254,7 @@ export async function setRankedSeason(
       resetRankedStats,
     };
   });
+
+  setRankedSeasonCache(result.season);
+  return result;
 }

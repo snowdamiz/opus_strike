@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { type MatchMode } from '@voxel-strike/shared';
+import * as SelectPrimitive from '@radix-ui/react-select';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { PARTY_MAX_MEMBERS, type BotDifficulty, type GameplayMode, type HeroId, type MatchMode, type PartyMemberSnapshot, type PartyMode } from '@voxel-strike/shared';
 import { config } from '../../config/environment';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
 import { useGameStore } from '../../store/gameStore';
-import { GameDialog } from './GameDialog';
+import { isPartyLeader as isPartyLeaderForUser, usePartyStore } from '../../store/partyStore';
+import { useSettingsStore } from '../../store/settingsStore';
+import { requiresTutorial } from '../../utils/tutorialAccess';
 import { TopNavIconButton } from './TopNavIconButton';
 
 type SocialTab = 'friends' | 'requests' | 'invites';
@@ -51,11 +54,23 @@ interface LobbyInvite {
   to: SocialUser;
 }
 
+interface PartyInvite {
+  inviteId: string;
+  partyId: string;
+  status: string;
+  createdAt: string;
+  expiresAt: string;
+  respondedAt: string | null;
+  from: SocialUser;
+  to: SocialUser;
+}
+
 interface SocialState {
   friends: SocialFriend[];
   incomingRequests: FriendRequest[];
   outgoingRequests: FriendRequest[];
   lobbyInvites: LobbyInvite[];
+  partyInvites: PartyInvite[];
   discordPlayers: SearchResult[];
 }
 
@@ -69,12 +84,23 @@ const emptySocialState: SocialState = {
   incomingRequests: [],
   outgoingRequests: [],
   lobbyInvites: [],
+  partyInvites: [],
   discordPlayers: [],
 };
 const SOCIAL_REFRESH_INTERVAL_MS = 10000;
+const SOCIAL_CLOSE_ANIMATION_MS = 220;
+const PARTY_BOT_OPTIONS: { difficulty: BotDifficulty; label: string }[] = [
+  { difficulty: 'easy', label: 'Easy' },
+  { difficulty: 'normal', label: 'Normal' },
+  { difficulty: 'hard', label: 'Hard' },
+];
+
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(' ');
+}
 
 function actionableSocialCount(social: SocialState): number {
-  return social.incomingRequests.length + social.lobbyInvites.length;
+  return social.incomingRequests.length + social.lobbyInvites.length + social.partyInvites.length;
 }
 
 function getHttpUrl(): string {
@@ -169,9 +195,7 @@ function matchModeLabel(mode: MatchMode | null): string {
     case 'ranked':
       return 'RANKED';
     case 'quick_play':
-      return 'QUICK PLAY';
-    case 'custom_wager':
-      return 'SOL POT';
+      return 'CAPTURE THE FLAG';
     case 'custom':
       return 'CUSTOM';
     default:
@@ -182,7 +206,7 @@ function matchModeLabel(mode: MatchMode | null): string {
 function UserIdentity({ user, detail }: { user: SocialUser; detail?: string }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-orange-500/20 text-orange-300">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-orange-200/15 bg-orange-500/15 text-orange-200 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.08)]">
         <span className="font-display text-base leading-none">{user.name.slice(0, 1).toUpperCase()}</span>
       </div>
       <div className="min-w-0">
@@ -191,6 +215,150 @@ function UserIdentity({ user, detail }: { user: SocialUser; detail?: string }) {
           {detail ?? user.rank?.label ?? 'Unranked'}
         </p>
       </div>
+    </div>
+  );
+}
+
+function SocialRow({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn('social-row flex items-center justify-between gap-3 rounded-lg px-3.5 py-3', className)}>
+      {children}
+    </div>
+  );
+}
+
+function SectionHeader({
+  title,
+  meta,
+}: {
+  title: string;
+  meta?: ReactNode;
+}) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-3">
+      <h3 className="truncate font-display text-base leading-none text-white">{title}</h3>
+      {meta && <div className="shrink-0">{meta}</div>}
+    </div>
+  );
+}
+
+function StatusBanner({ message, tone }: { message: string; tone: 'error' | 'success' }) {
+  return (
+    <div className={cn(
+      'rounded-lg border px-3 py-2 text-sm shadow-[inset_0_1px_0_rgb(255_255_255_/_0.06)]',
+      tone === 'error'
+        ? 'border-red-400/20 bg-red-500/10 text-red-200'
+        : 'border-green-300/20 bg-green-500/10 text-green-200',
+    )}>
+      {message}
+    </div>
+  );
+}
+
+function RelationshipActionButton({
+  relationship,
+  disabled,
+  onClick,
+}: {
+  relationship: RelationshipState;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const canSend = relationship === 'none';
+
+  return (
+    <button
+      type="button"
+      disabled={!canSend || disabled}
+      onClick={onClick}
+      className={cn(
+        'flex h-9 shrink-0 items-center justify-center rounded-lg border px-3.5 font-display text-xs transition focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-300/70',
+        canSend
+          ? 'border-orange-300/20 bg-orange-500/15 text-orange-100 hover:border-orange-200/40 hover:bg-orange-500/25'
+          : 'cursor-not-allowed border-white/10 bg-white/5 text-white/25',
+      )}
+    >
+      {statusLabel(relationship)}
+    </button>
+  );
+}
+
+function PlayerResultCard({
+  result,
+  detail,
+  pendingAction,
+  onRequest,
+}: {
+  result: SearchResult;
+  detail?: string;
+  pendingAction: string | null;
+  onRequest: (targetUserId: string) => void;
+}) {
+  return (
+    <SocialRow>
+      <UserIdentity user={result.user} detail={detail} />
+      <RelationshipActionButton
+        relationship={result.relationship}
+        disabled={Boolean(pendingAction)}
+        onClick={() => onRequest(result.user.userId)}
+      />
+    </SocialRow>
+  );
+}
+
+function BotDifficultySelect({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: BotDifficulty;
+  disabled: boolean;
+  onChange: (difficulty: BotDifficulty) => void;
+}) {
+  return (
+    <div className="social-bot-select-field">
+      <span className="social-bot-select-label">Difficulty</span>
+      <SelectPrimitive.Root
+        value={value}
+        disabled={disabled}
+        onValueChange={(nextValue) => onChange(nextValue as BotDifficulty)}
+      >
+        <SelectPrimitive.Trigger className="social-bot-select-trigger" aria-label="Bot difficulty">
+          <SelectPrimitive.Value />
+          <SelectPrimitive.Icon asChild>
+            <span className="social-bot-select-icon" aria-hidden="true" />
+          </SelectPrimitive.Icon>
+        </SelectPrimitive.Trigger>
+        <SelectPrimitive.Portal>
+          <SelectPrimitive.Content
+            align="start"
+            className="social-bot-select-content"
+            position="popper"
+            sideOffset={6}
+          >
+            <SelectPrimitive.Viewport className="social-bot-select-viewport">
+              {PARTY_BOT_OPTIONS.map((option) => (
+                <SelectPrimitive.Item
+                  key={option.difficulty}
+                  className="social-bot-select-item"
+                  value={option.difficulty}
+                >
+                  <SelectPrimitive.ItemIndicator className="social-bot-select-item-indicator">
+                    <CheckIcon className="h-3.5 w-3.5" />
+                  </SelectPrimitive.ItemIndicator>
+                  <SelectPrimitive.ItemText>{option.label.toUpperCase()}</SelectPrimitive.ItemText>
+                </SelectPrimitive.Item>
+              ))}
+            </SelectPrimitive.Viewport>
+          </SelectPrimitive.Content>
+        </SelectPrimitive.Portal>
+      </SelectPrimitive.Root>
     </div>
   );
 }
@@ -233,26 +401,26 @@ function IconButton({
 
 function FriendCard({
   friend,
-  canInviteFromLobby,
+  canInvite,
   pendingAction,
   onInvite,
   onRemove,
 }: {
   friend: SocialFriend;
-  canInviteFromLobby: boolean;
+  canInvite: boolean;
   pendingAction: string | null;
   onInvite: (friend: SocialFriend) => void;
   onRemove: (friendUserId: string) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg bg-white/5 px-3.5 py-3">
+    <SocialRow>
       <UserIdentity user={friend.user} />
       <div className="flex shrink-0 items-center gap-2">
         <IconButton
           label={`Invite ${friend.user.name}`}
-          title={canInviteFromLobby ? `Invite ${friend.user.name}` : 'Create or join a lobby to invite'}
+          title={canInvite ? `Invite ${friend.user.name}` : 'Open Play or join a lobby to invite'}
           tone="primary"
-          disabled={!canInviteFromLobby || Boolean(pendingAction)}
+          disabled={!canInvite || Boolean(pendingAction)}
           onClick={() => onInvite(friend)}
         >
           <InviteIcon className="h-4 w-4" />
@@ -267,7 +435,39 @@ function FriendCard({
           <XIcon className="h-4 w-4" />
         </IconButton>
       </div>
-    </div>
+    </SocialRow>
+  );
+}
+
+function PartyBotCard({
+  bot,
+  canManage,
+  pendingAction,
+  onRemove,
+}: {
+  bot: PartyMemberSnapshot;
+  canManage: boolean;
+  pendingAction: string | null;
+  onRemove: (bot: PartyMemberSnapshot) => void;
+}) {
+  return (
+    <SocialRow>
+      <div className="min-w-0">
+        <p className="truncate font-display text-sm leading-none text-white">{bot.displayName}</p>
+        <p className="mt-1 truncate text-xs font-body text-white/40">
+          {(bot.botDifficulty ?? 'normal').toUpperCase()} BOT
+        </p>
+      </div>
+      <IconButton
+        label={`Remove ${bot.displayName}`}
+        title={canManage ? `Remove ${bot.displayName}` : 'Only the party leader can remove bots'}
+        tone="danger"
+        disabled={!canManage || Boolean(pendingAction)}
+        onClick={() => onRemove(bot)}
+      >
+        <XIcon className="h-4 w-4" />
+      </IconButton>
+    </SocialRow>
   );
 }
 
@@ -324,16 +524,25 @@ export function useSocialBadgeCount(): number {
 
 export function SocialBox({
   onClose,
+  selectedHero = 'blaze',
+  initialPartyMode,
+  initialGameplayMode,
 }: {
   onClose: () => void;
+  selectedHero?: HeroId;
+  initialPartyMode?: PartyMode;
+  initialGameplayMode?: GameplayMode;
 }) {
   const { isAuthenticated, user } = useWallet();
-  const { joinLobby, startTutorialGame } = useNetwork();
+  const { addPartyBot, ensureParty, joinLobby, joinParty, kickPartyMember, startTutorialGame } = useNetwork();
   const playerName = useGameStore((state) => state.playerName);
   const appPhase = useGameStore((state) => state.appPhase);
   const currentLobbyId = useGameStore((state) => state.currentLobbyId);
   const currentLobbyName = useGameStore((state) => state.currentLobbyName);
-  const currentLobbyMatchMode = useGameStore((state) => state.currentLobbyWager.matchMode ?? null);
+  const currentLobbyMatchMode = useGameStore((state) => state.matchmakingStatus.matchMode ?? null);
+  const devTutorialOverride = useSettingsStore((state) => state.settings.devTutorialOverride);
+  const party = usePartyStore((state) => state.party);
+  const localPartyUserId = usePartyStore((state) => state.localUserId);
 
   const [activeTab, setActiveTab] = useState<SocialTab>('friends');
   const [social, setSocial] = useState<SocialState>(emptySocialState);
@@ -344,11 +553,22 @@ export function SocialBox({
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isClosing, setIsClosing] = useState(false);
+  const [selectedBotDifficulty, setSelectedBotDifficulty] = useState<BotDifficulty>('normal');
+  const closeTimeoutRef = useRef<number | null>(null);
 
   const canInviteFromLobby = isAuthenticated && appPhase === 'in_lobby' && Boolean(currentLobbyId);
-  const hasCompletedTutorial = Boolean(user?.tutorialCompletedAt);
+  const canInviteFromMenu = isAuthenticated && appPhase === 'menu';
+  const canInviteFriend = canInviteFromLobby || canInviteFromMenu;
+  const isPartyLeader = !party || isPartyLeaderForUser(party, localPartyUserId);
+  const partyBotMembers = party?.members.filter((member) => member.isBot) ?? [];
+  const assumedPartyMemberCount = party ? party.members.length : canInviteFromMenu ? 1 : 0;
+  const partySlotsRemaining = Math.max(0, PARTY_MAX_MEMBERS - assumedPartyMemberCount);
+  const canManagePartyBots = canInviteFromMenu && isPartyLeader;
+  const canAddPartyBot = canManagePartyBots && partySlotsRemaining > 0;
+  const tutorialRequired = requiresTutorial(user?.tutorialCompletedAt, devTutorialOverride);
   const requestCount = social.incomingRequests.length + social.outgoingRequests.length;
-  const inviteCount = social.lobbyInvites.length;
+  const inviteCount = social.lobbyInvites.length + social.partyInvites.length;
   const tabCounts = useMemo(() => ({
     friends: social.friends.length + social.discordPlayers.filter((candidate) => candidate.relationship === 'none').length,
     requests: requestCount,
@@ -359,6 +579,32 @@ export function SocialBox({
     { id: 'requests', label: 'Requests', icon: <RequestIcon className="h-4 w-4" />, count: tabCounts.requests },
     { id: 'invites', label: 'Invites', icon: <InviteIcon className="h-4 w-4" />, count: tabCounts.invites },
   ];
+  const sidebarState = isClosing ? 'closing' : 'open';
+
+  const closePanel = useCallback(() => {
+    if (isClosing) return;
+    setIsClosing(true);
+    closeTimeoutRef.current = window.setTimeout(onClose, SOCIAL_CLOSE_ANIMATION_MS);
+  }, [isClosing, onClose]);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimeoutRef.current !== null) {
+        window.clearTimeout(closeTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closePanel();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [closePanel]);
 
   const refreshSocial = useCallback(async (silent = false) => {
     if (!isAuthenticated) return;
@@ -488,29 +734,83 @@ export function SocialBox({
 
   const inviteFriend = (friend: SocialFriend) => {
     runAction(`invite:${friend.user.userId}`, async () => {
-      if (!currentLobbyId) {
-        throw new Error('Create or join a lobby before inviting friends');
+      if (canInviteFromLobby && currentLobbyId) {
+        await socialApi('/social/lobby-invites', {
+          method: 'POST',
+          body: JSON.stringify({
+            toUserId: friend.user.userId,
+            lobbyId: currentLobbyId,
+            lobbyName: currentLobbyName ?? 'Game Lobby',
+            matchMode: currentLobbyMatchMode ?? 'custom',
+          }),
+        });
+        setNotice(`Lobby invite sent to ${friend.user.name}.`);
+        await refreshSocial();
+        return;
       }
 
-      await socialApi('/social/lobby-invites', {
+      if (!canInviteFromMenu) {
+        throw new Error('Open Play or join a lobby before inviting friends');
+      }
+
+      const partyId = await ensureParty(playerName || user?.name || 'Player', selectedHero, {
+        selectedMode: initialPartyMode,
+        gameplayMode: initialGameplayMode,
+      });
+      await socialApi('/social/party-invites', {
         method: 'POST',
         body: JSON.stringify({
           toUserId: friend.user.userId,
-          lobbyId: currentLobbyId,
-          lobbyName: currentLobbyName ?? 'Game Lobby',
-          matchMode: currentLobbyMatchMode ?? 'custom',
+          partyId,
         }),
       });
-      setNotice(`Invite sent to ${friend.user.name}.`);
+      setNotice(`Party invite sent to ${friend.user.name}.`);
       await refreshSocial();
+    });
+  };
+
+  const invitePartyBot = (difficulty: BotDifficulty) => {
+    const option = PARTY_BOT_OPTIONS.find((candidate) => candidate.difficulty === difficulty);
+    const label = option?.label ?? 'Normal';
+    runAction(`invite-party-bot:${difficulty}`, async () => {
+      if (!canInviteFromMenu) {
+        throw new Error('Open Play before inviting party bots');
+      }
+      if (!isPartyLeader) {
+        throw new Error('Only the party leader can invite bots');
+      }
+      if (partySlotsRemaining <= 0) {
+        throw new Error('Party is full');
+      }
+
+      await ensureParty(playerName || user?.name || 'Player', selectedHero, {
+        selectedMode: initialPartyMode,
+        gameplayMode: initialGameplayMode,
+      });
+      addPartyBot({
+        difficulty,
+        displayName: `${label} Bot`,
+        heroId: selectedHero,
+      });
+      setNotice(`${label} bot invited.`);
+    });
+  };
+
+  const removePartyBotMember = (bot: PartyMemberSnapshot) => {
+    runAction(`remove-party-bot:${bot.userId}`, async () => {
+      if (!isPartyLeader) {
+        throw new Error('Only the party leader can remove bots');
+      }
+      kickPartyMember(bot.userId);
+      setNotice(`${bot.displayName} removed.`);
     });
   };
 
   const acceptLobbyInvite = (invite: LobbyInvite) => {
     runAction(`accept-invite:${invite.inviteId}`, async () => {
-      if (!hasCompletedTutorial) {
-        onClose();
+      if (tutorialRequired) {
         startTutorialGame(playerName || user?.name || 'Player');
+        closePanel();
         return;
       }
 
@@ -519,7 +819,7 @@ export function SocialBox({
         { method: 'POST' }
       );
       await joinLobby(playerName || user?.name || 'Player', data.invite.lobbyId);
-      onClose();
+      closePanel();
     });
   };
 
@@ -530,198 +830,294 @@ export function SocialBox({
     });
   };
 
+  const acceptPartyInvite = (invite: PartyInvite) => {
+    runAction(`accept-party-invite:${invite.inviteId}`, async () => {
+      const data = await socialApi<{ invite: PartyInvite }>(
+        `/social/party-invites/${encodeURIComponent(invite.inviteId)}/accept`,
+        { method: 'POST' }
+      );
+      await joinParty(playerName || user?.name || 'Player', data.invite.partyId, selectedHero);
+      closePanel();
+    });
+  };
+
+  const declinePartyInvite = (inviteId: string) => {
+    runAction(`decline-party-invite:${inviteId}`, async () => {
+      await socialApi(`/social/party-invites/${encodeURIComponent(inviteId)}/decline`, { method: 'POST' });
+      await refreshSocial();
+    });
+  };
+
   if (!isAuthenticated) return null;
 
   return (
-    <GameDialog
-      title="SOCIAL"
-      icon={<UsersIcon className="h-5 w-5" />}
-      iconClassName="bg-orange-500/20 text-orange-500"
-      size="xl"
-      onClose={onClose}
-      panelClassName="h-[min(70vh,40rem)]"
-      bodyClassName="flex-1 flex overflow-hidden min-h-0"
-    >
-      <>
-          <div className="w-32 lg:w-40 xl:w-48 shrink-0 border-r border-white/5 p-2.5 lg:p-3 space-y-1.5">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg font-display text-xs focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-400/70 ${
-                  activeTab === tab.id
-                    ? 'bg-orange-500/20 text-orange-400'
-                    : 'text-white/50 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                {tab.icon}
-                <span className="min-w-0 flex-1 truncate text-left">{tab.label.toUpperCase()}</span>
-                {tab.count > 0 && (
-                  <span className={`flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] leading-none ${
-                    activeTab === tab.id ? 'bg-orange-500/20 text-orange-100' : 'bg-white/10 text-white/55'
-                  }`}>
-                    {Math.min(99, tab.count)}
-                  </span>
-                )}
-              </button>
-            ))}
+    <div className="social-sidebar-layer fixed inset-0 z-modal pointer-events-none" data-state={sidebarState}>
+      <button
+        type="button"
+        className="social-sidebar-scrim pointer-events-auto"
+        aria-label="Close social sidebar"
+        onClick={closePanel}
+      />
+
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="social-sidebar-title"
+        className="social-sidebar-panel pointer-events-auto fixed flex flex-col overflow-hidden text-white"
+        data-state={sidebarState}
+      >
+        <header className="relative border-b border-white/[0.06] px-5 py-5">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center text-orange-400">
+                <UsersIcon className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <h2 id="social-sidebar-title" className="truncate font-display text-2xl leading-none text-white">
+                  SOCIAL
+                </h2>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={closePanel}
+              className="flex h-8 w-8 shrink-0 items-center justify-center text-white/45 transition hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-300/70"
+              aria-label="Close social sidebar"
+            >
+              <XIcon className="h-4 w-4" />
+            </button>
           </div>
+        </header>
 
-          <div className="flex-1 p-[clamp(1.125rem,1.6vw,1.65rem)] overflow-y-auto custom-scrollbar">
-            <div className="space-y-4">
-              {(error || notice) && (
-                <div className={`rounded-lg border px-3 py-2 text-sm ${
-                  error
-                    ? 'border-red-400/20 bg-red-500/10 text-red-200'
-                    : 'border-green-300/20 bg-green-500/10 text-green-200'
-                }`}>
-                  {error || notice}
-                </div>
+        <nav className="social-sidebar-tabs grid grid-cols-3 border-b border-white/[0.06] px-4" role="tablist" aria-label="Social sections">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={cn(
+                'social-sidebar-tab flex min-w-0 items-center justify-center gap-2 px-2.5 font-display text-xs transition focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-400/70',
+                activeTab === tab.id
+                  ? 'text-orange-100'
+                  : 'text-white/[0.42] hover:text-white/[0.75]',
               )}
+            >
+              {tab.icon}
+              <span className="min-w-0 truncate">{tab.label.toUpperCase()}</span>
+              {tab.count > 0 && (
+                <span className={cn(
+                  'flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] leading-none',
+                  activeTab === tab.id ? 'bg-orange-300/[0.16] text-orange-50' : 'bg-white/[0.08] text-white/50',
+                )}>
+                  {Math.min(99, tab.count)}
+                </span>
+              )}
+            </button>
+          ))}
+        </nav>
 
-              {isLoading ? (
-                <div className="flex h-52 items-center justify-center">
-                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/10 border-t-orange-300" />
-                </div>
-              ) : (
-                <>
-                  {activeTab === 'friends' && (
-                    <div className="space-y-5">
-                      <section>
-                        <form
-                          className="flex flex-col gap-3 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6"
-                          onSubmit={(event) => {
-                            event.preventDefault();
-                            const targetName = searchQuery.trim();
-                            if (targetName.length >= 2) {
-                              sendFriendRequest({ targetName });
-                            }
-                          }}
+        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 custom-scrollbar" role="tabpanel">
+          <div className="space-y-4">
+            {error && <StatusBanner message={error} tone="error" />}
+            {!error && notice && <StatusBanner message={notice} tone="success" />}
+
+            {isLoading ? (
+              <div className="flex h-52 items-center justify-center">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/10 border-t-orange-300" />
+              </div>
+            ) : (
+              <>
+                {activeTab === 'friends' && (
+                  <div className="space-y-5">
+                    <section className="space-y-3">
+                      <SectionHeader title="Find Player" />
+                      <form
+                        className="social-row flex items-center gap-2 rounded-lg p-2.5"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          const targetName = searchQuery.trim();
+                          if (targetName.length >= 2) {
+                            sendFriendRequest({ targetName });
+                          }
+                        }}
+                      >
+                        <input
+                          value={searchQuery}
+                          onChange={(event) => setSearchQuery(event.target.value)}
+                          placeholder="Callsign"
+                          maxLength={24}
+                          className="h-10 min-w-0 flex-1 rounded-lg border border-white/10 bg-black/20 px-3.5 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-orange-500/80 hover:border-white/20 hover:bg-white/[0.08]"
+                        />
+                        <IconButton
+                          label="Send friend request"
+                          title="Send friend request"
+                          tone="primary"
+                          disabled={searchQuery.trim().length < 2 || Boolean(pendingAction)}
+                          onClick={() => sendFriendRequest({ targetName: searchQuery.trim() })}
                         >
-                          <div className="min-w-0">
-                            <h4 className="font-display text-sm text-white">Find Player</h4>
-                            <p className="text-white/40 text-xs font-body mt-0.5">Search callsigns and send friend requests</p>
-                          </div>
-                          <div className="flex w-full min-w-0 items-center gap-2 sm:min-w-[16rem] sm:max-w-md sm:flex-1 sm:shrink-0">
-                            <input
-                              value={searchQuery}
-                              onChange={(event) => setSearchQuery(event.target.value)}
-                              placeholder="Callsign"
-                              maxLength={24}
-                              className="h-10 min-w-0 flex-1 rounded-lg border border-white/10 bg-white/[0.07] px-3.5 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-orange-500/80 hover:border-white/20 hover:bg-white/[0.1]"
-                            />
-                            <IconButton
-                              label="Send friend request"
-                              title="Send friend request"
-                              tone="primary"
-                              disabled={searchQuery.trim().length < 2 || Boolean(pendingAction)}
-                              onClick={() => sendFriendRequest({ targetName: searchQuery.trim() })}
-                            >
-                              <PlusIcon className="h-4 w-4" />
-                            </IconButton>
-                          </div>
-                        </form>
+                          <PlusIcon className="h-4 w-4" />
+                        </IconButton>
+                      </form>
 
-                        {(isSearching || searchResults.length > 0) && (
-                          <div className="mt-1 space-y-2">
-                            {isSearching && (
-                              <p className="py-4 text-center text-xs font-body text-white/35">SEARCHING...</p>
-                            )}
-                            {!isSearching && searchResults.map((result) => {
-                              const canSend = result.relationship === 'none';
-                              return (
-                                <div key={result.user.userId} className="flex items-center justify-between gap-3 rounded-lg bg-white/5 px-3.5 py-3">
-                                  <UserIdentity user={result.user} />
-                                  <button
-                                    type="button"
-                                    disabled={!canSend || Boolean(pendingAction)}
-                                    onClick={() => sendFriendRequest({ targetUserId: result.user.userId })}
-                                    className={`h-9 px-3.5 rounded-lg font-display text-xs flex shrink-0 items-center justify-center border focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-300/70 ${
-                                      canSend
-                                        ? 'border-orange-300/20 bg-orange-500/15 text-orange-100 hover:border-orange-200/40 hover:bg-orange-500/25'
-                                        : 'cursor-not-allowed border-white/10 bg-white/5 text-white/25'
-                                    }`}
-                                  >
-                                    {statusLabel(result.relationship)}
-                                  </button>
-                                </div>
-                              );
-                            })}
+                      {(isSearching || searchResults.length > 0) && (
+                        <div className="space-y-2">
+                          {isSearching && (
+                            <p className="py-4 text-center text-xs font-body text-white/35">SEARCHING...</p>
+                          )}
+                          {!isSearching && searchResults.map((result) => (
+                            <PlayerResultCard
+                              key={result.user.userId}
+                              result={result}
+                              pendingAction={pendingAction}
+                              onRequest={(targetUserId) => sendFriendRequest({ targetUserId })}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </section>
+
+                    {social.discordPlayers.length > 0 && (
+                      <section className="space-y-2 border-t border-white/[0.06] pt-4">
+                        <SectionHeader title="Discord Players" />
+                        {social.discordPlayers.map((result) => (
+                          <PlayerResultCard
+                            key={result.user.userId}
+                            result={result}
+                            detail="Discord"
+                            pendingAction={pendingAction}
+                            onRequest={(targetUserId) => sendFriendRequest({ targetUserId })}
+                          />
+                        ))}
+                      </section>
+                    )}
+
+                    <section className="space-y-2 border-t border-white/[0.06] pt-4">
+                      <SectionHeader
+                        title="Friends"
+                        meta={<span className="font-display text-xs text-white/35">{social.friends.length}</span>}
+                      />
+                      {social.friends.length > 0 ? (
+                        social.friends.map((friend) => (
+                          <FriendCard
+                            key={friend.friendshipId}
+                            friend={friend}
+                            canInvite={canInviteFriend}
+                            pendingAction={pendingAction}
+                            onInvite={inviteFriend}
+                            onRemove={removeFriend}
+                          />
+                        ))
+                      ) : (
+                        <EmptyState title="NO FRIENDS YET" />
+                      )}
+                    </section>
+
+                    {canInviteFromMenu && (
+                      <section className="social-party-section space-y-3">
+                        <SectionHeader
+                          title="Party Bots"
+                          meta={(
+                            <span className="rounded-full border border-cyan-200/15 bg-cyan-400/10 px-2 py-1 text-[10px] font-display text-cyan-100/75">
+                              {assumedPartyMemberCount}/{PARTY_MAX_MEMBERS}
+                            </span>
+                          )}
+                        />
+                        <p className="text-xs font-body text-white/40">
+                          Add an AI teammate to open party slots.
+                        </p>
+                        <div className="flex items-end gap-2">
+                          <BotDifficultySelect
+                            value={selectedBotDifficulty}
+                            disabled={!canAddPartyBot || Boolean(pendingAction)}
+                            onChange={setSelectedBotDifficulty}
+                          />
+                          <button
+                            type="button"
+                            disabled={!canAddPartyBot || Boolean(pendingAction)}
+                            onClick={() => invitePartyBot(selectedBotDifficulty)}
+                            className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-orange-300/25 bg-orange-500/[0.12] px-3.5 font-display text-xs text-orange-100 transition hover:border-orange-200/45 hover:bg-orange-500/[0.2] disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-white/25"
+                          >
+                            <PlusIcon className="h-4 w-4" />
+                            ADD BOT
+                          </button>
+                        </div>
+                        <p className="text-xs font-body text-white/35">
+                          {partySlotsRemaining > 0 ? `${partySlotsRemaining} slots open` : 'Party full'}
+                        </p>
+                        {partyBotMembers.length > 0 && (
+                          <div className="space-y-2 border-t border-white/[0.06] pt-3">
+                            {partyBotMembers.map((bot) => (
+                              <PartyBotCard
+                                key={bot.userId}
+                                bot={bot}
+                                canManage={canManagePartyBots}
+                                pendingAction={pendingAction}
+                                onRemove={removePartyBotMember}
+                              />
+                            ))}
                           </div>
                         )}
                       </section>
+                    )}
+                  </div>
+                )}
 
-                      {social.discordPlayers.length > 0 && (
-                        <section className="space-y-2 border-t border-white/5 pt-4">
-                          <h3 className="font-display text-base text-white">Discord Players</h3>
-                          {social.discordPlayers.map((result) => {
-                            const canSend = result.relationship === 'none';
-                            return (
-                              <div key={result.user.userId} className="flex items-center justify-between gap-3 rounded-lg bg-white/5 px-3.5 py-3">
-                                <UserIdentity user={result.user} detail="Discord" />
-                                <button
-                                  type="button"
-                                  disabled={!canSend || Boolean(pendingAction)}
-                                  onClick={() => sendFriendRequest({ targetUserId: result.user.userId })}
-                                  className={`h-9 px-3.5 rounded-lg font-display text-xs flex shrink-0 items-center justify-center border focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-300/70 ${
-                                    canSend
-                                      ? 'border-orange-300/20 bg-orange-500/15 text-orange-100 hover:border-orange-200/40 hover:bg-orange-500/25'
-                                      : 'cursor-not-allowed border-white/10 bg-white/5 text-white/25'
-                                  }`}
-                                >
-                                  {statusLabel(result.relationship)}
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </section>
-                      )}
+                {activeTab === 'requests' && (
+                  <div className="space-y-4">
+                    <RequestGroup
+                      title="INCOMING"
+                      requests={social.incomingRequests}
+                      emptyTitle="NO INCOMING REQUESTS"
+                      pendingAction={pendingAction}
+                      onAccept={acceptFriendRequest}
+                      onDecline={declineFriendRequest}
+                    />
+                    <RequestGroup
+                      title="OUTGOING"
+                      requests={social.outgoingRequests}
+                      emptyTitle="NO OUTGOING REQUESTS"
+                      pendingAction={pendingAction}
+                      onCancel={cancelFriendRequest}
+                    />
+                  </div>
+                )}
 
-                      {social.friends.length > 0 && (
-                        <section className="space-y-2 border-t border-white/5 pt-4">
-                          {social.friends.map((friend) => (
-                            <FriendCard
-                              key={friend.friendshipId}
-                              friend={friend}
-                              canInviteFromLobby={canInviteFromLobby}
-                              pendingAction={pendingAction}
-                              onInvite={inviteFriend}
-                              onRemove={removeFriend}
-                            />
-                          ))}
-                        </section>
-                      )}
-                    </div>
-                  )}
-
-                  {activeTab === 'requests' && (
-                    <div className="space-y-4">
-                      <RequestGroup
-                        title="INCOMING"
-                        requests={social.incomingRequests}
-                        emptyTitle="NO INCOMING REQUESTS"
-                        pendingAction={pendingAction}
-                        onAccept={acceptFriendRequest}
-                        onDecline={declineFriendRequest}
-                      />
-                      <RequestGroup
-                        title="OUTGOING"
-                        requests={social.outgoingRequests}
-                        emptyTitle="NO OUTGOING REQUESTS"
-                        pendingAction={pendingAction}
-                        onCancel={cancelFriendRequest}
-                      />
-                    </div>
-                  )}
-
-                  {activeTab === 'invites' && (
-                    <div className="space-y-2">
-                      {social.lobbyInvites.length === 0 ? (
-                        <EmptyState title="NO LOBBY INVITES" />
-                      ) : social.lobbyInvites.map((invite) => (
-                        <div key={invite.inviteId} className="rounded-lg bg-white/5 px-3.5 py-3">
-                          <div className="flex items-start justify-between gap-3">
+                {activeTab === 'invites' && (
+                  <div className="space-y-2">
+                    {social.partyInvites.length === 0 && social.lobbyInvites.length === 0 ? (
+                      <EmptyState title="NO INVITES" />
+                    ) : (
+                      <>
+                        {social.partyInvites.map((invite) => (
+                          <SocialRow key={invite.inviteId} className="items-start">
+                            <UserIdentity user={invite.from} detail="PARTY - Main Play" />
+                            <div className="flex shrink-0 items-center gap-2">
+                              <IconButton
+                                label="Join party"
+                                title="Join party"
+                                tone="success"
+                                disabled={Boolean(pendingAction)}
+                                onClick={() => acceptPartyInvite(invite)}
+                              >
+                                <CheckIcon className="h-4 w-4" />
+                              </IconButton>
+                              <IconButton
+                                label="Decline invite"
+                                title="Decline invite"
+                                tone="danger"
+                                disabled={Boolean(pendingAction)}
+                                onClick={() => declinePartyInvite(invite.inviteId)}
+                              >
+                                <XIcon className="h-4 w-4" />
+                              </IconButton>
+                            </div>
+                          </SocialRow>
+                        ))}
+                        {social.lobbyInvites.map((invite) => (
+                          <SocialRow key={invite.inviteId} className="items-start">
                             <UserIdentity
                               user={invite.from}
                               detail={`${matchModeLabel(invite.matchMode)} - ${invite.lobbyName}`}
@@ -746,24 +1142,25 @@ export function SocialBox({
                                 <XIcon className="h-4 w-4" />
                               </IconButton>
                             </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
+                          </SocialRow>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
           </div>
-      </>
-    </GameDialog>
+        </main>
+      </aside>
+    </div>
   );
 }
 
 function EmptyState({ title }: { title: string }) {
   return (
-    <div className="flex h-40 items-center justify-center">
-      <p className="font-display text-lg text-white/35">{title}</p>
+    <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-white/[0.055] bg-white/[0.008]">
+      <p className="font-display text-lg text-white/25">{title}</p>
     </div>
   );
 }
@@ -786,13 +1183,13 @@ function RequestGroup({
   onCancel?: (requestId: string) => void;
 }) {
   return (
-    <section>
-      <h3 className="mb-3 font-display text-base text-white">{title}</h3>
+    <section className="space-y-3">
+      <SectionHeader title={title} />
       <div className="space-y-2">
         {requests.length === 0 ? (
           <EmptyState title={emptyTitle} />
         ) : requests.map((request) => (
-          <div key={request.requestId} className="flex items-center justify-between gap-3 rounded-lg bg-white/5 px-3.5 py-3">
+          <SocialRow key={request.requestId}>
             <UserIdentity user={request.user} />
             <div className="flex shrink-0 items-center gap-2">
               {onAccept && (
@@ -829,7 +1226,7 @@ function RequestGroup({
                 </IconButton>
               )}
             </div>
-          </div>
+          </SocialRow>
         ))}
       </div>
     </section>

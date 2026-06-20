@@ -14,6 +14,7 @@ import {
   SLIDE_CAMERA_HEIGHT_OFFSET,
   SLIDE_CAMERA_PITCH_OFFSET,
 } from '@voxel-strike/shared';
+import type { MatchPerspective } from '@voxel-strike/shared';
 import type { CameraRefs } from './types';
 import { consumeMobileLookDelta } from '../../store/mobileControlsStore';
 import { useSettingsStore } from '../../store/settingsStore';
@@ -25,6 +26,11 @@ export interface UseCameraOptions {
 export interface UseCameraReturn {
   refs: CameraRefs;
   updateCameraRotation: (camera: THREE.Camera, isSliding: boolean, isCrouching: boolean, dt: number) => void;
+  updateCameraPosition: (
+    camera: THREE.Camera,
+    bodyPosition: { x: number; y: number; z: number },
+    options: CameraPositionOptions
+  ) => void;
   startDeathCamera: (
     camera: THREE.Camera,
     bodyPosition: { x: number; y: number; z: number },
@@ -44,6 +50,17 @@ export interface UseCameraReturn {
 interface DeathCameraStartOptions {
   nowMs?: number;
   sourceDirection?: { x: number; y: number; z: number } | null;
+}
+
+export type CameraCollisionResolver = (
+  origin: { x: number; y: number; z: number },
+  direction: { x: number; y: number; z: number },
+  maxDistance: number
+) => number | null;
+
+interface CameraPositionOptions {
+  perspective: MatchPerspective;
+  collision?: CameraCollisionResolver;
 }
 
 interface DeathCameraRuntime {
@@ -75,6 +92,69 @@ const DEATH_FOV_PULSE = 7;
 const DEATH_TARGET_EYE_HEIGHT = 0.36;
 const DEATH_ROLL_RADIANS = THREE.MathUtils.degToRad(86);
 const DEATH_PITCH_DOWN = 0.24;
+const THIRD_PERSON_CAMERA_DISTANCE = 4.15;
+const THIRD_PERSON_CAMERA_HEIGHT = 1.15;
+const THIRD_PERSON_CAMERA_SHOULDER_OFFSET = 0.82;
+const THIRD_PERSON_COLLISION_ANCHOR_HEIGHT = 0.24;
+const THIRD_PERSON_COLLISION_PADDING = 0.3;
+const THIRD_PERSON_MIN_DISTANCE = 0.85;
+
+const thirdPersonFocus = new THREE.Vector3();
+const thirdPersonDirection = new THREE.Vector3();
+
+interface ThirdPersonCameraPositionOptions {
+  bodyPosition: { x: number; y: number; z: number };
+  yaw: number;
+  eyeHeight: number;
+  collision?: CameraCollisionResolver;
+}
+
+export function writeThirdPersonCameraPosition(
+  outPosition: THREE.Vector3,
+  collisionAnchor: THREE.Vector3,
+  cameraDirection: THREE.Vector3,
+  options: ThirdPersonCameraPositionOptions
+): THREE.Vector3 {
+  const { bodyPosition, yaw, eyeHeight } = options;
+  const forwardX = -Math.sin(yaw);
+  const forwardZ = -Math.cos(yaw);
+  const rightX = Math.cos(yaw);
+  const rightZ = -Math.sin(yaw);
+
+  collisionAnchor.set(
+    bodyPosition.x,
+    bodyPosition.y + eyeHeight + THIRD_PERSON_COLLISION_ANCHOR_HEIGHT,
+    bodyPosition.z
+  );
+  outPosition.set(
+    bodyPosition.x - forwardX * THIRD_PERSON_CAMERA_DISTANCE + rightX * THIRD_PERSON_CAMERA_SHOULDER_OFFSET,
+    bodyPosition.y + eyeHeight + THIRD_PERSON_CAMERA_HEIGHT,
+    bodyPosition.z - forwardZ * THIRD_PERSON_CAMERA_DISTANCE + rightZ * THIRD_PERSON_CAMERA_SHOULDER_OFFSET
+  );
+
+  cameraDirection.copy(outPosition).sub(collisionAnchor);
+  const desiredDistance = cameraDirection.length();
+  if (desiredDistance <= 0.001) {
+    outPosition.copy(collisionAnchor);
+    return outPosition;
+  }
+
+  cameraDirection.multiplyScalar(1 / desiredDistance);
+  const hitDistance = options.collision?.(
+    collisionAnchor,
+    cameraDirection,
+    desiredDistance
+  );
+  const cameraDistance = typeof hitDistance === 'number'
+    ? THREE.MathUtils.clamp(
+      hitDistance - THIRD_PERSON_COLLISION_PADDING,
+      THIRD_PERSON_MIN_DISTANCE,
+      desiredDistance
+    )
+    : desiredDistance;
+
+  return outPosition.copy(collisionAnchor).addScaledVector(cameraDirection, cameraDistance);
+}
 
 export function useCamera(options: UseCameraOptions): UseCameraReturn {
   const { isPointerLocked } = options;
@@ -292,6 +372,25 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
     camera.rotation.z = slideRollRef.current;
   }, [applyLookDelta, fov]);
 
+  const updateCameraPosition = useCallback((
+    camera: THREE.Camera,
+    bodyPosition: { x: number; y: number; z: number },
+    positionOptions: CameraPositionOptions
+  ) => {
+    const eyeHeight = EYE_HEIGHT + crouchHeightRef.current;
+    if (positionOptions.perspective !== 'third_person') {
+      camera.position.set(bodyPosition.x, bodyPosition.y + eyeHeight, bodyPosition.z);
+      return;
+    }
+
+    writeThirdPersonCameraPosition(camera.position, thirdPersonFocus, thirdPersonDirection, {
+      bodyPosition,
+      yaw: yawRef.current,
+      eyeHeight,
+      collision: positionOptions.collision,
+    });
+  }, []);
+
   // Get camera position with eye height and crouch offset
   const getCameraPosition = useCallback((position: THREE.Vector3, _crouchOffset?: number): THREE.Vector3 => {
     const eyeHeight = EYE_HEIGHT + crouchHeightRef.current;
@@ -308,6 +407,7 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
       slideRoll: slideRollRef,
     },
     updateCameraRotation,
+    updateCameraPosition,
     startDeathCamera,
     updateDeathCamera,
     resetDeathCamera,

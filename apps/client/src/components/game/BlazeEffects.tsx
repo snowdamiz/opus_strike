@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { type Player } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import { playSharedLoop, setSharedLoopPosition, stopSharedLoop } from '../../hooks/useAudio';
-import { visualStore } from '../../store/visualStore';
+import { getPlayerVisualLookPitch, visualStore } from '../../store/visualStore';
 import { resolveAbilitySocketOrigin } from '../../model-system/abilitySocketResolver';
 import { BLAZE_COLORS, SHARED_GEOMETRIES } from './effectResources';
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
@@ -171,7 +171,7 @@ function resolveRemoteFlamethrowerPose(player: Player | undefined): Flamethrower
   const visualState = visualStore.getState();
   const visualPosition = visualState.playerPositions.get(player.id) ?? player.position;
   const yaw = visualState.playerRotations.get(player.id) ?? player.lookYaw;
-  const pitch = player.lookPitch;
+  const pitch = getPlayerVisualLookPitch(visualState, player);
   const cosPitch = Math.cos(pitch);
   const forwardX = -Math.sin(yaw);
   const forwardZ = -Math.cos(yaw);

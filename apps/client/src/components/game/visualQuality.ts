@@ -62,6 +62,8 @@ export interface EffectQualityConfig {
   maxActiveParticles: number;
   maxVisibleRemoteAbilityEffects: number;
   enableDecorativeLights: boolean;
+  maxRemoteMovementEffectDistance: number;
+  maxTerrainImpactRenderDistance: number;
 }
 
 export interface RemotePlayerQualityConfig {
@@ -84,6 +86,21 @@ export interface ViewmodelQualityConfig {
   allowDecorativeGlows: boolean;
 }
 
+export interface BattleRoyalVisibilityConfig {
+  terrainLodEnabled: boolean;
+  cameraFar: number;
+  fogDensity: number;
+  terrainCullDistance: number;
+  terrainLodFullDistance: number;
+  terrainLodCoarseDistance: number;
+  terrainPrebuildFullDistance: number;
+  dressingCullDistance: number;
+  gridFadeDistance: number;
+  remoteMovementEffectDistance: number;
+  terrainImpactDistance: number;
+  farTerrainFogBlend: number;
+}
+
 export interface VisualQualityConfig {
   profile: GraphicsPreset;
   render: RenderQualityConfig;
@@ -96,6 +113,8 @@ export interface VisualQualityConfig {
   ragdolls: RagdollQualityConfig;
   viewmodel: ViewmodelQualityConfig;
   budgets: WorldPerformanceBudget;
+  battleRoyalVisibility: BattleRoyalVisibilityConfig;
+  battleRoyalDeploymentVisibility: BattleRoyalVisibilityConfig;
   dynamicLights: {
     maxDynamicLights: number;
     staticAccentLights: boolean;
@@ -103,6 +122,7 @@ export interface VisualQualityConfig {
 }
 
 const DEFAULT_RENDER_EXPOSURE = 1.08;
+export const DEFAULT_CAMERA_FAR = 1000;
 
 const RESOLUTION_SCALE_CONFIG: Record<GraphicsQuality, Pick<RenderQualityConfig, 'dpr'>> = {
   minimum: {
@@ -368,6 +388,124 @@ export const WORLD_PERFORMANCE_BUDGETS: Record<GraphicsPreset, WorldPerformanceB
   },
 };
 
+export const BATTLE_ROYAL_VISIBILITY_CONFIG: Record<GraphicsPreset, BattleRoyalVisibilityConfig> = {
+  potato: {
+    terrainLodEnabled: true,
+    cameraFar: 115,
+    fogDensity: 0.022,
+    terrainCullDistance: 82,
+    terrainLodFullDistance: 56,
+    terrainLodCoarseDistance: 105,
+    terrainPrebuildFullDistance: 78,
+    dressingCullDistance: 54,
+    gridFadeDistance: 50,
+    remoteMovementEffectDistance: 54,
+    terrainImpactDistance: 60,
+    farTerrainFogBlend: 0.76,
+  },
+  competitive: {
+    terrainLodEnabled: true,
+    cameraFar: 136,
+    fogDensity: 0.0185,
+    terrainCullDistance: 104,
+    terrainLodFullDistance: 74,
+    terrainLodCoarseDistance: 128,
+    terrainPrebuildFullDistance: 96,
+    dressingCullDistance: 70,
+    gridFadeDistance: 62,
+    remoteMovementEffectDistance: 70,
+    terrainImpactDistance: 76,
+    farTerrainFogBlend: 0.7,
+  },
+  balanced: {
+    terrainLodEnabled: true,
+    cameraFar: 168,
+    fogDensity: 0.0148,
+    terrainCullDistance: 132,
+    terrainLodFullDistance: 94,
+    terrainLodCoarseDistance: 160,
+    terrainPrebuildFullDistance: 120,
+    dressingCullDistance: 94,
+    gridFadeDistance: 78,
+    remoteMovementEffectDistance: 90,
+    terrainImpactDistance: 98,
+    farTerrainFogBlend: 0.64,
+  },
+  cinematic: {
+    terrainLodEnabled: true,
+    cameraFar: 210,
+    fogDensity: 0.0115,
+    terrainCullDistance: 166,
+    terrainLodFullDistance: 122,
+    terrainLodCoarseDistance: 202,
+    terrainPrebuildFullDistance: 148,
+    dressingCullDistance: 122,
+    gridFadeDistance: 98,
+    remoteMovementEffectDistance: 118,
+    terrainImpactDistance: 126,
+    farTerrainFogBlend: 0.56,
+  },
+};
+
+export const BATTLE_ROYAL_DEPLOYMENT_VISIBILITY_CONFIG: Record<GraphicsPreset, BattleRoyalVisibilityConfig> = {
+  potato: {
+    terrainLodEnabled: false,
+    cameraFar: DEFAULT_CAMERA_FAR,
+    fogDensity: 0.007,
+    terrainCullDistance: DEFAULT_CAMERA_FAR,
+    terrainLodFullDistance: DEFAULT_CAMERA_FAR,
+    terrainLodCoarseDistance: DEFAULT_CAMERA_FAR,
+    terrainPrebuildFullDistance: DEFAULT_CAMERA_FAR,
+    dressingCullDistance: 150,
+    gridFadeDistance: 190,
+    remoteMovementEffectDistance: DEFAULT_CAMERA_FAR,
+    terrainImpactDistance: DEFAULT_CAMERA_FAR,
+    farTerrainFogBlend: 0.36,
+  },
+  competitive: {
+    terrainLodEnabled: false,
+    cameraFar: DEFAULT_CAMERA_FAR,
+    fogDensity: 0.006,
+    terrainCullDistance: DEFAULT_CAMERA_FAR,
+    terrainLodFullDistance: DEFAULT_CAMERA_FAR,
+    terrainLodCoarseDistance: DEFAULT_CAMERA_FAR,
+    terrainPrebuildFullDistance: DEFAULT_CAMERA_FAR,
+    dressingCullDistance: 170,
+    gridFadeDistance: 215,
+    remoteMovementEffectDistance: DEFAULT_CAMERA_FAR,
+    terrainImpactDistance: DEFAULT_CAMERA_FAR,
+    farTerrainFogBlend: 0.32,
+  },
+  balanced: {
+    terrainLodEnabled: false,
+    cameraFar: DEFAULT_CAMERA_FAR,
+    fogDensity: 0.0052,
+    terrainCullDistance: DEFAULT_CAMERA_FAR,
+    terrainLodFullDistance: DEFAULT_CAMERA_FAR,
+    terrainLodCoarseDistance: DEFAULT_CAMERA_FAR,
+    terrainPrebuildFullDistance: DEFAULT_CAMERA_FAR,
+    dressingCullDistance: 190,
+    gridFadeDistance: 240,
+    remoteMovementEffectDistance: DEFAULT_CAMERA_FAR,
+    terrainImpactDistance: DEFAULT_CAMERA_FAR,
+    farTerrainFogBlend: 0.28,
+  },
+  cinematic: {
+    terrainLodEnabled: false,
+    cameraFar: DEFAULT_CAMERA_FAR,
+    fogDensity: 0.0046,
+    terrainCullDistance: DEFAULT_CAMERA_FAR,
+    terrainLodFullDistance: DEFAULT_CAMERA_FAR,
+    terrainLodCoarseDistance: DEFAULT_CAMERA_FAR,
+    terrainPrebuildFullDistance: DEFAULT_CAMERA_FAR,
+    dressingCullDistance: 220,
+    gridFadeDistance: 270,
+    remoteMovementEffectDistance: DEFAULT_CAMERA_FAR,
+    terrainImpactDistance: DEFAULT_CAMERA_FAR,
+    farTerrainFogBlend: 0.24,
+  },
+};
+
 const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
   potato: {
     maxActiveImpacts: 18,
@@ -375,6 +513,8 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
     maxActiveParticles: 96,
     maxVisibleRemoteAbilityEffects: 8,
     enableDecorativeLights: false,
+    maxRemoteMovementEffectDistance: Number.POSITIVE_INFINITY,
+    maxTerrainImpactRenderDistance: Number.POSITIVE_INFINITY,
   },
   competitive: {
     maxActiveImpacts: 34,
@@ -382,6 +522,8 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
     maxActiveParticles: 180,
     maxVisibleRemoteAbilityEffects: 16,
     enableDecorativeLights: true,
+    maxRemoteMovementEffectDistance: Number.POSITIVE_INFINITY,
+    maxTerrainImpactRenderDistance: Number.POSITIVE_INFINITY,
   },
   balanced: {
     maxActiveImpacts: 44,
@@ -389,6 +531,8 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
     maxActiveParticles: 240,
     maxVisibleRemoteAbilityEffects: 22,
     enableDecorativeLights: true,
+    maxRemoteMovementEffectDistance: Number.POSITIVE_INFINITY,
+    maxTerrainImpactRenderDistance: Number.POSITIVE_INFINITY,
   },
   cinematic: {
     maxActiveImpacts: 72,
@@ -396,6 +540,8 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
     maxActiveParticles: 520,
     maxVisibleRemoteAbilityEffects: 42,
     enableDecorativeLights: true,
+    maxRemoteMovementEffectDistance: Number.POSITIVE_INFINITY,
+    maxTerrainImpactRenderDistance: Number.POSITIVE_INFINITY,
   },
 };
 
@@ -521,6 +667,8 @@ export function getVisualQualityConfig(settings: Pick<
     },
     viewmodel: VIEWMODEL_QUALITY_CONFIG[profile],
     budgets: WORLD_PERFORMANCE_BUDGETS[profile],
+    battleRoyalVisibility: BATTLE_ROYAL_VISIBILITY_CONFIG[profile],
+    battleRoyalDeploymentVisibility: BATTLE_ROYAL_DEPLOYMENT_VISIBILITY_CONFIG[profile],
     dynamicLights,
   };
 }

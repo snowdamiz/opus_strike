@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useShallow } from 'zustand/shallow';
-import type { Player, VoxelMapManifest } from '@voxel-strike/shared';
+import {
+  getTeamCatalogEntry,
+  type BattleRoyalDropSnapshot,
+  type Player,
+  type VoxelMapManifest,
+} from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { visualStore } from '../../../store/visualStore';
 import { measureFrameWork } from '../../../movement/networkDiagnostics';
 import { MINIMAP_COLORS } from '../../../styles/colorTokens';
+import { isSafeZoneTargetRevealed } from '../../../utils/battleRoyalSafeZoneReveal';
 import { getPreparedVoxelMap, prepareVoxelMapCpu } from '../../../utils/mapWarmup/mapPrepCache';
 import { getStaticMinimapLayer, resizeCanvas } from './minimapCanvas';
 import {
@@ -29,19 +35,20 @@ export function Minimap() {
   const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const size = useMeasuredSquareSize(containerRef, DEFAULT_MINIMAP_SIZE);
   const devicePixelRatio = useDevicePixelRatio();
-  const { localPlayer, mapSeed, mapThemeId, mapSize } = useGameStore(
+  const { localPlayer, mapSeed, mapThemeId, mapSize, mapProfileId } = useGameStore(
     useShallow((state) => ({
       localPlayer: state.localPlayer,
       mapSeed: state.mapSeed,
       mapThemeId: state.mapThemeId,
       mapSize: state.mapSize,
+      mapProfileId: state.mapProfileId,
     }))
   );
 
   const preparedMap = useMemo(() => (
-    getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize })
-    ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, source: 'match' })
-  ), [mapSeed, mapThemeId, mapSize]);
+    getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId })
+    ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, source: 'match' })
+  ), [mapSeed, mapThemeId, mapSize, mapProfileId]);
   const manifest = preparedMap.manifest;
   const localPlayerId = localPlayer?.id ?? null;
   const projection = useMemo(() => (
@@ -145,6 +152,15 @@ function drawLiveOverlay(
   const teammates = selectVisibleTeammates(localPlayer, store.players.values(), liveOverlayTeammatesScratch);
   const teamColor = store.isPracticeMode ? MINIMAP_COLORS.live.practiceTeam : getTeamColor(localPlayer.team);
 
+  if (store.safeZone?.enabled) {
+    drawSafeZone(ctx, projection, store.safeZone, isSafeZoneTargetRevealed(store.safeZone));
+  }
+
+  if (store.gameplayMode === 'battle_royal' && store.battleRoyalDrop?.enabled) {
+    const dropPathTime = store.gamePhase === 'countdown' ? store.battleRoyalDrop.ship.startedAt : Date.now();
+    drawBattleRoyalDropFlightPath(ctx, projection, store.battleRoyalDrop, dropPathTime);
+  }
+
   for (const teammate of teammates) {
     const position = visualState.playerPositions.get(teammate.id) ?? teammate.position;
     if (!isWorldPointInsideBoundary(position, manifest.boundary)) continue;
@@ -199,6 +215,88 @@ function createBoundaryClipPath(
   });
   path.closePath();
   return path;
+}
+
+function drawBattleRoyalDropFlightPath(
+  ctx: CanvasRenderingContext2D,
+  projection: MinimapProjection,
+  drop: BattleRoyalDropSnapshot,
+  now: number
+): void {
+  const pathStart = worldToMinimap(projection, drop.ship.start);
+  const pathEnd = worldToMinimap(projection, drop.ship.end);
+  const dropStart = worldToMinimap(
+    projection,
+    getBattleRoyalDropPathPoint(drop, getBattleRoyalDropPathProgress(drop, drop.ship.dropStartsAt))
+  );
+  const dropEnd = worldToMinimap(
+    projection,
+    getBattleRoyalDropPathPoint(drop, getBattleRoyalDropPathProgress(drop, drop.ship.dropEndsAt))
+  );
+  const shipPoint = worldToMinimap(
+    projection,
+    getBattleRoyalDropPathPoint(drop, getBattleRoyalDropPathProgress(drop, now))
+  );
+  const yaw = Math.atan2(
+    drop.ship.end.x - drop.ship.start.x,
+    drop.ship.end.z - drop.ship.start.z
+  );
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.shadowColor = MINIMAP_COLORS.live.dropPathShadow;
+  ctx.shadowBlur = 4;
+  ctx.strokeStyle = MINIMAP_COLORS.live.dropPath;
+  ctx.lineWidth = 1.2;
+  ctx.setLineDash([3, 4]);
+  ctx.beginPath();
+  ctx.moveTo(pathStart.x, pathStart.y);
+  ctx.lineTo(pathEnd.x, pathEnd.y);
+  ctx.stroke();
+
+  ctx.setLineDash([]);
+  ctx.shadowColor = MINIMAP_COLORS.live.dropSegmentShadow;
+  ctx.shadowBlur = 7;
+  ctx.strokeStyle = MINIMAP_COLORS.live.dropSegment;
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.moveTo(dropStart.x, dropStart.y);
+  ctx.lineTo(dropEnd.x, dropEnd.y);
+  ctx.stroke();
+
+  ctx.translate(shipPoint.x, shipPoint.y);
+  ctx.rotate(-yaw);
+  ctx.beginPath();
+  ctx.moveTo(0, -6.2);
+  ctx.lineTo(4.4, 4.4);
+  ctx.lineTo(0, 2.2);
+  ctx.lineTo(-4.4, 4.4);
+  ctx.closePath();
+  ctx.fillStyle = MINIMAP_COLORS.live.dropShipFill;
+  ctx.strokeStyle = MINIMAP_COLORS.live.dropShipStroke;
+  ctx.lineWidth = 1.3;
+  ctx.shadowBlur = 6;
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function getBattleRoyalDropPathProgress(drop: BattleRoyalDropSnapshot, time: number): number {
+  return Math.max(
+    0,
+    Math.min(1, (time - drop.ship.startedAt) / Math.max(1, drop.ship.endsAt - drop.ship.startedAt))
+  );
+}
+
+function getBattleRoyalDropPathPoint(
+  drop: BattleRoyalDropSnapshot,
+  progress: number
+): Pick<BattleRoyalDropSnapshot['ship']['start'], 'x' | 'z'> {
+  return {
+    x: drop.ship.start.x + (drop.ship.end.x - drop.ship.start.x) * progress,
+    z: drop.ship.start.z + (drop.ship.end.z - drop.ship.start.z) * progress,
+  };
 }
 
 function drawTeammateMarker(
@@ -277,6 +375,43 @@ function drawLocalMarker(
   ctx.restore();
 }
 
+function drawSafeZone(
+  ctx: CanvasRenderingContext2D,
+  projection: MinimapProjection,
+  safeZone: NonNullable<ReturnType<typeof useGameStore.getState>['safeZone']>,
+  showNextZone: boolean
+): void {
+  const center = worldToMinimap(projection, safeZone.center);
+  const radius = Math.max(1, safeZone.radius * projection.scale);
+
+  ctx.save();
+  ctx.globalAlpha = safeZone.warning ? 0.95 : 0.74;
+  ctx.strokeStyle = safeZone.warning ? MINIMAP_COLORS.safeZone.warningStroke : MINIMAP_COLORS.safeZone.stableStroke;
+  ctx.fillStyle = safeZone.warning ? MINIMAP_COLORS.safeZone.warningFill : MINIMAP_COLORS.safeZone.stableFill;
+  ctx.lineWidth = safeZone.shrinking ? 2.1 : 1.6;
+  ctx.shadowColor = safeZone.warning ? MINIMAP_COLORS.safeZone.warningShadow : MINIMAP_COLORS.safeZone.stableShadow;
+  ctx.shadowBlur = 6;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  if (showNextZone) {
+    const nextCenter = worldToMinimap(projection, safeZone.nextCenter);
+    const nextRadius = Math.max(1, safeZone.nextRadius * projection.scale);
+    ctx.setLineDash([4, 4]);
+    ctx.globalAlpha = 0.64;
+    ctx.lineWidth = 1.2;
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.beginPath();
+    ctx.arc(nextCenter.x, nextCenter.y, nextRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+
 function directionFromYaw(yaw: number): { x: number; y: number } {
   return {
     x: -Math.sin(yaw),
@@ -285,7 +420,8 @@ function directionFromYaw(yaw: number): { x: number; y: number } {
 }
 
 function getTeamColor(team: Player['team']): string {
-  return team === 'red' ? MINIMAP_COLORS.team.red : MINIMAP_COLORS.team.blue;
+  return getTeamCatalogEntry(team)?.color
+    ?? (team === 'red' ? MINIMAP_COLORS.team.red : MINIMAP_COLORS.team.blue);
 }
 
 function useDevicePixelRatio(): number {

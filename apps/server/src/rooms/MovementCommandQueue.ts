@@ -61,6 +61,11 @@ export class MovementCommandQueue implements Iterable<MovementCommand> {
     return command;
   }
 
+  peek(): MovementCommand | null {
+    if (this.count === 0) return null;
+    return this.buffer[this.head] ?? null;
+  }
+
   dropOldest(count: number): MovementCommand[] {
     const removed: MovementCommand[] = [];
     for (let index = 0; index < count; index++) {

@@ -7,7 +7,7 @@ import {
   type RankTheme,
   type RankSummary,
 } from '@voxel-strike/shared';
-import type { UserStats } from '../../store/gameStore';
+import type { UserStats } from '../../store/types';
 import { RANK_BADGE_COLORS } from '../../styles/colorTokens';
 
 type RankLike = PublicRankSnapshot | RankSummary | null | undefined;

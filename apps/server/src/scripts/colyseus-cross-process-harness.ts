@@ -41,6 +41,7 @@ interface QueueStatusResponse {
 interface GameStartingMessage {
   gameRoomId: string;
   entryTicket: string;
+  seatReservation?: unknown;
 }
 
 const repoRoot = resolve(__dirname, '../../../..');
@@ -272,13 +273,12 @@ async function main(): Promise<void> {
 
     assert.ok(await Promise.race(mapVoteStartedMessages), 'expected at least one client to receive mapVoteStarted');
 
-    const gameStartingMessages = lobbyRooms.map((room) => waitForMessage<GameStartingMessage>(room, 'gameStarting', 15_000));
+    const gameStartingMessages = lobbyRooms.map((room) => waitForMessage<GameStartingMessage>(room, 'gameStarting', 45_000));
     const timerStarted = waitForMessage(lobbyRooms[0], 'mapVoteTimerStarted', 5_000);
     for (const room of lobbyRooms) {
       room.send('mapVotePreviewsReady');
     }
     await timerStarted;
-    lobbyRooms[0].send('finalizeMapVote');
 
     const starts = await Promise.all(gameStartingMessages);
     const gameRoomIds = new Set(starts.map((message) => message.gameRoomId));
@@ -286,11 +286,13 @@ async function main(): Promise<void> {
     const gameRoomId = starts[0].gameRoomId;
 
     for (let index = 0; index < endpoints.length; index++) {
-      const room = await endpoints[index].client.joinById(gameRoomId, {
-        playerName: `Harness ${index + 1}`,
-        authToken: endpoints[index].authToken,
-        entryTicket: starts[index].entryTicket,
-      });
+      const room = starts[index].seatReservation
+        ? await endpoints[index].client.consumeSeatReservation(starts[index].seatReservation)
+        : await endpoints[index].client.joinById(gameRoomId, {
+          playerName: `Harness ${index + 1}`,
+          authToken: endpoints[index].authToken,
+          entryTicket: starts[index].entryTicket,
+        });
       room.onMessage('*', () => undefined);
       gameRooms.push(room);
     }

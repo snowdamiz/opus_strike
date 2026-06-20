@@ -6,6 +6,7 @@ export type GamePhase =
   | 'waiting'       // Waiting for players
   | 'hero_select'   // Players selecting heroes
   | 'countdown'     // Pre-round countdown
+  | 'deployment'    // Battle Royal drop-ship deployment
   | 'playing'       // Active gameplay
   | 'round_end'     // Round ended, showing scores
   | 'game_end';     // Game over
@@ -31,7 +32,9 @@ export interface TeamState {
 export interface GameConfig {
   gameplayMode: GameplayMode;
   maxPlayers: number;
+  minPlayers: number;
   teamSize: number;
+  maxTeams: number;
   scoreToWin: number;
   roundTimeSeconds: number;
   respawnTimeSeconds: number;

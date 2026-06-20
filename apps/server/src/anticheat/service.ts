@@ -349,7 +349,6 @@ export class AntiCheatEvidenceStore {
     matchMode: MatchMode;
     gate: AntiCheatIntegrityGate;
     rankedImpact: string;
-    wagerImpact: string;
   }): Promise<void> {
     await this.prisma.antiCheatMatchIntegrity.upsert({
       where: { matchId: input.matchId },
@@ -364,7 +363,6 @@ export class AntiCheatEvidenceStore {
         affectedUserIds: input.gate.affectedUserIds,
         affectedTeams: input.gate.affectedTeams,
         rankedImpact: input.rankedImpact,
-        wagerImpact: input.wagerImpact,
         caseId: input.gate.caseId,
       },
       update: {
@@ -374,7 +372,6 @@ export class AntiCheatEvidenceStore {
         affectedUserIds: input.gate.affectedUserIds,
         affectedTeams: input.gate.affectedTeams,
         rankedImpact: input.rankedImpact,
-        wagerImpact: input.wagerImpact,
         caseId: input.gate.caseId,
       },
     });
@@ -408,82 +405,16 @@ export class AntiCheatEvidenceStore {
     });
   }
 
-  async createPayoutHold(input: {
-    wageredLobbyId: string;
-    matchId: string | null;
-    winningTeam: Team | null;
-    gate: AntiCheatIntegrityGate;
-  }): Promise<string | null> {
-    const payments = await this.prisma.wagerPayment.findMany({
-      where: {
-        wageredLobbyId: input.wageredLobbyId,
-        status: { in: ['credited', 'settled'] },
-      },
-      select: { id: true, amountLamports: true, userId: true, teamAtLock: true },
-    });
-    const amountLamports = payments.reduce((sum, payment) => sum + payment.amountLamports, 0n);
-
-    const hold = await this.prisma.antiCheatPayoutHold.upsert({
-      where: { wageredLobbyId: input.wageredLobbyId },
-      create: {
-        wageredLobbyId: input.wageredLobbyId,
-        matchId: input.matchId,
-        winningTeam: input.winningTeam,
-        paymentIds: payments.map((payment) => payment.id),
-        affectedUserIds: payments.map((payment) => payment.userId),
-        amountLamports,
-        reason: input.gate.reason ?? 'match_integrity_review',
-        status: 'open',
-        caseId: input.gate.caseId,
-      },
-      update: {
-        matchId: input.matchId,
-        winningTeam: input.winningTeam,
-        paymentIds: payments.map((payment) => payment.id),
-        affectedUserIds: payments.map((payment) => payment.userId),
-        amountLamports,
-        reason: input.gate.reason ?? 'match_integrity_review',
-        caseId: input.gate.caseId,
-      },
-    });
-
-    await this.prisma.wageredLobby.updateMany({
-      where: { id: input.wageredLobbyId },
-      data: { status: 'review_required' },
-    });
-
-    await this.recordAction({
-      type: 'payout_hold',
-      matchId: input.matchId,
-      caseId: input.gate.caseId,
-      reason: input.gate.reason ?? 'match_integrity_review',
-      details: {
-        wageredLobbyId: input.wageredLobbyId,
-        paymentIds: payments.map((payment) => payment.id),
-        amountLamports: amountLamports.toString(),
-        observedOnly: input.gate.observedOnly,
-      },
-      observedOnly: input.gate.observedOnly,
-    });
-
-    return hold.id;
-  }
-
   async listReviewData(): Promise<{
     cases: unknown[];
-    payoutHolds: unknown[];
     accountActions: unknown[];
     recentSignals: unknown[];
     movementShadow: MovementShadowDriftReport;
     config: Record<string, unknown>;
   }> {
-    const [cases, payoutHolds, accountActions, recentSignals] = await Promise.all([
+    const [cases, accountActions, recentSignals] = await Promise.all([
       this.prisma.antiCheatCase.findMany({
         orderBy: [{ status: 'asc' }, { priority: 'desc' }, { updatedAt: 'desc' }],
-        take: 100,
-      }),
-      this.prisma.antiCheatPayoutHold.findMany({
-        orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
         take: 100,
       }),
       this.prisma.antiCheatAccountAction.findMany({
@@ -498,7 +429,6 @@ export class AntiCheatEvidenceStore {
     const config = getAntiCheatConfig();
     return {
       cases: serializeBigInts(cases),
-      payoutHolds: serializeBigInts(payoutHolds),
       accountActions: serializeBigInts(accountActions),
       recentSignals: serializeBigInts(recentSignals),
       movementShadow: getMovementShadowDriftReport({ limit: 100 }),
@@ -508,13 +438,10 @@ export class AntiCheatEvidenceStore {
         movementAuthorityMode: config.movementAuthorityMode,
         movementParityGateRequired: config.movementParityGateRequired,
         movementParityGate: config.movementParityGate,
-        payoutHoldsEnabled: config.payoutHoldsEnabled,
         manualAccountActionsEnabled: config.manualAccountActionsEnabled,
         thresholds: {
           ranked: config.rankedScoreThreshold,
-          wager: config.wagerScoreThreshold,
           adminReview: config.adminReviewScoreThreshold,
-          payoutHold: config.payoutHoldScoreThreshold,
         },
       },
     };

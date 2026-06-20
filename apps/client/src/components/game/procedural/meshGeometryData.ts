@@ -14,6 +14,10 @@ export interface VoxelMeshGeometryData {
   indices: Uint16Array | Uint32Array;
 }
 
+export type VoxelRegionGeometryDetail = 'full' | 'coarse';
+
+const COARSE_REGION_VOXEL_STEP = 8;
+
 interface FaceRect {
   x: number;
   y: number;
@@ -112,8 +116,7 @@ interface MeshBufferBuilders {
   indices: IndexBuilder;
 }
 
-function createMeshBufferBuilders(chunks: VoxelChunk[]): MeshBufferBuilders {
-  const estimatedFaces = Math.max(64, chunks.reduce((sum, chunk) => sum + Math.ceil(chunk.solidBlockCount * 0.42), 0));
+function createMeshBufferBuildersForEstimatedFaces(estimatedFaces: number): MeshBufferBuilders {
   const estimatedVertices = estimatedFaces * 4;
   return {
     positions: new FloatBuilder(estimatedVertices * 3),
@@ -122,6 +125,11 @@ function createMeshBufferBuilders(chunks: VoxelChunk[]): MeshBufferBuilders {
     textureLayers: new FloatBuilder(estimatedVertices),
     indices: new IndexBuilder(estimatedFaces * 6),
   };
+}
+
+function createMeshBufferBuilders(chunks: VoxelChunk[]): MeshBufferBuilders {
+  const estimatedFaces = Math.max(64, chunks.reduce((sum, chunk) => sum + Math.ceil(chunk.solidBlockCount * 0.42), 0));
+  return createMeshBufferBuildersForEstimatedFaces(estimatedFaces);
 }
 
 function blockIndex(x: number, y: number, z: number, size: { x: number; y: number; z: number }): number {
@@ -369,11 +377,117 @@ function appendVoxelChunkBuffers(
   }
 }
 
-export function buildVoxelChunkGeometryData(manifest: VoxelMapManifest, chunk: VoxelChunk): VoxelMeshGeometryData {
-  return buildVoxelRegionGeometryData(manifest, [chunk]);
+function getChunkVoxelBounds(manifest: VoxelMapManifest, chunks: VoxelChunk[]): {
+  minX: number;
+  minZ: number;
+  maxX: number;
+  maxZ: number;
+} {
+  let minX = manifest.size.x;
+  let minZ = manifest.size.z;
+  let maxX = 0;
+  let maxZ = 0;
+
+  for (const chunk of chunks) {
+    const chunkMinX = chunk.coord.x * manifest.chunkSize.x;
+    const chunkMinZ = chunk.coord.z * manifest.chunkSize.z;
+    minX = Math.min(minX, chunkMinX);
+    minZ = Math.min(minZ, chunkMinZ);
+    maxX = Math.max(maxX, chunkMinX + chunk.size.x);
+    maxZ = Math.max(maxZ, chunkMinZ + chunk.size.z);
+  }
+
+  return {
+    minX: Math.max(0, minX),
+    minZ: Math.max(0, minZ),
+    maxX: Math.min(manifest.size.x, maxX),
+    maxZ: Math.min(manifest.size.z, maxZ),
+  };
 }
 
-export function buildVoxelRegionGeometryData(manifest: VoxelMapManifest, chunks: VoxelChunk[]): VoxelMeshGeometryData {
+function getTopSolidBlock(
+  manifest: VoxelMapManifest,
+  lookup: ChunkLookup,
+  x: number,
+  z: number
+): { y: number; block: number } | null {
+  if (x < 0 || x >= manifest.size.x || z < 0 || z >= manifest.size.z) return null;
+
+  const topRows = manifest.heightfield?.topSolidRows;
+  const heightfieldSize = manifest.heightfield?.size;
+  let startY = manifest.size.y - 1;
+  if (
+    topRows?.length &&
+    heightfieldSize &&
+    x < heightfieldSize.x &&
+    z < heightfieldSize.z
+  ) {
+    const topRow = topRows[x + z * heightfieldSize.x] ?? 0;
+    if (topRow <= 0) return null;
+    startY = Math.min(manifest.size.y - 1, topRow - 1);
+  }
+
+  for (let y = startY; y >= 0; y--) {
+    const block = getBlock(lookup, x, y, z);
+    if (isSolidBlock(block)) return { y, block };
+  }
+
+  return null;
+}
+
+function buildCoarseVoxelRegionGeometryData(
+  manifest: VoxelMapManifest,
+  chunks: VoxelChunk[]
+): VoxelMeshGeometryData {
+  const lookup = createChunkLookup(manifest);
+  const bounds = getChunkVoxelBounds(manifest, chunks);
+  const estimatedCoarseFaces = Math.max(
+    16,
+    Math.ceil((bounds.maxX - bounds.minX) / COARSE_REGION_VOXEL_STEP) *
+      Math.ceil((bounds.maxZ - bounds.minZ) / COARSE_REGION_VOXEL_STEP)
+  );
+  const buffers = createMeshBufferBuildersForEstimatedFaces(estimatedCoarseFaces);
+
+  for (let z = bounds.minZ; z < bounds.maxZ; z += COARSE_REGION_VOXEL_STEP) {
+    const z1 = Math.min(bounds.maxZ, z + COARSE_REGION_VOXEL_STEP);
+    const sampleZ = Math.min(manifest.size.z - 1, z + Math.floor((z1 - z) * 0.5));
+
+    for (let x = bounds.minX; x < bounds.maxX; x += COARSE_REGION_VOXEL_STEP) {
+      const x1 = Math.min(bounds.maxX, x + COARSE_REGION_VOXEL_STEP);
+      const sampleX = Math.min(manifest.size.x - 1, x + Math.floor((x1 - x) * 0.5));
+      const topBlock = getTopSolidBlock(manifest, lookup, sampleX, sampleZ);
+      if (!topBlock) continue;
+
+      emitFace(buffers, 'py', {
+        x,
+        y: topBlock.y,
+        z,
+        width: x1 - x,
+        height: z1 - z,
+        blockId: topBlock.block,
+      });
+    }
+  }
+
+  const vertexCount = buffers.positions.length / 3;
+  return {
+    positions: buffers.positions.finish(),
+    normals: buffers.normals.finish(),
+    uvs: buffers.uvs.finish(),
+    textureLayers: buffers.textureLayers.finish(),
+    indices: buffers.indices.finish(vertexCount),
+  };
+}
+
+export function buildVoxelRegionGeometryData(
+  manifest: VoxelMapManifest,
+  chunks: VoxelChunk[],
+  detail: VoxelRegionGeometryDetail = 'full'
+): VoxelMeshGeometryData {
+  if (detail === 'coarse') {
+    return buildCoarseVoxelRegionGeometryData(manifest, chunks);
+  }
+
   const lookup = createChunkLookup(manifest);
   const buffers = createMeshBufferBuilders(chunks);
 

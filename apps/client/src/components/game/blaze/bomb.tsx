@@ -10,14 +10,15 @@ import {
   BLAZE_BOMB_SPLASH_RADIUS,
   getBlazeMeteorPath,
 } from '@voxel-strike/shared';
-import { useGameStore, type BombData } from '../../../store/gameStore';
+import { useGameStore } from '../../../store/gameStore';
+import type { BombData } from '../../../store/types';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
 import { measureFrameWork } from '../../../movement/networkDiagnostics';
-import { applyTutorialTrainingAreaDamage } from '../../../utils/tutorialTrainingHeroes';
+import { applyTutorialOfflineTrainingAreaDamage } from '../../../utils/tutorialOfflineCombatRuntime';
 import {
   getBombBodyMaterial,
   getBombBandMaterial,
@@ -358,7 +359,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       hasExplodedRef.current = true;
       if (!meteorPath.intercepted && !tutorialDamageAppliedRef.current) {
         tutorialDamageAppliedRef.current = true;
-        applyTutorialTrainingAreaDamage({
+        applyTutorialOfflineTrainingAreaDamage({
           center: bomb.targetPosition,
           radius: blastRadius,
           damage: BLAZE_BOMB_DAMAGE,

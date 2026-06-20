@@ -27,6 +27,7 @@ import {
   createTutorialVoxelMapManifest,
   isTutorialMapSeed,
 } from './tutorial.js';
+import { generateBattleRoyalVoxelMap } from './battleRoyalGenerator.js';
 import {
   CONSTRUCTED_MAP_MANIFEST_VERSION,
   DEFAULT_PROCEDURAL_MAP_SEED,
@@ -37,6 +38,7 @@ import {
   type MapPowerupKind,
   type MapPowerupPickup,
   type MapPowerupStrategicRole,
+  type MapProfileId,
   type MapTeam,
   type ModuleInstance,
   type ModuleRoleTag,
@@ -139,6 +141,11 @@ export interface ProceduralVoxelMapGenerationResult {
 export interface ProceduralVoxelMapGenerationOptions {
   themeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
+  profileId?: MapProfileId | string | null;
+}
+
+function normalizeArenaMapProfileId(profileId?: MapProfileId | string | null): MapProfileId {
+  return profileId === 'tdm_arena' ? 'tdm_arena' : 'ctf_arena';
 }
 
 interface PlacedStructure {
@@ -3060,6 +3067,7 @@ function generateProceduralVoxelMapInternal(
     version: CONSTRUCTED_MAP_MANIFEST_VERSION,
     seed: normalizedSeed,
     mapSize: layout.mapSize,
+    profileId: normalizeArenaMapProfileId(options.profileId),
     familyId: construction.designBrief.familyId,
     topologyId: blueprint.topologyId,
     themeId: theme.id,
@@ -3118,6 +3126,10 @@ export function generateProceduralVoxelMap(
     return createTutorialVoxelMapManifest();
   }
 
+  if (options.profileId === 'battle_royal_large') {
+    return generateBattleRoyalVoxelMap(seed, { themeId: options.themeId, mapSize: options.mapSize });
+  }
+
   return generateProceduralVoxelMapInternal(seed, undefined, options);
 }
 
@@ -3142,6 +3154,27 @@ export function generateProceduralVoxelMapWithDiagnostics(
   }
 
   const normalizedSeed = seed >>> 0;
+  if (options.profileId === 'battle_royal_large') {
+    const manifest = generateBattleRoyalVoxelMap(normalizedSeed, { themeId: options.themeId, mapSize: options.mapSize });
+    return {
+      manifest,
+      diagnostics: {
+        seed: normalizedSeed,
+        mapSize: manifest.mapSize,
+        themeId: manifest.themeId,
+        designBrief: manifest.construction.designBrief,
+        map: manifest.construction.diagnostics,
+        repairActions: manifest.construction.diagnostics.repairActions,
+        stageTimingsMs: manifest.construction.diagnostics.stageTimingsMs,
+        objectSummary: {
+          spawn_cluster: Object.keys(manifest.gameplay.spawns).length,
+          health_pack: manifest.gameplay.powerups.filter((pickup) => pickup.kind === 'health_pack').length,
+          powerup: manifest.gameplay.powerups.filter((pickup) => pickup.kind === 'powerup').length,
+        },
+      },
+    };
+  }
+
   const mapSize = normalizeVoxelMapSizeId(options.mapSize);
   const diagnostics = createProceduralVoxelMapDiagnostics(
     normalizedSeed,

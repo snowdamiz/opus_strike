@@ -3,20 +3,21 @@ import crypto from 'node:crypto';
 import express, { type Request, type Response } from 'express';
 import cookieParser from 'cookie-parser';
 import { createServer } from 'http';
-import { Server, matchMaker } from 'colyseus';
+import { Server, matchMaker, type ServerOptions } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { GameRoom } from './rooms/GameRoom';
 import { LobbyRoom } from './rooms/LobbyRoom';
+import { PartyRoom } from './rooms/PartyRoom';
 import authRoutes from './auth/routes';
 import createAdminRouter from './admin/routes';
 import matchmakingRoutes from './matchmaking/routes';
 import socialRoutes from './social/routes';
-import wagerRoutes from './wagers/routes';
 import { voiceService } from './voice/VoiceService';
-import { wagerService } from './wagers/service';
 import {
   createDistributedColyseusOptions,
   getColyseusRuntimeConfig,
+  selectLeastLoadedColyseusProcess,
+  shouldCreateRoomOnLocalColyseusProcess,
   validateColyseusRuntimeConfig,
 } from './config/colyseus';
 import { closeSharedRedisClient, getSharedRedisClient, pingRedis } from './config/redis';
@@ -36,7 +37,7 @@ import {
   startAdminMachineHeartbeat,
   type AdminMachineHeartbeatHandle,
 } from './admin/machineRegistry';
-import { getGlobalNotification } from './notifications/globalNotificationService';
+import { getCachedGlobalNotification } from './notifications/globalNotificationService';
 import { loggers } from './utils/logger';
 
 const app = express();
@@ -74,12 +75,25 @@ function configureTrustProxy(): void {
 
 configureTrustProxy();
 
+const selectProcessIdToCreateRoom: NonNullable<ServerOptions['selectProcessIdToCreateRoom']> = async (
+  roomName,
+  clientOptions
+) => {
+  if (shouldCreateRoomOnLocalColyseusProcess({
+    roomName,
+    clientOptions,
+    roomCreateStrategy: colyseusRuntime.roomCreateStrategy,
+  })) {
+    return matchMaker.processId;
+  }
+
+  return selectLeastLoadedColyseusProcess(await matchMaker.stats.fetchAll(), matchMaker.processId);
+};
+
 // Create Colyseus server
 const gameServer = new Server({
   ...createDistributedColyseusOptions(colyseusRuntime),
-  selectProcessIdToCreateRoom: colyseusRuntime.roomCreateStrategy === 'local'
-    ? async () => matchMaker.processId
-    : undefined,
+  selectProcessIdToCreateRoom,
   gracefullyShutdown: false,
   transport: new WebSocketTransport({
     server: httpServer,
@@ -91,8 +105,11 @@ const gameServer = new Server({
 // Register rooms
 gameServer.define('game_room', GameRoom);
 gameServer
+  .define('party_room', PartyRoom)
+  .enableRealtimeListing();
+gameServer
   .define('lobby_room', LobbyRoom)
-  .filterBy(['isPrivate', 'matchmakingMode', 'matchMode', 'rankBandId'])
+  .filterBy(['isPrivate', 'matchmakingMode', 'matchMode', 'rankBandId', 'gameplayMode'])
   .sortBy({ clients: -1 })
   .enableRealtimeListing();
 
@@ -116,7 +133,7 @@ app.use((_req, res, next) => {
   }
 
   res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-CSRF-Token, X-Internal-Status-Token, X-Wager-Admin-Token');
+  res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-CSRF-Token, X-Internal-Status-Token');
   res.header('Access-Control-Allow-Credentials', 'true');
 
   // Handle preflight requests
@@ -137,7 +154,6 @@ app.use(express.json());
 app.use('/auth', authRoutes);
 app.use('/matchmaking', matchmakingRoutes);
 app.use('/social', socialRoutes);
-app.use('/wagers', wagerRoutes);
 app.use('/admin', createAdminRouter({
   config: colyseusRuntime,
   matchMaker,
@@ -145,16 +161,18 @@ app.use('/admin', createAdminRouter({
   flyReplayRegistered: () => Boolean(flyReplayRouteHandle),
 }));
 
-function noStorePublic(res: Response): void {
-  res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('Pragma', 'no-cache');
-}
-
-app.get('/notifications/global', async (_req, res) => {
-  noStorePublic(res);
-
+app.get('/notifications/global', async (req, res) => {
   try {
-    res.json({ notification: await getGlobalNotification() });
+    const { notification, etag } = await getCachedGlobalNotification();
+    res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=30');
+    res.setHeader('ETag', etag);
+
+    if (req.headers['if-none-match'] === etag) {
+      res.status(304).end();
+      return;
+    }
+
+    res.json({ notification });
   } catch (error) {
     loggers.room.error('Failed to load global notification', {
       error: error instanceof Error ? error.message : String(error),
@@ -306,17 +324,6 @@ interface LobbySummary {
   status: string;
   queuedHumanCount?: number;
   requiredPlayers?: number;
-  wager?: {
-    enabled: boolean;
-    matchMode?: string;
-    rankedEntryQuoteId?: string | null;
-    status?: string;
-    token?: string;
-    coverChargeLamports?: string;
-    potLamports?: string;
-    paidPlayerCount?: number;
-    treasuryWallet?: string;
-  };
 }
 
 async function getPublicLobbies(): Promise<LobbySummary[]> {
@@ -336,17 +343,6 @@ async function getPublicLobbies(): Promise<LobbySummary[]> {
       status: room.metadata?.status || 'waiting',
       queuedHumanCount: room.metadata?.queuedHumanCount,
       requiredPlayers: room.metadata?.requiredPlayers,
-      wager: {
-        enabled: room.metadata?.wagerEnabled === true,
-        matchMode: room.metadata?.matchMode,
-        rankedEntryQuoteId: room.metadata?.rankedEntryQuoteId,
-        status: room.metadata?.wagerStatus,
-        token: room.metadata?.wagerToken,
-        coverChargeLamports: room.metadata?.wagerCoverChargeLamports,
-        potLamports: room.metadata?.wagerPotLamports,
-        paidPlayerCount: room.metadata?.wagerPaidPlayerCount,
-        treasuryWallet: room.metadata?.wagerTreasuryWallet,
-      },
     }));
 }
 
@@ -446,7 +442,6 @@ async function startServer(): Promise<void> {
     });
   }
 
-  wagerService.startBackgroundJobs();
 }
 
 let shutdownStarted = false;
@@ -462,7 +457,6 @@ async function shutdown(signal: string): Promise<void> {
   });
 
   try {
-    wagerService.stopBackgroundJobs();
     await adminMachineHeartbeatHandle?.close();
     adminMachineHeartbeatHandle = null;
     await flyReplayRouteHandle?.close();

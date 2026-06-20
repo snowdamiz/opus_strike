@@ -7,6 +7,8 @@ import {
 import {
   buildPlayerInterestSnapshot,
   getPlayerInterestSignature,
+  removeMissingPlayerInterestSignatures,
+  selectChangedPlayerInterestSnapshot,
 } from '../rooms/playerInterestSnapshot';
 import { getPlayerLineOfSightSamplePoints, type Team, type Vec3 } from '@voxel-strike/shared';
 
@@ -81,6 +83,61 @@ const enemy = makePlayer('blue-a', 'blue', 12, 0);
     }),
     'last-known position changes must still trigger a new broadcast signature'
   );
+}
+
+{
+  const signatures = new Map<string, string>();
+  const visibleSnapshot = {
+    playerId: 'blue-a',
+    state: 'visible' as const,
+    reason: 'line_of_sight',
+  };
+
+  assert.equal(selectChangedPlayerInterestSnapshot({
+    signatures,
+    playerId: visibleSnapshot.playerId,
+    snapshot: visibleSnapshot,
+    force: false,
+  }), visibleSnapshot);
+  assert.equal(signatures.get(visibleSnapshot.playerId), getPlayerInterestSignature(visibleSnapshot));
+
+  assert.equal(selectChangedPlayerInterestSnapshot({
+    signatures,
+    playerId: visibleSnapshot.playerId,
+    snapshot: visibleSnapshot,
+    force: false,
+  }), null);
+
+  assert.equal(selectChangedPlayerInterestSnapshot({
+    signatures,
+    playerId: visibleSnapshot.playerId,
+    snapshot: visibleSnapshot,
+    force: true,
+  }), visibleSnapshot);
+
+  const hiddenSnapshot = {
+    ...visibleSnapshot,
+    state: 'hidden' as const,
+    reason: 'hidden',
+  };
+  assert.equal(selectChangedPlayerInterestSnapshot({
+    signatures,
+    playerId: hiddenSnapshot.playerId,
+    snapshot: hiddenSnapshot,
+    force: false,
+  }), hiddenSnapshot);
+  assert.equal(signatures.get(hiddenSnapshot.playerId), getPlayerInterestSignature(hiddenSnapshot));
+}
+
+{
+  const signatures = new Map([
+    ['stale', 'hidden:hidden:'],
+    ['current', 'visible:team:'],
+  ]);
+
+  assert.deepEqual(removeMissingPlayerInterestSignatures(signatures, new Set(['current'])), ['stale']);
+  assert.equal(signatures.has('stale'), false);
+  assert.equal(signatures.has('current'), true);
 }
 
 {

@@ -48,5 +48,6 @@ export interface AbilityCastOriginHint {
   abilityId: string;
   socketName: string;
   origin: Vec3;
+  aimPoint?: Vec3;
   sampledAtMs?: number;
 }

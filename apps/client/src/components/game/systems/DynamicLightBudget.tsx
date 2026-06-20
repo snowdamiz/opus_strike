@@ -78,6 +78,9 @@ export const BudgetedPointLight = forwardRef<THREE.PointLight, BudgetedPointLigh
     recordRef.current.priority = budgetPriority;
 
     const setRefs = useCallback((light: THREE.PointLight | null) => {
+      if (light) {
+        light.visible = false;
+      }
       lightRef.current = light;
       assignForwardedRef(forwardedRef, light);
     }, [forwardedRef]);
@@ -98,7 +101,7 @@ export const BudgetedPointLight = forwardRef<THREE.PointLight, BudgetedPointLigh
       recordRef.current.radius = budgetRadius ?? light?.distance ?? 1;
     }, [budgetRadius, props.distance]);
 
-    return <pointLight ref={setRefs} {...props} />;
+    return <pointLight ref={setRefs} {...props} visible={false} />;
   }
 );
 
@@ -243,7 +246,7 @@ function updateDynamicLightBudget(
 }
 
 export function DynamicLightBudgetSystem({ maxLights }: { maxLights: number }) {
-  const accumulatorRef = useRef(0);
+  const accumulatorRef = useRef(0.08);
   const rankedRef = useRef<RankedLight[]>([]);
   const rankedPoolRef = useRef<RankedLight[]>([]);
 

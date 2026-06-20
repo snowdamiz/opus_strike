@@ -6,7 +6,7 @@ import {
   getChronosAegisForward,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
-import { visualStore } from '../../../store/visualStore';
+import { getPlayerVisualLookPitch, visualStore } from '../../../store/visualStore';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import {
@@ -107,14 +107,17 @@ function createAegisCrackMaterial(): THREE.MeshBasicMaterial {
 function collectActiveChronosAegisIds(target: string[], now: number): string[] {
   const store = useGameStore.getState();
   const localPlayerId = store.localPlayer?.id;
+  const showLocalAegis = store.matchPerspective === 'third_person';
   const visual = visualStore.getState();
   const activeIds = visual.activeChronosAegisPlayerIds;
   target.length = 0;
 
   for (let index = 0; index < activeIds.length; index++) {
     const playerId = activeIds[index];
-    if (playerId === localPlayerId) continue;
-    const player = store.players.get(playerId);
+    if (playerId === localPlayerId && !showLocalAegis) continue;
+    const player = store.players.get(playerId) ?? (
+      store.localPlayer?.id === playerId ? store.localPlayer : null
+    );
     if (!player) continue;
     if (player.heroId !== 'chronos' || player.state !== 'alive') continue;
 
@@ -185,7 +188,10 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
   useChronosAegisFrameUpdater(`chronos-aegis:${playerId}`, () => {
     measureFrameWork('frame.effects.chronosAegisShield', () => {
       const group = groupRef.current;
-      const player = useGameStore.getState().players.get(playerId);
+      const store = useGameStore.getState();
+      const player = store.players.get(playerId) ?? (
+        store.localPlayer?.id === playerId ? store.localPlayer : null
+      );
       const aegis = visualStore.getState().chronosAegisStates.get(playerId);
       if (!group || !player || !aegis?.active) {
         if (group) group.visible = false;
@@ -198,9 +204,10 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
         return;
       }
 
-      const visualPosition = visualStore.getState().playerPositions.get(playerId) ?? player.position;
-      const visualYaw = visualStore.getState().playerRotations.get(playerId) ?? player.lookYaw;
-      const visualPitch = player.lookPitch ?? 0;
+      const visual = visualStore.getState();
+      const visualPosition = visual.playerPositions.get(playerId) ?? player.position;
+      const visualYaw = visual.playerRotations.get(playerId) ?? player.lookYaw;
+      const visualPitch = getPlayerVisualLookPitch(visual, player);
       const center = getChronosAegisCenter({
         playerId,
         position: visualPosition,

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGameStore } from '../../store/gameStore';
-import type { DragHookData, HookProjectileData } from '../../store/gameStore';
+import type { DragHookData, HookProjectileData } from '../../store/types';
 import { useShallow } from 'zustand/shallow';
 import {
   MOVEMENT_DIAGNOSTICS_ENABLED,

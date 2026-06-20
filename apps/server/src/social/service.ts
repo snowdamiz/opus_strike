@@ -21,14 +21,31 @@ export const lobbyInviteInclude = {
   toUser: { select: socialUserSelect },
 } satisfies Prisma.LobbyInviteInclude;
 
+export const partyInviteInclude = {
+  fromUser: { select: socialUserSelect },
+  toUser: { select: socialUserSelect },
+} satisfies Prisma.PartyInviteInclude;
+
 export type SocialUserRecord = Prisma.UserGetPayload<{ select: typeof socialUserSelect }>;
 export type LobbyInviteWithUsers = Prisma.LobbyInviteGetPayload<{ include: typeof lobbyInviteInclude }>;
+export type PartyInviteWithUsers = Prisma.PartyInviteGetPayload<{ include: typeof partyInviteInclude }>;
 
 export interface LobbyInvitePayload {
   inviteId: string;
   lobbyId: string;
   lobbyName: string;
   matchMode: MatchMode | null;
+  status: string;
+  createdAt: string;
+  expiresAt: string;
+  respondedAt: string | null;
+  from: ReturnType<typeof serializeSocialUser>;
+  to: ReturnType<typeof serializeSocialUser>;
+}
+
+export interface PartyInvitePayload {
+  inviteId: string;
+  partyId: string;
   status: string;
   createdAt: string;
   expiresAt: string;
@@ -80,8 +97,34 @@ export function serializeLobbyInvite(invite: LobbyInviteWithUsers): LobbyInviteP
   };
 }
 
+export function serializePartyInvite(invite: PartyInviteWithUsers): PartyInvitePayload {
+  return {
+    inviteId: invite.id,
+    partyId: invite.partyId,
+    status: invite.status,
+    createdAt: invite.createdAt.toISOString(),
+    expiresAt: invite.expiresAt.toISOString(),
+    respondedAt: invite.respondedAt?.toISOString() ?? null,
+    from: serializeSocialUser(invite.fromUser),
+    to: serializeSocialUser(invite.toUser),
+  };
+}
+
 export async function expireOldLobbyInvites(now = new Date()): Promise<void> {
   await prisma.lobbyInvite.updateMany({
+    where: {
+      status: 'pending',
+      expiresAt: { lte: now },
+    },
+    data: {
+      status: 'expired',
+      respondedAt: now,
+    },
+  });
+}
+
+export async function expireOldPartyInvites(now = new Date()): Promise<void> {
+  await prisma.partyInvite.updateMany({
     where: {
       status: 'pending',
       expiresAt: { lte: now },
@@ -165,4 +208,57 @@ export async function createLobbyInvite(options: {
     });
 
   return serializeLobbyInvite(invite);
+}
+
+export async function createPartyInvite(options: {
+  fromUserId: string;
+  toUserId: string;
+  partyId: string;
+  expiresInMs?: number;
+}): Promise<PartyInvitePayload> {
+  const fromUserId = options.fromUserId.trim();
+  const toUserId = options.toUserId.trim();
+  const partyId = options.partyId.trim();
+
+  if (!fromUserId || !toUserId || !partyId) {
+    throw new SocialServiceError(400, 'Missing invite target or party');
+  }
+
+  if (fromUserId === toUserId) {
+    throw new SocialServiceError(400, 'Cannot invite yourself');
+  }
+
+  await ensureAcceptedFriendship(fromUserId, toUserId);
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + (options.expiresInMs ?? 15 * 60 * 1000));
+  const existing = await prisma.partyInvite.findFirst({
+    where: {
+      fromUserId,
+      toUserId,
+      partyId,
+      status: 'pending',
+      expiresAt: { gt: now },
+    },
+    include: partyInviteInclude,
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const invite = existing
+    ? await prisma.partyInvite.update({
+      where: { id: existing.id },
+      data: { expiresAt },
+      include: partyInviteInclude,
+    })
+    : await prisma.partyInvite.create({
+      data: {
+        fromUserId,
+        toUserId,
+        partyId,
+        expiresAt,
+      },
+      include: partyInviteInclude,
+    });
+
+  return serializePartyInvite(invite);
 }

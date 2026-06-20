@@ -17,6 +17,30 @@ const COMBAT_TEXT_CANVAS_WIDTH = 384;
 const COMBAT_TEXT_CANVAS_HEIGHT = 192;
 const COMBAT_TEXT_ASPECT = COMBAT_TEXT_CANVAS_WIDTH / COMBAT_TEXT_CANVAS_HEIGHT;
 const STACKED_TEXT_GAP_Y = 0.34;
+const COMBAT_TEXT_TEXTURE_CACHE_LIMIT = 96;
+const COMBAT_TEXT_PREWARM_AMOUNTS = [
+  1,
+  5,
+  6,
+  10,
+  12,
+  14,
+  15,
+  16,
+  18,
+  20,
+  24,
+  25,
+  30,
+  40,
+  50,
+  51,
+  70,
+  75,
+  100,
+  150,
+  200,
+] as const;
 const DEFAULT_MOVEMENT: PlayerMovementState = Object.freeze({
   isGrounded: true,
   isSprinting: false,
@@ -31,6 +55,15 @@ const DEFAULT_MOVEMENT: PlayerMovementState = Object.freeze({
   jetpackFuel: 0,
   isGliding: false,
 });
+
+interface CombatTextTextureEntry {
+  texture: THREE.CanvasTexture;
+  refCount: number;
+  lastUsedAt: number;
+}
+
+const combatTextTextureCache = new Map<string, CombatTextTextureEntry>();
+let combatTextTextureUseCounter = 0;
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -197,6 +230,85 @@ function drawCombatTextTexture(canvas: HTMLCanvasElement, kind: CombatTextKind, 
   ctx.restore();
 }
 
+function getCombatTextTextureKey(kind: CombatTextKind, amount: number): string {
+  return `${kind}:${Math.max(1, Math.round(amount))}`;
+}
+
+function createCombatTextTexture(kind: CombatTextKind, amount: number): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = COMBAT_TEXT_CANVAS_WIDTH;
+  canvas.height = COMBAT_TEXT_CANVAS_HEIGHT;
+
+  drawCombatTextTexture(canvas, kind, amount);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  return texture;
+}
+
+function evictUnusedCombatTextTextures(): void {
+  if (combatTextTextureCache.size <= COMBAT_TEXT_TEXTURE_CACHE_LIMIT) return;
+
+  while (combatTextTextureCache.size > COMBAT_TEXT_TEXTURE_CACHE_LIMIT) {
+    let oldestKey: string | null = null;
+    let oldestEntry: CombatTextTextureEntry | null = null;
+
+    for (const [key, entry] of combatTextTextureCache) {
+      if (entry.refCount > 0) continue;
+      if (!oldestEntry || entry.lastUsedAt < oldestEntry.lastUsedAt) {
+        oldestKey = key;
+        oldestEntry = entry;
+      }
+    }
+
+    if (oldestKey === null || oldestEntry === null) return;
+    oldestEntry.texture.dispose();
+    combatTextTextureCache.delete(oldestKey);
+  }
+}
+
+function acquireCombatTextTexture(kind: CombatTextKind, amount: number): THREE.CanvasTexture {
+  const key = getCombatTextTextureKey(kind, amount);
+  let entry = combatTextTextureCache.get(key);
+  if (!entry) {
+    entry = {
+      texture: createCombatTextTexture(kind, amount),
+      refCount: 0,
+      lastUsedAt: 0,
+    };
+    combatTextTextureCache.set(key, entry);
+  }
+
+  entry.refCount++;
+  entry.lastUsedAt = ++combatTextTextureUseCounter;
+  evictUnusedCombatTextTextures();
+  return entry.texture;
+}
+
+function releaseCombatTextTexture(kind: CombatTextKind, amount: number): void {
+  const entry = combatTextTextureCache.get(getCombatTextTextureKey(kind, amount));
+  if (!entry) return;
+  entry.refCount = Math.max(0, entry.refCount - 1);
+  entry.lastUsedAt = ++combatTextTextureUseCounter;
+  evictUnusedCombatTextTextures();
+}
+
+export function prewarmCombatTextTextures(): void {
+  if (typeof document === 'undefined') return;
+
+  const kinds: readonly CombatTextKind[] = ['damage', 'shieldDamage', 'heal'];
+  for (const kind of kinds) {
+    for (const amount of COMBAT_TEXT_PREWARM_AMOUNTS) {
+      const texture = acquireCombatTextTexture(kind, amount);
+      releaseCombatTextTexture(kind, amount);
+      texture.needsUpdate = true;
+    }
+  }
+}
+
 function findPlayer(targetId: string | null | undefined): Player | null {
   if (!targetId) return null;
 
@@ -265,27 +377,18 @@ function CombatTextSprite({ event, stackIndex }: { event: CombatTextEvent; stack
       z: Math.sin(angle) * radius,
     };
   }, [event.id, event.kind]);
-  const texture = useMemo(() => {
-    const canvas = document.createElement('canvas');
-    canvas.width = COMBAT_TEXT_CANVAS_WIDTH;
-    canvas.height = COMBAT_TEXT_CANVAS_HEIGHT;
-
-    drawCombatTextTexture(canvas, event.kind, event.amount);
-
-    const nextTexture = new THREE.CanvasTexture(canvas);
-    nextTexture.colorSpace = THREE.SRGBColorSpace;
-    nextTexture.minFilter = THREE.LinearFilter;
-    nextTexture.magFilter = THREE.LinearFilter;
-    nextTexture.generateMipmaps = false;
-    return nextTexture;
-  }, [event.amount, event.kind]);
+  const textureAmount = Math.max(1, Math.round(event.amount));
+  const texture = useMemo(
+    () => acquireCombatTextTexture(event.kind, textureAmount),
+    [event.kind, textureAmount]
+  );
   const baseHeight = (event.kind === 'heal' ? 0.74 : event.kind === 'shieldDamage' ? 0.78 : 0.82) + getAmountScale(event.amount);
   const baseWidth = baseHeight * COMBAT_TEXT_ASPECT;
   const initialY = event.targetId
     ? getCombatTextWorldY(event.position.y, null, DEFAULT_MOVEMENT)
     : getStandaloneCombatTextY(event);
 
-  useEffect(() => () => texture.dispose(), [texture]);
+  useEffect(() => () => releaseCombatTextTexture(event.kind, textureAmount), [event.kind, textureAmount]);
 
   useFrame(() => {
     const sprite = spriteRef.current;

@@ -10,6 +10,7 @@ import {
   getVoxelMapSizeDefinition,
   type ProceduralCTFLayout,
 } from './ctfLayout.js';
+import { createBattleRoyalMapPreview } from './battleRoyalGenerator.js';
 import { hashSeed, mulberry32 } from './rng.js';
 import { getVoxelMapTheme } from './themes.js';
 import type {
@@ -23,6 +24,7 @@ import type {
   MapDesignBrief,
   MapDiagnostics,
   MapPerformanceBudget,
+  MapProfileId,
   MapTeam,
   MapTopologyId,
   ModuleConnector,
@@ -1382,9 +1384,17 @@ export function createMapConstruction(
   };
 }
 
-export function createProceduralMapPreview(seed = 0, mapSize?: VoxelMapSizeId | null): ProceduralMapPreview {
+export function createProceduralMapPreview(
+  seed = 0,
+  mapSize?: VoxelMapSizeId | null,
+  options: { profileId?: MapProfileId | string | null; themeId?: VoxelMapTheme['id'] | null } = {}
+): ProceduralMapPreview {
   const normalizedSeed = seed >>> 0;
-  const theme = getVoxelMapTheme(normalizedSeed);
+  if (options.profileId === 'battle_royal_large') {
+    return createBattleRoyalMapPreview(normalizedSeed, { themeId: options.themeId, mapSize });
+  }
+
+  const theme = getVoxelMapTheme(normalizedSeed, options.themeId);
   const layout = createProceduralCTFLayout(normalizedSeed, mapSize);
   const construction = createMapConstruction(normalizedSeed, layout, theme);
   const topologyLabel = construction.blueprint.topologyId

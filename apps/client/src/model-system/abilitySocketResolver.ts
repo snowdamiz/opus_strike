@@ -95,11 +95,11 @@ function warnIfDrifted({
   sampledPose: ViewmodelSocketPose | null;
   tolerance: number;
 }): void {
-  if (!import.meta.env.DEV || !livePose || !sampledPose) return;
+  if (!import.meta.env?.DEV || !livePose || !sampledPose) return;
   const distance = livePose.position.distanceTo(sampledPose.position);
   if (distance <= tolerance) return;
 
-  loggers.viewmodel.warn('live socket diverged from sampled pose', {
+  loggers.viewmodel.sample(`sample-drift:${abilityId}:${livePose.socketName}`, 2500, 'live socket diverged from sampled pose', {
     abilityId,
     socketName: livePose.socketName,
     distance,

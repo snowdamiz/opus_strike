@@ -98,11 +98,7 @@ export function createProceduralTerrainLookup(manifest: VoxelMapManifest): Proce
   const { chunksX, chunksZ, chunks } = buildChunkLookup(manifest);
   const maxPlayableY = getBoundaryWallCeilingY(manifest);
 
-  const getBlockAtWorld = (position: Vec3): number => {
-    const gx = worldToGrid(position.x, manifest.origin.x, manifest.voxelSize.x);
-    const gy = worldToGrid(position.y, manifest.origin.y, manifest.voxelSize.y);
-    const gz = worldToGrid(position.z, manifest.origin.z, manifest.voxelSize.z);
-
+  const getBlockAtGrid = (gx: number, gy: number, gz: number): number => {
     if (gx < 0 || gx >= manifest.size.x || gy < 0 || gy >= manifest.size.y || gz < 0 || gz >= manifest.size.z) {
       return 0;
     }
@@ -118,6 +114,12 @@ export function createProceduralTerrainLookup(manifest: VoxelMapManifest): Proce
     const lz = gz - cz * manifest.chunkSize.z;
     return chunk.blocks[lx + chunk.size.x * (lz + chunk.size.z * ly)] ?? 0;
   };
+
+  const getBlockAtWorld = (position: Vec3): number => getBlockAtGrid(
+    worldToGrid(position.x, manifest.origin.x, manifest.voxelSize.x),
+    worldToGrid(position.y, manifest.origin.y, manifest.voxelSize.y),
+    worldToGrid(position.z, manifest.origin.z, manifest.voxelSize.z)
+  );
 
   return {
     origin: { ...manifest.origin },
@@ -135,11 +137,7 @@ export function createProceduralTerrainLookup(manifest: VoxelMapManifest): Proce
 
       const topRow = manifest.heightfield.topSolidRows[gx + gz * manifest.heightfield.size.x];
       if (topRow > 0) {
-        const topBlock = getBlockAtWorld({
-          x: manifest.origin.x + (gx + 0.5) * manifest.voxelSize.x,
-          y: manifest.origin.y + (topRow - 0.5) * manifest.voxelSize.y,
-          z: manifest.origin.z + (gz + 0.5) * manifest.voxelSize.z,
-        });
+        const topBlock = getBlockAtGrid(gx, topRow - 1, gz);
         const topY = manifest.origin.y + topRow * manifest.voxelSize.y;
         if (isWalkableCollisionBlock(topBlock) && position.y >= topY - 0.75) {
           return topY;
@@ -152,11 +150,7 @@ export function createProceduralTerrainLookup(manifest: VoxelMapManifest): Proce
       ));
 
       for (let gy = startY; gy >= 0; gy--) {
-        const block = getBlockAtWorld({
-          x: position.x,
-          y: manifest.origin.y + (gy + 0.5) * manifest.voxelSize.y,
-          z: position.z,
-        });
+        const block = getBlockAtGrid(gx, gy, gz);
         if (isWalkableCollisionBlock(block)) {
           return manifest.origin.y + (gy + 1) * manifest.voxelSize.y;
         }

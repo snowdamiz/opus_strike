@@ -22,6 +22,7 @@ export interface SharedMovementSimulationInput {
   deltaTime: number;
   terrain: MovementTerrainAdapter;
   collisionWorld?: MovementCollisionWorld;
+  collisionRevision?: number | string | null;
   flagCarrier?: boolean;
   activeSpeedMultiplier?: number;
   chronosAscendantActive?: boolean;
@@ -31,6 +32,27 @@ export interface SharedMovementSimulationResult {
   position: Vec3;
   velocity: Vec3;
   movement: PlayerMovementState;
+}
+
+interface CachedFallbackCollisionWorld {
+  revision: number | string | null;
+  world: MovementCollisionWorld;
+}
+
+const fallbackCollisionWorlds = new WeakMap<MovementTerrainAdapter, CachedFallbackCollisionWorld>();
+
+function getSharedMovementCollisionWorld(input: SharedMovementSimulationInput): MovementCollisionWorld {
+  if (input.collisionWorld) return input.collisionWorld;
+
+  const revision = input.collisionRevision ?? input.terrain.collisionRevision ?? null;
+  const cached = fallbackCollisionWorlds.get(input.terrain);
+  if (cached && cached.revision === revision) {
+    return cached.world;
+  }
+
+  const world = createVoxelCollisionWorld(input.terrain);
+  fallbackCollisionWorlds.set(input.terrain, { revision, world });
+  return world;
 }
 
 export function simulateSharedMovement(input: SharedMovementSimulationInput): SharedMovementSimulationResult {
@@ -44,7 +66,7 @@ export function simulateSharedMovement(input: SharedMovementSimulationInput): Sh
       input: input.input,
       lookYaw: input.lookYaw,
     },
-    terrain: input.collisionWorld ?? createVoxelCollisionWorld(input.terrain),
+    terrain: getSharedMovementCollisionWorld(input),
     heroStats: input.heroStats,
     modifiers: {
       flagCarrier: input.flagCarrier,
@@ -52,6 +74,7 @@ export function simulateSharedMovement(input: SharedMovementSimulationInput): Sh
       chronosAscendantActive: input.chronosAscendantActive,
     },
     dt: input.deltaTime,
+    collectContacts: false,
   });
 
   return result.state;

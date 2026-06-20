@@ -1,11 +1,12 @@
 import { VoxelMap } from './procedural';
-import type { VoxelMapTheme } from '@voxel-strike/shared';
+import type { MapProfileId, VoxelMapTheme } from '@voxel-strike/shared';
 import type { VoxelMapWarmupStatus } from './procedural/VoxelMap';
-import type { MaterialQualityConfig, WorldPerformanceBudget } from './visualQuality';
+import type { BattleRoyalVisibilityConfig, MaterialQualityConfig, WorldPerformanceBudget } from './visualQuality';
 
 interface VoxelWorldProps {
   seed?: number;
   themeId?: VoxelMapTheme['id'] | null;
+  mapProfileId?: MapProfileId | null;
   enablePhysics?: boolean;
   shadowsEnabled: boolean;
   dressingShadows: boolean;
@@ -13,6 +14,7 @@ interface VoxelWorldProps {
   reflectionIntensity: number;
   materialQuality: MaterialQualityConfig['terrainTextureQuality'];
   performanceBudget: WorldPerformanceBudget;
+  battleRoyalVisibility?: BattleRoyalVisibilityConfig;
   prebuildRegions?: boolean;
   onWarmupStatus?: (status: VoxelMapWarmupStatus) => void;
   onReady?: () => void;
@@ -21,6 +23,7 @@ interface VoxelWorldProps {
 export function VoxelWorld({
   seed,
   themeId,
+  mapProfileId,
   enablePhysics = true,
   shadowsEnabled,
   dressingShadows,
@@ -28,6 +31,7 @@ export function VoxelWorld({
   reflectionIntensity,
   materialQuality,
   performanceBudget,
+  battleRoyalVisibility,
   prebuildRegions = false,
   onWarmupStatus,
   onReady,
@@ -37,6 +41,7 @@ export function VoxelWorld({
       <VoxelMap
         seed={seed}
         themeId={themeId}
+        mapProfileId={mapProfileId}
         enablePhysics={enablePhysics}
         shadowsEnabled={shadowsEnabled}
         dressingShadows={dressingShadows}
@@ -44,6 +49,7 @@ export function VoxelWorld({
         reflectionIntensity={reflectionIntensity}
         materialQuality={materialQuality}
         performanceBudget={performanceBudget}
+        battleRoyalVisibility={battleRoyalVisibility}
         prebuildRegions={prebuildRegions}
         onWarmupStatus={onWarmupStatus}
         onReady={onReady}

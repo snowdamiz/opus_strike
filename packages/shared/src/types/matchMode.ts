@@ -1,4 +1,4 @@
-export const MATCH_MODES = ['quick_play', 'ranked', 'custom', 'custom_wager'] as const;
+export const MATCH_MODES = ['quick_play', 'ranked', 'custom'] as const;
 
 export type MatchMode = typeof MATCH_MODES[number];
 

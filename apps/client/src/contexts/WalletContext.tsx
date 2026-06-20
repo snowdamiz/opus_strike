@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import type { Transaction } from '@solana/web3.js';
 import type { RankSummary } from '@voxel-strike/shared';
 import { config } from '../config/environment';
@@ -15,6 +15,7 @@ import {
 } from '../utils/phantomDeepLink';
 
 type AuthProviderName = 'discord' | 'phantom';
+const EMPTY_LINKED_ACCOUNTS: LinkedAccountSummary[] = [];
 
 interface WalletPublicKey {
   toBase58: () => string;
@@ -745,42 +746,71 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const clearError = useCallback(() => setError(null), []);
   const clearNotice = useCallback(() => setNotice(null), []);
-  const linkedAccounts = user?.linkedAccounts ?? [];
+  const linkedAccounts = user?.linkedAccounts ?? EMPTY_LINKED_ACCOUNTS;
   const hasDiscordAccount = linkedAccounts.some((account) => account.provider === 'discord');
   const hasPhantomAccount = Boolean(user?.walletAddress) || linkedAccounts.some((account) => account.provider === 'phantom');
+  const suggestedPlayerName = useMemo(() => getSuggestedPlayerName(pendingRegistration), [pendingRegistration]);
+
+  const contextValue = useMemo<WalletContextType>(() => ({
+    isPhantomInstalled,
+    isConnected,
+    isConnecting,
+    walletAddress,
+    isAuthenticated,
+    isNewUser,
+    authProvider,
+    user,
+    linkedAccounts,
+    hasDiscordAccount,
+    hasPhantomAccount,
+    pendingRegistration,
+    suggestedPlayerName,
+    isSessionLoading,
+    connect,
+    disconnect,
+    signInWithDiscord,
+    linkDiscord,
+    linkPhantom,
+    signTransaction,
+    registerUser,
+    completeTutorial,
+    logout,
+    error,
+    notice,
+    clearError,
+    clearNotice,
+  }), [
+    authProvider,
+    clearError,
+    clearNotice,
+    completeTutorial,
+    connect,
+    disconnect,
+    error,
+    hasDiscordAccount,
+    hasPhantomAccount,
+    isAuthenticated,
+    isConnected,
+    isConnecting,
+    isNewUser,
+    isPhantomInstalled,
+    isSessionLoading,
+    linkDiscord,
+    linkPhantom,
+    linkedAccounts,
+    logout,
+    notice,
+    pendingRegistration,
+    registerUser,
+    signInWithDiscord,
+    signTransaction,
+    suggestedPlayerName,
+    user,
+    walletAddress,
+  ]);
 
   return (
-    <WalletContext.Provider
-      value={{
-        isPhantomInstalled,
-        isConnected,
-        isConnecting,
-        walletAddress,
-        isAuthenticated,
-        isNewUser,
-        authProvider,
-        user,
-        linkedAccounts,
-        hasDiscordAccount,
-        hasPhantomAccount,
-        pendingRegistration,
-        suggestedPlayerName: getSuggestedPlayerName(pendingRegistration),
-        isSessionLoading,
-        connect,
-        disconnect,
-        signInWithDiscord,
-        linkDiscord,
-        linkPhantom,
-        signTransaction,
-        registerUser,
-        completeTutorial,
-        logout,
-        error,
-        notice,
-        clearError,
-        clearNotice,
-      }}
-    >
+    <WalletContext.Provider value={contextValue}>
       {children}
     </WalletContext.Provider>
   );

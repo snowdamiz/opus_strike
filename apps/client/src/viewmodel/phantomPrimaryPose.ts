@@ -1,6 +1,10 @@
 import type * as THREE from 'three';
 import {
   defaultViewmodelPoseRuntime,
+  getViewmodelEventChannel,
+  getViewmodelHeldBlend,
+  setViewmodelHeldChannel,
+  triggerViewmodelEventChannel,
   type ViewmodelPoseRuntime,
 } from './viewmodelPoseRuntime';
 export {
@@ -28,6 +32,9 @@ const PHANTOM_VEIL_CAST_CLAP_SECONDS = 0.36;
 const PHANTOM_VEIL_CAST_HOLD_SECONDS = 0.64;
 const PHANTOM_VEIL_CAST_FADE_SECONDS = 0.96;
 export const PHANTOM_VEIL_CAST_POSE_DURATION_MS = PHANTOM_VEIL_CAST_FADE_SECONDS * 1000;
+const PHANTOM_PRIMARY_HELD_CHANNEL = 'phantom.primaryHeld';
+const PHANTOM_SHIELD_CAST_CHANNEL = 'phantom.personalShieldCast';
+const PHANTOM_VEIL_CAST_CHANNEL = 'phantom.veilCast';
 
 export interface PhantomPrimaryPoseSampleContext {
   camera: THREE.Camera;
@@ -81,47 +88,46 @@ export function setPhantomPrimaryHeld(
   timestampMs = Date.now(),
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): void {
-  const state = runtime.phantom.primary;
-  if (state.held === held) return;
-
-  state.blendAtChange = getPhantomPrimaryHeldBlend(timestampMs, runtime);
-  state.held = held;
-  state.changedAtMs = timestampMs;
-  runtime.revision += 1;
+  setViewmodelHeldChannel({
+    runtime,
+    channelId: PHANTOM_PRIMARY_HELD_CHANNEL,
+    held,
+    transitionSeconds: PHANTOM_PRIMARY_READY_TRANSITION_SECONDS,
+    timestampMs,
+  });
 }
 
 export function getPhantomPrimaryHeldBlend(
   timestampMs = Date.now(),
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): number {
-  const state = runtime.phantom.primary;
-  const targetBlend = state.held ? 1 : 0;
-  const elapsedSeconds = Math.max(0, timestampMs - state.changedAtMs) / 1000;
-  const progress = smoothstep(0, PHANTOM_PRIMARY_READY_TRANSITION_SECONDS, elapsedSeconds);
-  return state.blendAtChange + (targetBlend - state.blendAtChange) * progress;
+  return getViewmodelHeldBlend({
+    runtime,
+    channelId: PHANTOM_PRIMARY_HELD_CHANNEL,
+    transitionSeconds: PHANTOM_PRIMARY_READY_TRANSITION_SECONDS,
+    timestampMs,
+  });
 }
 
 export function triggerPhantomShieldCastPose(
   timestampMs = Date.now(),
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): void {
-  runtime.phantom.shieldCastStartedAtMs = timestampMs;
-  runtime.revision += 1;
+  triggerViewmodelEventChannel(runtime, PHANTOM_SHIELD_CAST_CHANNEL, timestampMs);
 }
 
 export function triggerPhantomVeilCastPose(
   timestampMs = Date.now(),
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): void {
-  runtime.phantom.veilCastStartedAtMs = timestampMs;
-  runtime.revision += 1;
+  triggerViewmodelEventChannel(runtime, PHANTOM_VEIL_CAST_CHANNEL, timestampMs);
 }
 
 export function getPhantomShieldCastPose(
   timestampMs = Date.now(),
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): PhantomShieldCastPose {
-  const startedAtMs = runtime.phantom.shieldCastStartedAtMs;
+  const startedAtMs = getViewmodelEventChannel(runtime, PHANTOM_SHIELD_CAST_CHANNEL).startedAtMs;
   if (!Number.isFinite(startedAtMs)) return PHANTOM_SHIELD_CAST_IDLE_POSE;
 
   const elapsedSeconds = Math.max(0, timestampMs - startedAtMs) / 1000;
@@ -151,7 +157,7 @@ export function getPhantomVeilCastPose(
   timestampMs = Date.now(),
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): PhantomVeilCastPose {
-  const startedAtMs = runtime.phantom.veilCastStartedAtMs;
+  const startedAtMs = getViewmodelEventChannel(runtime, PHANTOM_VEIL_CAST_CHANNEL).startedAtMs;
   if (!Number.isFinite(startedAtMs)) return PHANTOM_VEIL_CAST_IDLE_POSE;
 
   const elapsedSeconds = Math.max(0, timestampMs - startedAtMs) / 1000;

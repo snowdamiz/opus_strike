@@ -14,18 +14,22 @@ import {
   fillCombatVisualEnemyPlayers,
   findCombatVisualEnemyPlayerHit,
   findCombatVisualPlayerHit,
+  getPlayerVisualLookPitch,
   getDeathVisualForPlayer,
   pruneRemoteTransformHistories,
   rebuildCombatVisualFrameCache,
   removeDeathVisual,
   sampleRemoteTransformInto,
   setLocalSlideIntensity,
+  setPlayerVisualRotation,
   setPlayerVisualTransform,
   updateDeathVisualExpirationForPlayer,
   visualStore,
   type DeathVisualSnapshot,
   type SampledRemoteTransform,
 } from './visualStore';
+
+const TEST_REMOTE_TRANSFORM_RECEIVED_AT_MS = 10_000;
 
 function makeTarget(): SampledRemoteTransform {
   return {
@@ -41,18 +45,32 @@ function makeTarget(): SampledRemoteTransform {
   };
 }
 
+function addRemoteSnapshot(
+  playerId: string,
+  serverTime: number,
+  x: number,
+  receivedAtMs: number,
+  movementEpoch = 1
+): void {
+  addRemoteTransformSnapshot(
+    playerId,
+    {
+      serverTick: serverTime / 50,
+      serverTime,
+      position: { x, y: 1, z: 0 },
+      velocity: { x: 1, y: 0, z: 0 },
+      lookYaw: x,
+      lookPitch: 0,
+      movementBits: x,
+      wallRunSide: 0,
+      movementEpoch,
+    },
+    receivedAtMs
+  );
+}
+
 function addSnapshot(serverTime: number, x: number): void {
-  addRemoteTransformSnapshot('remote-a', {
-    serverTick: serverTime / 50,
-    serverTime,
-    position: { x, y: 1, z: 0 },
-    velocity: { x: 1, y: 0, z: 0 },
-    lookYaw: x,
-    lookPitch: 0,
-    movementBits: x,
-    wallRunSide: 0,
-    movementEpoch: 1,
-  });
+  addRemoteSnapshot('remote-a', serverTime, x, TEST_REMOTE_TRANSFORM_RECEIVED_AT_MS);
 }
 
 function makePlayer(id: string, team: Team, x: number, z: number, state: Player['state'] = 'alive'): Player {
@@ -166,9 +184,42 @@ assert.equal(visualStore.getState().remoteTransformHistories.has('remote-b'), fa
 const missingTarget = makeTarget();
 assert.equal(sampleRemoteTransformInto('missing', missingTarget), false);
 
+clearVisualState();
+addRemoteSnapshot('jittery', 1000, 10, 10_000);
+addRemoteSnapshot('jittery', 1050, 11, 10_050);
+let jitteryHistory = visualStore.getState().remoteTransformHistories.get('jittery');
+assert.ok(jitteryHistory);
+assert.equal(jitteryHistory.interpolationDelayMs, MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS);
+addRemoteSnapshot('jittery', 1100, 12, 10_210);
+jitteryHistory = visualStore.getState().remoteTransformHistories.get('jittery');
+assert.ok(jitteryHistory);
+const raisedInterpolationDelayMs = jitteryHistory.interpolationDelayMs;
+assert.ok(raisedInterpolationDelayMs > MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS);
+
+for (let index = 1; index <= 12; index++) {
+  addRemoteSnapshot('jittery', 1100 + index * 50, 12 + index, 10_210 + index * 50);
+}
+jitteryHistory = visualStore.getState().remoteTransformHistories.get('jittery');
+assert.ok(jitteryHistory);
+assert.ok(jitteryHistory.interpolationDelayMs < raisedInterpolationDelayMs);
+assert.ok(jitteryHistory.interpolationDelayMs >= MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS);
+
+addRemoteSnapshot('jittery', 2000, 20, 11_000, 2);
+jitteryHistory = visualStore.getState().remoteTransformHistories.get('jittery');
+assert.ok(jitteryHistory);
+assert.equal(jitteryHistory.interpolationDelayMs, MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS);
+assert.equal(jitteryHistory.arrivalJitterMs, 0);
+
 setPlayerVisualTransform('remote-a', { x: 3, y: 4, z: 5 }, 1.25);
 assert.deepEqual(visualStore.getState().playerPositions.get('remote-a'), { x: 3, y: 4, z: 5 });
 assert.equal(visualStore.getState().playerRotations.get('remote-a'), 1.25);
+assert.equal(visualStore.getState().playerLookPitches.has('remote-a'), false);
+setPlayerVisualTransform('remote-a', { x: 3, y: 4, z: 5 }, 1.25, -0.4);
+assert.equal(visualStore.getState().playerLookPitches.get('remote-a'), -0.4);
+assert.equal(getPlayerVisualLookPitch(visualStore.getState(), makePlayer('remote-a', 'red', 0, 0)), -0.4);
+setPlayerVisualRotation('remote-a', 0.5, 0.3);
+assert.equal(visualStore.getState().playerRotations.get('remote-a'), 0.5);
+assert.equal(visualStore.getState().playerLookPitches.get('remote-a'), 0.3);
 
 setLocalSlideIntensity(1.5, { x: 3, y: 0, z: -4 }, 0.75);
 assert.equal(visualStore.getState().slideIntensity, 1);
@@ -271,5 +322,40 @@ assert.equal(
 
 const rebuiltCombatCache = rebuildCombatVisualFrameCache(combatPlayers, 2001, 2001, combatPlayers.length);
 assert.equal(rebuiltCombatCache.buckets.get(0)?.get(0), firstCombatBucket);
+
+const brCombatPlayers = [
+  makePlayer('br-owner', 'br_01', 0, 0),
+  makePlayer('br-near-enemy', 'br_02', 1, 1),
+  makePlayer('br-squadmate', 'br_01', 1, 0),
+  makePlayer('br-far-enemy', 'br_03', 48, 0),
+  makePlayer('br-hidden-enemy', 'br_04', 2, 0),
+];
+brCombatPlayers[4].visibility = 'hidden';
+const brCombatCache = rebuildCombatVisualFrameCache(brCombatPlayers, 3000, 3000, brCombatPlayers.length);
+assert.equal(brCombatCache.byTeam.get('br_01')?.length, 2);
+assert.equal(brCombatCache.byTeam.get('br_02')?.length, 1);
+assert.equal(brCombatCache.byTeam.get('br_03')?.length, 1);
+assert.equal(brCombatCache.byTeam.has('br_04'), false);
+
+const brNearbyEnemies: Player[] = [];
+fillCombatVisualEnemyPlayers(brCombatCache, 'br_01', 'br-owner', brNearbyEnemies, { x: 0, z: 0 }, 4);
+assert.deepEqual(brNearbyEnemies.map((player) => player.id), ['br-near-enemy']);
+
+const brAllEnemies: Player[] = [];
+fillCombatVisualEnemyPlayers(brCombatCache, 'br_01', 'br-owner', brAllEnemies);
+assert.deepEqual(brAllEnemies.map((player) => player.id), ['br-near-enemy', 'br-far-enemy']);
+
+const brHitEnemy = findCombatVisualEnemyPlayerHit(
+  brCombatCache,
+  'br_01',
+  'br-owner',
+  { x: 0, y: 1, z: 0 },
+  { x: Math.SQRT1_2, y: 0, z: Math.SQRT1_2 },
+  3,
+  0.21,
+  { x: 0, z: 0 },
+  4
+);
+assert.equal(brHitEnemy?.id, 'br-near-enemy');
 
 console.log('visualStore remote transform tests passed');

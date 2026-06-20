@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { Player, PlayerMovementState, VoxelMapTheme } from '@voxel-strike/shared';
 import { PLAYER_HEIGHT } from '@voxel-strike/shared';
@@ -28,7 +29,7 @@ export interface RemoteMovementEffectStyle {
 interface RemoteMovementEffectsProps {
   players: readonly Player[];
   theme: VoxelMapTheme;
-  config: Pick<EffectQualityConfig, 'maxActiveParticles'>;
+  config: Pick<EffectQualityConfig, 'maxActiveParticles' | 'maxRemoteMovementEffectDistance'>;
 }
 
 interface EmitterState {
@@ -348,6 +349,18 @@ function deactivateParticlesForOwner(particles: MovementParticle[], ownerId: str
   }
 }
 
+function isWithinDistanceSq(
+  a: { x: number; y: number; z: number },
+  b: { x: number; y: number; z: number },
+  maxDistance: number
+): boolean {
+  if (!Number.isFinite(maxDistance)) return true;
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const dz = a.z - b.z;
+  return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
+}
+
 function getEffectPosition(player: Player, visualState: VisualState, target: THREE.Vector3): THREE.Vector3 {
   const position = visualState.renderedPlayerPositions.get(player.id)
     ?? visualState.playerPositions.get(player.id)
@@ -493,6 +506,7 @@ export function RemoteMovementEffects({
   theme,
   config,
 }: RemoteMovementEffectsProps) {
+  const { camera } = useThree();
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const emitterStatesRef = useRef(new Map<string, EmitterState>());
   const nextParticleIndexRef = useRef(0);
@@ -527,7 +541,11 @@ export function RemoteMovementEffects({
   }, [capacity]);
 
   useEffect(() => {
-    const activePlayerIds = new Set(players.map((player) => player.id));
+    const activePlayerIds = new Set<string>();
+    for (const player of players) {
+      activePlayerIds.add(player.id);
+    }
+
     for (const playerId of emitterStatesRef.current.keys()) {
       if (!activePlayerIds.has(playerId)) {
         emitterStatesRef.current.delete(playerId);
@@ -547,9 +565,14 @@ export function RemoteMovementEffects({
       const visualState = visualStore.getState();
       const positionScratch = positionScratchRef.current;
       for (const player of players) {
-        if (shouldSuppressRemoteMovementEffects(player)) {
-          emitterStatesRef.current.delete(player.id);
-          deactivateParticlesForOwner(particles, player.id);
+        const effectPosition = getEffectPosition(player, visualState, positionScratch);
+        if (
+          shouldSuppressRemoteMovementEffects(player) ||
+          !isWithinDistanceSq(effectPosition, camera.position, config.maxRemoteMovementEffectDistance)
+        ) {
+          if (emitterStatesRef.current.delete(player.id)) {
+            deactivateParticlesForOwner(particles, player.id);
+          }
           continue;
         }
 
@@ -567,7 +590,7 @@ export function RemoteMovementEffects({
 
         updateEmitterState(
           emitterState,
-          getEffectPosition(player, visualState, positionScratch),
+          effectPosition,
           player,
           deltaSeconds,
           density,
@@ -580,7 +603,7 @@ export function RemoteMovementEffects({
       updateParticles(particles, deltaSeconds, style);
       renderParticles(mesh, particles, palette, dummyRef.current);
     },
-  }), [density, palette, particles, players, style]);
+  }), [camera, config.maxRemoteMovementEffectDistance, density, palette, particles, players, style]);
 
   return (
     <instancedMesh

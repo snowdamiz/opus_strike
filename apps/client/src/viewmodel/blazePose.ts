@@ -1,8 +1,11 @@
 import type * as THREE from 'three';
 import {
+  clearViewmodelEventChannel,
   defaultViewmodelPoseRuntime,
-  type BlazeViewmodelPoseRuntime,
-  type HeldBlendRuntime,
+  getViewmodelEventChannel,
+  getViewmodelHeldBlend,
+  setViewmodelHeldChannel,
+  triggerViewmodelEventChannel,
   type ViewmodelPoseRuntime,
 } from './viewmodelPoseRuntime';
 export { BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME } from '@voxel-strike/shared';
@@ -17,6 +20,11 @@ export const BLAZE_ROCKET_JUMP_IMPACT_DELAY_MS =
   BLAZE_ROCKET_JUMP_READY_MS + BLAZE_ROCKET_JUMP_STRIKE_MS;
 export const BLAZE_ROCKET_JUMP_ANIMATION_DURATION_MS =
   BLAZE_ROCKET_JUMP_IMPACT_DELAY_MS + BLAZE_ROCKET_JUMP_RECOVER_MS;
+const BLAZE_ROCKET_HELD_CHANNEL = 'blaze.rocketHeld';
+const BLAZE_BOMB_TARGET_CHANNEL = 'blaze.bombTarget';
+const BLAZE_FLAMETHROWER_HELD_CHANNEL = 'blaze.flamethrowerHeld';
+const BLAZE_STAFF_SHOCKWAVE_CHANNEL = 'blaze.staffShockwave';
+const BLAZE_ROCKET_JUMP_STAFF_SLAM_CHANNEL = 'blaze.rocketJumpStaffSlam';
 
 export interface BlazeRocketStaffPoseSampleContext {
   camera: THREE.Camera;
@@ -36,21 +44,18 @@ export interface BlazeRocketJumpStaffSlamPose {
 }
 
 function markHeldState(
-  state: HeldBlendRuntime,
+  runtime: ViewmodelPoseRuntime,
+  channelId: string,
   held: boolean,
-  timestampMs: number,
-  runtime: ViewmodelPoseRuntime
+  timestampMs: number
 ): void {
-  if (state.held === held) return;
-
-  state.blendAtChange = getHeldBlend({ state, timestampMs });
-  state.held = held;
-  state.changedAtMs = timestampMs;
-  runtime.revision += 1;
-}
-
-function blazeRuntime(runtime: ViewmodelPoseRuntime): BlazeViewmodelPoseRuntime {
-  return runtime.blaze;
+  setViewmodelHeldChannel({
+    runtime,
+    channelId,
+    held,
+    transitionSeconds: BLAZE_ROCKET_READY_TRANSITION_SECONDS,
+    timestampMs,
+  });
 }
 
 export function setBlazeRocketHeld(
@@ -58,14 +63,19 @@ export function setBlazeRocketHeld(
   timestampMs = Date.now(),
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): void {
-  markHeldState(blazeRuntime(runtime).rocket, held, timestampMs, runtime);
+  markHeldState(runtime, BLAZE_ROCKET_HELD_CHANNEL, held, timestampMs);
 }
 
 export function getBlazeRocketHeldBlend(
   timestampMs = Date.now(),
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): number {
-  return getHeldBlend({ state: blazeRuntime(runtime).rocket, timestampMs });
+  return getViewmodelHeldBlend({
+    runtime,
+    channelId: BLAZE_ROCKET_HELD_CHANNEL,
+    transitionSeconds: BLAZE_ROCKET_READY_TRANSITION_SECONDS,
+    timestampMs,
+  });
 }
 
 export function setBlazeBombTargetHeld(
@@ -73,14 +83,19 @@ export function setBlazeBombTargetHeld(
   timestampMs = Date.now(),
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): void {
-  markHeldState(blazeRuntime(runtime).bombTarget, held, timestampMs, runtime);
+  markHeldState(runtime, BLAZE_BOMB_TARGET_CHANNEL, held, timestampMs);
 }
 
 export function getBlazeBombTargetHeldBlend(
   timestampMs = Date.now(),
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): number {
-  return getHeldBlend({ state: blazeRuntime(runtime).bombTarget, timestampMs });
+  return getViewmodelHeldBlend({
+    runtime,
+    channelId: BLAZE_BOMB_TARGET_CHANNEL,
+    transitionSeconds: BLAZE_ROCKET_READY_TRANSITION_SECONDS,
+    timestampMs,
+  });
 }
 
 export function setBlazeFlamethrowerHeld(
@@ -88,14 +103,19 @@ export function setBlazeFlamethrowerHeld(
   timestampMs = Date.now(),
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): void {
-  markHeldState(blazeRuntime(runtime).flamethrower, held, timestampMs, runtime);
+  markHeldState(runtime, BLAZE_FLAMETHROWER_HELD_CHANNEL, held, timestampMs);
 }
 
 export function getBlazeFlamethrowerHeldBlend(
   timestampMs = Date.now(),
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): number {
-  return getHeldBlend({ state: blazeRuntime(runtime).flamethrower, timestampMs });
+  return getViewmodelHeldBlend({
+    runtime,
+    channelId: BLAZE_FLAMETHROWER_HELD_CHANNEL,
+    transitionSeconds: BLAZE_ROCKET_READY_TRANSITION_SECONDS,
+    timestampMs,
+  });
 }
 
 export function getBlazeStaffHeldBlend(
@@ -113,34 +133,29 @@ export function triggerBlazeRocketJumpStaffSlam(
   timestampMs = Date.now(),
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): number {
-  const state = blazeRuntime(runtime);
-  state.rocketJumpStaffSlamRevision += 1;
-  state.rocketJumpStaffSlamStartedAtMs = timestampMs;
-  runtime.revision += 1;
-  return state.rocketJumpStaffSlamRevision;
+  return triggerViewmodelEventChannel(runtime, BLAZE_ROCKET_JUMP_STAFF_SLAM_CHANNEL, timestampMs);
 }
 
 export function clearBlazeRocketJumpStaffSlam(
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): void {
-  blazeRuntime(runtime).rocketJumpStaffSlamStartedAtMs = 0;
-  runtime.revision += 1;
+  clearViewmodelEventChannel(runtime, BLAZE_ROCKET_JUMP_STAFF_SLAM_CHANNEL, 0);
 }
 
 export function getBlazeRocketJumpStaffSlamPose(
   timestampMs = Date.now(),
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): BlazeRocketJumpStaffSlamPose {
-  const state = blazeRuntime(runtime);
-  if (state.rocketJumpStaffSlamRevision <= 0 || state.rocketJumpStaffSlamStartedAtMs <= 0) {
+  const state = getViewmodelEventChannel(runtime, BLAZE_ROCKET_JUMP_STAFF_SLAM_CHANNEL);
+  if (state.revision <= 0 || state.startedAtMs <= 0) {
     return BLAZE_ROCKET_JUMP_IDLE_POSE;
   }
 
-  const elapsedMs = timestampMs - state.rocketJumpStaffSlamStartedAtMs;
+  const elapsedMs = timestampMs - state.startedAtMs;
   if (elapsedMs < 0 || elapsedMs > BLAZE_ROCKET_JUMP_ANIMATION_DURATION_MS) {
     return {
       ...BLAZE_ROCKET_JUMP_IDLE_POSE,
-      revision: state.rocketJumpStaffSlamRevision,
+      revision: state.revision,
       elapsedMs,
     };
   }
@@ -154,7 +169,7 @@ export function getBlazeRocketJumpStaffSlamPose(
   const impactProgress = Math.max(0, Math.min(1, (elapsedMs - BLAZE_ROCKET_JUMP_IMPACT_DELAY_MS) / 120));
 
   return {
-    revision: state.rocketJumpStaffSlamRevision,
+    revision: state.revision,
     active: true,
     elapsedMs,
     readyBlend: smoothstep(0, BLAZE_ROCKET_JUMP_READY_MS, elapsedMs) * activeMultiplier,
@@ -177,33 +192,17 @@ export function triggerBlazeStaffShockwave(
   timestampMs = Date.now(),
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): void {
-  const state = blazeRuntime(runtime);
-  state.staffShockwaveRevision += 1;
-  state.staffShockwaveStartedAtMs = timestampMs;
-  runtime.revision += 1;
+  triggerViewmodelEventChannel(runtime, BLAZE_STAFF_SHOCKWAVE_CHANNEL, timestampMs);
 }
 
 export function getBlazeStaffShockwaveEvent(
   runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
 ): BlazeStaffShockwaveEvent {
-  const state = blazeRuntime(runtime);
+  const state = getViewmodelEventChannel(runtime, BLAZE_STAFF_SHOCKWAVE_CHANNEL);
   return {
-    revision: state.staffShockwaveRevision,
-    startedAtMs: state.staffShockwaveStartedAtMs,
+    revision: state.revision,
+    startedAtMs: state.startedAtMs,
   };
-}
-
-function getHeldBlend({
-  state,
-  timestampMs,
-}: {
-  state: HeldBlendRuntime;
-  timestampMs: number;
-}): number {
-  const targetBlend = state.held ? 1 : 0;
-  const elapsedSeconds = Math.max(0, timestampMs - state.changedAtMs) / 1000;
-  const progress = smoothstep(0, BLAZE_ROCKET_READY_TRANSITION_SECONDS, elapsedSeconds);
-  return state.blendAtChange + (targetBlend - state.blendAtChange) * progress;
 }
 
 function smoothstep(edge0: number, edge1: number, value: number): number {

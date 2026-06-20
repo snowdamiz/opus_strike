@@ -4,7 +4,8 @@ import {
   HOOKSHOT_GROUND_HOOKS_HOOKS_PER_TARGET,
   PLAYER_HEIGHT,
 } from '@voxel-strike/shared';
-import { useGameStore, type HookshotGroundHooksData, type HookshotGroundHooksTargetData } from '../../../store/gameStore';
+import { useGameStore } from '../../../store/gameStore';
+import type { HookshotGroundHooksData, HookshotGroundHooksTargetData } from '../../../store/types';
 import { getFrameClock } from '../../../utils/frameClock';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';

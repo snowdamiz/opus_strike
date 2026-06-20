@@ -10,7 +10,6 @@ export type AntiCheatCategory =
   | 'ability'
   | 'objective'
   | 'ranked'
-  | 'wager'
   | 'client_hint'
   | 'player_report';
 export type AntiCheatSeverity = 'low' | 'medium' | 'high' | 'critical';
@@ -24,10 +23,6 @@ export type AntiCheatActionType =
   | 'ranked_hold'
   | 'ranked_release'
   | 'ranked_cancel'
-  | 'payout_hold'
-  | 'payout_release'
-  | 'refund_decision'
-  | 'settlement_cancel'
   | 'operator_note'
   | 'case_resolution'
   | 'case_reversal';
@@ -58,10 +53,7 @@ export interface AntiCheatRuntimeConfig {
   lowSignalRetentionDays: number;
   maxSignalDetailBytes: number;
   rankedScoreThreshold: number;
-  wagerScoreThreshold: number;
   adminReviewScoreThreshold: number;
-  payoutHoldScoreThreshold: number;
-  payoutHoldsEnabled: boolean;
   manualAccountActionsEnabled: boolean;
   banRequiresElevatedRole: boolean;
   clientHintsEnabled: boolean;
@@ -131,14 +123,13 @@ export interface AntiCheatScoreChange {
   integrityStatus: AntiCheatMatchIntegrityStatus;
   casePriority: AntiCheatCasePriority | null;
   shouldCreateCase: boolean;
-  affectsRankedOrWager: boolean;
+  affectsRanked: boolean;
 }
 
 export interface AntiCheatIntegrityGate {
   status: AntiCheatMatchIntegrityStatus;
   reviewRequired: boolean;
   rankedHoldRequired: boolean;
-  payoutHoldRequired: boolean;
   observedOnly: boolean;
   reason: string | null;
   affectedUserIds: string[];

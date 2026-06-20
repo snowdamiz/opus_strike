@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { usePwaInstallPrompt } from '../../pwa';
-import { useUISounds } from '../../hooks/useAudio';
+import { useUISounds } from '../../hooks/useUiAudio';
 
 export function PwaInstallToast() {
   const { canInstall, hasDownloaded, install } = usePwaInstallPrompt();

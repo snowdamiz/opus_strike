@@ -17,6 +17,7 @@ import {
   PHANTOM_PRIMARY_RELOAD_MS,
   PHANTOM_VOID_RAY_COOLDOWN_MS,
   VOID_RAY_CHARGE_TIME,
+  type Team,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { playSharedSound } from '../../useAudio';
@@ -26,9 +27,9 @@ import {
   PHANTOM_FIRE_INTERVAL,
   PHANTOM_PROJECTILE_SPEED,
   PHANTOM_VOID_RAY_SOCKET,
-  calculateLookDirection,
   calculatePlayerSocketPosition,
 } from '../constants';
+import { resolveAbilityAimDirection } from '../abilityAim';
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import {
   PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
@@ -108,6 +109,8 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   const voidRayIdRef = useRef(0);
   const phantomPrimaryHoldStartedAtRef = useRef(0);
   const localVoidRayLastReleaseAtRef = useRef(0);
+
+  const getOwnerTeam = (ctx: AbilityContext): Team => ctx.localPlayer.team || 'red';
 
   function samplePhantomPrimarySpawn(
     ctx: AbilityContext,
@@ -238,7 +241,6 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     lastFireTimeRef.current = now;
     direBallIdRef.current += 1;
     const launchSide = direBallIdRef.current % 2 === 1 ? 1 : -1;
-    const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
     const sampledSpawn = samplePhantomPrimarySpawn(ctx, launchSide, now);
     const spawnPosition = sampledSpawn
       ? vectorToPlainPosition(sampledSpawn.position)
@@ -246,6 +248,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
         ...PHANTOM_DIRE_BALL_SOCKET,
         sideOffset: PHANTOM_DIRE_BALL_SOCKET.sideOffset * launchSide,
       });
+    const direction = resolveAbilityAimDirection(ctx, spawnPosition);
     const visualId = `predicted_phantom_dire_ball_${ctx.localPlayer.id}_${direBallIdRef.current}`;
 
     phantomPrimaryAmmoRef.current = Math.max(0, phantomPrimaryAmmoRef.current - 1);
@@ -263,7 +266,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
       },
       startTime: now - PHANTOM_PRIMARY_VISUAL_FIRE_LEAD_SECONDS * 1000,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: getOwnerTeam(ctx),
       launchSide,
       launchYaw: ctx.yaw,
       viewmodelEventId: visualId,
@@ -315,11 +318,11 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     store.setVoidRayCharging(false, 0);
 
     voidRayIdRef.current += 1;
-    const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
     const sampledSpawn = samplePhantomVoidRaySpawn(ctx, now);
     const startPosition = sampledSpawn
       ? vectorToPlainPosition(sampledSpawn.position)
       : calculatePlayerSocketPosition(ctx.position, ctx.yaw, PHANTOM_VOID_RAY_SOCKET);
+    const direction = resolveAbilityAimDirection(ctx, startPosition);
     const visualId = `predicted_phantom_void_ray_${ctx.localPlayer.id}_${voidRayIdRef.current}`;
     store.addVoidRay({
       id: visualId,
@@ -327,7 +330,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
       direction,
       startTime: now,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      ownerTeam: getOwnerTeam(ctx),
     });
     if (store.isPracticeMode && store.localPlayer?.id === ctx.localPlayer.id) {
       store.setClientCooldown('phantom_void_ray', now + cooldownMs);

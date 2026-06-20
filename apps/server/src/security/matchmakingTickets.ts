@@ -1,16 +1,33 @@
 import crypto from 'crypto';
 import { PublicKey } from '@solana/web3.js';
-import { getEntryTicketSecret } from '../config/security';
 import {
   DEFAULT_MATCHMAKING_RATING,
   DEFAULT_RANK_DIVISION_INDEX,
   normalizeRankDivisionIndex,
 } from '../matchmaking/skill';
-import { isMatchMode, type MatchMode } from '@voxel-strike/shared';
+import {
+  DEFAULT_GAMEPLAY_MODE,
+  DEFAULT_MATCH_PERSPECTIVE,
+  isGameplayMode,
+  isMatchMode,
+  isMatchPerspective,
+  type GameplayMode,
+  type MatchMode,
+  type MatchPerspective,
+} from '@voxel-strike/shared';
+import { createSignedTicket, readSignedTicketClaims } from './signedTicket';
+import {
+  isMatchmakingBotFillMode,
+  normalizeMatchmakingBotFillMode,
+  type MatchmakingBotFillMode,
+} from '../matchmaking/matchSettings';
 
 export interface MatchmakingTicketClaims {
   version: 2;
   mode: MatchMode;
+  gameplayMode: GameplayMode;
+  botFillMode: MatchmakingBotFillMode;
+  matchPerspective: MatchPerspective;
   userId: string;
   competitiveRating: number;
   rankDivisionIndex: number;
@@ -32,6 +49,9 @@ export interface MatchmakingTicketClaims {
 
 export interface CreateMatchmakingTicketInput {
   mode: MatchMode;
+  gameplayMode?: GameplayMode;
+  botFillMode?: MatchmakingBotFillMode;
+  matchPerspective?: MatchPerspective;
   userId: string;
   competitiveRating: number;
   rankDivisionIndex: number;
@@ -51,32 +71,6 @@ export interface CreateMatchmakingTicketInput {
 
 const DEFAULT_TICKET_TTL_MS = 60_000;
 
-function base64UrlEncode(input: Buffer | string): string {
-  return Buffer.from(input)
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
-}
-
-function base64UrlDecode(input: string): Buffer {
-  const normalized = input.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
-  return Buffer.from(padded, 'base64');
-}
-
-function signPayload(payload: string): string {
-  return base64UrlEncode(
-    crypto.createHmac('sha256', getEntryTicketSecret()).update(payload).digest()
-  );
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const aBuffer = Buffer.from(a);
-  const bBuffer = Buffer.from(b);
-  return aBuffer.length === bBuffer.length && crypto.timingSafeEqual(aBuffer, bBuffer);
-}
-
 function isCanonicalSolanaAddress(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   try {
@@ -94,6 +88,15 @@ export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
   const claims: MatchmakingTicketClaims = {
     version: 2,
     mode: input.mode,
+    gameplayMode: input.mode === 'quick_play' && isGameplayMode(input.gameplayMode)
+      ? input.gameplayMode
+      : DEFAULT_GAMEPLAY_MODE,
+    botFillMode: input.mode === 'quick_play'
+      ? normalizeMatchmakingBotFillMode(input.botFillMode)
+      : 'manual',
+    matchPerspective: input.mode === 'quick_play' && isMatchPerspective(input.matchPerspective)
+      ? input.matchPerspective
+      : DEFAULT_MATCH_PERSPECTIVE,
     userId: input.userId,
     competitiveRating: Math.round(Number.isFinite(input.competitiveRating) ? input.competitiveRating : DEFAULT_MATCHMAKING_RATING),
     rankDivisionIndex: normalizeRankDivisionIndex(input.rankDivisionIndex),
@@ -113,29 +116,27 @@ export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
     nonce: crypto.randomBytes(16).toString('hex'),
   };
 
-  const payload = base64UrlEncode(JSON.stringify(claims));
   return {
-    ticket: `${payload}.${signPayload(payload)}`,
+    ticket: createSignedTicket(claims),
     claims,
   };
 }
 
 export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): MatchmakingTicketClaims | null {
-  if (typeof ticket !== 'string' || ticket.length > 4096) return null;
-
-  const [payload, signature, ...extra] = ticket.split('.');
-  if (!payload || !signature || extra.length > 0) return null;
-  if (!safeEqual(signPayload(payload), signature)) return null;
-
-  let claims: MatchmakingTicketClaims;
-  try {
-    claims = JSON.parse(base64UrlDecode(payload).toString('utf8')) as MatchmakingTicketClaims;
-  } catch {
-    return null;
-  }
+  const claims = readSignedTicketClaims<MatchmakingTicketClaims>(ticket);
+  if (!claims) return null;
 
   if (claims.version !== 2) return null;
   const mode = isMatchMode(claims.mode) ? claims.mode : 'quick_play';
+  const gameplayMode = mode === 'quick_play' && isGameplayMode(claims.gameplayMode)
+    ? claims.gameplayMode
+    : DEFAULT_GAMEPLAY_MODE;
+  const botFillMode = mode === 'quick_play' && isMatchmakingBotFillMode(claims.botFillMode)
+    ? claims.botFillMode
+    : 'manual';
+  const matchPerspective = mode === 'quick_play' && isMatchPerspective(claims.matchPerspective)
+    ? claims.matchPerspective
+    : DEFAULT_MATCH_PERSPECTIVE;
   if (!claims.userId || !claims.nonce) return null;
   if (claims.expiresAt < now || claims.issuedAt > now + 5_000) return null;
   if (!Number.isFinite(claims.competitiveRating)) return null;
@@ -179,6 +180,9 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
   return {
     ...claims,
     mode,
+    gameplayMode,
+    botFillMode,
+    matchPerspective,
     competitiveRating: Math.round(claims.competitiveRating),
     rankDivisionIndex: claims.rankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,
     targetRankDivisionIndex: claims.targetRankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,

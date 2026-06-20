@@ -11,7 +11,9 @@ export class GameState extends Schema {
   mapSeed: number = 0;
   mapThemeId: string = '';
   mapSize: string = DEFAULT_VOXEL_MAP_SIZE_ID;
+  mapProfileId: string = '';
   gameplayMode: string = 'capture_the_flag';
+  matchPerspective: string = 'first_person';
 
   // Teams
   redTeam: TeamState = new TeamState();
@@ -49,7 +51,9 @@ defineTypes(GameState, {
   mapSeed: 'number',
   mapThemeId: 'string',
   mapSize: 'string',
+  mapProfileId: 'string',
   gameplayMode: 'string',
+  matchPerspective: 'string',
   players: { map: Player },
   phaseEndTime: 'number',
 });

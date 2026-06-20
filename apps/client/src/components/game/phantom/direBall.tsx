@@ -8,7 +8,8 @@ import {
   PLAYER_RADIUS,
   type Team,
 } from '@voxel-strike/shared';
-import { useGameStore, type DireBallData } from '../../../store/gameStore';
+import { useGameStore } from '../../../store/gameStore';
+import type { DireBallData } from '../../../store/types';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
 import { SHARED_GEOMETRIES } from '../effectResources';
@@ -17,7 +18,7 @@ import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '.
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 import { playPrimaryImpactSound } from '../primaryImpactSound';
-import { applyTutorialTrainingDamage } from '../../../utils/tutorialTrainingHeroes';
+import { applyTutorialOfflineTrainingDamage } from '../../../utils/tutorialOfflineCombatRuntime';
 
 const DIRE_BALL_LIFETIME_MS = 3000;
 const PARTICLES_PER_BALL = 30;
@@ -682,7 +683,7 @@ export function DireBallsManager() {
         moveDistance + PHANTOM_DIRE_BALL_COLLISION_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
       );
       if (hitPlayer) {
-        applyTutorialTrainingDamage({
+        applyTutorialOfflineTrainingDamage({
           target: hitPlayer,
           damage: PHANTOM_DIRE_BALL_DAMAGE,
           damageType: 'dire_ball',

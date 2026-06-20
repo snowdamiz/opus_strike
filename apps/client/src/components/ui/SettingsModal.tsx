@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAudio } from '../../hooks/useAudio';
+import { config } from '../../config/environment';
 import {
   defaultSettings,
   graphicsPresetSettings,
   type ClientSettings,
+  type DevTutorialOverride,
   type KeybindAction,
   useSettingsStore,
 } from '../../store/settingsStore';
@@ -13,7 +15,7 @@ import { formatKeybind, mouseButtonToKeybindCode } from '../../utils/keybindings
 import { GameDialog } from './GameDialog';
 import { PhantomLogo } from './PhantomLogo';
 
-type SettingsTab = 'video' | 'audio' | 'controls' | 'gameplay' | 'account';
+type SettingsTab = 'video' | 'audio' | 'controls' | 'gameplay' | 'account' | 'development';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -46,6 +48,12 @@ const graphicsPresetOptions = [
   { value: 'competitive', label: 'Competitive' },
   { value: 'balanced', label: 'Balanced' },
   { value: 'cinematic', label: 'Cinematic' },
+];
+
+const devTutorialOverrideOptions = [
+  { value: 'account', label: 'Account Status' },
+  { value: 'bypass', label: 'Bypass Tutorial' },
+  { value: 'force', label: 'Force Tutorial' },
 ];
 
 const keybindRows: { action: KeybindAction; label: string }[] = [
@@ -103,6 +111,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const phantomAccount = linkedAccounts.find((account) => account.provider === 'phantom') ?? null;
   const accountInitial = displayName.charAt(0).toUpperCase();
   const hasAccount = isAuthenticated && Boolean(user);
+  const showDevelopmentSettings = config.isDev;
 
   const updateSetting = <K extends keyof ClientSettings>(key: K, value: ClientSettings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -302,6 +311,18 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       )
     },
   ];
+
+  if (showDevelopmentSettings) {
+    tabs.push({
+      id: 'development',
+      label: 'Dev',
+      icon: (
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 9l-3 3 3 3m8-6l3 3-3 3M13.5 5l-3 14" />
+        </svg>
+      ),
+    });
+  }
 
   const inputDeviceOptions = [
     { value: '', label: 'Default Input' },
@@ -665,12 +686,24 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               </div>
             )}
 
+            {showDevelopmentSettings && activeTab === 'development' && (
+              <div className="space-y-4">
+                <SettingRow label="Tutorial Gate" description="Local development account gating">
+                  <SelectInput
+                    value={settings.devTutorialOverride}
+                    onChange={(v) => updateSetting('devTutorialOverride', v as DevTutorialOverride)}
+                    options={devTutorialOverrideOptions}
+                  />
+                </SettingRow>
+              </div>
+            )}
+
             {activeTab === 'account' && (
               <div className="space-y-1">
                 {hasAccount && !hasPhantomAccount && (
                   <div className="mb-2 rounded-lg border border-amber-400/20 bg-amber-500/10 px-3 py-2">
                     <p className="text-amber-200 text-xs font-body">
-                      Phantom is required for ranked and wager modes. Connect a wallet before entering those games.
+                      Phantom is required for ranked. Connect a wallet before entering ranked games.
                     </p>
                   </div>
                 )}
@@ -707,7 +740,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   </div>
                 </SettingRow>
 
-                <SettingRow label="Restricted Modes" description={hasPhantomAccount ? 'Ranked and wager access ready' : 'Phantom wallet required for ranked and wager'}>
+                <SettingRow label="Restricted Modes" description={hasPhantomAccount ? 'Ranked access ready' : 'Phantom wallet required for ranked'}>
                   <AccountValue value={hasPhantomAccount ? 'READY' : hasAccount ? 'WALLET NEEDED' : 'SIGNED OUT'} />
                 </SettingRow>
 
@@ -730,7 +763,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   )}
                 </SettingRow>
 
-                <SettingRow label="Phantom" description={hasPhantomAccount ? 'Connected wallet provider' : 'Required for ranked and wager modes'}>
+                <SettingRow label="Phantom" description={hasPhantomAccount ? 'Connected wallet provider' : 'Required for ranked'}>
                   {hasPhantomAccount ? (
                     <AccountValue value={formatAccountAddress(displayWalletAddress)} />
                   ) : (

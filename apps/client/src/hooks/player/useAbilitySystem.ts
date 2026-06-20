@@ -9,21 +9,14 @@ import { ABILITY_DEFINITIONS, PHANTOM_VEIL_SPEED_MULTIPLIER } from '@voxel-strik
 import { useGameStore } from '../../store/gameStore';
 import type { AbilityActiveState } from './types';
 import { getLocalChronosTimebreakTempoMultiplier } from './chronosTimebreakTempo';
+import {
+  getAbilityCooldownRemainingSeconds,
+  getAbilityCooldownSeconds,
+  getAbilityMaxCharges,
+} from '../../abilities/cooldowns';
 
 const CLIENT_COOLDOWN_SYNC_INTERVAL_MS = 100;
 const PHANTOM_RELOAD_ALLOWED_ABILITY_ID = 'phantom_blink';
-
-function getAbilityCooldownRemainingSeconds(
-  abilityState: { cooldownRemaining?: number; cooldownUntil?: number } | undefined,
-  now: number
-): number {
-  if (!abilityState) return 0;
-  if (abilityState.cooldownUntil && abilityState.cooldownUntil > now) {
-    return Math.max(0, (abilityState.cooldownUntil - now) / 1000);
-  }
-  if (abilityState.cooldownUntil !== undefined) return 0;
-  return Math.max(0, abilityState.cooldownRemaining ?? 0);
-}
 
 export interface UseAbilitySystemReturn {
   // Refs
@@ -63,7 +56,7 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
     const abilityDef = ABILITY_DEFINITIONS[abilityId];
     if (!abilityDef) return 1;
 
-    const maxCharges = abilityDef.charges || 1;
+    const maxCharges = getAbilityMaxCharges(abilityDef);
 
     // Initialize charges if not set
     if (clientChargesRef.current[abilityId] === undefined) {
@@ -79,9 +72,8 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
     const abilityDef = ABILITY_DEFINITIONS[abilityId];
     if (!abilityDef) return false;
 
-    const maxCharges = abilityDef.charges || 1;
-    // Force 10s cooldown for blink
-    const cooldownSeconds = abilityId === 'phantom_blink' ? 10 : (abilityDef.cooldown || 10);
+    const maxCharges = getAbilityMaxCharges(abilityDef);
+    const cooldownSeconds = getAbilityCooldownSeconds(abilityId, abilityDef, 10);
     const now = Date.now();
 
     // Check if on cooldown (charges depleted)
@@ -126,7 +118,7 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
   const startClientCooldown = useCallback((abilityId: string) => {
     const abilityDef = ABILITY_DEFINITIONS[abilityId];
     if (abilityDef) {
-      const cooldownMs = abilityDef.cooldown * 1000;
+      const cooldownMs = getAbilityCooldownSeconds(abilityId, abilityDef) * 1000;
       const endTime = Date.now() + cooldownMs;
       clientCooldownsRef.current[abilityId] = endTime;
       setClientCooldown(abilityId, endTime);
@@ -157,7 +149,7 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
     }
 
     const abilityDef = ABILITY_DEFINITIONS[abilityId];
-    const maxCharges = abilityDef?.charges || 1;
+    const maxCharges = getAbilityMaxCharges(abilityDef);
     const hasCharges = maxCharges > 1;
     const durationMs = (abilityDef?.duration ?? 0) * 1000;
 
@@ -303,7 +295,7 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
         syncCooldownStore = true;
 
         const abilityDef = ABILITY_DEFINITIONS[abilityId];
-        const maxCharges = abilityDef?.charges || 1;
+        const maxCharges = getAbilityMaxCharges(abilityDef);
         if (maxCharges > 1 && (clientChargesRef.current[abilityId] ?? maxCharges) <= 0) {
           clientChargesRef.current[abilityId] = maxCharges;
           setClientCharges(abilityId, maxCharges);

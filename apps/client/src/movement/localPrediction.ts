@@ -7,9 +7,12 @@ import {
   CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST,
   CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE,
   CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER,
+  PLAYER_HEIGHT,
+  PLAYER_RADIUS,
   PHANTOM_BLINK_DISTANCE,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
   POWERUP_MOVEMENT_SPEED_MULTIPLIER,
+  advanceBattleRoyalDropPodMotion,
   calculateBlazeRocketJumpVelocity,
   calculateLookDirection,
   inputStateToMovementButtons,
@@ -66,6 +69,7 @@ export interface AppliedSelfMovementAuthority {
 
 export interface SelfMovementAuthorityApplyOptions {
   visualLookYaw?: number;
+  includeDuplicateAckAuthorities?: boolean;
 }
 
 const fallbackTerrain: MovementTerrainAdapter = {
@@ -203,6 +207,23 @@ function getClientCollisionWorld(terrain = getClientTerrainAdapter()): MovementC
   const world = createVoxelCollisionWorld(terrain);
   cachedCollisionWorld = { mapId, revision, world };
   return world;
+}
+
+export function prewarmLocalMovementCollisionWorld(): boolean {
+  if (!getActiveProceduralMap()) return false;
+  const terrain = getClientTerrainAdapter();
+  const world = getClientCollisionWorld(terrain);
+  const localPlayer = useGameStore.getState().localPlayer;
+  const origin = terrain.origin ?? { x: 0, y: 0, z: 0 };
+  const originGroundY = terrain.getGroundY(origin) ?? origin.y;
+  const probePosition = localPlayer?.position ?? {
+    x: origin.x,
+    y: originGroundY + PLAYER_HEIGHT / 2,
+    z: origin.z,
+  };
+  world.findGround(probePosition, 0.75, PLAYER_RADIUS, PLAYER_HEIGHT);
+  world.sweepCapsule(probePosition, { x: 0, y: -0.05, z: 0 }, PLAYER_HEIGHT, PLAYER_RADIUS);
+  return true;
 }
 
 function clampClientPosition(position: Vec3): { position: Vec3; clampedY: boolean } {
@@ -432,6 +453,81 @@ export function predictLocalChronosAscendantParadox(player: Player, lookYaw: num
   }, lookYaw);
 }
 
+export function predictLocalBattleRoyalDrop(
+  player: Player,
+  input: InputState,
+  options: {
+    lookYaw: number;
+    lookPitch: number;
+    deltaTime: number;
+    nowMs?: number;
+  }
+): MovementSimulationState {
+  ensureLocalPredictionInitialized(player);
+  const current = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
+  if (current.movement.isGrounded) {
+    const groundedState: MovementSimulationState = {
+      position: current.position,
+      velocity: { x: 0, y: 0, z: 0 },
+      movement: {
+        ...current.movement,
+        isSprinting: false,
+        isCrouching: false,
+        isSliding: false,
+        slideTimeRemaining: 0,
+        isWallRunning: false,
+        wallRunSide: null,
+        isGrappling: false,
+        grapplePoint: null,
+        isJetpacking: false,
+        isGliding: false,
+      },
+    };
+    localMovementPrediction.overwriteState(groundedState, { updateLatestCommandRecord: false });
+    setPredictedVisuals(player.id, groundedState.position, options.lookYaw, options.nowMs);
+    return groundedState;
+  }
+
+  const lookup = getClientProceduralTerrainLookup();
+  const nextPod = advanceBattleRoyalDropPodMotion({
+    position: current.position,
+    input: {
+      moveForward: input.moveForward,
+      moveBackward: input.moveBackward,
+      moveLeft: input.moveLeft,
+      moveRight: input.moveRight,
+      sprint: input.sprint,
+      lookYaw: options.lookYaw,
+      lookPitch: options.lookPitch,
+    },
+    dt: Math.min(Math.max(0, options.deltaTime), 0.08),
+    getGroundY: lookup ? (position) => lookup.getGroundY(position) : () => 0,
+    clampToPlayableMap: lookup ? (position) => lookup.clampToPlayableMap(position) : (position) => ({ ...position }),
+  });
+  const nextState: MovementSimulationState = {
+    position: nextPod.position,
+    velocity: nextPod.velocity,
+    movement: {
+      ...current.movement,
+      isGrounded: nextPod.landed,
+      isSprinting: false,
+      isCrouching: false,
+      isSliding: false,
+      slideTimeRemaining: 0,
+      isWallRunning: false,
+      wallRunSide: null,
+      isGrappling: false,
+      grapplePoint: null,
+      isJetpacking: !nextPod.landed,
+      isGliding: false,
+    },
+  };
+
+  localMovementPrediction.overwriteState(nextState, { updateLatestCommandRecord: false });
+  setPredictedVisuals(player.id, nextState.position, options.lookYaw, options.nowMs);
+  return nextState;
+}
+
 export function confirmLocalMovementTransform(
   player: Player,
   transform: {
@@ -527,7 +623,7 @@ export function drainSelfMovementAuthorities(
       authority.movementEpoch === predictionEpoch &&
       compareMovementSeq(authority.ackSeq, localMovementPrediction.getLastAckSeq()) <= 0;
 
-    if ((staleEpoch || staleAck) && !isSelfAuthorityBarrier(authority)) {
+    if ((staleEpoch || (staleAck && !options.includeDuplicateAckAuthorities)) && !isSelfAuthorityBarrier(authority)) {
       continue;
     }
 

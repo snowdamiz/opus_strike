@@ -6,7 +6,8 @@ import {
   HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS,
   HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE,
 } from '@voxel-strike/shared';
-import { useGameStore, type DragHookData } from '../../../store/gameStore';
+import { useGameStore } from '../../../store/gameStore';
+import type { DragHookData } from '../../../store/types';
 import { findCombatVisualPlayerHit, rebuildCombatVisualFrameCache, visualStore } from '../../../store/visualStore';
 import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { DRAG_HOOK_MAX_DISTANCE, DRAG_HOOK_RETRACT_SPEED, HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';

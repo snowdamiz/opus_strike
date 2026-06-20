@@ -4,17 +4,18 @@ import { useSettingsStore } from './store/settingsStore';
 import { MainLobby } from './components/ui/MainLobby';
 import { Lobby } from './components/ui/Lobby';
 import { MatchmakingScreen } from './components/ui/MatchmakingScreen';
+import { MapVoteScreen } from './components/ui/MapVoteScreen';
 import { HUD } from './components/ui/HUD';
 import { LoadingScreen } from './components/ui/LoadingScreen';
 import { PracticeLoadingScreen } from './components/ui/PracticeLoadingScreen';
-import { MatchLoadingScreen } from './components/ui/MatchLoadingScreen';
-import { MapVoteScreen } from './components/ui/MapVoteScreen';
+import { MATCH_LOADING_INITIAL_PROGRESS, MatchLoadingScreen } from './components/ui/MatchLoadingScreen';
 import { TeleportEffects } from './components/ui/TeleportEffects';
 import { UltimateEffects } from './components/ui/UltimateEffects';
 import { SlideEffects } from './components/ui/SlideEffects';
 import { MobileControls } from './components/ui/MobileControls';
 import { TutorialGuide } from './components/ui/TutorialGuide';
-import { useAudio, useGlobalButtonSounds, useMusic } from './hooks/useAudio';
+import { useAudio, useMusic } from './hooks/useAudio';
+import { useGlobalButtonSounds } from './hooks/useUiAudio';
 import { useNetwork } from './contexts/NetworkContext';
 import { mouseButtonToKeybindCode } from './utils/keybindings';
 import { installLocalCombatStressScenario } from './utils/combatStressScenario';
@@ -23,7 +24,6 @@ import { config } from './config/environment';
 import type { MapWarmupSnapshot } from './utils/mapWarmup/mapWarmupCoordinator';
 
 const GameCanvas = lazy(() => import('./components/game/GameCanvas').then((module) => ({ default: module.GameCanvas })));
-const HeroSelect = lazy(() => import('./components/ui/HeroSelect').then((module) => ({ default: module.HeroSelect })));
 const Scoreboard = lazy(() => import('./components/ui/Scoreboard').then((module) => ({ default: module.Scoreboard })));
 const InGameMenu = lazy(() => import('./components/ui/InGameMenu').then((module) => ({ default: module.InGameMenu })));
 const GameConsole = lazy(() => import('./components/ui/GameConsole').then((module) => ({ default: module.GameConsole })));
@@ -70,14 +70,16 @@ export function App() {
   const isTutorialMode = useGameStore((state) => state.isTutorialMode);
   const tutorialCompletionOverlayOpen = useGameStore((state) => state.tutorialCompletionOverlayOpen);
   const isPracticePreparing = useGameStore((state) => state.isPracticePreparing);
-  const isObserverMode = useGameStore((state) => state.isObserverMode);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
+  const mapProfileId = useGameStore((state) => state.mapProfileId);
+  const gameplayMode = useGameStore((state) => state.gameplayMode);
   const scoreboardKeybind = useSettingsStore((state) => state.settings.keybindings.scoreboard);
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showInGameMenu, setShowInGameMenu] = useState(false);
   const [shouldMountMatchWorld, setShouldMountMatchWorld] = useState(false);
+  const [isMatchStartSceneReady, setIsMatchStartSceneReady] = useState(false);
   const [isMatchSceneReady, setIsMatchSceneReady] = useState(false);
   const [isMatchLoadingVisible, setIsMatchLoadingVisible] = useState(false);
   const [areMatchResourcesReady, setAreMatchResourcesReady] = useState(false);
@@ -85,29 +87,62 @@ export function App() {
   const [isStartupRampActive, setIsStartupRampActive] = useState(false);
   const mountedWarmupKeyRef = useRef<string | null>(null);
   const revealedWarmupKeyRef = useRef<string | null>(null);
+  const matchLoadingProgressRef = useRef(MATCH_LOADING_INITIAL_PROGRESS);
+  const wasTrackingMatchLoadingRef = useRef(false);
   const reportedMatchStartGateRef = useRef<number | null>(null);
   const { playLobbyMusic, playGameMusic, pauseMusic, resumeMusic } = useMusic();
   const { preloadSoundGroup } = useAudio();
   const { matchStartGateKey, reportMatchSceneReady } = useNetwork();
   useGlobalButtonSounds();
-  const isPreGame = gamePhase === 'waiting' || gamePhase === 'hero_select' || !gamePhase;
-  const isActiveGame = gamePhase === 'playing' || gamePhase === 'countdown';
+  const isActiveGame = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
   const shouldPrepareMatchWorld = (
     appPhase === 'in_game' &&
     !matchSummary &&
     (gamePhase === 'waiting' || gamePhase === 'hero_select' || isActiveGame)
   );
   const warmupKey = useMemo(
-    () => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId, mapSize }),
-    [mapSeed, mapThemeId, mapSize]
+    () => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId }),
+    [mapSeed, mapThemeId, mapSize, mapProfileId]
   );
+  const shouldShowMatchLoading = (
+    shouldPrepareMatchWorld &&
+    (
+      isMatchLoadingVisible ||
+      !shouldMountMatchWorld ||
+      !isMatchSceneReady
+    )
+  );
+  const shouldTrackMatchLoadingProgress = appPhase === 'match_loading' || shouldPrepareMatchWorld;
+  const isBattleRoyalLoading = gameplayMode === 'battle_royal' || mapProfileId === 'battle_royal_large';
+  const matchLoadingTitle = isBattleRoyalLoading ? 'GENERATING MAP' : 'LOADING ARENA';
+  const matchLoadingEyebrow = isBattleRoyalLoading ? 'Battle Royal' : 'Match';
 
   useEffect(() => {
     installLocalCombatStressScenario();
   }, []);
 
   useEffect(() => {
-    preloadSoundGroup(appPhase === 'matchmaking' || appPhase === 'in_lobby' || appPhase === 'map_vote' ? 'lobby' : 'menu');
+    if (!shouldTrackMatchLoadingProgress) {
+      wasTrackingMatchLoadingRef.current = false;
+      matchLoadingProgressRef.current = MATCH_LOADING_INITIAL_PROGRESS;
+      return;
+    }
+
+    if (!wasTrackingMatchLoadingRef.current) {
+      wasTrackingMatchLoadingRef.current = true;
+      matchLoadingProgressRef.current = MATCH_LOADING_INITIAL_PROGRESS;
+    }
+  }, [shouldTrackMatchLoadingProgress]);
+
+  useEffect(() => {
+    const shouldPreloadLobbyAudio = (
+      appPhase === 'matchmaking' ||
+      appPhase === 'in_lobby' ||
+      appPhase === 'map_vote' ||
+      appPhase === 'match_loading'
+    );
+
+    preloadSoundGroup(shouldPreloadLobbyAudio ? 'lobby' : 'menu');
   }, [appPhase, preloadSoundGroup]);
 
   useEffect(() => {
@@ -123,6 +158,8 @@ export function App() {
       try {
         const heroEffectWarmup = import('./components/game/effectPrewarm')
           .then((prewarm) => prewarm.prewarmGameplayEffectResources());
+        const combatTextWarmup = import('./components/game/CombatText')
+          .then((combatText) => combatText.prewarmCombatTextTextures());
 
         await Promise.all([
           preloadSoundGroup('commonCombat'),
@@ -131,6 +168,7 @@ export function App() {
           preloadSoundGroup('hookshot'),
           preloadSoundGroup('chronos'),
           heroEffectWarmup,
+          combatTextWarmup,
         ]);
       } catch (error) {
         console.warn('[App] Match resource preload failed', error);
@@ -144,31 +182,31 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [preloadSoundGroup, shouldPrepareMatchWorld, warmupKey]);
+  }, [preloadSoundGroup, shouldPrepareMatchWorld]);
 
   // Manage background music based on game phase
   useEffect(() => {
     if (isLoading) return;
 
     // Play game music during active gameplay, lobby music otherwise
-    if (appPhase === 'in_game' && (gamePhase === 'playing' || gamePhase === 'countdown')) {
+    if (appPhase === 'in_game' && isActiveGame) {
       playGameMusic();
     } else {
       playLobbyMusic();
     }
-  }, [appPhase, gamePhase, isLoading, playLobbyMusic, playGameMusic]);
+  }, [appPhase, isActiveGame, isLoading, playLobbyMusic, playGameMusic]);
 
   // Pause/resume music when in-game menu opens/closes (only during active game)
   useEffect(() => {
     // Only manage pause/resume when actually in a playing game
-    if (appPhase === 'in_game' && (gamePhase === 'playing' || gamePhase === 'countdown')) {
+    if (appPhase === 'in_game' && isActiveGame) {
       if (showInGameMenu) {
         pauseMusic();
       } else {
         resumeMusic();
       }
     }
-  }, [showInGameMenu, appPhase, gamePhase, pauseMusic, resumeMusic]);
+  }, [showInGameMenu, appPhase, isActiveGame, pauseMusic, resumeMusic]);
 
   useEffect(() => {
     const showScoreboardForCode = (code: string) => {
@@ -266,6 +304,7 @@ export function App() {
   useEffect(() => {
     if (!shouldPrepareMatchWorld) {
       setShouldMountMatchWorld(false);
+      setIsMatchStartSceneReady(false);
       setIsMatchSceneReady(false);
       setIsMatchLoadingVisible(false);
       setMatchWarmupSnapshot(null);
@@ -279,12 +318,13 @@ export function App() {
       mountedWarmupKeyRef.current = warmupKey;
       revealedWarmupKeyRef.current = null;
       setShouldMountMatchWorld(false);
+      setIsMatchStartSceneReady(false);
       setIsMatchSceneReady(false);
       setMatchWarmupSnapshot(null);
       setIsStartupRampActive(false);
     }
 
-    if (isActiveGame && !isMatchSceneReady && !isObserverMode) {
+    if (!isMatchSceneReady) {
       setIsMatchLoadingVisible(true);
     }
 
@@ -309,19 +349,11 @@ export function App() {
     };
   }, [
     areMatchResourcesReady,
-    isActiveGame,
     isMatchSceneReady,
-    isObserverMode,
     shouldMountMatchWorld,
     shouldPrepareMatchWorld,
     warmupKey,
   ]);
-
-  useEffect(() => {
-    if (isObserverMode) {
-      setIsMatchLoadingVisible(false);
-    }
-  }, [isObserverMode]);
 
   useEffect(() => {
     if (!isMatchSceneReady) return;
@@ -333,12 +365,20 @@ export function App() {
     return () => window.clearTimeout(timeout);
   }, [isMatchSceneReady]);
 
+  const handleMatchStartSceneReady = useCallback(() => {
+    setIsMatchStartSceneReady(true);
+  }, []);
+
   const handleMatchSceneReady = useCallback(() => {
     setIsMatchSceneReady(true);
   }, []);
 
   const handleWarmupUpdate = useCallback((snapshot: MapWarmupSnapshot) => {
     setMatchWarmupSnapshot(snapshot);
+  }, []);
+
+  const handleMatchLoadingProgressChange = useCallback((progress: number) => {
+    matchLoadingProgressRef.current = progress;
   }, []);
 
   useEffect(() => {
@@ -350,9 +390,8 @@ export function App() {
   useEffect(() => {
     if (
       isPracticeMode ||
-      isObserverMode ||
       gamePhase !== 'hero_select' ||
-      !isMatchSceneReady ||
+      !isMatchStartSceneReady ||
       matchStartGateKey === null ||
       reportedMatchStartGateRef.current === matchStartGateKey
     ) {
@@ -363,8 +402,7 @@ export function App() {
     reportMatchSceneReady();
   }, [
     gamePhase,
-    isMatchSceneReady,
-    isObserverMode,
+    isMatchStartSceneReady,
     isPracticeMode,
     matchStartGateKey,
     reportMatchSceneReady,
@@ -392,7 +430,7 @@ export function App() {
     return <PracticeLoadingScreen />;
   }
 
-  if (isLoading) {
+  if (isLoading && appPhase === 'menu') {
     return <LoadingScreen />;
   }
 
@@ -414,6 +452,19 @@ export function App() {
     return <MapVoteScreen />;
   }
 
+  if (appPhase === 'match_loading') {
+    return (
+      <MatchLoadingScreen
+        key={warmupKey}
+        initialProgress={matchLoadingProgressRef.current}
+        eyebrow={matchLoadingEyebrow}
+        title={matchLoadingTitle}
+        label={isBattleRoyalLoading ? mapSize : 'Preparing'}
+        onProgressChange={handleMatchLoadingProgressChange}
+      />
+    );
+  }
+
   // In game
   if (appPhase === 'in_game') {
     if (matchSummary) {
@@ -429,6 +480,7 @@ export function App() {
         <Suspense fallback={null}>
           {shouldMountMatchWorld && (
             <GameCanvas
+              onMatchStartReady={handleMatchStartSceneReady}
               onReady={handleMatchSceneReady}
               onWarmupUpdate={handleWarmupUpdate}
               startupRampActive={isStartupRampActive}
@@ -436,24 +488,21 @@ export function App() {
           )}
         </Suspense>
 
-        {/* Show hero select during pre-game phases */}
-        {isPreGame && !isObserverMode && (
-          <Suspense fallback={null}>
-            <HeroSelect />
-          </Suspense>
-        )}
-
-        {!isObserverMode && !isPreGame && isMatchLoadingVisible && (
+        {shouldShowMatchLoading && (
           <MatchLoadingScreen
             key={warmupKey}
             isComplete={isMatchSceneReady}
+            initialProgress={matchLoadingProgressRef.current}
             progress={matchWarmupSnapshot?.progress}
+            eyebrow={matchLoadingEyebrow}
+            title={matchLoadingTitle}
             label={matchWarmupSnapshot?.label}
+            onProgressChange={handleMatchLoadingProgressChange}
           />
         )}
 
         {/* Show HUD during active gameplay */}
-        {isActiveGame && isMatchSceneReady && !isObserverMode && (
+        {isActiveGame && isMatchSceneReady && (
           <>
             <HUD />
             {isTutorialMode && <TutorialGuide />}
@@ -472,7 +521,7 @@ export function App() {
         )}
 
         {/* Countdown overlay */}
-        {gamePhase === 'countdown' && isMatchSceneReady && !isObserverMode && <CountdownOverlay />}
+        {gamePhase === 'countdown' && isMatchSceneReady && <CountdownOverlay />}
 
         {/* Round/game end overlays */}
         {gamePhase === 'round_end' && (

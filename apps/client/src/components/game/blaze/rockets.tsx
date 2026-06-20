@@ -7,7 +7,8 @@ import {
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_RADIUS,
 } from '@voxel-strike/shared';
-import { useGameStore, type RocketData } from '../../../store/gameStore';
+import { useGameStore } from '../../../store/gameStore';
+import type { RocketData } from '../../../store/types';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
@@ -15,7 +16,7 @@ import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
 import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
-import { applyTutorialTrainingDamage } from '../../../utils/tutorialTrainingHeroes';
+import { applyTutorialOfflineTrainingDamage } from '../../../utils/tutorialOfflineCombatRuntime';
 import {
   getFireballCoreMaterial,
   getFireballInnerMaterial,
@@ -433,7 +434,7 @@ export function RocketsManager() {
         moveDistance + BLAZE_ROCKET_COLLISION_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
       );
       if (hitPlayer) {
-        applyTutorialTrainingDamage({
+        applyTutorialOfflineTrainingDamage({
           target: hitPlayer,
           damage: BLAZE_ROCKET_DAMAGE,
           damageType: 'rocket',

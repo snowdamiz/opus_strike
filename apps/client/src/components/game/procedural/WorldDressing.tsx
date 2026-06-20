@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   getBlockId,
@@ -61,6 +62,8 @@ const dressingMatrixDummy = new THREE.Object3D();
 const dressingSetCache = new Map<string, CachedDressingSet>();
 const DRESSING_SET_CACHE_MAX_ENTRIES = 8;
 const DRESSING_SET_CACHE_MAX_INSTANCES = 5200;
+const DRESSING_CULL_UPDATE_INTERVAL_SECONDS = 0.2;
+const DRESSING_CULL_CAMERA_MOVE_EPSILON_SQ = 1.6 * 1.6;
 let dressingSetCacheInstances = 0;
 
 function chunkIndex(x: number, y: number, z: number, chunk: VoxelChunk): number {
@@ -188,11 +191,14 @@ function worldPositionForSurface(
 }
 
 function createProtectedSurfaceZones(manifest: VoxelMapManifest): ProtectedSurfaceZone[] {
+  const spawnZones = Object.values(manifest.spawnPoints).flatMap((spawnPoints) => (
+    spawnPoints.map((spawn) => ({ x: spawn.x, z: spawn.z, radiusSq: 5.8 ** 2 }))
+  ));
+
   return [
     { x: manifest.flagZones.red.x, z: manifest.flagZones.red.z, radiusSq: 7.5 ** 2 },
     { x: manifest.flagZones.blue.x, z: manifest.flagZones.blue.z, radiusSq: 7.5 ** 2 },
-    ...manifest.spawnPoints.red.map((spawn) => ({ x: spawn.x, z: spawn.z, radiusSq: 5.8 ** 2 })),
-    ...manifest.spawnPoints.blue.map((spawn) => ({ x: spawn.x, z: spawn.z, radiusSq: 5.8 ** 2 })),
+    ...spawnZones,
   ];
 }
 
@@ -447,39 +453,117 @@ function enforceDressingSetCacheBudget(activeCacheKey: string): void {
     return;
   }
 
-  const candidates = Array.from(dressingSetCache.entries())
-    .filter(([cacheKey]) => cacheKey !== activeCacheKey)
-    .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+  while (
+    dressingSetCache.size > DRESSING_SET_CACHE_MAX_ENTRIES ||
+    dressingSetCacheInstances > DRESSING_SET_CACHE_MAX_INSTANCES
+  ) {
+    let oldestCacheKey: string | null = null;
+    let oldestEntry: CachedDressingSet | null = null;
 
-  for (const [cacheKey, entry] of candidates) {
-    if (
-      dressingSetCache.size <= DRESSING_SET_CACHE_MAX_ENTRIES &&
-      dressingSetCacheInstances <= DRESSING_SET_CACHE_MAX_INSTANCES
-    ) {
-      break;
+    for (const [cacheKey, entry] of dressingSetCache) {
+      if (cacheKey === activeCacheKey) continue;
+      if (!oldestEntry || entry.lastUsedAt < oldestEntry.lastUsedAt) {
+        oldestCacheKey = cacheKey;
+        oldestEntry = entry;
+      }
     }
-    dressingSetCache.delete(cacheKey);
-    dressingSetCacheInstances = Math.max(0, dressingSetCacheInstances - entry.instanceCount);
+
+    if (!oldestCacheKey || !oldestEntry) return;
+    dressingSetCache.delete(oldestCacheKey);
+    dressingSetCacheInstances = Math.max(0, dressingSetCacheInstances - oldestEntry.instanceCount);
   }
 }
 
-function useInstancedMatrices(ref: RefObject<THREE.InstancedMesh>, instances: DressingInstance[]): void {
+function writeDressingInstanceMatrix(mesh: THREE.InstancedMesh, instance: DressingInstance, index: number): void {
+  const { position, rotation, scale } = instance;
+  dressingMatrixDummy.position.set(position[0], position[1], position[2]);
+  dressingMatrixDummy.rotation.set(rotation[0], rotation[1], rotation[2]);
+  dressingMatrixDummy.scale.set(scale[0], scale[1], scale[2]);
+  dressingMatrixDummy.updateMatrix();
+  mesh.setMatrixAt(index, dressingMatrixDummy.matrix);
+}
+
+function writeVisibleDressingMatrices(
+  mesh: THREE.InstancedMesh,
+  instances: DressingInstance[],
+  cameraPosition: THREE.Vector3,
+  maxRenderDistance: number
+): number {
+  let writeIndex = 0;
+  const maxRenderDistanceSq = Number.isFinite(maxRenderDistance)
+    ? maxRenderDistance * maxRenderDistance
+    : Number.POSITIVE_INFINITY;
+
+  for (const instance of instances) {
+    if (Number.isFinite(maxRenderDistanceSq)) {
+      const position = instance.position;
+      const dx = position[0] - cameraPosition.x;
+      const dz = position[2] - cameraPosition.z;
+      if (dx * dx + dz * dz > maxRenderDistanceSq) continue;
+    }
+    writeDressingInstanceMatrix(mesh, instance, writeIndex++);
+  }
+
+  mesh.count = writeIndex;
+  mesh.instanceMatrix.needsUpdate = true;
+  return writeIndex;
+}
+
+function useInstancedMatrices(
+  ref: RefObject<THREE.InstancedMesh>,
+  instances: DressingInstance[],
+  maxRenderDistance = Number.POSITIVE_INFINITY
+): void {
+  const { camera } = useThree();
+  const cullAccumulatorRef = useRef(0);
+  const visibleCountRef = useRef(-1);
+  const lastCullCameraXRef = useRef(Number.NaN);
+  const lastCullCameraZRef = useRef(Number.NaN);
+
   useLayoutEffect(() => {
     const mesh = ref.current;
     if (!mesh) return;
 
-    mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-    instances.forEach((instance, index) => {
-      dressingMatrixDummy.position.set(...instance.position);
-      dressingMatrixDummy.rotation.set(...instance.rotation);
-      dressingMatrixDummy.scale.set(...instance.scale);
-      dressingMatrixDummy.updateMatrix();
-      mesh.setMatrixAt(index, dressingMatrixDummy.matrix);
-    });
+    mesh.instanceMatrix.setUsage(Number.isFinite(maxRenderDistance) ? THREE.DynamicDrawUsage : THREE.StaticDrawUsage);
+    visibleCountRef.current = writeVisibleDressingMatrices(mesh, instances, camera.position, maxRenderDistance);
+    lastCullCameraXRef.current = camera.position.x;
+    lastCullCameraZRef.current = camera.position.z;
+    if (!Number.isFinite(maxRenderDistance)) {
+      mesh.count = instances.length;
+    }
 
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
-  }, [instances, ref]);
+  }, [camera, instances, maxRenderDistance, ref]);
+
+  useFrame((_, delta) => {
+    if (!Number.isFinite(maxRenderDistance)) return;
+    const mesh = ref.current;
+    if (!mesh) return;
+
+    cullAccumulatorRef.current += delta;
+    if (
+      cullAccumulatorRef.current < DRESSING_CULL_UPDATE_INTERVAL_SECONDS &&
+      visibleCountRef.current >= 0
+    ) {
+      return;
+    }
+
+    const dx = camera.position.x - lastCullCameraXRef.current;
+    const dz = camera.position.z - lastCullCameraZRef.current;
+    if (
+      Number.isFinite(lastCullCameraXRef.current) &&
+      dx * dx + dz * dz < DRESSING_CULL_CAMERA_MOVE_EPSILON_SQ
+    ) {
+      cullAccumulatorRef.current = 0;
+      return;
+    }
+
+    cullAccumulatorRef.current = 0;
+    lastCullCameraXRef.current = camera.position.x;
+    lastCullCameraZRef.current = camera.position.z;
+    visibleCountRef.current = writeVisibleDressingMatrices(mesh, instances, camera.position, maxRenderDistance);
+  });
 }
 
 function InstancedDressingMesh({
@@ -487,6 +571,7 @@ function InstancedDressingMesh({
   instances,
   geometry,
   material,
+  maxRenderDistance,
   castShadow = false,
   receiveShadow = false,
 }: {
@@ -494,11 +579,12 @@ function InstancedDressingMesh({
   instances: DressingInstance[];
   geometry: THREE.BufferGeometry;
   material: THREE.Material;
+  maxRenderDistance?: number;
   castShadow?: boolean;
   receiveShadow?: boolean;
 }) {
   const ref = useRef<THREE.InstancedMesh>(null);
-  useInstancedMatrices(ref, instances);
+  useInstancedMatrices(ref, instances, maxRenderDistance);
 
   if (instances.length === 0) return null;
 
@@ -507,6 +593,7 @@ function InstancedDressingMesh({
       ref={ref}
       name={name}
       args={[geometry, material, instances.length]}
+      frustumCulled={!Number.isFinite(maxRenderDistance)}
       matrixAutoUpdate={false}
       castShadow={castShadow}
       receiveShadow={receiveShadow}
@@ -518,12 +605,14 @@ export function WorldDressing({
   manifest,
   densityScale,
   maxInstances,
+  maxRenderDistance,
   shadowsEnabled,
   reflectionIntensity,
 }: {
   manifest: VoxelMapManifest;
   densityScale: number;
   maxInstances?: number;
+  maxRenderDistance?: number;
   shadowsEnabled: boolean;
   reflectionIntensity: number;
 }) {
@@ -576,6 +665,7 @@ export function WorldDressing({
         instances={dressing.tufts}
         geometry={DRESSING_GEOMETRIES.tuft}
         material={resources.tuftMaterial}
+        maxRenderDistance={maxRenderDistance}
         receiveShadow={shadowsEnabled}
       />
       <InstancedDressingMesh
@@ -583,6 +673,7 @@ export function WorldDressing({
         instances={dressing.pebbles}
         geometry={DRESSING_GEOMETRIES.pebble}
         material={resources.pebbleMaterial}
+        maxRenderDistance={maxRenderDistance}
         castShadow={shadowsEnabled}
         receiveShadow={shadowsEnabled}
       />
@@ -591,6 +682,7 @@ export function WorldDressing({
         instances={dressing.crystals}
         geometry={DRESSING_GEOMETRIES.crystal}
         material={resources.crystalMaterial}
+        maxRenderDistance={maxRenderDistance}
         castShadow={shadowsEnabled}
         receiveShadow={shadowsEnabled}
       />

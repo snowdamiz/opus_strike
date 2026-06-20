@@ -5,6 +5,7 @@ import type {
   RemoteBodySocketMarker,
   RiggedVoxelPart,
   VoxelPart,
+  VoxelPartDraft,
 } from './heroBodyTypes';
 
 export const HERO_BONE_PIVOTS: Record<HeroBoneName, [number, number, number]> = {
@@ -49,7 +50,7 @@ export const HERO_PART_GEOMETRIES = {
   cone: new THREE.ConeGeometry(0.5, 1, 8),
 } satisfies Record<PartKind, THREE.BufferGeometry>;
 
-export function getPartGeometry(part: VoxelPart): THREE.BufferGeometry {
+export function getPartGeometry(part: VoxelPartDraft): THREE.BufferGeometry {
   switch (part.kind) {
     case 'sphere':
       return HERO_PART_GEOMETRIES.sphere;
@@ -62,7 +63,7 @@ export function getPartGeometry(part: VoxelPart): THREE.BufferGeometry {
   }
 }
 
-export function inferStaticBone(part: VoxelPart): HeroBoneName {
+export function inferStaticBone(part: VoxelPartDraft): HeroBoneName {
   const [, y] = part.position;
   if (part.material === 'mist' || (part.kind === 'cylinder' && y < 0.08)) return 'aura';
   if (y >= 1.52) return 'head';
@@ -70,10 +71,8 @@ export function inferStaticBone(part: VoxelPart): HeroBoneName {
   return 'hips';
 }
 
-export function classifyHeroBone(part: VoxelPart): HeroBoneName {
-  if (part.limb) {
-    return part.limb === 'static' ? inferStaticBone(part) : part.limb;
-  }
+export function classifyHeroBone(part: VoxelPartDraft): HeroBoneName {
+  if (part.bone) return part.bone;
 
   const [x, y, z] = part.position;
   const absX = Math.abs(x);
@@ -112,7 +111,7 @@ export function classifyHeroBone(part: VoxelPart): HeroBoneName {
   return 'hips';
 }
 
-export function createRiggedPart<TPart extends VoxelPart>(part: TPart): RiggedVoxelPart<TPart> {
+export function createRiggedPart<TPart extends VoxelPartDraft>(part: TPart): RiggedVoxelPart<TPart> {
   const bone = classifyHeroBone(part);
   const [x, y, z] = part.position;
   const pivot = HERO_BONE_PIVOTS[bone];
@@ -150,6 +149,60 @@ export function groupRiggedParts<TPart extends VoxelPart>(
   });
 
   return grouped;
+}
+
+function stableStringifyPartValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringifyPartValue).join(',')}]`;
+  }
+
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${key}:${stableStringifyPartValue(entry)}`)
+      .join(',')}}`;
+  }
+
+  return String(value);
+}
+
+function hashPartIdSource(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36).padStart(7, '0');
+}
+
+function createGeneratedPartId(part: VoxelPartDraft, bone: HeroBoneName, idPrefix: string): string {
+  const source = stableStringifyPartValue({
+    bone,
+    kind: part.kind ?? 'box',
+    material: part.material,
+    position: part.position,
+    scale: part.scale,
+    rotation: part.rotation,
+    emissive: part.emissive,
+    transparent: part.transparent,
+    generated: part.generated,
+  });
+  return `${idPrefix}.${bone}.${part.material}.${hashPartIdSource(source)}`;
+}
+
+export function addVoxelPartMetadata<TPart extends VoxelPartDraft>(
+  parts: readonly TPart[],
+  idPrefix: string
+): Array<TPart & VoxelPart> {
+  return parts.map((part) => {
+    const bone = part.bone ?? classifyHeroBone(part);
+    return {
+      ...part,
+      id: part.id ?? createGeneratedPartId(part, bone, idPrefix),
+      bone,
+    };
+  });
 }
 
 export function getChildBonePosition(bone: HeroBoneName, parent: HeroBoneName): [number, number, number] {

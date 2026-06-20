@@ -10,9 +10,15 @@ import {
   type BotDifficulty,
   type GameplayMode,
   type HeroId,
+  type PlayerInput,
   type Team,
   type VoxelMapManifest,
 } from '@voxel-strike/shared';
+import {
+  getForwardVector,
+  normalizeAngle,
+  rotateAngleToward,
+} from '../roomMath';
 
 export type PlainVec3 = { x: number; y: number; z: number };
 export type PlainVec2 = { x: number; z: number };
@@ -411,6 +417,178 @@ export interface BotBrain {
   pendingSecondaryMode: BotAbilityPlanMode | '';
 }
 
+export interface BotSecondaryAttackTiming {
+  range: number;
+  cooldownMs: number;
+}
+
+export interface BotPrimaryFireDecisionInput {
+  brain: BotBrain;
+  skill: BotSkillProfile;
+  now: number;
+  aimReady: boolean;
+  tempoMultiplier: number;
+  random?: () => number;
+}
+
+export interface BotCombatEngagementInput {
+  hasCombatTarget: boolean;
+  enemyDistance: number;
+  attackRange: number;
+  hasClearShot: boolean;
+  targetProtected: boolean;
+  primaryAimReady: boolean;
+}
+
+export interface BotCombatEngagementState {
+  shouldFight: boolean;
+  aimReady: boolean;
+}
+
+export interface BotAimLeadInput {
+  sourcePosition: PlainVec3;
+  targetPosition: PlainVec3;
+  targetVelocity: PlainVec3;
+  targetDistance?: number;
+  skill: BotSkillProfile;
+}
+
+export interface BotAimAngles {
+  yaw: number;
+  pitch: number;
+}
+
+export interface BotAimUpdateInput {
+  brain: BotBrain;
+  skill: BotSkillProfile;
+  desiredAim: BotAimAngles;
+  currentYaw: number;
+  currentPitch: number;
+  targetDistance: number | null;
+  now: number;
+  dt: number;
+  random?: () => number;
+}
+
+export interface BotAimReadinessTraceInput {
+  origin: PlainVec3;
+  yaw: number;
+  pitch: number;
+  attackRange: number;
+  attackCollisionRadius?: number;
+  hitboxPadding: number;
+  skill: BotSkillProfile;
+}
+
+export interface BotAimReadinessTrace {
+  origin: PlainVec3;
+  direction: PlainVec3;
+  range: number;
+  extraRadius: number;
+}
+
+export interface BotSecondaryFireWindowInput {
+  brain: Pick<BotBrain, 'nextSecondaryAt'>;
+  now: number;
+  shouldFight: boolean;
+  heroId: HeroId | '';
+  secondaryAttack?: BotSecondaryAttackTiming | null;
+  enemyDistance: number;
+}
+
+export interface BotSecondaryFireDecisionInput extends BotSecondaryFireWindowInput {
+  brain: BotBrain;
+  skill: BotSkillProfile;
+  aimReady: boolean;
+  tempoMultiplier: number;
+  random?: () => number;
+}
+
+export interface BotLocomotionActionInput {
+  botId: string;
+  position: PlainVec3;
+  hasFlag: boolean;
+  isGrounded: boolean;
+  previousCrouch?: boolean | null;
+  intentType: BotIntentType;
+  steeringTarget: PlainVec3;
+  steeringJump: boolean;
+  stalled: boolean;
+  hasCombatTarget: boolean;
+  now: number;
+}
+
+export interface BotLocomotionActionState {
+  sprint: boolean;
+  jump: boolean;
+  crouch: boolean;
+  crouchPressed: boolean;
+}
+
+export interface BotInputMovementStateInput extends BotLocomotionActionInput {
+  lookYaw: number;
+  desiredMove: PlainVec2 | null;
+  recovering: boolean;
+  strafeDirection: -1 | 1;
+}
+
+export interface BotInputMovementState extends BotLocomotionActionState {
+  moveForward: boolean;
+  moveBackward: boolean;
+  moveLeft: boolean;
+  moveRight: boolean;
+}
+
+export interface BotAbilityInputPlanInput {
+  input: PlayerInput;
+  brain: BotBrain;
+  plan: BotAbilityPlan;
+  skill: BotSkillProfile;
+  now: number;
+  tempoMultiplier: number;
+  random?: () => number;
+}
+
+export interface BotPlanningStateInput {
+  brain: BotBrain;
+  now: number;
+  gameplayMode: GameplayMode;
+  bot: BotPlayerSnapshot;
+  players: BotPlayerSnapshot[];
+  flags: Record<Team, BotFlagSnapshot>;
+  visibleEnemyIds: Set<string>;
+  enemyLineOfSightIds: Set<string>;
+  recentDamageSources: BotRecentDamageSource[];
+  teamTactics: BotTeamTactics;
+  routeGraph: BotRouteGraphAdapter | null;
+  skill: BotSkillProfile;
+  random?: () => number;
+}
+
+export interface BotPlanningStateResult {
+  blackboard: BotBlackboard;
+  routePlan: BotRoutePlan;
+}
+
+export interface BotMovementRecoveryInput {
+  brain: BotBrain;
+  now: number;
+  bot: BotPlayerSnapshot;
+  blackboard: BotBlackboard;
+  routeGraph: BotRouteGraphAdapter | null;
+  routePlan: BotRoutePlan;
+  desiredMove: PlainVec2 | null;
+  steeringBlocked: boolean;
+  skill: BotSkillProfile;
+  random?: () => number;
+}
+
+export interface BotMovementRecoveryResult {
+  stalled: boolean;
+  markBlockedEdgeId: string | null;
+  routePlan: BotRoutePlan;
+}
+
 export interface BotSteeringProbe {
   direction: PlainVec2;
   clear: boolean;
@@ -596,6 +774,10 @@ export function getBotSkillProfile(difficulty?: string): BotSkillProfile {
   return BOT_SKILL_PROFILES[normalizeBotDifficulty(difficulty)];
 }
 
+export function shouldRefreshBotPlanningState(brain: BotBrain, now: number): boolean {
+  return !brain.blackboard || now >= brain.nextBlackboardAt || now >= brain.nextThinkAt;
+}
+
 export function otherTeam(team: Team): Team {
   return team === 'red' ? 'blue' : 'red';
 }
@@ -707,6 +889,392 @@ export function createInitialBotBrain(position: PlainVec3 = { x: 0, y: 0, z: 0 }
     nextUltimateAt: 0,
     secondaryHoldUntil: 0,
     pendingSecondaryMode: '',
+  };
+}
+
+export function updateBotPrimaryFireDecision(input: BotPrimaryFireDecisionInput): boolean {
+  const { brain, skill, now, aimReady, tempoMultiplier } = input;
+  const random = input.random ?? Math.random;
+
+  if (now >= brain.nextFireDecisionAt) {
+    brain.nextFireDecisionAt = now + randomBetweenWith(random, skill.fireDecisionMs[0], skill.fireDecisionMs[1]) / tempoMultiplier;
+    if (aimReady && random() < skill.fireChance) {
+      brain.fireUntil = now + randomBetweenWith(random, skill.burstDurationMs[0], skill.burstDurationMs[1]) / tempoMultiplier;
+    }
+  }
+
+  return aimReady && now < brain.fireUntil;
+}
+
+export function getBotCombatEngagementState(input: BotCombatEngagementInput): BotCombatEngagementState {
+  const shouldFight = Boolean(
+    input.hasCombatTarget
+    && input.enemyDistance <= input.attackRange
+    && input.hasClearShot
+    && !input.targetProtected
+  );
+
+  return {
+    shouldFight,
+    aimReady: shouldFight && input.primaryAimReady,
+  };
+}
+
+export function getBotPredictedAimPoint(input: BotAimLeadInput): PlainVec3 {
+  const targetDistance = input.targetDistance ?? distance3D(input.sourcePosition, input.targetPosition);
+  const reactionLag = input.skill.reactionMs / 1000;
+  const leadSeconds = clamp(
+    input.skill.aimLeadSeconds + targetDistance / 160 - reactionLag * 0.45,
+    -0.22,
+    0.42
+  );
+
+  return {
+    x: input.targetPosition.x + input.targetVelocity.x * leadSeconds,
+    y: input.targetPosition.y + input.targetVelocity.y * leadSeconds,
+    z: input.targetPosition.z + input.targetVelocity.z * leadSeconds,
+  };
+}
+
+export function getBotYawPitchTowardPosition(sourcePosition: PlainVec3, targetPosition: PlainVec3): BotAimAngles {
+  const dx = targetPosition.x - sourcePosition.x;
+  const dy = targetPosition.y - sourcePosition.y;
+  const dz = targetPosition.z - sourcePosition.z;
+  const horizontal = Math.sqrt(dx * dx + dz * dz);
+  return {
+    yaw: Math.atan2(-dx, -dz),
+    pitch: clamp(Math.atan2(dy, horizontal), -0.8, 0.8),
+  };
+}
+
+export function updateBotAimState(input: BotAimUpdateInput): BotAimAngles {
+  const { brain, skill, desiredAim, currentYaw, currentPitch, targetDistance, now, dt } = input;
+  const random = input.random ?? Math.random;
+
+  if (!Number.isFinite(brain.aimYaw)) brain.aimYaw = currentYaw;
+  if (!Number.isFinite(brain.aimPitch)) brain.aimPitch = currentPitch;
+
+  if (targetDistance !== null && Number.isFinite(targetDistance) && now >= brain.nextAimJitterAt) {
+    const distanceScale = clamp(targetDistance / 24, 0.55, 1.35);
+    brain.aimJitterYaw = randomSignedWith(random, skill.aimErrorRadians * distanceScale);
+    brain.aimJitterPitch = randomSignedWith(random, skill.aimErrorRadians * 0.55 * distanceScale);
+    brain.nextAimJitterAt = now + randomBetweenWith(random, skill.aimJitterRefreshMs[0], skill.aimJitterRefreshMs[1]);
+  } else if (targetDistance === null) {
+    brain.aimJitterYaw *= 0.82;
+    brain.aimJitterPitch *= 0.82;
+  }
+
+  const targetYaw = normalizeAngle(desiredAim.yaw + brain.aimJitterYaw);
+  const targetPitch = clamp(desiredAim.pitch + brain.aimJitterPitch, -0.8, 0.8);
+  const maxStep = skill.turnRateRadians * clamp(dt, 0.016, 0.1);
+
+  brain.aimYaw = rotateAngleToward(brain.aimYaw, targetYaw, maxStep);
+  const pitchDelta = clamp(targetPitch - brain.aimPitch, -maxStep, maxStep);
+  brain.aimPitch = clamp(brain.aimPitch + pitchDelta, -0.8, 0.8);
+
+  return { yaw: brain.aimYaw, pitch: brain.aimPitch };
+}
+
+export function getBotAimReadinessTrace(input: BotAimReadinessTraceInput): BotAimReadinessTrace {
+  const readinessPadding = Math.max(0, input.skill.aimFireToleranceScale - 1) * input.hitboxPadding;
+  return {
+    origin: input.origin,
+    direction: getForwardVector(input.yaw, input.pitch),
+    range: input.attackRange,
+    extraRadius: readinessPadding + (input.attackCollisionRadius ?? 0),
+  };
+}
+
+export function isBotSecondaryFireWindowOpen(input: BotSecondaryFireWindowInput): boolean {
+  return Boolean(
+    input.shouldFight
+    && input.heroId !== 'blaze'
+    && input.secondaryAttack
+    && input.enemyDistance <= input.secondaryAttack.range
+    && input.now >= input.brain.nextSecondaryAt
+  );
+}
+
+export function updateBotSecondaryFireDecision(input: BotSecondaryFireDecisionInput): boolean {
+  const {
+    brain,
+    skill,
+    now,
+    secondaryAttack,
+    aimReady,
+    tempoMultiplier,
+  } = input;
+  if (!isBotSecondaryFireWindowOpen(input) || !secondaryAttack || !aimReady) {
+    return false;
+  }
+
+  const random = input.random ?? Math.random;
+  const firedSecondary = random() < skill.secondaryChance;
+  const secondaryDelayMs = firedSecondary
+    ? randomBetweenWith(random, secondaryAttack.cooldownMs * 0.85, secondaryAttack.cooldownMs * 1.3)
+    : randomBetweenWith(random, 350, 900);
+  brain.nextSecondaryAt = now + secondaryDelayMs / tempoMultiplier;
+  return firedSecondary;
+}
+
+export function getBotLocomotionActionState(input: BotLocomotionActionInput): BotLocomotionActionState {
+  const routeDistance = distance2D(input.position, input.steeringTarget);
+  const sprint = routeDistance > 9
+    || input.hasFlag
+    || (input.intentType !== 'fight_local_enemy' && input.intentType !== 'defend_base');
+  const jump = input.steeringJump || (input.stalled && input.isGrounded);
+  const crouch = sprint
+    && routeDistance > 14
+    && !input.hasCombatTarget
+    && hashString(`${input.botId}:${Math.floor(input.now / 500)}`) % 11 === 0;
+
+  return {
+    sprint,
+    jump,
+    crouch,
+    crouchPressed: crouch && input.previousCrouch !== true,
+  };
+}
+
+export function composeBotInputMovementState(input: BotInputMovementStateInput): BotInputMovementState {
+  const movement = getBotDirectionalMovementState({
+    lookYaw: input.lookYaw,
+    desiredMove: input.desiredMove,
+    recovering: input.recovering,
+    strafeDirection: input.strafeDirection,
+  });
+  const locomotion = getBotLocomotionActionState(input);
+
+  return {
+    ...movement,
+    ...locomotion,
+  };
+}
+
+export function applyBotAbilityInputPlan(input: BotAbilityInputPlanInput): void {
+  const { brain, input: controls, plan, skill, now, tempoMultiplier } = input;
+  const random = input.random ?? Math.random;
+
+  if (brain.pendingSecondaryMode) {
+    if (now < brain.secondaryHoldUntil) {
+      controls.secondaryFire = true;
+      controls.primaryFire = false;
+      return;
+    }
+    brain.pendingSecondaryMode = '';
+    brain.secondaryHoldUntil = 0;
+    controls.secondaryFire = false;
+    return;
+  }
+
+  if (plan.mode === 'none' || !plan.slot) return;
+
+  if (plan.slot === 'ultimate') {
+    if (now < brain.nextUltimateAt && plan.score < skill.abilityScoreThreshold + 75) return;
+  } else if (plan.slot !== 'secondary' && plan.mode !== 'blaze_flamethrower') {
+    if (now < brain.nextAbilityAt && plan.score < skill.abilityScoreThreshold + 55) return;
+  }
+
+  switch (plan.mode) {
+    case 'chronos_lifeline_allies':
+      controls.ability1 = true;
+      controls.primaryFire = true;
+      controls.secondaryFire = false;
+      break;
+    case 'chronos_lifeline_self':
+      controls.ability1 = true;
+      controls.primaryFire = false;
+      controls.secondaryFire = true;
+      break;
+    case 'chronos_aegis':
+      controls.secondaryFire = true;
+      controls.primaryFire = false;
+      return;
+    case 'blaze_flamethrower':
+      controls.ability1 = true;
+      controls.primaryFire = false;
+      break;
+    case 'blaze_bomb':
+      if (now < brain.nextSecondaryAt) return;
+      controls.secondaryFire = true;
+      controls.primaryFire = false;
+      brain.pendingSecondaryMode = plan.mode;
+      brain.secondaryHoldUntil = now + (plan.holdMs ?? 120);
+      brain.nextSecondaryAt = now + randomBetweenWith(random, 900, 1450) / tempoMultiplier;
+      return;
+    default:
+      if (plan.slot === 'ability1') controls.ability1 = true;
+      if (plan.slot === 'ability2') controls.ability2 = true;
+      if (plan.slot === 'ultimate') controls.ultimate = true;
+      if (plan.slot) controls.primaryFire = false;
+      break;
+  }
+
+  if (plan.slot === 'ultimate') {
+    brain.nextUltimateAt = now + randomBetweenWith(random, skill.ultimateCadenceMs[0], skill.ultimateCadenceMs[1]) / tempoMultiplier;
+  } else if (plan.slot !== 'secondary' && plan.mode !== 'blaze_flamethrower') {
+    brain.nextAbilityAt = now + randomBetweenWith(random, skill.abilityCadenceMs[0], skill.abilityCadenceMs[1]) / tempoMultiplier;
+  }
+}
+
+export function updateBotPlanningState(input: BotPlanningStateInput): BotPlanningStateResult {
+  const { brain, now, bot, skill } = input;
+  const random = input.random ?? Math.random;
+  const shouldRefreshBlackboard = shouldRefreshBotPlanningState(brain, now);
+  const blackboard = shouldRefreshBlackboard
+    ? buildBotBlackboard({
+      now,
+      gameplayMode: input.gameplayMode,
+      bot,
+      players: input.players,
+      flags: input.flags,
+      visibleEnemyIds: input.visibleEnemyIds,
+      enemyLineOfSightIds: input.enemyLineOfSightIds,
+      recentDamageSources: input.recentDamageSources,
+      teamTactics: input.teamTactics,
+      enemyMemory: brain.enemyMemory,
+      skill,
+    })
+    : brain.blackboard!;
+
+  if (shouldRefreshBlackboard) {
+    brain.blackboard = blackboard;
+    brain.nextBlackboardAt = now + Math.max(80, skill.thinkIntervalMs * 0.75);
+  }
+
+  if (now >= brain.nextThinkAt) {
+    brain.intent = scoreBotIntents(bot, blackboard, skill);
+    brain.routePlan = planBotRoute({
+      now,
+      bot,
+      intent: brain.intent,
+      blackboard,
+      routeGraph: input.routeGraph,
+      blockedEdges: brain.blockedEdges,
+      skill,
+      previousPlan: brain.routePlan,
+    });
+    brain.nextThinkAt = now + randomBetweenWith(random, skill.thinkIntervalMs * 0.75, skill.thinkIntervalMs * 1.25);
+
+    if (now >= brain.strafeUntil) {
+      brain.strafeDirection = hashString(`${bot.id}:${Math.floor(now / 1000)}`) % 2 === 0 ? -1 : 1;
+      brain.strafeUntil = now + randomBetweenWith(random, 900, 2600);
+    }
+  }
+
+  if (!brain.routePlan || now - brain.routePlan.plannedAt > skill.replanIntervalMs * 2) {
+    brain.routePlan = planBotRoute({
+      now,
+      bot,
+      intent: brain.intent,
+      blackboard,
+      routeGraph: input.routeGraph,
+      blockedEdges: brain.blockedEdges,
+      skill,
+      previousPlan: brain.routePlan,
+    });
+  }
+
+  return {
+    blackboard,
+    routePlan: brain.routePlan,
+  };
+}
+
+export function updateBotMovementRecoveryState(input: BotMovementRecoveryInput): BotMovementRecoveryResult {
+  const { brain, now, bot, blackboard, routePlan, desiredMove, steeringBlocked, skill } = input;
+  const random = input.random ?? Math.random;
+  const progress = updateBotMovementProgress(
+    brain.movementProgress,
+    now,
+    bot.position,
+    routePlan.steeringTarget,
+    routePlan.activeEdgeId,
+    desiredMove,
+    steeringBlocked,
+    skill
+  );
+
+  if (progress.markBlockedEdgeId) {
+    brain.blockedEdges.set(progress.markBlockedEdgeId, now + skill.blockedEdgeTtlMs);
+    brain.routePlan = planBotRoute({
+      now,
+      bot,
+      intent: brain.intent,
+      blackboard,
+      routeGraph: input.routeGraph,
+      blockedEdges: brain.blockedEdges,
+      skill,
+      previousPlan: brain.routePlan,
+    });
+  }
+
+  if (progress.stalled && steeringBlocked) {
+    brain.reverseUntil = now + randomBetweenWith(random, 220, 420);
+  }
+
+  return {
+    ...progress,
+    routePlan: brain.routePlan ?? routePlan,
+  };
+}
+
+function randomBetweenWith(random: () => number, min: number, max: number): number {
+  return min + random() * (max - min);
+}
+
+function randomSignedWith(random: () => number, amount: number): number {
+  return (random() * 2 - 1) * amount;
+}
+
+function getBotDirectionalMovementState(input: {
+  lookYaw: number;
+  desiredMove: PlainVec2 | null;
+  recovering: boolean;
+  strafeDirection: -1 | 1;
+}): Pick<BotInputMovementState, 'moveForward' | 'moveBackward' | 'moveLeft' | 'moveRight'> {
+  const movement = {
+    moveForward: false,
+    moveBackward: false,
+    moveLeft: false,
+    moveRight: false,
+  };
+
+  if (input.recovering) {
+    movement.moveBackward = true;
+    movement.moveLeft = input.strafeDirection < 0;
+    movement.moveRight = input.strafeDirection > 0;
+    return movement;
+  }
+
+  if (!input.desiredMove) return movement;
+
+  const local = worldDirectionToLocalMove(input.desiredMove, input.lookYaw);
+  const threshold = 0.22;
+  movement.moveForward = local.z < -threshold;
+  movement.moveBackward = local.z > threshold;
+  movement.moveLeft = local.x < -threshold;
+  movement.moveRight = local.x > threshold;
+
+  if (!movement.moveForward && !movement.moveBackward && !movement.moveLeft && !movement.moveRight) {
+    if (Math.abs(local.x) > Math.abs(local.z)) {
+      movement.moveLeft = local.x < 0;
+      movement.moveRight = local.x >= 0;
+    } else {
+      movement.moveForward = local.z <= 0;
+      movement.moveBackward = local.z > 0;
+    }
+  }
+
+  return movement;
+}
+
+function worldDirectionToLocalMove(direction: PlainVec2, lookYaw: number): PlainVec2 {
+  const cos = Math.cos(lookYaw);
+  const sin = Math.sin(lookYaw);
+  return {
+    x: direction.x * cos - direction.z * sin,
+    z: direction.x * sin + direction.z * cos,
   };
 }
 
@@ -822,6 +1390,34 @@ function nearestPlayer(
     }
   }
   return best;
+}
+
+function isCaptureTheFlagGameplayMode(mode: GameplayMode): boolean {
+  return mode === 'capture_the_flag';
+}
+
+function isEnemyForGameplayMode(mode: GameplayMode, playerTeam: Team, ownTeam: Team): boolean {
+  if (playerTeam === ownTeam) return false;
+  return !isCaptureTheFlagGameplayMode(mode) || playerTeam === otherTeam(ownTeam);
+}
+
+function createNeutralFlagSnapshot(team: Team, position: PlainVec3): BotFlagSnapshot {
+  return {
+    team,
+    position: { ...position },
+    basePosition: { ...position },
+    carrierId: '',
+    isAtBase: true,
+    droppedAt: 0,
+  };
+}
+
+function getFlagSnapshotOrFallback(
+  flags: Record<Team, BotFlagSnapshot>,
+  team: Team,
+  fallbackPosition: PlainVec3
+): BotFlagSnapshot {
+  return flags[team] ?? createNeutralFlagSnapshot(team, fallbackPosition);
 }
 
 function createThreatClusters(team: Team, enemies: readonly BotPlayerSnapshot[]): BotThreatCluster[] {
@@ -967,7 +1563,7 @@ function assignBestBot(
   return best;
 }
 
-function buildTeamDeathmatchTacticsForTeam(input: BotTeamTacticsInput, team: Team): BotTeamTactics {
+function buildEliminationTacticsForTeam(input: BotTeamTacticsInput, team: Team): BotTeamTactics {
   const enemyTeam = otherTeam(team);
   const allies: BotPlayerSnapshot[] = [];
   const enemies: BotPlayerSnapshot[] = [];
@@ -977,7 +1573,7 @@ function buildTeamDeathmatchTacticsForTeam(input: BotTeamTacticsInput, team: Tea
     if (player.team === team) {
       allies.push(player);
       if (player.isBot) bots.push(player);
-    } else if (player.team === enemyTeam) {
+    } else if (isEnemyForGameplayMode(input.gameplayMode, player.team, team)) {
       enemies.push(player);
     }
   }
@@ -1017,14 +1613,19 @@ function buildTeamDeathmatchTacticsForTeam(input: BotTeamTacticsInput, team: Tea
     const nearestEnemy = nearestPlayer(enemies, bot.position);
     const targetPosition = nearestEnemy?.position
       ?? threatClusters[0]?.center
-      ?? input.flags[enemyTeam].basePosition;
+      ?? input.flags[enemyTeam]?.basePosition
+      ?? bot.position;
     assignments[bot.id] = {
       botId: bot.id,
       role: bot.heroId === 'chronos' && roleDemand.support > 0 ? 'support' : 'fighter',
       job: 'fight',
       targetPosition: { ...targetPosition },
       targetPlayerId: nearestEnemy?.id,
-      reason: nearestEnemy ? 'nearest enemy pressure' : 'team deathmatch pressure',
+      reason: nearestEnemy
+        ? 'nearest enemy pressure'
+        : input.gameplayMode === 'battle_royal'
+          ? 'battle royal pressure'
+          : 'team deathmatch pressure',
       priority: 420,
     };
   }
@@ -1044,8 +1645,8 @@ function buildTeamDeathmatchTacticsForTeam(input: BotTeamTacticsInput, team: Tea
 }
 
 function buildTeamTacticsForTeam(input: BotTeamTacticsInput, team: Team): BotTeamTactics {
-  if (input.gameplayMode === 'team_deathmatch') {
-    return buildTeamDeathmatchTacticsForTeam(input, team);
+  if (!isCaptureTheFlagGameplayMode(input.gameplayMode)) {
+    return buildEliminationTacticsForTeam(input, team);
   }
 
   const enemyTeam = otherTeam(team);
@@ -1305,10 +1906,14 @@ function getDefaultRole(bot: BotPlayerSnapshot, demand: BotRoleDemand): BotStrat
 }
 
 export function buildTeamTactics(input: BotTeamTacticsInput): BotTeamTacticsByTeam {
-  return {
-    red: buildTeamTacticsForTeam(input, 'red'),
-    blue: buildTeamTacticsForTeam(input, 'blue'),
-  };
+  const teams = input.gameplayMode === 'battle_royal'
+    ? Array.from(new Set(input.players.map((player) => player.team))).sort((a, b) => a.localeCompare(b))
+    : ['red', 'blue'];
+  const tactics: BotTeamTacticsByTeam = {};
+  for (const team of teams) {
+    tactics[team] = buildTeamTacticsForTeam(input, team);
+  }
+  return tactics;
 }
 
 function getAbilityState(bot: BotPlayerSnapshot, abilityId: string): BotAbilitySnapshot | null {
@@ -1433,8 +2038,9 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
   const bot = input.bot;
   const team = bot.team;
   const enemyTeam = otherTeam(team);
-  const ownFlag = input.flags[team];
-  const enemyFlag = input.flags[enemyTeam];
+  const isCaptureTheFlag = isCaptureTheFlagGameplayMode(input.gameplayMode);
+  const ownFlag = getFlagSnapshotOrFallback(input.flags, team, bot.position);
+  const enemyFlag = getFlagSnapshotOrFallback(input.flags, enemyTeam, bot.position);
   const allies: BotPlayerSnapshot[] = [];
   const enemyPlayers: BotPlayerSnapshot[] = [];
   let alliedCarrier: BotPlayerSnapshot | null = null;
@@ -1446,15 +2052,15 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
     if (player.team === team) {
       if (player.id !== bot.id) {
         allies.push(player);
-        if (input.gameplayMode === 'capture_the_flag' && player.hasFlag) alliedCarrier = player;
+        if (isCaptureTheFlag && player.hasFlag) alliedCarrier = player;
       }
-    } else if (player.team === enemyTeam) {
+    } else if (isEnemyForGameplayMode(input.gameplayMode, player.team, team)) {
       enemyPlayers.push(player);
-      if (input.gameplayMode === 'capture_the_flag' && (player.hasFlag || ownFlag.carrierId === player.id)) {
+      if (isCaptureTheFlag && (player.hasFlag || ownFlag.carrierId === player.id)) {
         enemyCarrierPlayer = player;
       }
     }
-    if (input.gameplayMode === 'capture_the_flag' && enemyFlag.carrierId && player.id === enemyFlag.carrierId) {
+    if (isCaptureTheFlag && enemyFlag.carrierId && player.id === enemyFlag.carrierId) {
       enemyFlagCarrierPosition = player.position;
     }
   }
@@ -1580,8 +2186,8 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
     enemyCarrier,
     nearestAlly,
     alliedCarrier,
-    droppedFriendlyFlag: input.gameplayMode === 'capture_the_flag' && !ownFlag.isAtBase && !ownFlag.carrierId ? { ...ownFlag.position } : null,
-    droppedEnemyFlag: input.gameplayMode === 'capture_the_flag' && !enemyFlag.isAtBase && !enemyFlag.carrierId ? { ...enemyFlag.position } : null,
+    droppedFriendlyFlag: isCaptureTheFlag && !ownFlag.isAtBase && !ownFlag.carrierId ? { ...ownFlag.position } : null,
+    droppedEnemyFlag: isCaptureTheFlag && !enemyFlag.isAtBase && !enemyFlag.carrierId ? { ...enemyFlag.position } : null,
     enemyFlagPosition: enemyFlag.carrierId
       ? { ...(enemyFlagCarrierPosition ?? enemyFlag.position) }
       : { ...enemyFlag.position },
