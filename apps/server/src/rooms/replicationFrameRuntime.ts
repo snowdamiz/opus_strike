@@ -387,17 +387,22 @@ export function collectRecipientPlayerStateStreams(
         now,
         transformInterest
       );
+      let transform: PackedPlayerTransform | undefined;
+      let signature: PackedPlayerTransform | undefined;
+      let highRelevance = false;
+      if (exactStateVisible) {
+        transform = input.frameContext.packedTransforms.get(id) ?? input.buildPackedTransform(id, player);
+        signature = input.frameContext.packedTransformSignatures.get(id) ?? getPackedTransformSignature(transform);
+        highRelevance = input.isHighRelevanceTransform(recipient, id, player, now);
+      }
       const delta = selectPackedTransformDelta({
         state: input.transformState,
         playerId: id,
-        getSnapshot: () => {
-          const transform = input.frameContext.packedTransforms.get(id) ?? input.buildPackedTransform(id, player);
-          const signature = input.frameContext.packedTransformSignatures.get(id) ?? getPackedTransformSignature(transform);
-          return { transform, signature };
-        },
+        transform,
+        signature,
         exactStateVisible,
         force: input.forceTransforms,
-        getHighRelevance: () => input.isHighRelevanceTransform(recipient, id, player, now),
+        highRelevance,
         now,
       });
       if (delta?.kind === 'visible') {
