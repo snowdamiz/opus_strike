@@ -232,19 +232,18 @@ function getEarthWallExpiresAt(wall: EarthWallData): number {
 }
 
 function appendUnique<T extends { id: string }>(items: T[], item: T, limit: number): T[] {
-  const length = items.length;
-  const capped = length >= limit;
-  const retainStart = capped ? length - limit + 1 : 0;
-  const next = new Array<T>(capped ? limit : length + 1);
-  let writeIndex = 0;
-
-  for (let index = 0; index < length; index++) {
-    const existing = items[index];
-    if (existing.id === item.id) return items;
-    if (index >= retainStart) next[writeIndex++] = existing;
+  for (let index = items.length - 1; index >= 0; index--) {
+    if (items[index].id === item.id) return items;
   }
 
-  next[writeIndex] = item;
+  if (items.length >= limit) {
+    const next = items.slice(items.length - limit + 1);
+    next.push(item);
+    return next;
+  }
+
+  const next = items.slice();
+  next.push(item);
   return next;
 }
 
