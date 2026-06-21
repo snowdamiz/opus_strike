@@ -500,6 +500,17 @@ export function setupLobbyListeners(
     leaveLobby();
   });
 
+  room.onMessage('partyQueueCancelled', (data: { reason?: string }) => {
+    loggers.network.info('party matchmaking cancelled', data.reason ?? 'party leader left matchmaking');
+    isAwaitingGameStart = false;
+    isJoiningGame = false;
+    hasJoinedGame = false;
+    hasFailedGameStart = false;
+    clearGameStartTimeout();
+    disconnectVoice('party_queue_cancelled');
+    leaveLobby();
+  });
+
   room.onMessage('duplicateSession', (data: { reason: string }) => {
     loggers.network.warn('duplicate session detected in lobby', data.reason);
     disconnectVoice('duplicate_lobby_session');

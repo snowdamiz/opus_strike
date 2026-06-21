@@ -72,6 +72,7 @@ async function createMatchmakingLobby(input: {
   gameplayMode: GameplayMode;
   matchmakingTicket: string;
   rankBandId: number;
+  partyLeaderUserId: string;
   partyBots: PartyBotLaunchDescriptor[];
   botFillMode: MatchmakingBotFillMode;
   matchPerspective: MatchPerspective;
@@ -86,6 +87,7 @@ async function createMatchmakingLobby(input: {
     gameplayMode: input.gameplayMode,
     matchmakingTicket: input.matchmakingTicket,
     rankBandId: input.rankBandId,
+    expectedPartyLeaderUserId: input.partyLeaderUserId,
     expectedHumanPlayers: input.expectedHumanPlayers,
     expectedHumanUserIds: input.expectedHumanUserIds,
     initialBotCount: 0,
@@ -157,6 +159,7 @@ export async function launchPartyToMatchmaking(
     gameplayMode,
     matchmakingTicket: firstTicket.ticket,
     rankBandId: targetRankDivisionIndex,
+    partyLeaderUserId: party.leaderId ?? humanMembers[0].userId,
     partyBots,
     botFillMode,
     matchPerspective,

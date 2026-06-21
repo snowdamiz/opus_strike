@@ -73,6 +73,7 @@ import {
   buildLobbyStatePayload,
 } from './lobbyNetworkPayloads';
 import {
+  addMissingBotMapVotes as addMissingBotMapVotesForRoster,
   buildMapVoteStartedPayload,
   buildMapVoteUpdatedPayload,
   createMapLaunchSelection,
@@ -109,6 +110,7 @@ interface JoinOptions {
   matchPerspective?: MatchPerspective;
   rankBandId?: number;
   rankedEntryQuoteId?: string;
+  expectedPartyLeaderUserId?: string;
   authToken?: string;
   expectedHumanPlayers?: number;
   expectedHumanUserIds?: string[];
@@ -135,6 +137,7 @@ interface MapVoteSession {
 const MAX_PLAYERS_PER_TEAM = DEFAULT_GAME_CONFIG.teamSize;
 const PRODUCTION_CUSTOM_MIN_PARTICIPANTS = 2;
 const MAP_VOTE_DURATION_MS = 30000;
+const MATCHMAKING_AUTO_START_DELAY_MS = 250;
 const BOT_NAMES = [
   'Vector',
   'Cipher',
@@ -212,6 +215,18 @@ export function getMatchmakingBotFillPriorityTeams(input: {
   return Array.from({ length: fillCount }, () => partyTeam);
 }
 
+export function shouldCancelExpectedPartyMatchmakingQueue(input: {
+  status: string;
+  leavingUserId: string | null;
+  expectedPartyLeaderUserId: string | null;
+  expectedHumanUserCount: number;
+}): boolean {
+  return input.status === 'matchmaking'
+    && input.expectedHumanUserCount > 1
+    && Boolean(input.leavingUserId)
+    && input.leavingUserId === input.expectedPartyLeaderUserId;
+}
+
 export class LobbyRoom extends Room<LobbyState> {
   maxClients = DEFAULT_GAME_CONFIG.maxPlayers;
   private botIdCounter = 0;
@@ -234,8 +249,10 @@ export class LobbyRoom extends Room<LobbyState> {
   private minimumMatchmakingHumanCount = 1;
   private expectedMatchmakingPartyParticipantCount = 1;
   private expectedMatchmakingUserIds: Set<string> | null = null;
+  private expectedMatchmakingPartyLeaderUserId: string | null = null;
   private matchmakingPartyTeam: Team | null = null;
   private pendingPartyBots: PartyBotLaunchDescriptor[] = [];
+  private matchmakingAutoStartTimeout: ReturnType<typeof setTimeout> | null = null;
   private capacityRetryTimeout: ReturnType<typeof setTimeout> | null = null;
   private gameStartDisconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private matchmakingCapacityBlocked = false;
@@ -281,6 +298,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.state.maxPlayers = this.maxClients;
     this.minimumMatchmakingHumanCount = this.resolveMinimumMatchmakingHumanCount(options);
     this.expectedMatchmakingUserIds = this.resolveExpectedMatchmakingUserIds(options);
+    this.expectedMatchmakingPartyLeaderUserId = this.resolveExpectedMatchmakingPartyLeaderUserId(options);
     this.expectedMatchmakingPartyParticipantCount = this.resolveExpectedMatchmakingPartyParticipantCount(options);
     this.state.isPublic = !options.isPrivate && !this.isMatchmakingQueue();
     this.state.createdAt = Date.now();
@@ -560,7 +578,7 @@ export class LobbyRoom extends Room<LobbyState> {
     }
     this.updateMetadata();
     this.broadcastMatchmakingStatus();
-    this.tryStartMatchmakingMapVote();
+    this.scheduleMatchmakingAutoStart();
   }
 
   private async canJoinInviteOnlyLobby(authContext: RoomAuthContext): Promise<boolean> {
@@ -590,6 +608,8 @@ export class LobbyRoom extends Room<LobbyState> {
     const player = this.state.players.get(client.sessionId);
     const wasHost = player?.isHost;
     const authContext = this.playerAuthContexts.get(client.sessionId);
+    const leavingUserId = authContext?.userId ?? null;
+    const shouldCancelExpectedPartyQueue = this.shouldCancelExpectedPartyQueueForLeavingUser(leavingUserId);
 
     const cleanup = this.cleanupLobbySession(client.sessionId);
 
@@ -616,11 +636,16 @@ export class LobbyRoom extends Room<LobbyState> {
     this.startMapVoteCountdownIfReady();
     this.updateMetadata();
     this.broadcastMatchmakingStatus();
+
+    if (shouldCancelExpectedPartyQueue) {
+      this.cancelExpectedPartyQueueForLeader(leavingUserId);
+    }
   }
 
   async onDispose() {
     this.disposed = true;
     this.clearMapVoteTimer();
+    this.clearMatchmakingAutoStart();
     this.clearCapacityRetry();
     this.clearGameStartDisconnectTimer();
   }
@@ -827,11 +852,7 @@ export class LobbyRoom extends Room<LobbyState> {
       previewReadyPlayerIds: new Set(),
     };
 
-    this.state.players.forEach((player, playerId) => {
-      if (!player.isBot) return;
-      const option = this.mapVoteSession!.options[Math.floor(Math.random() * this.mapVoteSession!.options.length)];
-      this.mapVoteSession!.votes.set(playerId, option.id);
-    });
+    this.addMissingBotMapVotes();
 
     this.updateMetadata({ status: 'map_vote' });
     this.broadcastMapVoteStarted();
@@ -921,6 +942,7 @@ export class LobbyRoom extends Room<LobbyState> {
     const session = this.mapVoteSession;
     if (!session || this.state.status !== 'map_vote' || !session.phaseEndTime) return;
 
+    this.addMissingBotMapVotes();
     const players: MapVotePlayer[] = [];
     this.state.players.forEach((player, playerId) => {
       players.push({ id: playerId, isBot: player.isBot });
@@ -938,6 +960,7 @@ export class LobbyRoom extends Room<LobbyState> {
 
     this.isFinalizingMapVote = true;
     try {
+      this.addMissingBotMapVotes();
       const selectedOption = getWinningMapOption({
         options: this.mapVoteSession.options,
         votes: this.mapVoteSession.votes,
@@ -1292,6 +1315,10 @@ export class LobbyRoom extends Room<LobbyState> {
 
     this.state.players.set(bot.id, bot);
     this.broadcast('playerJoined', buildLobbyPlayerJoinedPayload(bot.id, bot));
+    if (this.state.status === 'map_vote' && this.mapVoteSession) {
+      this.addMissingBotMapVotes();
+      this.broadcastMapVoteUpdated();
+    }
     this.updateMetadata();
     return { ok: true, bot };
   }
@@ -1328,6 +1355,7 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private sendMapVoteStarted(client: Client): void {
     if (!this.mapVoteSession) return;
+    this.addMissingBotMapVotes();
     client.send('mapVoteStarted', buildMapVoteStartedPayload({
       ...this.mapVoteSession,
       gameplayMode: this.gameplayMode,
@@ -1336,6 +1364,7 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private broadcastMapVoteStarted(): void {
     if (!this.mapVoteSession) return;
+    this.addMissingBotMapVotes();
     this.broadcast('mapVoteStarted', buildMapVoteStartedPayload({
       ...this.mapVoteSession,
       gameplayMode: this.gameplayMode,
@@ -1344,7 +1373,18 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private broadcastMapVoteUpdated(): void {
     if (!this.mapVoteSession) return;
+    this.addMissingBotMapVotes();
     this.broadcast('mapVoteUpdated', buildMapVoteUpdatedPayload(this.mapVoteSession.votes));
+  }
+
+  private addMissingBotMapVotes(): number {
+    const session = this.mapVoteSession;
+    if (!session) return 0;
+    return addMissingBotMapVotesForRoster({
+      players: Array.from(this.state.players, ([id, player]) => ({ id, isBot: player.isBot })),
+      options: session.options,
+      votes: session.votes,
+    });
   }
 
   private clearMapVoteTimer(): void {
@@ -1475,6 +1515,7 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!this.isBotFillMatchmakingQueue()) return;
 
     let missingParticipants = Math.max(0, requiredPlayers - this.getCombatParticipantCount());
+    let createdBotCount = 0;
     const partyTeam = this.matchmakingPartyTeam && this.isTeam(this.matchmakingPartyTeam)
       ? this.matchmakingPartyTeam
       : null;
@@ -1492,6 +1533,7 @@ export class LobbyRoom extends Room<LobbyState> {
       });
       if (!result.ok) break;
       missingParticipants--;
+      createdBotCount++;
     }
 
     while (missingParticipants > 0) {
@@ -1500,9 +1542,13 @@ export class LobbyRoom extends Room<LobbyState> {
       });
       if (!result.ok) break;
       missingParticipants--;
+      createdBotCount++;
     }
 
     this.updateMetadata();
+    if (createdBotCount > 0) {
+      this.broadcastLobbyState();
+    }
     this.broadcastMatchmakingStatus();
   }
 
@@ -1623,6 +1669,23 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!capacityAvailable || this.state.status !== 'matchmaking') return;
 
     await this.startMapSelection();
+  }
+
+  private scheduleMatchmakingAutoStart(): void {
+    if (!this.isMatchmakingQueue() || this.disposed || this.state.status !== 'matchmaking') return;
+    if (this.matchmakingAutoStartTimeout) return;
+
+    this.matchmakingAutoStartTimeout = setTimeout(() => {
+      this.matchmakingAutoStartTimeout = null;
+      this.tryStartMatchmakingMapVote();
+    }, MATCHMAKING_AUTO_START_DELAY_MS);
+    this.matchmakingAutoStartTimeout.unref?.();
+  }
+
+  private clearMatchmakingAutoStart(): void {
+    if (!this.matchmakingAutoStartTimeout) return;
+    clearTimeout(this.matchmakingAutoStartTimeout);
+    this.matchmakingAutoStartTimeout = null;
   }
 
   private clearCapacityRetry(): void {
@@ -1756,6 +1819,13 @@ export class LobbyRoom extends Room<LobbyState> {
     return userIds.length > 0 ? new Set(userIds) : null;
   }
 
+  private resolveExpectedMatchmakingPartyLeaderUserId(options: JoinOptions): string | null {
+    if (!this.isMatchmakingQueue() || typeof options.expectedPartyLeaderUserId !== 'string') return null;
+    const leaderUserId = options.expectedPartyLeaderUserId.trim();
+    if (!leaderUserId) return null;
+    return this.expectedMatchmakingUserIds?.has(leaderUserId) ? leaderUserId : null;
+  }
+
   private getRequestedMatchmakingUserId(options: JoinOptions): string | null {
     if (!options.matchmakingTicket) return null;
     try {
@@ -1802,6 +1872,31 @@ export class LobbyRoom extends Room<LobbyState> {
     if (missingExpectedHumans <= 0) return false;
     const openParticipantSlots = this.state.maxParticipants - this.getCombatParticipantCount();
     return openParticipantSlots <= missingExpectedHumans;
+  }
+
+  private shouldCancelExpectedPartyQueueForLeavingUser(leavingUserId: string | null): boolean {
+    return shouldCancelExpectedPartyMatchmakingQueue({
+      status: this.state.status,
+      leavingUserId,
+      expectedPartyLeaderUserId: this.expectedMatchmakingPartyLeaderUserId,
+      expectedHumanUserCount: this.expectedMatchmakingUserIds?.size ?? 0,
+    });
+  }
+
+  private cancelExpectedPartyQueueForLeader(leaderUserId: string | null): void {
+    if (!leaderUserId || !this.expectedMatchmakingUserIds) return;
+
+    for (const candidate of [...this.clients]) {
+      const authContext = this.playerAuthContexts.get(candidate.sessionId);
+      const userId = authContext?.userId ?? null;
+      if (!userId || userId === leaderUserId || !this.expectedMatchmakingUserIds.has(userId)) continue;
+
+      candidate.send('partyQueueCancelled', {
+        reason: 'Party leader left matchmaking',
+        leaderUserId,
+      });
+      candidate.leave(4002);
+    }
   }
 
   private isValidMatchmakingTicket(
