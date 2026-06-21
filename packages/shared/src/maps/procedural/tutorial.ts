@@ -2,7 +2,7 @@ import { PLAYER_HEIGHT } from '../../constants/physics.js';
 import { POWERUP_PICKUP_RADIUS, POWERUP_RESPAWN_SECONDS } from '../../constants/game.js';
 import { getBlockNumericId, isSolidBlock } from './blocks.js';
 import { generateVoxelColliders } from './colliders.js';
-import { getVoxelMapTheme } from './themes.js';
+import { getVoxelMapTheme, withVoxelSkyVariant } from './themes.js';
 import {
   CONSTRUCTED_MAP_MANIFEST_VERSION,
   type BaseZone,
@@ -29,6 +29,7 @@ import {
 export const TUTORIAL_MAP_SEED = 0x54555431;
 export const TUTORIAL_MAP_ID = 'tutorial_ctf_training_lane';
 export const TUTORIAL_MAP_SIZE_ID = 'small' as const;
+export const TUTORIAL_SKY_VARIANT_ID = 'late_day' as const;
 
 const VOXEL_SIZE: VoxelSize = { x: 0.5, y: 0.5, z: 0.5 };
 const MAP_SIZE: VoxelSize = { x: 72, y: 28, z: 176 };
@@ -216,6 +217,45 @@ function paintTutorialFloorAccents(blocks: Uint8Array): void {
   paintDisc(blocks, TUTORIAL_TARGET_STAND_POSITION.x, TUTORIAL_TARGET_STAND_POSITION.z, 2.25, 'gold_panel');
 }
 
+function paintTutorialSunsetTilework(blocks: Uint8Array): void {
+  for (let i = 0; i < TUTORIAL_STAGE_MARKER_Z.length - 1; i++) {
+    const markerZ = TUTORIAL_STAGE_MARKER_Z[i] + 1.1;
+    const leftFirst = i % 2 === 0;
+    const block: VoxelBlockId = i % 3 === 0 ? 'gold_panel' : i % 3 === 1 ? 'stone' : 'gold_ore';
+
+    fillWorldCuboid(blocks, leftFirst ? -8.2 : 6.7, leftFirst ? -6.7 : 8.2, markerZ, markerZ + 0.8, 0, 1, block);
+    fillWorldCuboid(blocks, leftFirst ? 6.1 : -8.8, leftFirst ? 8.8 : -6.1, markerZ + 1.35, markerZ + 1.7, 0, 1, 'gold_ore');
+  }
+
+  fillWorldCuboid(blocks, -8.6, -8.1, -36.5, 34.5, 0, 1, 'stone');
+  fillWorldCuboid(blocks, 8.1, 8.6, -34.5, 36.5, 0, 1, 'stone');
+  fillWorldCuboid(blocks, -9.25, -8.8, -10.5, 12.5, 0, 1, 'moss');
+  fillWorldCuboid(blocks, 8.8, 9.25, -10.5, 12.5, 0, 1, 'moss');
+}
+
+function paintTutorialGardenEdges(blocks: Uint8Array): void {
+  const gardenSegments: Array<{ minZ: number; maxZ: number; canopy: VoxelBlockId }> = [
+    { minZ: -38.5, maxZ: -33.2, canopy: 'leaves' },
+    { minZ: -16.8, maxZ: -7.2, canopy: 'blossom_leaves' },
+    { minZ: 11.6, maxZ: 18.9, canopy: 'leaves' },
+    { minZ: 26.2, maxZ: 36.4, canopy: 'blossom_leaves' },
+  ];
+
+  for (const segment of gardenSegments) {
+    fillWorldCuboid(blocks, -10.45, -9.35, segment.minZ, segment.maxZ, 0, 1, 'stone');
+    fillWorldCuboid(blocks, 9.35, 10.45, segment.minZ, segment.maxZ, 0, 1, 'stone');
+    fillWorldCuboid(blocks, -10.15, -9.65, segment.minZ + 0.35, segment.maxZ - 0.35, 1, 2, 'moss');
+    fillWorldCuboid(blocks, 9.65, 10.15, segment.minZ + 0.35, segment.maxZ - 0.35, 1, 2, 'moss');
+
+    for (let z = segment.minZ + 1.15; z < segment.maxZ - 0.75; z += 3.1) {
+      fillWorldCuboid(blocks, -10.05, -9.55, z, z + 0.5, 2, 7, 'bamboo');
+      fillWorldCuboid(blocks, 9.55, 10.05, z, z + 0.5, 2, 7, 'bamboo');
+      fillWorldCuboid(blocks, -10.85, -8.95, z - 0.55, z + 1.05, 7, 8, segment.canopy);
+      fillWorldCuboid(blocks, 8.95, 10.85, z - 0.55, z + 1.05, 7, 8, segment.canopy);
+    }
+  }
+}
+
 function createTutorialBlocks(): Uint8Array {
   const blocks = new Uint8Array(MAP_SIZE.x * MAP_SIZE.y * MAP_SIZE.z);
 
@@ -273,13 +313,19 @@ function createTutorialBlocks(): Uint8Array {
   fillWorldCuboid(blocks, -4, 4, 35.9, 36.7, 0, 1, 'gold_panel');
 
   for (const gateZ of TUTORIAL_DECORATIVE_GATE_Z) {
+    fillWorldCuboid(blocks, -8.15, -7.45, gateZ - 0.1, gateZ + 0.6, 1, 8, 'stone');
+    fillWorldCuboid(blocks, 7.45, 8.15, gateZ - 0.1, gateZ + 0.6, 1, 8, 'stone');
+    fillWorldCuboid(blocks, -8.15, -7.45, gateZ - 0.1, gateZ + 0.6, 8, 9, 'gold_glass');
+    fillWorldCuboid(blocks, 7.45, 8.15, gateZ - 0.1, gateZ + 0.6, 8, 9, 'gold_glass');
     fillWorldCuboid(blocks, -7, -6.2, gateZ, gateZ + 0.5, 1, 5, 'gold');
     fillWorldCuboid(blocks, 6.2, 7, gateZ, gateZ + 0.5, 1, 5, 'gold');
     fillWorldCuboid(blocks, -7, 7, gateZ, gateZ + 0.5, GATE_BEAM_MIN_ROW, GATE_BEAM_MAX_ROW, 'gold_glass');
     fillWorldCuboid(blocks, -4.5, 4.5, gateZ, gateZ + 0.5, 0, 1, 'gold_panel');
   }
 
+  paintTutorialGardenEdges(blocks);
   paintTutorialFloorAccents(blocks);
+  paintTutorialSunsetTilework(blocks);
   paintDisc(blocks, RED_FLAG.x, RED_FLAG.z, 3.1, 'flag_pad');
   paintDisc(blocks, BLUE_FLAG.x, BLUE_FLAG.z, 3.1, 'flag_pad');
   for (const spawn of RED_SPAWNS) paintDisc(blocks, spawn.x, spawn.z, 1.75, 'spawn_pad_red');
@@ -778,7 +824,7 @@ export function createTutorialVoxelMapManifest(): VoxelMapManifest {
     preview,
     diagnostics,
   };
-  const theme = getVoxelMapTheme(TUTORIAL_MAP_SEED, 'verdant');
+  const theme = withVoxelSkyVariant(getVoxelMapTheme(TUTORIAL_MAP_SEED, 'verdant'), TUTORIAL_SKY_VARIANT_ID);
 
   tutorialManifest = {
     id: TUTORIAL_MAP_ID,

@@ -95,6 +95,10 @@ const duplicateHeroParty: PartyStateSnapshot = {
 };
 assert.equal(hasDuplicatePartyHeroes(duplicateHeroParty.members), true);
 assert.equal(arePartyMembersReady(duplicateHeroParty), false);
+assert.equal(arePartyMembersReady({
+  ...duplicateHeroParty,
+  selectedMode: 'custom',
+}), true);
 
 const partyWithBot: PartyStateSnapshot = {
   ...party,
@@ -129,10 +133,12 @@ const perspectiveByMode = createDefaultMatchPerspectiveSettings();
 perspectiveByMode.battle_royal = 'third_person';
 savePlayMenuPreferences({
   selectedPlayMode: 'battle_royal',
+  customGameplayMode: 'team_deathmatch',
   botFillEnabledByMode,
   perspectiveByMode,
 });
 assert.equal(loadPlayMenuPreferences().selectedPlayMode, 'battle_royal');
+assert.equal(loadPlayMenuPreferences().customGameplayMode, 'team_deathmatch');
 assert.equal(loadPlayMenuPreferences().botFillEnabledByMode.battle_royal, true);
 assert.equal(loadPlayMenuPreferences().perspectiveByMode.battle_royal, 'third_person');
 assert.equal(loadPlayMenuPreferences().perspectiveByMode.quick_play, 'first_person');

@@ -65,8 +65,8 @@ interface DustDevilConfig {
 
 const ATMOSPHERE_MAX_STEP = 1 / 12;
 const SKY_DOME_RADIUS = 760;
-const SUN_POSITION: [number, number, number] = [92, 118, -76];
-const SUN_DIRECTION = new THREE.Vector3(...SUN_POSITION).normalize();
+const DEFAULT_ATMOSPHERE_SUN_POSITION: [number, number, number] = [92, 118, -76];
+const LATE_DAY_ATMOSPHERE_SUN_POSITION: [number, number, number] = [-286, 48, -204];
 const BLAZE_SUN_CORE_COLOR = new THREE.Color('#ffd36a');
 const BLAZE_SUN_CORONA_COLOR = new THREE.Color('#ff5a00');
 const BLAZE_SUN_OUTER_CORONA_COLOR = new THREE.Color('#ff2700');
@@ -101,6 +101,7 @@ const SKY_FRAGMENT_SHADER = `
 uniform vec3 topColor;
 uniform vec3 horizonColor;
 uniform vec3 hazeColor;
+uniform vec3 sunGlowColor;
 uniform vec3 fireTopColor;
 uniform vec3 fireHorizonColor;
 uniform vec3 emberColor;
@@ -110,6 +111,7 @@ uniform vec3 phantomHorizonColor;
 uniform vec3 phantomPurpleColor;
 uniform vec3 phantomStarColor;
 uniform vec3 sunDirection;
+uniform float sunsetIntensity;
 uniform float fireIntensity;
 uniform float phantomIntensity;
 uniform float time;
@@ -125,8 +127,15 @@ void main() {
   vec3 direction = normalize(vWorldPosition);
   float height = clamp(direction.y * 0.5 + 0.5, 0.0, 1.0);
   float horizon = pow(1.0 - abs(direction.y), 3.0);
+  float lowSky = 1.0 - smoothstep(0.5, 0.92, height);
   vec3 color = mix(horizonColor, topColor, smoothstep(0.05, 1.0, height));
   color += hazeColor * horizon * 0.28;
+
+  float sunFacing = max(dot(direction, normalize(sunDirection)), 0.0);
+  float sunsetCorona = pow(sunFacing, 10.0);
+  float sunsetCore = pow(sunFacing, 84.0);
+  color += sunGlowColor * sunsetIntensity * (sunsetCorona * 0.32 + sunsetCore * 0.68);
+  color = mix(color, sunGlowColor, sunsetIntensity * horizon * lowSky * 0.16);
 
   float azimuth = atan(direction.z, direction.x);
   float wave =
@@ -134,7 +143,6 @@ void main() {
     sin(azimuth * 13.0 - time * 1.9 + direction.y * 4.0) * 0.32 +
     sin((direction.x - direction.z) * 10.0 + time * 2.35) * 0.18;
   float flame = smoothstep(0.18, 0.95, wave * 0.5 + 0.5);
-  float lowSky = 1.0 - smoothstep(0.5, 0.92, height);
   float heatBand = horizon * (0.54 + flame * 0.46) * lowSky;
   float smoke = smoothstep(0.5, 1.0, height) * (0.56 + flame * 0.18);
   vec3 fireColor = mix(fireHorizonColor, emberColor, flame * 0.68 + horizon * 0.2);
@@ -142,7 +150,6 @@ void main() {
   color = mix(color, fireTopColor, fireIntensity * smoke * 0.44);
   color += emberColor * fireIntensity * flame * horizon * 0.18;
 
-  float sunFacing = max(dot(direction, normalize(sunDirection)), 0.0);
   float corona = pow(sunFacing, 18.0);
   float sunCore = pow(sunFacing, 220.0);
   color += fireIntensity * (fireHorizonColor * corona * 0.42 + emberColor * sunCore * 1.15);
@@ -177,6 +184,20 @@ void main() {
 
 function createThemeColor(hex: string, mixTarget: string, amount: number): THREE.Color {
   return new THREE.Color(hex).lerp(new THREE.Color(mixTarget), amount);
+}
+
+function getAtmosphereSunPosition(theme: VoxelMapTheme): [number, number, number] {
+  return theme.skyVariantId === 'late_day' ? LATE_DAY_ATMOSPHERE_SUN_POSITION : DEFAULT_ATMOSPHERE_SUN_POSITION;
+}
+
+function getAtmosphereSunDirection(theme: VoxelMapTheme): THREE.Vector3 {
+  return new THREE.Vector3(...getAtmosphereSunPosition(theme)).normalize();
+}
+
+function getSunsetIntensity(theme: VoxelMapTheme): number {
+  if (theme.skyVariantId === 'late_day') return 1;
+  if (theme.id === 'desert' || theme.id === 'golden') return 0.22;
+  return 0.1;
 }
 
 function seededValue(seed: number, salt: number): number {
@@ -216,6 +237,45 @@ function pickProfileStack(seed: number, salt: number, variants: AtmosphereProfil
 }
 
 function getAtmosphereProfiles(theme: VoxelMapTheme, seed: number): AtmosphereProfile[] {
+  if (theme.skyVariantId === 'late_day') {
+    return withSeededWinds(seed ^ 0x1a7eda7, [
+      {
+        kind: 'glimmer',
+        variant: 'gold-hour-pollen',
+        color: '#ffd98a',
+        count: 430,
+        opacity: 0.68,
+        size: 0.115,
+        fallSpeed: 0.22,
+        spreadX: 82,
+        spreadZ: 72,
+        minY: 0.8,
+        maxY: 24,
+        turbulence: 0.18,
+        windScale: 0.5,
+        floatStrength: 0.42,
+        verticalDirection: 'float',
+      },
+      {
+        kind: 'mist',
+        variant: 'low-sunset-haze',
+        color: theme.fogColor,
+        count: 300,
+        opacity: 0.32,
+        size: 0.3,
+        fallSpeed: 0.12,
+        spreadX: 90,
+        spreadZ: 80,
+        minY: 0.4,
+        maxY: 13,
+        turbulence: 0.14,
+        windScale: 0.48,
+        floatStrength: 0.22,
+        verticalDirection: 'float',
+      },
+    ]);
+  }
+
   if (theme.id === 'golden') {
     return pickProfileStack(seed, 0x906d3a, [
       [
@@ -971,6 +1031,7 @@ function getSkyUniforms(theme: VoxelMapTheme) {
     topColor: { value: createThemeColor(theme.skyColor, '#07111f', darken) },
     horizonColor: { value: createThemeColor(theme.fogColor, '#fff7e5', warmHorizon) },
     hazeColor: { value: createThemeColor(theme.structures.accent, theme.fogColor, 0.68) },
+    sunGlowColor: { value: createThemeColor(theme.sunColor, theme.fogColor, theme.skyVariantId === 'late_day' ? 0.12 : 0.34) },
     fireTopColor: { value: new THREE.Color('#2a0c0d') },
     fireHorizonColor: { value: new THREE.Color('#ff5c1c') },
     emberColor: { value: new THREE.Color('#ffd36a') },
@@ -979,7 +1040,8 @@ function getSkyUniforms(theme: VoxelMapTheme) {
     phantomHorizonColor: { value: new THREE.Color('#120024') },
     phantomPurpleColor: { value: new THREE.Color('#5b21b6') },
     phantomStarColor: { value: new THREE.Color('#f8f7ff') },
-    sunDirection: { value: SUN_DIRECTION.clone() },
+    sunDirection: { value: getAtmosphereSunDirection(theme) },
+    sunsetIntensity: { value: getSunsetIntensity(theme) },
     fireIntensity: { value: 0 },
     phantomIntensity: { value: 0 },
     time: { value: 0 },
@@ -1279,6 +1341,7 @@ export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
     () => scaleAtmosphereProfiles(getAtmosphereProfiles(theme, seed), config),
     [config, theme, seed]
   );
+  const sunPosition = useMemo(() => getAtmosphereSunPosition(theme), [theme]);
   const skyMaterial = useMemo(
     () =>
       new THREE.ShaderMaterial({
@@ -1335,7 +1398,7 @@ export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
         <sphereGeometry args={[SKY_DOME_RADIUS, ...config.skySegments]} />
         <primitive object={skyMaterial} attach="material" />
       </mesh>
-      <group ref={sunGroupRef} position={SUN_POSITION} frustumCulled={false}>
+      <group ref={sunGroupRef} position={sunPosition} frustumCulled={false}>
         <mesh frustumCulled={false} renderOrder={-92} scale={[3.45, 3.45, 3.45]}>
           <sphereGeometry args={[7.5, ...config.sunSegments]} />
           <meshBasicMaterial

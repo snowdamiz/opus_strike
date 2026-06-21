@@ -1,6 +1,15 @@
 import * as SelectPrimitive from '@radix-ui/react-select';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { PARTY_MAX_MEMBERS, type BotDifficulty, type GameplayMode, type HeroId, type MatchMode, type PartyMemberSnapshot, type PartyMode } from '@voxel-strike/shared';
+import {
+  DEFAULT_GAMEPLAY_MODE,
+  getPartyMaxMembersForMode,
+  type BotDifficulty,
+  type GameplayMode,
+  type HeroId,
+  type MatchMode,
+  type PartyMemberSnapshot,
+  type PartyMode,
+} from '@voxel-strike/shared';
 import { config } from '../../config/environment';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
@@ -474,7 +483,10 @@ export function SocialBox({
   const isPartyLeader = !party || isPartyLeaderForUser(party, localPartyUserId);
   const partyBotMembers = party?.members.filter((member) => member.isBot) ?? [];
   const assumedPartyMemberCount = party ? party.members.length : canInviteFromMenu ? 1 : 0;
-  const partySlotsRemaining = Math.max(0, PARTY_MAX_MEMBERS - assumedPartyMemberCount);
+  const activePartyMode = party?.selectedMode ?? initialPartyMode ?? 'quick_play';
+  const activePartyGameplayMode = party?.gameplayMode ?? initialGameplayMode ?? DEFAULT_GAMEPLAY_MODE;
+  const partyMemberLimit = getPartyMaxMembersForMode(activePartyMode, activePartyGameplayMode);
+  const partySlotsRemaining = Math.max(0, partyMemberLimit - assumedPartyMemberCount);
   const canManagePartyBots = canInviteFromMenu && isPartyLeader;
   const canAddPartyBot = canManagePartyBots && partySlotsRemaining > 0;
   const tutorialRequired = requiresTutorial(user?.tutorialCompletedAt, devTutorialOverride);
@@ -907,7 +919,7 @@ export function SocialBox({
                           title="Party Bots"
                           meta={(
                             <span className="rounded-full border border-cyan-200/15 bg-cyan-400/10 px-2 py-1 text-[10px] font-display text-cyan-100/75">
-                              {assumedPartyMemberCount}/{PARTY_MAX_MEMBERS}
+                              {assumedPartyMemberCount}/{partyMemberLimit}
                             </span>
                           )}
                         />

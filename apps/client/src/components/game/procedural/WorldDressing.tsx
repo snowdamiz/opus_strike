@@ -228,6 +228,15 @@ function isNaturalSurface(blockId: VoxelBlockId): boolean {
 }
 
 function getDressingPalette(theme: VoxelMapTheme): DressingPalette {
+  if (theme.skyVariantId === 'late_day') {
+    return {
+      tuft: '#79b85f',
+      pebble: '#7f786c',
+      crystal: '#ffc66f',
+      crystalEmissive: '#ffd98a',
+    };
+  }
+
   if (theme.id === 'golden') {
     return {
       tuft: '#d9b956',
@@ -300,6 +309,10 @@ function getDressingPalette(theme: VoxelMapTheme): DressingPalette {
 }
 
 function getBiomeDensities(theme: VoxelMapTheme): { tuft: number; pebble: number; crystal: number } {
+  if (theme.skyVariantId === 'late_day') {
+    return { tuft: 0.058, pebble: 0.025, crystal: 0.018 };
+  }
+
   if (theme.id === 'golden') {
     return { tuft: 0.018, pebble: 0.028, crystal: 0.034 };
   }

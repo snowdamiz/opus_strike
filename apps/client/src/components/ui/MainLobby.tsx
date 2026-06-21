@@ -28,15 +28,17 @@ import {
   DEFAULT_MATCH_PERSPECTIVE,
   DEFAULT_RANKED_SEASON_NUMBER,
   HERO_DEFINITIONS,
-  PARTY_MAX_MEMBERS,
   getMatchPerspectiveSettingMode,
-  getGameplayModeRules,
   getGameplayModeLabel,
+  getPartyMaxMembersForMode,
   getHumanPartyHeroIds,
   hasDuplicatePartyHeroes,
+  isCustomLobbyGameplayMode,
   getRankedSeasonLabel,
+  requiresUniquePartyHeroes,
 } from '@voxel-strike/shared';
 import type {
+  CustomLobbyGameplayMode,
   GameplayMode,
   HeroId,
   MatchPerspective,
@@ -58,6 +60,7 @@ import {
 import { clearActivePartySession, loadActivePartySession } from '../../utils/activePartySession';
 import {
   PLAY_MODE_OPTIONS,
+  DEFAULT_CUSTOM_GAMEPLAY_MODE,
   loadPlayMenuPreferences,
   savePlayMenuPreferences,
   type PlayMenuMode,
@@ -71,9 +74,9 @@ const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((mod
   default: module.FeaturedHeroPreview,
 })));
 const HERO_IDLE_ANIMATION_MODE: HeroPreviewAnimationMode = 'idle';
-const PLAY_PARTY_SLOT_COUNT = PARTY_MAX_MEMBERS;
-const BATTLE_ROYAL_MAX_SQUAD_SIZE = getGameplayModeRules('battle_royal').maxTeamSize;
+const PLAY_PARTY_SLOT_COUNT = getPartyMaxMembersForMode('quick_play', DEFAULT_GAMEPLAY_MODE);
 const PING_ADVISORY_VISIBLE_MIN_MS = 100;
+const EMPTY_HERO_ID_SET = new Set<HeroId>();
 
 function DiscordIcon({ className, style }: { className?: string; style?: CSSProperties }) {
   return (
@@ -163,12 +166,17 @@ function formatSeasonBoundaryDate(season: RankedSeasonSnapshot): string {
   return season.mode === 'preseason' ? `Opens ${formattedDate}` : `Ends ${formattedDate}`;
 }
 
-function getGameplayModeForPlayMode(mode: PlayMenuMode): GameplayMode {
+function getGameplayModeForPlayMode(
+  mode: PlayMenuMode,
+  customGameplayMode: CustomLobbyGameplayMode = DEFAULT_CUSTOM_GAMEPLAY_MODE
+): GameplayMode {
   switch (mode) {
     case 'team_deathmatch':
       return 'team_deathmatch';
     case 'battle_royal':
       return 'battle_royal';
+    case 'custom':
+      return customGameplayMode;
     case 'practice':
     case 'ranked':
     case 'quick_play':
@@ -178,15 +186,17 @@ function getGameplayModeForPlayMode(mode: PlayMenuMode): GameplayMode {
 }
 
 function getPartyModeForPlayMode(mode: PlayMenuMode): PartyMode {
+  if (mode === 'custom') return 'custom';
   return mode === 'team_deathmatch' || mode === 'battle_royal' ? 'quick_play' : mode;
 }
 
 function getPlayModeFromParty(party: PartyStateSnapshot): PlayMenuMode {
-  if (party.selectedMode === 'quick_play' || party.selectedMode === 'custom') {
+  if (party.selectedMode === 'custom') return 'custom';
+  if (party.selectedMode === 'quick_play') {
     if (party.gameplayMode === 'team_deathmatch') return 'team_deathmatch';
     if (party.gameplayMode === 'battle_royal') return 'battle_royal';
   }
-  return party.selectedMode === 'custom' ? 'quick_play' : party.selectedMode;
+  return party.selectedMode;
 }
 
 function getBotFillGameplayModeForPlayMode(mode: PlayMenuMode): GameplayMode | null {
@@ -197,6 +207,7 @@ function getBotFillGameplayModeForPlayMode(mode: PlayMenuMode): GameplayMode | n
       return 'team_deathmatch';
     case 'battle_royal':
       return 'battle_royal';
+    case 'custom':
     case 'ranked':
     case 'practice':
     default:
@@ -229,6 +240,17 @@ function getPerspectiveLabel(perspective: MatchPerspective): string {
   return perspective === 'third_person' ? 'Third Person' : 'First Person';
 }
 
+function getCustomGameplayModeLabel(gameplayMode: CustomLobbyGameplayMode): string {
+  return getGameplayModeLabel(gameplayMode);
+}
+
+function getPartyMemberLimitForPlayMode(
+  mode: PlayMenuMode,
+  gameplayMode: GameplayMode
+): number {
+  return getPartyMaxMembersForMode(getPartyModeForPlayMode(mode), gameplayMode);
+}
+
 export function MainLobby() {
   const { playerName, isLoading, userStats, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore(
     useShallow((state) => ({
@@ -247,6 +269,7 @@ export function MainLobby() {
     getRankedTokenHoldStatus,
     startPracticeGame,
     startTutorialGame,
+    ensureParty,
     joinParty,
     restoreParty,
     getActivePartySession,
@@ -313,9 +336,13 @@ export function MainLobby() {
   const isPartyLeader = isPartyLeaderForUser(party, localPartyUserId);
   const isPartyReadyToStart = arePartyMembersReady(party);
   const selectedPlayMode = playMenuPreferences.selectedPlayMode;
+  const customGameplayMode = playMenuPreferences.customGameplayMode;
   const botFillEnabledByMode = playMenuPreferences.botFillEnabledByMode;
   const perspectiveByMode = playMenuPreferences.perspectiveByMode;
   const activePlayMode = party ? getPlayModeFromParty(party) : selectedPlayMode;
+  const activeCustomGameplayMode = party?.selectedMode === 'custom' && isCustomLobbyGameplayMode(party.gameplayMode)
+    ? party.gameplayMode
+    : customGameplayMode;
   const activeBotFillEnabledByMode = party?.botFillEnabledByMode ?? botFillEnabledByMode;
   const activePerspectiveByMode = party?.perspectiveByMode ?? perspectiveByMode;
   const currentRank = getRankForStats(userStats);
@@ -672,6 +699,24 @@ export function MainLobby() {
     }
   };
 
+  const handleCustomPlay = async () => {
+    setError(null);
+    if (tutorialRequired) {
+      handleStartTutorial();
+      return;
+    }
+    try {
+      await ensureParty(playerName, featuredHero, {
+        selectedMode: 'custom',
+        gameplayMode: activeCustomGameplayMode,
+      });
+      setPartyPerspective('custom', getMatchPerspectiveForPlayMode('custom', activePerspectiveByMode));
+      startParty();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create custom lobby');
+    }
+  };
+
   const handleReconnectGame = async () => {
     setError(null);
     try {
@@ -732,9 +777,10 @@ export function MainLobby() {
   };
 
   const handleSelectPlayMode = (mode: PlayMenuMode) => {
+    const gameplayMode = getGameplayModeForPlayMode(mode, activeCustomGameplayMode);
     if (isInParty) {
       if (isPartyLeader) {
-        setPartyMode(getPartyModeForPlayMode(mode), getGameplayModeForPlayMode(mode));
+        setPartyMode(getPartyModeForPlayMode(mode), gameplayMode);
       }
       return;
     }
@@ -743,6 +789,22 @@ export function MainLobby() {
       current.selectedPlayMode === mode ? current : {
         ...current,
         selectedPlayMode: mode,
+      }
+    ));
+  };
+
+  const handleSetCustomGameplayMode = (gameplayMode: CustomLobbyGameplayMode) => {
+    if (isInParty) {
+      if (isPartyLeader) {
+        setPartyMode('custom', gameplayMode);
+      }
+      return;
+    }
+
+    updatePlayMenuPreferences((current) => (
+      current.customGameplayMode === gameplayMode ? current : {
+        ...current,
+        customGameplayMode: gameplayMode,
       }
     ));
   };
@@ -806,6 +868,9 @@ export function MainLobby() {
           getBotFillEnabledForPlayMode(activePlayMode, activeBotFillEnabledByMode),
           getMatchPerspectiveForPlayMode(activePlayMode, activePerspectiveByMode)
         );
+        break;
+      case 'custom':
+        void handleCustomPlay();
         break;
       case 'practice':
         handlePracticeGame();
@@ -918,6 +983,7 @@ export function MainLobby() {
             isPartyLeader={isPartyLeader}
             isPartyReadyToStart={isPartyReadyToStart}
             selectedPlayMode={activePlayMode}
+            customGameplayMode={activeCustomGameplayMode}
             botFillEnabledByMode={activeBotFillEnabledByMode}
             perspectiveByMode={activePerspectiveByMode}
             rankedTokenHoldStatus={rankedTokenHoldStatus}
@@ -966,7 +1032,7 @@ export function MainLobby() {
         <SocialBox
           selectedHero={featuredHero}
           initialPartyMode={getPartyModeForPlayMode(activePlayMode)}
-          initialGameplayMode={getGameplayModeForPlayMode(activePlayMode)}
+          initialGameplayMode={getGameplayModeForPlayMode(activePlayMode, activeCustomGameplayMode)}
           onClose={() => setShowSocial(false)}
         />
       )}
@@ -975,10 +1041,12 @@ export function MainLobby() {
         <MatchSettingsDialog
           mode={matchSettingsMode}
           heroColor={heroColor}
+          customGameplayMode={activeCustomGameplayMode}
           botFillEnabledByMode={activeBotFillEnabledByMode}
           perspectiveByMode={activePerspectiveByMode}
           settingsDisabled={isInParty && !isPartyLeader}
           onSetBotFillEnabled={handleSetBotFillEnabled}
+          onSetCustomGameplayMode={handleSetCustomGameplayMode}
           onSetMatchPerspective={handleSetMatchPerspective}
           onClose={() => setMatchSettingsMode(null)}
         />
@@ -1018,6 +1086,7 @@ interface PlayTabProps {
   isPartyLeader: boolean;
   isPartyReadyToStart: boolean;
   selectedPlayMode: PlayMenuMode;
+  customGameplayMode: CustomLobbyGameplayMode;
   botFillEnabledByMode: PartyBotFillSettings;
   perspectiveByMode: MatchPerspectiveSettings;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
@@ -1053,6 +1122,7 @@ function PlayTab({
   isPartyLeader,
   isPartyReadyToStart,
   selectedPlayMode,
+  customGameplayMode,
   botFillEnabledByMode,
   perspectiveByMode,
   rankedTokenHoldStatus,
@@ -1081,8 +1151,11 @@ function PlayTab({
     ? lineupMembers.find((member) => member.userId === lineupLocalUserId) ?? null
     : null;
   const lineupSelectedHero = lineupLocalMember?.heroId ?? featuredHero;
-  const lineupLockedHeroIds = getHumanPartyHeroIds(lineupMembers, lineupLocalUserId);
-  const partyHasDuplicateHeroes = isInParty && hasDuplicatePartyHeroes(lineupMembers);
+  const uniquePartyHeroesRequired = requiresUniquePartyHeroes(getPartyModeForPlayMode(selectedPlayMode));
+  const lineupLockedHeroIds = uniquePartyHeroesRequired
+    ? getHumanPartyHeroIds(lineupMembers, lineupLocalUserId)
+    : EMPTY_HERO_ID_SET;
+  const partyHasDuplicateHeroes = isInParty && uniquePartyHeroesRequired && hasDuplicatePartyHeroes(lineupMembers);
   const mainPlayLabel = isReconnectChecking
     ? 'CHECKING...'
     : canReconnect
@@ -1104,11 +1177,12 @@ function PlayTab({
     !requiresTutorial &&
     rankedTokenHoldStatus?.eligible === false;
   const partySize = party?.members.length ?? 1;
-  const isBattleRoyalPartyTooLarge = selectedPlayMode === 'battle_royal' &&
-    partySize > BATTLE_ROYAL_MAX_SQUAD_SIZE;
+  const gameplayModeForLimit = getGameplayModeForPlayMode(selectedPlayMode, customGameplayMode);
+  const partyMemberLimit = getPartyMemberLimitForPlayMode(selectedPlayMode, gameplayModeForLimit);
+  const isPartyTooLargeForMode = isInParty && partySize > partyMemberLimit;
   const primaryDisabled = isLoading || isReconnectChecking || (
     isInParty && isPartyLeader && !isPartyReadyToStart
-  ) || partyHasDuplicateHeroes || isBattleRoyalPartyTooLarge || (
+  ) || partyHasDuplicateHeroes || isPartyTooLargeForMode || (
     selectedPlayMode === 'ranked' &&
     !requiresTutorial &&
     rankedSeason.mode === 'preseason'
@@ -1123,6 +1197,8 @@ function PlayTab({
     requiresTutorial,
     selectedPlayMode,
     partySize,
+    partyMemberLimit,
+    gameplayMode: gameplayModeForLimit,
     rankedSeason,
     rankedTokenHoldStatus,
   });
@@ -1154,6 +1230,7 @@ function PlayTab({
         requiresTutorial={requiresTutorial}
         rankedSeason={rankedSeason}
         selectedPlayMode={selectedPlayMode}
+        customGameplayMode={customGameplayMode}
         botFillEnabledByMode={botFillEnabledByMode}
         perspectiveByMode={perspectiveByMode}
         rankedTokenHoldStatus={rankedTokenHoldStatus}
@@ -1229,10 +1306,7 @@ function PartyLineup({
 
   return (
     <div className="party-lineup-stage">
-      <div
-        className="party-lineup-grid"
-        data-count={PLAY_PARTY_SLOT_COUNT}
-      >
+      <div className="party-lineup-grid">
         {visibleMembers.map((member) => {
           const heroColor = HERO_COLORS[member.heroId];
           const hero = HERO_DEFINITIONS[member.heroId];
@@ -1383,6 +1457,8 @@ function getPlayModeLabel(mode: PlayMenuMode): string {
       return getGameplayModeLabel('team_deathmatch').toUpperCase();
     case 'battle_royal':
       return getGameplayModeLabel('battle_royal').toUpperCase();
+    case 'custom':
+      return 'CUSTOM';
     case 'practice':
       return 'PRACTICE';
     case 'quick_play':
@@ -1398,6 +1474,8 @@ function getPlayModeActionLabel(mode: PlayMenuMode, isLoading: boolean): string 
         return 'PREPARING...';
       case 'practice':
         return 'STARTING...';
+      case 'custom':
+        return 'CREATING...';
       case 'team_deathmatch':
       case 'battle_royal':
       case 'quick_play':
@@ -1412,6 +1490,8 @@ function getPlayModeActionLabel(mode: PlayMenuMode, isLoading: boolean): string 
     case 'team_deathmatch':
     case 'battle_royal':
       return 'FIND MATCH';
+    case 'custom':
+      return 'CREATE LOBBY';
     case 'practice':
       return 'PRACTICE';
     case 'quick_play':
@@ -1430,13 +1510,21 @@ function getPrimaryDisabledReason(input: {
   requiresTutorial: boolean;
   selectedPlayMode: PlayMenuMode;
   partySize: number;
+  partyMemberLimit: number;
+  gameplayMode: GameplayMode;
   rankedSeason: RankedSeasonSnapshot;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
 }): string | null {
   if (input.isLoading) return null;
   if (input.isReconnectChecking) return 'Checking active match';
-  if (input.selectedPlayMode === 'battle_royal' && input.partySize > BATTLE_ROYAL_MAX_SQUAD_SIZE) {
-    return `Battle Royal squads are limited to ${BATTLE_ROYAL_MAX_SQUAD_SIZE} players`;
+  if (input.partySize > input.partyMemberLimit) {
+    if (input.selectedPlayMode === 'battle_royal') {
+      return `Battle Royal squads are limited to ${input.partyMemberLimit} players`;
+    }
+    if (input.selectedPlayMode === 'custom') {
+      return `Custom lobbies are limited to ${input.partyMemberLimit} players`;
+    }
+    return `${getGameplayModeLabel(input.gameplayMode)} parties are limited to ${input.partyMemberLimit} players`;
   }
   if (input.partyHasDuplicateHeroes) {
     return 'Each party member needs a unique hero';
@@ -1473,6 +1561,13 @@ function PlayModeIcon({ mode }: { mode: PlayMenuMode }) {
         <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M4.5 8l4.25 3.75L12 5l3.25 6.75L19.5 8l-1.35 10.25H5.85L4.5 8z" />
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M7 21h10" />
+        </svg>
+      );
+    case 'custom':
+      return (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M7 5h10l2 3.5-7 10-7-10L7 5z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M9 10h6M12 7v6" />
         </svg>
       );
     case 'practice':
@@ -1523,19 +1618,23 @@ function getModeTitle(input: {
 function MatchSettingsDialog({
   mode,
   heroColor,
+  customGameplayMode,
   botFillEnabledByMode,
   perspectiveByMode,
   settingsDisabled,
   onSetBotFillEnabled,
+  onSetCustomGameplayMode,
   onSetMatchPerspective,
   onClose,
 }: {
   mode: PlayMenuMode;
   heroColor: string;
+  customGameplayMode: CustomLobbyGameplayMode;
   botFillEnabledByMode: PartyBotFillSettings;
   perspectiveByMode: MatchPerspectiveSettings;
   settingsDisabled: boolean;
   onSetBotFillEnabled: (gameplayMode: GameplayMode, enabled: boolean) => void;
+  onSetCustomGameplayMode: (gameplayMode: CustomLobbyGameplayMode) => void;
   onSetMatchPerspective: (modeKey: MatchPerspectiveSettingMode, perspective: MatchPerspective) => void;
   onClose: () => void;
 }) {
@@ -1549,6 +1648,13 @@ function MatchSettingsDialog({
   const selectedPerspective = perspectiveByMode[perspectiveMode] ?? DEFAULT_MATCH_PERSPECTIVE;
   const disabledTitle = settingsDisabled ? 'Party leader chooses match settings' : undefined;
   const botFillStatus = botFillEnabled ? 'Enabled' : 'Disabled';
+  const isCustomMode = mode === 'custom';
+  const customModeIsTeamDeathmatch = customGameplayMode === 'team_deathmatch';
+  const nextCustomGameplayMode: CustomLobbyGameplayMode = customModeIsTeamDeathmatch
+    ? 'capture_the_flag'
+    : 'team_deathmatch';
+  const selectedCustomGameplayModeLabel = getCustomGameplayModeLabel(customGameplayMode);
+  const nextCustomGameplayModeLabel = getCustomGameplayModeLabel(nextCustomGameplayMode);
   const perspectiveIsThirdPerson = selectedPerspective === 'third_person';
   const nextPerspective: MatchPerspective = perspectiveIsThirdPerson ? 'first_person' : 'third_person';
   const selectedPerspectiveLabel = getPerspectiveLabel(selectedPerspective);
@@ -1566,7 +1672,34 @@ function MatchSettingsDialog({
       onClose={onClose}
     >
       <div className="match-settings-panel">
-        {botFillGameplayMode && (
+        {isCustomMode ? (
+          <section className="match-settings-row">
+            <div className="match-settings-row-copy">
+              <span className="match-settings-row-title">Game Mode</span>
+              <span className="match-settings-row-status is-enabled">
+                {selectedCustomGameplayModeLabel}
+              </span>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={customModeIsTeamDeathmatch}
+              aria-label={`Switch custom game mode to ${nextCustomGameplayModeLabel}`}
+              disabled={settingsDisabled}
+              className={`match-settings-toggle is-wide${customModeIsTeamDeathmatch ? ' is-enabled' : ''}`}
+              title={disabledTitle ?? `Switch to ${nextCustomGameplayModeLabel}`}
+              onClick={() => onSetCustomGameplayMode(nextCustomGameplayMode)}
+            >
+              <span className="match-settings-toggle-indicator" aria-hidden="true" />
+              <span className={`match-settings-toggle-option${!customModeIsTeamDeathmatch ? ' is-active' : ''}`} aria-hidden="true">
+                CTF
+              </span>
+              <span className={`match-settings-toggle-option${customModeIsTeamDeathmatch ? ' is-active' : ''}`} aria-hidden="true">
+                TDM
+              </span>
+            </button>
+          </section>
+        ) : botFillGameplayMode && (
           <section className="match-settings-row">
             <div className="match-settings-row-copy">
               <span className="match-settings-row-title">Bot Fill</span>
@@ -1633,6 +1766,7 @@ function PlayActionStack({
   requiresTutorial,
   rankedSeason,
   selectedPlayMode,
+  customGameplayMode,
   botFillEnabledByMode,
   perspectiveByMode,
   rankedTokenHoldStatus,
@@ -1659,6 +1793,7 @@ function PlayActionStack({
   requiresTutorial: boolean;
   rankedSeason: RankedSeasonSnapshot;
   selectedPlayMode: PlayMenuMode;
+  customGameplayMode: CustomLobbyGameplayMode;
   botFillEnabledByMode: PartyBotFillSettings;
   perspectiveByMode: MatchPerspectiveSettings;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
@@ -1700,6 +1835,7 @@ function PlayActionStack({
         requiresTutorial={requiresTutorial}
         rankedSeason={rankedSeason}
         selectedPlayMode={selectedPlayMode}
+        customGameplayMode={customGameplayMode}
         botFillEnabledByMode={botFillEnabledByMode}
         perspectiveByMode={perspectiveByMode}
         rankedTokenHoldStatus={rankedTokenHoldStatus}
@@ -1777,6 +1913,7 @@ function PlayModeSelector({
   requiresTutorial,
   rankedSeason,
   selectedPlayMode,
+  customGameplayMode,
   botFillEnabledByMode,
   perspectiveByMode,
   rankedTokenHoldStatus,
@@ -1791,6 +1928,7 @@ function PlayModeSelector({
   requiresTutorial: boolean;
   rankedSeason: RankedSeasonSnapshot;
   selectedPlayMode: PlayMenuMode;
+  customGameplayMode: CustomLobbyGameplayMode;
   botFillEnabledByMode: PartyBotFillSettings;
   perspectiveByMode: MatchPerspectiveSettings;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
@@ -1812,6 +1950,9 @@ function PlayModeSelector({
           ? perspectiveByMode[perspectiveSettingMode]
           : DEFAULT_MATCH_PERSPECTIVE;
         const showSettingsButton = selected && Boolean(perspectiveSettingMode);
+        const settingsTitle = mode === 'custom'
+          ? `Match settings: ${getCustomGameplayModeLabel(customGameplayMode)}, ${getPerspectiveLabel(perspective)}`
+          : `Match settings: ${getPerspectiveLabel(perspective)}`;
         const isRanked = mode === 'ranked';
         const locked = isRanked && (
           rankedSeason.mode === 'preseason' ||
@@ -1858,7 +1999,7 @@ function PlayModeSelector({
                 aria-label={`Open match settings for ${getPlayModeLabel(mode)}`}
                 disabled={modeReadOnly}
                 className={`play-mode-settings-button${botFillEnabled ? ' has-bots-enabled' : ''}${perspective === 'third_person' ? ' has-third-person' : ''}`}
-                title={modeReadOnly ? 'Party leader chooses match settings' : `Match settings: ${getPerspectiveLabel(perspective)}`}
+                title={modeReadOnly ? 'Party leader chooses match settings' : settingsTitle}
                 onClick={(event) => {
                   event.stopPropagation();
                   onOpenMatchSettings(mode);

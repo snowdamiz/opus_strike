@@ -12,6 +12,13 @@ const SKY_PALETTES: Record<VoxelSkyVariantId, VoxelSkyPalette> = {
     sunColor: '#fff1c7',
     fogColor: '#a6d7ff',
   },
+  late_day: {
+    skyVariantId: 'late_day',
+    skyColor: '#e88d6d',
+    ambientColor: '#ffe2c4',
+    sunColor: '#ffc66f',
+    fogColor: '#d79f74',
+  },
   stormfront: {
     skyVariantId: 'stormfront',
     skyColor: '#5e7aa6',
@@ -208,7 +215,7 @@ export const ALL_VOXEL_MAP_THEMES: VoxelMapTheme[] = [...STANDARD_VOXEL_MAP_THEM
 export const GOLDEN_VOXEL_MAP_THEME_ID = GOLDEN_VOXEL_MAP_THEME.id;
 
 const SKY_VARIANTS_BY_THEME = {
-  verdant: ['clear_day', 'stormfront', 'desert_heat', 'frost_glow', 'crystal_dusk', 'sakura_dawn'],
+  verdant: ['clear_day', 'late_day', 'stormfront', 'desert_heat', 'frost_glow', 'crystal_dusk', 'sakura_dawn'],
   basalt: ['stormfront', 'frost_glow', 'crystal_dusk', 'ember_haze'],
   desert: ['clear_day', 'desert_heat', 'stormfront', 'sakura_dawn', 'ember_haze'],
   frost: ['clear_day', 'stormfront', 'frost_glow', 'crystal_dusk'],
@@ -242,6 +249,13 @@ function withSeededSky(theme: VoxelMapTheme, seed: number): VoxelMapTheme {
   return {
     ...theme,
     ...SKY_PALETTES[getSkyVariantId(theme.id, seed)],
+  };
+}
+
+export function withVoxelSkyVariant(theme: VoxelMapTheme, skyVariantId: VoxelSkyVariantId): VoxelMapTheme {
+  return {
+    ...theme,
+    ...SKY_PALETTES[skyVariantId],
   };
 }
 

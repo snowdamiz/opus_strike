@@ -14,6 +14,7 @@ import {
   getTeamIdsForGameplayMode,
   getVoxelMapTheme,
   hashSeed,
+  isCustomLobbyGameplayMode,
   isGameplayMode,
   isMatchMode,
   isMatchPerspective,
@@ -1774,7 +1775,7 @@ export class LobbyRoom extends Room<LobbyState> {
       if (isGameplayMode(ticket?.gameplayMode)) return ticket.gameplayMode;
       return isGameplayMode(options.gameplayMode) ? options.gameplayMode : DEFAULT_GAMEPLAY_MODE;
     }
-    return isGameplayMode(options.gameplayMode) ? options.gameplayMode : DEFAULT_GAMEPLAY_MODE;
+    return isCustomLobbyGameplayMode(options.gameplayMode) ? options.gameplayMode : DEFAULT_GAMEPLAY_MODE;
   }
 
   private resolveRoomMatchPerspective(options: JoinOptions, ticket: MatchmakingTicketClaims | null): MatchPerspective {

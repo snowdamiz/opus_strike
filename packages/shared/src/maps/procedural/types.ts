@@ -466,6 +466,7 @@ export interface VoxelHeightfield {
 
 export type VoxelSkyVariantId =
   | 'clear_day'
+  | 'late_day'
   | 'stormfront'
   | 'desert_heat'
   | 'frost_glow'

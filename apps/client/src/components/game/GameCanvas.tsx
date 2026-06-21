@@ -2,7 +2,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Suspense, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { Environment, OrbitControls, Grid } from '@react-three/drei';
 import * as THREE from 'three';
-import { getVoxelMapTheme } from '@voxel-strike/shared';
+import { createTutorialVoxelMapManifest, getVoxelMapTheme, isTutorialMapSeed } from '@voxel-strike/shared';
 import { VoxelWorld } from './VoxelWorld';
 import type { VoxelMapWarmupStatus } from './procedural/VoxelMap';
 import { WorldAtmosphere } from './WorldAtmosphere';
@@ -69,6 +69,16 @@ const PHANTOM_NIGHT_RIM_COLOR = new THREE.Color('#a78bfa');
 const DEFAULT_SCENE_FOG_DENSITY = 0.0062;
 
 type GameMapTheme = ReturnType<typeof getVoxelMapTheme>;
+const DEFAULT_REFLECTION_SUN_POSITION: [number, number, number] = [18, 24, -20];
+const LATE_DAY_REFLECTION_SUN_POSITION: [number, number, number] = [-52, 13, -36];
+const DEFAULT_WORLD_SUN_POSITION: [number, number, number] = [58, 105, 34];
+const LATE_DAY_WORLD_SUN_POSITION: [number, number, number] = [-126, 34, -88];
+const DEFAULT_WORLD_RIM_POSITION: [number, number, number] = [-60, 36, -70];
+const LATE_DAY_WORLD_RIM_POSITION: [number, number, number] = [72, 42, 82];
+
+function isLateDayTheme(theme: GameMapTheme): boolean {
+  return theme.skyVariantId === 'late_day';
+}
 
 function CameraSettingsApplier({ far, fov }: { far: number; fov: number }) {
   const { camera } = useThree();
@@ -181,19 +191,23 @@ function ThemedWorldLighting({
   shadows: ShadowQualityConfig;
   theme: GameMapTheme;
 }) {
+  const lateDay = isLateDayTheme(theme);
   const ambientRef = useRef<THREE.AmbientLight>(null);
   const hemisphereRef = useRef<THREE.HemisphereLight>(null);
   const sunRef = useRef<THREE.DirectionalLight>(null);
   const rimRef = useRef<THREE.DirectionalLight>(null);
+  const sunPosition = lateDay ? LATE_DAY_WORLD_SUN_POSITION : DEFAULT_WORLD_SUN_POSITION;
+  const rimPosition = lateDay ? LATE_DAY_WORLD_RIM_POSITION : DEFAULT_WORLD_RIM_POSITION;
   const baseAmbientColor = useMemo(() => new THREE.Color(theme.ambientColor), [theme]);
   const baseSkyColor = useMemo(() => new THREE.Color(theme.skyColor), [theme]);
   const baseGroundColor = useMemo(() => new THREE.Color(theme.ground.side), [theme]);
   const baseSunColor = useMemo(() => new THREE.Color(theme.sunColor), [theme]);
   const baseRimColor = useMemo(() => new THREE.Color(theme.structures.glass), [theme]);
-  const baseLightLevels = useMemo(() => theme.id === 'golden'
-    ? { ambient: 0.5, hemisphere: 1.95, sun: 5.7, rim: 1.05 }
-    : { ambient: 0.42, hemisphere: 1.65, sun: 4.85, rim: 0.75 },
-  [theme.id]);
+  const baseLightLevels = useMemo(() => {
+    if (lateDay) return { ambient: 0.34, hemisphere: 1.42, sun: 5.55, rim: 1.18 };
+    if (theme.id === 'golden') return { ambient: 0.5, hemisphere: 1.95, sun: 5.7, rim: 1.05 };
+    return { ambient: 0.42, hemisphere: 1.65, sun: 4.85, rim: 0.75 };
+  }, [lateDay, theme.id]);
   const fireAmbientColor = useMemo(
     () => new THREE.Color(theme.ambientColor).lerp(BLAZE_AMBIENT_COLOR, 0.72),
     [theme]
@@ -267,7 +281,7 @@ function ThemedWorldLighting({
       <hemisphereLight ref={hemisphereRef} args={[theme.skyColor, theme.ground.side, baseLightLevels.hemisphere]} />
       <directionalLight
         ref={sunRef}
-        position={[58, 105, 34]}
+        position={sunPosition}
         intensity={baseLightLevels.sun}
         color={theme.sunColor}
         castShadow={shadows.enabled}
@@ -278,11 +292,11 @@ function ThemedWorldLighting({
         shadow-camera-top={shadows.volume}
         shadow-camera-bottom={-shadows.volume}
         shadow-bias={-0.00018}
-        shadow-normalBias={0.045}
+        shadow-normalBias={lateDay ? 0.06 : 0.045}
       />
       <directionalLight
         ref={rimRef}
-        position={[-60, 36, -70]}
+        position={rimPosition}
         intensity={baseLightLevels.rim}
         color={theme.structures.glass}
       />
@@ -752,9 +766,11 @@ function ReflectionEnvironment({
   theme: ReturnType<typeof getVoxelMapTheme>;
   config: ReflectionQualityConfig;
 }) {
+  const lateDay = isLateDayTheme(theme);
+  const reflectionSunPosition = lateDay ? LATE_DAY_REFLECTION_SUN_POSITION : DEFAULT_REFLECTION_SUN_POSITION;
   const sunColor = useMemo(
-    () => new THREE.Color(theme.sunColor).lerp(new THREE.Color('#ffffff'), theme.id === 'basalt' ? 0.25 : 0.1),
-    [theme]
+    () => new THREE.Color(theme.sunColor).lerp(new THREE.Color('#fff7df'), lateDay ? 0.04 : theme.id === 'basalt' ? 0.25 : 0.1),
+    [lateDay, theme]
   );
   const groundColor = useMemo(
     () => new THREE.Color(theme.ground.stone).lerp(new THREE.Color(theme.structures.accent), 0.18),
@@ -775,7 +791,7 @@ function ReflectionEnvironment({
         <sphereGeometry args={[80, 32, 16]} />
         <meshBasicMaterial color={theme.skyColor} side={THREE.BackSide} />
       </mesh>
-      <mesh position={[18, 24, -20]} frustumCulled={false}>
+      <mesh position={reflectionSunPosition} frustumCulled={false}>
         <sphereGeometry args={[4, 24, 12]} />
         <meshBasicMaterial color={sunColor} toneMapped={false} />
       </mesh>
@@ -824,7 +840,10 @@ export function GameCanvas({
   );
   const completedWarmupStagesRef = useRef<Set<MapWarmupStageId>>(new Set());
   const didStartGpuRef = useRef<string | null>(null);
-  const mapTheme = useMemo(() => getVoxelMapTheme(mapSeed, mapThemeId), [mapSeed, mapThemeId]);
+  const mapTheme = useMemo(
+    () => isTutorialMapSeed(mapSeed) ? createTutorialVoxelMapManifest().theme : getVoxelMapTheme(mapSeed, mapThemeId),
+    [mapSeed, mapThemeId]
+  );
   const gridCellColor = useMemo(
     () => new THREE.Color(mapTheme.ground.stone).lerp(new THREE.Color(mapTheme.fogColor), 0.28).getStyle(),
     [mapTheme]

@@ -4,6 +4,7 @@ import {
   DEFAULT_MATCH_PERSPECTIVE,
   getGameplayModeLabel,
   getRankDivisionIndex,
+  isCustomLobbyGameplayMode,
   type GameplayMode,
   type MatchPerspective,
   type PartyBotLaunchDescriptor,
@@ -216,13 +217,19 @@ export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promi
   if (humanMembers.length === 0 || !party.leaderId) {
     throw new Error('Party is empty');
   }
+  if (party.mode === 'custom' && !isCustomLobbyGameplayMode(party.selectedGameplayMode)) {
+    throw new Error('Custom lobbies support Capture the Flag or Team Deathmatch');
+  }
 
   humanMembers.forEach(assertPartyTutorialComplete);
 
-  const lobbyName = party.mode === 'practice' ? 'Party Practice' : 'Party Custom';
+  const gameplayMode = party.selectedGameplayMode;
+  const lobbyName = party.mode === 'practice'
+    ? 'Party Practice'
+    : `Custom ${getGameplayModeLabel(gameplayMode)}`;
   const matchPerspective = party.mode === 'practice'
     ? party.getActiveMatchPerspective('practice', party.selectedGameplayMode)
-    : DEFAULT_MATCH_PERSPECTIVE;
+    : party.getActiveMatchPerspective('custom', gameplayMode);
   const room = await matchMaker.createRoom('lobby_room', {
     lobbyName,
     isPrivate: true,
@@ -230,7 +237,7 @@ export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promi
     botFillMode: 'manual',
     defaultBotDifficulty: 'normal',
     partyBots,
-    gameplayMode: party.selectedGameplayMode,
+    gameplayMode,
     matchPerspective,
   });
 
@@ -248,7 +255,7 @@ export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promi
       mode: party.mode,
       lobbyId: room.roomId,
       matchMode: 'custom',
-      gameplayMode: party.selectedGameplayMode,
+      gameplayMode,
       botFillMode: 'manual',
       matchPerspective,
     });
