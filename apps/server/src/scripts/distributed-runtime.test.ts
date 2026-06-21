@@ -18,6 +18,7 @@ import {
 import { WagerEventBus } from '../wagers/eventBus';
 import { runWithRedisOwnerLock, type RedisOwnerLockClient } from '../wagers/workerLock';
 import type { WagerPaymentStatusChanged } from '../wagers/service';
+import { SocialEventBus, type SocialChangedEvent } from '../social/eventBus';
 
 function paymentEvent(lobbyId = 'lobby-test'): WagerPaymentStatusChanged {
   return {
@@ -364,6 +365,38 @@ async function runEventBusTests(): Promise<void> {
   await unsubscribeDistributed();
   await distributedBus.publishPaymentStatusChanged(paymentEvent('lobby-distributed'));
   assert.equal(distributedReceived.length, 1);
+
+  const localSocialBus = new SocialEventBus(() => getColyseusRuntimeConfig({}));
+  const localSocialReceived: SocialChangedEvent[] = [];
+  const unsubscribeLocalSocial = await localSocialBus.subscribeToUser('user-local', (payload) => {
+    localSocialReceived.push(payload);
+  });
+  await localSocialBus.publishSocialChanged(['user-local', 'user-local'], 'friend_request_created');
+  assert.equal(localSocialReceived.length, 1);
+  assert.equal(localSocialReceived[0]?.reason, 'friend_request_created');
+  await unsubscribeLocalSocial();
+  await localSocialBus.publishSocialChanged(['user-local'], 'friend_removed');
+  assert.equal(localSocialReceived.length, 1);
+
+  const fakeSocialPresence = new FakePresence();
+  const distributedSocialBus = new SocialEventBus(
+    () => getColyseusRuntimeConfig({
+      COLYSEUS_DISTRIBUTED: '1',
+      COLYSEUS_REDIS_URL: 'redis://localhost:6379',
+    }),
+    () => fakeSocialPresence as any
+  );
+  const distributedSocialReceived: SocialChangedEvent[] = [];
+  const unsubscribeDistributedSocial = await distributedSocialBus.subscribeToUser('user-distributed', (payload) => {
+    distributedSocialReceived.push(payload);
+  });
+  await distributedSocialBus.publishSocialChanged(['user-distributed'], 'party_invite_created');
+  assert.equal(fakeSocialPresence.published[0]?.topic, 'social:user:user-distributed');
+  assert.equal(distributedSocialReceived.length, 1);
+  assert.equal(distributedSocialReceived[0]?.reason, 'party_invite_created');
+  await unsubscribeDistributedSocial();
+  await distributedSocialBus.publishSocialChanged(['user-distributed'], 'party_invite_declined');
+  assert.equal(distributedSocialReceived.length, 1);
 }
 
 async function runWorkerLockTests(): Promise<void> {

@@ -8,6 +8,7 @@ import {
   getMatchPerspectiveSettingMode,
   getGameplayModeRules,
   getHumanPartyHeroIds,
+  hasDuplicatePartyHeroes,
   isMatchMode,
   getRankDivisionIndex,
   getRankFromRating,
@@ -323,7 +324,7 @@ export class PartyRosterRuntime {
       if (!member || typeof member !== 'object') continue;
       const rawMember = member as Partial<PartyMemberSnapshot>;
       const competitiveRating = 800;
-      const heroId = typeof rawMember.heroId === 'string' && ALL_HERO_IDS.includes(rawMember.heroId as HeroId)
+      const requestedHeroId = typeof rawMember.heroId === 'string' && ALL_HERO_IDS.includes(rawMember.heroId as HeroId)
         ? rawMember.heroId as HeroId
         : 'blaze';
       const displayName = typeof rawMember.displayName === 'string' && rawMember.displayName.trim()
@@ -333,12 +334,13 @@ export class PartyRosterRuntime {
       if (rawMember.isBot !== true) {
         const userId = normalizeUserId(rawMember.userId);
         if (!userId) continue;
+        const heroId = this.resolveHumanHero(userId, requestedHeroId);
         this.members.set(userId, {
           userId,
           sessionId: null,
           displayName: displayName ?? userId,
           heroId,
-          ready: rawMember.ready === true,
+          ready: rawMember.ready === true && heroId === requestedHeroId,
           connected: false,
           isBot: false,
           botDifficulty: undefined,
@@ -355,6 +357,7 @@ export class PartyRosterRuntime {
 
       const botIndex = this.botCounter++;
       const difficulty = normalizeBotDifficulty(rawMember.botDifficulty);
+      const heroId = requestedHeroId;
       this.members.set(`party-bot:${this.partyId}:restored:${botIndex}`, {
         userId: `party-bot:${this.partyId}:restored:${botIndex}`,
         sessionId: null,
@@ -399,6 +402,9 @@ export class PartyRosterRuntime {
   setReady(userId: string, ready: boolean): PartyRuntimeMember | null {
     const member = this.members.get(userId);
     if (!member) return null;
+    if (ready && hasDuplicatePartyHeroes(this.members.values())) {
+      throw new Error('Each party member needs a unique hero');
+    }
     member.ready = this.leaderUserId === userId ? false : ready;
     this.launchError = null;
     return member;
@@ -507,12 +513,8 @@ export class PartyRosterRuntime {
       return { ok: false, message: `${disconnected.displayName} is disconnected` };
     }
 
-    const pickedHeroIds = new Set<HeroId>();
-    for (const member of this.members.values()) {
-      if (pickedHeroIds.has(member.heroId)) {
-        return { ok: false, message: 'Each party member needs a unique hero' };
-      }
-      pickedHeroIds.add(member.heroId);
+    if (hasDuplicatePartyHeroes(this.members.values())) {
+      return { ok: false, message: 'Each party member needs a unique hero' };
     }
 
     return { ok: true };

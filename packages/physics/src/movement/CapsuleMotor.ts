@@ -520,7 +520,7 @@ function collectVoxelAabbs(
 
           if (solid && terrain.getGroundY && getBlockDefinition(block).walkable) {
             groundProbe.x = sample.x;
-            groundProbe.y = bounds.max.y + STEP_HEIGHT + SKIN_WIDTH;
+            groundProbe.y = bounds.min.y + STEP_HEIGHT + SKIN_WIDTH;
             groundProbe.z = sample.z;
             const groundY = terrain.getGroundY(groundProbe);
             const neighborDistance = Math.max(PLAYER_RADIUS, voxelSize.x, voxelSize.z);

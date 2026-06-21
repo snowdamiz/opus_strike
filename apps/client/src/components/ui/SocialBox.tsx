@@ -8,86 +8,22 @@ import { useGameStore } from '../../store/gameStore';
 import { isPartyLeader as isPartyLeaderForUser, usePartyStore } from '../../store/partyStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { requiresTutorial } from '../../utils/tutorialAccess';
+import {
+  actionableSocialCount,
+  requestSocialRealtimeRefresh,
+  useSocialRealtime,
+  useSocialRealtimeStore,
+  type FriendRequest,
+  type LobbyInvite,
+  type PartyInvite,
+  type SearchResult,
+  type SocialFriend,
+  type SocialTab,
+  type SocialUser,
+  type RelationshipState,
+} from '../../social/realtime';
 import { TopNavIconButton } from './TopNavIconButton';
 
-type SocialTab = 'friends' | 'requests' | 'invites';
-type RelationshipState = 'none' | 'friend' | 'pending_incoming' | 'pending_outgoing';
-
-interface SocialRank {
-  label: string;
-  tierLabel: string;
-  isRanked: boolean;
-}
-
-interface SocialUser {
-  userId: string;
-  name: string;
-  rank: SocialRank;
-  lastLoginAt: string | null;
-}
-
-interface SocialFriend {
-  friendshipId: string;
-  friendedAt: string;
-  user: SocialUser;
-}
-
-interface FriendRequest {
-  requestId: string;
-  status: string;
-  direction: 'incoming' | 'outgoing';
-  requestedAt: string;
-  respondedAt: string | null;
-  user: SocialUser;
-}
-
-interface LobbyInvite {
-  inviteId: string;
-  lobbyId: string;
-  lobbyName: string;
-  matchMode: MatchMode | null;
-  status: string;
-  createdAt: string;
-  expiresAt: string;
-  respondedAt: string | null;
-  from: SocialUser;
-  to: SocialUser;
-}
-
-interface PartyInvite {
-  inviteId: string;
-  partyId: string;
-  status: string;
-  createdAt: string;
-  expiresAt: string;
-  respondedAt: string | null;
-  from: SocialUser;
-  to: SocialUser;
-}
-
-interface SocialState {
-  friends: SocialFriend[];
-  incomingRequests: FriendRequest[];
-  outgoingRequests: FriendRequest[];
-  lobbyInvites: LobbyInvite[];
-  partyInvites: PartyInvite[];
-  discordPlayers: SearchResult[];
-}
-
-interface SearchResult {
-  user: SocialUser;
-  relationship: RelationshipState;
-}
-
-const emptySocialState: SocialState = {
-  friends: [],
-  incomingRequests: [],
-  outgoingRequests: [],
-  lobbyInvites: [],
-  partyInvites: [],
-  discordPlayers: [],
-};
-const SOCIAL_REFRESH_INTERVAL_MS = 10000;
 const SOCIAL_CLOSE_ANIMATION_MS = 220;
 const PARTY_BOT_OPTIONS: { difficulty: BotDifficulty; label: string }[] = [
   { difficulty: 'easy', label: 'Easy' },
@@ -97,10 +33,6 @@ const PARTY_BOT_OPTIONS: { difficulty: BotDifficulty; label: string }[] = [
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
-}
-
-function actionableSocialCount(social: SocialState): number {
-  return social.incomingRequests.length + social.lobbyInvites.length + social.partyInvites.length;
 }
 
 function getHttpUrl(): string {
@@ -491,35 +423,11 @@ export function SocialButton({
 }
 
 export function useSocialBadgeCount(): number {
-  const { isAuthenticated } = useWallet();
-  const [badgeCount, setBadgeCount] = useState(0);
+  const { isAuthenticated, user } = useWallet();
+  const social = useSocialRealtimeStore((state) => state.social);
+  useSocialRealtime(isAuthenticated ? user?.id : null);
 
-  const refreshBadgeCount = useCallback(async () => {
-    if (!isAuthenticated) {
-      setBadgeCount(0);
-      return;
-    }
-
-    try {
-      const data = await socialApi<SocialState>('/social');
-      setBadgeCount(actionableSocialCount(data));
-    } catch {
-      setBadgeCount(0);
-    }
-  }, [isAuthenticated]);
-
-  useEffect(() => {
-    refreshBadgeCount();
-  }, [refreshBadgeCount]);
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    const interval = window.setInterval(refreshBadgeCount, SOCIAL_REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [isAuthenticated, refreshBadgeCount]);
-
-  return badgeCount;
+  return isAuthenticated ? actionableSocialCount(social) : 0;
 }
 
 export function SocialBox({
@@ -534,6 +442,7 @@ export function SocialBox({
   initialGameplayMode?: GameplayMode;
 }) {
   const { isAuthenticated, user } = useWallet();
+  useSocialRealtime(isAuthenticated ? user?.id : null);
   const { addPartyBot, ensureParty, joinLobby, joinParty, kickPartyMember, startTutorialGame } = useNetwork();
   const playerName = useGameStore((state) => state.playerName);
   const appPhase = useGameStore((state) => state.appPhase);
@@ -545,8 +454,10 @@ export function SocialBox({
   const localPartyUserId = usePartyStore((state) => state.localUserId);
 
   const [activeTab, setActiveTab] = useState<SocialTab>('friends');
-  const [social, setSocial] = useState<SocialState>(emptySocialState);
-  const [isLoading, setIsLoading] = useState(false);
+  const social = useSocialRealtimeStore((state) => state.social);
+  const socialStatus = useSocialRealtimeStore((state) => state.status);
+  const socialError = useSocialRealtimeStore((state) => state.error);
+  const socialHasLoaded = useSocialRealtimeStore((state) => state.hasLoaded);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -567,6 +478,8 @@ export function SocialBox({
   const canManagePartyBots = canInviteFromMenu && isPartyLeader;
   const canAddPartyBot = canManagePartyBots && partySlotsRemaining > 0;
   const tutorialRequired = requiresTutorial(user?.tutorialCompletedAt, devTutorialOverride);
+  const isLoading = isAuthenticated && !socialHasLoaded && socialStatus === 'connecting';
+  const visibleError = error ?? socialError;
   const requestCount = social.incomingRequests.length + social.outgoingRequests.length;
   const inviteCount = social.lobbyInvites.length + social.partyInvites.length;
   const tabCounts = useMemo(() => ({
@@ -606,36 +519,9 @@ export function SocialBox({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [closePanel]);
 
-  const refreshSocial = useCallback(async (silent = false) => {
-    if (!isAuthenticated) return;
-    if (!silent) {
-      setIsLoading(true);
-    }
-    setError(null);
-    try {
-      const data = await socialApi<SocialState>('/social');
-      setSocial(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load social');
-    } finally {
-      if (!silent) {
-        setIsLoading(false);
-      }
-    }
-  }, [isAuthenticated]);
-
-  useEffect(() => {
-    refreshSocial();
-  }, [refreshSocial]);
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    const interval = window.setInterval(() => {
-      refreshSocial(true);
-    }, SOCIAL_REFRESH_INTERVAL_MS);
-
-    return () => window.clearInterval(interval);
-  }, [isAuthenticated, refreshSocial]);
+  const refreshSocial = useCallback(async () => {
+    requestSocialRealtimeRefresh();
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -921,8 +807,8 @@ export function SocialBox({
 
         <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 custom-scrollbar" role="tabpanel">
           <div className="space-y-4">
-            {error && <StatusBanner message={error} tone="error" />}
-            {!error && notice && <StatusBanner message={notice} tone="success" />}
+            {visibleError && <StatusBanner message={visibleError} tone="error" />}
+            {!visibleError && notice && <StatusBanner message={notice} tone="success" />}
 
             {isLoading ? (
               <div className="flex h-52 items-center justify-center">

@@ -10,17 +10,23 @@ import {
   canUserAccessPersistentPartyRoom,
   findActivePersistentPartyForUser,
 } from '../party/persistentParty';
+import { socialEventBus, type SocialChangeReason } from './eventBus';
 import {
   SocialServiceError,
   createLobbyInvite,
   createPartyInvite,
   expireOldLobbyInvites,
   expireOldPartyInvites,
+  friendshipInclude,
   getFriendshipPair,
+  getRelationshipsForCandidates,
+  loadSocialStateForUser,
   lobbyInviteInclude,
   partyInviteInclude,
   serializeLobbyInvite,
   serializePartyInvite,
+  serializeFriendship,
+  serializeFriendshipRequest,
   serializeSocialUser,
   socialUserSelect,
 } from './service';
@@ -33,15 +39,6 @@ const SOCIAL_RATE_LIMITS = {
   mutate: { limit: 30, windowMs: 60 * 1000 },
   invite: { limit: 20, windowMs: 60 * 1000 },
 } as const;
-
-const friendshipInclude = {
-  userA: { select: socialUserSelect },
-  userB: { select: socialUserSelect },
-  requestedBy: { select: socialUserSelect },
-} satisfies Prisma.FriendshipInclude;
-
-type FriendshipWithUsers = Prisma.FriendshipGetPayload<{ include: typeof friendshipInclude }>;
-type RelationshipState = 'none' | 'friend' | 'pending_incoming' | 'pending_outgoing';
 
 async function getAuthenticatedPayload(req: Request): Promise<AuthTokenPayload | null> {
   const token = getRequestAuthToken(req);
@@ -117,69 +114,6 @@ async function canInviteFromParty(partyId: string, userId: string): Promise<bool
   return canUserAccessPersistentPartyRoom(partyId, userId);
 }
 
-function otherUser(friendship: FriendshipWithUsers, currentUserId: string) {
-  return friendship.userAId === currentUserId ? friendship.userB : friendship.userA;
-}
-
-function serializeFriendshipRequest(friendship: FriendshipWithUsers, currentUserId: string) {
-  const requestedByCurrentUser = friendship.requestedByUserId === currentUserId;
-
-  return {
-    requestId: friendship.id,
-    status: friendship.status,
-    direction: requestedByCurrentUser ? 'outgoing' : 'incoming',
-    requestedAt: friendship.createdAt.toISOString(),
-    respondedAt: friendship.respondedAt?.toISOString() ?? null,
-    user: serializeSocialUser(otherUser(friendship, currentUserId)),
-  };
-}
-
-function serializeFriendship(friendship: FriendshipWithUsers, currentUserId: string) {
-  return {
-    friendshipId: friendship.id,
-    friendedAt: friendship.respondedAt?.toISOString() ?? friendship.updatedAt.toISOString(),
-    user: serializeSocialUser(otherUser(friendship, currentUserId)),
-  };
-}
-
-async function getRelationshipsForCandidates(
-  currentUserId: string,
-  candidateUserIds: string[]
-): Promise<Map<string, RelationshipState>> {
-  if (candidateUserIds.length === 0) return new Map();
-
-  const friendships = await prisma.friendship.findMany({
-    where: {
-      OR: [
-        { userAId: currentUserId, userBId: { in: candidateUserIds } },
-        { userBId: currentUserId, userAId: { in: candidateUserIds } },
-      ],
-    },
-    select: {
-      userAId: true,
-      userBId: true,
-      requestedByUserId: true,
-      status: true,
-    },
-  });
-
-  const relationshipByUserId = new Map<string, RelationshipState>();
-  for (const friendship of friendships) {
-    const otherUserId = friendship.userAId === currentUserId ? friendship.userBId : friendship.userAId;
-    if (friendship.status === 'accepted') {
-      relationshipByUserId.set(otherUserId, 'friend');
-    } else if (friendship.status === 'pending' && friendship.requestedByUserId === currentUserId) {
-      relationshipByUserId.set(otherUserId, 'pending_outgoing');
-    } else if (friendship.status === 'pending') {
-      relationshipByUserId.set(otherUserId, 'pending_incoming');
-    } else {
-      relationshipByUserId.set(otherUserId, 'none');
-    }
-  }
-
-  return relationshipByUserId;
-}
-
 function sendSocialError(res: Response, error: unknown): void {
   const statusCode = typeof error === 'object' && error && 'statusCode' in error
     ? Number((error as { statusCode?: unknown }).statusCode) || 500
@@ -201,6 +135,12 @@ function sendSocialError(res: Response, error: unknown): void {
 
   console.error('[social] request failed:', error);
   res.status(500).json({ error: 'Internal server error' });
+}
+
+function notifySocialUsers(userIds: readonly string[], reason: SocialChangeReason): void {
+  socialEventBus.publishSocialChanged(userIds, reason).catch((error) => {
+    console.error('[social] realtime publish failed:', error);
+  });
 }
 
 router.get('/party-session', async (req: Request, res: Response) => {
@@ -232,91 +172,7 @@ router.get('/', async (req: Request, res: Response) => {
     const user = await requireCurrentUser(req, res);
     if (!user) return;
 
-    await Promise.all([
-      expireOldLobbyInvites(),
-      expireOldPartyInvites(),
-    ]);
-
-    const [friendships, incomingRequests, outgoingRequests, lobbyInvites, partyInvites, discordPlayers] = await Promise.all([
-      prisma.friendship.findMany({
-        where: {
-          status: 'accepted',
-          OR: [{ userAId: user.id }, { userBId: user.id }],
-        },
-        include: friendshipInclude,
-        orderBy: { updatedAt: 'desc' },
-      }),
-      prisma.friendship.findMany({
-        where: {
-          status: 'pending',
-          requestedByUserId: { not: user.id },
-          OR: [{ userAId: user.id }, { userBId: user.id }],
-        },
-        include: friendshipInclude,
-        orderBy: { createdAt: 'desc' },
-      }),
-      prisma.friendship.findMany({
-        where: {
-          status: 'pending',
-          requestedByUserId: user.id,
-        },
-        include: friendshipInclude,
-        orderBy: { createdAt: 'desc' },
-      }),
-      prisma.lobbyInvite.findMany({
-        where: {
-          toUserId: user.id,
-          status: 'pending',
-          expiresAt: { gt: new Date() },
-        },
-        include: lobbyInviteInclude,
-        orderBy: { createdAt: 'desc' },
-        take: 20,
-      }),
-      prisma.partyInvite.findMany({
-        where: {
-          toUserId: user.id,
-          status: 'pending',
-          expiresAt: { gt: new Date() },
-        },
-        include: partyInviteInclude,
-        orderBy: { createdAt: 'desc' },
-        take: 20,
-      }),
-      prisma.user.findMany({
-        where: {
-          id: { not: user.id },
-          authAccounts: {
-            some: { provider: 'discord' },
-          },
-        },
-        select: socialUserSelect,
-        orderBy: [
-          { lastLoginAt: 'desc' },
-          { rankedGames: 'desc' },
-          { totalScore: 'desc' },
-        ],
-        take: 12,
-      }),
-    ]);
-    const discordRelationships = await getRelationshipsForCandidates(
-      user.id,
-      discordPlayers.map((candidate) => candidate.id)
-    );
-
-    res.json({
-      friends: friendships.map((friendship) => serializeFriendship(friendship, user.id)),
-      incomingRequests: incomingRequests.map((request) => serializeFriendshipRequest(request, user.id)),
-      outgoingRequests: outgoingRequests.map((request) => serializeFriendshipRequest(request, user.id)),
-      lobbyInvites: lobbyInvites.map(serializeLobbyInvite),
-      partyInvites: partyInvites.map(serializePartyInvite),
-      discordPlayers: discordPlayers
-        .map((candidate) => ({
-          user: serializeSocialUser(candidate),
-          relationship: discordRelationships.get(candidate.id) ?? 'none',
-        }))
-        .filter((candidate) => candidate.relationship !== 'friend'),
-    });
+    res.json(await loadSocialStateForUser(user.id));
   } catch (error) {
     sendSocialError(res, error);
   }
@@ -443,6 +299,7 @@ router.post('/friend-requests', async (req: Request, res: Response) => {
       });
     });
 
+    notifySocialUsers([user.id, target.id], 'friend_request_created');
     res.status(201).json({ request: serializeFriendshipRequest(request, user.id) });
   } catch (error) {
     sendSocialError(res, error);
@@ -486,6 +343,7 @@ router.post('/friend-requests/:requestId/accept', async (req: Request, res: Resp
       include: friendshipInclude,
     });
 
+    notifySocialUsers([friendship.userAId, friendship.userBId], 'friend_request_accepted');
     res.json({ friend: serializeFriendship(friendship, user.id) });
   } catch (error) {
     sendSocialError(res, error);
@@ -529,6 +387,7 @@ router.post('/friend-requests/:requestId/decline', async (req: Request, res: Res
       include: friendshipInclude,
     });
 
+    notifySocialUsers([request.userAId, request.userBId], 'friend_request_declined');
     res.json({ request: serializeFriendshipRequest(request, user.id) });
   } catch (error) {
     sendSocialError(res, error);
@@ -567,6 +426,7 @@ router.post('/friend-requests/:requestId/cancel', async (req: Request, res: Resp
       include: friendshipInclude,
     });
 
+    notifySocialUsers([request.userAId, request.userBId], 'friend_request_canceled');
     res.json({ request: serializeFriendshipRequest(request, user.id) });
   } catch (error) {
     sendSocialError(res, error);
@@ -606,6 +466,7 @@ router.delete('/friends/:friendUserId', async (req: Request, res: Response) => {
       },
     });
 
+    notifySocialUsers([user.id, friendUserId], 'friend_removed');
     res.json({ success: true });
   } catch (error) {
     sendSocialError(res, error);
@@ -638,6 +499,7 @@ router.post('/party-invites', async (req: Request, res: Response) => {
       partyId,
     });
 
+    notifySocialUsers([invite.from.userId, invite.to.userId], 'party_invite_created');
     res.status(201).json({ invite });
   } catch (error) {
     sendSocialError(res, error);
@@ -683,6 +545,7 @@ router.post('/party-invites/:inviteId/accept', async (req: Request, res: Respons
       include: partyInviteInclude,
     });
 
+    notifySocialUsers([invite.fromUserId, invite.toUserId], 'party_invite_accepted');
     res.json({ invite: serializePartyInvite(invite) });
   } catch (error) {
     sendSocialError(res, error);
@@ -721,6 +584,7 @@ router.post('/party-invites/:inviteId/decline', async (req: Request, res: Respon
       include: partyInviteInclude,
     });
 
+    notifySocialUsers([invite.fromUserId, invite.toUserId], 'party_invite_declined');
     res.json({ invite: serializePartyInvite(invite) });
   } catch (error) {
     sendSocialError(res, error);
@@ -759,6 +623,7 @@ router.post('/party-invites/:inviteId/cancel', async (req: Request, res: Respons
       include: partyInviteInclude,
     });
 
+    notifySocialUsers([invite.fromUserId, invite.toUserId], 'party_invite_canceled');
     res.json({ invite: serializePartyInvite(invite) });
   } catch (error) {
     sendSocialError(res, error);
@@ -790,6 +655,7 @@ router.post('/lobby-invites', async (req: Request, res: Response) => {
       matchMode,
     });
 
+    notifySocialUsers([invite.from.userId, invite.to.userId], 'lobby_invite_created');
     res.status(201).json({ invite });
   } catch (error) {
     sendSocialError(res, error);
@@ -835,6 +701,7 @@ router.post('/lobby-invites/:inviteId/accept', async (req: Request, res: Respons
       include: lobbyInviteInclude,
     });
 
+    notifySocialUsers([invite.fromUserId, invite.toUserId], 'lobby_invite_accepted');
     res.json({ invite: serializeLobbyInvite(invite) });
   } catch (error) {
     sendSocialError(res, error);
@@ -873,6 +740,7 @@ router.post('/lobby-invites/:inviteId/decline', async (req: Request, res: Respon
       include: lobbyInviteInclude,
     });
 
+    notifySocialUsers([invite.fromUserId, invite.toUserId], 'lobby_invite_declined');
     res.json({ invite: serializeLobbyInvite(invite) });
   } catch (error) {
     sendSocialError(res, error);
@@ -911,6 +779,7 @@ router.post('/lobby-invites/:inviteId/cancel', async (req: Request, res: Respons
       include: lobbyInviteInclude,
     });
 
+    notifySocialUsers([invite.fromUserId, invite.toUserId], 'lobby_invite_canceled');
     res.json({ invite: serializeLobbyInvite(invite) });
   } catch (error) {
     sendSocialError(res, error);

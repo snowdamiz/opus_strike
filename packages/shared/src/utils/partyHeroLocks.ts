@@ -7,6 +7,10 @@ export interface PartyHeroLockMember {
   isBot?: boolean | null;
 }
 
+export interface DuplicatePartyHeroOptions {
+  includeBots?: boolean;
+}
+
 export function getHumanPartyHeroIds(
   members: Iterable<PartyHeroLockMember>,
   exceptUserId?: string | null
@@ -29,4 +33,32 @@ export function isHumanPartyHeroAvailable(
   exceptUserId?: string | null
 ): boolean {
   return !getHumanPartyHeroIds(members, exceptUserId).has(heroId);
+}
+
+export function getDuplicatePartyHeroIds(
+  members: Iterable<PartyHeroLockMember>,
+  options: DuplicatePartyHeroOptions = {}
+): Set<HeroId> {
+  const includeBots = options.includeBots ?? true;
+  const picked = new Set<HeroId>();
+  const duplicates = new Set<HeroId>();
+
+  for (const member of members) {
+    if (!includeBots && member.isBot) continue;
+    if (!isKnownHeroId(member.heroId)) continue;
+    if (picked.has(member.heroId)) {
+      duplicates.add(member.heroId);
+      continue;
+    }
+    picked.add(member.heroId);
+  }
+
+  return duplicates;
+}
+
+export function hasDuplicatePartyHeroes(
+  members: Iterable<PartyHeroLockMember>,
+  options?: DuplicatePartyHeroOptions
+): boolean {
+  return getDuplicatePartyHeroIds(members, options).size > 0;
 }

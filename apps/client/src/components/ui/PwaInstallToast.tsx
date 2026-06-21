@@ -3,7 +3,7 @@ import { usePwaInstallPrompt } from '../../pwa';
 import { useUISounds } from '../../hooks/useUiAudio';
 
 export function PwaInstallToast() {
-  const { canInstall, hasDownloaded, install } = usePwaInstallPrompt();
+  const { canInstall, dismissInstallToast, hasDownloaded, install } = usePwaInstallPrompt();
   const { playButtonClick } = useUISounds();
   const [isInstalling, setIsInstalling] = useState(false);
 
@@ -25,6 +25,11 @@ export function PwaInstallToast() {
     } finally {
       setIsInstalling(false);
     }
+  };
+
+  const handleDismiss = () => {
+    playButtonClick();
+    dismissInstallToast();
   };
 
   return (
@@ -50,6 +55,17 @@ export function PwaInstallToast() {
         aria-label="Download Slop Heroes app"
       >
         {isInstalling ? 'Opening' : 'Download'}
+      </button>
+
+      <button
+        type="button"
+        className="pwa-install-toast-dismiss"
+        onClick={handleDismiss}
+        aria-label="Dismiss download prompt"
+      >
+        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M6 6l12 12M18 6L6 18" />
+        </svg>
       </button>
     </div>
   );

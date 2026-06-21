@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useShallow } from 'zustand/shallow';
 import {
-  BHOP_MIN_CHAIN_SPEED,
   PLAYER_RADIUS,
   POWERUP_BUFF_DURATION_MS,
   POWERUP_HEALTH_RESTORE_RATIO,
@@ -16,24 +15,18 @@ import { formatKeybind } from '../../utils/keybindings';
 import { isTutorialOfflineTrainingHeroId } from '../../utils/tutorialOfflineCombatRuntime';
 import { visualStore } from '../../store/visualStore';
 import { HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
+import {
+  MOVEMENT_CHECKPOINT_Z,
+  TUTORIAL_TASK_IDS,
+  collectMovementTutorialCompletions,
+  completeTasks,
+  createInitialTaskCompletion,
+  createTutorialMovementHistory,
+  type TutorialStageId,
+  type TutorialTaskCompletion,
+  type TutorialTaskId,
+} from './tutorialProgress';
 
-const TUTORIAL_TASK_IDS = [
-  'move_forward',
-  'run',
-  'crouch',
-  'slide',
-  'bunny_hop',
-  'movement_checkpoint',
-  'skill_use',
-  'boost_pickup',
-  'health_pickup',
-  'target_practice',
-  'flag_pickup',
-  'flag_capture',
-] as const;
-
-type TutorialTaskId = (typeof TUTORIAL_TASK_IDS)[number];
-type TutorialStageId = 'movement' | 'combat' | 'skills' | 'powerups' | 'objective';
 type TutorialIconId =
   | 'move'
   | 'run'
@@ -57,28 +50,12 @@ interface TutorialTask {
   icon: TutorialIconId;
 }
 
-type TutorialTaskCompletion = Record<TutorialTaskId, boolean>;
-
 const TUTORIAL_PICKUP_CHECK_MS = 80;
 const TUTORIAL_OBJECTIVE_CHECK_MS = 80;
 const TUTORIAL_PROGRESS_CHECK_MS = 80;
-const MOVEMENT_CHECKPOINT_Z = 5.5;
-const RED_SPAWN_EXIT_Z = -35.5;
 const LIVE_MOVEMENT_SAMPLE_MAX_AGE_MS = 250;
-const RUN_SPEED_THRESHOLD = 6;
-const BUNNY_HOP_CHAIN_WINDOW_MS = 450;
 const OBJECTIVE_PICKUP_RADIUS = 2.4;
 const OBJECTIVE_CAPTURE_RADIUS = 3;
-const TUTORIAL_GATES: Array<{ z: number; requiredTaskIds: readonly TutorialTaskId[] }> = [
-  { z: -34.5, requiredTaskIds: ['move_forward'] },
-  { z: -29, requiredTaskIds: ['run'] },
-  { z: -23.6, requiredTaskIds: ['crouch'] },
-  { z: -18.2, requiredTaskIds: ['slide'] },
-  { z: 7.6, requiredTaskIds: ['bunny_hop', 'movement_checkpoint'] },
-  { z: 12.6, requiredTaskIds: ['skill_use'] },
-  { z: 24.8, requiredTaskIds: ['boost_pickup', 'health_pickup'] },
-  { z: 35.4, requiredTaskIds: ['target_practice'] },
-];
 const FLOATING_TEXT_STYLE = {
   textShadow: '0 2px 7px rgba(0,0,0,0.95), 0 0 18px rgba(0,0,0,0.72)',
 } satisfies CSSProperties;
@@ -108,34 +85,6 @@ function hasDownedTutorialTrainingHero(players: Iterable<{ id: string; state: st
     }
   }
   return false;
-}
-
-function createInitialTaskCompletion(): TutorialTaskCompletion {
-  return Object.fromEntries(TUTORIAL_TASK_IDS.map((id) => [id, false])) as TutorialTaskCompletion;
-}
-
-function completeTasks(
-  current: TutorialTaskCompletion,
-  taskIds: readonly TutorialTaskId[]
-): TutorialTaskCompletion {
-  let changed = false;
-  const next = { ...current };
-
-  for (const taskId of taskIds) {
-    if (!next[taskId]) {
-      next[taskId] = true;
-      changed = true;
-    }
-  }
-
-  return changed ? next : current;
-}
-
-function getBlockingGate(completedTasks: TutorialTaskCompletion, z: number) {
-  return TUTORIAL_GATES.find((gate) => (
-    z > gate.z &&
-    !gate.requiredTaskIds.every((taskId) => completedTasks[taskId])
-  )) ?? null;
 }
 
 function TutorialIcon({ icon, className = 'h-8 w-8' }: { icon: TutorialIconId; className?: string }) {
@@ -361,11 +310,7 @@ export function TutorialGuide() {
   const [isSaving, setIsSaving] = useState(false);
   const manifest = useMemo(() => createTutorialVoxelMapManifest(), []);
   const completedTasksRef = useRef(completedTasks);
-  const movementHistoryRef = useRef({
-    wasGrounded: true,
-    lastLandingAt: 0,
-    fastJumpCount: 0,
-  });
+  const movementHistoryRef = useRef(createTutorialMovementHistory());
   const targetTaskActivatedAtRef = useRef(0);
   const skillTaskActivatedAtRef = useRef(0);
 
@@ -501,40 +446,15 @@ export function TutorialGuide() {
         freshViewmodelMovement?.horizontalSpeed ?? 0
       );
       const history = movementHistoryRef.current;
-      const completed: TutorialTaskId[] = [];
-
-      if (playerPosition.z >= RED_SPAWN_EXIT_Z) {
-        completed.push('move_forward');
-      }
-      if (movement.isSprinting || speed >= RUN_SPEED_THRESHOLD) completed.push('run');
-      if (movement.isCrouching) completed.push('crouch');
-      if (movement.isSliding || movement.slideTimeRemaining > 0) completed.push('slide');
-
-      const justLanded = !history.wasGrounded && movement.isGrounded;
-      if (justLanded) {
-        history.lastLandingAt = now;
-      }
-
-      const justJumped = history.wasGrounded && !movement.isGrounded && player.velocity.y > 0.5;
-      if (justJumped && speed >= Math.max(4, BHOP_MIN_CHAIN_SPEED - 0.75)) {
-        const chainedFromLanding = history.lastLandingAt > 0 && now - history.lastLandingAt <= BUNNY_HOP_CHAIN_WINDOW_MS;
-        history.fastJumpCount = chainedFromLanding ? history.fastJumpCount + 1 : Math.max(1, history.fastJumpCount);
-      }
-
-      if (
-        history.fastJumpCount >= 2 ||
-        (
-          completedTasksRef.current.slide &&
-          !movement.isGrounded &&
-          speed >= BHOP_MIN_CHAIN_SPEED
-        )
-      ) {
-        completed.push('bunny_hop');
-      }
-
-      history.wasGrounded = movement.isGrounded;
-
-      if (playerPosition.z >= MOVEMENT_CHECKPOINT_Z) completed.push('movement_checkpoint');
+      const completed = collectMovementTutorialCompletions({
+        completedTasks: completedTasksRef.current,
+        history,
+        movement,
+        nowMs: now,
+        playerZ: playerPosition.z,
+        speed,
+        verticalVelocity: player.velocity.y,
+      });
       const skillTaskReady = (
         !completedTasksRef.current.skill_use &&
         (completedTasksRef.current.movement_checkpoint || completed.includes('movement_checkpoint'))
@@ -573,17 +493,6 @@ export function TutorialGuide() {
 
       if (completed.length > 0) {
         markTasksComplete(completed);
-      }
-
-      const effectiveCompletedTasks = completed.length > 0
-        ? completeTasks(completedTasksRef.current, completed)
-        : completedTasksRef.current;
-      const blockingGate = getBlockingGate(effectiveCompletedTasks, playerPosition.z);
-      if (blockingGate) {
-        store.updateLocalPlayer({
-          position: { ...player.position, x: playerPosition.x, y: playerPosition.y, z: blockingGate.z - 0.35 },
-          velocity: { ...player.velocity, z: Math.min(0, player.velocity.z) },
-        });
       }
     }, TUTORIAL_PROGRESS_CHECK_MS);
 

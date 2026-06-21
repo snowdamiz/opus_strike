@@ -41,6 +41,14 @@ const SLIDE_COVER_START_Z = -21.5;
 const SLIDE_COVER_END_Z = -19.5;
 const SLIDE_TUNNEL_Z = (SLIDE_COVER_START_Z + SLIDE_COVER_END_Z) / 2;
 const TUTORIAL_DECORATIVE_GATE_Z = [-34.7, -29.2, -23.8, -18.4, 7.4, 12.6, 18.8, 24.8, 35.4] as const;
+const TUTORIAL_STAGE_MARKER_Z = [-36, -31, -26, -20, -12, -4, 4, 10, 16, 22, 30, 36] as const;
+const SAFETY_DECK_MIN_X = -11;
+const SAFETY_DECK_MAX_X = 11;
+const SAFETY_DECK_MIN_Z = -41;
+const SAFETY_DECK_MAX_Z = 41;
+const BOUNDARY_WALL_HEIGHT_ROWS = 14;
+const GATE_BEAM_MIN_ROW = 9;
+const GATE_BEAM_MAX_ROW = 10;
 const ORIGIN = {
   x: -(MAP_SIZE.x * VOXEL_SIZE.x) / 2,
   y: 0,
@@ -162,13 +170,57 @@ function paintDisc(blocks: Uint8Array, centerX: number, centerZ: number, radius:
   }
 }
 
+function paintTutorialSafetyDeck(blocks: Uint8Array): void {
+  fillWorldCuboid(
+    blocks,
+    SAFETY_DECK_MIN_X,
+    SAFETY_DECK_MAX_X,
+    SAFETY_DECK_MIN_Z,
+    SAFETY_DECK_MAX_Z,
+    0,
+    1,
+    'stone'
+  );
+  fillWorldCuboid(blocks, -9.75, 9.75, -39.5, 39.5, 0, 1, 'moss');
+}
+
+function paintTutorialBoundaryWalls(blocks: Uint8Array): void {
+  fillWorldCuboid(blocks, -12, -11, -42, 42, 1, BOUNDARY_WALL_HEIGHT_ROWS, 'barrier');
+  fillWorldCuboid(blocks, 11, 12, -42, 42, 1, BOUNDARY_WALL_HEIGHT_ROWS, 'barrier');
+  fillWorldCuboid(blocks, -12, 12, -42, -41, 1, BOUNDARY_WALL_HEIGHT_ROWS, 'barrier');
+  fillWorldCuboid(blocks, -12, 12, 41, 42, 1, BOUNDARY_WALL_HEIGHT_ROWS, 'barrier');
+
+  fillWorldCuboid(blocks, -12, -10.9, -42, 42, BOUNDARY_WALL_HEIGHT_ROWS - 1, BOUNDARY_WALL_HEIGHT_ROWS, 'gold');
+  fillWorldCuboid(blocks, 10.9, 12, -42, 42, BOUNDARY_WALL_HEIGHT_ROWS - 1, BOUNDARY_WALL_HEIGHT_ROWS, 'gold');
+  fillWorldCuboid(blocks, -12, 12, -42, -40.9, BOUNDARY_WALL_HEIGHT_ROWS - 1, BOUNDARY_WALL_HEIGHT_ROWS, 'gold');
+  fillWorldCuboid(blocks, -12, 12, 40.9, 42, BOUNDARY_WALL_HEIGHT_ROWS - 1, BOUNDARY_WALL_HEIGHT_ROWS, 'gold');
+
+  fillWorldCuboid(blocks, -11, -10.5, -40.5, 40.5, 1, 2, 'neon_red');
+  fillWorldCuboid(blocks, 10.5, 11, -40.5, 40.5, 1, 2, 'neon_blue');
+  fillWorldCuboid(blocks, -10.5, 10.5, -41, -40.5, 1, 2, 'neon_red');
+  fillWorldCuboid(blocks, -10.5, 10.5, 40.5, 41, 1, 2, 'neon_blue');
+}
+
+function paintTutorialFloorAccents(blocks: Uint8Array): void {
+  fillWorldCuboid(blocks, -0.25, 0.25, -39.5, 39.5, 0, 1, 'gold_panel');
+  fillWorldCuboid(blocks, -10.5, -10, -39, 39, 0, 1, 'neon_red');
+  fillWorldCuboid(blocks, 10, 10.5, -39, 39, 0, 1, 'neon_blue');
+
+  for (const markerZ of TUTORIAL_STAGE_MARKER_Z) {
+    fillWorldCuboid(blocks, -9.5, 9.5, markerZ, markerZ + 0.35, 0, 1, 'gold_ore');
+  }
+
+  paintDisc(blocks, 0, -12.5, 3.2, 'obsidian');
+  paintDisc(blocks, 0, 5.5, 3, 'flag_pad');
+  paintDisc(blocks, TUTORIAL_TARGET_STAND_POSITION.x, TUTORIAL_TARGET_STAND_POSITION.z, 3.6, 'gold_ore');
+  paintDisc(blocks, TUTORIAL_TARGET_STAND_POSITION.x, TUTORIAL_TARGET_STAND_POSITION.z, 2.25, 'gold_panel');
+}
+
 function createTutorialBlocks(): Uint8Array {
   const blocks = new Uint8Array(MAP_SIZE.x * MAP_SIZE.y * MAP_SIZE.z);
 
-  fillWorldCuboid(blocks, -12, -11, -42, 42, 1, 9, 'barrier');
-  fillWorldCuboid(blocks, 11, 12, -42, 42, 1, 9, 'barrier');
-  fillWorldCuboid(blocks, -12, 12, -42, -41, 1, 9, 'barrier');
-  fillWorldCuboid(blocks, -12, 12, 41, 42, 1, 9, 'barrier');
+  paintTutorialSafetyDeck(blocks);
+  paintTutorialBoundaryWalls(blocks);
 
   fillWorldCuboid(blocks, -9, 9, -42, -35, 0, 1, 'spawn_pad_red');
   fillWorldCuboid(blocks, -5.5, 5.5, -35, -29, 0, 1, 'metal');
@@ -223,9 +275,11 @@ function createTutorialBlocks(): Uint8Array {
   for (const gateZ of TUTORIAL_DECORATIVE_GATE_Z) {
     fillWorldCuboid(blocks, -7, -6.2, gateZ, gateZ + 0.5, 1, 5, 'gold');
     fillWorldCuboid(blocks, 6.2, 7, gateZ, gateZ + 0.5, 1, 5, 'gold');
+    fillWorldCuboid(blocks, -7, 7, gateZ, gateZ + 0.5, GATE_BEAM_MIN_ROW, GATE_BEAM_MAX_ROW, 'gold_glass');
     fillWorldCuboid(blocks, -4.5, 4.5, gateZ, gateZ + 0.5, 0, 1, 'gold_panel');
   }
 
+  paintTutorialFloorAccents(blocks);
   paintDisc(blocks, RED_FLAG.x, RED_FLAG.z, 3.1, 'flag_pad');
   paintDisc(blocks, BLUE_FLAG.x, BLUE_FLAG.z, 3.1, 'flag_pad');
   for (const spawn of RED_SPAWNS) paintDisc(blocks, spawn.x, spawn.z, 1.75, 'spawn_pad_red');
@@ -624,7 +678,7 @@ function createDesignBrief(): MapDesignBrief {
     desiredTopology: 'lane_triad',
     desiredSymmetry: 'asymmetric_balanced',
     performanceBudget: {
-      maxSolidBlocks: 18_000,
+      maxSolidBlocks: 24_000,
       maxColliders: 1_200,
       maxRenderableChunks: 64,
       maxGenerationMs: 16,

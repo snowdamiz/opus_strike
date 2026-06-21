@@ -33,6 +33,7 @@ import {
   getGameplayModeRules,
   getGameplayModeLabel,
   getHumanPartyHeroIds,
+  hasDuplicatePartyHeroes,
   getRankedSeasonLabel,
 } from '@voxel-strike/shared';
 import type {
@@ -307,6 +308,7 @@ export function MainLobby() {
     }))
   );
   const localPartyMember = getPartyMember(party, localPartyUserId);
+  const localPartyHeroId = localPartyMember?.heroId;
   const isInParty = Boolean(party);
   const isPartyLeader = isPartyLeaderForUser(party, localPartyUserId);
   const isPartyReadyToStart = arePartyMembersReady(party);
@@ -398,6 +400,12 @@ export function MainLobby() {
       autoJoinPartyAttemptRef.current = null;
     }
   }, [party?.partyId]);
+
+  useEffect(() => {
+    if (localPartyHeroId && localPartyHeroId !== featuredHero) {
+      setFeaturedHero(localPartyHeroId);
+    }
+  }, [featuredHero, localPartyHeroId]);
 
   useEffect(() => {
     if (!isAuthenticated || isNewUser || !user || party) return;
@@ -1074,6 +1082,7 @@ function PlayTab({
     : null;
   const lineupSelectedHero = lineupLocalMember?.heroId ?? featuredHero;
   const lineupLockedHeroIds = getHumanPartyHeroIds(lineupMembers, lineupLocalUserId);
+  const partyHasDuplicateHeroes = isInParty && hasDuplicatePartyHeroes(lineupMembers);
   const mainPlayLabel = isReconnectChecking
     ? 'CHECKING...'
     : canReconnect
@@ -1099,7 +1108,7 @@ function PlayTab({
     partySize > BATTLE_ROYAL_MAX_SQUAD_SIZE;
   const primaryDisabled = isLoading || isReconnectChecking || (
     isInParty && isPartyLeader && !isPartyReadyToStart
-  ) || isBattleRoyalPartyTooLarge || (
+  ) || partyHasDuplicateHeroes || isBattleRoyalPartyTooLarge || (
     selectedPlayMode === 'ranked' &&
     !requiresTutorial &&
     rankedSeason.mode === 'preseason'
@@ -1110,6 +1119,7 @@ function PlayTab({
     isInParty,
     isPartyLeader,
     isPartyReadyToStart,
+    partyHasDuplicateHeroes,
     requiresTutorial,
     selectedPlayMode,
     partySize,
@@ -1416,6 +1426,7 @@ function getPrimaryDisabledReason(input: {
   isInParty: boolean;
   isPartyLeader: boolean;
   isPartyReadyToStart: boolean;
+  partyHasDuplicateHeroes: boolean;
   requiresTutorial: boolean;
   selectedPlayMode: PlayMenuMode;
   partySize: number;
@@ -1426,6 +1437,9 @@ function getPrimaryDisabledReason(input: {
   if (input.isReconnectChecking) return 'Checking active match';
   if (input.selectedPlayMode === 'battle_royal' && input.partySize > BATTLE_ROYAL_MAX_SQUAD_SIZE) {
     return `Battle Royal squads are limited to ${BATTLE_ROYAL_MAX_SQUAD_SIZE} players`;
+  }
+  if (input.partyHasDuplicateHeroes) {
+    return 'Each party member needs a unique hero';
   }
   if (input.isInParty && input.isPartyLeader && !input.isPartyReadyToStart) {
     return 'Waiting for teammates to ready up';

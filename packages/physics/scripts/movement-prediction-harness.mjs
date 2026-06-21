@@ -19,7 +19,13 @@ import {
   MOVEMENT_BUTTON_RELOAD,
   MOVEMENT_BUTTON_SPRINT,
   MOVEMENT_PROTOCOL_VERSION,
+  PLAYER_CROUCH_HEIGHT,
+  PLAYER_HEIGHT,
+  PLAYER_RADIUS,
+  PLAYER_SLIDE_HEIGHT,
+  PLAYER_SLIDE_RADIUS,
   createProceduralTerrainLookup,
+  createTutorialVoxelMapManifest,
   createEmptyInputState,
   generateProceduralVoxelMap,
   inputStateToMovementButtons,
@@ -852,6 +858,53 @@ function runProceduralSpawnGroundedMovement() {
   assert.ok(crouchedState.position.z < spawn.z, `crouched procedural movement should still advance, got z ${crouchedState.position.z}`);
 }
 
+function runTutorialLowCoversHaveMovementClearance() {
+  const manifest = createTutorialVoxelMapManifest();
+  const lookup = createProceduralTerrainLookup(manifest);
+  const tutorialTerrain = {
+    getGroundY: (position) => lookup.getGroundY(position),
+    clampPosition: (position) => lookup.clampToPlayableMap(position),
+    getBlockAtWorld: (position) => lookup.getBlockAtWorld(position),
+    origin: lookup.origin,
+    voxelSize: lookup.voxelSize,
+    collisionRevision: 0,
+  };
+  const world = createVoxelCollisionWorld(tutorialTerrain);
+  const laneFloorY = manifest.origin.y + manifest.voxelSize.y;
+  const bodyY = laneFloorY + PLAYER_HEIGHT / 2 + 0.05;
+
+  assert.equal(
+    world.testCapsule({ x: 0, y: bodyY, z: -26 }, PLAYER_HEIGHT, PLAYER_RADIUS).length > 0,
+    true,
+    'standing capsule should not fit under tutorial crouch cover'
+  );
+  assert.equal(
+    world.testCapsule({ x: 0, y: bodyY, z: -26 }, PLAYER_CROUCH_HEIGHT, PLAYER_RADIUS).length,
+    0,
+    'crouched capsule should fit under tutorial crouch cover'
+  );
+  assert.equal(
+    world.sweepCapsule({ x: 0, y: bodyY, z: -28.3 }, { x: 0, y: 0, z: 4.1 }, PLAYER_CROUCH_HEIGHT, PLAYER_RADIUS),
+    null,
+    'crouched capsule should clear the full tutorial crouch cover'
+  );
+  assert.equal(
+    world.testCapsule({ x: 0, y: bodyY, z: -20.5 }, PLAYER_CROUCH_HEIGHT, PLAYER_RADIUS).length > 0,
+    true,
+    'crouched capsule should not fit under tutorial slide cover'
+  );
+  assert.equal(
+    world.testCapsule({ x: 0, y: bodyY, z: -20.5 }, PLAYER_SLIDE_HEIGHT, PLAYER_SLIDE_RADIUS).length,
+    0,
+    'sliding capsule should fit under tutorial slide cover'
+  );
+  assert.equal(
+    world.sweepCapsule({ x: 0, y: bodyY, z: -22.1 }, { x: 0, y: 0, z: 4 }, PLAYER_SLIDE_HEIGHT, PLAYER_SLIDE_RADIUS),
+    null,
+    'sliding capsule should clear the full tutorial slide cover'
+  );
+}
+
 function createStairMomentumTerrain() {
   const stairTerrain = {
     ...fineVoxelGrid,
@@ -1438,6 +1491,7 @@ runOverwriteDefaultsToExternalCorrection();
 runEpochBarrier();
 runVoxelWallBlocksMovement();
 runProceduralSpawnGroundedMovement();
+runTutorialLowCoversHaveMovementClearance();
 runStairClimbReconcileHasNoMicroCorrections();
 runVoxelStepUpKeepsMovementSmooth();
 runVoxelStepUpBeginsAtCapsuleEdge();

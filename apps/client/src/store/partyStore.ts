@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { PartyMemberSnapshot, PartyStateSnapshot } from '@voxel-strike/shared';
+import { hasDuplicatePartyHeroes, type PartyMemberSnapshot, type PartyStateSnapshot } from '@voxel-strike/shared';
 
 interface PartyStoreState {
   party: PartyStateSnapshot | null;
@@ -29,6 +29,7 @@ export function isPartyLeader(
 export function arePartyMembersReady(party: PartyStateSnapshot | null): boolean {
   if (!party) return false;
   if (!party.leaderUserId) return false;
+  if (hasDuplicatePartyHeroes(party.members)) return false;
   return party.members.every((member) => member.leader || member.ready);
 }
 

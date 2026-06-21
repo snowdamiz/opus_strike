@@ -4,6 +4,7 @@ import {
   getRankFromRating,
   createDefaultMatchPerspectiveSettings,
   createDefaultPartyBotFillSettings,
+  hasDuplicatePartyHeroes,
   isHumanPartyHeroAvailable,
   type PartyStateSnapshot,
 } from '@voxel-strike/shared';
@@ -83,6 +84,17 @@ assert.equal(getPartyMember(party, 'member')?.heroId, 'phantom');
 assert.equal(isPartyLeader(party, 'leader'), true);
 assert.equal(isPartyLeader(party, 'member'), false);
 assert.equal(arePartyMembersReady(party), true);
+
+const duplicateHeroParty: PartyStateSnapshot = {
+  ...party,
+  members: party.members.map((member) => ({
+    ...member,
+    heroId: 'blaze',
+    ready: member.leader ? false : true,
+  })),
+};
+assert.equal(hasDuplicatePartyHeroes(duplicateHeroParty.members), true);
+assert.equal(arePartyMembersReady(duplicateHeroParty), false);
 
 const partyWithBot: PartyStateSnapshot = {
   ...party,
