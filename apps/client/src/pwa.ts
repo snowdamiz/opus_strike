@@ -17,6 +17,7 @@ let isInstallTrackingInitialized = false;
 let pendingInstallPrompt: BeforeInstallPromptEvent | null = null;
 let hasInstalledPwa = isRunningAsInstalledPwa();
 let hasDownloadedPwa = hasRecordedPwaDownload() || hasInstalledPwa;
+let hasDismissedPwaInstallToast = false;
 const installPromptSubscribers = new Set<() => void>();
 
 export function registerServiceWorker(): void {
@@ -46,7 +47,10 @@ export function registerServiceWorker(): void {
 }
 
 export function usePwaInstallPrompt() {
-  const [{ hasDownloaded, installPrompt, isInstalled }, setInstallState] = useState(getPwaInstallState);
+  const [
+    { hasDownloaded, installPrompt, isInstalled, isInstallToastDismissed },
+    setInstallState,
+  ] = useState(getPwaInstallState);
 
   useEffect(() => {
     initializeInstallPromptTracking();
@@ -77,8 +81,14 @@ export function usePwaInstallPrompt() {
     }
   }, [installPrompt]);
 
+  const dismissInstallToast = useCallback(() => {
+    hasDismissedPwaInstallToast = true;
+    notifyInstallPromptSubscribers();
+  }, []);
+
   return {
-    canInstall: Boolean(installPrompt) && !hasDownloaded,
+    canInstall: Boolean(installPrompt) && !hasDownloaded && !isInstallToastDismissed,
+    dismissInstallToast,
     hasDownloaded,
     install,
     isInstalled,
@@ -135,6 +145,7 @@ function getPwaInstallState() {
   return {
     hasDownloaded,
     installPrompt: hasDownloaded ? null : pendingInstallPrompt,
+    isInstallToastDismissed: hasDismissedPwaInstallToast,
     isInstalled,
   };
 }

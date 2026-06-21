@@ -1,6 +1,8 @@
 export const GAMEPLAY_MODES = ['capture_the_flag', 'team_deathmatch', 'battle_royal'] as const;
+export const CUSTOM_LOBBY_GAMEPLAY_MODES = ['capture_the_flag', 'team_deathmatch'] as const;
 
 export type GameplayMode = typeof GAMEPLAY_MODES[number];
+export type CustomLobbyGameplayMode = typeof CUSTOM_LOBBY_GAMEPLAY_MODES[number];
 
 export const DEFAULT_GAMEPLAY_MODE: GameplayMode = 'capture_the_flag';
 export const BATTLE_ROYAL_GAMEPLAY_MODE: GameplayMode = 'battle_royal';
@@ -129,6 +131,10 @@ export const GAMEPLAY_MODE_RULES = {
 
 export function isGameplayMode(value: unknown): value is GameplayMode {
   return typeof value === 'string' && (GAMEPLAY_MODES as readonly string[]).includes(value);
+}
+
+export function isCustomLobbyGameplayMode(value: unknown): value is CustomLobbyGameplayMode {
+  return typeof value === 'string' && (CUSTOM_LOBBY_GAMEPLAY_MODES as readonly string[]).includes(value);
 }
 
 export function getGameplayModeRules(mode: GameplayMode = DEFAULT_GAMEPLAY_MODE): GameplayModeRules {

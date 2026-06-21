@@ -4,6 +4,7 @@ import {
   getRankFromRating,
   createDefaultMatchPerspectiveSettings,
   createDefaultPartyBotFillSettings,
+  hasDuplicatePartyHeroes,
   isHumanPartyHeroAvailable,
   type PartyStateSnapshot,
 } from '@voxel-strike/shared';
@@ -84,6 +85,21 @@ assert.equal(isPartyLeader(party, 'leader'), true);
 assert.equal(isPartyLeader(party, 'member'), false);
 assert.equal(arePartyMembersReady(party), true);
 
+const duplicateHeroParty: PartyStateSnapshot = {
+  ...party,
+  members: party.members.map((member) => ({
+    ...member,
+    heroId: 'blaze',
+    ready: member.leader ? false : true,
+  })),
+};
+assert.equal(hasDuplicatePartyHeroes(duplicateHeroParty.members), true);
+assert.equal(arePartyMembersReady(duplicateHeroParty), false);
+assert.equal(arePartyMembersReady({
+  ...duplicateHeroParty,
+  selectedMode: 'custom',
+}), true);
+
 const partyWithBot: PartyStateSnapshot = {
   ...party,
   members: [
@@ -117,10 +133,12 @@ const perspectiveByMode = createDefaultMatchPerspectiveSettings();
 perspectiveByMode.battle_royal = 'third_person';
 savePlayMenuPreferences({
   selectedPlayMode: 'battle_royal',
+  customGameplayMode: 'team_deathmatch',
   botFillEnabledByMode,
   perspectiveByMode,
 });
 assert.equal(loadPlayMenuPreferences().selectedPlayMode, 'battle_royal');
+assert.equal(loadPlayMenuPreferences().customGameplayMode, 'team_deathmatch');
 assert.equal(loadPlayMenuPreferences().botFillEnabledByMode.battle_royal, true);
 assert.equal(loadPlayMenuPreferences().perspectiveByMode.battle_royal, 'third_person');
 assert.equal(loadPlayMenuPreferences().perspectiveByMode.quick_play, 'first_person');

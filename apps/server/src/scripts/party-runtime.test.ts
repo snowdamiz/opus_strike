@@ -96,6 +96,86 @@ assert.equal(party.getMemberBySession('session-b'), null);
 assert.equal(party.getMemberBySession('session-c')?.userId, member.userId);
 assert.equal(replacement.member.ready, false);
 
+const restoredDuplicateParty = new PartyRosterRuntime('party-restored-duplicates', 4);
+restoredDuplicateParty.restorePersistentSnapshot({
+  leaderUserId: 'restore-leader',
+  members: [
+    {
+      userId: 'restore-leader',
+      displayName: 'Restore Leader',
+      heroId: 'blaze',
+      ready: false,
+      connected: false,
+      leader: true,
+      isBot: false,
+      rank: getRankFromRating(900, 0),
+    },
+    {
+      userId: 'restore-member',
+      displayName: 'Restore Member',
+      heroId: 'blaze',
+      ready: true,
+      connected: false,
+      leader: false,
+      isBot: false,
+      rank: getRankFromRating(950, 0),
+    },
+  ],
+});
+const restoredDuplicateHeroes = restoredDuplicateParty.snapshot().members.map((snapshot) => snapshot.heroId);
+assert.equal(new Set(restoredDuplicateHeroes).size, restoredDuplicateHeroes.length);
+assert.notEqual(restoredDuplicateParty.getMember('restore-member')?.heroId, 'blaze');
+assert.equal(restoredDuplicateParty.getMember('restore-member')?.ready, false);
+
+const exhaustedHeroParty = new PartyRosterRuntime('party-exhausted-heroes', 5);
+addMember(exhaustedHeroParty, 'exhausted-a', 'session-exhausted-a', 900, 'phantom');
+addMember(exhaustedHeroParty, 'exhausted-b', 'session-exhausted-b', 910, 'hookshot');
+addMember(exhaustedHeroParty, 'exhausted-c', 'session-exhausted-c', 920, 'blaze');
+addMember(exhaustedHeroParty, 'exhausted-d', 'session-exhausted-d', 930, 'chronos');
+const exhaustedDuplicate = addMember(exhaustedHeroParty, 'exhausted-e', 'session-exhausted-e', 940, 'blaze');
+assert.equal(exhaustedDuplicate.heroId, 'blaze');
+assert.throws(() => exhaustedHeroParty.setReady(exhaustedDuplicate.userId, true), /unique hero/);
+
+const oversizedQuickParty = new PartyRosterRuntime('party-quick-limit');
+const oversizedQuickLeader = addMember(oversizedQuickParty, 'quick-leader', 'session-quick-leader', 900, 'blaze');
+for (let index = 0; index < 4; index += 1) {
+  const member = addMember(
+    oversizedQuickParty,
+    `quick-member-${index}`,
+    `session-quick-member-${index}`,
+    910 + index,
+    ['phantom', 'hookshot', 'chronos', 'blaze'][index] as HeroId
+  );
+  if (index < 3) {
+    oversizedQuickParty.setReady(member.userId, true);
+  }
+}
+assert.deepEqual(
+  oversizedQuickParty.validateStart(),
+  { ok: false, message: 'Capture the Flag parties are limited to 4 players' }
+);
+
+const customParty = new PartyRosterRuntime('party-custom');
+const customLeader = addMember(customParty, 'custom-leader', 'session-custom-leader', 900, 'blaze');
+customParty.setMode(customLeader.userId, 'custom', 'team_deathmatch');
+for (let index = 0; index < PARTY_MAX_MEMBERS - 1; index += 1) {
+  const member = addMember(
+    customParty,
+    `custom-member-${index}`,
+    `session-custom-member-${index}`,
+    910 + index,
+    'blaze'
+  );
+  customParty.setReady(member.userId, true);
+}
+assert.equal(customParty.size, PARTY_MAX_MEMBERS);
+assert.equal(new Set(customParty.getMembers().map((candidate) => candidate.heroId)).size < customParty.size, true);
+assert.equal(customParty.validateStart().ok, true);
+assert.throws(
+  () => customParty.setMode(customLeader.userId, 'custom', 'battle_royal'),
+  /Custom lobbies support Capture the Flag or Team Deathmatch/
+);
+
 const botParty = new PartyRosterRuntime('party-bots', 4);
 const botLeader = addMember(botParty, 'bot-leader', 'session-bot-leader', 900);
 const bot = botParty.addBot(botLeader.userId, {

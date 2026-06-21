@@ -1,9 +1,21 @@
 import assert from 'node:assert/strict';
-import { getGameplayModeRules } from '@voxel-strike/shared';
+import { assignTeamByCapacity, getGameplayModeRules } from '@voxel-strike/shared';
 import {
   getMatchmakingBotFillPriorityTeams,
   getMatchmakingBotFillRequiredParticipants,
+  shouldCancelExpectedPartyMatchmakingQueue,
 } from '../rooms/LobbyRoom';
+
+{
+  const requiredParticipants = getMatchmakingBotFillRequiredParticipants({
+    gameplayMode: 'team_deathmatch',
+    rules: getGameplayModeRules('team_deathmatch'),
+    expectedPartyParticipantCount: 1,
+    largestTeamCount: 1,
+  });
+
+  assert.equal(requiredParticipants, 2);
+}
 
 {
   const requiredParticipants = getMatchmakingBotFillRequiredParticipants({
@@ -81,6 +93,68 @@ assert.deepEqual(
     missingParticipants: 3,
   }),
   []
+);
+
+{
+  const rules = getGameplayModeRules('team_deathmatch');
+  const players = new Map([
+    ['leader', { team: 'red' }],
+    ['member', { team: 'red' }],
+  ]);
+  const firstBotTeam = assignTeamByCapacity({
+    players: players.values(),
+    teamIds: ['red', 'blue'],
+    maxTeamSize: rules.maxTeamSize,
+  });
+  players.set('bot-a', { team: firstBotTeam });
+  const secondBotTeam = assignTeamByCapacity({
+    players: players.values(),
+    teamIds: ['red', 'blue'],
+    maxTeamSize: rules.maxTeamSize,
+  });
+
+  assert.equal(firstBotTeam, 'blue');
+  assert.equal(secondBotTeam, 'blue');
+}
+
+assert.equal(
+  shouldCancelExpectedPartyMatchmakingQueue({
+    status: 'matchmaking',
+    leavingUserId: 'leader',
+    expectedPartyLeaderUserId: 'leader',
+    expectedHumanUserCount: 2,
+  }),
+  true
+);
+
+assert.equal(
+  shouldCancelExpectedPartyMatchmakingQueue({
+    status: 'matchmaking',
+    leavingUserId: 'member',
+    expectedPartyLeaderUserId: 'leader',
+    expectedHumanUserCount: 2,
+  }),
+  false
+);
+
+assert.equal(
+  shouldCancelExpectedPartyMatchmakingQueue({
+    status: 'matchmaking',
+    leavingUserId: 'leader',
+    expectedPartyLeaderUserId: 'leader',
+    expectedHumanUserCount: 1,
+  }),
+  false
+);
+
+assert.equal(
+  shouldCancelExpectedPartyMatchmakingQueue({
+    status: 'map_vote',
+    leavingUserId: 'leader',
+    expectedPartyLeaderUserId: 'leader',
+    expectedHumanUserCount: 2,
+  }),
+  false
 );
 
 console.log('lobby matchmaking bot fill tests passed');

@@ -718,17 +718,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setConnected(true);
       setLoading(false);
 
-      if (options.preservePartyRoom && partyRoomRef.current === options.preservePartyRoom) {
-        clearActivePartySession(options.preservePartyRoom.id);
-        try {
-          options.preservePartyRoom.leave(false);
-        } catch (error) {
-          loggers.network.debug('error leaving launched party room', error);
-        }
-        partyRoomRef.current = null;
-        usePartyStore.getState().clearParty();
-      }
-
       loggers.network.info('joined party launch lobby', launch.lobbyId);
     } catch (error) {
       loggers.network.error('failed to join party launch lobby', error);

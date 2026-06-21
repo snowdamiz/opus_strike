@@ -26,9 +26,17 @@ export const partyInviteInclude = {
   toUser: { select: socialUserSelect },
 } satisfies Prisma.PartyInviteInclude;
 
+export const friendshipInclude = {
+  userA: { select: socialUserSelect },
+  userB: { select: socialUserSelect },
+  requestedBy: { select: socialUserSelect },
+} satisfies Prisma.FriendshipInclude;
+
 export type SocialUserRecord = Prisma.UserGetPayload<{ select: typeof socialUserSelect }>;
 export type LobbyInviteWithUsers = Prisma.LobbyInviteGetPayload<{ include: typeof lobbyInviteInclude }>;
 export type PartyInviteWithUsers = Prisma.PartyInviteGetPayload<{ include: typeof partyInviteInclude }>;
+export type FriendshipWithUsers = Prisma.FriendshipGetPayload<{ include: typeof friendshipInclude }>;
+export type RelationshipState = 'none' | 'friend' | 'pending_incoming' | 'pending_outgoing';
 
 export interface LobbyInvitePayload {
   inviteId: string;
@@ -52,6 +60,35 @@ export interface PartyInvitePayload {
   respondedAt: string | null;
   from: ReturnType<typeof serializeSocialUser>;
   to: ReturnType<typeof serializeSocialUser>;
+}
+
+export interface FriendRequestPayload {
+  requestId: string;
+  status: string;
+  direction: 'incoming' | 'outgoing';
+  requestedAt: string;
+  respondedAt: string | null;
+  user: ReturnType<typeof serializeSocialUser>;
+}
+
+export interface SocialFriendPayload {
+  friendshipId: string;
+  friendedAt: string;
+  user: ReturnType<typeof serializeSocialUser>;
+}
+
+export interface SearchResultPayload {
+  user: ReturnType<typeof serializeSocialUser>;
+  relationship: RelationshipState;
+}
+
+export interface SocialStatePayload {
+  friends: SocialFriendPayload[];
+  incomingRequests: FriendRequestPayload[];
+  outgoingRequests: FriendRequestPayload[];
+  lobbyInvites: LobbyInvitePayload[];
+  partyInvites: PartyInvitePayload[];
+  discordPlayers: SearchResultPayload[];
 }
 
 export class SocialServiceError extends Error {
@@ -79,6 +116,37 @@ export function serializeSocialUser(user: SocialUserRecord) {
     name: user.name,
     rank: serializeRankPayload(user).current,
     lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
+  };
+}
+
+export function otherFriendshipUser(friendship: FriendshipWithUsers, currentUserId: string): SocialUserRecord {
+  return friendship.userAId === currentUserId ? friendship.userB : friendship.userA;
+}
+
+export function serializeFriendshipRequest(
+  friendship: FriendshipWithUsers,
+  currentUserId: string
+): FriendRequestPayload {
+  const requestedByCurrentUser = friendship.requestedByUserId === currentUserId;
+
+  return {
+    requestId: friendship.id,
+    status: friendship.status,
+    direction: requestedByCurrentUser ? 'outgoing' : 'incoming',
+    requestedAt: friendship.createdAt.toISOString(),
+    respondedAt: friendship.respondedAt?.toISOString() ?? null,
+    user: serializeSocialUser(otherFriendshipUser(friendship, currentUserId)),
+  };
+}
+
+export function serializeFriendship(
+  friendship: FriendshipWithUsers,
+  currentUserId: string
+): SocialFriendPayload {
+  return {
+    friendshipId: friendship.id,
+    friendedAt: friendship.respondedAt?.toISOString() ?? friendship.updatedAt.toISOString(),
+    user: serializeSocialUser(otherFriendshipUser(friendship, currentUserId)),
   };
 }
 
@@ -134,6 +202,134 @@ export async function expireOldPartyInvites(now = new Date()): Promise<void> {
       respondedAt: now,
     },
   });
+}
+
+export async function getRelationshipsForCandidates(
+  currentUserId: string,
+  candidateUserIds: string[]
+): Promise<Map<string, RelationshipState>> {
+  if (candidateUserIds.length === 0) return new Map();
+
+  const friendships = await prisma.friendship.findMany({
+    where: {
+      OR: [
+        { userAId: currentUserId, userBId: { in: candidateUserIds } },
+        { userBId: currentUserId, userAId: { in: candidateUserIds } },
+      ],
+    },
+    select: {
+      userAId: true,
+      userBId: true,
+      requestedByUserId: true,
+      status: true,
+    },
+  });
+
+  const relationshipByUserId = new Map<string, RelationshipState>();
+  for (const friendship of friendships) {
+    const otherUserId = friendship.userAId === currentUserId ? friendship.userBId : friendship.userAId;
+    if (friendship.status === 'accepted') {
+      relationshipByUserId.set(otherUserId, 'friend');
+    } else if (friendship.status === 'pending' && friendship.requestedByUserId === currentUserId) {
+      relationshipByUserId.set(otherUserId, 'pending_outgoing');
+    } else if (friendship.status === 'pending') {
+      relationshipByUserId.set(otherUserId, 'pending_incoming');
+    } else {
+      relationshipByUserId.set(otherUserId, 'none');
+    }
+  }
+
+  return relationshipByUserId;
+}
+
+export async function loadSocialStateForUser(userId: string): Promise<SocialStatePayload> {
+  await Promise.all([
+    expireOldLobbyInvites(),
+    expireOldPartyInvites(),
+  ]);
+
+  const now = new Date();
+  const [friendships, incomingRequests, outgoingRequests, lobbyInvites, partyInvites, discordPlayers] = await Promise.all([
+    prisma.friendship.findMany({
+      where: {
+        status: 'accepted',
+        OR: [{ userAId: userId }, { userBId: userId }],
+      },
+      include: friendshipInclude,
+      orderBy: { updatedAt: 'desc' },
+    }),
+    prisma.friendship.findMany({
+      where: {
+        status: 'pending',
+        requestedByUserId: { not: userId },
+        OR: [{ userAId: userId }, { userBId: userId }],
+      },
+      include: friendshipInclude,
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.friendship.findMany({
+      where: {
+        status: 'pending',
+        requestedByUserId: userId,
+      },
+      include: friendshipInclude,
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.lobbyInvite.findMany({
+      where: {
+        toUserId: userId,
+        status: 'pending',
+        expiresAt: { gt: now },
+      },
+      include: lobbyInviteInclude,
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    }),
+    prisma.partyInvite.findMany({
+      where: {
+        toUserId: userId,
+        status: 'pending',
+        expiresAt: { gt: now },
+      },
+      include: partyInviteInclude,
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    }),
+    prisma.user.findMany({
+      where: {
+        id: { not: userId },
+        authAccounts: {
+          some: { provider: 'discord' },
+        },
+      },
+      select: socialUserSelect,
+      orderBy: [
+        { lastLoginAt: 'desc' },
+        { rankedGames: 'desc' },
+        { totalScore: 'desc' },
+      ],
+      take: 12,
+    }),
+  ]);
+
+  const discordRelationships = await getRelationshipsForCandidates(
+    userId,
+    discordPlayers.map((candidate) => candidate.id)
+  );
+
+  return {
+    friends: friendships.map((friendship) => serializeFriendship(friendship, userId)),
+    incomingRequests: incomingRequests.map((request) => serializeFriendshipRequest(request, userId)),
+    outgoingRequests: outgoingRequests.map((request) => serializeFriendshipRequest(request, userId)),
+    lobbyInvites: lobbyInvites.map(serializeLobbyInvite),
+    partyInvites: partyInvites.map(serializePartyInvite),
+    discordPlayers: discordPlayers
+      .map((candidate) => ({
+        user: serializeSocialUser(candidate),
+        relationship: discordRelationships.get(candidate.id) ?? 'none',
+      }))
+      .filter((candidate) => candidate.relationship !== 'friend'),
+  };
 }
 
 export async function ensureAcceptedFriendship(userId: string, otherUserId: string): Promise<void> {

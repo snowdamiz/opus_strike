@@ -166,6 +166,8 @@ const EMPTY_MOVEMENT_CONTACTS: MovementContact[] = [];
 const EMPTY_MOVEMENT_AABBS: readonly MovementAabb[] = [];
 const SKIN_WIDTH_EXPANSION: Vec3 = { x: SKIN_WIDTH, y: SKIN_WIDTH, z: SKIN_WIDTH };
 const SLIDE_EXIT_PROBE_DISTANCES = [0, 0.08, 0.16, 0.24] as const;
+const LOW_POSTURE_GATE_PROBE_DISTANCES = [PLAYER_RADIUS, PLAYER_RADIUS + 0.25, PLAYER_RADIUS + 0.55] as const;
+const LOW_POSTURE_CLEARANCE_MARGIN = 0.05;
 
 type SlideExitPosture = 'stand' | 'crouch';
 
@@ -517,10 +519,17 @@ function collectVoxelAabbs(
           sample.z = origin.z + (z + 0.5) * voxelSize.z;
           const block = terrain.getBlockAtWorld(sample);
           solid = isCollisionBlock(block);
+          const blockTopY = origin.y + (y + 1) * voxelSize.y;
+
+          if (solid && terrain.getGroundY && getBlockDefinition(block).walkable) {
+            if (blockTopY <= bounds.min.y + SKIN_WIDTH + EPSILON) {
+              solid = false;
+            }
+          }
 
           if (solid && terrain.getGroundY && getBlockDefinition(block).walkable) {
             groundProbe.x = sample.x;
-            groundProbe.y = bounds.max.y + STEP_HEIGHT + SKIN_WIDTH;
+            groundProbe.y = bounds.min.y + STEP_HEIGHT + SKIN_WIDTH;
             groundProbe.z = sample.z;
             const groundY = terrain.getGroundY(groundProbe);
             const neighborDistance = Math.max(PLAYER_RADIUS, voxelSize.x, voxelSize.z);
@@ -543,7 +552,6 @@ function collectVoxelAabbs(
             const localRise = groundY !== null && lowestNeighborGroundY !== null
               ? groundY - lowestNeighborGroundY
               : Infinity;
-            const blockTopY = origin.y + (y + 1) * voxelSize.y;
             const climbableGround = groundY !== null &&
               localRise <= STEP_HEIGHT + SKIN_WIDTH &&
               groundY <= bounds.min.y + STEP_HEIGHT + SKIN_WIDTH &&
@@ -813,7 +821,7 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
     if (!terrain.getGroundY) return null;
 
     const sampleRadius = radius * 0.72;
-    const probeY = position.y + STEP_HEIGHT + 0.25;
+    const probeY = feetY(position) + STEP_HEIGHT + 0.25;
     let bestGroundY: number | null = null;
 
     for (let index = 0; index < 5; index++) {
@@ -972,6 +980,40 @@ function resolveSlideExitPosture(
   }
 
   return null;
+}
+
+function shouldPreferCrouchForLowClearance(
+  world: MovementCollisionWorld,
+  position: Vec3,
+  movementDirection: Vec3
+): boolean {
+  const direction = normalizeHorizontal(movementDirection);
+  if (length(direction) <= EPSILON) return false;
+
+  let hasCrouchClearance = false;
+
+  for (const probeDistance of LOW_POSTURE_GATE_PROBE_DISTANCES) {
+    const candidate = add(position, scale(direction, probeDistance));
+    if (canOccupy(world, candidate, PLAYER_HEIGHT, PLAYER_RADIUS)) continue;
+
+    const crouchClears = canOccupy(
+      world,
+      candidate,
+      PLAYER_CROUCH_HEIGHT + LOW_POSTURE_CLEARANCE_MARGIN,
+      PLAYER_RADIUS
+    );
+    const slideClears = canOccupy(
+      world,
+      candidate,
+      PLAYER_SLIDE_HEIGHT + LOW_POSTURE_CLEARANCE_MARGIN,
+      PLAYER_SLIDE_RADIUS
+    );
+
+    if (!crouchClears && slideClears) return false;
+    if (crouchClears) hasCrouchClearance = true;
+  }
+
+  return hasCrouchClearance;
 }
 
 function tryStepUp(
@@ -1235,7 +1277,7 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
     !movement.isSliding &&
     movement.slideTimeRemaining <= 0;
 
-  if (canStartSlide) {
+  if (canStartSlide && !shouldPreferCrouchForLowClearance(world, position, wishDir)) {
     movement.isSliding = true;
     movement.isCrouching = false;
     movement.isSprinting = false;

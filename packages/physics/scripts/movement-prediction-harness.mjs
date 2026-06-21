@@ -19,7 +19,14 @@ import {
   MOVEMENT_BUTTON_RELOAD,
   MOVEMENT_BUTTON_SPRINT,
   MOVEMENT_PROTOCOL_VERSION,
+  PLAYER_CROUCH_HEIGHT,
+  PLAYER_HEIGHT,
+  PLAYER_RADIUS,
+  PLAYER_SLIDE_HEIGHT,
+  PLAYER_SLIDE_RADIUS,
+  SPRINT_MULTIPLIER,
   createProceduralTerrainLookup,
+  createTutorialVoxelMapManifest,
   createEmptyInputState,
   generateProceduralVoxelMap,
   inputStateToMovementButtons,
@@ -852,6 +859,188 @@ function runProceduralSpawnGroundedMovement() {
   assert.ok(crouchedState.position.z < spawn.z, `crouched procedural movement should still advance, got z ${crouchedState.position.z}`);
 }
 
+function createTutorialMovementTerrain() {
+  const manifest = createTutorialVoxelMapManifest();
+  const lookup = createProceduralTerrainLookup(manifest);
+  const tutorialTerrain = {
+    getGroundY: (position) => lookup.getGroundY(position),
+    clampPosition: (position) => lookup.clampToPlayableMap(position),
+    getBlockAtWorld: (position) => lookup.getBlockAtWorld(position),
+    origin: lookup.origin,
+    voxelSize: lookup.voxelSize,
+    collisionRevision: 0,
+  };
+  const world = createVoxelCollisionWorld(tutorialTerrain);
+  const laneFloorY = manifest.origin.y + manifest.voxelSize.y;
+
+  return {
+    terrain: tutorialTerrain,
+    world,
+    groundedBodyY: laneFloorY + PLAYER_HEIGHT / 2,
+    clearanceBodyY: laneFloorY + PLAYER_HEIGHT / 2 + 0.05,
+  };
+}
+
+function runTutorialLowCoversHaveMovementClearance() {
+  const { world, groundedBodyY, clearanceBodyY } = createTutorialMovementTerrain();
+
+  assert.equal(
+    world.testCapsule({ x: 0, y: clearanceBodyY, z: -26 }, PLAYER_HEIGHT, PLAYER_RADIUS).length > 0,
+    true,
+    'standing capsule should not fit under tutorial crouch cover'
+  );
+  assert.equal(
+    world.testCapsule({ x: 0, y: clearanceBodyY, z: -26 }, PLAYER_CROUCH_HEIGHT, PLAYER_RADIUS).length,
+    0,
+    'crouched capsule should fit under tutorial crouch cover'
+  );
+  assert.equal(
+    world.sweepCapsule({ x: 0, y: clearanceBodyY, z: -28.3 }, { x: 0, y: 0, z: 4.1 }, PLAYER_CROUCH_HEIGHT, PLAYER_RADIUS),
+    null,
+    'crouched capsule should clear the full tutorial crouch cover'
+  );
+  assert.equal(
+    world.testCapsule({ x: 0, y: clearanceBodyY, z: -20.5 }, PLAYER_CROUCH_HEIGHT, PLAYER_RADIUS).length > 0,
+    true,
+    'crouched capsule should not fit under tutorial slide cover'
+  );
+  assert.equal(
+    world.testCapsule({ x: 0, y: groundedBodyY, z: -20.5 }, PLAYER_CROUCH_HEIGHT, PLAYER_RADIUS).length > 0,
+    true,
+    'grounded crouched capsule should not fit under tutorial slide cover'
+  );
+  assert.equal(
+    world.testCapsule({ x: 0, y: clearanceBodyY, z: -20.5 }, PLAYER_SLIDE_HEIGHT, PLAYER_SLIDE_RADIUS).length,
+    0,
+    'sliding capsule should fit under tutorial slide cover'
+  );
+  assert.equal(
+    world.sweepCapsule({ x: 0, y: clearanceBodyY, z: -22.1 }, { x: 0, y: 0, z: 4 }, PLAYER_SLIDE_HEIGHT, PLAYER_SLIDE_RADIUS),
+    null,
+    'sliding capsule should clear the full tutorial slide cover'
+  );
+  assert.equal(
+    world.sweepCapsule({ x: 0, y: groundedBodyY, z: -22.1 }, { x: 0, y: 0, z: 4 }, PLAYER_SLIDE_HEIGHT, PLAYER_SLIDE_RADIUS),
+    null,
+    'grounded sliding capsule should not catch on the tutorial slide floor lip'
+  );
+}
+
+function runTutorialCrouchGateDoesNotConsumeSlide() {
+  const { terrain: tutorialTerrain, groundedBodyY } = createTutorialMovementTerrain();
+  const heroStats = HERO_DEFINITIONS.phantom.stats;
+  let state = {
+    position: { x: 0, y: groundedBodyY, z: -34 },
+    velocity: { x: 0, y: 0, z: 0 },
+    movement: createMovementState(),
+  };
+  let previousCrouch = false;
+  let sawCrouch = false;
+  let sawSlide = false;
+  let maxSlideCooldown = 0;
+
+  for (let step = 0; step < 360; step++) {
+    const inCrouchGate = state.position.z > -28.7 && state.position.z < -23.9;
+    const input = {
+      ...createEmptyInputState(),
+      moveForward: true,
+      sprint: true,
+      crouch: inCrouchGate,
+      crouchPressed: inCrouchGate && !previousCrouch,
+    };
+    previousCrouch = inCrouchGate;
+
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats,
+      input,
+      lookYaw: Math.PI,
+      deltaTime: 1 / 60,
+      terrain: tutorialTerrain,
+    });
+
+    if (state.position.z > -28.4 && state.position.z < -24.1) {
+      sawCrouch ||= state.movement.isCrouching;
+      sawSlide ||= state.movement.isSliding;
+      maxSlideCooldown = Math.max(maxSlideCooldown, state.movement.slideTimeRemaining);
+    }
+  }
+
+  assert.equal(sawCrouch, true, 'tutorial crouch gate should use crouch posture');
+  assert.equal(sawSlide, false, 'tutorial crouch gate should not start or consume slide');
+  assert.equal(maxSlideCooldown, 0, 'tutorial crouch gate should not trigger slide cooldown');
+  assert.ok(state.position.z > -23.9, `crouch gate should be passable without slide, got z ${state.position.z}`);
+}
+
+function runTutorialSlideTunnelAllowsGroundedSlide() {
+  const { terrain: tutorialTerrain, groundedBodyY } = createTutorialMovementTerrain();
+  const heroStats = HERO_DEFINITIONS.phantom.stats;
+  let state = {
+    position: { x: 0, y: groundedBodyY, z: -22.25 },
+    velocity: { x: 0, y: 0, z: heroStats.moveSpeed * SPRINT_MULTIPLIER },
+    movement: createMovementState(),
+  };
+  let sawSlide = false;
+
+  for (let step = 0; step < 90; step++) {
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats,
+      input: {
+        ...createEmptyInputState(),
+        moveForward: true,
+        sprint: true,
+        crouch: true,
+        crouchPressed: step === 0,
+      },
+      lookYaw: Math.PI,
+      deltaTime: 1 / 60,
+      terrain: tutorialTerrain,
+    });
+    sawSlide ||= state.movement.isSliding;
+  }
+
+  assert.equal(sawSlide, true, 'tutorial slide tunnel should allow a deliberate slide');
+  assert.ok(state.position.z > -19, `grounded slide should clear tutorial slide tunnel, got z ${state.position.z}`);
+}
+
+function runTutorialSlideTunnelRejectsHeldCrouchWalk() {
+  const { terrain: tutorialTerrain, groundedBodyY } = createTutorialMovementTerrain();
+  const heroStats = HERO_DEFINITIONS.phantom.stats;
+  let state = {
+    position: { x: 0, y: groundedBodyY, z: -22.25 },
+    velocity: { x: 0, y: 0, z: heroStats.moveSpeed * SPRINT_MULTIPLIER },
+    movement: createMovementState(),
+  };
+  state.movement.isCrouching = true;
+
+  for (let step = 0; step < 120; step++) {
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats,
+      input: {
+        ...createEmptyInputState(),
+        moveForward: true,
+        sprint: true,
+        crouch: true,
+        crouchPressed: false,
+      },
+      lookYaw: Math.PI,
+      deltaTime: 1 / 60,
+      terrain: tutorialTerrain,
+    });
+  }
+
+  assert.equal(state.movement.isSliding, false, 'held crouch walk should not silently become a slide');
+  assert.ok(state.position.z < -21.35, `held crouch should not clip into tutorial slide cover, got z ${state.position.z}`);
+}
+
 function createStairMomentumTerrain() {
   const stairTerrain = {
     ...fineVoxelGrid,
@@ -1438,6 +1627,10 @@ runOverwriteDefaultsToExternalCorrection();
 runEpochBarrier();
 runVoxelWallBlocksMovement();
 runProceduralSpawnGroundedMovement();
+runTutorialLowCoversHaveMovementClearance();
+runTutorialCrouchGateDoesNotConsumeSlide();
+runTutorialSlideTunnelAllowsGroundedSlide();
+runTutorialSlideTunnelRejectsHeldCrouchWalk();
 runStairClimbReconcileHasNoMicroCorrections();
 runVoxelStepUpKeepsMovementSmooth();
 runVoxelStepUpBeginsAtCapsuleEdge();

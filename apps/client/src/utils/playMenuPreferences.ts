@@ -1,9 +1,12 @@
 import {
+  CUSTOM_LOBBY_GAMEPLAY_MODES,
   GAMEPLAY_MODES,
   MATCH_PERSPECTIVE_SETTING_MODES,
   createDefaultMatchPerspectiveSettings,
   createDefaultPartyBotFillSettings,
+  isCustomLobbyGameplayMode,
   isMatchPerspective,
+  type CustomLobbyGameplayMode,
   type GameplayMode,
   type MatchPerspectiveSettingMode,
   type MatchPerspectiveSettings,
@@ -11,15 +14,17 @@ import {
   type PartyMode,
 } from '@voxel-strike/shared';
 
-export type PlayMenuMode = Exclude<PartyMode, 'custom'> | 'team_deathmatch' | 'battle_royal';
+export type PlayMenuMode = PartyMode | 'team_deathmatch' | 'battle_royal';
 
 export interface PlayMenuPreferences {
   selectedPlayMode: PlayMenuMode;
+  customGameplayMode: CustomLobbyGameplayMode;
   botFillEnabledByMode: PartyBotFillSettings;
   perspectiveByMode: MatchPerspectiveSettings;
 }
 
-export const PLAY_MODE_OPTIONS: PlayMenuMode[] = ['ranked', 'quick_play', 'team_deathmatch', 'battle_royal', 'practice'];
+export const DEFAULT_CUSTOM_GAMEPLAY_MODE: CustomLobbyGameplayMode = CUSTOM_LOBBY_GAMEPLAY_MODES[0];
+export const PLAY_MODE_OPTIONS: PlayMenuMode[] = ['ranked', 'quick_play', 'team_deathmatch', 'battle_royal', 'custom', 'practice'];
 export const PLAY_MENU_PREFERENCES_STORAGE_KEY = 'voxel_strike_play_menu_preferences:v1';
 
 export function isPlayMenuMode(value: unknown): value is PlayMenuMode {
@@ -37,6 +42,10 @@ export function sanitizeBotFillSettings(value: unknown): PartyBotFillSettings {
   return next;
 }
 
+export function sanitizeCustomGameplayMode(value: unknown): CustomLobbyGameplayMode {
+  return isCustomLobbyGameplayMode(value) ? value : DEFAULT_CUSTOM_GAMEPLAY_MODE;
+}
+
 export function sanitizeMatchPerspectiveSettings(value: unknown): MatchPerspectiveSettings {
   const next = createDefaultMatchPerspectiveSettings();
   if (!value || typeof value !== 'object') return next;
@@ -51,6 +60,7 @@ export function sanitizeMatchPerspectiveSettings(value: unknown): MatchPerspecti
 export function createDefaultPlayMenuPreferences(): PlayMenuPreferences {
   return {
     selectedPlayMode: 'quick_play',
+    customGameplayMode: DEFAULT_CUSTOM_GAMEPLAY_MODE,
     botFillEnabledByMode: createDefaultPartyBotFillSettings(),
     perspectiveByMode: createDefaultMatchPerspectiveSettings(),
   };
@@ -64,11 +74,13 @@ export function sanitizePlayMenuPreferences(value: unknown): PlayMenuPreferences
   const selectedPlayMode = isPlayMenuMode(raw.selectedPlayMode)
     ? raw.selectedPlayMode
     : defaults.selectedPlayMode;
+  const customGameplayMode = sanitizeCustomGameplayMode(raw.customGameplayMode);
   const botFillEnabledByMode = sanitizeBotFillSettings(raw.botFillEnabledByMode);
   const perspectiveByMode = sanitizeMatchPerspectiveSettings(raw.perspectiveByMode);
 
   return {
     selectedPlayMode,
+    customGameplayMode,
     botFillEnabledByMode,
     perspectiveByMode,
   };

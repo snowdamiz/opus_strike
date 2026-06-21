@@ -8,6 +8,7 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { GameRoom } from './rooms/GameRoom';
 import { LobbyRoom } from './rooms/LobbyRoom';
 import { PartyRoom } from './rooms/PartyRoom';
+import { SocialRoom } from './rooms/SocialRoom';
 import authRoutes from './auth/routes';
 import createAdminRouter from './admin/routes';
 import matchmakingRoutes from './matchmaking/routes';
@@ -107,6 +108,7 @@ gameServer.define('game_room', GameRoom);
 gameServer
   .define('party_room', PartyRoom)
   .enableRealtimeListing();
+gameServer.define('social_room', SocialRoom);
 gameServer
   .define('lobby_room', LobbyRoom)
   .filterBy(['isPrivate', 'matchmakingMode', 'matchMode', 'rankBandId', 'gameplayMode'])

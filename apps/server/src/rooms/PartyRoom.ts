@@ -425,13 +425,17 @@ export class PartyRoom extends Room {
   private handleSetReady(client: Client, ready: boolean): void {
     const member = this.memberForClient(client);
     if (!member) return;
-    const updated = this.party.setReady(member.userId, ready);
-    if (!updated) return;
-    this.broadcast('partyMemberUpdated', {
-      userId: updated.userId,
-      ready: updated.ready,
-    });
-    this.broadcastPartyState();
+    try {
+      const updated = this.party.setReady(member.userId, ready);
+      if (!updated) return;
+      this.broadcast('partyMemberUpdated', {
+        userId: updated.userId,
+        ready: updated.ready,
+      });
+      this.broadcastPartyState();
+    } catch (error) {
+      client.send('error', { message: error instanceof Error ? error.message : 'Failed to set party ready' });
+    }
   }
 
   private handleSetMode(client: Client, mode: PartyMode, gameplayMode?: GameplayMode): void {

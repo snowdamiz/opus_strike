@@ -206,6 +206,30 @@ export function haveAllHumanPlayersVoted(input: {
   return hasHumanPlayer;
 }
 
+export function addMissingBotMapVotes(input: {
+  players: Iterable<MapVotePlayer>;
+  options: readonly MapVoteOption[];
+  votes: Map<string, string>;
+  pickOptionIndex?: (player: MapVotePlayer, optionCount: number) => number;
+}): number {
+  if (input.options.length === 0) return 0;
+
+  let added = 0;
+  for (const player of input.players) {
+    if (!player.isBot || input.votes.has(player.id)) continue;
+    const rawIndex = input.pickOptionIndex
+      ? input.pickOptionIndex(player, input.options.length)
+      : Math.floor(Math.random() * input.options.length);
+    const index = ((Math.floor(rawIndex) % input.options.length) + input.options.length) % input.options.length;
+    const option = input.options[index] ?? input.options[0];
+    if (!option) continue;
+    input.votes.set(player.id, option.id);
+    added++;
+  }
+
+  return added;
+}
+
 export function getWinningMapOption(input: {
   options: readonly MapVoteOption[];
   votes: Iterable<readonly [string, string]>;

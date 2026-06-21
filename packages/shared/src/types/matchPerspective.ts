@@ -11,6 +11,7 @@ export const MATCH_PERSPECTIVE_SETTING_MODES = [
   'quick_play',
   'team_deathmatch',
   'battle_royal',
+  'custom',
   'practice',
 ] as const;
 
@@ -37,6 +38,7 @@ export function getMatchPerspectiveSettingMode(
   gameplayMode: GameplayMode
 ): MatchPerspectiveSettingMode | null {
   if (partyMode === 'practice') return 'practice';
+  if (partyMode === 'custom') return 'custom';
   if (partyMode !== 'quick_play') return null;
   if (gameplayMode === 'team_deathmatch') return 'team_deathmatch';
   if (gameplayMode === 'battle_royal') return 'battle_royal';

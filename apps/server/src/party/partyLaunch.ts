@@ -4,6 +4,7 @@ import {
   DEFAULT_MATCH_PERSPECTIVE,
   getGameplayModeLabel,
   getRankDivisionIndex,
+  isCustomLobbyGameplayMode,
   type GameplayMode,
   type MatchPerspective,
   type PartyBotLaunchDescriptor,
@@ -72,6 +73,7 @@ async function createMatchmakingLobby(input: {
   gameplayMode: GameplayMode;
   matchmakingTicket: string;
   rankBandId: number;
+  partyLeaderUserId: string;
   partyBots: PartyBotLaunchDescriptor[];
   botFillMode: MatchmakingBotFillMode;
   matchPerspective: MatchPerspective;
@@ -86,6 +88,7 @@ async function createMatchmakingLobby(input: {
     gameplayMode: input.gameplayMode,
     matchmakingTicket: input.matchmakingTicket,
     rankBandId: input.rankBandId,
+    expectedPartyLeaderUserId: input.partyLeaderUserId,
     expectedHumanPlayers: input.expectedHumanPlayers,
     expectedHumanUserIds: input.expectedHumanUserIds,
     initialBotCount: 0,
@@ -157,6 +160,7 @@ export async function launchPartyToMatchmaking(
     gameplayMode,
     matchmakingTicket: firstTicket.ticket,
     rankBandId: targetRankDivisionIndex,
+    partyLeaderUserId: party.leaderId ?? humanMembers[0].userId,
     partyBots,
     botFillMode,
     matchPerspective,
@@ -213,13 +217,19 @@ export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promi
   if (humanMembers.length === 0 || !party.leaderId) {
     throw new Error('Party is empty');
   }
+  if (party.mode === 'custom' && !isCustomLobbyGameplayMode(party.selectedGameplayMode)) {
+    throw new Error('Custom lobbies support Capture the Flag or Team Deathmatch');
+  }
 
   humanMembers.forEach(assertPartyTutorialComplete);
 
-  const lobbyName = party.mode === 'practice' ? 'Party Practice' : 'Party Custom';
+  const gameplayMode = party.selectedGameplayMode;
+  const lobbyName = party.mode === 'practice'
+    ? 'Party Practice'
+    : `Custom ${getGameplayModeLabel(gameplayMode)}`;
   const matchPerspective = party.mode === 'practice'
     ? party.getActiveMatchPerspective('practice', party.selectedGameplayMode)
-    : DEFAULT_MATCH_PERSPECTIVE;
+    : party.getActiveMatchPerspective('custom', gameplayMode);
   const room = await matchMaker.createRoom('lobby_room', {
     lobbyName,
     isPrivate: true,
@@ -227,7 +237,7 @@ export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promi
     botFillMode: 'manual',
     defaultBotDifficulty: 'normal',
     partyBots,
-    gameplayMode: party.selectedGameplayMode,
+    gameplayMode,
     matchPerspective,
   });
 
@@ -245,7 +255,7 @@ export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promi
       mode: party.mode,
       lobbyId: room.roomId,
       matchMode: 'custom',
-      gameplayMode: party.selectedGameplayMode,
+      gameplayMode,
       botFillMode: 'manual',
       matchPerspective,
     });

@@ -4,6 +4,7 @@ import {
   VOXEL_MAP_SIZE_IDS,
 } from '@voxel-strike/shared';
 import {
+  addMissingBotMapVotes,
   buildMapVoteStartedPayload,
   buildMapVoteUpdatedPayload,
   createMapLaunchSelection,
@@ -126,6 +127,40 @@ function option(id: string): MapVoteOption {
       ['bot-b', 'map_2'],
     ]),
   }), false);
+}
+
+{
+  const options = [option('map_1'), option('map_2'), option('map_3')];
+  const votes = new Map<string, string>([
+    ['human-a', 'map_1'],
+    ['bot-a', 'map_2'],
+  ]);
+  const added = addMissingBotMapVotes({
+    players: [
+      { id: 'human-a' },
+      { id: 'human-b' },
+      { id: 'bot-a', isBot: true },
+      { id: 'bot-b', isBot: true },
+    ],
+    options,
+    votes,
+    pickOptionIndex: () => 2,
+  });
+
+  assert.equal(added, 1);
+  assert.equal(votes.get('bot-a'), 'map_2');
+  assert.equal(votes.get('bot-b'), 'map_3');
+  assert.equal(votes.has('human-b'), false);
+}
+
+{
+  const added = addMissingBotMapVotes({
+    players: [{ id: 'bot-a', isBot: true }],
+    options: [],
+    votes: new Map<string, string>(),
+  });
+
+  assert.equal(added, 0);
 }
 
 {

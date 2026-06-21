@@ -529,6 +529,31 @@ body,
   opacity: 0.76;
 }
 
+.pwa-install-toast-dismiss {
+  display: flex;
+  width: 2.1rem;
+  height: 2.1rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 0.5rem;
+  background: rgb(255 255 255 / 0.04);
+  color: rgb(255 255 255 / 0.7);
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.pwa-install-toast-dismiss:hover,
+.pwa-install-toast-dismiss:focus-visible {
+  border-color: rgb(255 255 255 / 0.24);
+  background: rgb(255 255 255 / 0.1);
+  color: white;
+}
+
+.pwa-install-toast-dismiss:active {
+  transform: translateY(1px);
+}
+
 @keyframes pwa-install-toast-in {
   from {
     opacity: 0;
@@ -556,6 +581,11 @@ body,
   .pwa-install-toast-action {
     min-width: 4.9rem;
     font-size: 0.86rem;
+  }
+
+  .pwa-install-toast-dismiss {
+    width: 1.95rem;
+    height: 1.95rem;
   }
 }
 

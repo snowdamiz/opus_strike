@@ -57,7 +57,6 @@ export const SLIDE_SPEED_BOOST = 1.75; // Speed multiplier during slide
 export const SLIDE_DURATION = 0.6; // Duration of slide in seconds
 export const SLIDE_COOLDOWN = 0.8; // Cooldown before next slide
 export const SLIDE_FRICTION = 0.982; // Friction applied during slide (higher = less slowdown)
-export const MIN_SLIDE_SPEED = 5; // Minimum speed to initiate slide
 export const SLIDE_INITIAL_BOOST = 1.75; // Initial speed boost when entering slide (ensures faster than sprint)
 export const SLIDE_ENTRY_SPEED_CAP_MULTIPLIER = 1.1; // Caps carried speed before applying slide boost
 export const SLIDE_MAX_SPEED_MULTIPLIER = 2.45; // Absolute slide speed cap relative to sprint speed
@@ -133,7 +132,7 @@ export const GLIDE_TURN_SPEED = 2;
 // Player collision
 export const PLAYER_HEIGHT = 1.8;
 export const PLAYER_RADIUS = 0.48;
-export const PLAYER_CROUCH_HEIGHT = 1.0;
+export const PLAYER_CROUCH_HEIGHT = 1.08;
 export const PLAYER_SLIDE_HEIGHT = 0.78;
 export const PLAYER_SLIDE_RADIUS = 0.36;
 export const PLAYER_MASS = 80;

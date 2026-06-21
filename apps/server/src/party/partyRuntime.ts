@@ -7,14 +7,18 @@ import {
   createDefaultPartyBotFillSettings,
   getMatchPerspectiveSettingMode,
   getGameplayModeRules,
+  getPartyMaxMembersForMode,
   getHumanPartyHeroIds,
+  hasDuplicatePartyHeroes,
   isMatchMode,
+  isCustomLobbyGameplayMode,
   getRankDivisionIndex,
   getRankFromRating,
   isGameplayMode,
   isMatchPerspective,
   isMatchPerspectiveSettingMode,
   isPartyMode,
+  requiresUniquePartyHeroes,
   type GameplayMode,
   type BotDifficulty,
   type HeroId,
@@ -138,6 +142,9 @@ export class PartyRosterRuntime {
     }
     if (isGameplayMode(input.gameplayMode)) {
       this.gameplayMode = input.gameplayMode;
+    }
+    if (this.selectedMode === 'custom' && !isCustomLobbyGameplayMode(this.gameplayMode)) {
+      this.gameplayMode = DEFAULT_GAMEPLAY_MODE;
     }
   }
 
@@ -323,7 +330,7 @@ export class PartyRosterRuntime {
       if (!member || typeof member !== 'object') continue;
       const rawMember = member as Partial<PartyMemberSnapshot>;
       const competitiveRating = 800;
-      const heroId = typeof rawMember.heroId === 'string' && ALL_HERO_IDS.includes(rawMember.heroId as HeroId)
+      const requestedHeroId = typeof rawMember.heroId === 'string' && ALL_HERO_IDS.includes(rawMember.heroId as HeroId)
         ? rawMember.heroId as HeroId
         : 'blaze';
       const displayName = typeof rawMember.displayName === 'string' && rawMember.displayName.trim()
@@ -333,12 +340,13 @@ export class PartyRosterRuntime {
       if (rawMember.isBot !== true) {
         const userId = normalizeUserId(rawMember.userId);
         if (!userId) continue;
+        const heroId = this.resolveHumanHero(userId, requestedHeroId);
         this.members.set(userId, {
           userId,
           sessionId: null,
           displayName: displayName ?? userId,
           heroId,
-          ready: rawMember.ready === true,
+          ready: rawMember.ready === true && heroId === requestedHeroId,
           connected: false,
           isBot: false,
           botDifficulty: undefined,
@@ -355,6 +363,7 @@ export class PartyRosterRuntime {
 
       const botIndex = this.botCounter++;
       const difficulty = normalizeBotDifficulty(rawMember.botDifficulty);
+      const heroId = requestedHeroId;
       this.members.set(`party-bot:${this.partyId}:restored:${botIndex}`, {
         userId: `party-bot:${this.partyId}:restored:${botIndex}`,
         sessionId: null,
@@ -386,7 +395,11 @@ export class PartyRosterRuntime {
   updateHero(userId: string, heroId: HeroId): PartyRuntimeMember | null {
     const member = this.members.get(userId);
     if (!member) return null;
-    if (!member.isBot && !this.isHumanHeroAvailable(heroId, userId)) {
+    if (
+      !member.isBot
+      && this.requiresUniqueHeroes()
+      && !this.isHumanHeroAvailable(heroId, userId)
+    ) {
       throw new Error('Hero is already picked by a party member');
     }
     member.heroId = heroId;
@@ -399,6 +412,9 @@ export class PartyRosterRuntime {
   setReady(userId: string, ready: boolean): PartyRuntimeMember | null {
     const member = this.members.get(userId);
     if (!member) return null;
+    if (ready && this.requiresUniqueHeroes() && hasDuplicatePartyHeroes(this.members.values())) {
+      throw new Error('Each party member needs a unique hero');
+    }
     member.ready = this.leaderUserId === userId ? false : ready;
     this.launchError = null;
     return member;
@@ -411,13 +427,18 @@ export class PartyRosterRuntime {
     if (!isPartyMode(mode)) {
       throw new Error('Invalid party mode');
     }
-    this.selectedMode = mode;
+    let nextGameplayMode = this.gameplayMode;
     if (gameplayMode !== undefined) {
       if (!isGameplayMode(gameplayMode)) {
         throw new Error('Invalid gameplay mode');
       }
-      this.gameplayMode = gameplayMode;
+      nextGameplayMode = gameplayMode;
     }
+    if (mode === 'custom' && !isCustomLobbyGameplayMode(nextGameplayMode)) {
+      throw new Error('Custom lobbies support Capture the Flag or Team Deathmatch');
+    }
+    this.selectedMode = mode;
+    this.gameplayMode = nextGameplayMode;
     this.clearNonLeaderReady();
     this.launchError = null;
     return this.snapshot();
@@ -490,11 +511,19 @@ export class PartyRosterRuntime {
       return { ok: false, message: 'Party is empty' };
     }
 
-    if (this.gameplayMode === 'battle_royal') {
-      const maxSquadSize = getGameplayModeRules('battle_royal').maxTeamSize;
-      if (this.members.size > maxSquadSize) {
-        return { ok: false, message: `Battle Royal squads are limited to ${maxSquadSize} players` };
+    if (this.selectedMode === 'custom' && !isCustomLobbyGameplayMode(this.gameplayMode)) {
+      return { ok: false, message: 'Custom lobbies support Capture the Flag or Team Deathmatch' };
+    }
+
+    const maxMembersForMode = getPartyMaxMembersForMode(this.selectedMode, this.gameplayMode);
+    if (this.members.size > maxMembersForMode) {
+      if (this.gameplayMode === 'battle_royal') {
+        return { ok: false, message: `Battle Royal squads are limited to ${maxMembersForMode} players` };
       }
+      const label = this.selectedMode === 'custom'
+        ? 'Custom lobbies'
+        : getGameplayModeRules(this.gameplayMode).label;
+      return { ok: false, message: `${label} parties are limited to ${maxMembersForMode} players` };
     }
 
     const notReady = this.getMembers().find((member) => !member.isBot && member.userId !== this.leaderUserId && !member.ready);
@@ -507,12 +536,8 @@ export class PartyRosterRuntime {
       return { ok: false, message: `${disconnected.displayName} is disconnected` };
     }
 
-    const pickedHeroIds = new Set<HeroId>();
-    for (const member of this.members.values()) {
-      if (pickedHeroIds.has(member.heroId)) {
-        return { ok: false, message: 'Each party member needs a unique hero' };
-      }
-      pickedHeroIds.add(member.heroId);
+    if (this.requiresUniqueHeroes() && hasDuplicatePartyHeroes(this.members.values())) {
+      return { ok: false, message: 'Each party member needs a unique hero' };
     }
 
     return { ok: true };
@@ -576,6 +601,10 @@ export class PartyRosterRuntime {
   }
 
   private resolveHumanHero(userId: string, requestedHeroId: HeroId): HeroId {
+    if (!this.requiresUniqueHeroes()) {
+      return requestedHeroId;
+    }
+
     if (this.isHumanHeroAvailable(requestedHeroId, userId)) {
       return requestedHeroId;
     }
@@ -595,6 +624,10 @@ export class PartyRosterRuntime {
   }
 
   private reassignBotHeroes(): void {
+    if (!this.requiresUniqueHeroes()) {
+      return;
+    }
+
     const occupied = new Set<HeroId>();
     const bots: PartyRuntimeMember[] = [];
 
@@ -630,6 +663,10 @@ export class PartyRosterRuntime {
         this.pendingLaunchPayloadsByUserId.set(userId, normalizedPayload);
       }
     }
+  }
+
+  private requiresUniqueHeroes(): boolean {
+    return requiresUniquePartyHeroes(this.selectedMode);
   }
 }
 

@@ -2,7 +2,7 @@ import { PLAYER_HEIGHT } from '../../constants/physics.js';
 import { POWERUP_PICKUP_RADIUS, POWERUP_RESPAWN_SECONDS } from '../../constants/game.js';
 import { getBlockNumericId, isSolidBlock } from './blocks.js';
 import { generateVoxelColliders } from './colliders.js';
-import { getVoxelMapTheme } from './themes.js';
+import { getVoxelMapTheme, withVoxelSkyVariant } from './themes.js';
 import {
   CONSTRUCTED_MAP_MANIFEST_VERSION,
   type BaseZone,
@@ -29,6 +29,7 @@ import {
 export const TUTORIAL_MAP_SEED = 0x54555431;
 export const TUTORIAL_MAP_ID = 'tutorial_ctf_training_lane';
 export const TUTORIAL_MAP_SIZE_ID = 'small' as const;
+export const TUTORIAL_SKY_VARIANT_ID = 'late_day' as const;
 
 const VOXEL_SIZE: VoxelSize = { x: 0.5, y: 0.5, z: 0.5 };
 const MAP_SIZE: VoxelSize = { x: 72, y: 28, z: 176 };
@@ -41,6 +42,14 @@ const SLIDE_COVER_START_Z = -21.5;
 const SLIDE_COVER_END_Z = -19.5;
 const SLIDE_TUNNEL_Z = (SLIDE_COVER_START_Z + SLIDE_COVER_END_Z) / 2;
 const TUTORIAL_DECORATIVE_GATE_Z = [-34.7, -29.2, -23.8, -18.4, 7.4, 12.6, 18.8, 24.8, 35.4] as const;
+const TUTORIAL_STAGE_MARKER_Z = [-36, -31, -26, -20, -12, -4, 4, 10, 16, 22, 30, 36] as const;
+const SAFETY_DECK_MIN_X = -11;
+const SAFETY_DECK_MAX_X = 11;
+const SAFETY_DECK_MIN_Z = -41;
+const SAFETY_DECK_MAX_Z = 41;
+const BOUNDARY_WALL_HEIGHT_ROWS = 14;
+const GATE_BEAM_MIN_ROW = 9;
+const GATE_BEAM_MAX_ROW = 10;
 const ORIGIN = {
   x: -(MAP_SIZE.x * VOXEL_SIZE.x) / 2,
   y: 0,
@@ -162,13 +171,96 @@ function paintDisc(blocks: Uint8Array, centerX: number, centerZ: number, radius:
   }
 }
 
+function paintTutorialSafetyDeck(blocks: Uint8Array): void {
+  fillWorldCuboid(
+    blocks,
+    SAFETY_DECK_MIN_X,
+    SAFETY_DECK_MAX_X,
+    SAFETY_DECK_MIN_Z,
+    SAFETY_DECK_MAX_Z,
+    0,
+    1,
+    'stone'
+  );
+  fillWorldCuboid(blocks, -9.75, 9.75, -39.5, 39.5, 0, 1, 'moss');
+}
+
+function paintTutorialBoundaryWalls(blocks: Uint8Array): void {
+  fillWorldCuboid(blocks, -12, -11, -42, 42, 1, BOUNDARY_WALL_HEIGHT_ROWS, 'barrier');
+  fillWorldCuboid(blocks, 11, 12, -42, 42, 1, BOUNDARY_WALL_HEIGHT_ROWS, 'barrier');
+  fillWorldCuboid(blocks, -12, 12, -42, -41, 1, BOUNDARY_WALL_HEIGHT_ROWS, 'barrier');
+  fillWorldCuboid(blocks, -12, 12, 41, 42, 1, BOUNDARY_WALL_HEIGHT_ROWS, 'barrier');
+
+  fillWorldCuboid(blocks, -12, -10.9, -42, 42, BOUNDARY_WALL_HEIGHT_ROWS - 1, BOUNDARY_WALL_HEIGHT_ROWS, 'gold');
+  fillWorldCuboid(blocks, 10.9, 12, -42, 42, BOUNDARY_WALL_HEIGHT_ROWS - 1, BOUNDARY_WALL_HEIGHT_ROWS, 'gold');
+  fillWorldCuboid(blocks, -12, 12, -42, -40.9, BOUNDARY_WALL_HEIGHT_ROWS - 1, BOUNDARY_WALL_HEIGHT_ROWS, 'gold');
+  fillWorldCuboid(blocks, -12, 12, 40.9, 42, BOUNDARY_WALL_HEIGHT_ROWS - 1, BOUNDARY_WALL_HEIGHT_ROWS, 'gold');
+
+  fillWorldCuboid(blocks, -11, -10.5, -40.5, 40.5, 1, 2, 'neon_red');
+  fillWorldCuboid(blocks, 10.5, 11, -40.5, 40.5, 1, 2, 'neon_blue');
+  fillWorldCuboid(blocks, -10.5, 10.5, -41, -40.5, 1, 2, 'neon_red');
+  fillWorldCuboid(blocks, -10.5, 10.5, 40.5, 41, 1, 2, 'neon_blue');
+}
+
+function paintTutorialFloorAccents(blocks: Uint8Array): void {
+  fillWorldCuboid(blocks, -0.25, 0.25, -39.5, 39.5, 0, 1, 'gold_panel');
+  fillWorldCuboid(blocks, -10.5, -10, -39, 39, 0, 1, 'neon_red');
+  fillWorldCuboid(blocks, 10, 10.5, -39, 39, 0, 1, 'neon_blue');
+
+  for (const markerZ of TUTORIAL_STAGE_MARKER_Z) {
+    fillWorldCuboid(blocks, -9.5, 9.5, markerZ, markerZ + 0.35, 0, 1, 'gold_ore');
+  }
+
+  paintDisc(blocks, 0, -12.5, 3.2, 'obsidian');
+  paintDisc(blocks, 0, 5.5, 3, 'flag_pad');
+  paintDisc(blocks, TUTORIAL_TARGET_STAND_POSITION.x, TUTORIAL_TARGET_STAND_POSITION.z, 3.6, 'gold_ore');
+  paintDisc(blocks, TUTORIAL_TARGET_STAND_POSITION.x, TUTORIAL_TARGET_STAND_POSITION.z, 2.25, 'gold_panel');
+}
+
+function paintTutorialSunsetTilework(blocks: Uint8Array): void {
+  for (let i = 0; i < TUTORIAL_STAGE_MARKER_Z.length - 1; i++) {
+    const markerZ = TUTORIAL_STAGE_MARKER_Z[i] + 1.1;
+    const leftFirst = i % 2 === 0;
+    const block: VoxelBlockId = i % 3 === 0 ? 'gold_panel' : i % 3 === 1 ? 'stone' : 'gold_ore';
+
+    fillWorldCuboid(blocks, leftFirst ? -8.2 : 6.7, leftFirst ? -6.7 : 8.2, markerZ, markerZ + 0.8, 0, 1, block);
+    fillWorldCuboid(blocks, leftFirst ? 6.1 : -8.8, leftFirst ? 8.8 : -6.1, markerZ + 1.35, markerZ + 1.7, 0, 1, 'gold_ore');
+  }
+
+  fillWorldCuboid(blocks, -8.6, -8.1, -36.5, 34.5, 0, 1, 'stone');
+  fillWorldCuboid(blocks, 8.1, 8.6, -34.5, 36.5, 0, 1, 'stone');
+  fillWorldCuboid(blocks, -9.25, -8.8, -10.5, 12.5, 0, 1, 'moss');
+  fillWorldCuboid(blocks, 8.8, 9.25, -10.5, 12.5, 0, 1, 'moss');
+}
+
+function paintTutorialGardenEdges(blocks: Uint8Array): void {
+  const gardenSegments: Array<{ minZ: number; maxZ: number; canopy: VoxelBlockId }> = [
+    { minZ: -38.5, maxZ: -33.2, canopy: 'leaves' },
+    { minZ: -16.8, maxZ: -7.2, canopy: 'blossom_leaves' },
+    { minZ: 11.6, maxZ: 18.9, canopy: 'leaves' },
+    { minZ: 26.2, maxZ: 36.4, canopy: 'blossom_leaves' },
+  ];
+
+  for (const segment of gardenSegments) {
+    fillWorldCuboid(blocks, -10.45, -9.35, segment.minZ, segment.maxZ, 0, 1, 'stone');
+    fillWorldCuboid(blocks, 9.35, 10.45, segment.minZ, segment.maxZ, 0, 1, 'stone');
+    fillWorldCuboid(blocks, -10.15, -9.65, segment.minZ + 0.35, segment.maxZ - 0.35, 1, 2, 'moss');
+    fillWorldCuboid(blocks, 9.65, 10.15, segment.minZ + 0.35, segment.maxZ - 0.35, 1, 2, 'moss');
+
+    for (let z = segment.minZ + 1.15; z < segment.maxZ - 0.75; z += 3.1) {
+      fillWorldCuboid(blocks, -10.05, -9.55, z, z + 0.5, 2, 7, 'bamboo');
+      fillWorldCuboid(blocks, 9.55, 10.05, z, z + 0.5, 2, 7, 'bamboo');
+      fillWorldCuboid(blocks, -10.85, -8.95, z - 0.55, z + 1.05, 7, 8, segment.canopy);
+      fillWorldCuboid(blocks, 8.95, 10.85, z - 0.55, z + 1.05, 7, 8, segment.canopy);
+    }
+  }
+}
+
 function createTutorialBlocks(): Uint8Array {
   const blocks = new Uint8Array(MAP_SIZE.x * MAP_SIZE.y * MAP_SIZE.z);
 
-  fillWorldCuboid(blocks, -12, -11, -42, 42, 1, 9, 'barrier');
-  fillWorldCuboid(blocks, 11, 12, -42, 42, 1, 9, 'barrier');
-  fillWorldCuboid(blocks, -12, 12, -42, -41, 1, 9, 'barrier');
-  fillWorldCuboid(blocks, -12, 12, 41, 42, 1, 9, 'barrier');
+  paintTutorialSafetyDeck(blocks);
+  paintTutorialBoundaryWalls(blocks);
 
   fillWorldCuboid(blocks, -9, 9, -42, -35, 0, 1, 'spawn_pad_red');
   fillWorldCuboid(blocks, -5.5, 5.5, -35, -29, 0, 1, 'metal');
@@ -221,11 +313,19 @@ function createTutorialBlocks(): Uint8Array {
   fillWorldCuboid(blocks, -4, 4, 35.9, 36.7, 0, 1, 'gold_panel');
 
   for (const gateZ of TUTORIAL_DECORATIVE_GATE_Z) {
+    fillWorldCuboid(blocks, -8.15, -7.45, gateZ - 0.1, gateZ + 0.6, 1, 8, 'stone');
+    fillWorldCuboid(blocks, 7.45, 8.15, gateZ - 0.1, gateZ + 0.6, 1, 8, 'stone');
+    fillWorldCuboid(blocks, -8.15, -7.45, gateZ - 0.1, gateZ + 0.6, 8, 9, 'gold_glass');
+    fillWorldCuboid(blocks, 7.45, 8.15, gateZ - 0.1, gateZ + 0.6, 8, 9, 'gold_glass');
     fillWorldCuboid(blocks, -7, -6.2, gateZ, gateZ + 0.5, 1, 5, 'gold');
     fillWorldCuboid(blocks, 6.2, 7, gateZ, gateZ + 0.5, 1, 5, 'gold');
+    fillWorldCuboid(blocks, -7, 7, gateZ, gateZ + 0.5, GATE_BEAM_MIN_ROW, GATE_BEAM_MAX_ROW, 'gold_glass');
     fillWorldCuboid(blocks, -4.5, 4.5, gateZ, gateZ + 0.5, 0, 1, 'gold_panel');
   }
 
+  paintTutorialGardenEdges(blocks);
+  paintTutorialFloorAccents(blocks);
+  paintTutorialSunsetTilework(blocks);
   paintDisc(blocks, RED_FLAG.x, RED_FLAG.z, 3.1, 'flag_pad');
   paintDisc(blocks, BLUE_FLAG.x, BLUE_FLAG.z, 3.1, 'flag_pad');
   for (const spawn of RED_SPAWNS) paintDisc(blocks, spawn.x, spawn.z, 1.75, 'spawn_pad_red');
@@ -624,7 +724,7 @@ function createDesignBrief(): MapDesignBrief {
     desiredTopology: 'lane_triad',
     desiredSymmetry: 'asymmetric_balanced',
     performanceBudget: {
-      maxSolidBlocks: 18_000,
+      maxSolidBlocks: 24_000,
       maxColliders: 1_200,
       maxRenderableChunks: 64,
       maxGenerationMs: 16,
@@ -724,7 +824,7 @@ export function createTutorialVoxelMapManifest(): VoxelMapManifest {
     preview,
     diagnostics,
   };
-  const theme = getVoxelMapTheme(TUTORIAL_MAP_SEED, 'verdant');
+  const theme = withVoxelSkyVariant(getVoxelMapTheme(TUTORIAL_MAP_SEED, 'verdant'), TUTORIAL_SKY_VARIANT_ID);
 
   tutorialManifest = {
     id: TUTORIAL_MAP_ID,
