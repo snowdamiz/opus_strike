@@ -11,6 +11,8 @@ import type { MatchParticipantSnapshot } from '../persistence/matchPersistence';
 
 const joinedAt = new Date('2026-06-10T10:00:00.000Z');
 const rejoinedAt = new Date('2026-06-10T10:05:00.000Z');
+const uint32MapSeedAboveInt4 = 2_191_938_583;
+assert.ok(uint32MapSeedAboveInt4 > 2_147_483_647);
 
 const baseParticipant: MatchParticipantSnapshot = {
   userId: 'user_red',
@@ -231,7 +233,7 @@ async function runPersistenceWriteTests() {
     roomId: 'room_ranked',
     lobbyId: 'lobby_ranked',
     matchMode: 'ranked',
-    mapSeed: 123,
+    mapSeed: uint32MapSeedAboveInt4,
     rankedEligible: true,
     startedAt: joinedAt,
     endedAt: new Date('2026-06-10T10:20:00.000Z'),
@@ -245,6 +247,7 @@ async function runPersistenceWriteTests() {
   });
 
   assert.equal(rankedResult.alreadyPersisted, false);
+  assert.equal(fake.matches.get('ranked_match').mapSeed, BigInt(uint32MapSeedAboveInt4));
   assert.equal(fake.matches.get('ranked_match').rankedEligible, true);
   assert.equal(fake.matches.get('ranked_match').matchMode, 'ranked');
   assert.equal(fake.users.get('ranked_red').rankedGames, 6);
@@ -265,7 +268,7 @@ async function runPersistenceWriteTests() {
     roomId: 'room_ranked',
     lobbyId: 'lobby_ranked',
     matchMode: 'ranked',
-    mapSeed: 123,
+    mapSeed: uint32MapSeedAboveInt4,
     rankedEligible: true,
     startedAt: joinedAt,
     endedAt: new Date('2026-06-10T10:20:00.000Z'),

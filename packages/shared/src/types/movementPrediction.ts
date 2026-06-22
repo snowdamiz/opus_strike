@@ -139,6 +139,7 @@ export interface MovementTelemetrySnapshot {
   abilityRejects?: number;
   rateLimitDrops?: number;
   staleCollisionRevisionDrops?: number;
+  staleCollisionRevisionCommands?: number;
   shadowSamples?: number;
   shadowLastPositionDrift?: number;
   shadowLastVelocityDrift?: number;

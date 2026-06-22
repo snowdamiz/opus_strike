@@ -166,8 +166,24 @@ enqueueSelfMovementAuthority(duplicateAckAuthority);
 assert.equal(drainSelfMovementAuthorities(player, 2800).length, 0);
 enqueueSelfMovementAuthority({
   ...duplicateAckAuthority,
+  serverTime: 2850,
+  collisionRevision: 4,
+});
+const revisionOnlyApplications = drainSelfMovementAuthorities(player, 2850);
+assert.equal(revisionOnlyApplications.length, 1);
+assert.equal(revisionOnlyApplications[0].result.corrected, false);
+assert.equal(getLocalMovementCollisionRevision(), 4);
+const commandAfterRevisionSync = createLocalMovementCommand(createEmptyInputState(), {
+  lookYaw: 0,
+  lookPitch: 0,
+  clientTimeMs: 2860,
+});
+assert.equal(commandAfterRevisionSync.collisionRevision, 4);
+enqueueSelfMovementAuthority({
+  ...duplicateAckAuthority,
   serverTime: 2900,
   position: { x: 4, y: 2.3, z: -2 },
+  collisionRevision: 4,
 });
 const duplicateAckApplications = drainSelfMovementAuthorities(player, 2900, {
   includeDuplicateAckAuthorities: true,

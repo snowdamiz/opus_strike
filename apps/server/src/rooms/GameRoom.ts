@@ -3359,6 +3359,9 @@ export class GameRoom extends Room<GameState> {
     if (result.shouldMarkQueueOverflowBarrier) {
       this.markMovementBarrier(client.sessionId, 'queue_overflow');
     }
+    if (result.acceptedStaleCollisionRevisionCount > 0) {
+      this.sendSelfMovementAuthority(player, client, authority.correctionReason);
+    }
   }
 
   private isBattleRoyalDeploymentPlayer(player: Player): boolean {
@@ -3397,6 +3400,9 @@ export class GameRoom extends Room<GameState> {
 
     if (result.shouldMarkQueueOverflowBarrier) {
       this.markMovementBarrier(client.sessionId, 'queue_overflow');
+    }
+    if (result.acceptedStaleCollisionRevisionCount > 0) {
+      this.sendSelfMovementAuthority(player, client, authority.correctionReason);
     }
   }
 

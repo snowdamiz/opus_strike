@@ -179,11 +179,27 @@ assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
     currentCollisionRevision: 4,
   });
 
+  assert.equal(result.ok, true);
+  if (!result.ok) throw new Error('expected stale collision revision command acceptance');
+  assert.equal(result.acceptedStaleCollisionRevision, true);
+  assert.equal(result.command.seq, 2);
+  assert.equal(movementAuthority.metrics.staleCollisionRevisionDrops, 0);
+  assert.equal(movementAuthority.correctionReason, null);
+}
+
+{
+  const movementAuthority = authority();
+  const result = sanitizeIncomingMovementCommand({
+    authority: movementAuthority,
+    command: command(2, { collisionRevision: 5 }),
+    currentCollisionRevision: 4,
+  });
+
   assert.equal(result.ok, false);
-  if (result.ok) throw new Error('expected collision revision rejection');
+  if (result.ok) throw new Error('expected future collision revision rejection');
   assert.equal(result.rejection.reason, 'collision_revision');
   assert.deepEqual(result.rejection.detail, {
-    commandRevision: 3,
+    commandRevision: 5,
     currentRevision: 4,
   });
   assert.equal(movementAuthority.metrics.staleCollisionRevisionDrops, 1);
@@ -259,6 +275,7 @@ assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
   });
 
   assert.equal(result.acceptedCommandCount, 2);
+  assert.equal(result.acceptedStaleCollisionRevisionCount, 0);
   assert.equal(result.overflow, 0);
   assert.equal(result.discardedCommandCount, 0);
   assert.equal(result.shouldMarkQueueOverflowBarrier, false);
@@ -278,6 +295,7 @@ assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
   });
 
   assert.equal(result.acceptedCommandCount, 0);
+  assert.equal(result.acceptedStaleCollisionRevisionCount, 0);
   assert.deepEqual(result.events, [{
     type: 'malformed_message',
     movementEpoch: 0,
@@ -302,6 +320,7 @@ assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
   });
 
   assert.equal(result.acceptedCommandCount, 0);
+  assert.equal(result.acceptedStaleCollisionRevisionCount, 0);
   assert.deepEqual(result.events, [{
     type: 'movement_command_drop',
     movementEpoch: 0,
@@ -327,6 +346,7 @@ assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
   });
 
   assert.equal(result.acceptedCommandCount, 1);
+  assert.equal(result.acceptedStaleCollisionRevisionCount, 0);
   assert.equal(movementAuthority.commandWindowStartedAt, 1_100);
   assert.equal(movementAuthority.commandsInWindow, 1);
   assert.deepEqual(movementAuthority.pendingCommands.toArray().map((item) => item.seq), [1]);
@@ -343,6 +363,7 @@ assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
   });
 
   assert.equal(result.acceptedCommandCount, 0);
+  assert.equal(result.acceptedStaleCollisionRevisionCount, 0);
   assert.equal(result.events.length, 1);
   assert.equal(result.events[0].type, 'movement_command_reject');
   assert.equal(result.events[0].reason, 'epoch_mismatch');
@@ -364,6 +385,7 @@ assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
   });
 
   assert.equal(result.acceptedCommandCount, 1);
+  assert.equal(result.acceptedStaleCollisionRevisionCount, 0);
   assert.equal(result.overflow, 1);
   assert.equal(result.discardedCommandCount, 3);
   assert.equal(result.shouldMarkQueueOverflowBarrier, true);
@@ -381,6 +403,28 @@ assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
   }]);
   assert.equal(movementAuthority.metrics.droppedCommands, 3);
   assert.equal(movementAuthority.metrics.queueLength, 3);
+}
+
+{
+  const movementAuthority = authority();
+  const result = ingestMovementCommandPacket({
+    authority: movementAuthority,
+    packet: packet([
+      command(11, { collisionRevision: 7 }),
+      command(12, { collisionRevision: 8 }),
+      command(13, { collisionRevision: 9 }),
+    ]),
+    now: 1_000,
+    currentCollisionRevision: 9,
+  });
+
+  assert.equal(result.acceptedCommandCount, 3);
+  assert.equal(result.acceptedStaleCollisionRevisionCount, 2);
+  assert.deepEqual(result.events, []);
+  assert.deepEqual(movementAuthority.pendingCommands.toArray().map((item) => item.seq), [11, 12, 13]);
+  assert.equal(movementAuthority.metrics.staleCollisionRevisionCommands, 2);
+  assert.equal(movementAuthority.metrics.staleCollisionRevisionDrops, 0);
+  assert.equal(movementAuthority.correctionReason, null);
 }
 
 const emptyDrain = getMovementCommandDrainDecision(0);

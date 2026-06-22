@@ -1,4 +1,8 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import {
+  nullableMapSeedFromDatabaseValue,
+  nullableMapSeedToDatabaseValue,
+} from '../utils/mapSeedPersistence';
 
 export const PLAYER_REPORT_STATUSES = ['open', 'reviewing', 'cleared', 'actioned', 'dismissed'] as const;
 export type PlayerReportStatus = typeof PLAYER_REPORT_STATUSES[number];
@@ -69,7 +73,7 @@ export async function createPlayerReport(
       matchId: input.matchId,
       lobbyId: input.lobbyId,
       matchMode: input.matchMode,
-      mapSeed: input.mapSeed,
+      mapSeed: nullableMapSeedToDatabaseValue(input.mapSeed),
       serverTick: input.serverTick,
       evidenceEventId: input.evidenceEventId,
       metadata: serializeReportMetadata(input.metadata),
@@ -155,7 +159,7 @@ export async function listPlayerReportQueue(prisma: PrismaClient): Promise<{
       matchId: report.matchId,
       lobbyId: report.lobbyId,
       matchMode: report.matchMode,
-      mapSeed: report.mapSeed,
+      mapSeed: nullableMapSeedFromDatabaseValue(report.mapSeed),
       serverTick: report.serverTick,
       evidenceEventId: report.evidenceEventId,
       resolvedByUserId: report.resolvedByUserId,
