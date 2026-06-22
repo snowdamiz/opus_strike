@@ -7,39 +7,39 @@ export interface PlayerSpatialQueryOptions {
   excludeId?: string;
 }
 
+const BUCKET_KEY_CELL_OFFSET = 1 << 20;
+const BUCKET_KEY_CELL_STRIDE = BUCKET_KEY_CELL_OFFSET * 2;
+
 export class PlayerSpatialIndex {
   private readonly buckets = new Map<number, Player[]>();
+  private readonly activeBucketKeys: number[] = [];
+  private readonly previousBucketKeys: number[] = [];
   private readonly alivePlayers: Player[] = [];
   private readonly alivePlayersByTeam = new Map<Team, Player[]>();
+  private readonly activeTeamKeys: Team[] = [];
+  private readonly previousTeamKeys: Team[] = [];
   private readonly enemyPlayersByTeam = new Map<Team, Player[]>();
+  private readonly enemyPlayersGenerationByTeam = new Map<Team, number>();
   private readonly emptyTeamPlayers: Player[] = [];
+  private rebuildGeneration = 0;
 
   constructor(private readonly cellSize = 8) {}
 
   rebuild(players: Iterable<Player>): void {
-    this.buckets.clear();
+    this.rebuildGeneration++;
+    this.prepareBucketsForRebuild();
     this.alivePlayers.length = 0;
-    this.alivePlayersByTeam.clear();
-    this.enemyPlayersByTeam.clear();
+    this.prepareTeamsForRebuild();
 
     for (const player of players) {
       if (player.state !== 'alive') continue;
       this.alivePlayers.push(player);
-      let teamPlayers = this.alivePlayersByTeam.get(player.team);
-      if (!teamPlayers) {
-        teamPlayers = [];
-        this.alivePlayersByTeam.set(player.team, teamPlayers);
-      }
-      teamPlayers.push(player);
-
-      const key = this.getBucketKey(player.position.x, player.position.z);
-      let bucket = this.buckets.get(key);
-      if (!bucket) {
-        bucket = [];
-        this.buckets.set(key, bucket);
-      }
-      bucket.push(player);
+      this.getMutableTeamPlayers(player.team).push(player);
+      this.getMutableBucket(player.position.x, player.position.z).push(player);
     }
+
+    this.pruneInactiveBuckets();
+    this.pruneInactiveTeams();
   }
 
   getAlivePlayers(): Player[] {
@@ -52,19 +52,22 @@ export class PlayerSpatialIndex {
 
   getEnemyPlayers(team: Team): Player[] {
     let enemyPlayers = this.enemyPlayersByTeam.get(team);
-    if (enemyPlayers) return enemyPlayers;
+    if (this.enemyPlayersGenerationByTeam.get(team) === this.rebuildGeneration) {
+      return enemyPlayers && enemyPlayers.length > 0 ? enemyPlayers : this.emptyTeamPlayers;
+    }
 
-    enemyPlayers = [];
+    if (!enemyPlayers) {
+      enemyPlayers = [];
+      this.enemyPlayersByTeam.set(team, enemyPlayers);
+    } else {
+      enemyPlayers.length = 0;
+    }
     for (const player of this.alivePlayers) {
       if (player.team !== team) enemyPlayers.push(player);
     }
-    if (enemyPlayers.length === 0) {
-      this.enemyPlayersByTeam.set(team, this.emptyTeamPlayers);
-      return this.emptyTeamPlayers;
-    }
 
-    this.enemyPlayersByTeam.set(team, enemyPlayers);
-    return enemyPlayers;
+    this.enemyPlayersGenerationByTeam.set(team, this.rebuildGeneration);
+    return enemyPlayers.length > 0 ? enemyPlayers : this.emptyTeamPlayers;
   }
 
   getTeamPlayers(team: Team): Player[] {
@@ -78,6 +81,9 @@ export class PlayerSpatialIndex {
     options: PlayerSpatialQueryOptions = {}
   ): Player[] {
     out.length = 0;
+    const optionTeam = options.team;
+    const optionExcludeTeam = options.excludeTeam;
+    const optionExcludeId = options.excludeId;
     const minCellX = Math.floor((center.x - radius) / this.cellSize);
     const maxCellX = Math.floor((center.x + radius) / this.cellSize);
     const minCellZ = Math.floor((center.z - radius) / this.cellSize);
@@ -90,9 +96,9 @@ export class PlayerSpatialIndex {
         if (!bucket) continue;
 
         for (const player of bucket) {
-          if (options.excludeId && player.id === options.excludeId) continue;
-          if (options.team && player.team !== options.team) continue;
-          if (options.excludeTeam && player.team === options.excludeTeam) continue;
+          if (optionExcludeId && player.id === optionExcludeId) continue;
+          if (optionTeam && player.team !== optionTeam) continue;
+          if (optionExcludeTeam && player.team === optionExcludeTeam) continue;
           const dx = player.position.x - center.x;
           const dz = player.position.z - center.z;
           if (dx * dx + dz * dz <= radiusSq) {
@@ -122,7 +128,71 @@ export class PlayerSpatialIndex {
   }
 
   private getBucketKeyForCell(cellX: number, cellZ: number): number {
-    const offset = 1 << 20;
-    return (cellX + offset) * (offset * 2) + (cellZ + offset);
+    return (cellX + BUCKET_KEY_CELL_OFFSET) * BUCKET_KEY_CELL_STRIDE + (cellZ + BUCKET_KEY_CELL_OFFSET);
+  }
+
+  private prepareBucketsForRebuild(): void {
+    this.previousBucketKeys.length = 0;
+    for (const key of this.activeBucketKeys) {
+      this.previousBucketKeys.push(key);
+      const bucket = this.buckets.get(key);
+      if (bucket) bucket.length = 0;
+    }
+    this.activeBucketKeys.length = 0;
+  }
+
+  private getMutableBucket(x: number, z: number): Player[] {
+    const key = this.getBucketKey(x, z);
+    let bucket = this.buckets.get(key);
+    if (!bucket) {
+      bucket = [];
+      this.buckets.set(key, bucket);
+    }
+    if (bucket.length === 0) {
+      this.activeBucketKeys.push(key);
+    }
+    return bucket;
+  }
+
+  private pruneInactiveBuckets(): void {
+    for (const key of this.previousBucketKeys) {
+      const bucket = this.buckets.get(key);
+      if (bucket && bucket.length === 0) {
+        this.buckets.delete(key);
+      }
+    }
+    this.previousBucketKeys.length = 0;
+  }
+
+  private prepareTeamsForRebuild(): void {
+    this.previousTeamKeys.length = 0;
+    for (const team of this.activeTeamKeys) {
+      this.previousTeamKeys.push(team);
+      const players = this.alivePlayersByTeam.get(team);
+      if (players) players.length = 0;
+    }
+    this.activeTeamKeys.length = 0;
+  }
+
+  private getMutableTeamPlayers(team: Team): Player[] {
+    let teamPlayers = this.alivePlayersByTeam.get(team);
+    if (!teamPlayers) {
+      teamPlayers = [];
+      this.alivePlayersByTeam.set(team, teamPlayers);
+    }
+    if (teamPlayers.length === 0) {
+      this.activeTeamKeys.push(team);
+    }
+    return teamPlayers;
+  }
+
+  private pruneInactiveTeams(): void {
+    for (const team of this.previousTeamKeys) {
+      const teamPlayers = this.alivePlayersByTeam.get(team);
+      if (teamPlayers && teamPlayers.length === 0) {
+        this.alivePlayersByTeam.delete(team);
+      }
+    }
+    this.previousTeamKeys.length = 0;
   }
 }
