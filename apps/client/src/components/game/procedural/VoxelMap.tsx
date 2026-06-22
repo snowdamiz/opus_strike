@@ -170,6 +170,7 @@ export function VoxelMap({
   const regionRevealBudgetRef = useRef(performanceBudget?.maxGeneratedRegionMeshesPerFrame ?? 3);
   const readyRegionManifestIdRef = useRef(manifest.id);
   const readyRegionIdsRef = useRef<Set<string>>(new Set());
+  const readyRegionCountRafRef = useRef(0);
   const terrainCullAccumulatorRef = useRef(0);
   const terrainCullNeedsRefreshRef = useRef(true);
   const terrainCullLastCameraPositionRef = useRef(new THREE.Vector3(Number.NaN, Number.NaN, Number.NaN));
@@ -320,24 +321,58 @@ export function VoxelMap({
     };
   }, [manifest.id, renderableRegions, shouldRevealAllRegions]);
 
+  const cancelReadyRegionCountFlush = useCallback(() => {
+    if (readyRegionCountRafRef.current && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(readyRegionCountRafRef.current);
+    }
+    readyRegionCountRafRef.current = 0;
+  }, []);
+
+  const flushReadyRegionCount = useCallback(() => {
+    readyRegionCountRafRef.current = 0;
+    const nextReadyRegionCount = readyRegionIdsRef.current.size;
+    setReadyRegionCount((previousReadyRegionCount) => (
+      previousReadyRegionCount === nextReadyRegionCount ? previousReadyRegionCount : nextReadyRegionCount
+    ));
+  }, []);
+
+  const scheduleReadyRegionCountFlush = useCallback(() => {
+    if (readyRegionCountRafRef.current) return;
+    if (typeof window === 'undefined') {
+      flushReadyRegionCount();
+      return;
+    }
+
+    readyRegionCountRafRef.current = window.requestAnimationFrame(flushReadyRegionCount);
+  }, [flushReadyRegionCount]);
+
+  const resetReadyRegionTracking = useCallback(() => {
+    readyRegionManifestIdRef.current = manifest.id;
+    readyRegionIdsRef.current = new Set();
+    cancelReadyRegionCountFlush();
+    setReadyRegionCount((previousReadyRegionCount) => (
+      previousReadyRegionCount === 0 ? previousReadyRegionCount : 0
+    ));
+  }, [cancelReadyRegionCountFlush, manifest.id]);
+
   const handleRegionGeometryReady = useCallback((regionId: string) => {
     if (readyRegionManifestIdRef.current !== manifest.id) {
-      readyRegionManifestIdRef.current = manifest.id;
-      readyRegionIdsRef.current = new Set();
-      setReadyRegionCount(0);
+      resetReadyRegionTracking();
     }
 
     if (readyRegionIdsRef.current.has(regionId)) return;
     readyRegionIdsRef.current.add(regionId);
-    setReadyRegionCount(readyRegionIdsRef.current.size);
-  }, [manifest.id]);
+    scheduleReadyRegionCountFlush();
+  }, [manifest.id, resetReadyRegionTracking, scheduleReadyRegionCountFlush]);
 
   useEffect(() => {
     if (readyRegionManifestIdRef.current === manifest.id) return;
-    readyRegionManifestIdRef.current = manifest.id;
-    readyRegionIdsRef.current = new Set();
-    setReadyRegionCount(0);
-  }, [manifest.id]);
+    resetReadyRegionTracking();
+  }, [manifest.id, resetReadyRegionTracking]);
+
+  useEffect(() => () => {
+    cancelReadyRegionCountFlush();
+  }, [cancelReadyRegionCountFlush]);
 
   useEffect(() => () => {
     if (disposeGeometryCacheOnUnmount) {

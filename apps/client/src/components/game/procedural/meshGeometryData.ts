@@ -34,6 +34,10 @@ interface ChunkLookup {
   manifest: VoxelMapManifest;
 }
 
+const chunkLookupCache = new WeakMap<VoxelMapManifest, ChunkLookup>();
+const solidBlockCache: Array<boolean | undefined> = [];
+const textureLayerCache: Array<[number | undefined, number | undefined, number | undefined] | undefined> = [];
+
 class FloatBuilder {
   private buffer: Float32Array;
   length = 0;
@@ -42,10 +46,57 @@ class FloatBuilder {
     this.buffer = new Float32Array(initialCapacity);
   }
 
-  push(...values: number[]): void {
-    this.ensure(values.length);
-    this.buffer.set(values, this.length);
-    this.length += values.length;
+  push4(a: number, b: number, c: number, d: number): void {
+    this.ensure(4);
+    this.buffer[this.length++] = a;
+    this.buffer[this.length++] = b;
+    this.buffer[this.length++] = c;
+    this.buffer[this.length++] = d;
+  }
+
+  push12(
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number,
+    i: number,
+    j: number,
+    k: number,
+    l: number
+  ): void {
+    this.ensure(12);
+    this.buffer[this.length++] = a;
+    this.buffer[this.length++] = b;
+    this.buffer[this.length++] = c;
+    this.buffer[this.length++] = d;
+    this.buffer[this.length++] = e;
+    this.buffer[this.length++] = f;
+    this.buffer[this.length++] = g;
+    this.buffer[this.length++] = h;
+    this.buffer[this.length++] = i;
+    this.buffer[this.length++] = j;
+    this.buffer[this.length++] = k;
+    this.buffer[this.length++] = l;
+  }
+
+  pushRepeated3x4(a: number, b: number, c: number): void {
+    this.ensure(12);
+    this.buffer[this.length++] = a;
+    this.buffer[this.length++] = b;
+    this.buffer[this.length++] = c;
+    this.buffer[this.length++] = a;
+    this.buffer[this.length++] = b;
+    this.buffer[this.length++] = c;
+    this.buffer[this.length++] = a;
+    this.buffer[this.length++] = b;
+    this.buffer[this.length++] = c;
+    this.buffer[this.length++] = a;
+    this.buffer[this.length++] = b;
+    this.buffer[this.length++] = c;
   }
 
   finish(): Float32Array {
@@ -141,6 +192,9 @@ function chunkLookupIndex(x: number, y: number, z: number, chunksX: number, chun
 }
 
 export function createChunkLookup(manifest: VoxelMapManifest): ChunkLookup {
+  const cached = chunkLookupCache.get(manifest);
+  if (cached) return cached;
+
   const chunksX = Math.ceil(manifest.size.x / manifest.chunkSize.x);
   const chunksY = Math.ceil(manifest.size.y / manifest.chunkSize.y);
   const chunksZ = Math.ceil(manifest.size.z / manifest.chunkSize.z);
@@ -150,7 +204,9 @@ export function createChunkLookup(manifest: VoxelMapManifest): ChunkLookup {
     chunks[chunkLookupIndex(chunk.coord.x, chunk.coord.y, chunk.coord.z, chunksX, chunksZ)] = chunk;
   }
 
-  return { chunks, chunksX, chunksZ, manifest };
+  const lookup = { chunks, chunksX, chunksZ, manifest };
+  chunkLookupCache.set(manifest, lookup);
+  return lookup;
 }
 
 function getBlock(lookup: ChunkLookup, x: number, y: number, z: number): number {
@@ -175,6 +231,35 @@ function getBlock(lookup: ChunkLookup, x: number, y: number, z: number): number 
   ] ?? 0;
 }
 
+function isSolidNumericBlock(block: number): boolean {
+  const cached = solidBlockCache[block];
+  if (cached !== undefined) return cached;
+
+  const solid = isSolidBlock(block);
+  solidBlockCache[block] = solid;
+  return solid;
+}
+
+function getFaceTextureIndex(face: VoxelFaceDirection): 0 | 1 | 2 {
+  return face === 'top' ? 0 : face === 'bottom' ? 1 : 2;
+}
+
+function getCachedTextureLayer(blockId: number, face: VoxelFaceDirection): number {
+  const faceIndex = getFaceTextureIndex(face);
+  let layers = textureLayerCache[blockId];
+  if (!layers) {
+    layers = [undefined, undefined, undefined];
+    textureLayerCache[blockId] = layers;
+  }
+
+  const cached = layers[faceIndex];
+  if (cached !== undefined) return cached;
+
+  const layer = getTextureLayerForBlock(getBlockId(blockId), face).layer;
+  layers[faceIndex] = layer;
+  return layer;
+}
+
 function pushUv(
   buffers: MeshBufferBuilders,
   blockId: number,
@@ -182,16 +267,30 @@ function pushUv(
   repeatWidth: number,
   repeatHeight: number
 ): void {
-  const tile = getTextureLayerForBlock(getBlockId(blockId), face);
+  const layer = getCachedTextureLayer(blockId, face);
 
-  buffers.uvs.push(0, 0, repeatWidth, 0, repeatWidth, repeatHeight, 0, repeatHeight);
-  buffers.textureLayers.push(tile.layer, tile.layer, tile.layer, tile.layer);
+  buffers.uvs.push4(0, 0, repeatWidth, 0);
+  buffers.uvs.push4(repeatWidth, repeatHeight, 0, repeatHeight);
+  buffers.textureLayers.push4(layer, layer, layer, layer);
 }
 
 function pushQuad(
   buffers: MeshBufferBuilders,
-  vertices: [number, number, number][],
-  normal: [number, number, number],
+  ax: number,
+  ay: number,
+  az: number,
+  bx: number,
+  by: number,
+  bz: number,
+  cx: number,
+  cy: number,
+  cz: number,
+  dx: number,
+  dy: number,
+  dz: number,
+  normalX: number,
+  normalY: number,
+  normalZ: number,
   blockId: number,
   face: VoxelFaceDirection,
   repeatWidth: number,
@@ -199,10 +298,8 @@ function pushQuad(
 ): void {
   const baseIndex = buffers.positions.length / 3;
 
-  for (const vertex of vertices) {
-    buffers.positions.push(vertex[0], vertex[1], vertex[2]);
-    buffers.normals.push(normal[0], normal[1], normal[2]);
-  }
+  buffers.positions.push12(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz);
+  buffers.normals.pushRepeated3x4(normalX, normalY, normalZ);
 
   pushUv(buffers, blockId, face, repeatWidth, repeatHeight);
   buffers.indices.push(baseIndex, baseIndex + 1, baseIndex + 2, baseIndex, baseIndex + 2, baseIndex + 3);
@@ -216,17 +313,65 @@ function emitFace(
   const { x, y, z, width, height, blockId } = rect;
 
   if (direction === 'px') {
-    pushQuad(buffers, [[x + 1, y, z + width], [x + 1, y, z], [x + 1, y + height, z], [x + 1, y + height, z + width]], [1, 0, 0], blockId, 'side', width, height);
+    pushQuad(
+      buffers,
+      x + 1, y, z + width,
+      x + 1, y, z,
+      x + 1, y + height, z,
+      x + 1, y + height, z + width,
+      1, 0, 0,
+      blockId, 'side', width, height
+    );
   } else if (direction === 'nx') {
-    pushQuad(buffers, [[x, y, z], [x, y, z + width], [x, y + height, z + width], [x, y + height, z]], [-1, 0, 0], blockId, 'side', width, height);
+    pushQuad(
+      buffers,
+      x, y, z,
+      x, y, z + width,
+      x, y + height, z + width,
+      x, y + height, z,
+      -1, 0, 0,
+      blockId, 'side', width, height
+    );
   } else if (direction === 'py') {
-    pushQuad(buffers, [[x, y + 1, z], [x, y + 1, z + height], [x + width, y + 1, z + height], [x + width, y + 1, z]], [0, 1, 0], blockId, 'top', height, width);
+    pushQuad(
+      buffers,
+      x, y + 1, z,
+      x, y + 1, z + height,
+      x + width, y + 1, z + height,
+      x + width, y + 1, z,
+      0, 1, 0,
+      blockId, 'top', height, width
+    );
   } else if (direction === 'ny') {
-    pushQuad(buffers, [[x, y, z + height], [x, y, z], [x + width, y, z], [x + width, y, z + height]], [0, -1, 0], blockId, 'bottom', height, width);
+    pushQuad(
+      buffers,
+      x, y, z + height,
+      x, y, z,
+      x + width, y, z,
+      x + width, y, z + height,
+      0, -1, 0,
+      blockId, 'bottom', height, width
+    );
   } else if (direction === 'pz') {
-    pushQuad(buffers, [[x, y, z + 1], [x + width, y, z + 1], [x + width, y + height, z + 1], [x, y + height, z + 1]], [0, 0, 1], blockId, 'side', width, height);
+    pushQuad(
+      buffers,
+      x, y, z + 1,
+      x + width, y, z + 1,
+      x + width, y + height, z + 1,
+      x, y + height, z + 1,
+      0, 0, 1,
+      blockId, 'side', width, height
+    );
   } else {
-    pushQuad(buffers, [[x + width, y, z], [x, y, z], [x, y + height, z], [x + width, y + height, z]], [0, 0, -1], blockId, 'side', width, height);
+    pushQuad(
+      buffers,
+      x + width, y, z,
+      x, y, z,
+      x, y + height, z,
+      x + width, y + height, z,
+      0, 0, -1,
+      blockId, 'side', width, height
+    );
   }
 }
 
@@ -280,98 +425,113 @@ function appendVoxelChunkBuffers(
     y: chunk.coord.y * manifest.chunkSize.y,
     z: chunk.coord.z * manifest.chunkSize.z,
   };
+  const { blocks, size } = chunk;
+  const sizeX = size.x;
+  const sizeY = size.y;
+  const sizeZ = size.z;
+  const yStride = sizeX * sizeZ;
 
-  const isFaceVisible = (block: number, neighbor: number): boolean => isSolidBlock(block) && !isSolidBlock(neighbor);
-
-  const xMaskArea = chunk.size.z * chunk.size.y;
+  const xMaskArea = sizeZ * sizeY;
   const pxMask = new Uint8Array(xMaskArea);
   const nxMask = new Uint8Array(xMaskArea);
   const xUsed = new Uint8Array(xMaskArea);
 
-  for (let lx = 0; lx < chunk.size.x; lx++) {
+  for (let lx = 0; lx < sizeX; lx++) {
     pxMask.fill(0);
     nxMask.fill(0);
     const gx = chunkOrigin.x + lx;
 
-    for (let ly = 0; ly < chunk.size.y; ly++) {
-      for (let lz = 0; lz < chunk.size.z; lz++) {
-        const gy = chunkOrigin.y + ly;
+    for (let ly = 0; ly < sizeY; ly++) {
+      const rowOffset = lx + yStride * ly;
+      const gy = chunkOrigin.y + ly;
+      for (let lz = 0; lz < sizeZ; lz++) {
         const gz = chunkOrigin.z + lz;
-        const block = getBlock(lookup, gx, gy, gz);
-        if (!isSolidBlock(block)) continue;
+        const blockOffset = rowOffset + sizeX * lz;
+        const block = blocks[blockOffset] ?? 0;
+        if (!isSolidNumericBlock(block)) continue;
 
-        const index = lz + ly * chunk.size.z;
-        if (isFaceVisible(block, getBlock(lookup, gx + 1, gy, gz))) pxMask[index] = block;
-        if (isFaceVisible(block, getBlock(lookup, gx - 1, gy, gz))) nxMask[index] = block;
+        const index = lz + ly * sizeZ;
+        const pxNeighbor = lx + 1 < sizeX ? blocks[blockOffset + 1] ?? 0 : getBlock(lookup, gx + 1, gy, gz);
+        const nxNeighbor = lx > 0 ? blocks[blockOffset - 1] ?? 0 : getBlock(lookup, gx - 1, gy, gz);
+        if (!isSolidNumericBlock(pxNeighbor)) pxMask[index] = block;
+        if (!isSolidNumericBlock(nxNeighbor)) nxMask[index] = block;
       }
     }
 
-    greedyMask(pxMask, xUsed, chunk.size.z, chunk.size.y, (u, v, width, height, blockId) => {
+    greedyMask(pxMask, xUsed, sizeZ, sizeY, (u, v, width, height, blockId) => {
       emitFace(buffers, 'px', { x: gx, y: chunkOrigin.y + v, z: chunkOrigin.z + u, width, height, blockId });
     });
-    greedyMask(nxMask, xUsed, chunk.size.z, chunk.size.y, (u, v, width, height, blockId) => {
+    greedyMask(nxMask, xUsed, sizeZ, sizeY, (u, v, width, height, blockId) => {
       emitFace(buffers, 'nx', { x: gx, y: chunkOrigin.y + v, z: chunkOrigin.z + u, width, height, blockId });
     });
   }
 
-  const yMaskArea = chunk.size.x * chunk.size.z;
+  const yMaskArea = sizeX * sizeZ;
   const pyMask = new Uint8Array(yMaskArea);
   const nyMask = new Uint8Array(yMaskArea);
   const yUsed = new Uint8Array(yMaskArea);
 
-  for (let ly = 0; ly < chunk.size.y; ly++) {
+  for (let ly = 0; ly < sizeY; ly++) {
     pyMask.fill(0);
     nyMask.fill(0);
     const gy = chunkOrigin.y + ly;
 
-    for (let lz = 0; lz < chunk.size.z; lz++) {
-      for (let lx = 0; lx < chunk.size.x; lx++) {
+    for (let lz = 0; lz < sizeZ; lz++) {
+      const rowOffset = sizeX * (lz + sizeZ * ly);
+      const gz = chunkOrigin.z + lz;
+      for (let lx = 0; lx < sizeX; lx++) {
         const gx = chunkOrigin.x + lx;
-        const gz = chunkOrigin.z + lz;
-        const block = getBlock(lookup, gx, gy, gz);
-        if (!isSolidBlock(block)) continue;
+        const blockOffset = rowOffset + lx;
+        const block = blocks[blockOffset] ?? 0;
+        if (!isSolidNumericBlock(block)) continue;
 
-        const index = lx + lz * chunk.size.x;
-        if (isFaceVisible(block, getBlock(lookup, gx, gy + 1, gz))) pyMask[index] = block;
-        if (isFaceVisible(block, getBlock(lookup, gx, gy - 1, gz))) nyMask[index] = block;
+        const index = lx + lz * sizeX;
+        const pyNeighbor = ly + 1 < sizeY ? blocks[blockOffset + yStride] ?? 0 : getBlock(lookup, gx, gy + 1, gz);
+        const nyNeighbor = ly > 0 ? blocks[blockOffset - yStride] ?? 0 : getBlock(lookup, gx, gy - 1, gz);
+        if (!isSolidNumericBlock(pyNeighbor)) pyMask[index] = block;
+        if (!isSolidNumericBlock(nyNeighbor)) nyMask[index] = block;
       }
     }
 
-    greedyMask(pyMask, yUsed, chunk.size.x, chunk.size.z, (u, v, width, height, blockId) => {
+    greedyMask(pyMask, yUsed, sizeX, sizeZ, (u, v, width, height, blockId) => {
       emitFace(buffers, 'py', { x: chunkOrigin.x + u, y: gy, z: chunkOrigin.z + v, width, height, blockId });
     });
-    greedyMask(nyMask, yUsed, chunk.size.x, chunk.size.z, (u, v, width, height, blockId) => {
+    greedyMask(nyMask, yUsed, sizeX, sizeZ, (u, v, width, height, blockId) => {
       emitFace(buffers, 'ny', { x: chunkOrigin.x + u, y: gy, z: chunkOrigin.z + v, width, height, blockId });
     });
   }
 
-  const zMaskArea = chunk.size.x * chunk.size.y;
+  const zMaskArea = sizeX * sizeY;
   const pzMask = new Uint8Array(zMaskArea);
   const nzMask = new Uint8Array(zMaskArea);
   const zUsed = new Uint8Array(zMaskArea);
 
-  for (let lz = 0; lz < chunk.size.z; lz++) {
+  for (let lz = 0; lz < sizeZ; lz++) {
     pzMask.fill(0);
     nzMask.fill(0);
     const gz = chunkOrigin.z + lz;
 
-    for (let ly = 0; ly < chunk.size.y; ly++) {
-      for (let lx = 0; lx < chunk.size.x; lx++) {
+    for (let ly = 0; ly < sizeY; ly++) {
+      const rowOffset = sizeX * (lz + sizeZ * ly);
+      const gy = chunkOrigin.y + ly;
+      for (let lx = 0; lx < sizeX; lx++) {
         const gx = chunkOrigin.x + lx;
-        const gy = chunkOrigin.y + ly;
-        const block = getBlock(lookup, gx, gy, gz);
-        if (!isSolidBlock(block)) continue;
+        const blockOffset = rowOffset + lx;
+        const block = blocks[blockOffset] ?? 0;
+        if (!isSolidNumericBlock(block)) continue;
 
-        const index = lx + ly * chunk.size.x;
-        if (isFaceVisible(block, getBlock(lookup, gx, gy, gz + 1))) pzMask[index] = block;
-        if (isFaceVisible(block, getBlock(lookup, gx, gy, gz - 1))) nzMask[index] = block;
+        const index = lx + ly * sizeX;
+        const pzNeighbor = lz + 1 < sizeZ ? blocks[blockOffset + sizeX] ?? 0 : getBlock(lookup, gx, gy, gz + 1);
+        const nzNeighbor = lz > 0 ? blocks[blockOffset - sizeX] ?? 0 : getBlock(lookup, gx, gy, gz - 1);
+        if (!isSolidNumericBlock(pzNeighbor)) pzMask[index] = block;
+        if (!isSolidNumericBlock(nzNeighbor)) nzMask[index] = block;
       }
     }
 
-    greedyMask(pzMask, zUsed, chunk.size.x, chunk.size.y, (u, v, width, height, blockId) => {
+    greedyMask(pzMask, zUsed, sizeX, sizeY, (u, v, width, height, blockId) => {
       emitFace(buffers, 'pz', { x: chunkOrigin.x + u, y: chunkOrigin.y + v, z: gz, width, height, blockId });
     });
-    greedyMask(nzMask, zUsed, chunk.size.x, chunk.size.y, (u, v, width, height, blockId) => {
+    greedyMask(nzMask, zUsed, sizeX, sizeY, (u, v, width, height, blockId) => {
       emitFace(buffers, 'nz', { x: chunkOrigin.x + u, y: chunkOrigin.y + v, z: gz, width, height, blockId });
     });
   }
@@ -429,7 +589,7 @@ function getTopSolidBlock(
 
   for (let y = startY; y >= 0; y--) {
     const block = getBlock(lookup, x, y, z);
-    if (isSolidBlock(block)) return { y, block };
+    if (isSolidNumericBlock(block)) return { y, block };
   }
 
   return null;

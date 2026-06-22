@@ -40,6 +40,28 @@ assert.ok(uniqueLayers.has(getTextureLayerForBlock('grass', 'bottom').layer));
 assert.ok(uniqueLayers.has(getTextureLayerForBlock('stone', 'side').layer));
 assert.equal(getTextureLayerForBlock('grass', 'bottom').layer, getTextureLayerForBlock('dirt', 'side').layer);
 
+const crossChunkA: VoxelChunk = {
+  coord: { x: 0, y: 0, z: 0 },
+  size: { x: 1, y: 1, z: 1 },
+  blocks: new Uint8Array([getBlockNumericId('grass')]),
+  solidBlockCount: 1,
+};
+const crossChunkB: VoxelChunk = {
+  coord: { x: 1, y: 0, z: 0 },
+  size: { x: 1, y: 1, z: 1 },
+  blocks: new Uint8Array([getBlockNumericId('stone')]),
+  solidBlockCount: 1,
+};
+const crossChunkManifest = {
+  id: 'terrain-texture-cross-chunk-test',
+  size: { x: 2, y: 1, z: 1 },
+  chunkSize: { x: 1, y: 1, z: 1 },
+  chunks: [crossChunkA, crossChunkB],
+} as unknown as VoxelMapManifest;
+const crossChunkMeshData = buildVoxelRegionGeometryData(crossChunkManifest, [crossChunkA, crossChunkB]);
+assert.equal(crossChunkMeshData.textureLayers.length, 40);
+assert.equal(crossChunkMeshData.indices.length, 60);
+
 assert.equal(TERRAIN_TEXTURE_LAYER_COUNT, 36);
 assert.deepEqual(TERRAIN_TEXTURE_ANISOTROPY_BY_QUALITY, {
   off: 4,
