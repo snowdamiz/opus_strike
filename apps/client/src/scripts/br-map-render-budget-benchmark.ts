@@ -14,6 +14,7 @@ import {
 
 const DEFAULT_BENCHMARK_SEED = 20260611;
 const seed = Number.parseInt(process.env.BR_MAP_BENCH_SEED ?? `${DEFAULT_BENCHMARK_SEED}`, 10) >>> 0;
+const MAX_RUNTIME_TERRAIN_TRIANGLE_BUDGET_RATIO = 0.85;
 
 interface GeometrySummary {
   buildMs: number;
@@ -120,6 +121,7 @@ function summarizeVisibilityBudget(
   }
 
   const triangleBudget = WORLD_PERFORMANCE_BUDGETS[profile].triangles;
+  const terrainTriangleBudgetRatio = triangles / Math.max(1, triangleBudget);
   const warmupRegions = getCentralBattleRoyalRegions(preparedMap, { graphicsPreset: profile });
 
   return {
@@ -134,8 +136,10 @@ function summarizeVisibilityBudget(
     terrainVertices: vertices,
     terrainTriangles: triangles,
     triangleBudget,
-    terrainTriangleBudgetRatio: Number((triangles / Math.max(1, triangleBudget)).toFixed(4)),
+    terrainTriangleBudgetRatio: Number(terrainTriangleBudgetRatio.toFixed(4)),
+    terrainTriangleHeadroomRatio: MAX_RUNTIME_TERRAIN_TRIANGLE_BUDGET_RATIO,
     terrainTriangleBudgetExceeded: triangles > triangleBudget,
+    terrainTriangleHeadroomExceeded: terrainTriangleBudgetRatio > MAX_RUNTIME_TERRAIN_TRIANGLE_BUDGET_RATIO,
   };
 }
 
@@ -201,6 +205,11 @@ for (const [profile, summary] of Object.entries(visibility)) {
   if (summary.terrainTriangleBudgetExceeded) {
     throw new Error(
       `${profile} BR terrain exceeds triangle budget: ${summary.terrainTriangles} > ${summary.triangleBudget}`
+    );
+  }
+  if (summary.terrainTriangleHeadroomExceeded) {
+    throw new Error(
+      `${profile} BR terrain exceeds triangle headroom: ratio=${summary.terrainTriangleBudgetRatio} > ${MAX_RUNTIME_TERRAIN_TRIANGLE_BUDGET_RATIO}`
     );
   }
 }

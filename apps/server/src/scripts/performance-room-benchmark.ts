@@ -1,6 +1,8 @@
 import { performance } from 'node:perf_hooks';
 import {
   DEFAULT_GAMEPLAY_MODE,
+  createProceduralTerrainLookup,
+  generateProceduralVoxelMap,
   getGameplayModeRules,
   getTeamIdsForGameplayMode,
   HERO_DEFINITIONS,
@@ -19,6 +21,7 @@ import {
   type HeroId,
   type MapProfileId,
   type PackedPlayerTransform,
+  type PlayerInput,
   type SelfMovementAuthority,
   type Team,
   type VoxelMapSizeId,
@@ -54,6 +57,12 @@ import {
 import { AntiCheatSignalPriorityQueue } from '../anticheat';
 import { normalizeAntiCheatSignal } from '../anticheat/signal';
 import { Player } from '../rooms/schema/Player';
+import {
+  advanceBattleRoyalDropState,
+  createBattleRoyalDropState,
+  setBattleRoyalDropPlayerInput,
+  startBattleRoyalTeamDrop,
+} from '../rooms/battleRoyalDrop';
 
 function percentile(sorted: number[], p: number): number {
   return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * p))] ?? 0;
@@ -211,6 +220,90 @@ function runSpatialBenchmark(): Record<string, number | string> {
     samples.push(performance.now() - startedAt);
   }
   return summarize('spatial_rebuild_and_queries', samples);
+}
+
+function createBattleRoyalDropBenchmarkInput(index: number, tick: number): PlayerInput {
+  return {
+    tick,
+    moveForward: true,
+    moveBackward: false,
+    moveLeft: (tick + index) % 5 === 0,
+    moveRight: (tick + index) % 7 === 0,
+    jump: false,
+    crouch: false,
+    sprint: index % 2 === 0,
+    primaryFire: false,
+    secondaryFire: false,
+    reload: false,
+    ability1: false,
+    ability2: false,
+    ultimate: false,
+    interact: false,
+    lookYaw: Math.sin((tick + index) / 24) * 1.15,
+    lookPitch: Math.sin((tick + index) / 31) * 0.35,
+    timestamp: tick * ROOM_TICK_INTERVAL_MS,
+  };
+}
+
+function runBattleRoyalDropBenchmark(): Record<string, BenchmarkSummaryValue> {
+  const manifest = generateProceduralVoxelMap(424242, {
+    profileId: 'battle_royal_large',
+    mapSize: 'large',
+  });
+  const terrain = createProceduralTerrainLookup(manifest);
+  const rules = getGameplayModeRules('battle_royal');
+  const participants = Array.from({ length: 30 }, (_, index) => ({
+    playerId: `drop-human-${index}`,
+    team: getBenchmarkTeamForPlayer('battle_royal', index),
+    isBot: false,
+  }));
+  const state = createBattleRoyalDropState(manifest, participants, 2_200_000_000_000);
+  const teams = Array.from(state.teamPlayers.keys());
+  const dropAt = state.dropStartsAt + 100;
+  for (const team of teams) {
+    startBattleRoyalTeamDrop(state, team, dropAt);
+  }
+
+  const samples: number[] = [];
+  const warmupIterations = 40;
+  const sampleIterations = 420;
+  const totalIterations = warmupIterations + sampleIterations;
+  let landedPlayers = 0;
+
+  for (let iteration = 0; iteration < totalIterations; iteration++) {
+    const now = dropAt + iteration * ROOM_TICK_INTERVAL_MS;
+    let playerIndex = 0;
+    for (const player of state.players.values()) {
+      if (!player.attachedToPlayerId) {
+        setBattleRoyalDropPlayerInput(state, player.playerId, createBattleRoyalDropBenchmarkInput(playerIndex, iteration));
+      }
+      playerIndex++;
+    }
+
+    const startedAt = performance.now();
+    advanceBattleRoyalDropState({
+      state,
+      now,
+      dt: ROOM_TICK_INTERVAL_MS / 1000,
+      getGroundY: (position) => terrain.getGroundY(position),
+      clampToPlayableMap: (position) => terrain.clampToPlayableMap(position),
+    });
+    if (iteration >= warmupIterations) {
+      samples.push(performance.now() - startedAt);
+    }
+  }
+
+  for (const player of state.players.values()) {
+    if (player.status === 'landed') landedPlayers++;
+  }
+
+  return {
+    ...summarize('battle_royal_drop_30_players_deployment', samples),
+    players: state.players.size,
+    teams: teams.length,
+    maxTeamSize: rules.maxTeamSize,
+    landedPlayers,
+  };
 }
 
 function botVec(x: number, z: number, y = 1): PlainVec3 {
@@ -1062,6 +1155,7 @@ const benchmarkCases: BenchmarkCase[] = [
   { name: 'movement_queue_8_players_burst', run: () => runMovementQueueBenchmark() },
   { name: 'shared_movement_8_players', run: () => runMovementSimulationBenchmark() },
   { name: 'spatial_rebuild_and_queries', run: () => runSpatialBenchmark() },
+  { name: 'battle_royal_drop_30_players_deployment', run: () => runBattleRoyalDropBenchmark() },
   { name: 'bot_ai_8_bots_tactics_path_abilities', run: () => runBotAiBenchmark(8) },
   { name: 'bot_ai_16_bots_tactics_path_abilities', run: () => runBotAiBenchmark(16) },
   { name: 'bot_ai_24_bots_tactics_path_abilities', run: () => runBotAiBenchmark(24) },
@@ -1152,3 +1246,9 @@ console.log(JSON.stringify({
   filter: benchmarkFilter || undefined,
   results,
 }, null, 2));
+
+if (results.some((result) => result.budgetExceeded === true)) {
+  process.exitCode = 1;
+}
+
+process.exit(process.exitCode ?? 0);

@@ -16,6 +16,7 @@ import {
   forceLandBattleRoyalDropState,
   isBattleRoyalDropTeamLeader,
   isBattleRoyalDropShipDroppable,
+  removeBattleRoyalDropParticipant,
   setBattleRoyalDropPlayerInput,
   shouldAutoDropBattleRoyalTeam,
   startBattleRoyalTeamDrop,
@@ -100,6 +101,8 @@ assert.equal(initialSnapshot.players.length, 3);
 assert.equal(initialSnapshot.players.every((player) => player.status === 'aboard'), true);
 assert.equal(initialSnapshot.players.find((player) => player.playerId === 'red-1')?.attachedToPlayerId, null);
 assert.equal(initialSnapshot.players.find((player) => player.playerId === 'red-2')?.attachedToPlayerId, 'red-1');
+assert.equal(state.teamPlayers.get('red')?.length, 2);
+assert.equal(state.teamHumanCounts.get('red'), 2);
 assert.equal(isBattleRoyalDropTeamLeader(state, 'red-1'), true);
 assert.equal(isBattleRoyalDropTeamLeader(state, 'red-2'), false);
 assert.equal(initialSnapshot.ship.canDrop, false);
@@ -308,5 +311,30 @@ advanceBattleRoyalDropState({
   clampToPlayableMap: unclamped,
 });
 assert.equal(botOnlyState.players.get('bot-blue')?.status, 'dropping');
+
+const removalState = createBattleRoyalDropState(
+  manifest,
+  [
+    { playerId: 'human-red', team: 'red' },
+    { playerId: 'bot-red', team: 'red', isBot: true },
+  ],
+  startedAt
+);
+assert.equal(removeBattleRoyalDropParticipant(removalState, 'human-red'), true);
+assert.equal(removalState.players.has('human-red'), false);
+assert.equal(removalState.teamPlayers.get('red')?.map((player) => player.playerId).join(','), 'bot-red');
+assert.equal(removalState.teamHumanCounts.has('red'), false);
+assert.equal(isBattleRoyalDropTeamLeader(removalState, 'bot-red'), true);
+assert.equal(
+  shouldAutoDropBattleRoyalTeam(
+    removalState,
+    'red',
+    Math.max(removalState.dropStartsAt, removalState.teamAutoDropAt.get('red') ?? removalState.autoDropAt)
+  ),
+  true
+);
+assert.equal(removeBattleRoyalDropParticipant(removalState, 'bot-red'), true);
+assert.equal(removalState.teamPlayers.has('red'), false);
+assert.equal(removeBattleRoyalDropParticipant(removalState, 'missing-red'), false);
 
 console.log('battle royal drop tests passed');

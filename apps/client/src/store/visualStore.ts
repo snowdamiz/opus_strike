@@ -201,10 +201,8 @@ export interface CombatVisualFrameCache {
   builtAtMs: number;
   sourceSize: number;
   alivePlayers: CombatVisualPlayer[];
-  byTeam: Map<Team, CombatVisualPlayer[]>;
-  buckets: Map<number, Map<number, CombatVisualPlayer[]>>;
+  buckets: Map<number, CombatVisualPlayer[]>;
   activeBuckets: CombatVisualPlayer[][];
-  activeBucketSet: Set<CombatVisualPlayer[]>;
   entryPool: CombatVisualPlayer[];
   cellSize: number;
 }
@@ -240,6 +238,8 @@ const DEFAULT_LOCAL_MOVEMENT: PlayerMovementState = {
 };
 
 const COMBAT_VISUAL_CELL_SIZE = 8;
+const COMBAT_VISUAL_BUCKET_KEY_CELL_OFFSET = 1 << 20;
+const COMBAT_VISUAL_BUCKET_KEY_CELL_STRIDE = COMBAT_VISUAL_BUCKET_KEY_CELL_OFFSET * 2;
 const CHRONOS_ASCENDANT_ABILITY_ID = 'chronos_ascendant_paradox';
 
 function createCombatVisualHitboxMetrics(size: { width: number; height: number; depth: number }): {
@@ -277,10 +277,8 @@ const createCombatFrameCache = (): CombatVisualFrameCache => ({
   builtAtMs: 0,
   sourceSize: 0,
   alivePlayers: [],
-  byTeam: new Map(),
   buckets: new Map(),
   activeBuckets: [],
-  activeBucketSet: new Set(),
   entryPool: [],
   cellSize: COMBAT_VISUAL_CELL_SIZE,
 });
@@ -328,6 +326,10 @@ const REMOTE_HISTORY_LIMIT = 32;
 const REMOTE_TRANSFORM_EXPECTED_CADENCE_MS = TICK_INTERVAL_MS;
 const REMOTE_INTERPOLATION_MAX_DELAY_MS =
   MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS + MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS;
+const REMOTE_TRANSFORM_TAIL_FAST_PATH_SEGMENTS = Math.max(
+  1,
+  Math.ceil(MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS / REMOTE_TRANSFORM_EXPECTED_CADENCE_MS)
+);
 const REMOTE_INTERPOLATION_JITTER_DECAY_ALPHA = 0.12;
 const REMOTE_INTERPOLATION_JITTER_GAIN = 0.75;
 
@@ -664,54 +666,34 @@ export const pruneRemoteTransformHistories = (activePlayerIds: ReadonlySet<strin
   }
 };
 
-export const sampleRemoteTransformHistoryInto = (
-  history: RemoteTransformHistory | null | undefined,
+function writeInterpolatedRemoteTransform(
   target: SampledRemoteTransform,
-  nowMs = Date.now()
-): boolean => {
-  if (!history || history.snapshots.length === 0) return false;
+  previous: RemoteTransformSnapshot,
+  next: RemoteTransformSnapshot,
+  renderServerTime: number
+): void {
+  const span = Math.max(1, next.serverTime - previous.serverTime);
+  const t = Math.max(0, Math.min(1, (renderServerTime - previous.serverTime) / span));
+  target.position.x = lerp(previous.position.x, next.position.x, t);
+  target.position.y = lerp(previous.position.y, next.position.y, t);
+  target.position.z = lerp(previous.position.z, next.position.z, t);
+  target.velocity.x = lerp(previous.velocity.x, next.velocity.x, t);
+  target.velocity.y = lerp(previous.velocity.y, next.velocity.y, t);
+  target.velocity.z = lerp(previous.velocity.z, next.velocity.z, t);
+  target.lookYaw = lerpYaw(previous.lookYaw, next.lookYaw, t);
+  target.lookPitch = lerp(previous.lookPitch, next.lookPitch, t);
+  target.movementBits = next.movementBits;
+  target.wallRunSide = next.wallRunSide;
+  target.movementEpoch = next.movementEpoch;
+  target.extrapolatedMs = 0;
+  target.stale = false;
+}
 
-  const snapshots = history.snapshots;
-  const latest = snapshots[snapshots.length - 1];
-  const estimatedServerTime = latest.serverTime + Math.max(0, nowMs - latest.receivedAtMs);
-  const interpolationDelayMs = Number.isFinite(history.interpolationDelayMs)
-    ? history.interpolationDelayMs
-    : MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS;
-  const renderServerTime = estimatedServerTime - interpolationDelayMs;
-
-  let low = 0;
-  let high = snapshots.length;
-  while (low < high) {
-    const mid = (low + high) >> 1;
-    if (snapshots[mid].serverTime <= renderServerTime) {
-      low = mid + 1;
-    } else {
-      high = mid;
-    }
-  }
-
-  const previous = snapshots[Math.max(0, low - 1)];
-  const next = low < snapshots.length ? snapshots[low] : null;
-
-  if (next) {
-    const span = Math.max(1, next.serverTime - previous.serverTime);
-    const t = Math.max(0, Math.min(1, (renderServerTime - previous.serverTime) / span));
-    target.position.x = lerp(previous.position.x, next.position.x, t);
-    target.position.y = lerp(previous.position.y, next.position.y, t);
-    target.position.z = lerp(previous.position.z, next.position.z, t);
-    target.velocity.x = lerp(previous.velocity.x, next.velocity.x, t);
-    target.velocity.y = lerp(previous.velocity.y, next.velocity.y, t);
-    target.velocity.z = lerp(previous.velocity.z, next.velocity.z, t);
-    target.lookYaw = lerpYaw(previous.lookYaw, next.lookYaw, t);
-    target.lookPitch = lerp(previous.lookPitch, next.lookPitch, t);
-    target.movementBits = next.movementBits;
-    target.wallRunSide = next.wallRunSide;
-    target.movementEpoch = next.movementEpoch;
-    target.extrapolatedMs = 0;
-    target.stale = false;
-    return true;
-  }
-
+function writeExtrapolatedRemoteTransform(
+  target: SampledRemoteTransform,
+  latest: RemoteTransformSnapshot,
+  renderServerTime: number
+): void {
   const extrapolatedMs = Math.max(0, renderServerTime - latest.serverTime);
   const cappedMs = Math.min(extrapolatedMs, MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS);
   const dt = cappedMs / 1000;
@@ -728,6 +710,58 @@ export const sampleRemoteTransformHistoryInto = (
   target.movementEpoch = latest.movementEpoch;
   target.extrapolatedMs = extrapolatedMs;
   target.stale = extrapolatedMs > MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS;
+}
+
+export const sampleRemoteTransformHistoryInto = (
+  history: RemoteTransformHistory | null | undefined,
+  target: SampledRemoteTransform,
+  nowMs = Date.now()
+): boolean => {
+  if (!history || history.snapshots.length === 0) return false;
+
+  const snapshots = history.snapshots;
+  const latest = snapshots[snapshots.length - 1];
+  const estimatedServerTime = latest.serverTime + Math.max(0, nowMs - latest.receivedAtMs);
+  const interpolationDelayMs = Number.isFinite(history.interpolationDelayMs)
+    ? history.interpolationDelayMs
+    : MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS;
+  const renderServerTime = estimatedServerTime - interpolationDelayMs;
+  if (renderServerTime >= latest.serverTime) {
+    writeExtrapolatedRemoteTransform(target, latest, renderServerTime);
+    return true;
+  }
+
+  const latestIndex = snapshots.length - 1;
+  const fastPathSegments = Math.min(REMOTE_TRANSFORM_TAIL_FAST_PATH_SEGMENTS, latestIndex);
+  for (let offset = 1; offset <= fastPathSegments; offset++) {
+    const next = snapshots[latestIndex - offset + 1];
+    const previous = snapshots[latestIndex - offset];
+    if (renderServerTime >= previous.serverTime) {
+      writeInterpolatedRemoteTransform(target, previous, next, renderServerTime);
+      return true;
+    }
+  }
+
+  let low = 0;
+  let high = snapshots.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (snapshots[mid].serverTime <= renderServerTime) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+
+  const previous = snapshots[Math.max(0, low - 1)];
+  const next = low < snapshots.length ? snapshots[low] : null;
+
+  if (next) {
+    writeInterpolatedRemoteTransform(target, previous, next, renderServerTime);
+    return true;
+  }
+
+  writeExtrapolatedRemoteTransform(target, latest, renderServerTime);
   return true;
 };
 
@@ -766,19 +800,6 @@ function clearActiveCombatBuckets(cache: CombatVisualFrameCache): void {
     cache.activeBuckets[i].length = 0;
   }
   cache.activeBuckets.length = 0;
-  cache.activeBucketSet.clear();
-}
-
-function markActiveCombatBucket(
-  cache: CombatVisualFrameCache,
-  bucket: CombatVisualPlayer[]
-): void {
-  if (cache.activeBucketSet.has(bucket)) {
-    return;
-  }
-
-  cache.activeBucketSet.add(bucket);
-  cache.activeBuckets.push(bucket);
 }
 
 function getCombatBucket(
@@ -786,37 +807,21 @@ function getCombatBucket(
   cellX: number,
   cellZ: number
 ): CombatVisualPlayer[] {
-  let zBuckets = cache.buckets.get(cellX);
-  if (!zBuckets) {
-    zBuckets = new Map();
-    cache.buckets.set(cellX, zBuckets);
-  }
-
-  let bucket = zBuckets.get(cellZ);
+  const key = getCombatBucketKeyForCell(cellX, cellZ);
+  let bucket = cache.buckets.get(key);
   if (!bucket) {
     bucket = [];
-    zBuckets.set(cellZ, bucket);
+    cache.buckets.set(key, bucket);
   }
-  markActiveCombatBucket(cache, bucket);
-  return bucket;
-}
-
-function getCombatTeamBucket(
-  cache: CombatVisualFrameCache,
-  team: Team
-): CombatVisualPlayer[] {
-  let bucket = cache.byTeam.get(team);
-  if (!bucket) {
-    bucket = [];
-    cache.byTeam.set(team, bucket);
+  if (bucket.length === 0) {
+    cache.activeBuckets.push(bucket);
   }
   return bucket;
 }
 
-function clearCombatTeamBuckets(cache: CombatVisualFrameCache): void {
-  for (const bucket of cache.byTeam.values()) {
-    bucket.length = 0;
-  }
+function getCombatBucketKeyForCell(cellX: number, cellZ: number): number {
+  return (cellX + COMBAT_VISUAL_BUCKET_KEY_CELL_OFFSET) * COMBAT_VISUAL_BUCKET_KEY_CELL_STRIDE +
+    (cellZ + COMBAT_VISUAL_BUCKET_KEY_CELL_OFFSET);
 }
 
 export const rebuildCombatVisualFrameCache = (
@@ -834,7 +839,6 @@ export const rebuildCombatVisualFrameCache = (
   cache.builtAtMs = nowMs;
   cache.sourceSize = sourceSize;
   cache.alivePlayers.length = 0;
-  clearCombatTeamBuckets(cache);
   clearActiveCombatBuckets(cache);
 
   let entryIndex = 0;
@@ -867,7 +871,6 @@ export const rebuildCombatVisualFrameCache = (
     }
     entryIndex++;
     cache.alivePlayers.push(visualPlayer);
-    getCombatTeamBucket(cache, player.team).push(visualPlayer);
 
     const bucket = getCombatBucket(
       cache,
@@ -910,6 +913,17 @@ function doesCombatVisualPlayerPassRadius(
   return dx * dx + dz * dz <= radiusSq;
 }
 
+function shouldScanActiveCombatBuckets(
+  cache: CombatVisualFrameCache,
+  minCellX: number,
+  maxCellX: number,
+  minCellZ: number,
+  maxCellZ: number
+): boolean {
+  const queryCellCount = (maxCellX - minCellX + 1) * (maxCellZ - minCellZ + 1);
+  return cache.activeBuckets.length > 0 && cache.activeBuckets.length < queryCellCount;
+}
+
 export const fillCombatVisualEnemyPlayers = (
   cache: CombatVisualFrameCache,
   ownerTeam: Team | null | undefined,
@@ -927,11 +941,23 @@ export const fillCombatVisualEnemyPlayers = (
     const maxCellZ = Math.floor((center.z + radius) / cache.cellSize);
     const radiusSq = radius * radius;
 
+    if (shouldScanActiveCombatBuckets(cache, minCellX, maxCellX, minCellZ, maxCellZ)) {
+      for (let bucketIndex = 0; bucketIndex < cache.activeBuckets.length; bucketIndex++) {
+        const bucket = cache.activeBuckets[bucketIndex];
+        for (let i = 0; i < bucket.length; i++) {
+          const visualPlayer = bucket[i];
+          if (!isEnemyCombatVisualPlayer(visualPlayer, ownerTeam, ownerId)) continue;
+          if (doesCombatVisualPlayerPassRadius(visualPlayer, center, radiusSq)) {
+            target.push(visualPlayer.player);
+          }
+        }
+      }
+      return target;
+    }
+
     for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
-      const zBuckets = cache.buckets.get(cellX);
-      if (!zBuckets) continue;
       for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
-        const bucket = zBuckets.get(cellZ);
+        const bucket = cache.buckets.get(getCombatBucketKeyForCell(cellX, cellZ));
         if (!bucket) continue;
         for (let i = 0; i < bucket.length; i++) {
           const visualPlayer = bucket[i];
@@ -974,11 +1000,34 @@ export const findCombatVisualPlayerHit = (
     const maxCellZ = Math.floor((center.z + radius) / cache.cellSize);
     const radiusSq = radius * radius;
 
+    if (shouldScanActiveCombatBuckets(cache, minCellX, maxCellX, minCellZ, maxCellZ)) {
+      for (let bucketIndex = 0; bucketIndex < cache.activeBuckets.length; bucketIndex++) {
+        const bucket = cache.activeBuckets[bucketIndex];
+        for (let i = 0; i < bucket.length; i++) {
+          const visualPlayer = bucket[i];
+          if (!isCombatVisualTargetPlayer(visualPlayer, ownerTeam, ownerId, targetTeam)) continue;
+          if (!doesCombatVisualPlayerPassRadius(visualPlayer, center, radiusSq)) continue;
+          if (
+            doesSegmentHitVerticalCapsule(
+              start,
+              direction,
+              distance,
+              visualPlayer,
+              visualPlayer.hitboxRadius + extraRadius,
+              visualPlayer.hitboxSegmentHalfHeight
+            )
+          ) {
+            return visualPlayer.player;
+          }
+        }
+      }
+
+      return null;
+    }
+
     for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
-      const zBuckets = cache.buckets.get(cellX);
-      if (!zBuckets) continue;
       for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
-        const bucket = zBuckets.get(cellZ);
+        const bucket = cache.buckets.get(getCombatBucketKeyForCell(cellX, cellZ));
         if (!bucket) continue;
         for (let i = 0; i < bucket.length; i++) {
           const visualPlayer = bucket[i];
@@ -1052,9 +1101,7 @@ export const clearCombatVisualFrameCache = (): void => {
   cache.builtAtMs = 0;
   cache.sourceSize = 0;
   cache.alivePlayers.length = 0;
-  cache.byTeam.clear();
   cache.activeBuckets.length = 0;
-  cache.activeBucketSet.clear();
   cache.buckets.clear();
 };
 
