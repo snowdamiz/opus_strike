@@ -18,20 +18,17 @@ export type VoxelRegionGeometryDetail = 'full' | 'coarse';
 
 const COARSE_REGION_VOXEL_STEP = 8;
 
-interface FaceRect {
-  x: number;
-  y: number;
-  z: number;
-  width: number;
-  height: number;
-  blockId: number;
-}
-
 interface ChunkLookup {
   chunks: Array<VoxelChunk | undefined>;
   chunksX: number;
   chunksZ: number;
   manifest: VoxelMapManifest;
+}
+
+interface VoxelChunkMeshScratch {
+  positiveMask: Uint8Array;
+  negativeMask: Uint8Array;
+  usedMask: Uint8Array;
 }
 
 const chunkLookupCache = new WeakMap<VoxelMapManifest, ChunkLookup>();
@@ -183,6 +180,20 @@ function createMeshBufferBuilders(chunks: VoxelChunk[]): MeshBufferBuilders {
   return createMeshBufferBuildersForEstimatedFaces(estimatedFaces);
 }
 
+function createVoxelChunkMeshScratch(manifest: VoxelMapManifest): VoxelChunkMeshScratch {
+  const maxMaskArea = Math.max(
+    manifest.chunkSize.z * manifest.chunkSize.y,
+    manifest.chunkSize.x * manifest.chunkSize.z,
+    manifest.chunkSize.x * manifest.chunkSize.y
+  );
+
+  return {
+    positiveMask: new Uint8Array(maxMaskArea),
+    negativeMask: new Uint8Array(maxMaskArea),
+    usedMask: new Uint8Array(maxMaskArea),
+  };
+}
+
 function blockIndex(x: number, y: number, z: number, size: { x: number; y: number; z: number }): number {
   return x + size.x * (z + size.z * y);
 }
@@ -308,10 +319,13 @@ function pushQuad(
 function emitFace(
   buffers: MeshBufferBuilders,
   direction: 'px' | 'nx' | 'py' | 'ny' | 'pz' | 'nz',
-  rect: FaceRect
+  x: number,
+  y: number,
+  z: number,
+  width: number,
+  height: number,
+  blockId: number
 ): void {
-  const { x, y, z, width, height, blockId } = rect;
-
   if (direction === 'px') {
     pushQuad(
       buffers,
@@ -418,7 +432,8 @@ function appendVoxelChunkBuffers(
   manifest: VoxelMapManifest,
   lookup: ChunkLookup,
   chunk: VoxelChunk,
-  buffers: MeshBufferBuilders
+  buffers: MeshBufferBuilders,
+  scratch: VoxelChunkMeshScratch
 ): void {
   const chunkOrigin = {
     x: chunk.coord.x * manifest.chunkSize.x,
@@ -430,15 +445,15 @@ function appendVoxelChunkBuffers(
   const sizeY = size.y;
   const sizeZ = size.z;
   const yStride = sizeX * sizeZ;
+  const positiveMask = scratch.positiveMask;
+  const negativeMask = scratch.negativeMask;
+  const usedMask = scratch.usedMask;
 
   const xMaskArea = sizeZ * sizeY;
-  const pxMask = new Uint8Array(xMaskArea);
-  const nxMask = new Uint8Array(xMaskArea);
-  const xUsed = new Uint8Array(xMaskArea);
 
   for (let lx = 0; lx < sizeX; lx++) {
-    pxMask.fill(0);
-    nxMask.fill(0);
+    positiveMask.fill(0, 0, xMaskArea);
+    negativeMask.fill(0, 0, xMaskArea);
     const gx = chunkOrigin.x + lx;
 
     for (let ly = 0; ly < sizeY; ly++) {
@@ -447,33 +462,30 @@ function appendVoxelChunkBuffers(
       for (let lz = 0; lz < sizeZ; lz++) {
         const gz = chunkOrigin.z + lz;
         const blockOffset = rowOffset + sizeX * lz;
-        const block = blocks[blockOffset] ?? 0;
+        const block = blocks[blockOffset];
         if (!isSolidNumericBlock(block)) continue;
 
         const index = lz + ly * sizeZ;
-        const pxNeighbor = lx + 1 < sizeX ? blocks[blockOffset + 1] ?? 0 : getBlock(lookup, gx + 1, gy, gz);
-        const nxNeighbor = lx > 0 ? blocks[blockOffset - 1] ?? 0 : getBlock(lookup, gx - 1, gy, gz);
-        if (!isSolidNumericBlock(pxNeighbor)) pxMask[index] = block;
-        if (!isSolidNumericBlock(nxNeighbor)) nxMask[index] = block;
+        const pxNeighbor = lx + 1 < sizeX ? blocks[blockOffset + 1] : getBlock(lookup, gx + 1, gy, gz);
+        const nxNeighbor = lx > 0 ? blocks[blockOffset - 1] : getBlock(lookup, gx - 1, gy, gz);
+        if (!isSolidNumericBlock(pxNeighbor)) positiveMask[index] = block;
+        if (!isSolidNumericBlock(nxNeighbor)) negativeMask[index] = block;
       }
     }
 
-    greedyMask(pxMask, xUsed, sizeZ, sizeY, (u, v, width, height, blockId) => {
-      emitFace(buffers, 'px', { x: gx, y: chunkOrigin.y + v, z: chunkOrigin.z + u, width, height, blockId });
+    greedyMask(positiveMask, usedMask, sizeZ, sizeY, (u, v, width, height, blockId) => {
+      emitFace(buffers, 'px', gx, chunkOrigin.y + v, chunkOrigin.z + u, width, height, blockId);
     });
-    greedyMask(nxMask, xUsed, sizeZ, sizeY, (u, v, width, height, blockId) => {
-      emitFace(buffers, 'nx', { x: gx, y: chunkOrigin.y + v, z: chunkOrigin.z + u, width, height, blockId });
+    greedyMask(negativeMask, usedMask, sizeZ, sizeY, (u, v, width, height, blockId) => {
+      emitFace(buffers, 'nx', gx, chunkOrigin.y + v, chunkOrigin.z + u, width, height, blockId);
     });
   }
 
   const yMaskArea = sizeX * sizeZ;
-  const pyMask = new Uint8Array(yMaskArea);
-  const nyMask = new Uint8Array(yMaskArea);
-  const yUsed = new Uint8Array(yMaskArea);
 
   for (let ly = 0; ly < sizeY; ly++) {
-    pyMask.fill(0);
-    nyMask.fill(0);
+    positiveMask.fill(0, 0, yMaskArea);
+    negativeMask.fill(0, 0, yMaskArea);
     const gy = chunkOrigin.y + ly;
 
     for (let lz = 0; lz < sizeZ; lz++) {
@@ -482,33 +494,30 @@ function appendVoxelChunkBuffers(
       for (let lx = 0; lx < sizeX; lx++) {
         const gx = chunkOrigin.x + lx;
         const blockOffset = rowOffset + lx;
-        const block = blocks[blockOffset] ?? 0;
+        const block = blocks[blockOffset];
         if (!isSolidNumericBlock(block)) continue;
 
         const index = lx + lz * sizeX;
-        const pyNeighbor = ly + 1 < sizeY ? blocks[blockOffset + yStride] ?? 0 : getBlock(lookup, gx, gy + 1, gz);
-        const nyNeighbor = ly > 0 ? blocks[blockOffset - yStride] ?? 0 : getBlock(lookup, gx, gy - 1, gz);
-        if (!isSolidNumericBlock(pyNeighbor)) pyMask[index] = block;
-        if (!isSolidNumericBlock(nyNeighbor)) nyMask[index] = block;
+        const pyNeighbor = ly + 1 < sizeY ? blocks[blockOffset + yStride] : getBlock(lookup, gx, gy + 1, gz);
+        const nyNeighbor = ly > 0 ? blocks[blockOffset - yStride] : getBlock(lookup, gx, gy - 1, gz);
+        if (!isSolidNumericBlock(pyNeighbor)) positiveMask[index] = block;
+        if (!isSolidNumericBlock(nyNeighbor)) negativeMask[index] = block;
       }
     }
 
-    greedyMask(pyMask, yUsed, sizeX, sizeZ, (u, v, width, height, blockId) => {
-      emitFace(buffers, 'py', { x: chunkOrigin.x + u, y: gy, z: chunkOrigin.z + v, width, height, blockId });
+    greedyMask(positiveMask, usedMask, sizeX, sizeZ, (u, v, width, height, blockId) => {
+      emitFace(buffers, 'py', chunkOrigin.x + u, gy, chunkOrigin.z + v, width, height, blockId);
     });
-    greedyMask(nyMask, yUsed, sizeX, sizeZ, (u, v, width, height, blockId) => {
-      emitFace(buffers, 'ny', { x: chunkOrigin.x + u, y: gy, z: chunkOrigin.z + v, width, height, blockId });
+    greedyMask(negativeMask, usedMask, sizeX, sizeZ, (u, v, width, height, blockId) => {
+      emitFace(buffers, 'ny', chunkOrigin.x + u, gy, chunkOrigin.z + v, width, height, blockId);
     });
   }
 
   const zMaskArea = sizeX * sizeY;
-  const pzMask = new Uint8Array(zMaskArea);
-  const nzMask = new Uint8Array(zMaskArea);
-  const zUsed = new Uint8Array(zMaskArea);
 
   for (let lz = 0; lz < sizeZ; lz++) {
-    pzMask.fill(0);
-    nzMask.fill(0);
+    positiveMask.fill(0, 0, zMaskArea);
+    negativeMask.fill(0, 0, zMaskArea);
     const gz = chunkOrigin.z + lz;
 
     for (let ly = 0; ly < sizeY; ly++) {
@@ -517,22 +526,22 @@ function appendVoxelChunkBuffers(
       for (let lx = 0; lx < sizeX; lx++) {
         const gx = chunkOrigin.x + lx;
         const blockOffset = rowOffset + lx;
-        const block = blocks[blockOffset] ?? 0;
+        const block = blocks[blockOffset];
         if (!isSolidNumericBlock(block)) continue;
 
         const index = lx + ly * sizeX;
-        const pzNeighbor = lz + 1 < sizeZ ? blocks[blockOffset + sizeX] ?? 0 : getBlock(lookup, gx, gy, gz + 1);
-        const nzNeighbor = lz > 0 ? blocks[blockOffset - sizeX] ?? 0 : getBlock(lookup, gx, gy, gz - 1);
-        if (!isSolidNumericBlock(pzNeighbor)) pzMask[index] = block;
-        if (!isSolidNumericBlock(nzNeighbor)) nzMask[index] = block;
+        const pzNeighbor = lz + 1 < sizeZ ? blocks[blockOffset + sizeX] : getBlock(lookup, gx, gy, gz + 1);
+        const nzNeighbor = lz > 0 ? blocks[blockOffset - sizeX] : getBlock(lookup, gx, gy, gz - 1);
+        if (!isSolidNumericBlock(pzNeighbor)) positiveMask[index] = block;
+        if (!isSolidNumericBlock(nzNeighbor)) negativeMask[index] = block;
       }
     }
 
-    greedyMask(pzMask, zUsed, sizeX, sizeY, (u, v, width, height, blockId) => {
-      emitFace(buffers, 'pz', { x: chunkOrigin.x + u, y: chunkOrigin.y + v, z: gz, width, height, blockId });
+    greedyMask(positiveMask, usedMask, sizeX, sizeY, (u, v, width, height, blockId) => {
+      emitFace(buffers, 'pz', chunkOrigin.x + u, chunkOrigin.y + v, gz, width, height, blockId);
     });
-    greedyMask(nzMask, zUsed, sizeX, sizeY, (u, v, width, height, blockId) => {
-      emitFace(buffers, 'nz', { x: chunkOrigin.x + u, y: chunkOrigin.y + v, z: gz, width, height, blockId });
+    greedyMask(negativeMask, usedMask, sizeX, sizeY, (u, v, width, height, blockId) => {
+      emitFace(buffers, 'nz', chunkOrigin.x + u, chunkOrigin.y + v, gz, width, height, blockId);
     });
   }
 }
@@ -618,14 +627,7 @@ function buildCoarseVoxelRegionGeometryData(
       const topBlock = getTopSolidBlock(manifest, lookup, sampleX, sampleZ);
       if (!topBlock) continue;
 
-      emitFace(buffers, 'py', {
-        x,
-        y: topBlock.y,
-        z,
-        width: x1 - x,
-        height: z1 - z,
-        blockId: topBlock.block,
-      });
+      emitFace(buffers, 'py', x, topBlock.y, z, x1 - x, z1 - z, topBlock.block);
     }
   }
 
@@ -650,9 +652,10 @@ export function buildVoxelRegionGeometryData(
 
   const lookup = createChunkLookup(manifest);
   const buffers = createMeshBufferBuilders(chunks);
+  const scratch = createVoxelChunkMeshScratch(manifest);
 
   for (const chunk of chunks) {
-    appendVoxelChunkBuffers(manifest, lookup, chunk, buffers);
+    appendVoxelChunkBuffers(manifest, lookup, chunk, buffers, scratch);
   }
 
   const vertexCount = buffers.positions.length / 3;
