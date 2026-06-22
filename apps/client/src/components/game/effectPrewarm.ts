@@ -11,6 +11,10 @@ import {
   appendBlazeAirstrikeGpuPrewarmObjects,
   prewarmBlazeAirstrikeResources,
 } from './blaze/airstrike';
+import {
+  appendRocketJumpExplosionGpuPrewarmObjects,
+  prewarmRocketJumpExplosionResources,
+} from './blaze/rocketJumpExplosion';
 import { prewarmRocketResources } from './blaze/rockets';
 import {
   appendDireBallGpuPrewarmObjects,
@@ -29,6 +33,14 @@ import {
   appendChronosPulseGpuPrewarmObjects,
   prewarmChronosPulseResources,
 } from './chronos/verdantPulse';
+import {
+  appendChronosAegisGpuPrewarmObjects,
+  prewarmChronosAegisResources,
+} from './chronos/aegis';
+import {
+  appendChronosAscendantGpuPrewarmObjects,
+  prewarmChronosAscendantResources,
+} from './chronos/ascendant';
 import {
   appendChronosTimebreakGpuPrewarmObjects,
   prewarmChronosTimebreakResources,
@@ -67,6 +79,7 @@ export async function prewarmBlazeEffects(): Promise<void> {
   initializeEffectResources();
   BlazeMaterials.prewarmBlazeMaterials();
   prewarmRocketResources();
+  prewarmRocketJumpExplosionResources();
   prewarmBlazeAirstrikeResources();
 }
 
@@ -78,6 +91,8 @@ export async function prewarmHookshotEffects(): Promise<void> {
 export async function prewarmChronosEffects(): Promise<void> {
   initializeEffectResources();
   prewarmChronosPulseResources();
+  prewarmChronosAegisResources();
+  prewarmChronosAscendantResources();
   prewarmChronosTimebreakResources();
 }
 
@@ -291,6 +306,7 @@ function addBlazeGpuPrewarmObjects(scene: THREE.Scene): void {
   ];
 
   addMaterialSwatches(scene, materials, -1.35, -5.4);
+  appendRocketJumpExplosionGpuPrewarmObjects(scene);
   appendBlazeAirstrikeGpuPrewarmObjects(scene);
   addInstancedMesh(scene, SHARED_GEOMETRIES.sphere8, BlazeMaterials.getFireballCoreMaterial(), [-0.7, -0.65, -4.2], 0.22, 'gpu-prewarm-blaze-fireball-core');
   addInstancedMesh(scene, SHARED_GEOMETRIES.sphere12, BlazeMaterials.getFireballOuterMaterial(), [-0.35, -0.65, -4.2], 0.28, 'gpu-prewarm-blaze-fireball-outer');
@@ -320,6 +336,8 @@ function addHookshotGpuPrewarmObjects(scene: THREE.Scene): void {
 }
 
 function addChronosGpuPrewarmObjects(scene: THREE.Scene): void {
+  appendChronosAegisGpuPrewarmObjects(scene);
+  appendChronosAscendantGpuPrewarmObjects(scene);
   appendChronosPulseGpuPrewarmObjects(scene);
   appendChronosTimebreakGpuPrewarmObjects(scene);
   addMaterialSwatches(scene, createRepresentativeChronosMaterials(), 0.9, -5.6);
