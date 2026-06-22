@@ -32,6 +32,7 @@ export type IncomingMovementCommandSanitization =
   | {
       ok: true;
       command: MovementCommand;
+      acceptedStaleCollisionRevision?: boolean;
     }
   | {
       ok: false;
@@ -53,6 +54,7 @@ export interface MovementCommandPacketIngressInput {
 
 export interface MovementCommandPacketIngressResult {
   acceptedCommandCount: number;
+  acceptedStaleCollisionRevisionCount: number;
   overflow: number;
   discardedCommandCount: number;
   shouldMarkQueueOverflowBarrier: boolean;
@@ -163,14 +165,15 @@ export function sanitizeIncomingMovementCommand(input: {
     );
   }
 
-  if ((sanitized.collisionRevision ?? 0) !== currentCollisionRevision) {
+  const commandCollisionRevision = sanitized.collisionRevision ?? 0;
+  if (commandCollisionRevision > currentCollisionRevision) {
     authority.metrics.staleCollisionRevisionDrops = (authority.metrics.staleCollisionRevisionDrops ?? 0) + 1;
     authority.correctionReason = 'collision_revision';
     return rejectMovementCommand(
       authority,
       'collision_revision',
       {
-        commandRevision: sanitized.collisionRevision ?? 0,
+        commandRevision: commandCollisionRevision,
         currentRevision: currentCollisionRevision,
       },
       sanitized.seq
@@ -200,6 +203,7 @@ export function sanitizeIncomingMovementCommand(input: {
   return {
     ok: true,
     command: sanitized,
+    acceptedStaleCollisionRevision: commandCollisionRevision < currentCollisionRevision,
   };
 }
 
@@ -272,6 +276,7 @@ export function ingestMovementCommandPacket(
     authority.metrics.queueLength = authority.pendingCommands.length;
     return {
       acceptedCommandCount: 0,
+      acceptedStaleCollisionRevisionCount: 0,
       overflow: 0,
       discardedCommandCount: 0,
       shouldMarkQueueOverflowBarrier: false,
@@ -280,6 +285,7 @@ export function ingestMovementCommandPacket(
   }
 
   let acceptedCommandCount = 0;
+  let acceptedStaleCollisionRevisionCount = 0;
   for (const rawCommand of commands) {
     if (authority.commandsInWindow >= maxCommandsPerSecond) {
       authority.metrics.droppedCommands++;
@@ -307,6 +313,12 @@ export function ingestMovementCommandPacket(
 
     authority.commandsInWindow++;
     authority.metrics.commandsReceived++;
+    if (sanitized.acceptedStaleCollisionRevision) {
+      acceptedStaleCollisionRevisionCount++;
+      authority.metrics.staleCollisionRevisionCommands = (
+        authority.metrics.staleCollisionRevisionCommands ?? 0
+      ) + 1;
+    }
     authority.pendingCommands.push(sanitized.command);
     acceptedCommandCount++;
   }
@@ -328,6 +340,7 @@ export function ingestMovementCommandPacket(
   authority.metrics.queueLength = authority.pendingCommands.length;
   return {
     acceptedCommandCount,
+    acceptedStaleCollisionRevisionCount,
     overflow: overflowPolicy.overflow,
     discardedCommandCount: overflowPolicy.discardedCommandCount,
     shouldMarkQueueOverflowBarrier: overflowPolicy.shouldMarkQueueOverflowBarrier,

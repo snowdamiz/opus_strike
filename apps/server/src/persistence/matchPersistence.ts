@@ -8,6 +8,7 @@ import {
   type RankedUserState,
 } from '../ranking/ratingService';
 import { ensureRankedSeasonSettingsTx } from '../ranking/seasonService';
+import { mapSeedToDatabaseValue } from '../utils/mapSeedPersistence';
 
 export interface MatchParticipantStats {
   kills: number;
@@ -299,7 +300,7 @@ export async function persistCompletedMatch(
           roomId: input.roomId,
           lobbyId: input.lobbyId,
           matchMode: input.matchMode,
-          mapSeed: input.mapSeed,
+          mapSeed: mapSeedToDatabaseValue(input.mapSeed),
           mapThemeId: input.mapThemeId || 'standard',
           rankedEligible,
           startedAt: input.startedAt,

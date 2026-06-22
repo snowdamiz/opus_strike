@@ -85,6 +85,44 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
 {
   const assignments = createLobbyGameStartAssignments({
     players: [
+      player({
+        id: 'red-bot',
+        name: 'Red Bot',
+        team: 'red',
+        isBot: true,
+        heroId: 'phantom',
+      }),
+      player({ id: 'red-human', name: 'Red Human', team: 'red', heroId: 'phantom' }),
+    ],
+    heroIds: ['phantom', 'hookshot'],
+    random: () => 0,
+  });
+
+  assert.deepEqual(assignments.playerAssignments, [
+    {
+      playerId: 'red-bot',
+      playerName: 'Red Bot',
+      team: 'red',
+      isBot: true,
+      heroId: 'hookshot',
+      botDifficulty: 'normal',
+      botProfileId: undefined,
+    },
+    {
+      playerId: 'red-human',
+      playerName: 'Red Human',
+      team: 'red',
+      isBot: false,
+      heroId: 'phantom',
+      botDifficulty: undefined,
+      botProfileId: undefined,
+    },
+  ]);
+}
+
+{
+  const assignments = createLobbyGameStartAssignments({
+    players: [
       player({ id: 'red-a', name: 'Red A', team: 'red', heroId: 'phantom' }),
     ],
   });

@@ -14,6 +14,10 @@ import {
 import type { MatchMode } from '@voxel-strike/shared';
 import prisma from '../db';
 import { loggers } from '../utils/logger';
+import {
+  mapSeedFromDatabaseValue,
+  mapSeedToDatabaseValue,
+} from '../utils/mapSeedPersistence';
 import { getColyseusRuntimeConfig } from '../config/colyseus';
 import { getSharedRedisClient } from '../config/redis';
 import {
@@ -654,7 +658,7 @@ export class WagerService extends EventEmitter {
         matchId: reward.matchId,
         roomId: reward.roomId,
         lobbyId: reward.lobbyId,
-        mapSeed: reward.mapSeed,
+        mapSeed: mapSeedFromDatabaseValue(reward.mapSeed),
         mapThemeId: reward.mapThemeId,
         winningTeam: reward.winningTeam,
         treasuryWallet: reward.treasuryWallet,
@@ -1465,7 +1469,7 @@ export class WagerService extends EventEmitter {
         matchId: input.matchId,
         roomId: input.roomId,
         lobbyId: input.lobbyId,
-        mapSeed: input.mapSeed,
+        mapSeed: mapSeedToDatabaseValue(input.mapSeed),
         mapThemeId: 'golden',
         winningTeam: input.winningTeam,
         treasuryWallet: config.treasuryWallet,

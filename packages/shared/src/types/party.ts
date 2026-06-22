@@ -86,6 +86,7 @@ export interface PartyLaunchPayload {
   gameplayMode: GameplayMode;
   botFillMode?: 'manual' | 'fill_even';
   matchPerspective: MatchPerspective;
+  selectedHero?: HeroId;
   matchmakingTicket?: string;
   targetRankDivisionIndex?: number;
   targetRankLabel?: string;

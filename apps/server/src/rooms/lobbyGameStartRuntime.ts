@@ -107,13 +107,25 @@ export function createLobbyGameStartAssignments(input: {
     }
 
     participants.push(player);
-    const heroId = normalizeHeroId(player.heroId);
-    let claimed = claimedHeroesByTeam.get(player.team);
-    if (!claimed) {
-      claimed = new Map();
-      claimedHeroesByTeam.set(player.team, claimed);
+    if (!claimedHeroesByTeam.has(player.team)) {
+      claimedHeroesByTeam.set(player.team, new Map());
     }
-    if (heroId && !claimed.has(heroId)) {
+  }
+
+  for (const player of participants) {
+    if (player.isBot) continue;
+    const heroId = normalizeHeroId(player.heroId);
+    const claimed = claimedHeroesByTeam.get(player.team as Team);
+    if (claimed && heroId && !claimed.has(heroId)) {
+      claimed.set(heroId, player.id);
+    }
+  }
+
+  for (const player of participants) {
+    if (!player.isBot) continue;
+    const heroId = normalizeHeroId(player.heroId);
+    const claimed = claimedHeroesByTeam.get(player.team as Team);
+    if (claimed && heroId && !claimed.has(heroId)) {
       claimed.set(heroId, player.id);
     }
   }

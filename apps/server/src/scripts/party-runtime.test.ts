@@ -290,6 +290,7 @@ const launchPayload = {
   gameplayMode: 'capture_the_flag' as const,
   botFillMode: 'manual' as const,
   matchPerspective: 'first_person' as const,
+  selectedHero: 'phantom' as const,
   matchmakingTicket: 'ticket-member',
   targetRankDivisionIndex: 1,
   targetRankLabel: 'Bronze I',

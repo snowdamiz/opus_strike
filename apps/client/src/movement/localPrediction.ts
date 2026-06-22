@@ -602,6 +602,13 @@ function isSelfAuthorityBarrier(authority: SelfMovementAuthority): boolean {
   return Boolean(authority.correctionReason && authority.correctionReason !== 'normal');
 }
 
+function hasCollisionRevisionUpdate(authority: SelfMovementAuthority): boolean {
+  return (
+    authority.collisionRevision !== undefined &&
+    authority.collisionRevision !== latestServerCollisionRevision
+  );
+}
+
 export function drainSelfMovementAuthorities(
   player: Player,
   nowMs: number,
@@ -622,8 +629,15 @@ export function drainSelfMovementAuthorities(
     const staleAck =
       authority.movementEpoch === predictionEpoch &&
       compareMovementSeq(authority.ackSeq, localMovementPrediction.getLastAckSeq()) <= 0;
+    const collisionRevisionUpdate = !staleEpoch && hasCollisionRevisionUpdate(authority);
 
-    if ((staleEpoch || (staleAck && !options.includeDuplicateAckAuthorities)) && !isSelfAuthorityBarrier(authority)) {
+    if (
+      (
+        staleEpoch ||
+        (staleAck && !options.includeDuplicateAckAuthorities && !collisionRevisionUpdate)
+      ) &&
+      !isSelfAuthorityBarrier(authority)
+    ) {
       continue;
     }
 

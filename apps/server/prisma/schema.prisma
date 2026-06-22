@@ -268,7 +268,7 @@ model GameMatch {
   roomId                   String
   lobbyId                  String?
   matchMode                MatchMode @default(custom)
-  mapSeed                  Int
+  mapSeed                  BigInt
   mapThemeId               String    @default("standard")
   startedAt                DateTime
   endedAt                  DateTime
@@ -482,7 +482,7 @@ model GoldenBiomeReward {
   matchId                 String                            @unique
   roomId                  String
   lobbyId                 String?
-  mapSeed                 Int
+  mapSeed                 BigInt
   mapThemeId              String                            @default("golden")
   winningTeam             String
   treasuryWallet          String
@@ -791,7 +791,7 @@ model PlayerReport {
   matchId                 String?
   lobbyId                 String?
   matchMode               MatchMode?
-  mapSeed                 Int?
+  mapSeed                 BigInt?
   serverTick              Int        @default(0)
   evidenceEventId         String?
   metadata                Json       @default("{}")

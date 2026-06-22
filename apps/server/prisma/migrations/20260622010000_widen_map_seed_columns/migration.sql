@@ -1,0 +1,8 @@
+ALTER TABLE "GameMatch"
+  ALTER COLUMN "mapSeed" TYPE BIGINT;
+
+ALTER TABLE "GoldenBiomeReward"
+  ALTER COLUMN "mapSeed" TYPE BIGINT;
+
+ALTER TABLE "PlayerReport"
+  ALTER COLUMN "mapSeed" TYPE BIGINT;
