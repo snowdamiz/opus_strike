@@ -179,6 +179,7 @@ export async function launchPartyToMatchmaking(
       gameplayMode,
       botFillMode,
       matchPerspective,
+      selectedHero: member.heroId,
       matchmakingTicket: issued.ticket,
       targetRankDivisionIndex,
       targetRankLabel: issued.targetRankLabel,
@@ -258,6 +259,7 @@ export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promi
       gameplayMode,
       botFillMode: 'manual',
       matchPerspective,
+      selectedHero: member.heroId,
     });
   }
 

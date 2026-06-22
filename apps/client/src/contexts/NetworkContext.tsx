@@ -12,6 +12,7 @@ import {
   getGameplayModeLabel,
   getHeroStats,
   isGameplayMode,
+  isKnownHeroId,
   isMatchPerspective,
   MOVEMENT_PROTOCOL_VERSION,
   POWERUP_HEALTH_RESTORE_RATIO,
@@ -682,6 +683,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       };
       if (launch.matchmakingTicket) {
         joinOptions.matchmakingTicket = launch.matchmakingTicket;
+      }
+      if (isKnownHeroId(launch.selectedHero)) {
+        joinOptions.selectedHero = launch.selectedHero;
       }
       joinOptions.matchPerspective = launch.matchPerspective;
 
