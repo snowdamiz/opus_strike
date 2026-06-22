@@ -87,6 +87,7 @@ const preparedMap = prepareVoxelMapCpu({
 const { manifest, renderableRegions } = preparedMap;
 const full = summarizeHydration(manifest, renderableRegions, 'full');
 const coarse = summarizeHydration(manifest, renderableRegions, 'coarse');
+const ultraCoarse = summarizeHydration(manifest, renderableRegions, 'ultraCoarse');
 clearVoxelGeometryCache(manifest.id);
 
 console.log(JSON.stringify({
@@ -95,4 +96,5 @@ console.log(JSON.stringify({
   renderableRegions: renderableRegions.length,
   full,
   coarse,
+  ultraCoarse,
 }, null, 2));

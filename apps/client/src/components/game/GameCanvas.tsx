@@ -1,5 +1,5 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Suspense, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { Environment, OrbitControls, Grid } from '@react-three/drei';
 import * as THREE from 'three';
 import { createTutorialVoxelMapManifest, getVoxelMapTheme, isTutorialMapSeed } from '@voxel-strike/shared';
@@ -41,11 +41,14 @@ import {
 import {
   getVisualQualityConfig,
   DEFAULT_CAMERA_FAR,
+  scaleBattleRoyalVisibilityConfig,
+  type BattleRoyalVisibilityConfig,
   type ReflectionQualityConfig,
   type ShadowQualityConfig,
 } from './visualQuality';
 import { getBattleRoyalVisibilityMode } from './battleRoyalVisibilityMode';
 import { FrameTimeHistogram } from './adaptiveQualityHistogram';
+import { recordRendererDiagnostics } from '../../movement/networkDiagnostics';
 import { configureVisualPhysicsQueryBudget } from '../../hooks/usePhysics';
 import { prewarmLocalMovementCollisionWorld } from '../../movement/localPrediction';
 import { getBlazeGearstormSkyIntensity } from './blaze/airstrike';
@@ -680,42 +683,150 @@ function WarmupSettlingFrames({
   return null;
 }
 
+function RendererDiagnosticsRecorder() {
+  const frameHistogramRef = useRef(new FrameTimeHistogram());
+  const accumulatorRef = useRef(0);
+  const sampleCountRef = useRef(0);
+  const maxFrameMsRef = useRef(0);
+
+  useFrame(({ gl }, delta) => {
+    const frameMs = delta * 1000;
+    frameHistogramRef.current.record(frameMs);
+    maxFrameMsRef.current = Math.max(maxFrameMsRef.current, frameMs);
+    sampleCountRef.current++;
+    accumulatorRef.current += delta;
+
+    if (accumulatorRef.current < 0.5) return;
+
+    const sampleSeconds = accumulatorRef.current;
+    recordRendererDiagnostics({
+      fps: sampleCountRef.current / Math.max(0.001, sampleSeconds),
+      frameP50Ms: frameHistogramRef.current.percentile(0.5),
+      frameP95Ms: frameHistogramRef.current.percentile(0.95),
+      frameMaxMs: maxFrameMsRef.current,
+      drawCalls: gl.info.render.calls,
+      triangles: gl.info.render.triangles,
+      geometries: gl.info.memory.geometries,
+      textures: gl.info.memory.textures,
+    });
+
+    accumulatorRef.current = 0;
+    sampleCountRef.current = 0;
+    maxFrameMsRef.current = 0;
+    frameHistogramRef.current.reset();
+  });
+
+  return null;
+}
+
 const FEATURE_QUALITY_STEPS = ['off', 'minimum', 'low', 'medium', 'high', 'ultra'] as const;
 const RESOLUTION_QUALITY_STEPS = ['minimum', 'low', 'medium', 'high', 'ultra'] as const;
+const BR_TERRAIN_PRESSURE_CHECK_SECONDS = 2;
+const BR_TERRAIN_PRESSURE_FRAME_P95_MS = 22;
+const BR_TERRAIN_PRESSURE_RECOVERY_FRAME_P95_MS = 17;
+const BR_TERRAIN_PRESSURE_HIGH_RATIO = 0.74;
+const BR_TERRAIN_PRESSURE_RECOVERY_RATIO = 0.54;
+const BR_TERRAIN_VISIBILITY_MIN_SCALE = 0.72;
+const BR_TERRAIN_VISIBILITY_STEP_DOWN = 0.08;
+const BR_TERRAIN_VISIBILITY_STEP_UP = 0.04;
 
 function stepDown<T extends string>(value: T, steps: readonly T[]): T {
   const index = steps.indexOf(value);
   return steps[Math.max(0, index - 1)] ?? value;
 }
 
-function AdaptiveQualityController() {
+function AdaptiveQualityController({
+  battleRoyalTerrainScale,
+  battleRoyalVisibility,
+  isBattleRoyal,
+  onBattleRoyalTerrainScaleChange,
+  performanceBudget,
+}: {
+  battleRoyalTerrainScale: number;
+  battleRoyalVisibility?: BattleRoyalVisibilityConfig;
+  isBattleRoyal: boolean;
+  onBattleRoyalTerrainScaleChange: (scale: number) => void;
+  performanceBudget: ReturnType<typeof getVisualQualityConfig>['budgets'];
+}) {
   const settings = useSettingsStore(state => state.settings);
   const accumulatorRef = useRef(0);
   const overBudgetSecondsRef = useRef(0);
+  const terrainPressureSecondsRef = useRef(0);
+  const terrainRecoverySecondsRef = useRef(0);
+  const battleRoyalTerrainScaleRef = useRef(battleRoyalTerrainScale);
   const frameHistogramRef = useRef(new FrameTimeHistogram());
 
-  useFrame((_, delta) => {
+  useEffect(() => {
+    battleRoyalTerrainScaleRef.current = battleRoyalTerrainScale;
+  }, [battleRoyalTerrainScale]);
+
+  const setBattleRoyalTerrainScale = useCallback((nextScale: number) => {
+    const clampedScale = THREE.MathUtils.clamp(nextScale, BR_TERRAIN_VISIBILITY_MIN_SCALE, 1);
+    if (Math.abs(clampedScale - battleRoyalTerrainScaleRef.current) < 0.005) return;
+    battleRoyalTerrainScaleRef.current = clampedScale;
+    onBattleRoyalTerrainScaleChange(clampedScale);
+  }, [onBattleRoyalTerrainScaleChange]);
+
+  useFrame(({ gl }, delta) => {
     if (!settings.adaptiveQuality) {
       accumulatorRef.current = 0;
       overBudgetSecondsRef.current = 0;
+      terrainPressureSecondsRef.current = 0;
+      terrainRecoverySecondsRef.current = 0;
       frameHistogramRef.current.reset();
+      setBattleRoyalTerrainScale(1);
       return;
     }
 
     frameHistogramRef.current.record(delta * 1000);
 
     accumulatorRef.current += delta;
-    if (accumulatorRef.current < 2) return;
+    if (accumulatorRef.current < BR_TERRAIN_PRESSURE_CHECK_SECONDS) return;
+    const sampleSeconds = accumulatorRef.current;
     accumulatorRef.current = 0;
 
     const p95 = frameHistogramRef.current.percentile(0.95);
     frameHistogramRef.current.reset();
+    const drawCallRatio = gl.info.render.calls / Math.max(1, performanceBudget.drawCalls);
+    const triangleRatio = gl.info.render.triangles / Math.max(1, performanceBudget.triangles);
+    const renderPressureRatio = Math.max(drawCallRatio, triangleRatio);
+
+    if (isBattleRoyal && battleRoyalVisibility) {
+      const pressureHigh = p95 >= BR_TERRAIN_PRESSURE_FRAME_P95_MS &&
+        renderPressureRatio >= BR_TERRAIN_PRESSURE_HIGH_RATIO;
+      const canRecover = p95 <= BR_TERRAIN_PRESSURE_RECOVERY_FRAME_P95_MS &&
+        renderPressureRatio <= BR_TERRAIN_PRESSURE_RECOVERY_RATIO;
+
+      if (pressureHigh) {
+        terrainPressureSecondsRef.current += sampleSeconds;
+        terrainRecoverySecondsRef.current = 0;
+        if (terrainPressureSecondsRef.current >= BR_TERRAIN_PRESSURE_CHECK_SECONDS * 2) {
+          terrainPressureSecondsRef.current = 0;
+          setBattleRoyalTerrainScale(battleRoyalTerrainScaleRef.current - BR_TERRAIN_VISIBILITY_STEP_DOWN);
+        }
+      } else if (canRecover) {
+        terrainRecoverySecondsRef.current += sampleSeconds;
+        terrainPressureSecondsRef.current = Math.max(0, terrainPressureSecondsRef.current - sampleSeconds);
+        if (terrainRecoverySecondsRef.current >= BR_TERRAIN_PRESSURE_CHECK_SECONDS * 4) {
+          terrainRecoverySecondsRef.current = 0;
+          setBattleRoyalTerrainScale(battleRoyalTerrainScaleRef.current + BR_TERRAIN_VISIBILITY_STEP_UP);
+        }
+      } else {
+        terrainPressureSecondsRef.current = Math.max(0, terrainPressureSecondsRef.current - sampleSeconds * 0.5);
+        terrainRecoverySecondsRef.current = 0;
+      }
+    } else {
+      terrainPressureSecondsRef.current = 0;
+      terrainRecoverySecondsRef.current = 0;
+      setBattleRoyalTerrainScale(1);
+    }
+
     if (p95 < 22) {
-      overBudgetSecondsRef.current = Math.max(0, overBudgetSecondsRef.current - 2);
+      overBudgetSecondsRef.current = Math.max(0, overBudgetSecondsRef.current - sampleSeconds);
       return;
     }
 
-    overBudgetSecondsRef.current += 2;
+    overBudgetSecondsRef.current += sampleSeconds;
     if (overBudgetSecondsRef.current < 6) return;
     overBudgetSecondsRef.current = 0;
 
@@ -838,6 +949,7 @@ export function GameCanvas({
     reduceMapWarmup,
     createMapWarmupSnapshot(warmupKey, mapSeed)
   );
+  const [battleRoyalTerrainScale, setBattleRoyalTerrainScale] = useState(1);
   const completedWarmupStagesRef = useRef<Set<MapWarmupStageId>>(new Set());
   const didStartGpuRef = useRef<string | null>(null);
   const mapTheme = useMemo(
@@ -861,14 +973,23 @@ export function GameCanvas({
       localPlayerId,
     })
     : 'runtime';
-  const battleRoyalVisibility = isBattleRoyal
+  const baseBattleRoyalVisibility = isBattleRoyal
     ? (
       battleRoyalVisibilityMode === 'deployment'
         ? qualityConfig.battleRoyalDeploymentVisibility
         : qualityConfig.battleRoyalVisibility
     )
     : undefined;
+  const battleRoyalVisibility = useMemo(() => {
+    if (!baseBattleRoyalVisibility) return undefined;
+    if (battleRoyalTerrainScale >= 0.995) return baseBattleRoyalVisibility;
+    return scaleBattleRoyalVisibilityConfig(baseBattleRoyalVisibility, battleRoyalTerrainScale);
+  }, [baseBattleRoyalVisibility, battleRoyalTerrainScale]);
   const effectiveCameraFar = battleRoyalVisibility?.cameraFar ?? DEFAULT_CAMERA_FAR;
+
+  useEffect(() => {
+    setBattleRoyalTerrainScale(1);
+  }, [battleRoyalVisibilityMode, isBattleRoyal, settings.graphicsPreset]);
   const isBattleRoyalEliminated = isBattleRoyal && localPlayerState === 'dead';
   const isWorldReady = warmupSnapshot.key === warmupKey && warmupSnapshot.canAcceptInput;
   const isReadyForMatchStart = isMapWarmupReadyForMatchStart(warmupSnapshot, warmupKey);
@@ -1026,7 +1147,14 @@ export function GameCanvas({
         <PhysicsBudgetApplier maxVisualQueriesPerFrame={qualityConfig.budgets.maxVisualPhysicsQueriesPerFrame} />
         <GameplayFrameSystems />
         <DynamicLightBudgetSystem maxLights={effectiveDynamicLights.maxDynamicLights} />
-        <AdaptiveQualityController />
+        <RendererDiagnosticsRecorder />
+        <AdaptiveQualityController
+          battleRoyalTerrainScale={battleRoyalTerrainScale}
+          battleRoyalVisibility={battleRoyalVisibility}
+          isBattleRoyal={isBattleRoyal}
+          onBattleRoyalTerrainScaleChange={setBattleRoyalTerrainScale}
+          performanceBudget={qualityConfig.budgets}
+        />
         <ReflectionEnvironment theme={mapTheme} config={qualityConfig.reflections} />
         <WorldAtmosphere theme={mapTheme} seed={mapSeed} config={effectiveEnvironmentConfig} />
 

@@ -66,6 +66,11 @@ export function prebuildPreparedVoxelMapGeometry(
           preparedMap.renderableRegions,
           { detail: 'coarse', frameBudgetMs }
         );
+        await prebuildVoxelRegionGeometries(
+          preparedMap.manifest,
+          preparedMap.renderableRegions,
+          { detail: 'ultraCoarse', frameBudgetMs }
+        );
         return;
       }
 

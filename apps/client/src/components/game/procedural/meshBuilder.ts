@@ -5,6 +5,10 @@ import {
   type VoxelRegionGeometryDetail,
   type VoxelMeshGeometryData,
 } from './meshGeometryData';
+import {
+  recordTerrainGeometryBuild,
+  recordTerrainGeometryFinalization,
+} from '../../../movement/networkDiagnostics';
 
 interface PendingRegionRequest {
   resolve: (geometry: THREE.BufferGeometry) => void;
@@ -53,8 +57,8 @@ const geometryCache = new Map<string, CachedVoxelGeometry>();
 const pendingRegionRequests = new Map<number, PendingRegionRequest>();
 const pendingRegionGeometryByCacheKey = new Map<string, Promise<THREE.BufferGeometry>>();
 const VOXEL_MESH_REQUEST_CANCELLED = 'Voxel mesh request cancelled because manifest cache was cleared';
-const VOXEL_GEOMETRY_CACHE_MAX_ENTRIES = 192;
-const VOXEL_GEOMETRY_CACHE_MAX_BYTES = 96 * 1024 * 1024;
+const VOXEL_GEOMETRY_CACHE_MAX_ENTRIES = 1536;
+const VOXEL_GEOMETRY_CACHE_MAX_BYTES = 128 * 1024 * 1024;
 const FALLBACK_REGION_FRAME_BUDGET_MS = 4;
 const FALLBACK_REGION_MAX_BUILDS_PER_FRAME = 1;
 const FALLBACK_REGION_QUEUE_COMPACT_THRESHOLD = 64;
@@ -319,6 +323,7 @@ function createGeometryFromData(
   });
   geometryCacheBytes += bytes;
   enforceVoxelGeometryCacheBudget(manifest.id);
+  recordTerrainGeometryFinalization();
   return geometry;
 }
 
@@ -412,6 +417,7 @@ function getMeshWorker(): Worker | null {
           indices: message.indices,
         },
       });
+      recordTerrainGeometryBuild();
       scheduleWorkerRegionFinalizationQueue();
     };
     meshWorker.onerror = (event) => {
@@ -470,6 +476,7 @@ export function buildVoxelRegionGeometry(
   }
 
   const data = buildVoxelRegionGeometryData(manifest, chunks, detail);
+  recordTerrainGeometryBuild();
   return createGeometryFromData(manifest, cacheKey, data);
 }
 

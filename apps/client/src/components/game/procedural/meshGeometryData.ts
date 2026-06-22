@@ -14,9 +14,10 @@ export interface VoxelMeshGeometryData {
   indices: Uint16Array | Uint32Array;
 }
 
-export type VoxelRegionGeometryDetail = 'full' | 'coarse';
+export type VoxelRegionGeometryDetail = 'full' | 'coarse' | 'ultraCoarse';
 
 const COARSE_REGION_VOXEL_STEP = 8;
+const ULTRA_COARSE_REGION_VOXEL_STEP = 16;
 
 interface ChunkLookup {
   chunks: Array<VoxelChunk | undefined>;
@@ -692,23 +693,24 @@ function getTopSolidBlock(
 
 function buildCoarseVoxelRegionGeometryData(
   manifest: VoxelMapManifest,
-  chunks: VoxelChunk[]
+  chunks: VoxelChunk[],
+  step = COARSE_REGION_VOXEL_STEP
 ): VoxelMeshGeometryData {
   const lookup = createChunkLookup(manifest);
   const bounds = getChunkVoxelBounds(manifest, chunks);
   const estimatedCoarseFaces = Math.max(
     16,
-    Math.ceil((bounds.maxX - bounds.minX) / COARSE_REGION_VOXEL_STEP) *
-      Math.ceil((bounds.maxZ - bounds.minZ) / COARSE_REGION_VOXEL_STEP)
+    Math.ceil((bounds.maxX - bounds.minX) / step) *
+      Math.ceil((bounds.maxZ - bounds.minZ) / step)
   );
   const buffers = createMeshBufferBuildersForEstimatedFaces(estimatedCoarseFaces);
 
-  for (let z = bounds.minZ; z < bounds.maxZ; z += COARSE_REGION_VOXEL_STEP) {
-    const z1 = Math.min(bounds.maxZ, z + COARSE_REGION_VOXEL_STEP);
+  for (let z = bounds.minZ; z < bounds.maxZ; z += step) {
+    const z1 = Math.min(bounds.maxZ, z + step);
     const sampleZ = Math.min(manifest.size.z - 1, z + Math.floor((z1 - z) * 0.5));
 
-    for (let x = bounds.minX; x < bounds.maxX; x += COARSE_REGION_VOXEL_STEP) {
-      const x1 = Math.min(bounds.maxX, x + COARSE_REGION_VOXEL_STEP);
+    for (let x = bounds.minX; x < bounds.maxX; x += step) {
+      const x1 = Math.min(bounds.maxX, x + step);
       const sampleX = Math.min(manifest.size.x - 1, x + Math.floor((x1 - x) * 0.5));
       const topBlock = getTopSolidBlock(manifest, lookup, sampleX, sampleZ);
       if (!topBlock) continue;
@@ -734,6 +736,9 @@ export function buildVoxelRegionGeometryData(
 ): VoxelMeshGeometryData {
   if (detail === 'coarse') {
     return buildCoarseVoxelRegionGeometryData(manifest, chunks);
+  }
+  if (detail === 'ultraCoarse') {
+    return buildCoarseVoxelRegionGeometryData(manifest, chunks, ULTRA_COARSE_REGION_VOXEL_STEP);
   }
 
   const lookup = createChunkLookup(manifest);

@@ -139,12 +139,11 @@ export function useVoxelFarMaterial(
       new THREE.Color(theme.fogColor),
       THREE.MathUtils.clamp(fogBlend, 0, 1)
     );
-    const farMaterial = new THREE.MeshLambertMaterial({
+    const farMaterial = new THREE.MeshBasicMaterial({
       color,
-      emissive: color.clone().multiplyScalar(0.16),
-      emissiveIntensity: 0.16,
+      fog: true,
     });
-    farMaterial.name = 'procedural-voxel-far-terrain-material';
+    farMaterial.name = 'procedural-voxel-far-unlit-terrain-material';
     return farMaterial;
   }, [fogBlend, theme]);
 
