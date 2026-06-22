@@ -61,7 +61,7 @@ export class MovementAuthorityRegistry {
 
   removeOldestPendingCommands(authority: ServerMovementAuthorityState, count: number): void {
     if (count <= 0) return;
-    authority.pendingCommands.dropOldest(count);
+    authority.pendingCommands.discardOldest(count);
   }
 
   getNextMovementCommand(authority: ServerMovementAuthorityState): MovementCommand | null {

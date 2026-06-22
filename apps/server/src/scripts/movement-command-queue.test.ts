@@ -82,6 +82,10 @@ assert.equal(queue.hasSeq(2), false);
 assert.equal(queue.peek()?.seq, 4);
 assert.equal(queue.peekLast()?.seq, 5);
 
+queue.discardOldest(1);
+assert.deepEqual(queue.toArray().map((item) => item.seq), [5]);
+assert.equal(queue.hasSeq(4), false);
+
 queue.replace([command(9), command(7), command(8)]);
 assert.deepEqual(queue.toArray().map((item) => item.seq), [7, 8, 9]);
 queue.clear();

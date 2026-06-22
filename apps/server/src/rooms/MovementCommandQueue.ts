@@ -76,6 +76,12 @@ export class MovementCommandQueue implements Iterable<MovementCommand> {
     return removed;
   }
 
+  discardOldest(count: number): void {
+    for (let index = 0; index < count; index++) {
+      if (!this.pop()) break;
+    }
+  }
+
   peekLast(): MovementCommand | null {
     if (this.count === 0) return null;
     return this.buffer[this.physicalIndex(this.count - 1)] ?? null;

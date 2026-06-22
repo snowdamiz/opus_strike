@@ -241,6 +241,7 @@ function getBlock(lookup: ChunkLookup, x: number, y: number, z: number): number 
 }
 
 function isSolidNumericBlock(block: number): boolean {
+  if (block === 0) return false;
   const cached = solidBlockCache[block];
   if (cached !== undefined) return cached;
 
@@ -314,9 +315,8 @@ function pushQuad(
   buffers.indices.push(baseIndex, baseIndex + 1, baseIndex + 2, baseIndex, baseIndex + 2, baseIndex + 3);
 }
 
-function emitFace(
+function emitPositiveXFace(
   buffers: MeshBufferBuilders,
-  direction: 'px' | 'nx' | 'py' | 'ny' | 'pz' | 'nz',
   x: number,
   y: number,
   z: number,
@@ -324,67 +324,115 @@ function emitFace(
   height: number,
   blockId: number
 ): void {
-  if (direction === 'px') {
-    pushQuad(
-      buffers,
-      x + 1, y, z + width,
-      x + 1, y, z,
-      x + 1, y + height, z,
-      x + 1, y + height, z + width,
-      1, 0, 0,
-      blockId, 'side', width, height
-    );
-  } else if (direction === 'nx') {
-    pushQuad(
-      buffers,
-      x, y, z,
-      x, y, z + width,
-      x, y + height, z + width,
-      x, y + height, z,
-      -1, 0, 0,
-      blockId, 'side', width, height
-    );
-  } else if (direction === 'py') {
-    pushQuad(
-      buffers,
-      x, y + 1, z,
-      x, y + 1, z + height,
-      x + width, y + 1, z + height,
-      x + width, y + 1, z,
-      0, 1, 0,
-      blockId, 'top', height, width
-    );
-  } else if (direction === 'ny') {
-    pushQuad(
-      buffers,
-      x, y, z + height,
-      x, y, z,
-      x + width, y, z,
-      x + width, y, z + height,
-      0, -1, 0,
-      blockId, 'bottom', height, width
-    );
-  } else if (direction === 'pz') {
-    pushQuad(
-      buffers,
-      x, y, z + 1,
-      x + width, y, z + 1,
-      x + width, y + height, z + 1,
-      x, y + height, z + 1,
-      0, 0, 1,
-      blockId, 'side', width, height
-    );
-  } else {
-    pushQuad(
-      buffers,
-      x + width, y, z,
-      x, y, z,
-      x, y + height, z,
-      x + width, y + height, z,
-      0, 0, -1,
-      blockId, 'side', width, height
-    );
-  }
+  pushQuad(
+    buffers,
+    x + 1, y, z + width,
+    x + 1, y, z,
+    x + 1, y + height, z,
+    x + 1, y + height, z + width,
+    1, 0, 0,
+    blockId, 'side', width, height
+  );
+}
+
+function emitNegativeXFace(
+  buffers: MeshBufferBuilders,
+  x: number,
+  y: number,
+  z: number,
+  width: number,
+  height: number,
+  blockId: number
+): void {
+  pushQuad(
+    buffers,
+    x, y, z,
+    x, y, z + width,
+    x, y + height, z + width,
+    x, y + height, z,
+    -1, 0, 0,
+    blockId, 'side', width, height
+  );
+}
+
+function emitPositiveYFace(
+  buffers: MeshBufferBuilders,
+  x: number,
+  y: number,
+  z: number,
+  width: number,
+  height: number,
+  blockId: number
+): void {
+  pushQuad(
+    buffers,
+    x, y + 1, z,
+    x, y + 1, z + height,
+    x + width, y + 1, z + height,
+    x + width, y + 1, z,
+    0, 1, 0,
+    blockId, 'top', height, width
+  );
+}
+
+function emitNegativeYFace(
+  buffers: MeshBufferBuilders,
+  x: number,
+  y: number,
+  z: number,
+  width: number,
+  height: number,
+  blockId: number
+): void {
+  pushQuad(
+    buffers,
+    x, y, z + height,
+    x, y, z,
+    x + width, y, z,
+    x + width, y, z + height,
+    0, -1, 0,
+    blockId, 'bottom', height, width
+  );
+}
+
+function emitPositiveZFace(
+  buffers: MeshBufferBuilders,
+  x: number,
+  y: number,
+  z: number,
+  width: number,
+  height: number,
+  blockId: number
+): void {
+  pushQuad(
+    buffers,
+    x, y, z + 1,
+    x + width, y, z + 1,
+    x + width, y + height, z + 1,
+    x, y + height, z + 1,
+    0, 0, 1,
+    blockId, 'side', width, height
+  );
+}
+
+function emitNegativeZFace(
+  buffers: MeshBufferBuilders,
+  x: number,
+  y: number,
+  z: number,
+  width: number,
+  height: number,
+  blockId: number
+): void {
+  pushQuad(
+    buffers,
+    x + width, y, z,
+    x, y, z,
+    x, y + height, z,
+    x + width, y + height, z,
+    0, 0, -1,
+    blockId, 'side', width, height
+  );
 }
 
 function greedyMask(
@@ -456,21 +504,22 @@ function appendVoxelChunkBuffers(
         const gz = chunkOrigin.z + lz;
         const blockOffset = rowOffset + sizeX * lz;
         const block = blocks[blockOffset];
+        if (block === 0) continue;
         if (!isSolidNumericBlock(block)) continue;
 
         const index = lz + ly * sizeZ;
         const pxNeighbor = lx + 1 < sizeX ? blocks[blockOffset + 1] : getBlock(lookup, gx + 1, gy, gz);
         const nxNeighbor = lx > 0 ? blocks[blockOffset - 1] : getBlock(lookup, gx - 1, gy, gz);
-        if (!isSolidNumericBlock(pxNeighbor)) positiveMask[index] = block;
-        if (!isSolidNumericBlock(nxNeighbor)) negativeMask[index] = block;
+        if (pxNeighbor === 0 || !isSolidNumericBlock(pxNeighbor)) positiveMask[index] = block;
+        if (nxNeighbor === 0 || !isSolidNumericBlock(nxNeighbor)) negativeMask[index] = block;
       }
     }
 
     greedyMask(positiveMask, sizeZ, sizeY, (u, v, width, height, blockId) => {
-      emitFace(buffers, 'px', gx, chunkOrigin.y + v, chunkOrigin.z + u, width, height, blockId);
+      emitPositiveXFace(buffers, gx, chunkOrigin.y + v, chunkOrigin.z + u, width, height, blockId);
     });
     greedyMask(negativeMask, sizeZ, sizeY, (u, v, width, height, blockId) => {
-      emitFace(buffers, 'nx', gx, chunkOrigin.y + v, chunkOrigin.z + u, width, height, blockId);
+      emitNegativeXFace(buffers, gx, chunkOrigin.y + v, chunkOrigin.z + u, width, height, blockId);
     });
   }
 
@@ -488,21 +537,22 @@ function appendVoxelChunkBuffers(
         const gx = chunkOrigin.x + lx;
         const blockOffset = rowOffset + lx;
         const block = blocks[blockOffset];
+        if (block === 0) continue;
         if (!isSolidNumericBlock(block)) continue;
 
         const index = lx + lz * sizeX;
         const pyNeighbor = ly + 1 < sizeY ? blocks[blockOffset + yStride] : getBlock(lookup, gx, gy + 1, gz);
         const nyNeighbor = ly > 0 ? blocks[blockOffset - yStride] : getBlock(lookup, gx, gy - 1, gz);
-        if (!isSolidNumericBlock(pyNeighbor)) positiveMask[index] = block;
-        if (!isSolidNumericBlock(nyNeighbor)) negativeMask[index] = block;
+        if (pyNeighbor === 0 || !isSolidNumericBlock(pyNeighbor)) positiveMask[index] = block;
+        if (nyNeighbor === 0 || !isSolidNumericBlock(nyNeighbor)) negativeMask[index] = block;
       }
     }
 
     greedyMask(positiveMask, sizeX, sizeZ, (u, v, width, height, blockId) => {
-      emitFace(buffers, 'py', chunkOrigin.x + u, gy, chunkOrigin.z + v, width, height, blockId);
+      emitPositiveYFace(buffers, chunkOrigin.x + u, gy, chunkOrigin.z + v, width, height, blockId);
     });
     greedyMask(negativeMask, sizeX, sizeZ, (u, v, width, height, blockId) => {
-      emitFace(buffers, 'ny', chunkOrigin.x + u, gy, chunkOrigin.z + v, width, height, blockId);
+      emitNegativeYFace(buffers, chunkOrigin.x + u, gy, chunkOrigin.z + v, width, height, blockId);
     });
   }
 
@@ -520,21 +570,22 @@ function appendVoxelChunkBuffers(
         const gx = chunkOrigin.x + lx;
         const blockOffset = rowOffset + lx;
         const block = blocks[blockOffset];
+        if (block === 0) continue;
         if (!isSolidNumericBlock(block)) continue;
 
         const index = lx + ly * sizeX;
         const pzNeighbor = lz + 1 < sizeZ ? blocks[blockOffset + sizeX] : getBlock(lookup, gx, gy, gz + 1);
         const nzNeighbor = lz > 0 ? blocks[blockOffset - sizeX] : getBlock(lookup, gx, gy, gz - 1);
-        if (!isSolidNumericBlock(pzNeighbor)) positiveMask[index] = block;
-        if (!isSolidNumericBlock(nzNeighbor)) negativeMask[index] = block;
+        if (pzNeighbor === 0 || !isSolidNumericBlock(pzNeighbor)) positiveMask[index] = block;
+        if (nzNeighbor === 0 || !isSolidNumericBlock(nzNeighbor)) negativeMask[index] = block;
       }
     }
 
     greedyMask(positiveMask, sizeX, sizeY, (u, v, width, height, blockId) => {
-      emitFace(buffers, 'pz', chunkOrigin.x + u, chunkOrigin.y + v, gz, width, height, blockId);
+      emitPositiveZFace(buffers, chunkOrigin.x + u, chunkOrigin.y + v, gz, width, height, blockId);
     });
     greedyMask(negativeMask, sizeX, sizeY, (u, v, width, height, blockId) => {
-      emitFace(buffers, 'nz', chunkOrigin.x + u, chunkOrigin.y + v, gz, width, height, blockId);
+      emitNegativeZFace(buffers, chunkOrigin.x + u, chunkOrigin.y + v, gz, width, height, blockId);
     });
   }
 }
@@ -588,12 +639,12 @@ function getTopSolidBlock(
     if (topRow <= 0) return null;
     startY = Math.min(manifest.size.y - 1, topRow - 1);
     const block = getBlock(lookup, x, startY, z);
-    if (isSolidNumericBlock(block)) return { y: startY, block };
+    if (block !== 0 && isSolidNumericBlock(block)) return { y: startY, block };
   }
 
   for (let y = startY; y >= 0; y--) {
     const block = getBlock(lookup, x, y, z);
-    if (isSolidNumericBlock(block)) return { y, block };
+    if (block !== 0 && isSolidNumericBlock(block)) return { y, block };
   }
 
   return null;
@@ -622,7 +673,7 @@ function buildCoarseVoxelRegionGeometryData(
       const topBlock = getTopSolidBlock(manifest, lookup, sampleX, sampleZ);
       if (!topBlock) continue;
 
-      emitFace(buffers, 'py', x, topBlock.y, z, x1 - x, z1 - z, topBlock.block);
+      emitPositiveYFace(buffers, x, topBlock.y, z, x1 - x, z1 - z, topBlock.block);
     }
   }
 

@@ -112,7 +112,7 @@ function runMovementQueueBenchmark(): Record<string, number | string> {
         const jitter = index % 9 === 0 ? 1 : index % 11 === 0 ? -1 : 0;
         queue.push(command(base + index + jitter));
       }
-      queue.dropOldest(Math.max(0, queue.length - 96));
+      queue.discardOldest(Math.max(0, queue.length - 96));
       while (queue.pop()) {
         // Drain the queue to exercise head advancement.
       }
