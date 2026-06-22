@@ -406,7 +406,9 @@ function runRemoteTransformSamplingScenario(): BenchmarkSummary {
   });
 }
 
-function getBalancedRemotePlayerConfig() {
+type RemoteHeroBenchmarkQualityProfile = 'balanced' | 'competitive';
+
+function getRemotePlayerBenchmarkConfig(graphicsPreset: RemoteHeroBenchmarkQualityProfile) {
   return getVisualQualityConfig({
     resolutionScale: 'medium',
     antialiasing: true,
@@ -414,7 +416,7 @@ function getBalancedRemotePlayerConfig() {
     reflectionQuality: 'medium',
     environmentQuality: 'medium',
     materialQuality: 'medium',
-    graphicsPreset: 'balanced',
+    graphicsPreset,
   }).remotePlayers;
 }
 
@@ -496,6 +498,7 @@ function runRemoteHeroBatchScenario(options: {
   playerCount: number;
   visibleFighters: number;
   resourceScope: 'allAlive' | 'visibleOnly';
+  qualityProfile?: RemoteHeroBenchmarkQualityProfile;
   cardinalityBudget?: {
     maxMountedInstancedMeshes: number;
     maxEmptyMountedInstancedMeshes: number;
@@ -505,13 +508,14 @@ function runRemoteHeroBatchScenario(options: {
   prepareDenseRemoteHeroPlayers(players, options.visibleFighters);
   const renderPlayers = players.filter((player) => player.visibility === 'visible');
   const resourcePlayers = options.resourceScope === 'visibleOnly' ? renderPlayers : players;
+  const qualityProfile = options.qualityProfile ?? 'balanced';
   const runner = createRemoteHeroBatchBenchmarkRunner({
     players: renderPlayers,
     resourcePlayers,
     isBattleRoyal: true,
     localPlayerId: 'br-player-0',
     localPlayerTeam: players[0]?.team ?? null,
-    config: getBalancedRemotePlayerConfig(),
+    config: getRemotePlayerBenchmarkConfig(qualityProfile),
     cameraPosition: BR_REMOTE_HERO_CAMERA_POSITION,
   });
   const samples: number[] = [];
@@ -561,7 +565,7 @@ function runRemoteHeroBatchScenario(options: {
     resourcePlayers: resourcePlayers.length,
     visibleFighters: options.visibleFighters,
     resourceScope: options.resourceScope,
-    qualityProfile: 'balanced',
+    qualityProfile,
     groups: lastStats?.groups ?? 0,
     emptyGroups: lastStats?.emptyGroups ?? 0,
     normalBatches: lastStats?.normalBatches ?? 0,
@@ -736,6 +740,17 @@ function runBenchmarks(): BenchmarkSummary[] {
       resourceScope: 'allAlive',
       cardinalityBudget: {
         maxMountedInstancedMeshes: 96,
+        maxEmptyMountedInstancedMeshes: 0,
+      },
+    }),
+    runRemoteHeroBatchScenario({
+      name: 'br_canvas_remote_hero_batch_cpu_competitive_no_outlines',
+      playerCount: BR_FULL_ROSTER_PLAYER_COUNT,
+      visibleFighters: REPORTED_CLUSTER_VISIBLE_FIGHTERS,
+      resourceScope: 'visibleOnly',
+      qualityProfile: 'competitive',
+      cardinalityBudget: {
+        maxMountedInstancedMeshes: 72,
         maxEmptyMountedInstancedMeshes: 0,
       },
     }),

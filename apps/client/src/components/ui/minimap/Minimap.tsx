@@ -71,6 +71,7 @@ export function Minimap() {
     resizeCanvas(canvas, size, devicePixelRatio);
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    const liveContext = ctx;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -84,22 +85,29 @@ export function Minimap() {
     resizeCanvas(canvas, size, devicePixelRatio);
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    const liveContext = ctx;
 
     let rafId = 0;
-    let lastDrawAt = 0;
-    const draw = (now: number) => {
-      if (now - lastDrawAt >= LIVE_OVERLAY_FRAME_MS) {
-        lastDrawAt = now;
-        measureFrameWork('ui.minimapOverlay', () => {
-          drawLiveOverlay(ctx, manifest, projection, boundaryClipPath, size, devicePixelRatio);
-        });
-      }
-      rafId = window.requestAnimationFrame(draw);
-    };
+    let timeoutId = 0;
+    let cancelled = false;
+    function scheduleDraw() {
+      if (cancelled) return;
+      timeoutId = window.setTimeout(() => {
+        if (!cancelled) rafId = window.requestAnimationFrame(draw);
+      }, LIVE_OVERLAY_FRAME_MS);
+    }
+    function draw() {
+      measureFrameWork('ui.minimapOverlay', () => {
+        drawLiveOverlay(liveContext, manifest, projection, boundaryClipPath, size, devicePixelRatio);
+      });
+      scheduleDraw();
+    }
 
-    draw(performance.now());
+    draw();
 
     return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
       window.cancelAnimationFrame(rafId);
     };
   }, [boundaryClipPath, devicePixelRatio, localPlayerId, manifest, projection, size]);

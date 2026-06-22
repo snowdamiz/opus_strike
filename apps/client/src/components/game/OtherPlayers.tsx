@@ -78,8 +78,9 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
     return () => window.clearTimeout(timeout);
   }, [firstPersonDropBodyVisibleUntilMs]);
 
-  const otherPlayers = useMemo(() => {
+  const { otherPlayers, remoteBatchResourcePlayers } = useMemo(() => {
     const nextPlayers: Player[] = [];
+    const nextResourcePlayers: Player[] = [];
     const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
 
     for (const player of players.values()) {
@@ -88,30 +89,24 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
       if (hideDeadPlayers && player.state === 'dead') continue;
       if (isBattleRoyal && gamePhase === 'countdown' && player.state === 'spawning') continue;
       if (player.state === 'dropping' && !(isLocalPlayer && showFirstPersonDropBody)) continue;
-      if (player.visibility === 'hidden' || player.visibility === 'last_known' || player.visibility === 'audible') continue;
-      nextPlayers.push(player);
+
+      const isHiddenFromRemoteRender = player.visibility === 'hidden' ||
+        player.visibility === 'last_known' ||
+        player.visibility === 'audible';
+
+      if (isBattleRoyal) {
+        nextResourcePlayers.push(player);
+        if (!isHiddenFromRemoteRender) nextPlayers.push(player);
+      } else if (!isHiddenFromRemoteRender) {
+        nextPlayers.push(player);
+      }
     }
 
-    return nextPlayers;
+    return {
+      otherPlayers: nextPlayers,
+      remoteBatchResourcePlayers: isBattleRoyal ? nextResourcePlayers : nextPlayers,
+    };
   }, [gamePhase, isBattleRoyal, localPlayerId, playerId, players, showFirstPersonDropBody, showLocalPlayerBody]);
-
-  const remoteBatchResourcePlayers = useMemo(() => {
-    if (!isBattleRoyal) return otherPlayers;
-
-    const nextPlayers: Player[] = [];
-    const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
-
-    for (const player of players.values()) {
-      const isLocalPlayer = player.id === playerId || player.id === localPlayerId;
-      if (isLocalPlayer && !showLocalPlayerBody) continue;
-      if (hideDeadPlayers && player.state === 'dead') continue;
-      if (gamePhase === 'countdown' && player.state === 'spawning') continue;
-      if (player.state === 'dropping' && !(isLocalPlayer && showFirstPersonDropBody)) continue;
-      nextPlayers.push(player);
-    }
-
-    return nextPlayers;
-  }, [gamePhase, isBattleRoyal, localPlayerId, otherPlayers, playerId, players, showFirstPersonDropBody, showLocalPlayerBody]);
 
   useEffect(() => {
     if (!config.showNameplates) return;

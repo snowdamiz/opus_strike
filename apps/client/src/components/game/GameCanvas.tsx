@@ -46,6 +46,7 @@ import {
   type EffectQualityConfig,
   type ReflectionQualityConfig,
   type RemotePlayerQualityConfig,
+  type RagdollQualityConfig,
   type ShadowQualityConfig,
 } from './visualQuality';
 import { getBattleRoyalVisibilityMode } from './battleRoyalVisibilityMode';
@@ -741,6 +742,10 @@ const BR_REMOTE_FULL_BODY_COMBAT_CAP = 88;
 const BR_REMOTE_OUTLINE_COMBAT_CAP = 112;
 const BR_REMOTE_MIN_FULL_BODY_DISTANCE = 32;
 const BR_REMOTE_MIN_OUTLINE_DISTANCE = 24;
+const BR_RAGDOLL_COMBAT_TOTAL_CAP = 10;
+const BR_RAGDOLL_HEAVY_COMBAT_TOTAL_CAP = 6;
+const BR_RAGDOLL_COMBAT_HIGH_QUALITY_CAP = 3;
+const BR_RAGDOLL_HEAVY_COMBAT_HIGH_QUALITY_CAP = 1;
 
 function finiteDistanceOrCap(value: number, cap: number): number {
   return Number.isFinite(value) ? Math.min(value, cap) : cap;
@@ -827,6 +832,26 @@ function scaleBattleRoyalDynamicLightsForCombat(
   return {
     maxDynamicLights: Math.min(config.maxDynamicLights, combatLightLimit),
     staticAccentLights: config.staticAccentLights && scale > 0.82,
+  };
+}
+
+function scaleBattleRoyalRagdollsForCombat(
+  config: RagdollQualityConfig,
+  combatScale: number
+): RagdollQualityConfig {
+  const scale = THREE.MathUtils.clamp(combatScale, BR_COMBAT_PRESSURE_MIN_SCALE, 1);
+  if (scale >= 0.995) return config;
+
+  const maxTotalCap = scale <= 0.66 ? BR_RAGDOLL_HEAVY_COMBAT_TOTAL_CAP : BR_RAGDOLL_COMBAT_TOTAL_CAP;
+  const maxHighQualityCap = scale <= 0.66
+    ? BR_RAGDOLL_HEAVY_COMBAT_HIGH_QUALITY_CAP
+    : BR_RAGDOLL_COMBAT_HIGH_QUALITY_CAP;
+  const maxTotal = Math.min(config.maxTotal, maxTotalCap);
+
+  return {
+    maxHighQuality: Math.min(config.maxHighQuality, maxHighQualityCap, maxTotal),
+    maxTotal,
+    castShadows: config.castShadows && scale > 0.74,
   };
 }
 
@@ -1211,6 +1236,13 @@ export function GameCanvas({
     },
     [battleRoyalCombatScale, battleRoyalVisibility, qualityConfig.dynamicLights, startupRampActive]
   );
+  const effectiveRagdollConfig = useMemo(
+    () => {
+      if (!battleRoyalVisibility) return qualityConfig.ragdolls;
+      return scaleBattleRoyalRagdollsForCombat(qualityConfig.ragdolls, battleRoyalCombatScale);
+    },
+    [battleRoyalCombatScale, battleRoyalVisibility, qualityConfig.ragdolls]
+  );
   const effectiveDressingShadows = startupRampActive ? false : qualityConfig.shadows.dressingShadows;
 
   const markWarmupStageDone = useCallback((stage: MapWarmupStageId, durationMs?: number) => {
@@ -1377,7 +1409,7 @@ export function GameCanvas({
           effectConfig={effectiveEffectsConfig}
           theme={mapTheme}
         />
-        <RagdollManager config={qualityConfig.ragdolls} />
+        <RagdollManager config={effectiveRagdollConfig} />
         
         {/* Gameplay objects mount during warmup so first-use shaders and buffers are paid before input. */}
         {shouldMountGameplayObjects && (
