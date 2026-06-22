@@ -121,14 +121,17 @@ export function BattleRoyalDropDeployment() {
     <group>
       <DropShipVisual drop={drop} frozen={frozen} />
       <BattleRoyalLocationLabels locations={namedLocations} />
-      {podPlayers.map((player) => (
-        <DropPodVisual
-          key={player.playerId}
-          snapshot={player}
-          snapshotServerTime={drop.serverTime}
-          isLocal={player.playerId === localPlayerId}
-        />
-      ))}
+      {podPlayers.map((player) => {
+        const isLocal = player.playerId === localPlayerId;
+        return (
+          <DropPodVisual
+            key={player.playerId}
+            snapshot={player}
+            snapshotServerTime={drop.serverTime}
+            isLocal={isLocal}
+          />
+        );
+      })}
     </group>
   );
 }

@@ -11,7 +11,9 @@ import {
   isGameplayMode,
   isMatchMode,
   isMatchPerspective,
+  isKnownHeroId,
   type GameplayMode,
+  type HeroId,
   type MatchMode,
   type MatchPerspective,
 } from '@voxel-strike/shared';
@@ -28,6 +30,7 @@ export interface MatchmakingTicketClaims {
   gameplayMode: GameplayMode;
   botFillMode: MatchmakingBotFillMode;
   matchPerspective: MatchPerspective;
+  selectedHero?: HeroId;
   userId: string;
   competitiveRating: number;
   rankDivisionIndex: number;
@@ -52,6 +55,7 @@ export interface CreateMatchmakingTicketInput {
   gameplayMode?: GameplayMode;
   botFillMode?: MatchmakingBotFillMode;
   matchPerspective?: MatchPerspective;
+  selectedHero?: HeroId;
   userId: string;
   competitiveRating: number;
   rankDivisionIndex: number;
@@ -97,6 +101,7 @@ export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
     matchPerspective: input.mode === 'quick_play' && isMatchPerspective(input.matchPerspective)
       ? input.matchPerspective
       : DEFAULT_MATCH_PERSPECTIVE,
+    selectedHero: isKnownHeroId(input.selectedHero) ? input.selectedHero : undefined,
     userId: input.userId,
     competitiveRating: Math.round(Number.isFinite(input.competitiveRating) ? input.competitiveRating : DEFAULT_MATCHMAKING_RATING),
     rankDivisionIndex: normalizeRankDivisionIndex(input.rankDivisionIndex),
@@ -137,6 +142,7 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
   const matchPerspective = mode === 'quick_play' && isMatchPerspective(claims.matchPerspective)
     ? claims.matchPerspective
     : DEFAULT_MATCH_PERSPECTIVE;
+  const selectedHero = isKnownHeroId(claims.selectedHero) ? claims.selectedHero : undefined;
   if (!claims.userId || !claims.nonce) return null;
   if (claims.expiresAt < now || claims.issuedAt > now + 5_000) return null;
   if (!Number.isFinite(claims.competitiveRating)) return null;
@@ -183,6 +189,7 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
     gameplayMode,
     botFillMode,
     matchPerspective,
+    selectedHero,
     competitiveRating: Math.round(claims.competitiveRating),
     rankDivisionIndex: claims.rankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,
     targetRankDivisionIndex: claims.targetRankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,

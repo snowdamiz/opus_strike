@@ -12,6 +12,8 @@ const DROP_POD_CAMERA_HEIGHT = 2.4;
 const DROP_POD_CAMERA_LOOK_AHEAD = 6;
 const DROP_POD_CAMERA_MAX_UP_PITCH = 0.35;
 const DEPLOYMENT_CAMERA_LERP = 14;
+export const BATTLE_ROYAL_FIRST_PERSON_DROP_CAMERA_MS = 620;
+export const BATTLE_ROYAL_FIRST_PERSON_DROP_BODY_VISIBLE_MS = BATTLE_ROYAL_FIRST_PERSON_DROP_CAMERA_MS;
 
 export type BattleRoyalDeploymentCameraMode = 'ship' | 'pod';
 
@@ -21,8 +23,112 @@ export interface BattleRoyalDeploymentCameraTarget {
   yaw: number;
 }
 
+export interface BattleRoyalFirstPersonDropCameraRuntime {
+  active: boolean;
+  dropKey: string | null;
+  startedAtMs: number;
+  startPosition: THREE.Vector3;
+  startQuaternion: THREE.Quaternion;
+}
+
+const firstPersonDropTargetPosition = new THREE.Vector3();
+const firstPersonDropTargetQuaternion = new THREE.Quaternion();
+const firstPersonDropTargetEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+
 export function clampDropProgress(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+export function createBattleRoyalFirstPersonDropCameraRuntime(): BattleRoyalFirstPersonDropCameraRuntime {
+  return {
+    active: false,
+    dropKey: null,
+    startedAtMs: 0,
+    startPosition: new THREE.Vector3(),
+    startQuaternion: new THREE.Quaternion(),
+  };
+}
+
+function getFirstPersonDropKey(playerId: string, droppedAt: number | null | undefined): string {
+  return `${playerId}:${droppedAt ?? 'pending'}`;
+}
+
+export function beginBattleRoyalFirstPersonDropCamera(input: {
+  runtime: BattleRoyalFirstPersonDropCameraRuntime;
+  camera: THREE.Camera;
+  playerId: string;
+  droppedAt: number | null | undefined;
+  nowMs: number;
+}): boolean {
+  const dropKey = getFirstPersonDropKey(input.playerId, input.droppedAt);
+  if (input.runtime.dropKey === dropKey) return false;
+
+  input.runtime.active = true;
+  input.runtime.dropKey = dropKey;
+  input.runtime.startedAtMs = input.nowMs;
+  input.runtime.startPosition.copy(input.camera.position);
+  input.runtime.startQuaternion.copy(input.camera.quaternion);
+  return true;
+}
+
+export function resetBattleRoyalFirstPersonDropCamera(
+  runtime: BattleRoyalFirstPersonDropCameraRuntime,
+  clearDropKey = false
+): void {
+  runtime.active = false;
+  runtime.startedAtMs = 0;
+  if (clearDropKey) {
+    runtime.dropKey = null;
+  }
+}
+
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+export function applyBattleRoyalFirstPersonDropCamera(input: {
+  runtime: BattleRoyalFirstPersonDropCameraRuntime;
+  camera: THREE.Camera;
+  bodyPosition: { x: number; y: number; z: number };
+  eyeHeight: number;
+  localYaw: number;
+  localPitch: number;
+  nowMs: number;
+}): void {
+  firstPersonDropTargetPosition.set(
+    input.bodyPosition.x,
+    input.bodyPosition.y + input.eyeHeight,
+    input.bodyPosition.z
+  );
+  firstPersonDropTargetEuler.set(input.localPitch, input.localYaw, 0, 'YXZ');
+  firstPersonDropTargetQuaternion.setFromEuler(firstPersonDropTargetEuler);
+
+  if (!input.runtime.active) {
+    input.camera.position.copy(firstPersonDropTargetPosition);
+    input.camera.quaternion.copy(firstPersonDropTargetQuaternion);
+    input.camera.rotation.setFromQuaternion(firstPersonDropTargetQuaternion, 'YXZ');
+    return;
+  }
+
+  const elapsedMs = Math.max(0, input.nowMs - input.runtime.startedAtMs);
+  const progress = clampDropProgress(elapsedMs / BATTLE_ROYAL_FIRST_PERSON_DROP_CAMERA_MS);
+  const easedProgress = easeOutCubic(progress);
+
+  input.camera.position.lerpVectors(
+    input.runtime.startPosition,
+    firstPersonDropTargetPosition,
+    easedProgress
+  );
+  input.camera.quaternion.slerpQuaternions(
+    input.runtime.startQuaternion,
+    firstPersonDropTargetQuaternion,
+    easedProgress
+  );
+  input.camera.rotation.setFromQuaternion(input.camera.quaternion, 'YXZ');
+
+  if (progress >= 1) {
+    input.runtime.active = false;
+  }
 }
 
 export function getBattleRoyalDropShipProgress(

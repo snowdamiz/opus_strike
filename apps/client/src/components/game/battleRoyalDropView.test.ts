@@ -7,6 +7,10 @@ import {
 } from '@voxel-strike/shared';
 import {
   applyBattleRoyalDeploymentCamera,
+  applyBattleRoyalFirstPersonDropCamera,
+  beginBattleRoyalFirstPersonDropCamera,
+  BATTLE_ROYAL_FIRST_PERSON_DROP_CAMERA_MS,
+  createBattleRoyalFirstPersonDropCameraRuntime,
   writeBattleRoyalDeploymentCameraTarget,
   type BattleRoyalDeploymentCameraTarget,
 } from './battleRoyalDropView';
@@ -157,5 +161,59 @@ assert.equal(Math.abs(shipLookTarget.x - target.position.x) < 0.001, true);
 assert.equal(shipLookTarget.z < target.position.z, true);
 assert.equal(Math.abs(shipCameraPosition.x - target.position.x) < 0.001, true);
 assert.equal(shipCameraPosition.z > target.position.z, true);
+
+const firstPersonRuntime = createBattleRoyalFirstPersonDropCameraRuntime();
+const firstPersonCamera = new THREE.PerspectiveCamera();
+firstPersonCamera.position.set(-12, 80, 30);
+firstPersonCamera.lookAt(3, 70, -6);
+const firstPersonStartPosition = firstPersonCamera.position.clone();
+const firstPersonStartQuaternion = firstPersonCamera.quaternion.clone();
+const firstPersonBodyPosition = { x: 4, y: 12, z: -6 };
+const firstPersonEyeHeight = 1.55;
+const firstPersonYaw = 0.4;
+const firstPersonPitch = -0.2;
+const firstPersonTargetPosition = new THREE.Vector3(
+  firstPersonBodyPosition.x,
+  firstPersonBodyPosition.y + firstPersonEyeHeight,
+  firstPersonBodyPosition.z
+);
+const firstPersonTargetQuaternion = new THREE.Quaternion().setFromEuler(
+  new THREE.Euler(firstPersonPitch, firstPersonYaw, 0, 'YXZ')
+);
+
+assert.equal(beginBattleRoyalFirstPersonDropCamera({
+  runtime: firstPersonRuntime,
+  camera: firstPersonCamera,
+  playerId: 'local-player',
+  droppedAt: 1_000,
+  nowMs: 1_000,
+}), true);
+
+applyBattleRoyalFirstPersonDropCamera({
+  runtime: firstPersonRuntime,
+  camera: firstPersonCamera,
+  bodyPosition: firstPersonBodyPosition,
+  eyeHeight: firstPersonEyeHeight,
+  localYaw: firstPersonYaw,
+  localPitch: firstPersonPitch,
+  nowMs: 1_000,
+});
+
+assert.equal(firstPersonCamera.position.distanceTo(firstPersonStartPosition) < 0.001, true);
+assert.equal(firstPersonCamera.quaternion.angleTo(firstPersonStartQuaternion) < 0.001, true);
+
+applyBattleRoyalFirstPersonDropCamera({
+  runtime: firstPersonRuntime,
+  camera: firstPersonCamera,
+  bodyPosition: firstPersonBodyPosition,
+  eyeHeight: firstPersonEyeHeight,
+  localYaw: firstPersonYaw,
+  localPitch: firstPersonPitch,
+  nowMs: 1_000 + BATTLE_ROYAL_FIRST_PERSON_DROP_CAMERA_MS,
+});
+
+assert.equal(firstPersonCamera.position.distanceTo(firstPersonTargetPosition) < 0.001, true);
+assert.equal(firstPersonCamera.quaternion.angleTo(firstPersonTargetQuaternion) < 0.001, true);
+assert.equal(firstPersonRuntime.active, false);
 
 console.log('battle royal drop view tests passed');

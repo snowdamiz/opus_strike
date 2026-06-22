@@ -74,6 +74,7 @@
     "test:room-reconnect": "tsx src/scripts/room-reconnect-runtime.test.ts",
     "test:room-voice-runtime": "tsx src/scripts/room-voice-runtime.test.ts",
     "test:matchmaking": "tsx src/scripts/matchmaking-skill.test.ts",
+    "test:matchmaking-hero-queues": "tsx src/scripts/matchmaking-hero-queues.test.ts",
     "test:matchmaking-settings": "tsx src/scripts/matchmaking-settings.test.ts",
     "test:persistence": "tsx src/scripts/match-persistence.test.ts",
     "test:ranking": "tsx src/scripts/ranking-service.test.ts",

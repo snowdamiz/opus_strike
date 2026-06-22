@@ -5,6 +5,7 @@ import { useGameStore } from '../../store/gameStore';
 import {
   getPlayerVisualLookPitch,
   sampleRemoteTransformInto,
+  useVisualStore,
   type SampledRemoteTransform,
   visualStore,
 } from '../../store/visualStore';
@@ -47,8 +48,29 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
       matchPerspective: state.matchPerspective,
     }))
   );
+  const firstPersonDropBodyVisibleUntilMs = useVisualStore(
+    (state) => state.battleRoyalFirstPersonDropBodyVisibleUntilMs
+  );
+  const [dropBodyVisibilityNowMs, setDropBodyVisibilityNowMs] = useState(() => Date.now());
   const isBattleRoyal = gameplayMode === 'battle_royal';
-  const showLocalPlayerBody = matchPerspective === 'third_person';
+  const showFirstPersonDropBody = matchPerspective === 'first_person' &&
+    firstPersonDropBodyVisibleUntilMs > dropBodyVisibilityNowMs;
+  const showLocalPlayerBody = matchPerspective === 'third_person' || showFirstPersonDropBody;
+
+  useEffect(() => {
+    if (firstPersonDropBodyVisibleUntilMs <= 0) return;
+
+    const delayMs = firstPersonDropBodyVisibleUntilMs - Date.now();
+    if (delayMs <= 0) {
+      setDropBodyVisibilityNowMs(Date.now());
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setDropBodyVisibilityNowMs(Date.now());
+    }, delayMs);
+    return () => window.clearTimeout(timeout);
+  }, [firstPersonDropBodyVisibleUntilMs]);
 
   const otherPlayers = useMemo(() => {
     const nextPlayers: Player[] = [];
@@ -59,13 +81,13 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
       if (isLocalPlayer && !showLocalPlayerBody) continue;
       if (hideDeadPlayers && player.state === 'dead') continue;
       if (isBattleRoyal && gamePhase === 'countdown' && player.state === 'spawning') continue;
-      if (player.state === 'dropping') continue;
+      if (player.state === 'dropping' && !(isLocalPlayer && showFirstPersonDropBody)) continue;
       if (player.visibility === 'hidden' || player.visibility === 'last_known' || player.visibility === 'audible') continue;
       nextPlayers.push(player);
     }
 
     return nextPlayers;
-  }, [gamePhase, isBattleRoyal, localPlayerId, playerId, players, showLocalPlayerBody]);
+  }, [gamePhase, isBattleRoyal, localPlayerId, playerId, players, showFirstPersonDropBody, showLocalPlayerBody]);
 
   const remoteBatchResourcePlayers = useMemo(() => {
     if (!isBattleRoyal) return otherPlayers;
@@ -78,11 +100,12 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
       if (isLocalPlayer && !showLocalPlayerBody) continue;
       if (hideDeadPlayers && player.state === 'dead') continue;
       if (gamePhase === 'countdown' && player.state === 'spawning') continue;
+      if (player.state === 'dropping' && !(isLocalPlayer && showFirstPersonDropBody)) continue;
       nextPlayers.push(player);
     }
 
     return nextPlayers;
-  }, [gamePhase, isBattleRoyal, localPlayerId, otherPlayers, playerId, players, showLocalPlayerBody]);
+  }, [gamePhase, isBattleRoyal, localPlayerId, otherPlayers, playerId, players, showFirstPersonDropBody, showLocalPlayerBody]);
 
   useEffect(() => {
     if (!config.showNameplates) return;
@@ -194,7 +217,7 @@ function isPlayerMovingForAnimation(
   visualHorizontalSpeed = 0,
   movement: PlayerMovementState = player.movement
 ): boolean {
-  if (player.state !== 'alive') return false;
+  if (player.state !== 'alive' && player.state !== 'dropping') return false;
 
   const networkHorizontalSpeed = getHorizontalSpeed(player.velocity);
 

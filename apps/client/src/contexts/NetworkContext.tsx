@@ -508,6 +508,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         gameplayMode,
         botFillMode,
         matchPerspective,
+        selectedHero,
       });
 
       loggers.network.debug('quick play matchmaking', matchmakingTicket.targetRankLabel);
@@ -570,7 +571,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setLoading(true);
 
     try {
-      const rankedTicket = await requestRankedTicket();
+      const rankedTicket = await requestRankedTicket({ selectedHero });
       const client = getClient();
 
       cleanupExistingConnections();

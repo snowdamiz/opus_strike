@@ -85,6 +85,9 @@ export interface VisualState {
   /** High-frequency local movement used by first-person effects. */
   localMovement: PlayerMovementState;
 
+  /** Temporary BR first-person drop reveal for the local full-body model. */
+  battleRoyalFirstPersonDropBodyVisibleUntilMs: number;
+
   /** High-frequency slide intensity for UI and viewmodel effects. */
   slideIntensity: number;
 
@@ -269,6 +272,7 @@ const initialVisualState: VisualState = {
     updatedAtMs: 0,
   },
   localMovement: { ...DEFAULT_LOCAL_MOVEMENT },
+  battleRoyalFirstPersonDropBodyVisibleUntilMs: 0,
   slideIntensity: 0,
   localSlideVelocity: { x: 0, y: 0, z: 0 },
   localViewYaw: 0,
@@ -470,6 +474,16 @@ export const setLocalVisualMovement = (movement: PlayerMovementState): void => {
   current.jetpackFuel = movement.jetpackFuel;
   current.isGliding = movement.isGliding;
   current.chronosAscendantStartY = movement.chronosAscendantStartY;
+};
+
+export const setBattleRoyalFirstPersonDropBodyVisibleUntil = (untilMs: number): void => {
+  const nextUntilMs = Number.isFinite(untilMs) ? Math.max(0, untilMs) : 0;
+  const currentUntilMs = visualStore.getState().battleRoyalFirstPersonDropBodyVisibleUntilMs;
+  const effectiveUntilMs = nextUntilMs > 0 ? Math.max(currentUntilMs, nextUntilMs) : 0;
+  if (currentUntilMs === effectiveUntilMs) return;
+
+  recordHotStoreCommit('visual.battleRoyalFirstPersonDropBody');
+  visualStore.setState({ battleRoyalFirstPersonDropBodyVisibleUntilMs: effectiveUntilMs });
 };
 
 export const setLocalSlideIntensity = (intensity: number, velocity?: Vec3, viewYaw?: number): void => {
@@ -1343,6 +1357,7 @@ export const clearVisualState = (): void => {
       updatedAtMs: 0,
     },
     localMovement: { ...DEFAULT_LOCAL_MOVEMENT },
+    battleRoyalFirstPersonDropBodyVisibleUntilMs: 0,
     slideIntensity: 0,
     localSlideVelocity: { x: 0, y: 0, z: 0 },
     localViewYaw: 0,

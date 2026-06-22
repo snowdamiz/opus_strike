@@ -352,7 +352,7 @@ function isPlayerMovingForAnimation(
   visualHorizontalSpeed = 0,
   movement: PlayerMovementState = player.movement
 ): boolean {
-  if (player.state !== 'alive') return false;
+  if (player.state !== 'alive' && player.state !== 'dropping') return false;
 
   const networkHorizontalSpeed = getHorizontalSpeed(player.velocity);
 
@@ -1572,9 +1572,10 @@ function RemoteHeroBatchGroup({
 
         const movement = getPlayerRenderMovement(player, visualState, localPlayerId);
         const visualHorizontalSpeed = updateRemoteTransform(runtime, player, deltaSeconds, visualState, nowMs);
+        const isLocalPlayer = player.id === localPlayerId;
         const isObjectivePriority = isObjectivePriorityRemoteBody(player);
         const isActivityPriority = isActivityPriorityRemoteBody(player, visualState, nowMs);
-        const forceBodyForPriority = isObjectivePriority || (
+        const forceBodyForPriority = isLocalPlayer || isObjectivePriority || (
           isActivityPriority &&
           isWithinDistanceLimitSq(camera, runtime.currentPosition, activityBodyDistanceSq)
         );

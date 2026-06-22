@@ -16,8 +16,10 @@ import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_MATCH_PERSPECTIVE,
   isGameplayMode,
+  isKnownHeroId,
   isMatchPerspective,
   type GameplayMode,
+  type HeroId,
   type MatchMode,
   type MatchPerspective,
 } from '@voxel-strike/shared';
@@ -97,6 +99,10 @@ function readRoomIdParam(req: Request): string | null {
   const value = typeof req.params.roomId === 'string' ? req.params.roomId.trim() : '';
   if (!value || value.length > 128) return null;
   return /^[a-zA-Z0-9_-]+$/.test(value) ? value : null;
+}
+
+function readSelectedHero(value: unknown): HeroId | undefined {
+  return typeof value === 'string' && isKnownHeroId(value) ? value : undefined;
 }
 
 async function getQueueStatus(
@@ -286,6 +292,7 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
     const matchPerspective = isMatchPerspective(req.query.perspective)
       ? req.query.perspective
       : DEFAULT_MATCH_PERSPECTIVE;
+    const selectedHero = readSelectedHero(req.query.selectedHero);
     const targetRankDivisionIndex = await chooseMatchmakingRankBand({
       mode: 'quick_play',
       playerRating: context.competitiveRating,
@@ -293,11 +300,13 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
       gameplayMode,
       botFillMode,
       matchPerspective,
+      selectedHero,
     });
     res.json(issueQuickPlayTicket(context, targetRankDivisionIndex, {
       gameplayMode,
       botFillMode,
       matchPerspective,
+      selectedHero,
     }));
   } catch (error) {
     console.error('[matchmaking] Failed to issue quick-play ticket:', error);
@@ -336,13 +345,15 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
     }
 
     const tokenHold = await assertRankedTokenHoldingEligibility(context.walletAddress);
+    const selectedHero = readSelectedHero(req.body?.selectedHero);
     const targetRankDivisionIndex = await chooseMatchmakingRankBand({
       mode: 'ranked',
       playerRating: context.competitiveRating,
       playerDivisionIndex: context.rankDivisionIndex,
       matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
+      selectedHero,
     });
-    res.json(issueRankedTicket(context, targetRankDivisionIndex, tokenHold));
+    res.json(issueRankedTicket(context, targetRankDivisionIndex, tokenHold, selectedHero));
   } catch (error) {
     console.error('[matchmaking] Failed to issue ranked ticket:', error);
     sendRouteError(res, error, 'Failed to issue ranked ticket');
