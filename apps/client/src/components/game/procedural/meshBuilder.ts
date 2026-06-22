@@ -304,7 +304,6 @@ function createGeometryFromData(
   geometry.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
   geometry.setAttribute('normal', new THREE.BufferAttribute(data.normals, 3));
   geometry.setAttribute('uv', new THREE.BufferAttribute(data.uvs, 2));
-  geometry.setAttribute('uv2', new THREE.BufferAttribute(data.uvs, 2));
   geometry.setAttribute('voxelTextureLayer', new THREE.BufferAttribute(data.textureLayers, 1));
   geometry.setIndex(new THREE.BufferAttribute(data.indices, 1));
   geometry.scale(manifest.voxelSize.x, manifest.voxelSize.y, manifest.voxelSize.z);

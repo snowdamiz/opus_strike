@@ -21,6 +21,7 @@ const COARSE_REGION_VOXEL_STEP = 8;
 interface ChunkLookup {
   chunks: Array<VoxelChunk | undefined>;
   chunksX: number;
+  chunksY: number;
   chunksZ: number;
   manifest: VoxelMapManifest;
 }
@@ -213,7 +214,7 @@ export function createChunkLookup(manifest: VoxelMapManifest): ChunkLookup {
     chunks[chunkLookupIndex(chunk.coord.x, chunk.coord.y, chunk.coord.z, chunksX, chunksZ)] = chunk;
   }
 
-  const lookup = { chunks, chunksX, chunksZ, manifest };
+  const lookup = { chunks, chunksX, chunksY, chunksZ, manifest };
   chunkLookupCache.set(manifest, lookup);
   return lookup;
 }
@@ -248,6 +249,25 @@ function isSolidNumericBlock(block: number): boolean {
   const solid = isSolidBlock(block);
   solidBlockCache[block] = solid;
   return solid;
+}
+
+function getChunkNeighbor(
+  lookup: ChunkLookup,
+  x: number,
+  y: number,
+  z: number
+): VoxelChunk | undefined {
+  if (x < 0 || x >= lookup.chunksX || y < 0 || y >= lookup.chunksY || z < 0 || z >= lookup.chunksZ) {
+    return undefined;
+  }
+  return lookup.chunks[chunkLookupIndex(x, y, z, lookup.chunksX, lookup.chunksZ)];
+}
+
+function getChunkBlock(chunk: VoxelChunk | undefined, x: number, y: number, z: number): number {
+  if (!chunk || x < 0 || x >= chunk.size.x || y < 0 || y >= chunk.size.y || z < 0 || z >= chunk.size.z) {
+    return 0;
+  }
+  return chunk.blocks[blockIndex(x, y, z, chunk.size)] ?? 0;
 }
 
 function getFaceTextureIndex(face: VoxelFaceDirection): 0 | 1 | 2 {
@@ -489,6 +509,15 @@ function appendVoxelChunkBuffers(
   const yStride = sizeX * sizeZ;
   const positiveMask = scratch.positiveMask;
   const negativeMask = scratch.negativeMask;
+  const coordX = chunk.coord.x;
+  const coordY = chunk.coord.y;
+  const coordZ = chunk.coord.z;
+  const positiveXNeighbor = getChunkNeighbor(lookup, coordX + 1, coordY, coordZ);
+  const negativeXNeighbor = getChunkNeighbor(lookup, coordX - 1, coordY, coordZ);
+  const positiveYNeighbor = getChunkNeighbor(lookup, coordX, coordY + 1, coordZ);
+  const negativeYNeighbor = getChunkNeighbor(lookup, coordX, coordY - 1, coordZ);
+  const positiveZNeighbor = getChunkNeighbor(lookup, coordX, coordY, coordZ + 1);
+  const negativeZNeighbor = getChunkNeighbor(lookup, coordX, coordY, coordZ - 1);
 
   const xMaskArea = sizeZ * sizeY;
 
@@ -508,8 +537,8 @@ function appendVoxelChunkBuffers(
         if (!isSolidNumericBlock(block)) continue;
 
         const index = lz + ly * sizeZ;
-        const pxNeighbor = lx + 1 < sizeX ? blocks[blockOffset + 1] : getBlock(lookup, gx + 1, gy, gz);
-        const nxNeighbor = lx > 0 ? blocks[blockOffset - 1] : getBlock(lookup, gx - 1, gy, gz);
+        const pxNeighbor = lx + 1 < sizeX ? blocks[blockOffset + 1] : getChunkBlock(positiveXNeighbor, 0, ly, lz);
+        const nxNeighbor = lx > 0 ? blocks[blockOffset - 1] : getChunkBlock(negativeXNeighbor, negativeXNeighbor ? negativeXNeighbor.size.x - 1 : 0, ly, lz);
         if (pxNeighbor === 0 || !isSolidNumericBlock(pxNeighbor)) positiveMask[index] = block;
         if (nxNeighbor === 0 || !isSolidNumericBlock(nxNeighbor)) negativeMask[index] = block;
       }
@@ -541,8 +570,8 @@ function appendVoxelChunkBuffers(
         if (!isSolidNumericBlock(block)) continue;
 
         const index = lx + lz * sizeX;
-        const pyNeighbor = ly + 1 < sizeY ? blocks[blockOffset + yStride] : getBlock(lookup, gx, gy + 1, gz);
-        const nyNeighbor = ly > 0 ? blocks[blockOffset - yStride] : getBlock(lookup, gx, gy - 1, gz);
+        const pyNeighbor = ly + 1 < sizeY ? blocks[blockOffset + yStride] : getChunkBlock(positiveYNeighbor, lx, 0, lz);
+        const nyNeighbor = ly > 0 ? blocks[blockOffset - yStride] : getChunkBlock(negativeYNeighbor, lx, negativeYNeighbor ? negativeYNeighbor.size.y - 1 : 0, lz);
         if (pyNeighbor === 0 || !isSolidNumericBlock(pyNeighbor)) positiveMask[index] = block;
         if (nyNeighbor === 0 || !isSolidNumericBlock(nyNeighbor)) negativeMask[index] = block;
       }
@@ -574,8 +603,8 @@ function appendVoxelChunkBuffers(
         if (!isSolidNumericBlock(block)) continue;
 
         const index = lx + ly * sizeX;
-        const pzNeighbor = lz + 1 < sizeZ ? blocks[blockOffset + sizeX] : getBlock(lookup, gx, gy, gz + 1);
-        const nzNeighbor = lz > 0 ? blocks[blockOffset - sizeX] : getBlock(lookup, gx, gy, gz - 1);
+        const pzNeighbor = lz + 1 < sizeZ ? blocks[blockOffset + sizeX] : getChunkBlock(positiveZNeighbor, lx, ly, 0);
+        const nzNeighbor = lz > 0 ? blocks[blockOffset - sizeX] : getChunkBlock(negativeZNeighbor, lx, ly, negativeZNeighbor ? negativeZNeighbor.size.z - 1 : 0);
         if (pzNeighbor === 0 || !isSolidNumericBlock(pzNeighbor)) positiveMask[index] = block;
         if (nzNeighbor === 0 || !isSolidNumericBlock(nzNeighbor)) negativeMask[index] = block;
       }

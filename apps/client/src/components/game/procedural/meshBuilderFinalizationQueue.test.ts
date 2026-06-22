@@ -118,7 +118,9 @@ try {
   } = await import('./meshBuilder');
   const resolvedRegions: string[] = [];
   const regionPromises = ['a', 'b', 'c'].map((regionId) => (
-    buildVoxelRegionGeometryAsync(manifest, regionId, [], 'full').then(() => {
+    buildVoxelRegionGeometryAsync(manifest, regionId, [], 'full').then((geometry) => {
+      assert.ok(geometry.getAttribute('uv'));
+      assert.equal(geometry.getAttribute('uv2'), undefined);
       resolvedRegions.push(regionId);
     })
   ));

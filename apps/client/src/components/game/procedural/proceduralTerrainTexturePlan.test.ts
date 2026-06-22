@@ -40,27 +40,36 @@ assert.ok(uniqueLayers.has(getTextureLayerForBlock('grass', 'bottom').layer));
 assert.ok(uniqueLayers.has(getTextureLayerForBlock('stone', 'side').layer));
 assert.equal(getTextureLayerForBlock('grass', 'bottom').layer, getTextureLayerForBlock('dirt', 'side').layer);
 
-const crossChunkA: VoxelChunk = {
-  coord: { x: 0, y: 0, z: 0 },
-  size: { x: 1, y: 1, z: 1 },
-  blocks: new Uint8Array([getBlockNumericId('grass')]),
-  solidBlockCount: 1,
-};
-const crossChunkB: VoxelChunk = {
-  coord: { x: 1, y: 0, z: 0 },
-  size: { x: 1, y: 1, z: 1 },
-  blocks: new Uint8Array([getBlockNumericId('stone')]),
-  solidBlockCount: 1,
-};
-const crossChunkManifest = {
-  id: 'terrain-texture-cross-chunk-test',
-  size: { x: 2, y: 1, z: 1 },
-  chunkSize: { x: 1, y: 1, z: 1 },
-  chunks: [crossChunkA, crossChunkB],
-} as unknown as VoxelMapManifest;
-const crossChunkMeshData = buildVoxelRegionGeometryData(crossChunkManifest, [crossChunkA, crossChunkB]);
-assert.equal(crossChunkMeshData.textureLayers.length, 40);
-assert.equal(crossChunkMeshData.indices.length, 60);
+function singleBlockChunk(coord: { x: number; y: number; z: number }, blockId: number): VoxelChunk {
+  return {
+    coord,
+    size: { x: 1, y: 1, z: 1 },
+    blocks: new Uint8Array([blockId]),
+    solidBlockCount: 1,
+  };
+}
+
+function assertAdjacentChunksHideSharedFace(
+  id: string,
+  size: { x: number; y: number; z: number },
+  adjacentCoord: { x: number; y: number; z: number }
+): void {
+  const crossChunkA = singleBlockChunk({ x: 0, y: 0, z: 0 }, getBlockNumericId('grass'));
+  const crossChunkB = singleBlockChunk(adjacentCoord, getBlockNumericId('stone'));
+  const crossChunkManifest = {
+    id,
+    size,
+    chunkSize: { x: 1, y: 1, z: 1 },
+    chunks: [crossChunkA, crossChunkB],
+  } as unknown as VoxelMapManifest;
+  const crossChunkMeshData = buildVoxelRegionGeometryData(crossChunkManifest, [crossChunkA, crossChunkB]);
+  assert.equal(crossChunkMeshData.textureLayers.length, 40);
+  assert.equal(crossChunkMeshData.indices.length, 60);
+}
+
+assertAdjacentChunksHideSharedFace('terrain-texture-cross-chunk-x-test', { x: 2, y: 1, z: 1 }, { x: 1, y: 0, z: 0 });
+assertAdjacentChunksHideSharedFace('terrain-texture-cross-chunk-y-test', { x: 1, y: 2, z: 1 }, { x: 0, y: 1, z: 0 });
+assertAdjacentChunksHideSharedFace('terrain-texture-cross-chunk-z-test', { x: 1, y: 1, z: 2 }, { x: 0, y: 0, z: 1 });
 
 assert.equal(TERRAIN_TEXTURE_LAYER_COUNT, 36);
 assert.deepEqual(TERRAIN_TEXTURE_ANISOTROPY_BY_QUALITY, {
