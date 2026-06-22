@@ -2,10 +2,14 @@ import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import {
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
+  HERO_DEFINITIONS,
   MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
   MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+  PLAYER_COMBAT_HITBOX_PADDING,
+  PLAYER_HEIGHT,
+  PLAYER_RADIUS,
   TICK_INTERVAL_MS,
-  doesSegmentHitPlayerCombatHitbox,
+  doesSegmentHitVerticalCapsule,
   type HeroId,
   type Player,
   type PlayerMovementState,
@@ -188,6 +192,8 @@ export interface CombatVisualPlayer {
   x: number;
   y: number;
   z: number;
+  hitboxRadius: number;
+  hitboxSegmentHalfHeight: number;
 }
 
 export interface CombatVisualFrameCache {
@@ -235,6 +241,36 @@ const DEFAULT_LOCAL_MOVEMENT: PlayerMovementState = {
 
 const COMBAT_VISUAL_CELL_SIZE = 8;
 const CHRONOS_ASCENDANT_ABILITY_ID = 'chronos_ascendant_paradox';
+
+function createCombatVisualHitboxMetrics(size: { width: number; height: number; depth: number }): {
+  radius: number;
+  segmentHalfHeight: number;
+} {
+  const radius = Math.max(size.width, size.depth) / 2 + PLAYER_COMBAT_HITBOX_PADDING;
+  return {
+    radius,
+    segmentHalfHeight: Math.max(0, size.height / 2 + PLAYER_COMBAT_HITBOX_PADDING - radius),
+  };
+}
+
+const DEFAULT_COMBAT_VISUAL_HITBOX = createCombatVisualHitboxMetrics({
+  width: PLAYER_RADIUS * 2,
+  height: PLAYER_HEIGHT,
+  depth: PLAYER_RADIUS * 2,
+});
+
+const HERO_COMBAT_VISUAL_HITBOXES = Object.fromEntries(
+  (Object.keys(HERO_DEFINITIONS) as HeroId[]).map((heroId) => [
+    heroId,
+    createCombatVisualHitboxMetrics(HERO_DEFINITIONS[heroId].stats.size),
+  ])
+) as Record<HeroId, typeof DEFAULT_COMBAT_VISUAL_HITBOX>;
+
+function getCombatVisualHitboxMetrics(heroId: HeroId | string | null | undefined): typeof DEFAULT_COMBAT_VISUAL_HITBOX {
+  return typeof heroId === 'string'
+    ? HERO_COMBAT_VISUAL_HITBOXES[heroId as HeroId] ?? DEFAULT_COMBAT_VISUAL_HITBOX
+    : DEFAULT_COMBAT_VISUAL_HITBOX;
+}
 
 const createCombatFrameCache = (): CombatVisualFrameCache => ({
   frameKey: -1,
@@ -805,6 +841,7 @@ export const rebuildCombatVisualFrameCache = (
   for (const player of players) {
     if (player.state !== 'alive') continue;
     if (player.visibility === 'hidden' || player.visibility === 'last_known' || player.visibility === 'audible') continue;
+    const hitbox = getCombatVisualHitboxMetrics(player.heroId);
     let visualPlayer = cache.entryPool[entryIndex];
     if (!visualPlayer) {
       visualPlayer = {
@@ -814,6 +851,8 @@ export const rebuildCombatVisualFrameCache = (
         x: player.position.x,
         y: player.position.y,
         z: player.position.z,
+        hitboxRadius: hitbox.radius,
+        hitboxSegmentHalfHeight: hitbox.segmentHalfHeight,
       };
       cache.entryPool[entryIndex] = visualPlayer;
     } else {
@@ -823,6 +862,8 @@ export const rebuildCombatVisualFrameCache = (
       visualPlayer.x = player.position.x;
       visualPlayer.y = player.position.y;
       visualPlayer.z = player.position.z;
+      visualPlayer.hitboxRadius = hitbox.radius;
+      visualPlayer.hitboxSegmentHalfHeight = hitbox.segmentHalfHeight;
     }
     entryIndex++;
     cache.alivePlayers.push(visualPlayer);
@@ -943,7 +984,16 @@ export const findCombatVisualPlayerHit = (
           const visualPlayer = bucket[i];
           if (!isCombatVisualTargetPlayer(visualPlayer, ownerTeam, ownerId, targetTeam)) continue;
           if (!doesCombatVisualPlayerPassRadius(visualPlayer, center, radiusSq)) continue;
-          if (doesSegmentHitPlayerCombatHitbox(start, direction, distance, visualPlayer.player, extraRadius)) {
+          if (
+            doesSegmentHitVerticalCapsule(
+              start,
+              direction,
+              distance,
+              visualPlayer,
+              visualPlayer.hitboxRadius + extraRadius,
+              visualPlayer.hitboxSegmentHalfHeight
+            )
+          ) {
             return visualPlayer.player;
           }
         }
@@ -956,7 +1006,16 @@ export const findCombatVisualPlayerHit = (
   for (let i = 0; i < cache.alivePlayers.length; i++) {
     const visualPlayer = cache.alivePlayers[i];
     if (!isCombatVisualTargetPlayer(visualPlayer, ownerTeam, ownerId, targetTeam)) continue;
-    if (doesSegmentHitPlayerCombatHitbox(start, direction, distance, visualPlayer.player, extraRadius)) {
+    if (
+      doesSegmentHitVerticalCapsule(
+        start,
+        direction,
+        distance,
+        visualPlayer,
+        visualPlayer.hitboxRadius + extraRadius,
+        visualPlayer.hitboxSegmentHalfHeight
+      )
+    ) {
       return visualPlayer.player;
     }
   }

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import {
+  ALL_HERO_IDS,
   MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+  doesSegmentHitPlayerCombatHitbox,
+  type HeroId,
   type Player,
   type Team,
 } from '@voxel-strike/shared';
@@ -73,12 +76,19 @@ function addSnapshot(serverTime: number, x: number): void {
   addRemoteSnapshot('remote-a', serverTime, x, TEST_REMOTE_TRANSFORM_RECEIVED_AT_MS);
 }
 
-function makePlayer(id: string, team: Team, x: number, z: number, state: Player['state'] = 'alive'): Player {
+function makePlayer(
+  id: string,
+  team: Team,
+  x: number,
+  z: number,
+  state: Player['state'] = 'alive',
+  heroId: HeroId | null = null
+): Player {
   return {
     id,
     name: id,
     team,
-    heroId: null,
+    heroId,
     state,
     isReady: true,
     isBot: false,
@@ -357,5 +367,33 @@ const brHitEnemy = findCombatVisualEnemyPlayerHit(
   4
 );
 assert.equal(brHitEnemy?.id, 'br-near-enemy');
+
+for (const heroId of ALL_HERO_IDS) {
+  const heroTarget = makePlayer(`hero-sized-${heroId}`, 'blue', 1.2, 0, 'alive', heroId);
+  const heroCache = rebuildCombatVisualFrameCache(
+    [makePlayer(`hero-owner-${heroId}`, 'red', 0, 0), heroTarget],
+    4000 + ALL_HERO_IDS.indexOf(heroId),
+    4000,
+    2
+  );
+  const start = { x: -0.25, y: 1.04, z: 0.56 };
+  const direction = { x: 1, y: 0, z: 0 };
+  const distance = 3;
+  const extraRadius = 0.02;
+  const expectedHit = doesSegmentHitPlayerCombatHitbox(start, direction, distance, heroTarget, extraRadius);
+  assert.equal(
+    findCombatVisualEnemyPlayerHit(
+      heroCache,
+      'red',
+      `hero-owner-${heroId}`,
+      start,
+      direction,
+      distance,
+      extraRadius
+    )?.id === heroTarget.id,
+    expectedHit,
+    `combat visual hitbox should match shared hitbox for ${heroId}`
+  );
+}
 
 console.log('visualStore remote transform tests passed');
