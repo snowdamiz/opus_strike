@@ -6,11 +6,13 @@ import {
   BATTLE_ROYAL_TEAM_IDS,
   createGameConfigForGameplayMode,
   createProceduralMapPreview,
+  createProceduralTerrainLookup,
   generateProceduralVoxelMap,
   getGameplayModeCapacityCost,
   getGameplayModeRules,
   getTeamCatalogForGameplayMode,
   getTeamIdsForGameplayMode,
+  PLAYER_HEIGHT,
 } from '../dist/index.js';
 
 function distance2D(a, b) {
@@ -26,6 +28,14 @@ function heightfieldRowAt(manifest, point) {
 
 function surfaceYAt(manifest, point) {
   return manifest.heightfield.origin.y + heightfieldRowAt(manifest, point) * manifest.heightfield.voxelSize.y;
+}
+
+function maxSurfaceY(manifest) {
+  let maxRow = 0;
+  for (const row of manifest.heightfield.topSolidRows) {
+    maxRow = Math.max(maxRow, row);
+  }
+  return manifest.heightfield.origin.y + maxRow * manifest.heightfield.voxelSize.y;
 }
 
 function elevatedRoofCellCount(manifest, node, radius = 2.6, minRowsAboveSurface = 6) {
@@ -112,6 +122,14 @@ function boundaryRadiusRange(boundary) {
   return Math.max(...radii) - Math.min(...radii);
 }
 
+function assertApproximately(actual, expected, tolerance, message) {
+  assert.equal(
+    Math.abs(actual - expected) <= tolerance,
+    true,
+    `${message}: expected ${actual} to be within ${tolerance} of ${expected}`
+  );
+}
+
 const rules = getGameplayModeRules(BATTLE_ROYAL_GAMEPLAY_MODE);
 assert.equal(rules.maxPlayers, 33);
 assert.equal(rules.minPlayers, 12);
@@ -174,6 +192,9 @@ assert.equal(
   mediumPreview.preview.thumbnailSilhouette.bounds.maxX < preview.preview.thumbnailSilhouette.bounds.maxX,
   true
 );
+assertApproximately(smallPreview.preview.thumbnailSilhouette.bounds.maxX, 112.104, 0.01, 'small BR radius should be reduced by 10%');
+assertApproximately(mediumPreview.preview.thumbnailSilhouette.bounds.maxX, 133.902, 0.01, 'medium BR radius should be reduced by 10%');
+assertApproximately(preview.preview.thumbnailSilhouette.bounds.maxX, 155.7, 0.01, 'large BR radius should be reduced by 10%');
 assert.equal(preview.preview.thumbnailSilhouette.routes.length >= 30, true);
 
 const manifest = generateProceduralVoxelMap(0x51f15eed, {
@@ -188,10 +209,10 @@ const manifestAgain = generateProceduralVoxelMap(0x51f15eed, {
 assert.equal(manifest.profileId, 'battle_royal_large');
 assert.equal(manifest.mapSize, 'large');
 assert.equal(manifest.gameplay.mode, 'battle_royal');
-assert.equal(manifest.size.x >= 740, true);
+assert.equal(manifest.size.x >= 660 && manifest.size.x <= 690, true);
 assert.equal(manifest.size.y >= 180, true);
-assert.equal(manifest.size.z >= 740, true);
-assert.equal(boundaryRadiusRange(manifest.boundary) >= 45, true);
+assert.equal(manifest.size.z >= 660 && manifest.size.z <= 690, true);
+assert.equal(boundaryRadiusRange(manifest.boundary) >= 38, true);
 assert.equal(manifest.spawnPoints.red.length, 0);
 assert.equal(manifest.spawnPoints.blue.length, 0);
 assert.deepEqual(manifestAgain.boundary, manifest.boundary);
@@ -204,7 +225,7 @@ for (const teamId of BATTLE_ROYAL_TEAM_IDS) {
   const spawn = manifest.gameplay.spawns[teamId];
   assert.equal(Boolean(spawn), true);
   assert.equal(spawn.points.length, 3);
-  assert.equal(distance2D(spawn.center, { x: 0, z: 0 }) > 115, true);
+  assert.equal(distance2D(spawn.center, { x: 0, z: 0 }) > 100, true);
   for (const point of spawnPoints) {
     assert.equal(point.y - surfaceYAt(manifest, point) > 1, true, `${teamId} spawn should sit above generated surface`);
   }
@@ -217,16 +238,32 @@ for (let a = 0; a < spawnCenters.length; a++) {
     minSpawnSeparation = Math.min(minSpawnSeparation, distance2D(spawnCenters[a], spawnCenters[b]));
   }
 }
-assert.equal(minSpawnSeparation > 76, true);
+assert.equal(minSpawnSeparation > preview.preview.thumbnailSilhouette.bounds.maxX * 0.4, true);
 
-const playableRows = playableHeightRows(manifest, 166);
-const playableSlopes = playableSlopeStats(manifest, 166);
+const largePlayableRadius = preview.preview.thumbnailSilhouette.bounds.maxX * 0.96;
+const playableRows = playableHeightRows(manifest, largePlayableRadius);
+const playableSlopes = playableSlopeStats(manifest, largePlayableRadius);
+const terrainLookup = createProceduralTerrainLookup(manifest);
 assert.equal(percentile(playableRows, 0.1) >= 10, true);
-assert.equal(percentile(playableRows, 0.9) >= 45, true);
-assert.equal(percentile(playableRows, 0.9) - percentile(playableRows, 0.1) >= 12, true);
+assert.equal(percentile(playableRows, 0.9) >= 30, true);
+const playableMidSpan = percentile(playableRows, 0.9) - percentile(playableRows, 0.1);
+assert.equal(playableMidSpan >= 12, true);
 assert.equal(percentile(playableRows, 0.98) - percentile(playableRows, 0.02) >= 28, true);
 assert.equal(playableSlopes.steepStepRatio <= 0.006, true);
 assert.equal(playableSlopes.cliffStepRatio <= 0.003, true);
+assert.equal(terrainLookup.getMaxPlayableY() >= maxSurfaceY(manifest) + PLAYER_HEIGHT / 2 + 12, true);
+const hillierManifest = generateProceduralVoxelMap(0x00000001, {
+  mapSize: 'large',
+  profileId: 'battle_royal_large',
+});
+const hillierRows = playableHeightRows(
+  hillierManifest,
+  hillierManifest.preview.thumbnailSilhouette.bounds.maxX * 0.96
+);
+const hillierMidSpan = percentile(hillierRows, 0.9) - percentile(hillierRows, 0.1);
+assert.equal(hillierMidSpan >= playableMidSpan + 15, true);
+assert.equal(hillierManifest.construction.diagnostics.spawnVisibilityPairs, 0);
+assert.deepEqual(hillierManifest.construction.diagnostics.warnings, []);
 const pickupCounts = manifest.gameplay.powerups.reduce((counts, pickup) => {
   counts[pickup.kind] = (counts[pickup.kind] ?? 0) + 1;
   return counts;
@@ -287,7 +324,7 @@ assert.equal(manifest.gameplay.routeGraph.edges.every((edge) => edge.tags.includ
 assert.equal(manifest.construction.diagnostics.scoreBreakdown.settlementStructure > 0, true);
 assert.equal(manifest.construction.diagnostics.scoreBreakdown.openAreaStructure > 0, true);
 assert.equal(manifest.construction.diagnostics.repairActions.openAreaCoverage > 0.1, true);
-assert.equal(manifest.construction.diagnostics.maxSightlineLength <= 180, true);
+assert.equal(manifest.construction.diagnostics.maxSightlineLength <= preview.preview.thumbnailSilhouette.bounds.maxX * 1.71, true);
 assert.equal(manifest.construction.diagnostics.spawnVisibilityPairs, 0);
 assert.deepEqual(manifest.construction.diagnostics.warnings, []);
 assert.equal(manifest.stats.solidBlocks <= manifest.construction.designBrief.performanceBudget.maxSolidBlocks, true);

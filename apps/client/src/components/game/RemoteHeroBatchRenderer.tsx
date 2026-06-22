@@ -147,6 +147,32 @@ interface RemoteHeroRenderGroup {
   resource: RemoteBatchResources;
 }
 
+export interface RemoteHeroBatchBenchmarkFrameStats {
+  groups: number;
+  emptyGroups: number;
+  players: number;
+  consideredPlayers: number;
+  bodyPlayers: number;
+  outlinePlayers: number;
+  normalMatrixWrites: number;
+  outlineMatrixWrites: number;
+  normalBatches: number;
+  outlineBatches: number;
+  mountedInstancedMeshes: number;
+  emptyMountedInstancedMeshes: number;
+  batchFinalizations: number;
+}
+
+export interface RemoteHeroBatchBenchmarkRunner {
+  runFrame: (options: {
+    deltaSeconds: number;
+    elapsedSeconds: number;
+    nowMs: number;
+    cameraPosition?: { x: number; y: number; z: number };
+  }) => RemoteHeroBatchBenchmarkFrameStats;
+  dispose: () => void;
+}
+
 interface RemoteSocketRegistration {
   object: THREE.Object3D;
   cleanup: () => void;
@@ -220,7 +246,6 @@ const BATTLE_ROYAL_REMOTE_ACTIVITY_BODY_DISTANCE = 96;
 const BATTLE_ROYAL_REMOTE_ACTIVITY_OUTLINE_DISTANCE = 128;
 const BATTLE_ROYAL_TEAM_SILHOUETTE_OUTLINE_SCALE = 1.22;
 const BATTLE_ROYAL_TEAM_SILHOUETTE_OUTLINE_OPACITY = 0.92;
-const EMPTY_REMOTE_PLAYER_GROUP: readonly Player[] = Object.freeze([]);
 
 function isHeroId(value: string | null | undefined): value is HeroId {
   return Boolean(value && HERO_BODY_MANIFESTS[value as HeroId]);
@@ -261,12 +286,10 @@ function buildRemoteHeroRenderGroups(
 ): RemoteHeroRenderGroup[] {
   const playerGroupsByKey = new Map<string, Player[]>();
   const resourcePlayerCountsByKey = new Map<string, number>();
-  const resourceKeys: string[] = [];
 
   const ensureResourceKey = (key: string): void => {
     if (resourcePlayerCountsByKey.has(key)) return;
     resourcePlayerCountsByKey.set(key, 0);
-    resourceKeys.push(key);
   };
 
   for (const player of resourcePlayers) {
@@ -289,10 +312,11 @@ function buildRemoteHeroRenderGroups(
     }
   }
 
-  resourceKeys.sort();
+  const renderKeys = Array.from(playerGroupsByKey.keys()).sort();
   const groups: RemoteHeroRenderGroup[] = [];
-  for (const key of resourceKeys) {
-    const groupPlayers = playerGroupsByKey.get(key) ?? EMPTY_REMOTE_PLAYER_GROUP;
+  for (const key of renderKeys) {
+    const groupPlayers = playerGroupsByKey.get(key);
+    if (!groupPlayers) continue;
     groups.push({
       key,
       players: groupPlayers,
@@ -451,6 +475,20 @@ function isWithinDistanceLimitSq(camera: THREE.Camera, position: THREE.Vector3, 
   const dx = camera.position.x - position.x;
   const dy = camera.position.y - position.y;
   const dz = camera.position.z - position.z;
+  return dx * dx + dy * dy + dz * dz <= maxDistanceSq;
+}
+
+function isWithinPointDistanceLimitSq(
+  origin: { x: number; y: number; z: number },
+  position: THREE.Vector3,
+  maxDistanceSq: number
+): boolean {
+  if (maxDistanceSq === Number.POSITIVE_INFINITY) return true;
+  if (maxDistanceSq < 0) return false;
+
+  const dx = origin.x - position.x;
+  const dy = origin.y - position.y;
+  const dz = origin.z - position.z;
   return dx * dx + dy * dy + dz * dz <= maxDistanceSq;
 }
 
@@ -1059,6 +1097,226 @@ function setPartMatrix(
     : runtime.bones[descriptor.bone].matrixWorld;
   runtime.finalMatrix.multiplyMatrices(parentMatrix, localMatrix);
   return runtime.finalMatrix;
+}
+
+function countBatchDescriptorsForPlayers(
+  batches: readonly (RemotePartBatch | RemoteOutlineBatch)[],
+  players: readonly Player[]
+): number {
+  let total = 0;
+  for (const batch of batches) {
+    let playersForBatch = 0;
+    for (const player of players) {
+      if (shouldRenderBatchForPlayer(batch.playerFilter, player)) playersForBatch++;
+    }
+    total += Math.max(1, playersForBatch) * batch.capacityPerPlayer;
+  }
+  return total;
+}
+
+export function createRemoteHeroBatchBenchmarkRunner(options: {
+  players: readonly Player[];
+  resourcePlayers?: readonly Player[];
+  isBattleRoyal?: boolean;
+  localPlayerId?: string | null;
+  config: RemotePlayerQualityConfig;
+  cameraPosition?: { x: number; y: number; z: number };
+}): RemoteHeroBatchBenchmarkRunner {
+  const {
+    players,
+    resourcePlayers = players,
+    isBattleRoyal = false,
+    localPlayerId = null,
+    config,
+  } = options;
+  const resourceCache = new Map<string, RemoteBatchResources>();
+  const groups = buildRemoteHeroRenderGroups(players, resourcePlayers, resourceCache);
+  const groupCounters = groups.map((group) => ({
+    normal: new Uint32Array(group.resource.batches.length),
+    outline: new Uint32Array(group.resource.outlineBatches.length),
+  }));
+  const runtimes = new Map<string, RemoteHeroRuntime>();
+  const cameraPosition = new THREE.Vector3(
+    options.cameraPosition?.x ?? 0,
+    options.cameraPosition?.y ?? 0,
+    options.cameraPosition?.z ?? 0
+  );
+  const normalMatrixSink = new Float32Array(
+    Math.max(16, groups.reduce((total, group) => (
+      total + countBatchDescriptorsForPlayers(group.resource.batches, group.players)
+    ), 0) * 16)
+  );
+  const outlineMatrixSink = new Float32Array(
+    Math.max(16, groups.reduce((total, group) => (
+      total + countBatchDescriptorsForPlayers(group.resource.outlineBatches, group.players)
+    ), 0) * 16)
+  );
+  const fullBodyDistance = isBattleRoyal
+    ? getBattleRoyalDistanceCap(config.fullBodyDistance, BATTLE_ROYAL_MAX_REMOTE_FULL_BODY_DISTANCE)
+    : config.fullBodyDistance;
+  const outlineDistance = isBattleRoyal
+    ? getBattleRoyalDistanceCap(config.outlineDistance, BATTLE_ROYAL_MAX_REMOTE_OUTLINE_DISTANCE)
+    : config.outlineDistance;
+  const fullBodyDistanceSq = getDistanceLimitSq(fullBodyDistance);
+  const outlineDistanceSq = getDistanceLimitSq(outlineDistance);
+  const activityBodyDistanceSq = isBattleRoyal
+    ? getDistanceLimitSq(BATTLE_ROYAL_REMOTE_ACTIVITY_BODY_DISTANCE)
+    : Number.POSITIVE_INFINITY;
+  const activityOutlineDistanceSq = isBattleRoyal
+    ? getDistanceLimitSq(BATTLE_ROYAL_REMOTE_ACTIVITY_OUTLINE_DISTANCE)
+    : Number.POSITIVE_INFINITY;
+  let disposed = false;
+
+  return {
+    runFrame: ({ deltaSeconds, elapsedSeconds, nowMs, cameraPosition: nextCameraPosition }) => {
+      if (disposed) {
+        throw new Error('Remote hero batch benchmark runner has already been disposed');
+      }
+      if (nextCameraPosition) {
+        cameraPosition.set(nextCameraPosition.x, nextCameraPosition.y, nextCameraPosition.z);
+      }
+
+      const visualState = visualStore.getState();
+      const stats: RemoteHeroBatchBenchmarkFrameStats = {
+        groups: groups.length,
+        emptyGroups: 0,
+        players: players.length,
+        consideredPlayers: 0,
+        bodyPlayers: 0,
+        outlinePlayers: 0,
+        normalMatrixWrites: 0,
+        outlineMatrixWrites: 0,
+        normalBatches: 0,
+        outlineBatches: 0,
+        mountedInstancedMeshes: 0,
+        emptyMountedInstancedMeshes: 0,
+        batchFinalizations: 0,
+      };
+      let normalMatrixOffset = 0;
+      let outlineMatrixOffset = 0;
+
+      for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+        const group = groups[groupIndex];
+        if (!group) continue;
+        const { resource } = group;
+        const counters = groupCounters[groupIndex];
+        counters?.normal.fill(0);
+        counters?.outline.fill(0);
+        stats.normalBatches += resource.batches.length;
+        stats.outlineBatches += resource.outlineBatches.length;
+        stats.mountedInstancedMeshes += resource.batches.length + resource.outlineBatches.length;
+        if (group.players.length === 0) {
+          stats.emptyGroups++;
+          stats.emptyMountedInstancedMeshes += resource.batches.length + resource.outlineBatches.length;
+        }
+
+        for (const player of group.players) {
+          let runtime = runtimes.get(player.id);
+          if (!runtime) {
+            runtime = createRemoteRuntime(player);
+            runtimes.set(player.id, runtime);
+          }
+          updateRuntimeHero(runtime, player);
+          if (runtime.heroId !== resource.heroId) continue;
+          stats.consideredPlayers++;
+
+          const movement = getPlayerRenderMovement(player, visualState, localPlayerId);
+          const visualHorizontalSpeed = updateRemoteTransform(runtime, player, deltaSeconds, visualState, nowMs);
+          const isLocalPlayer = player.id === localPlayerId;
+          const isObjectivePriority = isObjectivePriorityRemoteBody(player);
+          const isActivityPriority = isActivityPriorityRemoteBody(player, visualState, nowMs);
+          const forceBodyForPriority = isLocalPlayer || isObjectivePriority || (
+            isActivityPriority &&
+            isWithinPointDistanceLimitSq(cameraPosition, runtime.currentPosition, activityBodyDistanceSq)
+          );
+          const renderBody = !hasActivePhantomVeil(player) && (
+            forceBodyForPriority ||
+            isWithinPointDistanceLimitSq(cameraPosition, runtime.currentPosition, fullBodyDistanceSq)
+          );
+          if (!renderBody) continue;
+
+          stats.bodyPlayers++;
+          updateRemotePose(
+            runtime,
+            player,
+            movement,
+            deltaSeconds,
+            elapsedSeconds,
+            visualHorizontalSpeed,
+            visualState,
+            nowMs
+          );
+          updateBodyWorldMatrix(runtime);
+
+          for (let batchIndex = 0; batchIndex < resource.batches.length; batchIndex++) {
+            const batch = resource.batches[batchIndex];
+            if (!batch) continue;
+            if (!shouldRenderBatchForPlayer(batch.playerFilter, player)) continue;
+            let writeIndex = counters?.normal[batchIndex] ?? 0;
+            for (const descriptor of batch.descriptors) {
+              setPartMatrix(runtime, descriptor).toArray(normalMatrixSink, normalMatrixOffset);
+              normalMatrixOffset = (normalMatrixOffset + 16) % normalMatrixSink.length;
+              getDescriptorEmissiveBoost(descriptor, player, runtime.glowPulse);
+              writeIndex++;
+              stats.normalMatrixWrites++;
+            }
+            if (counters) counters.normal[batchIndex] = writeIndex;
+          }
+
+          const forceOutlineForPriority = isObjectivePriority || (
+            isActivityPriority &&
+            isWithinPointDistanceLimitSq(cameraPosition, runtime.currentPosition, activityOutlineDistanceSq)
+          );
+          const renderOutline = config.outlineDistance > 0 && (
+            forceOutlineForPriority ||
+            isWithinPointDistanceLimitSq(cameraPosition, runtime.currentPosition, outlineDistanceSq)
+          );
+          if (!renderOutline) continue;
+
+          stats.outlinePlayers++;
+          for (let batchIndex = 0; batchIndex < resource.outlineBatches.length; batchIndex++) {
+            const batch = resource.outlineBatches[batchIndex];
+            if (!batch) continue;
+            if (!shouldRenderBatchForPlayer(batch.playerFilter, player)) continue;
+            let writeIndex = counters?.outline[batchIndex] ?? 0;
+            for (const descriptor of batch.descriptors) {
+              setPartMatrix(runtime, descriptor, getOutlineLocalMatrix(descriptor, isBattleRoyal))
+                .toArray(outlineMatrixSink, outlineMatrixOffset);
+              outlineMatrixOffset = (outlineMatrixOffset + 16) % outlineMatrixSink.length;
+              writeIndex++;
+              stats.outlineMatrixWrites++;
+            }
+            if (counters) counters.outline[batchIndex] = writeIndex;
+          }
+        }
+
+        for (let batchIndex = 0; batchIndex < resource.batches.length; batchIndex++) {
+          const count = counters?.normal[batchIndex] ?? 0;
+          if (count > 0) normalMatrixSink[batchIndex % normalMatrixSink.length] = count;
+          stats.batchFinalizations++;
+        }
+        for (let batchIndex = 0; batchIndex < resource.outlineBatches.length; batchIndex++) {
+          const count = counters?.outline[batchIndex] ?? 0;
+          if (count > 0) outlineMatrixSink[batchIndex % outlineMatrixSink.length] = count;
+          stats.batchFinalizations++;
+        }
+      }
+
+      return stats;
+    },
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      for (const runtime of runtimes.values()) {
+        disposeRemoteRuntime(runtime);
+      }
+      runtimes.clear();
+      for (const resource of resourceCache.values()) {
+        resource.dispose();
+      }
+      resourceCache.clear();
+    },
+  };
 }
 
 function patchInstancedEmissiveMaterial(material: THREE.MeshStandardMaterial): void {

@@ -8,6 +8,9 @@ import {
   HERO_DEFINITIONS,
   MOVEMENT_BUTTON_MOVE_FORWARD,
   MOVEMENT_BUTTON_MOVE_LEFT,
+  MOVEMENT_BUTTON_PRIMARY_FIRE,
+  MOVEMENT_BUTTON_SECONDARY_FIRE,
+  MOVEMENT_BUTTON_ABILITY_1,
   MOVEMENT_BUTTON_SPRINT,
   MOVEMENT_PROTOCOL_VERSION,
   MOVEMENT_SUBSTEP_MS,
@@ -737,6 +740,7 @@ interface GameRoomTickScenarioOptions {
   mapProfileId?: MapProfileId;
   mapSize?: VoxelMapSizeId;
   burstMovement?: boolean;
+  clusteredCombat?: boolean;
 }
 
 const ROOM_TICK_INTERVAL_MS = 50;
@@ -745,6 +749,9 @@ const ROOM_TICK_BUDGET_MAX_MS = 50;
 const ROOM_TICK_WARMUP_ITERATIONS = 40;
 const ROOM_TICK_SAMPLE_ITERATIONS = 220;
 const ROOM_TICK_HEROES: HeroId[] = ['phantom', 'hookshot', 'blaze', 'chronos'];
+const CLUSTERED_COMBAT_SPACING_METERS = PLAYER_RADIUS * 2 + 1.6;
+const CLUSTERED_COMBAT_SEARCH_STEP_METERS = 2.25;
+const CLUSTERED_COMBAT_MAX_SEARCH_RADIUS_METERS = 34;
 
 function getBenchmarkTeamForPlayer(gameplayMode: GameplayMode, playerIndex: number): Team {
   const rules = getGameplayModeRules(gameplayMode);
@@ -907,6 +914,114 @@ function getInvalidBenchmarkPlayerPlacements(room: GameRoom, now: number): strin
   return invalidPlayerIds;
 }
 
+function createClusteredCombatSearchOffsets(): Array<{ x: number; z: number }> {
+  const offsets: Array<{ x: number; z: number }> = [{ x: 0, z: 0 }];
+  for (
+    let radius = CLUSTERED_COMBAT_SEARCH_STEP_METERS;
+    radius <= CLUSTERED_COMBAT_MAX_SEARCH_RADIUS_METERS;
+    radius += CLUSTERED_COMBAT_SEARCH_STEP_METERS
+  ) {
+    const sampleCount = Math.max(8, Math.ceil((Math.PI * 2 * radius) / CLUSTERED_COMBAT_SPACING_METERS));
+    for (let sample = 0; sample < sampleCount; sample++) {
+      const angle = (sample / sampleCount) * Math.PI * 2;
+      offsets.push({
+        x: Math.cos(angle) * radius,
+        z: Math.sin(angle) * radius,
+      });
+    }
+  }
+  return offsets;
+}
+
+function getClusteredCombatPosition(input: {
+  room: GameRoom;
+  collisionWorld: MovementCollisionWorld;
+  anchor: { x: number; y: number; z: number };
+  offset: { x: number; z: number };
+}): { x: number; y: number; z: number } | null {
+  const roomAny = input.room as unknown as {
+    getProceduralGroundY(position: { x: number; y: number; z: number }): number | null;
+  };
+  const x = input.anchor.x + input.offset.x;
+  const z = input.anchor.z + input.offset.z;
+  const groundY = roomAny.getProceduralGroundY({
+    x,
+    y: input.anchor.y + 48,
+    z,
+  });
+  if (groundY === null) return null;
+
+  const position = {
+    x,
+    y: groundY + PLAYER_HEIGHT / 2 + 0.12,
+    z,
+  };
+  return canCapsuleOccupy(input.collisionWorld, position, PLAYER_HEIGHT, PLAYER_RADIUS)
+    ? position
+    : null;
+}
+
+function placeBenchmarkPlayersInCombatCluster(room: GameRoom, now: number): void {
+  const roomAny = room as unknown as {
+    updateLastSafeMovement(player: Player, sequence: number, acceptedAt?: number): void;
+  };
+  const players = Array.from(room.state.players.values()).filter((player) => player.state === 'alive');
+  const anchorPlayer = players.find((player) => !player.isBot) ?? players[0];
+  if (!anchorPlayer) return;
+
+  const collisionWorld = getBenchmarkMovementCollisionWorld(room, now);
+  const offsets = createClusteredCombatSearchOffsets();
+  const positions: Array<{ x: number; y: number; z: number }> = [];
+
+  for (const offset of offsets) {
+    const position = getClusteredCombatPosition({
+      room,
+      collisionWorld,
+      anchor: anchorPlayer.position,
+      offset,
+    });
+    if (!position) continue;
+    positions.push(position);
+    if (positions.length >= players.length) break;
+  }
+
+  if (positions.length < players.length) {
+    throw new Error(`clustered combat placement found ${positions.length}/${players.length} valid positions`);
+  }
+
+  for (let index = 0; index < players.length; index++) {
+    const player = players[index];
+    const position = positions[index];
+    if (!player || !position) continue;
+    const dx = anchorPlayer.position.x - position.x;
+    const dz = anchorPlayer.position.z - position.z;
+    player.position.x = position.x;
+    player.position.y = position.y;
+    player.position.z = position.z;
+    player.velocity.x = 0;
+    player.velocity.y = 0;
+    player.velocity.z = 0;
+    player.lookYaw = index === 0 || Math.hypot(dx, dz) <= 0.001 ? 0 : Math.atan2(-dx, -dz);
+    player.lookPitch = 0;
+    player.movement.isGrounded = true;
+    player.movement.isSprinting = false;
+    player.movement.isSliding = false;
+    player.movement.isGrappling = false;
+    player.movement.isJetpacking = false;
+    player.movement.isGliding = false;
+    roomAny.updateLastSafeMovement(player, 0, now);
+  }
+}
+
+function sustainBenchmarkCombatRoster(room: GameRoom): void {
+  for (const player of room.state.players.values()) {
+    player.state = 'alive';
+    player.respawnTime = 0;
+    player.spawnProtectionUntil = 0;
+    player.health = player.maxHealth;
+  }
+}
+
 function createBenchmarkRoomScenario(
   options: GameRoomTickScenarioOptions,
   now: number
@@ -962,6 +1077,9 @@ function createBenchmarkRoomScenario(
     createBotBrain(player: Player, index: number): unknown;
   };
   roomAny.placeTeamsAtUniqueSpawns('spawn');
+  if (options.clusteredCombat) {
+    placeBenchmarkPlayersInCombatCluster(room, now);
+  }
 
   for (const { player, index } of createdPlayers) {
     roomAny.updateLastSafeMovement(player, 0, now);
@@ -986,6 +1104,7 @@ function enqueueBenchmarkHumanMovement(input: {
   tickIndex: number;
   now: number;
   burstMovement: boolean;
+  combatInputs: boolean;
 }): void {
   const roomAny = input.room as unknown as {
     getMovementAuthority(playerId: string): { movementEpoch: number };
@@ -1006,11 +1125,21 @@ function enqueueBenchmarkHumanMovement(input: {
     let seq = input.sequences.get(playerId) ?? 0;
     for (let index = 0; index < commandCount; index++) {
       seq = (seq + 1) >>> 0;
+      let buttons = MOVEMENT_BUTTON_MOVE_FORWARD |
+        MOVEMENT_BUTTON_SPRINT |
+        ((input.tickIndex + playerIndex + index) % 16 < 5 ? MOVEMENT_BUTTON_MOVE_LEFT : 0);
+      if (input.combatInputs) {
+        buttons |= MOVEMENT_BUTTON_PRIMARY_FIRE;
+        if ((input.tickIndex + playerIndex + index) % 17 === 0) {
+          buttons |= MOVEMENT_BUTTON_SECONDARY_FIRE;
+        }
+        if ((input.tickIndex + playerIndex + index) % 29 === 0) {
+          buttons |= MOVEMENT_BUTTON_ABILITY_1;
+        }
+      }
       commands.push({
         seq,
-        buttons: MOVEMENT_BUTTON_MOVE_FORWARD |
-          MOVEMENT_BUTTON_SPRINT |
-          ((input.tickIndex + playerIndex + index) % 16 < 5 ? MOVEMENT_BUTTON_MOVE_LEFT : 0),
+        buttons,
         lookYaw: Math.sin((input.tickIndex + playerIndex) / 18) * 0.9,
         lookPitch: 0,
         clientTimeMs: input.now + index * MOVEMENT_SUBSTEP_MS,
@@ -1087,6 +1216,9 @@ function runGameRoomTickBenchmark(options: GameRoomTickScenarioOptions): Record<
     const totalIterations = ROOM_TICK_WARMUP_ITERATIONS + ROOM_TICK_SAMPLE_ITERATIONS;
 
     for (let iteration = 0; iteration < totalIterations; iteration++) {
+      if (options.clusteredCombat) {
+        sustainBenchmarkCombatRoster(room);
+      }
       enqueueBenchmarkHumanMovement({
         room,
         clientsById: scenario.clientsById,
@@ -1095,6 +1227,7 @@ function runGameRoomTickBenchmark(options: GameRoomTickScenarioOptions): Record<
         tickIndex: iteration,
         now,
         burstMovement: options.burstMovement === true,
+        combatInputs: options.clusteredCombat === true,
       });
       if (iteration % 4 === 0) {
         markBenchmarkCombatInterest(room, now);
@@ -1148,6 +1281,10 @@ function runGameRoomTickBenchmark(options: GameRoomTickScenarioOptions): Record<
   summary.topOperationTotalCounts = topOperationTotalCounts;
   summary.tickOperationCounts = tickOperationCounts;
   summary.invalidSpawnCount = invalidSpawnCount;
+  summary.humanCount = options.humanCount;
+  summary.botCount = options.botCount;
+  summary.clusteredCombat = options.clusteredCombat === true;
+  summary.gameplayMode = options.gameplayMode ?? DEFAULT_GAMEPLAY_MODE;
   return summary;
 }
 
@@ -1196,6 +1333,45 @@ const benchmarkCases: BenchmarkCase[] = [
       humanCount: 30,
       botCount: 0,
       burstMovement: true,
+    }),
+  },
+  {
+    name: 'game_room_tick_br_cluster_1_player_8_bots',
+    run: () => runGameRoomTickBenchmark({
+      name: 'game_room_tick_br_cluster_1_player_8_bots',
+      gameplayMode: 'battle_royal',
+      mapProfileId: 'battle_royal_large',
+      mapSize: 'large',
+      humanCount: 1,
+      botCount: 8,
+      burstMovement: true,
+      clusteredCombat: true,
+    }),
+  },
+  {
+    name: 'game_room_tick_br_cluster_8_players_8_bots',
+    run: () => runGameRoomTickBenchmark({
+      name: 'game_room_tick_br_cluster_8_players_8_bots',
+      gameplayMode: 'battle_royal',
+      mapProfileId: 'battle_royal_large',
+      mapSize: 'large',
+      humanCount: 8,
+      botCount: 8,
+      burstMovement: true,
+      clusteredCombat: true,
+    }),
+  },
+  {
+    name: 'game_room_tick_br_cluster_4_players_24_bots',
+    run: () => runGameRoomTickBenchmark({
+      name: 'game_room_tick_br_cluster_4_players_24_bots',
+      gameplayMode: 'battle_royal',
+      mapProfileId: 'battle_royal_large',
+      mapSize: 'large',
+      humanCount: 4,
+      botCount: 24,
+      burstMovement: true,
+      clusteredCombat: true,
     }),
   },
   {
