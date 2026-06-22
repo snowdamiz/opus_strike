@@ -28,7 +28,6 @@ interface ChunkLookup {
 interface VoxelChunkMeshScratch {
   positiveMask: Uint8Array;
   negativeMask: Uint8Array;
-  usedMask: Uint8Array;
 }
 
 const chunkLookupCache = new WeakMap<VoxelMapManifest, ChunkLookup>();
@@ -190,7 +189,6 @@ function createVoxelChunkMeshScratch(manifest: VoxelMapManifest): VoxelChunkMesh
   return {
     positiveMask: new Uint8Array(maxMaskArea),
     negativeMask: new Uint8Array(maxMaskArea),
-    usedMask: new Uint8Array(maxMaskArea),
   };
 }
 
@@ -391,22 +389,18 @@ function emitFace(
 
 function greedyMask(
   mask: Uint8Array,
-  used: Uint8Array,
   width: number,
   height: number,
   emit: (u: number, v: number, w: number, h: number, blockId: number) => void
 ): void {
-  const area = width * height;
-  used.fill(0, 0, area);
-
   for (let v = 0; v < height; v++) {
     for (let u = 0; u < width; u++) {
       const i = u + v * width;
       const blockId = mask[i];
-      if (blockId === 0 || used[i]) continue;
+      if (blockId === 0) continue;
 
       let w = 1;
-      while (u + w < width && !used[i + w] && mask[i + w] === blockId) {
+      while (u + w < width && mask[i + w] === blockId) {
         w++;
       }
 
@@ -414,13 +408,13 @@ function greedyMask(
       scan: while (v + h < height) {
         for (let x = 0; x < w; x++) {
           const next = u + x + (v + h) * width;
-          if (used[next] || mask[next] !== blockId) break scan;
+          if (mask[next] !== blockId) break scan;
         }
         h++;
       }
 
       for (let yy = 0; yy < h; yy++) {
-        used.fill(1, u + yy * width, u + w + yy * width);
+        mask.fill(0, u + yy * width, u + w + yy * width);
       }
 
       emit(u, v, w, h, blockId);
@@ -447,7 +441,6 @@ function appendVoxelChunkBuffers(
   const yStride = sizeX * sizeZ;
   const positiveMask = scratch.positiveMask;
   const negativeMask = scratch.negativeMask;
-  const usedMask = scratch.usedMask;
 
   const xMaskArea = sizeZ * sizeY;
 
@@ -473,10 +466,10 @@ function appendVoxelChunkBuffers(
       }
     }
 
-    greedyMask(positiveMask, usedMask, sizeZ, sizeY, (u, v, width, height, blockId) => {
+    greedyMask(positiveMask, sizeZ, sizeY, (u, v, width, height, blockId) => {
       emitFace(buffers, 'px', gx, chunkOrigin.y + v, chunkOrigin.z + u, width, height, blockId);
     });
-    greedyMask(negativeMask, usedMask, sizeZ, sizeY, (u, v, width, height, blockId) => {
+    greedyMask(negativeMask, sizeZ, sizeY, (u, v, width, height, blockId) => {
       emitFace(buffers, 'nx', gx, chunkOrigin.y + v, chunkOrigin.z + u, width, height, blockId);
     });
   }
@@ -505,10 +498,10 @@ function appendVoxelChunkBuffers(
       }
     }
 
-    greedyMask(positiveMask, usedMask, sizeX, sizeZ, (u, v, width, height, blockId) => {
+    greedyMask(positiveMask, sizeX, sizeZ, (u, v, width, height, blockId) => {
       emitFace(buffers, 'py', chunkOrigin.x + u, gy, chunkOrigin.z + v, width, height, blockId);
     });
-    greedyMask(negativeMask, usedMask, sizeX, sizeZ, (u, v, width, height, blockId) => {
+    greedyMask(negativeMask, sizeX, sizeZ, (u, v, width, height, blockId) => {
       emitFace(buffers, 'ny', chunkOrigin.x + u, gy, chunkOrigin.z + v, width, height, blockId);
     });
   }
@@ -537,10 +530,10 @@ function appendVoxelChunkBuffers(
       }
     }
 
-    greedyMask(positiveMask, usedMask, sizeX, sizeY, (u, v, width, height, blockId) => {
+    greedyMask(positiveMask, sizeX, sizeY, (u, v, width, height, blockId) => {
       emitFace(buffers, 'pz', chunkOrigin.x + u, chunkOrigin.y + v, gz, width, height, blockId);
     });
-    greedyMask(negativeMask, usedMask, sizeX, sizeY, (u, v, width, height, blockId) => {
+    greedyMask(negativeMask, sizeX, sizeY, (u, v, width, height, blockId) => {
       emitFace(buffers, 'nz', chunkOrigin.x + u, chunkOrigin.y + v, gz, width, height, blockId);
     });
   }
@@ -594,6 +587,8 @@ function getTopSolidBlock(
     const topRow = topRows[x + z * heightfieldSize.x] ?? 0;
     if (topRow <= 0) return null;
     startY = Math.min(manifest.size.y - 1, topRow - 1);
+    const block = getBlock(lookup, x, startY, z);
+    if (isSolidNumericBlock(block)) return { y: startY, block };
   }
 
   for (let y = startY; y >= 0; y--) {
