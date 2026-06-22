@@ -94,6 +94,7 @@ interface RemoteHeroBatchRendererProps {
   resourcePlayers?: readonly Player[];
   isBattleRoyal?: boolean;
   localPlayerId?: string | null;
+  localPlayerTeam?: Team | null;
   config: RemotePlayerQualityConfig;
 }
 
@@ -111,6 +112,7 @@ interface RemotePartDescriptor {
   paletteKind?: MaterialKind;
   trimEmissiveIntensity?: number;
   fixedEmissiveIntensity?: number;
+  instanceColor?: 'team';
   battleRoyalLocalMatrix?: THREE.Matrix4;
 }
 
@@ -134,7 +136,6 @@ interface RemoteOutlineBatch {
 
 interface RemoteBatchResources {
   heroId: HeroId;
-  team: Team;
   batches: RemotePartBatch[];
   outlineBatches: RemoteOutlineBatch[];
   dispose: () => void;
@@ -171,6 +172,17 @@ export interface RemoteHeroBatchBenchmarkRunner {
     cameraPosition?: { x: number; y: number; z: number };
   }) => RemoteHeroBatchBenchmarkFrameStats;
   dispose: () => void;
+}
+
+interface RemoteMaterialOptions {
+  color: string;
+  roughness: number;
+  metalness: number;
+  transparent: boolean;
+  opacity: number;
+  depthWrite: boolean;
+  toneMapped: boolean;
+  vertexColors?: boolean;
 }
 
 interface RemoteSocketRegistration {
@@ -246,6 +258,7 @@ const BATTLE_ROYAL_REMOTE_ACTIVITY_BODY_DISTANCE = 96;
 const BATTLE_ROYAL_REMOTE_ACTIVITY_OUTLINE_DISTANCE = 128;
 const BATTLE_ROYAL_TEAM_SILHOUETTE_OUTLINE_SCALE = 1.22;
 const BATTLE_ROYAL_TEAM_SILHOUETTE_OUTLINE_OPACITY = 0.92;
+const teamColorCache = new Map<Team, THREE.Color>();
 
 function isHeroId(value: string | null | undefined): value is HeroId {
   return Boolean(value && HERO_BODY_MANIFESTS[value as HeroId]);
@@ -256,15 +269,13 @@ function resolveHeroId(player: Player): HeroId {
 }
 
 function getRemoteHeroResourceKey(player: Player): string {
-  return `${resolveHeroId(player)}:${player.team as Team}`;
+  return resolveHeroId(player);
 }
 
 function createRemoteBatchResourcesForKey(key: string): RemoteBatchResources {
-  const separatorIndex = key.indexOf(':');
-  const heroId = key.slice(0, separatorIndex) as HeroId;
-  const team = key.slice(separatorIndex + 1) as Team;
+  const heroId = key as HeroId;
   recordFrameAllocation('remoteHeroBatch.resourceCreated');
-  return createRemoteBatchResources(heroId, team);
+  return createRemoteBatchResources(heroId);
 }
 
 function getCachedRemoteBatchResources(
@@ -466,6 +477,41 @@ function getBattleRoyalDistanceCap(distance: number, cap: number): number {
 function getDistanceLimitSq(distance: number): number {
   if (!Number.isFinite(distance)) return Number.POSITIVE_INFINITY;
   return distance > 0 ? distance * distance : -1;
+}
+
+function getScaledDistanceLimitSq(distance: number, scale: number): number {
+  if (!Number.isFinite(distance)) return Number.POSITIVE_INFINITY;
+  return getDistanceLimitSq(distance * Math.max(0, scale));
+}
+
+function getPlayerDistanceLimitSq(
+  player: Player,
+  localPlayerId: string | null | undefined,
+  localPlayerTeam: Team | null | undefined,
+  baseDistance: number,
+  baseDistanceSq: number,
+  botDistanceScale: number,
+  isBattleRoyal: boolean
+): number {
+  if (
+    !isBattleRoyal ||
+    !player.isBot ||
+    player.id === localPlayerId ||
+    (localPlayerTeam && player.team === localPlayerTeam) ||
+    player.hasFlag
+  ) {
+    return baseDistanceSq;
+  }
+  return getScaledDistanceLimitSq(baseDistance, botDistanceScale);
+}
+
+function getTeamColor(team: Team): THREE.Color {
+  let color = teamColorCache.get(team);
+  if (!color) {
+    color = new THREE.Color(TEAM_COLORS[team] ?? '#ffffff');
+    teamColorCache.set(team, color);
+  }
+  return color;
 }
 
 function isWithinDistanceLimitSq(camera: THREE.Camera, position: THREE.Vector3, maxDistanceSq: number): boolean {
@@ -1119,6 +1165,7 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
   resourcePlayers?: readonly Player[];
   isBattleRoyal?: boolean;
   localPlayerId?: string | null;
+  localPlayerTeam?: Team | null;
   config: RemotePlayerQualityConfig;
   cameraPosition?: { x: number; y: number; z: number };
 }): RemoteHeroBatchBenchmarkRunner {
@@ -1127,6 +1174,7 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
     resourcePlayers = players,
     isBattleRoyal = false,
     localPlayerId = null,
+    localPlayerTeam = null,
     config,
   } = options;
   const resourceCache = new Map<string, RemoteBatchResources>();
@@ -1229,9 +1277,18 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
             isActivityPriority &&
             isWithinPointDistanceLimitSq(cameraPosition, runtime.currentPosition, activityBodyDistanceSq)
           );
+          const playerFullBodyDistanceSq = getPlayerDistanceLimitSq(
+            player,
+            localPlayerId,
+            localPlayerTeam,
+            fullBodyDistance,
+            fullBodyDistanceSq,
+            config.botFullBodyDistanceScale ?? 1,
+            isBattleRoyal
+          );
           const renderBody = !hasActivePhantomVeil(player) && (
             forceBodyForPriority ||
-            isWithinPointDistanceLimitSq(cameraPosition, runtime.currentPosition, fullBodyDistanceSq)
+            isWithinPointDistanceLimitSq(cameraPosition, runtime.currentPosition, playerFullBodyDistanceSq)
           );
           if (!renderBody) continue;
 
@@ -1267,9 +1324,18 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
             isActivityPriority &&
             isWithinPointDistanceLimitSq(cameraPosition, runtime.currentPosition, activityOutlineDistanceSq)
           );
+          const playerOutlineDistanceSq = getPlayerDistanceLimitSq(
+            player,
+            localPlayerId,
+            localPlayerTeam,
+            outlineDistance,
+            outlineDistanceSq,
+            config.botOutlineDistanceScale ?? 1,
+            isBattleRoyal
+          );
           const renderOutline = config.outlineDistance > 0 && (
             forceOutlineForPriority ||
-            isWithinPointDistanceLimitSq(cameraPosition, runtime.currentPosition, outlineDistanceSq)
+            isWithinPointDistanceLimitSq(cameraPosition, runtime.currentPosition, playerOutlineDistanceSq)
           );
           if (!renderOutline) continue;
 
@@ -1347,15 +1413,7 @@ varying float vInstanceEmissiveBoost;`
   material.customProgramCacheKey = () => 'remote-hero-instanced-emissive-v1';
 }
 
-function createStandardBatchMaterial(options: {
-  color: string;
-  roughness: number;
-  metalness: number;
-  transparent: boolean;
-  opacity: number;
-  depthWrite: boolean;
-  toneMapped: boolean;
-}): THREE.MeshStandardMaterial {
+function createStandardBatchMaterial(options: RemoteMaterialOptions): THREE.MeshStandardMaterial {
   const material = new THREE.MeshStandardMaterial({
     color: options.color,
     emissive: new THREE.Color(options.color),
@@ -1366,12 +1424,13 @@ function createStandardBatchMaterial(options: {
     opacity: options.opacity,
     depthWrite: options.depthWrite,
     toneMapped: options.toneMapped,
+    vertexColors: options.vertexColors ?? false,
   });
   patchInstancedEmissiveMaterial(material);
   return material;
 }
 
-function getPaletteMaterialOptions(kind: MaterialKind, color: string) {
+function getPaletteMaterialOptions(kind: MaterialKind, color: string): RemoteMaterialOptions {
   const isTranslucent = kind === 'glass' || kind === 'mist';
   return {
     color,
@@ -1384,7 +1443,7 @@ function getPaletteMaterialOptions(kind: MaterialKind, color: string) {
   };
 }
 
-function materialKey(options: ReturnType<typeof getPaletteMaterialOptions>): string {
+function materialKey(options: RemoteMaterialOptions): string {
   return [
     options.color,
     options.roughness,
@@ -1393,6 +1452,7 @@ function materialKey(options: ReturnType<typeof getPaletteMaterialOptions>): str
     options.opacity,
     options.depthWrite ? 1 : 0,
     options.toneMapped ? 1 : 0,
+    options.vertexColors ? 1 : 0,
   ].join('|');
 }
 
@@ -1479,13 +1539,15 @@ function appendRiggedPartDescriptors<TPart extends VoxelPart>(
   }
 }
 
-function createRemotePartDescriptors(heroId: HeroId, team: Team): { descriptors: RemotePartDescriptor[]; materialOptions: Map<string, ReturnType<typeof getPaletteMaterialOptions>> } {
+function createRemotePartDescriptors(heroId: HeroId): {
+  descriptors: RemotePartDescriptor[];
+  materialOptions: Map<string, RemoteMaterialOptions>;
+} {
   const manifest = HERO_BODY_MANIFESTS[heroId];
-  const teamColor = TEAM_COLORS[team];
-  const materialOptionsByKey = new Map<string, ReturnType<typeof getPaletteMaterialOptions>>();
+  const materialOptionsByKey = new Map<string, RemoteMaterialOptions>();
   const descriptors: RemotePartDescriptor[] = [];
 
-  const getOrAddMaterialKey = (options: ReturnType<typeof getPaletteMaterialOptions>) => {
+  const getOrAddMaterialKey = (options: RemoteMaterialOptions) => {
     const key = materialKey(options);
     materialOptionsByKey.set(key, options);
     return key;
@@ -1520,12 +1582,13 @@ function createRemotePartDescriptors(heroId: HeroId, team: Team): { descriptors:
     trim: true,
   });
 
-  const botMarkerOptions = getPaletteMaterialOptions('accent', teamColor);
+  const botMarkerOptions = getPaletteMaterialOptions('accent', '#ffffff');
   const botMarkerKey = getOrAddMaterialKey({
     ...botMarkerOptions,
     roughness: 1,
     metalness: 0,
     toneMapped: true,
+    vertexColors: true,
   });
   descriptors.push({
     ...descriptorBase(
@@ -1540,13 +1603,14 @@ function createRemotePartDescriptors(heroId: HeroId, team: Team): { descriptors:
       'bot'
     ),
     fixedEmissiveIntensity: HERO_BODY_BOT_MARKER_PART.fixedEmissiveIntensity,
+    instanceColor: 'team',
   });
 
   return { descriptors, materialOptions: materialOptionsByKey };
 }
 
-function createRemoteBatchResources(heroId: HeroId, team: Team): RemoteBatchResources {
-  const { descriptors, materialOptions } = createRemotePartDescriptors(heroId, team);
+function createRemoteBatchResources(heroId: HeroId): RemoteBatchResources {
+  const { descriptors, materialOptions } = createRemotePartDescriptors(heroId);
   const normalGroups = new Map<string, RemotePartDescriptor[]>();
   const outlineGroups = new Map<string, RemotePartDescriptor[]>();
 
@@ -1568,7 +1632,7 @@ function createRemoteBatchResources(heroId: HeroId, team: Team): RemoteBatchReso
     const material = createStandardBatchMaterial(materialOptionsForKey);
     materials.push(material);
     return {
-      key: `remote-hero:${heroId}:${team}:${key}`,
+      key: `remote-hero:${heroId}:${key}`,
       geometry: groupDescriptors[0].geometry,
       descriptors: groupDescriptors,
       material,
@@ -1579,17 +1643,18 @@ function createRemoteBatchResources(heroId: HeroId, team: Team): RemoteBatchReso
 
   const outlineBatches: RemoteOutlineBatch[] = Array.from(outlineGroups, ([key, groupDescriptors]) => {
     const material = new THREE.MeshBasicMaterial({
-      color: TEAM_COLORS[team],
+      color: 0xffffff,
       transparent: true,
       opacity: TEAM_BODY_GLOW_OUTLINE_OPACITY,
       depthWrite: false,
       side: THREE.BackSide,
       blending: THREE.AdditiveBlending,
       toneMapped: false,
+      vertexColors: true,
     });
     materials.push(material);
     return {
-      key: `remote-hero-outline:${heroId}:${team}:${key}`,
+      key: `remote-hero-outline:${heroId}:${key}`,
       geometry: groupDescriptors[0].geometry,
       descriptors: groupDescriptors,
       material,
@@ -1600,7 +1665,6 @@ function createRemoteBatchResources(heroId: HeroId, team: Team): RemoteBatchReso
 
   return {
     heroId,
-    team,
     batches,
     outlineBatches,
     dispose: () => {
@@ -1649,6 +1713,17 @@ function assignDynamicInstancedMesh(
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   }
   onMesh(mesh);
+}
+
+function setDynamicInstanceColorAt(
+  mesh: THREE.InstancedMesh,
+  index: number,
+  color: THREE.Color
+): void {
+  mesh.setColorAt(index, color);
+  if (mesh.instanceColor && mesh.instanceColor.usage !== THREE.DynamicDrawUsage) {
+    mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  }
 }
 
 function RemoteHeroInstancedBatch({
@@ -1719,6 +1794,7 @@ function RemoteHeroBatchGroup({
   resources,
   isBattleRoyal,
   localPlayerId,
+  localPlayerTeam,
   config,
 }: {
   players: readonly Player[];
@@ -1726,6 +1802,7 @@ function RemoteHeroBatchGroup({
   resources: RemoteBatchResources;
   isBattleRoyal: boolean;
   localPlayerId?: string | null;
+  localPlayerTeam?: Team | null;
   config: RemotePlayerQualityConfig;
 }) {
   const camera = useThree((state) => state.camera);
@@ -1837,9 +1914,18 @@ function RemoteHeroBatchGroup({
           isActivityPriority &&
           isWithinDistanceLimitSq(camera, runtime.currentPosition, activityBodyDistanceSq)
         );
+        const playerFullBodyDistanceSq = getPlayerDistanceLimitSq(
+          player,
+          localPlayerId,
+          localPlayerTeam,
+          fullBodyDistance,
+          fullBodyDistanceSq,
+          frameConfig.botFullBodyDistanceScale ?? 1,
+          isBattleRoyal
+        );
         const renderBody = !hasActivePhantomVeil(player) && (
           forceBodyForPriority ||
-          isWithinDistanceLimitSq(camera, runtime.currentPosition, fullBodyDistanceSq)
+          isWithinDistanceLimitSq(camera, runtime.currentPosition, playerFullBodyDistanceSq)
         );
         if (!renderBody) continue;
 
@@ -1854,6 +1940,7 @@ function RemoteHeroBatchGroup({
           nowMs
         );
         updateBodyWorldMatrix(runtime);
+        const teamColor = getTeamColor(player.team as Team);
 
         for (let batchIndex = 0; batchIndex < resources.batches.length; batchIndex++) {
           const batch = resources.batches[batchIndex];
@@ -1865,6 +1952,9 @@ function RemoteHeroBatchGroup({
           for (const descriptor of batch.descriptors) {
             mesh.setMatrixAt(writeIndex, setPartMatrix(runtime, descriptor));
             emissiveAttribute?.setX(writeIndex, getDescriptorEmissiveBoost(descriptor, player, runtime.glowPulse));
+            if (descriptor.instanceColor === 'team') {
+              setDynamicInstanceColorAt(mesh, writeIndex, teamColor);
+            }
             writeIndex++;
           }
           counts[batchIndex] = writeIndex;
@@ -1874,9 +1964,18 @@ function RemoteHeroBatchGroup({
           isActivityPriority &&
           isWithinDistanceLimitSq(camera, runtime.currentPosition, activityOutlineDistanceSq)
         );
+        const playerOutlineDistanceSq = getPlayerDistanceLimitSq(
+          player,
+          localPlayerId,
+          localPlayerTeam,
+          outlineDistance,
+          outlineDistanceSq,
+          frameConfig.botOutlineDistanceScale ?? 1,
+          isBattleRoyal
+        );
         const renderOutline = frameConfig.outlineDistance > 0 && (
           forceOutlineForPriority ||
-          isWithinDistanceLimitSq(camera, runtime.currentPosition, outlineDistanceSq)
+          isWithinDistanceLimitSq(camera, runtime.currentPosition, playerOutlineDistanceSq)
         );
         if (!renderOutline) continue;
 
@@ -1891,6 +1990,7 @@ function RemoteHeroBatchGroup({
               writeIndex,
               setPartMatrix(runtime, descriptor, getOutlineLocalMatrix(descriptor, isBattleRoyal))
             );
+            setDynamicInstanceColorAt(mesh, writeIndex, teamColor);
             writeIndex++;
           }
           outlineCounts[batchIndex] = writeIndex;
@@ -1906,6 +2006,7 @@ function RemoteHeroBatchGroup({
           mesh.instanceMatrix.needsUpdate = true;
           const emissiveAttribute = emissiveAttributesRef.current[batchIndex];
           if (emissiveAttribute) emissiveAttribute.needsUpdate = true;
+          if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         }
       }
 
@@ -1916,6 +2017,7 @@ function RemoteHeroBatchGroup({
         mesh.count = count;
         if (count > 0) {
           mesh.instanceMatrix.needsUpdate = true;
+          if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         }
       }
     },
@@ -1957,6 +2059,7 @@ export const RemoteHeroBatchRenderer = memo(function RemoteHeroBatchRenderer({
   resourcePlayers = players,
   isBattleRoyal = false,
   localPlayerId = null,
+  localPlayerTeam = null,
   config,
 }: RemoteHeroBatchRendererProps) {
   const resourceCacheRef = useRef<Map<string, RemoteBatchResources>>(new Map());
@@ -1982,6 +2085,7 @@ export const RemoteHeroBatchRenderer = memo(function RemoteHeroBatchRenderer({
           resources={resource}
           isBattleRoyal={isBattleRoyal}
           localPlayerId={localPlayerId}
+          localPlayerTeam={localPlayerTeam}
           config={config}
         />
       ))}

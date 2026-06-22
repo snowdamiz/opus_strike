@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, type RefObject } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import { visualStore } from '../../store/visualStore';
@@ -80,6 +80,11 @@ interface ObservedAbilityCastSlotRuntime {
 
 type RegisterObservedCastSlot = (slotIndex: number, runtime: ObservedAbilityCastSlotRuntime | null) => void;
 
+interface RankedObservedCastSlot {
+  slotIndex: number;
+  score: number;
+}
+
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
@@ -110,6 +115,57 @@ function clearObservedCastSlot(slotIndex: number): void {
   slot.effect = null;
   slot.token++;
   markObservedCastSlotInactive(slotIndex);
+}
+
+function hideObservedAbilityCastEffectSlot(runtime: ObservedAbilityCastSlotRuntime): void {
+  if (runtime.groupRef.current) runtime.groupRef.current.visible = false;
+  if (runtime.lightRef.current) runtime.lightRef.current.intensity = 0;
+}
+
+function getObservedCastPriorityScore(effect: ObservedAbilityCastEffectData, camera: THREE.Camera): number {
+  const store = useGameStore.getState();
+  const player = store.players.get(effect.playerId) ??
+    (store.localPlayer?.id === effect.playerId ? store.localPlayer : null);
+  const localPlayerId = store.localPlayer?.id ?? store.playerId ?? null;
+  const localTeam = store.localPlayer?.team ?? null;
+  let priority = effect.playerId === localPlayerId ? 2_000_000 : 0;
+  if (player?.team && localTeam && player.team === localTeam) priority += 500_000;
+
+  const visualPosition = visualStore.getState().playerPositions.get(effect.playerId);
+  const position = visualPosition ?? player?.position ?? effect.startPosition;
+  if (!position) return priority - 1_000_000;
+
+  const dx = camera.position.x - position.x;
+  const dy = camera.position.y - position.y;
+  const dz = camera.position.z - position.z;
+  return priority - (dx * dx + dy * dy + dz * dz);
+}
+
+function insertRankedObservedCastSlot(
+  ranked: RankedObservedCastSlot[],
+  slotIndex: number,
+  score: number,
+  limit: number
+): void {
+  if (limit <= 0) return;
+
+  let insertIndex = ranked.length;
+  if (insertIndex < limit) {
+    ranked.push({ slotIndex, score });
+  } else {
+    insertIndex = limit - 1;
+    const last = ranked[insertIndex];
+    if (!last || score <= last.score) return;
+    last.slotIndex = slotIndex;
+    last.score = score;
+  }
+
+  const entry = ranked[insertIndex];
+  while (insertIndex > 0 && ranked[insertIndex - 1].score < score) {
+    ranked[insertIndex] = ranked[insertIndex - 1];
+    insertIndex--;
+  }
+  ranked[insertIndex] = entry;
 }
 
 function offsetObservedChronosCastPosition(
@@ -494,10 +550,17 @@ export function appendObservedCastGpuPrewarmObjects(target: THREE.Object3D): voi
   addObservedCastPrewarmMesh(target, SHARED_GEOMETRIES.ring16, ring, [1.62, 1.48, -4.7], 0.2, [0, Math.PI / 2, 0]);
 }
 
-export function ObservedAbilityCastEffectsManager() {
+export function ObservedAbilityCastEffectsManager({
+  maxVisibleEffects = OBSERVED_CAST_EFFECT_CAPACITY,
+}: {
+  maxVisibleEffects?: number;
+}) {
+  const camera = useThree((state) => state.camera);
   const slotRuntimesRef = useRef<Array<ObservedAbilityCastSlotRuntime | null>>(
     Array.from({ length: OBSERVED_CAST_EFFECT_CAPACITY }, () => null)
   );
+  const rankedSlotsRef = useRef<RankedObservedCastSlot[]>([]);
+  const visibleSlotFlagsRef = useRef(new Uint8Array(OBSERVED_CAST_EFFECT_CAPACITY));
   const registerSlot = useCallback<RegisterObservedCastSlot>((slotIndex, runtime) => {
     slotRuntimesRef.current[slotIndex] = runtime;
   }, []);
@@ -507,9 +570,45 @@ export function ObservedAbilityCastEffectsManager() {
       pruneObservedAbilityCastEffects(getFrameClock().epochNowMs);
 
       const runtimes = slotRuntimesRef.current;
+      const visibleLimit = Math.max(
+        0,
+        Math.min(OBSERVED_CAST_EFFECT_CAPACITY, Math.floor(maxVisibleEffects))
+      );
+      const visibleSlotFlags = visibleSlotFlagsRef.current;
+      visibleSlotFlags.fill(0);
+
+      if (observedCastActiveSlotIndices.length <= visibleLimit) {
+        for (const slotIndex of observedCastActiveSlotIndices) {
+          visibleSlotFlags[slotIndex] = 1;
+        }
+      } else {
+        const rankedSlots = rankedSlotsRef.current;
+        rankedSlots.length = 0;
+        for (const slotIndex of observedCastActiveSlotIndices) {
+          const effect = observedCastSlots[slotIndex].effect;
+          if (!effect) continue;
+          insertRankedObservedCastSlot(
+            rankedSlots,
+            slotIndex,
+            getObservedCastPriorityScore(effect, camera),
+            visibleLimit
+          );
+        }
+        for (const slot of rankedSlots) {
+          visibleSlotFlags[slot.slotIndex] = 1;
+        }
+      }
+
+      let visible = 0;
       for (const slotIndex of observedCastActiveSlotIndices) {
         const runtime = runtimes[slotIndex];
-        if (runtime) updateObservedAbilityCastEffectSlot(runtime, slotIndex, delta);
+        if (!runtime) continue;
+        if (visibleSlotFlags[slotIndex]) {
+          visible++;
+          updateObservedAbilityCastEffectSlot(runtime, slotIndex, delta);
+        } else {
+          hideObservedAbilityCastEffectSlot(runtime);
+        }
       }
 
       const active = observedCastActiveSlotIndices.length;
@@ -517,7 +616,7 @@ export function ObservedAbilityCastEffectsManager() {
         recordEffectSlotDiagnostics('observedAbilityCast', {
           active,
           capacity: OBSERVED_CAST_EFFECT_CAPACITY,
-          hiddenMounted: OBSERVED_CAST_EFFECT_CAPACITY - active,
+          hiddenMounted: OBSERVED_CAST_EFFECT_CAPACITY - visible,
         });
       }
     });

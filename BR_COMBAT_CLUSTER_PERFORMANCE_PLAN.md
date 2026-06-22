@@ -20,9 +20,10 @@ Benchmarks run locally, without browser testing:
 | Client existing BR combat | `br_canvas_combat_visual_cache_dense_skirmish` | p99 0.11ms, max 0.19ms. No budget breach. |
 | Client existing transforms | `br_canvas_remote_transform_sampling_96_players` | p99 0.042ms, max 0.052ms. No budget breach. |
 | Client remote hero batch, before fix | `br_canvas_remote_hero_batch_cpu_8_bot_cluster_full_roster` | Same 9 visible fighters with the real 33-player BR roster mounted 657 instanced meshes, including 480 empty mounted meshes. |
-| Client remote hero batch, after fix | `br_canvas_remote_hero_batch_cpu_8_bot_cluster_full_roster` | p99 0.24ms, max 0.51ms. Full-roster input now mounts 9 groups, 177 instanced meshes, and 0 empty mounted meshes. |
-| Client remote hero batch control | `br_canvas_remote_hero_batch_cpu_8_bot_cluster_visible_resources` | p99 0.17ms, max 0.51ms with the same 9 visible fighters. Visible-only resources also mount 9 groups, 177 instanced meshes, and 0 empty mounted meshes. |
-| Client remote hero batch stress, after fix | `br_canvas_remote_hero_batch_cpu_dense_skirmish` | p99 0.33ms, max 0.71ms for 24 visible fighters and the real 33-player BR roster. Full-roster input now mounts 24 groups, 480 instanced meshes, and 0 empty mounted meshes. |
+| Client remote hero batch, empty-group fix | `br_canvas_remote_hero_batch_cpu_8_bot_cluster_full_roster` | p99 0.24ms, max 0.51ms. Full-roster input mounted 9 groups, 177 instanced meshes, and 0 empty mounted meshes. |
+| Client remote hero batch, hero-key fix | `br_canvas_remote_hero_batch_cpu_8_bot_cluster_full_roster` | p99 0.78ms, max 3.09ms. Full-roster input now mounts 4 hero groups, 80 instanced meshes, and 0 empty mounted meshes. |
+| Client remote hero batch control | `br_canvas_remote_hero_batch_cpu_8_bot_cluster_visible_resources` | p99 0.74ms, max 1.52ms with the same 9 visible fighters. Visible-only resources also mount 4 groups, 80 instanced meshes, and 0 empty mounted meshes. |
+| Client remote hero batch stress, hero-key fix | `br_canvas_remote_hero_batch_cpu_dense_skirmish` | p99 1.32ms, max 2.10ms for 24 visible fighters and the real 33-player BR roster. Full-roster input now mounts 4 groups, 80 instanced meshes, and 0 empty mounted meshes. |
 | Client existing effects/store | full `bench:br-combat-canvas` | Ability burst p99 0.58ms, effect trigger p99 0.71ms. No budget breach. |
 
 The new server cases are now part of `apps/server/src/scripts/performance-room-benchmark.ts` and can be run with:
@@ -44,7 +45,7 @@ BR_CANVAS_BENCH_FILTER='remote_hero_batch' pnpm --filter @voxel-strike/client be
 3. The largest server risk at higher real-human counts is still per-recipient replication fanout, not the 1-player bot-fill case.
 4. The previous client benchmark suite covered visual-store projectile queries, transform sampling, store bursts, and effect trigger setup, but missed remote body batching. The new headless benchmark covers remote transform/pose/matrix CPU, while actual browser/GPU render cost remains a user-side validation item.
 5. The likely frame-drop source was `RemoteHeroBatchRenderer` mounted resource cardinality, not pose CPU. `OtherPlayers` filters hidden players out of the per-frame update list, but BR passes nearly the whole alive roster as `resourcePlayers`; before the fix, `buildRemoteHeroRenderGroups` created one mounted group per hero/team key, even when the group had no visible players.
-6. Team-specific resource keys multiply mostly identical geometry/material batches across BR teams. At default balanced graphics, outlines are enabled, so this cost is paid in the reported clustered-fight case even though only about 9 fighters are visible.
+6. Team-specific resource keys previously multiplied mostly identical geometry/material batches across BR teams. The renderer now keys main remote hero resources by hero and moves team color variance to instanced color attributes for outlines and bot markers.
 
 ## Optimization Plan
 
@@ -66,21 +67,18 @@ BR_CANVAS_BENCH_FILTER='remote_hero_batch' pnpm --filter @voxel-strike/client be
   - `RemoteHeroBatchGroup` is no longer created for groups with no visible players
   - the 8-bot cluster full-roster benchmark now stays near the visible-only control: 9 groups, 177 mounted instanced meshes, and 0 empty mounted meshes
   - follow-up: optionally add a small recently-visible warm cache if user-side browser validation shows hitches when enemies first appear
-- Second fix: collapse hero/team batch cardinality:
-  - avoid duplicating full hero body resources by team when only outline color or bot marker color differs
-  - move team color variance to instanced color attributes, a palette texture, or tiny team-only accent batches
-  - change the main body resource key from hero/team to hero where possible
-  - skip mounting outline instanced meshes entirely when the active quality profile has `outlineDistance <= 0`
-- Add BR combat adaptive caps:
-  - lower full remote body distance first for enemy bots
-  - use silhouette/outline representation sooner for bots outside immediate threat range
-  - suppress remote nameplates and movement particles during frame pressure
-  - reduce dynamic light budget for remote abilities before reducing local feedback
-- Make remote effects budget-aware:
-  - cap concurrent observed cast effects by distance and ownership
-  - prefer pooled/instanced effects for repeated bot attacks
-  - decay or skip low-value remote particles when frame p95 rises
-- Extend the remote hero batch benchmark to fail on excessive batch cardinality, not just CPU time, after the target batch count is chosen.
+- Second fix, implemented: collapse hero/team batch cardinality:
+  - main remote body resources are keyed by hero instead of hero/team
+  - team color variance now uses instanced color attributes for outlines and bot markers
+  - the 8-bot cluster full-roster benchmark now stays at 4 groups, 80 mounted instanced meshes, and 0 empty mounted meshes
+- BR combat adaptive caps, implemented:
+  - adaptive quality now tracks a separate BR combat pressure scale alongside terrain visibility scale
+  - remote body and outline distances shrink under combat pressure, with a stronger first reduction for enemy bots
+  - remote nameplates, beacons, movement particle density, movement particle bot distance, observed cast effects, and dynamic lights reduce before broader preset degradation
+- Remote effects budget-awareness, partially implemented:
+  - observed cast effects are capped by quality budget and ranked by distance, ownership, and team
+  - remote movement particles decay by adaptive density and bot distance under combat pressure
+- Extended the remote hero batch benchmark to fail on excessive batch cardinality with a 96 mounted-instanced-mesh budget for the current hero-keyed BR cases.
 
 ### Test Plan
 
@@ -91,9 +89,9 @@ BR_CANVAS_BENCH_FILTER='remote_hero_batch' pnpm --filter @voxel-strike/client be
   - `pnpm --filter @voxel-strike/server typecheck`
   - `ROOM_BENCH_FILTER='game_room_tick_br_cluster' pnpm --filter @voxel-strike/server bench:room-load`
 - Add benchmark assertions after the first optimization lands:
-  - 8-bot cluster full-roster `mountedInstancedMeshes <= 220`
+  - 8-bot cluster full-roster `mountedInstancedMeshes <= 96`
   - 8-bot cluster full-roster `emptyMountedInstancedMeshes <= 0`
-  - dense skirmish full-roster `mountedInstancedMeshes <= 520`
+  - dense skirmish full-roster `mountedInstancedMeshes <= 96`
   - dense skirmish full-roster `emptyMountedInstancedMeshes <= 0`
   - remote hero batch CPU p99 remains below 8ms
 - User-side browser validation:

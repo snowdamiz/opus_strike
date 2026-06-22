@@ -65,7 +65,11 @@ const balanced = getVisualQualityConfig({
 assert.equal(balanced.battleRoyalVisibility, BATTLE_ROYAL_VISIBILITY_CONFIG.balanced);
 assert.equal(balanced.battleRoyalDeploymentVisibility, BATTLE_ROYAL_DEPLOYMENT_VISIBILITY_CONFIG.balanced);
 assert.equal(balanced.effects.maxRemoteMovementEffectDistance, Number.POSITIVE_INFINITY);
+assert.equal(balanced.effects.remoteMovementEffectDensityScale, 1);
+assert.equal(balanced.effects.remoteMovementEffectBotDistanceScale, 1);
 assert.equal(balanced.effects.maxTerrainImpactRenderDistance, Number.POSITIVE_INFINITY);
+assert.equal(balanced.remotePlayers.botFullBodyDistanceScale, 1);
+assert.equal(balanced.remotePlayers.botOutlineDistanceScale, 1);
 
 function createDrop(status: BattleRoyalDropPlayerStatus, y: number, velocityY: number): BattleRoyalDropSnapshot {
   return {

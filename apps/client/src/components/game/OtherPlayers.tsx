@@ -28,7 +28,13 @@ import { gameplayFrameScheduler } from './systems/gameplayFrameScheduler';
 
 interface OtherPlayersProps {
   config: RemotePlayerQualityConfig;
-  effectConfig: Pick<EffectQualityConfig, 'maxActiveParticles' | 'maxRemoteMovementEffectDistance'>;
+  effectConfig: Pick<
+    EffectQualityConfig,
+    | 'maxActiveParticles'
+    | 'maxRemoteMovementEffectDistance'
+    | 'remoteMovementEffectDensityScale'
+    | 'remoteMovementEffectBotDistanceScale'
+  >;
   theme: VoxelMapTheme;
 }
 
@@ -127,6 +133,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
         resourcePlayers={remoteBatchResourcePlayers}
         isBattleRoyal={isBattleRoyal}
         localPlayerId={showLocalPlayerBody ? (localPlayerId ?? playerId) : null}
+        localPlayerTeam={localPlayerTeam}
         config={config}
       />
       <RemoteMovementEffects players={otherPlayers} theme={theme} config={effectConfig} />

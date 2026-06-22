@@ -63,6 +63,8 @@ export interface EffectQualityConfig {
   maxVisibleRemoteAbilityEffects: number;
   enableDecorativeLights: boolean;
   maxRemoteMovementEffectDistance: number;
+  remoteMovementEffectDensityScale: number;
+  remoteMovementEffectBotDistanceScale: number;
   maxTerrainImpactRenderDistance: number;
 }
 
@@ -72,6 +74,8 @@ export interface RemotePlayerQualityConfig {
   showBeacons: boolean;
   fullBodyDistance: number;
   outlineDistance: number;
+  botFullBodyDistanceScale: number;
+  botOutlineDistanceScale: number;
   castShadows: boolean;
 }
 
@@ -580,6 +584,8 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
     maxVisibleRemoteAbilityEffects: 8,
     enableDecorativeLights: false,
     maxRemoteMovementEffectDistance: Number.POSITIVE_INFINITY,
+    remoteMovementEffectDensityScale: 1,
+    remoteMovementEffectBotDistanceScale: 1,
     maxTerrainImpactRenderDistance: Number.POSITIVE_INFINITY,
   },
   competitive: {
@@ -589,6 +595,8 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
     maxVisibleRemoteAbilityEffects: 16,
     enableDecorativeLights: true,
     maxRemoteMovementEffectDistance: Number.POSITIVE_INFINITY,
+    remoteMovementEffectDensityScale: 1,
+    remoteMovementEffectBotDistanceScale: 1,
     maxTerrainImpactRenderDistance: Number.POSITIVE_INFINITY,
   },
   balanced: {
@@ -598,6 +606,8 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
     maxVisibleRemoteAbilityEffects: 22,
     enableDecorativeLights: true,
     maxRemoteMovementEffectDistance: Number.POSITIVE_INFINITY,
+    remoteMovementEffectDensityScale: 1,
+    remoteMovementEffectBotDistanceScale: 1,
     maxTerrainImpactRenderDistance: Number.POSITIVE_INFINITY,
   },
   cinematic: {
@@ -607,6 +617,8 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
     maxVisibleRemoteAbilityEffects: 42,
     enableDecorativeLights: true,
     maxRemoteMovementEffectDistance: Number.POSITIVE_INFINITY,
+    remoteMovementEffectDensityScale: 1,
+    remoteMovementEffectBotDistanceScale: 1,
     maxTerrainImpactRenderDistance: Number.POSITIVE_INFINITY,
   },
 };
@@ -618,6 +630,8 @@ const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityCo
     showBeacons: false,
     fullBodyDistance: 36,
     outlineDistance: 0,
+    botFullBodyDistanceScale: 1,
+    botOutlineDistanceScale: 1,
     castShadows: false,
   },
   competitive: {
@@ -626,6 +640,8 @@ const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityCo
     showBeacons: false,
     fullBodyDistance: 52,
     outlineDistance: 0,
+    botFullBodyDistanceScale: 1,
+    botOutlineDistanceScale: 1,
     castShadows: false,
   },
   balanced: {
@@ -634,6 +650,8 @@ const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityCo
     showBeacons: true,
     fullBodyDistance: 72,
     outlineDistance: 48,
+    botFullBodyDistanceScale: 1,
+    botOutlineDistanceScale: 1,
     castShadows: true,
   },
   cinematic: {
@@ -642,6 +660,8 @@ const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityCo
     showBeacons: true,
     fullBodyDistance: Number.POSITIVE_INFINITY,
     outlineDistance: 96,
+    botFullBodyDistanceScale: 1,
+    botOutlineDistanceScale: 1,
     castShadows: true,
   },
 };

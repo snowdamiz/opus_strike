@@ -68,6 +68,8 @@ let activeImpactConfig: EffectQualityConfig = {
   maxVisibleRemoteAbilityEffects: 48,
   enableDecorativeLights: true,
   maxRemoteMovementEffectDistance: Number.POSITIVE_INFINITY,
+  remoteMovementEffectDensityScale: 1,
+  remoteMovementEffectBotDistanceScale: 1,
   maxTerrainImpactRenderDistance: Number.POSITIVE_INFINITY,
 };
 const activeImpactCameraPosition = new THREE.Vector3(Number.NaN, Number.NaN, Number.NaN);

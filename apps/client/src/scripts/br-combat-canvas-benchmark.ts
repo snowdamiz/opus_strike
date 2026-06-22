@@ -510,6 +510,7 @@ function runRemoteHeroBatchScenario(options: {
     resourcePlayers,
     isBattleRoyal: true,
     localPlayerId: 'br-player-0',
+    localPlayerTeam: players[0]?.team ?? null,
     config: getBalancedRemotePlayerConfig(),
     cameraPosition: BR_REMOTE_HERO_CAMERA_POSITION,
   });
@@ -714,7 +715,7 @@ function runBenchmarks(): BenchmarkSummary[] {
       visibleFighters: REPORTED_CLUSTER_VISIBLE_FIGHTERS,
       resourceScope: 'allAlive',
       cardinalityBudget: {
-        maxMountedInstancedMeshes: 220,
+        maxMountedInstancedMeshes: 96,
         maxEmptyMountedInstancedMeshes: 0,
       },
     }),
@@ -724,7 +725,7 @@ function runBenchmarks(): BenchmarkSummary[] {
       visibleFighters: REPORTED_CLUSTER_VISIBLE_FIGHTERS,
       resourceScope: 'visibleOnly',
       cardinalityBudget: {
-        maxMountedInstancedMeshes: 220,
+        maxMountedInstancedMeshes: 96,
         maxEmptyMountedInstancedMeshes: 0,
       },
     }),
@@ -734,7 +735,7 @@ function runBenchmarks(): BenchmarkSummary[] {
       visibleFighters: DENSE_VISIBLE_FIGHTERS,
       resourceScope: 'allAlive',
       cardinalityBudget: {
-        maxMountedInstancedMeshes: 520,
+        maxMountedInstancedMeshes: 96,
         maxEmptyMountedInstancedMeshes: 0,
       },
     }),

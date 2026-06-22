@@ -43,7 +43,9 @@ import {
   DEFAULT_CAMERA_FAR,
   scaleBattleRoyalVisibilityConfig,
   type BattleRoyalVisibilityConfig,
+  type EffectQualityConfig,
   type ReflectionQualityConfig,
+  type RemotePlayerQualityConfig,
   type ShadowQualityConfig,
 } from './visualQuality';
 import { getBattleRoyalVisibilityMode } from './battleRoyalVisibilityMode';
@@ -729,6 +731,104 @@ const BR_TERRAIN_PRESSURE_RECOVERY_RATIO = 0.54;
 const BR_TERRAIN_VISIBILITY_MIN_SCALE = 0.72;
 const BR_TERRAIN_VISIBILITY_STEP_DOWN = 0.08;
 const BR_TERRAIN_VISIBILITY_STEP_UP = 0.04;
+const BR_COMBAT_PRESSURE_FRAME_P95_MS = 20;
+const BR_COMBAT_PRESSURE_RECOVERY_FRAME_P95_MS = 16;
+const BR_COMBAT_PRESSURE_RECOVERY_RATIO = 0.62;
+const BR_COMBAT_PRESSURE_MIN_SCALE = 0.55;
+const BR_COMBAT_PRESSURE_STEP_DOWN = 0.15;
+const BR_COMBAT_PRESSURE_STEP_UP = 0.05;
+const BR_REMOTE_FULL_BODY_COMBAT_CAP = 88;
+const BR_REMOTE_OUTLINE_COMBAT_CAP = 112;
+const BR_REMOTE_MIN_FULL_BODY_DISTANCE = 32;
+const BR_REMOTE_MIN_OUTLINE_DISTANCE = 24;
+
+function finiteDistanceOrCap(value: number, cap: number): number {
+  return Number.isFinite(value) ? Math.min(value, cap) : cap;
+}
+
+function scaleBattleRoyalRemotePlayersForCombat(
+  config: RemotePlayerQualityConfig,
+  combatScale: number
+): RemotePlayerQualityConfig {
+  const scale = THREE.MathUtils.clamp(combatScale, BR_COMBAT_PRESSURE_MIN_SCALE, 1);
+  if (scale >= 0.995) return config;
+
+  const distanceScale = THREE.MathUtils.lerp(0.62, 1, scale);
+  const scaledOutlineDistance = config.outlineDistance > 0
+    ? Math.max(
+      BR_REMOTE_MIN_OUTLINE_DISTANCE,
+      finiteDistanceOrCap(config.outlineDistance, BR_REMOTE_OUTLINE_COMBAT_CAP) * distanceScale
+    )
+    : 0;
+
+  return {
+    ...config,
+    animateBeacons: config.animateBeacons && scale > 0.82,
+    showNameplates: config.showNameplates && scale > 0.68,
+    showBeacons: config.showBeacons && scale > 0.76,
+    fullBodyDistance: Math.max(
+      BR_REMOTE_MIN_FULL_BODY_DISTANCE,
+      finiteDistanceOrCap(config.fullBodyDistance, BR_REMOTE_FULL_BODY_COMBAT_CAP) * distanceScale
+    ),
+    outlineDistance: scaledOutlineDistance,
+    botFullBodyDistanceScale: Math.min(
+      config.botFullBodyDistanceScale,
+      THREE.MathUtils.lerp(0.48, 1, scale)
+    ),
+    botOutlineDistanceScale: Math.min(
+      config.botOutlineDistanceScale,
+      THREE.MathUtils.lerp(0.62, 1, scale)
+    ),
+    castShadows: config.castShadows && scale > 0.64,
+  };
+}
+
+function scaleBattleRoyalEffectsForCombat(
+  config: EffectQualityConfig,
+  combatScale: number
+): EffectQualityConfig {
+  const scale = THREE.MathUtils.clamp(combatScale, BR_COMBAT_PRESSURE_MIN_SCALE, 1);
+  if (scale >= 0.995) return config;
+
+  const particleScale = THREE.MathUtils.lerp(0.45, 1, scale);
+  return {
+    ...config,
+    maxActiveParticles: Math.max(48, Math.floor(config.maxActiveParticles * particleScale)),
+    maxActiveTrails: Math.max(6, Math.floor(config.maxActiveTrails * particleScale)),
+    maxVisibleRemoteAbilityEffects: Math.max(
+      6,
+      Math.floor(config.maxVisibleRemoteAbilityEffects * THREE.MathUtils.lerp(0.45, 1, scale))
+    ),
+    enableDecorativeLights: config.enableDecorativeLights && scale > 0.72,
+    remoteMovementEffectDensityScale: Math.min(
+      config.remoteMovementEffectDensityScale,
+      THREE.MathUtils.lerp(0.35, 1, scale)
+    ),
+    remoteMovementEffectBotDistanceScale: Math.min(
+      config.remoteMovementEffectBotDistanceScale,
+      THREE.MathUtils.lerp(0.35, 1, scale)
+    ),
+  };
+}
+
+function scaleBattleRoyalDynamicLightsForCombat(
+  config: ReturnType<typeof getVisualQualityConfig>['dynamicLights'],
+  combatScale: number
+): ReturnType<typeof getVisualQualityConfig>['dynamicLights'] {
+  const scale = THREE.MathUtils.clamp(combatScale, BR_COMBAT_PRESSURE_MIN_SCALE, 1);
+  if (scale >= 0.995) return config;
+
+  let combatLightLimit = Math.max(2, Math.floor(config.maxDynamicLights * 0.5));
+  if (scale <= 0.66) {
+    combatLightLimit = 1;
+  } else if (scale <= 0.82) {
+    combatLightLimit = 2;
+  }
+  return {
+    maxDynamicLights: Math.min(config.maxDynamicLights, combatLightLimit),
+    staticAccentLights: config.staticAccentLights && scale > 0.82,
+  };
+}
 
 function stepDown<T extends string>(value: T, steps: readonly T[]): T {
   const index = steps.indexOf(value);
@@ -736,15 +836,19 @@ function stepDown<T extends string>(value: T, steps: readonly T[]): T {
 }
 
 function AdaptiveQualityController({
+  battleRoyalCombatScale,
   battleRoyalTerrainScale,
   battleRoyalVisibility,
   isBattleRoyal,
+  onBattleRoyalCombatScaleChange,
   onBattleRoyalTerrainScaleChange,
   performanceBudget,
 }: {
+  battleRoyalCombatScale: number;
   battleRoyalTerrainScale: number;
   battleRoyalVisibility?: BattleRoyalVisibilityConfig;
   isBattleRoyal: boolean;
+  onBattleRoyalCombatScaleChange: (scale: number) => void;
   onBattleRoyalTerrainScaleChange: (scale: number) => void;
   performanceBudget: ReturnType<typeof getVisualQualityConfig>['budgets'];
 }) {
@@ -753,12 +857,19 @@ function AdaptiveQualityController({
   const overBudgetSecondsRef = useRef(0);
   const terrainPressureSecondsRef = useRef(0);
   const terrainRecoverySecondsRef = useRef(0);
+  const combatPressureSecondsRef = useRef(0);
+  const combatRecoverySecondsRef = useRef(0);
   const battleRoyalTerrainScaleRef = useRef(battleRoyalTerrainScale);
+  const battleRoyalCombatScaleRef = useRef(battleRoyalCombatScale);
   const frameHistogramRef = useRef(new FrameTimeHistogram());
 
   useEffect(() => {
     battleRoyalTerrainScaleRef.current = battleRoyalTerrainScale;
   }, [battleRoyalTerrainScale]);
+
+  useEffect(() => {
+    battleRoyalCombatScaleRef.current = battleRoyalCombatScale;
+  }, [battleRoyalCombatScale]);
 
   const setBattleRoyalTerrainScale = useCallback((nextScale: number) => {
     const clampedScale = THREE.MathUtils.clamp(nextScale, BR_TERRAIN_VISIBILITY_MIN_SCALE, 1);
@@ -767,14 +878,24 @@ function AdaptiveQualityController({
     onBattleRoyalTerrainScaleChange(clampedScale);
   }, [onBattleRoyalTerrainScaleChange]);
 
+  const setBattleRoyalCombatScale = useCallback((nextScale: number) => {
+    const clampedScale = THREE.MathUtils.clamp(nextScale, BR_COMBAT_PRESSURE_MIN_SCALE, 1);
+    if (Math.abs(clampedScale - battleRoyalCombatScaleRef.current) < 0.005) return;
+    battleRoyalCombatScaleRef.current = clampedScale;
+    onBattleRoyalCombatScaleChange(clampedScale);
+  }, [onBattleRoyalCombatScaleChange]);
+
   useFrame(({ gl }, delta) => {
     if (!settings.adaptiveQuality) {
       accumulatorRef.current = 0;
       overBudgetSecondsRef.current = 0;
       terrainPressureSecondsRef.current = 0;
       terrainRecoverySecondsRef.current = 0;
+      combatPressureSecondsRef.current = 0;
+      combatRecoverySecondsRef.current = 0;
       frameHistogramRef.current.reset();
       setBattleRoyalTerrainScale(1);
+      setBattleRoyalCombatScale(1);
       return;
     }
 
@@ -815,10 +936,36 @@ function AdaptiveQualityController({
         terrainPressureSecondsRef.current = Math.max(0, terrainPressureSecondsRef.current - sampleSeconds * 0.5);
         terrainRecoverySecondsRef.current = 0;
       }
+
+      const combatPressureHigh = p95 >= BR_COMBAT_PRESSURE_FRAME_P95_MS;
+      const combatCanRecover = p95 <= BR_COMBAT_PRESSURE_RECOVERY_FRAME_P95_MS &&
+        renderPressureRatio <= BR_COMBAT_PRESSURE_RECOVERY_RATIO;
+
+      if (combatPressureHigh) {
+        combatPressureSecondsRef.current += sampleSeconds;
+        combatRecoverySecondsRef.current = 0;
+        if (combatPressureSecondsRef.current >= BR_TERRAIN_PRESSURE_CHECK_SECONDS) {
+          combatPressureSecondsRef.current = 0;
+          setBattleRoyalCombatScale(battleRoyalCombatScaleRef.current - BR_COMBAT_PRESSURE_STEP_DOWN);
+        }
+      } else if (combatCanRecover) {
+        combatRecoverySecondsRef.current += sampleSeconds;
+        combatPressureSecondsRef.current = Math.max(0, combatPressureSecondsRef.current - sampleSeconds);
+        if (combatRecoverySecondsRef.current >= BR_TERRAIN_PRESSURE_CHECK_SECONDS * 4) {
+          combatRecoverySecondsRef.current = 0;
+          setBattleRoyalCombatScale(battleRoyalCombatScaleRef.current + BR_COMBAT_PRESSURE_STEP_UP);
+        }
+      } else {
+        combatPressureSecondsRef.current = Math.max(0, combatPressureSecondsRef.current - sampleSeconds * 0.5);
+        combatRecoverySecondsRef.current = 0;
+      }
     } else {
       terrainPressureSecondsRef.current = 0;
       terrainRecoverySecondsRef.current = 0;
+      combatPressureSecondsRef.current = 0;
+      combatRecoverySecondsRef.current = 0;
       setBattleRoyalTerrainScale(1);
+      setBattleRoyalCombatScale(1);
     }
 
     if (p95 < 22) {
@@ -950,6 +1097,7 @@ export function GameCanvas({
     createMapWarmupSnapshot(warmupKey, mapSeed)
   );
   const [battleRoyalTerrainScale, setBattleRoyalTerrainScale] = useState(1);
+  const [battleRoyalCombatScale, setBattleRoyalCombatScale] = useState(1);
   const completedWarmupStagesRef = useRef<Set<MapWarmupStageId>>(new Set());
   const didStartGpuRef = useRef<string | null>(null);
   const mapTheme = useMemo(
@@ -989,6 +1137,7 @@ export function GameCanvas({
 
   useEffect(() => {
     setBattleRoyalTerrainScale(1);
+    setBattleRoyalCombatScale(1);
   }, [battleRoyalVisibilityMode, isBattleRoyal, settings.graphicsPreset]);
   const isBattleRoyalEliminated = isBattleRoyal && localPlayerState === 'dead';
   const isWorldReady = warmupSnapshot.key === warmupKey && warmupSnapshot.canAcceptInput;
@@ -1016,6 +1165,13 @@ export function GameCanvas({
     },
     [battleRoyalVisibility, qualityConfig.environment, startupRampActive]
   );
+  const effectiveRemotePlayerConfig = useMemo(
+    () => {
+      if (!battleRoyalVisibility) return qualityConfig.remotePlayers;
+      return scaleBattleRoyalRemotePlayersForCombat(qualityConfig.remotePlayers, battleRoyalCombatScale);
+    },
+    [battleRoyalCombatScale, battleRoyalVisibility, qualityConfig.remotePlayers]
+  );
   const effectiveEffectsConfig = useMemo(
     () => {
       const effectsConfig = startupRampActive
@@ -1029,7 +1185,7 @@ export function GameCanvas({
 
       if (!battleRoyalVisibility) return effectsConfig;
 
-      return {
+      const battleRoyalEffectsConfig = {
         ...effectsConfig,
         maxActiveParticles: Math.min(effectsConfig.maxActiveParticles, 220),
         maxActiveTrails: Math.min(effectsConfig.maxActiveTrails, 28),
@@ -1037,17 +1193,23 @@ export function GameCanvas({
         maxRemoteMovementEffectDistance: battleRoyalVisibility.remoteMovementEffectDistance,
         maxTerrainImpactRenderDistance: battleRoyalVisibility.terrainImpactDistance,
       };
+      return scaleBattleRoyalEffectsForCombat(battleRoyalEffectsConfig, battleRoyalCombatScale);
     },
-    [battleRoyalVisibility, qualityConfig.effects, startupRampActive]
+    [battleRoyalCombatScale, battleRoyalVisibility, qualityConfig.effects, startupRampActive]
   );
   const effectiveDynamicLights = useMemo(
-    () => startupRampActive
-      ? {
-        maxDynamicLights: Math.min(qualityConfig.dynamicLights.maxDynamicLights, 2),
-        staticAccentLights: false,
-      }
-      : qualityConfig.dynamicLights,
-    [qualityConfig.dynamicLights, startupRampActive]
+    () => {
+      const dynamicLights = startupRampActive
+        ? {
+          maxDynamicLights: Math.min(qualityConfig.dynamicLights.maxDynamicLights, 2),
+          staticAccentLights: false,
+        }
+        : qualityConfig.dynamicLights;
+      return battleRoyalVisibility
+        ? scaleBattleRoyalDynamicLightsForCombat(dynamicLights, battleRoyalCombatScale)
+        : dynamicLights;
+    },
+    [battleRoyalCombatScale, battleRoyalVisibility, qualityConfig.dynamicLights, startupRampActive]
   );
   const effectiveDressingShadows = startupRampActive ? false : qualityConfig.shadows.dressingShadows;
 
@@ -1149,9 +1311,11 @@ export function GameCanvas({
         <DynamicLightBudgetSystem maxLights={effectiveDynamicLights.maxDynamicLights} />
         <RendererDiagnosticsRecorder />
         <AdaptiveQualityController
+          battleRoyalCombatScale={battleRoyalCombatScale}
           battleRoyalTerrainScale={battleRoyalTerrainScale}
           battleRoyalVisibility={battleRoyalVisibility}
           isBattleRoyal={isBattleRoyal}
+          onBattleRoyalCombatScaleChange={setBattleRoyalCombatScale}
           onBattleRoyalTerrainScaleChange={setBattleRoyalTerrainScale}
           performanceBudget={qualityConfig.budgets}
         />
@@ -1209,7 +1373,7 @@ export function GameCanvas({
         
         {/* Other players - always rendered so players can see each other in lobby */}
         <OtherPlayers
-          config={qualityConfig.remotePlayers}
+          config={effectiveRemotePlayerConfig}
           effectConfig={effectiveEffectsConfig}
           theme={mapTheme}
         />
@@ -1230,7 +1394,9 @@ export function GameCanvas({
             <PhantomPersonalShieldsManager />
             <VoidRaysManager />
             <PhantomEffectsManager />
-            <ObservedAbilityCastEffectsManager />
+            <ObservedAbilityCastEffectsManager
+              maxVisibleEffects={effectiveEffectsConfig.maxVisibleRemoteAbilityEffects}
+            />
             <BlazeEffectsManager />
             <HookshotEffectsManager />
             <ChronosAscendantManager />
