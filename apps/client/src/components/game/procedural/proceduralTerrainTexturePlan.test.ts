@@ -34,6 +34,7 @@ const uniqueLayers = new Set(textureLayers);
 
 assert.equal(textureLayers.length, meshData.positions.length / 3);
 assert.equal(meshData.textureLayers.length, 40);
+assert.equal(meshData.indices.BYTES_PER_ELEMENT, 2);
 assert.ok(uniqueLayers.has(getTextureLayerForBlock('grass', 'top').layer));
 assert.ok(uniqueLayers.has(getTextureLayerForBlock('grass', 'side').layer));
 assert.ok(uniqueLayers.has(getTextureLayerForBlock('grass', 'bottom').layer));

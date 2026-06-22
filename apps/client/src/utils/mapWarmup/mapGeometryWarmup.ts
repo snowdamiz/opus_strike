@@ -1,11 +1,13 @@
 import type { PreparedVoxelMap, VoxelChunkRegion } from './mapPrepCache';
+import { useSettingsStore, type GraphicsPreset } from '../../store/settingsStore';
+import { BATTLE_ROYAL_VISIBILITY_CONFIG } from '../../components/game/visualQuality';
 
 interface MapGeometryWarmupOptions {
   frameBudgetMs?: number;
   label?: string;
+  graphicsPreset?: GraphicsPreset;
+  battleRoyalFullDetailDistance?: number;
 }
-
-const BATTLE_ROYAL_BACKGROUND_FULL_DETAIL_DISTANCE = 138;
 
 function getRegionFocusPoint(preparedMap: PreparedVoxelMap): { x: number; y: number; z: number } {
   const { manifest } = preparedMap;
@@ -16,13 +18,30 @@ function getRegionFocusPoint(preparedMap: PreparedVoxelMap): { x: number; y: num
   };
 }
 
-function getCentralBattleRoyalRegions(preparedMap: PreparedVoxelMap): VoxelChunkRegion[] {
+export function getBattleRoyalWarmupFullDetailDistance(options: MapGeometryWarmupOptions = {}): number {
+  if (
+    typeof options.battleRoyalFullDetailDistance === 'number' &&
+    Number.isFinite(options.battleRoyalFullDetailDistance)
+  ) {
+    return Math.max(0, options.battleRoyalFullDetailDistance);
+  }
+
+  const graphicsPreset = options.graphicsPreset ?? useSettingsStore.getState().settings.graphicsPreset;
+  return BATTLE_ROYAL_VISIBILITY_CONFIG[graphicsPreset]?.terrainPrebuildFullDistance ??
+    BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.terrainPrebuildFullDistance;
+}
+
+export function getCentralBattleRoyalRegions(
+  preparedMap: PreparedVoxelMap,
+  options: MapGeometryWarmupOptions = {}
+): VoxelChunkRegion[] {
   const focus = getRegionFocusPoint(preparedMap);
+  const fullDetailDistance = getBattleRoyalWarmupFullDetailDistance(options);
   return preparedMap.renderableRegions.filter((region) => {
     const dx = region.bounds.center.x - focus.x;
     const dy = region.bounds.center.y - focus.y;
     const dz = region.bounds.center.z - focus.z;
-    const maxDistance = BATTLE_ROYAL_BACKGROUND_FULL_DETAIL_DISTANCE + region.bounds.radius;
+    const maxDistance = fullDetailDistance + region.bounds.radius;
     return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
   });
 }
@@ -39,7 +58,7 @@ export function prebuildPreparedVoxelMapGeometry(
       if (preparedMap.manifest.profileId === 'battle_royal_large') {
         await prebuildVoxelRegionGeometries(
           preparedMap.manifest,
-          getCentralBattleRoyalRegions(preparedMap),
+          getCentralBattleRoyalRegions(preparedMap, options),
           { detail: 'full', frameBudgetMs }
         );
         await prebuildVoxelRegionGeometries(

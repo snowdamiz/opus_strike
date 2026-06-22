@@ -97,7 +97,7 @@ class FloatBuilder {
   }
 
   finish(): Float32Array {
-    return this.buffer.slice(0, this.length);
+    return this.length === this.buffer.length ? this.buffer : this.buffer.slice(0, this.length);
   }
 
   private ensure(extra: number): void {
@@ -116,14 +116,18 @@ class FloatBuilder {
 }
 
 class IndexBuilder {
-  private buffer: Uint32Array;
+  private buffer: Uint16Array | Uint32Array;
   length = 0;
+  private usesUint32 = false;
 
   constructor(initialCapacity: number) {
-    this.buffer = new Uint32Array(initialCapacity);
+    this.buffer = new Uint16Array(initialCapacity);
   }
 
   push(a: number, b: number, c: number, d: number, e: number, f: number): void {
+    if (!this.usesUint32 && (a > 65_535 || b > 65_535 || c > 65_535 || d > 65_535 || e > 65_535 || f > 65_535)) {
+      this.promoteToUint32();
+    }
     this.ensure(6);
     this.buffer[this.length++] = a;
     this.buffer[this.length++] = b;
@@ -134,11 +138,11 @@ class IndexBuilder {
   }
 
   finish(vertexCount: number): Uint16Array | Uint32Array {
-    const view = this.buffer.subarray(0, this.length);
-    if (vertexCount <= 65_535) {
-      return new Uint16Array(view);
+    if (vertexCount > 65_535 && !this.usesUint32) {
+      this.promoteToUint32();
     }
-    return view.slice();
+
+    return this.length === this.buffer.length ? this.buffer : this.buffer.slice(0, this.length);
   }
 
   private ensure(extra: number): void {
@@ -150,9 +154,16 @@ class IndexBuilder {
       nextCapacity = Math.max(nextCapacity * 2, 1024);
     }
 
-    const next = new Uint32Array(nextCapacity);
+    const next = this.usesUint32 ? new Uint32Array(nextCapacity) : new Uint16Array(nextCapacity);
     next.set(this.buffer);
     this.buffer = next;
+  }
+
+  private promoteToUint32(): void {
+    const next = new Uint32Array(this.buffer.length);
+    next.set(this.buffer);
+    this.buffer = next;
+    this.usesUint32 = true;
   }
 }
 

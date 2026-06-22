@@ -20,6 +20,8 @@ for (const profile of orderedProfiles) {
   assert.equal(config.terrainLodEnabled, true, `${profile} runtime config should enable terrain LOD`);
   assert.ok(config.cameraFar < DEFAULT_CAMERA_FAR, `${profile} should reduce BR camera far plane`);
   assert.ok(config.terrainLodFullDistance < config.terrainCullDistance, `${profile} should use coarse terrain before culling`);
+  assert.ok(config.terrainPrebuildFullDistance >= config.terrainLodFullDistance, `${profile} should prebuild at least the runtime full LOD band`);
+  assert.ok(config.terrainPrebuildFullDistance <= config.terrainCullDistance, `${profile} should not prebuild full-detail terrain outside cull range`);
   assert.ok(config.terrainCullDistance <= config.terrainLodCoarseDistance, `${profile} cull distance should stay inside coarse LOD range`);
   assert.ok(config.terrainLodCoarseDistance <= config.cameraFar, `${profile} coarse terrain should fade before camera far plane`);
   assert.ok(config.dressingCullDistance <= config.terrainCullDistance, `${profile} dressing should not outlive terrain visibility`);
