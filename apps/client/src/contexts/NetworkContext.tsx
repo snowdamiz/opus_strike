@@ -1,6 +1,7 @@
 import { createContext, useContext, useRef, useCallback, useMemo, useState, type ReactNode } from 'react';
 import { Client, Room } from 'colyseus.js';
 import { useGameStore } from '../store/gameStore';
+import { useChatStore } from '../store/chatStore';
 import { config } from '../config/environment';
 import {
   createRandomSeed,
@@ -143,6 +144,7 @@ interface NetworkContextType {
   reconnectRunningGame: () => Promise<void>;
   leaveGame: () => void;
   disconnect: () => void;
+  sendChatMessage: (message: string, options?: { teamOnly?: boolean }) => boolean;
   sendMovementCommands: (packet: MovementCommandPacket) => void;
   devSetHero: (heroId: HeroId) => void;
   devFillUltimate: () => void;
@@ -291,6 +293,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     disconnectVoice('network_cleanup');
     rejectPendingVoiceTokenRequests('connection cleaned up before voice token response');
     rejectPendingPlayerReportRequests('connection cleaned up before report response');
+    useChatStore.getState().clearMessages();
     if (partyRoomRef.current && partyRoomRef.current !== options.preservePartyRoom) {
       clearActivePartySession(partyRoomRef.current.id);
       try {
@@ -914,6 +917,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const leaveLobby = useCallback(() => {
     disconnectVoice('leave_lobby');
+    useChatStore.getState().clearMessages();
     if (lobbyRoomRef.current) {
       lobbyRoomRef.current.leave();
       lobbyRoomRef.current = null;
@@ -1043,6 +1047,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setMatchStartGateKey(null);
       setGamePhase('waiting');
       setPhaseEndTime(null);
+      useChatStore.getState().clearMessages();
 
       const client = getClient();
 
@@ -1103,6 +1108,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     disconnectVoice('leave_game');
     rejectPendingVoiceTokenRequests('left game before voice token response');
     rejectPendingPlayerReportRequests('left game before report response');
+    useChatStore.getState().clearMessages();
     gameRoomRef.current?.leave();
     gameRoomRef.current = null;
     lobbyRoomRef.current?.leave();
@@ -1150,6 +1156,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     disconnectVoice('network_disconnect');
     rejectPendingVoiceTokenRequests('network disconnected before voice token response');
     rejectPendingPlayerReportRequests('network disconnected before report response');
+    useChatStore.getState().clearMessages();
     gameRoomRef.current?.leave();
     gameRoomRef.current = null;
     lobbyRoomRef.current?.leave();
@@ -1188,6 +1195,18 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // ==================== GAME ACTIONS ====================
+
+  const sendChatMessage = useCallback((message: string, options: { teamOnly?: boolean } = {}): boolean => {
+    const normalizedMessage = message.trim();
+    const room = gameRoomRef.current ?? lobbyRoomRef.current;
+    if (!normalizedMessage || !room) return false;
+
+    room.send('chat', {
+      message: normalizedMessage,
+      teamOnly: options.teamOnly === true,
+    });
+    return true;
+  }, []);
 
   const sendMovementCommands = useCallback((packet: MovementCommandPacket) => {
     if (packet.commands.length === 0) return;
@@ -1327,6 +1346,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     reconnectRunningGame,
     leaveGame,
     disconnect,
+    sendChatMessage,
     sendMovementCommands,
     devSetHero,
     devFillUltimate,
@@ -1377,6 +1397,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     requestVoiceToken,
     restoreParty,
     selectTeam,
+    sendChatMessage,
     sendMovementCommands,
     setDevBotBrainEnabled,
     setDevBotsRooted,

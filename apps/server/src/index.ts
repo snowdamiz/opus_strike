@@ -6,6 +6,7 @@ import { createServer } from 'http';
 import { Server, matchMaker, type ServerOptions } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { GameRoom } from './rooms/GameRoom';
+import { GlobalChatRoom } from './rooms/GlobalChatRoom';
 import { LobbyRoom } from './rooms/LobbyRoom';
 import { PartyRoom } from './rooms/PartyRoom';
 import { SocialRoom } from './rooms/SocialRoom';
@@ -105,6 +106,7 @@ const gameServer = new Server({
 
 // Register rooms
 gameServer.define('game_room', GameRoom);
+gameServer.define('global_chat_room', GlobalChatRoom);
 gameServer
   .define('party_room', PartyRoom)
   .enableRealtimeListing();

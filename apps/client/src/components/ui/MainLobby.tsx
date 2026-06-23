@@ -14,12 +14,14 @@ import { HeroesPage } from './HeroesPage';
 import { StatsPage } from './StatsPage';
 import { SettingsModal } from './SettingsModal';
 import { GameDialog } from './GameDialog';
+import { GlobalChat } from './GlobalChat';
 import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
 import { TopNavIconButton } from './TopNavIconButton';
 import { HeroIcon } from './HeroIcons';
 import { useUISounds } from '../../hooks/useUiAudio';
+import { useMobileDevice } from '../../hooks/useDeviceCapabilities';
 import { useServerLatencyProbe } from '../../hooks/useServerLatencyProbe';
 import { config } from '../../config/environment';
 import {
@@ -27,6 +29,7 @@ import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_MATCH_PERSPECTIVE,
   DEFAULT_RANKED_SEASON_NUMBER,
+  GAMEPLAY_MODES,
   HERO_DEFINITIONS,
   getMatchPerspectiveSettingMode,
   getGameplayModeLabel,
@@ -44,13 +47,13 @@ import type {
   MatchPerspective,
   MatchPerspectiveSettingMode,
   MatchPerspectiveSettings,
-  PartyBotFillSettings,
   PartyMemberSnapshot,
   PartyMode,
   PartyStateSnapshot,
   RankedSeasonSnapshot,
 } from '@voxel-strike/shared';
 import { DISCORD_AUTH_COLORS, HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
+import { usePwaInstallPrompt } from '../../pwa';
 import { PwaInstallToast } from './PwaInstallToast';
 import {
   RUNNING_GAME_SESSION_EVENT,
@@ -61,6 +64,8 @@ import { clearActivePartySession, loadActivePartySession } from '../../utils/act
 import {
   PLAY_MODE_OPTIONS,
   DEFAULT_CUSTOM_GAMEPLAY_MODE,
+  createGlobalBotFillSettings,
+  isGlobalBotFillEnabled,
   loadPlayMenuPreferences,
   savePlayMenuPreferences,
   type PlayMenuMode,
@@ -199,30 +204,6 @@ function getPlayModeFromParty(party: PartyStateSnapshot): PlayMenuMode {
   return party.selectedMode;
 }
 
-function getBotFillGameplayModeForPlayMode(mode: PlayMenuMode): GameplayMode | null {
-  switch (mode) {
-    case 'quick_play':
-      return DEFAULT_GAMEPLAY_MODE;
-    case 'team_deathmatch':
-      return 'team_deathmatch';
-    case 'battle_royal':
-      return 'battle_royal';
-    case 'custom':
-    case 'ranked':
-    case 'practice':
-    default:
-      return null;
-  }
-}
-
-function getBotFillEnabledForPlayMode(
-  mode: PlayMenuMode,
-  settings: PartyBotFillSettings
-): boolean {
-  const gameplayMode = getBotFillGameplayModeForPlayMode(mode);
-  return gameplayMode ? settings[gameplayMode] === true : false;
-}
-
 function getPerspectiveSettingModeForPlayMode(mode: PlayMenuMode): MatchPerspectiveSettingMode | null {
   if (mode === 'ranked') return null;
   return getMatchPerspectiveSettingMode(getPartyModeForPlayMode(mode), getGameplayModeForPlayMode(mode));
@@ -234,14 +215,6 @@ function getMatchPerspectiveForPlayMode(
 ): MatchPerspective {
   const modeKey = getPerspectiveSettingModeForPlayMode(mode);
   return modeKey ? settings[modeKey] : DEFAULT_MATCH_PERSPECTIVE;
-}
-
-function getPerspectiveLabel(perspective: MatchPerspective): string {
-  return perspective === 'third_person' ? 'Third Person' : 'First Person';
-}
-
-function getCustomGameplayModeLabel(gameplayMode: CustomLobbyGameplayMode): string {
-  return getGameplayModeLabel(gameplayMode);
 }
 
 function getPartyMemberLimitForPlayMode(
@@ -267,7 +240,6 @@ export function MainLobby() {
     quickPlay,
     rankedPlay,
     getRankedTokenHoldStatus,
-    startPracticeGame,
     startTutorialGame,
     ensureParty,
     joinParty,
@@ -285,6 +257,8 @@ export function MainLobby() {
     reconnectRunningGame,
   } = useNetwork();
   const { playButtonClick } = useUISounds();
+  const isMobileDevice = useMobileDevice();
+  const pwaInstall = usePwaInstallPrompt();
   const {
     walletAddress,
     isAuthenticated,
@@ -305,7 +279,6 @@ export function MainLobby() {
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showSocial, setShowSocial] = useState(false);
-  const [matchSettingsMode, setMatchSettingsMode] = useState<PlayMenuMode | null>(null);
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
   const [playMenuPreferences, setPlayMenuPreferences] = useState<PlayMenuPreferences>(loadPlayMenuPreferences);
   const [rankedTokenHoldStatus, setRankedTokenHoldStatus] = useState<RankedTokenHoldStatus | null>(null);
@@ -314,6 +287,7 @@ export function MainLobby() {
   const [rankedSeason, setRankedSeason] = useState<RankedSeasonSnapshot>(DEFAULT_RANKED_SEASON);
   const [runningGameSession, setRunningGameSession] = useState<RunningGameSession | null>(null);
   const [isReconnectChecking, setIsReconnectChecking] = useState(false);
+  const [isMobilePwaInstalling, setIsMobilePwaInstalling] = useState(false);
   const heroAnimationMode = HERO_IDLE_ANIMATION_MODE;
 
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -344,6 +318,14 @@ export function MainLobby() {
     ? party.gameplayMode
     : customGameplayMode;
   const activeBotFillEnabledByMode = party?.botFillEnabledByMode ?? botFillEnabledByMode;
+  const globalBotFillEnabled = isGlobalBotFillEnabled(activeBotFillEnabledByMode);
+  const customBotFillDisabled = activePlayMode === 'custom';
+  const botFillDisabledReason = customBotFillDisabled
+    ? 'Bot fill does not apply to custom lobbies'
+    : isInParty && !isPartyLeader
+      ? 'Party leader chooses bot fill'
+      : null;
+  const displayedBotFillEnabled = customBotFillDisabled ? false : globalBotFillEnabled;
   const activePerspectiveByMode = party?.perspectiveByMode ?? perspectiveByMode;
   const currentRank = getRankForStats(userStats);
   const soloPartyMember: PartyMemberSnapshot | null = isAuthenticated
@@ -362,6 +344,7 @@ export function MainLobby() {
   const serverLatency = useServerLatencyProbe(activeTab === 'play');
   const devTutorialOverride = useSettingsStore((state) => state.settings.devTutorialOverride);
   const tutorialRequired = requiresTutorial(user?.tutorialCompletedAt, devTutorialOverride);
+  const mobilePwaInstallRequired = isMobileDevice && !pwaInstall.hasDownloaded && !pwaInstall.isInstalled;
 
   const updatePlayMenuPreferences = useCallback((updater: (current: PlayMenuPreferences) => PlayMenuPreferences) => {
     setPlayMenuPreferences((current) => {
@@ -642,6 +625,21 @@ export function MainLobby() {
     setShowProfileModal(false);
   };
 
+  const handleMobilePwaInstall = useCallback(async () => {
+    if (isMobilePwaInstalling) {
+      return;
+    }
+
+    setError(null);
+    setIsMobilePwaInstalling(true);
+
+    try {
+      await pwaInstall.install();
+    } finally {
+      setIsMobilePwaInstalling(false);
+    }
+  }, [isMobilePwaInstalling, pwaInstall.install]);
+
   const handleLinkPhantom = async (): Promise<boolean> => {
     if (hasPhantomAccount) return true;
     if (isLinkingPhantom) return false;
@@ -666,6 +664,7 @@ export function MainLobby() {
 
   const shouldShowPwaInstallToast = (
     activeTab === 'play' &&
+    !isMobileDevice &&
     !showSettings &&
     !showSocial &&
     !showProfileModal
@@ -728,15 +727,6 @@ export function MainLobby() {
     }
   };
 
-  const handlePracticeGame = (mapSeed?: number) => {
-    setError(null);
-    startPracticeGame(playerName, {
-      mapSeed,
-      heroId: featuredHero,
-      matchPerspective: getMatchPerspectiveForPlayMode('practice', activePerspectiveByMode),
-    });
-  };
-
   const handleStartTutorial = () => {
     setError(null);
     startTutorialGame(playerName);
@@ -793,56 +783,20 @@ export function MainLobby() {
     ));
   };
 
-  const handleSetCustomGameplayMode = (gameplayMode: CustomLobbyGameplayMode) => {
+  const handleSetBotFillEnabled = (enabled: boolean) => {
     if (isInParty) {
       if (isPartyLeader) {
-        setPartyMode('custom', gameplayMode);
+        for (const gameplayMode of GAMEPLAY_MODES) {
+          setPartyBotFill(gameplayMode, enabled);
+        }
       }
       return;
     }
 
     updatePlayMenuPreferences((current) => (
-      current.customGameplayMode === gameplayMode ? current : {
+      isGlobalBotFillEnabled(current.botFillEnabledByMode) === enabled ? current : {
         ...current,
-        customGameplayMode: gameplayMode,
-      }
-    ));
-  };
-
-  const handleSetBotFillEnabled = (gameplayMode: GameplayMode, enabled: boolean) => {
-    if (isInParty) {
-      if (isPartyLeader) {
-        setPartyBotFill(gameplayMode, enabled);
-      }
-      return;
-    }
-
-    updatePlayMenuPreferences((current) => (
-      current.botFillEnabledByMode[gameplayMode] === enabled ? current : {
-        ...current,
-        botFillEnabledByMode: {
-          ...current.botFillEnabledByMode,
-          [gameplayMode]: enabled,
-        },
-      }
-    ));
-  };
-
-  const handleSetMatchPerspective = (modeKey: MatchPerspectiveSettingMode, perspective: MatchPerspective) => {
-    if (isInParty) {
-      if (isPartyLeader) {
-        setPartyPerspective(modeKey, perspective);
-      }
-      return;
-    }
-
-    updatePlayMenuPreferences((current) => (
-      current.perspectiveByMode[modeKey] === perspective ? current : {
-        ...current,
-        perspectiveByMode: {
-          ...current.perspectiveByMode,
-          [modeKey]: perspective,
-        },
+        botFillEnabledByMode: createGlobalBotFillSettings(enabled),
       }
     ));
   };
@@ -865,21 +819,18 @@ export function MainLobby() {
       case 'battle_royal':
         void handleQuickPlay(
           getGameplayModeForPlayMode(activePlayMode),
-          getBotFillEnabledForPlayMode(activePlayMode, activeBotFillEnabledByMode),
+          globalBotFillEnabled,
           getMatchPerspectiveForPlayMode(activePlayMode, activePerspectiveByMode)
         );
         break;
       case 'custom':
         void handleCustomPlay();
         break;
-      case 'practice':
-        handlePracticeGame();
-        break;
       case 'quick_play':
       default:
         void handleQuickPlay(
           DEFAULT_GAMEPLAY_MODE,
-          getBotFillEnabledForPlayMode('quick_play', activeBotFillEnabledByMode),
+          globalBotFillEnabled,
           getMatchPerspectiveForPlayMode('quick_play', activePerspectiveByMode)
         );
         break;
@@ -973,6 +924,7 @@ export function MainLobby() {
             heroColor={heroColor}
             heroAnimationMode={heroAnimationMode}
             rankedSeason={rankedSeason}
+            playerName={playerName || user?.name || 'Guest'}
             isAuthenticated={isAuthenticated}
             hasPhantomAccount={hasPhantomAccount}
             requiresTutorial={tutorialRequired}
@@ -984,16 +936,20 @@ export function MainLobby() {
             isPartyReadyToStart={isPartyReadyToStart}
             selectedPlayMode={activePlayMode}
             customGameplayMode={activeCustomGameplayMode}
-            botFillEnabledByMode={activeBotFillEnabledByMode}
-            perspectiveByMode={activePerspectiveByMode}
+            botFillEnabled={displayedBotFillEnabled}
+            botFillDisabledReason={botFillDisabledReason}
             rankedTokenHoldStatus={rankedTokenHoldStatus}
             rankedTokenHoldError={rankedTokenHoldError}
             runningGameSession={runningGameSession}
             isReconnectChecking={isReconnectChecking}
             serverLatency={serverLatency}
+            mobilePwaInstallRequired={mobilePwaInstallRequired}
+            mobilePwaCanInstall={pwaInstall.canPromptInstall}
+            mobilePwaInstallInProgress={isMobilePwaInstalling}
             onSelectPlayMode={handleSelectPlayMode}
-            onOpenMatchSettings={setMatchSettingsMode}
+            onSetBotFillEnabled={handleSetBotFillEnabled}
             onPlayAction={handleSelectedPlayAction}
+            onMobilePwaInstall={handleMobilePwaInstall}
             onKickPartyMember={kickPartyMember}
             onLeaveParty={leaveParty}
             onOpenSocial={() => setShowSocial(true)}
@@ -1037,21 +993,6 @@ export function MainLobby() {
         />
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-      {matchSettingsMode && (
-        <MatchSettingsDialog
-          mode={matchSettingsMode}
-          heroColor={heroColor}
-          customGameplayMode={activeCustomGameplayMode}
-          botFillEnabledByMode={activeBotFillEnabledByMode}
-          perspectiveByMode={activePerspectiveByMode}
-          settingsDisabled={isInParty && !isPartyLeader}
-          onSetBotFillEnabled={handleSetBotFillEnabled}
-          onSetCustomGameplayMode={handleSetCustomGameplayMode}
-          onSetMatchPerspective={handleSetMatchPerspective}
-          onClose={() => setMatchSettingsMode(null)}
-        />
-      )}
-
       {showProfileModal && (
         <CreateProfileModal
           pendingRegistrationDisplayName={discordDisplayName}
@@ -1076,6 +1017,7 @@ interface PlayTabProps {
   heroColor: string;
   heroAnimationMode: HeroPreviewAnimationMode;
   rankedSeason: RankedSeasonSnapshot;
+  playerName: string;
   isAuthenticated: boolean;
   hasPhantomAccount: boolean;
   requiresTutorial: boolean;
@@ -1087,16 +1029,20 @@ interface PlayTabProps {
   isPartyReadyToStart: boolean;
   selectedPlayMode: PlayMenuMode;
   customGameplayMode: CustomLobbyGameplayMode;
-  botFillEnabledByMode: PartyBotFillSettings;
-  perspectiveByMode: MatchPerspectiveSettings;
+  botFillEnabled: boolean;
+  botFillDisabledReason: string | null;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
   rankedTokenHoldError: string | null;
   runningGameSession: RunningGameSession | null;
   isReconnectChecking: boolean;
   serverLatency: ServerLatencyProbeSnapshot | null;
+  mobilePwaInstallRequired: boolean;
+  mobilePwaCanInstall: boolean;
+  mobilePwaInstallInProgress: boolean;
   onSelectPlayMode: (mode: PlayMenuMode) => void;
-  onOpenMatchSettings: (mode: PlayMenuMode) => void;
+  onSetBotFillEnabled: (enabled: boolean) => void;
   onPlayAction: () => void;
+  onMobilePwaInstall: () => Promise<void>;
   onKickPartyMember: (userId: string) => void;
   onLeaveParty: () => void;
   onOpenSocial: () => void;
@@ -1112,6 +1058,7 @@ function PlayTab({
   heroColor,
   heroAnimationMode,
   rankedSeason,
+  playerName,
   isAuthenticated,
   hasPhantomAccount,
   requiresTutorial,
@@ -1123,16 +1070,20 @@ function PlayTab({
   isPartyReadyToStart,
   selectedPlayMode,
   customGameplayMode,
-  botFillEnabledByMode,
-  perspectiveByMode,
+  botFillEnabled,
+  botFillDisabledReason,
   rankedTokenHoldStatus,
   rankedTokenHoldError,
   runningGameSession,
   isReconnectChecking,
   serverLatency,
+  mobilePwaInstallRequired,
+  mobilePwaCanInstall,
+  mobilePwaInstallInProgress,
   onSelectPlayMode,
-  onOpenMatchSettings,
+  onSetBotFillEnabled,
   onPlayAction,
+  onMobilePwaInstall,
   onKickPartyMember,
   onLeaveParty,
   onOpenSocial,
@@ -1230,9 +1181,8 @@ function PlayTab({
         requiresTutorial={requiresTutorial}
         rankedSeason={rankedSeason}
         selectedPlayMode={selectedPlayMode}
-        customGameplayMode={customGameplayMode}
-        botFillEnabledByMode={botFillEnabledByMode}
-        perspectiveByMode={perspectiveByMode}
+        botFillEnabled={botFillEnabled}
+        botFillDisabledReason={botFillDisabledReason}
         rankedTokenHoldStatus={rankedTokenHoldStatus}
         rankedTokenHoldError={rankedTokenHoldError}
         isInParty={isInParty}
@@ -1242,12 +1192,16 @@ function PlayTab({
         mainPlayLabel={mainPlayLabel}
         primaryDisabled={primaryDisabled}
         primaryDisabledReason={primaryDisabledReason}
+        mobilePwaInstallRequired={mobilePwaInstallRequired}
+        mobilePwaCanInstall={mobilePwaCanInstall}
+        mobilePwaInstallInProgress={mobilePwaInstallInProgress}
         onSelectPlayMode={onSelectPlayMode}
-        onOpenMatchSettings={onOpenMatchSettings}
+        onSetBotFillEnabled={onSetBotFillEnabled}
         onDiscordSignIn={onDiscordSignIn}
         onReconnect={onReconnect}
         onStartTutorial={onStartTutorial}
         onPlayAction={onPlayAction}
+        onMobilePwaInstall={onMobilePwaInstall}
       />
       <div className="play-tab-stage menu-compact-scale relative">
         <PartyLineup
@@ -1271,6 +1225,7 @@ function PlayTab({
       {serverLatency && shouldShowServerLatencyAdvisory(serverLatency) && (
         <ServerLatencyAdvisory snapshot={serverLatency} />
       )}
+      <GlobalChat displayName={playerName} />
       <RankedSeasonPlate season={rankedSeason} />
     </div>
   );
@@ -1586,11 +1541,11 @@ function PlayModeIcon({ mode }: { mode: PlayMenuMode }) {
   }
 }
 
-function SettingsCogIcon() {
+function DownloadPwaIcon() {
   return (
     <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.9} d="M10.5 4.2c.38-1.58 2.62-1.58 3 0a1.55 1.55 0 002.32.96c1.39-.85 2.98.74 2.13 2.13a1.55 1.55 0 00.96 2.32c1.58.38 1.58 2.62 0 3a1.55 1.55 0 00-.96 2.32c.85 1.39-.74 2.98-2.13 2.13a1.55 1.55 0 00-2.32.96c-.38 1.58-2.62 1.58-3 0a1.55 1.55 0 00-2.32-.96c-1.39.85-2.98-.74-2.13-2.13a1.55 1.55 0 00-.96-2.32c-1.58-.38-1.58-2.62 0-3a1.55 1.55 0 00.96-2.32c-.85-1.39.74-2.98 2.13-2.13.9.55 2.07.06 2.32-.96z" />
-      <circle cx="12" cy="12" r="2.35" strokeWidth={1.9} />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3v10m0 0l4-4m-4 4L8 9" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M5 14v3.5A2.5 2.5 0 007.5 20h9a2.5 2.5 0 002.5-2.5V14" />
     </svg>
   );
 }
@@ -1615,148 +1570,6 @@ function getModeTitle(input: {
   return input.rankedTokenHoldError ?? 'Competitive queue';
 }
 
-function MatchSettingsDialog({
-  mode,
-  heroColor,
-  customGameplayMode,
-  botFillEnabledByMode,
-  perspectiveByMode,
-  settingsDisabled,
-  onSetBotFillEnabled,
-  onSetCustomGameplayMode,
-  onSetMatchPerspective,
-  onClose,
-}: {
-  mode: PlayMenuMode;
-  heroColor: string;
-  customGameplayMode: CustomLobbyGameplayMode;
-  botFillEnabledByMode: PartyBotFillSettings;
-  perspectiveByMode: MatchPerspectiveSettings;
-  settingsDisabled: boolean;
-  onSetBotFillEnabled: (gameplayMode: GameplayMode, enabled: boolean) => void;
-  onSetCustomGameplayMode: (gameplayMode: CustomLobbyGameplayMode) => void;
-  onSetMatchPerspective: (modeKey: MatchPerspectiveSettingMode, perspective: MatchPerspective) => void;
-  onClose: () => void;
-}) {
-  const perspectiveMode = getPerspectiveSettingModeForPlayMode(mode);
-  if (!perspectiveMode) return null;
-
-  const botFillGameplayMode = getBotFillGameplayModeForPlayMode(mode);
-  const botFillEnabled = botFillGameplayMode
-    ? botFillEnabledByMode[botFillGameplayMode] === true
-    : false;
-  const selectedPerspective = perspectiveByMode[perspectiveMode] ?? DEFAULT_MATCH_PERSPECTIVE;
-  const disabledTitle = settingsDisabled ? 'Party leader chooses match settings' : undefined;
-  const botFillStatus = botFillEnabled ? 'Enabled' : 'Disabled';
-  const isCustomMode = mode === 'custom';
-  const customModeIsTeamDeathmatch = customGameplayMode === 'team_deathmatch';
-  const nextCustomGameplayMode: CustomLobbyGameplayMode = customModeIsTeamDeathmatch
-    ? 'capture_the_flag'
-    : 'team_deathmatch';
-  const selectedCustomGameplayModeLabel = getCustomGameplayModeLabel(customGameplayMode);
-  const nextCustomGameplayModeLabel = getCustomGameplayModeLabel(nextCustomGameplayMode);
-  const perspectiveIsThirdPerson = selectedPerspective === 'third_person';
-  const nextPerspective: MatchPerspective = perspectiveIsThirdPerson ? 'first_person' : 'third_person';
-  const selectedPerspectiveLabel = getPerspectiveLabel(selectedPerspective);
-  const nextPerspectiveLabel = getPerspectiveLabel(nextPerspective);
-
-  return (
-    <GameDialog
-      title={`${getPlayModeLabel(mode)} SETTINGS`}
-      size="sm"
-      icon={<SettingsCogIcon />}
-      iconClassName="match-settings-dialog-icon"
-      panelClassName="match-settings-dialog"
-      bodyClassName="p-0"
-      style={{ '--match-settings-accent': heroColor } as CSSProperties}
-      onClose={onClose}
-    >
-      <div className="match-settings-panel">
-        {isCustomMode ? (
-          <section className="match-settings-row">
-            <div className="match-settings-row-copy">
-              <span className="match-settings-row-title">Game Mode</span>
-              <span className="match-settings-row-status is-enabled">
-                {selectedCustomGameplayModeLabel}
-              </span>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={customModeIsTeamDeathmatch}
-              aria-label={`Switch custom game mode to ${nextCustomGameplayModeLabel}`}
-              disabled={settingsDisabled}
-              className={`match-settings-toggle is-wide${customModeIsTeamDeathmatch ? ' is-enabled' : ''}`}
-              title={disabledTitle ?? `Switch to ${nextCustomGameplayModeLabel}`}
-              onClick={() => onSetCustomGameplayMode(nextCustomGameplayMode)}
-            >
-              <span className="match-settings-toggle-indicator" aria-hidden="true" />
-              <span className={`match-settings-toggle-option${!customModeIsTeamDeathmatch ? ' is-active' : ''}`} aria-hidden="true">
-                CTF
-              </span>
-              <span className={`match-settings-toggle-option${customModeIsTeamDeathmatch ? ' is-active' : ''}`} aria-hidden="true">
-                TDM
-              </span>
-            </button>
-          </section>
-        ) : botFillGameplayMode && (
-          <section className="match-settings-row">
-            <div className="match-settings-row-copy">
-              <span className="match-settings-row-title">Bot Fill</span>
-              <span className={`match-settings-row-status${botFillEnabled ? ' is-enabled' : ''}`}>
-                {botFillStatus}
-              </span>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={botFillEnabled}
-              aria-label={`${botFillEnabled ? 'Disable' : 'Enable'} bot fill`}
-              disabled={settingsDisabled}
-              className={`match-settings-toggle${botFillEnabled ? ' is-enabled' : ''}`}
-              title={disabledTitle ?? `${botFillEnabled ? 'Disable' : 'Enable'} bots`}
-              onClick={() => onSetBotFillEnabled(botFillGameplayMode, !botFillEnabled)}
-            >
-              <span className="match-settings-toggle-indicator" aria-hidden="true" />
-              <span className={`match-settings-toggle-option${!botFillEnabled ? ' is-active' : ''}`} aria-hidden="true">
-                Off
-              </span>
-              <span className={`match-settings-toggle-option${botFillEnabled ? ' is-active' : ''}`} aria-hidden="true">
-                On
-              </span>
-            </button>
-          </section>
-        )}
-
-        <section className="match-settings-row">
-          <div className="match-settings-row-copy">
-            <span className="match-settings-row-title">Perspective</span>
-            <span className="match-settings-row-status">{selectedPerspectiveLabel}</span>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={perspectiveIsThirdPerson}
-            aria-label={`Switch to ${nextPerspectiveLabel}`}
-            disabled={settingsDisabled}
-            className={`match-settings-toggle is-wide${perspectiveIsThirdPerson ? ' is-enabled' : ''}`}
-            title={disabledTitle ?? `Switch to ${nextPerspectiveLabel}`}
-            onClick={() => onSetMatchPerspective(perspectiveMode, nextPerspective)}
-          >
-            <span className="match-settings-toggle-indicator" aria-hidden="true" />
-            <span className={`match-settings-toggle-option${!perspectiveIsThirdPerson ? ' is-active' : ''}`} aria-hidden="true">
-              First
-            </span>
-            <span className={`match-settings-toggle-option${perspectiveIsThirdPerson ? ' is-active' : ''}`} aria-hidden="true">
-              Third
-            </span>
-          </button>
-        </section>
-      </div>
-    </GameDialog>
-  );
-}
-
 function PlayActionStack({
   error,
   heroColor,
@@ -1766,9 +1579,8 @@ function PlayActionStack({
   requiresTutorial,
   rankedSeason,
   selectedPlayMode,
-  customGameplayMode,
-  botFillEnabledByMode,
-  perspectiveByMode,
+  botFillEnabled,
+  botFillDisabledReason,
   rankedTokenHoldStatus,
   rankedTokenHoldError,
   isInParty,
@@ -1778,12 +1590,16 @@ function PlayActionStack({
   mainPlayLabel,
   primaryDisabled,
   primaryDisabledReason,
+  mobilePwaInstallRequired,
+  mobilePwaCanInstall,
+  mobilePwaInstallInProgress,
   onSelectPlayMode,
-  onOpenMatchSettings,
+  onSetBotFillEnabled,
   onDiscordSignIn,
   onReconnect,
   onStartTutorial,
   onPlayAction,
+  onMobilePwaInstall,
 }: {
   error: string | null;
   heroColor: string;
@@ -1793,9 +1609,8 @@ function PlayActionStack({
   requiresTutorial: boolean;
   rankedSeason: RankedSeasonSnapshot;
   selectedPlayMode: PlayMenuMode;
-  customGameplayMode: CustomLobbyGameplayMode;
-  botFillEnabledByMode: PartyBotFillSettings;
-  perspectiveByMode: MatchPerspectiveSettings;
+  botFillEnabled: boolean;
+  botFillDisabledReason: string | null;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
   rankedTokenHoldError: string | null;
   isInParty: boolean;
@@ -1805,18 +1620,38 @@ function PlayActionStack({
   mainPlayLabel: string;
   primaryDisabled: boolean;
   primaryDisabledReason: string | null;
+  mobilePwaInstallRequired: boolean;
+  mobilePwaCanInstall: boolean;
+  mobilePwaInstallInProgress: boolean;
   onSelectPlayMode: (mode: PlayMenuMode) => void;
-  onOpenMatchSettings: (mode: PlayMenuMode) => void;
+  onSetBotFillEnabled: (enabled: boolean) => void;
   onDiscordSignIn: () => void;
   onReconnect: () => void;
   onStartTutorial: () => void;
   onPlayAction: () => void;
+  onMobilePwaInstall: () => Promise<void>;
 }) {
   const { playButtonClick } = useUISounds();
+  const mobilePwaDisabledReason = mobilePwaInstallRequired && !mobilePwaCanInstall
+    ? 'PWA install is required on mobile'
+    : null;
+  const effectiveMainPlayLabel = mobilePwaInstallRequired
+    ? mobilePwaInstallInProgress
+      ? 'OPENING...'
+      : 'DOWNLOAD PWA'
+    : mainPlayLabel;
+  const effectivePrimaryDisabled = mobilePwaInstallRequired
+    ? mobilePwaInstallInProgress || !mobilePwaCanInstall
+    : primaryDisabled;
+  const effectivePrimaryDisabledReason = mobilePwaDisabledReason ?? (
+    mobilePwaInstallRequired ? null : primaryDisabledReason
+  );
 
   const runPrimaryAction = () => {
     playButtonClick();
-    if (canReconnect) {
+    if (mobilePwaInstallRequired) {
+      void onMobilePwaInstall();
+    } else if (canReconnect) {
       onReconnect();
     } else if (requiresTutorial) {
       onStartTutorial();
@@ -1835,9 +1670,8 @@ function PlayActionStack({
         requiresTutorial={requiresTutorial}
         rankedSeason={rankedSeason}
         selectedPlayMode={selectedPlayMode}
-        customGameplayMode={customGameplayMode}
-        botFillEnabledByMode={botFillEnabledByMode}
-        perspectiveByMode={perspectiveByMode}
+        botFillEnabled={botFillEnabled}
+        botFillDisabledReason={botFillDisabledReason}
         rankedTokenHoldStatus={rankedTokenHoldStatus}
         rankedTokenHoldError={rankedTokenHoldError}
         modeReadOnly={isInParty && !isPartyLeader}
@@ -1845,9 +1679,9 @@ function PlayActionStack({
           playButtonClick();
           onSelectPlayMode(mode);
         }}
-        onOpenMatchSettings={(mode) => {
+        onSetBotFillEnabled={(enabled) => {
           playButtonClick();
-          onOpenMatchSettings(mode);
+          onSetBotFillEnabled(enabled);
         }}
       />
       {error && (
@@ -1855,14 +1689,14 @@ function PlayActionStack({
           {error}
         </div>
       )}
-      {isAuthenticated ? (
+      {mobilePwaInstallRequired || isAuthenticated ? (
         <div className="play-main-cta-wrap">
           <button
             type="button"
             onClick={runPrimaryAction}
-            disabled={primaryDisabled}
+            disabled={effectivePrimaryDisabled}
             className="play-main-cta group"
-            aria-describedby={primaryDisabledReason ? 'play-main-cta-disabled-reason' : undefined}
+            aria-describedby={effectivePrimaryDisabledReason ? 'play-main-cta-disabled-reason' : undefined}
             style={{
               background: `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`,
               boxShadow: `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`,
@@ -1873,23 +1707,25 @@ function PlayActionStack({
               style={{ background: WALLET_AUTH_COLORS.shimmer }}
             />
             <span className="play-main-cta-content relative flex items-center justify-center gap-2">
-              {canReconnect ? (
+              {mobilePwaInstallRequired ? (
+                <DownloadPwaIcon />
+              ) : canReconnect ? (
                 <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4v6h6M20 20v-6h-6M5.5 14a7 7 0 0012.1 2.4M18.5 10A7 7 0 006.4 7.6" />
                 </svg>
               ) : (
                 <PlayModeIcon mode={selectedPlayMode} />
               )}
-              {mainPlayLabel}
+              {effectiveMainPlayLabel}
             </span>
           </button>
-          {primaryDisabledReason && (
+          {effectivePrimaryDisabledReason && (
             <div
               id="play-main-cta-disabled-reason"
               className="play-disabled-reason"
               role="status"
             >
-              {primaryDisabledReason}
+              {effectivePrimaryDisabledReason}
             </div>
           )}
         </div>
@@ -1913,14 +1749,13 @@ function PlayModeSelector({
   requiresTutorial,
   rankedSeason,
   selectedPlayMode,
-  customGameplayMode,
-  botFillEnabledByMode,
-  perspectiveByMode,
+  botFillEnabled,
+  botFillDisabledReason,
   rankedTokenHoldStatus,
   rankedTokenHoldError,
   modeReadOnly,
   onSelectMode,
-  onOpenMatchSettings,
+  onSetBotFillEnabled,
 }: {
   heroColor: string;
   isAuthenticated: boolean;
@@ -1928,31 +1763,18 @@ function PlayModeSelector({
   requiresTutorial: boolean;
   rankedSeason: RankedSeasonSnapshot;
   selectedPlayMode: PlayMenuMode;
-  customGameplayMode: CustomLobbyGameplayMode;
-  botFillEnabledByMode: PartyBotFillSettings;
-  perspectiveByMode: MatchPerspectiveSettings;
+  botFillEnabled: boolean;
+  botFillDisabledReason: string | null;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
   rankedTokenHoldError: string | null;
   modeReadOnly: boolean;
   onSelectMode: (mode: PlayMenuMode) => void;
-  onOpenMatchSettings: (mode: PlayMenuMode) => void;
+  onSetBotFillEnabled: (enabled: boolean) => void;
 }) {
   return (
-    <div className="play-mode-selector" role="radiogroup" aria-label="Match mode">
+    <div className="play-mode-selector" aria-label="Match mode and options">
       {PLAY_MODE_OPTIONS.map((mode) => {
         const selected = mode === selectedPlayMode;
-        const botFillGameplayMode = getBotFillGameplayModeForPlayMode(mode);
-        const botFillEnabled = botFillGameplayMode
-          ? botFillEnabledByMode[botFillGameplayMode] === true
-          : false;
-        const perspectiveSettingMode = getPerspectiveSettingModeForPlayMode(mode);
-        const perspective = perspectiveSettingMode
-          ? perspectiveByMode[perspectiveSettingMode]
-          : DEFAULT_MATCH_PERSPECTIVE;
-        const showSettingsButton = selected && Boolean(perspectiveSettingMode);
-        const settingsTitle = mode === 'custom'
-          ? `Match settings: ${getCustomGameplayModeLabel(customGameplayMode)}, ${getPerspectiveLabel(perspective)}`
-          : `Match settings: ${getPerspectiveLabel(perspective)}`;
         const isRanked = mode === 'ranked';
         const locked = isRanked && (
           rankedSeason.mode === 'preseason' ||
@@ -1974,13 +1796,12 @@ function PlayModeSelector({
         return (
           <div
             key={mode}
-            className={`play-mode-option-shell${showSettingsButton ? ' has-settings-button' : ''}`}
+            className="play-mode-option-shell"
             style={optionStyle}
           >
             <button
               type="button"
-              role="radio"
-              aria-checked={selected}
+              aria-pressed={selected}
               disabled={modeReadOnly}
               onClick={() => onSelectMode(mode)}
               className={`play-mode-option${selected ? ' is-selected' : ''}${locked ? ' is-locked' : ''}`}
@@ -1993,24 +1814,54 @@ function PlayModeSelector({
                 <span className="play-mode-option-title">{getPlayModeLabel(mode)}</span>
               </span>
             </button>
-            {showSettingsButton && (
-              <button
-                type="button"
-                aria-label={`Open match settings for ${getPlayModeLabel(mode)}`}
-                disabled={modeReadOnly}
-                className={`play-mode-settings-button${botFillEnabled ? ' has-bots-enabled' : ''}${perspective === 'third_person' ? ' has-third-person' : ''}`}
-                title={modeReadOnly ? 'Party leader chooses match settings' : settingsTitle}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onOpenMatchSettings(mode);
-                }}
-              >
-                <SettingsCogIcon />
-              </button>
-            )}
           </div>
         );
       })}
+      <BotFillToggle
+        enabled={botFillEnabled}
+        disabledReason={botFillDisabledReason}
+        onToggle={onSetBotFillEnabled}
+      />
+    </div>
+  );
+}
+
+function BotFillToggle({
+  enabled,
+  disabledReason,
+  onToggle,
+}: {
+  enabled: boolean;
+  disabledReason: string | null;
+  onToggle: (enabled: boolean) => void;
+}) {
+  const disabled = disabledReason !== null;
+
+  return (
+    <div className="play-mode-option-shell">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={enabled}
+        disabled={disabled}
+        className={`play-mode-option play-mode-bot-fill-toggle${enabled ? ' is-enabled' : ''}`}
+        title={disabledReason ?? `${enabled ? 'Disable' : 'Enable'} bot fill`}
+        onClick={() => onToggle(!enabled)}
+      >
+        <span className="play-mode-option-icon" aria-hidden="true">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M8.5 11.5a3.25 3.25 0 100-6.5 3.25 3.25 0 000 6.5zM3.5 19.25c.58-3.22 2.38-5.05 5-5.05s4.42 1.83 5 5.05" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M15.4 9.25a2.55 2.55 0 100-5.1M14.6 13.95c2.6.25 4.3 2 4.9 5.3" />
+          </svg>
+        </span>
+        <span className="play-mode-option-copy">
+          <span className="play-mode-option-title">BOT FILL</span>
+          <span className="play-mode-bot-fill-status">{enabled ? 'ON' : 'OFF'}</span>
+        </span>
+        <span className="play-mode-bot-fill-switch" aria-hidden="true">
+          <span />
+        </span>
+      </button>
     </div>
   );
 }
@@ -2068,11 +1919,16 @@ function PlayPanelHeading() {
 }
 
 function RankedSeasonPlate({ season }: { season: RankedSeasonSnapshot }) {
+  const seasonBoundary = formatSeasonBoundaryDate(season);
+
   return (
-    <aside className="play-season-plate" aria-label={`${season.label}. ${formatSeasonBoundaryDate(season)}. ${SEASON_RULES_ARIA}`}>
-      <div className="play-season-plate-kicker">Ranked</div>
+    <aside className="play-season-plate" aria-label={`${season.label}. ${seasonBoundary}. ${SEASON_RULES_ARIA}`}>
+      <div className="play-season-plate-kicker">
+        <span>Ranked</span>
+        <span aria-hidden="true">-</span>
+        <span>{seasonBoundary}</span>
+      </div>
       <div className="play-season-plate-title">{season.label}</div>
-      <div className="play-season-plate-end">{formatSeasonBoundaryDate(season)}</div>
     </aside>
   );
 }

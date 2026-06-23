@@ -574,6 +574,17 @@ model GlobalNotification {
   updatedAt       DateTime @updatedAt
 }
 
+model GlobalChatMessage {
+  id         String   @id @default(cuid())
+  userId     String?
+  playerName String
+  message    String   @db.Text
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt(sort: Desc)])
+  @@index([userId, createdAt])
+}
+
 model GoldenBiomeRewardTransfer {
   id              String                          @id @default(cuid())
   rewardId        String

@@ -19,6 +19,7 @@ import type {
   MapVoteOption,
   MapVoteRecord,
 } from '../store/types';
+import { useChatStore } from '../store/chatStore';
 import { seedMapPrepCacheFromManifest, type PrepareVoxelMapOptions } from '../utils/mapWarmup/mapPrepCache';
 import { prebuildPreparedMapGeometryDeferred } from '../utils/mapWarmup/deferredMapGeometryWarmup';
 import { requestMapPreviewManifest } from '../utils/mapPreview/mapPreviewManifestClient';
@@ -452,6 +453,10 @@ export function setupLobbyListeners(
       updatedPlayers.set(id, { ...player, isHost: id === data.newHostId });
     });
     setLobbyPlayers(updatedPlayers);
+  });
+
+  room.onMessage('chat', (data: unknown) => {
+    useChatStore.getState().addIncomingMessage('lobby', data);
   });
 
   room.onMessage('gameStarting', async (data: GameStartingMessage) => {

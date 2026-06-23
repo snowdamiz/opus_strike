@@ -42,6 +42,7 @@ import { normalizeGamePhase } from './gamePhase';
 import { setupPollingSync } from './gamePollingSync';
 import { measureNetworkMessage } from './networkMessageMetrics';
 import { loggers } from '../utils/logger';
+import { useChatStore } from '../store/chatStore';
 
 type MutableRef<T> = { current: T };
 type SchemaPlayerCollection = {
@@ -325,6 +326,10 @@ export function setupGameRoomListeners(
 
   room.onMessage('playerPings', measureNetworkMessage('playerPings', (data: PlayerPingsMessage) => {
     setPlayerPings(data);
+  }));
+
+  room.onMessage('chat', measureNetworkMessage('chat', (data: unknown) => {
+    useChatStore.getState().addIncomingMessage('game', data);
   }));
 
   room.onMessage('playerLeft', measureNetworkMessage('playerLeft', (data: { playerId: string }) => {

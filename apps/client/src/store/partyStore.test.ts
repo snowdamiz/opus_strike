@@ -139,8 +139,10 @@ savePlayMenuPreferences({
 });
 assert.equal(loadPlayMenuPreferences().selectedPlayMode, 'battle_royal');
 assert.equal(loadPlayMenuPreferences().customGameplayMode, 'team_deathmatch');
+assert.equal(loadPlayMenuPreferences().botFillEnabledByMode.capture_the_flag, true);
+assert.equal(loadPlayMenuPreferences().botFillEnabledByMode.team_deathmatch, true);
 assert.equal(loadPlayMenuPreferences().botFillEnabledByMode.battle_royal, true);
-assert.equal(loadPlayMenuPreferences().perspectiveByMode.battle_royal, 'third_person');
+assert.equal(loadPlayMenuPreferences().perspectiveByMode.battle_royal, 'first_person');
 assert.equal(loadPlayMenuPreferences().perspectiveByMode.quick_play, 'first_person');
 
 saveActivePartySession({

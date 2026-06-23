@@ -86,8 +86,11 @@ export function usePwaInstallPrompt() {
     notifyInstallPromptSubscribers();
   }, []);
 
+  const canPromptInstall = Boolean(installPrompt) && !hasDownloaded;
+
   return {
-    canInstall: Boolean(installPrompt) && !hasDownloaded && !isInstallToastDismissed,
+    canInstall: canPromptInstall && !isInstallToastDismissed,
+    canPromptInstall,
     dismissInstallToast,
     hasDownloaded,
     install,

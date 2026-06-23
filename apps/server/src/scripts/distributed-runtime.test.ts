@@ -324,6 +324,16 @@ function runConfigTests(): void {
     roomCreateStrategy: 'least_loaded',
   }), false);
   assert.equal(shouldCreateRoomOnLocalColyseusProcess({
+    roomName: 'global_chat_room',
+    clientOptions: {},
+    roomCreateStrategy: 'least_loaded',
+  }), true);
+  assert.equal(shouldCreateRoomOnLocalColyseusProcess({
+    roomName: 'social_room',
+    clientOptions: {},
+    roomCreateStrategy: 'least_loaded',
+  }), true);
+  assert.equal(shouldCreateRoomOnLocalColyseusProcess({
     roomName: 'lobby_room',
     clientOptions: {},
     roomCreateStrategy: 'local',
