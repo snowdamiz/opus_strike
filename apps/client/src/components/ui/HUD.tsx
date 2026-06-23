@@ -585,6 +585,11 @@ function getReviveProgress(player: Player, now: number): number {
   return Math.max(0, Math.min(1, (now - player.reviveStartedAt) / duration));
 }
 
+function getHudMeterScale(value: number, max: number): number {
+  if (!Number.isFinite(value) || !Number.isFinite(max)) return 0;
+  return Math.max(0, Math.min(1, value / Math.max(1, max)));
+}
+
 function getPlayerDistanceSq(a: Player, b: Player): number {
   const dx = a.position.x - b.position.x;
   const dy = a.position.y - b.position.y;
@@ -601,32 +606,75 @@ function DownedStateHud({ player }: { player: Player }) {
   const remainingSeconds = Math.ceil(getDownedRemainingSeconds(player, now));
   const reviveProgress = getReviveProgress(player, now);
   const isBeingRevived = Boolean(player.reviveByPlayerId);
+  const downedHealthScale = getHudMeterScale(downedHealth, downedMaxHealth);
+  const statusLabel = isBeingRevived ? 'REVIVING' : 'DOWNED';
+  const statusTextColor = isBeingRevived ? 'text-cyan-100' : 'text-red-100';
+  const statusLineColor = isBeingRevived
+    ? 'from-transparent via-cyan-100/54 to-cyan-300/16'
+    : 'from-transparent via-red-100/54 to-red-400/16';
 
   return (
-    <div className="absolute bottom-[clamp(6.75rem,14vh,9rem)] left-1/2 z-[126] w-[min(22rem,86vw)] -translate-x-1/2 text-center">
-      <div className="rounded-md border border-red-200/24 bg-black/54 px-4 py-3 shadow-2xl backdrop-blur-md">
-        <div className="flex items-center justify-between gap-3">
-          <span className="font-display text-sm tracking-[0.24em] text-red-100">DOWNED</span>
-          <span className="font-mono text-lg font-black tabular-nums text-white">{remainingSeconds}s</span>
+    <div
+      className="absolute bottom-[clamp(6.5rem,13vh,8.75rem)] left-1/2 z-[126] w-[min(25rem,88vw)] -translate-x-1/2 text-center uppercase text-white"
+      aria-label={`${statusLabel}: ${remainingSeconds} seconds remaining`}
+    >
+      <div className="relative isolate grid gap-2 px-1 py-1 drop-shadow-[0_3px_10px_rgba(0,0,0,0.9)]">
+        <div
+          className="absolute left-1/2 top-1/2 -z-10 h-20 w-[118%] -translate-x-1/2 -translate-y-1/2"
+          style={{
+            background: isBeingRevived
+              ? 'radial-gradient(ellipse at center, rgba(8, 145, 178, 0.22) 0%, rgba(0, 0, 0, 0.26) 38%, transparent 72%)'
+              : 'radial-gradient(ellipse at center, rgba(185, 28, 28, 0.26) 0%, rgba(0, 0, 0, 0.28) 38%, transparent 72%)',
+          }}
+        />
+
+        <div className="flex items-center justify-center gap-3">
+          <span className={`h-px min-w-10 flex-1 bg-gradient-to-r ${statusLineColor}`} />
+          <span
+            className={`font-display text-2xl leading-none drop-shadow-[0_2px_8px_rgba(0,0,0,0.95)] sm:text-3xl ${statusTextColor}`}
+            style={{ textShadow: isBeingRevived ? '0 0 14px rgba(103, 232, 249, 0.42)' : '0 0 14px rgba(248, 113, 113, 0.46)' }}
+          >
+            {statusLabel}
+          </span>
+          <span className="font-mono text-lg font-black leading-none tabular-nums text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.95)]">
+            {remainingSeconds}s
+          </span>
+          <span className={`h-px min-w-10 flex-1 bg-gradient-to-l ${statusLineColor}`} />
         </div>
-        <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+
+        <div
+          className="relative h-2.5 overflow-hidden bg-black/48 shadow-[0_0_0_1px_rgba(255,255,255,0.14),0_0_18px_rgba(248,113,113,0.16)]"
+          style={{ clipPath: 'polygon(0.55rem 0, 100% 0, calc(100% - 0.55rem) 100%, 0 100%)' }}
+        >
           <div
-            className="h-full w-full origin-left rounded-full bg-red-400 transition-transform duration-150"
+            className="h-full w-full origin-left transition-transform duration-150"
             style={{
-              transform: `scaleX(${downedHealth / downedMaxHealth})`,
-              boxShadow: '0 0 12px rgba(248, 113, 113, 0.68)',
+              transform: `scaleX(${downedHealthScale})`,
+              background: 'linear-gradient(90deg, rgba(239, 68, 68, 0.95), rgba(248, 113, 113, 0.88), rgba(251, 146, 60, 0.72))',
+              boxShadow: '0 0 14px rgba(248, 113, 113, 0.72)',
             }}
           />
+          <div className="absolute inset-0 bg-gradient-to-r from-white/20 via-transparent to-white/10" />
         </div>
+
         {isBeingRevived && (
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-cyan-100/12">
+          <div className="grid gap-1">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[0.64rem] font-black text-cyan-100/78">REVIVE</span>
+              <span className="h-px flex-1 bg-gradient-to-r from-cyan-100/38 to-transparent" />
+            </div>
             <div
-              className="h-full w-full origin-left rounded-full bg-cyan-300 transition-transform duration-100"
-              style={{
-                transform: `scaleX(${reviveProgress})`,
-                boxShadow: '0 0 10px rgba(103, 232, 249, 0.7)',
-              }}
-            />
+              className="relative h-1.5 overflow-hidden bg-cyan-950/42 shadow-[0_0_0_1px_rgba(103,232,249,0.18),0_0_14px_rgba(34,211,238,0.16)]"
+              style={{ clipPath: 'polygon(0.4rem 0, 100% 0, calc(100% - 0.4rem) 100%, 0 100%)' }}
+            >
+              <div
+                className="h-full w-full origin-left bg-cyan-300 transition-transform duration-100"
+                style={{
+                  transform: `scaleX(${reviveProgress})`,
+                  boxShadow: '0 0 10px rgba(103, 232, 249, 0.72)',
+                }}
+              />
+            </div>
           </div>
         )}
       </div>

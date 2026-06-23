@@ -13,7 +13,7 @@
     "test:voice": "tsx src/store/voiceStore.test.ts && tsx src/components/ui/VoiceHud.test.ts",
     "test:movement": "tsx src/hooks/useInput.test.ts && tsx src/movement/localPrediction.test.ts && tsx src/hooks/player/useCamera.test.ts && tsx src/hooks/player/abilityAim.test.ts && tsx src/components/game/PlayerController.frame.test.ts",
     "test:player-frame": "tsx src/components/game/PlayerController.frame.test.ts",
-    "test:visual-store": "tsx src/store/visualStore.test.ts && tsx src/store/gameTimingStore.test.ts && tsx src/store/projectileSlicePerformance.test.ts && tsx src/components/game/performanceUtils.test.ts && tsx src/components/game/RemoteMovementEffects.test.ts && tsx src/components/game/playerWorldAnchors.test.ts && tsx src/components/game/brVisibilityConfig.test.ts",
+    "test:visual-store": "tsx src/store/visualStore.test.ts && tsx src/store/gameTimingStore.test.ts && tsx src/store/projectileSlicePerformance.test.ts && tsx src/components/game/performanceUtils.test.ts && tsx src/components/game/RemoteMovementEffects.test.ts && tsx src/components/game/RemoteHeroBatchRenderer.test.ts && tsx src/components/game/playerWorldAnchors.test.ts && tsx src/components/game/brVisibilityConfig.test.ts",
     "test:map-warmup": "tsx src/utils/mapWarmup/mapPrepCache.test.ts && tsx src/utils/mapWarmup/mapGeometryWarmup.test.ts",
     "bench:br-combat-canvas": "tsx src/scripts/br-combat-canvas-benchmark.ts",
     "bench:br-geometry-hydration": "tsx src/scripts/br-geometry-hydration-benchmark.ts",
