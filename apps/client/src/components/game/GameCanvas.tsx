@@ -1,6 +1,6 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { Environment, OrbitControls, Grid } from '@react-three/drei';
+import { Environment, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { createTutorialVoxelMapManifest, getVoxelMapTheme, isTutorialMapSeed } from '@voxel-strike/shared';
 import { VoxelWorld } from './VoxelWorld';
@@ -54,6 +54,7 @@ import { getBattleRoyalVisibilityMode } from './battleRoyalVisibilityMode';
 import { FrameTimeHistogram } from './adaptiveQualityHistogram';
 import { recordRendererDiagnostics } from '../../movement/networkDiagnostics';
 import { configureVisualPhysicsQueryBudget } from '../../hooks/usePhysics';
+import { config } from '../../config/environment';
 import { prewarmLocalMovementCollisionWorld } from '../../movement/localPrediction';
 import { getBlazeGearstormSkyIntensity } from './blaze/airstrike';
 import { getPhantomVeilSkyIntensity } from './phantom/veilAtmosphere';
@@ -687,6 +688,15 @@ function WarmupSettlingFrames({
   return null;
 }
 
+function formatTerrainWarmupDetail(status: VoxelMapWarmupStatus): string {
+  const requiredRegions = Math.max(1, status.warmupRequiredRegionCount);
+  const readyRegions = Math.min(requiredRegions, status.readyRegionCount);
+  if (requiredRegions >= status.renderableRegionCount) {
+    return `${readyRegions}/${requiredRegions} terrain regions`;
+  }
+  return `${readyRegions}/${requiredRegions} starter terrain regions`;
+}
+
 function RendererDiagnosticsRecorder() {
   const frameHistogramRef = useRef(new FrameTimeHistogram());
   const accumulatorRef = useRef(0);
@@ -794,9 +804,7 @@ function scaleBattleRoyalRemotePlayersForCombat(
 
   return {
     ...config,
-    animateBeacons: config.animateBeacons && scale > 0.82,
     showNameplates: config.showNameplates && scale > 0.68,
-    showBeacons: config.showBeacons && scale > 0.76,
     fullBodyDistance: Math.max(
       BR_REMOTE_MIN_FULL_BODY_DISTANCE,
       finiteDistanceOrCap(config.fullBodyDistance, BR_REMOTE_FULL_BODY_COMBAT_CAP) * distanceScale
@@ -1155,14 +1163,6 @@ export function GameCanvas({
     () => isTutorialMapSeed(mapSeed) ? createTutorialVoxelMapManifest().theme : getVoxelMapTheme(mapSeed, mapThemeId),
     [mapSeed, mapThemeId]
   );
-  const gridCellColor = useMemo(
-    () => new THREE.Color(mapTheme.ground.stone).lerp(new THREE.Color(mapTheme.fogColor), 0.28).getStyle(),
-    [mapTheme]
-  );
-  const gridSectionColor = useMemo(
-    () => new THREE.Color(mapTheme.structures.accent).lerp(new THREE.Color('#ffffff'), 0.18).getStyle(),
-    [mapTheme]
-  );
   const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
   const isBattleRoyal = gameplayMode === 'battle_royal';
   const battleRoyalVisibilityMode = isBattleRoyal
@@ -1309,11 +1309,26 @@ export function GameCanvas({
 
     markWarmupStageDone('map', status.preparedMap.source === 'match' ? undefined : 0);
 
+    if (!status.collidersReady) {
+      dispatchWarmup({
+        type: 'stageProgress',
+        stage: 'colliders',
+        progress: 0.35,
+        detail: 'Loading collision',
+      });
+    }
     if (status.collidersReady) {
       prewarmLocalMovementCollisionWorld();
       markWarmupStageDone('colliders');
     }
 
+    const requiredRegions = Math.max(1, status.warmupRequiredRegionCount);
+    dispatchWarmup({
+      type: 'stageProgress',
+      stage: 'meshes',
+      progress: Math.min(1, status.readyRegionCount / requiredRegions),
+      detail: formatTerrainWarmupDetail(status),
+    });
     if (status.terrainReady) {
       markWarmupStageDone('meshes');
     }
@@ -1380,7 +1395,7 @@ export function GameCanvas({
         <PhysicsBudgetApplier maxVisualQueriesPerFrame={qualityConfig.budgets.maxVisualPhysicsQueriesPerFrame} />
         <GameplayFrameSystems />
         <DynamicLightBudgetSystem maxLights={effectiveDynamicLights.maxDynamicLights} />
-        <RendererDiagnosticsRecorder />
+        {config.clientDiagnosticsEnabled && <RendererDiagnosticsRecorder />}
         <AdaptiveQualityController
           battleRoyalCombatScale={battleRoyalCombatScale}
           battleRoyalTerrainScale={battleRoyalTerrainScale}
@@ -1420,21 +1435,6 @@ export function GameCanvas({
 
         <BattleRoyalDropDeployment />
         <BattleRoyalSafeZone />
-
-        {/* Grid helper for visibility */}
-        <Grid
-          args={[100, 100]}
-          position={[0, 0.01, 0]}
-          cellSize={2}
-          cellThickness={0.22}
-          cellColor={gridCellColor}
-          sectionSize={10}
-          sectionThickness={0.55}
-          sectionColor={gridSectionColor}
-          fadeDistance={battleRoyalVisibility?.gridFadeDistance ?? 78}
-          fadeStrength={1.45}
-          followCamera={false}
-        />
 
         {isBattleRoyalEliminated ? (
           <BattleRoyalTeamSpectatorCameraController enabled />

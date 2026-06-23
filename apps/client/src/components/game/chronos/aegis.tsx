@@ -19,6 +19,7 @@ import {
   measureFrameWork,
   recordEffectSlotDiagnostics,
 } from '../../../movement/networkDiagnostics';
+import { useDeferredFrameCommit } from '../systems/useDeferredFrameCommit';
 
 const CHRONOS_AEGIS_COLOR = 0x22c55e;
 const CHRONOS_AEGIS_EDGE_COLOR = 0x86efac;
@@ -328,6 +329,7 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
 
 export function ChronosAegisManager() {
   const [activeIds, setActiveIds] = useState<string[]>([]);
+  const deferActiveIdsCommit = useDeferredFrameCommit(setActiveIds);
   const activeIdsRef = useRef<string[]>([]);
   const scratchIdsRef = useRef<string[]>([]);
   const scanAccumulatorRef = useRef(ACTIVE_ID_SCAN_INTERVAL_MS);
@@ -358,7 +360,7 @@ export function ChronosAegisManager() {
 
       const committedIds = nextIds.slice();
       activeIdsRef.current = committedIds;
-      setActiveIds(committedIds);
+      deferActiveIdsCommit(committedIds);
       recordEffectSlotDiagnostics('chronosAegis', {
         active: committedIds.length,
         capacity: committedIds.length,

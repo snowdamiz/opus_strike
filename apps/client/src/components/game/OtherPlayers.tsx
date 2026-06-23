@@ -1,5 +1,4 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import {
@@ -266,7 +265,7 @@ function shouldRenderRemotePlayerFallback(
   config: RemotePlayerQualityConfig,
   showNameplate: boolean
 ): boolean {
-  return player.heroId === 'phantom' || player.hasFlag || showNameplate || config.showBeacons;
+  return hasActivePhantomVeil(player) || player.hasFlag || showNameplate;
 }
 
 function getPlayerRenderMovement(
@@ -508,15 +507,6 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
         />
       )}
 
-      {!isVeiled && config.showBeacons && (
-        <PlayerVisibilityBeacon
-          team={player.team}
-          height={visibleHeight}
-          isBot={player.isBot}
-          animate={config.animateBeacons}
-        />
-      )}
-
       {/* Flag indicator */}
       {player.hasFlag && (
         <FlagCarrierIndicator team={player.team === 'red' ? 'blue' : 'red'} />
@@ -740,40 +730,6 @@ const Nameplate = memo(function Nameplate({ name, health, maxHealth, height }: N
     <sprite position={[0, height + NAMEPLATE_WORLD_OFFSET_Y, 0]} scale={[width, NAMEPLATE_FULL_SPRITE_HEIGHT, 1]} renderOrder={30}>
       <spriteMaterial map={texture} transparent depthTest depthWrite={false} toneMapped={false} />
     </sprite>
-  );
-});
-
-const BEACON_TORUS_GEOMETRY = new THREE.TorusGeometry(0.42, 0.018, 6, 24);
-const BEACON_MATERIALS = {
-  red: new THREE.MeshBasicMaterial({ color: '#ef4444', transparent: true, opacity: 0.75 }),
-  redBot: new THREE.MeshBasicMaterial({ color: '#ef4444', transparent: true, opacity: 0.95 }),
-  blue: new THREE.MeshBasicMaterial({ color: '#38bdf8', transparent: true, opacity: 0.75 }),
-  blueBot: new THREE.MeshBasicMaterial({ color: '#38bdf8', transparent: true, opacity: 0.95 }),
-} as const;
-
-function getBeaconMaterial(team: Team, isBot?: boolean): THREE.MeshBasicMaterial {
-  if (team === 'red') return isBot ? BEACON_MATERIALS.redBot : BEACON_MATERIALS.red;
-  return isBot ? BEACON_MATERIALS.blueBot : BEACON_MATERIALS.blue;
-}
-
-const PlayerVisibilityBeacon = memo(function PlayerVisibilityBeacon({ team, height, isBot, animate }: { team: Team; height: number; isBot?: boolean; animate: boolean }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const material = getBeaconMaterial(team, isBot);
-
-  useFrame((state) => {
-    if (!animate || !groupRef.current) return;
-    groupRef.current.rotation.y = state.clock.elapsedTime * 1.6;
-  });
-
-  return (
-    <group ref={groupRef} position={[0, height + 0.18, 0]}>
-      <mesh
-        rotation={[Math.PI / 2, 0, 0]}
-        geometry={BEACON_TORUS_GEOMETRY}
-        material={material}
-        dispose={null}
-      />
-    </group>
   );
 });
 

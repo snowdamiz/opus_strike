@@ -192,12 +192,13 @@ Server environment:
 |--------|-----|
 | Move | WASD |
 | Jump | Space |
-| Crouch | Left Ctrl |
+| Crouch | C |
 | Sprint | Left Shift |
 | Ability 1 | E |
 | Ability 2 | Q |
 | Ultimate | F |
-| Interact | R |
+| Reload | R |
+| Interact | X |
 | Scoreboard | Tab |
 
 ## License

@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useRef, useEffect, useMemo, useState, type MutableRefObject } from 'react';
 import { useFrame, useThree, type RootState } from '@react-three/fiber';
 import * as THREE from 'three';
 import { resolveAbilitySocketOrigin } from '../../model-system/abilitySocketResolver';
@@ -16,6 +16,7 @@ import {
   measureFrameWork,
   recordEffectSlotDiagnostics,
 } from '../../movement/networkDiagnostics';
+import { useDeferredFrameCommit } from './systems/useDeferredFrameCommit';
 
 interface Effect {
   id: string;
@@ -266,7 +267,7 @@ function runGlobalEffectsFrame(
   activeEffectsRef: MutableRefObject<Effect[]>,
   lastEffectCountRef: MutableRefObject<number>,
   lastCleanupRef: MutableRefObject<number>,
-  setEffectsVersion: Dispatch<SetStateAction<number>>
+  commitEffectCount: (effectCount: number) => void
 ): void {
   const now = getFrameClock().epochNowMs;
 
@@ -279,7 +280,7 @@ function runGlobalEffectsFrame(
     // PERFORMANCE: Only trigger re-render if effect count changed (not every frame)
     if (effects.length !== lastEffectCountRef.current) {
       lastEffectCountRef.current = effects.length;
-      setEffectsVersion(v => v + 1);
+      commitEffectCount(effects.length);
     }
   }
 
@@ -299,7 +300,8 @@ export function Effects() {
   const activeEffectsRef = useRef<Effect[]>([]);
 
   // Version counter to trigger re-renders when effects change (incremented only when count changes)
-  const [effectsVersion, setEffectsVersion] = useState(0);
+  const [, setEffectsVersion] = useState(0);
+  const deferEffectCountCommit = useDeferredFrameCommit(setEffectsVersion);
 
   const lastEffectCountRef = useRef(0);
   const lastCleanupRef = useRef(0);
@@ -307,10 +309,10 @@ export function Effects() {
   useFrame((state, delta) => {
     if (MOVEMENT_DIAGNOSTICS_ENABLED) {
       measureFrameWork('frame.effects.global', () => (
-        runGlobalEffectsFrame(state, delta, activeEffectsRef, lastEffectCountRef, lastCleanupRef, setEffectsVersion)
+        runGlobalEffectsFrame(state, delta, activeEffectsRef, lastEffectCountRef, lastCleanupRef, deferEffectCountCommit)
       ));
     } else {
-      runGlobalEffectsFrame(state, delta, activeEffectsRef, lastEffectCountRef, lastCleanupRef, setEffectsVersion);
+      runGlobalEffectsFrame(state, delta, activeEffectsRef, lastEffectCountRef, lastCleanupRef, deferEffectCountCommit);
     }
   });
 

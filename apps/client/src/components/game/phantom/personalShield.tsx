@@ -13,6 +13,7 @@ import {
   PHANTOM_SHIELD_CAST_POSE_DURATION_MS,
   triggerPhantomShieldCastPose,
 } from '../../../viewmodel/phantomPrimaryPose';
+import { useDeferredFrameCommit } from '../systems/useDeferredFrameCommit';
 
 const PHANTOM_PERSONAL_SHIELD_ABILITY_ID = 'phantom_personal_shield';
 const PHANTOM_SHIELD_LOOP_ID_PREFIX = 'phantom-shield';
@@ -993,6 +994,9 @@ export function PhantomPersonalShieldsManager() {
   const [activeIds, setActiveIds] = useState<string[]>([]);
   const [activeCastEffects, setActiveCastEffects] = useState<ShieldCastEffectData[]>([]);
   const [activeBreakEffects, setActiveBreakEffects] = useState<ShieldBreakEffectData[]>([]);
+  const deferActiveIdsCommit = useDeferredFrameCommit(setActiveIds);
+  const deferCastEffectsCommit = useDeferredFrameCommit(setActiveCastEffects);
+  const deferBreakEffectsCommit = useDeferredFrameCommit(setActiveBreakEffects);
   const activeIdsRef = useRef<string[]>([]);
   const scratchIdsRef = useRef<string[]>([]);
   const scratchCastEffectsRef = useRef<ShieldCastEffectData[]>([]);
@@ -1015,12 +1019,12 @@ export function PhantomPersonalShieldsManager() {
     const castRevision = collectActiveShieldCastEffects(frameClock.nowMs, scratchCastEffectsRef.current);
     if (castRevision !== lastCastEffectRevisionRef.current) {
       lastCastEffectRevisionRef.current = castRevision;
-      setActiveCastEffects(scratchCastEffectsRef.current.slice());
+      deferCastEffectsCommit(scratchCastEffectsRef.current.slice());
     }
     const breakRevision = collectActiveShieldBreakEffects(frameClock.nowMs, scratchBreakEffectsRef.current);
     if (breakRevision !== lastBreakEffectRevisionRef.current) {
       lastBreakEffectRevisionRef.current = breakRevision;
-      setActiveBreakEffects(scratchBreakEffectsRef.current.slice());
+      deferBreakEffectsCommit(scratchBreakEffectsRef.current.slice());
     }
 
     syncShieldAudioLoopPositions(activeAudioIdsRef.current, now);
@@ -1035,7 +1039,7 @@ export function PhantomPersonalShieldsManager() {
 
     const committedIds = nextIds.slice();
     activeIdsRef.current = committedIds;
-    setActiveIds(committedIds);
+    deferActiveIdsCommit(committedIds);
   });
 
   return (

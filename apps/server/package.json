@@ -66,6 +66,7 @@
     "test:lobby-map-vote": "tsx src/scripts/lobby-map-vote-runtime.test.ts",
     "test:lobby-game-start": "tsx src/scripts/lobby-game-start-runtime.test.ts",
     "test:lobby-session-cleanup": "tsx src/scripts/lobby-session-cleanup.test.ts",
+    "test:line-of-sight-cache": "tsx src/scripts/line-of-sight-cache.test.ts",
     "test:room-map-runtime": "tsx src/scripts/room-map-runtime.test.ts",
     "test:room-metadata-snapshot": "tsx src/scripts/room-metadata-snapshot.test.ts",
     "test:room-participants": "tsx src/scripts/room-participant-registry.test.ts",

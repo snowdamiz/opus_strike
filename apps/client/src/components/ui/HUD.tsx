@@ -908,7 +908,6 @@ export function HUD() {
     gameClockFrozen,
     safeZone,
     battleRoyalDrop,
-    players,
     clientCooldowns,
     clientCharges,
     ultimateEffectActive,
@@ -937,7 +936,6 @@ export function HUD() {
       gameClockFrozen: state.gameClockFrozen,
       safeZone: state.safeZone,
       battleRoyalDrop: state.battleRoyalDrop,
-      players: state.players,
       clientCooldowns: state.clientCooldowns,
       clientCharges: state.clientCharges,
       ultimateEffectActive: state.ultimateEffectActive,
@@ -968,6 +966,11 @@ export function HUD() {
     }))
   );
   const killFeed = useCombatFeedbackStore((state) => state.killFeed);
+  const battleRoyalRemainingPlayers = useGameStore((state) => {
+    const player = state.localPlayer;
+    if (!player) return 0;
+    return getBattleRoyalRemainingPlayerCount(state.players.values(), player);
+  });
 
   if (!localPlayer) return null;
 
@@ -985,7 +988,6 @@ export function HUD() {
     : 'calc(clamp(2.25rem, 3.4vw, 3.25rem) + 0.5rem)';
   const scoreLabel = gameplayMode === 'team_deathmatch' ? 'KILLS' : 'BATTLE';
   const battleRoyalEliminations = localPlayer.stats.kills;
-  const battleRoyalRemainingPlayers = getBattleRoyalRemainingPlayerCount(players.values(), localPlayer);
   const battleRoyalDropPlayer = battleRoyalDrop?.players.find((player) => (
     player.playerId === localPlayer.id
   )) ?? null;

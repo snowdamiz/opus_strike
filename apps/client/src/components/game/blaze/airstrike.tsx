@@ -17,6 +17,7 @@ import {
   recordEffectSlotDiagnostics,
 } from '../../../movement/networkDiagnostics';
 import { applyTutorialOfflineTrainingAreaDamage } from '../../../utils/tutorialOfflineCombatRuntime';
+import { useDeferredFrameCommit } from '../systems/useDeferredFrameCommit';
 
 // ============================================================================
 // INFERNAL GEARSTORM EFFECT - BLAZE ULTIMATE
@@ -972,6 +973,7 @@ export function appendBlazeAirstrikeGpuPrewarmObjects(target: THREE.Object3D): v
 
 export function useAirStrikes() {
   const [activeStrikes, setActiveStrikes] = useState<AirStrikeData[]>([]);
+  const deferActiveStrikesCommit = useDeferredFrameCommit(setActiveStrikes);
   const lastRevisionRef = useRef(-1);
 
   useFrame(() => {
@@ -987,7 +989,7 @@ export function useAirStrikes() {
 
     if (changed) {
       lastRevisionRef.current = airStrikeRevision;
-      setActiveStrikes([...airStrikes]);
+      deferActiveStrikesCommit([...airStrikes]);
     }
 
     recordEffectSlotDiagnostics('blazeAirstrike', {

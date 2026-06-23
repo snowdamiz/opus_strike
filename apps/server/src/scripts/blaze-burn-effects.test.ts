@@ -35,6 +35,7 @@ const burnDurationMs = BLAZE_FLAMETHROWER_BURN_INTERVAL_MS * BLAZE_FLAMETHROWER_
     sourceId,
     sourcePosition: { x: 1, y: 2, z: 3 },
     sourceDirection: { x: 0, y: 0, z: -1 },
+    tickCount: 1,
   }]);
 }
 
@@ -71,7 +72,14 @@ const burnDurationMs = BLAZE_FLAMETHROWER_BURN_INTERVAL_MS * BLAZE_FLAMETHROWER_
     },
   });
 
-  assert.equal(ticks.length, 3);
+  assert.equal(ticks.length, 1);
+  assert.deepEqual(ticks, [{
+    targetId,
+    sourceId,
+    sourcePosition: null,
+    sourceDirection: null,
+    tickCount: 3,
+  }]);
   assert.equal(tracker.getBurnUntil(targetId), 1_000 + burnDurationMs);
 }
 

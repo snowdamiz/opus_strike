@@ -30,7 +30,7 @@ import {
 import type { VoiceScope, VoiceTokenResponse } from '../voice/types';
 import { disconnectVoice } from '../voice/voiceControls';
 import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
-import { prebuildPreparedVoxelMapGeometry } from '../utils/mapWarmup/mapGeometryWarmup';
+import { prebuildPreparedMapGeometryDeferred } from '../utils/mapWarmup/deferredMapGeometryWarmup';
 import {
   clearRunningGameSession,
   loadRunningGameSession,
@@ -356,7 +356,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           mapProfileId: tutorialManifest?.profileId ?? null,
           source: 'match',
         });
-        prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'practice-start' });
+        prebuildPreparedMapGeometryDeferred(preparedMap, { frameBudgetMs: 2, label: 'practice-start' });
         const spawnPoints = isTutorial
           ? preparedMap.manifest.spawnPoints.red
           : [

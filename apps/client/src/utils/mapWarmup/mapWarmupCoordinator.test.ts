@@ -17,8 +17,13 @@ assert.equal(snapshot.canShowGameplayObjects, false);
 
 snapshot = reduceMapWarmup(snapshot, { type: 'stageDone', stage: 'resources', durationMs: 12 });
 snapshot = reduceMapWarmup(snapshot, { type: 'stageDone', stage: 'map', durationMs: 24 });
+snapshot = reduceMapWarmup(snapshot, { type: 'stageProgress', stage: 'colliders', progress: 0.5, detail: 'Loading collision' });
+assert.equal(snapshot.stages.colliders.partialProgress, 0.5);
+assert.equal(snapshot.stages.colliders.detail, 'Loading collision');
 snapshot = reduceMapWarmup(snapshot, { type: 'stageDone', stage: 'colliders', durationMs: 6 });
 assert.equal(isMapWarmupReadyForMatchStart(snapshot, initial.key), false);
+snapshot = reduceMapWarmup(snapshot, { type: 'stageProgress', stage: 'meshes', progress: 0.25, detail: '4/16 starter terrain regions' });
+assert.equal(snapshot.stages.meshes.partialProgress, 0.25);
 snapshot = reduceMapWarmup(snapshot, { type: 'stageDone', stage: 'meshes', durationMs: 42 });
 assert.equal(snapshot.stages.meshes.done, true);
 assert.equal(snapshot.canAcceptInput, false);

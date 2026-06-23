@@ -20,7 +20,7 @@ import type {
   MapVoteRecord,
 } from '../store/types';
 import { seedMapPrepCacheFromManifest, type PrepareVoxelMapOptions } from '../utils/mapWarmup/mapPrepCache';
-import { prebuildPreparedVoxelMapGeometry } from '../utils/mapWarmup/mapGeometryWarmup';
+import { prebuildPreparedMapGeometryDeferred } from '../utils/mapWarmup/deferredMapGeometryWarmup';
 import { requestMapPreviewManifest } from '../utils/mapPreview/mapPreviewManifestClient';
 import { disconnectVoice } from '../voice/voiceControls';
 import { loggers } from '../utils/logger';
@@ -183,10 +183,6 @@ function waitForRetry(delayMs: number): Promise<void> {
   });
 }
 
-function shouldDeferSelectedMapWarmup(data: SelectedMapMessage): boolean {
-  return data.mapProfileId === 'battle_royal_large';
-}
-
 export function setupLobbyListeners(
   room: Room,
   { playerName, joinGameRoom, leaveLobby }: SetupLobbyListenersOptions
@@ -300,7 +296,6 @@ export function setupLobbyListeners(
     setMapSize(data.mapSize);
     useGameStore.getState().setMapProfileId(data.mapProfileId);
     setAppPhase('match_loading');
-    if (shouldDeferSelectedMapWarmup(data)) return;
 
     void requestMapPreviewManifest({
       seed: data.mapSeed,
@@ -314,7 +309,7 @@ export function setupLobbyListeners(
           manifest,
           cacheLabel
         );
-        prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 3, label: cacheLabel });
+        prebuildPreparedMapGeometryDeferred(preparedMap, { frameBudgetMs: 3, label: cacheLabel });
       })
       .catch((error) => {
         loggers.network.warn('selected map worker prep failed', error);

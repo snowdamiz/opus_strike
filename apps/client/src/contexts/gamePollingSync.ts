@@ -8,8 +8,8 @@ import {
 } from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
 import { loggers } from '../utils/logger';
-import { prebuildPreparedVoxelMapGeometry } from '../utils/mapWarmup/mapGeometryWarmup';
 import { seedMapPrepCacheFromManifest } from '../utils/mapWarmup/mapPrepCache';
+import { prebuildPreparedMapGeometryDeferred } from '../utils/mapWarmup/deferredMapGeometryWarmup';
 import { requestMapPreviewManifest } from '../utils/mapPreview/mapPreviewManifestClient';
 import { normalizeGamePhase } from './gamePhase';
 import type { GameStoreActions } from './gameMessageHandlers';
@@ -55,7 +55,7 @@ export function setupPollingSync(
       })
         .then((manifest) => {
           const preparedMap = seedMapPrepCacheFromManifest(room.state.mapSeed, manifest, 'match');
-          prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'fallback-poll' });
+          prebuildPreparedMapGeometryDeferred(preparedMap, { frameBudgetMs: 2, label: 'fallback-poll' });
         })
         .catch((error) => {
           loggers.network.warn('fallback poll map worker prep failed', error);

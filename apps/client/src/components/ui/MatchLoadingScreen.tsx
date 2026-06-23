@@ -3,15 +3,25 @@ import { LobbyBackdrop } from './LobbyBackdrop';
 
 export const MATCH_LOADING_INITIAL_PROGRESS = 8;
 const MATCH_LOADING_MAX_IN_PROGRESS = 99;
-const MATCH_LOADING_FAKE_TARGET_PROGRESS = 92;
+const MATCH_LOADING_FALLBACK_TARGET_PROGRESS = 92;
+
+interface MatchLoadingStage {
+  id: string;
+  label: string;
+  partialProgress?: number;
+  done: boolean;
+  detail?: string;
+}
 
 interface MatchLoadingScreenProps {
   isComplete?: boolean;
   progress?: number;
   label?: string;
+  fallbackProgressCap?: number;
   eyebrow?: string;
   title?: string;
   initialProgress?: number;
+  stages?: MatchLoadingStage[];
   onProgressChange?: (progress: number) => void;
 }
 
@@ -24,17 +34,21 @@ export function MatchLoadingScreen({
   isComplete = false,
   progress: coordinatorProgress,
   label = 'Systems',
+  fallbackProgressCap = MATCH_LOADING_FALLBACK_TARGET_PROGRESS,
   eyebrow = 'Match',
   title = 'LOADING ARENA',
   initialProgress = MATCH_LOADING_INITIAL_PROGRESS,
+  stages,
   onProgressChange,
 }: MatchLoadingScreenProps) {
   const [progress, setProgress] = useState(() => clampLoadingProgress(initialProgress));
+  const activeStage = stages?.find((stage) => !stage.done) ?? stages?.at(-1);
+  const statusLabel = activeStage?.detail ?? label;
   const targetProgress = isComplete
     ? 100
     : typeof coordinatorProgress === 'number'
       ? Math.min(MATCH_LOADING_MAX_IN_PROGRESS, clampLoadingProgress(coordinatorProgress * 100))
-      : MATCH_LOADING_FAKE_TARGET_PROGRESS;
+      : fallbackProgressCap;
 
   useEffect(() => {
     if (isComplete) {
@@ -94,6 +108,7 @@ export function MatchLoadingScreen({
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percent}
+            aria-valuetext={`${percent}% ${statusLabel}`}
           >
             <div
               className="absolute inset-y-0 left-0 rounded-md bg-gradient-to-r from-orange-500 via-amber-300 to-cyan-300 transition-[width] duration-200 ease-out"
@@ -107,9 +122,41 @@ export function MatchLoadingScreen({
 
           <div className="mt-4 flex items-center justify-between gap-4 font-body text-[11px] uppercase tracking-[0.26em] text-white/35">
             <span>World</span>
-            <span>{label}</span>
+            <span className="min-w-0 truncate text-center">{statusLabel}</span>
             <span>Spawn</span>
           </div>
+
+          {stages?.length ? (
+            <div className="mt-6 grid gap-2 sm:grid-cols-3">
+              {stages.map((stage) => {
+                const isActive = stage.id === activeStage?.id && !stage.done;
+                const stageProgress = stage.done
+                  ? 100
+                  : Math.round(Math.min(1, Math.max(0, stage.partialProgress ?? 0)) * 100);
+                return (
+                  <div
+                    key={stage.id}
+                    className={`border border-white/10 bg-black/35 px-3 py-2 ${isActive ? 'text-white' : 'text-white/40'}`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="min-w-0 truncate font-body text-[10px] uppercase tracking-[0.22em]">
+                        {stage.label}
+                      </span>
+                      <span className="shrink-0 font-mono text-[10px] tabular-nums">
+                        {stage.done ? 'OK' : `${stageProgress}%`}
+                      </span>
+                    </div>
+                    <div className="mt-2 h-1 overflow-hidden bg-white/10">
+                      <div
+                        className={`h-full ${stage.done ? 'bg-cyan-300' : isActive ? 'bg-orange-400' : 'bg-white/25'}`}
+                        style={{ width: `${stage.done ? 100 : stageProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       </main>
     </div>

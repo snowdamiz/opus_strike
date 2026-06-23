@@ -649,7 +649,6 @@ export interface LocalPlayerFrameContext {
   gamePhase: GameStoreSnapshot['gamePhase'];
   inputState: InputState;
   isPointerLocked: boolean;
-  isControlPressed: boolean;
   isTouchInputActive: boolean;
   bombTargeting: boolean;
   isPracticeMode: boolean;
@@ -1050,7 +1049,7 @@ export function runPredictionAndCommandPhase(input: {
   const reloadForServer = frameInput.reload ||
     refs.pendingReloadInputRef.current ||
     (phantomAutoReloadForServer && !serverCombatInput.primaryFire);
-  const crouchHeld = frameInput.crouch || ctx.isControlPressed;
+  const crouchHeld = frameInput.crouch;
   const crouchPressedThisFrame = crouchHeld && !refs.lastCrouchHeldRef.current;
   if (crouchPressedThisFrame) {
     refs.pendingCrouchPressedRef.current = true;
@@ -1883,7 +1882,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const isPracticeMode = useGameStore(state => state.isPracticeMode);
 
   // Input and network
-  const { inputState, isPointerLocked, isControlPressed, isTouchInputActive, requestPointerLock, exitPointerLock } = useInput();
+  const { inputState, isPointerLocked, isTouchInputActive, requestPointerLock, exitPointerLock } = useInput();
   usePhysics();
   const { sendMovementCommands } = useNetwork();
 
@@ -2285,7 +2284,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       gamePhase,
       inputState,
       isPointerLocked,
-      isControlPressed,
       isTouchInputActive,
       bombTargeting,
       isPracticeMode,
@@ -2361,7 +2359,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       frameCtx.gamePhase = gamePhase;
       frameCtx.inputState = inputState;
       frameCtx.isPointerLocked = isPointerLocked;
-      frameCtx.isControlPressed = isControlPressed;
       frameCtx.isTouchInputActive = isTouchInputActive;
       frameCtx.bombTargeting = bombTargeting;
       frameCtx.isPracticeMode = isPracticeMode;

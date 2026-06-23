@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import type { MapProfileId, VoxelMapSizeId, VoxelMapTheme } from '@voxel-strike/shared';
 import { useGameStore } from './store/gameStore';
 import { useSettingsStore } from './store/settingsStore';
 import { MainLobby } from './components/ui/MainLobby';
@@ -31,6 +32,8 @@ const MatchSummaryScreen = lazy(() => import('./components/ui/MatchSummaryScreen
 const PerfMonitorOverlay = lazy(() => import('./components/game/PerfMonitor').then((module) => ({ default: module.PerfMonitorOverlay })));
 const PREMATCH_COUNTDOWN_EFFECT_FADE_MS = 3000;
 const STARTUP_QUALITY_RAMP_MS = 1600;
+const MATCH_RESOURCE_WARMUP_IDLE_TIMEOUT_MS = 80;
+const BATTLE_ROYAL_PENDING_MAP_PROGRESS_CAP = 24;
 
 type CountdownEffectStyle = CSSProperties & {
   '--prematch-countdown-backdrop-opacity': string;
@@ -59,6 +62,43 @@ function isStartupQualityRampDisabled(): boolean {
   } catch {
     return false;
   }
+}
+
+function yieldForMatchResourceWarmup(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(() => resolve(), { timeout: MATCH_RESOURCE_WARMUP_IDLE_TIMEOUT_MS });
+      return;
+    }
+
+    window.setTimeout(resolve, 0);
+  });
+}
+
+async function prepareMatchMapWarmupResources(input: {
+  seed: number;
+  themeId?: VoxelMapTheme['id'] | null;
+  mapSize?: VoxelMapSizeId | null;
+  mapProfileId?: MapProfileId | null;
+  label: string;
+}): Promise<void> {
+  const [
+    { requestMapPreviewManifest },
+    { seedMapPrepCacheFromManifest },
+    { prebuildPreparedMapGeometryDeferred },
+  ] = await Promise.all([
+    import('./utils/mapPreview/mapPreviewManifestClient'),
+    import('./utils/mapWarmup/mapPrepCache'),
+    import('./utils/mapWarmup/deferredMapGeometryWarmup'),
+  ]);
+  const manifest = await requestMapPreviewManifest({
+    seed: input.seed,
+    themeId: input.themeId ?? null,
+    mapSize: input.mapSize,
+    mapProfileId: input.mapProfileId,
+  });
+  const preparedMap = seedMapPrepCacheFromManifest(input.seed, manifest, 'match');
+  prebuildPreparedMapGeometryDeferred(preparedMap, { frameBudgetMs: 2, label: input.label });
 }
 
 export function App() {
@@ -116,6 +156,10 @@ export function App() {
   const isBattleRoyalLoading = gameplayMode === 'battle_royal' || mapProfileId === 'battle_royal_large';
   const matchLoadingTitle = isBattleRoyalLoading ? 'GENERATING MAP' : 'LOADING ARENA';
   const matchLoadingEyebrow = isBattleRoyalLoading ? 'Battle Royal' : 'Match';
+  const matchWarmupStages = useMemo(
+    () => matchWarmupSnapshot ? Object.values(matchWarmupSnapshot.stages) : undefined,
+    [matchWarmupSnapshot]
+  );
 
   useEffect(() => {
     installLocalCombatStressScenario();
@@ -153,23 +197,37 @@ export function App() {
 
     let cancelled = false;
     setAreMatchResourcesReady(false);
+    const mapWarmupPromise = isBattleRoyalLoading
+      ? prepareMatchMapWarmupResources({
+        seed: mapSeed,
+        themeId: mapThemeId,
+        mapSize,
+        mapProfileId,
+        label: 'match-loading',
+      }).catch((error) => {
+        console.warn('[App] Match map warmup failed', error);
+      })
+      : Promise.resolve();
 
     (async () => {
       try {
-        const heroEffectWarmup = import('./components/game/effectPrewarm')
-          .then((prewarm) => prewarm.prewarmGameplayEffectResources());
-        const combatTextWarmup = import('./components/game/CombatText')
-          .then((combatText) => combatText.prewarmCombatTextTextures());
+        const soundGroups = ['commonCombat', 'phantom', 'blaze', 'hookshot', 'chronos'] as const;
+        for (const group of soundGroups) {
+          if (cancelled) return;
+          await preloadSoundGroup(group);
+          await yieldForMatchResourceWarmup();
+        }
 
-        await Promise.all([
-          preloadSoundGroup('commonCombat'),
-          preloadSoundGroup('phantom'),
-          preloadSoundGroup('blaze'),
-          preloadSoundGroup('hookshot'),
-          preloadSoundGroup('chronos'),
-          heroEffectWarmup,
-          combatTextWarmup,
-        ]);
+        if (cancelled) return;
+        const effectPrewarm = await import('./components/game/effectPrewarm');
+        await effectPrewarm.prewarmGameplayEffectResources();
+        await yieldForMatchResourceWarmup();
+
+        if (cancelled) return;
+        const combatText = await import('./components/game/CombatText');
+        combatText.prewarmCombatTextTextures();
+
+        await mapWarmupPromise;
       } catch (error) {
         console.warn('[App] Match resource preload failed', error);
       } finally {
@@ -182,7 +240,15 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [preloadSoundGroup, shouldPrepareMatchWorld]);
+  }, [
+    isBattleRoyalLoading,
+    mapProfileId,
+    mapSeed,
+    mapSize,
+    mapThemeId,
+    preloadSoundGroup,
+    shouldPrepareMatchWorld,
+  ]);
 
   // Manage background music based on game phase
   useEffect(() => {
@@ -459,7 +525,8 @@ export function App() {
         initialProgress={matchLoadingProgressRef.current}
         eyebrow={matchLoadingEyebrow}
         title={matchLoadingTitle}
-        label={isBattleRoyalLoading ? mapSize : 'Preparing'}
+        label={isBattleRoyalLoading ? 'Server Map' : 'Preparing'}
+        fallbackProgressCap={isBattleRoyalLoading ? BATTLE_ROYAL_PENDING_MAP_PROGRESS_CAP : undefined}
         onProgressChange={handleMatchLoadingProgressChange}
       />
     );
@@ -496,7 +563,9 @@ export function App() {
             progress={matchWarmupSnapshot?.progress}
             eyebrow={matchLoadingEyebrow}
             title={matchLoadingTitle}
-            label={matchWarmupSnapshot?.label}
+            label={matchWarmupSnapshot?.label ?? (isBattleRoyalLoading ? 'Client Map' : 'Preparing')}
+            fallbackProgressCap={isBattleRoyalLoading ? BATTLE_ROYAL_PENDING_MAP_PROGRESS_CAP : undefined}
+            stages={isBattleRoyalLoading ? matchWarmupStages : undefined}
             onProgressChange={handleMatchLoadingProgressChange}
           />
         )}

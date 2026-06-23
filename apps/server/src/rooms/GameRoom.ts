@@ -717,6 +717,12 @@ interface BotSteeringPathCacheEntry {
   collisionRevision: number;
 }
 
+interface DeferredTrackedMessage {
+  client: Client;
+  type: string;
+  payload: unknown;
+}
+
 interface MovementPhysicsFrameEntry {
   player: Player;
   authority: ServerMovementAuthorityState;
@@ -833,6 +839,8 @@ const DEV_COMMANDS_DISABLED_MESSAGE = 'Developer commands are disabled';
 const HOOKSHOT_SPEED = 38;
 const DRAG_HOOK_SPEED = 50;
 const DEFAULT_GAME_ROOM_SEAT_RESERVATION_SECONDS = 60;
+const MAX_CONSECUTIVE_TICK_ERRORS = 5;
+const TICK_ERROR_LOG_SAMPLE_MS = 1000;
 
 function readGameRoomSeatReservationSeconds(): number {
   const raw = process.env.GAME_ROOM_SEAT_RESERVATION_SECONDS
@@ -846,7 +854,12 @@ function readGameRoomSeatReservationSeconds(): number {
 export class GameRoom extends Room<GameState> {
   maxClients = DEFAULT_GAME_CONFIG.maxPlayers;
 
-  private tickInterval: ReturnType<typeof setInterval> | null = null;
+  private tickTimer: ReturnType<typeof setTimeout> | null = null;
+  private tickLoopActive = false;
+  private tickInProgress = false;
+  private nextTickAtMs = 0;
+  private consecutiveTickErrors = 0;
+  private lastTickErrorLoggedAtMs = 0;
   private matchStartCancelTimeout: ReturnType<typeof setTimeout> | null = null;
   private matchCancelDisconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private readonly roomTimeouts = new RoomTimeoutRegistry();
@@ -936,6 +949,10 @@ export class GameRoom extends Room<GameState> {
   private readonly botMovementLodEnemyHumanScratch: Player[] = [];
   private readonly botSimulationHumanScratch: Player[] = [];
   private readonly botSteeringPathCache = new Map<string, BotSteeringPathCacheEntry>();
+  private readonly deferredTrackedMessages: DeferredTrackedMessage[] = [];
+  private eventReplicationFrameContext: ReplicationFrameContext | null = null;
+  private eventReplicationFrameContextTick = -1;
+  private eventReplicationFrameContextNow = 0;
   private readonly movementStepPosition: PlainVec3 = { x: 0, y: 0, z: 0 };
   private readonly movementStepVelocity: PlainVec3 = { x: 0, y: 0, z: 0 };
   private readonly movementStepState: PlayerMovementState = {
@@ -1254,8 +1271,76 @@ export class GameRoom extends Room<GameState> {
   }
 
   private ensureTickLoopStarted(): void {
-    if (this.tickInterval) return;
-    this.tickInterval = setInterval(() => this.tick(), TICK_INTERVAL_MS);
+    if (this.tickLoopActive) return;
+    this.tickLoopActive = true;
+    this.nextTickAtMs = performance.now() + TICK_INTERVAL_MS;
+    this.scheduleNextTick(TICK_INTERVAL_MS);
+  }
+
+  private scheduleNextTick(delayMs: number): void {
+    if (!this.tickLoopActive) return;
+    this.tickTimer = setTimeout(() => this.runScheduledTick(), Math.max(0, delayMs));
+  }
+
+  private runScheduledTick(): void {
+    this.tickTimer = null;
+    if (!this.tickLoopActive) return;
+
+    if (this.tickInProgress) {
+      this.nextTickAtMs = performance.now() + TICK_INTERVAL_MS;
+      this.scheduleNextTick(TICK_INTERVAL_MS);
+      return;
+    }
+
+    const scheduledTickAtMs = this.nextTickAtMs || performance.now();
+    this.tickInProgress = true;
+    try {
+      this.tick();
+      this.consecutiveTickErrors = 0;
+    } catch (error) {
+      this.handleTickError(error);
+    } finally {
+      this.tickInProgress = false;
+      if (!this.tickLoopActive) return;
+
+      const finishedAtMs = performance.now();
+      const idealNextTickAtMs = scheduledTickAtMs + TICK_INTERVAL_MS;
+      this.nextTickAtMs = idealNextTickAtMs <= finishedAtMs
+        ? finishedAtMs + TICK_INTERVAL_MS
+        : idealNextTickAtMs;
+      this.scheduleNextTick(this.nextTickAtMs - finishedAtMs);
+    }
+  }
+
+  private stopTickLoop(): void {
+    this.tickLoopActive = false;
+    this.tickInProgress = false;
+    this.nextTickAtMs = 0;
+    if (!this.tickTimer) return;
+    clearTimeout(this.tickTimer);
+    this.tickTimer = null;
+  }
+
+  private handleTickError(error: unknown): void {
+    this.consecutiveTickErrors++;
+    const now = Date.now();
+    if (now - this.lastTickErrorLoggedAtMs >= TICK_ERROR_LOG_SAMPLE_MS) {
+      this.lastTickErrorLoggedAtMs = now;
+      loggers.room.error('Game room tick failed', {
+        roomId: this.roomId,
+        consecutiveTickErrors: this.consecutiveTickErrors,
+        error,
+      });
+    }
+
+    if (this.consecutiveTickErrors < MAX_CONSECUTIVE_TICK_ERRORS) return;
+
+    loggers.room.error('Game room stopped after repeated tick failures', {
+      roomId: this.roomId,
+      consecutiveTickErrors: this.consecutiveTickErrors,
+    });
+    this.stopTickLoop();
+    this.disconnect();
   }
 
   private registerCoreMessageHandlers(): void {
@@ -1585,10 +1670,7 @@ export class GameRoom extends Room<GameState> {
         void this.removeVoiceParticipantForPlayer(playerId, normalizeVoiceTeam(player.team), 'room_dispose');
       }
     });
-    if (this.tickInterval) {
-      clearInterval(this.tickInterval);
-      this.tickInterval = null;
-    }
+    this.stopTickLoop();
     this.blazeFlamethrowers.clearDamageTicks();
   }
 
@@ -1686,6 +1768,9 @@ export class GameRoom extends Room<GameState> {
   private tick() {
     const tickStartedAt = performance.now();
     this.tickProfiler.beginTick();
+    this.resetEventReplicationFrameContext();
+    this.discardDeferredTrackedMessages();
+    let tickCompleted = false;
     try {
       this.state.tick++;
       this.state.serverTime = Date.now();
@@ -1742,7 +1827,14 @@ export class GameRoom extends Room<GameState> {
           }
           break;
       }
+      tickCompleted = true;
     } finally {
+      if (tickCompleted) {
+        this.flushDeferredTrackedMessages();
+      } else {
+        this.discardDeferredTrackedMessages();
+      }
+      this.resetEventReplicationFrameContext();
       const tickDurationMs = performance.now() - tickStartedAt;
       this.tickProfiler.endTick(tickDurationMs);
       this.roomMetrics.recordTickDuration(tickDurationMs);
@@ -1855,7 +1947,9 @@ export class GameRoom extends Room<GameState> {
     });
 
     this.updateBattleRoyalSafeZone(now);
+    this.flushDeferredTrackedMessages();
     this.checkBattleRoyalWinCondition();
+    this.flushDeferredTrackedMessages();
 
     this.broadcastStateStreams();
   }
@@ -1932,6 +2026,25 @@ export class GameRoom extends Room<GameState> {
 
   private buildReplicationFrameContext(now = this.state.serverTime || Date.now()): ReplicationFrameContext {
     return this.replicationFrames.buildFrameContext(this.state.players, now);
+  }
+
+  private resetEventReplicationFrameContext(): void {
+    this.eventReplicationFrameContext = null;
+    this.eventReplicationFrameContextTick = -1;
+    this.eventReplicationFrameContextNow = 0;
+  }
+
+  private getEventReplicationFrameContext(now = this.state.serverTime || Date.now()): ReplicationFrameContext {
+    if (
+      !this.eventReplicationFrameContext ||
+      this.eventReplicationFrameContextTick !== this.state.tick ||
+      this.eventReplicationFrameContextNow !== now
+    ) {
+      this.eventReplicationFrameContext = this.buildReplicationFrameContext(now);
+      this.eventReplicationFrameContextTick = this.state.tick;
+      this.eventReplicationFrameContextNow = now;
+    }
+    return this.eventReplicationFrameContext;
   }
 
   private getRecipientInterest(
@@ -2242,6 +2355,26 @@ export class GameRoom extends Room<GameState> {
     client.send(type, payload);
   }
 
+  private sendTrackedAfterGameplayWork(client: Client, type: string, payload: unknown): void {
+    if (this.tickInProgress && this.state.phase === 'playing') {
+      this.deferredTrackedMessages.push({ client, type, payload });
+      return;
+    }
+    this.sendTracked(client, type, payload);
+  }
+
+  private flushDeferredTrackedMessages(): void {
+    if (this.deferredTrackedMessages.length === 0) return;
+    const messages = this.deferredTrackedMessages.splice(0);
+    for (const message of messages) {
+      this.sendTracked(message.client, message.type, message.payload);
+    }
+  }
+
+  private discardDeferredTrackedMessages(): void {
+    this.deferredTrackedMessages.length = 0;
+  }
+
   private broadcastTracked(type: string, payload: unknown): void {
     this.roomMetrics.recordCustomMessage(type, payload, this.clients.length);
     this.broadcast(type, payload);
@@ -2260,11 +2393,11 @@ export class GameRoom extends Room<GameState> {
 
   private broadcastExactPlayerEvent(type: string, player: Player, payload: Record<string, unknown>): void {
     const now = this.state.serverTime || Date.now();
-    const frameContext = this.buildReplicationFrameContext(now);
+    const frameContext = this.getEventReplicationFrameContext(now);
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
       if (!this.shouldSendExactEnemyState(recipient, player.id, player, now, undefined, frameContext)) continue;
-      this.sendTracked(client, type, payload);
+      this.sendTrackedAfterGameplayWork(client, type, payload);
     }
   }
 
@@ -2274,7 +2407,7 @@ export class GameRoom extends Room<GameState> {
     payload: PlayerDamagedEvent
   ): void {
     const now = this.state.serverTime || Date.now();
-    const frameContext = this.buildReplicationFrameContext(now);
+    const frameContext = this.getEventReplicationFrameContext(now);
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
       const canKnowTarget = this.shouldSendExactEnemyState(recipient, target.id, target, now, undefined, frameContext);
@@ -2289,7 +2422,7 @@ export class GameRoom extends Room<GameState> {
       });
 
       if (!eventPayload) continue;
-      this.sendTracked(client, 'playerDamaged', eventPayload);
+      this.sendTrackedAfterGameplayWork(client, 'playerDamaged', eventPayload);
     }
   }
 
@@ -2309,7 +2442,7 @@ export class GameRoom extends Room<GameState> {
     }
   ): void {
     const now = this.state.serverTime || Date.now();
-    const frameContext = this.buildReplicationFrameContext(now);
+    const frameContext = this.getEventReplicationFrameContext(now);
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
       const canKnowBlocker = this.shouldSendExactEnemyState(recipient, blocker.id, blocker, now, undefined, frameContext);
@@ -2324,7 +2457,7 @@ export class GameRoom extends Room<GameState> {
       });
 
       if (!eventPayload) continue;
-      this.sendTracked(client, 'chronosAegisDamaged', eventPayload);
+      this.sendTrackedAfterGameplayWork(client, 'chronosAegisDamaged', eventPayload);
     }
   }
 
@@ -2334,7 +2467,7 @@ export class GameRoom extends Room<GameState> {
     payload: PhantomShieldBrokenEvent
   ): void {
     const now = this.state.serverTime || Date.now();
-    const frameContext = this.buildReplicationFrameContext(now);
+    const frameContext = this.getEventReplicationFrameContext(now);
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
       const canKnowTarget = this.shouldSendExactEnemyState(recipient, target.id, target, now, undefined, frameContext);
@@ -2345,13 +2478,13 @@ export class GameRoom extends Room<GameState> {
       });
 
       if (!eventPayload) continue;
-      this.sendTracked(client, 'phantomShieldBroken', eventPayload);
+      this.sendTrackedAfterGameplayWork(client, 'phantomShieldBroken', eventPayload);
     }
   }
 
   private broadcastPlayerHealed(source: Player, payload: PlayerHealedEvent): void {
     const now = this.state.serverTime || Date.now();
-    const frameContext = this.buildReplicationFrameContext(now);
+    const frameContext = this.getEventReplicationFrameContext(now);
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
       if (!this.shouldSendExactEnemyState(recipient, source.id, source, now, undefined, frameContext)) continue;
@@ -2367,7 +2500,7 @@ export class GameRoom extends Room<GameState> {
 
       const eventPayload = buildPlayerHealedPayload(payload, visibleTargetIds);
       if (!eventPayload) continue;
-      this.sendTracked(client, 'playerHealed', eventPayload);
+      this.sendTrackedAfterGameplayWork(client, 'playerHealed', eventPayload);
     }
   }
 
@@ -2376,18 +2509,19 @@ export class GameRoom extends Room<GameState> {
     payload: PowerupCollectedMessage
   ): void {
     const now = this.state.serverTime || Date.now();
-    const frameContext = this.buildReplicationFrameContext(now);
+    const frameContext = this.getEventReplicationFrameContext(now);
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
       const canKnowCollector = this.shouldSendExactEnemyState(recipient, collector.id, collector, now, undefined, frameContext);
-      this.sendTracked(client, 'powerupCollected', buildPowerupCollectedPayload(payload, canKnowCollector));
+      this.sendTrackedAfterGameplayWork(client, 'powerupCollected', buildPowerupCollectedPayload(payload, canKnowCollector));
     }
   }
 
   private broadcastPlayerKilled(victim: Player, killer: Player | null, payload: PlayerDeathEvent): void {
     const now = this.state.serverTime || Date.now();
     const exactPosition = payload.position;
-    const frameContext = this.buildReplicationFrameContext(now);
+    this.resetEventReplicationFrameContext();
+    const frameContext = this.getEventReplicationFrameContext(now);
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
       const canKnowVictim = this.shouldSendExactEnemyState(recipient, victim.id, victim, now, undefined, frameContext);
@@ -2396,7 +2530,7 @@ export class GameRoom extends Room<GameState> {
         : true;
       const isParticipant = recipient?.id === victim.id || (killer && recipient?.id === killer.id);
 
-      this.sendTracked(client, 'playerKilled', buildPlayerKilledPayload(payload, {
+      this.sendTrackedAfterGameplayWork(client, 'playerKilled', buildPlayerKilledPayload(payload, {
         isParticipant: Boolean(isParticipant),
         canKnowTarget: canKnowVictim,
         canKnowSource: canKnowKiller,
@@ -6777,15 +6911,28 @@ export class GameRoom extends Room<GameState> {
       z: start.z + normalized.z * distance,
     };
     const clear = sweepCapsulePathClear(this.getMovementCollisionWorld(now), start, end, PLAYER_HEIGHT, PLAYER_RADIUS);
-    if (this.botSteeringPathCache.size >= BOT_STEERING_PATH_CACHE_MAX_ENTRIES) {
-      this.botSteeringPathCache.clear();
-    }
+    this.pruneBotSteeringPathCache(now);
     this.botSteeringPathCache.set(cacheKey, {
       clear,
       expiresAt: now + BOT_STEERING_PATH_CACHE_TTL_MS,
       collisionRevision,
     });
     return clear;
+  }
+
+  private pruneBotSteeringPathCache(now: number): void {
+    if (this.botSteeringPathCache.size < BOT_STEERING_PATH_CACHE_MAX_ENTRIES) return;
+
+    for (const [key, cached] of this.botSteeringPathCache) {
+      if (cached.expiresAt <= now) this.botSteeringPathCache.delete(key);
+    }
+    if (this.botSteeringPathCache.size < BOT_STEERING_PATH_CACHE_MAX_ENTRIES) return;
+
+    const targetSize = Math.floor(BOT_STEERING_PATH_CACHE_MAX_ENTRIES * 0.88);
+    for (const key of this.botSteeringPathCache.keys()) {
+      this.botSteeringPathCache.delete(key);
+      if (this.botSteeringPathCache.size <= targetSize) break;
+    }
   }
 
   private getBotSteeringPathCacheKey(
@@ -7231,10 +7378,12 @@ export class GameRoom extends Room<GameState> {
 
   private hasLineOfSight(start: PlainVec3, end: PlainVec3): boolean {
     const now = this.state.serverTime || Date.now();
+    const collisionRevision = this.getMovementCollisionRevision(now);
     return this.lineOfSightCache.hasLineOfSight(
       start,
       end,
       now,
+      collisionRevision,
       (samplePoint) => isCollisionBlock(this.getBlockAtWorld(samplePoint))
     );
   }
@@ -7771,9 +7920,6 @@ export class GameRoom extends Room<GameState> {
 
   private bumpMovementCollisionRevision(options: { forceTransformSync?: boolean } = {}): void {
     this.mapRuntime.bumpMovementCollisionRevision();
-    this.botSteeringPathCache.clear();
-    this.lineOfSightCache.clear();
-    this.visibilityInterest.clearLineOfSightCache();
     if (options.forceTransformSync !== false) {
       this.forceTransformFullSync();
     }
@@ -8627,12 +8773,12 @@ export class GameRoom extends Room<GameState> {
     this.blazeBurns.update(now, {
       isTargetAlive: (targetId) => this.state.players.get(targetId)?.state === 'alive',
       hasSource: (sourceId) => this.state.players.has(sourceId),
-      applyTick: ({ targetId, sourceId, sourcePosition, sourceDirection }) => {
+      applyTick: ({ targetId, sourceId, sourcePosition, sourceDirection, tickCount }) => {
         const target = this.state.players.get(targetId);
         if (!target || target.state !== 'alive') return false;
         const killed = this.applyDamage(
           target,
-          BLAZE_FLAMETHROWER_BURN_DAMAGE,
+          BLAZE_FLAMETHROWER_BURN_DAMAGE * Math.max(1, tickCount),
           sourceId,
           'burn',
           {

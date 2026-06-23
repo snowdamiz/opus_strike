@@ -21,7 +21,9 @@ export interface MapWarmupStageSnapshot {
   id: MapWarmupStageId;
   label: string;
   progress: number;
+  partialProgress: number;
   done: boolean;
+  detail?: string;
   durationMs?: number;
 }
 
@@ -41,6 +43,7 @@ export interface MapWarmupSnapshot {
 
 export type MapWarmupEvent =
   | { type: 'startCpu'; key: string; mapSeed: number }
+  | { type: 'stageProgress'; stage: MapWarmupStageId; progress: number; detail?: string }
   | { type: 'stageDone'; stage: MapWarmupStageId; durationMs?: number }
   | { type: 'startGpu' }
   | { type: 'gpuReady' }
@@ -48,23 +51,23 @@ export type MapWarmupEvent =
   | { type: 'fallback'; reason: string }
   | { type: 'reset'; key: string; mapSeed: number };
 
-const STAGE_DEFS: Array<Omit<MapWarmupStageSnapshot, 'done' | 'durationMs'>> = [
-  { id: 'resources', label: 'Resources', progress: 0.16 },
-  { id: 'map', label: 'Map', progress: 0.3 },
-  { id: 'colliders', label: 'Colliders', progress: 0.42 },
-  { id: 'meshes', label: 'Meshes', progress: 0.6 },
-  { id: 'textures', label: 'Textures', progress: 0.7 },
-  { id: 'shaders', label: 'Shaders', progress: 0.8 },
-  { id: 'shadowsReflections', label: 'Shadows', progress: 0.86 },
-  { id: 'gameplayObjects', label: 'Gameplay Objects', progress: 0.9 },
-  { id: 'settling', label: 'Settling', progress: 0.96 },
+const STAGE_DEFS: Array<Omit<MapWarmupStageSnapshot, 'done' | 'durationMs' | 'partialProgress' | 'detail'>> = [
+  { id: 'resources', label: 'Resources', progress: 0.1 },
+  { id: 'map', label: 'Map', progress: 0.22 },
+  { id: 'colliders', label: 'Colliders', progress: 0.36 },
+  { id: 'meshes', label: 'Terrain Meshes', progress: 0.68 },
+  { id: 'textures', label: 'Textures', progress: 0.76 },
+  { id: 'shaders', label: 'Shaders', progress: 0.84 },
+  { id: 'shadowsReflections', label: 'Lighting', progress: 0.9 },
+  { id: 'gameplayObjects', label: 'Gameplay Objects', progress: 0.94 },
+  { id: 'settling', label: 'Settling', progress: 0.98 },
 ];
 
 const SETTLING_FRAMES_REQUIRED = 2;
 
 function createStages(): Record<MapWarmupStageId, MapWarmupStageSnapshot> {
   return Object.fromEntries(
-    STAGE_DEFS.map((stage) => [stage.id, { ...stage, done: false }])
+    STAGE_DEFS.map((stage) => [stage.id, { ...stage, partialProgress: 0, done: false }])
   ) as Record<MapWarmupStageId, MapWarmupStageSnapshot>;
 }
 
@@ -104,6 +107,7 @@ function applyStageDone(
   const currentStage = snapshot.stages[stage];
   const nextStage = {
     ...currentStage,
+    partialProgress: 1,
     done: true,
     durationMs,
   };
@@ -120,6 +124,55 @@ function applyStageDone(
     stages,
     progress: normalizeProgress(nextProgress),
     label: nextLabel,
+  });
+}
+
+function getStageProgressRange(stage: MapWarmupStageId): { start: number; end: number } {
+  const stageIndex = STAGE_DEFS.findIndex((candidate) => candidate.id === stage);
+  if (stageIndex <= 0) return { start: 0, end: STAGE_DEFS[0]?.progress ?? 0 };
+  return {
+    start: STAGE_DEFS[stageIndex - 1]?.progress ?? 0,
+    end: STAGE_DEFS[stageIndex]?.progress ?? 0,
+  };
+}
+
+function applyStageProgress(
+  snapshot: MapWarmupSnapshot,
+  stage: MapWarmupStageId,
+  progress: number,
+  detail?: string
+): MapWarmupSnapshot {
+  const currentStage = snapshot.stages[stage];
+  if (!currentStage || currentStage.done) return snapshot;
+
+  const partialProgress = normalizeProgress(progress);
+  if (
+    partialProgress <= currentStage.partialProgress &&
+    (!detail || detail === currentStage.detail)
+  ) {
+    return snapshot;
+  }
+
+  const nextStage = {
+    ...currentStage,
+    partialProgress: Math.max(currentStage.partialProgress, partialProgress),
+    detail: detail ?? currentStage.detail,
+  };
+  const stages = {
+    ...snapshot.stages,
+    [stage]: nextStage,
+  };
+  const { start, end } = getStageProgressRange(stage);
+  const nextProgress = Math.max(
+    snapshot.progress,
+    start + (end - start) * nextStage.partialProgress
+  );
+
+  return withBooleans({
+    ...snapshot,
+    stages,
+    progress: normalizeProgress(nextProgress),
+    label: nextStage.label,
   });
 }
 
@@ -142,6 +195,9 @@ export function reduceMapWarmup(
     case 'stageDone':
       return applyStageDone(snapshot, event.stage, event.durationMs);
 
+    case 'stageProgress':
+      return applyStageProgress(snapshot, event.stage, event.progress, event.detail);
+
     case 'startGpu':
       return withBooleans({
         ...snapshot,
@@ -154,7 +210,7 @@ export function reduceMapWarmup(
       return withBooleans({
         ...snapshot,
         state: 'settling',
-        progress: Math.max(snapshot.progress, 0.92),
+        progress: Math.max(snapshot.progress, 0.94),
         label: 'Settling',
         settlingFrames: 0,
       });
