@@ -719,7 +719,7 @@ function runBenchmarks(): BenchmarkSummary[] {
       visibleFighters: REPORTED_CLUSTER_VISIBLE_FIGHTERS,
       resourceScope: 'allAlive',
       cardinalityBudget: {
-        maxMountedInstancedMeshes: 240,
+        maxMountedInstancedMeshes: 170,
         maxEmptyMountedInstancedMeshes: 0,
       },
     }),
@@ -729,7 +729,7 @@ function runBenchmarks(): BenchmarkSummary[] {
       visibleFighters: REPORTED_CLUSTER_VISIBLE_FIGHTERS,
       resourceScope: 'visibleOnly',
       cardinalityBudget: {
-        maxMountedInstancedMeshes: 240,
+        maxMountedInstancedMeshes: 170,
         maxEmptyMountedInstancedMeshes: 0,
       },
     }),
@@ -739,18 +739,18 @@ function runBenchmarks(): BenchmarkSummary[] {
       visibleFighters: DENSE_VISIBLE_FIGHTERS,
       resourceScope: 'allAlive',
       cardinalityBudget: {
-        maxMountedInstancedMeshes: 640,
+        maxMountedInstancedMeshes: 440,
         maxEmptyMountedInstancedMeshes: 0,
       },
     }),
     runRemoteHeroBatchScenario({
-      name: 'br_canvas_remote_hero_batch_cpu_competitive_team_silhouettes',
+      name: 'br_canvas_remote_hero_batch_cpu_competitive_no_silhouettes',
       playerCount: BR_FULL_ROSTER_PLAYER_COUNT,
       visibleFighters: REPORTED_CLUSTER_VISIBLE_FIGHTERS,
       resourceScope: 'visibleOnly',
       qualityProfile: 'competitive',
       cardinalityBudget: {
-        maxMountedInstancedMeshes: 240,
+        maxMountedInstancedMeshes: 170,
         maxEmptyMountedInstancedMeshes: 0,
       },
     }),

@@ -76,12 +76,12 @@ function makePlayer({
   };
 }
 
-function runSinglePlayerFrame(player: Player, localPlayerTeam: Team) {
+function runSinglePlayerFrame(player: Player, localPlayerTeam: Team, isBattleRoyal = false) {
   clearVisualState();
   const runner = createRemoteHeroBatchBenchmarkRunner({
     players: [player],
     resourcePlayers: [player],
-    isBattleRoyal: false,
+    isBattleRoyal,
     localPlayerId: 'local-player',
     localPlayerTeam,
     config: OUTLINES_DISABLED_CONFIG,
@@ -100,12 +100,12 @@ function runSinglePlayerFrame(player: Player, localPlayerTeam: Team) {
   }
 }
 
-function runMultiPlayerFrame(players: readonly Player[], localPlayerTeam: Team) {
+function runMultiPlayerFrame(players: readonly Player[], localPlayerTeam: Team, isBattleRoyal = false) {
   clearVisualState();
   const runner = createRemoteHeroBatchBenchmarkRunner({
     players,
     resourcePlayers: players,
-    isBattleRoyal: false,
+    isBattleRoyal,
     localPlayerId: 'local-player',
     localPlayerTeam,
     config: OUTLINES_DISABLED_CONFIG,
@@ -135,7 +135,13 @@ assert.equal(teammateStats.bodyPlayers, 0, 'far teammate body should remain LOD 
 assert.equal(teammateStats.outlinePlayers, 1, 'far teammate should still render a team-color outline');
 assert.equal(teammateStats.normalMatrixWrites, 0, 'outline path should not force full body matrices');
 assert.ok(teammateStats.outlineMatrixWrites > 0, 'teammate outline should write outline matrices');
-assert.ok(teammateStats.outlineBatches > 0, 'teammate outline should mount outline batches with outlines disabled');
+assert.ok(teammateStats.outlineBatches > 0, 'non-BR teammate outline should mount outline batches');
+
+const battleRoyalTeammateStats = runSinglePlayerFrame(farTeammate, 'red', true);
+assert.equal(battleRoyalTeammateStats.bodyPlayers, 0, 'far BR teammate body should remain LOD culled');
+assert.equal(battleRoyalTeammateStats.outlinePlayers, 0, 'BR teammate silhouettes should be disabled');
+assert.equal(battleRoyalTeammateStats.outlineMatrixWrites, 0, 'BR teammate should not write outline matrices');
+assert.equal(battleRoyalTeammateStats.outlineBatches, 0, 'BR teammate should not mount outline batches');
 
 const hiddenNearbyTeammate = makePlayer({
   id: 'hidden-nearby-teammate',
@@ -158,7 +164,13 @@ const enemyStats = runSinglePlayerFrame(farEnemy, 'red');
 assert.equal(enemyStats.bodyPlayers, 0, 'far enemy body should remain LOD culled');
 assert.equal(enemyStats.outlinePlayers, 1, 'visible enemy should render its own team-color outline');
 assert.ok(enemyStats.outlineMatrixWrites > 0, 'visible enemy outline should write outline matrices');
-assert.ok(enemyStats.outlineBatches > 0, 'visible enemy should mount outline batches with generic outlines disabled');
+assert.ok(enemyStats.outlineBatches > 0, 'non-BR visible enemy should mount outline batches');
+
+const battleRoyalEnemyStats = runSinglePlayerFrame(farEnemy, 'red', true);
+assert.equal(battleRoyalEnemyStats.bodyPlayers, 0, 'far BR enemy body should remain LOD culled');
+assert.equal(battleRoyalEnemyStats.outlinePlayers, 0, 'BR enemy silhouettes should be disabled');
+assert.equal(battleRoyalEnemyStats.outlineMatrixWrites, 0, 'BR enemy should not write outline matrices');
+assert.equal(battleRoyalEnemyStats.outlineBatches, 0, 'BR enemy should not mount outline batches');
 
 const hiddenEnemy = makePlayer({
   id: 'hidden-enemy',

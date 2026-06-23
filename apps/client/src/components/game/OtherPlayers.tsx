@@ -108,7 +108,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
   }, [gamePhase, isBattleRoyal, localPlayerId, playerId, players, showFirstPersonDropBody, showLocalPlayerBody]);
 
   useEffect(() => {
-    if (!config.showNameplates) return;
+    if (!isBattleRoyal && !config.showNameplates) return;
     for (const player of otherPlayers) {
       if (player.id === playerId || player.id === localPlayerId) continue;
       if (!shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam)) continue;
@@ -135,13 +135,14 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
         const showNameplate = player.id !== playerId
           && player.id !== localPlayerId
           && shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam);
-        return shouldRenderRemotePlayerFallback(player, config, showNameplate) ? (
+        const showFlagIndicator = !isBattleRoyal && player.hasFlag;
+        return shouldRenderRemotePlayerFallback(player, showNameplate, showFlagIndicator) ? (
           <OtherPlayer
             key={player.id}
             player={player}
             localPlayerId={showLocalPlayerBody ? (localPlayerId ?? playerId) : null}
-            config={config}
             showNameplate={showNameplate}
+            showFlagIndicator={showFlagIndicator}
           />
         ) : null;
       })}
@@ -152,8 +153,8 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
 interface OtherPlayerProps {
   player: Player;
   localPlayerId?: string | null;
-  config: RemotePlayerQualityConfig;
   showNameplate: boolean;
+  showFlagIndicator: boolean;
 }
 
 const NETWORK_MOVING_SPEED = 0.45;
@@ -257,16 +258,17 @@ function shouldShowRemoteNameplate(
   isBattleRoyal: boolean,
   localPlayerTeam: Team | null
 ): boolean {
+  if (isBattleRoyal) return player.team === localPlayerTeam;
   if (!config.showNameplates) return false;
-  return !isBattleRoyal || player.team === localPlayerTeam;
+  return true;
 }
 
 function shouldRenderRemotePlayerFallback(
   player: Player,
-  config: RemotePlayerQualityConfig,
-  showNameplate: boolean
+  showNameplate: boolean,
+  showFlagIndicator: boolean
 ): boolean {
-  return hasActivePhantomVeil(player) || player.hasFlag || showNameplate;
+  return hasActivePhantomVeil(player) || showFlagIndicator || showNameplate;
 }
 
 function getPlayerRenderMovement(
@@ -276,7 +278,12 @@ function getPlayerRenderMovement(
   return player.id === localPlayerId ? visualStore.getState().localMovement : player.movement;
 }
 
-const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, showNameplate }: OtherPlayerProps) {
+const OtherPlayer = memo(function OtherPlayer({
+  player,
+  localPlayerId,
+  showNameplate,
+  showFlagIndicator,
+}: OtherPlayerProps) {
   const groupRef = useRef<THREE.Group>(null);
   const [isVeiled, setIsVeiled] = useState(() => hasActivePhantomVeil(player));
   const playerHeight = getPlayerHeight(player.heroId);
@@ -517,7 +524,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
       )}
 
       {/* Flag indicator */}
-      {player.hasFlag && (
+      {showFlagIndicator && (
         <FlagCarrierIndicator team={player.team === 'red' ? 'blue' : 'red'} />
       )}
     </group>

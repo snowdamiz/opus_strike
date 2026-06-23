@@ -1368,7 +1368,7 @@ export function GameCanvas({
       gl={{ 
         antialias: canvasAntialiasRef.current,
         powerPreference: 'high-performance',
-        stencil: true,
+        stencil: !isBattleRoyal,
       }}
       onCreated={({ gl }) => {
         suppressExpectedContextLossLog(gl);

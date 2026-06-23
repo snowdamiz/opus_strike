@@ -121,7 +121,6 @@ interface RemotePartDescriptor {
   paletteKind?: MaterialKind;
   trimEmissiveIntensity?: number;
   fixedEmissiveIntensity?: number;
-  battleRoyalLocalMatrix?: THREE.Matrix4;
 }
 
 interface RemotePartBatch {
@@ -141,7 +140,6 @@ interface RemoteOutlineBatch {
   capacityPerPlayer: number;
   playerFilter: PlayerFilter;
   opacity: number;
-  battleRoyalOpacity: number;
   renderOrder: number;
 }
 
@@ -273,15 +271,9 @@ const WORLD_UNIT_SCALE = new THREE.Vector3(1, 1, 1);
 const REMOTE_BATCH_PREWARM_PLAYER_CAPACITY = 4;
 const REMOTE_BATCH_CAPACITY_GROWTH_PADDING = 2;
 const BATTLE_ROYAL_MAX_REMOTE_FULL_BODY_DISTANCE = 88;
-const BATTLE_ROYAL_MAX_REMOTE_OUTLINE_DISTANCE = 112;
 const BATTLE_ROYAL_REMOTE_ACTIVITY_BODY_DISTANCE = 96;
-const BATTLE_ROYAL_REMOTE_ACTIVITY_OUTLINE_DISTANCE = 128;
-const BATTLE_ROYAL_TEAM_SILHOUETTE_OUTLINE_SCALE = 1.28;
-const BATTLE_ROYAL_TEAM_SILHOUETTE_OUTLINE_OPACITY = 1;
 const TEAM_SILHOUETTE_GLOW_OUTLINE_SCALE = 1.24;
 const TEAM_SILHOUETTE_GLOW_OUTLINE_OPACITY = 0.82;
-const BATTLE_ROYAL_TEAM_SILHOUETTE_GLOW_SCALE = 1.62;
-const BATTLE_ROYAL_TEAM_SILHOUETTE_GLOW_OPACITY = 0.95;
 const REMOTE_HERO_SILHOUETTE_STENCIL_REF = 5;
 const CHRONOS_ASCENDANT_CAPE_STRIPS = 5;
 const CHRONOS_ASCENDANT_CAPE_SEGMENTS = 4;
@@ -300,9 +292,7 @@ const TEAM_SILHOUETTE_GLOW_WHITE_LIFT = 0.05;
 interface RemoteOutlinePassConfig {
   id: 'glow' | 'core';
   outlineScale: number;
-  battleRoyalOutlineScale: number;
   opacity: number;
-  battleRoyalOpacity: number;
   whiteLift: number;
   blending: THREE.Blending;
   renderOrder: number;
@@ -312,9 +302,7 @@ const REMOTE_OUTLINE_PASSES: readonly RemoteOutlinePassConfig[] = [
   {
     id: 'glow',
     outlineScale: TEAM_SILHOUETTE_GLOW_OUTLINE_SCALE,
-    battleRoyalOutlineScale: BATTLE_ROYAL_TEAM_SILHOUETTE_GLOW_SCALE,
     opacity: TEAM_SILHOUETTE_GLOW_OUTLINE_OPACITY,
-    battleRoyalOpacity: BATTLE_ROYAL_TEAM_SILHOUETTE_GLOW_OPACITY,
     whiteLift: TEAM_SILHOUETTE_GLOW_WHITE_LIFT,
     blending: THREE.AdditiveBlending,
     renderOrder: 1,
@@ -322,15 +310,12 @@ const REMOTE_OUTLINE_PASSES: readonly RemoteOutlinePassConfig[] = [
   {
     id: 'core',
     outlineScale: TEAM_BODY_GLOW_OUTLINE_SCALE,
-    battleRoyalOutlineScale: BATTLE_ROYAL_TEAM_SILHOUETTE_OUTLINE_SCALE,
     opacity: TEAM_BODY_GLOW_OUTLINE_OPACITY,
-    battleRoyalOpacity: BATTLE_ROYAL_TEAM_SILHOUETTE_OUTLINE_OPACITY,
     whiteLift: TEAM_SILHOUETTE_WHITE_LIFT,
     blending: THREE.NormalBlending,
     renderOrder: 2,
   },
 ] as const;
-
 function isHeroId(value: string | null | undefined): value is HeroId {
   return Boolean(value && HERO_BODY_MANIFESTS[value as HeroId]);
 }
@@ -343,7 +328,7 @@ function getRemoteHeroResourceKey(player: Player): string {
   return `${resolveHeroId(player)}:${player.team as Team}`;
 }
 
-function createRemoteBatchResourcesForKey(key: string): RemoteBatchResources {
+function createRemoteBatchResourcesForKey(key: string, includeOutlines: boolean): RemoteBatchResources {
   const separatorIndex = key.indexOf(':');
   if (separatorIndex <= 0) {
     throw new Error(`Invalid remote hero resource key: ${key}`);
@@ -351,17 +336,19 @@ function createRemoteBatchResourcesForKey(key: string): RemoteBatchResources {
   const heroId = key.slice(0, separatorIndex) as HeroId;
   const team = key.slice(separatorIndex + 1) as Team;
   recordFrameAllocation('remoteHeroBatch.resourceCreated');
-  return createRemoteBatchResources(heroId, team);
+  return createRemoteBatchResources(heroId, team, includeOutlines);
 }
 
 function getCachedRemoteBatchResources(
   cache: Map<string, RemoteBatchResources>,
-  key: string
+  key: string,
+  includeOutlines: boolean
 ): RemoteBatchResources {
-  let resource = cache.get(key);
+  const cacheKey = `${key}:${includeOutlines ? 'outline' : 'body'}`;
+  let resource = cache.get(cacheKey);
   if (!resource) {
-    resource = createRemoteBatchResourcesForKey(key);
-    cache.set(key, resource);
+    resource = createRemoteBatchResourcesForKey(key, includeOutlines);
+    cache.set(cacheKey, resource);
   }
   return resource;
 }
@@ -369,7 +356,8 @@ function getCachedRemoteBatchResources(
 function buildRemoteHeroRenderGroups(
   players: readonly Player[],
   resourcePlayers: readonly Player[],
-  cache: Map<string, RemoteBatchResources>
+  cache: Map<string, RemoteBatchResources>,
+  includeOutlines = true
 ): RemoteHeroRenderGroup[] {
   const playerGroupsByKey = new Map<string, Player[]>();
   const resourcePlayerCountsByKey = new Map<string, number>();
@@ -408,7 +396,7 @@ function buildRemoteHeroRenderGroups(
       key,
       players: groupPlayers,
       resourcePlayerCount: Math.max(resourcePlayerCountsByKey.get(key) ?? 0, groupPlayers.length),
-      resource: getCachedRemoteBatchResources(cache, key),
+      resource: getCachedRemoteBatchResources(cache, key, includeOutlines),
     });
   }
   return groups;
@@ -633,6 +621,24 @@ function configureRemoteBodyStencilWrite(material: THREE.Material): void {
   material.stencilZPass = THREE.ReplaceStencilOp;
 }
 
+function resetRemoteBodyStencilWrite(material: THREE.Material): void {
+  material.stencilWrite = false;
+  material.stencilRef = 0;
+  material.stencilFunc = THREE.AlwaysStencilFunc;
+  material.stencilFail = THREE.KeepStencilOp;
+  material.stencilZFail = THREE.KeepStencilOp;
+  material.stencilZPass = THREE.KeepStencilOp;
+}
+
+function setRemoteBodyStencilWriteEnabled(material: THREE.Material, enabled: boolean): void {
+  if (enabled) {
+    configureRemoteBodyStencilWrite(material);
+  } else {
+    resetRemoteBodyStencilWrite(material);
+  }
+  material.needsUpdate = true;
+}
+
 function configureRemoteOutlineStencilMask(material: THREE.Material): void {
   material.stencilWrite = false;
   material.stencilRef = REMOTE_HERO_SILHOUETTE_STENCIL_REF;
@@ -683,23 +689,13 @@ function getOutlineScale(
 
 function createOutlineDescriptor(
   descriptor: RemotePartDescriptor,
-  outlineScale = TEAM_BODY_GLOW_OUTLINE_SCALE,
-  battleRoyalOutlineScale = BATTLE_ROYAL_TEAM_SILHOUETTE_OUTLINE_SCALE
+  outlineScale = TEAM_BODY_GLOW_OUTLINE_SCALE
 ): RemotePartDescriptor {
   const scale = getOutlineScale(descriptor.scale, outlineScale);
-  const battleRoyalScale = getOutlineScale(
-    descriptor.scale,
-    battleRoyalOutlineScale
-  );
   return {
     ...descriptor,
     scale,
     localMatrix: createPartLocalMatrix(descriptor.meshOffset, scale, descriptor.rotation),
-    battleRoyalLocalMatrix: createPartLocalMatrix(
-      descriptor.meshOffset,
-      battleRoyalScale,
-      descriptor.rotation
-    ),
   };
 }
 
@@ -1411,7 +1407,7 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
     config,
   } = options;
   const resourceCache = new Map<string, RemoteBatchResources>();
-  const groups = buildRemoteHeroRenderGroups(players, resourcePlayers, resourceCache);
+  const groups = buildRemoteHeroRenderGroups(players, resourcePlayers, resourceCache, !isBattleRoyal);
   const groupCounters = groups.map((group) => ({
     normal: new Uint32Array(group.resource.batches.length),
     outline: new Uint32Array(group.resource.outlineBatches.length),
@@ -1441,17 +1437,12 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
   const fullBodyDistance = isBattleRoyal
     ? getBattleRoyalDistanceCap(config.fullBodyDistance, BATTLE_ROYAL_MAX_REMOTE_FULL_BODY_DISTANCE)
     : config.fullBodyDistance;
-  const outlineDistance = config.outlineDistance > 0 && isBattleRoyal
-    ? getBattleRoyalDistanceCap(config.outlineDistance, BATTLE_ROYAL_MAX_REMOTE_OUTLINE_DISTANCE)
-    : config.outlineDistance;
+  const outlineDistance = isBattleRoyal ? 0 : config.outlineDistance;
   const shouldRenderDistanceOutlines = outlineDistance > 0;
   const fullBodyDistanceSq = getDistanceLimitSq(fullBodyDistance);
   const outlineDistanceSq = shouldRenderDistanceOutlines ? getDistanceLimitSq(outlineDistance) : 0;
   const activityBodyDistanceSq = isBattleRoyal
     ? getDistanceLimitSq(BATTLE_ROYAL_REMOTE_ACTIVITY_BODY_DISTANCE)
-    : Number.POSITIVE_INFINITY;
-  const activityOutlineDistanceSq = isBattleRoyal
-    ? getDistanceLimitSq(BATTLE_ROYAL_REMOTE_ACTIVITY_OUTLINE_DISTANCE)
     : Number.POSITIVE_INFINITY;
   let disposed = false;
 
@@ -1489,16 +1480,17 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
         const group = groups[groupIndex];
         if (!group) continue;
         const { resource } = group;
+        const outlineBatches = resource.outlineBatches;
         const capeBatchCount = resource.heroId === 'chronos' ? 1 : 0;
         const counters = groupCounters[groupIndex];
         counters?.normal.fill(0);
         counters?.outline.fill(0);
         stats.normalBatches += resource.batches.length;
-        stats.outlineBatches += resource.outlineBatches.length;
-        stats.mountedInstancedMeshes += resource.batches.length + resource.outlineBatches.length + capeBatchCount;
+        stats.outlineBatches += outlineBatches.length;
+        stats.mountedInstancedMeshes += resource.batches.length + outlineBatches.length + capeBatchCount;
         if (group.players.length === 0) {
           stats.emptyGroups++;
-          stats.emptyMountedInstancedMeshes += resource.batches.length + resource.outlineBatches.length + capeBatchCount;
+          stats.emptyMountedInstancedMeshes += resource.batches.length + outlineBatches.length + capeBatchCount;
         }
 
         for (const player of group.players) {
@@ -1518,7 +1510,7 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
           const isActivityPriority = isActivityPriorityRemoteBody(player, visualState, nowMs);
           const playerIsVeiled = hasActivePhantomVeil(player);
           const playerHasHiddenRenderState = hasHiddenRemoteRenderState(player);
-          const renderTeamOutline = shouldRenderTeamOutlineForPlayer(
+          const renderTeamOutline = !isBattleRoyal && shouldRenderTeamOutlineForPlayer(
             player,
             localPlayerId,
             playerIsVeiled,
@@ -1541,12 +1533,11 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
             forceBodyForPriority ||
             isWithinPointDistanceLimitSq(cameraPosition, runtime.currentPosition, playerFullBodyDistanceSq)
           );
-          const forceOutlineForPriority = !playerIsVeiled && !playerHasHiddenRenderState && shouldRenderDistanceOutlines && (
-            isObjectivePriority || (
-              isActivityPriority &&
-              isWithinPointDistanceLimitSq(cameraPosition, runtime.currentPosition, activityOutlineDistanceSq)
-            )
-          );
+          const forceOutlineForPriority = !isBattleRoyal &&
+            !playerIsVeiled &&
+            !playerHasHiddenRenderState &&
+            shouldRenderDistanceOutlines &&
+            (isObjectivePriority || isActivityPriority);
           const playerOutlineDistanceSq = shouldRenderDistanceOutlines
             ? getPlayerDistanceLimitSq(
               player,
@@ -1618,13 +1609,13 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
           if (!renderOutline) continue;
 
           stats.outlinePlayers++;
-          for (let batchIndex = 0; batchIndex < resource.outlineBatches.length; batchIndex++) {
-            const batch = resource.outlineBatches[batchIndex];
+          for (let batchIndex = 0; batchIndex < outlineBatches.length; batchIndex++) {
+            const batch = outlineBatches[batchIndex];
             if (!batch) continue;
             if (!shouldRenderBatchForPlayer(batch.playerFilter, player)) continue;
             let writeIndex = counters?.outline[batchIndex] ?? 0;
             for (const descriptor of batch.descriptors) {
-              setPartMatrix(runtime, descriptor, getOutlineLocalMatrix(descriptor, isBattleRoyal))
+              setPartMatrix(runtime, descriptor, getOutlineLocalMatrix(descriptor))
                 .toArray(outlineMatrixSink, outlineMatrixOffset);
               outlineMatrixOffset = (outlineMatrixOffset + 16) % outlineMatrixSink.length;
               writeIndex++;
@@ -1642,7 +1633,7 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
           if (count > 0) normalMatrixSink[batchIndex % normalMatrixSink.length] = count;
           stats.batchFinalizations++;
         }
-        for (let batchIndex = 0; batchIndex < resource.outlineBatches.length; batchIndex++) {
+        for (let batchIndex = 0; batchIndex < outlineBatches.length; batchIndex++) {
           const count = counters?.outline[batchIndex] ?? 0;
           if (count > 0) outlineMatrixSink[batchIndex % outlineMatrixSink.length] = count;
           stats.batchFinalizations++;
@@ -1706,7 +1697,6 @@ function createStandardBatchMaterial(options: RemoteMaterialOptions): THREE.Mesh
     depthWrite: options.depthWrite,
     toneMapped: options.toneMapped,
   });
-  configureRemoteBodyStencilWrite(material);
   patchInstancedEmissiveMaterial(material);
   return material;
 }
@@ -1888,7 +1878,7 @@ function createRemotePartDescriptors(heroId: HeroId, team: Team): {
   return { descriptors, materialOptions: materialOptionsByKey };
 }
 
-function createRemoteBatchResources(heroId: HeroId, team: Team): RemoteBatchResources {
+function createRemoteBatchResources(heroId: HeroId, team: Team, includeOutlines = true): RemoteBatchResources {
   const { descriptors, materialOptions } = createRemotePartDescriptors(heroId, team);
   const normalGroups = new Map<string, RemotePartDescriptor[]>();
   const outlineGroups = new Map<string, RemotePartDescriptor[]>();
@@ -1897,7 +1887,9 @@ function createRemoteBatchResources(heroId: HeroId, team: Team): RemoteBatchReso
     const normalKey = `${descriptor.geometryKey}:${descriptor.materialKey}:${descriptor.playerFilter}`;
     const outlineKey = `${descriptor.geometryKey}:${descriptor.playerFilter}`;
     (normalGroups.get(normalKey) ?? normalGroups.set(normalKey, []).get(normalKey)!).push(descriptor);
-    (outlineGroups.get(outlineKey) ?? outlineGroups.set(outlineKey, []).get(outlineKey)!).push(descriptor);
+    if (includeOutlines) {
+      (outlineGroups.get(outlineKey) ?? outlineGroups.set(outlineKey, []).get(outlineKey)!).push(descriptor);
+    }
   }
 
   const materials: THREE.Material[] = [];
@@ -1922,8 +1914,7 @@ function createRemoteBatchResources(heroId: HeroId, team: Team): RemoteBatchReso
     REMOTE_OUTLINE_PASSES.map((pass): RemoteOutlineBatch => {
       const outlineDescriptors = groupDescriptors.map((descriptor) => createOutlineDescriptor(
         descriptor,
-        pass.outlineScale,
-        pass.battleRoyalOutlineScale
+        pass.outlineScale
       ));
       const material = new THREE.MeshBasicMaterial({
         color: getTeamSilhouetteColor(team, pass.whiteLift),
@@ -1945,7 +1936,6 @@ function createRemoteBatchResources(heroId: HeroId, team: Team): RemoteBatchReso
         capacityPerPlayer: outlineDescriptors.length,
         playerFilter: outlineDescriptors[0].playerFilter,
         opacity: pass.opacity,
-        battleRoyalOpacity: pass.battleRoyalOpacity,
         renderOrder: pass.renderOrder,
       };
     })
@@ -1982,14 +1972,8 @@ function getDescriptorEmissiveBoost(
   return descriptor.fixedEmissiveIntensity ?? 0;
 }
 
-function getOutlineLocalMatrix(descriptor: RemotePartDescriptor, isBattleRoyal: boolean): THREE.Matrix4 {
-  return isBattleRoyal && descriptor.battleRoyalLocalMatrix
-    ? descriptor.battleRoyalLocalMatrix
-    : descriptor.localMatrix;
-}
-
-function getOutlineOpacity(batch: RemoteOutlineBatch, isBattleRoyal: boolean): number {
-  return isBattleRoyal ? batch.battleRoyalOpacity : batch.opacity;
+function getOutlineLocalMatrix(descriptor: RemotePartDescriptor): THREE.Matrix4 {
+  return descriptor.localMatrix;
 }
 
 function createChronosAscendantCapeMaterial(): THREE.MeshBasicMaterial {
@@ -2018,11 +2002,13 @@ function RemoteHeroInstancedBatch({
   batch,
   capacity,
   castShadow,
+  writeSilhouetteStencil,
   onMesh,
 }: {
   batch: RemotePartBatch;
   capacity: number;
   castShadow: boolean;
+  writeSilhouetteStencil: boolean;
   onMesh: (mesh: THREE.InstancedMesh | null) => void;
 }) {
   const geometry = useMemo(() => {
@@ -2037,6 +2023,9 @@ function RemoteHeroInstancedBatch({
   }, [batch.geometry, capacity]);
 
   useEffect(() => () => geometry.dispose(), [geometry]);
+  useLayoutEffect(() => {
+    setRemoteBodyStencilWriteEnabled(batch.material, writeSilhouetteStencil);
+  }, [batch.material, writeSilhouetteStencil]);
 
   return (
     <instancedMesh
@@ -2053,18 +2042,12 @@ function RemoteHeroInstancedBatch({
 function RemoteHeroOutlineBatch({
   batch,
   capacity,
-  isBattleRoyal,
   onMesh,
 }: {
   batch: RemoteOutlineBatch;
   capacity: number;
-  isBattleRoyal: boolean;
   onMesh: (mesh: THREE.InstancedMesh | null) => void;
 }) {
-  useLayoutEffect(() => {
-    batch.material.opacity = getOutlineOpacity(batch, isBattleRoyal);
-  }, [batch, isBattleRoyal]);
-
   return (
     <instancedMesh
       ref={(mesh) => assignDynamicInstancedMesh(mesh, onMesh)}
@@ -2114,13 +2097,14 @@ function RemoteHeroBatchGroup({
   config: RemotePlayerQualityConfig;
 }) {
   const camera = useThree((state) => state.camera);
+  const outlineBatches = resources.outlineBatches;
   const runtimeByPlayerIdRef = useRef<Map<string, RemoteHeroRuntime>>(new Map());
   const meshesRef = useRef<Array<THREE.InstancedMesh | null>>([]);
   const emissiveAttributesRef = useRef<Array<THREE.InstancedBufferAttribute | null>>([]);
   const outlineMeshesRef = useRef<Array<THREE.InstancedMesh | null>>([]);
   const capeMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const countsRef = useRef<Uint32Array>(new Uint32Array(resources.batches.length));
-  const outlineCountsRef = useRef<Uint32Array>(new Uint32Array(resources.outlineBatches.length));
+  const outlineCountsRef = useRef<Uint32Array>(new Uint32Array(outlineBatches.length));
   const playersRef = useRef(players);
   const configRef = useRef(config);
   const playerGenerationRef = useRef(0);
@@ -2146,8 +2130,8 @@ function RemoteHeroBatchGroup({
   if (countsRef.current.length !== resources.batches.length) {
     countsRef.current = new Uint32Array(resources.batches.length);
   }
-  if (outlineCountsRef.current.length !== resources.outlineBatches.length) {
-    outlineCountsRef.current = new Uint32Array(resources.outlineBatches.length);
+  if (outlineCountsRef.current.length !== outlineBatches.length) {
+    outlineCountsRef.current = new Uint32Array(outlineBatches.length);
   }
 
   playersRef.current = players;
@@ -2202,17 +2186,12 @@ function RemoteHeroBatchGroup({
       const fullBodyDistance = isBattleRoyal
         ? getBattleRoyalDistanceCap(frameConfig.fullBodyDistance, BATTLE_ROYAL_MAX_REMOTE_FULL_BODY_DISTANCE)
         : frameConfig.fullBodyDistance;
-      const outlineDistance = frameConfig.outlineDistance > 0 && isBattleRoyal
-        ? getBattleRoyalDistanceCap(frameConfig.outlineDistance, BATTLE_ROYAL_MAX_REMOTE_OUTLINE_DISTANCE)
-        : frameConfig.outlineDistance;
+      const outlineDistance = isBattleRoyal ? 0 : frameConfig.outlineDistance;
       const shouldRenderDistanceOutlines = outlineDistance > 0;
       const fullBodyDistanceSq = getDistanceLimitSq(fullBodyDistance);
       const outlineDistanceSq = shouldRenderDistanceOutlines ? getDistanceLimitSq(outlineDistance) : 0;
       const activityBodyDistanceSq = isBattleRoyal
         ? getDistanceLimitSq(BATTLE_ROYAL_REMOTE_ACTIVITY_BODY_DISTANCE)
-        : Number.POSITIVE_INFINITY;
-      const activityOutlineDistanceSq = isBattleRoyal
-        ? getDistanceLimitSq(BATTLE_ROYAL_REMOTE_ACTIVITY_OUTLINE_DISTANCE)
         : Number.POSITIVE_INFINITY;
       counts.fill(0);
       outlineCounts.fill(0);
@@ -2234,7 +2213,7 @@ function RemoteHeroBatchGroup({
         const isActivityPriority = isActivityPriorityRemoteBody(player, visualState, nowMs);
         const playerIsVeiled = hasActivePhantomVeil(player);
         const playerHasHiddenRenderState = hasHiddenRemoteRenderState(player);
-        const renderTeamOutline = shouldRenderTeamOutlineForPlayer(
+        const renderTeamOutline = !isBattleRoyal && shouldRenderTeamOutlineForPlayer(
           player,
           localPlayerId,
           playerIsVeiled,
@@ -2257,12 +2236,11 @@ function RemoteHeroBatchGroup({
           forceBodyForPriority ||
           isWithinDistanceLimitSq(camera, runtime.currentPosition, playerFullBodyDistanceSq)
         );
-        const forceOutlineForPriority = !playerIsVeiled && !playerHasHiddenRenderState && shouldRenderDistanceOutlines && (
-          isObjectivePriority || (
-            isActivityPriority &&
-            isWithinDistanceLimitSq(camera, runtime.currentPosition, activityOutlineDistanceSq)
-          )
-        );
+        const forceOutlineForPriority = !isBattleRoyal &&
+          !playerIsVeiled &&
+          !playerHasHiddenRenderState &&
+          shouldRenderDistanceOutlines &&
+          (isObjectivePriority || isActivityPriority);
         const playerOutlineDistanceSq = shouldRenderDistanceOutlines
           ? getPlayerDistanceLimitSq(
             player,
@@ -2324,8 +2302,8 @@ function RemoteHeroBatchGroup({
 
         if (!renderOutline) continue;
 
-        for (let batchIndex = 0; batchIndex < resources.outlineBatches.length; batchIndex++) {
-          const batch = resources.outlineBatches[batchIndex];
+        for (let batchIndex = 0; batchIndex < outlineBatches.length; batchIndex++) {
+          const batch = outlineBatches[batchIndex];
           if (!shouldRenderBatchForPlayer(batch.playerFilter, player)) continue;
           const mesh = outlineMeshesRef.current[batchIndex];
           if (!mesh) continue;
@@ -2333,7 +2311,7 @@ function RemoteHeroBatchGroup({
           for (const descriptor of batch.descriptors) {
             mesh.setMatrixAt(
               writeIndex,
-              setPartMatrix(runtime, descriptor, getOutlineLocalMatrix(descriptor, isBattleRoyal))
+              setPartMatrix(runtime, descriptor, getOutlineLocalMatrix(descriptor))
             );
             writeIndex++;
           }
@@ -2353,7 +2331,7 @@ function RemoteHeroBatchGroup({
         }
       }
 
-      for (let batchIndex = 0; batchIndex < resources.outlineBatches.length; batchIndex++) {
+      for (let batchIndex = 0; batchIndex < outlineBatches.length; batchIndex++) {
         const mesh = outlineMeshesRef.current[batchIndex];
         if (!mesh) continue;
         const count = outlineCounts[batchIndex];
@@ -2368,7 +2346,7 @@ function RemoteHeroBatchGroup({
         if (capeCount > 0) capeMesh.instanceMatrix.needsUpdate = true;
       }
     },
-  }), [camera, isBattleRoyal, localPlayerId, localPlayerTeam, resources]);
+  }), [camera, isBattleRoyal, localPlayerId, localPlayerTeam, outlineBatches, resources]);
 
   return (
     <>
@@ -2378,6 +2356,7 @@ function RemoteHeroBatchGroup({
           batch={batch}
           capacity={Math.max(1, capacity * batch.capacityPerPlayer)}
           castShadow={config.castShadows}
+          writeSilhouetteStencil={!isBattleRoyal && outlineBatches.length > 0}
           onMesh={(mesh) => {
             meshesRef.current[batchIndex] = mesh;
             emissiveAttributesRef.current[batchIndex] = mesh
@@ -2386,12 +2365,11 @@ function RemoteHeroBatchGroup({
           }}
         />
       ))}
-      {resources.outlineBatches.map((batch, batchIndex) => (
+      {outlineBatches.map((batch, batchIndex) => (
         <RemoteHeroOutlineBatch
           key={batch.key}
           batch={batch}
           capacity={Math.max(1, capacity * batch.capacityPerPlayer)}
-          isBattleRoyal={isBattleRoyal}
           onMesh={(mesh) => {
             outlineMeshesRef.current[batchIndex] = mesh;
           }}
@@ -2420,8 +2398,8 @@ export const RemoteHeroBatchRenderer = memo(function RemoteHeroBatchRenderer({
 }: RemoteHeroBatchRendererProps) {
   const resourceCacheRef = useRef<Map<string, RemoteBatchResources>>(new Map());
   const renderGroups = useMemo(
-    () => buildRemoteHeroRenderGroups(players, resourcePlayers, resourceCacheRef.current),
-    [players, resourcePlayers]
+    () => buildRemoteHeroRenderGroups(players, resourcePlayers, resourceCacheRef.current, !isBattleRoyal),
+    [isBattleRoyal, players, resourcePlayers]
   );
 
   useEffect(() => () => {
