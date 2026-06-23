@@ -1440,6 +1440,9 @@ export class GameRoom extends Room<GameState> {
         clientMessage: 'Failed to switch hero',
       }
     );
+    this.onParsedDevCommand('devDownHero', validateHeroPayload, (client, heroId) => {
+      this.handleDevDownHero(client, heroId);
+    });
 
     // Development-only entity helpers. Production bots are lobby participants.
     this.onParsedDevCommand('spawnNpc', parseDevNpcSpawnRequest, (client, request) => {
@@ -7860,6 +7863,33 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
+  private handleDevDownHero(client: Client, heroId: HeroId): void {
+    if (!this.requireDevelopmentMode(client)) return;
+
+    if (!isBattleRoyalMode(this.gameplayMode) || this.state.phase !== 'playing') {
+      client.send('devCommandError', { message: '/hero down is only available during active Battle Royal matches' });
+      return;
+    }
+
+    const requester = this.state.players.get(client.sessionId);
+    if (!requester) {
+      client.send('devCommandError', { message: 'No active player found for /hero down' });
+      return;
+    }
+
+    const target = this.findDevTeammateHeroTarget(requester, heroId);
+    if (!target) {
+      client.send('devCommandError', {
+        message: `No alive teammate ${HERO_DEFINITIONS[heroId].name} found to down`,
+      });
+      return;
+    }
+
+    const now = this.state.serverTime || Date.now();
+    this.battleRoyalDownedRuntime.enterDowned(target, null, 'dev_command', now);
+    this.broadcastStateStreams({ transforms: true, forceVitals: true, forceMatch: true });
+  }
+
   private getHeroLockPlayers(): RoomHeroLockParticipant[] {
     return getRoomHeroLockParticipants(this.state.players.values(), this.npcs.ids);
   }
@@ -8220,6 +8250,20 @@ export class GameRoom extends Room<GameState> {
       }
     });
     return fallback;
+  }
+
+  private findDevTeammateHeroTarget(requester: Player, heroId: HeroId): Player | null {
+    let target: Player | null = null;
+    this.state.players.forEach((player) => {
+      if (target) return;
+      if (player.id === requester.id) return;
+      if (this.npcs.has(player.id)) return;
+      if (player.team !== requester.team) return;
+      if (player.heroId !== heroId) return;
+      if (player.state !== 'alive') return;
+      target = player;
+    });
+    return target;
   }
 
   private primeDevBotSkill(player: Player, slot: DevBotSkillSlot): void {

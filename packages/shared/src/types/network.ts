@@ -17,6 +17,7 @@ export type ClientMessage =
   | { type: 'playerPingResponse'; payload: PlayerPingResponseMessage }
   | { type: 'selectHero'; payload: { heroId: HeroId } }
   | { type: 'devSetHero'; payload: { heroId: HeroId } }
+  | { type: 'devDownHero'; payload: { heroId: HeroId } }
   | { type: 'devFillUltimate'; payload: Record<string, never> }
   | { type: 'devEndGame'; payload: Record<string, never> }
   | { type: 'setDevImmune'; payload: { enabled: boolean } }

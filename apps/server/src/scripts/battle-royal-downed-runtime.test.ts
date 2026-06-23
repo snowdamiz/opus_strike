@@ -204,4 +204,47 @@ assert.equal(hasBattleRoyalReviveBreakingInput({
   assert.equal(frozenDownedInput.moveRight, false);
 }
 
+{
+  const room = Object.create(GameRoom.prototype) as any;
+  const requester = player('requester', 'br_01', 'alive');
+  const teammate = player('teammate', 'br_01', 'alive');
+  const enemy = player('enemy', 'br_02', 'alive');
+  requester.heroId = 'blaze';
+  teammate.heroId = 'blaze';
+  enemy.heroId = 'blaze';
+
+  const downed: Array<{ playerId: string; sourceId: string | null; damageType: string; now: number }> = [];
+  const broadcasts: unknown[] = [];
+  const sent: Array<{ type: string; payload: unknown }> = [];
+  room.requireDevelopmentMode = () => true;
+  room.gameplayMode = 'battle_royal';
+  room.npcs = new Set<string>();
+  room.state = {
+    phase: 'playing',
+    serverTime: 12_345,
+    players: new Map([
+      [requester.id, requester],
+      [enemy.id, enemy],
+      [teammate.id, teammate],
+    ]),
+  };
+  room.battleRoyalDownedRuntime = {
+    enterDowned: (target: Player, sourceId: string | null, damageType: string, nowMs: number) => {
+      downed.push({ playerId: target.id, sourceId, damageType, now: nowMs });
+    },
+  };
+  room.broadcastStateStreams = (options: unknown) => broadcasts.push(options);
+
+  room.handleDevDownHero({ sessionId: requester.id, send: (type: string, payload: unknown) => sent.push({ type, payload }) }, 'blaze');
+
+  assert.deepEqual(downed, [{
+    playerId: teammate.id,
+    sourceId: null,
+    damageType: 'dev_command',
+    now: 12_345,
+  }]);
+  assert.deepEqual(sent, []);
+  assert.deepEqual(broadcasts, [{ transforms: true, forceVitals: true, forceMatch: true }]);
+}
+
 console.log('battle royal downed runtime tests passed');

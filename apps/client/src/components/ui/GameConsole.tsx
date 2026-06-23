@@ -32,7 +32,7 @@ let messageId = 0;
 const CHAT_PREVIEW_IDLE_TIMEOUT_MS = 30_000;
 const CHAT_PREVIEW_FADE_MS = 500;
 const PUBLIC_COMMAND_LIST = '/seed copy';
-const DEV_COMMAND_LIST = '/seed copy, /immune, /hero <hero>, /end, /bot add <hero> <red|blue>, /bot skill <hero> <red|blue> <e|q|f|lmb|rmb>, /bot look <hero> <red|blue> <up|down>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze';
+const DEV_COMMAND_LIST = '/seed copy, /immune, /hero <hero>, /hero down <hero>, /end, /bot add <hero> <red|blue>, /bot skill <hero> <red|blue> <e|q|f|lmb|rmb>, /bot look <hero> <red|blue> <up|down>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze';
 type BotLookDirection = 'up' | 'down';
 const BOT_SKILL_KEYS: Record<string, string> = {
   e: 'e',
@@ -240,6 +240,7 @@ export function GameConsole() {
 
   const {
     devSetHero,
+    devDownHero,
     devFillUltimate,
     devEndGame,
     setDevImmune,
@@ -401,6 +402,23 @@ export function GameConsole() {
           break;
         }
 
+        const action = parts[1]?.toLowerCase();
+        if (action === 'down') {
+          const heroName = parts.slice(2).join(' ');
+          const heroId = resolveHeroId(heroName);
+
+          if (!heroName || !heroId) {
+            addMessage('Usage: /hero down <hero name>', 'error');
+            addMessage(`Valid heroes: ${validHeroNames()}`, 'info');
+            break;
+          }
+
+          devDownHero(heroId);
+          addMessage(`Downing teammate ${HERO_DEFINITIONS[heroId].name} for revive testing...`, 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
         const heroName = parts.slice(1).join(' ');
         const heroId = resolveHeroId(heroName);
 
@@ -559,7 +577,7 @@ export function GameConsole() {
       default:
         addMessage(`Unknown command: ${command}. Available commands: ${config.isDev ? DEV_COMMAND_LIST : PUBLIC_COMMAND_LIST}`, 'error');
     }
-  }, [addGameBot, addMessage, devBotLook, devBotSkill, devEndGame, devFillUltimate, devSetHero, sendChatMessage, setDevBotBrainEnabled, setDevBotsRooted, setDevImmune, setDevTimeFrozen]);
+  }, [addGameBot, addMessage, devBotLook, devBotSkill, devDownHero, devEndGame, devFillUltimate, devSetHero, sendChatMessage, setDevBotBrainEnabled, setDevBotsRooted, setDevImmune, setDevTimeFrozen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

@@ -147,6 +147,7 @@ interface NetworkContextType {
   sendChatMessage: (message: string, options?: { teamOnly?: boolean }) => boolean;
   sendMovementCommands: (packet: MovementCommandPacket) => void;
   devSetHero: (heroId: HeroId) => void;
+  devDownHero: (heroId: HeroId) => void;
   devFillUltimate: () => void;
   devEndGame: () => void;
   setDevImmune: (enabled: boolean) => void;
@@ -1249,6 +1250,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('devSetHero', { heroId });
   }, []);
 
+  const devDownHero = useCallback((heroId: HeroId) => {
+    if (!config.isDev) return;
+    loggers.network.debug('sending development hero down', heroId);
+    gameRoomRef.current?.send('devDownHero', { heroId });
+  }, []);
+
   const devFillUltimate = useCallback(() => {
     if (!config.isDev) return;
     loggers.network.debug('sending development ultimate fill');
@@ -1349,6 +1356,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     sendChatMessage,
     sendMovementCommands,
     devSetHero,
+    devDownHero,
     devFillUltimate,
     devEndGame,
     setDevImmune,
@@ -1369,6 +1377,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     addPartyBot,
     devBotLook,
     devBotSkill,
+    devDownHero,
     devEndGame,
     devFillUltimate,
     devSetHero,
