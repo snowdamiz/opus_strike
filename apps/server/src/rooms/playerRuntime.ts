@@ -34,7 +34,7 @@ export function applyPlayerAliveRuntimeReset(
   return {
     resetAbilityCooldowns: true,
     resetBotBrain: player.isBot,
-    resetPrimaryMagazine: player.heroId === 'phantom' || player.heroId === 'blaze',
+    resetPrimaryMagazine: player.heroId === 'phantom' || player.heroId === 'blaze' || player.heroId === 'chronos',
     clearChronosAegisShield: player.heroId === 'chronos',
   };
 }

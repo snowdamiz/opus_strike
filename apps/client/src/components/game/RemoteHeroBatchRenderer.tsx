@@ -1,7 +1,13 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { HeroId, Player, PlayerMovementState, Team } from '@voxel-strike/shared';
+import {
+  CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
+  type HeroId,
+  type Player,
+  type PlayerMovementState,
+  type Team,
+} from '@voxel-strike/shared';
 import {
   DEFAULT_WALK_DIRECTION,
   EMPTY_TEAM_ACCENT_PARTS,
@@ -85,6 +91,7 @@ import {
   PLAYER_CENTER_TO_FEET,
   setPlayerRenderOrigin,
 } from './playerWorldAnchors';
+import { SHARED_GEOMETRIES } from './effectResources';
 import { gameplayFrameScheduler } from './systems/gameplayFrameScheduler';
 import type { RemotePlayerQualityConfig } from './visualQuality';
 
@@ -159,6 +166,7 @@ export interface RemoteHeroBatchBenchmarkFrameStats {
   outlinePlayers: number;
   normalMatrixWrites: number;
   outlineMatrixWrites: number;
+  capeMatrixWrites: number;
   normalBatches: number;
   outlineBatches: number;
   mountedInstancedMeshes: number;
@@ -238,6 +246,11 @@ interface RemoteHeroRuntime {
   bodyLocalMatrix: THREE.Matrix4;
   bodyWorldMatrix: THREE.Matrix4;
   finalMatrix: THREE.Matrix4;
+  capeLocalMatrix: THREE.Matrix4;
+  capePosition: THREE.Vector3;
+  capeQuaternion: THREE.Quaternion;
+  capeRotation: THREE.Euler;
+  capeScale: THREE.Vector3;
   glowPulse: number;
 }
 
@@ -251,6 +264,7 @@ const REMOTE_ATTACK_STATE_RETENTION_MS = 3200;
 const REMOTE_ATTACK_STATE_CLEANUP_MS = 5000;
 const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
 const PHANTOM_PERSONAL_SHIELD_ABILITY_ID = 'phantom_personal_shield';
+const CHRONOS_ASCENDANT_ABILITY_ID = 'chronos_ascendant_paradox';
 const INSTANCE_EMISSIVE_ATTRIBUTE = 'instanceEmissiveBoost';
 const WORLD_UP_AXIS = new THREE.Vector3(0, 1, 0);
 const WORLD_UNIT_SCALE = new THREE.Vector3(1, 1, 1);
@@ -262,6 +276,17 @@ const BATTLE_ROYAL_REMOTE_ACTIVITY_BODY_DISTANCE = 96;
 const BATTLE_ROYAL_REMOTE_ACTIVITY_OUTLINE_DISTANCE = 128;
 const BATTLE_ROYAL_TEAM_SILHOUETTE_OUTLINE_SCALE = 1.22;
 const BATTLE_ROYAL_TEAM_SILHOUETTE_OUTLINE_OPACITY = 0.92;
+const CHRONOS_ASCENDANT_CAPE_STRIPS = 5;
+const CHRONOS_ASCENDANT_CAPE_SEGMENTS = 4;
+const CHRONOS_ASCENDANT_CAPE_INSTANCES_PER_PLAYER =
+  CHRONOS_ASCENDANT_CAPE_STRIPS * CHRONOS_ASCENDANT_CAPE_SEGMENTS;
+const CHRONOS_ASCENDANT_CAPE_TOP_Y = 1.32;
+const CHRONOS_ASCENDANT_CAPE_TOP_Z = 0.26;
+const CHRONOS_ASCENDANT_CAPE_SEGMENT_HEIGHT = 0.235;
+const CHRONOS_ASCENDANT_CAPE_STRIP_WIDTH = 0.17;
+const CHRONOS_ASCENDANT_CAPE_FADE_IN_MS = 220;
+const CHRONOS_ASCENDANT_CAPE_FADE_OUT_MS = 520;
+const CHRONOS_ASCENDANT_CAPE_GREEN = 0x22c55e;
 const teamColorCache = new Map<Team, THREE.Color>();
 
 function isHeroId(value: string | null | undefined): value is HeroId {
@@ -424,6 +449,27 @@ function hasActivePhantomVeil(player: Player): boolean {
   return Boolean(veil?.isActive);
 }
 
+function hasActiveChronosAscendant(player: Player, frameNowMs: number): boolean {
+  if (player.state !== 'alive' || player.heroId !== 'chronos') return false;
+
+  const ascendant = player.abilities?.[CHRONOS_ASCENDANT_ABILITY_ID];
+  if (!ascendant?.isActive) return false;
+
+  const activatedAt = ascendant.activatedAt ?? frameNowMs;
+  return frameNowMs - activatedAt < CHRONOS_ASCENDANT_PARADOX_DURATION_MS;
+}
+
+function getChronosAscendantCapeIntensity(player: Player, frameNowMs: number): number {
+  const activatedAt = player.abilities?.[CHRONOS_ASCENDANT_ABILITY_ID]?.activatedAt;
+  if (activatedAt === undefined) return 1;
+
+  const elapsedMs = Math.max(0, frameNowMs - activatedAt);
+  const remainingMs = Math.max(0, CHRONOS_ASCENDANT_PARADOX_DURATION_MS - elapsedMs);
+  const fadeIn = Math.min(1, elapsedMs / CHRONOS_ASCENDANT_CAPE_FADE_IN_MS);
+  const fadeOut = Math.min(1, remainingMs / CHRONOS_ASCENDANT_CAPE_FADE_OUT_MS);
+  return Math.max(0, Math.min(fadeIn, fadeOut));
+}
+
 function getActivePhantomShieldStartedAt(player: Player): number | null {
   if (player.state !== 'alive' || player.heroId !== 'phantom') return null;
 
@@ -450,6 +496,7 @@ function hasActiveRemoteBodyEffect(player: Player, visualState: VisualState, fra
     visualState.activeBlazeBurningPlayerIdSet.has(player.id) ||
     visualState.activeChronosAegisPlayerIdSet.has(player.id) ||
     visualState.activeChronosAscendantPlayerIdSet.has(player.id) ||
+    hasActiveChronosAscendant(player, frameNowMs) ||
     (player.onFireUntil ?? 0) > frameNowMs
   );
 }
@@ -666,6 +713,10 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
   const rootPosition = new THREE.Vector3();
   const rootQuaternion = new THREE.Quaternion();
   const rootScale = new THREE.Vector3(1, 1, 1);
+  const capePosition = new THREE.Vector3();
+  const capeQuaternion = new THREE.Quaternion();
+  const capeRotation = new THREE.Euler();
+  const capeScale = new THREE.Vector3(1, 1, 1);
   const initialMovementPose = getPlayerMovementPose(
     player,
     player.movement.isCrouching || player.movement.isSliding,
@@ -730,6 +781,11 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
     bodyLocalMatrix: new THREE.Matrix4(),
     bodyWorldMatrix: new THREE.Matrix4(),
     finalMatrix: new THREE.Matrix4(),
+    capeLocalMatrix: new THREE.Matrix4(),
+    capePosition,
+    capeQuaternion,
+    capeRotation,
+    capeScale,
     glowPulse: 0,
   };
 
@@ -1181,6 +1237,67 @@ function setPartMatrix(
   return runtime.finalMatrix;
 }
 
+function setChronosAscendantCapeMatrix(
+  runtime: RemoteHeroRuntime,
+  stripIndex: number,
+  segmentIndex: number,
+  elapsedSeconds: number,
+  intensity: number
+): THREE.Matrix4 {
+  const stripCenter = (CHRONOS_ASCENDANT_CAPE_STRIPS - 1) / 2;
+  const stripOffset = stripIndex - stripCenter;
+  const segmentProgress = (segmentIndex + 0.5) / CHRONOS_ASCENDANT_CAPE_SEGMENTS;
+  const flutter = Math.sin(elapsedSeconds * 9.4 + stripIndex * 0.82 + segmentIndex * 0.68);
+  const ripple = Math.sin(elapsedSeconds * 14.1 + stripIndex * 1.37 - segmentIndex * 0.44);
+  const tailFlutterScale = (0.36 + segmentProgress * 0.86) * intensity;
+
+  runtime.capePosition.set(
+    stripOffset * CHRONOS_ASCENDANT_CAPE_STRIP_WIDTH +
+      flutter * 0.018 * tailFlutterScale,
+    CHRONOS_ASCENDANT_CAPE_TOP_Y -
+      (segmentIndex + 0.5) * CHRONOS_ASCENDANT_CAPE_SEGMENT_HEIGHT -
+      segmentProgress * segmentProgress * 0.085,
+    CHRONOS_ASCENDANT_CAPE_TOP_Z +
+      segmentIndex * 0.055 +
+      (flutter * 0.032 + ripple * 0.012) * tailFlutterScale
+  );
+  runtime.capeRotation.set(
+    -0.18 - segmentProgress * 0.32 + flutter * 0.07 * tailFlutterScale,
+    flutter * 0.045 * tailFlutterScale,
+    stripOffset * 0.025 + ripple * 0.075 * tailFlutterScale
+  );
+  runtime.capeQuaternion.setFromEuler(runtime.capeRotation);
+  runtime.capeScale.set(
+    CHRONOS_ASCENDANT_CAPE_STRIP_WIDTH * (0.94 - segmentProgress * 0.08) * intensity,
+    CHRONOS_ASCENDANT_CAPE_SEGMENT_HEIGHT * (1.02 + ripple * 0.018) * intensity,
+    1
+  );
+  runtime.capeLocalMatrix.compose(runtime.capePosition, runtime.capeQuaternion, runtime.capeScale);
+  runtime.finalMatrix.multiplyMatrices(runtime.bodyWorldMatrix, runtime.capeLocalMatrix);
+  return runtime.finalMatrix;
+}
+
+function writeChronosAscendantCapeInstances(
+  mesh: THREE.InstancedMesh,
+  writeIndex: number,
+  runtime: RemoteHeroRuntime,
+  elapsedSeconds: number,
+  intensity: number
+): number {
+  const capacity = mesh.instanceMatrix.count;
+  for (let stripIndex = 0; stripIndex < CHRONOS_ASCENDANT_CAPE_STRIPS; stripIndex++) {
+    for (let segmentIndex = 0; segmentIndex < CHRONOS_ASCENDANT_CAPE_SEGMENTS; segmentIndex++) {
+      if (writeIndex >= capacity) return writeIndex;
+      mesh.setMatrixAt(
+        writeIndex,
+        setChronosAscendantCapeMatrix(runtime, stripIndex, segmentIndex, elapsedSeconds, intensity)
+      );
+      writeIndex++;
+    }
+  }
+  return writeIndex;
+}
+
 function countBatchDescriptorsForPlayers(
   batches: readonly (RemotePartBatch | RemoteOutlineBatch)[],
   players: readonly Player[]
@@ -1237,6 +1354,12 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
     ), 0) * 16)
     : 16
   );
+  const capeMatrixSink = new Float32Array(
+    Math.max(16, groups.reduce((total, group) => {
+      if (group.resource.heroId !== 'chronos') return total;
+      return total + Math.max(1, group.players.length) * CHRONOS_ASCENDANT_CAPE_INSTANCES_PER_PLAYER;
+    }, 0) * 16)
+  );
   const fullBodyDistance = isBattleRoyal
     ? getBattleRoyalDistanceCap(config.fullBodyDistance, BATTLE_ROYAL_MAX_REMOTE_FULL_BODY_DISTANCE)
     : config.fullBodyDistance;
@@ -1273,6 +1396,7 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
         outlinePlayers: 0,
         normalMatrixWrites: 0,
         outlineMatrixWrites: 0,
+        capeMatrixWrites: 0,
         normalBatches: 0,
         outlineBatches: 0,
         mountedInstancedMeshes: 0,
@@ -1281,11 +1405,13 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
       };
       let normalMatrixOffset = 0;
       let outlineMatrixOffset = 0;
+      let capeMatrixOffset = 0;
 
       for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
         const group = groups[groupIndex];
         if (!group) continue;
         const { resource } = group;
+        const capeBatchCount = resource.heroId === 'chronos' ? 1 : 0;
         const counters = groupCounters[groupIndex];
         counters?.normal.fill(0);
         if (shouldRenderOutlines) counters?.outline.fill(0);
@@ -1293,12 +1419,12 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
         if (shouldMountOutlineBatches) stats.outlineBatches += resource.outlineBatches.length;
         stats.mountedInstancedMeshes += resource.batches.length + (
           shouldMountOutlineBatches ? resource.outlineBatches.length : 0
-        );
+        ) + capeBatchCount;
         if (group.players.length === 0) {
           stats.emptyGroups++;
           stats.emptyMountedInstancedMeshes += resource.batches.length + (
             shouldMountOutlineBatches ? resource.outlineBatches.length : 0
-          );
+          ) + capeBatchCount;
         }
 
         for (const player of group.players) {
@@ -1347,6 +1473,24 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
             nowMs
           );
           updateBodyWorldMatrix(runtime);
+          if (resource.heroId === 'chronos' && hasActiveChronosAscendant(player, nowMs)) {
+            const capeIntensity = getChronosAscendantCapeIntensity(player, nowMs);
+            if (capeIntensity > 0.01) {
+              for (let stripIndex = 0; stripIndex < CHRONOS_ASCENDANT_CAPE_STRIPS; stripIndex++) {
+                for (let segmentIndex = 0; segmentIndex < CHRONOS_ASCENDANT_CAPE_SEGMENTS; segmentIndex++) {
+                  setChronosAscendantCapeMatrix(
+                    runtime,
+                    stripIndex,
+                    segmentIndex,
+                    elapsedSeconds,
+                    capeIntensity
+                  ).toArray(capeMatrixSink, capeMatrixOffset);
+                  capeMatrixOffset = (capeMatrixOffset + 16) % capeMatrixSink.length;
+                  stats.capeMatrixWrites++;
+                }
+              }
+            }
+          }
 
           for (let batchIndex = 0; batchIndex < resource.batches.length; batchIndex++) {
             const batch = resource.batches[batchIndex];
@@ -1399,6 +1543,9 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
           }
         }
 
+        if (resource.heroId === 'chronos') {
+          stats.batchFinalizations++;
+        }
         for (let batchIndex = 0; batchIndex < resource.batches.length; batchIndex++) {
           const count = counters?.normal[batchIndex] ?? 0;
           if (count > 0) normalMatrixSink[batchIndex % normalMatrixSink.length] = count;
@@ -1750,6 +1897,18 @@ function getOutlineOpacity(isBattleRoyal: boolean): number {
     : TEAM_BODY_GLOW_OUTLINE_OPACITY;
 }
 
+function createChronosAscendantCapeMaterial(): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color: CHRONOS_ASCENDANT_CAPE_GREEN,
+    transparent: true,
+    opacity: 0.66,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+}
+
 function assignDynamicInstancedMesh(
   mesh: THREE.InstancedMesh | null,
   onMesh: (mesh: THREE.InstancedMesh | null) => void
@@ -1833,6 +1992,26 @@ function RemoteHeroOutlineBatch({
   );
 }
 
+function RemoteChronosAscendantCapeBatch({
+  capacity,
+  material,
+  onMesh,
+}: {
+  capacity: number;
+  material: THREE.MeshBasicMaterial;
+  onMesh: (mesh: THREE.InstancedMesh | null) => void;
+}) {
+  return (
+    <instancedMesh
+      ref={(mesh) => assignDynamicInstancedMesh(mesh, onMesh)}
+      args={[SHARED_GEOMETRIES.plane, material, capacity]}
+      count={0}
+      frustumCulled={false}
+      renderOrder={2}
+    />
+  );
+}
+
 function RemoteHeroBatchGroup({
   players,
   resourcePlayerCount,
@@ -1855,6 +2034,7 @@ function RemoteHeroBatchGroup({
   const meshesRef = useRef<Array<THREE.InstancedMesh | null>>([]);
   const emissiveAttributesRef = useRef<Array<THREE.InstancedBufferAttribute | null>>([]);
   const outlineMeshesRef = useRef<Array<THREE.InstancedMesh | null>>([]);
+  const capeMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const countsRef = useRef<Uint32Array>(new Uint32Array(resources.batches.length));
   const outlineCountsRef = useRef<Uint32Array>(new Uint32Array(resources.outlineBatches.length));
   const playersRef = useRef(players);
@@ -1873,6 +2053,12 @@ function RemoteHeroBatchGroup({
   }
   const capacity = capacityPlayersRef.current;
   const shouldMountOutlineBatches = config.outlineDistance > 0;
+  const shouldMountChronosCape = resources.heroId === 'chronos';
+  const chronosCapeCapacity = Math.max(1, capacity * CHRONOS_ASCENDANT_CAPE_INSTANCES_PER_PLAYER);
+  const chronosCapeMaterial = useMemo(
+    () => shouldMountChronosCape ? createChronosAscendantCapeMaterial() : null,
+    [shouldMountChronosCape]
+  );
 
   if (countsRef.current.length !== resources.batches.length) {
     countsRef.current = new Uint32Array(resources.batches.length);
@@ -1915,6 +2101,10 @@ function RemoteHeroBatchGroup({
     runtimeByPlayerIdRef.current.clear();
   }, []);
 
+  useEffect(() => () => {
+    chronosCapeMaterial?.dispose();
+  }, [chronosCapeMaterial]);
+
   useEffect(() => gameplayFrameScheduler.register({
     system: 'remoteHeroBatch',
     label: 'frame.remoteHeroBatch',
@@ -1925,6 +2115,7 @@ function RemoteHeroBatchGroup({
       const counts = countsRef.current;
       const outlineCounts = outlineCountsRef.current;
       const visualState = visualStore.getState();
+      const capeMesh = capeMeshRef.current;
       const fullBodyDistance = isBattleRoyal
         ? getBattleRoyalDistanceCap(frameConfig.fullBodyDistance, BATTLE_ROYAL_MAX_REMOTE_FULL_BODY_DISTANCE)
         : frameConfig.fullBodyDistance;
@@ -1942,6 +2133,7 @@ function RemoteHeroBatchGroup({
         : Number.POSITIVE_INFINITY;
       counts.fill(0);
       if (shouldRenderOutlines) outlineCounts.fill(0);
+      let capeCount = 0;
 
       for (const player of framePlayers) {
         let runtime = runtimes.get(player.id);
@@ -1988,6 +2180,18 @@ function RemoteHeroBatchGroup({
         );
         updateBodyWorldMatrix(runtime);
         const teamColor = getTeamColor(player.team as Team);
+        if (capeMesh && hasActiveChronosAscendant(player, nowMs)) {
+          const capeIntensity = getChronosAscendantCapeIntensity(player, nowMs);
+          if (capeIntensity > 0.01) {
+            capeCount = writeChronosAscendantCapeInstances(
+              capeMesh,
+              capeCount,
+              runtime,
+              elapsedSeconds,
+              capeIntensity
+            );
+          }
+        }
 
         for (let batchIndex = 0; batchIndex < resources.batches.length; batchIndex++) {
           const batch = resources.batches[batchIndex];
@@ -2073,8 +2277,13 @@ function RemoteHeroBatchGroup({
           if (mesh) mesh.count = 0;
         }
       }
+
+      if (capeMesh) {
+        capeMesh.count = capeCount;
+        if (capeCount > 0) capeMesh.instanceMatrix.needsUpdate = true;
+      }
     },
-  }), [camera, isBattleRoyal, localPlayerId, resources]);
+  }), [camera, isBattleRoyal, localPlayerId, localPlayerTeam, resources]);
 
   return (
     <>
@@ -2103,6 +2312,15 @@ function RemoteHeroBatchGroup({
           }}
         />
       ))}
+      {chronosCapeMaterial && (
+        <RemoteChronosAscendantCapeBatch
+          capacity={chronosCapeCapacity}
+          material={chronosCapeMaterial}
+          onMesh={(mesh) => {
+            capeMeshRef.current = mesh;
+          }}
+        />
+      )}
     </>
   );
 }

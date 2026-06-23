@@ -76,6 +76,9 @@ export const CHRONOS_LIFELINE_BEAM_DURATION_MS = 620;
 export const CHRONOS_LIFELINE_SOURCE_HEIGHT = 1.18;
 export const CHRONOS_LIFELINE_TARGET_HEIGHT = 1.02;
 export const CHRONOS_VERDANT_PULSE_DAMAGE = 16;
+export const CHRONOS_PRIMARY_MAGAZINE_SIZE = 20;
+export const CHRONOS_PRIMARY_RELOAD_SECONDS = 1.8;
+export const CHRONOS_PRIMARY_RELOAD_MS = CHRONOS_PRIMARY_RELOAD_SECONDS * 1000;
 export const CHRONOS_VERDANT_PULSE_COOLDOWN_MS = 300;
 export const CHRONOS_VERDANT_PULSE_FIRE_READY_MS = 140;
 export const CHRONOS_VERDANT_PULSE_SPEED = 68;
@@ -197,6 +200,8 @@ export const ABILITY_CARD_STATS = {
   ],
   chronos_verdant_pulse: [
     { value: CHRONOS_VERDANT_PULSE_DAMAGE, label: 'dmg' },
+    { value: CHRONOS_PRIMARY_MAGAZINE_SIZE, label: 'ammo' },
+    { value: CHRONOS_PRIMARY_RELOAD_SECONDS, label: 'reload', format: 'seconds' },
     { value: CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE, label: 'dmg with AOE during F' },
   ],
   chronos_lifeline_conduit: [

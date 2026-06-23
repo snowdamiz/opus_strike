@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import {
   BLAZE_PRIMARY_MAGAZINE_SIZE,
   BLAZE_PRIMARY_RELOAD_MS,
+  CHRONOS_PRIMARY_MAGAZINE_SIZE,
+  CHRONOS_PRIMARY_RELOAD_MS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
 } from '@voxel-strike/shared';
@@ -20,6 +22,13 @@ function createBlazeTracker(): PrimaryMagazineTracker {
   return new PrimaryMagazineTracker({
     magazineSize: BLAZE_PRIMARY_MAGAZINE_SIZE,
     reloadMs: BLAZE_PRIMARY_RELOAD_MS,
+  });
+}
+
+function createChronosTracker(): PrimaryMagazineTracker {
+  return new PrimaryMagazineTracker({
+    magazineSize: CHRONOS_PRIMARY_MAGAZINE_SIZE,
+    reloadMs: CHRONOS_PRIMARY_RELOAD_MS,
   });
 }
 
@@ -125,6 +134,27 @@ function createBlazeTracker(): PrimaryMagazineTracker {
   const completed = tracker.completeReloadIfReady(playerId, emptyAt + BLAZE_PRIMARY_RELOAD_MS);
   assert.equal(completed.completed, true);
   assert.equal(completed.magazine.ammo, BLAZE_PRIMARY_MAGAZINE_SIZE);
+}
+
+{
+  const tracker = createChronosTracker();
+  const now = 30_000;
+
+  for (let shot = 1; shot <= CHRONOS_PRIMARY_MAGAZINE_SIZE; shot++) {
+    const result = tracker.consumeShot(playerId, now + shot);
+    assert.equal(result.consumed, true);
+    assert.equal(result.magazine.ammo, CHRONOS_PRIMARY_MAGAZINE_SIZE - shot);
+  }
+
+  const emptyAt = now + CHRONOS_PRIMARY_MAGAZINE_SIZE;
+  const emptyState = tracker.getClientState(playerId, emptyAt + 1);
+  assert.equal(emptyState.ammo, 0);
+  assert.equal(emptyState.reloading, true);
+  assert.equal(emptyState.reloadUntil, emptyAt + CHRONOS_PRIMARY_RELOAD_MS);
+
+  const completed = tracker.completeReloadIfReady(playerId, emptyAt + CHRONOS_PRIMARY_RELOAD_MS);
+  assert.equal(completed.completed, true);
+  assert.equal(completed.magazine.ammo, CHRONOS_PRIMARY_MAGAZINE_SIZE);
 }
 
 console.log('primary magazine tests passed');

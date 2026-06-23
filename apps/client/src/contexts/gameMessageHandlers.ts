@@ -5,6 +5,7 @@ import {
   BLAZE_BOMB_SPLASH_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_LIFELINE_RELEASE_DELAY_MS,
+  CHRONOS_PRIMARY_RELOAD_MS,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
@@ -134,11 +135,13 @@ import type {
 import type { AppPhase } from '../store/types';
 
 const CHRONOS_TIMEBREAK_CHARGE_FADE_OUT_MS = 110;
+const CHRONOS_PRIMARY_RELOAD_SOUND_FADE_OUT_MS = 240;
 const remotePhantomChargeControllers = new Map<string, AbortController>();
 const playerIdByNetId = new Map<number, string>();
 const netIdByPlayerId = new Map<string, number>();
 let lastLocalPhantomReloadSoundKey = '';
 let lastLocalBlazeReloadSoundKey = '';
+let lastLocalChronosReloadSoundKey = '';
 let hasReceivedSelfMovementAuthority = false;
 const HOOKSHOT_SHOT_CLIP_MS = 250;
 const BATTLE_ROYAL_REVIVE_AUDIO_LOOP_PREFIX = 'battle-royal-revive:';
@@ -1760,6 +1763,57 @@ function applyBlazePrimaryState(data: {
   }
 }
 
+function applyChronosPrimaryState(data: {
+  ammo?: number;
+  ammoRemaining?: number;
+  reloading?: boolean;
+  reloadStartedAt?: number;
+  reloadUntil?: number;
+}): void {
+  const store = useGameStore.getState();
+  const wasReloading = store.chronosPrimaryReloading;
+  const previousReloadStart = store.chronosPrimaryReloadStart;
+  const previousReloadEnd = store.chronosPrimaryReloadEnd;
+  const now = Date.now();
+  const ammo = data.ammoRemaining ?? data.ammo;
+  const reloading = data.reloading ?? Boolean(data.reloadUntil && data.reloadUntil > now);
+  const shouldPreserveEmptyReloadAmmo =
+    reloading &&
+    wasReloading &&
+    store.chronosPrimaryAmmo <= 0 &&
+    typeof ammo === 'number' &&
+    ammo > 0;
+  if (typeof ammo === 'number') {
+    store.setChronosPrimaryAmmo(shouldPreserveEmptyReloadAmmo ? 0 : ammo);
+  }
+
+  const reloadStartedAt = reloading ? (data.reloadStartedAt ?? now) : 0;
+  const reloadUntil = reloading ? (data.reloadUntil ?? now) : 0;
+  store.setChronosPrimaryReload(
+    reloading,
+    reloadStartedAt,
+    reloadUntil
+  );
+
+  const reloadSoundKey = `${reloadStartedAt}:${reloadUntil}`;
+  const startedNewReload = reloading &&
+    reloadUntil > reloadStartedAt &&
+    reloadUntil > now &&
+    (!wasReloading || previousReloadStart !== reloadStartedAt || previousReloadEnd !== reloadUntil);
+
+  if (startedNewReload && lastLocalChronosReloadSoundKey !== reloadSoundKey) {
+    lastLocalChronosReloadSoundKey = reloadSoundKey;
+    if (shouldSuppressPredictedLocalAbilitySound('chronos_reload', now)) return;
+
+    const reloadDurationMs = Math.max(0, reloadUntil - now || CHRONOS_PRIMARY_RELOAD_MS);
+    const fadeOutMs = Math.min(CHRONOS_PRIMARY_RELOAD_SOUND_FADE_OUT_MS, reloadDurationMs);
+    void playSharedSound('chronosReload', {
+      durationMs: reloadDurationMs,
+      fadeOutMs,
+    });
+  }
+}
+
 function applyConfirmedPhantomActiveAbility(data: AbilityUsedMessage): void {
   const abilityDef = ABILITY_DEFINITIONS[data.abilityId];
   if (!abilityDef) return;
@@ -2451,6 +2505,9 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
 
   switch (data.abilityId) {
     case 'chronos_verdant_pulse': {
+      if (isLocalPlayer) {
+        applyChronosPrimaryState(data);
+      }
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
@@ -2728,6 +2785,16 @@ export function setupCombatHandlers(room: Room) {
     serverTime: number;
   }) => {
     applyBlazePrimaryState(data);
+  }));
+
+  room.onMessage('chronosPrimaryState', measureNetworkMessage('chronosPrimaryState', (data: {
+    ammo: number;
+    reloading: boolean;
+    reloadStartedAt: number;
+    reloadUntil: number;
+    serverTime: number;
+  }) => {
+    applyChronosPrimaryState(data);
   }));
 
   room.onMessage('chronosAegisDamaged', measureNetworkMessage('chronosAegisDamaged', (data: ChronosAegisDamagedEvent) => {

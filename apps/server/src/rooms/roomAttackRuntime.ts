@@ -144,6 +144,7 @@ export interface AttackPreflightInput {
   chronosPrimaryReady: boolean;
   phantomPrimaryShotAvailable: boolean;
   blazePrimaryShotAvailable: boolean;
+  chronosPrimaryShotAvailable: boolean;
 }
 
 export function getRoomAttackConfig(input: {
@@ -192,6 +193,9 @@ export function getAttackPreflightRejection(input: AttackPreflightInput): { reas
   }
   if (input.mode === 'primary' && !input.blazePrimaryShotAvailable) {
     return { reason: 'blaze_primary_no_ammo', logEvent: false };
+  }
+  if (input.mode === 'primary' && !input.chronosPrimaryShotAvailable) {
+    return { reason: 'chronos_primary_no_ammo', logEvent: false };
   }
   return null;
 }

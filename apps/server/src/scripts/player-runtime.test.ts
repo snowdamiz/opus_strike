@@ -69,7 +69,7 @@ function player(heroId: string, options: { bot?: boolean } = {}): Player {
   assert.deepEqual(plan, {
     resetAbilityCooldowns: true,
     resetBotBrain: false,
-    resetPrimaryMagazine: false,
+    resetPrimaryMagazine: true,
     clearChronosAegisShield: true,
   });
 }

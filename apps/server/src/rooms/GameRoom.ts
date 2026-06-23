@@ -352,6 +352,8 @@ import {
   resolveDirectionalMovementIntent,
   canReceiveLiveTransform,
   isPlayerAliveOrDowned,
+  CHRONOS_PRIMARY_MAGAZINE_SIZE,
+  CHRONOS_PRIMARY_RELOAD_MS,
 } from '@voxel-strike/shared';
 import type { 
   AbilityCastOriginHint,
@@ -890,6 +892,10 @@ export class GameRoom extends Room<GameState> {
   private readonly blazePrimaryMagazines = new PrimaryMagazineTracker({
     magazineSize: BLAZE_PRIMARY_MAGAZINE_SIZE,
     reloadMs: BLAZE_PRIMARY_RELOAD_MS,
+  });
+  private readonly chronosPrimaryMagazines = new PrimaryMagazineTracker({
+    magazineSize: CHRONOS_PRIMARY_MAGAZINE_SIZE,
+    reloadMs: CHRONOS_PRIMARY_RELOAD_MS,
   });
   private readonly phantomPrimaryHolds = new PlayerHoldTracker();
   private readonly chronosPrimaryHolds = new PlayerHoldTracker();
@@ -1691,6 +1697,7 @@ export class GameRoom extends Room<GameState> {
     this.playerPressStates.clear(playerId);
     this.phantomPrimaryMagazines.clear(playerId);
     this.blazePrimaryMagazines.clear(playerId);
+    this.chronosPrimaryMagazines.clear(playerId);
     this.clearPrimaryHoldStates(playerId);
     this.phantomVoidRayCharges.clear(playerId);
     this.phantomPrimaryLaunchSide.clear(playerId);
@@ -4762,6 +4769,7 @@ export class GameRoom extends Room<GameState> {
     const pulseSpeed = supercharged
       ? CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED
       : CHRONOS_VERDANT_PULSE_SPEED;
+    const magazine = this.getOrCreatePrimaryMagazine(player);
 
     this.broadcastExactPlayerEvent('abilityUsed', player, {
       playerId: player.id,
@@ -4782,6 +4790,9 @@ export class GameRoom extends Room<GameState> {
       serverTime: now,
       radius: supercharged ? CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS : undefined,
       supercharged,
+      ammoRemaining: magazine?.ammo,
+      reloadStartedAt: magazine && magazine.reloadUntil > now ? magazine.reloadStartedAt : undefined,
+      reloadUntil: magazine && magazine.reloadUntil > now ? magazine.reloadUntil : undefined,
     });
   }
 
@@ -5363,6 +5374,7 @@ export class GameRoom extends Room<GameState> {
   private getPrimaryMagazineTracker(heroId: string): PrimaryMagazineTracker | null {
     if (heroId === 'phantom') return this.phantomPrimaryMagazines;
     if (heroId === 'blaze') return this.blazePrimaryMagazines;
+    if (heroId === 'chronos') return this.chronosPrimaryMagazines;
     return null;
   }
 
@@ -5372,12 +5384,19 @@ export class GameRoom extends Room<GameState> {
     if (heroId === 'phantom') {
       this.phantomPrimaryMagazines.reset(playerId);
       this.blazePrimaryMagazines.clear(playerId);
+      this.chronosPrimaryMagazines.clear(playerId);
     } else if (heroId === 'blaze') {
       this.blazePrimaryMagazines.reset(playerId);
       this.phantomPrimaryMagazines.clear(playerId);
+      this.chronosPrimaryMagazines.clear(playerId);
+    } else if (heroId === 'chronos') {
+      this.chronosPrimaryMagazines.reset(playerId);
+      this.phantomPrimaryMagazines.clear(playerId);
+      this.blazePrimaryMagazines.clear(playerId);
     } else {
       this.phantomPrimaryMagazines.clear(playerId);
       this.blazePrimaryMagazines.clear(playerId);
+      this.chronosPrimaryMagazines.clear(playerId);
     }
 
     const player = this.state.players.get(playerId);
@@ -5421,7 +5440,9 @@ export class GameRoom extends Room<GameState> {
 
     const messageType = player.heroId === 'phantom'
       ? 'phantomPrimaryState'
-      : 'blazePrimaryState';
+      : player.heroId === 'blaze'
+        ? 'blazePrimaryState'
+        : 'chronosPrimaryState';
     this.sendTracked(client, messageType, tracker.getClientState(player.id, now));
   }
 
@@ -5611,6 +5632,7 @@ export class GameRoom extends Room<GameState> {
       chronosPrimaryReady: mode !== 'primary' || this.isChronosPrimaryReady(player, now),
       phantomPrimaryShotAvailable: true,
       blazePrimaryShotAvailable: true,
+      chronosPrimaryShotAvailable: true,
     });
     if (readinessRejection || !heroId || !attack) {
       this.rejectAbilityOrCombat(
@@ -5632,6 +5654,7 @@ export class GameRoom extends Room<GameState> {
         chronosPrimaryReady: true,
         phantomPrimaryShotAvailable: heroId !== 'phantom',
         blazePrimaryShotAvailable: heroId !== 'blaze',
+        chronosPrimaryShotAvailable: heroId !== 'chronos',
       });
       this.rejectAbilityOrCombat(player, ammoRejection?.reason ?? 'primary_no_ammo', ammoRejection?.logEvent ?? false);
       return;

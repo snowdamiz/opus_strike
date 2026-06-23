@@ -1042,7 +1042,7 @@ export function runPredictionAndCommandPhase(input: {
     dt,
     rawDelta,
   } = input;
-  const { cameraControl, phantomAbilities, blazeAbilities, flushMovementCommands, movementSounds, refs } = ctx;
+  const { cameraControl, phantomAbilities, blazeAbilities, chronosAbilities, flushMovementCommands, movementSounds, refs } = ctx;
   let { predictedState } = input;
   const wasGroundedBeforePrediction = predictedState.movement.isGrounded;
   const currentBombTargeting = useGameStore.getState().bombTargeting;
@@ -1052,9 +1052,12 @@ export function runPredictionAndCommandPhase(input: {
   const blazeAutoReloadForServer = heroId === 'blaze' &&
     blazeAbilities.blazePrimaryReloadingRef.current &&
     blazeAbilities.blazePrimaryAmmoRef.current <= 0;
+  const chronosAutoReloadForServer = heroId === 'chronos' &&
+    chronosAbilities.chronosPrimaryReloadingRef.current &&
+    chronosAbilities.chronosPrimaryAmmoRef.current <= 0;
   const reloadForServer = frameInput.reload ||
     refs.pendingReloadInputRef.current ||
-    ((phantomAutoReloadForServer || blazeAutoReloadForServer) && !serverCombatInput.primaryFire);
+    ((phantomAutoReloadForServer || blazeAutoReloadForServer || chronosAutoReloadForServer) && !serverCombatInput.primaryFire);
   const crouchHeld = frameInput.crouch;
   const crouchPressedThisFrame = crouchHeld && !refs.lastCrouchHeldRef.current;
   if (crouchPressedThisFrame) {
@@ -1175,6 +1178,7 @@ export function runInputPhase(
     abilitySystem,
     phantomAbilities,
     blazeAbilities,
+    chronosAbilities,
     lockHeroActions,
     isHeroActionLocked,
     refs,
@@ -1264,10 +1268,16 @@ export function runInputPhase(
     if (reloadPressed) {
       blazeAbilities.reloadBlazePrimary(now);
     }
+  } else if (heroId === 'chronos') {
+    chronosAbilities.updateChronosPrimaryReload(now);
+    if (reloadPressed) {
+      chronosAbilities.reloadChronosPrimary(now);
+    }
   }
 
   const phantomPrimaryReloading = heroId === 'phantom' && phantomAbilities.phantomPrimaryReloadingRef.current;
   const blazePrimaryReloading = heroId === 'blaze' && blazeAbilities.blazePrimaryReloadingRef.current;
+  const chronosPrimaryReloading = heroId === 'chronos' && chronosAbilities.chronosPrimaryReloadingRef.current;
   const phantomReloadBlocksNonBlinkCasts = heroId === 'phantom' && phantomPrimaryReloading;
   const localAbilityInput = phantomReloadBlocksNonBlinkCasts
     ? {
@@ -1291,7 +1301,7 @@ export function runInputPhase(
   const primaryFireForServer = heroId === 'phantom'
     ? phantomPrimaryHeldForPose && phantomAbilities.phantomPrimaryAmmoRef.current > 0
     : heroId === 'chronos'
-      ? frameInput.primaryFire
+      ? frameInput.primaryFire && !chronosPrimaryReloading && chronosAbilities.chronosPrimaryAmmoRef.current > 0
       : heroId === 'blaze'
         ? blazePrimaryHeldForPose && blazeAbilities.blazePrimaryAmmoRef.current > 0
         : frameInput.primaryFire;
@@ -1337,6 +1347,7 @@ function runNoLocalPlayerFrame(ctx: LocalPlayerFrameContext, now: number): Local
     movement,
     phantomAbilities,
     blazeAbilities,
+    chronosAbilities,
     resetPredictedAbilitySounds,
     resetViewmodelPoseState,
     resetBlazeFlamethrower,
@@ -1365,6 +1376,7 @@ function runNoLocalPlayerFrame(ctx: LocalPlayerFrameContext, now: number): Local
   clearHeroActionLock();
   phantomAbilities.resetPhantomPrimaryMagazine();
   blazeAbilities.resetBlazePrimaryMagazine();
+  chronosAbilities.resetChronosPrimaryMagazine();
   blazeAbilities.resetRocketJump();
   cameraControl.resetDeathCamera(camera);
   return { kind: 'no-player', authorityApplied: 0, substeps: 0 };
@@ -1566,6 +1578,7 @@ function runHeroSwapPhase(ctx: LocalPlayerFrameContext, localPlayer: Player, now
     hookshotAbilities,
     phantomAbilities,
     blazeAbilities,
+    chronosAbilities,
     resetMovementCommandBuffer,
     resetPredictedAbilitySounds,
     clearHeroActionLock,
@@ -1595,6 +1608,7 @@ function runHeroSwapPhase(ctx: LocalPlayerFrameContext, localPlayer: Player, now
   setFlamethrowerActive(false);
   phantomAbilities.resetPhantomPrimaryMagazine();
   blazeAbilities.resetBlazePrimaryMagazine();
+  chronosAbilities.resetChronosPrimaryMagazine();
   resetViewmodelPoseState('hero-swap', localPlayer.heroId as HeroId, now);
   resetBlazeFlamethrower(now);
   blazeAbilities.resetRocketJump();
@@ -1616,6 +1630,7 @@ function runDisabledLifecycleFrame(
     resetMovementCommandBuffer,
     clearHeroActionLock,
     blazeAbilities,
+    chronosAbilities,
     refs,
   } = ctx;
   const { dt, now } = timing;
@@ -1647,6 +1662,7 @@ function runDisabledLifecycleFrame(
   refs.lastExclusiveHoldInputRef.current = { ...EMPTY_EXCLUSIVE_HOLD_INPUT };
   clearHeroActionLock();
   blazeAbilities.resetRocketJump();
+  chronosAbilities.resetChronosPrimaryMagazine();
   cameraControl.resetDeathCamera(camera);
 
   const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
@@ -2780,7 +2796,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       now
     );
     setChronosPrimaryHeld(
-      heroId === 'chronos' && frameInput.primaryFire && !chronosLifelineCommitActive,
+      heroId === 'chronos' && frameInput.primaryFire && !chronosLifelineCommitActive && !chronosAbilities.chronosPrimaryReloadingRef.current,
       now
     );
     const chronosAegisDurability = heroId === 'chronos'
@@ -2807,6 +2823,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         phantomPrimaryReloading,
         blazePrimaryAmmo: blazeAbilities.blazePrimaryAmmoRef.current,
         blazePrimaryReloading,
+        chronosPrimaryAmmo: chronosAbilities.chronosPrimaryAmmoRef.current,
+        chronosPrimaryReloading: chronosAbilities.chronosPrimaryReloadingRef.current,
         canUseAbility: abilitySystem.canUseAbility,
         getAbilityCharges: (abilityId: string) => localPlayer.abilities?.[abilityId]?.charges,
         canUseHookshotGrapple: () => hookshotAbilities.canGrapple(abilityCtx),

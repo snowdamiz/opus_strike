@@ -7,6 +7,8 @@ import {
   BATTLE_ROYAL_REVIVE_RADIUS,
   BLAZE_PRIMARY_MAGAZINE_SIZE,
   BLAZE_PRIMARY_RELOAD_MS,
+  CHRONOS_PRIMARY_MAGAZINE_SIZE,
+  CHRONOS_PRIMARY_RELOAD_MS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
   VOID_RAY_CHARGE_TIME,
@@ -755,6 +757,28 @@ const BLAZE_SHOT_COUNTER_TONE: ShotCounterTone = {
   progressShadow: '0 0 8px rgba(251, 146, 60, 0.34)',
 };
 
+const CHRONOS_SHOT_COUNTER_TONE: ShotCounterTone = {
+  labelClass: 'text-emerald-100/52',
+  readyClass: 'text-emerald-50/96',
+  reloadClass: 'text-lime-100',
+  idleBackground: 'linear-gradient(135deg, rgba(14, 80, 55, 0.3), rgba(5, 18, 12, 0.24))',
+  reloadBackground: 'linear-gradient(135deg, rgba(16, 100, 65, 0.38), rgba(6, 28, 17, 0.28))',
+  idleBorder: '1px solid rgba(34, 197, 94, 0.24)',
+  reloadBorder: '1px solid rgba(132, 204, 22, 0.38)',
+  idleShadow: '0 0 18px rgba(34, 197, 94, 0.12), 0 8px 20px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255,255,255,0.06)',
+  reloadShadow: '0 0 20px rgba(74, 222, 128, 0.22), 0 8px 20px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255,255,255,0.07)',
+  idleFill: 'linear-gradient(90deg, rgba(34, 197, 94, 0.09), transparent)',
+  reloadFill: 'linear-gradient(90deg, rgba(34, 197, 94, 0.15), rgba(190, 242, 100, 0.08))',
+  idleProgress: 'linear-gradient(90deg, rgba(34, 197, 94, 0.66), rgba(134, 239, 172, 0.5))',
+  reloadProgress: 'linear-gradient(90deg, rgba(190, 242, 100, 0.72), rgba(34, 197, 94, 0.48))',
+  idleStroke: '#22c55e',
+  reloadStroke: '#bef264',
+  idleTextShadow: '0 0 10px rgba(34, 197, 94, 0.42), 0 2px 8px rgba(0,0,0,0.7)',
+  reloadTextShadow: '0 0 12px rgba(190, 242, 100, 0.58)',
+  reloadStrokeFilter: 'drop-shadow(0 0 4px rgba(190, 242, 100, 0.76))',
+  progressShadow: '0 0 8px rgba(74, 222, 128, 0.34)',
+};
+
 const HOOKSHOT_SHOT_COUNTER_TONE: ShotCounterTone = {
   labelClass: 'text-cyan-100/52',
   readyClass: 'text-cyan-50/95',
@@ -945,6 +969,34 @@ function BlazeAmmoCounter({
   );
 }
 
+function ChronosAmmoCounter({
+  ammo,
+  reloading,
+  reloadStart,
+  reloadEnd,
+}: {
+  ammo: number;
+  reloading: boolean;
+  reloadStart: number;
+  reloadEnd: number;
+}) {
+  const now = useHudNow();
+
+  return (
+    <PrimaryShotCounter
+      label="pulse"
+      ammo={ammo}
+      reloading={reloading}
+      reloadStart={reloadStart}
+      reloadEnd={reloadEnd}
+      now={now}
+      maxAmmo={CHRONOS_PRIMARY_MAGAZINE_SIZE}
+      reloadMs={CHRONOS_PRIMARY_RELOAD_MS}
+      tone={CHRONOS_SHOT_COUNTER_TONE}
+    />
+  );
+}
+
 function HookshotShotCounter() {
   return (
     <PrimaryShotCounter
@@ -968,9 +1020,9 @@ const CHRONOS_LIFELINE_HELPERS = [
   { input: 'key-e', icon: 'cancel', ariaLabel: 'E cancels Lifeline' },
 ] as const;
 
-const CHRONOS_LIFELINE_ICON_COLOR = 'rgba(255, 255, 255, 0.64)';
-const CHRONOS_LIFELINE_ICON_MUTED = 'rgba(255, 255, 255, 0.34)';
-const CHRONOS_LIFELINE_ICON_SOFT = 'rgba(255, 255, 255, 0.12)';
+const CHRONOS_LIFELINE_ICON_COLOR = 'rgba(255, 255, 255, 0.94)';
+const CHRONOS_LIFELINE_ICON_MUTED = 'rgba(197, 255, 234, 0.62)';
+const CHRONOS_LIFELINE_ICON_SOFT = 'rgba(4, 28, 25, 0.78)';
 
 type ChronosLifelineHelperIcon = (typeof CHRONOS_LIFELINE_HELPERS)[number]['icon'];
 type ChronosLifelineInputIcon = (typeof CHRONOS_LIFELINE_HELPERS)[number]['input'];
@@ -984,14 +1036,14 @@ function ChronosLifelineInputGlyph({
 }) {
   if (input === 'key-e') {
     return (
-      <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path
           d="M7.2 5.2h9.6c1 0 1.8.8 1.8 1.8v10c0 1-.8 1.8-1.8 1.8H7.2c-1 0-1.8-.8-1.8-1.8V7c0-1 .8-1.8 1.8-1.8Z"
           fill={CHRONOS_LIFELINE_ICON_SOFT}
           stroke={CHRONOS_LIFELINE_ICON_MUTED}
-          strokeWidth="1.4"
+          strokeWidth="1.6"
         />
-        <path d="M14.7 8.5H9.5v7h5.4M9.9 12h4.1" stroke={color} strokeWidth="1.55" strokeLinecap="round" />
+        <path d="M14.7 8.5H9.5v7h5.4M9.9 12h4.1" stroke={color} strokeWidth="1.75" strokeLinecap="round" />
       </svg>
     );
   }
@@ -999,19 +1051,19 @@ function ChronosLifelineInputGlyph({
   const leftActive = input === 'mouse-left';
 
   return (
-    <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M12 3.5c-3.35 0-6.1 2.75-6.1 6.1v4.8c0 3.35 2.75 6.1 6.1 6.1s6.1-2.75 6.1-6.1V9.6c0-3.35-2.75-6.1-6.1-6.1Z"
         fill={CHRONOS_LIFELINE_ICON_SOFT}
         stroke={CHRONOS_LIFELINE_ICON_MUTED}
-        strokeWidth="1.45"
+        strokeWidth="1.6"
       />
-      <path d="M12 4.3v5.5" stroke="rgba(255,255,255,0.22)" strokeWidth="1.15" strokeLinecap="round" />
+      <path d="M12 4.3v5.5" stroke="rgba(197,255,234,0.4)" strokeWidth="1.25" strokeLinecap="round" />
       <path
         d={leftActive ? 'M11.2 4.8c-2.3.35-4 2.35-4 4.8h4V4.8Z' : 'M12.8 4.8c2.3.35 4 2.35 4 4.8h-4V4.8Z'}
         fill={color}
       />
-      <path d="M12 11.3v2" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M12 11.3v2" stroke={color} strokeWidth="1.7" strokeLinecap="round" />
     </svg>
   );
 }
@@ -1025,29 +1077,29 @@ function ChronosLifelineActionIcon({
 }) {
   if (icon === 'cancel') {
     return (
-      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M6.2 6.2 17.8 17.8M17.8 6.2 6.2 17.8" stroke={color} strokeWidth="2.4" strokeLinecap="round" />
+      <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M6.2 6.2 17.8 17.8M17.8 6.2 6.2 17.8" stroke={color} strokeWidth="2.7" strokeLinecap="round" />
       </svg>
     );
   }
 
   if (icon === 'self') {
     return (
-      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <circle cx="10" cy="7.2" r="3" stroke={color} strokeWidth="1.8" />
-        <path d="M4.7 18.6c.7-3.4 2.5-5.2 5.3-5.2s4.6 1.8 5.3 5.2" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
-        <path d="M18.2 10.7v5M15.7 13.2h5" stroke={color} strokeWidth="2" strokeLinecap="round" />
+      <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="10" cy="7.2" r="3" stroke={color} strokeWidth="2" />
+        <path d="M4.7 18.6c.7-3.4 2.5-5.2 5.3-5.2s4.6 1.8 5.3 5.2" stroke={color} strokeWidth="2" strokeLinecap="round" />
+        <path d="M18.2 10.7v5M15.7 13.2h5" stroke={color} strokeWidth="2.25" strokeLinecap="round" />
       </svg>
     );
   }
 
   return (
-    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <circle cx="8" cy="7.3" r="2.4" stroke={color} strokeWidth="1.7" />
-      <circle cx="15.8" cy="7.3" r="2.4" stroke={color} strokeWidth="1.7" opacity="0.76" />
-      <path d="M3.7 18.2c.6-3.1 2-4.7 4.3-4.7s3.7 1.6 4.3 4.7" stroke={color} strokeWidth="1.7" strokeLinecap="round" />
-      <path d="M12.5 14c.7-.4 1.5-.6 2.5-.6 2.2 0 3.7 1.6 4.3 4.7" stroke={color} strokeWidth="1.7" strokeLinecap="round" opacity="0.76" />
-      <path d="M18.7 11.1v4.2M16.6 13.2h4.2" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="8" cy="7.3" r="2.4" stroke={color} strokeWidth="1.9" />
+      <circle cx="15.8" cy="7.3" r="2.4" stroke={color} strokeWidth="1.9" opacity="0.84" />
+      <path d="M3.7 18.2c.6-3.1 2-4.7 4.3-4.7s3.7 1.6 4.3 4.7" stroke={color} strokeWidth="1.9" strokeLinecap="round" />
+      <path d="M12.5 14c.7-.4 1.5-.6 2.5-.6 2.2 0 3.7 1.6 4.3 4.7" stroke={color} strokeWidth="1.9" strokeLinecap="round" opacity="0.84" />
+      <path d="M18.7 11.1v4.2M16.6 13.2h4.2" stroke={color} strokeWidth="2.05" strokeLinecap="round" />
     </svg>
   );
 }
@@ -1055,22 +1107,26 @@ function ChronosLifelineActionIcon({
 function ChronosLifelineHelper() {
   return (
     <div
-      className="relative flex max-w-[92vw] items-center justify-center gap-3 px-1 pb-0.5 animate-fade-in sm:gap-4"
+      className="relative flex max-w-[92vw] items-center justify-center gap-3.5 rounded-full px-3 py-1.5 animate-fade-in sm:gap-5 sm:px-4"
       style={{
-        filter: 'drop-shadow(0 1px 2px rgba(0, 0, 0, 0.48))',
+        background: 'linear-gradient(180deg, rgba(5, 31, 28, 0.84), rgba(3, 17, 22, 0.76))',
+        border: '1px solid rgba(202, 255, 236, 0.24)',
+        boxShadow: '0 10px 24px rgba(0, 0, 0, 0.34), 0 0 0 1px rgba(255, 255, 255, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.18)',
+        backdropFilter: 'blur(10px) saturate(1.15)',
+        filter: 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.58))',
       }}
       aria-label="Chronos Lifeline helper actions"
     >
-      <span className="absolute left-1/2 top-1/2 h-px w-[calc(100%-1.2rem)] -translate-x-1/2 bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+      <span className="absolute left-1/2 top-1/2 h-px w-[calc(100%-2rem)] -translate-x-1/2 bg-gradient-to-r from-transparent via-cyan-100/40 to-transparent" />
 
       {CHRONOS_LIFELINE_HELPERS.map((helper) => (
         <div
           key={helper.input}
-          className="relative flex h-9 items-center gap-1.5"
+          className="relative flex h-11 items-center gap-2"
           aria-label={helper.ariaLabel}
         >
           <ChronosLifelineInputGlyph input={helper.input} color={CHRONOS_LIFELINE_ICON_COLOR} />
-          <span className="h-1 w-1 rounded-full bg-white/40" />
+          <span className="h-1.5 w-1.5 rounded-full bg-cyan-100/65 shadow-[0_0_8px_rgba(186,255,236,0.5)]" />
           <ChronosLifelineActionIcon icon={helper.icon} color={CHRONOS_LIFELINE_ICON_COLOR} />
         </div>
       ))}
@@ -1109,6 +1165,10 @@ export function HUD() {
     blazePrimaryReloading,
     blazePrimaryReloadStart,
     blazePrimaryReloadEnd,
+    chronosPrimaryAmmo,
+    chronosPrimaryReloading,
+    chronosPrimaryReloadStart,
+    chronosPrimaryReloadEnd,
     chronosLifelineQueued,
   } = useGameStore(
     useShallow(state => ({
@@ -1141,6 +1201,10 @@ export function HUD() {
       blazePrimaryReloading: state.blazePrimaryReloading,
       blazePrimaryReloadStart: state.blazePrimaryReloadStart,
       blazePrimaryReloadEnd: state.blazePrimaryReloadEnd,
+      chronosPrimaryAmmo: state.chronosPrimaryAmmo,
+      chronosPrimaryReloading: state.chronosPrimaryReloading,
+      chronosPrimaryReloadStart: state.chronosPrimaryReloadStart,
+      chronosPrimaryReloadEnd: state.chronosPrimaryReloadEnd,
       chronosLifelineQueued: state.chronosLifelineQueued,
     }))
   );
@@ -1557,6 +1621,14 @@ export function HUD() {
             reloading={blazePrimaryReloading}
             reloadStart={blazePrimaryReloadStart}
             reloadEnd={blazePrimaryReloadEnd}
+          />
+        )}
+        {localPlayer.heroId === 'chronos' && (
+          <ChronosAmmoCounter
+            ammo={chronosPrimaryAmmo}
+            reloading={chronosPrimaryReloading}
+            reloadStart={chronosPrimaryReloadStart}
+            reloadEnd={chronosPrimaryReloadEnd}
           />
         )}
 

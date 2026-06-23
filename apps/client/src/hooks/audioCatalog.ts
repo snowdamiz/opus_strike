@@ -43,6 +43,7 @@ export const SOUND_EFFECTS = {
   hookshotRetract: { path: '/sounds/hookshot_retract.mp3', volume: 0.42 },
 
   chronosPulse: { path: '/sounds/chronos_charge.mp3', volume: 0 },
+  chronosReload: { path: '/sounds/chronos_LMB_reload.mp3', volume: 0.56 },
   chronosAegis: { path: '/sounds/chronos_shield.mp3', volume: 0.8352 },
   chronosLifelineActive: { path: '/sounds/chronos_E_active.mp3', volume: 0.55 },
   chronosLifeline: { path: '/sounds/choronos_heal.mp3', volume: 0.5 },
@@ -161,6 +162,7 @@ export const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   chronos: [
     'phantomBasic',
     'chronosPulse',
+    'chronosReload',
     'chronosAegis',
     'chronosLifelineActive',
     'chronosLifeline',

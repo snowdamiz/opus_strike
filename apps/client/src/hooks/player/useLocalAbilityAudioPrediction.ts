@@ -62,6 +62,8 @@ export interface LocalAbilityAudioPredictionFrame {
   phantomPrimaryReloading: boolean;
   blazePrimaryAmmo: number;
   blazePrimaryReloading: boolean;
+  chronosPrimaryAmmo: number;
+  chronosPrimaryReloading: boolean;
   canUseAbility: (abilityId: string, isUltimate: boolean, isTargetingActive?: boolean) => boolean;
   getAbilityCharges?: (abilityId: string) => number | undefined;
   canUseHookshotGrapple?: () => boolean;
@@ -260,6 +262,8 @@ export function useLocalAbilityAudioPrediction() {
       phantomPrimaryReloading,
       blazePrimaryAmmo,
       blazePrimaryReloading,
+      chronosPrimaryAmmo,
+      chronosPrimaryReloading,
       canUseAbility,
       getAbilityCharges,
       canUseHookshotGrapple,
@@ -358,6 +362,8 @@ export function useLocalAbilityAudioPrediction() {
         }
         break;
       case 'chronos': {
+        void chronosPrimaryAmmo;
+        void chronosPrimaryReloading;
         break;
       }
     }

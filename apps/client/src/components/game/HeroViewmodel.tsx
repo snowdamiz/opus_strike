@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { useShallow } from 'zustand/shallow';
 import {
   BLAZE_PRIMARY_RELOAD_MS,
+  CHRONOS_PRIMARY_RELOAD_MS,
   HERO_DEFINITIONS,
   PHANTOM_PRIMARY_RELOAD_MS,
   SPRINT_MULTIPLIER,
@@ -339,7 +340,35 @@ const CHRONOS_WEAPON_PYRAMID_WIRE_GLOW_OPACITY = 1;
 const CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X = -0.18;
 const CHRONOS_WEAPON_PYRAMID_SPIN_SPEED = 0.22;
 const CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST = 0.86;
+const CHRONOS_WEAPON_PYRAMID_RELOAD_SPIN_BOOST = 7.2;
 const CHRONOS_WEAPON_PYRAMID_HEARTBEAT_GROWTH = 0.085;
+const CHRONOS_WEAPON_RELOAD_AURA_PUFFS = [
+  { angle: 0.08, radius: 0.26, y: 0.1, offset: 0.0, speed: 1.02, swirl: 0.72, size: 1.1 },
+  { angle: 0.52, radius: 0.32, y: -0.06, offset: 0.08, speed: 1.14, swirl: -0.56, size: 0.94 },
+  { angle: 1.04, radius: 0.28, y: 0.16, offset: 0.15, speed: 0.98, swirl: 0.64, size: 1.04 },
+  { angle: 1.5, radius: 0.34, y: -0.14, offset: 0.23, speed: 1.18, swirl: -0.76, size: 0.88 },
+  { angle: 2.0, radius: 0.3, y: 0.03, offset: 0.31, speed: 1.08, swirl: 0.58, size: 1.18 },
+  { angle: 2.48, radius: 0.25, y: -0.02, offset: 0.39, speed: 1.2, swirl: -0.68, size: 0.96 },
+  { angle: 2.96, radius: 0.36, y: 0.13, offset: 0.46, speed: 1.0, swirl: 0.78, size: 1.0 },
+  { angle: 3.44, radius: 0.29, y: -0.12, offset: 0.54, speed: 1.16, swirl: -0.62, size: 1.12 },
+  { angle: 3.92, radius: 0.33, y: 0.06, offset: 0.62, speed: 1.04, swirl: 0.7, size: 0.9 },
+  { angle: 4.42, radius: 0.27, y: 0.18, offset: 0.69, speed: 1.22, swirl: -0.74, size: 1.08 },
+  { angle: 4.88, radius: 0.35, y: -0.08, offset: 0.77, speed: 1.1, swirl: 0.6, size: 1.0 },
+  { angle: 5.36, radius: 0.31, y: 0.01, offset: 0.85, speed: 0.96, swirl: -0.66, size: 0.92 },
+  { angle: 5.82, radius: 0.24, y: -0.16, offset: 0.92, speed: 1.24, swirl: 0.8, size: 1.14 },
+] as const;
+const CHRONOS_WEAPON_RELOAD_AURA_MOTES = [
+  { angle: 0.18, radius: 0.34, y: 0.14, offset: 0.02, speed: 1.08, drift: 0.8, size: 1.05 },
+  { angle: 0.72, radius: 0.28, y: -0.1, offset: 0.13, speed: 1.18, drift: -0.9, size: 0.86 },
+  { angle: 1.28, radius: 0.38, y: 0.02, offset: 0.24, speed: 0.98, drift: 1.05, size: 1.16 },
+  { angle: 1.9, radius: 0.26, y: 0.17, offset: 0.36, speed: 1.3, drift: -0.7, size: 0.92 },
+  { angle: 2.52, radius: 0.32, y: -0.15, offset: 0.47, speed: 1.04, drift: 0.92, size: 1 },
+  { angle: 3.1, radius: 0.4, y: 0.08, offset: 0.58, speed: 1.22, drift: -1.02, size: 1.12 },
+  { angle: 3.76, radius: 0.29, y: -0.03, offset: 0.68, speed: 1.12, drift: 0.75, size: 0.9 },
+  { angle: 4.38, radius: 0.36, y: 0.2, offset: 0.78, speed: 0.94, drift: -0.84, size: 1.2 },
+  { angle: 5.0, radius: 0.3, y: -0.12, offset: 0.88, speed: 1.28, drift: 0.95, size: 0.94 },
+  { angle: 5.62, radius: 0.42, y: 0.01, offset: 0.96, speed: 1.0, drift: -0.72, size: 1.06 },
+] as const;
 const CHRONOS_AEGIS_VISUAL_STALE_MS = 220;
 const CHRONOS_AEGIS_BLEND_IN_SPEED = 6.8;
 const CHRONOS_AEGIS_BLEND_OUT_SPEED = 9;
@@ -456,6 +485,44 @@ function writeViewmodelRootTransform(
 
 function createAdditiveGlowMaterial(color: number): THREE.MeshBasicMaterial {
   return new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+}
+
+function createChronosReloadAuraTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    return new THREE.CanvasTexture(canvas);
+  }
+
+  const gradient = context.createRadialGradient(32, 32, 2, 32, 32, 32);
+  gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+  gradient.addColorStop(0.28, 'rgba(210, 255, 226, 0.82)');
+  gradient.addColorStop(0.62, 'rgba(64, 255, 150, 0.28)');
+  gradient.addColorStop(1, 'rgba(64, 255, 150, 0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function createChronosReloadAuraMaterial(
+  texture: THREE.Texture,
+  color: number
+): THREE.SpriteMaterial {
+  return new THREE.SpriteMaterial({
+    map: texture,
     color,
     transparent: true,
     opacity: 0,
@@ -4017,6 +4084,8 @@ function ChronosFloatingPyramidWeapon({
   const pyramidRef = useRef<THREE.Group>(null);
   const orbRef = useRef<THREE.Group>(null);
   const orbLightRef = useRef<THREE.PointLight>(null);
+  const reloadAuraPuffRefs = useRef<(THREE.Sprite | null)[]>([]);
+  const reloadAuraMoteRefs = useRef<(THREE.Sprite | null)[]>([]);
   const primarySpinPhaseRef = useRef(0);
   const leftSocketWorldPosition = useMemo(() => new THREE.Vector3(), []);
   const rightSocketWorldPosition = useMemo(() => new THREE.Vector3(), []);
@@ -4062,8 +4131,23 @@ function ChronosFloatingPyramidWeapon({
     depthWrite: false,
     toneMapped: false,
   }), []);
+  const reloadAuraTexture = useMemo(createChronosReloadAuraTexture, []);
+  const reloadAuraPuffMaterial = useMemo(
+    () => createChronosReloadAuraMaterial(reloadAuraTexture, 0x32ff91),
+    [reloadAuraTexture]
+  );
+  const reloadAuraMoteMaterial = useMemo(
+    () => createChronosReloadAuraMaterial(reloadAuraTexture, 0xd6ffe5),
+    [reloadAuraTexture]
+  );
 
   useRegisteredViewmodelSocket(CHRONOS_PRIMARY_ORB_SOCKET_NAME, orbRef);
+
+  useEffect(() => () => {
+    reloadAuraPuffMaterial.dispose();
+    reloadAuraMoteMaterial.dispose();
+    reloadAuraTexture.dispose();
+  }, [reloadAuraMoteMaterial, reloadAuraPuffMaterial, reloadAuraTexture]);
 
   useFrame((state, delta) => {
     const weapon = weaponRef.current;
@@ -4078,10 +4162,28 @@ function ChronosFloatingPyramidWeapon({
     const aegisGlow = THREE.MathUtils.smoothstep(aegisPose.blend, 0, 1);
     const primaryHeldBlend = getChronosPrimaryHeldBlend(nowMs);
     const primaryShotGlow = getChronosPrimaryShotGlowBlend(nowMs);
+    const {
+      chronosPrimaryReloading,
+      chronosPrimaryReloadStart,
+      chronosPrimaryReloadEnd,
+    } = useGameStore.getState();
+    const reloadDuration = Math.max(
+      1,
+      chronosPrimaryReloadEnd - chronosPrimaryReloadStart || CHRONOS_PRIMARY_RELOAD_MS
+    );
+    const reloadProgress = chronosPrimaryReloading
+      ? THREE.MathUtils.clamp((nowMs - chronosPrimaryReloadStart) / reloadDuration, 0, 1)
+      : 0;
+    const reloadIntensity = chronosPrimaryReloading
+      ? THREE.MathUtils.smoothstep(reloadProgress, 0, 0.14) *
+        (1 - THREE.MathUtils.smoothstep(reloadProgress, 0.86, 1))
+      : 0;
+    const reloadFlicker = 1 + Math.sin(t * 38.5) * 0.1 * reloadIntensity + Math.sin(t * 71.0) * 0.045 * reloadIntensity;
     const orbGlow = Math.max(
       aegisGlow,
       primaryHeldBlend * CHRONOS_WEAPON_ORB_PRIMARY_HOLD_GLOW,
-      primaryShotGlow
+      primaryShotGlow,
+      reloadIntensity * 0.98
     );
     const glowFlicker = 1 + Math.sin(t * 12.5) * 0.055 * orbGlow;
     const spread = aegisPose.spread;
@@ -4112,33 +4214,38 @@ function ChronosFloatingPyramidWeapon({
         CHRONOS_AEGIS_PYRAMID_GROWTH * spread +
         0.18 * shield +
         0.08 * recoil +
-        CHRONOS_WEAPON_PYRAMID_HEARTBEAT_GROWTH * heartbeat;
+        CHRONOS_WEAPON_PYRAMID_HEARTBEAT_GROWTH * heartbeat +
+        reloadIntensity * 0.12;
       primarySpinPhaseRef.current +=
-        Math.min(delta, 0.05) * CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST * (primaryHeldBlend + recoil * 2.4 + spinBoost * 3.8);
+        Math.min(delta, 0.05) * (
+          CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST * (primaryHeldBlend + recoil * 2.4 + spinBoost * 3.8) +
+          CHRONOS_WEAPON_PYRAMID_RELOAD_SPIN_BOOST * reloadIntensity
+        );
       pyramidRef.current.rotation.set(
-        CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X - 0.08 * shield + Math.sin(t * 0.42) * 0.02 + 0.16 * recoil,
+        CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X - 0.08 * shield + Math.sin(t * 0.42) * 0.02 + 0.16 * recoil + 0.04 * reloadIntensity,
         Math.PI / 4 +
-          t * (CHRONOS_WEAPON_PYRAMID_SPIN_SPEED + 0.5 * spread + 1.7 * spinBoost) +
+          t * (CHRONOS_WEAPON_PYRAMID_SPIN_SPEED + 0.5 * spread + 1.7 * spinBoost + 3.2 * reloadIntensity) +
           primarySpinPhaseRef.current,
-        Math.sin(t * 0.5) * 0.018
+        Math.sin(t * (0.5 + reloadIntensity * 2.2)) * (0.018 + reloadIntensity * 0.035)
       );
       pyramidRef.current.scale.setScalar(pyramidScale);
     }
-    const pyramidGlow = Math.max(aegisGlow, spinBoost, heartbeat);
+    const pyramidGlow = Math.max(aegisGlow, spinBoost, heartbeat, reloadIntensity);
+    const pyramidFaceMaxOpacity = CHRONOS_WEAPON_PYRAMID_FACE_GLOW_OPACITY + reloadIntensity * 0.18;
     pyramidFaceMaterial.opacity = THREE.MathUtils.clamp(
       THREE.MathUtils.lerp(
         CHRONOS_WEAPON_PYRAMID_FACE_BASE_OPACITY,
-        CHRONOS_WEAPON_PYRAMID_FACE_GLOW_OPACITY,
+        pyramidFaceMaxOpacity,
         pyramidGlow
-      ) * glowFlicker,
+      ) * glowFlicker * reloadFlicker,
       0,
-      CHRONOS_WEAPON_PYRAMID_FACE_GLOW_OPACITY
+      pyramidFaceMaxOpacity
     );
     pyramidFaceMaterial.emissiveIntensity = THREE.MathUtils.lerp(
       CHRONOS_WEAPON_PYRAMID_EMISSIVE_BASE_INTENSITY,
-      CHRONOS_WEAPON_PYRAMID_EMISSIVE_GLOW_INTENSITY,
+      CHRONOS_WEAPON_PYRAMID_EMISSIVE_GLOW_INTENSITY + reloadIntensity * 1.15,
       pyramidGlow
-    ) * glowFlicker;
+    ) * glowFlicker * reloadFlicker;
     pyramidFaceMaterial.color
       .copy(pyramidFaceIdleColor)
       .lerp(pyramidFaceGlowColor, pyramidGlow * 0.76);
@@ -4148,7 +4255,7 @@ function ChronosFloatingPyramidWeapon({
         CHRONOS_WEAPON_PYRAMID_WIRE_BASE_OPACITY,
         CHRONOS_WEAPON_PYRAMID_WIRE_GLOW_OPACITY,
         pyramidGlow
-      ) * glowFlicker,
+      ) * glowFlicker * reloadFlicker,
       0,
       CHRONOS_WEAPON_PYRAMID_WIRE_GLOW_OPACITY
     );
@@ -4175,8 +4282,59 @@ function ChronosFloatingPyramidWeapon({
         CHRONOS_WEAPON_ORB_LIGHT_BASE_INTENSITY,
         CHRONOS_WEAPON_ORB_LIGHT_HELD_INTENSITY,
         orbGlow
-      );
+      ) + reloadIntensity * 0.48;
     }
+
+    const reloadVisible = reloadIntensity > 0.02;
+    reloadAuraPuffRefs.current.forEach((puffNode, index) => {
+      if (!puffNode) return;
+      const puff = CHRONOS_WEAPON_RELOAD_AURA_PUFFS[index];
+      if (!puff) return;
+
+      const localProgress = (reloadProgress * puff.speed + puff.offset) % 1;
+      const easedProgress = THREE.MathUtils.smoothstep(localProgress, 0, 1);
+      const puffAmount = reloadIntensity * Math.sin(localProgress * Math.PI);
+      puffNode.visible = reloadVisible && puffAmount > 0.035;
+      if (!puffNode.visible) return;
+
+      const angle = puff.angle + puff.swirl * easedProgress + t * (0.18 + puff.speed * 0.06);
+      const radius = THREE.MathUtils.lerp(puff.radius, 0.045, easedProgress);
+      const scale = puff.size * THREE.MathUtils.lerp(0.14, 0.035, easedProgress) * (0.82 + puffAmount * 0.24);
+      puffNode.position.set(
+        Math.sin(angle) * radius,
+        THREE.MathUtils.lerp(puff.y, 0, easedProgress) + Math.sin(t * 4.5 + index) * 0.008 * puffAmount,
+        Math.cos(angle) * radius
+      );
+      puffNode.scale.set(scale, scale, 1);
+    });
+
+    reloadAuraMoteRefs.current.forEach((moteNode, index) => {
+      if (!moteNode) return;
+      const mote = CHRONOS_WEAPON_RELOAD_AURA_MOTES[index];
+      if (!mote) return;
+
+      const localProgress = (reloadProgress * mote.speed + mote.offset) % 1;
+      const easedProgress = THREE.MathUtils.smoothstep(localProgress, 0, 1);
+      const moteAmount = reloadIntensity * Math.sin(localProgress * Math.PI);
+      moteNode.visible = reloadVisible && moteAmount > 0.04;
+      if (!moteNode.visible) return;
+
+      const angle = mote.angle + mote.drift * easedProgress + t * (0.58 + mote.speed * 0.18);
+      const radius = THREE.MathUtils.lerp(mote.radius, 0.018, easedProgress);
+      moteNode.position.set(
+        Math.sin(angle) * radius,
+        THREE.MathUtils.lerp(mote.y, 0, easedProgress) + Math.sin(t * 8 + index) * 0.01 * moteAmount,
+        Math.cos(angle) * radius
+      );
+      const moteScale = mote.size * THREE.MathUtils.lerp(0.042, 0.012, easedProgress) * (0.78 + moteAmount * 0.28);
+      moteNode.scale.set(moteScale, moteScale, 1);
+    });
+    reloadAuraPuffMaterial.opacity = reloadVisible
+      ? THREE.MathUtils.clamp(reloadIntensity * 0.42, 0, 0.42)
+      : 0;
+    reloadAuraMoteMaterial.opacity = reloadVisible
+      ? THREE.MathUtils.clamp(reloadIntensity * 0.82, 0, 0.82)
+      : 0;
   });
 
   return (
@@ -4200,6 +4358,30 @@ function ChronosFloatingPyramidWeapon({
           scale={[0.143, 0.213, 0.143]}
         />
       </group>
+
+      {CHRONOS_WEAPON_RELOAD_AURA_PUFFS.map((puff, index) => (
+        <sprite
+          key={`chronos-reload-aura-puff-${puff.angle}`}
+          ref={(node) => {
+            reloadAuraPuffRefs.current[index] = node;
+          }}
+          material={reloadAuraPuffMaterial}
+          visible={false}
+          scale={[0.001, 0.001, 1]}
+        />
+      ))}
+
+      {CHRONOS_WEAPON_RELOAD_AURA_MOTES.map((mote, index) => (
+        <sprite
+          key={`chronos-reload-aura-mote-${mote.angle}`}
+          ref={(node) => {
+            reloadAuraMoteRefs.current[index] = node;
+          }}
+          material={reloadAuraMoteMaterial}
+          visible={false}
+          scale={[0.001, 0.001, 1]}
+        />
+      ))}
 
       <group ref={orbRef} name={CHRONOS_PRIMARY_ORB_SOCKET_NAME} position={[0, CHRONOS_WEAPON_ORB_BASE_Y, 0.048]}>
         <mesh

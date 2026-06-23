@@ -2,6 +2,8 @@ import type { StateCreator } from 'zustand';
 import {
   BLAZE_PRIMARY_MAGAZINE_SIZE,
   BLAZE_PRIMARY_RELOAD_MS,
+  CHRONOS_PRIMARY_MAGAZINE_SIZE,
+  CHRONOS_PRIMARY_RELOAD_MS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
 } from '@voxel-strike/shared';
@@ -49,6 +51,10 @@ export interface ProjectileState {
 
   // Chronos projectiles
   chronosPulses: ChronosPulseData[];
+  chronosPrimaryAmmo: number;
+  chronosPrimaryReloading: boolean;
+  chronosPrimaryReloadStart: number;
+  chronosPrimaryReloadEnd: number;
 
   // Hookshot projectiles
   hookProjectiles: HookProjectileData[];
@@ -103,6 +109,9 @@ export interface ProjectileActions {
   removeChronosPulse: (id: string) => void;
   removeChronosPulses: (ids: readonly string[]) => void;
   clearExpiredChronosPulses: () => void;
+  setChronosPrimaryAmmo: (ammo: number) => void;
+  setChronosPrimaryReload: (reloading: boolean, startTime?: number, endTime?: number) => void;
+  resetChronosPrimaryMagazine: () => void;
 
   // Hook projectile actions
   addHookProjectile: (hook: HookProjectileData) => void;
@@ -165,6 +174,10 @@ export const projectileInitialState: ProjectileState = {
   flamethrowerActive: false,
   flamethrowerFuel: 100,
   chronosPulses: [],
+  chronosPrimaryAmmo: CHRONOS_PRIMARY_MAGAZINE_SIZE,
+  chronosPrimaryReloading: false,
+  chronosPrimaryReloadStart: 0,
+  chronosPrimaryReloadEnd: 0,
   hookProjectiles: [],
   dragHooks: [],
   hookshotGroundHooks: [],
@@ -567,6 +580,45 @@ export const createProjectileSlice: StateCreator<
   clearExpiredChronosPulses: () => set((state) => {
     const chronosPulses = filterExpiredByExpiry(state.chronosPulses, getChronosPulseExpiresAt);
     return chronosPulses === state.chronosPulses ? state : { chronosPulses };
+  }),
+
+  setChronosPrimaryAmmo: (ammo) => set((state) => {
+    const nextAmmo = Math.max(0, Math.min(CHRONOS_PRIMARY_MAGAZINE_SIZE, ammo));
+    return state.chronosPrimaryAmmo === nextAmmo ? state : { chronosPrimaryAmmo: nextAmmo };
+  }),
+
+  setChronosPrimaryReload: (reloading, startTime = 0, endTime = startTime + CHRONOS_PRIMARY_RELOAD_MS) => set((state) => {
+    if (
+      state.chronosPrimaryReloading === reloading &&
+      state.chronosPrimaryReloadStart === startTime &&
+      state.chronosPrimaryReloadEnd === endTime
+    ) {
+      return state;
+    }
+
+    return {
+      chronosPrimaryReloading: reloading,
+      chronosPrimaryReloadStart: reloading ? startTime : 0,
+      chronosPrimaryReloadEnd: reloading ? endTime : 0,
+    };
+  }),
+
+  resetChronosPrimaryMagazine: () => set((state) => {
+    if (
+      state.chronosPrimaryAmmo === CHRONOS_PRIMARY_MAGAZINE_SIZE &&
+      !state.chronosPrimaryReloading &&
+      state.chronosPrimaryReloadStart === 0 &&
+      state.chronosPrimaryReloadEnd === 0
+    ) {
+      return state;
+    }
+
+    return {
+      chronosPrimaryAmmo: CHRONOS_PRIMARY_MAGAZINE_SIZE,
+      chronosPrimaryReloading: false,
+      chronosPrimaryReloadStart: 0,
+      chronosPrimaryReloadEnd: 0,
+    };
   }),
 
   // ==================== HOOK PROJECTILES ====================
