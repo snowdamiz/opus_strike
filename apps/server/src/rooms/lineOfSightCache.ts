@@ -5,27 +5,51 @@ import {
 
 const LINE_OF_SIGHT_CACHE_TTL_MS = 180;
 const LINE_OF_SIGHT_CACHE_MAX_ENTRIES = 1500;
+const LINE_OF_SIGHT_CACHE_EVICT_BATCH = 150;
 
 type BlockedPositionPredicate = (position: PlainVec3) => boolean;
 
-function getLineOfSightCacheKey(start: PlainVec3, end: PlainVec3): string {
+function getLineOfSightCacheKey(start: PlainVec3, end: PlainVec3, collisionRevision: number): string {
   const q = (value: number) => Math.round(value * 2);
-  return `${q(start.x)}:${q(start.y)}:${q(start.z)}>${q(end.x)}:${q(end.y)}:${q(end.z)}`;
+  return `${collisionRevision}:${q(start.x)}:${q(start.y)}:${q(start.z)}>${q(end.x)}:${q(end.y)}:${q(end.z)}`;
+}
+
+interface CachedLineOfSightResult {
+  result: boolean;
+  expiresAt: number;
+  collisionRevision: number;
 }
 
 export class LineOfSightCache {
-  private readonly cache = new Map<string, { result: boolean; expiresAt: number }>();
+  private readonly cache = new Map<string, CachedLineOfSightResult>();
   private readonly samplePoint: PlainVec3 = { x: 0, y: 0, z: 0 };
+
+  private pruneCache(now: number): void {
+    if (this.cache.size < LINE_OF_SIGHT_CACHE_MAX_ENTRIES) return;
+
+    for (const [key, cached] of this.cache) {
+      if (cached.expiresAt <= now) this.cache.delete(key);
+    }
+    if (this.cache.size < LINE_OF_SIGHT_CACHE_MAX_ENTRIES) return;
+
+    let evicted = 0;
+    for (const key of this.cache.keys()) {
+      this.cache.delete(key);
+      evicted++;
+      if (evicted >= LINE_OF_SIGHT_CACHE_EVICT_BATCH || this.cache.size < LINE_OF_SIGHT_CACHE_MAX_ENTRIES) break;
+    }
+  }
 
   hasLineOfSight(
     start: PlainVec3,
     end: PlainVec3,
     now: number,
+    collisionRevision: number,
     isBlockedAtPosition: BlockedPositionPredicate
   ): boolean {
-    const cacheKey = getLineOfSightCacheKey(start, end);
+    const cacheKey = getLineOfSightCacheKey(start, end, collisionRevision);
     const cached = this.cache.get(cacheKey);
-    if (cached && cached.expiresAt > now) {
+    if (cached && cached.expiresAt > now && cached.collisionRevision === collisionRevision) {
       return cached.result;
     }
 
@@ -48,12 +72,11 @@ export class LineOfSightCache {
       }
     }
 
-    if (this.cache.size > LINE_OF_SIGHT_CACHE_MAX_ENTRIES) {
-      this.cache.clear();
-    }
+    this.pruneCache(now);
     this.cache.set(cacheKey, {
       result,
       expiresAt: now + LINE_OF_SIGHT_CACHE_TTL_MS,
+      collisionRevision,
     });
     return result;
   }

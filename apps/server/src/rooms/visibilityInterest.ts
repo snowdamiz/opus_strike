@@ -90,6 +90,7 @@ const DEFAULT_LAST_KNOWN_TTL_MS = 1800;
 const DEFAULT_VISIBILITY_LOSS_GRACE_MS = 320;
 const DEFAULT_LOS_QUANTIZATION_METERS = 0.75;
 const DEFAULT_MAX_LOS_CACHE_ENTRIES = 4096;
+const LINE_OF_SIGHT_CACHE_EVICT_BATCH = 256;
 
 function cloneVec3(value: Vec3): Vec3 {
   return { x: value.x, y: value.y, z: value.z };
@@ -185,8 +186,22 @@ export class VisibilityInterestManager {
     }
   }
 
-  clearLineOfSightCache(): void {
-    this.lineOfSightCache.clear();
+  private pruneLineOfSightCache(now: number): void {
+    if (this.lineOfSightCache.size < this.maxLineOfSightCacheEntries) return;
+
+    for (const [key, cached] of this.lineOfSightCache) {
+      if (cached.expiresAt <= now) this.lineOfSightCache.delete(key);
+    }
+    if (this.lineOfSightCache.size < this.maxLineOfSightCacheEntries) return;
+
+    let evicted = 0;
+    for (const key of this.lineOfSightCache.keys()) {
+      this.lineOfSightCache.delete(key);
+      evicted++;
+      if (evicted >= LINE_OF_SIGHT_CACHE_EVICT_BATCH || this.lineOfSightCache.size < this.maxLineOfSightCacheEntries) {
+        break;
+      }
+    }
   }
 
   markHiddenTargetLeak(): void {
@@ -380,9 +395,7 @@ export class VisibilityInterestManager {
 
     const result = context.hasLineOfSight(from, to);
     this.lastMetrics.losChecks++;
-    if (this.lineOfSightCache.size >= this.maxLineOfSightCacheEntries) {
-      this.lineOfSightCache.clear();
-    }
+    this.pruneLineOfSightCache(context.now);
     this.lineOfSightCache.set(key, {
       result,
       expiresAt: context.now + this.lineOfSightTtlMs,

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { config } from '../../config/environment';
+import { useGameStore } from '../../store/gameStore';
 
 interface GlobalNotification {
   id: string;
@@ -12,7 +13,6 @@ interface GlobalNotificationBannerProps {
 }
 
 const DISMISSED_NOTIFICATION_STORAGE_KEY = 'slop-heroes-dismissed-global-notification';
-const NOTIFICATION_POLL_MS = 30_000;
 
 function readDismissedNotificationToken(): string {
   try {
@@ -58,6 +58,7 @@ function readGlobalNotificationPayload(value: unknown): GlobalNotification | nul
 }
 
 export function GlobalNotificationBanner({ onVisibilityChange }: GlobalNotificationBannerProps) {
+  const appPhase = useGameStore((state) => state.appPhase);
   const [notification, setNotification] = useState<GlobalNotification | null>(null);
   const [dismissedToken, setDismissedToken] = useState(readDismissedNotificationToken);
   const activeLoadRef = useRef<Promise<void> | null>(null);
@@ -93,26 +94,31 @@ export function GlobalNotificationBanner({ onVisibilityChange }: GlobalNotificat
 
   useEffect(() => {
     mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (appPhase === 'in_game') return;
+
     const controller = new AbortController();
     void loadNotification(controller.signal);
 
-    const interval = window.setInterval(() => void loadNotification(), NOTIFICATION_POLL_MS);
     const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') void loadNotification();
+      if (document.visibilityState === 'visible') void loadNotification(controller.signal);
     };
-    const refreshOnFocus = () => void loadNotification();
+    const refreshOnFocus = () => void loadNotification(controller.signal);
 
     document.addEventListener('visibilitychange', refreshWhenVisible);
     window.addEventListener('focus', refreshOnFocus);
 
     return () => {
-      mountedRef.current = false;
       controller.abort();
-      window.clearInterval(interval);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
       window.removeEventListener('focus', refreshOnFocus);
     };
-  }, [loadNotification]);
+  }, [appPhase, loadNotification]);
 
   const token = notification ? notificationToken(notification) : '';
   const isVisible = Boolean(notification && token !== dismissedToken);

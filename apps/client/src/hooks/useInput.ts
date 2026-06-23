@@ -11,7 +11,6 @@ type InputAction = keyof InputState;
 interface UseInputReturn {
   inputState: InputState;
   isPointerLocked: boolean;
-  isControlPressed: boolean;
   isTouchInputActive: boolean;
   requestPointerLock: () => void;
   exitPointerLock: () => void;
@@ -36,13 +35,44 @@ function mergeInputStates(primary: InputState, secondary: InputState): InputStat
   };
 }
 
+const BROWSER_SHORTCUT_MODIFIER_CODES = new Set(['ControlLeft', 'ControlRight', 'MetaLeft', 'MetaRight']);
+
+function hasPressedGameplayCode(
+  pressedCodes: ReadonlySet<string>,
+  gameplayCodes: Pick<ReadonlySet<string>, 'has'>
+): boolean {
+  for (const code of pressedCodes) {
+    if (gameplayCodes.has(code)) return true;
+  }
+  return false;
+}
+
+export function shouldPreventGameplayBrowserShortcut(input: {
+  code: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  isPointerLocked: boolean;
+  pressedCodes: ReadonlySet<string>;
+  gameplayCodes: Pick<ReadonlySet<string>, 'has'>;
+}): boolean {
+  if (!input.isPointerLocked) return false;
+
+  const isGameplayCode = input.gameplayCodes.has(input.code);
+  const isShortcutModifierDown = input.ctrlKey || input.metaKey;
+  if (isGameplayCode && isShortcutModifierDown) return true;
+
+  return (
+    BROWSER_SHORTCUT_MODIFIER_CODES.has(input.code) &&
+    hasPressedGameplayCode(input.pressedCodes, input.gameplayCodes)
+  );
+}
+
 export function useInput(): UseInputReturn {
   const inputStateRef = useRef<InputState>(createEmptyInputState());
   const [inputState, setInputState] = useState<InputState>(createEmptyInputState());
   const [isPointerLocked, setIsPointerLocked] = useState(
     () => typeof document !== 'undefined' && document.pointerLockElement !== null
   );
-  const [isControlPressed, setIsControlPressed] = useState(false);
   const mobileInputState = useMobileControlsStore(state => state.inputState);
   const isTouchInputActive = useMobileControlsStore(state => state.isTouchInputActive);
   const toggleCrouch = useSettingsStore(state => state.settings.toggleCrouch);
@@ -53,15 +83,6 @@ export function useInput(): UseInputReturn {
   const keyToAction = useRef<Map<string, InputAction>>(new Map());
   const pressedCodesRef = useRef<Set<string>>(new Set());
   const toggleSettingsRef = useRef({ toggleCrouch, toggleSprint });
-
-  const isGameplayControlSpaceShortcut = useCallback((e: KeyboardEvent): boolean => {
-    if (document.pointerLockElement === null) return false;
-    const controlPressed = e.ctrlKey || pressedCodesRef.current.has('ControlLeft') || pressedCodesRef.current.has('ControlRight');
-    return (
-      (e.code === 'Space' && controlPressed) ||
-      ((e.code === 'ControlLeft' || e.code === 'ControlRight') && pressedCodesRef.current.has('Space'))
-    );
-  }, []);
 
   useEffect(() => {
     toggleSettingsRef.current = { toggleCrouch, toggleSprint };
@@ -153,12 +174,16 @@ export function useInput(): UseInputReturn {
         return;
       }
 
-      if (isGameplayControlSpaceShortcut(e)) {
+      if (shouldPreventGameplayBrowserShortcut({
+        code: e.code,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        isPointerLocked: document.pointerLockElement !== null,
+        pressedCodes: pressedCodesRef.current,
+        gameplayCodes: keyToAction.current,
+      })) {
         e.preventDefault();
-      }
-
-      if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
-        setIsControlPressed(true);
+        e.stopPropagation();
       }
 
       if (pressInputCode(e.code)) {
@@ -167,14 +192,6 @@ export function useInput(): UseInputReturn {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
-        setIsControlPressed(false);
-      }
-
-      if (isGameplayControlSpaceShortcut(e)) {
-        e.preventDefault();
-      }
-
       if (releaseInputCode(e.code)) {
         e.preventDefault();
       }
@@ -187,7 +204,7 @@ export function useInput(): UseInputReturn {
       window.removeEventListener('keydown', handleKeyDown, true);
       window.removeEventListener('keyup', handleKeyUp, true);
     };
-  }, [isGameplayControlSpaceShortcut, pressInputCode, releaseInputCode]);
+  }, [pressInputCode, releaseInputCode]);
 
   // Handle mouse buttons
   useEffect(() => {
@@ -222,6 +239,18 @@ export function useInput(): UseInputReturn {
     };
   }, [isPointerLocked, pressInputCode, releaseInputCode]);
 
+  useEffect(() => {
+    if (!isPointerLocked) return;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isPointerLocked]);
+
   // Handle pointer lock
   useEffect(() => {
     const handlePointerLockChange = () => {
@@ -248,7 +277,6 @@ export function useInput(): UseInputReturn {
     if (!isPointerLocked) {
       inputStateRef.current = createEmptyInputState();
       setInputState(createEmptyInputState());
-      setIsControlPressed(false);
       pressedCodesRef.current.clear();
     }
   }, [isPointerLocked]);
@@ -280,7 +308,6 @@ export function useInput(): UseInputReturn {
   return {
     inputState: mergedInputState,
     isPointerLocked,
-    isControlPressed,
     isTouchInputActive,
     requestPointerLock,
     exitPointerLock,

@@ -1289,6 +1289,30 @@ function testDifficultyChangesDecisionQuality() {
   assert.notEqual(hardPlan.mode, 'chronos_lifeline_allies');
 }
 
+function testSkillProfilesScaleCombatResponsiveness() {
+  const easy = getBotSkillProfile('easy');
+  const normal = getBotSkillProfile('normal');
+  const hard = getBotSkillProfile('hard');
+
+  assert.ok(normal.thinkIntervalMs < easy.thinkIntervalMs);
+  assert.ok(hard.thinkIntervalMs < normal.thinkIntervalMs);
+  assert.ok(normal.reactionMs < easy.reactionMs);
+  assert.ok(hard.reactionMs < normal.reactionMs);
+  assert.ok(normal.aimErrorRadians < easy.aimErrorRadians);
+  assert.ok(hard.aimErrorRadians < normal.aimErrorRadians);
+  assert.ok(normal.fireChance > easy.fireChance);
+  assert.ok(hard.fireChance > normal.fireChance);
+  assert.ok(normal.memoryMs > easy.memoryMs);
+  assert.ok(hard.memoryMs > normal.memoryMs);
+  assert.ok(normal.pathExpansionLimit > easy.pathExpansionLimit);
+  assert.ok(hard.pathExpansionLimit > normal.pathExpansionLimit);
+
+  assert.ok(normal.thinkIntervalMs <= 480);
+  assert.ok(normal.reactionMs <= 600);
+  assert.ok(normal.fireChance >= 0.38);
+  assert.ok(normal.memoryMs >= 1000);
+}
+
 function testNeutralAllBotOpenerPressuresFlag() {
   const redBots = [
     player({ id: 'red-phantom', team: 'red', heroId: 'phantom', x: -42, z: 0, profile: 'defender-alpha' }),
@@ -1414,6 +1438,7 @@ testOutnumberedBotsRegroupBeforeCriticalHealth();
 testChronosHealingThresholds();
 testHeroAbilityControllers();
 testDifficultyChangesDecisionQuality();
+testSkillProfilesScaleCombatResponsiveness();
 testNeutralAllBotOpenerPressuresFlag();
 testUncontestedDefendersHoldControlUltimates();
 testContestedObjectiveStillSpendsControlUltimate();

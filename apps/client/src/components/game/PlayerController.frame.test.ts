@@ -154,7 +154,6 @@ function makeInputPhaseContext(options: {
   abilityPressed?: { ability1: boolean; ability2: boolean; ultimate: boolean };
 } = {}): LocalPlayerFrameContext {
   return {
-    isControlPressed: false,
     abilitySystem: {
       abilityPressedRef: ref(options.abilityPressed ?? { ability1: false, ability2: false, ultimate: false }),
     },
@@ -209,7 +208,6 @@ function makeCommandPhaseContext(options: {
   let groundJumpSoundCalls = 0;
 
   const ctx = {
-    isControlPressed: false,
     cameraControl: {
       refs: {
         yaw: ref(0),

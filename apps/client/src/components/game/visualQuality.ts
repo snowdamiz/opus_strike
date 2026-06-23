@@ -69,9 +69,7 @@ export interface EffectQualityConfig {
 }
 
 export interface RemotePlayerQualityConfig {
-  animateBeacons: boolean;
   showNameplates: boolean;
-  showBeacons: boolean;
   fullBodyDistance: number;
   outlineDistance: number;
   botFullBodyDistanceScale: number;
@@ -625,9 +623,7 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
 
 const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityConfig> = {
   potato: {
-    animateBeacons: false,
     showNameplates: false,
-    showBeacons: false,
     fullBodyDistance: 36,
     outlineDistance: 0,
     botFullBodyDistanceScale: 1,
@@ -635,9 +631,7 @@ const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityCo
     castShadows: false,
   },
   competitive: {
-    animateBeacons: false,
     showNameplates: true,
-    showBeacons: false,
     fullBodyDistance: 52,
     outlineDistance: 0,
     botFullBodyDistanceScale: 1,
@@ -645,9 +639,7 @@ const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityCo
     castShadows: false,
   },
   balanced: {
-    animateBeacons: true,
     showNameplates: true,
-    showBeacons: true,
     fullBodyDistance: 72,
     outlineDistance: 48,
     botFullBodyDistanceScale: 1,
@@ -655,9 +647,7 @@ const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityCo
     castShadows: true,
   },
   cinematic: {
-    animateBeacons: true,
     showNameplates: true,
-    showBeacons: true,
     fullBodyDistance: Number.POSITIVE_INFINITY,
     outlineDistance: 96,
     botFullBodyDistanceScale: 1,

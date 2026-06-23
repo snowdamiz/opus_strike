@@ -991,7 +991,13 @@ export function useAudio() {
       soundCount: preloadNames.length,
       queuedForActivation: false,
     });
-    await Promise.all(preloadNames.map(name => loadSound(name)));
+    for (let index = 0; index < preloadNames.length; index += AUDIO_PRELOAD_FLUSH_BATCH_SIZE) {
+      const batch = preloadNames.slice(index, index + AUDIO_PRELOAD_FLUSH_BATCH_SIZE);
+      await Promise.all(batch.map(name => loadSound(name)));
+      if (index + AUDIO_PRELOAD_FLUSH_BATCH_SIZE < preloadNames.length) {
+        await yieldAfterAudioPreloadBatch();
+      }
+    }
     await flushPendingAudioPreloads();
     updateAudioDiagnosticsState();
   }, [loadSound]);

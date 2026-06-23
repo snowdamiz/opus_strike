@@ -15,6 +15,7 @@ import {
   measureFrameWork,
   recordEffectSlotDiagnostics,
 } from '../../../movement/networkDiagnostics';
+import { useDeferredFrameCommit } from '../systems/useDeferredFrameCommit';
 
 const CHRONOS_ASCENDANT_ABILITY_ID = 'chronos_ascendant_paradox';
 const ASCENDANT_GREEN = 0x22c55e;
@@ -253,6 +254,7 @@ function ChronosAscendantBubble({ playerId }: { playerId: string }) {
 
 export function ChronosAscendantManager() {
   const [activeIds, setActiveIds] = useState<string[]>([]);
+  const deferActiveIdsCommit = useDeferredFrameCommit(setActiveIds);
   const activeIdsRef = useRef<string[]>([]);
   const scratchIdsRef = useRef<string[]>([]);
   const scanAccumulatorRef = useRef(ACTIVE_ID_SCAN_INTERVAL_MS);
@@ -283,7 +285,7 @@ export function ChronosAscendantManager() {
 
       const committedIds = nextIds.slice();
       activeIdsRef.current = committedIds;
-      setActiveIds(committedIds);
+      deferActiveIdsCommit(committedIds);
       recordEffectSlotDiagnostics('chronosAscendant', {
         active: committedIds.length,
         capacity: committedIds.length,

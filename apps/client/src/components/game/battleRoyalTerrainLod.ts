@@ -13,6 +13,7 @@ export interface BattleRoyalTerrainLodDistances {
 interface BattleRoyalTerrainDetailInput {
   manifest: VoxelMapManifest;
   visibility: BattleRoyalVisibilityConfig;
+  lodDistances?: BattleRoyalTerrainLodDistances;
   cameraPosition: { x: number; y: number; z: number };
   regionBounds: VoxelChunkRegionBounds;
   distanceSq: number;
@@ -77,7 +78,7 @@ export function estimateProjectedRegionPixels(input: {
 
 export function selectBattleRoyalTerrainDetail(input: BattleRoyalTerrainDetailInput): VoxelRegionGeometryDetail {
   const distance = Math.sqrt(Math.max(0, input.distanceSq));
-  const distances = getBattleRoyalTerrainLodDistances(input);
+  const distances = input.lodDistances ?? getBattleRoyalTerrainLodDistances(input);
   const radius = input.regionBounds.radius;
   const previousDetail = input.previousDetail ?? 'ultraCoarse';
   const fullLimit = distances.full + radius + (previousDetail === 'full' ? DETAIL_HYSTERESIS : 0);
@@ -105,12 +106,13 @@ export function selectBattleRoyalTerrainDetail(input: BattleRoyalTerrainDetailIn
 export function isBattleRoyalRegionInsideCullDistance(input: {
   manifest: VoxelMapManifest;
   visibility: BattleRoyalVisibilityConfig;
+  lodDistances?: BattleRoyalTerrainLodDistances;
   cameraPosition: { x: number; y: number; z: number };
   regionBounds: VoxelChunkRegionBounds;
   distanceSq: number;
   wasVisible?: boolean;
 }): boolean {
-  const distances = getBattleRoyalTerrainLodDistances(input);
+  const distances = input.lodDistances ?? getBattleRoyalTerrainLodDistances(input);
   const maxDistance = distances.cull +
     input.regionBounds.radius +
     (input.wasVisible ? DETAIL_HYSTERESIS : 0);

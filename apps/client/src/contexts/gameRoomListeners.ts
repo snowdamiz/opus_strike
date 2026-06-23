@@ -16,7 +16,7 @@ import { useGameStore } from '../store/gameStore';
 import type { VoiceTokenResponse } from '../voice/types';
 import { disconnectVoice } from '../voice/voiceControls';
 import { seedMapPrepCacheFromManifest } from '../utils/mapWarmup/mapPrepCache';
-import { prebuildPreparedVoxelMapGeometry } from '../utils/mapWarmup/mapGeometryWarmup';
+import { prebuildPreparedMapGeometryDeferred } from '../utils/mapWarmup/deferredMapGeometryWarmup';
 import { requestMapPreviewManifest } from '../utils/mapPreview/mapPreviewManifestClient';
 import { clearRunningGameSession } from '../utils/runningGameSession';
 import {
@@ -212,7 +212,7 @@ export function setupGameRoomListeners(
             manifest,
             'match'
           );
-          prebuildPreparedVoxelMapGeometry(preparedMap, { frameBudgetMs: 2, label: 'phase-change' });
+          prebuildPreparedMapGeometryDeferred(preparedMap, { frameBudgetMs: 2, label: 'phase-change' });
         })
         .catch((error) => {
           loggers.network.warn('phase map worker prep failed', error);

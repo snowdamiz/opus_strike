@@ -3,6 +3,8 @@ import { BATTLE_ROYAL_VISIBILITY_CONFIG } from '../../components/game/visualQual
 import { defaultSettings, useSettingsStore, type GraphicsPreset } from '../../store/settingsStore';
 import { clearPreparedVoxelMapCache, prepareVoxelMapCpu } from './mapPrepCache';
 import {
+  getBattleRoyalStartupFullDetailRegions,
+  getBattleRoyalStartupRegions,
   getBattleRoyalWarmupFullDetailDistance,
   getCentralBattleRoyalRegions,
 } from './mapGeometryWarmup';
@@ -48,6 +50,16 @@ for (const profile of orderedProfiles) {
 const narrowRegions = getCentralBattleRoyalRegions(preparedMap, { battleRoyalFullDetailDistance: 1 });
 const balancedRegions = getCentralBattleRoyalRegions(preparedMap, { graphicsPreset: 'balanced' });
 assert.ok(narrowRegions.length < balancedRegions.length);
+
+const startupRegions = getBattleRoyalStartupRegions(preparedMap, { graphicsPreset: 'cinematic' });
+const startupFullDetailRegions = getBattleRoyalStartupFullDetailRegions(preparedMap, { graphicsPreset: 'cinematic' });
+const cinematicCentralRegions = getCentralBattleRoyalRegions(preparedMap, { graphicsPreset: 'cinematic' });
+assert.ok(startupRegions.length > 0);
+assert.ok(startupFullDetailRegions.length > 0);
+assert.ok(startupFullDetailRegions.length <= startupRegions.length);
+assert.ok(startupRegions.length < preparedMap.renderableRegions.length);
+assert.ok(startupFullDetailRegions.length <= cinematicCentralRegions.length);
+assert.ok(startupRegions.length <= 96);
 
 clearPreparedVoxelMapCache();
 

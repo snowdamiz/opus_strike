@@ -27,6 +27,10 @@ import {
   type VoxelChunkRegionBounds,
 } from '../../../utils/mapWarmup/mapPrepCache';
 import {
+  getBattleRoyalStartupFullDetailRegions,
+  getBattleRoyalStartupRegions,
+} from '../../../utils/mapWarmup/mapGeometryWarmup';
+import {
   MOVEMENT_DIAGNOSTICS_ENABLED,
   measureFrameWork,
   recordTerrainRendererDiagnostics,
@@ -39,6 +43,7 @@ const TERRAIN_CULL_CAMERA_ROTATE_EPSILON = 0.00008;
 const TERRAIN_HORIZON_BIN_COUNT = 64;
 const TERRAIN_HORIZON_SLOPE_EPSILON = 0.055;
 const TERRAIN_HORIZON_MIN_DISTANCE_SCALE = 1.15;
+const TERRAIN_CULL_DISTANCE_BUCKET_COUNT = 64;
 const BATTLE_ROYAL_OUTER_FILL_SCALE = 2.75;
 const BATTLE_ROYAL_OUTER_FILL_HEIGHT_ROWS = 44;
 const BATTLE_ROYAL_OUTER_FILL_Y_OFFSET = 0.06;
@@ -58,6 +63,52 @@ interface TerrainCullingEntry {
 }
 
 type RegionVisibilityTarget = Pick<VoxelChunkRegion, 'id'>;
+
+function orderTerrainCullingEntriesByDistance(
+  entries: TerrainCullingEntry[],
+  orderedEntries: TerrainCullingEntry[],
+  bucketCounts: Uint32Array,
+  bucketOffsets: Uint32Array
+): TerrainCullingEntry[] {
+  const entryCount = entries.length;
+  if (entryCount <= 1) return entries;
+
+  let maxDistanceSq = 0;
+  for (let index = 0; index < entryCount; index++) {
+    maxDistanceSq = Math.max(maxDistanceSq, entries[index].distanceSq);
+  }
+  if (maxDistanceSq <= 0) return entries;
+
+  bucketCounts.fill(0);
+  const bucketScale = (TERRAIN_CULL_DISTANCE_BUCKET_COUNT - 1) / maxDistanceSq;
+  for (let index = 0; index < entryCount; index++) {
+    const bucket = Math.min(
+      TERRAIN_CULL_DISTANCE_BUCKET_COUNT - 1,
+      Math.max(0, Math.floor(entries[index].distanceSq * bucketScale))
+    );
+    bucketCounts[bucket]++;
+  }
+
+  let offset = 0;
+  for (let bucket = 0; bucket < TERRAIN_CULL_DISTANCE_BUCKET_COUNT; bucket++) {
+    bucketOffsets[bucket] = offset;
+    offset += bucketCounts[bucket];
+  }
+  bucketCounts.fill(0);
+
+  orderedEntries.length = entryCount;
+  for (let index = 0; index < entryCount; index++) {
+    const entry = entries[index];
+    const bucket = Math.min(
+      TERRAIN_CULL_DISTANCE_BUCKET_COUNT - 1,
+      Math.max(0, Math.floor(entry.distanceSq * bucketScale))
+    );
+    orderedEntries[bucketOffsets[bucket] + bucketCounts[bucket]] = entry;
+    bucketCounts[bucket]++;
+  }
+
+  return orderedEntries;
+}
 
 function createMacroTileBounds(regions: VoxelChunkRegion[]): VoxelChunkRegionBounds {
   const bounds: VoxelChunkRegionBounds = {
@@ -184,19 +235,6 @@ function prioritizeRenderableRegions(
   return [...regions].sort((a, b) => distanceSqToRegionFocus(a, focus) - distanceSqToRegionFocus(b, focus));
 }
 
-function getPrebuildFullDetailRegions(
-  regions: VoxelChunkRegion[],
-  manifest: VoxelMapManifest,
-  visibilityBudget: BattleRoyalVisibilityConfig
-): VoxelChunkRegion[] {
-  const focus = getRegionFocusPoint(manifest);
-  const maxDistance = visibilityBudget.terrainPrebuildFullDistance;
-  return regions.filter((region) => {
-    const radiusAdjustedDistance = maxDistance + region.bounds.radius;
-    return distanceSqToRegionFocus(region, focus) <= radiusAdjustedDistance * radiusAdjustedDistance;
-  });
-}
-
 interface VoxelMapProps {
   seed?: number;
   themeId?: VoxelMapTheme['id'] | null;
@@ -225,6 +263,7 @@ export interface VoxelMapWarmupStatus {
   renderableRegionCount: number;
   visibleRegionCount: number;
   readyRegionCount: number;
+  warmupRequiredRegionCount: number;
   terrainReady: boolean;
   collidersReady: boolean;
   ready: boolean;
@@ -278,6 +317,24 @@ export function VoxelMap({
     () => prioritizeRenderableRegions(preparedMap.renderableRegions, manifest, activeBattleRoyalVisibility),
     [activeBattleRoyalTerrainLodEnabled, manifest, preparedMap.renderableRegions]
   );
+  const battleRoyalStartupRegions = useMemo(
+    () => (
+      activeBattleRoyalVisibility?.terrainLodEnabled
+        ? getBattleRoyalStartupRegions(preparedMap, {
+          battleRoyalFullDetailDistance: activeBattleRoyalVisibility.terrainPrebuildFullDistance,
+        })
+        : renderableRegions
+    ),
+    [
+      activeBattleRoyalTerrainLodEnabled,
+      activeBattleRoyalTerrainPrebuildFullDistance,
+      preparedMap,
+      renderableRegions,
+    ]
+  );
+  const warmupRequiredRegionCount = activeBattleRoyalVisibility?.terrainLodEnabled
+    ? Math.min(renderableRegions.length, battleRoyalStartupRegions.length)
+    : renderableRegions.length;
   const macroTerrainTiles = useMemo(
     () => createBattleRoyalMacroTerrainTiles(renderableRegions, manifest, activeBattleRoyalVisibility),
     [activeBattleRoyalTerrainLodEnabled, activeBattleRoyalTerrainMacroTileSize, manifest, renderableRegions]
@@ -294,6 +351,11 @@ export function VoxelMap({
   const terrainCullNeedsRefreshRef = useRef(true);
   const terrainCullLastCameraPositionRef = useRef(new THREE.Vector3(Number.NaN, Number.NaN, Number.NaN));
   const terrainCullLastCameraQuaternionRef = useRef(new THREE.Quaternion());
+  const terrainCullEntriesRef = useRef<TerrainCullingEntry[]>([]);
+  const terrainCullOrderedEntriesRef = useRef<TerrainCullingEntry[]>([]);
+  const terrainCullBucketCountsRef = useRef(new Uint32Array(TERRAIN_CULL_DISTANCE_BUCKET_COUNT));
+  const terrainCullBucketOffsetsRef = useRef(new Uint32Array(TERRAIN_CULL_DISTANCE_BUCKET_COUNT));
+  const terrainHorizonSlopesRef = useRef(new Float32Array(TERRAIN_HORIZON_BIN_COUNT));
   const regionVisibilityRef = useRef<Map<string, boolean>>(new Map());
   const regionDetailRef = useRef<Map<string, VoxelRegionGeometryDetail>>(new Map());
   const regionGroupsRef = useRef<Map<string, THREE.Group>>(new Map());
@@ -314,6 +376,12 @@ export function VoxelMap({
     () => getRuntimeTerrainCullDistance(performanceBudget, activeBattleRoyalVisibility),
     [activeBattleRoyalTerrainLodEnabled, activeBattleRoyalVisibility?.terrainCullDistance, performanceBudget?.drawCalls]
   );
+  const effectiveReadyRegionCount = readyRegionManifestIdRef.current === manifest.id ? readyRegionCount : 0;
+  const terrainReady = (
+    visibleRegionCount >= warmupRequiredRegionCount &&
+    effectiveReadyRegionCount >= warmupRequiredRegionCount
+  );
+  const isReady = terrainReady && collidersReady;
 
   const applyRegionGroupVisibility = useCallback((regionId: string) => {
     const group = regionGroupsRef.current.get(regionId);
@@ -366,13 +434,13 @@ export function VoxelMap({
 
   const setActiveMacroTiles = useCallback((
     nextActiveMacroTileIds: Set<string>,
-    entries: TerrainCullingEntry[]
+    regionsToRefresh: RegionVisibilityTarget[]
   ): boolean => {
     const previousActiveMacroTileIds = activeMacroTileIdsRef.current;
     const changed = !areSetsEqual(previousActiveMacroTileIds, nextActiveMacroTileIds);
     activeMacroTileIdsRef.current = nextActiveMacroTileIds;
 
-    refreshMacroHiddenRegions(entries.map((entry) => entry.region));
+    refreshMacroHiddenRegions(regionsToRefresh);
     return changed;
   }, [refreshMacroHiddenRegions]);
 
@@ -456,11 +524,18 @@ export function VoxelMap({
     let cancelled = false;
     const prebuild = async () => {
       if (activeBattleRoyalVisibility) {
-        const fullDetailRegions = getPrebuildFullDetailRegions(
-          renderableRegions,
+        const startupRegions = getBattleRoyalStartupRegions(preparedMap, {
+          battleRoyalFullDetailDistance: activeBattleRoyalVisibility.terrainPrebuildFullDistance,
+        });
+        const fullDetailRegions = getBattleRoyalStartupFullDetailRegions(preparedMap, {
+          battleRoyalFullDetailDistance: activeBattleRoyalVisibility.terrainPrebuildFullDistance,
+        });
+        await prebuildVoxelRegionGeometries(
           manifest,
-          activeBattleRoyalVisibility
+          startupRegions,
+          { detail: 'ultraCoarse', frameBudgetMs: 4 }
         );
+        if (cancelled) return;
         await prebuildVoxelRegionGeometries(
           manifest,
           fullDetailRegions,
@@ -469,14 +544,8 @@ export function VoxelMap({
         if (cancelled) return;
         await prebuildVoxelRegionGeometries(
           manifest,
-          renderableRegions,
+          startupRegions,
           { detail: 'coarse', frameBudgetMs: 4 }
-        );
-        if (cancelled) return;
-        await prebuildVoxelRegionGeometries(
-          manifest,
-          renderableRegions,
-          { detail: 'ultraCoarse', frameBudgetMs: 4 }
         );
         return;
       }
@@ -500,35 +569,43 @@ export function VoxelMap({
     activeBattleRoyalTerrainPrebuildFullDistance,
     manifest,
     prebuildRegions,
+    preparedMap,
     renderableRegions,
   ]);
 
   useEffect(() => {
+    const targetRegionCount = shouldRevealAllRegions || terrainReady
+      ? renderableRegions.length
+      : warmupRequiredRegionCount;
+
     if (shouldRevealAllRegions) {
-      setVisibleRegionCount(renderableRegions.length);
+      setVisibleRegionCount(targetRegionCount);
       return;
     }
 
     let cancelled = false;
     let rafId = 0;
-    let nextVisibleCount = Math.min(renderableRegions.length, regionRevealBudgetRef.current);
+    let nextVisibleCount = Math.min(
+      targetRegionCount,
+      Math.max(visibleRegionCount, regionRevealBudgetRef.current)
+    );
 
     setVisibleRegionCount(nextVisibleCount);
 
     const revealNextBatch = () => {
       if (cancelled) return;
       nextVisibleCount = Math.min(
-        renderableRegions.length,
+        targetRegionCount,
         nextVisibleCount + regionRevealBudgetRef.current
       );
       setVisibleRegionCount(nextVisibleCount);
 
-      if (nextVisibleCount < renderableRegions.length) {
+      if (nextVisibleCount < targetRegionCount) {
         rafId = window.requestAnimationFrame(revealNextBatch);
       }
     };
 
-    if (nextVisibleCount < renderableRegions.length) {
+    if (nextVisibleCount < targetRegionCount) {
       rafId = window.requestAnimationFrame(revealNextBatch);
     }
 
@@ -536,7 +613,7 @@ export function VoxelMap({
       cancelled = true;
       if (rafId) window.cancelAnimationFrame(rafId);
     };
-  }, [manifest.id, renderableRegions, shouldRevealAllRegions]);
+  }, [manifest.id, renderableRegions, shouldRevealAllRegions, terrainReady, warmupRequiredRegionCount]);
 
   const cancelReadyRegionCountFlush = useCallback(() => {
     if (readyRegionCountRafRef.current && typeof window !== 'undefined') {
@@ -669,12 +746,6 @@ export function VoxelMap({
     };
   }, [enablePhysics, manifest]);
 
-  const effectiveReadyRegionCount = readyRegionManifestIdRef.current === manifest.id ? readyRegionCount : 0;
-  const terrainReady = (
-    visibleRegionCount >= renderableRegions.length &&
-    effectiveReadyRegionCount >= renderableRegions.length
-  );
-  const isReady = terrainReady && collidersReady;
   const visibleRegions = useMemo(
     () => renderableRegions.slice(0, visibleRegionCount),
     [renderableRegions, visibleRegionCount]
@@ -714,21 +785,46 @@ export function VoxelMap({
     matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     frustum.setFromProjectionMatrix(matrix);
 
-    const entries = visibleRegions.map((region): TerrainCullingEntry => {
+    const entries = terrainCullEntriesRef.current;
+    entries.length = visibleRegions.length;
+    for (let index = 0; index < visibleRegions.length; index++) {
+      const region = visibleRegions[index];
       const { bounds } = region;
       const dx = bounds.center.x - camera.position.x;
       const dy = bounds.center.y - camera.position.y;
       const dz = bounds.center.z - camera.position.z;
-      return {
-        region,
-        dx,
-        dy,
-        dz,
-        distanceSq: dx * dx + dy * dy + dz * dz,
-      };
-    }).sort((a, b) => a.distanceSq - b.distanceSq);
+      const existingEntry = entries[index];
+      if (existingEntry) {
+        existingEntry.region = region;
+        existingEntry.dx = dx;
+        existingEntry.dy = dy;
+        existingEntry.dz = dz;
+        existingEntry.distanceSq = dx * dx + dy * dy + dz * dz;
+      } else {
+        entries[index] = {
+          region,
+          dx,
+          dy,
+          dz,
+          distanceSq: dx * dx + dy * dy + dz * dz,
+        };
+      }
+    }
+    const orderedEntries = orderTerrainCullingEntriesByDistance(
+      entries,
+      terrainCullOrderedEntriesRef.current,
+      terrainCullBucketCountsRef.current,
+      terrainCullBucketOffsetsRef.current
+    );
+    const battleRoyalLodDistances = activeBattleRoyalVisibility
+      ? getBattleRoyalTerrainLodDistances({
+        manifest,
+        visibility: activeBattleRoyalVisibility,
+        cameraPosition: camera.position,
+      })
+      : null;
     const horizonSlopes = activeBattleRoyalVisibility
-      ? new Float32Array(TERRAIN_HORIZON_BIN_COUNT).fill(Number.NEGATIVE_INFINITY)
+      ? terrainHorizonSlopesRef.current.fill(Number.NEGATIVE_INFINITY)
       : null;
     const cameraFovDegrees = 'fov' in camera ? (camera as THREE.PerspectiveCamera).fov : 75;
 
@@ -746,7 +842,7 @@ export function VoxelMap({
     let detailSwaps = 0;
     let detailChanged = false;
 
-    for (const entry of entries) {
+    for (const entry of orderedEntries) {
       const { region, dx, dz, distanceSq } = entry;
       const { bounds } = region;
       if (distanceSq < closestDistanceSq) {
@@ -758,10 +854,11 @@ export function VoxelMap({
       let nextDetail: VoxelRegionGeometryDetail = 'full';
       let nextVisible = true;
 
-      if (activeBattleRoyalVisibility) {
+      if (activeBattleRoyalVisibility && battleRoyalLodDistances) {
         nextVisible = isBattleRoyalRegionInsideCullDistance({
           manifest,
           visibility: activeBattleRoyalVisibility,
+          lodDistances: battleRoyalLodDistances,
           cameraPosition: camera.position,
           regionBounds: bounds,
           distanceSq,
@@ -773,6 +870,7 @@ export function VoxelMap({
           ? selectBattleRoyalTerrainDetail({
             manifest,
             visibility: activeBattleRoyalVisibility,
+            lodDistances: battleRoyalLodDistances,
             cameraPosition: camera.position,
             regionBounds: bounds,
             distanceSq,
@@ -794,16 +892,11 @@ export function VoxelMap({
         if (!nextVisible) hiddenByFrustum++;
       }
 
-      if (nextVisible && activeBattleRoyalVisibility && horizonSlopes) {
+      if (nextVisible && activeBattleRoyalVisibility && battleRoyalLodDistances && horizonSlopes) {
         const horizontalDistance = Math.max(0.001, Math.hypot(dx, dz));
-        const lodDistances = getBattleRoyalTerrainLodDistances({
-          manifest,
-          visibility: activeBattleRoyalVisibility,
-          cameraPosition: camera.position,
-        });
         const bin = getHorizonBin(dx, dz);
         const topSlope = (bounds.max.y + manifest.voxelSize.y * 2 - camera.position.y) / horizontalDistance;
-        const shouldApplyHorizon = horizontalDistance > lodDistances.coarse * TERRAIN_HORIZON_MIN_DISTANCE_SCALE;
+        const shouldApplyHorizon = horizontalDistance > battleRoyalLodDistances.coarse * TERRAIN_HORIZON_MIN_DISTANCE_SCALE;
 
         if (shouldApplyHorizon && topSlope < horizonSlopes[bin] - TERRAIN_HORIZON_SLOPE_EPSILON) {
           nextVisible = false;
@@ -891,7 +984,7 @@ export function VoxelMap({
       }
     }
 
-    const macroChanged = setActiveMacroTiles(nextActiveMacroTileIds, entries);
+    const macroChanged = setActiveMacroTiles(nextActiveMacroTileIds, visibleRegions);
     if (detailChanged || macroChanged) {
       setRegionRenderRevision((revision) => revision + 1);
     }
@@ -932,6 +1025,7 @@ export function VoxelMap({
       renderableRegionCount: renderableRegions.length,
       visibleRegionCount,
       readyRegionCount: effectiveReadyRegionCount,
+      warmupRequiredRegionCount,
       terrainReady,
       collidersReady,
       ready: isReady,
@@ -946,6 +1040,7 @@ export function VoxelMap({
     renderableRegions.length,
     terrainReady,
     visibleRegionCount,
+    warmupRequiredRegionCount,
   ]);
 
   useEffect(() => {

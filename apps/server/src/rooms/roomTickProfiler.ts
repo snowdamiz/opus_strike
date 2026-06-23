@@ -119,6 +119,7 @@ export interface RoomTickProfilerSnapshot {
 
 const DEFAULT_ROOM_TICK_PROFILE_SAMPLE_COUNT = 240;
 const ROOM_TICK_P99_SPIKE_MIN_SAMPLE_COUNT = 16;
+const ROOM_TICK_SPIKE_FALLBACK_THRESHOLD_MS = 33;
 
 function createEmptySpanSample(): RoomTickSpanSample {
   return {
@@ -165,17 +166,6 @@ class RingSamples {
     this.samples[this.index] = Math.max(0, Number.isFinite(valueMs) ? valueMs : 0);
     this.index = (this.index + 1) % this.samples.length;
     this.count = Math.min(this.samples.length, this.count + 1);
-  }
-
-  percentile(percentileValue: number): number {
-    if (this.count === 0) return 0;
-
-    const sorted: number[] = [];
-    for (let index = 0; index < this.count; index++) {
-      sorted.push(this.samples[index]);
-    }
-    sorted.sort((a, b) => a - b);
-    return percentile(sorted, percentileValue);
   }
 
   snapshot(): RoomTickSpanSample {
@@ -261,7 +251,6 @@ export class RoomTickProfiler {
 
   endTick(durationMs: number): void {
     const tickDurationMs = Math.max(0, Number.isFinite(durationMs) ? durationMs : 0);
-    const p99BeforeRecord = this.tickSamples.percentile(0.99);
     const sampleCountBeforeRecord = this.tickSamples.sampleCount;
 
     this.tickSamples.record(tickDurationMs);
@@ -288,7 +277,7 @@ export class RoomTickProfiler {
 
     if (
       sampleCountBeforeRecord >= ROOM_TICK_P99_SPIKE_MIN_SAMPLE_COUNT
-      && tickDurationMs >= p99BeforeRecord
+      && tickDurationMs >= ROOM_TICK_SPIKE_FALLBACK_THRESHOLD_MS
       && largestSpanName
     ) {
       this.lastP99SpikeSpanName = largestSpanName;

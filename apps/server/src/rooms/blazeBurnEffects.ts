@@ -9,6 +9,7 @@ export interface BlazeBurnTick {
   sourceId: string | null;
   sourcePosition: PlainVec3 | null;
   sourceDirection: PlainVec3 | null;
+  tickCount: number;
 }
 
 interface BlazeBurnEffect {
@@ -80,22 +81,24 @@ export class BlazeBurnEffectTracker {
         continue;
       }
 
-      while (
-        burn.ticksRemaining > 0 &&
-        now >= burn.nextTickAt &&
-        options.isTargetAlive(targetId)
-      ) {
+      let dueTicks = 0;
+      while (burn.ticksRemaining > 0 && now >= burn.nextTickAt) {
+        dueTicks++;
+        burn.ticksRemaining--;
+        burn.nextTickAt += BLAZE_FLAMETHROWER_BURN_INTERVAL_MS;
+      }
+
+      if (dueTicks > 0 && options.isTargetAlive(targetId)) {
         const killed = options.applyTick({
           targetId,
           sourceId: options.hasSource(burn.sourceId) ? burn.sourceId : null,
           sourcePosition: burn.sourcePosition,
           sourceDirection: burn.sourceDirection,
+          tickCount: dueTicks,
         });
-        burn.ticksRemaining--;
-        burn.nextTickAt += BLAZE_FLAMETHROWER_BURN_INTERVAL_MS;
-
         if (killed || !options.isTargetAlive(targetId)) {
-          break;
+          this.burns.delete(targetId);
+          continue;
         }
       }
 
