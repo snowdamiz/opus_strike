@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
-import type { BattleRoyalDropPlayerStatus, BattleRoyalDropSnapshot } from '@voxel-strike/shared';
+import type {
+  BattleRoyalDropPlayerStatus,
+  BattleRoyalDropSnapshot,
+  VoxelMapManifest,
+} from '@voxel-strike/shared';
 import { getBattleRoyalVisibilityMode } from './battleRoyalVisibilityMode';
+import { getBattleRoyalTerrainLodDistances } from './battleRoyalTerrainLod';
 import {
   BATTLE_ROYAL_DEPLOYMENT_VISIBILITY_CONFIG,
   BATTLE_ROYAL_VISIBILITY_CONFIG,
@@ -9,6 +14,7 @@ import {
 } from './visualQuality';
 
 const orderedProfiles = ['potato', 'competitive', 'balanced', 'cinematic'] as const;
+const expectedDropShipAltitude = 153;
 
 let previousCameraFar = 0;
 let previousCullDistance = 0;
@@ -39,6 +45,7 @@ for (const profile of orderedProfiles) {
   assert.ok(deploymentConfig.terrainLodUltraCoarseDistance <= deploymentConfig.terrainCullDistance, `${profile} deployment ultra-coarse band should reach cull range`);
   assert.ok(deploymentConfig.terrainCullDistance <= deploymentConfig.cameraFar, `${profile} deployment terrain should cull before the far plane`);
   assert.ok(deploymentConfig.terrainPrebuildFullDistance <= deploymentConfig.terrainLodCoarseDistance, `${profile} deployment should not prebuild broad full detail`);
+  assert.equal(deploymentConfig.terrainMacroTileSize, 0, `${profile} deployment should not collapse flight terrain into macro tiles`);
   assert.ok(deploymentConfig.dressingCullDistance <= deploymentConfig.terrainLodCoarseDistance, `${profile} deployment dressing should stay tightly capped`);
   assert.ok(deploymentConfig.remoteMovementEffectDistance <= deploymentConfig.terrainLodCoarseDistance, `${profile} deployment remote movement effects should stay capped`);
   assert.ok(deploymentConfig.terrainImpactDistance <= deploymentConfig.terrainLodCoarseDistance, `${profile} deployment terrain impacts should stay capped`);
@@ -78,10 +85,10 @@ function createDrop(status: BattleRoyalDropPlayerStatus, y: number, velocityY: n
     phaseEndsAt: 60_000,
     serverTime: 0,
     ship: {
-      start: { x: 0, y: 180, z: 0 },
-      end: { x: 100, y: 180, z: 100 },
-      position: { x: 0, y: 180, z: 0 },
-      altitude: 180,
+      start: { x: 0, y: expectedDropShipAltitude, z: 0 },
+      end: { x: 100, y: expectedDropShipAltitude, z: 100 },
+      position: { x: 0, y: expectedDropShipAltitude, z: 0 },
+      altitude: expectedDropShipAltitude,
       startedAt: 0,
       endsAt: 60_000,
       autoDropAt: 40_000,
@@ -104,7 +111,7 @@ function createDrop(status: BattleRoyalDropPlayerStatus, y: number, velocityY: n
 
 assert.equal(getBattleRoyalVisibilityMode({
   gamePhase: 'countdown',
-  drop: createDrop('aboard', 180, 0),
+  drop: createDrop('aboard', expectedDropShipAltitude, 0),
   localPlayerId: 'local',
 }), 'deployment');
 
@@ -125,5 +132,20 @@ assert.equal(getBattleRoyalVisibilityMode({
   drop: createDrop('landed', 10, 0),
   localPlayerId: 'local',
 }), 'runtime');
+
+const flightLodManifest = {
+  seed: 0x51f15eed,
+  origin: { x: -128, y: 0, z: -128 },
+  voxelSize: { x: 1, y: 1, z: 1 },
+  size: { x: 256, y: 96, z: 256 },
+  boundary: [],
+} as unknown as VoxelMapManifest;
+const balancedFlightLod = getBattleRoyalTerrainLodDistances({
+  manifest: flightLodManifest,
+  visibility: BATTLE_ROYAL_DEPLOYMENT_VISIBILITY_CONFIG.balanced,
+  cameraPosition: { x: 0, y: expectedDropShipAltitude, z: 0 },
+});
+assert.ok(balancedFlightLod.full >= 150, 'deployment flight should keep a readable full-detail LOD range');
+assert.ok(balancedFlightLod.coarse >= 255, 'deployment flight should keep a readable coarse LOD range');
 
 console.log('battle royal visibility config tests passed');

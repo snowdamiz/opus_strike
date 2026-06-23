@@ -29,7 +29,7 @@ import { GameplayFrameSystems, GameplayFrameWorkBoundary } from './systems/Gamep
 import { BudgetedPointLight, DynamicLightBudgetSystem } from './systems/DynamicLightBudget';
 import { CombatTextLayer } from './CombatText';
 import { useGameStore } from '../../store/gameStore';
-import { graphicsPresetSettings, useSettingsStore } from '../../store/settingsStore';
+import { graphicsPresetSettings, useSettingsStore, type GraphicsPreset } from '../../store/settingsStore';
 import { getMapPrepCacheKey } from '../../utils/mapWarmup/mapPrepCache';
 import {
   createMapWarmupSnapshot,
@@ -48,6 +48,7 @@ import {
   type RemotePlayerQualityConfig,
   type RagdollQualityConfig,
   type ShadowQualityConfig,
+  type WorldPerformanceBudget,
 } from './visualQuality';
 import { getBattleRoyalVisibilityMode } from './battleRoyalVisibilityMode';
 import { FrameTimeHistogram } from './adaptiveQualityHistogram';
@@ -746,6 +747,31 @@ const BR_RAGDOLL_COMBAT_TOTAL_CAP = 10;
 const BR_RAGDOLL_HEAVY_COMBAT_TOTAL_CAP = 6;
 const BR_RAGDOLL_COMBAT_HIGH_QUALITY_CAP = 3;
 const BR_RAGDOLL_HEAVY_COMBAT_HIGH_QUALITY_CAP = 1;
+const BATTLE_ROYAL_DEPLOYMENT_PERFORMANCE_BUDGETS: Record<
+  GraphicsPreset,
+  Pick<WorldPerformanceBudget, 'drawCalls' | 'triangles' | 'maxGeneratedRegionMeshesPerFrame'>
+> = {
+  potato: {
+    drawCalls: 450,
+    triangles: 520_000,
+    maxGeneratedRegionMeshesPerFrame: 2,
+  },
+  competitive: {
+    drawCalls: 620,
+    triangles: 850_000,
+    maxGeneratedRegionMeshesPerFrame: 3,
+  },
+  balanced: {
+    drawCalls: 780,
+    triangles: 1_100_000,
+    maxGeneratedRegionMeshesPerFrame: 4,
+  },
+  cinematic: {
+    drawCalls: 1_100,
+    triangles: 1_500_000,
+    maxGeneratedRegionMeshesPerFrame: 5,
+  },
+};
 
 function finiteDistanceOrCap(value: number, cap: number): number {
   return Number.isFinite(value) ? Math.min(value, cap) : cap;
@@ -1158,6 +1184,19 @@ export function GameCanvas({
     if (battleRoyalTerrainScale >= 0.995) return baseBattleRoyalVisibility;
     return scaleBattleRoyalVisibilityConfig(baseBattleRoyalVisibility, battleRoyalTerrainScale);
   }, [baseBattleRoyalVisibility, battleRoyalTerrainScale]);
+  const effectivePerformanceBudget = useMemo(() => {
+    if (!isBattleRoyal || battleRoyalVisibilityMode !== 'deployment') return qualityConfig.budgets;
+    const deploymentBudget = BATTLE_ROYAL_DEPLOYMENT_PERFORMANCE_BUDGETS[settings.graphicsPreset];
+    return {
+      ...qualityConfig.budgets,
+      drawCalls: Math.max(qualityConfig.budgets.drawCalls, deploymentBudget.drawCalls),
+      triangles: Math.max(qualityConfig.budgets.triangles, deploymentBudget.triangles),
+      maxGeneratedRegionMeshesPerFrame: Math.max(
+        qualityConfig.budgets.maxGeneratedRegionMeshesPerFrame,
+        deploymentBudget.maxGeneratedRegionMeshesPerFrame
+      ),
+    };
+  }, [battleRoyalVisibilityMode, isBattleRoyal, qualityConfig.budgets, settings.graphicsPreset]);
   const effectiveCameraFar = battleRoyalVisibility?.cameraFar ?? DEFAULT_CAMERA_FAR;
 
   useEffect(() => {
@@ -1349,7 +1388,7 @@ export function GameCanvas({
           isBattleRoyal={isBattleRoyal}
           onBattleRoyalCombatScaleChange={setBattleRoyalCombatScale}
           onBattleRoyalTerrainScaleChange={setBattleRoyalTerrainScale}
-          performanceBudget={qualityConfig.budgets}
+          performanceBudget={effectivePerformanceBudget}
         />
         <ReflectionEnvironment theme={mapTheme} config={qualityConfig.reflections} />
         <WorldAtmosphere theme={mapTheme} seed={mapSeed} config={effectiveEnvironmentConfig} />
@@ -1371,7 +1410,7 @@ export function GameCanvas({
           dressingDensity={effectiveEnvironmentConfig.dressingDensity}
           reflectionIntensity={qualityConfig.reflections.materialIntensity}
           materialQuality={qualityConfig.materials.terrainTextureQuality}
-          performanceBudget={qualityConfig.budgets}
+          performanceBudget={effectivePerformanceBudget}
           battleRoyalVisibility={battleRoyalVisibility}
           themeId={mapThemeId}
           mapProfileId={mapProfileId}

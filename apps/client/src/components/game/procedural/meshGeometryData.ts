@@ -698,10 +698,19 @@ function buildCoarseVoxelRegionGeometryData(
 ): VoxelMeshGeometryData {
   const lookup = createChunkLookup(manifest);
   const bounds = getChunkVoxelBounds(manifest, chunks);
+  const cells: Array<{
+    x: number;
+    z: number;
+    x1: number;
+    z1: number;
+    y: number;
+    block: number;
+  }> = [];
   const estimatedCoarseFaces = Math.max(
     16,
     Math.ceil((bounds.maxX - bounds.minX) / step) *
-      Math.ceil((bounds.maxZ - bounds.minZ) / step)
+      Math.ceil((bounds.maxZ - bounds.minZ) / step) *
+      3
   );
   const buffers = createMeshBufferBuildersForEstimatedFaces(estimatedCoarseFaces);
 
@@ -716,6 +725,36 @@ function buildCoarseVoxelRegionGeometryData(
       if (!topBlock) continue;
 
       emitPositiveYFace(buffers, x, topBlock.y, z, x1 - x, z1 - z, topBlock.block);
+      cells.push({ x, z, x1, z1, y: topBlock.y, block: topBlock.block });
+    }
+  }
+
+  const cellByOrigin = new Map<string, (typeof cells)[number]>();
+  for (const cell of cells) {
+    cellByOrigin.set(`${cell.x}:${cell.z}`, cell);
+  }
+
+  for (const cell of cells) {
+    const left = cellByOrigin.get(`${cell.x - step}:${cell.z}`);
+    if (left && left.y !== cell.y) {
+      const lowY = Math.min(left.y, cell.y);
+      const height = Math.abs(left.y - cell.y);
+      if (cell.y > left.y) {
+        emitNegativeXFace(buffers, cell.x, lowY + 1, cell.z, cell.z1 - cell.z, height, cell.block);
+      } else {
+        emitPositiveXFace(buffers, cell.x - 1, lowY + 1, cell.z, cell.z1 - cell.z, height, left.block);
+      }
+    }
+
+    const back = cellByOrigin.get(`${cell.x}:${cell.z - step}`);
+    if (back && back.y !== cell.y) {
+      const lowY = Math.min(back.y, cell.y);
+      const height = Math.abs(back.y - cell.y);
+      if (cell.y > back.y) {
+        emitNegativeZFace(buffers, cell.x, lowY + 1, cell.z, cell.x1 - cell.x, height, cell.block);
+      } else {
+        emitPositiveZFace(buffers, cell.x, lowY + 1, cell.z - 1, cell.x1 - cell.x, height, back.block);
+      }
     }
   }
 

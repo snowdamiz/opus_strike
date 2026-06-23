@@ -26,8 +26,6 @@ const MIN_COARSE_LOD_DISTANCE = 38;
 const MIN_ULTRA_COARSE_LOD_DISTANCE = 56;
 const MIN_CULL_DISTANCE = 72;
 const DETAIL_HYSTERESIS = 8;
-const HIGH_ALTITUDE_LOW_ROWS = 20;
-const HIGH_ALTITUDE_HIGH_ROWS = 40;
 const SMALL_PROJECTED_REGION_PIXELS = 12;
 const TINY_PROJECTED_REGION_PIXELS = 6;
 
@@ -36,66 +34,23 @@ function clampDistance(value: number, min: number, max = Number.POSITIVE_INFINIT
   return Math.max(min, Math.min(max, value));
 }
 
-export function getBattleRoyalGroundY(
-  manifest: VoxelMapManifest,
-  worldX: number,
-  worldZ: number
-): number | null {
-  const { heightfield } = manifest;
-  if (!heightfield?.topSolidRows.length) return null;
-
-  const x = Math.floor((worldX - heightfield.origin.x) / heightfield.voxelSize.x);
-  const z = Math.floor((worldZ - heightfield.origin.z) / heightfield.voxelSize.z);
-  if (x < 0 || z < 0 || x >= heightfield.size.x || z >= heightfield.size.z) return null;
-
-  const topRow = heightfield.topSolidRows[x + z * heightfield.size.x] ?? 0;
-  if (topRow <= 0) return null;
-  return heightfield.origin.y + topRow * heightfield.voxelSize.y;
-}
-
-export function getBattleRoyalCameraAltitudeRows(
-  manifest: VoxelMapManifest,
-  cameraPosition: { x: number; y: number; z: number }
-): number {
-  const groundY = getBattleRoyalGroundY(manifest, cameraPosition.x, cameraPosition.z);
-  if (groundY === null) {
-    return Math.max(0, (cameraPosition.y - manifest.origin.y) / manifest.voxelSize.y);
-  }
-  return Math.max(0, (cameraPosition.y - groundY) / manifest.voxelSize.y);
-}
-
 export function getBattleRoyalTerrainLodDistances(input: {
   manifest: VoxelMapManifest;
   visibility: BattleRoyalVisibilityConfig;
   cameraPosition: { x: number; y: number; z: number };
 }): BattleRoyalTerrainLodDistances {
-  const altitudeRows = getBattleRoyalCameraAltitudeRows(input.manifest, input.cameraPosition);
-  let fullScale = 1;
-  let coarseScale = 1;
-  let ultraScale = 1;
-
-  if (altitudeRows >= HIGH_ALTITUDE_HIGH_ROWS) {
-    fullScale = 0.5;
-    coarseScale = 0.84;
-    ultraScale = 0.96;
-  } else if (altitudeRows >= HIGH_ALTITUDE_LOW_ROWS) {
-    fullScale = 0.68;
-    coarseScale = 0.92;
-    ultraScale = 1;
-  }
-
   const full = clampDistance(
-    input.visibility.terrainLodFullDistance * fullScale,
+    input.visibility.terrainLodFullDistance,
     MIN_FULL_LOD_DISTANCE,
     input.visibility.terrainLodCoarseDistance - 4
   );
   const coarse = clampDistance(
-    input.visibility.terrainLodCoarseDistance * coarseScale,
+    input.visibility.terrainLodCoarseDistance,
     Math.max(MIN_COARSE_LOD_DISTANCE, full + 10),
     input.visibility.terrainLodUltraCoarseDistance - 4
   );
   const ultraCoarse = clampDistance(
-    input.visibility.terrainLodUltraCoarseDistance * ultraScale,
+    input.visibility.terrainLodUltraCoarseDistance,
     Math.max(MIN_ULTRA_COARSE_LOD_DISTANCE, coarse + 12),
     input.visibility.terrainCullDistance - 2
   );

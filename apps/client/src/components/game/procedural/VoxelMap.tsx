@@ -917,7 +917,7 @@ export function VoxelMap({
             <VoxelRegionMesh
               region={region}
               manifest={manifest}
-              material={detail === 'full' ? material : farMaterial}
+              material={detail === 'ultraCoarse' ? farMaterial : material}
               shadowsEnabled={shadowsEnabled}
               buildMode={meshBuildMode}
               detail={detail}
