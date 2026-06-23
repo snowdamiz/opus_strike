@@ -46,6 +46,7 @@ const WORLD_SIZE = 376;
 const WORLD_HEIGHT = 96;
 const CHUNK_SIZE: VoxelSize = { x: 16, y: 16, z: 16 };
 const BASE_RADIUS = 173;
+const BATTLE_ROYAL_SIZE_VARIANT_SCALE = 0.9;
 const SPAWN_CLUSTER_POINT_RADIUS = 2.75;
 const SPAWN_FLATTEN_RADIUS = 11.5;
 const SPAWN_CAPSULE_CLEARANCE_RADIUS = PLAYER_RADIUS + 0.04;
@@ -64,9 +65,6 @@ const SIGHTLINE_EYE_ROWS = 4.2;
 const SIGHTLINE_SAMPLE_GRID_SPACING = 42;
 const SIGHTLINE_SAMPLE_STEP_DISTANCE = 2.25;
 const SIGHTLINE_MIN_REPORTED_DISTANCE = 45;
-const SIGHTLINE_OCCLUSION_TARGET_DISTANCE = 155;
-const SIGHTLINE_WARNING_MAX_DISTANCE = 180;
-const SIGHTLINE_REPAIR_MAX_PASSES = 30;
 const HEALTH_PACK_COUNT = 42;
 const STRATEGIC_POWERUP_COUNT = 24;
 const ROAD_LANE_PRIMARY = 'primary_roads';
@@ -82,6 +80,7 @@ type RoadSegmentKind = 'primary' | 'loop' | 'spur' | 'wild';
 type CoverRole = 'settlement' | 'roadside' | 'natural' | 'spawn_shelter';
 type CoverMaterial = 'terrain' | 'metal' | 'glass';
 type TerrainFeatureKind = 'mountain' | 'ridge';
+type TerrainReliefProfileId = 'flats' | 'rolling' | 'highlands';
 
 function createBattleRoyalSizeProfile(
   mapSize: VoxelMapSizeId,
@@ -96,17 +95,18 @@ function createBattleRoyalSizeProfile(
     | 'labelTags'
   >
 ): BattleRoyalSizeProfile {
-  const worldSize = Math.round((WORLD_SIZE * scale) / VOXEL_SIZE.x) * VOXEL_SIZE.x;
-  const baseRadius = BASE_RADIUS * scale;
+  const effectiveScale = scale * BATTLE_ROYAL_SIZE_VARIANT_SCALE;
+  const worldSize = Math.round((WORLD_SIZE * effectiveScale) / VOXEL_SIZE.x) * VOXEL_SIZE.x;
+  const baseRadius = BASE_RADIUS * effectiveScale;
 
   return {
     mapSize,
-    scale,
+    scale: effectiveScale,
     worldSize,
     worldHeight: WORLD_HEIGHT,
     baseRadius,
     spawnClusterRadius: baseRadius * 0.86,
-    sightlineSampleGridSpacing: SIGHTLINE_SAMPLE_GRID_SPACING * scale,
+    sightlineSampleGridSpacing: SIGHTLINE_SAMPLE_GRID_SPACING * effectiveScale,
     ...overrides,
   };
 }
@@ -131,8 +131,8 @@ const BATTLE_ROYAL_SIZE_PROFILES: Record<VoxelMapSizeId, BattleRoyalSizeProfile>
   small: createBattleRoyalSizeProfile('small', 0.72, {
     healthPackCount: 22,
     strategicPowerupCount: 12,
-    sightlineOcclusionTargetDistance: 112,
-    sightlineWarningMaxDistance: 132,
+    sightlineOcclusionTargetDistance: 150,
+    sightlineWarningMaxDistance: 190,
     labelTags: ['Battle Royal', '12-18 Players', 'Compact', 'Towns', 'Fast Routes'],
     performanceBudget: {
       maxSolidBlocks: 4_600_000,
@@ -144,8 +144,8 @@ const BATTLE_ROYAL_SIZE_PROFILES: Record<VoxelMapSizeId, BattleRoyalSizeProfile>
   medium: createBattleRoyalSizeProfile('medium', 0.86, {
     healthPackCount: 32,
     strategicPowerupCount: 18,
-    sightlineOcclusionTargetDistance: 132,
-    sightlineWarningMaxDistance: 155,
+    sightlineOcclusionTargetDistance: 180,
+    sightlineWarningMaxDistance: 220,
     labelTags: ['Battle Royal', '19-26 Players', 'Balanced', 'Towns', 'Open Routes'],
     performanceBudget: {
       maxSolidBlocks: 6_400_000,
@@ -157,8 +157,8 @@ const BATTLE_ROYAL_SIZE_PROFILES: Record<VoxelMapSizeId, BattleRoyalSizeProfile>
   large: createBattleRoyalSizeProfile('large', 1, {
     healthPackCount: HEALTH_PACK_COUNT,
     strategicPowerupCount: STRATEGIC_POWERUP_COUNT,
-    sightlineOcclusionTargetDistance: SIGHTLINE_OCCLUSION_TARGET_DISTANCE,
-    sightlineWarningMaxDistance: SIGHTLINE_WARNING_MAX_DISTANCE,
+    sightlineOcclusionTargetDistance: 215,
+    sightlineWarningMaxDistance: 265,
     labelTags: ['Battle Royal', '27-33 Players', 'Expansive', 'Towns', 'Open Routes'],
     performanceBudget: {
       maxSolidBlocks: 8_750_000,
@@ -259,6 +259,20 @@ interface TerrainFeature {
   noiseSeed: number;
 }
 
+interface TerrainReliefProfile {
+  id: TerrainReliefProfileId;
+  noiseAmplitudeScale: number;
+  edgeLiftScale: number;
+  naturalFeatureCountScale: number;
+  naturalFeatureAmplitudeScale: number;
+  occlusionFeatureCountScale: number;
+  occlusionFeatureAmplitudeScale: number;
+  landmarkScreenCountScale: number;
+  landmarkScreenAmplitudeScale: number;
+  sightlineRepairPasses: number;
+  sightlineRepairAmplitudeScale: number;
+}
+
 interface SightlineSamplePoint {
   id: string;
   x: number;
@@ -286,6 +300,7 @@ interface BattleRoyalLayout {
   spawns: TeamMap<SpawnCluster>;
   spawnPoints: Record<string, Vec3[]>;
   flattenZones: FlattenZone[];
+  terrainRelief: TerrainReliefProfile;
   terrainFeatures: TerrainFeature[];
   districts: BattleRoyalDistrict[];
   roadNodes: RoadNode[];
@@ -427,6 +442,75 @@ function unitFromSeed(seed: number): number {
   return (hashSeed(seed) >>> 0) / 0x1_0000_0000;
 }
 
+const TERRAIN_RELIEF_PROFILES: readonly TerrainReliefProfile[] = [
+  {
+    id: 'flats',
+    noiseAmplitudeScale: 0.58,
+    edgeLiftScale: 0.42,
+    naturalFeatureCountScale: 0.48,
+    naturalFeatureAmplitudeScale: 0.48,
+    occlusionFeatureCountScale: 0.2,
+    occlusionFeatureAmplitudeScale: 0.32,
+    landmarkScreenCountScale: 0.24,
+    landmarkScreenAmplitudeScale: 0.34,
+    sightlineRepairPasses: 5,
+    sightlineRepairAmplitudeScale: 0.38,
+  },
+  {
+    id: 'rolling',
+    noiseAmplitudeScale: 0.74,
+    edgeLiftScale: 0.58,
+    naturalFeatureCountScale: 0.68,
+    naturalFeatureAmplitudeScale: 0.6,
+    occlusionFeatureCountScale: 0.34,
+    occlusionFeatureAmplitudeScale: 0.44,
+    landmarkScreenCountScale: 0.38,
+    landmarkScreenAmplitudeScale: 0.46,
+    sightlineRepairPasses: 8,
+    sightlineRepairAmplitudeScale: 0.5,
+  },
+  {
+    id: 'highlands',
+    noiseAmplitudeScale: 0.9,
+    edgeLiftScale: 0.72,
+    naturalFeatureCountScale: 0.86,
+    naturalFeatureAmplitudeScale: 0.74,
+    occlusionFeatureCountScale: 0.52,
+    occlusionFeatureAmplitudeScale: 0.6,
+    landmarkScreenCountScale: 0.54,
+    landmarkScreenAmplitudeScale: 0.62,
+    sightlineRepairPasses: 12,
+    sightlineRepairAmplitudeScale: 0.62,
+  },
+];
+
+function createTerrainReliefProfile(seed: number): TerrainReliefProfile {
+  const profileRoll = unitFromSeed(seed ^ 0x6e617475);
+  const baseProfile = profileRoll < 0.34
+    ? TERRAIN_RELIEF_PROFILES[0]
+    : profileRoll < 0.78
+      ? TERRAIN_RELIEF_PROFILES[1]
+      : TERRAIN_RELIEF_PROFILES[2];
+  const amplitudeJitter = lerp(0.92, 1.08, unitFromSeed(seed ^ 0x72756e));
+  const countJitter = lerp(0.9, 1.12, unitFromSeed(seed ^ 0x766172));
+
+  return {
+    ...baseProfile,
+    noiseAmplitudeScale: baseProfile.noiseAmplitudeScale * amplitudeJitter,
+    naturalFeatureCountScale: baseProfile.naturalFeatureCountScale * countJitter,
+    naturalFeatureAmplitudeScale: baseProfile.naturalFeatureAmplitudeScale * amplitudeJitter,
+    occlusionFeatureCountScale: baseProfile.occlusionFeatureCountScale * countJitter,
+    occlusionFeatureAmplitudeScale: baseProfile.occlusionFeatureAmplitudeScale * amplitudeJitter,
+    landmarkScreenCountScale: baseProfile.landmarkScreenCountScale * countJitter,
+    landmarkScreenAmplitudeScale: baseProfile.landmarkScreenAmplitudeScale * amplitudeJitter,
+    sightlineRepairAmplitudeScale: baseProfile.sightlineRepairAmplitudeScale * amplitudeJitter,
+  };
+}
+
+function scaledCount(count: number, scale: number, minimum: number): number {
+  return Math.max(minimum, Math.round(count * scale));
+}
+
 function sampleDistrictPoint(
   random: () => number,
   district: BattleRoyalDistrict,
@@ -487,14 +571,15 @@ function terrainRows(
   worldZ: number,
   flattenZones: readonly FlattenZone[],
   terrainFeatures: readonly TerrainFeature[],
-  profile: BattleRoyalSizeProfile
+  profile: BattleRoyalSizeProfile,
+  relief: TerrainReliefProfile
 ): number {
   const radial = Math.hypot(worldX, worldZ) / profile.baseRadius;
   const centerRise = Math.max(0, 1 - radial) * 1.8;
-  const outerShoulder = radial > 0.76 ? smoothstep((radial - 0.76) / 0.2) * 4.5 : 0;
-  const broad = (fractalNoise2(seed ^ 0x514f, worldX * 0.0065, worldZ * 0.0065, 5) - 0.5) * 9;
-  const medium = (fractalNoise2(seed ^ 0x2d7, worldX * 0.019, worldZ * 0.019, 4) - 0.5) * 4.2;
-  const detail = (fractalNoise2(seed ^ 0xf00d, worldX * 0.055, worldZ * 0.055, 2) - 0.5) * 1.2;
+  const outerShoulder = radial > 0.76 ? smoothstep((radial - 0.76) / 0.2) * 4.5 * relief.edgeLiftScale : 0;
+  const broad = (fractalNoise2(seed ^ 0x514f, worldX * 0.0065, worldZ * 0.0065, 5) - 0.5) * 9 * relief.noiseAmplitudeScale;
+  const medium = (fractalNoise2(seed ^ 0x2d7, worldX * 0.019, worldZ * 0.019, 4) - 0.5) * 4.2 * relief.noiseAmplitudeScale;
+  const detail = (fractalNoise2(seed ^ 0xf00d, worldX * 0.055, worldZ * 0.055, 2) - 0.5) * 1.2 * lerp(0.75, 1, relief.noiseAmplitudeScale);
   let rows = BASE_TERRAIN_ROWS + centerRise + outerShoulder + broad + medium + detail;
 
   for (const feature of terrainFeatures) {
@@ -960,7 +1045,8 @@ function createTerrainFeatures(
   boundary: BoundaryPoint[],
   spawns: TeamMap<SpawnCluster>,
   districts: readonly BattleRoyalDistrict[],
-  profile: BattleRoyalSizeProfile
+  profile: BattleRoyalSizeProfile,
+  relief: TerrainReliefProfile
 ): TerrainFeature[] {
   const random = mulberry32(seed ^ 0x7e44a11);
   const baseRadius = profile.baseRadius;
@@ -996,7 +1082,7 @@ function createTerrainFeatures(
         rotation: rotationBias === undefined
           ? random() * Math.PI * 2
           : radialAngle + rotationBias + lerp(-0.36, 0.36, random()),
-        amplitudeRows: lerp(amplitudeRows.min, amplitudeRows.max, random()),
+        amplitudeRows: lerp(amplitudeRows.min, amplitudeRows.max, random()) * relief.naturalFeatureAmplitudeScale,
         noiseSeed: hashSeed(seed ^ Math.imul(index + 1, kind === 'mountain' ? 0x45d9f3b : 0x27d4eb2d)),
       });
       return;
@@ -1009,7 +1095,9 @@ function createTerrainFeatures(
     radiusZ: number,
     rotation: number,
     amplitudeRows: number,
-    salt: number
+    salt: number,
+    amplitudeScale = relief.occlusionFeatureAmplitudeScale,
+    minimumAmplitudeRows = 2
   ): void => {
     const clamped = clampPointToBoundary(center, boundary, 8);
     features.push({
@@ -1019,12 +1107,13 @@ function createTerrainFeatures(
       radiusX,
       radiusZ,
       rotation,
-      amplitudeRows,
+      amplitudeRows: Math.max(minimumAmplitudeRows, amplitudeRows * amplitudeScale),
       noiseSeed: hashSeed(seed ^ salt),
     });
   };
 
-  for (let index = 0; index < 6; index++) {
+  const mountainCount = scaledCount(6, relief.naturalFeatureCountScale, 2);
+  for (let index = 0; index < mountainCount; index++) {
     addFeature(
       'mountain',
       index,
@@ -1036,7 +1125,8 @@ function createTerrainFeatures(
     );
   }
 
-  for (let index = 0; index < 6; index++) {
+  const ridgeCount = scaledCount(6, relief.naturalFeatureCountScale, 2);
+  for (let index = 0; index < ridgeCount; index++) {
     addFeature(
       'ridge',
       index,
@@ -1050,8 +1140,9 @@ function createTerrainFeatures(
   }
 
   const occlusionPhase = random() * Math.PI * 2;
-  for (let index = 0; index < 6; index++) {
-    const angle = occlusionPhase + (index / 6) * Math.PI * 2;
+  const sectorScreenCount = scaledCount(6, relief.occlusionFeatureCountScale, 1);
+  for (let index = 0; index < sectorScreenCount; index++) {
+    const angle = occlusionPhase + (index / sectorScreenCount) * Math.PI * 2;
     const radialDistance = baseRadius * lerp(0.36, 0.54, random());
     addOcclusionRidge(
       `sector_screen_${index + 1}`,
@@ -1067,8 +1158,9 @@ function createTerrainFeatures(
     );
   }
 
-  for (let index = 0; index < 6; index++) {
-    const angle = occlusionPhase + Math.PI / 6 + (index / 6) * Math.PI * 2;
+  const horizonBreakCount = scaledCount(6, relief.occlusionFeatureCountScale, 1);
+  for (let index = 0; index < horizonBreakCount; index++) {
+    const angle = occlusionPhase + Math.PI / 6 + (index / horizonBreakCount) * Math.PI * 2;
     const radialDistance = baseRadius * lerp(0.52, 0.76, random());
     addOcclusionRidge(
       `horizon_break_${index + 1}`,
@@ -1084,8 +1176,9 @@ function createTerrainFeatures(
     );
   }
 
-  for (let index = 0; index < 8; index++) {
-    const angle = occlusionPhase + Math.PI / 8 + (index / 8) * Math.PI * 2;
+  const midfieldLipCount = scaledCount(8, relief.occlusionFeatureCountScale, 1);
+  for (let index = 0; index < midfieldLipCount; index++) {
+    const angle = occlusionPhase + Math.PI / 8 + (index / midfieldLipCount) * Math.PI * 2;
     addOcclusionRidge(
       `midfield_lip_${index + 1}`,
       {
@@ -1110,7 +1203,8 @@ function createTerrainFeatures(
     ))
     .filter((pair) => pair.distance >= baseRadius * 0.62)
     .sort((a, b) => b.distance - a.distance);
-  for (let index = 0; index < Math.min(38, districtPairs.length); index++) {
+  const districtScreenLimit = Math.min(scaledCount(38, relief.occlusionFeatureCountScale, 5), districtPairs.length);
+  for (let index = 0; index < districtScreenLimit; index++) {
     const { a, b, distance } = districtPairs[index];
     const openAreaPair = a.kind === 'wildland' || a.kind === 'open_field' ||
       b.kind === 'wildland' || b.kind === 'open_field';
@@ -1129,8 +1223,9 @@ function createTerrainFeatures(
     );
   }
 
-  for (let index = 0; index < 4; index++) {
-    const angle = occlusionPhase + Math.PI / 4 + (index / 4) * Math.PI * 2;
+  const outerBowlCount = scaledCount(4, relief.occlusionFeatureCountScale, 1);
+  for (let index = 0; index < outerBowlCount; index++) {
+    const angle = occlusionPhase + Math.PI / 4 + (index / outerBowlCount) * Math.PI * 2;
     addOcclusionRidge(
       `outer_bowl_${index + 1}`,
       {
@@ -1147,7 +1242,9 @@ function createTerrainFeatures(
 
   const orderedSpawns = Object.values(spawns)
     .sort((a, b) => Math.atan2(a.center.z, a.center.x) - Math.atan2(b.center.z, b.center.x));
-  for (let index = 0; index < orderedSpawns.length; index++) {
+  const spawnSeparatorCount = orderedSpawns.length;
+  for (let slot = 0; slot < spawnSeparatorCount; slot++) {
+    const index = Math.floor((slot / spawnSeparatorCount) * orderedSpawns.length);
     const current = orderedSpawns[index];
     const next = orderedSpawns[(index + 1) % orderedSpawns.length];
     if (!current || !next) continue;
@@ -1163,7 +1260,9 @@ function createTerrainFeatures(
       lerp(16 * scale, 24 * scale, random()),
       radialAngle,
       lerp(15, 25, random()),
-      Math.imul(index + 61, 0x9e3779b1)
+      Math.imul(index + 61, 0x9e3779b1),
+      Math.max(0.68, relief.occlusionFeatureAmplitudeScale),
+      10
     );
   }
 
@@ -1704,6 +1803,7 @@ function createBattleRoyalLayout(
 ): BattleRoyalLayout {
   const theme = getVoxelMapTheme(seed, themeId);
   const profile = getBattleRoyalSizeProfile(mapSize);
+  const terrainRelief = createTerrainReliefProfile(seed);
   const size = {
     x: Math.round(profile.worldSize / VOXEL_SIZE.x),
     y: Math.round(profile.worldHeight / VOXEL_SIZE.y),
@@ -1723,7 +1823,7 @@ function createBattleRoyalLayout(
     spawns: spawnLayout.spawns,
     districts,
   });
-  const terrainFeatures = createTerrainFeatures(seed, boundary, spawnLayout.spawns, districts, profile);
+  const terrainFeatures = createTerrainFeatures(seed, boundary, spawnLayout.spawns, districts, profile, terrainRelief);
   const poiLayout = createPois(seed, boundary, spawnLayout.spawns, districts);
   const pickupLayout = createPowerups(
     seed,
@@ -1751,6 +1851,7 @@ function createBattleRoyalLayout(
     spawns: spawnLayout.spawns,
     spawnPoints: spawnLayout.spawnPoints,
     flattenZones,
+    terrainRelief,
     terrainFeatures,
     districts,
     roadNodes: roadLayout.roadNodes,
@@ -1775,7 +1876,15 @@ function gridRowsToWorldY(row: number, originY: number, voxelY: number): number 
 }
 
 function getSurfaceRow(layout: BattleRoyalLayout, point: { x: number; z: number }): number {
-  return terrainRows(layout.seed, point.x, point.z, layout.flattenZones, layout.terrainFeatures, layout.profile);
+  return terrainRows(
+    layout.seed,
+    point.x,
+    point.z,
+    layout.flattenZones,
+    layout.terrainFeatures,
+    layout.profile,
+    layout.terrainRelief
+  );
 }
 
 function getSurfacePosition(layout: BattleRoyalLayout, point: Vec3, yOffset = 0.25): Vec3 {
@@ -1892,7 +2001,15 @@ function buildBlocks(layout: BattleRoyalLayout): {
       let rows = 0;
 
       if (insidePlayable) {
-        rows = terrainRows(layout.seed, worldX, worldZ, layout.flattenZones, layout.terrainFeatures, layout.profile);
+        rows = terrainRows(
+          layout.seed,
+          worldX,
+          worldZ,
+          layout.flattenZones,
+          layout.terrainFeatures,
+          layout.profile,
+          layout.terrainRelief
+        );
       } else if (radial <= halfSize - 1 && radial >= layout.profile.baseRadius * 0.78) {
         const closest = getClosestBoundaryPoint(worldX, worldZ, layout.boundary).point;
         boundaryWall = distance2D({ x: worldX, z: worldZ }, closest) <= BOUNDARY_WALL_THICKNESS;
@@ -1918,11 +2035,11 @@ function buildBlocks(layout: BattleRoyalLayout): {
 
   stampPads(layout, blocks);
   stampBattleRoyalContent(layout, blocks, terrain);
-  stampStrategicLandmarkScreens(layout, blocks, terrain.side);
+  stampStrategicLandmarkRelief(layout, blocks, terrain.side);
 
   let heightfield = createHeightfield({ blocks, size: layout.size, origin: layout.origin });
   const sightlineSamplePoints = createLayoutSightlineSamplePoints(layout);
-  for (let pass = 0; pass < SIGHTLINE_REPAIR_MAX_PASSES; pass++) {
+  for (let pass = 0; pass < layout.terrainRelief.sightlineRepairPasses; pass++) {
     const repairPair = findLongestVisibleSightline(
       heightfield,
       sightlineSamplePoints,
@@ -2164,6 +2281,7 @@ function stampSightlineMountainRidge(
   const direction = normalize2D({ x: pair.to.x - pair.from.x, z: pair.to.z - pair.from.z });
   const normal = { x: -direction.z, z: direction.x };
   const salt = hashSeed(layout.seed ^ Math.imul(passIndex + 1, 0x6d2b79f5));
+  const relief = layout.terrainRelief;
   const baseT = lerp(0.42, 0.58, unitFromSeed(salt));
   const offsetMagnitude = lerp(14, 28, unitFromSeed(salt ^ 0x9e3779b9));
   const offsetSign = unitFromSeed(salt ^ 0x85ebca6b) > 0.5 ? 1 : -1;
@@ -2199,9 +2317,9 @@ function stampSightlineMountainRidge(
   }
 
   clampedCenter ??= clampPointToBoundary(add2D(lerpPoint2D(pair.from, pair.to, baseT), normal, offsetSign * offsetMagnitude), layout.boundary, 5);
-  const length = clamp(pair.distance * lerp(0.38, 0.54, unitFromSeed(salt ^ 0x85ebca6b)), 78, 138);
-  const thickness = lerp(22, 34, unitFromSeed(salt ^ 0xc2b2ae35));
-  const heightRows = Math.round(clamp(pair.distance * 0.19, 52, 76));
+  const length = clamp(pair.distance * lerp(0.38, 0.54, unitFromSeed(salt ^ 0x85ebca6b)), 72, 132);
+  const thickness = lerp(24, 38, unitFromSeed(salt ^ 0xc2b2ae35));
+  const heightRows = Math.max(10, Math.round(clamp(pair.distance * 0.18, 44, 68) * relief.sightlineRepairAmplitudeScale));
 
   stampNaturalMountainRidge(
     layout,
@@ -2405,17 +2523,18 @@ function stampBattleRoyalContent(
   }
 }
 
-function stampStrategicLandmarkScreens(
+function stampStrategicLandmarkRelief(
   layout: BattleRoyalLayout,
   blocks: Uint8Array,
   block: number
 ): void {
   const districtById = new Map(layout.districts.map((district) => [district.id, district]));
-  for (const district of layout.districts) {
+  for (const [districtIndex, district] of layout.districts.entries()) {
     if (district.kind !== 'open_field' && district.kind !== 'wildland') continue;
+    const salt = hashSeed(layout.seed ^ Math.imul(district.id.length + districtIndex, 0x6ac690c5));
+    if (unitFromSeed(salt ^ 0x1b873593) > layout.terrainRelief.landmarkScreenCountScale) continue;
     const radial = normalize2D({ x: district.center.x, z: district.center.z });
     const tangent = { x: -radial.z, z: radial.x };
-    const salt = hashSeed(layout.seed ^ Math.imul(district.id.length + layout.districts.indexOf(district), 0x6ac690c5));
     const centerFactors = district.kind === 'wildland'
       ? [0.56, 0.66, 0.76]
       : [0.48, 0.6, 0.72];
@@ -2449,7 +2568,16 @@ function stampStrategicLandmarkScreens(
       center,
       clamp(district.influenceRadius * 1.9, 74, 128),
       lerp(24, 36, unitFromSeed(salt ^ 0xc2b2ae35)),
-      Math.round(lerp(district.kind === 'wildland' ? 64 : 58, district.kind === 'wildland' ? 84 : 76, unitFromSeed(salt ^ 0x85ebca6b))),
+      Math.max(
+        10,
+        Math.round(
+          lerp(
+            district.kind === 'wildland' ? 64 : 58,
+            district.kind === 'wildland' ? 84 : 76,
+            unitFromSeed(salt ^ 0x85ebca6b)
+          ) * layout.terrainRelief.landmarkScreenAmplitudeScale
+        )
+      ),
       block,
       Math.atan2(tangent.z, tangent.x),
       salt ^ 0x7f4a7c15
@@ -2474,7 +2602,7 @@ function stampStrategicLandmarkScreens(
     ))
     .filter((pair) => pair.distance >= layout.profile.sightlineOcclusionTargetDistance * 0.92)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 34);
+    .slice(0, scaledCount(34, layout.terrainRelief.landmarkScreenCountScale, 6));
 
   for (let index = 0; index < screenPairs.length; index++) {
     const pair = screenPairs[index];
@@ -2514,7 +2642,7 @@ function stampStrategicLandmarkScreens(
       center,
       clamp(pair.distance * lerp(0.38, 0.5, unitFromSeed(salt ^ 0x85ebca6b)), 74, 132),
       lerp(22, 34, unitFromSeed(salt ^ 0xc2b2ae35)),
-      Math.round(clamp(pair.distance * 0.21, 56, 82)),
+      Math.max(10, Math.round(clamp(pair.distance * 0.21, 56, 82) * layout.terrainRelief.landmarkScreenAmplitudeScale)),
       block,
       Math.atan2(normal.z, normal.x),
       salt ^ 0x7f4a7c15
@@ -2957,8 +3085,10 @@ function createDiagnostics(input: {
     widths[edge.laneId] = Math.max(widths[edge.laneId] ?? 0, edge.width);
     return widths;
   }, {});
+  const spawnSeparationTarget = 74 * input.layout.profile.scale;
+  const spawnSeparationWarningDistance = 66 * input.layout.profile.scale;
   const scoreBreakdown = {
-    spawnSeparation: clamp(minSpawnSeparation / 74, 0, 1) * 18,
+    spawnSeparation: clamp(minSpawnSeparation / spawnSeparationTarget, 0, 1) * 18,
     roadConnectivity: clamp(input.layout.roadSegments.length / 24, 0, 1) * 18,
     settlementStructure: clamp(settlementCount / 10, 0, 1) * 18,
     openAreaStructure: clamp(openAreaCount / 7, 0, 1) * 14,
@@ -2967,7 +3097,7 @@ function createDiagnostics(input: {
     budget: input.stats.solidBlocks < 6_800_000 && input.stats.renderableChunkCount < 7600 ? 6 : 3,
   };
   const warnings: string[] = [];
-  if (minSpawnSeparation < 70) warnings.push('spawn separation below battle royal target');
+  if (minSpawnSeparation < spawnSeparationWarningDistance) warnings.push('spawn separation below battle royal target');
   if ((districtCounts.city_core ?? 0) < 1 || (districtCounts.town ?? 0) < 3) warnings.push('settlement structure below target');
   if (openAreaCount < 7) warnings.push('open area structure below target');
   if (input.layout.roadSegments.length < 22) warnings.push('road network below target');

@@ -203,6 +203,7 @@ export interface BotRouteGraphAdapter {
   edges: BotRouteEdgeInfo[];
   nodeById: Map<string, BotRouteNodeInfo>;
   adjacency: Map<string, BotRouteEdgeInfo[]>;
+  edgeByPath: Map<string, BotRouteEdgeInfo>;
   lanes: Map<string, BotRouteLaneInfo>;
   primaryRouteNodeIds: Record<Team, string[]>;
   fallbackAnchorNodeIds: Record<Team, string[]>;
@@ -1310,11 +1311,13 @@ export function createBotRouteGraphAdapter(manifest: VoxelMapManifest | null | u
 
   const edges: BotRouteEdgeInfo[] = [];
   const adjacency = new Map<string, BotRouteEdgeInfo[]>();
+  const edgeByPath = new Map<string, BotRouteEdgeInfo>();
   const addEdge = (edge: BotRouteEdgeInfo): void => {
     edges.push(edge);
     const list = adjacency.get(edge.from) ?? [];
     list.push(edge);
     adjacency.set(edge.from, list);
+    edgeByPath.set(`${edge.from}\0${edge.to}`, edge);
   };
 
   for (const edge of routeGraph.edges) {
@@ -1361,6 +1364,7 @@ export function createBotRouteGraphAdapter(manifest: VoxelMapManifest | null | u
     edges,
     nodeById,
     adjacency,
+    edgeByPath,
     lanes,
     primaryRouteNodeIds: {
       red: [...(routeGraph.primaryRouteNodeIds.red ?? [])],
@@ -2607,7 +2611,7 @@ function resolvePathEdges(routeGraph: BotRouteGraphAdapter, pathNodeIds: readonl
   for (let index = 1; index < pathNodeIds.length; index++) {
     const from = pathNodeIds[index - 1];
     const to = pathNodeIds[index];
-    const edge = routeGraph.adjacency.get(from)?.find((candidate) => candidate.to === to);
+    const edge = routeGraph.edgeByPath.get(`${from}\0${to}`);
     if (edge) pathEdges.push(edge);
   }
   return pathEdges;

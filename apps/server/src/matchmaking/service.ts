@@ -10,8 +10,13 @@ import {
   getRankDivisionLabel,
   normalizeRankDivisionIndex,
 } from './skill';
-import { getRankDivisionIndex } from '@voxel-strike/shared';
-import type { GameplayMode, MatchMode, MatchPerspective } from '@voxel-strike/shared';
+import {
+  getGameplayModeRules,
+  getRankDivisionIndex,
+  getTeamIdsForGameplayMode,
+  isKnownHeroId,
+} from '@voxel-strike/shared';
+import type { GameplayMode, HeroId, MatchMode, MatchPerspective } from '@voxel-strike/shared';
 import { serializeRankPayload, type PublicRankPayload } from '../ranking/serialization';
 import type { RankedTokenHoldingStatus } from './rankedTokenHold';
 import {
@@ -19,6 +24,10 @@ import {
   doesMatchmakingMetadataMatchSettings,
   type MatchmakingBotFillMode,
 } from './matchSettings';
+import {
+  readMatchmakingHeroQueueStateFromMetadata,
+  resolveMatchmakingHeroTeam,
+} from './heroQueues';
 
 export interface MatchmakingUserContext {
   userId: string;
@@ -44,6 +53,7 @@ export interface IssuedMatchmakingTicket {
   gameplayMode: GameplayMode;
   botFillMode: MatchmakingBotFillMode;
   matchPerspective: MatchPerspective;
+  selectedHero?: HeroId;
   expiresAt: number;
   competitiveRating: number;
   rankDivisionIndex: number;
@@ -116,6 +126,7 @@ export async function chooseMatchmakingRankBand(input: {
   gameplayMode?: GameplayMode;
   botFillMode?: MatchmakingBotFillMode;
   matchPerspective?: MatchPerspective;
+  selectedHero?: HeroId;
 }): Promise<number> {
   const now = Date.now();
   const rooms = await matchMaker.query({ name: 'lobby_room' });
@@ -150,6 +161,21 @@ export async function chooseMatchmakingRankBand(input: {
 
     if (participantCount >= requiredPlayers) return [];
     if (distance > getAllowedRankDivisionDistance(waitMs)) return [];
+    if (isKnownHeroId(input.selectedHero)) {
+      const rules = getGameplayModeRules(settings.gameplayMode);
+      const teamIds = getTeamIdsForGameplayMode(settings.gameplayMode).slice(0, rules.maxTeams);
+      const heroQueueState = readMatchmakingHeroQueueStateFromMetadata({ metadata, teamIds });
+      if (heroQueueState) {
+        const heroTeam = resolveMatchmakingHeroTeam({
+          teamIds,
+          maxTeamSize: rules.maxTeamSize,
+          teamCounts: heroQueueState.teamCounts,
+          teamHeroIds: heroQueueState.teamHeroIds,
+          selectedHero: input.selectedHero,
+        });
+        if (!heroTeam) return [];
+      }
+    }
 
     return [{
       rankBandId,
@@ -178,6 +204,7 @@ export function issueQuickPlayTicket(
     gameplayMode: GameplayMode;
     botFillMode: MatchmakingBotFillMode;
     matchPerspective: MatchPerspective;
+    selectedHero?: HeroId;
   }
 ): IssuedMatchmakingTicket {
   const { ticket, claims } = createMatchmakingTicket({
@@ -185,6 +212,7 @@ export function issueQuickPlayTicket(
     gameplayMode: settings.gameplayMode,
     botFillMode: settings.botFillMode,
     matchPerspective: settings.matchPerspective,
+    selectedHero: settings.selectedHero,
     userId: context.userId,
     competitiveRating: context.competitiveRating,
     rankDivisionIndex: context.rankDivisionIndex,
@@ -198,6 +226,7 @@ export function issueQuickPlayTicket(
     gameplayMode: claims.gameplayMode,
     botFillMode: claims.botFillMode,
     matchPerspective: claims.matchPerspective,
+    selectedHero: claims.selectedHero,
     expiresAt: claims.expiresAt,
     competitiveRating: context.competitiveRating,
     rankDivisionIndex: context.rankDivisionIndex,
@@ -210,10 +239,12 @@ export function issueQuickPlayTicket(
 export function issueRankedTicket(
   context: MatchmakingUserContext,
   targetRankDivisionIndex: number,
-  tokenHold: RankedTokenHoldingStatus
+  tokenHold: RankedTokenHoldingStatus,
+  selectedHero?: HeroId
 ): IssuedRankedTicket {
   const { ticket, claims } = createMatchmakingTicket({
     mode: 'ranked',
+    selectedHero,
     userId: context.userId,
     competitiveRating: context.competitiveRating,
     rankDivisionIndex: context.rankDivisionIndex,
@@ -233,6 +264,7 @@ export function issueRankedTicket(
     gameplayMode: claims.gameplayMode,
     botFillMode: claims.botFillMode,
     matchPerspective: claims.matchPerspective,
+    selectedHero: claims.selectedHero,
     expiresAt: claims.expiresAt,
     competitiveRating: context.competitiveRating,
     rankDivisionIndex: context.rankDivisionIndex,

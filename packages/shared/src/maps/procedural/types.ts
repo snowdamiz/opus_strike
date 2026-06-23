@@ -2,7 +2,7 @@ import type { Team } from '../../types/team.js';
 import type { Vec3 } from '../../types/vector.js';
 
 export const DEFAULT_PROCEDURAL_MAP_SEED = 0x57564f58;
-export const CONSTRUCTED_MAP_MANIFEST_VERSION = 11;
+export const CONSTRUCTED_MAP_MANIFEST_VERSION = 12;
 
 export type VoxelMapSizeId = 'small' | 'medium' | 'large';
 export const DEFAULT_VOXEL_MAP_SIZE_ID: VoxelMapSizeId = 'medium';

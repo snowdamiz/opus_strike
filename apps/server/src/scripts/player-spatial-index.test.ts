@@ -29,6 +29,12 @@ assert.deepEqual(index.getTeamPlayers('blue').map((player) => player.id), ['blue
 assert.deepEqual(index.getEnemyPlayers('red').map((player) => player.id), ['blue-a', 'blue-b']);
 assert.equal(index.getEnemyPlayers('red'), index.getEnemyPlayers('red'));
 
+const redTeamPlayersReference = index.getTeamPlayers('red');
+const redEnemyPlayersReference = index.getEnemyPlayers('red');
+index.rebuild(players);
+assert.equal(index.getTeamPlayers('red'), redTeamPlayersReference);
+assert.equal(index.getEnemyPlayers('red'), redEnemyPlayersReference);
+
 const radiusResults: Player[] = [];
 index.queryRadius({ x: 0, z: 0 }, 9, radiusResults, { team: 'blue' });
 assert.deepEqual(radiusResults.map((player) => player.id), ['blue-a']);

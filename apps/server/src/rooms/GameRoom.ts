@@ -74,6 +74,7 @@ import {
   buildBattleRoyalDropSnapshot,
   createBattleRoyalDropState,
   forceLandBattleRoyalDropState,
+  removeBattleRoyalDropParticipant,
   setBattleRoyalDropPlayerInput,
   startBattleRoyalTeamDrop,
   type BattleRoyalDropState,
@@ -1566,7 +1567,9 @@ export class GameRoom extends Room<GameState> {
     this.playerCombatActivity.clear(playerId);
     this.devRuntime.clearPlayer(playerId);
     this.matchStartGate.clearPlayer(playerId);
-    this.battleRoyalDrop?.players.delete(playerId);
+    if (this.battleRoyalDrop) {
+      removeBattleRoyalDropParticipant(this.battleRoyalDrop, playerId);
+    }
   }
 
   onDispose() {

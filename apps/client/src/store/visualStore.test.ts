@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import {
+  ALL_HERO_IDS,
   MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+  doesSegmentHitPlayerCombatHitbox,
+  type HeroId,
   type Player,
   type Team,
 } from '@voxel-strike/shared';
@@ -73,12 +76,19 @@ function addSnapshot(serverTime: number, x: number): void {
   addRemoteSnapshot('remote-a', serverTime, x, TEST_REMOTE_TRANSFORM_RECEIVED_AT_MS);
 }
 
-function makePlayer(id: string, team: Team, x: number, z: number, state: Player['state'] = 'alive'): Player {
+function makePlayer(
+  id: string,
+  team: Team,
+  x: number,
+  z: number,
+  state: Player['state'] = 'alive',
+  heroId: HeroId | null = null
+): Player {
   return {
     id,
     name: id,
     team,
-    heroId: null,
+    heroId,
     state,
     isReady: true,
     isBot: false,
@@ -164,6 +174,20 @@ assert.equal(target.movementBits, 12);
 assert.equal(target.movementEpoch, 1);
 assert.equal(target.stale, false);
 
+const extrapolatedTarget = makeTarget();
+assert.equal(
+  sampleRemoteTransformInto(
+    'remote-a',
+    extrapolatedTarget,
+    history.latestReceivedAtMs + MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS + 40
+  ),
+  true
+);
+assert.ok(Math.abs(extrapolatedTarget.position.x - 12.04) < 0.000001);
+assert.equal(extrapolatedTarget.velocity.x, 1);
+assert.equal(extrapolatedTarget.extrapolatedMs, 40);
+assert.equal(extrapolatedTarget.stale, false);
+
 addRemoteTransformSnapshot('remote-b', {
   serverTick: 25,
   serverTime: 1250,
@@ -183,6 +207,25 @@ assert.equal(visualStore.getState().remoteTransformHistories.has('remote-b'), fa
 
 const missingTarget = makeTarget();
 assert.equal(sampleRemoteTransformInto('missing', missingTarget), false);
+
+clearVisualState();
+addRemoteSnapshot('single-snapshot', 2000, 20, 20_000);
+const singleSnapshotTarget = makeTarget();
+assert.equal(sampleRemoteTransformInto('single-snapshot', singleSnapshotTarget, 20_000), true);
+assert.equal(singleSnapshotTarget.position.x, 20);
+assert.equal(singleSnapshotTarget.extrapolatedMs, 0);
+
+const singleSnapshotExtrapolatedTarget = makeTarget();
+assert.equal(
+  sampleRemoteTransformInto(
+    'single-snapshot',
+    singleSnapshotExtrapolatedTarget,
+    20_000 + MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS + 30
+  ),
+  true
+);
+assert.ok(Math.abs(singleSnapshotExtrapolatedTarget.position.x - 20.03) < 0.000001);
+assert.equal(singleSnapshotExtrapolatedTarget.extrapolatedMs, 30);
 
 clearVisualState();
 addRemoteSnapshot('jittery', 1000, 10, 10_000);
@@ -270,7 +313,7 @@ const combatPlayers = [
   makePlayer('dead-blue', 'blue', 1, 0, 'dead'),
 ];
 const combatCache = rebuildCombatVisualFrameCache(combatPlayers, 2000, 2000, combatPlayers.length);
-const firstCombatBucket = combatCache.buckets.get(0)?.get(0);
+const firstCombatBucket = combatCache.activeBuckets[0];
 assert.ok(firstCombatBucket);
 const nearbyEnemies: Player[] = [];
 fillCombatVisualEnemyPlayers(combatCache, 'red', 'owner', nearbyEnemies, { x: 0, z: 0 }, 4);
@@ -321,7 +364,7 @@ assert.equal(
 );
 
 const rebuiltCombatCache = rebuildCombatVisualFrameCache(combatPlayers, 2001, 2001, combatPlayers.length);
-assert.equal(rebuiltCombatCache.buckets.get(0)?.get(0), firstCombatBucket);
+assert.equal(rebuiltCombatCache.activeBuckets[0], firstCombatBucket);
 
 const brCombatPlayers = [
   makePlayer('br-owner', 'br_01', 0, 0),
@@ -332,10 +375,7 @@ const brCombatPlayers = [
 ];
 brCombatPlayers[4].visibility = 'hidden';
 const brCombatCache = rebuildCombatVisualFrameCache(brCombatPlayers, 3000, 3000, brCombatPlayers.length);
-assert.equal(brCombatCache.byTeam.get('br_01')?.length, 2);
-assert.equal(brCombatCache.byTeam.get('br_02')?.length, 1);
-assert.equal(brCombatCache.byTeam.get('br_03')?.length, 1);
-assert.equal(brCombatCache.byTeam.has('br_04'), false);
+assert.equal(brCombatCache.alivePlayers.length, 4);
 
 const brNearbyEnemies: Player[] = [];
 fillCombatVisualEnemyPlayers(brCombatCache, 'br_01', 'br-owner', brNearbyEnemies, { x: 0, z: 0 }, 4);
@@ -357,5 +397,33 @@ const brHitEnemy = findCombatVisualEnemyPlayerHit(
   4
 );
 assert.equal(brHitEnemy?.id, 'br-near-enemy');
+
+for (const heroId of ALL_HERO_IDS) {
+  const heroTarget = makePlayer(`hero-sized-${heroId}`, 'blue', 1.2, 0, 'alive', heroId);
+  const heroCache = rebuildCombatVisualFrameCache(
+    [makePlayer(`hero-owner-${heroId}`, 'red', 0, 0), heroTarget],
+    4000 + ALL_HERO_IDS.indexOf(heroId),
+    4000,
+    2
+  );
+  const start = { x: -0.25, y: 1.04, z: 0.56 };
+  const direction = { x: 1, y: 0, z: 0 };
+  const distance = 3;
+  const extraRadius = 0.02;
+  const expectedHit = doesSegmentHitPlayerCombatHitbox(start, direction, distance, heroTarget, extraRadius);
+  assert.equal(
+    findCombatVisualEnemyPlayerHit(
+      heroCache,
+      'red',
+      `hero-owner-${heroId}`,
+      start,
+      direction,
+      distance,
+      extraRadius
+    )?.id === heroTarget.id,
+    expectedHit,
+    `combat visual hitbox should match shared hitbox for ${heroId}`
+  );
+}
 
 console.log('visualStore remote transform tests passed');

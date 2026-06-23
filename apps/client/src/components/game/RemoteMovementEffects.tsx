@@ -29,7 +29,13 @@ export interface RemoteMovementEffectStyle {
 interface RemoteMovementEffectsProps {
   players: readonly Player[];
   theme: VoxelMapTheme;
-  config: Pick<EffectQualityConfig, 'maxActiveParticles' | 'maxRemoteMovementEffectDistance'>;
+  config: Pick<
+    EffectQualityConfig,
+    | 'maxActiveParticles'
+    | 'maxRemoteMovementEffectDistance'
+    | 'remoteMovementEffectDensityScale'
+    | 'remoteMovementEffectBotDistanceScale'
+  >;
 }
 
 interface EmitterState {
@@ -514,7 +520,10 @@ export function RemoteMovementEffects({
   const positionScratchRef = useRef(new THREE.Vector3());
   const capacity = getRemoteMovementParticleCapacity(config.maxActiveParticles);
   const particles = useMemo(() => createParticles(capacity), [capacity]);
-  const density = useMemo(() => getParticleDensity(capacity), [capacity]);
+  const density = useMemo(
+    () => getParticleDensity(capacity) * config.remoteMovementEffectDensityScale,
+    [capacity, config.remoteMovementEffectDensityScale]
+  );
   const style = getRemoteMovementEffectStyle(theme.id);
   const palette = useMemo(() => style.colors.map((color) => new THREE.Color(color)), [style]);
   const material = useMemo(() => new THREE.MeshBasicMaterial({
@@ -564,11 +573,25 @@ export function RemoteMovementEffects({
 
       const visualState = visualStore.getState();
       const positionScratch = positionScratchRef.current;
+      const baseEffectDistance = config.maxRemoteMovementEffectDistance;
+      if (density <= 0 || baseEffectDistance <= 0) {
+        for (const playerId of emitterStatesRef.current.keys()) {
+          emitterStatesRef.current.delete(playerId);
+          deactivateParticlesForOwner(particles, playerId);
+        }
+        updateParticles(particles, deltaSeconds, style);
+        renderParticles(mesh, particles, palette, dummyRef.current);
+        return;
+      }
+
       for (const player of players) {
         const effectPosition = getEffectPosition(player, visualState, positionScratch);
+        const maxEffectDistance = player.isBot
+          ? baseEffectDistance * config.remoteMovementEffectBotDistanceScale
+          : baseEffectDistance;
         if (
           shouldSuppressRemoteMovementEffects(player) ||
-          !isWithinDistanceSq(effectPosition, camera.position, config.maxRemoteMovementEffectDistance)
+          !isWithinDistanceSq(effectPosition, camera.position, maxEffectDistance)
         ) {
           if (emitterStatesRef.current.delete(player.id)) {
             deactivateParticlesForOwner(particles, player.id);
@@ -603,7 +626,16 @@ export function RemoteMovementEffects({
       updateParticles(particles, deltaSeconds, style);
       renderParticles(mesh, particles, palette, dummyRef.current);
     },
-  }), [camera, config.maxRemoteMovementEffectDistance, density, palette, particles, players, style]);
+  }), [
+    camera,
+    config.maxRemoteMovementEffectDistance,
+    config.remoteMovementEffectBotDistanceScale,
+    density,
+    palette,
+    particles,
+    players,
+    style,
+  ]);
 
   return (
     <instancedMesh

@@ -64,6 +64,35 @@ export interface DynamicLightDiagnostics {
   budget: number;
 }
 
+export interface RendererDiagnostics {
+  fps: number;
+  frameP50Ms: number;
+  frameP95Ms: number;
+  frameMaxMs: number;
+  drawCalls: number;
+  triangles: number;
+  geometries: number;
+  textures: number;
+}
+
+export interface TerrainRendererDiagnostics {
+  visibleRegionCount: number;
+  fullDetailRegionCount: number;
+  coarseRegionCount: number;
+  ultraCoarseRegionCount: number;
+  macroMeshCount: number;
+  macroRegionCount: number;
+  hiddenByDistance: number;
+  hiddenByFrustum: number;
+  hiddenByHorizon: number;
+  detailSwapsPerSecond: number;
+  geometryBuildsPerSecond: number;
+  geometryFinalizationsPerSecond: number;
+  pendingRegionBuilds: number;
+  pendingRegionFinalizations: number;
+  adaptiveVisibilityScale: number;
+}
+
 export interface AudioLoadSample {
   name: string;
   ok: boolean;
@@ -146,6 +175,8 @@ export interface MovementNetworkDiagnosticsSnapshot {
   frameAllocations: Record<string, number>;
   hotStoreCommits: Record<string, number>;
   dynamicLights: DynamicLightDiagnostics;
+  renderer: RendererDiagnostics;
+  terrainRenderer: TerrainRendererDiagnostics;
 }
 
 const SAMPLE_LIMIT = 120;
@@ -153,6 +184,7 @@ const FRAME_WORK_SAMPLE_LIMIT = 240;
 const HITCH_FRAME_WORK_SAMPLE_LIMIT = 40;
 const HITCH_FRAME_WORK_LABEL_LIMIT = 12;
 const LONG_TASK_SAMPLE_LIMIT = 80;
+const RATE_SAMPLE_WINDOW_MS = 1000;
 const HITCH_LONG_TASK_LIMIT = 8;
 const HITCH_LONG_TASK_WINDOW_PADDING_MS = 8;
 const AUDIO_SAMPLE_LIMIT = 80;
@@ -237,12 +269,42 @@ const diagnostics: MovementNetworkDiagnosticsSnapshot = {
     enabled: 0,
     budget: 0,
   },
+  renderer: {
+    fps: 0,
+    frameP50Ms: 0,
+    frameP95Ms: 0,
+    frameMaxMs: 0,
+    drawCalls: 0,
+    triangles: 0,
+    geometries: 0,
+    textures: 0,
+  },
+  terrainRenderer: {
+    visibleRegionCount: 0,
+    fullDetailRegionCount: 0,
+    coarseRegionCount: 0,
+    ultraCoarseRegionCount: 0,
+    macroMeshCount: 0,
+    macroRegionCount: 0,
+    hiddenByDistance: 0,
+    hiddenByFrustum: 0,
+    hiddenByHorizon: 0,
+    detailSwapsPerSecond: 0,
+    geometryBuildsPerSecond: 0,
+    geometryFinalizationsPerSecond: 0,
+    pendingRegionBuilds: 0,
+    pendingRegionFinalizations: 0,
+    adaptiveVisibilityScale: 1,
+  },
 };
 
 let lastAuthorityAckReceivedAtMs = 0;
 let lastFrameWorkMarkAtMs = 0;
 let activeFrameWorkStartedAtMs = 0;
 let longTaskObserver: PerformanceObserver | null = null;
+const terrainDetailSwapSamples: number[] = [];
+const terrainGeometryBuildSamples: number[] = [];
+const terrainGeometryFinalizationSamples: number[] = [];
 
 function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -253,6 +315,30 @@ function pushSample(samples: number[], value: number): void {
   if (samples.length > SAMPLE_LIMIT) {
     samples.splice(0, samples.length - SAMPLE_LIMIT);
   }
+}
+
+function pushRateSamples(samples: number[], count: number, recordedAtMs = nowMs()): void {
+  const safeCount = Math.max(0, Math.floor(count));
+  for (let index = 0; index < safeCount; index++) {
+    samples.push(recordedAtMs);
+  }
+  pruneRateSamples(samples, recordedAtMs);
+}
+
+function pruneRateSamples(samples: number[], recordedAtMs = nowMs()): void {
+  const oldestIncludedMs = recordedAtMs - RATE_SAMPLE_WINDOW_MS;
+  let firstIncludedIndex = 0;
+  while (firstIncludedIndex < samples.length && samples[firstIncludedIndex] < oldestIncludedMs) {
+    firstIncludedIndex++;
+  }
+  if (firstIncludedIndex > 0) {
+    samples.splice(0, firstIncludedIndex);
+  }
+}
+
+function ratePerSecond(samples: number[], recordedAtMs = nowMs()): number {
+  pruneRateSamples(samples, recordedAtMs);
+  return samples.length;
 }
 
 function pushWorkSample(sample: FrameWorkSample): void {
@@ -428,6 +514,13 @@ function cloneDiagnostics(): MovementNetworkDiagnosticsSnapshot {
     frameAllocations: { ...diagnostics.frameAllocations },
     hotStoreCommits: { ...diagnostics.hotStoreCommits },
     dynamicLights: { ...diagnostics.dynamicLights },
+    renderer: { ...diagnostics.renderer },
+    terrainRenderer: {
+      ...diagnostics.terrainRenderer,
+      detailSwapsPerSecond: ratePerSecond(terrainDetailSwapSamples),
+      geometryBuildsPerSecond: ratePerSecond(terrainGeometryBuildSamples),
+      geometryFinalizationsPerSecond: ratePerSecond(terrainGeometryFinalizationSamples),
+    },
   };
 }
 
@@ -499,6 +592,32 @@ export function resetMovementNetworkDiagnostics(): void {
   diagnostics.dynamicLights.activeCandidates = 0;
   diagnostics.dynamicLights.enabled = 0;
   diagnostics.dynamicLights.budget = 0;
+  diagnostics.renderer.fps = 0;
+  diagnostics.renderer.frameP50Ms = 0;
+  diagnostics.renderer.frameP95Ms = 0;
+  diagnostics.renderer.frameMaxMs = 0;
+  diagnostics.renderer.drawCalls = 0;
+  diagnostics.renderer.triangles = 0;
+  diagnostics.renderer.geometries = 0;
+  diagnostics.renderer.textures = 0;
+  diagnostics.terrainRenderer.visibleRegionCount = 0;
+  diagnostics.terrainRenderer.fullDetailRegionCount = 0;
+  diagnostics.terrainRenderer.coarseRegionCount = 0;
+  diagnostics.terrainRenderer.ultraCoarseRegionCount = 0;
+  diagnostics.terrainRenderer.macroMeshCount = 0;
+  diagnostics.terrainRenderer.macroRegionCount = 0;
+  diagnostics.terrainRenderer.hiddenByDistance = 0;
+  diagnostics.terrainRenderer.hiddenByFrustum = 0;
+  diagnostics.terrainRenderer.hiddenByHorizon = 0;
+  diagnostics.terrainRenderer.detailSwapsPerSecond = 0;
+  diagnostics.terrainRenderer.geometryBuildsPerSecond = 0;
+  diagnostics.terrainRenderer.geometryFinalizationsPerSecond = 0;
+  diagnostics.terrainRenderer.pendingRegionBuilds = 0;
+  diagnostics.terrainRenderer.pendingRegionFinalizations = 0;
+  diagnostics.terrainRenderer.adaptiveVisibilityScale = 1;
+  terrainDetailSwapSamples.length = 0;
+  terrainGeometryBuildSamples.length = 0;
+  terrainGeometryFinalizationSamples.length = 0;
   lastAuthorityAckReceivedAtMs = 0;
   lastFrameWorkMarkAtMs = 0;
   activeFrameWorkStartedAtMs = 0;
@@ -666,6 +785,66 @@ export function recordDynamicLightDiagnostics(stats: DynamicLightDiagnostics): v
   diagnostics.dynamicLights.activeCandidates = Math.max(0, stats.activeCandidates);
   diagnostics.dynamicLights.enabled = Math.max(0, stats.enabled);
   diagnostics.dynamicLights.budget = Math.max(0, stats.budget);
+}
+
+export function recordRendererDiagnostics(stats: RendererDiagnostics): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
+  diagnostics.renderer.fps = Math.max(0, stats.fps);
+  diagnostics.renderer.frameP50Ms = Math.max(0, stats.frameP50Ms);
+  diagnostics.renderer.frameP95Ms = Math.max(0, stats.frameP95Ms);
+  diagnostics.renderer.frameMaxMs = Math.max(0, stats.frameMaxMs);
+  diagnostics.renderer.drawCalls = Math.max(0, stats.drawCalls);
+  diagnostics.renderer.triangles = Math.max(0, stats.triangles);
+  diagnostics.renderer.geometries = Math.max(0, stats.geometries);
+  diagnostics.renderer.textures = Math.max(0, stats.textures);
+}
+
+export function recordTerrainRendererDiagnostics(stats: Omit<
+  TerrainRendererDiagnostics,
+  'detailSwapsPerSecond' | 'geometryBuildsPerSecond' | 'geometryFinalizationsPerSecond'
+> & { detailSwaps?: number }): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
+  const recordedAtMs = nowMs();
+  pushRateSamples(terrainDetailSwapSamples, stats.detailSwaps ?? 0, recordedAtMs);
+  diagnostics.terrainRenderer.visibleRegionCount = Math.max(0, stats.visibleRegionCount);
+  diagnostics.terrainRenderer.fullDetailRegionCount = Math.max(0, stats.fullDetailRegionCount);
+  diagnostics.terrainRenderer.coarseRegionCount = Math.max(0, stats.coarseRegionCount);
+  diagnostics.terrainRenderer.ultraCoarseRegionCount = Math.max(0, stats.ultraCoarseRegionCount);
+  diagnostics.terrainRenderer.macroMeshCount = Math.max(0, stats.macroMeshCount);
+  diagnostics.terrainRenderer.macroRegionCount = Math.max(0, stats.macroRegionCount);
+  diagnostics.terrainRenderer.hiddenByDistance = Math.max(0, stats.hiddenByDistance);
+  diagnostics.terrainRenderer.hiddenByFrustum = Math.max(0, stats.hiddenByFrustum);
+  diagnostics.terrainRenderer.hiddenByHorizon = Math.max(0, stats.hiddenByHorizon);
+  diagnostics.terrainRenderer.detailSwapsPerSecond = ratePerSecond(terrainDetailSwapSamples, recordedAtMs);
+  diagnostics.terrainRenderer.geometryBuildsPerSecond = ratePerSecond(terrainGeometryBuildSamples, recordedAtMs);
+  diagnostics.terrainRenderer.geometryFinalizationsPerSecond = ratePerSecond(
+    terrainGeometryFinalizationSamples,
+    recordedAtMs
+  );
+  diagnostics.terrainRenderer.pendingRegionBuilds = Math.max(0, stats.pendingRegionBuilds);
+  diagnostics.terrainRenderer.pendingRegionFinalizations = Math.max(0, stats.pendingRegionFinalizations);
+  diagnostics.terrainRenderer.adaptiveVisibilityScale = Math.max(0, stats.adaptiveVisibilityScale);
+}
+
+export function recordTerrainGeometryBuild(count = 1): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
+  const recordedAtMs = nowMs();
+  pushRateSamples(terrainGeometryBuildSamples, count, recordedAtMs);
+  diagnostics.terrainRenderer.geometryBuildsPerSecond = ratePerSecond(terrainGeometryBuildSamples, recordedAtMs);
+}
+
+export function recordTerrainGeometryFinalization(count = 1): void {
+  if (!CLIENT_DIAGNOSTICS_ENABLED) return;
+
+  const recordedAtMs = nowMs();
+  pushRateSamples(terrainGeometryFinalizationSamples, count, recordedAtMs);
+  diagnostics.terrainRenderer.geometryFinalizationsPerSecond = ratePerSecond(
+    terrainGeometryFinalizationSamples,
+    recordedAtMs
+  );
 }
 
 export function recordAudioRuntimeState(stats: {

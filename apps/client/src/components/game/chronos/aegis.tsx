@@ -104,6 +104,46 @@ function createAegisCrackMaterial(): THREE.MeshBasicMaterial {
   });
 }
 
+export function prewarmChronosAegisResources(): void {
+  void SHARED_GEOMETRIES.box;
+  void createChronosAegisPanelGeometry;
+}
+
+export function appendChronosAegisGpuPrewarmObjects(target: THREE.Object3D): void {
+  prewarmChronosAegisResources();
+
+  const group = new THREE.Group();
+  group.name = 'gpu-prewarm-chronos-aegis';
+  group.position.set(-1.28, 0.32, -5.05);
+  group.scale.setScalar(0.18);
+
+  const fillGeometry = createChronosAegisPanelGeometry(
+    CHRONOS_AEGIS_WORLD_WIDTH,
+    CHRONOS_AEGIS_WORLD_HEIGHT,
+    0.24,
+    1
+  );
+  const wireGeometry = createChronosAegisPanelGeometry(
+    CHRONOS_AEGIS_WORLD_WIDTH * 0.96,
+    CHRONOS_AEGIS_WORLD_HEIGHT * 0.94,
+    0.2,
+    1,
+    6,
+    5
+  );
+  const fillMaterial = createAegisFillMaterial();
+  const ringMaterial = createAegisRingMaterial();
+  const wireMaterial = createAegisWireMaterial();
+  const crackMaterial = createAegisCrackMaterial();
+
+  group.add(new THREE.Mesh(fillGeometry, fillMaterial));
+  group.add(new THREE.Mesh(wireGeometry, wireMaterial));
+  group.add(new THREE.Mesh(SHARED_GEOMETRIES.box, ringMaterial));
+  group.add(new THREE.Mesh(SHARED_GEOMETRIES.box, crackMaterial));
+
+  target.add(group);
+}
+
 function collectActiveChronosAegisIds(target: string[], now: number): string[] {
   const store = useGameStore.getState();
   const localPlayerId = store.localPlayer?.id;

@@ -1,3 +1,4 @@
+import { PLAYER_HEIGHT } from '../../constants/physics.js';
 import type { Vec3 } from '../../types/vector.js';
 import { getBlockDefinition, isCollisionBlock } from './blocks.js';
 import { clampToBoundaryPolygon, isInsideBoundaryPolygon } from './boundaries.js';
@@ -15,6 +16,7 @@ export interface ProceduralTerrainLookup {
 
 const BOUNDARY_CEILING_SAMPLE_BAND = 4;
 const MIN_PLAYABLE_Y = -20;
+const PLAYABLE_CEILING_SURFACE_HEADROOM = 24;
 
 function chunkLookupIndex(x: number, y: number, z: number, chunksX: number, chunksZ: number): number {
   return x + chunksX * (z + chunksZ * y);
@@ -54,8 +56,9 @@ function distanceToBoundary(worldX: number, worldZ: number, manifest: VoxelMapMa
   return closest;
 }
 
-function getBoundaryWallCeilingY(manifest: VoxelMapManifest): number {
+function getPlayableCeilingY(manifest: VoxelMapManifest): number {
   let highestBoundaryRow = 0;
+  let highestSurfaceRow = 0;
   const sampleBand = Math.max(
     BOUNDARY_CEILING_SAMPLE_BAND,
     manifest.voxelSize.x * 2,
@@ -66,16 +69,20 @@ function getBoundaryWallCeilingY(manifest: VoxelMapManifest): number {
     const worldZ = manifest.origin.z + (gz + 0.5) * manifest.voxelSize.z;
     for (let gx = 0; gx < manifest.heightfield.size.x; gx++) {
       const worldX = manifest.origin.x + (gx + 0.5) * manifest.voxelSize.x;
+      const topRow = manifest.heightfield.topSolidRows[gx + gz * manifest.heightfield.size.x] ?? 0;
+      highestSurfaceRow = Math.max(highestSurfaceRow, topRow);
+
       const inside = isInsideBoundaryPolygon(worldX, worldZ, manifest.boundary);
       if (inside && distanceToBoundary(worldX, worldZ, manifest) > sampleBand) continue;
 
-      const topRow = manifest.heightfield.topSolidRows[gx + gz * manifest.heightfield.size.x] ?? 0;
       highestBoundaryRow = Math.max(highestBoundaryRow, topRow);
     }
   }
 
-  const ceilingRow = highestBoundaryRow > 0 ? highestBoundaryRow : manifest.size.y;
-  return manifest.origin.y + ceilingRow * manifest.voxelSize.y;
+  const highestSurfaceY = manifest.origin.y + Math.max(highestBoundaryRow, highestSurfaceRow) * manifest.voxelSize.y;
+  const worldCeilingY = manifest.origin.y + manifest.size.y * manifest.voxelSize.y;
+  const centerClearance = PLAYER_HEIGHT / 2 + PLAYABLE_CEILING_SURFACE_HEADROOM;
+  return Math.min(worldCeilingY, highestSurfaceY + centerClearance);
 }
 
 function buildChunkLookup(manifest: VoxelMapManifest): {
@@ -96,7 +103,7 @@ function buildChunkLookup(manifest: VoxelMapManifest): {
 
 export function createProceduralTerrainLookup(manifest: VoxelMapManifest): ProceduralTerrainLookup {
   const { chunksX, chunksZ, chunks } = buildChunkLookup(manifest);
-  const maxPlayableY = getBoundaryWallCeilingY(manifest);
+  const maxPlayableY = getPlayableCeilingY(manifest);
 
   const getBlockAtGrid = (gx: number, gy: number, gz: number): number => {
     if (gx < 0 || gx >= manifest.size.x || gy < 0 || gy >= manifest.size.y || gz < 0 || gz >= manifest.size.z) {

@@ -5,6 +5,7 @@ import { useGameStore } from '../../store/gameStore';
 import {
   getPlayerVisualLookPitch,
   sampleRemoteTransformInto,
+  useVisualStore,
   type SampledRemoteTransform,
   visualStore,
 } from '../../store/visualStore';
@@ -27,7 +28,13 @@ import { gameplayFrameScheduler } from './systems/gameplayFrameScheduler';
 
 interface OtherPlayersProps {
   config: RemotePlayerQualityConfig;
-  effectConfig: Pick<EffectQualityConfig, 'maxActiveParticles' | 'maxRemoteMovementEffectDistance'>;
+  effectConfig: Pick<
+    EffectQualityConfig,
+    | 'maxActiveParticles'
+    | 'maxRemoteMovementEffectDistance'
+    | 'remoteMovementEffectDensityScale'
+    | 'remoteMovementEffectBotDistanceScale'
+  >;
   theme: VoxelMapTheme;
 }
 
@@ -47,11 +54,33 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
       matchPerspective: state.matchPerspective,
     }))
   );
+  const firstPersonDropBodyVisibleUntilMs = useVisualStore(
+    (state) => state.battleRoyalFirstPersonDropBodyVisibleUntilMs
+  );
+  const [dropBodyVisibilityNowMs, setDropBodyVisibilityNowMs] = useState(() => Date.now());
   const isBattleRoyal = gameplayMode === 'battle_royal';
-  const showLocalPlayerBody = matchPerspective === 'third_person';
+  const showFirstPersonDropBody = matchPerspective === 'first_person' &&
+    firstPersonDropBodyVisibleUntilMs > dropBodyVisibilityNowMs;
+  const showLocalPlayerBody = matchPerspective === 'third_person' || showFirstPersonDropBody;
 
-  const otherPlayers = useMemo(() => {
+  useEffect(() => {
+    if (firstPersonDropBodyVisibleUntilMs <= 0) return;
+
+    const delayMs = firstPersonDropBodyVisibleUntilMs - Date.now();
+    if (delayMs <= 0) {
+      setDropBodyVisibilityNowMs(Date.now());
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setDropBodyVisibilityNowMs(Date.now());
+    }, delayMs);
+    return () => window.clearTimeout(timeout);
+  }, [firstPersonDropBodyVisibleUntilMs]);
+
+  const { otherPlayers, remoteBatchResourcePlayers } = useMemo(() => {
     const nextPlayers: Player[] = [];
+    const nextResourcePlayers: Player[] = [];
     const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
 
     for (const player of players.values()) {
@@ -59,30 +88,25 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
       if (isLocalPlayer && !showLocalPlayerBody) continue;
       if (hideDeadPlayers && player.state === 'dead') continue;
       if (isBattleRoyal && gamePhase === 'countdown' && player.state === 'spawning') continue;
-      if (player.state === 'dropping') continue;
-      if (player.visibility === 'hidden' || player.visibility === 'last_known' || player.visibility === 'audible') continue;
-      nextPlayers.push(player);
+      if (player.state === 'dropping' && !(isLocalPlayer && showFirstPersonDropBody)) continue;
+
+      const isHiddenFromRemoteRender = player.visibility === 'hidden' ||
+        player.visibility === 'last_known' ||
+        player.visibility === 'audible';
+
+      if (isBattleRoyal) {
+        nextResourcePlayers.push(player);
+        if (!isHiddenFromRemoteRender) nextPlayers.push(player);
+      } else if (!isHiddenFromRemoteRender) {
+        nextPlayers.push(player);
+      }
     }
 
-    return nextPlayers;
-  }, [gamePhase, isBattleRoyal, localPlayerId, playerId, players, showLocalPlayerBody]);
-
-  const remoteBatchResourcePlayers = useMemo(() => {
-    if (!isBattleRoyal) return otherPlayers;
-
-    const nextPlayers: Player[] = [];
-    const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
-
-    for (const player of players.values()) {
-      const isLocalPlayer = player.id === playerId || player.id === localPlayerId;
-      if (isLocalPlayer && !showLocalPlayerBody) continue;
-      if (hideDeadPlayers && player.state === 'dead') continue;
-      if (gamePhase === 'countdown' && player.state === 'spawning') continue;
-      nextPlayers.push(player);
-    }
-
-    return nextPlayers;
-  }, [gamePhase, isBattleRoyal, localPlayerId, otherPlayers, playerId, players, showLocalPlayerBody]);
+    return {
+      otherPlayers: nextPlayers,
+      remoteBatchResourcePlayers: isBattleRoyal ? nextResourcePlayers : nextPlayers,
+    };
+  }, [gamePhase, isBattleRoyal, localPlayerId, playerId, players, showFirstPersonDropBody, showLocalPlayerBody]);
 
   useEffect(() => {
     if (!config.showNameplates) return;
@@ -104,6 +128,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
         resourcePlayers={remoteBatchResourcePlayers}
         isBattleRoyal={isBattleRoyal}
         localPlayerId={showLocalPlayerBody ? (localPlayerId ?? playerId) : null}
+        localPlayerTeam={localPlayerTeam}
         config={config}
       />
       <RemoteMovementEffects players={otherPlayers} theme={theme} config={effectConfig} />
@@ -194,7 +219,7 @@ function isPlayerMovingForAnimation(
   visualHorizontalSpeed = 0,
   movement: PlayerMovementState = player.movement
 ): boolean {
-  if (player.state !== 'alive') return false;
+  if (player.state !== 'alive' && player.state !== 'dropping') return false;
 
   const networkHorizontalSpeed = getHorizontalSpeed(player.velocity);
 

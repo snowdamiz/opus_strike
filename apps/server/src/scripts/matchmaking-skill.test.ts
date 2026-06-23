@@ -78,6 +78,7 @@ const { ticket, claims } = createMatchmakingTicket({
   gameplayMode: 'battle_royal',
   botFillMode: 'fill_even',
   matchPerspective: 'third_person',
+  selectedHero: 'phantom',
   userId: 'user_1',
   competitiveRating: strongPlayer,
   rankDivisionIndex: getRankDivisionIndex(strongPlayer),
@@ -93,6 +94,7 @@ assert.equal(verified.mode, 'quick_play');
 assert.equal(verified.gameplayMode, 'battle_royal');
 assert.equal(verified.botFillMode, 'fill_even');
 assert.equal(verified.matchPerspective, 'third_person');
+assert.equal(verified.selectedHero, 'phantom');
 assert.equal(verified.competitiveRating, strongPlayer);
 assert.equal(verified.targetRankDivisionIndex, getRankDivisionIndex(1300));
 
@@ -101,6 +103,7 @@ assert.equal(verifyMatchmakingTicket(ticket, claims.expiresAt + 1), null);
 
 const ranked = createMatchmakingTicket({
   mode: 'ranked',
+  selectedHero: 'chronos',
   userId: 'user_ranked',
   competitiveRating: strongPlayer,
   rankDivisionIndex: getRankDivisionIndex(strongPlayer),
@@ -119,6 +122,7 @@ assert.equal(rankedVerified.mode, 'ranked');
 assert.equal(rankedVerified.gameplayMode, 'capture_the_flag');
 assert.equal(rankedVerified.botFillMode, 'manual');
 assert.equal(rankedVerified.matchPerspective, 'first_person');
+assert.equal(rankedVerified.selectedHero, 'chronos');
 assert.equal(rankedVerified.rankedEntryQuoteId, undefined);
 assert.equal(rankedVerified.coverChargeLamports, undefined);
 assert.equal(rankedVerified.rankedTokenAddress, RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS);

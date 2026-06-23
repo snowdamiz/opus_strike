@@ -133,14 +133,17 @@ export async function launchPartyToMatchmaking(
         throw new Error(`${member?.displayName ?? 'A party member'} needs a linked Solana wallet for ranked`);
       }
       const tokenHold = await assertRankedTokenHoldingEligibility(context.walletAddress);
-      tickets.set(context.userId, issueRankedTicket(context, targetRankDivisionIndex, tokenHold));
+      const member = humanMembers.find((candidate) => candidate.userId === context.userId);
+      tickets.set(context.userId, issueRankedTicket(context, targetRankDivisionIndex, tokenHold, member?.heroId));
     }
   } else {
     for (const context of contexts) {
+      const member = humanMembers.find((candidate) => candidate.userId === context.userId);
       tickets.set(context.userId, issueQuickPlayTicket(context, targetRankDivisionIndex, {
         gameplayMode,
         botFillMode,
         matchPerspective,
+        selectedHero: member?.heroId,
       }));
     }
   }

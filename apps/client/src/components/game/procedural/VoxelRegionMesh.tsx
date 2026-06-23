@@ -32,9 +32,18 @@ function getCachedFallbackGeometry(
   regionId: string,
   requestedDetail: VoxelRegionGeometryDetail
 ): RegionGeometryState | null {
-  const fallbackDetail: VoxelRegionGeometryDetail = requestedDetail === 'full' ? 'coarse' : 'full';
-  const fallback = getCachedVoxelGeometry(getVoxelRegionGeometryCacheKey(manifest, regionId, fallbackDetail));
-  return fallback ? { geometry: fallback, detail: fallbackDetail } : null;
+  const fallbackDetails: VoxelRegionGeometryDetail[] = requestedDetail === 'full'
+    ? ['coarse', 'ultraCoarse']
+    : requestedDetail === 'coarse'
+      ? ['ultraCoarse', 'full']
+      : ['coarse', 'full'];
+
+  for (const fallbackDetail of fallbackDetails) {
+    const fallback = getCachedVoxelGeometry(getVoxelRegionGeometryCacheKey(manifest, regionId, fallbackDetail));
+    if (fallback) return { geometry: fallback, detail: fallbackDetail };
+  }
+
+  return null;
 }
 
 export const VoxelRegionMesh = memo(function VoxelRegionMesh({

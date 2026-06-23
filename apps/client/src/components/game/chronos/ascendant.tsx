@@ -122,16 +122,39 @@ function createBubbleMaterial(): THREE.MeshBasicMaterial {
   });
 }
 
-function createEnergyMaterial(color: number): THREE.MeshBasicMaterial {
+function createEnergyMaterial(color: number, blending: THREE.Blending = THREE.AdditiveBlending): THREE.MeshBasicMaterial {
   return new THREE.MeshBasicMaterial({
     color,
     transparent: true,
     opacity: 0,
-    blending: THREE.AdditiveBlending,
+    blending,
     depthWrite: false,
     side: THREE.DoubleSide,
     toneMapped: false,
   });
+}
+
+export function prewarmChronosAscendantResources(): void {
+  void SHARED_GEOMETRIES.sphere16;
+  void SHARED_GEOMETRIES.sphere12;
+  void SHARED_GEOMETRIES.ring32;
+}
+
+export function appendChronosAscendantGpuPrewarmObjects(target: THREE.Object3D): void {
+  prewarmChronosAscendantResources();
+
+  const group = new THREE.Group();
+  group.name = 'gpu-prewarm-chronos-ascendant';
+  group.position.set(-0.88, 0.88, -5.1);
+  group.scale.setScalar(0.26);
+
+  group.add(new THREE.Mesh(SHARED_GEOMETRIES.sphere16, createBubbleMaterial()));
+  group.add(new THREE.Mesh(SHARED_GEOMETRIES.sphere16, createEnergyMaterial(ASCENDANT_LIGHT)));
+  group.add(new THREE.Mesh(SHARED_GEOMETRIES.sphere12, createEnergyMaterial(ASCENDANT_GREEN)));
+  group.add(new THREE.Mesh(SHARED_GEOMETRIES.ring32, createEnergyMaterial(ASCENDANT_LIGHT)));
+  group.add(new THREE.Mesh(SHARED_GEOMETRIES.ring32, createEnergyMaterial(ASCENDANT_LIGHT, THREE.NormalBlending)));
+
+  target.add(group);
 }
 
 function ChronosAscendantBubble({ playerId }: { playerId: string }) {

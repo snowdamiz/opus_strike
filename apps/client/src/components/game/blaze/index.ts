@@ -9,6 +9,8 @@ export {
   triggerRocketJumpExplosion, 
   RocketJumpExplosions,
   ROCKET_JUMP_DURATION,
+  prewarmRocketJumpExplosionResources,
+  appendRocketJumpExplosionGpuPrewarmObjects,
 } from './rocketJumpExplosion';
 
 export { 

@@ -597,7 +597,7 @@ function runPlayableCeilingClampsSharedMovement() {
   );
 }
 
-function runProceduralLookupClampsToBoundaryCeiling() {
+function runProceduralLookupClampsToMapCeiling() {
   const manifest = generateProceduralVoxelMap(4277893733);
   const lookup = createProceduralTerrainLookup(manifest);
   const playableCeilingY = lookup.getMaxPlayableY();
@@ -611,7 +611,7 @@ function runProceduralLookupClampsToBoundaryCeiling() {
   assert.equal(
     clamped.y,
     playableCeilingY,
-    `procedural map clamp should use boundary ceiling ${playableCeilingY}, got ${clamped.y}`
+    `procedural map clamp should use map ceiling ${playableCeilingY}, got ${clamped.y}`
   );
 }
 
@@ -1619,7 +1619,7 @@ runChronosAscendantReleaseDampsStrafe();
 runChronosAscendantCapsElevation();
 runChronosAscendantCapsAtPlayableCeiling();
 runPlayableCeilingClampsSharedMovement();
-runProceduralLookupClampsToBoundaryCeiling();
+runProceduralLookupClampsToMapCeiling();
 runCorrectionReplay();
 runClientAuthoritativeAckDoesNotMovePresentation();
 runOverwriteUpdatesLatestAckState();

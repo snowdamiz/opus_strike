@@ -1,4 +1,4 @@
-import type { GameplayMode, MatchPerspective, VoxelMapSizeId, VoxelMapTheme } from '@voxel-strike/shared';
+import type { GameplayMode, HeroId, MatchPerspective, VoxelMapSizeId, VoxelMapTheme } from '@voxel-strike/shared';
 import { config } from '../config/environment';
 import { useSettingsStore } from '../store/settingsStore';
 import { DEV_TUTORIAL_BYPASS_HEADER, shouldBypassTutorialForDev } from '../utils/tutorialAccess';
@@ -9,6 +9,7 @@ export interface QuickPlayTicketResponse {
   gameplayMode: GameplayMode;
   botFillMode: 'manual' | 'fill_even';
   matchPerspective: MatchPerspective;
+  selectedHero?: HeroId;
   competitiveRating: number;
   rankDivisionIndex: number;
   rank: unknown;
@@ -37,6 +38,7 @@ export interface RankedTicketResponse {
   gameplayMode: GameplayMode;
   botFillMode: 'manual' | 'fill_even';
   matchPerspective: MatchPerspective;
+  selectedHero?: HeroId;
   competitiveRating: number;
   rankDivisionIndex: number;
   rank: unknown;
@@ -87,6 +89,7 @@ export async function requestQuickPlayTicket(input: {
   gameplayMode: GameplayMode;
   botFillMode: 'manual' | 'fill_even';
   matchPerspective: MatchPerspective;
+  selectedHero?: HeroId;
 }): Promise<QuickPlayTicketResponse> {
   const devTutorialBypassHeaders = getDevTutorialBypassHeaders();
   const params = new URLSearchParams({
@@ -94,6 +97,9 @@ export async function requestQuickPlayTicket(input: {
     botFillMode: input.botFillMode,
     perspective: input.matchPerspective,
   });
+  if (input.selectedHero) {
+    params.set('selectedHero', input.selectedHero);
+  }
   const response = await fetch(`${getHttpUrl()}/matchmaking/quick-play-ticket?${params.toString()}`, {
     credentials: 'include',
     ...(devTutorialBypassHeaders ? { headers: devTutorialBypassHeaders } : {}),
@@ -106,7 +112,7 @@ export async function requestQuickPlayTicket(input: {
   return response.json();
 }
 
-export async function requestRankedTicket(): Promise<RankedTicketResponse> {
+export async function requestRankedTicket(input: { selectedHero?: HeroId } = {}): Promise<RankedTicketResponse> {
   const response = await fetch(`${getHttpUrl()}/matchmaking/ranked-ticket`, {
     method: 'POST',
     credentials: 'include',
@@ -114,7 +120,7 @@ export async function requestRankedTicket(): Promise<RankedTicketResponse> {
       'Content-Type': 'application/json',
       ...getDevTutorialBypassHeaders(),
     },
-    body: JSON.stringify({}),
+    body: JSON.stringify(input.selectedHero ? { selectedHero: input.selectedHero } : {}),
   });
 
   if (!response.ok) {

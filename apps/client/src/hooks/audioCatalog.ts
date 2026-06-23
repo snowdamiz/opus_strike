@@ -62,6 +62,10 @@ export const SOUND_EFFECTS = {
   healPickup: { path: '/sounds/heal_pickup.mp3', volume: 0.78 },
   powerupPickup: { path: '/sounds/powerup_pickkup.mp3', volume: 0.82 },
 
+  battleRoyalDropShip: { path: '/sounds/drop_ship.mp3', volume: 0.42 },
+  battleRoyalFly: { path: '/sounds/fly.mp3', volume: 0.52 },
+  battleRoyalFlyDrop: { path: '/sounds/fly_drop.mp3', volume: 0.82 },
+
   buttonHover: { path: '/sounds/button.mp3', volume: 0.4 },
   buttonClick: { path: '/sounds/button.mp3', volume: 0.1, playbackDurationRatio: 0.15 },
   countdownTick: { path: '/sounds/tick.mp3', volume: 0.65 },
@@ -110,6 +114,9 @@ export const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
     'flagReturn',
     'healPickup',
     'powerupPickup',
+    'battleRoyalDropShip',
+    'battleRoyalFly',
+    'battleRoyalFlyDrop',
     'countdownTick',
     'countdown',
     'matchStart',

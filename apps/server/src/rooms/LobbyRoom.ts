@@ -47,6 +47,10 @@ import {
   runWithInGameCapacity,
   InGameCapacityAdmissionError,
 } from '../matchmaking/playerCapacity';
+import {
+  buildMatchmakingHeroQueueState,
+  resolveMatchmakingHeroTeam,
+} from '../matchmaking/heroQueues';
 import { LOBBY_MESSAGE_RATE_LIMITS, MessageRateLimiter, type RateLimitRule } from './rateLimiter';
 import prisma from '../db';
 import {
@@ -464,8 +468,11 @@ export class LobbyRoom extends Room<LobbyState> {
       ? requestedTicket.botFillMode
       : this.normalizeBotFillMode(options.botFillMode);
     if (requestedBotFillMode !== this.state.botFillMode) return false;
-    if (this.shouldReserveExpectedHumanSlot(this.getRequestedMatchmakingUserId(options))) return false;
+    if (!this.isJoinSelectedHeroConsistent(options, requestedTicket)) return false;
+    const requestedUserId = this.getRequestedMatchmakingUserId(options);
+    if (this.shouldReserveExpectedHumanSlot(requestedUserId)) return false;
     if (this.getCombatParticipantCount() >= this.getMatchmakingRequiredPlayers()) return false;
+    if (!this.canAdmitMatchmakingHero(requestedUserId, this.resolveJoinSelectedHero(options, requestedTicket))) return false;
     return true;
   }
 
@@ -480,7 +487,7 @@ export class LobbyRoom extends Room<LobbyState> {
     const matchmakingTicket = this.isMatchmakingQueue()
       ? verifyMatchmakingTicket(options.matchmakingTicket)
       : null;
-    if (this.isMatchmakingQueue() && !this.isValidMatchmakingTicket(matchmakingTicket, authContext)) {
+    if (this.isMatchmakingQueue() && !this.isValidMatchmakingTicket(matchmakingTicket, authContext, options)) {
       client.send('error', { message: 'Invalid matchmaking ticket' });
       client.leave();
       return;
@@ -545,13 +552,24 @@ export class LobbyRoom extends Room<LobbyState> {
       return;
     }
 
+    const selectedHero = this.resolveJoinSelectedHero(options, matchmakingTicket);
+    const playerTeam = this.isMatchmakingQueue()
+      ? this.resolveMatchmakingJoiningPlayerTeam(authContext, selectedHero)
+      : '';
+    if (playerTeam === null) {
+      client.send('error', { message: 'Selected hero is already picked on the available team' });
+      this.cleanupLobbySession(client.sessionId);
+      client.leave();
+      return;
+    }
+
     const player = new LobbyPlayer();
     player.id = client.sessionId;
     player.name = authContext.displayName || `Player${this.state.players.size + 1}`;
     player.isHost = this.getLobbyHumanCount() === 0; // First human player is host
     player.isReady = this.isMatchmakingQueue();
-    player.team = this.resolveJoiningPlayerTeam(authContext);
-    player.heroId = isHeroId(options.selectedHero) ? options.selectedHero : '';
+    player.team = playerTeam;
+    player.heroId = selectedHero ?? '';
     player.isBot = false;
     player.botDifficulty = '';
     player.botProfileId = '';
@@ -1403,24 +1421,78 @@ export class LobbyRoom extends Room<LobbyState> {
     });
   }
 
-  private resolveJoiningPlayerTeam(authContext: RoomAuthContext): Team | '' {
-    if (!this.isMatchmakingQueue()) return '';
+  private resolveMatchmakingJoiningPlayerTeam(authContext: RoomAuthContext, selectedHero: HeroId | null): Team | null {
+    if (!this.isMatchmakingQueue()) return null;
 
-    if (this.expectedMatchmakingUserIds?.has(authContext.userId)) {
-      if (
-        this.matchmakingPartyTeam
-        && this.isTeam(this.matchmakingPartyTeam)
-        && this.getTeamCount(this.matchmakingPartyTeam) < this.gameplayRules.maxTeamSize
-      ) {
-        return this.matchmakingPartyTeam;
-      }
+    const isExpectedPartyUser = this.expectedMatchmakingUserIds?.has(authContext.userId) === true;
+    const preferredPartyTeam = isExpectedPartyUser
+      && this.matchmakingPartyTeam
+      && this.isTeam(this.matchmakingPartyTeam)
+      && this.getTeamCount(this.matchmakingPartyTeam) < this.gameplayRules.maxTeamSize
+      ? this.matchmakingPartyTeam
+      : null;
+    const team = this.resolveMatchmakingTeamForHero({
+      selectedHero,
+      preferredTeam: preferredPartyTeam,
+      requirePreferredTeam: Boolean(preferredPartyTeam),
+    });
 
-      const team = this.assignBalancedTeam();
+    if (team && isExpectedPartyUser) {
       this.matchmakingPartyTeam = team;
-      return team;
     }
 
-    return this.assignBalancedTeam();
+    return team;
+  }
+
+  private resolveMatchmakingTeamForHero(input: {
+    selectedHero: HeroId | null;
+    preferredTeam?: Team | null;
+    requirePreferredTeam?: boolean;
+  }): Team | null {
+    const queueState = buildMatchmakingHeroQueueState({
+      players: this.state.players.values(),
+      teamIds: this.getAssignableTeamIds(),
+    });
+
+    return resolveMatchmakingHeroTeam({
+      teamIds: this.getAssignableTeamIds(),
+      maxTeamSize: this.gameplayRules.maxTeamSize,
+      teamCounts: queueState.teamCounts,
+      teamHeroIds: queueState.teamHeroIds,
+      selectedHero: input.selectedHero,
+      preferredTeam: input.preferredTeam,
+      requirePreferredTeam: input.requirePreferredTeam,
+    });
+  }
+
+  private canAdmitMatchmakingHero(requestedUserId: string | null, selectedHero: HeroId | null): boolean {
+    if (!this.isMatchmakingQueue()) return true;
+
+    const isExpectedPartyUser = Boolean(
+      requestedUserId && this.expectedMatchmakingUserIds?.has(requestedUserId)
+    );
+    const preferredPartyTeam = isExpectedPartyUser
+      && this.matchmakingPartyTeam
+      && this.isTeam(this.matchmakingPartyTeam)
+      && this.getTeamCount(this.matchmakingPartyTeam) < this.gameplayRules.maxTeamSize
+      ? this.matchmakingPartyTeam
+      : null;
+
+    return Boolean(this.resolveMatchmakingTeamForHero({
+      selectedHero,
+      preferredTeam: preferredPartyTeam,
+      requirePreferredTeam: Boolean(preferredPartyTeam),
+    }));
+  }
+
+  private resolveJoinSelectedHero(options: JoinOptions, ticket: MatchmakingTicketClaims | null): HeroId | null {
+    const selectedHero = ticket?.selectedHero ?? options.selectedHero;
+    return this.normalizeHeroId(selectedHero) || null;
+  }
+
+  private isJoinSelectedHeroConsistent(options: JoinOptions, ticket: MatchmakingTicketClaims | null): boolean {
+    const requestedHero = this.normalizeHeroId(options.selectedHero);
+    return !ticket?.selectedHero || !requestedHero || ticket.selectedHero === requestedHero;
   }
 
   private createPendingPartyBotsForJoinedPlayer(authContext: RoomAuthContext, team: string): void {
@@ -1902,7 +1974,8 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private isValidMatchmakingTicket(
     ticket: MatchmakingTicketClaims | null,
-    authContext: RoomAuthContext
+    authContext: RoomAuthContext,
+    options: JoinOptions
   ): ticket is MatchmakingTicketClaims {
     if (!ticket) return false;
     if (ticket.mode !== this.matchMode) return false;
@@ -1910,6 +1983,7 @@ export class LobbyRoom extends Room<LobbyState> {
     if (ticket.gameplayMode !== this.gameplayMode) return false;
     if (ticket.botFillMode !== this.state.botFillMode) return false;
     if (ticket.matchPerspective !== this.matchPerspective) return false;
+    if (!this.isJoinSelectedHeroConsistent(options, ticket)) return false;
 
     return ticket.userId === authContext.userId;
   }
@@ -1971,6 +2045,12 @@ export class LobbyRoom extends Room<LobbyState> {
     const rosterCounts = countLobbyRoster(this.state.players);
     const humanCount = rosterCounts.human;
     const botCount = rosterCounts.bot;
+    const matchmakingHeroQueueState = this.isMatchmakingQueue()
+      ? buildMatchmakingHeroQueueState({
+          players: this.state.players.values(),
+          teamIds: this.getAssignableTeamIds(),
+        })
+      : null;
     this.setMetadata({
       name: this.state.name,
       isPublic: this.state.isPublic,
@@ -1988,6 +2068,8 @@ export class LobbyRoom extends Room<LobbyState> {
       rankBandId: this.isMatchmakingQueue() ? this.rankBandId : undefined,
       requiredPlayers: this.isMatchmakingQueue() ? this.getMatchmakingRequiredPlayers() : undefined,
       queuedHumanCount: humanCount,
+      matchmakingTeamCounts: matchmakingHeroQueueState?.teamCounts,
+      matchmakingTeamHeroIds: matchmakingHeroQueueState?.teamHeroIds,
       capacityBlocked: this.isMatchmakingQueue() ? this.matchmakingCapacityBlocked : undefined,
       capacityMaxPlayers: this.isMatchmakingQueue() ? MAX_IN_GAME_PLAYERS : undefined,
       ...this.getMatchmakingStatusPayload(),

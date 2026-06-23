@@ -2,10 +2,14 @@ import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import {
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
+  HERO_DEFINITIONS,
   MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
   MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+  PLAYER_COMBAT_HITBOX_PADDING,
+  PLAYER_HEIGHT,
+  PLAYER_RADIUS,
   TICK_INTERVAL_MS,
-  doesSegmentHitPlayerCombatHitbox,
+  doesSegmentHitVerticalCapsule,
   type HeroId,
   type Player,
   type PlayerMovementState,
@@ -84,6 +88,9 @@ export interface VisualState {
 
   /** High-frequency local movement used by first-person effects. */
   localMovement: PlayerMovementState;
+
+  /** Temporary BR first-person drop reveal for the local full-body model. */
+  battleRoyalFirstPersonDropBodyVisibleUntilMs: number;
 
   /** High-frequency slide intensity for UI and viewmodel effects. */
   slideIntensity: number;
@@ -185,6 +192,8 @@ export interface CombatVisualPlayer {
   x: number;
   y: number;
   z: number;
+  hitboxRadius: number;
+  hitboxSegmentHalfHeight: number;
 }
 
 export interface CombatVisualFrameCache {
@@ -192,10 +201,8 @@ export interface CombatVisualFrameCache {
   builtAtMs: number;
   sourceSize: number;
   alivePlayers: CombatVisualPlayer[];
-  byTeam: Map<Team, CombatVisualPlayer[]>;
-  buckets: Map<number, Map<number, CombatVisualPlayer[]>>;
+  buckets: Map<number, CombatVisualPlayer[]>;
   activeBuckets: CombatVisualPlayer[][];
-  activeBucketSet: Set<CombatVisualPlayer[]>;
   entryPool: CombatVisualPlayer[];
   cellSize: number;
 }
@@ -231,17 +238,47 @@ const DEFAULT_LOCAL_MOVEMENT: PlayerMovementState = {
 };
 
 const COMBAT_VISUAL_CELL_SIZE = 8;
+const COMBAT_VISUAL_BUCKET_KEY_CELL_OFFSET = 1 << 20;
+const COMBAT_VISUAL_BUCKET_KEY_CELL_STRIDE = COMBAT_VISUAL_BUCKET_KEY_CELL_OFFSET * 2;
 const CHRONOS_ASCENDANT_ABILITY_ID = 'chronos_ascendant_paradox';
+
+function createCombatVisualHitboxMetrics(size: { width: number; height: number; depth: number }): {
+  radius: number;
+  segmentHalfHeight: number;
+} {
+  const radius = Math.max(size.width, size.depth) / 2 + PLAYER_COMBAT_HITBOX_PADDING;
+  return {
+    radius,
+    segmentHalfHeight: Math.max(0, size.height / 2 + PLAYER_COMBAT_HITBOX_PADDING - radius),
+  };
+}
+
+const DEFAULT_COMBAT_VISUAL_HITBOX = createCombatVisualHitboxMetrics({
+  width: PLAYER_RADIUS * 2,
+  height: PLAYER_HEIGHT,
+  depth: PLAYER_RADIUS * 2,
+});
+
+const HERO_COMBAT_VISUAL_HITBOXES = Object.fromEntries(
+  (Object.keys(HERO_DEFINITIONS) as HeroId[]).map((heroId) => [
+    heroId,
+    createCombatVisualHitboxMetrics(HERO_DEFINITIONS[heroId].stats.size),
+  ])
+) as Record<HeroId, typeof DEFAULT_COMBAT_VISUAL_HITBOX>;
+
+function getCombatVisualHitboxMetrics(heroId: HeroId | string | null | undefined): typeof DEFAULT_COMBAT_VISUAL_HITBOX {
+  return typeof heroId === 'string'
+    ? HERO_COMBAT_VISUAL_HITBOXES[heroId as HeroId] ?? DEFAULT_COMBAT_VISUAL_HITBOX
+    : DEFAULT_COMBAT_VISUAL_HITBOX;
+}
 
 const createCombatFrameCache = (): CombatVisualFrameCache => ({
   frameKey: -1,
   builtAtMs: 0,
   sourceSize: 0,
   alivePlayers: [],
-  byTeam: new Map(),
   buckets: new Map(),
   activeBuckets: [],
-  activeBucketSet: new Set(),
   entryPool: [],
   cellSize: COMBAT_VISUAL_CELL_SIZE,
 });
@@ -269,6 +306,7 @@ const initialVisualState: VisualState = {
     updatedAtMs: 0,
   },
   localMovement: { ...DEFAULT_LOCAL_MOVEMENT },
+  battleRoyalFirstPersonDropBodyVisibleUntilMs: 0,
   slideIntensity: 0,
   localSlideVelocity: { x: 0, y: 0, z: 0 },
   localViewYaw: 0,
@@ -288,6 +326,10 @@ const REMOTE_HISTORY_LIMIT = 32;
 const REMOTE_TRANSFORM_EXPECTED_CADENCE_MS = TICK_INTERVAL_MS;
 const REMOTE_INTERPOLATION_MAX_DELAY_MS =
   MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS + MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS;
+const REMOTE_TRANSFORM_TAIL_FAST_PATH_SEGMENTS = Math.max(
+  1,
+  Math.ceil(MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS / REMOTE_TRANSFORM_EXPECTED_CADENCE_MS)
+);
 const REMOTE_INTERPOLATION_JITTER_DECAY_ALPHA = 0.12;
 const REMOTE_INTERPOLATION_JITTER_GAIN = 0.75;
 
@@ -472,6 +514,16 @@ export const setLocalVisualMovement = (movement: PlayerMovementState): void => {
   current.chronosAscendantStartY = movement.chronosAscendantStartY;
 };
 
+export const setBattleRoyalFirstPersonDropBodyVisibleUntil = (untilMs: number): void => {
+  const nextUntilMs = Number.isFinite(untilMs) ? Math.max(0, untilMs) : 0;
+  const currentUntilMs = visualStore.getState().battleRoyalFirstPersonDropBodyVisibleUntilMs;
+  const effectiveUntilMs = nextUntilMs > 0 ? Math.max(currentUntilMs, nextUntilMs) : 0;
+  if (currentUntilMs === effectiveUntilMs) return;
+
+  recordHotStoreCommit('visual.battleRoyalFirstPersonDropBody');
+  visualStore.setState({ battleRoyalFirstPersonDropBodyVisibleUntilMs: effectiveUntilMs });
+};
+
 export const setLocalSlideIntensity = (intensity: number, velocity?: Vec3, viewYaw?: number): void => {
   const state = visualStore.getState();
   const nextIntensity = Math.max(0, Math.min(1, intensity));
@@ -614,54 +666,34 @@ export const pruneRemoteTransformHistories = (activePlayerIds: ReadonlySet<strin
   }
 };
 
-export const sampleRemoteTransformHistoryInto = (
-  history: RemoteTransformHistory | null | undefined,
+function writeInterpolatedRemoteTransform(
   target: SampledRemoteTransform,
-  nowMs = Date.now()
-): boolean => {
-  if (!history || history.snapshots.length === 0) return false;
+  previous: RemoteTransformSnapshot,
+  next: RemoteTransformSnapshot,
+  renderServerTime: number
+): void {
+  const span = Math.max(1, next.serverTime - previous.serverTime);
+  const t = Math.max(0, Math.min(1, (renderServerTime - previous.serverTime) / span));
+  target.position.x = lerp(previous.position.x, next.position.x, t);
+  target.position.y = lerp(previous.position.y, next.position.y, t);
+  target.position.z = lerp(previous.position.z, next.position.z, t);
+  target.velocity.x = lerp(previous.velocity.x, next.velocity.x, t);
+  target.velocity.y = lerp(previous.velocity.y, next.velocity.y, t);
+  target.velocity.z = lerp(previous.velocity.z, next.velocity.z, t);
+  target.lookYaw = lerpYaw(previous.lookYaw, next.lookYaw, t);
+  target.lookPitch = lerp(previous.lookPitch, next.lookPitch, t);
+  target.movementBits = next.movementBits;
+  target.wallRunSide = next.wallRunSide;
+  target.movementEpoch = next.movementEpoch;
+  target.extrapolatedMs = 0;
+  target.stale = false;
+}
 
-  const snapshots = history.snapshots;
-  const latest = snapshots[snapshots.length - 1];
-  const estimatedServerTime = latest.serverTime + Math.max(0, nowMs - latest.receivedAtMs);
-  const interpolationDelayMs = Number.isFinite(history.interpolationDelayMs)
-    ? history.interpolationDelayMs
-    : MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS;
-  const renderServerTime = estimatedServerTime - interpolationDelayMs;
-
-  let low = 0;
-  let high = snapshots.length;
-  while (low < high) {
-    const mid = (low + high) >> 1;
-    if (snapshots[mid].serverTime <= renderServerTime) {
-      low = mid + 1;
-    } else {
-      high = mid;
-    }
-  }
-
-  const previous = snapshots[Math.max(0, low - 1)];
-  const next = low < snapshots.length ? snapshots[low] : null;
-
-  if (next) {
-    const span = Math.max(1, next.serverTime - previous.serverTime);
-    const t = Math.max(0, Math.min(1, (renderServerTime - previous.serverTime) / span));
-    target.position.x = lerp(previous.position.x, next.position.x, t);
-    target.position.y = lerp(previous.position.y, next.position.y, t);
-    target.position.z = lerp(previous.position.z, next.position.z, t);
-    target.velocity.x = lerp(previous.velocity.x, next.velocity.x, t);
-    target.velocity.y = lerp(previous.velocity.y, next.velocity.y, t);
-    target.velocity.z = lerp(previous.velocity.z, next.velocity.z, t);
-    target.lookYaw = lerpYaw(previous.lookYaw, next.lookYaw, t);
-    target.lookPitch = lerp(previous.lookPitch, next.lookPitch, t);
-    target.movementBits = next.movementBits;
-    target.wallRunSide = next.wallRunSide;
-    target.movementEpoch = next.movementEpoch;
-    target.extrapolatedMs = 0;
-    target.stale = false;
-    return true;
-  }
-
+function writeExtrapolatedRemoteTransform(
+  target: SampledRemoteTransform,
+  latest: RemoteTransformSnapshot,
+  renderServerTime: number
+): void {
   const extrapolatedMs = Math.max(0, renderServerTime - latest.serverTime);
   const cappedMs = Math.min(extrapolatedMs, MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS);
   const dt = cappedMs / 1000;
@@ -678,6 +710,58 @@ export const sampleRemoteTransformHistoryInto = (
   target.movementEpoch = latest.movementEpoch;
   target.extrapolatedMs = extrapolatedMs;
   target.stale = extrapolatedMs > MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS;
+}
+
+export const sampleRemoteTransformHistoryInto = (
+  history: RemoteTransformHistory | null | undefined,
+  target: SampledRemoteTransform,
+  nowMs = Date.now()
+): boolean => {
+  if (!history || history.snapshots.length === 0) return false;
+
+  const snapshots = history.snapshots;
+  const latest = snapshots[snapshots.length - 1];
+  const estimatedServerTime = latest.serverTime + Math.max(0, nowMs - latest.receivedAtMs);
+  const interpolationDelayMs = Number.isFinite(history.interpolationDelayMs)
+    ? history.interpolationDelayMs
+    : MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS;
+  const renderServerTime = estimatedServerTime - interpolationDelayMs;
+  if (renderServerTime >= latest.serverTime) {
+    writeExtrapolatedRemoteTransform(target, latest, renderServerTime);
+    return true;
+  }
+
+  const latestIndex = snapshots.length - 1;
+  const fastPathSegments = Math.min(REMOTE_TRANSFORM_TAIL_FAST_PATH_SEGMENTS, latestIndex);
+  for (let offset = 1; offset <= fastPathSegments; offset++) {
+    const next = snapshots[latestIndex - offset + 1];
+    const previous = snapshots[latestIndex - offset];
+    if (renderServerTime >= previous.serverTime) {
+      writeInterpolatedRemoteTransform(target, previous, next, renderServerTime);
+      return true;
+    }
+  }
+
+  let low = 0;
+  let high = snapshots.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (snapshots[mid].serverTime <= renderServerTime) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+
+  const previous = snapshots[Math.max(0, low - 1)];
+  const next = low < snapshots.length ? snapshots[low] : null;
+
+  if (next) {
+    writeInterpolatedRemoteTransform(target, previous, next, renderServerTime);
+    return true;
+  }
+
+  writeExtrapolatedRemoteTransform(target, latest, renderServerTime);
   return true;
 };
 
@@ -716,19 +800,6 @@ function clearActiveCombatBuckets(cache: CombatVisualFrameCache): void {
     cache.activeBuckets[i].length = 0;
   }
   cache.activeBuckets.length = 0;
-  cache.activeBucketSet.clear();
-}
-
-function markActiveCombatBucket(
-  cache: CombatVisualFrameCache,
-  bucket: CombatVisualPlayer[]
-): void {
-  if (cache.activeBucketSet.has(bucket)) {
-    return;
-  }
-
-  cache.activeBucketSet.add(bucket);
-  cache.activeBuckets.push(bucket);
 }
 
 function getCombatBucket(
@@ -736,37 +807,21 @@ function getCombatBucket(
   cellX: number,
   cellZ: number
 ): CombatVisualPlayer[] {
-  let zBuckets = cache.buckets.get(cellX);
-  if (!zBuckets) {
-    zBuckets = new Map();
-    cache.buckets.set(cellX, zBuckets);
-  }
-
-  let bucket = zBuckets.get(cellZ);
+  const key = getCombatBucketKeyForCell(cellX, cellZ);
+  let bucket = cache.buckets.get(key);
   if (!bucket) {
     bucket = [];
-    zBuckets.set(cellZ, bucket);
+    cache.buckets.set(key, bucket);
   }
-  markActiveCombatBucket(cache, bucket);
-  return bucket;
-}
-
-function getCombatTeamBucket(
-  cache: CombatVisualFrameCache,
-  team: Team
-): CombatVisualPlayer[] {
-  let bucket = cache.byTeam.get(team);
-  if (!bucket) {
-    bucket = [];
-    cache.byTeam.set(team, bucket);
+  if (bucket.length === 0) {
+    cache.activeBuckets.push(bucket);
   }
   return bucket;
 }
 
-function clearCombatTeamBuckets(cache: CombatVisualFrameCache): void {
-  for (const bucket of cache.byTeam.values()) {
-    bucket.length = 0;
-  }
+function getCombatBucketKeyForCell(cellX: number, cellZ: number): number {
+  return (cellX + COMBAT_VISUAL_BUCKET_KEY_CELL_OFFSET) * COMBAT_VISUAL_BUCKET_KEY_CELL_STRIDE +
+    (cellZ + COMBAT_VISUAL_BUCKET_KEY_CELL_OFFSET);
 }
 
 export const rebuildCombatVisualFrameCache = (
@@ -784,13 +839,13 @@ export const rebuildCombatVisualFrameCache = (
   cache.builtAtMs = nowMs;
   cache.sourceSize = sourceSize;
   cache.alivePlayers.length = 0;
-  clearCombatTeamBuckets(cache);
   clearActiveCombatBuckets(cache);
 
   let entryIndex = 0;
   for (const player of players) {
     if (player.state !== 'alive') continue;
     if (player.visibility === 'hidden' || player.visibility === 'last_known' || player.visibility === 'audible') continue;
+    const hitbox = getCombatVisualHitboxMetrics(player.heroId);
     let visualPlayer = cache.entryPool[entryIndex];
     if (!visualPlayer) {
       visualPlayer = {
@@ -800,6 +855,8 @@ export const rebuildCombatVisualFrameCache = (
         x: player.position.x,
         y: player.position.y,
         z: player.position.z,
+        hitboxRadius: hitbox.radius,
+        hitboxSegmentHalfHeight: hitbox.segmentHalfHeight,
       };
       cache.entryPool[entryIndex] = visualPlayer;
     } else {
@@ -809,10 +866,11 @@ export const rebuildCombatVisualFrameCache = (
       visualPlayer.x = player.position.x;
       visualPlayer.y = player.position.y;
       visualPlayer.z = player.position.z;
+      visualPlayer.hitboxRadius = hitbox.radius;
+      visualPlayer.hitboxSegmentHalfHeight = hitbox.segmentHalfHeight;
     }
     entryIndex++;
     cache.alivePlayers.push(visualPlayer);
-    getCombatTeamBucket(cache, player.team).push(visualPlayer);
 
     const bucket = getCombatBucket(
       cache,
@@ -855,6 +913,17 @@ function doesCombatVisualPlayerPassRadius(
   return dx * dx + dz * dz <= radiusSq;
 }
 
+function shouldScanActiveCombatBuckets(
+  cache: CombatVisualFrameCache,
+  minCellX: number,
+  maxCellX: number,
+  minCellZ: number,
+  maxCellZ: number
+): boolean {
+  const queryCellCount = (maxCellX - minCellX + 1) * (maxCellZ - minCellZ + 1);
+  return cache.activeBuckets.length > 0 && cache.activeBuckets.length < queryCellCount;
+}
+
 export const fillCombatVisualEnemyPlayers = (
   cache: CombatVisualFrameCache,
   ownerTeam: Team | null | undefined,
@@ -872,11 +941,23 @@ export const fillCombatVisualEnemyPlayers = (
     const maxCellZ = Math.floor((center.z + radius) / cache.cellSize);
     const radiusSq = radius * radius;
 
+    if (shouldScanActiveCombatBuckets(cache, minCellX, maxCellX, minCellZ, maxCellZ)) {
+      for (let bucketIndex = 0; bucketIndex < cache.activeBuckets.length; bucketIndex++) {
+        const bucket = cache.activeBuckets[bucketIndex];
+        for (let i = 0; i < bucket.length; i++) {
+          const visualPlayer = bucket[i];
+          if (!isEnemyCombatVisualPlayer(visualPlayer, ownerTeam, ownerId)) continue;
+          if (doesCombatVisualPlayerPassRadius(visualPlayer, center, radiusSq)) {
+            target.push(visualPlayer.player);
+          }
+        }
+      }
+      return target;
+    }
+
     for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
-      const zBuckets = cache.buckets.get(cellX);
-      if (!zBuckets) continue;
       for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
-        const bucket = zBuckets.get(cellZ);
+        const bucket = cache.buckets.get(getCombatBucketKeyForCell(cellX, cellZ));
         if (!bucket) continue;
         for (let i = 0; i < bucket.length; i++) {
           const visualPlayer = bucket[i];
@@ -919,17 +1000,49 @@ export const findCombatVisualPlayerHit = (
     const maxCellZ = Math.floor((center.z + radius) / cache.cellSize);
     const radiusSq = radius * radius;
 
+    if (shouldScanActiveCombatBuckets(cache, minCellX, maxCellX, minCellZ, maxCellZ)) {
+      for (let bucketIndex = 0; bucketIndex < cache.activeBuckets.length; bucketIndex++) {
+        const bucket = cache.activeBuckets[bucketIndex];
+        for (let i = 0; i < bucket.length; i++) {
+          const visualPlayer = bucket[i];
+          if (!isCombatVisualTargetPlayer(visualPlayer, ownerTeam, ownerId, targetTeam)) continue;
+          if (!doesCombatVisualPlayerPassRadius(visualPlayer, center, radiusSq)) continue;
+          if (
+            doesSegmentHitVerticalCapsule(
+              start,
+              direction,
+              distance,
+              visualPlayer,
+              visualPlayer.hitboxRadius + extraRadius,
+              visualPlayer.hitboxSegmentHalfHeight
+            )
+          ) {
+            return visualPlayer.player;
+          }
+        }
+      }
+
+      return null;
+    }
+
     for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
-      const zBuckets = cache.buckets.get(cellX);
-      if (!zBuckets) continue;
       for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
-        const bucket = zBuckets.get(cellZ);
+        const bucket = cache.buckets.get(getCombatBucketKeyForCell(cellX, cellZ));
         if (!bucket) continue;
         for (let i = 0; i < bucket.length; i++) {
           const visualPlayer = bucket[i];
           if (!isCombatVisualTargetPlayer(visualPlayer, ownerTeam, ownerId, targetTeam)) continue;
           if (!doesCombatVisualPlayerPassRadius(visualPlayer, center, radiusSq)) continue;
-          if (doesSegmentHitPlayerCombatHitbox(start, direction, distance, visualPlayer.player, extraRadius)) {
+          if (
+            doesSegmentHitVerticalCapsule(
+              start,
+              direction,
+              distance,
+              visualPlayer,
+              visualPlayer.hitboxRadius + extraRadius,
+              visualPlayer.hitboxSegmentHalfHeight
+            )
+          ) {
             return visualPlayer.player;
           }
         }
@@ -942,7 +1055,16 @@ export const findCombatVisualPlayerHit = (
   for (let i = 0; i < cache.alivePlayers.length; i++) {
     const visualPlayer = cache.alivePlayers[i];
     if (!isCombatVisualTargetPlayer(visualPlayer, ownerTeam, ownerId, targetTeam)) continue;
-    if (doesSegmentHitPlayerCombatHitbox(start, direction, distance, visualPlayer.player, extraRadius)) {
+    if (
+      doesSegmentHitVerticalCapsule(
+        start,
+        direction,
+        distance,
+        visualPlayer,
+        visualPlayer.hitboxRadius + extraRadius,
+        visualPlayer.hitboxSegmentHalfHeight
+      )
+    ) {
       return visualPlayer.player;
     }
   }
@@ -979,9 +1101,7 @@ export const clearCombatVisualFrameCache = (): void => {
   cache.builtAtMs = 0;
   cache.sourceSize = 0;
   cache.alivePlayers.length = 0;
-  cache.byTeam.clear();
   cache.activeBuckets.length = 0;
-  cache.activeBucketSet.clear();
   cache.buckets.clear();
 };
 
@@ -1343,6 +1463,7 @@ export const clearVisualState = (): void => {
       updatedAtMs: 0,
     },
     localMovement: { ...DEFAULT_LOCAL_MOVEMENT },
+    battleRoyalFirstPersonDropBodyVisibleUntilMs: 0,
     slideIntensity: 0,
     localSlideVelocity: { x: 0, y: 0, z: 0 },
     localViewYaw: 0,

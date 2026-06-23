@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
@@ -84,9 +84,10 @@ interface TimebreakMaterialOptions {
 }
 
 const MAX_CHRONOS_TIMEBREAK_EFFECTS = 24;
+const POOLED_CHRONOS_TIMEBREAK_EFFECTS = 8;
+const CHRONOS_TIMEBREAK_SLOT_INDICES = Array.from({ length: POOLED_CHRONOS_TIMEBREAK_EFFECTS }, (_, i) => i);
 const CHRONOS_TIMEBREAK_RETENTION_MS = TIMEBREAK_SHOCKWAVE_DURATION_MS + 120;
 const activeChronosTimebreakEffects: ChronosTimebreakEffectData[] = [];
-let chronosTimebreakRevision = 0;
 
 export function addChronosTimebreakEffect({
   id,
@@ -99,6 +100,8 @@ export function addChronosTimebreakEffect({
   duration = ABILITY_DEFINITIONS[CHRONOS_TIMEBREAK_ABILITY_ID]?.duration ?? 0,
   radius = CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
 }: AddChronosTimebreakEffectOptions): void {
+  pruneChronosTimebreakEffects(getFrameClock().epochNowMs || Date.now());
+
   const normalizedDirection = normalizeTimebreakDirection(direction);
   const effectId = id ?? `chronos_timebreak_${ownerId}_${timebreakEffectIdCounter++}`;
 
@@ -128,7 +131,6 @@ export function addChronosTimebreakEffect({
     }
     activeChronosTimebreakEffects.push(effect);
   }
-  chronosTimebreakRevision++;
 }
 
 function normalizeTimebreakDirection(direction: Vec3Like): Vec3Like {
@@ -326,236 +328,282 @@ function disposeTimebreakMaterials(materials: TimebreakMaterials): void {
   materials.spark.dispose();
 }
 
-function ChronosTimebreakEffect({ timebreak }: { timebreak: ChronosTimebreakEffectData }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const outerShellRef = useRef<THREE.Mesh>(null);
-  const innerShellRef = useRef<THREE.Mesh>(null);
-  const coreBeamRef = useRef<THREE.Mesh>(null);
-  const muzzleFlashRef = useRef<THREE.Mesh>(null);
-  const ringRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const spiralRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const shardRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const sparkRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const timebreakMaterials = useMemo(createTimebreakMaterials, []);
-  const outerShellMaterial = timebreakMaterials.outerShell;
-  const innerShellMaterial = timebreakMaterials.innerShell;
-  const coreBeamMaterial = timebreakMaterials.coreBeam;
-  const muzzleFlashMaterial = timebreakMaterials.muzzleFlash;
-  const ringMaterials = timebreakMaterials.rings;
-  const spiralMaterials = timebreakMaterials.spirals;
-  const shardMaterial = timebreakMaterials.shard;
-  const sparkMaterial = timebreakMaterials.spark;
-  const hasRemovedRef = useRef(false);
-
-  useEffect(() => () => disposeTimebreakMaterials(timebreakMaterials), [timebreakMaterials]);
-
-  useFrame(() => {
-    const group = groupRef.current;
-    if (!group) return;
-
-    const now = getFrameClock().epochNowMs;
-    const elapsedMs = now - timebreak.releaseTime;
-
-    if (elapsedMs < 0) {
-      group.visible = false;
-      return;
-    }
-
-    if (elapsedMs > TIMEBREAK_SHOCKWAVE_DURATION_MS) {
-      group.visible = false;
-      if (!hasRemovedRef.current) {
-        hasRemovedRef.current = true;
-        timebreak.active = false;
-        chronosTimebreakRevision++;
-      }
-      return;
-    }
-
-    const progress = THREE.MathUtils.clamp(elapsedMs / TIMEBREAK_SHOCKWAVE_DURATION_MS, 0, 1);
-    const expansion = easeOutCubic(progress);
-    const shockwaveRange = timebreak.radius || CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE;
-    const waveLength = shockwaveRange * THREE.MathUtils.lerp(0.08, 1, expansion);
-    const maxHorizontalRadius = Math.tan(CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE)
-      * shockwaveRange;
-    const waveHorizontalRadius = maxHorizontalRadius * THREE.MathUtils.lerp(0.12, 1, expansion);
-    const waveVerticalRadius = CHRONOS_TIMEBREAK_SHOCKWAVE_MAX_VERTICAL_DELTA
-      * THREE.MathUtils.lerp(0.12, 1, expansion);
-    const fade = 1 - THREE.MathUtils.smoothstep(progress, 0.46, 1);
-    const birth = THREE.MathUtils.smoothstep(progress, 0, 0.08);
-    const opacity = birth * fade;
-    const ripple = 0.82 + Math.sin(progress * Math.PI * 7.5) * 0.18 * (1 - progress);
-    const recoilPulse = Math.sin(progress * Math.PI) * (1 - progress * 0.35);
-
-    group.visible = true;
-    group.position.set(timebreak.position.x, timebreak.position.y, timebreak.position.z);
-    group.rotation.y = getYawFromDirection(timebreak.direction);
-
-    if (outerShellRef.current) {
-      outerShellRef.current.rotation.z = progress * 0.28;
-      outerShellRef.current.scale.set(waveHorizontalRadius, waveVerticalRadius, waveLength);
-    }
-    outerShellMaterial.opacity = THREE.MathUtils.clamp(opacity * 0.24, 0, 0.24);
-
-    if (innerShellRef.current) {
-      innerShellRef.current.rotation.z = -progress * 0.48 + 0.18;
-      innerShellRef.current.scale.set(waveHorizontalRadius * 0.72, waveVerticalRadius * 0.66, waveLength * 0.94);
-    }
-    innerShellMaterial.opacity = THREE.MathUtils.clamp(opacity * 0.18 * ripple, 0, 0.18);
-
-    if (coreBeamRef.current) {
-      coreBeamRef.current.rotation.z = progress * -0.32;
-      coreBeamRef.current.scale.set(
-        waveHorizontalRadius * CONE_CORE_RADIUS_SCALE,
-        waveVerticalRadius * 0.5,
-        waveLength * 0.98
-      );
-    }
-    coreBeamMaterial.opacity = THREE.MathUtils.clamp(opacity * 0.36 * ripple, 0, 0.34);
-
-    if (muzzleFlashRef.current) {
-      const muzzleScale = 0.12 + recoilPulse * 0.24;
-      muzzleFlashRef.current.scale.set(muzzleScale, muzzleScale, muzzleScale);
-      muzzleFlashRef.current.position.z = -0.08 - progress * 0.34;
-    }
-    muzzleFlashMaterial.opacity = THREE.MathUtils.clamp(opacity * (0.38 - progress * 0.18), 0, 0.38);
-
-    ringRefs.current.forEach((ring, index) => {
-      if (!ring) return;
-
-      const spec = TIMEBREAK_RING_SPECS[index];
-      const depth = waveLength * spec.depth;
-      const ringPulse = Math.min(1, 1 + Math.sin(progress * Math.PI * 4 + index * 0.9) * spec.pulse * (1 - progress));
-      ring.position.z = -depth;
-      ring.rotation.z = progress * spec.spin + index * 0.18;
-      ring.scale.set(
-        Math.max(0.001, waveHorizontalRadius * spec.depth * ringPulse),
-        Math.max(0.001, waveVerticalRadius * spec.depth * ringPulse),
-        1
-      );
-      ringMaterials[index].opacity = THREE.MathUtils.clamp(opacity * spec.opacity * ripple, 0, spec.opacity);
-    });
-
-    spiralRefs.current.forEach((spiral, index) => {
-      if (!spiral) return;
-
-      const spec = TIMEBREAK_SPIRAL_SPECS[index];
-      spiral.rotation.z = progress * spec.spin;
-      spiral.scale.set(waveHorizontalRadius * (0.96 - index * 0.08), waveVerticalRadius * (0.9 - index * 0.07), waveLength);
-      spiralMaterials[index].opacity = THREE.MathUtils.clamp(opacity * spec.opacity * ripple, 0, spec.opacity);
-    });
-
-    shardRefs.current.forEach((shard, index) => {
-      if (!shard) return;
-
-      const spec = TIMEBREAK_SHARD_SPECS[index];
-      const drift = progress * 0.18 * (1 - spec.depth);
-      const depth = THREE.MathUtils.clamp(spec.depth + drift, 0.05, 1);
-      const angle = spec.angle + progress * spec.spin * 0.58;
-      const radial = spec.radial * depth;
-      shard.visible = progress > 0.04 && progress < 0.96;
-      shard.position.set(
-        Math.cos(angle) * waveHorizontalRadius * radial,
-        Math.sin(angle) * waveVerticalRadius * radial,
-        -waveLength * depth
-      );
-      shard.rotation.set(-Math.PI / 2 + progress * 0.35, angle, progress * spec.spin);
-      const shardScale = spec.size * (0.065 + recoilPulse * 0.03);
-      shard.scale.set(shardScale * 0.42, shardScale * 1.35, shardScale * 0.42);
-    });
-    shardMaterial.opacity = THREE.MathUtils.clamp(opacity * 0.54 * ripple, 0, 0.54);
-
-    sparkRefs.current.forEach((spark, index) => {
-      if (!spark) return;
-
-      const spec = TIMEBREAK_SHARD_SPECS[index];
-      const angle = spec.angle - progress * spec.spin * 0.44 + 0.55;
-      const depth = THREE.MathUtils.clamp(spec.depth + progress * 0.11, 0.04, 1);
-      const radial = (0.18 + spec.radial * 0.34) * depth;
-      spark.visible = progress > 0.02 && progress < 0.92;
-      spark.position.set(
-        Math.cos(angle) * waveHorizontalRadius * radial,
-        Math.sin(angle) * waveVerticalRadius * radial,
-        -waveLength * depth
-      );
-      const sparkScale = spec.size * (0.025 + Math.sin(progress * Math.PI) * 0.025);
-      spark.scale.setScalar(sparkScale);
-    });
-    sparkMaterial.opacity = THREE.MathUtils.clamp(opacity * 0.44, 0, 0.44);
-  });
-
-  return (
-    <group ref={groupRef} visible={false} frustumCulled={false}>
-      <mesh ref={outerShellRef} geometry={TIMEBREAK_OUTER_SHELL_GEOMETRY} material={outerShellMaterial} scale={[0.001, 0.001, 0.001]} frustumCulled={false} />
-      <mesh ref={innerShellRef} geometry={TIMEBREAK_INNER_SHELL_GEOMETRY} material={innerShellMaterial} scale={[0.001, 0.001, 0.001]} frustumCulled={false} />
-      <mesh ref={coreBeamRef} geometry={TIMEBREAK_CORE_BEAM_GEOMETRY} material={coreBeamMaterial} scale={[0.001, 0.001, 0.001]} frustumCulled={false} />
-      <mesh ref={muzzleFlashRef} geometry={SHARED_GEOMETRIES.sphere16} material={muzzleFlashMaterial} scale={[0.001, 0.001, 0.001]} frustumCulled={false} />
-      {TIMEBREAK_RING_SPECS.map((_, index) => (
-        <mesh
-          key={`ring-${index}`}
-          ref={(node) => {
-            ringRefs.current[index] = node;
-          }}
-          geometry={TIMEBREAK_RING_GEOMETRY}
-          material={ringMaterials[index]}
-          scale={[0.001, 0.001, 0.001]}
-          frustumCulled={false}
-        />
-      ))}
-      {TIMEBREAK_SPIRAL_GEOMETRIES.map((geometry, index) => (
-        <mesh
-          key={`spiral-${index}`}
-          ref={(node) => {
-            spiralRefs.current[index] = node;
-          }}
-          geometry={geometry}
-          material={spiralMaterials[index]}
-          scale={[0.001, 0.001, 0.001]}
-          frustumCulled={false}
-        />
-      ))}
-      {TIMEBREAK_SHARD_SPECS.map((_, index) => (
-        <mesh
-          key={`shard-${index}`}
-          ref={(node) => {
-            shardRefs.current[index] = node;
-          }}
-          geometry={SHARED_GEOMETRIES.cone6}
-          material={shardMaterial}
-          visible={false}
-          frustumCulled={false}
-        />
-      ))}
-      {TIMEBREAK_SHARD_SPECS.map((_, index) => (
-        <mesh
-          key={`spark-${index}`}
-          ref={(node) => {
-            sparkRefs.current[index] = node;
-          }}
-          geometry={SHARED_GEOMETRIES.sphere8}
-          material={sparkMaterial}
-          visible={false}
-          frustumCulled={false}
-        />
-      ))}
-    </group>
-  );
+interface TimebreakRenderSlot {
+  group: THREE.Group | null;
+  outerShell: THREE.Mesh | null;
+  innerShell: THREE.Mesh | null;
+  coreBeam: THREE.Mesh | null;
+  muzzleFlash: THREE.Mesh | null;
+  rings: (THREE.Mesh | null)[];
+  spirals: (THREE.Mesh | null)[];
+  shards: (THREE.Mesh | null)[];
+  sparks: (THREE.Mesh | null)[];
+  materials: TimebreakMaterials;
 }
 
-function pruneChronosTimebreakEffects(now: number): number {
-  let changed = false;
+function createTimebreakRenderSlot(): TimebreakRenderSlot {
+  return {
+    group: null,
+    outerShell: null,
+    innerShell: null,
+    coreBeam: null,
+    muzzleFlash: null,
+    rings: Array.from({ length: TIMEBREAK_RING_SPECS.length }, () => null),
+    spirals: Array.from({ length: TIMEBREAK_SPIRAL_GEOMETRIES.length }, () => null),
+    shards: Array.from({ length: TIMEBREAK_SHARD_SPECS.length }, () => null),
+    sparks: Array.from({ length: TIMEBREAK_SHARD_SPECS.length }, () => null),
+    materials: createTimebreakMaterials(),
+  };
+}
+
+function ensureTimebreakRenderSlot(renderSlots: TimebreakRenderSlot[], index: number): TimebreakRenderSlot {
+  let slot = renderSlots[index];
+  if (!slot) {
+    slot = createTimebreakRenderSlot();
+    renderSlots[index] = slot;
+  }
+  return slot;
+}
+
+function hideTimebreakSlot(slot: TimebreakRenderSlot): void {
+  if (slot.group) slot.group.visible = false;
+}
+
+function updateTimebreakSlot(
+  slot: TimebreakRenderSlot,
+  timebreak: ChronosTimebreakEffectData | undefined,
+  now: number
+): boolean {
+  const group = slot.group;
+  if (!group || !timebreak?.active) {
+    hideTimebreakSlot(slot);
+    return false;
+  }
+
+  const elapsedMs = now - timebreak.releaseTime;
+
+  if (elapsedMs < 0) {
+    hideTimebreakSlot(slot);
+    return false;
+  }
+
+  if (elapsedMs > TIMEBREAK_SHOCKWAVE_DURATION_MS) {
+    timebreak.active = false;
+    hideTimebreakSlot(slot);
+    return false;
+  }
+
+  const materials = slot.materials;
+  const progress = THREE.MathUtils.clamp(elapsedMs / TIMEBREAK_SHOCKWAVE_DURATION_MS, 0, 1);
+  const expansion = easeOutCubic(progress);
+  const shockwaveRange = timebreak.radius || CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE;
+  const waveLength = shockwaveRange * THREE.MathUtils.lerp(0.08, 1, expansion);
+  const maxHorizontalRadius = Math.tan(CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE)
+    * shockwaveRange;
+  const waveHorizontalRadius = maxHorizontalRadius * THREE.MathUtils.lerp(0.12, 1, expansion);
+  const waveVerticalRadius = CHRONOS_TIMEBREAK_SHOCKWAVE_MAX_VERTICAL_DELTA
+    * THREE.MathUtils.lerp(0.12, 1, expansion);
+  const fade = 1 - THREE.MathUtils.smoothstep(progress, 0.46, 1);
+  const birth = THREE.MathUtils.smoothstep(progress, 0, 0.08);
+  const opacity = birth * fade;
+  const ripple = 0.82 + Math.sin(progress * Math.PI * 7.5) * 0.18 * (1 - progress);
+  const recoilPulse = Math.sin(progress * Math.PI) * (1 - progress * 0.35);
+
+  group.visible = true;
+  group.position.set(timebreak.position.x, timebreak.position.y, timebreak.position.z);
+  group.rotation.y = getYawFromDirection(timebreak.direction);
+
+  if (slot.outerShell) {
+    slot.outerShell.rotation.z = progress * 0.28;
+    slot.outerShell.scale.set(waveHorizontalRadius, waveVerticalRadius, waveLength);
+  }
+  materials.outerShell.opacity = THREE.MathUtils.clamp(opacity * 0.24, 0, 0.24);
+
+  if (slot.innerShell) {
+    slot.innerShell.rotation.z = -progress * 0.48 + 0.18;
+    slot.innerShell.scale.set(waveHorizontalRadius * 0.72, waveVerticalRadius * 0.66, waveLength * 0.94);
+  }
+  materials.innerShell.opacity = THREE.MathUtils.clamp(opacity * 0.18 * ripple, 0, 0.18);
+
+  if (slot.coreBeam) {
+    slot.coreBeam.rotation.z = progress * -0.32;
+    slot.coreBeam.scale.set(
+      waveHorizontalRadius * CONE_CORE_RADIUS_SCALE,
+      waveVerticalRadius * 0.5,
+      waveLength * 0.98
+    );
+  }
+  materials.coreBeam.opacity = THREE.MathUtils.clamp(opacity * 0.36 * ripple, 0, 0.34);
+
+  if (slot.muzzleFlash) {
+    const muzzleScale = 0.12 + recoilPulse * 0.24;
+    slot.muzzleFlash.scale.set(muzzleScale, muzzleScale, muzzleScale);
+    slot.muzzleFlash.position.z = -0.08 - progress * 0.34;
+  }
+  materials.muzzleFlash.opacity = THREE.MathUtils.clamp(opacity * (0.38 - progress * 0.18), 0, 0.38);
+
+  for (let index = 0; index < slot.rings.length; index++) {
+    const ring = slot.rings[index];
+    if (!ring) continue;
+
+    const spec = TIMEBREAK_RING_SPECS[index];
+    const depth = waveLength * spec.depth;
+    const ringPulse = Math.min(1, 1 + Math.sin(progress * Math.PI * 4 + index * 0.9) * spec.pulse * (1 - progress));
+    ring.position.z = -depth;
+    ring.rotation.z = progress * spec.spin + index * 0.18;
+    ring.scale.set(
+      Math.max(0.001, waveHorizontalRadius * spec.depth * ringPulse),
+      Math.max(0.001, waveVerticalRadius * spec.depth * ringPulse),
+      1
+    );
+    materials.rings[index].opacity = THREE.MathUtils.clamp(opacity * spec.opacity * ripple, 0, spec.opacity);
+  }
+
+  for (let index = 0; index < slot.spirals.length; index++) {
+    const spiral = slot.spirals[index];
+    if (!spiral) continue;
+
+    const spec = TIMEBREAK_SPIRAL_SPECS[index];
+    spiral.rotation.z = progress * spec.spin;
+    spiral.scale.set(waveHorizontalRadius * (0.96 - index * 0.08), waveVerticalRadius * (0.9 - index * 0.07), waveLength);
+    materials.spirals[index].opacity = THREE.MathUtils.clamp(opacity * spec.opacity * ripple, 0, spec.opacity);
+  }
+
+  for (let index = 0; index < slot.shards.length; index++) {
+    const shard = slot.shards[index];
+    if (!shard) continue;
+
+    const spec = TIMEBREAK_SHARD_SPECS[index];
+    const drift = progress * 0.18 * (1 - spec.depth);
+    const depth = THREE.MathUtils.clamp(spec.depth + drift, 0.05, 1);
+    const angle = spec.angle + progress * spec.spin * 0.58;
+    const radial = spec.radial * depth;
+    shard.visible = progress > 0.04 && progress < 0.96;
+    shard.position.set(
+      Math.cos(angle) * waveHorizontalRadius * radial,
+      Math.sin(angle) * waveVerticalRadius * radial,
+      -waveLength * depth
+    );
+    shard.rotation.set(-Math.PI / 2 + progress * 0.35, angle, progress * spec.spin);
+    const shardScale = spec.size * (0.065 + recoilPulse * 0.03);
+    shard.scale.set(shardScale * 0.42, shardScale * 1.35, shardScale * 0.42);
+  }
+  materials.shard.opacity = THREE.MathUtils.clamp(opacity * 0.54 * ripple, 0, 0.54);
+
+  for (let index = 0; index < slot.sparks.length; index++) {
+    const spark = slot.sparks[index];
+    if (!spark) continue;
+
+    const spec = TIMEBREAK_SHARD_SPECS[index];
+    const angle = spec.angle - progress * spec.spin * 0.44 + 0.55;
+    const depth = THREE.MathUtils.clamp(spec.depth + progress * 0.11, 0.04, 1);
+    const radial = (0.18 + spec.radial * 0.34) * depth;
+    spark.visible = progress > 0.02 && progress < 0.92;
+    spark.position.set(
+      Math.cos(angle) * waveHorizontalRadius * radial,
+      Math.sin(angle) * waveVerticalRadius * radial,
+      -waveLength * depth
+    );
+    const sparkScale = spec.size * (0.025 + Math.sin(progress * Math.PI) * 0.025);
+    spark.scale.setScalar(sparkScale);
+  }
+  materials.spark.opacity = THREE.MathUtils.clamp(opacity * 0.44, 0, 0.44);
+
+  return true;
+}
+
+function pruneChronosTimebreakEffects(now: number): void {
   for (let index = activeChronosTimebreakEffects.length - 1; index >= 0; index--) {
     const effect = activeChronosTimebreakEffects[index];
     if (!effect.active || now - effect.releaseTime > CHRONOS_TIMEBREAK_RETENTION_MS) {
       activeChronosTimebreakEffects.splice(index, 1);
-      changed = true;
     }
   }
+}
 
-  if (changed) {
-    chronosTimebreakRevision++;
+function updatePooledChronosTimebreakEffects(renderSlots: TimebreakRenderSlot[], now: number): void {
+  pruneChronosTimebreakEffects(now);
+
+  for (let index = 0; index < POOLED_CHRONOS_TIMEBREAK_EFFECTS; index++) {
+    const slot = renderSlots[index];
+    if (!slot) continue;
+    updateTimebreakSlot(slot, activeChronosTimebreakEffects[index], now);
   }
+}
 
-  return chronosTimebreakRevision;
+function PooledChronosTimebreakSlots({ renderSlots }: { renderSlots: TimebreakRenderSlot[] }) {
+  useEffect(() => () => {
+    for (const slot of renderSlots) {
+      disposeTimebreakMaterials(slot.materials);
+    }
+  }, [renderSlots]);
+
+  return (
+    <group>
+      {CHRONOS_TIMEBREAK_SLOT_INDICES.map((slotIndex) => {
+        const slot = ensureTimebreakRenderSlot(renderSlots, slotIndex);
+        const materials = slot.materials;
+        return (
+          <group key={slotIndex} ref={(node) => { slot.group = node; }} visible={false} frustumCulled={false}>
+            <mesh ref={(node) => { slot.outerShell = node; }} geometry={TIMEBREAK_OUTER_SHELL_GEOMETRY} material={materials.outerShell} scale={[0.001, 0.001, 0.001]} frustumCulled={false} />
+            <mesh ref={(node) => { slot.innerShell = node; }} geometry={TIMEBREAK_INNER_SHELL_GEOMETRY} material={materials.innerShell} scale={[0.001, 0.001, 0.001]} frustumCulled={false} />
+            <mesh ref={(node) => { slot.coreBeam = node; }} geometry={TIMEBREAK_CORE_BEAM_GEOMETRY} material={materials.coreBeam} scale={[0.001, 0.001, 0.001]} frustumCulled={false} />
+            <mesh ref={(node) => { slot.muzzleFlash = node; }} geometry={SHARED_GEOMETRIES.sphere16} material={materials.muzzleFlash} scale={[0.001, 0.001, 0.001]} frustumCulled={false} />
+            {TIMEBREAK_RING_SPECS.map((_, index) => (
+              <mesh
+                key={`ring-${index}`}
+                ref={(node) => { slot.rings[index] = node; }}
+                geometry={TIMEBREAK_RING_GEOMETRY}
+                material={materials.rings[index]}
+                scale={[0.001, 0.001, 0.001]}
+                frustumCulled={false}
+              />
+            ))}
+            {TIMEBREAK_SPIRAL_GEOMETRIES.map((geometry, index) => (
+              <mesh
+                key={`spiral-${index}`}
+                ref={(node) => { slot.spirals[index] = node; }}
+                geometry={geometry}
+                material={materials.spirals[index]}
+                scale={[0.001, 0.001, 0.001]}
+                frustumCulled={false}
+              />
+            ))}
+            {TIMEBREAK_SHARD_SPECS.map((_, index) => (
+              <mesh
+                key={`shard-${index}`}
+                ref={(node) => { slot.shards[index] = node; }}
+                geometry={SHARED_GEOMETRIES.cone6}
+                material={materials.shard}
+                visible={false}
+                frustumCulled={false}
+              />
+            ))}
+            {TIMEBREAK_SHARD_SPECS.map((_, index) => (
+              <mesh
+                key={`spark-${index}`}
+                ref={(node) => { slot.sparks[index] = node; }}
+                geometry={SHARED_GEOMETRIES.sphere8}
+                material={materials.spark}
+                visible={false}
+                frustumCulled={false}
+              />
+            ))}
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
+export function ChronosTimebreakManager() {
+  const renderSlotsRef = useRef<TimebreakRenderSlot[]>([]);
+
+  useFrame(() => {
+    updatePooledChronosTimebreakEffects(renderSlotsRef.current, getFrameClock().epochNowMs);
+  });
+
+  return <PooledChronosTimebreakSlots renderSlots={renderSlotsRef.current} />;
 }
 
 export function prewarmChronosTimebreakResources(): void {
@@ -607,25 +655,4 @@ export function appendChronosTimebreakGpuPrewarmObjects(target: THREE.Object3D):
   });
   addTimebreakPrewarmMesh(target, SHARED_GEOMETRIES.cone6, materials.shard, [-0.45, 1.48, -4.8], 0.13);
   addTimebreakPrewarmMesh(target, SHARED_GEOMETRIES.sphere8, materials.spark, [-0.25, 1.48, -4.8], 0.11);
-}
-
-export function ChronosTimebreakManager() {
-  const [timebreaks, setTimebreaks] = useState<ChronosTimebreakEffectData[]>([]);
-  const lastRevisionRef = useRef(-1);
-
-  useFrame(() => {
-    const revision = pruneChronosTimebreakEffects(getFrameClock().epochNowMs);
-    if (revision === lastRevisionRef.current) return;
-
-    lastRevisionRef.current = revision;
-    setTimebreaks(activeChronosTimebreakEffects.filter((effect) => effect.active));
-  });
-
-  return (
-    <group>
-      {timebreaks.map((timebreak) => (
-        <ChronosTimebreakEffect key={timebreak.id} timebreak={timebreak} />
-      ))}
-    </group>
-  );
 }

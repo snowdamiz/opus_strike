@@ -4,6 +4,8 @@ import {
   BLAZE_BOMB_SPLASH_RADIUS,
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
+  MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+  getGameplayModeRules,
   type HeroId,
   type Player,
   type Team,
@@ -17,15 +19,23 @@ import type {
   RocketData,
 } from '../store/types';
 import {
+  addRemoteTransformSnapshot,
   clearVisualState,
   findCombatVisualEnemyPlayerHit,
   rebuildCombatVisualFrameCache,
+  sampleRemoteTransformInto,
   setChronosAegisVisualState,
   triggerRemotePlayerAttack,
   visualStore,
+  type SampledRemoteTransform,
 } from '../store/visualStore';
 import { triggerAirStrike } from '../components/game/blaze/airstrike';
 import { addChronosLifelineEffects } from '../components/game/chronos/lifeline';
+import {
+  createRemoteHeroBatchBenchmarkRunner,
+  type RemoteHeroBatchBenchmarkFrameStats,
+} from '../components/game/RemoteHeroBatchRenderer';
+import { getVisualQualityConfig } from '../components/game/visualQuality';
 
 type BenchmarkMetricValue =
   | number
@@ -49,17 +59,38 @@ interface BenchmarkSummary {
 
 const PLAYER_COUNT = 30;
 const VISIBLE_FIGHTERS = 6;
+const DENSE_PLAYER_COUNT = 96;
+const DENSE_VISIBLE_FIGHTERS = 24;
+const BR_FULL_ROSTER_PLAYER_COUNT = getGameplayModeRules('battle_royal').maxPlayers;
+const REPORTED_CLUSTER_VISIBLE_FIGHTERS = 9;
 const SAMPLE_FRAMES = 360;
 const WARMUP_FRAMES = 60;
 const PROJECTILE_QUERIES_PER_FRAME = 48;
+const DENSE_PROJECTILE_QUERIES_PER_FRAME = 192;
+const REMOTE_TRANSFORM_PLAYER_COUNT = 96;
+const REMOTE_TRANSFORM_HISTORY_SNAPSHOTS = 12;
+const REMOTE_TRANSFORM_WALL_RUN_SIDES = [0, 1, -1] as const;
 const ABILITY_BURST_ITERATIONS = 180;
 const EFFECT_BURST_ITERATIONS = 80;
 const HEROES: HeroId[] = ['phantom', 'hookshot', 'blaze', 'chronos'];
+const BR_REMOTE_HERO_CAMERA_POSITION = vec3(0, 5.5, -2);
 
 const BUDGETS = {
   combatVisualCache: {
     p99Ms: 6,
     maxMs: 30,
+  },
+  denseCombatVisualCache: {
+    p99Ms: 12,
+    maxMs: 60,
+  },
+  remoteTransformSampling: {
+    p99Ms: 2,
+    maxMs: 10,
+  },
+  remoteHeroBatchCpu: {
+    p99Ms: 8,
+    maxMs: 40,
   },
   abilityBurstStore: {
     p99Ms: 6,
@@ -106,9 +137,23 @@ function vec3(x: number, y: number, z: number): { x: number; y: number; z: numbe
   return { x, y, z };
 }
 
-function makePlayer(index: number): Player {
+function createSampledRemoteTransform(): SampledRemoteTransform {
+  return {
+    position: vec3(0, 0, 0),
+    velocity: vec3(0, 0, 0),
+    lookYaw: 0,
+    lookPitch: 0,
+    movementBits: 0,
+    wallRunSide: 0,
+    movementEpoch: 0,
+    extrapolatedMs: 0,
+    stale: false,
+  };
+}
+
+function makePlayer(index: number, visibleFighters = VISIBLE_FIGHTERS): Player {
   const team = BATTLE_ROYAL_TEAM_IDS[Math.floor(index / 3) % BATTLE_ROYAL_TEAM_IDS.length] ?? 'br_01';
-  const visible = index < VISIBLE_FIGHTERS;
+  const visible = index < visibleFighters;
   const side = index % 2 === 0 ? -1 : 1;
   const lane = Math.floor(index / 2);
   const x = visible ? side * (3 + lane * 0.8) : side * (80 + index * 3);
@@ -159,9 +204,9 @@ function makePlayer(index: number): Player {
   };
 }
 
-function setupBattleRoyalStore(): Player[] {
+function setupBattleRoyalStore(playerCount = PLAYER_COUNT, visibleFighters = VISIBLE_FIGHTERS): Player[] {
   clearVisualState();
-  const players = Array.from({ length: PLAYER_COUNT }, (_, index) => makePlayer(index));
+  const players = Array.from({ length: playerCount }, (_, index) => makePlayer(index, visibleFighters));
   const playerMap = new Map(players.map((player) => [player.id, player]));
   useGameStore.setState({
     ...projectileInitialState,
@@ -238,7 +283,17 @@ function makeChronosPulse(id: string, owner: Player, now: number): ChronosPulseD
   };
 }
 
-function runCombatVisualCacheScenario(players: readonly Player[]): BenchmarkSummary {
+function runCombatVisualCacheScenario(
+  players: readonly Player[],
+  options: {
+    name?: string;
+    visibleFighters?: number;
+    projectileQueriesPerFrame?: number;
+    budget?: { p99Ms: number; maxMs: number };
+  } = {}
+): BenchmarkSummary {
+  const visibleFighters = options.visibleFighters ?? VISIBLE_FIGHTERS;
+  const projectileQueriesPerFrame = options.projectileQueriesPerFrame ?? PROJECTILE_QUERIES_PER_FRAME;
   const samples: number[] = [];
   const playerMap = useGameStore.getState().players;
   let hits = 0;
@@ -247,8 +302,8 @@ function runCombatVisualCacheScenario(players: readonly Player[]): BenchmarkSumm
     const frameKey = 10_000 + frame;
     const cache = rebuildCombatVisualFrameCache(playerMap.values(), frameKey, frameKey, playerMap.size);
 
-    for (let queryIndex = 0; queryIndex < PROJECTILE_QUERIES_PER_FRAME; queryIndex++) {
-      const owner = players[queryIndex % VISIBLE_FIGHTERS] ?? players[0];
+    for (let queryIndex = 0; queryIndex < projectileQueriesPerFrame; queryIndex++) {
+      const owner = players[queryIndex % visibleFighters] ?? players[0];
       const direction = directionFor(queryIndex);
       const hit = findCombatVisualEnemyPlayerHit(
         cache,
@@ -268,13 +323,269 @@ function runCombatVisualCacheScenario(players: readonly Player[]): BenchmarkSumm
     if (frame >= WARMUP_FRAMES) samples.push(durationMs);
   }
 
-  return summarize('br_canvas_combat_visual_cache_3v3_projectiles', samples, BUDGETS.combatVisualCache, {
+  return summarize(options.name ?? 'br_canvas_combat_visual_cache_3v3_projectiles', samples, options.budget ?? BUDGETS.combatVisualCache, {
     players: playerMap.size,
-    visibleFighters: VISIBLE_FIGHTERS,
-    projectileQueriesPerFrame: PROJECTILE_QUERIES_PER_FRAME,
+    visibleFighters,
+    projectileQueriesPerFrame,
     hits,
-    combatTeamBuckets: visualStore.getState().combatFrameCache.byTeam.size,
+    combatSpatialBuckets: visualStore.getState().combatFrameCache.activeBuckets.length,
   });
+}
+
+function seedRemoteTransformHistories(playerCount: number): {
+  ids: string[];
+  targets: SampledRemoteTransform[];
+  latestReceivedAtMs: number;
+} {
+  clearVisualState();
+  const ids: string[] = [];
+  const targets: SampledRemoteTransform[] = [];
+  const firstServerTime = 40_000;
+  const firstReceivedAtMs = 80_000;
+
+  for (let playerIndex = 0; playerIndex < playerCount; playerIndex++) {
+    const playerId = `br-remote-${playerIndex}`;
+    ids.push(playerId);
+    targets.push(createSampledRemoteTransform());
+
+    for (let snapshotIndex = 0; snapshotIndex < REMOTE_TRANSFORM_HISTORY_SNAPSHOTS; snapshotIndex++) {
+      const serverTime = firstServerTime + snapshotIndex * 50;
+      const receivedAtMs = firstReceivedAtMs + snapshotIndex * 50;
+      addRemoteTransformSnapshot(
+        playerId,
+        {
+          serverTick: serverTime / 50,
+          serverTime,
+          position: vec3(playerIndex * 0.45 + snapshotIndex * 0.08, 1, playerIndex * 0.22),
+          velocity: vec3(1 + (playerIndex % 4) * 0.1, 0, -0.4),
+          lookYaw: playerIndex * 0.05 + snapshotIndex * 0.01,
+          lookPitch: (playerIndex % 5) * 0.02,
+          movementBits: snapshotIndex,
+          wallRunSide: REMOTE_TRANSFORM_WALL_RUN_SIDES[playerIndex % REMOTE_TRANSFORM_WALL_RUN_SIDES.length],
+          movementEpoch: Math.floor(snapshotIndex / 4),
+        },
+        receivedAtMs
+      );
+    }
+  }
+
+  return {
+    ids,
+    targets,
+    latestReceivedAtMs: firstReceivedAtMs + (REMOTE_TRANSFORM_HISTORY_SNAPSHOTS - 1) * 50,
+  };
+}
+
+function runRemoteTransformSamplingScenario(): BenchmarkSummary {
+  const { ids, targets, latestReceivedAtMs } = seedRemoteTransformHistories(REMOTE_TRANSFORM_PLAYER_COUNT);
+  const samples: number[] = [];
+  let sampledCount = 0;
+  let staleSamples = 0;
+
+  for (let frame = 0; frame < WARMUP_FRAMES + SAMPLE_FRAMES; frame++) {
+    const frameOffsetMs = frame % 3 === 0 ? 16 : frame % 3 === 1 ? -25 : -75;
+    const nowMs = latestReceivedAtMs + MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS + frameOffsetMs;
+    const startedAt = performance.now();
+    for (let playerIndex = 0; playerIndex < ids.length; playerIndex++) {
+      const target = targets[playerIndex] ?? targets[0];
+      if (sampleRemoteTransformInto(ids[playerIndex] ?? '', target, nowMs)) {
+        sampledCount++;
+        if (target.stale) staleSamples++;
+      }
+    }
+    const durationMs = performance.now() - startedAt;
+    if (frame >= WARMUP_FRAMES) samples.push(durationMs);
+  }
+
+  return summarize('br_canvas_remote_transform_sampling_96_players', samples, BUDGETS.remoteTransformSampling, {
+    players: REMOTE_TRANSFORM_PLAYER_COUNT,
+    snapshotsPerPlayer: REMOTE_TRANSFORM_HISTORY_SNAPSHOTS,
+    samplesPerFrame: ids.length,
+    sampledCount,
+    staleSamples,
+  });
+}
+
+type RemoteHeroBenchmarkQualityProfile = 'balanced' | 'competitive';
+
+function getRemotePlayerBenchmarkConfig(graphicsPreset: RemoteHeroBenchmarkQualityProfile) {
+  return getVisualQualityConfig({
+    resolutionScale: 'medium',
+    antialiasing: true,
+    shadowQuality: 'medium',
+    reflectionQuality: 'medium',
+    environmentQuality: 'medium',
+    materialQuality: 'medium',
+    graphicsPreset,
+  }).remotePlayers;
+}
+
+function prepareDenseRemoteHeroPlayers(players: readonly Player[], visibleFighters: number): void {
+  for (let index = 0; index < players.length; index++) {
+    const player = players[index];
+    if (!player) continue;
+    const isVisibleFighter = index < visibleFighters;
+    const angle = index * 0.47;
+    const speed = isVisibleFighter ? 5 + (index % 5) * 0.75 : 0.25;
+    player.lookYaw = angle + Math.PI;
+    player.lookPitch = isVisibleFighter ? Math.sin(angle) * 0.12 : 0;
+    player.velocity.x = Math.sin(angle) * speed;
+    player.velocity.y = index % 11 === 0 && isVisibleFighter ? 0.8 : 0;
+    player.velocity.z = Math.cos(angle) * speed;
+    player.hasFlag = isVisibleFighter && index % 13 === 0;
+    player.onFireUntil = isVisibleFighter && index % 7 === 0 ? Number.MAX_SAFE_INTEGER : undefined;
+    player.movement = {
+      ...player.movement,
+      isGrounded: !(isVisibleFighter && index % 11 === 0),
+      isSprinting: isVisibleFighter && index % 3 !== 1,
+      isCrouching: isVisibleFighter && index % 10 === 0,
+      isSliding: isVisibleFighter && index % 9 === 0,
+      slideTimeRemaining: isVisibleFighter && index % 9 === 0 ? 0.35 : 0,
+      isWallRunning: false,
+      wallRunSide: null,
+      isGrappling: isVisibleFighter && index % 17 === 0,
+      grapplePoint: isVisibleFighter && index % 17 === 0
+        ? vec3(player.position.x + 4, player.position.y + 3, player.position.z - 2)
+        : null,
+      isJetpacking: isVisibleFighter && index % 19 === 0,
+      jetpackFuel: isVisibleFighter && index % 19 === 0 ? 0.6 : 0,
+      isGliding: false,
+    };
+  }
+}
+
+function animateDenseRemoteHeroPlayers(players: readonly Player[], visibleFighters: number, frame: number): void {
+  const time = frame / 60;
+  for (let index = 0; index < visibleFighters; index++) {
+    const player = players[index];
+    if (!player) continue;
+    const radius = 8 + (index % 8) * 1.4;
+    const angle = time * (0.55 + (index % 4) * 0.08) + index * 0.53;
+    player.position.x = Math.sin(angle) * radius;
+    player.position.z = -3 + Math.cos(angle) * radius * 0.72;
+    player.lookYaw = angle + Math.PI * 0.5;
+    player.lookPitch = Math.sin(time * 1.7 + index) * 0.14;
+    player.velocity.x = Math.cos(angle) * radius * 0.45;
+    player.velocity.z = -Math.sin(angle) * radius * 0.32;
+    player.movement.isSliding = index % 9 === 0 && frame % 120 < 42;
+    player.movement.isCrouching = !player.movement.isSliding && index % 10 === 0 && frame % 150 < 70;
+    player.movement.isSprinting = !player.movement.isCrouching && index % 3 !== 1;
+  }
+}
+
+function seedDenseRemoteHeroCombatActivity(
+  players: readonly Player[],
+  visibleFighters: number,
+  nowMs: number
+): void {
+  for (let index = 0; index < visibleFighters; index++) {
+    const player = players[index];
+    if (!player) continue;
+    triggerRemotePlayerAttack(player.id, index % 2 === 0 ? 'basic_attack' : 'secondary_attack', {
+      side: index % 2 === 0 ? 1 : -1,
+      startedAtMs: nowMs,
+    });
+    if (player.heroId === 'chronos' && index % 6 === 3) {
+      setChronosAegisVisualState(player.id, true, nowMs, 0.75, {
+        renderWorldEffect: true,
+      });
+    }
+  }
+}
+
+function runRemoteHeroBatchScenario(options: {
+  name: string;
+  playerCount: number;
+  visibleFighters: number;
+  resourceScope: 'allAlive' | 'visibleOnly';
+  qualityProfile?: RemoteHeroBenchmarkQualityProfile;
+  cardinalityBudget?: {
+    maxMountedInstancedMeshes: number;
+    maxEmptyMountedInstancedMeshes: number;
+  };
+}): BenchmarkSummary {
+  const players = setupBattleRoyalStore(options.playerCount, options.visibleFighters);
+  prepareDenseRemoteHeroPlayers(players, options.visibleFighters);
+  const renderPlayers = players.filter((player) => player.visibility === 'visible');
+  const resourcePlayers = options.resourceScope === 'visibleOnly' ? renderPlayers : players;
+  const qualityProfile = options.qualityProfile ?? 'balanced';
+  const runner = createRemoteHeroBatchBenchmarkRunner({
+    players: renderPlayers,
+    resourcePlayers,
+    isBattleRoyal: true,
+    localPlayerId: 'br-player-0',
+    localPlayerTeam: players[0]?.team ?? null,
+    config: getRemotePlayerBenchmarkConfig(qualityProfile),
+    cameraPosition: BR_REMOTE_HERO_CAMERA_POSITION,
+  });
+  const samples: number[] = [];
+  let lastStats: RemoteHeroBatchBenchmarkFrameStats | null = null;
+  let maxBodyPlayers = 0;
+  let maxOutlinePlayers = 0;
+  let maxNormalMatrixWrites = 0;
+  let maxOutlineMatrixWrites = 0;
+
+  try {
+    for (let frame = 0; frame < WARMUP_FRAMES + SAMPLE_FRAMES; frame++) {
+      const nowMs = 120_000 + frame * (1000 / 60);
+      animateDenseRemoteHeroPlayers(players, options.visibleFighters, frame);
+      if (frame % 90 === 0) {
+        seedDenseRemoteHeroCombatActivity(players, options.visibleFighters, nowMs);
+      }
+
+      const startedAt = performance.now();
+      lastStats = runner.runFrame({
+        deltaSeconds: 1 / 60,
+        elapsedSeconds: frame / 60,
+        nowMs,
+        cameraPosition: BR_REMOTE_HERO_CAMERA_POSITION,
+      });
+      const durationMs = performance.now() - startedAt;
+
+      if (frame >= WARMUP_FRAMES) {
+        samples.push(durationMs);
+        maxBodyPlayers = Math.max(maxBodyPlayers, lastStats.bodyPlayers);
+        maxOutlinePlayers = Math.max(maxOutlinePlayers, lastStats.outlinePlayers);
+        maxNormalMatrixWrites = Math.max(maxNormalMatrixWrites, lastStats.normalMatrixWrites);
+        maxOutlineMatrixWrites = Math.max(maxOutlineMatrixWrites, lastStats.outlineMatrixWrites);
+      }
+    }
+  } finally {
+    runner.dispose();
+  }
+
+  const mountedInstancedMeshes = lastStats?.mountedInstancedMeshes ?? 0;
+  const emptyMountedInstancedMeshes = lastStats?.emptyMountedInstancedMeshes ?? 0;
+  const cardinalityBudgetExceeded = options.cardinalityBudget
+    ? mountedInstancedMeshes > options.cardinalityBudget.maxMountedInstancedMeshes ||
+      emptyMountedInstancedMeshes > options.cardinalityBudget.maxEmptyMountedInstancedMeshes
+    : false;
+  const summary = summarize(options.name, samples, BUDGETS.remoteHeroBatchCpu, {
+    players: renderPlayers.length,
+    resourcePlayers: resourcePlayers.length,
+    visibleFighters: options.visibleFighters,
+    resourceScope: options.resourceScope,
+    qualityProfile,
+    groups: lastStats?.groups ?? 0,
+    emptyGroups: lastStats?.emptyGroups ?? 0,
+    normalBatches: lastStats?.normalBatches ?? 0,
+    outlineBatches: lastStats?.outlineBatches ?? 0,
+    instancedBatches: (lastStats?.normalBatches ?? 0) + (lastStats?.outlineBatches ?? 0),
+    mountedInstancedMeshes,
+    emptyMountedInstancedMeshes,
+    batchFinalizations: lastStats?.batchFinalizations ?? 0,
+    cardinalityBudgetExceeded,
+    ...(options.cardinalityBudget ? {
+      mountedInstancedMeshesBudget: options.cardinalityBudget.maxMountedInstancedMeshes,
+      emptyMountedInstancedMeshesBudget: options.cardinalityBudget.maxEmptyMountedInstancedMeshes,
+    } : {}),
+    maxBodyPlayers,
+    maxOutlinePlayers,
+    maxNormalMatrixWrites,
+    maxOutlineMatrixWrites,
+  });
+  if (cardinalityBudgetExceeded) summary.budgetExceeded = true;
+  return summary;
 }
 
 function runAbilityBurstStoreScenario(players: readonly Player[]): BenchmarkSummary {
@@ -388,10 +699,63 @@ function runEffectTriggerScenario(players: readonly Player[]): BenchmarkSummary 
 
 function runBenchmarks(): BenchmarkSummary[] {
   const players = setupBattleRoyalStore();
+  const combatVisualCacheSummary = runCombatVisualCacheScenario(players);
+  const densePlayers = setupBattleRoyalStore(DENSE_PLAYER_COUNT, DENSE_VISIBLE_FIGHTERS);
+  const denseCombatVisualCacheSummary = runCombatVisualCacheScenario(densePlayers, {
+    name: 'br_canvas_combat_visual_cache_dense_skirmish',
+    visibleFighters: DENSE_VISIBLE_FIGHTERS,
+    projectileQueriesPerFrame: DENSE_PROJECTILE_QUERIES_PER_FRAME,
+    budget: BUDGETS.denseCombatVisualCache,
+  });
+  const remoteTransformSamplingSummary = runRemoteTransformSamplingScenario();
+  const abilityPlayers = setupBattleRoyalStore();
   return [
-    runCombatVisualCacheScenario(players),
-    runAbilityBurstStoreScenario(players),
-    runEffectTriggerScenario(players),
+    combatVisualCacheSummary,
+    denseCombatVisualCacheSummary,
+    remoteTransformSamplingSummary,
+    runRemoteHeroBatchScenario({
+      name: 'br_canvas_remote_hero_batch_cpu_8_bot_cluster_full_roster',
+      playerCount: BR_FULL_ROSTER_PLAYER_COUNT,
+      visibleFighters: REPORTED_CLUSTER_VISIBLE_FIGHTERS,
+      resourceScope: 'allAlive',
+      cardinalityBudget: {
+        maxMountedInstancedMeshes: 96,
+        maxEmptyMountedInstancedMeshes: 0,
+      },
+    }),
+    runRemoteHeroBatchScenario({
+      name: 'br_canvas_remote_hero_batch_cpu_8_bot_cluster_visible_resources',
+      playerCount: BR_FULL_ROSTER_PLAYER_COUNT,
+      visibleFighters: REPORTED_CLUSTER_VISIBLE_FIGHTERS,
+      resourceScope: 'visibleOnly',
+      cardinalityBudget: {
+        maxMountedInstancedMeshes: 96,
+        maxEmptyMountedInstancedMeshes: 0,
+      },
+    }),
+    runRemoteHeroBatchScenario({
+      name: 'br_canvas_remote_hero_batch_cpu_dense_skirmish',
+      playerCount: BR_FULL_ROSTER_PLAYER_COUNT,
+      visibleFighters: DENSE_VISIBLE_FIGHTERS,
+      resourceScope: 'allAlive',
+      cardinalityBudget: {
+        maxMountedInstancedMeshes: 96,
+        maxEmptyMountedInstancedMeshes: 0,
+      },
+    }),
+    runRemoteHeroBatchScenario({
+      name: 'br_canvas_remote_hero_batch_cpu_competitive_no_outlines',
+      playerCount: BR_FULL_ROSTER_PLAYER_COUNT,
+      visibleFighters: REPORTED_CLUSTER_VISIBLE_FIGHTERS,
+      resourceScope: 'visibleOnly',
+      qualityProfile: 'competitive',
+      cardinalityBudget: {
+        maxMountedInstancedMeshes: 72,
+        maxEmptyMountedInstancedMeshes: 0,
+      },
+    }),
+    runAbilityBurstStoreScenario(abilityPlayers),
+    runEffectTriggerScenario(abilityPlayers),
   ];
 }
 

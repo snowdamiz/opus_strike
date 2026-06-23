@@ -498,6 +498,7 @@ function collectVoxelAabbs(
 ): MovementAabb[] {
   if (!terrain.getBlockAtWorld) return [];
 
+  const getGroundY = terrain.getGroundY;
   const gx0 = Math.floor((bounds.min.x - origin.x) / voxelSize.x) - 1;
   const gy0 = Math.floor((bounds.min.y - origin.y) / voxelSize.y) - 1;
   const gz0 = Math.floor((bounds.min.z - origin.z) / voxelSize.z) - 1;
@@ -520,34 +521,37 @@ function collectVoxelAabbs(
           const block = terrain.getBlockAtWorld(sample);
           solid = isCollisionBlock(block);
           const blockTopY = origin.y + (y + 1) * voxelSize.y;
+          const walkableBlock = solid && getGroundY
+            ? getBlockDefinition(block).walkable
+            : false;
 
-          if (solid && terrain.getGroundY && getBlockDefinition(block).walkable) {
+          if (solid && walkableBlock) {
             if (blockTopY <= bounds.min.y + SKIN_WIDTH + EPSILON) {
               solid = false;
             }
           }
 
-          if (solid && terrain.getGroundY && getBlockDefinition(block).walkable) {
+          if (solid && walkableBlock && getGroundY) {
             groundProbe.x = sample.x;
             groundProbe.y = bounds.min.y + STEP_HEIGHT + SKIN_WIDTH;
             groundProbe.z = sample.z;
-            const groundY = terrain.getGroundY(groundProbe);
+            const groundY = getGroundY(groundProbe);
             const neighborDistance = Math.max(PLAYER_RADIUS, voxelSize.x, voxelSize.z);
             let lowestNeighborGroundY = groundY;
             groundProbe.x = sample.x - neighborDistance;
             groundProbe.y = sample.y;
             groundProbe.z = sample.z;
-            const leftGroundY = terrain.getGroundY(groundProbe);
+            const leftGroundY = getGroundY(groundProbe);
             if (leftGroundY !== null) lowestNeighborGroundY = lowestNeighborGroundY === null ? leftGroundY : Math.min(lowestNeighborGroundY, leftGroundY);
             groundProbe.x = sample.x + neighborDistance;
-            const rightGroundY = terrain.getGroundY(groundProbe);
+            const rightGroundY = getGroundY(groundProbe);
             if (rightGroundY !== null) lowestNeighborGroundY = lowestNeighborGroundY === null ? rightGroundY : Math.min(lowestNeighborGroundY, rightGroundY);
             groundProbe.x = sample.x;
             groundProbe.z = sample.z - neighborDistance;
-            const backGroundY = terrain.getGroundY(groundProbe);
+            const backGroundY = getGroundY(groundProbe);
             if (backGroundY !== null) lowestNeighborGroundY = lowestNeighborGroundY === null ? backGroundY : Math.min(lowestNeighborGroundY, backGroundY);
             groundProbe.z = sample.z + neighborDistance;
-            const forwardGroundY = terrain.getGroundY(groundProbe);
+            const forwardGroundY = getGroundY(groundProbe);
             if (forwardGroundY !== null) lowestNeighborGroundY = lowestNeighborGroundY === null ? forwardGroundY : Math.min(lowestNeighborGroundY, forwardGroundY);
             const localRise = groundY !== null && lowestNeighborGroundY !== null
               ? groundY - lowestNeighborGroundY

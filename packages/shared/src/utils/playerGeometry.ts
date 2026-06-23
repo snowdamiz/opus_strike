@@ -369,19 +369,14 @@ export function getAimConeHitAgainstPlayerCombatHitbox(
   return hit;
 }
 
-export function doesSegmentHitPlayerCombatHitbox(
+export function doesSegmentHitVerticalCapsule(
   start: Vec3Like,
   direction: Vec3Like,
   distance: number,
-  target: PlayerGeometryTarget,
-  extraRadius = 0
+  center: Vec3Like,
+  radius: number,
+  segmentHalfHeight: number
 ): boolean {
-  const size = getHeroSize(target.heroId);
-  const baseRadius = Math.max(size.width, size.depth) / 2 + PLAYER_COMBAT_HITBOX_PADDING;
-  const radius = baseRadius + extraRadius;
-  const segmentHalfHeight = Math.max(0, size.height / 2 + PLAYER_COMBAT_HITBOX_PADDING - baseRadius);
-  const center = target.position;
-
   if (distance <= 0.0001) {
     const closestY = clamp(
       start.y,
@@ -442,4 +437,20 @@ export function doesSegmentHitPlayerCombatHitbox(
   const closestDy = ry + firstDy * firstT - secondDy * secondT;
   const closestDz = rz + firstDz * firstT;
   return closestDx * closestDx + closestDy * closestDy + closestDz * closestDz <= radiusSq;
+}
+
+export function doesSegmentHitPlayerCombatHitbox(
+  start: Vec3Like,
+  direction: Vec3Like,
+  distance: number,
+  target: PlayerGeometryTarget,
+  extraRadius = 0
+): boolean {
+  const size = getHeroSize(target.heroId);
+  const baseRadius = Math.max(size.width, size.depth) / 2 + PLAYER_COMBAT_HITBOX_PADDING;
+  const radius = baseRadius + extraRadius;
+  const segmentHalfHeight = Math.max(0, size.height / 2 + PLAYER_COMBAT_HITBOX_PADDING - baseRadius);
+  const center = target.position;
+
+  return doesSegmentHitVerticalCapsule(start, direction, distance, center, radius, segmentHalfHeight);
 }
