@@ -238,7 +238,7 @@ function MobileSkillButton({
   fallbackLabel,
   ariaLabel,
   skill,
-  heroColor,
+  accentColor,
   className = '',
   disabled,
 }: {
@@ -246,7 +246,7 @@ function MobileSkillButton({
   fallbackLabel: string;
   ariaLabel: string;
   skill?: HeroSkillItem;
-  heroColor: string;
+  accentColor: string;
   className?: string;
   disabled?: boolean;
 }) {
@@ -261,7 +261,7 @@ function MobileSkillButton({
       {skill ? (
         <HeroSkillIcon
           item={skill}
-          color={heroColor}
+          color={accentColor}
           size="hud"
           className="mobile-skill-icon"
         />
@@ -378,7 +378,7 @@ export function MobileControls({ disabled = false, onOpenMenu, onScoreboardChang
   const setActionPressed = useMobileControlsStore(state => state.setActionPressed);
   const shouldRender = Boolean(controlsAvailable && !disabled && heroId);
   const isTargeting = bombTargeting;
-  const heroTone = heroId ? HUD_HERO_COLORS[heroId] : HUD_HERO_COLORS.phantom;
+  const heroTone = heroId ? HUD_HERO_COLORS[heroId] : HUD_HERO_COLORS.blaze;
 
   const skillItems = useMemo(
     () => (heroId ? getHeroSkillItems(heroId) : []),
@@ -493,21 +493,21 @@ export function MobileControls({ disabled = false, onOpenMenu, onScoreboardChang
             fallbackLabel="E"
             ariaLabel={ability1Skill?.name ?? 'Ability one'}
             skill={ability1Skill}
-            heroColor={heroTone.primary}
+            accentColor={heroTone.primary}
           />
           <MobileSkillButton
             action="ability2"
             fallbackLabel="Q"
             ariaLabel={ability2Skill?.name ?? 'Ability two'}
             skill={ability2Skill}
-            heroColor={heroTone.primary}
+            accentColor={heroTone.primary}
           />
           <MobileSkillButton
             action="ultimate"
             fallbackLabel="F"
             ariaLabel={ultimateSkill?.name ?? 'Ultimate ability'}
             skill={ultimateSkill}
-            heroColor={heroTone.primary}
+            accentColor={heroTone.primary}
             className="mobile-ultimate-button"
           />
         </div>
@@ -528,7 +528,7 @@ export function MobileControls({ disabled = false, onOpenMenu, onScoreboardChang
               fallbackLabel="ALT"
               ariaLabel={secondarySkill?.name ?? 'Secondary fire'}
               skill={secondarySkill}
-              heroColor={heroTone.primary}
+              accentColor={heroTone.primary}
               className="mobile-secondary-button"
             />
             <MobileSkillButton
@@ -536,7 +536,7 @@ export function MobileControls({ disabled = false, onOpenMenu, onScoreboardChang
               fallbackLabel="FIRE"
               ariaLabel={primarySkill?.name ?? 'Primary fire'}
               skill={primarySkill}
-              heroColor={heroTone.primary}
+              accentColor={heroTone.primary}
               className="mobile-primary-button"
             />
           </div>

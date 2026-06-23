@@ -18,7 +18,7 @@ import {
   type Team,
 } from '@voxel-strike/shared';
 import type { LobbyPlayer } from '../../store/types';
-import { FACTIONS, HERO_COLORS, TEAM_FALLBACK_COLORS } from '../../styles/colorTokens';
+import { BLAZE_UI_COLORS, FACTIONS, TEAM_FALLBACK_COLORS } from '../../styles/colorTokens';
 import { RankIcon, getRankForStats } from './RankBadge';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
 
@@ -1129,7 +1129,6 @@ function PlayerCard({
       : 'normal';
   const botTeam: LobbyTeam = player.team === 'blue' ? 'blue' : 'red';
   const botHero: LobbyBotHero = isHeroId(player.heroId) ? player.heroId : '';
-  const botHeroColor = botHero ? HERO_COLORS[botHero] : color;
   const botHeroOptions = useMemo(() => BOT_HERO_OPTIONS.map((option) => {
     const heroId = option.value;
     if (!heroId || heroId === botHero || !pickedHeroIds.has(heroId)) {
@@ -1203,7 +1202,7 @@ function PlayerCard({
               label={`${player.name} hero`}
               value={botHero}
               options={botHeroOptions}
-              accentColor={botHeroColor}
+              accentColor={BLAZE_UI_COLORS.primary}
               widthClass="w-[4.65rem]"
               onChange={(heroId) => onBotHeroChange?.(heroId)}
             />

@@ -52,7 +52,7 @@ import type {
   PartyStateSnapshot,
   RankedSeasonSnapshot,
 } from '@voxel-strike/shared';
-import { DISCORD_AUTH_COLORS, HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
+import { BLAZE_UI_COLORS, DISCORD_AUTH_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 import { usePwaInstallPrompt } from '../../pwa';
 import { PwaInstallToast } from './PwaInstallToast';
 import {
@@ -839,8 +839,6 @@ export function MainLobby() {
 
   const handleBack = () => setAppPhase('menu');
 
-  const heroColor = HERO_COLORS[featuredHero];
-
   return (
     <div className="menu-screen bg-strike-bg">
       <LobbyBackdrop />
@@ -921,7 +919,6 @@ export function MainLobby() {
           <PlayTab
             isLoading={isLoading}
             featuredHero={featuredHero}
-            heroColor={heroColor}
             heroAnimationMode={heroAnimationMode}
             rankedSeason={rankedSeason}
             playerName={playerName || user?.name || 'Guest'}
@@ -1014,7 +1011,6 @@ export function MainLobby() {
 interface PlayTabProps {
   isLoading: boolean;
   featuredHero: HeroId;
-  heroColor: string;
   heroAnimationMode: HeroPreviewAnimationMode;
   rankedSeason: RankedSeasonSnapshot;
   playerName: string;
@@ -1055,7 +1051,6 @@ interface PlayTabProps {
 function PlayTab({
   isLoading,
   featuredHero,
-  heroColor,
   heroAnimationMode,
   rankedSeason,
   playerName,
@@ -1174,7 +1169,6 @@ function PlayTab({
     <div className={`play-tab-shell h-full menu-content ${party ? 'is-party-mode' : 'is-solo-mode'}`}>
       <PlayActionStack
         error={error}
-        heroColor={heroColor}
         isLoading={isLoading}
         isAuthenticated={isAuthenticated}
         hasPhantomAccount={hasPhantomAccount}
@@ -1263,7 +1257,6 @@ function PartyLineup({
     <div className="party-lineup-stage">
       <div className="party-lineup-grid">
         {visibleMembers.map((member) => {
-          const heroColor = HERO_COLORS[member.heroId];
           const hero = HERO_DEFINITIONS[member.heroId];
           const isLocalMember = member.userId === localUserId;
           const kickAction = !isLocalMember && onKickMember
@@ -1285,7 +1278,6 @@ function PartyLineup({
               <Suspense fallback={null}>
                 <FeaturedHeroPreview
                   heroId={member.heroId}
-                  accentColor={heroColor}
                   initialYaw={Math.PI - 0.12}
                   animationMode={heroAnimationMode}
                   rank={member.rank}
@@ -1378,7 +1370,6 @@ function PartyHeroPicker({
       {ALL_HERO_IDS.map((heroId) => {
         const selected = heroId === selectedHero;
         const locked = !selected && lockedHeroIds.has(heroId);
-        const heroColor = HERO_COLORS[heroId];
         return (
           <button
             key={heroId}
@@ -1393,7 +1384,7 @@ function PartyHeroPicker({
             }}
             className={`party-hero-picker-button${selected ? ' is-selected' : ''}${locked ? ' is-locked' : ''}`}
             style={selected ? {
-              '--party-hero-accent': heroColor,
+              '--party-hero-accent': BLAZE_UI_COLORS.primary,
             } as CSSProperties : undefined}
           >
             <HeroIcon heroId={heroId} size={21} />
@@ -1572,7 +1563,6 @@ function getModeTitle(input: {
 
 function PlayActionStack({
   error,
-  heroColor,
   isLoading,
   isAuthenticated,
   hasPhantomAccount,
@@ -1602,7 +1592,6 @@ function PlayActionStack({
   onMobilePwaInstall,
 }: {
   error: string | null;
-  heroColor: string;
   isLoading: boolean;
   isAuthenticated: boolean;
   hasPhantomAccount: boolean;
@@ -1664,7 +1653,6 @@ function PlayActionStack({
     <div className="play-action-stack">
       <PlayPanelHeading />
       <PlayModeSelector
-        heroColor={heroColor}
         isAuthenticated={isAuthenticated}
         hasPhantomAccount={hasPhantomAccount}
         requiresTutorial={requiresTutorial}
@@ -1698,8 +1686,8 @@ function PlayActionStack({
             className="play-main-cta group"
             aria-describedby={effectivePrimaryDisabledReason ? 'play-main-cta-disabled-reason' : undefined}
             style={{
-              background: `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`,
-              boxShadow: `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`,
+              background: `linear-gradient(135deg, ${BLAZE_UI_COLORS.primary}, ${BLAZE_UI_COLORS.primary}dd)`,
+              boxShadow: `0 0 60px ${BLAZE_UI_COLORS.primary}40, inset 0 1px 0 rgba(255,255,255,0.2)`,
             }}
           >
             <span
@@ -1743,7 +1731,6 @@ function PlayActionStack({
 }
 
 function PlayModeSelector({
-  heroColor,
   isAuthenticated,
   hasPhantomAccount,
   requiresTutorial,
@@ -1757,7 +1744,6 @@ function PlayModeSelector({
   onSelectMode,
   onSetBotFillEnabled,
 }: {
-  heroColor: string;
   isAuthenticated: boolean;
   hasPhantomAccount: boolean;
   requiresTutorial: boolean;
@@ -1789,15 +1775,10 @@ function PlayModeSelector({
           rankedTokenHoldStatus,
           rankedTokenHoldError,
         });
-        const optionStyle = selected ? {
-          '--play-mode-accent': heroColor,
-        } as CSSProperties : undefined;
-
         return (
           <div
             key={mode}
             className="play-mode-option-shell"
-            style={optionStyle}
           >
             <button
               type="button"

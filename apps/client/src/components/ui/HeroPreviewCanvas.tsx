@@ -8,7 +8,7 @@ import type { HeroId, PublicRankSnapshot, Team } from '@voxel-strike/shared';
 import { HeroVoxelBody } from '../game/HeroVoxelBody';
 import type { HeroAnimationMode, HeroWalkDirection } from '../game/HeroVoxelBody';
 import { suppressExpectedContextLossLog } from '../game/webglLifecycle';
-import { HERO_COLOR_SCHEMES, HERO_PREVIEW_COLORS } from '../../styles/colorTokens';
+import { BLAZE_UI_COLORS, HERO_PREVIEW_COLORS } from '../../styles/colorTokens';
 import { useHeroPreviewRotation } from './useHeroPreviewRotation';
 
 type HeroPreviewSize = 'featured' | 'detail' | 'compact' | 'card';
@@ -33,7 +33,6 @@ interface HeroPreviewCanvasProps {
   idleAnimation?: boolean;
   initialYaw?: number;
   className?: string;
-  accentColor?: string;
   showShadow?: boolean;
   isBot?: boolean;
   hasFlag?: boolean;
@@ -298,7 +297,6 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   idleAnimation = true,
   initialYaw = Math.PI - 0.24,
   className = '',
-  accentColor,
   showShadow = true,
   isBot = false,
   hasFlag = false,
@@ -309,7 +307,6 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   'aria-label': ariaLabel,
 }: HeroPreviewCanvasProps) {
   const config = PREVIEW_CONFIG[size];
-  const resolvedAccentColor = accentColor ?? HERO_COLOR_SCHEMES[heroId].primary;
   const [isCanvasReady, setIsCanvasReady] = useState(false);
   const [shouldMountStage, setShouldMountStage] = useState(false);
   const [stageElement] = useState(createPreviewStageElement);
@@ -322,7 +319,7 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   const platformRankKey = platformRank ? `${platformRank.tier}:${platformRank.division ?? 0}:${platformRank.isRanked}` : 'none';
   const previewReadyKey = `${heroId}:${team}:${size}:${animationMode}:${isBot}:${hasFlag}:${postureScaleY}:${platformRankKey}`;
   const previewShellStyle = {
-    '--hero-preview-accent': resolvedAccentColor,
+    '--hero-preview-accent': BLAZE_UI_COLORS.primary,
   } as CSSProperties;
   const { yaw, isDragging, interactionProps } = useHeroPreviewRotation({
     enabled: interactive,
@@ -466,7 +463,6 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
             yaw={yaw}
             isDragging={isDragging}
             idleRotation={shouldIdleRotate}
-            accentColor={resolvedAccentColor}
             config={config}
             showShadow={showShadow}
             isBot={isBot}
@@ -528,7 +524,6 @@ interface HeroPreviewSceneProps {
   yaw: number;
   isDragging: boolean;
   idleRotation: boolean;
-  accentColor: string;
   config: PreviewConfig;
   showShadow: boolean;
   isBot: boolean;
@@ -545,7 +540,6 @@ function HeroPreviewScene({
   yaw,
   isDragging,
   idleRotation,
-  accentColor,
   config,
   showShadow,
   isBot,
@@ -635,7 +629,7 @@ function HeroPreviewScene({
     <>
       <PreviewCamera config={config} fov={previewFov} />
       <ambientLight intensity={1.45} />
-      <hemisphereLight args={['white', HERO_COLOR_SCHEMES[heroId].secondary, 1.4]} />
+      <hemisphereLight args={['white', BLAZE_UI_COLORS.secondary, 1.4]} />
       <directionalLight
         color="white"
         position={[3, 4.5, 4.5]}
@@ -644,8 +638,8 @@ function HeroPreviewScene({
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
       />
-      <pointLight color={accentColor} position={[-2.4, 1.4, 2.2]} intensity={2.2} distance={6} />
-      <pointLight color={accentColor} position={[2, 2.2, -1.8]} intensity={1.15} distance={5} />
+      <pointLight color={BLAZE_UI_COLORS.primary} position={[-2.4, 1.4, 2.2]} intensity={2.2} distance={6} />
+      <pointLight color={BLAZE_UI_COLORS.primary} position={[2, 2.2, -1.8]} intensity={1.15} distance={5} />
 
       {platformRank && (
         <HeroRankPlatform

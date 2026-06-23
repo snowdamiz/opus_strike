@@ -14,7 +14,7 @@ import { useWallet } from '../../contexts/WalletContext';
 import { formatKeybind } from '../../utils/keybindings';
 import { isTutorialOfflineTrainingHeroId } from '../../utils/tutorialOfflineCombatRuntime';
 import { visualStore } from '../../store/visualStore';
-import { HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
+import { BLAZE_UI_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 import {
   MOVEMENT_CHECKPOINT_Z,
   TUTORIAL_TASK_IDS,
@@ -215,7 +215,7 @@ function TutorialCompletionOverlay({
   saveError: string | null;
   onComplete: () => void;
 }) {
-  const ctaColor = HERO_COLORS.blaze;
+  const ctaColor = BLAZE_UI_COLORS.primary;
 
   return (
     <div

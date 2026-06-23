@@ -5,7 +5,6 @@ import type { MatchMode } from '@voxel-strike/shared';
 import { config } from '../config/environment';
 import { loggers } from '../utils/logger';
 
-export type SocialTab = 'friends' | 'requests' | 'invites';
 export type RelationshipState = 'none' | 'friend' | 'pending_incoming' | 'pending_outgoing';
 
 export interface SocialRank {

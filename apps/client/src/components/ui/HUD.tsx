@@ -14,7 +14,7 @@ import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkil
 import { useCombatFeedbackStore, type KillFeedEvent } from '../../store/combatFeedbackStore';
 import { useSettingsStore, type CrosshairStyle } from '../../store/settingsStore';
 import { useHudNow } from '../../store/hudSignals';
-import { FACTIONS, HUD_HERO_COLORS as HERO_COLORS } from '../../styles/colorTokens';
+import { FACTIONS, HUD_HERO_COLORS } from '../../styles/colorTokens';
 import { Minimap } from './minimap/Minimap';
 import { VoiceHud } from './VoiceHud';
 import { formatKeybind } from '../../utils/keybindings';
@@ -978,8 +978,8 @@ export function HUD() {
   const isLowHealth = healthPercent < 30;
   const isCriticalHealth = healthPercent < 15;
   const ultimatePercent = localPlayer.ultimateCharge ?? 0;
-  const heroColors = localPlayer.heroId ? HERO_COLORS[localPlayer.heroId] : HERO_COLORS.phantom;
   const heroSkillItems = localPlayer.heroId ? getHeroSkillItems(localPlayer.heroId) : [];
+  const skillAccent = localPlayer.heroId ? HUD_HERO_COLORS[localPlayer.heroId].primary : HUD_HERO_COLORS.blaze.primary;
   const showChronosLifelineHelper = localPlayer.heroId === 'chronos' && chronosLifelineQueued;
   const isCaptureTheFlag = gameplayMode === 'capture_the_flag';
   const showFloatingFlag = localPlayer.hasFlag;
@@ -1288,7 +1288,7 @@ export function HUD() {
                 abilityState={skill.abilityId ? localPlayer.abilities?.[skill.abilityId] : undefined}
                 clientCooldownEnd={skill.abilityId ? clientCooldowns[skill.abilityId] : undefined}
                 clientCharges={skill.abilityId ? clientCharges[skill.abilityId] : undefined}
-                heroColor={heroColors.primary}
+                accentColor={skillAccent}
                 ultimateCharge={ultimatePercent}
                 ultimateEffectActive={ultimateEffectActive}
               />
@@ -1342,7 +1342,7 @@ function HUDSkillSlot({
   abilityState,
   clientCooldownEnd,
   clientCharges,
-  heroColor,
+  accentColor,
   ultimateCharge,
   ultimateEffectActive,
 }: {
@@ -1350,7 +1350,7 @@ function HUDSkillSlot({
   abilityState?: AbilityState;
   clientCooldownEnd?: number;
   clientCharges?: number;
-  heroColor: string;
+  accentColor: string;
   ultimateCharge: number;
   ultimateEffectActive?: boolean;
 }) {
@@ -1419,7 +1419,7 @@ function HUDSkillSlot({
       <div className="relative">
         <HeroSkillIcon
           item={skill}
-          color={heroColor}
+          color={accentColor}
           size="hud"
           muted={!isUsable && !showActiveTimer}
           active={isActive || isUltReady}
@@ -1433,8 +1433,8 @@ function HUDSkillSlot({
           <div
             className="absolute inset-0 rounded-md z-10"
             style={{
-              background: `radial-gradient(circle at center, ${heroColor}44 0%, rgba(22, 163, 74, 0.22) 46%, transparent 72%)`,
-              boxShadow: `inset 0 0 0 1px ${heroColor}99, 0 0 16px ${heroColor}66`,
+              background: `radial-gradient(circle at center, ${accentColor}44 0%, rgba(22, 163, 74, 0.22) 46%, transparent 72%)`,
+              boxShadow: `inset 0 0 0 1px ${accentColor}99, 0 0 16px ${accentColor}66`,
             }}
           />
         )}
@@ -1454,7 +1454,7 @@ function HUDSkillSlot({
               cy="50"
               r="44"
               fill="none"
-              stroke={heroColor}
+              stroke={accentColor}
               strokeWidth="8"
               strokeLinecap="round"
               strokeDasharray={`${activeProgress * 276} 276`}
@@ -1531,7 +1531,7 @@ function HUDSkillSlot({
           <div
             className="absolute inset-0 rounded-md z-10 animate-pulse"
             style={{
-              background: `radial-gradient(circle at center, ${heroColor}55 0%, transparent 62%)`,
+              background: `radial-gradient(circle at center, ${accentColor}55 0%, transparent 62%)`,
             }}
           />
         )}
