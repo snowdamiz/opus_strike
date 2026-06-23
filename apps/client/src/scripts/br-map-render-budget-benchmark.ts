@@ -22,10 +22,10 @@ const DEFAULT_BENCHMARK_SEED = 20260611;
 const seed = Number.parseInt(process.env.BR_MAP_BENCH_SEED ?? `${DEFAULT_BENCHMARK_SEED}`, 10) >>> 0;
 const MAX_RUNTIME_TERRAIN_TRIANGLE_BUDGET_RATIO = 0.85;
 const DEPLOYMENT_TERRAIN_TRIANGLE_BUDGETS: Record<GraphicsPreset, number> = {
-  potato: 520_000,
-  competitive: 850_000,
-  balanced: 1_100_000,
-  cinematic: 1_500_000,
+  potato: 2_200_000,
+  competitive: 2_800_000,
+  balanced: 3_500_000,
+  cinematic: 4_400_000,
 };
 const HIGH_VANTAGE_SAMPLE_COUNT = 6;
 const HIGH_VANTAGE_MIN_SPACING_METERS = 38;

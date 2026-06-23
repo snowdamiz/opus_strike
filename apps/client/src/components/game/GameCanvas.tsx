@@ -752,24 +752,24 @@ const BATTLE_ROYAL_DEPLOYMENT_PERFORMANCE_BUDGETS: Record<
   Pick<WorldPerformanceBudget, 'drawCalls' | 'triangles' | 'maxGeneratedRegionMeshesPerFrame'>
 > = {
   potato: {
-    drawCalls: 450,
-    triangles: 520_000,
-    maxGeneratedRegionMeshesPerFrame: 2,
+    drawCalls: 900,
+    triangles: 2_200_000,
+    maxGeneratedRegionMeshesPerFrame: 6,
   },
   competitive: {
-    drawCalls: 620,
-    triangles: 850_000,
-    maxGeneratedRegionMeshesPerFrame: 3,
+    drawCalls: 1_100,
+    triangles: 2_800_000,
+    maxGeneratedRegionMeshesPerFrame: 7,
   },
   balanced: {
-    drawCalls: 780,
-    triangles: 1_100_000,
-    maxGeneratedRegionMeshesPerFrame: 4,
+    drawCalls: 1_400,
+    triangles: 3_500_000,
+    maxGeneratedRegionMeshesPerFrame: 9,
   },
   cinematic: {
-    drawCalls: 1_100,
-    triangles: 1_500_000,
-    maxGeneratedRegionMeshesPerFrame: 5,
+    drawCalls: 1_700,
+    triangles: 4_400_000,
+    maxGeneratedRegionMeshesPerFrame: 11,
   },
 };
 

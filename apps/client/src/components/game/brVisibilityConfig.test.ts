@@ -6,6 +6,7 @@ import type {
 } from '@voxel-strike/shared';
 import { getBattleRoyalVisibilityMode } from './battleRoyalVisibilityMode';
 import { getBattleRoyalTerrainLodDistances } from './battleRoyalTerrainLod';
+import { shouldHideBattleRoyalRegionForMacroTile } from './procedural/VoxelMap';
 import {
   BATTLE_ROYAL_DEPLOYMENT_VISIBILITY_CONFIG,
   BATTLE_ROYAL_VISIBILITY_CONFIG,
@@ -41,9 +42,13 @@ for (const profile of orderedProfiles) {
   assert.equal(deploymentConfig.adaptiveVisibilityScale, 1, `${profile} deployment config should start at neutral adaptive scale`);
   assert.ok(deploymentConfig.cameraFar < DEFAULT_CAMERA_FAR, `${profile} deployment config should reduce the far plane`);
   assert.ok(deploymentConfig.terrainLodFullDistance < deploymentConfig.terrainLodCoarseDistance, `${profile} deployment should keep only a full-detail bubble`);
+  assert.ok(deploymentConfig.terrainLodFullDistance + 10 <= deploymentConfig.terrainLodCoarseDistance, `${profile} deployment should leave enough room for full-to-coarse LOD`);
   assert.ok(deploymentConfig.terrainLodCoarseDistance <= deploymentConfig.terrainLodUltraCoarseDistance, `${profile} deployment should use ultra-coarse far terrain`);
+  assert.ok(deploymentConfig.terrainLodCoarseDistance + 12 <= deploymentConfig.terrainLodUltraCoarseDistance, `${profile} deployment should leave enough room for coarse-to-ultra LOD`);
   assert.ok(deploymentConfig.terrainLodUltraCoarseDistance <= deploymentConfig.terrainCullDistance, `${profile} deployment ultra-coarse band should reach cull range`);
+  assert.ok(deploymentConfig.terrainLodUltraCoarseDistance + 2 <= deploymentConfig.terrainCullDistance, `${profile} deployment should leave enough room before terrain culling`);
   assert.ok(deploymentConfig.terrainCullDistance <= deploymentConfig.cameraFar, `${profile} deployment terrain should cull before the far plane`);
+  assert.ok(deploymentConfig.terrainPrebuildFullDistance >= deploymentConfig.terrainLodFullDistance, `${profile} deployment should prebuild the full-detail flight band`);
   assert.ok(deploymentConfig.terrainPrebuildFullDistance <= deploymentConfig.terrainLodCoarseDistance, `${profile} deployment should not prebuild broad full detail`);
   assert.equal(deploymentConfig.terrainMacroTileSize, 0, `${profile} deployment should not collapse flight terrain into macro tiles`);
   assert.ok(deploymentConfig.dressingCullDistance <= deploymentConfig.terrainLodCoarseDistance, `${profile} deployment dressing should stay tightly capped`);
@@ -131,7 +136,27 @@ assert.equal(getBattleRoyalVisibilityMode({
   gamePhase: 'deployment',
   drop: createDrop('landed', 10, 0),
   localPlayerId: 'local',
+}), 'deployment');
+
+assert.equal(getBattleRoyalVisibilityMode({
+  gamePhase: 'playing',
+  drop: createDrop('landed', 10, 0),
+  localPlayerId: 'local',
 }), 'runtime');
+
+assert.equal(shouldHideBattleRoyalRegionForMacroTile({
+  active: true,
+  macroGeometryReady: false,
+  regionVisible: true,
+  regionDetail: 'ultraCoarse',
+}), false);
+
+assert.equal(shouldHideBattleRoyalRegionForMacroTile({
+  active: true,
+  macroGeometryReady: true,
+  regionVisible: true,
+  regionDetail: 'ultraCoarse',
+}), true);
 
 const flightLodManifest = {
   seed: 0x51f15eed,
@@ -145,7 +170,7 @@ const balancedFlightLod = getBattleRoyalTerrainLodDistances({
   visibility: BATTLE_ROYAL_DEPLOYMENT_VISIBILITY_CONFIG.balanced,
   cameraPosition: { x: 0, y: expectedDropShipAltitude, z: 0 },
 });
-assert.ok(balancedFlightLod.full >= 150, 'deployment flight should keep a readable full-detail LOD range');
-assert.ok(balancedFlightLod.coarse >= 255, 'deployment flight should keep a readable coarse LOD range');
+assert.ok(balancedFlightLod.full >= 360, 'deployment flight should keep a readable full-detail LOD range');
+assert.ok(balancedFlightLod.coarse >= 388, 'deployment flight should keep a readable coarse LOD range');
 
 console.log('battle royal visibility config tests passed');
