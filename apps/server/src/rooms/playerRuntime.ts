@@ -13,7 +13,7 @@ export interface PlayerAliveRuntimeResetInput {
 export interface PlayerAliveRuntimeResetPlan {
   resetAbilityCooldowns: boolean;
   resetBotBrain: boolean;
-  resetPhantomPrimaryMagazine: boolean;
+  resetPrimaryMagazine: boolean;
   clearChronosAegisShield: boolean;
 }
 
@@ -34,7 +34,7 @@ export function applyPlayerAliveRuntimeReset(
   return {
     resetAbilityCooldowns: true,
     resetBotBrain: player.isBot,
-    resetPhantomPrimaryMagazine: player.heroId === 'phantom',
+    resetPrimaryMagazine: player.heroId === 'phantom' || player.heroId === 'blaze',
     clearChronosAegisShield: player.heroId === 'chronos',
   };
 }

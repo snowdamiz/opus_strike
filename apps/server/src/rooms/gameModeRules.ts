@@ -1,5 +1,6 @@
 import {
   getGameplayModeRules,
+  isBattleRoyalContestant,
   isBattleRoyalMode,
   type GameplayMode,
   type Team,
@@ -50,6 +51,15 @@ export function getAliveTeams(players: Iterable<{ team?: string | null; state?: 
   return Array.from(aliveTeams);
 }
 
+export function getBattleRoyalContestingTeams(players: Iterable<{ team?: string | null; state?: string | null }>): Team[] {
+  const contestingTeams = new Set<Team>();
+  for (const player of players) {
+    if (!player.team || !isBattleRoyalContestant(player)) continue;
+    contestingTeams.add(player.team);
+  }
+  return Array.from(contestingTeams);
+}
+
 export interface BattleRoyalMatchEndDecision {
   shouldEnd: boolean;
   winningTeam: Team | null;
@@ -59,7 +69,7 @@ export interface BattleRoyalMatchEndDecision {
 export function resolveBattleRoyalMatchEnd(
   players: Iterable<{ team?: string | null; state?: string | null }>
 ): BattleRoyalMatchEndDecision {
-  const aliveTeams = getAliveTeams(players);
+  const aliveTeams = getBattleRoyalContestingTeams(players);
   return {
     shouldEnd: aliveTeams.length <= 1,
     winningTeam: aliveTeams.length === 1 ? aliveTeams[0] : null,

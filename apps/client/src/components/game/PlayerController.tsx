@@ -156,6 +156,7 @@ import {
   predictLocalBlazeRocketJump,
   predictLocalPhantomBlink,
   stepLocalMovementPrediction,
+  suppressDownedMovementInput,
 } from '../../movement/localPrediction';
 import {
   recordAuthorityDrainFrame,
@@ -712,6 +713,8 @@ interface InputPhaseResult {
   requestedCommandScheduleReasons: CommandScheduleReason[];
   phantomPrimaryReloading: boolean;
   phantomPrimaryHeldForPose: boolean;
+  blazePrimaryReloading: boolean;
+  blazePrimaryHeldForPose: boolean;
   chronosLifelineCommitMode: ChronosLifelineMode | null;
   chronosLifelineCommitActive: boolean;
   chronosLifelineCommitPressed: boolean;
@@ -1039,16 +1042,19 @@ export function runPredictionAndCommandPhase(input: {
     dt,
     rawDelta,
   } = input;
-  const { cameraControl, phantomAbilities, flushMovementCommands, movementSounds, refs } = ctx;
+  const { cameraControl, phantomAbilities, blazeAbilities, flushMovementCommands, movementSounds, refs } = ctx;
   let { predictedState } = input;
   const wasGroundedBeforePrediction = predictedState.movement.isGrounded;
   const currentBombTargeting = useGameStore.getState().bombTargeting;
   const phantomAutoReloadForServer = heroId === 'phantom' &&
     phantomAbilities.phantomPrimaryReloadingRef.current &&
     phantomAbilities.phantomPrimaryAmmoRef.current <= 0;
+  const blazeAutoReloadForServer = heroId === 'blaze' &&
+    blazeAbilities.blazePrimaryReloadingRef.current &&
+    blazeAbilities.blazePrimaryAmmoRef.current <= 0;
   const reloadForServer = frameInput.reload ||
     refs.pendingReloadInputRef.current ||
-    (phantomAutoReloadForServer && !serverCombatInput.primaryFire);
+    ((phantomAutoReloadForServer || blazeAutoReloadForServer) && !serverCombatInput.primaryFire);
   const crouchHeld = frameInput.crouch;
   const crouchPressedThisFrame = crouchHeld && !refs.lastCrouchHeldRef.current;
   if (crouchPressedThisFrame) {
@@ -1168,6 +1174,7 @@ export function runInputPhase(
   const {
     abilitySystem,
     phantomAbilities,
+    blazeAbilities,
     lockHeroActions,
     isHeroActionLocked,
     refs,
@@ -1252,9 +1259,15 @@ export function runInputPhase(
     if (reloadPressed) {
       phantomAbilities.reloadPhantomPrimary(now);
     }
+  } else if (heroId === 'blaze') {
+    blazeAbilities.updateBlazePrimaryReload(now);
+    if (reloadPressed) {
+      blazeAbilities.reloadBlazePrimary(now);
+    }
   }
 
   const phantomPrimaryReloading = heroId === 'phantom' && phantomAbilities.phantomPrimaryReloadingRef.current;
+  const blazePrimaryReloading = heroId === 'blaze' && blazeAbilities.blazePrimaryReloadingRef.current;
   const phantomReloadBlocksNonBlinkCasts = heroId === 'phantom' && phantomPrimaryReloading;
   const localAbilityInput = phantomReloadBlocksNonBlinkCasts
     ? {
@@ -1269,12 +1282,18 @@ export function runInputPhase(
     frameInput.primaryFire &&
     !phantomPrimaryReloading
   );
+  const blazePrimaryHeldForPose = (
+    heroId === 'blaze' &&
+    frameInput.primaryFire &&
+    !bombTargetingForFrame &&
+    !blazePrimaryReloading
+  );
   const primaryFireForServer = heroId === 'phantom'
     ? phantomPrimaryHeldForPose && phantomAbilities.phantomPrimaryAmmoRef.current > 0
     : heroId === 'chronos'
       ? frameInput.primaryFire
       : heroId === 'blaze'
-        ? frameInput.primaryFire && !bombTargetingForFrame
+        ? blazePrimaryHeldForPose && blazeAbilities.blazePrimaryAmmoRef.current > 0
         : frameInput.primaryFire;
   const ability2ForServer = frameInput.ability2;
   const serverCombatInput = deriveServerCombatInput({
@@ -1303,6 +1322,8 @@ export function runInputPhase(
     requestedCommandScheduleReasons,
     phantomPrimaryReloading,
     phantomPrimaryHeldForPose,
+    blazePrimaryReloading,
+    blazePrimaryHeldForPose,
     chronosLifelineCommitMode,
     chronosLifelineCommitActive,
     chronosLifelineCommitPressed,
@@ -1343,6 +1364,7 @@ function runNoLocalPlayerFrame(ctx: LocalPlayerFrameContext, now: number): Local
   refs.lastExclusiveHoldInputRef.current = { ...EMPTY_EXCLUSIVE_HOLD_INPUT };
   clearHeroActionLock();
   phantomAbilities.resetPhantomPrimaryMagazine();
+  blazeAbilities.resetBlazePrimaryMagazine();
   blazeAbilities.resetRocketJump();
   cameraControl.resetDeathCamera(camera);
   return { kind: 'no-player', authorityApplied: 0, substeps: 0 };
@@ -1572,6 +1594,7 @@ function runHeroSwapPhase(ctx: LocalPlayerFrameContext, localPlayer: Player, now
   setBombTargeting(false, false);
   setFlamethrowerActive(false);
   phantomAbilities.resetPhantomPrimaryMagazine();
+  blazeAbilities.resetBlazePrimaryMagazine();
   resetViewmodelPoseState('hero-swap', localPlayer.heroId as HeroId, now);
   resetBlazeFlamethrower(now);
   blazeAbilities.resetRocketJump();
@@ -2515,7 +2538,12 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       resetBattleRoyalDeploymentAudio(frameCtx.refs.battleRoyalDeploymentAudioRef.current);
     }
 
-    if (!isPlaying || localPlayer.state !== 'alive' || hasLocalDeathVisual) {
+    const canRunLocalGameplayFrame = (
+      isPlaying &&
+      (localPlayer.state === 'alive' || localPlayer.state === 'downed') &&
+      !hasLocalDeathVisual
+    );
+    if (!canRunLocalGameplayFrame) {
       runInactiveLifecycleFrame(
         frameCtx,
         localPlayer,
@@ -2586,6 +2614,106 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       });
     };
 
+    if (localPlayer.state === 'downed') {
+      const downedFrameInput = suppressDownedMovementInput(frameInput, {
+        frozen: Boolean(localPlayer.reviveByPlayerId),
+      });
+      const downedHasMovementInput = (
+        downedFrameInput.moveForward ||
+        downedFrameInput.moveBackward ||
+        downedFrameInput.moveLeft ||
+        downedFrameInput.moveRight
+      );
+      setPhantomPrimaryHeld(false, now);
+      setBlazeRocketHeld(false, now);
+      setBlazeBombTargetHeld(false, now);
+      setBlazeFlamethrowerHeld(false, now);
+      setChronosPrimaryHeld(false, now);
+      setChronosLifelineQueuedState(false, now);
+      setChronosAegisVisualState(
+        localPlayer.id,
+        false,
+        now,
+        0,
+        { renderWorldEffect: storeSnapshot.matchPerspective === 'third_person' }
+      );
+      resetViewmodelPoseState('downed', heroId, now);
+
+      const aimYaw = cameraControl.refs.yaw.current;
+      const aimPitch = cameraControl.refs.pitch.current + cameraControl.refs.slidePitch.current;
+      const thirdPersonAimPoint = resolveThirdPersonCrosshairAimPoint({
+        bodyPosition: position,
+        yaw: aimYaw,
+        pitch: aimPitch,
+        eyeHeight: EYE_HEIGHT + cameraControl.refs.crouchHeight.current,
+        matchPerspective: storeSnapshot.matchPerspective,
+      });
+      const downedAbilityCtx: AbilityContext = {
+        position,
+        velocity,
+        yaw: aimYaw,
+        pitch: cameraControl.refs.pitch.current,
+        heroId,
+        localPlayer: {
+          id: localPlayer.id,
+          team: localPlayer.team,
+          position: localPlayer.position,
+          ultimateCharge: localPlayer.ultimateCharge,
+        },
+        inputState: downedFrameInput,
+        dt,
+        isGrounded: movement.refs.isGrounded.current,
+        camera,
+        viewmodelElapsedSeconds: frameState.clock.elapsedTime,
+        viewmodelNowMs: now,
+        aimPoint: thirdPersonAimPoint,
+      };
+      const predictionPhase = runPredictionAndCommandPhase({
+        ctx: frameCtx,
+        localPlayer,
+        heroId,
+        frameInput: downedFrameInput,
+        serverCombatInput: EMPTY_SERVER_COMBAT_INPUT,
+        requestedCommandScheduleReasons: [],
+        abilityCtx: downedAbilityCtx,
+        predictedState,
+        now,
+        dt,
+        rawDelta: delta,
+      });
+      predictedState = predictionPhase.predictedState;
+      const presentation = runPresentationPhase({
+        ctx: frameCtx,
+        localPlayer,
+        heroId,
+        heroStats,
+        predictedState,
+        abilityCtx: downedAbilityCtx,
+        frameInput: downedFrameInput,
+        hasMovementInput: downedHasMovementInput,
+        speedMultiplier: 1,
+        wasGroundedBeforePrediction: predictionPhase.wasGroundedBeforePrediction,
+        now,
+        frameNowMs,
+        dt,
+      });
+      runTracePhase({
+        ctx: frameCtx,
+        localPlayer,
+        heroId,
+        heroDef: HERO_DEFINITIONS[heroId],
+        frameInput: downedFrameInput,
+        commandInput: predictionPhase.commandInput,
+        localMovementForTrace: presentation.localMovementForTrace,
+        isSliding: presentation.isSliding,
+        wasSlidingBeforeFrame: presentation.wasSlidingBeforeFrame,
+        speedMultiplier: 1,
+        now,
+        dt,
+      });
+      return;
+    }
+
     let { speedMultiplier } = abilitySystem.updateActiveAbilities(dt);
     if (localPlayer.heroId === 'phantom' && localPlayer.abilities?.['phantom_veil']?.isActive) {
       speedMultiplier *= PHANTOM_VEIL_SPEED_MULTIPLIER;
@@ -2606,6 +2734,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       requestedCommandScheduleReasons,
       phantomPrimaryReloading,
       phantomPrimaryHeldForPose,
+      blazePrimaryReloading,
+      blazePrimaryHeldForPose,
       chronosLifelineCommitMode,
       chronosLifelineCommitActive,
       chronosLifelineCommitPressed,
@@ -2646,7 +2776,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
     setPhantomPrimaryHeld(phantomPrimaryHeldForPose, now);
     setBlazeRocketHeld(
-      heroId === 'blaze' && !bombTargetingForFrame && frameInput.primaryFire,
+      blazePrimaryHeldForPose,
       now
     );
     setChronosPrimaryHeld(
@@ -2675,6 +2805,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         bombTargeting: bombTargetingForFrame,
         phantomPrimaryAmmo: phantomAbilities.phantomPrimaryAmmoRef.current,
         phantomPrimaryReloading,
+        blazePrimaryAmmo: blazeAbilities.blazePrimaryAmmoRef.current,
+        blazePrimaryReloading,
         canUseAbility: abilitySystem.canUseAbility,
         getAbilityCharges: (abilityId: string) => localPlayer.abilities?.[abilityId]?.charges,
         canUseHookshotGrapple: () => hookshotAbilities.canGrapple(abilityCtx),

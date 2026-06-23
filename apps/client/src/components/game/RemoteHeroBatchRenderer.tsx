@@ -19,6 +19,8 @@ import {
 import {
   applyChronosArmPose,
   applyCrouchBonePose,
+  applyDownedBonePose,
+  applyDownedRootPivot,
   applyHeroBodyPoseTransition,
   applyHeroAttackPose,
   applyPhantomShieldBodyPose,
@@ -204,6 +206,8 @@ interface RemoteHeroRuntime {
   crouchBlend: number;
   jumpBlend: number;
   slideBlend: number;
+  downedBlend: number;
+  reviveBlend: number;
   attackBlend: number;
   poseTransition: HeroBodyPoseTransitionRuntime;
   targetMovementPose: HeroMovementPose;
@@ -387,7 +391,8 @@ function isPlayerMovingForAnimation(
   visualHorizontalSpeed = 0,
   movement: PlayerMovementState = player.movement
 ): boolean {
-  if (player.state !== 'alive' && player.state !== 'dropping') return false;
+  if (player.state !== 'alive' && player.state !== 'downed' && player.state !== 'dropping') return false;
+  if (player.state === 'downed' && player.reviveByPlayerId) return false;
 
   const networkHorizontalSpeed = getHorizontalSpeed(player.velocity);
 
@@ -598,13 +603,16 @@ function resetRemoteAnimationState(runtime: RemoteHeroRuntime, player: Player): 
   const movementPose = getPlayerMovementPose(player, hasLoweredPosture, moving);
   const movementProfile = getHeroMovementProfile(heroId, movementPose);
 
-  runtime.idleBlend = moving || player.movement.isCrouching || player.movement.isSliding ? 0 : 1;
-  runtime.movementBlend = moving ? 1 : 0;
-  runtime.crouchBlend = player.movement.isCrouching ? 1 : 0;
-  runtime.jumpBlend = !player.movement.isGrounded ? 1 : 0;
-  runtime.slideBlend = player.movement.isSliding ? 1 : 0;
+  const downed = player.state === 'downed';
+  runtime.idleBlend = downed || !(moving || player.movement.isCrouching || player.movement.isSliding) ? 1 : 0;
+  runtime.movementBlend = moving && !downed ? 1 : 0;
+  runtime.crouchBlend = player.movement.isCrouching && !downed ? 1 : 0;
+  runtime.jumpBlend = !player.movement.isGrounded && !downed ? 1 : 0;
+  runtime.slideBlend = player.movement.isSliding && !downed ? 1 : 0;
+  runtime.downedBlend = downed ? 1 : 0;
+  runtime.reviveBlend = player.reviveByPlayerId ? 1 : 0;
   runtime.attackBlend = 0;
-  runtime.postureScaleY = getPlayerBodyPostureScaleY(player.movement);
+  runtime.postureScaleY = getPlayerBodyPostureScaleY(player.movement, player.state);
   runtime.targetMovementPose = movementPose;
   runtime.previousMovementProfile = movementProfile;
   runtime.currentMovementProfile = movementProfile;
@@ -676,6 +684,8 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
     crouchBlend: 0,
     jumpBlend: 0,
     slideBlend: 0,
+    downedBlend: player.state === 'downed' ? 1 : 0,
+    reviveBlend: player.reviveByPlayerId ? 1 : 0,
     attackBlend: 0,
     poseTransition: createHeroBodyPoseTransitionRuntime(),
     targetMovementPose: initialMovementPose,
@@ -683,7 +693,7 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
     currentMovementProfile: initialMovementProfile,
     movementProfileBlend: 1,
     movementCycle: 0,
-    postureScaleY: getPlayerBodyPostureScaleY(player.movement),
+    postureScaleY: getPlayerBodyPostureScaleY(player.movement, player.state),
     smoothedWalkDirection: { ...DEFAULT_WALK_DIRECTION },
     wasJumping: false,
     jumpStartedAt: null,
@@ -860,7 +870,7 @@ function updateRemotePose(
   const manifest = HERO_BODY_MANIFESTS[heroId];
   const playerHeight = getRemotePlayerHeight(player);
   const scale = playerHeight / 1.8;
-  const targetPostureScaleY = getPlayerBodyPostureScaleY(movement);
+  const targetPostureScaleY = getPlayerBodyPostureScaleY(movement, player.state);
   runtime.postureScaleY = THREE.MathUtils.damp(
     runtime.postureScaleY,
     targetPostureScaleY,
@@ -868,10 +878,12 @@ function updateRemotePose(
     frameDelta
   );
   const baseScaleY = scale * runtime.postureScaleY;
-  const moving = isPlayerMovingForAnimation(player, visualHorizontalSpeed, movement);
-  const jumping = !movement.isGrounded && !movement.isSliding;
-  const crouching = movement.isCrouching;
-  const sliding = movement.isSliding;
+  const downed = player.state === 'downed';
+  const beingRevived = Boolean(player.reviveByPlayerId);
+  const moving = downed && beingRevived ? false : isPlayerMovingForAnimation(player, visualHorizontalSpeed, movement);
+  const jumping = downed ? false : !movement.isGrounded && !movement.isSliding;
+  const crouching = downed ? false : movement.isCrouching;
+  const sliding = downed ? false : movement.isSliding;
   let attacking = false;
   let attackStartedAtMs: number | null = null;
   let attackSide: -1 | 1 = 1;
@@ -880,7 +892,7 @@ function updateRemotePose(
   const shieldStartedAt = getActivePhantomShieldStartedAt(player);
   if (remoteAttackState) {
     const attackAgeMs = frameNowMs - remoteAttackState.startedAtMs;
-    attacking = attackAgeMs <= REMOTE_ATTACK_STATE_RETENTION_MS;
+    attacking = !downed && attackAgeMs <= REMOTE_ATTACK_STATE_RETENTION_MS;
     attackStartedAtMs = remoteAttackState.startedAtMs;
     attackSide = remoteAttackState.side;
 
@@ -957,6 +969,9 @@ function updateRemotePose(
     jumping,
     crouching,
     sliding,
+    downed,
+    crawling: downed && moving,
+    beingRevived,
     attacking,
     attackSide: activeAttackSide,
     movementPose: runtime.targetMovementPose,
@@ -980,10 +995,12 @@ function updateRemotePose(
   }
   runtime.wasJumping = jumping;
 
-  const targetMovementBlend = moving && !jumping && !sliding ? 1 : 0;
-  const targetCrouchBlend = crouching && !jumping && !sliding ? 1 : 0;
+  const targetMovementBlend = moving && !jumping && !sliding && !downed ? 1 : 0;
+  const targetCrouchBlend = crouching && !jumping && !sliding && !downed ? 1 : 0;
   const targetJumpBlend = jumping ? 1 : 0;
   const targetSlideBlend = sliding && !jumping ? 1 : 0;
+  const targetDownedBlend = downed ? 1 : 0;
+  const targetReviveBlend = beingRevived ? 1 : 0;
   const targetAttackBlend = attacking ? 1 : 0;
   runtime.movementBlend = THREE.MathUtils.damp(
     runtime.movementBlend,
@@ -1009,6 +1026,18 @@ function updateRemotePose(
     targetSlideBlend > runtime.slideBlend ? 11 : 7.5,
     frameDelta
   );
+  runtime.downedBlend = THREE.MathUtils.damp(
+    runtime.downedBlend,
+    targetDownedBlend,
+    targetDownedBlend > runtime.downedBlend ? 8.5 : 7,
+    frameDelta
+  );
+  runtime.reviveBlend = THREE.MathUtils.damp(
+    runtime.reviveBlend,
+    targetReviveBlend,
+    targetReviveBlend > runtime.reviveBlend ? 9 : 8,
+    frameDelta
+  );
   runtime.attackBlend = THREE.MathUtils.damp(
     runtime.attackBlend,
     targetAttackBlend,
@@ -1016,15 +1045,18 @@ function updateRemotePose(
     frameDelta
   );
 
-  const targetIdleBlend = moving || jumping || crouching || sliding || attacking ? 0 : 1;
+  const targetIdleBlend = downed || !(moving || jumping || crouching || sliding || attacking) ? 1 : 0;
   runtime.idleBlend = THREE.MathUtils.damp(
     runtime.idleBlend,
     targetIdleBlend,
-    moving || jumping || crouching || sliding || attacking ? 9.5 : 5.5,
+    targetIdleBlend < runtime.idleBlend ? 9.5 : 5.5,
     frameDelta
   );
 
   const slideAmount = easeInOutSine(runtime.slideBlend);
+  const downedAmount = easeInOutSine(runtime.downedBlend);
+  const crawlAmount = downed && moving && !beingRevived ? downedAmount : 0;
+  const reviveAmount = easeInOutSine(runtime.reviveBlend);
   const runSlideCrossfadeAmount = runtime.targetMovementPose === 'run' ? slideAmount : 0;
   const attackAmount = easeInOutSine(runtime.attackBlend);
   const attackPosePulse = heroId === 'blaze' || heroId === 'phantom'
@@ -1034,7 +1066,7 @@ function updateRemotePose(
   const rootAttackPulse = heroId === 'phantom' ? 0 : attackPulse;
   const shieldPoseAmount = getPhantomShieldBodyPoseAmount(shieldStartedAt, frameNowMs);
   const idleAmount = runtime.idleBlend;
-  const movingAmount = runtime.movementBlend * (1 - runSlideCrossfadeAmount);
+  const movingAmount = downed ? 0 : runtime.movementBlend * (1 - runSlideCrossfadeAmount);
   const jumpAmount = runtime.jumpBlend;
   const poseCrouchAmount = runtime.crouchBlend;
   const jumpTime = runtime.jumpStartedAt === null ? 0 : elapsedSeconds - runtime.jumpStartedAt;
@@ -1064,21 +1096,23 @@ function updateRemotePose(
       0.012 * rootAttackPulse,
     -0.24 * slideAmount + slideSkid - 0.035 * rootAttackPulse
   );
+  const uprightRootAmount = 1 - downedAmount;
   runtime.rootRotation.set(
-    secondary * idleProfile.swayAmplitude * 0.08 * idleAmount -
+    (secondary * idleProfile.swayAmplitude * 0.08 * idleAmount -
       runtime.smoothedWalkDirection.forward * movementProfile.rootPitch * movingAmount +
       jumpPose.pitch * jumpAmount +
       -0.025 * poseCrouchAmount +
       0.6 * slideAmount -
-      0.035 * rootAttackPulse,
-    tertiary * idleProfile.twistAmplitude * 0.12 * idleAmount +
-      activeAttackSide * 0.025 * rootAttackPulse,
-    secondary * idleProfile.swayAmplitude * 0.12 * idleAmount -
+      0.035 * rootAttackPulse) * uprightRootAmount,
+    (tertiary * idleProfile.twistAmplitude * 0.12 * idleAmount +
+      activeAttackSide * 0.025 * rootAttackPulse) * uprightRootAmount,
+    (secondary * idleProfile.swayAmplitude * 0.12 * idleAmount -
       runtime.smoothedWalkDirection.right * movementProfile.rootRoll * movingAmount +
       movementSway * movementProfile.rootSway * movingAmount +
       0.055 * slideAmount -
-      activeAttackSide * 0.018 * rootAttackPulse
+      activeAttackSide * 0.018 * rootAttackPulse) * uprightRootAmount
   );
+  applyDownedRootPivot(runtime.rootPosition, runtime.rootRotation, scale, downedAmount);
   runtime.rootQuaternion.setFromEuler(runtime.rootRotation);
 
   const jumpSquash = jumpPose.crouch * 0.035 + jumpPose.land * 0.026;
@@ -1096,6 +1130,7 @@ function updateRemotePose(
   applyIdleBonePose(bones, idleProfile, primary, secondary, tertiary, idleAmount);
   applyJumpBonePose(bones, jumpPose, jumpAmount);
   applyCrouchBonePose(bones, elapsedSeconds, poseCrouchAmount);
+  applyDownedBonePose(bones, elapsedSeconds, downedAmount, crawlAmount, reviveAmount);
   if (heroId === 'chronos') {
     applyChronosArmPose(bones, 1 - slideAmount);
   }
@@ -1109,13 +1144,14 @@ function updateRemotePose(
     bones,
     frameDelta
   );
-  applyLookPitchWaistBend(bones, runtime.renderPitch);
+  applyLookPitchWaistBend(bones, runtime.renderPitch * (1 - downedAmount));
 
   runtime.glowPulse =
     (0.5 + 0.5 * tertiary) * idleProfile.auraPulse * idleAmount +
     (jumpPose.extension * 0.18 + jumpPose.land * 0.14) * jumpAmount +
     movementStep * movementProfile.glowPulse * movingAmount +
     0.035 * poseCrouchAmount +
+    0.035 * downedAmount +
     0.09 * slideAmount +
     0.16 * attackPulse +
     0.14 * shieldPoseAmount;

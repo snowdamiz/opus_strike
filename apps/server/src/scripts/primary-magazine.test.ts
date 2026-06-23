@@ -1,14 +1,30 @@
 import assert from 'node:assert/strict';
 import {
+  BLAZE_PRIMARY_MAGAZINE_SIZE,
+  BLAZE_PRIMARY_RELOAD_MS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
 } from '@voxel-strike/shared';
-import { PhantomPrimaryMagazineTracker } from '../rooms/phantomPrimaryMagazine';
+import { PrimaryMagazineTracker } from '../rooms/primaryMagazine';
 
 const playerId = 'phantom-player';
 
+function createPhantomTracker(): PrimaryMagazineTracker {
+  return new PrimaryMagazineTracker({
+    magazineSize: PHANTOM_PRIMARY_MAGAZINE_SIZE,
+    reloadMs: PHANTOM_PRIMARY_RELOAD_MS,
+  });
+}
+
+function createBlazeTracker(): PrimaryMagazineTracker {
+  return new PrimaryMagazineTracker({
+    magazineSize: BLAZE_PRIMARY_MAGAZINE_SIZE,
+    reloadMs: BLAZE_PRIMARY_RELOAD_MS,
+  });
+}
+
 {
-  const tracker = new PhantomPrimaryMagazineTracker();
+  const tracker = createPhantomTracker();
   const now = 1_000;
 
   assert.deepEqual(tracker.getClientState(playerId, now), {
@@ -52,7 +68,7 @@ const playerId = 'phantom-player';
 }
 
 {
-  const tracker = new PhantomPrimaryMagazineTracker();
+  const tracker = createPhantomTracker();
   const now = 5_000;
 
   assert.equal(tracker.reload(playerId, now).alreadyFull, true);
@@ -77,7 +93,7 @@ const playerId = 'phantom-player';
 }
 
 {
-  const tracker = new PhantomPrimaryMagazineTracker();
+  const tracker = createPhantomTracker();
   const now = 10_000;
 
   tracker.reset(playerId).ammo = 1;
@@ -90,4 +106,25 @@ const playerId = 'phantom-player';
   assert.equal(afterAutoComplete.magazine.reloadUntil, 0);
 }
 
-console.log('phantom primary magazine tests passed');
+{
+  const tracker = createBlazeTracker();
+  const now = 20_000;
+
+  for (let shot = 1; shot <= BLAZE_PRIMARY_MAGAZINE_SIZE; shot++) {
+    const result = tracker.consumeShot(playerId, now + shot);
+    assert.equal(result.consumed, true);
+    assert.equal(result.magazine.ammo, BLAZE_PRIMARY_MAGAZINE_SIZE - shot);
+  }
+
+  const emptyAt = now + BLAZE_PRIMARY_MAGAZINE_SIZE;
+  const emptyState = tracker.getClientState(playerId, emptyAt + 1);
+  assert.equal(emptyState.ammo, 0);
+  assert.equal(emptyState.reloading, true);
+  assert.equal(emptyState.reloadUntil, emptyAt + BLAZE_PRIMARY_RELOAD_MS);
+
+  const completed = tracker.completeReloadIfReady(playerId, emptyAt + BLAZE_PRIMARY_RELOAD_MS);
+  assert.equal(completed.completed, true);
+  assert.equal(completed.magazine.ammo, BLAZE_PRIMARY_MAGAZINE_SIZE);
+}
+
+console.log('primary magazine tests passed');

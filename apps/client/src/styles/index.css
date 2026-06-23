@@ -261,6 +261,11 @@ body,
   --slide-edge-opacity: 0;
   --slide-haze-opacity: 0;
   --slide-haze-side-opacity: 0;
+  --slide-line-angle: 0deg;
+  --slide-line-drift: 34px;
+  --slide-line-opacity: 0;
+  --slide-line-play-state: paused;
+  --slide-line-skew: 0deg;
   contain: layout paint style;
   opacity: 0;
   visibility: hidden;
@@ -278,19 +283,19 @@ body,
 .slide-edge-blur-left {
   left: 0;
   top: 0;
-  width: min(18vw, 220px);
+  width: min(22vw, 280px);
   height: 100%;
-  mask-image: linear-gradient(to right, black 0%, rgba(0, 0, 0, 0.78) 42%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to right, black 0%, rgba(0, 0, 0, 0.78) 42%, transparent 100%);
+  mask-image: linear-gradient(to right, black 0%, rgba(0, 0, 0, 0.84) 44%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, black 0%, rgba(0, 0, 0, 0.84) 44%, transparent 100%);
 }
 
 .slide-edge-blur-right {
   right: 0;
   top: 0;
-  width: min(18vw, 220px);
+  width: min(22vw, 280px);
   height: 100%;
-  mask-image: linear-gradient(to left, black 0%, rgba(0, 0, 0, 0.78) 42%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to left, black 0%, rgba(0, 0, 0, 0.78) 42%, transparent 100%);
+  mask-image: linear-gradient(to left, black 0%, rgba(0, 0, 0, 0.84) 44%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to left, black 0%, rgba(0, 0, 0, 0.84) 44%, transparent 100%);
 }
 
 .slide-edge-blur-top {
@@ -322,6 +327,135 @@ body,
       rgba(255, 255, 255, var(--slide-haze-side-opacity)) 89%,
       transparent 100%);
   mix-blend-mode: screen;
+}
+
+.slide-speed-lines {
+  position: absolute;
+  inset: -7%;
+  opacity: var(--slide-line-opacity);
+  transform: rotate(var(--slide-line-angle));
+  transform-origin: center;
+  mix-blend-mode: screen;
+  will-change: opacity, transform;
+}
+
+.slide-speed-lines i {
+  position: absolute;
+  left: -2%;
+  display: block;
+  width: min(32vw, 430px);
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg,
+      transparent 0%,
+      rgba(172, 244, 255, 0.08) 13%,
+      rgba(214, 252, 255, 0.72) 42%,
+      rgba(255, 255, 255, 0.48) 57%,
+      transparent 100%);
+  box-shadow: 0 0 14px rgba(134, 232, 255, 0.28);
+  filter: blur(0.2px);
+  transform: translate3d(calc(0px - var(--slide-line-drift)), 0, 0) skewX(var(--slide-line-skew));
+  animation: slide-speed-line-left 520ms linear infinite;
+  animation-play-state: var(--slide-line-play-state);
+  will-change: opacity, transform;
+}
+
+.slide-speed-lines i:nth-child(even) {
+  right: -2%;
+  left: auto;
+  transform: translate3d(var(--slide-line-drift), 0, 0) skewX(var(--slide-line-skew));
+  animation-name: slide-speed-line-right;
+}
+
+.slide-speed-lines i:nth-child(1) {
+  top: 12%;
+  animation-delay: -40ms;
+}
+
+.slide-speed-lines i:nth-child(2) {
+  top: 21%;
+  width: min(24vw, 340px);
+  animation-delay: -280ms;
+}
+
+.slide-speed-lines i:nth-child(3) {
+  top: 35%;
+  left: 4%;
+  width: min(18vw, 270px);
+  animation-delay: -170ms;
+}
+
+.slide-speed-lines i:nth-child(4) {
+  top: 47%;
+  right: 4%;
+  width: min(34vw, 460px);
+  animation-delay: -410ms;
+}
+
+.slide-speed-lines i:nth-child(5) {
+  top: 60%;
+  left: 8%;
+  width: min(23vw, 320px);
+  animation-delay: -110ms;
+}
+
+.slide-speed-lines i:nth-child(6) {
+  top: 71%;
+  right: 9%;
+  width: min(27vw, 380px);
+  animation-delay: -350ms;
+}
+
+.slide-speed-lines i:nth-child(7) {
+  top: 82%;
+  width: min(31vw, 420px);
+  animation-delay: -230ms;
+}
+
+.slide-speed-lines i:nth-child(8) {
+  top: 90%;
+  right: 3%;
+  width: min(19vw, 280px);
+  animation-delay: -470ms;
+}
+
+@keyframes slide-speed-line-left {
+  0% {
+    opacity: 0;
+    transform: translate3d(calc(0px - var(--slide-line-drift)), 0, 0) scaleX(0.68) skewX(var(--slide-line-skew));
+  }
+
+  18% {
+    opacity: 0.95;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--slide-line-drift), 0, 0) scaleX(1.35) skewX(var(--slide-line-skew));
+  }
+}
+
+@keyframes slide-speed-line-right {
+  0% {
+    opacity: 0;
+    transform: translate3d(var(--slide-line-drift), 0, 0) scaleX(0.68) skewX(var(--slide-line-skew));
+  }
+
+  18% {
+    opacity: 0.95;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate3d(calc(0px - var(--slide-line-drift)), 0, 0) scaleX(1.35) skewX(var(--slide-line-skew));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slide-speed-lines i {
+    animation: none;
+    opacity: 0.28;
+  }
 }
 
 /* ===== GAME STATES ===== */

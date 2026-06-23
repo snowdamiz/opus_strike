@@ -3,6 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useShallow } from 'zustand/shallow';
 import {
+  BLAZE_PRIMARY_RELOAD_MS,
   HERO_DEFINITIONS,
   PHANTOM_PRIMARY_RELOAD_MS,
   SPRINT_MULTIPLIER,
@@ -88,6 +89,7 @@ import {
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
 import type { ViewmodelQualityConfig } from './visualQuality';
 import { ViewmodelBurnOverlay } from './ViewmodelBurnOverlay';
+import { playSharedSound } from '../../hooks/useAudio';
 
 interface HeroViewmodelProps {
   heroId: ViewmodelHeroId;
@@ -257,6 +259,45 @@ const BLAZE_STAFF_TIP_FLAME_ANGLES = [
   Math.PI * 0.75,
   Math.PI * 1.25,
   Math.PI * 1.75,
+] as const;
+const BLAZE_STAFF_RELOAD_FLAMES = [
+  { y: -0.38, angle: 0, progress: 0.02, size: 1.06 },
+  { y: -0.32, angle: Math.PI * 0.74, progress: 0.08, size: 0.92 },
+  { y: -0.25, angle: Math.PI * 1.36, progress: 0.15, size: 1.12 },
+  { y: -0.18, angle: Math.PI * 0.3, progress: 0.23, size: 0.98 },
+  { y: -0.1, angle: Math.PI * 1.02, progress: 0.31, size: 1.18 },
+  { y: -0.02, angle: Math.PI * 1.64, progress: 0.39, size: 0.96 },
+  { y: 0.07, angle: Math.PI * 0.48, progress: 0.48, size: 1.16 },
+  { y: 0.16, angle: Math.PI * 1.16, progress: 0.57, size: 1.02 },
+  { y: 0.25, angle: Math.PI * 1.78, progress: 0.66, size: 1.2 },
+  { y: 0.34, angle: Math.PI * 0.2, progress: 0.74, size: 1.08 },
+  { y: 0.43, angle: Math.PI * 0.92, progress: 0.82, size: 1.24 },
+  { y: 0.5, angle: Math.PI * 1.54, progress: 0.9, size: 1.1 },
+] as const;
+const BLAZE_STAFF_RELOAD_BURST_START = 0.78;
+const BLAZE_STAFF_RELOAD_SHAFT_START_Y = -0.4;
+const BLAZE_STAFF_RELOAD_SHAFT_END_Y = 0.52;
+const BLAZE_STAFF_RELOAD_BURST_RAYS = [
+  { angle: 0, pitch: -1.0, length: 1.16 },
+  { angle: Math.PI * 0.25, pitch: -0.78, length: 0.84 },
+  { angle: Math.PI * 0.5, pitch: -1.04, length: 1.08 },
+  { angle: Math.PI * 0.75, pitch: -0.72, length: 0.9 },
+  { angle: Math.PI, pitch: -1.0, length: 1.18 },
+  { angle: Math.PI * 1.25, pitch: -0.8, length: 0.86 },
+  { angle: Math.PI * 1.5, pitch: -1.06, length: 1.12 },
+  { angle: Math.PI * 1.75, pitch: -0.76, length: 0.88 },
+] as const;
+const BLAZE_STAFF_RELOAD_BURST_SPARKS = [
+  { angle: 0.2, lift: 0.074, distance: 0.22, delay: 0, size: 0.014 },
+  { angle: 0.72, lift: 0.045, distance: 0.18, delay: 0.05, size: 0.01 },
+  { angle: 1.24, lift: 0.092, distance: 0.26, delay: 0.01, size: 0.012 },
+  { angle: 1.76, lift: 0.032, distance: 0.17, delay: 0.09, size: 0.009 },
+  { angle: 2.34, lift: 0.082, distance: 0.24, delay: 0.03, size: 0.012 },
+  { angle: 2.92, lift: 0.055, distance: 0.2, delay: 0.12, size: 0.009 },
+  { angle: 3.48, lift: 0.096, distance: 0.28, delay: 0.02, size: 0.013 },
+  { angle: 4.08, lift: 0.038, distance: 0.19, delay: 0.08, size: 0.01 },
+  { angle: 4.7, lift: 0.078, distance: 0.25, delay: 0.04, size: 0.012 },
+  { angle: 5.34, lift: 0.052, distance: 0.21, delay: 0.1, size: 0.009 },
 ] as const;
 const CHRONOS_FOREARM_READY_BLEND = 0.52;
 const CHRONOS_HAND_READY_BLEND = 0.62;
@@ -2640,10 +2681,29 @@ function BlazeWizardStaff({
   const shockwaveRingRefs = useRef<(THREE.Mesh | null)[]>([]);
   const shockwaveStartMsRef = useRef(0);
   const processedShockwaveRevisionRef = useRef(0);
+  const processedReloadBlastStartRef = useRef(0);
+  const reloadShaftGlowRef = useRef<THREE.Mesh>(null);
+  const reloadShaftRingRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const reloadFlameRefs = useRef<(THREE.Group | null)[]>([]);
+  const reloadBurstRef = useRef<THREE.Group>(null);
+  const reloadBurstCoreRef = useRef<THREE.Mesh>(null);
+  const reloadBurstShellRef = useRef<THREE.Mesh>(null);
+  const reloadBurstRingRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const reloadBurstRayRefs = useRef<(THREE.Group | null)[]>([]);
+  const reloadBurstSparkRefs = useRef<(THREE.Group | null)[]>([]);
   const chargeCoreMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff4a16), []);
   const chargeHaloMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff6f1f), []);
   const tipFlareMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xffcf3a), []);
   const shockwaveMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff5a18), []);
+  const reloadShaftMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff5a18), []);
+  const reloadShaftRingMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xffa11d), []);
+  const reloadFlameOuterMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff6418), []);
+  const reloadFlameCoreMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xfff08a), []);
+  const reloadBurstCoreMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xfff1a0), []);
+  const reloadBurstShellMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff7a18), []);
+  const reloadBurstRayMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xffa21d), []);
+  const reloadBurstRingMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xffd65a), []);
+  const reloadBurstSparkMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xfff7bc), []);
 
   useRegisteredViewmodelSocket(BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME, socketRef);
 
@@ -2652,7 +2712,30 @@ function BlazeWizardStaff({
     chargeHaloMaterial.dispose();
     tipFlareMaterial.dispose();
     shockwaveMaterial.dispose();
-  }, [chargeCoreMaterial, chargeHaloMaterial, shockwaveMaterial, tipFlareMaterial]);
+    reloadShaftMaterial.dispose();
+    reloadShaftRingMaterial.dispose();
+    reloadFlameOuterMaterial.dispose();
+    reloadFlameCoreMaterial.dispose();
+    reloadBurstCoreMaterial.dispose();
+    reloadBurstShellMaterial.dispose();
+    reloadBurstRayMaterial.dispose();
+    reloadBurstRingMaterial.dispose();
+    reloadBurstSparkMaterial.dispose();
+  }, [
+    chargeCoreMaterial,
+    chargeHaloMaterial,
+    reloadBurstCoreMaterial,
+    reloadBurstRayMaterial,
+    reloadBurstRingMaterial,
+    reloadBurstShellMaterial,
+    reloadBurstSparkMaterial,
+    reloadFlameCoreMaterial,
+    reloadFlameOuterMaterial,
+    reloadShaftMaterial,
+    reloadShaftRingMaterial,
+    shockwaveMaterial,
+    tipFlareMaterial,
+  ]);
 
   useFrame((state) => {
     const staff = staffRef.current;
@@ -2707,28 +2790,203 @@ function BlazeWizardStaff({
     }
 
     const shockwave = shockwaveRef.current;
-    if (!shockwave || shockwaveStartMsRef.current <= 0) return;
-
-    const progress = THREE.MathUtils.clamp(
-      (nowMs - shockwaveStartMsRef.current) / BLAZE_STAFF_SHOCKWAVE_DURATION_MS,
-      0,
-      1
-    );
-    const shockwaveVisible = progress < 1;
-    shockwave.visible = shockwaveVisible;
-    if (!shockwaveVisible) {
+    if (shockwave && shockwaveStartMsRef.current > 0) {
+      const progress = THREE.MathUtils.clamp(
+        (nowMs - shockwaveStartMsRef.current) / BLAZE_STAFF_SHOCKWAVE_DURATION_MS,
+        0,
+        1
+      );
+      const shockwaveVisible = progress < 1;
+      shockwave.visible = shockwaveVisible;
+      if (shockwaveVisible) {
+        const easedProgress = 1 - Math.pow(1 - progress, 3);
+        const shockwaveScale = THREE.MathUtils.lerp(0.06, 0.74, easedProgress);
+        const shockwaveOpacity = (1 - THREE.MathUtils.smoothstep(progress, 0.18, 1)) * 0.62;
+        shockwaveShellRef.current?.scale.setScalar(shockwaveScale);
+        shockwaveRingRefs.current.forEach((ring) => {
+          ring?.scale.set(shockwaveScale, shockwaveScale, 1);
+        });
+        shockwaveMaterial.opacity = THREE.MathUtils.clamp(shockwaveOpacity, 0, 0.62);
+      } else {
+        shockwaveMaterial.opacity = 0;
+      }
+    } else {
       shockwaveMaterial.opacity = 0;
-      return;
     }
 
-    const easedProgress = 1 - Math.pow(1 - progress, 3);
-    const shockwaveScale = THREE.MathUtils.lerp(0.06, 0.74, easedProgress);
-    const shockwaveOpacity = (1 - THREE.MathUtils.smoothstep(progress, 0.18, 1)) * 0.62;
-    shockwaveShellRef.current?.scale.setScalar(shockwaveScale);
-    shockwaveRingRefs.current.forEach((ring) => {
-      ring?.scale.set(shockwaveScale, shockwaveScale, 1);
+    const {
+      blazePrimaryReloading,
+      blazePrimaryReloadStart,
+      blazePrimaryReloadEnd,
+    } = useGameStore.getState();
+    const reloadDuration = Math.max(
+      1,
+      blazePrimaryReloadEnd - blazePrimaryReloadStart || BLAZE_PRIMARY_RELOAD_MS
+    );
+    const reloadProgress = blazePrimaryReloading
+      ? THREE.MathUtils.clamp((nowMs - blazePrimaryReloadStart) / reloadDuration, 0, 1)
+      : 0;
+    const reloadHead = THREE.MathUtils.smoothstep(reloadProgress, 0.02, BLAZE_STAFF_RELOAD_BURST_START);
+    const reloadActiveAmount = blazePrimaryReloading
+      ? THREE.MathUtils.smoothstep(reloadProgress, 0, 0.12) *
+        (1 - THREE.MathUtils.smoothstep(reloadProgress, 0.86, 1))
+      : 0;
+    const shaftWaveY = THREE.MathUtils.lerp(
+      BLAZE_STAFF_RELOAD_SHAFT_START_Y,
+      BLAZE_STAFF_RELOAD_SHAFT_END_Y,
+      reloadHead
+    );
+    const shaftGlow = reloadShaftGlowRef.current;
+    if (shaftGlow) {
+      shaftGlow.visible = reloadActiveAmount > 0.025;
+      if (shaftGlow.visible) {
+        const shaftPulse = 1 + Math.sin(state.clock.elapsedTime * 18.5) * 0.08;
+        const shaftHeight = THREE.MathUtils.clamp(
+          shaftWaveY - BLAZE_STAFF_RELOAD_SHAFT_START_Y + 0.12,
+          0.1,
+          BLAZE_STAFF_RELOAD_SHAFT_END_Y - BLAZE_STAFF_RELOAD_SHAFT_START_Y + 0.12
+        );
+        shaftGlow.position.y = BLAZE_STAFF_RELOAD_SHAFT_START_Y + shaftHeight * 0.5;
+        shaftGlow.rotation.y = state.clock.elapsedTime * 0.9;
+        shaftGlow.scale.set(0.052 * shaftPulse, shaftHeight, 0.052 * shaftPulse);
+      }
+    }
+    reloadShaftMaterial.opacity = THREE.MathUtils.clamp(reloadActiveAmount * 0.42, 0, 0.42);
+    reloadShaftRingRefs.current.forEach((ring, index) => {
+      if (!ring) return;
+      const trailingY = shaftWaveY - index * 0.115;
+      const ringVisible =
+        reloadActiveAmount > 0.04 &&
+        trailingY > BLAZE_STAFF_RELOAD_SHAFT_START_Y + 0.01 &&
+        trailingY < BLAZE_STAFF_RELOAD_SHAFT_END_Y + 0.06;
+      ring.visible = ringVisible;
+      if (!ringVisible) return;
+
+      const ringPulse = 1 + Math.sin(state.clock.elapsedTime * 24 + index * 1.9) * 0.08;
+      ring.position.y = trailingY;
+      ring.rotation.z = state.clock.elapsedTime * (1.5 + index * 0.28);
+      ring.scale.setScalar((0.061 - index * 0.006) * ringPulse);
     });
-    shockwaveMaterial.opacity = THREE.MathUtils.clamp(shockwaveOpacity, 0, 0.62);
+    reloadShaftRingMaterial.opacity = THREE.MathUtils.clamp(reloadActiveAmount * 0.62, 0, 0.62);
+    let strongestFlame = 0;
+
+    BLAZE_STAFF_RELOAD_FLAMES.forEach((flame, index) => {
+      const flameNode = reloadFlameRefs.current[index];
+      if (!flameNode) return;
+
+      const ignite = THREE.MathUtils.smoothstep(reloadHead, flame.progress - 0.11, flame.progress + 0.03);
+      const extinguish = 1 - THREE.MathUtils.smoothstep(reloadHead, flame.progress + 0.16, flame.progress + 0.34);
+      const waveProximity = 1 - THREE.MathUtils.clamp(Math.abs(flame.progress - reloadHead) / 0.2, 0, 1);
+      const endFade = 1 - THREE.MathUtils.smoothstep(reloadProgress, 0.84, 0.96);
+      const amount = blazePrimaryReloading
+        ? THREE.MathUtils.clamp((ignite * extinguish * 0.9 + waveProximity * 0.58) * endFade, 0, 1)
+        : 0;
+      strongestFlame = Math.max(strongestFlame, amount);
+      flameNode.visible = amount > 0.018;
+      if (!flameNode.visible) return;
+
+      const flicker = 1 + Math.sin(state.clock.elapsedTime * 29 + index * 1.77) * 0.16;
+      const wobbleAngle = flame.angle + Math.sin(state.clock.elapsedTime * 12 + index * 0.84) * 0.16 * amount;
+      const flameRadius = 0.035 + amount * 0.013;
+      flameNode.position.set(
+        Math.sin(wobbleAngle) * flameRadius,
+        flame.y + Math.sin(state.clock.elapsedTime * 18 + index) * 0.009 * amount,
+        Math.cos(wobbleAngle) * flameRadius
+      );
+      flameNode.rotation.y = wobbleAngle + state.clock.elapsedTime * (0.7 + amount * 1.85);
+      flameNode.scale.set(
+        THREE.MathUtils.lerp(0.72, 1.82, amount) * flame.size * flicker,
+        THREE.MathUtils.lerp(0.58, 2.18, amount) * flame.size,
+        THREE.MathUtils.lerp(0.72, 1.82, amount) * flame.size * flicker
+      );
+    });
+    reloadFlameOuterMaterial.opacity = THREE.MathUtils.clamp(strongestFlame * 0.94, 0, 0.94);
+    reloadFlameCoreMaterial.opacity = THREE.MathUtils.clamp(strongestFlame * 0.86, 0, 0.86);
+
+    const burst = reloadBurstRef.current;
+    const burstProgress = blazePrimaryReloading
+      ? THREE.MathUtils.clamp((reloadProgress - BLAZE_STAFF_RELOAD_BURST_START) / (1 - BLAZE_STAFF_RELOAD_BURST_START), 0, 1)
+      : 0;
+    if (
+      blazePrimaryReloading &&
+      blazePrimaryReloadStart > 0 &&
+      burstProgress > 0 &&
+      processedReloadBlastStartRef.current !== blazePrimaryReloadStart
+    ) {
+      processedReloadBlastStartRef.current = blazePrimaryReloadStart;
+      void playSharedSound('blazeReloadBlast');
+    } else if (!blazePrimaryReloading && reloadProgress === 0) {
+      processedReloadBlastStartRef.current = 0;
+    }
+    const burstIgnite = THREE.MathUtils.smoothstep(burstProgress, 0, 0.1);
+    const burstFade = 1 - THREE.MathUtils.smoothstep(burstProgress, 0.34, 1);
+    const burstAmount = burstIgnite * burstFade;
+    const burstExpansion = 1 - Math.pow(1 - burstProgress, 3);
+    const burstVisible = burstProgress > 0 && burstProgress < 1;
+    if (burst) {
+      burst.visible = burstVisible;
+      if (burst.visible) {
+        burst.rotation.y = state.clock.elapsedTime * 1.9;
+        burst.rotation.z = Math.sin(state.clock.elapsedTime * 18) * 0.08 * burstAmount;
+      }
+    }
+    reloadBurstCoreRef.current?.scale.setScalar(THREE.MathUtils.lerp(0.055, 0.17, burstAmount));
+    reloadBurstShellRef.current?.scale.setScalar(THREE.MathUtils.lerp(0.12, 0.42, burstExpansion));
+    reloadBurstRingRefs.current.forEach((ring, index) => {
+      if (!ring) return;
+      ring.visible = burstVisible;
+      if (!ring.visible) return;
+      const ringScale = THREE.MathUtils.lerp(0.07, 0.38 + index * 0.06, burstExpansion);
+      ring.scale.set(ringScale, ringScale, 1);
+      ring.rotation.z += 0.01 * (index + 1);
+    });
+    reloadBurstRayRefs.current.forEach((ray, index) => {
+      if (!ray) return;
+      const rayDelay = index % 2 === 0 ? 0 : 0.045;
+      const rayProgress = THREE.MathUtils.clamp((burstProgress - rayDelay) / 0.48, 0, 1);
+      const rayAmount =
+        THREE.MathUtils.smoothstep(rayProgress, 0, 0.16) *
+        (1 - THREE.MathUtils.smoothstep(rayProgress, 0.52, 1));
+      ray.visible = rayAmount > 0.02;
+      if (!ray.visible) return;
+      const rayLength = BLAZE_STAFF_RELOAD_BURST_RAYS[index]?.length ?? 1;
+      ray.position.y = Math.sin(rayProgress * Math.PI) * 0.018;
+      ray.scale.set(
+        THREE.MathUtils.lerp(0.4, 1.35, rayAmount) * rayLength,
+        THREE.MathUtils.lerp(0.52, 1.8, rayAmount) * rayLength,
+        THREE.MathUtils.lerp(0.4, 1.35, rayAmount) * rayLength
+      );
+    });
+    reloadBurstSparkRefs.current.forEach((sparkNode, index) => {
+      if (!sparkNode) return;
+      const spark = BLAZE_STAFF_RELOAD_BURST_SPARKS[index];
+      if (!spark) return;
+
+      const sparkProgress = THREE.MathUtils.clamp((burstProgress - spark.delay) / (1 - spark.delay), 0, 1);
+      const sparkAmount = Math.sin(sparkProgress * Math.PI);
+      sparkNode.visible = burstProgress > spark.delay && sparkProgress < 1 && sparkAmount > 0.02;
+      if (!sparkNode.visible) return;
+
+      const sparkEase = 1 - Math.pow(1 - sparkProgress, 2);
+      const sparkDistance = THREE.MathUtils.lerp(0.034, spark.distance, sparkEase);
+      sparkNode.position.set(
+        Math.sin(spark.angle) * sparkDistance,
+        spark.lift * Math.sin(sparkProgress * Math.PI * 0.86) + sparkProgress * 0.028,
+        Math.cos(spark.angle) * sparkDistance
+      );
+      sparkNode.scale.setScalar(spark.size * (0.45 + sparkAmount * 1.25));
+    });
+    reloadBurstCoreMaterial.opacity = burstVisible ? THREE.MathUtils.clamp(burstAmount * 0.96, 0, 0.96) : 0;
+    reloadBurstShellMaterial.opacity = burstVisible
+      ? THREE.MathUtils.clamp((1 - THREE.MathUtils.smoothstep(burstProgress, 0.2, 1)) * 0.5, 0, 0.5)
+      : 0;
+    reloadBurstRayMaterial.opacity = burstVisible ? THREE.MathUtils.clamp(burstAmount * 0.86, 0, 0.86) : 0;
+    reloadBurstRingMaterial.opacity = burstVisible
+      ? THREE.MathUtils.clamp((1 - THREE.MathUtils.smoothstep(burstProgress, 0.18, 1)) * 0.72, 0, 0.72)
+      : 0;
+    reloadBurstSparkMaterial.opacity = burstVisible
+      ? THREE.MathUtils.clamp((1 - THREE.MathUtils.smoothstep(burstProgress, 0.45, 1)) * 0.92, 0, 0.92)
+      : 0;
   });
 
   return (
@@ -2766,6 +3024,124 @@ function BlazeWizardStaff({
           scale={[0.032, 0.016, 0.032]}
         />
       ))}
+
+      <mesh
+        ref={reloadShaftGlowRef}
+        geometry={SHARED_GEOMETRIES.cylinderOpen16}
+        material={reloadShaftMaterial}
+        visible={false}
+        position={[0, -0.34, 0]}
+        scale={[0.001, 0.001, 0.001]}
+      />
+      {[0, 1, 2].map(index => (
+        <mesh
+          key={`reload-shaft-ring-${index}`}
+          ref={(node) => {
+            reloadShaftRingRefs.current[index] = node;
+          }}
+          geometry={SHARED_GEOMETRIES.ring24}
+          material={reloadShaftRingMaterial}
+          visible={false}
+          rotation={[Math.PI / 2, 0, 0]}
+          scale={[0.001, 0.001, 1]}
+        />
+      ))}
+
+      <group>
+        {BLAZE_STAFF_RELOAD_FLAMES.map((flame, index) => (
+          <group
+            key={`reload-flame-${flame.y}`}
+            ref={(node) => {
+              reloadFlameRefs.current[index] = node;
+            }}
+            visible={false}
+            position={[Math.sin(flame.angle) * 0.026, flame.y, Math.cos(flame.angle) * 0.026]}
+            rotation={[0, flame.angle, 0]}
+          >
+            <mesh
+              geometry={SHARED_GEOMETRIES.cone6}
+              material={reloadFlameOuterMaterial}
+              position={[0, 0.038, 0]}
+              scale={[0.026, 0.132, 0.026]}
+            />
+            <mesh
+              geometry={SHARED_GEOMETRIES.cone6}
+              material={reloadFlameCoreMaterial}
+              position={[0, 0.048, 0]}
+              scale={[0.012, 0.1, 0.012]}
+            />
+            <mesh
+              geometry={SHARED_GEOMETRIES.sphere8}
+              material={reloadFlameOuterMaterial}
+              position={[0, 0.006, 0]}
+              scale={0.026}
+            />
+            <mesh
+              geometry={SHARED_GEOMETRIES.sphere8}
+              material={reloadFlameCoreMaterial}
+              position={[0, 0.012, 0]}
+              scale={0.012}
+            />
+          </group>
+        ))}
+      </group>
+
+      <group ref={reloadBurstRef} visible={false} position={[0, 0.588, 0]}>
+        <mesh ref={reloadBurstCoreRef} geometry={SHARED_GEOMETRIES.sphere16} material={reloadBurstCoreMaterial} scale={0.001} />
+        <mesh ref={reloadBurstShellRef} geometry={SHARED_GEOMETRIES.sphere16} material={reloadBurstShellMaterial} scale={0.001} />
+        {[
+          [Math.PI / 2, 0, 0],
+          [0, Math.PI / 2, 0],
+          [0, 0, Math.PI / 2],
+        ].map((rotation, index) => (
+          <mesh
+            key={`reload-burst-ring-${index}`}
+            ref={(node) => {
+              reloadBurstRingRefs.current[index] = node;
+            }}
+            geometry={SHARED_GEOMETRIES.ring24}
+            material={reloadBurstRingMaterial}
+            rotation={rotation as [number, number, number]}
+            scale={[0.001, 0.001, 1]}
+          />
+        ))}
+        {BLAZE_STAFF_RELOAD_BURST_RAYS.map((ray, index) => (
+          <group
+            key={`reload-burst-ray-${ray.angle}`}
+            ref={(node) => {
+              reloadBurstRayRefs.current[index] = node;
+            }}
+            visible={false}
+            rotation={[0, ray.angle, 0]}
+          >
+            <mesh
+              geometry={SHARED_GEOMETRIES.cone6}
+              material={reloadBurstRayMaterial}
+              position={[0, 0.034, 0.082]}
+              rotation={[ray.pitch, 0, 0]}
+              scale={[0.024, 0.148, 0.024]}
+            />
+            <mesh
+              geometry={SHARED_GEOMETRIES.cone6}
+              material={reloadBurstCoreMaterial}
+              position={[0, 0.036, 0.084]}
+              rotation={[ray.pitch, 0, 0]}
+              scale={[0.01, 0.108, 0.01]}
+            />
+          </group>
+        ))}
+        {BLAZE_STAFF_RELOAD_BURST_SPARKS.map((spark, index) => (
+          <group
+            key={`reload-burst-spark-${spark.angle}`}
+            ref={(node) => {
+              reloadBurstSparkRefs.current[index] = node;
+            }}
+            visible={false}
+          >
+            <mesh geometry={SHARED_GEOMETRIES.sphere8} material={reloadBurstSparkMaterial} scale={1} />
+          </group>
+        ))}
+      </group>
 
       <group position={[0, 0.49, 0]}>
         <mesh geometry={SHARED_GEOMETRIES.cylinder12} material={materials.metal} position={[0, -0.048, 0]} scale={[0.056, 0.026, 0.056]} />

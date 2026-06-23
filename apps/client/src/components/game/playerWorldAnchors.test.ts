@@ -7,6 +7,7 @@ import {
 } from '@voxel-strike/shared';
 import {
   CROUCH_BODY_POSTURE_SCALE_Y,
+  DOWNED_BODY_POSTURE_SCALE_Y,
   getPlayerBodyPostureScaleY,
   getVisiblePlayerHeight,
   SLIDE_BODY_POSTURE_SCALE_Y,
@@ -18,10 +19,12 @@ const slidingMovement = createDefaultPlayerMovementState({ isCrouching: true, is
 
 assert.equal(getVisiblePlayerHeight(null, crouchingMovement), PLAYER_CROUCH_HEIGHT);
 assert.equal(getVisiblePlayerHeight(null, slidingMovement), PLAYER_SLIDE_HEIGHT);
+assert.equal(getVisiblePlayerHeight(null, standingMovement, 'downed'), PLAYER_SLIDE_HEIGHT);
 
 assert.equal(getPlayerBodyPostureScaleY(standingMovement), 1);
 assert.equal(getPlayerBodyPostureScaleY(crouchingMovement), CROUCH_BODY_POSTURE_SCALE_Y);
 assert.equal(getPlayerBodyPostureScaleY(slidingMovement), SLIDE_BODY_POSTURE_SCALE_Y);
+assert.equal(getPlayerBodyPostureScaleY(standingMovement, 'downed'), DOWNED_BODY_POSTURE_SCALE_Y);
 
 assert.ok(
   CROUCH_BODY_POSTURE_SCALE_Y > PLAYER_CROUCH_HEIGHT / PLAYER_HEIGHT,
@@ -33,5 +36,6 @@ assert.ok(
 );
 assert.ok(CROUCH_BODY_POSTURE_SCALE_Y < 1);
 assert.ok(SLIDE_BODY_POSTURE_SCALE_Y < CROUCH_BODY_POSTURE_SCALE_Y);
+assert.equal(DOWNED_BODY_POSTURE_SCALE_Y, 1);
 
 console.log('player world anchor tests passed');

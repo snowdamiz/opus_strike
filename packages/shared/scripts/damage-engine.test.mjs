@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   applyDamage,
+  BATTLE_ROYAL_DOWNED_MAX_HP,
   calculateFalloffDamage,
   getAimConeHitAgainstPlayerCombatHitbox,
   shouldApplyDamageTick,
@@ -13,6 +14,8 @@ function player(id, team, overrides = {}) {
     state: 'alive',
     health: 100,
     maxHealth: 100,
+    downedHealth: 0,
+    downedMaxHealth: BATTLE_ROYAL_DOWNED_MAX_HP,
     ultimateCharge: 0,
     spawnProtectionUntil: null,
     shieldActive: false,
@@ -35,6 +38,11 @@ function adapter(players) {
       entry.health = health;
     },
     getMaxHealth: (entry) => entry.maxHealth,
+    getDownedHealth: (entry) => entry.downedHealth,
+    setDownedHealth: (entry, health) => {
+      entry.downedHealth = health;
+    },
+    getDownedMaxHealth: (entry) => entry.downedMaxHealth,
     getSpawnProtectionUntil: (entry) => entry.spawnProtectionUntil,
     getUltimateCharge: (entry) => entry.ultimateCharge,
     setUltimateCharge: (entry, charge) => {
@@ -88,6 +96,7 @@ function adapter(players) {
   });
 
   assert.equal(result.killed, true);
+  assert.equal(result.downed, null);
   assert.equal(target.state, 'dead');
   assert.equal(target.health, 0);
   assert.equal(target.respawnTime, 4000);
@@ -96,6 +105,80 @@ function adapter(players) {
   assert.equal(assister.stats.assists, 1);
   assert.equal(result.death.assistIds[0], 'assister');
   assert.equal(damageHistory.has('target'), false);
+}
+
+{
+  const target = player('target', 'blue', { health: 12 });
+  const source = player('source', 'red');
+  const players = new Map([target, source].map((entry) => [entry.id, entry]));
+  const result = applyDamage({
+    adapter: adapter(players),
+    damageHistory: new Map(),
+    now: 1_000,
+    assistWindowMs: 10_000,
+    lethalAliveResolution: 'downed',
+  }, {
+    target,
+    source,
+    rawDamage: 20,
+    damageType: 'battle_royal_test',
+  });
+
+  assert.equal(result.applied, true);
+  assert.equal(result.killed, false);
+  assert.equal(result.death, null);
+  assert.equal(result.downed.targetId, 'target');
+  assert.equal(result.downed.sourceId, 'source');
+  assert.equal(target.state, 'downed');
+  assert.equal(target.health, 0);
+  assert.equal(target.downedHealth, BATTLE_ROYAL_DOWNED_MAX_HP);
+  assert.equal(result.newDownedHealth, BATTLE_ROYAL_DOWNED_MAX_HP);
+  assert.equal(target.stats.deaths, 0);
+  assert.equal(source.stats.kills, 0);
+}
+
+{
+  const target = player('target', 'blue', {
+    state: 'downed',
+    health: 0,
+    downedHealth: 18,
+    downedMaxHealth: 30,
+  });
+  const assister = player('assister', 'red');
+  const finisher = player('finisher', 'red');
+  const players = new Map([target, assister, finisher].map((entry) => [entry.id, entry]));
+  const common = {
+    adapter: adapter(players),
+    damageHistory: new Map(),
+    assistWindowMs: 10_000,
+    damageDownedPlayers: true,
+    ultimateChargePerKill: 20,
+    ultimateChargePerAssist: 8,
+  };
+
+  applyDamage({ ...common, now: 1_000 }, {
+    target,
+    source: assister,
+    rawDamage: 8,
+    damageType: 'downed_finish_test',
+  });
+  const result = applyDamage({ ...common, now: 2_000 }, {
+    target,
+    source: finisher,
+    rawDamage: 12,
+    damageType: 'downed_finish_test',
+  });
+
+  assert.equal(result.applied, true);
+  assert.equal(result.killed, true);
+  assert.equal(result.downed, null);
+  assert.equal(result.newDownedHealth, 0);
+  assert.equal(target.state, 'dead');
+  assert.equal(target.downedHealth, 0);
+  assert.equal(target.stats.deaths, 1);
+  assert.equal(finisher.stats.kills, 1);
+  assert.equal(assister.stats.assists, 1);
+  assert.deepEqual(result.death.assistIds, ['assister']);
 }
 
 {

@@ -843,7 +843,7 @@ export const rebuildCombatVisualFrameCache = (
 
   let entryIndex = 0;
   for (const player of players) {
-    if (player.state !== 'alive') continue;
+    if (player.state !== 'alive' && player.state !== 'downed') continue;
     if (player.visibility === 'hidden' || player.visibility === 'last_known' || player.visibility === 'audible') continue;
     const hitbox = getCombatVisualHitboxMetrics(player.heroId);
     let visualPlayer = cache.entryPool[entryIndex];

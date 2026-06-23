@@ -3,6 +3,10 @@ import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
 import {
   ABILITY_DEFINITIONS,
+  BATTLE_ROYAL_REVIVE_DURATION_MS,
+  BATTLE_ROYAL_REVIVE_RADIUS,
+  BLAZE_PRIMARY_MAGAZINE_SIZE,
+  BLAZE_PRIMARY_RELOAD_MS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
   VOID_RAY_CHARGE_TIME,
@@ -362,7 +366,7 @@ function BattleRoyalRemainingIcon({ className }: { className?: string }) {
 }
 
 function isBattleRoyalRemainingPlayer(player: Player): boolean {
-  return player.state === 'alive' || player.state === 'dropping' || player.state === 'spawning';
+  return player.state === 'alive' || player.state === 'downed' || player.state === 'dropping' || player.state === 'spawning';
 }
 
 function getBattleRoyalRemainingPlayerCount(players: Iterable<Player>, localPlayer: Player): number {
@@ -562,6 +566,129 @@ function BattleRoyalDropPrompt({
   );
 }
 
+function getDownedRemainingSeconds(player: Player, now: number): number {
+  if (player.state !== 'downed') return 0;
+  if (player.reviveByPlayerId) {
+    return Math.max(0, (player.downedRemainingMs ?? 0) / 1000);
+  }
+  if (player.downedExpiresAt) {
+    return Math.max(0, (player.downedExpiresAt - now) / 1000);
+  }
+  return Math.max(0, (player.downedRemainingMs ?? 0) / 1000);
+}
+
+function getReviveProgress(player: Player, now: number): number {
+  if (!player.reviveStartedAt || !player.reviveCompletesAt) return 0;
+  const duration = Math.max(1, player.reviveCompletesAt - player.reviveStartedAt);
+  return Math.max(0, Math.min(1, (now - player.reviveStartedAt) / duration));
+}
+
+function getPlayerDistanceSq(a: Player, b: Player): number {
+  const dx = a.position.x - b.position.x;
+  const dy = a.position.y - b.position.y;
+  const dz = a.position.z - b.position.z;
+  return dx * dx + dy * dy + dz * dz;
+}
+
+function DownedStateHud({ player }: { player: Player }) {
+  const now = useHudNow();
+  if (player.state !== 'downed') return null;
+
+  const downedHealth = Math.max(0, player.downedHealth ?? 0);
+  const downedMaxHealth = Math.max(1, player.downedMaxHealth ?? 1);
+  const remainingSeconds = Math.ceil(getDownedRemainingSeconds(player, now));
+  const reviveProgress = getReviveProgress(player, now);
+  const isBeingRevived = Boolean(player.reviveByPlayerId);
+
+  return (
+    <div className="absolute bottom-[clamp(6.75rem,14vh,9rem)] left-1/2 z-[126] w-[min(22rem,86vw)] -translate-x-1/2 text-center">
+      <div className="rounded-md border border-red-200/24 bg-black/54 px-4 py-3 shadow-2xl backdrop-blur-md">
+        <div className="flex items-center justify-between gap-3">
+          <span className="font-display text-sm tracking-[0.24em] text-red-100">DOWNED</span>
+          <span className="font-mono text-lg font-black tabular-nums text-white">{remainingSeconds}s</span>
+        </div>
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+          <div
+            className="h-full w-full origin-left rounded-full bg-red-400 transition-transform duration-150"
+            style={{
+              transform: `scaleX(${downedHealth / downedMaxHealth})`,
+              boxShadow: '0 0 12px rgba(248, 113, 113, 0.68)',
+            }}
+          />
+        </div>
+        {isBeingRevived && (
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-cyan-100/12">
+            <div
+              className="h-full w-full origin-left rounded-full bg-cyan-300 transition-transform duration-100"
+              style={{
+                transform: `scaleX(${reviveProgress})`,
+                boxShadow: '0 0 10px rgba(103, 232, 249, 0.7)',
+              }}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ReviveChannelHud({
+  target,
+  interactKeyLabel,
+}: {
+  target: Player | null;
+  interactKeyLabel: string;
+}) {
+  const now = useHudNow();
+  if (!target || target.state !== 'downed') return null;
+
+  const progress = getReviveProgress(target, now);
+  const remainingMs = target.reviveCompletesAt ? Math.max(0, target.reviveCompletesAt - now) : BATTLE_ROYAL_REVIVE_DURATION_MS;
+
+  return (
+    <div className="absolute bottom-[clamp(6.5rem,13vh,8.5rem)] left-1/2 z-[126] w-[min(20rem,82vw)] -translate-x-1/2">
+      <div className="rounded-md border border-cyan-200/28 bg-black/52 px-4 py-3 text-center shadow-2xl backdrop-blur-md">
+        <div className="flex items-center justify-between gap-3">
+          <span className="font-display text-xs tracking-[0.24em] text-cyan-100">REVIVING</span>
+          <span className="font-mono text-sm font-bold tabular-nums text-white">{(remainingMs / 1000).toFixed(1)}s</span>
+        </div>
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+          <div
+            className="h-full w-full origin-left rounded-full bg-cyan-300 transition-transform duration-100"
+            style={{
+              transform: `scaleX(${progress})`,
+              boxShadow: '0 0 12px rgba(103, 232, 249, 0.68)',
+            }}
+          />
+        </div>
+        <div className="mt-2 font-mono text-[0.68rem] font-bold tracking-[0.2em] text-white/62">
+          HOLD {interactKeyLabel}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RevivePromptHud({
+  target,
+  interactKeyLabel,
+}: {
+  target: Player | null;
+  interactKeyLabel: string;
+}) {
+  if (!target) return null;
+  return (
+    <div className="absolute bottom-[clamp(6.5rem,13vh,8.5rem)] left-1/2 z-[125] -translate-x-1/2 rounded-md border border-white/16 bg-black/42 px-4 py-2 text-center shadow-xl backdrop-blur-md">
+      <span className="font-mono text-sm font-black tracking-[0.18em] text-white">
+        {interactKeyLabel}
+      </span>
+      <span className="ml-2 font-display text-sm tracking-[0.18em] text-cyan-100">
+        REVIVE
+      </span>
+    </div>
+  );
+}
+
 interface ShotCounterTone {
   labelClass: string;
   readyClass: string;
@@ -606,6 +733,28 @@ const PHANTOM_SHOT_COUNTER_TONE: ShotCounterTone = {
   progressShadow: '0 0 8px rgba(34, 211, 238, 0.32)',
 };
 
+const BLAZE_SHOT_COUNTER_TONE: ShotCounterTone = {
+  labelClass: 'text-orange-100/50',
+  readyClass: 'text-orange-50/96',
+  reloadClass: 'text-amber-100',
+  idleBackground: 'linear-gradient(135deg, rgba(95, 39, 12, 0.3), rgba(13, 8, 5, 0.24))',
+  reloadBackground: 'linear-gradient(135deg, rgba(127, 45, 10, 0.38), rgba(28, 11, 5, 0.28))',
+  idleBorder: '1px solid rgba(251, 146, 60, 0.24)',
+  reloadBorder: '1px solid rgba(251, 191, 36, 0.36)',
+  idleShadow: '0 0 18px rgba(249, 115, 22, 0.13), 0 8px 20px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255,255,255,0.06)',
+  reloadShadow: '0 0 20px rgba(251, 146, 60, 0.22), 0 8px 20px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255,255,255,0.07)',
+  idleFill: 'linear-gradient(90deg, rgba(249, 115, 22, 0.09), transparent)',
+  reloadFill: 'linear-gradient(90deg, rgba(251, 146, 60, 0.14), rgba(250, 204, 21, 0.08))',
+  idleProgress: 'linear-gradient(90deg, rgba(249, 115, 22, 0.66), rgba(251, 191, 36, 0.5))',
+  reloadProgress: 'linear-gradient(90deg, rgba(250, 204, 21, 0.7), rgba(248, 113, 113, 0.48))',
+  idleStroke: '#f97316',
+  reloadStroke: '#facc15',
+  idleTextShadow: '0 0 10px rgba(249, 115, 22, 0.4), 0 2px 8px rgba(0,0,0,0.7)',
+  reloadTextShadow: '0 0 12px rgba(251, 191, 36, 0.58)',
+  reloadStrokeFilter: 'drop-shadow(0 0 4px rgba(250, 204, 21, 0.76))',
+  progressShadow: '0 0 8px rgba(251, 146, 60, 0.34)',
+};
+
 const HOOKSHOT_SHOT_COUNTER_TONE: ShotCounterTone = {
   labelClass: 'text-cyan-100/52',
   readyClass: 'text-cyan-50/95',
@@ -635,6 +784,8 @@ function PrimaryShotCounter({
   reloadStart,
   reloadEnd,
   now,
+  maxAmmo,
+  reloadMs,
   infinite = false,
   tone,
 }: {
@@ -644,12 +795,13 @@ function PrimaryShotCounter({
   reloadStart: number;
   reloadEnd: number;
   now: number;
+  maxAmmo: number;
+  reloadMs: number;
   infinite?: boolean;
   tone: ShotCounterTone;
 }) {
-  const maxAmmo = PHANTOM_PRIMARY_MAGAZINE_SIZE;
   const shownAmmo = Math.max(0, Math.min(maxAmmo, Math.round(ammo)));
-  const reloadDuration = Math.max(1, reloadEnd - reloadStart || PHANTOM_PRIMARY_RELOAD_MS);
+  const reloadDuration = Math.max(1, reloadEnd - reloadStart || reloadMs);
   const isReloading = !infinite && reloading;
   const reloadProgress = isReloading
     ? Math.max(0, Math.min(1, (now - reloadStart) / reloadDuration))
@@ -758,7 +910,37 @@ function PhantomAmmoCounter({
       reloadStart={reloadStart}
       reloadEnd={reloadEnd}
       now={now}
+      maxAmmo={PHANTOM_PRIMARY_MAGAZINE_SIZE}
+      reloadMs={PHANTOM_PRIMARY_RELOAD_MS}
       tone={PHANTOM_SHOT_COUNTER_TONE}
+    />
+  );
+}
+
+function BlazeAmmoCounter({
+  ammo,
+  reloading,
+  reloadStart,
+  reloadEnd,
+}: {
+  ammo: number;
+  reloading: boolean;
+  reloadStart: number;
+  reloadEnd: number;
+}) {
+  const now = useHudNow();
+
+  return (
+    <PrimaryShotCounter
+      label="rocket"
+      ammo={ammo}
+      reloading={reloading}
+      reloadStart={reloadStart}
+      reloadEnd={reloadEnd}
+      now={now}
+      maxAmmo={BLAZE_PRIMARY_MAGAZINE_SIZE}
+      reloadMs={BLAZE_PRIMARY_RELOAD_MS}
+      tone={BLAZE_SHOT_COUNTER_TONE}
     />
   );
 }
@@ -772,6 +954,8 @@ function HookshotShotCounter() {
       reloadStart={0}
       reloadEnd={0}
       now={0}
+      maxAmmo={1}
+      reloadMs={1}
       infinite
       tone={HOOKSHOT_SHOT_COUNTER_TONE}
     />
@@ -921,6 +1105,10 @@ export function HUD() {
     phantomPrimaryReloading,
     phantomPrimaryReloadStart,
     phantomPrimaryReloadEnd,
+    blazePrimaryAmmo,
+    blazePrimaryReloading,
+    blazePrimaryReloadStart,
+    blazePrimaryReloadEnd,
     chronosLifelineQueued,
   } = useGameStore(
     useShallow(state => ({
@@ -949,6 +1137,10 @@ export function HUD() {
       phantomPrimaryReloading: state.phantomPrimaryReloading,
       phantomPrimaryReloadStart: state.phantomPrimaryReloadStart,
       phantomPrimaryReloadEnd: state.phantomPrimaryReloadEnd,
+      blazePrimaryAmmo: state.blazePrimaryAmmo,
+      blazePrimaryReloading: state.blazePrimaryReloading,
+      blazePrimaryReloadStart: state.blazePrimaryReloadStart,
+      blazePrimaryReloadEnd: state.blazePrimaryReloadEnd,
       chronosLifelineQueued: state.chronosLifelineQueued,
     }))
   );
@@ -971,10 +1163,46 @@ export function HUD() {
     if (!player) return 0;
     return getBattleRoyalRemainingPlayerCount(state.players.values(), player);
   });
+  const {
+    reviveChannelTarget,
+    nearbyDownedAlly,
+  } = useGameStore(
+    useShallow(state => {
+      const player = state.localPlayer;
+      if (!player || state.gameplayMode !== 'battle_royal' || state.gamePhase !== 'playing') {
+        return { reviveChannelTarget: null, nearbyDownedAlly: null };
+      }
+
+      let channelTarget: Player | null = null;
+      let nearestAlly: Player | null = null;
+      let nearestDistanceSq = (BATTLE_ROYAL_REVIVE_RADIUS + 0.35) * (BATTLE_ROYAL_REVIVE_RADIUS + 0.35);
+
+      for (const candidate of state.players.values()) {
+        if (candidate.id === player.id || candidate.team !== player.team || candidate.state !== 'downed') continue;
+        if (candidate.reviveByPlayerId === player.id) {
+          channelTarget = candidate;
+        }
+        const distanceSq = getPlayerDistanceSq(player, candidate);
+        if (distanceSq <= nearestDistanceSq && !candidate.reviveByPlayerId) {
+          nearestDistanceSq = distanceSq;
+          nearestAlly = candidate;
+        }
+      }
+
+      return {
+        reviveChannelTarget: channelTarget,
+        nearbyDownedAlly: nearestAlly,
+      };
+    })
+  );
 
   if (!localPlayer) return null;
 
-  const healthPercent = (localPlayer.health / localPlayer.maxHealth) * 100;
+  const isLocalDowned = localPlayer.state === 'downed';
+  const isLocalReviving = Boolean(reviveChannelTarget);
+  const displayedHealth = isLocalDowned ? localPlayer.downedHealth ?? 0 : localPlayer.health;
+  const displayedMaxHealth = isLocalDowned ? Math.max(1, localPlayer.downedMaxHealth ?? 1) : localPlayer.maxHealth;
+  const healthPercent = (displayedHealth / displayedMaxHealth) * 100;
   const isLowHealth = healthPercent < 30;
   const isCriticalHealth = healthPercent < 15;
   const ultimatePercent = localPlayer.ultimateCharge ?? 0;
@@ -999,6 +1227,7 @@ export function HUD() {
     battleRoyalDropStatus === 'aboard' ||
     battleRoyalDropStatus === 'dropping'
   );
+  const suppressCombatHud = isBattleRoyalPreLanding || isLocalDowned || isLocalReviving;
   const healthColor = healthPercent <= 15
     ? '#ef4444'
     : healthPercent <= 30
@@ -1020,7 +1249,7 @@ export function HUD() {
       )}
 
       {/* Crosshair - changes for Meteor Strike targeting mode */}
-      {!isBattleRoyalPreLanding && (
+      {!suppressCombatHud && (
         <div className="crosshair">
           {bombTargeting ? (
             // Meteor Strike targeting crosshair - larger, orange, with explosion radius indicator
@@ -1071,10 +1300,23 @@ export function HUD() {
           attachedToPlayerId={battleRoyalDropAttachedToPlayerId}
         />
       )}
+      {gameplayMode === 'battle_royal' && <DownedStateHud player={localPlayer} />}
+      {gameplayMode === 'battle_royal' && (
+        <ReviveChannelHud
+          target={reviveChannelTarget}
+          interactKeyLabel={formatKeybind(interactKeybind)}
+        />
+      )}
+      {gameplayMode === 'battle_royal' && !isLocalDowned && !isLocalReviving && (
+        <RevivePromptHud
+          target={nearbyDownedAlly}
+          interactKeyLabel={formatKeybind(interactKeybind)}
+        />
+      )}
       {!isPracticeMode && <VoiceHud />}
 
       {/* Meteor Strike targeting instructions */}
-      {bombTargeting && (
+      {bombTargeting && !suppressCombatHud && (
         <div className="fixed top-1/3 left-1/2 -translate-x-1/2 text-center z-50 pointer-events-none">
           <div
             className="px-4 py-2 rounded-lg backdrop-blur-sm"
@@ -1092,7 +1334,7 @@ export function HUD() {
       )}
 
       {/* Void Ray Charge Indicator */}
-      {voidRayCharging && localPlayer?.heroId === 'phantom' && (
+      {voidRayCharging && !suppressCombatHud && localPlayer?.heroId === 'phantom' && (
         <VoidRayChargeIndicator chargeStart={voidRayChargeStart} />
       )}
 
@@ -1275,7 +1517,7 @@ export function HUD() {
       </div>
 
       {/* ===== BOTTOM CENTER - Skill Bar ===== */}
-      {heroSkillItems.length > 0 && !isBattleRoyalPreLanding && (
+      {heroSkillItems.length > 0 && !suppressCombatHud && (
         <div className="absolute bottom-[clamp(0.45rem,1vw,0.875rem)] left-1/2 flex max-w-[94vw] -translate-x-1/2 flex-col items-center gap-2 hud-skill-bar">
           {showChronosLifelineHelper && (
             <ChronosLifelineHelper />
@@ -1298,6 +1540,7 @@ export function HUD() {
       )}
 
       {/* ===== BOTTOM RIGHT - Movement Status (Improved) ===== */}
+      {!suppressCombatHud && (
       <div className="absolute bottom-4 right-4 xl:bottom-6 xl:right-6 flex flex-col items-end gap-2 hud-status">
         {localPlayer.heroId === 'phantom' && (
           <PhantomAmmoCounter
@@ -1308,6 +1551,14 @@ export function HUD() {
           />
         )}
         {localPlayer.heroId === 'hookshot' && <HookshotShotCounter />}
+        {localPlayer.heroId === 'blaze' && (
+          <BlazeAmmoCounter
+            ammo={blazePrimaryAmmo}
+            reloading={blazePrimaryReloading}
+            reloadStart={blazePrimaryReloadStart}
+            reloadEnd={blazePrimaryReloadEnd}
+          />
+        )}
 
         {/* Movement indicators container */}
         <div className="flex flex-col items-end gap-1.5">
@@ -1324,6 +1575,7 @@ export function HUD() {
         )}
 
       </div>
+      )}
     </div>
   );
 }

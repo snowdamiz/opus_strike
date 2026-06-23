@@ -1,5 +1,7 @@
 import type { StateCreator } from 'zustand';
 import {
+  BLAZE_PRIMARY_MAGAZINE_SIZE,
+  BLAZE_PRIMARY_RELOAD_MS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
 } from '@voxel-strike/shared';
@@ -35,6 +37,10 @@ export interface ProjectileState {
 
   // Blaze projectiles
   rockets: RocketData[];
+  blazePrimaryAmmo: number;
+  blazePrimaryReloading: boolean;
+  blazePrimaryReloadStart: number;
+  blazePrimaryReloadEnd: number;
   bombs: BombData[];
   bombTargeting: boolean;
   bombTargetValid: boolean;
@@ -78,6 +84,9 @@ export interface ProjectileActions {
   removeRocket: (id: string) => void;
   removeRockets: (ids: readonly string[]) => void;
   clearExpiredRockets: () => void;
+  setBlazePrimaryAmmo: (ammo: number) => void;
+  setBlazePrimaryReload: (reloading: boolean, startTime?: number, endTime?: number) => void;
+  resetBlazePrimaryMagazine: () => void;
 
   // Blaze bomb actions
   addBomb: (bomb: BombData) => void;
@@ -146,6 +155,10 @@ export const projectileInitialState: ProjectileState = {
   phantomPrimaryReloadStart: 0,
   phantomPrimaryReloadEnd: 0,
   rockets: [],
+  blazePrimaryAmmo: BLAZE_PRIMARY_MAGAZINE_SIZE,
+  blazePrimaryReloading: false,
+  blazePrimaryReloadStart: 0,
+  blazePrimaryReloadEnd: 0,
   bombs: [],
   bombTargeting: false,
   bombTargetValid: false,
@@ -461,6 +474,45 @@ export const createProjectileSlice: StateCreator<
   clearExpiredRockets: () => set((state) => {
     const rockets = filterExpiredByExpiry(state.rockets, getRocketExpiresAt);
     return rockets === state.rockets ? state : { rockets };
+  }),
+
+  setBlazePrimaryAmmo: (ammo) => set((state) => {
+    const nextAmmo = Math.max(0, Math.min(BLAZE_PRIMARY_MAGAZINE_SIZE, ammo));
+    return state.blazePrimaryAmmo === nextAmmo ? state : { blazePrimaryAmmo: nextAmmo };
+  }),
+
+  setBlazePrimaryReload: (reloading, startTime = 0, endTime = startTime + BLAZE_PRIMARY_RELOAD_MS) => set((state) => {
+    if (
+      state.blazePrimaryReloading === reloading &&
+      state.blazePrimaryReloadStart === startTime &&
+      state.blazePrimaryReloadEnd === endTime
+    ) {
+      return state;
+    }
+
+    return {
+      blazePrimaryReloading: reloading,
+      blazePrimaryReloadStart: reloading ? startTime : 0,
+      blazePrimaryReloadEnd: reloading ? endTime : 0,
+    };
+  }),
+
+  resetBlazePrimaryMagazine: () => set((state) => {
+    if (
+      state.blazePrimaryAmmo === BLAZE_PRIMARY_MAGAZINE_SIZE &&
+      !state.blazePrimaryReloading &&
+      state.blazePrimaryReloadStart === 0 &&
+      state.blazePrimaryReloadEnd === 0
+    ) {
+      return state;
+    }
+
+    return {
+      blazePrimaryAmmo: BLAZE_PRIMARY_MAGAZINE_SIZE,
+      blazePrimaryReloading: false,
+      blazePrimaryReloadStart: 0,
+      blazePrimaryReloadEnd: 0,
+    };
   }),
 
   // ==================== BOMBS ====================

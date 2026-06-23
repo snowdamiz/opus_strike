@@ -28,6 +28,8 @@ import {
   groupRiggedParts,
 } from './heroRig';
 import {
+  applyDownedBonePose,
+  applyDownedRootPivot,
   applyHeroBodyPoseTransition,
   applyLookPitchWaistBend,
   beginHeroBodyPoseTransition,
@@ -345,6 +347,36 @@ assert.equal(Math.abs(lookPitchTorso.rotation.x), upwardTorsoBend);
 assert.equal(getHeroLookPitchWaistBend(Number.NaN), 0);
 assert.equal(getHeroLookPitchWaistBend(0.01), 0);
 assert.equal(Math.abs(getHeroLookPitchWaistBend(10)), THREE.MathUtils.degToRad(38));
+
+const downedPoseBones: HeroBoneRefs = {
+  hips: new THREE.Group(),
+  torso: new THREE.Group(),
+  head: new THREE.Group(),
+  leftArm: new THREE.Group(),
+  rightArm: new THREE.Group(),
+  leftLeg: new THREE.Group(),
+  rightLeg: new THREE.Group(),
+  leftShin: new THREE.Group(),
+  rightShin: new THREE.Group(),
+};
+applyDownedBonePose(downedPoseBones, 1.25, 1, 1, 0);
+assert.equal(downedPoseBones.hips!.rotation.x, 0);
+assert.equal(downedPoseBones.torso!.rotation.x, 0);
+assert.equal(downedPoseBones.head!.rotation.x, 0);
+assert.equal(downedPoseBones.leftArm!.rotation.x, 0);
+assert.equal(downedPoseBones.rightArm!.rotation.x, 0);
+assert.equal(downedPoseBones.leftLeg!.rotation.x, 0);
+assert.equal(downedPoseBones.rightLeg!.rotation.x, 0);
+assert.equal(downedPoseBones.leftShin!.rotation.x, 0);
+assert.equal(downedPoseBones.rightShin!.rotation.x, 0);
+
+const downedRootPosition = new THREE.Vector3();
+const downedRootRotation = new THREE.Euler();
+applyDownedRootPivot(downedRootPosition, downedRootRotation, 1, 1);
+assert.ok(downedRootRotation.x < -1.35);
+assert.ok(downedRootRotation.x > -1.55);
+assert.ok(downedRootPosition.y > 0.18);
+assert.ok(downedRootPosition.z < -0.15);
 
 const runtime = createViewmodelPoseRuntime('phantom');
 setPhantomPrimaryHeld(true, 1000, runtime);

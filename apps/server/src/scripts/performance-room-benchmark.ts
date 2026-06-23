@@ -658,21 +658,26 @@ function runCustomMessageTrackingBenchmark(playerCount = 8): Record<string, numb
         trackCustomMessage(metrics, 'playerVitals', {
           tick,
           serverTime,
-          players: Array.from({ length: playerCount }, (_, playerIndex) => ({
-            id: `player-${playerIndex}`,
-            name: `Player ${playerIndex}`,
-            team: playerIndex < Math.ceil(playerCount / 2) ? 'red' : 'blue',
-            heroId: playerIndex % 2 === 0 ? 'phantom' : 'chronos',
-            state: 'alive',
-            health: 180 - playerIndex,
-            maxHealth: 225,
-            ultimateCharge: (iteration + playerIndex) % 100,
-            abilities: [
-              { abilityId: 'primary', cooldownUntil: 0, charges: 1, isActive: false },
-              { abilityId: 'utility', cooldownUntil: serverTime + 1200, charges: 2, isActive: playerIndex % 3 === 0 },
-            ],
-            hasFlag: playerIndex === 2,
-          })),
+          players: Array.from({ length: playerCount }, (_, playerIndex) => {
+            const heroId = playerIndex % 2 === 0 ? 'phantom' : 'chronos';
+            const maxHealth = HERO_DEFINITIONS[heroId].stats.maxHealth;
+
+            return {
+              id: `player-${playerIndex}`,
+              name: `Player ${playerIndex}`,
+              team: playerIndex < Math.ceil(playerCount / 2) ? 'red' : 'blue',
+              heroId,
+              state: 'alive',
+              health: Math.max(1, Math.min(maxHealth, maxHealth - playerIndex)),
+              maxHealth,
+              ultimateCharge: (iteration + playerIndex) % 100,
+              abilities: [
+                { abilityId: 'primary', cooldownUntil: 0, charges: 1, isActive: false },
+                { abilityId: 'utility', cooldownUntil: serverTime + 1200, charges: 2, isActive: playerIndex % 3 === 0 },
+              ],
+              hasFlag: playerIndex === 2,
+            };
+          }),
           removedPlayerIds: [],
         }, 1);
       }
@@ -859,7 +864,7 @@ function addBenchmarkPlayer(input: {
     replicationState: { markKnownPlayer(playerId: string): void };
     initializePressState(playerId: string): void;
     assignPlayerSpawnPosition(player: Player): void;
-    resetPhantomPrimaryMagazine(playerId: string): void;
+    resetPrimaryMagazineForHero(playerId: string, heroId: string): void;
   };
   const heroDef = HERO_DEFINITIONS[input.heroId];
   const player = new Player();
@@ -878,8 +883,8 @@ function addBenchmarkPlayer(input: {
   player.spawnProtectionUntil = 0;
   initializePlayerAbilities(player, input.heroId);
   roomAny.assignPlayerSpawnPosition(player);
-  if (input.heroId === 'phantom') {
-    roomAny.resetPhantomPrimaryMagazine(player.id);
+  if (input.heroId === 'phantom' || input.heroId === 'blaze') {
+    roomAny.resetPrimaryMagazineForHero(player.id, input.heroId);
   }
 
   input.room.state.players.set(player.id, player);

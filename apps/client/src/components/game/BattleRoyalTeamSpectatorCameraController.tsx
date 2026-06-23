@@ -6,12 +6,14 @@ import { useGameStore } from '../../store/gameStore';
 const CAMERA_DISTANCE = 6.4;
 const CAMERA_HEIGHT = 2.6;
 const LOOK_HEIGHT = 1.15;
+const DOWNED_CAMERA_HEIGHT = 1.7;
+const DOWNED_LOOK_HEIGHT = 0.45;
 const POSITION_LERP = 0.16;
 
-function getBehindOffset(lookYaw: number): THREE.Vector3 {
+function getBehindOffset(lookYaw: number, downed: boolean): THREE.Vector3 {
   return new THREE.Vector3(
     Math.sin(lookYaw) * CAMERA_DISTANCE,
-    CAMERA_HEIGHT,
+    downed ? DOWNED_CAMERA_HEIGHT : CAMERA_HEIGHT,
     Math.cos(lookYaw) * CAMERA_DISTANCE
   );
 }
@@ -29,7 +31,7 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
       .filter((player) => (
         player.team === localPlayer.team
         && player.id !== localPlayer.id
-        && player.state === 'alive'
+        && (player.state === 'alive' || player.state === 'downed')
       ))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [localPlayer?.id, localPlayer?.team, players]);
@@ -79,12 +81,13 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
       ?? localPlayer;
     if (!target) return;
 
+    const isDowned = target.state === 'downed';
     const targetPosition = new THREE.Vector3(
       target.position.x,
-      target.position.y + LOOK_HEIGHT,
+      target.position.y + (isDowned ? DOWNED_LOOK_HEIGHT : LOOK_HEIGHT),
       target.position.z
     );
-    const desiredPosition = targetPosition.clone().add(getBehindOffset(target.lookYaw));
+    const desiredPosition = targetPosition.clone().add(getBehindOffset(target.lookYaw, isDowned));
 
     if (initializedTargetRef.current !== target.id) {
       camera.position.copy(desiredPosition);

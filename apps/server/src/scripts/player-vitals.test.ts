@@ -29,6 +29,14 @@ function vitals(overrides: Partial<PlayerVitalsSnapshot> = {}): PlayerVitalsSnap
     rank: undefined,
     health: 80,
     maxHealth: 100,
+    downedHealth: null,
+    downedMaxHealth: null,
+    downedStartedAt: null,
+    downedRemainingMs: null,
+    downedExpiresAt: null,
+    reviveStartedAt: null,
+    reviveCompletesAt: null,
+    reviveByPlayerId: null,
     ultimateCharge: 65,
     onFireUntil: 12_000,
     powerupBoostUntil: 13_000,
@@ -320,6 +328,14 @@ function vitals(overrides: Partial<PlayerVitalsSnapshot> = {}): PlayerVitalsSnap
     rank: undefined,
     health: 80,
     maxHealth: 100,
+    downedHealth: 21,
+    downedMaxHealth: 30,
+    downedStartedAt: 11_000,
+    downedRemainingMs: 42_000,
+    downedExpiresAt: 53_000,
+    reviveStartedAt: 12_000,
+    reviveCompletesAt: 17_000,
+    reviveByPlayerId: 'ally-a',
     ultimateCharge: 65,
     onFireUntil: 12_000,
     powerupBoostUntil: 13_000,
@@ -354,6 +370,14 @@ function vitals(overrides: Partial<PlayerVitalsSnapshot> = {}): PlayerVitalsSnap
     rank: undefined,
     health: 80,
     maxHealth: 100,
+    downedHealth: 21,
+    downedMaxHealth: 30,
+    downedStartedAt: 11_000,
+    downedRemainingMs: 42_000,
+    downedExpiresAt: 53_000,
+    reviveStartedAt: 12_000,
+    reviveCompletesAt: 17_000,
+    reviveByPlayerId: 'ally-a',
     ultimateCharge: 65,
     onFireUntil: 12_000,
     powerupBoostUntil: 13_000,
@@ -432,8 +456,19 @@ function vitals(overrides: Partial<PlayerVitalsSnapshot> = {}): PlayerVitalsSnap
 }
 
 {
-  const masked = buildVisibleEnemyVitalsSnapshot(vitals(), 'last_known');
+  const masked = buildVisibleEnemyVitalsSnapshot(vitals({
+    state: 'downed',
+    downedHealth: 16,
+    downedMaxHealth: 30,
+    downedStartedAt: 11_000,
+    downedRemainingMs: 42_000,
+    downedExpiresAt: 53_000,
+    reviveStartedAt: 12_000,
+    reviveCompletesAt: 17_000,
+    reviveByPlayerId: 'ally-a',
+  }), 'last_known');
 
+  assert.equal(masked.state, 'downed');
   assert.equal(masked.ultimateCharge, 0);
   assert.deepEqual(masked.abilities, {
     active: {
@@ -448,11 +483,20 @@ function vitals(overrides: Partial<PlayerVitalsSnapshot> = {}): PlayerVitalsSnap
   assert.equal(masked.spawnProtectionUntil, null);
   assert.equal(masked.visibility, 'last_known');
   assert.equal(masked.health, 80);
+  assert.equal(masked.downedHealth, 16);
+  assert.equal(masked.downedMaxHealth, 30);
+  assert.equal(masked.downedStartedAt, null);
+  assert.equal(masked.downedRemainingMs, null);
+  assert.equal(masked.downedExpiresAt, null);
+  assert.equal(masked.reviveStartedAt, null);
+  assert.equal(masked.reviveCompletesAt, null);
+  assert.equal(masked.reviveByPlayerId, null);
   assert.equal(masked.hasFlag, true);
 }
 
 {
   assert.equal(getPublicEnemyVitalsState('dead'), 'dead');
+  assert.equal(getPublicEnemyVitalsState('downed'), 'downed');
   assert.equal(getPublicEnemyVitalsState('alive'), 'alive');
   assert.equal(getPublicEnemyVitalsState('spawning'), 'alive');
   assert.equal(getPublicEnemyVitalsState('selecting'), 'alive');
@@ -497,6 +541,14 @@ function vitals(overrides: Partial<PlayerVitalsSnapshot> = {}): PlayerVitalsSnap
     rank: undefined,
     health: 150,
     maxHealth: 150,
+    downedHealth: null,
+    downedMaxHealth: null,
+    downedStartedAt: null,
+    downedRemainingMs: null,
+    downedExpiresAt: null,
+    reviveStartedAt: null,
+    reviveCompletesAt: null,
+    reviveByPlayerId: null,
     ultimateCharge: 0,
     onFireUntil: null,
     powerupBoostUntil: null,
@@ -516,6 +568,7 @@ function vitals(overrides: Partial<PlayerVitalsSnapshot> = {}): PlayerVitalsSnap
   assert.equal(haveVitalsChanged(base, vitals()), false);
   assert.equal(haveVitalsChanged(base, vitals({ ultimateCharge: 65.4 })), false);
   assert.equal(haveVitalsChanged(base, vitals({ ultimateCharge: 66 })), true);
+  assert.equal(haveVitalsChanged(base, vitals({ downedHealth: 29 })), true);
   assert.equal(haveVitalsChanged(base, vitals({
     movement: {
       ...base.movement,

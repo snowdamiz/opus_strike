@@ -212,7 +212,12 @@ function shouldKeepChronosLifelineQueued(
   previousLocalPlayer: Player | null,
   nextLocalPlayer: Player | null
 ): boolean {
-  return queued && nextLocalPlayer?.heroId === 'chronos' && previousLocalPlayer?.id === nextLocalPlayer.id;
+  return (
+    queued &&
+    nextLocalPlayer?.state === 'alive' &&
+    nextLocalPlayer.heroId === 'chronos' &&
+    previousLocalPlayer?.id === nextLocalPlayer.id
+  );
 }
 
 // ============================================================================

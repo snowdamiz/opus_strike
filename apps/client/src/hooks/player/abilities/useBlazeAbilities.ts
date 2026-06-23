@@ -18,6 +18,8 @@ import {
   BLAZE_FLAMETHROWER_RANGE,
   BLAZE_FLAMETHROWER_SOCKET,
   BLAZE_BOMB_SPLASH_RADIUS,
+  BLAZE_PRIMARY_MAGAZINE_SIZE,
+  BLAZE_PRIMARY_RELOAD_MS,
   BLAZE_ROCKET_STAFF_SOCKET,
   type Team,
 } from '@voxel-strike/shared';
@@ -54,6 +56,7 @@ import type { AbilityContext, PlayerSounds } from '../types';
 import { isActionLockBlocking } from '../actionLock';
 import { markPredictedLocalAbilitySound } from '../useLocalAbilityAudioPrediction';
 import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
+import { playSharedSound } from '../../useAudio';
 
 const FUEL_AUTHORITY_EPSILON = 0.05;
 
@@ -104,6 +107,15 @@ function vectorToPlainPosition(vector: THREE.Vector3): { x: number; y: number; z
   };
 }
 
+function playPredictedBlazePrimaryReload(now: number): void {
+  markPredictedLocalAbilitySound('blaze_reload', now, BLAZE_PRIMARY_RELOAD_MS + 250);
+  const fadeOutMs = Math.min(180, BLAZE_PRIMARY_RELOAD_MS);
+  void playSharedSound('blazeReload', {
+    durationMs: BLAZE_PRIMARY_RELOAD_MS,
+    fadeOutMs,
+  });
+}
+
 function sampleBlazeStaffTipPose(
   ctx: AbilityContext,
   abilityId: string,
@@ -144,6 +156,9 @@ export interface UseBlazeAbilitiesReturn {
   lastBombTimeRef: React.MutableRefObject<number>;
   lastRocketTimeRef: React.MutableRefObject<number>;
   rocketIdRef: React.MutableRefObject<number>;
+  blazePrimaryAmmoRef: React.MutableRefObject<number>;
+  blazePrimaryReloadingRef: React.MutableRefObject<boolean>;
+  blazePrimaryReloadStartRef: React.MutableRefObject<number>;
   bombTargetRef: React.MutableRefObject<THREE.Vector3 | null>;
   bombValidRef: React.MutableRefObject<boolean>;
   flamethrowerFuelRef: React.MutableRefObject<number>;
@@ -156,6 +171,9 @@ export interface UseBlazeAbilitiesReturn {
   lockActions: (durationMs: number, timestampMs?: number) => void;
   clearActionLock: () => void;
   isActionLocked: (timestampMs?: number, overlapGraceMs?: number) => boolean;
+  updateBlazePrimaryReload: (now?: number) => void;
+  reloadBlazePrimary: (now?: number) => boolean;
+  resetBlazePrimaryMagazine: () => void;
   handleBombTargeting: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   fireRocket: (ctx: AbilityContext) => void;
   executeBombDrop: (sounds: PlayerSounds) => void;
@@ -184,6 +202,9 @@ interface PendingRocketJump {
 export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   const lastRocketTimeRef = useRef(0);
   const rocketIdRef = useRef(0);
+  const blazePrimaryAmmoRef = useRef(BLAZE_PRIMARY_MAGAZINE_SIZE);
+  const blazePrimaryReloadingRef = useRef(false);
+  const blazePrimaryReloadStartRef = useRef(0);
 
   // Meteor Strike state
   const lastBombTimeRef = useRef(0);
@@ -216,6 +237,65 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   const isActionLocked = useCallback((timestampMs = Date.now(), overlapGraceMs = 0) => (
     isActionLockBlocking(actionLockUntilRef.current, timestampMs, overlapGraceMs)
   ), []);
+
+  const completeBlazePrimaryReload = useCallback(() => {
+    blazePrimaryAmmoRef.current = BLAZE_PRIMARY_MAGAZINE_SIZE;
+    blazePrimaryReloadingRef.current = false;
+    blazePrimaryReloadStartRef.current = 0;
+
+    const store = useGameStore.getState();
+    store.setBlazePrimaryAmmo(BLAZE_PRIMARY_MAGAZINE_SIZE);
+    store.setBlazePrimaryReload(false, 0, 0);
+  }, []);
+
+  const beginBlazePrimaryReload = useCallback((now = Date.now()): boolean => {
+    const store = useGameStore.getState();
+    const currentAmmo = Math.min(store.blazePrimaryAmmo, blazePrimaryAmmoRef.current);
+
+    if (store.blazePrimaryReloading || blazePrimaryReloadingRef.current) return false;
+    if (currentAmmo >= BLAZE_PRIMARY_MAGAZINE_SIZE) return false;
+
+    blazePrimaryAmmoRef.current = Math.max(0, currentAmmo);
+    blazePrimaryReloadingRef.current = true;
+    blazePrimaryReloadStartRef.current = now;
+
+    store.setBlazePrimaryAmmo(blazePrimaryAmmoRef.current);
+    store.setBlazePrimaryReload(true, now, now + BLAZE_PRIMARY_RELOAD_MS);
+    playPredictedBlazePrimaryReload(now);
+    return true;
+  }, []);
+
+  const updateBlazePrimaryReload = useCallback((now = Date.now()) => {
+    const store = useGameStore.getState();
+    blazePrimaryAmmoRef.current = store.blazePrimaryAmmo;
+    blazePrimaryReloadingRef.current = store.blazePrimaryReloading;
+    blazePrimaryReloadStartRef.current = store.blazePrimaryReloadStart;
+
+    if (!blazePrimaryReloadingRef.current) {
+      if (blazePrimaryAmmoRef.current <= 0) {
+        beginBlazePrimaryReload(now);
+      }
+      return;
+    }
+
+    const reloadEnd = store.blazePrimaryReloadEnd;
+    if (reloadEnd > 0 && now < reloadEnd) return;
+
+    completeBlazePrimaryReload();
+  }, [beginBlazePrimaryReload, completeBlazePrimaryReload]);
+
+  const reloadBlazePrimary = useCallback((now = Date.now()): boolean => {
+    updateBlazePrimaryReload(now);
+    return beginBlazePrimaryReload(now);
+  }, [beginBlazePrimaryReload, updateBlazePrimaryReload]);
+
+  const resetBlazePrimaryMagazine = useCallback(() => {
+    lastRocketTimeRef.current = 0;
+    blazePrimaryAmmoRef.current = BLAZE_PRIMARY_MAGAZINE_SIZE;
+    blazePrimaryReloadingRef.current = false;
+    blazePrimaryReloadStartRef.current = 0;
+    useGameStore.getState().resetBlazePrimaryMagazine();
+  }, []);
 
   // Handle Meteor Strike targeting mode
   const handleBombTargeting = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
@@ -266,6 +346,13 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     if (store.bombTargeting) return;
 
     const now = Date.now();
+    updateBlazePrimaryReload(now);
+    if (blazePrimaryReloadingRef.current) return;
+    if (blazePrimaryAmmoRef.current <= 0) {
+      beginBlazePrimaryReload(now);
+      return;
+    }
+
     const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
     if (now - lastRocketTimeRef.current < BLAZE_ROCKET_FIRE_INTERVAL / tempoMultiplier) return;
 
@@ -278,6 +365,12 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       : calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_ROCKET_STAFF_SOCKET);
     const direction = resolveAbilityAimDirection(ctx, startPosition);
     const visualId = `predicted_blaze_rocket_${ctx.localPlayer.id}_${rocketIdRef.current}`;
+
+    blazePrimaryAmmoRef.current = Math.max(0, blazePrimaryAmmoRef.current - 1);
+    store.setBlazePrimaryAmmo(blazePrimaryAmmoRef.current);
+    if (blazePrimaryAmmoRef.current <= 0) {
+      beginBlazePrimaryReload(now);
+    }
 
     store.addRocket({
       id: visualId,
@@ -295,7 +388,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       store.recordPrimaryFire(now);
     }
     markPredictedLocalAbilityVisual('blaze_rocket', ctx.localPlayer.id, visualId, { now });
-  }, []);
+  }, [beginBlazePrimaryReload, updateBlazePrimaryReload]);
 
   // Execute Meteor Strike
   const executeBombDrop = useCallback((sounds: PlayerSounds) => {
@@ -500,6 +593,9 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   return {
     lastRocketTimeRef,
     rocketIdRef,
+    blazePrimaryAmmoRef,
+    blazePrimaryReloadingRef,
+    blazePrimaryReloadStartRef,
     lastBombTimeRef,
     bombTargetRef,
     bombValidRef,
@@ -511,6 +607,9 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     lockActions,
     clearActionLock,
     isActionLocked,
+    updateBlazePrimaryReload,
+    reloadBlazePrimary,
+    resetBlazePrimaryMagazine,
     handleBombTargeting,
     fireRocket,
     executeBombDrop,

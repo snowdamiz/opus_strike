@@ -13,6 +13,8 @@ export const CROUCH_HEIGHT_RATIO = PLAYER_CROUCH_HEIGHT / PLAYER_HEIGHT;
 export const SLIDE_HEIGHT_RATIO = PLAYER_SLIDE_HEIGHT / PLAYER_HEIGHT;
 export const CROUCH_BODY_POSTURE_SCALE_Y = 0.88;
 export const SLIDE_BODY_POSTURE_SCALE_Y = 0.66;
+export const DOWNED_HEIGHT_RATIO = 0.42;
+export const DOWNED_BODY_POSTURE_SCALE_Y = 1;
 export const NAMEPLATE_WORLD_OFFSET_Y = 0.58;
 export const COMBAT_TEXT_NAMEPLATE_CLEARANCE_Y = 0.72;
 
@@ -20,21 +22,29 @@ export function getPlayerHeight(heroId: HeroId | null): number {
   return heroId ? HERO_DEFINITIONS[heroId].stats.size.height : PLAYER_HEIGHT;
 }
 
-export function hasLoweredPlayerPosture(movement: PlayerMovementState): boolean {
-  return movement.isCrouching || movement.isSliding;
+function isDownedState(state?: string | null): boolean {
+  return state === 'downed';
 }
 
-export function getVisiblePlayerHeight(heroId: HeroId | null, movement: PlayerMovementState): number {
+export function hasLoweredPlayerPosture(movement: PlayerMovementState, state?: string | null): boolean {
+  return isDownedState(state) || movement.isCrouching || movement.isSliding;
+}
+
+export function getVisiblePlayerHeight(heroId: HeroId | null, movement: PlayerMovementState, state?: string | null): number {
   const playerHeight = getPlayerHeight(heroId);
+  if (isDownedState(state)) {
+    return Math.max(PLAYER_SLIDE_HEIGHT, playerHeight * DOWNED_HEIGHT_RATIO);
+  }
   if (movement.isSliding) {
     return Math.max(PLAYER_SLIDE_HEIGHT, playerHeight * SLIDE_HEIGHT_RATIO);
   }
-  return hasLoweredPlayerPosture(movement)
+  return hasLoweredPlayerPosture(movement, state)
     ? Math.max(PLAYER_CROUCH_HEIGHT, playerHeight * CROUCH_HEIGHT_RATIO)
     : playerHeight;
 }
 
-export function getPlayerBodyPostureScaleY(movement: PlayerMovementState): number {
+export function getPlayerBodyPostureScaleY(movement: PlayerMovementState, state?: string | null): number {
+  if (isDownedState(state)) return DOWNED_BODY_POSTURE_SCALE_Y;
   if (movement.isSliding) return SLIDE_BODY_POSTURE_SCALE_Y;
   if (movement.isCrouching) return CROUCH_BODY_POSTURE_SCALE_Y;
   return 1;
@@ -47,17 +57,19 @@ export function getPlayerFeetY(centerY: number): number {
 export function getNameplateWorldY(
   centerY: number,
   heroId: HeroId | null,
-  movement: PlayerMovementState
+  movement: PlayerMovementState,
+  state?: string | null
 ): number {
-  return getPlayerFeetY(centerY) + getVisiblePlayerHeight(heroId, movement) + NAMEPLATE_WORLD_OFFSET_Y;
+  return getPlayerFeetY(centerY) + getVisiblePlayerHeight(heroId, movement, state) + NAMEPLATE_WORLD_OFFSET_Y;
 }
 
 export function getCombatTextWorldY(
   centerY: number,
   heroId: HeroId | null,
-  movement: PlayerMovementState
+  movement: PlayerMovementState,
+  state?: string | null
 ): number {
-  return getNameplateWorldY(centerY, heroId, movement) + COMBAT_TEXT_NAMEPLATE_CLEARANCE_Y;
+  return getNameplateWorldY(centerY, heroId, movement, state) + COMBAT_TEXT_NAMEPLATE_CLEARANCE_Y;
 }
 
 export function setPlayerRenderOrigin(

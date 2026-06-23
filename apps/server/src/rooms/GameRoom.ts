@@ -40,9 +40,9 @@ import {
 } from './roomPhaseRuntime';
 import { RoomTimeoutRegistry } from './roomTimeouts';
 import {
-  PhantomPrimaryMagazineTracker,
-  type PhantomPrimaryMagazineState,
-} from './phantomPrimaryMagazine';
+  PrimaryMagazineTracker,
+  type PrimaryMagazineState,
+} from './primaryMagazine';
 import { PhantomVoidRayChargeTracker } from './phantomVoidRayCharge';
 import {
   PlayerPressStateTracker,
@@ -79,6 +79,10 @@ import {
   startBattleRoyalTeamDrop,
   type BattleRoyalDropState,
 } from './battleRoyalDrop';
+import {
+  BattleRoyalDownedRuntime,
+  hasBattleRoyalReviveBreakingInput,
+} from './battleRoyalDownedRuntime';
 import {
   MatchLedgerRuntime,
   type MatchPersistenceLedger,
@@ -259,6 +263,7 @@ import {
   ULTIMATE_CHARGE_PER_KILL,
   ULTIMATE_CHARGE_PER_SECOND,
   BLAZE_FLAMETHROWER_MAX_FUEL,
+  BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER,
   BLAZE_FLAMETHROWER_RANGE,
   BLAZE_FLAMETHROWER_CONE_HALF_ANGLE,
   BLAZE_FLAMETHROWER_DAMAGE,
@@ -266,6 +271,8 @@ import {
   BLAZE_FLAMETHROWER_BURN_DAMAGE,
   BLAZE_GEARSTORM_RADIUS,
   BLAZE_GEARSTORM_DAMAGE,
+  BLAZE_PRIMARY_MAGAZINE_SIZE,
+  BLAZE_PRIMARY_RELOAD_MS,
   BLAZE_ROCKET_SPEED,
   BLAZE_ROCKET_SPLASH_RADIUS,
   BLAZE_BOMB_SPLASH_RADIUS,
@@ -298,6 +305,8 @@ import {
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
   PHANTOM_PRIMARY_FIRE_READY_MS,
+  PHANTOM_PRIMARY_MAGAZINE_SIZE,
+  PHANTOM_PRIMARY_RELOAD_MS,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_HEIGHT,
@@ -341,6 +350,8 @@ import {
   getSegmentHitAgainstChronosAegis,
   calculateFalloffDamage,
   resolveDirectionalMovementIntent,
+  canReceiveLiveTransform,
+  isPlayerAliveOrDowned,
 } from '@voxel-strike/shared';
 import type { 
   AbilityCastOriginHint,
@@ -363,8 +374,12 @@ import type {
   PhantomShieldBrokenEvent,
   PlayerInterestMessage,
   PlayerDamagedEvent,
+  PlayerDownedEvent,
   PlayerDeathEvent,
   PlayerHealedEvent,
+  PlayerReviveCancelledEvent,
+  PlayerRevivedEvent,
+  PlayerReviveStartedEvent,
   PowerupCollectedMessage,
   PlayerTransformsV2Message,
   PlayerVitalsMessage,
@@ -868,7 +883,14 @@ export class GameRoom extends Room<GameState> {
   private lobbyId: string | null = null;
   private lobbyName: string | null = null;
   private readonly voidZones = new VoidZoneTracker();
-  private readonly phantomPrimaryMagazines = new PhantomPrimaryMagazineTracker();
+  private readonly phantomPrimaryMagazines = new PrimaryMagazineTracker({
+    magazineSize: PHANTOM_PRIMARY_MAGAZINE_SIZE,
+    reloadMs: PHANTOM_PRIMARY_RELOAD_MS,
+  });
+  private readonly blazePrimaryMagazines = new PrimaryMagazineTracker({
+    magazineSize: BLAZE_PRIMARY_MAGAZINE_SIZE,
+    reloadMs: BLAZE_PRIMARY_RELOAD_MS,
+  });
   private readonly phantomPrimaryHolds = new PlayerHoldTracker();
   private readonly chronosPrimaryHolds = new PlayerHoldTracker();
   private readonly phantomVoidRayCharges = new PhantomVoidRayChargeTracker();
@@ -1014,6 +1036,13 @@ export class GameRoom extends Room<GameState> {
     ),
     broadcastPhantomShieldBroken: (target, source, payload) => this.broadcastPhantomShieldBroken(target, source, payload),
     broadcastPlayerDamaged: (target, source, payload) => this.broadcastPlayerDamaged(target, source, payload),
+    shouldDownLethalDamage: (target) => (
+      isBattleRoyalMode(this.gameplayMode) &&
+      this.state.phase === 'playing' &&
+      target.state === 'alive'
+    ),
+    shouldDamageDownedPlayers: () => isBattleRoyalMode(this.gameplayMode) && this.state.phase === 'playing',
+    enterBattleRoyalDowned: (target, source, payload) => this.enterBattleRoyalDowned(target, source, payload),
     broadcastPlayerKilled: (target, killer, payload) => this.broadcastPlayerKilled(target, killer, payload),
     recordMatchDeath: (victim, killer) => this.recordMatchDeath(victim, killer),
     recordMatchKill: (killer, victim) => this.recordMatchKill(killer, victim),
@@ -1023,6 +1052,18 @@ export class GameRoom extends Room<GameState> {
     dropFlag: (player) => this.dropFlag(player),
     scoreTeamDeathmatchKill: (killer, victim) => this.scoreTeamDeathmatchKill(killer, victim),
     removeNpcPlayer: (playerId) => this.removeNpcPlayer(playerId),
+  });
+  private readonly battleRoyalDownedRuntime = new BattleRoyalDownedRuntime({
+    getPlayerById: (playerId) => this.state.players.get(playerId) ?? null,
+    prepareDownedPlayer: (player, now) => this.prepareBattleRoyalDownedPlayer(player, now),
+    prepareRevivedPlayer: (player, now) => this.prepareBattleRoyalRevivedPlayer(player, now),
+    finalEliminate: (player, sourceId, damageType, now, context) => {
+      this.damageRuntime.finalEliminatePlayer(player, sourceId, damageType, now, context ?? {});
+    },
+    broadcastPlayerDowned: (payload) => this.broadcastPlayerDowned(payload),
+    broadcastReviveStarted: (payload) => this.broadcastPlayerReviveStarted(payload),
+    broadcastReviveCancelled: (payload) => this.broadcastPlayerReviveCancelled(payload),
+    broadcastPlayerRevived: (payload) => this.broadcastPlayerRevived(payload),
   });
   private readonly matchLedger = new MatchLedgerRuntime({
     getConfig: () => ({
@@ -1589,6 +1630,13 @@ export class GameRoom extends Room<GameState> {
     if (oldPlayer?.hasFlag) {
       this.dropFlag(oldPlayer);
     }
+    if (oldPlayer) {
+      this.battleRoyalDownedRuntime.clearPlayer(
+        oldPlayer,
+        Date.now(),
+        oldPlayer.state === 'downed' ? 'target_removed' : 'reviver_removed'
+      );
+    }
     this.state.players.delete(existingSessionId);
     this.clearCombatPlayerRuntimeState(existingSessionId);
     this.clientRegistry.clearSession(existingSessionId);
@@ -1612,6 +1660,11 @@ export class GameRoom extends Room<GameState> {
     }
     if (player) {
       this.markMatchParticipantLeft(player);
+      this.battleRoyalDownedRuntime.clearPlayer(
+        player,
+        Date.now(),
+        player.state === 'downed' ? 'target_removed' : 'reviver_removed'
+      );
     }
 
     this.state.players.delete(client.sessionId);
@@ -1637,6 +1690,7 @@ export class GameRoom extends Room<GameState> {
   private clearCombatPlayerRuntimeState(playerId: string): void {
     this.playerPressStates.clear(playerId);
     this.phantomPrimaryMagazines.clear(playerId);
+    this.blazePrimaryMagazines.clear(playerId);
     this.clearPrimaryHoldStates(playerId);
     this.phantomVoidRayCharges.clear(playerId);
     this.phantomPrimaryLaunchSide.clear(playerId);
@@ -1876,6 +1930,10 @@ export class GameRoom extends Room<GameState> {
         if (this.state.roundTimeRemaining <= 0) {
           this.endRound();
         }
+      }
+
+      if (isBattleRoyalMode(this.gameplayMode)) {
+        this.battleRoyalDownedRuntime.update(this.state.players.values(), now);
       }
 
       // Update each player
@@ -2140,6 +2198,14 @@ export class GameRoom extends Room<GameState> {
       rank: buildRoomRankSnapshot(player),
       health: player.health,
       maxHealth: player.maxHealth,
+      downedHealth: player.downedHealth || null,
+      downedMaxHealth: player.downedMaxHealth || null,
+      downedStartedAt: player.downedStartedAt || null,
+      downedRemainingMs: player.downedRemainingMs || null,
+      downedExpiresAt: player.downedExpiresAt || null,
+      reviveStartedAt: player.reviveStartedAt || null,
+      reviveCompletesAt: player.reviveCompletesAt || null,
+      reviveByPlayerId: player.reviveByPlayerId || null,
       ultimateCharge: player.ultimateCharge,
       onFireUntil: this.getBlazeBurnUntil(id),
       powerupBoostUntil: this.powerupBoosts.getUntil(id, now),
@@ -2517,6 +2583,66 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private broadcastPlayerDowned(payload: PlayerDownedEvent): void {
+    const target = this.state.players.get(payload.targetId);
+    if (!target) return;
+    const source = payload.sourceId ? this.state.players.get(payload.sourceId) ?? null : null;
+    const now = this.state.serverTime || Date.now();
+    const frameContext = this.getEventReplicationFrameContext(now);
+
+    for (const client of this.clients) {
+      const recipient = this.state.players.get(client.sessionId) ?? null;
+      const canKnowTarget = this.shouldSendExactEnemyState(recipient, target.id, target, now, undefined, frameContext);
+      const canKnowSource = source
+        ? this.shouldSendExactEnemyState(recipient, source.id, source, now, undefined, frameContext)
+        : true;
+      const isParticipant = recipient?.id === target.id || (source && recipient?.id === source.id);
+      if (!isParticipant && !canKnowTarget && !canKnowSource) continue;
+
+      this.sendTrackedAfterGameplayWork(client, 'playerDowned', {
+        ...payload,
+        sourcePosition: canKnowSource || isParticipant ? payload.sourcePosition : undefined,
+        sourceDirection: canKnowSource || isParticipant ? payload.sourceDirection : undefined,
+      });
+    }
+  }
+
+  private broadcastPlayerReviveStarted(payload: PlayerReviveStartedEvent): void {
+    this.broadcastBattleRoyalReviveEvent('playerReviveStarted', payload.targetId, payload.reviverId, payload);
+  }
+
+  private broadcastPlayerReviveCancelled(payload: PlayerReviveCancelledEvent): void {
+    this.broadcastBattleRoyalReviveEvent('playerReviveCancelled', payload.targetId, payload.reviverId, payload);
+  }
+
+  private broadcastPlayerRevived(payload: PlayerRevivedEvent): void {
+    this.broadcastBattleRoyalReviveEvent('playerRevived', payload.targetId, payload.reviverId, payload);
+  }
+
+  private broadcastBattleRoyalReviveEvent(
+    type: 'playerReviveStarted' | 'playerReviveCancelled' | 'playerRevived',
+    targetId: string,
+    reviverId: string | null,
+    payload: PlayerReviveStartedEvent | PlayerReviveCancelledEvent | PlayerRevivedEvent
+  ): void {
+    const target = this.state.players.get(targetId);
+    if (!target) return;
+    const reviver = reviverId ? this.state.players.get(reviverId) ?? null : null;
+    const now = this.state.serverTime || Date.now();
+    const frameContext = this.getEventReplicationFrameContext(now);
+
+    for (const client of this.clients) {
+      const recipient = this.state.players.get(client.sessionId) ?? null;
+      const canKnowTarget = this.shouldSendExactEnemyState(recipient, target.id, target, now, undefined, frameContext);
+      const canKnowReviver = reviver
+        ? this.shouldSendExactEnemyState(recipient, reviver.id, reviver, now, undefined, frameContext)
+        : false;
+      const isParticipant = recipient?.id === target.id || (reviver && recipient?.id === reviver.id);
+      if (!isParticipant && !canKnowTarget && !canKnowReviver) continue;
+      this.sendTrackedAfterGameplayWork(client, type, payload);
+    }
+  }
+
   private broadcastPlayerKilled(victim: Player, killer: Player | null, payload: PlayerDeathEvent): void {
     const now = this.state.serverTime || Date.now();
     const exactPosition = payload.position;
@@ -2726,7 +2852,7 @@ export class GameRoom extends Room<GameState> {
       ? this.getTransformReplicationState(options.recipientId)
       : this.replicationState.getGlobalTransformState();
     this.state.players.forEach((player, id) => {
-      if (player.state !== 'alive' && player.state !== 'spawning' && player.state !== 'dropping') return;
+      if (!canReceiveLiveTransform(player) && player.state !== 'dropping') return;
       if (!force && options.recipientId && id === options.recipientId) return;
       const interest = options.recipient
         ? this.getRecipientInterest(options.recipient, player, now, options.frameContext)
@@ -3408,6 +3534,70 @@ export class GameRoom extends Room<GameState> {
     return suppressLocomotionInput(input);
   }
 
+  private getBattleRoyalReviveLockedInput(player: Player, input: PlayerInput, now: number): PlayerInput {
+    if (!this.battleRoyalDownedRuntime.isReviving(player.id)) return input;
+
+    const targetId = this.battleRoyalDownedRuntime.getReviveTargetId(player.id);
+    const target = targetId ? this.state.players.get(targetId) ?? null : null;
+    if (!input.interact || hasBattleRoyalReviveBreakingInput(input)) {
+      if (target) {
+        this.battleRoyalDownedRuntime.cancelReviveForTarget(target, 'interrupted', now);
+      } else {
+        this.battleRoyalDownedRuntime.cancelReviveForPlayer(player.id, 'target_removed', now);
+      }
+    }
+
+    return {
+      ...input,
+      moveForward: false,
+      moveBackward: false,
+      moveLeft: false,
+      moveRight: false,
+      jump: false,
+      crouch: false,
+      crouchPressed: false,
+      sprint: false,
+      primaryFire: false,
+      secondaryFire: false,
+      reload: false,
+      ability1: false,
+      ability2: false,
+      ultimate: false,
+      interact: false,
+    };
+  }
+
+  private getDownedMovementInput(player: Player, input: PlayerInput): PlayerInput {
+    if (player.state !== 'downed') return input;
+    const frozenByRevive = this.battleRoyalDownedRuntime.isBeingRevived(player);
+    return {
+      ...input,
+      moveForward: frozenByRevive ? false : input.moveForward,
+      moveBackward: frozenByRevive ? false : input.moveBackward,
+      moveLeft: frozenByRevive ? false : input.moveLeft,
+      moveRight: frozenByRevive ? false : input.moveRight,
+      jump: false,
+      crouch: false,
+      crouchPressed: false,
+      sprint: false,
+      primaryFire: false,
+      secondaryFire: false,
+      reload: false,
+      ability1: false,
+      ability2: false,
+      ultimate: false,
+      interact: false,
+    };
+  }
+
+  private getSanitizedMovementInput(player: Player, input: PlayerInput, now: number): PlayerInput {
+    return this.getRootedMovementInput(
+      player,
+      this.getDownedMovementInput(player, this.getBattleRoyalReviveLockedInput(player, input, now)),
+      now
+    );
+  }
+
   private markMovementBarrier(
     playerId: string,
     reason: MovementCorrectionReason,
@@ -3474,7 +3664,7 @@ export class GameRoom extends Room<GameState> {
       this.handleBattleRoyalDropCommandPacket(client, player, packet);
       return;
     }
-    if (player.state !== 'alive') return;
+    if (player.state !== 'alive' && !this.isBattleRoyalDownedPlayer(player)) return;
 
     const authority = this.getMovementAuthority(client.sessionId);
     const position = vec3SchemaToPlain(player.position);
@@ -3506,6 +3696,14 @@ export class GameRoom extends Room<GameState> {
       isBattleRoyalMode(this.gameplayMode) &&
       this.state.phase === 'deployment' &&
       player.state === 'dropping'
+    );
+  }
+
+  private isBattleRoyalDownedPlayer(player: Player): boolean {
+    return (
+      isBattleRoyalMode(this.gameplayMode) &&
+      this.state.phase === 'playing' &&
+      player.state === 'downed'
     );
   }
 
@@ -3599,7 +3797,7 @@ export class GameRoom extends Room<GameState> {
     collisionWorld: MovementCollisionWorld,
     options: { processGameplayInput: boolean }
   ): PlayerInput {
-    const movementInput = this.getRootedMovementInput(player, input, stepNow);
+    const movementInput = this.getSanitizedMovementInput(player, input, stepNow);
     player.lastInput = movementInput;
     player.lookYaw = movementInput.lookYaw;
     player.lookPitch = movementInput.lookPitch;
@@ -3655,6 +3853,23 @@ export class GameRoom extends Room<GameState> {
     player.movement.jetpackFuel = result.movement.jetpackFuel;
     player.movement.isGliding = result.movement.isGliding;
     player.movement.chronosAscendantStartY = result.movement.chronosAscendantStartY ?? 0;
+    if (player.state === 'downed') {
+      this.forceDownedMovementState(player);
+    }
+  }
+
+  private forceDownedMovementState(player: Player): void {
+    player.movement.isGrounded = true;
+    player.movement.isSprinting = false;
+    player.movement.isCrouching = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    player.movement.isGrappling = false;
+    player.movement.isJetpacking = false;
+    player.movement.isGliding = false;
+    player.movement.chronosAscendantStartY = 0;
   }
 
   private startHookshotGrappleAuthority(
@@ -3822,8 +4037,9 @@ export class GameRoom extends Room<GameState> {
       terrain: this.mapRuntime.terrain,
       collisionWorld,
       flagCarrier: isCaptureTheFlagMode(this.gameplayMode) && player.hasFlag,
-      activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
-      chronosAscendantActive: this.isChronosAscendantActive(player),
+      activeSpeedMultiplier: this.getActiveSpeedMultiplier(player) *
+        (player.state === 'downed' ? BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER : 1),
+      chronosAscendantActive: player.state === 'downed' ? false : this.isChronosAscendantActive(player),
     });
 
     this.applyMovementSimulationResult(player, result);
@@ -4307,7 +4523,7 @@ export class GameRoom extends Room<GameState> {
       getTargets: (storm) => this.playerSpatialQueries.queryRadius(
         storm.position,
         storm.radius,
-        { excludeTeam: storm.ownerTeam }
+        { excludeTeam: storm.ownerTeam, includeDowned: true }
       ),
       applyDamage: (storm, target, distance) => {
         this.applyDamage(
@@ -4451,6 +4667,8 @@ export class GameRoom extends Room<GameState> {
       });
     }
 
+    const magazine = this.getOrCreatePrimaryMagazine(player);
+
     this.broadcastExactPlayerEvent('abilityUsed', player, {
       playerId: player.id,
       abilityId: 'blaze_rocket',
@@ -4471,6 +4689,9 @@ export class GameRoom extends Room<GameState> {
       serverTime: now,
       impactTime: rocket.impactTime,
       radius: attack.radius ?? BLAZE_ROCKET_SPLASH_RADIUS,
+      ammoRemaining: magazine?.ammo,
+      reloadStartedAt: magazine && magazine.reloadUntil > now ? magazine.reloadStartedAt : undefined,
+      reloadUntil: magazine && magazine.reloadUntil > now ? magazine.reloadUntil : undefined,
     });
   }
 
@@ -4691,7 +4912,7 @@ export class GameRoom extends Room<GameState> {
       z: aimPoint.z - startPosition.z,
     }) ?? lookDirection;
     const magazine = abilityId === 'phantom_dire_ball'
-      ? this.getOrCreatePhantomPrimaryMagazine(player)
+      ? this.getOrCreatePrimaryMagazine(player)
       : null;
 
     this.broadcastPhantomCast({
@@ -5139,50 +5360,80 @@ export class GameRoom extends Room<GameState> {
     this.chronosPrimaryHolds.clear(playerId);
   }
 
-  private resetPhantomPrimaryMagazine(playerId: string): void {
+  private getPrimaryMagazineTracker(heroId: string): PrimaryMagazineTracker | null {
+    if (heroId === 'phantom') return this.phantomPrimaryMagazines;
+    if (heroId === 'blaze') return this.blazePrimaryMagazines;
+    return null;
+  }
+
+  private resetPrimaryMagazineForHero(playerId: string, heroId: string): void {
     this.phantomPrimaryHolds.clear(playerId);
-    this.phantomPrimaryMagazines.reset(playerId);
+
+    if (heroId === 'phantom') {
+      this.phantomPrimaryMagazines.reset(playerId);
+      this.blazePrimaryMagazines.clear(playerId);
+    } else if (heroId === 'blaze') {
+      this.blazePrimaryMagazines.reset(playerId);
+      this.phantomPrimaryMagazines.clear(playerId);
+    } else {
+      this.phantomPrimaryMagazines.clear(playerId);
+      this.blazePrimaryMagazines.clear(playerId);
+    }
+
     const player = this.state.players.get(playerId);
-    if (player?.heroId === 'phantom') {
-      this.sendPhantomPrimaryState(player, Date.now());
+    if (player?.heroId === heroId) {
+      this.sendPrimaryMagazineState(player, Date.now());
     }
   }
 
-  private getOrCreatePhantomPrimaryMagazine(player: Player): PhantomPrimaryMagazineState {
-    return this.phantomPrimaryMagazines.getOrCreate(player.id);
+  private getOrCreatePrimaryMagazine(player: Player): PrimaryMagazineState | null {
+    return this.getPrimaryMagazineTracker(player.heroId)?.getOrCreate(player.id) ?? null;
   }
 
-  private completePhantomPrimaryReloadIfReady(player: Player, now: number): PhantomPrimaryMagazineState {
-    const { magazine, completed } = this.phantomPrimaryMagazines.completeReloadIfReady(player.id, now);
+  private completePrimaryReloadIfReady(player: Player, now: number): PrimaryMagazineState | null {
+    const tracker = this.getPrimaryMagazineTracker(player.heroId);
+    if (!tracker) return null;
+
+    const { magazine, completed } = tracker.completeReloadIfReady(player.id, now);
     if (completed) {
-      this.sendPhantomPrimaryState(player, now);
+      this.sendPrimaryMagazineState(player, now);
     }
 
     return magazine;
   }
 
-  private isPhantomPrimaryReloading(player: Player, now: number): boolean {
-    if (player.heroId !== 'phantom') return false;
-    return this.completePhantomPrimaryReloadIfReady(player, now).reloadUntil > now;
+  private isPrimaryReloading(player: Player, now: number): boolean {
+    return (this.completePrimaryReloadIfReady(player, now)?.reloadUntil ?? 0) > now;
   }
 
-  private sendPhantomPrimaryState(player: Player, now: number): void {
-    if (player.heroId !== 'phantom' || player.isBot) return;
+  private isPhantomPrimaryReloading(player: Player, now: number): boolean {
+    return player.heroId === 'phantom' && this.isPrimaryReloading(player, now);
+  }
 
-    const state = this.phantomPrimaryMagazines.getClientState(player.id, now);
+  private sendPrimaryMagazineState(player: Player, now: number): void {
+    if (player.isBot) return;
+
+    const tracker = this.getPrimaryMagazineTracker(player.heroId);
+    if (!tracker) return;
+
     const client = this.clientRegistry.getClient(player.id);
     if (!client) return;
-    this.sendTracked(client, 'phantomPrimaryState', state);
+
+    const messageType = player.heroId === 'phantom'
+      ? 'phantomPrimaryState'
+      : 'blazePrimaryState';
+    this.sendTracked(client, messageType, tracker.getClientState(player.id, now));
   }
 
-  private consumePhantomPrimaryShot(player: Player, now: number): boolean {
-    if (player.heroId !== 'phantom') return true;
+  private consumePrimaryShot(player: Player, now: number): boolean {
+    const tracker = this.getPrimaryMagazineTracker(player.heroId);
+    if (!tracker) return true;
 
-    this.completePhantomPrimaryReloadIfReady(player, now);
-    const result = this.phantomPrimaryMagazines.consumeShot(player.id, now);
+    this.completePrimaryReloadIfReady(player, now);
+    const result = tracker.consumeShot(player.id, now);
 
     if (!result.consumed) {
-      this.sendPhantomPrimaryState(player, now);
+      this.sendPrimaryMagazineState(player, now);
       return false;
     }
 
@@ -5190,18 +5441,14 @@ export class GameRoom extends Room<GameState> {
   }
 
   private reloadHeroPrimary(player: Player, now: number): boolean {
-    if (player.heroId !== 'phantom') return false;
+    const tracker = this.getPrimaryMagazineTracker(player.heroId);
+    if (!tracker) return false;
 
-    this.completePhantomPrimaryReloadIfReady(player, now);
-    const result = this.phantomPrimaryMagazines.reload(player.id, now);
+    this.completePrimaryReloadIfReady(player, now);
+    const result = tracker.reload(player.id, now);
 
-    if (!result.started) {
-      this.sendPhantomPrimaryState(player, now);
-      return false;
-    }
-
-    this.sendPhantomPrimaryState(player, now);
-    return true;
+    this.sendPrimaryMagazineState(player, now);
+    return result.started;
   }
 
   private updatePhantomPrimaryHoldState(
@@ -5251,6 +5498,23 @@ export class GameRoom extends Room<GameState> {
     if (player.state !== 'alive') return;
 
     const previous = this.playerPressStates.getOrCreate(player.id);
+    if (
+      isBattleRoyalMode(this.gameplayMode) &&
+      this.state.phase === 'playing' &&
+      input.interact &&
+      this.tryStartBattleRoyalRevive(player, now)
+    ) {
+      this.playerPressStates.applyInput(player.id, {
+        primaryFire: false,
+        secondaryFire: false,
+        reload: false,
+        ability1: false,
+        ability2: false,
+        ultimate: false,
+      });
+      return;
+    }
+
     const reloadPressed = Boolean(input.reload);
     this.updatePhantomPrimaryHoldState(player, input, previous, now);
     this.updateChronosPrimaryHoldState(player, input, previous, now);
@@ -5305,6 +5569,29 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
+  private tryStartBattleRoyalRevive(reviver: Player, now: number): boolean {
+    if (this.battleRoyalDownedRuntime.isReviving(reviver.id)) return true;
+
+    let bestTarget: Player | null = null;
+    let bestDistanceSq = Number.POSITIVE_INFINITY;
+    this.state.players.forEach((candidate) => {
+      if (candidate.id === reviver.id) return;
+      if (candidate.team !== reviver.team) return;
+      if (candidate.state !== 'downed') return;
+      if (candidate.reviveByPlayerId && candidate.reviveByPlayerId !== reviver.id) return;
+
+      const dx = candidate.position.x - reviver.position.x;
+      const dy = candidate.position.y - reviver.position.y;
+      const dz = candidate.position.z - reviver.position.z;
+      const distanceSq = dx * dx + dy * dy + dz * dz;
+      if (distanceSq >= bestDistanceSq) return;
+      bestDistanceSq = distanceSq;
+      bestTarget = candidate;
+    });
+
+    return bestTarget ? this.battleRoyalDownedRuntime.tryStartRevive(reviver, bestTarget, now) : false;
+  }
+
   private tryResolveAttack(player: Player, mode: AttackMode, now = Date.now()): void {
     const heroId = isHeroId(player.heroId) ? player.heroId : null;
     const attack = heroId
@@ -5323,6 +5610,7 @@ export class GameRoom extends Room<GameState> {
       phantomPrimaryReady: mode !== 'primary' || this.isPhantomPrimaryReady(player, now),
       chronosPrimaryReady: mode !== 'primary' || this.isChronosPrimaryReady(player, now),
       phantomPrimaryShotAvailable: true,
+      blazePrimaryShotAvailable: true,
     });
     if (readinessRejection || !heroId || !attack) {
       this.rejectAbilityOrCombat(
@@ -5333,7 +5621,7 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    if (mode === 'primary' && !this.consumePhantomPrimaryShot(player, now)) {
+    if (mode === 'primary' && !this.consumePrimaryShot(player, now)) {
       const ammoRejection = getAttackPreflightRejection({
         isHeroId: true,
         playerState: player.state,
@@ -5342,9 +5630,10 @@ export class GameRoom extends Room<GameState> {
         isCoolingDown: false,
         phantomPrimaryReady: true,
         chronosPrimaryReady: true,
-        phantomPrimaryShotAvailable: false,
+        phantomPrimaryShotAvailable: heroId !== 'phantom',
+        blazePrimaryShotAvailable: heroId !== 'blaze',
       });
-      this.rejectAbilityOrCombat(player, ammoRejection?.reason ?? 'phantom_primary_no_ammo', ammoRejection?.logEvent ?? false);
+      this.rejectAbilityOrCombat(player, ammoRejection?.reason ?? 'primary_no_ammo', ammoRejection?.logEvent ?? false);
       return;
     }
     this.attackCooldowns.setFromDuration(player.id, mode, now, attack.cooldownMs);
@@ -5546,6 +5835,7 @@ export class GameRoom extends Room<GameState> {
       {
         excludeTeam: targetTeam === 'enemy' ? source.team as Team : undefined,
         excludeId: source.id,
+        includeDowned: true,
       }
     );
 
@@ -5610,7 +5900,7 @@ export class GameRoom extends Room<GameState> {
     const targets = this.playerSpatialQueries.queryRadius(
       center,
       radius,
-      { excludeTeam: source.team as Team, excludeId: source.id }
+      { excludeTeam: source.team as Team, excludeId: source.id, includeDowned: true }
     );
     for (const target of targets) {
       if (target.id === source.id) continue;
@@ -6126,8 +6416,9 @@ export class GameRoom extends Room<GameState> {
     this.attackCooldowns.adjust(player.id, 'primary', adjustmentMs, now);
     this.attackCooldowns.adjust(player.id, 'secondary', adjustmentMs, now);
 
-    if (this.phantomPrimaryMagazines.adjustActiveReload(player.id, adjustmentMs, now).adjusted) {
-      this.sendPhantomPrimaryState(player, now);
+    const primaryMagazines = this.getPrimaryMagazineTracker(player.heroId);
+    if (primaryMagazines?.adjustActiveReload(player.id, adjustmentMs, now).adjusted) {
+      this.sendPrimaryMagazineState(player, now);
     }
   }
 
@@ -6136,7 +6427,7 @@ export class GameRoom extends Room<GameState> {
     this.checkFlagReturns(now);
 
     this.state.players.forEach((player) => {
-      if (player.state !== 'alive') return;
+      if (player.state !== 'alive' && !this.isBattleRoyalDownedPlayer(player)) return;
       if (!isTeam(player.team)) return;
       if (this.isObjectiveSuppressed(player.id, now)) return;
 
@@ -7404,6 +7695,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private resetPlayerLifeRuntime(player: Player, now = Date.now()): void {
+    this.battleRoyalDownedRuntime.clearPlayer(player, now);
     this.disablePlayerSkills(player);
     this.resetPlayerPressState(player.id);
     resetPlayerMovementRuntime(player);
@@ -7414,6 +7706,55 @@ export class GameRoom extends Room<GameState> {
     this.clearHookshotDragPullsInvolving(player.id);
     this.attackCooldowns.clearPlayer(player.id);
     this.playerCombatActivity.clear(player.id);
+    player.lastInput = player.isBot
+      ? createEmptyBotInput(this.state.tick, player, now)
+      : null;
+  }
+
+  private enterBattleRoyalDowned(
+    target: Player,
+    source: Player | null,
+    payload: PlayerDownedEvent
+  ): void {
+    this.battleRoyalDownedRuntime.enterDowned(
+      target,
+      source?.id ?? null,
+      payload.damageType,
+      payload.downedStartedAt,
+      {
+        sourcePosition: payload.sourcePosition ?? null,
+        sourceDirection: payload.sourceDirection ?? null,
+      }
+    );
+  }
+
+  private prepareBattleRoyalDownedPlayer(player: Player, now: number): void {
+    if (player.hasFlag && isCaptureTheFlagMode(this.gameplayMode)) {
+      this.dropFlag(player);
+    }
+    player.hasFlag = false;
+    this.disablePlayerSkills(player);
+    this.resetPlayerPressState(player.id);
+    resetPlayerMovementRuntime(player);
+    this.blazeBurns.clearTarget(player.id);
+    this.blazeFlamethrowers.clearDamageTicksForPlayer(player.id);
+    this.playerRoots.clear(player.id);
+    this.powerupBoosts.clear(player.id);
+    this.clearHookshotDragPullsInvolving(player.id);
+    this.markMovementBarrier(player.id, 'downed');
+    player.lastInput = player.isBot
+      ? createEmptyBotInput(this.state.tick, player, now)
+      : null;
+  }
+
+  private prepareBattleRoyalRevivedPlayer(player: Player, now: number): void {
+    resetPlayerMovementRuntime(player);
+    this.resetPlayerPressState(player.id);
+    this.blazeBurns.clearTarget(player.id);
+    this.blazeFlamethrowers.clearDamageTicksForPlayer(player.id);
+    this.playerRoots.clear(player.id);
+    this.clearHookshotDragPullsInvolving(player.id);
+    this.markMovementBarrier(player.id, 'revived');
     player.lastInput = player.isBot
       ? createEmptyBotInput(this.state.tick, player, now)
       : null;
@@ -7521,11 +7862,7 @@ export class GameRoom extends Room<GameState> {
     this.clearPrimaryHoldStates(player.id);
     this.chronosAegisShields.clear(player.id);
     this.devRuntime.clearPlayer(player.id);
-    if (heroId === 'phantom') {
-      this.resetPhantomPrimaryMagazine(player.id);
-    } else {
-      this.phantomPrimaryMagazines.clear(player.id);
-    }
+    this.resetPrimaryMagazineForHero(player.id, heroId);
     this.disablePlayerSkills(player);
     if (player.lastInput) {
       player.lastInput = {
@@ -7867,8 +8204,8 @@ export class GameRoom extends Room<GameState> {
     this.clearPrimaryHoldStates(player.id);
     this.phantomVoidRayCharges.clear(player.id);
 
-    if (player.heroId === 'phantom' && slot === 'primary') {
-      this.phantomPrimaryMagazines.reset(player.id);
+    if ((player.heroId === 'phantom' || player.heroId === 'blaze') && slot === 'primary') {
+      this.resetPrimaryMagazineForHero(player.id, player.heroId);
     }
     if (player.heroId === 'blaze') {
       player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
@@ -7912,6 +8249,7 @@ export class GameRoom extends Room<GameState> {
     this.botSteeringPathCache.clear();
     this.lineOfSightCache.clear();
     this.visibilityInterest.clearAll();
+    this.battleRoyalDownedRuntime.clearAll(this.state.players.values(), Date.now());
     this.battleRoyalSafeZone = null;
     this.battleRoyalDrop = null;
     this.nextBattleRoyalSafeZoneDamageAt = 0;
@@ -8355,8 +8693,8 @@ export class GameRoom extends Room<GameState> {
         spawnProtectionMs: this.config.spawnProtectionSeconds * 1000,
       });
       this.resetPlayerLifeRuntime(player, now);
-      if (resetPlan.resetPhantomPrimaryMagazine) {
-        this.resetPhantomPrimaryMagazine(player.id);
+      if (resetPlan.resetPrimaryMagazine) {
+        this.resetPrimaryMagazineForHero(player.id, player.heroId);
       }
       if (resetPlan.clearChronosAegisShield) {
         this.chronosAegisShields.clear(player.id);
@@ -8440,7 +8778,7 @@ export class GameRoom extends Room<GameState> {
     const damage = safeZone.damagePerSecond * elapsedTicks;
 
     this.state.players.forEach((player) => {
-      if (player.state !== 'alive') return;
+      if (!isPlayerAliveOrDowned(player)) return;
       if (!isOutsideBattleRoyalSafeZone(safeZone, player.position)) return;
       this.applyDamage(player, damage, null, 'safe_zone', {
         sourcePosition: {
@@ -8548,8 +8886,8 @@ export class GameRoom extends Room<GameState> {
       this.resetPlayerLifeRuntime(player, now);
       this.markMovementBarrier(player.id, 'spawn');
 
-      if (resetPlan.resetPhantomPrimaryMagazine) {
-        this.resetPhantomPrimaryMagazine(player.id);
+      if (resetPlan.resetPrimaryMagazine) {
+        this.resetPrimaryMagazineForHero(player.id, player.heroId);
       }
       if (resetPlan.clearChronosAegisShield) {
         this.chronosAegisShields.clear(player.id);
@@ -8689,6 +9027,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private resetAfterGame(): void {
+    this.battleRoyalDownedRuntime.clearAll(this.state.players.values(), Date.now());
     this.applyPostGameResetStatePatch(buildPostGameResetStatePatch(createRandomSeed()));
     this.refreshMapManifest();
     resetFlagsFromManifest(this.state, this.getMapManifest());
@@ -8706,7 +9045,7 @@ export class GameRoom extends Room<GameState> {
       getTargets: (zone) => this.playerSpatialQueries.queryRadius(
         zone.position,
         zone.radius,
-        { excludeTeam: zone.ownerTeam, excludeId: zone.ownerId }
+        { excludeTeam: zone.ownerTeam, excludeId: zone.ownerId, includeDowned: true }
       ),
       applyDamage: (zone, player) => {
         this.applyDamage(player, zone.damage, zone.ownerId, 'void_zone', {
@@ -8848,7 +9187,7 @@ export class GameRoom extends Room<GameState> {
     const candidates = this.playerSpatialQueries.queryConeCandidates(
       origin,
       damageFrame.candidateRange,
-      { excludeTeam: source.team as Team, excludeId: source.id }
+      { excludeTeam: source.team as Team, excludeId: source.id, includeDowned: true }
     );
 
     const hitCandidates: Array<{
@@ -9024,8 +9363,8 @@ export class GameRoom extends Room<GameState> {
     this.resetPlayerLifeRuntime(player, now);
 
     this.placePlayerAtSpawn(player, 'respawn');
-    if (resetPlan.resetPhantomPrimaryMagazine) {
-      this.resetPhantomPrimaryMagazine(player.id);
+    if (resetPlan.resetPrimaryMagazine) {
+      this.resetPrimaryMagazineForHero(player.id, player.heroId);
     }
     if (resetPlan.clearChronosAegisShield) {
       this.chronosAegisShields.clear(player.id);
@@ -9426,12 +9765,14 @@ export class GameRoom extends Room<GameState> {
       input.reload ||
       input.ability1 ||
       input.ability2 ||
-      input.ultimate
+      input.ultimate ||
+      input.interact
     ) {
       return true;
     }
 
-    return this.hasPressedGameplayState(this.playerPressStates.get(player.id));
+    return (this.battleRoyalDownedRuntime?.isReviving(player.id) ?? false) ||
+      this.hasPressedGameplayState(this.playerPressStates.get(player.id));
   }
 
   private shouldRunServerOwnedBotFullMovementStep(
@@ -10089,6 +10430,14 @@ export class GameRoom extends Room<GameState> {
   }
 
   private removeNpcPlayer(playerId: string): void {
+    const player = this.state.players.get(playerId);
+    if (player) {
+      this.battleRoyalDownedRuntime.clearPlayer(
+        player,
+        Date.now(),
+        player.state === 'downed' ? 'target_removed' : 'reviver_removed'
+      );
+    }
     this.state.players.delete(playerId);
     this.npcs.delete(playerId);
     this.clearPlayerReplicationState(playerId);

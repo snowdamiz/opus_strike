@@ -14,6 +14,7 @@ export type PlayerState =
   | 'spawning'
   | 'dropping'
   | 'alive'
+  | 'downed'
   | 'dead';
 
 export type PlayerVisibilityState = 'visible' | 'audible' | 'last_known' | 'hidden';
@@ -107,6 +108,14 @@ export interface Player {
   // Health
   health: number;
   maxHealth: number;
+  downedHealth?: number | null;
+  downedMaxHealth?: number | null;
+  downedStartedAt?: number | null;
+  downedRemainingMs?: number | null;
+  downedExpiresAt?: number | null;
+  reviveStartedAt?: number | null;
+  reviveCompletesAt?: number | null;
+  reviveByPlayerId?: string | null;
   ultimateCharge: number;
   onFireUntil?: number | null;
   powerupBoostUntil?: number | null;
@@ -141,6 +150,14 @@ export interface PlayerSnapshot {
   lookPitch: number;
   health: number;
   maxHealth?: number;
+  downedHealth?: number | null;
+  downedMaxHealth?: number | null;
+  downedStartedAt?: number | null;
+  downedRemainingMs?: number | null;
+  downedExpiresAt?: number | null;
+  reviveStartedAt?: number | null;
+  reviveCompletesAt?: number | null;
+  reviveByPlayerId?: string | null;
   powerupBoostUntil?: number | null;
   state: PlayerState;
   movement: PlayerMovementState;
@@ -149,4 +166,41 @@ export interface PlayerSnapshot {
   isBot?: boolean;
   rank?: PublicRankSnapshot;
   stats?: PlayerStats;
+}
+
+export function isPlayerAlive(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return player.state === 'alive';
+}
+
+export function isPlayerDowned(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return player.state === 'downed';
+}
+
+export function isPlayerAliveOrDowned(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return player.state === 'alive' || player.state === 'downed';
+}
+
+export function isBattleRoyalContestant(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return (
+    player.state === 'alive' ||
+    player.state === 'downed' ||
+    player.state === 'dropping' ||
+    player.state === 'spawning'
+  );
+}
+
+export function canReceiveLiveTransform(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return player.state === 'alive' || player.state === 'downed' || player.state === 'spawning';
+}
+
+export function canUseCombatInput(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return player.state === 'alive';
+}
+
+export function canUseMovementInput(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return player.state === 'alive' || player.state === 'downed';
+}
+
+export function canUseAbilityInput(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return player.state === 'alive';
 }

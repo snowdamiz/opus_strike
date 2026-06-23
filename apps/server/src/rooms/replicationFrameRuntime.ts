@@ -1,4 +1,5 @@
 import {
+  canReceiveLiveTransform,
   getPlayerEyePosition as getSharedPlayerEyePosition,
   getPlayerLineOfSightSamplePoints as getSharedPlayerLineOfSightSamplePoints,
   type PlayerInterestSnapshot,
@@ -199,7 +200,7 @@ export class ReplicationFrameRuntime {
     players.forEach((player, id) => {
       frameContext.currentIds.add(id);
       frameContext.visibilityPlayers.set(id, createVisibilityInterestPlayer(player));
-      if (player.state !== 'alive' && player.state !== 'spawning') return;
+      if (!canReceiveLiveTransform(player)) return;
 
       const transform = this.options.buildPackedTransform(id, player);
       frameContext.packedTransforms.set(id, transform);
@@ -369,7 +370,7 @@ export function collectRecipientPlayerStateStreams(
     }
 
     if (input.transformState) {
-      if (player.state !== 'alive' && player.state !== 'spawning') return;
+      if (!canReceiveLiveTransform(player)) return;
       if (!input.forceTransforms && id === input.recipientId) return;
 
       let transformInterest: RecipientInterestDecision | undefined;

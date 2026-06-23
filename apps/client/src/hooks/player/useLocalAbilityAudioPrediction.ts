@@ -60,6 +60,8 @@ export interface LocalAbilityAudioPredictionFrame {
   bombTargeting: boolean;
   phantomPrimaryAmmo: number;
   phantomPrimaryReloading: boolean;
+  blazePrimaryAmmo: number;
+  blazePrimaryReloading: boolean;
   canUseAbility: (abilityId: string, isUltimate: boolean, isTargetingActive?: boolean) => boolean;
   getAbilityCharges?: (abilityId: string) => number | undefined;
   canUseHookshotGrapple?: () => boolean;
@@ -256,6 +258,8 @@ export function useLocalAbilityAudioPrediction() {
       bombTargeting,
       phantomPrimaryAmmo,
       phantomPrimaryReloading,
+      blazePrimaryAmmo,
+      blazePrimaryReloading,
       canUseAbility,
       getAbilityCharges,
       canUseHookshotGrapple,
@@ -337,6 +341,8 @@ export function useLocalAbilityAudioPrediction() {
         if (
           primaryPressed &&
           !bombTargeting &&
+          !blazePrimaryReloading &&
+          blazePrimaryAmmo > 0 &&
           canPlayPrimary(now, BLAZE_ROCKET_FIRE_INTERVAL / tempoMultiplier)
         ) {
           markPredictedLocalAbilitySound('blaze_rocket', now);

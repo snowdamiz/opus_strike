@@ -60,6 +60,7 @@ function command(seq: number, movementEpoch = 0): MovementCommand {
     abilityRejects: 0,
     rateLimitDrops: 0,
     staleCollisionRevisionDrops: 0,
+    staleCollisionRevisionCommands: 0,
     lastAckSeq: 0,
     authoritySends: 0,
     lastAckIntervalMs: 0,

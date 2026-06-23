@@ -32,6 +32,8 @@ const HERO_LOOK_PITCH_DEADZONE = 0.035;
 const HERO_LOOK_PITCH_WAIST_SCALE = 0.55;
 const HERO_LOOK_PITCH_MAX_WAIST_BEND = THREE.MathUtils.degToRad(38);
 const HERO_LOOK_PITCH_HEAD_BLEND = 0.28;
+const DOWNED_BODY_FACE_DOWN_TILT_RADIANS = -THREE.MathUtils.degToRad(84);
+const DOWNED_BODY_TOE_PIVOT_Z = -0.22;
 const JUMP_ROOT_LIFT_MULTIPLIER = 1.28;
 const JUMP_ANTICIPATION_DIP = 0.055;
 const JUMP_LANDING_DIP = 0.058;
@@ -50,6 +52,22 @@ const HERO_TORSO_WAIST_ANCHOR_BEFORE = new THREE.Vector3();
 const HERO_TORSO_WAIST_ANCHOR_AFTER = new THREE.Vector3();
 
 export const HERO_LOOK_PITCH_WAIST_DAMPING = 14;
+
+export function applyDownedRootPivot(
+  position: THREE.Vector3,
+  rotation: THREE.Euler,
+  scale: number,
+  amount: number
+): void {
+  const blend = clamp01(amount);
+  if (blend <= 0.001) return;
+
+  const tilt = DOWNED_BODY_FACE_DOWN_TILT_RADIANS * blend;
+  const pivotZ = DOWNED_BODY_TOE_PIVOT_Z * scale;
+  position.y += Math.sin(tilt) * pivotZ;
+  position.z += pivotZ * (1 - Math.cos(tilt));
+  rotation.x += tilt;
+}
 
 export interface HeroBodyPoseRootTransform {
   position: THREE.Vector3;
@@ -193,6 +211,9 @@ export function getHeroBodyPoseBlendKey(options: {
   jumping: boolean;
   crouching: boolean;
   sliding: boolean;
+  downed?: boolean;
+  crawling?: boolean;
+  beingRevived?: boolean;
   attacking: boolean;
   attackSide: -1 | 1;
   movementPose: HeroMovementPose;
@@ -206,6 +227,9 @@ export function getHeroBodyPoseBlendKey(options: {
     options.jumping ? 'jump' : 'ground',
     options.crouching ? 'crouch' : 'stand',
     options.sliding ? 'slide' : 'noslide',
+    options.downed ? 'downed' : 'notdowned',
+    options.crawling ? 'crawl' : 'nocrawl',
+    options.beingRevived ? 'reviving' : 'norevive',
     options.attacking ? `attack-${options.attackSide}` : 'noattack',
     options.shieldActive ? 'shield' : 'noshield',
     options.movementPose,
@@ -729,6 +753,22 @@ export function applySlideBonePose(bones: HeroBoneRefs, time: number, amount: nu
     bones.aura.scale.x *= 1 + 0.08 * amount;
     bones.aura.scale.z *= 1 + 0.14 * amount;
     bones.aura.rotation.y += time * 0.025 * amount;
+  }
+}
+
+export function applyDownedBonePose(
+  bones: HeroBoneRefs,
+  time: number,
+  amount: number,
+  _crawlAmount: number,
+  _reviveAmount: number
+): void {
+  if (amount <= 0.001) return;
+
+  if (bones.aura) {
+    const pulse = 1 + (0.025 + Math.max(0, Math.sin(time * 5.2)) * 0.025) * amount;
+    bones.aura.scale.x *= pulse;
+    bones.aura.scale.z *= pulse;
   }
 }
 

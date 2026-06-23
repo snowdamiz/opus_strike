@@ -218,7 +218,8 @@ function isPlayerMovingForAnimation(
   visualHorizontalSpeed = 0,
   movement: PlayerMovementState = player.movement
 ): boolean {
-  if (player.state !== 'alive' && player.state !== 'dropping') return false;
+  if (player.state !== 'alive' && player.state !== 'downed' && player.state !== 'dropping') return false;
+  if (player.state === 'downed' && player.reviveByPlayerId) return false;
 
   const networkHorizontalSpeed = getHorizontalSpeed(player.velocity);
 
@@ -281,9 +282,9 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
   const playerHeight = getPlayerHeight(player.heroId);
   const initialMovement = getPlayerRenderMovement(player, localPlayerId);
   const initialLookPitch = getPlayerVisualLookPitch(visualStore.getState(), player);
-  const hasLoweredPosture = hasLoweredPlayerPosture(initialMovement);
-  const visibleHeight = getVisiblePlayerHeight(player.heroId, initialMovement);
-  const postureScaleY = getPlayerBodyPostureScaleY(initialMovement);
+  const hasLoweredPosture = hasLoweredPlayerPosture(initialMovement, player.state);
+  const visibleHeight = getVisiblePlayerHeight(player.heroId, initialMovement, player.state);
+  const postureScaleY = getPlayerBodyPostureScaleY(initialMovement, player.state);
   const initialIsMoving = isPlayerMovingForAnimation(player, 0, initialMovement);
   const initialMovementPose = getPlayerMovementPose(player, hasLoweredPosture, initialIsMoving, initialMovement);
   const targetPosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
@@ -292,6 +293,8 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
   const isMovingRef = useRef(initialIsMoving);
   const isCrouchingRef = useRef(initialMovement.isCrouching);
   const isSlidingRef = useRef(initialMovement.isSliding);
+  const isDownedRef = useRef(player.state === 'downed');
+  const isBeingRevivedRef = useRef(Boolean(player.reviveByPlayerId));
   const isAttackingRef = useRef(false);
   const attackStartedAtMsRef = useRef<number | null>(null);
   const attackSideRef = useRef<-1 | 1>(1);
@@ -455,11 +458,13 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
       }
 
       const frameMovement = getPlayerRenderMovement(player, localPlayerId);
-      const frameHasLoweredPosture = hasLoweredPlayerPosture(frameMovement);
+      const frameHasLoweredPosture = hasLoweredPlayerPosture(frameMovement, player.state);
       const frameIsMoving = isPlayerMovingForAnimation(player, visualHorizontalSpeed, frameMovement);
-      postureScaleYRef.current = getPlayerBodyPostureScaleY(frameMovement);
+      postureScaleYRef.current = getPlayerBodyPostureScaleY(frameMovement, player.state);
       isCrouchingRef.current = frameMovement.isCrouching;
       isSlidingRef.current = frameMovement.isSliding;
+      isDownedRef.current = player.state === 'downed';
+      isBeingRevivedRef.current = Boolean(player.reviveByPlayerId);
       movementPoseRef.current = getPlayerMovementPose(player, frameHasLoweredPosture, frameIsMoving, frameMovement);
       isMovingRef.current = frameIsMoving;
     },
@@ -483,6 +488,10 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
           isCrouchingRef={isCrouchingRef}
           isSliding={initialMovement.isSliding}
           isSlidingRef={isSlidingRef}
+          isDowned={player.state === 'downed'}
+          isDownedRef={isDownedRef}
+          isBeingRevived={Boolean(player.reviveByPlayerId)}
+          isBeingRevivedRef={isBeingRevivedRef}
           isAttackingRef={isAttackingRef}
           attackStartedAtMsRef={attackStartedAtMsRef}
           attackSideRef={attackSideRef}

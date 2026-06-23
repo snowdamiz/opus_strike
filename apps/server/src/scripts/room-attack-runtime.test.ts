@@ -61,6 +61,7 @@ import {
     phantomPrimaryReady: true,
     chronosPrimaryReady: true,
     phantomPrimaryShotAvailable: true,
+    blazePrimaryShotAvailable: true,
   }), { reason: 'attack_invalid_state:primary', logEvent: true });
 
   assert.deepEqual(getAttackPreflightRejection({
@@ -72,6 +73,7 @@ import {
     phantomPrimaryReady: true,
     chronosPrimaryReady: true,
     phantomPrimaryShotAvailable: true,
+    blazePrimaryShotAvailable: true,
   }), { reason: 'attack_missing_config:secondary', logEvent: true });
 
   assert.deepEqual(getAttackPreflightRejection({
@@ -83,6 +85,7 @@ import {
     phantomPrimaryReady: false,
     chronosPrimaryReady: false,
     phantomPrimaryShotAvailable: false,
+    blazePrimaryShotAvailable: false,
   }), { reason: 'attack_cooldown:primary', logEvent: false });
 
   assert.deepEqual(getAttackPreflightRejection({
@@ -94,7 +97,20 @@ import {
     phantomPrimaryReady: true,
     chronosPrimaryReady: true,
     phantomPrimaryShotAvailable: false,
+    blazePrimaryShotAvailable: true,
   }), { reason: 'phantom_primary_no_ammo', logEvent: false });
+
+  assert.deepEqual(getAttackPreflightRejection({
+    isHeroId: true,
+    playerState: 'alive',
+    mode: 'primary',
+    attackExists: true,
+    isCoolingDown: false,
+    phantomPrimaryReady: true,
+    chronosPrimaryReady: true,
+    phantomPrimaryShotAvailable: true,
+    blazePrimaryShotAvailable: false,
+  }), { reason: 'blaze_primary_no_ammo', logEvent: false });
 }
 
 {

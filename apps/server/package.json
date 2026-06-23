@@ -32,7 +32,7 @@
     "test:player-holds": "tsx src/scripts/player-hold-tracker.test.ts",
     "test:player-runtime": "tsx src/scripts/player-runtime.test.ts",
     "test:player-report-runtime": "tsx src/scripts/player-report-runtime.test.ts",
-    "test:phantom-primary": "tsx src/scripts/phantom-primary-magazine.test.ts",
+    "test:primary-magazine": "tsx src/scripts/primary-magazine.test.ts",
     "test:phantom-void-ray": "tsx src/scripts/phantom-void-ray-charge.test.ts",
     "test:post-game-reset": "tsx src/scripts/post-game-reset-runtime.test.ts",
     "test:press-state": "tsx src/scripts/player-press-state.test.ts",

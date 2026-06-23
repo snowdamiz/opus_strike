@@ -30,6 +30,14 @@ export class Player extends Schema {
   // Runtime vitals; streamed through playerVitals instead of Colyseus patches.
   health: number = 100;
   maxHealth: number = 100;
+  downedHealth: number = 0;
+  downedMaxHealth: number = 0;
+  downedStartedAt: number = 0;
+  downedRemainingMs: number = 0;
+  downedExpiresAt: number = 0;
+  reviveStartedAt: number = 0;
+  reviveCompletesAt: number = 0;
+  reviveByPlayerId: string = '';
   ultimateCharge: number = 0;
 
   // Movement state
