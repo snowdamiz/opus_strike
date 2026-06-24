@@ -22,6 +22,7 @@ type SkinShopSettingsRow = {
 };
 
 function createFakePrisma() {
+  const itemUpdatedAt = new Date('2026-06-24T12:00:00.000Z');
   const shop: SkinShopSettingsRow = {
     id: 'default',
     enabled: false,
@@ -32,15 +33,40 @@ function createFakePrisma() {
     createdAt: new Date('2026-06-24T12:00:00.000Z'),
     updatedAt: new Date('2026-06-24T12:00:00.000Z'),
   };
-  const item: SkinShopItemRow = {
-    skinId: 'phantom.void-monarch',
+  const createItemRow = (skinId: string): SkinShopItemRow => ({
+    skinId,
     saleEnabled: false,
     tokenAmountBaseUnits: null,
     maxSupply: null,
     priceVersion: 1,
     updatedByUserId: null,
-    updatedAt: new Date('2026-06-24T12:00:00.000Z'),
-  };
+    updatedAt: itemUpdatedAt,
+  });
+  const item = createItemRow('phantom.void-monarch');
+  const itemRows = new Map<string, SkinShopItemRow>([[item.skinId, item]]);
+  const ownerships = [
+    {
+      userId: 'user-a',
+      skinId: 'phantom.void-monarch',
+      source: 'paid',
+      grantedAt: new Date('2026-06-24T12:15:00.000Z'),
+      revokedAt: null,
+    },
+    {
+      userId: 'user-a',
+      skinId: 'phantom.nightglass-wraith',
+      source: 'paid',
+      grantedAt: new Date('2026-06-24T12:16:00.000Z'),
+      revokedAt: null,
+    },
+  ];
+  const heroLoadouts = [
+    {
+      userId: 'user-a',
+      heroId: 'phantom',
+      selectedSkinId: 'phantom.nightglass-wraith',
+    },
+  ];
   const audits: any[] = [];
   let itemCreateManyCount = 0;
   let itemFindUniqueCount = 0;
@@ -85,6 +111,15 @@ function createFakePrisma() {
     },
     prisma: {
       skinShopSettings: {
+        createMany: async ({ data, skipDuplicates }: any) => {
+          assert.equal(skipDuplicates, true);
+          assert.equal(Array.isArray(data), true);
+          return { count: 0 };
+        },
+        findUnique: async ({ where }: any) => {
+          assert.deepEqual(where, { id: shop.id });
+          return { ...shop };
+        },
         upsert: async ({ where, create, update }: any) => {
           assert.deepEqual(where, { id: shop.id });
           lastShopCreate = { ...create };
@@ -99,23 +134,63 @@ function createFakePrisma() {
       skinShopItemSettings: {
         createMany: async ({ data, skipDuplicates }: any) => {
           assert.equal(skipDuplicates, true);
-          assert.deepEqual(data, [{
-            skinId: item.skinId,
-            saleEnabled: false,
-            tokenAmountBaseUnits: null,
-            maxSupply: null,
-          }]);
+          for (const row of data) {
+            assert.equal(row.saleEnabled, false);
+            assert.equal(row.tokenAmountBaseUnits, null);
+            assert.equal(row.maxSupply, null);
+            if (!itemRows.has(row.skinId)) itemRows.set(row.skinId, createItemRow(row.skinId));
+          }
           itemCreateManyCount += 1;
           return { count: 0 };
         },
         findUnique: async ({ where }: any) => {
-          assert.deepEqual(where, { skinId: item.skinId });
+          assert.equal(typeof where.skinId, 'string');
           itemFindUniqueCount += 1;
-          return { ...item };
+          const row = itemRows.get(where.skinId);
+          return row ? { ...row } : null;
         },
+        findMany: async () => Array.from(itemRows.values()).map((row) => ({ ...row })),
       },
       skinPurchaseIntent: {
         count: async () => 0,
+        groupBy: async () => [],
+      },
+      userSkinOwnership: {
+        findMany: async ({ where }: any) => ownerships
+          .filter((row) => row.userId === where.userId && row.revokedAt === where.revokedAt)
+          .map((row) => ({ ...row })),
+        findUnique: async ({ where }: any) => {
+          const row = ownerships.find((ownership) => (
+            ownership.userId === where.userId_skinId.userId &&
+            ownership.skinId === where.userId_skinId.skinId
+          ));
+          return row ? { revokedAt: row.revokedAt } : null;
+        },
+      },
+      userHeroLoadout: {
+        findMany: async ({ where }: any) => heroLoadouts
+          .filter((row) => row.userId === where.userId)
+          .map((row) => ({ ...row })),
+        findUnique: async ({ where }: any) => {
+          const row = heroLoadouts.find((loadout) => (
+            loadout.userId === where.userId_heroId.userId &&
+            loadout.heroId === where.userId_heroId.heroId
+          ));
+          return row ? { selectedSkinId: row.selectedSkinId } : null;
+        },
+        upsert: async ({ where, create, update }: any) => {
+          const row = heroLoadouts.find((loadout) => (
+            loadout.userId === where.userId_heroId.userId &&
+            loadout.heroId === where.userId_heroId.heroId
+          ));
+          if (row) {
+            Object.assign(row, update);
+            return { ...row };
+          }
+          const next = { ...create };
+          heroLoadouts.push(next);
+          return { ...next };
+        },
       },
       $transaction: async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
     },
@@ -138,17 +213,27 @@ async function expectServiceError(operation: () => Promise<unknown>, message: Re
 async function runSkinShopServiceTests() {
   const previousTreasuryWallet = process.env.WAGER_TREASURY_WALLET;
   const previousSolanaRpcUrl = process.env.SOLANA_RPC_URL;
+  const previousGameTokenMint = process.env.GAME_TOKEN_MINT;
+  const previousGameTokenSymbol = process.env.GAME_TOKEN_SYMBOL;
   process.env.WAGER_TREASURY_WALLET = 'Treasury1111111111111111111111111111111111';
   process.env.SOLANA_RPC_URL = 'https://example.invalid/rpc';
+  // No game token configured yet — the shop starts without a usable token.
+  delete process.env.GAME_TOKEN_MINT;
+  delete process.env.GAME_TOKEN_SYMBOL;
 
   const fake = createFakePrisma();
   (globalThis as any).prisma = fake.prisma;
 
-  const { updateSkinShopItemSettings, updateSkinShopSettings } = await import('../cosmetics/skinShopService');
+  const {
+    getSkinCatalogForUser,
+    resolveUserLoadoutForHero,
+    updateSkinShopItemSettings,
+    updateSkinShopSettings,
+    updateUserHeroLoadout,
+  } = await import('../cosmetics/skinShopService');
 
   const shop = await updateSkinShopSettings({
     enabled: false,
-    tokenSymbol: 'TBA',
     updatedByUserId: 'admin-a',
   });
   assert.equal(shop.treasuryWallet, process.env.WAGER_TREASURY_WALLET);
@@ -254,6 +339,51 @@ async function runSkinShopServiceTests() {
   assert.equal(fake.audits[0].oldPriceVersion, 1);
   assert.equal(fake.audits[0].newPriceVersion, 2);
 
+  const disabledShopCatalog = await getSkinCatalogForUser('user-a');
+  assert.deepEqual(
+    disabledShopCatalog.skins.filter((skin) => skin.availability === 'paid').map((skin) => skin.id),
+    [],
+    'paid skins stay out of the public catalog while the shop is disabled'
+  );
+
+  // Configure the global game token; the shop now transacts in it.
+  process.env.GAME_TOKEN_MINT = 'So11111111111111111111111111111111111111112';
+  process.env.GAME_TOKEN_SYMBOL = 'STRIKE';
+  await updateSkinShopSettings({
+    enabled: true,
+    updatedByUserId: 'admin-a',
+  });
+
+  const enabledShopCatalog = await getSkinCatalogForUser('user-a');
+  const enabledShopSkinIds = enabledShopCatalog.skins.map((skin) => skin.id);
+  assert.ok(enabledShopSkinIds.includes('phantom.default'));
+  assert.ok(enabledShopSkinIds.includes('phantom.void-monarch'));
+  assert.equal(enabledShopCatalog.skins.find((skin) => skin.id === 'phantom.void-monarch')?.owned, true);
+  assert.equal(enabledShopSkinIds.includes('phantom.nightglass-wraith'), false);
+  assert.equal(
+    enabledShopCatalog.loadouts.find((loadout) => loadout.heroId === 'phantom')?.skinId,
+    'phantom.default',
+    'saved hidden paid loadouts fall back to the default skin'
+  );
+  assert.equal(await resolveUserLoadoutForHero('user-a', 'phantom'), 'phantom.default');
+  assert.equal(await resolveUserLoadoutForHero('user-a', 'phantom', 'phantom.void-monarch'), 'phantom.void-monarch');
+  await expectServiceError(
+    () => updateUserHeroLoadout({
+      userId: 'user-a',
+      heroId: 'phantom',
+      skinId: 'phantom.nightglass-wraith',
+    }),
+    /not available in game/
+  );
+  assert.deepEqual(await updateUserHeroLoadout({
+    userId: 'user-a',
+    heroId: 'phantom',
+    skinId: 'phantom.void-monarch',
+  }), {
+    heroId: 'phantom',
+    skinId: 'phantom.void-monarch',
+  });
+
   await expectServiceError(
     () => updateSkinShopItemSettings({
       skinId: 'phantom.void-monarch',
@@ -274,6 +404,16 @@ async function runSkinShopServiceTests() {
     delete process.env.SOLANA_RPC_URL;
   } else {
     process.env.SOLANA_RPC_URL = previousSolanaRpcUrl;
+  }
+  if (previousGameTokenMint === undefined) {
+    delete process.env.GAME_TOKEN_MINT;
+  } else {
+    process.env.GAME_TOKEN_MINT = previousGameTokenMint;
+  }
+  if (previousGameTokenSymbol === undefined) {
+    delete process.env.GAME_TOKEN_SYMBOL;
+  } else {
+    process.env.GAME_TOKEN_SYMBOL = previousGameTokenSymbol;
   }
 }
 

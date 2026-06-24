@@ -23,6 +23,7 @@ import {
   type SkinPurchaseTransactionSnapshot,
 } from '@voxel-strike/shared';
 import prisma from '../db';
+import { getGameTokenConfig } from '../config/gameToken';
 import {
   assertSolanaPublicKey,
   buildSplTokenPaymentTransaction,
@@ -208,8 +209,14 @@ type ShopSettings = NonNullable<StoredShopSettings> & {
 };
 
 function withRuntimeShopConfig(settings: NonNullable<StoredShopSettings>): ShopSettings {
+  // Overlay the single global game-token config over any stored values so the
+  // shop always transacts in the one game token, regardless of legacy DB rows.
+  const token = getGameTokenConfig();
   return {
     ...settings,
+    tokenMintAddress: token.mintAddress,
+    tokenSymbol: token.symbol,
+    cluster: token.cluster,
     treasuryWallet: readTreasuryWallet(),
     rpcUrl: readSolanaRpcUrl(),
   };
@@ -419,6 +426,51 @@ async function loadResolvedLoadouts(userId: string | null | undefined, ownedSkin
   }));
 }
 
+function isSkinVisibleInGame(input: {
+  skin: HeroSkinDefinition;
+  shop: Awaited<ReturnType<typeof getOrCreateShopSettings>>;
+  item: Awaited<ReturnType<typeof getOrCreateItemSettings>> | null;
+}): boolean {
+  if (input.skin.availability === 'free') return true;
+  if (input.skin.releaseState === 'disabled') return false;
+  if (!input.shop.enabled || !input.shop.tokenMintAddress || !input.shop.treasuryWallet || !input.shop.rpcUrl) return false;
+  if (!input.item?.saleEnabled || !input.item.tokenAmountBaseUnits) return false;
+  return input.item.tokenAmountBaseUnits > 0n;
+}
+
+function buildGameVisibleSkinIds(
+  shop: Awaited<ReturnType<typeof getOrCreateShopSettings>>,
+  itemRowsBySkin: ReadonlyMap<string, Awaited<ReturnType<typeof getOrCreateItemSettings>>>
+): Set<HeroSkinId> {
+  const visible = new Set<HeroSkinId>();
+  for (const skin of HERO_SKIN_CATALOG) {
+    if (isSkinVisibleInGame({ skin, shop, item: itemRowsBySkin.get(skin.id) ?? null })) {
+      visible.add(skin.id);
+    }
+  }
+  return visible;
+}
+
+function buildGameEligibleOwnedSkinIds(
+  ownedSkinIds: ReadonlySet<HeroSkinId>,
+  visibleSkinIds: ReadonlySet<HeroSkinId>
+): Set<HeroSkinId> {
+  const eligible = new Set<HeroSkinId>();
+  for (const skinId of ownedSkinIds) {
+    if (visibleSkinIds.has(skinId)) eligible.add(skinId);
+  }
+  return eligible;
+}
+
+async function loadGameVisibleSkinIds(): Promise<Set<HeroSkinId>> {
+  const [shop, itemRows] = await Promise.all([
+    getOrCreateShopSettings(),
+    prisma.skinShopItemSettings.findMany(),
+  ]);
+  const itemRowsBySkin = new Map(itemRows.map((item) => [item.skinId, item]));
+  return buildGameVisibleSkinIds(shop, itemRowsBySkin);
+}
+
 function buildShopPriceState(input: {
   skin: HeroSkinDefinition;
   shop: Awaited<ReturnType<typeof getOrCreateShopSettings>>;
@@ -495,10 +547,12 @@ export async function getSkinCatalogForUser(userId?: string | null): Promise<Her
       entitlementBySkin.set(ownership.skinId, toEntitlementSource(ownership.source));
     }
   }
-  const loadouts = await loadResolvedLoadouts(userId, ownedSkinIds);
+  const visibleSkinIds = buildGameVisibleSkinIds(shop, itemRowsBySkin);
+  const gameEligibleOwnedSkinIds = buildGameEligibleOwnedSkinIds(ownedSkinIds, visibleSkinIds);
+  const loadouts = await loadResolvedLoadouts(userId, gameEligibleOwnedSkinIds);
   const equippedSkinIds = new Set(loadouts.map((loadout) => loadout.skinId));
 
-  const skins: HeroSkinCatalogItem[] = HERO_SKIN_CATALOG.map((skin) => {
+  const skins: HeroSkinCatalogItem[] = HERO_SKIN_CATALOG.filter((skin) => visibleSkinIds.has(skin.id)).map((skin) => {
     const item = itemRowsBySkin.get(skin.id) ?? null;
     const supply = supplyBySkin.get(skin.id) ?? { soldCount: 0, reservedCount: 0 };
     return {
@@ -533,15 +587,21 @@ export async function resolveUserLoadoutForHero(
   heroId: HeroId,
   requestedSkinId?: HeroSkinId | string | null
 ): Promise<HeroSkinId> {
-  const ownerships = await loadOwnershipRows(userId);
+  const [ownerships, visibleSkinIds, stored] = await Promise.all([
+    loadOwnershipRows(userId),
+    loadGameVisibleSkinIds(),
+    requestedSkinId === undefined
+      ? prisma.userHeroLoadout.findUnique({
+        where: { userId_heroId: { userId, heroId } },
+        select: { selectedSkinId: true },
+      })
+      : Promise.resolve(null),
+  ]);
   const ownedSkinIds = buildOwnedSkinIds(ownerships);
-  const stored = requestedSkinId === undefined
-    ? await prisma.userHeroLoadout.findUnique({
-      where: { userId_heroId: { userId, heroId } },
-      select: { selectedSkinId: true },
-    })
-    : null;
-  return resolveHeroSkinDefinition(heroId, requestedSkinId ?? stored?.selectedSkinId, { ownedSkinIds }).skin.id;
+  const gameEligibleOwnedSkinIds = buildGameEligibleOwnedSkinIds(ownedSkinIds, visibleSkinIds);
+  return resolveHeroSkinDefinition(heroId, requestedSkinId ?? stored?.selectedSkinId, {
+    ownedSkinIds: gameEligibleOwnedSkinIds,
+  }).skin.id;
 }
 
 export async function updateUserHeroLoadout(input: {
@@ -552,6 +612,10 @@ export async function updateUserHeroLoadout(input: {
   const skin = getHeroSkinDefinition(input.skinId);
   if (skin.heroId !== input.heroId) {
     throw new SkinShopServiceError('Skin does not belong to that hero');
+  }
+  const visibleSkinIds = await loadGameVisibleSkinIds();
+  if (!visibleSkinIds.has(input.skinId)) {
+    throw new SkinShopServiceError('Skin is not available in game');
   }
   if (!(await userOwnsSkin(input.userId, input.skinId))) {
     throw new SkinShopServiceError('You do not own that skin', 403);
@@ -1045,38 +1109,19 @@ export async function getSkinShopAdminOverview(): Promise<SkinShopAdminOverview>
 
 export async function updateSkinShopSettings(input: {
   enabled?: unknown;
-  tokenMintAddress?: unknown;
-  tokenSymbol?: unknown;
-  cluster?: unknown;
   updatedByUserId: string;
 }) {
-  const tokenMintAddress = input.tokenMintAddress === undefined
-    ? undefined
-    : cleanOptionalString(input.tokenMintAddress, 96);
-  if (tokenMintAddress) assertSolanaPublicKey(tokenMintAddress, 'tokenMintAddress');
-
-  const tokenSymbol = input.tokenSymbol === undefined
-    ? undefined
-    : cleanOptionalString(input.tokenSymbol, 16) ?? '';
-  const cluster = input.cluster === undefined
-    ? undefined
-    : cleanOptionalString(input.cluster, 32) ?? 'devnet';
-
+  // Token identity (mint/symbol/cluster) is owned by the global game-token
+  // config and overlaid at read time — the shop only owns its enabled flag.
   const settings = await prisma.skinShopSettings.upsert({
     where: { id: SHOP_SETTINGS_ID },
     create: {
       ...defaultShopSettingsInput(),
       enabled: input.enabled === true,
-      tokenMintAddress: tokenMintAddress ?? null,
-      tokenSymbol: tokenSymbol ?? '',
-      cluster: cluster ?? 'devnet',
       updatedByUserId: input.updatedByUserId,
     },
     update: {
       ...(input.enabled === undefined ? {} : { enabled: input.enabled === true }),
-      ...(input.tokenMintAddress === undefined ? {} : { tokenMintAddress }),
-      ...(input.tokenSymbol === undefined ? {} : { tokenSymbol }),
-      ...(input.cluster === undefined ? {} : { cluster }),
       updatedByUserId: input.updatedByUserId,
     },
   });

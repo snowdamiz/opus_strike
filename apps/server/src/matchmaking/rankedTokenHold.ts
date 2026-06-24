@@ -1,8 +1,8 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import type { RankedEntryGateMode as PrismaRankedEntryGateMode } from '@prisma/client';
 import prisma from '../db';
+import { getGameTokenConfig } from '../config/gameToken';
 
-const DISALLOWED_NATIVE_SOL_MINT_ADDRESS = 'So11111111111111111111111111111111111111112';
 const RANKED_ENTRY_GATE_SETTINGS_ID = 'default';
 const DEFAULT_RANKED_ENTRY_TOKEN_SYMBOL = '';
 const DEFAULT_RANKED_TOKEN_HOLD_RPC_TIMEOUT_MS = 5 * 1000;
@@ -36,8 +36,6 @@ export interface RankedEntryGateAdminView {
 
 export interface RankedEntryGateUpdateInput {
   mode: unknown;
-  tokenMintAddress?: unknown;
-  tokenSymbol?: unknown;
   requiredTokenAmount?: unknown;
 }
 
@@ -88,42 +86,6 @@ function intEnv(name: string, fallback: number, options: { min?: number; max?: n
   return parsed;
 }
 
-function canonicalSolanaAddress(value: string, fieldName: string): string {
-  try {
-    const parsed = new PublicKey(value);
-    const canonical = parsed.toBase58();
-    if (canonical !== value) {
-      throw new Error('non-canonical public key');
-    }
-    if (canonical === DISALLOWED_NATIVE_SOL_MINT_ADDRESS) {
-      throw new Error('native SOL mint is not allowed');
-    }
-    return canonical;
-  } catch {
-    throw new Error(`${fieldName} must be a valid SPL token mint address and cannot be native SOL`);
-  }
-}
-
-function readOptionalTokenMintAddress(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  const raw = String(value).trim();
-  return raw ? canonicalSolanaAddress(raw, 'Ranked token mint') : null;
-}
-
-function normalizeTokenSymbol(value: unknown, options: { required: boolean }): string {
-  const symbol = (typeof value === 'string' ? value : DEFAULT_RANKED_ENTRY_TOKEN_SYMBOL)
-    .trim()
-    .replace(/^\$/, '')
-    .toUpperCase();
-
-  if (!symbol && !options.required) return '';
-  if (!/^[A-Z0-9]{1,12}$/.test(symbol)) {
-    throw new Error('Ranked token symbol must be 1-12 letters or numbers');
-  }
-
-  return symbol;
-}
-
 function readWholeTokenAmount(value: unknown, options: { requirePositive: boolean }): string {
   const raw = typeof value === 'bigint'
     ? value.toString()
@@ -168,21 +130,19 @@ function rpcUrlEnv(): string {
   return process.env.RANKED_TOKEN_HOLD_RPC_URL || process.env.SOLANA_RPC_URL || '';
 }
 
-function clusterEnv(): string {
-  return process.env.SOLANA_CLUSTER || 'mainnet-beta';
-}
-
 function toRankedEntryGateView(row: RankedEntryGateRow): RankedEntryGateAdminView {
-  const tokenMintAddress = readOptionalTokenMintAddress(row.tokenMintAddress);
+  // Token identity comes from the single global game-token config, never the
+  // per-feature row. The row only owns the gate mode + required amount.
+  const token = getGameTokenConfig();
 
   return {
     mode: toGateMode(row.mode),
-    tokenMintAddress,
-    tokenAddress: tokenMintAddress ?? '',
-    tokenSymbol: tokenMintAddress ? normalizeTokenSymbol(row.tokenSymbol, { required: true }) : '',
+    tokenMintAddress: token.mintAddress,
+    tokenAddress: token.mintAddress ?? '',
+    tokenSymbol: token.mintAddress ? token.symbol : '',
     requiredTokenAmount: readWholeTokenAmount(row.requiredTokenAmount, { requirePositive: false }),
-    cluster: clusterEnv(),
-    rpcConfigured: Boolean(rpcUrlEnv()),
+    cluster: token.cluster,
+    rpcConfigured: token.rpcConfigured,
     updatedAt: row.updatedAt.toISOString(),
     updatedByUserId: row.updatedByUserId,
   };
@@ -235,26 +195,20 @@ export async function setRankedEntryGateSettings(
 ): Promise<RankedEntryGateAdminView> {
   const current = await ensureRankedEntryGateSettings();
   const mode = readGateMode(input.mode);
-  const tokenMintAddress = input.tokenMintAddress === undefined
-    ? current.tokenMintAddress
-    : readOptionalTokenMintAddress(input.tokenMintAddress);
-  const tokenSymbol = input.tokenSymbol === undefined
-    ? normalizeTokenSymbol(current.tokenSymbol, { required: mode === 'token_required' })
-    : normalizeTokenSymbol(input.tokenSymbol, { required: mode === 'token_required' });
   const requiredTokenAmount = input.requiredTokenAmount === undefined
     ? readWholeTokenAmount(current.requiredTokenAmount, { requirePositive: mode === 'token_required' })
     : readWholeTokenAmount(input.requiredTokenAmount, { requirePositive: mode === 'token_required' });
 
-  if (mode === 'token_required' && !tokenMintAddress) {
-    throw new Error('Ranked token mint is required before enabling token-gated ranked');
+  // The game token is configured globally (GAME_TOKEN_MINT); the gate cannot
+  // require a token that isn't configured.
+  if (mode === 'token_required' && !getGameTokenConfig().mintAddress) {
+    throw new Error('A game token (GAME_TOKEN_MINT) must be configured before enabling token-gated ranked');
   }
 
   const updated = await prisma.rankedEntryGateSettings.update({
     where: { id: RANKED_ENTRY_GATE_SETTINGS_ID },
     data: {
       mode: mode as PrismaRankedEntryGateMode,
-      tokenMintAddress,
-      tokenSymbol,
       requiredTokenAmount,
       updatedByUserId: updatedByUserId ?? null,
     },

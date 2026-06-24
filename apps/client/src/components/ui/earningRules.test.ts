@@ -69,6 +69,10 @@ function labelsFor(economy: RewardEconomy | null): string[] {
   return getEarningRules('UNITS', economy).map((rule) => rule.label);
 }
 
+function valuesFor(economy: RewardEconomy | null): string[] {
+  return getEarningRules('UNITS', economy).map((rule) => rule.value);
+}
+
 assert.deepEqual(
   labelsFor(createEconomy()),
   ['Ranked match', 'Win + assist', 'Flag bonus', 'Weekly top 10', 'Golden map', 'Wagers'],
@@ -113,6 +117,19 @@ assert.deepEqual(
   labelsFor(null),
   ['Ranked match', 'Win + assist', 'Flag bonus', 'Weekly top 10', 'Golden map', 'Wagers'],
   'missing economy data should keep default copy while the API request is pending or unavailable',
+);
+
+assert.deepEqual(
+  valuesFor(createEconomy()),
+  [
+    '20K UNITS, max 5/day',
+    '10K UNITS win, 2K UNITS assist',
+    '15K UNITS capture, 5K UNITS return',
+    'split 1M UNITS',
+    '2% roll, 0.2 SOL each winner',
+    'winners split pot, treasury keeps 5%',
+  ],
+  'token payout values should be compact and human-readable',
 );
 
 console.log('earning rules tests passed');

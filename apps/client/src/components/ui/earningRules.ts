@@ -1,4 +1,5 @@
 import type { RewardEconomyResponse } from '../../contexts/networkApi';
+import { formatCompactTokenAmount } from '../../utils/tokenAmountFormat';
 
 export type EarningRule = {
   label: string;
@@ -10,25 +11,6 @@ export type RewardEconomy = RewardEconomyResponse['economy'];
 export function rewardTokenTicker(symbol?: string | null): string | null {
   const cleaned = symbol?.trim().replace(/^\$/, '').toUpperCase() ?? '';
   return /^[A-Z0-9]{1,16}$/.test(cleaned) ? cleaned : null;
-}
-
-function formatCompactInteger(value: string | undefined, fallback: string): string {
-  try {
-    const amount = BigInt(value ?? fallback);
-    const units: Array<[bigint, string]> = [
-      [1_000_000_000n, 'B'],
-      [1_000_000n, 'M'],
-      [1_000n, 'k'],
-    ];
-    for (const [unit, suffix] of units) {
-      if (amount >= unit && amount % unit === 0n) {
-        return `${amount / unit}${suffix}`;
-      }
-    }
-    return amount.toLocaleString('en-US');
-  } catch {
-    return fallback;
-  }
 }
 
 function formatBpsShort(value: number | undefined, fallback: number): string {
@@ -64,12 +46,12 @@ export function getEarningRules(tokenSymbol: string | null, economy: RewardEcono
   const rules: EarningRule[] = [];
 
   if (rankedRewardsEnabled) {
-    const rankedDrip = formatCompactInteger(rewards?.dailyRankedDripLamports, '20k');
+    const rankedDrip = formatCompactTokenAmount(rewards?.dailyRankedDripLamports, '20K');
     const maxDaily = rewards?.dailyRankedDripMaxMatches ?? 5;
-    const win = formatCompactInteger(rewards?.objectiveWinLamports, '10k');
-    const assist = formatCompactInteger(rewards?.objectiveAssistLamports, '2k');
-    const capture = formatCompactInteger(rewards?.objectiveFlagCaptureLamports, '15k');
-    const flagReturn = formatCompactInteger(rewards?.objectiveFlagReturnLamports, '5k');
+    const win = formatCompactTokenAmount(rewards?.objectiveWinLamports, '10K');
+    const assist = formatCompactTokenAmount(rewards?.objectiveAssistLamports, '2K');
+    const capture = formatCompactTokenAmount(rewards?.objectiveFlagCaptureLamports, '15K');
+    const flagReturn = formatCompactTokenAmount(rewards?.objectiveFlagReturnLamports, '5K');
 
     rules.push(
       { label: 'Ranked match', value: `${tokenAmountLabel(rankedDrip, token)}, max ${maxDaily}/day` },
@@ -80,7 +62,7 @@ export function getEarningRules(tokenSymbol: string | null, economy: RewardEcono
 
   if (weeklyRewardsEnabled) {
     const weeklyTop = rewards?.weeklyTopPlayers ?? 10;
-    const weeklyPool = formatCompactInteger(rewards?.weeklyPoolLamports, '1M');
+    const weeklyPool = formatCompactTokenAmount(rewards?.weeklyPoolLamports, '1M');
     rules.push({ label: `Weekly top ${weeklyTop}`, value: `split ${tokenAmountLabel(weeklyPool, token)}` });
   }
 

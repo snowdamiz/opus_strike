@@ -38,6 +38,7 @@ import {
   type AdminRoomListing,
 } from './machineRegistry';
 import { createInGameCapacitySnapshot } from '../matchmaking/playerCapacity';
+import { getGameTokenConfig } from '../config/gameToken';
 import {
   getGlobalNotification,
   setGlobalNotification,
@@ -848,8 +849,9 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     lobbyRooms: lobbyRooms.length,
     lobbyParticipants: lobbyRooms.reduce((sum, room) => sum + room.participants, 0),
   };
+  const gameToken = getGameTokenConfig();
   const rewardEconomy = {
-    rewardTokenSymbol: rankedEntryGate.tokenMintAddress ? rankedEntryGate.tokenSymbol : null,
+    rewardTokenSymbol: gameToken.mintAddress ? gameToken.symbol : null,
     ...rewardEconomySettings,
   };
 
@@ -885,6 +887,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
       localProcessId: options.matchMaker.processId ?? null,
       warnings,
     },
+    gameToken,
     antiCheat,
     playerReports,
     rewardEconomy,
@@ -1139,8 +1142,6 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     try {
       const rankedEntryGate = await setRankedEntryGateSettings({
         mode: req.body?.mode,
-        tokenMintAddress: req.body?.tokenMintAddress,
-        tokenSymbol: req.body?.tokenSymbol,
         requiredTokenAmount: req.body?.requiredTokenAmount,
       }, adminUser.id);
 
@@ -1157,9 +1158,6 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     try {
       const shop = await updateSkinShopSettings({
         enabled: req.body?.enabled,
-        tokenMintAddress: req.body?.tokenMintAddress,
-        tokenSymbol: req.body?.tokenSymbol,
-        cluster: req.body?.cluster,
         updatedByUserId: adminUser.id,
       });
       res.json({ ok: true, shop });

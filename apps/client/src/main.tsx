@@ -10,12 +10,20 @@ import './styles/index.css';
 
 const App = lazy(() => import('./App').then((module) => ({ default: module.App })));
 const LegalPage = lazy(() => import('./components/ui/LegalPage').then((module) => ({ default: module.LegalPage })));
+const AdminConsole = lazy(() =>
+  import('./components/admin/AdminConsole').then((module) => ({ default: module.AdminConsole }))
+);
 const legalPageKind = getLegalPageKind(window.location.pathname);
+const isAdminRoute = getIsAdminRoute(window.location.pathname);
 
 function getLegalPageKind(pathname: string) {
   if (pathname === '/terms-of-service') return 'terms';
   if (pathname === '/privacy-policy') return 'privacy';
   return null;
+}
+
+function getIsAdminRoute(pathname: string) {
+  return pathname === '/admin' || pathname === '/admin/';
 }
 
 function ClientAppShell() {
@@ -40,7 +48,9 @@ function ClientAppShell() {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <Suspense fallback={null}>
-      {legalPageKind ? (
+      {isAdminRoute ? (
+        <AdminConsole />
+      ) : legalPageKind ? (
         <LegalPage kind={legalPageKind} />
       ) : (
         <ClientAppShell />

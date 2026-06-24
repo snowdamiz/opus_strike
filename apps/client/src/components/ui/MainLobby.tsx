@@ -92,7 +92,9 @@ import {
 } from '../../utils/playMenuPreferences';
 import type { ServerLatencyProbeSnapshot } from '../../utils/serverLatency';
 import { requiresTutorial } from '../../utils/tutorialAccess';
+import { formatCompactTokenAmount } from '../../utils/tokenAmountFormat';
 import { RankIcon, getRankForStats } from './RankBadge';
+import { SkinRarityChrome } from './SkinRarityChrome';
 
 const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((module) => ({
   default: module.FeaturedHeroPreview,
@@ -287,7 +289,9 @@ const SEASON_RULES_ARIA = 'Season rewards and ranked history are tracked by seas
 
 function rankedTokenHoldRequirement(status: RankedTokenHoldStatus): string {
   const symbol = rewardTokenTicker(status.tokenSymbol);
-  return `${status.requiredTokenAmount || '0'} ${symbol ?? 'tokens'} hold`;
+  const fallbackAmount = status.requiredTokenAmount || '0';
+  const amount = formatCompactTokenAmount(status.requiredTokenAmount, fallbackAmount);
+  return `${amount} ${symbol ?? 'tokens'} hold`;
 }
 
 function rankedTokenGateBlockedMessage(status: RankedTokenHoldStatus): string {
@@ -295,13 +299,22 @@ function rankedTokenGateBlockedMessage(status: RankedTokenHoldStatus): string {
   return `Ranked requires ${rankedTokenHoldRequirement(status)}`;
 }
 
+function getSeasonBoundaryDate(season: RankedSeasonSnapshot): Date | null {
+  if (!season.endsAt) return null;
+  const date = new Date(season.endsAt);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function formatSeasonBoundaryDate(season: RankedSeasonSnapshot): string {
   const fallback = season.mode === 'preseason' ? 'Opens TBA' : 'Ends TBA';
-  if (!season.endsAt) return fallback;
-  const date = new Date(season.endsAt);
-  if (Number.isNaN(date.getTime())) return fallback;
+  const date = getSeasonBoundaryDate(season);
+  if (!date) return fallback;
   const formattedDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   return season.mode === 'preseason' ? `Opens ${formattedDate}` : `Ends ${formattedDate}`;
+}
+
+function shouldShowSeasonRewardsPlate(season: RankedSeasonSnapshot): boolean {
+  return season.mode === 'season' && getSeasonBoundaryDate(season) !== null;
 }
 
 function getGameplayModeForPlayMode(
@@ -1358,7 +1371,7 @@ function formatSkinPrice(skin: HeroSkinCatalogItem): string {
   const price = skin.shopPrice;
   const tokenSymbol = formatTokenSymbol(price?.tokenSymbol);
   if (!price?.amountBaseUnits) return tokenSymbol ? `TBA ${tokenSymbol}` : 'TBA';
-  const amount = formatCompactTokenAmount(price.amountBaseUnits);
+  const amount = formatCompactTokenAmount(price.amountBaseUnits, price.amountBaseUnits);
   return tokenSymbol ? `${amount} ${tokenSymbol}` : amount;
 }
 
@@ -1368,37 +1381,8 @@ function formatTokenSymbol(symbol?: string | null): string {
   return cleaned.startsWith('$') ? cleaned : `$${cleaned}`;
 }
 
-function formatCompactTokenAmount(amountBaseUnits: string): string {
-  const amount = Number(amountBaseUnits);
-  if (!Number.isFinite(amount)) return amountBaseUnits;
-  const absolute = Math.abs(amount);
-  if (absolute >= 1_000_000_000) return `${formatCompactNumber(amount / 1_000_000_000)}b`;
-  if (absolute >= 1_000_000) return `${formatCompactNumber(amount / 1_000_000)}m`;
-  if (absolute >= 1_000) return `${formatCompactNumber(amount / 1_000)}k`;
-  return amount.toLocaleString('en-US');
-}
-
-function formatCompactNumber(value: number): string {
-  return Number.isInteger(value)
-    ? value.toLocaleString('en-US')
-    : value.toLocaleString('en-US', { maximumFractionDigits: 1 });
-}
-
 function skinRarityClass(rarity: HeroSkinCatalogItem['rarity']): string {
   return `is-${rarity}`;
-}
-
-function SkinRarityChrome({ className = '' }: { className?: string }) {
-  return (
-    <div className={`loadout-skin-card-chrome${className ? ` ${className}` : ''}`} aria-hidden="true">
-      <span className="loadout-skin-card-sash" />
-      <span className="loadout-skin-card-emblem" />
-      <span className="loadout-skin-card-bracket is-top-left" />
-      <span className="loadout-skin-card-bracket is-top-right" />
-      <span className="loadout-skin-card-bracket is-bottom-left" />
-      <span className="loadout-skin-card-bracket is-bottom-right" />
-    </div>
-  );
 }
 
 function skinOwnershipLabel(skin: HeroSkinCatalogItem): string {
@@ -1856,9 +1840,13 @@ function PlayTab({
       {serverLatency && shouldShowServerLatencyAdvisory(serverLatency) && (
         <ServerLatencyAdvisory snapshot={serverLatency} />
       )}
-      {isAuthenticated && <GlobalChat displayName={playerName} />}
-      <EarningRulesPlate tokenSymbol={rewardTokenSymbol} economy={rewardEconomy} />
-      <RankedSeasonPlate season={rankedSeason} />
+      <div className="play-tab-bottom-right-stack">
+        <RankedSeasonPlate season={rankedSeason} />
+        {shouldShowSeasonRewardsPlate(rankedSeason) && (
+          <EarningRulesPlate tokenSymbol={rewardTokenSymbol} economy={rewardEconomy} />
+        )}
+        {isAuthenticated && <GlobalChat displayName={playerName} />}
+      </div>
     </div>
   );
 }

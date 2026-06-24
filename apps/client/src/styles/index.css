@@ -1471,6 +1471,7 @@ body,
   --global-chat-expanded-height: clamp(12.25rem, 24dvh, 15.25rem);
   --global-chat-height: var(--global-chat-collapsed-height);
   --global-chat-stack-gap: clamp(0.45rem, 1dvh, 0.75rem);
+  --play-bottom-right-stack-gap: var(--global-chat-stack-gap);
   --play-stage-x-offset: 0px;
   --play-stage-y-offset: clamp(1.5rem, 4vh, 3rem);
   position: static;
@@ -1490,6 +1491,7 @@ body,
 .play-tab-shell.is-guest-mode {
   --global-chat-height: 0rem;
   --global-chat-stack-gap: 0rem;
+  --play-bottom-right-stack-gap: clamp(0.45rem, 1dvh, 0.75rem);
   --play-stage-y-offset: clamp(0.7rem, 2.4vh, 1.8rem);
 }
 
@@ -2541,6 +2543,135 @@ body,
   transform-origin: center bottom;
 }
 
+.admin-skin-item-card {
+  --loadout-skin-tier-rgb: 148 163 184;
+  --loadout-skin-tier-secondary-rgb: 71 85 105;
+  --loadout-skin-tier-border: 0.14;
+  --loadout-skin-tier-fill: 0.04;
+  --loadout-skin-tier-glow: 0.08;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-color: rgb(var(--loadout-skin-tier-rgb) / var(--loadout-skin-tier-border));
+  background:
+    linear-gradient(90deg, rgb(var(--loadout-skin-tier-rgb) / var(--loadout-skin-tier-fill)), rgb(var(--loadout-skin-tier-secondary-rgb) / 0.03) 38%, transparent 72%),
+    rgb(var(--color-strike-canvas) / 0.42);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.035),
+    inset 0 -1px 0 rgb(0 0 0 / 0.2);
+}
+
+.admin-skin-item-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 5.4rem 50%, rgb(var(--loadout-skin-tier-rgb) / var(--loadout-skin-tier-glow)), transparent 7.4rem),
+    linear-gradient(90deg, rgb(var(--loadout-skin-tier-rgb) / 0.035), transparent 34%);
+}
+
+.admin-skin-item-card.is-common {
+  --loadout-skin-tier-rgb: 148 163 184;
+  --loadout-skin-tier-secondary-rgb: 71 85 105;
+  --loadout-skin-tier-border: 0.13;
+  --loadout-skin-tier-fill: 0.035;
+  --loadout-skin-tier-glow: 0.06;
+}
+
+.admin-skin-item-card.is-epic {
+  --loadout-skin-tier-rgb: 167 139 250;
+  --loadout-skin-tier-secondary-rgb: 236 72 153;
+  --loadout-skin-tier-border: 0.24;
+  --loadout-skin-tier-fill: 0.065;
+  --loadout-skin-tier-glow: 0.14;
+}
+
+.admin-skin-item-card.is-unique {
+  --loadout-skin-tier-rgb: 34 211 238;
+  --loadout-skin-tier-secondary-rgb: 45 212 191;
+  --loadout-skin-tier-border: 0.26;
+  --loadout-skin-tier-fill: 0.068;
+  --loadout-skin-tier-glow: 0.15;
+}
+
+.admin-skin-item-card.is-legendary {
+  --loadout-skin-tier-rgb: 250 204 21;
+  --loadout-skin-tier-secondary-rgb: 249 115 22;
+  --loadout-skin-tier-border: 0.3;
+  --loadout-skin-tier-fill: 0.088;
+  --loadout-skin-tier-glow: 0.2;
+}
+
+.admin-skin-preview-frame {
+  position: relative;
+  align-self: start;
+  width: min(100%, 9rem);
+}
+
+.admin-skin-preview-frame .loadout-skin-preview-button {
+  height: 7.7rem;
+  border-color: rgb(var(--loadout-skin-tier-rgb) / 0.2);
+  background:
+    radial-gradient(circle at 50% 66%, rgb(var(--loadout-skin-tier-rgb) / 0.16), transparent 48%),
+    rgb(0 0 0 / 0.1);
+}
+
+.admin-skin-preview-frame .loadout-skin-card-chrome {
+  z-index: 3;
+}
+
+.admin-skin-preview-frame .loadout-skin-card-sash {
+  inset: 0.62rem 0.8rem auto;
+  height: 0.12rem;
+  background: linear-gradient(90deg, transparent, rgb(var(--loadout-skin-tier-rgb) / 0.58), transparent);
+  opacity: 0.64;
+  box-shadow: 0 0 0.7rem rgb(var(--loadout-skin-tier-rgb) / 0.18);
+}
+
+.admin-skin-preview-frame .loadout-skin-card-emblem {
+  top: 0.96rem;
+  right: 0.84rem;
+  width: 0.62rem;
+  aspect-ratio: 1;
+  background: rgb(var(--loadout-skin-tier-rgb) / 0.72);
+  box-shadow:
+    0 0 0 0.18rem rgb(var(--loadout-skin-tier-rgb) / 0.08),
+    0 0 0.7rem rgb(var(--loadout-skin-tier-rgb) / 0.24);
+}
+
+.admin-skin-preview-frame .loadout-skin-card-bracket {
+  width: 0.95rem;
+  height: 0.95rem;
+  opacity: 0.5;
+}
+
+.admin-skin-card-preview {
+  transform: translateY(0.34rem) scale(1.12);
+}
+
+.admin-skin-preview-placeholder {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.035), transparent 56%),
+    radial-gradient(circle at 50% 70%, rgb(var(--loadout-skin-tier-rgb) / 0.12), transparent 46%);
+}
+
+.admin-skin-rarity-chip {
+  padding: 0.27rem 0.4rem;
+  font-size: 0.58rem;
+}
+
+@media (max-width: 1023px) {
+  .admin-skin-preview-frame {
+    width: min(12rem, 100%);
+  }
+}
+
 .loadout-skin-copy {
   position: relative;
   z-index: 3;
@@ -2944,13 +3075,22 @@ body,
   pointer-events: auto;
 }
 
-.play-season-plate {
+.play-tab-bottom-right-stack {
   position: absolute;
   right: var(--play-corner-inset);
-  bottom: calc(max(var(--play-corner-inset), env(safe-area-inset-bottom)) + var(--global-chat-height) + var(--global-chat-stack-gap));
-  z-index: 3;
+  bottom: max(var(--play-corner-inset), env(safe-area-inset-bottom));
+  z-index: 6;
   display: grid;
-  width: min(31rem, calc(100vw - (var(--play-corner-inset) * 2)));
+  width: min(21.5rem, calc(100vw - (var(--play-corner-inset) * 2)));
+  align-content: end;
+  justify-items: end;
+  gap: var(--play-bottom-right-stack-gap);
+  pointer-events: none;
+}
+
+.play-season-plate {
+  display: grid;
+  width: 100%;
   justify-items: end;
   padding: 0.25rem 0.2rem 0.1rem;
   pointer-events: none;
@@ -2958,12 +3098,8 @@ body,
 }
 
 .play-earnings-plate {
-  position: absolute;
-  right: var(--play-corner-inset);
-  top: calc(var(--global-notification-offset) + var(--menu-nav-h) + clamp(0.45rem, 1.1vh, 0.9rem));
-  z-index: 5;
   display: flex;
-  width: min(17.75rem, calc(100vw - (var(--play-corner-inset) * 2)));
+  width: min(17.75rem, 100%);
   flex-direction: column;
   overflow: hidden;
   border: 1px solid rgb(255 255 255 / 0.06);
@@ -3012,12 +3148,9 @@ body,
 }
 
 .global-chat-panel {
-  position: absolute;
-  right: var(--play-corner-inset);
-  bottom: max(var(--play-corner-inset), env(safe-area-inset-bottom));
-  z-index: 6;
   display: flex;
-  width: min(21.5rem, calc(100vw - (var(--play-corner-inset) * 2)));
+  width: 100%;
+  margin-top: clamp(0.18rem, 0.5dvh, 0.36rem);
   height: var(--global-chat-height);
   flex-direction: column;
   overflow: hidden;
@@ -3029,6 +3162,7 @@ body,
     inset 0 1px 0 rgb(255 255 255 / 0.055);
   backdrop-filter: blur(3px);
   -webkit-backdrop-filter: blur(3px);
+  pointer-events: auto;
   transition:
     height 180ms ease,
     border-color 160ms ease,
@@ -5042,22 +5176,14 @@ body,
     padding-top: 0;
   }
 
-  .play-season-plate {
-    bottom: calc(max(0.45rem, env(safe-area-inset-bottom)) + var(--global-chat-height) + var(--global-chat-stack-gap));
-  }
-
-  .play-earnings-plate {
-    top: calc(var(--global-notification-offset) + var(--menu-nav-h) + 0.4rem);
-    width: min(16.75rem, 34vw);
+  .play-tab-bottom-right-stack {
+    bottom: max(0.45rem, env(safe-area-inset-bottom));
+    width: min(16.5rem, 35vw);
   }
 
   .play-tab-shell.is-guest-mode {
+    --play-bottom-right-stack-gap: 0.38rem;
     --play-stage-y-offset: 0.1rem;
-  }
-
-  .global-chat-panel {
-    bottom: max(0.45rem, env(safe-area-inset-bottom));
-    width: min(16.5rem, 35vw);
   }
 
   .play-ping-advisory-icon {
@@ -6346,25 +6472,22 @@ body,
     gap: 0;
   }
 
+  .play-tab-bottom-right-stack {
+    right: max(0.8rem, env(safe-area-inset-right));
+    bottom: max(0.8rem, env(safe-area-inset-bottom));
+    width: min(19rem, calc(100vw - 1.6rem));
+  }
+
   .play-season-plate {
-    bottom: calc(max(0.8rem, env(safe-area-inset-bottom)) + var(--global-chat-height) + var(--global-chat-stack-gap));
     padding: 0.2rem 0.15rem;
   }
 
   .play-earnings-plate {
-    right: max(0.8rem, env(safe-area-inset-right));
-    top: calc(var(--global-notification-offset) + var(--menu-nav-h) + 0.5rem);
-    width: min(17.25rem, calc(100vw - 1.6rem));
+    width: min(17.25rem, 100%);
   }
 
   .play-season-plate-title {
     font-size: clamp(2rem, 7.5vw, 3rem);
-  }
-
-  .global-chat-panel {
-    right: max(0.8rem, env(safe-area-inset-right));
-    bottom: max(0.8rem, env(safe-area-inset-bottom));
-    width: min(19rem, calc(100vw - 1.6rem));
   }
 
   .heroes-page-layout,
@@ -6451,7 +6574,7 @@ body,
     --play-stage-y-offset: -0.1rem;
   }
 
-  .global-chat-panel {
+  .play-tab-bottom-right-stack {
     width: min(16.75rem, calc(100vw - 1.6rem));
     bottom: max(0.8rem, env(safe-area-inset-bottom));
   }

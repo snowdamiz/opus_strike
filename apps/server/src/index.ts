@@ -29,6 +29,7 @@ import {
 } from './config/colyseus';
 import { closeSharedRedisClient, getSharedRedisClient, pingRedis } from './config/redis';
 import { getAllowedClientOrigins, isCorsOriginAllowed } from './config/clientOrigins';
+import { ALLOWED_CORS_HEADER_VALUE } from './config/corsHeaders';
 import { envFlag } from './config/security';
 import {
   installFlyReplayUpgradeRouter,
@@ -142,7 +143,7 @@ app.use((_req, res, next) => {
   }
 
   res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-CSRF-Token, X-Internal-Status-Token');
+  res.header('Access-Control-Allow-Headers', ALLOWED_CORS_HEADER_VALUE);
   res.header('Access-Control-Allow-Credentials', 'true');
 
   // Handle preflight requests
