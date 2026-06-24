@@ -58,8 +58,9 @@ export function getEarningRules(tokenSymbol: string | null, economy: RewardEcono
   const wagers = economy?.wagers;
   const golden = economy?.goldenBiome;
   const rankedRewardsEnabled = rewards?.enabled !== false;
-  const weeklyRewardsEnabled = rankedRewardsEnabled && rewards?.weeklyEnabled !== false;
+  const weeklyRewardsEnabled = rewards?.weeklyEnabled !== false;
   const goldenRewardsEnabled = golden?.enabled !== false;
+  const wagersEnabled = wagers?.enabled !== false;
   const rules: EarningRule[] = [];
 
   if (rankedRewardsEnabled) {
@@ -89,8 +90,10 @@ export function getEarningRules(tokenSymbol: string | null, economy: RewardEcono
     rules.push({ label: 'Golden map', value: `${goldenChance} roll, ${goldenReward} SOL each winner` });
   }
 
-  const wagerFee = formatBpsShort(wagers?.platformFeeBps, 500);
-  rules.push({ label: 'Wagers', value: `winners split pot, treasury keeps ${wagerFee}` });
+  if (wagersEnabled) {
+    const wagerFee = formatBpsShort(wagers?.platformFeeBps, 500);
+    rules.push({ label: 'Wagers', value: `winners split pot, treasury keeps ${wagerFee}` });
+  }
 
   return rules;
 }

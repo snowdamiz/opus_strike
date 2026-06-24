@@ -607,7 +607,7 @@ export class PlayerRewardService {
 
   async settlePreviousWeeklyLeaderboardRewards(now = new Date()): Promise<PlayerRewardCreationResult> {
     const config = await this.getConfig();
-    if (!config.enabled || !config.weeklyEnabled) {
+    if (!config.weeklyEnabled) {
       return { createdCount: 0, totalLamports: '0', requestedLamports: '0', skippedReason: 'disabled' };
     }
 
@@ -1051,7 +1051,7 @@ export class PlayerRewardService {
   private async getTreasuryAvailableBudgetLamports(config?: PlayerRewardRuntimeConfig): Promise<bigint> {
     const rewardConfig = config ?? await this.getConfig();
     const wagerConfig = wagerService.getConfig();
-    if (!rewardConfig.enabled || !wagerConfig.enabled || !wagerConfig.rpcUrl || !wagerConfig.treasuryWallet) {
+    if (!wagerConfig.enabled || !wagerConfig.rpcUrl || !wagerConfig.treasuryWallet) {
       return 0n;
     }
 

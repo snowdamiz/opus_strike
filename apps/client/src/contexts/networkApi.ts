@@ -107,6 +107,7 @@ export interface RewardEconomyResponse {
       updatedAt: string | null;
     };
     wagers: {
+      enabled: boolean;
       platformFeeBps: number;
       updatedByUserId: string | null;
       updatedAt: string | null;

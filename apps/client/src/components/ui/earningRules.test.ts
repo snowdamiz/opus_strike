@@ -30,6 +30,7 @@ function createEconomy(overrides: RewardEconomyOverrides = {}): RewardEconomy {
       updatedAt: null,
     },
     wagers: {
+      enabled: true,
       platformFeeBps: 500,
       updatedByUserId: null,
       updatedAt: null,
@@ -76,8 +77,8 @@ assert.deepEqual(
 
 assert.deepEqual(
   labelsFor(createEconomy({ playerRewards: { enabled: false } })),
-  ['Golden map', 'Wagers'],
-  'turning off ranked payouts should hide ranked match, bonuses, and weekly leaderboard rewards',
+  ['Weekly top 10', 'Golden map', 'Wagers'],
+  'turning off ranked payouts should hide ranked match and bonuses without hiding weekly rewards',
 );
 
 assert.deepEqual(
@@ -90,6 +91,22 @@ assert.deepEqual(
   labelsFor(createEconomy({ goldenBiome: { enabled: false } })),
   ['Ranked match', 'Win + assist', 'Flag bonus', 'Weekly top 10', 'Wagers'],
   'turning off golden map rewards should hide the golden map row',
+);
+
+assert.deepEqual(
+  labelsFor(createEconomy({ wagers: { enabled: false } })),
+  ['Ranked match', 'Win + assist', 'Flag bonus', 'Weekly top 10', 'Golden map'],
+  'turning off wagers should hide the wager row',
+);
+
+assert.deepEqual(
+  labelsFor(createEconomy({
+    playerRewards: { enabled: false, weeklyEnabled: false },
+    goldenBiome: { enabled: false },
+    wagers: { enabled: false },
+  })),
+  [],
+  'turning off every reward economy item should hide every payout rule',
 );
 
 assert.deepEqual(

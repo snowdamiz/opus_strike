@@ -307,6 +307,7 @@ export type GoldenBiomeSettingsUpdate = Partial<Record<
 >>;
 
 export interface WagerEconomySettingsSnapshot {
+  enabled: boolean;
   platformFeeBps: number;
   updatedByUserId: string | null;
   updatedAt: string | null;
@@ -536,7 +537,9 @@ export class WagerService extends EventEmitter {
 
   async getWagerEconomySettings(): Promise<WagerEconomySettingsSnapshot> {
     const settings = await this.getWagerEconomySettingsRow();
+    const config = this.getConfig();
     return {
+      enabled: config.enabled,
       platformFeeBps: settings.platformFeeBps,
       updatedByUserId: settings.updatedByUserId,
       updatedAt: settings.updatedAt.toISOString(),
@@ -549,6 +552,7 @@ export class WagerService extends EventEmitter {
   ): Promise<WagerEconomySettingsSnapshot> {
     const current = await this.getWagerEconomySettingsRow();
     const settings = input ?? {};
+    const config = this.getConfig();
     const updated = await prisma.wagerEconomySettings.update({
       where: { id: WAGER_ECONOMY_SETTINGS_ID },
       data: {
@@ -560,6 +564,7 @@ export class WagerService extends EventEmitter {
     });
 
     return {
+      enabled: config.enabled,
       platformFeeBps: updated.platformFeeBps,
       updatedByUserId: updated.updatedByUserId,
       updatedAt: updated.updatedAt.toISOString(),

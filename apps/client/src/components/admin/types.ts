@@ -199,6 +199,7 @@ export interface PlayerRewardSettingsOverview {
 }
 
 export interface WagerEconomySettingsOverview {
+  enabled: boolean;
   platformFeeBps: number;
   updatedByUserId: string | null;
   updatedAt: string | null;

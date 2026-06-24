@@ -2680,6 +2680,8 @@ function RankedSeasonPlate({ season }: { season: RankedSeasonSnapshot }) {
 
 function EarningRulesPlate({ tokenSymbol, economy }: { tokenSymbol: string | null; economy: RewardEconomy | null }) {
   const rules = getEarningRules(tokenSymbol, economy);
+  if (rules.length === 0) return null;
+
   return (
     <aside className="play-earnings-plate" aria-label="Ways to earn and payout rules">
       <ul className="play-earnings-rule-list">
