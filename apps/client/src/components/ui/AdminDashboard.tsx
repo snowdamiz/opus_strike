@@ -627,6 +627,43 @@ function formatBps(bps: number): string {
   return `${(bps / 100).toFixed(2).replace(/\.00$/, '')}%`;
 }
 
+function formatDraftBps(value: string): string {
+  const bps = Number(value);
+  return Number.isFinite(bps) ? formatBps(bps) : 'Invalid';
+}
+
+function parseDraftNumber(value: string): number | null {
+  const number = Number(value.trim());
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatDraftWhole(value: string): string {
+  const number = parseDraftNumber(value);
+  return number === null ? 'Invalid' : formatNumber(Math.round(number));
+}
+
+function formatDraftTokenAmount(value: string, suffix: string): string {
+  const number = parseDraftNumber(value);
+  return number === null ? 'Invalid' : `${formatNumber(Math.round(number))} ${suffix}`;
+}
+
+function formatDraftTokenProduct(left: string, right: string, suffix: string): string {
+  const leftNumber = parseDraftNumber(left);
+  const rightNumber = parseDraftNumber(right);
+  if (leftNumber === null || rightNumber === null) return 'Invalid';
+  return `${formatNumber(Math.round(leftNumber * rightNumber))} ${suffix}`;
+}
+
+function formatDraftDuration(value: string): string {
+  const milliseconds = parseDraftNumber(value);
+  if (milliseconds === null) return 'Invalid duration';
+  const seconds = Math.round(milliseconds / 1000);
+  if (seconds < 60) return `${formatNumber(seconds)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return remainingSeconds === 0 ? `${formatNumber(minutes)}m` : `${formatNumber(minutes)}m ${remainingSeconds}s`;
+}
+
 function solInputToLamports(value: string, fieldName: string): string {
   const trimmed = value.trim();
   const match = /^([0-9]+)(?:\.([0-9]{0,9}))?$/.exec(trimmed);
@@ -703,7 +740,7 @@ function rewardEconomyPayloadFromDraft(draft: RewardEconomyDraft) {
 }
 
 type Tone = 'neutral' | 'success' | 'warning' | 'danger' | 'info' | 'amber';
-type AdminTabId = 'overview' | 'operations' | 'players' | 'servers' | 'rooms' | 'rewards' | 'reports';
+type AdminPageId = 'command' | 'liveOps' | 'players' | 'economy' | 'infrastructure';
 
 interface MetricTileProps {
   label: string;
@@ -713,9 +750,10 @@ interface MetricTileProps {
   meter?: number;
 }
 
-interface AdminTab {
-  id: AdminTabId;
+interface AdminPage {
+  id: AdminPageId;
   label: string;
+  eyebrow: string;
   meta: string;
   tone: Tone;
 }
@@ -738,6 +776,29 @@ function formatCount(value: number, singular: string, plural = `${singular}s`): 
   return `${formatNumber(value)} ${value === 1 ? singular : plural}`;
 }
 
+function formatDateAge(value: string): string {
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? 'unknown' : formatAge(timestamp);
+}
+
+function getActiveReportCount(overview: AdminOverview): number {
+  return (overview.playerReports?.counts.open ?? 0) + (overview.playerReports?.counts.reviewing ?? 0);
+}
+
+function getPendingGoldenRewardCount(overview: AdminOverview): number {
+  return overview.goldenBiomeRewards?.rewards.filter((reward) => reward.status !== 'complete').length ?? 0;
+}
+
+function getPurchasableSkinCount(overview: AdminOverview): number {
+  return overview.skinShop.items.filter((item) => (
+    item.settings.saleEnabled && item.settings.remainingSupply !== 0
+  )).length;
+}
+
+function getTotalRoomCount(overview: AdminOverview): number {
+  return overview.rooms.game.length + overview.rooms.lobbies.length;
+}
+
 function toneForSystemStatus(status: string): Tone {
   if (status === 'ok' || status === 'complete' || status === 'cleared') return 'success';
   if (status === 'degraded' || status === 'pending' || status === 'reviewing') return 'warning';
@@ -752,30 +813,30 @@ function toneForPressure(value: number): Tone {
 }
 
 const pillToneClasses: Record<Tone, string> = {
-  neutral: 'border-white/10 bg-white/[0.035] text-white/60',
-  success: 'border-ui-success/30 bg-ui-success/10 text-emerald-100',
-  warning: 'border-ui-warning/35 bg-ui-warning/10 text-yellow-100',
-  danger: 'border-ui-danger/35 bg-ui-danger/10 text-red-100',
-  info: 'border-accent-secondary/30 bg-accent-secondary/10 text-cyan-100',
-  amber: 'border-amber-300/35 bg-amber-300/10 text-amber-100',
+  neutral: 'admin-pill--neutral',
+  success: 'admin-pill--success',
+  warning: 'admin-pill--warning',
+  danger: 'admin-pill--danger',
+  info: 'admin-pill--info',
+  amber: 'admin-pill--amber',
 };
 
 const dotToneClasses: Record<Tone, string> = {
-  neutral: 'bg-white/45',
-  success: 'bg-ui-success',
-  warning: 'bg-ui-warning',
-  danger: 'bg-ui-danger',
-  info: 'bg-accent-secondary',
-  amber: 'bg-amber-300',
+  neutral: 'admin-dot--neutral',
+  success: 'admin-dot--success',
+  warning: 'admin-dot--warning',
+  danger: 'admin-dot--danger',
+  info: 'admin-dot--info',
+  amber: 'admin-dot--amber',
 };
 
 const meterToneClasses: Record<Tone, string> = {
-  neutral: 'bg-white/55',
-  success: 'bg-ui-success',
-  warning: 'bg-ui-warning',
-  danger: 'bg-ui-danger',
-  info: 'bg-accent-secondary',
-  amber: 'bg-amber-300',
+  neutral: 'admin-meter--neutral',
+  success: 'admin-meter--success',
+  warning: 'admin-meter--warning',
+  danger: 'admin-meter--danger',
+  info: 'admin-meter--info',
+  amber: 'admin-meter--amber',
 };
 
 function Pill({
@@ -791,7 +852,7 @@ function Pill({
 }) {
   return (
     <span className={cx(
-      'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 font-body text-[11px] font-semibold uppercase leading-5',
+      'admin-pill inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 font-body text-[11px] font-semibold uppercase leading-5',
       pillToneClasses[tone],
       className,
     )}>
@@ -808,7 +869,7 @@ function StatusPill({ status }: { status: string }) {
 function MiniMeter({ value, tone = 'info' }: { value: number; tone?: Tone }) {
   const width = `${clampPercent(value)}%`;
   return (
-    <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.08]">
+    <div className="admin-meter-track mt-2 h-1.5 overflow-hidden rounded-full">
       <div className={cx('h-full rounded-full', meterToneClasses[tone])} style={{ width }} />
     </div>
   );
@@ -816,25 +877,25 @@ function MiniMeter({ value, tone = 'info' }: { value: number; tone?: Tone }) {
 
 function MetricTile({ label, value, sublabel, tone = 'neutral', meter }: MetricTileProps) {
   return (
-    <div className="min-h-[78px] rounded-md border border-white/10 bg-strike-panel-raised/90 p-3 shadow-[inset_0_1px_0_rgb(var(--color-strike-border)_/_0.04)]">
+    <div className={cx('admin-metric min-h-[92px] rounded-md p-4', `admin-metric--${tone}`)}>
       <div className="font-body text-[10px] font-semibold uppercase leading-none text-white/45">{label}</div>
-      <div className="mt-2 break-words font-body text-[1.45rem] font-semibold leading-none text-white">{value}</div>
-      {sublabel && <div className="mt-1.5 truncate font-body text-[11px] leading-4 text-white/42">{sublabel}</div>}
+      <div className="mt-2 break-words font-body text-[1.55rem] font-semibold leading-none text-white">{value}</div>
+      {sublabel && <div className="mt-2 truncate font-body text-[11px] leading-4 text-white/42">{sublabel}</div>}
       {typeof meter === 'number' && <MiniMeter value={meter} tone={tone} />}
     </div>
   );
 }
 
 function EmptyTable({ label }: { label: string }) {
-  return <div className="px-3 py-5 font-body text-xs text-white/45">{label}</div>;
+  return <div className="admin-empty px-4 py-6 font-body text-xs text-white/45">{label}</div>;
 }
 
 function Section({ title, meta, children }: { title: string; meta?: string; children: ReactNode }) {
   return (
-    <section className="overflow-hidden rounded-md border border-white/10 bg-strike-panel/95 shadow-[0_12px_30px_rgb(var(--color-strike-canvas)_/_0.35)]">
-      <div className="flex min-h-[42px] items-center justify-between gap-3 border-b border-white/10 bg-white/[0.03] px-3">
+    <section className="admin-section overflow-hidden rounded-md">
+      <div className="admin-section__header flex min-h-[48px] items-center justify-between gap-3 px-4">
         <h2 className="font-body text-sm font-semibold uppercase text-white/90">{title}</h2>
-        {meta && <Pill>{meta}</Pill>}
+        {meta && <span className="font-mono text-[11px] font-semibold uppercase text-white/38">{meta}</span>}
       </div>
       {children}
     </section>
@@ -843,7 +904,7 @@ function Section({ title, meta, children }: { title: string; meta?: string; chil
 
 function HeaderCell({ children, align = 'left' }: { children: ReactNode; align?: 'left' | 'right' }) {
   return (
-    <th className={`border-b border-white/10 bg-white/[0.018] px-3 py-2 font-body text-[10px] font-bold uppercase text-white/45 ${align === 'right' ? 'text-right' : 'text-left'}`}>
+    <th className={`admin-table-head px-3 py-2.5 font-body text-[10px] font-bold uppercase ${align === 'right' ? 'text-right' : 'text-left'}`}>
       {children}
     </th>
   );
@@ -851,7 +912,7 @@ function HeaderCell({ children, align = 'left' }: { children: ReactNode; align?:
 
 function Cell({ children, align = 'left', mono = false }: { children: ReactNode; align?: 'left' | 'right'; mono?: boolean }) {
   return (
-    <td className={`border-b border-white/[0.07] px-3 py-2 align-middle text-xs text-white/78 ${align === 'right' ? 'text-right tabular-nums' : 'text-left'} ${mono ? 'font-mono text-[11px]' : 'font-body'}`}>
+    <td className={`admin-table-cell px-3 py-3 align-middle text-xs ${align === 'right' ? 'text-right tabular-nums' : 'text-left'} ${mono ? 'font-mono text-[11px]' : 'font-body'}`}>
       {children}
     </td>
   );
@@ -1006,34 +1067,46 @@ function LobbiesTable({ lobbies }: { lobbies: LobbyRoomOverview[] }) {
 
 function EconomyField({
   label,
+  description,
   value,
   disabled,
   suffix,
+  detail,
+  inputMode = 'decimal',
   onChange,
 }: {
   label: string;
+  description: string;
   value: string;
   disabled?: boolean;
   suffix?: string;
+  detail?: string;
+  inputMode?: 'decimal' | 'numeric' | 'text';
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="min-w-0">
-      <span className="font-body text-[10px] font-semibold uppercase leading-none text-white/45">{label}</span>
-      <span className="mt-1.5 flex h-8 min-w-0 overflow-hidden rounded-md border border-white/10 bg-black/30 focus-within:border-accent-primary/55">
+    <label className="admin-economy-field grid min-w-0 gap-3 px-4 py-4">
+      <span className="min-w-0">
+        <span className="block font-body text-[11px] font-semibold uppercase leading-none text-white/74">{label}</span>
+        <span className="mt-1.5 block font-body text-[11px] leading-snug text-white/38">{description}</span>
+      </span>
+      <span className="admin-input-shell flex h-10 min-w-0 overflow-hidden rounded-md">
         <input
           type="text"
-          inputMode="decimal"
+          inputMode={inputMode}
           disabled={disabled}
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          className="min-w-0 flex-1 bg-transparent px-2.5 font-mono text-xs text-white outline-none disabled:cursor-not-allowed disabled:opacity-45"
+          className="min-w-0 flex-1 bg-transparent px-2.5 font-mono text-sm text-white outline-none disabled:cursor-not-allowed disabled:opacity-45"
         />
         {suffix && (
-          <span className="flex shrink-0 items-center border-l border-white/10 bg-white/[0.035] px-2 font-body text-[10px] font-semibold uppercase text-white/40">
+          <span className="admin-input-suffix flex shrink-0 items-center px-2 font-body text-[10px] font-semibold uppercase text-white/38">
             {suffix}
           </span>
         )}
+      </span>
+      <span className="min-h-4 font-mono text-[11px] uppercase leading-snug text-white/42">
+        {detail ?? ''}
       </span>
     </label>
   );
@@ -1051,16 +1124,93 @@ function EconomyToggle({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex h-8 items-center justify-between gap-3 rounded-md border border-white/10 bg-black/25 px-2.5">
-      <span className="font-body text-[10px] font-semibold uppercase text-white/45">{label}</span>
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.checked)}
-        className="h-4 w-4 accent-accent-primary disabled:cursor-not-allowed disabled:opacity-45"
-      />
-    </label>
+    <button
+      type="button"
+      aria-pressed={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={cx(
+        'admin-toggle flex h-10 w-full items-center justify-between gap-3 rounded-md px-3 text-left transition disabled:cursor-not-allowed disabled:opacity-45',
+        checked ? 'is-on text-white' : 'text-white/58 hover:text-white',
+      )}
+    >
+      <span className="font-body text-[11px] font-semibold uppercase">{label}</span>
+      <span className="flex items-center gap-2">
+        <span className={cx('h-2 w-2 rounded-full', checked ? 'bg-accent-primary' : 'bg-white/28')} />
+        <span className="font-mono text-[10px] font-semibold uppercase text-white/48">{checked ? 'On' : 'Off'}</span>
+      </span>
+    </button>
+  );
+}
+
+function EconomyModeSwitch({
+  label,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: GoldenBiomeDistributionMode;
+  disabled?: boolean;
+  onChange: (mode: GoldenBiomeDistributionMode) => void;
+}) {
+  return (
+    <div>
+      <div className="font-body text-[11px] font-semibold uppercase text-white/58">{label}</div>
+      <div className="admin-segmented mt-2 grid grid-cols-2 rounded-md">
+        {(['manual', 'auto'] as GoldenBiomeDistributionMode[]).map((mode) => {
+          const active = value === mode;
+          return (
+            <button
+              key={mode}
+              type="button"
+              aria-pressed={active}
+              disabled={disabled}
+              onClick={() => onChange(mode)}
+              className={cx(
+                'h-10 px-3 font-body text-[11px] font-semibold uppercase transition disabled:cursor-not-allowed disabled:opacity-45',
+                active ? 'is-active text-amber-100' : 'text-white/50 hover:text-white',
+              )}
+            >
+              {mode}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function EconomyGroup({
+  title,
+  summary,
+  action,
+  children,
+}: {
+  title: string;
+  summary: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="admin-economy-group grid last:border-b-0 xl:grid-cols-[20rem_minmax(0,1fr)]">
+      <div className="admin-economy-group__summary px-4 py-4">
+        <h3 className="font-body text-xs font-semibold uppercase text-white/76">{title}</h3>
+        <p className="mt-2 font-body text-[12px] leading-relaxed text-white/48">{summary}</p>
+        {action && <div className="mt-3">{action}</div>}
+      </div>
+      <div className="admin-economy-group__fields">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function EconomyPair({ children }: { children: ReactNode }) {
+  return (
+    <div className="admin-economy-pair grid lg:grid-cols-2">
+      {children}
+    </div>
   );
 }
 
@@ -1082,65 +1232,268 @@ function RewardEconomyPanel({
   onSave: () => void;
 }) {
   const disabled = busy;
-  const tokenSuffix = tokenSymbol?.trim().replace(/^\$/, '').toUpperCase() || undefined;
+  const tokenSuffix = tokenSymbol?.trim().replace(/^\$/, '').toUpperCase() || 'UNITS';
+  const rankedDailyCeiling = formatDraftTokenProduct(draft.dailyRankedDripLamports, draft.dailyRankedDripMaxMatches, tokenSuffix);
+  const rankedMatchDrip = formatDraftTokenAmount(draft.dailyRankedDripLamports, tokenSuffix);
+  const playerMatchCap = formatDraftTokenAmount(draft.maxPlayerMatchLamports, tokenSuffix);
+  const matchPayoutCap = formatDraftTokenAmount(draft.maxMatchPayoutLamports, tokenSuffix);
+  const weeklyPool = formatDraftTokenAmount(draft.weeklyPoolLamports, tokenSuffix);
+  const weeklyPlaces = formatDraftWhole(draft.weeklyTopPlayers);
+  const goldenChance = formatDraftBps(draft.goldenBiomeChanceBps);
+  const wagerFee = formatDraftBps(draft.platformFeeBps);
+  const rankedSummary = draft.enabled
+    ? `${rankedMatchDrip} per eligible ranked match, up to ${rankedDailyCeiling} per player each day before bonuses.`
+    : 'Ranked token payouts are disabled.';
+  const weeklySummary = draft.weeklyEnabled
+    ? `${weeklyPool} is reserved for the top ${weeklyPlaces} weekly ranked players.`
+    : 'Weekly leaderboard payouts are disabled.';
+  const limitsSummary = `A player can receive at most ${playerMatchCap} from one match, and the whole match stops paying at ${matchPayoutCap}.`;
+  const goldenSummary = draft.goldenBiomeEnabled
+    ? `${goldenChance} golden map roll. Winners receive ${draft.goldenBiomeWinnerRewardSol || '0'} SOL each, paid in ${draft.goldenBiomeDistributionMode} mode.`
+    : 'Golden map rewards are disabled.';
+  const policySummary = `${rankedSummary} ${weeklySummary} ${limitsSummary} ${goldenSummary} Wager fee is ${wagerFee}.`;
+
   return (
-    <div className="space-y-4 p-3">
-      <div className="grid gap-3 lg:grid-cols-3">
-        <div className="space-y-3">
-          <div className="font-body text-xs font-semibold uppercase text-white/70">Ranked Token Rewards</div>
-          <EconomyToggle label="Enabled" checked={draft.enabled} disabled={disabled} onChange={(enabled) => onDraftChange({ enabled })} />
-          <div className="grid gap-3 sm:grid-cols-2">
-            <EconomyField label="Match drip" value={draft.dailyRankedDripLamports} suffix={tokenSuffix} disabled={disabled} onChange={(dailyRankedDripLamports) => onDraftChange({ dailyRankedDripLamports })} />
-            <EconomyField label="Paid/day" value={draft.dailyRankedDripMaxMatches} suffix="max" disabled={disabled} onChange={(dailyRankedDripMaxMatches) => onDraftChange({ dailyRankedDripMaxMatches })} />
-            <EconomyField label="Win" value={draft.objectiveWinLamports} suffix={tokenSuffix} disabled={disabled} onChange={(objectiveWinLamports) => onDraftChange({ objectiveWinLamports })} />
-            <EconomyField label="Assist" value={draft.objectiveAssistLamports} suffix={tokenSuffix} disabled={disabled} onChange={(objectiveAssistLamports) => onDraftChange({ objectiveAssistLamports })} />
-            <EconomyField label="Flag capture" value={draft.objectiveFlagCaptureLamports} suffix={tokenSuffix} disabled={disabled} onChange={(objectiveFlagCaptureLamports) => onDraftChange({ objectiveFlagCaptureLamports })} />
-            <EconomyField label="Flag return" value={draft.objectiveFlagReturnLamports} suffix={tokenSuffix} disabled={disabled} onChange={(objectiveFlagReturnLamports) => onDraftChange({ objectiveFlagReturnLamports })} />
-          </div>
-        </div>
+    <div>
+      <div className="admin-economy-summary px-4 py-4">
+        <div className="font-body text-[10px] font-semibold uppercase text-accent-primary/70">Current Player Economy</div>
+        <p className="mt-2 max-w-[92rem] font-body text-sm leading-relaxed text-white/72">
+          {policySummary}
+        </p>
+      </div>
 
-        <div className="space-y-3">
-          <div className="font-body text-xs font-semibold uppercase text-white/70">Caps + Weekly</div>
-          <EconomyToggle label="Weekly pool" checked={draft.weeklyEnabled} disabled={disabled} onChange={(weeklyEnabled) => onDraftChange({ weeklyEnabled })} />
-          <div className="grid gap-3 sm:grid-cols-2">
-            <EconomyField label="Weekly pool" value={draft.weeklyPoolLamports} suffix={tokenSuffix} disabled={disabled} onChange={(weeklyPoolLamports) => onDraftChange({ weeklyPoolLamports })} />
-            <EconomyField label="Weekly places" value={draft.weeklyTopPlayers} suffix="top" disabled={disabled} onChange={(weeklyTopPlayers) => onDraftChange({ weeklyTopPlayers })} />
-            <EconomyField label="Player cap" value={draft.maxPlayerMatchLamports} suffix={tokenSuffix} disabled={disabled} onChange={(maxPlayerMatchLamports) => onDraftChange({ maxPlayerMatchLamports })} />
-            <EconomyField label="Match cap" value={draft.maxMatchPayoutLamports} suffix={tokenSuffix} disabled={disabled} onChange={(maxMatchPayoutLamports) => onDraftChange({ maxMatchPayoutLamports })} />
-            <EconomyField label="Min duration" value={draft.minMatchDurationMs} suffix="ms" disabled={disabled} onChange={(minMatchDurationMs) => onDraftChange({ minMatchDurationMs })} />
-            <EconomyField label="Payout batch" value={draft.payoutBatchSize} suffix="rows" disabled={disabled} onChange={(payoutBatchSize) => onDraftChange({ payoutBatchSize })} />
-          </div>
-          <EconomyField label="Treasury reserve" value={draft.treasuryReserveLamports} suffix="lamports" disabled={disabled} onChange={(treasuryReserveLamports) => onDraftChange({ treasuryReserveLamports })} />
+      <div className="admin-economy-snapshot grid lg:grid-cols-4">
+        <div className="px-4 py-4">
+          <div className="font-body text-[10px] font-semibold uppercase text-white/42">Ranked Match</div>
+          <div className="mt-1 font-body text-lg font-semibold leading-none text-white">{draft.enabled ? rankedMatchDrip : 'Off'}</div>
+          <div className="mt-2 font-body text-[11px] leading-snug text-white/42">{draft.enabled ? `First ${formatDraftWhole(draft.dailyRankedDripMaxMatches)} matches/day can pay.` : 'No base ranked payout.'}</div>
         </div>
-
-        <div className="space-y-3">
-          <div className="font-body text-xs font-semibold uppercase text-white/70">Golden + Wagers</div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <EconomyToggle label="Golden maps" checked={draft.goldenBiomeEnabled} disabled={disabled} onChange={(goldenBiomeEnabled) => onDraftChange({ goldenBiomeEnabled })} />
-            <label className="min-w-0">
-              <span className="font-body text-[10px] font-semibold uppercase leading-none text-white/45">Distribution</span>
-              <AdminSelect
-                label="Golden distribution mode"
-                value={draft.goldenBiomeDistributionMode}
-                disabled={disabled}
-                options={[
-                  { value: 'manual', label: 'Manual' },
-                  { value: 'auto', label: 'Auto' },
-                ]}
-                onChange={(goldenBiomeDistributionMode) => onDraftChange({ goldenBiomeDistributionMode: goldenBiomeDistributionMode as GoldenBiomeDistributionMode })}
-                className="mt-1.5"
-              />
-            </label>
-            <EconomyField label="Golden roll" value={draft.goldenBiomeChanceBps} suffix="bps" disabled={disabled} onChange={(goldenBiomeChanceBps) => onDraftChange({ goldenBiomeChanceBps })} />
-            <EconomyField label="Winner payout" value={draft.goldenBiomeWinnerRewardSol} suffix="SOL" disabled={disabled} onChange={(goldenBiomeWinnerRewardSol) => onDraftChange({ goldenBiomeWinnerRewardSol })} />
-            <EconomyField label="Golden reserve" value={draft.goldenBiomeTreasuryMinSol} suffix="SOL" disabled={disabled} onChange={(goldenBiomeTreasuryMinSol) => onDraftChange({ goldenBiomeTreasuryMinSol })} />
-            <EconomyField label="Wager fee" value={draft.platformFeeBps} suffix="bps" disabled={disabled} onChange={(platformFeeBps) => onDraftChange({ platformFeeBps })} />
-          </div>
+        <div className="px-4 py-4">
+          <div className="font-body text-[10px] font-semibold uppercase text-white/42">Daily Ceiling</div>
+          <div className="mt-1 font-body text-lg font-semibold leading-none text-white">{rankedDailyCeiling}</div>
+          <div className="mt-2 font-body text-[11px] leading-snug text-white/42">Before win, flag, return, and assist bonuses.</div>
+        </div>
+        <div className="px-4 py-4">
+          <div className="font-body text-[10px] font-semibold uppercase text-white/42">Per Match Guardrails</div>
+          <div className="mt-1 font-body text-lg font-semibold leading-none text-white">{playerMatchCap}</div>
+          <div className="mt-2 font-body text-[11px] leading-snug text-white/42">Player max; match max is {matchPayoutCap}.</div>
+        </div>
+        <div className="px-4 py-4">
+          <div className="font-body text-[10px] font-semibold uppercase text-white/42">Golden Maps</div>
+          <div className="mt-1 font-body text-lg font-semibold leading-none text-white">{draft.goldenBiomeEnabled ? goldenChance : 'Off'}</div>
+          <div className="mt-2 font-body text-[11px] leading-snug text-white/42">{draft.goldenBiomeDistributionMode} distribution / {draft.goldenBiomeWinnerRewardSol || '0'} SOL per winner.</div>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-3">
-        <div className="font-body text-[11px] text-white/40">
+      <EconomyGroup
+        title="Ranked Rewards"
+        summary={rankedSummary}
+        action={<EconomyToggle label="Ranked payouts" checked={draft.enabled} disabled={disabled} onChange={(enabled) => onDraftChange({ enabled })} />}
+      >
+        <EconomyPair>
+          <EconomyField
+            label="Base match payout"
+            description="Paid once when a ranked match qualifies for rewards."
+            value={draft.dailyRankedDripLamports}
+            suffix={tokenSuffix}
+            detail={rankedMatchDrip}
+            disabled={disabled}
+            onChange={(dailyRankedDripLamports) => onDraftChange({ dailyRankedDripLamports })}
+          />
+          <EconomyField
+            label="Daily paid matches"
+            description="Caps how many ranked matches per player can earn the base payout each day."
+            value={draft.dailyRankedDripMaxMatches}
+            suffix="matches"
+            detail={`${rankedDailyCeiling} max/day`}
+            inputMode="numeric"
+            disabled={disabled}
+            onChange={(dailyRankedDripMaxMatches) => onDraftChange({ dailyRankedDripMaxMatches })}
+          />
+        </EconomyPair>
+        <EconomyPair>
+          <EconomyField
+            label="Win bonus"
+            description="Extra payout for the winning objective outcome."
+            value={draft.objectiveWinLamports}
+            suffix={tokenSuffix}
+            detail={formatDraftTokenAmount(draft.objectiveWinLamports, tokenSuffix)}
+            disabled={disabled}
+            onChange={(objectiveWinLamports) => onDraftChange({ objectiveWinLamports })}
+          />
+          <EconomyField
+            label="Assist bonus"
+            description="Small reward for objective support actions."
+            value={draft.objectiveAssistLamports}
+            suffix={tokenSuffix}
+            detail={formatDraftTokenAmount(draft.objectiveAssistLamports, tokenSuffix)}
+            disabled={disabled}
+            onChange={(objectiveAssistLamports) => onDraftChange({ objectiveAssistLamports })}
+          />
+        </EconomyPair>
+        <EconomyPair>
+          <EconomyField
+            label="Flag capture"
+            description="Primary objective action payout."
+            value={draft.objectiveFlagCaptureLamports}
+            suffix={tokenSuffix}
+            detail={formatDraftTokenAmount(draft.objectiveFlagCaptureLamports, tokenSuffix)}
+            disabled={disabled}
+            onChange={(objectiveFlagCaptureLamports) => onDraftChange({ objectiveFlagCaptureLamports })}
+          />
+          <EconomyField
+            label="Flag return"
+            description="Defensive objective action payout."
+            value={draft.objectiveFlagReturnLamports}
+            suffix={tokenSuffix}
+            detail={formatDraftTokenAmount(draft.objectiveFlagReturnLamports, tokenSuffix)}
+            disabled={disabled}
+            onChange={(objectiveFlagReturnLamports) => onDraftChange({ objectiveFlagReturnLamports })}
+          />
+        </EconomyPair>
+      </EconomyGroup>
+
+      <EconomyGroup
+        title="Weekly And Limits"
+        summary={`${weeklySummary} ${limitsSummary}`}
+        action={<EconomyToggle label="Weekly pool" checked={draft.weeklyEnabled} disabled={disabled} onChange={(weeklyEnabled) => onDraftChange({ weeklyEnabled })} />}
+      >
+        <EconomyPair>
+          <EconomyField
+            label="Weekly prize pool"
+            description="Total pool available for the weekly ranked leaderboard."
+            value={draft.weeklyPoolLamports}
+            suffix={tokenSuffix}
+            detail={weeklyPool}
+            disabled={disabled}
+            onChange={(weeklyPoolLamports) => onDraftChange({ weeklyPoolLamports })}
+          />
+          <EconomyField
+            label="Paid placements"
+            description="How many leaderboard positions share the weekly pool."
+            value={draft.weeklyTopPlayers}
+            suffix="top"
+            detail={`Top ${weeklyPlaces}`}
+            inputMode="numeric"
+            disabled={disabled}
+            onChange={(weeklyTopPlayers) => onDraftChange({ weeklyTopPlayers })}
+          />
+        </EconomyPair>
+        <EconomyPair>
+          <EconomyField
+            label="Player match cap"
+            description="Hard ceiling for one player’s payout from a single match."
+            value={draft.maxPlayerMatchLamports}
+            suffix={tokenSuffix}
+            detail={playerMatchCap}
+            disabled={disabled}
+            onChange={(maxPlayerMatchLamports) => onDraftChange({ maxPlayerMatchLamports })}
+          />
+          <EconomyField
+            label="Whole match cap"
+            description="Hard ceiling for all reward payouts generated by one match."
+            value={draft.maxMatchPayoutLamports}
+            suffix={tokenSuffix}
+            detail={matchPayoutCap}
+            disabled={disabled}
+            onChange={(maxMatchPayoutLamports) => onDraftChange({ maxMatchPayoutLamports })}
+          />
+        </EconomyPair>
+        <EconomyPair>
+          <EconomyField
+            label="Minimum match time"
+            description="Matches shorter than this do not qualify for reward payouts."
+            value={draft.minMatchDurationMs}
+            suffix="ms"
+            detail={formatDraftDuration(draft.minMatchDurationMs)}
+            inputMode="numeric"
+            disabled={disabled}
+            onChange={(minMatchDurationMs) => onDraftChange({ minMatchDurationMs })}
+          />
+          <EconomyField
+            label="Payout batch size"
+            description="Maximum reward rows sent through the payout worker at once."
+            value={draft.payoutBatchSize}
+            suffix="rows"
+            detail={`${formatDraftWhole(draft.payoutBatchSize)} rows`}
+            inputMode="numeric"
+            disabled={disabled}
+            onChange={(payoutBatchSize) => onDraftChange({ payoutBatchSize })}
+          />
+        </EconomyPair>
+        <EconomyField
+          label="Treasury reserve"
+          description="Token balance to keep untouched before reward payouts proceed."
+          value={draft.treasuryReserveLamports}
+          suffix="lamports"
+          detail={formatDraftTokenAmount(draft.treasuryReserveLamports, 'LAMPORTS')}
+          inputMode="numeric"
+          disabled={disabled}
+          onChange={(treasuryReserveLamports) => onDraftChange({ treasuryReserveLamports })}
+        />
+      </EconomyGroup>
+
+      <EconomyGroup
+        title="Golden Maps And Wagers"
+        summary={`${goldenSummary} Wager fee is ${wagerFee}.`}
+        action={(
+          <div className="space-y-3">
+            <EconomyToggle label="Golden maps" checked={draft.goldenBiomeEnabled} disabled={disabled} onChange={(goldenBiomeEnabled) => onDraftChange({ goldenBiomeEnabled })} />
+            <EconomyModeSwitch
+              label="Distribution"
+              value={draft.goldenBiomeDistributionMode}
+              disabled={disabled}
+              onChange={(goldenBiomeDistributionMode) => onDraftChange({ goldenBiomeDistributionMode })}
+            />
+          </div>
+        )}
+      >
+        <EconomyPair>
+          <EconomyField
+            label="Golden map chance"
+            description="Roll chance for a match to become a golden reward match."
+            value={draft.goldenBiomeChanceBps}
+            suffix="bps"
+            detail={goldenChance}
+            inputMode="numeric"
+            disabled={disabled}
+            onChange={(goldenBiomeChanceBps) => onDraftChange({ goldenBiomeChanceBps })}
+          />
+          <EconomyField
+            label="Winner SOL payout"
+            description="SOL amount each paid winner receives after a golden match."
+            value={draft.goldenBiomeWinnerRewardSol}
+            suffix="SOL"
+            detail={`${draft.goldenBiomeWinnerRewardSol || '0'} SOL each`}
+            disabled={disabled}
+            onChange={(goldenBiomeWinnerRewardSol) => onDraftChange({ goldenBiomeWinnerRewardSol })}
+          />
+        </EconomyPair>
+        <EconomyPair>
+          <EconomyField
+            label="SOL treasury reserve"
+            description="Minimum SOL balance required before golden payouts can run."
+            value={draft.goldenBiomeTreasuryMinSol}
+            suffix="SOL"
+            detail={`${draft.goldenBiomeTreasuryMinSol || '0'} SOL reserve`}
+            disabled={disabled}
+            onChange={(goldenBiomeTreasuryMinSol) => onDraftChange({ goldenBiomeTreasuryMinSol })}
+          />
+          <EconomyField
+            label="Platform wager fee"
+            description="Percentage kept by the platform from wager settlements."
+            value={draft.platformFeeBps}
+            suffix="bps"
+            detail={wagerFee}
+            inputMode="numeric"
+            disabled={disabled}
+            onChange={(platformFeeBps) => onDraftChange({ platformFeeBps })}
+          />
+        </EconomyPair>
+      </EconomyGroup>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-3">
+        <div className="font-body text-[11px] text-white/38">
           {updatedAt ? `Updated ${formatDate(updatedAt)}` : 'Using default economy settings'}
         </div>
         <ActionButton disabled={disabled || !dirty} onClick={onSave}>
@@ -1165,7 +1518,7 @@ function ActionButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="h-7 rounded-md border border-white/10 bg-white/[0.04] px-2.5 font-body text-[11px] font-semibold uppercase text-white/70 transition hover:border-accent-primary/45 hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
+      className="admin-action-button h-8 rounded-md px-3 font-body text-[11px] font-semibold uppercase transition disabled:cursor-not-allowed disabled:opacity-45"
     >
       {children}
     </button>
@@ -1247,7 +1600,7 @@ function AdminSelect({
         role="listbox"
         aria-label={label}
         style={menuStyle}
-        className="z-50 overflow-auto rounded-md border border-white/10 bg-strike-panel-raised py-1 shadow-[0_18px_44px_rgb(0_0_0_/_0.55)] backdrop-blur"
+        className="admin-select-menu z-50 overflow-auto rounded-md py-1 shadow-[0_18px_44px_rgb(15_23_42_/_0.18)]"
       >
         {options.map((option) => {
           const isSelected = option.value === value;
@@ -1262,10 +1615,10 @@ function AdminSelect({
                 setOpen(false);
               }}
               className={cx(
-                'flex w-full items-start justify-between gap-3 px-3 py-2 text-left font-body text-xs transition',
+                'admin-select-option flex w-full items-start justify-between gap-3 px-3 py-2 text-left font-body text-xs transition',
                 isSelected
-                  ? 'bg-accent-primary/15 text-white'
-                  : 'text-white/74 hover:bg-white/[0.055] hover:text-white',
+                  ? 'is-selected text-white'
+                  : 'text-white/74 hover:text-white',
               )}
             >
               <span className="min-w-0">
@@ -1300,8 +1653,8 @@ function AdminSelect({
           setOpen(true);
         }}
         className={cx(
-          'flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-white/10 bg-black/30 px-2.5 font-body text-xs text-white outline-none transition hover:border-white/20 focus:border-accent-primary/55 disabled:cursor-not-allowed disabled:opacity-45',
-          open && 'border-accent-primary/55 bg-black/45',
+          'admin-select-button flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-md px-2.5 font-body text-xs text-white outline-none transition disabled:cursor-not-allowed disabled:opacity-45',
+          open && 'is-open',
           className,
         )}
       >
@@ -1313,43 +1666,313 @@ function AdminSelect({
   );
 }
 
-function AdminTabs({
-  tabs,
-  activeTab,
+function AdminNavigation({
+  pages,
+  activePage,
+  compact = false,
   onChange,
 }: {
-  tabs: AdminTab[];
-  activeTab: AdminTabId;
-  onChange: (tab: AdminTabId) => void;
+  pages: AdminPage[];
+  activePage: AdminPageId;
+  compact?: boolean;
+  onChange: (page: AdminPageId) => void;
 }) {
+  if (pages.length === 0) return null;
+
   return (
-    <div className="-mx-1 overflow-x-auto px-1">
-      <div role="tablist" aria-label="Admin sections" className="flex min-w-max gap-1.5">
-        {tabs.map((tab) => {
-          const isActive = tab.id === activeTab;
+    <nav aria-label="Admin pages" className={compact ? 'admin-mobile-nav -mx-1 overflow-x-auto px-1' : 'space-y-1'}>
+      <div className={compact ? 'flex min-w-max gap-2' : 'space-y-1'}>
+        {pages.map((page) => {
+          const isActive = page.id === activePage;
           return (
             <button
-              key={tab.id}
+              key={page.id}
               type="button"
-              role="tab"
-              id={`admin-tab-${tab.id}`}
-              aria-selected={isActive}
-              aria-controls={`admin-panel-${tab.id}`}
-              onClick={() => onChange(tab.id)}
+              aria-current={isActive ? 'page' : undefined}
+              onClick={() => onChange(page.id)}
               className={cx(
-                'group flex h-9 min-w-[8.5rem] items-center justify-between gap-3 rounded-md border px-3 font-body text-xs font-semibold uppercase transition',
-                isActive
-                  ? 'border-accent-primary/55 bg-accent-primary/15 text-white shadow-[inset_0_1px_0_rgb(var(--color-strike-border)_/_0.08)]'
-                  : 'border-white/10 bg-white/[0.035] text-white/55 hover:border-white/20 hover:bg-white/[0.06] hover:text-white/80',
+                'admin-nav-item group min-w-0 rounded-md font-body transition',
+                compact
+                  ? 'flex h-11 min-w-[11rem] items-center justify-between gap-3 px-3 text-left'
+                  : 'flex w-full items-center justify-between gap-3 px-3 py-3 text-left',
+                isActive && 'is-active text-white',
               )}
             >
-              <span>{tab.label}</span>
-              <Pill tone={isActive ? tab.tone : 'neutral'} className="px-1.5 py-0 text-[10px] leading-4">
-                {tab.meta}
-              </Pill>
+              <span className="flex min-w-0 items-center gap-2.5">
+                <span className={cx('h-2 w-2 shrink-0 rounded-full', dotToneClasses[page.tone])} />
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-semibold uppercase leading-none">{page.label}</span>
+                  {!compact && <span className="mt-1 block truncate text-[11px] leading-none text-white/38">{page.eyebrow}</span>}
+                </span>
+              </span>
+              <span className={cx(
+                'shrink-0 font-mono text-[10px] font-semibold uppercase leading-none',
+                isActive ? 'text-accent-primary/90' : 'text-white/32',
+              )}>
+                {page.meta}
+              </span>
             </button>
           );
         })}
+      </div>
+    </nav>
+  );
+}
+
+function FactRow({
+  label,
+  value,
+  detail,
+  tone = 'neutral',
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+  tone?: Tone;
+}) {
+  return (
+    <div className="flex min-h-[58px] items-center justify-between gap-3 border-b border-white/[0.07] px-3 py-2.5 last:border-b-0">
+      <div className="min-w-0">
+        <div className="font-body text-[10px] font-semibold uppercase leading-none text-white/42">{label}</div>
+        {detail && <div className="mt-1.5 truncate font-body text-[11px] text-white/35">{detail}</div>}
+      </div>
+      <Pill tone={tone} className="shrink-0">
+        {value}
+      </Pill>
+    </div>
+  );
+}
+
+function AttentionQueue({
+  overview,
+  onNavigate,
+}: {
+  overview: AdminOverview;
+  onNavigate: (page: AdminPageId) => void;
+}) {
+  const activeReports = getActiveReportCount(overview);
+  const pendingGoldenRewards = getPendingGoldenRewardCount(overview);
+  const purchasableSkins = getPurchasableSkinCount(overview);
+  const capacityTone = overview.capacity.full ? 'danger' : toneForPressure(overview.capacity.capacityPressure);
+  const items: Array<{
+    label: string;
+    value: string;
+    detail: string;
+    tone: Tone;
+    page: AdminPageId;
+  }> = [
+    {
+      label: 'Capacity',
+      value: `${formatNumber(overview.capacity.reservedPlayers)} / ${formatNumber(overview.capacity.maxPlayers)}`,
+      detail: `${formatNumber(overview.capacity.availablePlayers)} open across ${formatCount(overview.capacity.machineCount, 'machine')}`,
+      tone: capacityTone,
+      page: 'infrastructure',
+    },
+    {
+      label: 'Player Reports',
+      value: `${formatNumber(activeReports)} active`,
+      detail: `${formatNumber(overview.playerReports?.reports.length ?? 0)} reports in the queue`,
+      tone: activeReports > 0 ? 'warning' : 'success',
+      page: 'players',
+    },
+    {
+      label: 'Golden Rewards',
+      value: `${formatNumber(pendingGoldenRewards)} pending`,
+      detail: `${overview.goldenBiomeRewards?.settings.distributionMode ?? 'manual'} distribution mode`,
+      tone: pendingGoldenRewards > 0 ? 'warning' : 'success',
+      page: 'economy',
+    },
+    {
+      label: 'Global Message',
+      value: overview.globalNotification ? 'Active' : 'Off',
+      detail: overview.globalNotification ? `Updated ${formatDateAge(overview.globalNotification.updatedAt)}` : 'No broadcast message',
+      tone: overview.globalNotification ? 'warning' : 'neutral',
+      page: 'liveOps',
+    },
+    {
+      label: 'Ranked Gate',
+      value: formatRankedEntryGateMode(overview.rankedEntryGate.mode),
+      detail: `${overview.rankedSeason.label} / ${formatSeasonBoundary(overview.rankedSeason.mode, overview.rankedSeason.endsAt)}`,
+      tone: overview.rankedEntryGate.mode === 'token_required' ? 'success' : 'amber',
+      page: 'liveOps',
+    },
+    {
+      label: 'Skin Shop',
+      value: overview.skinShop.shop.enabled ? 'Online' : 'Locked',
+      detail: `${formatNumber(purchasableSkins)} purchasable skins`,
+      tone: overview.skinShop.shop.enabled ? 'success' : 'amber',
+      page: 'economy',
+    },
+  ];
+
+  return (
+    <div className="divide-y divide-white/[0.07]">
+      {items.map((item) => (
+        <button
+          key={item.label}
+          type="button"
+          onClick={() => onNavigate(item.page)}
+          className="group flex w-full min-w-0 items-center justify-between gap-3 px-3 py-3 text-left transition hover:bg-white/[0.035]"
+        >
+          <span className="min-w-0">
+            <span className="block font-body text-xs font-semibold uppercase leading-none text-white/82">{item.label}</span>
+            <span className="mt-1.5 block truncate font-body text-[11px] leading-none text-white/38">{item.detail}</span>
+          </span>
+          <span className="flex shrink-0 items-center gap-2">
+            <Pill tone={item.tone}>{item.value}</Pill>
+            <span aria-hidden="true" className="font-mono text-xs text-white/32 transition group-hover:text-white/60">open</span>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function RuntimeShapePanel({ overview }: { overview: AdminOverview }) {
+  const capacityTone = overview.capacity.full ? 'danger' : toneForPressure(overview.capacity.capacityPressure);
+  return (
+    <div>
+      <FactRow
+        label="World Activity"
+        value={`${formatNumber(overview.totals.participantsInGame)} live`}
+        detail={`${formatCount(overview.totals.gameRooms, 'game')} / ${formatCount(overview.totals.lobbyRooms, 'lobby', 'lobbies')}`}
+        tone={overview.totals.participantsInGame > 0 ? 'success' : 'neutral'}
+      />
+      <FactRow
+        label="Capacity"
+        value={`${formatNumber(overview.capacity.availablePlayers)} open`}
+        detail={`${overview.capacity.source} source / ${formatNumber(overview.capacity.projectedMachineCount)} projected machines`}
+        tone={capacityTone}
+      />
+      <FactRow
+        label="Clients"
+        value={formatNumber(overview.totals.totalConnectedClients)}
+        detail={`${formatNumber(overview.totals.playersInGame)} players / ${formatNumber(overview.totals.botsInGame)} bots`}
+        tone="info"
+      />
+      <FactRow
+        label="Last Sample"
+        value={formatDateAge(overview.generatedAt)}
+        detail={formatDate(overview.generatedAt)}
+        tone={overview.status === 'ok' ? 'success' : 'warning'}
+      />
+    </div>
+  );
+}
+
+function MachinePressurePanel({ overview }: { overview: AdminOverview }) {
+  const machines = [...overview.machines]
+    .sort((left, right) => (
+      right.capacityPressure - left.capacityPressure ||
+      right.playersInGame - left.playersInGame ||
+      right.loadPct1 - left.loadPct1
+    ))
+    .slice(0, 5);
+
+  if (machines.length === 0) return <EmptyTable label="No machines reporting yet." />;
+
+  return (
+    <div className="divide-y divide-white/[0.07]">
+      {machines.map((machine) => {
+        const pressureTone = toneForPressure(machine.capacityPressure);
+        return (
+          <div key={machine.machineId} className="grid gap-3 px-3 py-3 md:grid-cols-[minmax(0,1fr)_minmax(12rem,0.4fr)] md:items-center">
+            <div className="min-w-0">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="truncate font-mono text-xs text-white">{machine.machineId}</span>
+                <Pill tone={pressureTone}>{Math.round(machine.capacityPressure * 100)}%</Pill>
+              </div>
+              <div className="mt-1 font-body text-[11px] text-white/38">
+                {machine.region || 'unknown region'} / {formatCount(machine.processCount, 'process', 'processes')} / updated {formatAge(machine.latestUpdatedAtMs)}
+              </div>
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center justify-between gap-3 font-body text-[11px] text-white/50">
+                <span>{formatNumber(machine.playersInGame)} players</span>
+                <span>{formatNumber(machine.gameRoomCount)} games</span>
+                <span>{machine.loadPct1.toFixed(0)}% load</span>
+              </div>
+              <MiniMeter value={machine.capacityPressure} tone={pressureTone} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DiagnosticsPanel({ overview }: { overview: AdminOverview }) {
+  return (
+    <div>
+      <FactRow
+        label="Redis"
+        value={overview.diagnostics.redis.status}
+        detail={overview.diagnostics.redis.error || 'Shared runtime state'}
+        tone={overview.diagnostics.redis.ok ? 'success' : 'danger'}
+      />
+      <FactRow
+        label="Runtime"
+        value={overview.diagnostics.distributed ? 'Distributed' : 'Single'}
+        detail={`${overview.diagnostics.routingStrategy} routing`}
+        tone={overview.diagnostics.distributed ? 'info' : 'neutral'}
+      />
+      <FactRow
+        label="Room Creation"
+        value={overview.diagnostics.roomCreateStrategy}
+        detail={`local process ${overview.diagnostics.localProcessId ?? 'unknown'}`}
+        tone="neutral"
+      />
+      <FactRow
+        label="Fly Replay"
+        value={overview.diagnostics.flyReplay.enabled ? 'Enabled' : 'Off'}
+        detail={overview.diagnostics.flyReplay.registered
+          ? `${overview.diagnostics.flyReplay.appName ?? 'app'} / ${overview.diagnostics.flyReplay.region ?? 'region unknown'}`
+          : 'Not registered'}
+        tone={overview.diagnostics.flyReplay.enabled ? 'success' : 'neutral'}
+      />
+    </div>
+  );
+}
+
+function CommandCenterPage({
+  overview,
+  metrics,
+  onNavigate,
+}: {
+  overview: AdminOverview;
+  metrics: MetricTileProps[];
+  onNavigate: (page: AdminPageId) => void;
+}) {
+  const activeReports = getActiveReportCount(overview);
+  const pendingGoldenRewards = getPendingGoldenRewardCount(overview);
+  const actionCount = activeReports + pendingGoldenRewards + (overview.capacity.full ? 1 : 0) + (overview.globalNotification ? 1 : 0);
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+        {metrics.map((metric) => (
+          <MetricTile key={metric.label} {...metric} />
+        ))}
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,0.48fr)]">
+        <Section title="Attention Queue" meta={`${formatNumber(actionCount)} signals`}>
+          <AttentionQueue overview={overview} onNavigate={onNavigate} />
+        </Section>
+
+        <Section title="Runtime Shape" meta={overview.diagnostics.distributed ? 'distributed' : 'single'}>
+          <RuntimeShapePanel overview={overview} />
+        </Section>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,0.48fr)]">
+        <Section title="Machine Pressure" meta={`${formatNumber(overview.machines.length)} machines`}>
+          <MachinePressurePanel overview={overview} />
+        </Section>
+
+        <Section title="Diagnostics" meta={overview.diagnostics.redis.ok ? 'healthy' : 'attention'}>
+          <DiagnosticsPanel overview={overview} />
+        </Section>
       </div>
     </div>
   );
@@ -2128,10 +2751,10 @@ function ModeButton({
       aria-pressed={active}
       disabled={active || busy}
       onClick={onClick}
-      className={`h-7 rounded-md border px-3 font-body text-[11px] font-semibold uppercase transition disabled:cursor-default ${
+      className={`h-8 border-r border-white/10 px-4 font-body text-[11px] font-semibold uppercase transition last:border-r-0 disabled:cursor-default ${
         active
-          ? 'border-amber-300/45 bg-amber-300/15 text-amber-100'
-          : 'border-white/10 bg-white/[0.04] text-white/65 hover:border-amber-300/35 hover:text-white'
+          ? 'bg-amber-300/12 text-amber-100'
+          : 'text-white/55 hover:bg-white/[0.04] hover:text-white'
       }`}
     >
       {mode}
@@ -2159,10 +2782,10 @@ function GoldenBiomeRewardsPanel({
 
   return (
     <div>
-      <div className="grid gap-3 border-b border-white/10 bg-black/20 p-3 md:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)_auto] md:items-center">
-        <div className="min-w-0">
-          <div className="font-body text-[10px] font-semibold uppercase text-white/45">Distribution</div>
-          <div className="mt-2 flex flex-wrap gap-2">
+      <div className="grid border-b border-white/10 md:grid-cols-[15rem_minmax(0,1fr)_minmax(16rem,0.36fr)]">
+        <div className="border-b border-white/10 px-3 py-3 md:border-b-0 md:border-r">
+          <div className="font-body text-xs font-semibold uppercase text-white/76">Distribution</div>
+          <div className="mt-3 grid grid-cols-2 border border-white/10 bg-black/20">
             <ModeButton
               mode="manual"
               active={overview.settings.distributionMode === 'manual'}
@@ -2176,17 +2799,19 @@ function GoldenBiomeRewardsPanel({
               onClick={() => onSetMode('auto')}
             />
           </div>
-          <div className="mt-2 font-body text-[11px] text-white/40">{overview.settings.distributionMode} payout mode</div>
         </div>
 
-        <div className="min-w-0">
-          <div className="font-body text-[10px] font-semibold uppercase text-white/45">Treasury</div>
-          <div className="mt-2">
-            <Pill tone={treasury.eligible ? 'success' : 'warning'}>
+        <div className="min-w-0 border-b border-white/10 px-3 py-3 md:border-b-0 md:border-r">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <div className="font-body text-xs font-semibold uppercase text-white/76">Treasury</div>
+            <span className={cx(
+              'font-mono text-[11px] font-semibold uppercase',
+              treasury.eligible ? 'text-emerald-100/75' : 'text-yellow-100/75',
+            )}>
               {treasury.eligible ? 'Eligible' : treasury.reason || 'Not eligible'}
-            </Pill>
+            </span>
           </div>
-          <div className="mt-2 break-all font-mono text-xs text-white/45">
+          <div className="mt-3 break-all font-mono text-xs text-white/48">
             {treasury.treasuryWallet || overview.settings.treasuryWallet || 'No treasury wallet'}
           </div>
           <div className="mt-1 font-body text-[11px] text-white/40">
@@ -2194,9 +2819,19 @@ function GoldenBiomeRewardsPanel({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 md:min-w-[14rem]">
-          <MetricTile label="Reward" value={`${lamportsToSolDisplay(overview.settings.winnerRewardLamports)} SOL`} sublabel="per winner" tone="amber" />
-          <MetricTile label="Chance" value={formatBps(overview.settings.chanceBps)} sublabel={`${formatNumber(pendingRewards)} pending`} tone="warning" />
+        <div className="grid grid-cols-3 divide-x divide-white/[0.07] md:grid-cols-1 md:divide-x-0 md:divide-y">
+          <div className="px-3 py-3">
+            <div className="font-body text-[10px] font-semibold uppercase text-white/42">Reward</div>
+            <div className="mt-1 font-body text-xl font-semibold leading-none text-white">{lamportsToSolDisplay(overview.settings.winnerRewardLamports)} SOL</div>
+          </div>
+          <div className="px-3 py-3">
+            <div className="font-body text-[10px] font-semibold uppercase text-white/42">Chance</div>
+            <div className="mt-1 font-body text-xl font-semibold leading-none text-white">{formatBps(overview.settings.chanceBps)}</div>
+          </div>
+          <div className="px-3 py-3">
+            <div className="font-body text-[10px] font-semibold uppercase text-white/42">Pending</div>
+            <div className="mt-1 font-body text-xl font-semibold leading-none text-white">{formatNumber(pendingRewards)}</div>
+          </div>
         </div>
       </div>
 
@@ -2366,7 +3001,7 @@ function PlayerReportsTable({
 
 export function AdminDashboard() {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
-  const [activeTab, setActiveTab] = useState<AdminTabId>('overview');
+  const [activePage, setActivePage] = useState<AdminPageId>('command');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyReportId, setBusyReportId] = useState<string | null>(null);
@@ -2783,9 +3418,9 @@ export function AdminDashboard() {
   }, [loadOverview]);
 
   useEffect(() => {
-    if (activeTab !== 'players' || rankUsersLoaded || rankUsersLoading) return;
+    if (activePage !== 'players' || rankUsersLoaded || rankUsersLoading) return;
     void loadRankUsers('', 1);
-  }, [activeTab, loadRankUsers, rankUsersLoaded, rankUsersLoading]);
+  }, [activePage, loadRankUsers, rankUsersLoaded, rankUsersLoading]);
 
   useEffect(() => {
     setGlobalNotificationDraft(overview?.globalNotification?.message ?? '');
@@ -2872,11 +3507,9 @@ export function AdminDashboard() {
 
   const metrics = useMemo<MetricTileProps[]>(() => {
     if (!overview) return [];
-    const activeReports = (overview.playerReports?.counts.open ?? 0) + (overview.playerReports?.counts.reviewing ?? 0);
-    const pendingGoldenRewards = overview.goldenBiomeRewards?.rewards.filter((reward) => reward.status !== 'complete').length ?? 0;
-    const purchasableSkins = overview.skinShop.items.filter((item) => (
-      item.settings.saleEnabled && item.settings.remainingSupply !== 0
-    )).length;
+    const activeReports = getActiveReportCount(overview);
+    const pendingGoldenRewards = getPendingGoldenRewardCount(overview);
+    const purchasableSkins = getPurchasableSkinCount(overview);
     const capacityTone = overview.capacity.full ? 'danger' : toneForPressure(overview.capacity.capacityPressure);
     return [
       { label: 'Machines', value: formatNumber(overview.totals.runningMachines), sublabel: formatCount(overview.totals.serverProcesses, 'process', 'processes'), tone: 'info' },
@@ -2892,270 +3525,314 @@ export function AdminDashboard() {
     ];
   }, [overview]);
 
-  const tabs = useMemo<AdminTab[]>(() => {
+  const pages = useMemo<AdminPage[]>(() => {
     if (!overview) return [];
-    const activeReports = (overview.playerReports?.counts.open ?? 0) + (overview.playerReports?.counts.reviewing ?? 0);
-    const pendingGoldenRewards = overview.goldenBiomeRewards?.rewards.filter((reward) => reward.status !== 'complete').length ?? 0;
-    const totalRooms = overview.rooms.game.length + overview.rooms.lobbies.length;
+    const activeReports = getActiveReportCount(overview);
+    const pendingGoldenRewards = getPendingGoldenRewardCount(overview);
+    const totalRooms = getTotalRoomCount(overview);
     const capacityTone = overview.capacity.full ? 'danger' : toneForPressure(overview.capacity.capacityPressure);
 
     return [
       {
-        id: 'overview',
-        label: 'Overview',
+        id: 'command',
+        label: 'Command Center',
+        eyebrow: 'At-a-glance operations',
         meta: overview.status,
         tone: toneForSystemStatus(overview.status),
       },
       {
-        id: 'operations',
-        label: 'Operations',
+        id: 'liveOps',
+        label: 'Live Ops',
+        eyebrow: 'Broadcasts and ranked access',
         meta: overview.globalNotification ? 'message on' : formatRankedEntryGateMode(overview.rankedEntryGate.mode),
-        tone: overview.globalNotification ? 'warning' : 'amber',
+        tone: overview.globalNotification
+          ? 'warning'
+          : overview.rankedEntryGate.mode === 'token_required'
+            ? 'success'
+            : 'amber',
       },
       {
         id: 'players',
         label: 'Players',
-        meta: 'rank edit',
-        tone: 'amber',
+        eyebrow: 'Reports and ranked corrections',
+        meta: `${formatNumber(activeReports)} active`,
+        tone: activeReports > 0 ? 'warning' : 'success',
       },
       {
-        id: 'servers',
-        label: 'Servers',
-        meta: `${formatNumber(overview.machines.length)} machines`,
-        tone: capacityTone,
-      },
-      {
-        id: 'rooms',
-        label: 'Rooms',
-        meta: `${formatNumber(totalRooms)} active`,
-        tone: totalRooms > 0 ? 'info' : 'neutral',
-      },
-      {
-        id: 'rewards',
-        label: 'Rewards',
+        id: 'economy',
+        label: 'Economy',
+        eyebrow: 'Rewards and skin shop',
         meta: `${formatNumber(pendingGoldenRewards)} pending`,
         tone: pendingGoldenRewards > 0 ? 'warning' : 'success',
       },
       {
-        id: 'reports',
-        label: 'Reports',
-        meta: `${formatNumber(activeReports)} active`,
-        tone: activeReports > 0 ? 'warning' : 'success',
+        id: 'infrastructure',
+        label: 'Infrastructure',
+        eyebrow: 'Machines, rooms, diagnostics',
+        meta: `${formatNumber(totalRooms)} rooms`,
+        tone: capacityTone,
       },
     ];
   }, [overview]);
 
+  const activePageMeta = pages.find((page) => page.id === activePage) ?? {
+    id: 'command',
+    label: 'Command Center',
+    eyebrow: 'At-a-glance operations',
+    meta: 'loading',
+    tone: 'neutral' as Tone,
+  };
+
   return (
-    <main className="admin-dashboard h-dvh overflow-y-auto bg-strike-bg text-white">
-      <div className="mx-auto flex min-h-full w-full max-w-[1600px] flex-col gap-3 px-3 py-3 md:px-4">
-        <header className="sticky top-0 z-20 -mx-3 flex flex-col gap-3 border-b border-white/10 bg-strike-bg/90 px-3 py-3 backdrop-blur-xl md:-mx-4 md:px-4">
-          <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
-            <div className="min-w-0">
-              <h1 className="font-body text-2xl font-semibold leading-none text-white">SLOP HEROES Admin</h1>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              {overview && <StatusPill status={overview.status} />}
+    <main className="admin-dashboard h-dvh overflow-hidden text-white">
+      <div className="grid h-full min-h-0 lg:grid-cols-[18rem_minmax(0,1fr)]">
+        <aside className="admin-sidebar hidden min-h-0 lg:flex lg:flex-col">
+          <div className="admin-sidebar__brand p-5">
+            <div className="font-body text-[10px] font-semibold uppercase leading-none text-accent-primary/75">SLOP HEROES</div>
+            <h1 className="mt-3 font-display text-4xl leading-none text-white">Admin Console</h1>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {overview ? <StatusPill status={overview.status} /> : <Pill>Loading</Pill>}
               {overview?.admin.elevatedAntiCheatRole && <Pill tone="info">Anti-cheat</Pill>}
-              <ActionButton onClick={() => void loadOverview()}>Refresh</ActionButton>
             </div>
           </div>
 
-          {overview && <AdminTabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />}
-        </header>
-
-        {error && (
-          <div className="rounded-md border border-ui-danger/40 bg-ui-danger/10 px-3 py-2 font-body text-xs text-red-100">
-            {error}
+          <div className="min-h-0 flex-1 overflow-y-auto p-3.5">
+            <AdminNavigation pages={pages} activePage={activePage} onChange={setActivePage} />
           </div>
-        )}
 
-        {overview?.diagnostics.warnings && overview.diagnostics.warnings.length > 0 && (
-          <div className="rounded-md border border-ui-warning/40 bg-ui-warning/10 px-3 py-2 font-body text-xs text-yellow-100">
-            {overview.diagnostics.warnings.map((warning) => (
-              <div key={warning}>{warning}</div>
-            ))}
+          <div className="admin-sidebar__footer space-y-3 p-3.5">
+            {overview && (
+              <div className="admin-user-card min-w-0 rounded-md p-3">
+                <div className="truncate font-body text-xs font-semibold text-white">{overview.admin.name}</div>
+                <div className="mt-1 truncate font-mono text-[11px] text-white/35" title={overview.admin.walletAddress}>
+                  {formatCompactIdentifier(overview.admin.walletAddress, 6, 6)}
+                </div>
+                <div className="mt-2 font-body text-[11px] text-white/35">
+                  Sampled {formatDateAge(overview.generatedAt)}
+                </div>
+              </div>
+            )}
+            <ActionButton onClick={() => void loadOverview()}>Refresh</ActionButton>
           </div>
-        )}
+        </aside>
 
-        {overview ? (
-          <>
-            {overview.capacity.full && (
-              <div className="rounded-md border border-ui-warning/45 bg-ui-warning/10 px-3 py-2 font-body text-xs text-yellow-100">
-                Max in-game players hit: {formatNumber(overview.capacity.reservedPlayers)} / {formatNumber(overview.capacity.maxPlayers)} reserved across {formatNumber(overview.capacity.maxMachines)} machines. Queued players will wait until a match frees space.
+        <section className="flex min-h-0 flex-col">
+          <header className="admin-topbar z-20 px-3 py-3 md:px-5">
+            <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
+              <div className="min-w-0">
+                <div className="font-body text-[10px] font-semibold uppercase leading-none text-white/38 lg:hidden">SLOP HEROES Admin</div>
+                <div className="mt-1 font-body text-[10px] font-semibold uppercase leading-none text-accent-primary/70">{activePageMeta.eyebrow}</div>
+                <h2 className="mt-1 font-body text-3xl font-semibold leading-none text-white">{activePageMeta.label}</h2>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {overview && <StatusPill status={overview.status} />}
+                {overview?.admin.elevatedAntiCheatRole && <Pill tone="info">Anti-cheat</Pill>}
+                <ActionButton onClick={() => void loadOverview()}>Refresh</ActionButton>
+              </div>
+            </div>
+
+            {overview && (
+              <div className="mt-3 lg:hidden">
+                <AdminNavigation pages={pages} activePage={activePage} compact onChange={setActivePage} />
               </div>
             )}
+          </header>
 
-            {activeTab === 'overview' && (
-              <div
-                role="tabpanel"
-                id="admin-panel-overview"
-                aria-labelledby="admin-tab-overview"
-                className="grid grid-cols-1 gap-2 sm:grid-cols-3 xl:grid-cols-10"
-              >
-                {metrics.map((metric) => (
-                  <MetricTile key={metric.label} {...metric} />
-                ))}
-              </div>
-            )}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="admin-content mx-auto w-full max-w-[1580px] space-y-4 p-3 md:p-5">
+              {error && (
+                <div className="rounded-md border border-ui-danger/40 bg-ui-danger/10 px-3 py-2 font-body text-xs text-red-100">
+                  {error}
+                </div>
+              )}
 
-            {activeTab === 'operations' && (
-              <div
-                role="tabpanel"
-                id="admin-panel-operations"
-                aria-labelledby="admin-tab-operations"
-                className="flex flex-col gap-3"
-              >
-                <Section
-                  title="Global Notification"
-                  meta={overview.globalNotification ? 'active' : 'off'}
-                >
-                  <GlobalNotificationPanel
-                    notification={overview.globalNotification}
-                    draft={globalNotificationDraft}
-                    busy={busyGlobalNotification}
-                    onDraftChange={setGlobalNotificationDraft}
-                    onSave={saveGlobalNotification}
-                    onRemove={removeGlobalNotification}
-                  />
-                </Section>
+              {overview?.diagnostics.warnings && overview.diagnostics.warnings.length > 0 && (
+                <div className="rounded-md border border-ui-warning/40 bg-ui-warning/10 px-3 py-2 font-body text-xs text-yellow-100">
+                  {overview.diagnostics.warnings.map((warning) => (
+                    <div key={warning}>{warning}</div>
+                  ))}
+                </div>
+              )}
 
-                <Section title="Skin Shop" meta={overview.skinShop.shop.enabled ? 'online' : 'locked'}>
-                  <SkinShopPanel
-                    overview={overview.skinShop}
-                    settingsDraft={skinShopDraft}
-                    itemDrafts={skinShopItemDrafts}
-                    dirtyById={skinShopItemDraftDirtyById}
-                    busySettings={busySkinShopSettings}
-                    busyItemId={busySkinShopItemId}
-                    onSettingsDraftChange={updateSkinShopDraft}
-                    onItemDraftChange={updateSkinShopItemDraft}
-                    onSaveSettings={saveSkinShopSettings}
-                    onSaveItem={saveSkinShopItem}
-                  />
-                </Section>
+              {overview ? (
+                <>
+                  {overview.capacity.full && (
+                    <div className="rounded-md border border-ui-warning/45 bg-ui-warning/10 px-3 py-2 font-body text-xs text-yellow-100">
+                      Max in-game players hit: {formatNumber(overview.capacity.reservedPlayers)} / {formatNumber(overview.capacity.maxPlayers)} reserved across {formatNumber(overview.capacity.maxMachines)} machines. Queued players will wait until a match frees space.
+                    </div>
+                  )}
 
-                <Section title="Ranked Entry Gate" meta={formatRankedEntryGateMode(overview.rankedEntryGate.mode)}>
-                  <RankedEntryGatePanel
-                    gate={overview.rankedEntryGate}
-                    draft={rankedEntryGateDraft}
-                    busy={busyRankedEntryGate}
-                    onDraftChange={updateRankedEntryGateDraft}
-                    onSave={saveRankedEntryGate}
-                  />
-                </Section>
+                  {activePage === 'command' && (
+                    <CommandCenterPage
+                      overview={overview}
+                      metrics={metrics}
+                      onNavigate={setActivePage}
+                    />
+                  )}
 
-                <Section title="Ranked Season" meta={overview.rankedSeason.label}>
-                  <RankedSeasonPanel
-                    season={overview.rankedSeason}
-                    draft={rankedSeasonDraft}
-                    busy={busyRankedSeason}
-                    onDraftChange={updateRankedSeasonDraft}
-                    onSave={saveRankedSeason}
-                  />
-                </Section>
-              </div>
-            )}
+                  {activePage === 'liveOps' && (
+                    <div id="admin-page-live-ops" className="flex flex-col gap-3">
+                      <Section
+                        title="Global Notification"
+                        meta={overview.globalNotification ? 'active' : 'off'}
+                      >
+                        <GlobalNotificationPanel
+                          notification={overview.globalNotification}
+                          draft={globalNotificationDraft}
+                          busy={busyGlobalNotification}
+                          onDraftChange={setGlobalNotificationDraft}
+                          onSave={saveGlobalNotification}
+                          onRemove={removeGlobalNotification}
+                        />
+                      </Section>
 
-            {activeTab === 'players' && (
-              <div role="tabpanel" id="admin-panel-players" aria-labelledby="admin-tab-players">
-                <Section title="Player Ranks" meta={`${formatNumber(rankUsersPagination.total)} users`}>
-                  <PlayerRankPanel
-                    users={rankUsers}
-                    pagination={rankUsersPagination}
-                    search={rankSearch}
-                    reason={rankReason}
-                    drafts={rankUserDrafts}
-                    loading={rankUsersLoading}
-                    busyUserId={busyRankUserId}
-                    onSearchChange={setRankSearch}
-                    onReasonChange={setRankReason}
-                    onSearch={searchRankUsers}
-                    onClearSearch={clearRankUserSearch}
-                    onPageChange={changeRankUserPage}
-                    onDraftChange={updateRankUserDraft}
-                    onSave={saveRankUser}
-                  />
-                </Section>
-              </div>
-            )}
+                      <Section title="Ranked Entry Gate" meta={formatRankedEntryGateMode(overview.rankedEntryGate.mode)}>
+                        <RankedEntryGatePanel
+                          gate={overview.rankedEntryGate}
+                          draft={rankedEntryGateDraft}
+                          busy={busyRankedEntryGate}
+                          onDraftChange={updateRankedEntryGateDraft}
+                          onSave={saveRankedEntryGate}
+                        />
+                      </Section>
 
-            {activeTab === 'servers' && (
-              <div role="tabpanel" id="admin-panel-servers" aria-labelledby="admin-tab-servers">
-                <Section title="Machines" meta={`${formatNumber(overview.machines.length)} running`}>
-                  <MachinesTable machines={overview.machines} />
-                </Section>
-              </div>
-            )}
+                      <Section title="Ranked Season" meta={overview.rankedSeason.label}>
+                        <RankedSeasonPanel
+                          season={overview.rankedSeason}
+                          draft={rankedSeasonDraft}
+                          busy={busyRankedSeason}
+                          onDraftChange={updateRankedSeasonDraft}
+                          onSave={saveRankedSeason}
+                        />
+                      </Section>
+                    </div>
+                  )}
 
-            {activeTab === 'rooms' && (
-              <div
-                role="tabpanel"
-                id="admin-panel-rooms"
-                aria-labelledby="admin-tab-rooms"
-                className="flex flex-col gap-3"
-              >
-                <Section title="Game Rooms" meta={`${formatNumber(overview.rooms.game.length)} active`}>
-                  <GameRoomsTable rooms={overview.rooms.game} />
-                </Section>
+                  {activePage === 'players' && (
+                    <div id="admin-page-players" className="flex flex-col gap-3">
+                      <Section
+                        title="Player Reports"
+                        meta={`${formatNumber(getActiveReportCount(overview))} active`}
+                      >
+                        <PlayerReportsTable
+                          reports={overview.playerReports?.reports ?? []}
+                          busyId={busyReportId}
+                          onSetStatus={updateReportStatus}
+                          onAccountAction={applyReportAccountAction}
+                        />
+                      </Section>
 
-                <Section title="Lobbies" meta={`${formatNumber(overview.rooms.lobbies.length)} active`}>
-                  <LobbiesTable lobbies={overview.rooms.lobbies} />
-                </Section>
-              </div>
-            )}
+                      <Section title="Player Ranks" meta={`${formatNumber(rankUsersPagination.total)} users`}>
+                        <PlayerRankPanel
+                          users={rankUsers}
+                          pagination={rankUsersPagination}
+                          search={rankSearch}
+                          reason={rankReason}
+                          drafts={rankUserDrafts}
+                          loading={rankUsersLoading}
+                          busyUserId={busyRankUserId}
+                          onSearchChange={setRankSearch}
+                          onReasonChange={setRankReason}
+                          onSearch={searchRankUsers}
+                          onClearSearch={clearRankUserSearch}
+                          onPageChange={changeRankUserPage}
+                          onDraftChange={updateRankUserDraft}
+                          onSave={saveRankUser}
+                        />
+                      </Section>
+                    </div>
+                  )}
 
-            {activeTab === 'rewards' && (
-              <div role="tabpanel" id="admin-panel-rewards" aria-labelledby="admin-tab-rewards" className="flex flex-col gap-3">
-                <Section
-                  title="Reward Economy"
-                  meta={rewardEconomyDraftDirty ? 'unsaved' : 'live'}
-                >
-                  <RewardEconomyPanel
-                    draft={rewardEconomyDraft}
-                    dirty={rewardEconomyDraftDirty}
-                    busy={busyRewardEconomy}
-                    updatedAt={overview.rewardEconomy?.playerRewards.updatedAt ?? overview.goldenBiomeRewards?.settings.updatedAt ?? null}
-                    tokenSymbol={overview.rewardEconomy?.rewardTokenSymbol ?? null}
-                    onDraftChange={updateRewardEconomyDraft}
-                    onSave={saveRewardEconomy}
-                  />
-                </Section>
+                  {activePage === 'economy' && (
+                    <div id="admin-page-economy" className="flex flex-col gap-3">
+                      <Section
+                        title="Reward Economy"
+                        meta={rewardEconomyDraftDirty ? 'unsaved' : 'live'}
+                      >
+                        <RewardEconomyPanel
+                          draft={rewardEconomyDraft}
+                          dirty={rewardEconomyDraftDirty}
+                          busy={busyRewardEconomy}
+                          updatedAt={overview.rewardEconomy?.playerRewards.updatedAt ?? overview.goldenBiomeRewards?.settings.updatedAt ?? null}
+                          tokenSymbol={overview.rewardEconomy?.rewardTokenSymbol ?? null}
+                          onDraftChange={updateRewardEconomyDraft}
+                          onSave={saveRewardEconomy}
+                        />
+                      </Section>
 
-                <Section
-                  title="Golden Rewards"
-                  meta={`${formatNumber(overview.goldenBiomeRewards?.rewards.filter((reward) => reward.status !== 'complete').length ?? 0)} pending`}
-                >
-                  <GoldenBiomeRewardsPanel
-                    overview={overview.goldenBiomeRewards}
-                    busyRewardId={busyGoldenRewardId}
-                    busyMode={busyGoldenMode}
-                    onSetMode={setGoldenDistributionMode}
-                    onDistribute={distributeGoldenReward}
-                  />
-                </Section>
-              </div>
-            )}
+                      <Section title="Skin Shop" meta={overview.skinShop.shop.enabled ? 'online' : 'locked'}>
+                        <SkinShopPanel
+                          overview={overview.skinShop}
+                          settingsDraft={skinShopDraft}
+                          itemDrafts={skinShopItemDrafts}
+                          dirtyById={skinShopItemDraftDirtyById}
+                          busySettings={busySkinShopSettings}
+                          busyItemId={busySkinShopItemId}
+                          onSettingsDraftChange={updateSkinShopDraft}
+                          onItemDraftChange={updateSkinShopItemDraft}
+                          onSaveSettings={saveSkinShopSettings}
+                          onSaveItem={saveSkinShopItem}
+                        />
+                      </Section>
 
-            {activeTab === 'reports' && (
-              <div role="tabpanel" id="admin-panel-reports" aria-labelledby="admin-tab-reports">
-                <Section
-                  title="Player Reports"
-                  meta={`${formatNumber((overview.playerReports?.counts.open ?? 0) + (overview.playerReports?.counts.reviewing ?? 0))} active`}
-                >
-                  <PlayerReportsTable
-                    reports={overview.playerReports?.reports ?? []}
-                    busyId={busyReportId}
-                    onSetStatus={updateReportStatus}
-                    onAccountAction={applyReportAccountAction}
-                  />
-                </Section>
-              </div>
-            )}
-          </>
-        ) : (
-          !loading && <EmptyTable label="Telemetry unavailable." />
-        )}
+                      <Section
+                        title="Golden Rewards"
+                        meta={`${formatNumber(getPendingGoldenRewardCount(overview))} pending`}
+                      >
+                        <GoldenBiomeRewardsPanel
+                          overview={overview.goldenBiomeRewards}
+                          busyRewardId={busyGoldenRewardId}
+                          busyMode={busyGoldenMode}
+                          onSetMode={setGoldenDistributionMode}
+                          onDistribute={distributeGoldenReward}
+                        />
+                      </Section>
+                    </div>
+                  )}
+
+                  {activePage === 'infrastructure' && (
+                    <div id="admin-page-infrastructure" className="flex flex-col gap-3">
+                      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                        {metrics
+                          .filter((metric) => ['Machines', 'Capacity', 'Game Rooms', 'Lobby', 'Clients'].includes(metric.label))
+                          .map((metric) => (
+                            <MetricTile key={metric.label} {...metric} />
+                          ))}
+                      </div>
+
+                      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,0.48fr)]">
+                        <Section title="Machine Pressure" meta={`${formatNumber(overview.machines.length)} machines`}>
+                          <MachinePressurePanel overview={overview} />
+                        </Section>
+
+                        <Section title="Diagnostics" meta={overview.diagnostics.redis.ok ? 'healthy' : 'attention'}>
+                          <DiagnosticsPanel overview={overview} />
+                        </Section>
+                      </div>
+
+                      <Section title="Machines" meta={`${formatNumber(overview.machines.length)} running`}>
+                        <MachinesTable machines={overview.machines} />
+                      </Section>
+
+                      <Section title="Game Rooms" meta={`${formatNumber(overview.rooms.game.length)} active`}>
+                        <GameRoomsTable rooms={overview.rooms.game} />
+                      </Section>
+
+                      <Section title="Lobbies" meta={`${formatNumber(overview.rooms.lobbies.length)} active`}>
+                        <LobbiesTable lobbies={overview.rooms.lobbies} />
+                      </Section>
+                    </div>
+                  )}
+                </>
+              ) : loading ? (
+                <EmptyTable label="Loading admin telemetry." />
+              ) : (
+                <EmptyTable label="Telemetry unavailable." />
+              )}
+            </div>
+          </div>
+        </section>
       </div>
     </main>
   );
