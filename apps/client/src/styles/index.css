@@ -5404,11 +5404,19 @@ body,
 
 .map-vote-card {
   min-width: 0;
+  aspect-ratio: 4 / 4.5;
   background:
     linear-gradient(145deg, rgb(255 255 255 / 0.055), transparent 38%),
     rgb(var(--color-strike-bg) / 0.18);
   border-color: rgb(255 255 255 / 0.13);
-  transition: transform 120ms ease-out, border-color 120ms ease-out, box-shadow 120ms ease-out;
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), border-color 180ms ease-out, box-shadow 180ms ease-out;
+}
+
+.map-vote-scrim {
+  z-index: 1;
+  background:
+    linear-gradient(to top, rgb(0 0 0 / 0.92) 0%, rgb(0 0 0 / 0.55) 26%, rgb(0 0 0 / 0.12) 48%, transparent 68%),
+    linear-gradient(to bottom, rgb(0 0 0 / 0.45) 0%, transparent 24%);
 }
 
 .map-vote-card-golden {
@@ -5433,6 +5441,29 @@ body,
 
 .map-vote-card-golden:hover {
   border-color: rgb(253 224 71 / 0.96);
+}
+
+.map-vote-card .map-vote-preview img {
+  transition: opacity 300ms ease-out, transform 600ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+@media (hover: hover) {
+  .map-vote-card:not(:disabled):hover {
+    transform: translateY(-4px);
+  }
+
+  .map-vote-card:not(:disabled):hover .map-vote-preview img {
+    transform: scale(1.06);
+  }
+
+  .map-vote-card:not(:disabled):hover .map-vote-vote-btn {
+    filter: brightness(1.16);
+  }
+
+  .map-vote-card:not(:disabled):hover .map-vote-vote-arrow {
+    transform: translateX(2px);
+  }
 }
 
 .map-vote-card:active {
@@ -5559,16 +5590,9 @@ body,
   }
 
   .map-vote-card {
-    display: grid;
-    grid-template-rows: minmax(0, 1fr) auto;
-    border-radius: 0.8rem;
+    aspect-ratio: 16 / 11;
+    border-radius: 0.9rem;
     justify-self: stretch;
-  }
-
-  .map-vote-preview {
-    aspect-ratio: 16 / 9;
-    min-height: clamp(6.9rem, 28dvh, 12rem);
-    max-height: clamp(8.2rem, 34dvh, 14.25rem);
   }
 
   .map-vote-card-meta {
@@ -5626,9 +5650,8 @@ body,
     display: none;
   }
 
-  .map-vote-preview {
-    min-height: clamp(6.1rem, 32dvh, 9.35rem);
-    max-height: clamp(6.85rem, 36dvh, 10.35rem);
+  .map-vote-card {
+    aspect-ratio: 16 / 10;
   }
 
   .map-vote-card-meta .relative.flex {
@@ -5705,8 +5728,8 @@ body,
     max-width: min(100%, 29rem);
   }
 
-  .map-vote-preview {
-    aspect-ratio: 16 / 7.25;
+  .map-vote-card {
+    aspect-ratio: 16 / 9;
   }
 
   .map-vote-action-bar {

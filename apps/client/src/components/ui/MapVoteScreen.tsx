@@ -43,6 +43,24 @@ function ClockGlyph({ className }: { className?: string }) {
   );
 }
 
+function VotersGlyph({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 19v-1a4 4 0 00-4-4H6a4 4 0 00-4 4v1" />
+      <circle cx="9" cy="7" r="3" strokeWidth={2} />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M22 19v-1a4 4 0 00-3-3.87M16 4.13A4 4 0 0116 11.87" />
+    </svg>
+  );
+}
+
+function ArrowGlyph({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.6} d="M9 6l6 6-6 6" />
+    </svg>
+  );
+}
+
 function CaptureFrame({
   captureKey,
   ready,
@@ -324,9 +342,8 @@ function GeneratingMapPanel() {
 
 type MapVoteBadgeTone = 'idle' | 'selected' | 'winner';
 
-const mapVoteCardClass = 'map-vote-card relative overflow-hidden rounded-lg border bg-black/[0.1] shadow-2xl shadow-black/[0.26] backdrop-blur-xl';
-const mapVoteCardMetaClass = 'map-vote-card-meta relative overflow-hidden border-t border-white/[0.045] bg-black/[0.025] px-3.5 py-2.5 xl:px-4';
-const mapVoteCardMetaStyle = { backdropFilter: 'brightness(0.42) blur(2px)' };
+const mapVoteCardClass = 'map-vote-card group relative overflow-hidden rounded-2xl border bg-strike-bg/40 shadow-2xl shadow-black/40';
+const mapVoteCardMetaClass = 'map-vote-card-meta absolute inset-x-0 bottom-0 z-10 px-4 pb-4 pt-14 xl:px-5';
 const GOLDEN_MAP_CARD_SHADOW = '0 20px 60px rgba(0,0,0,0.48), 0 0 34px rgb(var(--color-map-golden-glow) / 0.38), inset 0 0 0 1px rgb(var(--color-map-golden-highlight) / 0.2)';
 
 function isGoldenMapOption(option: MapVoteOption): boolean {
@@ -351,9 +368,9 @@ function getVoteBadgeStyle(tone: MapVoteBadgeTone) {
   }
 
   return {
-    background: 'rgba(255,255,255,0.035)',
-    color: 'rgba(255,255,255,0.58)',
-    borderColor: 'rgba(255,255,255,0.08)',
+    background: 'linear-gradient(180deg, rgb(var(--color-accent-primary) / 0.22), rgb(var(--color-accent-primary) / 0.12))',
+    color: 'rgb(var(--color-accent-primary-hover))',
+    borderColor: 'rgb(var(--color-accent-primary) / 0.34)',
   };
 }
 
@@ -369,24 +386,22 @@ function MapVoteCardMeta({
   badgeTone?: MapVoteBadgeTone;
 }) {
   return (
-    <div
-      className={mapVoteCardMetaClass}
-      style={mapVoteCardMetaStyle}
-    >
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/[0.02] via-transparent to-black/[0.07]" />
-      <div className="relative flex min-h-11 items-center justify-between gap-3">
+    <div className={mapVoteCardMetaClass}>
+      <div className="relative flex min-h-11 items-end justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate font-display text-base leading-none text-white xl:text-lg">{titleLabel}</p>
-          <p className="mt-1 truncate font-display text-[10px] uppercase tracking-wide text-white/45">
+          <p className="truncate font-display text-lg leading-none text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)] xl:text-xl">{titleLabel}</p>
+          <p className="mt-2 flex items-center gap-1.5 truncate font-display text-[10px] uppercase tracking-[0.14em] text-white/65 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]">
+            <VotersGlyph className="h-3 w-3 shrink-0 text-white/55" />
             {getVoteLabel(voteCount)}
           </p>
         </div>
 
         <span
-          className="shrink-0 rounded-full border px-3 py-1.5 font-display text-[11px] uppercase tracking-wide transition-colors"
+          className="map-vote-vote-btn flex shrink-0 items-center gap-1 rounded-full border px-3.5 py-2 font-display text-[11px] uppercase tracking-[0.14em] shadow-lg shadow-black/40 transition-all duration-150"
           style={getVoteBadgeStyle(badgeTone)}
         >
           {badgeLabel}
+          {badgeTone !== 'winner' && <ArrowGlyph className="map-vote-vote-arrow h-3 w-3 transition-transform duration-150" />}
         </span>
       </div>
     </div>
@@ -396,8 +411,9 @@ function MapVoteCardMeta({
 function PreparingMapCard() {
   return (
     <div className={`${mapVoteCardClass} map-vote-preparing-card border-white/[0.16]`} aria-hidden="true">
-      <div className="map-vote-preview relative aspect-[16/8.4] overflow-hidden border-b border-white/[0.06]">
+      <div className="map-vote-preview absolute inset-0 overflow-hidden">
         <GeneratingMapPanel />
+        <div className="map-vote-scrim pointer-events-none absolute inset-0" />
       </div>
       <MapVoteCardMeta titleLabel="Preparing Map" voteCount={0} badgeLabel="Vote" />
     </div>
@@ -681,31 +697,33 @@ export function MapVoteScreen() {
                         : undefined,
                   }}
                 >
-                  <div className="map-vote-preview relative aspect-[16/8.4] overflow-hidden border-b border-white/[0.06]">
+                  <div className="map-vote-preview absolute inset-0 overflow-hidden">
                     <MapPreviewImage
                       active={activePreviewOptionId === option.id}
                       option={option}
                       onReady={handlePreviewReady}
                     />
-                    <div
-                      className="absolute left-3 top-3 rounded-md border px-2.5 py-1 font-display text-[10px] uppercase tracking-wide shadow-lg shadow-black/20 backdrop-blur-md"
-                      style={getMapSizeBadgeStyle(option)}
-                    >
-                      {getMapSizeLabel(option)}
-                    </div>
-                    {(isSelected || isWinner) && (
-                      <div
-                        className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-lg border backdrop-blur-md"
-                        style={{
-                          background: isWinner ? 'rgb(var(--color-ui-success) / 0.22)' : 'rgb(var(--color-accent-primary) / 0.22)',
-                          borderColor: isWinner ? 'rgb(var(--color-ui-success) / 0.45)' : 'rgb(var(--color-accent-primary) / 0.45)',
-                          color: isWinner ? 'rgb(var(--color-ui-success-light))' : 'rgb(var(--color-accent-primary-hover))',
-                        }}
-                      >
-                        <CheckGlyph className="h-4 w-4" />
-                      </div>
-                    )}
+                    <div className="map-vote-scrim pointer-events-none absolute inset-0" />
                   </div>
+                  <div
+                    className="absolute left-3 top-3 z-10 flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-display text-[10px] uppercase tracking-wider shadow-lg shadow-black/40 backdrop-blur-md"
+                    style={getMapSizeBadgeStyle(option)}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-current shadow-[0_0_6px_currentColor]" />
+                    {getMapSizeLabel(option)}
+                  </div>
+                  {(isSelected || isWinner) && (
+                    <div
+                      className="absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-full border shadow-lg shadow-black/40 backdrop-blur-md"
+                      style={{
+                        background: isWinner ? 'rgb(var(--color-ui-success) / 0.32)' : 'rgb(var(--color-accent-primary) / 0.32)',
+                        borderColor: isWinner ? 'rgb(var(--color-ui-success) / 0.6)' : 'rgb(var(--color-accent-primary) / 0.6)',
+                        color: isWinner ? 'rgb(var(--color-ui-success-light))' : 'rgb(var(--color-accent-primary-hover))',
+                      }}
+                    >
+                      <CheckGlyph className="h-4 w-4" />
+                    </div>
+                  )}
 
                   <MapVoteCardMeta
                     titleLabel={option.name}

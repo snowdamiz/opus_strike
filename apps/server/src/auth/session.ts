@@ -37,6 +37,19 @@ export interface RoomAuthContext {
 }
 
 const JWT_SECRET = getAuthTokenSecret();
+export const AUTHENTICATION_REQUIRED_MESSAGE = 'Authentication required';
+
+export class AuthenticationRequiredError extends Error {
+  constructor(message = AUTHENTICATION_REQUIRED_MESSAGE) {
+    super(message);
+    this.name = 'AuthenticationRequiredError';
+  }
+}
+
+export function isAuthenticationRequiredError(error: unknown): error is AuthenticationRequiredError {
+  return error instanceof AuthenticationRequiredError
+    || (error instanceof Error && error.message === AUTHENTICATION_REQUIRED_MESSAGE);
+}
 
 export function createAuthToken(options: {
   userId: string;
@@ -222,5 +235,5 @@ export async function resolveRoomAuthContext(
     }
   }
 
-  throw new Error('Authentication required');
+  throw new AuthenticationRequiredError();
 }

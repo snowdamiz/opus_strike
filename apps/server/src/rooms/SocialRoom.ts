@@ -1,6 +1,11 @@
 import type { IncomingMessage } from 'http';
-import { Client, Room } from 'colyseus';
-import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
+import { Client, ErrorCode, Room, ServerError } from 'colyseus';
+import {
+  AUTHENTICATION_REQUIRED_MESSAGE,
+  isAuthenticationRequiredError,
+  resolveRoomAuthContext,
+  type RoomAuthContext,
+} from '../auth/session';
 import { socialEventBus } from '../social/eventBus';
 import { loadSocialStateForUser, type SocialStatePayload } from '../social/service';
 import { loggers } from '../utils/logger';
@@ -37,7 +42,14 @@ export class SocialRoom extends Room {
   private disposed = false;
 
   async onAuth(client: Client, options: SocialJoinOptions, request?: IncomingMessage): Promise<RoomAuthContext> {
-    return resolveRoomAuthContext(options as Record<string, unknown>, request);
+    try {
+      return await resolveRoomAuthContext(options as Record<string, unknown>, request);
+    } catch (error) {
+      if (isAuthenticationRequiredError(error)) {
+        throw new ServerError(ErrorCode.AUTH_FAILED, AUTHENTICATION_REQUIRED_MESSAGE);
+      }
+      throw error;
+    }
   }
 
   onCreate() {
