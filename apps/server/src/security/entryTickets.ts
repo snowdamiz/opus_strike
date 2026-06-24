@@ -8,6 +8,7 @@ import {
   type HeroId,
   type HeroSkinId,
   type MatchPerspective,
+  type PlayerRole,
   type Team,
 } from '@voxel-strike/shared';
 import { createSignedTicket, readSignedTicketClaims } from './signedTicket';
@@ -20,6 +21,7 @@ export interface GameEntryTicketClaims {
   userId: string;
   displayName: string;
   matchPerspective?: MatchPerspective;
+  role?: PlayerRole;
   assignedTeam?: Team;
   selectedHero?: HeroId;
   selectedSkinId?: HeroSkinId;
@@ -35,6 +37,7 @@ export interface CreateGameEntryTicketInput {
   userId: string;
   displayName: string;
   matchPerspective?: MatchPerspective;
+  role?: PlayerRole;
   assignedTeam?: Team;
   selectedHero?: HeroId;
   selectedSkinId?: HeroSkinId;
@@ -49,6 +52,10 @@ function normalizeSelectedSkinId(heroId: HeroId | undefined, skinId: unknown): H
   return skin.heroId === heroId ? skinId : undefined;
 }
 
+function normalizeTicketRole(role: unknown): PlayerRole {
+  return role === 'observer' ? 'observer' : 'combat';
+}
+
 export function createGameEntryTicket(input: CreateGameEntryTicketInput): string {
   const now = Date.now();
   const claims: GameEntryTicketClaims = {
@@ -59,6 +66,7 @@ export function createGameEntryTicket(input: CreateGameEntryTicketInput): string
     userId: input.userId,
     displayName: input.displayName,
     matchPerspective: input.matchPerspective ?? DEFAULT_MATCH_PERSPECTIVE,
+    role: input.role ?? 'combat',
     assignedTeam: input.assignedTeam,
     selectedHero: input.selectedHero,
     selectedSkinId: normalizeSelectedSkinId(input.selectedHero, input.selectedSkinId),
@@ -82,11 +90,14 @@ export function verifyGameEntryTicket(
   if (expected.lobbyId && claims.lobbyId !== expected.lobbyId) return null;
   if (claims.expiresAt < now) return null;
   if (claims.issuedAt > now + 5_000) return null;
-  if (!isTeamId(claims.assignedTeam)) return null;
+  const role = normalizeTicketRole(claims.role);
+  if (role === 'combat' && !isTeamId(claims.assignedTeam)) return null;
   if (!claims.userId || !claims.lobbyPlayerId || !claims.displayName || !claims.nonce) return null;
 
   return {
     ...claims,
+    role,
+    assignedTeam: isTeamId(claims.assignedTeam) ? claims.assignedTeam : undefined,
     matchPerspective: isMatchPerspective(claims.matchPerspective)
       ? claims.matchPerspective
       : DEFAULT_MATCH_PERSPECTIVE,

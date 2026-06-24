@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useGameStore } from '../../store/gameStore';
+import { normalizeObserverFlightSpeed, useGameStore } from '../../store/gameStore';
 import { setGameConsoleOpen } from '../../store/gameConsoleState';
 import { useChatStore, type ChatMessage } from '../../store/chatStore';
 import { useNetwork } from '../../contexts/NetworkContext';
@@ -37,8 +37,8 @@ let messageId = 0;
 
 const CHAT_PREVIEW_IDLE_TIMEOUT_MS = 30_000;
 const CHAT_PREVIEW_FADE_MS = 500;
-const PUBLIC_COMMAND_LIST = '/seed copy';
-const DEV_COMMAND_LIST = '/seed copy, /immune, /hero <hero>, /hero down <hero>, /skins <hero>, /skins apply <skin>, /end, /bot add <hero> <red|blue>, /bot skill <hero> <red|blue> <e|q|f|lmb|rmb>, /bot look <hero> <red|blue> <up|down>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze';
+const PUBLIC_COMMAND_LIST = '/seed copy, /observer <low|med|hight>';
+const DEV_COMMAND_LIST = '/seed copy, /observer <low|med|hight>, /immune, /hero <hero>, /hero down <hero>, /skins <hero>, /skins apply <skin>, /end, /bot add <hero> <red|blue>, /bot skill <hero> <red|blue> <e|q|f|lmb|rmb>, /bot look <hero> <red|blue> <up|down>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze';
 type BotLookDirection = 'up' | 'down';
 const BOT_SKILL_KEYS: Record<string, string> = {
   e: 'e',
@@ -387,6 +387,18 @@ export function GameConsole() {
         } else {
           addMessage(`Clipboard unavailable. Current seed: ${seed}`, 'error');
         }
+        break;
+      }
+
+      case '/observer': {
+        const speed = normalizeObserverFlightSpeed(parts[1]?.toLowerCase() ?? '');
+        if (parts.length !== 2 || !speed) {
+          addMessage('Usage: /observer low|med|hight', 'error');
+          break;
+        }
+
+        useGameStore.getState().setObserverFlightSpeed(speed);
+        addMessage(`Observer flight speed set to ${speed}.`, 'info');
         break;
       }
 

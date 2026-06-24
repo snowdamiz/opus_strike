@@ -14,7 +14,7 @@
 import { useRef, useEffect, useCallback, useMemo, type MutableRefObject } from 'react';
 import { useFrame, useThree, type RootState } from '@react-three/fiber';
 import * as THREE from 'three';
-import { useGameStore } from '../../store/gameStore';
+import { useGameStore, type ObserverFlightSpeed } from '../../store/gameStore';
 import { useCombatFeedbackStore } from '../../store/combatFeedbackStore';
 import {
   consumeLocalPlayerImpulses,
@@ -241,6 +241,11 @@ const BATTLE_ROYAL_DROP_AUDIO_FADE_IN_MS = 120;
 const BATTLE_ROYAL_DROP_AUDIO_FADE_OUT_MS = 180;
 const MOVEMENT_COMMAND_TARGET_PACKET_SIZE = 3;
 const MOVEMENT_COMMAND_MAX_FLUSH_AGE_MS = 1000 / TICK_RATE;
+const OBSERVER_FLIGHT_SPEED_UNITS: Record<ObserverFlightSpeed, number> = {
+  low: 8,
+  med: 18,
+  hight: 32,
+};
 const INACTIVE_LOCAL_MOVEMENT: PlayerMovementState = {
   isGrounded: true,
   isSprinting: false,
@@ -276,6 +281,9 @@ const authorityMetricsScratch: PredictionCorrectionMetrics[] = [];
 const battleRoyalDeploymentVisualPosition = new THREE.Vector3();
 const battleRoyalDeploymentCameraPosition = new THREE.Vector3();
 const battleRoyalDeploymentLookTarget = new THREE.Vector3();
+const observerFlightMove = new THREE.Vector3();
+const observerFlightForward = new THREE.Vector3();
+const observerFlightRight = new THREE.Vector3();
 const thirdPersonAimCameraPosition = new THREE.Vector3();
 const thirdPersonAimCollisionAnchor = new THREE.Vector3();
 const thirdPersonAimCameraDirection = new THREE.Vector3();
@@ -1752,6 +1760,110 @@ function runInactiveLifecycleFrame(
   return { kind: 'inactive', authorityApplied, substeps: 0, deathCamera: shouldUseDeathCamera };
 }
 
+function runObserverLifecycleFrame(
+  ctx: LocalPlayerFrameContext,
+  localPlayer: Player,
+  timing: FrameTiming,
+  frameInput: InputState
+): LocalPlayerFrameResult {
+  const {
+    camera,
+    cameraControl,
+    movement,
+    resetPredictedAbilitySounds,
+    resetViewmodelPoseState,
+    resetBlazeFlamethrower,
+    resetMovementCommandBuffer,
+    clearHeroActionLock,
+    updateLocalPlayer,
+    refs,
+  } = ctx;
+  const { dt, now } = timing;
+
+  clearBattleRoyalDeploymentPresentation(ctx, true);
+  cameraControl.resetDeathCamera(camera);
+  resetViewmodelPoseState('observer', null, now);
+  resetBlazeFlamethrower(now);
+  resetMovementCommandBuffer();
+  resetPredictedAbilitySounds();
+  clearHeroActionLock();
+  refs.reloadPressedRef.current = false;
+  refs.pendingReloadInputRef.current = false;
+  refs.lastExclusiveHoldInputRef.current = { ...EMPTY_EXCLUSIVE_HOLD_INPUT };
+
+  setLocalViewmodelMovement({
+    hasMovementInput: false,
+    isSprinting: false,
+    horizontalSpeed: 0,
+    updatedAtMs: now,
+  });
+  setChronosAegisVisualState(localPlayer.id, false, now);
+  setLocalSlideIntensity(0);
+  setLocalVisualMovement(INACTIVE_LOCAL_MOVEMENT);
+  movement.refs.slideIntensity.current = 0;
+  movement.refs.velocity.current.set(0, 0, 0);
+  movement.refs.isGrounded.current = false;
+  movement.refs.wasGrounded.current = false;
+  movement.refs.canJump.current = false;
+  movement.refs.isCrouching.current = false;
+  movement.refs.isSprinting.current = false;
+  movement.refs.isSliding.current = false;
+  movement.refs.slideTime.current = 0;
+  movement.refs.smoothedY.current = null;
+
+  cameraControl.updateCameraRotation(camera, false, false, dt);
+  camera.getWorldDirection(observerFlightForward).normalize();
+  observerFlightRight
+    .set(Math.cos(cameraControl.refs.yaw.current), 0, -Math.sin(cameraControl.refs.yaw.current))
+    .normalize();
+  observerFlightMove.set(0, 0, 0);
+
+  if (frameInput.moveForward) observerFlightMove.add(observerFlightForward);
+  if (frameInput.moveBackward) observerFlightMove.sub(observerFlightForward);
+  if (frameInput.moveRight) observerFlightMove.add(observerFlightRight);
+  if (frameInput.moveLeft) observerFlightMove.sub(observerFlightRight);
+  if (frameInput.jump) observerFlightMove.y += 1;
+  if (frameInput.crouch) observerFlightMove.y -= 1;
+
+  if (observerFlightMove.lengthSq() > 0.0001) {
+    observerFlightMove.normalize();
+    const speed = OBSERVER_FLIGHT_SPEED_UNITS[useGameStore.getState().observerFlightSpeed] ?? OBSERVER_FLIGHT_SPEED_UNITS.med;
+    camera.position.addScaledVector(observerFlightMove, speed * dt);
+    camera.position.y = Math.max(0.5, camera.position.y);
+  }
+
+  camera.updateMatrixWorld();
+  camera.getWorldDirection(refs.audioForwardRef.current);
+  refs.audioUpRef.current.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+  setAudioListenerTransform(camera.position, refs.audioForwardRef.current, refs.audioUpRef.current);
+
+  const observerPosition = {
+    x: camera.position.x,
+    y: camera.position.y,
+    z: camera.position.z,
+  };
+  refs.positionRef.current.copy(camera.position);
+  setPlayerVisualTransform(
+    localPlayer.id,
+    observerPosition,
+    cameraControl.refs.yaw.current,
+    cameraControl.refs.pitch.current
+  );
+  updateLocalPlayer({
+    role: 'observer',
+    state: 'spectating',
+    heroId: null,
+    skinId: null,
+    position: observerPosition,
+    velocity: { x: 0, y: 0, z: 0 },
+    lookYaw: cameraControl.refs.yaw.current,
+    lookPitch: cameraControl.refs.pitch.current,
+    movement: INACTIVE_LOCAL_MOVEMENT,
+  });
+
+  return { kind: 'inactive', authorityApplied: 0, substeps: 0, deathCamera: false };
+}
+
 function runBattleRoyalDeploymentFrame(
   ctx: LocalPlayerFrameContext,
   localPlayer: Player,
@@ -2442,7 +2554,10 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       return;
     }
 
-    const authority = runAuthorityPhase(frameCtx, localPlayer, frameNowMs);
+    const isObserverMode = localPlayer.role === 'observer';
+    const authority = isObserverMode
+      ? { localPlayer, authorityApplied: 0 }
+      : runAuthorityPhase(frameCtx, localPlayer, frameNowMs);
     localPlayer = authority.localPlayer;
     runHeroSwapPhase(frameCtx, localPlayer, now);
 
@@ -2471,6 +2586,11 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       rawFrameInput.moveLeft ||
       rawFrameInput.moveRight
     );
+
+    if (localPlayer.role === 'observer') {
+      runObserverLifecycleFrame(frameCtx, localPlayer, timing, frameInput);
+      return;
+    }
 
     const storeSnapshot = useGameStore.getState();
     const localDropPlayer = findBattleRoyalDropPlayer(storeSnapshot.battleRoyalDrop, localPlayer.id);

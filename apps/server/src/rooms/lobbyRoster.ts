@@ -1,6 +1,8 @@
 import {
   createTeamCountMap,
+  getPlayerRole,
   isTeamId,
+  type PlayerRole,
   type PublicRankSnapshot,
   type Team,
 } from '@voxel-strike/shared';
@@ -11,6 +13,7 @@ export interface LobbyRosterPlayer extends RoomRankState {
   name: string;
   isHost: boolean;
   isReady: boolean;
+  role?: string;
   team: string;
   heroId: string;
   skinId?: string;
@@ -24,6 +27,7 @@ export interface LobbyPlayerSnapshot {
   name: string;
   isHost: boolean;
   isReady: boolean;
+  role: PlayerRole;
   team: string;
   heroId: string;
   skinId?: string;
@@ -37,8 +41,13 @@ export interface LobbyRosterCounts {
   human: number;
   lobbyHuman: number;
   bot: number;
+  observer: number;
   combatParticipant: number;
   team: Record<Team, number>;
+}
+
+export function isLobbyObserver(player: Pick<LobbyRosterPlayer, 'role'>): boolean {
+  return getPlayerRole(player) === 'observer';
 }
 
 export function buildLobbyPlayerSnapshots(
@@ -51,6 +60,7 @@ export function buildLobbyPlayerSnapshots(
       name: player.name,
       isHost: player.isHost,
       isReady: player.isReady,
+      role: getPlayerRole(player),
       team: player.team,
       heroId: player.heroId,
       skinId: player.skinId || '',
@@ -71,6 +81,7 @@ export function countLobbyTeamMembers(
 
   let count = 0;
   for (const player of players) {
+    if (isLobbyObserver(player)) continue;
     if (player.team === team) count++;
   }
   return count;
@@ -85,6 +96,7 @@ export function countLobbyTeamMembersExcluding(
 
   let count = 0;
   for (const [playerId, player] of players) {
+    if (isLobbyObserver(player)) continue;
     if (playerId !== excludedPlayerId && player.team === team) {
       count++;
     }
@@ -99,6 +111,7 @@ export function countLobbyRoster(
     human: 0,
     lobbyHuman: 0,
     bot: 0,
+    observer: 0,
     combatParticipant: 0,
     team: createTeamCountMap(),
   };
@@ -108,6 +121,11 @@ export function countLobbyRoster(
       counts.bot++;
     } else {
       counts.lobbyHuman++;
+    }
+
+    if (isLobbyObserver(player)) {
+      counts.observer++;
+      continue;
     }
 
     counts.combatParticipant++;

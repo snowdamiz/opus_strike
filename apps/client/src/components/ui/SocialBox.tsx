@@ -472,9 +472,9 @@ export function SocialBox({
   initialPartyMode?: PartyMode;
   initialGameplayMode?: GameplayMode;
 }) {
-  const { isAuthenticated, user } = useWallet();
+  const { completeTutorial, isAuthenticated, user } = useWallet();
   useSocialRealtime(isAuthenticated ? user?.id : null);
-  const { addPartyBot, ensureParty, joinLobby, joinParty, kickPartyMember, startTutorialGame } = useNetwork();
+  const { addPartyBot, ensureParty, joinLobby, joinParty, kickPartyMember } = useNetwork();
   const playerName = useGameStore((state) => state.playerName);
   const appPhase = useGameStore((state) => state.appPhase);
   const currentLobbyId = useGameStore((state) => state.currentLobbyId);
@@ -731,9 +731,7 @@ export function SocialBox({
   const acceptLobbyInvite = (invite: LobbyInvite) => {
     runAction(`accept-invite:${invite.inviteId}`, async () => {
       if (tutorialRequired) {
-        startTutorialGame(playerName || user?.name || 'Player');
-        closePanel();
-        return;
+        await completeTutorial();
       }
 
       const data = await socialApi<{ invite: LobbyInvite }>(
@@ -1062,8 +1060,8 @@ export function SocialBox({
                             />
                             <div className="flex shrink-0 items-center gap-2">
                               <IconButton
-                                label="Join lobby"
-                                title="Join lobby"
+                                label={tutorialRequired ? 'Accept and skip tutorial' : 'Join lobby'}
+                                title={tutorialRequired ? 'Accept and skip tutorial' : 'Join lobby'}
                                 tone="success"
                                 disabled={Boolean(pendingAction)}
                                 onClick={() => acceptLobbyInvite(invite)}

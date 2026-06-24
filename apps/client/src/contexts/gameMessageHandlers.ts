@@ -121,6 +121,7 @@ import type {
   PlayerRevivedEvent,
   PlayerReviveStartedEvent,
   PlayerInterestMessage,
+  PlayerRole,
   PlayerVitalsAbilitySnapshot,
   PlayerVisibilityState,
   PlayerMovementState,
@@ -240,14 +241,25 @@ function normalizeRankSnapshot(source: any, fallback?: PublicRankSnapshot): Publ
   };
 }
 
+function normalizePlayerRole(role: unknown): PlayerRole {
+  return role === 'observer' ? 'observer' : 'combat';
+}
+
+function normalizePlayerTeam(team: unknown, role: PlayerRole, fallback: Team = 'red'): Team {
+  if (typeof team === 'string') return team as Team;
+  return role === 'observer' ? ('' as Team) : fallback;
+}
+
 /**
  * Creates a Player object from server schema data
  */
 export function createPlayerFromSchema(schemaPlayer: any, id: string): Player {
+  const role = normalizePlayerRole(schemaPlayer.role);
   return {
     id,
     name: schemaPlayer.name || 'Unknown',
-    team: (schemaPlayer.team || 'red') as Team,
+    role,
+    team: normalizePlayerTeam(schemaPlayer.team, role),
     heroId: (schemaPlayer.heroId || null) as HeroId | null,
     skinId: (schemaPlayer.skinId || null) as HeroSkinId | null,
     state: normalizePlayerState(schemaPlayer.state),
@@ -289,6 +301,7 @@ export function createDefaultLocalPlayer(sessionId: string, playerName: string):
   return {
     id: sessionId,
     name: playerName,
+    role: 'combat',
     team: 'red',
     heroId: null,
     skinId: null,
@@ -759,6 +772,7 @@ function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: number
   return {
     id: vitals.id,
     name: vitals.name || existing?.name || 'Unknown',
+    role: normalizePlayerRole(vitals.role ?? existing?.role),
     team: vitals.team,
     heroId: vitals.heroId,
     skinId: vitals.skinId ?? existing?.skinId ?? null,
@@ -836,6 +850,7 @@ function createLocalPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: n
 
 function applyLocalVitalsPatchInPlace(player: Player, vitals: PlayerVitalsSnapshot, serverTime: number): void {
   player.name = vitals.name || player.name;
+  player.role = normalizePlayerRole(vitals.role ?? player.role);
   player.team = vitals.team;
   player.heroId = vitals.heroId;
   player.skinId = vitals.skinId ?? player.skinId ?? null;
@@ -902,13 +917,15 @@ export function syncPlayerFromSchema(
     const store = useGameStore.getState();
     if (store.localPlayer) {
       const nextState = schemaPlayer.state || store.localPlayer.state;
+      const nextRole = normalizePlayerRole(schemaPlayer.role ?? store.localPlayer.role);
       const nextHeroId = (schemaPlayer.heroId || store.localPlayer.heroId) as HeroId | null;
       const nextSkinId = (schemaPlayer.skinId || store.localPlayer.skinId) as HeroSkinId | null;
       const updated = {
         ...store.localPlayer,
+        role: nextRole,
         heroId: nextHeroId,
         skinId: nextSkinId,
-        team: schemaPlayer.team || store.localPlayer.team,
+        team: normalizePlayerTeam(schemaPlayer.team, nextRole, store.localPlayer.team),
         isBot: Boolean(schemaPlayer.isBot ?? store.localPlayer.isBot),
         botDifficulty: schemaPlayer.botDifficulty || store.localPlayer.botDifficulty,
         botProfileId: schemaPlayer.botProfileId || store.localPlayer.botProfileId,
@@ -946,6 +963,7 @@ export function setupPlayerJoinedHandler(
   room.onMessage('playerJoined', measureNetworkMessage('playerJoined', (data: {
     playerId: string;
     playerName: string;
+    role?: string;
     team?: string;
     heroId?: string;
     skinId?: string;
@@ -965,10 +983,12 @@ export function setupPlayerJoinedHandler(
       const currentStore = useGameStore.getState();
       const existingPlayer = currentStore.players.get(data.playerId);
       if (existingPlayer) {
+        const role = normalizePlayerRole(data.role ?? existingPlayer.role);
         updatePlayer(data.playerId, {
           ...existingPlayer,
           name: data.playerName || existingPlayer.name,
-          team: (data.team || existingPlayer.team) as Team,
+          role,
+          team: normalizePlayerTeam(data.team, role, existingPlayer.team),
           heroId: (data.heroId || existingPlayer.heroId) as HeroId | null,
           skinId: (data.skinId || existingPlayer.skinId) as HeroSkinId | null,
           isBot: Boolean(data.isBot ?? existingPlayer.isBot),
@@ -979,10 +999,12 @@ export function setupPlayerJoinedHandler(
           visibility: data.position ? 'visible' : existingPlayer.visibility ?? 'hidden',
         });
       } else {
+        const role = normalizePlayerRole(data.role);
         const newPlayer: Player = {
           id: data.playerId,
           name: data.playerName,
-          team: (data.team || 'red') as Team,
+          role,
+          team: normalizePlayerTeam(data.team, role),
           heroId: (data.heroId || null) as HeroId | null,
           skinId: (data.skinId || null) as HeroSkinId | null,
           state: 'selecting',

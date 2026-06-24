@@ -83,6 +83,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
     const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
 
     for (const player of players.values()) {
+      if (player.role === 'observer') continue;
       const isLocalPlayer = player.id === playerId || player.id === localPlayerId;
       if (isLocalPlayer && !showLocalPlayerBody) continue;
       if (hideDeadPlayers && player.state === 'dead') continue;

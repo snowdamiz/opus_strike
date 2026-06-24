@@ -570,6 +570,7 @@ function vitals(overrides: Partial<PlayerVitalsSnapshot> = {}): PlayerVitalsSnap
   const base = vitals();
   assert.equal(haveVitalsChanged(undefined, base), true);
   assert.equal(haveVitalsChanged(base, vitals()), false);
+  assert.equal(haveVitalsChanged(base, vitals({ role: 'observer' })), true);
   assert.equal(haveVitalsChanged(base, vitals({ ultimateCharge: 65.4 })), false);
   assert.equal(haveVitalsChanged(base, vitals({ ultimateCharge: 66 })), true);
   assert.equal(haveVitalsChanged(base, vitals({ skinId: 'phantom.default' })), true);

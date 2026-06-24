@@ -5,6 +5,7 @@ import { Vec3Schema, MovementState, AbilityStateSchema } from './Components';
 export class Player extends Schema {
   id: string = '';
   name: string = '';
+  role: string = 'combat';
   team: string = 'red';
   heroId: string = '';
   skinId: string = '';
@@ -68,6 +69,7 @@ export class Player extends Schema {
 defineTypes(Player, {
   id: 'string',
   name: 'string',
+  role: 'string',
   team: 'string',
   heroId: 'string',
   skinId: 'string',

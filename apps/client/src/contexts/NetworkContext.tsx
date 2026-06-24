@@ -124,6 +124,7 @@ interface NetworkContextType {
   startParty: () => void;
   setLobbyReady: (ready: boolean) => void;
   setLobbyTeam: (team: string) => void;
+  setLobbyObserver: (observer?: boolean) => void;
   addLobbyBot: (options?: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }) => void;
   removeLobbyBot: (botId: string) => void;
   updateLobbyBotTeam: (botId: string, team: string) => void;
@@ -951,6 +952,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     lobbyRoomRef.current?.send('setTeam', { team });
   }, []);
 
+  const setLobbyObserver = useCallback((observer = true) => {
+    lobbyRoomRef.current?.send('setObserver', { observer });
+  }, []);
+
   const addLobbyBot = useCallback((options?: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }) => {
     setLobbyError(null);
     lobbyRoomRef.current?.send('addBot', options || {});
@@ -1360,6 +1365,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     leaveLobby,
     setLobbyReady,
     setLobbyTeam,
+    setLobbyObserver,
     addLobbyBot,
     removeLobbyBot,
     updateLobbyBotTeam,
@@ -1437,6 +1443,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setDevTimeFrozen,
     setLobbyReady,
     setLobbyTeam,
+    setLobbyObserver,
     setPartyHero,
     setPartySkin,
     setPartyBotFill,

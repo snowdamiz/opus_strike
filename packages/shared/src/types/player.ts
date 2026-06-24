@@ -8,6 +8,7 @@ import type { Team } from './team.js';
 export type { Team } from './team.js';
 
 export type BotDifficulty = 'easy' | 'normal' | 'hard';
+export type PlayerRole = 'combat' | 'observer';
 
 export type PlayerState = 
   | 'spectating'
@@ -91,6 +92,7 @@ export interface PlayerStats {
 export interface Player {
   id: string;
   name: string;
+  role?: PlayerRole;
   team: Team;
   heroId: HeroId | null;
   skinId?: HeroSkinId | null;
@@ -144,6 +146,7 @@ export interface Player {
 export interface PlayerSnapshot {
   id: string;
   name?: string;
+  role?: PlayerRole;
   team?: Team;
   heroId?: HeroId | null;
   skinId?: HeroSkinId | null;
@@ -169,6 +172,14 @@ export interface PlayerSnapshot {
   isBot?: boolean;
   rank?: PublicRankSnapshot;
   stats?: PlayerStats;
+}
+
+export function getPlayerRole(player: { role?: string | null } | null | undefined): PlayerRole {
+  return player?.role === 'observer' ? 'observer' : 'combat';
+}
+
+export function isObserverPlayer(player: { role?: string | null } | null | undefined): boolean {
+  return getPlayerRole(player) === 'observer';
 }
 
 export function isPlayerAlive(player: Pick<Player, 'state'> | { state?: string | null }): boolean {

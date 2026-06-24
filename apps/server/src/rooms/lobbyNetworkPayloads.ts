@@ -11,6 +11,7 @@ export interface LobbyPlayerJoinedPayload {
   playerName: string;
   isHost: boolean;
   isReady: boolean;
+  role: string;
   team: string;
   heroId: string;
   skinId: string;
@@ -61,6 +62,7 @@ export function buildLobbyPlayerJoinedPayload(
     playerName: player.name,
     isHost: player.isHost,
     isReady: player.isReady,
+    role: player.role === 'observer' ? 'observer' : 'combat',
     team: player.team,
     heroId: player.heroId,
     skinId: player.skinId || '',

@@ -9,6 +9,7 @@ import {
   type HeroId,
   type HeroSkinId,
   type MapProfileId,
+  type PlayerRole,
   type MatchPerspective,
   type PublicRankSnapshot,
   type VoxelMapSizeId,
@@ -70,6 +71,7 @@ interface LobbyPlayerWire {
   name: string;
   isHost: boolean;
   isReady?: boolean;
+  role?: PlayerRole;
   team?: string;
   heroId?: HeroId | '';
   skinId?: HeroSkinId | '';
@@ -94,6 +96,7 @@ interface PlayerJoinedMessage {
   playerName: string;
   isHost: boolean;
   isReady?: boolean;
+  role?: PlayerRole;
   team?: string;
   heroId?: HeroId | '';
   skinId?: HeroSkinId | '';
@@ -105,7 +108,7 @@ interface PlayerJoinedMessage {
 
 interface GameStartingMessage {
   gameRoomId: string;
-  players: { playerId: string; playerName: string; team?: string; isBot?: boolean }[];
+  players: { playerId: string; playerName: string; role?: PlayerRole; team?: string; isBot?: boolean }[];
   entryTicket?: string;
   seatReservation?: unknown;
   gameplayMode?: GameplayMode;
@@ -147,6 +150,7 @@ function toLobbyPlayer(player: LobbyPlayerWire): LobbyPlayer {
     name: player.name,
     isHost: player.isHost,
     isReady: player.isReady ?? false,
+    role: player.role === 'observer' ? 'observer' : 'combat',
     team: player.team || '',
     heroId: player.heroId || '',
     skinId: player.skinId || '',
@@ -163,6 +167,7 @@ function toJoinedLobbyPlayer(data: PlayerJoinedMessage): LobbyPlayer {
     name: data.playerName,
     isHost: data.isHost,
     isReady: data.isReady,
+    role: data.role,
     team: data.team,
     heroId: data.heroId,
     skinId: data.skinId,
@@ -431,7 +436,24 @@ export function setupLobbyListeners(
   });
 
   room.onMessage('playerTeamChanged', (data: { playerId: string; team: string }) => {
-    updateLobbyPlayerPatch(data.playerId, { team: data.team });
+    updateLobbyPlayerPatch(data.playerId, { role: 'combat', team: data.team });
+  });
+
+  room.onMessage('playerRoleChanged', (data: {
+    playerId: string;
+    role: PlayerRole;
+    team?: string;
+    heroId?: HeroId | '';
+    skinId?: HeroSkinId | '';
+    isReady?: boolean;
+  }) => {
+    updateLobbyPlayerPatch(data.playerId, {
+      role: data.role === 'observer' ? 'observer' : 'combat',
+      team: data.team || '',
+      heroId: data.heroId || '',
+      skinId: data.skinId || '',
+      ...(typeof data.isReady === 'boolean' ? { isReady: data.isReady } : {}),
+    });
   });
 
   room.onMessage('botDifficultyChanged', (data: { playerId: string; difficulty: BotDifficulty }) => {
@@ -467,7 +489,7 @@ export function setupLobbyListeners(
 
     loggers.network.info('game starting', data.gameRoomId);
     const myAssignment = data.players.find((player) => player.playerId === room.sessionId);
-    const myTeam = myAssignment?.team || 'red';
+    const myTeam = myAssignment?.team || '';
     useGameStore.setState({
       gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : DEFAULT_GAMEPLAY_MODE,
       matchPerspective: isMatchPerspective(data.matchPerspective) ? data.matchPerspective : DEFAULT_MATCH_PERSPECTIVE,

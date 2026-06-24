@@ -115,6 +115,7 @@ export function App() {
   const mapSize = useGameStore((state) => state.mapSize);
   const mapProfileId = useGameStore((state) => state.mapProfileId);
   const gameplayMode = useGameStore((state) => state.gameplayMode);
+  const isObserverMode = useGameStore((state) => state.localPlayer?.role === 'observer');
   const scoreboardKeybind = useSettingsStore((state) => state.settings.keybindings.scoreboard);
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showInGameMenu, setShowInGameMenu] = useState(false);
@@ -571,7 +572,7 @@ export function App() {
         )}
 
         {/* Show HUD during active gameplay */}
-        {isActiveGame && isMatchSceneReady && (
+        {isActiveGame && isMatchSceneReady && !isObserverMode && (
           <>
             <HUD />
             {isTutorialMode && <TutorialGuide />}
@@ -590,7 +591,7 @@ export function App() {
         )}
 
         {/* Countdown overlay */}
-        {gamePhase === 'countdown' && isMatchSceneReady && <CountdownOverlay />}
+        {gamePhase === 'countdown' && isMatchSceneReady && !isObserverMode && <CountdownOverlay />}
 
         {/* Round/game end overlays */}
         {gamePhase === 'round_end' && (

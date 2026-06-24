@@ -43,6 +43,7 @@ export interface FullPlayerVitalsSnapshotInput {
   id: string;
   netId: number;
   name: string;
+  role?: PlayerVitalsSnapshot['role'];
   team: PlayerVitalsSnapshot['team'];
   heroId: PlayerVitalsSnapshot['heroId'];
   skinId?: PlayerVitalsSnapshot['skinId'];
@@ -182,6 +183,7 @@ export function buildFullPlayerVitalsSnapshot(
     id: input.id,
     netId: input.netId,
     name: input.name,
+    ...(input.role ? { role: input.role } : {}),
     team: input.team,
     heroId: input.heroId,
     skinId: input.skinId,
@@ -258,6 +260,7 @@ export function buildPublicEnemyVitalsSnapshot(input: {
   id: string;
   netId: number;
   name: string;
+  role?: PlayerVitalsSnapshot['role'];
   team: PlayerVitalsSnapshot['team'];
   heroId: PlayerVitalsSnapshot['heroId'];
   skinId?: PlayerVitalsSnapshot['skinId'];
@@ -275,6 +278,7 @@ export function buildPublicEnemyVitalsSnapshot(input: {
     id: input.id,
     netId: input.netId,
     name: input.name,
+    ...(input.role ? { role: input.role } : {}),
     team: input.team,
     heroId: input.heroId,
     skinId: input.skinId,
@@ -452,6 +456,7 @@ export function haveVitalsChanged(
   return (
     previous.name !== next.name ||
     previous.netId !== next.netId ||
+    previous.role !== next.role ||
     previous.team !== next.team ||
     previous.heroId !== next.heroId ||
     previous.skinId !== next.skinId ||

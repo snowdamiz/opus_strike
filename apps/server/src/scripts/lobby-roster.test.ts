@@ -70,6 +70,7 @@ const roster = new Map<string, LobbyRosterPlayer>([
   assert.equal(snapshots[0].id, 'red-human');
   assert.equal(snapshots[0].name, 'Red Human');
   assert.equal(snapshots[0].isHost, true);
+  assert.equal(snapshots[0].role, 'combat');
   assert.equal(snapshots[0].rank.tier, 'bronze');
   assert.equal(snapshots[0].rank.division, 2);
 }
@@ -81,9 +82,35 @@ const roster = new Map<string, LobbyRosterPlayer>([
     human: 2,
     lobbyHuman: 2,
     bot: 1,
+    observer: 0,
     combatParticipant: 3,
     team: { ...createTeamCountMap(), red: 2, blue: 1 },
   });
+}
+
+{
+  const observerRoster = new Map<string, LobbyRosterPlayer>([
+    ...roster,
+    ['observer-a', lobbyPlayer({
+      id: 'observer-a',
+      name: 'Observer A',
+      role: 'observer',
+      isReady: true,
+      team: '',
+      heroId: '',
+    })],
+  ]);
+
+  assert.deepEqual(countLobbyRoster(observerRoster), {
+    human: 2,
+    lobbyHuman: 3,
+    bot: 1,
+    observer: 1,
+    combatParticipant: 3,
+    team: { ...createTeamCountMap(), red: 2, blue: 1 },
+  });
+  assert.equal(countLobbyTeamMembers(observerRoster.values(), 'red'), 2);
+  assert.equal(countLobbyTeamMembersExcluding(observerRoster, 'red', 'observer-a'), 2);
 }
 
 {

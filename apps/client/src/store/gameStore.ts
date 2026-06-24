@@ -50,6 +50,14 @@ export interface PowerupPickupCollectionState {
   collectedAt: number;
 }
 
+export type ObserverFlightSpeed = 'low' | 'med' | 'hight';
+
+export function normalizeObserverFlightSpeed(value: string): ObserverFlightSpeed | null {
+  if (value === 'low' || value === 'med' || value === 'hight') return value;
+  if (value === 'high') return 'hight';
+  return null;
+}
+
 // ============================================================================
 // CORE STATE INTERFACE (non-slice state)
 // ============================================================================
@@ -131,6 +139,7 @@ interface CoreState {
 
   // Slide visual effects
   slideIntensity: number;
+  observerFlightSpeed: ObserverFlightSpeed;
 
 }
 
@@ -186,6 +195,7 @@ interface CoreActions {
   recordSkillCast: (timestampMs?: number) => void;
   recordPrimaryFire: (timestampMs?: number) => void;
   setSlideIntensity: (intensity: number) => void;
+  setObserverFlightSpeed: (speed: ObserverFlightSpeed) => void;
 
   // Ghost cleanup
   cleanupGhostPlayers: () => void;
@@ -294,6 +304,7 @@ const coreInitialState: CoreState = {
   lastSkillCastAt: 0,
   lastPrimaryFireAt: 0,
   slideIntensity: 0,
+  observerFlightSpeed: 'med',
 };
 
 const initialState = {
@@ -693,6 +704,10 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   )),
 
   setSlideIntensity: (intensity) => set((state) => state.slideIntensity === intensity ? state : { slideIntensity: intensity }),
+
+  setObserverFlightSpeed: (speed) => set((state) => (
+    state.observerFlightSpeed === speed ? state : { observerFlightSpeed: speed }
+  )),
 
   // ==================== RESET ACTIONS ====================
 

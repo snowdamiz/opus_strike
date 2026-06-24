@@ -353,6 +353,8 @@ import {
   calculateFalloffDamage,
   resolveDirectionalMovementIntent,
   canReceiveLiveTransform,
+  getPlayerRole,
+  isObserverPlayer,
   isPlayerAliveOrDowned,
   isHeroSkinId,
   CHRONOS_PRIMARY_MAGAZINE_SIZE,
@@ -1282,7 +1284,10 @@ export class GameRoom extends Room<GameState> {
       this.reservedHumanPlayers,
       Math.floor(options.capacityPlayerCost ?? this.reservedHumanPlayers)
     );
-    this.maxClients = this.config.maxPlayers;
+    this.maxClients = Math.max(
+      this.config.maxPlayers,
+      this.reservedHumanPlayers + Math.max(0, options.botAssignments?.length ?? 0)
+    );
     this.antiCheat = new AntiCheatRoomRuntime({
       roomId: this.roomId,
       lobbyId: this.lobbyId,
@@ -1525,7 +1530,7 @@ export class GameRoom extends Room<GameState> {
 
     if (shouldRejectRoomJoinForCapacity({
       playerCount: this.state.players.size,
-      maxPlayers: this.config.maxPlayers,
+      maxPlayers: this.maxClients,
     })) {
       client.send('error', { message: 'Game room is full' });
       this.participantRegistry.clearSession(client.sessionId);
@@ -1589,6 +1594,22 @@ export class GameRoom extends Room<GameState> {
       authDisplayName: authContext.displayName,
       playerNumber: this.state.players.size + 1,
     });
+    player.role = getPlayerRole(entryTicket);
+    if (isObserverPlayer(player)) {
+      player.team = '';
+      player.heroId = '';
+      player.skinId = '';
+      player.state = 'spectating';
+      player.isReady = true;
+      player.isBot = false;
+      player.botDifficulty = '';
+      player.botProfileId = '';
+      applyRoomRankState(player, toPublicRankSnapshot(authContext.rank));
+      this.assignPlayerSpawnPosition(player);
+      player.position.y += 12;
+      return player;
+    }
+
     player.team = resolveRoomJoinTeam({
       players: this.state.players.values(),
       teamIds: this.getAssignableTeamIds(),
@@ -2149,6 +2170,7 @@ export class GameRoom extends Room<GameState> {
   ): boolean {
     if (!recipient) return true;
     if (recipient.id === targetId) return true;
+    if (isObserverPlayer(recipient)) return true;
     if (recipient.team === target.team) return true;
     if (isBattleRoyalMode(this.gameplayMode) && recipient.state === 'dead') return false;
     return (interest ?? this.getRecipientInterest(recipient, target, now, frameContext)).state === 'visible';
@@ -2213,6 +2235,7 @@ export class GameRoom extends Room<GameState> {
       id,
       netId: this.getPlayerNetId(id),
       name: player.name,
+      role: getPlayerRole(player),
       team: player.team as Team,
       heroId: (player.heroId || null) as HeroId | null,
       skinId: (player.skinId || null) as HeroSkinId | null,
@@ -2264,6 +2287,7 @@ export class GameRoom extends Room<GameState> {
       id,
       netId: this.getPlayerNetId(id),
       name: player.name,
+      role: getPlayerRole(player),
       team: player.team as Team,
       heroId: (player.heroId || null) as HeroId | null,
       skinId: (player.skinId || null) as HeroSkinId | null,
@@ -2290,9 +2314,13 @@ export class GameRoom extends Room<GameState> {
     const shouldRestrictBattleRoyalSpectator = recipient
       && isBattleRoyalMode(this.gameplayMode)
       && recipient.state === 'dead'
+      && !isObserverPlayer(recipient)
       && recipient.id !== id
       && recipient.team !== player.team;
-    const shouldResolveInterest = recipient && recipient.id !== id && recipient.team !== player.team;
+    const shouldResolveInterest = recipient
+      && !isObserverPlayer(recipient)
+      && recipient.id !== id
+      && recipient.team !== player.team;
     const visibility = shouldRestrictBattleRoyalSpectator
       ? 'hidden'
       : shouldResolveInterest
@@ -2692,6 +2720,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private shouldIncludeJoinPosition(recipient: Player | null, target: Player): boolean {
+    if (isObserverPlayer(recipient)) return true;
     return shouldIncludePlayerJoinPosition({
       recipientId: recipient?.id,
       recipientTeam: recipient?.team,
@@ -2705,6 +2734,7 @@ export class GameRoom extends Room<GameState> {
     const payload: {
       playerId: string;
       playerName: string;
+      role: string;
       team: string;
       heroId: string;
       isReady: boolean;
@@ -2716,6 +2746,7 @@ export class GameRoom extends Room<GameState> {
     } = {
       playerId: target.id,
       playerName: target.name,
+      role: getPlayerRole(target),
       team: target.team,
       heroId: target.heroId,
       isReady: target.isReady,
@@ -3311,10 +3342,12 @@ export class GameRoom extends Room<GameState> {
   }
 
   private registerMatchParticipant(player: Player, now = Date.now()) {
+    if (isObserverPlayer(player)) return null;
     return this.matchLedger.registerParticipant(player, now);
   }
 
   private syncMatchParticipant(player: Player) {
+    if (isObserverPlayer(player)) return null;
     return this.matchLedger.syncParticipant(player);
   }
 
@@ -8008,6 +8041,15 @@ export class GameRoom extends Room<GameState> {
   }
 
   private commitPreselectedHeroForMatchStart(player: Player): void {
+    if (isObserverPlayer(player)) {
+      player.heroId = '';
+      player.skinId = '';
+      player.abilities.clear();
+      player.isReady = true;
+      player.state = 'spectating';
+      return;
+    }
+
     if (!isHeroId(player.heroId) || !this.isPlayerTeamHeroAvailable(player, player.heroId)) {
       const committed = this.setPlayerHero(player, this.selectAvailableHeroForPlayer(player));
       if (!committed) {
@@ -8561,6 +8603,11 @@ export class GameRoom extends Room<GameState> {
           now: Date.now(),
         })) {
           this.state.players.forEach(p => {
+            if (isObserverPlayer(p)) {
+              p.state = 'spectating';
+              p.isReady = true;
+              return;
+            }
             if (!p.heroId) {
               this.setPlayerHero(p, this.selectAvailableHeroForPlayer(p));
             }
@@ -8652,6 +8699,13 @@ export class GameRoom extends Room<GameState> {
 
     const now = Date.now();
     this.state.players.forEach((player) => {
+      if (isObserverPlayer(player)) {
+        player.state = 'spectating';
+        player.velocity.x = 0;
+        player.velocity.y = 0;
+        player.velocity.z = 0;
+        return;
+      }
       player.state = 'spawning';
     });
     if (isBattleRoyalMode(this.gameplayMode)) {
@@ -8666,6 +8720,7 @@ export class GameRoom extends Room<GameState> {
 
     this.state.players.forEach((player, playerId) => {
       if (player.isBot) return;
+      if (isObserverPlayer(player)) return;
 
       const client = this.clientRegistry.getClient(playerId);
       if (!client) return;
@@ -8699,6 +8754,15 @@ export class GameRoom extends Room<GameState> {
     this.updateMetadata();
 
     this.state.players.forEach(player => {
+      if (isObserverPlayer(player)) {
+        player.state = 'spectating';
+        player.isReady = true;
+        player.heroId = '';
+        player.skinId = '';
+        player.abilities.clear();
+        return;
+      }
+
       player.state = 'selecting';
       const preferredHero = player.isBot ? this.botRuntime.getPreferredHero(player.id) : null;
       if (preferredHero) {
@@ -8729,6 +8793,13 @@ export class GameRoom extends Room<GameState> {
     this.updateMetadata();
 
     this.state.players.forEach(player => {
+      if (isObserverPlayer(player)) {
+        player.state = 'spectating';
+        player.velocity.x = 0;
+        player.velocity.y = 0;
+        player.velocity.z = 0;
+        return;
+      }
       player.state = 'spawning';
       player.velocity.x = 0;
       player.velocity.y = 0;
@@ -8749,11 +8820,13 @@ export class GameRoom extends Room<GameState> {
 
     this.clearMatchStartCancelTimer();
     const now = Date.now();
-    const participants = Array.from(this.state.players.values()).map((player) => ({
-      playerId: player.id,
-      team: player.team as Team,
-      isBot: player.isBot,
-    }));
+    const participants = Array.from(this.state.players.values())
+      .filter((player) => !isObserverPlayer(player))
+      .map((player) => ({
+        playerId: player.id,
+        team: player.team as Team,
+        isBot: player.isBot,
+      }));
     this.battleRoyalDrop = createBattleRoyalDropState(this.getMapManifest(), participants, now);
     this.applyPhaseStatePatch(buildBattleRoyalDeploymentPhaseStatePatch({
       now,
@@ -8762,6 +8835,10 @@ export class GameRoom extends Room<GameState> {
     this.updateMetadata();
 
     this.state.players.forEach((player) => {
+      if (isObserverPlayer(player)) {
+        player.state = 'spectating';
+        return;
+      }
       const dropPlayer = this.battleRoyalDrop?.players.get(player.id);
       if (!dropPlayer) return;
       this.resetPlayerLifeRuntime(player, now);
@@ -8779,6 +8856,7 @@ export class GameRoom extends Room<GameState> {
 
     this.state.players.forEach((player, playerId) => {
       if (player.isBot) return;
+      if (isObserverPlayer(player)) return;
       const client = this.clientRegistry.getClient(playerId);
       if (client) {
         this.sendSelfMovementAuthority(player, client, 'spawn');
@@ -8803,6 +8881,14 @@ export class GameRoom extends Room<GameState> {
     this.blazeBurns.clearAll();
 
     this.state.players.forEach(player => {
+      if (isObserverPlayer(player)) {
+        player.state = 'spectating';
+        player.velocity.x = 0;
+        player.velocity.y = 0;
+        player.velocity.z = 0;
+        return;
+      }
+
       if (options.preserveAlivePlayers && player.state === 'alive') {
         if (ledger.state === 'active') {
           this.registerMatchParticipant(player, this.state.roundStartTime);
@@ -10334,11 +10420,13 @@ export class GameRoom extends Room<GameState> {
   ): BattleRoyalDropState {
     const previewDrop = createBattleRoyalDropState(
       this.getMapManifest(),
-      Array.from(this.state.players.values()).map((player) => ({
-        playerId: player.id,
-        team: player.team as Team,
-        isBot: player.isBot,
-      })),
+      Array.from(this.state.players.values())
+        .filter((player) => !isObserverPlayer(player))
+        .map((player) => ({
+          playerId: player.id,
+          team: player.team as Team,
+          isBot: player.isBot,
+        })),
       now
     );
 

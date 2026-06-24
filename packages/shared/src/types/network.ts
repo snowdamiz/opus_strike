@@ -1,4 +1,4 @@
-import type { BotDifficulty, PlayerSnapshot, PlayerStats, PlayerVisibilityState, Team } from './player.js';
+import type { BotDifficulty, PlayerRole, PlayerSnapshot, PlayerStats, PlayerVisibilityState, Team } from './player.js';
 import type { HeroId } from './hero.js';
 import type { HeroSkinId } from './skins.js';
 import type { GamePhase, MatchOutcome } from './game.js';
@@ -213,6 +213,7 @@ export interface PlayerVitalsSnapshot {
   id: string;
   netId: number;
   name: string;
+  role?: PlayerRole;
   team: Team;
   heroId: HeroId | null;
   skinId?: HeroSkinId | null;

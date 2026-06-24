@@ -30,6 +30,7 @@ import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
 import { TopNavIconButton } from './TopNavIconButton';
 import { HeroIcon } from './HeroIcons';
+import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
 import { WalletProviderLogo } from './WalletProviderLogo';
 import { useUISounds } from '../../hooks/useUiAudio';
 import { useMobileDevice } from '../../hooks/useDeviceCapabilities';
@@ -68,7 +69,7 @@ import type {
   HeroSkinId,
   SkinPurchaseIntentSnapshot,
 } from '@voxel-strike/shared';
-import { BLAZE_UI_COLORS, DISCORD_AUTH_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
+import { BLAZE_UI_COLORS, DISCORD_AUTH_COLORS, HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 import { usePwaInstallPrompt } from '../../pwa';
 import { PwaInstallToast } from './PwaInstallToast';
 import {
@@ -434,6 +435,7 @@ export function MainLobby() {
     linkWallet,
     signTransaction,
     registerUser,
+    completeTutorial,
     error: authError,
     clearError,
     clearNotice,
@@ -457,6 +459,7 @@ export function MainLobby() {
   const [runningGameSession, setRunningGameSession] = useState<RunningGameSession | null>(null);
   const [isReconnectChecking, setIsReconnectChecking] = useState(false);
   const [isMobilePwaInstalling, setIsMobilePwaInstalling] = useState(false);
+  const [isSkippingTutorial, setIsSkippingTutorial] = useState(false);
   const heroAnimationMode = HERO_IDLE_ANIMATION_MODE;
 
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -1036,6 +1039,20 @@ export function MainLobby() {
     startTutorialGame(playerName);
   };
 
+  const handleSkipTutorial = async () => {
+    if (isSkippingTutorial) return;
+
+    setError(null);
+    setIsSkippingTutorial(true);
+    try {
+      await completeTutorial();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to skip tutorial');
+    } finally {
+      setIsSkippingTutorial(false);
+    }
+  };
+
   const handleRankedPlay = async () => {
     setError(null);
     if (tutorialRequired) {
@@ -1243,6 +1260,7 @@ export function MainLobby() {
             rankedTokenHoldError={rankedTokenHoldError}
             runningGameSession={runningGameSession}
             isReconnectChecking={isReconnectChecking}
+            isSkippingTutorial={isSkippingTutorial}
             serverLatency={serverLatency}
             mobilePwaInstallRequired={mobilePwaInstallRequired}
             mobilePwaCanInstall={pwaInstall.canPromptInstall}
@@ -1255,6 +1273,7 @@ export function MainLobby() {
             onLeaveParty={leaveParty}
             onOpenSocial={() => setShowSocial(true)}
             onStartTutorial={handleStartTutorial}
+            onSkipTutorial={handleSkipTutorial}
             onReconnect={handleReconnectGame}
             onLogin={handleOpenLogin}
             onSelectHero={handleSelectHero}
@@ -1344,6 +1363,57 @@ function skinOwnershipLabel(skin: HeroSkinCatalogItem): string {
   return 'OWNED';
 }
 
+type LoadoutCosmeticCategory = 'hero-skins' | 'skill-effects';
+
+interface LoadoutCategorySummary {
+  id: LoadoutCosmeticCategory;
+  label: string;
+  ownedCount: number;
+  totalCount: number;
+}
+
+function getLoadoutSkillPreviewKey(skill: HeroSkillItem): string {
+  return `${skill.input}:${skill.abilityId ?? skill.name}`;
+}
+
+const LOADOUT_SKILL_PREVIEW_VIDEO_SRC: Partial<Record<HeroId, Partial<Record<string, string>>>> = {};
+
+function getLoadoutSkillPreviewVideoSrc(heroId: HeroId, skill: HeroSkillItem | null): string | null {
+  if (!skill) return null;
+  return LOADOUT_SKILL_PREVIEW_VIDEO_SRC[heroId]?.[getLoadoutSkillPreviewKey(skill)] ?? null;
+}
+
+function LoadoutSkillVideoPreview({
+  heroId,
+  skill,
+}: {
+  heroId: HeroId;
+  skill: HeroSkillItem | null;
+}) {
+  const videoSrc = getLoadoutSkillPreviewVideoSrc(heroId, skill);
+
+  return (
+    <div
+      className="loadout-skill-video-preview"
+      data-empty={videoSrc ? undefined : 'true'}
+      aria-label={skill ? `${skill.name} effect video preview` : `${HERO_DEFINITIONS[heroId].name} effect video preview`}
+    >
+      {videoSrc && (
+        <video
+          key={videoSrc}
+          className="loadout-skill-video"
+          src={videoSrc}
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="metadata"
+        />
+      )}
+    </div>
+  );
+}
+
 function LoadoutTab({
   featuredHero,
   selectedSkinId,
@@ -1370,105 +1440,196 @@ function LoadoutTab({
   onPurchaseSkin: (skin: HeroSkinCatalogItem) => void;
 }) {
   const hero = HERO_DEFINITIONS[featuredHero];
+  const [activeCategory, setActiveCategory] = useState<LoadoutCosmeticCategory>('hero-skins');
   const [previewSkinId, setPreviewSkinId] = useState<HeroSkinId>(selectedSkinId);
+  const [previewSkillKey, setPreviewSkillKey] = useState<string | null>(null);
   const selectedSkin = skins.find((skin) => skin.id === selectedSkinId) ?? skins[0] ?? null;
   const previewSkin = skins.find((skin) => skin.id === previewSkinId) ?? selectedSkin;
   const ownedCount = skins.filter((skin) => skin.owned).length;
-  const shopMeta = catalog?.shop
-    ? `${catalog.shop.enabled ? 'SHOP ONLINE' : 'SHOP LOCKED'} · ${catalog.shop.tokenSymbol || 'TOKEN'} · ${catalog.shop.cluster}`
-    : 'CATALOG';
+  const skillEffectItems = useMemo(() => getHeroSkillItems(featuredHero), [featuredHero]);
+  const previewSkill = skillEffectItems.find((skill) => getLoadoutSkillPreviewKey(skill) === previewSkillKey)
+    ?? skillEffectItems[0]
+    ?? null;
+  const previewSkillResolvedKey = previewSkill ? getLoadoutSkillPreviewKey(previewSkill) : null;
+  const skillEffectOwnedCount = skillEffectItems.length;
+  const isHeroSkinCategory = activeCategory === 'hero-skins';
+  const activeSkillPreview = isHeroSkinCategory ? null : previewSkill;
+  const categorySummaries: LoadoutCategorySummary[] = [
+    {
+      id: 'hero-skins',
+      label: 'Hero Skins',
+      ownedCount,
+      totalCount: skins.length,
+    },
+    {
+      id: 'skill-effects',
+      label: 'Skill Effects',
+      ownedCount: skillEffectOwnedCount,
+      totalCount: skillEffectItems.length,
+    },
+  ];
+  const stageTitle = isHeroSkinCategory
+    ? previewSkin?.displayName ?? hero.name
+    : activeSkillPreview?.name ?? `${hero.name} Effects`;
 
   useEffect(() => {
     setPreviewSkinId(selectedSkinId);
   }, [featuredHero, selectedSkinId]);
 
+  useEffect(() => {
+    setPreviewSkillKey(null);
+  }, [featuredHero]);
+
   return (
     <div className="loadout-screen menu-content-wide">
-      <div className="loadout-hero-switcher" aria-label="Choose hero">
-        {ALL_HERO_IDS.map((heroId) => {
-          const heroDefinition = HERO_DEFINITIONS[heroId];
-          const active = heroId === featuredHero;
-          const equippedSkin = catalog?.loadouts.find((loadout) => loadout.heroId === heroId)?.skinId
-            ?? getDefaultHeroSkinId(heroId);
-          const equippedSkinName = catalog?.skins.find((skin) => skin.id === equippedSkin)?.displayName ?? 'Default';
-          return (
-            <button
-              type="button"
-              key={heroId}
-              onClick={() => onSelectHero(heroId)}
-              className={`loadout-hero-tab${active ? ' is-active' : ''}`}
-              aria-pressed={active}
-              title={heroDefinition.name}
-            >
-              <HeroIcon heroId={heroId} className="loadout-hero-tab-icon" />
-              <span className="loadout-hero-tab-copy">
-                <span className="loadout-hero-tab-name">{heroDefinition.name}</span>
-                <span className="loadout-hero-tab-skin">{equippedSkinName}</span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
       {error && (
         <div className="loadout-error" role="alert">
           {error}
         </div>
       )}
 
-      <div className="loadout-workbench">
-        <section className="loadout-stage" aria-label={`${hero.name} skin preview`}>
+      <div className="loadout-workbench" data-category={activeCategory}>
+        <aside className="loadout-roster" aria-label="Choose hero">
+          <div className="loadout-roster-list">
+            {ALL_HERO_IDS.map((heroId) => {
+              const heroDefinition = HERO_DEFINITIONS[heroId];
+              const active = heroId === featuredHero;
+              const equippedSkin = catalog?.loadouts.find((loadout) => loadout.heroId === heroId)?.skinId
+                ?? getDefaultHeroSkinId(heroId);
+              const equippedSkinName = catalog?.skins.find((skin) => skin.id === equippedSkin)?.displayName ?? 'Default';
+              return (
+                <button
+                  type="button"
+                  key={heroId}
+                  onClick={() => onSelectHero(heroId)}
+                  className={`loadout-hero-tab${active ? ' is-active' : ''}`}
+                  aria-pressed={active}
+                  title={heroDefinition.name}
+                >
+                  <HeroIcon heroId={heroId} className="loadout-hero-tab-icon" />
+                  <span className="loadout-hero-tab-copy">
+                    <span className="loadout-hero-tab-name">{heroDefinition.name}</span>
+                    <span className="loadout-hero-tab-skin">{equippedSkinName}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </aside>
+
+        <section className="loadout-stage" aria-label={`${hero.name} cosmetic preview`}>
           <div className="loadout-stage-copy">
             <div>
-              <p className="loadout-kicker">{previewSkin?.owned ? 'ARMORY READY' : 'PREVIEW ACCESS'}</p>
-              <h2 className="loadout-stage-title">{previewSkin?.displayName ?? hero.name}</h2>
-            </div>
-            <div className="loadout-stage-meta">
-              <span>{hero.name}</span>
-              <span>{previewSkin?.rarity ?? 'common'}</span>
-              <span>{previewSkin?.id === selectedSkinId ? 'equipped' : 'previewing'}</span>
+              <p className="loadout-kicker">
+                {isHeroSkinCategory
+                  ? (previewSkin?.owned ? 'ARMORY READY' : 'PREVIEW ACCESS')
+                  : 'EFFECT BAY'}
+              </p>
+              <h2 className="loadout-stage-title">{stageTitle}</h2>
             </div>
           </div>
 
           <div className="loadout-stage-preview">
-            <Suspense fallback={null}>
-              <FeaturedHeroPreview
+            {isHeroSkinCategory ? (
+              <Suspense fallback={null}>
+                <FeaturedHeroPreview
+                  heroId={featuredHero}
+                  skinId={previewSkin?.id ?? selectedSkinId}
+                  initialYaw={Math.PI - 0.18}
+                  animationMode={HERO_IDLE_ANIMATION_MODE}
+                  className="loadout-featured-preview"
+                />
+              </Suspense>
+            ) : (
+              <LoadoutSkillVideoPreview
                 heroId={featuredHero}
-                skinId={previewSkin?.id ?? selectedSkinId}
-                initialYaw={Math.PI - 0.18}
-                animationMode={HERO_IDLE_ANIMATION_MODE}
-                className="loadout-featured-preview"
+                skill={activeSkillPreview}
               />
-            </Suspense>
-          </div>
-
-          <div className="loadout-stage-footer">
-            <p>{previewSkin?.subtitle ?? 'Inspect the selected hero frame.'}</p>
-            <span>{shopMeta}</span>
+            )}
           </div>
         </section>
 
-        <section className="loadout-skin-bay" aria-label={`${hero.name} skins`}>
-          <div className="loadout-skin-bay-header">
-            <div>
-              <p className="loadout-kicker">SKIN BAY</p>
-              <h3>{hero.name}</h3>
-            </div>
-            <span>{ownedCount}/{skins.length} owned</span>
+        <section className="loadout-skin-bay" aria-label={`${hero.name} cosmetics`}>
+          <div className="loadout-category-switcher" aria-label="Choose cosmetic type">
+            {categorySummaries.map((category) => {
+              const active = category.id === activeCategory;
+              return (
+                <button
+                  type="button"
+                  key={category.id}
+                  aria-pressed={active}
+                  className={`loadout-category-tab${active ? ' is-active' : ''}`}
+                  onClick={() => setActiveCategory(category.id)}
+                >
+                  <span>{category.label}</span>
+                  <span>{category.ownedCount}/{category.totalCount}</span>
+                </button>
+              );
+            })}
           </div>
 
           <div className="loadout-skin-list">
-            {isLoading && skins.length === 0 && (
+            {isHeroSkinCategory && isLoading && skins.length === 0 && (
               <div className="loadout-empty-state">
                 Loading skins...
               </div>
             )}
-            {!isLoading && skins.length === 0 && (
+            {isHeroSkinCategory && !isLoading && skins.length === 0 && (
               <div className="loadout-empty-state">
-                No skins available.
+                No hero skins available.
               </div>
             )}
-            {skins.map((skin) => {
+            {!isHeroSkinCategory && (
+              <div className="loadout-effect-list">
+                {skillEffectItems.map((skill) => {
+                  const skillKey = getLoadoutSkillPreviewKey(skill);
+                  const previewed = skillKey === previewSkillResolvedKey;
+                  return (
+                    <article
+                      className={`loadout-skin-row loadout-effect-row${previewed ? ' is-previewed' : ''}`}
+                      key={`${skill.input}-${skill.abilityId ?? skill.name}`}
+                    >
+                      <button
+                        type="button"
+                        className="loadout-skin-row-hitbox"
+                        onClick={() => setPreviewSkillKey(skillKey)}
+                        aria-label={`Preview ${skill.name} effect`}
+                        aria-pressed={previewed}
+                      />
+
+                      <div className="loadout-skin-preview-button loadout-effect-preview" aria-hidden="true">
+                        <HeroSkillIcon
+                          item={skill}
+                          color={HERO_COLORS[featuredHero]}
+                          className="loadout-effect-icon"
+                        />
+                      </div>
+
+                      <div className="loadout-skin-copy">
+                        <div className="loadout-skin-title-line">
+                          <span className="loadout-rarity-chip is-effect">
+                            {skill.input}
+                          </span>
+                          <h2>{skill.name}</h2>
+                        </div>
+                        <p>{skill.description}</p>
+                      </div>
+
+                      <div className="loadout-skin-actions" aria-label={`${skill.name} default effect equipped`}>
+                        <button
+                          type="button"
+                          disabled
+                          className="loadout-action-button is-equip"
+                        >
+                          EQUIPPED
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+            {isHeroSkinCategory && skins.map((skin) => {
               const busy = busySkinId === skin.id;
               const equipped = skin.id === selectedSkinId;
               const previewed = skin.id === previewSkin?.id;
@@ -1481,11 +1642,13 @@ function LoadoutTab({
                 >
                   <button
                     type="button"
-                    className="loadout-skin-preview-button"
+                    className="loadout-skin-row-hitbox"
                     onClick={() => setPreviewSkinId(skin.id)}
                     aria-label={`Preview ${skin.displayName}`}
                     aria-pressed={previewed}
-                  >
+                  />
+
+                  <div className="loadout-skin-preview-button" aria-hidden="true">
                     <HeroPreviewCanvas
                       heroId={skin.heroId}
                       skinId={skin.id}
@@ -1496,7 +1659,7 @@ function LoadoutTab({
                       initialYaw={Math.PI - 0.28}
                       className="loadout-skin-card-preview"
                     />
-                  </button>
+                  </div>
 
                   <div className="loadout-skin-copy">
                     <div className="loadout-skin-title-line">
@@ -1546,7 +1709,6 @@ function LoadoutTab({
     </div>
   );
 }
-
 // Play Tab Component
 interface PlayTabProps {
   isLoading: boolean;
@@ -1571,6 +1733,7 @@ interface PlayTabProps {
   rankedTokenHoldError: string | null;
   runningGameSession: RunningGameSession | null;
   isReconnectChecking: boolean;
+  isSkippingTutorial: boolean;
   serverLatency: ServerLatencyProbeSnapshot | null;
   mobilePwaInstallRequired: boolean;
   mobilePwaCanInstall: boolean;
@@ -1583,6 +1746,7 @@ interface PlayTabProps {
   onLeaveParty: () => void;
   onOpenSocial: () => void;
   onStartTutorial: () => void;
+  onSkipTutorial: () => void;
   onReconnect: () => void;
   onLogin: () => void;
   onSelectHero: (heroId: HeroId) => void;
@@ -1612,6 +1776,7 @@ function PlayTab({
   rankedTokenHoldError,
   runningGameSession,
   isReconnectChecking,
+  isSkippingTutorial,
   serverLatency,
   mobilePwaInstallRequired,
   mobilePwaCanInstall,
@@ -1624,6 +1789,7 @@ function PlayTab({
   onLeaveParty,
   onOpenSocial,
   onStartTutorial,
+  onSkipTutorial,
   onReconnect,
   onLogin,
   onSelectHero,
@@ -1668,7 +1834,7 @@ function PlayTab({
   const gameplayModeForLimit = getGameplayModeForPlayMode(selectedPlayMode, customGameplayMode);
   const partyMemberLimit = getPartyMemberLimitForPlayMode(selectedPlayMode, gameplayModeForLimit);
   const isPartyTooLargeForMode = isInParty && partySize > partyMemberLimit;
-  const primaryDisabled = isLoading || isReconnectChecking || (
+  const primaryDisabled = isLoading || isReconnectChecking || isSkippingTutorial || (
     isInParty && isPartyLeader && !isPartyReadyToStart
   ) || partyHasDuplicateHeroes || isPartyTooLargeForMode || (
     selectedPlayMode === 'ranked' &&
@@ -1731,6 +1897,7 @@ function PlayTab({
         isPartyLeader={isPartyLeader}
         canReconnect={canReconnect}
         isReconnectChecking={isReconnectChecking}
+        isSkippingTutorial={isSkippingTutorial}
         mainPlayLabel={mainPlayLabel}
         primaryDisabled={primaryDisabled}
         primaryDisabledReason={primaryDisabledReason}
@@ -1742,6 +1909,7 @@ function PlayTab({
         onLogin={onLogin}
         onReconnect={onReconnect}
         onStartTutorial={onStartTutorial}
+        onSkipTutorial={onSkipTutorial}
         onPlayAction={onPlayAction}
         onMobilePwaInstall={onMobilePwaInstall}
       />
@@ -2225,7 +2393,7 @@ function getModeTitle(input: {
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
   rankedTokenHoldError: string | null;
 }): string {
-  if (input.requiresTutorial && input.mode !== 'practice') return 'Complete the tutorial before online play';
+  if (input.requiresTutorial && input.mode !== 'practice') return 'Start or skip the tutorial before online play';
 
   if (input.mode !== 'ranked') return getPlayModeLabel(input.mode);
   if (input.rankedSeason.mode === 'preseason') return 'Ranked is disabled during Pre-season';
@@ -2252,6 +2420,7 @@ function PlayActionStack({
   isPartyLeader,
   canReconnect,
   isReconnectChecking,
+  isSkippingTutorial,
   mainPlayLabel,
   primaryDisabled,
   primaryDisabledReason,
@@ -2263,6 +2432,7 @@ function PlayActionStack({
   onLogin,
   onReconnect,
   onStartTutorial,
+  onSkipTutorial,
   onPlayAction,
   onMobilePwaInstall,
 }: {
@@ -2281,6 +2451,7 @@ function PlayActionStack({
   isPartyLeader: boolean;
   canReconnect: boolean;
   isReconnectChecking: boolean;
+  isSkippingTutorial: boolean;
   mainPlayLabel: string;
   primaryDisabled: boolean;
   primaryDisabledReason: string | null;
@@ -2292,6 +2463,7 @@ function PlayActionStack({
   onLogin: () => void;
   onReconnect: () => void;
   onStartTutorial: () => void;
+  onSkipTutorial: () => void;
   onPlayAction: () => void;
   onMobilePwaInstall: () => Promise<void>;
 }) {
@@ -2322,6 +2494,10 @@ function PlayActionStack({
     } else {
       onPlayAction();
     }
+  };
+  const runSkipTutorial = () => {
+    playButtonClick();
+    onSkipTutorial();
   };
 
   return (
@@ -2389,6 +2565,16 @@ function PlayActionStack({
             >
               {effectivePrimaryDisabledReason}
             </div>
+          )}
+          {requiresTutorial && !mobilePwaInstallRequired && (
+            <button
+              type="button"
+              onClick={runSkipTutorial}
+              disabled={isLoading || isSkippingTutorial}
+              className="play-secondary-cta"
+            >
+              {isSkippingTutorial ? 'SKIPPING...' : 'SKIP TUTORIAL'}
+            </button>
           )}
         </div>
       ) : (

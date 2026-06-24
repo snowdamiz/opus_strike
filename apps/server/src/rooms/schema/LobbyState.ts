@@ -6,6 +6,7 @@ export class LobbyPlayer extends Schema {
   name: string = '';
   isHost: boolean = false;
   isReady: boolean = false;
+  role: string = 'combat';
   team: string = ''; // empty = awaiting selection
   heroId: string = '';
   skinId: string = '';
@@ -27,6 +28,7 @@ defineTypes(LobbyPlayer, {
   name: 'string',
   isHost: 'boolean',
   isReady: 'boolean',
+  role: 'string',
   team: 'string',
   heroId: 'string',
   skinId: 'string',

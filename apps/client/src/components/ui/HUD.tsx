@@ -1308,7 +1308,7 @@ export function HUD() {
     })
   );
 
-  if (!localPlayer) return null;
+  if (!localPlayer || localPlayer.role === 'observer') return null;
 
   const isLocalDowned = localPlayer.state === 'downed';
   const isLocalReviving = Boolean(reviveChannelTarget);

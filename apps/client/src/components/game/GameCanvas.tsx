@@ -1148,6 +1148,7 @@ export function GameCanvas({
   const isTutorialMode = useGameStore((state) => state.isTutorialMode);
   const gameplayMode = useGameStore((state) => state.gameplayMode);
   const localPlayerState = useGameStore((state) => state.localPlayer?.state ?? null);
+  const isObserverMode = useGameStore((state) => state.localPlayer?.role === 'observer');
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
@@ -1451,7 +1452,7 @@ export function GameCanvas({
             {isTutorialMode && <TutorialTargetRange />}
             <Effects />
             <CombatTextLayer enabled={settings.showDamageNumbers} />
-            <HeroViewmodel config={qualityConfig.viewmodel} />
+            {!isObserverMode && <HeroViewmodel config={qualityConfig.viewmodel} />}
             <VoidZonesManager />
             <DireBallsManager />
             <PhantomPersonalShieldsManager />

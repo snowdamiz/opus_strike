@@ -3,6 +3,7 @@ import {
   HERO_DEFINITIONS,
   getDefaultHeroSkinId,
   getHeroSkinDefinition,
+  getPlayerRole,
   isHeroSkinId,
   isTeamId,
   type BotDifficulty,
@@ -11,6 +12,7 @@ import {
   type HeroSkinId,
   type MapProfileId,
   type MatchPerspective,
+  type PlayerRole,
   type Team,
   type VoxelMapSizeId,
   type VoxelMapTheme,
@@ -20,6 +22,7 @@ import type { CreateGameEntryTicketInput } from '../security/entryTickets';
 export interface LobbyGameStartPlayer {
   id: string;
   name: string;
+  role?: string;
   team: string;
   isBot: boolean;
   heroId: string;
@@ -36,7 +39,8 @@ export interface LobbyGameStartAuthContext {
 export interface ParticipantAssignment {
   playerId: string;
   playerName: string;
-  team: Team;
+  role: PlayerRole;
+  team?: Team;
   isBot: boolean;
   heroId?: HeroId;
   skinId?: HeroSkinId;
@@ -116,6 +120,11 @@ export function createLobbyGameStartAssignments(input: {
   const claimedHeroesByTeam = new Map<Team, Map<HeroId, string>>();
 
   for (const player of input.players) {
+    if (getPlayerRole(player) === 'observer') {
+      participants.push(player);
+      continue;
+    }
+
     if (!isTeamId(player.team)) {
       throw new Error('Cannot create assignments with unassigned players');
     }
@@ -127,6 +136,7 @@ export function createLobbyGameStartAssignments(input: {
   }
 
   for (const player of participants) {
+    if (getPlayerRole(player) === 'observer') continue;
     if (player.isBot) continue;
     const heroId = normalizeHeroId(player.heroId);
     const claimed = claimedHeroesByTeam.get(player.team as Team);
@@ -136,6 +146,7 @@ export function createLobbyGameStartAssignments(input: {
   }
 
   for (const player of participants) {
+    if (getPlayerRole(player) === 'observer') continue;
     if (!player.isBot) continue;
     const heroId = normalizeHeroId(player.heroId);
     const claimed = claimedHeroesByTeam.get(player.team as Team);
@@ -145,6 +156,17 @@ export function createLobbyGameStartAssignments(input: {
   }
 
   for (const player of participants) {
+    const role = getPlayerRole(player);
+    if (role === 'observer') {
+      playerAssignments.push({
+        playerId: player.id,
+        playerName: player.name,
+        role,
+        isBot: player.isBot,
+      });
+      continue;
+    }
+
     const team = player.team as Team;
     const normalizedHeroId = normalizeHeroId(player.heroId);
     let heroId: HeroId | undefined = normalizedHeroId || undefined;
@@ -169,6 +191,7 @@ export function createLobbyGameStartAssignments(input: {
     playerAssignments.push({
       playerId: player.id,
       playerName: player.name,
+      role,
       team,
       isBot: player.isBot,
       heroId,
@@ -211,6 +234,7 @@ export function buildGameEntryTicketInputs(input: {
       userId: authContext.userId,
       displayName: authContext.displayName || assignment.playerName,
       matchPerspective: input.matchPerspective,
+      role: assignment.role,
       assignedTeam: assignment.team,
       selectedHero: assignment.heroId,
       selectedSkinId: assignment.skinId,

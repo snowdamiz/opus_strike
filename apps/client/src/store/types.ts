@@ -18,6 +18,7 @@ import type {
   VoxelMapTheme,
   GameplayMode,
   MatchPerspective,
+  PlayerRole,
 } from '@voxel-strike/shared';
 
 export type { PowerupPickupRuntimeState, SafeZoneSnapshot };
@@ -31,6 +32,7 @@ export interface LobbyPlayer {
   name: string;
   isHost: boolean;
   isReady: boolean;
+  role?: PlayerRole;
   team: string;
   heroId?: HeroId | '';
   skinId?: HeroSkinId | '';
