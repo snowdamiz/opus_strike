@@ -13,6 +13,7 @@ import { useGameStore } from '../../store/gameStore';
 import { useWallet } from '../../contexts/WalletContext';
 import { formatKeybind, mouseButtonToKeybindCode } from '../../utils/keybindings';
 import { GameDialog } from './GameDialog';
+import { WalletProviderOptions } from './WalletProviderOptions';
 
 type SettingsTab = 'video' | 'audio' | 'controls' | 'gameplay' | 'account' | 'development';
 
@@ -89,6 +90,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     linkDiscord,
     linkWallet,
     user,
+    walletProviders,
     walletAddress,
     linkedAccounts,
     hasWalletAccount,
@@ -155,12 +157,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     linkDiscord();
   };
 
-  const handleLinkWallet = async () => {
+  const handleLinkWallet = async (providerId?: string) => {
     if (!hasAccount || hasWalletAccount || isLinkingWallet) return;
 
     setIsLinkingWallet(true);
     try {
-      const linkedUser = await linkWallet();
+      const linkedUser = await linkWallet(providerId);
       setGameUser(linkedUser.id, linkedUser.name, linkedUser.stats);
       setGameWalletAddress(linkedUser.walletAddress ?? null);
     } catch {
@@ -765,30 +767,18 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   {hasWalletAccount ? (
                     <AccountValue value={formatAccountAddress(displayWalletAddress)} />
                   ) : (
-                    <button
-                      type="button"
-                      onClick={handleLinkWallet}
-                      disabled={!hasAccount || isLinkingWallet || isConnecting}
-                      className={`h-9 px-3.5 rounded-lg font-display text-xs flex shrink-0 items-center justify-center gap-2 border focus:outline-none focus-visible:ring-1 focus-visible:ring-purple-300/70 ${
-                        hasAccount
-                          ? 'border-purple-300/20 bg-purple-500/15 text-purple-100 hover:border-purple-200/40 hover:bg-purple-500/25'
-                          : 'border-white/10 bg-white/5 text-white/25 cursor-not-allowed'
-                      }`}
-                    >
-                      {(isLinkingWallet || isConnecting) && (
-                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                      )}
-                      {!isLinkingWallet && !isConnecting && (
-                        <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.5 7.25h12.75A2.75 2.75 0 0121 10v6.25A2.75 2.75 0 0118.25 19H5.5A2.5 2.5 0 013 16.5V9.75a2.5 2.5 0 012.5-2.5z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 13.25h.01" />
-                        </svg>
-                      )}
-                      {isLinkingWallet || isConnecting ? 'CONNECTING' : 'CONNECT'}
-                    </button>
+                    <WalletProviderOptions
+                      walletProviders={walletProviders}
+                      isConnecting={isLinkingWallet || isConnecting}
+                      onSelect={handleLinkWallet}
+                      disabled={!hasAccount}
+                      className="settings-wallet-options"
+                      buttonClassName="settings-wallet-option"
+                      iconClassName="settings-wallet-icon"
+                      logoClassName="settings-wallet-logo"
+                      showLabels={false}
+                      showSpinner={false}
+                    />
                   )}
                 </SettingRow>
 

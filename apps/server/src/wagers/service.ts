@@ -18,6 +18,7 @@ import {
   mapSeedFromDatabaseValue,
   mapSeedToDatabaseValue,
 } from '../utils/mapSeedPersistence';
+import { readSingletonAfterUniqueRace } from '../utils/prismaSingleton';
 import { getColyseusRuntimeConfig } from '../config/colyseus';
 import { getSharedRedisClient } from '../config/redis';
 import {
@@ -80,9 +81,9 @@ const WAGER_REFUND_RETRY_CONCURRENCY = 3;
 const WAGER_SETTLEMENT_RETRY_CONCURRENCY = 2;
 const WAGER_TREASURY_RECONCILE_CONCURRENCY = 6;
 const WAGER_STATUS_EMIT_CONCURRENCY = 10;
-const MICRO_USD_PER_USD = 1_000_000n;
-const MICRO_USD_PER_CENT = 10_000n;
-const LAMPORTS_PER_SOL = 1_000_000_000n;
+const WAGER_ECONOMY_SETTINGS_ID = 'default';
+const GOLDEN_BIOME_SETTINGS_ID = 'default';
+const UNSIGNED_INTEGER_PATTERN = /^[0-9]+$/;
 
 async function runWithConcurrency<T>(
   items: readonly T[],
@@ -101,14 +102,6 @@ async function runWithConcurrency<T>(
     }
   }));
 }
-
-interface CachedGoldenBiomeSolPrice {
-  source: WagerRuntimeConfig['goldenBiomeSolUsdPriceSource'];
-  solUsdPriceMicroUsd: bigint;
-  fetchedAt: number;
-}
-
-let cachedGoldenBiomeSolPrice: CachedGoldenBiomeSolPrice | null = null;
 
 export interface CreateWagerOptions {
   enabled?: boolean;
@@ -287,8 +280,8 @@ export interface GoldenBiomeAdminOverview {
     distributionMode: GoldenBiomeRewardDistributionMode;
     enabled: boolean;
     chanceBps: number;
-    winnerRewardUsdCents: number;
-    treasuryMinUsdCents: number;
+    winnerRewardLamports: string;
+    treasuryMinLamports: string;
     treasuryWallet: string | null;
     updatedByUserId: string | null;
     updatedAt: string | null;
@@ -297,7 +290,31 @@ export interface GoldenBiomeAdminOverview {
   rewards: GoldenBiomeAdminReward[];
 }
 
-interface TreasuryTransferResult {
+export interface GoldenBiomeSettingsSnapshot {
+  distributionMode: GoldenBiomeRewardDistributionMode;
+  enabled: boolean;
+  chanceBps: number;
+  winnerRewardLamports: string;
+  treasuryMinLamports: string;
+  treasuryWallet: string | null;
+  updatedByUserId: string | null;
+  updatedAt: string | null;
+}
+
+export type GoldenBiomeSettingsUpdate = Partial<Record<
+  'distributionMode' | 'enabled' | 'chanceBps' | 'winnerRewardLamports' | 'treasuryMinLamports',
+  unknown
+>>;
+
+export interface WagerEconomySettingsSnapshot {
+  platformFeeBps: number;
+  updatedByUserId: string | null;
+  updatedAt: string | null;
+}
+
+export type WagerEconomySettingsUpdate = Partial<Record<'platformFeeBps', unknown>>;
+
+export interface TreasuryTransferResult {
   signature: string | null;
   confirmedAt: Date;
 }
@@ -344,7 +361,7 @@ function isSafeLamportNumber(value: bigint): boolean {
 function parseCoverChargeLamports(value: unknown): bigint {
   if (typeof value === 'bigint') return value;
   if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return BigInt(value);
-  if (typeof value === 'string' && /^[0-9]+$/.test(value)) return BigInt(value);
+  if (typeof value === 'string' && UNSIGNED_INTEGER_PATTERN.test(value)) return BigInt(value);
   throw new Error('coverChargeLamports must be an integer lamport value');
 }
 
@@ -356,34 +373,6 @@ function base64LooksValid(value: string): boolean {
   return value.length > 0 && value.length <= 100_000 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
 }
 
-function parseDecimalToMicroUsd(value: string, fieldName: string): bigint {
-  const trimmed = value.trim();
-  const match = /^([0-9]+)(?:\.([0-9]+))?$/.exec(trimmed);
-  if (!match) {
-    throw new Error(`${fieldName} must be a positive decimal USD price`);
-  }
-
-  const whole = BigInt(match[1]);
-  const fractional = (match[2] ?? '').slice(0, 6).padEnd(6, '0');
-  const micro = whole * MICRO_USD_PER_USD + BigInt(fractional || '0');
-  if (micro <= 0n) {
-    throw new Error(`${fieldName} must be greater than zero`);
-  }
-  return micro;
-}
-
-function ceilDiv(numerator: bigint, denominator: bigint): bigint {
-  if (denominator <= 0n) {
-    throw new Error('Cannot divide by zero');
-  }
-  return (numerator + denominator - 1n) / denominator;
-}
-
-function usdCentsToLamports(usdCents: number, solUsdPriceMicroUsd: bigint): bigint {
-  const microUsd = BigInt(usdCents) * MICRO_USD_PER_CENT;
-  return ceilDiv(microUsd * LAMPORTS_PER_SOL, solUsdPriceMicroUsd);
-}
-
 function hashGoldenRoll(seed: number, salt: number): number {
   let hash = (seed >>> 0) ^ Math.imul(salt >>> 0, 0x9e3779b1);
   hash = Math.imul(hash ^ (hash >>> 16), 0x7feb352d);
@@ -391,21 +380,60 @@ function hashGoldenRoll(seed: number, salt: number): number {
   return (hash ^ (hash >>> 16)) >>> 0;
 }
 
-async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<unknown> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: { accept: 'application/json' },
-    });
-    if (!response.ok) {
-      throw new Error(`SOL price source responded with HTTP ${response.status}`);
-    }
-    return response.json();
-  } finally {
-    clearTimeout(timeout);
+function hasOwnSetting(input: object, fieldName: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(input, fieldName);
+}
+
+function parseBooleanSetting(value: unknown, fieldName: string): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
   }
+  throw new Error(`${fieldName} must be true or false`);
+}
+
+function parseIntegerSetting(
+  value: unknown,
+  fieldName: string,
+  options: { min?: number; max?: number } = {}
+): number {
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim() !== ''
+      ? Number(value)
+      : Number.NaN;
+  if (!Number.isInteger(parsed)) throw new Error(`${fieldName} must be an integer`);
+  if (options.min !== undefined && parsed < options.min) {
+    throw new Error(`${fieldName} must be >= ${options.min}`);
+  }
+  if (options.max !== undefined && parsed > options.max) {
+    throw new Error(`${fieldName} must be <= ${options.max}`);
+  }
+  return parsed;
+}
+
+function parseLamportSetting(value: unknown, fieldName: string): bigint {
+  if (typeof value === 'bigint') {
+    if (value < 0n) throw new Error(`${fieldName} must be >= 0`);
+    return value;
+  }
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(`${fieldName} must be a safe unsigned integer`);
+    }
+    return BigInt(value);
+  }
+  if (typeof value === 'string' && UNSIGNED_INTEGER_PATTERN.test(value.trim())) {
+    return BigInt(value.trim());
+  }
+  throw new Error(`${fieldName} must be an unsigned integer`);
+}
+
+function parseDistributionMode(value: unknown): GoldenBiomeRewardDistributionMode {
+  if (value === 'manual' || value === 'auto') return value;
+  throw new Error('distributionMode must be manual or auto');
 }
 
 function decodeUtf8InstructionData(instruction: TransactionInstruction): string {
@@ -458,6 +486,144 @@ export class WagerService extends EventEmitter {
     return getWagerRuntimeConfig();
   }
 
+  private wagerEconomySettingsCreateData(updatedByUserId: string | null = null) {
+    const config = this.getConfig();
+    return {
+      id: WAGER_ECONOMY_SETTINGS_ID,
+      platformFeeBps: config.platformFeeBps,
+      updatedByUserId,
+    };
+  }
+
+  private goldenBiomeSettingsCreateData(updatedByUserId: string | null = null) {
+    const config = this.getConfig();
+    return {
+      id: GOLDEN_BIOME_SETTINGS_ID,
+      distributionMode: 'manual' as const,
+      enabled: config.goldenBiomeEnabled,
+      chanceBps: config.goldenBiomeChanceBps,
+      winnerRewardLamports: config.goldenBiomeWinnerRewardLamports,
+      treasuryMinLamports: config.goldenBiomeTreasuryMinLamports,
+      updatedByUserId,
+    };
+  }
+
+  private async getWagerEconomySettingsRow() {
+    return readSingletonAfterUniqueRace(
+      () => prisma.wagerEconomySettings.upsert({
+        where: { id: WAGER_ECONOMY_SETTINGS_ID },
+        create: this.wagerEconomySettingsCreateData(),
+        update: {},
+      }),
+      () => prisma.wagerEconomySettings.findUnique({
+        where: { id: WAGER_ECONOMY_SETTINGS_ID },
+      })
+    );
+  }
+
+  private async getGoldenBiomeSettingsRow() {
+    return readSingletonAfterUniqueRace(
+      () => prisma.goldenBiomeRewardSettings.upsert({
+        where: { id: GOLDEN_BIOME_SETTINGS_ID },
+        create: this.goldenBiomeSettingsCreateData(),
+        update: {},
+      }),
+      () => prisma.goldenBiomeRewardSettings.findUnique({
+        where: { id: GOLDEN_BIOME_SETTINGS_ID },
+      })
+    );
+  }
+
+  async getWagerEconomySettings(): Promise<WagerEconomySettingsSnapshot> {
+    const settings = await this.getWagerEconomySettingsRow();
+    return {
+      platformFeeBps: settings.platformFeeBps,
+      updatedByUserId: settings.updatedByUserId,
+      updatedAt: settings.updatedAt.toISOString(),
+    };
+  }
+
+  async updateWagerEconomySettings(
+    input: WagerEconomySettingsUpdate,
+    updatedByUserId?: string | null
+  ): Promise<WagerEconomySettingsSnapshot> {
+    const current = await this.getWagerEconomySettingsRow();
+    const settings = input ?? {};
+    const updated = await prisma.wagerEconomySettings.update({
+      where: { id: WAGER_ECONOMY_SETTINGS_ID },
+      data: {
+        platformFeeBps: hasOwnSetting(settings, 'platformFeeBps')
+          ? parseIntegerSetting(settings.platformFeeBps, 'platformFeeBps', { min: 0, max: 10_000 })
+          : current.platformFeeBps,
+        updatedByUserId: updatedByUserId ?? null,
+      },
+    });
+
+    return {
+      platformFeeBps: updated.platformFeeBps,
+      updatedByUserId: updated.updatedByUserId,
+      updatedAt: updated.updatedAt.toISOString(),
+    };
+  }
+
+  async getGoldenBiomeSettings(): Promise<GoldenBiomeSettingsSnapshot> {
+    const [settings, config] = await Promise.all([
+      this.getGoldenBiomeSettingsRow(),
+      Promise.resolve(this.getConfig()),
+    ]);
+    return {
+      distributionMode: settings.distributionMode as GoldenBiomeRewardDistributionMode,
+      enabled: settings.enabled,
+      chanceBps: settings.chanceBps,
+      winnerRewardLamports: settings.winnerRewardLamports.toString(),
+      treasuryMinLamports: settings.treasuryMinLamports.toString(),
+      treasuryWallet: config.treasuryWallet || null,
+      updatedByUserId: settings.updatedByUserId,
+      updatedAt: settings.updatedAt.toISOString(),
+    };
+  }
+
+  async updateGoldenBiomeSettings(
+    input: GoldenBiomeSettingsUpdate,
+    updatedByUserId?: string | null
+  ): Promise<GoldenBiomeSettingsSnapshot> {
+    const current = await this.getGoldenBiomeSettingsRow();
+    const settings = input ?? {};
+    const updated = await prisma.goldenBiomeRewardSettings.update({
+      where: { id: GOLDEN_BIOME_SETTINGS_ID },
+      data: {
+        distributionMode: hasOwnSetting(settings, 'distributionMode')
+          ? parseDistributionMode(settings.distributionMode)
+          : current.distributionMode,
+        enabled: hasOwnSetting(settings, 'enabled')
+          ? parseBooleanSetting(settings.enabled, 'enabled')
+          : current.enabled,
+        chanceBps: hasOwnSetting(settings, 'chanceBps')
+          ? parseIntegerSetting(settings.chanceBps, 'chanceBps', { min: 0, max: 10_000 })
+          : current.chanceBps,
+        winnerRewardLamports: hasOwnSetting(settings, 'winnerRewardLamports')
+          ? parseLamportSetting(settings.winnerRewardLamports, 'winnerRewardLamports')
+          : current.winnerRewardLamports,
+        treasuryMinLamports: hasOwnSetting(settings, 'treasuryMinLamports')
+          ? parseLamportSetting(settings.treasuryMinLamports, 'treasuryMinLamports')
+          : current.treasuryMinLamports,
+        updatedByUserId: updatedByUserId ?? null,
+      },
+    });
+    const config = this.getConfig();
+
+    return {
+      distributionMode: updated.distributionMode as GoldenBiomeRewardDistributionMode,
+      enabled: updated.enabled,
+      chanceBps: updated.chanceBps,
+      winnerRewardLamports: updated.winnerRewardLamports.toString(),
+      treasuryMinLamports: updated.treasuryMinLamports.toString(),
+      treasuryWallet: config.treasuryWallet || null,
+      updatedByUserId: updated.updatedByUserId,
+      updatedAt: updated.updatedAt.toISOString(),
+    };
+  }
+
   private getConnection(): Connection {
     const config = this.getConfig();
     assertWagerPaymentsConfigured(config);
@@ -467,64 +633,32 @@ export class WagerService extends EventEmitter {
     return this.connection;
   }
 
-  shouldRollGoldenBiome(seed: number, salt = 0): boolean {
+  async getTreasuryBalanceLamports(): Promise<bigint> {
     const config = this.getConfig();
-    if (!config.goldenBiomeEnabled || config.goldenBiomeChanceBps <= 0) return false;
-    return hashGoldenRoll(seed, salt) % 10_000 < config.goldenBiomeChanceBps;
+    assertWagerPaymentsConfigured(config);
+    return BigInt(await this.getConnection().getBalance(new PublicKey(config.treasuryWallet), 'confirmed'));
   }
 
-  private async resolveGoldenBiomeSolUsdPriceMicroUsd(config = this.getConfig()): Promise<bigint> {
-    const now = Date.now();
-    if (
-      cachedGoldenBiomeSolPrice
-      && cachedGoldenBiomeSolPrice.source === config.goldenBiomeSolUsdPriceSource
-      && now - cachedGoldenBiomeSolPrice.fetchedAt <= config.goldenBiomeSolUsdPriceStaleMs
-    ) {
-      return cachedGoldenBiomeSolPrice.solUsdPriceMicroUsd;
-    }
+  async sendTreasuryRewardTransfer(input: {
+    recipientWallet: string;
+    amountLamports: bigint;
+    existingSignature?: string | null;
+    onSubmitted: (signature: string) => Promise<void>;
+  }): Promise<TreasuryTransferResult> {
+    return this.sendTreasuryTransfer(input);
+  }
 
-    let solUsdPriceMicroUsd: bigint;
-    if (config.goldenBiomeSolUsdPriceSource === 'env') {
-      const explicitMicro = process.env.GOLDEN_BIOME_SOL_USD_MICRO_USD;
-      if (explicitMicro) {
-        if (!/^[0-9]+$/.test(explicitMicro)) {
-          throw new Error('GOLDEN_BIOME_SOL_USD_MICRO_USD must be an unsigned integer');
-        }
-        solUsdPriceMicroUsd = BigInt(explicitMicro);
-        if (solUsdPriceMicroUsd <= 0n) {
-          throw new Error('GOLDEN_BIOME_SOL_USD_MICRO_USD must be greater than zero');
-        }
-      } else {
-        const decimal = process.env.GOLDEN_BIOME_SOL_USD_PRICE;
-        if (!decimal) {
-          throw new Error('GOLDEN_BIOME_SOL_USD_PRICE is required when GOLDEN_BIOME_SOL_USD_PRICE_SOURCE=env');
-        }
-        solUsdPriceMicroUsd = parseDecimalToMicroUsd(decimal, 'GOLDEN_BIOME_SOL_USD_PRICE');
-      }
-    } else {
-      const payload = await fetchJsonWithTimeout(
-        'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd',
-        config.goldenBiomeSolUsdPriceTimeoutMs
-      );
-      const price = (payload as { solana?: { usd?: unknown } })?.solana?.usd;
-      if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) {
-        throw new Error('CoinGecko response did not include a usable SOL/USD price');
-      }
-      solUsdPriceMicroUsd = parseDecimalToMicroUsd(price.toFixed(6), 'CoinGecko SOL/USD price');
-    }
-
-    cachedGoldenBiomeSolPrice = {
-      source: config.goldenBiomeSolUsdPriceSource,
-      solUsdPriceMicroUsd,
-      fetchedAt: now,
-    };
-    return solUsdPriceMicroUsd;
+  async shouldRollGoldenBiome(seed: number, salt = 0): Promise<boolean> {
+    const settings = await this.getGoldenBiomeSettingsRow();
+    if (!settings.enabled || settings.chanceBps <= 0) return false;
+    return hashGoldenRoll(seed, salt) % 10_000 < settings.chanceBps;
   }
 
   async getGoldenBiomeTreasuryEligibility(): Promise<GoldenBiomeTreasuryEligibility> {
     const config = this.getConfig();
+    const settings = await this.getGoldenBiomeSettingsRow();
     const checkedAt = new Date();
-    if (!config.goldenBiomeEnabled) {
+    if (!settings.enabled) {
       return {
         eligible: false,
         enabled: false,
@@ -549,8 +683,7 @@ export class WagerService extends EventEmitter {
       };
     }
 
-    const solUsdPriceMicroUsd = await this.resolveGoldenBiomeSolUsdPriceMicroUsd(config);
-    const requiredLamports = usdCentsToLamports(config.goldenBiomeTreasuryMinUsdCents, solUsdPriceMicroUsd);
+    const requiredLamports = settings.treasuryMinLamports;
     const balance = BigInt(await this.getConnection().getBalance(new PublicKey(config.treasuryWallet), 'confirmed'));
 
     return {
@@ -559,18 +692,14 @@ export class WagerService extends EventEmitter {
       treasuryWallet: config.treasuryWallet,
       treasuryBalanceLamports: balance.toString(),
       requiredLamports: requiredLamports.toString(),
-      solUsdPriceMicroUsd: solUsdPriceMicroUsd.toString(),
+      solUsdPriceMicroUsd: '0',
       checkedAt: checkedAt.toISOString(),
       reason: balance > requiredLamports ? undefined : 'treasury_below_golden_biome_threshold',
     };
   }
 
   async getGoldenBiomeRewardDistributionMode(): Promise<GoldenBiomeRewardDistributionMode> {
-    const settings = await prisma.goldenBiomeRewardSettings.upsert({
-      where: { id: 'default' },
-      create: { id: 'default', distributionMode: 'manual' },
-      update: {},
-    });
+    const settings = await this.getGoldenBiomeSettingsRow();
     return settings.distributionMode as GoldenBiomeRewardDistributionMode;
   }
 
@@ -582,14 +711,10 @@ export class WagerService extends EventEmitter {
       throw new Error('Invalid golden biome reward distribution mode');
     }
 
-    const settings = await prisma.goldenBiomeRewardSettings.upsert({
-      where: { id: 'default' },
-      create: {
-        id: 'default',
-        distributionMode,
-        updatedByUserId: updatedByUserId ?? null,
-      },
-      update: {
+    await this.getGoldenBiomeSettingsRow();
+    const settings = await prisma.goldenBiomeRewardSettings.update({
+      where: { id: GOLDEN_BIOME_SETTINGS_ID },
+      data: {
         distributionMode,
         updatedByUserId: updatedByUserId ?? null,
       },
@@ -601,11 +726,7 @@ export class WagerService extends EventEmitter {
   async getGoldenBiomeAdminOverview(): Promise<GoldenBiomeAdminOverview> {
     const config = this.getConfig();
     const [settings, rewards] = await Promise.all([
-      prisma.goldenBiomeRewardSettings.upsert({
-        where: { id: 'default' },
-        create: { id: 'default', distributionMode: 'manual' },
-        update: {},
-      }),
+      this.getGoldenBiomeSettingsRow(),
       prisma.goldenBiomeReward.findMany({
         orderBy: [
           { status: 'asc' },
@@ -632,7 +753,7 @@ export class WagerService extends EventEmitter {
     const userNameById = new Map(users.map((user) => [user.id, user.name]));
     const treasury = await this.getGoldenBiomeTreasuryEligibility().catch((error) => ({
       eligible: false,
-      enabled: config.goldenBiomeEnabled,
+      enabled: settings.enabled,
       treasuryWallet: config.treasuryWallet || null,
       treasuryBalanceLamports: '0',
       requiredLamports: '0',
@@ -644,10 +765,10 @@ export class WagerService extends EventEmitter {
     return {
       settings: {
         distributionMode: settings.distributionMode as GoldenBiomeRewardDistributionMode,
-        enabled: config.goldenBiomeEnabled,
-        chanceBps: config.goldenBiomeChanceBps,
-        winnerRewardUsdCents: config.goldenBiomeWinnerRewardUsdCents,
-        treasuryMinUsdCents: config.goldenBiomeTreasuryMinUsdCents,
+        enabled: settings.enabled,
+        chanceBps: settings.chanceBps,
+        winnerRewardLamports: settings.winnerRewardLamports.toString(),
+        treasuryMinLamports: settings.treasuryMinLamports.toString(),
         treasuryWallet: config.treasuryWallet || null,
         updatedByUserId: settings.updatedByUserId,
         updatedAt: settings.updatedAt?.toISOString() ?? null,
@@ -694,15 +815,16 @@ export class WagerService extends EventEmitter {
     };
   }
 
-  normalizeCreateOptions(options: CreateWagerOptions | undefined): { enabled: false } | {
+  async normalizeCreateOptions(options: CreateWagerOptions | undefined): Promise<{ enabled: false } | {
     enabled: true;
     coverChargeLamports: bigint;
     token: typeof WAGER_TOKEN;
     treasuryWallet: string;
     platformFeeBps: number;
-  } {
+  }> {
     if (!options?.enabled) return { enabled: false };
     const config = this.getConfig();
+    const economySettings = await this.getWagerEconomySettingsRow();
     assertWagerPaymentsConfigured(config);
 
     const token = options.token || WAGER_TOKEN;
@@ -726,7 +848,7 @@ export class WagerService extends EventEmitter {
       coverChargeLamports,
       token: WAGER_TOKEN,
       treasuryWallet: config.treasuryWallet,
-      platformFeeBps: config.platformFeeBps,
+      platformFeeBps: economySettings.platformFeeBps,
     };
   }
 
@@ -737,7 +859,7 @@ export class WagerService extends EventEmitter {
     rankedEntryQuoteId?: string | null;
     options?: CreateWagerOptions;
   }): Promise<LobbyWagerSnapshot> {
-    const normalized = this.normalizeCreateOptions(input.options);
+    const normalized = await this.normalizeCreateOptions(input.options);
     if (!normalized.enabled) return { enabled: false };
 
     const row = await prisma.wageredLobby.create({
@@ -1400,6 +1522,50 @@ export class WagerService extends EventEmitter {
     return updated ? this.serializeSettlement(updated) : null;
   }
 
+  async settleWageredLobbyForLobby(input: {
+    lobbyId: string;
+    matchId: string | null;
+    winningTeam: 'red' | 'blue' | null;
+  }): Promise<WagerSettlementSnapshot | null> {
+    const wageredLobby = await prisma.wageredLobby.findUnique({
+      where: { lobbyId: input.lobbyId },
+      select: { id: true },
+    });
+    if (!wageredLobby) return null;
+
+    return this.settleWageredLobby({
+      wageredLobbyId: wageredLobby.id,
+      matchId: input.matchId,
+      winningTeam: input.winningTeam,
+    });
+  }
+
+  async markLobbyReviewRequired(input: {
+    lobbyId: string;
+    matchId: string | null;
+    reason?: string | null;
+  }): Promise<void> {
+    await prisma.wageredLobby.updateMany({
+      where: {
+        lobbyId: input.lobbyId,
+        status: { in: ['locked', 'in_game', 'settling', 'failed'] },
+      },
+      data: {
+        status: 'review_required',
+        matchId: input.matchId,
+        settledAt: null,
+      },
+    });
+
+    if (input.reason) {
+      loggers.room.warn('Wagered lobby marked review_required', {
+        lobbyId: input.lobbyId,
+        matchId: input.matchId,
+        reason: input.reason,
+      });
+    }
+  }
+
   async retrySettlement(settlementId: string): Promise<WagerSettlementSnapshot> {
     await this.processSettlement(settlementId);
     const settlement = await prisma.wagerSettlement.findUniqueOrThrow({ where: { id: settlementId } });
@@ -1415,10 +1581,11 @@ export class WagerService extends EventEmitter {
     winners: GoldenBiomeRewardWinner[];
   }): Promise<GoldenBiomeRewardSnapshot | null> {
     const config = this.getConfig();
+    const settings = await this.getGoldenBiomeSettingsRow();
     assertWagerPaymentsConfigured(config);
-    if (!config.goldenBiomeEnabled || input.winners.length === 0) return null;
+    if (!settings.enabled || input.winners.length === 0) return null;
 
-    const distributionMode = await this.getGoldenBiomeRewardDistributionMode();
+    const distributionMode = settings.distributionMode as GoldenBiomeRewardDistributionMode;
     const existing = await prisma.goldenBiomeReward.findUnique({ where: { matchId: input.matchId } });
     if (existing?.status === 'complete') {
       return this.serializeGoldenBiomeReward(existing);
@@ -1451,11 +1618,11 @@ export class WagerService extends EventEmitter {
       return null;
     }
 
-    const solUsdPriceMicroUsd = existing?.solUsdPriceMicroUsd ?? await this.resolveGoldenBiomeSolUsdPriceMicroUsd(config);
-    const rewardLamports = existing?.rewardLamports ?? usdCentsToLamports(config.goldenBiomeWinnerRewardUsdCents, solUsdPriceMicroUsd);
+    const solUsdPriceMicroUsd = existing?.solUsdPriceMicroUsd ?? 0n;
+    const rewardLamports = existing?.rewardLamports ?? settings.winnerRewardLamports;
     const totalRewardLamports = rewardLamports * BigInt(winners.length);
     const treasuryBalanceLamports = BigInt(await this.getConnection().getBalance(new PublicKey(config.treasuryWallet), 'confirmed'));
-    const treasuryMinimumLamports = usdCentsToLamports(config.goldenBiomeTreasuryMinUsdCents, solUsdPriceMicroUsd);
+    const treasuryMinimumLamports = settings.treasuryMinLamports;
 
     if (treasuryBalanceLamports <= treasuryMinimumLamports) {
       throw new Error('Golden biome treasury balance is below the reward threshold');
@@ -1473,7 +1640,7 @@ export class WagerService extends EventEmitter {
         mapThemeId: 'golden',
         winningTeam: input.winningTeam,
         treasuryWallet: config.treasuryWallet,
-        rewardUsdCents: config.goldenBiomeWinnerRewardUsdCents,
+        rewardUsdCents: 0,
         solUsdPriceMicroUsd,
         rewardLamports,
         totalRewardLamports,

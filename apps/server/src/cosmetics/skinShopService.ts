@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { Connection, Transaction } from '@solana/web3.js';
 import {
   ALL_HERO_IDS,
@@ -36,6 +37,13 @@ const SHOP_SETTINGS_ID = 'default';
 const DEFAULT_INTENT_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_INTENT_EXPIRY_GRACE_MS = 2 * 60 * 1000;
 const DEFAULT_RPC_TIMEOUT_MS = 12_000;
+const MAX_SUPPLY_LIMIT = 2_147_483_647;
+const ACTIVE_SUPPLY_RESERVATION_STATUSES = [
+  'intent_created',
+  'transaction_built',
+  'submitted',
+  'confirmed',
+] as const;
 
 export class SkinShopServiceError extends Error {
   readonly statusCode: number;
@@ -45,6 +53,10 @@ export class SkinShopServiceError extends Error {
     this.name = 'SkinShopServiceError';
     this.statusCode = statusCode;
   }
+}
+
+function isSerializableTransactionConflict(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034';
 }
 
 export interface SkinShopAdminOverview {
@@ -60,7 +72,10 @@ export interface SerializedSkinShopItemSettings {
   skinId: HeroSkinId;
   saleEnabled: boolean;
   tokenAmountBaseUnits: string | null;
-  displayNote: string | null;
+  maxSupply: number | null;
+  soldCount: number;
+  reservedCount: number;
+  remainingSupply: number | null;
   priceVersion: number;
   updatedByUserId: string | null;
   updatedAt: string | null;
@@ -72,10 +87,10 @@ export interface SerializedSkinShopItemAudit {
   updatedByUserId: string | null;
   oldTokenAmountBaseUnits: string | null;
   newTokenAmountBaseUnits: string | null;
+  oldMaxSupply: number | null;
+  newMaxSupply: number | null;
   oldSaleEnabled: boolean | null;
   newSaleEnabled: boolean | null;
-  oldDisplayNote: string | null;
-  newDisplayNote: string | null;
   oldPriceVersion: number | null;
   newPriceVersion: number | null;
   createdAt: string;
@@ -120,12 +135,60 @@ function readPositiveBaseUnits(value: unknown, options: { required: boolean }): 
   return amount;
 }
 
+function readOptionalMaxSupply(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') {
+    throw new SkinShopServiceError('Supply cap must be a positive integer');
+  }
+  const text = String(value).trim();
+  if (!/^[0-9]+$/.test(text)) {
+    throw new SkinShopServiceError('Supply cap must be a positive integer');
+  }
+  const parsed = BigInt(text);
+  if (parsed <= 0n) {
+    throw new SkinShopServiceError('Supply cap must be greater than zero');
+  }
+  if (parsed > BigInt(MAX_SUPPLY_LIMIT)) {
+    throw new SkinShopServiceError(`Supply cap cannot exceed ${MAX_SUPPLY_LIMIT}`);
+  }
+  return Number(parsed);
+}
+
 function bigintToString(value: bigint | number | null | undefined): string | null {
   return value === null || value === undefined ? null : value.toString();
 }
 
+interface SkinSupplyCounts {
+  soldCount: number;
+  reservedCount: number;
+}
+
+function buildSupplySnapshot(maxSupply: number | null | undefined, counts: SkinSupplyCounts) {
+  const cap = maxSupply ?? null;
+  const claimedCount = counts.soldCount + counts.reservedCount;
+  return {
+    maxSupply: cap,
+    soldCount: counts.soldCount,
+    reservedCount: counts.reservedCount,
+    remainingSupply: cap === null ? null : Math.max(0, cap - claimedCount),
+  };
+}
+
+function isSupplySoldOut(maxSupply: number | null | undefined, counts: SkinSupplyCounts): boolean {
+  const snapshot = buildSupplySnapshot(maxSupply, counts);
+  return snapshot.remainingSupply !== null && snapshot.remainingSupply <= 0;
+}
+
 function paidSkins(): HeroSkinDefinition[] {
   return HERO_SKIN_CATALOG.filter((skin) => skin.availability === 'paid');
+}
+
+function readTreasuryWallet(): string | null {
+  return process.env.WAGER_TREASURY_WALLET?.trim() || null;
+}
+
+function readSolanaRpcUrl(): string | null {
+  return process.env.SOLANA_RPC_URL?.trim() || null;
 }
 
 function defaultShopSettingsInput() {
@@ -133,19 +196,36 @@ function defaultShopSettingsInput() {
     id: SHOP_SETTINGS_ID,
     enabled: envFlag('SKIN_SHOP_ENABLED', false),
     tokenMintAddress: process.env.SKIN_SHOP_TOKEN_MINT?.trim() || null,
-    tokenSymbol: process.env.SKIN_SHOP_TOKEN_SYMBOL?.trim() || 'TOKEN',
-    treasuryWallet: process.env.SKIN_SHOP_TREASURY_WALLET?.trim() || null,
-    rpcUrl: process.env.SKIN_SHOP_RPC_URL?.trim() || null,
+    tokenSymbol: process.env.SKIN_SHOP_TOKEN_SYMBOL?.trim() || '',
     cluster: process.env.SKIN_SHOP_CLUSTER?.trim() || 'devnet',
   };
 }
 
+type StoredShopSettings = Awaited<ReturnType<typeof prisma.skinShopSettings.findUnique>> & {};
+type ShopSettings = NonNullable<StoredShopSettings> & {
+  treasuryWallet: string | null;
+  rpcUrl: string | null;
+};
+
+function withRuntimeShopConfig(settings: NonNullable<StoredShopSettings>): ShopSettings {
+  return {
+    ...settings,
+    treasuryWallet: readTreasuryWallet(),
+    rpcUrl: readSolanaRpcUrl(),
+  };
+}
+
 async function getOrCreateShopSettings() {
-  return prisma.skinShopSettings.upsert({
-    where: { id: SHOP_SETTINGS_ID },
-    create: defaultShopSettingsInput(),
-    update: {},
+  await prisma.skinShopSettings.createMany({
+    data: [defaultShopSettingsInput()],
+    skipDuplicates: true,
   });
+
+  const settings = await prisma.skinShopSettings.findUnique({ where: { id: SHOP_SETTINGS_ID } });
+  if (!settings) {
+    throw new SkinShopServiceError('Skin shop settings could not be initialized', 500);
+  }
+  return withRuntimeShopConfig(settings);
 }
 
 async function getOrCreateItemSettings(skinId: HeroSkinId) {
@@ -153,16 +233,23 @@ async function getOrCreateItemSettings(skinId: HeroSkinId) {
   if (skin.availability !== 'paid') {
     throw new SkinShopServiceError('Only paid skins have shop settings');
   }
-  return prisma.skinShopItemSettings.upsert({
-    where: { skinId },
-    create: {
-      skinId,
-      saleEnabled: false,
-      tokenAmountBaseUnits: null,
-      displayNote: skin.price?.disabledReason ?? null,
-    },
-    update: {},
+  await prisma.skinShopItemSettings.createMany({
+    data: [
+      {
+        skinId,
+        saleEnabled: false,
+        tokenAmountBaseUnits: null,
+        maxSupply: null,
+      },
+    ],
+    skipDuplicates: true,
   });
+
+  const settings = await prisma.skinShopItemSettings.findUnique({ where: { skinId } });
+  if (!settings) {
+    throw new SkinShopServiceError(`Skin shop item settings could not be initialized for ${skinId}`, 500);
+  }
+  return settings;
 }
 
 function serializeShopSettings(settings: {
@@ -178,7 +265,7 @@ function serializeShopSettings(settings: {
   return {
     enabled: settings.enabled,
     tokenMintAddress: settings.tokenMintAddress,
-    tokenSymbol: settings.tokenSymbol,
+    tokenSymbol: settings.tokenMintAddress ? settings.tokenSymbol : '',
     treasuryWallet: settings.treasuryWallet,
     cluster: settings.cluster,
     rpcConfigured: Boolean(settings.rpcUrl),
@@ -191,16 +278,20 @@ function serializeItemSettings(item: {
   skinId: string;
   saleEnabled: boolean;
   tokenAmountBaseUnits: bigint | null;
-  displayNote: string | null;
+  maxSupply: number | null;
   priceVersion: number;
   updatedByUserId: string | null;
   updatedAt: Date;
-}): SerializedSkinShopItemSettings {
+}, counts: SkinSupplyCounts): SerializedSkinShopItemSettings {
+  const supply = buildSupplySnapshot(item.maxSupply, counts);
   return {
     skinId: item.skinId as HeroSkinId,
     saleEnabled: item.saleEnabled,
     tokenAmountBaseUnits: bigintToString(item.tokenAmountBaseUnits),
-    displayNote: item.displayNote,
+    maxSupply: supply.maxSupply,
+    soldCount: supply.soldCount,
+    reservedCount: supply.reservedCount,
+    remainingSupply: supply.remainingSupply,
     priceVersion: item.priceVersion,
     updatedByUserId: item.updatedByUserId,
     updatedAt: item.updatedAt.toISOString(),
@@ -213,10 +304,10 @@ function serializeAudit(audit: {
   updatedByUserId: string | null;
   oldTokenAmountBaseUnits: bigint | null;
   newTokenAmountBaseUnits: bigint | null;
+  oldMaxSupply: number | null;
+  newMaxSupply: number | null;
   oldSaleEnabled: boolean | null;
   newSaleEnabled: boolean | null;
-  oldDisplayNote: string | null;
-  newDisplayNote: string | null;
   oldPriceVersion: number | null;
   newPriceVersion: number | null;
   createdAt: Date;
@@ -227,10 +318,10 @@ function serializeAudit(audit: {
     updatedByUserId: audit.updatedByUserId,
     oldTokenAmountBaseUnits: bigintToString(audit.oldTokenAmountBaseUnits),
     newTokenAmountBaseUnits: bigintToString(audit.newTokenAmountBaseUnits),
+    oldMaxSupply: audit.oldMaxSupply,
+    newMaxSupply: audit.newMaxSupply,
     oldSaleEnabled: audit.oldSaleEnabled,
     newSaleEnabled: audit.newSaleEnabled,
-    oldDisplayNote: audit.oldDisplayNote,
-    newDisplayNote: audit.newDisplayNote,
     oldPriceVersion: audit.oldPriceVersion,
     newPriceVersion: audit.newPriceVersion,
     createdAt: audit.createdAt.toISOString(),
@@ -261,6 +352,61 @@ async function loadOwnershipRows(userId: string | null | undefined) {
   });
 }
 
+type SkinSupplyCountClient = Pick<Prisma.TransactionClient, 'skinPurchaseIntent'>;
+
+async function loadPaidSkinSupplyCounts(): Promise<Map<HeroSkinId, SkinSupplyCounts>> {
+  const now = new Date();
+  const [soldRows, reservedRows] = await Promise.all([
+    prisma.skinPurchaseIntent.groupBy({
+      by: ['skinId'],
+      where: { status: 'credited' },
+      _count: { _all: true },
+    }),
+    prisma.skinPurchaseIntent.groupBy({
+      by: ['skinId'],
+      where: {
+        status: { in: [...ACTIVE_SUPPLY_RESERVATION_STATUSES] },
+        intentExpiresAt: { gt: now },
+      },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const counts = new Map<HeroSkinId, SkinSupplyCounts>();
+  for (const skin of paidSkins()) counts.set(skin.id, { soldCount: 0, reservedCount: 0 });
+  for (const row of soldRows) {
+    if (isHeroSkinId(row.skinId)) {
+      counts.set(row.skinId, { ...(counts.get(row.skinId) ?? { soldCount: 0, reservedCount: 0 }), soldCount: row._count._all });
+    }
+  }
+  for (const row of reservedRows) {
+    if (isHeroSkinId(row.skinId)) {
+      counts.set(row.skinId, { ...(counts.get(row.skinId) ?? { soldCount: 0, reservedCount: 0 }), reservedCount: row._count._all });
+    }
+  }
+  return counts;
+}
+
+async function getPaidSkinSupplyCounts(
+  skinId: HeroSkinId,
+  client: SkinSupplyCountClient = prisma
+): Promise<SkinSupplyCounts> {
+  const now = new Date();
+  const [soldCount, reservedCount] = await Promise.all([
+    client.skinPurchaseIntent.count({
+      where: { skinId, status: 'credited' },
+    }),
+    client.skinPurchaseIntent.count({
+      where: {
+        skinId,
+        status: { in: [...ACTIVE_SUPPLY_RESERVATION_STATUSES] },
+        intentExpiresAt: { gt: now },
+      },
+    }),
+  ]);
+  return { soldCount, reservedCount };
+}
+
 async function loadResolvedLoadouts(userId: string | null | undefined, ownedSkinIds: Set<HeroSkinId>): Promise<HeroLoadoutSelection[]> {
   const rows = userId
     ? await prisma.userHeroLoadout.findMany({ where: { userId } })
@@ -277,19 +423,24 @@ function buildShopPriceState(input: {
   skin: HeroSkinDefinition;
   shop: Awaited<ReturnType<typeof getOrCreateShopSettings>>;
   item: Awaited<ReturnType<typeof getOrCreateItemSettings>> | null;
+  supply: SkinSupplyCounts;
 }): HeroSkinCatalogPriceState | null {
   if (input.skin.availability !== 'paid') return null;
+  const supply = buildSupplySnapshot(input.item?.maxSupply, input.supply);
   return {
-    tokenSymbol: input.shop.tokenSymbol || input.skin.price?.tokenSymbol || 'TOKEN',
+    tokenSymbol: input.shop.tokenMintAddress ? input.shop.tokenSymbol : '',
     tokenMintAddress: input.shop.tokenMintAddress,
     amountBaseUnits: bigintToString(input.item?.tokenAmountBaseUnits),
     adminEditable: input.skin.price?.adminEditable ?? true,
-    disabledReason: input.item?.displayNote ?? input.skin.price?.disabledReason ?? null,
+    disabledReason: input.skin.price?.disabledReason ?? null,
     saleEnabled: input.item?.saleEnabled ?? false,
+    maxSupply: supply.maxSupply,
+    soldCount: supply.soldCount,
+    reservedCount: supply.reservedCount,
+    remainingSupply: supply.remainingSupply,
     priceVersion: input.item?.priceVersion ?? 1,
     updatedByUserId: input.item?.updatedByUserId ?? null,
     updatedAt: input.item?.updatedAt?.toISOString() ?? null,
-    displayNote: input.item?.displayNote ?? null,
   };
 }
 
@@ -297,32 +448,37 @@ function purchaseDisabledReason(input: {
   skin: HeroSkinDefinition;
   shop: Awaited<ReturnType<typeof getOrCreateShopSettings>>;
   item: Awaited<ReturnType<typeof getOrCreateItemSettings>> | null;
+  supply: SkinSupplyCounts;
 }): string | null {
   if (input.skin.availability !== 'paid') return null;
   const mergedSkin: HeroSkinDefinition = {
     ...input.skin,
     price: {
-      tokenSymbol: input.shop.tokenSymbol || input.skin.price?.tokenSymbol || 'TOKEN',
+      tokenSymbol: input.shop.tokenMintAddress ? input.shop.tokenSymbol : '',
       tokenMintAddress: input.shop.tokenMintAddress,
       amountBaseUnits: bigintToString(input.item?.tokenAmountBaseUnits),
       adminEditable: input.skin.price?.adminEditable ?? true,
-      disabledReason: input.item?.displayNote ?? input.skin.price?.disabledReason ?? null,
+      disabledReason: input.skin.price?.disabledReason ?? null,
     },
   };
-  if (!input.shop.treasuryWallet) return 'Treasury wallet is not configured';
-  if (!input.shop.rpcUrl) return 'Skin shop RPC is not configured';
-  return getPurchaseDisabledReasonForSkin(
+  if (!input.shop.treasuryWallet) return 'WAGER_TREASURY_WALLET is not configured';
+  if (!input.shop.rpcUrl) return 'SOLANA_RPC_URL is not configured';
+  const baseReason = getPurchaseDisabledReasonForSkin(
     mergedSkin,
     input.item?.saleEnabled ?? false,
     input.shop.enabled
   );
+  if (baseReason) return baseReason;
+  if (isSupplySoldOut(input.item?.maxSupply, input.supply)) return 'Sold out';
+  return null;
 }
 
 export async function getSkinCatalogForUser(userId?: string | null): Promise<HeroSkinCatalogResponse> {
-  const [shop, ownerships, itemRows] = await Promise.all([
+  const [shop, ownerships, itemRows, supplyBySkin] = await Promise.all([
     getOrCreateShopSettings(),
     loadOwnershipRows(userId),
     prisma.skinShopItemSettings.findMany(),
+    loadPaidSkinSupplyCounts(),
   ]);
   const itemRowsBySkin = new Map(itemRows.map((item) => [item.skinId, item]));
   for (const skin of paidSkins()) {
@@ -344,13 +500,14 @@ export async function getSkinCatalogForUser(userId?: string | null): Promise<Her
 
   const skins: HeroSkinCatalogItem[] = HERO_SKIN_CATALOG.map((skin) => {
     const item = itemRowsBySkin.get(skin.id) ?? null;
+    const supply = supplyBySkin.get(skin.id) ?? { soldCount: 0, reservedCount: 0 };
     return {
       ...skin,
       owned: ownedSkinIds.has(skin.id),
       equipped: equippedSkinIds.has(skin.id),
       entitlementSource: entitlementBySkin.get(skin.id) ?? null,
-      shopPrice: buildShopPriceState({ skin, shop, item }),
-      purchaseDisabledReason: purchaseDisabledReason({ skin, shop, item }),
+      shopPrice: buildShopPriceState({ skin, shop, item, supply }),
+      purchaseDisabledReason: purchaseDisabledReason({ skin, shop, item, supply }),
     };
   });
 
@@ -417,19 +574,21 @@ export async function updateUserHeroLoadout(input: {
 }
 
 function connectionForShop(shop: Awaited<ReturnType<typeof getOrCreateShopSettings>>): Connection {
-  if (!shop.rpcUrl) throw new SkinShopServiceError('Skin shop RPC is not configured', 503);
+  if (!shop.rpcUrl) throw new SkinShopServiceError('SOLANA_RPC_URL is not configured', 503);
   return new Connection(shop.rpcUrl, {
     commitment: 'confirmed',
     confirmTransactionInitialTimeout: DEFAULT_RPC_TIMEOUT_MS,
   });
 }
 
-function assertPurchaseAvailable(input: {
+async function assertPurchaseAvailable(input: {
   skin: HeroSkinDefinition;
   shop: Awaited<ReturnType<typeof getOrCreateShopSettings>>;
   item: Awaited<ReturnType<typeof getOrCreateItemSettings>>;
-}): void {
-  const reason = purchaseDisabledReason(input);
+  supply?: SkinSupplyCounts;
+}): Promise<void> {
+  const supply = input.supply ?? await getPaidSkinSupplyCounts(input.skin.id);
+  const reason = purchaseDisabledReason({ ...input, supply });
   if (reason) throw new SkinShopServiceError(reason, 400);
   if (!input.shop.tokenMintAddress || !input.shop.treasuryWallet || !input.item.tokenAmountBaseUnits) {
     throw new SkinShopServiceError('Token launch configuration is incomplete');
@@ -499,7 +658,8 @@ export async function createSkinPurchaseIntent(input: {
   if (!user?.walletAddress) {
     throw new SkinShopServiceError('A linked Solana wallet is required', 400);
   }
-  assertPurchaseAvailable({ skin, shop, item });
+  const walletAddress = user.walletAddress;
+  await assertPurchaseAvailable({ skin, shop, item });
 
   const tokenMintAddress = shop.tokenMintAddress!;
   const treasuryWallet = shop.treasuryWallet!;
@@ -512,27 +672,45 @@ export async function createSkinPurchaseIntent(input: {
     }),
   ]);
 
-  const intentId = randomUUID();
-  const now = new Date();
-  const intent = await prisma.skinPurchaseIntent.create({
-    data: {
-      id: intentId,
-      userId: input.userId,
-      walletAddress: user.walletAddress,
-      skinId: input.skinId,
-      quotedPriceVersion: item.priceVersion,
-      tokenMintAddress,
-      tokenSymbol: shop.tokenSymbol,
-      tokenAmountBaseUnits: item.tokenAmountBaseUnits!,
-      tokenDecimals,
-      treasuryWallet,
-      treasuryTokenAccount,
-      cluster: shop.cluster,
-      memo: createSkinPaymentMemo(intentId),
-      status: 'intent_created',
-      intentExpiresAt: new Date(now.getTime() + DEFAULT_INTENT_TTL_MS),
-    },
-  });
+  const intent = await (async () => {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const currentItem = await tx.skinShopItemSettings.findUnique({ where: { skinId: input.skinId } });
+        if (!currentItem) {
+          throw new SkinShopServiceError(`Skin shop item settings could not be initialized for ${input.skinId}`, 500);
+        }
+        const supply = await getPaidSkinSupplyCounts(input.skinId, tx);
+        await assertPurchaseAvailable({ skin, shop, item: currentItem, supply });
+
+        const intentId = randomUUID();
+        const now = new Date();
+        return tx.skinPurchaseIntent.create({
+          data: {
+            id: intentId,
+            userId: input.userId,
+            walletAddress,
+            skinId: input.skinId,
+            quotedPriceVersion: currentItem.priceVersion,
+            tokenMintAddress,
+            tokenSymbol: shop.tokenSymbol,
+            tokenAmountBaseUnits: currentItem.tokenAmountBaseUnits!,
+            tokenDecimals,
+            treasuryWallet,
+            treasuryTokenAccount,
+            cluster: shop.cluster,
+            memo: createSkinPaymentMemo(intentId),
+            status: 'intent_created',
+            intentExpiresAt: new Date(now.getTime() + DEFAULT_INTENT_TTL_MS),
+          },
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error) {
+      if (isSerializableTransactionConflict(error)) {
+        throw new SkinShopServiceError('Skin supply changed; try again', 409);
+      }
+      throw error;
+    }
+  })();
 
   return serializeIntent(intent);
 }
@@ -765,31 +943,50 @@ export async function verifySubmittedSkinPurchase(
   }
 
   const creditedAt = new Date();
-  const credited = await prisma.$transaction(async (tx) => {
-    await tx.userSkinOwnership.upsert({
-      where: { userId_skinId: { userId: intent.userId, skinId: intent.skinId } },
-      create: {
-        userId: intent.userId,
-        skinId: intent.skinId,
-        source: 'paid',
-        purchaseId: intent.id,
-        grantedAt: creditedAt,
-      },
-      update: {
-        source: 'paid',
-        purchaseId: intent.id,
-        revokedAt: null,
-      },
-    });
-    return tx.skinPurchaseIntent.update({
-      where: { id: intent.id },
-      data: {
-        status: 'credited',
-        creditedAt,
-        lastError: null,
-      },
-    });
-  });
+  const credited = await (async () => {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const currentItem = await tx.skinShopItemSettings.findUnique({ where: { skinId: intent.skinId } });
+        if (currentItem?.maxSupply !== null && currentItem?.maxSupply !== undefined) {
+          const soldCount = await tx.skinPurchaseIntent.count({
+            where: { skinId: intent.skinId, status: 'credited' },
+          });
+          if (soldCount >= currentItem.maxSupply) {
+            throw new SkinShopServiceError('Sold out', 409);
+          }
+        }
+
+        await tx.userSkinOwnership.upsert({
+          where: { userId_skinId: { userId: intent.userId, skinId: intent.skinId } },
+          create: {
+            userId: intent.userId,
+            skinId: intent.skinId,
+            source: 'paid',
+            purchaseId: intent.id,
+            grantedAt: creditedAt,
+          },
+          update: {
+            source: 'paid',
+            purchaseId: intent.id,
+            revokedAt: null,
+          },
+        });
+        return tx.skinPurchaseIntent.update({
+          where: { id: intent.id },
+          data: {
+            status: 'credited',
+            creditedAt,
+            lastError: null,
+          },
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error) {
+      if (isSerializableTransactionConflict(error)) {
+        throw new SkinShopServiceError('Skin supply changed; try again', 409);
+      }
+      throw error;
+    }
+  })();
 
   return serializeIntent(credited);
 }
@@ -816,12 +1013,13 @@ export async function getSkinPurchaseIntent(input: {
 }
 
 export async function getSkinShopAdminOverview(): Promise<SkinShopAdminOverview> {
-  const [shop, audits] = await Promise.all([
+  const [shop, audits, supplyBySkin] = await Promise.all([
     getOrCreateShopSettings(),
     prisma.skinShopItemAudit.findMany({
       orderBy: { createdAt: 'desc' },
       take: 50,
     }),
+    loadPaidSkinSupplyCounts(),
   ]);
   const auditsBySkin = new Map<string, SerializedSkinShopItemAudit>();
   for (const audit of audits) {
@@ -831,9 +1029,10 @@ export async function getSkinShopAdminOverview(): Promise<SkinShopAdminOverview>
   const items = [];
   for (const skin of paidSkins()) {
     const settings = await getOrCreateItemSettings(skin.id);
+    const supply = supplyBySkin.get(skin.id) ?? { soldCount: 0, reservedCount: 0 };
     items.push({
       skin,
-      settings: serializeItemSettings(settings),
+      settings: serializeItemSettings(settings, supply),
       lastAudit: auditsBySkin.get(skin.id) ?? null,
     });
   }
@@ -848,26 +1047,17 @@ export async function updateSkinShopSettings(input: {
   enabled?: unknown;
   tokenMintAddress?: unknown;
   tokenSymbol?: unknown;
-  treasuryWallet?: unknown;
-  rpcUrl?: unknown;
   cluster?: unknown;
   updatedByUserId: string;
 }) {
   const tokenMintAddress = input.tokenMintAddress === undefined
     ? undefined
     : cleanOptionalString(input.tokenMintAddress, 96);
-  const treasuryWallet = input.treasuryWallet === undefined
-    ? undefined
-    : cleanOptionalString(input.treasuryWallet, 96);
   if (tokenMintAddress) assertSolanaPublicKey(tokenMintAddress, 'tokenMintAddress');
-  if (treasuryWallet) assertSolanaPublicKey(treasuryWallet, 'treasuryWallet');
 
   const tokenSymbol = input.tokenSymbol === undefined
     ? undefined
-    : cleanOptionalString(input.tokenSymbol, 16) ?? 'TOKEN';
-  const rpcUrl = input.rpcUrl === undefined
-    ? undefined
-    : cleanOptionalString(input.rpcUrl, 240);
+    : cleanOptionalString(input.tokenSymbol, 16) ?? '';
   const cluster = input.cluster === undefined
     ? undefined
     : cleanOptionalString(input.cluster, 32) ?? 'devnet';
@@ -878,9 +1068,7 @@ export async function updateSkinShopSettings(input: {
       ...defaultShopSettingsInput(),
       enabled: input.enabled === true,
       tokenMintAddress: tokenMintAddress ?? null,
-      tokenSymbol: tokenSymbol ?? 'TOKEN',
-      treasuryWallet: treasuryWallet ?? null,
-      rpcUrl: rpcUrl ?? null,
+      tokenSymbol: tokenSymbol ?? '',
       cluster: cluster ?? 'devnet',
       updatedByUserId: input.updatedByUserId,
     },
@@ -888,21 +1076,19 @@ export async function updateSkinShopSettings(input: {
       ...(input.enabled === undefined ? {} : { enabled: input.enabled === true }),
       ...(input.tokenMintAddress === undefined ? {} : { tokenMintAddress }),
       ...(input.tokenSymbol === undefined ? {} : { tokenSymbol }),
-      ...(input.treasuryWallet === undefined ? {} : { treasuryWallet }),
-      ...(input.rpcUrl === undefined ? {} : { rpcUrl }),
       ...(input.cluster === undefined ? {} : { cluster }),
       updatedByUserId: input.updatedByUserId,
     },
   });
 
-  return serializeShopSettings(settings);
+  return serializeShopSettings(withRuntimeShopConfig(settings));
 }
 
 export async function updateSkinShopItemSettings(input: {
   skinId: HeroSkinId;
   saleEnabled?: unknown;
   tokenAmountBaseUnits?: unknown;
-  displayNote?: unknown;
+  maxSupply?: unknown;
   expectedPriceVersion?: unknown;
   updatedByUserId: string;
 }): Promise<SerializedSkinShopItemSettings> {
@@ -924,12 +1110,12 @@ export async function updateSkinShopItemSettings(input: {
   const nextAmount = input.tokenAmountBaseUnits === undefined
     ? current.tokenAmountBaseUnits
     : readPositiveBaseUnits(input.tokenAmountBaseUnits, { required: nextSaleEnabled });
+  const nextMaxSupply = input.maxSupply === undefined
+    ? current.maxSupply
+    : readOptionalMaxSupply(input.maxSupply);
   if (nextSaleEnabled && !nextAmount) {
     throw new SkinShopServiceError('Token amount is required when sale is enabled');
   }
-  const nextDisplayNote = input.displayNote === undefined
-    ? current.displayNote
-    : cleanOptionalString(input.displayNote, 160);
   const nextVersion = current.priceVersion + 1;
 
   const updated = await prisma.$transaction(async (tx) => {
@@ -938,7 +1124,7 @@ export async function updateSkinShopItemSettings(input: {
       data: {
         saleEnabled: nextSaleEnabled,
         tokenAmountBaseUnits: nextAmount,
-        displayNote: nextDisplayNote,
+        maxSupply: nextMaxSupply,
         priceVersion: nextVersion,
         updatedByUserId: input.updatedByUserId,
       },
@@ -949,10 +1135,10 @@ export async function updateSkinShopItemSettings(input: {
         updatedByUserId: input.updatedByUserId,
         oldTokenAmountBaseUnits: current.tokenAmountBaseUnits,
         newTokenAmountBaseUnits: nextAmount,
+        oldMaxSupply: current.maxSupply,
+        newMaxSupply: nextMaxSupply,
         oldSaleEnabled: current.saleEnabled,
         newSaleEnabled: nextSaleEnabled,
-        oldDisplayNote: current.displayNote,
-        newDisplayNote: nextDisplayNote,
         oldPriceVersion: current.priceVersion,
         newPriceVersion: nextVersion,
       },
@@ -960,7 +1146,7 @@ export async function updateSkinShopItemSettings(input: {
     return item;
   });
 
-  return serializeItemSettings(updated);
+  return serializeItemSettings(updated, await getPaidSkinSupplyCounts(input.skinId));
 }
 
 export function parseHeroIdParam(value: unknown): HeroId | null {

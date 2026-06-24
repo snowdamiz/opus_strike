@@ -9,6 +9,7 @@ import {
   type HeroId,
   type HeroSkinId,
   type MapProfileId,
+  type MatchMode,
   type PlayerRole,
   type MatchPerspective,
   type PublicRankSnapshot,
@@ -50,7 +51,7 @@ interface SetupLobbyListenersOptions {
 }
 
 interface MatchmakingStatusMessage {
-  matchMode?: 'quick_play' | 'ranked' | 'custom';
+  matchMode?: MatchMode;
   gameplayMode?: GameplayMode;
   botFillMode?: 'manual' | 'fill_even';
   matchPerspective?: MatchPerspective;

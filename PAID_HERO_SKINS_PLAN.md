@@ -83,7 +83,7 @@ Once this works, remove direct render-time indexing into hero-only body and view
 
 Add server-side persistence for cosmetics:
 
-- `SkinShopSettings`: admin-managed row for active token mint, token symbol, treasury wallet, cluster, and shop enabled flag.
+- `SkinShopSettings`: admin-managed row for active token mint, token symbol, cluster, and shop enabled flag. Skin purchases use the shared `WAGER_TREASURY_WALLET`.
 - `SkinShopItemSettings`: admin-managed per-skin row for sale status, token amount base units, price version, updated by, and updated at.
 - `UserSkinOwnership`: user id, skin id, source, purchase id, granted at, revoked at.
 - `SkinPurchaseIntent`: user id, wallet address, skin id, quoted price version, token mint, token amount base units, treasury token account, memo, status, transaction signature, expiration, credited at, last error.
@@ -137,9 +137,9 @@ Because the token has not launched yet, ship the plumbing behind disabled launch
 - `SKIN_SHOP_ENABLED`
 - `SKIN_SHOP_TOKEN_MINT`
 - `SKIN_SHOP_TOKEN_SYMBOL`
-- `SKIN_SHOP_TREASURY_WALLET`
-- `SKIN_SHOP_RPC_URL`
 - `SKIN_SHOP_CLUSTER`
+- `WAGER_TREASURY_WALLET`
+- `SOLANA_RPC_URL`
 
 Payment flow:
 
@@ -182,7 +182,7 @@ The current server already has useful SOL payment intent and verification patter
     tokenMintAddress: null,
     amountBaseUnits: null,
     adminEditable: true,
-    disabledReason: 'Game SPL token has not launched yet'
+    disabledReason: 'Disabled'
   }
 }
 ```

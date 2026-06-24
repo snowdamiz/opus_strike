@@ -47,6 +47,7 @@
     "test:player-ping-runtime": "tsx src/scripts/player-ping-runtime.test.ts",
     "test:player-replication": "tsx src/scripts/player-replication-state.test.ts",
     "test:player-roots": "tsx src/scripts/player-root-state.test.ts",
+    "test:player-rewards": "tsx src/scripts/player-reward-runtime.test.ts",
     "test:player-transforms": "tsx src/scripts/player-transform-packing.test.ts",
     "test:player-vitals": "tsx src/scripts/player-vitals.test.ts",
     "test:pre-match-cancellation": "tsx src/scripts/pre-match-cancellation.test.ts",

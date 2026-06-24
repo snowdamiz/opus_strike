@@ -28,6 +28,7 @@ import {
   listPlayerReportQueue,
 } from '../reports/playerReportService';
 import { wagerService } from '../wagers/service';
+import { playerRewardService } from '../rewards/service';
 import {
   collectLocalAdminMachineSnapshot,
   listAdminMachineSnapshots,
@@ -753,12 +754,16 @@ function summarizeLobbyRoom(room: AdminRoomListing, processSnapshots: Map<string
 
 async function collectAdminOverview(options: AdminRouterOptions, adminUser: AdminUser) {
   const generatedAtMs = Date.now();
-  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, goldenBiomeRewards, globalNotification, rankedSeason, rankedEntryGate, skinShop] = await Promise.all([
+  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, rewardEconomySettings, goldenBiomeRewards, globalNotification, rankedSeason, rankedEntryGate, skinShop] = await Promise.all([
     pingRedis(options.redis),
     queryRooms(options.matchMaker, 'game_room'),
     queryRooms(options.matchMaker, 'lobby_room'),
     antiCheatEvidenceStore.listReviewData(),
     listPlayerReportQueue(prisma),
+    Promise.all([
+      playerRewardService.getSettingsOverview(),
+      wagerService.getWagerEconomySettings(),
+    ]).then(([playerRewards, wagers]) => ({ playerRewards, wagers })),
     wagerService.getGoldenBiomeAdminOverview(),
     getGlobalNotification(),
     getRankedSeason(),
@@ -843,6 +848,10 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     lobbyRooms: lobbyRooms.length,
     lobbyParticipants: lobbyRooms.reduce((sum, room) => sum + room.participants, 0),
   };
+  const rewardEconomy = {
+    rewardTokenSymbol: rankedEntryGate.tokenMintAddress ? rankedEntryGate.tokenSymbol : null,
+    ...rewardEconomySettings,
+  };
 
   return {
     generatedAt: new Date(generatedAtMs).toISOString(),
@@ -878,6 +887,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     },
     antiCheat,
     playerReports,
+    rewardEconomy,
     goldenBiomeRewards,
     globalNotification,
     rankedSeason: rankedSeason satisfies AdminRankedSeason,
@@ -1034,6 +1044,36 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     }
   });
 
+  router.post('/api/reward-economy', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const body = req.body && typeof req.body === 'object' ? req.body as {
+      playerRewards?: Record<string, unknown>;
+      wagers?: Record<string, unknown>;
+      goldenBiome?: Record<string, unknown>;
+    } : {};
+
+    try {
+      const [playerRewards, wagers, goldenBiome] = await Promise.all([
+        playerRewardService.updateSettings(
+          body.playerRewards && typeof body.playerRewards === 'object' ? body.playerRewards : {},
+          adminUser.id
+        ),
+        wagerService.updateWagerEconomySettings(
+          body.wagers && typeof body.wagers === 'object' ? body.wagers : {},
+          adminUser.id
+        ),
+        wagerService.updateGoldenBiomeSettings(
+          body.goldenBiome && typeof body.goldenBiome === 'object' ? body.goldenBiome : {},
+          adminUser.id
+        ),
+      ]);
+      res.json({ ok: true, rewardEconomy: { playerRewards, wagers }, goldenBiome });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   router.post('/api/golden-biome/rewards/:rewardId/distribute', ensureAdmin, ensureAdminMutation, async (req, res) => {
     noStore(res);
     const adminUser = res.locals.adminUser as AdminUser;
@@ -1119,8 +1159,6 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         enabled: req.body?.enabled,
         tokenMintAddress: req.body?.tokenMintAddress,
         tokenSymbol: req.body?.tokenSymbol,
-        treasuryWallet: req.body?.treasuryWallet,
-        rpcUrl: req.body?.rpcUrl,
         cluster: req.body?.cluster,
         updatedByUserId: adminUser.id,
       });
@@ -1144,7 +1182,7 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         skinId,
         saleEnabled: req.body?.saleEnabled,
         tokenAmountBaseUnits: req.body?.tokenAmountBaseUnits,
-        displayNote: req.body?.displayNote,
+        maxSupply: req.body?.maxSupply,
         expectedPriceVersion: req.body?.expectedPriceVersion,
         updatedByUserId: adminUser.id,
       });

@@ -84,6 +84,46 @@ export interface SkinPurchaseSimulationResponse {
   logs: string[];
 }
 
+export interface RewardEconomyResponse {
+  economy: {
+    rewardTokenSymbol: string | null;
+    playerRewards: {
+      enabled: boolean;
+      dailyRankedDripLamports: string;
+      dailyRankedDripMaxMatches: number;
+      minMatchDurationMs: number;
+      objectiveWinLamports: string;
+      objectiveFlagCaptureLamports: string;
+      objectiveFlagReturnLamports: string;
+      objectiveAssistLamports: string;
+      maxPlayerMatchLamports: string;
+      maxMatchPayoutLamports: string;
+      treasuryReserveLamports: string;
+      payoutBatchSize: number;
+      weeklyEnabled: boolean;
+      weeklyPoolLamports: string;
+      weeklyTopPlayers: number;
+      updatedByUserId: string | null;
+      updatedAt: string | null;
+    };
+    wagers: {
+      platformFeeBps: number;
+      updatedByUserId: string | null;
+      updatedAt: string | null;
+    };
+    goldenBiome: {
+      distributionMode: 'manual' | 'auto';
+      enabled: boolean;
+      chanceBps: number;
+      winnerRewardLamports: string;
+      treasuryMinLamports: string;
+      treasuryWallet: string | null;
+      updatedByUserId: string | null;
+      updatedAt: string | null;
+    };
+  };
+}
+
 function getHttpUrl(): string {
   return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
 }
@@ -169,6 +209,20 @@ export async function requestRankedTokenHoldStatus(): Promise<RankedTokenHoldSta
 
   const payload = await response.json() as { tokenHold: RankedTokenHoldStatus };
   return payload.tokenHold;
+}
+
+export async function requestRewardEconomy(): Promise<RewardEconomyResponse['economy']> {
+  const response = await fetch(`${getHttpUrl()}/rewards/economy`, {
+    credentials: 'include',
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load reward economy'));
+  }
+
+  const payload = await response.json() as RewardEconomyResponse;
+  return payload.economy;
 }
 
 export async function requestRunningGameStatus(roomId: string): Promise<RunningGameStatusResponse> {

@@ -165,8 +165,8 @@ interface GoldenBiomeRewardsOverview {
     distributionMode: GoldenBiomeDistributionMode;
     enabled: boolean;
     chanceBps: number;
-    winnerRewardUsdCents: number;
-    treasuryMinUsdCents: number;
+    winnerRewardLamports: string;
+    treasuryMinLamports: string;
     treasuryWallet: string | null;
     updatedByUserId: string | null;
     updatedAt: string | null;
@@ -184,6 +184,62 @@ interface GoldenBiomeRewardsOverview {
   rewards: GoldenBiomeRewardOverview[];
 }
 
+interface PlayerRewardSettingsOverview {
+  enabled: boolean;
+  dailyRankedDripLamports: string;
+  dailyRankedDripMaxMatches: number;
+  minMatchDurationMs: number;
+  objectiveWinLamports: string;
+  objectiveFlagCaptureLamports: string;
+  objectiveFlagReturnLamports: string;
+  objectiveAssistLamports: string;
+  maxPlayerMatchLamports: string;
+  maxMatchPayoutLamports: string;
+  treasuryReserveLamports: string;
+  payoutBatchSize: number;
+  weeklyEnabled: boolean;
+  weeklyPoolLamports: string;
+  weeklyTopPlayers: number;
+  updatedByUserId: string | null;
+  updatedAt: string | null;
+}
+
+interface WagerEconomySettingsOverview {
+  platformFeeBps: number;
+  updatedByUserId: string | null;
+  updatedAt: string | null;
+}
+
+interface RewardEconomyOverview {
+  rewardTokenSymbol: string | null;
+  playerRewards: PlayerRewardSettingsOverview;
+  wagers: WagerEconomySettingsOverview;
+}
+
+interface RewardEconomyDraft {
+  enabled: boolean;
+  dailyRankedDripLamports: string;
+  dailyRankedDripMaxMatches: string;
+  minMatchDurationMs: string;
+  objectiveWinLamports: string;
+  objectiveFlagCaptureLamports: string;
+  objectiveFlagReturnLamports: string;
+  objectiveAssistLamports: string;
+  maxPlayerMatchLamports: string;
+  maxMatchPayoutLamports: string;
+  treasuryReserveLamports: string;
+  payoutBatchSize: string;
+  weeklyEnabled: boolean;
+  weeklyPoolLamports: string;
+  weeklyTopPlayers: string;
+  platformFeeBps: string;
+  goldenBiomeEnabled: boolean;
+  goldenBiomeChanceBps: string;
+  goldenBiomeWinnerRewardSol: string;
+  goldenBiomeTreasuryMinSol: string;
+  goldenBiomeDistributionMode: GoldenBiomeDistributionMode;
+}
+
 interface GlobalNotificationOverview {
   id: string;
   message: string;
@@ -194,6 +250,7 @@ interface GlobalNotificationOverview {
 type RankedSeasonMode = 'preseason' | 'season';
 type RankedEntryGateMode = 'locked' | 'token_required';
 const ADMIN_RANK_PAGE_SIZE = 25;
+const ADMIN_SKIN_SUPPLY_CAP_MAX = 2_147_483_647;
 
 interface RankedSeasonOverview {
   mode: RankedSeasonMode;
@@ -245,7 +302,10 @@ interface SkinShopItemSettingsOverview {
   skinId: string;
   saleEnabled: boolean;
   tokenAmountBaseUnits: string | null;
-  displayNote: string | null;
+  maxSupply: number | null;
+  soldCount: number;
+  reservedCount: number;
+  remainingSupply: number | null;
   priceVersion: number;
   updatedByUserId: string | null;
   updatedAt: string | null;
@@ -257,6 +317,8 @@ interface SkinShopAuditOverview {
   createdAt: string;
   oldTokenAmountBaseUnits: string | null;
   newTokenAmountBaseUnits: string | null;
+  oldMaxSupply: number | null;
+  newMaxSupply: number | null;
   oldSaleEnabled: boolean | null;
   newSaleEnabled: boolean | null;
 }
@@ -281,15 +343,13 @@ interface SkinShopSettingsDraft {
   enabled: boolean;
   tokenMintAddress: string;
   tokenSymbol: string;
-  treasuryWallet: string;
-  rpcUrl: string;
   cluster: string;
 }
 
 interface SkinShopItemDraft {
   saleEnabled: boolean;
   tokenAmountBaseUnits: string;
-  displayNote: string;
+  maxSupply: string;
   expectedPriceVersion: number;
 }
 
@@ -404,6 +464,7 @@ interface AdminOverview {
     reports: PlayerReportOverview[];
     counts: Record<string, number>;
   };
+  rewardEconomy?: RewardEconomyOverview;
   goldenBiomeRewards?: GoldenBiomeRewardsOverview;
   globalNotification: GlobalNotificationOverview | null;
   rankedSeason: RankedSeasonOverview;
@@ -501,6 +562,11 @@ function isPositiveWholeNumberString(value: string): boolean {
   return /^[0-9]+$/.test(value.trim()) && BigInt(value.trim()) > 0n;
 }
 
+function isPositiveWholeNumberInRange(value: string, max: number): boolean {
+  const trimmed = value.trim();
+  return /^[0-9]+$/.test(trimmed) && BigInt(trimmed) > 0n && BigInt(trimmed) <= BigInt(max);
+}
+
 const ADMIN_MANUAL_RATING_MAX = 5000;
 
 const RANK_OPTIONS = RANK_DEFINITIONS.flatMap((tier) => (
@@ -557,14 +623,83 @@ function getRankPreview(value: string, rankedGames: number) {
   };
 }
 
-function formatUsdCents(usdCents: number): string {
-  const dollars = Math.floor(Math.max(0, usdCents) / 100);
-  const cents = Math.max(0, usdCents) % 100;
-  return cents === 0 ? `$${dollars}` : `$${dollars}.${cents.toString().padStart(2, '0')}`;
-}
-
 function formatBps(bps: number): string {
   return `${(bps / 100).toFixed(2).replace(/\.00$/, '')}%`;
+}
+
+function solInputToLamports(value: string, fieldName: string): string {
+  const trimmed = value.trim();
+  const match = /^([0-9]+)(?:\.([0-9]{0,9}))?$/.exec(trimmed);
+  if (!match) throw new Error(`${fieldName} must be a SOL amount with up to 9 decimals`);
+
+  const whole = BigInt(match[1]);
+  const fractional = BigInt((match[2] ?? '').padEnd(9, '0') || '0');
+  return (whole * 1_000_000_000n + fractional).toString();
+}
+
+function rewardEconomyDraftFromOverview(
+  rewardEconomy?: RewardEconomyOverview,
+  goldenBiomeRewards?: GoldenBiomeRewardsOverview
+): RewardEconomyDraft {
+  const playerRewards = rewardEconomy?.playerRewards;
+  const wagers = rewardEconomy?.wagers;
+  const golden = goldenBiomeRewards?.settings;
+
+  return {
+    enabled: playerRewards?.enabled ?? true,
+    dailyRankedDripLamports: playerRewards?.dailyRankedDripLamports ?? '20000',
+    dailyRankedDripMaxMatches: String(playerRewards?.dailyRankedDripMaxMatches ?? 5),
+    minMatchDurationMs: String(playerRewards?.minMatchDurationMs ?? 180000),
+    objectiveWinLamports: playerRewards?.objectiveWinLamports ?? '10000',
+    objectiveFlagCaptureLamports: playerRewards?.objectiveFlagCaptureLamports ?? '15000',
+    objectiveFlagReturnLamports: playerRewards?.objectiveFlagReturnLamports ?? '5000',
+    objectiveAssistLamports: playerRewards?.objectiveAssistLamports ?? '2000',
+    maxPlayerMatchLamports: playerRewards?.maxPlayerMatchLamports ?? '50000',
+    maxMatchPayoutLamports: playerRewards?.maxMatchPayoutLamports ?? '250000',
+    treasuryReserveLamports: playerRewards?.treasuryReserveLamports ?? '1000000000',
+    payoutBatchSize: String(playerRewards?.payoutBatchSize ?? 100),
+    weeklyEnabled: playerRewards?.weeklyEnabled ?? true,
+    weeklyPoolLamports: playerRewards?.weeklyPoolLamports ?? '1000000',
+    weeklyTopPlayers: String(playerRewards?.weeklyTopPlayers ?? 10),
+    platformFeeBps: String(wagers?.platformFeeBps ?? 500),
+    goldenBiomeEnabled: golden?.enabled ?? true,
+    goldenBiomeChanceBps: String(golden?.chanceBps ?? 200),
+    goldenBiomeWinnerRewardSol: lamportsToSolDisplay(golden?.winnerRewardLamports ?? '200000000'),
+    goldenBiomeTreasuryMinSol: lamportsToSolDisplay(golden?.treasuryMinLamports ?? '1000000000'),
+    goldenBiomeDistributionMode: golden?.distributionMode ?? 'manual',
+  };
+}
+
+function rewardEconomyPayloadFromDraft(draft: RewardEconomyDraft) {
+  return {
+    playerRewards: {
+      enabled: draft.enabled,
+      dailyRankedDripLamports: draft.dailyRankedDripLamports,
+      dailyRankedDripMaxMatches: draft.dailyRankedDripMaxMatches,
+      minMatchDurationMs: draft.minMatchDurationMs,
+      objectiveWinLamports: draft.objectiveWinLamports,
+      objectiveFlagCaptureLamports: draft.objectiveFlagCaptureLamports,
+      objectiveFlagReturnLamports: draft.objectiveFlagReturnLamports,
+      objectiveAssistLamports: draft.objectiveAssistLamports,
+      maxPlayerMatchLamports: draft.maxPlayerMatchLamports,
+      maxMatchPayoutLamports: draft.maxMatchPayoutLamports,
+      treasuryReserveLamports: draft.treasuryReserveLamports,
+      payoutBatchSize: draft.payoutBatchSize,
+      weeklyEnabled: draft.weeklyEnabled,
+      weeklyPoolLamports: draft.weeklyPoolLamports,
+      weeklyTopPlayers: draft.weeklyTopPlayers,
+    },
+    wagers: {
+      platformFeeBps: draft.platformFeeBps,
+    },
+    goldenBiome: {
+      distributionMode: draft.goldenBiomeDistributionMode,
+      enabled: draft.goldenBiomeEnabled,
+      chanceBps: draft.goldenBiomeChanceBps,
+      winnerRewardLamports: solInputToLamports(draft.goldenBiomeWinnerRewardSol, 'Golden winner payout'),
+      treasuryMinLamports: solInputToLamports(draft.goldenBiomeTreasuryMinSol, 'Golden reserve'),
+    },
+  };
 }
 
 type Tone = 'neutral' | 'success' | 'warning' | 'danger' | 'info' | 'amber';
@@ -869,6 +1004,153 @@ function LobbiesTable({ lobbies }: { lobbies: LobbyRoomOverview[] }) {
   );
 }
 
+function EconomyField({
+  label,
+  value,
+  disabled,
+  suffix,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  disabled?: boolean;
+  suffix?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="min-w-0">
+      <span className="font-body text-[10px] font-semibold uppercase leading-none text-white/45">{label}</span>
+      <span className="mt-1.5 flex h-8 min-w-0 overflow-hidden rounded-md border border-white/10 bg-black/30 focus-within:border-accent-primary/55">
+        <input
+          type="text"
+          inputMode="decimal"
+          disabled={disabled}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="min-w-0 flex-1 bg-transparent px-2.5 font-mono text-xs text-white outline-none disabled:cursor-not-allowed disabled:opacity-45"
+        />
+        {suffix && (
+          <span className="flex shrink-0 items-center border-l border-white/10 bg-white/[0.035] px-2 font-body text-[10px] font-semibold uppercase text-white/40">
+            {suffix}
+          </span>
+        )}
+      </span>
+    </label>
+  );
+}
+
+function EconomyToggle({
+  label,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex h-8 items-center justify-between gap-3 rounded-md border border-white/10 bg-black/25 px-2.5">
+      <span className="font-body text-[10px] font-semibold uppercase text-white/45">{label}</span>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+        className="h-4 w-4 accent-accent-primary disabled:cursor-not-allowed disabled:opacity-45"
+      />
+    </label>
+  );
+}
+
+function RewardEconomyPanel({
+  draft,
+  dirty,
+  busy,
+  updatedAt,
+  tokenSymbol,
+  onDraftChange,
+  onSave,
+}: {
+  draft: RewardEconomyDraft;
+  dirty: boolean;
+  busy: boolean;
+  updatedAt: string | null;
+  tokenSymbol: string | null;
+  onDraftChange: (patch: Partial<RewardEconomyDraft>) => void;
+  onSave: () => void;
+}) {
+  const disabled = busy;
+  const tokenSuffix = tokenSymbol?.trim().replace(/^\$/, '').toUpperCase() || undefined;
+  return (
+    <div className="space-y-4 p-3">
+      <div className="grid gap-3 lg:grid-cols-3">
+        <div className="space-y-3">
+          <div className="font-body text-xs font-semibold uppercase text-white/70">Ranked Token Rewards</div>
+          <EconomyToggle label="Enabled" checked={draft.enabled} disabled={disabled} onChange={(enabled) => onDraftChange({ enabled })} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <EconomyField label="Match drip" value={draft.dailyRankedDripLamports} suffix={tokenSuffix} disabled={disabled} onChange={(dailyRankedDripLamports) => onDraftChange({ dailyRankedDripLamports })} />
+            <EconomyField label="Paid/day" value={draft.dailyRankedDripMaxMatches} suffix="max" disabled={disabled} onChange={(dailyRankedDripMaxMatches) => onDraftChange({ dailyRankedDripMaxMatches })} />
+            <EconomyField label="Win" value={draft.objectiveWinLamports} suffix={tokenSuffix} disabled={disabled} onChange={(objectiveWinLamports) => onDraftChange({ objectiveWinLamports })} />
+            <EconomyField label="Assist" value={draft.objectiveAssistLamports} suffix={tokenSuffix} disabled={disabled} onChange={(objectiveAssistLamports) => onDraftChange({ objectiveAssistLamports })} />
+            <EconomyField label="Flag capture" value={draft.objectiveFlagCaptureLamports} suffix={tokenSuffix} disabled={disabled} onChange={(objectiveFlagCaptureLamports) => onDraftChange({ objectiveFlagCaptureLamports })} />
+            <EconomyField label="Flag return" value={draft.objectiveFlagReturnLamports} suffix={tokenSuffix} disabled={disabled} onChange={(objectiveFlagReturnLamports) => onDraftChange({ objectiveFlagReturnLamports })} />
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <div className="font-body text-xs font-semibold uppercase text-white/70">Caps + Weekly</div>
+          <EconomyToggle label="Weekly pool" checked={draft.weeklyEnabled} disabled={disabled} onChange={(weeklyEnabled) => onDraftChange({ weeklyEnabled })} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <EconomyField label="Weekly pool" value={draft.weeklyPoolLamports} suffix={tokenSuffix} disabled={disabled} onChange={(weeklyPoolLamports) => onDraftChange({ weeklyPoolLamports })} />
+            <EconomyField label="Weekly places" value={draft.weeklyTopPlayers} suffix="top" disabled={disabled} onChange={(weeklyTopPlayers) => onDraftChange({ weeklyTopPlayers })} />
+            <EconomyField label="Player cap" value={draft.maxPlayerMatchLamports} suffix={tokenSuffix} disabled={disabled} onChange={(maxPlayerMatchLamports) => onDraftChange({ maxPlayerMatchLamports })} />
+            <EconomyField label="Match cap" value={draft.maxMatchPayoutLamports} suffix={tokenSuffix} disabled={disabled} onChange={(maxMatchPayoutLamports) => onDraftChange({ maxMatchPayoutLamports })} />
+            <EconomyField label="Min duration" value={draft.minMatchDurationMs} suffix="ms" disabled={disabled} onChange={(minMatchDurationMs) => onDraftChange({ minMatchDurationMs })} />
+            <EconomyField label="Payout batch" value={draft.payoutBatchSize} suffix="rows" disabled={disabled} onChange={(payoutBatchSize) => onDraftChange({ payoutBatchSize })} />
+          </div>
+          <EconomyField label="Treasury reserve" value={draft.treasuryReserveLamports} suffix="lamports" disabled={disabled} onChange={(treasuryReserveLamports) => onDraftChange({ treasuryReserveLamports })} />
+        </div>
+
+        <div className="space-y-3">
+          <div className="font-body text-xs font-semibold uppercase text-white/70">Golden + Wagers</div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <EconomyToggle label="Golden maps" checked={draft.goldenBiomeEnabled} disabled={disabled} onChange={(goldenBiomeEnabled) => onDraftChange({ goldenBiomeEnabled })} />
+            <label className="min-w-0">
+              <span className="font-body text-[10px] font-semibold uppercase leading-none text-white/45">Distribution</span>
+              <AdminSelect
+                label="Golden distribution mode"
+                value={draft.goldenBiomeDistributionMode}
+                disabled={disabled}
+                options={[
+                  { value: 'manual', label: 'Manual' },
+                  { value: 'auto', label: 'Auto' },
+                ]}
+                onChange={(goldenBiomeDistributionMode) => onDraftChange({ goldenBiomeDistributionMode: goldenBiomeDistributionMode as GoldenBiomeDistributionMode })}
+                className="mt-1.5"
+              />
+            </label>
+            <EconomyField label="Golden roll" value={draft.goldenBiomeChanceBps} suffix="bps" disabled={disabled} onChange={(goldenBiomeChanceBps) => onDraftChange({ goldenBiomeChanceBps })} />
+            <EconomyField label="Winner payout" value={draft.goldenBiomeWinnerRewardSol} suffix="SOL" disabled={disabled} onChange={(goldenBiomeWinnerRewardSol) => onDraftChange({ goldenBiomeWinnerRewardSol })} />
+            <EconomyField label="Golden reserve" value={draft.goldenBiomeTreasuryMinSol} suffix="SOL" disabled={disabled} onChange={(goldenBiomeTreasuryMinSol) => onDraftChange({ goldenBiomeTreasuryMinSol })} />
+            <EconomyField label="Wager fee" value={draft.platformFeeBps} suffix="bps" disabled={disabled} onChange={(platformFeeBps) => onDraftChange({ platformFeeBps })} />
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-3">
+        <div className="font-body text-[11px] text-white/40">
+          {updatedAt ? `Updated ${formatDate(updatedAt)}` : 'Using default economy settings'}
+        </div>
+        <ActionButton disabled={disabled || !dirty} onClick={onSave}>
+          {busy ? 'Saving' : 'Save Economy'}
+        </ActionButton>
+      </div>
+    </div>
+  );
+}
+
 function ActionButton({
   children,
   onClick,
@@ -1169,7 +1451,7 @@ function SkinShopPanel({
 }) {
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 rounded-md border border-accent-primary/25 bg-black/20 p-3 lg:grid-cols-[0.4fr_1fr_1fr_0.45fr_0.45fr_auto] lg:items-end">
+      <div className="grid gap-3 rounded-md border border-accent-primary/25 bg-black/20 p-3 lg:grid-cols-[0.4fr_1fr_0.55fr_0.55fr_auto] lg:items-end">
         <div>
           <div className="font-body text-[10px] font-semibold uppercase text-white/45">Shop</div>
           <button
@@ -1195,17 +1477,6 @@ function SkinShopPanel({
             onChange={(event) => onSettingsDraftChange({ ...settingsDraft, tokenMintAddress: event.target.value })}
             className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-mono text-xs text-white outline-none transition placeholder:text-white/25 focus:border-accent-primary/55"
             placeholder="SPL mint address"
-          />
-        </label>
-
-        <label className="block min-w-0">
-          <span className="font-body text-[10px] font-semibold uppercase text-white/45">Treasury Wallet</span>
-          <input
-            value={settingsDraft.treasuryWallet}
-            disabled={busySettings}
-            onChange={(event) => onSettingsDraftChange({ ...settingsDraft, treasuryWallet: event.target.value })}
-            className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-mono text-xs text-white outline-none transition placeholder:text-white/25 focus:border-accent-primary/55"
-            placeholder="Treasury owner wallet"
           />
         </label>
 
@@ -1239,20 +1510,30 @@ function SkinShopPanel({
           Save Shop
         </button>
 
-        <label className="block min-w-0 lg:col-span-5">
-          <span className="font-body text-[10px] font-semibold uppercase text-white/45">RPC URL</span>
-          <input
-            value={settingsDraft.rpcUrl}
-            disabled={busySettings}
-            onChange={(event) => onSettingsDraftChange({ ...settingsDraft, rpcUrl: event.target.value })}
-            className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-mono text-xs text-white outline-none transition placeholder:text-white/25 focus:border-accent-primary/55"
-            placeholder={overview.shop.rpcConfigured ? 'Configured. Enter a new URL to rotate.' : 'RPC URL required before enabling purchases'}
-          />
-        </label>
-        <div className="flex items-end justify-end">
-          <Pill tone={overview.shop.rpcConfigured ? 'success' : 'warning'}>
-            RPC {overview.shop.rpcConfigured ? 'set' : 'missing'}
-          </Pill>
+        <div className="min-w-0 lg:col-span-2">
+          <div className="font-body text-[10px] font-semibold uppercase text-white/45">Solana RPC</div>
+          <div
+            className={`mt-2 flex h-8 items-center rounded-md border px-2.5 font-body text-[11px] font-semibold uppercase ${
+              overview.shop.rpcConfigured
+                ? 'border-ui-success/25 bg-ui-success/10 text-emerald-100'
+                : 'border-ui-warning/35 bg-ui-warning/10 text-yellow-100'
+            }`}
+          >
+            SOLANA_RPC_URL {overview.shop.rpcConfigured ? 'ready' : 'missing'}
+          </div>
+        </div>
+        <div className="min-w-0 lg:col-span-3">
+          <div className="font-body text-[10px] font-semibold uppercase text-white/45">Wager Treasury</div>
+          <div
+            className={`mt-2 flex h-8 items-center rounded-md border px-2.5 font-mono text-xs ${
+              overview.shop.treasuryWallet
+                ? 'border-ui-success/25 bg-ui-success/10 text-emerald-100'
+                : 'border-ui-warning/35 bg-ui-warning/10 text-yellow-100'
+            }`}
+            title={overview.shop.treasuryWallet ?? undefined}
+          >
+            {overview.shop.treasuryWallet ? formatCompactIdentifier(overview.shop.treasuryWallet, 8, 8) : 'WAGER_TREASURY_WALLET missing'}
+          </div>
         </div>
       </div>
 
@@ -1261,11 +1542,13 @@ function SkinShopPanel({
           const draft = itemDrafts[item.settings.skinId] ?? {
             saleEnabled: item.settings.saleEnabled,
             tokenAmountBaseUnits: item.settings.tokenAmountBaseUnits ?? '',
-            displayNote: item.settings.displayNote ?? '',
+            maxSupply: item.settings.maxSupply?.toString() ?? '',
             expectedPriceVersion: item.settings.priceVersion,
           };
           const busy = busyItemId === item.settings.skinId;
           const canSave = !busy && Boolean(dirtyById[item.settings.skinId]);
+          const hasSupplyCap = item.settings.maxSupply !== null;
+          const remainingSupply = item.settings.remainingSupply ?? 0;
           return (
             <article key={item.settings.skinId} className="rounded-md border border-white/10 bg-black/20 p-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
@@ -1290,7 +1573,7 @@ function SkinShopPanel({
                 </button>
               </div>
 
-              <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,0.7fr)_minmax(0,1fr)_auto] sm:items-end">
+              <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,0.35fr)_auto] sm:items-end">
                 <label className="block">
                   <span className="font-body text-[10px] font-semibold uppercase text-white/45">Base Units</span>
                   <input
@@ -1304,14 +1587,18 @@ function SkinShopPanel({
                     className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-mono text-xs text-white outline-none transition focus:border-accent-primary/55"
                   />
                 </label>
-                <label className="block min-w-0">
-                  <span className="font-body text-[10px] font-semibold uppercase text-white/45">Display Note</span>
+                <label className="block">
+                  <span className="font-body text-[10px] font-semibold uppercase text-white/45">Supply Cap</span>
                   <input
-                    value={draft.displayNote}
+                    value={draft.maxSupply}
+                    inputMode="numeric"
                     disabled={busy}
-                    onChange={(event) => onItemDraftChange(item.settings.skinId, { ...draft, displayNote: event.target.value })}
-                    className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-body text-xs text-white outline-none transition placeholder:text-white/25 focus:border-accent-primary/55"
-                    placeholder="Optional disabled or sale note"
+                    onChange={(event) => onItemDraftChange(item.settings.skinId, {
+                      ...draft,
+                      maxSupply: event.target.value.replace(/\D/g, ''),
+                    })}
+                    className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-mono text-xs text-white outline-none transition placeholder:text-white/25 focus:border-accent-primary/55"
+                    placeholder="Unlimited"
                   />
                 </label>
                 <button
@@ -1327,6 +1614,15 @@ function SkinShopPanel({
               <div className="mt-3 flex flex-wrap gap-2 font-body text-[11px] text-white/42">
                 <Pill>{item.settings.tokenAmountBaseUnits ?? 'no price'} {overview.shop.tokenSymbol}</Pill>
                 <Pill tone={item.settings.saleEnabled ? 'success' : 'warning'}>{item.settings.saleEnabled ? 'sale enabled' : 'sale locked'}</Pill>
+                <Pill tone={!hasSupplyCap ? 'neutral' : remainingSupply === 0 ? 'danger' : 'info'}>
+                  {hasSupplyCap ? `${formatNumber(remainingSupply)} left` : `${formatNumber(item.settings.soldCount)} sold`}
+                </Pill>
+                {hasSupplyCap && (
+                  <Pill>{formatNumber(item.settings.soldCount)} / {formatNumber(item.settings.maxSupply ?? 0)} sold</Pill>
+                )}
+                {item.settings.reservedCount > 0 && (
+                  <Pill tone="warning">{formatNumber(item.settings.reservedCount)} reserved</Pill>
+                )}
                 {item.lastAudit && (
                   <span>
                     Last update {formatDate(item.lastAudit.createdAt)}
@@ -1899,7 +2195,7 @@ function GoldenBiomeRewardsPanel({
         </div>
 
         <div className="grid grid-cols-2 gap-2 md:min-w-[14rem]">
-          <MetricTile label="Reward" value={formatUsdCents(overview.settings.winnerRewardUsdCents)} sublabel="per winner" tone="amber" />
+          <MetricTile label="Reward" value={`${lamportsToSolDisplay(overview.settings.winnerRewardLamports)} SOL`} sublabel="per winner" tone="amber" />
           <MetricTile label="Chance" value={formatBps(overview.settings.chanceBps)} sublabel={`${formatNumber(pendingRewards)} pending`} tone="warning" />
         </div>
       </div>
@@ -1959,8 +2255,7 @@ function GoldenBiomeRewardsTable({
                   <div className="mt-1 text-[11px] text-white/40">{formatCount(reward.paidPlayerCount, 'winner')}</div>
                 </Cell>
                 <Cell align="right">
-                  {formatUsdCents(reward.rewardUsdCents)}
-                  <div className="text-[11px] text-white/40">{lamportsToSolDisplay(reward.rewardLamports)} SOL each</div>
+                  {lamportsToSolDisplay(reward.rewardLamports)} SOL each
                   <div className="text-[11px] text-white/35">{lamportsToSolDisplay(reward.totalRewardLamports)} SOL total</div>
                 </Cell>
                 <Cell>
@@ -2083,6 +2378,7 @@ export function AdminDashboard() {
   const [busySkinShopSettings, setBusySkinShopSettings] = useState(false);
   const [busySkinShopItemId, setBusySkinShopItemId] = useState<string | null>(null);
   const [busyRankUserId, setBusyRankUserId] = useState<string | null>(null);
+  const [busyRewardEconomy, setBusyRewardEconomy] = useState(false);
   const [rankUsersLoading, setRankUsersLoading] = useState(false);
   const [rankUsersLoaded, setRankUsersLoaded] = useState(false);
   const [globalNotificationDraft, setGlobalNotificationDraft] = useState('');
@@ -2094,20 +2390,20 @@ export function AdminDashboard() {
   const [rankedEntryGateDraft, setRankedEntryGateDraft] = useState<RankedEntryGateDraft>({
     mode: 'locked',
     tokenMintAddress: '',
-    tokenSymbol: 'TOKEN',
+    tokenSymbol: '',
     requiredTokenAmount: '0',
   });
+  const [rewardEconomyDraft, setRewardEconomyDraft] = useState<RewardEconomyDraft>(() => rewardEconomyDraftFromOverview());
   const [skinShopDraft, setSkinShopDraft] = useState<SkinShopSettingsDraft>({
     enabled: false,
     tokenMintAddress: '',
-    tokenSymbol: 'TOKEN',
-    treasuryWallet: '',
-    rpcUrl: '',
+    tokenSymbol: '',
     cluster: 'devnet',
   });
   const [skinShopItemDrafts, setSkinShopItemDrafts] = useState<Record<string, SkinShopItemDraft>>({});
   const [rankedSeasonDraftDirty, setRankedSeasonDraftDirty] = useState(false);
   const [rankedEntryGateDraftDirty, setRankedEntryGateDraftDirty] = useState(false);
+  const [rewardEconomyDraftDirty, setRewardEconomyDraftDirty] = useState(false);
   const [skinShopDraftDirty, setSkinShopDraftDirty] = useState(false);
   const [skinShopItemDraftDirtyById, setSkinShopItemDraftDirtyById] = useState<Record<string, boolean>>({});
   const [rankSearch, setRankSearch] = useState('');
@@ -2271,7 +2567,7 @@ export function AdminDashboard() {
   }, [overview?.goldenBiomeRewards?.settings.distributionMode, postAdminJson]);
 
   const distributeGoldenReward = useCallback((reward: GoldenBiomeRewardOverview) => {
-    if (!window.confirm(`Distribute ${formatUsdCents(reward.rewardUsdCents)} worth of SOL to ${reward.paidPlayerCount} ${reward.winningTeam} winner${reward.paidPlayerCount === 1 ? '' : 's'}?`)) {
+    if (!window.confirm(`Distribute ${lamportsToSolDisplay(reward.rewardLamports)} SOL to ${reward.paidPlayerCount} ${reward.winningTeam} winner${reward.paidPlayerCount === 1 ? '' : 's'}?`)) {
       return;
     }
 
@@ -2312,6 +2608,11 @@ export function AdminDashboard() {
   const updateRankedEntryGateDraft = useCallback((draft: RankedEntryGateDraft) => {
     setRankedEntryGateDraft(draft);
     setRankedEntryGateDraftDirty(true);
+  }, []);
+
+  const updateRewardEconomyDraft = useCallback((patch: Partial<RewardEconomyDraft>) => {
+    setRewardEconomyDraft((draft) => ({ ...draft, ...patch }));
+    setRewardEconomyDraftDirty(true);
   }, []);
 
   const updateSkinShopDraft = useCallback((draft: SkinShopSettingsDraft) => {
@@ -2392,15 +2693,39 @@ export function AdminDashboard() {
       .finally(() => setBusyRankedEntryGate(false));
   }, [overview?.rankedEntryGate, postAdminJson, rankedEntryGateDraft]);
 
+  const saveRewardEconomy = useCallback(() => {
+    let payload: ReturnType<typeof rewardEconomyPayloadFromDraft>;
+    try {
+      payload = rewardEconomyPayloadFromDraft(rewardEconomyDraft);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+
+    setBusyRewardEconomy(true);
+    postAdminJson('/admin/api/reward-economy', payload)
+      .then(() => setRewardEconomyDraftDirty(false))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusyRewardEconomy(false));
+  }, [postAdminJson, rewardEconomyDraft]);
+
   const saveSkinShopSettings = useCallback(() => {
     const tokenSymbol = skinShopDraft.tokenSymbol.trim().replace(/^\$/, '').toUpperCase();
     const tokenMintAddress = skinShopDraft.tokenMintAddress.trim();
-    const treasuryWallet = skinShopDraft.treasuryWallet.trim();
-    const rpcUrl = skinShopDraft.rpcUrl.trim();
+    const treasuryWallet = overview?.skinShop.shop.treasuryWallet?.trim() ?? '';
+    const rpcConfigured = overview?.skinShop.shop.rpcConfigured ?? false;
     const cluster = skinShopDraft.cluster.trim() || 'devnet';
 
-    if (skinShopDraft.enabled && (!tokenMintAddress || !treasuryWallet || !rpcUrl)) {
-      setError('Token mint, treasury wallet, and RPC URL are required before enabling the skin shop');
+    if (skinShopDraft.enabled && !tokenMintAddress) {
+      setError('Token mint is required before enabling the skin shop');
+      return;
+    }
+    if (skinShopDraft.enabled && !treasuryWallet) {
+      setError('WAGER_TREASURY_WALLET is required before enabling the skin shop');
+      return;
+    }
+    if (skinShopDraft.enabled && !rpcConfigured) {
+      setError('SOLANA_RPC_URL is required before enabling the skin shop');
       return;
     }
     if (!/^[A-Z0-9]{1,16}$/.test(tokenSymbol)) {
@@ -2416,21 +2741,24 @@ export function AdminDashboard() {
       enabled: skinShopDraft.enabled,
       tokenMintAddress,
       tokenSymbol,
-      treasuryWallet,
-      rpcUrl,
       cluster,
     })
       .then(() => setSkinShopDraftDirty(false))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setBusySkinShopSettings(false));
-  }, [postAdminJson, skinShopDraft]);
+  }, [overview?.skinShop.shop.rpcConfigured, overview?.skinShop.shop.treasuryWallet, postAdminJson, skinShopDraft]);
 
   const saveSkinShopItem = useCallback((skinId: string) => {
     const draft = skinShopItemDrafts[skinId];
     if (!draft) return;
     const tokenAmountBaseUnits = draft.tokenAmountBaseUnits.trim();
+    const maxSupply = draft.maxSupply.trim();
     if (draft.saleEnabled && !isPositiveWholeNumberString(tokenAmountBaseUnits)) {
       setError('Sale-enabled skins need a positive integer base-unit amount');
+      return;
+    }
+    if (maxSupply && !isPositiveWholeNumberInRange(maxSupply, ADMIN_SKIN_SUPPLY_CAP_MAX)) {
+      setError(`Supply cap must be between 1 and ${formatNumber(ADMIN_SKIN_SUPPLY_CAP_MAX)}`);
       return;
     }
 
@@ -2438,7 +2766,7 @@ export function AdminDashboard() {
     postAdminJson(`/admin/api/skin-shop/items/${encodeURIComponent(skinId)}`, {
       saleEnabled: draft.saleEnabled,
       tokenAmountBaseUnits,
-      displayNote: draft.displayNote.trim(),
+      maxSupply,
       expectedPriceVersion: draft.expectedPriceVersion,
     })
       .then(() => {
@@ -2482,7 +2810,7 @@ export function AdminDashboard() {
     setRankedEntryGateDraft({
       mode: overview.rankedEntryGate.mode,
       tokenMintAddress: overview.rankedEntryGate.tokenMintAddress ?? '',
-      tokenSymbol: overview.rankedEntryGate.tokenSymbol || 'TOKEN',
+      tokenSymbol: overview.rankedEntryGate.tokenSymbol || '',
       requiredTokenAmount: overview.rankedEntryGate.requiredTokenAmount || '0',
     });
   }, [
@@ -2494,13 +2822,27 @@ export function AdminDashboard() {
   ]);
 
   useEffect(() => {
+    if ((!overview?.rewardEconomy && !overview?.goldenBiomeRewards) || rewardEconomyDraftDirty) return;
+    setRewardEconomyDraft(rewardEconomyDraftFromOverview(
+      overview.rewardEconomy,
+      overview.goldenBiomeRewards,
+    ));
+  }, [
+    overview?.goldenBiomeRewards?.settings.chanceBps,
+    overview?.goldenBiomeRewards?.settings.distributionMode,
+    overview?.goldenBiomeRewards?.settings.enabled,
+    overview?.goldenBiomeRewards?.settings.treasuryMinLamports,
+    overview?.goldenBiomeRewards?.settings.winnerRewardLamports,
+    overview?.rewardEconomy,
+    rewardEconomyDraftDirty,
+  ]);
+
+  useEffect(() => {
     if (!overview?.skinShop?.shop || skinShopDraftDirty) return;
     setSkinShopDraft({
       enabled: overview.skinShop.shop.enabled,
       tokenMintAddress: overview.skinShop.shop.tokenMintAddress ?? '',
-      tokenSymbol: overview.skinShop.shop.tokenSymbol || 'TOKEN',
-      treasuryWallet: overview.skinShop.shop.treasuryWallet ?? '',
-      rpcUrl: '',
+      tokenSymbol: overview.skinShop.shop.tokenSymbol || '',
       cluster: overview.skinShop.shop.cluster || 'devnet',
     });
   }, [
@@ -2508,7 +2850,6 @@ export function AdminDashboard() {
     overview?.skinShop?.shop?.enabled,
     overview?.skinShop?.shop?.tokenMintAddress,
     overview?.skinShop?.shop?.tokenSymbol,
-    overview?.skinShop?.shop?.treasuryWallet,
     skinShopDraftDirty,
   ]);
 
@@ -2521,7 +2862,7 @@ export function AdminDashboard() {
         next[item.settings.skinId] = {
           saleEnabled: item.settings.saleEnabled,
           tokenAmountBaseUnits: item.settings.tokenAmountBaseUnits ?? '',
-          displayNote: item.settings.displayNote ?? '',
+          maxSupply: item.settings.maxSupply?.toString() ?? '',
           expectedPriceVersion: item.settings.priceVersion,
         };
       }
@@ -2533,7 +2874,9 @@ export function AdminDashboard() {
     if (!overview) return [];
     const activeReports = (overview.playerReports?.counts.open ?? 0) + (overview.playerReports?.counts.reviewing ?? 0);
     const pendingGoldenRewards = overview.goldenBiomeRewards?.rewards.filter((reward) => reward.status !== 'complete').length ?? 0;
-    const purchasableSkins = overview.skinShop.items.filter((item) => item.settings.saleEnabled).length;
+    const purchasableSkins = overview.skinShop.items.filter((item) => (
+      item.settings.saleEnabled && item.settings.remainingSupply !== 0
+    )).length;
     const capacityTone = overview.capacity.full ? 'danger' : toneForPressure(overview.capacity.capacityPressure);
     return [
       { label: 'Machines', value: formatNumber(overview.totals.runningMachines), sublabel: formatCount(overview.totals.serverProcesses, 'process', 'processes'), tone: 'info' },
@@ -2763,7 +3106,22 @@ export function AdminDashboard() {
             )}
 
             {activeTab === 'rewards' && (
-              <div role="tabpanel" id="admin-panel-rewards" aria-labelledby="admin-tab-rewards">
+              <div role="tabpanel" id="admin-panel-rewards" aria-labelledby="admin-tab-rewards" className="flex flex-col gap-3">
+                <Section
+                  title="Reward Economy"
+                  meta={rewardEconomyDraftDirty ? 'unsaved' : 'live'}
+                >
+                  <RewardEconomyPanel
+                    draft={rewardEconomyDraft}
+                    dirty={rewardEconomyDraftDirty}
+                    busy={busyRewardEconomy}
+                    updatedAt={overview.rewardEconomy?.playerRewards.updatedAt ?? overview.goldenBiomeRewards?.settings.updatedAt ?? null}
+                    tokenSymbol={overview.rewardEconomy?.rewardTokenSymbol ?? null}
+                    onDraftChange={updateRewardEconomyDraft}
+                    onSave={saveRewardEconomy}
+                  />
+                </Section>
+
                 <Section
                   title="Golden Rewards"
                   meta={`${formatNumber(overview.goldenBiomeRewards?.rewards.filter((reward) => reward.status !== 'complete').length ?? 0)} pending`}

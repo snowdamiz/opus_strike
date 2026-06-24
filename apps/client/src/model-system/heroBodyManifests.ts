@@ -174,6 +174,174 @@ export const EPOCH_REGENT_COLORS: Record<MaterialKind, string> = {
   mist: '#2dd4bf',
 };
 
+export const NIGHTGLASS_WRAITH_COLORS: Record<MaterialKind, string> = {
+  armor: '#1f2937',
+  dark: '#030712',
+  metal: '#475569',
+  accent: '#a855f7',
+  glow: '#bae6fd',
+  glass: '#111827',
+  skin: '#171024',
+  void: '#01030a',
+  edge: '#64748b',
+  eye: '#f0f9ff',
+  mist: '#38bdf8',
+};
+
+export const ASTRAL_EXECUTIONER_COLORS: Record<MaterialKind, string> = {
+  armor: '#1e1b4b',
+  dark: '#050414',
+  metal: '#f0abfc',
+  accent: '#22d3ee',
+  glow: '#f5d0fe',
+  glass: '#312e81',
+  skin: '#19112c',
+  void: '#020113',
+  edge: '#c084fc',
+  eye: '#ecfeff',
+  mist: '#818cf8',
+};
+
+export const ECLIPSE_SERAPH_COLORS: Record<MaterialKind, string> = {
+  armor: '#f8fafc',
+  dark: '#09090b',
+  metal: '#facc15',
+  accent: '#c084fc',
+  glow: '#ffffff',
+  glass: '#1e1b4b',
+  skin: '#1f1235',
+  void: '#020006',
+  edge: '#a78bfa',
+  eye: '#fefce8',
+  mist: '#f0abfc',
+};
+
+export const IRON_LEVIATHAN_COLORS: Record<MaterialKind, string> = {
+  armor: '#1f2937',
+  dark: '#07111d',
+  metal: '#94a3b8',
+  accent: '#f97316',
+  glow: '#93c5fd',
+  glass: '#0f172a',
+  skin: '#172033',
+  void: '#020617',
+  edge: '#475569',
+  eye: '#dbeafe',
+  mist: '#60a5fa',
+};
+
+export const ABYSSAL_CORSAIR_COLORS: Record<MaterialKind, string> = {
+  armor: '#0f172a',
+  dark: '#020617',
+  metal: '#a3e635',
+  accent: '#06b6d4',
+  glow: '#a7f3d0',
+  glass: '#164e63',
+  skin: '#12242e',
+  void: '#01080c',
+  edge: '#7c3aed',
+  eye: '#ecfeff',
+  mist: '#22d3ee',
+};
+
+export const KRAKEN_SOVEREIGN_COLORS: Record<MaterialKind, string> = {
+  armor: '#172554',
+  dark: '#020617',
+  metal: '#fbbf24',
+  accent: '#2dd4bf',
+  glow: '#ccfbf1',
+  glass: '#0f766e',
+  skin: '#11223f',
+  void: '#010313',
+  edge: '#818cf8',
+  eye: '#f0fdfa',
+  mist: '#67e8f9',
+};
+
+export const ASHEN_VANGUARD_COLORS: Record<MaterialKind, string> = {
+  armor: '#3f1d18',
+  dark: '#09090b',
+  metal: '#9ca3af',
+  accent: '#ef4444',
+  glow: '#f97316',
+  glass: '#7f1d1d',
+  skin: '#231614',
+  void: '#030202',
+  edge: '#57534e',
+  eye: '#fed7aa',
+  mist: '#fb923c',
+};
+
+export const INFERNO_ARCHON_COLORS: Record<MaterialKind, string> = {
+  armor: '#7f1d1d',
+  dark: '#16040b',
+  metal: '#fef08a',
+  accent: '#e879f9',
+  glow: '#fdba74',
+  glass: '#fb7185',
+  skin: '#3a111a',
+  void: '#09020a',
+  edge: '#f43f5e',
+  eye: '#fff7ed',
+  mist: '#f0abfc',
+};
+
+export const STARFALL_PHOENIX_COLORS: Record<MaterialKind, string> = {
+  armor: '#451a03',
+  dark: '#09090b',
+  metal: '#fde68a',
+  accent: '#38bdf8',
+  glow: '#fff7ad',
+  glass: '#f97316',
+  skin: '#2d1508',
+  void: '#020617',
+  edge: '#fb923c',
+  eye: '#fefce8',
+  mist: '#facc15',
+};
+
+export const PARADOX_SENTINEL_COLORS: Record<MaterialKind, string> = {
+  armor: '#1e3a5f',
+  dark: '#06111d',
+  metal: '#c08457',
+  accent: '#60a5fa',
+  glow: '#bbf7d0',
+  glass: '#1d4ed8',
+  skin: '#14283a',
+  void: '#020817',
+  edge: '#38bdf8',
+  eye: '#ecfeff',
+  mist: '#34d399',
+};
+
+export const MERIDIAN_ORACLE_COLORS: Record<MaterialKind, string> = {
+  armor: '#ecfeff',
+  dark: '#082f49',
+  metal: '#a7f3d0',
+  accent: '#2563eb',
+  glow: '#ccfbf1',
+  glass: '#67e8f9',
+  skin: '#12343a',
+  void: '#03121a',
+  edge: '#f0abfc',
+  eye: '#ffffff',
+  mist: '#7dd3fc',
+};
+
+export const ETERNITY_SOVEREIGN_COLORS: Record<MaterialKind, string> = {
+  armor: '#f8fafc',
+  dark: '#08111f',
+  metal: '#facc15',
+  accent: '#22c55e',
+  glow: '#ffffff',
+  glass: '#a78bfa',
+  skin: '#17302b',
+  void: '#020617',
+  edge: '#38bdf8',
+  eye: '#fefce8',
+  mist: '#34d399',
+};
+
 type TeamAccentPartDraft = Omit<TeamAccentPart, 'id' | 'bone'> & {
   id?: string;
   bone?: TeamAccentPart['bone'];
@@ -347,6 +515,211 @@ export const EPOCH_REGENT_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'metal', position: [0, 1.9, -0.04], scale: [0.08, 0.22, 0.17] },
   { material: 'glow', position: [0, 1.75, -0.225], scale: [0.22, 0.026, 0.022], emissive: true },
 ], 'chronos.epochRegent.body');
+
+export const NIGHTGLASS_WRAITH_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.6, 0.012, 0.6], transparent: true },
+  { material: 'glass', position: [-0.33, 1.42, -0.19], scale: [0.13, 0.18, 0.032], rotation: [0, 0, -0.34], transparent: true },
+  { material: 'glass', position: [0.33, 1.42, -0.19], scale: [0.13, 0.18, 0.032], rotation: [0, 0, 0.34], transparent: true },
+  { material: 'metal', position: [-0.3, 1.28, -0.225], scale: [0.18, 0.04, 0.03] },
+  { material: 'metal', position: [0.3, 1.28, -0.225], scale: [0.18, 0.04, 0.03] },
+  { material: 'edge', position: [0, 1.18, -0.262], scale: [0.22, 0.032, 0.024], emissive: true },
+  { material: 'glow', position: [0, 1.02, -0.262], scale: [0.12, 0.05, 0.024], emissive: true },
+  { material: 'glass', position: [0, 1.79, -0.235], scale: [0.28, 0.038, 0.026], transparent: true },
+  { material: 'edge', position: [0, 1.9, -0.06], scale: [0.1, 0.18, 0.16] },
+  { material: 'glow', position: [-0.43, 0.73, -0.405], scale: [0.032, 0.08, 0.022], emissive: true, bone: 'leftForearm' },
+  { material: 'glow', position: [0.43, 0.73, -0.405], scale: [0.032, 0.08, 0.022], emissive: true, bone: 'rightForearm' },
+  { material: 'metal', position: [-0.15, 0.46, -0.09], scale: [0.1, 0.03, 0.028] },
+  { material: 'metal', position: [0.15, 0.46, -0.09], scale: [0.1, 0.03, 0.028] },
+], 'phantom.nightglassWraith.body');
+
+export const ASTRAL_EXECUTIONER_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.7, 0.012, 0.7], transparent: true },
+  { material: 'glow', kind: 'cylinder', position: [0, 1.92, -0.1], scale: [0.34, 0.018, 0.34], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { material: 'metal', position: [-0.16, 1.98, -0.04], scale: [0.08, 0.2, 0.16], rotation: [0, 0, 0.22] },
+  { material: 'metal', position: [0.16, 1.98, -0.04], scale: [0.08, 0.2, 0.16], rotation: [0, 0, -0.22] },
+  { material: 'accent', position: [0, 1.24, -0.268], scale: [0.32, 0.038, 0.024], emissive: true },
+  { material: 'glow', position: [0, 1.12, -0.276], scale: [0.1, 0.24, 0.024], emissive: true },
+  { material: 'glass', kind: 'sphere', position: [-0.2, 1.22, -0.285], scale: [0.055, 0.055, 0.055], emissive: true, transparent: true },
+  { material: 'glass', kind: 'sphere', position: [0.2, 1.22, -0.285], scale: [0.055, 0.055, 0.055], emissive: true, transparent: true },
+  { material: 'edge', position: [-0.5, 0.8, -0.54], scale: [0.042, 0.07, 0.23], rotation: [0, 0.22, 0], emissive: true, bone: 'leftForearm' },
+  { material: 'edge', position: [0.5, 0.8, -0.54], scale: [0.042, 0.07, 0.23], rotation: [0, -0.22, 0], emissive: true, bone: 'rightForearm' },
+  { material: 'glow', position: [-0.5, 0.63, -0.62], scale: [0.028, 0.048, 0.16], emissive: true, bone: 'leftForearm' },
+  { material: 'glow', position: [0.5, 0.63, -0.62], scale: [0.028, 0.048, 0.16], emissive: true, bone: 'rightForearm' },
+  { material: 'metal', position: [-0.2, 0.4, -0.08], scale: [0.13, 0.03, 0.028] },
+  { material: 'metal', position: [0.2, 0.4, -0.08], scale: [0.13, 0.03, 0.028] },
+], 'phantom.astralExecutioner.body');
+
+export const ECLIPSE_SERAPH_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.82, 0.012, 0.82], transparent: true },
+  { material: 'glow', kind: 'cylinder', position: [0, 2.06, -0.08], scale: [0.42, 0.014, 0.42], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { material: 'metal', kind: 'cylinder', position: [0, 1.98, -0.08], scale: [0.26, 0.016, 0.26], rotation: [Math.PI / 2, 0, 0], emissive: true },
+  { material: 'metal', position: [-0.18, 1.92, -0.04], scale: [0.08, 0.24, 0.17], rotation: [0, 0, 0.32] },
+  { material: 'metal', position: [0.18, 1.92, -0.04], scale: [0.08, 0.24, 0.17], rotation: [0, 0, -0.32] },
+  { material: 'glow', position: [-0.52, 1.38, 0.2], scale: [0.08, 0.6, 0.028], rotation: [0, 0, -0.46], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', position: [0.52, 1.38, 0.2], scale: [0.08, 0.6, 0.028], rotation: [0, 0, 0.46], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', position: [-0.68, 1.17, 0.22], scale: [0.06, 0.46, 0.026], rotation: [0, 0, -0.72], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', position: [0.68, 1.17, 0.22], scale: [0.06, 0.46, 0.026], rotation: [0, 0, 0.72], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'metal', position: [0, 1.34, -0.266], scale: [0.36, 0.036, 0.024], emissive: true },
+  { material: 'glow', kind: 'sphere', position: [0, 1.12, -0.286], scale: [0.09, 0.09, 0.09], emissive: true, transparent: true },
+  { material: 'glass', kind: 'sphere', position: [-0.32, 1.2, -0.29], scale: [0.052, 0.052, 0.052], emissive: true, transparent: true },
+  { material: 'glass', kind: 'sphere', position: [0.32, 1.2, -0.29], scale: [0.052, 0.052, 0.052], emissive: true, transparent: true },
+  { material: 'metal', position: [-0.48, 0.78, -0.42], scale: [0.1, 0.03, 0.026], bone: 'leftForearm' },
+  { material: 'metal', position: [0.48, 0.78, -0.42], scale: [0.1, 0.03, 0.026], bone: 'rightForearm' },
+  { material: 'glow', position: [-0.48, 0.66, -0.46], scale: [0.03, 0.08, 0.038], emissive: true, bone: 'leftForearm' },
+  { material: 'glow', position: [0.48, 0.66, -0.46], scale: [0.03, 0.08, 0.038], emissive: true, bone: 'rightForearm' },
+], 'phantom.eclipseSeraph.body');
+
+export const IRON_LEVIATHAN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.64, 0.012, 0.64], transparent: true },
+  { material: 'metal', position: [-0.42, 1.36, -0.08], scale: [0.22, 0.18, 0.08], rotation: [0, 0, -0.18] },
+  { material: 'metal', position: [0.42, 1.36, -0.08], scale: [0.22, 0.18, 0.08], rotation: [0, 0, 0.18] },
+  { material: 'edge', position: [-0.42, 1.22, -0.2], scale: [0.2, 0.042, 0.032] },
+  { material: 'edge', position: [0.42, 1.22, -0.2], scale: [0.2, 0.042, 0.032] },
+  { material: 'accent', position: [0, 1.15, -0.268], scale: [0.26, 0.036, 0.026], emissive: true },
+  { material: 'metal', kind: 'cone', position: [0, 1.9, -0.04], scale: [0.18, 0.22, 0.18], rotation: [0, 0, Math.PI] },
+  { material: 'glow', position: [-0.6, 0.7, -0.76], scale: [0.038, 0.046, 0.16], emissive: true, bone: 'leftForearm' },
+  { material: 'glow', position: [0.6, 0.73, -0.76], scale: [0.038, 0.046, 0.16], emissive: true, bone: 'rightForearm' },
+  { material: 'metal', position: [-0.6, 0.88, -0.36], scale: [0.2, 0.042, 0.034], bone: 'leftForearm' },
+  { material: 'metal', position: [0.6, 0.9, -0.36], scale: [0.2, 0.042, 0.034], bone: 'rightForearm' },
+  { material: 'edge', position: [-0.19, 0.5, -0.12], scale: [0.12, 0.03, 0.026] },
+  { material: 'edge', position: [0.19, 0.5, -0.12], scale: [0.12, 0.03, 0.026] },
+], 'hookshot.ironLeviathan.body');
+
+export const ABYSSAL_CORSAIR_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.72, 0.012, 0.72], transparent: true },
+  { material: 'metal', position: [-0.23, 1.86, -0.04], scale: [0.16, 0.07, 0.18], rotation: [0, 0, -0.42] },
+  { material: 'metal', position: [0.23, 1.86, -0.04], scale: [0.16, 0.07, 0.18], rotation: [0, 0, 0.42] },
+  { material: 'edge', position: [0, 1.9, -0.05], scale: [0.16, 0.15, 0.16] },
+  { material: 'accent', position: [0, 1.22, -0.272], scale: [0.34, 0.034, 0.024], emissive: true },
+  { material: 'glow', kind: 'sphere', position: [-0.2, 1.14, -0.288], scale: [0.062, 0.062, 0.062], emissive: true, transparent: true },
+  { material: 'glow', kind: 'sphere', position: [0.2, 1.14, -0.288], scale: [0.062, 0.062, 0.062], emissive: true, transparent: true },
+  { material: 'glass', kind: 'cylinder', position: [-0.6, 0.7, -0.62], scale: [0.062, 0.18, 0.062], emissive: true, transparent: true, bone: 'leftForearm' },
+  { material: 'glass', kind: 'cylinder', position: [0.6, 0.73, -0.62], scale: [0.062, 0.18, 0.062], emissive: true, transparent: true, bone: 'rightForearm' },
+  { material: 'edge', position: [-0.72, 0.7, -0.78], scale: [0.036, 0.044, 0.14], rotation: [0, 0.52, 0], emissive: true, bone: 'leftForearm' },
+  { material: 'edge', position: [0.72, 0.73, -0.78], scale: [0.036, 0.044, 0.14], rotation: [0, -0.52, 0], emissive: true, bone: 'rightForearm' },
+  { material: 'accent', position: [-0.54, 1.08, 0.19], scale: [0.05, 0.34, 0.026], rotation: [0, 0, -0.34], emissive: true, bone: 'torso' },
+  { material: 'accent', position: [0.54, 1.08, 0.19], scale: [0.05, 0.34, 0.026], rotation: [0, 0, 0.34], emissive: true, bone: 'torso' },
+], 'hookshot.abyssalCorsair.body');
+
+export const KRAKEN_SOVEREIGN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.86, 0.012, 0.86], transparent: true },
+  { material: 'glow', kind: 'cylinder', position: [0, 1.98, -0.09], scale: [0.38, 0.014, 0.38], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { material: 'metal', position: [-0.2, 1.94, -0.03], scale: [0.09, 0.24, 0.18], rotation: [0, 0, 0.28] },
+  { material: 'metal', position: [0.2, 1.94, -0.03], scale: [0.09, 0.24, 0.18], rotation: [0, 0, -0.28] },
+  { material: 'metal', position: [-0.48, 1.42, -0.09], scale: [0.24, 0.2, 0.08], rotation: [0, 0, -0.24] },
+  { material: 'metal', position: [0.48, 1.42, -0.09], scale: [0.24, 0.2, 0.08], rotation: [0, 0, 0.24] },
+  { material: 'glow', position: [-0.74, 1.14, 0.2], scale: [0.06, 0.52, 0.026], rotation: [0, 0, -0.56], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', position: [0.74, 1.14, 0.2], scale: [0.06, 0.52, 0.026], rotation: [0, 0, 0.56], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', position: [0, 1.2, -0.282], scale: [0.38, 0.04, 0.026], emissive: true },
+  { material: 'glow', kind: 'sphere', position: [0, 1.06, -0.3], scale: [0.09, 0.09, 0.09], emissive: true, transparent: true },
+  { material: 'metal', position: [-0.6, 0.92, -0.38], scale: [0.22, 0.046, 0.036], bone: 'leftForearm' },
+  { material: 'metal', position: [0.6, 0.94, -0.38], scale: [0.22, 0.046, 0.036], bone: 'rightForearm' },
+  { material: 'glow', position: [-0.75, 0.7, -0.82], scale: [0.048, 0.052, 0.18], rotation: [0, 0.54, 0], emissive: true, bone: 'leftForearm' },
+  { material: 'glow', position: [-0.45, 0.7, -0.82], scale: [0.048, 0.052, 0.18], rotation: [0, -0.54, 0], emissive: true, bone: 'leftForearm' },
+  { material: 'glow', position: [0.45, 0.73, -0.82], scale: [0.048, 0.052, 0.18], rotation: [0, 0.54, 0], emissive: true, bone: 'rightForearm' },
+  { material: 'glow', position: [0.75, 0.73, -0.82], scale: [0.048, 0.052, 0.18], rotation: [0, -0.54, 0], emissive: true, bone: 'rightForearm' },
+], 'hookshot.krakenSovereign.body');
+
+export const ASHEN_VANGUARD_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.58, 0.012, 0.58], transparent: true },
+  { material: 'metal', position: [-0.31, 1.38, -0.215], scale: [0.16, 0.05, 0.036] },
+  { material: 'metal', position: [0.31, 1.38, -0.215], scale: [0.16, 0.05, 0.036] },
+  { material: 'edge', position: [0, 1.28, -0.266], scale: [0.3, 0.036, 0.026], emissive: true },
+  { material: 'glow', position: [0, 1.08, -0.27], scale: [0.12, 0.18, 0.026], emissive: true },
+  { material: 'metal', position: [-0.18, 0.48, -0.095], scale: [0.13, 0.032, 0.03] },
+  { material: 'metal', position: [0.18, 0.48, -0.095], scale: [0.13, 0.032, 0.03] },
+  { material: 'edge', position: [-0.43, 0.5, -0.15], scale: [0.085, 0.032, 0.028], bone: 'leftArm' },
+  { material: 'edge', position: [0.43, 0.82, -0.39], scale: [0.085, 0.032, 0.028], bone: 'rightForearm' },
+  { material: 'metal', kind: 'cylinder', position: [0.52, 1.48, -0.38], scale: [0.12, 0.03, 0.12], emissive: true, bone: 'rightForearm' },
+  { material: 'glow', kind: 'sphere', position: [0.52, 1.7, -0.38], scale: [0.13, 0.13, 0.13], emissive: true, bone: 'rightForearm' },
+  { material: 'metal', kind: 'cone', position: [0.02, 2.36, -0.02], scale: [0.16, 0.2, 0.16], rotation: [0, 0, -0.12] },
+], 'blaze.ashenVanguard.body');
+
+export const INFERNO_ARCHON_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.72, 0.012, 0.72], transparent: true },
+  { material: 'metal', position: [-0.18, 1.9, -0.04], scale: [0.08, 0.22, 0.16], rotation: [0, 0, 0.36] },
+  { material: 'metal', position: [0.18, 1.9, -0.04], scale: [0.08, 0.22, 0.16], rotation: [0, 0, -0.36] },
+  { material: 'glow', position: [-0.55, 1.32, 0.2], scale: [0.07, 0.5, 0.026], rotation: [0, 0, -0.5], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', position: [0.55, 1.32, 0.2], scale: [0.07, 0.5, 0.026], rotation: [0, 0, 0.5], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', position: [-0.67, 1.08, 0.22], scale: [0.05, 0.36, 0.024], rotation: [0, 0, -0.74], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', position: [0.67, 1.08, 0.22], scale: [0.05, 0.36, 0.024], rotation: [0, 0, 0.74], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'metal', position: [0, 1.32, -0.27], scale: [0.34, 0.04, 0.026], emissive: true },
+  { material: 'glow', kind: 'sphere', position: [0, 1.1, -0.292], scale: [0.08, 0.08, 0.08], emissive: true, transparent: true },
+  { material: 'metal', kind: 'cylinder', position: [0.52, 1.48, -0.38], scale: [0.14, 0.03, 0.14], emissive: true, bone: 'rightForearm' },
+  { material: 'accent', kind: 'cylinder', position: [0.52, 1.62, -0.38], scale: [0.18, 0.024, 0.18], emissive: true, bone: 'rightForearm' },
+  { material: 'glow', kind: 'sphere', position: [0.52, 1.8, -0.38], scale: [0.09, 0.09, 0.09], emissive: true, transparent: true, bone: 'rightForearm' },
+  { material: 'edge', position: [-0.43, 0.5, -0.15], scale: [0.09, 0.04, 0.03], bone: 'leftArm' },
+  { material: 'edge', position: [0.43, 0.82, -0.39], scale: [0.09, 0.04, 0.03], bone: 'rightForearm' },
+], 'blaze.infernoArchon.body');
+
+export const STARFALL_PHOENIX_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.86, 0.012, 0.86], transparent: true },
+  { material: 'glow', kind: 'cylinder', position: [0, 2.14, -0.04], scale: [0.34, 0.014, 0.34], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { material: 'metal', kind: 'cone', position: [0.02, 2.44, -0.02], scale: [0.2, 0.28, 0.2], rotation: [0, 0, -0.12] },
+  { material: 'glow', kind: 'sphere', position: [0.08, 2.6, -0.02], scale: [0.07, 0.07, 0.07], emissive: true, transparent: true },
+  { material: 'glow', position: [-0.58, 1.42, 0.2], scale: [0.08, 0.62, 0.028], rotation: [0, 0, -0.42], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', position: [0.58, 1.42, 0.2], scale: [0.08, 0.62, 0.028], rotation: [0, 0, 0.42], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', position: [-0.78, 1.18, 0.22], scale: [0.06, 0.5, 0.026], rotation: [0, 0, -0.72], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', position: [0.78, 1.18, 0.22], scale: [0.06, 0.5, 0.026], rotation: [0, 0, 0.72], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'metal', position: [0, 1.34, -0.274], scale: [0.38, 0.04, 0.026], emissive: true },
+  { material: 'glow', kind: 'sphere', position: [0, 1.12, -0.298], scale: [0.1, 0.1, 0.1], emissive: true, transparent: true },
+  { material: 'metal', kind: 'cylinder', position: [0.52, 1.5, -0.38], scale: [0.16, 0.03, 0.16], emissive: true, bone: 'rightForearm' },
+  { material: 'glow', kind: 'sphere', position: [0.52, 1.82, -0.38], scale: [0.12, 0.12, 0.12], emissive: true, transparent: true, bone: 'rightForearm' },
+  { material: 'accent', position: [0.52, 1.95, -0.38], scale: [0.07, 0.16, 0.07], emissive: true, bone: 'rightForearm' },
+], 'blaze.starfallPhoenix.body');
+
+export const PARADOX_SENTINEL_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.64, 0.012, 0.64], transparent: true },
+  { material: 'metal', position: [-0.32, 1.4, -0.22], scale: [0.15, 0.046, 0.034] },
+  { material: 'metal', position: [0.32, 1.4, -0.22], scale: [0.15, 0.046, 0.034] },
+  { material: 'edge', position: [0, 1.5, 0.24], scale: [0.58, 0.05, 0.044], emissive: true },
+  { material: 'accent', position: [0, 1.16, -0.27], scale: [0.26, 0.036, 0.026], emissive: true },
+  { material: 'glass', kind: 'cylinder', position: [0, 1.16, -0.286], scale: [0.22, 0.016, 0.22], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { material: 'metal', position: [-0.16, 0.45, -0.08], scale: [0.12, 0.032, 0.03] },
+  { material: 'metal', position: [0.16, 0.45, -0.08], scale: [0.12, 0.032, 0.03] },
+  { material: 'metal', position: [-0.43, 0.78, -0.38], scale: [0.09, 0.032, 0.028], bone: 'leftForearm' },
+  { material: 'metal', position: [0.43, 0.78, -0.38], scale: [0.09, 0.032, 0.028], bone: 'rightForearm' },
+  { material: 'glow', kind: 'cylinder', position: [-0.43, 0.69, -0.37], scale: [0.06, 0.014, 0.06], rotation: [Math.PI / 2, 0, 0], emissive: true, bone: 'leftForearm' },
+  { material: 'glow', kind: 'cylinder', position: [0.43, 0.69, -0.37], scale: [0.06, 0.014, 0.06], rotation: [Math.PI / 2, 0, 0], emissive: true, bone: 'rightForearm' },
+  { material: 'metal', position: [0, 1.9, -0.04], scale: [0.08, 0.18, 0.16] },
+], 'chronos.paradoxSentinel.body');
+
+export const MERIDIAN_ORACLE_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.74, 0.012, 0.74], transparent: true },
+  { material: 'glow', kind: 'cylinder', position: [0, 1.94, -0.08], scale: [0.36, 0.014, 0.36], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { material: 'metal', position: [-0.18, 1.9, -0.04], scale: [0.08, 0.22, 0.16], rotation: [0, 0, 0.28] },
+  { material: 'metal', position: [0.18, 1.9, -0.04], scale: [0.08, 0.22, 0.16], rotation: [0, 0, -0.28] },
+  { material: 'edge', position: [-0.46, 1.32, 0.22], scale: [0.06, 0.44, 0.026], rotation: [0, 0, -0.34], emissive: true, bone: 'torso' },
+  { material: 'edge', position: [0.46, 1.32, 0.22], scale: [0.06, 0.44, 0.026], rotation: [0, 0, 0.34], emissive: true, bone: 'torso' },
+  { material: 'accent', position: [0, 1.18, -0.276], scale: [0.32, 0.036, 0.026], emissive: true },
+  { material: 'glow', kind: 'sphere', position: [-0.24, 1.18, -0.298], scale: [0.06, 0.06, 0.06], emissive: true, transparent: true },
+  { material: 'glow', kind: 'sphere', position: [0.24, 1.18, -0.298], scale: [0.06, 0.06, 0.06], emissive: true, transparent: true },
+  { material: 'glass', kind: 'cylinder', position: [0, 1.04, -0.29], scale: [0.24, 0.014, 0.24], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { material: 'metal', position: [-0.43, 0.78, -0.38], scale: [0.09, 0.03, 0.028], bone: 'leftForearm' },
+  { material: 'metal', position: [0.43, 0.78, -0.38], scale: [0.09, 0.03, 0.028], bone: 'rightForearm' },
+  { material: 'glow', position: [-0.43, 0.68, -0.38], scale: [0.032, 0.09, 0.02], emissive: true, bone: 'leftForearm' },
+  { material: 'glow', position: [0.43, 0.68, -0.38], scale: [0.032, 0.09, 0.02], emissive: true, bone: 'rightForearm' },
+], 'chronos.meridianOracle.body');
+
+export const ETERNITY_SOVEREIGN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.88, 0.012, 0.88], transparent: true },
+  { material: 'glow', kind: 'cylinder', position: [0, 2.04, -0.08], scale: [0.44, 0.014, 0.44], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { material: 'metal', kind: 'cylinder', position: [0, 1.96, -0.08], scale: [0.26, 0.016, 0.26], rotation: [Math.PI / 2, 0, 0], emissive: true },
+  { material: 'metal', position: [-0.2, 1.94, -0.04], scale: [0.09, 0.25, 0.18], rotation: [0, 0, 0.3] },
+  { material: 'metal', position: [0.2, 1.94, -0.04], scale: [0.09, 0.25, 0.18], rotation: [0, 0, -0.3] },
+  { material: 'glow', position: [-0.56, 1.44, 0.24], scale: [0.07, 0.58, 0.028], rotation: [0, 0, -0.4], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', position: [0.56, 1.44, 0.24], scale: [0.07, 0.58, 0.028], rotation: [0, 0, 0.4], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', position: [-0.74, 1.2, 0.24], scale: [0.06, 0.48, 0.026], rotation: [0, 0, -0.68], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', position: [0.74, 1.2, 0.24], scale: [0.06, 0.48, 0.026], rotation: [0, 0, 0.68], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'metal', position: [0, 1.32, -0.28], scale: [0.38, 0.04, 0.026], emissive: true },
+  { material: 'glow', kind: 'sphere', position: [0, 1.1, -0.304], scale: [0.092, 0.092, 0.092], emissive: true, transparent: true },
+  { material: 'glass', kind: 'sphere', position: [-0.28, 1.2, -0.3], scale: [0.062, 0.062, 0.062], emissive: true, transparent: true },
+  { material: 'glass', kind: 'sphere', position: [0.28, 1.2, -0.3], scale: [0.062, 0.062, 0.062], emissive: true, transparent: true },
+  { material: 'metal', position: [-0.43, 0.78, -0.38], scale: [0.1, 0.03, 0.028], bone: 'leftForearm' },
+  { material: 'metal', position: [0.43, 0.78, -0.38], scale: [0.1, 0.03, 0.028], bone: 'rightForearm' },
+  { material: 'glow', kind: 'cylinder', position: [-0.43, 0.66, -0.38], scale: [0.07, 0.014, 0.07], rotation: [Math.PI / 2, 0, 0], emissive: true, bone: 'leftForearm' },
+  { material: 'glow', kind: 'cylinder', position: [0.43, 0.66, -0.38], scale: [0.07, 0.014, 0.07], rotation: [Math.PI / 2, 0, 0], emissive: true, bone: 'rightForearm' },
+], 'chronos.eternitySovereign.body');
 
 export const HOOKSHOT_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.016, 0], scale: [0.54, 0.024, 0.54], transparent: true },
@@ -828,71 +1201,49 @@ export const HERO_BODY_MANIFESTS: Record<HeroId, HeroBodyManifest> = {
   },
 };
 
+function createSkinBodyManifest(
+  heroId: HeroId,
+  extraParts: readonly VoxelPart[],
+  materialPalette: Record<MaterialKind, string>,
+  auraPulse: number
+): HeroBodyManifest {
+  const base = HERO_BODY_MANIFESTS[heroId];
+
+  return {
+    ...base,
+    parts: [
+      ...base.parts,
+      ...extraParts,
+    ],
+    materialPalette,
+    idleProfile: {
+      ...base.idleProfile,
+      auraPulse,
+    },
+  };
+}
+
 export const HERO_SKIN_BODY_MANIFESTS: Record<HeroSkinId, HeroBodyManifest> = {
   'phantom.default': HERO_BODY_MANIFESTS.phantom,
   'hookshot.default': HERO_BODY_MANIFESTS.hookshot,
   'blaze.default': HERO_BODY_MANIFESTS.blaze,
   'chronos.default': HERO_BODY_MANIFESTS.chronos,
-  'phantom.void-monarch': {
-    heroId: 'phantom',
-    parts: [
-      ...PHANTOM_PARTS,
-      ...VOID_MONARCH_EXTRA_PARTS,
-    ],
-    teamAccentParts: TEAM_ACCENT_PARTS.phantom,
-    remoteSocketMarkers: REMOTE_BODY_SOCKET_MARKERS.phantom,
-    materialPalette: VOID_MONARCH_COLORS,
-    idleProfile: {
-      ...HERO_IDLE_PROFILES.phantom,
-      auraPulse: 0.15,
-    },
-    attackDurationSeconds: HERO_ATTACK_DURATIONS.phantom,
-  },
-  'hookshot.tidebreaker': {
-    heroId: 'hookshot',
-    parts: [
-      ...HOOKSHOT_PARTS,
-      ...TIDEBREAKER_EXTRA_PARTS,
-    ],
-    teamAccentParts: TEAM_ACCENT_PARTS.hookshot,
-    remoteSocketMarkers: REMOTE_BODY_SOCKET_MARKERS.hookshot,
-    materialPalette: TIDEBREAKER_COLORS,
-    idleProfile: {
-      ...HERO_IDLE_PROFILES.hookshot,
-      auraPulse: 0.11,
-    },
-    attackDurationSeconds: HERO_ATTACK_DURATIONS.hookshot,
-  },
-  'blaze.solar-forge': {
-    heroId: 'blaze',
-    parts: [
-      ...BLAZE_PARTS,
-      ...SOLAR_FORGE_EXTRA_PARTS,
-    ],
-    teamAccentParts: TEAM_ACCENT_PARTS.blaze,
-    remoteSocketMarkers: REMOTE_BODY_SOCKET_MARKERS.blaze,
-    materialPalette: SOLAR_FORGE_COLORS,
-    idleProfile: {
-      ...HERO_IDLE_PROFILES.blaze,
-      auraPulse: 0.14,
-    },
-    attackDurationSeconds: HERO_ATTACK_DURATIONS.blaze,
-  },
-  'chronos.epoch-regent': {
-    heroId: 'chronos',
-    parts: [
-      ...CHRONOS_PARTS,
-      ...EPOCH_REGENT_EXTRA_PARTS,
-    ],
-    teamAccentParts: TEAM_ACCENT_PARTS.chronos,
-    remoteSocketMarkers: REMOTE_BODY_SOCKET_MARKERS.chronos,
-    materialPalette: EPOCH_REGENT_COLORS,
-    idleProfile: {
-      ...HERO_IDLE_PROFILES.chronos,
-      auraPulse: 0.17,
-    },
-    attackDurationSeconds: HERO_ATTACK_DURATIONS.chronos,
-  },
+  'phantom.void-monarch': createSkinBodyManifest('phantom', VOID_MONARCH_EXTRA_PARTS, VOID_MONARCH_COLORS, 0.15),
+  'phantom.nightglass-wraith': createSkinBodyManifest('phantom', NIGHTGLASS_WRAITH_EXTRA_PARTS, NIGHTGLASS_WRAITH_COLORS, 0.16),
+  'phantom.astral-executioner': createSkinBodyManifest('phantom', ASTRAL_EXECUTIONER_EXTRA_PARTS, ASTRAL_EXECUTIONER_COLORS, 0.19),
+  'phantom.eclipse-seraph': createSkinBodyManifest('phantom', ECLIPSE_SERAPH_EXTRA_PARTS, ECLIPSE_SERAPH_COLORS, 0.23),
+  'hookshot.tidebreaker': createSkinBodyManifest('hookshot', TIDEBREAKER_EXTRA_PARTS, TIDEBREAKER_COLORS, 0.11),
+  'hookshot.iron-leviathan': createSkinBodyManifest('hookshot', IRON_LEVIATHAN_EXTRA_PARTS, IRON_LEVIATHAN_COLORS, 0.12),
+  'hookshot.abyssal-corsair': createSkinBodyManifest('hookshot', ABYSSAL_CORSAIR_EXTRA_PARTS, ABYSSAL_CORSAIR_COLORS, 0.15),
+  'hookshot.kraken-sovereign': createSkinBodyManifest('hookshot', KRAKEN_SOVEREIGN_EXTRA_PARTS, KRAKEN_SOVEREIGN_COLORS, 0.19),
+  'blaze.solar-forge': createSkinBodyManifest('blaze', SOLAR_FORGE_EXTRA_PARTS, SOLAR_FORGE_COLORS, 0.14),
+  'blaze.ashen-vanguard': createSkinBodyManifest('blaze', ASHEN_VANGUARD_EXTRA_PARTS, ASHEN_VANGUARD_COLORS, 0.15),
+  'blaze.inferno-archon': createSkinBodyManifest('blaze', INFERNO_ARCHON_EXTRA_PARTS, INFERNO_ARCHON_COLORS, 0.19),
+  'blaze.starfall-phoenix': createSkinBodyManifest('blaze', STARFALL_PHOENIX_EXTRA_PARTS, STARFALL_PHOENIX_COLORS, 0.23),
+  'chronos.epoch-regent': createSkinBodyManifest('chronos', EPOCH_REGENT_EXTRA_PARTS, EPOCH_REGENT_COLORS, 0.17),
+  'chronos.paradox-sentinel': createSkinBodyManifest('chronos', PARADOX_SENTINEL_EXTRA_PARTS, PARADOX_SENTINEL_COLORS, 0.18),
+  'chronos.meridian-oracle': createSkinBodyManifest('chronos', MERIDIAN_ORACLE_EXTRA_PARTS, MERIDIAN_ORACLE_COLORS, 0.21),
+  'chronos.eternity-sovereign': createSkinBodyManifest('chronos', ETERNITY_SOVEREIGN_EXTRA_PARTS, ETERNITY_SOVEREIGN_COLORS, 0.25),
 };
 
 export const HERO_DEFAULT_FALLBACK_SOCKETS = {

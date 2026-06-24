@@ -14,7 +14,11 @@ import authRoutes from './auth/routes';
 import createAdminRouter from './admin/routes';
 import cosmeticsRoutes from './cosmetics/routes';
 import matchmakingRoutes from './matchmaking/routes';
+import rewardsRoutes from './rewards/routes';
 import socialRoutes from './social/routes';
+import wagersRoutes from './wagers/routes';
+import { playerRewardService } from './rewards/service';
+import { wagerService } from './wagers/service';
 import { voiceService } from './voice/VoiceService';
 import {
   createDistributedColyseusOptions,
@@ -159,7 +163,9 @@ app.use(express.json());
 app.use('/auth', authRoutes);
 app.use('/cosmetics', cosmeticsRoutes);
 app.use('/matchmaking', matchmakingRoutes);
+app.use('/rewards', rewardsRoutes);
 app.use('/social', socialRoutes);
+app.use('/wagers', wagersRoutes);
 app.use('/admin', createAdminRouter({
   config: colyseusRuntime,
   matchMaker,
@@ -418,7 +424,11 @@ async function startServer(): Promise<void> {
     }
 
     await gameServer.listen(PORT);
+    wagerService.startBackgroundJobs();
+    playerRewardService.startBackgroundJobs();
   } catch (error) {
+    playerRewardService.stopBackgroundJobs();
+    wagerService.stopBackgroundJobs();
     await adminMachineHeartbeatHandle?.close();
     adminMachineHeartbeatHandle = null;
     await flyReplayRouteHandle?.close();
@@ -463,6 +473,8 @@ async function shutdown(signal: string): Promise<void> {
   });
 
   try {
+    playerRewardService.stopBackgroundJobs();
+    wagerService.stopBackgroundJobs();
     await adminMachineHeartbeatHandle?.close();
     adminMachineHeartbeatHandle = null;
     await flyReplayRouteHandle?.close();

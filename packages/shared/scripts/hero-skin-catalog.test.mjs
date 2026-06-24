@@ -14,14 +14,35 @@ const validation = validateHeroSkinCatalog();
 assert.deepEqual(validation.errors, []);
 assert.equal(validation.ok, true);
 
-const paidSkinIds = [
-  'phantom.void-monarch',
-  'hookshot.tidebreaker',
-  'blaze.solar-forge',
-  'chronos.epoch-regent',
-];
+const paidSkinIdsByHero = {
+  phantom: [
+    'phantom.void-monarch',
+    'phantom.nightglass-wraith',
+    'phantom.astral-executioner',
+    'phantom.eclipse-seraph',
+  ],
+  hookshot: [
+    'hookshot.tidebreaker',
+    'hookshot.iron-leviathan',
+    'hookshot.abyssal-corsair',
+    'hookshot.kraken-sovereign',
+  ],
+  blaze: [
+    'blaze.solar-forge',
+    'blaze.ashen-vanguard',
+    'blaze.inferno-archon',
+    'blaze.starfall-phoenix',
+  ],
+  chronos: [
+    'chronos.epoch-regent',
+    'chronos.paradox-sentinel',
+    'chronos.meridian-oracle',
+    'chronos.eternity-sovereign',
+  ],
+};
+const paidSkinIds = Object.values(paidSkinIdsByHero).flat();
 
-assert.equal(HERO_SKIN_CATALOG.length, 8);
+assert.equal(HERO_SKIN_CATALOG.length, 20);
 for (const skinId of paidSkinIds) {
   assert.equal(isHeroSkinId(skinId), true, `${skinId} should be a known skin id`);
 }
@@ -32,11 +53,21 @@ for (const heroId of ALL_HERO_IDS) {
   assert.equal(defaultSkinId, DEFAULT_HERO_SKIN_IDS[heroId]);
 
   const skins = getHeroSkinsForHero(heroId);
+  assert.equal(skins.length, 5, `${heroId} should expose one default and four paid skins`);
   assert.equal(
     skins.filter((skin) => skin.id === defaultSkinId).length,
     1,
     `${heroId} should expose exactly one default skin`
   );
+  assert.deepEqual(
+    skins.filter((skin) => skin.availability === 'paid').map((skin) => skin.id).sort(),
+    [...paidSkinIdsByHero[heroId]].sort(),
+    `${heroId} paid skins should match the expected catalog`
+  );
+  assert.equal(skins.filter((skin) => skin.rarity === 'common').length, 1, `${heroId} should have one common skin`);
+  assert.equal(skins.filter((skin) => skin.rarity === 'epic').length, 2, `${heroId} should have two epic skins`);
+  assert.equal(skins.filter((skin) => skin.rarity === 'unique').length, 1, `${heroId} should have one unique skin`);
+  assert.equal(skins.filter((skin) => skin.rarity === 'legendary').length, 1, `${heroId} should have one legendary skin`);
 }
 
 for (const skinId of paidSkinIds) {
@@ -45,7 +76,7 @@ for (const skinId of paidSkinIds) {
   assert.equal(skin.availability, 'paid');
   assert.equal(skin.releaseState, 'ready_when_token_launches');
   assert.equal(skin.price.amountBaseUnits, null);
-  assert.equal(skin.price.disabledReason, 'Game SPL token has not launched yet');
+  assert.equal(skin.price.disabledReason, 'Disabled');
 }
 
 const matched = resolveHeroSkinDefinition('phantom', 'phantom.void-monarch', {

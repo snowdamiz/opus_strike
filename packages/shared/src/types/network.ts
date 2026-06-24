@@ -454,7 +454,7 @@ export interface GameEndEvent {
 }
 
 export interface GoldenBiomeRewardSummary {
-  rewardUsdCents: number;
+  rewardLamports: string;
   rewardToken: 'SOL';
   winningTeam: Team | null;
   eligiblePlayerIds: string[];

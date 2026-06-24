@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import type { MatchMode, Team } from '@voxel-strike/shared';
+import { GOLDEN_VOXEL_MAP_THEME_ID, type MatchMode, type Team } from '@voxel-strike/shared';
 import prisma from '../db';
 import {
   type AntiCheatActionType,
@@ -12,6 +12,8 @@ import {
   type PersistCompletedMatchResult,
 } from '../persistence/matchPersistence';
 import { loggers } from '../utils/logger';
+import { playerRewardService, type CreateMatchPlayerRewardsInput } from '../rewards/service';
+import { wagerService } from '../wagers/service';
 import type { MatchPersistenceLedger } from './matchLedgerRuntime';
 
 type RankedOutcomeStatus = NonNullable<CompletedMatchPersistenceInput['rankedOutcomeStatus']>;
@@ -56,12 +58,44 @@ export type PersistCompletedMatchFn = (
   input: CompletedMatchPersistenceInput
 ) => Promise<PersistCompletedMatchResult>;
 
+export interface GoldenBiomeRewardWinnerInput {
+  userId: string;
+  playerSessionId: string;
+}
+
+export type SettleGoldenBiomeRewardFn = (input: {
+  matchId: string;
+  roomId: string;
+  lobbyId: string | null;
+  mapSeed: number;
+  winningTeam: 'red' | 'blue';
+  winners: GoldenBiomeRewardWinnerInput[];
+}) => Promise<unknown>;
+
+export type CreateMatchPlayerRewardsFn = (input: CreateMatchPlayerRewardsInput) => Promise<unknown>;
+
+export type SettleWageredLobbyFn = (input: {
+  lobbyId: string;
+  matchId: string | null;
+  winningTeam: 'red' | 'blue' | null;
+}) => Promise<unknown>;
+
+export type MarkWageredLobbyReviewRequiredFn = (input: {
+  lobbyId: string;
+  matchId: string | null;
+  reason?: string | null;
+}) => Promise<unknown>;
+
 export interface MatchFinalizationRuntimeDeps {
   prisma: PrismaClient;
   persistCompletedMatch: PersistCompletedMatchFn;
   evidenceStore: MatchFinalizationEvidenceStore;
   log: MatchFinalizationLogger;
   serializeError(error: unknown): Record<string, unknown>;
+  settleGoldenBiomeReward?: SettleGoldenBiomeRewardFn;
+  createMatchPlayerRewards?: CreateMatchPlayerRewardsFn;
+  settleWageredLobby?: SettleWageredLobbyFn;
+  markWageredLobbyReviewRequired?: MarkWageredLobbyReviewRequiredFn;
 }
 
 export interface PersistMatchLedgerInput {
@@ -135,7 +169,7 @@ export class MatchFinalizationRuntime {
         winningTeam: input.winningTeam,
         participants: input.participants,
         antiCheatIntegrityStatus: input.integrityGate.status,
-        antiCheatReviewRequired: input.integrityGate.rankedHoldRequired,
+        antiCheatReviewRequired: input.integrityGate.reviewRequired,
         antiCheatIntegrityReason: input.integrityGate.reason,
         rankedOutcomeStatus: outcomes.rankedOutcomeStatus,
       });
@@ -153,6 +187,7 @@ export class MatchFinalizationRuntime {
         skippedUserIds: result.skippedUserIds,
         rankedEligible: input.rankedEligible,
       });
+      await this.processPostPersistenceEarnings(ledger, input);
     } catch (error) {
       ledger.state = 'failed';
       this.deps.log.error('Match persistence failed', {
@@ -169,6 +204,117 @@ export class MatchFinalizationRuntime {
     }
 
     return true;
+  }
+
+  private async processPostPersistenceEarnings(
+    ledger: MatchPersistenceLedger,
+    input: PersistMatchLedgerInput
+  ): Promise<void> {
+    await this.processPostPersistenceWager(ledger, input);
+
+    const rewardEligible = input.rankedEligible
+      && input.integrityGate.status === 'clean'
+      && !input.integrityGate.rankedHoldRequired
+      && !input.integrityGate.reviewRequired;
+
+    if (!rewardEligible) return;
+
+    if (this.deps.createMatchPlayerRewards) {
+      await this.deps.createMatchPlayerRewards({
+        matchId: ledger.matchId,
+        roomId: ledger.roomId,
+        lobbyId: ledger.lobbyId,
+        matchMode: ledger.matchMode,
+        startedAt: ledger.startedAt,
+        endedAt: ledger.endedAt ?? new Date(),
+        winningTeam: input.winningTeam,
+        participants: input.participants,
+        rankedEligible: input.rankedEligible,
+        integrityGate: input.integrityGate,
+      }).catch((error) => {
+        this.deps.log.warn('Player match rewards were skipped after persistence', {
+          roomId: ledger.roomId,
+          matchId: ledger.matchId,
+          error: this.deps.serializeError(error),
+        });
+      });
+    }
+
+    if (
+      this.deps.settleGoldenBiomeReward
+      && ledger.matchMode === 'ranked'
+      && ledger.mapThemeId === GOLDEN_VOXEL_MAP_THEME_ID
+      && input.winningTeam
+    ) {
+      if (input.winningTeam !== 'red' && input.winningTeam !== 'blue') return;
+
+      const winners = input.participants
+        .filter((participant) => participant.team === input.winningTeam && participant.leftAt === null)
+        .map((participant) => ({
+          userId: participant.userId,
+          playerSessionId: participant.playerSessionId,
+        }));
+      if (winners.length === 0) return;
+
+      await this.deps.settleGoldenBiomeReward({
+        matchId: ledger.matchId,
+        roomId: ledger.roomId,
+        lobbyId: ledger.lobbyId,
+        mapSeed: ledger.mapSeed,
+        winningTeam: input.winningTeam,
+        winners,
+      }).catch((error) => {
+        this.deps.log.warn('Golden biome reward settlement skipped after persistence', {
+          roomId: ledger.roomId,
+          matchId: ledger.matchId,
+          error: this.deps.serializeError(error),
+        });
+      });
+    }
+  }
+
+  private async processPostPersistenceWager(
+    ledger: MatchPersistenceLedger,
+    input: PersistMatchLedgerInput
+  ): Promise<void> {
+    if (!ledger.lobbyId) return;
+
+    const needsReview = input.integrityGate.status !== 'clean'
+      || input.integrityGate.rankedHoldRequired
+      || input.integrityGate.reviewRequired;
+
+    if (needsReview && this.deps.markWageredLobbyReviewRequired) {
+      await this.deps.markWageredLobbyReviewRequired({
+        lobbyId: ledger.lobbyId,
+        matchId: ledger.matchId,
+        reason: input.integrityGate.reason,
+      }).catch((error) => {
+        this.deps.log.warn('Wagered lobby review mark skipped after persistence', {
+          roomId: ledger.roomId,
+          matchId: ledger.matchId,
+          lobbyId: ledger.lobbyId,
+          error: this.deps.serializeError(error),
+        });
+      });
+      return;
+    }
+
+    if (!this.deps.settleWageredLobby) return;
+    const winningTeam = input.winningTeam === 'red' || input.winningTeam === 'blue'
+      ? input.winningTeam
+      : null;
+    await this.deps.settleWageredLobby({
+      lobbyId: ledger.lobbyId,
+      matchId: ledger.matchId,
+      winningTeam,
+    }).catch((error) => {
+      this.deps.log.warn('Wagered lobby settlement skipped after persistence', {
+        roomId: ledger.roomId,
+        matchId: ledger.matchId,
+        lobbyId: ledger.lobbyId,
+        error: this.deps.serializeError(error),
+      });
+    });
   }
 
   private recordMatchIntegrity(
@@ -233,5 +379,9 @@ export function createRoomMatchFinalizationRuntime(input: {
     evidenceStore: input.evidenceStore,
     log: loggers.room,
     serializeError: input.serializeError,
+    settleGoldenBiomeReward: (rewardInput) => wagerService.settleGoldenBiomeReward(rewardInput),
+    createMatchPlayerRewards: (rewardInput) => playerRewardService.createMatchRewards(rewardInput),
+    settleWageredLobby: (settlementInput) => wagerService.settleWageredLobbyForLobby(settlementInput),
+    markWageredLobbyReviewRequired: (reviewInput) => wagerService.markLobbyReviewRequired(reviewInput),
   });
 }

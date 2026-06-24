@@ -15,10 +15,12 @@ import {
   buildSkinPurchaseTransaction,
   createSkinPurchaseIntent,
   getSkinPurchaseIntent,
+  requestRewardEconomy,
   requestSkinCatalog,
   simulateSkinPurchaseTransaction,
   submitSignedSkinPurchaseTransaction,
   updateHeroSkinLoadout,
+  type RewardEconomyResponse,
 } from '../../contexts/networkApi';
 import { HeroesPage } from './HeroesPage';
 import { StatsPage } from './StatsPage';
@@ -30,8 +32,8 @@ import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
 import { TopNavIconButton } from './TopNavIconButton';
 import { HeroIcon } from './HeroIcons';
-import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
 import { WalletProviderLogo } from './WalletProviderLogo';
+import { WalletProviderOptions } from './WalletProviderOptions';
 import { useUISounds } from '../../hooks/useUiAudio';
 import { useMobileDevice } from '../../hooks/useDeviceCapabilities';
 import { useServerLatencyProbe } from '../../hooks/useServerLatencyProbe';
@@ -69,7 +71,7 @@ import type {
   HeroSkinId,
   SkinPurchaseIntentSnapshot,
 } from '@voxel-strike/shared';
-import { BLAZE_UI_COLORS, DISCORD_AUTH_COLORS, HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
+import { BLAZE_UI_COLORS, DISCORD_AUTH_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 import { usePwaInstallPrompt } from '../../pwa';
 import { PwaInstallToast } from './PwaInstallToast';
 import {
@@ -137,15 +139,6 @@ function LoginIcon({ className }: { className?: string }) {
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M15.75 8.75V6.5A2.5 2.5 0 0013.25 4h-6.5A2.5 2.5 0 004.25 6.5v11A2.5 2.5 0 006.75 20h6.5a2.5 2.5 0 002.5-2.5v-2.25" />
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M10.5 12h8.25m0 0l-3-3m3 3l-3 3" />
-    </svg>
-  );
-}
-
-function SpinnerIcon({ className = 'h-4 w-4' }: { className?: string }) {
-  return (
-    <svg className={`${className} animate-spin`} fill="none" viewBox="0 0 24 24" aria-hidden="true">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>
   );
 }
@@ -231,10 +224,6 @@ function LoginDialog({
   onWalletSignIn: (providerId?: string) => Promise<void>;
   onClose: () => void;
 }) {
-  const walletOptions = walletProviders.length > 0
-    ? walletProviders
-    : [{ id: undefined, name: 'Solana Wallet', installed: false, mobileDeepLink: false }];
-
   return (
     <GameDialog
       title="LOGIN"
@@ -257,25 +246,11 @@ function LoginDialog({
             <span>Wallet</span>
             <span>{walletProviders.length > 0 ? 'Detected' : 'Not detected'}</span>
           </div>
-          <div className="login-wallet-options">
-            {walletOptions.map((wallet) => (
-              <button
-                key={wallet.id ?? 'wallet-fallback'}
-                type="button"
-                onClick={() => onWalletSignIn(wallet.id)}
-                disabled={isConnecting}
-                className="login-provider-button login-provider-button-wallet"
-              >
-                <span className="login-provider-icon">
-                  {isConnecting ? <SpinnerIcon /> : <WalletProviderLogo wallet={wallet} className="login-provider-logo" />}
-                </span>
-                <span className="login-provider-copy">
-                  <span>{wallet.installed ? wallet.name : 'Connect Wallet'}</span>
-                  <span>{wallet.mobileDeepLink ? 'Mobile deep link' : wallet.installed ? 'Sign message' : 'Phantom, Solflare, Brave'}</span>
-                </span>
-              </button>
-            ))}
-          </div>
+          <WalletProviderOptions
+            walletProviders={walletProviders}
+            isConnecting={isConnecting}
+            onSelect={onWalletSignIn}
+          />
         </div>
 
         {authError && (
@@ -310,9 +285,88 @@ const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
 };
 const SEASON_RULES_ARIA = 'Season rewards and ranked history are tracked by season.';
 
+type EarningRule = {
+  label: string;
+  value: string;
+};
+
+type RewardEconomy = RewardEconomyResponse['economy'];
+
+function rewardTokenTicker(symbol?: string | null): string | null {
+  const cleaned = symbol?.trim().replace(/^\$/, '').toUpperCase() ?? '';
+  return /^[A-Z0-9]{1,16}$/.test(cleaned) ? cleaned : null;
+}
+
+function formatCompactInteger(value: string | undefined, fallback: string): string {
+  try {
+    const amount = BigInt(value ?? fallback);
+    const units: Array<[bigint, string]> = [
+      [1_000_000_000n, 'B'],
+      [1_000_000n, 'M'],
+      [1_000n, 'k'],
+    ];
+    for (const [unit, suffix] of units) {
+      if (amount >= unit && amount % unit === 0n) {
+        return `${amount / unit}${suffix}`;
+      }
+    }
+    return amount.toLocaleString('en-US');
+  } catch {
+    return fallback;
+  }
+}
+
+function formatBpsShort(value: number | undefined, fallback: number): string {
+  const bps = Number.isFinite(value) ? value ?? fallback : fallback;
+  return `${(bps / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')}%`;
+}
+
+function formatSolLamports(value: string | undefined, fallback: string): string {
+  try {
+    const lamports = BigInt(value ?? fallback);
+    const whole = lamports / 1_000_000_000n;
+    const fractional = lamports % 1_000_000_000n;
+    if (fractional === 0n) return whole.toString();
+    return `${whole}.${fractional.toString().padStart(9, '0').replace(/0+$/, '')}`;
+  } catch {
+    return '0.2';
+  }
+}
+
+function tokenAmountLabel(amount: string, tokenSymbol: string | null): string {
+  return tokenSymbol ? `${amount} ${tokenSymbol}` : `${amount} tokens`;
+}
+
+function getEarningRules(tokenSymbol: string | null, economy: RewardEconomy | null): EarningRule[] {
+  const token = rewardTokenTicker(tokenSymbol);
+  const rewards = economy?.playerRewards;
+  const wagers = economy?.wagers;
+  const golden = economy?.goldenBiome;
+  const rankedDrip = formatCompactInteger(rewards?.dailyRankedDripLamports, '20k');
+  const maxDaily = rewards?.dailyRankedDripMaxMatches ?? 5;
+  const win = formatCompactInteger(rewards?.objectiveWinLamports, '10k');
+  const assist = formatCompactInteger(rewards?.objectiveAssistLamports, '2k');
+  const capture = formatCompactInteger(rewards?.objectiveFlagCaptureLamports, '15k');
+  const flagReturn = formatCompactInteger(rewards?.objectiveFlagReturnLamports, '5k');
+  const weeklyTop = rewards?.weeklyTopPlayers ?? 10;
+  const weeklyPool = formatCompactInteger(rewards?.weeklyPoolLamports, '1M');
+  const goldenChance = formatBpsShort(golden?.chanceBps, 200);
+  const goldenReward = formatSolLamports(golden?.winnerRewardLamports, '200000000');
+  const wagerFee = formatBpsShort(wagers?.platformFeeBps, 500);
+
+  return [
+    { label: 'Ranked match', value: `${tokenAmountLabel(rankedDrip, token)}, max ${maxDaily}/day` },
+    { label: 'Win + assist', value: `${tokenAmountLabel(win, token)} win, ${tokenAmountLabel(assist, token)} assist` },
+    { label: 'Flag bonus', value: `${tokenAmountLabel(capture, token)} capture, ${tokenAmountLabel(flagReturn, token)} return` },
+    { label: `Weekly top ${weeklyTop}`, value: `split ${tokenAmountLabel(weeklyPool, token)}` },
+    { label: 'Golden map', value: golden?.enabled === false ? 'off' : `${goldenChance} roll, ${goldenReward} SOL each winner` },
+    { label: 'Wagers', value: `winners split pot, treasury keeps ${wagerFee}` },
+  ];
+}
+
 function rankedTokenHoldRequirement(status: RankedTokenHoldStatus): string {
-  const symbol = status.tokenSymbol ?? 'TOKEN';
-  return `${status.requiredTokenAmount || '0'} ${symbol} hold`;
+  const symbol = rewardTokenTicker(status.tokenSymbol);
+  return `${status.requiredTokenAmount || '0'} ${symbol ?? 'tokens'} hold`;
 }
 
 function rankedTokenGateBlockedMessage(status: RankedTokenHoldStatus): string {
@@ -452,6 +506,7 @@ export function MainLobby() {
   const [isRankedTokenHoldLoading, setIsRankedTokenHoldLoading] = useState(false);
   const [rankedTokenHoldError, setRankedTokenHoldError] = useState<string | null>(null);
   const [rankedSeason, setRankedSeason] = useState<RankedSeasonSnapshot>(DEFAULT_RANKED_SEASON);
+  const [rewardEconomy, setRewardEconomy] = useState<RewardEconomy | null>(null);
   const [skinCatalog, setSkinCatalog] = useState<HeroSkinCatalogResponse | null>(null);
   const [isSkinCatalogLoading, setIsSkinCatalogLoading] = useState(false);
   const [skinCatalogError, setSkinCatalogError] = useState<string | null>(null);
@@ -489,6 +544,10 @@ export function MainLobby() {
   const skinsForFeaturedHero = useMemo(
     () => (skinCatalog?.skins ?? []).filter((skin) => skin.heroId === featuredHero),
     [featuredHero, skinCatalog]
+  );
+  const rewardTokenSymbol = rewardTokenTicker(
+    rewardEconomy?.rewardTokenSymbol
+    ?? rankedTokenHoldStatus?.tokenSymbol
   );
   const isInParty = Boolean(party);
   const isPartyLeader = isPartyLeaderForUser(party, localPartyUserId);
@@ -564,6 +623,31 @@ export function MainLobby() {
       });
 
     return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    let timeoutId: number | null = null;
+
+    const loadRewardEconomy = async () => {
+      try {
+        const economy = await requestRewardEconomy();
+        if (mounted) setRewardEconomy(economy);
+      } catch (err) {
+        if (mounted) console.warn('[MainLobby] Reward economy unavailable:', err);
+      } finally {
+        if (mounted) {
+          timeoutId = window.setTimeout(loadRewardEconomy, 30_000);
+        }
+      }
+    };
+
+    void loadRewardEconomy();
+
+    return () => {
+      mounted = false;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    };
   }, []);
 
   const loadSkinCatalog = useCallback(async () => {
@@ -1258,6 +1342,8 @@ export function MainLobby() {
             botFillDisabledReason={botFillDisabledReason}
             rankedTokenHoldStatus={rankedTokenHoldStatus}
             rankedTokenHoldError={rankedTokenHoldError}
+            rewardTokenSymbol={rewardTokenSymbol}
+            rewardEconomy={rewardEconomy}
             runningGameSession={runningGameSession}
             isReconnectChecking={isReconnectChecking}
             isSkippingTutorial={isSkippingTutorial}
@@ -1349,12 +1435,49 @@ export function MainLobby() {
 
 function formatSkinPrice(skin: HeroSkinCatalogItem): string {
   const price = skin.shopPrice;
-  if (!price?.amountBaseUnits) return price?.tokenSymbol ? `TBA ${price.tokenSymbol}` : 'TBA';
-  return `${price.amountBaseUnits} ${price.tokenSymbol || 'TOKEN'}`;
+  const tokenSymbol = formatTokenSymbol(price?.tokenSymbol);
+  if (!price?.amountBaseUnits) return tokenSymbol ? `TBA ${tokenSymbol}` : 'TBA';
+  const amount = formatCompactTokenAmount(price.amountBaseUnits);
+  return tokenSymbol ? `${amount} ${tokenSymbol}` : amount;
+}
+
+function formatTokenSymbol(symbol?: string | null): string {
+  const cleaned = symbol?.trim();
+  if (!cleaned) return '';
+  return cleaned.startsWith('$') ? cleaned : `$${cleaned}`;
+}
+
+function formatCompactTokenAmount(amountBaseUnits: string): string {
+  const amount = Number(amountBaseUnits);
+  if (!Number.isFinite(amount)) return amountBaseUnits;
+  const absolute = Math.abs(amount);
+  if (absolute >= 1_000_000_000) return `${formatCompactNumber(amount / 1_000_000_000)}b`;
+  if (absolute >= 1_000_000) return `${formatCompactNumber(amount / 1_000_000)}m`;
+  if (absolute >= 1_000) return `${formatCompactNumber(amount / 1_000)}k`;
+  return amount.toLocaleString('en-US');
+}
+
+function formatCompactNumber(value: number): string {
+  return Number.isInteger(value)
+    ? value.toLocaleString('en-US')
+    : value.toLocaleString('en-US', { maximumFractionDigits: 1 });
 }
 
 function skinRarityClass(rarity: HeroSkinCatalogItem['rarity']): string {
   return `is-${rarity}`;
+}
+
+function SkinRarityChrome({ className = '' }: { className?: string }) {
+  return (
+    <div className={`loadout-skin-card-chrome${className ? ` ${className}` : ''}`} aria-hidden="true">
+      <span className="loadout-skin-card-sash" />
+      <span className="loadout-skin-card-emblem" />
+      <span className="loadout-skin-card-bracket is-top-left" />
+      <span className="loadout-skin-card-bracket is-top-right" />
+      <span className="loadout-skin-card-bracket is-bottom-left" />
+      <span className="loadout-skin-card-bracket is-bottom-right" />
+    </div>
+  );
 }
 
 function skinOwnershipLabel(skin: HeroSkinCatalogItem): string {
@@ -1363,55 +1486,13 @@ function skinOwnershipLabel(skin: HeroSkinCatalogItem): string {
   return 'OWNED';
 }
 
-type LoadoutCosmeticCategory = 'hero-skins' | 'skill-effects';
-
-interface LoadoutCategorySummary {
-  id: LoadoutCosmeticCategory;
-  label: string;
-  ownedCount: number;
-  totalCount: number;
-}
-
-function getLoadoutSkillPreviewKey(skill: HeroSkillItem): string {
-  return `${skill.input}:${skill.abilityId ?? skill.name}`;
-}
-
-const LOADOUT_SKILL_PREVIEW_VIDEO_SRC: Partial<Record<HeroId, Partial<Record<string, string>>>> = {};
-
-function getLoadoutSkillPreviewVideoSrc(heroId: HeroId, skill: HeroSkillItem | null): string | null {
-  if (!skill) return null;
-  return LOADOUT_SKILL_PREVIEW_VIDEO_SRC[heroId]?.[getLoadoutSkillPreviewKey(skill)] ?? null;
-}
-
-function LoadoutSkillVideoPreview({
-  heroId,
-  skill,
-}: {
-  heroId: HeroId;
-  skill: HeroSkillItem | null;
-}) {
-  const videoSrc = getLoadoutSkillPreviewVideoSrc(heroId, skill);
-
-  return (
-    <div
-      className="loadout-skill-video-preview"
-      data-empty={videoSrc ? undefined : 'true'}
-      aria-label={skill ? `${skill.name} effect video preview` : `${HERO_DEFINITIONS[heroId].name} effect video preview`}
-    >
-      {videoSrc && (
-        <video
-          key={videoSrc}
-          className="loadout-skill-video"
-          src={videoSrc}
-          autoPlay
-          loop
-          muted
-          playsInline
-          preload="metadata"
-        />
-      )}
-    </div>
-  );
+function skinSupplyLabel(skin: HeroSkinCatalogItem): string | null {
+  const price = skin.shopPrice;
+  if (skin.availability !== 'paid' || skin.owned || price?.maxSupply === null || price?.maxSupply === undefined) {
+    return null;
+  }
+  if (price.remainingSupply === 0) return 'sold out';
+  return `${(price.remainingSupply ?? 0).toLocaleString('en-US')} left`;
 }
 
 function LoadoutTab({
@@ -1440,45 +1521,15 @@ function LoadoutTab({
   onPurchaseSkin: (skin: HeroSkinCatalogItem) => void;
 }) {
   const hero = HERO_DEFINITIONS[featuredHero];
-  const [activeCategory, setActiveCategory] = useState<LoadoutCosmeticCategory>('hero-skins');
   const [previewSkinId, setPreviewSkinId] = useState<HeroSkinId>(selectedSkinId);
-  const [previewSkillKey, setPreviewSkillKey] = useState<string | null>(null);
   const selectedSkin = skins.find((skin) => skin.id === selectedSkinId) ?? skins[0] ?? null;
   const previewSkin = skins.find((skin) => skin.id === previewSkinId) ?? selectedSkin;
-  const ownedCount = skins.filter((skin) => skin.owned).length;
-  const skillEffectItems = useMemo(() => getHeroSkillItems(featuredHero), [featuredHero]);
-  const previewSkill = skillEffectItems.find((skill) => getLoadoutSkillPreviewKey(skill) === previewSkillKey)
-    ?? skillEffectItems[0]
-    ?? null;
-  const previewSkillResolvedKey = previewSkill ? getLoadoutSkillPreviewKey(previewSkill) : null;
-  const skillEffectOwnedCount = skillEffectItems.length;
-  const isHeroSkinCategory = activeCategory === 'hero-skins';
-  const activeSkillPreview = isHeroSkinCategory ? null : previewSkill;
-  const categorySummaries: LoadoutCategorySummary[] = [
-    {
-      id: 'hero-skins',
-      label: 'Hero Skins',
-      ownedCount,
-      totalCount: skins.length,
-    },
-    {
-      id: 'skill-effects',
-      label: 'Skill Effects',
-      ownedCount: skillEffectOwnedCount,
-      totalCount: skillEffectItems.length,
-    },
-  ];
-  const stageTitle = isHeroSkinCategory
-    ? previewSkin?.displayName ?? hero.name
-    : activeSkillPreview?.name ?? `${hero.name} Effects`;
+  const stageTitle = previewSkin?.displayName ?? hero.name;
+  const stageRarityClass = previewSkin ? skinRarityClass(previewSkin.rarity) : 'is-common';
 
   useEffect(() => {
     setPreviewSkinId(selectedSkinId);
   }, [featuredHero, selectedSkinId]);
-
-  useEffect(() => {
-    setPreviewSkillKey(null);
-  }, [featuredHero]);
 
   return (
     <div className="loadout-screen menu-content-wide">
@@ -1488,7 +1539,7 @@ function LoadoutTab({
         </div>
       )}
 
-      <div className="loadout-workbench" data-category={activeCategory}>
+      <div className="loadout-workbench">
         <aside className="loadout-roster" aria-label="Choose hero">
           <div className="loadout-roster-list">
             {ALL_HERO_IDS.map((heroId) => {
@@ -1517,129 +1568,64 @@ function LoadoutTab({
           </div>
         </aside>
 
-        <section className="loadout-stage" aria-label={`${hero.name} cosmetic preview`}>
+        <section className={`loadout-stage ${stageRarityClass}`} aria-label={`${hero.name} cosmetic preview`}>
+          <SkinRarityChrome className="loadout-stage-card-chrome" />
+
           <div className="loadout-stage-copy">
             <div>
               <p className="loadout-kicker">
-                {isHeroSkinCategory
-                  ? (previewSkin?.owned ? 'ARMORY READY' : 'PREVIEW ACCESS')
-                  : 'EFFECT BAY'}
+                {previewSkin?.owned ? 'ARMORY READY' : 'PREVIEW ACCESS'}
               </p>
-              <h2 className="loadout-stage-title">{stageTitle}</h2>
+              <div className="loadout-stage-title-line">
+                <h2 className="loadout-stage-title">{stageTitle}</h2>
+                {previewSkin && (
+                  <span className={`loadout-rarity-chip ${stageRarityClass}`}>
+                    {previewSkin.rarity}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
           <div className="loadout-stage-preview">
-            {isHeroSkinCategory ? (
-              <Suspense fallback={null}>
-                <FeaturedHeroPreview
-                  heroId={featuredHero}
-                  skinId={previewSkin?.id ?? selectedSkinId}
-                  initialYaw={Math.PI - 0.18}
-                  animationMode={HERO_IDLE_ANIMATION_MODE}
-                  className="loadout-featured-preview"
-                />
-              </Suspense>
-            ) : (
-              <LoadoutSkillVideoPreview
+            <Suspense fallback={null}>
+              <FeaturedHeroPreview
                 heroId={featuredHero}
-                skill={activeSkillPreview}
+                skinId={previewSkin?.id ?? selectedSkinId}
+                initialYaw={Math.PI - 0.18}
+                animationMode={HERO_IDLE_ANIMATION_MODE}
+                className="loadout-featured-preview"
               />
-            )}
+            </Suspense>
           </div>
         </section>
 
         <section className="loadout-skin-bay" aria-label={`${hero.name} cosmetics`}>
-          <div className="loadout-category-switcher" aria-label="Choose cosmetic type">
-            {categorySummaries.map((category) => {
-              const active = category.id === activeCategory;
-              return (
-                <button
-                  type="button"
-                  key={category.id}
-                  aria-pressed={active}
-                  className={`loadout-category-tab${active ? ' is-active' : ''}`}
-                  onClick={() => setActiveCategory(category.id)}
-                >
-                  <span>{category.label}</span>
-                  <span>{category.ownedCount}/{category.totalCount}</span>
-                </button>
-              );
-            })}
-          </div>
-
           <div className="loadout-skin-list">
-            {isHeroSkinCategory && isLoading && skins.length === 0 && (
+            {isLoading && skins.length === 0 && (
               <div className="loadout-empty-state">
                 Loading skins...
               </div>
             )}
-            {isHeroSkinCategory && !isLoading && skins.length === 0 && (
+            {!isLoading && skins.length === 0 && (
               <div className="loadout-empty-state">
                 No hero skins available.
               </div>
             )}
-            {!isHeroSkinCategory && (
-              <div className="loadout-effect-list">
-                {skillEffectItems.map((skill) => {
-                  const skillKey = getLoadoutSkillPreviewKey(skill);
-                  const previewed = skillKey === previewSkillResolvedKey;
-                  return (
-                    <article
-                      className={`loadout-skin-row loadout-effect-row${previewed ? ' is-previewed' : ''}`}
-                      key={`${skill.input}-${skill.abilityId ?? skill.name}`}
-                    >
-                      <button
-                        type="button"
-                        className="loadout-skin-row-hitbox"
-                        onClick={() => setPreviewSkillKey(skillKey)}
-                        aria-label={`Preview ${skill.name} effect`}
-                        aria-pressed={previewed}
-                      />
-
-                      <div className="loadout-skin-preview-button loadout-effect-preview" aria-hidden="true">
-                        <HeroSkillIcon
-                          item={skill}
-                          color={HERO_COLORS[featuredHero]}
-                          className="loadout-effect-icon"
-                        />
-                      </div>
-
-                      <div className="loadout-skin-copy">
-                        <div className="loadout-skin-title-line">
-                          <span className="loadout-rarity-chip is-effect">
-                            {skill.input}
-                          </span>
-                          <h2>{skill.name}</h2>
-                        </div>
-                        <p>{skill.description}</p>
-                      </div>
-
-                      <div className="loadout-skin-actions" aria-label={`${skill.name} default effect equipped`}>
-                        <button
-                          type="button"
-                          disabled
-                          className="loadout-action-button is-equip"
-                        >
-                          EQUIPPED
-                        </button>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-            {isHeroSkinCategory && skins.map((skin) => {
+            {skins.map((skin) => {
               const busy = busySkinId === skin.id;
               const equipped = skin.id === selectedSkinId;
               const previewed = skin.id === previewSkin?.id;
               const canPurchase = skin.availability === 'paid' && !skin.owned && !skin.purchaseDisabledReason;
-              const disabledReason = skin.purchaseDisabledReason ?? skin.shopPrice?.displayNote ?? null;
+              const disabledReason = skin.purchaseDisabledReason;
+              const supplyLabel = skinSupplyLabel(skin);
               return (
                 <article
                   key={skin.id}
-                  className={`loadout-skin-row${previewed ? ' is-previewed' : ''}${equipped ? ' is-equipped' : ''}${skin.owned ? '' : ' is-locked'}`}
+                  className={`loadout-skin-row ${skinRarityClass(skin.rarity)}${previewed ? ' is-previewed' : ''}${equipped ? ' is-equipped' : ''}${skin.owned ? '' : ' is-locked'}`}
                 >
+                  <SkinRarityChrome />
+
                   <button
                     type="button"
                     className="loadout-skin-row-hitbox"
@@ -1671,6 +1657,7 @@ function LoadoutTab({
                     <p>{skin.subtitle}</p>
                     <div className="loadout-skin-tags">
                       <span>{skinOwnershipLabel(skin)}</span>
+                      {supplyLabel && <span>{supplyLabel}</span>}
                       {equipped && <span>equipped</span>}
                       {previewed && !equipped && <span>previewing</span>}
                     </div>
@@ -1693,7 +1680,7 @@ function LoadoutTab({
                         onClick={() => onPurchaseSkin(skin)}
                         className="loadout-action-button is-purchase"
                       >
-                        {busy ? 'PURCHASING...' : isAuthenticated ? 'PURCHASE' : 'SIGN IN'}
+                        {busy ? 'PURCHASING...' : isAuthenticated ? formatSkinPrice(skin) : 'SIGN IN'}
                       </button>
                     )}
                     {disabledReason && !skin.owned && (
@@ -1731,6 +1718,8 @@ interface PlayTabProps {
   botFillDisabledReason: string | null;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
   rankedTokenHoldError: string | null;
+  rewardTokenSymbol: string | null;
+  rewardEconomy: RewardEconomy | null;
   runningGameSession: RunningGameSession | null;
   isReconnectChecking: boolean;
   isSkippingTutorial: boolean;
@@ -1774,6 +1763,8 @@ function PlayTab({
   botFillDisabledReason,
   rankedTokenHoldStatus,
   rankedTokenHoldError,
+  rewardTokenSymbol,
+  rewardEconomy,
   runningGameSession,
   isReconnectChecking,
   isSkippingTutorial,
@@ -1945,6 +1936,7 @@ function PlayTab({
         <ServerLatencyAdvisory snapshot={serverLatency} />
       )}
       {isAuthenticated && <GlobalChat displayName={playerName} />}
+      <EarningRulesPlate tokenSymbol={rewardTokenSymbol} economy={rewardEconomy} />
       <RankedSeasonPlate season={rankedSeason} />
     </div>
   );
@@ -2761,6 +2753,22 @@ function RankedSeasonPlate({ season }: { season: RankedSeasonSnapshot }) {
         <span>{seasonBoundary}</span>
       </div>
       <div className="play-season-plate-title">{season.label}</div>
+    </aside>
+  );
+}
+
+function EarningRulesPlate({ tokenSymbol, economy }: { tokenSymbol: string | null; economy: RewardEconomy | null }) {
+  const rules = getEarningRules(tokenSymbol, economy);
+  return (
+    <aside className="play-earnings-plate" aria-label="Ways to earn and payout rules">
+      <ul className="play-earnings-rule-list">
+        {rules.map((rule) => (
+          <li key={rule.label}>
+            <span className="play-earnings-rule-label">{rule.label}:</span>
+            <span>{rule.value}</span>
+          </li>
+        ))}
+      </ul>
     </aside>
   );
 }

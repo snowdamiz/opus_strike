@@ -175,6 +175,20 @@ for (const skin of HERO_SKIN_CATALOG) {
   assert.equal(document.heroId, skin.heroId, `${skin.id} model document must match catalog hero`);
   assert.equal(validateHeroModelDocument(document).ok, true, `${skin.id} model document must validate`);
 
+  if (skin.availability === 'paid') {
+    const defaultSkinId = DEFAULT_HERO_SKIN_IDS[skin.heroId];
+    const defaultManifest = HERO_SKIN_BODY_MANIFESTS[defaultSkinId];
+    const defaultDocument = HERO_SKIN_MODEL_DOCUMENTS[defaultSkinId];
+    assert.ok(
+      manifest.parts.length > defaultManifest.parts.length,
+      `${skin.id} should add full-body geometry beyond the default skin`
+    );
+    assert.ok(
+      (document.viewmodel?.parts.length ?? 0) > (defaultDocument.viewmodel?.parts.length ?? 0),
+      `${skin.id} should add first-person viewmodel geometry beyond the default skin`
+    );
+  }
+
   const fullBodySocketNames = new Set(document.fullBody.sockets.map((socket) => socket.name));
   const viewmodelSocketNames = new Set(document.viewmodel?.sockets.map((socket) => socket.name) ?? []);
   const requiredSocketNames = Object.values(ABILITY_SOCKET_CATALOG)
@@ -232,22 +246,13 @@ for (const part of voidMonarchLowerLegTrim) {
   );
 }
 
-assert.equal(
-  resolveHeroSkinModel('phantom', 'phantom.void-monarch').skinId,
-  'phantom.void-monarch'
-);
-assert.equal(
-  resolveHeroSkinModel('hookshot', 'hookshot.tidebreaker').skinId,
-  'hookshot.tidebreaker'
-);
-assert.equal(
-  resolveHeroSkinModel('blaze', 'blaze.solar-forge').skinId,
-  'blaze.solar-forge'
-);
-assert.equal(
-  resolveHeroSkinModel('chronos', 'chronos.epoch-regent').skinId,
-  'chronos.epoch-regent'
-);
+for (const skin of HERO_SKIN_CATALOG.filter((catalogSkin) => catalogSkin.availability === 'paid')) {
+  assert.equal(
+    resolveHeroSkinModel(skin.heroId, skin.id).skinId,
+    skin.id,
+    `${skin.id} should resolve to its renderable model`
+  );
+}
 assert.equal(
   resolveHeroSkinModel('blaze', 'phantom.void-monarch').skinId,
   'blaze.default'

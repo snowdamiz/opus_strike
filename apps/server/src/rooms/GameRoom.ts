@@ -88,6 +88,7 @@ import {
   type MatchPersistenceLedger,
 } from './matchLedgerRuntime';
 import { createRoomMatchFinalizationRuntime } from './matchFinalizationRuntime';
+import { getWagerRuntimeConfig } from '../wagers/config';
 import {
   MatchSummaryRuntime,
   buildRankedUserStatesFromAuthContexts,
@@ -2377,6 +2378,14 @@ export class GameRoom extends Room<GameState> {
     const integrityGate = this.antiCheat?.buildIntegrityGate({
       rankedEligible: ledger?.rankedEligible === true,
     });
+    let goldenBiomeRewardLamports = '0';
+    if (this.matchMode === 'ranked' && this.state.mapThemeId === 'golden') {
+      try {
+        goldenBiomeRewardLamports = getWagerRuntimeConfig().goldenBiomeWinnerRewardLamports.toString();
+      } catch {
+        goldenBiomeRewardLamports = '0';
+      }
+    }
     let rankedPreview: RankedSummaryPreviewInput | undefined;
     if (ledger && ledger.state === 'active') {
       const participants = this.buildMatchParticipantSnapshots(ledger);
@@ -2405,7 +2414,7 @@ export class GameRoom extends Room<GameState> {
       players: this.state.players,
       integrityGate,
       mapThemeId: this.state.mapThemeId,
-      goldenBiomeRewardUsdCents: 0,
+      goldenBiomeRewardLamports,
       rankedPreview,
     });
   }

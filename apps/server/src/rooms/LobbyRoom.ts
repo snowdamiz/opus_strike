@@ -5,6 +5,7 @@ import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_GAME_CONFIG,
   DEFAULT_MATCH_PERSPECTIVE,
+  GOLDEN_VOXEL_MAP_THEME_ID,
   HERO_DEFINITIONS,
   assignTeamByCapacity,
   getGameplayModeCapacityCost,
@@ -106,6 +107,9 @@ import {
 } from './lobbySessionCleanup';
 import { applyRoomRankState } from './roomRankSnapshot';
 import { resolveUserLoadoutForHero } from '../cosmetics/skinShopService';
+import { loggers } from '../utils/logger';
+import { wagerService, type CreateWagerOptions } from '../wagers/service';
+import type { WagerRosterPlayer } from '../wagers/math';
 
 type BotFillMode = 'manual' | 'fill_even';
 
@@ -123,6 +127,7 @@ interface JoinOptions {
   authToken?: string;
   expectedHumanPlayers?: number;
   expectedHumanUserIds?: string[];
+  wager?: CreateWagerOptions;
   initialBotCount?: number;
   botFillMode?: BotFillMode;
   defaultBotDifficulty?: BotDifficulty;
@@ -255,6 +260,7 @@ export class LobbyRoom extends Room<LobbyState> {
   private gameplayRules: GameplayModeRules = getGameplayModeRules(DEFAULT_GAMEPLAY_MODE);
   private isQuickPlayQueue = false;
   private isRankedQueue = false;
+  private wagerSetupStarted = false;
   private rankBandId = DEFAULT_RANK_DIVISION_INDEX;
   private minimumMatchmakingHumanCount = 1;
   private expectedMatchmakingPartyParticipantCount = 1;
@@ -575,10 +581,17 @@ export class LobbyRoom extends Room<LobbyState> {
       return;
     }
 
+    const isHost = this.getLobbyHumanCount() === 0;
+    if (isHost && !await this.ensureWageredLobbyForHost(authContext.userId, options.wager)) {
+      client.send('error', { message: 'Failed to create wagered lobby' });
+      client.leave();
+      return;
+    }
+
     const player = new LobbyPlayer();
     player.id = client.sessionId;
     player.name = authContext.displayName || `Player${this.state.players.size + 1}`;
-    player.isHost = this.getLobbyHumanCount() === 0; // First human player is host
+    player.isHost = isHost; // First human player is host
     player.isReady = this.isMatchmakingQueue();
     player.team = playerTeam;
     player.heroId = selectedHero ?? '';
@@ -840,8 +853,59 @@ export class LobbyRoom extends Room<LobbyState> {
 
     const capacityAvailable = await this.ensureInGameCapacityAvailableForRoster(client);
     if (!capacityAvailable) return;
+    if (!await this.ensureWagerStartReady(client)) return;
 
     await this.startMapSelection(client);
+  }
+
+  private async ensureWagerStartReady(client?: Client): Promise<boolean> {
+    try {
+      const eligibility = await wagerService.getStartEligibility(this.state.lobbyId, this.buildWagerRoster());
+      if (eligibility.canStart) return true;
+
+      const message = eligibility.reasons.includes('unpaid_players')
+        ? 'All combat players must pay the wager before the game can start'
+        : 'Each team needs at least one paid human player before the wager can start';
+      client?.send('error', { message });
+      return false;
+    } catch (error) {
+      loggers.room.warn('Failed to check wager start eligibility', {
+        lobbyId: this.state.lobbyId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      client?.send('error', { message: 'Failed to verify wager payments' });
+      return false;
+    }
+  }
+
+  private async ensureWageredLobbyForHost(
+    hostUserId: string,
+    wagerOptions?: CreateWagerOptions
+  ): Promise<boolean> {
+    const effectiveWagerOptions = this.matchMode === 'custom_wager'
+      ? { ...wagerOptions, enabled: true }
+      : wagerOptions;
+    if (effectiveWagerOptions?.enabled !== true) return true;
+    if (this.wagerSetupStarted) return true;
+
+    this.wagerSetupStarted = true;
+    try {
+      await wagerService.createWageredLobby({
+        lobbyId: this.state.lobbyId,
+        createdByUserId: hostUserId,
+        matchMode: this.matchMode === 'ranked' ? 'ranked' : 'custom_wager',
+        options: effectiveWagerOptions,
+      });
+      return true;
+    } catch (error) {
+      loggers.room.warn('Failed to create wagered lobby', {
+        lobbyId: this.state.lobbyId,
+        hostUserId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.wagerSetupStarted = false;
+      return false;
+    }
   }
 
   private createMapSelectionSource(): number {
@@ -1103,9 +1167,13 @@ export class LobbyRoom extends Room<LobbyState> {
       !assignment.isBot && assignment.role !== 'observer'
     )).length;
     const capacityPlayerCost = getGameplayModeCapacityCost(this.gameplayMode, reservedHumanPlayers);
+    let wagerLocked = false;
+    let wagerMarkedInGame = false;
 
     try {
       const rankedEligible = this.isRankedMatchCandidate(playerAssignments);
+      const lockedWager = await wagerService.lockLobbyRoster(this.state.lobbyId, this.buildWagerRoster());
+      wagerLocked = Boolean(lockedWager);
 
       const admission = await runWithInGameCapacity({
         matchMaker,
@@ -1196,6 +1264,11 @@ export class LobbyRoom extends Room<LobbyState> {
         };
       }));
 
+      if (lockedWager) {
+        await wagerService.markLobbyInGame(this.state.lobbyId, gameRoom.roomId);
+        wagerMarkedInGame = true;
+      }
+
       for (const { client, payload } of launchPayloads) {
         client.send('gameStarting', payload);
       }
@@ -1209,6 +1282,14 @@ export class LobbyRoom extends Room<LobbyState> {
       }, 5000);
       this.gameStartDisconnectTimeout.unref?.();
     } catch (error) {
+      if (wagerLocked && !wagerMarkedInGame) {
+        await wagerService.unlockLobbyAfterStartFailure(this.state.lobbyId).catch((unlockError) => {
+          loggers.room.warn('Failed to unlock wagered lobby after start failure', {
+            lobbyId: this.state.lobbyId,
+            error: unlockError instanceof Error ? unlockError.message : String(unlockError),
+          });
+        });
+      }
       throw error;
     }
   }
@@ -1441,6 +1522,21 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   private async resolveSelectedMapThemeId(seed: number): Promise<VoxelMapTheme['id']> {
+    if (this.matchMode === 'ranked') {
+      try {
+        if (await wagerService.shouldRollGoldenBiome(seed)) {
+          const treasury = await wagerService.getGoldenBiomeTreasuryEligibility();
+          if (treasury.eligible) return GOLDEN_VOXEL_MAP_THEME_ID;
+        }
+      } catch (error) {
+        loggers.room.warn('Golden biome roll skipped after treasury eligibility failure', {
+          lobbyId: this.roomId,
+          seed,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     return getVoxelMapTheme(seed).id;
   }
 
@@ -1628,7 +1724,7 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   private isObserverSlotEnabled(): boolean {
-    return this.matchMode === 'custom' && this.gameplayMode !== 'battle_royal';
+    return this.isCustomLobbyVariant() && this.gameplayMode !== 'battle_royal';
   }
 
   private getLobbyParticipantCapacity(): number {
@@ -1672,6 +1768,20 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private getCombatParticipantCount(): number {
     return countLobbyRoster(this.state.players).combatParticipant;
+  }
+
+  private buildWagerRoster(): WagerRosterPlayer[] {
+    const roster: WagerRosterPlayer[] = [];
+    this.state.players.forEach((player) => {
+      roster.push({
+        lobbyPlayerId: player.id,
+        userId: this.sessionIdToIdentity.get(player.id) ?? null,
+        name: player.name,
+        team: this.isTeam(player.team) ? player.team : null,
+        isBot: player.isBot || isLobbyObserver(player),
+      });
+    });
+    return roster;
   }
 
   private getMatchmakingRequiredPlayers(): number {
@@ -1755,7 +1865,11 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private isProductionCustomLobby(): boolean {
     return process.env.NODE_ENV === 'production'
-      && this.matchMode === 'custom';
+      && this.isCustomLobbyVariant();
+  }
+
+  private isCustomLobbyVariant(): boolean {
+    return this.matchMode === 'custom' || this.matchMode === 'custom_wager';
   }
 
   private isHost(client: Client): boolean {
@@ -1962,6 +2076,7 @@ export class LobbyRoom extends Room<LobbyState> {
       if (ticket?.mode === 'ranked' || requestedMode === 'ranked') return 'ranked';
       return 'quick_play';
     }
+    if (requestedMode === 'custom_wager' || options.wager?.enabled === true) return 'custom_wager';
     return 'custom';
   }
 

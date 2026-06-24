@@ -6,11 +6,23 @@ export type HeroSkinId =
   | 'blaze.default'
   | 'chronos.default'
   | 'phantom.void-monarch'
+  | 'phantom.nightglass-wraith'
+  | 'phantom.astral-executioner'
+  | 'phantom.eclipse-seraph'
   | 'hookshot.tidebreaker'
+  | 'hookshot.iron-leviathan'
+  | 'hookshot.abyssal-corsair'
+  | 'hookshot.kraken-sovereign'
   | 'blaze.solar-forge'
-  | 'chronos.epoch-regent';
+  | 'blaze.ashen-vanguard'
+  | 'blaze.inferno-archon'
+  | 'blaze.starfall-phoenix'
+  | 'chronos.epoch-regent'
+  | 'chronos.paradox-sentinel'
+  | 'chronos.meridian-oracle'
+  | 'chronos.eternity-sovereign';
 
-export type HeroSkinRarity = 'common' | 'rare' | 'epic' | 'legendary';
+export type HeroSkinRarity = 'common' | 'epic' | 'unique' | 'legendary';
 export type HeroSkinAvailability = 'free' | 'paid';
 export type HeroSkinReleaseState = 'live' | 'ready_when_token_launches' | 'disabled';
 export type HeroSkinEntitlement = 'free' | 'paid' | 'admin_grant' | 'event';
@@ -50,10 +62,13 @@ export interface HeroLoadoutSelection {
 
 export interface HeroSkinCatalogPriceState extends HeroSkinPrice {
   saleEnabled: boolean;
+  maxSupply: number | null;
+  soldCount: number;
+  reservedCount: number;
+  remainingSupply: number | null;
   priceVersion: number;
   updatedByUserId: string | null;
   updatedAt: string | null;
-  displayNote?: string | null;
 }
 
 export interface HeroSkinCatalogItem extends HeroSkinDefinition {

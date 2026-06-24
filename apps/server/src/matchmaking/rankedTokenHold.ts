@@ -4,7 +4,7 @@ import prisma from '../db';
 
 const DISALLOWED_NATIVE_SOL_MINT_ADDRESS = 'So11111111111111111111111111111111111111112';
 const RANKED_ENTRY_GATE_SETTINGS_ID = 'default';
-const DEFAULT_RANKED_ENTRY_TOKEN_SYMBOL = 'TOKEN';
+const DEFAULT_RANKED_ENTRY_TOKEN_SYMBOL = '';
 const DEFAULT_RANKED_TOKEN_HOLD_RPC_TIMEOUT_MS = 5 * 1000;
 const DEFAULT_RANKED_TOKEN_HOLD_STATUS_CACHE_MS = 30 * 1000;
 const RANKED_ENTRY_GATE_CACHE_TTL_MS = 10 * 1000;
@@ -110,13 +110,13 @@ function readOptionalTokenMintAddress(value: unknown): string | null {
   return raw ? canonicalSolanaAddress(raw, 'Ranked token mint') : null;
 }
 
-function normalizeTokenSymbol(value: unknown): string {
-  const raw = (typeof value === 'string' ? value : DEFAULT_RANKED_ENTRY_TOKEN_SYMBOL)
+function normalizeTokenSymbol(value: unknown, options: { required: boolean }): string {
+  const symbol = (typeof value === 'string' ? value : DEFAULT_RANKED_ENTRY_TOKEN_SYMBOL)
     .trim()
     .replace(/^\$/, '')
     .toUpperCase();
-  const symbol = raw || DEFAULT_RANKED_ENTRY_TOKEN_SYMBOL;
 
+  if (!symbol && !options.required) return '';
   if (!/^[A-Z0-9]{1,12}$/.test(symbol)) {
     throw new Error('Ranked token symbol must be 1-12 letters or numbers');
   }
@@ -179,7 +179,7 @@ function toRankedEntryGateView(row: RankedEntryGateRow): RankedEntryGateAdminVie
     mode: toGateMode(row.mode),
     tokenMintAddress,
     tokenAddress: tokenMintAddress ?? '',
-    tokenSymbol: normalizeTokenSymbol(row.tokenSymbol),
+    tokenSymbol: tokenMintAddress ? normalizeTokenSymbol(row.tokenSymbol, { required: true }) : '',
     requiredTokenAmount: readWholeTokenAmount(row.requiredTokenAmount, { requirePositive: false }),
     cluster: clusterEnv(),
     rpcConfigured: Boolean(rpcUrlEnv()),
@@ -239,8 +239,8 @@ export async function setRankedEntryGateSettings(
     ? current.tokenMintAddress
     : readOptionalTokenMintAddress(input.tokenMintAddress);
   const tokenSymbol = input.tokenSymbol === undefined
-    ? normalizeTokenSymbol(current.tokenSymbol)
-    : normalizeTokenSymbol(input.tokenSymbol);
+    ? normalizeTokenSymbol(current.tokenSymbol, { required: mode === 'token_required' })
+    : normalizeTokenSymbol(input.tokenSymbol, { required: mode === 'token_required' });
   const requiredTokenAmount = input.requiredTokenAmount === undefined
     ? readWholeTokenAmount(current.requiredTokenAmount, { requirePositive: mode === 'token_required' })
     : readWholeTokenAmount(input.requiredTokenAmount, { requirePositive: mode === 'token_required' });
