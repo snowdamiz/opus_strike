@@ -7,6 +7,7 @@ export class Player extends Schema {
   name: string = '';
   team: string = 'red';
   heroId: string = '';
+  skinId: string = '';
   state: string = 'spectating';
   isReady: boolean = false;
   isBot: boolean = false;
@@ -69,6 +70,7 @@ defineTypes(Player, {
   name: 'string',
   team: 'string',
   heroId: 'string',
+  skinId: 'string',
   state: 'string',
   isReady: 'boolean',
   isBot: 'boolean',

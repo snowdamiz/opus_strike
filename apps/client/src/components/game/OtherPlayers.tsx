@@ -482,6 +482,7 @@ const OtherPlayer = memo(function OtherPlayer({
       {isVeiled && (
         <HeroVoxelBody
           heroId={player.heroId}
+          skinId={player.skinId}
           team={player.team}
           height={playerHeight}
           postureScaleY={postureScaleY}

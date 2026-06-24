@@ -342,6 +342,8 @@ import {
   getChronosAegisForward as getSharedChronosAegisForward,
   getChronosAegisForwardDot as getSharedChronosAegisForwardDot,
   getBlazeMeteorPath,
+  getDefaultHeroSkinId,
+  getHeroSkinDefinition,
   getTeamIdsForGameplayMode,
   getPlayerBodyAimPosition as getSharedPlayerBodyAimPosition,
   getPlayerEyePosition as getSharedPlayerEyePosition,
@@ -352,6 +354,7 @@ import {
   resolveDirectionalMovementIntent,
   canReceiveLiveTransform,
   isPlayerAliveOrDowned,
+  isHeroSkinId,
   CHRONOS_PRIMARY_MAGAZINE_SIZE,
   CHRONOS_PRIMARY_RELOAD_MS,
 } from '@voxel-strike/shared';
@@ -360,6 +363,7 @@ import type {
   BotDifficulty,
   PlayerCombatHitResult,
   HeroId, 
+  HeroSkinId,
   Team, 
   PlayerInput,
   PlayerMovementState,
@@ -444,6 +448,7 @@ import {
   isTeam,
   validateChatPayload,
   validateHeroPayload,
+  validateSkinPayload,
   validateTeamPayload,
 } from './protocolValidation';
 import {
@@ -670,6 +675,7 @@ interface BotAssignment {
   team: Team;
   isBot: true;
   heroId?: HeroId;
+  skinId?: HeroSkinId;
   botDifficulty?: BotDifficulty;
   botProfileId?: string;
 }
@@ -1440,6 +1446,15 @@ export class GameRoom extends Room<GameState> {
         clientMessage: 'Failed to switch hero',
       }
     );
+    this.onParsedDevCommand(
+      'devSetSkin',
+      validateSkinPayload,
+      (client, skinId) => this.handleDevSetSkin(client, skinId),
+      {
+        logMessage: 'Failed to apply dev skin switch:',
+        clientMessage: 'Failed to switch skin',
+      }
+    );
     this.onParsedDevCommand('devDownHero', validateHeroPayload, (client, heroId) => {
       this.handleDevDownHero(client, heroId);
     });
@@ -1589,7 +1604,7 @@ export class GameRoom extends Room<GameState> {
 
     this.assignPlayerSpawnPosition(player);
     if (entryTicket?.selectedHero && isHeroId(entryTicket.selectedHero)) {
-      this.setPlayerHero(player, entryTicket.selectedHero);
+      this.setPlayerHero(player, entryTicket.selectedHero, entryTicket.selectedSkinId);
     }
     if (
       this.state.phase === 'deployment' &&
@@ -2200,6 +2215,7 @@ export class GameRoom extends Room<GameState> {
       name: player.name,
       team: player.team as Team,
       heroId: (player.heroId || null) as HeroId | null,
+      skinId: (player.skinId || null) as HeroSkinId | null,
       state: player.state as PlayerVitalsSnapshot['state'],
       isReady: player.isReady,
       isBot: player.isBot,
@@ -2250,6 +2266,7 @@ export class GameRoom extends Room<GameState> {
       name: player.name,
       team: player.team as Team,
       heroId: (player.heroId || null) as HeroId | null,
+      skinId: (player.skinId || null) as HeroSkinId | null,
       state: player.state as PlayerVitalsSnapshot['state'],
       isReady: player.isReady,
       isBot: player.isBot,
@@ -5333,7 +5350,7 @@ export class GameRoom extends Room<GameState> {
       const preferredHero = assignment.heroId && HERO_DEFINITIONS[assignment.heroId]
         ? assignment.heroId
         : null;
-      if (preferredHero && this.setPlayerHero(bot, preferredHero)) {
+      if (preferredHero && this.setPlayerHero(bot, preferredHero, assignment.skinId)) {
         this.botRuntime.setPreferredHero(bot.id, preferredHero);
       }
 
@@ -6889,6 +6906,7 @@ export class GameRoom extends Room<GameState> {
       name: player.name,
       team: player.team,
       heroId: isHeroId(player.heroId) ? player.heroId : '',
+      skinId: isHeroSkinId(player.skinId) ? player.skinId : '',
       state: player.state,
       isBot: player.isBot,
       botDifficulty: normalizeBotDifficulty(player.botDifficulty),
@@ -7858,8 +7876,36 @@ export class GameRoom extends Room<GameState> {
 
     client.send('devHeroChanged', {
       heroId,
+      skinId: player.skinId,
       health: player.health,
       maxHealth: player.maxHealth,
+    });
+  }
+
+  private handleDevSetSkin(client: Client, skinId: HeroSkinId): void {
+    if (!this.requireDevelopmentMode(client)) return;
+
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !player.heroId) {
+      client.send('devCommandError', { message: 'No active hero to apply a skin to' });
+      return;
+    }
+
+    const skin = getHeroSkinDefinition(skinId);
+    if (skin.heroId !== player.heroId) {
+      client.send('devCommandError', {
+        message: `${skin.displayName} belongs to ${HERO_DEFINITIONS[skin.heroId].name}`,
+      });
+      return;
+    }
+
+    player.skinId = skin.id;
+    this.syncMatchParticipant(player);
+    this.syncReconnectParticipantFromPlayer(player);
+    this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
+    client.send('devSkinChanged', {
+      heroId: player.heroId,
+      skinId: player.skinId,
     });
   }
 
@@ -7903,12 +7949,13 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private setPlayerHero(player: Player, heroId: HeroId): boolean {
+  private setPlayerHero(player: Player, heroId: HeroId, skinId?: HeroSkinId | string | null): boolean {
     const heroDef = HERO_DEFINITIONS[heroId];
     if (!heroDef) return false;
     if (!this.isPlayerTeamHeroAvailable(player, heroId)) return false;
 
     player.heroId = heroId;
+    player.skinId = this.normalizeHeroSkinId(heroId, skinId);
     player.maxHealth = heroDef.stats.maxHealth;
     player.health = player.maxHealth;
     player.ultimateCharge = 0;
@@ -7941,6 +7988,13 @@ export class GameRoom extends Room<GameState> {
     return true;
   }
 
+  private normalizeHeroSkinId(heroId: HeroId, skinId?: HeroSkinId | string | null): HeroSkinId {
+    if (isHeroSkinId(skinId) && getHeroSkinDefinition(skinId).heroId === heroId) {
+      return skinId;
+    }
+    return getDefaultHeroSkinId(heroId);
+  }
+
   private selectRandomBotHero(team?: string, playerId?: string): HeroId {
     return selectAvailableRoomHero({
       players: this.getHeroLockPlayers(),
@@ -7958,6 +8012,7 @@ export class GameRoom extends Room<GameState> {
       const committed = this.setPlayerHero(player, this.selectAvailableHeroForPlayer(player));
       if (!committed) {
         player.heroId = '';
+        player.skinId = '';
         player.abilities.clear();
         this.disablePlayerSkills(player);
       }
@@ -10350,6 +10405,7 @@ export class GameRoom extends Room<GameState> {
     npc.name = npcName;
     npc.team = team;
     npc.heroId = heroId;
+    npc.skinId = getDefaultHeroSkinId(heroId);
     npc.state = 'alive';
     npc.isReady = true;
     

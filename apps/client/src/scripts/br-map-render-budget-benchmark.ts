@@ -8,8 +8,8 @@ import {
   type VoxelRegionGeometryDetail,
 } from '../components/game/procedural/meshGeometryData';
 import {
-  BATTLE_ROYAL_DEPLOYMENT_VISIBILITY_CONFIG,
   BATTLE_ROYAL_VISIBILITY_CONFIG,
+  createBattleRoyalFlightVisibilityConfig,
   WORLD_PERFORMANCE_BUDGETS,
   type BattleRoyalVisibilityConfig,
 } from '../components/game/visualQuality';
@@ -21,7 +21,8 @@ import {
 const DEFAULT_BENCHMARK_SEED = 20260611;
 const seed = Number.parseInt(process.env.BR_MAP_BENCH_SEED ?? `${DEFAULT_BENCHMARK_SEED}`, 10) >>> 0;
 const MAX_RUNTIME_TERRAIN_TRIANGLE_BUDGET_RATIO = 0.85;
-const DEPLOYMENT_TERRAIN_TRIANGLE_BUDGETS: Record<GraphicsPreset, number> = {
+const MAX_FLIGHT_TERRAIN_TRIANGLE_BUDGET_RATIO = 0.9;
+const FLIGHT_TERRAIN_TRIANGLE_BUDGETS: Record<GraphicsPreset, number> = {
   potato: 2_200_000,
   competitive: 2_800_000,
   balanced: 3_500_000,
@@ -63,6 +64,8 @@ interface ViewSample {
   position: THREE.Vector3;
   target: THREE.Vector3;
 }
+
+type HighVantageMode = 'runtime' | 'flight';
 
 interface VisibilityEstimate {
   sample: string;
@@ -146,7 +149,7 @@ function getRegionStats(
 
 function createHighestTerrainViewSamples(
   manifest: ReturnType<typeof prepareVoxelMapCpu>['manifest'],
-  mode: 'runtime' | 'deployment'
+  mode: HighVantageMode
 ): ViewSample[] {
   const candidates: Array<{ x: number; y: number; z: number; row: number }> = [];
   const { heightfield } = manifest;
@@ -175,8 +178,8 @@ function createHighestTerrainViewSamples(
     if (selected.length >= HIGH_VANTAGE_SAMPLE_COUNT) break;
   }
 
-  const cameraHeight = mode === 'deployment' ? 82 : 30;
-  const lookDown = mode === 'deployment' ? 28 : 12;
+  const cameraHeight = mode === 'flight' ? 82 : 30;
+  const lookDown = mode === 'flight' ? 28 : 12;
   return selected.flatMap((sample, sampleIndex) => {
     const position = new THREE.Vector3(sample.x, sample.y + cameraHeight, sample.z);
     return HIGH_VANTAGE_DIRECTIONS.map((direction) => ({
@@ -207,7 +210,7 @@ function estimateVisibilityForSample(
   summaries: Record<VoxelRegionGeometryDetail, Map<string, RegionGeometrySummary>>,
   preparedMap: ReturnType<typeof prepareVoxelMapCpu>,
   sample: ViewSample,
-  mode: 'runtime' | 'deployment'
+  mode: HighVantageMode
 ): VisibilityEstimate {
   const camera = createCameraForSample(config, sample);
   const matrix = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
@@ -293,9 +296,12 @@ function estimateVisibilityForSample(
     }
   }
 
-  const triangleBudget = mode === 'deployment'
-    ? DEPLOYMENT_TERRAIN_TRIANGLE_BUDGETS[profile]
+  const triangleBudget = mode === 'flight'
+    ? FLIGHT_TERRAIN_TRIANGLE_BUDGETS[profile]
     : WORLD_PERFORMANCE_BUDGETS[profile].triangles;
+  const terrainTriangleHeadroomRatio = mode === 'flight'
+    ? MAX_FLIGHT_TERRAIN_TRIANGLE_BUDGET_RATIO
+    : MAX_RUNTIME_TERRAIN_TRIANGLE_BUDGET_RATIO;
   const terrainTriangleBudgetRatio = triangles / Math.max(1, triangleBudget);
   const warmupRegions = getCentralBattleRoyalRegions(preparedMap, {
     battleRoyalFullDetailDistance: config.terrainPrebuildFullDistance,
@@ -321,9 +327,9 @@ function estimateVisibilityForSample(
     terrainTriangles: triangles,
     triangleBudget,
     terrainTriangleBudgetRatio: Number(terrainTriangleBudgetRatio.toFixed(4)),
-    terrainTriangleHeadroomRatio: MAX_RUNTIME_TERRAIN_TRIANGLE_BUDGET_RATIO,
+    terrainTriangleHeadroomRatio,
     terrainTriangleBudgetExceeded: triangles > triangleBudget,
-    terrainTriangleHeadroomExceeded: terrainTriangleBudgetRatio > MAX_RUNTIME_TERRAIN_TRIANGLE_BUDGET_RATIO,
+    terrainTriangleHeadroomExceeded: terrainTriangleBudgetRatio > terrainTriangleHeadroomRatio,
   };
 }
 
@@ -333,7 +339,7 @@ function summarizeWorstHighVantageVisibility(
   regions: VoxelChunkRegion[],
   summaries: Record<VoxelRegionGeometryDetail, Map<string, RegionGeometrySummary>>,
   preparedMap: ReturnType<typeof prepareVoxelMapCpu>,
-  mode: 'runtime' | 'deployment'
+  mode: HighVantageMode
 ): VisibilityEstimate {
   const estimates = createHighestTerrainViewSamples(preparedMap.manifest, mode)
     .map((sample) => estimateVisibilityForSample(profile, config, regions, summaries, preparedMap, sample, mode));
@@ -380,16 +386,16 @@ const runtimeHighVantage = Object.fromEntries(
   ])
 );
 
-const deploymentHighVantage = Object.fromEntries(
-  Object.entries(BATTLE_ROYAL_DEPLOYMENT_VISIBILITY_CONFIG).map(([profile, config]) => [
+const flightHighVantage = Object.fromEntries(
+  Object.entries(BATTLE_ROYAL_VISIBILITY_CONFIG).map(([profile, config]) => [
     profile,
     summarizeWorstHighVantageVisibility(
       profile as GraphicsPreset,
-      config,
+      createBattleRoyalFlightVisibilityConfig(config),
       renderableRegions,
       summaries,
       preparedMap,
-      'deployment'
+      'flight'
     ),
   ])
 );
@@ -414,7 +420,7 @@ console.log(JSON.stringify({
     ultraCoarseToCoarseTriangles: Number(ultraCoarseTriangleRatio.toFixed(4)),
   },
   runtimeHighVantage,
-  deploymentHighVantage,
+  flightHighVantage,
 }, null, 2));
 
 if (coarseByteRatio > 0.18 || coarseTriangleRatio > 0.18) {
@@ -438,15 +444,22 @@ for (const [profile, summary] of Object.entries(runtimeHighVantage)) {
   }
 }
 
+for (const [profile, summary] of Object.entries(flightHighVantage)) {
+  if (summary.terrainTriangleBudgetExceeded) {
+    throw new Error(
+      `${profile} flight high-vantage terrain exceeds flight triangle budget: ${summary.terrainTriangles} > ${summary.triangleBudget}`
+    );
+  }
+  if (summary.terrainTriangleHeadroomExceeded) {
+    throw new Error(
+      `${profile} flight high-vantage terrain exceeds flight triangle headroom: ratio=${summary.terrainTriangleBudgetRatio} > ${summary.terrainTriangleHeadroomRatio}`
+    );
+  }
+}
+
 if (runtimeHighVantage.balanced.terrainTriangles > 250_000) {
   throw new Error(`balanced runtime high-vantage terrain exceeds 250k triangles: ${runtimeHighVantage.balanced.terrainTriangles}`);
 }
 if (runtimeHighVantage.cinematic.terrainTriangles > 400_000) {
   throw new Error(`cinematic runtime high-vantage terrain exceeds 400k triangles: ${runtimeHighVantage.cinematic.terrainTriangles}`);
-}
-if (deploymentHighVantage.balanced.terrainTriangles > DEPLOYMENT_TERRAIN_TRIANGLE_BUDGETS.balanced) {
-  throw new Error(`balanced deployment high-vantage terrain exceeds ${DEPLOYMENT_TERRAIN_TRIANGLE_BUDGETS.balanced} triangles: ${deploymentHighVantage.balanced.terrainTriangles}`);
-}
-if (deploymentHighVantage.cinematic.terrainTriangles > DEPLOYMENT_TERRAIN_TRIANGLE_BUDGETS.cinematic) {
-  throw new Error(`cinematic deployment high-vantage terrain exceeds ${DEPLOYMENT_TERRAIN_TRIANGLE_BUDGETS.cinematic} triangles: ${deploymentHighVantage.cinematic.terrainTriangles}`);
 }

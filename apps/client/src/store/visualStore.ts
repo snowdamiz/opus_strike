@@ -137,6 +137,7 @@ export interface DeathVisualSnapshot {
   id: string;
   playerId: string;
   heroId: HeroId | null;
+  skinId?: Player['skinId'];
   team: Team;
   isBot: boolean;
   name: string;

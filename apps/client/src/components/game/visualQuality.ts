@@ -119,7 +119,6 @@ export interface VisualQualityConfig {
   viewmodel: ViewmodelQualityConfig;
   budgets: WorldPerformanceBudget;
   battleRoyalVisibility: BattleRoyalVisibilityConfig;
-  battleRoyalDeploymentVisibility: BattleRoyalVisibilityConfig;
   dynamicLights: {
     maxDynamicLights: number;
     staticAccentLights: boolean;
@@ -464,77 +463,6 @@ export const BATTLE_ROYAL_VISIBILITY_CONFIG: Record<GraphicsPreset, BattleRoyalV
   },
 };
 
-export const BATTLE_ROYAL_DEPLOYMENT_VISIBILITY_CONFIG: Record<GraphicsPreset, BattleRoyalVisibilityConfig> = {
-  potato: {
-    adaptiveVisibilityScale: 1,
-    terrainLodEnabled: true,
-    cameraFar: 315,
-    fogDensity: 0.0048,
-    terrainCullDistance: 285,
-    terrainLodFullDistance: 230,
-    terrainLodCoarseDistance: 252,
-    terrainLodUltraCoarseDistance: 276,
-    terrainPrebuildFullDistance: 230,
-    terrainMacroTileSize: 0,
-    dressingCullDistance: 74,
-    gridFadeDistance: 240,
-    remoteMovementEffectDistance: 54,
-    terrainImpactDistance: 58,
-    farTerrainFogBlend: 0.18,
-  },
-  competitive: {
-    adaptiveVisibilityScale: 1,
-    terrainLodEnabled: true,
-    cameraFar: 380,
-    fogDensity: 0.004,
-    terrainCullDistance: 345,
-    terrainLodFullDistance: 280,
-    terrainLodCoarseDistance: 306,
-    terrainLodUltraCoarseDistance: 334,
-    terrainPrebuildFullDistance: 280,
-    terrainMacroTileSize: 0,
-    dressingCullDistance: 92,
-    gridFadeDistance: 292,
-    remoteMovementEffectDistance: 66,
-    terrainImpactDistance: 72,
-    farTerrainFogBlend: 0.14,
-  },
-  balanced: {
-    adaptiveVisibilityScale: 1,
-    terrainLodEnabled: true,
-    cameraFar: 470,
-    fogDensity: 0.0032,
-    terrainCullDistance: 430,
-    terrainLodFullDistance: 360,
-    terrainLodCoarseDistance: 388,
-    terrainLodUltraCoarseDistance: 418,
-    terrainPrebuildFullDistance: 360,
-    terrainMacroTileSize: 0,
-    dressingCullDistance: 118,
-    gridFadeDistance: 372,
-    remoteMovementEffectDistance: 78,
-    terrainImpactDistance: 86,
-    farTerrainFogBlend: 0.08,
-  },
-  cinematic: {
-    adaptiveVisibilityScale: 1,
-    terrainLodEnabled: true,
-    cameraFar: 550,
-    fogDensity: 0.0028,
-    terrainCullDistance: 505,
-    terrainLodFullDistance: 420,
-    terrainLodCoarseDistance: 454,
-    terrainLodUltraCoarseDistance: 490,
-    terrainPrebuildFullDistance: 420,
-    terrainMacroTileSize: 0,
-    dressingCullDistance: 150,
-    gridFadeDistance: 438,
-    remoteMovementEffectDistance: 96,
-    terrainImpactDistance: 108,
-    farTerrainFogBlend: 0.05,
-  },
-};
-
 export function scaleBattleRoyalVisibilityConfig(
   config: BattleRoyalVisibilityConfig,
   scale: number
@@ -571,6 +499,38 @@ export function scaleBattleRoyalVisibilityConfig(
     remoteMovementEffectDistance: Math.min(config.remoteMovementEffectDistance, scaledCoarseDistance),
     terrainImpactDistance: Math.min(config.terrainImpactDistance, scaledCoarseDistance),
     farTerrainFogBlend: THREE.MathUtils.clamp(config.farTerrainFogBlend + (1 - visibilityScale) * 0.18, 0, 0.92),
+  };
+}
+
+export function createBattleRoyalFlightVisibilityConfig(
+  config: BattleRoyalVisibilityConfig,
+  blend = 1
+): BattleRoyalVisibilityConfig {
+  const flightBlend = THREE.MathUtils.clamp(blend, 0, 1);
+  if (flightBlend <= 0.001) return config;
+
+  const flightFullDistance = Math.max(config.terrainLodFullDistance * 4.6, config.terrainLodFullDistance + 130);
+  const flightCoarseDistance = Math.max(config.terrainLodCoarseDistance * 3.25, flightFullDistance + 42);
+  const flightUltraCoarseDistance = Math.max(config.terrainLodUltraCoarseDistance * 2.55, flightCoarseDistance + 44);
+  const flightCullDistance = Math.max(config.terrainCullDistance * 2.45, flightUltraCoarseDistance + 30);
+  const flightCameraFar = Math.max(config.cameraFar * 2.45, flightCullDistance + 24);
+
+  return {
+    ...config,
+    cameraFar: THREE.MathUtils.lerp(config.cameraFar, flightCameraFar, flightBlend),
+    terrainCullDistance: THREE.MathUtils.lerp(config.terrainCullDistance, flightCullDistance, flightBlend),
+    terrainLodFullDistance: THREE.MathUtils.lerp(config.terrainLodFullDistance, flightFullDistance, flightBlend),
+    terrainLodCoarseDistance: THREE.MathUtils.lerp(config.terrainLodCoarseDistance, flightCoarseDistance, flightBlend),
+    terrainLodUltraCoarseDistance: THREE.MathUtils.lerp(
+      config.terrainLodUltraCoarseDistance,
+      flightUltraCoarseDistance,
+      flightBlend
+    ),
+    terrainPrebuildFullDistance: THREE.MathUtils.lerp(
+      config.terrainPrebuildFullDistance,
+      flightFullDistance,
+      flightBlend
+    ),
   };
 }
 
@@ -744,7 +704,6 @@ export function getVisualQualityConfig(settings: Pick<
     viewmodel: VIEWMODEL_QUALITY_CONFIG[profile],
     budgets: WORLD_PERFORMANCE_BUDGETS[profile],
     battleRoyalVisibility: BATTLE_ROYAL_VISIBILITY_CONFIG[profile],
-    battleRoyalDeploymentVisibility: BATTLE_ROYAL_DEPLOYMENT_VISIBILITY_CONFIG[profile],
     dynamicLights,
   };
 }

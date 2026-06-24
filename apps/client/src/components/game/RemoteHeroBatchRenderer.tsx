@@ -3,7 +3,9 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
+  HERO_DEFINITIONS,
   type HeroId,
+  type HeroSkinId,
   type Player,
   type PlayerMovementState,
   type Team,
@@ -11,7 +13,6 @@ import {
 import {
   DEFAULT_WALK_DIRECTION,
   EMPTY_TEAM_ACCENT_PARTS,
-  HERO_BODY_MANIFESTS,
   IDLE_SPEED_MULTIPLIER,
   TEAM_BODY_GLOW_OUTLINE_OPACITY,
   TEAM_BODY_GLOW_OUTLINE_SCALE,
@@ -94,6 +95,7 @@ import {
 import { SHARED_GEOMETRIES } from './effectResources';
 import { gameplayFrameScheduler } from './systems/gameplayFrameScheduler';
 import type { RemotePlayerQualityConfig } from './visualQuality';
+import { resolveHeroSkinModel } from '../../model-system/heroSkinModelResolver';
 
 type BoneOrRoot = HeroBoneName | 'root';
 type PlayerFilter = 'all' | 'bot' | 'nonBot';
@@ -145,6 +147,7 @@ interface RemoteOutlineBatch {
 
 interface RemoteBatchResources {
   heroId: HeroId;
+  skinId: HeroSkinId;
   team: Team;
   batches: RemotePartBatch[];
   outlineBatches: RemoteOutlineBatch[];
@@ -205,6 +208,7 @@ type CompleteBoneRefs = Record<HeroBoneName, THREE.Group>;
 interface RemoteHeroRuntime {
   playerId: string;
   heroId: HeroId;
+  skinId: HeroSkinId;
   seenGeneration: number;
   bodyRoot: THREE.Group;
   bones: CompleteBoneRefs;
@@ -317,26 +321,28 @@ const REMOTE_OUTLINE_PASSES: readonly RemoteOutlinePassConfig[] = [
   },
 ] as const;
 function isHeroId(value: string | null | undefined): value is HeroId {
-  return Boolean(value && HERO_BODY_MANIFESTS[value as HeroId]);
+  return Boolean(value && HERO_DEFINITIONS[value as HeroId]);
 }
 
 function resolveHeroId(player: Player): HeroId {
   return isHeroId(player.heroId) ? player.heroId : 'phantom';
 }
 
+function resolveRemoteSkinId(player: Player): HeroSkinId {
+  return resolveHeroSkinModel(resolveHeroId(player), player.skinId).skinId;
+}
+
 function getRemoteHeroResourceKey(player: Player): string {
-  return `${resolveHeroId(player)}:${player.team as Team}`;
+  return `${resolveHeroId(player)}:${resolveRemoteSkinId(player)}:${player.team as Team}`;
 }
 
 function createRemoteBatchResourcesForKey(key: string, includeOutlines: boolean): RemoteBatchResources {
-  const separatorIndex = key.indexOf(':');
-  if (separatorIndex <= 0) {
+  const [heroId, skinId, team] = key.split(':') as [HeroId | undefined, HeroSkinId | undefined, Team | undefined];
+  if (!heroId || !skinId || !team) {
     throw new Error(`Invalid remote hero resource key: ${key}`);
   }
-  const heroId = key.slice(0, separatorIndex) as HeroId;
-  const team = key.slice(separatorIndex + 1) as Team;
   recordFrameAllocation('remoteHeroBatch.resourceCreated');
-  return createRemoteBatchResources(heroId, team, includeOutlines);
+  return createRemoteBatchResources(heroId, skinId, team, includeOutlines);
 }
 
 function getCachedRemoteBatchResources(
@@ -758,7 +764,7 @@ function clearSocketRegistrations(runtime: RemoteHeroRuntime): void {
 
 function syncSocketRegistrations(runtime: RemoteHeroRuntime): void {
   clearSocketRegistrations(runtime);
-  const manifest = HERO_BODY_MANIFESTS[runtime.heroId];
+  const manifest = resolveHeroSkinModel(runtime.heroId, runtime.skinId).bodyManifest;
 
   for (const marker of manifest.remoteSocketMarkers ?? EMPTY_REMOTE_SOCKET_MARKERS) {
     const bone = runtime.bones[marker.bone];
@@ -779,6 +785,7 @@ function syncSocketRegistrations(runtime: RemoteHeroRuntime): void {
 
 function createRemoteRuntime(player: Player): RemoteHeroRuntime {
   const heroId = resolveHeroId(player);
+  const skinId = resolveRemoteSkinId(player);
   const { bodyRoot, bones } = createBoneRefs();
   const initialPosition = setPlayerRenderOrigin(new THREE.Vector3(), player.position);
   const visualPosition = {
@@ -802,6 +809,7 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
   const runtime: RemoteHeroRuntime = {
     playerId: player.id,
     heroId,
+    skinId,
     seenGeneration: 0,
     bodyRoot,
     bones,
@@ -872,8 +880,10 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
 
 function updateRuntimeHero(runtime: RemoteHeroRuntime, player: Player): void {
   const nextHeroId = resolveHeroId(player);
-  if (runtime.heroId === nextHeroId) return;
+  const nextSkinId = resolveRemoteSkinId(player);
+  if (runtime.heroId === nextHeroId && runtime.skinId === nextSkinId) return;
   runtime.heroId = nextHeroId;
+  runtime.skinId = nextSkinId;
   resetRemoteAnimationState(runtime, player);
   syncSocketRegistrations(runtime);
 }
@@ -999,7 +1009,7 @@ function updateRemotePose(
 ): void {
   const frameDelta = Math.min(delta, 0.05);
   const heroId = runtime.heroId;
-  const manifest = HERO_BODY_MANIFESTS[heroId];
+  const manifest = resolveHeroSkinModel(heroId, runtime.skinId).bodyManifest;
   const playerHeight = getRemotePlayerHeight(player);
   const scale = playerHeight / 1.8;
   const targetPostureScaleY = getPlayerBodyPostureScaleY(movement, player.state);
@@ -1500,7 +1510,7 @@ export function createRemoteHeroBatchBenchmarkRunner(options: {
             runtimes.set(player.id, runtime);
           }
           updateRuntimeHero(runtime, player);
-          if (runtime.heroId !== resource.heroId) continue;
+          if (runtime.heroId !== resource.heroId || runtime.skinId !== resource.skinId) continue;
           stats.consideredPlayers++;
 
           const movement = getPlayerRenderMovement(player, visualState, localPlayerId);
@@ -1809,11 +1819,11 @@ function appendRiggedPartDescriptors<TPart extends VoxelPart>(
   }
 }
 
-function createRemotePartDescriptors(heroId: HeroId, team: Team): {
+function createRemotePartDescriptors(heroId: HeroId, skinId: HeroSkinId, team: Team): {
   descriptors: RemotePartDescriptor[];
   materialOptions: Map<string, RemoteMaterialOptions>;
 } {
-  const manifest = HERO_BODY_MANIFESTS[heroId];
+  const manifest = resolveHeroSkinModel(heroId, skinId).bodyManifest;
   const teamColor = TEAM_COLORS[team] ?? '#ffffff';
   const materialOptionsByKey = new Map<string, RemoteMaterialOptions>();
   const descriptors: RemotePartDescriptor[] = [];
@@ -1830,7 +1840,7 @@ function createRemotePartDescriptors(heroId: HeroId, team: Team): {
 
   const riggedPartsByBone = groupHeroBodyRenderParts(manifest.parts);
   appendRiggedPartDescriptors(descriptors, riggedPartsByBone, materialKeyForPalettePart, {
-    prefix: `${heroId}-palette`,
+    prefix: `${skinId}-palette`,
     palette: true,
   });
 
@@ -1849,7 +1859,7 @@ function createRemotePartDescriptors(heroId: HeroId, team: Team): {
     });
   };
   appendRiggedPartDescriptors(descriptors, groupRiggedParts(teamAccentParts), teamAccentKeyFor, {
-    prefix: `${heroId}-team`,
+    prefix: `${skinId}-team`,
     trim: true,
   });
 
@@ -1862,7 +1872,7 @@ function createRemotePartDescriptors(heroId: HeroId, team: Team): {
   });
   descriptors.push({
     ...descriptorBase(
-      `${heroId}-${HERO_BODY_BOT_MARKER_PART.id}`,
+      `${skinId}-${HERO_BODY_BOT_MARKER_PART.id}`,
       HERO_BODY_BOT_MARKER_PART.bone,
       HERO_BODY_BOT_MARKER_PART.position,
       HERO_BODY_BOT_MARKER_PART.scale,
@@ -1878,8 +1888,13 @@ function createRemotePartDescriptors(heroId: HeroId, team: Team): {
   return { descriptors, materialOptions: materialOptionsByKey };
 }
 
-function createRemoteBatchResources(heroId: HeroId, team: Team, includeOutlines = true): RemoteBatchResources {
-  const { descriptors, materialOptions } = createRemotePartDescriptors(heroId, team);
+function createRemoteBatchResources(
+  heroId: HeroId,
+  skinId: HeroSkinId,
+  team: Team,
+  includeOutlines = true
+): RemoteBatchResources {
+  const { descriptors, materialOptions } = createRemotePartDescriptors(heroId, skinId, team);
   const normalGroups = new Map<string, RemotePartDescriptor[]>();
   const outlineGroups = new Map<string, RemotePartDescriptor[]>();
 
@@ -1901,7 +1916,7 @@ function createRemoteBatchResources(heroId: HeroId, team: Team, includeOutlines 
     const material = createStandardBatchMaterial(materialOptionsForKey);
     materials.push(material);
     return {
-      key: `remote-hero:${heroId}:${team}:${key}`,
+      key: `remote-hero:${skinId}:${team}:${key}`,
       geometry: groupDescriptors[0].geometry,
       descriptors: groupDescriptors,
       material,
@@ -1929,7 +1944,7 @@ function createRemoteBatchResources(heroId: HeroId, team: Team, includeOutlines 
       configureRemoteOutlineStencilMask(material);
       materials.push(material);
       return {
-        key: `remote-hero-outline:${pass.id}:${heroId}:${team}:${key}`,
+        key: `remote-hero-outline:${pass.id}:${skinId}:${team}:${key}`,
         geometry: outlineDescriptors[0].geometry,
         descriptors: outlineDescriptors,
         material,
@@ -1943,6 +1958,7 @@ function createRemoteBatchResources(heroId: HeroId, team: Team, includeOutlines 
 
   return {
     heroId,
+    skinId,
     team,
     batches,
     outlineBatches,
@@ -2204,7 +2220,7 @@ function RemoteHeroBatchGroup({
           runtimes.set(player.id, runtime);
         }
         updateRuntimeHero(runtime, player);
-        if (runtime.heroId !== resources.heroId) continue;
+        if (runtime.heroId !== resources.heroId || runtime.skinId !== resources.skinId) continue;
 
         const movement = getPlayerRenderMovement(player, visualState, localPlayerId);
         const visualHorizontalSpeed = updateRemoteTransform(runtime, player, deltaSeconds, visualState, nowMs);

@@ -13,6 +13,7 @@ export interface LobbyPlayerJoinedPayload {
   isReady: boolean;
   team: string;
   heroId: string;
+  skinId: string;
   isBot: boolean;
   botDifficulty: string;
   botProfileId: string;
@@ -62,6 +63,7 @@ export function buildLobbyPlayerJoinedPayload(
     isReady: player.isReady,
     team: player.team,
     heroId: player.heroId,
+    skinId: player.skinId || '',
     isBot: player.isBot,
     botDifficulty: player.botDifficulty,
     botProfileId: player.botProfileId,

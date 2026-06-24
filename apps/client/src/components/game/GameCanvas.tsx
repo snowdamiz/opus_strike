@@ -29,7 +29,7 @@ import { GameplayFrameSystems, GameplayFrameWorkBoundary } from './systems/Gamep
 import { BudgetedPointLight, DynamicLightBudgetSystem } from './systems/DynamicLightBudget';
 import { CombatTextLayer } from './CombatText';
 import { useGameStore } from '../../store/gameStore';
-import { graphicsPresetSettings, useSettingsStore, type GraphicsPreset } from '../../store/settingsStore';
+import { graphicsPresetSettings, useSettingsStore } from '../../store/settingsStore';
 import { getMapPrepCacheKey } from '../../utils/mapWarmup/mapPrepCache';
 import {
   createMapWarmupSnapshot,
@@ -39,6 +39,7 @@ import {
   type MapWarmupStageId,
 } from '../../utils/mapWarmup/mapWarmupCoordinator';
 import {
+  createBattleRoyalFlightVisibilityConfig,
   getVisualQualityConfig,
   DEFAULT_CAMERA_FAR,
   scaleBattleRoyalVisibilityConfig,
@@ -48,9 +49,7 @@ import {
   type RemotePlayerQualityConfig,
   type RagdollQualityConfig,
   type ShadowQualityConfig,
-  type WorldPerformanceBudget,
 } from './visualQuality';
-import { getBattleRoyalVisibilityMode } from './battleRoyalVisibilityMode';
 import { FrameTimeHistogram } from './adaptiveQualityHistogram';
 import { recordRendererDiagnostics } from '../../movement/networkDiagnostics';
 import { configureVisualPhysicsQueryBudget } from '../../hooks/usePhysics';
@@ -128,6 +127,43 @@ function PhysicsBudgetApplier({ maxVisualQueriesPerFrame }: { maxVisualQueriesPe
   }, [maxVisualQueriesPerFrame]);
 
   return null;
+}
+
+function useSmoothedNumber(target: number, smoothing: number): number {
+  const [value, setValue] = useState(target);
+  const valueRef = useRef(target);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      valueRef.current = target;
+      setValue(target);
+      return undefined;
+    }
+
+    let rafId = 0;
+    let lastTime = performance.now();
+    const tick = (time: number) => {
+      const delta = Math.max(0, (time - lastTime) / 1000);
+      lastTime = time;
+      const current = valueRef.current;
+      const alpha = 1 - Math.exp(-smoothing * delta);
+      const next = Math.abs(current - target) < 0.001
+        ? target
+        : THREE.MathUtils.lerp(current, target, alpha);
+
+      valueRef.current = next;
+      setValue((previous) => Math.abs(previous - next) < 0.002 ? previous : next);
+
+      if (next !== target) {
+        rafId = window.requestAnimationFrame(tick);
+      }
+    };
+
+    rafId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [smoothing, target]);
+
+  return value;
 }
 
 function SceneAtmosphereColors({
@@ -757,32 +793,6 @@ const BR_RAGDOLL_COMBAT_TOTAL_CAP = 10;
 const BR_RAGDOLL_HEAVY_COMBAT_TOTAL_CAP = 6;
 const BR_RAGDOLL_COMBAT_HIGH_QUALITY_CAP = 3;
 const BR_RAGDOLL_HEAVY_COMBAT_HIGH_QUALITY_CAP = 1;
-const BATTLE_ROYAL_DEPLOYMENT_PERFORMANCE_BUDGETS: Record<
-  GraphicsPreset,
-  Pick<WorldPerformanceBudget, 'drawCalls' | 'triangles' | 'maxGeneratedRegionMeshesPerFrame'>
-> = {
-  potato: {
-    drawCalls: 900,
-    triangles: 2_200_000,
-    maxGeneratedRegionMeshesPerFrame: 6,
-  },
-  competitive: {
-    drawCalls: 1_100,
-    triangles: 2_800_000,
-    maxGeneratedRegionMeshesPerFrame: 7,
-  },
-  balanced: {
-    drawCalls: 1_400,
-    triangles: 3_500_000,
-    maxGeneratedRegionMeshesPerFrame: 9,
-  },
-  cinematic: {
-    drawCalls: 1_700,
-    triangles: 4_400_000,
-    maxGeneratedRegionMeshesPerFrame: 11,
-  },
-};
-
 function finiteDistanceOrCap(value: number, cap: number): number {
   return Number.isFinite(value) ? Math.min(value, cap) : cap;
 }
@@ -1138,8 +1148,6 @@ export function GameCanvas({
   const isTutorialMode = useGameStore((state) => state.isTutorialMode);
   const gameplayMode = useGameStore((state) => state.gameplayMode);
   const localPlayerState = useGameStore((state) => state.localPlayer?.state ?? null);
-  const localPlayerId = useGameStore((state) => state.localPlayer?.id ?? state.playerId);
-  const battleRoyalDrop = useGameStore((state) => state.battleRoyalDrop);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
@@ -1165,44 +1173,27 @@ export function GameCanvas({
   );
   const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
   const isBattleRoyal = gameplayMode === 'battle_royal';
-  const battleRoyalVisibilityMode = isBattleRoyal
-    ? getBattleRoyalVisibilityMode({
-      gamePhase,
-      drop: battleRoyalDrop,
-      localPlayerId,
-    })
-    : 'runtime';
-  const baseBattleRoyalVisibility = isBattleRoyal
-    ? (
-      battleRoyalVisibilityMode === 'deployment'
-        ? qualityConfig.battleRoyalDeploymentVisibility
-        : qualityConfig.battleRoyalVisibility
-    )
-    : undefined;
+  const isBattleRoyalFlightPhase = isBattleRoyal && (gamePhase === 'countdown' || gamePhase === 'deployment');
+  const battleRoyalFlightVisibilityBlend = useSmoothedNumber(isBattleRoyalFlightPhase ? 1 : 0, 4.2);
+  const baseBattleRoyalVisibility = useMemo(() => {
+    if (!isBattleRoyal) return undefined;
+    return createBattleRoyalFlightVisibilityConfig(
+      qualityConfig.battleRoyalVisibility,
+      battleRoyalFlightVisibilityBlend
+    );
+  }, [battleRoyalFlightVisibilityBlend, isBattleRoyal, qualityConfig.battleRoyalVisibility]);
   const battleRoyalVisibility = useMemo(() => {
     if (!baseBattleRoyalVisibility) return undefined;
     if (battleRoyalTerrainScale >= 0.995) return baseBattleRoyalVisibility;
     return scaleBattleRoyalVisibilityConfig(baseBattleRoyalVisibility, battleRoyalTerrainScale);
   }, [baseBattleRoyalVisibility, battleRoyalTerrainScale]);
-  const effectivePerformanceBudget = useMemo(() => {
-    if (!isBattleRoyal || battleRoyalVisibilityMode !== 'deployment') return qualityConfig.budgets;
-    const deploymentBudget = BATTLE_ROYAL_DEPLOYMENT_PERFORMANCE_BUDGETS[settings.graphicsPreset];
-    return {
-      ...qualityConfig.budgets,
-      drawCalls: Math.max(qualityConfig.budgets.drawCalls, deploymentBudget.drawCalls),
-      triangles: Math.max(qualityConfig.budgets.triangles, deploymentBudget.triangles),
-      maxGeneratedRegionMeshesPerFrame: Math.max(
-        qualityConfig.budgets.maxGeneratedRegionMeshesPerFrame,
-        deploymentBudget.maxGeneratedRegionMeshesPerFrame
-      ),
-    };
-  }, [battleRoyalVisibilityMode, isBattleRoyal, qualityConfig.budgets, settings.graphicsPreset]);
+  const effectivePerformanceBudget = qualityConfig.budgets;
   const effectiveCameraFar = battleRoyalVisibility?.cameraFar ?? DEFAULT_CAMERA_FAR;
 
   useEffect(() => {
     setBattleRoyalTerrainScale(1);
     setBattleRoyalCombatScale(1);
-  }, [battleRoyalVisibilityMode, isBattleRoyal, settings.graphicsPreset]);
+  }, [isBattleRoyal, settings.graphicsPreset]);
   const isBattleRoyalEliminated = isBattleRoyal && localPlayerState === 'dead';
   const isWorldReady = warmupSnapshot.key === warmupKey && warmupSnapshot.canAcceptInput;
   const isReadyForMatchStart = isMapWarmupReadyForMatchStart(warmupSnapshot, warmupKey);

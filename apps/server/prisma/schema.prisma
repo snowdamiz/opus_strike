@@ -12,7 +12,7 @@ datasource db {
 
 enum AuthProvider {
   discord
-  phantom
+  wallet
 }
 
 enum MatchMode {
@@ -90,6 +90,11 @@ enum RankedSeasonMode {
   season
 }
 
+enum RankedEntryGateMode {
+  locked
+  token_required
+}
+
 enum FriendshipStatus {
   pending
   accepted
@@ -110,6 +115,23 @@ enum PartyInviteStatus {
   accepted
   declined
   canceled
+  expired
+}
+
+enum SkinEntitlementSource {
+  free
+  paid
+  admin_grant
+  event
+}
+
+enum SkinPurchaseIntentStatus {
+  intent_created
+  transaction_built
+  submitted
+  confirmed
+  credited
+  failed
   expired
 }
 
@@ -135,6 +157,9 @@ model User {
   receivedLobbyInvites   LobbyInvite[]           @relation("LobbyInviteRecipient")
   sentPartyInvites       PartyInvite[]           @relation("PartyInviteSender")
   receivedPartyInvites   PartyInvite[]           @relation("PartyInviteRecipient")
+  skinOwnerships         UserSkinOwnership[]
+  skinPurchaseIntents    SkinPurchaseIntent[]
+  heroLoadouts           UserHeroLoadout[]
 
   // Player stats (optional - can expand later)
   totalGames                Int       @default(0)
@@ -246,6 +271,115 @@ model PartyInvite {
   @@index([fromUserId, createdAt])
   @@index([partyId, status])
   @@index([expiresAt])
+}
+
+model SkinShopSettings {
+  id              String   @id @default("default")
+  enabled         Boolean  @default(false)
+  tokenMintAddress String?
+  tokenSymbol     String   @default("TOKEN")
+  treasuryWallet  String?
+  rpcUrl          String?
+  cluster         String   @default("devnet")
+  updatedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model SkinShopItemSettings {
+  skinId               String   @id
+  saleEnabled          Boolean  @default(false)
+  tokenAmountBaseUnits BigInt?
+  displayNote          String?
+  priceVersion         Int      @default(1)
+  updatedByUserId      String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  audits               SkinShopItemAudit[]
+}
+
+model SkinShopItemAudit {
+  id                         String   @id @default(cuid())
+  skinId                     String
+  updatedByUserId            String?
+  oldTokenAmountBaseUnits    BigInt?
+  newTokenAmountBaseUnits    BigInt?
+  oldSaleEnabled             Boolean?
+  newSaleEnabled             Boolean?
+  oldDisplayNote             String?
+  newDisplayNote             String?
+  oldPriceVersion            Int?
+  newPriceVersion            Int?
+  createdAt                  DateTime @default(now())
+
+  item SkinShopItemSettings @relation(fields: [skinId], references: [skinId], onDelete: Cascade)
+
+  @@index([skinId, createdAt])
+  @@index([updatedByUserId, createdAt])
+}
+
+model UserSkinOwnership {
+  id         String                @id @default(cuid())
+  userId     String
+  skinId     String
+  source     SkinEntitlementSource
+  purchaseId String?               @unique
+  grantedAt  DateTime              @default(now())
+  revokedAt  DateTime?
+
+  user     User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purchase SkinPurchaseIntent? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, skinId])
+  @@index([userId, revokedAt])
+  @@index([skinId, grantedAt])
+}
+
+model SkinPurchaseIntent {
+  id                   String                   @id @default(cuid())
+  userId               String
+  walletAddress        String
+  skinId               String
+  quotedPriceVersion   Int
+  tokenMintAddress     String
+  tokenSymbol          String
+  tokenAmountBaseUnits BigInt
+  tokenDecimals        Int?
+  treasuryWallet       String
+  treasuryTokenAccount String
+  cluster              String
+  memo                 String                   @unique
+  status               SkinPurchaseIntentStatus @default(intent_created)
+  transactionSignature String?                  @unique
+  intentExpiresAt      DateTime
+  lastValidBlockHeight BigInt?
+  creditedAt           DateTime?
+  lastError            String?
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ownership UserSkinOwnership?
+
+  @@index([userId, status, createdAt])
+  @@index([walletAddress])
+  @@index([skinId, status])
+  @@index([status, intentExpiresAt])
+}
+
+model UserHeroLoadout {
+  id             String   @id @default(cuid())
+  userId         String
+  heroId         String
+  selectedSkinId String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, heroId])
+  @@index([userId])
+  @@index([selectedSkinId])
 }
 
 model PersistentParty {
@@ -528,6 +662,17 @@ model RankedSeasonSettings {
   updatedByUserId String?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
+}
+
+model RankedEntryGateSettings {
+  id                     String              @id @default("default")
+  mode                   RankedEntryGateMode @default(locked)
+  tokenMintAddress       String?
+  tokenSymbol            String              @default("TOKEN")
+  requiredTokenAmount    String              @default("0")
+  updatedByUserId        String?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
 }
 
 model RankedSeasonUserStats {

@@ -45,6 +45,7 @@ export interface FullPlayerVitalsSnapshotInput {
   name: string;
   team: PlayerVitalsSnapshot['team'];
   heroId: PlayerVitalsSnapshot['heroId'];
+  skinId?: PlayerVitalsSnapshot['skinId'];
   state: PlayerVitalsSnapshot['state'];
   isReady: boolean;
   isBot: boolean;
@@ -183,6 +184,7 @@ export function buildFullPlayerVitalsSnapshot(
     name: input.name,
     team: input.team,
     heroId: input.heroId,
+    skinId: input.skinId,
     state: input.state,
     isReady: input.isReady,
     isBot: input.isBot,
@@ -258,6 +260,7 @@ export function buildPublicEnemyVitalsSnapshot(input: {
   name: string;
   team: PlayerVitalsSnapshot['team'];
   heroId: PlayerVitalsSnapshot['heroId'];
+  skinId?: PlayerVitalsSnapshot['skinId'];
   state: PlayerVitalsSnapshot['state'];
   isReady: boolean;
   isBot: boolean;
@@ -274,6 +277,7 @@ export function buildPublicEnemyVitalsSnapshot(input: {
     name: input.name,
     team: input.team,
     heroId: input.heroId,
+    skinId: input.skinId,
     state: getPublicEnemyVitalsState(input.state),
     isReady: input.isReady,
     isBot: input.isBot,
@@ -450,6 +454,7 @@ export function haveVitalsChanged(
     previous.netId !== next.netId ||
     previous.team !== next.team ||
     previous.heroId !== next.heroId ||
+    previous.skinId !== next.skinId ||
     previous.state !== next.state ||
     previous.isReady !== next.isReady ||
     previous.isBot !== next.isBot ||

@@ -1,6 +1,6 @@
 import type { PublicRankPayload } from '../ranking/serialization';
 
-export const AUTH_PROVIDERS = ['discord', 'phantom'] as const;
+export const AUTH_PROVIDERS = ['discord', 'wallet'] as const;
 
 export type AuthProviderName = (typeof AUTH_PROVIDERS)[number];
 

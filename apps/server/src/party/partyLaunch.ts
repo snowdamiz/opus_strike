@@ -24,6 +24,7 @@ import {
   type MatchmakingUserContext,
 } from '../matchmaking/service';
 import type { MatchmakingBotFillMode } from '../matchmaking/matchSettings';
+import { resolveUserLoadoutForHero } from '../cosmetics/skinShopService';
 import type { PartyRosterRuntime, PartyRuntimeMember } from './partyRuntime';
 
 interface PartyLaunchResult {
@@ -63,8 +64,18 @@ function toPartyBotDescriptor(member: PartyRuntimeMember): PartyBotLaunchDescrip
   return {
     displayName: member.displayName,
     heroId: member.heroId,
+    skinId: member.skinId,
     difficulty: member.botDifficulty ?? 'normal',
   };
+}
+
+async function revalidateHumanMemberSkins(party: PartyRosterRuntime): Promise<void> {
+  for (const member of party.getHumanMembers()) {
+    const skinId = await resolveUserLoadoutForHero(member.userId, member.heroId, member.skinId);
+    if (skinId !== member.skinId) {
+      party.updateSkin(member.userId, skinId);
+    }
+  }
 }
 
 async function createMatchmakingLobby(input: {
@@ -103,6 +114,7 @@ export async function launchPartyToMatchmaking(
   party: PartyRosterRuntime,
   mode: 'quick_play' | 'ranked'
 ): Promise<PartyLaunchResult> {
+  await revalidateHumanMemberSkins(party);
   const humanMembers = party.getHumanMembers();
   const partyBots = party.getBotMembers().map(toPartyBotDescriptor);
   if (humanMembers.length === 0) {
@@ -128,13 +140,15 @@ export async function launchPartyToMatchmaking(
   const tickets = new Map<string, ReturnType<typeof issueQuickPlayTicket> | ReturnType<typeof issueRankedTicket>>();
   if (mode === 'ranked') {
     for (const context of contexts) {
-      if (!context.walletAddress) {
-        const member = humanMembers.find((candidate) => candidate.userId === context.userId);
-        throw new Error(`${member?.displayName ?? 'A party member'} needs a linked Solana wallet for ranked`);
-      }
       const tokenHold = await assertRankedTokenHoldingEligibility(context.walletAddress);
       const member = humanMembers.find((candidate) => candidate.userId === context.userId);
-      tickets.set(context.userId, issueRankedTicket(context, targetRankDivisionIndex, tokenHold, member?.heroId));
+      tickets.set(context.userId, issueRankedTicket(
+        context,
+        targetRankDivisionIndex,
+        tokenHold,
+        member?.heroId,
+        member?.skinId
+      ));
     }
   } else {
     for (const context of contexts) {
@@ -144,6 +158,7 @@ export async function launchPartyToMatchmaking(
         botFillMode,
         matchPerspective,
         selectedHero: member?.heroId,
+        selectedSkinId: member?.skinId,
       }));
     }
   }
@@ -183,6 +198,7 @@ export async function launchPartyToMatchmaking(
       botFillMode,
       matchPerspective,
       selectedHero: member.heroId,
+      selectedSkinId: member.skinId,
       matchmakingTicket: issued.ticket,
       targetRankDivisionIndex,
       targetRankLabel: issued.targetRankLabel,
@@ -216,6 +232,7 @@ async function createAcceptedLobbyInvites(input: {
 }
 
 export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promise<PartyLaunchResult> {
+  await revalidateHumanMemberSkins(party);
   const humanMembers = party.getHumanMembers();
   const partyBots = party.getBotMembers().map(toPartyBotDescriptor);
   if (humanMembers.length === 0 || !party.leaderId) {
@@ -263,6 +280,7 @@ export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promi
       botFillMode: 'manual',
       matchPerspective,
       selectedHero: member.heroId,
+      selectedSkinId: member.skinId,
     });
   }
 

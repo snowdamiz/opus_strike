@@ -9,11 +9,14 @@ import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_MATCH_PERSPECTIVE,
   isGameplayMode,
+  isHeroSkinId,
   isMatchMode,
   isMatchPerspective,
   isKnownHeroId,
+  getHeroSkinDefinition,
   type GameplayMode,
   type HeroId,
+  type HeroSkinId,
   type MatchMode,
   type MatchPerspective,
 } from '@voxel-strike/shared';
@@ -31,17 +34,14 @@ export interface MatchmakingTicketClaims {
   botFillMode: MatchmakingBotFillMode;
   matchPerspective: MatchPerspective;
   selectedHero?: HeroId;
+  selectedSkinId?: HeroSkinId;
   userId: string;
   competitiveRating: number;
   rankDivisionIndex: number;
   targetRankDivisionIndex: number;
   placementRemaining: number;
-  rankedEntryQuoteId?: string;
-  coverChargeLamports?: string;
-  rankedEntryQuoteExpiresAt?: number;
   rankedTokenAddress?: string;
   rankedTokenDecimals?: number;
-  rankedTokenHoldUsdCents?: number;
   rankedTokenRequiredBaseUnits?: string;
   rankedTokenBalanceBaseUnits?: string;
   rankedTokenCheckedAt?: number;
@@ -56,17 +56,14 @@ export interface CreateMatchmakingTicketInput {
   botFillMode?: MatchmakingBotFillMode;
   matchPerspective?: MatchPerspective;
   selectedHero?: HeroId;
+  selectedSkinId?: HeroSkinId;
   userId: string;
   competitiveRating: number;
   rankDivisionIndex: number;
   targetRankDivisionIndex: number;
   placementRemaining: number;
-  rankedEntryQuoteId?: string;
-  coverChargeLamports?: string;
-  rankedEntryQuoteExpiresAt?: number;
   rankedTokenAddress?: string;
   rankedTokenDecimals?: number;
-  rankedTokenHoldUsdCents?: number;
   rankedTokenRequiredBaseUnits?: string;
   rankedTokenBalanceBaseUnits?: string;
   rankedTokenCheckedAt?: number;
@@ -84,11 +81,18 @@ function isCanonicalSolanaAddress(value: unknown): value is string {
   }
 }
 
+function normalizeSelectedSkinId(heroId: HeroId | undefined, skinId: unknown): HeroSkinId | undefined {
+  if (!heroId || !isHeroSkinId(skinId)) return undefined;
+  const skin = getHeroSkinDefinition(skinId);
+  return skin.heroId === heroId ? skinId : undefined;
+}
+
 export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
   ticket: string;
   claims: MatchmakingTicketClaims;
 } {
   const now = Date.now();
+  const selectedHero = isKnownHeroId(input.selectedHero) ? input.selectedHero : undefined;
   const claims: MatchmakingTicketClaims = {
     version: 2,
     mode: input.mode,
@@ -101,18 +105,15 @@ export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
     matchPerspective: input.mode === 'quick_play' && isMatchPerspective(input.matchPerspective)
       ? input.matchPerspective
       : DEFAULT_MATCH_PERSPECTIVE,
-    selectedHero: isKnownHeroId(input.selectedHero) ? input.selectedHero : undefined,
+    selectedHero,
+    selectedSkinId: normalizeSelectedSkinId(selectedHero, input.selectedSkinId),
     userId: input.userId,
     competitiveRating: Math.round(Number.isFinite(input.competitiveRating) ? input.competitiveRating : DEFAULT_MATCHMAKING_RATING),
     rankDivisionIndex: normalizeRankDivisionIndex(input.rankDivisionIndex),
     targetRankDivisionIndex: normalizeRankDivisionIndex(input.targetRankDivisionIndex),
     placementRemaining: Math.max(0, Math.floor(Number.isFinite(input.placementRemaining) ? input.placementRemaining : 0)),
-    rankedEntryQuoteId: input.mode === 'ranked' ? input.rankedEntryQuoteId : undefined,
-    coverChargeLamports: input.mode === 'ranked' ? input.coverChargeLamports : undefined,
-    rankedEntryQuoteExpiresAt: input.mode === 'ranked' ? input.rankedEntryQuoteExpiresAt : undefined,
     rankedTokenAddress: input.mode === 'ranked' ? input.rankedTokenAddress : undefined,
     rankedTokenDecimals: input.mode === 'ranked' ? input.rankedTokenDecimals : undefined,
-    rankedTokenHoldUsdCents: input.mode === 'ranked' ? input.rankedTokenHoldUsdCents : undefined,
     rankedTokenRequiredBaseUnits: input.mode === 'ranked' ? input.rankedTokenRequiredBaseUnits : undefined,
     rankedTokenBalanceBaseUnits: input.mode === 'ranked' ? input.rankedTokenBalanceBaseUnits : undefined,
     rankedTokenCheckedAt: input.mode === 'ranked' ? input.rankedTokenCheckedAt : undefined,
@@ -143,6 +144,7 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
     ? claims.matchPerspective
     : DEFAULT_MATCH_PERSPECTIVE;
   const selectedHero = isKnownHeroId(claims.selectedHero) ? claims.selectedHero : undefined;
+  const selectedSkinId = normalizeSelectedSkinId(selectedHero, claims.selectedSkinId);
   if (!claims.userId || !claims.nonce) return null;
   if (claims.expiresAt < now || claims.issuedAt > now + 5_000) return null;
   if (!Number.isFinite(claims.competitiveRating)) return null;
@@ -150,25 +152,12 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
   if (normalizeRankDivisionIndex(claims.targetRankDivisionIndex) !== claims.targetRankDivisionIndex) return null;
 
   if (
-    claims.coverChargeLamports !== undefined
-    && (typeof claims.coverChargeLamports !== 'string' || !/^[0-9]+$/.test(claims.coverChargeLamports))
-  ) return null;
-  if (claims.coverChargeLamports !== undefined && BigInt(claims.coverChargeLamports) <= 0n) return null;
-  if (
-    claims.rankedEntryQuoteExpiresAt !== undefined
-    && !Number.isFinite(claims.rankedEntryQuoteExpiresAt)
-  ) return null;
-  if (
     claims.rankedTokenAddress !== undefined
     && !isCanonicalSolanaAddress(claims.rankedTokenAddress)
   ) return null;
   if (
     claims.rankedTokenDecimals !== undefined
     && (!Number.isInteger(claims.rankedTokenDecimals) || claims.rankedTokenDecimals < 0 || claims.rankedTokenDecimals > 255)
-  ) return null;
-  if (
-    claims.rankedTokenHoldUsdCents !== undefined
-    && (!Number.isInteger(claims.rankedTokenHoldUsdCents) || claims.rankedTokenHoldUsdCents < 0)
   ) return null;
   if (
     claims.rankedTokenRequiredBaseUnits !== undefined
@@ -190,16 +179,13 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
     botFillMode,
     matchPerspective,
     selectedHero,
+    selectedSkinId,
     competitiveRating: Math.round(claims.competitiveRating),
     rankDivisionIndex: claims.rankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,
     targetRankDivisionIndex: claims.targetRankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,
     placementRemaining: Math.max(0, Math.floor(claims.placementRemaining ?? 0)),
-    rankedEntryQuoteId: mode === 'ranked' ? claims.rankedEntryQuoteId : undefined,
-    coverChargeLamports: mode === 'ranked' ? claims.coverChargeLamports : undefined,
-    rankedEntryQuoteExpiresAt: mode === 'ranked' ? claims.rankedEntryQuoteExpiresAt : undefined,
     rankedTokenAddress: mode === 'ranked' ? claims.rankedTokenAddress : undefined,
     rankedTokenDecimals: mode === 'ranked' ? claims.rankedTokenDecimals : undefined,
-    rankedTokenHoldUsdCents: mode === 'ranked' ? claims.rankedTokenHoldUsdCents : undefined,
     rankedTokenRequiredBaseUnits: mode === 'ranked' ? claims.rankedTokenRequiredBaseUnits : undefined,
     rankedTokenBalanceBaseUnits: mode === 'ranked' ? claims.rankedTokenBalanceBaseUnits : undefined,
     rankedTokenCheckedAt: mode === 'ranked' ? claims.rankedTokenCheckedAt : undefined,

@@ -14,7 +14,7 @@ interface LegalPageCopy {
   sections: LegalSection[];
 }
 
-const LAST_UPDATED = 'June 15, 2026';
+const LAST_UPDATED = 'June 24, 2026';
 
 const LEGAL_COPY: Record<LegalPageKind, LegalPageCopy> = {
   terms: {
@@ -26,13 +26,13 @@ const LEGAL_COPY: Record<LegalPageKind, LegalPageCopy> = {
         title: 'Use of Slop Heroes',
         body: [
           'Slop Heroes is a multiplayer browser game. You may use the service only if you can form a binding agreement and only where use of the service is lawful.',
-          'You are responsible for the activity that happens through your account and for keeping your Discord account and connected wallet secure.',
+          'You are responsible for the activity that happens through your account and for keeping your Discord account or connected wallet secure.',
         ],
       },
       {
         title: 'Accounts and Authentication',
         body: [
-          'Discord is the required login provider for Slop Heroes. Ranked modes may require a Phantom wallet connection before entry.',
+          'You can create and access a Slop Heroes account with Discord, a supported Solana wallet, or both. Ranked modes may require a linked wallet before entry.',
           'You may not impersonate another person, sell or transfer your account, bypass eligibility checks, or attempt to link accounts or wallets that you do not control.',
         ],
       },
@@ -47,7 +47,7 @@ const LEGAL_COPY: Record<LegalPageKind, LegalPageCopy> = {
         title: 'Wallets',
         body: [
           'If wallet-enabled features are available, you are responsible for reviewing wallet prompts, transaction details, network fees, eligibility requirements, and local laws before participating.',
-          'Blockchain transactions may be irreversible. Slop Heroes does not control Phantom, Discord, wallet software, blockchain networks, or third-party infrastructure.',
+          'Blockchain transactions may be irreversible. Slop Heroes does not control Discord, wallet software, blockchain networks, or third-party infrastructure.',
         ],
       },
       {
@@ -74,7 +74,7 @@ const LEGAL_COPY: Record<LegalPageKind, LegalPageCopy> = {
         title: 'Information We Collect',
         body: [
           'When you sign in with Discord, we receive basic Discord account information such as your Discord user ID, username, display name, and avatar.',
-          'If you connect Phantom, we collect the wallet address you choose to link. We also collect gameplay, matchmaking, device, diagnostic, security, and anti-cheat information needed to operate the game.',
+          'When you sign in or connect with a wallet, we collect the wallet address you choose to use. We also collect gameplay, matchmaking, device, diagnostic, security, and anti-cheat information needed to operate the game.',
         ],
       },
       {
@@ -88,7 +88,7 @@ const LEGAL_COPY: Record<LegalPageKind, LegalPageCopy> = {
         title: 'Sharing',
         body: [
           'We do not sell personal information. We may share information with service providers that help host, secure, authenticate, monitor, or operate Slop Heroes.',
-          'Discord, Phantom, wallet providers, hosting providers, and blockchain networks process information under their own policies when you interact with them.',
+          'Discord, wallet providers, hosting providers, and blockchain networks process information under their own policies when you interact with them.',
         ],
       },
       {
@@ -101,7 +101,7 @@ const LEGAL_COPY: Record<LegalPageKind, LegalPageCopy> = {
       {
         title: 'Your Choices',
         body: [
-          'You can choose not to connect Phantom unless you want to access modes that require it. You can also stop using Slop Heroes at any time.',
+          'You can choose not to connect a wallet unless you want to access modes or features that require it. You can also stop using Slop Heroes at any time.',
           'Requests about account or data access can be sent through the official Slop Heroes support or community channels.',
         ],
       },

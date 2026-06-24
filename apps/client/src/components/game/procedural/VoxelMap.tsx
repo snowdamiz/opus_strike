@@ -45,8 +45,7 @@ const TERRAIN_HORIZON_SLOPE_EPSILON = 0.055;
 const TERRAIN_HORIZON_MIN_DISTANCE_SCALE = 1.15;
 const TERRAIN_CULL_DISTANCE_BUCKET_COUNT = 64;
 const BATTLE_ROYAL_OUTER_FILL_SCALE = 2.75;
-const BATTLE_ROYAL_OUTER_FILL_HEIGHT_ROWS = 44;
-const BATTLE_ROYAL_OUTER_FILL_Y_OFFSET = 0.06;
+const BATTLE_ROYAL_OUTER_FILL_WORLD_CLEARANCE = 0.08;
 const BATTLE_ROYAL_OUTER_FILL_BOUNDARY_PADDING = 2.4;
 const BATTLE_ROYAL_OUTER_FILL_FOG_BLEND = 0.42;
 
@@ -187,6 +186,10 @@ export function shouldHideBattleRoyalRegionForMacroTile(input: {
   regionDetail: VoxelRegionGeometryDetail;
 }): boolean {
   return input.active && input.macroGeometryReady && input.regionVisible && input.regionDetail === 'ultraCoarse';
+}
+
+export function getBattleRoyalOuterFillY(manifest: Pick<VoxelMapManifest, 'origin'>): number {
+  return manifest.origin.y - BATTLE_ROYAL_OUTER_FILL_WORLD_CLEARANCE;
 }
 
 function getHorizonBin(dx: number, dz: number): number {
@@ -1109,9 +1112,7 @@ function BattleRoyalOuterFill({ manifest }: { manifest: VoxelMapManifest }) {
   const centerX = manifest.origin.x + worldWidth / 2;
   const centerZ = manifest.origin.z + worldDepth / 2;
   const outerFillSize = Math.max(worldWidth, worldDepth) * BATTLE_ROYAL_OUTER_FILL_SCALE;
-  const outerFillY = manifest.origin.y +
-    manifest.voxelSize.y * BATTLE_ROYAL_OUTER_FILL_HEIGHT_ROWS -
-    BATTLE_ROYAL_OUTER_FILL_Y_OFFSET;
+  const outerFillY = getBattleRoyalOuterFillY(manifest);
 
   const outerFillColor = useMemo(() => {
     const color = new THREE.Color(manifest.theme.ground.side);
@@ -1156,7 +1157,7 @@ function BattleRoyalOuterFill({ manifest }: { manifest: VoxelMapManifest }) {
     <mesh
       name="battle-royal-outer-fill"
       position={[0, outerFillY, 0]}
-      rotation={[Math.PI / 2, 0, 0]}
+      rotation={[-Math.PI / 2, 0, 0]}
       receiveShadow={false}
     >
       <shapeGeometry key={`${manifest.id}:battle-royal-outer-fill`} args={[outerFillShape]} />

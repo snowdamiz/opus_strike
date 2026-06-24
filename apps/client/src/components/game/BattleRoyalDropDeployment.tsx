@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Billboard, Text } from '@react-three/drei';
 import * as THREE from 'three';
@@ -37,6 +37,8 @@ const LOCATION_LABEL_FONT_WEIGHT = 800;
 const LOCATION_LABEL_TYPE_FONT_WEIGHT = 700;
 const LOCATION_LABEL_OUTLINE_WIDTH = 0.18;
 const LOCATION_LABEL_TYPE_OUTLINE_WIDTH = 0.08;
+const LOCATION_LABEL_FADE_SMOOTHING = 5.5;
+const LOCATION_LABEL_MIN_RENDER_OPACITY = 0.015;
 const SHIP_WINDOW_Z_OFFSETS = [3.8, 2.65, 1.5, 0.35, -0.8, -1.95, -3.1] as const;
 const SHIP_ENGINE_X_OFFSETS = [-2.25, 0, 2.25] as const;
 const SHIP_WING_TIP_LIGHTS = [
@@ -94,34 +96,70 @@ function createSampledRemoteTransform(): SampledRemoteTransform {
   };
 }
 
-export function BattleRoyalDropDeployment() {
-  const drop = useGameStore((state) => {
-    const isVisiblePhase = state.gamePhase === 'countdown' || state.gamePhase === 'deployment';
-    return state.gameplayMode === 'battle_royal' && isVisiblePhase ? state.battleRoyalDrop : null;
+function useSmoothedScalar(target: number, smoothing: number): number {
+  const targetRef = useRef(target);
+  const valueRef = useRef(target);
+  const publishedValueRef = useRef(target);
+  const [value, setValue] = useState(target);
+
+  useEffect(() => {
+    targetRef.current = target;
+  }, [target]);
+
+  useFrame((_, delta) => {
+    const current = valueRef.current;
+    const nextTarget = targetRef.current;
+    const alpha = 1 - Math.exp(-smoothing * Math.max(0, delta));
+    const next = Math.abs(current - nextTarget) < 0.001
+      ? nextTarget
+      : THREE.MathUtils.lerp(current, nextTarget, alpha);
+
+    valueRef.current = next;
+    if (
+      Math.abs(next - publishedValueRef.current) >= 0.002 ||
+      (next === nextTarget && publishedValueRef.current !== nextTarget)
+    ) {
+      publishedValueRef.current = next;
+      setValue(next);
+    }
   });
-  const frozen = useGameStore((state) => state.gamePhase === 'countdown');
+
+  return value;
+}
+
+export function BattleRoyalDropDeployment() {
+  const gameplayMode = useGameStore((state) => state.gameplayMode);
+  const gamePhase = useGameStore((state) => state.gamePhase);
+  const drop = useGameStore((state) => state.battleRoyalDrop);
   const localPlayerId = useGameStore((state) => state.localPlayer?.id ?? state.playerId);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
   const mapProfileId = useGameStore((state) => state.mapProfileId);
+  const isBattleRoyal = gameplayMode === 'battle_royal';
+  const isDeploymentPhase = gamePhase === 'countdown' || gamePhase === 'deployment';
+  const shouldRenderDropVisuals = isBattleRoyal && isDeploymentPhase && drop?.enabled === true;
+  const labelOpacity = useSmoothedScalar(isBattleRoyal && isDeploymentPhase ? 1 : 0, LOCATION_LABEL_FADE_SMOOTHING);
   const preparedMap = getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId });
   const namedLocations = preparedMap?.manifest.gameplay.namedLocations ?? [];
 
   const podPlayers = useMemo(
-    () => drop?.players.filter((player) => (
+    () => shouldRenderDropVisuals ? drop?.players.filter((player) => (
       player.status === 'dropping' && player.attachedToPlayerId === null
-    )) ?? [],
-    [drop]
+    )) ?? [] : [],
+    [drop, shouldRenderDropVisuals]
   );
+  const shouldRenderLabels = isBattleRoyal &&
+    namedLocations.length > 0 &&
+    (isDeploymentPhase || labelOpacity > LOCATION_LABEL_MIN_RENDER_OPACITY);
 
-  if (!drop?.enabled) return null;
+  if (!shouldRenderDropVisuals && !shouldRenderLabels) return null;
 
   return (
     <group>
-      <DropShipVisual drop={drop} frozen={frozen} />
-      <BattleRoyalLocationLabels locations={namedLocations} />
-      {podPlayers.map((player) => {
+      {shouldRenderDropVisuals && drop ? <DropShipVisual drop={drop} frozen={gamePhase === 'countdown'} /> : null}
+      {shouldRenderLabels ? <BattleRoyalLocationLabels locations={namedLocations} opacity={labelOpacity} /> : null}
+      {shouldRenderDropVisuals && drop ? podPlayers.map((player) => {
         const isLocal = player.playerId === localPlayerId;
         return (
           <DropPodVisual
@@ -131,7 +169,7 @@ export function BattleRoyalDropDeployment() {
             isLocal={isLocal}
           />
         );
-      })}
+      }) : null}
     </group>
   );
 }
@@ -163,7 +201,13 @@ function getLocationLabelStyle(location: MapNamedLocation): {
   }
 }
 
-function BattleRoyalLocationLabels({ locations }: { locations: MapNamedLocation[] }) {
+function BattleRoyalLocationLabels({
+  locations,
+  opacity,
+}: {
+  locations: MapNamedLocation[];
+  opacity: number;
+}) {
   const visibleLocations = useMemo(
     () => locations.slice().sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name)).slice(0, LOCATION_LABEL_MAX_COUNT),
     [locations]
@@ -183,11 +227,11 @@ function BattleRoyalLocationLabels({ locations }: { locations: MapNamedLocation[
           <group key={location.id} position={[location.position.x, 0, location.position.z]}>
             <mesh position={[0, beamY, 0]} renderOrder={18}>
               <cylinderGeometry args={[0.1, 0.22, beamHeight, 8]} />
-              <meshBasicMaterial color={style.accent} transparent opacity={0.22} depthWrite={false} />
+              <meshBasicMaterial color={style.accent} transparent opacity={0.22 * opacity} depthWrite={false} />
             </mesh>
             <mesh position={[0, location.position.y + 0.35, 0]} rotation={[Math.PI / 2, 0, 0]} renderOrder={17}>
               <ringGeometry args={[Math.max(3.5, location.radius * 0.18), Math.max(4.4, location.radius * 0.18 + 0.8), 48]} />
-              <meshBasicMaterial color={style.accent} transparent opacity={0.36} depthWrite={false} />
+              <meshBasicMaterial color={style.accent} transparent opacity={0.36 * opacity} depthWrite={false} />
             </mesh>
             <Billboard position={[0, labelY, 0]} follow>
               <Text
@@ -197,6 +241,8 @@ function BattleRoyalLocationLabels({ locations }: { locations: MapNamedLocation[
                 fontSize={labelFontSize}
                 fontWeight={LOCATION_LABEL_FONT_WEIGHT}
                 outlineColor="#06111d"
+                fillOpacity={opacity}
+                outlineOpacity={opacity}
                 outlineWidth={LOCATION_LABEL_OUTLINE_WIDTH}
                 renderOrder={20}
                 textAlign="center"
@@ -211,6 +257,8 @@ function BattleRoyalLocationLabels({ locations }: { locations: MapNamedLocation[
                 fontSize={typeFontSize}
                 fontWeight={LOCATION_LABEL_TYPE_FONT_WEIGHT}
                 outlineColor="#06111d"
+                fillOpacity={opacity}
+                outlineOpacity={opacity}
                 outlineWidth={LOCATION_LABEL_TYPE_OUTLINE_WIDTH}
                 renderOrder={20}
                 textAlign="center"

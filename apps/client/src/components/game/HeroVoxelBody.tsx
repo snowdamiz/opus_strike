@@ -1,11 +1,10 @@
 import { Fragment, memo, useEffect, useMemo, useRef, type MutableRefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { HeroId, Team } from '@voxel-strike/shared';
+import type { HeroId, HeroSkinId, Team } from '@voxel-strike/shared';
 import {
   DEFAULT_WALK_DIRECTION,
   EMPTY_TEAM_ACCENT_PARTS,
-  HERO_BODY_MANIFESTS,
   IDLE_SPEED_MULTIPLIER,
   TEAM_BODY_GLOW_OUTLINE_OPACITY,
   TEAM_BODY_GLOW_OUTLINE_SCALE,
@@ -16,6 +15,7 @@ import {
   getTeamBodyGlowOpacity,
   lerpMovementProfile,
 } from '../../model-system/heroBodyManifests';
+import { resolveHeroSkinModel } from '../../model-system/heroSkinModelResolver';
 import {
   applyChronosArmPose,
   applyCrouchBonePose,
@@ -72,6 +72,7 @@ export type { HeroAnimationMode, HeroMovementPose, HeroWalkDirection } from '../
 
 interface HeroVoxelBodyProps {
   heroId: HeroId | null;
+  skinId?: HeroSkinId | string | null;
   team: Team;
   height: number;
   isBot?: boolean;
@@ -177,6 +178,7 @@ function getOutlineScale(scale: VoxelPart['scale']): VoxelPart['scale'] {
 
 export const HeroVoxelBody = memo(function HeroVoxelBody({
   heroId,
+  skinId,
   team,
   height,
   isBot = false,
@@ -216,6 +218,11 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   socketOwnerId,
 }: HeroVoxelBodyProps) {
   const resolvedHero = heroId || 'phantom';
+  const resolvedSkinModel = useMemo(
+    () => resolveHeroSkinModel(resolvedHero, skinId),
+    [resolvedHero, skinId]
+  );
+  const resolvedSkinId = resolvedSkinModel.skinId;
   const groupRef = useRef<THREE.Group>(null);
   const boneRefs = useRef<HeroBoneRefs>({});
   const socketRefs = useRef<Record<string, THREE.Group | null>>({});
@@ -248,7 +255,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const initialVerticalScale = Math.max(0.45, Math.min(1, postureScaleY));
   const postureScaleYRefInternal = useRef(initialVerticalScale);
   const teamColor = TEAM_COLORS[team];
-  const manifest = HERO_BODY_MANIFESTS[resolvedHero];
+  const manifest = resolvedSkinModel.bodyManifest;
   const parts = manifest.parts;
   const teamAccentParts = showTeamAccents ? manifest.teamAccentParts : EMPTY_TEAM_ACCENT_PARTS;
   const riggedPartsByBone = useMemo(() => groupHeroBodyRenderParts(parts), [parts]);
@@ -359,7 +366,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     wasJumpingRef.current = false;
     postureScaleYRefInternal.current = Math.max(0.45, Math.min(1, postureScaleYRef?.current ?? postureScaleY));
     resetHeroBodyPoseTransitionRuntime(poseTransitionRuntimeRef.current);
-  }, [resolvedHero]);
+  }, [resolvedHero, resolvedSkinId]);
 
   useFrame((state, delta) => {
     if (!groupRef.current) return;
@@ -713,7 +720,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const renderPartsForBone = (bone: HeroBoneName) => (
     <>
       {(riggedPartsByBone[bone] ?? EMPTY_RIGGED_PARTS).map((riggedPart, index) => (
-        <Fragment key={`${resolvedHero}-${riggedPart.part.id ?? `${bone}-${index}`}`}>
+        <Fragment key={`${resolvedSkinId}-${riggedPart.part.id ?? `${bone}-${index}`}`}>
           <mesh
             position={riggedPart.meshOffset}
             rotation={riggedPart.part.rotation}
@@ -724,7 +731,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
             <primitive object={materials.get(riggedPart.part.material)!} attach="material" />
           </mesh>
           {renderOutlineMesh(
-            `${resolvedHero}-${riggedPart.part.id ?? `${bone}-${index}`}-outline`,
+            `${resolvedSkinId}-${riggedPart.part.id ?? `${bone}-${index}`}-outline`,
             riggedPart.meshOffset,
             riggedPart.part.scale,
             getPartGeometry(riggedPart.part),
@@ -734,7 +741,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       ))}
 
       {(riggedTeamAccentPartsByBone[bone] ?? EMPTY_RIGGED_PARTS).map((riggedPart, index) => (
-        <Fragment key={`${resolvedHero}-team-${riggedPart.part.id ?? `${bone}-${index}`}`}>
+        <Fragment key={`${resolvedSkinId}-team-${riggedPart.part.id ?? `${bone}-${index}`}`}>
           <mesh
             position={riggedPart.meshOffset}
             rotation={riggedPart.part.rotation}
@@ -748,7 +755,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
             />
           </mesh>
           {renderOutlineMesh(
-            `${resolvedHero}-team-${riggedPart.part.id ?? `${bone}-${index}`}-outline`,
+            `${resolvedSkinId}-team-${riggedPart.part.id ?? `${bone}-${index}`}-outline`,
             riggedPart.meshOffset,
             riggedPart.part.scale,
             getPartGeometry(riggedPart.part),
@@ -762,7 +769,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const renderSocketMarkersForBone = (bone: HeroBoneName) => (
     (socketMarkersByBone[bone] ?? EMPTY_REMOTE_SOCKET_MARKERS).map((marker) => (
       <group
-        key={`${resolvedHero}-socket-${marker.socketName}`}
+        key={`${resolvedSkinId}-socket-${marker.socketName}`}
         ref={(node) => {
           socketRefs.current[marker.socketName] = node;
         }}
@@ -777,7 +784,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     const emissiveIntensity = part.fixedEmissiveIntensity ?? getHeroBodyMaterialEmissiveIntensity(part.material, hasFlag);
 
     return (
-      <Fragment key={`${resolvedHero}-${part.id}`}>
+      <Fragment key={`${resolvedSkinId}-${part.id}`}>
         <mesh
           position={part.position}
           rotation={part.rotation}
@@ -788,7 +795,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
           <meshStandardMaterial color={color} emissive={color} emissiveIntensity={emissiveIntensity} />
         </mesh>
         {renderOutlineMesh(
-          `${resolvedHero}-${part.id}-outline`,
+          `${resolvedSkinId}-${part.id}-outline`,
           part.position,
           part.scale,
           geometry,

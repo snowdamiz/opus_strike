@@ -1,9 +1,12 @@
 import crypto from 'crypto';
 import {
   DEFAULT_MATCH_PERSPECTIVE,
+  getHeroSkinDefinition,
+  isHeroSkinId,
   isMatchPerspective,
   isTeamId,
   type HeroId,
+  type HeroSkinId,
   type MatchPerspective,
   type Team,
 } from '@voxel-strike/shared';
@@ -19,6 +22,7 @@ export interface GameEntryTicketClaims {
   matchPerspective?: MatchPerspective;
   assignedTeam?: Team;
   selectedHero?: HeroId;
+  selectedSkinId?: HeroSkinId;
   issuedAt: number;
   expiresAt: number;
   nonce: string;
@@ -33,10 +37,17 @@ export interface CreateGameEntryTicketInput {
   matchPerspective?: MatchPerspective;
   assignedTeam?: Team;
   selectedHero?: HeroId;
+  selectedSkinId?: HeroSkinId;
   ttlMs?: number;
 }
 
 const DEFAULT_TICKET_TTL_MS = 90_000;
+
+function normalizeSelectedSkinId(heroId: HeroId | undefined, skinId: unknown): HeroSkinId | undefined {
+  if (!heroId || !isHeroSkinId(skinId)) return undefined;
+  const skin = getHeroSkinDefinition(skinId);
+  return skin.heroId === heroId ? skinId : undefined;
+}
 
 export function createGameEntryTicket(input: CreateGameEntryTicketInput): string {
   const now = Date.now();
@@ -50,6 +61,7 @@ export function createGameEntryTicket(input: CreateGameEntryTicketInput): string
     matchPerspective: input.matchPerspective ?? DEFAULT_MATCH_PERSPECTIVE,
     assignedTeam: input.assignedTeam,
     selectedHero: input.selectedHero,
+    selectedSkinId: normalizeSelectedSkinId(input.selectedHero, input.selectedSkinId),
     issuedAt: now,
     expiresAt: now + (input.ttlMs ?? DEFAULT_TICKET_TTL_MS),
     nonce: crypto.randomBytes(16).toString('hex'),
@@ -78,5 +90,6 @@ export function verifyGameEntryTicket(
     matchPerspective: isMatchPerspective(claims.matchPerspective)
       ? claims.matchPerspective
       : DEFAULT_MATCH_PERSPECTIVE,
+    selectedSkinId: normalizeSelectedSkinId(claims.selectedHero, claims.selectedSkinId),
   };
 }

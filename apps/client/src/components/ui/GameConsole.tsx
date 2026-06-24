@@ -7,10 +7,16 @@ import { config } from '../../config/environment';
 import {
   ABILITY_DEFINITIONS,
   BLAZE_FLAMETHROWER_MAX_FUEL,
-  HERO_DEFINITIONS,
   ALL_HERO_IDS,
+  getDefaultHeroSkinId,
+  getHeroSkinsForHero,
+  HERO_DEFINITIONS,
 } from '@voxel-strike/shared';
 import type { AbilityState, HeroId, Team } from '@voxel-strike/shared';
+import {
+  formatConsoleSkinLine,
+  resolveConsoleSkinQuery,
+} from './gameConsoleSkinCommands';
 
 interface ConsoleMessage {
   id: number;
@@ -32,7 +38,7 @@ let messageId = 0;
 const CHAT_PREVIEW_IDLE_TIMEOUT_MS = 30_000;
 const CHAT_PREVIEW_FADE_MS = 500;
 const PUBLIC_COMMAND_LIST = '/seed copy';
-const DEV_COMMAND_LIST = '/seed copy, /immune, /hero <hero>, /hero down <hero>, /end, /bot add <hero> <red|blue>, /bot skill <hero> <red|blue> <e|q|f|lmb|rmb>, /bot look <hero> <red|blue> <up|down>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze';
+const DEV_COMMAND_LIST = '/seed copy, /immune, /hero <hero>, /hero down <hero>, /skins <hero>, /skins apply <skin>, /end, /bot add <hero> <red|blue>, /bot skill <hero> <red|blue> <e|q|f|lmb|rmb>, /bot look <hero> <red|blue> <up|down>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze';
 type BotLookDirection = 'up' | 'down';
 const BOT_SKILL_KEYS: Record<string, string> = {
   e: 'e',
@@ -173,6 +179,7 @@ function applyLocalHero(heroId: HeroId): boolean {
 
   store.updateLocalPlayer({
     heroId,
+    skinId: getDefaultHeroSkinId(heroId),
     health: hero.stats.maxHealth,
     maxHealth: hero.stats.maxHealth,
     ultimateCharge: 0,
@@ -240,6 +247,7 @@ export function GameConsole() {
 
   const {
     devSetHero,
+    devSetSkin,
     devDownHero,
     devFillUltimate,
     devEndGame,
@@ -439,6 +447,67 @@ export function GameConsole() {
         break;
       }
 
+      case '/skins': {
+        if (!config.isDev) {
+          addMessage('Developer commands are disabled outside development builds.', 'error');
+          break;
+        }
+
+        const action = parts[1]?.toLowerCase();
+        if (action === 'apply') {
+          const skinName = parts.slice(2).join(' ');
+          const store = useGameStore.getState();
+          const localHeroId = store.localPlayer?.heroId ?? null;
+
+          if (!skinName) {
+            addMessage('Usage: /skins apply <skin name>', 'error');
+            break;
+          }
+          if (!store.localPlayer || !localHeroId) {
+            addMessage('No active hero to apply a skin to.', 'error');
+            break;
+          }
+
+          const resolution = resolveConsoleSkinQuery(skinName, { heroId: localHeroId });
+          if (resolution.status === 'empty' || resolution.status === 'not_found') {
+            addMessage(`Unknown skin: ${skinName}`, 'error');
+            break;
+          }
+          if (resolution.status === 'ambiguous') {
+            addMessage(`Ambiguous skin: ${skinName}`, 'error');
+            addMessage(`Matches: ${resolution.matches.map((skin) => skin.displayName).join(', ')}`, 'info');
+            break;
+          }
+
+          const skin = resolution.skin;
+          if (skin.heroId !== localHeroId) {
+            addMessage(`${skin.displayName} belongs to ${HERO_DEFINITIONS[skin.heroId].name}. Switch hero first.`, 'error');
+            break;
+          }
+
+          store.updateLocalPlayer({ skinId: skin.id });
+          devSetSkin(skin.id);
+          addMessage(`Applying ${skin.displayName} (${skin.id})...`, 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
+        const heroName = parts.slice(1).join(' ');
+        const heroId = resolveHeroId(heroName);
+
+        if (!heroName || !heroId) {
+          addMessage('Usage: /skins <hero name> | /skins apply <skin name>', 'error');
+          addMessage(`Valid heroes: ${validHeroNames()}`, 'info');
+          break;
+        }
+
+        addMessage(`Skins for ${HERO_DEFINITIONS[heroId].name}:`, 'info');
+        for (const skin of getHeroSkinsForHero(heroId)) {
+          addMessage(formatConsoleSkinLine(skin), 'output');
+        }
+        break;
+      }
+
       case '/f': {
         if (!config.isDev) {
           addMessage('Developer commands are disabled outside development builds.', 'error');
@@ -577,7 +646,7 @@ export function GameConsole() {
       default:
         addMessage(`Unknown command: ${command}. Available commands: ${config.isDev ? DEV_COMMAND_LIST : PUBLIC_COMMAND_LIST}`, 'error');
     }
-  }, [addGameBot, addMessage, devBotLook, devBotSkill, devDownHero, devEndGame, devFillUltimate, devSetHero, sendChatMessage, setDevBotBrainEnabled, setDevBotsRooted, setDevImmune, setDevTimeFrozen]);
+  }, [addGameBot, addMessage, devBotLook, devBotSkill, devDownHero, devEndGame, devFillUltimate, devSetHero, devSetSkin, sendChatMessage, setDevBotBrainEnabled, setDevBotsRooted, setDevImmune, setDevTimeFrozen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

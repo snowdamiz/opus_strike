@@ -7,6 +7,7 @@ import {
   type BotDifficulty,
   type GameplayMode,
   type HeroId,
+  type HeroSkinId,
   type MapProfileId,
   type MatchPerspective,
   type PublicRankSnapshot,
@@ -62,8 +63,6 @@ interface MatchmakingStatusMessage {
   requiredPlayers?: number;
   capacityBlocked?: boolean;
   capacityMaxPlayers?: number;
-  rankedCoverChargeLamports?: string;
-  rankedEntryQuoteId?: string;
 }
 
 interface LobbyPlayerWire {
@@ -73,6 +72,7 @@ interface LobbyPlayerWire {
   isReady?: boolean;
   team?: string;
   heroId?: HeroId | '';
+  skinId?: HeroSkinId | '';
   isBot?: boolean;
   botDifficulty?: BotDifficulty | '';
   botProfileId?: string;
@@ -96,6 +96,7 @@ interface PlayerJoinedMessage {
   isReady?: boolean;
   team?: string;
   heroId?: HeroId | '';
+  skinId?: HeroSkinId | '';
   isBot?: boolean;
   botDifficulty?: BotDifficulty | '';
   botProfileId?: string;
@@ -137,8 +138,6 @@ function toMatchmakingStatus(data: MatchmakingStatusMessage): MatchmakingStatusS
     requiredPlayers: typeof data.requiredPlayers === 'number' ? data.requiredPlayers : null,
     capacityBlocked: data.capacityBlocked === true,
     capacityMaxPlayers: typeof data.capacityMaxPlayers === 'number' ? data.capacityMaxPlayers : null,
-    rankedCoverChargeLamports: data.rankedCoverChargeLamports ?? null,
-    rankedEntryQuoteId: data.rankedEntryQuoteId ?? null,
   };
 }
 
@@ -150,6 +149,7 @@ function toLobbyPlayer(player: LobbyPlayerWire): LobbyPlayer {
     isReady: player.isReady ?? false,
     team: player.team || '',
     heroId: player.heroId || '',
+    skinId: player.skinId || '',
     isBot: Boolean(player.isBot),
     botDifficulty: player.botDifficulty || '',
     botProfileId: player.botProfileId,
@@ -165,6 +165,7 @@ function toJoinedLobbyPlayer(data: PlayerJoinedMessage): LobbyPlayer {
     isReady: data.isReady,
     team: data.team,
     heroId: data.heroId,
+    skinId: data.skinId,
     isBot: data.isBot,
     botDifficulty: data.botDifficulty,
     botProfileId: data.botProfileId,
@@ -338,10 +339,7 @@ export function setupLobbyListeners(
       matchPerspective: isMatchPerspective(data.matchPerspective) ? data.matchPerspective : DEFAULT_MATCH_PERSPECTIVE,
     });
     setIsLobbyHost(data.hostId === room.sessionId);
-    setMatchmakingStatus(toMatchmakingStatus({
-      ...data,
-      rankedEntryQuoteId: data.rankedEntryQuoteId ?? undefined,
-    }));
+    setMatchmakingStatus(toMatchmakingStatus(data));
     if (data.status === 'map_vote') {
       setAppPhase('map_vote');
     } else if (data.status === 'matchmaking') {
@@ -440,8 +438,8 @@ export function setupLobbyListeners(
     updateLobbyPlayerPatch(data.playerId, { botDifficulty: data.difficulty });
   });
 
-  room.onMessage('botHeroChanged', (data: { playerId: string; heroId: HeroId | '' }) => {
-    updateLobbyPlayerPatch(data.playerId, { heroId: data.heroId });
+  room.onMessage('botHeroChanged', (data: { playerId: string; heroId: HeroId | ''; skinId?: HeroSkinId | '' }) => {
+    updateLobbyPlayerPatch(data.playerId, { heroId: data.heroId, skinId: data.skinId || '' });
   });
 
   room.onMessage('hostChanged', (data: { newHostId: string; newHostName: string }) => {

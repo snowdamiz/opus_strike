@@ -15,6 +15,7 @@ export * from './types/matchPerspective.js';
 export * from './types/team.js';
 export * from './types/party.js';
 export * from './types/modelSystem.js';
+export * from './types/skins.js';
 
 // Constants
 export * from './constants/game.js';
@@ -39,6 +40,7 @@ export * from './combat/damageEngine.js';
 // Model system
 export * from './model/abilitySocketCatalog.js';
 export * from './model/heroModelDocument.js';
+export * from './model/heroSkinCatalog.js';
 
 // Progression
 export * from './progression/leveling.js';

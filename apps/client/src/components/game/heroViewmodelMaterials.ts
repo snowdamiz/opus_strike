@@ -1,11 +1,19 @@
 import * as THREE from 'three';
-import type { HeroId } from '@voxel-strike/shared';
+import {
+  HERO_SKIN_CATALOG,
+  getDefaultHeroSkinId,
+  type HeroId,
+  type HeroSkinId,
+  type ViewmodelModelDocument,
+} from '@voxel-strike/shared';
 import { getHookshotMaterials } from './effectResources';
 import {
   VIEWMODEL_MATERIAL_TOKENS,
   VIEWMODEL_MODEL_DOCUMENTS,
   type ViewmodelMaterialToken,
 } from '../../viewmodel/viewmodelManifests';
+import { resolveHeroSkinModel } from '../../model-system/heroSkinModelResolver';
+import { HERO_SKIN_MODEL_DOCUMENTS } from '../../model-system/heroModelDocuments';
 
 export type ViewmodelHeroId = keyof typeof VIEWMODEL_MODEL_DOCUMENTS & HeroId;
 
@@ -19,7 +27,7 @@ export interface ViewmodelMaterialSet {
 }
 
 const VIEWMODEL_HEROES = new Set<HeroId>(Object.keys(VIEWMODEL_MODEL_DOCUMENTS) as HeroId[]);
-const materialCache = new Map<ViewmodelHeroId, ViewmodelMaterialSet>();
+const materialCache = new Map<string, ViewmodelMaterialSet>();
 
 type ViewmodelMaterialColorNumbers = Record<ViewmodelMaterialToken, number>;
 
@@ -27,6 +35,14 @@ function getMaterialDescriptor(heroId: ViewmodelHeroId, token: ViewmodelMaterial
   const descriptor = VIEWMODEL_MODEL_DOCUMENTS[heroId].materials.find((material) => material.token === token);
   if (!descriptor) {
     throw new Error(`Viewmodel material "${token}" is missing for ${heroId}`);
+  }
+  return descriptor;
+}
+
+function getSkinMaterialDescriptor(viewmodel: ViewmodelModelDocument, token: ViewmodelMaterialToken) {
+  const descriptor = viewmodel.materials.find((material) => material.token === token);
+  if (!descriptor) {
+    throw new Error(`Viewmodel material "${token}" is missing`);
   }
   return descriptor;
 }
@@ -50,11 +66,24 @@ export function isViewmodelHero(heroId: HeroId | '' | null | undefined): heroId 
 }
 
 export function getViewmodelMaterials(heroId: ViewmodelHeroId): ViewmodelMaterialSet {
-  const cached = materialCache.get(heroId);
+  return getViewmodelMaterialsForSkin(heroId, getDefaultHeroSkinId(heroId));
+}
+
+export function getViewmodelMaterialsForSkin(
+  heroId: ViewmodelHeroId,
+  requestedSkinId?: HeroSkinId | string | null
+): ViewmodelMaterialSet {
+  const resolved = resolveHeroSkinModel(heroId, requestedSkinId);
+  const skinId = resolved.skinId;
+  const cached = materialCache.get(skinId);
   if (cached) return cached;
 
-  const colors = HERO_MATERIAL_COLORS[heroId];
-  const descriptor = (token: ViewmodelMaterialToken) => getMaterialDescriptor(heroId, token);
+  const viewmodel = HERO_SKIN_MODEL_DOCUMENTS[skinId].viewmodel ?? VIEWMODEL_MODEL_DOCUMENTS[heroId];
+  const descriptor = (token: ViewmodelMaterialToken) => getSkinMaterialDescriptor(viewmodel, token);
+  const colors = VIEWMODEL_MATERIAL_TOKENS.reduce((colorMap, token) => {
+    colorMap[token] = new THREE.Color(descriptor(token).color).getHex();
+    return colorMap;
+  }, {} as ViewmodelMaterialColorNumbers);
   const materials: ViewmodelMaterialSet = {
     armor: new THREE.MeshStandardMaterial({
       color: colors.armor,
@@ -93,15 +122,16 @@ export function getViewmodelMaterials(heroId: ViewmodelHeroId): ViewmodelMateria
     }),
   };
 
-  materialCache.set(heroId, materials);
+  materialCache.set(skinId, materials);
   return materials;
 }
 
 export function getHeroViewmodelGpuPrewarmMaterials(): THREE.Material[] {
   const materials: THREE.Material[] = [];
-  for (const heroId of VIEWMODEL_HEROES) {
+  for (const skin of HERO_SKIN_CATALOG) {
+    const heroId = skin.heroId;
     if (!isViewmodelHero(heroId)) continue;
-    const materialSet = getViewmodelMaterials(heroId);
+    const materialSet = getViewmodelMaterialsForSkin(heroId, skin.id);
     materials.push(
       materialSet.armor,
       materialSet.dark,

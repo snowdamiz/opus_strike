@@ -13,7 +13,6 @@ import { useGameStore } from '../../store/gameStore';
 import { useWallet } from '../../contexts/WalletContext';
 import { formatKeybind, mouseButtonToKeybindCode } from '../../utils/keybindings';
 import { GameDialog } from './GameDialog';
-import { PhantomLogo } from './PhantomLogo';
 
 type SettingsTab = 'video' | 'audio' | 'controls' | 'gameplay' | 'account' | 'development';
 
@@ -88,11 +87,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     isSessionLoading,
     logout,
     linkDiscord,
-    linkPhantom,
+    linkWallet,
     user,
     walletAddress,
     linkedAccounts,
-    hasPhantomAccount,
+    hasWalletAccount,
     error: authError,
     notice,
   } = useWallet();
@@ -100,7 +99,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [hasChanges, setHasChanges] = useState(false);
   const [rebindingAction, setRebindingAction] = useState<KeybindAction | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
-  const [isLinkingPhantom, setIsLinkingPhantom] = useState(false);
+  const [isLinkingWallet, setIsLinkingWallet] = useState(false);
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([]);
   const { updateSettings: applyAudioSettings } = useAudio();
@@ -108,7 +107,6 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const displayName = user?.name || gamePlayerName || 'Unknown';
   const displayWalletAddress = user?.walletAddress ?? walletAddress;
   const discordAccount = linkedAccounts.find((account) => account.provider === 'discord') ?? null;
-  const phantomAccount = linkedAccounts.find((account) => account.provider === 'phantom') ?? null;
   const accountInitial = displayName.charAt(0).toUpperCase();
   const hasAccount = isAuthenticated && Boolean(user);
   const showDevelopmentSettings = config.isDev;
@@ -157,18 +155,18 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     linkDiscord();
   };
 
-  const handleLinkPhantom = async () => {
-    if (!hasAccount || hasPhantomAccount || isLinkingPhantom) return;
+  const handleLinkWallet = async () => {
+    if (!hasAccount || hasWalletAccount || isLinkingWallet) return;
 
-    setIsLinkingPhantom(true);
+    setIsLinkingWallet(true);
     try {
-      const linkedUser = await linkPhantom();
+      const linkedUser = await linkWallet();
       setGameUser(linkedUser.id, linkedUser.name, linkedUser.stats);
       setGameWalletAddress(linkedUser.walletAddress ?? null);
     } catch {
       // The auth context owns the user-facing error message.
     } finally {
-      setIsLinkingPhantom(false);
+      setIsLinkingWallet(false);
     }
   };
 
@@ -700,10 +698,10 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
             {activeTab === 'account' && (
               <div className="space-y-1">
-                {hasAccount && !hasPhantomAccount && (
+                {hasAccount && !hasWalletAccount && (
                   <div className="mb-2 rounded-lg border border-amber-400/20 bg-amber-500/10 px-3 py-2">
                     <p className="text-amber-200 text-xs font-body">
-                      Phantom is required for ranked. Connect a wallet before entering ranked games.
+                      A wallet is required for ranked. Connect one before entering ranked games.
                     </p>
                   </div>
                 )}
@@ -740,8 +738,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   </div>
                 </SettingRow>
 
-                <SettingRow label="Restricted Modes" description={hasPhantomAccount ? 'Ranked access ready' : 'Phantom wallet required for ranked'}>
-                  <AccountValue value={hasPhantomAccount ? 'READY' : hasAccount ? 'WALLET NEEDED' : 'SIGNED OUT'} />
+                <SettingRow label="Restricted Modes" description={hasWalletAccount ? 'Ranked access ready' : 'Wallet required for ranked'}>
+                  <AccountValue value={hasWalletAccount ? 'READY' : hasAccount ? 'WALLET NEEDED' : 'SIGNED OUT'} />
                 </SettingRow>
 
                 <SettingRow label="Discord" description={discordAccount ? 'Connected login provider' : 'Link Discord to this profile'}>
@@ -763,28 +761,33 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   )}
                 </SettingRow>
 
-                <SettingRow label="Phantom" description={hasPhantomAccount ? 'Connected wallet provider' : 'Required for ranked'}>
-                  {hasPhantomAccount ? (
+                <SettingRow label="Wallet" description={hasWalletAccount ? 'Connected wallet provider' : 'Required for ranked'}>
+                  {hasWalletAccount ? (
                     <AccountValue value={formatAccountAddress(displayWalletAddress)} />
                   ) : (
                     <button
                       type="button"
-                      onClick={handleLinkPhantom}
-                      disabled={!hasAccount || isLinkingPhantom || isConnecting}
+                      onClick={handleLinkWallet}
+                      disabled={!hasAccount || isLinkingWallet || isConnecting}
                       className={`h-9 px-3.5 rounded-lg font-display text-xs flex shrink-0 items-center justify-center gap-2 border focus:outline-none focus-visible:ring-1 focus-visible:ring-purple-300/70 ${
                         hasAccount
                           ? 'border-purple-300/20 bg-purple-500/15 text-purple-100 hover:border-purple-200/40 hover:bg-purple-500/25'
                           : 'border-white/10 bg-white/5 text-white/25 cursor-not-allowed'
                       }`}
                     >
-                      {(isLinkingPhantom || isConnecting) && (
+                      {(isLinkingWallet || isConnecting) && (
                         <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                         </svg>
                       )}
-                      {!isLinkingPhantom && !isConnecting && <PhantomLogo className="h-4 w-4 text-white" />}
-                      {isLinkingPhantom || isConnecting ? 'CONNECTING' : 'CONNECT'}
+                      {!isLinkingWallet && !isConnecting && (
+                        <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.5 7.25h12.75A2.75 2.75 0 0121 10v6.25A2.75 2.75 0 0118.25 19H5.5A2.5 2.5 0 013 16.5V9.75a2.5 2.5 0 012.5-2.5z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 13.25h.01" />
+                        </svg>
+                      )}
+                      {isLinkingWallet || isConnecting ? 'CONNECTING' : 'CONNECT'}
                     </button>
                   )}
                 </SettingRow>

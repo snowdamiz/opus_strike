@@ -19,7 +19,7 @@ const PHANTOM_CALLBACK_PARAMS = [
 ];
 
 type PhantomDeepLinkAction = 'connect' | 'signMessage';
-type PhantomDeepLinkPurpose = 'connect' | 'linkPhantom';
+type PhantomDeepLinkPurpose = 'connect' | 'linkWallet' | 'walletAuth';
 
 interface StoredPhantomDeepLinkSession {
   version: 1;

@@ -1,5 +1,6 @@
 import type { Vec3, Quaternion } from './vector.js';
 import type { HeroId } from './hero.js';
+import type { HeroSkinId } from './skins.js';
 import type { AbilityCastOriginHint, AbilityState } from './ability.js';
 import type { PublicRankSnapshot } from '../progression/ranking.js';
 import type { Team } from './team.js';
@@ -92,6 +93,7 @@ export interface Player {
   name: string;
   team: Team;
   heroId: HeroId | null;
+  skinId?: HeroSkinId | null;
   state: PlayerState;
   isReady: boolean;
   isBot: boolean;
@@ -144,6 +146,7 @@ export interface PlayerSnapshot {
   name?: string;
   team?: Team;
   heroId?: HeroId | null;
+  skinId?: HeroSkinId | null;
   position: Vec3;
   velocity: Vec3;
   lookYaw: number;

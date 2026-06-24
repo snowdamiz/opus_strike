@@ -1,10 +1,14 @@
 import {
   ALL_HERO_IDS,
   HERO_DEFINITIONS,
+  getDefaultHeroSkinId,
+  getHeroSkinDefinition,
+  isHeroSkinId,
   isTeamId,
   type BotDifficulty,
   type GameplayMode,
   type HeroId,
+  type HeroSkinId,
   type MapProfileId,
   type MatchPerspective,
   type Team,
@@ -19,6 +23,7 @@ export interface LobbyGameStartPlayer {
   team: string;
   isBot: boolean;
   heroId: string;
+  skinId?: string;
   botDifficulty: string;
   botProfileId: string;
 }
@@ -34,6 +39,7 @@ export interface ParticipantAssignment {
   team: Team;
   isBot: boolean;
   heroId?: HeroId;
+  skinId?: HeroSkinId;
   botDifficulty?: BotDifficulty;
   botProfileId?: string;
 }
@@ -88,6 +94,14 @@ function normalizeDifficulty(difficulty?: string): BotDifficulty {
     return difficulty;
   }
   return 'normal';
+}
+
+function normalizeSkinId(heroId: HeroId | undefined, skinId?: string): HeroSkinId | undefined {
+  if (!heroId) return undefined;
+  if (isHeroSkinId(skinId) && getHeroSkinDefinition(skinId).heroId === heroId) {
+    return skinId;
+  }
+  return getDefaultHeroSkinId(heroId);
 }
 
 export function createLobbyGameStartAssignments(input: {
@@ -158,6 +172,7 @@ export function createLobbyGameStartAssignments(input: {
       team,
       isBot: player.isBot,
       heroId,
+      skinId: normalizeSkinId(heroId, player.skinId),
       botDifficulty: player.isBot ? normalizeDifficulty(player.botDifficulty) : undefined,
       botProfileId: player.botProfileId || undefined,
     });
@@ -198,6 +213,7 @@ export function buildGameEntryTicketInputs(input: {
       matchPerspective: input.matchPerspective,
       assignedTeam: assignment.team,
       selectedHero: assignment.heroId,
+      selectedSkinId: assignment.skinId,
     });
   }
 

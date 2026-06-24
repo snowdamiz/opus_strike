@@ -10,12 +10,15 @@ import {
   getGameplayModeCapacityCost,
   getGameplayModeLabel,
   getGameplayModeRules,
+  getDefaultHeroSkinId,
+  getHeroSkinDefinition,
   getRankFromRating,
   getTeamIdsForGameplayMode,
   getVoxelMapTheme,
   hashSeed,
   isCustomLobbyGameplayMode,
   isGameplayMode,
+  isHeroSkinId,
   isMatchMode,
   isMatchPerspective,
   isTeamHeroAvailable,
@@ -24,7 +27,7 @@ import {
   type GameplayModeRules,
 } from '@voxel-strike/shared';
 import type { MatchMode, MatchPerspective, PartyBotLaunchDescriptor } from '@voxel-strike/shared';
-import type { BotDifficulty, GameplayMode, HeroId, MapProfileId, Team, VoxelMapSizeId, VoxelMapTheme } from '@voxel-strike/shared';
+import type { BotDifficulty, GameplayMode, HeroId, HeroSkinId, MapProfileId, Team, VoxelMapSizeId, VoxelMapTheme } from '@voxel-strike/shared';
 import { assertUsableEntryTicketSecret } from '../config/security';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
 import { assertGameplayAccountEligible } from '../auth/accountEligibility';
@@ -101,6 +104,7 @@ import {
   type CleanupLobbySessionResult,
 } from './lobbySessionCleanup';
 import { applyRoomRankState } from './roomRankSnapshot';
+import { resolveUserLoadoutForHero } from '../cosmetics/skinShopService';
 
 type BotFillMode = 'manual' | 'fill_even';
 
@@ -114,7 +118,6 @@ interface JoinOptions {
   matchmakingTicket?: string;
   matchPerspective?: MatchPerspective;
   rankBandId?: number;
-  rankedEntryQuoteId?: string;
   expectedPartyLeaderUserId?: string;
   authToken?: string;
   expectedHumanPlayers?: number;
@@ -123,6 +126,7 @@ interface JoinOptions {
   botFillMode?: BotFillMode;
   defaultBotDifficulty?: BotDifficulty;
   selectedHero?: HeroId;
+  selectedSkinId?: HeroSkinId;
   partyBots?: PartyBotLaunchDescriptor[];
   devTutorialBypass?: boolean;
 }
@@ -250,7 +254,6 @@ export class LobbyRoom extends Room<LobbyState> {
   private isQuickPlayQueue = false;
   private isRankedQueue = false;
   private rankBandId = DEFAULT_RANK_DIVISION_INDEX;
-  private rankedEntryQuoteId: string | null = null;
   private minimumMatchmakingHumanCount = 1;
   private expectedMatchmakingPartyParticipantCount = 1;
   private expectedMatchmakingUserIds: Set<string> | null = null;
@@ -289,7 +292,6 @@ export class LobbyRoom extends Room<LobbyState> {
     this.isQuickPlayQueue = this.matchMode === 'quick_play';
     this.isRankedQueue = this.matchMode === 'ranked';
     this.rankBandId = this.resolveRoomRankBand(options, initialMatchmakingTicket);
-    this.rankedEntryQuoteId = this.isRankedQueue ? initialMatchmakingTicket?.rankedEntryQuoteId ?? null : null;
 
     this.setState(new LobbyState());
     this.state.lobbyId = this.roomId;
@@ -422,6 +424,7 @@ export class LobbyRoom extends Room<LobbyState> {
           difficulty: partyBot.difficulty,
           name: partyBot.displayName,
           heroId: partyBot.heroId,
+          skinId: partyBot.skinId,
         });
         if (!result.ok && result.reason === 'hero_taken') {
           this.createBot({
@@ -469,6 +472,7 @@ export class LobbyRoom extends Room<LobbyState> {
       : this.normalizeBotFillMode(options.botFillMode);
     if (requestedBotFillMode !== this.state.botFillMode) return false;
     if (!this.isJoinSelectedHeroConsistent(options, requestedTicket)) return false;
+    if (!this.isJoinSelectedSkinConsistent(options, requestedTicket)) return false;
     const requestedUserId = this.getRequestedMatchmakingUserId(options);
     if (this.shouldReserveExpectedHumanSlot(requestedUserId)) return false;
     if (this.getCombatParticipantCount() >= this.getMatchmakingRequiredPlayers()) return false;
@@ -553,6 +557,7 @@ export class LobbyRoom extends Room<LobbyState> {
     }
 
     const selectedHero = this.resolveJoinSelectedHero(options, matchmakingTicket);
+    const selectedSkin = await this.resolveJoinSelectedSkinForUser(authContext, options, matchmakingTicket, selectedHero);
     const playerTeam = this.isMatchmakingQueue()
       ? this.resolveMatchmakingJoiningPlayerTeam(authContext, selectedHero)
       : '';
@@ -570,6 +575,7 @@ export class LobbyRoom extends Room<LobbyState> {
     player.isReady = this.isMatchmakingQueue();
     player.team = playerTeam;
     player.heroId = selectedHero ?? '';
+    player.skinId = selectedSkin ?? '';
     player.isBot = false;
     player.botDifficulty = '';
     player.botProfileId = '';
@@ -1242,7 +1248,8 @@ export class LobbyRoom extends Room<LobbyState> {
     this.broadcast('playerTeamChanged', { playerId: botId, team });
     if (shouldClearHero) {
       bot.heroId = '';
-      this.broadcast('botHeroChanged', { playerId: botId, heroId: bot.heroId });
+      bot.skinId = '';
+      this.broadcast('botHeroChanged', { playerId: botId, heroId: bot.heroId, skinId: bot.skinId });
     }
     this.updateMetadata();
   }
@@ -1275,7 +1282,8 @@ export class LobbyRoom extends Room<LobbyState> {
     }
 
     bot.heroId = nextHeroId;
-    this.broadcast('botHeroChanged', { playerId: botId, heroId: bot.heroId });
+    bot.skinId = this.normalizeSkinId(nextHeroId, bot.skinId);
+    this.broadcast('botHeroChanged', { playerId: botId, heroId: bot.heroId, skinId: bot.skinId });
     this.updateMetadata();
   }
 
@@ -1293,7 +1301,13 @@ export class LobbyRoom extends Room<LobbyState> {
     }
   }
 
-  private createBot(data: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }): CreateBotResult {
+  private createBot(data: {
+    difficulty?: BotDifficulty;
+    team?: string;
+    name?: string;
+    heroId?: HeroId | '';
+    skinId?: HeroSkinId | '';
+  }): CreateBotResult {
     const requestedTeam = data.team && this.isTeam(data.team)
       ? data.team
       : null;
@@ -1328,6 +1342,7 @@ export class LobbyRoom extends Room<LobbyState> {
       return { ok: false, reason: 'hero_taken' };
     }
     bot.heroId = botHeroId;
+    bot.skinId = this.normalizeSkinId(botHeroId, data.skinId);
     bot.isBot = true;
     bot.botDifficulty = this.normalizeDifficulty(data.difficulty);
     bot.botProfileId = profileName.toLowerCase();
@@ -1490,9 +1505,39 @@ export class LobbyRoom extends Room<LobbyState> {
     return this.normalizeHeroId(selectedHero) || null;
   }
 
+  private resolveJoinSelectedSkin(
+    options: JoinOptions,
+    ticket: MatchmakingTicketClaims | null,
+    selectedHero: HeroId | null
+  ): HeroSkinId | null {
+    if (!selectedHero) return null;
+    const selectedSkin = ticket?.selectedSkinId ?? options.selectedSkinId;
+    return this.normalizeSkinId(selectedHero, selectedSkin) || null;
+  }
+
+  private async resolveJoinSelectedSkinForUser(
+    authContext: RoomAuthContext,
+    options: JoinOptions,
+    ticket: MatchmakingTicketClaims | null,
+    selectedHero: HeroId | null
+  ): Promise<HeroSkinId | null> {
+    if (!selectedHero) return null;
+    return resolveUserLoadoutForHero(
+      authContext.userId,
+      selectedHero,
+      ticket?.selectedSkinId ?? options.selectedSkinId
+    );
+  }
+
   private isJoinSelectedHeroConsistent(options: JoinOptions, ticket: MatchmakingTicketClaims | null): boolean {
     const requestedHero = this.normalizeHeroId(options.selectedHero);
     return !ticket?.selectedHero || !requestedHero || ticket.selectedHero === requestedHero;
+  }
+
+  private isJoinSelectedSkinConsistent(options: JoinOptions, ticket: MatchmakingTicketClaims | null): boolean {
+    const selectedHero = this.resolveJoinSelectedHero(options, ticket);
+    const requestedSkin = this.normalizeSkinId(selectedHero, options.selectedSkinId);
+    return !ticket?.selectedSkinId || !requestedSkin || ticket.selectedSkinId === requestedSkin;
   }
 
   private createPendingPartyBotsForJoinedPlayer(authContext: RoomAuthContext, team: string): void {
@@ -1508,6 +1553,7 @@ export class LobbyRoom extends Room<LobbyState> {
         difficulty: partyBot.difficulty,
         name: partyBot.displayName,
         heroId: partyBot.heroId,
+        skinId: partyBot.skinId,
         team,
       });
       if (!result.ok && result.reason === 'hero_taken') {
@@ -1675,6 +1721,14 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private normalizeHeroId(heroId?: HeroId | string): HeroId | '' {
     return heroId && HERO_DEFINITIONS[heroId as HeroId] ? (heroId as HeroId) : '';
+  }
+
+  private normalizeSkinId(heroId: HeroId | null | '', skinId?: HeroSkinId | string): HeroSkinId | '' {
+    if (!heroId) return '';
+    if (isHeroSkinId(skinId) && getHeroSkinDefinition(skinId).heroId === heroId) {
+      return skinId;
+    }
+    return getDefaultHeroSkinId(heroId);
   }
 
   private isRankedMatchCandidate(playerAssignments: ParticipantAssignment[]): boolean {
@@ -1984,6 +2038,7 @@ export class LobbyRoom extends Room<LobbyState> {
     if (ticket.botFillMode !== this.state.botFillMode) return false;
     if (ticket.matchPerspective !== this.matchPerspective) return false;
     if (!this.isJoinSelectedHeroConsistent(options, ticket)) return false;
+    if (!this.isJoinSelectedSkinConsistent(options, ticket)) return false;
 
     return ticket.userId === authContext.userId;
   }

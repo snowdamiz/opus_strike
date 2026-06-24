@@ -4,7 +4,7 @@ import { ContactShadows } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { HERO_DEFINITIONS, getRankTheme } from '@voxel-strike/shared';
-import type { HeroId, PublicRankSnapshot, Team } from '@voxel-strike/shared';
+import type { HeroId, HeroSkinId, PublicRankSnapshot, Team } from '@voxel-strike/shared';
 import { HeroVoxelBody } from '../game/HeroVoxelBody';
 import type { HeroAnimationMode, HeroWalkDirection } from '../game/HeroVoxelBody';
 import { suppressExpectedContextLossLog } from '../game/webglLifecycle';
@@ -26,6 +26,7 @@ export type HeroPreviewRank = Pick<PublicRankSnapshot, 'tier' | 'division' | 'is
 
 interface HeroPreviewCanvasProps {
   heroId: HeroId;
+  skinId?: HeroSkinId | string | null;
   team?: Team;
   size?: HeroPreviewSize;
   interactive?: boolean;
@@ -290,6 +291,7 @@ function isPreviewLoopMode(animationMode: HeroPreviewAnimationMode): animationMo
 
 export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   heroId,
+  skinId,
   team = 'blue',
   size = 'detail',
   interactive = true,
@@ -317,14 +319,14 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   const shouldIdleAnimate = idleAnimation && config.idleIntensity > 0;
   const rotationInitialYaw = animationMode === 'slide' ? SLIDE_PREVIEW_YAW : initialYaw;
   const platformRankKey = platformRank ? `${platformRank.tier}:${platformRank.division ?? 0}:${platformRank.isRanked}` : 'none';
-  const previewReadyKey = `${heroId}:${team}:${size}:${animationMode}:${isBot}:${hasFlag}:${postureScaleY}:${platformRankKey}`;
+  const previewReadyKey = `${heroId}:${skinId ?? 'default'}:${team}:${size}:${animationMode}:${isBot}:${hasFlag}:${postureScaleY}:${platformRankKey}`;
   const previewShellStyle = {
     '--hero-preview-accent': BLAZE_UI_COLORS.primary,
   } as CSSProperties;
   const { yaw, isDragging, interactionProps } = useHeroPreviewRotation({
     enabled: interactive,
     initialYaw: rotationInitialYaw,
-    resetKey: `${heroId}:${animationMode === 'slide' ? 'slide' : 'default'}`,
+    resetKey: `${heroId}:${skinId ?? 'default'}:${animationMode === 'slide' ? 'slide' : 'default'}`,
   });
 
   useLayoutEffect(() => {
@@ -459,6 +461,7 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
         >
           <HeroPreviewScene
             heroId={heroId}
+            skinId={skinId}
             team={team}
             yaw={yaw}
             isDragging={isDragging}
@@ -520,6 +523,7 @@ function PreviewRenderReadySignal({
 
 interface HeroPreviewSceneProps {
   heroId: HeroId;
+  skinId?: HeroSkinId | string | null;
   team: Team;
   yaw: number;
   isDragging: boolean;
@@ -536,6 +540,7 @@ interface HeroPreviewSceneProps {
 
 function HeroPreviewScene({
   heroId,
+  skinId,
   team,
   yaw,
   isDragging,
@@ -587,14 +592,14 @@ function HeroPreviewScene({
   useEffect(() => {
     idlePhaseRef.current = 0;
     idleYawRef.current = 0;
-  }, [animationMode, heroId]);
+  }, [animationMode, heroId, skinId]);
 
   useEffect(() => {
     if (loopConfig) {
       loopStartedAtRef.current = null;
       setLoopStep({ mode: loopConfig.initialMode, duration: 0 });
     }
-  }, [animationMode, heroId, loopConfig]);
+  }, [animationMode, heroId, skinId, loopConfig]);
 
   useFrame((state, delta) => {
     if (!rootRef.current) return;
@@ -653,6 +658,7 @@ function HeroPreviewScene({
         <group position={[0, -bodyCenterOffset, 0]} scale={previewBodyScale}>
           <HeroVoxelBody
             heroId={heroId}
+            skinId={skinId}
             team={team}
             height={heroHeight}
             isBot={isBot}

@@ -12,6 +12,7 @@ import { PartyRoom } from './rooms/PartyRoom';
 import { SocialRoom } from './rooms/SocialRoom';
 import authRoutes from './auth/routes';
 import createAdminRouter from './admin/routes';
+import cosmeticsRoutes from './cosmetics/routes';
 import matchmakingRoutes from './matchmaking/routes';
 import socialRoutes from './social/routes';
 import { voiceService } from './voice/VoiceService';
@@ -156,6 +157,7 @@ app.use(express.json());
 
 // Auth routes
 app.use('/auth', authRoutes);
+app.use('/cosmetics', cosmeticsRoutes);
 app.use('/matchmaking', matchmakingRoutes);
 app.use('/social', socialRoutes);
 app.use('/admin', createAdminRouter({

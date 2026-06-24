@@ -6,6 +6,7 @@ import {
   isMatchPerspective,
   type GameEndEvent,
   type HeroId,
+  type HeroSkinId,
   type MapProfileId,
   type PlayerPingRequestMessage,
   type PlayerPingsMessage,
@@ -377,15 +378,27 @@ export function setupGameRoomListeners(
     disconnectVoice('voice_team_changed');
   });
 
-  room.onMessage('devHeroChanged', measureNetworkMessage('devHeroChanged', (data: { heroId: HeroId; health: number; maxHealth: number }) => {
+  room.onMessage('devHeroChanged', measureNetworkMessage('devHeroChanged', (data: { heroId: HeroId; skinId?: HeroSkinId | null; health: number; maxHealth: number }) => {
     loggers.network.debug('developer hero switch confirmed', data.heroId);
     const store = useGameStore.getState();
     if (store.localPlayer) {
       setLocalPlayer({
         ...store.localPlayer,
         heroId: data.heroId,
+        skinId: data.skinId ?? store.localPlayer.skinId,
         health: data.health,
         maxHealth: data.maxHealth,
+      });
+    }
+  }));
+
+  room.onMessage('devSkinChanged', measureNetworkMessage('devSkinChanged', (data: { heroId: HeroId; skinId: HeroSkinId }) => {
+    loggers.network.debug('developer skin switch confirmed', data.skinId);
+    const store = useGameStore.getState();
+    if (store.localPlayer?.heroId === data.heroId) {
+      setLocalPlayer({
+        ...store.localPlayer,
+        skinId: data.skinId,
       });
     }
   }));

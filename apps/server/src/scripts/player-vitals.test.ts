@@ -23,6 +23,7 @@ function vitals(overrides: Partial<PlayerVitalsSnapshot> = {}): PlayerVitalsSnap
     name: 'Player A',
     team: 'red',
     heroId: 'phantom',
+    skinId: undefined,
     state: 'alive',
     isReady: true,
     isBot: false,
@@ -320,6 +321,7 @@ function vitals(overrides: Partial<PlayerVitalsSnapshot> = {}): PlayerVitalsSnap
     name: 'Player A',
     team: 'red',
     heroId: 'phantom',
+    skinId: undefined,
     state: 'alive',
     isReady: true,
     isBot: true,
@@ -362,6 +364,7 @@ function vitals(overrides: Partial<PlayerVitalsSnapshot> = {}): PlayerVitalsSnap
     name: 'Player A',
     team: 'red',
     heroId: 'phantom',
+    skinId: undefined,
     state: 'alive',
     isReady: true,
     isBot: true,
@@ -533,6 +536,7 @@ function vitals(overrides: Partial<PlayerVitalsSnapshot> = {}): PlayerVitalsSnap
     name: 'Enemy A',
     team: 'blue',
     heroId: 'blaze',
+    skinId: undefined,
     state: 'alive',
     isReady: true,
     isBot: true,
@@ -568,6 +572,7 @@ function vitals(overrides: Partial<PlayerVitalsSnapshot> = {}): PlayerVitalsSnap
   assert.equal(haveVitalsChanged(base, vitals()), false);
   assert.equal(haveVitalsChanged(base, vitals({ ultimateCharge: 65.4 })), false);
   assert.equal(haveVitalsChanged(base, vitals({ ultimateCharge: 66 })), true);
+  assert.equal(haveVitalsChanged(base, vitals({ skinId: 'phantom.default' })), true);
   assert.equal(haveVitalsChanged(base, vitals({ downedHealth: 29 })), true);
   assert.equal(haveVitalsChanged(base, vitals({
     movement: {

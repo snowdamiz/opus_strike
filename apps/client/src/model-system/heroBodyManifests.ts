@@ -12,6 +12,7 @@ import {
   TEAM_CATALOG,
   type HeroId,
   type Team,
+  type HeroSkinId,
 } from '@voxel-strike/shared';
 import * as THREE from 'three';
 import type {
@@ -117,6 +118,20 @@ export const HERO_COLORS: Record<HeroId, Record<MaterialKind, string>> = {
   },
 };
 
+export const VOID_MONARCH_COLORS: Record<MaterialKind, string> = {
+  armor: '#171127',
+  dark: '#05030a',
+  metal: '#3d3557',
+  accent: '#8b5cf6',
+  glow: '#e9d5ff',
+  glass: '#32224e',
+  skin: '#160d22',
+  void: '#010006',
+  edge: '#6d5a9b',
+  eye: '#fff7ff',
+  mist: '#7c3aed',
+};
+
 type TeamAccentPartDraft = Omit<TeamAccentPart, 'id' | 'bone'> & {
   id?: string;
   bone?: TeamAccentPart['bone'];
@@ -177,8 +192,8 @@ export function createPhantomBlazeArmParts(side: -1 | 1): VoxelPartDraft[] {
 
 export const PHANTOM_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.015, 0], scale: [0.5, 0.024, 0.5], transparent: true },
-  { material: 'void', position: [-0.14, 0.36, 0], scale: [0.14, 0.64, 0.17] },
-  { material: 'void', position: [0.14, 0.36, 0], scale: [0.14, 0.64, 0.17] },
+  { material: 'void', position: [-0.14, 0.37, 0.02], scale: [0.14, 0.66, 0.17], bone: 'leftShin' },
+  { material: 'void', position: [0.14, 0.37, 0.02], scale: [0.14, 0.66, 0.17], bone: 'rightShin' },
   { material: 'edge', position: [-0.15, 0.055, -0.04], scale: [0.21, 0.09, 0.24] },
   { material: 'edge', position: [0.15, 0.055, -0.04], scale: [0.21, 0.09, 0.24] },
   { material: 'glow', position: [-0.14, 0.14, -0.17], scale: [0.07, 0.06, 0.032], emissive: true },
@@ -189,7 +204,7 @@ export const PHANTOM_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'glow', position: [-0.12, 1.19, -0.235], scale: [0.08, 0.04, 0.032], emissive: true },
   { material: 'glow', position: [0.12, 1.19, -0.235], scale: [0.08, 0.04, 0.032], emissive: true },
   { material: 'glow', position: [0, 1.0, -0.235], scale: [0.14, 0.06, 0.032], emissive: true },
-  { material: 'void', position: [0, 0.72, -0.09], scale: [0.34, 0.22, 0.18] },
+  { material: 'void', position: [0, 0.75, 0.02], scale: [0.34, 0.24, 0.25] },
   { material: 'edge', position: [0, 0.82, -0.19], scale: [0.42, 0.08, 0.04] },
   { material: 'dark', position: [0, 0.93, 0.2], scale: [0.34, 0.56, 0.08] },
   { material: 'armor', position: [-0.2, 0.9, 0.19], scale: [0.08, 0.48, 0.08] },
@@ -210,6 +225,29 @@ export const PHANTOM_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'edge', position: [0.18, 1.86, -0.02], scale: [0.24, 0.11, 0.32] },
   { material: 'armor', position: [0, 1.66, 0.18], scale: [0.32, 0.22, 0.09] },
 ], 'phantom.body');
+
+export const VOID_MONARCH_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.62, 0.012, 0.62], transparent: true },
+  { material: 'edge', position: [0, 1.88, -0.22], scale: [0.38, 0.045, 0.035], emissive: true },
+  { material: 'armor', position: [-0.16, 1.94, -0.05], scale: [0.1, 0.18, 0.18], rotation: [0, 0, 0.22] },
+  { material: 'armor', position: [0.16, 1.94, -0.05], scale: [0.1, 0.18, 0.18], rotation: [0, 0, -0.22] },
+  { material: 'edge', position: [0, 2.0, -0.045], scale: [0.1, 0.24, 0.18] },
+  { material: 'glow', position: [0, 1.78, -0.236], scale: [0.24, 0.026, 0.022], emissive: true },
+  { material: 'metal', position: [-0.34, 1.38, -0.225], scale: [0.18, 0.045, 0.034] },
+  { material: 'metal', position: [0.34, 1.38, -0.225], scale: [0.18, 0.045, 0.034] },
+  { material: 'edge', position: [-0.34, 1.46, -0.18], scale: [0.16, 0.04, 0.04] },
+  { material: 'edge', position: [0.34, 1.46, -0.18], scale: [0.16, 0.04, 0.04] },
+  { material: 'metal', position: [0, 1.32, -0.244], scale: [0.3, 0.035, 0.026], emissive: true },
+  { material: 'edge', position: [0, 1.08, -0.255], scale: [0.22, 0.032, 0.024], emissive: true },
+  { material: 'metal', position: [-0.43, 0.78, -0.405], scale: [0.08, 0.026, 0.03], bone: 'leftForearm' },
+  { material: 'metal', position: [0.43, 0.78, -0.405], scale: [0.08, 0.026, 0.03], bone: 'rightForearm' },
+  { material: 'glow', position: [-0.43, 0.72, -0.385], scale: [0.034, 0.034, 0.018], emissive: true, bone: 'leftForearm' },
+  { material: 'glow', position: [0.43, 0.72, -0.385], scale: [0.034, 0.034, 0.018], emissive: true, bone: 'rightForearm' },
+  { material: 'metal', position: [-0.15, 0.46, -0.07], scale: [0.11, 0.03, 0.03] },
+  { material: 'metal', position: [0.15, 0.46, -0.07], scale: [0.11, 0.03, 0.03] },
+  { material: 'edge', position: [-0.15, 0.25, -0.07], scale: [0.1, 0.025, 0.026] },
+  { material: 'edge', position: [0.15, 0.25, -0.07], scale: [0.1, 0.025, 0.026] },
+], 'phantom.voidMonarch.body');
 
 export const HOOKSHOT_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.016, 0], scale: [0.54, 0.024, 0.54], transparent: true },
@@ -688,6 +726,28 @@ export const HERO_BODY_MANIFESTS: Record<HeroId, HeroBodyManifest> = {
     materialPalette: HERO_COLORS.chronos,
     idleProfile: HERO_IDLE_PROFILES.chronos,
     attackDurationSeconds: HERO_ATTACK_DURATIONS.chronos,
+  },
+};
+
+export const HERO_SKIN_BODY_MANIFESTS: Record<HeroSkinId, HeroBodyManifest> = {
+  'phantom.default': HERO_BODY_MANIFESTS.phantom,
+  'hookshot.default': HERO_BODY_MANIFESTS.hookshot,
+  'blaze.default': HERO_BODY_MANIFESTS.blaze,
+  'chronos.default': HERO_BODY_MANIFESTS.chronos,
+  'phantom.void-monarch': {
+    heroId: 'phantom',
+    parts: [
+      ...PHANTOM_PARTS,
+      ...VOID_MONARCH_EXTRA_PARTS,
+    ],
+    teamAccentParts: TEAM_ACCENT_PARTS.phantom,
+    remoteSocketMarkers: REMOTE_BODY_SOCKET_MARKERS.phantom,
+    materialPalette: VOID_MONARCH_COLORS,
+    idleProfile: {
+      ...HERO_IDLE_PROFILES.phantom,
+      auraPulse: 0.15,
+    },
+    attackDurationSeconds: HERO_ATTACK_DURATIONS.phantom,
   },
 };
 

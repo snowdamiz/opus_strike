@@ -167,7 +167,7 @@ function getRankedAggregateIncrement(
 
 function getSeasonAggregateCreateData(
   participant: PersistableParticipant,
-  user: RankedUserState & { name: string },
+  user: { name: string },
   ratingUpdate: RankedRatingUpdate,
   endedAt: Date
 ) {
@@ -177,10 +177,10 @@ function getSeasonAggregateCreateData(
 
   return {
     userName: user.name,
-    totalGames: user.rankedGames + 1,
-    totalWins: user.rankedWins + rankedWinIncrement,
-    totalLosses: user.rankedLosses + rankedLossIncrement,
-    totalDraws: user.rankedDraws + rankedDrawIncrement,
+    totalGames: 1,
+    totalWins: rankedWinIncrement,
+    totalLosses: rankedLossIncrement,
+    totalDraws: rankedDrawIncrement,
     totalKills: participant.kills,
     totalDeaths: participant.deaths,
     totalAssists: participant.assists,
@@ -189,10 +189,10 @@ function getSeasonAggregateCreateData(
     totalScore: participant.score,
     totalExperience: participant.experienceGained,
     competitiveRating: ratingUpdate.ratingAfter,
-    rankedGames: user.rankedGames + 1,
-    rankedWins: user.rankedWins + rankedWinIncrement,
-    rankedLosses: user.rankedLosses + rankedLossIncrement,
-    rankedDraws: user.rankedDraws + rankedDrawIncrement,
+    rankedGames: 1,
+    rankedWins: rankedWinIncrement,
+    rankedLosses: rankedLossIncrement,
+    rankedDraws: rankedDrawIncrement,
     rankedPlacementsRemaining: ratingUpdate.rankedPlacementsRemainingAfter,
     rankedPeakRating: ratingUpdate.rankedPeakRatingAfter,
     rankedLastMatchAt: endedAt,
@@ -201,7 +201,7 @@ function getSeasonAggregateCreateData(
 
 function getSeasonAggregateUpdateData(
   participant: PersistableParticipant,
-  user: RankedUserState & { name: string },
+  user: { name: string },
   ratingUpdate: RankedRatingUpdate,
   endedAt: Date
 ): Prisma.RankedSeasonUserStatsUpdateInput {

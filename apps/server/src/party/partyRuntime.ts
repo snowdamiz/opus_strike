@@ -14,15 +14,19 @@ import {
   isCustomLobbyGameplayMode,
   getRankDivisionIndex,
   getRankFromRating,
+  getDefaultHeroSkinId,
   isGameplayMode,
+  isHeroSkinId,
   isKnownHeroId,
   isMatchPerspective,
   isMatchPerspectiveSettingMode,
   isPartyMode,
   requiresUniquePartyHeroes,
+  resolveHeroSkinDefinition,
   type GameplayMode,
   type BotDifficulty,
   type HeroId,
+  type HeroSkinId,
   type MatchPerspective,
   type MatchPerspectiveSettingMode,
   type MatchPerspectiveSettings,
@@ -39,6 +43,7 @@ export interface PartyRuntimeMember {
   sessionId: string | null;
   displayName: string;
   heroId: HeroId;
+  skinId: HeroSkinId;
   ready: boolean;
   connected: boolean;
   isBot: boolean;
@@ -57,6 +62,7 @@ export interface AddPartyMemberInput {
   sessionId: string;
   displayName: string;
   heroId: HeroId;
+  skinId?: HeroSkinId;
   rank?: RankSummary;
   competitiveRating?: number;
   rankDivisionIndex?: number;
@@ -69,6 +75,7 @@ export interface AddPartyMemberInput {
 export interface AddPartyBotInput {
   displayName?: string;
   heroId?: HeroId;
+  skinId?: HeroSkinId;
   difficulty?: BotDifficulty;
 }
 
@@ -157,12 +164,15 @@ export class PartyRosterRuntime {
 
     const competitiveRating = input.competitiveRating ?? existing?.competitiveRating ?? 800;
     const heroId = this.resolveHumanHero(input.userId, input.heroId);
-    const ready = existing?.heroId === heroId ? existing.ready : false;
+    const requestedSkinId = input.skinId ?? (existing?.heroId === heroId ? existing.skinId : undefined);
+    const skinId = resolveSkinForHero(heroId, requestedSkinId);
+    const ready = existing?.heroId === heroId && existing.skinId === skinId ? existing.ready : false;
     const member: PartyRuntimeMember = {
       userId: input.userId,
       sessionId: input.sessionId,
       displayName: input.displayName,
       heroId,
+      skinId,
       ready,
       connected: true,
       isBot: false,
@@ -211,6 +221,7 @@ export class PartyRosterRuntime {
       sessionId: null,
       displayName: (input.displayName?.trim() || `Bot ${botIndex + 1}`).slice(0, 24),
       heroId: input.heroId ?? 'blaze',
+      skinId: resolveSkinForHero(input.heroId ?? 'blaze', input.skinId),
       ready: true,
       connected: true,
       isBot: true,
@@ -342,12 +353,14 @@ export class PartyRosterRuntime {
         const userId = normalizeUserId(rawMember.userId);
         if (!userId) continue;
         const heroId = this.resolveHumanHero(userId, requestedHeroId);
+        const skinId = resolveSkinForHero(heroId, rawMember.skinId);
         this.members.set(userId, {
           userId,
           sessionId: null,
           displayName: displayName ?? userId,
           heroId,
-          ready: rawMember.ready === true && heroId === requestedHeroId,
+          skinId,
+          ready: rawMember.ready === true && heroId === requestedHeroId && skinId === resolveSkinForHero(requestedHeroId, rawMember.skinId),
           connected: false,
           isBot: false,
           botDifficulty: undefined,
@@ -365,11 +378,13 @@ export class PartyRosterRuntime {
       const botIndex = this.botCounter++;
       const difficulty = normalizeBotDifficulty(rawMember.botDifficulty);
       const heroId = requestedHeroId;
+      const skinId = resolveSkinForHero(heroId, rawMember.skinId);
       this.members.set(`party-bot:${this.partyId}:restored:${botIndex}`, {
         userId: `party-bot:${this.partyId}:restored:${botIndex}`,
         sessionId: null,
         displayName: displayName ?? `Bot ${botIndex + 1}`,
         heroId,
+        skinId,
         ready: true,
         connected: true,
         isBot: true,
@@ -404,6 +419,42 @@ export class PartyRosterRuntime {
       throw new Error('Hero is already picked by a party member');
     }
     member.heroId = heroId;
+    member.skinId = getDefaultHeroSkinId(heroId);
+    member.ready = false;
+    this.reassignBotHeroes();
+    this.launchError = null;
+    return member;
+  }
+
+  updateSkin(userId: string, skinId: HeroSkinId): PartyRuntimeMember | null {
+    const member = this.members.get(userId);
+    if (!member) return null;
+    const nextSkinId = resolveSkinForHero(member.heroId, skinId);
+    if (nextSkinId !== skinId) {
+      throw new Error('Skin is not available for the selected hero');
+    }
+    member.skinId = nextSkinId;
+    member.ready = false;
+    this.launchError = null;
+    return member;
+  }
+
+  updateLoadout(userId: string, heroId: HeroId, skinId: HeroSkinId): PartyRuntimeMember | null {
+    const member = this.members.get(userId);
+    if (!member) return null;
+    if (
+      !member.isBot
+      && this.requiresUniqueHeroes()
+      && !this.isHumanHeroAvailable(heroId, userId)
+    ) {
+      throw new Error('Hero is already picked by a party member');
+    }
+    const nextSkinId = resolveSkinForHero(heroId, skinId);
+    if (nextSkinId !== skinId) {
+      throw new Error('Skin is not available for the selected hero');
+    }
+    member.heroId = heroId;
+    member.skinId = nextSkinId;
     member.ready = false;
     this.reassignBotHeroes();
     this.launchError = null;
@@ -556,6 +607,7 @@ export class PartyRosterRuntime {
         userId: member.userId,
         displayName: member.displayName,
         heroId: member.heroId,
+        skinId: member.skinId,
         ready: member.ready,
         connected: member.connected,
         leader: member.userId === this.leaderUserId,
@@ -649,6 +701,7 @@ export class PartyRosterRuntime {
       const replacement = ALL_HERO_IDS.find((heroId) => !occupied.has(heroId));
       if (replacement) {
         bot.heroId = replacement;
+        bot.skinId = getDefaultHeroSkinId(replacement);
       }
       occupied.add(bot.heroId);
     }
@@ -694,6 +747,10 @@ function normalizeRankSummary(value: unknown): RankSummary {
   return getRankFromRating(800, 0);
 }
 
+function resolveSkinForHero(heroId: HeroId, skinId: unknown): HeroSkinId {
+  return resolveHeroSkinDefinition(heroId, isHeroSkinId(skinId) ? skinId : getDefaultHeroSkinId(heroId)).skin.id;
+}
+
 function normalizePartyLaunchPayload(value: unknown): PartyLaunchPayload | null {
   if (!value || typeof value !== 'object') return null;
   const payload = value as Partial<PartyLaunchPayload>;
@@ -709,11 +766,12 @@ function normalizePartyLaunchPayload(value: unknown): PartyLaunchPayload | null 
     lobbyId: payload.lobbyId.trim(),
     matchMode: payload.matchMode,
     gameplayMode: payload.gameplayMode,
-    botFillMode: payload.botFillMode,
+    ...(payload.botFillMode === undefined ? {} : { botFillMode: payload.botFillMode }),
     matchPerspective: payload.matchPerspective,
-    selectedHero: isKnownHeroId(payload.selectedHero) ? payload.selectedHero : undefined,
-    matchmakingTicket: typeof payload.matchmakingTicket === 'string' ? payload.matchmakingTicket : undefined,
-    targetRankDivisionIndex: typeof payload.targetRankDivisionIndex === 'number' ? payload.targetRankDivisionIndex : undefined,
-    targetRankLabel: typeof payload.targetRankLabel === 'string' ? payload.targetRankLabel : undefined,
+    ...(isKnownHeroId(payload.selectedHero) ? { selectedHero: payload.selectedHero } : {}),
+    ...(isHeroSkinId(payload.selectedSkinId) ? { selectedSkinId: payload.selectedSkinId } : {}),
+    ...(typeof payload.matchmakingTicket === 'string' ? { matchmakingTicket: payload.matchmakingTicket } : {}),
+    ...(typeof payload.targetRankDivisionIndex === 'number' ? { targetRankDivisionIndex: payload.targetRankDivisionIndex } : {}),
+    ...(typeof payload.targetRankLabel === 'string' ? { targetRankLabel: payload.targetRankLabel } : {}),
   };
 }

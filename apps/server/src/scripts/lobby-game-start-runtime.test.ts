@@ -55,6 +55,7 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
       team: 'red',
       isBot: false,
       heroId: 'phantom',
+      skinId: 'phantom.default',
       botDifficulty: undefined,
       botProfileId: undefined,
     },
@@ -64,6 +65,7 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
       team: 'red',
       isBot: false,
       heroId: undefined,
+      skinId: undefined,
       botDifficulty: undefined,
       botProfileId: undefined,
     },
@@ -73,6 +75,7 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
       team: 'red',
       isBot: true,
       heroId: 'hookshot',
+      skinId: 'hookshot.default',
       botDifficulty: 'hard',
       botProfileId: 'atlas',
     },
@@ -105,6 +108,7 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
       team: 'red',
       isBot: true,
       heroId: 'hookshot',
+      skinId: 'hookshot.default',
       botDifficulty: 'normal',
       botProfileId: undefined,
     },
@@ -114,6 +118,7 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
       team: 'red',
       isBot: false,
       heroId: 'phantom',
+      skinId: 'phantom.default',
       botDifficulty: undefined,
       botProfileId: undefined,
     },
@@ -145,6 +150,7 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
     matchPerspective: 'third_person',
     assignedTeam: 'red',
     selectedHero: 'phantom',
+    selectedSkinId: 'phantom.default',
   });
   assert.equal(ticketInputs.size, 1);
 }

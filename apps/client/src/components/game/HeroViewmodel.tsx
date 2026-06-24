@@ -10,6 +10,7 @@ import {
   SPRINT_MULTIPLIER,
   VOID_RAY_CHARGE_TIME,
   type HeroId,
+  type HeroSkinId,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import {
@@ -65,7 +66,7 @@ import {
 } from './effectResources';
 import {
   HERO_MATERIAL_COLORS,
-  getViewmodelMaterials,
+  getViewmodelMaterialsForSkin,
   isViewmodelHero,
   type ViewmodelHeroId,
   type ViewmodelMaterialSet,
@@ -94,6 +95,7 @@ import { playSharedSound } from '../../hooks/useAudio';
 
 interface HeroViewmodelProps {
   heroId: ViewmodelHeroId;
+  skinId?: HeroSkinId | string | null;
   action: ViewmodelActionState;
   config: ViewmodelQualityConfig;
 }
@@ -4691,7 +4693,7 @@ function ChronosViewmodel({
   );
 }
 
-const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, config }: HeroViewmodelProps) {
+const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, skinId, action, config }: HeroViewmodelProps) {
   const { camera } = useThree();
   const groupRef = useRef<THREE.Group>(null);
   const rootRef = useRef<THREE.Group>(null);
@@ -4706,7 +4708,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
   const processedPhantomVoidRayEventIdRef = useRef<string | null>(null);
   const processedHookshotPrimaryEventIdRef = useRef<string | null>(null);
   const processedHookshotSecondaryEventIdRef = useRef<string | null>(null);
-  const materials = useMemo(() => getViewmodelMaterials(heroId), [heroId]);
+  const materials = useMemo(() => getViewmodelMaterialsForSkin(heroId, skinId), [heroId, skinId]);
 
   useEffect(() => {
     const accentBase = config.allowDecorativeGlows ? 0.34 : 0.12;
@@ -4951,6 +4953,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
 export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
   const {
     heroId,
+    skinId,
     playerState,
     gamePhase,
     actionActive,
@@ -4965,6 +4968,7 @@ export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
 
       return {
         heroId: viewmodelHeroId,
+        skinId: state.localPlayer?.skinId ?? null,
         playerState: state.localPlayer?.state ?? 'dead',
         gamePhase: state.gamePhase,
         matchPerspective: state.matchPerspective,
@@ -4984,8 +4988,9 @@ export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
 
   return (
     <HeroViewmodelInner
-      key={heroId}
+      key={`${heroId}:${skinId ?? 'default'}`}
       heroId={heroId}
+      skinId={skinId}
       config={config}
       action={{
         active: actionActive,

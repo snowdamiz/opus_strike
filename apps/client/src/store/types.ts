@@ -3,6 +3,7 @@ import type {
   Player,
   Team,
   HeroId,
+  HeroSkinId,
   Vec3,
   PlayerInput,
   BotDifficulty,
@@ -32,21 +33,11 @@ export interface LobbyPlayer {
   isReady: boolean;
   team: string;
   heroId?: HeroId | '';
+  skinId?: HeroSkinId | '';
   isBot?: boolean;
   botDifficulty?: BotDifficulty | '';
   botProfileId?: string;
   rank?: PublicRankSnapshot;
-}
-
-export interface RankedEntryQuote {
-  quoteId: string;
-  usdCents: number;
-  solUsdPrice?: string;
-  solUsdPriceMicroUsd: string;
-  coverChargeLamports: string;
-  priceSource: string;
-  expiresAt: string;
-  cluster: string;
 }
 
 export interface MapVoteOption {
@@ -113,8 +104,6 @@ export interface MatchmakingStatus {
   requiredPlayers: number | null;
   capacityBlocked: boolean;
   capacityMaxPlayers: number | null;
-  rankedCoverChargeLamports: string | null;
-  rankedEntryQuoteId: string | null;
 }
 
 export type AppPhase = 'menu' | 'matchmaking' | 'in_lobby' | 'map_vote' | 'match_loading' | 'in_game';

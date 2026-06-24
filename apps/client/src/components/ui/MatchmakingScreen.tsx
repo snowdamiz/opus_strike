@@ -39,7 +39,7 @@ function buildQueueStatusUrl(
 }
 
 const MIN_RANK_SEARCH_DISTANCE = 2;
-const RANKED_TOKEN_HOLD_LABEL = '$20 SOL';
+const RANKED_TOKEN_HOLD_LABEL = 'SPL Token Hold';
 
 interface MatchmakingTeammate {
   id: string;
@@ -197,7 +197,7 @@ export function MatchmakingScreen() {
             {capacityBlocked
               ? 'Servers are full. Your squad will launch when a match frees space.'
               : isRanked
-              ? `${playerName ? `${playerName}, ` : ''}SOL holding verified. Finding a ranked squad.`
+              ? `${playerName ? `${playerName}, ` : ''}token holding verified. Finding a ranked squad.`
               : `${playerName ? `${playerName}, hold tight.` : 'Hold tight.'} Building a full match squad.`}
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-2">

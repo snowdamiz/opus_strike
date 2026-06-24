@@ -1,5 +1,6 @@
 import type { BotDifficulty, PlayerSnapshot, PlayerStats, PlayerVisibilityState, Team } from './player.js';
 import type { HeroId } from './hero.js';
+import type { HeroSkinId } from './skins.js';
 import type { GamePhase, MatchOutcome } from './game.js';
 import type { Vec3 } from './vector.js';
 import type { AbilityCast } from './ability.js';
@@ -214,6 +215,7 @@ export interface PlayerVitalsSnapshot {
   name: string;
   team: Team;
   heroId: HeroId | null;
+  skinId?: HeroSkinId | null;
   state: PlayerSnapshot['state'];
   isReady: boolean;
   isBot: boolean;

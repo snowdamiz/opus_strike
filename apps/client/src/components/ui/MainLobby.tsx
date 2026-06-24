@@ -1,4 +1,5 @@
-import { lazy, Suspense, type CSSProperties, useCallback, useState, useEffect, useRef } from 'react';
+import { lazy, Suspense, type CSSProperties, useCallback, useMemo, useState, useEffect, useRef } from 'react';
+import { Transaction } from '@solana/web3.js';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import {
@@ -9,17 +10,27 @@ import {
 } from '../../store/partyStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useNetwork, type RankedTokenHoldStatus } from '../../contexts/NetworkContext';
-import { useWallet } from '../../contexts/WalletContext';
+import { useWallet, type WalletProviderSummary } from '../../contexts/WalletContext';
+import {
+  buildSkinPurchaseTransaction,
+  createSkinPurchaseIntent,
+  getSkinPurchaseIntent,
+  requestSkinCatalog,
+  simulateSkinPurchaseTransaction,
+  submitSignedSkinPurchaseTransaction,
+  updateHeroSkinLoadout,
+} from '../../contexts/networkApi';
 import { HeroesPage } from './HeroesPage';
 import { StatsPage } from './StatsPage';
 import { SettingsModal } from './SettingsModal';
 import { GameDialog } from './GameDialog';
 import { GlobalChat } from './GlobalChat';
-import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
+import { HeroPreviewCanvas, type HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
 import { TopNavIconButton } from './TopNavIconButton';
 import { HeroIcon } from './HeroIcons';
+import { WalletProviderLogo } from './WalletProviderLogo';
 import { useUISounds } from '../../hooks/useUiAudio';
 import { useMobileDevice } from '../../hooks/useDeviceCapabilities';
 import { useServerLatencyProbe } from '../../hooks/useServerLatencyProbe';
@@ -31,6 +42,7 @@ import {
   DEFAULT_RANKED_SEASON_NUMBER,
   GAMEPLAY_MODES,
   HERO_DEFINITIONS,
+  getDefaultHeroSkinId,
   getMatchPerspectiveSettingMode,
   getGameplayModeLabel,
   getPartyMaxMembersForMode,
@@ -51,6 +63,10 @@ import type {
   PartyMode,
   PartyStateSnapshot,
   RankedSeasonSnapshot,
+  HeroSkinCatalogItem,
+  HeroSkinCatalogResponse,
+  HeroSkinId,
+  SkinPurchaseIntentSnapshot,
 } from '@voxel-strike/shared';
 import { BLAZE_UI_COLORS, DISCORD_AUTH_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 import { usePwaInstallPrompt } from '../../pwa';
@@ -82,11 +98,53 @@ const HERO_IDLE_ANIMATION_MODE: HeroPreviewAnimationMode = 'idle';
 const PLAY_PARTY_SLOT_COUNT = getPartyMaxMembersForMode('quick_play', DEFAULT_GAMEPLAY_MODE);
 const PING_ADVISORY_VISIBLE_MIN_MS = 100;
 const EMPTY_HERO_ID_SET = new Set<HeroId>();
+const PURCHASE_STATUS_POLL_MS = 1800;
+const PURCHASE_STATUS_POLL_ATTEMPTS = 6;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function transactionFromBase64(base64: string): Transaction {
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return Transaction.from(bytes);
+}
+
+async function waitForCreditedPurchase(intent: SkinPurchaseIntentSnapshot): Promise<SkinPurchaseIntentSnapshot> {
+  let latest = intent;
+  for (let attempt = 0; attempt < PURCHASE_STATUS_POLL_ATTEMPTS && latest.status === 'submitted'; attempt += 1) {
+    await sleep(PURCHASE_STATUS_POLL_MS);
+    latest = await getSkinPurchaseIntent(latest.intentId);
+  }
+  return latest;
+}
 
 function DiscordIcon({ className, style }: { className?: string; style?: CSSProperties }) {
   return (
     <svg className={className} style={style} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M19.54 5.34A18.2 18.2 0 0015.02 4c-.2.36-.42.84-.58 1.22a16.9 16.9 0 00-5.01 0A11.7 11.7 0 008.84 4c-1.6.27-3.12.72-4.52 1.34C1.46 9.6.68 13.74 1.07 17.81A18.5 18.5 0 006.61 20.6c.45-.61.84-1.26 1.18-1.95-.65-.24-1.27-.54-1.86-.89.16-.12.31-.24.46-.36a13.05 13.05 0 0011.14 0l.46.36c-.6.35-1.22.65-1.87.89.34.69.74 1.34 1.18 1.95a18.43 18.43 0 005.55-2.79c.46-4.72-.78-8.82-3.31-12.47zM8.52 15.3c-1.08 0-1.97-.99-1.97-2.2 0-1.22.87-2.2 1.97-2.2 1.1 0 1.99.99 1.97 2.2 0 1.21-.87 2.2-1.97 2.2zm6.96 0c-1.08 0-1.97-.99-1.97-2.2 0-1.22.87-2.2 1.97-2.2 1.1 0 1.99.99 1.97 2.2 0 1.21-.87 2.2-1.97 2.2z" />
+    </svg>
+  );
+}
+
+function LoginIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M15.75 8.75V6.5A2.5 2.5 0 0013.25 4h-6.5A2.5 2.5 0 004.25 6.5v11A2.5 2.5 0 006.75 20h6.5a2.5 2.5 0 002.5-2.5v-2.25" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M10.5 12h8.25m0 0l-3-3m3 3l-3 3" />
+    </svg>
+  );
+}
+
+function SpinnerIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg className={`${className} animate-spin`} fill="none" viewBox="0 0 24 24" aria-hidden="true">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>
   );
 }
@@ -128,6 +186,107 @@ function DiscordSignInButton({
   );
 }
 
+function LoginButton({
+  onClick,
+  className = '',
+}: {
+  onClick: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`play-main-cta play-main-cta-login group ${className}`}
+      style={{
+        background: `linear-gradient(135deg, ${BLAZE_UI_COLORS.primary}, ${BLAZE_UI_COLORS.secondary})`,
+        boxShadow: `0 0 60px ${BLAZE_UI_COLORS.primary}40, inset 0 1px 0 rgba(255,255,255,0.22)`,
+      }}
+    >
+      <span
+        className="absolute inset-0 opacity-0 transition-opacity group-hover:opacity-100"
+        style={{ background: WALLET_AUTH_COLORS.shimmer }}
+      />
+      <span className="play-main-cta-content relative flex items-center justify-center gap-2">
+        <LoginIcon className="h-5 w-5 sm:h-6 sm:w-6" />
+        LOGIN
+      </span>
+    </button>
+  );
+}
+
+function LoginDialog({
+  walletProviders,
+  isConnecting,
+  authError,
+  onDiscordSignIn,
+  onWalletSignIn,
+  onClose,
+}: {
+  walletProviders: WalletProviderSummary[];
+  isConnecting: boolean;
+  authError: string | null;
+  onDiscordSignIn: () => void;
+  onWalletSignIn: (providerId?: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const walletOptions = walletProviders.length > 0
+    ? walletProviders
+    : [{ id: undefined, name: 'Solana Wallet', installed: false, mobileDeepLink: false }];
+
+  return (
+    <GameDialog
+      title="LOGIN"
+      icon={<LoginIcon />}
+      iconClassName="login-dialog-title-icon"
+      size="sm"
+      onClose={onClose}
+      panelClassName="login-dialog-panel"
+      bodyClassName="login-dialog-body"
+    >
+      <div className="login-provider-stack">
+        <DiscordSignInButton
+          onClick={onDiscordSignIn}
+          className="login-provider-button login-provider-button-discord group"
+          iconClassName="h-5 w-5"
+        />
+
+        <div className="login-wallet-section">
+          <div className="login-wallet-section-header">
+            <span>Wallet</span>
+            <span>{walletProviders.length > 0 ? 'Detected' : 'Not detected'}</span>
+          </div>
+          <div className="login-wallet-options">
+            {walletOptions.map((wallet) => (
+              <button
+                key={wallet.id ?? 'wallet-fallback'}
+                type="button"
+                onClick={() => onWalletSignIn(wallet.id)}
+                disabled={isConnecting}
+                className="login-provider-button login-provider-button-wallet"
+              >
+                <span className="login-provider-icon">
+                  {isConnecting ? <SpinnerIcon /> : <WalletProviderLogo wallet={wallet} className="login-provider-logo" />}
+                </span>
+                <span className="login-provider-copy">
+                  <span>{wallet.installed ? wallet.name : 'Connect Wallet'}</span>
+                  <span>{wallet.mobileDeepLink ? 'Mobile deep link' : wallet.installed ? 'Sign message' : 'Phantom, Solflare, Brave'}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {authError && (
+          <div className="login-dialog-error" role="status">
+            {authError}
+          </div>
+        )}
+      </div>
+    </GameDialog>
+  );
+}
+
 function SlopHeroesMark({ className }: { className?: string }) {
   return (
     <img
@@ -142,7 +301,6 @@ function SlopHeroesMark({ className }: { className?: string }) {
 
 // Navigation tabs
 type MainTab = 'play' | 'heroes' | 'stats' | 'loadout';
-const RANKED_NATIVE_SOL_ADDRESS = 'So11111111111111111111111111111111111111112';
 const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
   mode: 'season',
   seasonNumber: DEFAULT_RANKED_SEASON_NUMBER,
@@ -151,15 +309,14 @@ const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
 };
 const SEASON_RULES_ARIA = 'Season rewards and ranked history are tracked by season.';
 
-function formatRankedUsdCents(usdCents: number): string {
-  const normalizedCents = Number.isInteger(usdCents) && usdCents > 0 ? usdCents : 0;
-  const dollars = Math.floor(normalizedCents / 100);
-  const cents = normalizedCents % 100;
-  return cents === 0 ? `$${dollars}` : `$${dollars}.${cents.toString().padStart(2, '0')}`;
+function rankedTokenHoldRequirement(status: RankedTokenHoldStatus): string {
+  const symbol = status.tokenSymbol ?? 'TOKEN';
+  return `${status.requiredTokenAmount || '0'} ${symbol} hold`;
 }
 
-function rankedTokenHoldRequirement(status: RankedTokenHoldStatus): string {
-  return `${formatRankedUsdCents(status.usdCents)} hold`;
+function rankedTokenGateBlockedMessage(status: RankedTokenHoldStatus): string {
+  if (status.mode === 'locked') return status.lockedReason ?? 'Ranked is locked';
+  return `Ranked requires ${rankedTokenHoldRequirement(status)}`;
 }
 
 function formatSeasonBoundaryDate(season: RankedSeasonSnapshot): string {
@@ -246,6 +403,7 @@ export function MainLobby() {
     restoreParty,
     getActivePartySession,
     setPartyHero,
+    setPartySkin,
     kickPartyMember,
     setPartyMode,
     setPartyBotFill,
@@ -261,22 +419,29 @@ export function MainLobby() {
   const pwaInstall = usePwaInstallPrompt();
   const {
     walletAddress,
+    connectWallet,
+    walletProviders,
+    isConnecting: isWalletConnecting,
     isAuthenticated,
     isNewUser,
     user,
     pendingRegistration,
     suggestedPlayerName,
-    hasPhantomAccount,
+    hasWalletAccount,
     logout,
     signInWithDiscord,
-    linkPhantom,
+    signInWithWallet,
+    linkWallet,
+    signTransaction,
     registerUser,
+    error: authError,
     clearError,
     clearNotice,
   } = useWallet();
 
   const [activeTab, setActiveTab] = useState<MainTab>('play');
   const [error, setError] = useState<string | null>(null);
+  const [showLoginDialog, setShowLoginDialog] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showSocial, setShowSocial] = useState(false);
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
@@ -285,6 +450,10 @@ export function MainLobby() {
   const [isRankedTokenHoldLoading, setIsRankedTokenHoldLoading] = useState(false);
   const [rankedTokenHoldError, setRankedTokenHoldError] = useState<string | null>(null);
   const [rankedSeason, setRankedSeason] = useState<RankedSeasonSnapshot>(DEFAULT_RANKED_SEASON);
+  const [skinCatalog, setSkinCatalog] = useState<HeroSkinCatalogResponse | null>(null);
+  const [isSkinCatalogLoading, setIsSkinCatalogLoading] = useState(false);
+  const [skinCatalogError, setSkinCatalogError] = useState<string | null>(null);
+  const [skinActionBusyId, setSkinActionBusyId] = useState<HeroSkinId | null>(null);
   const [runningGameSession, setRunningGameSession] = useState<RunningGameSession | null>(null);
   const [isReconnectChecking, setIsReconnectChecking] = useState(false);
   const [isMobilePwaInstalling, setIsMobilePwaInstalling] = useState(false);
@@ -294,7 +463,7 @@ export function MainLobby() {
   const [newPlayerName, setNewPlayerName] = useState('');
   const [nameError, setNameError] = useState<string | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
-  const [isLinkingPhantom, setIsLinkingPhantom] = useState(false);
+  const [isLinkingWallet, setIsLinkingWallet] = useState(false);
   const autoJoinPartyAttemptRef = useRef<string | null>(null);
   const socialBadgeCount = useSocialBadgeCount();
   const { party, localPartyUserId, partyLaunchError } = usePartyStore(
@@ -306,6 +475,18 @@ export function MainLobby() {
   );
   const localPartyMember = getPartyMember(party, localPartyUserId);
   const localPartyHeroId = localPartyMember?.heroId;
+  const loadoutByHero = useMemo(() => new Map(
+    (skinCatalog?.loadouts ?? []).map((loadout) => [loadout.heroId, loadout.skinId])
+  ), [skinCatalog]);
+  const selectedSkinId = (
+    localPartyMember?.skinId
+    ?? loadoutByHero.get(featuredHero)
+    ?? getDefaultHeroSkinId(featuredHero)
+  ) as HeroSkinId;
+  const skinsForFeaturedHero = useMemo(
+    () => (skinCatalog?.skins ?? []).filter((skin) => skin.heroId === featuredHero),
+    [featuredHero, skinCatalog]
+  );
   const isInParty = Boolean(party);
   const isPartyLeader = isPartyLeaderForUser(party, localPartyUserId);
   const isPartyReadyToStart = arePartyMembersReady(party);
@@ -333,6 +514,7 @@ export function MainLobby() {
         userId: user?.id ?? 'local-player',
         displayName: playerName || user?.name || 'Player',
         heroId: featuredHero,
+        skinId: selectedSkinId,
         ready: false,
         connected: true,
         leader: true,
@@ -380,6 +562,22 @@ export function MainLobby() {
 
     return () => controller.abort();
   }, []);
+
+  const loadSkinCatalog = useCallback(async () => {
+    setIsSkinCatalogLoading(true);
+    setSkinCatalogError(null);
+    try {
+      setSkinCatalog(await requestSkinCatalog());
+    } catch (err) {
+      setSkinCatalogError(err instanceof Error ? err.message : 'Failed to load skins');
+    } finally {
+      setIsSkinCatalogLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSkinCatalog();
+  }, [isAuthenticated, loadSkinCatalog, user?.id]);
 
   // Handle user authenticated - close modal and set user info
   useEffect(() => {
@@ -445,10 +643,11 @@ export function MainLobby() {
 
       const rejoinName = playerName || user.name || validSavedParty?.playerName || 'Player';
       const heroId = validSavedParty?.heroId ?? featuredHero;
+      const skinId = validSavedParty?.skinId ?? selectedSkinId;
 
       try {
         if (!partyId) throw new Error('Saved party room is unavailable');
-        await joinParty(rejoinName, partyId, heroId);
+        await joinParty(rejoinName, partyId, heroId, skinId);
       } catch {
         if (!persistentPartyId) {
           if (partyId) {
@@ -461,7 +660,7 @@ export function MainLobby() {
         }
 
         try {
-          await restoreParty(rejoinName, persistentPartyId, heroId);
+          await restoreParty(rejoinName, persistentPartyId, heroId, skinId);
         } catch {
           if (partyId) {
             clearActivePartySession(partyId);
@@ -486,12 +685,13 @@ export function MainLobby() {
     party,
     playerName,
     restoreParty,
+    selectedSkinId,
     user?.id,
     user?.name,
   ]);
 
   useEffect(() => {
-    if (activePlayMode !== 'ranked' || !isAuthenticated || !hasPhantomAccount || isRankedPreseason) {
+    if (activePlayMode !== 'ranked' || !isAuthenticated || isRankedPreseason) {
       setRankedTokenHoldStatus(null);
       setRankedTokenHoldError(null);
       setIsRankedTokenHoldLoading(false);
@@ -520,7 +720,7 @@ export function MainLobby() {
     return () => {
       isCurrent = false;
     };
-  }, [activePlayMode, getRankedTokenHoldStatus, hasPhantomAccount, isAuthenticated, isRankedPreseason, user?.walletAddress, walletAddress]);
+  }, [activePlayMode, getRankedTokenHoldStatus, isAuthenticated, isRankedPreseason, user?.walletAddress, walletAddress]);
 
   const refreshRunningGameReconnect = useCallback(() => {
     if (!isAuthenticated) {
@@ -572,11 +772,29 @@ export function MainLobby() {
     };
   }, [refreshRunningGameReconnect]);
 
+  const handleOpenLogin = useCallback(() => {
+    clearError();
+    clearNotice();
+    setShowLoginDialog(true);
+  }, [clearError, clearNotice]);
+
   const handleDiscordSignIn = () => {
     clearError();
     clearNotice();
+    setShowLoginDialog(false);
     signInWithDiscord();
   };
+
+  const handleWalletSignIn = useCallback(async (providerId?: string) => {
+    clearError();
+    clearNotice();
+    try {
+      await signInWithWallet(providerId);
+      setShowLoginDialog(false);
+    } catch {
+      // WalletContext owns the user-facing error message.
+    }
+  }, [clearError, clearNotice, signInWithWallet]);
 
   const handleRegister = async () => {
     if (!newPlayerName.trim()) {
@@ -640,25 +858,25 @@ export function MainLobby() {
     }
   }, [isMobilePwaInstalling, pwaInstall.install]);
 
-  const handleLinkPhantom = async (): Promise<boolean> => {
-    if (hasPhantomAccount) return true;
-    if (isLinkingPhantom) return false;
+  const handleLinkWallet = async (): Promise<boolean> => {
+    if (hasWalletAccount) return true;
+    if (isLinkingWallet) return false;
 
     setError(null);
     clearError();
     clearNotice();
-    setIsLinkingPhantom(true);
+    setIsLinkingWallet(true);
     try {
-      const linkedUser = await linkPhantom();
+      const linkedUser = await linkWallet();
       storeSetPlayerName(linkedUser.name);
       setUser(linkedUser.id, linkedUser.name, linkedUser.stats);
       setWalletAddress(linkedUser.walletAddress ?? null);
       return Boolean(linkedUser.walletAddress);
     } catch (err: any) {
-      setError(err.message || 'Failed to connect Phantom');
+      setError(err.message || 'Failed to connect wallet');
       return false;
     } finally {
-      setIsLinkingPhantom(false);
+      setIsLinkingWallet(false);
     }
   };
 
@@ -670,14 +888,99 @@ export function MainLobby() {
     !showProfileModal
   );
 
-  const discordDisplayName = pendingRegistration?.displayName
+  const pendingRegistrationDisplayName = pendingRegistration?.displayName
+    || pendingRegistration?.walletAddress
     || user?.linkedAccounts.find((account) => account.provider === 'discord')?.displayName
-    || 'Discord';
+    || 'Connected';
+  const pendingRegistrationProviderLabel = pendingRegistration?.provider === 'wallet' ? 'Wallet' : 'Discord';
 
   const handleSelectHero = (heroId: HeroId) => {
     setFeaturedHero(heroId);
     if (isInParty) {
       setPartyHero(heroId);
+    }
+  };
+
+  const handleEquipSkin = async (skin: HeroSkinCatalogItem) => {
+    if (!isAuthenticated) {
+      handleOpenLogin();
+      return;
+    }
+    if (!skin.owned) {
+      setSkinCatalogError('Purchase this skin before equipping it.');
+      return;
+    }
+
+    setSkinActionBusyId(skin.id);
+    setSkinCatalogError(null);
+    try {
+      const loadout = await updateHeroSkinLoadout({ heroId: skin.heroId, skinId: skin.id });
+      setFeaturedHero(loadout.heroId);
+      if (isInParty && loadout.heroId === localPartyMember?.heroId) {
+        setPartySkin(loadout.skinId);
+      }
+      await loadSkinCatalog();
+    } catch (err) {
+      setSkinCatalogError(err instanceof Error ? err.message : 'Failed to equip skin');
+    } finally {
+      setSkinActionBusyId(null);
+    }
+  };
+
+  const handlePurchaseSkin = async (skin: HeroSkinCatalogItem) => {
+    if (!isAuthenticated) {
+      handleOpenLogin();
+      return;
+    }
+    if (skin.purchaseDisabledReason) {
+      setSkinCatalogError(skin.purchaseDisabledReason);
+      return;
+    }
+    if (!hasWalletAccount) {
+      const linked = await handleLinkWallet();
+      if (!linked) return;
+    }
+
+    setSkinActionBusyId(skin.id);
+    setSkinCatalogError(null);
+    try {
+      const intent = await createSkinPurchaseIntent(skin.id);
+      const connectedWallet = walletAddress ?? await connectWallet();
+      if (!connectedWallet) {
+        throw new Error('Connect a wallet before paying');
+      }
+      if (connectedWallet !== intent.walletAddress) {
+        throw new Error('Connected wallet does not match the linked account wallet');
+      }
+
+      const transactionPayload = await buildSkinPurchaseTransaction(intent.intentId);
+      const simulation = await simulateSkinPurchaseTransaction({
+        intentId: intent.intentId,
+        transactionBase64: transactionPayload.transactionBase64,
+      });
+      if (!simulation.ok) {
+        throw new Error('Purchase transaction simulation failed');
+      }
+
+      const signedTransactionBase64 = await signTransaction(transactionFromBase64(transactionPayload.transactionBase64));
+      const submitted = await submitSignedSkinPurchaseTransaction({
+        intentId: intent.intentId,
+        signedTransactionBase64,
+      });
+      const finalIntent = await waitForCreditedPurchase(submitted);
+      if (finalIntent.status !== 'credited') {
+        throw new Error(finalIntent.lastError || 'Purchase is still waiting for confirmation');
+      }
+
+      const loadout = await updateHeroSkinLoadout({ heroId: skin.heroId, skinId: skin.id });
+      if (isInParty && loadout.heroId === localPartyMember?.heroId) {
+        setPartySkin(loadout.skinId);
+      }
+      await loadSkinCatalog();
+    } catch (err) {
+      setSkinCatalogError(err instanceof Error ? err.message : 'Failed to purchase skin');
+    } finally {
+      setSkinActionBusyId(null);
     }
   };
 
@@ -692,7 +995,7 @@ export function MainLobby() {
       return;
     }
     try {
-      await quickPlay(playerName, gameplayMode, botFillEnabled, featuredHero, matchPerspective);
+      await quickPlay(playerName, gameplayMode, botFillEnabled, featuredHero, matchPerspective, selectedSkinId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to find a match');
     }
@@ -708,6 +1011,7 @@ export function MainLobby() {
       await ensureParty(playerName, featuredHero, {
         selectedMode: 'custom',
         gameplayMode: activeCustomGameplayMode,
+        selectedSkinId,
       });
       setPartyPerspective('custom', getMatchPerspectiveForPlayMode('custom', activePerspectiveByMode));
       startParty();
@@ -743,11 +1047,15 @@ export function MainLobby() {
       return;
     }
     if (!isAuthenticated) {
-      handleDiscordSignIn();
+      handleOpenLogin();
       return;
     }
-    if (!hasPhantomAccount) {
-      const linked = await handleLinkPhantom();
+    if (rankedTokenHoldStatus?.eligible === false) {
+      setError(rankedTokenGateBlockedMessage(rankedTokenHoldStatus));
+      return;
+    }
+    if (!hasWalletAccount) {
+      const linked = await handleLinkWallet();
       if (!linked) return;
       setRankedTokenHoldStatus(null);
       setRankedTokenHoldError(null);
@@ -755,12 +1063,8 @@ export function MainLobby() {
     if (isRankedTokenHoldLoading) {
       return;
     }
-    if (rankedTokenHoldStatus?.eligible === false) {
-      setError(`Ranked requires ${rankedTokenHoldRequirement(rankedTokenHoldStatus)}.`);
-      return;
-    }
     try {
-      await rankedPlay(playerName, featuredHero);
+      await rankedPlay(playerName, featuredHero, selectedSkinId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to enter ranked');
     }
@@ -923,7 +1227,7 @@ export function MainLobby() {
             rankedSeason={rankedSeason}
             playerName={playerName || user?.name || 'Guest'}
             isAuthenticated={isAuthenticated}
-            hasPhantomAccount={hasPhantomAccount}
+            hasWalletAccount={hasWalletAccount}
             requiresTutorial={tutorialRequired}
             error={error ?? partyLaunchError}
             party={party}
@@ -952,8 +1256,12 @@ export function MainLobby() {
             onOpenSocial={() => setShowSocial(true)}
             onStartTutorial={handleStartTutorial}
             onReconnect={handleReconnectGame}
-            onDiscordSignIn={handleDiscordSignIn}
+            onLogin={handleOpenLogin}
             onSelectHero={handleSelectHero}
+            onViewAllHeroes={() => {
+              playButtonClick();
+              setActiveTab('heroes');
+            }}
           />
         )}
         {activeTab === 'heroes' && (
@@ -964,17 +1272,19 @@ export function MainLobby() {
         )}
         {activeTab === 'stats' && <StatsPage />}
         {activeTab === 'loadout' && (
-          <div className="h-full flex items-center justify-center menu-content">
-            <div className="text-center">
-              <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
-                <svg className="w-10 h-10 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                </svg>
-              </div>
-              <h2 className="font-display text-3xl text-white/40">LOADOUT</h2>
-              <p className="text-white/20 font-body mt-2">Coming Soon</p>
-            </div>
-          </div>
+          <LoadoutTab
+            featuredHero={featuredHero}
+            selectedSkinId={selectedSkinId}
+            skins={skinsForFeaturedHero}
+            catalog={skinCatalog}
+            isLoading={isSkinCatalogLoading}
+            error={skinCatalogError}
+            busySkinId={skinActionBusyId}
+            isAuthenticated={isAuthenticated}
+            onSelectHero={handleSelectHero}
+            onEquipSkin={handleEquipSkin}
+            onPurchaseSkin={handlePurchaseSkin}
+          />
         )}
       </div>
 
@@ -990,9 +1300,20 @@ export function MainLobby() {
         />
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showLoginDialog && !isAuthenticated && (
+        <LoginDialog
+          walletProviders={walletProviders}
+          isConnecting={isWalletConnecting}
+          authError={authError}
+          onDiscordSignIn={handleDiscordSignIn}
+          onWalletSignIn={handleWalletSignIn}
+          onClose={() => setShowLoginDialog(false)}
+        />
+      )}
       {showProfileModal && (
         <CreateProfileModal
-          pendingRegistrationDisplayName={discordDisplayName}
+          pendingRegistrationDisplayName={pendingRegistrationDisplayName}
+          pendingRegistrationProviderLabel={pendingRegistrationProviderLabel}
           newPlayerName={newPlayerName}
           nameError={nameError}
           isRegistering={isRegistering}
@@ -1007,6 +1328,225 @@ export function MainLobby() {
   );
 }
 
+function formatSkinPrice(skin: HeroSkinCatalogItem): string {
+  const price = skin.shopPrice;
+  if (!price?.amountBaseUnits) return price?.tokenSymbol ? `TBA ${price.tokenSymbol}` : 'TBA';
+  return `${price.amountBaseUnits} ${price.tokenSymbol || 'TOKEN'}`;
+}
+
+function skinRarityClass(rarity: HeroSkinCatalogItem['rarity']): string {
+  return `is-${rarity}`;
+}
+
+function skinOwnershipLabel(skin: HeroSkinCatalogItem): string {
+  if (!skin.owned) return skin.availability === 'paid' ? formatSkinPrice(skin) : 'LOCKED';
+  if (skin.entitlementSource === 'free') return 'BASE ISSUE';
+  return 'OWNED';
+}
+
+function LoadoutTab({
+  featuredHero,
+  selectedSkinId,
+  skins,
+  catalog,
+  isLoading,
+  error,
+  busySkinId,
+  isAuthenticated,
+  onSelectHero,
+  onEquipSkin,
+  onPurchaseSkin,
+}: {
+  featuredHero: HeroId;
+  selectedSkinId: HeroSkinId;
+  skins: HeroSkinCatalogItem[];
+  catalog: HeroSkinCatalogResponse | null;
+  isLoading: boolean;
+  error: string | null;
+  busySkinId: HeroSkinId | null;
+  isAuthenticated: boolean;
+  onSelectHero: (heroId: HeroId) => void;
+  onEquipSkin: (skin: HeroSkinCatalogItem) => void;
+  onPurchaseSkin: (skin: HeroSkinCatalogItem) => void;
+}) {
+  const hero = HERO_DEFINITIONS[featuredHero];
+  const [previewSkinId, setPreviewSkinId] = useState<HeroSkinId>(selectedSkinId);
+  const selectedSkin = skins.find((skin) => skin.id === selectedSkinId) ?? skins[0] ?? null;
+  const previewSkin = skins.find((skin) => skin.id === previewSkinId) ?? selectedSkin;
+  const ownedCount = skins.filter((skin) => skin.owned).length;
+  const shopMeta = catalog?.shop
+    ? `${catalog.shop.enabled ? 'SHOP ONLINE' : 'SHOP LOCKED'} · ${catalog.shop.tokenSymbol || 'TOKEN'} · ${catalog.shop.cluster}`
+    : 'CATALOG';
+
+  useEffect(() => {
+    setPreviewSkinId(selectedSkinId);
+  }, [featuredHero, selectedSkinId]);
+
+  return (
+    <div className="loadout-screen menu-content-wide">
+      <div className="loadout-hero-switcher" aria-label="Choose hero">
+        {ALL_HERO_IDS.map((heroId) => {
+          const heroDefinition = HERO_DEFINITIONS[heroId];
+          const active = heroId === featuredHero;
+          const equippedSkin = catalog?.loadouts.find((loadout) => loadout.heroId === heroId)?.skinId
+            ?? getDefaultHeroSkinId(heroId);
+          const equippedSkinName = catalog?.skins.find((skin) => skin.id === equippedSkin)?.displayName ?? 'Default';
+          return (
+            <button
+              type="button"
+              key={heroId}
+              onClick={() => onSelectHero(heroId)}
+              className={`loadout-hero-tab${active ? ' is-active' : ''}`}
+              aria-pressed={active}
+              title={heroDefinition.name}
+            >
+              <HeroIcon heroId={heroId} className="loadout-hero-tab-icon" />
+              <span className="loadout-hero-tab-copy">
+                <span className="loadout-hero-tab-name">{heroDefinition.name}</span>
+                <span className="loadout-hero-tab-skin">{equippedSkinName}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {error && (
+        <div className="loadout-error" role="alert">
+          {error}
+        </div>
+      )}
+
+      <div className="loadout-workbench">
+        <section className="loadout-stage" aria-label={`${hero.name} skin preview`}>
+          <div className="loadout-stage-copy">
+            <div>
+              <p className="loadout-kicker">{previewSkin?.owned ? 'ARMORY READY' : 'PREVIEW ACCESS'}</p>
+              <h2 className="loadout-stage-title">{previewSkin?.displayName ?? hero.name}</h2>
+            </div>
+            <div className="loadout-stage-meta">
+              <span>{hero.name}</span>
+              <span>{previewSkin?.rarity ?? 'common'}</span>
+              <span>{previewSkin?.id === selectedSkinId ? 'equipped' : 'previewing'}</span>
+            </div>
+          </div>
+
+          <div className="loadout-stage-preview">
+            <Suspense fallback={null}>
+              <FeaturedHeroPreview
+                heroId={featuredHero}
+                skinId={previewSkin?.id ?? selectedSkinId}
+                initialYaw={Math.PI - 0.18}
+                animationMode={HERO_IDLE_ANIMATION_MODE}
+                className="loadout-featured-preview"
+              />
+            </Suspense>
+          </div>
+
+          <div className="loadout-stage-footer">
+            <p>{previewSkin?.subtitle ?? 'Inspect the selected hero frame.'}</p>
+            <span>{shopMeta}</span>
+          </div>
+        </section>
+
+        <section className="loadout-skin-bay" aria-label={`${hero.name} skins`}>
+          <div className="loadout-skin-bay-header">
+            <div>
+              <p className="loadout-kicker">SKIN BAY</p>
+              <h3>{hero.name}</h3>
+            </div>
+            <span>{ownedCount}/{skins.length} owned</span>
+          </div>
+
+          <div className="loadout-skin-list">
+            {isLoading && skins.length === 0 && (
+              <div className="loadout-empty-state">
+                Loading skins...
+              </div>
+            )}
+            {!isLoading && skins.length === 0 && (
+              <div className="loadout-empty-state">
+                No skins available.
+              </div>
+            )}
+            {skins.map((skin) => {
+              const busy = busySkinId === skin.id;
+              const equipped = skin.id === selectedSkinId;
+              const previewed = skin.id === previewSkin?.id;
+              const canPurchase = skin.availability === 'paid' && !skin.owned && !skin.purchaseDisabledReason;
+              const disabledReason = skin.purchaseDisabledReason ?? skin.shopPrice?.displayNote ?? null;
+              return (
+                <article
+                  key={skin.id}
+                  className={`loadout-skin-row${previewed ? ' is-previewed' : ''}${equipped ? ' is-equipped' : ''}${skin.owned ? '' : ' is-locked'}`}
+                >
+                  <button
+                    type="button"
+                    className="loadout-skin-preview-button"
+                    onClick={() => setPreviewSkinId(skin.id)}
+                    aria-label={`Preview ${skin.displayName}`}
+                    aria-pressed={previewed}
+                  >
+                    <HeroPreviewCanvas
+                      heroId={skin.heroId}
+                      skinId={skin.id}
+                      size="card"
+                      interactive={false}
+                      idleAnimation={false}
+                      showShadow={false}
+                      initialYaw={Math.PI - 0.28}
+                      className="loadout-skin-card-preview"
+                    />
+                  </button>
+
+                  <div className="loadout-skin-copy">
+                    <div className="loadout-skin-title-line">
+                      <h2>{skin.displayName}</h2>
+                      <span className={`loadout-rarity-chip ${skinRarityClass(skin.rarity)}`}>
+                        {skin.rarity}
+                      </span>
+                    </div>
+                    <p>{skin.subtitle}</p>
+                    <div className="loadout-skin-tags">
+                      <span>{skinOwnershipLabel(skin)}</span>
+                      {equipped && <span>equipped</span>}
+                      {previewed && !equipped && <span>previewing</span>}
+                    </div>
+                  </div>
+
+                  <div className="loadout-skin-actions">
+                    {skin.owned ? (
+                      <button
+                        type="button"
+                        disabled={equipped || busy}
+                        onClick={() => onEquipSkin(skin)}
+                        className="loadout-action-button is-equip"
+                      >
+                        {equipped ? 'EQUIPPED' : busy ? 'EQUIPPING...' : 'EQUIP'}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={!canPurchase || busy || !isAuthenticated}
+                        onClick={() => onPurchaseSkin(skin)}
+                        className="loadout-action-button is-purchase"
+                      >
+                        {busy ? 'PURCHASING...' : isAuthenticated ? 'PURCHASE' : 'SIGN IN'}
+                      </button>
+                    )}
+                    {disabledReason && !skin.owned && (
+                      <span className="loadout-skin-disabled-reason">{disabledReason}</span>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 // Play Tab Component
 interface PlayTabProps {
   isLoading: boolean;
@@ -1015,7 +1555,7 @@ interface PlayTabProps {
   rankedSeason: RankedSeasonSnapshot;
   playerName: string;
   isAuthenticated: boolean;
-  hasPhantomAccount: boolean;
+  hasWalletAccount: boolean;
   requiresTutorial: boolean;
   error: string | null;
   party: PartyStateSnapshot | null;
@@ -1044,8 +1584,9 @@ interface PlayTabProps {
   onOpenSocial: () => void;
   onStartTutorial: () => void;
   onReconnect: () => void;
-  onDiscordSignIn: () => void;
+  onLogin: () => void;
   onSelectHero: (heroId: HeroId) => void;
+  onViewAllHeroes: () => void;
 }
 
 function PlayTab({
@@ -1055,7 +1596,7 @@ function PlayTab({
   rankedSeason,
   playerName,
   isAuthenticated,
-  hasPhantomAccount,
+  hasWalletAccount,
   requiresTutorial,
   error,
   party,
@@ -1084,8 +1625,9 @@ function PlayTab({
   onOpenSocial,
   onStartTutorial,
   onReconnect,
-  onDiscordSignIn,
+  onLogin,
   onSelectHero,
+  onViewAllHeroes,
 }: PlayTabProps) {
   const { playButtonClick } = useUISounds();
   const canReconnect = isAuthenticated && Boolean(runningGameSession);
@@ -1153,7 +1695,7 @@ function PlayTab({
     if (isAuthenticated) {
       onOpenSocial();
     } else {
-      onDiscordSignIn();
+      onLogin();
     }
   };
   const handleLineupKickMember = isInParty && isPartyLeader ? (userId: string) => {
@@ -1165,13 +1707,19 @@ function PlayTab({
     onLeaveParty();
   } : undefined;
 
+  const playShellClassName = [
+    'play-tab-shell h-full menu-content',
+    party ? 'is-party-mode' : 'is-solo-mode',
+    isAuthenticated ? '' : 'is-guest-mode',
+  ].filter(Boolean).join(' ');
+
   return (
-    <div className={`play-tab-shell h-full menu-content ${party ? 'is-party-mode' : 'is-solo-mode'}`}>
+    <div className={playShellClassName}>
       <PlayActionStack
         error={error}
         isLoading={isLoading}
         isAuthenticated={isAuthenticated}
-        hasPhantomAccount={hasPhantomAccount}
+        hasWalletAccount={hasWalletAccount}
         requiresTutorial={requiresTutorial}
         rankedSeason={rankedSeason}
         selectedPlayMode={selectedPlayMode}
@@ -1191,21 +1739,30 @@ function PlayTab({
         mobilePwaInstallInProgress={mobilePwaInstallInProgress}
         onSelectPlayMode={onSelectPlayMode}
         onSetBotFillEnabled={onSetBotFillEnabled}
-        onDiscordSignIn={onDiscordSignIn}
+        onLogin={onLogin}
         onReconnect={onReconnect}
         onStartTutorial={onStartTutorial}
         onPlayAction={onPlayAction}
         onMobilePwaInstall={onMobilePwaInstall}
       />
       <div className="play-tab-stage menu-compact-scale relative">
-        <PartyLineup
-          members={lineupMembers}
-          localUserId={lineupLocalUserId}
-          heroAnimationMode={heroAnimationMode}
-          onAddMember={handleLineupAddMember}
-          onKickMember={handleLineupKickMember}
-          onLeaveParty={handleLineupLeaveParty}
-        />
+        {isAuthenticated ? (
+          <PartyLineup
+            members={lineupMembers}
+            localUserId={lineupLocalUserId}
+            heroAnimationMode={heroAnimationMode}
+            onAddMember={handleLineupAddMember}
+            onKickMember={handleLineupKickMember}
+            onLeaveParty={handleLineupLeaveParty}
+          />
+        ) : (
+          <GuestHeroCarousel
+            selectedHero={featuredHero}
+            heroAnimationMode={heroAnimationMode}
+            onSelectHero={onSelectHero}
+            onViewAllHeroes={onViewAllHeroes}
+          />
+        )}
       </div>
       {lineupLocalMember && (
         <div className="party-lineup-controls">
@@ -1219,9 +1776,126 @@ function PlayTab({
       {serverLatency && shouldShowServerLatencyAdvisory(serverLatency) && (
         <ServerLatencyAdvisory snapshot={serverLatency} />
       )}
-      <GlobalChat displayName={playerName} />
+      {isAuthenticated && <GlobalChat displayName={playerName} />}
       <RankedSeasonPlate season={rankedSeason} />
     </div>
+  );
+}
+
+function getHeroCarouselIndex(heroId: HeroId): number {
+  const index = ALL_HERO_IDS.indexOf(heroId);
+  return index >= 0 ? index : 0;
+}
+
+function getHeroCarouselNeighbor(heroId: HeroId, offset: number): HeroId {
+  const currentIndex = getHeroCarouselIndex(heroId);
+  const nextIndex = (currentIndex + offset + ALL_HERO_IDS.length) % ALL_HERO_IDS.length;
+  return ALL_HERO_IDS[nextIndex] ?? heroId;
+}
+
+function CarouselArrowIcon({ direction }: { direction: 'previous' | 'next' }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+      {direction === 'previous' ? (
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M15 5l-7 7 7 7" />
+      ) : (
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 5l7 7-7 7" />
+      )}
+    </svg>
+  );
+}
+
+function GuestHeroCarousel({
+  selectedHero,
+  heroAnimationMode,
+  onSelectHero,
+  onViewAllHeroes,
+}: {
+  selectedHero: HeroId;
+  heroAnimationMode: HeroPreviewAnimationMode;
+  onSelectHero: (heroId: HeroId) => void;
+  onViewAllHeroes: () => void;
+}) {
+  const selectedHeroIndex = getHeroCarouselIndex(selectedHero);
+  const selectedHeroDefinition = HERO_DEFINITIONS[selectedHero];
+  const handleCycleHero = (offset: number) => {
+    onSelectHero(getHeroCarouselNeighbor(selectedHero, offset));
+  };
+
+  return (
+    <section className="guest-hero-carousel" aria-label="Hero carousel">
+      <button
+        type="button"
+        className="guest-hero-carousel-arrow is-previous"
+        aria-label="Previous hero"
+        title="Previous hero"
+        onClick={() => handleCycleHero(-1)}
+      >
+        <CarouselArrowIcon direction="previous" />
+      </button>
+
+      <article className="guest-hero-slot" aria-live="polite">
+        <Suspense fallback={null}>
+          <FeaturedHeroPreview
+            heroId={selectedHero}
+            initialYaw={Math.PI - 0.12}
+            animationMode={heroAnimationMode}
+            className="guest-hero-preview"
+          />
+        </Suspense>
+        <div className="guest-hero-labels">
+          <div className="guest-hero-identity">
+            <HeroIcon heroId={selectedHero} className="guest-hero-identity-icon" />
+            <h2 className="guest-hero-name">{selectedHeroDefinition.name}</h2>
+          </div>
+          <p className="guest-hero-count">
+            HERO {selectedHeroIndex + 1}/{ALL_HERO_IDS.length}
+          </p>
+        </div>
+      </article>
+
+      <button
+        type="button"
+        className="guest-hero-carousel-arrow is-next"
+        aria-label="Next hero"
+        title="Next hero"
+        onClick={() => handleCycleHero(1)}
+      >
+        <CarouselArrowIcon direction="next" />
+      </button>
+
+      <div className="guest-hero-carousel-controls">
+        <div className="guest-hero-quick-list" aria-label="Choose hero">
+          {ALL_HERO_IDS.map((heroId) => {
+            const selected = heroId === selectedHero;
+            return (
+              <button
+                key={heroId}
+                type="button"
+                className={`guest-hero-quick-button${selected ? ' is-selected' : ''}`}
+                aria-pressed={selected}
+                aria-label={`Select ${HERO_DEFINITIONS[heroId].name}`}
+                title={HERO_DEFINITIONS[heroId].name}
+                onClick={() => {
+                  if (!selected) {
+                    onSelectHero(heroId);
+                  }
+                }}
+              >
+                <HeroIcon heroId={heroId} size={21} />
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          className="guest-hero-view-all"
+          onClick={onViewAllHeroes}
+        >
+          VIEW ALL HEROES
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -1278,6 +1952,7 @@ function PartyLineup({
               <Suspense fallback={null}>
                 <FeaturedHeroPreview
                   heroId={member.heroId}
+                  skinId={member.skinId}
                   initialYaw={Math.PI - 0.12}
                   animationMode={heroAnimationMode}
                   rank={member.rank}
@@ -1481,7 +2156,7 @@ function getPrimaryDisabledReason(input: {
   if (input.selectedPlayMode !== 'ranked' || input.requiresTutorial) return null;
   if (input.rankedSeason.mode === 'preseason') return formatSeasonBoundaryDate(input.rankedSeason);
   if (input.rankedTokenHoldStatus?.eligible === false) {
-    return `Ranked requires ${rankedTokenHoldRequirement(input.rankedTokenHoldStatus)}`;
+    return rankedTokenGateBlockedMessage(input.rankedTokenHoldStatus);
   }
   return null;
 }
@@ -1544,7 +2219,7 @@ function DownloadPwaIcon() {
 function getModeTitle(input: {
   mode: PlayMenuMode;
   isAuthenticated: boolean;
-  hasPhantomAccount: boolean;
+  hasWalletAccount: boolean;
   rankedSeason: RankedSeasonSnapshot;
   requiresTutorial: boolean;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
@@ -1554,10 +2229,10 @@ function getModeTitle(input: {
 
   if (input.mode !== 'ranked') return getPlayModeLabel(input.mode);
   if (input.rankedSeason.mode === 'preseason') return 'Ranked is disabled during Pre-season';
-  if (input.isAuthenticated && !input.hasPhantomAccount) return 'Connect Phantom before entering ranked';
   if (input.rankedTokenHoldStatus?.eligible === false) {
-    return `Ranked requires ${rankedTokenHoldRequirement(input.rankedTokenHoldStatus)}`;
+    return rankedTokenGateBlockedMessage(input.rankedTokenHoldStatus);
   }
+  if (input.isAuthenticated && !input.hasWalletAccount) return 'Connect a wallet before entering ranked';
   return input.rankedTokenHoldError ?? 'Competitive queue';
 }
 
@@ -1565,7 +2240,7 @@ function PlayActionStack({
   error,
   isLoading,
   isAuthenticated,
-  hasPhantomAccount,
+  hasWalletAccount,
   requiresTutorial,
   rankedSeason,
   selectedPlayMode,
@@ -1585,7 +2260,7 @@ function PlayActionStack({
   mobilePwaInstallInProgress,
   onSelectPlayMode,
   onSetBotFillEnabled,
-  onDiscordSignIn,
+  onLogin,
   onReconnect,
   onStartTutorial,
   onPlayAction,
@@ -1594,7 +2269,7 @@ function PlayActionStack({
   error: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  hasPhantomAccount: boolean;
+  hasWalletAccount: boolean;
   requiresTutorial: boolean;
   rankedSeason: RankedSeasonSnapshot;
   selectedPlayMode: PlayMenuMode;
@@ -1614,7 +2289,7 @@ function PlayActionStack({
   mobilePwaInstallInProgress: boolean;
   onSelectPlayMode: (mode: PlayMenuMode) => void;
   onSetBotFillEnabled: (enabled: boolean) => void;
-  onDiscordSignIn: () => void;
+  onLogin: () => void;
   onReconnect: () => void;
   onStartTutorial: () => void;
   onPlayAction: () => void;
@@ -1651,10 +2326,9 @@ function PlayActionStack({
 
   return (
     <div className="play-action-stack">
-      <PlayPanelHeading />
       <PlayModeSelector
         isAuthenticated={isAuthenticated}
-        hasPhantomAccount={hasPhantomAccount}
+        hasWalletAccount={hasWalletAccount}
         requiresTutorial={requiresTutorial}
         rankedSeason={rankedSeason}
         selectedPlayMode={selectedPlayMode}
@@ -1718,12 +2392,11 @@ function PlayActionStack({
           )}
         </div>
       ) : (
-        <DiscordSignInButton
+        <LoginButton
           onClick={() => {
             playButtonClick();
-            onDiscordSignIn();
+            onLogin();
           }}
-          className="play-main-cta play-main-cta-discord group"
         />
       )}
     </div>
@@ -1732,7 +2405,7 @@ function PlayActionStack({
 
 function PlayModeSelector({
   isAuthenticated,
-  hasPhantomAccount,
+  hasWalletAccount,
   requiresTutorial,
   rankedSeason,
   selectedPlayMode,
@@ -1745,7 +2418,7 @@ function PlayModeSelector({
   onSetBotFillEnabled,
 }: {
   isAuthenticated: boolean;
-  hasPhantomAccount: boolean;
+  hasWalletAccount: boolean;
   requiresTutorial: boolean;
   rankedSeason: RankedSeasonSnapshot;
   selectedPlayMode: PlayMenuMode;
@@ -1764,12 +2437,12 @@ function PlayModeSelector({
         const isRanked = mode === 'ranked';
         const locked = isRanked && (
           rankedSeason.mode === 'preseason' ||
-          (isAuthenticated && hasPhantomAccount && rankedTokenHoldStatus?.eligible === false)
+          (isAuthenticated && rankedTokenHoldStatus?.eligible === false)
         );
         const title = getModeTitle({
           mode,
           isAuthenticated,
-          hasPhantomAccount,
+          hasWalletAccount,
           rankedSeason,
           requiresTutorial,
           rankedTokenHoldStatus,
@@ -1891,14 +2564,6 @@ function ServerLatencyAdvisory({ snapshot }: { snapshot: ServerLatencyProbeSnaps
   );
 }
 
-function PlayPanelHeading() {
-  return (
-    <header className="play-panel-heading" aria-label="Play">
-      <h2 className="play-panel-heading-title">Play</h2>
-    </header>
-  );
-}
-
 function RankedSeasonPlate({ season }: { season: RankedSeasonSnapshot }) {
   const seasonBoundary = formatSeasonBoundaryDate(season);
 
@@ -1914,9 +2579,9 @@ function RankedSeasonPlate({ season }: { season: RankedSeasonSnapshot }) {
   );
 }
 
-// Profile creation after Discord authentication
 interface CreateProfileModalProps {
   pendingRegistrationDisplayName: string;
+  pendingRegistrationProviderLabel: string;
   newPlayerName: string;
   nameError: string | null;
   isRegistering: boolean;
@@ -1929,6 +2594,7 @@ interface CreateProfileModalProps {
 
 function CreateProfileModal({
   pendingRegistrationDisplayName,
+  pendingRegistrationProviderLabel,
   newPlayerName,
   nameError,
   isRegistering,
@@ -1938,29 +2604,41 @@ function CreateProfileModal({
   onNameErrorClear,
   onClose,
 }: CreateProfileModalProps) {
-  const discordPanelStyle = {
-    '--discord-auth-panel-bg': DISCORD_AUTH_COLORS.panelBg,
-    '--discord-auth-panel-border': DISCORD_AUTH_COLORS.panelBorder,
+  const walletLogo = { id: 'solana-wallet', name: 'Solana Wallet' };
+  const connectedPanelStyle = {
+    '--login-provider-panel-bg': pendingRegistrationProviderLabel === 'Discord'
+      ? DISCORD_AUTH_COLORS.panelBg
+      : 'rgba(255, 255, 255, 0.055)',
+    '--login-provider-panel-border': pendingRegistrationProviderLabel === 'Discord'
+      ? DISCORD_AUTH_COLORS.panelBorder
+      : 'rgba(255, 255, 255, 0.12)',
   } as CSSProperties;
-  const discordIconStyle = { color: DISCORD_AUTH_COLORS.icon } as CSSProperties;
+  const connectedIconStyle = {
+    color: pendingRegistrationProviderLabel === 'Discord' ? DISCORD_AUTH_COLORS.icon : 'white',
+  } as CSSProperties;
+  const connectedIcon = pendingRegistrationProviderLabel === 'Discord'
+    ? <DiscordIcon className="w-6 h-6 text-white" />
+    : <WalletProviderLogo wallet={walletLogo} className="w-6 h-6" />;
 
   return (
     <GameDialog
       title="CREATE PROFILE"
-      icon={<DiscordIcon className="w-6 h-6 text-white" />}
+      icon={connectedIcon}
       iconClassName="bg-white/5 border border-white/10"
       size="sm"
       onClose={onClose}
       bodyClassName="p-5 space-y-3"
     >
       <div
-        className="flex items-center justify-between p-3 bg-[var(--discord-auth-panel-bg)] border border-[var(--discord-auth-panel-border)] rounded-lg"
-        style={discordPanelStyle}
+        className="flex items-center justify-between p-3 bg-[var(--login-provider-panel-bg)] border border-[var(--login-provider-panel-border)] rounded-lg"
+        style={connectedPanelStyle}
       >
         <div className="flex items-center gap-3">
-          <DiscordIcon className="w-6 h-6" style={discordIconStyle} />
+          {pendingRegistrationProviderLabel === 'Discord'
+            ? <DiscordIcon className="w-6 h-6" style={connectedIconStyle} />
+            : <WalletProviderLogo wallet={walletLogo} className="w-6 h-6" style={connectedIconStyle} />}
           <div>
-            <p className="text-white/60 text-xs font-body">Connected</p>
+            <p className="text-white/60 text-xs font-body">{pendingRegistrationProviderLabel} Connected</p>
             <p className="text-white text-sm font-body">
               {pendingRegistrationDisplayName}
             </p>

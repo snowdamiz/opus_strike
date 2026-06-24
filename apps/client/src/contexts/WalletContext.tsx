@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import type { Transaction } from '@solana/web3.js';
 import type { RankSummary } from '@voxel-strike/shared';
 import { config } from '../config/environment';
@@ -14,31 +14,52 @@ import {
   waitForPhantomMobileRedirect,
 } from '../utils/phantomDeepLink';
 
-type AuthProviderName = 'discord' | 'phantom';
+type AuthProviderName = 'discord' | 'wallet';
 const EMPTY_LINKED_ACCOUNTS: LinkedAccountSummary[] = [];
 
 interface WalletPublicKey {
   toBase58: () => string;
 }
 
-interface PhantomProvider {
+interface SolanaWalletProvider {
   publicKey: WalletPublicKey | null;
-  isConnected: boolean;
-  isPhantom: boolean;
-  connect: (opts?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey: WalletPublicKey }>;
-  disconnect: () => Promise<void>;
-  signMessage: (message: Uint8Array, encoding: string) => Promise<{ signature: Uint8Array }>;
+  isConnected?: boolean;
+  connected?: boolean;
+  isPhantom?: boolean;
+  isSolflare?: boolean;
+  isBraveWallet?: boolean;
+  name?: string;
+  walletName?: string;
+  connect: (opts?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey?: WalletPublicKey } | void>;
+  disconnect?: () => Promise<void>;
+  signMessage: (message: Uint8Array, encoding?: string) => Promise<{ signature: Uint8Array } | Uint8Array>;
   signTransaction?: (transaction: Transaction) => Promise<Transaction>;
-  on: (event: string, handler: (...args: any[]) => void) => void;
-  off: (event: string, handler: (...args: any[]) => void) => void;
+  on?: (event: string, handler: (...args: any[]) => void) => void;
+  off?: (event: string, handler: (...args: any[]) => void) => void;
+}
+
+export interface WalletProviderSummary {
+  id: string;
+  name: string;
+  installed: boolean;
+  mobileDeepLink: boolean;
+}
+
+interface DiscoveredWalletProvider extends WalletProviderSummary {
+  provider: SolanaWalletProvider | null;
 }
 
 declare global {
   interface Window {
     phantom?: {
-      solana?: PhantomProvider;
+      solana?: SolanaWalletProvider;
     };
-    solana?: PhantomProvider;
+    solana?: SolanaWalletProvider & {
+      providers?: SolanaWalletProvider[];
+    };
+    solflare?: SolanaWalletProvider;
+    braveSolana?: SolanaWalletProvider;
+    solanaProviders?: SolanaWalletProvider[];
   }
 }
 
@@ -107,7 +128,8 @@ export interface UserData {
 }
 
 interface WalletContextType {
-  isPhantomInstalled: boolean;
+  isWalletInstalled: boolean;
+  walletProviders: WalletProviderSummary[];
   isConnected: boolean;
   isConnecting: boolean;
   walletAddress: string | null;
@@ -118,16 +140,17 @@ interface WalletContextType {
   user: UserData | null;
   linkedAccounts: LinkedAccountSummary[];
   hasDiscordAccount: boolean;
-  hasPhantomAccount: boolean;
+  hasWalletAccount: boolean;
   pendingRegistration: PendingRegistrationData | null;
   suggestedPlayerName: string;
   isSessionLoading: boolean;
 
-  connect: () => Promise<string | null>;
+  connectWallet: (providerId?: string) => Promise<string | null>;
   disconnect: () => void;
   signInWithDiscord: () => void;
+  signInWithWallet: (providerId?: string) => Promise<UserData | null>;
   linkDiscord: () => void;
-  linkPhantom: () => Promise<UserData>;
+  linkWallet: (providerId?: string) => Promise<UserData>;
   signTransaction: (transaction: Transaction) => Promise<string>;
   registerUser: (name: string) => Promise<UserData>;
   completeTutorial: () => Promise<UserData>;
@@ -140,21 +163,151 @@ interface WalletContextType {
 }
 
 const WalletContext = createContext<WalletContextType | null>(null);
+const PHANTOM_MOBILE_PROVIDER_ID = 'phantom-mobile';
 
-function getPhantomProvider(): PhantomProvider | null {
-  if (typeof window === 'undefined') return null;
-
-  const provider = window.phantom?.solana || window.solana;
-  return provider?.isPhantom ? provider : null;
+function isSolanaWalletProvider(value: unknown): value is SolanaWalletProvider {
+  if (!value || typeof value !== 'object') return false;
+  const provider = value as Partial<SolanaWalletProvider>;
+  return typeof provider.connect === 'function' && typeof provider.signMessage === 'function';
 }
 
-function getConnectedPhantomAddress(): string | null {
-  const provider = getPhantomProvider();
-  if (provider?.isConnected && provider.publicKey) {
-    return provider.publicKey.toBase58();
+function getWalletProviderName(provider: SolanaWalletProvider): string {
+  if (provider.isBraveWallet) return 'Brave Wallet';
+  if (provider.isSolflare) return 'Solflare';
+  if (provider.isPhantom) return 'Phantom';
+  return provider.name || provider.walletName || 'Solana Wallet';
+}
+
+function getWalletProviderId(provider: SolanaWalletProvider, fallback: string): string {
+  const name = getWalletProviderName(provider).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return name || fallback;
+}
+
+function collectInjectedWalletCandidates(): Array<{ provider: unknown; fallbackId: string }> {
+  if (typeof window === 'undefined') return [];
+
+  const candidates: Array<{ provider: unknown; fallbackId: string }> = [
+    { provider: window.braveSolana, fallbackId: 'brave-wallet' },
+    { provider: window.phantom?.solana, fallbackId: 'phantom' },
+    { provider: window.solflare, fallbackId: 'solflare' },
+    { provider: window.solana, fallbackId: 'solana' },
+  ];
+
+  for (const [index, provider] of (window.solanaProviders ?? []).entries()) {
+    candidates.push({ provider, fallbackId: `solana-provider-${index}` });
   }
 
-  return getPhantomMobileDeepLinkSession()?.publicKey ?? null;
+  for (const [index, provider] of (window.solana?.providers ?? []).entries()) {
+    candidates.push({ provider, fallbackId: `solana-provider-list-${index}` });
+  }
+
+  return candidates;
+}
+
+function discoverWalletProviders(): DiscoveredWalletProvider[] {
+  const providers: DiscoveredWalletProvider[] = [];
+  const seen = new Set<SolanaWalletProvider>();
+  const usedIds = new Set<string>();
+
+  for (const candidate of collectInjectedWalletCandidates()) {
+    if (!isSolanaWalletProvider(candidate.provider) || seen.has(candidate.provider)) continue;
+    seen.add(candidate.provider);
+
+    const baseId = getWalletProviderId(candidate.provider, candidate.fallbackId);
+    let id = baseId;
+    let duplicateIndex = 2;
+    while (usedIds.has(id)) {
+      id = `${baseId}-${duplicateIndex}`;
+      duplicateIndex += 1;
+    }
+    usedIds.add(id);
+
+    providers.push({
+      id,
+      name: getWalletProviderName(candidate.provider),
+      installed: true,
+      mobileDeepLink: false,
+      provider: candidate.provider,
+    });
+  }
+
+  if (providers.length === 0 && canUsePhantomMobileDeepLink()) {
+    providers.push({
+      id: PHANTOM_MOBILE_PROVIDER_ID,
+      name: 'Phantom Mobile',
+      installed: true,
+      mobileDeepLink: true,
+      provider: null,
+    });
+  }
+
+  return providers;
+}
+
+function getConnectedWallet(
+  providers: DiscoveredWalletProvider[],
+  preferredProviderId: string | null = null
+): { providerId: string; provider: SolanaWalletProvider | null; address: string } | null {
+  const orderedProviders = preferredProviderId
+    ? [
+        ...providers.filter((provider) => provider.id === preferredProviderId),
+        ...providers.filter((provider) => provider.id !== preferredProviderId),
+      ]
+    : providers;
+
+  for (const wallet of orderedProviders) {
+    const provider = wallet.provider;
+    if (!provider) continue;
+    const connected = provider.isConnected ?? provider.connected ?? false;
+    if (connected && provider.publicKey) {
+      return {
+        providerId: wallet.id,
+        provider,
+        address: provider.publicKey.toBase58(),
+      };
+    }
+  }
+
+  const mobileSession = getPhantomMobileDeepLinkSession();
+  return mobileSession
+    ? { providerId: PHANTOM_MOBILE_PROVIDER_ID, provider: null, address: mobileSession.publicKey }
+    : null;
+}
+
+function toWalletProviderSummaries(providers: DiscoveredWalletProvider[]): WalletProviderSummary[] {
+  return providers.map(({ id, name, installed, mobileDeepLink }) => ({
+    id,
+    name,
+    installed,
+    mobileDeepLink,
+  }));
+}
+
+async function connectInjectedWalletProvider(provider: SolanaWalletProvider): Promise<string> {
+  const result = await provider.connect();
+  const publicKey = result?.publicKey ?? provider.publicKey;
+  if (!publicKey) {
+    throw new Error('Wallet did not return a public key.');
+  }
+  return publicKey.toBase58();
+}
+
+async function signWalletAuthMessage(
+  provider: SolanaWalletProvider,
+  message: string
+): Promise<string> {
+  const encodedMessage = new TextEncoder().encode(message);
+  const result = await provider.signMessage(encodedMessage, 'utf8');
+  const signature = result instanceof Uint8Array ? result : result.signature;
+  const { default: bs58 } = await import('bs58');
+  return bs58.encode(signature);
+}
+
+function getWalletActionError(err: any, fallback: string): string {
+  if (err?.code === 4001) {
+    return 'Request rejected. Please approve the wallet prompt to continue.';
+  }
+  return err?.message || fallback;
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -241,6 +394,7 @@ function getSuggestedPlayerName(pending: PendingRegistrationData | null): string
 function inferAuthProvider(user: UserData | null): AuthProviderName | null {
   if (!user) return null;
   if (user.linkedAccounts.some((account) => account.provider === 'discord')) return 'discord';
+  if (user.linkedAccounts.some((account) => account.provider === 'wallet') || user.walletAddress) return 'wallet';
   return null;
 }
 
@@ -262,7 +416,7 @@ async function apiRequest<T>(endpoint: string, options?: RequestInit): Promise<T
   return response.json();
 }
 
-type PhantomVerificationResult = {
+type WalletVerificationResult = {
   authenticated: boolean;
   isNewUser: boolean;
   provider?: AuthProviderName;
@@ -272,18 +426,18 @@ type PhantomVerificationResult = {
   pendingRegistration?: PendingRegistrationData;
 };
 
-async function requestPhantomAuthNonce(address: string): Promise<{ nonce: string; message: string }> {
+async function requestWalletAuthNonce(address: string): Promise<{ nonce: string; message: string }> {
   return apiRequest<{ nonce: string; message: string }>(
     `/auth/nonce?walletAddress=${encodeURIComponent(address)}`
   );
 }
 
-async function verifyPhantomSignatureWithServer(
+async function verifyWalletSignatureWithServer(
   address: string,
   signature: string,
   nonce: string
-): Promise<PhantomVerificationResult> {
-  return apiRequest<PhantomVerificationResult>('/auth/verify', {
+): Promise<WalletVerificationResult> {
+  return apiRequest<WalletVerificationResult>('/auth/verify', {
     method: 'POST',
     body: JSON.stringify({
       walletAddress: address,
@@ -294,7 +448,8 @@ async function verifyPhantomSignatureWithServer(
 }
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  const [isPhantomInstalled, setIsPhantomInstalled] = useState(false);
+  const [discoveredWalletProviders, setDiscoveredWalletProviders] = useState<DiscoveredWalletProvider[]>([]);
+  const [isWalletInstalled, setIsWalletInstalled] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
@@ -306,42 +461,61 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSessionLoading, setIsSessionLoading] = useState(true);
+  const activeWalletProviderIdRef = useRef<string | null>(null);
+
+  const setActiveWalletProvider = useCallback((providerId: string | null) => {
+    activeWalletProviderIdRef.current = providerId;
+  }, []);
 
   const applyUserSession = useCallback((nextUser: UserData, provider?: AuthProviderName | null) => {
-    const connectedAddress = getConnectedPhantomAddress();
+    const connectedWallet = getConnectedWallet(discoveredWalletProviders, activeWalletProviderIdRef.current);
     setIsAuthenticated(true);
     setIsNewUser(false);
     setUser(nextUser);
     setPendingRegistration(null);
-    setWalletAddress(connectedAddress ?? nextUser.walletAddress);
-    setIsConnected(Boolean(connectedAddress));
+    setWalletAddress(connectedWallet?.address ?? nextUser.walletAddress);
+    setIsConnected(Boolean(connectedWallet));
+    if (connectedWallet) {
+      setActiveWalletProvider(connectedWallet.providerId);
+    }
     setAuthProvider(provider ?? inferAuthProvider(nextUser));
-  }, []);
+  }, [discoveredWalletProviders, setActiveWalletProvider]);
 
   const applyPendingRegistration = useCallback((pending: PendingRegistrationData) => {
+    const pendingWalletAddress = pending.provider === 'wallet' ? pending.walletAddress ?? null : null;
     setIsAuthenticated(true);
     setIsNewUser(true);
     setUser(null);
     setPendingRegistration(pending);
-    setWalletAddress(null);
-    setIsConnected(false);
+    setWalletAddress(pendingWalletAddress);
+    setIsConnected(Boolean(pendingWalletAddress));
     setAuthProvider(pending.provider);
   }, []);
 
-  const applyPhantomLinkResult = useCallback((
-    result: PhantomVerificationResult,
-    address: string
-  ): UserData => {
-    if (result.authenticated && result.user && result.linked) {
-      applyUserSession(result.user, 'discord');
+  const applyWalletVerificationResult = useCallback((
+    result: WalletVerificationResult,
+    address: string,
+    noticeText: string
+  ): UserData | null => {
+    if (result.authenticated && result.user) {
+      applyUserSession(result.user, result.provider ?? 'wallet');
       setWalletAddress(result.user.walletAddress ?? address);
       setIsConnected(true);
-      setNotice('Phantom wallet connected.');
+      setAuthProvider(result.provider ?? 'wallet');
+      setNotice(noticeText);
       return result.user;
     }
 
-    throw new Error('Sign in with Discord before connecting Phantom.');
-  }, [applyUserSession]);
+    if (result.authenticated && result.isNewUser && result.pendingRegistration) {
+      applyPendingRegistration(result.pendingRegistration);
+      setWalletAddress(result.pendingRegistration.walletAddress ?? address);
+      setIsConnected(true);
+      setNotice(null);
+      return null;
+    }
+
+    throw new Error('Wallet authentication failed. Please try again.');
+  }, [applyPendingRegistration, applyUserSession]);
 
   useEffect(() => {
     const restoreSession = async () => {
@@ -359,9 +533,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             if (callback.action === 'connect') {
               setWalletAddress(callback.publicKey);
               setIsConnected(true);
-              if (callback.purpose === 'linkPhantom') {
+              setActiveWalletProvider(PHANTOM_MOBILE_PROVIDER_ID);
+              if (callback.purpose === 'linkWallet' || callback.purpose === 'walletAuth') {
                 setIsConnecting(true);
-                const { nonce, message } = await requestPhantomAuthNonce(callback.publicKey);
+                const { nonce, message } = await requestWalletAuthNonce(callback.publicKey);
                 startPhantomMobileSignMessage({
                   publicKey: callback.publicKey,
                   message,
@@ -372,12 +547,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
               return;
             }
 
-            const result = await verifyPhantomSignatureWithServer(
+            const result = await verifyWalletSignatureWithServer(
               callback.publicKey,
               callback.signature,
               callback.authNonce
             );
-            applyPhantomLinkResult(result, callback.publicKey);
+            setActiveWalletProvider(PHANTOM_MOBILE_PROVIDER_ID);
+            applyWalletVerificationResult(result, callback.publicKey, result.linked ? 'Wallet connected.' : 'Signed in with wallet.');
             return;
           }
         }
@@ -397,7 +573,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           } else if (
             result.authenticated &&
             result.isNewUser &&
-            result.pendingRegistration?.provider === 'discord'
+            result.pendingRegistration
           ) {
             applyPendingRegistration(result.pendingRegistration);
           }
@@ -405,8 +581,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           loggers.auth.debug('no existing session found');
         }
       } catch (err: any) {
-        loggers.auth.error('phantom mobile callback error:', err);
-        setError(err.message || 'Phantom connection failed. Please try again.');
+        loggers.auth.error('wallet mobile callback error:', err);
+        setError(err.message || 'Wallet connection failed. Please try again.');
       } finally {
         if (oauthReturn.status === 'error') {
           setError(getOAuthErrorMessage(oauthReturn.errorCode));
@@ -423,17 +599,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     };
 
     restoreSession();
-  }, [applyPendingRegistration, applyPhantomLinkResult, applyUserSession]);
+  }, [applyPendingRegistration, applyUserSession, applyWalletVerificationResult, setActiveWalletProvider]);
 
   useEffect(() => {
-    const checkForPhantom = () => {
-      const provider = getPhantomProvider();
-      const connectedAddress = getConnectedPhantomAddress();
-      setIsPhantomInstalled(Boolean(provider) || canUsePhantomMobileDeepLink());
+    const refreshWalletProviders = () => {
+      const providers = discoverWalletProviders();
+      const connectedWallet = getConnectedWallet(providers, activeWalletProviderIdRef.current);
 
-      if (connectedAddress) {
+      setDiscoveredWalletProviders(providers);
+      setIsWalletInstalled(providers.length > 0);
+
+      if (connectedWallet) {
+        setActiveWalletProvider(connectedWallet.providerId);
         setIsConnected(true);
-        setWalletAddress(connectedAddress);
+        setWalletAddress(connectedWallet.address);
       } else if (isAuthenticated) {
         setIsConnected(false);
         setWalletAddress(user?.walletAddress ?? null);
@@ -443,46 +622,61 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    checkForPhantom();
-    const timeout = setTimeout(checkForPhantom, 500);
+    refreshWalletProviders();
+    const timeout = setTimeout(refreshWalletProviders, 500);
     return () => clearTimeout(timeout);
-  }, [isAuthenticated, user?.walletAddress]);
+  }, [isAuthenticated, setActiveWalletProvider, user?.walletAddress]);
 
   useEffect(() => {
-    const provider = getPhantomProvider();
-    if (!provider) return;
+    const cleanups: Array<() => void> = [];
 
-    const handleConnect = (publicKey: WalletPublicKey) => {
-      loggers.auth.debug('wallet connected', publicKey.toBase58());
-      setIsConnected(true);
-      setWalletAddress(publicKey.toBase58());
-    };
+    for (const wallet of discoveredWalletProviders) {
+      const provider = wallet.provider;
+      if (!provider?.on || !provider.off) continue;
 
-    const handleDisconnect = () => {
-      loggers.auth.debug('wallet disconnected');
-      setIsConnected(false);
-      setWalletAddress(null);
-    };
+      const handleConnect = (publicKey?: WalletPublicKey) => {
+        const nextPublicKey = publicKey ?? provider.publicKey;
+        if (!nextPublicKey) return;
+        loggers.auth.debug('wallet connected', wallet.name, nextPublicKey.toBase58());
+        setActiveWalletProvider(wallet.id);
+        setIsConnected(true);
+        setWalletAddress(nextPublicKey.toBase58());
+      };
 
-    const handleAccountChanged = (publicKey: WalletPublicKey | null) => {
-      if (publicKey) {
-        loggers.auth.debug('account changed', publicKey.toBase58());
-        setWalletAddress(publicKey.toBase58());
-      } else {
-        handleDisconnect();
-      }
-    };
+      const handleDisconnect = () => {
+        loggers.auth.debug('wallet disconnected', wallet.name);
+        if (activeWalletProviderIdRef.current === wallet.id) {
+          setActiveWalletProvider(null);
+          setIsConnected(false);
+          setWalletAddress(user?.walletAddress ?? null);
+        }
+      };
 
-    provider.on('connect', handleConnect);
-    provider.on('disconnect', handleDisconnect);
-    provider.on('accountChanged', handleAccountChanged);
+      const handleAccountChanged = (publicKey: WalletPublicKey | null) => {
+        if (publicKey) {
+          loggers.auth.debug('account changed', wallet.name, publicKey.toBase58());
+          setActiveWalletProvider(wallet.id);
+          setWalletAddress(publicKey.toBase58());
+        } else {
+          handleDisconnect();
+        }
+      };
+
+      provider.on('connect', handleConnect);
+      provider.on('disconnect', handleDisconnect);
+      provider.on('accountChanged', handleAccountChanged);
+
+      cleanups.push(() => {
+        provider.off?.('connect', handleConnect);
+        provider.off?.('disconnect', handleDisconnect);
+        provider.off?.('accountChanged', handleAccountChanged);
+      });
+    }
 
     return () => {
-      provider.off('connect', handleConnect);
-      provider.off('disconnect', handleDisconnect);
-      provider.off('accountChanged', handleAccountChanged);
+      cleanups.forEach((cleanup) => cleanup());
     };
-  }, []);
+  }, [discoveredWalletProviders, setActiveWalletProvider, user?.walletAddress]);
 
   const signInWithDiscord = useCallback(() => {
     setError(null);
@@ -498,20 +692,23 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     window.location.assign(`${getHttpUrl()}/auth/discord/link/start?returnTo=${returnTo}`);
   }, []);
 
-  const verifyPhantomWithServer = useCallback(async (provider: PhantomProvider, address: string) => {
-    const { nonce, message } = await requestPhantomAuthNonce(address);
-    const encodedMessage = new TextEncoder().encode(message);
-    const { signature } = await provider.signMessage(encodedMessage, 'utf8');
-    const { default: bs58 } = await import('bs58');
-    const signatureBase58 = bs58.encode(signature);
+  const getWalletById = useCallback((providerId?: string) => {
+    if (providerId) {
+      return discoveredWalletProviders.find((wallet) => wallet.id === providerId) ?? null;
+    }
+    return discoveredWalletProviders[0] ?? null;
+  }, [discoveredWalletProviders]);
 
-    return verifyPhantomSignatureWithServer(address, signatureBase58, nonce);
+  const verifyWalletWithServer = useCallback(async (provider: SolanaWalletProvider, address: string) => {
+    const { nonce, message } = await requestWalletAuthNonce(address);
+    const signatureBase58 = await signWalletAuthMessage(provider, message);
+    return verifyWalletSignatureWithServer(address, signatureBase58, nonce);
   }, []);
 
-  const connect = useCallback(async (): Promise<string | null> => {
-    const provider = getPhantomProvider();
+  const connectWallet = useCallback(async (providerId?: string): Promise<string | null> => {
+    const wallet = getWalletById(providerId);
 
-    if (!provider && canUsePhantomMobileDeepLink()) {
+    if (wallet?.mobileDeepLink || (!wallet && canUsePhantomMobileDeepLink())) {
       setIsConnecting(true);
       setError(null);
       setNotice(null);
@@ -519,6 +716,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       try {
         const mobileSession = getPhantomMobileDeepLinkSession();
         if (mobileSession) {
+          setActiveWalletProvider(PHANTOM_MOBILE_PROVIDER_ID);
           setWalletAddress(mobileSession.publicKey);
           setIsConnected(true);
           return mobileSession.publicKey;
@@ -529,16 +727,15 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         return null;
       } catch (err: any) {
         loggers.auth.error('failed to connect mobile wallet:', err);
-        setError(err.message || 'Failed to connect wallet');
+        setError(getWalletActionError(err, 'Failed to connect wallet'));
         return null;
       } finally {
         setIsConnecting(false);
       }
     }
 
-    if (!provider) {
-      window.open('https://phantom.app/', '_blank');
-      setError('Phantom wallet is not installed. Please install it to continue.');
+    if (!wallet?.provider) {
+      setError('No Solana wallet was detected. Install Phantom, Solflare, Brave Wallet, or another compatible wallet.');
       return null;
     }
 
@@ -547,47 +744,38 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setNotice(null);
 
     try {
-      const { publicKey } = await provider.connect();
-      const address = publicKey.toBase58();
+      const address = await connectInjectedWalletProvider(wallet.provider);
+      setActiveWalletProvider(wallet.id);
       setWalletAddress(address);
       setIsConnected(true);
       return address;
     } catch (err: any) {
       loggers.auth.error('failed to connect wallet:', err);
-      if (err.code === 4001) {
-        setError('Connection rejected. Please approve the connection request.');
-      } else {
-        setError(err.message || 'Failed to connect wallet');
-      }
+      setError(getWalletActionError(err, 'Failed to connect wallet'));
       return null;
     } finally {
       setIsConnecting(false);
     }
-  }, []);
+  }, [getWalletById, setActiveWalletProvider]);
 
   const disconnect = useCallback(() => {
-    const provider = getPhantomProvider();
-
-    if (provider) {
-      provider.disconnect();
+    const connectedWallet = getConnectedWallet(discoveredWalletProviders, activeWalletProviderIdRef.current);
+    if (connectedWallet?.provider?.disconnect) {
+      connectedWallet.provider.disconnect();
     }
     clearPhantomMobileDeepLinkSession();
 
+    setActiveWalletProvider(null);
     setIsConnected(false);
     setWalletAddress(null);
     setError(null);
     setNotice(null);
-  }, []);
+  }, [discoveredWalletProviders, setActiveWalletProvider]);
 
-  const linkPhantom = useCallback(async (): Promise<UserData> => {
-    const provider = getPhantomProvider();
+  const signInWithWallet = useCallback(async (providerId?: string): Promise<UserData | null> => {
+    const wallet = getWalletById(providerId);
 
-    if (!isAuthenticated || !user) {
-      setError('Sign in before linking Phantom.');
-      throw new Error('Sign in before linking Phantom.');
-    }
-
-    if (!provider && canUsePhantomMobileDeepLink()) {
+    if (wallet?.mobileDeepLink || (!wallet && canUsePhantomMobileDeepLink())) {
       setIsConnecting(true);
       setError(null);
       setNotice(null);
@@ -595,32 +783,33 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       try {
         const mobileSession = getPhantomMobileDeepLinkSession();
         if (mobileSession) {
+          setActiveWalletProvider(PHANTOM_MOBILE_PROVIDER_ID);
           setWalletAddress(mobileSession.publicKey);
           setIsConnected(true);
-          const { nonce, message } = await requestPhantomAuthNonce(mobileSession.publicKey);
+          const { nonce, message } = await requestWalletAuthNonce(mobileSession.publicKey);
           startPhantomMobileSignMessage({
             publicKey: mobileSession.publicKey,
             message,
             authNonce: nonce,
           });
         } else {
-          startPhantomMobileConnect('linkPhantom');
+          startPhantomMobileConnect('walletAuth');
         }
 
-        return await waitForPhantomMobileRedirect<UserData>();
+        return await waitForPhantomMobileRedirect<UserData | null>();
       } catch (err: any) {
-        loggers.auth.error('mobile phantom linking error:', err);
-        setError(err.message || 'Phantom linking failed');
+        loggers.auth.error('mobile wallet auth error:', err);
+        setError(getWalletActionError(err, 'Wallet sign-in failed'));
         throw err;
       } finally {
         setIsConnecting(false);
       }
     }
 
-    if (!provider) {
-      window.open('https://phantom.app/', '_blank');
-      setError('Phantom wallet is not installed. Please install it to continue.');
-      throw new Error('Phantom wallet not installed');
+    if (!wallet?.provider) {
+      const message = 'No Solana wallet was detected. Install Phantom, Solflare, Brave Wallet, or another compatible wallet.';
+      setError(message);
+      throw new Error(message);
     }
 
     setIsConnecting(true);
@@ -628,42 +817,51 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setNotice(null);
 
     try {
-      const { publicKey } = provider.isConnected && provider.publicKey
-        ? { publicKey: provider.publicKey }
-        : await provider.connect();
-      const address = publicKey.toBase58();
-
+      const address = (wallet.provider.isConnected || wallet.provider.connected) && wallet.provider.publicKey
+        ? wallet.provider.publicKey.toBase58()
+        : await connectInjectedWalletProvider(wallet.provider);
+      setActiveWalletProvider(wallet.id);
       setWalletAddress(address);
       setIsConnected(true);
 
-      const result = await verifyPhantomWithServer(provider, address);
-      return applyPhantomLinkResult(result, address);
+      const result = await verifyWalletWithServer(wallet.provider, address);
+      return applyWalletVerificationResult(result, address, 'Signed in with wallet.');
     } catch (err: any) {
-      loggers.auth.error('phantom linking error:', err);
-      if (err.code === 4001) {
-        setError('Signature rejected. Please sign the message to link Phantom.');
-      } else {
-        setError(err.message || 'Phantom linking failed');
-      }
+      loggers.auth.error('wallet sign-in error:', err);
+      setError(getWalletActionError(err, 'Wallet sign-in failed'));
       throw err;
     } finally {
       setIsConnecting(false);
     }
-  }, [applyPhantomLinkResult, isAuthenticated, user, verifyPhantomWithServer]);
+  }, [applyWalletVerificationResult, getWalletById, setActiveWalletProvider, verifyWalletWithServer]);
+
+  const linkWallet = useCallback(async (providerId?: string): Promise<UserData> => {
+    if (!isAuthenticated || !user) {
+      setError('Sign in before linking a wallet.');
+      throw new Error('Sign in before linking a wallet.');
+    }
+
+    const result = await signInWithWallet(providerId);
+    if (!result) {
+      throw new Error('Wallet linked profile is not ready yet.');
+    }
+    return result;
+  }, [isAuthenticated, signInWithWallet, user]);
 
   const signTransaction = useCallback(async (transaction: Transaction): Promise<string> => {
-    const provider = getPhantomProvider();
+    const connectedWallet = getConnectedWallet(discoveredWalletProviders, activeWalletProviderIdRef.current);
+    const provider = connectedWallet?.provider ?? null;
     if (!provider || !provider.publicKey) {
-      throw new Error('Connect Phantom before paying');
+      throw new Error('Connect a wallet before paying');
     }
 
     if (typeof provider.signTransaction !== 'function') {
-      throw new Error('This Phantom connection cannot sign transactions for server relay');
+      throw new Error('This wallet connection cannot sign transactions for server relay');
     }
 
     const signed = await provider.signTransaction(transaction);
     return bytesToBase64(signed.serialize());
-  }, []);
+  }, [discoveredWalletProviders]);
 
   const registerUser = useCallback(async (name: string): Promise<UserData> => {
     setError(null);
@@ -723,16 +921,17 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       loggers.auth.error('logout error:', err);
     }
 
-    const provider = getPhantomProvider();
-    if (provider) {
+    const connectedWallet = getConnectedWallet(discoveredWalletProviders, activeWalletProviderIdRef.current);
+    if (connectedWallet?.provider?.disconnect) {
       try {
-        await provider.disconnect();
+        await connectedWallet.provider.disconnect();
       } catch {
         // Ignore disconnect errors; the server session is already cleared.
       }
     }
     clearPhantomMobileDeepLinkSession();
 
+    setActiveWalletProvider(null);
     setIsConnected(false);
     setWalletAddress(null);
     setIsAuthenticated(false);
@@ -742,17 +941,22 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setPendingRegistration(null);
     setError(null);
     setNotice(null);
-  }, []);
+  }, [discoveredWalletProviders, setActiveWalletProvider]);
 
   const clearError = useCallback(() => setError(null), []);
   const clearNotice = useCallback(() => setNotice(null), []);
   const linkedAccounts = user?.linkedAccounts ?? EMPTY_LINKED_ACCOUNTS;
   const hasDiscordAccount = linkedAccounts.some((account) => account.provider === 'discord');
-  const hasPhantomAccount = Boolean(user?.walletAddress) || linkedAccounts.some((account) => account.provider === 'phantom');
+  const hasWalletAccount = Boolean(user?.walletAddress) || linkedAccounts.some((account) => account.provider === 'wallet');
   const suggestedPlayerName = useMemo(() => getSuggestedPlayerName(pendingRegistration), [pendingRegistration]);
+  const walletProviders = useMemo(
+    () => toWalletProviderSummaries(discoveredWalletProviders),
+    [discoveredWalletProviders]
+  );
 
   const contextValue = useMemo<WalletContextType>(() => ({
-    isPhantomInstalled,
+    isWalletInstalled,
+    walletProviders,
     isConnected,
     isConnecting,
     walletAddress,
@@ -762,15 +966,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     user,
     linkedAccounts,
     hasDiscordAccount,
-    hasPhantomAccount,
+    hasWalletAccount,
     pendingRegistration,
     suggestedPlayerName,
     isSessionLoading,
-    connect,
+    connectWallet,
     disconnect,
     signInWithDiscord,
+    signInWithWallet,
     linkDiscord,
-    linkPhantom,
+    linkWallet,
     signTransaction,
     registerUser,
     completeTutorial,
@@ -784,28 +989,30 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     clearError,
     clearNotice,
     completeTutorial,
-    connect,
+    connectWallet,
     disconnect,
     error,
     hasDiscordAccount,
-    hasPhantomAccount,
+    hasWalletAccount,
     isAuthenticated,
     isConnected,
     isConnecting,
     isNewUser,
-    isPhantomInstalled,
+    isWalletInstalled,
     isSessionLoading,
     linkDiscord,
-    linkPhantom,
+    linkWallet,
     linkedAccounts,
     logout,
     notice,
     pendingRegistration,
     registerUser,
     signInWithDiscord,
+    signInWithWallet,
     signTransaction,
     suggestedPlayerName,
     user,
+    walletProviders,
     walletAddress,
   ]);
 

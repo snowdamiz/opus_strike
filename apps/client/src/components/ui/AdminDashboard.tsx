@@ -192,6 +192,7 @@ interface GlobalNotificationOverview {
 }
 
 type RankedSeasonMode = 'preseason' | 'season';
+type RankedEntryGateMode = 'locked' | 'token_required';
 const ADMIN_RANK_PAGE_SIZE = 25;
 
 interface RankedSeasonOverview {
@@ -208,6 +209,88 @@ interface RankedSeasonDraft {
   mode: RankedSeasonMode;
   seasonNumber: string;
   endsAtLocal: string;
+}
+
+interface RankedEntryGateOverview {
+  mode: RankedEntryGateMode;
+  tokenMintAddress: string | null;
+  tokenAddress: string;
+  tokenSymbol: string;
+  requiredTokenAmount: string;
+  cluster: string;
+  rpcConfigured: boolean;
+  updatedAt: string;
+  updatedByUserId: string | null;
+}
+
+interface RankedEntryGateDraft {
+  mode: RankedEntryGateMode;
+  tokenMintAddress: string;
+  tokenSymbol: string;
+  requiredTokenAmount: string;
+}
+
+interface SkinShopSettingsOverview {
+  enabled: boolean;
+  tokenMintAddress: string | null;
+  tokenSymbol: string;
+  treasuryWallet: string | null;
+  cluster: string;
+  rpcConfigured: boolean;
+  updatedByUserId: string | null;
+  updatedAt: string | null;
+}
+
+interface SkinShopItemSettingsOverview {
+  skinId: string;
+  saleEnabled: boolean;
+  tokenAmountBaseUnits: string | null;
+  displayNote: string | null;
+  priceVersion: number;
+  updatedByUserId: string | null;
+  updatedAt: string | null;
+}
+
+interface SkinShopAuditOverview {
+  id: string;
+  updatedByUserId: string | null;
+  createdAt: string;
+  oldTokenAmountBaseUnits: string | null;
+  newTokenAmountBaseUnits: string | null;
+  oldSaleEnabled: boolean | null;
+  newSaleEnabled: boolean | null;
+}
+
+interface SkinShopOverview {
+  shop: SkinShopSettingsOverview;
+  items: Array<{
+    skin: {
+      id: string;
+      displayName: string;
+      subtitle: string;
+      rarity: string;
+      availability: string;
+      releaseState: string;
+    };
+    settings: SkinShopItemSettingsOverview;
+    lastAudit: SkinShopAuditOverview | null;
+  }>;
+}
+
+interface SkinShopSettingsDraft {
+  enabled: boolean;
+  tokenMintAddress: string;
+  tokenSymbol: string;
+  treasuryWallet: string;
+  rpcUrl: string;
+  cluster: string;
+}
+
+interface SkinShopItemDraft {
+  saleEnabled: boolean;
+  tokenAmountBaseUnits: string;
+  displayNote: string;
+  expectedPriceVersion: number;
 }
 
 interface AdminRankSummary {
@@ -324,6 +407,8 @@ interface AdminOverview {
   goldenBiomeRewards?: GoldenBiomeRewardsOverview;
   globalNotification: GlobalNotificationOverview | null;
   rankedSeason: RankedSeasonOverview;
+  rankedEntryGate: RankedEntryGateOverview;
+  skinShop: SkinShopOverview;
   diagnostics: {
     distributed: boolean;
     routingStrategy: string;
@@ -406,6 +491,14 @@ function fromDateTimeLocalValue(value: string): string | null {
 
 function getRankedSeasonIdentity(mode: RankedSeasonMode, seasonNumber: number): string {
   return mode === 'preseason' ? 'preseason' : `season:${Math.max(1, Math.floor(seasonNumber || 1))}`;
+}
+
+function formatRankedEntryGateMode(mode: RankedEntryGateMode): string {
+  return mode === 'token_required' ? 'Token Required' : 'Locked';
+}
+
+function isPositiveWholeNumberString(value: string): boolean {
+  return /^[0-9]+$/.test(value.trim()) && BigInt(value.trim()) > 0n;
 }
 
 const ADMIN_MANUAL_RATING_MAX = 5000;
@@ -1051,6 +1144,332 @@ function GlobalNotificationPanel({
   );
 }
 
+function SkinShopPanel({
+  overview,
+  settingsDraft,
+  itemDrafts,
+  dirtyById,
+  busySettings,
+  busyItemId,
+  onSettingsDraftChange,
+  onItemDraftChange,
+  onSaveSettings,
+  onSaveItem,
+}: {
+  overview: SkinShopOverview;
+  settingsDraft: SkinShopSettingsDraft;
+  itemDrafts: Record<string, SkinShopItemDraft>;
+  dirtyById: Record<string, boolean>;
+  busySettings: boolean;
+  busyItemId: string | null;
+  onSettingsDraftChange: (draft: SkinShopSettingsDraft) => void;
+  onItemDraftChange: (skinId: string, draft: SkinShopItemDraft) => void;
+  onSaveSettings: () => void;
+  onSaveItem: (skinId: string) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 rounded-md border border-accent-primary/25 bg-black/20 p-3 lg:grid-cols-[0.4fr_1fr_1fr_0.45fr_0.45fr_auto] lg:items-end">
+        <div>
+          <div className="font-body text-[10px] font-semibold uppercase text-white/45">Shop</div>
+          <button
+            type="button"
+            disabled={busySettings}
+            aria-pressed={settingsDraft.enabled}
+            onClick={() => onSettingsDraftChange({ ...settingsDraft, enabled: !settingsDraft.enabled })}
+            className={`mt-2 h-8 rounded-md border px-3 font-body text-[11px] font-semibold uppercase transition disabled:cursor-wait ${
+              settingsDraft.enabled
+                ? 'border-ui-success/45 bg-ui-success/15 text-emerald-100'
+                : 'border-white/10 bg-white/[0.04] text-white/60 hover:border-ui-success/35'
+            }`}
+          >
+            {settingsDraft.enabled ? 'Enabled' : 'Locked'}
+          </button>
+        </div>
+
+        <label className="block min-w-0">
+          <span className="font-body text-[10px] font-semibold uppercase text-white/45">Token Mint</span>
+          <input
+            value={settingsDraft.tokenMintAddress}
+            disabled={busySettings}
+            onChange={(event) => onSettingsDraftChange({ ...settingsDraft, tokenMintAddress: event.target.value })}
+            className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-mono text-xs text-white outline-none transition placeholder:text-white/25 focus:border-accent-primary/55"
+            placeholder="SPL mint address"
+          />
+        </label>
+
+        <label className="block min-w-0">
+          <span className="font-body text-[10px] font-semibold uppercase text-white/45">Treasury Wallet</span>
+          <input
+            value={settingsDraft.treasuryWallet}
+            disabled={busySettings}
+            onChange={(event) => onSettingsDraftChange({ ...settingsDraft, treasuryWallet: event.target.value })}
+            className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-mono text-xs text-white outline-none transition placeholder:text-white/25 focus:border-accent-primary/55"
+            placeholder="Treasury owner wallet"
+          />
+        </label>
+
+        <label className="block">
+          <span className="font-body text-[10px] font-semibold uppercase text-white/45">Symbol</span>
+          <input
+            value={settingsDraft.tokenSymbol}
+            disabled={busySettings}
+            maxLength={16}
+            onChange={(event) => onSettingsDraftChange({ ...settingsDraft, tokenSymbol: event.target.value.toUpperCase() })}
+            className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-body text-xs text-white outline-none transition focus:border-accent-primary/55"
+          />
+        </label>
+
+        <label className="block">
+          <span className="font-body text-[10px] font-semibold uppercase text-white/45">Cluster</span>
+          <input
+            value={settingsDraft.cluster}
+            disabled={busySettings}
+            onChange={(event) => onSettingsDraftChange({ ...settingsDraft, cluster: event.target.value })}
+            className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-body text-xs text-white outline-none transition focus:border-accent-primary/55"
+          />
+        </label>
+
+        <button
+          type="button"
+          disabled={busySettings}
+          onClick={onSaveSettings}
+          className="h-8 rounded-md border border-accent-primary/45 bg-accent-primary/20 px-3 font-body text-[11px] font-semibold uppercase text-white transition hover:border-accent-primary/70 hover:bg-accent-primary/30 disabled:cursor-wait disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-white/35"
+        >
+          Save Shop
+        </button>
+
+        <label className="block min-w-0 lg:col-span-5">
+          <span className="font-body text-[10px] font-semibold uppercase text-white/45">RPC URL</span>
+          <input
+            value={settingsDraft.rpcUrl}
+            disabled={busySettings}
+            onChange={(event) => onSettingsDraftChange({ ...settingsDraft, rpcUrl: event.target.value })}
+            className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-mono text-xs text-white outline-none transition placeholder:text-white/25 focus:border-accent-primary/55"
+            placeholder={overview.shop.rpcConfigured ? 'Configured. Enter a new URL to rotate.' : 'RPC URL required before enabling purchases'}
+          />
+        </label>
+        <div className="flex items-end justify-end">
+          <Pill tone={overview.shop.rpcConfigured ? 'success' : 'warning'}>
+            RPC {overview.shop.rpcConfigured ? 'set' : 'missing'}
+          </Pill>
+        </div>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-2">
+        {overview.items.map((item) => {
+          const draft = itemDrafts[item.settings.skinId] ?? {
+            saleEnabled: item.settings.saleEnabled,
+            tokenAmountBaseUnits: item.settings.tokenAmountBaseUnits ?? '',
+            displayNote: item.settings.displayNote ?? '',
+            expectedPriceVersion: item.settings.priceVersion,
+          };
+          const busy = busyItemId === item.settings.skinId;
+          const canSave = !busy && Boolean(dirtyById[item.settings.skinId]);
+          return (
+            <article key={item.settings.skinId} className="rounded-md border border-white/10 bg-black/20 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 className="font-display text-lg leading-none text-white">{item.skin.displayName}</h3>
+                  <p className="mt-1 font-body text-[11px] uppercase text-white/45">
+                    {item.settings.skinId} · v{item.settings.priceVersion}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={busy}
+                  aria-pressed={draft.saleEnabled}
+                  onClick={() => onItemDraftChange(item.settings.skinId, { ...draft, saleEnabled: !draft.saleEnabled })}
+                  className={`h-7 rounded-md border px-3 font-body text-[11px] font-semibold uppercase transition disabled:cursor-wait ${
+                    draft.saleEnabled
+                      ? 'border-ui-success/45 bg-ui-success/15 text-emerald-100'
+                      : 'border-white/10 bg-white/[0.04] text-white/55 hover:border-ui-success/35'
+                  }`}
+                >
+                  {draft.saleEnabled ? 'For Sale' : 'Locked'}
+                </button>
+              </div>
+
+              <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,0.7fr)_minmax(0,1fr)_auto] sm:items-end">
+                <label className="block">
+                  <span className="font-body text-[10px] font-semibold uppercase text-white/45">Base Units</span>
+                  <input
+                    value={draft.tokenAmountBaseUnits}
+                    inputMode="numeric"
+                    disabled={busy}
+                    onChange={(event) => onItemDraftChange(item.settings.skinId, {
+                      ...draft,
+                      tokenAmountBaseUnits: event.target.value.replace(/\D/g, ''),
+                    })}
+                    className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-mono text-xs text-white outline-none transition focus:border-accent-primary/55"
+                  />
+                </label>
+                <label className="block min-w-0">
+                  <span className="font-body text-[10px] font-semibold uppercase text-white/45">Display Note</span>
+                  <input
+                    value={draft.displayNote}
+                    disabled={busy}
+                    onChange={(event) => onItemDraftChange(item.settings.skinId, { ...draft, displayNote: event.target.value })}
+                    className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-body text-xs text-white outline-none transition placeholder:text-white/25 focus:border-accent-primary/55"
+                    placeholder="Optional disabled or sale note"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={!canSave}
+                  onClick={() => onSaveItem(item.settings.skinId)}
+                  className="h-8 rounded-md border border-accent-primary/45 bg-accent-primary/20 px-3 font-body text-[11px] font-semibold uppercase text-white transition hover:border-accent-primary/70 hover:bg-accent-primary/30 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-white/35"
+                >
+                  Save
+                </button>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2 font-body text-[11px] text-white/42">
+                <Pill>{item.settings.tokenAmountBaseUnits ?? 'no price'} {overview.shop.tokenSymbol}</Pill>
+                <Pill tone={item.settings.saleEnabled ? 'success' : 'warning'}>{item.settings.saleEnabled ? 'sale enabled' : 'sale locked'}</Pill>
+                {item.lastAudit && (
+                  <span>
+                    Last update {formatDate(item.lastAudit.createdAt)}
+                  </span>
+                )}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function RankedEntryGatePanel({
+  gate,
+  draft,
+  busy,
+  onDraftChange,
+  onSave,
+}: {
+  gate: RankedEntryGateOverview;
+  draft: RankedEntryGateDraft;
+  busy: boolean;
+  onDraftChange: (draft: RankedEntryGateDraft) => void;
+  onSave: () => void;
+}) {
+  const tokenMint = draft.tokenMintAddress.trim();
+  const tokenSymbol = draft.tokenSymbol.trim().replace(/^\$/, '').toUpperCase();
+  const requiredTokenAmount = draft.requiredTokenAmount.trim();
+  const tokenRequired = draft.mode === 'token_required';
+  const draftValid = (
+    !tokenRequired ||
+    (tokenMint.length > 0 && /^[A-Z0-9]{1,12}$/.test(tokenSymbol) && isPositiveWholeNumberString(requiredTokenAmount))
+  );
+  const canSave = !busy && draftValid;
+  const currentTone: Tone = gate.mode === 'token_required' ? 'success' : 'warning';
+
+  return (
+    <div className="grid gap-3 border-b border-white/10 bg-black/20 p-3 lg:grid-cols-[minmax(15rem,0.32fr)_minmax(0,1fr)]">
+      <div className="min-w-0 rounded-md border border-amber-300/25 bg-white/[0.025] p-3">
+        <div className="font-body text-[10px] font-semibold uppercase text-amber-200/70">Ranked Entry</div>
+        <div className="mt-2"><Pill tone={currentTone}>{formatRankedEntryGateMode(gate.mode)}</Pill></div>
+        <div className="mt-3 break-all font-mono text-xs text-white/50">
+          {gate.tokenMintAddress ? formatCompactIdentifier(gate.tokenMintAddress, 6, 6) : 'No token mint'}
+        </div>
+        <div className="mt-2 font-body text-[11px] text-white/40">
+          {gate.requiredTokenAmount} {gate.tokenSymbol} required
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Pill tone={gate.rpcConfigured ? 'success' : 'warning'}>{gate.rpcConfigured ? 'RPC ready' : 'RPC missing'}</Pill>
+          <Pill>{gate.cluster}</Pill>
+        </div>
+      </div>
+
+      <div className="min-w-0">
+        <div className="grid gap-3 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(6rem,0.25fr)_minmax(10rem,0.45fr)_auto] md:items-end">
+          <div>
+            <div className="font-body text-[10px] font-semibold uppercase text-white/45">Mode</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(['locked', 'token_required'] as RankedEntryGateMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={draft.mode === mode}
+                  disabled={busy}
+                  onClick={() => onDraftChange({ ...draft, mode })}
+                  className={`h-7 rounded-md border px-3 font-body text-[11px] font-semibold uppercase transition disabled:cursor-wait ${
+                    draft.mode === mode
+                      ? 'border-amber-300/55 bg-amber-300/15 text-amber-100'
+                      : 'border-white/10 bg-white/[0.04] text-white/65 hover:border-amber-300/35 hover:text-white'
+                  }`}
+                >
+                  {mode === 'token_required' ? 'Token' : 'Locked'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <label className="block min-w-0">
+            <span className="font-body text-[10px] font-semibold uppercase text-white/45">Mint Address</span>
+            <input
+              type="text"
+              value={draft.tokenMintAddress}
+              disabled={busy}
+              onChange={(event) => onDraftChange({ ...draft, tokenMintAddress: event.target.value })}
+              placeholder="SPL mint address"
+              className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-mono text-xs text-white outline-none transition placeholder:text-white/25 focus:border-amber-300/55"
+            />
+          </label>
+
+          <label className="block">
+            <span className="font-body text-[10px] font-semibold uppercase text-white/45">Symbol</span>
+            <input
+              type="text"
+              value={draft.tokenSymbol}
+              disabled={busy}
+              maxLength={12}
+              onChange={(event) => onDraftChange({ ...draft, tokenSymbol: event.target.value.toUpperCase() })}
+              className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-body text-xs text-white outline-none transition focus:border-amber-300/55"
+            />
+          </label>
+
+          <label className="block">
+            <span className="font-body text-[10px] font-semibold uppercase text-white/45">Tokens Required</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={draft.requiredTokenAmount}
+              disabled={busy}
+              onChange={(event) => onDraftChange({ ...draft, requiredTokenAmount: event.target.value.replace(/\D/g, '') })}
+              className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-mono text-xs text-white outline-none transition focus:border-amber-300/55"
+            />
+          </label>
+
+          <button
+            type="button"
+            disabled={!canSave}
+            onClick={onSave}
+            className="h-8 rounded-md border border-amber-300/45 bg-amber-300/15 px-3 font-body text-[11px] font-semibold uppercase text-amber-100 transition hover:border-amber-300/70 hover:bg-amber-300/25 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-white/35"
+          >
+            Save Gate
+          </button>
+        </div>
+
+        <div className={`mt-3 rounded-md border px-3 py-2 font-body text-[11px] ${
+          tokenRequired
+            ? draftValid
+              ? 'border-ui-success/30 bg-ui-success/10 text-emerald-100'
+              : 'border-ui-warning/35 bg-ui-warning/10 text-yellow-100'
+            : 'border-white/10 bg-white/[0.025] text-white/42'
+        }`}>
+          {tokenRequired
+            ? draftValid
+              ? 'Ranked will require the configured whole-token amount.'
+              : 'Token mode needs a mint address, symbol, and positive whole-token amount.'
+            : 'Ranked entry is locked until token mode is enabled.'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RankedSeasonPanel({
   season,
   draft,
@@ -1149,7 +1568,7 @@ function RankedSeasonPanel({
             : 'border-white/10 bg-white/[0.025] text-white/42'
         }`}>
           {willReset
-            ? 'Changing this season will reset every player rating and ranked win/loss record to ranked defaults.'
+            ? 'Changing this season will archive the current season and reset player ratings to ranked defaults.'
             : 'Schedule edits keep ranked stats intact.'}
         </div>
       </div>
@@ -1660,6 +2079,9 @@ export function AdminDashboard() {
   const [busyGoldenMode, setBusyGoldenMode] = useState(false);
   const [busyGlobalNotification, setBusyGlobalNotification] = useState(false);
   const [busyRankedSeason, setBusyRankedSeason] = useState(false);
+  const [busyRankedEntryGate, setBusyRankedEntryGate] = useState(false);
+  const [busySkinShopSettings, setBusySkinShopSettings] = useState(false);
+  const [busySkinShopItemId, setBusySkinShopItemId] = useState<string | null>(null);
   const [busyRankUserId, setBusyRankUserId] = useState<string | null>(null);
   const [rankUsersLoading, setRankUsersLoading] = useState(false);
   const [rankUsersLoaded, setRankUsersLoaded] = useState(false);
@@ -1669,7 +2091,25 @@ export function AdminDashboard() {
     seasonNumber: '1',
     endsAtLocal: '',
   });
+  const [rankedEntryGateDraft, setRankedEntryGateDraft] = useState<RankedEntryGateDraft>({
+    mode: 'locked',
+    tokenMintAddress: '',
+    tokenSymbol: 'TOKEN',
+    requiredTokenAmount: '0',
+  });
+  const [skinShopDraft, setSkinShopDraft] = useState<SkinShopSettingsDraft>({
+    enabled: false,
+    tokenMintAddress: '',
+    tokenSymbol: 'TOKEN',
+    treasuryWallet: '',
+    rpcUrl: '',
+    cluster: 'devnet',
+  });
+  const [skinShopItemDrafts, setSkinShopItemDrafts] = useState<Record<string, SkinShopItemDraft>>({});
   const [rankedSeasonDraftDirty, setRankedSeasonDraftDirty] = useState(false);
+  const [rankedEntryGateDraftDirty, setRankedEntryGateDraftDirty] = useState(false);
+  const [skinShopDraftDirty, setSkinShopDraftDirty] = useState(false);
+  const [skinShopItemDraftDirtyById, setSkinShopItemDraftDirtyById] = useState<Record<string, boolean>>({});
   const [rankSearch, setRankSearch] = useState('');
   const [rankReason, setRankReason] = useState('');
   const [rankUsers, setRankUsers] = useState<AdminRankUser[]>([]);
@@ -1869,6 +2309,21 @@ export function AdminDashboard() {
     setRankedSeasonDraftDirty(true);
   }, []);
 
+  const updateRankedEntryGateDraft = useCallback((draft: RankedEntryGateDraft) => {
+    setRankedEntryGateDraft(draft);
+    setRankedEntryGateDraftDirty(true);
+  }, []);
+
+  const updateSkinShopDraft = useCallback((draft: SkinShopSettingsDraft) => {
+    setSkinShopDraft(draft);
+    setSkinShopDraftDirty(true);
+  }, []);
+
+  const updateSkinShopItemDraft = useCallback((skinId: string, draft: SkinShopItemDraft) => {
+    setSkinShopItemDrafts((drafts) => ({ ...drafts, [skinId]: draft }));
+    setSkinShopItemDraftDirtyById((dirty) => ({ ...dirty, [skinId]: true }));
+  }, []);
+
   const saveRankedSeason = useCallback(() => {
     if (!overview?.rankedSeason) return;
 
@@ -1882,7 +2337,7 @@ export function AdminDashboard() {
     const nextIdentity = getRankedSeasonIdentity(rankedSeasonDraft.mode, seasonNumber);
     if (
       currentIdentity !== nextIdentity &&
-      !window.confirm('Changing the ranked season resets every player rating and ranked record. Continue?')
+      !window.confirm('Changing the ranked season archives the current season and resets player ratings. Ranked records are preserved. Continue?')
     ) {
       return;
     }
@@ -1897,6 +2352,101 @@ export function AdminDashboard() {
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setBusyRankedSeason(false));
   }, [overview?.rankedSeason, postAdminJson, rankedSeasonDraft]);
+
+  const saveRankedEntryGate = useCallback(() => {
+    if (!overview?.rankedEntryGate) return;
+
+    const tokenSymbol = rankedEntryGateDraft.tokenSymbol.trim().replace(/^\$/, '').toUpperCase();
+    const tokenMintAddress = rankedEntryGateDraft.tokenMintAddress.trim();
+    const requiredTokenAmount = rankedEntryGateDraft.requiredTokenAmount.trim();
+
+    if (rankedEntryGateDraft.mode === 'token_required') {
+      if (!tokenMintAddress) {
+        setError('Ranked token mint is required before enabling token-gated ranked');
+        return;
+      }
+      if (!/^[A-Z0-9]{1,12}$/.test(tokenSymbol)) {
+        setError('Ranked token symbol must be 1-12 letters or numbers');
+        return;
+      }
+      if (!isPositiveWholeNumberString(requiredTokenAmount)) {
+        setError('Required token amount must be greater than zero');
+        return;
+      }
+      if (overview.rankedEntryGate.mode !== 'token_required' && !window.confirm('Enable ranked token gate with the configured SPL token?')) {
+        return;
+      }
+    } else if (overview.rankedEntryGate.mode !== 'locked' && !window.confirm('Lock ranked entry?')) {
+      return;
+    }
+
+    setBusyRankedEntryGate(true);
+    postAdminJson('/admin/api/ranked-entry-gate', {
+      mode: rankedEntryGateDraft.mode,
+      tokenMintAddress,
+      tokenSymbol,
+      requiredTokenAmount,
+    })
+      .then(() => setRankedEntryGateDraftDirty(false))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusyRankedEntryGate(false));
+  }, [overview?.rankedEntryGate, postAdminJson, rankedEntryGateDraft]);
+
+  const saveSkinShopSettings = useCallback(() => {
+    const tokenSymbol = skinShopDraft.tokenSymbol.trim().replace(/^\$/, '').toUpperCase();
+    const tokenMintAddress = skinShopDraft.tokenMintAddress.trim();
+    const treasuryWallet = skinShopDraft.treasuryWallet.trim();
+    const rpcUrl = skinShopDraft.rpcUrl.trim();
+    const cluster = skinShopDraft.cluster.trim() || 'devnet';
+
+    if (skinShopDraft.enabled && (!tokenMintAddress || !treasuryWallet || !rpcUrl)) {
+      setError('Token mint, treasury wallet, and RPC URL are required before enabling the skin shop');
+      return;
+    }
+    if (!/^[A-Z0-9]{1,16}$/.test(tokenSymbol)) {
+      setError('Skin shop token symbol must be 1-16 letters or numbers');
+      return;
+    }
+    if (skinShopDraft.enabled && !window.confirm('Enable the skin shop with the configured SPL token settings?')) {
+      return;
+    }
+
+    setBusySkinShopSettings(true);
+    postAdminJson('/admin/api/skin-shop/settings', {
+      enabled: skinShopDraft.enabled,
+      tokenMintAddress,
+      tokenSymbol,
+      treasuryWallet,
+      rpcUrl,
+      cluster,
+    })
+      .then(() => setSkinShopDraftDirty(false))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusySkinShopSettings(false));
+  }, [postAdminJson, skinShopDraft]);
+
+  const saveSkinShopItem = useCallback((skinId: string) => {
+    const draft = skinShopItemDrafts[skinId];
+    if (!draft) return;
+    const tokenAmountBaseUnits = draft.tokenAmountBaseUnits.trim();
+    if (draft.saleEnabled && !isPositiveWholeNumberString(tokenAmountBaseUnits)) {
+      setError('Sale-enabled skins need a positive integer base-unit amount');
+      return;
+    }
+
+    setBusySkinShopItemId(skinId);
+    postAdminJson(`/admin/api/skin-shop/items/${encodeURIComponent(skinId)}`, {
+      saleEnabled: draft.saleEnabled,
+      tokenAmountBaseUnits,
+      displayNote: draft.displayNote.trim(),
+      expectedPriceVersion: draft.expectedPriceVersion,
+    })
+      .then(() => {
+        setSkinShopItemDraftDirtyById((dirty) => ({ ...dirty, [skinId]: false }));
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusySkinShopItemId(null));
+  }, [postAdminJson, skinShopItemDrafts]);
 
   useEffect(() => {
     void loadOverview();
@@ -1927,10 +2477,63 @@ export function AdminDashboard() {
     rankedSeasonDraftDirty,
   ]);
 
+  useEffect(() => {
+    if (!overview?.rankedEntryGate || rankedEntryGateDraftDirty) return;
+    setRankedEntryGateDraft({
+      mode: overview.rankedEntryGate.mode,
+      tokenMintAddress: overview.rankedEntryGate.tokenMintAddress ?? '',
+      tokenSymbol: overview.rankedEntryGate.tokenSymbol || 'TOKEN',
+      requiredTokenAmount: overview.rankedEntryGate.requiredTokenAmount || '0',
+    });
+  }, [
+    overview?.rankedEntryGate?.mode,
+    overview?.rankedEntryGate?.requiredTokenAmount,
+    overview?.rankedEntryGate?.tokenMintAddress,
+    overview?.rankedEntryGate?.tokenSymbol,
+    rankedEntryGateDraftDirty,
+  ]);
+
+  useEffect(() => {
+    if (!overview?.skinShop?.shop || skinShopDraftDirty) return;
+    setSkinShopDraft({
+      enabled: overview.skinShop.shop.enabled,
+      tokenMintAddress: overview.skinShop.shop.tokenMintAddress ?? '',
+      tokenSymbol: overview.skinShop.shop.tokenSymbol || 'TOKEN',
+      treasuryWallet: overview.skinShop.shop.treasuryWallet ?? '',
+      rpcUrl: '',
+      cluster: overview.skinShop.shop.cluster || 'devnet',
+    });
+  }, [
+    overview?.skinShop?.shop?.cluster,
+    overview?.skinShop?.shop?.enabled,
+    overview?.skinShop?.shop?.tokenMintAddress,
+    overview?.skinShop?.shop?.tokenSymbol,
+    overview?.skinShop?.shop?.treasuryWallet,
+    skinShopDraftDirty,
+  ]);
+
+  useEffect(() => {
+    if (!overview?.skinShop?.items) return;
+    setSkinShopItemDrafts((current) => {
+      const next = { ...current };
+      for (const item of overview.skinShop.items) {
+        if (skinShopItemDraftDirtyById[item.settings.skinId]) continue;
+        next[item.settings.skinId] = {
+          saleEnabled: item.settings.saleEnabled,
+          tokenAmountBaseUnits: item.settings.tokenAmountBaseUnits ?? '',
+          displayNote: item.settings.displayNote ?? '',
+          expectedPriceVersion: item.settings.priceVersion,
+        };
+      }
+      return next;
+    });
+  }, [overview?.skinShop?.items, skinShopItemDraftDirtyById]);
+
   const metrics = useMemo<MetricTileProps[]>(() => {
     if (!overview) return [];
     const activeReports = (overview.playerReports?.counts.open ?? 0) + (overview.playerReports?.counts.reviewing ?? 0);
     const pendingGoldenRewards = overview.goldenBiomeRewards?.rewards.filter((reward) => reward.status !== 'complete').length ?? 0;
+    const purchasableSkins = overview.skinShop.items.filter((item) => item.settings.saleEnabled).length;
     const capacityTone = overview.capacity.full ? 'danger' : toneForPressure(overview.capacity.capacityPressure);
     return [
       { label: 'Machines', value: formatNumber(overview.totals.runningMachines), sublabel: formatCount(overview.totals.serverProcesses, 'process', 'processes'), tone: 'info' },
@@ -1938,7 +2541,8 @@ export function AdminDashboard() {
       { label: 'Game Players', value: formatNumber(overview.totals.playersInGame), sublabel: `${formatNumber(overview.totals.botsInGame)} bots`, tone: 'success' },
       { label: 'Game Rooms', value: formatNumber(overview.totals.gameRooms), sublabel: `${formatNumber(overview.totals.participantsInGame)} participants`, tone: 'info' },
       { label: 'Lobby', value: formatNumber(overview.totals.lobbyParticipants), sublabel: formatCount(overview.totals.lobbyRooms, 'lobby', 'lobbies'), tone: 'neutral' },
-      { label: 'Ranked', value: overview.rankedSeason.label, sublabel: formatSeasonBoundary(overview.rankedSeason.mode, overview.rankedSeason.endsAt), tone: 'amber' },
+      { label: 'Ranked', value: overview.rankedSeason.label, sublabel: formatRankedEntryGateMode(overview.rankedEntryGate.mode), tone: overview.rankedEntryGate.mode === 'token_required' ? 'success' : 'amber' },
+      { label: 'Skin Shop', value: overview.skinShop.shop.enabled ? 'Online' : 'Locked', sublabel: `${formatNumber(purchasableSkins)} priced`, tone: overview.skinShop.shop.enabled ? 'success' : 'amber' },
       { label: 'Golden Rewards', value: formatNumber(pendingGoldenRewards), sublabel: overview.goldenBiomeRewards?.settings.distributionMode ?? 'manual', tone: pendingGoldenRewards > 0 ? 'warning' : 'success' },
       { label: 'Reports', value: formatNumber(activeReports), sublabel: `${formatNumber(overview.playerReports?.reports.length ?? 0)} listed`, tone: activeReports > 0 ? 'warning' : 'success' },
       { label: 'Clients', value: formatNumber(overview.totals.totalConnectedClients), sublabel: overview.diagnostics.redis.ok ? 'redis ok' : `redis ${overview.diagnostics.redis.status}`, tone: overview.diagnostics.redis.ok ? 'success' : 'danger' },
@@ -1962,7 +2566,7 @@ export function AdminDashboard() {
       {
         id: 'operations',
         label: 'Operations',
-        meta: overview.globalNotification ? 'message on' : overview.rankedSeason.label,
+        meta: overview.globalNotification ? 'message on' : formatRankedEntryGateMode(overview.rankedEntryGate.mode),
         tone: overview.globalNotification ? 'warning' : 'amber',
       },
       {
@@ -2044,7 +2648,7 @@ export function AdminDashboard() {
                 role="tabpanel"
                 id="admin-panel-overview"
                 aria-labelledby="admin-tab-overview"
-                className="grid grid-cols-1 gap-2 sm:grid-cols-3 xl:grid-cols-9"
+                className="grid grid-cols-1 gap-2 sm:grid-cols-3 xl:grid-cols-10"
               >
                 {metrics.map((metric) => (
                   <MetricTile key={metric.label} {...metric} />
@@ -2070,6 +2674,31 @@ export function AdminDashboard() {
                     onDraftChange={setGlobalNotificationDraft}
                     onSave={saveGlobalNotification}
                     onRemove={removeGlobalNotification}
+                  />
+                </Section>
+
+                <Section title="Skin Shop" meta={overview.skinShop.shop.enabled ? 'online' : 'locked'}>
+                  <SkinShopPanel
+                    overview={overview.skinShop}
+                    settingsDraft={skinShopDraft}
+                    itemDrafts={skinShopItemDrafts}
+                    dirtyById={skinShopItemDraftDirtyById}
+                    busySettings={busySkinShopSettings}
+                    busyItemId={busySkinShopItemId}
+                    onSettingsDraftChange={updateSkinShopDraft}
+                    onItemDraftChange={updateSkinShopItemDraft}
+                    onSaveSettings={saveSkinShopSettings}
+                    onSaveItem={saveSkinShopItem}
+                  />
+                </Section>
+
+                <Section title="Ranked Entry Gate" meta={formatRankedEntryGateMode(overview.rankedEntryGate.mode)}>
+                  <RankedEntryGatePanel
+                    gate={overview.rankedEntryGate}
+                    draft={rankedEntryGateDraft}
+                    busy={busyRankedEntryGate}
+                    onDraftChange={updateRankedEntryGateDraft}
+                    onSave={saveRankedEntryGate}
                   />
                 </Section>
 

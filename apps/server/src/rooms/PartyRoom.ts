@@ -9,9 +9,11 @@ import {
   type BotDifficulty,
   type GameplayMode,
   type HeroId,
+  type HeroSkinId,
   type MatchPerspective,
   type MatchPerspectiveSettingMode,
   type PartyMode,
+  isHeroSkinId,
 } from '@voxel-strike/shared';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
 import { assertGameplayAccountEligible } from '../auth/accountEligibility';
@@ -28,10 +30,15 @@ import {
   loadPersistentPartyForRestore,
   savePersistentParty,
 } from '../party/persistentParty';
+import {
+  resolveUserLoadoutForHero,
+  updateUserHeroLoadout,
+} from '../cosmetics/skinShopService';
 import { loggers } from '../utils/logger';
 
 interface PartyJoinOptions {
   heroId?: HeroId;
+  selectedSkinId?: HeroSkinId;
   selectedMode?: PartyMode;
   gameplayMode?: GameplayMode;
   authToken?: string;
@@ -41,6 +48,7 @@ interface PartyJoinOptions {
 
 const PARTY_MESSAGE_RATE_LIMITS = {
   hero: { limit: 8, intervalMs: 5000 },
+  skin: { limit: 8, intervalMs: 5000 },
   ready: { limit: 10, intervalMs: 5000 },
   mode: { limit: 8, intervalMs: 5000 },
   botFill: { limit: 12, intervalMs: 5000 },
@@ -133,6 +141,10 @@ function validatePartyMemberIdPayload(value: unknown): string | null {
   return sanitizeShortText(value.userId, 96);
 }
 
+function validateSkinPayload(value: unknown): HeroSkinId | null {
+  return isRecord(value) && isHeroSkinId(value.skinId) ? value.skinId : null;
+}
+
 function isDevTutorialBypassEnabled(value: unknown): boolean {
   return value === true || value === 'true' || value === '1';
 }
@@ -179,7 +191,18 @@ export class PartyRoom extends Room {
     this.onMessage('setHero', (client, data: unknown) => {
       if (!this.consumePartyMessage(client, 'setHero', PARTY_MESSAGE_RATE_LIMITS.hero)) return;
       if (!isRecord(data) || !isHeroId(data.heroId)) return;
-      this.handleSetHero(client, data.heroId);
+      this.handleSetHero(client, data.heroId).catch((error) => {
+        client.send('error', { message: error instanceof Error ? error.message : 'Failed to set party hero' });
+      });
+    });
+
+    this.onMessage('setSkin', (client, data: unknown) => {
+      if (!this.consumePartyMessage(client, 'setSkin', PARTY_MESSAGE_RATE_LIMITS.skin)) return;
+      const skinId = validateSkinPayload(data);
+      if (!skinId) return;
+      this.handleSetSkin(client, skinId).catch((error) => {
+        client.send('error', { message: error instanceof Error ? error.message : 'Failed to set party skin' });
+      });
     });
 
     this.onMessage('setReady', (client, data: unknown) => {
@@ -263,13 +286,20 @@ export class PartyRoom extends Room {
     }
 
     this.authBySessionId.set(client.sessionId, authContext);
+    const selectedHero = isHeroId(options.heroId) ? options.heroId : 'blaze';
+    const selectedSkinId = await resolveUserLoadoutForHero(
+      authContext.userId,
+      selectedHero,
+      isHeroSkinId(options.selectedSkinId) ? options.selectedSkinId : undefined
+    );
     let change;
     try {
       change = this.party.addMember({
         userId: authContext.userId,
         sessionId: client.sessionId,
         displayName: authContext.displayName,
-        heroId: isHeroId(options.heroId) ? options.heroId : 'blaze',
+        heroId: selectedHero,
+        skinId: selectedSkinId,
         rank: authContext.rank,
         competitiveRating: authContext.competitiveRating,
         rankDivisionIndex: authContext.rankDivisionIndex,
@@ -405,20 +435,44 @@ export class PartyRoom extends Room {
     return member;
   }
 
-  private handleSetHero(client: Client, heroId: HeroId): void {
+  private async handleSetHero(client: Client, heroId: HeroId): Promise<void> {
     const member = this.memberForClient(client);
     if (!member) return;
     try {
-      const updated = this.party.updateHero(member.userId, heroId);
+      const skinId = await resolveUserLoadoutForHero(member.userId, heroId);
+      const updated = this.party.updateLoadout(member.userId, heroId, skinId);
       if (!updated) return;
       this.broadcast('partyMemberUpdated', {
         userId: updated.userId,
         heroId: updated.heroId,
+        skinId: updated.skinId,
         ready: updated.ready,
       });
       this.broadcastPartyState();
     } catch (error) {
       client.send('error', { message: error instanceof Error ? error.message : 'Failed to set party hero' });
+    }
+  }
+
+  private async handleSetSkin(client: Client, skinId: HeroSkinId): Promise<void> {
+    const member = this.memberForClient(client);
+    if (!member) return;
+    try {
+      const loadout = await updateUserHeroLoadout({
+        userId: member.userId,
+        heroId: member.heroId,
+        skinId,
+      });
+      const updated = this.party.updateSkin(member.userId, loadout.skinId);
+      if (!updated) return;
+      this.broadcast('partyMemberUpdated', {
+        userId: updated.userId,
+        skinId: updated.skinId,
+        ready: updated.ready,
+      });
+      this.broadcastPartyState();
+    } catch (error) {
+      client.send('error', { message: error instanceof Error ? error.message : 'Failed to set party skin' });
     }
   }
 

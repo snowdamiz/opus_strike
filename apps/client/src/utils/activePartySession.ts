@@ -1,10 +1,11 @@
-import { ALL_HERO_IDS, type HeroId } from '@voxel-strike/shared';
+import { ALL_HERO_IDS, getHeroSkinDefinition, isHeroSkinId, type HeroId, type HeroSkinId } from '@voxel-strike/shared';
 
 export interface ActivePartySession {
   partyId: string;
   userId: string;
   playerName: string;
   heroId?: HeroId;
+  skinId?: HeroSkinId;
   savedAt: number;
 }
 
@@ -26,6 +27,11 @@ function normalizeHeroId(value: unknown): HeroId | undefined {
     : undefined;
 }
 
+function normalizeSkinId(heroId: HeroId | undefined, value: unknown): HeroSkinId | undefined {
+  if (!heroId || !isHeroSkinId(value)) return undefined;
+  return getHeroSkinDefinition(value).heroId === heroId ? value : undefined;
+}
+
 function parseSession(value: string | null): ActivePartySession | null {
   if (!value) return null;
 
@@ -37,11 +43,13 @@ function parseSession(value: string | null): ActivePartySession | null {
       ? parsed.playerName.trim().slice(0, 24)
       : '';
 
+    const heroId = normalizeHeroId(parsed.heroId);
     return {
       partyId: parsed.partyId,
       userId: parsed.userId,
       playerName,
-      heroId: normalizeHeroId(parsed.heroId),
+      heroId,
+      skinId: normalizeSkinId(heroId, parsed.skinId),
       savedAt: Number.isFinite(parsed.savedAt) ? Number(parsed.savedAt) : Date.now(),
     };
   } catch {
@@ -63,11 +71,13 @@ export function saveActivePartySession(input: Omit<ActivePartySession, 'savedAt'
   if (typeof window === 'undefined') return;
   if (!isValidStorageId(input.partyId) || !isValidStorageId(input.userId)) return;
 
+  const heroId = normalizeHeroId(input.heroId);
   const session: ActivePartySession = {
     partyId: input.partyId,
     userId: input.userId,
     playerName: input.playerName.trim().slice(0, 24),
-    heroId: normalizeHeroId(input.heroId),
+    heroId,
+    skinId: normalizeSkinId(heroId, input.skinId),
     savedAt: Date.now(),
   };
 

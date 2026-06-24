@@ -8,6 +8,7 @@ export class LobbyPlayer extends Schema {
   isReady: boolean = false;
   team: string = ''; // empty = awaiting selection
   heroId: string = '';
+  skinId: string = '';
   isBot: boolean = false;
   botDifficulty: string = 'normal';
   botProfileId: string = '';
@@ -28,6 +29,7 @@ defineTypes(LobbyPlayer, {
   isReady: 'boolean',
   team: 'string',
   heroId: 'string',
+  skinId: 'string',
   isBot: 'boolean',
   botDifficulty: 'string',
   botProfileId: 'string',

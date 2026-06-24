@@ -112,6 +112,7 @@ import type {
   PhantomShieldBrokenEvent,
   GamePhase,
   HeroId,
+  HeroSkinId,
   MatchSnapshotMessage,
   PlayerDeathEvent,
   PlayerDownedEvent,
@@ -248,6 +249,7 @@ export function createPlayerFromSchema(schemaPlayer: any, id: string): Player {
     name: schemaPlayer.name || 'Unknown',
     team: (schemaPlayer.team || 'red') as Team,
     heroId: (schemaPlayer.heroId || null) as HeroId | null,
+    skinId: (schemaPlayer.skinId || null) as HeroSkinId | null,
     state: normalizePlayerState(schemaPlayer.state),
     isReady: schemaPlayer.isReady || false,
     isBot: Boolean(schemaPlayer.isBot),
@@ -289,6 +291,7 @@ export function createDefaultLocalPlayer(sessionId: string, playerName: string):
     name: playerName,
     team: 'red',
     heroId: null,
+    skinId: null,
     state: 'alive',
     isReady: false,
     isBot: false,
@@ -475,6 +478,7 @@ function addDeathVisualFromKillEvent(data: PlayerDeathEvent): void {
     id: `death:${victim.id}:${startedAtMs}`,
     playerId: victim.id,
     heroId: victim.heroId,
+    skinId: victim.skinId,
     team: victim.team,
     isBot: victim.isBot,
     name: victim.name,
@@ -757,6 +761,7 @@ function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: number
     name: vitals.name || existing?.name || 'Unknown',
     team: vitals.team,
     heroId: vitals.heroId,
+    skinId: vitals.skinId ?? existing?.skinId ?? null,
     state: vitals.state,
     isReady: vitals.isReady,
     isBot: Boolean(vitals.isBot),
@@ -833,6 +838,7 @@ function applyLocalVitalsPatchInPlace(player: Player, vitals: PlayerVitalsSnapsh
   player.name = vitals.name || player.name;
   player.team = vitals.team;
   player.heroId = vitals.heroId;
+  player.skinId = vitals.skinId ?? player.skinId ?? null;
   player.state = vitals.state;
   player.isReady = vitals.isReady;
   player.isBot = Boolean(vitals.isBot);
@@ -897,9 +903,11 @@ export function syncPlayerFromSchema(
     if (store.localPlayer) {
       const nextState = schemaPlayer.state || store.localPlayer.state;
       const nextHeroId = (schemaPlayer.heroId || store.localPlayer.heroId) as HeroId | null;
+      const nextSkinId = (schemaPlayer.skinId || store.localPlayer.skinId) as HeroSkinId | null;
       const updated = {
         ...store.localPlayer,
         heroId: nextHeroId,
+        skinId: nextSkinId,
         team: schemaPlayer.team || store.localPlayer.team,
         isBot: Boolean(schemaPlayer.isBot ?? store.localPlayer.isBot),
         botDifficulty: schemaPlayer.botDifficulty || store.localPlayer.botDifficulty,
@@ -940,6 +948,7 @@ export function setupPlayerJoinedHandler(
     playerName: string;
     team?: string;
     heroId?: string;
+    skinId?: string;
     isBot?: boolean;
     botDifficulty?: BotDifficulty;
     botProfileId?: string;
@@ -961,6 +970,7 @@ export function setupPlayerJoinedHandler(
           name: data.playerName || existingPlayer.name,
           team: (data.team || existingPlayer.team) as Team,
           heroId: (data.heroId || existingPlayer.heroId) as HeroId | null,
+          skinId: (data.skinId || existingPlayer.skinId) as HeroSkinId | null,
           isBot: Boolean(data.isBot ?? existingPlayer.isBot),
           botDifficulty: data.botDifficulty || existingPlayer.botDifficulty,
           botProfileId: data.botProfileId || existingPlayer.botProfileId,
@@ -974,6 +984,7 @@ export function setupPlayerJoinedHandler(
           name: data.playerName,
           team: (data.team || 'red') as Team,
           heroId: (data.heroId || null) as HeroId | null,
+          skinId: (data.skinId || null) as HeroSkinId | null,
           state: 'selecting',
           isReady: false,
           isBot: Boolean(data.isBot),
