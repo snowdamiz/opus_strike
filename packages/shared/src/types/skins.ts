@@ -5,7 +5,10 @@ export type HeroSkinId =
   | 'hookshot.default'
   | 'blaze.default'
   | 'chronos.default'
-  | 'phantom.void-monarch';
+  | 'phantom.void-monarch'
+  | 'hookshot.tidebreaker'
+  | 'blaze.solar-forge'
+  | 'chronos.epoch-regent';
 
 export type HeroSkinRarity = 'common' | 'rare' | 'epic' | 'legendary';
 export type HeroSkinAvailability = 'free' | 'paid';

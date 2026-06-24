@@ -14,8 +14,17 @@ const validation = validateHeroSkinCatalog();
 assert.deepEqual(validation.errors, []);
 assert.equal(validation.ok, true);
 
-assert.equal(HERO_SKIN_CATALOG.length, 5);
-assert.equal(isHeroSkinId('phantom.void-monarch'), true);
+const paidSkinIds = [
+  'phantom.void-monarch',
+  'hookshot.tidebreaker',
+  'blaze.solar-forge',
+  'chronos.epoch-regent',
+];
+
+assert.equal(HERO_SKIN_CATALOG.length, 8);
+for (const skinId of paidSkinIds) {
+  assert.equal(isHeroSkinId(skinId), true, `${skinId} should be a known skin id`);
+}
 assert.equal(isHeroSkinId('Phantom.Void Monarch'), false);
 
 for (const heroId of ALL_HERO_IDS) {
@@ -30,12 +39,14 @@ for (const heroId of ALL_HERO_IDS) {
   );
 }
 
-const voidMonarch = HERO_SKIN_CATALOG.find((skin) => skin.id === 'phantom.void-monarch');
-assert.ok(voidMonarch);
-assert.equal(voidMonarch.availability, 'paid');
-assert.equal(voidMonarch.releaseState, 'ready_when_token_launches');
-assert.equal(voidMonarch.price.amountBaseUnits, null);
-assert.equal(voidMonarch.price.disabledReason, 'Game SPL token has not launched yet');
+for (const skinId of paidSkinIds) {
+  const skin = HERO_SKIN_CATALOG.find((catalogSkin) => catalogSkin.id === skinId);
+  assert.ok(skin, `${skinId} should be in the catalog`);
+  assert.equal(skin.availability, 'paid');
+  assert.equal(skin.releaseState, 'ready_when_token_launches');
+  assert.equal(skin.price.amountBaseUnits, null);
+  assert.equal(skin.price.disabledReason, 'Game SPL token has not launched yet');
+}
 
 const matched = resolveHeroSkinDefinition('phantom', 'phantom.void-monarch', {
   ownedSkinIds: new Set(['phantom.void-monarch']),
@@ -43,12 +54,15 @@ const matched = resolveHeroSkinDefinition('phantom', 'phantom.void-monarch', {
 assert.equal(matched.skin.id, 'phantom.void-monarch');
 assert.equal(matched.fallback, false);
 
-const locked = resolveHeroSkinDefinition('phantom', 'phantom.void-monarch', {
-  ownedSkinIds: new Set(),
-});
-assert.equal(locked.skin.id, 'phantom.default');
-assert.equal(locked.fallback, true);
-assert.equal(locked.fallbackReason, 'locked');
+for (const skinId of paidSkinIds) {
+  const skin = HERO_SKIN_CATALOG.find((catalogSkin) => catalogSkin.id === skinId);
+  const locked = resolveHeroSkinDefinition(skin.heroId, skinId, {
+    ownedSkinIds: new Set(),
+  });
+  assert.equal(locked.skin.id, DEFAULT_HERO_SKIN_IDS[skin.heroId]);
+  assert.equal(locked.fallback, true);
+  assert.equal(locked.fallbackReason, 'locked');
+}
 
 const mismatched = resolveHeroSkinDefinition('blaze', 'phantom.void-monarch');
 assert.equal(mismatched.skin.id, 'blaze.default');

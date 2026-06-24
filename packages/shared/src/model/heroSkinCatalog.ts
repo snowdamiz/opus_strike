@@ -1,9 +1,9 @@
 import { ALL_HERO_IDS } from '../constants/heroes.js';
 import type { HeroId } from '../types/hero.js';
 import type {
-  HeroSkinAvailability,
   HeroSkinDefinition,
   HeroSkinId,
+  HeroSkinPrice,
 } from '../types/skins.js';
 
 export interface HeroSkinCatalogValidationResult {
@@ -24,6 +24,13 @@ export interface ResolvedHeroSkin {
 }
 
 const HERO_SKIN_ID_PATTERN = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/;
+const TOKEN_LAUNCH_PENDING_PRICE = {
+  tokenSymbol: 'TOKEN',
+  tokenMintAddress: null,
+  amountBaseUnits: null,
+  adminEditable: true,
+  disabledReason: 'Game SPL token has not launched yet',
+} as const satisfies HeroSkinPrice;
 
 export const DEFAULT_HERO_SKIN_IDS: Record<HeroId, HeroSkinId> = {
   phantom: 'phantom.default',
@@ -82,13 +89,40 @@ export const HERO_SKIN_CATALOG = [
     availability: 'paid',
     releaseState: 'ready_when_token_launches',
     modelDocumentId: 'phantom.void-monarch',
-    price: {
-      tokenSymbol: 'TOKEN',
-      tokenMintAddress: null,
-      amountBaseUnits: null,
-      adminEditable: true,
-      disabledReason: 'Game SPL token has not launched yet',
-    },
+    price: TOKEN_LAUNCH_PENDING_PRICE,
+  },
+  {
+    id: 'hookshot.tidebreaker',
+    heroId: 'hookshot',
+    displayName: 'Tidebreaker',
+    subtitle: 'A storm-forged Hookshot rig with brass anchor plating and luminous deep-current hooks.',
+    rarity: 'epic',
+    availability: 'paid',
+    releaseState: 'ready_when_token_launches',
+    modelDocumentId: 'hookshot.tidebreaker',
+    price: TOKEN_LAUNCH_PENDING_PRICE,
+  },
+  {
+    id: 'blaze.solar-forge',
+    heroId: 'blaze',
+    displayName: 'Solar Forge',
+    subtitle: 'A white-hot Blaze chassis with furnace-gold trim, ember vents, and a brighter staff crystal.',
+    rarity: 'epic',
+    availability: 'paid',
+    releaseState: 'ready_when_token_launches',
+    modelDocumentId: 'blaze.solar-forge',
+    price: TOKEN_LAUNCH_PENDING_PRICE,
+  },
+  {
+    id: 'chronos.epoch-regent',
+    heroId: 'chronos',
+    displayName: 'Epoch Regent',
+    subtitle: 'A gilded Chronos frame with royal timeglass plates and cool paradox-blue conduits.',
+    rarity: 'epic',
+    availability: 'paid',
+    releaseState: 'ready_when_token_launches',
+    modelDocumentId: 'chronos.epoch-regent',
+    price: TOKEN_LAUNCH_PENDING_PRICE,
   },
 ] as const satisfies readonly HeroSkinDefinition[];
 

@@ -15,6 +15,12 @@ function assertMatched(query: string, expectedSkinId: string, heroId?: HeroId): 
 assertMatched('Void Monarch', 'phantom.void-monarch');
 assertMatched('void-monarch', 'phantom.void-monarch');
 assertMatched('phantom.void-monarch', 'phantom.void-monarch');
+assertMatched('Tidebreaker', 'hookshot.tidebreaker');
+assertMatched('hookshot.tidebreaker', 'hookshot.tidebreaker');
+assertMatched('Solar Forge', 'blaze.solar-forge');
+assertMatched('solar-forge', 'blaze.solar-forge');
+assertMatched('Epoch Regent', 'chronos.epoch-regent');
+assertMatched('chronos.epoch-regent', 'chronos.epoch-regent');
 assertMatched('default', 'phantom.default', 'phantom');
 
 const ambiguousDefault = resolveConsoleSkinQuery('default');

@@ -132,6 +132,48 @@ export const VOID_MONARCH_COLORS: Record<MaterialKind, string> = {
   mist: '#7c3aed',
 };
 
+export const TIDEBREAKER_COLORS: Record<MaterialKind, string> = {
+  armor: '#17324f',
+  dark: '#07111d',
+  metal: '#c9a95d',
+  accent: '#f59e0b',
+  glow: '#67e8f9',
+  glass: '#0f766e',
+  skin: '#172a38',
+  void: '#030910',
+  edge: '#8a6f37',
+  eye: '#e0ffff',
+  mist: '#22d3ee',
+};
+
+export const SOLAR_FORGE_COLORS: Record<MaterialKind, string> = {
+  armor: '#6b1d14',
+  dark: '#140807',
+  metal: '#f6d58c',
+  accent: '#ef4444',
+  glow: '#fff7ad',
+  glass: '#fb7185',
+  skin: '#35130f',
+  void: '#090302',
+  edge: '#b45309',
+  eye: '#fff6d0',
+  mist: '#ffb703',
+};
+
+export const EPOCH_REGENT_COLORS: Record<MaterialKind, string> = {
+  armor: '#10362f',
+  dark: '#06110f',
+  metal: '#d6b36a',
+  accent: '#2563eb',
+  glow: '#7dd3fc',
+  glass: '#34d399',
+  skin: '#173029',
+  void: '#020807',
+  edge: '#8b5cf6',
+  eye: '#ecfeff',
+  mist: '#2dd4bf',
+};
+
 type TeamAccentPartDraft = Omit<TeamAccentPart, 'id' | 'bone'> & {
   id?: string;
   bone?: TeamAccentPart['bone'];
@@ -248,6 +290,63 @@ export const VOID_MONARCH_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'edge', position: [-0.15, 0.25, -0.07], scale: [0.1, 0.025, 0.026] },
   { material: 'edge', position: [0.15, 0.25, -0.07], scale: [0.1, 0.025, 0.026] },
 ], 'phantom.voidMonarch.body');
+
+export const TIDEBREAKER_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.66, 0.012, 0.66], transparent: true },
+  { material: 'metal', position: [-0.37, 1.42, -0.19], scale: [0.18, 0.044, 0.034] },
+  { material: 'metal', position: [0.37, 1.42, -0.19], scale: [0.18, 0.044, 0.034] },
+  { material: 'edge', position: [-0.35, 1.34, -0.225], scale: [0.16, 0.034, 0.03] },
+  { material: 'edge', position: [0.35, 1.34, -0.225], scale: [0.16, 0.034, 0.03] },
+  { material: 'accent', position: [0, 1.22, -0.262], scale: [0.28, 0.034, 0.026], emissive: true },
+  { material: 'glow', position: [0, 1.09, -0.268], scale: [0.16, 0.026, 0.024], emissive: true },
+  { material: 'metal', position: [-0.6, 0.96, -0.305], scale: [0.17, 0.046, 0.034], bone: 'leftForearm' },
+  { material: 'metal', position: [0.6, 0.98, -0.305], scale: [0.17, 0.046, 0.034], bone: 'rightForearm' },
+  { material: 'accent', position: [-0.6, 0.7, -0.675], scale: [0.042, 0.05, 0.17], emissive: true, bone: 'leftForearm' },
+  { material: 'accent', position: [0.6, 0.73, -0.675], scale: [0.042, 0.05, 0.17], emissive: true, bone: 'rightForearm' },
+  { material: 'glow', kind: 'sphere', position: [-0.6, 0.7, -0.565], scale: [0.068, 0.068, 0.068], emissive: true, bone: 'leftForearm' },
+  { material: 'glow', kind: 'sphere', position: [0.6, 0.73, -0.565], scale: [0.072, 0.072, 0.072], emissive: true, bone: 'rightForearm' },
+  { material: 'edge', position: [0, 1.78, -0.225], scale: [0.34, 0.038, 0.032], emissive: true },
+  { material: 'metal', position: [-0.16, 1.89, -0.03], scale: [0.08, 0.18, 0.16], rotation: [0, 0, 0.28] },
+  { material: 'metal', position: [0.16, 1.89, -0.03], scale: [0.08, 0.18, 0.16], rotation: [0, 0, -0.28] },
+], 'hookshot.tidebreaker.body');
+
+export const SOLAR_FORGE_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.58, 0.012, 0.58], transparent: true },
+  { material: 'metal', position: [-0.28, 1.39, -0.225], scale: [0.14, 0.044, 0.034] },
+  { material: 'metal', position: [0.28, 1.39, -0.225], scale: [0.14, 0.044, 0.034] },
+  { material: 'accent', position: [0, 1.28, -0.262], scale: [0.28, 0.044, 0.032], emissive: true },
+  { material: 'glow', position: [0, 1.1, -0.265], scale: [0.12, 0.24, 0.028], emissive: true },
+  { material: 'metal', position: [-0.17, 0.45, -0.085], scale: [0.12, 0.032, 0.03] },
+  { material: 'metal', position: [0.17, 0.45, -0.085], scale: [0.12, 0.032, 0.03] },
+  { material: 'edge', position: [-0.17, 0.25, -0.085], scale: [0.11, 0.026, 0.026] },
+  { material: 'edge', position: [0.17, 0.25, -0.085], scale: [0.11, 0.026, 0.026] },
+  { material: 'metal', kind: 'cylinder', position: [0.52, 1.5, -0.38], scale: [0.115, 0.028, 0.115], emissive: true, bone: 'rightForearm' },
+  { material: 'accent', kind: 'cylinder', position: [0.52, 1.37, -0.38], scale: [0.1, 0.024, 0.1], emissive: true, bone: 'rightForearm' },
+  { material: 'glow', kind: 'sphere', position: [0.52, 1.7, -0.38], scale: [0.16, 0.16, 0.16], emissive: true, bone: 'rightForearm' },
+  { material: 'edge', position: [-0.43, 0.52, -0.15], scale: [0.08, 0.026, 0.024], bone: 'leftArm' },
+  { material: 'edge', position: [0.43, 0.82, -0.39], scale: [0.08, 0.026, 0.024], bone: 'rightForearm' },
+  { material: 'metal', kind: 'cone', position: [0.02, 2.4, -0.02], scale: [0.18, 0.24, 0.18], rotation: [0, 0, -0.12] },
+  { material: 'glow', kind: 'sphere', position: [0.08, 2.54, -0.02], scale: [0.06, 0.06, 0.06], emissive: true },
+], 'blaze.solarForge.body');
+
+export const EPOCH_REGENT_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.66, 0.012, 0.66], transparent: true },
+  { material: 'metal', position: [-0.3, 1.42, -0.225], scale: [0.14, 0.044, 0.034] },
+  { material: 'metal', position: [0.3, 1.42, -0.225], scale: [0.14, 0.044, 0.034] },
+  { material: 'edge', position: [0, 1.5, 0.23], scale: [0.56, 0.046, 0.042], emissive: true },
+  { material: 'accent', position: [0, 1.16, -0.266], scale: [0.24, 0.034, 0.026], emissive: true },
+  { material: 'glow', kind: 'cylinder', position: [0, 1.16, -0.278], scale: [0.22, 0.016, 0.22], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { material: 'metal', position: [-0.14, 0.45, -0.08], scale: [0.1, 0.032, 0.03] },
+  { material: 'metal', position: [0.14, 0.45, -0.08], scale: [0.1, 0.032, 0.03] },
+  { material: 'edge', position: [-0.14, 0.25, -0.08], scale: [0.09, 0.026, 0.026] },
+  { material: 'edge', position: [0.14, 0.25, -0.08], scale: [0.09, 0.026, 0.026] },
+  { material: 'metal', position: [-0.43, 0.78, -0.38], scale: [0.08, 0.026, 0.026], bone: 'leftForearm' },
+  { material: 'metal', position: [0.43, 0.78, -0.38], scale: [0.08, 0.026, 0.026], bone: 'rightForearm' },
+  { material: 'glow', position: [-0.43, 0.71, -0.37], scale: [0.034, 0.034, 0.018], emissive: true, bone: 'leftForearm' },
+  { material: 'glow', position: [0.43, 0.71, -0.37], scale: [0.034, 0.034, 0.018], emissive: true, bone: 'rightForearm' },
+  { material: 'metal', position: [0, 1.9, -0.04], scale: [0.08, 0.22, 0.17] },
+  { material: 'glow', position: [0, 1.75, -0.225], scale: [0.22, 0.026, 0.022], emissive: true },
+], 'chronos.epochRegent.body');
 
 export const HOOKSHOT_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.016, 0], scale: [0.54, 0.024, 0.54], transparent: true },
@@ -748,6 +847,51 @@ export const HERO_SKIN_BODY_MANIFESTS: Record<HeroSkinId, HeroBodyManifest> = {
       auraPulse: 0.15,
     },
     attackDurationSeconds: HERO_ATTACK_DURATIONS.phantom,
+  },
+  'hookshot.tidebreaker': {
+    heroId: 'hookshot',
+    parts: [
+      ...HOOKSHOT_PARTS,
+      ...TIDEBREAKER_EXTRA_PARTS,
+    ],
+    teamAccentParts: TEAM_ACCENT_PARTS.hookshot,
+    remoteSocketMarkers: REMOTE_BODY_SOCKET_MARKERS.hookshot,
+    materialPalette: TIDEBREAKER_COLORS,
+    idleProfile: {
+      ...HERO_IDLE_PROFILES.hookshot,
+      auraPulse: 0.11,
+    },
+    attackDurationSeconds: HERO_ATTACK_DURATIONS.hookshot,
+  },
+  'blaze.solar-forge': {
+    heroId: 'blaze',
+    parts: [
+      ...BLAZE_PARTS,
+      ...SOLAR_FORGE_EXTRA_PARTS,
+    ],
+    teamAccentParts: TEAM_ACCENT_PARTS.blaze,
+    remoteSocketMarkers: REMOTE_BODY_SOCKET_MARKERS.blaze,
+    materialPalette: SOLAR_FORGE_COLORS,
+    idleProfile: {
+      ...HERO_IDLE_PROFILES.blaze,
+      auraPulse: 0.14,
+    },
+    attackDurationSeconds: HERO_ATTACK_DURATIONS.blaze,
+  },
+  'chronos.epoch-regent': {
+    heroId: 'chronos',
+    parts: [
+      ...CHRONOS_PARTS,
+      ...EPOCH_REGENT_EXTRA_PARTS,
+    ],
+    teamAccentParts: TEAM_ACCENT_PARTS.chronos,
+    remoteSocketMarkers: REMOTE_BODY_SOCKET_MARKERS.chronos,
+    materialPalette: EPOCH_REGENT_COLORS,
+    idleProfile: {
+      ...HERO_IDLE_PROFILES.chronos,
+      auraPulse: 0.17,
+    },
+    attackDurationSeconds: HERO_ATTACK_DURATIONS.chronos,
   },
 };
 

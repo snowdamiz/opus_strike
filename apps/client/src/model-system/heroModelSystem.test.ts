@@ -237,6 +237,18 @@ assert.equal(
   'phantom.void-monarch'
 );
 assert.equal(
+  resolveHeroSkinModel('hookshot', 'hookshot.tidebreaker').skinId,
+  'hookshot.tidebreaker'
+);
+assert.equal(
+  resolveHeroSkinModel('blaze', 'blaze.solar-forge').skinId,
+  'blaze.solar-forge'
+);
+assert.equal(
+  resolveHeroSkinModel('chronos', 'chronos.epoch-regent').skinId,
+  'chronos.epoch-regent'
+);
+assert.equal(
   resolveHeroSkinModel('blaze', 'phantom.void-monarch').skinId,
   'blaze.default'
 );
