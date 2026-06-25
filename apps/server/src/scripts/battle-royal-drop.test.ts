@@ -73,7 +73,7 @@ function clampToBoundary(position: Vec3): Vec3 {
 }
 
 const startedAt = 1_000;
-const expectedDropShipAltitude = 153;
+const expectedDropShipAltitude = 153 * 0.85;
 const state = createBattleRoyalDropState(
   manifest,
   [

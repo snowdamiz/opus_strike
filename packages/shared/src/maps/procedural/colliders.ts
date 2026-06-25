@@ -9,33 +9,8 @@ interface ColliderInput {
   chunks: VoxelChunk[];
 }
 
-interface ColliderLookupInput extends ColliderInput {
-  chunkLookup: Map<number, VoxelChunk>;
-  chunksX: number;
-  chunksZ: number;
-}
-
 function index(x: number, y: number, z: number, size: VoxelSize): number {
   return x + size.x * (z + size.z * y);
-}
-
-function chunkLookupIndex(x: number, y: number, z: number, chunksX: number, chunksZ: number): number {
-  return x + chunksX * (z + chunksZ * y);
-}
-
-function getGlobalBlock(input: ColliderLookupInput, x: number, y: number, z: number): number {
-  if (x < 0 || x >= input.size.x || y < 0 || y >= input.size.y || z < 0 || z >= input.size.z) return 0;
-
-  const cx = Math.floor(x / input.chunkSize.x);
-  const cy = Math.floor(y / input.chunkSize.y);
-  const cz = Math.floor(z / input.chunkSize.z);
-  const chunk = input.chunkLookup.get(chunkLookupIndex(cx, cy, cz, input.chunksX, input.chunksZ));
-  if (!chunk) return 0;
-
-  const lx = x - cx * input.chunkSize.x;
-  const ly = y - cy * input.chunkSize.y;
-  const lz = z - cz * input.chunkSize.z;
-  return chunk.blocks[index(lx, ly, lz, chunk.size)];
 }
 
 function canFillCuboid(
@@ -61,30 +36,47 @@ function canFillCuboid(
   return true;
 }
 
-export function generateVoxelColliders(input: ColliderInput): VoxelCollider[] {
-  const chunkLookup = new Map<number, VoxelChunk>();
-  const chunksX = Math.ceil(input.size.x / input.chunkSize.x);
-  const chunksZ = Math.ceil(input.size.z / input.chunkSize.z);
-  for (const chunk of input.chunks) {
-    chunkLookup.set(chunkLookupIndex(chunk.coord.x, chunk.coord.y, chunk.coord.z, chunksX, chunksZ), chunk);
-  }
-  const lookupInput: ColliderLookupInput = { ...input, chunkLookup, chunksX, chunksZ };
+function fillSolidLookup(input: ColliderInput): { solid: Uint8Array; visited: Uint8Array; rowHasSolid: Uint8Array } {
   const solid = new Uint8Array(input.size.x * input.size.y * input.size.z);
   const visited = new Uint8Array(solid.length);
+  const rowHasSolid = new Uint8Array(input.size.y);
 
-  for (let y = 0; y < input.size.y; y++) {
-    for (let z = 0; z < input.size.z; z++) {
-      for (let x = 0; x < input.size.x; x++) {
-        if (isCollisionBlock(getGlobalBlock(lookupInput, x, y, z))) {
-          solid[index(x, y, z, input.size)] = 1;
+  for (const chunk of input.chunks) {
+    const baseX = chunk.coord.x * input.chunkSize.x;
+    const baseY = chunk.coord.y * input.chunkSize.y;
+    const baseZ = chunk.coord.z * input.chunkSize.z;
+
+    for (let y = 0; y < chunk.size.y; y++) {
+      const globalY = baseY + y;
+      if (globalY < 0 || globalY >= input.size.y) continue;
+
+      for (let z = 0; z < chunk.size.z; z++) {
+        const globalZ = baseZ + z;
+        if (globalZ < 0 || globalZ >= input.size.z) continue;
+
+        for (let x = 0; x < chunk.size.x; x++) {
+          const globalX = baseX + x;
+          if (globalX < 0 || globalX >= input.size.x) continue;
+
+          const block = chunk.blocks[index(x, y, z, chunk.size)];
+          if (!isCollisionBlock(block)) continue;
+
+          solid[index(globalX, globalY, globalZ, input.size)] = 1;
+          rowHasSolid[globalY] = 1;
         }
       }
     }
   }
 
+  return { solid, visited, rowHasSolid };
+}
+
+export function generateVoxelColliders(input: ColliderInput): VoxelCollider[] {
+  const { solid, visited, rowHasSolid } = fillSolidLookup(input);
   const colliders: VoxelCollider[] = [];
 
   for (let y = 0; y < input.size.y; y++) {
+    if (!rowHasSolid[y]) continue;
     for (let z = 0; z < input.size.z; z++) {
       for (let x = 0; x < input.size.x; x++) {
         const startIndex = index(x, y, z, input.size);

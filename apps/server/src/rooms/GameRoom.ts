@@ -6825,7 +6825,11 @@ export class GameRoom extends Room<GameState> {
         }
       }
 
-      if (this.state.phase !== 'playing' && this.state.phase !== 'countdown') {
+      if (
+        this.state.phase !== 'playing' &&
+        this.state.phase !== 'countdown' &&
+        !(this.state.phase === 'deployment' && isBattleRoyalMode(this.gameplayMode))
+      ) {
         return;
       }
 

@@ -1947,13 +1947,19 @@ function createHeightfield(input: {
   size: VoxelSize;
   origin: Vec3;
 }): VoxelHeightfield {
-  const topSolidRows = new Uint16Array(input.size.x * input.size.z);
-  for (let z = 0; z < input.size.z; z++) {
-    for (let x = 0; x < input.size.x; x++) {
-      for (let y = input.size.y - 1; y >= 0; y--) {
-        if (input.blocks[index(x, y, z, input.size)] !== AIR) {
-          topSolidRows[x + z * input.size.x] = y + 1;
-          break;
+  const width = input.size.x;
+  const depth = input.size.z;
+  const layerStride = width * depth;
+  const topSolidRows = new Uint16Array(layerStride);
+
+  for (let y = 0, layerOffset = 0; y < input.size.y; y++, layerOffset += layerStride) {
+    const topRow = y + 1;
+    for (let z = 0; z < depth; z++) {
+      const blockRowOffset = layerOffset + z * width;
+      const heightfieldRowOffset = z * width;
+      for (let x = 0; x < width; x++) {
+        if (input.blocks[blockRowOffset + x] !== AIR) {
+          topSolidRows[heightfieldRowOffset + x] = topRow;
         }
       }
     }
@@ -2664,7 +2670,6 @@ function createChunks(layout: BattleRoyalLayout, blocks: Uint8Array): VoxelChunk
           y: Math.min(CHUNK_SIZE.y, layout.size.y - cy * CHUNK_SIZE.y),
           z: Math.min(CHUNK_SIZE.z, layout.size.z - cz * CHUNK_SIZE.z),
         };
-        const chunkBlocks = new Uint8Array(chunkSize.x * chunkSize.y * chunkSize.z);
         let solidBlockCount = 0;
         for (let y = 0; y < chunkSize.y; y++) {
           for (let z = 0; z < chunkSize.z; z++) {
@@ -2673,12 +2678,24 @@ function createChunks(layout: BattleRoyalLayout, blocks: Uint8Array): VoxelChunk
               const globalY = cy * CHUNK_SIZE.y + y;
               const globalZ = cz * CHUNK_SIZE.z + z;
               const block = blocks[index(globalX, globalY, globalZ, layout.size)];
-              chunkBlocks[index(x, y, z, chunkSize)] = block;
               if (block !== AIR) solidBlockCount++;
             }
           }
         }
         if (solidBlockCount === 0) continue;
+
+        const chunkBlocks = new Uint8Array(chunkSize.x * chunkSize.y * chunkSize.z);
+        for (let y = 0; y < chunkSize.y; y++) {
+          for (let z = 0; z < chunkSize.z; z++) {
+            for (let x = 0; x < chunkSize.x; x++) {
+              const globalX = cx * CHUNK_SIZE.x + x;
+              const globalY = cy * CHUNK_SIZE.y + y;
+              const globalZ = cz * CHUNK_SIZE.z + z;
+              chunkBlocks[index(x, y, z, chunkSize)] = blocks[index(globalX, globalY, globalZ, layout.size)];
+            }
+          }
+        }
+
         chunks.push({
           coord: { x: cx, y: cy, z: cz },
           size: chunkSize,
