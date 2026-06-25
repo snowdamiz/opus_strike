@@ -1974,11 +1974,13 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!this.isMatchmakingQueue() || this.state.status !== 'matchmaking') return;
     if (!this.hasMinimumMatchmakingHumans()) return;
     const requiredPlayers = this.getMatchmakingRequiredPlayers();
-    this.fillMatchmakingBotsToRequiredPlayers(requiredPlayers);
-    if (this.getCombatParticipantCount() < requiredPlayers) return;
+    if (!this.isBotFillMatchmakingQueue() && this.getCombatParticipantCount() < requiredPlayers) return;
 
     const capacityAvailable = await this.ensureInGameCapacityAvailableForRoster();
     if (!capacityAvailable || this.state.status !== 'matchmaking') return;
+
+    this.fillMatchmakingBotsToRequiredPlayers(requiredPlayers);
+    if (this.getCombatParticipantCount() < requiredPlayers) return;
 
     await this.startMapSelection();
   }

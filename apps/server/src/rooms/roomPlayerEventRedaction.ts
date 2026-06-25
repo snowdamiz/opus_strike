@@ -80,11 +80,17 @@ export function buildPlayerHealedPayload(
   payload: PlayerHealedEvent,
   visibleTargetIds: ReadonlySet<string>
 ): PlayerHealedEvent | null {
-  const visibleTargets = payload.targets.filter((targetPayload) => (
-    visibleTargetIds.has(targetPayload.targetId)
-  ));
-  if (visibleTargets.length === 0) return null;
+  let visibleCount = 0;
+  for (const targetPayload of payload.targets) {
+    if (visibleTargetIds.has(targetPayload.targetId)) visibleCount++;
+  }
+  if (visibleCount === 0) return null;
+  if (visibleCount === payload.targets.length) return payload;
 
+  const visibleTargets: PlayerHealedEvent['targets'] = [];
+  for (const targetPayload of payload.targets) {
+    if (visibleTargetIds.has(targetPayload.targetId)) visibleTargets.push(targetPayload);
+  }
   return {
     ...payload,
     targets: visibleTargets,

@@ -10,7 +10,7 @@ import {
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import type { DireBallData } from '../../../store/types';
-import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
+import { getPhysicsWorld, isPhysicsReady, raycastInto, type RaycastHitResult } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
@@ -515,6 +515,11 @@ export function DireBallsManager() {
   const activeStoreIdsRef = useRef<Set<string>>(new Set());
   const removalsRef = useRef<string[]>([]);
   const rayDirectionRef = useRef<MutableVec3>({ x: 1, y: 0, z: 0 });
+  const terrainHitRef = useRef<RaycastHitResult>({
+    point: { x: 0, y: 0, z: 0 },
+    normal: { x: 0, y: 1, z: 0 },
+    distance: 0,
+  });
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const coreMeshRef = useRef<THREE.InstancedMesh>(null);
   const glowMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -645,11 +650,11 @@ export function DireBallsManager() {
           slot.ownerId,
           PHANTOM_DIRE_BALL_COLLISION_RADIUS
         );
-        const terrainHit = physicsWorld
-          ? raycast(physicsWorld, slot.position, rayDirectionRef.current, collisionDistance, {
+        const terrainHit = physicsWorld && raycastInto(terrainHitRef.current, physicsWorld, slot.position, rayDirectionRef.current, collisionDistance, {
             priority: 'visual',
             feature: 'projectile:phantomDireBall',
           })
+          ? terrainHitRef.current
           : null;
         let hit = authoritativeHit;
         if (aegisHit && (!hit || aegisHit.distance <= hit.distance)) {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  canCapsuleOccupy,
   createVoxelCollisionWorld,
   createHookshotSwingState,
   MovementPredictionController,
@@ -18,6 +19,7 @@ import {
   MOVEMENT_BUTTON_MOVE_FORWARD,
   MOVEMENT_BUTTON_RELOAD,
   MOVEMENT_BUTTON_SPRINT,
+  MOVEMENT_COMMAND_BUFFER_SIZE,
   MOVEMENT_PROTOCOL_VERSION,
   PLAYER_CROUCH_HEIGHT,
   PLAYER_HEIGHT,
@@ -1588,6 +1590,121 @@ function runTemporaryWallRevisionCollision() {
   assert.ok(Math.abs(result.velocity.z) < 0.5, `temporary wall should remove into-wall velocity, got ${result.velocity.z}`);
 }
 
+function runCanCapsuleOccupyUsesOverlapShortcut() {
+  let shortcutCalls = 0;
+  let testCapsuleCalls = 0;
+  const world = {
+    collisionRevision: 0,
+    testCapsule: () => {
+      testCapsuleCalls++;
+      return [{
+        normal: { x: 1, y: 0, z: 0 },
+        depth: 1,
+        aabb: {
+          min: { x: -1, y: -1, z: -1 },
+          max: { x: 1, y: 1, z: 1 },
+        },
+      }];
+    },
+    hasCapsuleOverlap: (position, height, radius) => {
+      shortcutCalls++;
+      assert.equal(position.x, 0);
+      assert.equal(height, PLAYER_HEIGHT);
+      assert.equal(radius, PLAYER_RADIUS);
+      return false;
+    },
+    sweepCapsule: () => null,
+    findGround: () => null,
+    clampToPlayableArea: (position) => ({ ...position }),
+  };
+
+  assert.equal(canCapsuleOccupy(world, { x: 0, y: 0.9, z: 0 }), true);
+  assert.equal(shortcutCalls, 1, 'canCapsuleOccupy should use hasCapsuleOverlap when available');
+  assert.equal(testCapsuleCalls, 0, 'canCapsuleOccupy should avoid allocating testCapsule results when shortcut exists');
+}
+
+function runDepenetrationUsesOverlapShortcut() {
+  let findOverlapCalls = 0;
+  let testCapsuleCalls = 0;
+  const blockingAabb = {
+    min: { x: -1, y: 0, z: -1 },
+    max: { x: 1, y: 2, z: 1 },
+  };
+  const world = {
+    collisionRevision: 0,
+    testCapsule: () => {
+      testCapsuleCalls++;
+      return [];
+    },
+    hasCapsuleOverlap: () => false,
+    findCapsuleOverlap: () => {
+      findOverlapCalls++;
+      return findOverlapCalls === 1
+        ? {
+            normal: { x: 1, y: 0, z: 0 },
+            depth: 0.2,
+            aabb: blockingAabb,
+          }
+        : null;
+    },
+    sweepCapsule: () => null,
+    findGround: () => null,
+    clampToPlayableArea: (position) => ({ ...position }),
+  };
+
+  const result = simulateCapsuleMotor({
+    state: {
+      position: { x: 0, y: 0.9, z: 0 },
+      velocity: { x: 0, y: 0, z: 0 },
+      movement: createMovementState(),
+    },
+    command: {
+      input: createEmptyInputState(),
+      lookYaw: 0,
+    },
+    terrain: world,
+    heroStats: HERO_DEFINITIONS.phantom.stats,
+    dt: 1 / 60,
+    collectContacts: false,
+  });
+
+  assert.equal(result.correction.depenetrationIterations, 1, 'depenetration should resolve the synthetic overlap');
+  assert.ok(result.state.position.x > 0.2, `depenetration should push out along overlap normal, got x ${result.state.position.x}`);
+  assert.equal(findOverlapCalls, 2, 'depenetration should keep using findCapsuleOverlap until clear');
+  assert.equal(testCapsuleCalls, 0, 'depenetration should not allocate testCapsule arrays when shortcut exists');
+}
+
+function runDynamicAabbFilterIgnoresFarCandidates() {
+  const world = createVoxelCollisionWorld({
+    getGroundY: () => null,
+    clampPosition: (position) => ({ ...position }),
+    getCollisionAabbs: () => [{
+      id: 'far-collider',
+      min: { x: 100, y: 0, z: 100 },
+      max: { x: 101, y: 2, z: 101 },
+    }],
+  });
+
+  assert.equal(canCapsuleOccupy(world, { x: 0, y: 0.9, z: 0 }), true);
+  assert.equal(world.hasCapsuleOverlap?.({ x: 0, y: 0.9, z: 0 }, PLAYER_HEIGHT, PLAYER_RADIUS), false);
+  assert.equal(world.findCapsuleOverlap?.({ x: 0, y: 0.9, z: 0 }, PLAYER_HEIGHT, PLAYER_RADIUS), null);
+}
+
+function runCommandBufferCompactsAfterOverflow() {
+  const controller = new MovementPredictionController();
+  controller.initialize(createSimulationState(), 0, 0);
+  for (let index = 1; index <= MOVEMENT_COMMAND_BUFFER_SIZE + 5; index++) {
+    controller.step(command(index, 0), context());
+  }
+
+  assert.equal(controller.getBufferedCommandCount(), MOVEMENT_COMMAND_BUFFER_SIZE);
+  controller.acknowledgeAck({
+    ackSeq: MOVEMENT_COMMAND_BUFFER_SIZE + 3,
+    movementEpoch: 0,
+  });
+  assert.equal(controller.getBufferedCommandCount(), 2);
+}
+
 function runBlinkCapsuleClearance() {
   const wallTerrain = {
     ...fineVoxelGrid,
@@ -1781,6 +1898,10 @@ runSteppedDownhillSlidePreservesSpeedAcrossShortLedges();
 runSlideJump();
 runLandingContact();
 runTemporaryWallRevisionCollision();
+runCanCapsuleOccupyUsesOverlapShortcut();
+runDepenetrationUsesOverlapShortcut();
+runDynamicAabbFilterIgnoresFarCandidates();
+runCommandBufferCompactsAfterOverflow();
 runBlinkCapsuleClearance();
 runHookshotTerrainContact();
 runHookshotSwingStep();

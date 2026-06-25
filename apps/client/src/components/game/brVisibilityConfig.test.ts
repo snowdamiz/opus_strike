@@ -4,7 +4,9 @@ import { shouldRenderBattleRoyalSafeZone } from './BattleRoyalSafeZone';
 import { getBattleRoyalTerrainLodDistances } from './battleRoyalTerrainLod';
 import {
   getBattleRoyalOuterFillY,
+  markBattleRoyalMacroTileDetail,
   shouldHideBattleRoyalRegionForMacroTile,
+  writeActiveBattleRoyalMacroTileIds,
 } from './procedural/VoxelMap';
 import {
   BATTLE_ROYAL_VISIBILITY_CONFIG,
@@ -64,6 +66,13 @@ assert.equal(balanced.remotePlayers.botFullBodyDistanceScale, 1);
 assert.equal(balanced.remotePlayers.botOutlineDistanceScale, 1);
 
 assert.equal(shouldHideBattleRoyalRegionForMacroTile({
+  active: false,
+  macroGeometryReady: true,
+  regionVisible: true,
+  regionDetail: 'ultraCoarse',
+}), false);
+
+assert.equal(shouldHideBattleRoyalRegionForMacroTile({
   active: true,
   macroGeometryReady: false,
   regionVisible: true,
@@ -73,9 +82,74 @@ assert.equal(shouldHideBattleRoyalRegionForMacroTile({
 assert.equal(shouldHideBattleRoyalRegionForMacroTile({
   active: true,
   macroGeometryReady: true,
+  regionVisible: false,
+  regionDetail: 'ultraCoarse',
+}), false);
+
+assert.equal(shouldHideBattleRoyalRegionForMacroTile({
+  active: true,
+  macroGeometryReady: true,
   regionVisible: true,
   regionDetail: 'ultraCoarse',
 }), true);
+
+assert.equal(shouldHideBattleRoyalRegionForMacroTile({
+  active: true,
+  macroGeometryReady: true,
+  regionVisible: true,
+  regionDetail: 'full',
+}), false);
+
+const activeMacroTileIds = new Set<string>();
+const ultraMacroTileIds = new Set<string>();
+const nearMacroTileIds = new Set<string>();
+markBattleRoyalMacroTileDetail({
+  tileId: 'tile-ultra-only',
+  visible: true,
+  detail: 'ultraCoarse',
+  tilesWithUltraCoarseVisibleRegions: ultraMacroTileIds,
+  tilesWithNearVisibleRegions: nearMacroTileIds,
+});
+markBattleRoyalMacroTileDetail({
+  tileId: 'tile-near',
+  visible: true,
+  detail: 'coarse',
+  tilesWithUltraCoarseVisibleRegions: ultraMacroTileIds,
+  tilesWithNearVisibleRegions: nearMacroTileIds,
+});
+markBattleRoyalMacroTileDetail({
+  tileId: 'tile-near',
+  visible: true,
+  detail: 'ultraCoarse',
+  tilesWithUltraCoarseVisibleRegions: ultraMacroTileIds,
+  tilesWithNearVisibleRegions: nearMacroTileIds,
+});
+markBattleRoyalMacroTileDetail({
+  tileId: 'tile-hidden',
+  visible: false,
+  detail: 'ultraCoarse',
+  tilesWithUltraCoarseVisibleRegions: ultraMacroTileIds,
+  tilesWithNearVisibleRegions: nearMacroTileIds,
+});
+markBattleRoyalMacroTileDetail({
+  tileId: undefined,
+  visible: true,
+  detail: 'ultraCoarse',
+  tilesWithUltraCoarseVisibleRegions: ultraMacroTileIds,
+  tilesWithNearVisibleRegions: nearMacroTileIds,
+});
+writeActiveBattleRoyalMacroTileIds(activeMacroTileIds, ultraMacroTileIds, nearMacroTileIds);
+assert.deepEqual([...activeMacroTileIds], ['tile-ultra-only']);
+
+markBattleRoyalMacroTileDetail({
+  tileId: 'tile-ultra-only',
+  visible: true,
+  detail: 'full',
+  tilesWithUltraCoarseVisibleRegions: ultraMacroTileIds,
+  tilesWithNearVisibleRegions: nearMacroTileIds,
+});
+writeActiveBattleRoyalMacroTileIds(activeMacroTileIds, ultraMacroTileIds, nearMacroTileIds);
+assert.equal(activeMacroTileIds.size, 0);
 
 const flightLodManifest = {
   seed: 0x51f15eed,

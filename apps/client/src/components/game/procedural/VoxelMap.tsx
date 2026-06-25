@@ -9,6 +9,7 @@ import { useVoxelFarMaterial, useVoxelMaterial } from './materials';
 import { VoxelRegionMesh, type VoxelMeshBuildMode } from './VoxelRegionMesh';
 import { WorldDressing } from './WorldDressing';
 import {
+  cancelVoxelGeometryBuilds,
   clearVoxelGeometryCache,
   getVoxelGeometryCacheStats,
   prebuildVoxelRegionGeometries,
@@ -49,6 +50,8 @@ const BATTLE_ROYAL_OUTER_FILL_SCALE = 2.75;
 const BATTLE_ROYAL_OUTER_FILL_WORLD_CLEARANCE = 0.08;
 const BATTLE_ROYAL_OUTER_FILL_BOUNDARY_PADDING = 2.4;
 const BATTLE_ROYAL_OUTER_FILL_FOG_BLEND = 0.42;
+const RENDERABLE_REGION_PRIORITY_CACHE_LIMIT = 8;
+const renderableRegionPriorityCache = new Map<string, VoxelChunkRegion[]>();
 
 interface BattleRoyalMacroTerrainTile extends VoxelChunkRegion {
   regions: VoxelChunkRegion[];
@@ -215,6 +218,35 @@ export function shouldHideBattleRoyalRegionForMacroTile(input: {
   return input.active && input.macroGeometryReady && input.regionVisible && input.regionDetail === 'ultraCoarse';
 }
 
+export function markBattleRoyalMacroTileDetail(input: {
+  tileId: string | undefined;
+  visible: boolean;
+  detail: VoxelRegionGeometryDetail;
+  tilesWithUltraCoarseVisibleRegions: Set<string>;
+  tilesWithNearVisibleRegions: Set<string>;
+}): void {
+  if (!input.visible || !input.tileId) return;
+  if (input.detail === 'ultraCoarse') {
+    input.tilesWithUltraCoarseVisibleRegions.add(input.tileId);
+  } else {
+    input.tilesWithNearVisibleRegions.add(input.tileId);
+  }
+}
+
+export function writeActiveBattleRoyalMacroTileIds(
+  target: Set<string>,
+  tilesWithUltraCoarseVisibleRegions: ReadonlySet<string>,
+  tilesWithNearVisibleRegions: ReadonlySet<string>
+): Set<string> {
+  target.clear();
+  for (const tileId of tilesWithUltraCoarseVisibleRegions) {
+    if (!tilesWithNearVisibleRegions.has(tileId)) {
+      target.add(tileId);
+    }
+  }
+  return target;
+}
+
 export function getBattleRoyalOuterFillY(manifest: Pick<VoxelMapManifest, 'origin'>): number {
   return manifest.origin.y - BATTLE_ROYAL_OUTER_FILL_WORLD_CLEARANCE;
 }
@@ -261,8 +293,18 @@ function prioritizeRenderableRegions(
 ): VoxelChunkRegion[] {
   if (manifest.gameplay.mode !== 'battle_royal' || !visibilityBudget?.terrainLodEnabled) return regions;
 
+  const cacheKey = `${manifest.id}:battle-royal-lod`;
+  const cached = renderableRegionPriorityCache.get(cacheKey);
+  if (cached) return cached;
+
   const focus = getRegionFocusPoint(manifest);
-  return [...regions].sort((a, b) => distanceSqToRegionFocus(a, focus) - distanceSqToRegionFocus(b, focus));
+  const prioritized = [...regions].sort((a, b) => distanceSqToRegionFocus(a, focus) - distanceSqToRegionFocus(b, focus));
+  if (renderableRegionPriorityCache.size >= RENDERABLE_REGION_PRIORITY_CACHE_LIMIT) {
+    const oldestKey = renderableRegionPriorityCache.keys().next().value;
+    if (oldestKey) renderableRegionPriorityCache.delete(oldestKey);
+  }
+  renderableRegionPriorityCache.set(cacheKey, prioritized);
+  return prioritized;
 }
 
 interface VoxelMapProps {
@@ -369,6 +411,15 @@ export function VoxelMap({
     () => createBattleRoyalMacroTerrainTiles(renderableRegions, manifest, activeBattleRoyalVisibility),
     [activeBattleRoyalTerrainLodEnabled, activeBattleRoyalTerrainMacroTileSize, manifest, renderableRegions]
   );
+  const macroTileIdByRegionId = useMemo(() => {
+    const tileIdByRegionId = new Map<string, string>();
+    for (const tile of macroTerrainTiles) {
+      for (const region of tile.regions) {
+        tileIdByRegionId.set(region.id, tile.id);
+      }
+    }
+    return tileIdByRegionId;
+  }, [macroTerrainTiles]);
   const material = useVoxelMaterial(manifest.theme, materialQuality);
   const farMaterial = useVoxelFarMaterial(manifest.theme, activeBattleRoyalVisibility?.farTerrainFogBlend ?? 0.52);
   const collidersLoadedRef = useRef(false);
@@ -392,6 +443,9 @@ export function VoxelMap({
   const activeMacroTileIdsRef = useRef<Set<string>>(new Set());
   const readyMacroTileIdsRef = useRef<Set<string>>(new Set());
   const macroHiddenRegionIdsRef = useRef<Set<string>>(new Set());
+  const nextActiveMacroTileIdsScratchRef = useRef<Set<string>>(new Set());
+  const macroTilesWithUltraCoarseVisibleRegionsScratchRef = useRef<Set<string>>(new Set());
+  const macroTilesWithNearVisibleRegionsScratchRef = useRef<Set<string>>(new Set());
   const terrainCullFrustumRef = useRef(new THREE.Frustum());
   const terrainCullMatrixRef = useRef(new THREE.Matrix4());
   const terrainCullSphereRef = useRef(new THREE.Sphere());
@@ -422,14 +476,15 @@ export function VoxelMap({
     group.visible = logicallyVisible && !macroHiddenRegionIdsRef.current.has(regionId);
   }, []);
 
-  const setRegionVisibility = useCallback((regionId: string, visible: boolean) => {
+  const setRegionVisibility = useCallback((regionId: string, visible: boolean): boolean => {
     const visibility = regionVisibilityRef.current;
     if (visibility.get(regionId) === visible) {
       applyRegionGroupVisibility(regionId);
-      return;
+      return false;
     }
     visibility.set(regionId, visible);
     applyRegionGroupVisibility(regionId);
+    return true;
   }, [applyRegionGroupVisibility]);
 
   const applyRegionGroupVisibilityForRegions = useCallback((regions: RegionVisibilityTarget[]) => {
@@ -439,7 +494,8 @@ export function VoxelMap({
   }, [applyRegionGroupVisibility]);
 
   const refreshMacroHiddenRegions = useCallback((regionsToRefresh: RegionVisibilityTarget[]) => {
-    const nextHiddenRegionIds = new Set<string>();
+    const hiddenRegionIds = macroHiddenRegionIdsRef.current;
+    hiddenRegionIds.clear();
     const activeMacroTileIds = activeMacroTileIdsRef.current;
     const readyMacroTileIds = readyMacroTileIdsRef.current;
 
@@ -455,24 +511,31 @@ export function VoxelMap({
           regionVisible: regionVisibilityRef.current.get(region.id) ?? false,
           regionDetail: regionDetailRef.current.get(region.id) ?? 'ultraCoarse',
         })) {
-          nextHiddenRegionIds.add(region.id);
+          hiddenRegionIds.add(region.id);
         }
       }
     }
 
-    macroHiddenRegionIdsRef.current = nextHiddenRegionIds;
     applyRegionGroupVisibilityForRegions(regionsToRefresh);
   }, [applyRegionGroupVisibilityForRegions, macroTerrainTiles]);
 
   const setActiveMacroTiles = useCallback((
     nextActiveMacroTileIds: Set<string>,
-    regionsToRefresh: RegionVisibilityTarget[]
+    regionsToRefresh: RegionVisibilityTarget[],
+    forceRefresh = false
   ): boolean => {
     const previousActiveMacroTileIds = activeMacroTileIdsRef.current;
     const changed = !areSetsEqual(previousActiveMacroTileIds, nextActiveMacroTileIds);
-    activeMacroTileIdsRef.current = nextActiveMacroTileIds;
+    if (changed) {
+      previousActiveMacroTileIds.clear();
+      for (const id of nextActiveMacroTileIds) {
+        previousActiveMacroTileIds.add(id);
+      }
+    }
 
-    refreshMacroHiddenRegions(regionsToRefresh);
+    if (changed || forceRefresh) {
+      refreshMacroHiddenRegions(regionsToRefresh);
+    }
     return changed;
   }, [refreshMacroHiddenRegions]);
 
@@ -554,6 +617,7 @@ export function VoxelMap({
     if (!prebuildRegions) return;
 
     let cancelled = false;
+    const prebuildController = new AbortController();
     const prebuild = async () => {
       if (activeBattleRoyalVisibility) {
         const startupRegions = getBattleRoyalStartupRegions(preparedMap, {
@@ -565,19 +629,19 @@ export function VoxelMap({
         await prebuildVoxelRegionGeometries(
           manifest,
           startupRegions,
-          { detail: 'ultraCoarse', frameBudgetMs: 4 }
+          { detail: 'ultraCoarse', frameBudgetMs: 4, signal: prebuildController.signal }
         );
         if (cancelled) return;
         await prebuildVoxelRegionGeometries(
           manifest,
           fullDetailRegions,
-          { detail: 'full', frameBudgetMs: 4 }
+          { detail: 'full', frameBudgetMs: 4, signal: prebuildController.signal }
         );
         if (cancelled) return;
         await prebuildVoxelRegionGeometries(
           manifest,
           startupRegions,
-          { detail: 'coarse', frameBudgetMs: 4 }
+          { detail: 'coarse', frameBudgetMs: 4, signal: prebuildController.signal }
         );
         return;
       }
@@ -585,7 +649,7 @@ export function VoxelMap({
       await prebuildVoxelRegionGeometries(
         manifest,
         renderableRegions,
-        { detail: 'full', frameBudgetMs: 4 }
+        { detail: 'full', frameBudgetMs: 4, signal: prebuildController.signal }
       );
     };
 
@@ -595,6 +659,7 @@ export function VoxelMap({
 
     return () => {
       cancelled = true;
+      prebuildController.abort();
     };
   }, [
     activeBattleRoyalTerrainLodEnabled,
@@ -716,6 +781,8 @@ export function VoxelMap({
   useEffect(() => () => {
     if (disposeGeometryCacheOnUnmount) {
       clearVoxelGeometryCache(manifest.id);
+    } else {
+      cancelVoxelGeometryBuilds(manifest.id);
     }
   }, [disposeGeometryCacheOnUnmount, manifest.id]);
 
@@ -873,6 +940,7 @@ export function VoxelMap({
     let hiddenByHorizon = 0;
     let detailSwaps = 0;
     let detailChanged = false;
+    let visibilityChanged = false;
 
     const cullScratch = battleRoyalCullScratchRef.current;
     const detailScratch = battleRoyalDetailScratchRef.current;
@@ -887,6 +955,12 @@ export function VoxelMap({
       detailScratch.cameraPosition = camera.position;
       detailScratch.viewportHeight = state.size.height;
       detailScratch.cameraFovDegrees = cameraFovDegrees;
+    }
+    const macroTilesWithUltraCoarseVisibleRegions = macroTilesWithUltraCoarseVisibleRegionsScratchRef.current;
+    const macroTilesWithNearVisibleRegions = macroTilesWithNearVisibleRegionsScratchRef.current;
+    if (activeBattleRoyalVisibility) {
+      macroTilesWithUltraCoarseVisibleRegions.clear();
+      macroTilesWithNearVisibleRegions.clear();
     }
 
     for (const entry of orderedEntries) {
@@ -969,12 +1043,25 @@ export function VoxelMap({
         } else {
           ultraCoarseRegionCount++;
         }
+        if (activeBattleRoyalVisibility) {
+          markBattleRoyalMacroTileDetail({
+            tileId: macroTileIdByRegionId.get(region.id),
+            visible: true,
+            detail: nextDetail,
+            tilesWithUltraCoarseVisibleRegions: macroTilesWithUltraCoarseVisibleRegions,
+            tilesWithNearVisibleRegions: macroTilesWithNearVisibleRegions,
+          });
+        }
       }
-      setRegionVisibility(region.id, nextVisible);
+      if (setRegionVisibility(region.id, nextVisible)) {
+        visibilityChanged = true;
+      }
     }
 
     if (visibleAfterCull === 0 && closestRegion) {
-      setRegionVisibility(closestRegion.id, true);
+      if (setRegionVisibility(closestRegion.id, true)) {
+        visibilityChanged = true;
+      }
       if (setRegionDetail(closestRegion.id, 'full')) {
         detailChanged = true;
         detailSwaps++;
@@ -982,6 +1069,15 @@ export function VoxelMap({
       visibleAfterCull = 1;
       fullDetailRegionCount = 1;
       closestVisibleRegion = closestRegion;
+      if (activeBattleRoyalVisibility) {
+        markBattleRoyalMacroTileDetail({
+          tileId: macroTileIdByRegionId.get(closestRegion.id),
+          visible: true,
+          detail: 'full',
+          tilesWithUltraCoarseVisibleRegions: macroTilesWithUltraCoarseVisibleRegions,
+          tilesWithNearVisibleRegions: macroTilesWithNearVisibleRegions,
+        });
+      }
     }
 
     if (activeBattleRoyalVisibility && visibleAfterCull > 0 && fullDetailRegionCount === 0 && closestVisibleRegion) {
@@ -996,32 +1092,27 @@ export function VoxelMap({
       } else if (previousDetail === 'ultraCoarse') {
         ultraCoarseRegionCount = Math.max(0, ultraCoarseRegionCount - 1);
       }
+      markBattleRoyalMacroTileDetail({
+        tileId: macroTileIdByRegionId.get(closestVisibleRegion.id),
+        visible: true,
+        detail: 'full',
+        tilesWithUltraCoarseVisibleRegions: macroTilesWithUltraCoarseVisibleRegions,
+        tilesWithNearVisibleRegions: macroTilesWithNearVisibleRegions,
+      });
     }
 
-    const nextActiveMacroTileIds = new Set<string>();
+    const nextActiveMacroTileIds = nextActiveMacroTileIdsScratchRef.current;
     if (activeBattleRoyalVisibility) {
-      for (const tile of macroTerrainTiles) {
-        let hasUltraCoarseVisibleRegion = false;
-        let hasNearVisibleRegion = false;
-
-        for (const region of tile.regions) {
-          if (!(regionVisibilityRef.current.get(region.id) ?? false)) continue;
-          const detail = regionDetailRef.current.get(region.id) ?? 'ultraCoarse';
-          if (detail === 'ultraCoarse') {
-            hasUltraCoarseVisibleRegion = true;
-          } else {
-            hasNearVisibleRegion = true;
-            break;
-          }
-        }
-
-        if (hasUltraCoarseVisibleRegion && !hasNearVisibleRegion) {
-          nextActiveMacroTileIds.add(tile.id);
-        }
-      }
+      writeActiveBattleRoyalMacroTileIds(
+        nextActiveMacroTileIds,
+        macroTilesWithUltraCoarseVisibleRegions,
+        macroTilesWithNearVisibleRegions
+      );
+    } else {
+      nextActiveMacroTileIds.clear();
     }
 
-    const macroChanged = setActiveMacroTiles(nextActiveMacroTileIds, visibleRegions);
+    const macroChanged = setActiveMacroTiles(nextActiveMacroTileIds, visibleRegions, detailChanged || visibilityChanged);
     if (detailChanged || macroChanged) {
       setRegionRenderRevision((revision) => revision + 1);
     }

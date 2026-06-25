@@ -13,7 +13,12 @@ import {
 import { useGameStore } from '../../../store/gameStore';
 import type { BombData } from '../../../store/types';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
-import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
+import {
+  checkGroundWithNormal,
+  createRaycastDirectionHitResult,
+  isPhysicsReady,
+  raycastDirectionInto,
+} from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
@@ -642,6 +647,7 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
   const lastReportedValidRef = useRef(false);
   const lastReportAtRef = useRef(0);
   const wasActiveRef = useRef(false);
+  const directHitRef = useRef(createRaycastDirectionHitResult());
   const { camera } = useThree();
   
   // Get pre-cached targeting materials (targeting indicator is only one at a time, so safe to share)
@@ -701,7 +707,9 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
       isValid = false;
 
       if (isPhysicsReady()) {
-        const directHit = raycastDirection(
+        const directHit = directHitRef.current;
+        if (raycastDirectionInto(
+          directHit,
           camera.position.x, camera.position.y, camera.position.z,
           _bombLookDir.x, _bombLookDir.y, _bombLookDir.z,
           BLAZE_BOMB_MAX_RANGE + 10,
@@ -709,9 +717,7 @@ export function BombTargetingIndicator({ isActive, showIndicator = true, onTarge
             priority: 'visual',
             feature: 'targeting:blazeBomb',
           }
-        );
-
-        if (directHit && directHit.hit) {
+        )) {
           targetX = directHit.point.x;
           targetY = directHit.point.y;
           targetZ = directHit.point.z;

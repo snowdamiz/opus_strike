@@ -12,6 +12,10 @@ export interface VoxelMeshGeometryData {
   uvs: Float32Array;
   textureLayers: Float32Array;
   indices: Uint16Array | Uint32Array;
+  boundingSphere?: {
+    center: { x: number; y: number; z: number };
+    radius: number;
+  };
 }
 
 export type VoxelRegionGeometryDetail = 'full' | 'coarse' | 'ultraCoarse';
@@ -796,4 +800,58 @@ export function buildVoxelRegionGeometryData(
     textureLayers: buffers.textureLayers.finish(),
     indices: buffers.indices.finish(vertexCount),
   };
+}
+
+export function transformVoxelMeshGeometryDataToWorld(
+  manifest: Pick<VoxelMapManifest, 'origin' | 'voxelSize'>,
+  data: VoxelMeshGeometryData
+): VoxelMeshGeometryData {
+  const positions = data.positions;
+  const vertexCount = positions.length / 3;
+  if (vertexCount === 0) {
+    data.boundingSphere = {
+      center: { x: manifest.origin.x, y: manifest.origin.y, z: manifest.origin.z },
+      radius: 0,
+    };
+    return data;
+  }
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+
+  for (let index = 0; index < positions.length; index += 3) {
+    const x = manifest.origin.x + positions[index] * manifest.voxelSize.x;
+    const y = manifest.origin.y + positions[index + 1] * manifest.voxelSize.y;
+    const z = manifest.origin.z + positions[index + 2] * manifest.voxelSize.z;
+    positions[index] = x;
+    positions[index + 1] = y;
+    positions[index + 2] = z;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    minZ = Math.min(minZ, z);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+    maxZ = Math.max(maxZ, z);
+  }
+
+  const centerX = (minX + maxX) * 0.5;
+  const centerY = (minY + maxY) * 0.5;
+  const centerZ = (minZ + maxZ) * 0.5;
+  let radiusSq = 0;
+  for (let index = 0; index < positions.length; index += 3) {
+    const dx = positions[index] - centerX;
+    const dy = positions[index + 1] - centerY;
+    const dz = positions[index + 2] - centerZ;
+    radiusSq = Math.max(radiusSq, dx * dx + dy * dy + dz * dz);
+  }
+
+  data.boundingSphere = {
+    center: { x: centerX, y: centerY, z: centerZ },
+    radius: Math.sqrt(radiusSq),
+  };
+  return data;
 }

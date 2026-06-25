@@ -386,25 +386,39 @@ function createHeroModelDocument(skinId: HeroSkinId, manifest: HeroBodyManifest)
   };
 }
 
-export const HERO_SKIN_MODEL_DOCUMENTS: Record<HeroSkinId, HeroModelDocumentV1> = {
-  'phantom.default': createHeroModelDocument('phantom.default', HERO_SKIN_BODY_MANIFESTS['phantom.default']),
-  'hookshot.default': createHeroModelDocument('hookshot.default', HERO_SKIN_BODY_MANIFESTS['hookshot.default']),
-  'blaze.default': createHeroModelDocument('blaze.default', HERO_SKIN_BODY_MANIFESTS['blaze.default']),
-  'chronos.default': createHeroModelDocument('chronos.default', HERO_SKIN_BODY_MANIFESTS['chronos.default']),
-  'phantom.void-monarch': createHeroModelDocument('phantom.void-monarch', HERO_SKIN_BODY_MANIFESTS['phantom.void-monarch']),
-  'phantom.nightglass-wraith': createHeroModelDocument('phantom.nightglass-wraith', HERO_SKIN_BODY_MANIFESTS['phantom.nightglass-wraith']),
-  'phantom.astral-executioner': createHeroModelDocument('phantom.astral-executioner', HERO_SKIN_BODY_MANIFESTS['phantom.astral-executioner']),
-  'phantom.eclipse-seraph': createHeroModelDocument('phantom.eclipse-seraph', HERO_SKIN_BODY_MANIFESTS['phantom.eclipse-seraph']),
-  'hookshot.tidebreaker': createHeroModelDocument('hookshot.tidebreaker', HERO_SKIN_BODY_MANIFESTS['hookshot.tidebreaker']),
-  'hookshot.iron-leviathan': createHeroModelDocument('hookshot.iron-leviathan', HERO_SKIN_BODY_MANIFESTS['hookshot.iron-leviathan']),
-  'hookshot.abyssal-corsair': createHeroModelDocument('hookshot.abyssal-corsair', HERO_SKIN_BODY_MANIFESTS['hookshot.abyssal-corsair']),
-  'hookshot.kraken-sovereign': createHeroModelDocument('hookshot.kraken-sovereign', HERO_SKIN_BODY_MANIFESTS['hookshot.kraken-sovereign']),
-  'blaze.solar-forge': createHeroModelDocument('blaze.solar-forge', HERO_SKIN_BODY_MANIFESTS['blaze.solar-forge']),
-  'blaze.ashen-vanguard': createHeroModelDocument('blaze.ashen-vanguard', HERO_SKIN_BODY_MANIFESTS['blaze.ashen-vanguard']),
-  'blaze.inferno-archon': createHeroModelDocument('blaze.inferno-archon', HERO_SKIN_BODY_MANIFESTS['blaze.inferno-archon']),
-  'blaze.starfall-phoenix': createHeroModelDocument('blaze.starfall-phoenix', HERO_SKIN_BODY_MANIFESTS['blaze.starfall-phoenix']),
-  'chronos.epoch-regent': createHeroModelDocument('chronos.epoch-regent', HERO_SKIN_BODY_MANIFESTS['chronos.epoch-regent']),
-  'chronos.paradox-sentinel': createHeroModelDocument('chronos.paradox-sentinel', HERO_SKIN_BODY_MANIFESTS['chronos.paradox-sentinel']),
-  'chronos.meridian-oracle': createHeroModelDocument('chronos.meridian-oracle', HERO_SKIN_BODY_MANIFESTS['chronos.meridian-oracle']),
-  'chronos.eternity-sovereign': createHeroModelDocument('chronos.eternity-sovereign', HERO_SKIN_BODY_MANIFESTS['chronos.eternity-sovereign']),
-};
+const heroSkinModelDocumentCache = new Map<HeroSkinId, HeroModelDocumentV1>();
+
+export function getHeroSkinModelDocument(skinId: HeroSkinId): HeroModelDocumentV1 | undefined {
+  const cached = heroSkinModelDocumentCache.get(skinId);
+  if (cached) return cached;
+
+  const manifest = HERO_SKIN_BODY_MANIFESTS[skinId];
+  if (!manifest) return undefined;
+
+  const document = createHeroModelDocument(skinId, manifest);
+  heroSkinModelDocumentCache.set(skinId, document);
+  return document;
+}
+
+export const HERO_SKIN_MODEL_DOCUMENTS: Record<HeroSkinId, HeroModelDocumentV1> = new Proxy(
+  {} as Record<HeroSkinId, HeroModelDocumentV1>,
+  {
+    get(_target, property): HeroModelDocumentV1 | undefined {
+      if (typeof property !== 'string' || !(property in HERO_SKIN_BODY_MANIFESTS)) return undefined;
+      return getHeroSkinModelDocument(property as HeroSkinId);
+    },
+    has(_target, property): boolean {
+      return typeof property === 'string' && property in HERO_SKIN_BODY_MANIFESTS;
+    },
+    ownKeys(): ArrayLike<string | symbol> {
+      return Object.keys(HERO_SKIN_BODY_MANIFESTS);
+    },
+    getOwnPropertyDescriptor(_target, property): PropertyDescriptor | undefined {
+      if (typeof property !== 'string' || !(property in HERO_SKIN_BODY_MANIFESTS)) return undefined;
+      return {
+        enumerable: true,
+        configurable: true,
+      };
+    },
+  }
+);

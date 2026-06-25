@@ -19,7 +19,6 @@ import {
   isMatchPerspective,
   normalizeVoxelMapSizeId,
   type PublicRankSnapshot,
-  type PlayerDamagedEvent,
 } from '@voxel-strike/shared';
 import { normalizeMapProfileId, useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
@@ -42,7 +41,7 @@ import {
   triggerRemotePlayerAttack,
   visualStore,
 } from '../store/visualStore';
-import { confirmLocalMovementTransform, enqueueSelfMovementAuthority, setLocalMovementRootedUntil } from '../movement/localPrediction';
+import { acknowledgeSelfMovementAck, confirmLocalMovementTransform, enqueueSelfMovementAuthority, setLocalMovementRootedUntil } from '../movement/localPrediction';
 import {
   recordAuthorityAckReceived,
   recordLocalReactiveUpdate,
@@ -100,9 +99,11 @@ import { normalizeServerAbilityCooldown } from '../abilities/cooldowns';
 import { normalizeGamePhase } from './gamePhase';
 import { measureNetworkMessage } from './networkMessageMetrics';
 import {
-  dequantizeTransform,
+  writeDequantizedTransform,
+  writeMovementFromBits,
   movementFromBits,
-  unpackPackedTransform,
+  unpackPackedTransformInto,
+  type DequantizedPlayerTransform,
   type UnpackedPlayerTransform,
 } from './playerTransformCodec';
 import type {
@@ -115,8 +116,11 @@ import type {
   HeroSkinId,
   MatchSnapshotMessage,
   PlayerDeathEvent,
+  PlayerDamagedEvent,
   PlayerDownedEvent,
+  PlayerEventBatchMessage,
   Player,
+  PlayerHealedEvent,
   PlayerReviveCancelledEvent,
   PlayerRevivedEvent,
   PlayerReviveStartedEvent,
@@ -132,6 +136,7 @@ import type {
   PowerupStateMessage,
   PlayerState,
   SelfMovementAuthority,
+  SelfMovementAck,
   Team,
 } from '@voxel-strike/shared';
 import type { AppPhase } from '../store/types';
@@ -139,6 +144,7 @@ import type { AppPhase } from '../store/types';
 const CHRONOS_TIMEBREAK_CHARGE_FADE_OUT_MS = 110;
 const CHRONOS_PRIMARY_RELOAD_SOUND_FADE_OUT_MS = 240;
 const remotePhantomChargeControllers = new Map<string, AbortController>();
+const delayedGameplayTimeouts = new Set<number>();
 const playerIdByNetId = new Map<number, string>();
 const netIdByPlayerId = new Map<string, number>();
 let lastLocalPhantomReloadSoundKey = '';
@@ -156,6 +162,22 @@ const PLAYER_STATES = new Set<string>([
   'downed',
   'dead',
 ]);
+
+function scheduleDelayedGameplayEffect(callback: () => void, delayMs: number): number {
+  const timeoutId = window.setTimeout(() => {
+    delayedGameplayTimeouts.delete(timeoutId);
+    callback();
+  }, Math.max(0, delayMs));
+  delayedGameplayTimeouts.add(timeoutId);
+  return timeoutId;
+}
+
+export function clearDelayedGameplayEffects(): void {
+  for (const timeoutId of delayedGameplayTimeouts) {
+    window.clearTimeout(timeoutId);
+  }
+  delayedGameplayTimeouts.clear();
+}
 
 function normalizePlayerState(value: unknown, fallback: PlayerState = 'alive'): PlayerState {
   return typeof value === 'string' && PLAYER_STATES.has(value) ? value as PlayerState : fallback;
@@ -1157,6 +1179,27 @@ export function setupPlayerTransformsHandler(
   localPlayerName: string,
   actions: Pick<GameStoreActions, 'setLocalPlayer'>
 ) {
+  const transformScratch: UnpackedPlayerTransform = {
+    netId: 0,
+    px: 0,
+    py: 0,
+    pz: 0,
+    vx: 0,
+    vy: 0,
+    vz: 0,
+    yaw: 0,
+    pitch: 0,
+    movementBits: 0,
+    wallRunSide: 0,
+    movementEpoch: 0,
+    chronosAegisShieldRatio: 1,
+  };
+  const decodedScratch: DequantizedPlayerTransform = {
+    position: { x: 0, y: 0, z: 0 },
+    velocity: { x: 0, y: 0, z: 0 },
+    lookYaw: 0,
+    lookPitch: 0,
+  };
   const handleTransform = (
     playerId: string,
     transform: UnpackedPlayerTransform,
@@ -1165,7 +1208,7 @@ export function setupPlayerTransformsHandler(
     allowSelfBootstrap: boolean,
     visibilityBatch: PlayerVisibilityBatch
   ): 'remote' | 'self' | 'ignored' => {
-    const decoded = dequantizeTransform(transform);
+    const decoded = writeDequantizedTransform(decodedScratch, transform);
 
     if (playerId === sessionId) {
       if (allowSelfBootstrap && !hasReceivedSelfMovementAuthority) {
@@ -1177,8 +1220,8 @@ export function setupPlayerTransformsHandler(
         if (shouldSyncPosition) {
           const updated: Player = {
             ...localPlayer,
-            position: decoded.position,
-            velocity: decoded.velocity,
+            position: { ...decoded.position },
+            velocity: { ...decoded.velocity },
             lookYaw: decoded.lookYaw,
             lookPitch: decoded.lookPitch,
             movement: nextMovement,
@@ -1201,12 +1244,15 @@ export function setupPlayerTransformsHandler(
 
     const remotePlayer = visibilityBatch.setVisibility(playerId, 'visible') ?? existingPlayer;
     const wasGrappling = remotePlayer.movement.isGrappling;
-    const nextMovement = movementFromBits(transform, remotePlayer.movement);
-    remotePlayer.position = decoded.position;
-    remotePlayer.velocity = decoded.velocity;
+    const nextMovement = writeMovementFromBits(remotePlayer.movement, transform, remotePlayer.movement);
+    remotePlayer.position.x = decoded.position.x;
+    remotePlayer.position.y = decoded.position.y;
+    remotePlayer.position.z = decoded.position.z;
+    remotePlayer.velocity.x = decoded.velocity.x;
+    remotePlayer.velocity.y = decoded.velocity.y;
+    remotePlayer.velocity.z = decoded.velocity.z;
     remotePlayer.lookYaw = decoded.lookYaw;
     remotePlayer.lookPitch = decoded.lookPitch;
-    remotePlayer.movement = nextMovement;
     if (wasGrappling && !nextMovement.isGrappling) {
       const freshStore = useGameStore.getState();
       for (const line of freshStore.grappleLines) {
@@ -1254,7 +1300,7 @@ export function setupPlayerTransformsHandler(
       clearHiddenLiveVisuals(hiddenPlayerId);
     }
     for (const packedTransform of data.players) {
-      const transform = unpackPackedTransform(packedTransform);
+      const transform = unpackPackedTransformInto(transformScratch, packedTransform);
       const playerId = playerIdByNetId.get(transform.netId);
       if (!playerId) continue;
       fullSnapshotPlayerIds?.add(playerId);
@@ -1337,6 +1383,13 @@ export function setupSelfMovementAuthorityHandler(room: Room) {
     if (localPlayer && authority.powerupBoostUntil !== undefined) {
       store.updateLocalPlayer({ powerupBoostUntil: authority.powerupBoostUntil ?? null });
     }
+  }));
+
+  room.onMessage('selfMovementAck', measureNetworkMessage('selfMovementAck', (ack: SelfMovementAck) => {
+    if (!hasReceivedSelfMovementAuthority) return;
+    recordMovementTraceAuthorityAck(ack);
+    recordAuthorityAckReceived(ack);
+    acknowledgeSelfMovementAck(ack);
   }));
 }
 
@@ -1504,6 +1557,39 @@ export function setupMatchSnapshotHandler(room: Room) {
   }));
 }
 
+function handlePowerupCollectedMessage(data: PowerupCollectedMessage): void {
+  if (!data || typeof data.pickupId !== 'string') return;
+
+  const store = useGameStore.getState();
+  store.updatePowerupPickup({
+    pickupId: data.pickupId,
+    availableAt: data.availableAt,
+  });
+  store.recordPowerupPickupCollection({
+    pickupId: data.pickupId,
+    collectedAt: Date.now(),
+  });
+
+  void playSharedSound(data.kind === 'health_pack' ? 'healPickup' : 'powerupPickup', {
+    position: data.position,
+  });
+
+  if (data.kind !== 'powerup' || !data.playerId) return;
+  const powerupBoostUntil = data.expiresAt ?? null;
+  if (data.playerId === store.localPlayer?.id) {
+    store.updateLocalPlayer({ powerupBoostUntil });
+    return;
+  }
+
+  const player = store.players.get(data.playerId);
+  if (player) {
+    store.updatePlayer(data.playerId, {
+      ...player,
+      powerupBoostUntil,
+    });
+  }
+}
+
 export function setupPowerupHandlers(room: Room) {
   room.onMessage('powerupState', measureNetworkMessage('powerupState', (data: PowerupStateMessage) => {
     if (!data || !Array.isArray(data.pickups)) return;
@@ -1511,36 +1597,7 @@ export function setupPowerupHandlers(room: Room) {
   }));
 
   room.onMessage('powerupCollected', measureNetworkMessage('powerupCollected', (data: PowerupCollectedMessage) => {
-    if (!data || typeof data.pickupId !== 'string') return;
-
-    const store = useGameStore.getState();
-    store.updatePowerupPickup({
-      pickupId: data.pickupId,
-      availableAt: data.availableAt,
-    });
-    store.recordPowerupPickupCollection({
-      pickupId: data.pickupId,
-      collectedAt: Date.now(),
-    });
-
-    void playSharedSound(data.kind === 'health_pack' ? 'healPickup' : 'powerupPickup', {
-      position: data.position,
-    });
-
-    if (data.kind !== 'powerup' || !data.playerId) return;
-    const powerupBoostUntil = data.expiresAt ?? null;
-    if (data.playerId === store.localPlayer?.id) {
-      store.updateLocalPlayer({ powerupBoostUntil });
-      return;
-    }
-
-    const player = store.players.get(data.playerId);
-    if (player) {
-      store.updatePlayer(data.playerId, {
-        ...player,
-        powerupBoostUntil,
-      });
-    }
+    handlePowerupCollectedMessage(data);
   }));
 }
 
@@ -2543,14 +2600,14 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
       }
       playBlazeWorldSound('blazeBombTarget', startPosition);
       if (fallSoundDuration > 0) {
-        window.setTimeout(() => {
+        scheduleDelayedGameplayEffect(() => {
           playBlazeWorldSound('blazeBombFall', startPosition, {
             durationMs: fallSoundDuration,
             fadeOutMs: Math.min(200, fallSoundDuration),
           });
         }, fallSoundDelay);
       }
-      window.setTimeout(() => {
+      scheduleDelayedGameplayEffect(() => {
         playBlazeWorldSound('blazeBombExplode', visualImpactPosition, { volume: 1.05 });
       }, impactDelay);
       return true;
@@ -2773,7 +2830,7 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
         });
       }
 
-      window.setTimeout(() => {
+      scheduleDelayedGameplayEffect(() => {
         stopObservedAbilityCastEffects(data.playerId, 'chronos_timebreak');
         const freshStore = useGameStore.getState();
         const freshLocalPlayerId = freshStore.localPlayer?.id ?? freshStore.playerId;
@@ -2917,6 +2974,245 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
   }
 }
 
+function handleChronosAegisDamagedMessage(data: ChronosAegisDamagedEvent): void {
+  const now = Date.now();
+  const store = useGameStore.getState();
+  const localPlayerId = store.localPlayer?.id ?? store.playerId;
+  setChronosAegisVisualState(data.playerId, true, now, data.shieldRatio, {
+    renderWorldEffect: data.playerId !== localPlayerId || store.matchPerspective === 'third_person',
+  });
+  useCombatFeedbackStore.getState().addCombatTextEvent({
+    kind: 'shieldDamage',
+    amount: data.damage,
+    damageType: data.damageType,
+    targetId: null,
+    position: data.position,
+  });
+}
+
+function handlePhantomShieldBrokenMessage(data: PhantomShieldBrokenEvent): void {
+  const store = useGameStore.getState();
+  const localPlayerId = store.localPlayer?.id ?? store.playerId;
+  triggerPhantomShieldBreakEffect({
+    playerId: data.playerId,
+    isLocalPlayer: data.playerId === localPlayerId,
+    position: data.position,
+    direction: data.direction,
+  });
+}
+
+function handlePlayerDamagedMessage(data: PlayerDamagedEvent): void {
+  loggers.network.sample('playerDamaged', 1000, 'player damaged', data.targetId, data.damage, data.damageType);
+
+  const store = useGameStore.getState();
+  const localPlayerId = store.localPlayer?.id ?? store.playerId;
+  const sourcePlayer = data.sourceId ? store.players.get(data.sourceId) : null;
+  const targetPlayer = store.players.get(data.targetId);
+  const sourcePosition = data.sourcePosition ?? sourcePlayer?.position ?? null;
+  const targetPosition = data.targetPosition ?? targetPlayer?.position ?? null;
+  const newDownedHealth = typeof data.newDownedHealth === 'number' && Number.isFinite(data.newDownedHealth)
+    ? Math.max(0, data.newDownedHealth)
+    : null;
+
+  if (newDownedHealth !== null) {
+    if (data.targetId === localPlayerId) {
+      store.updateLocalPlayer({ downedHealth: newDownedHealth });
+    } else if (targetPlayer) {
+      store.updatePlayer(data.targetId, {
+        ...targetPlayer,
+        downedHealth: newDownedHealth,
+      });
+    }
+  }
+
+  if (data.sourceId === localPlayerId && targetPosition) {
+    const fixedAnchor = data.damageType === 'bomb' || newDownedHealth !== null || targetPlayer?.state === 'downed';
+    useCombatFeedbackStore.getState().addCombatTextEvent({
+      kind: 'damage',
+      amount: data.damage,
+      damageType: data.damageType,
+      targetId: fixedAnchor ? null : data.targetId,
+      position: targetPosition,
+    });
+  }
+
+  if (data.sourceId && data.sourceId !== localPlayerId && sourcePosition && targetPosition) {
+    const start = new THREE.Vector3(sourcePosition.x, sourcePosition.y + 1.1, sourcePosition.z);
+    const end = new THREE.Vector3(targetPosition.x, targetPosition.y + 1.0, targetPosition.z);
+
+    addEffect({
+      type: 'grapple',
+      position: start,
+      endPosition: end,
+      duration: 180,
+    });
+    addEffect({
+      type: 'hit',
+      position: end,
+      duration: 260,
+    });
+  }
+}
+
+function handlePlayerDownedMessage(data: PlayerDownedEvent): void {
+  loggers.network.sample('playerDowned', 1000, 'player downed', data.targetId, data.sourceId, data.damageType);
+  handlePlayerDownedEvent(data);
+}
+
+function handlePlayerReviveStartedMessage(data: PlayerReviveStartedEvent): void {
+  loggers.network.sample('playerReviveStarted', 1000, 'player revive started', data.targetId, data.reviverId);
+  handlePlayerReviveStartedEvent(data);
+}
+
+function handlePlayerReviveCancelledMessage(data: PlayerReviveCancelledEvent): void {
+  loggers.network.sample('playerReviveCancelled', 1000, 'player revive cancelled', data.targetId, data.reason);
+  handlePlayerReviveCancelledEvent(data);
+}
+
+function handlePlayerRevivedMessage(data: PlayerRevivedEvent): void {
+  loggers.network.sample('playerRevived', 1000, 'player revived', data.targetId, data.reviverId);
+  handlePlayerRevivedEvent(data);
+}
+
+function handlePlayerHealedMessage(data: PlayerHealedEvent): void {
+  loggers.network.sample('playerHealed', 1000, 'player healed', data.sourceId, data.targets.length, data.abilityId);
+
+  const store = useGameStore.getState();
+  const localPlayerId = store.localPlayer?.id ?? store.playerId;
+  const combatFeedback = useCombatFeedbackStore.getState();
+  for (const target of data.targets) {
+    if (target.targetId === store.localPlayer?.id) {
+      store.updateLocalPlayer({ health: target.newHealth });
+    } else {
+      const player = store.players.get(target.targetId);
+      if (player) {
+        store.updatePlayer(target.targetId, {
+          ...player,
+          health: target.newHealth,
+        });
+      }
+    }
+
+    if (target.amount > 0) {
+      combatFeedback.addCombatTextEvent({
+        kind: 'heal',
+        amount: target.amount,
+        targetId: target.targetId,
+        position: target.position,
+      });
+    }
+  }
+
+  const isRemoteSource = data.sourceId !== localPlayerId;
+  const isChronosLifeline = data.abilityId === 'chronos_lifeline_conduit';
+  const selfHealTarget = isChronosLifeline
+    ? data.targets.find((target) => target.targetId === data.sourceId)
+    : undefined;
+
+  if (isChronosLifeline) {
+    stopObservedAbilityCastEffects(data.sourceId, 'chronos_lifeline_conduit');
+  }
+  const sourceOrigin = isChronosLifeline
+    ? resolveAbilitySocketOrigin({
+      ownerScope: isRemoteSource ? 'remoteBody' : 'localViewmodel',
+      playerId: isRemoteSource ? data.sourceId : undefined,
+      abilityId: 'chronos_lifeline_conduit',
+    })
+    : null;
+  const sourcePosition = isChronosLifeline
+    ? offsetChronosOrbVisualPlainPosition(
+      sourceOrigin ? toPlainPosition(sourceOrigin.position) : data.sourcePosition,
+      resolvePlayerFlatForward(data.sourceId),
+      'chronos_lifeline_conduit'
+    )
+    : sourceOrigin
+      ? toPlainPosition(sourceOrigin.position)
+      : data.sourcePosition;
+
+  if (selfHealTarget) {
+    addChronosSelfHealPulseEffect(
+      sourcePosition,
+      selfHealTarget.position,
+      undefined,
+      {
+        sourceIsExact: Boolean(sourceOrigin),
+        sourceAbilityId: 'chronos_lifeline_conduit',
+        sourcePlayerId: isRemoteSource ? data.sourceId : undefined,
+      }
+    );
+  } else {
+    addChronosLifelineEffects(
+      sourcePosition,
+      data.targets.map((target) => ({
+        position: target.position,
+      })),
+      undefined,
+      isChronosLifeline
+        ? {
+          sourceIsExact: Boolean(sourceOrigin),
+          sourceAbilityId: 'chronos_lifeline_conduit',
+          sourcePlayerId: isRemoteSource ? data.sourceId : undefined,
+        }
+        : {}
+    );
+  }
+  if (
+    isChronosLifeline &&
+    (isRemoteSource || !shouldSuppressPredictedLocalAbilitySound('chronos_lifeline_conduit'))
+  ) {
+    playChronosWorldSound('chronosLifeline', sourcePosition);
+  }
+}
+
+function handlePlayerKilledMessage(data: PlayerDeathEvent): void {
+  addDeathVisualFromKillEvent(data);
+
+  const players = useGameStore.getState().players;
+  useCombatFeedbackStore.getState().addKillFeedEvent({
+    killerName: data.killerId ? players.get(data.killerId)?.name ?? 'Unknown' : 'Unknown',
+    victimName: players.get(data.victimId)?.name ?? 'Unknown',
+  });
+}
+
+function handlePlayerEventBatchMessage(data: PlayerEventBatchMessage): void {
+  if (!data || !Array.isArray(data.events)) return;
+
+  for (const event of data.events) {
+    switch (event.type) {
+      case 'powerupCollected':
+        handlePowerupCollectedMessage(event.payload);
+        break;
+      case 'chronosAegisDamaged':
+        handleChronosAegisDamagedMessage(event.payload);
+        break;
+      case 'phantomShieldBroken':
+        handlePhantomShieldBrokenMessage(event.payload);
+        break;
+      case 'playerDamaged':
+        handlePlayerDamagedMessage(event.payload);
+        break;
+      case 'playerDowned':
+        handlePlayerDownedMessage(event.payload);
+        break;
+      case 'playerReviveStarted':
+        handlePlayerReviveStartedMessage(event.payload);
+        break;
+      case 'playerReviveCancelled':
+        handlePlayerReviveCancelledMessage(event.payload);
+        break;
+      case 'playerRevived':
+        handlePlayerRevivedMessage(event.payload);
+        break;
+      case 'playerHealed':
+        handlePlayerHealedMessage(event.payload);
+        break;
+      case 'playerKilled':
+        handlePlayerKilledMessage(event.payload);
+        break;
+    }
+  }
+}
+
 /**
  * Sets up combat event handlers (damage, kills)
  */
@@ -2951,20 +3247,12 @@ export function setupCombatHandlers(room: Room) {
     applyChronosPrimaryState(data);
   }));
 
+  room.onMessage('playerEventBatch', measureNetworkMessage('playerEventBatch', (data: PlayerEventBatchMessage) => {
+    handlePlayerEventBatchMessage(data);
+  }));
+
   room.onMessage('chronosAegisDamaged', measureNetworkMessage('chronosAegisDamaged', (data: ChronosAegisDamagedEvent) => {
-    const now = Date.now();
-    const store = useGameStore.getState();
-    const localPlayerId = store.localPlayer?.id ?? store.playerId;
-    setChronosAegisVisualState(data.playerId, true, now, data.shieldRatio, {
-      renderWorldEffect: data.playerId !== localPlayerId || store.matchPerspective === 'third_person',
-    });
-    useCombatFeedbackStore.getState().addCombatTextEvent({
-      kind: 'shieldDamage',
-      amount: data.damage,
-      damageType: data.damageType,
-      targetId: null,
-      position: data.position,
-    });
+    handleChronosAegisDamagedMessage(data);
   }));
 
   room.onMessage('chronosAegisBroken', measureNetworkMessage('chronosAegisBroken', (data: ChronosAegisBrokenEvent) => {
@@ -2983,198 +3271,35 @@ export function setupCombatHandlers(room: Room) {
   }));
 
   room.onMessage('phantomShieldBroken', measureNetworkMessage('phantomShieldBroken', (data: PhantomShieldBrokenEvent) => {
-    const store = useGameStore.getState();
-    const localPlayerId = store.localPlayer?.id ?? store.playerId;
-    triggerPhantomShieldBreakEffect({
-      playerId: data.playerId,
-      isLocalPlayer: data.playerId === localPlayerId,
-      position: data.position,
-      direction: data.direction,
-    });
+    handlePhantomShieldBrokenMessage(data);
   }));
 
   room.onMessage('playerDamaged', measureNetworkMessage('playerDamaged', (data: PlayerDamagedEvent) => {
-    loggers.network.sample('playerDamaged', 1000, 'player damaged', data.targetId, data.damage, data.damageType);
-
-    const store = useGameStore.getState();
-    const localPlayerId = store.localPlayer?.id ?? store.playerId;
-    const sourcePlayer = data.sourceId ? store.players.get(data.sourceId) : null;
-    const targetPlayer = store.players.get(data.targetId);
-    const sourcePosition = data.sourcePosition ?? sourcePlayer?.position ?? null;
-    const targetPosition = data.targetPosition ?? targetPlayer?.position ?? null;
-    const newDownedHealth = typeof data.newDownedHealth === 'number' && Number.isFinite(data.newDownedHealth)
-      ? Math.max(0, data.newDownedHealth)
-      : null;
-
-    if (newDownedHealth !== null) {
-      if (data.targetId === localPlayerId) {
-        store.updateLocalPlayer({ downedHealth: newDownedHealth });
-      } else if (targetPlayer) {
-        store.updatePlayer(data.targetId, {
-          ...targetPlayer,
-          downedHealth: newDownedHealth,
-        });
-      }
-    }
-
-    if (data.sourceId === localPlayerId && targetPosition) {
-      const fixedAnchor = data.damageType === 'bomb' || newDownedHealth !== null || targetPlayer?.state === 'downed';
-      useCombatFeedbackStore.getState().addCombatTextEvent({
-        kind: 'damage',
-        amount: data.damage,
-        damageType: data.damageType,
-        targetId: fixedAnchor ? null : data.targetId,
-        position: targetPosition,
-      });
-    }
-
-    if (data.sourceId && data.sourceId !== localPlayerId && sourcePosition && targetPosition) {
-      const start = new THREE.Vector3(sourcePosition.x, sourcePosition.y + 1.1, sourcePosition.z);
-      const end = new THREE.Vector3(targetPosition.x, targetPosition.y + 1.0, targetPosition.z);
-
-      addEffect({
-        type: 'grapple',
-        position: start,
-        endPosition: end,
-        duration: 180,
-      });
-      addEffect({
-        type: 'hit',
-        position: end,
-        duration: 260,
-      });
-    }
+    handlePlayerDamagedMessage(data);
   }));
 
   room.onMessage('playerDowned', measureNetworkMessage('playerDowned', (data: PlayerDownedEvent) => {
-    loggers.network.sample('playerDowned', 1000, 'player downed', data.targetId, data.sourceId, data.damageType);
-    handlePlayerDownedEvent(data);
+    handlePlayerDownedMessage(data);
   }));
 
   room.onMessage('playerReviveStarted', measureNetworkMessage('playerReviveStarted', (data: PlayerReviveStartedEvent) => {
-    loggers.network.sample('playerReviveStarted', 1000, 'player revive started', data.targetId, data.reviverId);
-    handlePlayerReviveStartedEvent(data);
+    handlePlayerReviveStartedMessage(data);
   }));
 
   room.onMessage('playerReviveCancelled', measureNetworkMessage('playerReviveCancelled', (data: PlayerReviveCancelledEvent) => {
-    loggers.network.sample('playerReviveCancelled', 1000, 'player revive cancelled', data.targetId, data.reason);
-    handlePlayerReviveCancelledEvent(data);
+    handlePlayerReviveCancelledMessage(data);
   }));
 
   room.onMessage('playerRevived', measureNetworkMessage('playerRevived', (data: PlayerRevivedEvent) => {
-    loggers.network.sample('playerRevived', 1000, 'player revived', data.targetId, data.reviverId);
-    handlePlayerRevivedEvent(data);
+    handlePlayerRevivedMessage(data);
   }));
 
-  room.onMessage('playerHealed', measureNetworkMessage('playerHealed', (data: {
-    sourceId: string;
-    abilityId: string;
-    sourcePosition: { x: number; y: number; z: number };
-    targets: Array<{
-      targetId: string;
-      amount: number;
-      newHealth: number;
-      position: { x: number; y: number; z: number };
-    }>;
-    timestamp: number;
-  }) => {
-    loggers.network.sample('playerHealed', 1000, 'player healed', data.sourceId, data.targets.length, data.abilityId);
-
-    const store = useGameStore.getState();
-    const localPlayerId = store.localPlayer?.id ?? store.playerId;
-    const combatFeedback = useCombatFeedbackStore.getState();
-    for (const target of data.targets) {
-      if (target.targetId === store.localPlayer?.id) {
-        store.updateLocalPlayer({ health: target.newHealth });
-      } else {
-        const player = store.players.get(target.targetId);
-        if (player) {
-          store.updatePlayer(target.targetId, {
-            ...player,
-            health: target.newHealth,
-          });
-        }
-      }
-
-      if (target.amount > 0) {
-        combatFeedback.addCombatTextEvent({
-          kind: 'heal',
-          amount: target.amount,
-          targetId: target.targetId,
-          position: target.position,
-        });
-      }
-    }
-
-    const isRemoteSource = data.sourceId !== localPlayerId;
-    const isChronosLifeline = data.abilityId === 'chronos_lifeline_conduit';
-    const selfHealTarget = isChronosLifeline
-      ? data.targets.find((target) => target.targetId === data.sourceId)
-      : undefined;
-
-    if (isChronosLifeline) {
-      stopObservedAbilityCastEffects(data.sourceId, 'chronos_lifeline_conduit');
-    }
-    const sourceOrigin = isChronosLifeline
-      ? resolveAbilitySocketOrigin({
-        ownerScope: isRemoteSource ? 'remoteBody' : 'localViewmodel',
-        playerId: isRemoteSource ? data.sourceId : undefined,
-        abilityId: 'chronos_lifeline_conduit',
-      })
-      : null;
-    const sourcePosition = isChronosLifeline
-      ? offsetChronosOrbVisualPlainPosition(
-        sourceOrigin ? toPlainPosition(sourceOrigin.position) : data.sourcePosition,
-        resolvePlayerFlatForward(data.sourceId),
-        'chronos_lifeline_conduit'
-      )
-      : sourceOrigin
-        ? toPlainPosition(sourceOrigin.position)
-        : data.sourcePosition;
-
-    if (selfHealTarget) {
-      addChronosSelfHealPulseEffect(
-        sourcePosition,
-        selfHealTarget.position,
-        undefined,
-        {
-          sourceIsExact: Boolean(sourceOrigin),
-          sourceAbilityId: 'chronos_lifeline_conduit',
-          sourcePlayerId: isRemoteSource ? data.sourceId : undefined,
-        }
-      );
-    } else {
-      addChronosLifelineEffects(
-        sourcePosition,
-        data.targets.map((target) => ({
-          position: target.position,
-        })),
-        undefined,
-        isChronosLifeline
-          ? {
-            sourceIsExact: Boolean(sourceOrigin),
-            sourceAbilityId: 'chronos_lifeline_conduit',
-            sourcePlayerId: isRemoteSource ? data.sourceId : undefined,
-          }
-          : {}
-      );
-    }
-    if (
-      isChronosLifeline &&
-      (isRemoteSource || !shouldSuppressPredictedLocalAbilitySound('chronos_lifeline_conduit'))
-    ) {
-      playChronosWorldSound('chronosLifeline', sourcePosition);
-    }
+  room.onMessage('playerHealed', measureNetworkMessage('playerHealed', (data: PlayerHealedEvent) => {
+    handlePlayerHealedMessage(data);
   }));
 
   room.onMessage('playerKilled', measureNetworkMessage('playerKilled', (data: PlayerDeathEvent) => {
-    addDeathVisualFromKillEvent(data);
-
-    const players = useGameStore.getState().players;
-    useCombatFeedbackStore.getState().addKillFeedEvent({
-      killerName: data.killerId ? players.get(data.killerId)?.name ?? 'Unknown' : 'Unknown',
-      victimName: players.get(data.victimId)?.name ?? 'Unknown',
-    });
+    handlePlayerKilledMessage(data);
   }));
 
   room.onMessage('abilityUsed', measureNetworkMessage('abilityUsed', (data: AbilityUsedMessage) => {

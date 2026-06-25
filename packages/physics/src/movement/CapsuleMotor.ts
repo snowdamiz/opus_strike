@@ -90,6 +90,8 @@ export interface MovementGroundHit {
 export interface MovementCollisionWorld {
   collisionRevision: number;
   testCapsule(position: Vec3, height: number, radius: number): MovementOverlap[];
+  hasCapsuleOverlap?: (position: Vec3, height: number, radius: number) => boolean;
+  findCapsuleOverlap?: (position: Vec3, height: number, radius: number) => MovementOverlap | null;
   sweepCapsule(position: Vec3, delta: Vec3, height: number, radius: number): CapsuleSweepHit | null;
   findGround(position: Vec3, snapDistance: number, radius: number, height: number): MovementGroundHit | null;
   clampToPlayableArea(position: Vec3): Vec3;
@@ -177,6 +179,7 @@ const SLIDE_GRADE_LOOKAHEAD_DISTANCES = [
 const SLIDE_GRADE_SAMPLE_RADIUS = 0.08;
 const SLIDE_GRADE_SNAP_DISTANCE = STEP_HEIGHT + GROUND_SNAP_DISTANCE;
 const SLIDE_DOWNHILL_MIN_DROP = 0.025;
+const STATIC_AABB_VERTICAL_CACHE_BUCKET = 0.025;
 
 type SlideExitPosture = 'stand' | 'crouch';
 
@@ -193,6 +196,35 @@ function setAddScaled(out: Vec3, base: Vec3, delta: Vec3, amount: number): Vec3 
   out.x = base.x + delta.x * amount;
   out.y = base.y + delta.y * amount;
   out.z = base.z + delta.z * amount;
+  return out;
+}
+
+function addScaledSelf(out: Vec3, delta: Vec3, amount: number): Vec3 {
+  out.x += delta.x * amount;
+  out.y += delta.y * amount;
+  out.z += delta.z * amount;
+  return out;
+}
+
+function setScaled(out: Vec3, value: Vec3, amount: number): Vec3 {
+  out.x = value.x * amount;
+  out.y = value.y * amount;
+  out.z = value.z * amount;
+  return out;
+}
+
+function setNormalizeHorizontal(out: Vec3, vector: Vec3): Vec3 {
+  const valueLength = Math.sqrt(vector.x * vector.x + vector.z * vector.z);
+  if (valueLength <= EPSILON) {
+    out.x = 0;
+    out.y = 0;
+    out.z = 0;
+    return out;
+  }
+
+  out.x = vector.x / valueLength;
+  out.y = 0;
+  out.z = vector.z / valueLength;
   return out;
 }
 
@@ -230,11 +262,9 @@ function clampHorizontalSpeed(velocity: Vec3, maxSpeed: number): Vec3 {
   const speed = horizontalSpeed(velocity);
   if (speed <= maxSpeed || speed <= EPSILON) return velocity;
   const amount = maxSpeed / speed;
-  return {
-    x: velocity.x * amount,
-    y: velocity.y,
-    z: velocity.z * amount,
-  };
+  velocity.x *= amount;
+  velocity.z *= amount;
+  return velocity;
 }
 
 function resolveAscendantMaxY(world: MovementCollisionWorld, startY: number): number {
@@ -246,15 +276,16 @@ function resolveAscendantMaxY(world: MovementCollisionWorld, startY: number): nu
 }
 
 function normalizeHorizontal(vector: Vec3): Vec3 {
-  const valueLength = Math.sqrt(vector.x * vector.x + vector.z * vector.z);
-  if (valueLength <= EPSILON) return { x: 0, y: 0, z: 0 };
-  return { x: vector.x / valueLength, y: 0, z: vector.z / valueLength };
+  return setNormalizeHorizontal({ x: 0, y: 0, z: 0 }, vector);
 }
 
-function projectOnPlane(value: Vec3, normal: Vec3): Vec3 {
+function projectOnPlaneSelf(value: Vec3, normal: Vec3): Vec3 {
   const into = dot(value, normal);
   if (into >= 0) return value;
-  return subtract(value, scale(normal, into));
+  value.x -= normal.x * into;
+  value.y -= normal.y * into;
+  value.z -= normal.z * into;
+  return value;
 }
 
 function copyMovementState(value: PlayerMovementState): PlayerMovementState {
@@ -499,6 +530,17 @@ function boundsOverlap(a: MovementCollisionBounds, b: MovementCollisionBounds): 
   );
 }
 
+function boundsOverlapAabb(bounds: MovementCollisionBounds, aabb: MovementAabb): boolean {
+  return (
+    bounds.min.x <= aabb.max.x &&
+    bounds.max.x >= aabb.min.x &&
+    bounds.min.y <= aabb.max.y &&
+    bounds.max.y >= aabb.min.y &&
+    bounds.min.z <= aabb.max.z &&
+    bounds.max.z >= aabb.min.z
+  );
+}
+
 function collectVoxelAabbs(
   terrain: VoxelMovementTerrainAdapter,
   bounds: MovementCollisionBounds,
@@ -686,7 +728,9 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
     const gx1 = Math.floor((bounds.max.x - origin.x) / voxelSize.x) + 1;
     const gy1 = Math.floor((bounds.max.y - origin.y) / voxelSize.y) + 1;
     const gz1 = Math.floor((bounds.max.z - origin.z) / voxelSize.z) + 1;
-    return `${gx0},${gy0},${gz0}:${gx1},${gy1},${gz1}:${bounds.min.y.toFixed(4)},${bounds.max.y.toFixed(4)}`;
+    const y0 = Math.floor((bounds.min.y - origin.y) / STATIC_AABB_VERTICAL_CACHE_BUCKET);
+    const y1 = Math.floor((bounds.max.y - origin.y) / STATIC_AABB_VERTICAL_CACHE_BUCKET);
+    return `${terrain.collisionRevision ?? 0}:${gx0},${gy0},${gz0}:${gx1},${gy1},${gz1}:${y0}:${y1}`;
   }
 
   function collectStaticAabbs(expanded: MovementCollisionBounds): readonly MovementAabb[] {
@@ -694,7 +738,11 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
 
     const cacheKey = staticAabbCacheKey(expanded);
     const cached = staticAabbCache.get(cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      staticAabbCache.delete(cacheKey);
+      staticAabbCache.set(cacheKey, cached);
+      return cached;
+    }
 
     const staticAabbs = mergeAabbRuns(collectVoxelAabbs(terrain, expanded, origin, voxelSize));
     if (staticAabbCache.size >= STATIC_AABB_CACHE_LIMIT) {
@@ -720,7 +768,7 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
     combinedAabbScratch.length = 0;
     for (const aabb of staticAabbs) combinedAabbScratch.push(aabb);
     for (const aabb of dynamicAabbs) {
-      if (boundsOverlap(expanded, { min: aabb.min, max: aabb.max })) {
+      if (boundsOverlapAabb(expanded, aabb)) {
         combinedAabbScratch.push(aabb);
       }
     }
@@ -757,6 +805,14 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
     return testCapsuleAgainstAabbs(position, height, radius, collectAabbs(capsuleBounds(position, height, radius)));
   }
 
+  function hasCapsuleOverlap(position: Vec3, height: number, radius: number): boolean {
+    const aabbs = collectAabbs(capsuleBounds(position, height, radius));
+    for (const aabb of aabbs) {
+      if (overlapCapsuleAabb(position, height, radius, aabb)) return true;
+    }
+    return false;
+  }
+
   function findDeepestCapsuleOverlap(
     position: Vec3,
     height: number,
@@ -772,6 +828,15 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
       bestOverlap = overlap;
     }
     return bestOverlap;
+  }
+
+  function findCapsuleOverlap(position: Vec3, height: number, radius: number): MovementOverlap | null {
+    return findDeepestCapsuleOverlap(
+      position,
+      height,
+      radius,
+      collectAabbs(capsuleBounds(position, height, radius))
+    );
   }
 
   function sweepCapsule(position: Vec3, delta: Vec3, height: number, radius: number): CapsuleSweepHit | null {
@@ -910,6 +975,8 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
   return {
     collisionRevision: terrain.collisionRevision ?? 0,
     testCapsule,
+    hasCapsuleOverlap,
+    findCapsuleOverlap,
     sweepCapsule,
     findGround,
     clampToPlayableArea(position: Vec3): Vec3 {
@@ -929,25 +996,27 @@ function accelerate(velocity: Vec3, wishDir: Vec3, wishSpeed: number, accelerati
   if (addSpeed <= 0) return velocity;
 
   const accelSpeed = Math.min(acceleration * dt * wishSpeed, addSpeed);
-  return {
-    x: velocity.x + accelSpeed * wishDir.x,
-    y: velocity.y,
-    z: velocity.z + accelSpeed * wishDir.z,
-  };
+  velocity.x += accelSpeed * wishDir.x;
+  velocity.z += accelSpeed * wishDir.z;
+  return velocity;
 }
 
 function getWishDirection(intent: DirectionalMovementIntent, lookYaw: number): Vec3 {
   const cos = Math.cos(lookYaw);
   const sin = Math.sin(lookYaw);
-
-  return normalizeHorizontal({
+  const wishDirection = {
     x: intent.localX * cos + intent.localZ * sin,
     y: 0,
     z: -intent.localX * sin + intent.localZ * cos,
-  });
+  };
+
+  return setNormalizeHorizontal(wishDirection, wishDirection);
 }
 
 function canOccupy(world: MovementCollisionWorld, position: Vec3, height: number, radius: number): boolean {
+  if (world.hasCapsuleOverlap) {
+    return !world.hasCapsuleOverlap(position, height, radius);
+  }
   return world.testCapsule(position, height, radius).length === 0;
 }
 
@@ -967,6 +1036,7 @@ function resolveSlideExitPosture(
         ] as const)
       : ([{ posture: 'stand', height: PLAYER_HEIGHT }] as const);
   const direction = exitDirection ? normalizeHorizontal(exitDirection) : null;
+  const candidateScratch: Vec3 = { x: position.x, y: position.y, z: position.z };
 
   for (const posture of postures) {
     for (const probeDistance of SLIDE_EXIT_PROBE_DISTANCES) {
@@ -974,7 +1044,7 @@ function resolveSlideExitPosture(
 
       const candidate =
         probeDistance > 0 && direction
-          ? add(position, scale(direction, probeDistance))
+          ? setAddScaled(candidateScratch, position, direction, probeDistance)
           : position;
 
       if (probeDistance > 0) {
@@ -985,7 +1055,7 @@ function resolveSlideExitPosture(
 
       if (canOccupy(world, candidate, posture.height, PLAYER_RADIUS)) {
         return {
-          position: candidate,
+          position: cloneVec3(candidate),
           posture: posture.posture,
         };
       }
@@ -1004,9 +1074,10 @@ function shouldPreferCrouchForLowClearance(
   if (length(direction) <= EPSILON) return false;
 
   let hasCrouchClearance = false;
+  const candidate: Vec3 = { x: position.x, y: position.y, z: position.z };
 
   for (const probeDistance of LOW_POSTURE_GATE_PROBE_DISTANCES) {
-    const candidate = add(position, scale(direction, probeDistance));
+    setAddScaled(candidate, position, direction, probeDistance);
     if (canOccupy(world, candidate, PLAYER_HEIGHT, PLAYER_RADIUS)) continue;
 
     const crouchClears = canOccupy(
@@ -1055,8 +1126,9 @@ function isSlidingDownhill(
   if (currentGroundY === null) return false;
 
   let foundDrop = false;
+  const forwardPosition: Vec3 = { x: position.x, y: position.y, z: position.z };
   for (const probeDistance of SLIDE_GRADE_LOOKAHEAD_DISTANCES) {
-    const forwardPosition = add(position, scale(direction, probeDistance));
+    setAddScaled(forwardPosition, position, direction, probeDistance);
     const forwardGroundY = sampleSlideGradeGroundY(world, forwardPosition, height);
     if (forwardGroundY === null) continue;
 
@@ -1124,22 +1196,29 @@ function depenetrate(
   contacts: MovementContact[] | null
 ): { position: Vec3; iterations: number; distance: number; hasGroundContact: boolean } {
   let nextPosition = position;
+  let ownsNextPosition = false;
   let totalDistance = 0;
   let iterations = 0;
   let hasGroundContact = false;
 
   for (; iterations < MAX_DEPENETRATION_ITERATIONS; iterations++) {
-    const overlap = world.testCapsule(nextPosition, height, radius)[0];
+    const overlap = world.findCapsuleOverlap
+      ? world.findCapsuleOverlap(nextPosition, height, radius)
+      : world.testCapsule(nextPosition, height, radius)[0];
     if (!overlap) break;
 
     const pushDistance = overlap.depth + SKIN_WIDTH;
-    nextPosition = add(nextPosition, scale(overlap.normal, pushDistance));
+    if (!ownsNextPosition) {
+      nextPosition = cloneVec3(nextPosition);
+      ownsNextPosition = true;
+    }
+    addScaledSelf(nextPosition, overlap.normal, pushDistance);
     totalDistance += pushDistance;
     if (overlap.normal.y >= WALKABLE_NORMAL_Y) hasGroundContact = true;
     if (contacts) {
       contacts.push({
         normal: overlap.normal,
-        position: nextPosition,
+        position: cloneVec3(nextPosition),
         time: 0,
         kind: 'depenetration',
         aabb: overlap.aabb,
@@ -1170,7 +1249,8 @@ function moveAndSlide(
 } {
   let nextPosition = position;
   let nextVelocity = velocity;
-  let remainingDelta = scale(velocity, dt);
+  let ownsNextPosition = false;
+  let remainingDelta = setScaled({ x: 0, y: 0, z: 0 }, velocity, dt);
   let steppedUp = false;
   let slideIterations = 0;
   let hasGroundContact = false;
@@ -1181,7 +1261,11 @@ function moveAndSlide(
 
     const hit = world.sweepCapsule(nextPosition, remainingDelta, height, radius);
     if (!hit) {
-      nextPosition = add(nextPosition, remainingDelta);
+      if (!ownsNextPosition) {
+        nextPosition = cloneVec3(nextPosition);
+        ownsNextPosition = true;
+      }
+      addScaledSelf(nextPosition, remainingDelta, 1);
       break;
     }
 
@@ -1197,7 +1281,11 @@ function moveAndSlide(
     }
 
     const safeTime = Math.max(0, hit.time - SKIN_WIDTH / Math.max(remainingDistance, SKIN_WIDTH));
-    nextPosition = add(nextPosition, scale(remainingDelta, safeTime));
+    if (!ownsNextPosition) {
+      nextPosition = cloneVec3(nextPosition);
+      ownsNextPosition = true;
+    }
+    addScaledSelf(nextPosition, remainingDelta, safeTime);
     if (hit.normal.y >= WALKABLE_NORMAL_Y) hasGroundContact = true;
     if (contacts) {
       contacts.push({
@@ -1209,11 +1297,14 @@ function moveAndSlide(
       });
     }
 
-    nextVelocity = projectOnPlane(nextVelocity, hit.normal);
+    nextVelocity = projectOnPlaneSelf(nextVelocity, hit.normal);
     if (hit.normal.y >= WALKABLE_NORMAL_Y && nextVelocity.y < 0) {
       nextVelocity.y = 0;
     }
-    remainingDelta = projectOnPlane(scale(remainingDelta, 1 - safeTime), hit.normal);
+    remainingDelta.x *= 1 - safeTime;
+    remainingDelta.y *= 1 - safeTime;
+    remainingDelta.z *= 1 - safeTime;
+    remainingDelta = projectOnPlaneSelf(remainingDelta, hit.normal);
   }
 
   const depenetration = depenetrate(world, nextPosition, height, radius, contacts);
@@ -1242,22 +1333,31 @@ function applyBoundaryClamp(
 
   if (!clamped) return { position, velocity, clamped: false, hasGroundContact: false };
 
-  const nextVelocity = cloneVec3(velocity);
-  if (Math.abs(clampedPosition.x - position.x) > EPSILON) nextVelocity.x = 0;
-  if (Math.abs(clampedPosition.y - position.y) > EPSILON) nextVelocity.y = 0;
-  if (Math.abs(clampedPosition.z - position.z) > EPSILON) nextVelocity.z = 0;
-  const normal = normalize(subtract(clampedPosition, position), { x: 0, y: 1, z: 0 });
-  const hasGroundContact = normal.y >= WALKABLE_NORMAL_Y;
+  if (Math.abs(clampedPosition.x - position.x) > EPSILON) velocity.x = 0;
+  if (Math.abs(clampedPosition.y - position.y) > EPSILON) velocity.y = 0;
+  if (Math.abs(clampedPosition.z - position.z) > EPSILON) velocity.z = 0;
+  const normalX = clampedPosition.x - position.x;
+  const normalY = clampedPosition.y - position.y;
+  const normalZ = clampedPosition.z - position.z;
+  const normalLength = Math.sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ);
+  const resolvedNormalY = normalLength > EPSILON ? normalY / normalLength : 1;
+  const hasGroundContact = resolvedNormalY >= WALKABLE_NORMAL_Y;
   if (contacts) {
     contacts.push({
-      normal,
+      normal: normalLength > EPSILON
+        ? {
+            x: normalX / normalLength,
+            y: resolvedNormalY,
+            z: normalZ / normalLength,
+          }
+        : { x: 0, y: 1, z: 0 },
       position: clampedPosition,
       time: 1,
       kind: 'boundary',
     });
   }
 
-  return { position: clampedPosition, velocity: nextVelocity, clamped: true, hasGroundContact };
+  return { position: clampedPosition, velocity, clamped: true, hasGroundContact };
 }
 
 export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResult {

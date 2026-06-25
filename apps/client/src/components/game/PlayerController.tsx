@@ -1291,19 +1291,22 @@ export function runInputPhase(
     refs.pendingReloadInputRef.current = true;
   }
   if (heroId === 'phantom') {
-    phantomAbilities.updatePhantomPrimaryReload(now);
     if (reloadPressed) {
       phantomAbilities.reloadPhantomPrimary(now);
+    } else {
+      phantomAbilities.updatePhantomPrimaryReload(now);
     }
   } else if (heroId === 'blaze') {
-    blazeAbilities.updateBlazePrimaryReload(now);
     if (reloadPressed) {
       blazeAbilities.reloadBlazePrimary(now);
+    } else {
+      blazeAbilities.updateBlazePrimaryReload(now);
     }
   } else if (heroId === 'chronos') {
-    chronosAbilities.updateChronosPrimaryReload(now);
     if (reloadPressed) {
       chronosAbilities.reloadChronosPrimary(now);
+    } else {
+      chronosAbilities.updateChronosPrimaryReload(now);
     }
   }
 
@@ -1467,40 +1470,31 @@ function syncBlazeAuthorityMovementAnchor(
 
   const jetpackFuel = Math.max(0, Math.min(BLAZE_FLAMETHROWER_MAX_FUEL, movement.jetpackFuel));
   const isJetpacking = movement.isJetpacking;
+  const store = useGameStore.getState();
+  const currentLocalPlayer = store.localPlayer?.id === localPlayer.id ? store.localPlayer : localPlayer;
   if (
-    localPlayer.movement.isJetpacking === isJetpacking &&
-    Math.abs(localPlayer.movement.jetpackFuel - jetpackFuel) < AUTHORITY_RESOURCE_EPSILON
+    currentLocalPlayer.movement.isJetpacking === isJetpacking &&
+    Math.abs(currentLocalPlayer.movement.jetpackFuel - jetpackFuel) < AUTHORITY_RESOURCE_EPSILON
   ) {
-    return localPlayer;
+    return currentLocalPlayer;
   }
 
-  let syncedPlayer: Player = {
-    ...localPlayer,
-    movement: {
-      ...localPlayer.movement,
-      isJetpacking,
-      jetpackFuel,
-    },
+  const syncedMovement = {
+    ...currentLocalPlayer.movement,
+    isJetpacking,
+    jetpackFuel,
+  };
+  const syncedPlayer: Player = {
+    ...currentLocalPlayer,
+    movement: syncedMovement,
   };
 
-  useGameStore.setState((state) => {
-    if (!state.localPlayer || state.localPlayer.id !== localPlayer.id) return state;
-
-    syncedPlayer = {
-      ...state.localPlayer,
-      movement: {
-        ...state.localPlayer.movement,
-        isJetpacking,
-        jetpackFuel,
-      },
-    };
-    const players = new Map(state.players);
-    players.set(syncedPlayer.id, syncedPlayer);
-
-    return {
-      localPlayer: syncedPlayer,
-      players,
-    };
+  // Local player updates are mirrored into the players Map by updateLocalPlayer
+  // without replacing the Map reference, keeping remote render subscribers stable.
+  store.updateLocalPlayer({
+    movement: {
+      ...syncedMovement,
+    },
   });
 
   return syncedPlayer;

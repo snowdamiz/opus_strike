@@ -15,12 +15,14 @@ import {
   measureFrameWork,
   recordEffectSlotDiagnostics,
 } from '../../movement/networkDiagnostics';
+import type { EffectQualityConfig } from './visualQuality';
 import {
   RocketsManager,
   RocketJumpExplosions,
   AirStrikeEffects,
   BombEffect,
   FlamethrowerEffect,
+  RemoteFlamethrowerInstancedVisuals,
   type FlamethrowerPose,
 } from './blaze';
 
@@ -64,6 +66,10 @@ const BURN_SMOKE_PUFFS = Array.from({ length: 4 }, (_, index) => ({
 
 type BlazeFrameUpdater = (state: RootState, delta: number) => void;
 const blazeFrameUpdaters = new Map<string, BlazeFrameUpdater>();
+type BlazeEffectsConfig = Pick<
+  EffectQualityConfig,
+  'maxRemoteMovementEffectDistance' | 'maxVisibleRemoteAbilityEffects'
+>;
 
 function useBlazeFrameUpdater(effectId: string, updater: BlazeFrameUpdater): void {
   const updaterRef = useRef(updater);
@@ -84,15 +90,53 @@ function runBlazeFrameUpdaters(state: RootState, delta: number): void {
   }
 }
 
-function collectRemoteFlamethrowerPlayerIds(target: string[]): string[] {
+function collectRemoteFlamethrowerPlayerIds(
+  target: string[],
+  selectedDistances: number[],
+  cameraPosition: THREE.Vector3,
+  config: BlazeEffectsConfig
+): string[] {
   const players = useGameStore.getState().players;
   const activeIds = visualStore.getState().activeBlazeFlamethrowerPlayerIds;
+  const maxVisible = Math.max(0, Math.floor(config.maxVisibleRemoteAbilityEffects));
+  const maxDistance = config.maxRemoteMovementEffectDistance;
+  const maxDistanceSq = Number.isFinite(maxDistance)
+    ? maxDistance * maxDistance
+    : Number.POSITIVE_INFINITY;
   target.length = 0;
+  selectedDistances.length = 0;
+  if (maxVisible <= 0 || maxDistance <= 0) return target;
 
   for (let index = 0; index < activeIds.length; index++) {
     const playerId = activeIds[index];
-    if (resolveRemoteFlamethrowerPose(players.get(playerId))) {
+    const pose = resolveRemoteFlamethrowerPose(players.get(playerId));
+    if (!pose) continue;
+
+    const dx = pose.origin.x - cameraPosition.x;
+    const dy = pose.origin.y - cameraPosition.y;
+    const dz = pose.origin.z - cameraPosition.z;
+    const distanceSq = dx * dx + dy * dy + dz * dz;
+    if (distanceSq > maxDistanceSq) continue;
+
+    if (target.length < maxVisible) {
       target.push(playerId);
+      selectedDistances.push(distanceSq);
+      continue;
+    }
+
+    let farthestIndex = 0;
+    let farthestDistanceSq = selectedDistances[0] ?? -1;
+    for (let selectedIndex = 1; selectedIndex < selectedDistances.length; selectedIndex++) {
+      const selectedDistanceSq = selectedDistances[selectedIndex];
+      if (selectedDistanceSq > farthestDistanceSq) {
+        farthestDistanceSq = selectedDistanceSq;
+        farthestIndex = selectedIndex;
+      }
+    }
+
+    if (distanceSq < farthestDistanceSq) {
+      target[farthestIndex] = playerId;
+      selectedDistances[farthestIndex] = distanceSq;
     }
   }
 
@@ -201,7 +245,7 @@ function resolveRemoteFlamethrowerPose(player: Player | undefined): Flamethrower
   };
 }
 
-function RemoteBlazeFlamethrower({ playerId }: { playerId: string }) {
+function RemoteBlazeFlamethrowerAudio({ playerId }: { playerId: string }) {
   const loopId = useMemo(() => `remote-blaze-flamethrower:${playerId}`, [playerId]);
   const poseProvider = useCallback(() => (
     resolveRemoteFlamethrowerPose(useGameStore.getState().players.get(playerId))
@@ -226,7 +270,7 @@ function RemoteBlazeFlamethrower({ playerId }: { playerId: string }) {
     }
   });
 
-  return <FlamethrowerEffect isActive ownerId={playerId} poseProvider={poseProvider} />;
+  return null;
 }
 
 function BurningHeroFire({ playerId }: { playerId: string }) {
@@ -403,7 +447,7 @@ function BurningHeroFire({ playerId }: { playerId: string }) {
   );
 }
 
-export function BlazeEffectsManager() {
+export function BlazeEffectsManager({ config }: { config: BlazeEffectsConfig }) {
   const bombs = useGameStore(state => state.bombs);
   const flamethrowerActive = useGameStore(state => state.flamethrowerActive);
   const [remoteFlamethrowerPlayerIds, setRemoteFlamethrowerPlayerIds] = useState<string[]>([]);
@@ -411,8 +455,12 @@ export function BlazeEffectsManager() {
   const activeRemoteIdsRef = useRef<string[]>([]);
   const activeBurningIdsRef = useRef<string[]>([]);
   const scratchRemoteIdsRef = useRef<string[]>([]);
+  const scratchRemoteDistancesRef = useRef<number[]>([]);
   const scratchBurningIdsRef = useRef<string[]>([]);
   const scanAccumulatorRef = useRef(BLAZE_EFFECT_SCAN_INTERVAL_MS);
+  const getRemoteFlamethrowerPose = useCallback((playerId: string) => (
+    resolveRemoteFlamethrowerPose(useGameStore.getState().players.get(playerId))
+  ), []);
 
   const recordBlazeEffectDiagnostics = (): void => {
     if (!MOVEMENT_DIAGNOSTICS_ENABLED) return;
@@ -443,7 +491,12 @@ export function BlazeEffectsManager() {
     }
     scanAccumulatorRef.current = 0;
 
-    const nextIds = collectRemoteFlamethrowerPlayerIds(scratchRemoteIdsRef.current);
+    const nextIds = collectRemoteFlamethrowerPlayerIds(
+      scratchRemoteIdsRef.current,
+      scratchRemoteDistancesRef.current,
+      state.camera.position,
+      config
+    );
     if (!sameIds(nextIds, activeRemoteIdsRef.current)) {
       const committedIds = nextIds.slice();
       activeRemoteIdsRef.current = committedIds;
@@ -484,8 +537,13 @@ export function BlazeEffectsManager() {
       <AirStrikeEffects />
       
       <FlamethrowerEffect isActive={flamethrowerActive} />
+      <RemoteFlamethrowerInstancedVisuals
+        playerIds={remoteFlamethrowerPlayerIds}
+        capacity={Math.max(0, Math.floor(config.maxVisibleRemoteAbilityEffects))}
+        poseProvider={getRemoteFlamethrowerPose}
+      />
       {remoteFlamethrowerPlayerIds.map(playerId => (
-        <RemoteBlazeFlamethrower key={playerId} playerId={playerId} />
+        <RemoteBlazeFlamethrowerAudio key={playerId} playerId={playerId} />
       ))}
       {burningPlayerIds.map(playerId => (
         <BurningHeroFire key={playerId} playerId={playerId} />

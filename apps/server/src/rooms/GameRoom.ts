@@ -378,6 +378,7 @@ import type {
   MapProfileId,
   MatchMode,
   MatchPerspective,
+  SelfMovementAck,
   SelfMovementAuthority,
   MatchSnapshotMessage,
   PhantomShieldBrokenEvent,
@@ -386,10 +387,12 @@ import type {
   PlayerDownedEvent,
   PlayerDeathEvent,
   PlayerHealedEvent,
+  PlayerEventBatchItem,
   PlayerReviveCancelledEvent,
   PlayerRevivedEvent,
   PlayerReviveStartedEvent,
   PowerupCollectedMessage,
+  ChronosAegisPose,
   PlayerTransformsV2Message,
   PlayerVitalsMessage,
   PlayerVitalsSnapshot,
@@ -723,7 +726,7 @@ interface BotFrameContext {
   aliveBotCount: number;
   flags: ReturnType<typeof getBotFlagSnapshots>;
   teamTactics: BotTeamTacticsByTeam;
-  protectedEnemyIdsByTeam: Record<Team, Set<string>>;
+  protectedEnemyIdsByTeam: Map<Team, Set<string>>;
   perceptionByBot: Map<string, BotPerceptionSets>;
   lineOfSightChecksRemaining: number;
   steeringProbeChecksRemaining: number;
@@ -747,6 +750,23 @@ interface DeferredTrackedMessage {
   client: Client;
   type: string;
   payload: unknown;
+}
+
+const BATCHABLE_PLAYER_EVENT_TYPES = new Set<string>([
+  'powerupCollected',
+  'playerDamaged',
+  'playerDowned',
+  'playerReviveStarted',
+  'playerReviveCancelled',
+  'playerRevived',
+  'playerKilled',
+  'playerHealed',
+  'chronosAegisDamaged',
+  'phantomShieldBroken',
+]);
+
+function isBatchablePlayerEvent(type: string): type is PlayerEventBatchItem['type'] {
+  return BATCHABLE_PLAYER_EVENT_TYPES.has(type);
 }
 
 interface MovementPhysicsFrameEntry {
@@ -792,16 +812,8 @@ const MATCH_SNAPSHOT_DRIFT_SYNC_INTERVAL_MS = 2000;
 const LOW_FREQUENCY_STATE_INTERVAL_MS = 250;
 const PLAYER_PING_BROADCAST_INTERVAL_MS = 250;
 const BATTLE_ROYAL_FIRST_SAFE_ZONE_REVEAL_BUFFER_MS = 3_000;
+const SELF_MOVEMENT_FULL_AUTHORITY_INTERVAL_MS = 100;
 const ROOM_MOVEMENT_EXTRA_CATCHUP_SUBSTEPS_PER_TICK = SERVER_MOVEMENT_SUBSTEPS_PER_TICK * 4;
-const MOVEMENT_GAMEPLAY_COMMAND_BUTTON_MASK =
-  MOVEMENT_BUTTON_PRIMARY_FIRE |
-  MOVEMENT_BUTTON_SECONDARY_FIRE |
-  MOVEMENT_BUTTON_RELOAD |
-  MOVEMENT_BUTTON_ABILITY_1 |
-  MOVEMENT_BUTTON_ABILITY_2 |
-  MOVEMENT_BUTTON_ULTIMATE |
-  MOVEMENT_BUTTON_INTERACT |
-  MOVEMENT_BUTTON_CROUCH_PRESSED;
 const BOT_URGENT_PLANNING_BUDGET_PER_TICK = 8;
 const BOT_DEFERRED_PLANNING_BUDGET_PER_TICK = 4;
 const BOT_FULL_RATE_PLANNING_COUNT = 6;
@@ -917,6 +929,7 @@ export class GameRoom extends Room<GameState> {
   private readonly powerupPickups = new PowerupPickupTracker();
   private readonly powerupBoosts = new PowerupBoostTracker();
   private readonly pendingAreaDamage = new PendingAreaDamageQueue();
+  private readonly pendingAreaDamageReady: PendingAreaDamageInstance[] = [];
   private readonly blazeGearstorms = new BlazeGearstormTracker();
   private readonly blazeFlamethrowers = new BlazeFlamethrowerRuntimeTracker();
   private readonly blazeBurns = new BlazeBurnEffectTracker();
@@ -986,7 +999,22 @@ export class GameRoom extends Room<GameState> {
   private readonly botMovementLodEnemyHumanScratch: Player[] = [];
   private readonly botSimulationHumanScratch: Player[] = [];
   private readonly botSteeringPathCache = new Map<string, BotSteeringPathCacheEntry>();
+  private readonly botFrameSnapshotById = new Map<string, BotPlayerSnapshot>();
+  private readonly botFrameProtectedEnemyIdsByTeam = new Map<Team, Set<string>>();
+  private readonly botFramePerceptionByBot = new Map<string, BotPerceptionSets>();
+  private readonly botPerceptionSetsPool: BotPerceptionSets[] = [];
+  private readonly botFramePerceptionSets: BotPerceptionSets[] = [];
   private readonly deferredTrackedMessages: DeferredTrackedMessage[] = [];
+  private readonly deferredPlayerEventBatches = new Map<Client, PlayerEventBatchItem[]>();
+  private readonly deferredPlayerEventBatchClients: Client[] = [];
+  private readonly visibleHealedTargetIdsScratch = new Set<string>();
+  private readonly terrainRaycastPointScratch: PlainVec3 = { x: 0, y: 0, z: 0 };
+  private readonly chronosAegisPoseScratch: ChronosAegisPose = {
+    playerId: '',
+    position: { x: 0, y: 0, z: 0 },
+    lookYaw: 0,
+    lookPitch: 0,
+  };
   private eventReplicationFrameContext: ReplicationFrameContext | null = null;
   private eventReplicationFrameContextTick = -1;
   private eventReplicationFrameContextNow = 0;
@@ -2495,14 +2523,47 @@ export class GameRoom extends Room<GameState> {
 
   private flushDeferredTrackedMessages(): void {
     if (this.deferredTrackedMessages.length === 0) return;
-    const messages = this.deferredTrackedMessages.splice(0);
+    const messages = this.deferredTrackedMessages;
     for (const message of messages) {
+      if (isBatchablePlayerEvent(message.type)) {
+        let batch = this.deferredPlayerEventBatches.get(message.client);
+        if (!batch) {
+          batch = [];
+          this.deferredPlayerEventBatches.set(message.client, batch);
+          this.deferredPlayerEventBatchClients.push(message.client);
+        }
+        batch.push({
+          type: message.type,
+          payload: message.payload,
+        } as PlayerEventBatchItem);
+        continue;
+      }
       this.sendTracked(message.client, message.type, message.payload);
     }
+    messages.length = 0;
+
+    for (const client of this.deferredPlayerEventBatchClients) {
+      const batch = this.deferredPlayerEventBatches.get(client);
+      if (!batch || batch.length === 0) continue;
+      if (batch.length === 1) {
+        const event = batch[0]!;
+        this.sendTracked(client, event.type, event.payload);
+      } else {
+        this.sendTracked(client, 'playerEventBatch', { events: batch.slice() });
+      }
+      batch.length = 0;
+    }
+    this.deferredPlayerEventBatches.clear();
+    this.deferredPlayerEventBatchClients.length = 0;
   }
 
   private discardDeferredTrackedMessages(): void {
     this.deferredTrackedMessages.length = 0;
+    for (const batch of this.deferredPlayerEventBatches.values()) {
+      batch.length = 0;
+    }
+    this.deferredPlayerEventBatches.clear();
+    this.deferredPlayerEventBatchClients.length = 0;
   }
 
   private broadcastTracked(type: string, payload: unknown): void {
@@ -2619,7 +2680,8 @@ export class GameRoom extends Room<GameState> {
       const recipient = this.state.players.get(client.sessionId) ?? null;
       if (!this.shouldSendExactEnemyState(recipient, source.id, source, now, undefined, frameContext)) continue;
 
-      const visibleTargetIds = new Set<string>();
+      const visibleTargetIds = this.visibleHealedTargetIdsScratch;
+      visibleTargetIds.clear();
       for (const targetPayload of payload.targets) {
         const target = this.state.players.get(targetPayload.targetId);
         if (!target) continue;
@@ -2629,6 +2691,7 @@ export class GameRoom extends Room<GameState> {
       }
 
       const eventPayload = buildPlayerHealedPayload(payload, visibleTargetIds);
+      visibleTargetIds.clear();
       if (!eventPayload) continue;
       this.sendTrackedAfterGameplayWork(client, 'playerHealed', eventPayload);
     }
@@ -4151,12 +4214,63 @@ export class GameRoom extends Room<GameState> {
       powerupBoostUntil: this.powerupBoosts.getUntil(player.id, now),
     };
     this.sendTracked(client, 'selfMovementAuthority', payload);
+    this.recordSelfMovementAuthoritySent(authority, now);
+    authority.lastFullAuthoritySentAt = now;
+    authority.correctionReason = null;
+  }
+
+  private sendSelfMovementAck(player: Player, client: Client): void {
+    const authority = this.getMovementAuthority(player.id);
+    const now = this.state.serverTime || Date.now();
+    const payload: SelfMovementAck = {
+      serverTick: this.state.tick,
+      serverTime: now,
+      ackSeq: authority.lastProcessedSeq,
+      movementEpoch: authority.movementEpoch,
+      collisionRevision: this.getMovementCollisionRevision(),
+    };
+    this.sendTracked(client, 'selfMovementAck', payload);
+    this.recordSelfMovementAuthoritySent(authority, now);
+  }
+
+  private recordSelfMovementAuthoritySent(
+    authority: ServerMovementAuthorityState,
+    now: number
+  ): void {
     if (authority.lastAuthoritySentAt > 0) {
       authority.metrics.lastAckIntervalMs = Math.max(0, now - authority.lastAuthoritySentAt);
     }
     authority.lastAuthoritySentAt = now;
     authority.metrics.authoritySends = (authority.metrics.authoritySends ?? 0) + 1;
-    authority.correctionReason = null;
+  }
+
+  private canSendSelfMovementAckOnly(player: Player, authority: ServerMovementAuthorityState, now: number): boolean {
+    if (authority.correctionReason) return false;
+    if (authority.lastFullAuthoritySentAt === 0) return false;
+    if (now - authority.lastFullAuthoritySentAt >= SELF_MOVEMENT_FULL_AUTHORITY_INTERVAL_MS) return false;
+    if (player.heroId === 'blaze') return false;
+    if (this.isChronosAegisActive(player)) return false;
+    if ((this.playerRoots.getRootedUntil(player.id, now) ?? 0) > now) return false;
+    if ((this.powerupBoosts.getUntil(player.id, now) ?? 0) > now) return false;
+    if (
+      player.movement.isGrappling ||
+      player.movement.isJetpacking ||
+      player.movement.isGliding ||
+      player.movement.chronosAscendantStartY
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  private sendSelfMovementAuthorityOrAck(player: Player, client: Client, reason: MovementCorrectionReason | null): void {
+    const authority = this.getMovementAuthority(player.id);
+    const now = this.state.serverTime || Date.now();
+    if (!reason && this.canSendSelfMovementAckOnly(player, authority, now)) {
+      this.sendSelfMovementAck(player, client);
+      return;
+    }
+    this.sendSelfMovementAuthority(player, client, reason);
   }
 
   private getChronosLifelineTargets(caster: Player): Player[] {
@@ -4420,18 +4534,28 @@ export class GameRoom extends Room<GameState> {
   }
 
   private raycastTerrain(start: PlainVec3, direction: PlainVec3, maxDistance: number, step = 0.35): PlainVec3 | null {
-    const normalized = this.normalize3D(direction);
-    if (!normalized) return null;
+    const length = Math.sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+    if (length <= 0.0001) return null;
 
+    const dirX = direction.x / length;
+    const dirY = direction.y / length;
+    const dirZ = direction.z / length;
     const steps = Math.max(1, Math.ceil(maxDistance / step));
-    let lastOpenPoint = { ...start };
+    let lastOpenX = start.x;
+    let lastOpenY = start.y;
+    let lastOpenZ = start.z;
+    const point = this.terrainRaycastPointScratch;
     for (let i = 1; i <= steps; i++) {
       const distance = Math.min(maxDistance, i * step);
-      const point = this.addScaled3D(start, normalized, distance);
+      point.x = start.x + dirX * distance;
+      point.y = start.y + dirY * distance;
+      point.z = start.z + dirZ * distance;
       if (isCollisionBlock(this.getBlockAtWorld(point))) {
-        return lastOpenPoint;
+        return { x: lastOpenX, y: lastOpenY, z: lastOpenZ };
       }
-      lastOpenPoint = point;
+      lastOpenX = point.x;
+      lastOpenY = point.y;
+      lastOpenZ = point.z;
     }
 
     return null;
@@ -4554,7 +4678,9 @@ export class GameRoom extends Room<GameState> {
   }
 
   private updatePendingAreaDamage(now: number): void {
-    for (const instance of this.pendingAreaDamage.drainReady(now)) {
+    const ready = this.pendingAreaDamage.drainReadyInto(now, this.pendingAreaDamageReady);
+    for (let index = 0; index < ready.length; index++) {
+      const instance = ready[index];
       const owner = this.state.players.get(instance.ownerId);
       if (owner) {
         this.applyAreaDamage(
@@ -4566,6 +4692,7 @@ export class GameRoom extends Room<GameState> {
         );
       }
     }
+    ready.length = 0;
   }
 
   private createBlazeGearstorm(
@@ -6028,13 +6155,17 @@ export class GameRoom extends Room<GameState> {
     return getSharedChronosAegisForward(player.lookYaw, player.lookPitch);
   }
 
+  private writeChronosAegisPose(player: Player): ChronosAegisPose {
+    const pose = this.chronosAegisPoseScratch;
+    pose.playerId = player.id;
+    pose.position = player.position;
+    pose.lookYaw = player.lookYaw;
+    pose.lookPitch = player.lookPitch;
+    return pose;
+  }
+
   private getChronosAegisCenter(player: Player): PlainVec3 {
-    return getSharedChronosAegisCenter({
-      playerId: player.id,
-      position: vec3SchemaToPlain(player.position),
-      lookYaw: player.lookYaw,
-      lookPitch: player.lookPitch,
-    });
+    return getSharedChronosAegisCenter(this.writeChronosAegisPose(player));
   }
 
   private updateChronosAegisShields(dt: number): void {
@@ -6065,16 +6196,12 @@ export class GameRoom extends Room<GameState> {
       if (aegisPlayer.id === source.id) continue;
       if (!this.isChronosAegisActive(aegisPlayer)) continue;
 
+      const aegisPose = this.writeChronosAegisPose(aegisPlayer);
       if (
         options.targetPoint &&
         getSharedChronosAegisForwardDot(
           options.targetPoint,
-          {
-            playerId: aegisPlayer.id,
-            position: vec3SchemaToPlain(aegisPlayer.position),
-            lookYaw: aegisPlayer.lookYaw,
-            lookPitch: aegisPlayer.lookPitch,
-          }
+          aegisPose
         ) > CHRONOS_AEGIS_TARGET_BACK_MAX
       ) {
         continue;
@@ -6084,12 +6211,7 @@ export class GameRoom extends Room<GameState> {
         start,
         direction,
         range,
-        {
-          playerId: aegisPlayer.id,
-          position: vec3SchemaToPlain(aegisPlayer.position),
-          lookYaw: aegisPlayer.lookYaw,
-          lookPitch: aegisPlayer.lookPitch,
-        },
+        aegisPose,
         { projectileRadius: options.projectileRadius }
       );
       if (!hit) continue;
@@ -7001,7 +7123,8 @@ export class GameRoom extends Room<GameState> {
 
   private buildBotFrameContext(now: number): BotFrameContext {
     const snapshots = this.getBotPlayerSnapshots();
-    const snapshotById = new Map<string, BotPlayerSnapshot>();
+    const snapshotById = this.botFrameSnapshotById;
+    snapshotById.clear();
     let aliveBotCount = 0;
     for (const snapshot of snapshots) {
       snapshotById.set(snapshot.id, snapshot);
@@ -7010,18 +7133,25 @@ export class GameRoom extends Room<GameState> {
 
     const flags = getBotFlagSnapshots(this.state);
     const teamTactics = this.refreshBotTeamTactics(now, snapshots, flags);
-    const protectedEnemyIdsByTeam: Record<Team, Set<string>> = {};
+    const protectedEnemyIdsByTeam = this.botFrameProtectedEnemyIdsByTeam;
+    for (const ids of protectedEnemyIdsByTeam.values()) {
+      ids.clear();
+    }
     for (const snapshot of snapshots) {
-      protectedEnemyIdsByTeam[snapshot.team] ??= new Set<string>();
+      if (!protectedEnemyIdsByTeam.has(snapshot.team)) {
+        protectedEnemyIdsByTeam.set(snapshot.team, new Set<string>());
+      }
     }
     this.state.players.forEach((player) => {
       if (!isTeam(player.team) || !this.isProtectedSpawnTarget(player, now)) return;
-      for (const team of Object.keys(protectedEnemyIdsByTeam) as Team[]) {
+      for (const [team, protectedEnemyIds] of protectedEnemyIdsByTeam) {
         if (team !== player.team) {
-          protectedEnemyIdsByTeam[team].add(player.id);
+          protectedEnemyIds.add(player.id);
         }
       }
     });
+
+    this.prepareBotFramePerceptionCache();
 
     return {
       snapshots,
@@ -7030,10 +7160,34 @@ export class GameRoom extends Room<GameState> {
       flags,
       teamTactics,
       protectedEnemyIdsByTeam,
-      perceptionByBot: new Map(),
+      perceptionByBot: this.botFramePerceptionByBot,
       lineOfSightChecksRemaining: this.getBotLineOfSightFrameBudget(aliveBotCount),
       steeringProbeChecksRemaining: this.getBotSteeringProbeFrameBudget(aliveBotCount),
     };
+  }
+
+  private prepareBotFramePerceptionCache(): void {
+    for (const perception of this.botFramePerceptionSets) {
+      perception.visibleEnemyIds.clear();
+      perception.enemyLineOfSightIds.clear();
+      perception.lineOfSightUnknownEnemyIds.clear();
+      this.botPerceptionSetsPool.push(perception);
+    }
+    this.botFramePerceptionSets.length = 0;
+    this.botFramePerceptionByBot.clear();
+  }
+
+  private allocateBotPerceptionSets(): BotPerceptionSets {
+    const perception = this.botPerceptionSetsPool.pop() ?? {
+      visibleEnemyIds: new Set<string>(),
+      enemyLineOfSightIds: new Set<string>(),
+      lineOfSightUnknownEnemyIds: new Set<string>(),
+    };
+    perception.visibleEnemyIds.clear();
+    perception.enemyLineOfSightIds.clear();
+    perception.lineOfSightUnknownEnemyIds.clear();
+    this.botFramePerceptionSets.push(perception);
+    return perception;
   }
 
   private refreshBotTeamTactics(
@@ -7061,9 +7215,8 @@ export class GameRoom extends Room<GameState> {
     const cached = frameContext.perceptionByBot.get(bot.id);
     if (cached) return cached;
 
-    const visibleEnemyIds = new Set<string>();
-    const enemyLineOfSightIds = new Set<string>();
-    const lineOfSightUnknownEnemyIds = new Set<string>();
+    const perception = this.allocateBotPerceptionSets();
+    const { visibleEnemyIds, enemyLineOfSightIds, lineOfSightUnknownEnemyIds } = perception;
     const losCandidateLimit = this.getBotPerceptionLineOfSightCandidateLimit(
       frameContext.aliveBotCount,
       simulationTier
@@ -7135,7 +7288,6 @@ export class GameRoom extends Room<GameState> {
       }
     }
 
-    const perception = { visibleEnemyIds, enemyLineOfSightIds, lineOfSightUnknownEnemyIds };
     frameContext.perceptionByBot.set(bot.id, perception);
     return perception;
   }
@@ -7524,7 +7676,7 @@ export class GameRoom extends Room<GameState> {
       blackboard,
       skill,
       primaryRange: this.getBotAttackRange(bot),
-      protectedEnemyIds: frameContext.protectedEnemyIdsByTeam[botSnapshot.team] ?? EMPTY_BOT_PERCEPTION_IDS,
+      protectedEnemyIds: frameContext.protectedEnemyIdsByTeam.get(botSnapshot.team) ?? EMPTY_BOT_PERCEPTION_IDS,
     });
     const combatTarget = combatPlan.targetId ? this.state.players.get(combatPlan.targetId) ?? null : null;
     const combatTargetSnapshot = combatPlan.targetId
@@ -9155,7 +9307,7 @@ export class GameRoom extends Room<GameState> {
         authority.lastAuthoritySentAt === 0 ||
         now - authority.lastAuthoritySentAt >= 100
       ) {
-        this.sendSelfMovementAuthority(player, client, authority.correctionReason);
+        this.sendSelfMovementAuthorityOrAck(player, client, authority.correctionReason);
       }
     });
   }
@@ -9828,7 +9980,7 @@ export class GameRoom extends Room<GameState> {
 
     const client = this.clientRegistry.getClient(player.id);
     if (client && (processedThisTick > 0 || authority.correctionReason)) {
-      this.sendSelfMovementAuthority(player, client, authority.correctionReason);
+      this.sendSelfMovementAuthorityOrAck(player, client, authority.correctionReason);
     }
   }
 
@@ -9929,13 +10081,7 @@ export class GameRoom extends Room<GameState> {
       return true;
     }
 
-    for (const command of authority.pendingCommands) {
-      if ((sanitizeMovementButtons(command.buttons) & MOVEMENT_GAMEPLAY_COMMAND_BUTTON_MASK) !== 0) {
-        return true;
-      }
-    }
-
-    return false;
+    return authority.pendingCommands.hasQueuedGameplayInput;
   }
 
   private suppressServerOwnedBotSkippedFullStepGameplayInput(input: PlayerInput): void {

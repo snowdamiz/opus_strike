@@ -371,23 +371,6 @@ function isBattleRoyalRemainingPlayer(player: Player): boolean {
   return player.state === 'alive' || player.state === 'downed' || player.state === 'dropping' || player.state === 'spawning';
 }
 
-function getBattleRoyalRemainingPlayerCount(players: Iterable<Player>, localPlayer: Player): number {
-  const seenPlayerIds = new Set<string>();
-  let remaining = 0;
-
-  for (const player of players) {
-    if (seenPlayerIds.has(player.id)) continue;
-    seenPlayerIds.add(player.id);
-    if (isBattleRoyalRemainingPlayer(player)) remaining += 1;
-  }
-
-  if (!seenPlayerIds.has(localPlayer.id) && isBattleRoyalRemainingPlayer(localPlayer)) {
-    remaining += 1;
-  }
-
-  return remaining;
-}
-
 function BattleRoyalTopHud({
   eliminations,
   remainingPlayers,
@@ -1340,26 +1323,34 @@ export function HUD() {
     }))
   );
   const killFeed = useCombatFeedbackStore((state) => state.killFeed);
-  const battleRoyalRemainingPlayers = useGameStore((state) => {
-    const player = state.localPlayer;
-    if (!player) return 0;
-    return getBattleRoyalRemainingPlayerCount(state.players.values(), player);
-  });
   const {
+    battleRoyalRemainingPlayers,
     reviveChannelTarget,
     nearbyDownedAlly,
   } = useGameStore(
     useShallow(state => {
       const player = state.localPlayer;
-      if (!player || state.gameplayMode !== 'battle_royal' || state.gamePhase !== 'playing') {
-        return { reviveChannelTarget: null, nearbyDownedAlly: null };
+      if (!player) {
+        return { battleRoyalRemainingPlayers: 0, reviveChannelTarget: null, nearbyDownedAlly: null };
+      }
+      if (state.gameplayMode !== 'battle_royal') {
+        return { battleRoyalRemainingPlayers: 0, reviveChannelTarget: null, nearbyDownedAlly: null };
       }
 
+      let remainingPlayers = 0;
+      let sawLocalPlayer = false;
       let channelTarget: Player | null = null;
       let nearestAlly: Player | null = null;
       let nearestDistanceSq = (BATTLE_ROYAL_REVIVE_RADIUS + 0.35) * (BATTLE_ROYAL_REVIVE_RADIUS + 0.35);
 
       for (const candidate of state.players.values()) {
+        if (candidate.id === player.id) {
+          sawLocalPlayer = true;
+        }
+        if (isBattleRoyalRemainingPlayer(candidate)) {
+          remainingPlayers++;
+        }
+        if (state.gamePhase !== 'playing') continue;
         if (candidate.id === player.id || candidate.team !== player.team || candidate.state !== 'downed') continue;
         if (candidate.reviveByPlayerId === player.id) {
           channelTarget = candidate;
@@ -1372,6 +1363,9 @@ export function HUD() {
       }
 
       return {
+        battleRoyalRemainingPlayers: remainingPlayers + (
+          !sawLocalPlayer && isBattleRoyalRemainingPlayer(player) ? 1 : 0
+        ),
         reviveChannelTarget: channelTarget,
         nearbyDownedAlly: nearestAlly,
       };

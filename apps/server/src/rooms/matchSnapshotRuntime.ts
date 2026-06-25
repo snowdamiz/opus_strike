@@ -12,6 +12,8 @@ import {
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
 
+const SAFE_ZONE_SIGNATURE_POSITION_SCALE = 0.25;
+
 export interface BuildMatchSnapshotInput {
   tick: number;
   serverTime: number;
@@ -70,9 +72,9 @@ export class MatchSnapshotRuntime {
       snapshot.phaseEndTime ?? 0,
       snapshot.gameClockFrozen ? 1 : 0,
       snapshot.safeZone?.phaseIndex ?? -1,
-      snapshot.safeZone ? this.quantizePosition(snapshot.safeZone.radius) : 0,
-      snapshot.safeZone ? this.quantizePosition(snapshot.safeZone.center.x) : 0,
-      snapshot.safeZone ? this.quantizePosition(snapshot.safeZone.center.z) : 0,
+      snapshot.safeZone ? this.quantizeSafeZonePosition(snapshot.safeZone.radius) : 0,
+      snapshot.safeZone ? this.quantizeSafeZonePosition(snapshot.safeZone.center.x) : 0,
+      snapshot.safeZone ? this.quantizeSafeZonePosition(snapshot.safeZone.center.z) : 0,
       snapshot.safeZone?.nextZoneRevealsAt ?? 0,
       snapshot.safeZone?.warning ? 1 : 0,
       snapshot.safeZone?.shrinking ? 1 : 0,
@@ -96,5 +98,9 @@ export class MatchSnapshotRuntime {
 
   private quantizePosition(value: number): number {
     return Math.round(value * TRANSFORM_POSITION_SCALE);
+  }
+
+  private quantizeSafeZonePosition(value: number): number {
+    return Math.round(value * SAFE_ZONE_SIGNATURE_POSITION_SCALE);
   }
 }

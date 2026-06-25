@@ -426,18 +426,40 @@ function getScratchRay(rapier: RapierModule): RAPIER.Ray {
   return scratchRay;
 }
 
+export interface RaycastHitResult {
+  point: { x: number; y: number; z: number };
+  normal: { x: number; y: number; z: number };
+  distance: number;
+}
+
+export interface RaycastDirectionHitResult extends RaycastHitResult {
+  hit: boolean;
+  isWalkable: boolean;
+}
+
+export function createRaycastDirectionHitResult(): RaycastDirectionHitResult {
+  return {
+    hit: false,
+    point: { x: 0, y: 0, z: 0 },
+    normal: { x: 0, y: 1, z: 0 },
+    distance: 0,
+    isWalkable: false,
+  };
+}
+
 // Utility function for raycasting
-export function raycast(
+export function raycastInto(
+  out: RaycastHitResult,
   world: RAPIER.World,
   origin: { x: number; y: number; z: number },
   direction: { x: number; y: number; z: number },
   maxDistance: number,
   options?: RaycastOptions
-): { point: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number }; distance: number } | null {
+): boolean {
   if (!rapierInstance || !world) {
-    return null;
+    return false;
   }
-  if (!shouldRunPhysicsQuery(options)) return null;
+  if (!shouldRunPhysicsQuery(options)) return false;
   
   try {
     // Reuse the shared scratch ray (mutated in place) to avoid per-call allocations.
@@ -456,42 +478,61 @@ export function raycast(
 
     if (hit) {
       const hitDistance = hit.timeOfImpact;
-      const hitPoint = ray.pointAt(hitDistance);
-      const normal = 'normal' in hit && hit.normal
-        ? { x: hit.normal.x, y: hit.normal.y, z: hit.normal.z }
-        : { x: 0, y: 1, z: 0 };
-      
-      return {
-        point: { x: hitPoint.x, y: hitPoint.y, z: hitPoint.z },
-        normal,
-        distance: hitDistance,
-      };
+      out.point.x = origin.x + direction.x * hitDistance;
+      out.point.y = origin.y + direction.y * hitDistance;
+      out.point.z = origin.z + direction.z * hitDistance;
+      if ('normal' in hit && hit.normal) {
+        out.normal.x = hit.normal.x;
+        out.normal.y = hit.normal.y;
+        out.normal.z = hit.normal.z;
+      } else {
+        out.normal.x = 0;
+        out.normal.y = 1;
+        out.normal.z = 0;
+      }
+      out.distance = hitDistance;
+      return true;
     }
   } catch (error) {
     console.error('[Physics] Raycast error:', error);
   }
 
-  return null;
+  return false;
+}
+
+// Utility function for raycasting
+export function raycast(
+  world: RAPIER.World,
+  origin: { x: number; y: number; z: number },
+  direction: { x: number; y: number; z: number },
+  maxDistance: number,
+  options?: RaycastOptions
+): RaycastHitResult | null {
+  const out: RaycastHitResult = {
+    point: { x: 0, y: 0, z: 0 },
+    normal: { x: 0, y: 1, z: 0 },
+    distance: 0,
+  };
+  return raycastInto(out, world, origin, direction, maxDistance, options) ? out : null;
 }
 
 // Directional raycast from world instance (for use outside component)
 // Returns hit point, normal, and whether the surface is walkable
-export function raycastDirection(
+export function raycastDirectionInto(
+  out: RaycastDirectionHitResult,
   originX: number, originY: number, originZ: number,
   dirX: number, dirY: number, dirZ: number,
   maxDistance: number,
   options?: PhysicsQueryOptions
-): { 
-  hit: boolean; 
-  point: { x: number; y: number; z: number }; 
-  normal: { x: number; y: number; z: number }; 
-  distance: number;
-  isWalkable: boolean;
-} | null {
+): boolean {
   if (!rapierInstance || !worldInstance) {
-    return null;
+    out.hit = false;
+    return false;
   }
-  if (!shouldRunPhysicsQuery(options)) return null;
+  if (!shouldRunPhysicsQuery(options)) {
+    out.hit = false;
+    return false;
+  }
   
   try {
     const ray = getScratchRay(rapierInstance);
@@ -506,29 +547,33 @@ export function raycastDirection(
     
     if (hit) {
       const hitDistance = hit.timeOfImpact;
-      const hitPoint = ray.pointAt(hitDistance);
-      const normal = {
-        x: hit.normal.x,
-        y: hit.normal.y,
-        z: hit.normal.z
-      };
-      
-      // Check if surface is walkable (not too steep)
-      const isWalkable = normal.y >= MAX_SLOPE_DOT;
-      
-      return {
-        hit: true,
-        point: { x: hitPoint.x, y: hitPoint.y, z: hitPoint.z },
-        normal,
-        distance: hitDistance,
-        isWalkable
-      };
+      out.hit = true;
+      out.point.x = originX + dirX * hitDistance;
+      out.point.y = originY + dirY * hitDistance;
+      out.point.z = originZ + dirZ * hitDistance;
+      out.normal.x = hit.normal.x;
+      out.normal.y = hit.normal.y;
+      out.normal.z = hit.normal.z;
+      out.distance = hitDistance;
+      out.isWalkable = out.normal.y >= MAX_SLOPE_DOT;
+      return true;
     }
   } catch (error) {
     console.error('[Physics] raycastDirection error:', error);
   }
   
-  return null;
+  out.hit = false;
+  return false;
+}
+
+export function raycastDirection(
+  originX: number, originY: number, originZ: number,
+  dirX: number, dirY: number, dirZ: number,
+  maxDistance: number,
+  options?: PhysicsQueryOptions
+): RaycastDirectionHitResult | null {
+  const out = createRaycastDirectionHitResult();
+  return raycastDirectionInto(out, originX, originY, originZ, dirX, dirY, dirZ, maxDistance, options) ? out : null;
 }
 
 // Ground check with surface normal - returns ground height and slope info

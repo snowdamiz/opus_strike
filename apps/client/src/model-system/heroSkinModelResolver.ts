@@ -8,7 +8,7 @@ import {
   type HeroModelDocumentV1,
 } from '@voxel-strike/shared';
 import { HERO_SKIN_BODY_MANIFESTS } from './heroBodyManifests';
-import { HERO_SKIN_MODEL_DOCUMENTS } from './heroModelDocuments';
+import { getHeroSkinModelDocument } from './heroModelDocuments';
 import type { HeroBodyManifest } from './heroBodyTypes';
 
 export interface ResolvedHeroSkinModel {
@@ -51,7 +51,7 @@ export function resolveHeroSkinModel(
   let skin = resolved.skin;
   let skinId = skin.id;
   let bodyManifest = HERO_SKIN_BODY_MANIFESTS[skinId];
-  let document = HERO_SKIN_MODEL_DOCUMENTS[skinId];
+  let document = getHeroSkinModelDocument(skinId);
 
   if (!bodyManifest || !document) {
     const defaultSkinId = getDefaultHeroSkinId(heroId);
@@ -59,7 +59,11 @@ export function resolveHeroSkinModel(
     skinId = defaultSkinId;
     skin = resolveHeroSkinDefinition(heroId, defaultSkinId).skin;
     bodyManifest = HERO_SKIN_BODY_MANIFESTS[skinId];
-    document = HERO_SKIN_MODEL_DOCUMENTS[skinId];
+    document = getHeroSkinModelDocument(skinId);
+  }
+
+  if (!bodyManifest || !document) {
+    throw new Error(`[hero-skins] Missing fallback model document for ${heroId}`);
   }
 
   return {
@@ -77,5 +81,5 @@ export function getRenderableHeroSkinId(heroId: HeroId, skinId?: HeroSkinId | st
 }
 
 export function isRenderableHeroSkinId(value: unknown): value is HeroSkinId {
-  return isHeroSkinId(value) && Boolean(HERO_SKIN_BODY_MANIFESTS[value] && HERO_SKIN_MODEL_DOCUMENTS[value]);
+  return isHeroSkinId(value) && Boolean(HERO_SKIN_BODY_MANIFESTS[value] && getHeroSkinModelDocument(value));
 }

@@ -5,8 +5,8 @@ import {
   type Team,
 } from '@voxel-strike/shared';
 import {
+  AnchorWallAabbCache,
   canCapsuleOccupy,
-  computeAnchorWallAabbs,
   type AnchorWallCollisionSource,
   type HookshotSwingState,
   type MovementAabb,
@@ -154,6 +154,7 @@ export class HookshotRuntimeTracker {
   private readonly dragPulls = new Map<string, HookshotDragPullAuthorityState>();
   private readonly anchorWalls: HookshotAnchorWallInstance[] = [];
   private readonly emptyMovementAabbs: MovementAabb[] = [];
+  private readonly anchorWallAabbCache = new AnchorWallAabbCache();
 
   clearGrapple(playerId: string): boolean {
     return this.grapples.delete(playerId);
@@ -210,6 +211,7 @@ export class HookshotRuntimeTracker {
 
   clearAnchorWalls(): void {
     this.anchorWalls.length = 0;
+    this.anchorWallAabbCache.clear();
   }
 
   addAnchorWall(instance: HookshotAnchorWallInstance): void {
@@ -219,6 +221,7 @@ export class HookshotRuntimeTracker {
       startPosition: { ...instance.startPosition },
       direction: { ...instance.direction },
     });
+    this.anchorWallAabbCache.clear();
   }
 
   pruneExpiredAnchorWalls(now: number): boolean {
@@ -233,12 +236,13 @@ export class HookshotRuntimeTracker {
 
     if (writeIndex === this.anchorWalls.length) return false;
     this.anchorWalls.length = writeIndex;
+    this.anchorWallAabbCache.clear();
     return true;
   }
 
-  getAnchorWallAabbs(now: number, bounds?: MovementCollisionBounds): MovementAabb[] {
+  getAnchorWallAabbs(now: number, bounds?: MovementCollisionBounds): readonly MovementAabb[] {
     if (this.anchorWalls.length === 0) return this.emptyMovementAabbs;
-    return computeAnchorWallAabbs(this.anchorWalls, now, bounds);
+    return this.anchorWallAabbCache.get(this.anchorWalls, now, bounds);
   }
 
   clearPlayer(playerId: string): void {

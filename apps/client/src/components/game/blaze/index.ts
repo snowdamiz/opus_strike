@@ -26,6 +26,7 @@ export {
 
 export { 
   FlamethrowerEffect,
+  RemoteFlamethrowerInstancedVisuals,
 } from './flamethrower';
 export type { FlamethrowerPose } from './flamethrower';
 

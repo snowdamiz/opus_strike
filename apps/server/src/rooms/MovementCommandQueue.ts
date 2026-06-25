@@ -1,9 +1,16 @@
-import { compareMovementSeq, isMovementSeqAfter, type MovementCommand } from '@voxel-strike/shared';
+import {
+  MOVEMENT_GAMEPLAY_COMMAND_BUTTON_MASK,
+  compareMovementSeq,
+  isMovementSeqAfter,
+  sanitizeMovementButtons,
+  type MovementCommand,
+} from '@voxel-strike/shared';
 
 export class MovementCommandQueue implements Iterable<MovementCommand> {
   private buffer: Array<MovementCommand | undefined>;
   private head = 0;
   private count = 0;
+  private gameplayInputCount = 0;
   private readonly queuedSeqs = new Set<number>();
 
   constructor(initialCapacity = 128) {
@@ -13,6 +20,10 @@ export class MovementCommandQueue implements Iterable<MovementCommand> {
 
   get length(): number {
     return this.count;
+  }
+
+  get hasQueuedGameplayInput(): boolean {
+    return this.gameplayInputCount > 0;
   }
 
   hasSeq(seq: number): boolean {
@@ -27,6 +38,7 @@ export class MovementCommandQueue implements Iterable<MovementCommand> {
     }
     this.head = 0;
     this.count = 0;
+    this.gameplayInputCount = 0;
     this.queuedSeqs.clear();
   }
 
@@ -56,7 +68,7 @@ export class MovementCommandQueue implements Iterable<MovementCommand> {
     this.buffer[this.head] = undefined;
     this.head = (this.head + 1) % this.buffer.length;
     this.count--;
-    if (command) this.queuedSeqs.delete(command.seq);
+    if (command) this.removeCommandIndexes(command);
     if (this.count === 0) this.head = 0;
     return command;
   }
@@ -109,7 +121,7 @@ export class MovementCommandQueue implements Iterable<MovementCommand> {
     this.ensureCapacity(this.count + 1);
     this.buffer[this.physicalIndex(this.count)] = command;
     this.count++;
-    this.queuedSeqs.add(command.seq);
+    this.addCommandIndexes(command);
   }
 
   private insertOrdered(command: MovementCommand): void {
@@ -127,7 +139,21 @@ export class MovementCommandQueue implements Iterable<MovementCommand> {
     }
     this.buffer[this.physicalIndex(insertIndex)] = command;
     this.count++;
+    this.addCommandIndexes(command);
+  }
+
+  private addCommandIndexes(command: MovementCommand): void {
     this.queuedSeqs.add(command.seq);
+    if ((sanitizeMovementButtons(command.buttons) & MOVEMENT_GAMEPLAY_COMMAND_BUTTON_MASK) !== 0) {
+      this.gameplayInputCount++;
+    }
+  }
+
+  private removeCommandIndexes(command: MovementCommand): void {
+    this.queuedSeqs.delete(command.seq);
+    if ((sanitizeMovementButtons(command.buttons) & MOVEMENT_GAMEPLAY_COMMAND_BUTTON_MASK) !== 0) {
+      this.gameplayInputCount = Math.max(0, this.gameplayInputCount - 1);
+    }
   }
 
   private ensureCapacity(required: number): void {

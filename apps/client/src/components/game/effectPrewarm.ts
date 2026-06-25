@@ -65,6 +65,7 @@ export interface GameplayEffectGpuPrewarmBundle {
 }
 
 let gameplayEffectGpuPrewarmBundle: GameplayEffectGpuPrewarmBundle | null = null;
+let gameplayEffectResourcePrewarmPromise: Promise<void> | null = null;
 
 export async function prewarmPhantomEffects(): Promise<void> {
   initializeEffectResources();
@@ -105,6 +106,11 @@ export async function prewarmGameplayEffectResources(): Promise<void> {
   ]);
   prewarmHeroViewmodelResources();
   prewarmRagdollRenderResources();
+}
+
+export function prewarmGameplayEffectResourcesOnce(): Promise<void> {
+  gameplayEffectResourcePrewarmPromise ??= prewarmGameplayEffectResources();
+  return gameplayEffectResourcePrewarmPromise;
 }
 
 function addMesh(
@@ -386,8 +392,6 @@ function addViewmodelGpuPrewarmObjects(scene: THREE.Scene): void {
 
 export function getGameplayEffectGpuPrewarmBundle(): GameplayEffectGpuPrewarmBundle {
   if (gameplayEffectGpuPrewarmBundle) return gameplayEffectGpuPrewarmBundle;
-
-  void prewarmGameplayEffectResources();
 
   const scene = new THREE.Scene();
   scene.name = 'gameplay-effect-gpu-prewarm-scene';

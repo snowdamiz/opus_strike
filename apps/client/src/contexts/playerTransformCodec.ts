@@ -32,57 +32,100 @@ export interface UnpackedPlayerTransform {
 
 type MovementBitsTransform = Pick<UnpackedPlayerTransform, 'movementBits' | 'wallRunSide'>;
 
+export interface DequantizedPlayerTransform {
+  position: { x: number; y: number; z: number };
+  velocity: { x: number; y: number; z: number };
+  lookYaw: number;
+  lookPitch: number;
+}
+
 export function dequantizeTransform(
   transform: Pick<UnpackedPlayerTransform, 'px' | 'py' | 'pz' | 'vx' | 'vy' | 'vz' | 'yaw' | 'pitch'>
-) {
-  return {
-    position: {
-      x: transform.px / TRANSFORM_POSITION_SCALE,
-      y: transform.py / TRANSFORM_POSITION_SCALE,
-      z: transform.pz / TRANSFORM_POSITION_SCALE,
-    },
-    velocity: {
-      x: transform.vx / TRANSFORM_VELOCITY_SCALE,
-      y: transform.vy / TRANSFORM_VELOCITY_SCALE,
-      z: transform.vz / TRANSFORM_VELOCITY_SCALE,
-    },
-    lookYaw: transform.yaw / TRANSFORM_ANGLE_SCALE,
-    lookPitch: transform.pitch / TRANSFORM_ANGLE_SCALE,
-  };
+): DequantizedPlayerTransform {
+  return writeDequantizedTransform({
+    position: { x: 0, y: 0, z: 0 },
+    velocity: { x: 0, y: 0, z: 0 },
+    lookYaw: 0,
+    lookPitch: 0,
+  }, transform);
+}
+
+export function writeDequantizedTransform(
+  out: DequantizedPlayerTransform,
+  transform: Pick<UnpackedPlayerTransform, 'px' | 'py' | 'pz' | 'vx' | 'vy' | 'vz' | 'yaw' | 'pitch'>
+): DequantizedPlayerTransform {
+  out.position.x = transform.px / TRANSFORM_POSITION_SCALE;
+  out.position.y = transform.py / TRANSFORM_POSITION_SCALE;
+  out.position.z = transform.pz / TRANSFORM_POSITION_SCALE;
+  out.velocity.x = transform.vx / TRANSFORM_VELOCITY_SCALE;
+  out.velocity.y = transform.vy / TRANSFORM_VELOCITY_SCALE;
+  out.velocity.z = transform.vz / TRANSFORM_VELOCITY_SCALE;
+  out.lookYaw = transform.yaw / TRANSFORM_ANGLE_SCALE;
+  out.lookPitch = transform.pitch / TRANSFORM_ANGLE_SCALE;
+  return out;
 }
 
 export function movementFromBits(
   transform: MovementBitsTransform,
   fallback: PlayerMovementState
 ): PlayerMovementState {
-  return {
+  return writeMovementFromBits({
     ...fallback,
-    isGrounded: Boolean(transform.movementBits & MOVEMENT_BIT_GROUNDED),
-    isSprinting: Boolean(transform.movementBits & MOVEMENT_BIT_SPRINTING),
-    isCrouching: Boolean(transform.movementBits & MOVEMENT_BIT_CROUCHING),
-    isSliding: Boolean(transform.movementBits & MOVEMENT_BIT_SLIDING),
-    isWallRunning: Boolean(transform.movementBits & MOVEMENT_BIT_WALL_RUNNING),
-    wallRunSide: transform.wallRunSide === -1 ? 'left' : transform.wallRunSide === 1 ? 'right' : null,
-    isGrappling: Boolean(transform.movementBits & MOVEMENT_BIT_GRAPPLING),
-    isJetpacking: Boolean(transform.movementBits & MOVEMENT_BIT_JETPACKING),
-    isGliding: Boolean(transform.movementBits & MOVEMENT_BIT_GLIDING),
-  };
+  }, transform, fallback);
+}
+
+export function writeMovementFromBits(
+  out: PlayerMovementState,
+  transform: MovementBitsTransform,
+  fallback: PlayerMovementState
+): PlayerMovementState {
+  out.isGrounded = Boolean(transform.movementBits & MOVEMENT_BIT_GROUNDED);
+  out.isSprinting = Boolean(transform.movementBits & MOVEMENT_BIT_SPRINTING);
+  out.isCrouching = Boolean(transform.movementBits & MOVEMENT_BIT_CROUCHING);
+  out.isSliding = Boolean(transform.movementBits & MOVEMENT_BIT_SLIDING);
+  out.isWallRunning = Boolean(transform.movementBits & MOVEMENT_BIT_WALL_RUNNING);
+  out.wallRunSide = transform.wallRunSide === -1 ? 'left' : transform.wallRunSide === 1 ? 'right' : null;
+  out.isGrappling = Boolean(transform.movementBits & MOVEMENT_BIT_GRAPPLING);
+  out.isJetpacking = Boolean(transform.movementBits & MOVEMENT_BIT_JETPACKING);
+  out.isGliding = Boolean(transform.movementBits & MOVEMENT_BIT_GLIDING);
+  out.grapplePoint = fallback.grapplePoint;
+  return out;
 }
 
 export function unpackPackedTransform(transform: PackedPlayerTransform): UnpackedPlayerTransform {
-  return {
-    netId: transform[0],
-    px: transform[1],
-    py: transform[2],
-    pz: transform[3],
-    vx: transform[4],
-    vy: transform[5],
-    vz: transform[6],
-    yaw: transform[7],
-    pitch: transform[8],
-    movementBits: transform[9],
-    wallRunSide: transform[10],
-    movementEpoch: transform[11],
-    chronosAegisShieldRatio: (transform[12] ?? 255) / 255,
-  };
+  return unpackPackedTransformInto({
+    netId: 0,
+    px: 0,
+    py: 0,
+    pz: 0,
+    vx: 0,
+    vy: 0,
+    vz: 0,
+    yaw: 0,
+    pitch: 0,
+    movementBits: 0,
+    wallRunSide: 0,
+    movementEpoch: 0,
+    chronosAegisShieldRatio: 1,
+  }, transform);
+}
+
+export function unpackPackedTransformInto(
+  out: UnpackedPlayerTransform,
+  transform: PackedPlayerTransform
+): UnpackedPlayerTransform {
+  out.netId = transform[0];
+  out.px = transform[1];
+  out.py = transform[2];
+  out.pz = transform[3];
+  out.vx = transform[4];
+  out.vy = transform[5];
+  out.vz = transform[6];
+  out.yaw = transform[7];
+  out.pitch = transform[8];
+  out.movementBits = transform[9];
+  out.wallRunSide = transform[10];
+  out.movementEpoch = transform[11];
+  out.chronosAegisShieldRatio = (transform[12] ?? 255) / 255;
+  return out;
 }

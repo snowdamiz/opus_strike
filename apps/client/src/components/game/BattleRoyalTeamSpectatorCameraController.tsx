@@ -10,8 +10,8 @@ const DOWNED_CAMERA_HEIGHT = 1.7;
 const DOWNED_LOOK_HEIGHT = 0.45;
 const POSITION_LERP = 0.16;
 
-function getBehindOffset(lookYaw: number, downed: boolean): THREE.Vector3 {
-  return new THREE.Vector3(
+function writeBehindOffset(lookYaw: number, downed: boolean, target: THREE.Vector3): THREE.Vector3 {
+  return target.set(
     Math.sin(lookYaw) * CAMERA_DISTANCE,
     downed ? DOWNED_CAMERA_HEIGHT : CAMERA_HEIGHT,
     Math.cos(lookYaw) * CAMERA_DISTANCE
@@ -24,6 +24,9 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
   const players = useGameStore((state) => state.players);
   const [targetId, setTargetId] = useState<string | null>(null);
   const initializedTargetRef = useRef<string | null>(null);
+  const targetPositionRef = useRef(new THREE.Vector3());
+  const desiredPositionRef = useRef(new THREE.Vector3());
+  const behindOffsetRef = useRef(new THREE.Vector3());
 
   const teammateTargets = useMemo(() => {
     if (!localPlayer?.team) return [];
@@ -35,6 +38,14 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
       ))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [localPlayer?.id, localPlayer?.team, players]);
+
+  const teammateTargetById = useMemo(() => {
+    const byId = new Map<string, (typeof teammateTargets)[number]>();
+    for (const player of teammateTargets) {
+      byId.set(player.id, player);
+    }
+    return byId;
+  }, [teammateTargets]);
 
   useEffect(() => {
     if (!enabled) {
@@ -76,18 +87,20 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
   useFrame(() => {
     if (!enabled) return;
 
-    const target = teammateTargets.find((player) => player.id === targetId)
+    const target = (targetId ? teammateTargetById.get(targetId) : undefined)
       ?? teammateTargets[0]
       ?? localPlayer;
     if (!target) return;
 
     const isDowned = target.state === 'downed';
-    const targetPosition = new THREE.Vector3(
+    const targetPosition = targetPositionRef.current.set(
       target.position.x,
       target.position.y + (isDowned ? DOWNED_LOOK_HEIGHT : LOOK_HEIGHT),
       target.position.z
     );
-    const desiredPosition = targetPosition.clone().add(getBehindOffset(target.lookYaw, isDowned));
+    const desiredPosition = desiredPositionRef.current
+      .copy(targetPosition)
+      .add(writeBehindOffset(target.lookYaw, isDowned, behindOffsetRef.current));
 
     if (initializedTargetRef.current !== target.id) {
       camera.position.copy(desiredPosition);
