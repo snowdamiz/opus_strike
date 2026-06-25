@@ -4,7 +4,7 @@ import type { HeroSkinId } from './skins.js';
 import type { GamePhase, MatchOutcome } from './game.js';
 import type { Vec3 } from './vector.js';
 import type { AbilityCast } from './ability.js';
-import type { MovementCommandPacket, SelfMovementAuthority } from './movementPrediction.js';
+import type { MovementCommandPacket, SelfMovementAck, SelfMovementAuthority } from './movementPrediction.js';
 import type { VoiceTokenRequest, VoiceTokenResponse, VoiceTeamChangedMessage } from './voice.js';
 import type { PublicRankSnapshot } from '../progression/ranking.js';
 import type { MatchMode } from './matchMode.js';
@@ -35,12 +35,14 @@ export type ServerMessage =
   | { type: 'playerTransformsV2'; payload: PlayerTransformsV2Message }
   | { type: 'playerInterest'; payload: PlayerInterestMessage }
   | { type: 'selfMovementAuthority'; payload: SelfMovementAuthority }
+  | { type: 'selfMovementAck'; payload: SelfMovementAck }
   | { type: 'playerVitals'; payload: PlayerVitalsMessage }
   | { type: 'playerPingRequest'; payload: PlayerPingRequestMessage }
   | { type: 'playerPings'; payload: PlayerPingsMessage }
   | { type: 'matchSnapshot'; payload: MatchSnapshotMessage }
   | { type: 'powerupState'; payload: PowerupStateMessage }
   | { type: 'powerupCollected'; payload: PowerupCollectedMessage }
+  | { type: 'playerEventBatch'; payload: PlayerEventBatchMessage }
   | { type: 'matchStartGate'; payload: MatchStartGateMessage }
   | { type: 'matchCancelled'; payload: MatchCancelledMessage }
   | { type: 'playerJoined'; payload: { playerId: string; playerName: string } }
@@ -68,6 +70,22 @@ export type ServerMessage =
   | { type: 'chronosAegisDamaged'; payload: ChronosAegisDamagedEvent }
   | { type: 'chronosAegisBroken'; payload: ChronosAegisBrokenEvent }
   | { type: 'phantomShieldBroken'; payload: PhantomShieldBrokenEvent };
+
+export type PlayerEventBatchItem =
+  | { type: 'powerupCollected'; payload: PowerupCollectedMessage }
+  | { type: 'playerDamaged'; payload: PlayerDamagedEvent }
+  | { type: 'playerDowned'; payload: PlayerDownedEvent }
+  | { type: 'playerReviveStarted'; payload: PlayerReviveStartedEvent }
+  | { type: 'playerReviveCancelled'; payload: PlayerReviveCancelledEvent }
+  | { type: 'playerRevived'; payload: PlayerRevivedEvent }
+  | { type: 'playerKilled'; payload: PlayerDeathEvent }
+  | { type: 'playerHealed'; payload: PlayerHealedEvent }
+  | { type: 'chronosAegisDamaged'; payload: ChronosAegisDamagedEvent }
+  | { type: 'phantomShieldBroken'; payload: PhantomShieldBrokenEvent };
+
+export interface PlayerEventBatchMessage {
+  events: PlayerEventBatchItem[];
+}
 
 export interface ChronosAegisDamagedEvent {
   playerId: string;

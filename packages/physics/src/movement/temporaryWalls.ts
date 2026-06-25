@@ -10,6 +10,8 @@ export const ANCHOR_WALL_DEPTH = 1.05;
 export const ANCHOR_WALL_RISE_SPEED = 14;
 export const ANCHOR_WALL_SEGMENT_BACKSET = 0.85;
 export const ANCHOR_WALL_COLLIDER_PREFIX = 'anchorwall_';
+const ANCHOR_WALL_AABB_TIME_BUCKET_MS = 16;
+const EMPTY_ANCHOR_WALL_AABBS: MovementAabb[] = [];
 
 export interface AnchorWallCollisionSource {
   id: string;
@@ -135,4 +137,57 @@ export function computeAnchorWallAabbs(
   }
 
   return aabbs;
+}
+
+export class AnchorWallAabbCache {
+  private cachedRevision = -1;
+  private cachedTimeBucket = -1;
+  private cachedAabbs: MovementAabb[] = EMPTY_ANCHOR_WALL_AABBS;
+  private readonly filteredScratch: MovementAabb[] = [];
+
+  clear(): void {
+    this.cachedRevision = -1;
+    this.cachedTimeBucket = -1;
+    this.cachedAabbs = EMPTY_ANCHOR_WALL_AABBS;
+    this.filteredScratch.length = 0;
+  }
+
+  get(
+    walls: readonly AnchorWallCollisionSource[],
+    nowMs: number,
+    bounds?: MovementCollisionBounds
+  ): readonly MovementAabb[] {
+    if (walls.length === 0) {
+      this.clear();
+      return EMPTY_ANCHOR_WALL_AABBS;
+    }
+
+    const revision = computeAnchorWallCollisionRevision(walls, nowMs);
+    const timeBucket = Math.floor(nowMs / ANCHOR_WALL_AABB_TIME_BUCKET_MS);
+    if (this.cachedRevision !== revision || this.cachedTimeBucket !== timeBucket) {
+      this.cachedRevision = revision;
+      this.cachedTimeBucket = timeBucket;
+      this.cachedAabbs = computeAnchorWallAabbs(walls, nowMs);
+    }
+
+    if (!bounds) return this.cachedAabbs;
+
+    this.filteredScratch.length = 0;
+    for (const aabb of this.cachedAabbs) {
+      if (
+        scalarBoundsOverlap(
+          bounds,
+          aabb.min.x,
+          aabb.min.y,
+          aabb.min.z,
+          aabb.max.x,
+          aabb.max.y,
+          aabb.max.z
+        )
+      ) {
+        this.filteredScratch.push(aabb);
+      }
+    }
+    return this.filteredScratch;
+  }
 }

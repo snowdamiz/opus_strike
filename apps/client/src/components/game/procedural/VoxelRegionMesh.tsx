@@ -7,6 +7,8 @@ import {
   buildVoxelRegionGeometryAsync,
   getCachedVoxelGeometry,
   getVoxelRegionGeometryCacheKey,
+  releaseVoxelGeometryCacheKey,
+  retainVoxelGeometryCacheKey,
 } from './meshBuilder';
 import type { VoxelRegionGeometryDetail } from './meshGeometryData';
 
@@ -95,6 +97,13 @@ export const VoxelRegionMesh = memo(function VoxelRegionMesh({
   useEffect(() => {
     if (geometryState.geometry) onGeometryReady?.(region.id, geometryState.detail ?? detail);
   }, [detail, geometryState.detail, geometryState.geometry, onGeometryReady, region.id]);
+
+  useEffect(() => {
+    if (!geometryState.geometry || !geometryState.detail) return undefined;
+    const retainedCacheKey = getVoxelRegionGeometryCacheKey(manifest, region.id, geometryState.detail);
+    retainVoxelGeometryCacheKey(retainedCacheKey);
+    return () => releaseVoxelGeometryCacheKey(retainedCacheKey);
+  }, [geometryState.detail, geometryState.geometry, manifest, region.id]);
 
   if (!geometryState.geometry) return null;
 

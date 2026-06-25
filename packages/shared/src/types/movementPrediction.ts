@@ -63,6 +63,16 @@ export const MOVEMENT_HELD_COMMAND_CLEAR_MASK =
   MOVEMENT_BUTTON_ULTIMATE |
   MOVEMENT_BUTTON_INTERACT;
 
+export const MOVEMENT_GAMEPLAY_COMMAND_BUTTON_MASK =
+  MOVEMENT_BUTTON_PRIMARY_FIRE |
+  MOVEMENT_BUTTON_SECONDARY_FIRE |
+  MOVEMENT_BUTTON_RELOAD |
+  MOVEMENT_BUTTON_ABILITY_1 |
+  MOVEMENT_BUTTON_ABILITY_2 |
+  MOVEMENT_BUTTON_ULTIMATE |
+  MOVEMENT_BUTTON_INTERACT |
+  MOVEMENT_BUTTON_CROUCH_PRESSED;
+
 export type MovementCorrectionReason =
   | 'normal'
   | 'spawn'
@@ -113,6 +123,14 @@ export interface SelfMovementAuthority {
   chronosAegisShieldRatio?: number;
   rootedUntil?: number;
   powerupBoostUntil?: number | null;
+}
+
+export interface SelfMovementAck {
+  serverTick: number;
+  serverTime: number;
+  ackSeq: number;
+  movementEpoch: number;
+  collisionRevision?: number;
 }
 
 export interface MovementTelemetrySnapshot {

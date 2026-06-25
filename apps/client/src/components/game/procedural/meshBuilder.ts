@@ -30,6 +30,7 @@ interface CachedVoxelGeometry {
   manifestId: string;
   bytes: number;
   lastUsedAt: number;
+  retainCount: number;
 }
 
 interface MeshWorkerResponse {
@@ -59,6 +60,8 @@ const pendingRegionGeometryByCacheKey = new Map<string, Promise<THREE.BufferGeom
 const VOXEL_MESH_REQUEST_CANCELLED = 'Voxel mesh request cancelled because manifest cache was cleared';
 const VOXEL_GEOMETRY_CACHE_MAX_ENTRIES = 1536;
 const VOXEL_GEOMETRY_CACHE_MAX_BYTES = 128 * 1024 * 1024;
+const PREBUILD_MAX_PENDING_REGION_REQUESTS = 8;
+const PREBUILD_MAX_PENDING_FINALIZATIONS = 16;
 const FALLBACK_REGION_FRAME_BUDGET_MS = 4;
 const FALLBACK_REGION_MAX_BUILDS_PER_FRAME = 1;
 const FALLBACK_REGION_QUEUE_COMPACT_THRESHOLD = 64;
@@ -320,6 +323,7 @@ function createGeometryFromData(
     manifestId: manifest.id,
     bytes,
     lastUsedAt: performance.now(),
+    retainCount: 0,
   });
   geometryCacheBytes += bytes;
   enforceVoxelGeometryCacheBudget(manifest.id);
@@ -344,7 +348,7 @@ function evictCachedGeometry(cacheKey: string, entry: CachedVoxelGeometry): void
   geometryCacheBytes = Math.max(0, geometryCacheBytes - entry.bytes);
 }
 
-function enforceVoxelGeometryCacheBudget(activeManifestId: string): void {
+function enforceVoxelGeometryCacheBudget(_activeManifestId: string): void {
   if (
     geometryCache.size <= VOXEL_GEOMETRY_CACHE_MAX_ENTRIES &&
     geometryCacheBytes <= VOXEL_GEOMETRY_CACHE_MAX_BYTES
@@ -360,7 +364,7 @@ function enforceVoxelGeometryCacheBudget(activeManifestId: string): void {
     let oldestEntry: CachedVoxelGeometry | null = null;
 
     for (const [cacheKey, entry] of geometryCache) {
-      if (entry.manifestId === activeManifestId) continue;
+      if (entry.retainCount > 0) continue;
       if (!oldestEntry || entry.lastUsedAt < oldestEntry.lastUsedAt) {
         oldestCacheKey = cacheKey;
         oldestEntry = entry;
@@ -454,6 +458,21 @@ export function getCachedVoxelGeometry(cacheKey: string): THREE.BufferGeometry |
   return cached.geometry;
 }
 
+export function retainVoxelGeometryCacheKey(cacheKey: string): void {
+  const cached = geometryCache.get(cacheKey);
+  if (!cached) return;
+  cached.retainCount++;
+  cached.lastUsedAt = performance.now();
+}
+
+export function releaseVoxelGeometryCacheKey(cacheKey: string): void {
+  const cached = geometryCache.get(cacheKey);
+  if (!cached) return;
+  cached.retainCount = Math.max(0, cached.retainCount - 1);
+  cached.lastUsedAt = performance.now();
+  enforceVoxelGeometryCacheBudget(cached.manifestId);
+}
+
 export function getVoxelRegionGeometryCacheKey(
   manifest: VoxelMapManifest,
   regionId: string,
@@ -541,15 +560,30 @@ export async function prebuildVoxelRegionGeometries(
   options: {
     frameBudgetMs?: number;
     detail?: VoxelRegionGeometryDetail;
+    signal?: AbortSignal;
+    maxPendingRequests?: number;
+    maxPendingFinalizations?: number;
     onDispatched?: (count: number) => void;
   } = {}
 ): Promise<void> {
   const frameBudgetMs = options.frameBudgetMs ?? 4;
   const detail = options.detail ?? 'full';
+  const maxPendingRequests = options.maxPendingRequests ?? PREBUILD_MAX_PENDING_REGION_REQUESTS;
+  const maxPendingFinalizations = options.maxPendingFinalizations ?? PREBUILD_MAX_PENDING_FINALIZATIONS;
   let frameStart = performance.now();
   let dispatched = 0;
 
   for (const region of regions) {
+    if (options.signal?.aborted) return;
+    while (
+      pendingRegionGeometryByCacheKey.size >= maxPendingRequests ||
+      workerRegionFinalizationQueue.length - workerRegionFinalizationQueueHead >= maxPendingFinalizations
+    ) {
+      if (options.signal?.aborted) return;
+      await waitForNextFrame();
+      frameStart = performance.now();
+    }
+
     if (!getCachedVoxelGeometry(getVoxelRegionGeometryCacheKey(manifest, region.id, detail))) {
       void buildVoxelRegionGeometryAsync(manifest, region.id, region.chunks, detail);
       dispatched++;
@@ -558,6 +592,7 @@ export async function prebuildVoxelRegionGeometries(
 
     if (performance.now() - frameStart >= frameBudgetMs) {
       await waitForNextFrame();
+      if (options.signal?.aborted) return;
       frameStart = performance.now();
     }
   }

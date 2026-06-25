@@ -177,6 +177,7 @@ const SLIDE_GRADE_LOOKAHEAD_DISTANCES = [
 const SLIDE_GRADE_SAMPLE_RADIUS = 0.08;
 const SLIDE_GRADE_SNAP_DISTANCE = STEP_HEIGHT + GROUND_SNAP_DISTANCE;
 const SLIDE_DOWNHILL_MIN_DROP = 0.025;
+const STATIC_AABB_VERTICAL_CACHE_BUCKET = 0.025;
 
 type SlideExitPosture = 'stand' | 'crouch';
 
@@ -686,7 +687,9 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
     const gx1 = Math.floor((bounds.max.x - origin.x) / voxelSize.x) + 1;
     const gy1 = Math.floor((bounds.max.y - origin.y) / voxelSize.y) + 1;
     const gz1 = Math.floor((bounds.max.z - origin.z) / voxelSize.z) + 1;
-    return `${gx0},${gy0},${gz0}:${gx1},${gy1},${gz1}:${bounds.min.y.toFixed(4)},${bounds.max.y.toFixed(4)}`;
+    const y0 = Math.floor((bounds.min.y - origin.y) / STATIC_AABB_VERTICAL_CACHE_BUCKET);
+    const y1 = Math.floor((bounds.max.y - origin.y) / STATIC_AABB_VERTICAL_CACHE_BUCKET);
+    return `${terrain.collisionRevision ?? 0}:${gx0},${gy0},${gz0}:${gx1},${gy1},${gz1}:${y0}:${y1}`;
   }
 
   function collectStaticAabbs(expanded: MovementCollisionBounds): readonly MovementAabb[] {
@@ -694,7 +697,11 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
 
     const cacheKey = staticAabbCacheKey(expanded);
     const cached = staticAabbCache.get(cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      staticAabbCache.delete(cacheKey);
+      staticAabbCache.set(cacheKey, cached);
+      return cached;
+    }
 
     const staticAabbs = mergeAabbRuns(collectVoxelAabbs(terrain, expanded, origin, voxelSize));
     if (staticAabbCache.size >= STATIC_AABB_CACHE_LIMIT) {

@@ -2,6 +2,7 @@ import type {
   HeroStats,
   MovementCommand,
   PlayerMovementState,
+  SelfMovementAck,
   SelfMovementAuthority,
   Vec3,
 } from '@voxel-strike/shared';
@@ -438,6 +439,18 @@ export class MovementPredictionController {
       visualCorrectionMagnitude: 0,
       visualCorrectionDurationMs: 0,
     };
+  }
+
+  acknowledgeAck(ack: SelfMovementAck): PredictionCorrectionMetrics {
+    if (!this.state) return emptyCorrectionMetrics(ack.ackSeq);
+    if (ack.movementEpoch !== this.movementEpoch) return emptyCorrectionMetrics(ack.ackSeq);
+    if (compareMovementSeq(ack.ackSeq, this.lastAckSeq) <= 0) return emptyCorrectionMetrics(ack.ackSeq);
+
+    this.trimAcknowledged(ack.ackSeq);
+    this.lastAckSeq = ack.ackSeq;
+    this.softCorrectionAckCount = 0;
+    this.softCorrectionErrorBudget = 0;
+    return emptyCorrectionMetrics(ack.ackSeq);
   }
 
   getVisualCorrectionOffset(nowMs: number): VisualCorrectionOffset {

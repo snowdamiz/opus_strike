@@ -1,5 +1,5 @@
 import type { PredictionCorrectionMetrics } from '@voxel-strike/physics';
-import type { SelfMovementAuthority } from '@voxel-strike/shared';
+import type { SelfMovementAck, SelfMovementAuthority } from '@voxel-strike/shared';
 import { config } from '../config/environment';
 
 type LocalReactiveUpdateSource = 'vitals' | 'transforms' | 'selfAuthority' | 'localGameplay';
@@ -681,7 +681,7 @@ export function recordMovementFrameTiming(input: {
   }
 }
 
-export function recordAuthorityAckReceived(authority: SelfMovementAuthority): void {
+export function recordAuthorityAckReceived(authority: SelfMovementAuthority | SelfMovementAck): void {
   if (!CLIENT_DIAGNOSTICS_ENABLED) return;
 
   const receivedAtMs = nowMs();

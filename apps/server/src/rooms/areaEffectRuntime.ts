@@ -27,10 +27,10 @@ export class PendingAreaDamageQueue {
     this.queue.push(instance);
   }
 
-  drainReady(now: number): PendingAreaDamageInstance[] {
-    if (this.queue.length === 0) return [];
+  drainReadyInto(now: number, ready: PendingAreaDamageInstance[]): PendingAreaDamageInstance[] {
+    ready.length = 0;
+    if (this.queue.length === 0) return ready;
 
-    const ready: PendingAreaDamageInstance[] = [];
     let writeIndex = 0;
     for (let readIndex = 0; readIndex < this.queue.length; readIndex++) {
       const instance = this.queue[readIndex];

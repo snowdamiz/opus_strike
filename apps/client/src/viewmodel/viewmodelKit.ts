@@ -43,14 +43,21 @@ export function viewmodelPoseDraftFromMatrix(
   matrix: THREE.Matrix4,
   timestampMs: number
 ): ViewmodelSocketPoseDraft {
-  const position = new THREE.Vector3();
-  const quaternion = new THREE.Quaternion();
   const scale = new THREE.Vector3(1, 1, 1);
-  matrix.decompose(position, quaternion, scale);
 
-  return {
-    position,
-    quaternion,
-    timestampMs,
-  };
+  return writeViewmodelPoseDraftFromMatrix({
+    position: new THREE.Vector3(),
+    quaternion: new THREE.Quaternion(),
+  }, scale, matrix, timestampMs);
+}
+
+export function writeViewmodelPoseDraftFromMatrix(
+  out: ViewmodelSocketPoseDraft,
+  scaleScratch: THREE.Vector3,
+  matrix: THREE.Matrix4,
+  timestampMs: number
+): ViewmodelSocketPoseDraft {
+  matrix.decompose(out.position, out.quaternion, scaleScratch);
+  out.timestampMs = timestampMs;
+  return out;
 }
