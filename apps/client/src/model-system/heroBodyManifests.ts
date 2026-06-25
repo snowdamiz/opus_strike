@@ -922,30 +922,61 @@ export const HERO_ATTACK_DURATIONS: Record<HeroId, number> = {
   chronos: BLAZE_ATTACK_DURATION,
 };
 
-export function lerpMovementProfile(
+export function copyMovementProfile(
+  target: HeroMovementProfile,
+  source: HeroMovementProfile
+): HeroMovementProfile {
+  target.cycleSpeed = source.cycleSpeed;
+  target.legPitch = source.legPitch;
+  target.legStrafeRoll = source.legStrafeRoll;
+  target.legStride = source.legStride;
+  target.legStrafe = source.legStrafe;
+  target.legLift = source.legLift;
+  target.armPitch = source.armPitch;
+  target.armStrafeRoll = source.armStrafeRoll;
+  target.armArcScale = source.armArcScale;
+  target.kneeBend = source.kneeBend;
+  target.supportKneeBend = source.supportKneeBend;
+  target.rootPitch = source.rootPitch;
+  target.rootRoll = source.rootRoll;
+  target.rootBob = source.rootBob;
+  target.rootSway = source.rootSway;
+  target.glowPulse = source.glowPulse;
+  return target;
+}
+
+export function lerpMovementProfileInto(
+  target: HeroMovementProfile,
   from: HeroMovementProfile,
   to: HeroMovementProfile,
   amount: number
 ): HeroMovementProfile {
   const t = easeInOutSine(amount);
-  return {
-    cycleSpeed: THREE.MathUtils.lerp(from.cycleSpeed, to.cycleSpeed, t),
-    legPitch: THREE.MathUtils.lerp(from.legPitch, to.legPitch, t),
-    legStrafeRoll: THREE.MathUtils.lerp(from.legStrafeRoll, to.legStrafeRoll, t),
-    legStride: THREE.MathUtils.lerp(from.legStride, to.legStride, t),
-    legStrafe: THREE.MathUtils.lerp(from.legStrafe, to.legStrafe, t),
-    legLift: THREE.MathUtils.lerp(from.legLift, to.legLift, t),
-    armPitch: THREE.MathUtils.lerp(from.armPitch, to.armPitch, t),
-    armStrafeRoll: THREE.MathUtils.lerp(from.armStrafeRoll, to.armStrafeRoll, t),
-    armArcScale: THREE.MathUtils.lerp(from.armArcScale, to.armArcScale, t),
-    kneeBend: THREE.MathUtils.lerp(from.kneeBend, to.kneeBend, t),
-    supportKneeBend: THREE.MathUtils.lerp(from.supportKneeBend, to.supportKneeBend, t),
-    rootPitch: THREE.MathUtils.lerp(from.rootPitch, to.rootPitch, t),
-    rootRoll: THREE.MathUtils.lerp(from.rootRoll, to.rootRoll, t),
-    rootBob: THREE.MathUtils.lerp(from.rootBob, to.rootBob, t),
-    rootSway: THREE.MathUtils.lerp(from.rootSway, to.rootSway, t),
-    glowPulse: THREE.MathUtils.lerp(from.glowPulse, to.glowPulse, t),
-  };
+  target.cycleSpeed = THREE.MathUtils.lerp(from.cycleSpeed, to.cycleSpeed, t);
+  target.legPitch = THREE.MathUtils.lerp(from.legPitch, to.legPitch, t);
+  target.legStrafeRoll = THREE.MathUtils.lerp(from.legStrafeRoll, to.legStrafeRoll, t);
+  target.legStride = THREE.MathUtils.lerp(from.legStride, to.legStride, t);
+  target.legStrafe = THREE.MathUtils.lerp(from.legStrafe, to.legStrafe, t);
+  target.legLift = THREE.MathUtils.lerp(from.legLift, to.legLift, t);
+  target.armPitch = THREE.MathUtils.lerp(from.armPitch, to.armPitch, t);
+  target.armStrafeRoll = THREE.MathUtils.lerp(from.armStrafeRoll, to.armStrafeRoll, t);
+  target.armArcScale = THREE.MathUtils.lerp(from.armArcScale, to.armArcScale, t);
+  target.kneeBend = THREE.MathUtils.lerp(from.kneeBend, to.kneeBend, t);
+  target.supportKneeBend = THREE.MathUtils.lerp(from.supportKneeBend, to.supportKneeBend, t);
+  target.rootPitch = THREE.MathUtils.lerp(from.rootPitch, to.rootPitch, t);
+  target.rootRoll = THREE.MathUtils.lerp(from.rootRoll, to.rootRoll, t);
+  target.rootBob = THREE.MathUtils.lerp(from.rootBob, to.rootBob, t);
+  target.rootSway = THREE.MathUtils.lerp(from.rootSway, to.rootSway, t);
+  target.glowPulse = THREE.MathUtils.lerp(from.glowPulse, to.glowPulse, t);
+  return target;
+}
+
+export function lerpMovementProfile(
+  from: HeroMovementProfile,
+  to: HeroMovementProfile,
+  amount: number
+): HeroMovementProfile {
+  return lerpMovementProfileInto({} as HeroMovementProfile, from, to, amount);
 }
 
 export const HERO_MOVEMENT_PROFILES: Record<HeroMovementPose, HeroMovementProfile> = {

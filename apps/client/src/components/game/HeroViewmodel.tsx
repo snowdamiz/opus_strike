@@ -606,6 +606,50 @@ function getPhantomVeilArmGlowOpacity(nowMs: number, elapsedSeconds: number): nu
   return THREE.MathUtils.clamp(glowBase * shimmer * 0.72, 0, 0.82);
 }
 
+// Per-frame shared pose memo. Both Phantom forearms, both hands and the charge orb
+// request these poses every frame; each getter does a store read and (when active)
+// allocates a fresh object. state.clock.elapsedTime is identical for every useFrame
+// within a single frame, so it is a safe frame token to memo on. Consumers only read
+// the returned pose, never mutate it, so sharing one instance per frame is safe.
+let phantomChargePoseFrame = -1;
+let phantomChargePoseCached: PhantomVoidRayChargePose = PHANTOM_VOID_RAY_IDLE_CHARGE_POSE;
+function getPhantomVoidRayChargePoseFrame(nowMs: number, elapsedSeconds: number): PhantomVoidRayChargePose {
+  if (elapsedSeconds !== phantomChargePoseFrame) {
+    phantomChargePoseFrame = elapsedSeconds;
+    phantomChargePoseCached = getPhantomVoidRayChargePose(nowMs, elapsedSeconds);
+  }
+  return phantomChargePoseCached;
+}
+
+let phantomVeilGlowFrame = -1;
+let phantomVeilGlowCached = 0;
+function getPhantomVeilArmGlowOpacityFrame(nowMs: number, elapsedSeconds: number): number {
+  if (elapsedSeconds !== phantomVeilGlowFrame) {
+    phantomVeilGlowFrame = elapsedSeconds;
+    phantomVeilGlowCached = getPhantomVeilArmGlowOpacity(nowMs, elapsedSeconds);
+  }
+  return phantomVeilGlowCached;
+}
+
+let phantomReloadPoseFrameNeg = -1;
+let phantomReloadPoseCachedNeg: PhantomReloadPose = PHANTOM_RELOAD_IDLE_POSE;
+let phantomReloadPoseFramePos = -1;
+let phantomReloadPoseCachedPos: PhantomReloadPose = PHANTOM_RELOAD_IDLE_POSE;
+function getPhantomReloadPoseFrame(nowMs: number, elapsedSeconds: number, side: -1 | 1): PhantomReloadPose {
+  if (side === 1) {
+    if (elapsedSeconds !== phantomReloadPoseFramePos) {
+      phantomReloadPoseFramePos = elapsedSeconds;
+      phantomReloadPoseCachedPos = getPhantomReloadPose(nowMs, elapsedSeconds, 1);
+    }
+    return phantomReloadPoseCachedPos;
+  }
+  if (elapsedSeconds !== phantomReloadPoseFrameNeg) {
+    phantomReloadPoseFrameNeg = elapsedSeconds;
+    phantomReloadPoseCachedNeg = getPhantomReloadPose(nowMs, elapsedSeconds, -1);
+  }
+  return phantomReloadPoseCachedNeg;
+}
+
 function applyPhantomReloadMotion(
   target: MutableTransformTarget,
   side: -1 | 1,
@@ -1576,9 +1620,9 @@ function PhantomAnimatedForearm({
     const attackTimeSeconds = attack?.side === side
       ? (nowMs - attack.startTimeMs) / 1000
       : Number.POSITIVE_INFINITY;
-    const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
-    const chargePose = getPhantomVoidRayChargePose(nowMs, state.clock.elapsedTime);
-    const veilGlowOpacity = getPhantomVeilArmGlowOpacity(nowMs, state.clock.elapsedTime);
+    const reloadPose = getPhantomReloadPoseFrame(nowMs, state.clock.elapsedTime, side);
+    const chargePose = getPhantomVoidRayChargePoseFrame(nowMs, state.clock.elapsedTime);
+    const veilGlowOpacity = getPhantomVeilArmGlowOpacityFrame(nowMs, state.clock.elapsedTime);
     const veilCastPose = reloadPose.active || chargePose.active
       ? null
       : getPhantomVeilCastPose(nowMs);
@@ -1683,6 +1727,10 @@ function PhantomPoseableHand({
   const fingerRefs = useRef<(THREE.Group | null)[]>([]);
   const thumbSide = -side;
   const reloadGlowMaterial = useMemo(createPhantomReloadGlowMaterial, []);
+  // Reused pose-targets object so the per-frame applyPhantom* calls don't each
+  // allocate a fresh literal (with conditional closedHand spread). The joint refs
+  // are stable groups; only the closedHand field is set/cleared per frame.
+  const poseTargetsRef = useRef<PhantomHandPoseTargets | null>(null);
 
   useRegisteredViewmodelSocket(PHANTOM_PRIMARY_PALM_SOCKET_NAMES[side], socketRef);
 
@@ -1700,14 +1748,26 @@ function PhantomPoseableHand({
     const fingers = resolveFingerTargets(fingerRefs.current);
     if (!arm || !wrist || !palm || !thumb || !fingers) return;
 
+    let poseTargets = poseTargetsRef.current;
+    if (!poseTargets) {
+      poseTargets = { arm, wrist, palm, thumb, fingers };
+      poseTargetsRef.current = poseTargets;
+    }
+    poseTargets.arm = arm;
+    poseTargets.wrist = wrist;
+    poseTargets.palm = palm;
+    poseTargets.thumb = thumb;
+    poseTargets.fingers = fingers;
+    poseTargets.closedHand = closedVisual ?? undefined;
+
     const nowMs = Date.now();
     const attack = primaryAttackRef.current;
     const attackTimeSeconds = attack?.side === side
       ? (nowMs - attack.startTimeMs) / 1000
       : Number.POSITIVE_INFINITY;
-    const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
-    const chargePose = getPhantomVoidRayChargePose(nowMs, state.clock.elapsedTime);
-    const veilGlowOpacity = getPhantomVeilArmGlowOpacity(nowMs, state.clock.elapsedTime);
+    const reloadPose = getPhantomReloadPoseFrame(nowMs, state.clock.elapsedTime, side);
+    const chargePose = getPhantomVoidRayChargePoseFrame(nowMs, state.clock.elapsedTime);
+    const veilGlowOpacity = getPhantomVeilArmGlowOpacityFrame(nowMs, state.clock.elapsedTime);
     const veilCastPose = reloadPose.active || chargePose.active
       ? null
       : getPhantomVeilCastPose(nowMs);
@@ -1721,14 +1781,6 @@ function PhantomPoseableHand({
         openVisual.visible = false;
         openVisual.scale.setScalar(0.001);
       }
-      const poseTargets = {
-        ...(closedVisual ? { closedHand: closedVisual } : {}),
-        arm,
-        wrist,
-        palm,
-        thumb,
-        fingers,
-      };
       writePhantomHandPose(
         poseTargets,
         side,
@@ -1785,14 +1837,7 @@ function PhantomPoseableHand({
     }
 
     writePhantomHandPose(
-      {
-        ...(closedVisual ? { closedHand: closedVisual } : {}),
-        arm,
-        wrist,
-        palm,
-        thumb,
-        fingers,
-      },
+      poseTargets,
       side,
       holdBlend,
       shotPulse,
@@ -1803,41 +1848,20 @@ function PhantomPoseableHand({
     );
     if (shieldCastPose) {
       applyPhantomShieldCastHandPose(
-        {
-          ...(closedVisual ? { closedHand: closedVisual } : {}),
-          arm,
-          wrist,
-          palm,
-          thumb,
-          fingers,
-        },
+        poseTargets,
         side,
         shieldCastPose,
         state.clock.elapsedTime
       );
     }
     applyPhantomVoidRayChargeHandPose(
-      {
-        ...(closedVisual ? { closedHand: closedVisual } : {}),
-        arm,
-        wrist,
-        palm,
-        thumb,
-        fingers,
-      },
+      poseTargets,
       side,
       chargePose,
       state.clock.elapsedTime
     );
     applyPhantomVoidRayReleaseHandPose(
-      {
-        ...(closedVisual ? { closedHand: closedVisual } : {}),
-        arm,
-        wrist,
-        palm,
-        thumb,
-        fingers,
-      },
+      poseTargets,
       side,
       voidRayReleaseExtensionBlend
     );
@@ -2034,7 +2058,7 @@ function PhantomVoidRayChargeOrb() {
     const halo = haloRef.current;
     if (!group || !core || !shell || !halo) return;
 
-    const chargePose = getPhantomVoidRayChargePose(Date.now(), state.clock.elapsedTime);
+    const chargePose = getPhantomVoidRayChargePoseFrame(Date.now(), state.clock.elapsedTime);
     const visible = chargePose.active && chargePose.blend > 0.015;
     group.visible = visible;
 
@@ -2751,6 +2775,10 @@ function BlazeWizardStaff({
   const shockwaveStartMsRef = useRef(0);
   const processedShockwaveRevisionRef = useRef(0);
   const processedReloadBlastStartRef = useRef(0);
+  // True while the reload pipeline has non-rest visuals that still need to be
+  // settled back to zero once reloading stops. Lets us skip the whole reload
+  // pipeline on frames where it is provably at rest (not reloading + already settled).
+  const reloadNeedsSettleRef = useRef(false);
   const reloadShaftGlowRef = useRef<THREE.Mesh>(null);
   const reloadShaftRingRefs = useRef<(THREE.Mesh | null)[]>([]);
   const reloadFlameRefs = useRef<(THREE.Group | null)[]>([]);
@@ -2888,6 +2916,15 @@ function BlazeWizardStaff({
       blazePrimaryReloadStart,
       blazePrimaryReloadEnd,
     } = useGameStore.getState();
+    // The reload pipeline is the last work in this frame. When not reloading and
+    // everything is already settled to its rest (all opacities 0, nodes hidden),
+    // there is nothing to do — skip it entirely. The frame reloading ends still
+    // runs once (ref is still true) to settle values, then subsequent idle frames
+    // bail here.
+    if (!blazePrimaryReloading && !reloadNeedsSettleRef.current) {
+      return;
+    }
+    reloadNeedsSettleRef.current = blazePrimaryReloading;
     const reloadDuration = Math.max(
       1,
       blazePrimaryReloadEnd - blazePrimaryReloadStart || BLAZE_PRIMARY_RELOAD_MS
@@ -2921,27 +2958,30 @@ function BlazeWizardStaff({
       }
     }
     reloadShaftMaterial.opacity = THREE.MathUtils.clamp(reloadActiveAmount * 0.42, 0, 0.42);
-    reloadShaftRingRefs.current.forEach((ring, index) => {
-      if (!ring) return;
+    const reloadShaftRings = reloadShaftRingRefs.current;
+    for (let index = 0; index < reloadShaftRings.length; index++) {
+      const ring = reloadShaftRings[index];
+      if (!ring) continue;
       const trailingY = shaftWaveY - index * 0.115;
       const ringVisible =
         reloadActiveAmount > 0.04 &&
         trailingY > BLAZE_STAFF_RELOAD_SHAFT_START_Y + 0.01 &&
         trailingY < BLAZE_STAFF_RELOAD_SHAFT_END_Y + 0.06;
       ring.visible = ringVisible;
-      if (!ringVisible) return;
+      if (!ringVisible) continue;
 
       const ringPulse = 1 + Math.sin(state.clock.elapsedTime * 24 + index * 1.9) * 0.08;
       ring.position.y = trailingY;
       ring.rotation.z = state.clock.elapsedTime * (1.5 + index * 0.28);
       ring.scale.setScalar((0.061 - index * 0.006) * ringPulse);
-    });
+    }
     reloadShaftRingMaterial.opacity = THREE.MathUtils.clamp(reloadActiveAmount * 0.62, 0, 0.62);
     let strongestFlame = 0;
 
-    BLAZE_STAFF_RELOAD_FLAMES.forEach((flame, index) => {
+    for (let index = 0; index < BLAZE_STAFF_RELOAD_FLAMES.length; index++) {
+      const flame = BLAZE_STAFF_RELOAD_FLAMES[index];
       const flameNode = reloadFlameRefs.current[index];
-      if (!flameNode) return;
+      if (!flameNode) continue;
 
       const ignite = THREE.MathUtils.smoothstep(reloadHead, flame.progress - 0.11, flame.progress + 0.03);
       const extinguish = 1 - THREE.MathUtils.smoothstep(reloadHead, flame.progress + 0.16, flame.progress + 0.34);
@@ -2952,7 +2992,7 @@ function BlazeWizardStaff({
         : 0;
       strongestFlame = Math.max(strongestFlame, amount);
       flameNode.visible = amount > 0.018;
-      if (!flameNode.visible) return;
+      if (!flameNode.visible) continue;
 
       const flicker = 1 + Math.sin(state.clock.elapsedTime * 29 + index * 1.77) * 0.16;
       const wobbleAngle = flame.angle + Math.sin(state.clock.elapsedTime * 12 + index * 0.84) * 0.16 * amount;
@@ -2968,7 +3008,7 @@ function BlazeWizardStaff({
         THREE.MathUtils.lerp(0.58, 2.18, amount) * flame.size,
         THREE.MathUtils.lerp(0.72, 1.82, amount) * flame.size * flicker
       );
-    });
+    }
     reloadFlameOuterMaterial.opacity = THREE.MathUtils.clamp(strongestFlame * 0.94, 0, 0.94);
     reloadFlameCoreMaterial.opacity = THREE.MathUtils.clamp(strongestFlame * 0.86, 0, 0.86);
 
@@ -3001,23 +3041,27 @@ function BlazeWizardStaff({
     }
     reloadBurstCoreRef.current?.scale.setScalar(THREE.MathUtils.lerp(0.055, 0.17, burstAmount));
     reloadBurstShellRef.current?.scale.setScalar(THREE.MathUtils.lerp(0.12, 0.42, burstExpansion));
-    reloadBurstRingRefs.current.forEach((ring, index) => {
-      if (!ring) return;
+    const reloadBurstRings = reloadBurstRingRefs.current;
+    for (let index = 0; index < reloadBurstRings.length; index++) {
+      const ring = reloadBurstRings[index];
+      if (!ring) continue;
       ring.visible = burstVisible;
-      if (!ring.visible) return;
+      if (!ring.visible) continue;
       const ringScale = THREE.MathUtils.lerp(0.07, 0.38 + index * 0.06, burstExpansion);
       ring.scale.set(ringScale, ringScale, 1);
       ring.rotation.z += 0.01 * (index + 1);
-    });
-    reloadBurstRayRefs.current.forEach((ray, index) => {
-      if (!ray) return;
+    }
+    const reloadBurstRays = reloadBurstRayRefs.current;
+    for (let index = 0; index < reloadBurstRays.length; index++) {
+      const ray = reloadBurstRays[index];
+      if (!ray) continue;
       const rayDelay = index % 2 === 0 ? 0 : 0.045;
       const rayProgress = THREE.MathUtils.clamp((burstProgress - rayDelay) / 0.48, 0, 1);
       const rayAmount =
         THREE.MathUtils.smoothstep(rayProgress, 0, 0.16) *
         (1 - THREE.MathUtils.smoothstep(rayProgress, 0.52, 1));
       ray.visible = rayAmount > 0.02;
-      if (!ray.visible) return;
+      if (!ray.visible) continue;
       const rayLength = BLAZE_STAFF_RELOAD_BURST_RAYS[index]?.length ?? 1;
       ray.position.y = Math.sin(rayProgress * Math.PI) * 0.018;
       ray.scale.set(
@@ -3025,16 +3069,18 @@ function BlazeWizardStaff({
         THREE.MathUtils.lerp(0.52, 1.8, rayAmount) * rayLength,
         THREE.MathUtils.lerp(0.4, 1.35, rayAmount) * rayLength
       );
-    });
-    reloadBurstSparkRefs.current.forEach((sparkNode, index) => {
-      if (!sparkNode) return;
+    }
+    const reloadBurstSparks = reloadBurstSparkRefs.current;
+    for (let index = 0; index < reloadBurstSparks.length; index++) {
+      const sparkNode = reloadBurstSparks[index];
+      if (!sparkNode) continue;
       const spark = BLAZE_STAFF_RELOAD_BURST_SPARKS[index];
-      if (!spark) return;
+      if (!spark) continue;
 
       const sparkProgress = THREE.MathUtils.clamp((burstProgress - spark.delay) / (1 - spark.delay), 0, 1);
       const sparkAmount = Math.sin(sparkProgress * Math.PI);
       sparkNode.visible = burstProgress > spark.delay && sparkProgress < 1 && sparkAmount > 0.02;
-      if (!sparkNode.visible) return;
+      if (!sparkNode.visible) continue;
 
       const sparkEase = 1 - Math.pow(1 - sparkProgress, 2);
       const sparkDistance = THREE.MathUtils.lerp(0.034, spark.distance, sparkEase);
@@ -3044,7 +3090,7 @@ function BlazeWizardStaff({
         Math.cos(spark.angle) * sparkDistance
       );
       sparkNode.scale.setScalar(spark.size * (0.45 + sparkAmount * 1.25));
-    });
+    }
     reloadBurstCoreMaterial.opacity = burstVisible ? THREE.MathUtils.clamp(burstAmount * 0.96, 0, 0.96) : 0;
     reloadBurstShellMaterial.opacity = burstVisible
       ? THREE.MathUtils.clamp((1 - THREE.MathUtils.smoothstep(burstProgress, 0.2, 1)) * 0.5, 0, 0.5)
@@ -4193,7 +4239,12 @@ function ChronosFloatingPyramidWeapon({
     const recoil = aegisPose.recoil;
     const spinBoost = aegisPose.spinBoost;
     const heartbeat = aegisPose.heartbeat;
-    root.updateMatrixWorld(true);
+    // The sockets are descendants of root, so updating each socket's world matrix
+    // (with its ancestor chain) refreshes root.matrixWorld too — enough for the
+    // socket world reads and the root.worldToLocal below — without forcing a
+    // recursive recompute of the entire viewmodel subtree every frame.
+    leftSocket.updateWorldMatrix(true, false);
+    rightSocket.updateWorldMatrix(true, false);
     leftSocket.getWorldPosition(leftSocketWorldPosition);
     rightSocket.getWorldPosition(rightSocketWorldPosition);
     weaponWorldPosition
@@ -4288,49 +4339,58 @@ function ChronosFloatingPyramidWeapon({
     }
 
     const reloadVisible = reloadIntensity > 0.02;
-    reloadAuraPuffRefs.current.forEach((puffNode, index) => {
-      if (!puffNode) return;
-      const puff = CHRONOS_WEAPON_RELOAD_AURA_PUFFS[index];
-      if (!puff) return;
+    // Guard the per-sprite work up front: when not reloading the shared aura
+    // materials are forced to opacity 0 below, so the sprites are invisible
+    // regardless of their .visible flag and the loops would be pure no-ops.
+    if (reloadVisible) {
+      const puffNodes = reloadAuraPuffRefs.current;
+      for (let index = 0; index < puffNodes.length; index++) {
+        const puffNode = puffNodes[index];
+        if (!puffNode) continue;
+        const puff = CHRONOS_WEAPON_RELOAD_AURA_PUFFS[index];
+        if (!puff) continue;
 
-      const localProgress = (reloadProgress * puff.speed + puff.offset) % 1;
-      const easedProgress = THREE.MathUtils.smoothstep(localProgress, 0, 1);
-      const puffAmount = reloadIntensity * Math.sin(localProgress * Math.PI);
-      puffNode.visible = reloadVisible && puffAmount > 0.035;
-      if (!puffNode.visible) return;
+        const localProgress = (reloadProgress * puff.speed + puff.offset) % 1;
+        const easedProgress = THREE.MathUtils.smoothstep(localProgress, 0, 1);
+        const puffAmount = reloadIntensity * Math.sin(localProgress * Math.PI);
+        puffNode.visible = puffAmount > 0.035;
+        if (!puffNode.visible) continue;
 
-      const angle = puff.angle + puff.swirl * easedProgress + t * (0.18 + puff.speed * 0.06);
-      const radius = THREE.MathUtils.lerp(puff.radius, 0.045, easedProgress);
-      const scale = puff.size * THREE.MathUtils.lerp(0.14, 0.035, easedProgress) * (0.82 + puffAmount * 0.24);
-      puffNode.position.set(
-        Math.sin(angle) * radius,
-        THREE.MathUtils.lerp(puff.y, 0, easedProgress) + Math.sin(t * 4.5 + index) * 0.008 * puffAmount,
-        Math.cos(angle) * radius
-      );
-      puffNode.scale.set(scale, scale, 1);
-    });
+        const angle = puff.angle + puff.swirl * easedProgress + t * (0.18 + puff.speed * 0.06);
+        const radius = THREE.MathUtils.lerp(puff.radius, 0.045, easedProgress);
+        const scale = puff.size * THREE.MathUtils.lerp(0.14, 0.035, easedProgress) * (0.82 + puffAmount * 0.24);
+        puffNode.position.set(
+          Math.sin(angle) * radius,
+          THREE.MathUtils.lerp(puff.y, 0, easedProgress) + Math.sin(t * 4.5 + index) * 0.008 * puffAmount,
+          Math.cos(angle) * radius
+        );
+        puffNode.scale.set(scale, scale, 1);
+      }
 
-    reloadAuraMoteRefs.current.forEach((moteNode, index) => {
-      if (!moteNode) return;
-      const mote = CHRONOS_WEAPON_RELOAD_AURA_MOTES[index];
-      if (!mote) return;
+      const moteNodes = reloadAuraMoteRefs.current;
+      for (let index = 0; index < moteNodes.length; index++) {
+        const moteNode = moteNodes[index];
+        if (!moteNode) continue;
+        const mote = CHRONOS_WEAPON_RELOAD_AURA_MOTES[index];
+        if (!mote) continue;
 
-      const localProgress = (reloadProgress * mote.speed + mote.offset) % 1;
-      const easedProgress = THREE.MathUtils.smoothstep(localProgress, 0, 1);
-      const moteAmount = reloadIntensity * Math.sin(localProgress * Math.PI);
-      moteNode.visible = reloadVisible && moteAmount > 0.04;
-      if (!moteNode.visible) return;
+        const localProgress = (reloadProgress * mote.speed + mote.offset) % 1;
+        const easedProgress = THREE.MathUtils.smoothstep(localProgress, 0, 1);
+        const moteAmount = reloadIntensity * Math.sin(localProgress * Math.PI);
+        moteNode.visible = moteAmount > 0.04;
+        if (!moteNode.visible) continue;
 
-      const angle = mote.angle + mote.drift * easedProgress + t * (0.58 + mote.speed * 0.18);
-      const radius = THREE.MathUtils.lerp(mote.radius, 0.018, easedProgress);
-      moteNode.position.set(
-        Math.sin(angle) * radius,
-        THREE.MathUtils.lerp(mote.y, 0, easedProgress) + Math.sin(t * 8 + index) * 0.01 * moteAmount,
-        Math.cos(angle) * radius
-      );
-      const moteScale = mote.size * THREE.MathUtils.lerp(0.042, 0.012, easedProgress) * (0.78 + moteAmount * 0.28);
-      moteNode.scale.set(moteScale, moteScale, 1);
-    });
+        const angle = mote.angle + mote.drift * easedProgress + t * (0.58 + mote.speed * 0.18);
+        const radius = THREE.MathUtils.lerp(mote.radius, 0.018, easedProgress);
+        moteNode.position.set(
+          Math.sin(angle) * radius,
+          THREE.MathUtils.lerp(mote.y, 0, easedProgress) + Math.sin(t * 8 + index) * 0.01 * moteAmount,
+          Math.cos(angle) * radius
+        );
+        const moteScale = mote.size * THREE.MathUtils.lerp(0.042, 0.012, easedProgress) * (0.78 + moteAmount * 0.28);
+        moteNode.scale.set(moteScale, moteScale, 1);
+      }
+    }
     reloadAuraPuffMaterial.opacity = reloadVisible
       ? THREE.MathUtils.clamp(reloadIntensity * 0.42, 0, 0.42)
       : 0;

@@ -351,14 +351,18 @@ export class MovementPredictionController {
     this.softCorrectionAckCount = 0;
     this.softCorrectionErrorBudget = 0;
 
-    const unacked = this.getUnacknowledgedCommands();
     let replayState = authoritativeState;
-    for (const command of unacked) {
-      replayState = this.simulateFromState(replayState, command, context);
-      this.commandRecords.set(command.seq, {
-        command,
-        predictedState: cloneMovementSimulationState(replayState),
-      });
+    let replayedCommands = 0;
+    for (const seq of this.commandOrder) {
+      const record = this.commandRecords.get(seq);
+      if (!record) continue;
+      // simulateFromState returns a fresh independent state which becomes the running
+      // replay state; clone it into the stored record because that snapshot is read by a
+      // later reconcile, while replayState keeps flowing into the next substep and is
+      // finally adopted as this.state (which gets mutated in place afterwards).
+      replayState = this.simulateFromState(replayState, record.command, context);
+      record.predictedState = cloneMovementSimulationState(replayState);
+      replayedCommands++;
     }
 
     this.state = replayState;
@@ -372,7 +376,7 @@ export class MovementPredictionController {
       ackSeq: authority.ackSeq,
       positionError,
       velocityError,
-      replayedCommands: unacked.length,
+      replayedCommands,
       hardCorrection,
       mediumCorrection,
       corrected: true,
@@ -501,7 +505,12 @@ export class MovementPredictionController {
       chronosAscendantActive: context.chronosAscendantActive,
     });
 
-    return cloneMovementSimulationState(result);
+    // simulateSharedMovement always returns a freshly-allocated, fully-independent
+    // state (position/velocity/movement are cloned from the inputs inside the motor and
+    // never alias any persistent buffer), so the caller can take ownership without an
+    // extra defensive clone here. step() and reconcile() each clone independently for the
+    // stored command record, and step() clones again for its returned value.
+    return result;
   }
 
   private storeCommandRecord(command: MovementCommand, state: MovementSimulationState): void {
@@ -532,15 +541,6 @@ export class MovementPredictionController {
       }
     }
     this.commandOrder = retained;
-  }
-
-  private getUnacknowledgedCommands(): MovementCommand[] {
-    const commands: MovementCommand[] = [];
-    for (const seq of this.commandOrder) {
-      const command = this.commandRecords.get(seq)?.command;
-      if (command) commands.push(command);
-    }
-    return commands;
   }
 
   private beginVisualCorrection(

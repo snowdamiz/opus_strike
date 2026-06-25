@@ -480,12 +480,16 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     if (!localPlayer) return;
 
     const updatedPlayer = { ...localPlayer, ...updates };
-    const updatedPlayers = new Map(players);
-    updatedPlayers.set(localPlayer.id, updatedPlayer);
+    // The local player is mirrored inside the `players` Map. Update that entry in
+    // place WITHOUT allocating a new Map so the `players` reference stays stable on
+    // local transform ticks — this avoids cascading re-renders into the remote
+    // render tree (OtherPlayers/RemoteHeroBatchRenderer/RemoteMovementEffects).
+    // Subscribers that need the change still observe it through the `localPlayer`
+    // field, which receives a fresh reference below.
+    players.set(localPlayer.id, updatedPlayer);
 
     set({
       localPlayer: updatedPlayer,
-      players: updatedPlayers,
       chronosLifelineQueued: shouldKeepChronosLifelineQueued(chronosLifelineQueued, localPlayer, updatedPlayer),
     });
   },

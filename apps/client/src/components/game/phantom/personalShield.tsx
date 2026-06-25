@@ -16,6 +16,9 @@ import {
 import { useDeferredFrameCommit } from '../systems/useDeferredFrameCommit';
 
 const PHANTOM_PERSONAL_SHIELD_ABILITY_ID = 'phantom_personal_shield';
+// ABILITY_DEFINITIONS is a static table; resolve this entry once at module load
+// instead of re-indexing it every frame for every shield bubble.
+const PHANTOM_PERSONAL_SHIELD_ABILITY_DEF = ABILITY_DEFINITIONS[PHANTOM_PERSONAL_SHIELD_ABILITY_ID];
 const PHANTOM_SHIELD_LOOP_ID_PREFIX = 'phantom-shield';
 const PHANTOM_SHIELD_CAST_DURATION_MS = PHANTOM_SHIELD_CAST_POSE_DURATION_MS;
 const PHANTOM_SHIELD_CAST_FADE_OUT_MS = 160;
@@ -302,7 +305,7 @@ function collectActiveShieldBreakEffects(frameNow: number, target: ShieldBreakEf
 }
 
 function getShieldDurationMs(): number {
-  return (ABILITY_DEFINITIONS[PHANTOM_PERSONAL_SHIELD_ABILITY_ID]?.duration ?? 0) * 1000;
+  return (PHANTOM_PERSONAL_SHIELD_ABILITY_DEF?.duration ?? 0) * 1000;
 }
 
 function hasActivePersonalShield(player: Player | null | undefined, now: number): boolean {
@@ -923,7 +926,12 @@ function PhantomPersonalShieldBubble({ playerId }: { playerId: string }) {
 
   useFrame(() => {
     const group = groupRef.current;
-    const player = getShieldPlayer(playerId);
+    // Read the game store once per frame and resolve the player inline (mirrors
+    // getShieldPlayer) so the bubble doesn't hit getState() multiple times.
+    const gameState = useGameStore.getState();
+    const player = gameState.localPlayer?.id === playerId
+      ? gameState.localPlayer
+      : gameState.players.get(playerId) ?? null;
     const now = getFrameClock().epochNowMs;
     if (!group || !player || !hasActivePersonalShield(player, now)) {
       if (group) group.visible = false;
@@ -931,9 +939,8 @@ function PhantomPersonalShieldBubble({ playerId }: { playerId: string }) {
     }
 
     const visualPosition = visualStore.getState().playerPositions.get(playerId) ?? player.position;
-    const isLocalPlayer = useGameStore.getState().localPlayer?.id === playerId;
-    const abilityDef = ABILITY_DEFINITIONS[PHANTOM_PERSONAL_SHIELD_ABILITY_ID];
-    const duration = abilityDef?.duration ?? 6;
+    const isLocalPlayer = gameState.localPlayer?.id === playerId;
+    const duration = PHANTOM_PERSONAL_SHIELD_ABILITY_DEF?.duration ?? 6;
     const elapsed = Math.max(0, (now - getShieldAbilityStart(player, now)) / 1000);
     const remaining = Math.max(0, duration - elapsed);
     const fadeIn = Math.min(1, elapsed / SHIELD_FADE_IN_SECONDS);
@@ -1003,6 +1010,8 @@ export function PhantomPersonalShieldsManager() {
   const scratchBreakEffectsRef = useRef<ShieldBreakEffectData[]>([]);
   const lastCastEffectRevisionRef = useRef(-1);
   const lastBreakEffectRevisionRef = useRef(-1);
+  const lastCastModuleRevisionRef = useRef(-1);
+  const lastBreakModuleRevisionRef = useRef(-1);
   const scanAccumulatorRef = useRef(ACTIVE_ID_SCAN_INTERVAL_MS);
   const activeAudioIdsRef = useRef<Set<string>>(new Set());
 
@@ -1016,22 +1025,42 @@ export function PhantomPersonalShieldsManager() {
   useFrame((_, delta) => {
     const frameClock = getFrameClock();
     const now = frameClock.epochNowMs;
-    const castRevision = collectActiveShieldCastEffects(frameClock.nowMs, scratchCastEffectsRef.current);
-    if (castRevision !== lastCastEffectRevisionRef.current) {
-      lastCastEffectRevisionRef.current = castRevision;
-      deferCastEffectsCommit(scratchCastEffectsRef.current.slice());
-    }
-    const breakRevision = collectActiveShieldBreakEffects(frameClock.nowMs, scratchBreakEffectsRef.current);
-    if (breakRevision !== lastBreakEffectRevisionRef.current) {
-      lastBreakEffectRevisionRef.current = breakRevision;
-      deferBreakEffectsCommit(scratchBreakEffectsRef.current.slice());
-    }
 
-    syncShieldAudioLoopPositions(activeAudioIdsRef.current, now);
+    // Only scan the fixed cast/break slot arrays when there is something to do:
+    // active effects still need expiry/commit checks, and a freshly triggered
+    // effect bumps the module revision. With no active effects and no new trigger
+    // the scan is a guaranteed no-op, so it is skipped (no appearance latency,
+    // since a trigger is picked up on the very next frame via the revision check).
+    if (
+      scratchCastEffectsRef.current.length > 0 ||
+      shieldCastEffectRevision !== lastCastModuleRevisionRef.current
+    ) {
+      const castRevision = collectActiveShieldCastEffects(frameClock.nowMs, scratchCastEffectsRef.current);
+      lastCastModuleRevisionRef.current = shieldCastEffectRevision;
+      if (castRevision !== lastCastEffectRevisionRef.current) {
+        lastCastEffectRevisionRef.current = castRevision;
+        deferCastEffectsCommit(scratchCastEffectsRef.current.slice());
+      }
+    }
+    if (
+      scratchBreakEffectsRef.current.length > 0 ||
+      shieldBreakEffectRevision !== lastBreakModuleRevisionRef.current
+    ) {
+      const breakRevision = collectActiveShieldBreakEffects(frameClock.nowMs, scratchBreakEffectsRef.current);
+      lastBreakModuleRevisionRef.current = shieldBreakEffectRevision;
+      if (breakRevision !== lastBreakEffectRevisionRef.current) {
+        lastBreakEffectRevisionRef.current = breakRevision;
+        deferBreakEffectsCommit(scratchBreakEffectsRef.current.slice());
+      }
+    }
 
     scanAccumulatorRef.current += delta * 1000;
     if (scanAccumulatorRef.current < ACTIVE_ID_SCAN_INTERVAL_MS) return;
     scanAccumulatorRef.current = 0;
+
+    // Audio loop position tracking only needs the throttled cadence; spatial
+    // panning at ~12.5 Hz is imperceptible and avoids per-frame setSharedLoopPosition.
+    syncShieldAudioLoopPositions(activeAudioIdsRef.current, now);
 
     const nextIds = collectActiveShieldIds(scratchIdsRef.current, now);
     syncShieldAudioLoops(activeAudioIdsRef.current, nextIds);

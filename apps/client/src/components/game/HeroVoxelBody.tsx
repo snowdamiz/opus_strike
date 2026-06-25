@@ -274,11 +274,15 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     const materialByKind = new Map<MaterialKind, THREE.MeshStandardMaterial>();
     (Object.keys(colors) as MaterialKind[]).forEach((kind) => {
       const baseColor = colors[kind];
-      const emissiveIntensity = getHeroBodyMaterialEmissiveIntensity(kind, hasFlag);
+      // Emissive intensity is driven per-frame (including the hasFlag boost), so build with
+      // the no-flag baseline here. Emissive color is always baseColor: when intensity is 0 the
+      // emissive contribution is 0 regardless of color, so this matches the prior black-when-off
+      // behavior while letting the per-frame intensity drive the flag glow without rebuilding.
+      const emissiveIntensity = getHeroBodyMaterialEmissiveIntensity(kind, false);
       const isTranslucent = kind === 'glass' || kind === 'mist';
       materialByKind.set(kind, new THREE.MeshStandardMaterial({
         color: baseColor,
-        emissive: emissiveIntensity > 0 ? new THREE.Color(baseColor) : new THREE.Color('#000000'),
+        emissive: new THREE.Color(baseColor),
         emissiveIntensity,
         roughness: kind === 'glass' ? 0.18 : kind === 'eye' || kind === 'glow' ? 0.28 : kind === 'void' ? 0.92 : 0.68,
         metalness: kind === 'armor' || kind === 'accent' || kind === 'edge' ? 0.28 : 0.05,
@@ -289,7 +293,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       }));
     });
     return materialByKind;
-  }, [colors, hasFlag]);
+  }, [colors]);
   const outlineMaterial = useMemo(() => new THREE.MeshBasicMaterial({
     color: teamColor,
     transparent: true,

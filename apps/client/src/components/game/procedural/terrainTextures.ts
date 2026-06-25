@@ -47,7 +47,7 @@ export const TERRAIN_TEXTURE_ANISOTROPY_BY_QUALITY: Record<GraphicsFeatureQualit
   low: 8,
   medium: 8,
   high: 8,
-  ultra: 16,
+  ultra: 8,
 };
 
 interface MaterialQualityPaintProfile {

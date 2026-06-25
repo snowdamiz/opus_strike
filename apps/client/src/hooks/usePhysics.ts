@@ -411,6 +411,21 @@ export function areProceduralMapCollidersLoaded(manifestOrMapId?: VoxelMapManife
   );
 }
 
+// Shared scratch ray reused by the per-frame raycast helpers to avoid allocating a new
+// Ray plus origin/direction object literals on every call. Rapier's Ray stores references
+// to the origin/dir objects and reads their x/y/z at cast time, so mutating these in place
+// between synchronous casts is safe. The query functions are never re-entrant with respect
+// to each other (no raycast runs while another holds the scratch ray), and each call fully
+// rewrites both origin and dir before casting, so no stale component leaks across callers.
+const scratchRayOrigin = { x: 0, y: 0, z: 0 };
+const scratchRayDirection = { x: 0, y: 0, z: 0 };
+let scratchRay: RAPIER.Ray | null = null;
+
+function getScratchRay(rapier: RapierModule): RAPIER.Ray {
+  scratchRay ??= new rapier.Ray(scratchRayOrigin, scratchRayDirection);
+  return scratchRay;
+}
+
 // Utility function for raycasting
 export function raycast(
   world: RAPIER.World,
@@ -425,9 +440,15 @@ export function raycast(
   if (!shouldRunPhysicsQuery(options)) return null;
   
   try {
-    // Create ray - Rapier accepts plain objects
-    const ray = new rapierInstance.Ray(origin, direction);
-    
+    // Reuse the shared scratch ray (mutated in place) to avoid per-call allocations.
+    const ray = getScratchRay(rapierInstance);
+    scratchRayOrigin.x = origin.x;
+    scratchRayOrigin.y = origin.y;
+    scratchRayOrigin.z = origin.z;
+    scratchRayDirection.x = direction.x;
+    scratchRayDirection.y = direction.y;
+    scratchRayDirection.z = direction.z;
+
     // Cast ray - solidHit=true means we want the first solid hit
     const hit = options?.includeNormal
       ? world.castRayAndGetNormal(ray, maxDistance, true)
@@ -473,10 +494,14 @@ export function raycastDirection(
   if (!shouldRunPhysicsQuery(options)) return null;
   
   try {
-    const origin = { x: originX, y: originY, z: originZ };
-    const direction = { x: dirX, y: dirY, z: dirZ };
-    const ray = new rapierInstance.Ray(origin, direction);
-    
+    const ray = getScratchRay(rapierInstance);
+    scratchRayOrigin.x = originX;
+    scratchRayOrigin.y = originY;
+    scratchRayOrigin.z = originZ;
+    scratchRayDirection.x = dirX;
+    scratchRayDirection.y = dirY;
+    scratchRayDirection.z = dirZ;
+
     const hit = worldInstance.castRayAndGetNormal(ray, maxDistance, true);
     
     if (hit) {
@@ -563,10 +588,14 @@ export function checkGroundWithNormal(
   if (!shouldRunPhysicsQuery(options)) return null;
   
   try {
-    const origin = { x, y, z };
-    const direction = { x: 0, y: -1, z: 0 };
-    const ray = new rapierInstance.Ray(origin, direction);
-    
+    const ray = getScratchRay(rapierInstance);
+    scratchRayOrigin.x = x;
+    scratchRayOrigin.y = y;
+    scratchRayOrigin.z = z;
+    scratchRayDirection.x = 0;
+    scratchRayDirection.y = -1;
+    scratchRayDirection.z = 0;
+
     const hit = worldInstance.castRayAndGetNormal(ray, maxDist, true);
     if (hit) {
       const groundY = y - hit.timeOfImpact;

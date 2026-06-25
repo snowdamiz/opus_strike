@@ -389,44 +389,54 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
     }
 
     if (innerRingsRef.current) {
-      innerRingsRef.current.children.forEach((ring, i) => {
+      const rings = innerRingsRef.current.children;
+      for (let i = 0; i < rings.length; i++) {
+        const ring = rings[i];
         const speed = 1 + i * 0.5;
         const direction = i % 2 === 0 ? 1 : -1;
         ring.rotation.z += delta * speed * direction;
         const scale = 1 + Math.sin(time * 3 + i) * 0.1;
         ring.scale.setScalar(scale);
-      });
+      }
     }
 
     if (particlesRef.current) {
-      const positions = particlesRef.current.geometry.attributes.position;
-      const speeds = particlesRef.current.geometry.attributes.speed;
-      const angleAttrs = particlesRef.current.geometry.attributes.angle;
-      const radiiAttrs = particlesRef.current.geometry.attributes.radius;
-      
-      for (let i = 0; i < positions.count; i++) {
-        const speed = (speeds as THREE.BufferAttribute).getX(i);
-        let angle = (angleAttrs as THREE.BufferAttribute).getX(i);
-        let r = (radiiAttrs as THREE.BufferAttribute).getX(i);
-        
+      const positions = particlesRef.current.geometry.attributes.position as THREE.BufferAttribute;
+      const speeds = particlesRef.current.geometry.attributes.speed as THREE.BufferAttribute;
+      const angleAttrs = particlesRef.current.geometry.attributes.angle as THREE.BufferAttribute;
+      const radiiAttrs = particlesRef.current.geometry.attributes.radius as THREE.BufferAttribute;
+      // Index the typed arrays directly to avoid per-particle getX/setX call overhead.
+      // angle/radius are CPU-only persistent state (never uploaded), so only the
+      // position attribute is flagged needsUpdate, matching the original behavior.
+      const positionArray = positions.array as Float32Array;
+      const speedArray = speeds.array as Float32Array;
+      const angleArray = angleAttrs.array as Float32Array;
+      const radiusArray = radiiAttrs.array as Float32Array;
+      const count = positions.count;
+
+      for (let i = 0; i < count; i++) {
+        const speed = speedArray[i];
+        let angle = angleArray[i];
+        let r = radiusArray[i];
+
         const normalizedRadius = r / radius;
         angle += delta * speed * (0.7 + (1 - normalizedRadius) * 0.9);
         r -= delta * 0.14;
-        
+
         if (r < radius * VOID_ZONE_MOTE_MIN_RADIUS) {
           r = radius * (VOID_ZONE_MOTE_RESET_RADIUS + ((i * 17) % 5) * 0.028);
           angle += Math.PI * 1.381966;
         }
-        
-        (angleAttrs as THREE.BufferAttribute).setX(i, angle);
-        (radiiAttrs as THREE.BufferAttribute).setX(i, r);
-        
+
+        angleArray[i] = angle;
+        radiusArray[i] = r;
+
         const lift = (Math.sin(time * 2.2 + i * 0.85) * 0.5 + 0.5) * VOID_ZONE_MOTE_MAX_LIFT;
         const height = VOID_ZONE_MOTE_BASE_HEIGHT + lift * (1 - Math.min(0.85, r / radius) * 0.65);
-        
-        positions.setX(i, Math.cos(angle) * r);
-        positions.setY(i, height);
-        positions.setZ(i, Math.sin(angle) * r);
+
+        positionArray[i * 3] = Math.cos(angle) * r;
+        positionArray[i * 3 + 1] = height;
+        positionArray[i * 3 + 2] = Math.sin(angle) * r;
       }
       positions.needsUpdate = true;
       particleMaterial.opacity = currentOpacity * 0.48;

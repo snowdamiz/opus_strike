@@ -13,6 +13,7 @@ import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
 import {
+  MOVEMENT_DIAGNOSTICS_ENABLED,
   measureFrameWork,
   recordEffectSlotDiagnostics,
 } from '../../../movement/networkDiagnostics';
@@ -633,7 +634,7 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
     });
   }, []);
 
-  useFrame(() => measureFrameWork('frame.effects.blazeAirstrike', () => {
+  const runGearstormFrame = () => {
     const elapsed = getFrameClock().nowMs - strike.frameStartTime;
 
     if (elapsed > AIR_STRIKE_DURATION) {
@@ -694,7 +695,9 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
 
     if (updateDecorativeInstancing) {
       let flamePlaneIndex = 0;
-      strike.groundFlames.forEach((flame, index) => {
+      const groundFlames = strike.groundFlames;
+      for (let index = 0; index < groundFlames.length; index++) {
+        const flame = groundFlames[index];
         const cycle = (elapsedSeconds * flame.flickerSpeed + flame.phase) % 1;
         const active = cycle <= flame.dutyCycle;
         const flameLife = active ? cycle / flame.dutyCycle : 0;
@@ -715,7 +718,7 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
             setInstancedMatrix(flameInnerRef.current, flamePlaneIndex, GEARSTORM_HIDDEN_MATRIX);
             flamePlaneIndex++;
           }
-          return;
+          continue;
         }
 
         matrixObject.position.set(flame.x, baseY + 0.015, flame.z);
@@ -747,7 +750,7 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
           setInstancedMatrix(flameInnerRef.current, flamePlaneIndex, matrixObject.matrix);
           flamePlaneIndex++;
         }
-      });
+      }
       commitInstancedMesh(flameRingRef.current);
       commitInstancedMesh(flameGlowRef.current);
       commitInstancedMesh(flameOuterRef.current);
@@ -808,7 +811,15 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
       lightRef.current.position.set(strike.centerPosition.x, strike.groundY + 4.2, strike.centerPosition.z);
       lightRef.current.intensity = 12 * fade + Math.sin(elapsed * 0.012) * 1.8 * fade;
     }
-  }));
+  };
+
+  useFrame(() => {
+    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+      measureFrameWork('frame.effects.blazeAirstrike', runGearstormFrame);
+    } else {
+      runGearstormFrame();
+    }
+  });
 
   return (
     <group ref={groupRef}>
@@ -992,11 +1003,13 @@ export function useAirStrikes() {
       deferActiveStrikesCommit([...airStrikes]);
     }
 
-    recordEffectSlotDiagnostics('blazeAirstrike', {
-      active: airStrikes.length,
-      capacity: Math.max(1, airStrikes.length),
-      hiddenMounted: 0,
-    });
+    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+      recordEffectSlotDiagnostics('blazeAirstrike', {
+        active: airStrikes.length,
+        capacity: Math.max(1, airStrikes.length),
+        hiddenMounted: 0,
+      });
+    }
   });
 
   return activeStrikes;

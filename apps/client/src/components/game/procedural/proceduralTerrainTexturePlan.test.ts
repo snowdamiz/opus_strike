@@ -79,11 +79,11 @@ assert.deepEqual(TERRAIN_TEXTURE_ANISOTROPY_BY_QUALITY, {
   low: 8,
   medium: 8,
   high: 8,
-  ultra: 16,
+  ultra: 8,
 });
 assert.equal(getTerrainTextureAnisotropy('off'), 4);
 assert.equal(getTerrainTextureAnisotropy('low'), 8);
-assert.equal(getTerrainTextureAnisotropy('ultra'), 16);
+assert.equal(getTerrainTextureAnisotropy('ultra'), 8);
 
 const terrainTexturesSource = readFileSync(new URL('./terrainTextures.ts', import.meta.url), 'utf8');
 const materialSource = readFileSync(new URL('./materials.ts', import.meta.url), 'utf8');

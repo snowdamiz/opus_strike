@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
 import {
@@ -568,7 +568,10 @@ function BattleRoyalDropPrompt({
   );
 }
 
-function getDownedRemainingSeconds(player: Player, now: number): number {
+function getDownedRemainingSeconds(
+  player: Pick<Player, 'state' | 'reviveByPlayerId' | 'downedRemainingMs' | 'downedExpiresAt'>,
+  now: number
+): number {
   if (player.state !== 'downed') return 0;
   if (player.reviveByPlayerId) {
     return Math.max(0, (player.downedRemainingMs ?? 0) / 1000);
@@ -579,7 +582,10 @@ function getDownedRemainingSeconds(player: Player, now: number): number {
   return Math.max(0, (player.downedRemainingMs ?? 0) / 1000);
 }
 
-function getReviveProgress(player: Player, now: number): number {
+function getReviveProgress(
+  player: Pick<Player, 'reviveStartedAt' | 'reviveCompletesAt'>,
+  now: number
+): number {
   if (!player.reviveStartedAt || !player.reviveCompletesAt) return 0;
   const duration = Math.max(1, player.reviveCompletesAt - player.reviveStartedAt);
   return Math.max(0, Math.min(1, (now - player.reviveStartedAt) / duration));
@@ -597,15 +603,36 @@ function getPlayerDistanceSq(a: Player, b: Player): number {
   return dx * dx + dy * dy + dz * dz;
 }
 
-function DownedStateHud({ player }: { player: Player }) {
+function DownedStateHud({
+  playerState,
+  downedHealth: downedHealthInput,
+  downedMaxHealth: downedMaxHealthInput,
+  reviveByPlayerId,
+  downedRemainingMs,
+  downedExpiresAt,
+  reviveStartedAt,
+  reviveCompletesAt,
+}: {
+  playerState: Player['state'] | undefined;
+  downedHealth: number | null | undefined;
+  downedMaxHealth: number | null | undefined;
+  reviveByPlayerId: string | null | undefined;
+  downedRemainingMs: number | null | undefined;
+  downedExpiresAt: number | null | undefined;
+  reviveStartedAt: number | null | undefined;
+  reviveCompletesAt: number | null | undefined;
+}) {
   const now = useHudNow();
-  if (player.state !== 'downed') return null;
+  if (playerState !== 'downed') return null;
 
-  const downedHealth = Math.max(0, player.downedHealth ?? 0);
-  const downedMaxHealth = Math.max(1, player.downedMaxHealth ?? 1);
-  const remainingSeconds = Math.ceil(getDownedRemainingSeconds(player, now));
-  const reviveProgress = getReviveProgress(player, now);
-  const isBeingRevived = Boolean(player.reviveByPlayerId);
+  const downedHealth = Math.max(0, downedHealthInput ?? 0);
+  const downedMaxHealth = Math.max(1, downedMaxHealthInput ?? 1);
+  const remainingSeconds = Math.ceil(getDownedRemainingSeconds(
+    { state: playerState, reviveByPlayerId, downedRemainingMs, downedExpiresAt },
+    now
+  ));
+  const reviveProgress = getReviveProgress({ reviveStartedAt, reviveCompletesAt }, now);
+  const isBeingRevived = Boolean(reviveByPlayerId);
   const downedHealthScale = getHudMeterScale(downedHealth, downedMaxHealth);
   const statusLabel = isBeingRevived ? 'REVIVING' : 'DOWNED';
   const statusTextColor = isBeingRevived ? 'text-cyan-100' : 'text-red-100';
@@ -961,7 +988,7 @@ function PrimaryShotCounter({
   );
 }
 
-function PhantomAmmoCounter({
+const PhantomAmmoCounter = memo(function PhantomAmmoCounter({
   ammo,
   reloading,
   reloadStart,
@@ -987,7 +1014,7 @@ function PhantomAmmoCounter({
       tone={PHANTOM_SHOT_COUNTER_TONE}
     />
   );
-}
+});
 
 function BlazeAmmoCounter({
   ammo,
@@ -1184,7 +1211,30 @@ function ChronosLifelineHelper() {
 
 export function HUD() {
   const {
-    localPlayer,
+    // Local player decomposed into the specific fields the HUD reads, so the HUD
+    // only re-renders when one of these values changes — not on every local
+    // transform reconciliation tick (which churns the whole localPlayer object).
+    localPlayerId,
+    localPlayerRole,
+    localPlayerState,
+    localHealth,
+    localMaxHealth,
+    localDownedHealth,
+    localDownedMaxHealth,
+    localDownedRemainingMs,
+    localDownedExpiresAt,
+    localReviveStartedAt,
+    localReviveCompletesAt,
+    localReviveByPlayerId,
+    localUltimateCharge,
+    localHeroId,
+    localHasFlag,
+    localKills,
+    localAbilities,
+    localIsWallRunning,
+    localIsSliding,
+    localIsGrappling,
+    localIsGliding,
     isPracticeMode,
     isTutorialMode,
     gameplayMode,
@@ -1220,7 +1270,27 @@ export function HUD() {
     chronosLifelineQueued,
   } = useGameStore(
     useShallow(state => ({
-      localPlayer: state.localPlayer,
+      localPlayerId: state.localPlayer?.id ?? null,
+      localPlayerRole: state.localPlayer?.role,
+      localPlayerState: state.localPlayer?.state,
+      localHealth: state.localPlayer?.health,
+      localMaxHealth: state.localPlayer?.maxHealth,
+      localDownedHealth: state.localPlayer?.downedHealth,
+      localDownedMaxHealth: state.localPlayer?.downedMaxHealth,
+      localDownedRemainingMs: state.localPlayer?.downedRemainingMs,
+      localDownedExpiresAt: state.localPlayer?.downedExpiresAt,
+      localReviveStartedAt: state.localPlayer?.reviveStartedAt,
+      localReviveCompletesAt: state.localPlayer?.reviveCompletesAt,
+      localReviveByPlayerId: state.localPlayer?.reviveByPlayerId,
+      localUltimateCharge: state.localPlayer?.ultimateCharge,
+      localHeroId: state.localPlayer?.heroId ?? null,
+      localHasFlag: state.localPlayer?.hasFlag ?? false,
+      localKills: state.localPlayer?.stats.kills ?? 0,
+      localAbilities: state.localPlayer?.abilities,
+      localIsWallRunning: state.localPlayer?.movement?.isWallRunning ?? false,
+      localIsSliding: state.localPlayer?.movement?.isSliding ?? false,
+      localIsGrappling: state.localPlayer?.movement?.isGrappling ?? false,
+      localIsGliding: state.localPlayer?.movement?.isGliding ?? false,
       isPracticeMode: state.isPracticeMode,
       isTutorialMode: state.isTutorialMode,
       gameplayMode: state.gameplayMode,
@@ -1308,28 +1378,28 @@ export function HUD() {
     })
   );
 
-  if (!localPlayer || localPlayer.role === 'observer') return null;
+  if (localPlayerId === null || localPlayerRole === 'observer') return null;
 
-  const isLocalDowned = localPlayer.state === 'downed';
+  const isLocalDowned = localPlayerState === 'downed';
   const isLocalReviving = Boolean(reviveChannelTarget);
-  const displayedHealth = isLocalDowned ? localPlayer.downedHealth ?? 0 : localPlayer.health;
-  const displayedMaxHealth = isLocalDowned ? Math.max(1, localPlayer.downedMaxHealth ?? 1) : localPlayer.maxHealth;
+  const displayedHealth = isLocalDowned ? localDownedHealth ?? 0 : localHealth ?? 0;
+  const displayedMaxHealth = isLocalDowned ? Math.max(1, localDownedMaxHealth ?? 1) : localMaxHealth ?? 0;
   const healthPercent = (displayedHealth / displayedMaxHealth) * 100;
   const isLowHealth = healthPercent < 30;
   const isCriticalHealth = healthPercent < 15;
-  const ultimatePercent = localPlayer.ultimateCharge ?? 0;
-  const heroSkillItems = localPlayer.heroId ? getHeroSkillItems(localPlayer.heroId) : [];
-  const skillAccent = localPlayer.heroId ? HUD_HERO_COLORS[localPlayer.heroId].primary : HUD_HERO_COLORS.blaze.primary;
-  const showChronosLifelineHelper = localPlayer.heroId === 'chronos' && chronosLifelineQueued;
+  const ultimatePercent = localUltimateCharge ?? 0;
+  const heroSkillItems = localHeroId ? getHeroSkillItems(localHeroId) : [];
+  const skillAccent = localHeroId ? HUD_HERO_COLORS[localHeroId].primary : HUD_HERO_COLORS.blaze.primary;
+  const showChronosLifelineHelper = localHeroId === 'chronos' && chronosLifelineQueued;
   const isCaptureTheFlag = gameplayMode === 'capture_the_flag';
-  const showFloatingFlag = localPlayer.hasFlag;
+  const showFloatingFlag = localHasFlag;
   const floatingFlagTop = isPracticeMode
     ? 'clamp(3.25rem, 8vh, 4.75rem)'
     : 'calc(clamp(2.25rem, 3.4vw, 3.25rem) + 0.5rem)';
   const scoreLabel = gameplayMode === 'team_deathmatch' ? 'KILLS' : 'BATTLE';
-  const battleRoyalEliminations = localPlayer.stats.kills;
+  const battleRoyalEliminations = localKills;
   const battleRoyalDropPlayer = battleRoyalDrop?.players.find((player) => (
-    player.playerId === localPlayer.id
+    player.playerId === localPlayerId
   )) ?? null;
   const battleRoyalDropStatus = battleRoyalDropPlayer?.status ?? null;
   const battleRoyalDropAttachedToPlayerId = battleRoyalDropPlayer?.attachedToPlayerId ?? null;
@@ -1412,7 +1482,18 @@ export function HUD() {
           attachedToPlayerId={battleRoyalDropAttachedToPlayerId}
         />
       )}
-      {gameplayMode === 'battle_royal' && <DownedStateHud player={localPlayer} />}
+      {gameplayMode === 'battle_royal' && (
+        <DownedStateHud
+          playerState={localPlayerState}
+          downedHealth={localDownedHealth}
+          downedMaxHealth={localDownedMaxHealth}
+          reviveByPlayerId={localReviveByPlayerId}
+          downedRemainingMs={localDownedRemainingMs}
+          downedExpiresAt={localDownedExpiresAt}
+          reviveStartedAt={localReviveStartedAt}
+          reviveCompletesAt={localReviveCompletesAt}
+        />
+      )}
       {gameplayMode === 'battle_royal' && (
         <ReviveChannelHud
           target={reviveChannelTarget}
@@ -1446,7 +1527,7 @@ export function HUD() {
       )}
 
       {/* Void Ray Charge Indicator */}
-      {voidRayCharging && !suppressCombatHud && localPlayer?.heroId === 'phantom' && (
+      {voidRayCharging && !suppressCombatHud && localHeroId === 'phantom' && (
         <VoidRayChargeIndicator chargeStart={voidRayChargeStart} />
       )}
 
@@ -1639,7 +1720,7 @@ export function HUD() {
               <HUDSkillSlot
                 key={`${skill.input}-${skill.name}`}
                 skill={skill}
-                abilityState={skill.abilityId ? localPlayer.abilities?.[skill.abilityId] : undefined}
+                abilityState={skill.abilityId ? localAbilities?.[skill.abilityId] : undefined}
                 clientCooldownEnd={skill.abilityId ? clientCooldowns[skill.abilityId] : undefined}
                 clientCharges={skill.abilityId ? clientCharges[skill.abilityId] : undefined}
                 accentColor={skillAccent}
@@ -1654,7 +1735,7 @@ export function HUD() {
       {/* ===== BOTTOM RIGHT - Movement Status (Improved) ===== */}
       {!suppressCombatHud && (
       <div className="absolute bottom-4 right-4 xl:bottom-6 xl:right-6 flex flex-col items-end gap-2 hud-status">
-        {localPlayer.heroId === 'phantom' && (
+        {localHeroId === 'phantom' && (
           <PhantomAmmoCounter
             ammo={phantomPrimaryAmmo}
             reloading={phantomPrimaryReloading}
@@ -1662,8 +1743,8 @@ export function HUD() {
             reloadEnd={phantomPrimaryReloadEnd}
           />
         )}
-        {localPlayer.heroId === 'hookshot' && <HookshotShotCounter />}
-        {localPlayer.heroId === 'blaze' && (
+        {localHeroId === 'hookshot' && <HookshotShotCounter />}
+        {localHeroId === 'blaze' && (
           <BlazeAmmoCounter
             ammo={blazePrimaryAmmo}
             reloading={blazePrimaryReloading}
@@ -1671,7 +1752,7 @@ export function HUD() {
             reloadEnd={blazePrimaryReloadEnd}
           />
         )}
-        {localPlayer.heroId === 'chronos' && (
+        {localHeroId === 'chronos' && (
           <ChronosAmmoCounter
             ammo={chronosPrimaryAmmo}
             reloading={chronosPrimaryReloading}
@@ -1682,15 +1763,15 @@ export function HUD() {
 
         {/* Movement indicators container */}
         <div className="flex flex-col items-end gap-1.5">
-          {localPlayer.movement?.isWallRunning && <MovementIndicator label="WALL RUN" color="#06b6d4" icon="wall" />}
-          {localPlayer.movement?.isSliding && <MovementIndicator label="SLIDE" color="#22c55e" icon="slide" />}
-          {localPlayer.movement?.isGrappling && <MovementIndicator label="GRAPPLE" color="#06b6d4" icon="grapple" />}
+          {localIsWallRunning && <MovementIndicator label="WALL RUN" color="#06b6d4" icon="wall" />}
+          {localIsSliding && <MovementIndicator label="SLIDE" color="#22c55e" icon="slide" />}
+          {localIsGrappling && <MovementIndicator label="GRAPPLE" color="#06b6d4" icon="grapple" />}
           {flamethrowerActive && <MovementIndicator label="FLAME" color="#f97316" icon="flame" />}
-          {localPlayer.movement?.isGliding && <MovementIndicator label="GLIDE" color="#a855f7" icon="glide" />}
+          {localIsGliding && <MovementIndicator label="GLIDE" color="#a855f7" icon="glide" />}
         </div>
 
         {/* Flamethrower Fuel */}
-        {localPlayer.heroId === 'blaze' && (
+        {localHeroId === 'blaze' && (
           <BlazeFuelIndicator fuel={flamethrowerFuel} active={flamethrowerActive} />
         )}
 
@@ -1709,7 +1790,7 @@ interface AbilityState {
   activatedAt?: number;
 }
 
-function HUDSkillSlot({
+const HUDSkillSlot = memo(function HUDSkillSlot({
   skill,
   abilityState,
   clientCooldownEnd,
@@ -1910,10 +1991,10 @@ function HUDSkillSlot({
       </div>
     </div>
   );
-}
+});
 
 // ===== MOVEMENT INDICATOR (Improved) =====
-function MovementIndicator({ label, color, icon }: { label: string; color: string; icon: string }) {
+const MovementIndicator = memo(function MovementIndicator({ label, color, icon }: { label: string; color: string; icon: string }) {
   return (
     <div
       className="flex items-center gap-2 px-3 py-1.5 rounded-lg backdrop-blur-sm animate-fade-in"
@@ -1935,4 +2016,4 @@ function MovementIndicator({ label, color, icon }: { label: string; color: strin
       </span>
     </div>
   );
-}
+});

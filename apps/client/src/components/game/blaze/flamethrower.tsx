@@ -66,6 +66,9 @@ const _streamEnd = new THREE.Vector3();
 const _swirlOffset = new THREE.Vector3();
 const _pathPoint = new THREE.Vector3();
 const OPEN_FLAME_GEOMETRY = new THREE.ConeGeometry(1, 1, 14, 1, true);
+// Type-only fallback so flamethrowerDirection is never undefined when idle; it is
+// never read unless hasLivePose (which requires a real origin/direction source).
+const FLAMETHROWER_FALLBACK_DIRECTION = { x: 0, y: 0, z: -1 };
 
 const FLAME_SEGMENTS = [
   { y: 0.72, radius: 0.1, length: 0.82, color: 0xffffff, opacity: 0.46, lag: 0 },
@@ -173,14 +176,49 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider, ownerId,
   const streamLagRef = useRef(new THREE.Vector3());
   const lastCollisionSampleRef = useRef(0);
   const cachedImpactHitRef = useRef<FlamethrowerImpactHit | null>(null);
+  // Persistent cone-damage config reused every channeling frame. Static fields are
+  // set once here; only origin/direction/range/source are mutated per frame below.
+  // applyTutorialOfflineTrainingConeDamage reads the input synchronously and copies
+  // out the values it retains, so reusing this object is safe.
+  const coneDamageConfigRef = useRef({
+    origin: { x: 0, y: 0, z: 0 },
+    direction: { x: 0, y: 0, z: 0 },
+    range: 0,
+    coneDot: Math.cos(BLAZE_FLAMETHROWER_CONE_HALF_ANGLE),
+    extraRadius: BLAZE_FLAMETHROWER_COLLISION_RADIUS,
+    damage: BLAZE_FLAMETHROWER_DAMAGE,
+    damageType: 'flamethrower',
+    sourceId: '' as string,
+    sourceTeam: null as Team | null,
+    abilityId: 'blaze_flamethrower',
+    falloffScale: 0.35,
+    damageIntervalMs: BLAZE_FLAMETHROWER_DAMAGE_INTERVAL,
+    burn: {
+      damage: BLAZE_FLAMETHROWER_BURN_DAMAGE,
+      damageType: 'burn',
+      ticks: BLAZE_FLAMETHROWER_BURN_TICKS,
+      intervalMs: BLAZE_FLAMETHROWER_BURN_INTERVAL_MS,
+      abilityId: 'blaze_flamethrower',
+    },
+  });
 
   useFrame((state, delta) => measureFrameWork('frame.effects.blazeFlamethrower', () => {
     if (!groupRef.current) return;
 
-    const providedPose = poseProvider?.() ?? null;
-    const { flamethrowerOrigin, flamethrowerDirection } = providedPose
-      ? { flamethrowerOrigin: providedPose.origin, flamethrowerDirection: providedPose.direction }
-      : visualStore.getState();
+    // Pose acquisition only matters when active: hasLivePose requires isActive,
+    // and the resolved origin/direction are only read inside the hasLivePose
+    // branch below. Skipping it while idle avoids the poseProvider allocation and
+    // store read every frame the weapon is holstered/ramping down.
+    const providedPose = isActive ? (poseProvider?.() ?? null) : null;
+    const storeState = isActive && !providedPose ? visualStore.getState() : null;
+    const flamethrowerOrigin = providedPose
+      ? providedPose.origin
+      : storeState?.flamethrowerOrigin ?? null;
+    const flamethrowerDirection = providedPose
+      ? providedPose.direction
+      : storeState
+        ? storeState.flamethrowerDirection
+        : FLAMETHROWER_FALLBACK_DIRECTION;
     const hasLivePose = isActive && Boolean(flamethrowerOrigin);
     const rampStep = delta / (hasLivePose ? FLAMETHROWER_SPIN_UP_DURATION : FLAMETHROWER_SPIN_DOWN_DURATION);
     rampRef.current = hasLivePose
@@ -260,27 +298,17 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider, ownerId,
       : BLAZE_FLAMETHROWER_RANGE;
 
     if (hasLivePose && rampRef.current > 0.35) {
-      applyTutorialOfflineTrainingConeDamage({
-        origin: { x: _origin.x, y: _origin.y, z: _origin.z },
-        direction: { x: _direction.x, y: _direction.y, z: _direction.z },
-        range: collisionRange,
-        coneDot: Math.cos(BLAZE_FLAMETHROWER_CONE_HALF_ANGLE),
-        extraRadius: BLAZE_FLAMETHROWER_COLLISION_RADIUS,
-        damage: BLAZE_FLAMETHROWER_DAMAGE,
-        damageType: 'flamethrower',
-        sourceId: activeOwnerId,
-        sourceTeam: activeOwnerTeam,
-        abilityId: 'blaze_flamethrower',
-        falloffScale: 0.35,
-        damageIntervalMs: BLAZE_FLAMETHROWER_DAMAGE_INTERVAL,
-        burn: {
-          damage: BLAZE_FLAMETHROWER_BURN_DAMAGE,
-          damageType: 'burn',
-          ticks: BLAZE_FLAMETHROWER_BURN_TICKS,
-          intervalMs: BLAZE_FLAMETHROWER_BURN_INTERVAL_MS,
-          abilityId: 'blaze_flamethrower',
-        },
-      });
+      const coneConfig = coneDamageConfigRef.current;
+      coneConfig.origin.x = _origin.x;
+      coneConfig.origin.y = _origin.y;
+      coneConfig.origin.z = _origin.z;
+      coneConfig.direction.x = _direction.x;
+      coneConfig.direction.y = _direction.y;
+      coneConfig.direction.z = _direction.z;
+      coneConfig.range = collisionRange;
+      coneConfig.sourceId = activeOwnerId;
+      coneConfig.sourceTeam = activeOwnerTeam;
+      applyTutorialOfflineTrainingConeDamage(coneConfig);
     }
 
     if (impactHit && now - lastTerrainImpactRef.current > FLAMETHROWER_TERRAIN_IMPACT_INTERVAL_MS) {

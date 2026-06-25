@@ -106,6 +106,7 @@ import {
   markPredictedLocalAbilitySound,
   shouldSuppressPredictedLocalAbilitySound,
   useLocalAbilityAudioPrediction,
+  type LocalAbilityAudioPredictionFrame,
 } from '../../hooks/player/useLocalAbilityAudioPrediction';
 import { buildAbilityCastOriginHints } from '../../hooks/player/abilityCastOriginHints';
 import { getLocalChronosTimebreakTempoMultiplier } from '../../hooks/player/chronosTimebreakTempo';
@@ -287,6 +288,28 @@ const observerFlightRight = new THREE.Vector3();
 const thirdPersonAimCameraPosition = new THREE.Vector3();
 const thirdPersonAimCollisionAnchor = new THREE.Vector3();
 const thirdPersonAimCameraDirection = new THREE.Vector3();
+const THIRD_PERSON_CAMERA_RAYCAST_OPTIONS = {
+  priority: 'visual',
+  feature: 'third-person-camera',
+} as const;
+const THIRD_PERSON_CROSSHAIR_AIM_RAYCAST_OPTIONS = {
+  priority: 'visual',
+  feature: 'third-person-crosshair-aim',
+} as const;
+const thirdPersonAimPointScratch: MutableVec3 = { x: 0, y: 0, z: 0 };
+// Reused scratch for confirmLocalMovementTransform. That function copies every
+// field out synchronously into a fresh state object and never retains the arg,
+// so a single mutable scratch is safe to reuse across both call sites per frame.
+const confirmTransformScratch: {
+  position: { x: number; y: number; z: number };
+  velocity: { x: number; y: number; z: number };
+  movement: { isGrappling: boolean; grapplePoint: { x: number; y: number; z: number } | null };
+} = {
+  position: { x: 0, y: 0, z: 0 },
+  velocity: { x: 0, y: 0, z: 0 },
+  movement: { isGrappling: false, grapplePoint: null },
+};
+const CONFIRM_TRANSFORM_UPDATE_LATEST_OPTIONS = { updateLatestCommandRecord: true } as const;
 const battleRoyalDeploymentCameraTarget: BattleRoyalDeploymentCameraTarget = {
   mode: 'ship',
   position: new THREE.Vector3(),
@@ -301,10 +324,7 @@ function resolveThirdPersonCameraCollision(
   if (!isPhysicsReady()) return null;
   const world = getPhysicsWorld();
   if (!world) return null;
-  return raycast(world, origin, direction, maxDistance, {
-    priority: 'visual',
-    feature: 'third-person-camera',
-  })?.distance ?? null;
+  return raycast(world, origin, direction, maxDistance, THIRD_PERSON_CAMERA_RAYCAST_OPTIONS)?.distance ?? null;
 }
 
 export function resolveThirdPersonCrosshairAimPoint({
@@ -337,17 +357,21 @@ export function resolveThirdPersonCrosshairAimPoint({
   const direction = calculateLookDirection(yaw, pitch);
   const world = isPhysicsReady() ? getPhysicsWorld() : null;
   const hit = world
-    ? raycast(world, thirdPersonAimCameraPosition, direction, THIRD_PERSON_CROSSHAIR_AIM_DISTANCE, {
-      priority: 'visual',
-      feature: 'third-person-crosshair-aim',
-    })
+    ? raycast(
+      world,
+      thirdPersonAimCameraPosition,
+      direction,
+      THIRD_PERSON_CROSSHAIR_AIM_DISTANCE,
+      THIRD_PERSON_CROSSHAIR_AIM_RAYCAST_OPTIONS
+    )
     : null;
 
-  return hit?.point ?? {
-    x: thirdPersonAimCameraPosition.x + direction.x * THIRD_PERSON_CROSSHAIR_AIM_DISTANCE,
-    y: thirdPersonAimCameraPosition.y + direction.y * THIRD_PERSON_CROSSHAIR_AIM_DISTANCE,
-    z: thirdPersonAimCameraPosition.z + direction.z * THIRD_PERSON_CROSSHAIR_AIM_DISTANCE,
-  };
+  if (hit) return hit.point;
+
+  thirdPersonAimPointScratch.x = thirdPersonAimCameraPosition.x + direction.x * THIRD_PERSON_CROSSHAIR_AIM_DISTANCE;
+  thirdPersonAimPointScratch.y = thirdPersonAimCameraPosition.y + direction.y * THIRD_PERSON_CROSSHAIR_AIM_DISTANCE;
+  thirdPersonAimPointScratch.z = thirdPersonAimCameraPosition.z + direction.z * THIRD_PERSON_CROSSHAIR_AIM_DISTANCE;
+  return thirdPersonAimPointScratch;
 }
 
 function frameRateBand(deltaSeconds: number): string {
@@ -2103,6 +2127,27 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const battleRoyalFirstPersonDropCameraRef = useRef(createBattleRoyalFirstPersonDropCameraRuntime());
   const battleRoyalDeploymentAudioRef = useRef(createBattleRoyalDeploymentAudioRuntime());
   const frameContextRef = useRef<LocalPlayerFrameContext | null>(null);
+  // Persistent per-frame scratch objects for the alive-path frame loop. Each is
+  // mutated in place every frame; all consumers read them synchronously and copy
+  // out (verified: no command-buffer / prediction-record / network retention).
+  const abilityCtxRef = useRef<AbilityContext | null>(null);
+  const predictionOptionsRef = useRef<Parameters<typeof runPredictionAndCommandPhase>[0] | null>(null);
+  const presentationOptionsRef = useRef<Parameters<typeof runPresentationPhase>[0] | null>(null);
+  const traceOptionsRef = useRef<Parameters<typeof runTracePhase>[0] | null>(null);
+  const soundFrameArgRef = useRef<LocalAbilityAudioPredictionFrame | null>(null);
+  const soundLocalPlayerRef = useRef<Player | null>(null);
+  // Stable closures for the reused sound-update arg. updatePredictedAbilitySounds
+  // invokes both only synchronously and never retains them.
+  const getAbilityChargesForSound = useCallback(
+    (abilityId: string) => soundLocalPlayerRef.current?.abilities?.[abilityId]?.charges,
+    []
+  );
+  const canUseHookshotGrappleForSound = useCallback(() => {
+    const ctx = abilityCtxRef.current;
+    const frameCtx = frameContextRef.current;
+    if (!ctx || !frameCtx) return false;
+    return frameCtx.hookshotAbilities.canGrapple(ctx);
+  }, []);
 
   const resetMovementCommandBuffer = useCallback(() => {
     movementCommandAccumulatorRef.current = 0;
@@ -2888,27 +2933,29 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       matchPerspective: storeSnapshot.matchPerspective,
     });
 
-    // Create ability context
-    const abilityCtx = {
-      position,
-      velocity,
-      yaw: aimYaw,
-      pitch: cameraControl.refs.pitch.current,
-      heroId,
-      localPlayer: {
-        id: localPlayer.id,
-        team: localPlayer.team,
-        position: localPlayer.position,
-        ultimateCharge: localPlayer.ultimateCharge,
-      },
-      inputState: localAbilityInput,
-      dt,
-      isGrounded: movement.refs.isGrounded.current,
-      camera,
-      viewmodelElapsedSeconds: frameState.clock.elapsedTime,
-      viewmodelNowMs: now,
-      aimPoint: thirdPersonAimPoint,
-    };
+    // Create ability context (reused mutable object; consumers read synchronously)
+    let abilityCtx = abilityCtxRef.current;
+    if (!abilityCtx) {
+      abilityCtx = {} as AbilityContext;
+      abilityCtx.localPlayer = { id: '', position: { x: 0, y: 0, z: 0 } };
+      abilityCtxRef.current = abilityCtx;
+    }
+    abilityCtx.position = position;
+    abilityCtx.velocity = velocity;
+    abilityCtx.yaw = aimYaw;
+    abilityCtx.pitch = cameraControl.refs.pitch.current;
+    abilityCtx.heroId = heroId;
+    abilityCtx.localPlayer.id = localPlayer.id;
+    abilityCtx.localPlayer.team = localPlayer.team;
+    abilityCtx.localPlayer.position = localPlayer.position;
+    abilityCtx.localPlayer.ultimateCharge = localPlayer.ultimateCharge;
+    abilityCtx.inputState = localAbilityInput;
+    abilityCtx.dt = dt;
+    abilityCtx.isGrounded = movement.refs.isGrounded.current;
+    abilityCtx.camera = camera;
+    abilityCtx.viewmodelElapsedSeconds = frameState.clock.elapsedTime;
+    abilityCtx.viewmodelNowMs = now;
+    abilityCtx.aimPoint = thirdPersonAimPoint;
 
     setPhantomPrimaryHeld(phantomPrimaryHeldForPose, now);
     setBlazeRocketHeld(
@@ -2933,23 +2980,25 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       { renderWorldEffect: storeSnapshot.matchPerspective === 'third_person' }
     );
     if (heroDef) {
-      updatePredictedAbilitySounds({
-        now,
-        heroId,
-        inputState: frameInput,
-        ultimateCharge: localPlayer.ultimateCharge ?? 0,
-        bombTargeting: bombTargetingForFrame,
-        phantomPrimaryAmmo: phantomAbilities.phantomPrimaryAmmoRef.current,
-        phantomPrimaryReloading,
-        blazePrimaryAmmo: blazeAbilities.blazePrimaryAmmoRef.current,
-        blazePrimaryReloading,
-        chronosPrimaryAmmo: chronosAbilities.chronosPrimaryAmmoRef.current,
-        chronosPrimaryReloading: chronosAbilities.chronosPrimaryReloadingRef.current,
-        canUseAbility: abilitySystem.canUseAbility,
-        getAbilityCharges: (abilityId: string) => localPlayer.abilities?.[abilityId]?.charges,
-        canUseHookshotGrapple: () => hookshotAbilities.canGrapple(abilityCtx),
-        hasChronosLifelineTarget,
-      });
+      soundLocalPlayerRef.current = localPlayer;
+      const soundFrameArg = soundFrameArgRef.current
+        ?? (soundFrameArgRef.current = {} as LocalAbilityAudioPredictionFrame);
+      soundFrameArg.now = now;
+      soundFrameArg.heroId = heroId;
+      soundFrameArg.inputState = frameInput;
+      soundFrameArg.ultimateCharge = localPlayer.ultimateCharge ?? 0;
+      soundFrameArg.bombTargeting = bombTargetingForFrame;
+      soundFrameArg.phantomPrimaryAmmo = phantomAbilities.phantomPrimaryAmmoRef.current;
+      soundFrameArg.phantomPrimaryReloading = phantomPrimaryReloading;
+      soundFrameArg.blazePrimaryAmmo = blazeAbilities.blazePrimaryAmmoRef.current;
+      soundFrameArg.blazePrimaryReloading = blazePrimaryReloading;
+      soundFrameArg.chronosPrimaryAmmo = chronosAbilities.chronosPrimaryAmmoRef.current;
+      soundFrameArg.chronosPrimaryReloading = chronosAbilities.chronosPrimaryReloadingRef.current;
+      soundFrameArg.canUseAbility = abilitySystem.canUseAbility;
+      soundFrameArg.getAbilityCharges = getAbilityChargesForSound;
+      soundFrameArg.canUseHookshotGrapple = canUseHookshotGrappleForSound;
+      soundFrameArg.hasChronosLifelineTarget = hasChronosLifelineTarget;
+      updatePredictedAbilitySounds(soundFrameArg);
 
       // Handle ability input
       if (heroId !== 'blaze') {
@@ -3297,33 +3346,36 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       velocity.y !== predictedState.velocity.y ||
       velocity.z !== predictedState.velocity.z
     ) {
+      confirmTransformScratch.position.x = position.x;
+      confirmTransformScratch.position.y = position.y;
+      confirmTransformScratch.position.z = position.z;
+      confirmTransformScratch.velocity.x = velocity.x;
+      confirmTransformScratch.velocity.y = velocity.y;
+      confirmTransformScratch.velocity.z = velocity.z;
+      confirmTransformScratch.movement.isGrappling =
+        hookshotAbilities.isGrapplingRef.current || hookshotAbilities.isSwingingRef.current;
+      confirmTransformScratch.movement.grapplePoint = hookshotAbilities.grappleTargetRef.current;
       predictedState = confirmLocalMovementTransform(
         localPlayer,
-        {
-          position: { x: position.x, y: position.y, z: position.z },
-          velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
-          movement: {
-            isGrappling: hookshotAbilities.isGrapplingRef.current || hookshotAbilities.isSwingingRef.current,
-            grapplePoint: hookshotAbilities.grappleTargetRef.current,
-          },
-        },
+        confirmTransformScratch,
         cameraControl.refs.yaw.current
       );
     }
 
-    const predictionPhase = runPredictionAndCommandPhase({
-      ctx: frameCtx,
-      localPlayer,
-      heroId,
-      frameInput,
-      serverCombatInput,
-      requestedCommandScheduleReasons,
-      abilityCtx,
-      predictedState,
-      now,
-      dt,
-      rawDelta: delta,
-    });
+    const predictionOptions = predictionOptionsRef.current
+      ?? (predictionOptionsRef.current = {} as Parameters<typeof runPredictionAndCommandPhase>[0]);
+    predictionOptions.ctx = frameCtx;
+    predictionOptions.localPlayer = localPlayer;
+    predictionOptions.heroId = heroId;
+    predictionOptions.frameInput = frameInput;
+    predictionOptions.serverCombatInput = serverCombatInput;
+    predictionOptions.requestedCommandScheduleReasons = requestedCommandScheduleReasons;
+    predictionOptions.abilityCtx = abilityCtx;
+    predictionOptions.predictedState = predictedState;
+    predictionOptions.now = now;
+    predictionOptions.dt = dt;
+    predictionOptions.rawDelta = delta;
+    const predictionPhase = runPredictionAndCommandPhase(predictionOptions);
     predictedState = predictionPhase.predictedState;
     const {
       wasGroundedBeforePrediction,
@@ -3333,13 +3385,14 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     if (heroId === 'hookshot') {
       position.set(predictedState.position.x, predictedState.position.y, predictedState.position.z);
       velocity.set(predictedState.velocity.x, predictedState.velocity.y, predictedState.velocity.z);
-      hookshotAbilities.updateGrapplePhysics({
-        ...abilityCtx,
-        position,
-        velocity,
-        inputState: commandInput,
-        isGrounded: predictedState.movement.isGrounded,
-      });
+      // position/velocity already alias abilityCtx.position/velocity (set above);
+      // only inputState/isGrounded differ for the grapple step. Mutating in place
+      // is safe: updateGrapplePhysics reads ctx synchronously without retaining it,
+      // and for hookshot abilityCtx is not read again this frame (presentation only
+      // reads it on the phantom path).
+      abilityCtx.inputState = commandInput;
+      abilityCtx.isGrounded = predictedState.movement.isGrounded;
+      hookshotAbilities.updateGrapplePhysics(abilityCtx);
 
       const nextGrappleActive = hookshotAbilities.isGrapplingRef.current || hookshotAbilities.isSwingingRef.current;
       const nextGrapplePoint = hookshotAbilities.grappleTargetRef.current;
@@ -3359,52 +3412,55 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         predictedState.movement.isGrappling !== nextGrappleActive ||
         grapplePointChanged
       ) {
+        confirmTransformScratch.position.x = position.x;
+        confirmTransformScratch.position.y = position.y;
+        confirmTransformScratch.position.z = position.z;
+        confirmTransformScratch.velocity.x = velocity.x;
+        confirmTransformScratch.velocity.y = velocity.y;
+        confirmTransformScratch.velocity.z = velocity.z;
+        confirmTransformScratch.movement.isGrappling = nextGrappleActive;
+        confirmTransformScratch.movement.grapplePoint = nextGrapplePoint;
         predictedState = confirmLocalMovementTransform(
           localPlayer,
-          {
-            position: { x: position.x, y: position.y, z: position.z },
-            velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
-            movement: {
-              isGrappling: nextGrappleActive,
-              grapplePoint: nextGrapplePoint,
-            },
-          },
+          confirmTransformScratch,
           cameraControl.refs.yaw.current,
-          { updateLatestCommandRecord: true }
+          CONFIRM_TRANSFORM_UPDATE_LATEST_OPTIONS
         );
       }
     }
 
-    const presentation = runPresentationPhase({
-      ctx: frameCtx,
-      localPlayer,
-      heroId,
-      heroStats,
-      predictedState,
-      abilityCtx,
-      frameInput,
-      hasMovementInput,
-      speedMultiplier,
-      wasGroundedBeforePrediction,
-      now,
-      frameNowMs,
-      dt,
-    });
+    const presentationOptions = presentationOptionsRef.current
+      ?? (presentationOptionsRef.current = {} as Parameters<typeof runPresentationPhase>[0]);
+    presentationOptions.ctx = frameCtx;
+    presentationOptions.localPlayer = localPlayer;
+    presentationOptions.heroId = heroId;
+    presentationOptions.heroStats = heroStats;
+    presentationOptions.predictedState = predictedState;
+    presentationOptions.abilityCtx = abilityCtx;
+    presentationOptions.frameInput = frameInput;
+    presentationOptions.hasMovementInput = hasMovementInput;
+    presentationOptions.speedMultiplier = speedMultiplier;
+    presentationOptions.wasGroundedBeforePrediction = wasGroundedBeforePrediction;
+    presentationOptions.now = now;
+    presentationOptions.frameNowMs = frameNowMs;
+    presentationOptions.dt = dt;
+    const presentation = runPresentationPhase(presentationOptions);
 
-    runTracePhase({
-      ctx: frameCtx,
-      localPlayer,
-      heroId,
-      heroDef,
-      frameInput,
-      commandInput,
-      localMovementForTrace: presentation.localMovementForTrace,
-      isSliding: presentation.isSliding,
-      wasSlidingBeforeFrame: presentation.wasSlidingBeforeFrame,
-      speedMultiplier,
-      now,
-      dt,
-    });
+    const traceOptions = traceOptionsRef.current
+      ?? (traceOptionsRef.current = {} as Parameters<typeof runTracePhase>[0]);
+    traceOptions.ctx = frameCtx;
+    traceOptions.localPlayer = localPlayer;
+    traceOptions.heroId = heroId;
+    traceOptions.heroDef = heroDef;
+    traceOptions.frameInput = frameInput;
+    traceOptions.commandInput = commandInput;
+    traceOptions.localMovementForTrace = presentation.localMovementForTrace;
+    traceOptions.isSliding = presentation.isSliding;
+    traceOptions.wasSlidingBeforeFrame = presentation.wasSlidingBeforeFrame;
+    traceOptions.speedMultiplier = speedMultiplier;
+    traceOptions.now = now;
+    traceOptions.dt = dt;
+    runTracePhase(traceOptions);
   };
 
   // Main game loop. Run early so viewmodel/effects sample the updated camera and predicted velocity.

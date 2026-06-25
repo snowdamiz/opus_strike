@@ -181,7 +181,7 @@ const SHADOW_QUALITY_CONFIG: Record<GraphicsFeatureQuality, ShadowQualityConfig>
   },
   high: {
     enabled: true,
-    mapSize: 4096,
+    mapSize: 2048,
     type: THREE.PCFSoftShadowMap,
     volume: 100,
     far: 200,

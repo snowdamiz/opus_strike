@@ -84,7 +84,7 @@ interface HeroBodyPoseSnapshotTransform {
 type HeroBodyPoseBlendTarget = HeroBoneName | 'root';
 
 export interface HeroBodyPoseTransitionRuntime {
-  activeKey: string | null;
+  activeKey: number | string | null;
   elapsedSeconds: number;
   durationSeconds: number;
   fromPose: Record<HeroBodyPoseBlendTarget, HeroBodyPoseSnapshotTransform>;
@@ -146,7 +146,7 @@ export function createHeroBodyPoseTransitionRuntime(
 
 export function resetHeroBodyPoseTransitionRuntime(
   runtime: HeroBodyPoseTransitionRuntime,
-  activeKey: string | null = null
+  activeKey: number | string | null = null
 ): void {
   runtime.activeKey = activeKey;
   runtime.elapsedSeconds = runtime.durationSeconds;
@@ -154,7 +154,7 @@ export function resetHeroBodyPoseTransitionRuntime(
 
 export function beginHeroBodyPoseTransition(
   runtime: HeroBodyPoseTransitionRuntime,
-  poseKey: string,
+  poseKey: number | string,
   root: HeroBodyPoseRootTransform,
   bones: HeroBoneRefs
 ): void {
@@ -205,6 +205,35 @@ export function applyHeroBodyPoseTransition(
   }
 }
 
+// Numeric (bitmask) encoding of a hero body pose state. Each field occupies a
+// disjoint bit range so two distinct pose states can never collide to the same
+// number. Bit layout (LSB first):
+//   bit 0      idleEnabled
+//   bit 1      moving
+//   bit 2      jumping
+//   bit 3      crouching
+//   bit 4      sliding
+//   bit 5      downed
+//   bit 6      crawling
+//   bit 7      beingRevived
+//   bit 8      shieldActive
+//   bits 9-10  attackState (0 = none, 1 = attack side +1, 2 = attack side -1)
+//   bits 11-13 heroId index (0-7)
+//   bits 14-16 movementPose index (0-7)
+// Max occupied bit is 16, so the key is always a positive 17-bit integer.
+const HERO_BODY_POSE_HERO_ID_BITS: Record<HeroId, number> = {
+  phantom: 0,
+  hookshot: 1,
+  blaze: 2,
+  chronos: 3,
+};
+
+const HERO_BODY_POSE_MOVEMENT_BITS: Record<HeroMovementPose, number> = {
+  walk: 0,
+  crouchWalk: 1,
+  run: 2,
+};
+
 export function getHeroBodyPoseBlendKey(options: {
   heroId: HeroId;
   moving: boolean;
@@ -219,21 +248,22 @@ export function getHeroBodyPoseBlendKey(options: {
   movementPose: HeroMovementPose;
   idleEnabled: boolean;
   shieldActive?: boolean;
-}): string {
-  return [
-    options.heroId,
-    options.idleEnabled ? 'idle-on' : 'idle-off',
-    options.moving ? 'moving' : 'still',
-    options.jumping ? 'jump' : 'ground',
-    options.crouching ? 'crouch' : 'stand',
-    options.sliding ? 'slide' : 'noslide',
-    options.downed ? 'downed' : 'notdowned',
-    options.crawling ? 'crawl' : 'nocrawl',
-    options.beingRevived ? 'reviving' : 'norevive',
-    options.attacking ? `attack-${options.attackSide}` : 'noattack',
-    options.shieldActive ? 'shield' : 'noshield',
-    options.movementPose,
-  ].join('|');
+}): number {
+  let key = 0;
+  if (options.idleEnabled) key |= 1 << 0;
+  if (options.moving) key |= 1 << 1;
+  if (options.jumping) key |= 1 << 2;
+  if (options.crouching) key |= 1 << 3;
+  if (options.sliding) key |= 1 << 4;
+  if (options.downed) key |= 1 << 5;
+  if (options.crawling) key |= 1 << 6;
+  if (options.beingRevived) key |= 1 << 7;
+  if (options.shieldActive) key |= 1 << 8;
+  const attackState = options.attacking ? (options.attackSide === 1 ? 1 : 2) : 0;
+  key |= attackState << 9;
+  key |= HERO_BODY_POSE_HERO_ID_BITS[options.heroId] << 11;
+  key |= HERO_BODY_POSE_MOVEMENT_BITS[options.movementPose] << 14;
+  return key;
 }
 
 export function getNormalizedWalkDirection(direction: HeroWalkDirection): HeroWalkDirection {

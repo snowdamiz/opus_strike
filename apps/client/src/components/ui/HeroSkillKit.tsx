@@ -190,8 +190,16 @@ export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
   ],
 };
 
+// The skill list is static per hero, so cache it once per heroId. This keeps the
+// returned array (and its item objects) referentially stable across renders, which
+// lets memoized HUD leaf components (e.g. HUDSkillSlot) skip re-renders.
+const heroSkillItemsCache = new Map<HeroId, HeroSkillItem[]>();
+
 export function getHeroSkillItems(heroId: HeroId): HeroSkillItem[] {
-  return [
+  const cached = heroSkillItemsCache.get(heroId);
+  if (cached) return cached;
+
+  const items: HeroSkillItem[] = [
     ...HERO_CLICK_SKILLS[heroId].map((skill) => ({
       ...skill,
       tone: 'click' as const,
@@ -208,6 +216,9 @@ export function getHeroSkillItems(heroId: HeroId): HeroSkillItem[] {
       ],
     })),
   ];
+
+  heroSkillItemsCache.set(heroId, items);
+  return items;
 }
 
 type HeroSkillIconSize = 'card' | 'hud';

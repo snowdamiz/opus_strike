@@ -421,7 +421,9 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
         }
         
         // Rising smoke column
-        smokeRefs.current.forEach((smoke, i) => {
+        const smokes = smokeRefs.current;
+        for (let i = 0; i < smokes.length; i++) {
+          const smoke = smokes[i];
           if (smoke) {
             const smokeDelay = i * 80;
             const smokeElapsed = Math.max(0, explosionElapsed - smokeDelay);
@@ -437,11 +439,13 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
             smoke.scale.setScalar(smokeScale);
             animatedMaterials.smoke[i].opacity = Math.max(0, 0.6 - smokeProgress * 0.6);
           }
-        });
+        }
         
         // Flying debris
         const t = explosionElapsed / 1000;
-        debrisRefs.current.forEach((debris, i) => {
+        const debrisList = debrisRefs.current;
+        for (let i = 0; i < debrisList.length; i++) {
+          const debris = debrisList[i];
           if (debris && i < METEOR_DEBRIS.length) {
             const d = METEOR_DEBRIS[i];
             const dx = Math.cos(d.angle) * d.speed * t;
@@ -451,7 +455,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
             debris.scale.setScalar(d.size * fadeOut);
             animatedMaterials.debris[i].opacity = dy > 0 ? fadeOut : 0;
           }
-        });
+        }
         
         if (lightRef.current) {
           lightRef.current.intensity = fadeOut * 60;

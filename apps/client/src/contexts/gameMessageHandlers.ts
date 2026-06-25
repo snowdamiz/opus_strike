@@ -809,6 +809,122 @@ function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: number
   };
 }
 
+function movementVitalsEqual(a: PlayerMovementState, b: PlayerMovementState): boolean {
+  if (
+    a.isGrounded !== b.isGrounded ||
+    a.isSprinting !== b.isSprinting ||
+    a.isCrouching !== b.isCrouching ||
+    a.isSliding !== b.isSliding ||
+    a.slideTimeRemaining !== b.slideTimeRemaining ||
+    a.isWallRunning !== b.isWallRunning ||
+    a.wallRunSide !== b.wallRunSide ||
+    a.isGrappling !== b.isGrappling ||
+    a.isJetpacking !== b.isJetpacking ||
+    a.jetpackFuel !== b.jetpackFuel ||
+    a.isGliding !== b.isGliding ||
+    a.chronosAscendantStartY !== b.chronosAscendantStartY
+  ) {
+    return false;
+  }
+  const ga = a.grapplePoint;
+  const gb = b.grapplePoint;
+  if (ga === gb) return true;
+  if (!ga || !gb) return false;
+  return ga.x === gb.x && ga.y === gb.y && ga.z === gb.z;
+}
+
+function abilitiesVitalsEqual(a: Player['abilities'], b: Player['abilities']): boolean {
+  const aKeys = Object.keys(a);
+  if (aKeys.length !== Object.keys(b).length) return false;
+  for (const key of aKeys) {
+    const av = a[key];
+    const bv = b[key];
+    if (!bv) return false;
+    if (
+      av.abilityId !== bv.abilityId ||
+      av.cooldownRemaining !== bv.cooldownRemaining ||
+      av.cooldownUntil !== bv.cooldownUntil ||
+      av.charges !== bv.charges ||
+      av.isActive !== bv.isActive ||
+      av.activatedAt !== bv.activatedAt
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function statsVitalsEqual(a: Player['stats'], b: Player['stats']): boolean {
+  return (
+    a.kills === b.kills &&
+    a.deaths === b.deaths &&
+    a.assists === b.assists &&
+    a.flagCaptures === b.flagCaptures &&
+    a.flagReturns === b.flagReturns
+  );
+}
+
+function rankVitalsEqual(a: Player['rank'], b: Player['rank']): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.tier === b.tier &&
+    a.tierLabel === b.tierLabel &&
+    a.division === b.division &&
+    a.divisionIndex === b.divisionIndex &&
+    a.label === b.label &&
+    a.iconKey === b.iconKey &&
+    a.isRanked === b.isRanked &&
+    a.placementRemaining === b.placementRemaining
+  );
+}
+
+/**
+ * Returns true when `next` (freshly built from a vitals snapshot) would render
+ * identically to the `existing` remote player. Used to skip the players Map churn
+ * (and the cascading re-renders) when a vitals broadcast carries no real change.
+ */
+function remotePlayerVitalsEqual(existing: Player, next: Player): boolean {
+  return (
+    existing.id === next.id &&
+    existing.name === next.name &&
+    existing.role === next.role &&
+    existing.team === next.team &&
+    existing.heroId === next.heroId &&
+    existing.skinId === next.skinId &&
+    existing.state === next.state &&
+    existing.isReady === next.isReady &&
+    existing.isBot === next.isBot &&
+    existing.botDifficulty === next.botDifficulty &&
+    existing.botProfileId === next.botProfileId &&
+    existing.health === next.health &&
+    existing.maxHealth === next.maxHealth &&
+    existing.downedHealth === next.downedHealth &&
+    existing.downedMaxHealth === next.downedMaxHealth &&
+    existing.downedStartedAt === next.downedStartedAt &&
+    existing.downedRemainingMs === next.downedRemainingMs &&
+    existing.downedExpiresAt === next.downedExpiresAt &&
+    existing.reviveStartedAt === next.reviveStartedAt &&
+    existing.reviveCompletesAt === next.reviveCompletesAt &&
+    existing.reviveByPlayerId === next.reviveByPlayerId &&
+    existing.ultimateCharge === next.ultimateCharge &&
+    existing.onFireUntil === next.onFireUntil &&
+    existing.powerupBoostUntil === next.powerupBoostUntil &&
+    existing.hasFlag === next.hasFlag &&
+    existing.respawnTime === next.respawnTime &&
+    existing.spawnProtectionUntil === next.spawnProtectionUntil &&
+    existing.visibility === next.visibility &&
+    existing.position === next.position &&
+    existing.velocity === next.velocity &&
+    existing.lookYaw === next.lookYaw &&
+    existing.lookPitch === next.lookPitch &&
+    statsVitalsEqual(existing.stats, next.stats) &&
+    rankVitalsEqual(existing.rank, next.rank) &&
+    movementVitalsEqual(existing.movement, next.movement) &&
+    abilitiesVitalsEqual(existing.abilities, next.abilities)
+  );
+}
+
 function isDefaultBootstrapPosition(player: Player): boolean {
   return (
     player.position.x === 0 &&
@@ -1316,11 +1432,16 @@ export function setupPlayerVitalsHandler(
       const existing = nextPlayers.get(vitals.id);
       const next = createPlayerFromVitals(vitals, data.serverTime, existing);
       syncDeathVisualForVitals(next.id, next.state, existing?.heroId ?? null, next.heroId, next.respawnTime);
-      writablePlayers().set(vitals.id, next);
-      if (shouldHideLiveVisuals(next.visibility)) {
-        hiddenVisualUpdates.push(next.id);
-      } else {
-        liveVisualUpdates.push(next);
+      // Only churn the players Map (and trigger re-renders) when the vitals snapshot
+      // actually changed this remote player. Periodic vitals broadcasts for idle /
+      // unchanged players are otherwise no-ops.
+      if (!existing || !remotePlayerVitalsEqual(existing, next)) {
+        writablePlayers().set(vitals.id, next);
+        if (shouldHideLiveVisuals(next.visibility)) {
+          hiddenVisualUpdates.push(next.id);
+        } else {
+          liveVisualUpdates.push(next);
+        }
       }
       syncPlayerVisualEffectIndexes(next, { localPlayerId: sessionId, nowMs });
       shouldPublishTiming = true;

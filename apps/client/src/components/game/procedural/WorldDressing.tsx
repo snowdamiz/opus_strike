@@ -687,7 +687,7 @@ export function WorldDressing({
         geometry={DRESSING_GEOMETRIES.pebble}
         material={resources.pebbleMaterial}
         maxRenderDistance={maxRenderDistance}
-        castShadow={shadowsEnabled}
+        castShadow={false}
         receiveShadow={shadowsEnabled}
       />
       <InstancedDressingMesh
@@ -696,7 +696,7 @@ export function WorldDressing({
         geometry={DRESSING_GEOMETRIES.crystal}
         material={resources.crystalMaterial}
         maxRenderDistance={maxRenderDistance}
-        castShadow={shadowsEnabled}
+        castShadow={false}
         receiveShadow={shadowsEnabled}
       />
     </group>

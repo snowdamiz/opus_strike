@@ -21,7 +21,8 @@ import {
   getHeroMovementProfile,
   getTeamBodyGlowEmissiveIntensity,
   getTeamBodyGlowOpacity,
-  lerpMovementProfile,
+  copyMovementProfile,
+  lerpMovementProfileInto,
 } from '../../model-system/heroBodyManifests';
 import {
   applyChronosArmPose,
@@ -66,6 +67,7 @@ import {
   groupRiggedParts,
 } from '../../model-system/heroRig';
 import type {
+  HeroBodyManifest,
   HeroBoneName,
   HeroBoneRefs,
   HeroMovementPose,
@@ -209,6 +211,7 @@ interface RemoteHeroRuntime {
   playerId: string;
   heroId: HeroId;
   skinId: HeroSkinId;
+  bodyManifest: HeroBodyManifest;
   seenGeneration: number;
   bodyRoot: THREE.Group;
   bones: CompleteBoneRefs;
@@ -274,6 +277,19 @@ const WORLD_UP_AXIS = new THREE.Vector3(0, 1, 0);
 const WORLD_UNIT_SCALE = new THREE.Vector3(1, 1, 1);
 const REMOTE_BATCH_PREWARM_PLAYER_CAPACITY = 4;
 const REMOTE_BATCH_CAPACITY_GROWTH_PADDING = 2;
+// Allocate instanced-mesh player capacity in coarse steps so the geometry/emissive
+// buffers are not re-cloned each time a single player joins. A granularity of 16
+// covers the battle-royale max (33 players) in at most two growth events, after
+// which capacity stays fixed for the rest of the match. Larger buffers only widen
+// allocations; the per-frame active instance count (mesh.count) is unaffected.
+const REMOTE_BATCH_CAPACITY_GRANULARITY = 16;
+
+function alignRemoteBatchPlayerCapacity(playerCount: number): number {
+  return Math.max(
+    REMOTE_BATCH_CAPACITY_GRANULARITY,
+    Math.ceil(playerCount / REMOTE_BATCH_CAPACITY_GRANULARITY) * REMOTE_BATCH_CAPACITY_GRANULARITY
+  );
+}
 const BATTLE_ROYAL_MAX_REMOTE_FULL_BODY_DISTANCE = 88;
 const BATTLE_ROYAL_REMOTE_ACTIVITY_BODY_DISTANCE = 96;
 const TEAM_SILHOUETTE_GLOW_OUTLINE_SCALE = 1.24;
@@ -743,8 +759,8 @@ function resetRemoteAnimationState(runtime: RemoteHeroRuntime, player: Player): 
   runtime.attackBlend = 0;
   runtime.postureScaleY = getPlayerBodyPostureScaleY(player.movement, player.state);
   runtime.targetMovementPose = movementPose;
-  runtime.previousMovementProfile = movementProfile;
-  runtime.currentMovementProfile = movementProfile;
+  copyMovementProfile(runtime.previousMovementProfile, movementProfile);
+  copyMovementProfile(runtime.currentMovementProfile, movementProfile);
   runtime.movementProfileBlend = 1;
   runtime.movementCycle = 0;
   runtime.smoothedWalkDirection = { ...DEFAULT_WALK_DIRECTION };
@@ -810,6 +826,7 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
     playerId: player.id,
     heroId,
     skinId,
+    bodyManifest: resolveHeroSkinModel(heroId, skinId).bodyManifest,
     seenGeneration: 0,
     bodyRoot,
     bones,
@@ -824,8 +841,8 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
     attackBlend: 0,
     poseTransition: createHeroBodyPoseTransitionRuntime(),
     targetMovementPose: initialMovementPose,
-    previousMovementProfile: initialMovementProfile,
-    currentMovementProfile: initialMovementProfile,
+    previousMovementProfile: copyMovementProfile({} as HeroMovementProfile, initialMovementProfile),
+    currentMovementProfile: copyMovementProfile({} as HeroMovementProfile, initialMovementProfile),
     movementProfileBlend: 1,
     movementCycle: 0,
     postureScaleY: getPlayerBodyPostureScaleY(player.movement, player.state),
@@ -884,6 +901,7 @@ function updateRuntimeHero(runtime: RemoteHeroRuntime, player: Player): void {
   if (runtime.heroId === nextHeroId && runtime.skinId === nextSkinId) return;
   runtime.heroId = nextHeroId;
   runtime.skinId = nextSkinId;
+  runtime.bodyManifest = resolveHeroSkinModel(nextHeroId, nextSkinId).bodyManifest;
   resetRemoteAnimationState(runtime, player);
   syncSocketRegistrations(runtime);
 }
@@ -1009,7 +1027,7 @@ function updateRemotePose(
 ): void {
   const frameDelta = Math.min(delta, 0.05);
   const heroId = runtime.heroId;
-  const manifest = resolveHeroSkinModel(heroId, runtime.skinId).bodyManifest;
+  const manifest = runtime.bodyManifest;
   const playerHeight = getRemotePlayerHeight(player);
   const scale = playerHeight / 1.8;
   const targetPostureScaleY = getPlayerBodyPostureScaleY(movement, player.state);
@@ -1060,7 +1078,7 @@ function updateRemotePose(
 
   const movementPose = getPlayerMovementPose(player, crouching || sliding, moving, movement);
   if (runtime.targetMovementPose !== movementPose) {
-    runtime.previousMovementProfile = runtime.currentMovementProfile;
+    copyMovementProfile(runtime.previousMovementProfile, runtime.currentMovementProfile);
     runtime.targetMovementPose = movementPose;
     runtime.movementProfileBlend = 0;
   }
@@ -1071,12 +1089,12 @@ function updateRemotePose(
     6.5,
     frameDelta
   );
-  const movementProfile = lerpMovementProfile(
+  const movementProfile = lerpMovementProfileInto(
+    runtime.currentMovementProfile,
     runtime.previousMovementProfile,
     getHeroMovementProfile(heroId, runtime.targetMovementPose),
     runtime.movementProfileBlend
   );
-  runtime.currentMovementProfile = movementProfile;
 
   const targetWalkDirection = getNormalizedWalkDirection(runtime.smoothedWalkDirection);
   const directionDampSpeed = moving && !jumping && !sliding
@@ -2124,16 +2142,16 @@ function RemoteHeroBatchGroup({
   const playersRef = useRef(players);
   const configRef = useRef(config);
   const playerGenerationRef = useRef(0);
-  const capacityPlayersRef = useRef(Math.max(
+  const capacityPlayersRef = useRef(alignRemoteBatchPlayerCapacity(Math.max(
     REMOTE_BATCH_PREWARM_PLAYER_CAPACITY,
     players.length,
     resourcePlayerCount
-  ));
+  )));
   if (players.length > capacityPlayersRef.current) {
-    capacityPlayersRef.current = players.length + REMOTE_BATCH_CAPACITY_GROWTH_PADDING;
+    capacityPlayersRef.current = alignRemoteBatchPlayerCapacity(players.length + REMOTE_BATCH_CAPACITY_GROWTH_PADDING);
   }
   if (resourcePlayerCount > capacityPlayersRef.current) {
-    capacityPlayersRef.current = resourcePlayerCount + REMOTE_BATCH_CAPACITY_GROWTH_PADDING;
+    capacityPlayersRef.current = alignRemoteBatchPlayerCapacity(resourcePlayerCount + REMOTE_BATCH_CAPACITY_GROWTH_PADDING);
   }
   const capacity = capacityPlayersRef.current;
   const shouldMountChronosCape = resources.heroId === 'chronos';

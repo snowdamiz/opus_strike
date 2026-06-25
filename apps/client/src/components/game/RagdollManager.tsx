@@ -795,7 +795,29 @@ export function RagdollManager({ config }: RagdollManagerProps) {
   }, [config.maxTotal, poolHandles]);
 
   useFrame((_, delta) => {
-    measureFrameWork('frame.effects.ragdollManager', () => {
+    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+      measureFrameWork('frame.effects.ragdollManager', () => {
+        const now = Date.now();
+        if (now - lastExpirySweepRef.current >= EXPIRY_SWEEP_INTERVAL_MS) {
+          lastExpirySweepRef.current = now;
+          clearExpiredDeathVisuals(now);
+        }
+
+        const deathVisualRevision = visualStore.getState().deathVisualRevision;
+        if (deathVisualRevision !== lastSyncedDeathRevisionRef.current) {
+          lastSyncedDeathRevisionRef.current = deathVisualRevision;
+          const activeSnapshots = config.maxTotal <= 0
+            ? []
+            : getActiveDeathVisuals(now).slice(0, config.maxTotal);
+          activeHandlesRef.current = syncRagdollSlots(poolHandles, activeSnapshots);
+          recordEffectSlotDiagnostics('ragdolls', {
+            active: activeSnapshots.length,
+            hiddenMounted: Math.max(0, poolHandles.length - activeSnapshots.length),
+            capacity: config.maxTotal,
+          });
+        }
+      });
+    } else {
       const now = Date.now();
       if (now - lastExpirySweepRef.current >= EXPIRY_SWEEP_INTERVAL_MS) {
         lastExpirySweepRef.current = now;
@@ -809,18 +831,24 @@ export function RagdollManager({ config }: RagdollManagerProps) {
           ? []
           : getActiveDeathVisuals(now).slice(0, config.maxTotal);
         activeHandlesRef.current = syncRagdollSlots(poolHandles, activeSnapshots);
-        if (MOVEMENT_DIAGNOSTICS_ENABLED) {
-          recordEffectSlotDiagnostics('ragdolls', {
-            active: activeSnapshots.length,
-            hiddenMounted: Math.max(0, poolHandles.length - activeSnapshots.length),
-            capacity: config.maxTotal,
-          });
-        }
       }
-    });
+    }
 
     if (activeHandlesRef.current.length > 0) {
-      measureFrameWork('frame.effects.ragdollBody', () => {
+      if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+        measureFrameWork('frame.effects.ragdollBody', () => {
+          const activeHandles = activeHandlesRef.current;
+          const now = Date.now();
+          let writeIndex = 0;
+          for (let readIndex = 0; readIndex < activeHandles.length; readIndex++) {
+            const handle = activeHandles[readIndex];
+            if (!updateRagdollSlot(handle, delta, now)) continue;
+            activeHandles[writeIndex] = handle;
+            writeIndex++;
+          }
+          activeHandles.length = writeIndex;
+        });
+      } else {
         const activeHandles = activeHandlesRef.current;
         const now = Date.now();
         let writeIndex = 0;
@@ -831,7 +859,7 @@ export function RagdollManager({ config }: RagdollManagerProps) {
           writeIndex++;
         }
         activeHandles.length = writeIndex;
-      });
+      }
     }
   });
 

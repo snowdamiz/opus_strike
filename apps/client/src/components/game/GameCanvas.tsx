@@ -74,6 +74,7 @@ const PHANTOM_NIGHT_HEMISPHERE_GROUND_COLOR = new THREE.Color('#171120');
 const PHANTOM_NIGHT_SUN_COLOR = new THREE.Color('#8f83c9');
 const PHANTOM_NIGHT_RIM_COLOR = new THREE.Color('#a78bfa');
 const DEFAULT_SCENE_FOG_DENSITY = 0.0062;
+const ATMOSPHERE_FX_IDLE_EPSILON = 1e-4;
 
 type GameMapTheme = ReturnType<typeof getVoxelMapTheme>;
 const DEFAULT_REFLECTION_SUN_POSITION: [number, number, number] = [18, 24, -20];
@@ -176,6 +177,7 @@ function SceneAtmosphereColors({
   const { gl, scene } = useThree();
   const fogRef = useRef<THREE.FogExp2>(null);
   const backgroundColorRef = useRef(new THREE.Color(theme.skyColor));
+  const wasIdleRef = useRef(false);
   const baseSkyColor = useMemo(() => new THREE.Color(theme.skyColor), [theme]);
   const baseFogColor = useMemo(() => new THREE.Color(theme.fogColor), [theme]);
   const fireBackgroundColor = useMemo(
@@ -201,6 +203,10 @@ function SceneAtmosphereColors({
   useFrame(({ clock }) => {
     const fireIntensity = getBlazeGearstormSkyIntensity();
     const phantomIntensity = getPhantomVeilSkyIntensity();
+    const isIdle =
+      fireIntensity <= ATMOSPHERE_FX_IDLE_EPSILON && phantomIntensity <= ATMOSPHERE_FX_IDLE_EPSILON;
+    if (isIdle && wasIdleRef.current) return;
+    wasIdleRef.current = isIdle;
     const shimmer = fireIntensity * (0.95 + Math.sin(clock.elapsedTime * 5.2) * 0.05);
 
     backgroundColorRef.current
@@ -240,6 +246,7 @@ function ThemedWorldLighting({
   const hemisphereRef = useRef<THREE.HemisphereLight>(null);
   const sunRef = useRef<THREE.DirectionalLight>(null);
   const rimRef = useRef<THREE.DirectionalLight>(null);
+  const wasIdleRef = useRef(false);
   const sunPosition = lateDay ? LATE_DAY_WORLD_SUN_POSITION : DEFAULT_WORLD_SUN_POSITION;
   const rimPosition = lateDay ? LATE_DAY_WORLD_RIM_POSITION : DEFAULT_WORLD_RIM_POSITION;
   const baseAmbientColor = useMemo(() => new THREE.Color(theme.ambientColor), [theme]);
@@ -276,6 +283,10 @@ function ThemedWorldLighting({
   useFrame(({ clock }) => {
     const fireIntensity = getBlazeGearstormSkyIntensity();
     const phantomIntensity = getPhantomVeilSkyIntensity();
+    const isIdle =
+      fireIntensity <= ATMOSPHERE_FX_IDLE_EPSILON && phantomIntensity <= ATMOSPHERE_FX_IDLE_EPSILON;
+    if (isIdle && wasIdleRef.current) return;
+    wasIdleRef.current = isIdle;
     const pulse = fireIntensity * (0.9 + Math.sin(clock.elapsedTime * 7.1) * 0.1);
 
     if (ambientRef.current) {
