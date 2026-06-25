@@ -3002,13 +3002,28 @@ export function setupCombatHandlers(room: Room) {
     const targetPlayer = store.players.get(data.targetId);
     const sourcePosition = data.sourcePosition ?? sourcePlayer?.position ?? null;
     const targetPosition = data.targetPosition ?? targetPlayer?.position ?? null;
+    const newDownedHealth = typeof data.newDownedHealth === 'number' && Number.isFinite(data.newDownedHealth)
+      ? Math.max(0, data.newDownedHealth)
+      : null;
+
+    if (newDownedHealth !== null) {
+      if (data.targetId === localPlayerId) {
+        store.updateLocalPlayer({ downedHealth: newDownedHealth });
+      } else if (targetPlayer) {
+        store.updatePlayer(data.targetId, {
+          ...targetPlayer,
+          downedHealth: newDownedHealth,
+        });
+      }
+    }
 
     if (data.sourceId === localPlayerId && targetPosition) {
+      const fixedAnchor = data.damageType === 'bomb' || newDownedHealth !== null || targetPlayer?.state === 'downed';
       useCombatFeedbackStore.getState().addCombatTextEvent({
         kind: 'damage',
         amount: data.damage,
         damageType: data.damageType,
-        targetId: data.targetId,
+        targetId: fixedAnchor ? null : data.targetId,
         position: targetPosition,
       });
     }

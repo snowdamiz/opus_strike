@@ -463,6 +463,19 @@ export const BATTLE_ROYAL_VISIBILITY_CONFIG: Record<GraphicsPreset, BattleRoyalV
   },
 };
 
+const BATTLE_ROYAL_FLIGHT_FULL_LOD_MULTIPLIER = 4.6;
+const BATTLE_ROYAL_FLIGHT_FULL_LOD_MIN_INCREASE = 130;
+const BATTLE_ROYAL_FLIGHT_COARSE_LOD_MULTIPLIER = 4.35;
+const BATTLE_ROYAL_FLIGHT_ULTRA_COARSE_LOD_MULTIPLIER = 4.15;
+const BATTLE_ROYAL_FLIGHT_CULL_MULTIPLIER = 4.15;
+const BATTLE_ROYAL_FLIGHT_CAMERA_FAR_MULTIPLIER = 4.15;
+const BATTLE_ROYAL_FLIGHT_COARSE_LOD_PADDING = 70;
+const BATTLE_ROYAL_FLIGHT_ULTRA_COARSE_LOD_PADDING = 80;
+const BATTLE_ROYAL_FLIGHT_CULL_PADDING = 96;
+const BATTLE_ROYAL_FLIGHT_CAMERA_FAR_PADDING = 96;
+const BATTLE_ROYAL_FLIGHT_MIN_TERRAIN_CULL_DISTANCE = 760;
+const BATTLE_ROYAL_FLIGHT_MIN_CAMERA_FAR = 860;
+
 export function scaleBattleRoyalVisibilityConfig(
   config: BattleRoyalVisibilityConfig,
   scale: number
@@ -509,11 +522,28 @@ export function createBattleRoyalFlightVisibilityConfig(
   const flightBlend = THREE.MathUtils.clamp(blend, 0, 1);
   if (flightBlend <= 0.001) return config;
 
-  const flightFullDistance = Math.max(config.terrainLodFullDistance * 4.6, config.terrainLodFullDistance + 130);
-  const flightCoarseDistance = Math.max(config.terrainLodCoarseDistance * 3.25, flightFullDistance + 42);
-  const flightUltraCoarseDistance = Math.max(config.terrainLodUltraCoarseDistance * 2.55, flightCoarseDistance + 44);
-  const flightCullDistance = Math.max(config.terrainCullDistance * 2.45, flightUltraCoarseDistance + 30);
-  const flightCameraFar = Math.max(config.cameraFar * 2.45, flightCullDistance + 24);
+  const flightFullDistance = Math.max(
+    config.terrainLodFullDistance * BATTLE_ROYAL_FLIGHT_FULL_LOD_MULTIPLIER,
+    config.terrainLodFullDistance + BATTLE_ROYAL_FLIGHT_FULL_LOD_MIN_INCREASE
+  );
+  const flightCoarseDistance = Math.max(
+    config.terrainLodCoarseDistance * BATTLE_ROYAL_FLIGHT_COARSE_LOD_MULTIPLIER,
+    flightFullDistance + BATTLE_ROYAL_FLIGHT_COARSE_LOD_PADDING
+  );
+  const flightUltraCoarseDistance = Math.max(
+    config.terrainLodUltraCoarseDistance * BATTLE_ROYAL_FLIGHT_ULTRA_COARSE_LOD_MULTIPLIER,
+    flightCoarseDistance + BATTLE_ROYAL_FLIGHT_ULTRA_COARSE_LOD_PADDING
+  );
+  const flightCullDistance = Math.max(
+    config.terrainCullDistance * BATTLE_ROYAL_FLIGHT_CULL_MULTIPLIER,
+    flightUltraCoarseDistance + BATTLE_ROYAL_FLIGHT_CULL_PADDING,
+    BATTLE_ROYAL_FLIGHT_MIN_TERRAIN_CULL_DISTANCE
+  );
+  const flightCameraFar = Math.max(
+    config.cameraFar * BATTLE_ROYAL_FLIGHT_CAMERA_FAR_MULTIPLIER,
+    flightCullDistance + BATTLE_ROYAL_FLIGHT_CAMERA_FAR_PADDING,
+    BATTLE_ROYAL_FLIGHT_MIN_CAMERA_FAR
+  );
 
   return {
     ...config,

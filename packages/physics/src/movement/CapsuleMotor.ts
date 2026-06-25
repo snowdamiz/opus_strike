@@ -168,6 +168,15 @@ const SKIN_WIDTH_EXPANSION: Vec3 = { x: SKIN_WIDTH, y: SKIN_WIDTH, z: SKIN_WIDTH
 const SLIDE_EXIT_PROBE_DISTANCES = [0, 0.08, 0.16, 0.24] as const;
 const LOW_POSTURE_GATE_PROBE_DISTANCES = [PLAYER_RADIUS, PLAYER_RADIUS + 0.25, PLAYER_RADIUS + 0.55] as const;
 const LOW_POSTURE_CLEARANCE_MARGIN = 0.05;
+const SLIDE_GRADE_LOOKAHEAD_DISTANCES = [
+  PLAYER_RADIUS,
+  PLAYER_RADIUS * 2,
+  PLAYER_RADIUS * 3,
+  PLAYER_RADIUS * 4,
+] as const;
+const SLIDE_GRADE_SAMPLE_RADIUS = 0.08;
+const SLIDE_GRADE_SNAP_DISTANCE = STEP_HEIGHT + GROUND_SNAP_DISTANCE;
+const SLIDE_DOWNHILL_MIN_DROP = 0.025;
 
 type SlideExitPosture = 'stand' | 'crouch';
 
@@ -1020,6 +1029,45 @@ function shouldPreferCrouchForLowClearance(
   return hasCrouchClearance;
 }
 
+function groundYFromHit(hit: MovementGroundHit): number {
+  return feetY(hit.position);
+}
+
+function sampleSlideGradeGroundY(
+  world: MovementCollisionWorld,
+  position: Vec3,
+  height: number
+): number | null {
+  const ground = world.findGround(position, SLIDE_GRADE_SNAP_DISTANCE, SLIDE_GRADE_SAMPLE_RADIUS, height);
+  return ground?.walkable ? groundYFromHit(ground) : null;
+}
+
+function isSlidingDownhill(
+  world: MovementCollisionWorld,
+  position: Vec3,
+  velocity: Vec3,
+  height: number
+): boolean {
+  const direction = normalizeHorizontal(velocity);
+  if (length(direction) <= EPSILON) return false;
+
+  const currentGroundY = sampleSlideGradeGroundY(world, position, height);
+  if (currentGroundY === null) return false;
+
+  let foundDrop = false;
+  for (const probeDistance of SLIDE_GRADE_LOOKAHEAD_DISTANCES) {
+    const forwardPosition = add(position, scale(direction, probeDistance));
+    const forwardGroundY = sampleSlideGradeGroundY(world, forwardPosition, height);
+    if (forwardGroundY === null) continue;
+
+    const gradeDelta = forwardGroundY - currentGroundY;
+    if (gradeDelta > SLIDE_DOWNHILL_MIN_DROP) return false;
+    if (gradeDelta < -SLIDE_DOWNHILL_MIN_DROP) foundDrop = true;
+  }
+
+  return foundDrop;
+}
+
 function tryStepUp(
   world: MovementCollisionWorld,
   position: Vec3,
@@ -1267,7 +1315,7 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
     !movement.isSliding
   );
 
-  if (movement.slideTimeRemaining > 0) {
+  if (!movement.isSliding && movement.slideTimeRemaining > 0) {
     movement.slideTimeRemaining = Math.max(0, movement.slideTimeRemaining - dt);
   }
 
@@ -1301,22 +1349,38 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
 
   if (movement.isSliding) {
     const sprintSpeed = input.heroStats.moveSpeed * SPRINT_MULTIPLIER;
-    const friction = Math.pow(SLIDE_FRICTION, dt * 60);
-    velocity.x *= friction;
-    velocity.z *= friction;
-    const slideSpeedAfterFriction = horizontalSpeed(velocity);
+    const slidingDownhill = isSlidingDownhill(
+      world,
+      position,
+      velocity,
+      PLAYER_SLIDE_HEIGHT
+    );
 
-    if (hasMovementInput && slideSpeedAfterFriction > EPSILON) {
+    if (!slidingDownhill && movement.slideTimeRemaining > 0) {
+      movement.slideTimeRemaining = Math.max(0, movement.slideTimeRemaining - dt);
+    }
+
+    let slideSpeedLimit = horizontalSpeed(velocity);
+    if (!slidingDownhill) {
+      const friction = Math.pow(SLIDE_FRICTION, dt * 60);
+      velocity.x *= friction;
+      velocity.z *= friction;
+      slideSpeedLimit = horizontalSpeed(velocity);
+    }
+
+    if (hasMovementInput && slideSpeedLimit > EPSILON) {
       const steer = input.heroStats.moveSpeed * 2.5 * dt;
       velocity.x += wishDir.x * steer;
       velocity.z += wishDir.z * steer;
-      velocity = clampHorizontalSpeed(velocity, slideSpeedAfterFriction);
+      velocity = clampHorizontalSpeed(velocity, slideSpeedLimit);
     }
 
     velocity = clampHorizontalSpeed(velocity, sprintSpeed * SLIDE_MAX_SPEED_MULTIPLIER);
 
     const slideJumpRequested = input.command.input.jump;
-    if (movement.slideTimeRemaining <= 0 || slideJumpRequested || horizontalSpeed(velocity) < 2) {
+    const slideExpired = !slidingDownhill && movement.slideTimeRemaining <= 0;
+    const slideTooSlow = !slidingDownhill && horizontalSpeed(velocity) < 2;
+    if (slideExpired || slideJumpRequested || slideTooSlow) {
       const exit = resolveSlideExitPosture(
         world,
         position,

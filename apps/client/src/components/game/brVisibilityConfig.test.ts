@@ -11,6 +11,7 @@ import {
   createBattleRoyalFlightVisibilityConfig,
   DEFAULT_CAMERA_FAR,
   getVisualQualityConfig,
+  scaleBattleRoyalVisibilityConfig,
 } from './visualQuality';
 
 const orderedProfiles = ['potato', 'competitive', 'balanced', 'cinematic'] as const;
@@ -95,8 +96,17 @@ assert.ok(
   'flight full LOD breakpoint should be much farther than runtime'
 );
 assert.ok(
-  balancedFlightVisibility.terrainCullDistance >= BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.terrainCullDistance * 2,
+  balancedFlightVisibility.terrainCullDistance >= BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.terrainCullDistance * 4,
   'flight cull distance should be much farther than runtime'
+);
+assert.ok(
+  balancedFlightVisibility.cameraFar >= balancedFlightVisibility.terrainCullDistance + 90,
+  'flight camera far plane should leave headroom after terrain cull'
+);
+const scaledBalancedFlightVisibility = scaleBattleRoyalVisibilityConfig(balancedFlightVisibility, 0.68);
+assert.ok(
+  scaledBalancedFlightVisibility.terrainCullDistance >= 500,
+  'flight cull distance should still cover high deployment views after adaptive scaling'
 );
 assert.equal(
   balancedFlightVisibility.fogDensity,

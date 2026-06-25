@@ -101,6 +101,7 @@ export interface PlayerDamagedEvent {
   sourceId: string | null;
   damageType: string;
   newHealth?: number;
+  newDownedHealth?: number;
   sourcePosition?: Vec3 | null;
   targetPosition?: Vec3 | null;
   sourceHeroId?: string | null;
