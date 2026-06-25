@@ -7,7 +7,10 @@ import {
   type BotDifficulty,
   type GameplayMode,
   type HeroId,
+  type HeroSkinId,
   type MapProfileId,
+  type MatchMode,
+  type PlayerRole,
   type MatchPerspective,
   type PublicRankSnapshot,
   type VoxelMapSizeId,
@@ -19,6 +22,7 @@ import type {
   MapVoteOption,
   MapVoteRecord,
 } from '../store/types';
+import { useChatStore } from '../store/chatStore';
 import { seedMapPrepCacheFromManifest, type PrepareVoxelMapOptions } from '../utils/mapWarmup/mapPrepCache';
 import { prebuildPreparedMapGeometryDeferred } from '../utils/mapWarmup/deferredMapGeometryWarmup';
 import { requestMapPreviewManifest } from '../utils/mapPreview/mapPreviewManifestClient';
@@ -47,7 +51,7 @@ interface SetupLobbyListenersOptions {
 }
 
 interface MatchmakingStatusMessage {
-  matchMode?: 'quick_play' | 'ranked' | 'custom';
+  matchMode?: MatchMode;
   gameplayMode?: GameplayMode;
   botFillMode?: 'manual' | 'fill_even';
   matchPerspective?: MatchPerspective;
@@ -61,8 +65,6 @@ interface MatchmakingStatusMessage {
   requiredPlayers?: number;
   capacityBlocked?: boolean;
   capacityMaxPlayers?: number;
-  rankedCoverChargeLamports?: string;
-  rankedEntryQuoteId?: string;
 }
 
 interface LobbyPlayerWire {
@@ -70,8 +72,10 @@ interface LobbyPlayerWire {
   name: string;
   isHost: boolean;
   isReady?: boolean;
+  role?: PlayerRole;
   team?: string;
   heroId?: HeroId | '';
+  skinId?: HeroSkinId | '';
   isBot?: boolean;
   botDifficulty?: BotDifficulty | '';
   botProfileId?: string;
@@ -93,8 +97,10 @@ interface PlayerJoinedMessage {
   playerName: string;
   isHost: boolean;
   isReady?: boolean;
+  role?: PlayerRole;
   team?: string;
   heroId?: HeroId | '';
+  skinId?: HeroSkinId | '';
   isBot?: boolean;
   botDifficulty?: BotDifficulty | '';
   botProfileId?: string;
@@ -103,7 +109,7 @@ interface PlayerJoinedMessage {
 
 interface GameStartingMessage {
   gameRoomId: string;
-  players: { playerId: string; playerName: string; team?: string; isBot?: boolean }[];
+  players: { playerId: string; playerName: string; role?: PlayerRole; team?: string; isBot?: boolean }[];
   entryTicket?: string;
   seatReservation?: unknown;
   gameplayMode?: GameplayMode;
@@ -136,8 +142,6 @@ function toMatchmakingStatus(data: MatchmakingStatusMessage): MatchmakingStatusS
     requiredPlayers: typeof data.requiredPlayers === 'number' ? data.requiredPlayers : null,
     capacityBlocked: data.capacityBlocked === true,
     capacityMaxPlayers: typeof data.capacityMaxPlayers === 'number' ? data.capacityMaxPlayers : null,
-    rankedCoverChargeLamports: data.rankedCoverChargeLamports ?? null,
-    rankedEntryQuoteId: data.rankedEntryQuoteId ?? null,
   };
 }
 
@@ -147,8 +151,10 @@ function toLobbyPlayer(player: LobbyPlayerWire): LobbyPlayer {
     name: player.name,
     isHost: player.isHost,
     isReady: player.isReady ?? false,
+    role: player.role === 'observer' ? 'observer' : 'combat',
     team: player.team || '',
     heroId: player.heroId || '',
+    skinId: player.skinId || '',
     isBot: Boolean(player.isBot),
     botDifficulty: player.botDifficulty || '',
     botProfileId: player.botProfileId,
@@ -162,8 +168,10 @@ function toJoinedLobbyPlayer(data: PlayerJoinedMessage): LobbyPlayer {
     name: data.playerName,
     isHost: data.isHost,
     isReady: data.isReady,
+    role: data.role,
     team: data.team,
     heroId: data.heroId,
+    skinId: data.skinId,
     isBot: data.isBot,
     botDifficulty: data.botDifficulty,
     botProfileId: data.botProfileId,
@@ -337,10 +345,7 @@ export function setupLobbyListeners(
       matchPerspective: isMatchPerspective(data.matchPerspective) ? data.matchPerspective : DEFAULT_MATCH_PERSPECTIVE,
     });
     setIsLobbyHost(data.hostId === room.sessionId);
-    setMatchmakingStatus(toMatchmakingStatus({
-      ...data,
-      rankedEntryQuoteId: data.rankedEntryQuoteId ?? undefined,
-    }));
+    setMatchmakingStatus(toMatchmakingStatus(data));
     if (data.status === 'map_vote') {
       setAppPhase('map_vote');
     } else if (data.status === 'matchmaking') {
@@ -432,15 +437,32 @@ export function setupLobbyListeners(
   });
 
   room.onMessage('playerTeamChanged', (data: { playerId: string; team: string }) => {
-    updateLobbyPlayerPatch(data.playerId, { team: data.team });
+    updateLobbyPlayerPatch(data.playerId, { role: 'combat', team: data.team });
+  });
+
+  room.onMessage('playerRoleChanged', (data: {
+    playerId: string;
+    role: PlayerRole;
+    team?: string;
+    heroId?: HeroId | '';
+    skinId?: HeroSkinId | '';
+    isReady?: boolean;
+  }) => {
+    updateLobbyPlayerPatch(data.playerId, {
+      role: data.role === 'observer' ? 'observer' : 'combat',
+      team: data.team || '',
+      heroId: data.heroId || '',
+      skinId: data.skinId || '',
+      ...(typeof data.isReady === 'boolean' ? { isReady: data.isReady } : {}),
+    });
   });
 
   room.onMessage('botDifficultyChanged', (data: { playerId: string; difficulty: BotDifficulty }) => {
     updateLobbyPlayerPatch(data.playerId, { botDifficulty: data.difficulty });
   });
 
-  room.onMessage('botHeroChanged', (data: { playerId: string; heroId: HeroId | '' }) => {
-    updateLobbyPlayerPatch(data.playerId, { heroId: data.heroId });
+  room.onMessage('botHeroChanged', (data: { playerId: string; heroId: HeroId | ''; skinId?: HeroSkinId | '' }) => {
+    updateLobbyPlayerPatch(data.playerId, { heroId: data.heroId, skinId: data.skinId || '' });
   });
 
   room.onMessage('hostChanged', (data: { newHostId: string; newHostName: string }) => {
@@ -454,6 +476,10 @@ export function setupLobbyListeners(
     setLobbyPlayers(updatedPlayers);
   });
 
+  room.onMessage('chat', (data: unknown) => {
+    useChatStore.getState().addIncomingMessage('lobby', data);
+  });
+
   room.onMessage('gameStarting', async (data: GameStartingMessage) => {
     if (isJoiningGame) {
       loggers.network.debug('ignoring duplicate gameStarting message');
@@ -464,7 +490,7 @@ export function setupLobbyListeners(
 
     loggers.network.info('game starting', data.gameRoomId);
     const myAssignment = data.players.find((player) => player.playerId === room.sessionId);
-    const myTeam = myAssignment?.team || 'red';
+    const myTeam = myAssignment?.team || '';
     useGameStore.setState({
       gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : DEFAULT_GAMEPLAY_MODE,
       matchPerspective: isMatchPerspective(data.matchPerspective) ? data.matchPerspective : DEFAULT_MATCH_PERSPECTIVE,

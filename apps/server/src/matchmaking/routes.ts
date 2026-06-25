@@ -15,11 +15,14 @@ import { collectInGameCapacitySnapshot, type InGameCapacitySnapshot } from './pl
 import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_MATCH_PERSPECTIVE,
+  getHeroSkinDefinition,
   isGameplayMode,
+  isHeroSkinId,
   isKnownHeroId,
   isMatchPerspective,
   type GameplayMode,
   type HeroId,
+  type HeroSkinId,
   type MatchMode,
   type MatchPerspective,
 } from '@voxel-strike/shared';
@@ -36,6 +39,7 @@ import {
   normalizeMatchmakingBotFillMode,
   type MatchmakingBotFillMode,
 } from './matchSettings';
+import { resolveUserLoadoutForHero } from '../cosmetics/skinShopService';
 
 const router: RouterType = Router();
 
@@ -103,6 +107,11 @@ function readRoomIdParam(req: Request): string | null {
 
 function readSelectedHero(value: unknown): HeroId | undefined {
   return typeof value === 'string' && isKnownHeroId(value) ? value : undefined;
+}
+
+function readSelectedSkin(heroId: HeroId | undefined, value: unknown): HeroSkinId | undefined {
+  if (!heroId || typeof value !== 'string' || !isHeroSkinId(value)) return undefined;
+  return getHeroSkinDefinition(value).heroId === heroId ? value : undefined;
 }
 
 async function getQueueStatus(
@@ -293,6 +302,9 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
       ? req.query.perspective
       : DEFAULT_MATCH_PERSPECTIVE;
     const selectedHero = readSelectedHero(req.query.selectedHero);
+    const selectedSkinId = selectedHero
+      ? await resolveUserLoadoutForHero(context.userId, selectedHero, readSelectedSkin(selectedHero, req.query.selectedSkinId))
+      : undefined;
     const targetRankDivisionIndex = await chooseMatchmakingRankBand({
       mode: 'quick_play',
       playerRating: context.competitiveRating,
@@ -307,6 +319,7 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
       botFillMode,
       matchPerspective,
       selectedHero,
+      selectedSkinId,
     }));
   } catch (error) {
     console.error('[matchmaking] Failed to issue quick-play ticket:', error);
@@ -320,9 +333,6 @@ router.get('/ranked-token-hold-status', async (req: Request, res: Response) => {
   try {
     const context = await getMatchmakingUserContext(req);
     if (!enforceMatchmakingIdentityRateLimit(res, 'matchmaking:ranked-token-hold-status:user', MATCHMAKING_RATE_LIMITS.rankedStatus, context.userId)) return;
-    if (!context.walletAddress) {
-      throw Object.assign(new Error('A linked Solana wallet is required for ranked'), { statusCode: 400 });
-    }
 
     res.json({ tokenHold: await getRankedTokenHoldingStatus(context.walletAddress) });
   } catch (error) {
@@ -340,12 +350,12 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
     assertTutorialCompleted(context.tutorialCompletedAt, {
       devBypass: req.headers[DEV_TUTORIAL_BYPASS_HEADER],
     });
-    if (!context.walletAddress) {
-      throw Object.assign(new Error('A linked Solana wallet is required for ranked'), { statusCode: 400 });
-    }
 
     const tokenHold = await assertRankedTokenHoldingEligibility(context.walletAddress);
     const selectedHero = readSelectedHero(req.body?.selectedHero);
+    const selectedSkinId = selectedHero
+      ? await resolveUserLoadoutForHero(context.userId, selectedHero, readSelectedSkin(selectedHero, req.body?.selectedSkinId))
+      : undefined;
     const targetRankDivisionIndex = await chooseMatchmakingRankBand({
       mode: 'ranked',
       playerRating: context.competitiveRating,
@@ -353,7 +363,7 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
       matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
       selectedHero,
     });
-    res.json(issueRankedTicket(context, targetRankDivisionIndex, tokenHold, selectedHero));
+    res.json(issueRankedTicket(context, targetRankDivisionIndex, tokenHold, selectedHero, selectedSkinId));
   } catch (error) {
     console.error('[matchmaking] Failed to issue ranked ticket:', error);
     sendRouteError(res, error, 'Failed to issue ranked ticket');

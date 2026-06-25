@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { Player, PlayerMovementState, VoxelMapTheme } from '@voxel-strike/shared';
@@ -507,7 +507,7 @@ function renderParticles(
   }
 }
 
-export function RemoteMovementEffects({
+export const RemoteMovementEffects = memo(function RemoteMovementEffects({
   players,
   theme,
   config,
@@ -646,4 +646,4 @@ export function RemoteMovementEffects({
       dispose={null}
     />
   );
-}
+});

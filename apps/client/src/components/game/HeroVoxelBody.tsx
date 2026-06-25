@@ -1,11 +1,10 @@
 import { Fragment, memo, useEffect, useMemo, useRef, type MutableRefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { HeroId, Team } from '@voxel-strike/shared';
+import type { HeroId, HeroSkinId, Team } from '@voxel-strike/shared';
 import {
   DEFAULT_WALK_DIRECTION,
   EMPTY_TEAM_ACCENT_PARTS,
-  HERO_BODY_MANIFESTS,
   IDLE_SPEED_MULTIPLIER,
   TEAM_BODY_GLOW_OUTLINE_OPACITY,
   TEAM_BODY_GLOW_OUTLINE_SCALE,
@@ -16,9 +15,12 @@ import {
   getTeamBodyGlowOpacity,
   lerpMovementProfile,
 } from '../../model-system/heroBodyManifests';
+import { resolveHeroSkinModel } from '../../model-system/heroSkinModelResolver';
 import {
   applyChronosArmPose,
   applyCrouchBonePose,
+  applyDownedBonePose,
+  applyDownedRootPivot,
   applyHeroBodyPoseTransition,
   applyHeroAttackPose,
   applyIdleBonePose,
@@ -70,6 +72,7 @@ export type { HeroAnimationMode, HeroMovementPose, HeroWalkDirection } from '../
 
 interface HeroVoxelBodyProps {
   heroId: HeroId | null;
+  skinId?: HeroSkinId | string | null;
   team: Team;
   height: number;
   isBot?: boolean;
@@ -81,6 +84,10 @@ interface HeroVoxelBodyProps {
   isCrouchingRef?: MutableRefObject<boolean>;
   isSliding?: boolean;
   isSlidingRef?: MutableRefObject<boolean>;
+  isDowned?: boolean;
+  isDownedRef?: MutableRefObject<boolean>;
+  isBeingRevived?: boolean;
+  isBeingRevivedRef?: MutableRefObject<boolean>;
   isAttacking?: boolean;
   isAttackingRef?: MutableRefObject<boolean>;
   attackStartedAtMs?: number | null;
@@ -171,6 +178,7 @@ function getOutlineScale(scale: VoxelPart['scale']): VoxelPart['scale'] {
 
 export const HeroVoxelBody = memo(function HeroVoxelBody({
   heroId,
+  skinId,
   team,
   height,
   isBot = false,
@@ -182,6 +190,10 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   isCrouchingRef,
   isSliding = false,
   isSlidingRef,
+  isDowned = false,
+  isDownedRef,
+  isBeingRevived = false,
+  isBeingRevivedRef,
   isAttacking = false,
   isAttackingRef,
   attackStartedAtMs = null,
@@ -206,15 +218,22 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   socketOwnerId,
 }: HeroVoxelBodyProps) {
   const resolvedHero = heroId || 'phantom';
+  const resolvedSkinModel = useMemo(
+    () => resolveHeroSkinModel(resolvedHero, skinId),
+    [resolvedHero, skinId]
+  );
+  const resolvedSkinId = resolvedSkinModel.skinId;
   const groupRef = useRef<THREE.Group>(null);
   const boneRefs = useRef<HeroBoneRefs>({});
   const socketRefs = useRef<Record<string, THREE.Group | null>>({});
   const poseTransitionRuntimeRef = useRef(createHeroBodyPoseTransitionRuntime());
-  const idleBlendRef = useRef(isMoving || isJumping || isCrouching || isSliding || isAttacking ? 0 : 1);
+  const idleBlendRef = useRef(isDowned || !(isMoving || isJumping || isCrouching || isSliding || isAttacking) ? 1 : 0);
   const movementBlendRef = useRef(isMoving && !isJumping && !isSliding ? 1 : 0);
   const crouchBlendRef = useRef(isCrouching && !isJumping && !isSliding ? 1 : 0);
   const jumpBlendRef = useRef(isJumping ? 1 : 0);
   const slideBlendRef = useRef(isSliding && !isJumping ? 1 : 0);
+  const downedBlendRef = useRef(isDowned ? 1 : 0);
+  const reviveBlendRef = useRef(isBeingRevived ? 1 : 0);
   const attackBlendRef = useRef(isAttacking ? 1 : 0);
   const targetMovementPoseRef = useRef<HeroMovementPose>(movementPose);
   const previousMovementProfileRef = useRef<HeroMovementProfile>(
@@ -236,7 +255,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const initialVerticalScale = Math.max(0.45, Math.min(1, postureScaleY));
   const postureScaleYRefInternal = useRef(initialVerticalScale);
   const teamColor = TEAM_COLORS[team];
-  const manifest = HERO_BODY_MANIFESTS[resolvedHero];
+  const manifest = resolvedSkinModel.bodyManifest;
   const parts = manifest.parts;
   const teamAccentParts = showTeamAccents ? manifest.teamAccentParts : EMPTY_TEAM_ACCENT_PARTS;
   const riggedPartsByBone = useMemo(() => groupHeroBodyRenderParts(parts), [parts]);
@@ -255,11 +274,15 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     const materialByKind = new Map<MaterialKind, THREE.MeshStandardMaterial>();
     (Object.keys(colors) as MaterialKind[]).forEach((kind) => {
       const baseColor = colors[kind];
-      const emissiveIntensity = getHeroBodyMaterialEmissiveIntensity(kind, hasFlag);
+      // Emissive intensity is driven per-frame (including the hasFlag boost), so build with
+      // the no-flag baseline here. Emissive color is always baseColor: when intensity is 0 the
+      // emissive contribution is 0 regardless of color, so this matches the prior black-when-off
+      // behavior while letting the per-frame intensity drive the flag glow without rebuilding.
+      const emissiveIntensity = getHeroBodyMaterialEmissiveIntensity(kind, false);
       const isTranslucent = kind === 'glass' || kind === 'mist';
       materialByKind.set(kind, new THREE.MeshStandardMaterial({
         color: baseColor,
-        emissive: emissiveIntensity > 0 ? new THREE.Color(baseColor) : new THREE.Color('#000000'),
+        emissive: new THREE.Color(baseColor),
         emissiveIntensity,
         roughness: kind === 'glass' ? 0.18 : kind === 'eye' || kind === 'glow' ? 0.28 : kind === 'void' ? 0.92 : 0.68,
         metalness: kind === 'armor' || kind === 'accent' || kind === 'edge' ? 0.28 : 0.05,
@@ -270,7 +293,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       }));
     });
     return materialByKind;
-  }, [colors, hasFlag]);
+  }, [colors]);
   const outlineMaterial = useMemo(() => new THREE.MeshBasicMaterial({
     color: teamColor,
     transparent: true,
@@ -322,15 +345,19 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     const jumping = isJumpingRef?.current ?? isJumping;
     const crouching = isCrouchingRef?.current ?? isCrouching;
     const sliding = isSlidingRef?.current ?? isSliding;
+    const downed = isDownedRef?.current ?? isDowned;
+    const beingRevived = isBeingRevivedRef?.current ?? isBeingRevived;
     const attacking = isAttackingRef?.current ?? isAttacking;
     const nextMovementPose = movementPoseRef?.current ?? movementPose;
     const nextMovementProfile = getHeroMovementProfile(resolvedHero, nextMovementPose);
     const nextWalkDirection = getNormalizedWalkDirection(walkDirectionRef?.current ?? walkDirection);
-    idleBlendRef.current = idleIntensity > 0 && !moving && !jumping && !crouching && !sliding && !attacking ? 1 : 0;
-    movementBlendRef.current = moving && !jumping && !sliding ? 1 : 0;
-    crouchBlendRef.current = crouching && !jumping && !sliding ? 1 : 0;
-    jumpBlendRef.current = jumping ? 1 : 0;
-    slideBlendRef.current = sliding && !jumping ? 1 : 0;
+    idleBlendRef.current = idleIntensity > 0 && (downed || (!moving && !jumping && !crouching && !sliding && !attacking)) ? 1 : 0;
+    movementBlendRef.current = moving && !jumping && !sliding && !downed ? 1 : 0;
+    crouchBlendRef.current = crouching && !jumping && !sliding && !downed ? 1 : 0;
+    jumpBlendRef.current = jumping && !downed ? 1 : 0;
+    slideBlendRef.current = sliding && !jumping && !downed ? 1 : 0;
+    downedBlendRef.current = downed ? 1 : 0;
+    reviveBlendRef.current = beingRevived ? 1 : 0;
     attackBlendRef.current = attacking ? 1 : 0;
     targetMovementPoseRef.current = nextMovementPose;
     previousMovementProfileRef.current = nextMovementProfile;
@@ -343,7 +370,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     wasJumpingRef.current = false;
     postureScaleYRefInternal.current = Math.max(0.45, Math.min(1, postureScaleYRef?.current ?? postureScaleY));
     resetHeroBodyPoseTransitionRuntime(poseTransitionRuntimeRef.current);
-  }, [resolvedHero]);
+  }, [resolvedHero, resolvedSkinId]);
 
   useFrame((state, delta) => {
     if (!groupRef.current) return;
@@ -369,11 +396,13 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     const verticalScale = postureScaleYRefInternal.current;
     const baseScaleY = scale * verticalScale;
     const t = state.clock.elapsedTime;
-    const moving = isMovingRef?.current ?? isMoving;
-    const jumping = isJumpingRef?.current ?? isJumping;
-    const crouching = isCrouchingRef?.current ?? isCrouching;
-    const sliding = isSlidingRef?.current ?? isSliding;
-    let attacking = isAttackingRef?.current ?? isAttacking;
+    const downed = isDownedRef?.current ?? isDowned;
+    const beingRevived = isBeingRevivedRef?.current ?? isBeingRevived;
+    const moving = downed && beingRevived ? false : (isMovingRef?.current ?? isMoving);
+    const jumping = downed ? false : (isJumpingRef?.current ?? isJumping);
+    const crouching = downed ? false : (isCrouchingRef?.current ?? isCrouching);
+    const sliding = downed ? false : (isSlidingRef?.current ?? isSliding);
+    let attacking = downed ? false : (isAttackingRef?.current ?? isAttacking);
     const attackDuration = manifest.attackDurationSeconds;
     const providedAttackStartedAtMs = attackStartedAtMsRef?.current ?? attackStartedAtMs;
     let attackProgress = 1;
@@ -449,6 +478,9 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       jumping,
       crouching,
       sliding,
+      downed,
+      crawling: downed && moving,
+      beingRevived,
       attacking,
       attackSide: activeAttackSide,
       movementPose: targetMovementPoseRef.current,
@@ -471,10 +503,12 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     }
     wasJumpingRef.current = jumping;
 
-    const targetMovementBlend = moving && !jumping && !sliding ? 1 : 0;
-    const targetCrouchBlend = crouching && !jumping && !sliding ? 1 : 0;
+    const targetMovementBlend = moving && !jumping && !sliding && !downed ? 1 : 0;
+    const targetCrouchBlend = crouching && !jumping && !sliding && !downed ? 1 : 0;
     const targetJumpBlend = jumping ? 1 : 0;
     const targetSlideBlend = sliding && !jumping ? 1 : 0;
+    const targetDownedBlend = downed ? 1 : 0;
+    const targetReviveBlend = beingRevived ? 1 : 0;
     const targetAttackBlend = attacking ? 1 : 0;
     movementBlendRef.current = THREE.MathUtils.damp(
       movementBlendRef.current,
@@ -500,6 +534,18 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       targetSlideBlend > slideBlendRef.current ? 11 : 7.5,
       frameDelta
     );
+    downedBlendRef.current = THREE.MathUtils.damp(
+      downedBlendRef.current,
+      targetDownedBlend,
+      targetDownedBlend > downedBlendRef.current ? 8.5 : 7,
+      frameDelta
+    );
+    reviveBlendRef.current = THREE.MathUtils.damp(
+      reviveBlendRef.current,
+      targetReviveBlend,
+      targetReviveBlend > reviveBlendRef.current ? 9 : 8,
+      frameDelta
+    );
     attackBlendRef.current = THREE.MathUtils.damp(
       attackBlendRef.current,
       targetAttackBlend,
@@ -518,6 +564,8 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       crouchBlendRef.current <= 0.001 &&
       jumpBlendRef.current <= 0.001 &&
       slideBlendRef.current <= 0.001 &&
+      downedBlendRef.current <= 0.001 &&
+      reviveBlendRef.current <= 0.001 &&
       attackBlendRef.current <= 0.001
     ) {
       groupRef.current.position.set(0, 0, 0);
@@ -537,15 +585,18 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       return;
     }
 
-    const targetIdleBlend = moving || jumping || crouching || sliding || attacking ? 0 : 1;
+    const targetIdleBlend = downed || !(moving || jumping || crouching || sliding || attacking) ? 1 : 0;
     idleBlendRef.current = THREE.MathUtils.damp(
       idleBlendRef.current,
       targetIdleBlend,
-      moving || jumping || crouching || sliding || attacking ? 9.5 : 5.5,
+      targetIdleBlend < idleBlendRef.current ? 9.5 : 5.5,
       frameDelta
     );
 
     const slideAmount = easeInOutSine(slideBlendRef.current);
+    const downedAmount = easeInOutSine(downedBlendRef.current);
+    const crawlAmount = downed && moving && !beingRevived ? downedAmount : 0;
+    const reviveAmount = easeInOutSine(reviveBlendRef.current);
     const runSlideCrossfadeAmount = targetMovementPoseRef.current === 'run' ? slideAmount : 0;
     const attackAmount = easeInOutSine(attackBlendRef.current);
     const attackPosePulse = resolvedHero === 'blaze' || resolvedHero === 'phantom'
@@ -554,7 +605,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     const attackPulse = attackPosePulse * attackAmount;
     const rootAttackPulse = resolvedHero === 'phantom' ? 0 : attackPulse;
     const idleAmount = idleBlendRef.current * idleIntensity;
-    const movingAmount = movementBlendRef.current * (1 - runSlideCrossfadeAmount);
+    const movingAmount = downed ? 0 : movementBlendRef.current * (1 - runSlideCrossfadeAmount);
     const jumpAmount = jumpBlendRef.current;
     const crouchAmount = crouchBlendRef.current;
     const poseCrouchAmount = crouchAmount;
@@ -584,22 +635,24 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       0.012 * rootAttackPulse,
       -0.24 * slideAmount + slideSkid - 0.035 * rootAttackPulse
     );
+    const uprightRootAmount = 1 - downedAmount;
     groupRef.current.rotation.x =
-      secondary * idleProfile.swayAmplitude * 0.08 * idleAmount -
+      (secondary * idleProfile.swayAmplitude * 0.08 * idleAmount -
       smoothedWalkDirection.forward * movementProfile.rootPitch * movingAmount +
       jumpPose.pitch * jumpAmount +
       -0.025 * poseCrouchAmount +
       0.6 * slideAmount -
-      0.035 * rootAttackPulse;
+      0.035 * rootAttackPulse) * uprightRootAmount;
     groupRef.current.rotation.y =
-      tertiary * idleProfile.twistAmplitude * 0.12 * idleAmount +
-      activeAttackSide * 0.025 * rootAttackPulse;
+      (tertiary * idleProfile.twistAmplitude * 0.12 * idleAmount +
+      activeAttackSide * 0.025 * rootAttackPulse) * uprightRootAmount;
     groupRef.current.rotation.z =
-      secondary * idleProfile.swayAmplitude * 0.12 * idleAmount -
+      (secondary * idleProfile.swayAmplitude * 0.12 * idleAmount -
       smoothedWalkDirection.right * movementProfile.rootRoll * movingAmount +
       movementSway * movementProfile.rootSway * movingAmount +
       0.055 * slideAmount -
-      activeAttackSide * 0.018 * rootAttackPulse;
+      activeAttackSide * 0.018 * rootAttackPulse) * uprightRootAmount;
+    applyDownedRootPivot(groupRef.current.position, groupRef.current.rotation, scale, downedAmount);
 
     const jumpSquash = jumpPose.crouch * 0.035 + jumpPose.land * 0.026;
     const jumpStretch = jumpPose.extension * 0.026;
@@ -615,6 +668,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     applyIdleBonePose(bones, idleProfile, primary, secondary, tertiary, idleAmount);
     applyJumpBonePose(bones, jumpPose, jumpAmount);
     applyCrouchBonePose(bones, t, poseCrouchAmount);
+    applyDownedBonePose(bones, t, downedAmount, crawlAmount, reviveAmount);
     if (resolvedHero === 'chronos') {
       applyChronosArmPose(bones, 1 - slideAmount);
     }
@@ -624,6 +678,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       (jumpPose.extension * 0.18 + jumpPose.land * 0.14) * jumpAmount +
       movementStep * movementProfile.glowPulse * movingAmount +
       0.035 * poseCrouchAmount +
+      0.035 * downedAmount +
       0.09 * slideAmount +
       0.16 * attackPulse;
     materials.forEach((material, kind) => {
@@ -640,7 +695,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       bones,
       frameDelta
     );
-    applyLookPitchWaistBend(bones, smoothedLookPitchRef.current);
+    applyLookPitchWaistBend(bones, smoothedLookPitchRef.current * (1 - downedAmount));
   });
 
   const renderOutlineMesh = (
@@ -669,7 +724,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const renderPartsForBone = (bone: HeroBoneName) => (
     <>
       {(riggedPartsByBone[bone] ?? EMPTY_RIGGED_PARTS).map((riggedPart, index) => (
-        <Fragment key={`${resolvedHero}-${riggedPart.part.id ?? `${bone}-${index}`}`}>
+        <Fragment key={`${resolvedSkinId}-${riggedPart.part.id ?? `${bone}-${index}`}`}>
           <mesh
             position={riggedPart.meshOffset}
             rotation={riggedPart.part.rotation}
@@ -680,7 +735,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
             <primitive object={materials.get(riggedPart.part.material)!} attach="material" />
           </mesh>
           {renderOutlineMesh(
-            `${resolvedHero}-${riggedPart.part.id ?? `${bone}-${index}`}-outline`,
+            `${resolvedSkinId}-${riggedPart.part.id ?? `${bone}-${index}`}-outline`,
             riggedPart.meshOffset,
             riggedPart.part.scale,
             getPartGeometry(riggedPart.part),
@@ -690,7 +745,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       ))}
 
       {(riggedTeamAccentPartsByBone[bone] ?? EMPTY_RIGGED_PARTS).map((riggedPart, index) => (
-        <Fragment key={`${resolvedHero}-team-${riggedPart.part.id ?? `${bone}-${index}`}`}>
+        <Fragment key={`${resolvedSkinId}-team-${riggedPart.part.id ?? `${bone}-${index}`}`}>
           <mesh
             position={riggedPart.meshOffset}
             rotation={riggedPart.part.rotation}
@@ -704,7 +759,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
             />
           </mesh>
           {renderOutlineMesh(
-            `${resolvedHero}-team-${riggedPart.part.id ?? `${bone}-${index}`}-outline`,
+            `${resolvedSkinId}-team-${riggedPart.part.id ?? `${bone}-${index}`}-outline`,
             riggedPart.meshOffset,
             riggedPart.part.scale,
             getPartGeometry(riggedPart.part),
@@ -718,7 +773,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const renderSocketMarkersForBone = (bone: HeroBoneName) => (
     (socketMarkersByBone[bone] ?? EMPTY_REMOTE_SOCKET_MARKERS).map((marker) => (
       <group
-        key={`${resolvedHero}-socket-${marker.socketName}`}
+        key={`${resolvedSkinId}-socket-${marker.socketName}`}
         ref={(node) => {
           socketRefs.current[marker.socketName] = node;
         }}
@@ -733,7 +788,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     const emissiveIntensity = part.fixedEmissiveIntensity ?? getHeroBodyMaterialEmissiveIntensity(part.material, hasFlag);
 
     return (
-      <Fragment key={`${resolvedHero}-${part.id}`}>
+      <Fragment key={`${resolvedSkinId}-${part.id}`}>
         <mesh
           position={part.position}
           rotation={part.rotation}
@@ -744,7 +799,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
           <meshStandardMaterial color={color} emissive={color} emissiveIntensity={emissiveIntensity} />
         </mesh>
         {renderOutlineMesh(
-          `${resolvedHero}-${part.id}-outline`,
+          `${resolvedSkinId}-${part.id}-outline`,
           part.position,
           part.scale,
           geometry,

@@ -27,13 +27,14 @@ import {
   type PartyInvite,
   type SearchResult,
   type SocialFriend,
-  type SocialTab,
   type SocialUser,
   type RelationshipState,
 } from '../../social/realtime';
 import { TopNavIconButton } from './TopNavIconButton';
 
 const SOCIAL_CLOSE_ANIMATION_MS = 220;
+type SocialPanelTab = 'friends' | 'bots' | 'requests' | 'invites';
+
 const PARTY_BOT_OPTIONS: { difficulty: BotDifficulty; label: string }[] = [
   { difficulty: 'easy', label: 'Easy' },
   { difficulty: 'normal', label: 'Normal' },
@@ -73,6 +74,18 @@ function UsersIcon({ className }: { className?: string }) {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M2 21v-2a4 4 0 014-4h6a4 4 0 014 4v2" />
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M16 3.2a4 4 0 010 7.6" />
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M22 21v-2a4 4 0 00-3-3.85" />
+    </svg>
+  );
+}
+
+function BotIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 4v3" />
+      <rect x="5" y="7" width="14" height="11" rx="3" strokeWidth={1.8} />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 18v2m8-2v2" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 12h.01M15 12h.01" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M10 15h4" />
     </svg>
   );
 }
@@ -147,7 +160,7 @@ function matchModeLabel(mode: MatchMode | null): string {
 function UserIdentity({ user, detail }: { user: SocialUser; detail?: string }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-orange-200/15 bg-orange-500/15 text-orange-200 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.08)]">
+      <div className="social-avatar flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-orange-100">
         <span className="font-display text-base leading-none">{user.name.slice(0, 1).toUpperCase()}</span>
       </div>
       <div className="min-w-0">
@@ -168,9 +181,25 @@ function SocialRow({
   className?: string;
 }) {
   return (
-    <div className={cn('social-row flex items-center justify-between gap-3 rounded-lg px-3.5 py-3', className)}>
+    <div className={cn('social-row flex items-center justify-between gap-3 px-3.5 py-3', className)}>
       {children}
     </div>
+  );
+}
+
+function SocialSection({
+  children,
+  className,
+  separated = false,
+}: {
+  children: ReactNode;
+  className?: string;
+  separated?: boolean;
+}) {
+  return (
+    <section className={cn('social-section space-y-3', separated && 'social-section--separated', className)}>
+      {children}
+    </section>
   );
 }
 
@@ -182,21 +211,16 @@ function SectionHeader({
   meta?: ReactNode;
 }) {
   return (
-    <div className="flex min-w-0 items-center justify-between gap-3">
-      <h3 className="truncate font-display text-base leading-none text-white">{title}</h3>
-      {meta && <div className="shrink-0">{meta}</div>}
+    <div className="social-section-header flex min-w-0 items-center justify-between gap-3">
+      <h3 className="social-section-title truncate font-display text-base leading-none text-white">{title}</h3>
+      {meta && <div className="social-section-meta shrink-0">{meta}</div>}
     </div>
   );
 }
 
 function StatusBanner({ message, tone }: { message: string; tone: 'error' | 'success' }) {
   return (
-    <div className={cn(
-      'rounded-lg border px-3 py-2 text-sm shadow-[inset_0_1px_0_rgb(255_255_255_/_0.06)]',
-      tone === 'error'
-        ? 'border-red-400/20 bg-red-500/10 text-red-200'
-        : 'border-green-300/20 bg-green-500/10 text-green-200',
-    )}>
+    <div className={cn('social-status-banner', `social-status-banner--${tone}`)}>
       {message}
     </div>
   );
@@ -219,10 +243,8 @@ function RelationshipActionButton({
       disabled={!canSend || disabled}
       onClick={onClick}
       className={cn(
-        'flex h-9 shrink-0 items-center justify-center rounded-lg border px-3.5 font-display text-xs transition focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-300/70',
-        canSend
-          ? 'border-orange-300/20 bg-orange-500/15 text-orange-100 hover:border-orange-200/40 hover:bg-orange-500/25'
-          : 'cursor-not-allowed border-white/10 bg-white/5 text-white/25',
+        'social-action-button flex h-9 shrink-0 items-center justify-center px-3.5 font-display text-xs transition focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-300/70',
+        canSend ? 'social-action-button--primary' : 'social-action-button--disabled',
       )}
     >
       {statusLabel(relationship)}
@@ -320,10 +342,10 @@ function IconButton({
   children: ReactNode;
 }) {
   const toneClass = {
-    neutral: 'border-white/10 bg-white/[0.07] text-white/55 hover:border-white/25 hover:bg-white/10 hover:text-white',
-    primary: 'border-orange-300/25 bg-orange-500/20 text-orange-100 hover:border-orange-200/50 hover:bg-orange-500/30',
-    danger: 'border-red-300/20 bg-red-500/10 text-red-200 hover:border-red-300/45 hover:bg-red-500/20',
-    success: 'border-green-300/20 bg-green-500/10 text-green-200 hover:border-green-300/45 hover:bg-green-500/20',
+    neutral: 'social-icon-button--neutral',
+    primary: 'social-icon-button--primary',
+    danger: 'social-icon-button--danger',
+    success: 'social-icon-button--success',
   }[tone];
 
   return (
@@ -333,7 +355,7 @@ function IconButton({
       title={title}
       disabled={disabled}
       onClick={onClick}
-      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-40 ${toneClass}`}
+      className={`social-icon-button flex h-9 w-9 shrink-0 items-center justify-center transition disabled:cursor-not-allowed disabled:opacity-40 ${toneClass}`}
     >
       {children}
     </button>
@@ -450,9 +472,9 @@ export function SocialBox({
   initialPartyMode?: PartyMode;
   initialGameplayMode?: GameplayMode;
 }) {
-  const { isAuthenticated, user } = useWallet();
+  const { completeTutorial, isAuthenticated, user } = useWallet();
   useSocialRealtime(isAuthenticated ? user?.id : null);
-  const { addPartyBot, ensureParty, joinLobby, joinParty, kickPartyMember, startTutorialGame } = useNetwork();
+  const { addPartyBot, ensureParty, joinLobby, joinParty, kickPartyMember } = useNetwork();
   const playerName = useGameStore((state) => state.playerName);
   const appPhase = useGameStore((state) => state.appPhase);
   const currentLobbyId = useGameStore((state) => state.currentLobbyId);
@@ -462,7 +484,7 @@ export function SocialBox({
   const party = usePartyStore((state) => state.party);
   const localPartyUserId = usePartyStore((state) => state.localUserId);
 
-  const [activeTab, setActiveTab] = useState<SocialTab>('friends');
+  const [activeTab, setActiveTab] = useState<SocialPanelTab>('friends');
   const social = useSocialRealtimeStore((state) => state.social);
   const socialStatus = useSocialRealtimeStore((state) => state.status);
   const socialError = useSocialRealtimeStore((state) => state.error);
@@ -496,11 +518,13 @@ export function SocialBox({
   const inviteCount = social.lobbyInvites.length + social.partyInvites.length;
   const tabCounts = useMemo(() => ({
     friends: social.friends.length + social.discordPlayers.filter((candidate) => candidate.relationship === 'none').length,
+    bots: partyBotMembers.length,
     requests: requestCount,
     invites: inviteCount,
-  }), [inviteCount, requestCount, social.discordPlayers, social.friends.length]);
-  const tabs: { id: SocialTab; label: string; icon: ReactNode; count: number }[] = [
+  }), [inviteCount, partyBotMembers.length, requestCount, social.discordPlayers, social.friends.length]);
+  const tabs: { id: SocialPanelTab; label: string; icon: ReactNode; count: number }[] = [
     { id: 'friends', label: 'Friends', icon: <UsersIcon className="h-4 w-4" />, count: tabCounts.friends },
+    { id: 'bots', label: 'Bots', icon: <BotIcon className="h-4 w-4" />, count: tabCounts.bots },
     { id: 'requests', label: 'Requests', icon: <RequestIcon className="h-4 w-4" />, count: tabCounts.requests },
     { id: 'invites', label: 'Invites', icon: <InviteIcon className="h-4 w-4" />, count: tabCounts.invites },
   ];
@@ -707,9 +731,7 @@ export function SocialBox({
   const acceptLobbyInvite = (invite: LobbyInvite) => {
     runAction(`accept-invite:${invite.inviteId}`, async () => {
       if (tutorialRequired) {
-        startTutorialGame(playerName || user?.name || 'Player');
-        closePanel();
-        return;
+        await completeTutorial();
       }
 
       const data = await socialApi<{ invite: LobbyInvite }>(
@@ -764,10 +786,10 @@ export function SocialBox({
         className="social-sidebar-panel pointer-events-auto fixed flex flex-col overflow-hidden text-white"
         data-state={sidebarState}
       >
-        <header className="relative border-b border-white/[0.06] px-5 py-5">
+        <header className="social-sidebar-header relative px-5 py-5">
           <div className="flex items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center text-orange-400">
+              <div className="social-title-icon flex h-8 w-8 shrink-0 items-center justify-center text-orange-300">
                 <UsersIcon className="h-5 w-5" />
               </div>
               <div className="min-w-0">
@@ -780,7 +802,7 @@ export function SocialBox({
             <button
               type="button"
               onClick={closePanel}
-              className="flex h-8 w-8 shrink-0 items-center justify-center text-white/45 transition hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-300/70"
+              className="social-close-button flex h-8 w-8 shrink-0 items-center justify-center text-white/45 transition hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-300/70"
               aria-label="Close social sidebar"
             >
               <XIcon className="h-4 w-4" />
@@ -788,7 +810,7 @@ export function SocialBox({
           </div>
         </header>
 
-        <nav className="social-sidebar-tabs grid grid-cols-3 border-b border-white/[0.06] px-4" role="tablist" aria-label="Social sections">
+        <nav className="social-sidebar-tabs grid grid-cols-4 px-3" role="tablist" aria-label="Social sections">
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -804,7 +826,7 @@ export function SocialBox({
               )}
             >
               {tab.icon}
-              <span className="min-w-0 truncate">{tab.label.toUpperCase()}</span>
+              <span className="social-sidebar-tab-label min-w-0 truncate">{tab.label.toUpperCase()}</span>
               {tab.count > 0 && (
                 <span className={cn(
                   'flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] leading-none',
@@ -817,7 +839,7 @@ export function SocialBox({
           ))}
         </nav>
 
-        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 custom-scrollbar" role="tabpanel">
+        <main className="min-h-0 flex-1 overflow-y-auto px-5 py-5 custom-scrollbar" role="tabpanel">
           <div className="space-y-4">
             {visibleError && <StatusBanner message={visibleError} tone="error" />}
             {!visibleError && notice && <StatusBanner message={notice} tone="success" />}
@@ -830,10 +852,10 @@ export function SocialBox({
               <>
                 {activeTab === 'friends' && (
                   <div className="space-y-5">
-                    <section className="space-y-3">
+                    <SocialSection>
                       <SectionHeader title="Find Player" />
                       <form
-                        className="social-row flex items-center gap-2 rounded-lg p-2.5"
+                        className="social-search-form flex items-center gap-2 p-1.5"
                         onSubmit={(event) => {
                           event.preventDefault();
                           const targetName = searchQuery.trim();
@@ -847,7 +869,7 @@ export function SocialBox({
                           onChange={(event) => setSearchQuery(event.target.value)}
                           placeholder="Callsign"
                           maxLength={24}
-                          className="h-10 min-w-0 flex-1 rounded-lg border border-white/10 bg-black/20 px-3.5 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-orange-500/80 hover:border-white/20 hover:bg-white/[0.08]"
+                          className="social-search-input h-10 min-w-0 flex-1 rounded-md px-3 text-sm text-white outline-none transition placeholder:text-white/25"
                         />
                         <IconButton
                           label="Send friend request"
@@ -875,10 +897,10 @@ export function SocialBox({
                           ))}
                         </div>
                       )}
-                    </section>
+                    </SocialSection>
 
                     {social.discordPlayers.length > 0 && (
-                      <section className="space-y-2 border-t border-white/[0.06] pt-4">
+                      <SocialSection separated className="space-y-2">
                         <SectionHeader title="Discord Players" />
                         {social.discordPlayers.map((result) => (
                           <PlayerResultCard
@@ -889,10 +911,10 @@ export function SocialBox({
                             onRequest={(targetUserId) => sendFriendRequest({ targetUserId })}
                           />
                         ))}
-                      </section>
+                      </SocialSection>
                     )}
 
-                    <section className="space-y-2 border-t border-white/[0.06] pt-4">
+                    <SocialSection separated className="space-y-2">
                       <SectionHeader
                         title="Friends"
                         meta={<span className="font-display text-xs text-white/35">{social.friends.length}</span>}
@@ -911,55 +933,71 @@ export function SocialBox({
                       ) : (
                         <EmptyState title="NO FRIENDS YET" />
                       )}
-                    </section>
+                    </SocialSection>
+                  </div>
+                )}
 
-                    {canInviteFromMenu && (
-                      <section className="social-party-section space-y-3">
-                        <SectionHeader
-                          title="Party Bots"
-                          meta={(
-                            <span className="rounded-full border border-cyan-200/15 bg-cyan-400/10 px-2 py-1 text-[10px] font-display text-cyan-100/75">
-                              {assumedPartyMemberCount}/{partyMemberLimit}
-                            </span>
-                          )}
-                        />
-                        <p className="text-xs font-body text-white/40">
-                          Add an AI teammate to open party slots.
-                        </p>
-                        <div className="flex items-end gap-2">
-                          <BotDifficultySelect
-                            value={selectedBotDifficulty}
-                            disabled={!canAddPartyBot || Boolean(pendingAction)}
-                            onChange={setSelectedBotDifficulty}
-                          />
-                          <button
-                            type="button"
-                            disabled={!canAddPartyBot || Boolean(pendingAction)}
-                            onClick={() => invitePartyBot(selectedBotDifficulty)}
-                            className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-orange-300/25 bg-orange-500/[0.12] px-3.5 font-display text-xs text-orange-100 transition hover:border-orange-200/45 hover:bg-orange-500/[0.2] disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-white/25"
-                          >
-                            <PlusIcon className="h-4 w-4" />
-                            ADD BOT
-                          </button>
-                        </div>
-                        <p className="text-xs font-body text-white/35">
-                          {partySlotsRemaining > 0 ? `${partySlotsRemaining} slots open` : 'Party full'}
-                        </p>
-                        {partyBotMembers.length > 0 && (
-                          <div className="space-y-2 border-t border-white/[0.06] pt-3">
-                            {partyBotMembers.map((bot) => (
-                              <PartyBotCard
-                                key={bot.userId}
-                                bot={bot}
-                                canManage={canManagePartyBots}
-                                pendingAction={pendingAction}
-                                onRemove={removePartyBotMember}
-                              />
-                            ))}
-                          </div>
+                {activeTab === 'bots' && (
+                  <div className="space-y-5">
+                    <SocialSection className="space-y-3">
+                      <SectionHeader
+                        title="Party Bots"
+                        meta={(
+                          <span className="social-capacity-badge rounded-full px-2 py-1 text-[10px] font-display">
+                            {assumedPartyMemberCount}/{partyMemberLimit}
+                          </span>
                         )}
-                      </section>
-                    )}
+                      />
+                      {canInviteFromMenu ? (
+                        <>
+                          <p className="text-xs font-body text-white/40">
+                            Add an AI teammate to open party slots.
+                          </p>
+                          <div className="flex items-end gap-2">
+                            <BotDifficultySelect
+                              value={selectedBotDifficulty}
+                              disabled={!canAddPartyBot || Boolean(pendingAction)}
+                              onChange={setSelectedBotDifficulty}
+                            />
+                            <button
+                              type="button"
+                              disabled={!canAddPartyBot || Boolean(pendingAction)}
+                              onClick={() => invitePartyBot(selectedBotDifficulty)}
+                              className="social-cta-button flex h-10 shrink-0 items-center justify-center gap-2 px-3.5 font-display text-xs transition disabled:cursor-not-allowed"
+                            >
+                              <PlusIcon className="h-4 w-4" />
+                              ADD BOT
+                            </button>
+                          </div>
+                          <p className="text-xs font-body text-white/35">
+                            {partySlotsRemaining > 0 ? `${partySlotsRemaining} slots open` : 'Party full'}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-xs font-body text-white/40">
+                          Open Play to manage party bots.
+                        </p>
+                      )}
+                    </SocialSection>
+
+                    <SocialSection separated className="space-y-2">
+                      <SectionHeader title="Bot Roster" />
+                      {partyBotMembers.length > 0 ? (
+                        <div className="social-list space-y-1">
+                          {partyBotMembers.map((bot) => (
+                            <PartyBotCard
+                              key={bot.userId}
+                              bot={bot}
+                              canManage={canManagePartyBots}
+                              pendingAction={pendingAction}
+                              onRemove={removePartyBotMember}
+                            />
+                          ))}
+                        </div>
+                      ) : (
+                        <EmptyState title="NO BOTS ADDED" />
+                      )}
+                    </SocialSection>
                   </div>
                 )}
 
@@ -984,7 +1022,7 @@ export function SocialBox({
                 )}
 
                 {activeTab === 'invites' && (
-                  <div className="space-y-2">
+                  <div className="social-list space-y-1">
                     {social.partyInvites.length === 0 && social.lobbyInvites.length === 0 ? (
                       <EmptyState title="NO INVITES" />
                     ) : (
@@ -1022,8 +1060,8 @@ export function SocialBox({
                             />
                             <div className="flex shrink-0 items-center gap-2">
                               <IconButton
-                                label="Join lobby"
-                                title="Join lobby"
+                                label={tutorialRequired ? 'Accept and skip tutorial' : 'Join lobby'}
+                                title={tutorialRequired ? 'Accept and skip tutorial' : 'Join lobby'}
                                 tone="success"
                                 disabled={Boolean(pendingAction)}
                                 onClick={() => acceptLobbyInvite(invite)}
@@ -1057,7 +1095,7 @@ export function SocialBox({
 
 function EmptyState({ title }: { title: string }) {
   return (
-    <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-white/[0.055] bg-white/[0.008]">
+    <div className="social-empty-state flex h-40 items-center justify-center">
       <p className="font-display text-lg text-white/25">{title}</p>
     </div>
   );
@@ -1081,9 +1119,9 @@ function RequestGroup({
   onCancel?: (requestId: string) => void;
 }) {
   return (
-    <section className="space-y-3">
+    <SocialSection>
       <SectionHeader title={title} />
-      <div className="space-y-2">
+      <div className="social-list space-y-1">
         {requests.length === 0 ? (
           <EmptyState title={emptyTitle} />
         ) : requests.map((request) => (
@@ -1127,6 +1165,6 @@ function RequestGroup({
           </SocialRow>
         ))}
       </div>
-    </section>
+    </SocialSection>
   );
 }

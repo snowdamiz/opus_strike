@@ -1,14 +1,11 @@
 import {
   CUSTOM_LOBBY_GAMEPLAY_MODES,
   GAMEPLAY_MODES,
-  MATCH_PERSPECTIVE_SETTING_MODES,
   createDefaultMatchPerspectiveSettings,
   createDefaultPartyBotFillSettings,
   isCustomLobbyGameplayMode,
-  isMatchPerspective,
   type CustomLobbyGameplayMode,
   type GameplayMode,
-  type MatchPerspectiveSettingMode,
   type MatchPerspectiveSettings,
   type PartyBotFillSettings,
   type PartyMode,
@@ -24,44 +21,46 @@ export interface PlayMenuPreferences {
 }
 
 export const DEFAULT_CUSTOM_GAMEPLAY_MODE: CustomLobbyGameplayMode = CUSTOM_LOBBY_GAMEPLAY_MODES[0];
-export const PLAY_MODE_OPTIONS: PlayMenuMode[] = ['ranked', 'quick_play', 'team_deathmatch', 'battle_royal', 'custom', 'practice'];
+export const PLAY_MODE_OPTIONS: PlayMenuMode[] = ['ranked', 'quick_play', 'team_deathmatch', 'battle_royal', 'custom'];
 export const PLAY_MENU_PREFERENCES_STORAGE_KEY = 'voxel_strike_play_menu_preferences:v1';
 
 export function isPlayMenuMode(value: unknown): value is PlayMenuMode {
   return typeof value === 'string' && (PLAY_MODE_OPTIONS as readonly string[]).includes(value);
 }
 
-export function sanitizeBotFillSettings(value: unknown): PartyBotFillSettings {
+export function createGlobalBotFillSettings(enabled: boolean): PartyBotFillSettings {
   const next = createDefaultPartyBotFillSettings();
-  if (!value || typeof value !== 'object') return next;
-
-  const raw = value as Partial<Record<GameplayMode, unknown>>;
   for (const mode of GAMEPLAY_MODES) {
-    next[mode] = raw[mode] === true;
+    next[mode] = enabled;
   }
   return next;
+}
+
+export function isGlobalBotFillEnabled(settings: PartyBotFillSettings): boolean {
+  return GAMEPLAY_MODES.some((mode) => settings[mode] === true);
+}
+
+export function sanitizeBotFillSettings(value: unknown): PartyBotFillSettings {
+  if (!value || typeof value !== 'object') return createGlobalBotFillSettings(false);
+
+  const raw = value as Partial<Record<GameplayMode, unknown>>;
+  return createGlobalBotFillSettings(GAMEPLAY_MODES.some((mode) => raw[mode] === true));
 }
 
 export function sanitizeCustomGameplayMode(value: unknown): CustomLobbyGameplayMode {
   return isCustomLobbyGameplayMode(value) ? value : DEFAULT_CUSTOM_GAMEPLAY_MODE;
 }
 
-export function sanitizeMatchPerspectiveSettings(value: unknown): MatchPerspectiveSettings {
-  const next = createDefaultMatchPerspectiveSettings();
-  if (!value || typeof value !== 'object') return next;
-
-  const raw = value as Partial<Record<MatchPerspectiveSettingMode, unknown>>;
-  for (const mode of MATCH_PERSPECTIVE_SETTING_MODES) {
-    next[mode] = isMatchPerspective(raw[mode]) ? raw[mode] : next[mode];
-  }
-  return next;
+export function sanitizeMatchPerspectiveSettings(_value: unknown): MatchPerspectiveSettings {
+  // Third-person selection is temporarily unavailable in the play menu.
+  return createDefaultMatchPerspectiveSettings();
 }
 
 export function createDefaultPlayMenuPreferences(): PlayMenuPreferences {
   return {
     selectedPlayMode: 'quick_play',
     customGameplayMode: DEFAULT_CUSTOM_GAMEPLAY_MODE,
-    botFillEnabledByMode: createDefaultPartyBotFillSettings(),
+    botFillEnabledByMode: createGlobalBotFillSettings(false),
     perspectiveByMode: createDefaultMatchPerspectiveSettings(),
   };
 }

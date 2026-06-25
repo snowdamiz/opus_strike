@@ -1,7 +1,8 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { HERO_DEFINITIONS } from '@voxel-strike/shared';
-import type { HeroId } from '@voxel-strike/shared';
+import type { HeroId, HeroSkinId } from '@voxel-strike/shared';
 import { HeroPreviewCanvas, type HeroPreviewAnimationMode, type HeroPreviewRank } from './HeroPreviewCanvas';
+import { BLAZE_UI_COLORS } from '../../styles/colorTokens';
 
 type FeaturedHeroPreviewScale = 'default' | 'large';
 
@@ -31,7 +32,7 @@ function getFeaturedHeroPreviewClassName(
 
 export function FeaturedHeroPreview({
   heroId,
-  accentColor,
+  skinId,
   initialYaw,
   animationMode,
   scale = 'default',
@@ -39,7 +40,7 @@ export function FeaturedHeroPreview({
   rank,
 }: {
   heroId: HeroId;
-  accentColor: string;
+  skinId?: HeroSkinId | string | null;
   initialYaw: number;
   animationMode: HeroPreviewAnimationMode;
   scale?: FeaturedHeroPreviewScale;
@@ -67,12 +68,12 @@ export function FeaturedHeroPreview({
       window.cancelAnimationFrame(secondFrame);
       window.cancelAnimationFrame(thirdFrame);
     };
-  }, [animationMode, heroId]);
+  }, [animationMode, heroId, skinId]);
 
   const preview = shouldMountPreview ? (
     <HeroPreviewCanvas
       heroId={heroId}
-      accentColor={accentColor}
+      skinId={skinId}
       size="featured"
       initialYaw={initialYaw}
       animationMode={animationMode}
@@ -84,7 +85,7 @@ export function FeaturedHeroPreview({
       className={`hero-preview-shell relative overflow-hidden select-none ${previewClassName}`}
       data-ready="false"
       data-size="featured"
-      style={{ '--hero-preview-accent': accentColor } as CSSProperties}
+      style={{ '--hero-preview-accent': BLAZE_UI_COLORS.primary } as CSSProperties}
       aria-label={`Loading ${HERO_DEFINITIONS[heroId].name} voxel preview`}
       aria-busy
     >

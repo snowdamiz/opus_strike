@@ -63,9 +63,9 @@ import {
     {
       sessionId: 'session-a',
       displayName: 'Player A',
+      role: 'combat',
       assignedTeam: 'red',
       selectedHero: 'phantom',
-      observer: false,
     }
   );
   assert.deepEqual(
@@ -78,9 +78,22 @@ import {
     {
       sessionId: 'session-b',
       displayName: null,
+      role: 'combat',
       assignedTeam: 'blue',
-      selectedHero: undefined,
-      observer: false,
+    }
+  );
+  assert.deepEqual(
+    buildReconnectParticipantSyncPayload({
+      id: 'observer-a',
+      name: 'Observer A',
+      role: 'observer',
+      team: '',
+      heroId: '',
+    }),
+    {
+      sessionId: 'observer-a',
+      displayName: 'Observer A',
+      role: 'observer',
     }
   );
 }

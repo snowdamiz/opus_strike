@@ -11,14 +11,17 @@ const palette = {
   redDeep: { hex: '#b91c1c', rgb: [185, 28, 28] as const },
   orange: { hex: '#f97316', rgb: [249, 115, 22] as const },
   orangeDeep: { hex: '#ea580c', rgb: [234, 88, 12] as const },
-  amber: { hex: '#fbbf24', rgb: [251, 191, 36] as const },
   cyan: { hex: '#06b6d4', rgb: [6, 182, 212] as const },
   purple: { hex: '#8b5cf6', rgb: [139, 92, 246] as const },
   phantom: { hex: '#a855f7', rgb: [168, 85, 247] as const },
-  phantomDeep: { hex: '#7c3aed', rgb: [124, 58, 237] as const },
-  hookshotDeep: { hex: '#0891b2', rgb: [8, 145, 178] as const },
   chronos: { hex: '#22c55e', rgb: [34, 197, 94] as const },
-  chronosDeep: { hex: '#b91c1c', rgb: [185, 28, 28] as const },
+  hookshotDeep: { hex: '#0891b2', rgb: [8, 145, 178] as const },
+} as const;
+
+export const BLAZE_UI_COLORS = {
+  primary: palette.orange.hex,
+  secondary: palette.orangeDeep.hex,
+  glow: rgba(palette.orange.rgb, 0.5),
 } as const;
 
 export const HERO_COLORS = {
@@ -27,13 +30,6 @@ export const HERO_COLORS = {
   blaze: palette.orange.hex,
   chronos: palette.chronos.hex,
 } satisfies Record<HeroId, string>;
-
-export const HERO_COLOR_SCHEMES = {
-  phantom: { primary: palette.phantom.hex, secondary: palette.phantomDeep.hex, glow: rgba(palette.phantom.rgb, 0.6) },
-  hookshot: { primary: palette.cyan.hex, secondary: palette.hookshotDeep.hex, glow: rgba(palette.cyan.rgb, 0.6) },
-  blaze: { primary: palette.orange.hex, secondary: palette.orangeDeep.hex, glow: rgba(palette.orange.rgb, 0.6) },
-  chronos: { primary: palette.chronos.hex, secondary: palette.chronosDeep.hex, glow: rgba(palette.chronos.rgb, 0.62) },
-} satisfies Record<HeroId, { primary: string; secondary: string; glow: string }>;
 
 export const HERO_PREVIEW_COLORS = {
   neutralShadow: '#05070a',

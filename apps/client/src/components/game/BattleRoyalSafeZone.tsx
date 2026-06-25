@@ -1,7 +1,7 @@
 import { useFrame } from '@react-three/fiber';
 import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import type { SafeZoneSnapshot } from '@voxel-strike/shared';
+import type { GamePhase, SafeZoneSnapshot } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import { isSafeZoneTargetRevealed } from '../../utils/battleRoyalSafeZoneReveal';
 
@@ -16,6 +16,16 @@ const SAFE_ZONE_NEXT_COLOR = new THREE.Color('#f8fafc');
 
 function getSafeZoneWarningMix(safeZone: SafeZoneSnapshot): number {
   return safeZone.warning || safeZone.shrinking ? 1 : 0;
+}
+
+export function shouldRenderBattleRoyalSafeZone(input: {
+  gamePhase: GamePhase;
+  gameplayMode: string | null | undefined;
+  safeZone: SafeZoneSnapshot | null | undefined;
+}): boolean {
+  return input.gameplayMode === 'battle_royal' &&
+    input.gamePhase === 'playing' &&
+    input.safeZone?.enabled === true;
 }
 
 function updateRingMaterial(
@@ -62,8 +72,12 @@ export function BattleRoyalSafeZone() {
     if (!root || !currentRing || !nextRing) return;
 
     const store = useGameStore.getState();
-    const safeZone = store.gameplayMode === 'battle_royal' ? store.safeZone : null;
-    if (!safeZone?.enabled) {
+    const safeZone = store.safeZone;
+    if (!safeZone || !shouldRenderBattleRoyalSafeZone({
+      gamePhase: store.gamePhase,
+      gameplayMode: store.gameplayMode,
+      safeZone,
+    })) {
       root.visible = false;
       initializedRef.current = false;
       return;

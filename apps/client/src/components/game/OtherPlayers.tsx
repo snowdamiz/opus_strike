@@ -83,6 +83,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
     const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
 
     for (const player of players.values()) {
+      if (player.role === 'observer') continue;
       const isLocalPlayer = player.id === playerId || player.id === localPlayerId;
       if (isLocalPlayer && !showLocalPlayerBody) continue;
       if (hideDeadPlayers && player.state === 'dead') continue;
@@ -108,7 +109,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
   }, [gamePhase, isBattleRoyal, localPlayerId, playerId, players, showFirstPersonDropBody, showLocalPlayerBody]);
 
   useEffect(() => {
-    if (!config.showNameplates) return;
+    if (!isBattleRoyal && !config.showNameplates) return;
     for (const player of otherPlayers) {
       if (player.id === playerId || player.id === localPlayerId) continue;
       if (!shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam)) continue;
@@ -135,13 +136,14 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
         const showNameplate = player.id !== playerId
           && player.id !== localPlayerId
           && shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam);
-        return shouldRenderRemotePlayerFallback(player, config, showNameplate) ? (
+        const showFlagIndicator = !isBattleRoyal && player.hasFlag;
+        return shouldRenderRemotePlayerFallback(player, showNameplate, showFlagIndicator) ? (
           <OtherPlayer
             key={player.id}
             player={player}
             localPlayerId={showLocalPlayerBody ? (localPlayerId ?? playerId) : null}
-            config={config}
             showNameplate={showNameplate}
+            showFlagIndicator={showFlagIndicator}
           />
         ) : null;
       })}
@@ -152,8 +154,8 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
 interface OtherPlayerProps {
   player: Player;
   localPlayerId?: string | null;
-  config: RemotePlayerQualityConfig;
   showNameplate: boolean;
+  showFlagIndicator: boolean;
 }
 
 const NETWORK_MOVING_SPEED = 0.45;
@@ -218,7 +220,8 @@ function isPlayerMovingForAnimation(
   visualHorizontalSpeed = 0,
   movement: PlayerMovementState = player.movement
 ): boolean {
-  if (player.state !== 'alive' && player.state !== 'dropping') return false;
+  if (player.state !== 'alive' && player.state !== 'downed' && player.state !== 'dropping') return false;
+  if (player.state === 'downed' && player.reviveByPlayerId) return false;
 
   const networkHorizontalSpeed = getHorizontalSpeed(player.velocity);
 
@@ -256,16 +259,17 @@ function shouldShowRemoteNameplate(
   isBattleRoyal: boolean,
   localPlayerTeam: Team | null
 ): boolean {
+  if (isBattleRoyal) return player.team === localPlayerTeam;
   if (!config.showNameplates) return false;
-  return !isBattleRoyal || player.team === localPlayerTeam;
+  return true;
 }
 
 function shouldRenderRemotePlayerFallback(
   player: Player,
-  config: RemotePlayerQualityConfig,
-  showNameplate: boolean
+  showNameplate: boolean,
+  showFlagIndicator: boolean
 ): boolean {
-  return hasActivePhantomVeil(player) || player.hasFlag || showNameplate;
+  return hasActivePhantomVeil(player) || showFlagIndicator || showNameplate;
 }
 
 function getPlayerRenderMovement(
@@ -275,15 +279,20 @@ function getPlayerRenderMovement(
   return player.id === localPlayerId ? visualStore.getState().localMovement : player.movement;
 }
 
-const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, showNameplate }: OtherPlayerProps) {
+const OtherPlayer = memo(function OtherPlayer({
+  player,
+  localPlayerId,
+  showNameplate,
+  showFlagIndicator,
+}: OtherPlayerProps) {
   const groupRef = useRef<THREE.Group>(null);
   const [isVeiled, setIsVeiled] = useState(() => hasActivePhantomVeil(player));
   const playerHeight = getPlayerHeight(player.heroId);
   const initialMovement = getPlayerRenderMovement(player, localPlayerId);
   const initialLookPitch = getPlayerVisualLookPitch(visualStore.getState(), player);
-  const hasLoweredPosture = hasLoweredPlayerPosture(initialMovement);
-  const visibleHeight = getVisiblePlayerHeight(player.heroId, initialMovement);
-  const postureScaleY = getPlayerBodyPostureScaleY(initialMovement);
+  const hasLoweredPosture = hasLoweredPlayerPosture(initialMovement, player.state);
+  const visibleHeight = getVisiblePlayerHeight(player.heroId, initialMovement, player.state);
+  const postureScaleY = getPlayerBodyPostureScaleY(initialMovement, player.state);
   const initialIsMoving = isPlayerMovingForAnimation(player, 0, initialMovement);
   const initialMovementPose = getPlayerMovementPose(player, hasLoweredPosture, initialIsMoving, initialMovement);
   const targetPosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
@@ -292,6 +301,8 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
   const isMovingRef = useRef(initialIsMoving);
   const isCrouchingRef = useRef(initialMovement.isCrouching);
   const isSlidingRef = useRef(initialMovement.isSliding);
+  const isDownedRef = useRef(player.state === 'downed');
+  const isBeingRevivedRef = useRef(Boolean(player.reviveByPlayerId));
   const isAttackingRef = useRef(false);
   const attackStartedAtMsRef = useRef<number | null>(null);
   const attackSideRef = useRef<-1 | 1>(1);
@@ -455,11 +466,13 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
       }
 
       const frameMovement = getPlayerRenderMovement(player, localPlayerId);
-      const frameHasLoweredPosture = hasLoweredPlayerPosture(frameMovement);
+      const frameHasLoweredPosture = hasLoweredPlayerPosture(frameMovement, player.state);
       const frameIsMoving = isPlayerMovingForAnimation(player, visualHorizontalSpeed, frameMovement);
-      postureScaleYRef.current = getPlayerBodyPostureScaleY(frameMovement);
+      postureScaleYRef.current = getPlayerBodyPostureScaleY(frameMovement, player.state);
       isCrouchingRef.current = frameMovement.isCrouching;
       isSlidingRef.current = frameMovement.isSliding;
+      isDownedRef.current = player.state === 'downed';
+      isBeingRevivedRef.current = Boolean(player.reviveByPlayerId);
       movementPoseRef.current = getPlayerMovementPose(player, frameHasLoweredPosture, frameIsMoving, frameMovement);
       isMovingRef.current = frameIsMoving;
     },
@@ -470,6 +483,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
       {isVeiled && (
         <HeroVoxelBody
           heroId={player.heroId}
+          skinId={player.skinId}
           team={player.team}
           height={playerHeight}
           postureScaleY={postureScaleY}
@@ -483,6 +497,10 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
           isCrouchingRef={isCrouchingRef}
           isSliding={initialMovement.isSliding}
           isSlidingRef={isSlidingRef}
+          isDowned={player.state === 'downed'}
+          isDownedRef={isDownedRef}
+          isBeingRevived={Boolean(player.reviveByPlayerId)}
+          isBeingRevivedRef={isBeingRevivedRef}
           isAttackingRef={isAttackingRef}
           attackStartedAtMsRef={attackStartedAtMsRef}
           attackSideRef={attackSideRef}
@@ -508,7 +526,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, localPlayerId, config, s
       )}
 
       {/* Flag indicator */}
-      {player.hasFlag && (
+      {showFlagIndicator && (
         <FlagCarrierIndicator team={player.team === 'red' ? 'blue' : 'red'} />
       )}
     </group>

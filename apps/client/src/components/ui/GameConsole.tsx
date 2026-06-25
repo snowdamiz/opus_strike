@@ -1,28 +1,44 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useGameStore } from '../../store/gameStore';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { normalizeObserverFlightSpeed, useGameStore } from '../../store/gameStore';
 import { setGameConsoleOpen } from '../../store/gameConsoleState';
+import { useChatStore, type ChatMessage } from '../../store/chatStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { config } from '../../config/environment';
 import {
   ABILITY_DEFINITIONS,
   BLAZE_FLAMETHROWER_MAX_FUEL,
-  HERO_DEFINITIONS,
   ALL_HERO_IDS,
+  getDefaultHeroSkinId,
+  getHeroSkinsForHero,
+  HERO_DEFINITIONS,
 } from '@voxel-strike/shared';
 import type { AbilityState, HeroId, Team } from '@voxel-strike/shared';
+import {
+  formatConsoleSkinLine,
+  resolveConsoleSkinQuery,
+} from './gameConsoleSkinCommands';
 
 interface ConsoleMessage {
   id: number;
   text: string;
   type: 'input' | 'output' | 'error' | 'info';
+  timestamp: number;
+}
+
+interface DisplayMessage {
+  id: string;
+  text: string;
+  type: ConsoleMessage['type'] | 'chat' | 'team';
+  timestamp: number;
+  source: 'console' | 'chat';
 }
 
 let messageId = 0;
 
-const PUBLIC_COMMAND_HELP = '/seed copy';
-const DEV_COMMAND_HELP = '/seed copy | /immune | /hero <hero> | /end | /bot add <hero> <red|blue> | /bot skill <hero> <red|blue> <e|q|f|lmb|rmb> | /bot look <hero> <red|blue> <up|down> | /bot nobrain | /bot brain | /bots root | /bots release | /f | /time freeze';
-const PUBLIC_COMMAND_LIST = '/seed copy';
-const DEV_COMMAND_LIST = '/seed copy, /immune, /hero <hero>, /end, /bot add <hero> <red|blue>, /bot skill <hero> <red|blue> <e|q|f|lmb|rmb>, /bot look <hero> <red|blue> <up|down>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze';
+const CHAT_PREVIEW_IDLE_TIMEOUT_MS = 30_000;
+const CHAT_PREVIEW_FADE_MS = 500;
+const PUBLIC_COMMAND_LIST = '/seed copy, /observer <low|med|hight>';
+const DEV_COMMAND_LIST = '/seed copy, /observer <low|med|hight>, /immune, /hero <hero>, /hero down <hero>, /skins <hero>, /skins apply <skin>, /end, /bot add <hero> <red|blue>, /bot skill <hero> <red|blue> <e|q|f|lmb|rmb>, /bot look <hero> <red|blue> <up|down>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze';
 type BotLookDirection = 'up' | 'down';
 const BOT_SKILL_KEYS: Record<string, string> = {
   e: 'e',
@@ -163,6 +179,7 @@ function applyLocalHero(heroId: HeroId): boolean {
 
   store.updateLocalPlayer({
     heroId,
+    skinId: getDefaultHeroSkinId(heroId),
     health: hero.stats.maxHealth,
     maxHealth: hero.stats.maxHealth,
     ultimateCharge: 0,
@@ -184,16 +201,42 @@ function applyLocalHero(heroId: HeroId): boolean {
   return true;
 }
 
+function formatChatMessage(message: ChatMessage): string {
+  const prefix = message.teamOnly ? '[Team] ' : '';
+  return `${prefix}${message.playerName}: ${message.message}`;
+}
+
+function toDisplayMessages(consoleMessages: ConsoleMessage[], chatMessages: ChatMessage[]): DisplayMessage[] {
+  return [
+    ...consoleMessages.map((message) => ({
+      id: `console:${message.id}`,
+      text: message.text,
+      type: message.type,
+      timestamp: message.timestamp,
+      source: 'console' as const,
+    })),
+    ...chatMessages.map((message) => ({
+      id: `chat:${message.id}`,
+      text: formatChatMessage(message),
+      type: message.teamOnly ? 'team' as const : 'chat' as const,
+      timestamp: message.timestamp,
+      source: 'chat' as const,
+    })),
+  ].sort((left, right) => left.timestamp - right.timestamp);
+}
+
 export function GameConsole() {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
+  const chatMessages = useChatStore((state) => state.messages);
+  const [isChatPreviewMounted, setIsChatPreviewMounted] = useState(false);
+  const [isChatPreviewVisible, setIsChatPreviewVisible] = useState(false);
   const [messages, setMessages] = useState<ConsoleMessage[]>(() => [
     {
       id: messageId++,
-      text: config.isDev
-        ? `Developer Console - ${DEV_COMMAND_HELP}`
-        : `Game Chat - ${PUBLIC_COMMAND_HELP}`,
+      text: config.isDev ? 'Developer Console' : 'Game Chat',
       type: 'info',
+      timestamp: Date.now(),
     },
   ]);
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
@@ -204,6 +247,8 @@ export function GameConsole() {
 
   const {
     devSetHero,
+    devSetSkin,
+    devDownHero,
     devFillUltimate,
     devEndGame,
     setDevImmune,
@@ -213,12 +258,21 @@ export function GameConsole() {
     addGameBot,
     devBotSkill,
     devBotLook,
+    sendChatMessage,
   } = useNetwork();
+
+  const displayMessages = useMemo(() => toDisplayMessages(messages, chatMessages), [messages, chatMessages]);
+  const visibleMessages = useMemo(
+    () => (isOpen ? displayMessages.slice(-80) : displayMessages.filter((message) => message.source === 'chat').slice(-5)),
+    [displayMessages, isOpen]
+  );
+  const latestChatMessageId = chatMessages[chatMessages.length - 1]?.id ?? null;
+  const lastVisibleMessageId = visibleMessages[visibleMessages.length - 1]?.id ?? null;
 
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [lastVisibleMessageId]);
 
   // Focus input when opened
   useEffect(() => {
@@ -260,19 +314,53 @@ export function GameConsole() {
     return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!latestChatMessageId) {
+      setIsChatPreviewVisible(false);
+      return;
+    }
+
+    setIsChatPreviewMounted(true);
+    setIsChatPreviewVisible(true);
+
+    const timeoutId = window.setTimeout(() => {
+      setIsChatPreviewVisible(false);
+    }, CHAT_PREVIEW_IDLE_TIMEOUT_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [latestChatMessageId]);
+
+  useEffect(() => {
+    if (isChatPreviewVisible) return;
+
+    const timeoutId = window.setTimeout(() => {
+      setIsChatPreviewMounted(false);
+    }, CHAT_PREVIEW_FADE_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isChatPreviewVisible]);
+
   const addMessage = useCallback((text: string, type: ConsoleMessage['type'] = 'output') => {
-    setMessages(prev => [...prev, { id: messageId++, text, type }]);
+    setMessages(prev => [...prev, { id: messageId++, text, type, timestamp: Date.now() }]);
   }, []);
 
   const executeCommand = useCallback(async (cmd: string) => {
     const trimmed = cmd.trim();
     if (!trimmed) return;
 
-    // Add to history
     setCommandHistory(prev => [...prev, trimmed]);
     setHistoryIndex(-1);
 
-    // Echo input
+    if (!trimmed.startsWith('/')) {
+      if (!sendChatMessage(trimmed)) {
+        addMessage('Chat is unavailable while disconnected.', 'error');
+        return;
+      }
+
+      setIsOpen(false);
+      return;
+    }
+
     addMessage(`> ${trimmed}`, 'input');
 
     const parts = parseCommandParts(trimmed);
@@ -302,6 +390,18 @@ export function GameConsole() {
         break;
       }
 
+      case '/observer': {
+        const speed = normalizeObserverFlightSpeed(parts[1]?.toLowerCase() ?? '');
+        if (parts.length !== 2 || !speed) {
+          addMessage('Usage: /observer low|med|hight', 'error');
+          break;
+        }
+
+        useGameStore.getState().setObserverFlightSpeed(speed);
+        addMessage(`Observer flight speed set to ${speed}.`, 'info');
+        break;
+      }
+
       case '/immune': {
         if (!config.isDev) {
           addMessage('Developer commands are disabled outside development builds.', 'error');
@@ -322,6 +422,23 @@ export function GameConsole() {
           break;
         }
 
+        const action = parts[1]?.toLowerCase();
+        if (action === 'down') {
+          const heroName = parts.slice(2).join(' ');
+          const heroId = resolveHeroId(heroName);
+
+          if (!heroName || !heroId) {
+            addMessage('Usage: /hero down <hero name>', 'error');
+            addMessage(`Valid heroes: ${validHeroNames()}`, 'info');
+            break;
+          }
+
+          devDownHero(heroId);
+          addMessage(`Downing teammate ${HERO_DEFINITIONS[heroId].name} for revive testing...`, 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
         const heroName = parts.slice(1).join(' ');
         const heroId = resolveHeroId(heroName);
 
@@ -339,6 +456,67 @@ export function GameConsole() {
 
         devSetHero(heroId);
         addMessage(`Switching to ${HERO_DEFINITIONS[heroId].name}...`, 'info');
+        break;
+      }
+
+      case '/skins': {
+        if (!config.isDev) {
+          addMessage('Developer commands are disabled outside development builds.', 'error');
+          break;
+        }
+
+        const action = parts[1]?.toLowerCase();
+        if (action === 'apply') {
+          const skinName = parts.slice(2).join(' ');
+          const store = useGameStore.getState();
+          const localHeroId = store.localPlayer?.heroId ?? null;
+
+          if (!skinName) {
+            addMessage('Usage: /skins apply <skin name>', 'error');
+            break;
+          }
+          if (!store.localPlayer || !localHeroId) {
+            addMessage('No active hero to apply a skin to.', 'error');
+            break;
+          }
+
+          const resolution = resolveConsoleSkinQuery(skinName, { heroId: localHeroId });
+          if (resolution.status === 'empty' || resolution.status === 'not_found') {
+            addMessage(`Unknown skin: ${skinName}`, 'error');
+            break;
+          }
+          if (resolution.status === 'ambiguous') {
+            addMessage(`Ambiguous skin: ${skinName}`, 'error');
+            addMessage(`Matches: ${resolution.matches.map((skin) => skin.displayName).join(', ')}`, 'info');
+            break;
+          }
+
+          const skin = resolution.skin;
+          if (skin.heroId !== localHeroId) {
+            addMessage(`${skin.displayName} belongs to ${HERO_DEFINITIONS[skin.heroId].name}. Switch hero first.`, 'error');
+            break;
+          }
+
+          store.updateLocalPlayer({ skinId: skin.id });
+          devSetSkin(skin.id);
+          addMessage(`Applying ${skin.displayName} (${skin.id})...`, 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
+        const heroName = parts.slice(1).join(' ');
+        const heroId = resolveHeroId(heroName);
+
+        if (!heroName || !heroId) {
+          addMessage('Usage: /skins <hero name> | /skins apply <skin name>', 'error');
+          addMessage(`Valid heroes: ${validHeroNames()}`, 'info');
+          break;
+        }
+
+        addMessage(`Skins for ${HERO_DEFINITIONS[heroId].name}:`, 'info');
+        for (const skin of getHeroSkinsForHero(heroId)) {
+          addMessage(formatConsoleSkinLine(skin), 'output');
+        }
         break;
       }
 
@@ -480,7 +658,7 @@ export function GameConsole() {
       default:
         addMessage(`Unknown command: ${command}. Available commands: ${config.isDev ? DEV_COMMAND_LIST : PUBLIC_COMMAND_LIST}`, 'error');
     }
-  }, [addGameBot, addMessage, devBotLook, devBotSkill, devEndGame, devFillUltimate, devSetHero, setDevBotBrainEnabled, setDevBotsRooted, setDevImmune, setDevTimeFrozen]);
+  }, [addGameBot, addMessage, devBotLook, devBotSkill, devDownHero, devEndGame, devFillUltimate, devSetHero, devSetSkin, sendChatMessage, setDevBotBrainEnabled, setDevBotsRooted, setDevImmune, setDevTimeFrozen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -511,28 +689,39 @@ export function GameConsole() {
     }
   };
 
-  if (!isOpen) {
+  const shouldShowClosedPreview = isChatPreviewMounted && visibleMessages.length > 0;
+
+  if (!isOpen && !shouldShowClosedPreview) {
     return null;
   }
 
   return (
     <>
-      {/* Chat box panel - positioned bottom-mid left */}
       <div
-        className="fixed bottom-4 left-4 w-[500px] max-w-[calc(100vw-2rem)] bg-black/80 backdrop-blur-sm text-green-400 font-mono text-sm z-[9999] flex flex-col rounded-lg border border-white/10 shadow-2xl"
+        className={`fixed left-4 z-[9999] flex max-w-[calc(100vw-2rem)] flex-col rounded-lg border font-mono text-sm transition-[opacity,transform] duration-500 ease-out ${
+          isOpen
+            ? 'bottom-[clamp(2.05rem,3.1vw,2.65rem)] w-[500px] border-white/[0.07] bg-black/[0.10] opacity-100 shadow-[0_0.7rem_1.8rem_rgb(0_0_0_/_0.1)] backdrop-blur-[2px]'
+            : `bottom-[clamp(2.05rem,3.1vw,2.65rem)] pointer-events-none w-[420px] border-white/[0.07] bg-black/[0.10] shadow-[0_0.7rem_1.8rem_rgb(0_0_0_/_0.1)] backdrop-blur-[2px] ${isChatPreviewVisible ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0'}`
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Messages - compact height with scroll */}
-        <div className="max-h-[200px] overflow-y-auto p-3 space-y-1">
-          {messages.map((msg) => (
+        <div className={`${isOpen ? 'max-h-[220px]' : 'max-h-[150px]'} space-y-1 overflow-y-auto p-3`}>
+          {visibleMessages.map((msg) => (
             <div
               key={msg.id}
-              className={`
-              ${msg.type === 'input' ? 'text-white' : ''}
-              ${msg.type === 'output' ? 'text-green-400' : ''}
-              ${msg.type === 'error' ? 'text-red-400' : ''}
-              ${msg.type === 'info' ? 'text-cyan-400' : ''}
-            `}
+              className={`break-words leading-relaxed ${
+                msg.type === 'input' ? 'text-white/80' : ''
+              } ${
+                msg.type === 'output' ? 'text-emerald-300' : ''
+              } ${
+                msg.type === 'error' ? 'text-red-300' : ''
+              } ${
+                msg.type === 'info' ? 'text-cyan-300' : ''
+              } ${
+                msg.type === 'chat' ? 'text-white' : ''
+              } ${
+                msg.type === 'team' ? 'text-sky-200' : ''
+              }`}
             >
               {msg.text}
             </div>
@@ -540,26 +729,22 @@ export function GameConsole() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input */}
-        <form onSubmit={handleSubmit} className="border-t border-green-800 p-2 flex">
-          <span className="text-green-400 mr-2">{'>'}</span>
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="flex-1 bg-transparent outline-none text-white caret-green-400"
-            placeholder={config.isDev ? `Type ${DEV_COMMAND_LIST}...` : `Type ${PUBLIC_COMMAND_LIST}...`}
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </form>
-
-        {/* Help hint */}
-        <div className="text-xs text-gray-500 px-3 pb-2">
-          Press Enter to open | ESC to close | /seed copy works in any match
-        </div>
+        {isOpen && (
+          <form onSubmit={handleSubmit} className="flex border-t border-white/[0.07] p-2">
+            <span className="mr-2 text-cyan-300">{'>'}</span>
+            <input
+              ref={inputRef}
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              className="min-w-0 flex-1 bg-transparent text-white outline-none caret-cyan-300"
+              placeholder={config.isDev ? 'Message or /seed copy' : 'Message'}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </form>
+        )}
       </div>
     </>
   );

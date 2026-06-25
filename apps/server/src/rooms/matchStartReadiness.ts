@@ -2,6 +2,7 @@ import type { MatchStartGateMessage } from '@voxel-strike/shared';
 
 export interface MatchStartReadinessPlayer {
   isBot?: boolean | null;
+  role?: string | null;
   heroId?: string | null;
   isReady?: boolean | null;
 }
@@ -22,7 +23,7 @@ export function readMatchSceneReadyGateKey(payload: unknown): number | null {
 }
 
 export function canMarkMatchSceneReady(player: MatchStartReadinessPlayer | null | undefined): boolean {
-  return Boolean(player && !player.isBot && player.heroId && player.isReady);
+  return Boolean(player && !player.isBot && player.role !== 'observer' && player.heroId && player.isReady);
 }
 
 export function countConnectedHumanPlayers(
@@ -30,6 +31,7 @@ export function countConnectedHumanPlayers(
 ): number {
   let count = 0;
   for (const player of players) {
+    if (player.role === 'observer') continue;
     if (!player.isBot) count++;
   }
   return count;
@@ -50,6 +52,7 @@ export function arePlayersReadyForCountdown(input: {
   let connectedHumanPlayers = 0;
 
   for (const player of input.players) {
+    if (player.role === 'observer') continue;
     playerCount++;
     if (!player.isBot) connectedHumanPlayers++;
     if (!player.heroId || !player.isReady) {
@@ -85,6 +88,7 @@ export function areHumansSceneReadyForCountdown(input: {
 
   let connectedHumanPlayers = 0;
   for (const [playerId, player] of input.players) {
+    if (player.role === 'observer') continue;
     if (player.isBot) continue;
 
     connectedHumanPlayers++;

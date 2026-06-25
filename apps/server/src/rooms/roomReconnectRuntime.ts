@@ -1,4 +1,4 @@
-import type { HeroId, Team } from '@voxel-strike/shared';
+import { isTeamId, type HeroId, type PlayerRole, type Team } from '@voxel-strike/shared';
 import { isHeroId } from './protocolValidation';
 
 const RUNNING_GAME_RECONNECT_TTL_MS = 60_000;
@@ -20,6 +20,7 @@ export interface RunningGameReconnectTicketRequest {
 export interface ReconnectParticipantPlayerSnapshot {
   id: string;
   name?: string | null;
+  role?: string | null;
   team: string;
   heroId?: unknown;
 }
@@ -27,7 +28,8 @@ export interface ReconnectParticipantPlayerSnapshot {
 export interface ReconnectParticipantSyncPayload {
   sessionId: string;
   displayName?: string | null;
-  assignedTeam: Team;
+  role?: PlayerRole;
+  assignedTeam?: Team;
   selectedHero?: HeroId;
 }
 
@@ -57,10 +59,14 @@ export function buildRunningGameReconnectTicketRequest(input: RunningGameReconne
 export function buildReconnectParticipantSyncPayload(
   player: ReconnectParticipantPlayerSnapshot
 ): ReconnectParticipantSyncPayload {
+  const assignedTeam = isTeamId(player.team) ? player.team : undefined;
+  const selectedHero = isHeroId(player.heroId) ? player.heroId : undefined;
+
   return {
     sessionId: player.id,
     displayName: player.name,
-    assignedTeam: player.team as Team,
-    selectedHero: isHeroId(player.heroId) ? player.heroId : undefined,
+    role: player.role === 'observer' ? 'observer' : 'combat',
+    ...(assignedTeam ? { assignedTeam } : {}),
+    ...(selectedHero ? { selectedHero } : {}),
   };
 }

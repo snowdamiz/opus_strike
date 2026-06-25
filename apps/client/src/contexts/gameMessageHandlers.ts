@@ -5,6 +5,7 @@ import {
   BLAZE_BOMB_SPLASH_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_LIFELINE_RELEASE_DELAY_MS,
+  CHRONOS_PRIMARY_RELOAD_MS,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
@@ -89,7 +90,9 @@ import {
   CHRONOS_VERDANT_PULSE_SHOT_PITCH,
   CHRONOS_VERDANT_PULSE_SHOT_VOLUME,
   playSharedBlazeAirstrikeSound,
+  playSharedLoop,
   playSharedSound,
+  stopSharedLoop,
   type SoundName,
 } from '../hooks/useAudio';
 import { loggers } from '../utils/logger';
@@ -109,10 +112,16 @@ import type {
   PhantomShieldBrokenEvent,
   GamePhase,
   HeroId,
+  HeroSkinId,
   MatchSnapshotMessage,
   PlayerDeathEvent,
+  PlayerDownedEvent,
   Player,
+  PlayerReviveCancelledEvent,
+  PlayerRevivedEvent,
+  PlayerReviveStartedEvent,
   PlayerInterestMessage,
+  PlayerRole,
   PlayerVitalsAbilitySnapshot,
   PlayerVisibilityState,
   PlayerMovementState,
@@ -128,18 +137,23 @@ import type {
 import type { AppPhase } from '../store/types';
 
 const CHRONOS_TIMEBREAK_CHARGE_FADE_OUT_MS = 110;
+const CHRONOS_PRIMARY_RELOAD_SOUND_FADE_OUT_MS = 240;
 const remotePhantomChargeControllers = new Map<string, AbortController>();
 const playerIdByNetId = new Map<number, string>();
 const netIdByPlayerId = new Map<string, number>();
 let lastLocalPhantomReloadSoundKey = '';
+let lastLocalBlazeReloadSoundKey = '';
+let lastLocalChronosReloadSoundKey = '';
 let hasReceivedSelfMovementAuthority = false;
 const HOOKSHOT_SHOT_CLIP_MS = 250;
+const BATTLE_ROYAL_REVIVE_AUDIO_LOOP_PREFIX = 'battle-royal-revive:';
 const PLAYER_STATES = new Set<string>([
   'spectating',
   'selecting',
   'spawning',
   'dropping',
   'alive',
+  'downed',
   'dead',
 ]);
 
@@ -227,15 +241,27 @@ function normalizeRankSnapshot(source: any, fallback?: PublicRankSnapshot): Publ
   };
 }
 
+function normalizePlayerRole(role: unknown): PlayerRole {
+  return role === 'observer' ? 'observer' : 'combat';
+}
+
+function normalizePlayerTeam(team: unknown, role: PlayerRole, fallback: Team = 'red'): Team {
+  if (typeof team === 'string') return team as Team;
+  return role === 'observer' ? ('' as Team) : fallback;
+}
+
 /**
  * Creates a Player object from server schema data
  */
 export function createPlayerFromSchema(schemaPlayer: any, id: string): Player {
+  const role = normalizePlayerRole(schemaPlayer.role);
   return {
     id,
     name: schemaPlayer.name || 'Unknown',
-    team: (schemaPlayer.team || 'red') as Team,
+    role,
+    team: normalizePlayerTeam(schemaPlayer.team, role),
     heroId: (schemaPlayer.heroId || null) as HeroId | null,
+    skinId: (schemaPlayer.skinId || null) as HeroSkinId | null,
     state: normalizePlayerState(schemaPlayer.state),
     isReady: schemaPlayer.isReady || false,
     isBot: Boolean(schemaPlayer.isBot),
@@ -248,6 +274,14 @@ export function createPlayerFromSchema(schemaPlayer: any, id: string): Player {
     lookPitch: 0,
     health: 100,
     maxHealth: 100,
+    downedHealth: null,
+    downedMaxHealth: null,
+    downedStartedAt: null,
+    downedRemainingMs: null,
+    downedExpiresAt: null,
+    reviveStartedAt: null,
+    reviveCompletesAt: null,
+    reviveByPlayerId: null,
     ultimateCharge: 0,
     onFireUntil: null,
     movement: createDefaultMovement(),
@@ -267,8 +301,10 @@ export function createDefaultLocalPlayer(sessionId: string, playerName: string):
   return {
     id: sessionId,
     name: playerName,
+    role: 'combat',
     team: 'red',
     heroId: null,
+    skinId: null,
     state: 'alive',
     isReady: false,
     isBot: false,
@@ -455,6 +491,7 @@ function addDeathVisualFromKillEvent(data: PlayerDeathEvent): void {
     id: `death:${victim.id}:${startedAtMs}`,
     playerId: victim.id,
     heroId: victim.heroId,
+    skinId: victim.skinId,
     team: victim.team,
     isBot: victim.isBot,
     name: victim.name,
@@ -484,6 +521,208 @@ function syncDeathVisualForVitals(
   }
 
   updateDeathVisualExpirationForPlayer(playerId, respawnTime);
+}
+
+function createDownedMovementSnapshot(player: Player): PlayerMovementState {
+  return {
+    ...normalizeMovementState(player.movement),
+    isGrounded: true,
+    isSprinting: false,
+    isCrouching: false,
+    isSliding: false,
+    slideTimeRemaining: 0,
+    isWallRunning: false,
+    wallRunSide: null,
+    isGrappling: false,
+    grapplePoint: null,
+    isJetpacking: false,
+    isGliding: false,
+    chronosAscendantStartY: undefined,
+  };
+}
+
+function updateKnownPlayerSnapshot(
+  playerId: string,
+  updater: (player: Player) => Player
+): Player | null {
+  const store = useGameStore.getState();
+  const current = store.localPlayer?.id === playerId
+    ? store.localPlayer
+    : store.players.get(playerId);
+  if (!current) return null;
+
+  const next = updater(current);
+  if (store.localPlayer?.id === playerId) {
+    store.updateLocalPlayer(next);
+  } else {
+    store.updatePlayer(playerId, next);
+  }
+  return next;
+}
+
+function getBattleRoyalReviveLoopId(targetId: string): string {
+  return `${BATTLE_ROYAL_REVIVE_AUDIO_LOOP_PREFIX}${targetId}`;
+}
+
+function getLocalLifecycleAudioRole(player: Player | null): 'self' | 'teammate' | 'none' {
+  if (!player) return 'none';
+  const localPlayer = useGameStore.getState().localPlayer;
+  if (!localPlayer) return 'none';
+  if (player.id === localPlayer.id) return 'self';
+  return player.team && player.team === localPlayer.team ? 'teammate' : 'none';
+}
+
+function isLocalReviveParticipant(targetId: string, reviverId: string | null): boolean {
+  const localPlayerId = useGameStore.getState().localPlayer?.id;
+  return Boolean(localPlayerId && (targetId === localPlayerId || reviverId === localPlayerId));
+}
+
+function playBattleRoyalDownedCue(player: Player): void {
+  const role = getLocalLifecycleAudioRole(player);
+  if (role === 'none') return;
+  void playSharedSound('damage', {
+    position: role === 'self' ? undefined : player.position,
+    volume: role === 'self' ? 0.95 : 0.45,
+    pitch: role === 'self' ? 0.82 : 0.9,
+  });
+}
+
+function playBattleRoyalReviveStartedCue(target: Player, reviverId: string): void {
+  if (!isLocalReviveParticipant(target.id, reviverId)) return;
+  void playSharedSound('healPickup', {
+    position: target.position,
+    volume: 0.38,
+    pitch: 0.86,
+  });
+  void playSharedLoop(getBattleRoyalReviveLoopId(target.id), 'chronosLifelineActive', {
+    position: target.position,
+    volume: 0.18,
+    fadeInMs: 140,
+  });
+}
+
+function stopBattleRoyalReviveLoop(targetId: string): void {
+  stopSharedLoop(getBattleRoyalReviveLoopId(targetId), 120);
+}
+
+function playBattleRoyalReviveCancelledCue(target: Player, reviverId: string | null): void {
+  stopBattleRoyalReviveLoop(target.id);
+  if (!isLocalReviveParticipant(target.id, reviverId)) return;
+  void playSharedSound('buttonClick', {
+    position: target.position,
+    volume: 0.35,
+    pitch: 0.74,
+  });
+}
+
+function playBattleRoyalRevivedCue(target: Player, reviverId: string): void {
+  stopBattleRoyalReviveLoop(target.id);
+  const role = getLocalLifecycleAudioRole(target);
+  if (role === 'none' && !isLocalReviveParticipant(target.id, reviverId)) return;
+  void playSharedSound('healPickup', {
+    position: role === 'self' ? undefined : target.position,
+    volume: role === 'self' || isLocalReviveParticipant(target.id, reviverId) ? 0.82 : 0.45,
+    pitch: 1.04,
+  });
+}
+
+function handlePlayerDownedEvent(data: PlayerDownedEvent): void {
+  const next = updateKnownPlayerSnapshot(data.targetId, (player) => ({
+    ...player,
+    state: 'downed',
+    health: 0,
+    downedHealth: data.downedHealth,
+    downedMaxHealth: data.downedMaxHealth,
+    downedStartedAt: data.downedStartedAt,
+    downedRemainingMs: data.downedRemainingMs,
+    downedExpiresAt: data.downedExpiresAt,
+    reviveStartedAt: null,
+    reviveCompletesAt: null,
+    reviveByPlayerId: null,
+    position: data.position ? clonePlainVec3(data.position) : player.position,
+    velocity: { ...player.velocity, x: 0, z: 0 },
+    movement: createDownedMovementSnapshot(player),
+  }));
+  if (!next) return;
+
+  playBattleRoyalDownedCue(next);
+  clearDeathVisualsForPlayer(data.targetId);
+  stopBattleRoyalReviveLoop(data.targetId);
+  stopRemotePhantomCharge(data.targetId);
+  stopObservedAbilityCastEffects(data.targetId);
+  setChronosAegisVisualState(data.targetId, false, Date.now(), 0);
+  if (!shouldHideLiveVisuals(next.visibility)) {
+    setPlayerVisualTransform(data.targetId, next.position, next.lookYaw, next.lookPitch);
+  }
+}
+
+function handlePlayerReviveStartedEvent(data: PlayerReviveStartedEvent): void {
+  const next = updateKnownPlayerSnapshot(data.targetId, (player) => ({
+    ...player,
+    state: 'downed',
+    downedRemainingMs: data.downedRemainingMs,
+    downedExpiresAt: null,
+    reviveStartedAt: data.startedAt,
+    reviveCompletesAt: data.completesAt,
+    reviveByPlayerId: data.reviverId,
+    velocity: { ...player.velocity, x: 0, z: 0 },
+    movement: createDownedMovementSnapshot(player),
+  }));
+  if (next) playBattleRoyalReviveStartedCue(next, data.reviverId);
+}
+
+function handlePlayerReviveCancelledEvent(data: PlayerReviveCancelledEvent): void {
+  const next = updateKnownPlayerSnapshot(data.targetId, (player) => ({
+    ...player,
+    state: player.state === 'dead' ? player.state : 'downed',
+    downedRemainingMs: data.downedRemainingMs,
+    downedExpiresAt: data.downedExpiresAt,
+    reviveStartedAt: null,
+    reviveCompletesAt: null,
+    reviveByPlayerId: null,
+  }));
+  if (next) {
+    playBattleRoyalReviveCancelledCue(next, data.reviverId);
+  } else {
+    stopBattleRoyalReviveLoop(data.targetId);
+  }
+}
+
+function handlePlayerRevivedEvent(data: PlayerRevivedEvent): void {
+  const next = updateKnownPlayerSnapshot(data.targetId, (player) => ({
+    ...player,
+    state: 'alive',
+    health: data.health,
+    maxHealth: data.maxHealth,
+    downedHealth: null,
+    downedMaxHealth: null,
+    downedStartedAt: null,
+    downedRemainingMs: null,
+    downedExpiresAt: null,
+    reviveStartedAt: null,
+    reviveCompletesAt: null,
+    reviveByPlayerId: null,
+    movement: {
+      ...normalizeMovementState(player.movement),
+      isSprinting: false,
+      isSliding: false,
+      slideTimeRemaining: 0,
+      isGrappling: false,
+      grapplePoint: null,
+      isJetpacking: false,
+      isGliding: false,
+      chronosAscendantStartY: undefined,
+    },
+  }));
+  clearDeathVisualsForPlayer(data.targetId);
+  if (next) {
+    playBattleRoyalRevivedCue(next, data.reviverId);
+  } else {
+    stopBattleRoyalReviveLoop(data.targetId);
+  }
+  if (next && !shouldHideLiveVisuals(next.visibility)) {
+    setPlayerVisualTransform(data.targetId, next.position, next.lookYaw, next.lookPitch);
+  }
 }
 
 export function forgetPlayerNetId(playerId: string): void {
@@ -533,8 +772,10 @@ function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: number
   return {
     id: vitals.id,
     name: vitals.name || existing?.name || 'Unknown',
+    role: normalizePlayerRole(vitals.role ?? existing?.role),
     team: vitals.team,
     heroId: vitals.heroId,
+    skinId: vitals.skinId ?? existing?.skinId ?? null,
     state: vitals.state,
     isReady: vitals.isReady,
     isBot: Boolean(vitals.isBot),
@@ -547,6 +788,14 @@ function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: number
     lookPitch: existing?.lookPitch ?? 0,
     health: vitals.health,
     maxHealth: vitals.maxHealth,
+    downedHealth: vitals.downedHealth ?? null,
+    downedMaxHealth: vitals.downedMaxHealth ?? null,
+    downedStartedAt: vitals.downedStartedAt ?? null,
+    downedRemainingMs: vitals.downedRemainingMs ?? null,
+    downedExpiresAt: vitals.downedExpiresAt ?? null,
+    reviveStartedAt: vitals.reviveStartedAt ?? null,
+    reviveCompletesAt: vitals.reviveCompletesAt ?? null,
+    reviveByPlayerId: vitals.reviveByPlayerId ?? null,
     ultimateCharge: vitals.ultimateCharge,
     onFireUntil: vitals.onFireUntil ?? null,
     powerupBoostUntil: vitals.powerupBoostUntil ?? null,
@@ -558,6 +807,122 @@ function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: number
     stats: vitals.stats || existing?.stats || createDefaultStats(),
     visibility: vitals.visibility ?? existing?.visibility ?? 'visible',
   };
+}
+
+function movementVitalsEqual(a: PlayerMovementState, b: PlayerMovementState): boolean {
+  if (
+    a.isGrounded !== b.isGrounded ||
+    a.isSprinting !== b.isSprinting ||
+    a.isCrouching !== b.isCrouching ||
+    a.isSliding !== b.isSliding ||
+    a.slideTimeRemaining !== b.slideTimeRemaining ||
+    a.isWallRunning !== b.isWallRunning ||
+    a.wallRunSide !== b.wallRunSide ||
+    a.isGrappling !== b.isGrappling ||
+    a.isJetpacking !== b.isJetpacking ||
+    a.jetpackFuel !== b.jetpackFuel ||
+    a.isGliding !== b.isGliding ||
+    a.chronosAscendantStartY !== b.chronosAscendantStartY
+  ) {
+    return false;
+  }
+  const ga = a.grapplePoint;
+  const gb = b.grapplePoint;
+  if (ga === gb) return true;
+  if (!ga || !gb) return false;
+  return ga.x === gb.x && ga.y === gb.y && ga.z === gb.z;
+}
+
+function abilitiesVitalsEqual(a: Player['abilities'], b: Player['abilities']): boolean {
+  const aKeys = Object.keys(a);
+  if (aKeys.length !== Object.keys(b).length) return false;
+  for (const key of aKeys) {
+    const av = a[key];
+    const bv = b[key];
+    if (!bv) return false;
+    if (
+      av.abilityId !== bv.abilityId ||
+      av.cooldownRemaining !== bv.cooldownRemaining ||
+      av.cooldownUntil !== bv.cooldownUntil ||
+      av.charges !== bv.charges ||
+      av.isActive !== bv.isActive ||
+      av.activatedAt !== bv.activatedAt
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function statsVitalsEqual(a: Player['stats'], b: Player['stats']): boolean {
+  return (
+    a.kills === b.kills &&
+    a.deaths === b.deaths &&
+    a.assists === b.assists &&
+    a.flagCaptures === b.flagCaptures &&
+    a.flagReturns === b.flagReturns
+  );
+}
+
+function rankVitalsEqual(a: Player['rank'], b: Player['rank']): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.tier === b.tier &&
+    a.tierLabel === b.tierLabel &&
+    a.division === b.division &&
+    a.divisionIndex === b.divisionIndex &&
+    a.label === b.label &&
+    a.iconKey === b.iconKey &&
+    a.isRanked === b.isRanked &&
+    a.placementRemaining === b.placementRemaining
+  );
+}
+
+/**
+ * Returns true when `next` (freshly built from a vitals snapshot) would render
+ * identically to the `existing` remote player. Used to skip the players Map churn
+ * (and the cascading re-renders) when a vitals broadcast carries no real change.
+ */
+function remotePlayerVitalsEqual(existing: Player, next: Player): boolean {
+  return (
+    existing.id === next.id &&
+    existing.name === next.name &&
+    existing.role === next.role &&
+    existing.team === next.team &&
+    existing.heroId === next.heroId &&
+    existing.skinId === next.skinId &&
+    existing.state === next.state &&
+    existing.isReady === next.isReady &&
+    existing.isBot === next.isBot &&
+    existing.botDifficulty === next.botDifficulty &&
+    existing.botProfileId === next.botProfileId &&
+    existing.health === next.health &&
+    existing.maxHealth === next.maxHealth &&
+    existing.downedHealth === next.downedHealth &&
+    existing.downedMaxHealth === next.downedMaxHealth &&
+    existing.downedStartedAt === next.downedStartedAt &&
+    existing.downedRemainingMs === next.downedRemainingMs &&
+    existing.downedExpiresAt === next.downedExpiresAt &&
+    existing.reviveStartedAt === next.reviveStartedAt &&
+    existing.reviveCompletesAt === next.reviveCompletesAt &&
+    existing.reviveByPlayerId === next.reviveByPlayerId &&
+    existing.ultimateCharge === next.ultimateCharge &&
+    existing.onFireUntil === next.onFireUntil &&
+    existing.powerupBoostUntil === next.powerupBoostUntil &&
+    existing.hasFlag === next.hasFlag &&
+    existing.respawnTime === next.respawnTime &&
+    existing.spawnProtectionUntil === next.spawnProtectionUntil &&
+    existing.visibility === next.visibility &&
+    existing.position === next.position &&
+    existing.velocity === next.velocity &&
+    existing.lookYaw === next.lookYaw &&
+    existing.lookPitch === next.lookPitch &&
+    statsVitalsEqual(existing.stats, next.stats) &&
+    rankVitalsEqual(existing.rank, next.rank) &&
+    movementVitalsEqual(existing.movement, next.movement) &&
+    abilitiesVitalsEqual(existing.abilities, next.abilities)
+  );
 }
 
 function isDefaultBootstrapPosition(player: Player): boolean {
@@ -601,8 +966,10 @@ function createLocalPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: n
 
 function applyLocalVitalsPatchInPlace(player: Player, vitals: PlayerVitalsSnapshot, serverTime: number): void {
   player.name = vitals.name || player.name;
+  player.role = normalizePlayerRole(vitals.role ?? player.role);
   player.team = vitals.team;
   player.heroId = vitals.heroId;
+  player.skinId = vitals.skinId ?? player.skinId ?? null;
   player.state = vitals.state;
   player.isReady = vitals.isReady;
   player.isBot = Boolean(vitals.isBot);
@@ -611,6 +978,14 @@ function applyLocalVitalsPatchInPlace(player: Player, vitals: PlayerVitalsSnapsh
   player.rank = normalizeRankSnapshot(vitals, player.rank);
   player.health = vitals.health;
   player.maxHealth = vitals.maxHealth;
+  player.downedHealth = vitals.downedHealth ?? null;
+  player.downedMaxHealth = vitals.downedMaxHealth ?? null;
+  player.downedStartedAt = vitals.downedStartedAt ?? null;
+  player.downedRemainingMs = vitals.downedRemainingMs ?? null;
+  player.downedExpiresAt = vitals.downedExpiresAt ?? null;
+  player.reviveStartedAt = vitals.reviveStartedAt ?? null;
+  player.reviveCompletesAt = vitals.reviveCompletesAt ?? null;
+  player.reviveByPlayerId = vitals.reviveByPlayerId ?? null;
   player.ultimateCharge = vitals.ultimateCharge;
   player.onFireUntil = vitals.onFireUntil ?? null;
   player.powerupBoostUntil = vitals.powerupBoostUntil ?? null;
@@ -658,11 +1033,15 @@ export function syncPlayerFromSchema(
     const store = useGameStore.getState();
     if (store.localPlayer) {
       const nextState = schemaPlayer.state || store.localPlayer.state;
+      const nextRole = normalizePlayerRole(schemaPlayer.role ?? store.localPlayer.role);
       const nextHeroId = (schemaPlayer.heroId || store.localPlayer.heroId) as HeroId | null;
+      const nextSkinId = (schemaPlayer.skinId || store.localPlayer.skinId) as HeroSkinId | null;
       const updated = {
         ...store.localPlayer,
+        role: nextRole,
         heroId: nextHeroId,
-        team: schemaPlayer.team || store.localPlayer.team,
+        skinId: nextSkinId,
+        team: normalizePlayerTeam(schemaPlayer.team, nextRole, store.localPlayer.team),
         isBot: Boolean(schemaPlayer.isBot ?? store.localPlayer.isBot),
         botDifficulty: schemaPlayer.botDifficulty || store.localPlayer.botDifficulty,
         botProfileId: schemaPlayer.botProfileId || store.localPlayer.botProfileId,
@@ -700,8 +1079,10 @@ export function setupPlayerJoinedHandler(
   room.onMessage('playerJoined', measureNetworkMessage('playerJoined', (data: {
     playerId: string;
     playerName: string;
+    role?: string;
     team?: string;
     heroId?: string;
+    skinId?: string;
     isBot?: boolean;
     botDifficulty?: BotDifficulty;
     botProfileId?: string;
@@ -718,11 +1099,14 @@ export function setupPlayerJoinedHandler(
       const currentStore = useGameStore.getState();
       const existingPlayer = currentStore.players.get(data.playerId);
       if (existingPlayer) {
+        const role = normalizePlayerRole(data.role ?? existingPlayer.role);
         updatePlayer(data.playerId, {
           ...existingPlayer,
           name: data.playerName || existingPlayer.name,
-          team: (data.team || existingPlayer.team) as Team,
+          role,
+          team: normalizePlayerTeam(data.team, role, existingPlayer.team),
           heroId: (data.heroId || existingPlayer.heroId) as HeroId | null,
+          skinId: (data.skinId || existingPlayer.skinId) as HeroSkinId | null,
           isBot: Boolean(data.isBot ?? existingPlayer.isBot),
           botDifficulty: data.botDifficulty || existingPlayer.botDifficulty,
           botProfileId: data.botProfileId || existingPlayer.botProfileId,
@@ -731,11 +1115,14 @@ export function setupPlayerJoinedHandler(
           visibility: data.position ? 'visible' : existingPlayer.visibility ?? 'hidden',
         });
       } else {
+        const role = normalizePlayerRole(data.role);
         const newPlayer: Player = {
           id: data.playerId,
           name: data.playerName,
-          team: (data.team || 'red') as Team,
+          role,
+          team: normalizePlayerTeam(data.team, role),
           heroId: (data.heroId || null) as HeroId | null,
+          skinId: (data.skinId || null) as HeroSkinId | null,
           state: 'selecting',
           isReady: false,
           isBot: Boolean(data.isBot),
@@ -1045,11 +1432,16 @@ export function setupPlayerVitalsHandler(
       const existing = nextPlayers.get(vitals.id);
       const next = createPlayerFromVitals(vitals, data.serverTime, existing);
       syncDeathVisualForVitals(next.id, next.state, existing?.heroId ?? null, next.heroId, next.respawnTime);
-      writablePlayers().set(vitals.id, next);
-      if (shouldHideLiveVisuals(next.visibility)) {
-        hiddenVisualUpdates.push(next.id);
-      } else {
-        liveVisualUpdates.push(next);
+      // Only churn the players Map (and trigger re-renders) when the vitals snapshot
+      // actually changed this remote player. Periodic vitals broadcasts for idle /
+      // unchanged players are otherwise no-ops.
+      if (!existing || !remotePlayerVitalsEqual(existing, next)) {
+        writablePlayers().set(vitals.id, next);
+        if (shouldHideLiveVisuals(next.visibility)) {
+          hiddenVisualUpdates.push(next.id);
+        } else {
+          liveVisualUpdates.push(next);
+        }
       }
       syncPlayerVisualEffectIndexes(next, { localPlayerId: sessionId, nowMs });
       shouldPublishTiming = true;
@@ -1063,6 +1455,7 @@ export function setupPlayerVitalsHandler(
       useGameStore.setState({
         ...(playersChanged ? { players: nextPlayers, localPlayer: nextLocalPlayer } : {}),
         ...(playerPingsChanged ? { playerPings: nextPlayerPings } : {}),
+        ...(nextLocalPlayer?.state !== 'alive' ? { chronosLifelineQueued: false } : {}),
       });
     }
 
@@ -1467,6 +1860,108 @@ function applyPhantomPrimaryState(data: {
     const reloadDurationMs = Math.max(0, reloadUntil - now);
     const fadeOutMs = Math.min(450, reloadDurationMs);
     void playSharedSound('phantomReload', {
+      durationMs: reloadDurationMs,
+      fadeOutMs,
+    });
+  }
+}
+
+function applyBlazePrimaryState(data: {
+  ammo?: number;
+  ammoRemaining?: number;
+  reloading?: boolean;
+  reloadStartedAt?: number;
+  reloadUntil?: number;
+}): void {
+  const store = useGameStore.getState();
+  const wasReloading = store.blazePrimaryReloading;
+  const previousReloadStart = store.blazePrimaryReloadStart;
+  const previousReloadEnd = store.blazePrimaryReloadEnd;
+  const now = Date.now();
+  const ammo = data.ammoRemaining ?? data.ammo;
+  const reloading = data.reloading ?? Boolean(data.reloadUntil && data.reloadUntil > now);
+  const shouldPreserveEmptyReloadAmmo =
+    reloading &&
+    wasReloading &&
+    store.blazePrimaryAmmo <= 0 &&
+    typeof ammo === 'number' &&
+    ammo > 0;
+  if (typeof ammo === 'number') {
+    store.setBlazePrimaryAmmo(shouldPreserveEmptyReloadAmmo ? 0 : ammo);
+  }
+
+  const reloadStartedAt = reloading ? (data.reloadStartedAt ?? now) : 0;
+  const reloadUntil = reloading ? (data.reloadUntil ?? now) : 0;
+  store.setBlazePrimaryReload(
+    reloading,
+    reloadStartedAt,
+    reloadUntil
+  );
+
+  const reloadSoundKey = `${reloadStartedAt}:${reloadUntil}`;
+  const startedNewReload = reloading &&
+    reloadUntil > reloadStartedAt &&
+    reloadUntil > now &&
+    (!wasReloading || previousReloadStart !== reloadStartedAt || previousReloadEnd !== reloadUntil);
+
+  if (startedNewReload && lastLocalBlazeReloadSoundKey !== reloadSoundKey) {
+    lastLocalBlazeReloadSoundKey = reloadSoundKey;
+    if (shouldSuppressPredictedLocalAbilitySound('blaze_reload', now)) return;
+
+    const reloadDurationMs = Math.max(0, reloadUntil - now);
+    const fadeOutMs = Math.min(180, reloadDurationMs);
+    void playSharedSound('blazeReload', {
+      durationMs: reloadDurationMs,
+      fadeOutMs,
+    });
+  }
+}
+
+function applyChronosPrimaryState(data: {
+  ammo?: number;
+  ammoRemaining?: number;
+  reloading?: boolean;
+  reloadStartedAt?: number;
+  reloadUntil?: number;
+}): void {
+  const store = useGameStore.getState();
+  const wasReloading = store.chronosPrimaryReloading;
+  const previousReloadStart = store.chronosPrimaryReloadStart;
+  const previousReloadEnd = store.chronosPrimaryReloadEnd;
+  const now = Date.now();
+  const ammo = data.ammoRemaining ?? data.ammo;
+  const reloading = data.reloading ?? Boolean(data.reloadUntil && data.reloadUntil > now);
+  const shouldPreserveEmptyReloadAmmo =
+    reloading &&
+    wasReloading &&
+    store.chronosPrimaryAmmo <= 0 &&
+    typeof ammo === 'number' &&
+    ammo > 0;
+  if (typeof ammo === 'number') {
+    store.setChronosPrimaryAmmo(shouldPreserveEmptyReloadAmmo ? 0 : ammo);
+  }
+
+  const reloadStartedAt = reloading ? (data.reloadStartedAt ?? now) : 0;
+  const reloadUntil = reloading ? (data.reloadUntil ?? now) : 0;
+  store.setChronosPrimaryReload(
+    reloading,
+    reloadStartedAt,
+    reloadUntil
+  );
+
+  const reloadSoundKey = `${reloadStartedAt}:${reloadUntil}`;
+  const startedNewReload = reloading &&
+    reloadUntil > reloadStartedAt &&
+    reloadUntil > now &&
+    (!wasReloading || previousReloadStart !== reloadStartedAt || previousReloadEnd !== reloadUntil);
+
+  if (startedNewReload && lastLocalChronosReloadSoundKey !== reloadSoundKey) {
+    lastLocalChronosReloadSoundKey = reloadSoundKey;
+    if (shouldSuppressPredictedLocalAbilitySound('chronos_reload', now)) return;
+
+    const reloadDurationMs = Math.max(0, reloadUntil - now || CHRONOS_PRIMARY_RELOAD_MS);
+    const fadeOutMs = Math.min(CHRONOS_PRIMARY_RELOAD_SOUND_FADE_OUT_MS, reloadDurationMs);
+    void playSharedSound('chronosReload', {
       durationMs: reloadDurationMs,
       fadeOutMs,
     });
@@ -1964,6 +2459,9 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
 
   switch (data.abilityId) {
     case 'blaze_rocket': {
+      if (isLocalPlayer) {
+        applyBlazePrimaryState(data);
+      }
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
@@ -2161,6 +2659,9 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
 
   switch (data.abilityId) {
     case 'chronos_verdant_pulse': {
+      if (isLocalPlayer) {
+        applyChronosPrimaryState(data);
+      }
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
@@ -2430,6 +2931,26 @@ export function setupCombatHandlers(room: Room) {
     applyPhantomPrimaryState(data);
   }));
 
+  room.onMessage('blazePrimaryState', measureNetworkMessage('blazePrimaryState', (data: {
+    ammo: number;
+    reloading: boolean;
+    reloadStartedAt: number;
+    reloadUntil: number;
+    serverTime: number;
+  }) => {
+    applyBlazePrimaryState(data);
+  }));
+
+  room.onMessage('chronosPrimaryState', measureNetworkMessage('chronosPrimaryState', (data: {
+    ammo: number;
+    reloading: boolean;
+    reloadStartedAt: number;
+    reloadUntil: number;
+    serverTime: number;
+  }) => {
+    applyChronosPrimaryState(data);
+  }));
+
   room.onMessage('chronosAegisDamaged', measureNetworkMessage('chronosAegisDamaged', (data: ChronosAegisDamagedEvent) => {
     const now = Date.now();
     const store = useGameStore.getState();
@@ -2481,13 +3002,28 @@ export function setupCombatHandlers(room: Room) {
     const targetPlayer = store.players.get(data.targetId);
     const sourcePosition = data.sourcePosition ?? sourcePlayer?.position ?? null;
     const targetPosition = data.targetPosition ?? targetPlayer?.position ?? null;
+    const newDownedHealth = typeof data.newDownedHealth === 'number' && Number.isFinite(data.newDownedHealth)
+      ? Math.max(0, data.newDownedHealth)
+      : null;
+
+    if (newDownedHealth !== null) {
+      if (data.targetId === localPlayerId) {
+        store.updateLocalPlayer({ downedHealth: newDownedHealth });
+      } else if (targetPlayer) {
+        store.updatePlayer(data.targetId, {
+          ...targetPlayer,
+          downedHealth: newDownedHealth,
+        });
+      }
+    }
 
     if (data.sourceId === localPlayerId && targetPosition) {
+      const fixedAnchor = data.damageType === 'bomb' || newDownedHealth !== null || targetPlayer?.state === 'downed';
       useCombatFeedbackStore.getState().addCombatTextEvent({
         kind: 'damage',
         amount: data.damage,
         damageType: data.damageType,
-        targetId: data.targetId,
+        targetId: fixedAnchor ? null : data.targetId,
         position: targetPosition,
       });
     }
@@ -2508,6 +3044,26 @@ export function setupCombatHandlers(room: Room) {
         duration: 260,
       });
     }
+  }));
+
+  room.onMessage('playerDowned', measureNetworkMessage('playerDowned', (data: PlayerDownedEvent) => {
+    loggers.network.sample('playerDowned', 1000, 'player downed', data.targetId, data.sourceId, data.damageType);
+    handlePlayerDownedEvent(data);
+  }));
+
+  room.onMessage('playerReviveStarted', measureNetworkMessage('playerReviveStarted', (data: PlayerReviveStartedEvent) => {
+    loggers.network.sample('playerReviveStarted', 1000, 'player revive started', data.targetId, data.reviverId);
+    handlePlayerReviveStartedEvent(data);
+  }));
+
+  room.onMessage('playerReviveCancelled', measureNetworkMessage('playerReviveCancelled', (data: PlayerReviveCancelledEvent) => {
+    loggers.network.sample('playerReviveCancelled', 1000, 'player revive cancelled', data.targetId, data.reason);
+    handlePlayerReviveCancelledEvent(data);
+  }));
+
+  room.onMessage('playerRevived', measureNetworkMessage('playerRevived', (data: PlayerRevivedEvent) => {
+    loggers.network.sample('playerRevived', 1000, 'player revived', data.targetId, data.reviverId);
+    handlePlayerRevivedEvent(data);
   }));
 
   room.onMessage('playerHealed', measureNetworkMessage('playerHealed', (data: {

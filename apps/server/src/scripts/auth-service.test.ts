@@ -97,13 +97,29 @@ function testSessionTokens(session: SessionModule): void {
     walletAddress: null,
   });
 
+  const pendingWalletToken = createPendingAuthToken({
+    provider: 'wallet',
+    providerAccountId: 'wallet_123',
+    displayName: 'wallet_123',
+    walletAddress: 'wallet_123',
+  });
+  assert.deepEqual(verifyPendingAuthToken(pendingWalletToken), {
+    pending: true,
+    provider: 'wallet',
+    providerAccountId: 'wallet_123',
+    displayName: 'wallet_123',
+    avatarUrl: null,
+    emailHash: null,
+    walletAddress: 'wallet_123',
+  });
+
   const legacyWalletToken = jwt.sign(
-    { userId: 'user_phantom', walletAddress: 'wallet_123' },
+    { userId: 'user_wallet', walletAddress: 'wallet_123' },
     process.env.JWT_SECRET!,
     { expiresIn: '1h' }
   );
   assert.deepEqual(verifyAuthToken(legacyWalletToken), {
-    userId: 'user_phantom',
+    userId: 'user_wallet',
     sessionVersion: 0,
     provider: undefined,
     walletAddress: 'wallet_123',

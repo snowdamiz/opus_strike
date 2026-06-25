@@ -3,11 +3,14 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useShallow } from 'zustand/shallow';
 import {
+  BLAZE_PRIMARY_RELOAD_MS,
+  CHRONOS_PRIMARY_RELOAD_MS,
   HERO_DEFINITIONS,
   PHANTOM_PRIMARY_RELOAD_MS,
   SPRINT_MULTIPLIER,
   VOID_RAY_CHARGE_TIME,
   type HeroId,
+  type HeroSkinId,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import {
@@ -63,7 +66,7 @@ import {
 } from './effectResources';
 import {
   HERO_MATERIAL_COLORS,
-  getViewmodelMaterials,
+  getViewmodelMaterialsForSkin,
   isViewmodelHero,
   type ViewmodelHeroId,
   type ViewmodelMaterialSet,
@@ -88,9 +91,11 @@ import {
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
 import type { ViewmodelQualityConfig } from './visualQuality';
 import { ViewmodelBurnOverlay } from './ViewmodelBurnOverlay';
+import { playSharedSound } from '../../hooks/useAudio';
 
 interface HeroViewmodelProps {
   heroId: ViewmodelHeroId;
+  skinId?: HeroSkinId | string | null;
   action: ViewmodelActionState;
   config: ViewmodelQualityConfig;
 }
@@ -258,6 +263,45 @@ const BLAZE_STAFF_TIP_FLAME_ANGLES = [
   Math.PI * 1.25,
   Math.PI * 1.75,
 ] as const;
+const BLAZE_STAFF_RELOAD_FLAMES = [
+  { y: -0.38, angle: 0, progress: 0.02, size: 1.06 },
+  { y: -0.32, angle: Math.PI * 0.74, progress: 0.08, size: 0.92 },
+  { y: -0.25, angle: Math.PI * 1.36, progress: 0.15, size: 1.12 },
+  { y: -0.18, angle: Math.PI * 0.3, progress: 0.23, size: 0.98 },
+  { y: -0.1, angle: Math.PI * 1.02, progress: 0.31, size: 1.18 },
+  { y: -0.02, angle: Math.PI * 1.64, progress: 0.39, size: 0.96 },
+  { y: 0.07, angle: Math.PI * 0.48, progress: 0.48, size: 1.16 },
+  { y: 0.16, angle: Math.PI * 1.16, progress: 0.57, size: 1.02 },
+  { y: 0.25, angle: Math.PI * 1.78, progress: 0.66, size: 1.2 },
+  { y: 0.34, angle: Math.PI * 0.2, progress: 0.74, size: 1.08 },
+  { y: 0.43, angle: Math.PI * 0.92, progress: 0.82, size: 1.24 },
+  { y: 0.5, angle: Math.PI * 1.54, progress: 0.9, size: 1.1 },
+] as const;
+const BLAZE_STAFF_RELOAD_BURST_START = 0.78;
+const BLAZE_STAFF_RELOAD_SHAFT_START_Y = -0.4;
+const BLAZE_STAFF_RELOAD_SHAFT_END_Y = 0.52;
+const BLAZE_STAFF_RELOAD_BURST_RAYS = [
+  { angle: 0, pitch: -1.0, length: 1.16 },
+  { angle: Math.PI * 0.25, pitch: -0.78, length: 0.84 },
+  { angle: Math.PI * 0.5, pitch: -1.04, length: 1.08 },
+  { angle: Math.PI * 0.75, pitch: -0.72, length: 0.9 },
+  { angle: Math.PI, pitch: -1.0, length: 1.18 },
+  { angle: Math.PI * 1.25, pitch: -0.8, length: 0.86 },
+  { angle: Math.PI * 1.5, pitch: -1.06, length: 1.12 },
+  { angle: Math.PI * 1.75, pitch: -0.76, length: 0.88 },
+] as const;
+const BLAZE_STAFF_RELOAD_BURST_SPARKS = [
+  { angle: 0.2, lift: 0.074, distance: 0.22, delay: 0, size: 0.014 },
+  { angle: 0.72, lift: 0.045, distance: 0.18, delay: 0.05, size: 0.01 },
+  { angle: 1.24, lift: 0.092, distance: 0.26, delay: 0.01, size: 0.012 },
+  { angle: 1.76, lift: 0.032, distance: 0.17, delay: 0.09, size: 0.009 },
+  { angle: 2.34, lift: 0.082, distance: 0.24, delay: 0.03, size: 0.012 },
+  { angle: 2.92, lift: 0.055, distance: 0.2, delay: 0.12, size: 0.009 },
+  { angle: 3.48, lift: 0.096, distance: 0.28, delay: 0.02, size: 0.013 },
+  { angle: 4.08, lift: 0.038, distance: 0.19, delay: 0.08, size: 0.01 },
+  { angle: 4.7, lift: 0.078, distance: 0.25, delay: 0.04, size: 0.012 },
+  { angle: 5.34, lift: 0.052, distance: 0.21, delay: 0.1, size: 0.009 },
+] as const;
 const CHRONOS_FOREARM_READY_BLEND = 0.52;
 const CHRONOS_HAND_READY_BLEND = 0.62;
 const CHRONOS_MOVEMENT_BOB_WALK_SPEED = 5.35;
@@ -298,7 +342,35 @@ const CHRONOS_WEAPON_PYRAMID_WIRE_GLOW_OPACITY = 1;
 const CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X = -0.18;
 const CHRONOS_WEAPON_PYRAMID_SPIN_SPEED = 0.22;
 const CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST = 0.86;
+const CHRONOS_WEAPON_PYRAMID_RELOAD_SPIN_BOOST = 7.2;
 const CHRONOS_WEAPON_PYRAMID_HEARTBEAT_GROWTH = 0.085;
+const CHRONOS_WEAPON_RELOAD_AURA_PUFFS = [
+  { angle: 0.08, radius: 0.26, y: 0.1, offset: 0.0, speed: 1.02, swirl: 0.72, size: 1.1 },
+  { angle: 0.52, radius: 0.32, y: -0.06, offset: 0.08, speed: 1.14, swirl: -0.56, size: 0.94 },
+  { angle: 1.04, radius: 0.28, y: 0.16, offset: 0.15, speed: 0.98, swirl: 0.64, size: 1.04 },
+  { angle: 1.5, radius: 0.34, y: -0.14, offset: 0.23, speed: 1.18, swirl: -0.76, size: 0.88 },
+  { angle: 2.0, radius: 0.3, y: 0.03, offset: 0.31, speed: 1.08, swirl: 0.58, size: 1.18 },
+  { angle: 2.48, radius: 0.25, y: -0.02, offset: 0.39, speed: 1.2, swirl: -0.68, size: 0.96 },
+  { angle: 2.96, radius: 0.36, y: 0.13, offset: 0.46, speed: 1.0, swirl: 0.78, size: 1.0 },
+  { angle: 3.44, radius: 0.29, y: -0.12, offset: 0.54, speed: 1.16, swirl: -0.62, size: 1.12 },
+  { angle: 3.92, radius: 0.33, y: 0.06, offset: 0.62, speed: 1.04, swirl: 0.7, size: 0.9 },
+  { angle: 4.42, radius: 0.27, y: 0.18, offset: 0.69, speed: 1.22, swirl: -0.74, size: 1.08 },
+  { angle: 4.88, radius: 0.35, y: -0.08, offset: 0.77, speed: 1.1, swirl: 0.6, size: 1.0 },
+  { angle: 5.36, radius: 0.31, y: 0.01, offset: 0.85, speed: 0.96, swirl: -0.66, size: 0.92 },
+  { angle: 5.82, radius: 0.24, y: -0.16, offset: 0.92, speed: 1.24, swirl: 0.8, size: 1.14 },
+] as const;
+const CHRONOS_WEAPON_RELOAD_AURA_MOTES = [
+  { angle: 0.18, radius: 0.34, y: 0.14, offset: 0.02, speed: 1.08, drift: 0.8, size: 1.05 },
+  { angle: 0.72, radius: 0.28, y: -0.1, offset: 0.13, speed: 1.18, drift: -0.9, size: 0.86 },
+  { angle: 1.28, radius: 0.38, y: 0.02, offset: 0.24, speed: 0.98, drift: 1.05, size: 1.16 },
+  { angle: 1.9, radius: 0.26, y: 0.17, offset: 0.36, speed: 1.3, drift: -0.7, size: 0.92 },
+  { angle: 2.52, radius: 0.32, y: -0.15, offset: 0.47, speed: 1.04, drift: 0.92, size: 1 },
+  { angle: 3.1, radius: 0.4, y: 0.08, offset: 0.58, speed: 1.22, drift: -1.02, size: 1.12 },
+  { angle: 3.76, radius: 0.29, y: -0.03, offset: 0.68, speed: 1.12, drift: 0.75, size: 0.9 },
+  { angle: 4.38, radius: 0.36, y: 0.2, offset: 0.78, speed: 0.94, drift: -0.84, size: 1.2 },
+  { angle: 5.0, radius: 0.3, y: -0.12, offset: 0.88, speed: 1.28, drift: 0.95, size: 0.94 },
+  { angle: 5.62, radius: 0.42, y: 0.01, offset: 0.96, speed: 1.0, drift: -0.72, size: 1.06 },
+] as const;
 const CHRONOS_AEGIS_VISUAL_STALE_MS = 220;
 const CHRONOS_AEGIS_BLEND_IN_SPEED = 6.8;
 const CHRONOS_AEGIS_BLEND_OUT_SPEED = 9;
@@ -424,6 +496,44 @@ function createAdditiveGlowMaterial(color: number): THREE.MeshBasicMaterial {
   });
 }
 
+function createChronosReloadAuraTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    return new THREE.CanvasTexture(canvas);
+  }
+
+  const gradient = context.createRadialGradient(32, 32, 2, 32, 32, 32);
+  gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+  gradient.addColorStop(0.28, 'rgba(210, 255, 226, 0.82)');
+  gradient.addColorStop(0.62, 'rgba(64, 255, 150, 0.28)');
+  gradient.addColorStop(1, 'rgba(64, 255, 150, 0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function createChronosReloadAuraMaterial(
+  texture: THREE.Texture,
+  color: number
+): THREE.SpriteMaterial {
+  return new THREE.SpriteMaterial({
+    map: texture,
+    color,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+}
+
 function createPhantomReloadGlowMaterial(): THREE.MeshBasicMaterial {
   return createAdditiveGlowMaterial(PHANTOM_COLORS.lightPurple);
 }
@@ -494,6 +604,50 @@ function getPhantomVeilArmGlowOpacity(nowMs: number, elapsedSeconds: number): nu
   const shimmer = 0.82 + Math.sin(elapsedSeconds * 7.4) * 0.12 + Math.sin(elapsedSeconds * 16.8) * 0.06;
 
   return THREE.MathUtils.clamp(glowBase * shimmer * 0.72, 0, 0.82);
+}
+
+// Per-frame shared pose memo. Both Phantom forearms, both hands and the charge orb
+// request these poses every frame; each getter does a store read and (when active)
+// allocates a fresh object. state.clock.elapsedTime is identical for every useFrame
+// within a single frame, so it is a safe frame token to memo on. Consumers only read
+// the returned pose, never mutate it, so sharing one instance per frame is safe.
+let phantomChargePoseFrame = -1;
+let phantomChargePoseCached: PhantomVoidRayChargePose = PHANTOM_VOID_RAY_IDLE_CHARGE_POSE;
+function getPhantomVoidRayChargePoseFrame(nowMs: number, elapsedSeconds: number): PhantomVoidRayChargePose {
+  if (elapsedSeconds !== phantomChargePoseFrame) {
+    phantomChargePoseFrame = elapsedSeconds;
+    phantomChargePoseCached = getPhantomVoidRayChargePose(nowMs, elapsedSeconds);
+  }
+  return phantomChargePoseCached;
+}
+
+let phantomVeilGlowFrame = -1;
+let phantomVeilGlowCached = 0;
+function getPhantomVeilArmGlowOpacityFrame(nowMs: number, elapsedSeconds: number): number {
+  if (elapsedSeconds !== phantomVeilGlowFrame) {
+    phantomVeilGlowFrame = elapsedSeconds;
+    phantomVeilGlowCached = getPhantomVeilArmGlowOpacity(nowMs, elapsedSeconds);
+  }
+  return phantomVeilGlowCached;
+}
+
+let phantomReloadPoseFrameNeg = -1;
+let phantomReloadPoseCachedNeg: PhantomReloadPose = PHANTOM_RELOAD_IDLE_POSE;
+let phantomReloadPoseFramePos = -1;
+let phantomReloadPoseCachedPos: PhantomReloadPose = PHANTOM_RELOAD_IDLE_POSE;
+function getPhantomReloadPoseFrame(nowMs: number, elapsedSeconds: number, side: -1 | 1): PhantomReloadPose {
+  if (side === 1) {
+    if (elapsedSeconds !== phantomReloadPoseFramePos) {
+      phantomReloadPoseFramePos = elapsedSeconds;
+      phantomReloadPoseCachedPos = getPhantomReloadPose(nowMs, elapsedSeconds, 1);
+    }
+    return phantomReloadPoseCachedPos;
+  }
+  if (elapsedSeconds !== phantomReloadPoseFrameNeg) {
+    phantomReloadPoseFrameNeg = elapsedSeconds;
+    phantomReloadPoseCachedNeg = getPhantomReloadPose(nowMs, elapsedSeconds, -1);
+  }
+  return phantomReloadPoseCachedNeg;
 }
 
 function applyPhantomReloadMotion(
@@ -1466,9 +1620,9 @@ function PhantomAnimatedForearm({
     const attackTimeSeconds = attack?.side === side
       ? (nowMs - attack.startTimeMs) / 1000
       : Number.POSITIVE_INFINITY;
-    const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
-    const chargePose = getPhantomVoidRayChargePose(nowMs, state.clock.elapsedTime);
-    const veilGlowOpacity = getPhantomVeilArmGlowOpacity(nowMs, state.clock.elapsedTime);
+    const reloadPose = getPhantomReloadPoseFrame(nowMs, state.clock.elapsedTime, side);
+    const chargePose = getPhantomVoidRayChargePoseFrame(nowMs, state.clock.elapsedTime);
+    const veilGlowOpacity = getPhantomVeilArmGlowOpacityFrame(nowMs, state.clock.elapsedTime);
     const veilCastPose = reloadPose.active || chargePose.active
       ? null
       : getPhantomVeilCastPose(nowMs);
@@ -1573,6 +1727,10 @@ function PhantomPoseableHand({
   const fingerRefs = useRef<(THREE.Group | null)[]>([]);
   const thumbSide = -side;
   const reloadGlowMaterial = useMemo(createPhantomReloadGlowMaterial, []);
+  // Reused pose-targets object so the per-frame applyPhantom* calls don't each
+  // allocate a fresh literal (with conditional closedHand spread). The joint refs
+  // are stable groups; only the closedHand field is set/cleared per frame.
+  const poseTargetsRef = useRef<PhantomHandPoseTargets | null>(null);
 
   useRegisteredViewmodelSocket(PHANTOM_PRIMARY_PALM_SOCKET_NAMES[side], socketRef);
 
@@ -1590,14 +1748,26 @@ function PhantomPoseableHand({
     const fingers = resolveFingerTargets(fingerRefs.current);
     if (!arm || !wrist || !palm || !thumb || !fingers) return;
 
+    let poseTargets = poseTargetsRef.current;
+    if (!poseTargets) {
+      poseTargets = { arm, wrist, palm, thumb, fingers };
+      poseTargetsRef.current = poseTargets;
+    }
+    poseTargets.arm = arm;
+    poseTargets.wrist = wrist;
+    poseTargets.palm = palm;
+    poseTargets.thumb = thumb;
+    poseTargets.fingers = fingers;
+    poseTargets.closedHand = closedVisual ?? undefined;
+
     const nowMs = Date.now();
     const attack = primaryAttackRef.current;
     const attackTimeSeconds = attack?.side === side
       ? (nowMs - attack.startTimeMs) / 1000
       : Number.POSITIVE_INFINITY;
-    const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
-    const chargePose = getPhantomVoidRayChargePose(nowMs, state.clock.elapsedTime);
-    const veilGlowOpacity = getPhantomVeilArmGlowOpacity(nowMs, state.clock.elapsedTime);
+    const reloadPose = getPhantomReloadPoseFrame(nowMs, state.clock.elapsedTime, side);
+    const chargePose = getPhantomVoidRayChargePoseFrame(nowMs, state.clock.elapsedTime);
+    const veilGlowOpacity = getPhantomVeilArmGlowOpacityFrame(nowMs, state.clock.elapsedTime);
     const veilCastPose = reloadPose.active || chargePose.active
       ? null
       : getPhantomVeilCastPose(nowMs);
@@ -1611,14 +1781,6 @@ function PhantomPoseableHand({
         openVisual.visible = false;
         openVisual.scale.setScalar(0.001);
       }
-      const poseTargets = {
-        ...(closedVisual ? { closedHand: closedVisual } : {}),
-        arm,
-        wrist,
-        palm,
-        thumb,
-        fingers,
-      };
       writePhantomHandPose(
         poseTargets,
         side,
@@ -1675,14 +1837,7 @@ function PhantomPoseableHand({
     }
 
     writePhantomHandPose(
-      {
-        ...(closedVisual ? { closedHand: closedVisual } : {}),
-        arm,
-        wrist,
-        palm,
-        thumb,
-        fingers,
-      },
+      poseTargets,
       side,
       holdBlend,
       shotPulse,
@@ -1693,41 +1848,20 @@ function PhantomPoseableHand({
     );
     if (shieldCastPose) {
       applyPhantomShieldCastHandPose(
-        {
-          ...(closedVisual ? { closedHand: closedVisual } : {}),
-          arm,
-          wrist,
-          palm,
-          thumb,
-          fingers,
-        },
+        poseTargets,
         side,
         shieldCastPose,
         state.clock.elapsedTime
       );
     }
     applyPhantomVoidRayChargeHandPose(
-      {
-        ...(closedVisual ? { closedHand: closedVisual } : {}),
-        arm,
-        wrist,
-        palm,
-        thumb,
-        fingers,
-      },
+      poseTargets,
       side,
       chargePose,
       state.clock.elapsedTime
     );
     applyPhantomVoidRayReleaseHandPose(
-      {
-        ...(closedVisual ? { closedHand: closedVisual } : {}),
-        arm,
-        wrist,
-        palm,
-        thumb,
-        fingers,
-      },
+      poseTargets,
       side,
       voidRayReleaseExtensionBlend
     );
@@ -1924,7 +2058,7 @@ function PhantomVoidRayChargeOrb() {
     const halo = haloRef.current;
     if (!group || !core || !shell || !halo) return;
 
-    const chargePose = getPhantomVoidRayChargePose(Date.now(), state.clock.elapsedTime);
+    const chargePose = getPhantomVoidRayChargePoseFrame(Date.now(), state.clock.elapsedTime);
     const visible = chargePose.active && chargePose.blend > 0.015;
     group.visible = visible;
 
@@ -2640,10 +2774,33 @@ function BlazeWizardStaff({
   const shockwaveRingRefs = useRef<(THREE.Mesh | null)[]>([]);
   const shockwaveStartMsRef = useRef(0);
   const processedShockwaveRevisionRef = useRef(0);
+  const processedReloadBlastStartRef = useRef(0);
+  // True while the reload pipeline has non-rest visuals that still need to be
+  // settled back to zero once reloading stops. Lets us skip the whole reload
+  // pipeline on frames where it is provably at rest (not reloading + already settled).
+  const reloadNeedsSettleRef = useRef(false);
+  const reloadShaftGlowRef = useRef<THREE.Mesh>(null);
+  const reloadShaftRingRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const reloadFlameRefs = useRef<(THREE.Group | null)[]>([]);
+  const reloadBurstRef = useRef<THREE.Group>(null);
+  const reloadBurstCoreRef = useRef<THREE.Mesh>(null);
+  const reloadBurstShellRef = useRef<THREE.Mesh>(null);
+  const reloadBurstRingRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const reloadBurstRayRefs = useRef<(THREE.Group | null)[]>([]);
+  const reloadBurstSparkRefs = useRef<(THREE.Group | null)[]>([]);
   const chargeCoreMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff4a16), []);
   const chargeHaloMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff6f1f), []);
   const tipFlareMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xffcf3a), []);
   const shockwaveMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff5a18), []);
+  const reloadShaftMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff5a18), []);
+  const reloadShaftRingMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xffa11d), []);
+  const reloadFlameOuterMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff6418), []);
+  const reloadFlameCoreMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xfff08a), []);
+  const reloadBurstCoreMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xfff1a0), []);
+  const reloadBurstShellMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff7a18), []);
+  const reloadBurstRayMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xffa21d), []);
+  const reloadBurstRingMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xffd65a), []);
+  const reloadBurstSparkMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xfff7bc), []);
 
   useRegisteredViewmodelSocket(BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME, socketRef);
 
@@ -2652,7 +2809,30 @@ function BlazeWizardStaff({
     chargeHaloMaterial.dispose();
     tipFlareMaterial.dispose();
     shockwaveMaterial.dispose();
-  }, [chargeCoreMaterial, chargeHaloMaterial, shockwaveMaterial, tipFlareMaterial]);
+    reloadShaftMaterial.dispose();
+    reloadShaftRingMaterial.dispose();
+    reloadFlameOuterMaterial.dispose();
+    reloadFlameCoreMaterial.dispose();
+    reloadBurstCoreMaterial.dispose();
+    reloadBurstShellMaterial.dispose();
+    reloadBurstRayMaterial.dispose();
+    reloadBurstRingMaterial.dispose();
+    reloadBurstSparkMaterial.dispose();
+  }, [
+    chargeCoreMaterial,
+    chargeHaloMaterial,
+    reloadBurstCoreMaterial,
+    reloadBurstRayMaterial,
+    reloadBurstRingMaterial,
+    reloadBurstShellMaterial,
+    reloadBurstSparkMaterial,
+    reloadFlameCoreMaterial,
+    reloadFlameOuterMaterial,
+    reloadShaftMaterial,
+    reloadShaftRingMaterial,
+    shockwaveMaterial,
+    tipFlareMaterial,
+  ]);
 
   useFrame((state) => {
     const staff = staffRef.current;
@@ -2707,28 +2887,221 @@ function BlazeWizardStaff({
     }
 
     const shockwave = shockwaveRef.current;
-    if (!shockwave || shockwaveStartMsRef.current <= 0) return;
-
-    const progress = THREE.MathUtils.clamp(
-      (nowMs - shockwaveStartMsRef.current) / BLAZE_STAFF_SHOCKWAVE_DURATION_MS,
-      0,
-      1
-    );
-    const shockwaveVisible = progress < 1;
-    shockwave.visible = shockwaveVisible;
-    if (!shockwaveVisible) {
+    if (shockwave && shockwaveStartMsRef.current > 0) {
+      const progress = THREE.MathUtils.clamp(
+        (nowMs - shockwaveStartMsRef.current) / BLAZE_STAFF_SHOCKWAVE_DURATION_MS,
+        0,
+        1
+      );
+      const shockwaveVisible = progress < 1;
+      shockwave.visible = shockwaveVisible;
+      if (shockwaveVisible) {
+        const easedProgress = 1 - Math.pow(1 - progress, 3);
+        const shockwaveScale = THREE.MathUtils.lerp(0.06, 0.74, easedProgress);
+        const shockwaveOpacity = (1 - THREE.MathUtils.smoothstep(progress, 0.18, 1)) * 0.62;
+        shockwaveShellRef.current?.scale.setScalar(shockwaveScale);
+        shockwaveRingRefs.current.forEach((ring) => {
+          ring?.scale.set(shockwaveScale, shockwaveScale, 1);
+        });
+        shockwaveMaterial.opacity = THREE.MathUtils.clamp(shockwaveOpacity, 0, 0.62);
+      } else {
+        shockwaveMaterial.opacity = 0;
+      }
+    } else {
       shockwaveMaterial.opacity = 0;
-      return;
     }
 
-    const easedProgress = 1 - Math.pow(1 - progress, 3);
-    const shockwaveScale = THREE.MathUtils.lerp(0.06, 0.74, easedProgress);
-    const shockwaveOpacity = (1 - THREE.MathUtils.smoothstep(progress, 0.18, 1)) * 0.62;
-    shockwaveShellRef.current?.scale.setScalar(shockwaveScale);
-    shockwaveRingRefs.current.forEach((ring) => {
-      ring?.scale.set(shockwaveScale, shockwaveScale, 1);
-    });
-    shockwaveMaterial.opacity = THREE.MathUtils.clamp(shockwaveOpacity, 0, 0.62);
+    const {
+      blazePrimaryReloading,
+      blazePrimaryReloadStart,
+      blazePrimaryReloadEnd,
+    } = useGameStore.getState();
+    // The reload pipeline is the last work in this frame. When not reloading and
+    // everything is already settled to its rest (all opacities 0, nodes hidden),
+    // there is nothing to do — skip it entirely. The frame reloading ends still
+    // runs once (ref is still true) to settle values, then subsequent idle frames
+    // bail here.
+    if (!blazePrimaryReloading && !reloadNeedsSettleRef.current) {
+      return;
+    }
+    reloadNeedsSettleRef.current = blazePrimaryReloading;
+    const reloadDuration = Math.max(
+      1,
+      blazePrimaryReloadEnd - blazePrimaryReloadStart || BLAZE_PRIMARY_RELOAD_MS
+    );
+    const reloadProgress = blazePrimaryReloading
+      ? THREE.MathUtils.clamp((nowMs - blazePrimaryReloadStart) / reloadDuration, 0, 1)
+      : 0;
+    const reloadHead = THREE.MathUtils.smoothstep(reloadProgress, 0.02, BLAZE_STAFF_RELOAD_BURST_START);
+    const reloadActiveAmount = blazePrimaryReloading
+      ? THREE.MathUtils.smoothstep(reloadProgress, 0, 0.12) *
+        (1 - THREE.MathUtils.smoothstep(reloadProgress, 0.86, 1))
+      : 0;
+    const shaftWaveY = THREE.MathUtils.lerp(
+      BLAZE_STAFF_RELOAD_SHAFT_START_Y,
+      BLAZE_STAFF_RELOAD_SHAFT_END_Y,
+      reloadHead
+    );
+    const shaftGlow = reloadShaftGlowRef.current;
+    if (shaftGlow) {
+      shaftGlow.visible = reloadActiveAmount > 0.025;
+      if (shaftGlow.visible) {
+        const shaftPulse = 1 + Math.sin(state.clock.elapsedTime * 18.5) * 0.08;
+        const shaftHeight = THREE.MathUtils.clamp(
+          shaftWaveY - BLAZE_STAFF_RELOAD_SHAFT_START_Y + 0.12,
+          0.1,
+          BLAZE_STAFF_RELOAD_SHAFT_END_Y - BLAZE_STAFF_RELOAD_SHAFT_START_Y + 0.12
+        );
+        shaftGlow.position.y = BLAZE_STAFF_RELOAD_SHAFT_START_Y + shaftHeight * 0.5;
+        shaftGlow.rotation.y = state.clock.elapsedTime * 0.9;
+        shaftGlow.scale.set(0.052 * shaftPulse, shaftHeight, 0.052 * shaftPulse);
+      }
+    }
+    reloadShaftMaterial.opacity = THREE.MathUtils.clamp(reloadActiveAmount * 0.42, 0, 0.42);
+    const reloadShaftRings = reloadShaftRingRefs.current;
+    for (let index = 0; index < reloadShaftRings.length; index++) {
+      const ring = reloadShaftRings[index];
+      if (!ring) continue;
+      const trailingY = shaftWaveY - index * 0.115;
+      const ringVisible =
+        reloadActiveAmount > 0.04 &&
+        trailingY > BLAZE_STAFF_RELOAD_SHAFT_START_Y + 0.01 &&
+        trailingY < BLAZE_STAFF_RELOAD_SHAFT_END_Y + 0.06;
+      ring.visible = ringVisible;
+      if (!ringVisible) continue;
+
+      const ringPulse = 1 + Math.sin(state.clock.elapsedTime * 24 + index * 1.9) * 0.08;
+      ring.position.y = trailingY;
+      ring.rotation.z = state.clock.elapsedTime * (1.5 + index * 0.28);
+      ring.scale.setScalar((0.061 - index * 0.006) * ringPulse);
+    }
+    reloadShaftRingMaterial.opacity = THREE.MathUtils.clamp(reloadActiveAmount * 0.62, 0, 0.62);
+    let strongestFlame = 0;
+
+    for (let index = 0; index < BLAZE_STAFF_RELOAD_FLAMES.length; index++) {
+      const flame = BLAZE_STAFF_RELOAD_FLAMES[index];
+      const flameNode = reloadFlameRefs.current[index];
+      if (!flameNode) continue;
+
+      const ignite = THREE.MathUtils.smoothstep(reloadHead, flame.progress - 0.11, flame.progress + 0.03);
+      const extinguish = 1 - THREE.MathUtils.smoothstep(reloadHead, flame.progress + 0.16, flame.progress + 0.34);
+      const waveProximity = 1 - THREE.MathUtils.clamp(Math.abs(flame.progress - reloadHead) / 0.2, 0, 1);
+      const endFade = 1 - THREE.MathUtils.smoothstep(reloadProgress, 0.84, 0.96);
+      const amount = blazePrimaryReloading
+        ? THREE.MathUtils.clamp((ignite * extinguish * 0.9 + waveProximity * 0.58) * endFade, 0, 1)
+        : 0;
+      strongestFlame = Math.max(strongestFlame, amount);
+      flameNode.visible = amount > 0.018;
+      if (!flameNode.visible) continue;
+
+      const flicker = 1 + Math.sin(state.clock.elapsedTime * 29 + index * 1.77) * 0.16;
+      const wobbleAngle = flame.angle + Math.sin(state.clock.elapsedTime * 12 + index * 0.84) * 0.16 * amount;
+      const flameRadius = 0.035 + amount * 0.013;
+      flameNode.position.set(
+        Math.sin(wobbleAngle) * flameRadius,
+        flame.y + Math.sin(state.clock.elapsedTime * 18 + index) * 0.009 * amount,
+        Math.cos(wobbleAngle) * flameRadius
+      );
+      flameNode.rotation.y = wobbleAngle + state.clock.elapsedTime * (0.7 + amount * 1.85);
+      flameNode.scale.set(
+        THREE.MathUtils.lerp(0.72, 1.82, amount) * flame.size * flicker,
+        THREE.MathUtils.lerp(0.58, 2.18, amount) * flame.size,
+        THREE.MathUtils.lerp(0.72, 1.82, amount) * flame.size * flicker
+      );
+    }
+    reloadFlameOuterMaterial.opacity = THREE.MathUtils.clamp(strongestFlame * 0.94, 0, 0.94);
+    reloadFlameCoreMaterial.opacity = THREE.MathUtils.clamp(strongestFlame * 0.86, 0, 0.86);
+
+    const burst = reloadBurstRef.current;
+    const burstProgress = blazePrimaryReloading
+      ? THREE.MathUtils.clamp((reloadProgress - BLAZE_STAFF_RELOAD_BURST_START) / (1 - BLAZE_STAFF_RELOAD_BURST_START), 0, 1)
+      : 0;
+    if (
+      blazePrimaryReloading &&
+      blazePrimaryReloadStart > 0 &&
+      burstProgress > 0 &&
+      processedReloadBlastStartRef.current !== blazePrimaryReloadStart
+    ) {
+      processedReloadBlastStartRef.current = blazePrimaryReloadStart;
+      void playSharedSound('blazeReloadBlast');
+    } else if (!blazePrimaryReloading && reloadProgress === 0) {
+      processedReloadBlastStartRef.current = 0;
+    }
+    const burstIgnite = THREE.MathUtils.smoothstep(burstProgress, 0, 0.1);
+    const burstFade = 1 - THREE.MathUtils.smoothstep(burstProgress, 0.34, 1);
+    const burstAmount = burstIgnite * burstFade;
+    const burstExpansion = 1 - Math.pow(1 - burstProgress, 3);
+    const burstVisible = burstProgress > 0 && burstProgress < 1;
+    if (burst) {
+      burst.visible = burstVisible;
+      if (burst.visible) {
+        burst.rotation.y = state.clock.elapsedTime * 1.9;
+        burst.rotation.z = Math.sin(state.clock.elapsedTime * 18) * 0.08 * burstAmount;
+      }
+    }
+    reloadBurstCoreRef.current?.scale.setScalar(THREE.MathUtils.lerp(0.055, 0.17, burstAmount));
+    reloadBurstShellRef.current?.scale.setScalar(THREE.MathUtils.lerp(0.12, 0.42, burstExpansion));
+    const reloadBurstRings = reloadBurstRingRefs.current;
+    for (let index = 0; index < reloadBurstRings.length; index++) {
+      const ring = reloadBurstRings[index];
+      if (!ring) continue;
+      ring.visible = burstVisible;
+      if (!ring.visible) continue;
+      const ringScale = THREE.MathUtils.lerp(0.07, 0.38 + index * 0.06, burstExpansion);
+      ring.scale.set(ringScale, ringScale, 1);
+      ring.rotation.z += 0.01 * (index + 1);
+    }
+    const reloadBurstRays = reloadBurstRayRefs.current;
+    for (let index = 0; index < reloadBurstRays.length; index++) {
+      const ray = reloadBurstRays[index];
+      if (!ray) continue;
+      const rayDelay = index % 2 === 0 ? 0 : 0.045;
+      const rayProgress = THREE.MathUtils.clamp((burstProgress - rayDelay) / 0.48, 0, 1);
+      const rayAmount =
+        THREE.MathUtils.smoothstep(rayProgress, 0, 0.16) *
+        (1 - THREE.MathUtils.smoothstep(rayProgress, 0.52, 1));
+      ray.visible = rayAmount > 0.02;
+      if (!ray.visible) continue;
+      const rayLength = BLAZE_STAFF_RELOAD_BURST_RAYS[index]?.length ?? 1;
+      ray.position.y = Math.sin(rayProgress * Math.PI) * 0.018;
+      ray.scale.set(
+        THREE.MathUtils.lerp(0.4, 1.35, rayAmount) * rayLength,
+        THREE.MathUtils.lerp(0.52, 1.8, rayAmount) * rayLength,
+        THREE.MathUtils.lerp(0.4, 1.35, rayAmount) * rayLength
+      );
+    }
+    const reloadBurstSparks = reloadBurstSparkRefs.current;
+    for (let index = 0; index < reloadBurstSparks.length; index++) {
+      const sparkNode = reloadBurstSparks[index];
+      if (!sparkNode) continue;
+      const spark = BLAZE_STAFF_RELOAD_BURST_SPARKS[index];
+      if (!spark) continue;
+
+      const sparkProgress = THREE.MathUtils.clamp((burstProgress - spark.delay) / (1 - spark.delay), 0, 1);
+      const sparkAmount = Math.sin(sparkProgress * Math.PI);
+      sparkNode.visible = burstProgress > spark.delay && sparkProgress < 1 && sparkAmount > 0.02;
+      if (!sparkNode.visible) continue;
+
+      const sparkEase = 1 - Math.pow(1 - sparkProgress, 2);
+      const sparkDistance = THREE.MathUtils.lerp(0.034, spark.distance, sparkEase);
+      sparkNode.position.set(
+        Math.sin(spark.angle) * sparkDistance,
+        spark.lift * Math.sin(sparkProgress * Math.PI * 0.86) + sparkProgress * 0.028,
+        Math.cos(spark.angle) * sparkDistance
+      );
+      sparkNode.scale.setScalar(spark.size * (0.45 + sparkAmount * 1.25));
+    }
+    reloadBurstCoreMaterial.opacity = burstVisible ? THREE.MathUtils.clamp(burstAmount * 0.96, 0, 0.96) : 0;
+    reloadBurstShellMaterial.opacity = burstVisible
+      ? THREE.MathUtils.clamp((1 - THREE.MathUtils.smoothstep(burstProgress, 0.2, 1)) * 0.5, 0, 0.5)
+      : 0;
+    reloadBurstRayMaterial.opacity = burstVisible ? THREE.MathUtils.clamp(burstAmount * 0.86, 0, 0.86) : 0;
+    reloadBurstRingMaterial.opacity = burstVisible
+      ? THREE.MathUtils.clamp((1 - THREE.MathUtils.smoothstep(burstProgress, 0.18, 1)) * 0.72, 0, 0.72)
+      : 0;
+    reloadBurstSparkMaterial.opacity = burstVisible
+      ? THREE.MathUtils.clamp((1 - THREE.MathUtils.smoothstep(burstProgress, 0.45, 1)) * 0.92, 0, 0.92)
+      : 0;
   });
 
   return (
@@ -2766,6 +3139,124 @@ function BlazeWizardStaff({
           scale={[0.032, 0.016, 0.032]}
         />
       ))}
+
+      <mesh
+        ref={reloadShaftGlowRef}
+        geometry={SHARED_GEOMETRIES.cylinderOpen16}
+        material={reloadShaftMaterial}
+        visible={false}
+        position={[0, -0.34, 0]}
+        scale={[0.001, 0.001, 0.001]}
+      />
+      {[0, 1, 2].map(index => (
+        <mesh
+          key={`reload-shaft-ring-${index}`}
+          ref={(node) => {
+            reloadShaftRingRefs.current[index] = node;
+          }}
+          geometry={SHARED_GEOMETRIES.ring24}
+          material={reloadShaftRingMaterial}
+          visible={false}
+          rotation={[Math.PI / 2, 0, 0]}
+          scale={[0.001, 0.001, 1]}
+        />
+      ))}
+
+      <group>
+        {BLAZE_STAFF_RELOAD_FLAMES.map((flame, index) => (
+          <group
+            key={`reload-flame-${flame.y}`}
+            ref={(node) => {
+              reloadFlameRefs.current[index] = node;
+            }}
+            visible={false}
+            position={[Math.sin(flame.angle) * 0.026, flame.y, Math.cos(flame.angle) * 0.026]}
+            rotation={[0, flame.angle, 0]}
+          >
+            <mesh
+              geometry={SHARED_GEOMETRIES.cone6}
+              material={reloadFlameOuterMaterial}
+              position={[0, 0.038, 0]}
+              scale={[0.026, 0.132, 0.026]}
+            />
+            <mesh
+              geometry={SHARED_GEOMETRIES.cone6}
+              material={reloadFlameCoreMaterial}
+              position={[0, 0.048, 0]}
+              scale={[0.012, 0.1, 0.012]}
+            />
+            <mesh
+              geometry={SHARED_GEOMETRIES.sphere8}
+              material={reloadFlameOuterMaterial}
+              position={[0, 0.006, 0]}
+              scale={0.026}
+            />
+            <mesh
+              geometry={SHARED_GEOMETRIES.sphere8}
+              material={reloadFlameCoreMaterial}
+              position={[0, 0.012, 0]}
+              scale={0.012}
+            />
+          </group>
+        ))}
+      </group>
+
+      <group ref={reloadBurstRef} visible={false} position={[0, 0.588, 0]}>
+        <mesh ref={reloadBurstCoreRef} geometry={SHARED_GEOMETRIES.sphere16} material={reloadBurstCoreMaterial} scale={0.001} />
+        <mesh ref={reloadBurstShellRef} geometry={SHARED_GEOMETRIES.sphere16} material={reloadBurstShellMaterial} scale={0.001} />
+        {[
+          [Math.PI / 2, 0, 0],
+          [0, Math.PI / 2, 0],
+          [0, 0, Math.PI / 2],
+        ].map((rotation, index) => (
+          <mesh
+            key={`reload-burst-ring-${index}`}
+            ref={(node) => {
+              reloadBurstRingRefs.current[index] = node;
+            }}
+            geometry={SHARED_GEOMETRIES.ring24}
+            material={reloadBurstRingMaterial}
+            rotation={rotation as [number, number, number]}
+            scale={[0.001, 0.001, 1]}
+          />
+        ))}
+        {BLAZE_STAFF_RELOAD_BURST_RAYS.map((ray, index) => (
+          <group
+            key={`reload-burst-ray-${ray.angle}`}
+            ref={(node) => {
+              reloadBurstRayRefs.current[index] = node;
+            }}
+            visible={false}
+            rotation={[0, ray.angle, 0]}
+          >
+            <mesh
+              geometry={SHARED_GEOMETRIES.cone6}
+              material={reloadBurstRayMaterial}
+              position={[0, 0.034, 0.082]}
+              rotation={[ray.pitch, 0, 0]}
+              scale={[0.024, 0.148, 0.024]}
+            />
+            <mesh
+              geometry={SHARED_GEOMETRIES.cone6}
+              material={reloadBurstCoreMaterial}
+              position={[0, 0.036, 0.084]}
+              rotation={[ray.pitch, 0, 0]}
+              scale={[0.01, 0.108, 0.01]}
+            />
+          </group>
+        ))}
+        {BLAZE_STAFF_RELOAD_BURST_SPARKS.map((spark, index) => (
+          <group
+            key={`reload-burst-spark-${spark.angle}`}
+            ref={(node) => {
+              reloadBurstSparkRefs.current[index] = node;
+            }}
+            visible={false}
+          >
+            <mesh geometry={SHARED_GEOMETRIES.sphere8} material={reloadBurstSparkMaterial} scale={1} />
+          </group>
+        ))}
+      </group>
 
       <group position={[0, 0.49, 0]}>
         <mesh geometry={SHARED_GEOMETRIES.cylinder12} material={materials.metal} position={[0, -0.048, 0]} scale={[0.056, 0.026, 0.056]} />
@@ -3641,6 +4132,8 @@ function ChronosFloatingPyramidWeapon({
   const pyramidRef = useRef<THREE.Group>(null);
   const orbRef = useRef<THREE.Group>(null);
   const orbLightRef = useRef<THREE.PointLight>(null);
+  const reloadAuraPuffRefs = useRef<(THREE.Sprite | null)[]>([]);
+  const reloadAuraMoteRefs = useRef<(THREE.Sprite | null)[]>([]);
   const primarySpinPhaseRef = useRef(0);
   const leftSocketWorldPosition = useMemo(() => new THREE.Vector3(), []);
   const rightSocketWorldPosition = useMemo(() => new THREE.Vector3(), []);
@@ -3686,8 +4179,23 @@ function ChronosFloatingPyramidWeapon({
     depthWrite: false,
     toneMapped: false,
   }), []);
+  const reloadAuraTexture = useMemo(createChronosReloadAuraTexture, []);
+  const reloadAuraPuffMaterial = useMemo(
+    () => createChronosReloadAuraMaterial(reloadAuraTexture, 0x32ff91),
+    [reloadAuraTexture]
+  );
+  const reloadAuraMoteMaterial = useMemo(
+    () => createChronosReloadAuraMaterial(reloadAuraTexture, 0xd6ffe5),
+    [reloadAuraTexture]
+  );
 
   useRegisteredViewmodelSocket(CHRONOS_PRIMARY_ORB_SOCKET_NAME, orbRef);
+
+  useEffect(() => () => {
+    reloadAuraPuffMaterial.dispose();
+    reloadAuraMoteMaterial.dispose();
+    reloadAuraTexture.dispose();
+  }, [reloadAuraMoteMaterial, reloadAuraPuffMaterial, reloadAuraTexture]);
 
   useFrame((state, delta) => {
     const weapon = weaponRef.current;
@@ -3702,10 +4210,28 @@ function ChronosFloatingPyramidWeapon({
     const aegisGlow = THREE.MathUtils.smoothstep(aegisPose.blend, 0, 1);
     const primaryHeldBlend = getChronosPrimaryHeldBlend(nowMs);
     const primaryShotGlow = getChronosPrimaryShotGlowBlend(nowMs);
+    const {
+      chronosPrimaryReloading,
+      chronosPrimaryReloadStart,
+      chronosPrimaryReloadEnd,
+    } = useGameStore.getState();
+    const reloadDuration = Math.max(
+      1,
+      chronosPrimaryReloadEnd - chronosPrimaryReloadStart || CHRONOS_PRIMARY_RELOAD_MS
+    );
+    const reloadProgress = chronosPrimaryReloading
+      ? THREE.MathUtils.clamp((nowMs - chronosPrimaryReloadStart) / reloadDuration, 0, 1)
+      : 0;
+    const reloadIntensity = chronosPrimaryReloading
+      ? THREE.MathUtils.smoothstep(reloadProgress, 0, 0.14) *
+        (1 - THREE.MathUtils.smoothstep(reloadProgress, 0.86, 1))
+      : 0;
+    const reloadFlicker = 1 + Math.sin(t * 38.5) * 0.1 * reloadIntensity + Math.sin(t * 71.0) * 0.045 * reloadIntensity;
     const orbGlow = Math.max(
       aegisGlow,
       primaryHeldBlend * CHRONOS_WEAPON_ORB_PRIMARY_HOLD_GLOW,
-      primaryShotGlow
+      primaryShotGlow,
+      reloadIntensity * 0.98
     );
     const glowFlicker = 1 + Math.sin(t * 12.5) * 0.055 * orbGlow;
     const spread = aegisPose.spread;
@@ -3713,7 +4239,12 @@ function ChronosFloatingPyramidWeapon({
     const recoil = aegisPose.recoil;
     const spinBoost = aegisPose.spinBoost;
     const heartbeat = aegisPose.heartbeat;
-    root.updateMatrixWorld(true);
+    // The sockets are descendants of root, so updating each socket's world matrix
+    // (with its ancestor chain) refreshes root.matrixWorld too — enough for the
+    // socket world reads and the root.worldToLocal below — without forcing a
+    // recursive recompute of the entire viewmodel subtree every frame.
+    leftSocket.updateWorldMatrix(true, false);
+    rightSocket.updateWorldMatrix(true, false);
     leftSocket.getWorldPosition(leftSocketWorldPosition);
     rightSocket.getWorldPosition(rightSocketWorldPosition);
     weaponWorldPosition
@@ -3736,33 +4267,38 @@ function ChronosFloatingPyramidWeapon({
         CHRONOS_AEGIS_PYRAMID_GROWTH * spread +
         0.18 * shield +
         0.08 * recoil +
-        CHRONOS_WEAPON_PYRAMID_HEARTBEAT_GROWTH * heartbeat;
+        CHRONOS_WEAPON_PYRAMID_HEARTBEAT_GROWTH * heartbeat +
+        reloadIntensity * 0.12;
       primarySpinPhaseRef.current +=
-        Math.min(delta, 0.05) * CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST * (primaryHeldBlend + recoil * 2.4 + spinBoost * 3.8);
+        Math.min(delta, 0.05) * (
+          CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST * (primaryHeldBlend + recoil * 2.4 + spinBoost * 3.8) +
+          CHRONOS_WEAPON_PYRAMID_RELOAD_SPIN_BOOST * reloadIntensity
+        );
       pyramidRef.current.rotation.set(
-        CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X - 0.08 * shield + Math.sin(t * 0.42) * 0.02 + 0.16 * recoil,
+        CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X - 0.08 * shield + Math.sin(t * 0.42) * 0.02 + 0.16 * recoil + 0.04 * reloadIntensity,
         Math.PI / 4 +
-          t * (CHRONOS_WEAPON_PYRAMID_SPIN_SPEED + 0.5 * spread + 1.7 * spinBoost) +
+          t * (CHRONOS_WEAPON_PYRAMID_SPIN_SPEED + 0.5 * spread + 1.7 * spinBoost + 3.2 * reloadIntensity) +
           primarySpinPhaseRef.current,
-        Math.sin(t * 0.5) * 0.018
+        Math.sin(t * (0.5 + reloadIntensity * 2.2)) * (0.018 + reloadIntensity * 0.035)
       );
       pyramidRef.current.scale.setScalar(pyramidScale);
     }
-    const pyramidGlow = Math.max(aegisGlow, spinBoost, heartbeat);
+    const pyramidGlow = Math.max(aegisGlow, spinBoost, heartbeat, reloadIntensity);
+    const pyramidFaceMaxOpacity = CHRONOS_WEAPON_PYRAMID_FACE_GLOW_OPACITY + reloadIntensity * 0.18;
     pyramidFaceMaterial.opacity = THREE.MathUtils.clamp(
       THREE.MathUtils.lerp(
         CHRONOS_WEAPON_PYRAMID_FACE_BASE_OPACITY,
-        CHRONOS_WEAPON_PYRAMID_FACE_GLOW_OPACITY,
+        pyramidFaceMaxOpacity,
         pyramidGlow
-      ) * glowFlicker,
+      ) * glowFlicker * reloadFlicker,
       0,
-      CHRONOS_WEAPON_PYRAMID_FACE_GLOW_OPACITY
+      pyramidFaceMaxOpacity
     );
     pyramidFaceMaterial.emissiveIntensity = THREE.MathUtils.lerp(
       CHRONOS_WEAPON_PYRAMID_EMISSIVE_BASE_INTENSITY,
-      CHRONOS_WEAPON_PYRAMID_EMISSIVE_GLOW_INTENSITY,
+      CHRONOS_WEAPON_PYRAMID_EMISSIVE_GLOW_INTENSITY + reloadIntensity * 1.15,
       pyramidGlow
-    ) * glowFlicker;
+    ) * glowFlicker * reloadFlicker;
     pyramidFaceMaterial.color
       .copy(pyramidFaceIdleColor)
       .lerp(pyramidFaceGlowColor, pyramidGlow * 0.76);
@@ -3772,7 +4308,7 @@ function ChronosFloatingPyramidWeapon({
         CHRONOS_WEAPON_PYRAMID_WIRE_BASE_OPACITY,
         CHRONOS_WEAPON_PYRAMID_WIRE_GLOW_OPACITY,
         pyramidGlow
-      ) * glowFlicker,
+      ) * glowFlicker * reloadFlicker,
       0,
       CHRONOS_WEAPON_PYRAMID_WIRE_GLOW_OPACITY
     );
@@ -3799,8 +4335,68 @@ function ChronosFloatingPyramidWeapon({
         CHRONOS_WEAPON_ORB_LIGHT_BASE_INTENSITY,
         CHRONOS_WEAPON_ORB_LIGHT_HELD_INTENSITY,
         orbGlow
-      );
+      ) + reloadIntensity * 0.48;
     }
+
+    const reloadVisible = reloadIntensity > 0.02;
+    // Guard the per-sprite work up front: when not reloading the shared aura
+    // materials are forced to opacity 0 below, so the sprites are invisible
+    // regardless of their .visible flag and the loops would be pure no-ops.
+    if (reloadVisible) {
+      const puffNodes = reloadAuraPuffRefs.current;
+      for (let index = 0; index < puffNodes.length; index++) {
+        const puffNode = puffNodes[index];
+        if (!puffNode) continue;
+        const puff = CHRONOS_WEAPON_RELOAD_AURA_PUFFS[index];
+        if (!puff) continue;
+
+        const localProgress = (reloadProgress * puff.speed + puff.offset) % 1;
+        const easedProgress = THREE.MathUtils.smoothstep(localProgress, 0, 1);
+        const puffAmount = reloadIntensity * Math.sin(localProgress * Math.PI);
+        puffNode.visible = puffAmount > 0.035;
+        if (!puffNode.visible) continue;
+
+        const angle = puff.angle + puff.swirl * easedProgress + t * (0.18 + puff.speed * 0.06);
+        const radius = THREE.MathUtils.lerp(puff.radius, 0.045, easedProgress);
+        const scale = puff.size * THREE.MathUtils.lerp(0.14, 0.035, easedProgress) * (0.82 + puffAmount * 0.24);
+        puffNode.position.set(
+          Math.sin(angle) * radius,
+          THREE.MathUtils.lerp(puff.y, 0, easedProgress) + Math.sin(t * 4.5 + index) * 0.008 * puffAmount,
+          Math.cos(angle) * radius
+        );
+        puffNode.scale.set(scale, scale, 1);
+      }
+
+      const moteNodes = reloadAuraMoteRefs.current;
+      for (let index = 0; index < moteNodes.length; index++) {
+        const moteNode = moteNodes[index];
+        if (!moteNode) continue;
+        const mote = CHRONOS_WEAPON_RELOAD_AURA_MOTES[index];
+        if (!mote) continue;
+
+        const localProgress = (reloadProgress * mote.speed + mote.offset) % 1;
+        const easedProgress = THREE.MathUtils.smoothstep(localProgress, 0, 1);
+        const moteAmount = reloadIntensity * Math.sin(localProgress * Math.PI);
+        moteNode.visible = moteAmount > 0.04;
+        if (!moteNode.visible) continue;
+
+        const angle = mote.angle + mote.drift * easedProgress + t * (0.58 + mote.speed * 0.18);
+        const radius = THREE.MathUtils.lerp(mote.radius, 0.018, easedProgress);
+        moteNode.position.set(
+          Math.sin(angle) * radius,
+          THREE.MathUtils.lerp(mote.y, 0, easedProgress) + Math.sin(t * 8 + index) * 0.01 * moteAmount,
+          Math.cos(angle) * radius
+        );
+        const moteScale = mote.size * THREE.MathUtils.lerp(0.042, 0.012, easedProgress) * (0.78 + moteAmount * 0.28);
+        moteNode.scale.set(moteScale, moteScale, 1);
+      }
+    }
+    reloadAuraPuffMaterial.opacity = reloadVisible
+      ? THREE.MathUtils.clamp(reloadIntensity * 0.42, 0, 0.42)
+      : 0;
+    reloadAuraMoteMaterial.opacity = reloadVisible
+      ? THREE.MathUtils.clamp(reloadIntensity * 0.82, 0, 0.82)
+      : 0;
   });
 
   return (
@@ -3824,6 +4420,30 @@ function ChronosFloatingPyramidWeapon({
           scale={[0.143, 0.213, 0.143]}
         />
       </group>
+
+      {CHRONOS_WEAPON_RELOAD_AURA_PUFFS.map((puff, index) => (
+        <sprite
+          key={`chronos-reload-aura-puff-${puff.angle}`}
+          ref={(node) => {
+            reloadAuraPuffRefs.current[index] = node;
+          }}
+          material={reloadAuraPuffMaterial}
+          visible={false}
+          scale={[0.001, 0.001, 1]}
+        />
+      ))}
+
+      {CHRONOS_WEAPON_RELOAD_AURA_MOTES.map((mote, index) => (
+        <sprite
+          key={`chronos-reload-aura-mote-${mote.angle}`}
+          ref={(node) => {
+            reloadAuraMoteRefs.current[index] = node;
+          }}
+          material={reloadAuraMoteMaterial}
+          visible={false}
+          scale={[0.001, 0.001, 1]}
+        />
+      ))}
 
       <group ref={orbRef} name={CHRONOS_PRIMARY_ORB_SOCKET_NAME} position={[0, CHRONOS_WEAPON_ORB_BASE_Y, 0.048]}>
         <mesh
@@ -4133,7 +4753,7 @@ function ChronosViewmodel({
   );
 }
 
-const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, config }: HeroViewmodelProps) {
+const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, skinId, action, config }: HeroViewmodelProps) {
   const { camera } = useThree();
   const groupRef = useRef<THREE.Group>(null);
   const rootRef = useRef<THREE.Group>(null);
@@ -4148,7 +4768,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
   const processedPhantomVoidRayEventIdRef = useRef<string | null>(null);
   const processedHookshotPrimaryEventIdRef = useRef<string | null>(null);
   const processedHookshotSecondaryEventIdRef = useRef<string | null>(null);
-  const materials = useMemo(() => getViewmodelMaterials(heroId), [heroId]);
+  const materials = useMemo(() => getViewmodelMaterialsForSkin(heroId, skinId), [heroId, skinId]);
 
   useEffect(() => {
     const accentBase = config.allowDecorativeGlows ? 0.34 : 0.12;
@@ -4393,6 +5013,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
 export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
   const {
     heroId,
+    skinId,
     playerState,
     gamePhase,
     actionActive,
@@ -4407,6 +5028,7 @@ export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
 
       return {
         heroId: viewmodelHeroId,
+        skinId: state.localPlayer?.skinId ?? null,
         playerState: state.localPlayer?.state ?? 'dead',
         gamePhase: state.gamePhase,
         matchPerspective: state.matchPerspective,
@@ -4426,8 +5048,9 @@ export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
 
   return (
     <HeroViewmodelInner
-      key={heroId}
+      key={`${heroId}:${skinId ?? 'default'}`}
       heroId={heroId}
+      skinId={skinId}
       config={config}
       action={{
         active: actionActive,

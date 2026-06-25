@@ -4,20 +4,26 @@ import {
   ABILITY_SOCKET_CATALOG,
   BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
   CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+  DEFAULT_HERO_SKIN_IDS,
+  HERO_SKIN_CATALOG,
   HERO_DEFINITIONS,
   HOOKSHOT_HOOK_SOCKET_NAMES,
   PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
   PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
   TEAM_CATALOG,
+  validateHeroSkinCatalog,
   validateHeroModelDocument,
   type HeroId,
+  type HeroSkinId,
 } from '@voxel-strike/shared';
 import {
   HERO_BODY_MANIFESTS,
+  HERO_SKIN_BODY_MANIFESTS,
   TEAM_COLORS,
 } from './heroBodyManifests';
 import { getHeroBodyRenderParts } from './heroBodyRenderParts';
-import { HERO_MODEL_DOCUMENTS } from './heroModelDocuments';
+import { HERO_SKIN_MODEL_DOCUMENTS } from './heroModelDocuments';
+import { resolveHeroSkinModel } from './heroSkinModelResolver';
 import {
   addVoxelPartMetadata,
   HERO_BONE_PARENTS,
@@ -28,6 +34,8 @@ import {
   groupRiggedParts,
 } from './heroRig';
 import {
+  applyDownedBonePose,
+  applyDownedRootPivot,
   applyHeroBodyPoseTransition,
   applyLookPitchWaistBend,
   beginHeroBodyPoseTransition,
@@ -63,9 +71,12 @@ import {
 import type { HeroBoneRefs, VoxelPartDraft } from './heroBodyTypes';
 
 const heroIds = Object.keys(HERO_DEFINITIONS).sort() as HeroId[];
+const skinIds = HERO_SKIN_CATALOG.map((skin) => skin.id).sort() as HeroSkinId[];
 
 assert.deepEqual(Object.keys(HERO_BODY_MANIFESTS).sort(), heroIds);
-assert.deepEqual(Object.keys(HERO_MODEL_DOCUMENTS).sort(), heroIds);
+assert.deepEqual(Object.keys(HERO_SKIN_BODY_MANIFESTS).sort(), skinIds);
+assert.deepEqual(Object.keys(HERO_SKIN_MODEL_DOCUMENTS).sort(), skinIds);
+assert.deepEqual(validateHeroSkinCatalog().errors, []);
 
 for (const team of TEAM_CATALOG) {
   assert.equal(TEAM_COLORS[team.id], team.color, `${team.id} body color must match the shared team catalog`);
@@ -129,7 +140,8 @@ for (const heroId of heroIds) {
     assert.ok(HERO_BONE_PIVOTS[marker.bone], `${heroId} socket ${marker.socketName} references an unknown bone`);
   }
 
-  const document = HERO_MODEL_DOCUMENTS[heroId];
+  const defaultSkinId = DEFAULT_HERO_SKIN_IDS[heroId];
+  const document = HERO_SKIN_MODEL_DOCUMENTS[defaultSkinId];
   const validation = validateHeroModelDocument(document);
   assert.deepEqual(validation.errors, [], `${heroId} model document must validate`);
   assert.equal(validation.ok, true, `${heroId} model document must validate`);
@@ -156,7 +168,101 @@ for (const heroId of heroIds) {
   }
 }
 
-const invalidViewmodelDocument = JSON.parse(JSON.stringify(HERO_MODEL_DOCUMENTS.phantom));
+for (const skin of HERO_SKIN_CATALOG) {
+  const manifest = HERO_SKIN_BODY_MANIFESTS[skin.id];
+  const document = HERO_SKIN_MODEL_DOCUMENTS[skin.id];
+  assert.equal(manifest.heroId, skin.heroId, `${skin.id} body manifest must match catalog hero`);
+  assert.equal(document.heroId, skin.heroId, `${skin.id} model document must match catalog hero`);
+  assert.equal(validateHeroModelDocument(document).ok, true, `${skin.id} model document must validate`);
+
+  if (skin.availability === 'paid') {
+    const defaultSkinId = DEFAULT_HERO_SKIN_IDS[skin.heroId];
+    const defaultManifest = HERO_SKIN_BODY_MANIFESTS[defaultSkinId];
+    const defaultDocument = HERO_SKIN_MODEL_DOCUMENTS[defaultSkinId];
+    assert.ok(
+      manifest.parts.length > defaultManifest.parts.length,
+      `${skin.id} should add full-body geometry beyond the default skin`
+    );
+    assert.ok(
+      (document.viewmodel?.parts.length ?? 0) > (defaultDocument.viewmodel?.parts.length ?? 0),
+      `${skin.id} should add first-person viewmodel geometry beyond the default skin`
+    );
+  }
+
+  const fullBodySocketNames = new Set(document.fullBody.sockets.map((socket) => socket.name));
+  const viewmodelSocketNames = new Set(document.viewmodel?.sockets.map((socket) => socket.name) ?? []);
+  const requiredSocketNames = Object.values(ABILITY_SOCKET_CATALOG)
+    .filter((entry) => entry.heroId === skin.heroId)
+    .flatMap((entry) => entry.socketNames);
+  for (const socketName of requiredSocketNames) {
+    assert.ok(fullBodySocketNames.has(socketName), `${skin.id} full-body document missing ${socketName}`);
+    assert.ok(viewmodelSocketNames.has(socketName), `${skin.id} viewmodel document missing ${socketName}`);
+  }
+}
+
+for (const skinId of ['phantom.default', 'phantom.void-monarch'] as const) {
+  const manifest = HERO_SKIN_BODY_MANIFESTS[skinId];
+  const legCoreParts = HERO_SKIN_BODY_MANIFESTS[skinId].parts.filter((part) => (
+    part.material === 'void' &&
+    Math.abs(Math.abs(part.position[0]) - 0.14) < 0.001 &&
+    Math.abs(part.position[2] - 0.02) < 0.001 &&
+    part.position[1] < 0.75
+  ));
+  const hipCore = manifest.parts.find((part) => (
+    part.material === 'void' &&
+    part.bone === 'hips' &&
+    Math.abs(part.position[0]) < 0.001 &&
+    part.position[1] >= 0.6 &&
+    part.position[1] <= 0.85 &&
+    part.scale[0] >= 0.3
+  ));
+
+  assert.ok(
+    legCoreParts.some((part) => part.bone === 'leftShin' && part.scale[1] >= 0.6),
+    `${skinId} needs a continuous left leg core on the same shin bone pattern as the other heroes`
+  );
+  assert.ok(
+    legCoreParts.some((part) => part.bone === 'rightShin' && part.scale[1] >= 0.6),
+    `${skinId} needs a continuous right leg core on the same shin bone pattern as the other heroes`
+  );
+  assert.ok(hipCore, `${skinId} needs a centered hip core above the leg columns`);
+  assert.ok(
+    Math.abs(hipCore!.position[2] - 0.02) <= 0.001,
+    `${skinId} hip core depth must align with the leg core depth`
+  );
+}
+
+const voidMonarchLowerLegTrim = HERO_SKIN_BODY_MANIFESTS['phantom.void-monarch'].parts.filter((part) => (
+  part.id.startsWith('phantom.voidMonarch.body.') &&
+  (part.material === 'metal' || part.material === 'edge') &&
+  Math.abs(Math.abs(part.position[0]) - 0.15) <= 0.001 &&
+  part.position[1] < 0.55
+));
+assert.equal(voidMonarchLowerLegTrim.length, 4);
+for (const part of voidMonarchLowerLegTrim) {
+  assert.ok(
+    Math.abs(part.position[2] - -0.07) <= 0.001,
+    `void monarch lower-leg trim ${part.id} must sit on the leg surface`
+  );
+}
+
+for (const skin of HERO_SKIN_CATALOG.filter((catalogSkin) => catalogSkin.availability === 'paid')) {
+  assert.equal(
+    resolveHeroSkinModel(skin.heroId, skin.id).skinId,
+    skin.id,
+    `${skin.id} should resolve to its renderable model`
+  );
+}
+assert.equal(
+  resolveHeroSkinModel('blaze', 'phantom.void-monarch').skinId,
+  'blaze.default'
+);
+assert.equal(
+  resolveHeroSkinModel('phantom', 'unknown.skin').skinId,
+  'phantom.default'
+);
+
+const invalidViewmodelDocument = JSON.parse(JSON.stringify(HERO_SKIN_MODEL_DOCUMENTS['phantom.default']));
 invalidViewmodelDocument.viewmodel.poseChannels = [{ id: 'phantom.invalid', kind: 'unknown-kind' }];
 invalidViewmodelDocument.viewmodel.materials = [
   { token: 'armor', color: '#ffffff' },
@@ -182,7 +288,7 @@ assert.ok(
   'validator should reject malformed custom fallback socket offsets'
 );
 
-const customEditorDocument = JSON.parse(JSON.stringify(HERO_MODEL_DOCUMENTS.phantom));
+const customEditorDocument = JSON.parse(JSON.stringify(HERO_SKIN_MODEL_DOCUMENTS['phantom.default']));
 customEditorDocument.heroId = 'editor-authored-hero';
 customEditorDocument.materialPalette.editorCrystal = '#88ffee';
 customEditorDocument.fullBody.parts[0].material = 'editorCrystal';
@@ -345,6 +451,36 @@ assert.equal(Math.abs(lookPitchTorso.rotation.x), upwardTorsoBend);
 assert.equal(getHeroLookPitchWaistBend(Number.NaN), 0);
 assert.equal(getHeroLookPitchWaistBend(0.01), 0);
 assert.equal(Math.abs(getHeroLookPitchWaistBend(10)), THREE.MathUtils.degToRad(38));
+
+const downedPoseBones: HeroBoneRefs = {
+  hips: new THREE.Group(),
+  torso: new THREE.Group(),
+  head: new THREE.Group(),
+  leftArm: new THREE.Group(),
+  rightArm: new THREE.Group(),
+  leftLeg: new THREE.Group(),
+  rightLeg: new THREE.Group(),
+  leftShin: new THREE.Group(),
+  rightShin: new THREE.Group(),
+};
+applyDownedBonePose(downedPoseBones, 1.25, 1, 1, 0);
+assert.equal(downedPoseBones.hips!.rotation.x, 0);
+assert.equal(downedPoseBones.torso!.rotation.x, 0);
+assert.equal(downedPoseBones.head!.rotation.x, 0);
+assert.equal(downedPoseBones.leftArm!.rotation.x, 0);
+assert.equal(downedPoseBones.rightArm!.rotation.x, 0);
+assert.equal(downedPoseBones.leftLeg!.rotation.x, 0);
+assert.equal(downedPoseBones.rightLeg!.rotation.x, 0);
+assert.equal(downedPoseBones.leftShin!.rotation.x, 0);
+assert.equal(downedPoseBones.rightShin!.rotation.x, 0);
+
+const downedRootPosition = new THREE.Vector3();
+const downedRootRotation = new THREE.Euler();
+applyDownedRootPivot(downedRootPosition, downedRootRotation, 1, 1);
+assert.ok(downedRootRotation.x < -1.35);
+assert.ok(downedRootRotation.x > -1.55);
+assert.ok(downedRootPosition.y > 0.18);
+assert.ok(downedRootPosition.z < -0.15);
 
 const runtime = createViewmodelPoseRuntime('phantom');
 setPhantomPrimaryHeld(true, 1000, runtime);

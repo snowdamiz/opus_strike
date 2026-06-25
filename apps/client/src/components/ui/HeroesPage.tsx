@@ -99,7 +99,6 @@ export function HeroesPage({ selectedHero, onSelectHero }: HeroesPageProps) {
           <Suspense fallback={null}>
             <FeaturedHeroPreview
               heroId={selectedHero}
-              accentColor={heroColor}
               initialYaw={Math.PI - 0.18}
               animationMode={HERO_IDLE_ANIMATION_MODE}
             />
@@ -167,7 +166,8 @@ function AbilityCard({ item, color }: { item: HeroSkillItem; color: string }) {
 
   return (
     <div
-      className="relative overflow-hidden rounded-lg"
+      className="hero-ability-card relative overflow-hidden rounded-lg"
+      tabIndex={metaPills.length > 0 ? 0 : undefined}
       style={{
         ...GLASS_CARD_STYLE,
         background: isUltimate
@@ -200,9 +200,15 @@ function AbilityCard({ item, color }: { item: HeroSkillItem; color: string }) {
             <p className="mt-1 text-white/70 text-[11px] font-body leading-snug">{item.description}</p>
 
             {metaPills.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                {metaPills.map((pill) => (
-                  <MetaPill key={pill} color={isUltimate ? ABILITY_COLORS.ultimate : color}>{pill}</MetaPill>
+              <div className="hero-ability-meta flex flex-wrap items-center gap-1.5">
+                {metaPills.map((pill, index) => (
+                  <MetaPill
+                    key={pill}
+                    color={isUltimate ? ABILITY_COLORS.ultimate : color}
+                    index={index}
+                  >
+                    {pill}
+                  </MetaPill>
                 ))}
               </div>
             )}
@@ -252,15 +258,16 @@ function InputTag({ children, color }: { children: ReactNode; color: string }) {
   );
 }
 
-function MetaPill({ children, color }: { children: ReactNode; color: string }) {
+function MetaPill({ children, color, index }: { children: ReactNode; color: string; index: number }) {
   return (
     <span
-      className="rounded-md px-2 py-0.5 text-[9px] font-mono font-medium text-white/80"
+      className="hero-ability-meta-pill rounded-md px-2 py-0.5 text-[9px] font-mono font-medium text-white/80"
       style={{
+        '--hero-ability-meta-delay': `${index * 26}ms`,
         background: `${color}18`,
         border: `1px solid ${color}4f`,
         boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.06)',
-      }}
+      } as CSSProperties}
     >
       {children}
     </span>

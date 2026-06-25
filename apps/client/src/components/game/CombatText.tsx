@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { Player, PlayerMovementState } from '@voxel-strike/shared';
@@ -64,6 +64,21 @@ interface CombatTextTextureEntry {
 
 const combatTextTextureCache = new Map<string, CombatTextTextureEntry>();
 let combatTextTextureUseCounter = 0;
+
+// Per-sprite animation state, driven by a single manager useFrame in CombatTextLayer
+// instead of one useFrame per sprite.
+interface CombatTextSpriteRuntime {
+  event: CombatTextEvent;
+  sprite: THREE.Sprite | null;
+  material: THREE.SpriteMaterial | null;
+  anchor: THREE.Vector3;
+  drift: { x: number; z: number };
+  baseWidth: number;
+  baseHeight: number;
+  stackIndex: number;
+}
+
+type CombatTextRegistry = Map<string, CombatTextSpriteRuntime>;
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -364,10 +379,15 @@ function getOpacity(progress: number): number {
   return 1 - easeInCubic(clamp01((progress - 0.62) / 0.38));
 }
 
-function CombatTextSprite({ event, stackIndex }: { event: CombatTextEvent; stackIndex: number }) {
-  const spriteRef = useRef<THREE.Sprite>(null);
-  const materialRef = useRef<THREE.SpriteMaterial>(null);
-  const anchorRef = useRef(new THREE.Vector3(event.position.x, event.position.y, event.position.z));
+function CombatTextSprite({
+  event,
+  stackIndex,
+  registry,
+}: {
+  event: CombatTextEvent;
+  stackIndex: number;
+  registry: CombatTextRegistry;
+}) {
   const drift = useMemo(() => {
     const seed = hashString(event.id);
     const angle = (seed / 0xffffffff) * Math.PI * 2;
@@ -388,40 +408,50 @@ function CombatTextSprite({ event, stackIndex }: { event: CombatTextEvent; stack
     ? getCombatTextWorldY(event.position.y, null, DEFAULT_MOVEMENT)
     : getStandaloneCombatTextY(event);
 
+  const runtimeRef = useRef<CombatTextSpriteRuntime | null>(null);
+  if (runtimeRef.current === null) {
+    runtimeRef.current = {
+      event,
+      sprite: null,
+      material: null,
+      anchor: new THREE.Vector3(event.position.x, event.position.y, event.position.z),
+      drift,
+      baseWidth,
+      baseHeight,
+      stackIndex,
+    };
+  }
+  // Keep the per-frame inputs that can change between renders fresh.
+  runtimeRef.current.event = event;
+  runtimeRef.current.stackIndex = stackIndex;
+
+  const setSpriteRef = useCallback((node: THREE.Sprite | null) => {
+    if (runtimeRef.current) runtimeRef.current.sprite = node;
+  }, []);
+  const setMaterialRef = useCallback((node: THREE.SpriteMaterial | null) => {
+    if (runtimeRef.current) runtimeRef.current.material = node;
+  }, []);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current!;
+    registry.set(event.id, runtime);
+    return () => {
+      registry.delete(event.id);
+    };
+  }, [registry, event.id]);
+
   useEffect(() => () => releaseCombatTextTexture(event.kind, textureAmount), [event.kind, textureAmount]);
-
-  useFrame(() => {
-    const sprite = spriteRef.current;
-    const material = materialRef.current;
-    if (!sprite || !material) return;
-
-    const progress = clamp01((getFrameClock().epochNowMs - event.createdAt) / COMBAT_TEXT_DURATION_MS);
-    const popScale = getPopScale(progress);
-    const driftProgress = easeOutCubic(progress);
-    const rise = easeOutCubic(progress) * 0.92 + Math.sin(progress * Math.PI) * 0.16;
-    const stackOffsetY = stackIndex * STACKED_TEXT_GAP_Y;
-    resolveCombatTextAnchor(event, anchorRef.current);
-
-    sprite.visible = progress < 1;
-    sprite.position.set(
-      anchorRef.current.x + drift.x * driftProgress,
-      anchorRef.current.y + stackOffsetY + rise,
-      anchorRef.current.z + drift.z * driftProgress
-    );
-    sprite.scale.set(baseWidth * popScale, baseHeight * popScale, 1);
-    material.opacity = getOpacity(progress);
-  });
 
   return (
     <sprite
-      ref={spriteRef}
+      ref={setSpriteRef}
       position={[event.position.x, initialY, event.position.z]}
       scale={[baseWidth * 0.36, baseHeight * 0.36, 1]}
       renderOrder={45}
       frustumCulled={false}
     >
       <spriteMaterial
-        ref={materialRef}
+        ref={setMaterialRef}
         map={texture}
         transparent
         depthTest
@@ -434,6 +464,11 @@ function CombatTextSprite({ event, stackIndex }: { event: CombatTextEvent; stack
 
 export function CombatTextLayer({ enabled }: CombatTextLayerProps) {
   const combatTextEvents = useCombatFeedbackStore((state) => state.combatTextEvents);
+  const registryRef = useRef<CombatTextRegistry | null>(null);
+  if (registryRef.current === null) {
+    registryRef.current = new Map<string, CombatTextSpriteRuntime>();
+  }
+  const registry = registryRef.current;
   const stackIndices = useMemo(() => {
     const counts = new Map<string, number>();
     const nextIndices = new Map<string, number>();
@@ -449,6 +484,37 @@ export function CombatTextLayer({ enabled }: CombatTextLayerProps) {
     return nextIndices;
   }, [combatTextEvents]);
 
+  // Single manager loop drives every active sprite. The frame clock is read once
+  // per frame; the per-sprite animation math is identical to the prior per-sprite
+  // useFrame, just hoisted into one iteration.
+  useFrame(() => {
+    if (registry.size === 0) return;
+    const nowMs = getFrameClock().epochNowMs;
+
+    for (const runtime of registry.values()) {
+      const sprite = runtime.sprite;
+      const material = runtime.material;
+      if (!sprite || !material) continue;
+
+      const event = runtime.event;
+      const progress = clamp01((nowMs - event.createdAt) / COMBAT_TEXT_DURATION_MS);
+      const popScale = getPopScale(progress);
+      const driftProgress = easeOutCubic(progress);
+      const rise = driftProgress * 0.92 + Math.sin(progress * Math.PI) * 0.16;
+      const stackOffsetY = runtime.stackIndex * STACKED_TEXT_GAP_Y;
+      resolveCombatTextAnchor(event, runtime.anchor);
+
+      sprite.visible = progress < 1;
+      sprite.position.set(
+        runtime.anchor.x + runtime.drift.x * driftProgress,
+        runtime.anchor.y + stackOffsetY + rise,
+        runtime.anchor.z + runtime.drift.z * driftProgress
+      );
+      sprite.scale.set(runtime.baseWidth * popScale, runtime.baseHeight * popScale, 1);
+      material.opacity = getOpacity(progress);
+    }
+  });
+
   if (!enabled || combatTextEvents.length === 0) return null;
 
   return (
@@ -458,6 +524,7 @@ export function CombatTextLayer({ enabled }: CombatTextLayerProps) {
           key={event.id}
           event={event}
           stackIndex={stackIndices.get(event.id) ?? 0}
+          registry={registry}
         />
       ))}
     </group>

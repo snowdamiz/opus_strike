@@ -192,12 +192,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+const PROCESS_LOCAL_ROOM_NAMES = new Set(['global_chat_room', 'social_room']);
+
 export function shouldCreateRoomOnLocalColyseusProcess(input: {
   roomName: string;
   clientOptions: unknown;
   roomCreateStrategy: ColyseusRoomCreateStrategy;
 }): boolean {
   if (input.roomCreateStrategy === 'local') return true;
+  if (PROCESS_LOCAL_ROOM_NAMES.has(input.roomName)) return true;
   if (input.roomName !== 'game_room' || !isRecord(input.clientOptions)) return false;
 
   const lobbyId = input.clientOptions.lobbyId;

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   getAliveTeams,
+  getBattleRoyalContestingTeams,
   getWinningTeam,
   resolveBattleRoyalMatchEnd,
   shouldEndGameAfterRound,
@@ -22,6 +23,12 @@ const players = [
   { team: null, state: 'alive' },
 ];
 assert.deepEqual(getAliveTeams(players), ['br_01', 'br_02']);
+assert.deepEqual(getBattleRoyalContestingTeams([
+  ...players,
+  { team: 'br_03', state: 'downed' },
+  { team: 'br_04', state: 'dropping' },
+  { team: 'br_05', state: 'spawning' },
+]), ['br_01', 'br_02', 'br_03', 'br_04', 'br_05']);
 assert.deepEqual(resolveBattleRoyalMatchEnd(players), {
   shouldEnd: false,
   winningTeam: null,
@@ -35,6 +42,14 @@ assert.deepEqual(resolveBattleRoyalMatchEnd([
   shouldEnd: true,
   winningTeam: 'br_05',
   aliveTeams: ['br_05'],
+});
+assert.deepEqual(resolveBattleRoyalMatchEnd([
+  { team: 'br_04', state: 'downed' },
+  { team: 'br_05', state: 'alive' },
+]), {
+  shouldEnd: false,
+  winningTeam: null,
+  aliveTeams: ['br_04', 'br_05'],
 });
 assert.deepEqual(resolveBattleRoyalMatchEnd([
   { team: 'br_04', state: 'dead' },

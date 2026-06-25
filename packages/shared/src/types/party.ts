@@ -7,6 +7,7 @@ import {
   type GameplayMode,
 } from './gameplayMode.js';
 import type { HeroId } from './hero.js';
+import type { HeroSkinId } from './skins.js';
 import type { MatchPerspective, MatchPerspectiveSettings } from './matchPerspective.js';
 import type { BotDifficulty } from './player.js';
 import type { RankSummary } from '../progression/ranking.js';
@@ -46,6 +47,7 @@ export interface PartyMemberSnapshot {
   userId: string;
   displayName: string;
   heroId: HeroId;
+  skinId?: HeroSkinId;
   ready: boolean;
   connected: boolean;
   leader: boolean;
@@ -57,6 +59,7 @@ export interface PartyMemberSnapshot {
 export interface PartyBotLaunchDescriptor {
   displayName: string;
   heroId: HeroId;
+  skinId?: HeroSkinId;
   difficulty: BotDifficulty;
 }
 
@@ -87,6 +90,7 @@ export interface PartyLaunchPayload {
   botFillMode?: 'manual' | 'fill_even';
   matchPerspective: MatchPerspective;
   selectedHero?: HeroId;
+  selectedSkinId?: HeroSkinId;
   matchmakingTicket?: string;
   targetRankDivisionIndex?: number;
   targetRankLabel?: string;

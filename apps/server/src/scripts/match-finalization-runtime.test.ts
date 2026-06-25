@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { PrismaClient } from '@prisma/client';
-import type { VoxelMapTheme } from '@voxel-strike/shared';
+import { GOLDEN_VOXEL_MAP_THEME_ID, type VoxelMapTheme } from '@voxel-strike/shared';
 import type { AntiCheatIntegrityGate } from '../anticheat';
 import type { MatchParticipantSnapshot, PersistCompletedMatchResult } from '../persistence/matchPersistence';
 import {
@@ -70,6 +70,10 @@ function createRuntime(options: {
     persisted: [] as unknown[],
     integrity: [] as unknown[],
     actions: [] as unknown[],
+    playerRewards: [] as unknown[],
+    goldenRewards: [] as unknown[],
+    wagerSettlements: [] as unknown[],
+    wagerReviews: [] as unknown[],
     logs: [] as Array<{ level: string; message: string; detail?: Record<string, unknown> }>,
   };
   const deps: MatchFinalizationRuntimeDeps = {
@@ -100,6 +104,18 @@ function createRuntime(options: {
     serializeError: (error) => ({
       message: error instanceof Error ? error.message : String(error),
     }),
+    createMatchPlayerRewards: async (input) => {
+      calls.playerRewards.push(input);
+    },
+    settleGoldenBiomeReward: async (input) => {
+      calls.goldenRewards.push(input);
+    },
+    settleWageredLobby: async (input) => {
+      calls.wagerSettlements.push(input);
+    },
+    markWageredLobbyReviewRequired: async (input) => {
+      calls.wagerReviews.push(input);
+    },
   };
 
   return {
@@ -149,10 +165,47 @@ async function run(): Promise<void> {
   assert.equal(currentLedger.winningTeam, 'red');
   assert.equal(calls.persisted.length, 1);
   assert.equal((calls.persisted[0] as { rankedOutcomeStatus: string }).rankedOutcomeStatus, 'applied');
+  assert.equal((calls.persisted[0] as { antiCheatReviewRequired: boolean }).antiCheatReviewRequired, true);
   assert.equal(calls.integrity.length, 1);
   assert.equal(calls.actions.length, 1);
+  assert.equal(calls.playerRewards.length, 0);
+  assert.equal(calls.goldenRewards.length, 0);
+  assert.equal(calls.wagerSettlements.length, 0);
+  assert.equal(calls.wagerReviews.length, 1);
   assert.equal((calls.actions[0] as { observedOnly: boolean }).observedOnly, true);
   assert.ok(calls.logs.some((entry) => entry.message === 'Match persistence completed'));
+}
+
+{
+  const { runtime, calls } = createRuntime();
+  const currentLedger = ledger({ mapThemeId: GOLDEN_VOXEL_MAP_THEME_ID });
+  const participants = [
+    participant(),
+    participant({ userId: 'user-blue', playerSessionId: 'session-blue', team: 'blue' }),
+  ];
+  const persisted = await runtime.persistLedger({
+    ledger: currentLedger,
+    finalScore: { red: 3, blue: 2 },
+    winningTeam: 'red',
+    participants,
+    rankedEligible: true,
+    integrityGate: gate(),
+    endedAt: new Date('2026-06-10T10:15:00.000Z'),
+  });
+
+  assert.equal(persisted, true);
+  assert.deepEqual(calls.wagerSettlements, [{
+    lobbyId: 'lobby-a',
+    matchId: 'match-a',
+    winningTeam: 'red',
+  }]);
+  assert.equal(calls.wagerReviews.length, 0);
+  assert.equal(calls.playerRewards.length, 1);
+  assert.equal(calls.goldenRewards.length, 1);
+  assert.deepEqual((calls.goldenRewards[0] as { winners: unknown[] }).winners, [{
+    userId: 'user-red',
+    playerSessionId: 'session-red',
+  }]);
 }
 
 {

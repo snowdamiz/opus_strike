@@ -356,7 +356,7 @@ function BattleRoyalScoreboard({
             <h2 className="font-display text-2xl leading-none text-white">Squads</h2>
           </div>
           <div className="font-body text-xs uppercase tracking-widest text-white/40">
-            {players.filter((player) => player.state === 'alive').length}/{players.length} alive
+            {players.filter((player) => player.state === 'alive' || player.state === 'downed').length}/{players.length} remaining
           </div>
         </div>
 
@@ -376,7 +376,7 @@ function BattleRoyalScoreboard({
                         {faction.fullName}
                       </p>
                       <p className="mt-1 font-body text-[10px] uppercase tracking-wider text-white/35">
-                        {teamPlayers.filter((player) => player.state === 'alive').length}/{teamPlayers.length || 3} alive
+                        {teamPlayers.filter((player) => player.state === 'alive' || player.state === 'downed').length}/{teamPlayers.length || 3} remaining
                       </p>
                     </div>
                     <span

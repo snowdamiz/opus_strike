@@ -14,7 +14,7 @@ import { useWallet } from '../../contexts/WalletContext';
 import { formatKeybind } from '../../utils/keybindings';
 import { isTutorialOfflineTrainingHeroId } from '../../utils/tutorialOfflineCombatRuntime';
 import { visualStore } from '../../store/visualStore';
-import { HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
+import { BLAZE_UI_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 import {
   MOVEMENT_CHECKPOINT_Z,
   TUTORIAL_TASK_IDS,
@@ -215,7 +215,7 @@ function TutorialCompletionOverlay({
   saveError: string | null;
   onComplete: () => void;
 }) {
-  const ctaColor = HERO_COLORS.blaze;
+  const ctaColor = BLAZE_UI_COLORS.primary;
 
   return (
     <div
@@ -583,8 +583,8 @@ export function TutorialGuide() {
     return () => window.clearInterval(interval);
   }, [gamePhase, isTutorialMode, manifest, markTasksComplete, objectiveCaptured, objectivePickedUp]);
 
-  const handleFinish = useCallback(async () => {
-    if (!tutorialComplete || isSaving) return;
+  const saveTutorialCompletion = useCallback(async () => {
+    if (isSaving) return;
 
     setIsSaving(true);
     setSaveError(null);
@@ -596,7 +596,16 @@ export function TutorialGuide() {
       setSaveError(error instanceof Error ? error.message : 'Failed to save tutorial completion');
       setIsSaving(false);
     }
-  }, [completeTutorial, isSaving, leaveGame, setTutorialCompletionOverlayOpen, tutorialComplete]);
+  }, [completeTutorial, isSaving, leaveGame, setTutorialCompletionOverlayOpen]);
+
+  const handleFinish = useCallback(() => {
+    if (!tutorialComplete) return;
+    void saveTutorialCompletion();
+  }, [saveTutorialCompletion, tutorialComplete]);
+
+  const handleSkipTutorial = useCallback(() => {
+    void saveTutorialCompletion();
+  }, [saveTutorialCompletion]);
 
   useEffect(() => {
     if (!isTutorialMode || gamePhase !== 'playing' || !tutorialComplete) {
@@ -650,6 +659,19 @@ export function TutorialGuide() {
           <p className="mt-1 max-w-[22rem] text-sm leading-snug text-white/90">
             {activeTask?.detail}
           </p>
+          {saveError && (
+            <p className="mt-3 max-w-[22rem] text-xs font-bold leading-snug text-red-200" role="status">
+              {saveError}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={handleSkipTutorial}
+            disabled={isSaving}
+            className="play-secondary-cta pointer-events-auto mt-4 max-w-[11rem]"
+          >
+            {isSaving ? 'SKIPPING...' : 'SKIP TUTORIAL'}
+          </button>
         </div>
       </div>
     </div>

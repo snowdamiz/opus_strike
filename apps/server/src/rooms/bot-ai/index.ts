@@ -113,6 +113,7 @@ export interface BotPlayerSnapshot {
   name: string;
   team: Team;
   heroId: HeroId | '';
+  skinId?: string;
   state: string;
   isBot: boolean;
   botDifficulty: BotDifficulty;

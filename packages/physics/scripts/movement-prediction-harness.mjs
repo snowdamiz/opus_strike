@@ -24,6 +24,8 @@ import {
   PLAYER_RADIUS,
   PLAYER_SLIDE_HEIGHT,
   PLAYER_SLIDE_RADIUS,
+  PROCEDURAL_VOXEL_SIZE,
+  SLIDE_DURATION,
   SPRINT_MULTIPLIER,
   createProceduralTerrainLookup,
   createTutorialVoxelMapManifest,
@@ -1366,6 +1368,140 @@ function runHeldSlideGraduallyLosesSpeed() {
   );
 }
 
+function runDownhillSlidePreservesSpeedUntilFlatGrade() {
+  const downhillEndZ = -4;
+  const downhillTerrain = {
+    ...terrain,
+    getGroundY: (position) => position.z > downhillEndZ ? position.z * 0.12 : downhillEndZ * 0.12,
+    getBlockAtWorld: () => 0,
+  };
+  let state = createSimulationState();
+  let downhillSpeed = null;
+  let downhillTimer = null;
+  let flatEntry = null;
+  let flatDecay = null;
+
+  for (let step = 0; step < 120; step++) {
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats: HERO_DEFINITIONS.phantom.stats,
+      input: {
+        ...createEmptyInputState(),
+        moveForward: true,
+        sprint: true,
+        crouch: true,
+        crouchPressed: step === 0,
+      },
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain: downhillTerrain,
+    });
+
+    const speed = speed2D(state.velocity);
+    if (state.position.z > downhillEndZ + 1) {
+      assert.equal(state.movement.isSliding, true, `downhill slide should stay active at step ${step}`);
+      downhillSpeed ??= speed;
+      downhillTimer ??= state.movement.slideTimeRemaining;
+      assert.ok(
+        Math.abs(speed - downhillSpeed) <= 0.001,
+        `downhill slide should preserve speed at step ${step}: ${downhillSpeed} -> ${speed}`
+      );
+      assert.ok(
+        Math.abs(state.movement.slideTimeRemaining - downhillTimer) <= EPSILON,
+        `downhill slide timer should pause at step ${step}: ${downhillTimer} -> ${state.movement.slideTimeRemaining}`
+      );
+    }
+
+    if (!flatEntry && state.position.z < downhillEndZ - 0.3) {
+      flatEntry = {
+        step,
+        speed,
+        timer: state.movement.slideTimeRemaining,
+      };
+    } else if (flatEntry && step >= flatEntry.step + 18) {
+      flatDecay = {
+        speed,
+        timer: state.movement.slideTimeRemaining,
+      };
+      break;
+    }
+  }
+
+  assert.ok(downhillSpeed !== null, 'downhill slide should collect speed samples');
+  assert.ok(downhillTimer !== null, 'downhill slide should collect timer samples');
+  assert.ok(Math.abs(downhillTimer - SLIDE_DURATION) <= EPSILON, `downhill slide should keep full duration, got ${downhillTimer}`);
+  assert.ok(flatEntry !== null, 'slide should reach flat ground after the downhill grade');
+  assert.ok(flatDecay !== null, 'slide should continue long enough to measure flat-ground decay');
+  assert.ok(
+    flatDecay.speed < flatEntry.speed * 0.75,
+    `flat ground should resume slide slowdown, got ${flatEntry.speed} -> ${flatDecay.speed}`
+  );
+  assert.ok(
+    flatDecay.timer < flatEntry.timer - 0.1,
+    `flat ground should resume slide timer countdown, got ${flatEntry.timer} -> ${flatDecay.timer}`
+  );
+}
+
+function runSteppedDownhillSlidePreservesSpeedAcrossShortLedges() {
+  const ledgeLength = PROCEDURAL_VOXEL_SIZE.z * 3;
+  const dropHeight = PROCEDURAL_VOXEL_SIZE.y;
+  const steppedDownhillTerrain = {
+    ...terrain,
+    getGroundY: (position) => {
+      if (position.z > 0) return 0;
+      return -Math.floor((-position.z) / ledgeLength) * dropHeight;
+    },
+    getBlockAtWorld: () => 0,
+  };
+  let state = {
+    position: { x: 0, y: 0.9, z: 0.2 },
+    velocity: { x: 0, y: 0, z: HERO_DEFINITIONS.phantom.stats.moveSpeed * SPRINT_MULTIPLIER },
+    movement: createMovementState(),
+  };
+  let initialSpeed = null;
+  let initialTimer = null;
+
+  for (let step = 0; step < 36; step++) {
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats: HERO_DEFINITIONS.phantom.stats,
+      input: {
+        ...createEmptyInputState(),
+        moveForward: true,
+        sprint: true,
+        crouch: true,
+        crouchPressed: step === 0,
+      },
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain: steppedDownhillTerrain,
+    });
+
+    const speed = speed2D(state.velocity);
+    initialSpeed ??= speed;
+    initialTimer ??= state.movement.slideTimeRemaining;
+
+    assert.equal(state.movement.isSliding, true, `stepped downhill slide should stay active at step ${step}`);
+    assert.ok(
+      Math.abs(speed - initialSpeed) <= 0.001,
+      `stepped downhill slide should preserve speed at step ${step}: ${initialSpeed} -> ${speed}`
+    );
+    assert.ok(
+      Math.abs(state.movement.slideTimeRemaining - initialTimer) <= EPSILON,
+      `stepped downhill slide timer should pause at step ${step}: ${initialTimer} -> ${state.movement.slideTimeRemaining}`
+    );
+  }
+
+  assert.ok(
+    state.position.z < -(ledgeLength * 3),
+    `stepped downhill slide should cross several ledges, got z ${state.position.z}`
+  );
+}
+
 function runSlideJump() {
   const movement = createMovementState();
   movement.isSliding = true;
@@ -1640,6 +1776,8 @@ runLowCeilingMaintainsCrouch();
 runCapsuleHoleRejection();
 runDiagonalCornerSlide();
 runHeldSlideGraduallyLosesSpeed();
+runDownhillSlidePreservesSpeedUntilFlatGrade();
+runSteppedDownhillSlidePreservesSpeedAcrossShortLedges();
 runSlideJump();
 runLandingContact();
 runTemporaryWallRevisionCollision();

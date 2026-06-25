@@ -20,6 +20,7 @@ const players = [
   makePlayer('red-b', 'red', 4, 0),
   makePlayer('blue-a', 'blue', 6, 0),
   makePlayer('blue-b', 'blue', 18, 0),
+  makePlayer('blue-downed', 'blue', 3, 0, 'downed'),
   makePlayer('blue-dead', 'blue', 2, 0, 'dead'),
 ];
 
@@ -27,6 +28,10 @@ index.rebuild(players);
 
 const firstRadiusResults = queries.queryRadius({ x: 0, z: 0 }, 8, { team: 'blue' });
 assert.deepEqual(firstRadiusResults.map((player) => player.id), ['blue-a']);
+
+const downedRadiusResults = queries.queryRadius({ x: 0, z: 0 }, 8, { team: 'blue', includeDowned: true });
+assert.equal(downedRadiusResults, firstRadiusResults);
+assert.deepEqual(downedRadiusResults.map((player) => player.id).sort(), ['blue-a', 'blue-downed']);
 
 const secondRadiusResults = queries.queryRadius({ x: 0, z: 0 }, 8, { team: 'red', excludeId: 'red-a' });
 assert.equal(secondRadiusResults, firstRadiusResults);

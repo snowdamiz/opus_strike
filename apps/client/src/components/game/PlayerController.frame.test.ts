@@ -164,6 +164,18 @@ function makeInputPhaseContext(options: {
       updatePhantomPrimaryReload: () => undefined,
       reloadPhantomPrimary: () => false,
     },
+    blazeAbilities: {
+      blazePrimaryReloadingRef: ref(false),
+      blazePrimaryAmmoRef: ref(4),
+      updateBlazePrimaryReload: () => undefined,
+      reloadBlazePrimary: () => false,
+    },
+    chronosAbilities: {
+      chronosPrimaryReloadingRef: ref(false),
+      chronosPrimaryAmmoRef: ref(6),
+      updateChronosPrimaryReload: () => undefined,
+      reloadChronosPrimary: () => false,
+    },
     refs: {
       lastExclusiveHoldInputRef: ref(options.previousHold ?? {
         primaryFire: false,
@@ -217,6 +229,14 @@ function makeCommandPhaseContext(options: {
     phantomAbilities: {
       phantomPrimaryReloadingRef: ref(false),
       phantomPrimaryAmmoRef: ref(3),
+    },
+    blazeAbilities: {
+      blazePrimaryReloadingRef: ref(false),
+      blazePrimaryAmmoRef: ref(4),
+    },
+    chronosAbilities: {
+      chronosPrimaryReloadingRef: ref(false),
+      chronosPrimaryAmmoRef: ref(6),
     },
     refs: {
       tickRef: ref(0),

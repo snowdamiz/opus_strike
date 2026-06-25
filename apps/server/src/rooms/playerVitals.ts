@@ -43,8 +43,10 @@ export interface FullPlayerVitalsSnapshotInput {
   id: string;
   netId: number;
   name: string;
+  role?: PlayerVitalsSnapshot['role'];
   team: PlayerVitalsSnapshot['team'];
   heroId: PlayerVitalsSnapshot['heroId'];
+  skinId?: PlayerVitalsSnapshot['skinId'];
   state: PlayerVitalsSnapshot['state'];
   isReady: boolean;
   isBot: boolean;
@@ -53,6 +55,14 @@ export interface FullPlayerVitalsSnapshotInput {
   rank?: PlayerVitalsSnapshot['rank'];
   health: number;
   maxHealth: number;
+  downedHealth?: number | null;
+  downedMaxHealth?: number | null;
+  downedStartedAt?: number | null;
+  downedRemainingMs?: number | null;
+  downedExpiresAt?: number | null;
+  reviveStartedAt?: number | null;
+  reviveCompletesAt?: number | null;
+  reviveByPlayerId?: string | null;
   ultimateCharge: number;
   onFireUntil?: number | null;
   powerupBoostUntil?: number | null;
@@ -173,8 +183,10 @@ export function buildFullPlayerVitalsSnapshot(
     id: input.id,
     netId: input.netId,
     name: input.name,
+    ...(input.role ? { role: input.role } : {}),
     team: input.team,
     heroId: input.heroId,
+    skinId: input.skinId,
     state: input.state,
     isReady: input.isReady,
     isBot: input.isBot,
@@ -183,6 +195,14 @@ export function buildFullPlayerVitalsSnapshot(
     rank: input.rank,
     health: input.health,
     maxHealth: input.maxHealth,
+    downedHealth: input.downedHealth ?? null,
+    downedMaxHealth: input.downedMaxHealth ?? null,
+    downedStartedAt: input.downedStartedAt ?? null,
+    downedRemainingMs: input.downedRemainingMs ?? null,
+    downedExpiresAt: input.downedExpiresAt ?? null,
+    reviveStartedAt: input.reviveStartedAt ?? null,
+    reviveCompletesAt: input.reviveCompletesAt ?? null,
+    reviveByPlayerId: input.reviveByPlayerId ?? null,
     ultimateCharge: input.ultimateCharge,
     onFireUntil: input.onFireUntil ?? null,
     powerupBoostUntil: input.powerupBoostUntil ?? null,
@@ -214,6 +234,12 @@ export function buildVisibleEnemyVitalsSnapshot(
 
   return {
     ...full,
+    downedStartedAt: null,
+    downedRemainingMs: null,
+    downedExpiresAt: null,
+    reviveStartedAt: null,
+    reviveCompletesAt: null,
+    reviveByPlayerId: null,
     ultimateCharge: 0,
     abilities: activeAbilities,
     respawnTime: null,
@@ -225,15 +251,19 @@ export function buildVisibleEnemyVitalsSnapshot(
 export function getPublicEnemyVitalsState(
   state: PlayerVitalsSnapshot['state']
 ): PlayerVitalsSnapshot['state'] {
-  return state === 'dead' ? 'dead' : 'alive';
+  if (state === 'dead') return 'dead';
+  if (state === 'downed') return 'downed';
+  return 'alive';
 }
 
 export function buildPublicEnemyVitalsSnapshot(input: {
   id: string;
   netId: number;
   name: string;
+  role?: PlayerVitalsSnapshot['role'];
   team: PlayerVitalsSnapshot['team'];
   heroId: PlayerVitalsSnapshot['heroId'];
+  skinId?: PlayerVitalsSnapshot['skinId'];
   state: PlayerVitalsSnapshot['state'];
   isReady: boolean;
   isBot: boolean;
@@ -248,8 +278,10 @@ export function buildPublicEnemyVitalsSnapshot(input: {
     id: input.id,
     netId: input.netId,
     name: input.name,
+    ...(input.role ? { role: input.role } : {}),
     team: input.team,
     heroId: input.heroId,
+    skinId: input.skinId,
     state: getPublicEnemyVitalsState(input.state),
     isReady: input.isReady,
     isBot: input.isBot,
@@ -258,6 +290,14 @@ export function buildPublicEnemyVitalsSnapshot(input: {
     rank: input.rank,
     health: input.maxHealth,
     maxHealth: input.maxHealth,
+    downedHealth: null,
+    downedMaxHealth: null,
+    downedStartedAt: null,
+    downedRemainingMs: null,
+    downedExpiresAt: null,
+    reviveStartedAt: null,
+    reviveCompletesAt: null,
+    reviveByPlayerId: null,
     ultimateCharge: 0,
     onFireUntil: null,
     powerupBoostUntil: null,
@@ -416,8 +456,10 @@ export function haveVitalsChanged(
   return (
     previous.name !== next.name ||
     previous.netId !== next.netId ||
+    previous.role !== next.role ||
     previous.team !== next.team ||
     previous.heroId !== next.heroId ||
+    previous.skinId !== next.skinId ||
     previous.state !== next.state ||
     previous.isReady !== next.isReady ||
     previous.isBot !== next.isBot ||
@@ -426,6 +468,14 @@ export function haveVitalsChanged(
     previous.visibility !== next.visibility ||
     previous.health !== next.health ||
     previous.maxHealth !== next.maxHealth ||
+    previous.downedHealth !== next.downedHealth ||
+    previous.downedMaxHealth !== next.downedMaxHealth ||
+    previous.downedStartedAt !== next.downedStartedAt ||
+    previous.downedRemainingMs !== next.downedRemainingMs ||
+    previous.downedExpiresAt !== next.downedExpiresAt ||
+    previous.reviveStartedAt !== next.reviveStartedAt ||
+    previous.reviveCompletesAt !== next.reviveCompletesAt ||
+    previous.reviveByPlayerId !== next.reviveByPlayerId ||
     Math.round(previous.ultimateCharge) !== Math.round(next.ultimateCharge) ||
     previous.onFireUntil !== next.onFireUntil ||
     previous.powerupBoostUntil !== next.powerupBoostUntil ||

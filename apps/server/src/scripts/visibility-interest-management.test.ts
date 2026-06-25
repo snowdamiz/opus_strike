@@ -186,6 +186,14 @@ const enemy = makePlayer('blue-a', 'blue', 12, 0);
 }
 
 {
+  const manager = new VisibilityInterestManager({ proximityRevealMeters: 1 });
+  const downedEnemy = makePlayer('blue-downed', 'blue', 12, 0, { state: 'downed' });
+  const decision = manager.getRecipientInterest(self, downedEnemy, makeContext({ hasLineOfSight: () => true }));
+  assert.equal(decision.state, 'visible');
+  assert.equal(decision.reason, 'line_of_sight');
+}
+
+{
   const manager = new VisibilityInterestManager({
     proximityRevealMeters: 1,
     visibleTtlMs: 1,

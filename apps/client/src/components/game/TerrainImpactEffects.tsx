@@ -627,10 +627,15 @@ export function TerrainImpactEffectsManager({ config }: { config: EffectQualityC
   useFrame(({ camera }) => {
     activeImpactCameraPosition.copy(camera.position);
     const frameNow = getFrameClock().nowMs;
-    measureFrameWork('frame.effects.terrainImpacts', () => {
+    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+      measureFrameWork('frame.effects.terrainImpacts', () => {
+        updatePooledPhantomDireImpacts(phantomRenderSlotsRef.current, frameNow);
+        updatePooledGenericImpacts(genericRenderSlotsRef.current, frameNow);
+      });
+    } else {
       updatePooledPhantomDireImpacts(phantomRenderSlotsRef.current, frameNow);
       updatePooledGenericImpacts(genericRenderSlotsRef.current, frameNow);
-    });
+    }
     recordTerrainImpactDiagnostics(frameNow, config);
   });
 

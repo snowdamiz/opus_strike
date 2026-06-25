@@ -44,7 +44,7 @@ router.get('/lobbies/:lobbyId', async (req, res) => {
 
 router.post('/lobbies/preflight', async (req, res) => {
   try {
-    const normalized = wagerService.normalizeCreateOptions(req.body?.wager);
+    const normalized = await wagerService.normalizeCreateOptions(req.body?.wager);
     if (!normalized.enabled) {
       res.json({ wager: { enabled: false } });
       return;

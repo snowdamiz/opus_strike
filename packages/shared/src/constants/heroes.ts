@@ -12,7 +12,7 @@ import {
 
 // Default hero stats - used as fallback when no hero is selected
 export const DEFAULT_HERO_STATS: HeroStats = {
-  maxHealth: 200,
+  maxHealth: 180,
   moveSpeed: 4.08,
   jumpForce: 8.3,
   size: { width: 0.8, height: 1.8, depth: 0.8 },
@@ -76,6 +76,9 @@ export const CHRONOS_LIFELINE_BEAM_DURATION_MS = 620;
 export const CHRONOS_LIFELINE_SOURCE_HEIGHT = 1.18;
 export const CHRONOS_LIFELINE_TARGET_HEIGHT = 1.02;
 export const CHRONOS_VERDANT_PULSE_DAMAGE = 16;
+export const CHRONOS_PRIMARY_MAGAZINE_SIZE = 20;
+export const CHRONOS_PRIMARY_RELOAD_SECONDS = 1.8;
+export const CHRONOS_PRIMARY_RELOAD_MS = CHRONOS_PRIMARY_RELOAD_SECONDS * 1000;
 export const CHRONOS_VERDANT_PULSE_COOLDOWN_MS = 300;
 export const CHRONOS_VERDANT_PULSE_FIRE_READY_MS = 140;
 export const CHRONOS_VERDANT_PULSE_SPEED = 68;
@@ -116,6 +119,9 @@ export const CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS = 360;
 export const CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED = 54;
 
 export const BLAZE_ROCKET_FIRE_INTERVAL_MS = 400;
+export const BLAZE_PRIMARY_MAGAZINE_SIZE = 10;
+export const BLAZE_PRIMARY_RELOAD_SECONDS = 2;
+export const BLAZE_PRIMARY_RELOAD_MS = BLAZE_PRIMARY_RELOAD_SECONDS * 1000;
 export const BLAZE_ROCKET_SPEED = 117.6;
 export const BLAZE_ROCKET_DAMAGE = 24;
 export const BLAZE_ROCKET_COLLISION_RADIUS = 0.21;
@@ -174,6 +180,8 @@ export const ABILITY_CARD_STATS = {
   ],
   blaze_rocket: [
     { value: BLAZE_ROCKET_DAMAGE, label: 'dmg' },
+    { value: BLAZE_PRIMARY_MAGAZINE_SIZE, label: 'ammo' },
+    { value: BLAZE_PRIMARY_RELOAD_SECONDS, label: 'reload', format: 'seconds' },
   ],
   blaze_bomb: [
     { value: BLAZE_BOMB_DAMAGE, label: 'dmg' },
@@ -192,6 +200,8 @@ export const ABILITY_CARD_STATS = {
   ],
   chronos_verdant_pulse: [
     { value: CHRONOS_VERDANT_PULSE_DAMAGE, label: 'dmg' },
+    { value: CHRONOS_PRIMARY_MAGAZINE_SIZE, label: 'ammo' },
+    { value: CHRONOS_PRIMARY_RELOAD_SECONDS, label: 'reload', format: 'seconds' },
     { value: CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE, label: 'dmg with AOE during F' },
   ],
   chronos_lifeline_conduit: [
@@ -208,7 +218,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     role: 'flanker',
     movementFocus: 'blink',
     stats: {
-      maxHealth: 200,
+      maxHealth: 180,
       moveSpeed: 3.18,
       jumpForce: 8.3,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
@@ -229,7 +239,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     role: 'mobile',
     movementFocus: 'grapple',
     stats: {
-      maxHealth: 225,
+      maxHealth: 200,
       moveSpeed: 3.63,
       jumpForce: 7.9,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
@@ -250,7 +260,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     role: 'assault',
     movementFocus: 'aerial',
     stats: {
-      maxHealth: 225,
+      maxHealth: 200,
       moveSpeed: 3.63,
       jumpForce: 9.0,
       size: { width: 0.9, height: 1.9, depth: 0.9 },
@@ -271,7 +281,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     role: 'support-tank',
     movementFocus: 'temporal',
     stats: {
-      maxHealth: 275,
+      maxHealth: 240,
       moveSpeed: 3.48,
       jumpForce: 8.1,
       size: { width: 0.78, height: 1.9, depth: 0.78 },

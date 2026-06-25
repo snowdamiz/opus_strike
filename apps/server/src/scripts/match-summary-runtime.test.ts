@@ -190,7 +190,7 @@ const runtime = new MatchSummaryRuntime({
     ]),
     integrityGate: gate({ reviewRequired: true, observedOnly: true, status: 'suspicious' }),
     mapThemeId: GOLDEN_VOXEL_MAP_THEME_ID,
-    goldenBiomeRewardUsdCents: 750,
+    goldenBiomeRewardLamports: '200000000',
   });
 
   assert.equal(event.durationMs, 6000);
@@ -198,7 +198,7 @@ const runtime = new MatchSummaryRuntime({
   assert.equal(event.matchIntegrity?.reviewRequired, false);
   assert.equal(event.matchIntegrity?.message, 'Match integrity telemetry has been recorded.');
   assert.deepEqual(event.goldenBiomeReward, {
-    rewardUsdCents: 750,
+    rewardLamports: '200000000',
     rewardToken: 'SOL',
     winningTeam: 'red',
     eligiblePlayerIds: ['red'],
@@ -232,7 +232,7 @@ const runtime = new MatchSummaryRuntime({
       player({ id: 'blue', team: 'blue', kills: 8, deaths: 4 }),
     ]),
     mapThemeId: 'forest',
-    goldenBiomeRewardUsdCents: 500,
+    goldenBiomeRewardLamports: '200000000',
     rankedPreview: {
       participants: [
         participant({ userId: 'user-red', playerSessionId: 'red', team: 'red', kills: 10, deaths: 2 }),
@@ -272,7 +272,7 @@ const runtime = new MatchSummaryRuntime({
       player({ id: 'blue', team: 'blue' }),
     ]),
     mapThemeId: 'forest',
-    goldenBiomeRewardUsdCents: 500,
+    goldenBiomeRewardLamports: '200000000',
     rankedPreview: {
       participants: [
         participant({ userId: 'user-red', playerSessionId: 'red', team: 'red' }),

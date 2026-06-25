@@ -23,10 +23,13 @@ export interface DamageEngineAdapter<TPlayer> {
   getId(player: TPlayer): string;
   getTeam(player: TPlayer): Team | null;
   getState(player: TPlayer): string;
-  setState(player: TPlayer, state: 'dead'): void;
+  setState(player: TPlayer, state: 'dead' | 'downed'): void;
   getHealth(player: TPlayer): number;
   setHealth(player: TPlayer, health: number): void;
   getMaxHealth(player: TPlayer): number;
+  getDownedHealth?(player: TPlayer): number;
+  setDownedHealth?(player: TPlayer, health: number): void;
+  getDownedMaxHealth?(player: TPlayer): number;
   getSpawnProtectionUntil(player: TPlayer): number | null;
   getUltimateCharge(player: TPlayer): number;
   setUltimateCharge(player: TPlayer, charge: number): void;
@@ -53,6 +56,8 @@ export interface DamageEngineRuntime<TPlayer> {
   ultimateChargePerKill?: number;
   ultimateChargePerAssist?: number;
   creditOverkillDamage?: boolean;
+  lethalAliveResolution?: 'death' | 'downed';
+  damageDownedPlayers?: boolean;
 }
 
 export interface DamageAbsorptionContext<TPlayer> {
@@ -105,6 +110,16 @@ export interface DamageDeathResolution<TPlayer> {
   lastDamageEntry: DamageHistoryEntry | null;
 }
 
+export interface DamageDownedResolution<TPlayer> {
+  target: TPlayer;
+  source: TPlayer | null;
+  targetId: string;
+  sourceId: string | null;
+  downedAt: number;
+  downedHealth: number;
+  downedMaxHealth: number;
+}
+
 export interface ApplyDamageResult<TPlayer> {
   applied: boolean;
   killed: boolean;
@@ -119,6 +134,8 @@ export interface ApplyDamageResult<TPlayer> {
   sourcePosition: Vec3 | null;
   sourceDirection: Vec3 | null;
   personalShieldBroken: boolean;
+  downed: DamageDownedResolution<TPlayer> | null;
+  newDownedHealth?: number;
   death: DamageDeathResolution<TPlayer> | null;
 }
 
@@ -212,7 +229,7 @@ export function recordDamageHistory(
   });
 }
 
-function resolveDeath<TPlayer>(
+export function resolveDamageDeath<TPlayer>(
   runtime: DamageEngineRuntime<TPlayer>,
   target: TPlayer,
   source: TPlayer | null
@@ -266,6 +283,33 @@ function resolveDeath<TPlayer>(
   };
 }
 
+function resolveDowned<TPlayer>(
+  runtime: DamageEngineRuntime<TPlayer>,
+  target: TPlayer,
+  source: TPlayer | null
+): DamageDownedResolution<TPlayer> {
+  const adapter = runtime.adapter;
+  const downedMaxHealth = Math.max(1, Math.round(adapter.getDownedMaxHealth?.(target) ?? 1));
+  const currentDownedHealth = adapter.getDownedHealth?.(target);
+  const downedHealth = Math.max(
+    1,
+    Math.round(currentDownedHealth && currentDownedHealth > 0 ? currentDownedHealth : downedMaxHealth)
+  );
+  adapter.setState(target, 'downed');
+  adapter.setHealth(target, 0);
+  adapter.setDownedHealth?.(target, downedHealth);
+
+  return {
+    target,
+    source,
+    targetId: adapter.getId(target),
+    sourceId: source ? adapter.getId(source) : null,
+    downedAt: runtime.now,
+    downedHealth,
+    downedMaxHealth,
+  };
+}
+
 export function applyDamage<TPlayer>(
   runtime: DamageEngineRuntime<TPlayer>,
   input: ApplyDamageInput<TPlayer>
@@ -273,7 +317,12 @@ export function applyDamage<TPlayer>(
   const adapter = runtime.adapter;
   const source = input.source ?? null;
   const target = input.target;
-  const targetHealth = adapter.getHealth(target);
+  const targetState = adapter.getState(target);
+  const damageDownedTarget = targetState === 'downed' &&
+    runtime.damageDownedPlayers === true &&
+    adapter.getDownedHealth !== undefined &&
+    adapter.setDownedHealth !== undefined;
+  const targetHealth = damageDownedTarget ? adapter.getDownedHealth!(target) : adapter.getHealth(target);
   const sourceId = source ? adapter.getId(source) : null;
   const sourcePosition = input.sourcePosition !== undefined ? input.sourcePosition : null;
   const sourceDirection = input.sourceDirection !== undefined ? input.sourceDirection : null;
@@ -292,16 +341,17 @@ export function applyDamage<TPlayer>(
     sourcePosition,
     sourceDirection,
     personalShieldBroken: false,
+    downed: null,
     death: null,
   });
 
-  if (adapter.getState(target) !== 'alive') return rejected('not_alive');
+  if (targetState !== 'alive' && !damageDownedTarget) return rejected('not_alive');
   if (input.rawDamage <= 0) return rejected('non_positive_damage');
   if (!input.allowFriendlyFire && source && sourceId !== adapter.getId(target) && isSameTeam(adapter, source, target)) {
     return rejected('friendly_fire');
   }
-  const spawnProtectionUntil = adapter.getSpawnProtectionUntil(target) ?? 0;
-  if (!input.bypassSpawnProtection && spawnProtectionUntil > 0 && runtime.now < spawnProtectionUntil) {
+  const spawnProtectionUntil = damageDownedTarget ? 0 : adapter.getSpawnProtectionUntil(target) ?? 0;
+  if (!damageDownedTarget && !input.bypassSpawnProtection && spawnProtectionUntil > 0 && runtime.now < spawnProtectionUntil) {
     return rejected('spawn_protection');
   }
   if (adapter.isDamageImmune?.(target)) return rejected('immune');
@@ -322,7 +372,7 @@ export function applyDamage<TPlayer>(
   let damageToApply = absorption ? absorption.remainingDamage : input.rawDamage;
   if (damageToApply <= 0) return rejected('absorbed');
 
-  if (!input.bypassPersonalShield && adapter.getPersonalShieldState?.(target)?.isActive) {
+  if (!damageDownedTarget && !input.bypassPersonalShield && adapter.getPersonalShieldState?.(target)?.isActive) {
     adapter.deactivatePersonalShield?.(target);
     return {
       applied: false,
@@ -337,6 +387,7 @@ export function applyDamage<TPlayer>(
       sourcePosition,
       sourceDirection,
       personalShieldBroken: true,
+      downed: null,
       death: null,
     };
   }
@@ -345,14 +396,18 @@ export function applyDamage<TPlayer>(
   const damage = Math.max(1, Math.round(damageToApply));
   const appliedDamage = Math.min(targetHealth, damage);
   const newHealth = Math.max(0, targetHealth - damage);
-  adapter.setHealth(target, newHealth);
+  if (damageDownedTarget) {
+    adapter.setDownedHealth!(target, newHealth);
+  } else {
+    adapter.setHealth(target, newHealth);
+  }
 
   if (source && sourceId && sourceId !== adapter.getId(target)) {
     const creditDamage = runtime.creditOverkillDamage === false ? appliedDamage : damage;
     addUltimateCharge(
       adapter,
       source,
-      creditDamage / Math.max(1, adapter.getMaxHealth(target)) *
+      creditDamage / Math.max(1, damageDownedTarget ? adapter.getDownedMaxHealth?.(target) ?? adapter.getMaxHealth(target) : adapter.getMaxHealth(target)) *
         (runtime.ultimateChargePerDamageRatio ?? DEFAULT_ULTIMATE_CHARGE_PER_DAMAGE_RATIO)
     );
     recordDamageHistory(
@@ -367,7 +422,10 @@ export function applyDamage<TPlayer>(
     );
   }
 
-  const death = newHealth <= 0 ? resolveDeath(runtime, target, source) : null;
+  const downed = !damageDownedTarget && newHealth <= 0 && runtime.lethalAliveResolution === 'downed'
+    ? resolveDowned(runtime, target, source)
+    : null;
+  const death = !downed && newHealth <= 0 ? resolveDamageDeath(runtime, target, source) : null;
 
   return {
     applied: true,
@@ -382,6 +440,8 @@ export function applyDamage<TPlayer>(
     sourcePosition,
     sourceDirection,
     personalShieldBroken: false,
+    downed,
+    newDownedHealth: damageDownedTarget ? adapter.getDownedHealth?.(target) : downed?.downedHealth,
     death,
   };
 }

@@ -76,7 +76,9 @@ export type MovementCorrectionReason =
   | 'bounds'
   | 'queue_overflow'
   | 'collision_revision'
-  | 'root';
+  | 'root'
+  | 'downed'
+  | 'revived';
 
 export interface MovementCommand {
   seq: number;

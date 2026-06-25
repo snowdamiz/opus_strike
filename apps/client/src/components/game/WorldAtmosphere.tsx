@@ -1,4 +1,4 @@
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { VoxelMapTheme } from '@voxel-strike/shared';
@@ -64,7 +64,8 @@ interface DustDevilConfig {
 }
 
 const ATMOSPHERE_MAX_STEP = 1 / 12;
-const SKY_DOME_RADIUS = 760;
+const SKY_DOME_MAX_RADIUS = 96;
+const SKY_DOME_FAR_MARGIN = 8;
 const DEFAULT_ATMOSPHERE_SUN_POSITION: [number, number, number] = [92, 118, -76];
 const LATE_DAY_ATMOSPHERE_SUN_POSITION: [number, number, number] = [-286, 48, -204];
 const BLAZE_SUN_CORE_COLOR = new THREE.Color('#ffd36a');
@@ -88,11 +89,10 @@ function getAtmosphereCount(profile: AtmosphereProfileInput): number {
 }
 
 const SKY_VERTEX_SHADER = `
-varying vec3 vWorldPosition;
+varying vec3 vSkyDirection;
 
 void main() {
-  vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-  vWorldPosition = worldPosition.xyz;
+  vSkyDirection = position.xyz;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
@@ -115,7 +115,7 @@ uniform float sunsetIntensity;
 uniform float fireIntensity;
 uniform float phantomIntensity;
 uniform float time;
-varying vec3 vWorldPosition;
+varying vec3 vSkyDirection;
 
 float hash12(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -124,7 +124,7 @@ float hash12(vec2 p) {
 }
 
 void main() {
-  vec3 direction = normalize(vWorldPosition);
+  vec3 direction = normalize(vSkyDirection);
   float height = clamp(direction.y * 0.5 + 0.5, 0.0, 1.0);
   float horizon = pow(1.0 - abs(direction.y), 3.0);
   float lowSky = 1.0 - smoothstep(0.5, 0.92, height);
@@ -192,6 +192,16 @@ function getAtmosphereSunPosition(theme: VoxelMapTheme): [number, number, number
 
 function getAtmosphereSunDirection(theme: VoxelMapTheme): THREE.Vector3 {
   return new THREE.Vector3(...getAtmosphereSunPosition(theme)).normalize();
+}
+
+function getSkyDomeRadius(camera: THREE.Camera): number {
+  const far = 'far' in camera && typeof camera.far === 'number' ? camera.far : Number.POSITIVE_INFINITY;
+  if (!Number.isFinite(far)) return SKY_DOME_MAX_RADIUS;
+
+  return Math.max(
+    1,
+    Math.min(SKY_DOME_MAX_RADIUS, far - SKY_DOME_FAR_MARGIN)
+  );
 }
 
 function getSunsetIntensity(theme: VoxelMapTheme): number {
@@ -1333,6 +1343,8 @@ function SandDevils({ profile, seed }: { profile: AtmosphereProfile; seed: numbe
 }
 
 export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
+  const { camera: initialCamera } = useThree();
+  const skyDomeRef = useRef<THREE.Mesh>(null);
   const sunGroupRef = useRef<THREE.Group>(null);
   const sunMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const sunInnerCoronaMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
@@ -1360,8 +1372,14 @@ export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
     () => createThemeColor(theme.sunColor, '#ffffff', theme.id === 'basalt' ? 0.25 : 0.1),
     [theme]
   );
+  const initialSkyDomeRadius = getSkyDomeRadius(initialCamera);
 
-  useFrame(({ clock }) => {
+  useFrame(({ camera, clock }) => {
+    if (skyDomeRef.current) {
+      skyDomeRef.current.position.copy(camera.position);
+      skyDomeRef.current.scale.setScalar(getSkyDomeRadius(camera));
+    }
+
     const fireIntensity = getBlazeGearstormSkyIntensity();
     const phantomIntensity = getPhantomVeilSkyIntensity();
     skyMaterial.uniforms.fireIntensity.value = fireIntensity;
@@ -1394,8 +1412,14 @@ export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
 
   return (
     <group name="world-atmosphere">
-      <mesh frustumCulled={false} matrixAutoUpdate={false} renderOrder={-100}>
-        <sphereGeometry args={[SKY_DOME_RADIUS, ...config.skySegments]} />
+      <mesh
+        ref={skyDomeRef}
+        frustumCulled={false}
+        position={[initialCamera.position.x, initialCamera.position.y, initialCamera.position.z]}
+        scale={[initialSkyDomeRadius, initialSkyDomeRadius, initialSkyDomeRadius]}
+        renderOrder={-100}
+      >
+        <sphereGeometry args={[1, ...config.skySegments]} />
         <primitive object={skyMaterial} attach="material" />
       </mesh>
       <group ref={sunGroupRef} position={sunPosition} frustumCulled={false}>

@@ -32,6 +32,33 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
 {
   const assignments = createLobbyGameStartAssignments({
     players: [
+      player({
+        id: 'observer-a',
+        name: 'Observer A',
+        role: 'observer',
+        team: '',
+        heroId: 'phantom',
+        skinId: 'phantom.default',
+      }),
+    ],
+  });
+
+  assert.deepEqual(assignments.playerAssignments, [
+    {
+      playerId: 'observer-a',
+      playerName: 'Observer A',
+      role: 'observer',
+      isBot: false,
+    },
+  ]);
+  assert.deepEqual(assignments.botAssignments, []);
+  assert.equal(assignments.reservedHumanPlayers, 1);
+  assert.deepEqual(assignments.gameStartingAssignments, assignments.playerAssignments);
+}
+
+{
+  const assignments = createLobbyGameStartAssignments({
+    players: [
       player({ id: 'red-a', name: 'Red A', team: 'red', heroId: 'phantom' }),
       player({ id: 'red-b', name: 'Red B', team: 'red', heroId: 'phantom' }),
       player({
@@ -52,27 +79,33 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
     {
       playerId: 'red-a',
       playerName: 'Red A',
+      role: 'combat',
       team: 'red',
       isBot: false,
       heroId: 'phantom',
+      skinId: 'phantom.default',
       botDifficulty: undefined,
       botProfileId: undefined,
     },
     {
       playerId: 'red-b',
       playerName: 'Red B',
+      role: 'combat',
       team: 'red',
       isBot: false,
       heroId: undefined,
+      skinId: undefined,
       botDifficulty: undefined,
       botProfileId: undefined,
     },
     {
       playerId: 'red-bot',
       playerName: 'Red Bot',
+      role: 'combat',
       team: 'red',
       isBot: true,
       heroId: 'hookshot',
+      skinId: 'hookshot.default',
       botDifficulty: 'hard',
       botProfileId: 'atlas',
     },
@@ -102,18 +135,22 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
     {
       playerId: 'red-bot',
       playerName: 'Red Bot',
+      role: 'combat',
       team: 'red',
       isBot: true,
       heroId: 'hookshot',
+      skinId: 'hookshot.default',
       botDifficulty: 'normal',
       botProfileId: undefined,
     },
     {
       playerId: 'red-human',
       playerName: 'Red Human',
+      role: 'combat',
       team: 'red',
       isBot: false,
       heroId: 'phantom',
+      skinId: 'phantom.default',
       botDifficulty: undefined,
       botProfileId: undefined,
     },
@@ -143,8 +180,10 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
     userId: 'user-red',
     displayName: 'Red A',
     matchPerspective: 'third_person',
+    role: 'combat',
     assignedTeam: 'red',
     selectedHero: 'phantom',
+    selectedSkinId: 'phantom.default',
   });
   assert.equal(ticketInputs.size, 1);
 }
@@ -173,6 +212,7 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
       {
         playerId: 'red-a',
         playerName: 'Red A',
+        role: 'combat',
         team: 'red',
         isBot: false,
       },
@@ -199,6 +239,7 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
       {
         playerId: 'red-a',
         playerName: 'Red A',
+        role: 'combat',
         team: 'red',
         isBot: false,
       },

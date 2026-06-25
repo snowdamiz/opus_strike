@@ -1,4 +1,4 @@
-import type { HeroId, MatchPerspective, Team } from '@voxel-strike/shared';
+import type { HeroId, MatchPerspective, PlayerRole, Team } from '@voxel-strike/shared';
 import type { RoomAuthContext } from '../auth/session';
 import type { GameEntryTicketClaims } from '../security/entryTickets';
 
@@ -7,6 +7,7 @@ export interface ReconnectParticipant {
   lobbyPlayerId: string;
   displayName: string;
   matchPerspective?: MatchPerspective;
+  role?: PlayerRole;
   assignedTeam?: Team;
   selectedHero?: HeroId;
 }
@@ -54,6 +55,7 @@ export class RoomParticipantRegistry {
       lobbyPlayerId: ticket.lobbyPlayerId,
       displayName: ticket.displayName,
       matchPerspective: ticket.matchPerspective,
+      role: ticket.role,
       assignedTeam: ticket.assignedTeam,
       selectedHero: ticket.selectedHero,
     });
@@ -80,9 +82,10 @@ export class RoomParticipantRegistry {
       lobbyPlayerId: participant.lobbyPlayerId,
       userId: participant.userId,
       displayName: participant.displayName,
-      matchPerspective: participant.matchPerspective,
-      assignedTeam: participant.assignedTeam,
-      selectedHero: participant.selectedHero,
+      ...(participant.matchPerspective ? { matchPerspective: participant.matchPerspective } : {}),
+      ...(participant.role ? { role: participant.role } : {}),
+      ...(participant.assignedTeam ? { assignedTeam: participant.assignedTeam } : {}),
+      ...(participant.selectedHero ? { selectedHero: participant.selectedHero } : {}),
       issuedAt: input.issuedAt,
       expiresAt: input.issuedAt + input.ttlMs,
       nonce: `reconnect:${participant.userId}:${input.issuedAt}`,
@@ -92,6 +95,7 @@ export class RoomParticipantRegistry {
   syncReconnectParticipant(input: {
     sessionId: string;
     displayName?: string | null;
+    role?: PlayerRole;
     assignedTeam?: Team;
     selectedHero?: HeroId;
   }): void {
@@ -102,6 +106,7 @@ export class RoomParticipantRegistry {
     if (!participant) return;
 
     participant.displayName = input.displayName || participant.displayName;
+    participant.role = input.role ?? participant.role;
     participant.assignedTeam = input.assignedTeam ?? participant.assignedTeam;
     participant.selectedHero = input.selectedHero ?? participant.selectedHero;
   }

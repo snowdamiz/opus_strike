@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks';
-import type { PlayerVisibilityState, Vec3 } from '@voxel-strike/shared';
+import { canReceiveLiveTransform, type PlayerVisibilityState, type Vec3 } from '@voxel-strike/shared';
 
 export type InterestPrecision = 'full' | 'coarse' | 'none';
 
@@ -250,7 +250,7 @@ export class VisibilityInterestManager {
     if (recipient.team === target.team) {
       return this.visibleDecision(recipient.id, target.id, context.now, 'team', target.position, previous);
     }
-    if (target.state !== 'alive' && target.state !== 'spawning') {
+    if (!canReceiveLiveTransform(target)) {
       return this.hiddenOrLastKnownDecision(recipient.id, target.id, context.now, 'invalid_target', previous);
     }
 

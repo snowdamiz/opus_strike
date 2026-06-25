@@ -9,15 +9,21 @@ import { registerServiceWorker } from './pwa';
 import './styles/index.css';
 
 const App = lazy(() => import('./App').then((module) => ({ default: module.App })));
-const AdminDashboard = lazy(() => import('./components/ui/AdminDashboard').then((module) => ({ default: module.AdminDashboard })));
 const LegalPage = lazy(() => import('./components/ui/LegalPage').then((module) => ({ default: module.LegalPage })));
-const isAdminRoute = window.location.pathname === '/admin';
+const AdminConsole = lazy(() =>
+  import('./components/admin/AdminConsole').then((module) => ({ default: module.AdminConsole }))
+);
 const legalPageKind = getLegalPageKind(window.location.pathname);
+const isAdminRoute = getIsAdminRoute(window.location.pathname);
 
 function getLegalPageKind(pathname: string) {
   if (pathname === '/terms-of-service') return 'terms';
   if (pathname === '/privacy-policy') return 'privacy';
   return null;
+}
+
+function getIsAdminRoute(pathname: string) {
+  return pathname === '/admin' || pathname === '/admin/';
 }
 
 function ClientAppShell() {
@@ -43,7 +49,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <Suspense fallback={null}>
       {isAdminRoute ? (
-        <AdminDashboard />
+        <AdminConsole />
       ) : legalPageKind ? (
         <LegalPage kind={legalPageKind} />
       ) : (

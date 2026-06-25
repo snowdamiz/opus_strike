@@ -28,6 +28,8 @@ export const SOUND_EFFECTS = {
   blazeBombFall: { path: '/sounds/bomb_fall.mp3', volume: 0.8 },
   blazeBombExplode: { path: '/sounds/bomb_explode.mp3', volume: 1.862 },
   blazeFlamethrower: { path: '/sounds/jetpack.mp3', volume: 0.3 },
+  blazeReload: { path: '/sounds/blaze_reload.mp3', volume: 0.42 },
+  blazeReloadBlast: { path: '/sounds/blaze_reload_blast.mp3', volume: 0.62 },
   blazeRocketJump: { path: '/sounds/rocket_jump.mp3', volume: 0.6 },
   blazeAirstrikeFire: { path: '/sounds/blaze_F_fire.mp3', volume: 0.5 },
   blazeAirstrikeGears: { path: '/sounds/blaze_F_gears.mp3', volume: 0.46 },
@@ -41,6 +43,7 @@ export const SOUND_EFFECTS = {
   hookshotRetract: { path: '/sounds/hookshot_retract.mp3', volume: 0.42 },
 
   chronosPulse: { path: '/sounds/chronos_charge.mp3', volume: 0 },
+  chronosReload: { path: '/sounds/chronos_LMB_reload.mp3', volume: 0.56 },
   chronosAegis: { path: '/sounds/chronos_shield.mp3', volume: 0.8352 },
   chronosLifelineActive: { path: '/sounds/chronos_E_active.mp3', volume: 0.55 },
   chronosLifeline: { path: '/sounds/choronos_heal.mp3', volume: 0.5 },
@@ -141,6 +144,8 @@ export const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
     'blazeBombFall',
     'blazeBombExplode',
     'blazeFlamethrower',
+    'blazeReload',
+    'blazeReloadBlast',
     'blazeRocketJump',
     'blazeAirstrikeFire',
     'blazeAirstrikeGears',
@@ -157,6 +162,7 @@ export const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   chronos: [
     'phantomBasic',
     'chronosPulse',
+    'chronosReload',
     'chronosAegis',
     'chronosLifelineActive',
     'chronosLifeline',

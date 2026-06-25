@@ -19,6 +19,7 @@ import {
   getBattleRoyalTerrainLodDistances,
   isBattleRoyalRegionInsideCullDistance,
   selectBattleRoyalTerrainDetail,
+  type BattleRoyalTerrainLodDistances,
 } from '../battleRoyalTerrainLod';
 import {
   prepareVoxelMapCpu,
@@ -45,8 +46,7 @@ const TERRAIN_HORIZON_SLOPE_EPSILON = 0.055;
 const TERRAIN_HORIZON_MIN_DISTANCE_SCALE = 1.15;
 const TERRAIN_CULL_DISTANCE_BUCKET_COUNT = 64;
 const BATTLE_ROYAL_OUTER_FILL_SCALE = 2.75;
-const BATTLE_ROYAL_OUTER_FILL_HEIGHT_ROWS = 44;
-const BATTLE_ROYAL_OUTER_FILL_Y_OFFSET = 0.06;
+const BATTLE_ROYAL_OUTER_FILL_WORLD_CLEARANCE = 0.08;
 const BATTLE_ROYAL_OUTER_FILL_BOUNDARY_PADDING = 2.4;
 const BATTLE_ROYAL_OUTER_FILL_FOG_BLEND = 0.42;
 
@@ -60,6 +60,32 @@ interface TerrainCullingEntry {
   dy: number;
   dz: number;
   distanceSq: number;
+}
+
+// Reusable scratch param objects for the per-region battle-royale cull helpers.
+// They are populated and consumed synchronously inside the cull loop (the helpers
+// only read fields and never retain the object), so a single instance can be
+// reused across every region instead of allocating a fresh config per region.
+interface BattleRoyalCullScratch {
+  manifest: VoxelMapManifest;
+  visibility: BattleRoyalVisibilityConfig;
+  lodDistances: BattleRoyalTerrainLodDistances;
+  cameraPosition: THREE.Vector3;
+  regionBounds: VoxelChunkRegionBounds;
+  distanceSq: number;
+  wasVisible: boolean;
+}
+
+interface BattleRoyalDetailScratch {
+  manifest: VoxelMapManifest;
+  visibility: BattleRoyalVisibilityConfig;
+  lodDistances: BattleRoyalTerrainLodDistances;
+  cameraPosition: THREE.Vector3;
+  regionBounds: VoxelChunkRegionBounds;
+  distanceSq: number;
+  previousDetail: VoxelRegionGeometryDetail | undefined;
+  viewportHeight: number;
+  cameraFovDegrees: number;
 }
 
 type RegionVisibilityTarget = Pick<VoxelChunkRegion, 'id'>;
@@ -187,6 +213,10 @@ export function shouldHideBattleRoyalRegionForMacroTile(input: {
   regionDetail: VoxelRegionGeometryDetail;
 }): boolean {
   return input.active && input.macroGeometryReady && input.regionVisible && input.regionDetail === 'ultraCoarse';
+}
+
+export function getBattleRoyalOuterFillY(manifest: Pick<VoxelMapManifest, 'origin'>): number {
+  return manifest.origin.y - BATTLE_ROYAL_OUTER_FILL_WORLD_CLEARANCE;
 }
 
 function getHorizonBin(dx: number, dz: number): number {
@@ -365,6 +395,8 @@ export function VoxelMap({
   const terrainCullFrustumRef = useRef(new THREE.Frustum());
   const terrainCullMatrixRef = useRef(new THREE.Matrix4());
   const terrainCullSphereRef = useRef(new THREE.Sphere());
+  const battleRoyalCullScratchRef = useRef<BattleRoyalCullScratch>({} as BattleRoyalCullScratch);
+  const battleRoyalDetailScratchRef = useRef<BattleRoyalDetailScratch>({} as BattleRoyalDetailScratch);
   const shouldRevealAllRegions = meshBuildMode === 'sync' || !progressiveReveal;
   const [visibleRegionCount, setVisibleRegionCount] = useState(() => (
     shouldRevealAllRegions ? renderableRegions.length : 0
@@ -842,6 +874,21 @@ export function VoxelMap({
     let detailSwaps = 0;
     let detailChanged = false;
 
+    const cullScratch = battleRoyalCullScratchRef.current;
+    const detailScratch = battleRoyalDetailScratchRef.current;
+    if (activeBattleRoyalVisibility && battleRoyalLodDistances) {
+      cullScratch.manifest = manifest;
+      cullScratch.visibility = activeBattleRoyalVisibility;
+      cullScratch.lodDistances = battleRoyalLodDistances;
+      cullScratch.cameraPosition = camera.position;
+      detailScratch.manifest = manifest;
+      detailScratch.visibility = activeBattleRoyalVisibility;
+      detailScratch.lodDistances = battleRoyalLodDistances;
+      detailScratch.cameraPosition = camera.position;
+      detailScratch.viewportHeight = state.size.height;
+      detailScratch.cameraFovDegrees = cameraFovDegrees;
+    }
+
     for (const entry of orderedEntries) {
       const { region, dx, dz, distanceSq } = entry;
       const { bounds } = region;
@@ -855,30 +902,20 @@ export function VoxelMap({
       let nextVisible = true;
 
       if (activeBattleRoyalVisibility && battleRoyalLodDistances) {
-        nextVisible = isBattleRoyalRegionInsideCullDistance({
-          manifest,
-          visibility: activeBattleRoyalVisibility,
-          lodDistances: battleRoyalLodDistances,
-          cameraPosition: camera.position,
-          regionBounds: bounds,
-          distanceSq,
-          wasVisible,
-        });
+        cullScratch.regionBounds = bounds;
+        cullScratch.distanceSq = distanceSq;
+        cullScratch.wasVisible = wasVisible;
+        nextVisible = isBattleRoyalRegionInsideCullDistance(cullScratch);
         if (!nextVisible) hiddenByDistance++;
 
-        nextDetail = nextVisible
-          ? selectBattleRoyalTerrainDetail({
-            manifest,
-            visibility: activeBattleRoyalVisibility,
-            lodDistances: battleRoyalLodDistances,
-            cameraPosition: camera.position,
-            regionBounds: bounds,
-            distanceSq,
-            previousDetail: regionDetailRef.current.get(region.id),
-            viewportHeight: state.size.height,
-            cameraFovDegrees,
-          })
-          : 'ultraCoarse';
+        if (nextVisible) {
+          detailScratch.regionBounds = bounds;
+          detailScratch.distanceSq = distanceSq;
+          detailScratch.previousDetail = regionDetailRef.current.get(region.id);
+          nextDetail = selectBattleRoyalTerrainDetail(detailScratch);
+        } else {
+          nextDetail = 'ultraCoarse';
+        }
       } else {
         const maxDistance = terrainCullDistance + bounds.radius + (wasVisible ? TERRAIN_CULL_HYSTERESIS : 0);
         nextVisible = distanceSq <= maxDistance * maxDistance;
@@ -989,7 +1026,7 @@ export function VoxelMap({
       setRegionRenderRevision((revision) => revision + 1);
     }
 
-    if (activeBattleRoyalVisibility) {
+    if (MOVEMENT_DIAGNOSTICS_ENABLED && activeBattleRoyalVisibility) {
       const cacheStats = getVoxelGeometryCacheStats();
       recordTerrainRendererDiagnostics({
         visibleRegionCount: visibleAfterCull,
@@ -1109,9 +1146,7 @@ function BattleRoyalOuterFill({ manifest }: { manifest: VoxelMapManifest }) {
   const centerX = manifest.origin.x + worldWidth / 2;
   const centerZ = manifest.origin.z + worldDepth / 2;
   const outerFillSize = Math.max(worldWidth, worldDepth) * BATTLE_ROYAL_OUTER_FILL_SCALE;
-  const outerFillY = manifest.origin.y +
-    manifest.voxelSize.y * BATTLE_ROYAL_OUTER_FILL_HEIGHT_ROWS -
-    BATTLE_ROYAL_OUTER_FILL_Y_OFFSET;
+  const outerFillY = getBattleRoyalOuterFillY(manifest);
 
   const outerFillColor = useMemo(() => {
     const color = new THREE.Color(manifest.theme.ground.side);
@@ -1156,7 +1191,7 @@ function BattleRoyalOuterFill({ manifest }: { manifest: VoxelMapManifest }) {
     <mesh
       name="battle-royal-outer-fill"
       position={[0, outerFillY, 0]}
-      rotation={[Math.PI / 2, 0, 0]}
+      rotation={[-Math.PI / 2, 0, 0]}
       receiveShadow={false}
     >
       <shapeGeometry key={`${manifest.id}:battle-royal-outer-fill`} args={[outerFillShape]} />

@@ -5,7 +5,6 @@ import type { MatchMode } from '@voxel-strike/shared';
 import { config } from '../config/environment';
 import { loggers } from '../utils/logger';
 
-export type SocialTab = 'friends' | 'requests' | 'invites';
 export type RelationshipState = 'none' | 'friend' | 'pending_incoming' | 'pending_outgoing';
 
 export interface SocialRank {
@@ -107,6 +106,8 @@ export const emptySocialState: SocialState = {
 const BASE_RECONNECT_DELAY_MS = 750;
 const MAX_RECONNECT_DELAY_MS = 10_000;
 const RECONNECT_JITTER_MS = 350;
+const COLYSEUS_AUTH_FAILED_CODE = 4215;
+const AUTHENTICATION_REQUIRED_MESSAGE = 'Authentication required';
 
 let client: Client | null = null;
 let room: Room | null = null;
@@ -174,6 +175,15 @@ function isSocialStateMessage(value: unknown): value is SocialStateMessage {
       && typeof (value as SocialStateMessage).social === 'object'
       && (value as SocialStateMessage).social !== null
   );
+}
+
+function isAuthFailure(error: unknown): boolean {
+  return Boolean(
+    error
+      && typeof error === 'object'
+      && 'code' in error
+      && (error as { code?: unknown }).code === COLYSEUS_AUTH_FAILED_CODE
+  ) || (error instanceof Error && error.message === AUTHENTICATION_REQUIRED_MESSAGE);
 }
 
 function retainSocialRealtime(userKey: string): () => void {
@@ -249,9 +259,16 @@ function connectSocialRoom(userKey: string): Promise<void> {
       });
     })
     .catch((error) => {
-      const message = error instanceof Error ? error.message : 'Failed to connect social updates';
+      const authFailure = isAuthFailure(error);
+      const message = authFailure
+        ? AUTHENTICATION_REQUIRED_MESSAGE
+        : error instanceof Error
+          ? error.message
+          : 'Failed to connect social updates';
       useSocialRealtimeStore.getState().setError(message);
-      scheduleReconnect(userKey);
+      if (!authFailure) {
+        scheduleReconnect(userKey);
+      }
     })
     .finally(() => {
       connectPromise = null;

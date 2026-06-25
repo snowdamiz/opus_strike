@@ -18,7 +18,7 @@ import {
   type Team,
 } from '@voxel-strike/shared';
 import type { LobbyPlayer } from '../../store/types';
-import { FACTIONS, HERO_COLORS, TEAM_FALLBACK_COLORS } from '../../styles/colorTokens';
+import { BLAZE_UI_COLORS, FACTIONS, TEAM_FALLBACK_COLORS } from '../../styles/colorTokens';
 import { RankIcon, getRankForStats } from './RankBadge';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
 
@@ -83,6 +83,15 @@ function InvitePlayerIcon({ className }: { className?: string }) {
   );
 }
 
+function ObserverIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
+  return (
+    <svg className={className} style={style} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M3 12s3.2-6 9-6 9 6 9 6-3.2 6-9 6-9-6-9-6z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="12" r="3" fill="currentColor" />
+    </svg>
+  );
+}
+
 type LobbyTeam = Team;
 type LobbyBotHero = HeroId | '';
 
@@ -137,6 +146,15 @@ const BOT_HERO_OPTIONS: readonly InlinePickerOption<LobbyBotHero>[] = [
   })),
 ];
 const EMPTY_HERO_LOCKS = new Set<HeroId>();
+const OBSERVER_LOBBY_FACTION: LobbyFaction = {
+  id: 'blue',
+  name: 'Observer',
+  fullName: 'Observer',
+  primaryColor: 'rgb(var(--color-accent-primary))',
+  secondaryColor: 'rgb(var(--color-accent-primary-deep))',
+  glowColor: 'rgb(var(--color-accent-primary) / 0.35)',
+  bgColor: 'rgb(var(--color-accent-primary) / 0.12)',
+};
 
 function isHeroId(value: string | undefined): value is HeroId {
   return ALL_HERO_IDS.includes(value as HeroId);
@@ -271,6 +289,7 @@ export function Lobby() {
     leaveLobby,
     setLobbyReady,
     setLobbyTeam,
+    setLobbyObserver,
     addLobbyBot,
     removeLobbyBot,
     updateLobbyBotTeam,
@@ -290,6 +309,8 @@ export function Lobby() {
   const gameplayRules = getGameplayModeRules(gameplayMode);
   const isBattleRoyal = gameplayMode === 'battle_royal';
   const hasChosenTeam = isTeamIdForGameplayMode(currentTeam, gameplayMode);
+  const isObserving = currentPlayer?.role === 'observer';
+  const hasChosenRole = hasChosenTeam || isObserving;
   const isReady = currentPlayer?.isReady || false;
   const currentRank = currentPlayer?.rank ?? getRankForStats(userStats);
   const {
@@ -298,16 +319,23 @@ export function Lobby() {
     assignedCount,
     solarPlayers,
     voidPlayers,
+    observerPlayers,
     teamPlayers,
     pickedHeroIdsByTeam,
     pickedHeroIdsByTeamMap,
   } = useMemo(() => {
     const nextCombatPlayers: LobbyPlayer[] = [];
+    const nextObserverPlayers: LobbyPlayer[] = [];
     const nextTeamPlayers = new Map<Team, LobbyPlayer[]>(teamEntries.map((entry) => [entry.id, []]));
     let nextReadyCount = 0;
     let nextAssignedCount = 0;
 
     for (const player of lobbyPlayers.values()) {
+      if (player.role === 'observer') {
+        nextObserverPlayers.push(player);
+        continue;
+      }
+
       nextCombatPlayers.push(player);
 
       if (player.isReady || player.isHost) {
@@ -336,6 +364,7 @@ export function Lobby() {
       assignedCount: nextAssignedCount,
       solarPlayers: nextSolarPlayers,
       voidPlayers: nextVoidPlayers,
+      observerPlayers: nextObserverPlayers,
       teamPlayers: nextTeamPlayers,
       pickedHeroIdsByTeam: {
         red: getPickedTeamHeroIds(nextSolarPlayers, 'red'),
@@ -347,9 +376,10 @@ export function Lobby() {
   const currentMatchMode = matchmakingStatus.matchMode ?? null;
   const botsAllowed = currentMatchMode === 'custom';
   const invitesAllowed = currentMatchMode === 'custom';
+  const observersAllowed = currentMatchMode === 'custom' && !isBattleRoyal;
 
   const handleToggleReady = () => {
-    if (!hasChosenTeam) return;
+    if (!hasChosenRole) return;
     setLobbyError(null);
     setLobbyReady(!isReady);
   };
@@ -357,6 +387,11 @@ export function Lobby() {
     if (currentTeam === team) return;
     setLobbyError(null);
     setLobbyTeam(team);
+  };
+  const handleObserverJoin = () => {
+    if (isObserving) return;
+    setLobbyError(null);
+    setLobbyObserver(true);
   };
   const handleStartGame = () => {
     setLobbyError(null);
@@ -378,9 +413,9 @@ export function Lobby() {
   const canStart = isLobbyHost && hasMinimumParticipants && allPlayersAssigned && (combatPlayers.length === 1 || readyCount === combatPlayers.length);
 
   const currentFaction = currentPlayer?.team ? factionFromCatalog(currentPlayer.team) : null;
-  const currentRoleLabel = currentFaction?.fullName || 'Unassigned';
+  const currentRoleLabel = isObserving ? 'Observer' : currentFaction?.fullName || 'Unassigned';
   const gameplayModeLabel = getGameplayModeLabel(gameplayMode);
-  const currentRoleColor = currentFaction?.primaryColor || 'rgb(var(--color-strike-border) / 0.4)';
+  const currentRoleColor = isObserving ? 'rgb(var(--color-accent-primary))' : currentFaction?.primaryColor || 'rgb(var(--color-strike-border) / 0.4)';
 
   const handleBack = () => {
     leaveLobby();
@@ -531,7 +566,7 @@ export function Lobby() {
             pickedHeroIdsByTeam={pickedHeroIdsByTeamMap}
           />
         ) : (
-          <div className="team-select-layout lobby-layout menu-content-wide">
+          <div className={`team-select-layout lobby-layout menu-content-wide ${observersAllowed ? 'lobby-layout-observer' : ''}`}>
             <div className="lobby-team-header-row">
               <FactionHeader
                 faction={FACTIONS.red}
@@ -539,7 +574,14 @@ export function Lobby() {
                 isSelected={currentTeam === 'red'}
               />
 
-              <div aria-hidden="true" />
+              {observersAllowed ? (
+                <div className="lobby-observer-header">
+                  <ObserverIcon className="h-5 w-5" />
+                  <span>Observer</span>
+                </div>
+              ) : (
+                <div aria-hidden="true" />
+              )}
 
               <FactionHeader
                 faction={FACTIONS.blue}
@@ -570,6 +612,17 @@ export function Lobby() {
                 pickedHeroIds={pickedHeroIdsByTeam.red}
               />
             </div>
+
+            {observersAllowed && (
+              <ObserverPanel
+                players={observerPlayers}
+                playerId={playerId}
+                isSelected={isObserving}
+                isLobbyHost={isLobbyHost}
+                onSelect={handleObserverJoin}
+                onKick={handleKick}
+              />
+            )}
 
             {/* Void Legion Panel */}
             <div className="lobby-team-panel">
@@ -688,13 +741,13 @@ export function Lobby() {
               <button
                 type="button"
                 onClick={() => { playButtonClick(); handleToggleReady(); }}
-                disabled={!hasChosenTeam || isLoading}
+                disabled={!hasChosenRole || isLoading}
                 className={`h-10 min-w-[12.5rem] rounded-full px-5 font-display text-xs uppercase tracking-wide transition-all ${
-                  hasChosenTeam
+                  hasChosenRole
                     ? 'text-white hover:brightness-110 active:scale-[0.98]'
                     : 'bg-white/[0.055] text-white/30 cursor-not-allowed'
                 }`}
-                style={hasChosenTeam ? {
+                style={hasChosenRole ? {
                   background: isReady
                     ? 'linear-gradient(135deg, rgb(var(--color-ui-success)) 0%, rgb(var(--color-ui-success-deep)) 100%)'
                     : 'linear-gradient(135deg, rgb(var(--color-accent-primary)) 0%, rgb(var(--color-accent-primary-deep)) 100%)',
@@ -704,12 +757,17 @@ export function Lobby() {
                 } : undefined}
               >
                 <span className="flex items-center justify-center gap-2">
-                  {!hasChosenTeam ? (
+                  {!hasChosenRole ? (
                     <>
                       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l7 4v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V7l7-4z" />
                       </svg>
                       Team Unassigned
+                    </>
+                  ) : isObserving ? (
+                    <>
+                      <ObserverIcon className="h-4 w-4" />
+                      Observing
                     </>
                   ) : isReady ? (
                     <>
@@ -762,6 +820,62 @@ export function Lobby() {
 
       {showSocial && isAuthenticated && (
         <SocialBox onClose={() => setShowSocial(false)} />
+      )}
+    </div>
+  );
+}
+
+interface ObserverPanelProps {
+  players: LobbyPlayer[];
+  playerId: string | null;
+  isSelected: boolean;
+  isLobbyHost: boolean;
+  onSelect: () => void;
+  onKick: (id: string) => void;
+}
+
+function ObserverPanel({
+  players,
+  playerId,
+  isSelected,
+  isLobbyHost,
+  onSelect,
+  onKick,
+}: ObserverPanelProps) {
+  const { playButtonClick } = useUISounds();
+  const observer = players[0] ?? null;
+  const canJoin = !observer && !isSelected;
+
+  return (
+    <div className="lobby-center-panel lobby-observer-panel">
+      {observer ? (
+        <PlayerCard
+          player={observer}
+          isCurrentPlayer={observer.id === playerId}
+          isLobbyHost={isLobbyHost}
+          botsAllowed={false}
+          onKick={() => onKick(observer.id)}
+          onRemoveBot={() => undefined}
+          pickedHeroIds={EMPTY_HERO_LOCKS}
+          faction={OBSERVER_LOBBY_FACTION}
+          compact
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => { playButtonClick(); onSelect(); }}
+          disabled={!canJoin}
+          className="lobby-observer-join"
+          title="Join as observer"
+        >
+          <span className="lobby-observer-join-icon">
+            <ObserverIcon className="h-5 w-5" />
+          </span>
+          <span className="min-w-0">
+            <span className="block font-display text-sm uppercase tracking-wide text-cyan-200">Observe</span>
+            <span className="mt-0.5 block truncate font-body text-[9px] uppercase tracking-widest text-white/28">Free Camera</span>
+          </span>
+        </button>
       )}
     </div>
   );
@@ -1129,7 +1243,6 @@ function PlayerCard({
       : 'normal';
   const botTeam: LobbyTeam = player.team === 'blue' ? 'blue' : 'red';
   const botHero: LobbyBotHero = isHeroId(player.heroId) ? player.heroId : '';
-  const botHeroColor = botHero ? HERO_COLORS[botHero] : color;
   const botHeroOptions = useMemo(() => BOT_HERO_OPTIONS.map((option) => {
     const heroId = option.value;
     if (!heroId || heroId === botHero || !pickedHeroIds.has(heroId)) {
@@ -1203,7 +1316,7 @@ function PlayerCard({
               label={`${player.name} hero`}
               value={botHero}
               options={botHeroOptions}
-              accentColor={botHeroColor}
+              accentColor={BLAZE_UI_COLORS.primary}
               widthClass="w-[4.65rem]"
               onChange={(heroId) => onBotHeroChange?.(heroId)}
             />

@@ -44,7 +44,7 @@ export interface RankedSeasonUpdateInput {
 
 export interface RankedSeasonUpdateResult {
   season: RankedSeasonAdminView;
-  resetRankedStats: boolean;
+  resetRankedRating: boolean;
 }
 
 let rankedSeasonCache: { value: RankedSeasonAdminView; expiresAt: number } | null = null;
@@ -137,64 +137,14 @@ async function archiveCurrentRankedSeason(
 ): Promise<void> {
   const mode = season.mode === 'preseason' ? 'preseason' : 'season';
   const seasonNumber = normalizeRankedSeasonNumber(season.seasonNumber);
-  const rankedUsers = await tx.user.findMany({
-    where: { rankedGames: { gt: 0 } },
-    select: {
-      id: true,
-      name: true,
-      competitiveRating: true,
-      rankedGames: true,
-      rankedWins: true,
-      rankedLosses: true,
-      rankedDraws: true,
-      rankedPlacementsRemaining: true,
-      rankedPeakRating: true,
-      rankedLastMatchAt: true,
+  await tx.rankedSeasonUserStats.updateMany({
+    where: {
+      mode,
+      seasonNumber,
+      rankedGames: { gt: 0 },
     },
+    data: { archivedAt },
   });
-
-  for (const user of rankedUsers) {
-    await tx.rankedSeasonUserStats.upsert({
-      where: {
-        mode_seasonNumber_userId: {
-          mode,
-          seasonNumber,
-          userId: user.id,
-        },
-      },
-      create: {
-        mode,
-        seasonNumber,
-        userId: user.id,
-        userName: user.name,
-        totalGames: user.rankedGames,
-        totalWins: user.rankedWins,
-        totalLosses: user.rankedLosses,
-        totalDraws: user.rankedDraws,
-        competitiveRating: user.competitiveRating,
-        rankedGames: user.rankedGames,
-        rankedWins: user.rankedWins,
-        rankedLosses: user.rankedLosses,
-        rankedDraws: user.rankedDraws,
-        rankedPlacementsRemaining: user.rankedPlacementsRemaining,
-        rankedPeakRating: user.rankedPeakRating,
-        rankedLastMatchAt: user.rankedLastMatchAt,
-        archivedAt,
-      },
-      update: {
-        userName: user.name,
-        competitiveRating: user.competitiveRating,
-        rankedGames: user.rankedGames,
-        rankedWins: user.rankedWins,
-        rankedLosses: user.rankedLosses,
-        rankedDraws: user.rankedDraws,
-        rankedPlacementsRemaining: user.rankedPlacementsRemaining,
-        rankedPeakRating: user.rankedPeakRating,
-        rankedLastMatchAt: user.rankedLastMatchAt,
-        archivedAt,
-      },
-    });
-  }
 }
 
 export async function setRankedSeason(
@@ -220,20 +170,15 @@ export async function setRankedSeason(
       seasonNumber: current.seasonNumber,
     });
     const nextIdentity = getRankedSeasonIdentity({ mode, seasonNumber });
-    const resetRankedStats = currentIdentity !== nextIdentity;
+    const resetRankedRating = currentIdentity !== nextIdentity;
 
-    if (resetRankedStats) {
+    if (resetRankedRating) {
       await archiveCurrentRankedSeason(tx, current, now);
       await tx.user.updateMany({
         data: {
           competitiveRating: DEFAULT_COMPETITIVE_RATING,
-          rankedGames: 0,
-          rankedWins: 0,
-          rankedLosses: 0,
-          rankedDraws: 0,
           rankedPlacementsRemaining: RANK_PLACEMENT_MATCHES,
           rankedPeakRating: DEFAULT_COMPETITIVE_RATING,
-          rankedLastMatchAt: null,
         },
       });
     }
@@ -245,13 +190,13 @@ export async function setRankedSeason(
         seasonNumber,
         endsAt,
         updatedByUserId: updatedByUserId ?? null,
-        lastResetAt: resetRankedStats ? now : current.lastResetAt,
+        lastResetAt: resetRankedRating ? now : current.lastResetAt,
       },
     });
 
     return {
       season: toRankedSeasonSnapshot(season),
-      resetRankedStats,
+      resetRankedRating,
     };
   });
 

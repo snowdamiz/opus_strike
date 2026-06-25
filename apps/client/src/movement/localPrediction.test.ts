@@ -3,6 +3,7 @@ import {
   BATTLE_ROYAL_DROP_POD_MAX_VERTICAL_SPEED,
   BATTLE_ROYAL_DROP_POD_MIN_VERTICAL_SPEED,
   BATTLE_ROYAL_DROP_POD_VERTICAL_SPEED,
+  BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER,
   BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
   PITCH_LIMIT,
@@ -16,11 +17,13 @@ import {
   createLocalMovementCommand,
   drainSelfMovementAuthorities,
   enqueueSelfMovementAuthority,
+  getLocalPredictionContext,
   getLocalMovementCollisionRevision,
   predictLocalBattleRoyalDrop,
   predictLocalBlazeRocketJump,
   resetLocalMovementPrediction,
   setLocalMovementRootedUntil,
+  suppressDownedMovementInput,
 } from './localPrediction';
 
 function state(): MovementSimulationState {
@@ -103,12 +106,59 @@ const player = {
   id: 'player-a',
   team: 'red',
   heroId: 'hookshot',
+  state: 'alive',
   position: { x: 4, y: 7, z: -2 },
   velocity: { x: 0, y: 0, z: 0 },
   movement: state().movement,
   hasFlag: false,
   abilities: {},
 } as Player;
+
+const downedInput = createEmptyInputState();
+downedInput.moveForward = true;
+downedInput.moveRight = true;
+downedInput.jump = true;
+downedInput.sprint = true;
+downedInput.primaryFire = true;
+downedInput.secondaryFire = true;
+downedInput.reload = true;
+downedInput.ability1 = true;
+downedInput.ability2 = true;
+downedInput.ultimate = true;
+downedInput.interact = true;
+const sanitizedDownedInput = suppressDownedMovementInput(downedInput);
+assert.equal(sanitizedDownedInput.moveForward, true);
+assert.equal(sanitizedDownedInput.moveRight, true);
+assert.equal(sanitizedDownedInput.jump, false);
+assert.equal(sanitizedDownedInput.sprint, false);
+assert.equal(sanitizedDownedInput.primaryFire, false);
+assert.equal(sanitizedDownedInput.secondaryFire, false);
+assert.equal(sanitizedDownedInput.reload, false);
+assert.equal(sanitizedDownedInput.ability1, false);
+assert.equal(sanitizedDownedInput.ability2, false);
+assert.equal(sanitizedDownedInput.ultimate, false);
+assert.equal(sanitizedDownedInput.interact, false);
+const frozenDownedInput = suppressDownedMovementInput(downedInput, { frozen: true });
+assert.equal(frozenDownedInput.moveForward, false);
+assert.equal(frozenDownedInput.moveRight, false);
+
+const downedPredictionContext = getLocalPredictionContext({
+  ...player,
+  state: 'downed',
+  heroId: 'chronos',
+  powerupBoostUntil: 0,
+  abilities: {
+    chronos_ascendant_paradox: {
+      abilityId: 'chronos_ascendant_paradox',
+      cooldownRemaining: 0,
+      charges: 1,
+      isActive: true,
+      activatedAt: 1000,
+    },
+  },
+});
+assert.equal(downedPredictionContext.activeSpeedMultiplier, BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER);
+assert.equal(downedPredictionContext.chronosAscendantActive, false);
 
 applySelfMovementAuthority(player, {
   serverTick: 2,

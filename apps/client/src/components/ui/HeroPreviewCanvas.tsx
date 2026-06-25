@@ -4,11 +4,11 @@ import { ContactShadows } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { HERO_DEFINITIONS, getRankTheme } from '@voxel-strike/shared';
-import type { HeroId, PublicRankSnapshot, Team } from '@voxel-strike/shared';
+import type { HeroId, HeroSkinId, PublicRankSnapshot, Team } from '@voxel-strike/shared';
 import { HeroVoxelBody } from '../game/HeroVoxelBody';
 import type { HeroAnimationMode, HeroWalkDirection } from '../game/HeroVoxelBody';
 import { suppressExpectedContextLossLog } from '../game/webglLifecycle';
-import { HERO_COLOR_SCHEMES, HERO_PREVIEW_COLORS } from '../../styles/colorTokens';
+import { BLAZE_UI_COLORS, HERO_PREVIEW_COLORS } from '../../styles/colorTokens';
 import { useHeroPreviewRotation } from './useHeroPreviewRotation';
 
 type HeroPreviewSize = 'featured' | 'detail' | 'compact' | 'card';
@@ -26,6 +26,7 @@ export type HeroPreviewRank = Pick<PublicRankSnapshot, 'tier' | 'division' | 'is
 
 interface HeroPreviewCanvasProps {
   heroId: HeroId;
+  skinId?: HeroSkinId | string | null;
   team?: Team;
   size?: HeroPreviewSize;
   interactive?: boolean;
@@ -33,7 +34,6 @@ interface HeroPreviewCanvasProps {
   idleAnimation?: boolean;
   initialYaw?: number;
   className?: string;
-  accentColor?: string;
   showShadow?: boolean;
   isBot?: boolean;
   hasFlag?: boolean;
@@ -291,6 +291,7 @@ function isPreviewLoopMode(animationMode: HeroPreviewAnimationMode): animationMo
 
 export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   heroId,
+  skinId,
   team = 'blue',
   size = 'detail',
   interactive = true,
@@ -298,7 +299,6 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   idleAnimation = true,
   initialYaw = Math.PI - 0.24,
   className = '',
-  accentColor,
   showShadow = true,
   isBot = false,
   hasFlag = false,
@@ -309,7 +309,6 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   'aria-label': ariaLabel,
 }: HeroPreviewCanvasProps) {
   const config = PREVIEW_CONFIG[size];
-  const resolvedAccentColor = accentColor ?? HERO_COLOR_SCHEMES[heroId].primary;
   const [isCanvasReady, setIsCanvasReady] = useState(false);
   const [shouldMountStage, setShouldMountStage] = useState(false);
   const [stageElement] = useState(createPreviewStageElement);
@@ -320,14 +319,14 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   const shouldIdleAnimate = idleAnimation && config.idleIntensity > 0;
   const rotationInitialYaw = animationMode === 'slide' ? SLIDE_PREVIEW_YAW : initialYaw;
   const platformRankKey = platformRank ? `${platformRank.tier}:${platformRank.division ?? 0}:${platformRank.isRanked}` : 'none';
-  const previewReadyKey = `${heroId}:${team}:${size}:${animationMode}:${isBot}:${hasFlag}:${postureScaleY}:${platformRankKey}`;
+  const previewReadyKey = `${heroId}:${skinId ?? 'default'}:${team}:${size}:${animationMode}:${isBot}:${hasFlag}:${postureScaleY}:${platformRankKey}`;
   const previewShellStyle = {
-    '--hero-preview-accent': resolvedAccentColor,
+    '--hero-preview-accent': BLAZE_UI_COLORS.primary,
   } as CSSProperties;
   const { yaw, isDragging, interactionProps } = useHeroPreviewRotation({
     enabled: interactive,
     initialYaw: rotationInitialYaw,
-    resetKey: `${heroId}:${animationMode === 'slide' ? 'slide' : 'default'}`,
+    resetKey: `${heroId}:${skinId ?? 'default'}:${animationMode === 'slide' ? 'slide' : 'default'}`,
   });
 
   useLayoutEffect(() => {
@@ -462,11 +461,11 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
         >
           <HeroPreviewScene
             heroId={heroId}
+            skinId={skinId}
             team={team}
             yaw={yaw}
             isDragging={isDragging}
             idleRotation={shouldIdleRotate}
-            accentColor={resolvedAccentColor}
             config={config}
             showShadow={showShadow}
             isBot={isBot}
@@ -524,11 +523,11 @@ function PreviewRenderReadySignal({
 
 interface HeroPreviewSceneProps {
   heroId: HeroId;
+  skinId?: HeroSkinId | string | null;
   team: Team;
   yaw: number;
   isDragging: boolean;
   idleRotation: boolean;
-  accentColor: string;
   config: PreviewConfig;
   showShadow: boolean;
   isBot: boolean;
@@ -541,11 +540,11 @@ interface HeroPreviewSceneProps {
 
 function HeroPreviewScene({
   heroId,
+  skinId,
   team,
   yaw,
   isDragging,
   idleRotation,
-  accentColor,
   config,
   showShadow,
   isBot,
@@ -593,14 +592,14 @@ function HeroPreviewScene({
   useEffect(() => {
     idlePhaseRef.current = 0;
     idleYawRef.current = 0;
-  }, [animationMode, heroId]);
+  }, [animationMode, heroId, skinId]);
 
   useEffect(() => {
     if (loopConfig) {
       loopStartedAtRef.current = null;
       setLoopStep({ mode: loopConfig.initialMode, duration: 0 });
     }
-  }, [animationMode, heroId, loopConfig]);
+  }, [animationMode, heroId, skinId, loopConfig]);
 
   useFrame((state, delta) => {
     if (!rootRef.current) return;
@@ -635,7 +634,7 @@ function HeroPreviewScene({
     <>
       <PreviewCamera config={config} fov={previewFov} />
       <ambientLight intensity={1.45} />
-      <hemisphereLight args={['white', HERO_COLOR_SCHEMES[heroId].secondary, 1.4]} />
+      <hemisphereLight args={['white', BLAZE_UI_COLORS.secondary, 1.4]} />
       <directionalLight
         color="white"
         position={[3, 4.5, 4.5]}
@@ -644,8 +643,8 @@ function HeroPreviewScene({
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
       />
-      <pointLight color={accentColor} position={[-2.4, 1.4, 2.2]} intensity={2.2} distance={6} />
-      <pointLight color={accentColor} position={[2, 2.2, -1.8]} intensity={1.15} distance={5} />
+      <pointLight color={BLAZE_UI_COLORS.primary} position={[-2.4, 1.4, 2.2]} intensity={2.2} distance={6} />
+      <pointLight color={BLAZE_UI_COLORS.primary} position={[2, 2.2, -1.8]} intensity={1.15} distance={5} />
 
       {platformRank && (
         <HeroRankPlatform
@@ -659,6 +658,7 @@ function HeroPreviewScene({
         <group position={[0, -bodyCenterOffset, 0]} scale={previewBodyScale}>
           <HeroVoxelBody
             heroId={heroId}
+            skinId={skinId}
             team={team}
             height={heroHeight}
             isBot={isBot}

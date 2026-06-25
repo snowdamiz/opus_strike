@@ -1,4 +1,4 @@
-import { type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { type HeroId, type InputState } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import {
@@ -6,10 +6,10 @@ import {
   resetMobileControls,
   useMobileControlsStore,
 } from '../../store/mobileControlsStore';
+import { useTouchControlsAvailable } from '../../hooks/useDeviceCapabilities';
 import { HUD_HERO_COLORS } from '../../styles/colorTokens';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
 
-const TOUCH_CONTROLS_QUERY = '(pointer: coarse), (hover: none)';
 const MIN_PRESS_MS = 72;
 
 type InputAction = keyof InputState;
@@ -18,37 +18,6 @@ interface MobileControlsProps {
   disabled?: boolean;
   onOpenMenu: () => void;
   onScoreboardChange: (showScoreboard: boolean) => void;
-}
-
-function getInitialTouchPreference(): boolean {
-  if (typeof window === 'undefined') return false;
-  return window.matchMedia(TOUCH_CONTROLS_QUERY).matches || navigator.maxTouchPoints > 0;
-}
-
-function useTouchControlsAvailable(): boolean {
-  const [available, setAvailable] = useState(getInitialTouchPreference);
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia(TOUCH_CONTROLS_QUERY);
-    const legacyMediaQuery = mediaQuery as MediaQueryList & {
-      addListener?: (listener: (event: MediaQueryListEvent) => void) => void;
-      removeListener?: (listener: (event: MediaQueryListEvent) => void) => void;
-    };
-    const updateAvailability = () => {
-      setAvailable(mediaQuery.matches || navigator.maxTouchPoints > 0);
-    };
-
-    updateAvailability();
-    if (typeof mediaQuery.addEventListener === 'function') {
-      mediaQuery.addEventListener('change', updateAvailability);
-      return () => mediaQuery.removeEventListener('change', updateAvailability);
-    }
-
-    legacyMediaQuery.addListener?.(updateAvailability);
-    return () => legacyMediaQuery.removeListener?.(updateAvailability);
-  }, []);
-
-  return available;
 }
 
 function releasePointerCapture(element: Element, pointerId: number): void {
@@ -269,7 +238,7 @@ function MobileSkillButton({
   fallbackLabel,
   ariaLabel,
   skill,
-  heroColor,
+  accentColor,
   className = '',
   disabled,
 }: {
@@ -277,7 +246,7 @@ function MobileSkillButton({
   fallbackLabel: string;
   ariaLabel: string;
   skill?: HeroSkillItem;
-  heroColor: string;
+  accentColor: string;
   className?: string;
   disabled?: boolean;
 }) {
@@ -292,7 +261,7 @@ function MobileSkillButton({
       {skill ? (
         <HeroSkillIcon
           item={skill}
-          color={heroColor}
+          color={accentColor}
           size="hud"
           className="mobile-skill-icon"
         />
@@ -409,7 +378,7 @@ export function MobileControls({ disabled = false, onOpenMenu, onScoreboardChang
   const setActionPressed = useMobileControlsStore(state => state.setActionPressed);
   const shouldRender = Boolean(controlsAvailable && !disabled && heroId);
   const isTargeting = bombTargeting;
-  const heroTone = heroId ? HUD_HERO_COLORS[heroId] : HUD_HERO_COLORS.phantom;
+  const heroTone = heroId ? HUD_HERO_COLORS[heroId] : HUD_HERO_COLORS.blaze;
 
   const skillItems = useMemo(
     () => (heroId ? getHeroSkillItems(heroId) : []),
@@ -524,21 +493,21 @@ export function MobileControls({ disabled = false, onOpenMenu, onScoreboardChang
             fallbackLabel="E"
             ariaLabel={ability1Skill?.name ?? 'Ability one'}
             skill={ability1Skill}
-            heroColor={heroTone.primary}
+            accentColor={heroTone.primary}
           />
           <MobileSkillButton
             action="ability2"
             fallbackLabel="Q"
             ariaLabel={ability2Skill?.name ?? 'Ability two'}
             skill={ability2Skill}
-            heroColor={heroTone.primary}
+            accentColor={heroTone.primary}
           />
           <MobileSkillButton
             action="ultimate"
             fallbackLabel="F"
             ariaLabel={ultimateSkill?.name ?? 'Ultimate ability'}
             skill={ultimateSkill}
-            heroColor={heroTone.primary}
+            accentColor={heroTone.primary}
             className="mobile-ultimate-button"
           />
         </div>
@@ -559,7 +528,7 @@ export function MobileControls({ disabled = false, onOpenMenu, onScoreboardChang
               fallbackLabel="ALT"
               ariaLabel={secondarySkill?.name ?? 'Secondary fire'}
               skill={secondarySkill}
-              heroColor={heroTone.primary}
+              accentColor={heroTone.primary}
               className="mobile-secondary-button"
             />
             <MobileSkillButton
@@ -567,7 +536,7 @@ export function MobileControls({ disabled = false, onOpenMenu, onScoreboardChang
               fallbackLabel="FIRE"
               ariaLabel={primarySkill?.name ?? 'Primary fire'}
               skill={primarySkill}
-              heroColor={heroTone.primary}
+              accentColor={heroTone.primary}
               className="mobile-primary-button"
             />
           </div>

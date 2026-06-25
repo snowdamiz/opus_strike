@@ -1,5 +1,9 @@
 import type { StateCreator } from 'zustand';
 import {
+  BLAZE_PRIMARY_MAGAZINE_SIZE,
+  BLAZE_PRIMARY_RELOAD_MS,
+  CHRONOS_PRIMARY_MAGAZINE_SIZE,
+  CHRONOS_PRIMARY_RELOAD_MS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
 } from '@voxel-strike/shared';
@@ -35,6 +39,10 @@ export interface ProjectileState {
 
   // Blaze projectiles
   rockets: RocketData[];
+  blazePrimaryAmmo: number;
+  blazePrimaryReloading: boolean;
+  blazePrimaryReloadStart: number;
+  blazePrimaryReloadEnd: number;
   bombs: BombData[];
   bombTargeting: boolean;
   bombTargetValid: boolean;
@@ -43,6 +51,10 @@ export interface ProjectileState {
 
   // Chronos projectiles
   chronosPulses: ChronosPulseData[];
+  chronosPrimaryAmmo: number;
+  chronosPrimaryReloading: boolean;
+  chronosPrimaryReloadStart: number;
+  chronosPrimaryReloadEnd: number;
 
   // Hookshot projectiles
   hookProjectiles: HookProjectileData[];
@@ -78,6 +90,9 @@ export interface ProjectileActions {
   removeRocket: (id: string) => void;
   removeRockets: (ids: readonly string[]) => void;
   clearExpiredRockets: () => void;
+  setBlazePrimaryAmmo: (ammo: number) => void;
+  setBlazePrimaryReload: (reloading: boolean, startTime?: number, endTime?: number) => void;
+  resetBlazePrimaryMagazine: () => void;
 
   // Blaze bomb actions
   addBomb: (bomb: BombData) => void;
@@ -94,6 +109,9 @@ export interface ProjectileActions {
   removeChronosPulse: (id: string) => void;
   removeChronosPulses: (ids: readonly string[]) => void;
   clearExpiredChronosPulses: () => void;
+  setChronosPrimaryAmmo: (ammo: number) => void;
+  setChronosPrimaryReload: (reloading: boolean, startTime?: number, endTime?: number) => void;
+  resetChronosPrimaryMagazine: () => void;
 
   // Hook projectile actions
   addHookProjectile: (hook: HookProjectileData) => void;
@@ -146,12 +164,20 @@ export const projectileInitialState: ProjectileState = {
   phantomPrimaryReloadStart: 0,
   phantomPrimaryReloadEnd: 0,
   rockets: [],
+  blazePrimaryAmmo: BLAZE_PRIMARY_MAGAZINE_SIZE,
+  blazePrimaryReloading: false,
+  blazePrimaryReloadStart: 0,
+  blazePrimaryReloadEnd: 0,
   bombs: [],
   bombTargeting: false,
   bombTargetValid: false,
   flamethrowerActive: false,
   flamethrowerFuel: 100,
   chronosPulses: [],
+  chronosPrimaryAmmo: CHRONOS_PRIMARY_MAGAZINE_SIZE,
+  chronosPrimaryReloading: false,
+  chronosPrimaryReloadStart: 0,
+  chronosPrimaryReloadEnd: 0,
   hookProjectiles: [],
   dragHooks: [],
   hookshotGroundHooks: [],
@@ -463,6 +489,45 @@ export const createProjectileSlice: StateCreator<
     return rockets === state.rockets ? state : { rockets };
   }),
 
+  setBlazePrimaryAmmo: (ammo) => set((state) => {
+    const nextAmmo = Math.max(0, Math.min(BLAZE_PRIMARY_MAGAZINE_SIZE, ammo));
+    return state.blazePrimaryAmmo === nextAmmo ? state : { blazePrimaryAmmo: nextAmmo };
+  }),
+
+  setBlazePrimaryReload: (reloading, startTime = 0, endTime = startTime + BLAZE_PRIMARY_RELOAD_MS) => set((state) => {
+    if (
+      state.blazePrimaryReloading === reloading &&
+      state.blazePrimaryReloadStart === startTime &&
+      state.blazePrimaryReloadEnd === endTime
+    ) {
+      return state;
+    }
+
+    return {
+      blazePrimaryReloading: reloading,
+      blazePrimaryReloadStart: reloading ? startTime : 0,
+      blazePrimaryReloadEnd: reloading ? endTime : 0,
+    };
+  }),
+
+  resetBlazePrimaryMagazine: () => set((state) => {
+    if (
+      state.blazePrimaryAmmo === BLAZE_PRIMARY_MAGAZINE_SIZE &&
+      !state.blazePrimaryReloading &&
+      state.blazePrimaryReloadStart === 0 &&
+      state.blazePrimaryReloadEnd === 0
+    ) {
+      return state;
+    }
+
+    return {
+      blazePrimaryAmmo: BLAZE_PRIMARY_MAGAZINE_SIZE,
+      blazePrimaryReloading: false,
+      blazePrimaryReloadStart: 0,
+      blazePrimaryReloadEnd: 0,
+    };
+  }),
+
   // ==================== BOMBS ====================
   addBomb: (bomb) => set((state) => {
     const bombs = appendUnique(state.bombs, bomb, PROJECTILE_LIMITS.bombs);
@@ -515,6 +580,45 @@ export const createProjectileSlice: StateCreator<
   clearExpiredChronosPulses: () => set((state) => {
     const chronosPulses = filterExpiredByExpiry(state.chronosPulses, getChronosPulseExpiresAt);
     return chronosPulses === state.chronosPulses ? state : { chronosPulses };
+  }),
+
+  setChronosPrimaryAmmo: (ammo) => set((state) => {
+    const nextAmmo = Math.max(0, Math.min(CHRONOS_PRIMARY_MAGAZINE_SIZE, ammo));
+    return state.chronosPrimaryAmmo === nextAmmo ? state : { chronosPrimaryAmmo: nextAmmo };
+  }),
+
+  setChronosPrimaryReload: (reloading, startTime = 0, endTime = startTime + CHRONOS_PRIMARY_RELOAD_MS) => set((state) => {
+    if (
+      state.chronosPrimaryReloading === reloading &&
+      state.chronosPrimaryReloadStart === startTime &&
+      state.chronosPrimaryReloadEnd === endTime
+    ) {
+      return state;
+    }
+
+    return {
+      chronosPrimaryReloading: reloading,
+      chronosPrimaryReloadStart: reloading ? startTime : 0,
+      chronosPrimaryReloadEnd: reloading ? endTime : 0,
+    };
+  }),
+
+  resetChronosPrimaryMagazine: () => set((state) => {
+    if (
+      state.chronosPrimaryAmmo === CHRONOS_PRIMARY_MAGAZINE_SIZE &&
+      !state.chronosPrimaryReloading &&
+      state.chronosPrimaryReloadStart === 0 &&
+      state.chronosPrimaryReloadEnd === 0
+    ) {
+      return state;
+    }
+
+    return {
+      chronosPrimaryAmmo: CHRONOS_PRIMARY_MAGAZINE_SIZE,
+      chronosPrimaryReloading: false,
+      chronosPrimaryReloadStart: 0,
+      chronosPrimaryReloadEnd: 0,
+    };
   }),
 
   // ==================== HOOK PROJECTILES ====================

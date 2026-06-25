@@ -37,6 +37,19 @@ export interface RoomAuthContext {
 }
 
 const JWT_SECRET = getAuthTokenSecret();
+export const AUTHENTICATION_REQUIRED_MESSAGE = 'Authentication required';
+
+export class AuthenticationRequiredError extends Error {
+  constructor(message = AUTHENTICATION_REQUIRED_MESSAGE) {
+    super(message);
+    this.name = 'AuthenticationRequiredError';
+  }
+}
+
+export function isAuthenticationRequiredError(error: unknown): error is AuthenticationRequiredError {
+  return error instanceof AuthenticationRequiredError
+    || (error instanceof Error && error.message === AUTHENTICATION_REQUIRED_MESSAGE);
+}
 
 export function createAuthToken(options: {
   userId: string;
@@ -85,7 +98,14 @@ export function verifyPendingAuthToken(token: string): PendingAuthTokenPayload |
     const payload = jwt.verify(token, JWT_SECRET) as Partial<PendingAuthTokenPayload>;
     if (!payload || !payload.pending) return null;
 
-    if (payload.provider === 'discord' && typeof payload.providerAccountId === 'string' && payload.providerAccountId) {
+    if (isAuthProvider(payload.provider) && typeof payload.providerAccountId === 'string' && payload.providerAccountId) {
+      const walletAddress = typeof payload.walletAddress === 'string'
+        ? payload.walletAddress
+        : payload.provider === 'wallet'
+          ? payload.providerAccountId
+          : null;
+      if (payload.provider === 'wallet' && !walletAddress) return null;
+
       return {
         pending: true,
         provider: payload.provider,
@@ -93,7 +113,7 @@ export function verifyPendingAuthToken(token: string): PendingAuthTokenPayload |
         displayName: typeof payload.displayName === 'string' ? payload.displayName : null,
         avatarUrl: typeof payload.avatarUrl === 'string' ? payload.avatarUrl : null,
         emailHash: typeof payload.emailHash === 'string' ? payload.emailHash : null,
-        walletAddress: typeof payload.walletAddress === 'string' ? payload.walletAddress : null,
+        walletAddress,
       };
     }
 
@@ -125,6 +145,31 @@ function sanitizeDisplayName(value: unknown, fallback: string): string {
   return trimmed || fallback;
 }
 
+function authPayloadMatchesUser(
+  payload: AuthTokenPayload,
+  user: {
+    walletAddress: string | null;
+    authAccounts: Array<{ provider: AuthProviderName; providerAccountId: string }>;
+  }
+): boolean {
+  if (payload.walletAddress && user.walletAddress !== payload.walletAddress) {
+    return false;
+  }
+
+  if (payload.provider === 'wallet') {
+    return Boolean(payload.walletAddress) && user.authAccounts.some((account) => (
+      account.provider === 'wallet' &&
+      account.providerAccountId === payload.walletAddress
+    ));
+  }
+
+  if (payload.provider) {
+    return user.authAccounts.some((account) => account.provider === payload.provider);
+  }
+
+  return Boolean(payload.walletAddress && user.walletAddress === payload.walletAddress);
+}
+
 export async function resolveRoomAuthContext(
   options: Record<string, unknown> | undefined,
   request?: IncomingMessage
@@ -135,7 +180,7 @@ export async function resolveRoomAuthContext(
     : cookies.auth_token;
   const payload = token ? verifyAuthToken(token) : null;
 
-  if (payload?.provider === 'discord') {
+  if (payload) {
     const user = await prisma.user.findFirst({
       where: {
         OR: [
@@ -167,13 +212,13 @@ export async function resolveRoomAuthContext(
         authAccounts: {
           select: {
             provider: true,
+            providerAccountId: true,
           },
         },
       },
     });
 
-    const hasDiscordAccount = user?.authAccounts.some((account) => account.provider === 'discord') ?? false;
-    if (user && hasDiscordAccount && (!payload.walletAddress || user.walletAddress === payload.walletAddress)) {
+    if (user && authPayloadMatchesUser(payload, user)) {
       const rankPayload = serializeRankPayload(user);
       return {
         userId: user.id,
@@ -190,5 +235,5 @@ export async function resolveRoomAuthContext(
     }
   }
 
-  throw new Error('Authentication required');
+  throw new AuthenticationRequiredError();
 }

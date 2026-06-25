@@ -35,9 +35,9 @@ export function Minimap() {
   const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const size = useMeasuredSquareSize(containerRef, DEFAULT_MINIMAP_SIZE);
   const devicePixelRatio = useDevicePixelRatio();
-  const { localPlayer, mapSeed, mapThemeId, mapSize, mapProfileId } = useGameStore(
+  const { localPlayerId, mapSeed, mapThemeId, mapSize, mapProfileId } = useGameStore(
     useShallow((state) => ({
-      localPlayer: state.localPlayer,
+      localPlayerId: state.localPlayer?.id ?? null,
       mapSeed: state.mapSeed,
       mapThemeId: state.mapThemeId,
       mapSize: state.mapSize,
@@ -50,7 +50,6 @@ export function Minimap() {
     ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, source: 'match' })
   ), [mapSeed, mapThemeId, mapSize, mapProfileId]);
   const manifest = preparedMap.manifest;
-  const localPlayerId = localPlayer?.id ?? null;
   const projection = useMemo(() => (
     createMinimapProjection(getMinimapBounds(manifest), size, MINIMAP_PADDING)
   ), [manifest, size]);
@@ -112,7 +111,7 @@ export function Minimap() {
     };
   }, [boundaryClipPath, devicePixelRatio, localPlayerId, manifest, projection, size]);
 
-  if (!localPlayer) return null;
+  if (!localPlayerId) return null;
 
   return (
     <div

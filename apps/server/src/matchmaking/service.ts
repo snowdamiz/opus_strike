@@ -16,7 +16,7 @@ import {
   getTeamIdsForGameplayMode,
   isKnownHeroId,
 } from '@voxel-strike/shared';
-import type { GameplayMode, HeroId, MatchMode, MatchPerspective } from '@voxel-strike/shared';
+import type { GameplayMode, HeroId, HeroSkinId, MatchMode, MatchPerspective } from '@voxel-strike/shared';
 import { serializeRankPayload, type PublicRankPayload } from '../ranking/serialization';
 import type { RankedTokenHoldingStatus } from './rankedTokenHold';
 import {
@@ -54,6 +54,7 @@ export interface IssuedMatchmakingTicket {
   botFillMode: MatchmakingBotFillMode;
   matchPerspective: MatchPerspective;
   selectedHero?: HeroId;
+  selectedSkinId?: HeroSkinId;
   expiresAt: number;
   competitiveRating: number;
   rankDivisionIndex: number;
@@ -205,6 +206,7 @@ export function issueQuickPlayTicket(
     botFillMode: MatchmakingBotFillMode;
     matchPerspective: MatchPerspective;
     selectedHero?: HeroId;
+    selectedSkinId?: HeroSkinId;
   }
 ): IssuedMatchmakingTicket {
   const { ticket, claims } = createMatchmakingTicket({
@@ -213,6 +215,7 @@ export function issueQuickPlayTicket(
     botFillMode: settings.botFillMode,
     matchPerspective: settings.matchPerspective,
     selectedHero: settings.selectedHero,
+    selectedSkinId: settings.selectedSkinId,
     userId: context.userId,
     competitiveRating: context.competitiveRating,
     rankDivisionIndex: context.rankDivisionIndex,
@@ -227,6 +230,7 @@ export function issueQuickPlayTicket(
     botFillMode: claims.botFillMode,
     matchPerspective: claims.matchPerspective,
     selectedHero: claims.selectedHero,
+    selectedSkinId: claims.selectedSkinId,
     expiresAt: claims.expiresAt,
     competitiveRating: context.competitiveRating,
     rankDivisionIndex: context.rankDivisionIndex,
@@ -240,11 +244,13 @@ export function issueRankedTicket(
   context: MatchmakingUserContext,
   targetRankDivisionIndex: number,
   tokenHold: RankedTokenHoldingStatus,
-  selectedHero?: HeroId
+  selectedHero?: HeroId,
+  selectedSkinId?: HeroSkinId
 ): IssuedRankedTicket {
   const { ticket, claims } = createMatchmakingTicket({
     mode: 'ranked',
     selectedHero,
+    selectedSkinId,
     userId: context.userId,
     competitiveRating: context.competitiveRating,
     rankDivisionIndex: context.rankDivisionIndex,
@@ -252,7 +258,6 @@ export function issueRankedTicket(
     placementRemaining: context.rank.rankedPlacementsRemaining,
     rankedTokenAddress: tokenHold.tokenAddress,
     rankedTokenDecimals: tokenHold.tokenDecimals ?? undefined,
-    rankedTokenHoldUsdCents: tokenHold.usdCents,
     rankedTokenRequiredBaseUnits: tokenHold.requiredTokenBaseUnits,
     rankedTokenBalanceBaseUnits: tokenHold.balanceTokenBaseUnits,
     rankedTokenCheckedAt: Date.parse(tokenHold.checkedAt),
@@ -265,6 +270,7 @@ export function issueRankedTicket(
     botFillMode: claims.botFillMode,
     matchPerspective: claims.matchPerspective,
     selectedHero: claims.selectedHero,
+    selectedSkinId: claims.selectedSkinId,
     expiresAt: claims.expiresAt,
     competitiveRating: context.competitiveRating,
     rankDivisionIndex: context.rankDivisionIndex,

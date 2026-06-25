@@ -192,13 +192,6 @@ const leaderboardOrderBy: Prisma.UserOrderByWithRelationInput[] = [
   { createdAt: 'asc' },
 ];
 
-const rankedLeaderboardOrderBy: Prisma.UserOrderByWithRelationInput[] = [
-  { competitiveRating: 'desc' },
-  { rankedWins: 'desc' },
-  { rankedGames: 'asc' },
-  { createdAt: 'asc' },
-];
-
 const rankedSeasonLeaderboardOrderBy: Prisma.RankedSeasonUserStatsOrderByWithRelationInput[] = [
   { competitiveRating: 'desc' },
   { rankedWins: 'desc' },
@@ -560,10 +553,6 @@ function serializeRankedSeasonLeaderboardEntry(user: RankedSeasonStatsSummary, r
 }
 
 async function findUserForPayload(payload: AuthTokenPayload) {
-  if (payload.provider !== 'discord') {
-    return null;
-  }
-
   const filters: Prisma.UserWhereInput[] = [{ id: payload.userId }];
   if (payload.walletAddress) {
     filters.push({ walletAddress: payload.walletAddress });
@@ -578,7 +567,19 @@ async function findUserForPayload(payload: AuthTokenPayload) {
     return null;
   }
 
-  if (!user.authAccounts.some((account) => account.provider === 'discord')) {
+  if (payload.provider === 'wallet') {
+    const hasWalletAccount = Boolean(payload.walletAddress) && user.authAccounts.some((account) => (
+      account.provider === 'wallet' &&
+      account.providerAccountId === payload.walletAddress
+    ));
+    return hasWalletAccount ? user : null;
+  }
+
+  if (payload.provider && !user.authAccounts.some((account) => account.provider === payload.provider)) {
+    return null;
+  }
+
+  if (!payload.provider && payload.walletAddress && user.walletAddress !== payload.walletAddress) {
     return null;
   }
 
@@ -613,36 +614,6 @@ async function getScoreLeaderboardRank(user: LeaderboardUserSummary): Promise<nu
           totalWins: user.totalWins,
           totalKills: user.totalKills,
           totalGames: user.totalGames,
-          createdAt: { lt: user.createdAt },
-        },
-      ],
-    },
-  });
-
-  return higherRankedUsers + 1;
-}
-
-async function getRankedLeaderboardRank(user: LeaderboardUserSummary): Promise<number | null> {
-  if (user.rankedGames <= 0) return null;
-
-  const higherRankedUsers = await prisma.user.count({
-    where: {
-      rankedGames: { gt: 0 },
-      OR: [
-        { competitiveRating: { gt: user.competitiveRating } },
-        {
-          competitiveRating: user.competitiveRating,
-          rankedWins: { gt: user.rankedWins },
-        },
-        {
-          competitiveRating: user.competitiveRating,
-          rankedWins: user.rankedWins,
-          rankedGames: { lt: user.rankedGames },
-        },
-        {
-          competitiveRating: user.competitiveRating,
-          rankedWins: user.rankedWins,
-          rankedGames: user.rankedGames,
           createdAt: { lt: user.createdAt },
         },
       ],
@@ -693,7 +664,7 @@ async function getAuthenticatedPayload(req: Request): Promise<AuthTokenPayload |
   return verifyAuthToken(token);
 }
 
-async function linkPhantomAccountToUser(userId: string, walletAddress: string) {
+async function linkWalletAccountToUser(userId: string, walletAddress: string) {
   return prisma.$transaction(async (tx) => {
     const [currentUser, existingAccount, walletUser] = await Promise.all([
       tx.user.findUnique({
@@ -703,7 +674,7 @@ async function linkPhantomAccountToUser(userId: string, walletAddress: string) {
       tx.authAccount.findUnique({
         where: {
           provider_providerAccountId: {
-            provider: 'phantom',
+            provider: 'wallet',
             providerAccountId: walletAddress,
           },
         },
@@ -719,20 +690,20 @@ async function linkPhantomAccountToUser(userId: string, walletAddress: string) {
     }
 
     if (currentUser.walletAddress && currentUser.walletAddress !== walletAddress) {
-      throw new ProviderConflictError('This profile already has a different Phantom wallet linked');
+      throw new ProviderConflictError('This profile already has a different wallet linked');
     }
 
-    const currentPhantomAccount = currentUser.authAccounts.find((account) => account.provider === 'phantom');
-    if (currentPhantomAccount && currentPhantomAccount.providerAccountId !== walletAddress) {
-      throw new ProviderConflictError('This profile already has a different Phantom wallet linked');
+    const currentWalletAccount = currentUser.authAccounts.find((account) => account.provider === 'wallet');
+    if (currentWalletAccount && currentWalletAccount.providerAccountId !== walletAddress) {
+      throw new ProviderConflictError('This profile already has a different wallet linked');
     }
 
     if (existingAccount && existingAccount.userId !== userId) {
-      throw new ProviderConflictError('That Phantom wallet is already linked to another profile');
+      throw new ProviderConflictError('That wallet is already linked to another profile');
     }
 
     if (walletUser && walletUser.id !== userId) {
-      throw new ProviderConflictError('That Phantom wallet is already linked to another profile');
+      throw new ProviderConflictError('That wallet is already linked to another profile');
     }
 
     await tx.user.update({
@@ -746,7 +717,7 @@ async function linkPhantomAccountToUser(userId: string, walletAddress: string) {
     await tx.authAccount.upsert({
       where: {
         provider_providerAccountId: {
-          provider: 'phantom',
+          provider: 'wallet',
           providerAccountId: walletAddress,
         },
       },
@@ -757,7 +728,7 @@ async function linkPhantomAccountToUser(userId: string, walletAddress: string) {
       },
       create: {
         userId,
-        provider: 'phantom',
+        provider: 'wallet',
         providerAccountId: walletAddress,
         displayName: walletAddress,
       },
@@ -786,13 +757,13 @@ async function issueUserSession(res: Response, userId: string, provider: AuthPro
 }
 
 async function createRegisteredUser(identity: PendingRegistrationIdentity, name: string) {
-  if (identity.provider !== 'discord') {
-    throw new ProviderConflictError('Discord sign-in is required');
+  if (identity.provider === 'wallet' && !identity.walletAddress) {
+    throw new ProviderConflictError('Wallet address is required');
   }
 
   return prisma.user.create({
     data: {
-      walletAddress: null,
+      walletAddress: identity.provider === 'wallet' ? identity.walletAddress! : null,
       name,
       lastLoginAt: new Date(),
       authAccounts: {
@@ -824,7 +795,7 @@ async function completePendingRegistration(pending: PendingAuthTokenPayload, nam
     displayName: pending.displayName,
     avatarUrl: pending.avatarUrl,
     emailHash: pending.emailHash,
-    walletAddress: null,
+    walletAddress: pending.walletAddress,
   };
 
   const existingAccount = await prisma.authAccount.findUnique({
@@ -906,7 +877,7 @@ router.post('/verify', async (req: Request, res: Response) => {
     const linkedAccount = await prisma.authAccount.findUnique({
       where: {
         provider_providerAccountId: {
-          provider: 'phantom',
+          provider: 'wallet',
           providerAccountId: walletAddress,
         },
       },
@@ -920,30 +891,74 @@ router.post('/verify', async (req: Request, res: Response) => {
     const authenticatedPayload = await getAuthenticatedPayload(req);
     const authenticatedUser = authenticatedPayload ? await findUserForPayload(authenticatedPayload) : null;
 
-    if (!authenticatedUser) {
-      res.status(401).json({ error: 'Sign in with Discord before connecting Phantom' });
+    if (authenticatedUser) {
+      if (walletUser && walletUser.id !== authenticatedUser.id) {
+        res.status(409).json({ error: 'That wallet is already linked to another profile' });
+        return;
+      }
+
+      const user = await linkWalletAccountToUser(authenticatedUser.id, walletAddress);
+      const provider = authenticatedPayload?.provider ?? 'wallet';
+      setAuthCookie(res, createAuthToken({
+        userId: user.id,
+        provider,
+        walletAddress: user.walletAddress,
+        expiresIn: JWT_EXPIRY,
+      }));
+
+      res.json({
+        authenticated: true,
+        isNewUser: false,
+        provider,
+        linked: true,
+        user: serializeUser(user),
+      });
       return;
     }
 
-    if (walletUser && walletUser.id !== authenticatedUser.id) {
-      res.status(409).json({ error: 'That Phantom wallet is already linked to another profile' });
+    if (walletUser) {
+      const user = await prisma.user.update({
+        where: { id: walletUser.id },
+        data: { lastLoginAt: new Date() },
+        include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
+      });
+      setAuthCookie(res, createAuthToken({
+        userId: user.id,
+        provider: 'wallet',
+        walletAddress: user.walletAddress,
+        expiresIn: JWT_EXPIRY,
+      }));
+
+      res.json({
+        authenticated: true,
+        isNewUser: false,
+        provider: 'wallet',
+        linked: false,
+        user: serializeUser(user),
+      });
       return;
     }
 
-    const user = await linkPhantomAccountToUser(authenticatedUser.id, walletAddress);
-    setAuthCookie(res, createAuthToken({
-      userId: user.id,
-      provider: 'discord',
-      walletAddress: user.walletAddress,
-      expiresIn: JWT_EXPIRY,
-    }));
+    const pendingRegistration: PendingRegistrationIdentity = {
+      provider: 'wallet',
+      providerAccountId: walletAddress,
+      displayName: walletAddress,
+      avatarUrl: null,
+      emailHash: null,
+      walletAddress,
+    };
+    setPendingAuthCookie(res, createPendingAuthToken(pendingRegistration));
 
     res.json({
       authenticated: true,
-      isNewUser: false,
-      provider: 'discord',
-      linked: true,
-      user: serializeUser(user),
+      isNewUser: true,
+      provider: 'wallet',
+      pendingRegistration: {
+        provider: pendingRegistration.provider,
+        displayName: pendingRegistration.displayName,
+        avatarUrl: pendingRegistration.avatarUrl,
+        walletAddress,
+      },
     });
   } catch (error) {
     if (error instanceof ProviderConflictError) {
@@ -952,11 +967,11 @@ router.post('/verify', async (req: Request, res: Response) => {
     }
 
     if (isPrismaUniqueError(error)) {
-      res.status(409).json({ error: 'That Phantom wallet is already linked to another profile' });
+      res.status(409).json({ error: 'That wallet is already linked to another profile' });
       return;
     }
 
-    console.error('[auth] Phantom verification error:', error);
+    console.error('[auth] Wallet verification error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -976,12 +991,6 @@ router.post('/register', async (req: Request, res: Response) => {
 
     if (!pending) {
       res.status(401).json({ error: 'No pending registration found' });
-      return;
-    }
-
-    if (pending.provider !== 'discord') {
-      clearAuthCookie(res);
-      res.status(401).json({ error: 'Discord sign-in is required' });
       return;
     }
 
@@ -1049,11 +1058,6 @@ router.get('/session', async (req: Request, res: Response) => {
 
     const pending = verifyPendingAuthToken(token);
     if (pending) {
-      if (pending.provider !== 'discord') {
-        sendUnauthenticated('Discord sign-in is required', true);
-        return;
-      }
-
       res.json({
         authenticated: true,
         isNewUser: true,
@@ -1076,7 +1080,7 @@ router.get('/session', async (req: Request, res: Response) => {
 
     const user = await findUserForPayload(payload);
     if (!user) {
-      sendUnauthenticated('Discord sign-in is required', true);
+      sendUnauthenticated('Authentication is required', true);
       return;
     }
 
@@ -1316,7 +1320,7 @@ router.get('/leaderboard', async (req: Request, res: Response) => {
     const payload = await getAuthenticatedPayload(req);
     const user = payload ? await findUserForPayload(payload) : null;
 
-    if (mode === 'ranked' && !selectedSeason.current) {
+    if (mode === 'ranked') {
       const leaderboardUsers = await prisma.rankedSeasonUserStats.findMany({
         where: {
           mode: selectedSeason.mode,
@@ -1359,13 +1363,13 @@ router.get('/leaderboard', async (req: Request, res: Response) => {
     }
 
     const leaderboardUsers = await prisma.user.findMany({
-      where: mode === 'ranked' ? { rankedGames: { gt: 0 } } : { totalGames: { gt: 0 } },
-      orderBy: mode === 'ranked' ? rankedLeaderboardOrderBy : leaderboardOrderBy,
+      where: { totalGames: { gt: 0 } },
+      orderBy: leaderboardOrderBy,
       take: limit,
       select: leaderboardUserSelect,
     });
     const personalRank = user
-      ? await (mode === 'ranked' ? getRankedLeaderboardRank(user) : getScoreLeaderboardRank(user))
+      ? await getScoreLeaderboardRank(user)
       : null;
 
     res.json({

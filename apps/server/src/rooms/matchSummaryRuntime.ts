@@ -57,7 +57,7 @@ export interface BuildGameEndEventInput {
   players: PlayerMapLike;
   integrityGate?: AntiCheatIntegrityGate | null;
   mapThemeId: VoxelMapTheme['id'] | string | null;
-  goldenBiomeRewardUsdCents: number;
+  goldenBiomeRewardLamports: string;
   rankedPreview?: RankedSummaryPreviewInput;
 }
 
@@ -138,7 +138,7 @@ export class MatchSummaryRuntime {
 
     if (input.mapThemeId === GOLDEN_VOXEL_MAP_THEME_ID && input.matchMode === 'ranked') {
       event.goldenBiomeReward = {
-        rewardUsdCents: input.goldenBiomeRewardUsdCents,
+        rewardLamports: input.goldenBiomeRewardLamports,
         rewardToken: 'SOL',
         winningTeam: input.winningTeam,
         eligiblePlayerIds: input.winningTeam

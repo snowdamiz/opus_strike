@@ -34,7 +34,14 @@ import {
   type BotTeamTactics,
   type PlainVec3,
 } from '../rooms/bot-ai';
-import { DEFAULT_GAMEPLAY_MODE, type BotDifficulty, type HeroId, type Team, type VoxelMapManifest } from '@voxel-strike/shared';
+import {
+  DEFAULT_GAMEPLAY_MODE,
+  getHeroStats,
+  type BotDifficulty,
+  type HeroId,
+  type Team,
+  type VoxelMapManifest,
+} from '@voxel-strike/shared';
 
 const NOW = 10_000;
 
@@ -96,6 +103,7 @@ function player(options: {
   ultimateCharge?: number;
 }): BotPlayerSnapshot {
   const heroId = options.heroId ?? 'phantom';
+  const maxHealth = options.maxHealth ?? getHeroStats(heroId).maxHealth;
   return {
     id: options.id,
     name: options.id,
@@ -109,8 +117,8 @@ function player(options: {
     velocity: { x: 0, y: 0, z: 0 },
     lookYaw: 0,
     lookPitch: 0,
-    health: options.health ?? options.maxHealth ?? 200,
-    maxHealth: options.maxHealth ?? 200,
+    health: options.health ?? maxHealth,
+    maxHealth,
     ultimateCharge: options.ultimateCharge ?? 0,
     movement: {
       isGrounded: true,
@@ -1138,7 +1146,7 @@ function testCombatMovementKitesInsideMinimumRange() {
 }
 
 function testOutnumberedBotsRegroupBeforeCriticalHealth() {
-  const bot = player({ id: 'red-phantom', team: 'red', heroId: 'phantom', x: 0, z: 0, health: 125, maxHealth: 200 });
+  const bot = player({ id: 'red-phantom', team: 'red', heroId: 'phantom', x: 0, z: 0, health: 115 });
   const enemyA = player({ id: 'blue-a', team: 'blue', heroId: 'phantom', x: 8, z: 0 });
   const enemyB = player({ id: 'blue-b', team: 'blue', heroId: 'hookshot', x: 10, z: 3 });
   const blackboard = blackboardFor(bot, [bot, enemyA, enemyB], {
@@ -1153,7 +1161,7 @@ function testOutnumberedBotsRegroupBeforeCriticalHealth() {
 
 function testChronosHealingThresholds() {
   const chronos = player({ id: 'chronos', team: 'red', heroId: 'chronos', x: 0, z: 0 });
-  const scratched = player({ id: 'scratched', team: 'red', heroId: 'phantom', x: 4, z: 0, health: 190, maxHealth: 200 });
+  const scratched = player({ id: 'scratched', team: 'red', heroId: 'phantom', x: 4, z: 0, health: 170 });
   const trivialBoard = blackboardFor(chronos, [chronos, scratched]);
   const trivialCombat = chooseBotCombatPlan({
     bot: chronos,
@@ -1174,8 +1182,8 @@ function testChronosHealingThresholds() {
   });
   assert.notEqual(trivialPlan.mode, 'chronos_lifeline_allies');
 
-  const hurtA = player({ id: 'hurt-a', team: 'red', heroId: 'phantom', x: 4, z: 0, health: 105, maxHealth: 200 });
-  const hurtB = player({ id: 'hurt-b', team: 'red', heroId: 'hookshot', x: 5, z: 1, health: 120, maxHealth: 225 });
+  const hurtA = player({ id: 'hurt-a', team: 'red', heroId: 'phantom', x: 4, z: 0, health: 95 });
+  const hurtB = player({ id: 'hurt-b', team: 'red', heroId: 'hookshot', x: 5, z: 1, health: 105 });
   const healBoard = blackboardFor(chronos, [chronos, hurtA, hurtB]);
   const healIntent = scoreBotIntents(chronos, healBoard, getBotSkillProfile('normal'));
   const healPlan = chooseBotAbilityPlan({
@@ -1215,7 +1223,7 @@ function testChronosHealingThresholds() {
 }
 
 function testHeroAbilityControllers() {
-  const enemy = player({ id: 'enemy', team: 'blue', heroId: 'phantom', x: 3, z: 0, health: 120, maxHealth: 200 });
+  const enemy = player({ id: 'enemy', team: 'blue', heroId: 'phantom', x: 3, z: 0, health: 110 });
 
   const phantom = player({ id: 'phantom', team: 'red', heroId: 'phantom', x: 0, z: 0 });
   const phantomBoard = blackboardFor(phantom, [phantom, enemy], { visibleEnemyIds: [enemy.id], losEnemyIds: [enemy.id] });
@@ -1262,7 +1270,7 @@ function testHeroAbilityControllers() {
 function testDifficultyChangesDecisionQuality() {
   const easyChronos = player({ id: 'easy-chronos', team: 'red', heroId: 'chronos', x: 0, z: 0, difficulty: 'easy' });
   const hardChronos = { ...easyChronos, id: 'hard-chronos', botDifficulty: 'hard' as const };
-  const ally = player({ id: 'ally', team: 'red', heroId: 'phantom', x: 4, z: 0, health: 140, maxHealth: 200 });
+  const ally = player({ id: 'ally', team: 'red', heroId: 'phantom', x: 4, z: 0, health: 120 });
 
   const easyBoard = blackboardFor(easyChronos, [easyChronos, ally], { difficulty: 'easy' });
   const hardBoard = blackboardFor(hardChronos, [hardChronos, ally], { difficulty: 'hard' });

@@ -28,6 +28,7 @@ import {
   listPlayerReportQueue,
 } from '../reports/playerReportService';
 import { wagerService } from '../wagers/service';
+import { playerRewardService } from '../rewards/service';
 import {
   collectLocalAdminMachineSnapshot,
   listAdminMachineSnapshots,
@@ -37,6 +38,7 @@ import {
   type AdminRoomListing,
 } from './machineRegistry';
 import { createInGameCapacitySnapshot } from '../matchmaking/playerCapacity';
+import { getGameTokenConfig } from '../config/gameToken';
 import {
   getGlobalNotification,
   setGlobalNotification,
@@ -48,6 +50,19 @@ import {
   setRankedSeason,
   type RankedSeasonAdminView,
 } from '../ranking/seasonService';
+import {
+  getRankedEntryGateSettings,
+  setRankedEntryGateSettings,
+  type RankedEntryGateAdminView,
+} from '../matchmaking/rankedTokenHold';
+import {
+  SkinShopServiceError,
+  getSkinShopAdminOverview,
+  parseSkinIdInput,
+  updateSkinShopItemSettings,
+  updateSkinShopSettings,
+  type SkinShopAdminOverview,
+} from '../cosmetics/skinShopService';
 
 interface AdminRouterOptions {
   config: ColyseusRuntimeConfig;
@@ -122,6 +137,8 @@ interface MachineOverview {
 }
 
 type AdminRankedSeason = RankedSeasonAdminView;
+type AdminRankedEntryGate = RankedEntryGateAdminView;
+type AdminSkinShop = SkinShopAdminOverview;
 
 function adminWallet(): string | null {
   const wallet = process.env.ADMIN_WALLET?.trim();
@@ -738,15 +755,21 @@ function summarizeLobbyRoom(room: AdminRoomListing, processSnapshots: Map<string
 
 async function collectAdminOverview(options: AdminRouterOptions, adminUser: AdminUser) {
   const generatedAtMs = Date.now();
-  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, goldenBiomeRewards, globalNotification, rankedSeason] = await Promise.all([
+  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, rewardEconomySettings, goldenBiomeRewards, globalNotification, rankedSeason, rankedEntryGate, skinShop] = await Promise.all([
     pingRedis(options.redis),
     queryRooms(options.matchMaker, 'game_room'),
     queryRooms(options.matchMaker, 'lobby_room'),
     antiCheatEvidenceStore.listReviewData(),
     listPlayerReportQueue(prisma),
+    Promise.all([
+      playerRewardService.getSettingsOverview(),
+      wagerService.getWagerEconomySettings(),
+    ]).then(([playerRewards, wagers]) => ({ playerRewards, wagers })),
     wagerService.getGoldenBiomeAdminOverview(),
     getGlobalNotification(),
     getRankedSeason(),
+    getRankedEntryGateSettings(),
+    getSkinShopAdminOverview(),
   ]);
 
   let machineSnapshots: AdminMachineSnapshot[] = [];
@@ -826,6 +849,11 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     lobbyRooms: lobbyRooms.length,
     lobbyParticipants: lobbyRooms.reduce((sum, room) => sum + room.participants, 0),
   };
+  const gameToken = getGameTokenConfig();
+  const rewardEconomy = {
+    rewardTokenSymbol: gameToken.mintAddress ? gameToken.symbol : null,
+    ...rewardEconomySettings,
+  };
 
   return {
     generatedAt: new Date(generatedAtMs).toISOString(),
@@ -859,12 +887,24 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
       localProcessId: options.matchMaker.processId ?? null,
       warnings,
     },
+    gameToken,
     antiCheat,
     playerReports,
+    rewardEconomy,
     goldenBiomeRewards,
     globalNotification,
     rankedSeason: rankedSeason satisfies AdminRankedSeason,
+    rankedEntryGate: rankedEntryGate satisfies AdminRankedEntryGate,
+    skinShop: skinShop satisfies AdminSkinShop,
   };
+}
+
+function sendAdminMutationError(res: Response, error: unknown): void {
+  if (error instanceof SkinShopServiceError) {
+    res.status(error.statusCode).json({ error: error.message });
+    return;
+  }
+  res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
 }
 
 export function createAdminRouter(options: AdminRouterOptions): Router {
@@ -1007,6 +1047,36 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     }
   });
 
+  router.post('/api/reward-economy', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const body = req.body && typeof req.body === 'object' ? req.body as {
+      playerRewards?: Record<string, unknown>;
+      wagers?: Record<string, unknown>;
+      goldenBiome?: Record<string, unknown>;
+    } : {};
+
+    try {
+      const [playerRewards, wagers, goldenBiome] = await Promise.all([
+        playerRewardService.updateSettings(
+          body.playerRewards && typeof body.playerRewards === 'object' ? body.playerRewards : {},
+          adminUser.id
+        ),
+        wagerService.updateWagerEconomySettings(
+          body.wagers && typeof body.wagers === 'object' ? body.wagers : {},
+          adminUser.id
+        ),
+        wagerService.updateGoldenBiomeSettings(
+          body.goldenBiome && typeof body.goldenBiome === 'object' ? body.goldenBiome : {},
+          adminUser.id
+        ),
+      ]);
+      res.json({ ok: true, rewardEconomy: { playerRewards, wagers }, goldenBiome });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   router.post('/api/golden-biome/rewards/:rewardId/distribute', ensureAdmin, ensureAdminMutation, async (req, res) => {
     noStore(res);
     const adminUser = res.locals.adminUser as AdminUser;
@@ -1062,6 +1132,61 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
       res.json({ ok: true, ...result });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/ranked-entry-gate', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+
+    try {
+      const rankedEntryGate = await setRankedEntryGateSettings({
+        mode: req.body?.mode,
+        requiredTokenAmount: req.body?.requiredTokenAmount,
+      }, adminUser.id);
+
+      res.json({ ok: true, rankedEntryGate });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/skin-shop/settings', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+
+    try {
+      const shop = await updateSkinShopSettings({
+        enabled: req.body?.enabled,
+        updatedByUserId: adminUser.id,
+      });
+      res.json({ ok: true, shop });
+    } catch (error) {
+      sendAdminMutationError(res, error);
+    }
+  });
+
+  router.post('/api/skin-shop/items/:skinId', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const skinId = parseSkinIdInput(req.params.skinId);
+    if (!skinId) {
+      res.status(400).json({ error: 'Invalid skin id' });
+      return;
+    }
+
+    try {
+      const settings = await updateSkinShopItemSettings({
+        skinId,
+        saleEnabled: req.body?.saleEnabled,
+        tokenAmountBaseUnits: req.body?.tokenAmountBaseUnits,
+        maxSupply: req.body?.maxSupply,
+        expectedPriceVersion: req.body?.expectedPriceVersion,
+        updatedByUserId: adminUser.id,
+      });
+      res.json({ ok: true, settings });
+    } catch (error) {
+      sendAdminMutationError(res, error);
     }
   });
 

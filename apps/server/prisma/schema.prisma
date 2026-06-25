@@ -12,7 +12,7 @@ datasource db {
 
 enum AuthProvider {
   discord
-  phantom
+  wallet
 }
 
 enum MatchMode {
@@ -85,9 +85,35 @@ enum GoldenBiomeRewardDistributionMode {
   auto
 }
 
+enum PlayerRewardKind {
+  daily_ranked_drip
+  objective_bounty
+  weekly_leaderboard
+}
+
+enum PlayerRewardStatus {
+  pending
+  processing
+  paid
+  failed
+  canceled
+}
+
+enum PlayerRewardPayoutStatus {
+  pending
+  submitted
+  confirmed
+  failed
+}
+
 enum RankedSeasonMode {
   preseason
   season
+}
+
+enum RankedEntryGateMode {
+  locked
+  token_required
 }
 
 enum FriendshipStatus {
@@ -113,6 +139,23 @@ enum PartyInviteStatus {
   expired
 }
 
+enum SkinEntitlementSource {
+  free
+  paid
+  admin_grant
+  event
+}
+
+enum SkinPurchaseIntentStatus {
+  intent_created
+  transaction_built
+  submitted
+  confirmed
+  credited
+  failed
+  expired
+}
+
 model User {
   id                     String                  @id @default(cuid())
   walletAddress          String?                 @unique
@@ -135,6 +178,11 @@ model User {
   receivedLobbyInvites   LobbyInvite[]           @relation("LobbyInviteRecipient")
   sentPartyInvites       PartyInvite[]           @relation("PartyInviteSender")
   receivedPartyInvites   PartyInvite[]           @relation("PartyInviteRecipient")
+  skinOwnerships         UserSkinOwnership[]
+  skinPurchaseIntents    SkinPurchaseIntent[]
+  heroLoadouts           UserHeroLoadout[]
+  playerRewards          PlayerReward[]
+  playerRewardPayouts    PlayerRewardPayout[]
 
   // Player stats (optional - can expand later)
   totalGames                Int       @default(0)
@@ -248,6 +296,113 @@ model PartyInvite {
   @@index([expiresAt])
 }
 
+model SkinShopSettings {
+  id              String   @id @default("default")
+  enabled         Boolean  @default(false)
+  tokenMintAddress String?
+  tokenSymbol     String   @default("")
+  cluster         String   @default("devnet")
+  updatedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model SkinShopItemSettings {
+  skinId               String   @id
+  saleEnabled          Boolean  @default(false)
+  tokenAmountBaseUnits BigInt?
+  maxSupply            Int?
+  priceVersion         Int      @default(1)
+  updatedByUserId      String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  audits               SkinShopItemAudit[]
+}
+
+model SkinShopItemAudit {
+  id                         String   @id @default(cuid())
+  skinId                     String
+  updatedByUserId            String?
+  oldTokenAmountBaseUnits    BigInt?
+  newTokenAmountBaseUnits    BigInt?
+  oldMaxSupply               Int?
+  newMaxSupply               Int?
+  oldSaleEnabled             Boolean?
+  newSaleEnabled             Boolean?
+  oldPriceVersion            Int?
+  newPriceVersion            Int?
+  createdAt                  DateTime @default(now())
+
+  item SkinShopItemSettings @relation(fields: [skinId], references: [skinId], onDelete: Cascade)
+
+  @@index([skinId, createdAt])
+  @@index([updatedByUserId, createdAt])
+}
+
+model UserSkinOwnership {
+  id         String                @id @default(cuid())
+  userId     String
+  skinId     String
+  source     SkinEntitlementSource
+  purchaseId String?               @unique
+  grantedAt  DateTime              @default(now())
+  revokedAt  DateTime?
+
+  user     User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purchase SkinPurchaseIntent? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, skinId])
+  @@index([userId, revokedAt])
+  @@index([skinId, grantedAt])
+}
+
+model SkinPurchaseIntent {
+  id                   String                   @id @default(cuid())
+  userId               String
+  walletAddress        String
+  skinId               String
+  quotedPriceVersion   Int
+  tokenMintAddress     String
+  tokenSymbol          String
+  tokenAmountBaseUnits BigInt
+  tokenDecimals        Int?
+  treasuryWallet       String
+  treasuryTokenAccount String
+  cluster              String
+  memo                 String                   @unique
+  status               SkinPurchaseIntentStatus @default(intent_created)
+  transactionSignature String?                  @unique
+  intentExpiresAt      DateTime
+  lastValidBlockHeight BigInt?
+  creditedAt           DateTime?
+  lastError            String?
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ownership UserSkinOwnership?
+
+  @@index([userId, status, createdAt])
+  @@index([walletAddress])
+  @@index([skinId, status])
+  @@index([status, intentExpiresAt])
+}
+
+model UserHeroLoadout {
+  id             String   @id @default(cuid())
+  userId         String
+  heroId         String
+  selectedSkinId String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, heroId])
+  @@index([userId])
+  @@index([selectedSkinId])
+}
+
 model PersistentParty {
   id             String   @id
   roomId         String   @unique
@@ -284,6 +439,7 @@ model GameMatch {
   updatedAt                DateTime  @updatedAt
 
   participants GameMatchParticipant[]
+  playerRewards PlayerReward[]
 
   @@index([roomId])
   @@index([lobbyId])
@@ -512,11 +668,94 @@ model GoldenBiomeReward {
 }
 
 model GoldenBiomeRewardSettings {
-  id               String                            @id @default("default")
-  distributionMode GoldenBiomeRewardDistributionMode @default(manual)
-  updatedByUserId  String?
-  createdAt        DateTime                          @default(now())
-  updatedAt        DateTime                          @updatedAt
+  id                    String                            @id @default("default")
+  distributionMode      GoldenBiomeRewardDistributionMode @default(manual)
+  enabled               Boolean                           @default(true)
+  chanceBps             Int                               @default(200)
+  winnerRewardLamports  BigInt                            @default(200000000)
+  treasuryMinLamports   BigInt                            @default(1000000000)
+  updatedByUserId       String?
+  createdAt             DateTime                          @default(now())
+  updatedAt             DateTime                          @updatedAt
+}
+
+model WagerEconomySettings {
+  id              String   @id @default("default")
+  platformFeeBps  Int      @default(500)
+  updatedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model PlayerRewardSettings {
+  id                          String   @id @default("default")
+  enabled                     Boolean  @default(true)
+  dailyRankedDripLamports     BigInt   @default(20000)
+  dailyRankedDripMaxMatches   Int      @default(5)
+  minMatchDurationMs          Int      @default(180000)
+  objectiveWinLamports        BigInt   @default(10000)
+  objectiveFlagCaptureLamports BigInt  @default(15000)
+  objectiveFlagReturnLamports BigInt   @default(5000)
+  objectiveAssistLamports     BigInt   @default(2000)
+  maxPlayerMatchLamports      BigInt   @default(50000)
+  maxMatchPayoutLamports      BigInt   @default(250000)
+  treasuryReserveLamports     BigInt   @default(1000000000)
+  payoutBatchSize             Int      @default(100)
+  weeklyEnabled               Boolean  @default(true)
+  weeklyPoolLamports          BigInt   @default(1000000)
+  weeklyTopPlayers            Int      @default(10)
+  updatedByUserId             String?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+}
+
+model PlayerReward {
+  id              String             @id @default(cuid())
+  userId          String
+  matchId         String?
+  playerSessionId String?
+  kind            PlayerRewardKind
+  status          PlayerRewardStatus @default(pending)
+  amountLamports  BigInt
+  idempotencyKey  String             @unique
+  reason          String
+  metadata        Json?
+  payoutId        String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  paidAt          DateTime?
+
+  user   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  match  GameMatch?          @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  payout PlayerRewardPayout? @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status, createdAt])
+  @@index([kind, createdAt])
+  @@index([matchId])
+  @@index([payoutId])
+  @@index([status, createdAt])
+}
+
+model PlayerRewardPayout {
+  id             String                  @id @default(cuid())
+  userId         String
+  walletAddress  String
+  amountLamports BigInt
+  status         PlayerRewardPayoutStatus @default(pending)
+  signature      String?                 @unique
+  lastError      String?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+  submittedAt    DateTime?
+  confirmedAt    DateTime?
+  failedAt       DateTime?
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rewards PlayerReward[]
+
+  @@index([userId, status, createdAt])
+  @@index([walletAddress])
+  @@index([status, createdAt])
 }
 
 model RankedSeasonSettings {
@@ -528,6 +767,17 @@ model RankedSeasonSettings {
   updatedByUserId String?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
+}
+
+model RankedEntryGateSettings {
+  id                     String              @id @default("default")
+  mode                   RankedEntryGateMode @default(locked)
+  tokenMintAddress       String?
+  tokenSymbol            String              @default("")
+  requiredTokenAmount    String              @default("0")
+  updatedByUserId        String?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
 }
 
 model RankedSeasonUserStats {
@@ -572,6 +822,17 @@ model GlobalNotification {
   updatedByUserId String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+model GlobalChatMessage {
+  id         String   @id @default(cuid())
+  userId     String?
+  playerName String
+  message    String   @db.Text
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt(sort: Desc)])
+  @@index([userId, createdAt])
 }
 
 model GoldenBiomeRewardTransfer {

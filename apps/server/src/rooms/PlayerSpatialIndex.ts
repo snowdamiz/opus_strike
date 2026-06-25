@@ -5,6 +5,7 @@ export interface PlayerSpatialQueryOptions {
   team?: Team;
   excludeTeam?: Team;
   excludeId?: string;
+  includeDowned?: boolean;
 }
 
 const BUCKET_KEY_CELL_OFFSET = 1 << 20;
@@ -32,9 +33,11 @@ export class PlayerSpatialIndex {
     this.prepareTeamsForRebuild();
 
     for (const player of players) {
-      if (player.state !== 'alive') continue;
-      this.alivePlayers.push(player);
-      this.getMutableTeamPlayers(player.team).push(player);
+      if (player.state !== 'alive' && player.state !== 'downed') continue;
+      if (player.state === 'alive') {
+        this.alivePlayers.push(player);
+        this.getMutableTeamPlayers(player.team).push(player);
+      }
       this.getMutableBucket(player.position.x, player.position.z).push(player);
     }
 
@@ -84,6 +87,7 @@ export class PlayerSpatialIndex {
     const optionTeam = options.team;
     const optionExcludeTeam = options.excludeTeam;
     const optionExcludeId = options.excludeId;
+    const includeDowned = options.includeDowned === true;
     const minCellX = Math.floor((center.x - radius) / this.cellSize);
     const maxCellX = Math.floor((center.x + radius) / this.cellSize);
     const minCellZ = Math.floor((center.z - radius) / this.cellSize);
@@ -96,6 +100,7 @@ export class PlayerSpatialIndex {
         if (!bucket) continue;
 
         for (const player of bucket) {
+          if (player.state !== 'alive' && !(includeDowned && player.state === 'downed')) continue;
           if (optionExcludeId && player.id === optionExcludeId) continue;
           if (optionTeam && player.team !== optionTeam) continue;
           if (optionExcludeTeam && player.team === optionExcludeTeam) continue;

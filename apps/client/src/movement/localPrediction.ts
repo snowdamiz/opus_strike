@@ -2,6 +2,7 @@ import type { AbilityCastOriginHint, MovementCommand, Player, SelfMovementAuthor
 import {
   MOVEMENT_PROTOCOL_VERSION,
   ABILITY_DEFINITIONS,
+  BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE,
   CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST,
@@ -103,6 +104,30 @@ function suppressRootedMovementInput(input: InputState, nowMs: number): InputSta
     jump: false,
     crouch: false,
     sprint: false,
+  };
+}
+
+export function suppressDownedMovementInput(
+  input: InputState,
+  options: { frozen?: boolean } = {}
+): InputState {
+  const frozen = options.frozen === true;
+  return {
+    ...input,
+    moveForward: frozen ? false : input.moveForward,
+    moveBackward: frozen ? false : input.moveBackward,
+    moveLeft: frozen ? false : input.moveLeft,
+    moveRight: frozen ? false : input.moveRight,
+    jump: false,
+    crouch: false,
+    sprint: false,
+    primaryFire: false,
+    secondaryFire: false,
+    reload: false,
+    ability1: false,
+    ability2: false,
+    ultimate: false,
+    interact: false,
   };
 }
 
@@ -248,9 +273,13 @@ export function getLocalPredictionContext(player: Player): MovementPredictionCon
     }
   }
 
-  const chronosAscendantActive = isChronosAscendantActive(player);
+  const isDowned = player.state === 'downed';
+  const chronosAscendantActive = !isDowned && isChronosAscendantActive(player);
   if (chronosAscendantActive) {
     activeSpeedMultiplier *= CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER;
+  }
+  if (isDowned) {
+    activeSpeedMultiplier *= BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER;
   }
   if ((player.powerupBoostUntil ?? 0) > Date.now()) {
     activeSpeedMultiplier *= POWERUP_MOVEMENT_SPEED_MULTIPLIER;

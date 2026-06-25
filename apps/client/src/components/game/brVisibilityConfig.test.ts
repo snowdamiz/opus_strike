@@ -1,21 +1,20 @@
 import assert from 'node:assert/strict';
-import type {
-  BattleRoyalDropPlayerStatus,
-  BattleRoyalDropSnapshot,
-  VoxelMapManifest,
-} from '@voxel-strike/shared';
-import { getBattleRoyalVisibilityMode } from './battleRoyalVisibilityMode';
+import type { SafeZoneSnapshot, VoxelMapManifest } from '@voxel-strike/shared';
+import { shouldRenderBattleRoyalSafeZone } from './BattleRoyalSafeZone';
 import { getBattleRoyalTerrainLodDistances } from './battleRoyalTerrainLod';
-import { shouldHideBattleRoyalRegionForMacroTile } from './procedural/VoxelMap';
 import {
-  BATTLE_ROYAL_DEPLOYMENT_VISIBILITY_CONFIG,
+  getBattleRoyalOuterFillY,
+  shouldHideBattleRoyalRegionForMacroTile,
+} from './procedural/VoxelMap';
+import {
   BATTLE_ROYAL_VISIBILITY_CONFIG,
+  createBattleRoyalFlightVisibilityConfig,
   DEFAULT_CAMERA_FAR,
   getVisualQualityConfig,
+  scaleBattleRoyalVisibilityConfig,
 } from './visualQuality';
 
 const orderedProfiles = ['potato', 'competitive', 'balanced', 'cinematic'] as const;
-const expectedDropShipAltitude = 153;
 
 let previousCameraFar = 0;
 let previousCullDistance = 0;
@@ -23,7 +22,6 @@ let previousFullLodDistance = 0;
 
 for (const profile of orderedProfiles) {
   const config = BATTLE_ROYAL_VISIBILITY_CONFIG[profile];
-  const deploymentConfig = BATTLE_ROYAL_DEPLOYMENT_VISIBILITY_CONFIG[profile];
   assert.equal(config.terrainLodEnabled, true, `${profile} runtime config should enable terrain LOD`);
   assert.ok(config.cameraFar < DEFAULT_CAMERA_FAR, `${profile} should reduce BR camera far plane`);
   assert.equal(config.adaptiveVisibilityScale, 1, `${profile} runtime config should start at neutral adaptive scale`);
@@ -37,23 +35,6 @@ for (const profile of orderedProfiles) {
   assert.ok(config.remoteMovementEffectDistance <= config.terrainCullDistance, `${profile} remote movement effects should stay inside terrain visibility`);
   assert.ok(config.terrainImpactDistance <= config.terrainCullDistance, `${profile} terrain impacts should stay inside terrain visibility`);
   assert.ok(config.fogDensity > 0, `${profile} fog density should be positive`);
-
-  assert.equal(deploymentConfig.terrainLodEnabled, true, `${profile} deployment config should enable terrain LOD`);
-  assert.equal(deploymentConfig.adaptiveVisibilityScale, 1, `${profile} deployment config should start at neutral adaptive scale`);
-  assert.ok(deploymentConfig.cameraFar < DEFAULT_CAMERA_FAR, `${profile} deployment config should reduce the far plane`);
-  assert.ok(deploymentConfig.terrainLodFullDistance < deploymentConfig.terrainLodCoarseDistance, `${profile} deployment should keep only a full-detail bubble`);
-  assert.ok(deploymentConfig.terrainLodFullDistance + 10 <= deploymentConfig.terrainLodCoarseDistance, `${profile} deployment should leave enough room for full-to-coarse LOD`);
-  assert.ok(deploymentConfig.terrainLodCoarseDistance <= deploymentConfig.terrainLodUltraCoarseDistance, `${profile} deployment should use ultra-coarse far terrain`);
-  assert.ok(deploymentConfig.terrainLodCoarseDistance + 12 <= deploymentConfig.terrainLodUltraCoarseDistance, `${profile} deployment should leave enough room for coarse-to-ultra LOD`);
-  assert.ok(deploymentConfig.terrainLodUltraCoarseDistance <= deploymentConfig.terrainCullDistance, `${profile} deployment ultra-coarse band should reach cull range`);
-  assert.ok(deploymentConfig.terrainLodUltraCoarseDistance + 2 <= deploymentConfig.terrainCullDistance, `${profile} deployment should leave enough room before terrain culling`);
-  assert.ok(deploymentConfig.terrainCullDistance <= deploymentConfig.cameraFar, `${profile} deployment terrain should cull before the far plane`);
-  assert.ok(deploymentConfig.terrainPrebuildFullDistance >= deploymentConfig.terrainLodFullDistance, `${profile} deployment should prebuild the full-detail flight band`);
-  assert.ok(deploymentConfig.terrainPrebuildFullDistance <= deploymentConfig.terrainLodCoarseDistance, `${profile} deployment should not prebuild broad full detail`);
-  assert.equal(deploymentConfig.terrainMacroTileSize, 0, `${profile} deployment should not collapse flight terrain into macro tiles`);
-  assert.ok(deploymentConfig.dressingCullDistance <= deploymentConfig.terrainLodCoarseDistance, `${profile} deployment dressing should stay tightly capped`);
-  assert.ok(deploymentConfig.remoteMovementEffectDistance <= deploymentConfig.terrainLodCoarseDistance, `${profile} deployment remote movement effects should stay capped`);
-  assert.ok(deploymentConfig.terrainImpactDistance <= deploymentConfig.terrainLodCoarseDistance, `${profile} deployment terrain impacts should stay capped`);
 
   assert.ok(config.cameraFar >= previousCameraFar, `${profile} camera far should be monotonic by preset`);
   assert.ok(config.terrainCullDistance >= previousCullDistance, `${profile} cull distance should be monotonic by preset`);
@@ -75,74 +56,12 @@ const balanced = getVisualQualityConfig({
 });
 
 assert.equal(balanced.battleRoyalVisibility, BATTLE_ROYAL_VISIBILITY_CONFIG.balanced);
-assert.equal(balanced.battleRoyalDeploymentVisibility, BATTLE_ROYAL_DEPLOYMENT_VISIBILITY_CONFIG.balanced);
 assert.equal(balanced.effects.maxRemoteMovementEffectDistance, Number.POSITIVE_INFINITY);
 assert.equal(balanced.effects.remoteMovementEffectDensityScale, 1);
 assert.equal(balanced.effects.remoteMovementEffectBotDistanceScale, 1);
 assert.equal(balanced.effects.maxTerrainImpactRenderDistance, Number.POSITIVE_INFINITY);
 assert.equal(balanced.remotePlayers.botFullBodyDistanceScale, 1);
 assert.equal(balanced.remotePlayers.botOutlineDistanceScale, 1);
-
-function createDrop(status: BattleRoyalDropPlayerStatus, y: number, velocityY: number): BattleRoyalDropSnapshot {
-  return {
-    enabled: true,
-    phaseStartedAt: 0,
-    phaseEndsAt: 60_000,
-    serverTime: 0,
-    ship: {
-      start: { x: 0, y: expectedDropShipAltitude, z: 0 },
-      end: { x: 100, y: expectedDropShipAltitude, z: 100 },
-      position: { x: 0, y: expectedDropShipAltitude, z: 0 },
-      altitude: expectedDropShipAltitude,
-      startedAt: 0,
-      endsAt: 60_000,
-      autoDropAt: 40_000,
-      dropStartsAt: 5_000,
-      dropEndsAt: 45_000,
-      canDrop: true,
-    },
-    players: [{
-      playerId: 'local',
-      team: 'red',
-      status,
-      position: { x: 1, y, z: 1 },
-      velocity: { x: 0, y: velocityY, z: 0 },
-      droppedAt: status === 'aboard' ? null : 1_000,
-      landedAt: status === 'landed' ? 2_000 : null,
-      attachedToPlayerId: null,
-    }],
-  };
-}
-
-assert.equal(getBattleRoyalVisibilityMode({
-  gamePhase: 'countdown',
-  drop: createDrop('aboard', expectedDropShipAltitude, 0),
-  localPlayerId: 'local',
-}), 'deployment');
-
-assert.equal(getBattleRoyalVisibilityMode({
-  gamePhase: 'deployment',
-  drop: createDrop('dropping', 80, -20),
-  localPlayerId: 'local',
-}), 'deployment');
-
-assert.equal(getBattleRoyalVisibilityMode({
-  gamePhase: 'deployment',
-  drop: createDrop('dropping', 10.2, -27),
-  localPlayerId: 'local',
-}), 'deployment');
-
-assert.equal(getBattleRoyalVisibilityMode({
-  gamePhase: 'deployment',
-  drop: createDrop('landed', 10, 0),
-  localPlayerId: 'local',
-}), 'deployment');
-
-assert.equal(getBattleRoyalVisibilityMode({
-  gamePhase: 'playing',
-  drop: createDrop('landed', 10, 0),
-  localPlayerId: 'local',
-}), 'runtime');
 
 assert.equal(shouldHideBattleRoyalRegionForMacroTile({
   active: true,
@@ -167,10 +86,84 @@ const flightLodManifest = {
 } as unknown as VoxelMapManifest;
 const balancedFlightLod = getBattleRoyalTerrainLodDistances({
   manifest: flightLodManifest,
-  visibility: BATTLE_ROYAL_DEPLOYMENT_VISIBILITY_CONFIG.balanced,
-  cameraPosition: { x: 0, y: expectedDropShipAltitude, z: 0 },
+  visibility: createBattleRoyalFlightVisibilityConfig(BATTLE_ROYAL_VISIBILITY_CONFIG.balanced),
+  cameraPosition: { x: 0, y: 153, z: 0 },
 });
-assert.ok(balancedFlightLod.full >= 360, 'deployment flight should keep a readable full-detail LOD range');
-assert.ok(balancedFlightLod.coarse >= 388, 'deployment flight should keep a readable coarse LOD range');
+const balancedFlightVisibility = createBattleRoyalFlightVisibilityConfig(BATTLE_ROYAL_VISIBILITY_CONFIG.balanced);
+assert.equal(balancedFlightVisibility.terrainMacroTileSize, BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.terrainMacroTileSize);
+assert.ok(
+  balancedFlightVisibility.terrainLodFullDistance >= BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.terrainLodFullDistance * 4,
+  'flight full LOD breakpoint should be much farther than runtime'
+);
+assert.ok(
+  balancedFlightVisibility.terrainCullDistance >= BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.terrainCullDistance * 4,
+  'flight cull distance should be much farther than runtime'
+);
+assert.ok(
+  balancedFlightVisibility.cameraFar >= balancedFlightVisibility.terrainCullDistance + 90,
+  'flight camera far plane should leave headroom after terrain cull'
+);
+const scaledBalancedFlightVisibility = scaleBattleRoyalVisibilityConfig(balancedFlightVisibility, 0.68);
+assert.ok(
+  scaledBalancedFlightVisibility.terrainCullDistance >= 500,
+  'flight cull distance should still cover high deployment views after adaptive scaling'
+);
+assert.equal(
+  balancedFlightVisibility.fogDensity,
+  BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.fogDensity,
+  'flight visibility should keep runtime fog density unchanged'
+);
+assert.equal(
+  balancedFlightVisibility.farTerrainFogBlend,
+  BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.farTerrainFogBlend,
+  'flight visibility should keep runtime far-terrain fog blend unchanged'
+);
+assert.equal(
+  balancedFlightVisibility.dressingCullDistance,
+  BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.dressingCullDistance,
+  'flight visibility should not change dressing visibility'
+);
+assert.equal(
+  balancedFlightVisibility.gridFadeDistance,
+  BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.gridFadeDistance,
+  'flight visibility should not change grid fade distance'
+);
+assert.equal(
+  balancedFlightVisibility.remoteMovementEffectDistance,
+  BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.remoteMovementEffectDistance,
+  'flight visibility should not change remote movement effect visibility'
+);
+assert.equal(
+  balancedFlightVisibility.terrainImpactDistance,
+  BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.terrainImpactDistance,
+  'flight visibility should not change terrain impact visibility'
+);
+assert.equal(balancedFlightLod.full, balancedFlightVisibility.terrainLodFullDistance);
+assert.equal(getBattleRoyalOuterFillY(flightLodManifest), flightLodManifest.origin.y - 0.08);
+
+const safeZone = {
+  enabled: true,
+  center: { x: 0, y: 0, z: 0 },
+  radius: 180,
+  nextCenter: { x: 0, y: 0, z: 0 },
+  nextRadius: 120,
+  shrinking: false,
+  warning: false,
+} as SafeZoneSnapshot;
+assert.equal(shouldRenderBattleRoyalSafeZone({
+  gamePhase: 'countdown',
+  gameplayMode: 'battle_royal',
+  safeZone,
+}), false);
+assert.equal(shouldRenderBattleRoyalSafeZone({
+  gamePhase: 'deployment',
+  gameplayMode: 'battle_royal',
+  safeZone,
+}), false);
+assert.equal(shouldRenderBattleRoyalSafeZone({
+  gamePhase: 'playing',
+  gameplayMode: 'battle_royal',
+  safeZone,
+}), true);
 
 console.log('battle royal visibility config tests passed');

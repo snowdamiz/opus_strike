@@ -6,13 +6,19 @@ import { createServer } from 'http';
 import { Server, matchMaker, type ServerOptions } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { GameRoom } from './rooms/GameRoom';
+import { GlobalChatRoom } from './rooms/GlobalChatRoom';
 import { LobbyRoom } from './rooms/LobbyRoom';
 import { PartyRoom } from './rooms/PartyRoom';
 import { SocialRoom } from './rooms/SocialRoom';
 import authRoutes from './auth/routes';
 import createAdminRouter from './admin/routes';
+import cosmeticsRoutes from './cosmetics/routes';
 import matchmakingRoutes from './matchmaking/routes';
+import rewardsRoutes from './rewards/routes';
 import socialRoutes from './social/routes';
+import wagersRoutes from './wagers/routes';
+import { playerRewardService } from './rewards/service';
+import { wagerService } from './wagers/service';
 import { voiceService } from './voice/VoiceService';
 import {
   createDistributedColyseusOptions,
@@ -23,6 +29,7 @@ import {
 } from './config/colyseus';
 import { closeSharedRedisClient, getSharedRedisClient, pingRedis } from './config/redis';
 import { getAllowedClientOrigins, isCorsOriginAllowed } from './config/clientOrigins';
+import { ALLOWED_CORS_HEADER_VALUE } from './config/corsHeaders';
 import { envFlag } from './config/security';
 import {
   installFlyReplayUpgradeRouter,
@@ -105,6 +112,7 @@ const gameServer = new Server({
 
 // Register rooms
 gameServer.define('game_room', GameRoom);
+gameServer.define('global_chat_room', GlobalChatRoom);
 gameServer
   .define('party_room', PartyRoom)
   .enableRealtimeListing();
@@ -135,7 +143,7 @@ app.use((_req, res, next) => {
   }
 
   res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-CSRF-Token, X-Internal-Status-Token');
+  res.header('Access-Control-Allow-Headers', ALLOWED_CORS_HEADER_VALUE);
   res.header('Access-Control-Allow-Credentials', 'true');
 
   // Handle preflight requests
@@ -154,8 +162,11 @@ app.use(express.json());
 
 // Auth routes
 app.use('/auth', authRoutes);
+app.use('/cosmetics', cosmeticsRoutes);
 app.use('/matchmaking', matchmakingRoutes);
+app.use('/rewards', rewardsRoutes);
 app.use('/social', socialRoutes);
+app.use('/wagers', wagersRoutes);
 app.use('/admin', createAdminRouter({
   config: colyseusRuntime,
   matchMaker,
@@ -414,7 +425,11 @@ async function startServer(): Promise<void> {
     }
 
     await gameServer.listen(PORT);
+    wagerService.startBackgroundJobs();
+    playerRewardService.startBackgroundJobs();
   } catch (error) {
+    playerRewardService.stopBackgroundJobs();
+    wagerService.stopBackgroundJobs();
     await adminMachineHeartbeatHandle?.close();
     adminMachineHeartbeatHandle = null;
     await flyReplayRouteHandle?.close();
@@ -459,6 +474,8 @@ async function shutdown(signal: string): Promise<void> {
   });
 
   try {
+    playerRewardService.stopBackgroundJobs();
+    wagerService.stopBackgroundJobs();
     await adminMachineHeartbeatHandle?.close();
     adminMachineHeartbeatHandle = null;
     await flyReplayRouteHandle?.close();

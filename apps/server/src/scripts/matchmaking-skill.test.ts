@@ -6,62 +6,12 @@ import {
   getRankDivisionLabel,
   normalizeRankDivisionIndex,
 } from '../matchmaking/skill';
-import {
-  RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS,
-  getRankedTokenHoldRuntimeConfig,
-} from '../matchmaking/rankedTokenHold';
 import { createMatchmakingTicket, verifyMatchmakingTicket } from '../security/matchmakingTickets';
 import { getRankDivisionIndex } from '@voxel-strike/shared';
 
 process.env.ENTRY_TICKET_SECRET = process.env.ENTRY_TICKET_SECRET || 'matchmaking-skill-test-secret';
 
-function withEnvValue<T>(name: string, value: string | undefined, fn: () => T): T {
-  const original = process.env[name];
-  if (value === undefined) {
-    delete process.env[name];
-  } else {
-    process.env[name] = value;
-  }
-
-  try {
-    return fn();
-  } finally {
-    if (original === undefined) {
-      delete process.env[name];
-    } else {
-      process.env[name] = original;
-    }
-  }
-}
-
-assert.equal(
-  withEnvValue('RANKED_TOKEN_HOLD_TOKEN_ADDRESS', undefined, () => getRankedTokenHoldRuntimeConfig().tokenAddress),
-  RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS
-);
-assert.equal(
-  withEnvValue('RANKED_TOKEN_HOLD_TOKEN_SYMBOL', undefined, () => getRankedTokenHoldRuntimeConfig().tokenSymbol),
-  'SOL'
-);
-assert.equal(
-  withEnvValue('RANKED_TOKEN_HOLD_TOKEN_SYMBOL', '$slop', () => getRankedTokenHoldRuntimeConfig().tokenSymbol),
-  'SLOP'
-);
-assert.throws(
-  () => withEnvValue('RANKED_TOKEN_HOLD_TOKEN_SYMBOL', 'too-long-symbol', () => getRankedTokenHoldRuntimeConfig()),
-  /RANKED_TOKEN_HOLD_TOKEN_SYMBOL must be 1-12 letters or numbers/
-);
-assert.equal(
-  withEnvValue('RANKED_TOKEN_HOLD_TOKEN_ADDRESS', RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS, () => getRankedTokenHoldRuntimeConfig().tokenAddress),
-  RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS
-);
-assert.equal(
-  withEnvValue('RANKED_TOKEN_HOLD_TOKEN_ADDRESS', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', () => getRankedTokenHoldRuntimeConfig().tokenAddress),
-  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
-);
-assert.throws(
-  () => withEnvValue('RANKED_TOKEN_HOLD_TOKEN_ADDRESS', 'not-a-token-address', () => getRankedTokenHoldRuntimeConfig()),
-  /RANKED_TOKEN_HOLD_TOKEN_ADDRESS must be a valid Solana token address/
-);
+const RANKED_TEST_SPL_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 
 assert.equal(DEFAULT_RANK_DIVISION_INDEX, getRankDivisionIndex(DEFAULT_MATCHMAKING_RATING));
 assert.equal(getRankDivisionLabel(DEFAULT_RANK_DIVISION_INDEX), 'Bronze 1');
@@ -109,9 +59,8 @@ const ranked = createMatchmakingTicket({
   rankDivisionIndex: getRankDivisionIndex(strongPlayer),
   targetRankDivisionIndex: getRankDivisionIndex(strongPlayer),
   placementRemaining: 0,
-  rankedTokenAddress: RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS,
-  rankedTokenDecimals: 9,
-  rankedTokenHoldUsdCents: 2000,
+  rankedTokenAddress: RANKED_TEST_SPL_MINT,
+  rankedTokenDecimals: 6,
   rankedTokenRequiredBaseUnits: '120000000',
   rankedTokenBalanceBaseUnits: '140000000',
   rankedTokenCheckedAt: claims.issuedAt,
@@ -123,11 +72,8 @@ assert.equal(rankedVerified.gameplayMode, 'capture_the_flag');
 assert.equal(rankedVerified.botFillMode, 'manual');
 assert.equal(rankedVerified.matchPerspective, 'first_person');
 assert.equal(rankedVerified.selectedHero, 'chronos');
-assert.equal(rankedVerified.rankedEntryQuoteId, undefined);
-assert.equal(rankedVerified.coverChargeLamports, undefined);
-assert.equal(rankedVerified.rankedTokenAddress, RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS);
-assert.equal(rankedVerified.rankedTokenDecimals, 9);
-assert.equal(rankedVerified.rankedTokenHoldUsdCents, 2000);
+assert.equal(rankedVerified.rankedTokenAddress, RANKED_TEST_SPL_MINT);
+assert.equal(rankedVerified.rankedTokenDecimals, 6);
 assert.equal(rankedVerified.rankedTokenRequiredBaseUnits, '120000000');
 assert.equal(rankedVerified.rankedTokenBalanceBaseUnits, '140000000');
 

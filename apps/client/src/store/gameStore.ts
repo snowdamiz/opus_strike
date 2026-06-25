@@ -33,7 +33,6 @@ import type {
   LobbyPlayer,
   MapVoteOption,
   MapVoteRecord,
-  RankedEntryQuote,
   UserStats,
   MatchmakingStatus,
   AppPhase,
@@ -49,6 +48,14 @@ import {
 export interface PowerupPickupCollectionState {
   pickupId: string;
   collectedAt: number;
+}
+
+export type ObserverFlightSpeed = 'low' | 'med' | 'hight';
+
+export function normalizeObserverFlightSpeed(value: string): ObserverFlightSpeed | null {
+  if (value === 'low' || value === 'med' || value === 'hight') return value;
+  if (value === 'high') return 'hight';
+  return null;
 }
 
 // ============================================================================
@@ -132,6 +139,7 @@ interface CoreState {
 
   // Slide visual effects
   slideIntensity: number;
+  observerFlightSpeed: ObserverFlightSpeed;
 
 }
 
@@ -187,6 +195,7 @@ interface CoreActions {
   recordSkillCast: (timestampMs?: number) => void;
   recordPrimaryFire: (timestampMs?: number) => void;
   setSlideIntensity: (intensity: number) => void;
+  setObserverFlightSpeed: (speed: ObserverFlightSpeed) => void;
 
   // Ghost cleanup
   cleanupGhostPlayers: () => void;
@@ -212,7 +221,12 @@ function shouldKeepChronosLifelineQueued(
   previousLocalPlayer: Player | null,
   nextLocalPlayer: Player | null
 ): boolean {
-  return queued && nextLocalPlayer?.heroId === 'chronos' && previousLocalPlayer?.id === nextLocalPlayer.id;
+  return (
+    queued &&
+    nextLocalPlayer?.state === 'alive' &&
+    nextLocalPlayer.heroId === 'chronos' &&
+    previousLocalPlayer?.id === nextLocalPlayer.id
+  );
 }
 
 // ============================================================================
@@ -256,12 +270,10 @@ const coreInitialState: CoreState = {
     rankSearchDistance: null,
     queuedHumanCount: null,
     provisionalHumanCount: null,
-    requiredPlayers: null,
-    capacityBlocked: false,
-    capacityMaxPlayers: null,
-    rankedCoverChargeLamports: null,
-    rankedEntryQuoteId: null,
-  },
+        requiredPlayers: null,
+        capacityBlocked: false,
+        capacityMaxPlayers: null,
+      },
   gamePhase: 'waiting',
   matchSummary: null,
   appliedExperienceMatchId: null,
@@ -292,6 +304,7 @@ const coreInitialState: CoreState = {
   lastSkillCastAt: 0,
   lastPrimaryFireAt: 0,
   slideIntensity: 0,
+  observerFlightSpeed: 'med',
 };
 
 const initialState = {
@@ -467,12 +480,16 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     if (!localPlayer) return;
 
     const updatedPlayer = { ...localPlayer, ...updates };
-    const updatedPlayers = new Map(players);
-    updatedPlayers.set(localPlayer.id, updatedPlayer);
+    // The local player is mirrored inside the `players` Map. Update that entry in
+    // place WITHOUT allocating a new Map so the `players` reference stays stable on
+    // local transform ticks — this avoids cascading re-renders into the remote
+    // render tree (OtherPlayers/RemoteHeroBatchRenderer/RemoteMovementEffects).
+    // Subscribers that need the change still observe it through the `localPlayer`
+    // field, which receives a fresh reference below.
+    players.set(localPlayer.id, updatedPlayer);
 
     set({
       localPlayer: updatedPlayer,
-      players: updatedPlayers,
       chronosLifelineQueued: shouldKeepChronosLifelineQueued(chronosLifelineQueued, localPlayer, updatedPlayer),
     });
   },
@@ -692,6 +709,10 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
   setSlideIntensity: (intensity) => set((state) => state.slideIntensity === intensity ? state : { slideIntensity: intensity }),
 
+  setObserverFlightSpeed: (speed) => set((state) => (
+    state.observerFlightSpeed === speed ? state : { observerFlightSpeed: speed }
+  )),
+
   // ==================== RESET ACTIONS ====================
 
   reset: () => {
@@ -725,8 +746,6 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       requiredPlayers: null,
       capacityBlocked: false,
       capacityMaxPlayers: null,
-      rankedCoverChargeLamports: null,
-      rankedEntryQuoteId: null,
     },
     gameplayMode: DEFAULT_GAMEPLAY_MODE,
     matchPerspective: DEFAULT_MATCH_PERSPECTIVE,

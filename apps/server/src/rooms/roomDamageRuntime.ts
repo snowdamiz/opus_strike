@@ -6,8 +6,10 @@ import {
   type DamageHistoryStore,
   type DamageCapWindowStore,
   type PlayerDamagedEvent,
+  type PlayerDownedEvent,
   type PlayerDeathEvent,
   type Team,
+  resolveDamageDeath,
 } from '@voxel-strike/shared';
 import { Player } from './schema/Player';
 import { deactivateActiveAbility } from './abilityHandlers';
@@ -68,6 +70,13 @@ export interface RoomDamageRuntimeDeps {
   ): void;
   broadcastPlayerDamaged(target: Player, source: Player | null, payload: PlayerDamagedEvent): void;
   broadcastPlayerKilled(target: Player, killer: Player | null, payload: PlayerDeathEvent): void;
+  shouldDownLethalDamage(target: Player): boolean;
+  shouldDamageDownedPlayers(): boolean;
+  enterBattleRoyalDowned(
+    target: Player,
+    source: Player | null,
+    payload: PlayerDownedEvent
+  ): void;
   recordMatchDeath(victim: Player, killer: Player | null): void;
   recordMatchKill(killer: Player, victim: Player): void;
   recordMatchAssist(assister: Player, victim: Player): void;
@@ -97,6 +106,11 @@ export class RoomDamageRuntime {
         player.health = health;
       },
       getMaxHealth: (player) => player.maxHealth,
+      getDownedHealth: (player) => player.downedHealth,
+      setDownedHealth: (player, health) => {
+        player.downedHealth = health;
+      },
+      getDownedMaxHealth: (player) => player.downedMaxHealth,
       getSpawnProtectionUntil: (player) => player.spawnProtectionUntil || null,
       getUltimateCharge: (player) => player.ultimateCharge,
       setUltimateCharge: (player, charge) => {
@@ -186,6 +200,8 @@ export class RoomDamageRuntime {
       respawnDelayMs: this.deps.getRespawnDelayMs(),
       ultimateChargePerKill: ULTIMATE_CHARGE_PER_KILL,
       ultimateChargePerAssist: 8,
+      lethalAliveResolution: this.deps.shouldDownLethalDamage(target) ? 'downed' : 'death',
+      damageDownedPlayers: this.deps.shouldDamageDownedPlayers(),
     }, {
       target,
       source,
@@ -270,6 +286,45 @@ export class RoomDamageRuntime {
     this.deps.removeNpcPlayer(npc.id);
   }
 
+  finalEliminatePlayer(
+    target: Player,
+    sourceId: string | null,
+    damageType: string,
+    now: number,
+    context: RoomDamageContext = {}
+  ): void {
+    const source = sourceId ? this.deps.getPlayerById(sourceId) : null;
+    const death = resolveDamageDeath({
+      adapter: this.damageEngineAdapter,
+      damageHistory: this.damageHistory,
+      now,
+      assistWindowMs: DAMAGE_HISTORY_WINDOW_MS,
+      respawnDelayMs: this.deps.getRespawnDelayMs(),
+      ultimateChargePerKill: ULTIMATE_CHARGE_PER_KILL,
+      ultimateChargePerAssist: 8,
+    }, target, source);
+
+    this.applyDamageResolutionSideEffects({
+      applied: true,
+      killed: true,
+      target,
+      source,
+      sourceId: source?.id ?? null,
+      damageType,
+      damage: 0,
+      appliedDamage: 0,
+      newHealth: target.health,
+      sourcePosition: context.sourcePosition ?? null,
+      sourceDirection: context.sourceDirection ?? null,
+      personalShieldBroken: false,
+      downed: null,
+      death,
+    }, {
+      ...context,
+      damageType,
+    });
+  }
+
   private resolveConsoleNpcDamage(
     npc: Player,
     source: Player | null,
@@ -337,11 +392,31 @@ export class RoomDamageRuntime {
       sourceId: result.sourceId,
       damageType: result.damageType,
       newHealth: result.newHealth,
+      newDownedHealth: result.newDownedHealth,
       sourcePosition: result.sourcePosition,
       targetPosition: this.deps.vec3ToPlain(target.position),
       sourceHeroId: source?.heroId || null,
       targetHeroId: target.heroId || null,
     });
+
+    if (result.downed) {
+      const downed = result.downed;
+      const payload: PlayerDownedEvent = {
+        targetId: target.id,
+        sourceId: downed.sourceId,
+        damageType: result.damageType,
+        downedHealth: downed.downedHealth,
+        downedMaxHealth: downed.downedMaxHealth,
+        downedStartedAt: downed.downedAt,
+        downedRemainingMs: 0,
+        downedExpiresAt: null,
+        position: { x: target.position.x, y: target.position.y, z: target.position.z },
+        sourcePosition: result.sourcePosition,
+        sourceDirection: result.sourceDirection,
+      };
+      this.deps.enterBattleRoyalDowned(target, source ?? null, payload);
+      return;
+    }
 
     if (!result.death) return;
 

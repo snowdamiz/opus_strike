@@ -11,7 +11,7 @@ import { MessageRateLimiter } from '../rooms/rateLimiter';
 import { getCreateBotFailureReason } from '../rooms/LobbyRoom';
 import { createTeamSpawnAssignments } from '../rooms/spawnAssignments';
 import { validateMovementProposal, type MovementBounds } from '../rooms/movementValidation';
-import { validateTeamPayload } from '../rooms/protocolValidation';
+import { validateSkinPayload, validateTeamPayload } from '../rooms/protocolValidation';
 import { shouldResolveGenericSecondaryAttack } from '../rooms/combatInputRouting';
 import { Player } from '../rooms/schema/Player';
 import { AbilityStateSchema } from '../rooms/schema/Components';
@@ -149,6 +149,8 @@ function runTicketTests(): void {
 function runProtocolTests(): void {
   assert.equal(validateTeamPayload({ team: 'green' }), null);
   assert.deepEqual(validateTeamPayload({ team: 'blue' }), 'blue');
+  assert.equal(validateSkinPayload({ skinId: 'phantom.missing' }), null);
+  assert.equal(validateSkinPayload({ skinId: 'phantom.void-monarch' }), 'phantom.void-monarch');
 }
 
 function runCombatInputRoutingTests(): void {

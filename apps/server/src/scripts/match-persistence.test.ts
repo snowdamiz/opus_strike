@@ -254,8 +254,8 @@ async function runPersistenceWriteTests() {
   assert.notEqual(fake.users.get('ranked_red').competitiveRating, 800);
   const rankedRedSeason = fake.rankedSeasonStats.get('season:1:ranked_red');
   assert.ok(rankedRedSeason);
-  assert.equal(rankedRedSeason.rankedGames, 6);
-  assert.equal(rankedRedSeason.totalGames, 6);
+  assert.equal(rankedRedSeason.rankedGames, 1);
+  assert.equal(rankedRedSeason.totalGames, 1);
   assert.equal(rankedRedSeason.totalKills, baseParticipant.kills);
   assert.equal(rankedRedSeason.totalCaptures, baseParticipant.flagCaptures);
   const rankedParticipant = fake.participants.find((participant) => participant.userId === 'ranked_blue');
@@ -282,6 +282,31 @@ async function runPersistenceWriteTests() {
   });
   assert.equal(duplicateResult.alreadyPersisted, true);
   assert.equal(fake.users.get('ranked_red').rankedGames, 6);
+  assert.equal(fake.rankedSeasonStats.get('season:1:ranked_red').rankedGames, 1);
+
+  const secondRankedResult = await persistCompletedMatch(fake.prisma as any, {
+    matchId: 'ranked_match_two',
+    roomId: 'room_ranked',
+    lobbyId: 'lobby_ranked',
+    matchMode: 'ranked',
+    mapSeed: 789,
+    rankedEligible: true,
+    startedAt: joinedAt,
+    endedAt: new Date('2026-06-10T10:25:00.000Z'),
+    redScore: 3,
+    blueScore: 1,
+    winningTeam: 'red',
+    participants: [
+      { ...baseParticipant, userId: 'ranked_red', team: 'red', leftAt: null },
+      { ...baseParticipant, userId: 'ranked_blue', team: 'blue', leftAt: null },
+    ],
+  });
+  assert.equal(secondRankedResult.alreadyPersisted, false);
+  assert.equal(fake.users.get('ranked_red').rankedGames, 7);
+  const rankedRedSeasonAfterSecond = fake.rankedSeasonStats.get('season:1:ranked_red');
+  assert.equal(rankedRedSeasonAfterSecond.rankedGames, 2);
+  assert.equal(rankedRedSeasonAfterSecond.totalGames, 2);
+  assert.equal(rankedRedSeasonAfterSecond.totalKills, baseParticipant.kills * 2);
 
   const unrankedBefore = fake.users.get('unranked_red').competitiveRating;
   await persistCompletedMatch(fake.prisma as any, {

@@ -33,7 +33,7 @@ function player(heroId: string, options: { bot?: boolean } = {}): Player {
   assert.deepEqual(plan, {
     resetAbilityCooldowns: true,
     resetBotBrain: false,
-    resetPhantomPrimaryMagazine: false,
+    resetPrimaryMagazine: true,
     clearChronosAegisShield: false,
   });
 }
@@ -52,7 +52,7 @@ function player(heroId: string, options: { bot?: boolean } = {}): Player {
   assert.deepEqual(plan, {
     resetAbilityCooldowns: true,
     resetBotBrain: true,
-    resetPhantomPrimaryMagazine: true,
+    resetPrimaryMagazine: true,
     clearChronosAegisShield: false,
   });
 }
@@ -69,7 +69,7 @@ function player(heroId: string, options: { bot?: boolean } = {}): Player {
   assert.deepEqual(plan, {
     resetAbilityCooldowns: true,
     resetBotBrain: false,
-    resetPhantomPrimaryMagazine: false,
+    resetPrimaryMagazine: true,
     clearChronosAegisShield: true,
   });
 }

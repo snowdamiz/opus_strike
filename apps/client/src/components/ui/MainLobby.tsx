@@ -1,4 +1,5 @@
-import { lazy, Suspense, type CSSProperties, useCallback, useState, useEffect, useRef } from 'react';
+import { lazy, Suspense, type CSSProperties, useCallback, useMemo, useState, useEffect, useRef } from 'react';
+import { Transaction } from '@solana/web3.js';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import {
@@ -9,17 +10,31 @@ import {
 } from '../../store/partyStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useNetwork, type RankedTokenHoldStatus } from '../../contexts/NetworkContext';
-import { useWallet } from '../../contexts/WalletContext';
+import { useWallet, type WalletProviderSummary } from '../../contexts/WalletContext';
+import {
+  buildSkinPurchaseTransaction,
+  createSkinPurchaseIntent,
+  getSkinPurchaseIntent,
+  requestRewardEconomy,
+  requestSkinCatalog,
+  simulateSkinPurchaseTransaction,
+  submitSignedSkinPurchaseTransaction,
+  updateHeroSkinLoadout,
+} from '../../contexts/networkApi';
 import { HeroesPage } from './HeroesPage';
 import { StatsPage } from './StatsPage';
 import { SettingsModal } from './SettingsModal';
 import { GameDialog } from './GameDialog';
-import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
+import { GlobalChat } from './GlobalChat';
+import { HeroPreviewCanvas, type HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
 import { TopNavIconButton } from './TopNavIconButton';
 import { HeroIcon } from './HeroIcons';
+import { WalletProviderLogo } from './WalletProviderLogo';
+import { WalletProviderOptions } from './WalletProviderOptions';
 import { useUISounds } from '../../hooks/useUiAudio';
+import { useMobileDevice } from '../../hooks/useDeviceCapabilities';
 import { useServerLatencyProbe } from '../../hooks/useServerLatencyProbe';
 import { config } from '../../config/environment';
 import {
@@ -27,7 +42,9 @@ import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_MATCH_PERSPECTIVE,
   DEFAULT_RANKED_SEASON_NUMBER,
+  GAMEPLAY_MODES,
   HERO_DEFINITIONS,
+  getDefaultHeroSkinId,
   getMatchPerspectiveSettingMode,
   getGameplayModeLabel,
   getPartyMaxMembersForMode,
@@ -44,14 +61,19 @@ import type {
   MatchPerspective,
   MatchPerspectiveSettingMode,
   MatchPerspectiveSettings,
-  PartyBotFillSettings,
   PartyMemberSnapshot,
   PartyMode,
   PartyStateSnapshot,
   RankedSeasonSnapshot,
+  HeroSkinCatalogItem,
+  HeroSkinCatalogResponse,
+  HeroSkinId,
+  SkinPurchaseIntentSnapshot,
 } from '@voxel-strike/shared';
-import { DISCORD_AUTH_COLORS, HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
+import { BLAZE_UI_COLORS, DISCORD_AUTH_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
+import { usePwaInstallPrompt } from '../../pwa';
 import { PwaInstallToast } from './PwaInstallToast';
+import { getEarningRules, rewardTokenTicker, type RewardEconomy } from './earningRules';
 import {
   RUNNING_GAME_SESSION_EVENT,
   RUNNING_GAME_SESSION_STORAGE_KEY,
@@ -61,6 +83,8 @@ import { clearActivePartySession, loadActivePartySession } from '../../utils/act
 import {
   PLAY_MODE_OPTIONS,
   DEFAULT_CUSTOM_GAMEPLAY_MODE,
+  createGlobalBotFillSettings,
+  isGlobalBotFillEnabled,
   loadPlayMenuPreferences,
   savePlayMenuPreferences,
   type PlayMenuMode,
@@ -68,7 +92,9 @@ import {
 } from '../../utils/playMenuPreferences';
 import type { ServerLatencyProbeSnapshot } from '../../utils/serverLatency';
 import { requiresTutorial } from '../../utils/tutorialAccess';
+import { formatCompactTokenAmount } from '../../utils/tokenAmountFormat';
 import { RankIcon, getRankForStats } from './RankBadge';
+import { SkinRarityChrome } from './SkinRarityChrome';
 
 const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((module) => ({
   default: module.FeaturedHeroPreview,
@@ -77,11 +103,44 @@ const HERO_IDLE_ANIMATION_MODE: HeroPreviewAnimationMode = 'idle';
 const PLAY_PARTY_SLOT_COUNT = getPartyMaxMembersForMode('quick_play', DEFAULT_GAMEPLAY_MODE);
 const PING_ADVISORY_VISIBLE_MIN_MS = 100;
 const EMPTY_HERO_ID_SET = new Set<HeroId>();
+const PURCHASE_STATUS_POLL_MS = 1800;
+const PURCHASE_STATUS_POLL_ATTEMPTS = 6;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function transactionFromBase64(base64: string): Transaction {
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return Transaction.from(bytes);
+}
+
+async function waitForCreditedPurchase(intent: SkinPurchaseIntentSnapshot): Promise<SkinPurchaseIntentSnapshot> {
+  let latest = intent;
+  for (let attempt = 0; attempt < PURCHASE_STATUS_POLL_ATTEMPTS && latest.status === 'submitted'; attempt += 1) {
+    await sleep(PURCHASE_STATUS_POLL_MS);
+    latest = await getSkinPurchaseIntent(latest.intentId);
+  }
+  return latest;
+}
 
 function DiscordIcon({ className, style }: { className?: string; style?: CSSProperties }) {
   return (
     <svg className={className} style={style} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M19.54 5.34A18.2 18.2 0 0015.02 4c-.2.36-.42.84-.58 1.22a16.9 16.9 0 00-5.01 0A11.7 11.7 0 008.84 4c-1.6.27-3.12.72-4.52 1.34C1.46 9.6.68 13.74 1.07 17.81A18.5 18.5 0 006.61 20.6c.45-.61.84-1.26 1.18-1.95-.65-.24-1.27-.54-1.86-.89.16-.12.31-.24.46-.36a13.05 13.05 0 0011.14 0l.46.36c-.6.35-1.22.65-1.87.89.34.69.74 1.34 1.18 1.95a18.43 18.43 0 005.55-2.79c.46-4.72-.78-8.82-3.31-12.47zM8.52 15.3c-1.08 0-1.97-.99-1.97-2.2 0-1.22.87-2.2 1.97-2.2 1.1 0 1.99.99 1.97 2.2 0 1.21-.87 2.2-1.97 2.2zm6.96 0c-1.08 0-1.97-.99-1.97-2.2 0-1.22.87-2.2 1.97-2.2 1.1 0 1.99.99 1.97 2.2 0 1.21-.87 2.2-1.97 2.2z" />
+    </svg>
+  );
+}
+
+function LoginIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M15.75 8.75V6.5A2.5 2.5 0 0013.25 4h-6.5A2.5 2.5 0 004.25 6.5v11A2.5 2.5 0 006.75 20h6.5a2.5 2.5 0 002.5-2.5v-2.25" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M10.5 12h8.25m0 0l-3-3m3 3l-3 3" />
     </svg>
   );
 }
@@ -123,6 +182,89 @@ function DiscordSignInButton({
   );
 }
 
+function LoginButton({
+  onClick,
+  className = '',
+}: {
+  onClick: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`play-main-cta play-main-cta-login group ${className}`}
+      style={{
+        background: `linear-gradient(135deg, ${BLAZE_UI_COLORS.primary}, ${BLAZE_UI_COLORS.secondary})`,
+        boxShadow: `0 0 60px ${BLAZE_UI_COLORS.primary}40, inset 0 1px 0 rgba(255,255,255,0.22)`,
+      }}
+    >
+      <span
+        className="absolute inset-0 opacity-0 transition-opacity group-hover:opacity-100"
+        style={{ background: WALLET_AUTH_COLORS.shimmer }}
+      />
+      <span className="play-main-cta-content relative flex items-center justify-center gap-2">
+        <LoginIcon className="h-5 w-5 sm:h-6 sm:w-6" />
+        LOGIN
+      </span>
+    </button>
+  );
+}
+
+function LoginDialog({
+  walletProviders,
+  isConnecting,
+  authError,
+  onDiscordSignIn,
+  onWalletSignIn,
+  onClose,
+}: {
+  walletProviders: WalletProviderSummary[];
+  isConnecting: boolean;
+  authError: string | null;
+  onDiscordSignIn: () => void;
+  onWalletSignIn: (providerId?: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  return (
+    <GameDialog
+      title="LOGIN"
+      icon={<LoginIcon />}
+      iconClassName="login-dialog-title-icon"
+      size="sm"
+      onClose={onClose}
+      panelClassName="login-dialog-panel"
+      bodyClassName="login-dialog-body"
+    >
+      <div className="login-provider-stack">
+        <DiscordSignInButton
+          onClick={onDiscordSignIn}
+          className="login-provider-button login-provider-button-discord group"
+          iconClassName="h-5 w-5"
+        />
+
+        <div className="login-wallet-section">
+          <div className="login-wallet-section-header">
+            <span>Wallet</span>
+            <span>{walletProviders.length > 0 ? 'Detected' : 'Not detected'}</span>
+          </div>
+          <WalletProviderOptions
+            walletProviders={walletProviders}
+            isConnecting={isConnecting}
+            onSelect={onWalletSignIn}
+          />
+        </div>
+
+        {authError && (
+          <div className="login-dialog-error" role="status">
+            {authError}
+          </div>
+        )}
+      </div>
+    </GameDialog>
+  );
+}
+
 function SlopHeroesMark({ className }: { className?: string }) {
   return (
     <img
@@ -137,7 +279,6 @@ function SlopHeroesMark({ className }: { className?: string }) {
 
 // Navigation tabs
 type MainTab = 'play' | 'heroes' | 'stats' | 'loadout';
-const RANKED_NATIVE_SOL_ADDRESS = 'So11111111111111111111111111111111111111112';
 const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
   mode: 'season',
   seasonNumber: DEFAULT_RANKED_SEASON_NUMBER,
@@ -146,24 +287,34 @@ const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
 };
 const SEASON_RULES_ARIA = 'Season rewards and ranked history are tracked by season.';
 
-function formatRankedUsdCents(usdCents: number): string {
-  const normalizedCents = Number.isInteger(usdCents) && usdCents > 0 ? usdCents : 0;
-  const dollars = Math.floor(normalizedCents / 100);
-  const cents = normalizedCents % 100;
-  return cents === 0 ? `$${dollars}` : `$${dollars}.${cents.toString().padStart(2, '0')}`;
+function rankedTokenHoldRequirement(status: RankedTokenHoldStatus): string {
+  const symbol = rewardTokenTicker(status.tokenSymbol);
+  const fallbackAmount = status.requiredTokenAmount || '0';
+  const amount = formatCompactTokenAmount(status.requiredTokenAmount, fallbackAmount);
+  return `${amount} ${symbol ?? 'tokens'} hold`;
 }
 
-function rankedTokenHoldRequirement(status: RankedTokenHoldStatus): string {
-  return `${formatRankedUsdCents(status.usdCents)} hold`;
+function rankedTokenGateBlockedMessage(status: RankedTokenHoldStatus): string {
+  if (status.mode === 'locked') return status.lockedReason ?? 'Ranked is locked';
+  return `Ranked requires ${rankedTokenHoldRequirement(status)}`;
+}
+
+function getSeasonBoundaryDate(season: RankedSeasonSnapshot): Date | null {
+  if (!season.endsAt) return null;
+  const date = new Date(season.endsAt);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function formatSeasonBoundaryDate(season: RankedSeasonSnapshot): string {
   const fallback = season.mode === 'preseason' ? 'Opens TBA' : 'Ends TBA';
-  if (!season.endsAt) return fallback;
-  const date = new Date(season.endsAt);
-  if (Number.isNaN(date.getTime())) return fallback;
+  const date = getSeasonBoundaryDate(season);
+  if (!date) return fallback;
   const formattedDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   return season.mode === 'preseason' ? `Opens ${formattedDate}` : `Ends ${formattedDate}`;
+}
+
+function shouldShowSeasonRewardsPlate(season: RankedSeasonSnapshot): boolean {
+  return season.mode === 'season' && getSeasonBoundaryDate(season) !== null;
 }
 
 function getGameplayModeForPlayMode(
@@ -199,30 +350,6 @@ function getPlayModeFromParty(party: PartyStateSnapshot): PlayMenuMode {
   return party.selectedMode;
 }
 
-function getBotFillGameplayModeForPlayMode(mode: PlayMenuMode): GameplayMode | null {
-  switch (mode) {
-    case 'quick_play':
-      return DEFAULT_GAMEPLAY_MODE;
-    case 'team_deathmatch':
-      return 'team_deathmatch';
-    case 'battle_royal':
-      return 'battle_royal';
-    case 'custom':
-    case 'ranked':
-    case 'practice':
-    default:
-      return null;
-  }
-}
-
-function getBotFillEnabledForPlayMode(
-  mode: PlayMenuMode,
-  settings: PartyBotFillSettings
-): boolean {
-  const gameplayMode = getBotFillGameplayModeForPlayMode(mode);
-  return gameplayMode ? settings[gameplayMode] === true : false;
-}
-
 function getPerspectiveSettingModeForPlayMode(mode: PlayMenuMode): MatchPerspectiveSettingMode | null {
   if (mode === 'ranked') return null;
   return getMatchPerspectiveSettingMode(getPartyModeForPlayMode(mode), getGameplayModeForPlayMode(mode));
@@ -234,14 +361,6 @@ function getMatchPerspectiveForPlayMode(
 ): MatchPerspective {
   const modeKey = getPerspectiveSettingModeForPlayMode(mode);
   return modeKey ? settings[modeKey] : DEFAULT_MATCH_PERSPECTIVE;
-}
-
-function getPerspectiveLabel(perspective: MatchPerspective): string {
-  return perspective === 'third_person' ? 'Third Person' : 'First Person';
-}
-
-function getCustomGameplayModeLabel(gameplayMode: CustomLobbyGameplayMode): string {
-  return getGameplayModeLabel(gameplayMode);
 }
 
 function getPartyMemberLimitForPlayMode(
@@ -267,13 +386,13 @@ export function MainLobby() {
     quickPlay,
     rankedPlay,
     getRankedTokenHoldStatus,
-    startPracticeGame,
     startTutorialGame,
     ensureParty,
     joinParty,
     restoreParty,
     getActivePartySession,
     setPartyHero,
+    setPartySkin,
     kickPartyMember,
     setPartyMode,
     setPartyBotFill,
@@ -285,42 +404,58 @@ export function MainLobby() {
     reconnectRunningGame,
   } = useNetwork();
   const { playButtonClick } = useUISounds();
+  const isMobileDevice = useMobileDevice();
+  const pwaInstall = usePwaInstallPrompt();
   const {
     walletAddress,
+    connectWallet,
+    walletProviders,
+    isConnecting: isWalletConnecting,
     isAuthenticated,
     isNewUser,
     user,
     pendingRegistration,
     suggestedPlayerName,
-    hasPhantomAccount,
+    hasWalletAccount,
     logout,
     signInWithDiscord,
-    linkPhantom,
+    signInWithWallet,
+    linkWallet,
+    signTransaction,
     registerUser,
+    completeTutorial,
+    error: authError,
     clearError,
     clearNotice,
   } = useWallet();
 
   const [activeTab, setActiveTab] = useState<MainTab>('play');
   const [error, setError] = useState<string | null>(null);
+  const [showLoginDialog, setShowLoginDialog] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showSocial, setShowSocial] = useState(false);
-  const [matchSettingsMode, setMatchSettingsMode] = useState<PlayMenuMode | null>(null);
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
   const [playMenuPreferences, setPlayMenuPreferences] = useState<PlayMenuPreferences>(loadPlayMenuPreferences);
   const [rankedTokenHoldStatus, setRankedTokenHoldStatus] = useState<RankedTokenHoldStatus | null>(null);
   const [isRankedTokenHoldLoading, setIsRankedTokenHoldLoading] = useState(false);
   const [rankedTokenHoldError, setRankedTokenHoldError] = useState<string | null>(null);
   const [rankedSeason, setRankedSeason] = useState<RankedSeasonSnapshot>(DEFAULT_RANKED_SEASON);
+  const [rewardEconomy, setRewardEconomy] = useState<RewardEconomy | null>(null);
+  const [skinCatalog, setSkinCatalog] = useState<HeroSkinCatalogResponse | null>(null);
+  const [isSkinCatalogLoading, setIsSkinCatalogLoading] = useState(false);
+  const [skinCatalogError, setSkinCatalogError] = useState<string | null>(null);
+  const [skinActionBusyId, setSkinActionBusyId] = useState<HeroSkinId | null>(null);
   const [runningGameSession, setRunningGameSession] = useState<RunningGameSession | null>(null);
   const [isReconnectChecking, setIsReconnectChecking] = useState(false);
+  const [isMobilePwaInstalling, setIsMobilePwaInstalling] = useState(false);
+  const [isSkippingTutorial, setIsSkippingTutorial] = useState(false);
   const heroAnimationMode = HERO_IDLE_ANIMATION_MODE;
 
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [newPlayerName, setNewPlayerName] = useState('');
   const [nameError, setNameError] = useState<string | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
-  const [isLinkingPhantom, setIsLinkingPhantom] = useState(false);
+  const [isLinkingWallet, setIsLinkingWallet] = useState(false);
   const autoJoinPartyAttemptRef = useRef<string | null>(null);
   const socialBadgeCount = useSocialBadgeCount();
   const { party, localPartyUserId, partyLaunchError } = usePartyStore(
@@ -332,6 +467,22 @@ export function MainLobby() {
   );
   const localPartyMember = getPartyMember(party, localPartyUserId);
   const localPartyHeroId = localPartyMember?.heroId;
+  const loadoutByHero = useMemo(() => new Map(
+    (skinCatalog?.loadouts ?? []).map((loadout) => [loadout.heroId, loadout.skinId])
+  ), [skinCatalog]);
+  const selectedSkinId = (
+    localPartyMember?.skinId
+    ?? loadoutByHero.get(featuredHero)
+    ?? getDefaultHeroSkinId(featuredHero)
+  ) as HeroSkinId;
+  const skinsForFeaturedHero = useMemo(
+    () => (skinCatalog?.skins ?? []).filter((skin) => skin.heroId === featuredHero),
+    [featuredHero, skinCatalog]
+  );
+  const rewardTokenSymbol = rewardTokenTicker(
+    rewardEconomy?.rewardTokenSymbol
+    ?? rankedTokenHoldStatus?.tokenSymbol
+  );
   const isInParty = Boolean(party);
   const isPartyLeader = isPartyLeaderForUser(party, localPartyUserId);
   const isPartyReadyToStart = arePartyMembersReady(party);
@@ -344,6 +495,14 @@ export function MainLobby() {
     ? party.gameplayMode
     : customGameplayMode;
   const activeBotFillEnabledByMode = party?.botFillEnabledByMode ?? botFillEnabledByMode;
+  const globalBotFillEnabled = isGlobalBotFillEnabled(activeBotFillEnabledByMode);
+  const customBotFillDisabled = activePlayMode === 'custom';
+  const botFillDisabledReason = customBotFillDisabled
+    ? 'Bot fill does not apply to custom lobbies'
+    : isInParty && !isPartyLeader
+      ? 'Party leader chooses bot fill'
+      : null;
+  const displayedBotFillEnabled = customBotFillDisabled ? false : globalBotFillEnabled;
   const activePerspectiveByMode = party?.perspectiveByMode ?? perspectiveByMode;
   const currentRank = getRankForStats(userStats);
   const soloPartyMember: PartyMemberSnapshot | null = isAuthenticated
@@ -351,6 +510,7 @@ export function MainLobby() {
         userId: user?.id ?? 'local-player',
         displayName: playerName || user?.name || 'Player',
         heroId: featuredHero,
+        skinId: selectedSkinId,
         ready: false,
         connected: true,
         leader: true,
@@ -362,6 +522,7 @@ export function MainLobby() {
   const serverLatency = useServerLatencyProbe(activeTab === 'play');
   const devTutorialOverride = useSettingsStore((state) => state.settings.devTutorialOverride);
   const tutorialRequired = requiresTutorial(user?.tutorialCompletedAt, devTutorialOverride);
+  const mobilePwaInstallRequired = isMobileDevice && !pwaInstall.hasDownloaded && !pwaInstall.isInstalled;
 
   const updatePlayMenuPreferences = useCallback((updater: (current: PlayMenuPreferences) => PlayMenuPreferences) => {
     setPlayMenuPreferences((current) => {
@@ -397,6 +558,47 @@ export function MainLobby() {
 
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    let timeoutId: number | null = null;
+
+    const loadRewardEconomy = async () => {
+      try {
+        const economy = await requestRewardEconomy();
+        if (mounted) setRewardEconomy(economy);
+      } catch (err) {
+        if (mounted) console.warn('[MainLobby] Reward economy unavailable:', err);
+      } finally {
+        if (mounted) {
+          timeoutId = window.setTimeout(loadRewardEconomy, 30_000);
+        }
+      }
+    };
+
+    void loadRewardEconomy();
+
+    return () => {
+      mounted = false;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    };
+  }, []);
+
+  const loadSkinCatalog = useCallback(async () => {
+    setIsSkinCatalogLoading(true);
+    setSkinCatalogError(null);
+    try {
+      setSkinCatalog(await requestSkinCatalog());
+    } catch (err) {
+      setSkinCatalogError(err instanceof Error ? err.message : 'Failed to load skins');
+    } finally {
+      setIsSkinCatalogLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSkinCatalog();
+  }, [isAuthenticated, loadSkinCatalog, user?.id]);
 
   // Handle user authenticated - close modal and set user info
   useEffect(() => {
@@ -462,10 +664,11 @@ export function MainLobby() {
 
       const rejoinName = playerName || user.name || validSavedParty?.playerName || 'Player';
       const heroId = validSavedParty?.heroId ?? featuredHero;
+      const skinId = validSavedParty?.skinId ?? selectedSkinId;
 
       try {
         if (!partyId) throw new Error('Saved party room is unavailable');
-        await joinParty(rejoinName, partyId, heroId);
+        await joinParty(rejoinName, partyId, heroId, skinId);
       } catch {
         if (!persistentPartyId) {
           if (partyId) {
@@ -478,7 +681,7 @@ export function MainLobby() {
         }
 
         try {
-          await restoreParty(rejoinName, persistentPartyId, heroId);
+          await restoreParty(rejoinName, persistentPartyId, heroId, skinId);
         } catch {
           if (partyId) {
             clearActivePartySession(partyId);
@@ -503,12 +706,13 @@ export function MainLobby() {
     party,
     playerName,
     restoreParty,
+    selectedSkinId,
     user?.id,
     user?.name,
   ]);
 
   useEffect(() => {
-    if (activePlayMode !== 'ranked' || !isAuthenticated || !hasPhantomAccount || isRankedPreseason) {
+    if (activePlayMode !== 'ranked' || !isAuthenticated || isRankedPreseason) {
       setRankedTokenHoldStatus(null);
       setRankedTokenHoldError(null);
       setIsRankedTokenHoldLoading(false);
@@ -537,7 +741,7 @@ export function MainLobby() {
     return () => {
       isCurrent = false;
     };
-  }, [activePlayMode, getRankedTokenHoldStatus, hasPhantomAccount, isAuthenticated, isRankedPreseason, user?.walletAddress, walletAddress]);
+  }, [activePlayMode, getRankedTokenHoldStatus, isAuthenticated, isRankedPreseason, user?.walletAddress, walletAddress]);
 
   const refreshRunningGameReconnect = useCallback(() => {
     if (!isAuthenticated) {
@@ -589,11 +793,29 @@ export function MainLobby() {
     };
   }, [refreshRunningGameReconnect]);
 
+  const handleOpenLogin = useCallback(() => {
+    clearError();
+    clearNotice();
+    setShowLoginDialog(true);
+  }, [clearError, clearNotice]);
+
   const handleDiscordSignIn = () => {
     clearError();
     clearNotice();
+    setShowLoginDialog(false);
     signInWithDiscord();
   };
+
+  const handleWalletSignIn = useCallback(async (providerId?: string) => {
+    clearError();
+    clearNotice();
+    try {
+      await signInWithWallet(providerId);
+      setShowLoginDialog(false);
+    } catch {
+      // WalletContext owns the user-facing error message.
+    }
+  }, [clearError, clearNotice, signInWithWallet]);
 
   const handleRegister = async () => {
     if (!newPlayerName.trim()) {
@@ -642,43 +864,144 @@ export function MainLobby() {
     setShowProfileModal(false);
   };
 
-  const handleLinkPhantom = async (): Promise<boolean> => {
-    if (hasPhantomAccount) return true;
-    if (isLinkingPhantom) return false;
+  const handleMobilePwaInstall = useCallback(async () => {
+    if (isMobilePwaInstalling) {
+      return;
+    }
+
+    setError(null);
+    setIsMobilePwaInstalling(true);
+
+    try {
+      await pwaInstall.install();
+    } finally {
+      setIsMobilePwaInstalling(false);
+    }
+  }, [isMobilePwaInstalling, pwaInstall.install]);
+
+  const handleLinkWallet = async (): Promise<boolean> => {
+    if (hasWalletAccount) return true;
+    if (isLinkingWallet) return false;
 
     setError(null);
     clearError();
     clearNotice();
-    setIsLinkingPhantom(true);
+    setIsLinkingWallet(true);
     try {
-      const linkedUser = await linkPhantom();
+      const linkedUser = await linkWallet();
       storeSetPlayerName(linkedUser.name);
       setUser(linkedUser.id, linkedUser.name, linkedUser.stats);
       setWalletAddress(linkedUser.walletAddress ?? null);
       return Boolean(linkedUser.walletAddress);
     } catch (err: any) {
-      setError(err.message || 'Failed to connect Phantom');
+      setError(err.message || 'Failed to connect wallet');
       return false;
     } finally {
-      setIsLinkingPhantom(false);
+      setIsLinkingWallet(false);
     }
   };
 
   const shouldShowPwaInstallToast = (
     activeTab === 'play' &&
+    !isMobileDevice &&
     !showSettings &&
     !showSocial &&
     !showProfileModal
   );
 
-  const discordDisplayName = pendingRegistration?.displayName
+  const pendingRegistrationDisplayName = pendingRegistration?.displayName
+    || pendingRegistration?.walletAddress
     || user?.linkedAccounts.find((account) => account.provider === 'discord')?.displayName
-    || 'Discord';
+    || 'Connected';
+  const pendingRegistrationProviderLabel = pendingRegistration?.provider === 'wallet' ? 'Wallet' : 'Discord';
 
   const handleSelectHero = (heroId: HeroId) => {
     setFeaturedHero(heroId);
     if (isInParty) {
       setPartyHero(heroId);
+    }
+  };
+
+  const handleEquipSkin = async (skin: HeroSkinCatalogItem) => {
+    if (!isAuthenticated) {
+      handleOpenLogin();
+      return;
+    }
+    if (!skin.owned) {
+      setSkinCatalogError('Purchase this skin before equipping it.');
+      return;
+    }
+
+    setSkinActionBusyId(skin.id);
+    setSkinCatalogError(null);
+    try {
+      const loadout = await updateHeroSkinLoadout({ heroId: skin.heroId, skinId: skin.id });
+      setFeaturedHero(loadout.heroId);
+      if (isInParty && loadout.heroId === localPartyMember?.heroId) {
+        setPartySkin(loadout.skinId);
+      }
+      await loadSkinCatalog();
+    } catch (err) {
+      setSkinCatalogError(err instanceof Error ? err.message : 'Failed to equip skin');
+    } finally {
+      setSkinActionBusyId(null);
+    }
+  };
+
+  const handlePurchaseSkin = async (skin: HeroSkinCatalogItem) => {
+    if (!isAuthenticated) {
+      handleOpenLogin();
+      return;
+    }
+    if (skin.purchaseDisabledReason) {
+      setSkinCatalogError(skin.purchaseDisabledReason);
+      return;
+    }
+    if (!hasWalletAccount) {
+      const linked = await handleLinkWallet();
+      if (!linked) return;
+    }
+
+    setSkinActionBusyId(skin.id);
+    setSkinCatalogError(null);
+    try {
+      const intent = await createSkinPurchaseIntent(skin.id);
+      const connectedWallet = walletAddress ?? await connectWallet();
+      if (!connectedWallet) {
+        throw new Error('Connect a wallet before paying');
+      }
+      if (connectedWallet !== intent.walletAddress) {
+        throw new Error('Connected wallet does not match the linked account wallet');
+      }
+
+      const transactionPayload = await buildSkinPurchaseTransaction(intent.intentId);
+      const simulation = await simulateSkinPurchaseTransaction({
+        intentId: intent.intentId,
+        transactionBase64: transactionPayload.transactionBase64,
+      });
+      if (!simulation.ok) {
+        throw new Error('Purchase transaction simulation failed');
+      }
+
+      const signedTransactionBase64 = await signTransaction(transactionFromBase64(transactionPayload.transactionBase64));
+      const submitted = await submitSignedSkinPurchaseTransaction({
+        intentId: intent.intentId,
+        signedTransactionBase64,
+      });
+      const finalIntent = await waitForCreditedPurchase(submitted);
+      if (finalIntent.status !== 'credited') {
+        throw new Error(finalIntent.lastError || 'Purchase is still waiting for confirmation');
+      }
+
+      const loadout = await updateHeroSkinLoadout({ heroId: skin.heroId, skinId: skin.id });
+      if (isInParty && loadout.heroId === localPartyMember?.heroId) {
+        setPartySkin(loadout.skinId);
+      }
+      await loadSkinCatalog();
+    } catch (err) {
+      setSkinCatalogError(err instanceof Error ? err.message : 'Failed to purchase skin');
+    } finally {
+      setSkinActionBusyId(null);
     }
   };
 
@@ -693,7 +1016,7 @@ export function MainLobby() {
       return;
     }
     try {
-      await quickPlay(playerName, gameplayMode, botFillEnabled, featuredHero, matchPerspective);
+      await quickPlay(playerName, gameplayMode, botFillEnabled, featuredHero, matchPerspective, selectedSkinId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to find a match');
     }
@@ -709,6 +1032,7 @@ export function MainLobby() {
       await ensureParty(playerName, featuredHero, {
         selectedMode: 'custom',
         gameplayMode: activeCustomGameplayMode,
+        selectedSkinId,
       });
       setPartyPerspective('custom', getMatchPerspectiveForPlayMode('custom', activePerspectiveByMode));
       startParty();
@@ -728,18 +1052,23 @@ export function MainLobby() {
     }
   };
 
-  const handlePracticeGame = (mapSeed?: number) => {
-    setError(null);
-    startPracticeGame(playerName, {
-      mapSeed,
-      heroId: featuredHero,
-      matchPerspective: getMatchPerspectiveForPlayMode('practice', activePerspectiveByMode),
-    });
-  };
-
   const handleStartTutorial = () => {
     setError(null);
     startTutorialGame(playerName);
+  };
+
+  const handleSkipTutorial = async () => {
+    if (isSkippingTutorial) return;
+
+    setError(null);
+    setIsSkippingTutorial(true);
+    try {
+      await completeTutorial();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to skip tutorial');
+    } finally {
+      setIsSkippingTutorial(false);
+    }
   };
 
   const handleRankedPlay = async () => {
@@ -753,11 +1082,15 @@ export function MainLobby() {
       return;
     }
     if (!isAuthenticated) {
-      handleDiscordSignIn();
+      handleOpenLogin();
       return;
     }
-    if (!hasPhantomAccount) {
-      const linked = await handleLinkPhantom();
+    if (rankedTokenHoldStatus?.eligible === false) {
+      setError(rankedTokenGateBlockedMessage(rankedTokenHoldStatus));
+      return;
+    }
+    if (!hasWalletAccount) {
+      const linked = await handleLinkWallet();
       if (!linked) return;
       setRankedTokenHoldStatus(null);
       setRankedTokenHoldError(null);
@@ -765,12 +1098,8 @@ export function MainLobby() {
     if (isRankedTokenHoldLoading) {
       return;
     }
-    if (rankedTokenHoldStatus?.eligible === false) {
-      setError(`Ranked requires ${rankedTokenHoldRequirement(rankedTokenHoldStatus)}.`);
-      return;
-    }
     try {
-      await rankedPlay(playerName, featuredHero);
+      await rankedPlay(playerName, featuredHero, selectedSkinId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to enter ranked');
     }
@@ -793,56 +1122,20 @@ export function MainLobby() {
     ));
   };
 
-  const handleSetCustomGameplayMode = (gameplayMode: CustomLobbyGameplayMode) => {
+  const handleSetBotFillEnabled = (enabled: boolean) => {
     if (isInParty) {
       if (isPartyLeader) {
-        setPartyMode('custom', gameplayMode);
+        for (const gameplayMode of GAMEPLAY_MODES) {
+          setPartyBotFill(gameplayMode, enabled);
+        }
       }
       return;
     }
 
     updatePlayMenuPreferences((current) => (
-      current.customGameplayMode === gameplayMode ? current : {
+      isGlobalBotFillEnabled(current.botFillEnabledByMode) === enabled ? current : {
         ...current,
-        customGameplayMode: gameplayMode,
-      }
-    ));
-  };
-
-  const handleSetBotFillEnabled = (gameplayMode: GameplayMode, enabled: boolean) => {
-    if (isInParty) {
-      if (isPartyLeader) {
-        setPartyBotFill(gameplayMode, enabled);
-      }
-      return;
-    }
-
-    updatePlayMenuPreferences((current) => (
-      current.botFillEnabledByMode[gameplayMode] === enabled ? current : {
-        ...current,
-        botFillEnabledByMode: {
-          ...current.botFillEnabledByMode,
-          [gameplayMode]: enabled,
-        },
-      }
-    ));
-  };
-
-  const handleSetMatchPerspective = (modeKey: MatchPerspectiveSettingMode, perspective: MatchPerspective) => {
-    if (isInParty) {
-      if (isPartyLeader) {
-        setPartyPerspective(modeKey, perspective);
-      }
-      return;
-    }
-
-    updatePlayMenuPreferences((current) => (
-      current.perspectiveByMode[modeKey] === perspective ? current : {
-        ...current,
-        perspectiveByMode: {
-          ...current.perspectiveByMode,
-          [modeKey]: perspective,
-        },
+        botFillEnabledByMode: createGlobalBotFillSettings(enabled),
       }
     ));
   };
@@ -865,21 +1158,18 @@ export function MainLobby() {
       case 'battle_royal':
         void handleQuickPlay(
           getGameplayModeForPlayMode(activePlayMode),
-          getBotFillEnabledForPlayMode(activePlayMode, activeBotFillEnabledByMode),
+          globalBotFillEnabled,
           getMatchPerspectiveForPlayMode(activePlayMode, activePerspectiveByMode)
         );
         break;
       case 'custom':
         void handleCustomPlay();
         break;
-      case 'practice':
-        handlePracticeGame();
-        break;
       case 'quick_play':
       default:
         void handleQuickPlay(
           DEFAULT_GAMEPLAY_MODE,
-          getBotFillEnabledForPlayMode('quick_play', activeBotFillEnabledByMode),
+          globalBotFillEnabled,
           getMatchPerspectiveForPlayMode('quick_play', activePerspectiveByMode)
         );
         break;
@@ -887,8 +1177,6 @@ export function MainLobby() {
   };
 
   const handleBack = () => setAppPhase('menu');
-
-  const heroColor = HERO_COLORS[featuredHero];
 
   return (
     <div className="menu-screen bg-strike-bg">
@@ -970,11 +1258,11 @@ export function MainLobby() {
           <PlayTab
             isLoading={isLoading}
             featuredHero={featuredHero}
-            heroColor={heroColor}
             heroAnimationMode={heroAnimationMode}
             rankedSeason={rankedSeason}
+            playerName={playerName || user?.name || 'Guest'}
             isAuthenticated={isAuthenticated}
-            hasPhantomAccount={hasPhantomAccount}
+            hasWalletAccount={hasWalletAccount}
             requiresTutorial={tutorialRequired}
             error={error ?? partyLaunchError}
             party={party}
@@ -984,23 +1272,35 @@ export function MainLobby() {
             isPartyReadyToStart={isPartyReadyToStart}
             selectedPlayMode={activePlayMode}
             customGameplayMode={activeCustomGameplayMode}
-            botFillEnabledByMode={activeBotFillEnabledByMode}
-            perspectiveByMode={activePerspectiveByMode}
+            botFillEnabled={displayedBotFillEnabled}
+            botFillDisabledReason={botFillDisabledReason}
             rankedTokenHoldStatus={rankedTokenHoldStatus}
             rankedTokenHoldError={rankedTokenHoldError}
+            rewardTokenSymbol={rewardTokenSymbol}
+            rewardEconomy={rewardEconomy}
             runningGameSession={runningGameSession}
             isReconnectChecking={isReconnectChecking}
+            isSkippingTutorial={isSkippingTutorial}
             serverLatency={serverLatency}
+            mobilePwaInstallRequired={mobilePwaInstallRequired}
+            mobilePwaCanInstall={pwaInstall.canPromptInstall}
+            mobilePwaInstallInProgress={isMobilePwaInstalling}
             onSelectPlayMode={handleSelectPlayMode}
-            onOpenMatchSettings={setMatchSettingsMode}
+            onSetBotFillEnabled={handleSetBotFillEnabled}
             onPlayAction={handleSelectedPlayAction}
+            onMobilePwaInstall={handleMobilePwaInstall}
             onKickPartyMember={kickPartyMember}
             onLeaveParty={leaveParty}
             onOpenSocial={() => setShowSocial(true)}
             onStartTutorial={handleStartTutorial}
+            onSkipTutorial={handleSkipTutorial}
             onReconnect={handleReconnectGame}
-            onDiscordSignIn={handleDiscordSignIn}
+            onLogin={handleOpenLogin}
             onSelectHero={handleSelectHero}
+            onViewAllHeroes={() => {
+              playButtonClick();
+              setActiveTab('heroes');
+            }}
           />
         )}
         {activeTab === 'heroes' && (
@@ -1011,17 +1311,19 @@ export function MainLobby() {
         )}
         {activeTab === 'stats' && <StatsPage />}
         {activeTab === 'loadout' && (
-          <div className="h-full flex items-center justify-center menu-content">
-            <div className="text-center">
-              <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
-                <svg className="w-10 h-10 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                </svg>
-              </div>
-              <h2 className="font-display text-3xl text-white/40">LOADOUT</h2>
-              <p className="text-white/20 font-body mt-2">Coming Soon</p>
-            </div>
-          </div>
+          <LoadoutTab
+            featuredHero={featuredHero}
+            selectedSkinId={selectedSkinId}
+            skins={skinsForFeaturedHero}
+            catalog={skinCatalog}
+            isLoading={isSkinCatalogLoading}
+            error={skinCatalogError}
+            busySkinId={skinActionBusyId}
+            isAuthenticated={isAuthenticated}
+            onSelectHero={handleSelectHero}
+            onEquipSkin={handleEquipSkin}
+            onPurchaseSkin={handlePurchaseSkin}
+          />
         )}
       </div>
 
@@ -1037,24 +1339,20 @@ export function MainLobby() {
         />
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-      {matchSettingsMode && (
-        <MatchSettingsDialog
-          mode={matchSettingsMode}
-          heroColor={heroColor}
-          customGameplayMode={activeCustomGameplayMode}
-          botFillEnabledByMode={activeBotFillEnabledByMode}
-          perspectiveByMode={activePerspectiveByMode}
-          settingsDisabled={isInParty && !isPartyLeader}
-          onSetBotFillEnabled={handleSetBotFillEnabled}
-          onSetCustomGameplayMode={handleSetCustomGameplayMode}
-          onSetMatchPerspective={handleSetMatchPerspective}
-          onClose={() => setMatchSettingsMode(null)}
+      {showLoginDialog && !isAuthenticated && (
+        <LoginDialog
+          walletProviders={walletProviders}
+          isConnecting={isWalletConnecting}
+          authError={authError}
+          onDiscordSignIn={handleDiscordSignIn}
+          onWalletSignIn={handleWalletSignIn}
+          onClose={() => setShowLoginDialog(false)}
         />
       )}
-
       {showProfileModal && (
         <CreateProfileModal
-          pendingRegistrationDisplayName={discordDisplayName}
+          pendingRegistrationDisplayName={pendingRegistrationDisplayName}
+          pendingRegistrationProviderLabel={pendingRegistrationProviderLabel}
           newPlayerName={newPlayerName}
           nameError={nameError}
           isRegistering={isRegistering}
@@ -1069,15 +1367,249 @@ export function MainLobby() {
   );
 }
 
+function formatSkinPrice(skin: HeroSkinCatalogItem): string {
+  const price = skin.shopPrice;
+  const tokenSymbol = formatTokenSymbol(price?.tokenSymbol);
+  if (!price?.amountBaseUnits) return tokenSymbol ? `TBA ${tokenSymbol}` : 'TBA';
+  const amount = formatCompactTokenAmount(price.amountBaseUnits, price.amountBaseUnits);
+  return tokenSymbol ? `${amount} ${tokenSymbol}` : amount;
+}
+
+function formatTokenSymbol(symbol?: string | null): string {
+  const cleaned = symbol?.trim();
+  if (!cleaned) return '';
+  return cleaned.startsWith('$') ? cleaned : `$${cleaned}`;
+}
+
+function skinRarityClass(rarity: HeroSkinCatalogItem['rarity']): string {
+  return `is-${rarity}`;
+}
+
+function skinOwnershipLabel(skin: HeroSkinCatalogItem): string {
+  if (!skin.owned) return skin.availability === 'paid' ? formatSkinPrice(skin) : 'LOCKED';
+  if (skin.entitlementSource === 'free') return 'BASE ISSUE';
+  return 'OWNED';
+}
+
+function skinSupplyLabel(skin: HeroSkinCatalogItem): string | null {
+  const price = skin.shopPrice;
+  if (skin.availability !== 'paid' || skin.owned || price?.maxSupply === null || price?.maxSupply === undefined) {
+    return null;
+  }
+  if (price.remainingSupply === 0) return 'sold out';
+  return `${(price.remainingSupply ?? 0).toLocaleString('en-US')} left`;
+}
+
+function LoadoutTab({
+  featuredHero,
+  selectedSkinId,
+  skins,
+  catalog,
+  isLoading,
+  error,
+  busySkinId,
+  isAuthenticated,
+  onSelectHero,
+  onEquipSkin,
+  onPurchaseSkin,
+}: {
+  featuredHero: HeroId;
+  selectedSkinId: HeroSkinId;
+  skins: HeroSkinCatalogItem[];
+  catalog: HeroSkinCatalogResponse | null;
+  isLoading: boolean;
+  error: string | null;
+  busySkinId: HeroSkinId | null;
+  isAuthenticated: boolean;
+  onSelectHero: (heroId: HeroId) => void;
+  onEquipSkin: (skin: HeroSkinCatalogItem) => void;
+  onPurchaseSkin: (skin: HeroSkinCatalogItem) => void;
+}) {
+  const hero = HERO_DEFINITIONS[featuredHero];
+  const [previewSkinId, setPreviewSkinId] = useState<HeroSkinId>(selectedSkinId);
+  const selectedSkin = skins.find((skin) => skin.id === selectedSkinId) ?? skins[0] ?? null;
+  const previewSkin = skins.find((skin) => skin.id === previewSkinId) ?? selectedSkin;
+  const stageTitle = previewSkin?.displayName ?? hero.name;
+  const stageRarityClass = previewSkin ? skinRarityClass(previewSkin.rarity) : 'is-common';
+
+  useEffect(() => {
+    setPreviewSkinId(selectedSkinId);
+  }, [featuredHero, selectedSkinId]);
+
+  return (
+    <div className="loadout-screen menu-content-wide">
+      {error && (
+        <div className="loadout-error" role="alert">
+          {error}
+        </div>
+      )}
+
+      <div className="loadout-workbench">
+        <aside className="loadout-roster" aria-label="Choose hero">
+          <div className="loadout-roster-list">
+            {ALL_HERO_IDS.map((heroId) => {
+              const heroDefinition = HERO_DEFINITIONS[heroId];
+              const active = heroId === featuredHero;
+              const equippedSkin = catalog?.loadouts.find((loadout) => loadout.heroId === heroId)?.skinId
+                ?? getDefaultHeroSkinId(heroId);
+              const equippedSkinName = catalog?.skins.find((skin) => skin.id === equippedSkin)?.displayName ?? 'Default';
+              return (
+                <button
+                  type="button"
+                  key={heroId}
+                  onClick={() => onSelectHero(heroId)}
+                  className={`loadout-hero-tab${active ? ' is-active' : ''}`}
+                  aria-pressed={active}
+                  title={heroDefinition.name}
+                >
+                  <HeroIcon heroId={heroId} className="loadout-hero-tab-icon" />
+                  <span className="loadout-hero-tab-copy">
+                    <span className="loadout-hero-tab-name">{heroDefinition.name}</span>
+                    <span className="loadout-hero-tab-skin">{equippedSkinName}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </aside>
+
+        <section className={`loadout-stage ${stageRarityClass}`} aria-label={`${hero.name} cosmetic preview`}>
+          <SkinRarityChrome className="loadout-stage-card-chrome" />
+
+          <div className="loadout-stage-copy">
+            <div>
+              <p className="loadout-kicker">
+                {previewSkin?.owned ? 'ARMORY READY' : 'PREVIEW ACCESS'}
+              </p>
+              <div className="loadout-stage-title-line">
+                <h2 className="loadout-stage-title">{stageTitle}</h2>
+                {previewSkin && (
+                  <span className={`loadout-rarity-chip ${stageRarityClass}`}>
+                    {previewSkin.rarity}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="loadout-stage-preview">
+            <Suspense fallback={null}>
+              <FeaturedHeroPreview
+                heroId={featuredHero}
+                skinId={previewSkin?.id ?? selectedSkinId}
+                initialYaw={Math.PI - 0.18}
+                animationMode={HERO_IDLE_ANIMATION_MODE}
+                className="loadout-featured-preview"
+              />
+            </Suspense>
+          </div>
+        </section>
+
+        <section className="loadout-skin-bay" aria-label={`${hero.name} cosmetics`}>
+          <div className="loadout-skin-list">
+            {isLoading && skins.length === 0 && (
+              <div className="loadout-empty-state">
+                Loading skins...
+              </div>
+            )}
+            {!isLoading && skins.length === 0 && (
+              <div className="loadout-empty-state">
+                No hero skins available.
+              </div>
+            )}
+            {skins.map((skin) => {
+              const busy = busySkinId === skin.id;
+              const equipped = skin.id === selectedSkinId;
+              const previewed = skin.id === previewSkin?.id;
+              const canPurchase = skin.availability === 'paid' && !skin.owned && !skin.purchaseDisabledReason;
+              const disabledReason = skin.purchaseDisabledReason;
+              const supplyLabel = skinSupplyLabel(skin);
+              return (
+                <article
+                  key={skin.id}
+                  className={`loadout-skin-row ${skinRarityClass(skin.rarity)}${previewed ? ' is-previewed' : ''}${equipped ? ' is-equipped' : ''}${skin.owned ? '' : ' is-locked'}`}
+                >
+                  <SkinRarityChrome />
+
+                  <button
+                    type="button"
+                    className="loadout-skin-row-hitbox"
+                    onClick={() => setPreviewSkinId(skin.id)}
+                    aria-label={`Preview ${skin.displayName}`}
+                    aria-pressed={previewed}
+                  />
+
+                  <div className="loadout-skin-preview-button" aria-hidden="true">
+                    <HeroPreviewCanvas
+                      heroId={skin.heroId}
+                      skinId={skin.id}
+                      size="card"
+                      interactive={false}
+                      idleAnimation={false}
+                      showShadow={false}
+                      initialYaw={Math.PI - 0.28}
+                      className="loadout-skin-card-preview"
+                    />
+                  </div>
+
+                  <div className="loadout-skin-copy">
+                    <div className="loadout-skin-title-line">
+                      <h2>{skin.displayName}</h2>
+                      <span className={`loadout-rarity-chip ${skinRarityClass(skin.rarity)}`}>
+                        {skin.rarity}
+                      </span>
+                    </div>
+                    <p>{skin.subtitle}</p>
+                    <div className="loadout-skin-tags">
+                      <span>{skinOwnershipLabel(skin)}</span>
+                      {supplyLabel && <span>{supplyLabel}</span>}
+                      {equipped && <span>equipped</span>}
+                      {previewed && !equipped && <span>previewing</span>}
+                    </div>
+                  </div>
+
+                  <div className="loadout-skin-actions">
+                    {skin.owned ? (
+                      <button
+                        type="button"
+                        disabled={equipped || busy}
+                        onClick={() => onEquipSkin(skin)}
+                        className="loadout-action-button is-equip"
+                      >
+                        {equipped ? 'EQUIPPED' : busy ? 'EQUIPPING...' : 'EQUIP'}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={!canPurchase || busy || !isAuthenticated}
+                        onClick={() => onPurchaseSkin(skin)}
+                        className="loadout-action-button is-purchase"
+                      >
+                        {busy ? 'PURCHASING...' : isAuthenticated ? formatSkinPrice(skin) : 'SIGN IN'}
+                      </button>
+                    )}
+                    {disabledReason && !skin.owned && (
+                      <span className="loadout-skin-disabled-reason">{disabledReason}</span>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
 // Play Tab Component
 interface PlayTabProps {
   isLoading: boolean;
   featuredHero: HeroId;
-  heroColor: string;
   heroAnimationMode: HeroPreviewAnimationMode;
   rankedSeason: RankedSeasonSnapshot;
+  playerName: string;
   isAuthenticated: boolean;
-  hasPhantomAccount: boolean;
+  hasWalletAccount: boolean;
   requiresTutorial: boolean;
   error: string | null;
   party: PartyStateSnapshot | null;
@@ -1087,33 +1619,42 @@ interface PlayTabProps {
   isPartyReadyToStart: boolean;
   selectedPlayMode: PlayMenuMode;
   customGameplayMode: CustomLobbyGameplayMode;
-  botFillEnabledByMode: PartyBotFillSettings;
-  perspectiveByMode: MatchPerspectiveSettings;
+  botFillEnabled: boolean;
+  botFillDisabledReason: string | null;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
   rankedTokenHoldError: string | null;
+  rewardTokenSymbol: string | null;
+  rewardEconomy: RewardEconomy | null;
   runningGameSession: RunningGameSession | null;
   isReconnectChecking: boolean;
+  isSkippingTutorial: boolean;
   serverLatency: ServerLatencyProbeSnapshot | null;
+  mobilePwaInstallRequired: boolean;
+  mobilePwaCanInstall: boolean;
+  mobilePwaInstallInProgress: boolean;
   onSelectPlayMode: (mode: PlayMenuMode) => void;
-  onOpenMatchSettings: (mode: PlayMenuMode) => void;
+  onSetBotFillEnabled: (enabled: boolean) => void;
   onPlayAction: () => void;
+  onMobilePwaInstall: () => Promise<void>;
   onKickPartyMember: (userId: string) => void;
   onLeaveParty: () => void;
   onOpenSocial: () => void;
   onStartTutorial: () => void;
+  onSkipTutorial: () => void;
   onReconnect: () => void;
-  onDiscordSignIn: () => void;
+  onLogin: () => void;
   onSelectHero: (heroId: HeroId) => void;
+  onViewAllHeroes: () => void;
 }
 
 function PlayTab({
   isLoading,
   featuredHero,
-  heroColor,
   heroAnimationMode,
   rankedSeason,
+  playerName,
   isAuthenticated,
-  hasPhantomAccount,
+  hasWalletAccount,
   requiresTutorial,
   error,
   party,
@@ -1123,23 +1664,32 @@ function PlayTab({
   isPartyReadyToStart,
   selectedPlayMode,
   customGameplayMode,
-  botFillEnabledByMode,
-  perspectiveByMode,
+  botFillEnabled,
+  botFillDisabledReason,
   rankedTokenHoldStatus,
   rankedTokenHoldError,
+  rewardTokenSymbol,
+  rewardEconomy,
   runningGameSession,
   isReconnectChecking,
+  isSkippingTutorial,
   serverLatency,
+  mobilePwaInstallRequired,
+  mobilePwaCanInstall,
+  mobilePwaInstallInProgress,
   onSelectPlayMode,
-  onOpenMatchSettings,
+  onSetBotFillEnabled,
   onPlayAction,
+  onMobilePwaInstall,
   onKickPartyMember,
   onLeaveParty,
   onOpenSocial,
   onStartTutorial,
+  onSkipTutorial,
   onReconnect,
-  onDiscordSignIn,
+  onLogin,
   onSelectHero,
+  onViewAllHeroes,
 }: PlayTabProps) {
   const { playButtonClick } = useUISounds();
   const canReconnect = isAuthenticated && Boolean(runningGameSession);
@@ -1180,7 +1730,7 @@ function PlayTab({
   const gameplayModeForLimit = getGameplayModeForPlayMode(selectedPlayMode, customGameplayMode);
   const partyMemberLimit = getPartyMemberLimitForPlayMode(selectedPlayMode, gameplayModeForLimit);
   const isPartyTooLargeForMode = isInParty && partySize > partyMemberLimit;
-  const primaryDisabled = isLoading || isReconnectChecking || (
+  const primaryDisabled = isLoading || isReconnectChecking || isSkippingTutorial || (
     isInParty && isPartyLeader && !isPartyReadyToStart
   ) || partyHasDuplicateHeroes || isPartyTooLargeForMode || (
     selectedPlayMode === 'ranked' &&
@@ -1207,7 +1757,7 @@ function PlayTab({
     if (isAuthenticated) {
       onOpenSocial();
     } else {
-      onDiscordSignIn();
+      onLogin();
     }
   };
   const handleLineupKickMember = isInParty && isPartyLeader ? (userId: string) => {
@@ -1219,45 +1769,64 @@ function PlayTab({
     onLeaveParty();
   } : undefined;
 
+  const playShellClassName = [
+    'play-tab-shell h-full menu-content',
+    party ? 'is-party-mode' : 'is-solo-mode',
+    isAuthenticated ? '' : 'is-guest-mode',
+  ].filter(Boolean).join(' ');
+
   return (
-    <div className={`play-tab-shell h-full menu-content ${party ? 'is-party-mode' : 'is-solo-mode'}`}>
+    <div className={playShellClassName}>
       <PlayActionStack
         error={error}
-        heroColor={heroColor}
         isLoading={isLoading}
         isAuthenticated={isAuthenticated}
-        hasPhantomAccount={hasPhantomAccount}
+        hasWalletAccount={hasWalletAccount}
         requiresTutorial={requiresTutorial}
         rankedSeason={rankedSeason}
         selectedPlayMode={selectedPlayMode}
-        customGameplayMode={customGameplayMode}
-        botFillEnabledByMode={botFillEnabledByMode}
-        perspectiveByMode={perspectiveByMode}
+        botFillEnabled={botFillEnabled}
+        botFillDisabledReason={botFillDisabledReason}
         rankedTokenHoldStatus={rankedTokenHoldStatus}
         rankedTokenHoldError={rankedTokenHoldError}
         isInParty={isInParty}
         isPartyLeader={isPartyLeader}
         canReconnect={canReconnect}
         isReconnectChecking={isReconnectChecking}
+        isSkippingTutorial={isSkippingTutorial}
         mainPlayLabel={mainPlayLabel}
         primaryDisabled={primaryDisabled}
         primaryDisabledReason={primaryDisabledReason}
+        mobilePwaInstallRequired={mobilePwaInstallRequired}
+        mobilePwaCanInstall={mobilePwaCanInstall}
+        mobilePwaInstallInProgress={mobilePwaInstallInProgress}
         onSelectPlayMode={onSelectPlayMode}
-        onOpenMatchSettings={onOpenMatchSettings}
-        onDiscordSignIn={onDiscordSignIn}
+        onSetBotFillEnabled={onSetBotFillEnabled}
+        onLogin={onLogin}
         onReconnect={onReconnect}
         onStartTutorial={onStartTutorial}
+        onSkipTutorial={onSkipTutorial}
         onPlayAction={onPlayAction}
+        onMobilePwaInstall={onMobilePwaInstall}
       />
       <div className="play-tab-stage menu-compact-scale relative">
-        <PartyLineup
-          members={lineupMembers}
-          localUserId={lineupLocalUserId}
-          heroAnimationMode={heroAnimationMode}
-          onAddMember={handleLineupAddMember}
-          onKickMember={handleLineupKickMember}
-          onLeaveParty={handleLineupLeaveParty}
-        />
+        {isAuthenticated ? (
+          <PartyLineup
+            members={lineupMembers}
+            localUserId={lineupLocalUserId}
+            heroAnimationMode={heroAnimationMode}
+            onAddMember={handleLineupAddMember}
+            onKickMember={handleLineupKickMember}
+            onLeaveParty={handleLineupLeaveParty}
+          />
+        ) : (
+          <GuestHeroCarousel
+            selectedHero={featuredHero}
+            heroAnimationMode={heroAnimationMode}
+            onSelectHero={onSelectHero}
+            onViewAllHeroes={onViewAllHeroes}
+          />
+        )}
       </div>
       {lineupLocalMember && (
         <div className="party-lineup-controls">
@@ -1271,8 +1840,131 @@ function PlayTab({
       {serverLatency && shouldShowServerLatencyAdvisory(serverLatency) && (
         <ServerLatencyAdvisory snapshot={serverLatency} />
       )}
-      <RankedSeasonPlate season={rankedSeason} />
+      <div className="play-tab-bottom-right-stack">
+        <RankedSeasonPlate season={rankedSeason} />
+        {shouldShowSeasonRewardsPlate(rankedSeason) && (
+          <EarningRulesPlate tokenSymbol={rewardTokenSymbol} economy={rewardEconomy} />
+        )}
+        {isAuthenticated && <GlobalChat displayName={playerName} />}
+      </div>
     </div>
+  );
+}
+
+function getHeroCarouselIndex(heroId: HeroId): number {
+  const index = ALL_HERO_IDS.indexOf(heroId);
+  return index >= 0 ? index : 0;
+}
+
+function getHeroCarouselNeighbor(heroId: HeroId, offset: number): HeroId {
+  const currentIndex = getHeroCarouselIndex(heroId);
+  const nextIndex = (currentIndex + offset + ALL_HERO_IDS.length) % ALL_HERO_IDS.length;
+  return ALL_HERO_IDS[nextIndex] ?? heroId;
+}
+
+function CarouselArrowIcon({ direction }: { direction: 'previous' | 'next' }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+      {direction === 'previous' ? (
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M15 5l-7 7 7 7" />
+      ) : (
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 5l7 7-7 7" />
+      )}
+    </svg>
+  );
+}
+
+function GuestHeroCarousel({
+  selectedHero,
+  heroAnimationMode,
+  onSelectHero,
+  onViewAllHeroes,
+}: {
+  selectedHero: HeroId;
+  heroAnimationMode: HeroPreviewAnimationMode;
+  onSelectHero: (heroId: HeroId) => void;
+  onViewAllHeroes: () => void;
+}) {
+  const selectedHeroIndex = getHeroCarouselIndex(selectedHero);
+  const selectedHeroDefinition = HERO_DEFINITIONS[selectedHero];
+  const handleCycleHero = (offset: number) => {
+    onSelectHero(getHeroCarouselNeighbor(selectedHero, offset));
+  };
+
+  return (
+    <section className="guest-hero-carousel" aria-label="Hero carousel">
+      <button
+        type="button"
+        className="guest-hero-carousel-arrow is-previous"
+        aria-label="Previous hero"
+        title="Previous hero"
+        onClick={() => handleCycleHero(-1)}
+      >
+        <CarouselArrowIcon direction="previous" />
+      </button>
+
+      <article className="guest-hero-slot" aria-live="polite">
+        <Suspense fallback={null}>
+          <FeaturedHeroPreview
+            heroId={selectedHero}
+            initialYaw={Math.PI - 0.12}
+            animationMode={heroAnimationMode}
+            className="guest-hero-preview"
+          />
+        </Suspense>
+        <div className="guest-hero-labels">
+          <div className="guest-hero-identity">
+            <HeroIcon heroId={selectedHero} className="guest-hero-identity-icon" />
+            <h2 className="guest-hero-name">{selectedHeroDefinition.name}</h2>
+          </div>
+          <p className="guest-hero-count">
+            HERO {selectedHeroIndex + 1}/{ALL_HERO_IDS.length}
+          </p>
+        </div>
+      </article>
+
+      <button
+        type="button"
+        className="guest-hero-carousel-arrow is-next"
+        aria-label="Next hero"
+        title="Next hero"
+        onClick={() => handleCycleHero(1)}
+      >
+        <CarouselArrowIcon direction="next" />
+      </button>
+
+      <div className="guest-hero-carousel-controls">
+        <div className="guest-hero-quick-list" aria-label="Choose hero">
+          {ALL_HERO_IDS.map((heroId) => {
+            const selected = heroId === selectedHero;
+            return (
+              <button
+                key={heroId}
+                type="button"
+                className={`guest-hero-quick-button${selected ? ' is-selected' : ''}`}
+                aria-pressed={selected}
+                aria-label={`Select ${HERO_DEFINITIONS[heroId].name}`}
+                title={HERO_DEFINITIONS[heroId].name}
+                onClick={() => {
+                  if (!selected) {
+                    onSelectHero(heroId);
+                  }
+                }}
+              >
+                <HeroIcon heroId={heroId} size={21} />
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          className="guest-hero-view-all"
+          onClick={onViewAllHeroes}
+        >
+          VIEW ALL HEROES
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -1308,7 +2000,6 @@ function PartyLineup({
     <div className="party-lineup-stage">
       <div className="party-lineup-grid">
         {visibleMembers.map((member) => {
-          const heroColor = HERO_COLORS[member.heroId];
           const hero = HERO_DEFINITIONS[member.heroId];
           const isLocalMember = member.userId === localUserId;
           const kickAction = !isLocalMember && onKickMember
@@ -1330,7 +2021,7 @@ function PartyLineup({
               <Suspense fallback={null}>
                 <FeaturedHeroPreview
                   heroId={member.heroId}
-                  accentColor={heroColor}
+                  skinId={member.skinId}
                   initialYaw={Math.PI - 0.12}
                   animationMode={heroAnimationMode}
                   rank={member.rank}
@@ -1423,7 +2114,6 @@ function PartyHeroPicker({
       {ALL_HERO_IDS.map((heroId) => {
         const selected = heroId === selectedHero;
         const locked = !selected && lockedHeroIds.has(heroId);
-        const heroColor = HERO_COLORS[heroId];
         return (
           <button
             key={heroId}
@@ -1438,7 +2128,7 @@ function PartyHeroPicker({
             }}
             className={`party-hero-picker-button${selected ? ' is-selected' : ''}${locked ? ' is-locked' : ''}`}
             style={selected ? {
-              '--party-hero-accent': heroColor,
+              '--party-hero-accent': BLAZE_UI_COLORS.primary,
             } as CSSProperties : undefined}
           >
             <HeroIcon heroId={heroId} size={21} />
@@ -1535,7 +2225,7 @@ function getPrimaryDisabledReason(input: {
   if (input.selectedPlayMode !== 'ranked' || input.requiresTutorial) return null;
   if (input.rankedSeason.mode === 'preseason') return formatSeasonBoundaryDate(input.rankedSeason);
   if (input.rankedTokenHoldStatus?.eligible === false) {
-    return `Ranked requires ${rankedTokenHoldRequirement(input.rankedTokenHoldStatus)}`;
+    return rankedTokenGateBlockedMessage(input.rankedTokenHoldStatus);
   }
   return null;
 }
@@ -1586,11 +2276,11 @@ function PlayModeIcon({ mode }: { mode: PlayMenuMode }) {
   }
 }
 
-function SettingsCogIcon() {
+function DownloadPwaIcon() {
   return (
     <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.9} d="M10.5 4.2c.38-1.58 2.62-1.58 3 0a1.55 1.55 0 002.32.96c1.39-.85 2.98.74 2.13 2.13a1.55 1.55 0 00.96 2.32c1.58.38 1.58 2.62 0 3a1.55 1.55 0 00-.96 2.32c.85 1.39-.74 2.98-2.13 2.13a1.55 1.55 0 00-2.32.96c-.38 1.58-2.62 1.58-3 0a1.55 1.55 0 00-2.32-.96c-1.39.85-2.98-.74-2.13-2.13a1.55 1.55 0 00-.96-2.32c-1.58-.38-1.58-2.62 0-3a1.55 1.55 0 00.96-2.32c-.85-1.39.74-2.98 2.13-2.13.9.55 2.07.06 2.32-.96z" />
-      <circle cx="12" cy="12" r="2.35" strokeWidth={1.9} />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3v10m0 0l4-4m-4 4L8 9" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M5 14v3.5A2.5 2.5 0 007.5 20h9a2.5 2.5 0 002.5-2.5V14" />
     </svg>
   );
 }
@@ -1598,225 +2288,107 @@ function SettingsCogIcon() {
 function getModeTitle(input: {
   mode: PlayMenuMode;
   isAuthenticated: boolean;
-  hasPhantomAccount: boolean;
+  hasWalletAccount: boolean;
   rankedSeason: RankedSeasonSnapshot;
   requiresTutorial: boolean;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
   rankedTokenHoldError: string | null;
 }): string {
-  if (input.requiresTutorial && input.mode !== 'practice') return 'Complete the tutorial before online play';
+  if (input.requiresTutorial && input.mode !== 'practice') return 'Start or skip the tutorial before online play';
 
   if (input.mode !== 'ranked') return getPlayModeLabel(input.mode);
   if (input.rankedSeason.mode === 'preseason') return 'Ranked is disabled during Pre-season';
-  if (input.isAuthenticated && !input.hasPhantomAccount) return 'Connect Phantom before entering ranked';
   if (input.rankedTokenHoldStatus?.eligible === false) {
-    return `Ranked requires ${rankedTokenHoldRequirement(input.rankedTokenHoldStatus)}`;
+    return rankedTokenGateBlockedMessage(input.rankedTokenHoldStatus);
   }
+  if (input.isAuthenticated && !input.hasWalletAccount) return 'Connect a wallet before entering ranked';
   return input.rankedTokenHoldError ?? 'Competitive queue';
-}
-
-function MatchSettingsDialog({
-  mode,
-  heroColor,
-  customGameplayMode,
-  botFillEnabledByMode,
-  perspectiveByMode,
-  settingsDisabled,
-  onSetBotFillEnabled,
-  onSetCustomGameplayMode,
-  onSetMatchPerspective,
-  onClose,
-}: {
-  mode: PlayMenuMode;
-  heroColor: string;
-  customGameplayMode: CustomLobbyGameplayMode;
-  botFillEnabledByMode: PartyBotFillSettings;
-  perspectiveByMode: MatchPerspectiveSettings;
-  settingsDisabled: boolean;
-  onSetBotFillEnabled: (gameplayMode: GameplayMode, enabled: boolean) => void;
-  onSetCustomGameplayMode: (gameplayMode: CustomLobbyGameplayMode) => void;
-  onSetMatchPerspective: (modeKey: MatchPerspectiveSettingMode, perspective: MatchPerspective) => void;
-  onClose: () => void;
-}) {
-  const perspectiveMode = getPerspectiveSettingModeForPlayMode(mode);
-  if (!perspectiveMode) return null;
-
-  const botFillGameplayMode = getBotFillGameplayModeForPlayMode(mode);
-  const botFillEnabled = botFillGameplayMode
-    ? botFillEnabledByMode[botFillGameplayMode] === true
-    : false;
-  const selectedPerspective = perspectiveByMode[perspectiveMode] ?? DEFAULT_MATCH_PERSPECTIVE;
-  const disabledTitle = settingsDisabled ? 'Party leader chooses match settings' : undefined;
-  const botFillStatus = botFillEnabled ? 'Enabled' : 'Disabled';
-  const isCustomMode = mode === 'custom';
-  const customModeIsTeamDeathmatch = customGameplayMode === 'team_deathmatch';
-  const nextCustomGameplayMode: CustomLobbyGameplayMode = customModeIsTeamDeathmatch
-    ? 'capture_the_flag'
-    : 'team_deathmatch';
-  const selectedCustomGameplayModeLabel = getCustomGameplayModeLabel(customGameplayMode);
-  const nextCustomGameplayModeLabel = getCustomGameplayModeLabel(nextCustomGameplayMode);
-  const perspectiveIsThirdPerson = selectedPerspective === 'third_person';
-  const nextPerspective: MatchPerspective = perspectiveIsThirdPerson ? 'first_person' : 'third_person';
-  const selectedPerspectiveLabel = getPerspectiveLabel(selectedPerspective);
-  const nextPerspectiveLabel = getPerspectiveLabel(nextPerspective);
-
-  return (
-    <GameDialog
-      title={`${getPlayModeLabel(mode)} SETTINGS`}
-      size="sm"
-      icon={<SettingsCogIcon />}
-      iconClassName="match-settings-dialog-icon"
-      panelClassName="match-settings-dialog"
-      bodyClassName="p-0"
-      style={{ '--match-settings-accent': heroColor } as CSSProperties}
-      onClose={onClose}
-    >
-      <div className="match-settings-panel">
-        {isCustomMode ? (
-          <section className="match-settings-row">
-            <div className="match-settings-row-copy">
-              <span className="match-settings-row-title">Game Mode</span>
-              <span className="match-settings-row-status is-enabled">
-                {selectedCustomGameplayModeLabel}
-              </span>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={customModeIsTeamDeathmatch}
-              aria-label={`Switch custom game mode to ${nextCustomGameplayModeLabel}`}
-              disabled={settingsDisabled}
-              className={`match-settings-toggle is-wide${customModeIsTeamDeathmatch ? ' is-enabled' : ''}`}
-              title={disabledTitle ?? `Switch to ${nextCustomGameplayModeLabel}`}
-              onClick={() => onSetCustomGameplayMode(nextCustomGameplayMode)}
-            >
-              <span className="match-settings-toggle-indicator" aria-hidden="true" />
-              <span className={`match-settings-toggle-option${!customModeIsTeamDeathmatch ? ' is-active' : ''}`} aria-hidden="true">
-                CTF
-              </span>
-              <span className={`match-settings-toggle-option${customModeIsTeamDeathmatch ? ' is-active' : ''}`} aria-hidden="true">
-                TDM
-              </span>
-            </button>
-          </section>
-        ) : botFillGameplayMode && (
-          <section className="match-settings-row">
-            <div className="match-settings-row-copy">
-              <span className="match-settings-row-title">Bot Fill</span>
-              <span className={`match-settings-row-status${botFillEnabled ? ' is-enabled' : ''}`}>
-                {botFillStatus}
-              </span>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={botFillEnabled}
-              aria-label={`${botFillEnabled ? 'Disable' : 'Enable'} bot fill`}
-              disabled={settingsDisabled}
-              className={`match-settings-toggle${botFillEnabled ? ' is-enabled' : ''}`}
-              title={disabledTitle ?? `${botFillEnabled ? 'Disable' : 'Enable'} bots`}
-              onClick={() => onSetBotFillEnabled(botFillGameplayMode, !botFillEnabled)}
-            >
-              <span className="match-settings-toggle-indicator" aria-hidden="true" />
-              <span className={`match-settings-toggle-option${!botFillEnabled ? ' is-active' : ''}`} aria-hidden="true">
-                Off
-              </span>
-              <span className={`match-settings-toggle-option${botFillEnabled ? ' is-active' : ''}`} aria-hidden="true">
-                On
-              </span>
-            </button>
-          </section>
-        )}
-
-        <section className="match-settings-row">
-          <div className="match-settings-row-copy">
-            <span className="match-settings-row-title">Perspective</span>
-            <span className="match-settings-row-status">{selectedPerspectiveLabel}</span>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={perspectiveIsThirdPerson}
-            aria-label={`Switch to ${nextPerspectiveLabel}`}
-            disabled={settingsDisabled}
-            className={`match-settings-toggle is-wide${perspectiveIsThirdPerson ? ' is-enabled' : ''}`}
-            title={disabledTitle ?? `Switch to ${nextPerspectiveLabel}`}
-            onClick={() => onSetMatchPerspective(perspectiveMode, nextPerspective)}
-          >
-            <span className="match-settings-toggle-indicator" aria-hidden="true" />
-            <span className={`match-settings-toggle-option${!perspectiveIsThirdPerson ? ' is-active' : ''}`} aria-hidden="true">
-              First
-            </span>
-            <span className={`match-settings-toggle-option${perspectiveIsThirdPerson ? ' is-active' : ''}`} aria-hidden="true">
-              Third
-            </span>
-          </button>
-        </section>
-      </div>
-    </GameDialog>
-  );
 }
 
 function PlayActionStack({
   error,
-  heroColor,
   isLoading,
   isAuthenticated,
-  hasPhantomAccount,
+  hasWalletAccount,
   requiresTutorial,
   rankedSeason,
   selectedPlayMode,
-  customGameplayMode,
-  botFillEnabledByMode,
-  perspectiveByMode,
+  botFillEnabled,
+  botFillDisabledReason,
   rankedTokenHoldStatus,
   rankedTokenHoldError,
   isInParty,
   isPartyLeader,
   canReconnect,
   isReconnectChecking,
+  isSkippingTutorial,
   mainPlayLabel,
   primaryDisabled,
   primaryDisabledReason,
+  mobilePwaInstallRequired,
+  mobilePwaCanInstall,
+  mobilePwaInstallInProgress,
   onSelectPlayMode,
-  onOpenMatchSettings,
-  onDiscordSignIn,
+  onSetBotFillEnabled,
+  onLogin,
   onReconnect,
   onStartTutorial,
+  onSkipTutorial,
   onPlayAction,
+  onMobilePwaInstall,
 }: {
   error: string | null;
-  heroColor: string;
   isLoading: boolean;
   isAuthenticated: boolean;
-  hasPhantomAccount: boolean;
+  hasWalletAccount: boolean;
   requiresTutorial: boolean;
   rankedSeason: RankedSeasonSnapshot;
   selectedPlayMode: PlayMenuMode;
-  customGameplayMode: CustomLobbyGameplayMode;
-  botFillEnabledByMode: PartyBotFillSettings;
-  perspectiveByMode: MatchPerspectiveSettings;
+  botFillEnabled: boolean;
+  botFillDisabledReason: string | null;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
   rankedTokenHoldError: string | null;
   isInParty: boolean;
   isPartyLeader: boolean;
   canReconnect: boolean;
   isReconnectChecking: boolean;
+  isSkippingTutorial: boolean;
   mainPlayLabel: string;
   primaryDisabled: boolean;
   primaryDisabledReason: string | null;
+  mobilePwaInstallRequired: boolean;
+  mobilePwaCanInstall: boolean;
+  mobilePwaInstallInProgress: boolean;
   onSelectPlayMode: (mode: PlayMenuMode) => void;
-  onOpenMatchSettings: (mode: PlayMenuMode) => void;
-  onDiscordSignIn: () => void;
+  onSetBotFillEnabled: (enabled: boolean) => void;
+  onLogin: () => void;
   onReconnect: () => void;
   onStartTutorial: () => void;
+  onSkipTutorial: () => void;
   onPlayAction: () => void;
+  onMobilePwaInstall: () => Promise<void>;
 }) {
   const { playButtonClick } = useUISounds();
+  const mobilePwaDisabledReason = mobilePwaInstallRequired && !mobilePwaCanInstall
+    ? 'PWA install is required on mobile'
+    : null;
+  const effectiveMainPlayLabel = mobilePwaInstallRequired
+    ? mobilePwaInstallInProgress
+      ? 'OPENING...'
+      : 'DOWNLOAD PWA'
+    : mainPlayLabel;
+  const effectivePrimaryDisabled = mobilePwaInstallRequired
+    ? mobilePwaInstallInProgress || !mobilePwaCanInstall
+    : primaryDisabled;
+  const effectivePrimaryDisabledReason = mobilePwaDisabledReason ?? (
+    mobilePwaInstallRequired ? null : primaryDisabledReason
+  );
 
   const runPrimaryAction = () => {
     playButtonClick();
-    if (canReconnect) {
+    if (mobilePwaInstallRequired) {
+      void onMobilePwaInstall();
+    } else if (canReconnect) {
       onReconnect();
     } else if (requiresTutorial) {
       onStartTutorial();
@@ -1824,20 +2396,21 @@ function PlayActionStack({
       onPlayAction();
     }
   };
+  const runSkipTutorial = () => {
+    playButtonClick();
+    onSkipTutorial();
+  };
 
   return (
     <div className="play-action-stack">
-      <PlayPanelHeading />
       <PlayModeSelector
-        heroColor={heroColor}
         isAuthenticated={isAuthenticated}
-        hasPhantomAccount={hasPhantomAccount}
+        hasWalletAccount={hasWalletAccount}
         requiresTutorial={requiresTutorial}
         rankedSeason={rankedSeason}
         selectedPlayMode={selectedPlayMode}
-        customGameplayMode={customGameplayMode}
-        botFillEnabledByMode={botFillEnabledByMode}
-        perspectiveByMode={perspectiveByMode}
+        botFillEnabled={botFillEnabled}
+        botFillDisabledReason={botFillDisabledReason}
         rankedTokenHoldStatus={rankedTokenHoldStatus}
         rankedTokenHoldError={rankedTokenHoldError}
         modeReadOnly={isInParty && !isPartyLeader}
@@ -1845,9 +2418,9 @@ function PlayActionStack({
           playButtonClick();
           onSelectPlayMode(mode);
         }}
-        onOpenMatchSettings={(mode) => {
+        onSetBotFillEnabled={(enabled) => {
           playButtonClick();
-          onOpenMatchSettings(mode);
+          onSetBotFillEnabled(enabled);
         }}
       />
       {error && (
@@ -1855,17 +2428,17 @@ function PlayActionStack({
           {error}
         </div>
       )}
-      {isAuthenticated ? (
+      {mobilePwaInstallRequired || isAuthenticated ? (
         <div className="play-main-cta-wrap">
           <button
             type="button"
             onClick={runPrimaryAction}
-            disabled={primaryDisabled}
+            disabled={effectivePrimaryDisabled}
             className="play-main-cta group"
-            aria-describedby={primaryDisabledReason ? 'play-main-cta-disabled-reason' : undefined}
+            aria-describedby={effectivePrimaryDisabledReason ? 'play-main-cta-disabled-reason' : undefined}
             style={{
-              background: `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`,
-              boxShadow: `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`,
+              background: `linear-gradient(135deg, ${BLAZE_UI_COLORS.primary}, ${BLAZE_UI_COLORS.primary}dd)`,
+              boxShadow: `0 0 60px ${BLAZE_UI_COLORS.primary}40, inset 0 1px 0 rgba(255,255,255,0.2)`,
             }}
           >
             <span
@@ -1873,33 +2446,44 @@ function PlayActionStack({
               style={{ background: WALLET_AUTH_COLORS.shimmer }}
             />
             <span className="play-main-cta-content relative flex items-center justify-center gap-2">
-              {canReconnect ? (
+              {mobilePwaInstallRequired ? (
+                <DownloadPwaIcon />
+              ) : canReconnect ? (
                 <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4v6h6M20 20v-6h-6M5.5 14a7 7 0 0012.1 2.4M18.5 10A7 7 0 006.4 7.6" />
                 </svg>
               ) : (
                 <PlayModeIcon mode={selectedPlayMode} />
               )}
-              {mainPlayLabel}
+              {effectiveMainPlayLabel}
             </span>
           </button>
-          {primaryDisabledReason && (
+          {effectivePrimaryDisabledReason && (
             <div
               id="play-main-cta-disabled-reason"
               className="play-disabled-reason"
               role="status"
             >
-              {primaryDisabledReason}
+              {effectivePrimaryDisabledReason}
             </div>
+          )}
+          {requiresTutorial && !mobilePwaInstallRequired && (
+            <button
+              type="button"
+              onClick={runSkipTutorial}
+              disabled={isLoading || isSkippingTutorial}
+              className="play-secondary-cta"
+            >
+              {isSkippingTutorial ? 'SKIPPING...' : 'SKIP TUTORIAL'}
+            </button>
           )}
         </div>
       ) : (
-        <DiscordSignInButton
+        <LoginButton
           onClick={() => {
             playButtonClick();
-            onDiscordSignIn();
+            onLogin();
           }}
-          className="play-main-cta play-main-cta-discord group"
         />
       )}
     </div>
@@ -1907,80 +2491,58 @@ function PlayActionStack({
 }
 
 function PlayModeSelector({
-  heroColor,
   isAuthenticated,
-  hasPhantomAccount,
+  hasWalletAccount,
   requiresTutorial,
   rankedSeason,
   selectedPlayMode,
-  customGameplayMode,
-  botFillEnabledByMode,
-  perspectiveByMode,
+  botFillEnabled,
+  botFillDisabledReason,
   rankedTokenHoldStatus,
   rankedTokenHoldError,
   modeReadOnly,
   onSelectMode,
-  onOpenMatchSettings,
+  onSetBotFillEnabled,
 }: {
-  heroColor: string;
   isAuthenticated: boolean;
-  hasPhantomAccount: boolean;
+  hasWalletAccount: boolean;
   requiresTutorial: boolean;
   rankedSeason: RankedSeasonSnapshot;
   selectedPlayMode: PlayMenuMode;
-  customGameplayMode: CustomLobbyGameplayMode;
-  botFillEnabledByMode: PartyBotFillSettings;
-  perspectiveByMode: MatchPerspectiveSettings;
+  botFillEnabled: boolean;
+  botFillDisabledReason: string | null;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
   rankedTokenHoldError: string | null;
   modeReadOnly: boolean;
   onSelectMode: (mode: PlayMenuMode) => void;
-  onOpenMatchSettings: (mode: PlayMenuMode) => void;
+  onSetBotFillEnabled: (enabled: boolean) => void;
 }) {
   return (
-    <div className="play-mode-selector" role="radiogroup" aria-label="Match mode">
+    <div className="play-mode-selector" aria-label="Match mode and options">
       {PLAY_MODE_OPTIONS.map((mode) => {
         const selected = mode === selectedPlayMode;
-        const botFillGameplayMode = getBotFillGameplayModeForPlayMode(mode);
-        const botFillEnabled = botFillGameplayMode
-          ? botFillEnabledByMode[botFillGameplayMode] === true
-          : false;
-        const perspectiveSettingMode = getPerspectiveSettingModeForPlayMode(mode);
-        const perspective = perspectiveSettingMode
-          ? perspectiveByMode[perspectiveSettingMode]
-          : DEFAULT_MATCH_PERSPECTIVE;
-        const showSettingsButton = selected && Boolean(perspectiveSettingMode);
-        const settingsTitle = mode === 'custom'
-          ? `Match settings: ${getCustomGameplayModeLabel(customGameplayMode)}, ${getPerspectiveLabel(perspective)}`
-          : `Match settings: ${getPerspectiveLabel(perspective)}`;
         const isRanked = mode === 'ranked';
         const locked = isRanked && (
           rankedSeason.mode === 'preseason' ||
-          (isAuthenticated && hasPhantomAccount && rankedTokenHoldStatus?.eligible === false)
+          (isAuthenticated && rankedTokenHoldStatus?.eligible === false)
         );
         const title = getModeTitle({
           mode,
           isAuthenticated,
-          hasPhantomAccount,
+          hasWalletAccount,
           rankedSeason,
           requiresTutorial,
           rankedTokenHoldStatus,
           rankedTokenHoldError,
         });
-        const optionStyle = selected ? {
-          '--play-mode-accent': heroColor,
-        } as CSSProperties : undefined;
-
         return (
           <div
             key={mode}
-            className={`play-mode-option-shell${showSettingsButton ? ' has-settings-button' : ''}`}
-            style={optionStyle}
+            className="play-mode-option-shell"
           >
             <button
               type="button"
-              role="radio"
-              aria-checked={selected}
+              aria-pressed={selected}
               disabled={modeReadOnly}
               onClick={() => onSelectMode(mode)}
               className={`play-mode-option${selected ? ' is-selected' : ''}${locked ? ' is-locked' : ''}`}
@@ -1993,24 +2555,54 @@ function PlayModeSelector({
                 <span className="play-mode-option-title">{getPlayModeLabel(mode)}</span>
               </span>
             </button>
-            {showSettingsButton && (
-              <button
-                type="button"
-                aria-label={`Open match settings for ${getPlayModeLabel(mode)}`}
-                disabled={modeReadOnly}
-                className={`play-mode-settings-button${botFillEnabled ? ' has-bots-enabled' : ''}${perspective === 'third_person' ? ' has-third-person' : ''}`}
-                title={modeReadOnly ? 'Party leader chooses match settings' : settingsTitle}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onOpenMatchSettings(mode);
-                }}
-              >
-                <SettingsCogIcon />
-              </button>
-            )}
           </div>
         );
       })}
+      <BotFillToggle
+        enabled={botFillEnabled}
+        disabledReason={botFillDisabledReason}
+        onToggle={onSetBotFillEnabled}
+      />
+    </div>
+  );
+}
+
+function BotFillToggle({
+  enabled,
+  disabledReason,
+  onToggle,
+}: {
+  enabled: boolean;
+  disabledReason: string | null;
+  onToggle: (enabled: boolean) => void;
+}) {
+  const disabled = disabledReason !== null;
+
+  return (
+    <div className="play-mode-option-shell">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={enabled}
+        disabled={disabled}
+        className={`play-mode-option play-mode-bot-fill-toggle${enabled ? ' is-enabled' : ''}`}
+        title={disabledReason ?? `${enabled ? 'Disable' : 'Enable'} bot fill`}
+        onClick={() => onToggle(!enabled)}
+      >
+        <span className="play-mode-option-icon" aria-hidden="true">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M8.5 11.5a3.25 3.25 0 100-6.5 3.25 3.25 0 000 6.5zM3.5 19.25c.58-3.22 2.38-5.05 5-5.05s4.42 1.83 5 5.05" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M15.4 9.25a2.55 2.55 0 100-5.1M14.6 13.95c2.6.25 4.3 2 4.9 5.3" />
+          </svg>
+        </span>
+        <span className="play-mode-option-copy">
+          <span className="play-mode-option-title">BOT FILL</span>
+          <span className="play-mode-bot-fill-status">{enabled ? 'ON' : 'OFF'}</span>
+        </span>
+        <span className="play-mode-bot-fill-switch" aria-hidden="true">
+          <span />
+        </span>
+      </button>
     </div>
   );
 }
@@ -2059,27 +2651,42 @@ function ServerLatencyAdvisory({ snapshot }: { snapshot: ServerLatencyProbeSnaps
   );
 }
 
-function PlayPanelHeading() {
-  return (
-    <header className="play-panel-heading" aria-label="Play">
-      <h2 className="play-panel-heading-title">Play</h2>
-    </header>
-  );
-}
-
 function RankedSeasonPlate({ season }: { season: RankedSeasonSnapshot }) {
+  const seasonBoundary = formatSeasonBoundaryDate(season);
+
   return (
-    <aside className="play-season-plate" aria-label={`${season.label}. ${formatSeasonBoundaryDate(season)}. ${SEASON_RULES_ARIA}`}>
-      <div className="play-season-plate-kicker">Ranked</div>
+    <aside className="play-season-plate" aria-label={`${season.label}. ${seasonBoundary}. ${SEASON_RULES_ARIA}`}>
+      <div className="play-season-plate-kicker">
+        <span>Ranked</span>
+        <span aria-hidden="true">-</span>
+        <span>{seasonBoundary}</span>
+      </div>
       <div className="play-season-plate-title">{season.label}</div>
-      <div className="play-season-plate-end">{formatSeasonBoundaryDate(season)}</div>
     </aside>
   );
 }
 
-// Profile creation after Discord authentication
+function EarningRulesPlate({ tokenSymbol, economy }: { tokenSymbol: string | null; economy: RewardEconomy | null }) {
+  const rules = getEarningRules(tokenSymbol, economy);
+  if (rules.length === 0) return null;
+
+  return (
+    <aside className="play-earnings-plate" aria-label="Ways to earn and payout rules">
+      <ul className="play-earnings-rule-list">
+        {rules.map((rule) => (
+          <li key={rule.label}>
+            <span className="play-earnings-rule-label">{rule.label}:</span>
+            <span>{rule.value}</span>
+          </li>
+        ))}
+      </ul>
+    </aside>
+  );
+}
+
 interface CreateProfileModalProps {
   pendingRegistrationDisplayName: string;
+  pendingRegistrationProviderLabel: string;
   newPlayerName: string;
   nameError: string | null;
   isRegistering: boolean;
@@ -2092,6 +2699,7 @@ interface CreateProfileModalProps {
 
 function CreateProfileModal({
   pendingRegistrationDisplayName,
+  pendingRegistrationProviderLabel,
   newPlayerName,
   nameError,
   isRegistering,
@@ -2101,29 +2709,41 @@ function CreateProfileModal({
   onNameErrorClear,
   onClose,
 }: CreateProfileModalProps) {
-  const discordPanelStyle = {
-    '--discord-auth-panel-bg': DISCORD_AUTH_COLORS.panelBg,
-    '--discord-auth-panel-border': DISCORD_AUTH_COLORS.panelBorder,
+  const walletLogo = { id: 'solana-wallet', name: 'Solana Wallet' };
+  const connectedPanelStyle = {
+    '--login-provider-panel-bg': pendingRegistrationProviderLabel === 'Discord'
+      ? DISCORD_AUTH_COLORS.panelBg
+      : 'rgba(255, 255, 255, 0.055)',
+    '--login-provider-panel-border': pendingRegistrationProviderLabel === 'Discord'
+      ? DISCORD_AUTH_COLORS.panelBorder
+      : 'rgba(255, 255, 255, 0.12)',
   } as CSSProperties;
-  const discordIconStyle = { color: DISCORD_AUTH_COLORS.icon } as CSSProperties;
+  const connectedIconStyle = {
+    color: pendingRegistrationProviderLabel === 'Discord' ? DISCORD_AUTH_COLORS.icon : 'white',
+  } as CSSProperties;
+  const connectedIcon = pendingRegistrationProviderLabel === 'Discord'
+    ? <DiscordIcon className="w-6 h-6 text-white" />
+    : <WalletProviderLogo wallet={walletLogo} className="w-6 h-6" />;
 
   return (
     <GameDialog
       title="CREATE PROFILE"
-      icon={<DiscordIcon className="w-6 h-6 text-white" />}
+      icon={connectedIcon}
       iconClassName="bg-white/5 border border-white/10"
       size="sm"
       onClose={onClose}
       bodyClassName="p-5 space-y-3"
     >
       <div
-        className="flex items-center justify-between p-3 bg-[var(--discord-auth-panel-bg)] border border-[var(--discord-auth-panel-border)] rounded-lg"
-        style={discordPanelStyle}
+        className="flex items-center justify-between p-3 bg-[var(--login-provider-panel-bg)] border border-[var(--login-provider-panel-border)] rounded-lg"
+        style={connectedPanelStyle}
       >
         <div className="flex items-center gap-3">
-          <DiscordIcon className="w-6 h-6" style={discordIconStyle} />
+          {pendingRegistrationProviderLabel === 'Discord'
+            ? <DiscordIcon className="w-6 h-6" style={connectedIconStyle} />
+            : <WalletProviderLogo wallet={walletLogo} className="w-6 h-6" style={connectedIconStyle} />}
           <div>
-            <p className="text-white/60 text-xs font-body">Connected</p>
+            <p className="text-white/60 text-xs font-body">{pendingRegistrationProviderLabel} Connected</p>
             <p className="text-white text-sm font-body">
               {pendingRegistrationDisplayName}
             </p>

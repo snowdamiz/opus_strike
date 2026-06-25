@@ -1,5 +1,6 @@
 import type { Vec3, Quaternion } from './vector.js';
 import type { HeroId } from './hero.js';
+import type { HeroSkinId } from './skins.js';
 import type { AbilityCastOriginHint, AbilityState } from './ability.js';
 import type { PublicRankSnapshot } from '../progression/ranking.js';
 import type { Team } from './team.js';
@@ -7,6 +8,7 @@ import type { Team } from './team.js';
 export type { Team } from './team.js';
 
 export type BotDifficulty = 'easy' | 'normal' | 'hard';
+export type PlayerRole = 'combat' | 'observer';
 
 export type PlayerState = 
   | 'spectating'
@@ -14,6 +16,7 @@ export type PlayerState =
   | 'spawning'
   | 'dropping'
   | 'alive'
+  | 'downed'
   | 'dead';
 
 export type PlayerVisibilityState = 'visible' | 'audible' | 'last_known' | 'hidden';
@@ -89,8 +92,10 @@ export interface PlayerStats {
 export interface Player {
   id: string;
   name: string;
+  role?: PlayerRole;
   team: Team;
   heroId: HeroId | null;
+  skinId?: HeroSkinId | null;
   state: PlayerState;
   isReady: boolean;
   isBot: boolean;
@@ -107,6 +112,14 @@ export interface Player {
   // Health
   health: number;
   maxHealth: number;
+  downedHealth?: number | null;
+  downedMaxHealth?: number | null;
+  downedStartedAt?: number | null;
+  downedRemainingMs?: number | null;
+  downedExpiresAt?: number | null;
+  reviveStartedAt?: number | null;
+  reviveCompletesAt?: number | null;
+  reviveByPlayerId?: string | null;
   ultimateCharge: number;
   onFireUntil?: number | null;
   powerupBoostUntil?: number | null;
@@ -133,14 +146,24 @@ export interface Player {
 export interface PlayerSnapshot {
   id: string;
   name?: string;
+  role?: PlayerRole;
   team?: Team;
   heroId?: HeroId | null;
+  skinId?: HeroSkinId | null;
   position: Vec3;
   velocity: Vec3;
   lookYaw: number;
   lookPitch: number;
   health: number;
   maxHealth?: number;
+  downedHealth?: number | null;
+  downedMaxHealth?: number | null;
+  downedStartedAt?: number | null;
+  downedRemainingMs?: number | null;
+  downedExpiresAt?: number | null;
+  reviveStartedAt?: number | null;
+  reviveCompletesAt?: number | null;
+  reviveByPlayerId?: string | null;
   powerupBoostUntil?: number | null;
   state: PlayerState;
   movement: PlayerMovementState;
@@ -149,4 +172,49 @@ export interface PlayerSnapshot {
   isBot?: boolean;
   rank?: PublicRankSnapshot;
   stats?: PlayerStats;
+}
+
+export function getPlayerRole(player: { role?: string | null } | null | undefined): PlayerRole {
+  return player?.role === 'observer' ? 'observer' : 'combat';
+}
+
+export function isObserverPlayer(player: { role?: string | null } | null | undefined): boolean {
+  return getPlayerRole(player) === 'observer';
+}
+
+export function isPlayerAlive(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return player.state === 'alive';
+}
+
+export function isPlayerDowned(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return player.state === 'downed';
+}
+
+export function isPlayerAliveOrDowned(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return player.state === 'alive' || player.state === 'downed';
+}
+
+export function isBattleRoyalContestant(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return (
+    player.state === 'alive' ||
+    player.state === 'downed' ||
+    player.state === 'dropping' ||
+    player.state === 'spawning'
+  );
+}
+
+export function canReceiveLiveTransform(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return player.state === 'alive' || player.state === 'downed' || player.state === 'spawning';
+}
+
+export function canUseCombatInput(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return player.state === 'alive';
+}
+
+export function canUseMovementInput(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return player.state === 'alive' || player.state === 'downed';
+}
+
+export function canUseAbilityInput(player: Pick<Player, 'state'> | { state?: string | null }): boolean {
+  return player.state === 'alive';
 }

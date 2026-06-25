@@ -1,5 +1,6 @@
-import type { BotDifficulty, PlayerSnapshot, PlayerStats, PlayerVisibilityState, Team } from './player.js';
+import type { BotDifficulty, PlayerRole, PlayerSnapshot, PlayerStats, PlayerVisibilityState, Team } from './player.js';
 import type { HeroId } from './hero.js';
+import type { HeroSkinId } from './skins.js';
 import type { GamePhase, MatchOutcome } from './game.js';
 import type { Vec3 } from './vector.js';
 import type { AbilityCast } from './ability.js';
@@ -17,6 +18,7 @@ export type ClientMessage =
   | { type: 'playerPingResponse'; payload: PlayerPingResponseMessage }
   | { type: 'selectHero'; payload: { heroId: HeroId } }
   | { type: 'devSetHero'; payload: { heroId: HeroId } }
+  | { type: 'devDownHero'; payload: { heroId: HeroId } }
   | { type: 'devFillUltimate'; payload: Record<string, never> }
   | { type: 'devEndGame'; payload: Record<string, never> }
   | { type: 'setDevImmune'; payload: { enabled: boolean } }
@@ -44,6 +46,10 @@ export type ServerMessage =
   | { type: 'playerJoined'; payload: { playerId: string; playerName: string } }
   | { type: 'playerLeft'; payload: { playerId: string; isNpc?: boolean } }
   | { type: 'playerDamaged'; payload: PlayerDamagedEvent }
+  | { type: 'playerDowned'; payload: PlayerDownedEvent }
+  | { type: 'playerReviveStarted'; payload: PlayerReviveStartedEvent }
+  | { type: 'playerReviveCancelled'; payload: PlayerReviveCancelledEvent }
+  | { type: 'playerRevived'; payload: PlayerRevivedEvent }
   | { type: 'playerKilled'; payload: PlayerDeathEvent }
   | { type: 'flagPickup'; payload: FlagEvent }
   | { type: 'flagDrop'; payload: FlagEvent }
@@ -95,10 +101,50 @@ export interface PlayerDamagedEvent {
   sourceId: string | null;
   damageType: string;
   newHealth?: number;
+  newDownedHealth?: number;
   sourcePosition?: Vec3 | null;
   targetPosition?: Vec3 | null;
   sourceHeroId?: string | null;
   targetHeroId?: string | null;
+}
+
+export interface PlayerDownedEvent {
+  targetId: string;
+  sourceId: string | null;
+  damageType: string;
+  downedHealth: number;
+  downedMaxHealth: number;
+  downedStartedAt: number;
+  downedRemainingMs: number;
+  downedExpiresAt: number | null;
+  position: Vec3;
+  sourcePosition?: Vec3 | null;
+  sourceDirection?: Vec3 | null;
+}
+
+export interface PlayerReviveStartedEvent {
+  targetId: string;
+  reviverId: string;
+  startedAt: number;
+  completesAt: number;
+  downedRemainingMs: number;
+}
+
+export interface PlayerReviveCancelledEvent {
+  targetId: string;
+  reviverId: string | null;
+  cancelledAt: number;
+  reason: string;
+  downedRemainingMs: number;
+  downedExpiresAt: number | null;
+}
+
+export interface PlayerRevivedEvent {
+  targetId: string;
+  reviverId: string;
+  revivedAt: number;
+  health: number;
+  maxHealth: number;
 }
 
 // Shared wire-format constants for packed player transform replication.
@@ -168,8 +214,10 @@ export interface PlayerVitalsSnapshot {
   id: string;
   netId: number;
   name: string;
+  role?: PlayerRole;
   team: Team;
   heroId: HeroId | null;
+  skinId?: HeroSkinId | null;
   state: PlayerSnapshot['state'];
   isReady: boolean;
   isBot: boolean;
@@ -178,6 +226,14 @@ export interface PlayerVitalsSnapshot {
   rank?: PublicRankSnapshot;
   health: number;
   maxHealth: number;
+  downedHealth?: number | null;
+  downedMaxHealth?: number | null;
+  downedStartedAt?: number | null;
+  downedRemainingMs?: number | null;
+  downedExpiresAt?: number | null;
+  reviveStartedAt?: number | null;
+  reviveCompletesAt?: number | null;
+  reviveByPlayerId?: string | null;
   ultimateCharge: number;
   onFireUntil?: number | null;
   powerupBoostUntil?: number | null;
@@ -399,7 +455,7 @@ export interface GameEndEvent {
 }
 
 export interface GoldenBiomeRewardSummary {
-  rewardUsdCents: number;
+  rewardLamports: string;
   rewardToken: 'SOL';
   winningTeam: Team | null;
   eligiblePlayerIds: string[];

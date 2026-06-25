@@ -1,8 +1,9 @@
 import {
   ALL_HERO_IDS,
+  isHeroSkinId,
   isTeamId,
 } from '@voxel-strike/shared';
-import type { BotDifficulty, HeroId, Team } from '@voxel-strike/shared';
+import type { BotDifficulty, HeroId, HeroSkinId, Team } from '@voxel-strike/shared';
 
 type RecordValue = Record<string, unknown>;
 
@@ -67,6 +68,11 @@ export function validateTeamPayload(value: unknown): Team | null {
 export function validateHeroPayload(value: unknown): HeroId | null {
   if (!isRecord(value)) return null;
   return isHeroId(value.heroId) ? value.heroId : null;
+}
+
+export function validateSkinPayload(value: unknown): HeroSkinId | null {
+  if (!isRecord(value)) return null;
+  return isHeroSkinId(value.skinId) ? value.skinId : null;
 }
 
 export function validateChatPayload(value: unknown, options: { teamOnly?: boolean } = {}): { message: string; teamOnly: boolean } | null {

@@ -35,6 +35,10 @@ interface CombatFeedbackStore {
 const COMBAT_TEXT_TTL = 1450;
 const MAX_COMBAT_TEXT_EVENTS = 28;
 const KILL_TTL = 5000;
+// Single shared sweep replaces per-event timers; expiry resolves within
+// EXPIRY_SWEEP_INTERVAL_MS of the exact TTL, which is imperceptible because
+// the visual fade already completes well before the TTL elapses.
+const EXPIRY_SWEEP_INTERVAL_MS = 200;
 let eventId = 0;
 
 function nextId(): string {
@@ -42,42 +46,67 @@ function nextId(): string {
   return `${Date.now()}-${eventId}`;
 }
 
-export const useCombatFeedbackStore = create<CombatFeedbackStore>((set) => ({
-  combatTextEvents: [],
-  killFeed: [],
-  addCombatTextEvent: (event) => {
-    const id = nextId();
-    set((state) => ({
-      combatTextEvents: [
-        ...state.combatTextEvents.slice(-(MAX_COMBAT_TEXT_EVENTS - 1)),
-        {
-          ...event,
-          id,
-          position: { ...event.position },
-          createdAt: Date.now(),
-        },
-      ],
-    }));
+let expirySweepInterval: number | null = null;
 
-    window.setTimeout(() => {
-      set((state) => ({
-        combatTextEvents: state.combatTextEvents.filter((item) => item.id !== id),
-      }));
-    }, COMBAT_TEXT_TTL);
-  },
-  addKillFeedEvent: (event) => {
-    const id = nextId();
-    set((state) => ({
-      killFeed: [
-        { ...event, id, createdAt: Date.now() },
-        ...state.killFeed.slice(0, 4),
-      ],
-    }));
+function stopExpirySweep(): void {
+  if (expirySweepInterval !== null) {
+    window.clearInterval(expirySweepInterval);
+    expirySweepInterval = null;
+  }
+}
 
-    window.setTimeout(() => {
+export const useCombatFeedbackStore = create<CombatFeedbackStore>((set, get) => {
+  const ensureExpirySweep = (): void => {
+    if (expirySweepInterval !== null) return;
+    expirySweepInterval = window.setInterval(() => {
+      const now = Date.now();
+      const state = get();
+      const nextCombat = state.combatTextEvents.filter((item) => now - item.createdAt < COMBAT_TEXT_TTL);
+      const nextKills = state.killFeed.filter((item) => now - item.createdAt < KILL_TTL);
+      const combatChanged = nextCombat.length !== state.combatTextEvents.length;
+      const killsChanged = nextKills.length !== state.killFeed.length;
+
+      if (combatChanged || killsChanged) {
+        set({
+          ...(combatChanged ? { combatTextEvents: nextCombat } : {}),
+          ...(killsChanged ? { killFeed: nextKills } : {}),
+        });
+      }
+
+      const settled = get();
+      if (settled.combatTextEvents.length === 0 && settled.killFeed.length === 0) {
+        stopExpirySweep();
+      }
+    }, EXPIRY_SWEEP_INTERVAL_MS);
+  };
+
+  return {
+    combatTextEvents: [],
+    killFeed: [],
+    addCombatTextEvent: (event) => {
+      const id = nextId();
       set((state) => ({
-        killFeed: state.killFeed.filter((item) => item.id !== id),
+        combatTextEvents: [
+          ...state.combatTextEvents.slice(-(MAX_COMBAT_TEXT_EVENTS - 1)),
+          {
+            ...event,
+            id,
+            position: { ...event.position },
+            createdAt: Date.now(),
+          },
+        ],
       }));
-    }, KILL_TTL);
-  },
-}));
+      ensureExpirySweep();
+    },
+    addKillFeedEvent: (event) => {
+      const id = nextId();
+      set((state) => ({
+        killFeed: [
+          { ...event, id, createdAt: Date.now() },
+          ...state.killFeed.slice(0, 4),
+        ],
+      }));
+      ensureExpirySweep();
+    },
+  };
+});

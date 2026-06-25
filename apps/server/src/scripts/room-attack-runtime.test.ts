@@ -61,6 +61,8 @@ import {
     phantomPrimaryReady: true,
     chronosPrimaryReady: true,
     phantomPrimaryShotAvailable: true,
+    blazePrimaryShotAvailable: true,
+    chronosPrimaryShotAvailable: true,
   }), { reason: 'attack_invalid_state:primary', logEvent: true });
 
   assert.deepEqual(getAttackPreflightRejection({
@@ -72,6 +74,8 @@ import {
     phantomPrimaryReady: true,
     chronosPrimaryReady: true,
     phantomPrimaryShotAvailable: true,
+    blazePrimaryShotAvailable: true,
+    chronosPrimaryShotAvailable: true,
   }), { reason: 'attack_missing_config:secondary', logEvent: true });
 
   assert.deepEqual(getAttackPreflightRejection({
@@ -83,6 +87,8 @@ import {
     phantomPrimaryReady: false,
     chronosPrimaryReady: false,
     phantomPrimaryShotAvailable: false,
+    blazePrimaryShotAvailable: false,
+    chronosPrimaryShotAvailable: false,
   }), { reason: 'attack_cooldown:primary', logEvent: false });
 
   assert.deepEqual(getAttackPreflightRejection({
@@ -94,7 +100,35 @@ import {
     phantomPrimaryReady: true,
     chronosPrimaryReady: true,
     phantomPrimaryShotAvailable: false,
+    blazePrimaryShotAvailable: true,
+    chronosPrimaryShotAvailable: true,
   }), { reason: 'phantom_primary_no_ammo', logEvent: false });
+
+  assert.deepEqual(getAttackPreflightRejection({
+    isHeroId: true,
+    playerState: 'alive',
+    mode: 'primary',
+    attackExists: true,
+    isCoolingDown: false,
+    phantomPrimaryReady: true,
+    chronosPrimaryReady: true,
+    phantomPrimaryShotAvailable: true,
+    blazePrimaryShotAvailable: false,
+    chronosPrimaryShotAvailable: true,
+  }), { reason: 'blaze_primary_no_ammo', logEvent: false });
+
+  assert.deepEqual(getAttackPreflightRejection({
+    isHeroId: true,
+    playerState: 'alive',
+    mode: 'primary',
+    attackExists: true,
+    isCoolingDown: false,
+    phantomPrimaryReady: true,
+    chronosPrimaryReady: true,
+    phantomPrimaryShotAvailable: true,
+    blazePrimaryShotAvailable: true,
+    chronosPrimaryShotAvailable: false,
+  }), { reason: 'chronos_primary_no_ammo', logEvent: false });
 }
 
 {
