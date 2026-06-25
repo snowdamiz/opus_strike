@@ -35,27 +35,33 @@ function createTarget(
 
 {
   const queue = new PendingAreaDamageQueue();
+  const ready: PendingAreaDamageInstance[] = [];
 
   queue.enqueue(createPendingAreaDamage('ready-a', 1_000));
   queue.enqueue(createPendingAreaDamage('future', 1_500));
   queue.enqueue(createPendingAreaDamage('ready-b', 500));
 
   assert.equal(queue.size, 3);
-  assert.deepEqual(queue.drainReady(1_000).map((instance) => instance.id), ['ready-a', 'ready-b']);
+  assert.equal(queue.drainReadyInto(1_000, ready), ready);
+  assert.deepEqual(ready.map((instance) => instance.id), ['ready-a', 'ready-b']);
   assert.equal(queue.size, 1);
-  assert.deepEqual(queue.drainReady(1_499), []);
+  assert.equal(queue.drainReadyInto(1_499, ready), ready);
+  assert.equal(ready.length, 0);
   assert.equal(queue.size, 1);
-  assert.deepEqual(queue.drainReady(1_500).map((instance) => instance.id), ['future']);
+  assert.equal(queue.drainReadyInto(1_500, ready), ready);
+  assert.deepEqual(ready.map((instance) => instance.id), ['future']);
   assert.equal(queue.size, 0);
 }
 
 {
   const queue = new PendingAreaDamageQueue();
+  const ready: PendingAreaDamageInstance[] = [];
 
   queue.enqueue(createPendingAreaDamage('queued', 1_000));
   queue.clear();
   assert.equal(queue.size, 0);
-  assert.deepEqual(queue.drainReady(2_000), []);
+  assert.equal(queue.drainReadyInto(2_000, ready), ready);
+  assert.equal(ready.length, 0);
 }
 
 {

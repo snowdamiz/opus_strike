@@ -15,6 +15,7 @@ import {
   type PlayerMovementState,
   type PlayerState,
   type SelfMovementAuthority,
+  type SelfMovementAck,
   type Vec3,
 } from '@voxel-strike/shared';
 import { config } from '../config/environment';
@@ -186,7 +187,7 @@ function getAllMovementTraces(): AntiCheatMovementTrace[] {
   return traces;
 }
 
-export function recordMovementTraceAuthorityAck(authority: SelfMovementAuthority): void {
+export function recordMovementTraceAuthorityAck(authority: SelfMovementAuthority | SelfMovementAck): void {
   if (!config.antiCheatMovementTraceRecorderEnabled) return;
 
   latestAck = {

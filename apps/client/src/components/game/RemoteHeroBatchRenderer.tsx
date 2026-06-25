@@ -694,6 +694,24 @@ function isWithinPointDistanceLimitSq(
   return dx * dx + dy * dy + dz * dz <= maxDistanceSq;
 }
 
+function writeRemotePlayerCullSphere(
+  target: THREE.Sphere,
+  player: Player,
+  feetPosition: THREE.Vector3
+): THREE.Sphere {
+  const size = HERO_DEFINITIONS[resolveHeroId(player)].stats.size;
+  const halfWidth = size.width / 2;
+  const halfHeight = size.height / 2;
+  const halfDepth = size.depth / 2;
+  target.center.set(feetPosition.x, feetPosition.y + halfHeight, feetPosition.z);
+  target.radius = Math.sqrt(
+    halfWidth * halfWidth +
+    halfHeight * halfHeight +
+    halfDepth * halfDepth
+  ) * Math.max(1, TEAM_BODY_GLOW_OUTLINE_SCALE);
+  return target;
+}
+
 function getRemotePlayerHeight(player: Player): number {
   return getPlayerHeight(player.heroId);
 }
@@ -2139,6 +2157,9 @@ function RemoteHeroBatchGroup({
   const capeMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const countsRef = useRef<Uint32Array>(new Uint32Array(resources.batches.length));
   const outlineCountsRef = useRef<Uint32Array>(new Uint32Array(outlineBatches.length));
+  const cameraFrustumRef = useRef(new THREE.Frustum());
+  const cameraFrustumMatrixRef = useRef(new THREE.Matrix4());
+  const playerCullSphereRef = useRef(new THREE.Sphere());
   const playersRef = useRef(players);
   const configRef = useRef(config);
   const playerGenerationRef = useRef(0);
@@ -2217,6 +2238,10 @@ function RemoteHeroBatchGroup({
       const outlineCounts = outlineCountsRef.current;
       const visualState = visualStore.getState();
       const capeMesh = capeMeshRef.current;
+      const cameraFrustum = cameraFrustumRef.current;
+      const playerCullSphere = playerCullSphereRef.current;
+      cameraFrustumMatrixRef.current.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      cameraFrustum.setFromProjectionMatrix(cameraFrustumMatrixRef.current);
       const fullBodyDistance = isBattleRoyal
         ? getBattleRoyalDistanceCap(frameConfig.fullBodyDistance, BATTLE_ROYAL_MAX_REMOTE_FULL_BODY_DISTANCE)
         : frameConfig.fullBodyDistance;
@@ -2242,6 +2267,10 @@ function RemoteHeroBatchGroup({
 
         const movement = getPlayerRenderMovement(player, visualState, localPlayerId);
         const visualHorizontalSpeed = updateRemoteTransform(runtime, player, deltaSeconds, visualState, nowMs);
+        if (!cameraFrustum.intersectsSphere(writeRemotePlayerCullSphere(playerCullSphere, player, runtime.currentPosition))) {
+          continue;
+        }
+
         const isLocalPlayer = player.id === localPlayerId;
         const isObjectivePriority = isObjectivePriorityRemoteBody(player);
         const isActivityPriority = isActivityPriorityRemoteBody(player, visualState, nowMs);

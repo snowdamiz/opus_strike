@@ -8,6 +8,7 @@ import type { RemotePlayerQualityConfig } from './visualQuality';
 
 const OUTLINES_DISABLED_CONFIG: RemotePlayerQualityConfig = {
   showNameplates: false,
+  nameplateDistance: 0,
   fullBodyDistance: 1,
   outlineDistance: 0,
   botFullBodyDistanceScale: 1,

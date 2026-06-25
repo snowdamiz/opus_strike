@@ -12,10 +12,47 @@ const POWERUP_TRIM_COLOR = '#ffd35a';
 const POWERUP_RING_COLOR = '#7cf7c8';
 const PICKUP_POP_DURATION_MS = 520;
 const BURST_SPARK_ANGLES = [0, Math.PI / 3, (Math.PI * 2) / 3, Math.PI, (Math.PI * 4) / 3, (Math.PI * 5) / 3] as const;
+const IDENTITY_QUATERNION = new THREE.Quaternion();
+const HEALTH_RING_QUATERNION = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
+const POWERUP_RING_QUATERNION = HEALTH_RING_QUATERNION.clone();
+const POWERUP_TRIM_QUATERNION = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI / 4, 0));
+const OBJECT_POSITION = new THREE.Vector3();
+const OBJECT_ROTATION = new THREE.Euler();
+const OBJECT_QUATERNION = new THREE.Quaternion();
+const OBJECT_SCALE = new THREE.Vector3();
+const CHILD_POSITION = new THREE.Vector3();
+const CHILD_SCALE = new THREE.Vector3();
+const PARENT_MATRIX = new THREE.Matrix4();
+const CHILD_MATRIX = new THREE.Matrix4();
+const INSTANCE_MATRIX = new THREE.Matrix4();
 
 interface VisiblePowerupPickup {
   pickup: MapPowerupPickup;
   collectedAt?: number;
+}
+
+interface PowerupRenderResources {
+  geometries: {
+    box: THREE.BoxGeometry;
+    healthRing: THREE.TorusGeometry;
+    powerCore: THREE.OctahedronGeometry;
+    powerRing: THREE.TorusGeometry;
+    burstRing: THREE.TorusGeometry;
+    burstSpark: THREE.SphereGeometry;
+  };
+  materials: {
+    healthBody: THREE.MeshStandardMaterial;
+    healthCross: THREE.MeshStandardMaterial;
+    powerCore: THREE.MeshStandardMaterial;
+    powerRing: THREE.MeshStandardMaterial;
+    powerTrim: THREE.MeshStandardMaterial;
+    healthBurstRing: THREE.MeshBasicMaterial;
+    powerBurstRing: THREE.MeshBasicMaterial;
+    healthBurstSpark: THREE.MeshBasicMaterial;
+    powerBurstSpark: THREE.MeshBasicMaterial;
+  };
+  allGeometries: THREE.BufferGeometry[];
+  allMaterials: THREE.Material[];
 }
 
 function clamp01(value: number): number {
@@ -83,111 +120,280 @@ function getVisiblePowerupPickups(
   return visiblePickups;
 }
 
-function PowerupMesh({ pickup, collectedAt }: { pickup: MapPowerupPickup; collectedAt?: number }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const phase = useMemo(() => {
-    let hash = 0;
-    for (let index = 0; index < pickup.id.length; index++) {
-      hash = Math.imul(hash ^ pickup.id.charCodeAt(index), 0x45d9f3b) >>> 0;
+function getPickupPhase(pickupId: string): number {
+  let hash = 0;
+  for (let index = 0; index < pickupId.length; index++) {
+    hash = Math.imul(hash ^ pickupId.charCodeAt(index), 0x45d9f3b) >>> 0;
+  }
+  return (hash / 0xffffffff) * Math.PI * 2;
+}
+
+function createPowerupRenderResources(): PowerupRenderResources {
+  const geometries = {
+    box: new THREE.BoxGeometry(1, 1, 1),
+    healthRing: new THREE.TorusGeometry(0.34, 0.025, 8, 28),
+    powerCore: new THREE.OctahedronGeometry(0.48, 0),
+    powerRing: new THREE.TorusGeometry(0.62, 0.035, 10, 42),
+    burstRing: new THREE.TorusGeometry(0.5, 0.025, 8, 40),
+    burstSpark: new THREE.SphereGeometry(0.055, 8, 8),
+  };
+  const materials = {
+    healthBody: new THREE.MeshStandardMaterial({ color: HEALTH_PACK_COLOR, roughness: 0.42, metalness: 0.1 }),
+    healthCross: new THREE.MeshStandardMaterial({ color: HEALTH_CROSS_COLOR, roughness: 0.35, metalness: 0.15 }),
+    powerCore: new THREE.MeshStandardMaterial({
+      color: POWERUP_CORE_COLOR,
+      emissive: POWERUP_CORE_COLOR,
+      emissiveIntensity: 0.65,
+      roughness: 0.22,
+      metalness: 0.35,
+    }),
+    powerRing: new THREE.MeshStandardMaterial({
+      color: POWERUP_RING_COLOR,
+      emissive: POWERUP_RING_COLOR,
+      emissiveIntensity: 0.35,
+      roughness: 0.24,
+      metalness: 0.35,
+    }),
+    powerTrim: new THREE.MeshStandardMaterial({
+      color: POWERUP_TRIM_COLOR,
+      emissive: POWERUP_TRIM_COLOR,
+      emissiveIntensity: 0.2,
+      roughness: 0.32,
+      metalness: 0.45,
+    }),
+    healthBurstRing: new THREE.MeshBasicMaterial({
+      color: HEALTH_CROSS_COLOR,
+      transparent: true,
+      opacity: 0.82,
+      depthWrite: false,
+    }),
+    powerBurstRing: new THREE.MeshBasicMaterial({
+      color: POWERUP_RING_COLOR,
+      transparent: true,
+      opacity: 0.82,
+      depthWrite: false,
+    }),
+    healthBurstSpark: new THREE.MeshBasicMaterial({
+      color: HEALTH_PACK_COLOR,
+      transparent: true,
+      opacity: 0.78,
+      depthWrite: false,
+    }),
+    powerBurstSpark: new THREE.MeshBasicMaterial({
+      color: POWERUP_TRIM_COLOR,
+      transparent: true,
+      opacity: 0.78,
+      depthWrite: false,
+    }),
+  };
+
+  return {
+    geometries,
+    materials,
+    allGeometries: Object.values(geometries),
+    allMaterials: Object.values(materials),
+  };
+}
+
+function composeParentMatrix(x: number, y: number, z: number, rotationY: number, scale: number): THREE.Matrix4 {
+  OBJECT_POSITION.set(x, y, z);
+  OBJECT_ROTATION.set(0, rotationY, 0);
+  OBJECT_QUATERNION.setFromEuler(OBJECT_ROTATION);
+  OBJECT_SCALE.setScalar(scale);
+  return PARENT_MATRIX.compose(OBJECT_POSITION, OBJECT_QUATERNION, OBJECT_SCALE);
+}
+
+function writeChildInstance(
+  mesh: THREE.InstancedMesh | null,
+  index: number,
+  parentMatrix: THREE.Matrix4,
+  localX: number,
+  localY: number,
+  localZ: number,
+  quaternion: THREE.Quaternion,
+  scaleX: number,
+  scaleY: number,
+  scaleZ: number
+): void {
+  if (!mesh) return;
+  CHILD_POSITION.set(localX, localY, localZ);
+  CHILD_SCALE.set(scaleX, scaleY, scaleZ);
+  CHILD_MATRIX.compose(CHILD_POSITION, quaternion, CHILD_SCALE);
+  INSTANCE_MATRIX.copy(parentMatrix).multiply(CHILD_MATRIX);
+  mesh.setMatrixAt(index, INSTANCE_MATRIX);
+}
+
+function commitInstancedMesh(mesh: THREE.InstancedMesh | null, count: number): void {
+  if (!mesh) return;
+  mesh.count = count;
+  mesh.instanceMatrix.needsUpdate = true;
+}
+
+function PowerupInstancedMeshes({
+  visiblePickups,
+  phaseByPickupId,
+  capacity,
+}: {
+  visiblePickups: VisiblePowerupPickup[];
+  phaseByPickupId: ReadonlyMap<string, number>;
+  capacity: number;
+}) {
+  const resources = useMemo(createPowerupRenderResources, []);
+  const visiblePickupsRef = useRef(visiblePickups);
+  const healthBodyRef = useRef<THREE.InstancedMesh>(null);
+  const healthCrossVerticalRef = useRef<THREE.InstancedMesh>(null);
+  const healthCrossHorizontalRef = useRef<THREE.InstancedMesh>(null);
+  const healthRingRef = useRef<THREE.InstancedMesh>(null);
+  const powerCoreRef = useRef<THREE.InstancedMesh>(null);
+  const powerRingRef = useRef<THREE.InstancedMesh>(null);
+  const powerTrimRef = useRef<THREE.InstancedMesh>(null);
+  const healthBurstRingRef = useRef<THREE.InstancedMesh>(null);
+  const powerBurstRingRef = useRef<THREE.InstancedMesh>(null);
+  const healthBurstSparkRef = useRef<THREE.InstancedMesh>(null);
+  const powerBurstSparkRef = useRef<THREE.InstancedMesh>(null);
+
+  visiblePickupsRef.current = visiblePickups;
+
+  useEffect(() => {
+    return () => {
+      for (const geometry of resources.allGeometries) geometry.dispose();
+      for (const material of resources.allMaterials) material.dispose();
+    };
+  }, [resources]);
+
+  useEffect(() => {
+    const meshes = [
+      healthBodyRef.current,
+      healthCrossVerticalRef.current,
+      healthCrossHorizontalRef.current,
+      healthRingRef.current,
+      powerCoreRef.current,
+      powerRingRef.current,
+      powerTrimRef.current,
+      healthBurstRingRef.current,
+      powerBurstRingRef.current,
+      healthBurstSparkRef.current,
+      powerBurstSparkRef.current,
+    ];
+    for (const mesh of meshes) {
+      mesh?.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     }
-    return (hash / 0xffffffff) * Math.PI * 2;
-  }, [pickup.id]);
+  }, []);
 
   useFrame(({ clock }) => {
-    const group = groupRef.current;
-    if (!group) return;
-    const elapsed = clock.elapsedTime + phase;
-    const popProgress = getPickupPopProgress(collectedAt) ?? 0;
-    const popEase = easeOutCubic(popProgress);
-    const idleWeight = 1 - popProgress;
-    const popScale = collectedAt === undefined
-      ? 1
-      : Math.max(0.16, 1 + Math.sin(popProgress * Math.PI) * 0.5 - popEase * 0.78);
+    const frameNow = Date.now();
+    let healthCount = 0;
+    let powerCount = 0;
+    let healthBurstRingCount = 0;
+    let powerBurstRingCount = 0;
+    let healthBurstSparkCount = 0;
+    let powerBurstSparkCount = 0;
 
-    group.position.y = pickup.position.y + Math.sin(elapsed * 2.2) * 0.14 * idleWeight + popEase * 0.72;
-    group.rotation.y = elapsed * (pickup.kind === 'health_pack' ? 0.75 : 1.15) + popEase * Math.PI * 1.4;
-    group.scale.setScalar(popScale);
+    for (const { pickup, collectedAt } of visiblePickupsRef.current) {
+      const popProgress = getPickupPopProgress(collectedAt, frameNow);
+      if (collectedAt !== undefined && popProgress === null) continue;
+
+      const phase = phaseByPickupId.get(pickup.id) ?? 0;
+      const elapsed = clock.elapsedTime + phase;
+      const resolvedPopProgress = popProgress ?? 0;
+      const popEase = easeOutCubic(resolvedPopProgress);
+      const idleWeight = 1 - resolvedPopProgress;
+      const popScale = collectedAt === undefined
+        ? 1
+        : Math.max(0.16, 1 + Math.sin(resolvedPopProgress * Math.PI) * 0.5 - popEase * 0.78);
+      const parentMatrix = composeParentMatrix(
+        pickup.position.x,
+        pickup.position.y + Math.sin(elapsed * 2.2) * 0.14 * idleWeight + popEase * 0.72,
+        pickup.position.z,
+        elapsed * (pickup.kind === 'health_pack' ? 0.75 : 1.15) + popEase * Math.PI * 1.4,
+        popScale
+      );
+
+      if (pickup.kind === 'health_pack') {
+        const index = healthCount++;
+        writeChildInstance(healthBodyRef.current, index, parentMatrix, 0, 0, 0, IDENTITY_QUATERNION, 0.82, 0.52, 0.82);
+        writeChildInstance(healthCrossVerticalRef.current, index, parentMatrix, 0, 0.01, -0.415, IDENTITY_QUATERNION, 0.18, 0.36, 0.04);
+        writeChildInstance(healthCrossHorizontalRef.current, index, parentMatrix, 0, 0.01, -0.435, IDENTITY_QUATERNION, 0.42, 0.14, 0.04);
+        writeChildInstance(healthRingRef.current, index, parentMatrix, 0, 0.32, 0, HEALTH_RING_QUATERNION, 1, 1, 1);
+      } else {
+        const index = powerCount++;
+        writeChildInstance(powerCoreRef.current, index, parentMatrix, 0, 0, 0, IDENTITY_QUATERNION, 1, 1, 1);
+        writeChildInstance(powerRingRef.current, index, parentMatrix, 0, 0, 0, POWERUP_RING_QUATERNION, 1, 1, 1);
+        writeChildInstance(powerTrimRef.current, index, parentMatrix, 0, -0.43, 0, POWERUP_TRIM_QUATERNION, 0.48, 0.08, 0.48);
+      }
+
+      if (collectedAt === undefined || popProgress === null) continue;
+
+      const eased = easeOutCubic(popProgress);
+      const burstMatrix = composeParentMatrix(
+        pickup.position.x,
+        pickup.position.y + 0.18 + eased * 0.54,
+        pickup.position.z,
+        eased * Math.PI * 2,
+        0.65 + eased * 1.55
+      );
+      const ringRef = pickup.kind === 'health_pack' ? healthBurstRingRef.current : powerBurstRingRef.current;
+      const ringIndex = pickup.kind === 'health_pack' ? healthBurstRingCount++ : powerBurstRingCount++;
+      writeChildInstance(ringRef, ringIndex, burstMatrix, 0, 0, 0, HEALTH_RING_QUATERNION, 1, 1, 1);
+
+      for (const angle of BURST_SPARK_ANGLES) {
+        const sparkRef = pickup.kind === 'health_pack' ? healthBurstSparkRef.current : powerBurstSparkRef.current;
+        const sparkIndex = pickup.kind === 'health_pack' ? healthBurstSparkCount++ : powerBurstSparkCount++;
+        writeChildInstance(
+          sparkRef,
+          sparkIndex,
+          burstMatrix,
+          Math.cos(angle) * 0.34,
+          0.05,
+          Math.sin(angle) * 0.34,
+          IDENTITY_QUATERNION,
+          1,
+          1,
+          1
+        );
+      }
+    }
+
+    commitInstancedMesh(healthBodyRef.current, healthCount);
+    commitInstancedMesh(healthCrossVerticalRef.current, healthCount);
+    commitInstancedMesh(healthCrossHorizontalRef.current, healthCount);
+    commitInstancedMesh(healthRingRef.current, healthCount);
+    commitInstancedMesh(powerCoreRef.current, powerCount);
+    commitInstancedMesh(powerRingRef.current, powerCount);
+    commitInstancedMesh(powerTrimRef.current, powerCount);
+    commitInstancedMesh(healthBurstRingRef.current, healthBurstRingCount);
+    commitInstancedMesh(powerBurstRingRef.current, powerBurstRingCount);
+    commitInstancedMesh(healthBurstSparkRef.current, healthBurstSparkCount);
+    commitInstancedMesh(powerBurstSparkRef.current, powerBurstSparkCount);
   });
 
-  if (pickup.kind === 'health_pack') {
-    return (
-      <group ref={groupRef} position={[pickup.position.x, pickup.position.y, pickup.position.z]}>
-        <mesh castShadow receiveShadow>
-          <boxGeometry args={[0.82, 0.52, 0.82]} />
-          <meshStandardMaterial color={HEALTH_PACK_COLOR} roughness={0.42} metalness={0.1} />
-        </mesh>
-        <mesh position={[0, 0.01, -0.415]}>
-          <boxGeometry args={[0.18, 0.36, 0.04]} />
-          <meshStandardMaterial color={HEALTH_CROSS_COLOR} roughness={0.35} />
-        </mesh>
-        <mesh position={[0, 0.01, -0.435]}>
-          <boxGeometry args={[0.42, 0.14, 0.04]} />
-          <meshStandardMaterial color={HEALTH_CROSS_COLOR} roughness={0.35} />
-        </mesh>
-        <mesh position={[0, 0.32, 0]} rotation={[Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[0.34, 0.025, 8, 28]} />
-          <meshStandardMaterial color={HEALTH_CROSS_COLOR} roughness={0.28} metalness={0.15} />
-        </mesh>
-      </group>
-    );
-  }
+  const sparkCapacity = Math.max(1, capacity * BURST_SPARK_ANGLES.length);
 
   return (
-    <group ref={groupRef} position={[pickup.position.x, pickup.position.y, pickup.position.z]}>
-      <mesh castShadow>
-        <octahedronGeometry args={[0.48, 0]} />
-        <meshStandardMaterial color={POWERUP_CORE_COLOR} emissive={POWERUP_CORE_COLOR} emissiveIntensity={0.65} roughness={0.22} metalness={0.35} />
-      </mesh>
-      <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[0.62, 0.035, 10, 42]} />
-        <meshStandardMaterial color={POWERUP_RING_COLOR} emissive={POWERUP_RING_COLOR} emissiveIntensity={0.35} roughness={0.24} metalness={0.35} />
-      </mesh>
-      <mesh position={[0, -0.43, 0]} rotation={[0, Math.PI / 4, 0]}>
-        <boxGeometry args={[0.48, 0.08, 0.48]} />
-        <meshStandardMaterial color={POWERUP_TRIM_COLOR} emissive={POWERUP_TRIM_COLOR} emissiveIntensity={0.2} roughness={0.32} metalness={0.45} />
-      </mesh>
+    <group name="map-powerups">
+      <instancedMesh ref={healthBodyRef} args={[resources.geometries.box, resources.materials.healthBody, capacity]} castShadow receiveShadow />
+      <instancedMesh ref={healthCrossVerticalRef} args={[resources.geometries.box, resources.materials.healthCross, capacity]} />
+      <instancedMesh ref={healthCrossHorizontalRef} args={[resources.geometries.box, resources.materials.healthCross, capacity]} />
+      <instancedMesh ref={healthRingRef} args={[resources.geometries.healthRing, resources.materials.healthCross, capacity]} />
+      <instancedMesh ref={powerCoreRef} args={[resources.geometries.powerCore, resources.materials.powerCore, capacity]} castShadow />
+      <instancedMesh ref={powerRingRef} args={[resources.geometries.powerRing, resources.materials.powerRing, capacity]} />
+      <instancedMesh ref={powerTrimRef} args={[resources.geometries.box, resources.materials.powerTrim, capacity]} />
+      <instancedMesh ref={healthBurstRingRef} args={[resources.geometries.burstRing, resources.materials.healthBurstRing, capacity]} />
+      <instancedMesh ref={powerBurstRingRef} args={[resources.geometries.burstRing, resources.materials.powerBurstRing, capacity]} />
+      <instancedMesh ref={healthBurstSparkRef} args={[resources.geometries.burstSpark, resources.materials.healthBurstSpark, sparkCapacity]} />
+      <instancedMesh ref={powerBurstSparkRef} args={[resources.geometries.burstSpark, resources.materials.powerBurstSpark, sparkCapacity]} />
     </group>
   );
 }
 
-function PickupCollectionBurst({ pickup, collectedAt }: { pickup: MapPowerupPickup; collectedAt: number }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const ringMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
-  const color = pickup.kind === 'health_pack' ? HEALTH_CROSS_COLOR : POWERUP_RING_COLOR;
-  const accentColor = pickup.kind === 'health_pack' ? HEALTH_PACK_COLOR : POWERUP_TRIM_COLOR;
-
-  useFrame(() => {
-    const group = groupRef.current;
-    const progress = getPickupPopProgress(collectedAt);
-    if (!group || progress === null) return;
-
-    const eased = easeOutCubic(progress);
-    group.position.y = pickup.position.y + 0.18 + eased * 0.54;
-    group.rotation.y = eased * Math.PI * 2;
-    group.scale.setScalar(0.65 + eased * 1.55);
-
-    if (ringMaterialRef.current) {
-      ringMaterialRef.current.opacity = Math.pow(1 - progress, 1.35) * 0.92;
+function usePickupPhases(pickups: MapPowerupPickup[]): ReadonlyMap<string, number> {
+  return useMemo(() => {
+    const phases = new Map<string, number>();
+    for (const pickup of pickups) {
+      phases.set(pickup.id, getPickupPhase(pickup.id));
     }
-  });
-
-  return (
-    <group ref={groupRef} position={[pickup.position.x, pickup.position.y + 0.18, pickup.position.z]}>
-      <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[0.5, 0.025, 8, 40]} />
-        <meshBasicMaterial ref={ringMaterialRef} color={color} transparent opacity={0.92} depthWrite={false} />
-      </mesh>
-      {BURST_SPARK_ANGLES.map((angle) => (
-        <mesh
-          key={angle}
-          position={[Math.cos(angle) * 0.34, 0.05, Math.sin(angle) * 0.34]}
-        >
-          <sphereGeometry args={[0.055, 8, 8]} />
-          <meshBasicMaterial color={accentColor} transparent opacity={0.85} depthWrite={false} />
-        </mesh>
-      ))}
-    </group>
-  );
+    return phases;
+  }, [pickups]);
 }
 
 export function Powerups() {
@@ -234,17 +440,16 @@ export function Powerups() {
       now
     );
   }, [manifest, now, powerupPickupCollections, powerupPickups]);
+  const phaseByPickupId = usePickupPhases(manifest.gameplay.powerups);
+  const instanceCapacity = Math.max(1, manifest.gameplay.powerups.length);
 
   if (visiblePickups.length === 0) return null;
 
   return (
-    <group name="map-powerups">
-      {visiblePickups.map(({ pickup, collectedAt }) => (
-        <group key={pickup.id}>
-          <PowerupMesh pickup={pickup} collectedAt={collectedAt} />
-          {collectedAt !== undefined && <PickupCollectionBurst pickup={pickup} collectedAt={collectedAt} />}
-        </group>
-      ))}
-    </group>
+    <PowerupInstancedMeshes
+      visiblePickups={visiblePickups}
+      phaseByPickupId={phaseByPickupId}
+      capacity={instanceCapacity}
+    />
   );
 }

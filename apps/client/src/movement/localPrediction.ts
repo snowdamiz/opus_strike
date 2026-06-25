@@ -1,4 +1,4 @@
-import type { AbilityCastOriginHint, MovementCommand, Player, SelfMovementAuthority, Vec3 } from '@voxel-strike/shared';
+import type { AbilityCastOriginHint, MovementCommand, Player, SelfMovementAck, SelfMovementAuthority, Vec3 } from '@voxel-strike/shared';
 import {
   MOVEMENT_PROTOCOL_VERSION,
   ABILITY_DEFINITIONS,
@@ -26,8 +26,8 @@ import {
 } from '@voxel-strike/shared';
 import type { InputState } from '@voxel-strike/shared';
 import {
+  AnchorWallAabbCache,
   MovementPredictionController,
-  computeAnchorWallAabbs,
   createVoxelCollisionWorld,
   resolveCapsuleTeleportDestination,
   type MovementCollisionWorld,
@@ -61,6 +61,7 @@ const pendingSelfMovementAuthorities: SelfMovementAuthority[] = [];
 let pendingSelfMovementAuthoritiesOutOfOrder = false;
 let localRootedUntil = 0;
 const EMPTY_MOVEMENT_AABBS: readonly MovementAabb[] = [];
+const clientAnchorWallAabbCache = new AnchorWallAabbCache();
 
 export interface AppliedSelfMovementAuthority {
   authority: SelfMovementAuthority;
@@ -215,7 +216,7 @@ function getClientTerrainAdapter(): MovementTerrainAdapter {
     getCollisionAabbs: (bounds) => {
       const earthWalls = useGameStore.getState().earthWalls;
       if (earthWalls.length === 0) return EMPTY_MOVEMENT_AABBS;
-      return computeAnchorWallAabbs(earthWalls, Date.now(), bounds);
+      return clientAnchorWallAabbCache.get(earthWalls, Date.now(), bounds);
     },
   };
   cachedTerrainAdapter = { mapId, revision, lookup, adapter };
@@ -638,6 +639,22 @@ function hasCollisionRevisionUpdate(authority: SelfMovementAuthority): boolean {
   );
 }
 
+function applyServerCollisionRevision(collisionRevision: number | undefined): void {
+  const nextCollisionRevision = collisionRevision ?? latestServerCollisionRevision;
+  if (nextCollisionRevision !== latestServerCollisionRevision) {
+    cachedTerrainAdapter = null;
+    cachedCollisionWorld = null;
+  }
+  latestServerCollisionRevision = nextCollisionRevision;
+}
+
+export function acknowledgeSelfMovementAck(ack: SelfMovementAck): PredictionCorrectionMetrics {
+  applyServerCollisionRevision(ack.collisionRevision);
+  const result = localMovementPrediction.acknowledgeAck(ack);
+  advanceNextCommandSeqPastAck(ack.ackSeq);
+  return result;
+}
+
 export function drainSelfMovementAuthorities(
   player: Player,
   nowMs: number,
@@ -698,12 +715,7 @@ export function applySelfMovementAuthority(
   if (authority.rootedUntil !== undefined) {
     setLocalMovementRootedUntil(authority.rootedUntil, nowMs);
   }
-  const nextCollisionRevision = authority.collisionRevision ?? latestServerCollisionRevision;
-  if (nextCollisionRevision !== latestServerCollisionRevision) {
-    cachedTerrainAdapter = null;
-    cachedCollisionWorld = null;
-  }
-  latestServerCollisionRevision = nextCollisionRevision;
+  applyServerCollisionRevision(authority.collisionRevision);
   const result = localMovementPrediction.acknowledgeAuthority(
     authority,
     getLocalPredictionContext(player),

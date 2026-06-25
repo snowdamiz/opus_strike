@@ -19,6 +19,7 @@ export interface ServerMovementAuthorityState {
   commandWindowStartedAt: number;
   commandsInWindow: number;
   lastAuthoritySentAt: number;
+  lastFullAuthoritySentAt: number;
   lastSafe: LastSafeMovementState | null;
   objectiveSuppressedUntil: number;
   shadow: MovementShadowSimulationState;
@@ -112,6 +113,7 @@ export class MovementAuthorityRegistry {
       commandWindowStartedAt: this.now(),
       commandsInWindow: 0,
       lastAuthoritySentAt: 0,
+      lastFullAuthoritySentAt: 0,
       lastSafe: null,
       objectiveSuppressedUntil: 0,
       shadow: createMovementShadowSimulationState(),

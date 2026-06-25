@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGameStore } from '../../store/gameStore';
-import type { DragHookData, HookProjectileData } from '../../store/types';
 import { useShallow } from 'zustand/shallow';
 import {
   MOVEMENT_DIAGNOSTICS_ENABLED,
@@ -13,10 +12,6 @@ import {
   GroundHooksEffect,
   EarthWallEffect,
   GrappleLineEffect,
-  createDragHookSlotHandle,
-  createHookProjectileSlotHandle,
-  type DragHookSlotHandle,
-  type HookProjectileSlotHandle,
 } from './hookshot';
 import { runHookshotFrameUpdaters } from './hookshot/hookshotFrameRegistry';
 
@@ -26,70 +21,6 @@ import { runHookshotFrameUpdaters } from './hookshot/hookshotFrameRegistry';
 
 const HOOK_PROJECTILE_VISUAL_SLOT_CAPACITY = 32;
 const DRAG_HOOK_VISUAL_SLOT_CAPACITY = 16;
-
-type ProjectileSlot<T extends { id: string }> = {
-  hook: T | null;
-};
-
-type ProjectileSlotSyncScratch<T extends { id: string }> = {
-  projectileById: Map<string, T>;
-  assignedIds: Set<string>;
-};
-
-function createProjectileSlotSyncScratch<T extends { id: string }>(): ProjectileSlotSyncScratch<T> {
-  return {
-    projectileById: new Map<string, T>(),
-    assignedIds: new Set<string>(),
-  };
-}
-
-function syncProjectileSlots<T extends { id: string }>(
-  slots: readonly ProjectileSlot<T>[],
-  projectiles: readonly T[],
-  scratch: ProjectileSlotSyncScratch<T>
-): number {
-  scratch.projectileById.clear();
-  scratch.assignedIds.clear();
-
-  for (let i = 0; i < projectiles.length; i++) {
-    const projectile = projectiles[i];
-    scratch.projectileById.set(projectile.id, projectile);
-  }
-
-  let activeCount = 0;
-  for (let i = 0; i < slots.length; i++) {
-    const slot = slots[i];
-    if (!slot.hook) continue;
-
-    const projectile = scratch.projectileById.get(slot.hook.id);
-    if (!projectile) {
-      slot.hook = null;
-      continue;
-    }
-
-    slot.hook = projectile;
-    scratch.assignedIds.add(projectile.id);
-    activeCount++;
-  }
-
-  let freeSlotIndex = 0;
-  for (let i = 0; i < projectiles.length; i++) {
-    const projectile = projectiles[i];
-    if (scratch.assignedIds.has(projectile.id)) continue;
-
-    while (freeSlotIndex < slots.length && slots[freeSlotIndex].hook) {
-      freeSlotIndex++;
-    }
-    if (freeSlotIndex >= slots.length) break;
-
-    slots[freeSlotIndex].hook = projectile;
-    scratch.assignedIds.add(projectile.id);
-    activeCount++;
-    freeSlotIndex++;
-  }
-
-  return activeCount;
-}
 
 function recordHookshotSlotDiagnostics(basicActive: number, dragActive: number): void {
   if (!MOVEMENT_DIAGNOSTICS_ENABLED) return;
@@ -116,55 +47,42 @@ function recordHookshotSlotDiagnostics(basicActive: number, dragActive: number):
 
 export function HookshotEffectsManager() {
   const {
+    hookProjectiles,
+    dragHooks,
     hookshotGroundHooks,
     grappleLines,
     earthWalls,
   } = useGameStore(useShallow(state => ({
+    hookProjectiles: state.hookProjectiles,
+    dragHooks: state.dragHooks,
     hookshotGroundHooks: state.hookshotGroundHooks,
     grappleLines: state.grappleLines,
     earthWalls: state.earthWalls,
   })));
-  const hookProjectileSlots = useMemo<HookProjectileSlotHandle[]>(
-    () => Array.from(
-      { length: HOOK_PROJECTILE_VISUAL_SLOT_CAPACITY },
-      (_, slotIndex) => createHookProjectileSlotHandle(slotIndex)
-    ),
-    []
+  const visibleHookProjectiles = useMemo(
+    () => hookProjectiles.slice(0, HOOK_PROJECTILE_VISUAL_SLOT_CAPACITY),
+    [hookProjectiles]
   );
-  const dragHookSlots = useMemo<DragHookSlotHandle[]>(
-    () => Array.from(
-      { length: DRAG_HOOK_VISUAL_SLOT_CAPACITY },
-      (_, slotIndex) => createDragHookSlotHandle(slotIndex)
-    ),
-    []
-  );
-  const hookSlotSyncScratch = useMemo(
-    () => createProjectileSlotSyncScratch<HookProjectileData>(),
-    []
-  );
-  const dragSlotSyncScratch = useMemo(
-    () => createProjectileSlotSyncScratch<DragHookData>(),
-    []
+  const visibleDragHooks = useMemo(
+    () => dragHooks.slice(0, DRAG_HOOK_VISUAL_SLOT_CAPACITY),
+    [dragHooks]
   );
 
   useFrame((state, delta) => {
-    const store = useGameStore.getState();
-    const basicActive = syncProjectileSlots<HookProjectileData>(hookProjectileSlots, store.hookProjectiles, hookSlotSyncScratch);
-    const dragActive = syncProjectileSlots<DragHookData>(dragHookSlots, store.dragHooks, dragSlotSyncScratch);
-    recordHookshotSlotDiagnostics(basicActive, dragActive);
+    recordHookshotSlotDiagnostics(visibleHookProjectiles.length, visibleDragHooks.length);
     runHookshotFrameUpdaters(state, delta);
   });
   
   return (
     <group>
       {/* Basic attack hooks */}
-      {hookProjectileSlots.map(slot => (
-        <HookProjectile key={`hook-projectile-slot-${slot.slotIndex}`} slot={slot} />
+      {visibleHookProjectiles.map((hook, slotIndex) => (
+        <HookProjectile key={hook.id} hook={hook} slotIndex={slotIndex} />
       ))}
       
       {/* Heavy attack drag hooks */}
-      {dragHookSlots.map(slot => (
-        <DragHookEffect key={`drag-hook-slot-${slot.slotIndex}`} slot={slot} />
+      {visibleDragHooks.map((hook, slotIndex) => (
+        <DragHookEffect key={hook.id} hook={hook} slotIndex={slotIndex} />
       ))}
       
       {/* Ground Hooks ultimate roots */}

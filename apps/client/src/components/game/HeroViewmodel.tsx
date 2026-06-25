@@ -54,7 +54,7 @@ import {
 import {
   registerViewmodelPoseSamplers,
   useRegisteredViewmodelSocket,
-  viewmodelPoseDraftFromMatrix,
+  writeViewmodelPoseDraftFromMatrix,
   type ViewmodelSocketPoseDraft,
 } from '../../viewmodel/viewmodelKit';
 import { SHARED_VIEWMODEL_ROOT_OFFSET } from '../../viewmodel/viewmodelManifests';
@@ -141,6 +141,29 @@ function resolveFingerTargets(fingerRefs: (THREE.Group | null)[]): THREE.Group[]
     return null;
   }
   return fingerRefs as THREE.Group[];
+}
+
+function createMutableTransformTarget(): MutableTransformTarget {
+  return {
+    position: new THREE.Vector3(),
+    rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
+  };
+}
+
+function createPhantomHandPoseTargets(): PhantomHandPoseTargets;
+function createPhantomHandPoseTargets(includeClosedHand: true): PhantomHandPoseTargets & {
+  closedHand: MutableTransformTarget;
+};
+function createPhantomHandPoseTargets(includeClosedHand = false): PhantomHandPoseTargets {
+  const targets: PhantomHandPoseTargets = {
+    arm: createMutableTransformTarget(),
+    wrist: createMutableTransformTarget(),
+    palm: createMutableTransformTarget(),
+    thumb: createMutableTransformTarget(),
+    fingers: Array.from({ length: 4 }, () => createMutableTransformTarget()),
+  };
+  if (includeClosedHand) targets.closedHand = createMutableTransformTarget();
+  return targets;
 }
 
 interface ViewmodelLocomotionPose {
@@ -431,6 +454,10 @@ const matrixQuaternion = new THREE.Quaternion();
 const matrixUnitScale = new THREE.Vector3(1, 1, 1);
 const viewmodelWorldScale = new THREE.Vector3(1, 1, 1);
 const matrixEuler = new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER);
+const viewmodelRootTransformScratch: MutableTransformTarget = {
+  position: matrixPosition,
+  rotation: matrixEuler,
+};
 const viewmodelRootMatrix = new THREE.Matrix4();
 const viewmodelOffsetMatrix = new THREE.Matrix4();
 const viewmodelArmMatrix = new THREE.Matrix4();
@@ -454,6 +481,14 @@ const chronosWeaponRotationScratch = new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EUL
 const chronosOrbPositionScratch = new THREE.Vector3();
 const blazeStaffPositionScratch = new THREE.Vector3();
 const blazeStaffRotationScratch = new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER);
+const viewmodelSocketPoseDraftScaleScratch = new THREE.Vector3(1, 1, 1);
+const viewmodelSocketPoseDraftScratch: ViewmodelSocketPoseDraft = {
+  position: new THREE.Vector3(),
+  quaternion: new THREE.Quaternion(),
+};
+const phantomPrimaryPalmPoseTarget = createPhantomHandPoseTargets();
+const blazeRocketHandPoseTarget = createPhantomHandPoseTargets(true);
+const chronosHandPoseTarget = createPhantomHandPoseTargets();
 const phantomClosedHandPivotOffset = new THREE.Vector3(0, 0, PHANTOM_CLOSED_HAND_WRIST_PIVOT_Z);
 const phantomClosedHandPivotWorldOffset = new THREE.Vector3();
 const VIEWMODEL_STILL_LOCOMOTION_POSE: ViewmodelLocomotionPose = {
@@ -1449,10 +1484,7 @@ function composePhantomPrimaryPalmMatrix({
   shieldCastPose?: PhantomShieldCastPose;
   locomotion?: ViewmodelLocomotionPose;
 }): THREE.Matrix4 {
-  const rootTransform = {
-    position: matrixPosition,
-    rotation: matrixEuler,
-  };
+  const rootTransform = viewmodelRootTransformScratch;
   writeViewmodelRootTransform(rootTransform, elapsedSeconds, actionBlend, targetingBlend);
   composeTransformMatrix(viewmodelRootMatrix, rootTransform.position, rootTransform.rotation);
 
@@ -1460,16 +1492,7 @@ function composePhantomPrimaryPalmMatrix({
   matrixEuler.set(0, 0, 0);
   composeTransformMatrix(viewmodelOffsetMatrix, matrixPosition, matrixEuler);
 
-  const poseTarget: PhantomHandPoseTargets = {
-    arm: { position: matrixPosition, rotation: matrixEuler },
-    wrist: { position: new THREE.Vector3(), rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER) },
-    palm: { position: new THREE.Vector3(), rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER) },
-    thumb: { position: new THREE.Vector3(), rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER) },
-    fingers: Array.from({ length: 4 }, () => ({
-      position: new THREE.Vector3(),
-      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
-    })),
-  };
+  const poseTarget = phantomPrimaryPalmPoseTarget;
   writePhantomHandPose(
     poseTarget,
     side,
@@ -1507,6 +1530,7 @@ function composePhantomPrimaryPalmMatrix({
 
 function samplePhantomPrimaryPalmSocket(
   context: PhantomPrimaryPoseSampleContext,
+  side: -1 | 1,
   actionBlend: number,
   targetingBlend: number,
   locomotion?: ViewmodelLocomotionPose
@@ -1522,7 +1546,7 @@ function samplePhantomPrimaryPalmSocket(
     elapsedSeconds: context.elapsedSeconds,
     actionBlend,
     targetingBlend,
-    side: context.side,
+    side,
     holdBlend,
     shotPulse,
     primaryReadyBlend: primaryHoldBlend,
@@ -1531,7 +1555,12 @@ function samplePhantomPrimaryPalmSocket(
     locomotion,
   });
 
-  return viewmodelPoseDraftFromMatrix(worldMatrix, timestampMs);
+  return writeViewmodelPoseDraftFromMatrix(
+    viewmodelSocketPoseDraftScratch,
+    viewmodelSocketPoseDraftScaleScratch,
+    worldMatrix,
+    timestampMs
+  );
 }
 
 function composePhantomVoidRayOrbMatrix({
@@ -1545,10 +1574,7 @@ function composePhantomVoidRayOrbMatrix({
   actionBlend: number;
   targetingBlend: number;
 }): THREE.Matrix4 {
-  const rootTransform = {
-    position: matrixPosition,
-    rotation: matrixEuler,
-  };
+  const rootTransform = viewmodelRootTransformScratch;
   writeViewmodelRootTransform(rootTransform, elapsedSeconds, actionBlend, targetingBlend);
   composeTransformMatrix(viewmodelRootMatrix, rootTransform.position, rootTransform.rotation);
 
@@ -1583,7 +1609,12 @@ function samplePhantomVoidRayOrbSocket(
     targetingBlend,
   });
 
-  return viewmodelPoseDraftFromMatrix(worldMatrix, timestampMs);
+  return writeViewmodelPoseDraftFromMatrix(
+    viewmodelSocketPoseDraftScratch,
+    viewmodelSocketPoseDraftScaleScratch,
+    worldMatrix,
+    timestampMs
+  );
 }
 
 function PhantomAnimatedForearm({
@@ -2576,37 +2607,6 @@ function writeBlazeStaffPose(
   target.rotation.z -= 0.006 * ready;
 }
 
-function createBlazeRocketHandPoseTargets(): PhantomHandPoseTargets & {
-  closedHand: MutableTransformTarget;
-} {
-  return {
-    closedHand: {
-      position: new THREE.Vector3(),
-      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
-    },
-    arm: {
-      position: new THREE.Vector3(),
-      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
-    },
-    wrist: {
-      position: new THREE.Vector3(),
-      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
-    },
-    palm: {
-      position: new THREE.Vector3(),
-      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
-    },
-    thumb: {
-      position: new THREE.Vector3(),
-      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
-    },
-    fingers: Array.from({ length: 4 }, () => ({
-      position: new THREE.Vector3(),
-      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
-    })),
-  };
-}
-
 function composeBlazeRocketStaffTipMatrix({
   camera,
   elapsedSeconds,
@@ -2625,10 +2625,7 @@ function composeBlazeRocketStaffTipMatrix({
   locomotion?: ViewmodelLocomotionPose;
 }): THREE.Matrix4 {
   const adjustedHoldBlend = holdBlend * (1 - getBlazeRocketJumpPoseAmount(rocketJumpPose));
-  const rootTransform = {
-    position: matrixPosition,
-    rotation: matrixEuler,
-  };
+  const rootTransform = viewmodelRootTransformScratch;
   writeViewmodelRootTransform(rootTransform, elapsedSeconds, actionBlend, targetingBlend);
   composeTransformMatrix(viewmodelRootMatrix, rootTransform.position, rootTransform.rotation);
 
@@ -2636,7 +2633,7 @@ function composeBlazeRocketStaffTipMatrix({
   matrixEuler.set(0, 0, 0);
   composeTransformMatrix(viewmodelOffsetMatrix, matrixPosition, matrixEuler);
 
-  const poseTarget = createBlazeRocketHandPoseTargets();
+  const poseTarget = blazeRocketHandPoseTarget;
   writePhantomHandPose(
     poseTarget,
     1,
@@ -2699,7 +2696,12 @@ function sampleBlazeRocketStaffTipSocket(
     locomotion,
   });
 
-  return viewmodelPoseDraftFromMatrix(worldMatrix, timestampMs);
+  return writeViewmodelPoseDraftFromMatrix(
+    viewmodelSocketPoseDraftScratch,
+    viewmodelSocketPoseDraftScaleScratch,
+    worldMatrix,
+    timestampMs
+  );
 }
 
 function createBlazeStaffChargeGlowMaterial(color: number): THREE.MeshBasicMaterial {
@@ -3770,31 +3772,6 @@ function writeChronosTriangleHandPose(
   }
 }
 
-function createChronosHandPoseTargets(): PhantomHandPoseTargets {
-  return {
-    arm: {
-      position: new THREE.Vector3(),
-      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
-    },
-    wrist: {
-      position: new THREE.Vector3(),
-      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
-    },
-    palm: {
-      position: new THREE.Vector3(),
-      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
-    },
-    thumb: {
-      position: new THREE.Vector3(),
-      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
-    },
-    fingers: Array.from({ length: 4 }, () => ({
-      position: new THREE.Vector3(),
-      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
-    })),
-  };
-}
-
 function composeChronosWeaponSocketLocalMatrix({
   targetMatrix,
   side,
@@ -3808,7 +3785,7 @@ function composeChronosWeaponSocketLocalMatrix({
   movementBob: ChronosMovementBobOffset;
   aegisPose: ChronosAegisPose;
 }): THREE.Matrix4 {
-  const poseTarget = createChronosHandPoseTargets();
+  const poseTarget = chronosHandPoseTarget;
   writeChronosTriangleHandPose(
     poseTarget,
     side,
@@ -3854,10 +3831,7 @@ function composeChronosPrimaryOrbMatrix({
   movementBob: ChronosMovementBobOffset;
   aegisPose: ChronosAegisPose;
 }): THREE.Matrix4 {
-  const rootTransform = {
-    position: matrixPosition,
-    rotation: matrixEuler,
-  };
+  const rootTransform = viewmodelRootTransformScratch;
   writeViewmodelRootTransform(rootTransform, elapsedSeconds, actionBlend, targetingBlend);
   composeTransformMatrix(viewmodelRootMatrix, rootTransform.position, rootTransform.rotation);
 
@@ -3938,7 +3912,12 @@ function sampleChronosPrimaryOrbSocket(
     aegisPose,
   });
 
-  return viewmodelPoseDraftFromMatrix(worldMatrix, timestampMs);
+  return writeViewmodelPoseDraftFromMatrix(
+    viewmodelSocketPoseDraftScratch,
+    viewmodelSocketPoseDraftScaleScratch,
+    worldMatrix,
+    timestampMs
+  );
 }
 
 function ChronosPhantomForearm({
@@ -4785,7 +4764,8 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, skinId, ac
       {
         socketName: PHANTOM_PRIMARY_PALM_SOCKET_NAMES[-1],
         sampler: (context: PhantomPrimaryPoseSampleContext) => samplePhantomPrimaryPalmSocket(
-          { ...context, side: -1 },
+          context,
+          -1,
           actionBlendRef.current,
           targetingBlendRef.current,
           viewmodelLocomotionRef.current
@@ -4794,7 +4774,8 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, skinId, ac
       {
         socketName: PHANTOM_PRIMARY_PALM_SOCKET_NAMES[1],
         sampler: (context: PhantomPrimaryPoseSampleContext) => samplePhantomPrimaryPalmSocket(
-          { ...context, side: 1 },
+          context,
+          1,
           actionBlendRef.current,
           targetingBlendRef.current,
           viewmodelLocomotionRef.current

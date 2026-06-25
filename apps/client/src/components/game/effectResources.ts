@@ -406,6 +406,27 @@ export function initializeEffectResources() {
   });
 }
 
+export function disposeSharedEffectResources(): void {
+  for (const geometry of Object.values(SHARED_GEOMETRIES)) {
+    geometry.dispose();
+  }
+
+  for (const material of materialCache.values()) {
+    material.dispose();
+  }
+  materialCache.clear();
+
+  if (_hookshotMaterials) {
+    for (const material of Object.values(_hookshotMaterials)) {
+      material.dispose();
+    }
+    _hookshotMaterials = null;
+  }
+
+  shaderProgramCache.clear();
+  _initialized = false;
+}
+
 // Auto-initialize on first import (browser only)
 if (typeof window !== 'undefined') {
   requestAnimationFrame(initializeEffectResources);

@@ -32,14 +32,14 @@ import {
 } from '@voxel-strike/shared';
 import type { VoiceScope, VoiceTokenResponse } from '../voice/types';
 import { disconnectVoice } from '../voice/voiceControls';
-import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
-import { prebuildPreparedMapGeometryDeferred } from '../utils/mapWarmup/deferredMapGeometryWarmup';
 import {
   clearRunningGameSession,
   loadRunningGameSession,
   saveRunningGameSession,
   type RunningGameSession,
 } from '../utils/runningGameSession';
+import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
+import { prebuildPreparedMapGeometryDeferred } from '../utils/mapWarmup/deferredMapGeometryWarmup';
 import {
   getDevTutorialBypassRoomOptions,
   requestQuickPlayTicket,
@@ -52,7 +52,6 @@ import {
 } from './networkApi';
 import { setupLobbyListeners as setupLobbyRoomListeners } from './lobbyListeners';
 import { setupGameRoomListeners } from './gameRoomListeners';
-
 // Import extracted handlers
 import {
   createDefaultLocalPlayer,

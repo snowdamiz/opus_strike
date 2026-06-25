@@ -17,6 +17,7 @@ import {
   recordEffectSlotDiagnostics,
 } from '../../movement/networkDiagnostics';
 import { useDeferredFrameCommit } from './systems/useDeferredFrameCommit';
+import { SHARED_GEOMETRIES } from './effectResources';
 
 interface Effect {
   id: string;
@@ -36,16 +37,155 @@ let effectIdCounter = 0;
 const MAX_GLOBAL_EFFECTS = 96;
 const EXPLOSION_PARTICLE_COUNT = 20;
 const BLINK_RING_GEOMETRY = new THREE.RingGeometry(0.5, 0.7, 6);
-const EXPLOSION_BOX_GEOMETRY = new THREE.BoxGeometry(0.2, 0.2, 0.2);
-const HIT_SPHERE_GEOMETRY = new THREE.SphereGeometry(0.3, 8, 8);
-const CHRONOS_SELF_HEAL_SPHERE_GEOMETRY = new THREE.SphereGeometry(1, 20, 14);
-const LIFELINE_BEAM_GEOMETRY = new THREE.CylinderGeometry(0.05, 0.05, 1, 8);
+const GLOBAL_EFFECT_BOX_SCALE = 0.2;
+const GLOBAL_EFFECT_SPHERE_SCALE = 0.3;
+const GLOBAL_EFFECT_CYLINDER_RADIUS_SCALE = 0.05;
 const LIFELINE_AXIS = new THREE.Vector3(0, 1, 0);
 const EFFECT_FORWARD = new THREE.Vector3(0, 0, 1);
 const EXPLOSION_INSTANCE_DUMMY = new THREE.Object3D();
+const GRAPPLE_LINE_MATERIAL = new THREE.LineBasicMaterial({ color: '#00ff88', linewidth: 2 });
 const CHRONOS_AEGIS_BREAK_SHARD_COUNT = 14;
 type GlobalEffectUpdater = (state: RootState, delta: number) => void;
 const globalEffectUpdaters = createFrameUpdaterRegistry<RootState>();
+
+type GlobalEffectMaterialKind =
+  | 'blinkStart'
+  | 'blinkEnd'
+  | 'explosion'
+  | 'hit'
+  | 'lifelineGlow'
+  | 'lifelineBeam'
+  | 'healSphere'
+  | 'healRing'
+  | 'chronosSelfHealSphere'
+  | 'chronosSelfHealRingGreen'
+  | 'chronosSelfHealRingLight'
+  | 'chronosAegisBreakFlash'
+  | 'chronosAegisBreakRing'
+  | 'chronosAegisBreakShard';
+
+const GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY: Record<GlobalEffectMaterialKind, number> = {
+  blinkStart: 1,
+  blinkEnd: 0,
+  explosion: 1,
+  hit: 1,
+  lifelineGlow: 0.2,
+  lifelineBeam: 0.72,
+  healSphere: 0.46,
+  healRing: 0.62,
+  chronosSelfHealSphere: 0.34,
+  chronosSelfHealRingGreen: 0.72,
+  chronosSelfHealRingLight: 0.72,
+  chronosAegisBreakFlash: 0,
+  chronosAegisBreakRing: 0,
+  chronosAegisBreakShard: 0,
+};
+const globalEffectMaterialPools = new Map<GlobalEffectMaterialKind, THREE.MeshBasicMaterial[]>();
+
+function createGlobalEffectMaterial(kind: GlobalEffectMaterialKind): THREE.MeshBasicMaterial {
+  switch (kind) {
+    case 'blinkStart':
+    case 'blinkEnd':
+      return new THREE.MeshBasicMaterial({
+        color: 0x9f7aea,
+        transparent: true,
+        opacity: GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind],
+        side: THREE.DoubleSide,
+      });
+    case 'explosion':
+      return new THREE.MeshBasicMaterial({
+        color: 0xff6b35,
+        transparent: true,
+        opacity: GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind],
+      });
+    case 'hit':
+      return new THREE.MeshBasicMaterial({
+        color: 0xff4444,
+        transparent: true,
+        opacity: GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind],
+      });
+    case 'lifelineGlow':
+      return createAdditiveBasicMaterial(0x22c55e, GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind]);
+    case 'lifelineBeam':
+      return createAdditiveBasicMaterial(0xbbf7d0, GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind]);
+    case 'healSphere':
+    case 'chronosSelfHealSphere':
+      return createAdditiveBasicMaterial(0x86efac, GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind], {
+        side: kind === 'chronosSelfHealSphere' ? THREE.DoubleSide : THREE.FrontSide,
+      });
+    case 'healRing':
+      return createAdditiveBasicMaterial(0xbbf7d0, GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind], {
+        side: THREE.DoubleSide,
+      });
+    case 'chronosSelfHealRingGreen':
+      return createAdditiveBasicMaterial(0x22c55e, GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind], {
+        side: THREE.DoubleSide,
+      });
+    case 'chronosSelfHealRingLight':
+      return createAdditiveBasicMaterial(0xbbf7d0, GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind], {
+        side: THREE.DoubleSide,
+      });
+    case 'chronosAegisBreakFlash':
+      return createAdditiveBasicMaterial(0xfef9c3, GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind], {
+        side: THREE.DoubleSide,
+      });
+    case 'chronosAegisBreakRing':
+      return createAdditiveBasicMaterial(0xfacc15, GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind], {
+        side: THREE.DoubleSide,
+      });
+    case 'chronosAegisBreakShard':
+      return createAdditiveBasicMaterial(0x86efac, GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind]);
+  }
+}
+
+function createAdditiveBasicMaterial(
+  color: number,
+  opacity: number,
+  options: { side?: THREE.Side } = {}
+): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+    side: options.side,
+  });
+}
+
+function acquireGlobalEffectMaterial(kind: GlobalEffectMaterialKind): THREE.MeshBasicMaterial {
+  const pool = globalEffectMaterialPools.get(kind);
+  const material = pool?.pop() ?? createGlobalEffectMaterial(kind);
+  material.opacity = GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind];
+  material.visible = true;
+  return material;
+}
+
+function releaseGlobalEffectMaterial(kind: GlobalEffectMaterialKind, material: THREE.MeshBasicMaterial): void {
+  material.opacity = GLOBAL_EFFECT_MATERIAL_INITIAL_OPACITY[kind];
+  material.visible = true;
+  let pool = globalEffectMaterialPools.get(kind);
+  if (!pool) {
+    pool = [];
+    globalEffectMaterialPools.set(kind, pool);
+  }
+  pool.push(material);
+}
+
+function useGlobalEffectMaterial(kind: GlobalEffectMaterialKind): THREE.MeshBasicMaterial {
+  const materialRef = useRef<THREE.MeshBasicMaterial | null>(null);
+  if (!materialRef.current) {
+    materialRef.current = acquireGlobalEffectMaterial(kind);
+  }
+  useEffect(() => () => {
+    const material = materialRef.current;
+    if (!material) return;
+    materialRef.current = null;
+    releaseGlobalEffectMaterial(kind, material);
+  }, [kind]);
+  return materialRef.current;
+}
 
 interface ChronosAegisBreakShard {
   x: number;
@@ -360,7 +500,7 @@ function GrappleLine({ effect }: EffectProps) {
     return bufferGeometry;
   }, [positions]);
   const lineObject = useMemo(() => {
-    const line = new THREE.Line(geometry);
+    const line = new THREE.Line(geometry, GRAPPLE_LINE_MATERIAL);
     line.frustumCulled = false;
     return line;
   }, [geometry]);
@@ -374,9 +514,7 @@ function GrappleLine({ effect }: EffectProps) {
   useEffect(() => () => geometry.dispose(), [geometry]);
 
   return (
-    <primitive object={lineObject}>
-      <lineBasicMaterial color="#00ff88" linewidth={2} />
-    </primitive>
+    <primitive object={lineObject} />
   );
 }
 
@@ -384,6 +522,8 @@ function BlinkEffect({ effect }: EffectProps) {
   const startRef = useRef<THREE.Mesh>(null);
   const endRef = useRef<THREE.Mesh>(null);
   const progress = useRef(0);
+  const startMaterial = useGlobalEffectMaterial('blinkStart');
+  const endMaterial = useGlobalEffectMaterial('blinkEnd');
 
   useGlobalEffectUpdater(effect.id, (_, delta) => {
     progress.current += delta / (effect.duration / 1000);
@@ -405,25 +545,11 @@ function BlinkEffect({ effect }: EffectProps) {
   return (
     <group>
       {/* Start position effect */}
-      <mesh ref={startRef} position={effect.position} geometry={BLINK_RING_GEOMETRY}>
-        <meshBasicMaterial 
-          color="#9f7aea"
-          transparent
-          opacity={1}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
+      <mesh ref={startRef} position={effect.position} geometry={BLINK_RING_GEOMETRY} material={startMaterial} />
 
       {/* End position effect */}
       {effect.endPosition && (
-        <mesh ref={endRef} position={effect.endPosition} geometry={BLINK_RING_GEOMETRY}>
-          <meshBasicMaterial 
-            color="#9f7aea"
-            transparent
-            opacity={0}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
+        <mesh ref={endRef} position={effect.endPosition} geometry={BLINK_RING_GEOMETRY} material={endMaterial} />
       )}
     </group>
   );
@@ -433,6 +559,7 @@ function ExplosionEffect({ effect }: EffectProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const progress = useRef(0);
   const directions = useMemo(() => createExplosionDirections(effect.id), [effect.id]);
+  const material = useGlobalEffectMaterial('explosion');
 
   useGlobalEffectUpdater(effect.id, (_, delta) => {
     const mesh = meshRef.current;
@@ -449,7 +576,7 @@ function ExplosionEffect({ effect }: EffectProps) {
         directions[offset + 1] * t * 3,
         directions[offset + 2] * t * 3
       );
-      EXPLOSION_INSTANCE_DUMMY.scale.setScalar(scale);
+      EXPLOSION_INSTANCE_DUMMY.scale.setScalar(scale * GLOBAL_EFFECT_BOX_SCALE);
       EXPLOSION_INSTANCE_DUMMY.updateMatrix();
       mesh.setMatrixAt(i, EXPLOSION_INSTANCE_DUMMY.matrix);
     }
@@ -461,22 +588,18 @@ function ExplosionEffect({ effect }: EffectProps) {
   return (
     <instancedMesh
       ref={meshRef}
-      args={[EXPLOSION_BOX_GEOMETRY, undefined, EXPLOSION_PARTICLE_COUNT]}
+      args={[SHARED_GEOMETRIES.box, undefined, EXPLOSION_PARTICLE_COUNT]}
       position={effect.position}
       frustumCulled={false}
-    >
-      <meshBasicMaterial
-        color="#ff6b35"
-        transparent
-        opacity={1}
-      />
-    </instancedMesh>
+      material={material}
+    />
   );
 }
 
 function HitEffect({ effect }: EffectProps) {
   const meshRef = useRef<THREE.Mesh>(null);
   const progress = useRef(0);
+  const material = useGlobalEffectMaterial('hit');
 
   useGlobalEffectUpdater(effect.id, (_, delta) => {
     if (!meshRef.current) return;
@@ -486,17 +609,17 @@ function HitEffect({ effect }: EffectProps) {
 
     const mat = meshRef.current.material as THREE.MeshBasicMaterial;
     mat.opacity = 1 - t;
-    meshRef.current.scale.setScalar(0.5 + t);
+    meshRef.current.scale.setScalar((0.5 + t) * GLOBAL_EFFECT_SPHERE_SCALE);
   });
 
   return (
-    <mesh ref={meshRef} position={effect.position} geometry={HIT_SPHERE_GEOMETRY}>
-      <meshBasicMaterial 
-        color="#ff4444"
-        transparent
-        opacity={1}
-      />
-    </mesh>
+    <mesh
+      ref={meshRef}
+      position={effect.position}
+      geometry={SHARED_GEOMETRIES.sphere8}
+      material={material}
+      scale={0.5 * GLOBAL_EFFECT_SPHERE_SCALE}
+    />
   );
 }
 
@@ -535,6 +658,8 @@ function LifelineBeamEffect({ effect }: EffectProps) {
   const direction = useMemo(() => new THREE.Vector3(), []);
   const sourceForward = useMemo(() => new THREE.Vector3(), []);
   const quaternion = useMemo(() => new THREE.Quaternion(), []);
+  const glowMaterial = useGlobalEffectMaterial('lifelineGlow');
+  const beamMaterial = useGlobalEffectMaterial('lifelineBeam');
 
   useGlobalEffectUpdater(effect.id, (_, delta) => {
     const group = groupRef.current;
@@ -570,13 +695,21 @@ function LifelineBeamEffect({ effect }: EffectProps) {
     if (beamRef.current) {
       const mat = beamRef.current.material as THREE.MeshBasicMaterial;
       mat.opacity = 0.72 * fade;
-      beamRef.current.scale.set(beamRadius, length, beamRadius);
+      beamRef.current.scale.set(
+        beamRadius * GLOBAL_EFFECT_CYLINDER_RADIUS_SCALE,
+        length,
+        beamRadius * GLOBAL_EFFECT_CYLINDER_RADIUS_SCALE
+      );
     }
 
     if (glowRef.current) {
       const mat = glowRef.current.material as THREE.MeshBasicMaterial;
       mat.opacity = 0.2 * fade;
-      glowRef.current.scale.set(beamRadius * 2.4, length, beamRadius * 2.4);
+      glowRef.current.scale.set(
+        beamRadius * 2.4 * GLOBAL_EFFECT_CYLINDER_RADIUS_SCALE,
+        length,
+        beamRadius * 2.4 * GLOBAL_EFFECT_CYLINDER_RADIUS_SCALE
+      );
     }
   });
 
@@ -584,32 +717,16 @@ function LifelineBeamEffect({ effect }: EffectProps) {
     <group ref={groupRef} position={effect.position}>
       <mesh
         ref={glowRef}
-        geometry={LIFELINE_BEAM_GEOMETRY}
-        scale={[1.8, 1, 1.8]}
-      >
-        <meshBasicMaterial
-          color="#22c55e"
-          transparent
-          opacity={0.2}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </mesh>
+        geometry={SHARED_GEOMETRIES.cylinder8}
+        material={glowMaterial}
+        scale={[1.8 * GLOBAL_EFFECT_CYLINDER_RADIUS_SCALE, 1, 1.8 * GLOBAL_EFFECT_CYLINDER_RADIUS_SCALE]}
+      />
       <mesh
         ref={beamRef}
-        geometry={LIFELINE_BEAM_GEOMETRY}
-        scale={[0.74, 1, 0.74]}
-      >
-        <meshBasicMaterial
-          color="#bbf7d0"
-          transparent
-          opacity={0.72}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </mesh>
+        geometry={SHARED_GEOMETRIES.cylinder8}
+        material={beamMaterial}
+        scale={[0.74 * GLOBAL_EFFECT_CYLINDER_RADIUS_SCALE, 1, 0.74 * GLOBAL_EFFECT_CYLINDER_RADIUS_SCALE]}
+      />
     </group>
   );
 }
@@ -618,6 +735,8 @@ function HealPulseEffect({ effect }: EffectProps) {
   const sphereRef = useRef<THREE.Mesh>(null);
   const ringRef = useRef<THREE.Mesh>(null);
   const progress = useRef(0);
+  const sphereMaterial = useGlobalEffectMaterial('healSphere');
+  const ringMaterial = useGlobalEffectMaterial('healRing');
 
   useGlobalEffectUpdater(effect.id, (_, delta) => {
     progress.current += delta / (effect.duration / 1000);
@@ -627,7 +746,7 @@ function HealPulseEffect({ effect }: EffectProps) {
     if (sphereRef.current) {
       const mat = sphereRef.current.material as THREE.MeshBasicMaterial;
       mat.opacity = 0.46 * fade;
-      sphereRef.current.scale.setScalar(0.7 + t * 1.45);
+      sphereRef.current.scale.setScalar((0.7 + t * 1.45) * GLOBAL_EFFECT_SPHERE_SCALE);
     }
 
     if (ringRef.current) {
@@ -639,27 +758,18 @@ function HealPulseEffect({ effect }: EffectProps) {
 
   return (
     <group position={effect.position}>
-      <mesh ref={sphereRef} geometry={HIT_SPHERE_GEOMETRY}>
-        <meshBasicMaterial
-          color="#86efac"
-          transparent
-          opacity={0.46}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </mesh>
-      <mesh ref={ringRef} geometry={BLINK_RING_GEOMETRY} rotation={[Math.PI / 2, 0, 0]}>
-        <meshBasicMaterial
-          color="#bbf7d0"
-          transparent
-          opacity={0.62}
-          side={THREE.DoubleSide}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </mesh>
+      <mesh
+        ref={sphereRef}
+        geometry={SHARED_GEOMETRIES.sphere8}
+        material={sphereMaterial}
+        scale={0.7 * GLOBAL_EFFECT_SPHERE_SCALE}
+      />
+      <mesh
+        ref={ringRef}
+        geometry={BLINK_RING_GEOMETRY}
+        material={ringMaterial}
+        rotation={[Math.PI / 2, 0, 0]}
+      />
     </group>
   );
 }
@@ -673,6 +783,9 @@ function ChronosSelfHealPulseEffect({ effect }: EffectProps) {
   const { camera } = useThree();
   const source = useMemo(() => new THREE.Vector3(), []);
   const sourceForward = useMemo(() => new THREE.Vector3(), []);
+  const sphereMaterial = useGlobalEffectMaterial('chronosSelfHealSphere');
+  const ringMaterialGreen = useGlobalEffectMaterial('chronosSelfHealRingGreen');
+  const ringMaterialLight = useGlobalEffectMaterial('chronosSelfHealRingLight');
 
   useGlobalEffectUpdater(effect.id, (_, delta) => {
     const group = groupRef.current;
@@ -721,17 +834,7 @@ function ChronosSelfHealPulseEffect({ effect }: EffectProps) {
 
   return (
     <group ref={groupRef} position={effect.position} frustumCulled={false}>
-      <mesh ref={sphereRef} geometry={CHRONOS_SELF_HEAL_SPHERE_GEOMETRY}>
-        <meshBasicMaterial
-          color="#86efac"
-          transparent
-          opacity={0.34}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          toneMapped={false}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
+      <mesh ref={sphereRef} geometry={SHARED_GEOMETRIES.sphere16} material={sphereMaterial} />
       {[
         [Math.PI / 2, 0, 0],
         [0, Math.PI / 2, 0],
@@ -743,18 +846,9 @@ function ChronosSelfHealPulseEffect({ effect }: EffectProps) {
             ringRefs.current[index] = node;
           }}
           geometry={BLINK_RING_GEOMETRY}
+          material={index === 1 ? ringMaterialLight : ringMaterialGreen}
           rotation={rotation as [number, number, number]}
-        >
-          <meshBasicMaterial
-            color={index === 1 ? '#bbf7d0' : '#22c55e'}
-            transparent
-            opacity={0.72}
-            side={THREE.DoubleSide}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </mesh>
+        />
       ))}
       <BudgetedPointLight
         ref={lightRef}
@@ -783,41 +877,9 @@ function ChronosAegisBreakEffect({ effect }: EffectProps) {
     direction.normalize();
     return new THREE.Quaternion().setFromUnitVectors(EFFECT_FORWARD, direction);
   }, [effect.direction]);
-  const materials = useMemo(() => {
-    const flash = new THREE.MeshBasicMaterial({
-      color: 0xfef9c3,
-      transparent: true,
-      opacity: 0,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      toneMapped: false,
-    });
-    const ring = new THREE.MeshBasicMaterial({
-      color: 0xfacc15,
-      transparent: true,
-      opacity: 0,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      toneMapped: false,
-    });
-    const shard = new THREE.MeshBasicMaterial({
-      color: 0x86efac,
-      transparent: true,
-      opacity: 0,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      toneMapped: false,
-    });
-    return { flash, ring, shard };
-  }, []);
-
-  useEffect(() => () => {
-    materials.flash.dispose();
-    materials.ring.dispose();
-    materials.shard.dispose();
-  }, [materials]);
+  const flashMaterial = useGlobalEffectMaterial('chronosAegisBreakFlash');
+  const ringMaterial = useGlobalEffectMaterial('chronosAegisBreakRing');
+  const shardMaterial = useGlobalEffectMaterial('chronosAegisBreakShard');
 
   useGlobalEffectUpdater(effect.id, (_, delta) => {
     progress.current += delta / (effect.duration / 1000);
@@ -826,11 +888,11 @@ function ChronosAegisBreakEffect({ effect }: EffectProps) {
     const burst = Math.sin(Math.min(1, t * 1.45) * Math.PI);
 
     if (flashRef.current) {
-      materials.flash.opacity = 0.58 * fade;
-      flashRef.current.scale.setScalar(0.78 + t * 2.4);
+      flashMaterial.opacity = 0.58 * fade;
+      flashRef.current.scale.setScalar((0.78 + t * 2.4) * GLOBAL_EFFECT_SPHERE_SCALE);
     }
     if (ringARef.current) {
-      materials.ring.opacity = 0.72 * fade;
+      ringMaterial.opacity = 0.72 * fade;
       ringARef.current.scale.setScalar(0.95 + t * 3.35);
       ringARef.current.rotation.z += delta * 1.8;
     }
@@ -838,13 +900,17 @@ function ChronosAegisBreakEffect({ effect }: EffectProps) {
       ringBRef.current.scale.setScalar(0.56 + t * 2.5);
       ringBRef.current.rotation.z -= delta * 2.3;
     }
-    materials.shard.opacity = 0.82 * fade;
+    shardMaterial.opacity = 0.82 * fade;
     shards.forEach((shard, index) => {
       const mesh = shardRefs.current[index];
       if (!mesh) return;
       mesh.position.set(shard.x * t, shard.y * t, shard.z * burst);
       mesh.rotation.set(0, 0, shard.rotation + shard.spin * t);
-      mesh.scale.set(shard.width * (1 - t * 0.25), shard.height * (1 - t * 0.42), 0.018);
+      mesh.scale.set(
+        shard.width * (1 - t * 0.25) * GLOBAL_EFFECT_BOX_SCALE,
+        shard.height * (1 - t * 0.42) * GLOBAL_EFFECT_BOX_SCALE,
+        0.018 * GLOBAL_EFFECT_BOX_SCALE
+      );
     });
     if (lightRef.current) {
       lightRef.current.intensity = 3.1 * burst * fade;
@@ -853,17 +919,17 @@ function ChronosAegisBreakEffect({ effect }: EffectProps) {
 
   return (
     <group position={effect.position} quaternion={quaternion} frustumCulled={false}>
-      <mesh ref={flashRef} geometry={HIT_SPHERE_GEOMETRY} material={materials.flash} frustumCulled={false} />
-      <mesh ref={ringARef} geometry={BLINK_RING_GEOMETRY} material={materials.ring} frustumCulled={false} />
-      <mesh ref={ringBRef} geometry={BLINK_RING_GEOMETRY} material={materials.ring} frustumCulled={false} />
+      <mesh ref={flashRef} geometry={SHARED_GEOMETRIES.sphere8} material={flashMaterial} scale={0.78 * GLOBAL_EFFECT_SPHERE_SCALE} frustumCulled={false} />
+      <mesh ref={ringARef} geometry={BLINK_RING_GEOMETRY} material={ringMaterial} frustumCulled={false} />
+      <mesh ref={ringBRef} geometry={BLINK_RING_GEOMETRY} material={ringMaterial} frustumCulled={false} />
       {shards.map((_, index) => (
         <mesh
           key={index}
           ref={(node) => {
             shardRefs.current[index] = node;
           }}
-          geometry={EXPLOSION_BOX_GEOMETRY}
-          material={materials.shard}
+          geometry={SHARED_GEOMETRIES.box}
+          material={shardMaterial}
           frustumCulled={false}
         />
       ))}

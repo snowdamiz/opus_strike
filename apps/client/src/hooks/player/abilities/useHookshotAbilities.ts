@@ -21,7 +21,14 @@ import {
   type HookshotSwingState,
 } from '@voxel-strike/physics';
 import { useGameStore } from '../../../store/gameStore';
-import { raycastDirection, checkGroundWithNormal, isPhysicsReady } from '../../usePhysics';
+import type { GrappleLineData } from '../../../store/types';
+import {
+  checkGroundWithNormal,
+  createRaycastDirectionHitResult,
+  isPhysicsReady,
+  raycastDirectionInto,
+  type RaycastDirectionHitResult,
+} from '../../usePhysics';
 import {
   EYE_HEIGHT,
   HOOKSHOT_FIRE_INTERVAL,
@@ -33,7 +40,6 @@ import {
   GRAPPLE_MAX_RANGE,
   HOOKSHOT_CHAIN_SOCKET,
   calculatePlayerSocketPosition,
-  calculateLookDirection,
   calculateHorizontalLookDirection,
 } from '../constants';
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
@@ -83,20 +89,53 @@ function readHookshotHookSocketPosition(
   }) ? origin : null;
 }
 
-function normalizeDelta(
-  from: { x: number; y: number; z: number },
+type MutableVec3 = { x: number; y: number; z: number };
+
+function writeLookDirection(out: MutableVec3, yaw: number, pitch: number): MutableVec3 {
+  const cosPitch = Math.cos(pitch);
+  out.x = -Math.sin(yaw) * cosPitch;
+  out.y = Math.sin(pitch);
+  out.z = -Math.cos(yaw) * cosPitch;
+  return out;
+}
+
+function writeNormalizedDeltaFromCoords(
+  out: MutableVec3,
+  fromX: number,
+  fromY: number,
+  fromZ: number,
   to: { x: number; y: number; z: number }
-): { x: number; y: number; z: number } | null {
-  const x = to.x - from.x;
-  const y = to.y - from.y;
-  const z = to.z - from.z;
+): number {
+  const x = to.x - fromX;
+  const y = to.y - fromY;
+  const z = to.z - fromZ;
   const length = Math.sqrt(x * x + y * y + z * z);
-  if (length <= 0.0001) return null;
-  return {
-    x: x / length,
-    y: y / length,
-    z: z / length,
-  };
+  if (length <= 0.0001) return 0;
+  out.x = x / length;
+  out.y = y / length;
+  out.z = z / length;
+  return length;
+}
+
+function writeRaycastHitPoint(
+  out: MutableVec3,
+  hit: RaycastDirectionHitResult,
+  originX: number,
+  originY: number,
+  originZ: number,
+  dirX: number,
+  dirY: number,
+  dirZ: number,
+  maxDistance: number
+): boolean {
+  if (!raycastDirectionInto(hit, originX, originY, originZ, dirX, dirY, dirZ, maxDistance)) {
+    return false;
+  }
+
+  out.x = hit.point.x;
+  out.y = hit.point.y;
+  out.z = hit.point.z;
+  return true;
 }
 
 function isNearPoint(
@@ -114,113 +153,111 @@ function calculateHookshotLaunch(
   ctx: AbilityContext,
   launchSide: -1 | 1,
   maxDistance: number,
+  raycastHit: RaycastDirectionHitResult,
+  lookDirection: MutableVec3,
   spawnOverride?: { x: number; y: number; z: number } | null
 ) {
-  const lookDirection = calculateLookDirection(ctx.yaw, ctx.pitch);
-  const fallbackSpawnPos = calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
+  writeLookDirection(lookDirection, ctx.yaw, ctx.pitch);
+  const spawnPos = spawnOverride ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
     ...HOOKSHOT_CHAIN_SOCKET,
     sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
   });
-  const spawnPos = spawnOverride ?? fallbackSpawnPos;
-  const aimOrigin = {
-    x: ctx.position.x,
-    y: ctx.position.y + EYE_HEIGHT,
-    z: ctx.position.z,
-  };
-  const aimPoint = {
-    x: aimOrigin.x + lookDirection.x * maxDistance,
-    y: aimOrigin.y + lookDirection.y * maxDistance,
-    z: aimOrigin.z + lookDirection.z * maxDistance,
-  };
+  const aimOriginX = ctx.position.x;
+  const aimOriginY = ctx.position.y + EYE_HEIGHT;
+  const aimOriginZ = ctx.position.z;
+  let aimPointX = aimOriginX + lookDirection.x * maxDistance;
+  let aimPointY = aimOriginY + lookDirection.y * maxDistance;
+  let aimPointZ = aimOriginZ + lookDirection.z * maxDistance;
 
   if (ctx.aimPoint) {
-    aimPoint.x = ctx.aimPoint.x;
-    aimPoint.y = ctx.aimPoint.y;
-    aimPoint.z = ctx.aimPoint.z;
+    aimPointX = ctx.aimPoint.x;
+    aimPointY = ctx.aimPoint.y;
+    aimPointZ = ctx.aimPoint.z;
   } else if (isPhysicsReady()) {
-    const hit = raycastDirection(
-      aimOrigin.x, aimOrigin.y, aimOrigin.z,
+    if (raycastDirectionInto(
+      raycastHit,
+      aimOriginX, aimOriginY, aimOriginZ,
       lookDirection.x, lookDirection.y, lookDirection.z,
       maxDistance
-    );
-
-    if (hit?.hit) {
-      aimPoint.x = hit.point.x;
-      aimPoint.y = hit.point.y;
-      aimPoint.z = hit.point.z;
+    )) {
+      aimPointX = raycastHit.point.x;
+      aimPointY = raycastHit.point.y;
+      aimPointZ = raycastHit.point.z;
     }
   }
 
-  const aimDelta = {
-    x: aimPoint.x - spawnPos.x,
-    y: aimPoint.y - spawnPos.y,
-    z: aimPoint.z - spawnPos.z,
-  };
-  const aimLength = Math.sqrt(aimDelta.x ** 2 + aimDelta.y ** 2 + aimDelta.z ** 2) || 1;
+  const aimDeltaX = aimPointX - spawnPos.x;
+  const aimDeltaY = aimPointY - spawnPos.y;
+  const aimDeltaZ = aimPointZ - spawnPos.z;
+  const aimLength = Math.sqrt(aimDeltaX ** 2 + aimDeltaY ** 2 + aimDeltaZ ** 2) || 1;
 
   return {
     spawnPos,
     direction: {
-      x: aimDelta.x / aimLength,
-      y: aimDelta.y / aimLength,
-      z: aimDelta.z / aimLength,
+      x: aimDeltaX / aimLength,
+      y: aimDeltaY / aimLength,
+      z: aimDeltaZ / aimLength,
     },
   };
 }
 
-function resolveHookshotGrapplePoint(ctx: AbilityContext): { x: number; y: number; z: number } | null {
-  const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
+function resolveHookshotGrapplePoint(
+  ctx: AbilityContext,
+  raycastHit: RaycastDirectionHitResult,
+  direction: MutableVec3,
+  hintedDirection: MutableVec3,
+  outPoint: MutableVec3
+): boolean {
+  writeLookDirection(direction, ctx.yaw, ctx.pitch);
+  if (!isPhysicsReady()) return false;
 
-  if (!isPhysicsReady()) return null;
-
-  const aimOrigin = {
-    x: ctx.position.x,
-    y: ctx.position.y + EYE_HEIGHT,
-    z: ctx.position.z,
-  };
+  const aimOriginX = ctx.position.x;
+  const aimOriginY = ctx.position.y + EYE_HEIGHT;
+  const aimOriginZ = ctx.position.z;
 
   if (ctx.aimPoint) {
-    const hintedDirection = normalizeDelta(aimOrigin, ctx.aimPoint);
-    const hintedDistance = hintedDirection
-      ? Math.min(
-        GRAPPLE_MAX_RANGE,
-        Math.sqrt(
-          (ctx.aimPoint.x - aimOrigin.x) ** 2 +
-          (ctx.aimPoint.y - aimOrigin.y) ** 2 +
-          (ctx.aimPoint.z - aimOrigin.z) ** 2
-        ) + 0.75
-      )
+    const hintedLength = writeNormalizedDeltaFromCoords(
+      hintedDirection,
+      aimOriginX,
+      aimOriginY,
+      aimOriginZ,
+      ctx.aimPoint
+    );
+    const hintedDistance = hintedLength > 0
+      ? Math.min(GRAPPLE_MAX_RANGE, hintedLength + 0.75)
       : 0;
-    const hintedHit = hintedDirection && hintedDistance > 0
-      ? raycastDirection(
-        aimOrigin.x, aimOrigin.y, aimOrigin.z,
+    const hintedHit = hintedDistance > 0
+      ? writeRaycastHitPoint(
+        outPoint,
+        raycastHit,
+        aimOriginX, aimOriginY, aimOriginZ,
         hintedDirection.x, hintedDirection.y, hintedDirection.z,
         hintedDistance
       )
-      : null;
+      : false;
 
-    if (hintedHit?.hit && isNearPoint(hintedHit.point, ctx.aimPoint, 1.25)) {
-      return hintedHit.point;
+    if (hintedHit && isNearPoint(outPoint, ctx.aimPoint, 1.25)) {
+      return true;
     }
   }
 
-  let hit = raycastDirection(
-    aimOrigin.x, aimOrigin.y, aimOrigin.z,
+  if (writeRaycastHitPoint(
+    outPoint,
+    raycastHit,
+    aimOriginX, aimOriginY, aimOriginZ,
     direction.x, direction.y, direction.z,
     GRAPPLE_MAX_RANGE
-  );
-
-  if (hit?.hit) {
-    return hit.point;
+  )) {
+    return true;
   }
 
-  hit = raycastDirection(
-    aimOrigin.x, aimOrigin.y, aimOrigin.z,
+  return writeRaycastHitPoint(
+    outPoint,
+    raycastHit,
+    aimOriginX, aimOriginY, aimOriginZ,
     direction.x, Math.min(direction.y, -0.1), direction.z,
     GRAPPLE_MAX_RANGE
   );
-
-  return hit?.hit ? hit.point : null;
 }
 
 function resolveGroundHookTargets(ctx: AbilityContext, rootUntil: number) {
@@ -272,12 +309,19 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
   const isGrapplingRef = useRef(false);
   const grappleTargetRef = useRef<{ x: number; y: number; z: number } | null>(null);
   const activeGrappleLineIdRef = useRef<string | null>(null);
+  const activeGrappleLineRef = useRef<GrappleLineData | null>(null);
   const activeGrappleStartTimeRef = useRef(0);
 
   // Grapple swing state
   const isSwingingRef = useRef(false);
   const swingWasAirborneRef = useRef(false);
   const grappleSwingStateRef = useRef<HookshotSwingState | null>(null);
+  const launchRaycastHitRef = useRef(createRaycastDirectionHitResult());
+  const grappleRaycastHitRef = useRef(createRaycastDirectionHitResult());
+  const launchLookDirectionRef = useRef({ x: 0, y: 0, z: -1 });
+  const grappleLookDirectionRef = useRef({ x: 0, y: 0, z: -1 });
+  const grappleHintedDirectionRef = useRef({ x: 0, y: 0, z: -1 });
+  const grapplePointScratchRef = useRef({ x: 0, y: 0, z: 0 });
 
   // Fire Chain Hook (primary fire)
   const fireChainHook = useCallback((ctx: AbilityContext) => {
@@ -293,6 +337,8 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       ctx,
       launchSide,
       HOOKSHOT_MAX_DISTANCE,
+      launchRaycastHitRef.current,
+      launchLookDirectionRef.current,
       socketSpawnPos
     );
     const hookId = `hook_${ctx.localPlayer.id}_${hookProjectileIdRef.current}`;
@@ -335,6 +381,8 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       ctx,
       launchSide,
       DRAG_HOOK_MAX_DISTANCE,
+      launchRaycastHitRef.current,
+      launchLookDirectionRef.current,
       socketSpawnPos
     );
     const hookId = `draghook_${ctx.localPlayer.id}_${dragHookIdRef.current}`;
@@ -363,13 +411,31 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
   }, []);
 
   const canGrapple = useCallback((ctx: AbilityContext) => {
-    return resolveHookshotGrapplePoint(ctx) !== null;
+    return resolveHookshotGrapplePoint(
+      ctx,
+      grappleRaycastHitRef.current,
+      grappleLookDirectionRef.current,
+      grappleHintedDirectionRef.current,
+      grapplePointScratchRef.current
+    );
   }, []);
 
   // Execute Grapple (E ability)
   const executeGrapple = useCallback((ctx: AbilityContext) => {
-    const grapplePoint = resolveHookshotGrapplePoint(ctx);
-    if (!grapplePoint) return false;
+    if (!resolveHookshotGrapplePoint(
+      ctx,
+      grappleRaycastHitRef.current,
+      grappleLookDirectionRef.current,
+      grappleHintedDirectionRef.current,
+      grapplePointScratchRef.current
+    )) {
+      return false;
+    }
+    const grapplePoint = {
+      x: grapplePointScratchRef.current.x,
+      y: grapplePointScratchRef.current.y,
+      z: grapplePointScratchRef.current.z,
+    };
 
     // Create grapple line visual
     grappleLineIdRef.current++;
@@ -381,7 +447,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     });
 
     const startTime = Date.now();
-    useGameStore.getState().addGrappleLine({
+    const line: GrappleLineData = {
       id: lineId,
       startPosition: startPos,
       endPosition: grapplePoint,
@@ -390,7 +456,8 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       state: 'extending',
       launchSide,
       launchYaw: ctx.yaw,
-    });
+    };
+    useGameStore.getState().addGrappleLine(line);
     markPredictedLocalAbilityVisual('hookshot_grapple', ctx.localPlayer.id, lineId, {
       launchSide,
       now: startTime,
@@ -399,6 +466,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     // Store target - pulling will start when hook reaches target
     grappleTargetRef.current = grapplePoint;
     activeGrappleLineIdRef.current = lineId;
+    activeGrappleLineRef.current = line;
     activeGrappleStartTimeRef.current = startTime;
     isGrapplingRef.current = false;
     swingWasAirborneRef.current = false;
@@ -480,6 +548,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     isSwingingRef.current = false;
     grappleTargetRef.current = null;
     activeGrappleLineIdRef.current = null;
+    activeGrappleLineRef.current = null;
     activeGrappleStartTimeRef.current = 0;
     swingWasAirborneRef.current = false;
     grappleSwingStateRef.current = null;
@@ -496,6 +565,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       isSwingingRef.current = false;
       grappleTargetRef.current = null;
       activeGrappleLineIdRef.current = null;
+      activeGrappleLineRef.current = null;
       activeGrappleStartTimeRef.current = 0;
       swingWasAirborneRef.current = false;
       grappleSwingStateRef.current = null;
@@ -509,6 +579,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
         if (line.state === 'done' || line.state === 'retracting') continue;
 
         activeGrappleLineIdRef.current = line.id;
+        activeGrappleLineRef.current = line;
         activeGrappleStartTimeRef.current = line.startTime;
         grappleTargetRef.current = line.endPosition;
         isGrapplingRef.current = false;
@@ -527,7 +598,9 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     }
 
     if (!isGrapplingRef.current) {
-      const activeLine = store.grappleLines.find(l => l.id === lineId);
+      const activeLine = activeGrappleLineRef.current?.id === lineId
+        ? activeGrappleLineRef.current
+        : null;
       if (!activeLine) {
         releaseGrappleSwing();
         return;
@@ -544,6 +617,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       );
       swingWasAirborneRef.current = grappleSwingStateRef.current.wasAirborne;
       store.updateGrappleLine(lineId, { state: 'pulling' });
+      activeGrappleLineRef.current = { ...activeLine, state: 'pulling' };
     }
 
     if (!grappleSwingStateRef.current) return;

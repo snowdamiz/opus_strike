@@ -13,6 +13,7 @@ import {
 import type { Player } from '@voxel-strike/shared';
 import type { MovementSimulationState } from '@voxel-strike/physics';
 import {
+  acknowledgeSelfMovementAck,
   applySelfMovementAuthority,
   createLocalMovementCommand,
   drainSelfMovementAuthorities,
@@ -229,6 +230,29 @@ const commandAfterRevisionSync = createLocalMovementCommand(createEmptyInputStat
   clientTimeMs: 2860,
 });
 assert.equal(commandAfterRevisionSync.collisionRevision, 4);
+
+resetLocalMovementPrediction(state(), 5, 'player-a', {
+  lastAckSeq: 50,
+  collisionRevision: 4,
+});
+const ackOnlyResult = acknowledgeSelfMovementAck({
+  serverTick: 4,
+  serverTime: 2870,
+  ackSeq: 60,
+  movementEpoch: 5,
+  collisionRevision: 6,
+});
+assert.equal(ackOnlyResult.ackSeq, 60);
+assert.equal(ackOnlyResult.corrected, false);
+assert.equal(getLocalMovementCollisionRevision(), 6);
+const commandAfterAckOnly = createLocalMovementCommand(createEmptyInputState(), {
+  lookYaw: 0,
+  lookPitch: 0,
+  clientTimeMs: 2875,
+});
+assert.equal(commandAfterAckOnly.seq, 61);
+assert.equal(commandAfterAckOnly.collisionRevision, 6);
+
 enqueueSelfMovementAuthority({
   ...duplicateAckAuthority,
   serverTime: 2900,

@@ -1,7 +1,9 @@
 import type {
   HeroStats,
   MovementCommand,
+  PlayerInput,
   PlayerMovementState,
+  SelfMovementAck,
   SelfMovementAuthority,
   Vec3,
 } from '@voxel-strike/shared';
@@ -14,7 +16,7 @@ import {
   MOVEMENT_VELOCITY_EPSILON_METERS_PER_SECOND,
   compareMovementSeq,
   isMovementSeqAfter,
-  movementButtonsToInputState,
+  writeMovementButtonsToInputState,
 } from '@voxel-strike/shared';
 import { simulateSharedMovement, type MovementTerrainAdapter } from './sharedSimulator.js';
 import type { MovementCollisionWorld } from './CapsuleMotor.js';
@@ -56,6 +58,25 @@ export interface VisualCorrectionOffset {
   y: number;
   z: number;
 }
+
+type PredictionInputScratch = Pick<
+  PlayerInput,
+  | 'moveForward'
+  | 'moveBackward'
+  | 'moveLeft'
+  | 'moveRight'
+  | 'jump'
+  | 'crouch'
+  | 'crouchPressed'
+  | 'sprint'
+  | 'primaryFire'
+  | 'secondaryFire'
+  | 'reload'
+  | 'ability1'
+  | 'ability2'
+  | 'ultimate'
+  | 'interact'
+>;
 
 const SOFT_CORRECTION_PERSISTENT_ACKS = 3;
 const SOFT_CORRECTION_ERROR_BUDGET_METERS = 0.18;
@@ -154,6 +175,23 @@ export class MovementPredictionController {
   private correctionDurationMs = 0;
   private softCorrectionAckCount = 0;
   private softCorrectionErrorBudget = 0;
+  private readonly commandInputScratch: PredictionInputScratch = {
+    moveForward: false,
+    moveBackward: false,
+    moveLeft: false,
+    moveRight: false,
+    jump: false,
+    crouch: false,
+    crouchPressed: false,
+    sprint: false,
+    primaryFire: false,
+    secondaryFire: false,
+    reload: false,
+    ability1: false,
+    ability2: false,
+    ultimate: false,
+    interact: false,
+  };
 
   initialize(state: MovementSimulationState, movementEpoch = 0, lastAckSeq = 0): void {
     this.state = cloneMovementSimulationState(state);
@@ -440,6 +478,18 @@ export class MovementPredictionController {
     };
   }
 
+  acknowledgeAck(ack: SelfMovementAck): PredictionCorrectionMetrics {
+    if (!this.state) return emptyCorrectionMetrics(ack.ackSeq);
+    if (ack.movementEpoch !== this.movementEpoch) return emptyCorrectionMetrics(ack.ackSeq);
+    if (compareMovementSeq(ack.ackSeq, this.lastAckSeq) <= 0) return emptyCorrectionMetrics(ack.ackSeq);
+
+    this.trimAcknowledged(ack.ackSeq);
+    this.lastAckSeq = ack.ackSeq;
+    this.softCorrectionAckCount = 0;
+    this.softCorrectionErrorBudget = 0;
+    return emptyCorrectionMetrics(ack.ackSeq);
+  }
+
   getVisualCorrectionOffset(nowMs: number): VisualCorrectionOffset {
     if (this.correctionDurationMs <= 0) {
       return { x: 0, y: 0, z: 0 };
@@ -495,7 +545,7 @@ export class MovementPredictionController {
       velocity: state.velocity,
       movement: state.movement,
       heroStats: context.heroStats,
-      input: movementButtonsToInputState(command.buttons),
+      input: writeMovementButtonsToInputState(command.buttons, this.commandInputScratch),
       lookYaw: command.lookYaw,
       deltaTime: MOVEMENT_SUBSTEP_SECONDS,
       terrain: context.terrain,
@@ -524,23 +574,29 @@ export class MovementPredictionController {
 
     if (this.commandOrder.length > MOVEMENT_COMMAND_BUFFER_SIZE) {
       const overflow = this.commandOrder.length - MOVEMENT_COMMAND_BUFFER_SIZE;
-      const removed = this.commandOrder.splice(0, overflow);
-      for (const seq of removed) {
-        this.commandRecords.delete(seq);
+      for (let index = 0; index < overflow; index++) {
+        this.commandRecords.delete(this.commandOrder[index]);
       }
+      const retainedCount = this.commandOrder.length - overflow;
+      for (let index = 0; index < retainedCount; index++) {
+        this.commandOrder[index] = this.commandOrder[index + overflow];
+      }
+      this.commandOrder.length = retainedCount;
     }
   }
 
   private trimAcknowledged(ackSeq: number): void {
-    const retained: number[] = [];
-    for (const seq of this.commandOrder) {
+    let writeIndex = 0;
+    for (let readIndex = 0; readIndex < this.commandOrder.length; readIndex++) {
+      const seq = this.commandOrder[readIndex];
       if (isMovementSeqAfter(seq, ackSeq)) {
-        retained.push(seq);
+        this.commandOrder[writeIndex] = seq;
+        writeIndex++;
       } else {
         this.commandRecords.delete(seq);
       }
     }
-    this.commandOrder = retained;
+    this.commandOrder.length = writeIndex;
   }
 
   private beginVisualCorrection(

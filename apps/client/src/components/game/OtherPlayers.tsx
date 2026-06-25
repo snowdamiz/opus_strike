@@ -9,7 +9,7 @@ import {
   visualStore,
 } from '../../store/visualStore';
 import { useShallow } from 'zustand/shallow';
-import type { Player, PlayerMovementState, Team, VoxelMapTheme } from '@voxel-strike/shared';
+import type { Player, PlayerMovementState, Team, Vec3, VoxelMapTheme } from '@voxel-strike/shared';
 import { HeroVoxelBody } from './HeroVoxelBody';
 import type { HeroMovementPose, HeroWalkDirection } from './HeroVoxelBody';
 import type { EffectQualityConfig, RemotePlayerQualityConfig } from './visualQuality';
@@ -61,6 +61,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
   const showFirstPersonDropBody = matchPerspective === 'first_person' &&
     firstPersonDropBodyVisibleUntilMs > dropBodyVisibilityNowMs;
   const showLocalPlayerBody = matchPerspective === 'third_person' || showFirstPersonDropBody;
+  const nameplateAnchorPosition = getNameplateAnchorPosition(localPlayerId ?? playerId, players);
 
   useEffect(() => {
     if (firstPersonDropBodyVisibleUntilMs <= 0) return;
@@ -112,14 +113,14 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
     if (!isBattleRoyal && !config.showNameplates) return;
     for (const player of otherPlayers) {
       if (player.id === playerId || player.id === localPlayerId) continue;
-      if (!shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam)) continue;
+      if (!shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam, nameplateAnchorPosition)) continue;
       prewarmNameplateTexture(
         player.name,
         player.health,
         player.maxHealth
       );
     }
-  }, [config.showNameplates, isBattleRoyal, localPlayerId, localPlayerTeam, otherPlayers, playerId]);
+  }, [config.showNameplates, config.nameplateDistance, isBattleRoyal, localPlayerId, localPlayerTeam, nameplateAnchorPosition, otherPlayers, playerId]);
 
   return (
     <group>
@@ -135,7 +136,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
       {otherPlayers.map((player) => {
         const showNameplate = player.id !== playerId
           && player.id !== localPlayerId
-          && shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam);
+          && shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam, nameplateAnchorPosition);
         const showFlagIndicator = !isBattleRoyal && player.hasFlag;
         return shouldRenderRemotePlayerFallback(player, showNameplate, showFlagIndicator) ? (
           <OtherPlayer
@@ -253,15 +254,47 @@ function hasActivePhantomVeil(player: Player): boolean {
   return Boolean(veil?.isActive);
 }
 
+function distanceSquared(a: Pick<Vec3, 'x' | 'y' | 'z'>, b: Pick<Vec3, 'x' | 'y' | 'z'>): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const dz = a.z - b.z;
+  return dx * dx + dy * dy + dz * dz;
+}
+
+function getNameplateAnchorPosition(
+  localPlayerId: string | null,
+  players: Map<string, Player>
+): Vec3 | null {
+  if (!localPlayerId) return null;
+  return visualStore.getState().playerPositions.get(localPlayerId) ??
+    players.get(localPlayerId)?.position ??
+    null;
+}
+
+function isWithinNameplateDistance(
+  player: Player,
+  config: RemotePlayerQualityConfig,
+  anchorPosition: Vec3 | null
+): boolean {
+  const distance = config.nameplateDistance;
+  if (!Number.isFinite(distance)) return true;
+  if (distance <= 0) return false;
+  if (!anchorPosition) return true;
+  return distanceSquared(player.position, anchorPosition) <= distance * distance;
+}
+
 function shouldShowRemoteNameplate(
   player: Player,
   config: RemotePlayerQualityConfig,
   isBattleRoyal: boolean,
-  localPlayerTeam: Team | null
+  localPlayerTeam: Team | null,
+  anchorPosition: Vec3 | null
 ): boolean {
-  if (isBattleRoyal) return player.team === localPlayerTeam;
+  if (isBattleRoyal) {
+    return player.team === localPlayerTeam && isWithinNameplateDistance(player, config, anchorPosition);
+  }
   if (!config.showNameplates) return false;
-  return true;
+  return isWithinNameplateDistance(player, config, anchorPosition);
 }
 
 function shouldRenderRemotePlayerFallback(

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   MOVEMENT_COMMAND_STALE_GRACE_STEPS,
+  MOVEMENT_BUTTON_PRIMARY_FIRE,
   MOVEMENT_MAX_COMMANDS_PER_SECOND,
   MOVEMENT_MAX_PACKET_COMMANDS,
   MOVEMENT_MAX_SERVER_QUEUE,
@@ -98,6 +99,33 @@ wrap.push(command(0xffffffff));
 wrap.push(command(0));
 wrap.push(command(1));
 assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
+
+{
+  const gameplayQueue = new MovementCommandQueue(2);
+  assert.equal(gameplayQueue.hasQueuedGameplayInput, false);
+
+  gameplayQueue.push(command(1));
+  assert.equal(gameplayQueue.hasQueuedGameplayInput, false);
+
+  gameplayQueue.push(command(3, { buttons: MOVEMENT_BUTTON_PRIMARY_FIRE }));
+  assert.equal(gameplayQueue.hasQueuedGameplayInput, true);
+
+  gameplayQueue.push(command(2));
+  gameplayQueue.push(command(3, { buttons: MOVEMENT_BUTTON_PRIMARY_FIRE }));
+  assert.equal(gameplayQueue.hasQueuedGameplayInput, true);
+
+  assert.equal(gameplayQueue.pop()?.seq, 1);
+  assert.equal(gameplayQueue.hasQueuedGameplayInput, true);
+  assert.equal(gameplayQueue.pop()?.seq, 2);
+  assert.equal(gameplayQueue.hasQueuedGameplayInput, true);
+  assert.equal(gameplayQueue.pop()?.seq, 3);
+  assert.equal(gameplayQueue.hasQueuedGameplayInput, false);
+
+  gameplayQueue.push(command(4, { buttons: MOVEMENT_BUTTON_PRIMARY_FIRE }));
+  assert.equal(gameplayQueue.hasQueuedGameplayInput, true);
+  gameplayQueue.clear();
+  assert.equal(gameplayQueue.hasQueuedGameplayInput, false);
+}
 
 {
   const movementAuthority = authority();

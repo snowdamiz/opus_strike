@@ -13,6 +13,7 @@ const PACKED_TRANSFORM_ESTIMATE_BYTES =
   PACKED_TRANSFORM_NUMBER_COUNT * NUMBER_ESTIMATE_BYTES +
   (PACKED_TRANSFORM_NUMBER_COUNT - 1) * ITEM_SEPARATOR_BYTES;
 const SELF_MOVEMENT_AUTHORITY_ESTIMATE_BYTES = 420;
+const SELF_MOVEMENT_ACK_ESTIMATE_BYTES = 72;
 const PLAYER_VITALS_BASE_BYTES = 64;
 const PLAYER_VITALS_SNAPSHOT_ESTIMATE_BYTES = 520;
 const PLAYER_TRANSFORM_HIDDEN_ID_ESTIMATE_BYTES = 48;
@@ -134,6 +135,8 @@ export function estimateCustomMessageBytes(type: string, payload: unknown): numb
       return estimatePlayerTransformsV2Bytes(payload);
     case 'selfMovementAuthority':
       return SELF_MOVEMENT_AUTHORITY_ESTIMATE_BYTES;
+    case 'selfMovementAck':
+      return SELF_MOVEMENT_ACK_ESTIMATE_BYTES;
     case 'playerVitals':
       return estimatePlayerVitalsBytes(payload);
     case 'playerInterest':

@@ -27,7 +27,6 @@
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.14.0",
-    "@preact/signals-react": "3.10.1",
     "@radix-ui/react-dialog": "1.1.17",
     "@radix-ui/react-label": "2.1.10",
     "@radix-ui/react-scroll-area": "1.2.12",

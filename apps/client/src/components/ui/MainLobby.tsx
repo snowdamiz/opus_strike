@@ -1,5 +1,5 @@
 import { lazy, Suspense, type CSSProperties, useCallback, useMemo, useState, useEffect, useRef } from 'react';
-import { Transaction } from '@solana/web3.js';
+import type { Transaction } from '@solana/web3.js';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import {
@@ -21,12 +21,9 @@ import {
   submitSignedSkinPurchaseTransaction,
   updateHeroSkinLoadout,
 } from '../../contexts/networkApi';
-import { HeroesPage } from './HeroesPage';
-import { StatsPage } from './StatsPage';
-import { SettingsModal } from './SettingsModal';
 import { GameDialog } from './GameDialog';
 import { GlobalChat } from './GlobalChat';
-import { HeroPreviewCanvas, type HeroPreviewAnimationMode } from './HeroPreviewCanvas';
+import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
 import { TopNavIconButton } from './TopNavIconButton';
@@ -99,6 +96,10 @@ import { SkinRarityChrome } from './SkinRarityChrome';
 const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((module) => ({
   default: module.FeaturedHeroPreview,
 })));
+const HeroesPage = lazy(() => import('./HeroesPage').then((module) => ({ default: module.HeroesPage })));
+const StatsPage = lazy(() => import('./StatsPage').then((module) => ({ default: module.StatsPage })));
+const SettingsModal = lazy(() => import('./SettingsModal').then((module) => ({ default: module.SettingsModal })));
+const HeroPreviewCanvas = lazy(() => import('./HeroPreviewCanvas').then((module) => ({ default: module.HeroPreviewCanvas })));
 const HERO_IDLE_ANIMATION_MODE: HeroPreviewAnimationMode = 'idle';
 const PLAY_PARTY_SLOT_COUNT = getPartyMaxMembersForMode('quick_play', DEFAULT_GAMEPLAY_MODE);
 const PING_ADVISORY_VISIBLE_MIN_MS = 100;
@@ -110,7 +111,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function transactionFromBase64(base64: string): Transaction {
+async function transactionFromBase64(base64: string): Promise<Transaction> {
+  const { Transaction } = await import('@solana/web3.js');
   const binary = window.atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {
@@ -983,7 +985,7 @@ export function MainLobby() {
         throw new Error('Purchase transaction simulation failed');
       }
 
-      const signedTransactionBase64 = await signTransaction(transactionFromBase64(transactionPayload.transactionBase64));
+      const signedTransactionBase64 = await signTransaction(await transactionFromBase64(transactionPayload.transactionBase64));
       const submitted = await submitSignedSkinPurchaseTransaction({
         intentId: intent.intentId,
         signedTransactionBase64,
@@ -1304,12 +1306,18 @@ export function MainLobby() {
           />
         )}
         {activeTab === 'heroes' && (
-          <HeroesPage
-            selectedHero={featuredHero}
-            onSelectHero={handleSelectHero}
-          />
+          <Suspense fallback={null}>
+            <HeroesPage
+              selectedHero={featuredHero}
+              onSelectHero={handleSelectHero}
+            />
+          </Suspense>
         )}
-        {activeTab === 'stats' && <StatsPage />}
+        {activeTab === 'stats' && (
+          <Suspense fallback={null}>
+            <StatsPage />
+          </Suspense>
+        )}
         {activeTab === 'loadout' && (
           <LoadoutTab
             featuredHero={featuredHero}
@@ -1338,7 +1346,11 @@ export function MainLobby() {
           onClose={() => setShowSocial(false)}
         />
       )}
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showSettings && (
+        <Suspense fallback={null}>
+          <SettingsModal onClose={() => setShowSettings(false)} />
+        </Suspense>
+      )}
       {showLoginDialog && !isAuthenticated && (
         <LoginDialog
           walletProviders={walletProviders}
@@ -1540,16 +1552,18 @@ function LoadoutTab({
                   />
 
                   <div className="loadout-skin-preview-button" aria-hidden="true">
-                    <HeroPreviewCanvas
-                      heroId={skin.heroId}
-                      skinId={skin.id}
-                      size="card"
-                      interactive={false}
-                      idleAnimation={false}
-                      showShadow={false}
-                      initialYaw={Math.PI - 0.28}
-                      className="loadout-skin-card-preview"
-                    />
+                    <Suspense fallback={null}>
+                      <HeroPreviewCanvas
+                        heroId={skin.heroId}
+                        skinId={skin.id}
+                        size="card"
+                        interactive={false}
+                        idleAnimation={false}
+                        showShadow={false}
+                        initialYaw={Math.PI - 0.28}
+                        className="loadout-skin-card-preview"
+                      />
+                    </Suspense>
                   </div>
 
                   <div className="loadout-skin-copy">

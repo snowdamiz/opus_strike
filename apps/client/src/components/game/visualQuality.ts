@@ -70,6 +70,7 @@ export interface EffectQualityConfig {
 
 export interface RemotePlayerQualityConfig {
   showNameplates: boolean;
+  nameplateDistance: number;
   fullBodyDistance: number;
   outlineDistance: number;
   botFullBodyDistanceScale: number;
@@ -614,6 +615,7 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
 const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityConfig> = {
   potato: {
     showNameplates: false,
+    nameplateDistance: 0,
     fullBodyDistance: 36,
     outlineDistance: 0,
     botFullBodyDistanceScale: 1,
@@ -622,6 +624,7 @@ const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityCo
   },
   competitive: {
     showNameplates: true,
+    nameplateDistance: 56,
     fullBodyDistance: 52,
     outlineDistance: 0,
     botFullBodyDistanceScale: 1,
@@ -630,6 +633,7 @@ const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityCo
   },
   balanced: {
     showNameplates: true,
+    nameplateDistance: 72,
     fullBodyDistance: 72,
     outlineDistance: 48,
     botFullBodyDistanceScale: 1,
@@ -638,6 +642,7 @@ const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityCo
   },
   cinematic: {
     showNameplates: true,
+    nameplateDistance: Number.POSITIVE_INFINITY,
     fullBodyDistance: Number.POSITIVE_INFINITY,
     outlineDistance: 96,
     botFullBodyDistanceScale: 1,

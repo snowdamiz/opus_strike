@@ -46,6 +46,30 @@ function nextId(): string {
   return `${Date.now()}-${eventId}`;
 }
 
+function pruneExpiredItems<T extends { createdAt: number }>(
+  items: T[],
+  now: number,
+  ttl: number
+): T[] {
+  let hasExpired = false;
+  for (let index = 0; index < items.length; index++) {
+    if (now - items[index].createdAt >= ttl) {
+      hasExpired = true;
+      break;
+    }
+  }
+  if (!hasExpired) return items;
+
+  const next: T[] = [];
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    if (now - item.createdAt < ttl) {
+      next.push(item);
+    }
+  }
+  return next;
+}
+
 let expirySweepInterval: number | null = null;
 
 function stopExpirySweep(): void {
@@ -61,10 +85,10 @@ export const useCombatFeedbackStore = create<CombatFeedbackStore>((set, get) => 
     expirySweepInterval = window.setInterval(() => {
       const now = Date.now();
       const state = get();
-      const nextCombat = state.combatTextEvents.filter((item) => now - item.createdAt < COMBAT_TEXT_TTL);
-      const nextKills = state.killFeed.filter((item) => now - item.createdAt < KILL_TTL);
-      const combatChanged = nextCombat.length !== state.combatTextEvents.length;
-      const killsChanged = nextKills.length !== state.killFeed.length;
+      const nextCombat = pruneExpiredItems(state.combatTextEvents, now, COMBAT_TEXT_TTL);
+      const nextKills = pruneExpiredItems(state.killFeed, now, KILL_TTL);
+      const combatChanged = nextCombat !== state.combatTextEvents;
+      const killsChanged = nextKills !== state.killFeed;
 
       if (combatChanged || killsChanged) {
         set({

@@ -5,7 +5,6 @@ import { useSettingsStore } from './store/settingsStore';
 import { MainLobby } from './components/ui/MainLobby';
 import { Lobby } from './components/ui/Lobby';
 import { MatchmakingScreen } from './components/ui/MatchmakingScreen';
-import { MapVoteScreen } from './components/ui/MapVoteScreen';
 import { HUD } from './components/ui/HUD';
 import { LoadingScreen } from './components/ui/LoadingScreen';
 import { PracticeLoadingScreen } from './components/ui/PracticeLoadingScreen';
@@ -15,16 +14,20 @@ import { UltimateEffects } from './components/ui/UltimateEffects';
 import { SlideEffects } from './components/ui/SlideEffects';
 import { MobileControls } from './components/ui/MobileControls';
 import { TutorialGuide } from './components/ui/TutorialGuide';
-import { useAudio, useMusic } from './hooks/useAudio';
+import { disposeSharedAudioResources, useAudio, useMusic } from './hooks/useAudio';
 import { useGlobalButtonSounds } from './hooks/useUiAudio';
 import { useNetwork } from './contexts/NetworkContext';
 import { mouseButtonToKeybindCode } from './utils/keybindings';
 import { installLocalCombatStressScenario } from './utils/combatStressScenario';
-import { getMapPrepCacheKey } from './utils/mapWarmup/mapPrepCache';
+import { requestMapPreviewManifest } from './utils/mapPreview/mapPreviewManifestClient';
+import { seedMapPrepCacheFromManifest } from './utils/mapWarmup/mapPrepCache';
+import { getMapPrepCacheKey } from './utils/mapWarmup/mapPrepCacheKey';
+import { prebuildPreparedMapGeometryDeferred } from './utils/mapWarmup/deferredMapGeometryWarmup';
 import { config } from './config/environment';
 import type { MapWarmupSnapshot } from './utils/mapWarmup/mapWarmupCoordinator';
 
 const GameCanvas = lazy(() => import('./components/game/GameCanvas').then((module) => ({ default: module.GameCanvas })));
+const MapVoteScreen = lazy(() => import('./components/ui/MapVoteScreen').then((module) => ({ default: module.MapVoteScreen })));
 const Scoreboard = lazy(() => import('./components/ui/Scoreboard').then((module) => ({ default: module.Scoreboard })));
 const InGameMenu = lazy(() => import('./components/ui/InGameMenu').then((module) => ({ default: module.InGameMenu })));
 const GameConsole = lazy(() => import('./components/ui/GameConsole').then((module) => ({ default: module.GameConsole })));
@@ -82,15 +85,6 @@ async function prepareMatchMapWarmupResources(input: {
   mapProfileId?: MapProfileId | null;
   label: string;
 }): Promise<void> {
-  const [
-    { requestMapPreviewManifest },
-    { seedMapPrepCacheFromManifest },
-    { prebuildPreparedMapGeometryDeferred },
-  ] = await Promise.all([
-    import('./utils/mapPreview/mapPreviewManifestClient'),
-    import('./utils/mapWarmup/mapPrepCache'),
-    import('./utils/mapWarmup/deferredMapGeometryWarmup'),
-  ]);
   const manifest = await requestMapPreviewManifest({
     seed: input.seed,
     themeId: input.themeId ?? null,
@@ -135,6 +129,11 @@ export function App() {
   const { preloadSoundGroup } = useAudio();
   const { matchStartGateKey, reportMatchSceneReady } = useNetwork();
   useGlobalButtonSounds();
+
+  useEffect(() => () => {
+    disposeSharedAudioResources();
+  }, []);
+
   const isActiveGame = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
   const shouldPrepareMatchWorld = (
     appPhase === 'in_game' &&
@@ -213,22 +212,21 @@ export function App() {
     (async () => {
       try {
         const soundGroups = ['commonCombat', 'phantom', 'blaze', 'hookshot', 'chronos'] as const;
-        for (const group of soundGroups) {
-          if (cancelled) return;
-          await preloadSoundGroup(group);
-          await yieldForMatchResourceWarmup();
-        }
+        const soundWarmupPromise = Promise.all(soundGroups.map((group) => preloadSoundGroup(group)));
+        const effectWarmupPromise = import('./components/game/effectPrewarm')
+          .then((effectPrewarm) => effectPrewarm.prewarmGameplayEffectResourcesOnce());
+        const combatTextWarmupPromise = import('./components/game/CombatText')
+          .then((combatText) => {
+            combatText.prewarmCombatTextTextures();
+          });
 
-        if (cancelled) return;
-        const effectPrewarm = await import('./components/game/effectPrewarm');
-        await effectPrewarm.prewarmGameplayEffectResources();
+        await Promise.all([
+          soundWarmupPromise,
+          effectWarmupPromise,
+          combatTextWarmupPromise,
+          mapWarmupPromise,
+        ]);
         await yieldForMatchResourceWarmup();
-
-        if (cancelled) return;
-        const combatText = await import('./components/game/CombatText');
-        combatText.prewarmCombatTextTextures();
-
-        await mapWarmupPromise;
       } catch (error) {
         console.warn('[App] Match resource preload failed', error);
       } finally {
@@ -516,7 +514,11 @@ export function App() {
   }
 
   if (appPhase === 'map_vote') {
-    return <MapVoteScreen />;
+    return (
+      <Suspense fallback={<LoadingScreen />}>
+        <MapVoteScreen />
+      </Suspense>
+    );
   }
 
   if (appPhase === 'match_loading') {
@@ -635,14 +637,22 @@ function CountdownOverlay() {
   const previousCountdownRef = useRef<number | null>(null);
 
   useEffect(() => {
+    let timeoutId: number | null = null;
+
     const updateCountdown = () => {
-      setRemainingMs(getCountdownRemainingMs(phaseEndTime));
+      const nextRemainingMs = getCountdownRemainingMs(phaseEndTime);
+      setRemainingMs(nextRemainingMs);
+      if (nextRemainingMs <= 0) return;
+
+      const msUntilNextSecond = nextRemainingMs % 1000 || 1000;
+      timeoutId = window.setTimeout(updateCountdown, Math.max(32, msUntilNextSecond + 8));
     };
 
     updateCountdown();
-    const interval = window.setInterval(updateCountdown, 50);
 
-    return () => window.clearInterval(interval);
+    return () => {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    };
   }, [phaseEndTime]);
 
   const countdown = Math.ceil(remainingMs / 1000);

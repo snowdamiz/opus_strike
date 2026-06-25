@@ -38,6 +38,7 @@ import {
   setupCombatHandlers,
   forgetPlayerNetId,
   stopRemotePhantomCharge,
+  clearDelayedGameplayEffects,
 } from './gameMessageHandlers';
 import { normalizeGamePhase } from './gamePhase';
 import { setupPollingSync } from './gamePollingSync';
@@ -300,6 +301,7 @@ export function setupGameRoomListeners(
     clearRunningGameSession(room.id);
     rejectPendingVoiceTokenRequests(data.message || 'match cancelled before start');
     rejectPendingPlayerReportRequests(data.message || 'match cancelled before start');
+    clearDelayedGameplayEffects();
     setMatchStartGateKey(null);
     clearMatchSummary();
     setPhaseEndTime(null);
@@ -416,6 +418,7 @@ export function setupGameRoomListeners(
     if (syncInterval) clearInterval(syncInterval);
     rejectPendingVoiceTokenRequests('game room left before voice token response');
     rejectPendingPlayerReportRequests('game room left before report response');
+    clearDelayedGameplayEffects();
     disconnectVoice('left_game_room');
     if (gameRoomRef.current === room) {
       gameRoomRef.current = null;

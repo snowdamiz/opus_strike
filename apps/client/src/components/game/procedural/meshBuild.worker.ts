@@ -1,5 +1,10 @@
 import type { VoxelChunk, VoxelMapManifest } from '@voxel-strike/shared';
-import { buildVoxelRegionGeometryData, type VoxelRegionGeometryDetail } from './meshGeometryData';
+import {
+  buildVoxelRegionGeometryData,
+  transformVoxelMeshGeometryDataToWorld,
+  type VoxelRegionGeometryDetail,
+} from './meshGeometryData';
+import { getVoxelChunkRegionId } from '../../../utils/mapWarmup/voxelRegionKeys';
 
 type WorkerRequest =
   | {
@@ -12,7 +17,7 @@ type WorkerRequest =
       manifestId: string;
       regionId: string;
       detail?: VoxelRegionGeometryDetail;
-      chunkCoords: Array<{ x: number; y: number; z: number }>;
+      chunkCoords?: Array<{ x: number; y: number; z: number }>;
     };
 
 type WorkerResponse =
@@ -30,6 +35,10 @@ type WorkerResponse =
       uvs: Float32Array;
       textureLayers: Float32Array;
       indices: Uint16Array | Uint32Array;
+      boundingSphere?: {
+        center: { x: number; y: number; z: number };
+        radius: number;
+      };
       buildMs: number;
     }
   | {
@@ -40,6 +49,7 @@ type WorkerResponse =
 
 let activeManifest: VoxelMapManifest | null = null;
 const chunksByCoord = new Map<string, VoxelChunk>();
+const chunksByRegionId = new Map<string, VoxelChunk[]>();
 
 function coordKey(coord: { x: number; y: number; z: number }): string {
   return `${coord.x}:${coord.y}:${coord.z}`;
@@ -52,8 +62,18 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
     if (message.type === 'init') {
       activeManifest = message.manifest;
       chunksByCoord.clear();
+      chunksByRegionId.clear();
       for (const chunk of activeManifest.chunks) {
         chunksByCoord.set(coordKey(chunk.coord), chunk);
+        if (chunk.solidBlockCount <= 0) continue;
+
+        const regionId = getVoxelChunkRegionId(chunk.coord);
+        const regionChunks = chunksByRegionId.get(regionId);
+        if (regionChunks) {
+          regionChunks.push(chunk);
+        } else {
+          chunksByRegionId.set(regionId, [chunk]);
+        }
       }
 
       const response: WorkerResponse = {
@@ -68,12 +88,22 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       throw new Error(`Worker has no initialized manifest for ${message.manifestId}`);
     }
 
-    const chunks = message.chunkCoords
-      .map((coord) => chunksByCoord.get(coordKey(coord)))
-      .filter((chunk): chunk is VoxelChunk => Boolean(chunk));
+    const chunks = chunksByRegionId.get(message.regionId) ?? (
+      message.chunkCoords
+        ? message.chunkCoords
+          .map((coord) => chunksByCoord.get(coordKey(coord)))
+          .filter((chunk): chunk is VoxelChunk => Boolean(chunk))
+        : null
+    );
+    if (!chunks) {
+      throw new Error(`Worker has no chunks for region ${message.regionId}`);
+    }
 
     const start = performance.now();
-    const data = buildVoxelRegionGeometryData(activeManifest, chunks, message.detail ?? 'full');
+    const data = transformVoxelMeshGeometryDataToWorld(
+      activeManifest,
+      buildVoxelRegionGeometryData(activeManifest, chunks, message.detail ?? 'full')
+    );
     const response: WorkerResponse = {
       type: 'regionBuilt',
       requestId: message.requestId,
