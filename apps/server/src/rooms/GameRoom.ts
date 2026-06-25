@@ -4,7 +4,7 @@ import { Room, Client } from 'colyseus';
 import { GameState } from './schema/GameState';
 import { Player } from './schema/Player';
 import { Vec3Schema, AbilityStateSchema } from './schema/Components';
-import { PlayerSpatialIndex } from './PlayerSpatialIndex';
+import { PlayerSpatialIndex, type PlayerSpatialQueryOptions } from './PlayerSpatialIndex';
 import { PlayerSpatialQueries } from './playerSpatialQueries';
 import { AlternatingLaunchSideTracker } from './alternatingLaunchSide';
 import { AttackCooldownTracker } from './attackCooldownTracker';
@@ -1035,7 +1035,11 @@ export class GameRoom extends Room<GameState> {
     isGliding: false,
   };
   private readonly playerSpatialIndex = new PlayerSpatialIndex(8);
-  private readonly playerSpatialQueries = new PlayerSpatialQueries(this.playerSpatialIndex);
+  private readonly playerSpatialQueries = new PlayerSpatialQueries(
+    this.playerSpatialIndex,
+    () => this.ensurePlayerSpatialIndexFresh()
+  );
+  private playerSpatialIndexDirty = true;
   private readonly roomMetrics = new RoomMetrics();
   private eventLoopDelay: IntervalHistogram | null = null;
   private readonly lineOfSightCache = new LineOfSightCache();
@@ -1972,10 +1976,60 @@ export class GameRoom extends Room<GameState> {
 
   private rebuildPlayerSpatialIndex(): void {
     this.playerSpatialIndex.rebuild(this.state.players.values());
+    this.playerSpatialIndexDirty = false;
+  }
+
+  private markPlayerSpatialIndexDirty(): void {
+    this.playerSpatialIndexDirty = true;
+  }
+
+  private ensurePlayerSpatialIndexFresh(): void {
+    if (this.playerSpatialIndexDirty) {
+      this.rebuildPlayerSpatialIndex();
+    }
+  }
+
+  private getAlivePlayers(): Player[] {
+    this.ensurePlayerSpatialIndexFresh();
+    return this.playerSpatialIndex.getAlivePlayers();
   }
 
   private getEnemyPlayers(team: Team): Player[] {
+    this.ensurePlayerSpatialIndexFresh();
     return this.playerSpatialIndex.getEnemyPlayers(team);
+  }
+
+  private getTeamPlayers(team: Team): Player[] {
+    this.ensurePlayerSpatialIndexFresh();
+    return this.playerSpatialIndex.getTeamPlayers(team);
+  }
+
+  private queryPlayersRadius(
+    center: { x: number; z: number },
+    radius: number,
+    options: PlayerSpatialQueryOptions = {}
+  ): Player[] {
+    this.ensurePlayerSpatialIndexFresh();
+    return this.playerSpatialQueries.queryRadius(center, radius, options);
+  }
+
+  private queryPlayersRadiusInto(
+    center: { x: number; z: number },
+    radius: number,
+    out: Player[],
+    options: PlayerSpatialQueryOptions = {}
+  ): Player[] {
+    this.ensurePlayerSpatialIndexFresh();
+    return this.playerSpatialIndex.queryRadius(center, radius, out, options);
+  }
+
+  private queryPlayersConeCandidates(
+    origin: { x: number; z: number },
+    range: number,
+    options: PlayerSpatialQueryOptions = {}
+  ): Player[] {
+    this.ensurePlayerSpatialIndexFresh();
+    return this.playerSpatialQueries.queryConeCandidates(origin, range, options);
   }
 
   private updateCountdown() {
@@ -2126,7 +2180,7 @@ export class GameRoom extends Room<GameState> {
     const pickups = this.getMapManifest().gameplay.powerups ?? [];
     if (pickups.length === 0) return;
 
-    for (const player of this.playerSpatialIndex.getAlivePlayers()) {
+    for (const player of this.getAlivePlayers()) {
       for (const pickup of pickups) {
         if (this.powerupPickups.getAvailableAt(pickup.id) > now) continue;
         if (distance2D(player.position, pickup.position) > pickup.radius + PLAYER_RADIUS) continue;
@@ -4716,7 +4770,7 @@ export class GameRoom extends Room<GameState> {
   private updateBlazeGearstorms(now: number): void {
     this.blazeGearstorms.update(now, {
       hasOwner: (ownerId) => this.state.players.has(ownerId),
-      getTargets: (storm) => this.playerSpatialQueries.queryRadius(
+      getTargets: (storm) => this.queryPlayersRadius(
         storm.position,
         storm.radius,
         { excludeTeam: storm.ownerTeam, includeDowned: true }
@@ -4739,7 +4793,7 @@ export class GameRoom extends Room<GameState> {
   private applyHookshotGroundHooksRoot(caster: Player, now: number): HookshotGroundHooksTarget[] {
     const ownerTeam = caster.team as Team;
     const rootUntil = now + HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS * 1000;
-    const targets = this.playerSpatialQueries.queryRadius(
+    const targets = this.queryPlayersRadius(
       caster.position,
       HOOKSHOT_GROUND_HOOKS_RADIUS,
       { excludeTeam: ownerTeam }
@@ -6041,7 +6095,7 @@ export class GameRoom extends Room<GameState> {
     let bestTargetHit: AimTargetHit | null = null;
     let bestDistance = range;
     const candidateRange = range + extraRadius + PLAYER_RADIUS + PLAYER_COMBAT_HITBOX_PADDING;
-    const candidates = this.playerSpatialQueries.queryConeCandidates(
+    const candidates = this.queryPlayersConeCandidates(
       origin,
       candidateRange,
       {
@@ -6109,7 +6163,7 @@ export class GameRoom extends Room<GameState> {
 
   private applyAreaDamage(source: Player, center: { x: number; y: number; z: number }, radius: number, damage: number, damageType: string): void {
     const radiusSq = radius * radius;
-    const targets = this.playerSpatialQueries.queryRadius(
+    const targets = this.queryPlayersRadius(
       center,
       radius,
       { excludeTeam: source.team as Team, excludeId: source.id, includeDowned: true }
@@ -6187,8 +6241,8 @@ export class GameRoom extends Room<GameState> {
     const shieldTeam = options.shieldTeam;
     let bestHit: ChronosAegisSkillHit | null = null;
     const aegisCandidates = shieldTeam
-      ? this.playerSpatialIndex.getTeamPlayers(shieldTeam)
-      : this.playerSpatialIndex.getEnemyPlayers(sourceTeam);
+      ? this.getTeamPlayers(shieldTeam)
+      : this.getEnemyPlayers(sourceTeam);
     const playersToCheck = aegisCandidates.length > 0 ? aegisCandidates : this.state.players.values();
 
     for (const aegisPlayer of playersToCheck) {
@@ -7021,7 +7075,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private hasRecentHumanCombatInterest(bot: Player, now: number): boolean {
-    for (const player of this.playerSpatialIndex.getAlivePlayers()) {
+    for (const player of this.getAlivePlayers()) {
       if (player.isBot || player.id === bot.id) continue;
       if (this.replicationState.getRecentCombatInterestUntil(bot.id, player.id) > now) return true;
     }
@@ -7378,7 +7432,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     const enemyTeam = getEnemyTeam(bot.team);
-    this.playerSpatialIndex.queryRadius(
+    this.queryPlayersRadiusInto(
       bot.position,
       BOT_AWARENESS_RANGE,
       candidates,
@@ -7388,7 +7442,7 @@ export class GameRoom extends Room<GameState> {
       candidateIds.add(enemy.id);
     }
 
-    for (const enemy of this.playerSpatialIndex.getEnemyPlayers(bot.team)) {
+    for (const enemy of this.getEnemyPlayers(bot.team)) {
       if (!enemy.hasFlag || candidateIds.has(enemy.id)) continue;
       candidateIds.add(enemy.id);
       candidates.push(enemy);
@@ -9411,7 +9465,7 @@ export class GameRoom extends Room<GameState> {
       onExpired: (zone) => {
         this.broadcastTracked('voidZoneExpired', { id: zone.id });
       },
-      getTargets: (zone) => this.playerSpatialQueries.queryRadius(
+      getTargets: (zone) => this.queryPlayersRadius(
         zone.position,
         zone.radius,
         { excludeTeam: zone.ownerTeam, excludeId: zone.ownerId, includeDowned: true }
@@ -9503,7 +9557,7 @@ export class GameRoom extends Room<GameState> {
   private updateBlazeFlamethrowers(now: number, dt: number) {
     this.blazeFlamethrowers.beginActiveFrame();
 
-    for (const player of this.playerSpatialIndex.getAlivePlayers()) {
+    for (const player of this.getAlivePlayers()) {
       if (player.heroId !== 'blaze') continue;
       this.blazeFlamethrowers.markActiveThisFrame(player.id);
 
@@ -9553,7 +9607,7 @@ export class GameRoom extends Room<GameState> {
       projectileRadius: BLAZE_FLAMETHROWER_COLLISION_RADIUS,
     });
 
-    const candidates = this.playerSpatialQueries.queryConeCandidates(
+    const candidates = this.queryPlayersConeCandidates(
       origin,
       damageFrame.candidateRange,
       { excludeTeam: source.team as Team, excludeId: source.id, includeDowned: true }
@@ -9767,6 +9821,9 @@ export class GameRoom extends Room<GameState> {
         this.processMovementPhysicsFrameEntry(entry, tickTime, frameCollisionWorld);
       }
     });
+    if (frameEntries.length > 0) {
+      this.markPlayerSpatialIndexDirty();
+    }
   }
 
   private buildMovementPhysicsFrame(tickTime: number): MovementPhysicsFrameEntry[] {
@@ -10493,7 +10550,7 @@ export class GameRoom extends Room<GameState> {
   private isServerOwnedBotNearEnemyHuman(bot: Player, distanceSq: number): boolean {
     const radius = Math.sqrt(distanceSq);
     const candidates = this.botMovementLodEnemyHumanScratch;
-    this.playerSpatialIndex.queryRadius(
+    this.queryPlayersRadiusInto(
       bot.position,
       radius,
       candidates,
@@ -10513,7 +10570,7 @@ export class GameRoom extends Room<GameState> {
   private isServerOwnedBotNearHuman(bot: Player, distanceSq: number): boolean {
     const radius = Math.sqrt(distanceSq);
     const candidates = this.botSimulationHumanScratch;
-    this.playerSpatialIndex.queryRadius(
+    this.queryPlayersRadiusInto(
       bot.position,
       radius,
       candidates,

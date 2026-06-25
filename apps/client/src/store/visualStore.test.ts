@@ -23,9 +23,12 @@ import {
   rebuildCombatVisualFrameCache,
   removeDeathVisual,
   sampleRemoteTransformInto,
+  setChronosAegisVisualState,
   setLocalSlideIntensity,
   setPlayerVisualRotation,
   setPlayerVisualTransform,
+  suspendPlayerLiveVisualEffects,
+  triggerRemotePlayerAttack,
   updateDeathVisualExpirationForPlayer,
   visualStore,
   type DeathVisualSnapshot,
@@ -174,12 +177,56 @@ assert.equal(target.movementBits, 12);
 assert.equal(target.movementEpoch, 1);
 assert.equal(target.stale, false);
 
+clearVisualState();
+const mutableSnapshotPosition = { x: 10, y: 1, z: 2 };
+const mutableSnapshotVelocity = { x: 4, y: 5, z: 6 };
+addRemoteTransformSnapshot(
+  'mutable-source',
+  {
+    serverTick: 1,
+    serverTime: 1000,
+    position: mutableSnapshotPosition,
+    velocity: mutableSnapshotVelocity,
+    lookYaw: 0,
+    lookPitch: 0,
+    movementBits: 0,
+    wallRunSide: 0,
+    movementEpoch: 1,
+  },
+  TEST_REMOTE_TRANSFORM_RECEIVED_AT_MS
+);
+const immutableSnapshot = visualStore.getState().remoteTransformHistories.get('mutable-source')?.snapshots[0];
+assert.ok(immutableSnapshot);
+assert.notEqual(immutableSnapshot.position, mutableSnapshotPosition);
+assert.notEqual(immutableSnapshot.velocity, mutableSnapshotVelocity);
+mutableSnapshotPosition.x = 99;
+mutableSnapshotVelocity.x = 42;
+assert.equal(immutableSnapshot.position.x, 10);
+assert.equal(immutableSnapshot.velocity.x, 4);
+
+setPlayerVisualTransform('mutable-source', { x: 10, y: 1, z: 2 }, 0.5, 0.1);
+setChronosAegisVisualState('mutable-source', true, TEST_REMOTE_TRANSFORM_RECEIVED_AT_MS, 0.5);
+triggerRemotePlayerAttack('mutable-source', 'primary', { startedAtMs: TEST_REMOTE_TRANSFORM_RECEIVED_AT_MS });
+suspendPlayerLiveVisualEffects('mutable-source');
+assert.equal(visualStore.getState().remoteTransformHistories.has('mutable-source'), true);
+assert.deepEqual(visualStore.getState().playerPositions.get('mutable-source'), { x: 10, y: 1, z: 2 });
+assert.equal(visualStore.getState().chronosAegisStates.has('mutable-source'), false);
+assert.equal(visualStore.getState().remotePlayerAttackStates.has('mutable-source'), false);
+
+clearVisualState();
+addSnapshot(1200, 12);
+addSnapshot(1000, 10);
+addSnapshot(1100, 11);
+
+const restoredHistory = visualStore.getState().remoteTransformHistories.get('remote-a');
+assert.ok(restoredHistory);
+
 const extrapolatedTarget = makeTarget();
 assert.equal(
   sampleRemoteTransformInto(
     'remote-a',
     extrapolatedTarget,
-    history.latestReceivedAtMs + MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS + 40
+    restoredHistory.latestReceivedAtMs + MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS + 40
   ),
   true
 );

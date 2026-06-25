@@ -32,11 +32,11 @@ import {
   pushLocalPlayerImpulse,
   addRemoteTransformSnapshot,
   pruneRemoteTransformHistories,
-  removePlayerLiveVisualState,
   removePlayerVisualState,
   setChronosAegisVisualState,
   setPlayerVisualRotation,
   setPlayerVisualTransform,
+  suspendPlayerLiveVisualEffects,
   syncPlayerVisualEffectIndexes,
   triggerRemotePlayerAttack,
   visualStore,
@@ -371,14 +371,14 @@ function syncLocalVisualPosition(player: Player): void {
   setPlayerVisualTransform(player.id, player.position, player.lookYaw, player.lookPitch);
 }
 
-function shouldHideLiveVisuals(visibility?: PlayerVisibilityState): boolean {
+function shouldSuspendHiddenLiveVisuals(visibility?: PlayerVisibilityState): boolean {
   return visibility === 'hidden' || visibility === 'last_known' || visibility === 'audible';
 }
 
-function clearHiddenLiveVisuals(playerId: string): void {
+function suspendHiddenLiveVisuals(playerId: string): void {
   stopRemotePhantomCharge(playerId);
   stopObservedAbilityCastEffects(playerId);
-  removePlayerLiveVisualState(playerId);
+  suspendPlayerLiveVisualEffects(playerId);
 }
 
 interface PlayerVisibilityBatch {
@@ -673,7 +673,7 @@ function handlePlayerDownedEvent(data: PlayerDownedEvent): void {
   stopRemotePhantomCharge(data.targetId);
   stopObservedAbilityCastEffects(data.targetId);
   setChronosAegisVisualState(data.targetId, false, Date.now(), 0);
-  if (!shouldHideLiveVisuals(next.visibility)) {
+  if (!shouldSuspendHiddenLiveVisuals(next.visibility)) {
     setPlayerVisualTransform(data.targetId, next.position, next.lookYaw, next.lookPitch);
   }
 }
@@ -742,7 +742,7 @@ function handlePlayerRevivedEvent(data: PlayerRevivedEvent): void {
   } else {
     stopBattleRoyalReviveLoop(data.targetId);
   }
-  if (next && !shouldHideLiveVisuals(next.visibility)) {
+  if (next && !shouldSuspendHiddenLiveVisuals(next.visibility)) {
     setPlayerVisualTransform(data.targetId, next.position, next.lookYaw, next.lookPitch);
   }
 }
@@ -1296,8 +1296,9 @@ export function setupPlayerTransformsHandler(
     let remoteTransformCount = 0;
     for (const hiddenPlayerId of data.hiddenPlayerIds || []) {
       if (hiddenPlayerId === sessionId) continue;
+      fullSnapshotPlayerIds?.add(hiddenPlayerId);
       visibilityBatch.setVisibility(hiddenPlayerId, 'hidden');
-      clearHiddenLiveVisuals(hiddenPlayerId);
+      suspendHiddenLiveVisuals(hiddenPlayerId);
     }
     for (const packedTransform of data.players) {
       const transform = unpackPackedTransformInto(transformScratch, packedTransform);
@@ -1345,8 +1346,8 @@ export function setupPlayerInterestHandler(room: Room, sessionId: string) {
         }
       }
 
-      if (snapshot.playerId !== sessionId && shouldHideLiveVisuals(snapshot.state)) {
-        clearHiddenLiveVisuals(snapshot.playerId);
+      if (snapshot.playerId !== sessionId && shouldSuspendHiddenLiveVisuals(snapshot.state)) {
+        suspendHiddenLiveVisuals(snapshot.playerId);
       }
     }
 
@@ -1490,7 +1491,7 @@ export function setupPlayerVitalsHandler(
       // unchanged players are otherwise no-ops.
       if (!existing || !remotePlayerVitalsEqual(existing, next)) {
         writablePlayers().set(vitals.id, next);
-        if (shouldHideLiveVisuals(next.visibility)) {
+        if (shouldSuspendHiddenLiveVisuals(next.visibility)) {
           hiddenVisualUpdates.push(next.id);
         } else {
           liveVisualUpdates.push(next);
@@ -1516,7 +1517,7 @@ export function setupPlayerVitalsHandler(
       removePlayerVisualState(removedId);
     }
     for (const playerId of hiddenVisualUpdates) {
-      clearHiddenLiveVisuals(playerId);
+      suspendHiddenLiveVisuals(playerId);
     }
     for (const player of liveVisualUpdates) {
       setPlayerVisualTransform(player.id, player.position, player.lookYaw, player.lookPitch);
