@@ -52,4 +52,28 @@ players[2].position.x = 40;
 index.rebuild(players);
 assert.deepEqual(queries.queryRadius({ x: 0, z: 0 }, 8, { team: 'blue' }), []);
 
+const lazyPlayers = [
+  makePlayer('lazy-red', 'red', 0, 0),
+  makePlayer('lazy-blue', 'blue', 40, 0),
+];
+const lazyIndex = new PlayerSpatialIndex(8);
+let lazyIndexDirty = true;
+const lazyQueries = new PlayerSpatialQueries(lazyIndex, () => {
+  if (!lazyIndexDirty) return;
+  lazyIndex.rebuild(lazyPlayers);
+  lazyIndexDirty = false;
+});
+
+assert.deepEqual(
+  lazyQueries.queryRadius({ x: 0, z: 0 }, 8, { team: 'blue' }).map((player) => player.id),
+  []
+);
+
+lazyPlayers[1].position.x = 4;
+lazyIndexDirty = true;
+assert.deepEqual(
+  lazyQueries.queryRadius({ x: 0, z: 0 }, 8, { team: 'blue' }).map((player) => player.id),
+  ['lazy-blue']
+);
+
 console.log('player spatial queries tests passed');

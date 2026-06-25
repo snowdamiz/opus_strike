@@ -631,7 +631,12 @@ export const addRemoteTransformSnapshot = (
     histories.set(playerId, history);
   }
 
-  const fullSnapshot = { ...snapshot, receivedAtMs };
+  const fullSnapshot = {
+    ...snapshot,
+    position: { ...snapshot.position },
+    velocity: { ...snapshot.velocity },
+    receivedAtMs,
+  };
   const snapshots = history.snapshots;
   const latest = snapshots[snapshots.length - 1];
   const isNewestSnapshot = !latest || fullSnapshot.serverTime >= latest.serverTime;
@@ -1220,6 +1225,11 @@ export const removePlayerLiveVisualState = (playerId: string): void => {
   state.renderedPlayerRotations.delete(playerId);
   state.interpolationTargets.delete(playerId);
   state.remoteTransformHistories.delete(playerId);
+  suspendPlayerLiveVisualEffects(playerId);
+};
+
+export const suspendPlayerLiveVisualEffects = (playerId: string): void => {
+  const state = visualStore.getState();
   state.chronosAegisStates.delete(playerId);
   state.remotePlayerAttackStates.delete(playerId);
   removeIndexedPlayerId(
