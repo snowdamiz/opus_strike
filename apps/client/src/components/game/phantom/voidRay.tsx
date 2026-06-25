@@ -5,7 +5,7 @@ import React from 'react';
 import { PHANTOM_VOID_RAY_COLLISION_RADIUS, type Team } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import type { VoidRayData } from '../../../store/types';
-import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
+import { getPhysicsWorld, isPhysicsReady, raycastInto, type RaycastHitResult } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
@@ -522,6 +522,11 @@ export const VoidRay = React.memo(({
   const hasRequestedRemovalRef = useRef(false);
   const lastCollisionSampleRef = useRef(-VOID_RAY_COLLISION_SAMPLE_INTERVAL_MS);
   const cachedVisualCollisionDistanceRef = useRef<number | null>(null);
+  const terrainHitRef = useRef<RaycastHitResult>({
+    point: { x: 0, y: 0, z: 0 },
+    normal: { x: 0, y: 1, z: 0 },
+    distance: 0,
+  });
   const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - startTime));
   
   const isLocalOwner = useGameStore(state => state.localPlayer?.id === ownerId);
@@ -690,14 +695,14 @@ export const VoidRay = React.memo(({
       if (isPhysicsReady()) {
         const world = getPhysicsWorld();
         if (world) {
-          const hit = raycast(world, startPosition, direction, targetLength, {
+          const hasHit = raycastInto(terrainHitRef.current, world, startPosition, direction, targetLength, {
             priority: 'visual',
             feature: 'effect:voidRayBeam',
           });
-          if (hit) {
+          if (hasHit) {
             visualCollisionDistance = visualCollisionDistance === null
-              ? hit.distance
-              : Math.min(visualCollisionDistance, hit.distance);
+              ? terrainHitRef.current.distance
+              : Math.min(visualCollisionDistance, terrainHitRef.current.distance);
           }
         }
       }

@@ -9,7 +9,7 @@ import {
 import { useGameStore } from '../../../store/gameStore';
 import type { DragHookData } from '../../../store/types';
 import { findCombatVisualPlayerHit, rebuildCombatVisualFrameCache, visualStore } from '../../../store/visualStore';
-import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
+import { isPhysicsReady, raycastDirectionInto, type RaycastDirectionHitResult } from '../../../hooks/usePhysics';
 import { DRAG_HOOK_MAX_DISTANCE, DRAG_HOOK_RETRACT_SPEED, HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';
 import { writeOwnerVisualPosition } from './ownerPosition';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
@@ -137,23 +137,12 @@ function getPointSegmentDistanceSq(
   return dx * dx + dy * dy + dz * dz;
 }
 
-export interface DragHookSlotHandle {
-  slotIndex: number;
-  hook: DragHookData | null;
-}
-
-export function createDragHookSlotHandle(slotIndex: number): DragHookSlotHandle {
-  return {
-    slotIndex,
-    hook: null,
-  };
-}
-
 interface DragHookProps {
-  slot: DragHookSlotHandle;
+  hook: DragHookData;
+  slotIndex: number;
 }
 
-export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
+export const DragHookEffect = React.memo(({ hook, slotIndex }: DragHookProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const hookRef = useRef<THREE.Group>(null);
   const muzzleRef = useRef<THREE.Group>(null);
@@ -189,12 +178,18 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
   const hasHitRef = useRef(false);
   const hookedTargetIdRef = useRef<string | null>(null);
   const hookedTargetAttachedAtRef = useRef(0);
+  const terrainHitRef = useRef<RaycastDirectionHitResult>({
+    hit: false,
+    point: { x: 0, y: 0, z: 0 },
+    normal: { x: 0, y: 1, z: 0 },
+    distance: 0,
+    isWalkable: false,
+  });
   
   const removeDragHook = useGameStore(state => state.removeDragHook);
   
-  useHookshotFrameUpdater(`drag-hook-slot:${slot.slotIndex}`, (state, delta) => {
-    const hook = slot.hook;
-    if (!hookRef.current || !groupRef.current || !hook) {
+  useHookshotFrameUpdater(`drag-hook:${hook.id}:${slotIndex}`, (state, delta) => {
+    if (!hookRef.current || !groupRef.current) {
       if (groupRef.current) groupRef.current.visible = false;
       activeHookIdRef.current = null;
       return;
@@ -351,11 +346,21 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
           HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS
         )
         : null;
-      const terrainHit = !serverTargetId && isPhysicsReady()
-        ? raycastDirection(previousPosition.x, previousPosition.y, previousPosition.z, dirX, dirY, dirZ, moveDistance + 0.5, {
+      const terrainHit = !serverTargetId && isPhysicsReady() && raycastDirectionInto(
+        terrainHitRef.current,
+        previousPosition.x,
+        previousPosition.y,
+        previousPosition.z,
+        dirX,
+        dirY,
+        dirZ,
+        moveDistance + 0.5,
+        {
           priority: 'visual',
           feature: 'projectile:hookshotDrag',
-        })
+        }
+      )
+        ? terrainHitRef.current
         : null;
       const hit = aegisHit && (!terrainHit?.hit || aegisHit.distance <= terrainHit.distance)
         ? { hit: true, point: aegisHit.point, normal: aegisHit.normal }
@@ -445,7 +450,6 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
       if (shouldReleaseAttachedTarget || (!hasLiveAttachedTarget && distSq <= 0.25)) {
         shouldRemoveRef.current = true;
         groupRef.current.visible = false;
-        slot.hook = null;
         activeHookIdRef.current = null;
         removeDragHook(hook.id);
         return;

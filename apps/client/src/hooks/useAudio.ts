@@ -56,6 +56,7 @@ const sharedSounds = new Map<string, SoundEffect>();
 const sharedSoundLoads = new Map<string, Promise<SoundEffect | null>>();
 const sharedSoundBuffersByPath = new Map<string, AudioBuffer>();
 const sharedSoundBufferLoads = new Map<string, Promise<AudioBuffer | null>>();
+const sharedSoundBufferLoadControllers = new Map<string, AbortController>();
 const sharedLoops = new Map<string, {
   source: AudioBufferSourceNode;
   gain: GainNode;
@@ -70,6 +71,8 @@ const sharedPendingLoops = new Map<string, { cancelled: boolean }>();
 let hasAudioUserActivation =
   typeof navigator !== 'undefined' && navigator.userActivation?.hasBeenActive === true;
 let audioUnlockListenersInstalled = false;
+let audioUnlockListenerRefs = 0;
+let audioUnlockListenersCleanup: (() => void) | null = null;
 
 function hasUserActivatedAudio(): boolean {
   if (hasAudioUserActivation) return true;
@@ -85,6 +88,7 @@ function hasUserActivatedAudio(): boolean {
 
 function markAudioUserActivation(): void {
   hasAudioUserActivation = true;
+  removeAudioUnlockListeners(true);
 
   if (sharedAudioContext?.state === 'suspended') {
     void sharedAudioContext.resume().catch(() => undefined);
@@ -93,20 +97,42 @@ function markAudioUserActivation(): void {
   void flushPendingAudioPreloads();
 }
 
-function installAudioUnlockListeners(): void {
-  if (audioUnlockListenersInstalled || typeof document === 'undefined') return;
-  audioUnlockListenersInstalled = true;
+function removeAudioUnlockListeners(force = false): void {
+  if (!force && audioUnlockListenerRefs > 0) return;
+  audioUnlockListenersCleanup?.();
+  audioUnlockListenersCleanup = null;
+  audioUnlockListenersInstalled = false;
+}
+
+function installAudioUnlockListeners(): () => void {
+  if (typeof document === 'undefined') return () => undefined;
+  if (hasUserActivatedAudio()) return () => undefined;
+  audioUnlockListenerRefs++;
+  if (audioUnlockListenersInstalled) {
+    return () => {
+      audioUnlockListenerRefs = Math.max(0, audioUnlockListenerRefs - 1);
+      removeAudioUnlockListeners();
+    };
+  }
 
   const handleInteraction = () => {
     markAudioUserActivation();
+  };
+
+  audioUnlockListenersInstalled = true;
+  audioUnlockListenersCleanup = () => {
     document.removeEventListener('pointerdown', handleInteraction, true);
     document.removeEventListener('touchstart', handleInteraction, true);
     document.removeEventListener('keydown', handleInteraction, true);
   };
-
   document.addEventListener('pointerdown', handleInteraction, true);
   document.addEventListener('touchstart', handleInteraction, true);
   document.addEventListener('keydown', handleInteraction, true);
+
+  return () => {
+    audioUnlockListenerRefs = Math.max(0, audioUnlockListenerRefs - 1);
+    removeAudioUnlockListeners();
+  };
 }
 
 function getAudioContextConstructor(): typeof AudioContext | undefined {
@@ -129,6 +155,8 @@ function getMusicVolume(): number {
 
 const pendingAudioPreloadNames = new Set<SoundName>();
 let pendingAudioPreloadFlush: Promise<void> | null = null;
+let audioResourceGeneration = 0;
+let audioPreloadGeneration = 0;
 const SHARED_SOUND_LAYER_START_DELAY_MS = 20;
 const AUDIO_PRELOAD_FLUSH_BATCH_SIZE = 4;
 
@@ -462,14 +490,19 @@ async function loadSharedSoundBuffer(
   }
 
   const startedAtMs = nowMs();
+  const loadGeneration = audioResourceGeneration;
+  const controller = new AbortController();
   const loadPromise = (async () => {
     let fetchMs = 0;
     let decodeMs = 0;
     let bytes = 0;
     try {
       const fetchStartedAtMs = nowMs();
-      const response = await fetch(soundDef.path);
+      const response = await fetch(soundDef.path, { signal: controller.signal });
       fetchMs = nowMs() - fetchStartedAtMs;
+      if (controller.signal.aborted || loadGeneration !== audioResourceGeneration) {
+        return null;
+      }
       if (!response.ok) {
         console.warn(`[Audio] Sound file not found: ${soundDef.path}`);
         recordAudioLoadSample({
@@ -486,10 +519,16 @@ async function loadSharedSoundBuffer(
       }
 
       const arrayBuffer = await response.arrayBuffer();
+      if (controller.signal.aborted || loadGeneration !== audioResourceGeneration) {
+        return null;
+      }
       bytes = arrayBuffer.byteLength;
       const decodeStartedAtMs = nowMs();
       const buffer = await decodeAudioDataLimited(ctx, arrayBuffer, updateAudioDiagnosticsState);
       decodeMs = nowMs() - decodeStartedAtMs;
+      if (controller.signal.aborted || loadGeneration !== audioResourceGeneration) {
+        return null;
+      }
       sharedSoundBuffersByPath.set(soundDef.path, buffer);
       recordAudioLoadSample({
         name,
@@ -502,7 +541,10 @@ async function loadSharedSoundBuffer(
       });
       return buffer;
     } catch (error) {
-      console.warn(`[Audio] Failed to load sound: ${name}`, error);
+      const aborted = error instanceof DOMException && error.name === 'AbortError';
+      if (!aborted) {
+        console.warn(`[Audio] Failed to load sound: ${name}`, error);
+      }
       recordAudioLoadSample({
         name,
         ok: false,
@@ -511,16 +553,20 @@ async function loadSharedSoundBuffer(
         fetchMs,
         decodeMs,
         bytes,
-        error: error instanceof Error ? error.message : String(error),
+        error: aborted ? 'aborted' : error instanceof Error ? error.message : String(error),
       });
       return null;
     } finally {
-      sharedSoundBufferLoads.delete(soundDef.path);
+      if (sharedSoundBufferLoadControllers.get(soundDef.path) === controller) {
+        sharedSoundBufferLoads.delete(soundDef.path);
+        sharedSoundBufferLoadControllers.delete(soundDef.path);
+      }
       updateAudioDiagnosticsState();
     }
   })();
 
   sharedSoundBufferLoads.set(soundDef.path, loadPromise);
+  sharedSoundBufferLoadControllers.set(soundDef.path, controller);
   updateAudioDiagnosticsState();
   return loadPromise;
 }
@@ -534,16 +580,20 @@ async function flushPendingAudioPreloads(): Promise<void> {
 
   pendingAudioPreloadFlush = (async () => {
     const flushStartedAtMs = nowMs();
+    const flushGeneration = audioPreloadGeneration;
     let flushedSoundCount = 0;
     try {
       while (pendingAudioPreloadNames.size > 0) {
+        if (flushGeneration !== audioPreloadGeneration) return;
         const names = Array.from(pendingAudioPreloadNames);
         pendingAudioPreloadNames.clear();
         for (let index = 0; index < names.length; index += AUDIO_PRELOAD_FLUSH_BATCH_SIZE) {
+          if (flushGeneration !== audioPreloadGeneration) return;
           const batch = names.slice(index, index + AUDIO_PRELOAD_FLUSH_BATCH_SIZE);
           flushedSoundCount += batch.length;
           updateAudioDiagnosticsState();
           await Promise.all(batch.map((name) => loadSharedSound(name)));
+          if (flushGeneration !== audioPreloadGeneration) return;
           if (index + AUDIO_PRELOAD_FLUSH_BATCH_SIZE < names.length || pendingAudioPreloadNames.size > 0) {
             await yieldAfterAudioPreloadBatch();
           }
@@ -890,10 +940,47 @@ export function stopSharedLoop(id: string, fadeOutMs = 0): void {
   sharedLoops.delete(id);
 }
 
+export function disposeSharedAudioResources(): void {
+  audioResourceGeneration++;
+  audioPreloadGeneration++;
+
+  for (const [id] of Array.from(sharedPendingLoops)) {
+    sharedPendingLoops.get(id)!.cancelled = true;
+    sharedPendingLoops.delete(id);
+  }
+
+  for (const [id] of Array.from(sharedLoops)) {
+    stopSharedLoop(id, 0);
+  }
+  for (const [id] of Array.from(sharedStreamedLoops)) {
+    stopStreamedLoop(id, 0);
+  }
+
+  pendingAudioPreloadNames.clear();
+  pendingAudioPreloadFlush = null;
+  for (const controller of sharedSoundBufferLoadControllers.values()) {
+    controller.abort();
+  }
+  sharedSoundBufferLoadControllers.clear();
+  sharedSounds.clear();
+  sharedSoundLoads.clear();
+  sharedSoundBuffersByPath.clear();
+  sharedSoundBufferLoads.clear();
+
+  const context = sharedAudioContext;
+  sharedAudioContext = null;
+  if (context && context.state !== 'closed') {
+    void context.close().catch(() => undefined);
+  }
+
+  updateAudioDiagnosticsState();
+}
+
 export function useAudio() {
   useEffect(() => {
-    installAudioUnlockListeners();
+    const cleanupAudioUnlockListeners = installAudioUnlockListeners();
     updateAudioDiagnosticsState();
+    return cleanupAudioUnlockListeners;
   }, []);
 
   // Initialize audio context on first interaction

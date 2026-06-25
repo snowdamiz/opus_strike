@@ -1,16 +1,17 @@
-import { useEffect } from 'react';
-import { signal } from '@preact/signals-react';
-import { useSignals } from '@preact/signals-react/runtime';
+import { useSyncExternalStore } from 'react';
 
 const HUD_CLOCK_INTERVAL_MS = 100;
 
-export const hudNowSignal = signal(Date.now());
-
+let hudNow = Date.now();
 let hudClockConsumers = 0;
 let hudClockIntervalId: number | null = null;
+const hudClockListeners = new Set<() => void>();
 
 function publishHudNow(): void {
-  hudNowSignal.value = Date.now();
+  hudNow = Date.now();
+  for (const listener of hudClockListeners) {
+    listener();
+  }
 }
 
 export function retainHudClock(): () => void {
@@ -31,8 +32,20 @@ export function retainHudClock(): () => void {
   };
 }
 
+function subscribeHudClock(listener: () => void): () => void {
+  hudClockListeners.add(listener);
+  const releaseHudClock = retainHudClock();
+
+  return () => {
+    hudClockListeners.delete(listener);
+    releaseHudClock();
+  };
+}
+
+function getHudNowSnapshot(): number {
+  return hudNow;
+}
+
 export function useHudNow(): number {
-  useSignals();
-  useEffect(() => retainHudClock(), []);
-  return hudNowSignal.value;
+  return useSyncExternalStore(subscribeHudClock, getHudNowSnapshot, getHudNowSnapshot);
 }

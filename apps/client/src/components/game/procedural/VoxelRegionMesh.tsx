@@ -5,8 +5,10 @@ import type { VoxelChunkRegion } from '../../../utils/mapWarmup/mapPrepCache';
 import {
   buildVoxelRegionGeometry,
   buildVoxelRegionGeometryAsync,
+  cancelVoxelRegionGeometryBuild,
   getCachedVoxelGeometry,
   getVoxelRegionGeometryCacheKey,
+  isVoxelMeshRequestCancelledError,
   releaseVoxelGeometryCacheKey,
   retainVoxelGeometryCacheKey,
 } from './meshBuilder';
@@ -86,11 +88,14 @@ export const VoxelRegionMesh = memo(function VoxelRegionMesh({
         if (!cancelled) setGeometryState({ geometry: nextGeometry, detail });
       })
       .catch((error) => {
-        if (!cancelled) console.warn('[VoxelMap] Failed to build region mesh', region.id, detail, error);
+        if (!cancelled && !isVoxelMeshRequestCancelledError(error)) {
+          console.warn('[VoxelMap] Failed to build region mesh', region.id, detail, error);
+        }
       });
 
     return () => {
       cancelled = true;
+      cancelVoxelRegionGeometryBuild(cacheKey);
     };
   }, [buildMode, cacheKey, detail, manifest, region]);
 

@@ -7,6 +7,7 @@ interface FakeWorkerBuildMessage {
   requestId: number;
   manifestId: string;
   regionId: string;
+  chunkCoords?: Array<{ x: number; y: number; z: number }>;
 }
 
 class FakeMeshWorker {
@@ -30,6 +31,7 @@ class FakeMeshWorker {
         requestId: message.requestId,
         manifestId: message.manifestId,
         regionId: message.regionId,
+        chunkCoords: message.chunkCoords,
       });
     }
   }
@@ -113,8 +115,11 @@ async function flushMicrotasks(): Promise<void> {
 try {
   const {
     buildVoxelRegionGeometryAsync,
+    cancelVoxelRegionGeometryBuild,
     clearVoxelGeometryCache,
     getVoxelGeometryCacheStats,
+    getVoxelRegionGeometryCacheKey,
+    isVoxelMeshRequestCancelledError,
   } = await import('./meshBuilder');
   const resolvedRegions: string[] = [];
   const regionPromises = ['a', 'b', 'c'].map((regionId) => (
@@ -126,6 +131,7 @@ try {
   ));
 
   assert.equal(workerBuilds.length, 3);
+  assert.equal(workerBuilds.some((build) => build.chunkCoords !== undefined), false);
   for (const build of workerBuilds) {
     emitBuiltRegion(build);
   }
@@ -145,6 +151,16 @@ try {
   flushNextFrame();
   await Promise.all(regionPromises);
   assert.equal(resolvedRegions.join(','), 'a,b,c');
+  assert.equal(getVoxelGeometryCacheStats().pendingRegionFinalizations, 0);
+
+  const cancelledRegionPromise = buildVoxelRegionGeometryAsync(manifest, 'cancelled', [], 'full');
+  assert.equal(workerBuilds.length, 4);
+  cancelVoxelRegionGeometryBuild(getVoxelRegionGeometryCacheKey(manifest, 'cancelled', 'full'));
+  await assert.rejects(cancelledRegionPromise, isVoxelMeshRequestCancelledError);
+  assert.equal(getVoxelGeometryCacheStats().pendingRegionBuilds, 0);
+  assert.equal(getVoxelGeometryCacheStats().pendingRegionRequests, 0);
+  emitBuiltRegion(workerBuilds[3]);
+  await flushMicrotasks();
   assert.equal(getVoxelGeometryCacheStats().pendingRegionFinalizations, 0);
 
   clearVoxelGeometryCache(manifest.id);

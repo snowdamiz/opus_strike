@@ -30,7 +30,7 @@ import { BudgetedPointLight, DynamicLightBudgetSystem } from './systems/DynamicL
 import { CombatTextLayer } from './CombatText';
 import { useGameStore } from '../../store/gameStore';
 import { graphicsPresetSettings, useSettingsStore } from '../../store/settingsStore';
-import { getMapPrepCacheKey } from '../../utils/mapWarmup/mapPrepCache';
+import { getMapPrepCacheKey } from '../../utils/mapWarmup/mapPrepCacheKey';
 import {
   createMapWarmupSnapshot,
   isMapWarmupReadyForMatchStart,
@@ -58,6 +58,7 @@ import { prewarmLocalMovementCollisionWorld } from '../../movement/localPredicti
 import { getBlazeGearstormSkyIntensity } from './blaze/airstrike';
 import { getPhantomVeilSkyIntensity } from './phantom/veilAtmosphere';
 import { suppressExpectedContextLossLog } from './webglLifecycle';
+import { disposeSharedEffectResources } from './effectResources';
 
 const BLAZE_BACKGROUND_COLOR = new THREE.Color('#4a150c');
 const BLAZE_FOG_COLOR = new THREE.Color('#651b0e');
@@ -627,9 +628,9 @@ function SceneGpuWarmup({
       try {
         const {
           getGameplayEffectGpuPrewarmBundle,
-          prewarmGameplayEffectResources,
+          prewarmGameplayEffectResourcesOnce,
         } = await import('./effectPrewarm');
-        await prewarmGameplayEffectResources();
+        await prewarmGameplayEffectResourcesOnce();
         gameplayEffectGpuPrewarmBundle = getGameplayEffectGpuPrewarmBundle();
       } catch (error) {
         console.warn('[MapWarmup] Gameplay effect prewarm setup failed', error);
@@ -826,6 +827,12 @@ function scaleBattleRoyalRemotePlayersForCombat(
   return {
     ...config,
     showNameplates: config.showNameplates && scale > 0.68,
+    nameplateDistance: config.nameplateDistance > 0
+      ? Math.max(
+        BR_REMOTE_MIN_FULL_BODY_DISTANCE,
+        finiteDistanceOrCap(config.nameplateDistance, BR_REMOTE_FULL_BODY_COMBAT_CAP) * distanceScale
+      )
+      : 0,
     fullBodyDistance: Math.max(
       BR_REMOTE_MIN_FULL_BODY_DISTANCE,
       finiteDistanceOrCap(config.fullBodyDistance, BR_REMOTE_FULL_BODY_COMBAT_CAP) * distanceScale
@@ -1154,6 +1161,10 @@ export function GameCanvas({
   onWarmupUpdate,
   startupRampActive = false,
 }: GameCanvasProps) {
+  useEffect(() => () => {
+    disposeSharedEffectResources();
+  }, []);
+
   const gamePhase = useGameStore((state) => state.gamePhase);
   const isPracticeMode = useGameStore((state) => state.isPracticeMode);
   const isTutorialMode = useGameStore((state) => state.isTutorialMode);
@@ -1380,8 +1391,8 @@ export function GameCanvas({
         gl.toneMappingExposure = qualityConfig.render.exposure;
         gl.shadowMap.enabled = qualityConfig.shadows.enabled;
         gl.shadowMap.type = qualityConfig.shadows.type;
-        import('./effectPrewarm').then(({ prewarmGameplayEffectResources }) => (
-          prewarmGameplayEffectResources()
+        import('./effectPrewarm').then(({ prewarmGameplayEffectResourcesOnce }) => (
+          prewarmGameplayEffectResourcesOnce()
         )).catch((error) => {
           console.warn('[Effects] Prewarm failed', error);
         });
@@ -1472,7 +1483,7 @@ export function GameCanvas({
             <ObservedAbilityCastEffectsManager
               maxVisibleEffects={effectiveEffectsConfig.maxVisibleRemoteAbilityEffects}
             />
-            <BlazeEffectsManager />
+            <BlazeEffectsManager config={effectiveEffectsConfig} />
             <HookshotEffectsManager />
             <ChronosAscendantManager />
             <ChronosAegisManager />

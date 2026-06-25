@@ -13,7 +13,6 @@ import {
   type ViewmodelMaterialToken,
 } from '../../viewmodel/viewmodelManifests';
 import { resolveHeroSkinModel } from '../../model-system/heroSkinModelResolver';
-import { HERO_SKIN_MODEL_DOCUMENTS } from '../../model-system/heroModelDocuments';
 
 export type ViewmodelHeroId = keyof typeof VIEWMODEL_MODEL_DOCUMENTS & HeroId;
 
@@ -78,7 +77,7 @@ export function getViewmodelMaterialsForSkin(
   const cached = materialCache.get(skinId);
   if (cached) return cached;
 
-  const viewmodel = HERO_SKIN_MODEL_DOCUMENTS[skinId].viewmodel ?? VIEWMODEL_MODEL_DOCUMENTS[heroId];
+  const viewmodel = resolved.document.viewmodel ?? VIEWMODEL_MODEL_DOCUMENTS[heroId];
   const descriptor = (token: ViewmodelMaterialToken) => getSkinMaterialDescriptor(viewmodel, token);
   const colors = VIEWMODEL_MATERIAL_TOKENS.reduce((colorMap, token) => {
     colorMap[token] = new THREE.Color(descriptor(token).color).getHex();

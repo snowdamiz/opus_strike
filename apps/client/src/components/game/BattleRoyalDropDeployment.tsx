@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Billboard, Text } from '@react-three/drei';
 import * as THREE from 'three';
@@ -96,15 +96,23 @@ function createSampledRemoteTransform(): SampledRemoteTransform {
   };
 }
 
-function useSmoothedScalar(target: number, smoothing: number): number {
+function useSmoothedScalarVisibility(
+  target: number,
+  smoothing: number,
+  minVisibleValue: number
+): { valueRef: MutableRefObject<number>; visible: boolean } {
   const targetRef = useRef(target);
   const valueRef = useRef(target);
-  const publishedValueRef = useRef(target);
-  const [value, setValue] = useState(target);
+  const visibleRef = useRef(target > minVisibleValue);
+  const [visible, setVisible] = useState(() => visibleRef.current);
 
   useEffect(() => {
     targetRef.current = target;
-  }, [target]);
+    if (target > minVisibleValue && !visibleRef.current) {
+      visibleRef.current = true;
+      setVisible(true);
+    }
+  }, [minVisibleValue, target]);
 
   useFrame((_, delta) => {
     const current = valueRef.current;
@@ -115,16 +123,14 @@ function useSmoothedScalar(target: number, smoothing: number): number {
       : THREE.MathUtils.lerp(current, nextTarget, alpha);
 
     valueRef.current = next;
-    if (
-      Math.abs(next - publishedValueRef.current) >= 0.002 ||
-      (next === nextTarget && publishedValueRef.current !== nextTarget)
-    ) {
-      publishedValueRef.current = next;
-      setValue(next);
+    const shouldBeVisible = next > minVisibleValue || nextTarget > minVisibleValue;
+    if (shouldBeVisible !== visibleRef.current) {
+      visibleRef.current = shouldBeVisible;
+      setVisible(shouldBeVisible);
     }
   });
 
-  return value;
+  return { valueRef, visible };
 }
 
 export function BattleRoyalDropDeployment() {
@@ -139,7 +145,11 @@ export function BattleRoyalDropDeployment() {
   const isBattleRoyal = gameplayMode === 'battle_royal';
   const isDeploymentPhase = gamePhase === 'countdown' || gamePhase === 'deployment';
   const shouldRenderDropVisuals = isBattleRoyal && isDeploymentPhase && drop?.enabled === true;
-  const labelOpacity = useSmoothedScalar(isBattleRoyal && isDeploymentPhase ? 1 : 0, LOCATION_LABEL_FADE_SMOOTHING);
+  const { valueRef: labelOpacityRef, visible: labelsVisible } = useSmoothedScalarVisibility(
+    isBattleRoyal && isDeploymentPhase ? 1 : 0,
+    LOCATION_LABEL_FADE_SMOOTHING,
+    LOCATION_LABEL_MIN_RENDER_OPACITY
+  );
   const preparedMap = getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId });
   const namedLocations = preparedMap?.manifest.gameplay.namedLocations ?? [];
 
@@ -151,14 +161,14 @@ export function BattleRoyalDropDeployment() {
   );
   const shouldRenderLabels = isBattleRoyal &&
     namedLocations.length > 0 &&
-    (isDeploymentPhase || labelOpacity > LOCATION_LABEL_MIN_RENDER_OPACITY);
+    labelsVisible;
 
   if (!shouldRenderDropVisuals && !shouldRenderLabels) return null;
 
   return (
     <group>
       {shouldRenderDropVisuals && drop ? <DropShipVisual drop={drop} frozen={gamePhase === 'countdown'} /> : null}
-      {shouldRenderLabels ? <BattleRoyalLocationLabels locations={namedLocations} opacity={labelOpacity} /> : null}
+      {shouldRenderLabels ? <BattleRoyalLocationLabels locations={namedLocations} opacityRef={labelOpacityRef} /> : null}
       {shouldRenderDropVisuals && drop ? podPlayers.map((player) => {
         const isLocal = player.playerId === localPlayerId;
         return (
@@ -203,19 +213,46 @@ function getLocationLabelStyle(location: MapNamedLocation): {
 
 function BattleRoyalLocationLabels({
   locations,
-  opacity,
+  opacityRef,
 }: {
   locations: MapNamedLocation[];
-  opacity: number;
+  opacityRef: MutableRefObject<number>;
 }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const beamMaterialRefs = useRef<(THREE.MeshBasicMaterial | null)[]>([]);
+  const ringMaterialRefs = useRef<(THREE.MeshBasicMaterial | null)[]>([]);
+  const textRefs = useRef<Array<{ fillOpacity?: number; outlineOpacity?: number; sync?: () => void } | null>>([]);
+  const lastAppliedOpacityRef = useRef(Number.NaN);
   const visibleLocations = useMemo(
     () => locations.slice().sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name)).slice(0, LOCATION_LABEL_MAX_COUNT),
     [locations]
   );
 
+  useFrame(() => {
+    if (!groupRef.current) return;
+    const opacity = opacityRef.current;
+    if (Math.abs(opacity - lastAppliedOpacityRef.current) < 0.001) return;
+    lastAppliedOpacityRef.current = opacity;
+
+    for (let index = 0; index < visibleLocations.length; index++) {
+      const beamMaterial = beamMaterialRefs.current[index];
+      if (beamMaterial) beamMaterial.opacity = 0.22 * opacity;
+      const ringMaterial = ringMaterialRefs.current[index];
+      if (ringMaterial) ringMaterial.opacity = 0.36 * opacity;
+    }
+    for (const text of textRefs.current) {
+      if (!text) continue;
+      text.fillOpacity = opacity;
+      text.outlineOpacity = opacity;
+      text.sync?.();
+    }
+  });
+
+  const initialOpacity = opacityRef.current;
+
   return (
-    <group name="battle-royal-location-labels">
-      {visibleLocations.map((location) => {
+    <group ref={groupRef} name="battle-royal-location-labels">
+      {visibleLocations.map((location, index) => {
         const style = getLocationLabelStyle(location);
         const labelFontSize = style.fontSize * LOCATION_LABEL_FONT_SCALE;
         const typeFontSize = Math.max(1.05, labelFontSize * 0.3);
@@ -227,22 +264,35 @@ function BattleRoyalLocationLabels({
           <group key={location.id} position={[location.position.x, 0, location.position.z]}>
             <mesh position={[0, beamY, 0]} renderOrder={18}>
               <cylinderGeometry args={[0.1, 0.22, beamHeight, 8]} />
-              <meshBasicMaterial color={style.accent} transparent opacity={0.22 * opacity} depthWrite={false} />
+              <meshBasicMaterial
+                ref={(material) => { beamMaterialRefs.current[index] = material; }}
+                color={style.accent}
+                transparent
+                opacity={0.22 * initialOpacity}
+                depthWrite={false}
+              />
             </mesh>
             <mesh position={[0, location.position.y + 0.35, 0]} rotation={[Math.PI / 2, 0, 0]} renderOrder={17}>
               <ringGeometry args={[Math.max(3.5, location.radius * 0.18), Math.max(4.4, location.radius * 0.18 + 0.8), 48]} />
-              <meshBasicMaterial color={style.accent} transparent opacity={0.36 * opacity} depthWrite={false} />
+              <meshBasicMaterial
+                ref={(material) => { ringMaterialRefs.current[index] = material; }}
+                color={style.accent}
+                transparent
+                opacity={0.36 * initialOpacity}
+                depthWrite={false}
+              />
             </mesh>
             <Billboard position={[0, labelY, 0]} follow>
               <Text
+                ref={(text) => { textRefs.current[index * 2] = text; }}
                 anchorX="center"
                 anchorY="middle"
                 color={style.color}
                 fontSize={labelFontSize}
                 fontWeight={LOCATION_LABEL_FONT_WEIGHT}
                 outlineColor="#06111d"
-                fillOpacity={opacity}
-                outlineOpacity={opacity}
+                fillOpacity={initialOpacity}
+                outlineOpacity={initialOpacity}
                 outlineWidth={LOCATION_LABEL_OUTLINE_WIDTH}
                 renderOrder={20}
                 textAlign="center"
@@ -250,6 +300,7 @@ function BattleRoyalLocationLabels({
                 {location.name.toUpperCase()}
               </Text>
               <Text
+                ref={(text) => { textRefs.current[index * 2 + 1] = text; }}
                 position={[0, -labelFontSize * 0.78, 0]}
                 anchorX="center"
                 anchorY="middle"
@@ -257,8 +308,8 @@ function BattleRoyalLocationLabels({
                 fontSize={typeFontSize}
                 fontWeight={LOCATION_LABEL_TYPE_FONT_WEIGHT}
                 outlineColor="#06111d"
-                fillOpacity={opacity}
-                outlineOpacity={opacity}
+                fillOpacity={initialOpacity}
+                outlineOpacity={initialOpacity}
                 outlineWidth={LOCATION_LABEL_TYPE_OUTLINE_WIDTH}
                 renderOrder={20}
                 textAlign="center"

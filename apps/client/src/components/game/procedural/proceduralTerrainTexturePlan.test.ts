@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { getBlockNumericId, type VoxelChunk, type VoxelMapManifest } from '@voxel-strike/shared';
-import { buildVoxelRegionGeometryData } from './meshGeometryData';
+import { buildVoxelRegionGeometryData, transformVoxelMeshGeometryDataToWorld } from './meshGeometryData';
 import {
   getTerrainTextureAnisotropy,
   TERRAIN_TEXTURE_ANISOTROPY_BY_QUALITY,
@@ -40,6 +40,23 @@ assert.ok(uniqueLayers.has(getTextureLayerForBlock('grass', 'side').layer));
 assert.ok(uniqueLayers.has(getTextureLayerForBlock('grass', 'bottom').layer));
 assert.ok(uniqueLayers.has(getTextureLayerForBlock('stone', 'side').layer));
 assert.equal(getTextureLayerForBlock('grass', 'bottom').layer, getTextureLayerForBlock('dirt', 'side').layer);
+
+const worldSpaceData = transformVoxelMeshGeometryDataToWorld(
+  {
+    origin: { x: 10, y: 20, z: 30 },
+    voxelSize: { x: 2, y: 3, z: 4 },
+  } as VoxelMapManifest,
+  {
+    positions: new Float32Array([0, 0, 0, 1, 2, 3]),
+    normals: new Float32Array([0, 1, 0, 0, 1, 0]),
+    uvs: new Float32Array([0, 0, 1, 1]),
+    textureLayers: new Float32Array([0, 0]),
+    indices: new Uint16Array([0, 1]),
+  }
+);
+assert.deepEqual(Array.from(worldSpaceData.positions), [10, 20, 30, 12, 26, 42]);
+assert.deepEqual(worldSpaceData.boundingSphere?.center, { x: 11, y: 23, z: 36 });
+assert.equal(worldSpaceData.boundingSphere?.radius, Math.sqrt(46));
 
 function singleBlockChunk(coord: { x: number; y: number; z: number }, blockId: number): VoxelChunk {
   return {

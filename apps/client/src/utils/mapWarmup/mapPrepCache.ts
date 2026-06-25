@@ -1,18 +1,19 @@
 import {
   CONSTRUCTED_MAP_MANIFEST_VERSION,
   DEFAULT_VOXEL_MAP_SIZE_ID,
-  TUTORIAL_MAP_SEED,
   generateProceduralVoxelMap,
-  isTutorialMapSeed,
   normalizeVoxelMapSizeId,
-  type MapProfileId,
   type VoxelChunk,
   type VoxelMapManifest,
-  type VoxelMapSizeId,
-  type VoxelMapTheme,
 } from '@voxel-strike/shared';
+import {
+  getMapPrepCacheKey,
+  type MapPrepCacheKeyInput,
+} from './mapPrepCacheKey';
+import { getVoxelChunkRegionId } from './voxelRegionKeys';
 
-const VOXEL_REGION_CHUNK_SPAN = 4;
+export { getMapPrepCacheKey, type MapPrepCacheKeyInput } from './mapPrepCacheKey';
+
 const MAX_PREPARED_MAPS = 4;
 const MAX_PREPARED_BATTLE_ROYAL_MAPS = 1;
 
@@ -28,14 +29,6 @@ export interface VoxelChunkRegion {
   chunks: VoxelChunk[];
   castShadow: boolean;
   bounds: VoxelChunkRegionBounds;
-}
-
-export interface MapPrepCacheKeyInput {
-  seed: number;
-  themeId?: VoxelMapTheme['id'] | null;
-  mapSize?: VoxelMapSizeId | string | null;
-  mapProfileId?: MapProfileId | string | null;
-  generatorVersion?: number;
 }
 
 export interface PrepareVoxelMapOptions extends MapPrepCacheKeyInput {
@@ -60,24 +53,6 @@ const preparedMapCache = new Map<string, PreparedVoxelMap>();
 
 function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
-}
-
-export function getMapPrepCacheKey({
-  seed,
-  themeId,
-  mapSize,
-  mapProfileId,
-  generatorVersion = CONSTRUCTED_MAP_MANIFEST_VERSION,
-}: MapPrepCacheKeyInput): string {
-  if (isTutorialMapSeed(seed)) {
-    return `tutorial-v${generatorVersion}:${TUTORIAL_MAP_SEED}`;
-  }
-
-  const themeSuffix = themeId ? `:${themeId}` : '';
-  const profileSuffix = mapProfileId ? `:${mapProfileId}` : '';
-  const normalizedMapSize = normalizeVoxelMapSizeId(mapSize);
-  const sizeSuffix = normalizedMapSize === DEFAULT_VOXEL_MAP_SIZE_ID ? '' : `:${normalizedMapSize}`;
-  return `procedural-v${generatorVersion}:${seed >>> 0}${themeSuffix}${profileSuffix}${sizeSuffix}`;
 }
 
 function createEmptyRegionBounds(): VoxelChunkRegionBounds {
@@ -132,9 +107,7 @@ export function createVoxelChunkRegions(chunks: VoxelChunk[], manifest: VoxelMap
   const regions = new Map<string, VoxelChunkRegion>();
 
   for (const chunk of chunks) {
-    const regionX = Math.floor(chunk.coord.x / VOXEL_REGION_CHUNK_SPAN);
-    const regionZ = Math.floor(chunk.coord.z / VOXEL_REGION_CHUNK_SPAN);
-    const id = `${regionX}:${chunk.coord.y}:${regionZ}`;
+    const id = getVoxelChunkRegionId(chunk.coord);
     let region = regions.get(id);
 
     if (!region) {

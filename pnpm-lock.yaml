@@ -23,9 +23,6 @@ importers:
       '@dimforge/rapier3d-compat':
         specifier: ^0.14.0
         version: 0.14.0
-      '@preact/signals-react':
-        specifier: 3.10.1
-        version: 3.10.1(react@18.3.1)
       '@radix-ui/react-dialog':
         specifier: 1.1.17
         version: 1.1.17(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -786,14 +783,6 @@ packages:
   '@nodelib/fs.walk@1.2.8':
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
-
-  '@preact/signals-core@1.14.2':
-    resolution: {integrity: sha512-RZHdBj9ZF4n40Rp4jS052EHHjBWf96P9oNdXPfhQTovCuWY9iQn3Gq+gOTJSgBO9A/JBuPfMOWsSX/lIU9Pc/A==}
-
-  '@preact/signals-react@3.10.1':
-    resolution: {integrity: sha512-42/ESNbLT2dpK/IElwo9YG0kFmFKz+pUQoAKLf59BVjSXdWMeUIm4WaVYTnC01ROuF2UDU+H3uX5fq8WreamSg==}
-    peerDependencies:
-      react: ^16.14.0 || 17.x || 18.x || 19.x
 
   '@prisma/client@5.22.0':
     resolution: {integrity: sha512-M0SVXfyHnQREBKxCgyo7sffrKttwE6R8PMq330MIUF0pTwjUhLbW84pFDlf06B27XyCR++VtjugEnIHdr07SVA==}
@@ -3852,14 +3841,6 @@ snapshots:
     dependencies:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.19.1
-
-  '@preact/signals-core@1.14.2': {}
-
-  '@preact/signals-react@3.10.1(react@18.3.1)':
-    dependencies:
-      '@preact/signals-core': 1.14.2
-      react: 18.3.1
-      use-sync-external-store: 1.6.0(react@18.3.1)
 
   '@prisma/client@5.22.0(prisma@5.22.0)':
     optionalDependencies:

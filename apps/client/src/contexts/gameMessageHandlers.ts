@@ -99,9 +99,11 @@ import { normalizeServerAbilityCooldown } from '../abilities/cooldowns';
 import { normalizeGamePhase } from './gamePhase';
 import { measureNetworkMessage } from './networkMessageMetrics';
 import {
-  dequantizeTransform,
+  writeDequantizedTransform,
+  writeMovementFromBits,
   movementFromBits,
-  unpackPackedTransform,
+  unpackPackedTransformInto,
+  type DequantizedPlayerTransform,
   type UnpackedPlayerTransform,
 } from './playerTransformCodec';
 import type {
@@ -142,6 +144,7 @@ import type { AppPhase } from '../store/types';
 const CHRONOS_TIMEBREAK_CHARGE_FADE_OUT_MS = 110;
 const CHRONOS_PRIMARY_RELOAD_SOUND_FADE_OUT_MS = 240;
 const remotePhantomChargeControllers = new Map<string, AbortController>();
+const delayedGameplayTimeouts = new Set<number>();
 const playerIdByNetId = new Map<number, string>();
 const netIdByPlayerId = new Map<string, number>();
 let lastLocalPhantomReloadSoundKey = '';
@@ -159,6 +162,22 @@ const PLAYER_STATES = new Set<string>([
   'downed',
   'dead',
 ]);
+
+function scheduleDelayedGameplayEffect(callback: () => void, delayMs: number): number {
+  const timeoutId = window.setTimeout(() => {
+    delayedGameplayTimeouts.delete(timeoutId);
+    callback();
+  }, Math.max(0, delayMs));
+  delayedGameplayTimeouts.add(timeoutId);
+  return timeoutId;
+}
+
+export function clearDelayedGameplayEffects(): void {
+  for (const timeoutId of delayedGameplayTimeouts) {
+    window.clearTimeout(timeoutId);
+  }
+  delayedGameplayTimeouts.clear();
+}
 
 function normalizePlayerState(value: unknown, fallback: PlayerState = 'alive'): PlayerState {
   return typeof value === 'string' && PLAYER_STATES.has(value) ? value as PlayerState : fallback;
@@ -1160,6 +1179,27 @@ export function setupPlayerTransformsHandler(
   localPlayerName: string,
   actions: Pick<GameStoreActions, 'setLocalPlayer'>
 ) {
+  const transformScratch: UnpackedPlayerTransform = {
+    netId: 0,
+    px: 0,
+    py: 0,
+    pz: 0,
+    vx: 0,
+    vy: 0,
+    vz: 0,
+    yaw: 0,
+    pitch: 0,
+    movementBits: 0,
+    wallRunSide: 0,
+    movementEpoch: 0,
+    chronosAegisShieldRatio: 1,
+  };
+  const decodedScratch: DequantizedPlayerTransform = {
+    position: { x: 0, y: 0, z: 0 },
+    velocity: { x: 0, y: 0, z: 0 },
+    lookYaw: 0,
+    lookPitch: 0,
+  };
   const handleTransform = (
     playerId: string,
     transform: UnpackedPlayerTransform,
@@ -1168,7 +1208,7 @@ export function setupPlayerTransformsHandler(
     allowSelfBootstrap: boolean,
     visibilityBatch: PlayerVisibilityBatch
   ): 'remote' | 'self' | 'ignored' => {
-    const decoded = dequantizeTransform(transform);
+    const decoded = writeDequantizedTransform(decodedScratch, transform);
 
     if (playerId === sessionId) {
       if (allowSelfBootstrap && !hasReceivedSelfMovementAuthority) {
@@ -1180,8 +1220,8 @@ export function setupPlayerTransformsHandler(
         if (shouldSyncPosition) {
           const updated: Player = {
             ...localPlayer,
-            position: decoded.position,
-            velocity: decoded.velocity,
+            position: { ...decoded.position },
+            velocity: { ...decoded.velocity },
             lookYaw: decoded.lookYaw,
             lookPitch: decoded.lookPitch,
             movement: nextMovement,
@@ -1204,12 +1244,15 @@ export function setupPlayerTransformsHandler(
 
     const remotePlayer = visibilityBatch.setVisibility(playerId, 'visible') ?? existingPlayer;
     const wasGrappling = remotePlayer.movement.isGrappling;
-    const nextMovement = movementFromBits(transform, remotePlayer.movement);
-    remotePlayer.position = decoded.position;
-    remotePlayer.velocity = decoded.velocity;
+    const nextMovement = writeMovementFromBits(remotePlayer.movement, transform, remotePlayer.movement);
+    remotePlayer.position.x = decoded.position.x;
+    remotePlayer.position.y = decoded.position.y;
+    remotePlayer.position.z = decoded.position.z;
+    remotePlayer.velocity.x = decoded.velocity.x;
+    remotePlayer.velocity.y = decoded.velocity.y;
+    remotePlayer.velocity.z = decoded.velocity.z;
     remotePlayer.lookYaw = decoded.lookYaw;
     remotePlayer.lookPitch = decoded.lookPitch;
-    remotePlayer.movement = nextMovement;
     if (wasGrappling && !nextMovement.isGrappling) {
       const freshStore = useGameStore.getState();
       for (const line of freshStore.grappleLines) {
@@ -1257,7 +1300,7 @@ export function setupPlayerTransformsHandler(
       clearHiddenLiveVisuals(hiddenPlayerId);
     }
     for (const packedTransform of data.players) {
-      const transform = unpackPackedTransform(packedTransform);
+      const transform = unpackPackedTransformInto(transformScratch, packedTransform);
       const playerId = playerIdByNetId.get(transform.netId);
       if (!playerId) continue;
       fullSnapshotPlayerIds?.add(playerId);
@@ -2557,14 +2600,14 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
       }
       playBlazeWorldSound('blazeBombTarget', startPosition);
       if (fallSoundDuration > 0) {
-        window.setTimeout(() => {
+        scheduleDelayedGameplayEffect(() => {
           playBlazeWorldSound('blazeBombFall', startPosition, {
             durationMs: fallSoundDuration,
             fadeOutMs: Math.min(200, fallSoundDuration),
           });
         }, fallSoundDelay);
       }
-      window.setTimeout(() => {
+      scheduleDelayedGameplayEffect(() => {
         playBlazeWorldSound('blazeBombExplode', visualImpactPosition, { volume: 1.05 });
       }, impactDelay);
       return true;
@@ -2787,7 +2830,7 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
         });
       }
 
-      window.setTimeout(() => {
+      scheduleDelayedGameplayEffect(() => {
         stopObservedAbilityCastEffects(data.playerId, 'chronos_timebreak');
         const freshStore = useGameStore.getState();
         const freshLocalPlayerId = freshStore.localPlayer?.id ?? freshStore.playerId;

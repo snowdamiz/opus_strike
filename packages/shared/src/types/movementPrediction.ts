@@ -242,24 +242,46 @@ export function movementButtonsForHeldCommand(buttons: number): number {
 }
 
 export function movementButtonsToInputState(buttons: number): InputState & { crouchPressed?: boolean } {
+  return writeMovementButtonsToInputState(buttons, {
+    moveForward: false,
+    moveBackward: false,
+    moveLeft: false,
+    moveRight: false,
+    jump: false,
+    crouch: false,
+    sprint: false,
+    primaryFire: false,
+    secondaryFire: false,
+    reload: false,
+    ability1: false,
+    ability2: false,
+    ultimate: false,
+    interact: false,
+    crouchPressed: false,
+  });
+}
+
+export function writeMovementButtonsToInputState<T extends InputState & { crouchPressed?: boolean }>(
+  buttons: number,
+  out: T
+): T {
   const sanitized = sanitizeMovementButtons(buttons);
-  return {
-    moveForward: Boolean(sanitized & MOVEMENT_BUTTON_MOVE_FORWARD),
-    moveBackward: Boolean(sanitized & MOVEMENT_BUTTON_MOVE_BACKWARD),
-    moveLeft: Boolean(sanitized & MOVEMENT_BUTTON_MOVE_LEFT),
-    moveRight: Boolean(sanitized & MOVEMENT_BUTTON_MOVE_RIGHT),
-    jump: Boolean(sanitized & MOVEMENT_BUTTON_JUMP),
-    crouch: Boolean(sanitized & MOVEMENT_BUTTON_CROUCH),
-    sprint: Boolean(sanitized & MOVEMENT_BUTTON_SPRINT),
-    primaryFire: Boolean(sanitized & MOVEMENT_BUTTON_PRIMARY_FIRE),
-    secondaryFire: Boolean(sanitized & MOVEMENT_BUTTON_SECONDARY_FIRE),
-    reload: Boolean(sanitized & MOVEMENT_BUTTON_RELOAD),
-    ability1: Boolean(sanitized & MOVEMENT_BUTTON_ABILITY_1),
-    ability2: Boolean(sanitized & MOVEMENT_BUTTON_ABILITY_2),
-    ultimate: Boolean(sanitized & MOVEMENT_BUTTON_ULTIMATE),
-    interact: Boolean(sanitized & MOVEMENT_BUTTON_INTERACT),
-    crouchPressed: Boolean(sanitized & MOVEMENT_BUTTON_CROUCH_PRESSED),
-  };
+  out.moveForward = Boolean(sanitized & MOVEMENT_BUTTON_MOVE_FORWARD);
+  out.moveBackward = Boolean(sanitized & MOVEMENT_BUTTON_MOVE_BACKWARD);
+  out.moveLeft = Boolean(sanitized & MOVEMENT_BUTTON_MOVE_LEFT);
+  out.moveRight = Boolean(sanitized & MOVEMENT_BUTTON_MOVE_RIGHT);
+  out.jump = Boolean(sanitized & MOVEMENT_BUTTON_JUMP);
+  out.crouch = Boolean(sanitized & MOVEMENT_BUTTON_CROUCH);
+  out.sprint = Boolean(sanitized & MOVEMENT_BUTTON_SPRINT);
+  out.primaryFire = Boolean(sanitized & MOVEMENT_BUTTON_PRIMARY_FIRE);
+  out.secondaryFire = Boolean(sanitized & MOVEMENT_BUTTON_SECONDARY_FIRE);
+  out.reload = Boolean(sanitized & MOVEMENT_BUTTON_RELOAD);
+  out.ability1 = Boolean(sanitized & MOVEMENT_BUTTON_ABILITY_1);
+  out.ability2 = Boolean(sanitized & MOVEMENT_BUTTON_ABILITY_2);
+  out.ultimate = Boolean(sanitized & MOVEMENT_BUTTON_ULTIMATE);
+  out.interact = Boolean(sanitized & MOVEMENT_BUTTON_INTERACT);
+  out.crouchPressed = Boolean(sanitized & MOVEMENT_BUTTON_CROUCH_PRESSED);
+  return out;
 }
 
 export function isValidMovementCommand(command: MovementCommand): boolean {

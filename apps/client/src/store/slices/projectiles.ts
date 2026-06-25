@@ -257,10 +257,26 @@ function getEarthWallExpiresAt(wall: EarthWallData): number {
   return wall.startTime + wall.duration * 1000 + EARTH_WALL_COLLAPSE_RETENTION_MS;
 }
 
-function appendUnique<T extends { id: string }>(items: T[], item: T, limit: number): T[] {
-  for (let index = items.length - 1; index >= 0; index--) {
-    if (items[index].id === item.id) return items;
+const projectileIdIndexCache = new WeakMap<readonly { id: string }[], Map<string, number>>();
+
+function getIdIndexMap<T extends { id: string }>(items: readonly T[]): Map<string, number> {
+  const cached = projectileIdIndexCache.get(items);
+  if (cached) return cached;
+
+  const indexById = new Map<string, number>();
+  for (let index = 0; index < items.length; index++) {
+    indexById.set(items[index].id, index);
   }
+  projectileIdIndexCache.set(items, indexById);
+  return indexById;
+}
+
+function hasId<T extends { id: string }>(items: readonly T[], id: string): boolean {
+  return getIdIndexMap(items).has(id);
+}
+
+function appendUnique<T extends { id: string }>(items: T[], item: T, limit: number): T[] {
+  if (hasId(items, item.id)) return items;
 
   if (items.length >= limit) {
     const next = items.slice(items.length - limit + 1);
@@ -324,10 +340,7 @@ function updateById<T extends { id: string }>(items: T[], id: string, updates: P
 }
 
 function findIdIndex<T extends { id: string }>(items: T[], id: string): number {
-  for (let index = items.length - 1; index >= 0; index--) {
-    if (items[index].id === id) return index;
-  }
-  return -1;
+  return getIdIndexMap(items).get(id) ?? -1;
 }
 
 function filterExpiredByExpiry<T>(items: T[], expiresAt: (item: T) => number): T[] {

@@ -4,7 +4,7 @@ import { HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import type { HookProjectileData } from '../../../store/types';
 import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
-import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
+import { isPhysicsReady, raycastDirectionInto, type RaycastDirectionHitResult } from '../../../hooks/usePhysics';
 import { HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';
 import { writeOwnerVisualPosition } from './ownerPosition';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
@@ -49,23 +49,12 @@ function writeLocalHookSocketPosition(out: { x: number; y: number; z: number }, 
   });
 }
 
-export interface HookProjectileSlotHandle {
-  slotIndex: number;
-  hook: HookProjectileData | null;
-}
-
-export function createHookProjectileSlotHandle(slotIndex: number): HookProjectileSlotHandle {
-  return {
-    slotIndex,
-    hook: null,
-  };
-}
-
 interface HookProjectileProps {
-  slot: HookProjectileSlotHandle;
+  hook: HookProjectileData;
+  slotIndex: number;
 }
 
-export const HookProjectile = React.memo(({ slot }: HookProjectileProps) => {
+export const HookProjectile = React.memo(({ hook, slotIndex }: HookProjectileProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const hookRef = useRef<THREE.Group>(null);
   const muzzleRef = useRef<THREE.Group>(null);
@@ -92,13 +81,19 @@ export const HookProjectile = React.memo(({ slot }: HookProjectileProps) => {
   const isFirstFrameRef = useRef(true);
   const socketInitializedRef = useRef(false);
   const shouldRemoveRef = useRef(false);
+  const terrainHitRef = useRef<RaycastDirectionHitResult>({
+    hit: false,
+    point: { x: 0, y: 0, z: 0 },
+    normal: { x: 0, y: 1, z: 0 },
+    distance: 0,
+    isWalkable: false,
+  });
   
   // Get store actions once (not in useFrame)
   const removeHookProjectile = useGameStore(state => state.removeHookProjectile);
   
-  useHookshotFrameUpdater(`hook-projectile-slot:${slot.slotIndex}`, (frameState, delta) => {
-    const hook = slot.hook;
-    if (!hookRef.current || !groupRef.current || !hook) {
+  useHookshotFrameUpdater(`hook-projectile:${hook.id}:${slotIndex}`, (frameState, delta) => {
+    if (!hookRef.current || !groupRef.current) {
       if (groupRef.current) groupRef.current.visible = false;
       activeHookIdRef.current = null;
       return;
@@ -223,11 +218,21 @@ export const HookProjectile = React.memo(({ slot }: HookProjectileProps) => {
         hook.ownerId,
         HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS
       );
-      const terrainHit = isPhysicsReady()
-        ? raycastDirection(previousPosition.x, previousPosition.y, previousPosition.z, dirX, dirY, dirZ, moveDistance + 0.5, {
+      const terrainHit = isPhysicsReady() && raycastDirectionInto(
+        terrainHitRef.current,
+        previousPosition.x,
+        previousPosition.y,
+        previousPosition.z,
+        dirX,
+        dirY,
+        dirZ,
+        moveDistance + 0.5,
+        {
           priority: 'visual',
           feature: 'projectile:hookshotHook',
-        })
+        }
+      )
+        ? terrainHitRef.current
         : null;
       const hit = aegisHit && (!terrainHit?.hit || aegisHit.distance <= terrainHit.distance)
         ? { hit: true, point: aegisHit.point, normal: aegisHit.normal }
@@ -281,7 +286,6 @@ export const HookProjectile = React.memo(({ slot }: HookProjectileProps) => {
       if (distSq < 0.25) { // 0.5^2
         shouldRemoveRef.current = true;
         groupRef.current.visible = false;
-        slot.hook = null;
         activeHookIdRef.current = null;
         removeHookProjectile(hook.id);
         return;

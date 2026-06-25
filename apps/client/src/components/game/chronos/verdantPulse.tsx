@@ -14,7 +14,7 @@ import {
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import type { ChronosPulseData } from '../../../store/types';
-import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
+import { getPhysicsWorld, isPhysicsReady, raycastInto, type RaycastHitResult } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
@@ -325,6 +325,11 @@ export function ChronosPulsesManager() {
   const poolRef = useRef<ChronosPulseRuntimePool>();
   const removalsRef = useRef<string[]>([]);
   const activeStoreIdsRef = useRef<Set<string>>(new Set());
+  const terrainHitRef = useRef<RaycastHitResult>({
+    point: { x: 0, y: 0, z: 0 },
+    normal: { x: 0, y: 1, z: 0 },
+    distance: 0,
+  });
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const pulseDirection = useMemo(() => new THREE.Vector3(0, 0, -1), []);
   const pulseQuaternion = useMemo(() => new THREE.Quaternion(), []);
@@ -411,8 +416,8 @@ export function ChronosPulsesManager() {
           slot.ownerId,
           collisionRadius
         );
-        const terrainHit = physicsWorld
-          ? raycast(
+        const terrainHit = physicsWorld && raycastInto(
+            terrainHitRef.current,
             physicsWorld,
             slot.position,
             slot.direction,
@@ -422,6 +427,7 @@ export function ChronosPulsesManager() {
             feature: 'projectile:chronosPulse',
             }
           )
+          ? terrainHitRef.current
           : null;
         const hit = aegisHit && (!terrainHit || aegisHit.distance <= terrainHit.distance)
           ? aegisHit

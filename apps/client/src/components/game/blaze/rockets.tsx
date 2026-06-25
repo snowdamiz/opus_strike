@@ -9,7 +9,7 @@ import {
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import type { RocketData } from '../../../store/types';
-import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
+import { getPhysicsWorld, isPhysicsReady, raycastInto, type RaycastHitResult } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
@@ -301,6 +301,11 @@ export function RocketsManager() {
   const poolRef = useRef<RocketRuntimePool>();
   const removalsRef = useRef<string[]>([]);
   const activeStoreIdsRef = useRef<Set<string>>(new Set());
+  const terrainHitRef = useRef<RaycastHitResult>({
+    point: { x: 0, y: 0, z: 0 },
+    normal: { x: 0, y: 1, z: 0 },
+    distance: 0,
+  });
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const rocketQuaternion = useMemo(() => new THREE.Quaternion(), []);
   const rocketDirection = useMemo(() => new THREE.Vector3(0, 0, -1), []);
@@ -396,11 +401,11 @@ export function RocketsManager() {
           slot.ownerId,
           BLAZE_ROCKET_COLLISION_RADIUS
         );
-        const terrainHit = physicsWorld
-          ? raycast(physicsWorld, slot.position, slot.direction, collisionDistance, {
+        const terrainHit = physicsWorld && raycastInto(terrainHitRef.current, physicsWorld, slot.position, slot.direction, collisionDistance, {
             priority: 'visual',
             feature: 'projectile:blazeRocket',
           })
+          ? terrainHitRef.current
           : null;
         let hit = authoritativeHit;
         if (aegisHit && (!hit || aegisHit.distance <= hit.distance)) {
