@@ -1,5 +1,10 @@
 import type * as THREE from 'three';
-import type { HeroId, KnownModelMaterialToken, ModelPartKind } from '@voxel-strike/shared';
+import type {
+  HeroId,
+  KnownModelMaterialToken,
+  ModelPartAttachmentMode,
+  ModelPartKind,
+} from '@voxel-strike/shared';
 
 export type PartKind = ModelPartKind;
 export type MaterialKind = KnownModelMaterialToken;
@@ -35,6 +40,7 @@ export interface VoxelPart {
   position: [number, number, number];
   scale: [number, number, number];
   rotation?: [number, number, number];
+  attachmentMode?: ModelPartAttachmentMode;
   emissive?: boolean;
   transparent?: boolean;
   generated?: boolean;

@@ -8,6 +8,7 @@ import {
   type RankedUserState,
 } from '../ranking/ratingService';
 import { ensureRankedSeasonSettingsTx } from '../ranking/seasonService';
+import { tryGrantRankedFounderSkins } from '../cosmetics/rankedFounderRewards';
 import { mapSeedToDatabaseValue } from '../utils/mapSeedPersistence';
 
 export interface MatchParticipantStats {
@@ -361,6 +362,15 @@ export async function persistCompletedMatch(
         });
 
         const user = usersById.get(participant.userId);
+
+        // Founder reward: grant the golden skin set to the first N players to
+        // complete a ranked match. `user.rankedGames` is the pre-update value, so
+        // 0 means this ranked-eligible match is their first. Runs in this same
+        // transaction so the grant is atomic with the rankedGames increment.
+        if (rankedEligible && user && user.rankedGames === 0) {
+          await tryGrantRankedFounderSkins(tx, participant.userId);
+        }
+
         if (rankedSeason && ratingUpdate && user) {
           const mode = rankedSeason.mode === 'preseason' ? 'preseason' : 'season';
           const createData = getSeasonAggregateCreateData(participant, user, ratingUpdate, input.endedAt);

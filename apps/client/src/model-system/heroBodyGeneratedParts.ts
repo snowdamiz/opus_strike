@@ -9,6 +9,7 @@ export interface HeroBodyGeneratedRootPart {
   position: [number, number, number];
   scale: [number, number, number];
   rotation?: [number, number, number];
+  attachmentMode?: 'surface' | 'floating';
   emissive?: boolean;
   transparent?: boolean;
   fixedEmissiveIntensity?: number;

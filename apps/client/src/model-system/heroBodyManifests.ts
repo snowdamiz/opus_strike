@@ -342,6 +342,66 @@ export const ETERNITY_SOVEREIGN_COLORS: Record<MaterialKind, string> = {
   mist: '#34d399',
 };
 
+// Golden founder skins — granted to the first 50 ranked players. All four share a
+// solid-gold core (bright gold metal/accents over a warm-dark base) with a small
+// per-hero hue shift in the secondary glow/mist so each keeps a whisper of its
+// hero identity.
+export const PHANTOM_GOLDEN_COLORS: Record<MaterialKind, string> = {
+  armor: '#e0a92a',
+  dark: '#241803',
+  metal: '#ffd700',
+  accent: '#ffe9a0',
+  glow: '#fff3c0',
+  glass: '#6b4e12',
+  skin: '#332208',
+  void: '#0a0702',
+  edge: '#c9a227',
+  eye: '#fff7e0',
+  mist: '#ffd76a',
+};
+
+export const HOOKSHOT_GOLDEN_COLORS: Record<MaterialKind, string> = {
+  armor: '#d9a82f',
+  dark: '#1f1804',
+  metal: '#ffd700',
+  accent: '#ffe98a',
+  glow: '#fff4b0',
+  glass: '#5f4a10',
+  skin: '#2c2207',
+  void: '#080602',
+  edge: '#c7a02a',
+  eye: '#fffbe6',
+  mist: '#f5cf3a',
+};
+
+export const BLAZE_GOLDEN_COLORS: Record<MaterialKind, string> = {
+  armor: '#e5a521',
+  dark: '#2a1602',
+  metal: '#ffd700',
+  accent: '#ffdf6e',
+  glow: '#ffe89a',
+  glass: '#8a5510',
+  skin: '#3a2306',
+  void: '#0b0602',
+  edge: '#d4951f',
+  eye: '#fff4d0',
+  mist: '#ffb733',
+};
+
+export const CHRONOS_GOLDEN_COLORS: Record<MaterialKind, string> = {
+  armor: '#dcab2d',
+  dark: '#1c1804',
+  metal: '#ffd700',
+  accent: '#ffe98a',
+  glow: '#fff3b0',
+  glass: '#5c4f12',
+  skin: '#2a2807',
+  void: '#080702',
+  edge: '#c5a82a',
+  eye: '#fffbe6',
+  mist: '#f0d24a',
+};
+
 type TeamAccentPartDraft = Omit<TeamAccentPart, 'id' | 'bone'> & {
   id?: string;
   bone?: TeamAccentPart['bone'];
@@ -493,8 +553,8 @@ export const SOLAR_FORGE_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'glow', kind: 'sphere', position: [0.52, 1.7, -0.38], scale: [0.16, 0.16, 0.16], emissive: true, bone: 'rightForearm' },
   { material: 'edge', position: [-0.43, 0.52, -0.15], scale: [0.08, 0.026, 0.024], bone: 'leftArm' },
   { material: 'edge', position: [0.43, 0.82, -0.39], scale: [0.08, 0.026, 0.024], bone: 'rightForearm' },
-  { material: 'metal', kind: 'cone', position: [0.02, 2.4, -0.02], scale: [0.18, 0.24, 0.18], rotation: [0, 0, -0.12] },
-  { material: 'glow', kind: 'sphere', position: [0.08, 2.54, -0.02], scale: [0.06, 0.06, 0.06], emissive: true },
+  { material: 'metal', kind: 'cone', position: [0.02, 2.4, -0.02], scale: [0.18, 0.24, 0.18], rotation: [0, 0, -0.12], attachmentMode: 'floating' },
+  { material: 'glow', kind: 'sphere', position: [0.08, 2.54, -0.02], scale: [0.06, 0.06, 0.06], emissive: true, attachmentMode: 'floating' },
 ], 'blaze.solarForge.body');
 
 export const EPOCH_REGENT_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
@@ -534,7 +594,7 @@ export const NIGHTGLASS_WRAITH_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
 
 export const ASTRAL_EXECUTIONER_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.7, 0.012, 0.7], transparent: true },
-  { material: 'glow', kind: 'cylinder', position: [0, 1.92, -0.1], scale: [0.34, 0.018, 0.34], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { material: 'glow', kind: 'cylinder', position: [0, 1.92, -0.1], scale: [0.34, 0.018, 0.34], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true, attachmentMode: 'floating' },
   { material: 'metal', position: [-0.16, 1.98, -0.04], scale: [0.08, 0.2, 0.16], rotation: [0, 0, 0.22] },
   { material: 'metal', position: [0.16, 1.98, -0.04], scale: [0.08, 0.2, 0.16], rotation: [0, 0, -0.22] },
   { material: 'accent', position: [0, 1.24, -0.268], scale: [0.32, 0.038, 0.024], emissive: true },
@@ -551,8 +611,8 @@ export const ASTRAL_EXECUTIONER_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata(
 
 export const ECLIPSE_SERAPH_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.82, 0.012, 0.82], transparent: true },
-  { material: 'glow', kind: 'cylinder', position: [0, 2.06, -0.08], scale: [0.42, 0.014, 0.42], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
-  { material: 'metal', kind: 'cylinder', position: [0, 1.98, -0.08], scale: [0.26, 0.016, 0.26], rotation: [Math.PI / 2, 0, 0], emissive: true },
+  { material: 'glow', kind: 'cylinder', position: [0, 2.06, -0.08], scale: [0.42, 0.014, 0.42], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true, attachmentMode: 'floating' },
+  { material: 'metal', kind: 'cylinder', position: [0, 1.98, -0.08], scale: [0.26, 0.016, 0.26], rotation: [Math.PI / 2, 0, 0], emissive: true, attachmentMode: 'floating' },
   { material: 'metal', position: [-0.18, 1.92, -0.04], scale: [0.08, 0.24, 0.17], rotation: [0, 0, 0.32] },
   { material: 'metal', position: [0.18, 1.92, -0.04], scale: [0.08, 0.24, 0.17], rotation: [0, 0, -0.32] },
   { material: 'glow', position: [-0.52, 1.38, 0.2], scale: [0.08, 0.6, 0.028], rotation: [0, 0, -0.46], emissive: true, transparent: true, bone: 'torso' },
@@ -603,7 +663,7 @@ export const ABYSSAL_CORSAIR_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
 
 export const KRAKEN_SOVEREIGN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.86, 0.012, 0.86], transparent: true },
-  { material: 'glow', kind: 'cylinder', position: [0, 1.98, -0.09], scale: [0.38, 0.014, 0.38], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { material: 'glow', kind: 'cylinder', position: [0, 1.98, -0.09], scale: [0.38, 0.014, 0.38], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true, attachmentMode: 'floating' },
   { material: 'metal', position: [-0.2, 1.94, -0.03], scale: [0.09, 0.24, 0.18], rotation: [0, 0, 0.28] },
   { material: 'metal', position: [0.2, 1.94, -0.03], scale: [0.09, 0.24, 0.18], rotation: [0, 0, -0.28] },
   { material: 'metal', position: [-0.48, 1.42, -0.09], scale: [0.24, 0.2, 0.08], rotation: [0, 0, -0.24] },
@@ -632,7 +692,7 @@ export const ASHEN_VANGUARD_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'edge', position: [0.43, 0.82, -0.39], scale: [0.085, 0.032, 0.028], bone: 'rightForearm' },
   { material: 'metal', kind: 'cylinder', position: [0.52, 1.48, -0.38], scale: [0.12, 0.03, 0.12], emissive: true, bone: 'rightForearm' },
   { material: 'glow', kind: 'sphere', position: [0.52, 1.7, -0.38], scale: [0.13, 0.13, 0.13], emissive: true, bone: 'rightForearm' },
-  { material: 'metal', kind: 'cone', position: [0.02, 2.36, -0.02], scale: [0.16, 0.2, 0.16], rotation: [0, 0, -0.12] },
+  { material: 'metal', kind: 'cone', position: [0.02, 2.36, -0.02], scale: [0.16, 0.2, 0.16], rotation: [0, 0, -0.12], attachmentMode: 'floating' },
 ], 'blaze.ashenVanguard.body');
 
 export const INFERNO_ARCHON_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
@@ -654,9 +714,9 @@ export const INFERNO_ARCHON_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
 
 export const STARFALL_PHOENIX_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.86, 0.012, 0.86], transparent: true },
-  { material: 'glow', kind: 'cylinder', position: [0, 2.14, -0.04], scale: [0.34, 0.014, 0.34], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
-  { material: 'metal', kind: 'cone', position: [0.02, 2.44, -0.02], scale: [0.2, 0.28, 0.2], rotation: [0, 0, -0.12] },
-  { material: 'glow', kind: 'sphere', position: [0.08, 2.6, -0.02], scale: [0.07, 0.07, 0.07], emissive: true, transparent: true },
+  { material: 'glow', kind: 'cylinder', position: [0, 2.14, -0.04], scale: [0.34, 0.014, 0.34], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true, attachmentMode: 'floating' },
+  { material: 'metal', kind: 'cone', position: [0.02, 2.44, -0.02], scale: [0.2, 0.28, 0.2], rotation: [0, 0, -0.12], attachmentMode: 'floating' },
+  { material: 'glow', kind: 'sphere', position: [0.08, 2.6, -0.02], scale: [0.07, 0.07, 0.07], emissive: true, transparent: true, attachmentMode: 'floating' },
   { material: 'glow', position: [-0.58, 1.42, 0.2], scale: [0.08, 0.62, 0.028], rotation: [0, 0, -0.42], emissive: true, transparent: true, bone: 'torso' },
   { material: 'glow', position: [0.58, 1.42, 0.2], scale: [0.08, 0.62, 0.028], rotation: [0, 0, 0.42], emissive: true, transparent: true, bone: 'torso' },
   { material: 'accent', position: [-0.78, 1.18, 0.22], scale: [0.06, 0.5, 0.026], rotation: [0, 0, -0.72], emissive: true, transparent: true, bone: 'torso' },
@@ -686,7 +746,7 @@ export const PARADOX_SENTINEL_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
 
 export const MERIDIAN_ORACLE_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.74, 0.012, 0.74], transparent: true },
-  { material: 'glow', kind: 'cylinder', position: [0, 1.94, -0.08], scale: [0.36, 0.014, 0.36], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { material: 'glow', kind: 'cylinder', position: [0, 1.94, -0.08], scale: [0.36, 0.014, 0.36], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true, attachmentMode: 'floating' },
   { material: 'metal', position: [-0.18, 1.9, -0.04], scale: [0.08, 0.22, 0.16], rotation: [0, 0, 0.28] },
   { material: 'metal', position: [0.18, 1.9, -0.04], scale: [0.08, 0.22, 0.16], rotation: [0, 0, -0.28] },
   { material: 'edge', position: [-0.46, 1.32, 0.22], scale: [0.06, 0.44, 0.026], rotation: [0, 0, -0.34], emissive: true, bone: 'torso' },
@@ -703,8 +763,8 @@ export const MERIDIAN_ORACLE_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
 
 export const ETERNITY_SOVEREIGN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.88, 0.012, 0.88], transparent: true },
-  { material: 'glow', kind: 'cylinder', position: [0, 2.04, -0.08], scale: [0.44, 0.014, 0.44], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
-  { material: 'metal', kind: 'cylinder', position: [0, 1.96, -0.08], scale: [0.26, 0.016, 0.26], rotation: [Math.PI / 2, 0, 0], emissive: true },
+  { material: 'glow', kind: 'cylinder', position: [0, 2.04, -0.08], scale: [0.44, 0.014, 0.44], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true, attachmentMode: 'floating' },
+  { material: 'metal', kind: 'cylinder', position: [0, 1.96, -0.08], scale: [0.26, 0.016, 0.26], rotation: [Math.PI / 2, 0, 0], emissive: true, attachmentMode: 'floating' },
   { material: 'metal', position: [-0.2, 1.94, -0.04], scale: [0.09, 0.25, 0.18], rotation: [0, 0, 0.3] },
   { material: 'metal', position: [0.2, 1.94, -0.04], scale: [0.09, 0.25, 0.18], rotation: [0, 0, -0.3] },
   { material: 'glow', position: [-0.56, 1.44, 0.24], scale: [0.07, 0.58, 0.028], rotation: [0, 0, -0.4], emissive: true, transparent: true, bone: 'torso' },
@@ -720,6 +780,84 @@ export const ETERNITY_SOVEREIGN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata(
   { material: 'glow', kind: 'cylinder', position: [-0.43, 0.66, -0.38], scale: [0.07, 0.014, 0.07], rotation: [Math.PI / 2, 0, 0], emissive: true, bone: 'leftForearm' },
   { material: 'glow', kind: 'cylinder', position: [0.43, 0.66, -0.38], scale: [0.07, 0.014, 0.07], rotation: [Math.PI / 2, 0, 0], emissive: true, bone: 'rightForearm' },
 ], 'chronos.eternitySovereign.body');
+
+// Shared gold regalia worn by every golden founder skin: floating halo, crown
+// band with spikes, gilded pauldrons, a chest emblem, and forearm/boot trims.
+// Per-hero flourishes are appended on top of this in each *_GOLDEN_EXTRA_PARTS.
+function createGoldenRegaliaParts(): VoxelPartDraft[] {
+  return [
+    { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.82, 0.012, 0.82], transparent: true },
+    // Floating double halo above the head
+    { material: 'glow', kind: 'cylinder', position: [0, 2.06, -0.06], scale: [0.42, 0.014, 0.42], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true, attachmentMode: 'floating' },
+    { material: 'metal', kind: 'cylinder', position: [0, 1.98, -0.06], scale: [0.26, 0.016, 0.26], rotation: [Math.PI / 2, 0, 0], emissive: true, attachmentMode: 'floating' },
+    // Crown band + spikes
+    { material: 'metal', position: [0, 1.92, -0.02], scale: [0.4, 0.07, 0.38] },
+    { material: 'edge', position: [0, 1.95, -0.225], scale: [0.36, 0.05, 0.04], emissive: true },
+    { material: 'metal', position: [0, 2.08, -0.02], scale: [0.06, 0.2, 0.06] },
+    { material: 'metal', position: [-0.17, 2.0, -0.02], scale: [0.05, 0.14, 0.05], rotation: [0, 0, 0.2] },
+    { material: 'metal', position: [0.17, 2.0, -0.02], scale: [0.05, 0.14, 0.05], rotation: [0, 0, -0.2] },
+    { material: 'metal', position: [-0.31, 1.95, -0.02], scale: [0.045, 0.1, 0.045], rotation: [0, 0, 0.36] },
+    { material: 'metal', position: [0.31, 1.95, -0.02], scale: [0.045, 0.1, 0.045], rotation: [0, 0, -0.36] },
+    { material: 'glow', kind: 'sphere', position: [0, 2.2, -0.02], scale: [0.04, 0.04, 0.04], emissive: true },
+    // Gilded pauldrons
+    { material: 'metal', position: [-0.34, 1.42, -0.03], scale: [0.18, 0.12, 0.22], rotation: [0, 0, -0.16] },
+    { material: 'metal', position: [0.34, 1.42, -0.03], scale: [0.18, 0.12, 0.22], rotation: [0, 0, 0.16] },
+    { material: 'edge', position: [-0.34, 1.5, -0.03], scale: [0.16, 0.05, 0.2], emissive: true },
+    { material: 'edge', position: [0.34, 1.5, -0.03], scale: [0.16, 0.05, 0.2], emissive: true },
+    // Chest emblem
+    { material: 'metal', position: [0, 1.16, -0.2], scale: [0.2, 0.22, 0.03] },
+    { material: 'glow', kind: 'sphere', position: [0, 1.16, -0.24], scale: [0.08, 0.08, 0.05], emissive: true, transparent: true },
+    { material: 'accent', position: [0, 1.34, -0.272], scale: [0.34, 0.04, 0.026], emissive: true },
+    // Forearm cuffs
+    { material: 'metal', position: [-0.43, 0.8, -0.04], scale: [0.11, 0.06, 0.11], bone: 'leftForearm' },
+    { material: 'metal', position: [0.43, 0.8, -0.04], scale: [0.11, 0.06, 0.11], bone: 'rightForearm' },
+    { material: 'glow', kind: 'cylinder', position: [-0.43, 0.7, -0.04], scale: [0.07, 0.014, 0.07], rotation: [Math.PI / 2, 0, 0], emissive: true, bone: 'leftForearm' },
+    { material: 'glow', kind: 'cylinder', position: [0.43, 0.7, -0.04], scale: [0.07, 0.014, 0.07], rotation: [Math.PI / 2, 0, 0], emissive: true, bone: 'rightForearm' },
+    // Boot trims
+    { material: 'edge', position: [-0.15, 0.1, -0.04], scale: [0.2, 0.05, 0.22], emissive: true },
+    { material: 'edge', position: [0.15, 0.1, -0.04], scale: [0.2, 0.05, 0.22], emissive: true },
+  ];
+}
+
+export const PHANTOM_GOLDEN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  ...createGoldenRegaliaParts(),
+  // Swept gold wing fins (flanker silhouette)
+  { material: 'metal', position: [-0.58, 1.4, 0.22], scale: [0.07, 0.6, 0.03], rotation: [0, 0, -0.46], bone: 'torso' },
+  { material: 'metal', position: [0.58, 1.4, 0.22], scale: [0.07, 0.6, 0.03], rotation: [0, 0, 0.46], bone: 'torso' },
+  { material: 'glow', position: [-0.74, 1.16, 0.24], scale: [0.05, 0.46, 0.026], rotation: [0, 0, -0.7], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', position: [0.74, 1.16, 0.24], scale: [0.05, 0.46, 0.026], rotation: [0, 0, 0.7], emissive: true, transparent: true, bone: 'torso' },
+], 'phantom.golden.body');
+
+export const HOOKSHOT_GOLDEN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  ...createGoldenRegaliaParts(),
+  // Gold anchor crest below the chest emblem
+  { material: 'metal', kind: 'cylinder', position: [0, 0.92, -0.22], scale: [0.05, 0.22, 0.05], rotation: [Math.PI / 2, 0, 0] },
+  { material: 'metal', position: [0, 1.04, -0.24], scale: [0.18, 0.05, 0.04] },
+  { material: 'glow', position: [-0.14, 0.82, -0.24], scale: [0.05, 0.05, 0.03], emissive: true },
+  { material: 'glow', position: [0.14, 0.82, -0.24], scale: [0.05, 0.05, 0.03], emissive: true },
+  // Gilded hook tips on the forearms
+  { material: 'metal', position: [-0.6, 0.84, -0.5], scale: [0.12, 0.12, 0.14], bone: 'leftForearm' },
+  { material: 'glow', position: [-0.6, 0.84, -0.6], scale: [0.06, 0.06, 0.04], emissive: true, bone: 'leftForearm' },
+], 'hookshot.golden.body');
+
+export const BLAZE_GOLDEN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  ...createGoldenRegaliaParts(),
+  // Floating solar crown above the halo
+  { material: 'metal', kind: 'cone', position: [0.02, 2.4, -0.02], scale: [0.18, 0.26, 0.18], rotation: [0, 0, -0.1], attachmentMode: 'floating' },
+  { material: 'glow', kind: 'sphere', position: [0.08, 2.56, -0.02], scale: [0.07, 0.07, 0.07], emissive: true, transparent: true, attachmentMode: 'floating' },
+  // Solar ray fins off the shoulders
+  { material: 'glow', position: [-0.56, 1.46, 0.22], scale: [0.07, 0.5, 0.026], rotation: [0, 0, -0.44], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', position: [0.56, 1.46, 0.22], scale: [0.07, 0.5, 0.026], rotation: [0, 0, 0.44], emissive: true, transparent: true, bone: 'torso' },
+], 'blaze.golden.body');
+
+export const CHRONOS_GOLDEN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
+  ...createGoldenRegaliaParts(),
+  // Floating gold time-ring with orbiting gems
+  { material: 'glow', kind: 'cylinder', position: [0, 1.18, -0.3], scale: [0.26, 0.014, 0.26], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { material: 'glass', kind: 'sphere', position: [-0.26, 1.2, -0.3], scale: [0.06, 0.06, 0.06], emissive: true, transparent: true },
+  { material: 'glass', kind: 'sphere', position: [0.26, 1.2, -0.3], scale: [0.06, 0.06, 0.06], emissive: true, transparent: true },
+  { material: 'glow', kind: 'cylinder', position: [0, 2.18, -0.06], scale: [0.3, 0.012, 0.3], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true, attachmentMode: 'floating' },
+], 'chronos.golden.body');
 
 export const HOOKSHOT_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.016, 0], scale: [0.54, 0.024, 0.54], transparent: true },
@@ -840,7 +978,7 @@ export const BLAZE_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'dark', kind: 'cone', position: [0.02, 2.08, -0.02], scale: [0.5, 0.56, 0.5], rotation: [0, 0, -0.12] },
   { material: 'armor', kind: 'cone', position: [0.035, 2.1, -0.02], scale: [0.38, 0.5, 0.38], rotation: [0, 0, -0.12] },
   { material: 'accent', position: [0, 1.88, -0.245], scale: [0.32, 0.045, 0.034], emissive: true },
-  { material: 'glow', kind: 'sphere', position: [0.075, 2.39, -0.02], scale: [0.055, 0.055, 0.055], emissive: true },
+  { material: 'glow', kind: 'sphere', position: [0.075, 2.39, -0.02], scale: [0.055, 0.055, 0.055], emissive: true, attachmentMode: 'floating' },
 ], 'blaze.body');
 
 export const CHRONOS_PARTS: VoxelPart[] = addVoxelPartMetadata([
@@ -1275,6 +1413,10 @@ export const HERO_SKIN_BODY_MANIFESTS: Record<HeroSkinId, HeroBodyManifest> = {
   'chronos.paradox-sentinel': createSkinBodyManifest('chronos', PARADOX_SENTINEL_EXTRA_PARTS, PARADOX_SENTINEL_COLORS, 0.18),
   'chronos.meridian-oracle': createSkinBodyManifest('chronos', MERIDIAN_ORACLE_EXTRA_PARTS, MERIDIAN_ORACLE_COLORS, 0.21),
   'chronos.eternity-sovereign': createSkinBodyManifest('chronos', ETERNITY_SOVEREIGN_EXTRA_PARTS, ETERNITY_SOVEREIGN_COLORS, 0.25),
+  'phantom.golden': createSkinBodyManifest('phantom', PHANTOM_GOLDEN_EXTRA_PARTS, PHANTOM_GOLDEN_COLORS, 0.24),
+  'hookshot.golden': createSkinBodyManifest('hookshot', HOOKSHOT_GOLDEN_EXTRA_PARTS, HOOKSHOT_GOLDEN_COLORS, 0.24),
+  'blaze.golden': createSkinBodyManifest('blaze', BLAZE_GOLDEN_EXTRA_PARTS, BLAZE_GOLDEN_COLORS, 0.24),
+  'chronos.golden': createSkinBodyManifest('chronos', CHRONOS_GOLDEN_EXTRA_PARTS, CHRONOS_GOLDEN_COLORS, 0.24),
 };
 
 export const HERO_DEFAULT_FALLBACK_SOCKETS = {

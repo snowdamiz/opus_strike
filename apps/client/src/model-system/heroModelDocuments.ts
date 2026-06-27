@@ -18,16 +18,20 @@ import {
   ABYSSAL_CORSAIR_COLORS,
   ASHEN_VANGUARD_COLORS,
   ASTRAL_EXECUTIONER_COLORS,
+  BLAZE_GOLDEN_COLORS,
+  CHRONOS_GOLDEN_COLORS,
   HERO_SKIN_BODY_MANIFESTS,
   ECLIPSE_SERAPH_COLORS,
   EPOCH_REGENT_COLORS,
   ETERNITY_SOVEREIGN_COLORS,
+  HOOKSHOT_GOLDEN_COLORS,
   INFERNO_ARCHON_COLORS,
   IRON_LEVIATHAN_COLORS,
   KRAKEN_SOVEREIGN_COLORS,
   MERIDIAN_ORACLE_COLORS,
   NIGHTGLASS_WRAITH_COLORS,
   PARADOX_SENTINEL_COLORS,
+  PHANTOM_GOLDEN_COLORS,
   SOLAR_FORGE_COLORS,
   STARFALL_PHOENIX_COLORS,
   TIDEBREAKER_COLORS,
@@ -50,6 +54,7 @@ function toModelPartDescriptor(part: DocumentPartSource): ModelPartDescriptor {
     position: part.position,
     scale: part.scale,
     rotation: part.rotation,
+    attachmentMode: part.attachmentMode,
     emissive: part.emissive,
     transparent: part.transparent,
     generated: part.generated,
@@ -243,6 +248,45 @@ const ETERNITY_SOVEREIGN_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
   { id: 'chronos.eternity-sovereign.viewmodel.aegis.sovereignBottom', material: 'glow', bone: 'root', position: [0, -0.23, -0.7], scale: [0.72, 0.016, 0.02], emissive: true, transparent: true },
 ];
 
+const PHANTOM_GOLDEN_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
+  { id: 'phantom.golden.viewmodel.left.goldBrace', material: 'metal', bone: 'leftForearm', position: [-0.24, -0.052, -0.3], scale: [0.1, 0.02, 0.038], emissive: true },
+  { id: 'phantom.golden.viewmodel.right.goldBrace', material: 'metal', bone: 'rightForearm', position: [0.24, -0.052, -0.3], scale: [0.1, 0.02, 0.038], emissive: true },
+  { id: 'phantom.golden.viewmodel.left.goldWing', material: 'glow', bone: 'leftForearm', position: [-0.33, -0.12, -0.56], scale: [0.034, 0.12, 0.2], rotation: [0, 0.32, 0], emissive: true, transparent: true },
+  { id: 'phantom.golden.viewmodel.right.goldWing', material: 'glow', bone: 'rightForearm', position: [0.33, -0.12, -0.56], scale: [0.034, 0.12, 0.2], rotation: [0, -0.32, 0], emissive: true, transparent: true },
+  { id: 'phantom.golden.viewmodel.orb.outerHalo', material: 'glow', bone: 'root', kind: 'cylinder', position: [0, -0.12, -0.8], scale: [0.2, 0.012, 0.2], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { id: 'phantom.golden.viewmodel.orb.crownRing', material: 'metal', bone: 'root', kind: 'cylinder', position: [0, -0.12, -0.76], scale: [0.14, 0.014, 0.14], rotation: [Math.PI / 2, 0, 0], emissive: true },
+  { id: 'phantom.golden.viewmodel.orb.goldCore', material: 'glass', bone: 'root', kind: 'sphere', position: [0, -0.12, -0.72], scale: [0.105, 0.105, 0.105], emissive: true, transparent: true },
+];
+
+const HOOKSHOT_GOLDEN_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
+  { id: 'hookshot.golden.viewmodel.left.goldClamp', material: 'metal', bone: 'leftForearm', position: [-0.2, -0.055, -0.31], scale: [0.12, 0.02, 0.038], emissive: true },
+  { id: 'hookshot.golden.viewmodel.right.goldClamp', material: 'metal', bone: 'rightForearm', position: [0.2, -0.055, -0.31], scale: [0.12, 0.02, 0.038], emissive: true },
+  { id: 'hookshot.golden.viewmodel.left.anchorHalo', material: 'glow', bone: 'leftForearm', kind: 'cylinder', position: [-0.2, -0.1, -0.7], scale: [0.16, 0.012, 0.16], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { id: 'hookshot.golden.viewmodel.right.anchorHalo', material: 'glow', bone: 'rightForearm', kind: 'cylinder', position: [0.2, -0.1, -0.7], scale: [0.16, 0.012, 0.16], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { id: 'hookshot.golden.viewmodel.left.goldHook', material: 'glow', bone: 'leftForearm', position: [-0.2, -0.1, -0.94], scale: [0.04, 0.048, 0.16], emissive: true },
+  { id: 'hookshot.golden.viewmodel.right.goldHook', material: 'glow', bone: 'rightForearm', position: [0.2, -0.1, -0.94], scale: [0.04, 0.048, 0.16], emissive: true },
+];
+
+const BLAZE_GOLDEN_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
+  { id: 'blaze.golden.viewmodel.left.goldVent', material: 'metal', bone: 'leftForearm', position: [-0.24, -0.052, -0.27], scale: [0.1, 0.02, 0.024], emissive: true },
+  { id: 'blaze.golden.viewmodel.right.goldVent', material: 'metal', bone: 'rightForearm', position: [0.24, -0.052, -0.27], scale: [0.1, 0.02, 0.024], emissive: true },
+  { id: 'blaze.golden.viewmodel.left.emberSlot', material: 'glow', bone: 'leftForearm', position: [-0.24, -0.115, -0.36], scale: [0.042, 0.028, 0.024], emissive: true },
+  { id: 'blaze.golden.viewmodel.right.emberSlot', material: 'glow', bone: 'rightForearm', position: [0.24, -0.115, -0.36], scale: [0.042, 0.028, 0.024], emissive: true },
+  { id: 'blaze.golden.viewmodel.staff.solarHalo', material: 'glow', bone: 'rightForearm', kind: 'cylinder', position: [0.32, -0.07, -0.93], scale: [0.16, 0.012, 0.16], emissive: true, transparent: true },
+  { id: 'blaze.golden.viewmodel.staff.goldCap', material: 'metal', bone: 'rightForearm', kind: 'cylinder', position: [0.32, -0.07, -0.84], scale: [0.07, 0.02, 0.07], emissive: true },
+  { id: 'blaze.golden.viewmodel.staff.goldCore', material: 'glass', bone: 'rightForearm', kind: 'sphere', position: [0.32, -0.07, -1.02], scale: [0.072, 0.072, 0.072], emissive: true, transparent: true },
+];
+
+const CHRONOS_GOLDEN_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
+  { id: 'chronos.golden.viewmodel.left.crownTrim', material: 'metal', bone: 'leftForearm', position: [-0.24, -0.052, -0.25], scale: [0.1, 0.02, 0.024], emissive: true },
+  { id: 'chronos.golden.viewmodel.right.crownTrim', material: 'metal', bone: 'rightForearm', position: [0.24, -0.052, -0.25], scale: [0.1, 0.02, 0.024], emissive: true },
+  { id: 'chronos.golden.viewmodel.left.goldDial', material: 'glow', bone: 'leftForearm', kind: 'cylinder', position: [-0.24, -0.105, -0.35], scale: [0.07, 0.012, 0.07], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { id: 'chronos.golden.viewmodel.right.goldDial', material: 'glow', bone: 'rightForearm', kind: 'cylinder', position: [0.24, -0.105, -0.35], scale: [0.07, 0.012, 0.07], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { id: 'chronos.golden.viewmodel.primaryOrb.outerCrown', material: 'metal', bone: 'root', kind: 'cylinder', position: [0, -0.12, -0.8], scale: [0.17, 0.014, 0.17], rotation: [Math.PI / 2, 0, 0], emissive: true },
+  { id: 'chronos.golden.viewmodel.primaryOrb.goldHalo', material: 'glow', bone: 'root', kind: 'cylinder', position: [0, -0.12, -0.84], scale: [0.22, 0.012, 0.22], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { id: 'chronos.golden.viewmodel.primaryOrb.goldCore', material: 'glass', bone: 'root', kind: 'sphere', position: [0, -0.12, -0.72], scale: [0.09, 0.09, 0.09], emissive: true, transparent: true },
+];
+
 function createSkinViewmodelDocument(
   heroId: HeroId,
   colorOverrides: Partial<Record<string, string>>,
@@ -356,10 +400,32 @@ const VIEWMODEL_DOCUMENTS_BY_SKIN: Record<HeroSkinId, ViewmodelModelDocument> = 
     glassIntensity: 0.56,
     glowIntensity: 1.22,
   }),
+  'phantom.golden': createSkinViewmodelDocument('phantom', PHANTOM_GOLDEN_COLORS, PHANTOM_GOLDEN_VIEWMODEL_PARTS, {
+    accentIntensity: 0.72,
+    glassIntensity: 0.52,
+    glowIntensity: 1.2,
+  }),
+  'hookshot.golden': createSkinViewmodelDocument('hookshot', HOOKSHOT_GOLDEN_COLORS, HOOKSHOT_GOLDEN_VIEWMODEL_PARTS, {
+    accentIntensity: 0.72,
+    glassIntensity: 0.52,
+    glowIntensity: 1.2,
+  }),
+  'blaze.golden': createSkinViewmodelDocument('blaze', BLAZE_GOLDEN_COLORS, BLAZE_GOLDEN_VIEWMODEL_PARTS, {
+    accentIntensity: 0.72,
+    glassIntensity: 0.52,
+    glowIntensity: 1.2,
+  }),
+  'chronos.golden': createSkinViewmodelDocument('chronos', CHRONOS_GOLDEN_COLORS, CHRONOS_GOLDEN_VIEWMODEL_PARTS, {
+    accentIntensity: 0.72,
+    glassIntensity: 0.52,
+    glowIntensity: 1.2,
+  }),
 };
 
 function createHeroModelDocument(skinId: HeroSkinId, manifest: HeroBodyManifest): HeroModelDocumentV1 {
   const stats = HERO_DEFINITIONS[manifest.heroId].stats;
+  const renderParts = getHeroBodyRenderParts(manifest.parts);
+  const renderTeamAccentParts = getHeroBodyRenderParts(manifest.teamAccentParts, renderParts);
 
   return {
     schemaVersion: HERO_MODEL_DOCUMENT_SCHEMA_VERSION,
@@ -373,10 +439,10 @@ function createHeroModelDocument(skinId: HeroSkinId, manifest: HeroBodyManifest)
         depth: stats.size.depth,
       },
       parts: [
-        ...getHeroBodyRenderParts(manifest.parts),
+        ...renderParts,
         HERO_BODY_BOT_MARKER_PART,
       ].map(toModelPartDescriptor),
-      teamAccentParts: manifest.teamAccentParts.map(toModelPartDescriptor),
+      teamAccentParts: renderTeamAccentParts.map(toModelPartDescriptor),
       sockets: manifest.remoteSocketMarkers.map(toModelSocketDescriptor),
       idleProfile: manifest.idleProfile,
       attackDurationSeconds: manifest.attackDurationSeconds,

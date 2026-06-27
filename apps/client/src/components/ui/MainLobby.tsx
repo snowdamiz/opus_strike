@@ -1397,8 +1397,40 @@ function skinRarityClass(rarity: HeroSkinCatalogItem['rarity']): string {
   return `is-${rarity}`;
 }
 
+type SkinFilter = 'all' | 'owned' | 'available' | 'locked';
+
+const SKIN_FILTERS: { id: SkinFilter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'owned', label: 'Owned' },
+  { id: 'available', label: 'Available' },
+  { id: 'locked', label: 'Locked' },
+];
+
+// A skin is "available" when it isn't owned yet but can be purchased right now.
+// Everything else that isn't owned (unlockable founder skins, sold-out or
+// shop-disabled paid skins) falls into "locked".
+function isSkinPurchasable(skin: HeroSkinCatalogItem): boolean {
+  return skin.availability === 'paid' && !skin.purchaseDisabledReason;
+}
+
+function skinMatchesFilter(skin: HeroSkinCatalogItem, filter: SkinFilter): boolean {
+  switch (filter) {
+    case 'owned':
+      return skin.owned;
+    case 'available':
+      return !skin.owned && isSkinPurchasable(skin);
+    case 'locked':
+      return !skin.owned && !isSkinPurchasable(skin);
+    default:
+      return true;
+  }
+}
+
 function skinOwnershipLabel(skin: HeroSkinCatalogItem): string {
-  if (!skin.owned) return skin.availability === 'paid' ? formatSkinPrice(skin) : 'LOCKED';
+  if (!skin.owned) {
+    if (skin.availability === 'paid') return formatSkinPrice(skin);
+    return skin.unlockHint ? skin.unlockHint.toUpperCase() : 'LOCKED';
+  }
   if (skin.entitlementSource === 'free') return 'BASE ISSUE';
   return 'OWNED';
 }
@@ -1439,10 +1471,22 @@ function LoadoutTab({
 }) {
   const hero = HERO_DEFINITIONS[featuredHero];
   const [previewSkinId, setPreviewSkinId] = useState<HeroSkinId>(selectedSkinId);
+  const [skinFilter, setSkinFilter] = useState<SkinFilter>('all');
   const selectedSkin = skins.find((skin) => skin.id === selectedSkinId) ?? skins[0] ?? null;
   const previewSkin = skins.find((skin) => skin.id === previewSkinId) ?? selectedSkin;
   const stageTitle = previewSkin?.displayName ?? hero.name;
   const stageRarityClass = previewSkin ? skinRarityClass(previewSkin.rarity) : 'is-common';
+
+  const filterCounts = useMemo(() => ({
+    all: skins.length,
+    owned: skins.filter((skin) => skinMatchesFilter(skin, 'owned')).length,
+    available: skins.filter((skin) => skinMatchesFilter(skin, 'available')).length,
+    locked: skins.filter((skin) => skinMatchesFilter(skin, 'locked')).length,
+  }), [skins]);
+  const visibleSkins = useMemo(
+    () => skins.filter((skin) => skinMatchesFilter(skin, skinFilter)),
+    [skins, skinFilter],
+  );
 
   useEffect(() => {
     setPreviewSkinId(selectedSkinId);
@@ -1518,6 +1562,22 @@ function LoadoutTab({
         </section>
 
         <section className="loadout-skin-bay" aria-label={`${hero.name} cosmetics`}>
+          {skins.length > 0 && (
+            <div className="loadout-skin-filter" role="group" aria-label="Filter skins">
+              {SKIN_FILTERS.map((filter) => (
+                <button
+                  type="button"
+                  key={filter.id}
+                  className={`loadout-skin-filter-chip${skinFilter === filter.id ? ' is-active' : ''}`}
+                  onClick={() => setSkinFilter(filter.id)}
+                  aria-pressed={skinFilter === filter.id}
+                >
+                  <span className="loadout-skin-filter-label">{filter.label}</span>
+                  <span className="loadout-skin-filter-count">{filterCounts[filter.id]}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <div className="loadout-skin-list">
             {isLoading && skins.length === 0 && (
               <div className="loadout-empty-state">
@@ -1529,7 +1589,12 @@ function LoadoutTab({
                 No hero skins available.
               </div>
             )}
-            {skins.map((skin) => {
+            {skins.length > 0 && visibleSkins.length === 0 && (
+              <div className="loadout-empty-state">
+                No {skinFilter} skins for {hero.name}.
+              </div>
+            )}
+            {visibleSkins.map((skin) => {
               const busy = busySkinId === skin.id;
               const equipped = skin.id === selectedSkinId;
               const previewed = skin.id === previewSkin?.id;
@@ -1577,8 +1642,8 @@ function LoadoutTab({
                     <div className="loadout-skin-tags">
                       <span>{skinOwnershipLabel(skin)}</span>
                       {supplyLabel && <span>{supplyLabel}</span>}
-                      {equipped && <span>equipped</span>}
-                      {previewed && !equipped && <span>previewing</span>}
+                      {equipped && <span className="is-status is-equipped-tag">equipped</span>}
+                      {previewed && !equipped && <span className="is-status is-previewing-tag">previewing</span>}
                     </div>
                   </div>
 
@@ -1588,11 +1653,11 @@ function LoadoutTab({
                         type="button"
                         disabled={equipped || busy}
                         onClick={() => onEquipSkin(skin)}
-                        className="loadout-action-button is-equip"
+                        className={`loadout-action-button is-equip${equipped ? ' is-equipped' : ''}`}
                       >
                         {equipped ? 'EQUIPPED' : busy ? 'EQUIPPING...' : 'EQUIP'}
                       </button>
-                    ) : (
+                    ) : skin.availability === 'paid' ? (
                       <button
                         type="button"
                         disabled={!canPurchase || busy || !isAuthenticated}
@@ -1601,6 +1666,13 @@ function LoadoutTab({
                       >
                         {busy ? 'PURCHASING...' : isAuthenticated ? formatSkinPrice(skin) : 'SIGN IN'}
                       </button>
+                    ) : (
+                      <button type="button" disabled className="loadout-action-button is-locked">
+                        LOCKED
+                      </button>
+                    )}
+                    {skin.availability !== 'paid' && !skin.owned && skin.unlockHint && (
+                      <span className="loadout-skin-disabled-reason">{skin.unlockHint}</span>
                     )}
                     {disabledReason && !skin.owned && (
                       <span className="loadout-skin-disabled-reason">{disabledReason}</span>

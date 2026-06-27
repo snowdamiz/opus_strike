@@ -15,6 +15,8 @@ export type ModelOwnerScope =
 
 export type ModelPartKind = 'box' | 'sphere' | 'cylinder' | 'cone';
 
+export type ModelPartAttachmentMode = 'surface' | 'floating';
+
 export type ModelTransformTuple = readonly [number, number, number];
 
 export type ModelQuaternionTuple = readonly [number, number, number, number];
@@ -76,6 +78,7 @@ export interface ModelPartDescriptor {
   position: ModelTransformTuple;
   scale: ModelTransformTuple;
   rotation?: ModelTransformTuple;
+  attachmentMode?: ModelPartAttachmentMode;
   emissive?: boolean;
   transparent?: boolean;
   generated?: boolean;

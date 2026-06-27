@@ -403,6 +403,17 @@ model UserHeroLoadout {
   @@index([selectedSkinId])
 }
 
+// Singleton counter backing the "first 50 ranked players" golden founder reward.
+// Claimed via an atomic conditional increment so concurrent match finalizations
+// can never grant more than maxClaims founder sets.
+model RankedFounderReward {
+  id           String   @id @default("ranked_founder_golden")
+  claimedCount Int      @default(0)
+  maxClaims    Int      @default(50)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
 model PersistentParty {
   id             String   @id
   roomId         String   @unique

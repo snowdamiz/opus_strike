@@ -21,6 +21,9 @@ interface MatchLoadingScreenProps {
   eyebrow?: string;
   title?: string;
   initialProgress?: number;
+  ariaLabel?: string;
+  trackStartLabel?: string;
+  trackEndLabel?: string;
   stages?: MatchLoadingStage[];
   onProgressChange?: (progress: number) => void;
 }
@@ -38,6 +41,9 @@ export function MatchLoadingScreen({
   eyebrow = 'Match',
   title = 'LOADING ARENA',
   initialProgress = MATCH_LOADING_INITIAL_PROGRESS,
+  ariaLabel = 'Loading match',
+  trackStartLabel = 'World',
+  trackEndLabel = 'Spawn',
   stages,
   onProgressChange,
 }: MatchLoadingScreenProps) {
@@ -104,7 +110,7 @@ export function MatchLoadingScreen({
           <div
             className="relative h-4 overflow-hidden rounded-lg border border-white/10 bg-black/45 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
             role="progressbar"
-            aria-label="Loading match"
+            aria-label={ariaLabel}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percent}
@@ -121,9 +127,9 @@ export function MatchLoadingScreen({
           </div>
 
           <div className="mt-4 flex items-center justify-between gap-4 font-body text-[11px] uppercase tracking-[0.26em] text-white/35">
-            <span>World</span>
+            <span>{trackStartLabel}</span>
             <span className="min-w-0 truncate text-center">{statusLabel}</span>
-            <span>Spawn</span>
+            <span>{trackEndLabel}</span>
           </div>
 
           {stages?.length ? (

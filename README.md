@@ -5,6 +5,7 @@ A browser-based 4v4 Capture the Flag game with Minecraft-style voxel graphics an
 ## Planning
 
 - [Battle Royal Mode Plan](BATTLE_ROYAL_PLAN.md)
+- [Skin NFT Plan](SKIN_NFT_PLAN.md)
 
 ## Features
 

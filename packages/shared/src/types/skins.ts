@@ -20,10 +20,16 @@ export type HeroSkinId =
   | 'chronos.epoch-regent'
   | 'chronos.paradox-sentinel'
   | 'chronos.meridian-oracle'
-  | 'chronos.eternity-sovereign';
+  | 'chronos.eternity-sovereign'
+  | 'phantom.golden'
+  | 'hookshot.golden'
+  | 'blaze.golden'
+  | 'chronos.golden';
 
 export type HeroSkinRarity = 'common' | 'epic' | 'unique' | 'legendary';
-export type HeroSkinAvailability = 'free' | 'paid';
+// 'unlockable' skins are shown in the store but cannot be purchased — they are
+// granted via achievements/events (e.g. the first-50-ranked founder reward).
+export type HeroSkinAvailability = 'free' | 'paid' | 'unlockable';
 export type HeroSkinReleaseState = 'live' | 'ready_when_token_launches' | 'disabled';
 export type HeroSkinEntitlement = 'free' | 'paid' | 'admin_grant' | 'event';
 
@@ -45,6 +51,9 @@ export interface HeroSkinDefinition {
   releaseState: HeroSkinReleaseState;
   modelDocumentId: string;
   price?: HeroSkinPrice;
+  // Short unlock condition shown in the store for non-purchasable skins
+  // (e.g. "First 50 ranked players"). Surfaced to the client via HeroSkinCatalogItem.
+  unlockHint?: string;
 }
 
 export interface HeroSkinOwnership {

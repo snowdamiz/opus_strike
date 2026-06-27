@@ -432,6 +432,9 @@ function isSkinVisibleInGame(input: {
   item: Awaited<ReturnType<typeof getOrCreateItemSettings>> | null;
 }): boolean {
   if (input.skin.availability === 'free') return true;
+  // Unlockable skins (e.g. the golden founder reward) are always shown so players
+  // can preview them and equip them once granted — they are never purchased.
+  if (input.skin.availability === 'unlockable') return input.skin.releaseState !== 'disabled';
   if (input.skin.releaseState === 'disabled') return false;
   if (!input.shop.enabled || !input.shop.tokenMintAddress || !input.shop.treasuryWallet || !input.shop.rpcUrl) return false;
   if (!input.item?.saleEnabled || !input.item.tokenAmountBaseUnits) return false;
@@ -704,6 +707,9 @@ export async function createSkinPurchaseIntent(input: {
   skinId: HeroSkinId;
 }): Promise<SkinPurchaseIntentSnapshot> {
   const skin = getHeroSkinDefinition(input.skinId);
+  if (skin.availability === 'unlockable') {
+    throw new SkinShopServiceError('This skin cannot be purchased; it is earned in game');
+  }
   if (skin.availability !== 'paid') {
     throw new SkinShopServiceError('Default skins do not need to be purchased');
   }

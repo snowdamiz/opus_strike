@@ -256,6 +256,50 @@ export const HERO_SKIN_CATALOG = [
     modelDocumentId: 'chronos.eternity-sovereign',
     price: LAUNCH_PENDING_PRICE,
   },
+  {
+    id: 'phantom.golden',
+    heroId: 'phantom',
+    displayName: 'Golden Phantom',
+    subtitle: 'A solid-gold founder Phantom with a radiant crown halo and gilded void plating.',
+    rarity: 'legendary',
+    availability: 'unlockable',
+    releaseState: 'live',
+    modelDocumentId: 'phantom.golden',
+    unlockHint: 'First 50 ranked players',
+  },
+  {
+    id: 'hookshot.golden',
+    heroId: 'hookshot',
+    displayName: 'Golden Hookshot',
+    subtitle: 'A founder Hookshot rig cast in gold, with a sovereign anchor crown and gilded hooks.',
+    rarity: 'legendary',
+    availability: 'unlockable',
+    releaseState: 'live',
+    modelDocumentId: 'hookshot.golden',
+    unlockHint: 'First 50 ranked players',
+  },
+  {
+    id: 'blaze.golden',
+    heroId: 'blaze',
+    displayName: 'Golden Blaze',
+    subtitle: 'A founder Blaze chassis plated in gold, crowned with a solar ring and gilded staff core.',
+    rarity: 'legendary',
+    availability: 'unlockable',
+    releaseState: 'live',
+    modelDocumentId: 'blaze.golden',
+    unlockHint: 'First 50 ranked players',
+  },
+  {
+    id: 'chronos.golden',
+    heroId: 'chronos',
+    displayName: 'Golden Chronos',
+    subtitle: 'A founder Chronos sovereign in solid gold, with a gilded time crown and radiant conduits.',
+    rarity: 'legendary',
+    availability: 'unlockable',
+    releaseState: 'live',
+    modelDocumentId: 'chronos.golden',
+    unlockHint: 'First 50 ranked players',
+  },
 ] as const satisfies readonly HeroSkinDefinition[];
 
 export const HERO_SKIN_CATALOG_BY_ID: Readonly<Record<HeroSkinId, HeroSkinDefinition>> = Object.freeze(
@@ -420,7 +464,7 @@ export function resolveHeroSkinDefinition(
 
   const ownedSkinIds = options.ownedSkinIds;
   if (
-    skin.availability === 'paid' &&
+    skin.availability !== 'free' &&
     ownedSkinIds &&
     !ownedSkinIds.has(skin.id)
   ) {
