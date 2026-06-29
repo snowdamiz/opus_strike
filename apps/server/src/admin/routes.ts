@@ -59,10 +59,12 @@ import {
   SkinShopServiceError,
   getSkinShopAdminOverview,
   parseSkinIdInput,
+  retrySkinNftMint,
   updateSkinShopItemSettings,
   updateSkinShopSettings,
   type SkinShopAdminOverview,
 } from '../cosmetics/skinShopService';
+import { SkinNftServiceError, syncUserSkinNftOwnership } from '../cosmetics/skinNftService';
 
 interface AdminRouterOptions {
   config: ColyseusRuntimeConfig;
@@ -904,6 +906,10 @@ function sendAdminMutationError(res: Response, error: unknown): void {
     res.status(error.statusCode).json({ error: error.message });
     return;
   }
+  if (error instanceof SkinNftServiceError) {
+    res.status(error.statusCode).json({ error: error.message });
+    return;
+  }
   res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
 }
 
@@ -1181,10 +1187,37 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         saleEnabled: req.body?.saleEnabled,
         tokenAmountBaseUnits: req.body?.tokenAmountBaseUnits,
         maxSupply: req.body?.maxSupply,
+        nftMetadataUriOverride: req.body?.nftMetadataUriOverride,
         expectedPriceVersion: req.body?.expectedPriceVersion,
         updatedByUserId: adminUser.id,
       });
       res.json({ ok: true, settings });
+    } catch (error) {
+      sendAdminMutationError(res, error);
+    }
+  });
+
+  router.post('/api/skin-shop/nft/retry/:intentId', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    try {
+      const intent = await retrySkinNftMint({ intentId: req.params.intentId });
+      res.json({ ok: true, intent });
+    } catch (error) {
+      sendAdminMutationError(res, error);
+    }
+  });
+
+  router.post('/api/skin-shop/nft/sync-user', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const userId = readRequestString(req.body?.userId, 128);
+    if (!userId) {
+      res.status(400).json({ error: 'User id is required' });
+      return;
+    }
+
+    try {
+      const sync = await syncUserSkinNftOwnership({ userId, force: true });
+      res.json({ ok: true, sync });
     } catch (error) {
       sendAdminMutationError(res, error);
     }

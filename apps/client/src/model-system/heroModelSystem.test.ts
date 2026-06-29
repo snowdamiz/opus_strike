@@ -68,7 +68,7 @@ import {
   setChronosPrimaryHeld,
   triggerChronosTimebreakPose,
 } from '../viewmodel/chronosPose';
-import type { HeroBoneRefs, VoxelPartDraft } from './heroBodyTypes';
+import type { HeroBoneName, HeroBoneRefs, MaterialKind, VoxelPart, VoxelPartDraft } from './heroBodyTypes';
 
 const heroIds = Object.keys(HERO_DEFINITIONS).sort() as HeroId[];
 const skinIds = HERO_SKIN_CATALOG.map((skin) => skin.id).sort() as HeroSkinId[];
@@ -99,6 +99,30 @@ const expectedRemoteSockets: Record<HeroId, readonly string[]> = {
     CHRONOS_PRIMARY_ORB_SOCKET_NAME,
   ],
 };
+
+const TERMINAL_HAND_DETAIL_BONES = new Set<HeroBoneName>([
+  'leftArm',
+  'rightArm',
+  'leftForearm',
+  'rightForearm',
+]);
+const TERMINAL_HAND_DETAIL_MATERIALS = new Set<MaterialKind>([
+  'accent',
+  'glass',
+  'glow',
+  'metal',
+]);
+
+function isTinyTerminalHandDetail(part: Pick<VoxelPart, 'bone' | 'material' | 'position' | 'scale'>): boolean {
+  const [, y, z] = part.position;
+  return (
+    TERMINAL_HAND_DETAIL_BONES.has(part.bone) &&
+    TERMINAL_HAND_DETAIL_MATERIALS.has(part.material) &&
+    y <= 0.9 &&
+    z <= -0.1 &&
+    Math.max(...part.scale) <= 0.18
+  );
+}
 
 for (const heroId of heroIds) {
   const manifest = HERO_BODY_MANIFESTS[heroId];
@@ -198,6 +222,15 @@ for (const skin of HERO_SKIN_CATALOG) {
     assert.ok(fullBodySocketNames.has(socketName), `${skin.id} full-body document missing ${socketName}`);
     assert.ok(viewmodelSocketNames.has(socketName), `${skin.id} viewmodel document missing ${socketName}`);
   }
+
+  const tinyTerminalHandDetails = [...manifest.parts, ...manifest.teamAccentParts]
+    .filter(isTinyTerminalHandDetail)
+    .map((part) => part.id);
+  assert.deepEqual(
+    tinyTerminalHandDetails,
+    [],
+    `${skin.id} should keep full-body hands clean of tiny terminal detail geometry`
+  );
 }
 
 for (const skinId of ['phantom.default', 'phantom.void-monarch'] as const) {

@@ -390,6 +390,21 @@ export interface SkinShopSettings {
   rpcConfigured: boolean;
   updatedByUserId: string | null;
   updatedAt: string | null;
+  nft: SkinShopNftSettings;
+}
+
+export interface SkinShopNftSettings {
+  enabled: boolean;
+  collectionAddress: string | null;
+  mintAuthorityPublicKey: string | null;
+  mintAuthorityConfigured: boolean;
+  metadataConfigured: boolean;
+  dasRpcConfigured: boolean;
+  syncAvailable: boolean;
+  mintingAvailable: boolean;
+  founderMintEnabled: boolean;
+  lastSyncedAt: string | null;
+  lastSyncError: string | null;
 }
 
 export interface SkinShopItemSettings {
@@ -400,6 +415,7 @@ export interface SkinShopItemSettings {
   soldCount: number;
   reservedCount: number;
   remainingSupply: number | null;
+  nftMetadataUriOverride: string | null;
   priceVersion: number;
   updatedByUserId: string | null;
   updatedAt: string | null;
@@ -415,7 +431,61 @@ export interface SkinShopItem {
 
 export interface SkinShopOverview {
   shop: SkinShopSettings;
+  nft: SkinShopNftOverview;
   items: SkinShopItem[];
+}
+
+export interface SkinShopNftOverview {
+  readiness: {
+    enabled: boolean;
+    collectionAddress: string | null;
+    collectionConfigured: boolean;
+    mintAuthorityPublicKey: string | null;
+    mintAuthoritySecretConfigured: boolean;
+    mintAuthorityMatchesPublicKey: boolean | null;
+    mintAuthorityError: string | null;
+    metadataBaseUri: string | null;
+    metadataUriTemplate: string | null;
+    metadataConfigured: boolean;
+    dasRpcConfigured: boolean;
+    rpcConfigured: boolean;
+    readyToSync: boolean;
+    readyToMint: boolean;
+    founderMintEnabled: boolean;
+    cluster: string;
+    edition: string;
+  };
+  failedMintQueue: SkinShopFailedNftMint[];
+  pendingMintCount: number;
+  failedMintCount: number;
+  assetCountBySkin: Array<{ skinId: HeroSkinId; count: number }>;
+  latestWalletSyncs: SkinShopNftWalletSync[];
+}
+
+export interface SkinShopFailedNftMint {
+  intentId: string;
+  skinId: string;
+  walletAddress: string;
+  status: string;
+  nftMintStatus: string;
+  mintedAssetAddress: string | null;
+  nftCollectionAddress: string | null;
+  nftMetadataUri: string | null;
+  nftMintSignature: string | null;
+  nftMintAttemptCount: number;
+  nftMintAttemptedAt: string | null;
+  nftMintError: string | null;
+  updatedAt: string;
+}
+
+export interface SkinShopNftWalletSync {
+  userId: string;
+  walletAddress: string;
+  collectionAddress: string;
+  assetCount: number;
+  activeEntitlementCount: number;
+  lastSyncedAt: string;
+  lastError: string | null;
 }
 
 /* ----------------------------- Anti-Cheat --------------------------- */
@@ -495,5 +565,6 @@ export interface SkinShopItemUpdate {
   saleEnabled: boolean;
   tokenAmountBaseUnits: string | number;
   maxSupply?: number | null;
+  nftMetadataUriOverride?: string | null;
   expectedPriceVersion: number;
 }

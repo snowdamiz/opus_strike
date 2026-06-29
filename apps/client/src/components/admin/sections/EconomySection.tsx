@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Coins, Gift, Sparkles, ShoppingBag, Loader2, Send } from 'lucide-react';
+import { AlertTriangle, Coins, Database, Gift, Loader2, RefreshCcw, Send, ShoppingBag, Sparkles } from 'lucide-react';
 import type { HeroSkinRarity } from '@voxel-strike/shared';
 import type { SectionProps } from '../section';
 import type {
@@ -747,10 +747,207 @@ function SkinShopSettingsCard({ console: c }: { console: SectionProps['console']
   );
 }
 
+function SkinShopNftCard({ console: c }: { console: SectionProps['console'] }) {
+  const nft = c.overview?.skinShop?.nft;
+  const [retryingIntentId, setRetryingIntentId] = React.useState<string | null>(null);
+  const [syncingUserId, setSyncingUserId] = React.useState<string | null>(null);
+  if (!nft) return null;
+
+  const retryMint = async (intentId: string) => {
+    setRetryingIntentId(intentId);
+    try {
+      await c.retrySkinNftMint(intentId);
+    } finally {
+      setRetryingIntentId(null);
+    }
+  };
+
+  const syncUser = async (userId: string) => {
+    setSyncingUserId(userId);
+    try {
+      await c.syncSkinNftUser(userId);
+    } finally {
+      setSyncingUserId(null);
+    }
+  };
+
+  const readiness = nft.readiness;
+  const failedQueue = nft.failedMintQueue;
+  const syncRows = nft.latestWalletSyncs;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <CardTitle>Skin NFTs</CardTitle>
+            <CardDescription>Metaplex Core delivery and wallet asset sync.</CardDescription>
+          </div>
+          <Badge variant={readiness.readyToMint ? 'success' : readiness.enabled ? 'warning' : 'default'}>
+            {readiness.readyToMint ? 'Mint Ready' : readiness.enabled ? 'NFT Partial' : 'NFT Off'}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={readiness.collectionConfigured ? 'success' : 'danger'}>
+            Collection {readiness.collectionConfigured ? 'Ready' : 'Missing'}
+          </Badge>
+          <Badge variant={readiness.mintAuthoritySecretConfigured && readiness.mintAuthorityMatchesPublicKey !== false ? 'success' : 'danger'}>
+            Mint Authority {readiness.mintAuthoritySecretConfigured ? 'Configured' : 'Missing'}
+          </Badge>
+          <Badge variant={readiness.metadataConfigured ? 'success' : 'danger'}>
+            Metadata {readiness.metadataConfigured ? 'Ready' : 'Missing'}
+          </Badge>
+          <Badge variant={readiness.readyToSync ? 'success' : 'danger'}>
+            DAS {readiness.readyToSync ? 'Ready' : 'Missing'}
+          </Badge>
+        </div>
+
+        <div className="grid gap-x-6 gap-y-3 rounded-lg border border-strike-border bg-strike-canvas/40 p-4 sm:grid-cols-3">
+          <div className="space-y-1">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-white/45">Collection</div>
+            <div className="font-mono text-xs text-white/80">{truncateAddress(readiness.collectionAddress)}</div>
+          </div>
+          <div className="space-y-1">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-white/45">Authority</div>
+            <div className="font-mono text-xs text-white/80">{truncateAddress(readiness.mintAuthorityPublicKey)}</div>
+          </div>
+          <div className="space-y-1">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-white/45">Edition</div>
+            <div className="text-sm text-white/80">{readiness.edition}</div>
+          </div>
+        </div>
+
+        {readiness.mintAuthorityError ? (
+          <div className="flex items-start gap-2 rounded-lg border border-ui-danger/30 bg-ui-danger/10 p-3 text-xs text-ui-danger">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{readiness.mintAuthorityError}</span>
+          </div>
+        ) : null}
+
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div className="rounded-lg border border-strike-border bg-strike-canvas/40 p-3">
+            <div className="text-[11px] uppercase tracking-wide text-white/45">Active Assets</div>
+            <div className="mt-1 text-2xl font-semibold text-white">
+              {formatNumber(nft.assetCountBySkin.reduce((sum, row) => sum + row.count, 0))}
+            </div>
+          </div>
+          <div className="rounded-lg border border-strike-border bg-strike-canvas/40 p-3">
+            <div className="text-[11px] uppercase tracking-wide text-white/45">Pending Mints</div>
+            <div className="mt-1 text-2xl font-semibold text-white">{formatNumber(nft.pendingMintCount)}</div>
+          </div>
+          <div className="rounded-lg border border-strike-border bg-strike-canvas/40 p-3">
+            <div className="text-[11px] uppercase tracking-wide text-white/45">Failed Mints</div>
+            <div className="mt-1 text-2xl font-semibold text-white">{formatNumber(nft.failedMintCount)}</div>
+          </div>
+        </div>
+
+        <Separator />
+
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <RefreshCcw className="h-4 w-4 text-white/55" />
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-white/50">Failed Mint Retry Queue</h4>
+          </div>
+          {failedQueue.length === 0 ? (
+            <EmptyState icon={Database} title="No failed mints" description="Failed NFT deliveries will appear here." />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Intent</TableHead>
+                  <TableHead>Skin</TableHead>
+                  <TableHead>Wallet</TableHead>
+                  <TableHead>Attempts</TableHead>
+                  <TableHead>Error</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {failedQueue.map((intent) => (
+                  <TableRow key={intent.intentId}>
+                    <TableCell className="font-mono text-xs text-white/70">{truncateAddress(intent.intentId, 6, 6)}</TableCell>
+                    <TableCell className="font-mono text-xs text-white/70">{intent.skinId}</TableCell>
+                    <TableCell className="font-mono text-xs text-white/60">{truncateAddress(intent.walletAddress)}</TableCell>
+                    <TableCell>{formatNumber(intent.nftMintAttemptCount)}</TableCell>
+                    <TableCell className="max-w-[18rem] truncate text-xs text-ui-danger">{intent.nftMintError || '—'}</TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={retryingIntentId === intent.intentId}
+                        onClick={() => void retryMint(intent.intentId)}
+                      >
+                        {retryingIntentId === intent.intentId ? <Loader2 className="animate-spin" /> : <RefreshCcw />}
+                        Retry
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+
+        <Separator />
+
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Database className="h-4 w-4 text-white/55" />
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-white/50">Recent Wallet Syncs</h4>
+          </div>
+          {syncRows.length === 0 ? (
+            <EmptyState icon={Database} title="No wallet syncs" description="User wallet syncs will appear here." />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>User</TableHead>
+                  <TableHead>Wallet</TableHead>
+                  <TableHead>Assets</TableHead>
+                  <TableHead>Entitlements</TableHead>
+                  <TableHead>Last Sync</TableHead>
+                  <TableHead>Error</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {syncRows.map((sync) => (
+                  <TableRow key={`${sync.userId}:${sync.walletAddress}:${sync.collectionAddress}`}>
+                    <TableCell className="font-mono text-xs text-white/70">{truncateAddress(sync.userId, 6, 6)}</TableCell>
+                    <TableCell className="font-mono text-xs text-white/60">{truncateAddress(sync.walletAddress)}</TableCell>
+                    <TableCell>{formatNumber(sync.assetCount)}</TableCell>
+                    <TableCell>{formatNumber(sync.activeEntitlementCount)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-white/45">{formatRelativeTime(sync.lastSyncedAt)}</TableCell>
+                    <TableCell className="max-w-[14rem] truncate text-xs text-ui-danger">{sync.lastError || '—'}</TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={syncingUserId === sync.userId}
+                        onClick={() => void syncUser(sync.userId)}
+                      >
+                        {syncingUserId === sync.userId ? <Loader2 className="animate-spin" /> : <RefreshCcw />}
+                        Sync
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 interface SkinItemForm {
   saleEnabled: boolean;
   tokenAmountBaseUnits: string;
   maxSupply: string;
+  nftMetadataUriOverride: string;
 }
 
 function buildSkinItemForm(item: SkinShopItem): SkinItemForm {
@@ -758,6 +955,7 @@ function buildSkinItemForm(item: SkinShopItem): SkinItemForm {
     saleEnabled: item.settings.saleEnabled,
     tokenAmountBaseUnits: str(item.settings.tokenAmountBaseUnits),
     maxSupply: item.settings.maxSupply == null ? '' : str(item.settings.maxSupply),
+    nftMetadataUriOverride: item.settings.nftMetadataUriOverride ?? '',
   };
 }
 
@@ -841,6 +1039,7 @@ function SkinItemCard({
         saleEnabled: form.saleEnabled,
         tokenAmountBaseUnits: num(form.tokenAmountBaseUnits),
         maxSupply: trimmed === '' ? null : num(trimmed),
+        nftMetadataUriOverride: form.nftMetadataUriOverride.trim() || null,
         expectedPriceVersion: settings.priceVersion,
       });
     } finally {
@@ -894,6 +1093,18 @@ function SkinItemCard({
             />
           </div>
 
+          <div className="mt-4 space-y-1.5">
+            <Label>NFT Metadata URI Override</Label>
+            <Input
+              value={form.nftMetadataUriOverride}
+              placeholder="https://metadata.example/skin.json"
+              onChange={(e) => set('nftMetadataUriOverride', e.target.value)}
+            />
+            <p className="text-[11px] text-white/35">
+              Leave blank to use the global skin NFT metadata template.
+            </p>
+          </div>
+
           <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-3 lg:grid-cols-5">
             <div>
               <div className="text-white/40">Sold</div>
@@ -936,6 +1147,7 @@ function SkinShopTab({ console: c }: { console: SectionProps['console'] }) {
   return (
     <div className="space-y-6">
       <SkinShopSettingsCard console={c} />
+      <SkinShopNftCard console={c} />
       <Card>
         <CardHeader>
           <CardTitle>Skin Items</CardTitle>

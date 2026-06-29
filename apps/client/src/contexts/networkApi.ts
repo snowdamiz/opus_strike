@@ -84,6 +84,18 @@ export interface SkinPurchaseSimulationResponse {
   logs: string[];
 }
 
+export interface SkinNftSyncResponse {
+  enabled: boolean;
+  collectionAddress: string | null;
+  walletAddress: string | null;
+  assetCount: number;
+  activeEntitlementCount: number;
+  synced: boolean;
+  cached: boolean;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+}
+
 export interface RewardEconomyResponse {
   economy: {
     rewardTokenSymbol: string | null;
@@ -257,6 +269,21 @@ export async function requestSkinCatalog(): Promise<HeroSkinCatalogResponse> {
 
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, 'Failed to load skin catalog'));
+  }
+
+  return response.json();
+}
+
+export async function syncWalletSkins(): Promise<SkinNftSyncResponse> {
+  const response = await fetch(`${getHttpUrl()}/cosmetics/nft/sync`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to sync wallet skins'));
   }
 
   return response.json();

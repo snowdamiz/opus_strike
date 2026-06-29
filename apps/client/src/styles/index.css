@@ -2051,7 +2051,7 @@ body,
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 0.58rem;
 }
 
@@ -2087,6 +2087,24 @@ body,
   background: rgb(255 255 255 / 0.055);
   color: rgb(255 255 255 / 0.88);
   outline: none;
+}
+
+.loadout-skin-filter-chip:disabled {
+  cursor: default;
+  opacity: 0.54;
+}
+
+.loadout-nft-status {
+  min-height: 1.7rem;
+  border: 1px solid rgb(255 255 255 / 0.075);
+  border-radius: 0.32rem;
+  background: rgb(0 0 0 / 0.16);
+  padding: 0.42rem 0.58rem;
+  color: rgb(255 255 255 / 0.58);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1.15;
 }
 
 .loadout-skin-filter-chip.is-active {

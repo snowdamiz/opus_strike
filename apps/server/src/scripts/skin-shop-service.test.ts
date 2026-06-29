@@ -5,6 +5,7 @@ type SkinShopItemRow = {
   saleEnabled: boolean;
   tokenAmountBaseUnits: bigint | null;
   maxSupply: number | null;
+  nftMetadataUriOverride: string | null;
   priceVersion: number;
   updatedByUserId: string | null;
   updatedAt: Date;
@@ -38,6 +39,7 @@ function createFakePrisma() {
     saleEnabled: false,
     tokenAmountBaseUnits: null,
     maxSupply: null,
+    nftMetadataUriOverride: null,
     priceVersion: 1,
     updatedByUserId: null,
     updatedAt: itemUpdatedAt,
@@ -321,11 +323,13 @@ async function runSkinShopServiceTests() {
   assert.equal(updated.saleEnabled, true);
   assert.equal(updated.tokenAmountBaseUnits, '2500000');
   assert.equal(updated.maxSupply, 100);
+  assert.equal(updated.nftMetadataUriOverride, null);
   assert.equal(updated.soldCount, 0);
   assert.equal(updated.reservedCount, 0);
   assert.equal(updated.remainingSupply, 100);
   assert.deepEqual(Object.keys(updated).sort(), [
     'maxSupply',
+    'nftMetadataUriOverride',
     'priceVersion',
     'remainingSupply',
     'reservedCount',
@@ -343,6 +347,8 @@ async function runSkinShopServiceTests() {
   assert.equal(fake.audits[0].newTokenAmountBaseUnits, 2500000n);
   assert.equal(fake.audits[0].oldMaxSupply, null);
   assert.equal(fake.audits[0].newMaxSupply, 100);
+  assert.equal(fake.audits[0].oldNftMetadataUriOverride, null);
+  assert.equal(fake.audits[0].newNftMetadataUriOverride, null);
   assert.equal(fake.audits[0].oldSaleEnabled, false);
   assert.equal(fake.audits[0].newSaleEnabled, true);
   assert.equal(fake.audits[0].oldPriceVersion, 1);

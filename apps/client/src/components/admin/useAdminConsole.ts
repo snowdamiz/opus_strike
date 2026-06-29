@@ -60,6 +60,8 @@ export interface UseAdminConsole {
   distributeGoldenReward: (rewardId: string) => Promise<MutationResult>;
   saveSkinShopSettings: (body: SkinShopSettingsUpdate) => Promise<MutationResult>;
   saveSkinShopItem: (skinId: string, body: SkinShopItemUpdate) => Promise<MutationResult>;
+  retrySkinNftMint: (intentId: string) => Promise<MutationResult>;
+  syncSkinNftUser: (userId: string) => Promise<MutationResult>;
 }
 
 export function useAdminConsole(): UseAdminConsole {
@@ -257,6 +259,22 @@ export function useAdminConsole(): UseAdminConsole {
     [runMutation]
   );
 
+  const retrySkinNftMint = useCallback(
+    (intentId: string) =>
+      runMutation('NFT mint retry', (csrf) =>
+        adminPost(`/skin-shop/nft/retry/${encodeURIComponent(intentId)}`, {}, csrf)
+      ),
+    [runMutation]
+  );
+
+  const syncSkinNftUser = useCallback(
+    (userId: string) =>
+      runMutation('NFT wallet sync', (csrf) =>
+        adminPost('/skin-shop/nft/sync-user', { userId }, csrf)
+      ),
+    [runMutation]
+  );
+
   return {
     overview,
     loading,
@@ -282,5 +300,7 @@ export function useAdminConsole(): UseAdminConsole {
     distributeGoldenReward,
     saveSkinShopSettings,
     saveSkinShopItem,
+    retrySkinNftMint,
+    syncSkinNftUser,
   };
 }
