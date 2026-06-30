@@ -60,10 +60,12 @@ export function getEarningRules(tokenSymbol: string | null, economy: RewardEcono
     );
   }
 
+  rules.push({ label: `Play Ranked`, value: `Hold 1M ${tokenSymbol} `})
+
   if (weeklyRewardsEnabled) {
     const weeklyTop = rewards?.weeklyTopPlayers ?? 10;
     const weeklyPool = formatCompactTokenAmount(rewards?.weeklyPoolLamports, '1M');
-    rules.push({ label: `Weekly top ${weeklyTop}`, value: `split ${tokenAmountLabel(weeklyPool, token)}` });
+    rules.push({ label: `Weekly top ${weeklyTop}`, value: `Split ${tokenAmountLabel(weeklyPool, token)}` });
   }
 
   if (goldenRewardsEnabled) {
@@ -74,7 +76,7 @@ export function getEarningRules(tokenSymbol: string | null, economy: RewardEcono
 
   if (wagersEnabled) {
     const wagerFee = formatBpsShort(wagers?.platformFeeBps, 500);
-    rules.push({ label: 'Wagers', value: `winners split pot, treasury keeps ${wagerFee}` });
+    rules.push({ label: 'Wagers', value: `Winners split pot` });
   }
 
   return rules;

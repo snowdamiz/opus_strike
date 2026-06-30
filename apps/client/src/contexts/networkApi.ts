@@ -301,7 +301,7 @@ export async function updateHeroSkinLoadout(input: {
   });
 
   if (!response.ok) {
-    throw new Error(await readErrorMessage(response, 'Failed to update loadout'));
+    throw new Error(await readErrorMessage(response, 'Failed to update skin selection'));
   }
 
   return response.json();

@@ -83,7 +83,7 @@ The first implementation should support tradable paid skins and leave founder NF
 
 The first version should keep the existing server-verified payment flow and add NFT minting after payment verification.
 
-1. Player clicks buy in the loadout UI.
+1. Player clicks buy in the Skins UI.
 2. Server creates a purchase intent for the selected skin.
 3. Server builds an SPL-token payment transaction using the configured game token mint.
 4. Client simulates, signs, and submits the transaction through the connected wallet.
@@ -239,7 +239,7 @@ Exit criteria:
 
 ### Phase 4: Client And Admin Polish
 
-- Update loadout UI labels and status messages.
+- Update Skins UI labels and status messages.
 - Add wallet sync feedback.
 - Add admin diagnostics and retry actions.
 - Add operational logging for mint and sync failures.

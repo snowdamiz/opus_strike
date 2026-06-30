@@ -288,7 +288,7 @@ function SlopHeroesMark({ className }: { className?: string }) {
 }
 
 // Navigation tabs
-type MainTab = 'play' | 'heroes' | 'stats' | 'loadout';
+type MainTab = 'play' | 'heroes' | 'stats' | 'skins';
 const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
   mode: 'season',
   seasonNumber: DEFAULT_RANKED_SEASON_NUMBER,
@@ -1235,7 +1235,7 @@ export function MainLobby() {
           </div>
 
           <div className="main-lobby-tabs flex min-w-0 items-center">
-            {(['play', 'heroes', 'stats', 'loadout'] as MainTab[]).map((tab) => (
+            {(['play', 'heroes', 'stats', 'skins'] as MainTab[]).map((tab) => (
  <button
  key={tab}
  onClick={() => { playButtonClick(); setActiveTab(tab); }}
@@ -1355,8 +1355,8 @@ export function MainLobby() {
             <StatsPage />
           </Suspense>
         )}
-        {activeTab === 'loadout' && (
-          <LoadoutTab
+        {activeTab === 'skins' && (
+          <SkinsTab
             featuredHero={featuredHero}
             selectedSkinId={selectedSkinId}
             skins={skinsForFeaturedHero}
@@ -1497,7 +1497,7 @@ function skinSupplyLabel(skin: HeroSkinCatalogItem): string | null {
   return `${(price.remainingSupply ?? 0).toLocaleString('en-US')} left`;
 }
 
-function LoadoutTab({
+function SkinsTab({
   featuredHero,
   selectedSkinId,
   skins,
@@ -1558,16 +1558,16 @@ function LoadoutTab({
   }, [featuredHero, selectedSkinId]);
 
   return (
-    <div className="loadout-screen menu-content-wide">
+    <div className="skins-screen menu-content-wide">
       {error && (
-        <div className="loadout-error" role="alert">
+        <div className="skins-error" role="alert">
           {error}
         </div>
       )}
 
-      <div className="loadout-workbench">
-        <aside className="loadout-roster" aria-label="Choose hero">
-          <div className="loadout-roster-list">
+      <div className="skins-workbench">
+        <aside className="skins-roster" aria-label="Choose hero">
+          <div className="skins-roster-list">
             {ALL_HERO_IDS.map((heroId) => {
               const heroDefinition = HERO_DEFINITIONS[heroId];
               const active = heroId === featuredHero;
@@ -1579,14 +1579,14 @@ function LoadoutTab({
                   type="button"
                   key={heroId}
                   onClick={() => onSelectHero(heroId)}
-                  className={`loadout-hero-tab${active ? ' is-active' : ''}`}
+                  className={`skins-hero-tab${active ? ' is-active' : ''}`}
                   aria-pressed={active}
                   title={heroDefinition.name}
                 >
-                  <HeroIcon heroId={heroId} className="loadout-hero-tab-icon" />
-                  <span className="loadout-hero-tab-copy">
-                    <span className="loadout-hero-tab-name">{heroDefinition.name}</span>
-                    <span className="loadout-hero-tab-skin">{equippedSkinName}</span>
+                  <HeroIcon heroId={heroId} className="skins-hero-tab-icon" />
+                  <span className="skins-hero-tab-copy">
+                    <span className="skins-hero-tab-name">{heroDefinition.name}</span>
+                    <span className="skins-hero-tab-skin">{equippedSkinName}</span>
                   </span>
                 </button>
               );
@@ -1594,18 +1594,18 @@ function LoadoutTab({
           </div>
         </aside>
 
-        <section className={`loadout-stage ${stageRarityClass}`} aria-label={`${hero.name} cosmetic preview`}>
-          <SkinRarityChrome className="loadout-stage-card-chrome" />
+        <section className={`skins-stage ${stageRarityClass}`} aria-label={`${hero.name} cosmetic preview`}>
+          <SkinRarityChrome className="skins-stage-card-chrome" />
 
-          <div className="loadout-stage-copy">
+          <div className="skins-stage-copy">
             <div>
-              <p className="loadout-kicker">
+              <p className="skins-kicker">
                 {previewSkin?.owned ? 'ARMORY READY' : 'PREVIEW ACCESS'}
               </p>
-              <div className="loadout-stage-title-line">
-                <h2 className="loadout-stage-title">{stageTitle}</h2>
+              <div className="skins-stage-title-line">
+                <h2 className="skins-stage-title">{stageTitle}</h2>
                 {previewSkin && (
-                  <span className={`loadout-rarity-chip ${stageRarityClass}`}>
+                  <span className={`skins-rarity-chip ${stageRarityClass}`}>
                     {previewSkin.rarity}
                   </span>
                 )}
@@ -1613,38 +1613,38 @@ function LoadoutTab({
             </div>
           </div>
 
-          <div className="loadout-stage-preview">
+          <div className="skins-stage-preview">
             <Suspense fallback={null}>
               <FeaturedHeroPreview
                 heroId={featuredHero}
                 skinId={previewSkin?.id ?? selectedSkinId}
                 initialYaw={Math.PI - 0.18}
                 animationMode={HERO_IDLE_ANIMATION_MODE}
-                className="loadout-featured-preview"
+                className="skins-featured-preview"
               />
             </Suspense>
           </div>
         </section>
 
-        <section className="loadout-skin-bay" aria-label={`${hero.name} cosmetics`}>
+        <section className="skins-bay" aria-label={`${hero.name} cosmetics`}>
           {skins.length > 0 && (
-            <div className="loadout-skin-filter" role="group" aria-label="Filter skins">
+            <div className="skins-filter" role="group" aria-label="Filter skins">
               {SKIN_FILTERS.map((filter) => (
                 <button
                   type="button"
                   key={filter.id}
-                  className={`loadout-skin-filter-chip${skinFilter === filter.id ? ' is-active' : ''}`}
+                  className={`skins-filter-chip${skinFilter === filter.id ? ' is-active' : ''}`}
                   onClick={() => setSkinFilter(filter.id)}
                   aria-pressed={skinFilter === filter.id}
                 >
-                  <span className="loadout-skin-filter-label">{filter.label}</span>
-                  <span className="loadout-skin-filter-count">{filterCounts[filter.id]}</span>
+                  <span className="skins-filter-label">{filter.label}</span>
+                  <span className="skins-filter-count">{filterCounts[filter.id]}</span>
                 </button>
               ))}
               {nftShop?.enabled && (
                 <button
                   type="button"
-                  className="loadout-skin-filter-chip loadout-nft-sync-button"
+                  className="skins-filter-chip skins-nft-sync-button"
                   onClick={onSyncWalletSkins}
                   disabled={isNftSyncing || !isAuthenticated}
                 >
@@ -1654,23 +1654,23 @@ function LoadoutTab({
             </div>
           )}
           {nftStatusText && (
-            <div className="loadout-nft-status" role="status">
+            <div className="skins-nft-status" role="status">
               {nftStatusText}
             </div>
           )}
-          <div className="loadout-skin-list">
+          <div className="skins-list">
             {isLoading && skins.length === 0 && (
-              <div className="loadout-empty-state">
+              <div className="skins-empty-state">
                 Loading skins...
               </div>
             )}
             {!isLoading && skins.length === 0 && (
-              <div className="loadout-empty-state">
+              <div className="skins-empty-state">
                 No hero skins available.
               </div>
             )}
             {skins.length > 0 && visibleSkins.length === 0 && (
-              <div className="loadout-empty-state">
+              <div className="skins-empty-state">
                 No {skinFilter} skins for {hero.name}.
               </div>
             )}
@@ -1685,19 +1685,19 @@ function LoadoutTab({
               return (
                 <article
                   key={skin.id}
-                  className={`loadout-skin-row ${skinRarityClass(skin.rarity)}${previewed ? ' is-previewed' : ''}${equipped ? ' is-equipped' : ''}${skin.owned ? '' : ' is-locked'}`}
+                  className={`skins-row ${skinRarityClass(skin.rarity)}${previewed ? ' is-previewed' : ''}${equipped ? ' is-equipped' : ''}${skin.owned ? '' : ' is-locked'}`}
                 >
                   <SkinRarityChrome />
 
                   <button
                     type="button"
-                    className="loadout-skin-row-hitbox"
+                    className="skins-row-hitbox"
                     onClick={() => setPreviewSkinId(skin.id)}
                     aria-label={`Preview ${skin.displayName}`}
                     aria-pressed={previewed}
                   />
 
-                  <div className="loadout-skin-preview-button" aria-hidden="true">
+                  <div className="skins-preview-button" aria-hidden="true">
                     <Suspense fallback={null}>
                       <HeroPreviewCanvas
                         heroId={skin.heroId}
@@ -1707,20 +1707,20 @@ function LoadoutTab({
                         idleAnimation={false}
                         showShadow={false}
                         initialYaw={Math.PI - 0.28}
-                        className="loadout-skin-card-preview"
+                        className="skins-card-preview"
                       />
                     </Suspense>
                   </div>
 
-                  <div className="loadout-skin-copy">
-                    <div className="loadout-skin-title-line">
+                  <div className="skins-copy">
+                    <div className="skins-title-line">
                       <h2>{skin.displayName}</h2>
-                      <span className={`loadout-rarity-chip ${skinRarityClass(skin.rarity)}`}>
+                      <span className={`skins-rarity-chip ${skinRarityClass(skin.rarity)}`}>
                         {skin.rarity}
                       </span>
                     </div>
                     <p>{skin.subtitle}</p>
-                    <div className="loadout-skin-tags">
+                    <div className="skins-tags">
                       <span>{skinOwnershipLabel(skin)}</span>
                       {supplyLabel && <span>{supplyLabel}</span>}
                       {nftStatusLabel && <span>{nftStatusLabel}</span>}
@@ -1729,13 +1729,13 @@ function LoadoutTab({
                     </div>
                   </div>
 
-                  <div className="loadout-skin-actions">
+                  <div className="skins-actions">
                     {skin.owned ? (
                       <button
                         type="button"
                         disabled={equipped || busy}
                         onClick={() => onEquipSkin(skin)}
-                        className={`loadout-action-button is-equip${equipped ? ' is-equipped' : ''}`}
+                        className={`skins-action-button is-equip${equipped ? ' is-equipped' : ''}`}
                       >
                         {equipped ? 'EQUIPPED' : busy ? 'EQUIPPING...' : 'EQUIP'}
                       </button>
@@ -1744,20 +1744,20 @@ function LoadoutTab({
                         type="button"
                         disabled={!canPurchase || busy || !isAuthenticated}
                         onClick={() => onPurchaseSkin(skin)}
-                        className="loadout-action-button is-purchase"
+                        className="skins-action-button is-purchase"
                       >
                         {busy ? 'PURCHASING...' : isAuthenticated ? formatSkinPrice(skin) : 'SIGN IN'}
                       </button>
                     ) : (
-                      <button type="button" disabled className="loadout-action-button is-locked">
+                      <button type="button" disabled className="skins-action-button is-locked">
                         LOCKED
                       </button>
                     )}
                     {skin.availability !== 'paid' && !skin.owned && skin.unlockHint && (
-                      <span className="loadout-skin-disabled-reason">{skin.unlockHint}</span>
+                      <span className="skins-disabled-reason">{skin.unlockHint}</span>
                     )}
                     {disabledReason && !skin.owned && (
-                      <span className="loadout-skin-disabled-reason">{disabledReason}</span>
+                      <span className="skins-disabled-reason">{disabledReason}</span>
                     )}
                   </div>
                 </article>

@@ -991,7 +991,7 @@ function SkinItemModelPreview({ item }: { item: SkinShopItem }) {
   return (
     <div ref={previewRef} className={cn('admin-skin-preview-frame', skinRarityClass(skin.rarity))} aria-hidden="true">
       <SkinRarityChrome />
-      <div className="loadout-skin-preview-button">
+      <div className="skins-preview-button">
         {shouldMountPreview ? (
           <React.Suspense fallback={null}>
             <AdminHeroPreviewCanvas
@@ -1002,7 +1002,7 @@ function SkinItemModelPreview({ item }: { item: SkinShopItem }) {
               idleAnimation={false}
               showShadow={false}
               initialYaw={Math.PI - 0.28}
-              className="loadout-skin-card-preview admin-skin-card-preview"
+              className="skins-card-preview admin-skin-card-preview"
             />
           </React.Suspense>
         ) : (
@@ -1062,7 +1062,7 @@ function SkinItemCard({
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <div className="text-sm font-semibold text-white">{displayName}</div>
-                <span className={cn('loadout-rarity-chip admin-skin-rarity-chip', rarityClass)}>
+                <span className={cn('skins-rarity-chip admin-skin-rarity-chip', rarityClass)}>
                   {skin.rarity}
                 </span>
               </div>
