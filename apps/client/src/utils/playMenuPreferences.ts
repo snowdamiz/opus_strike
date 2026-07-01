@@ -21,7 +21,14 @@ export interface PlayMenuPreferences {
 }
 
 export const DEFAULT_CUSTOM_GAMEPLAY_MODE: CustomLobbyGameplayMode = CUSTOM_LOBBY_GAMEPLAY_MODES[0];
-export const PLAY_MODE_OPTIONS: PlayMenuMode[] = ['ranked', 'quick_play', 'team_deathmatch', 'battle_royal', 'custom'];
+export const PLAY_MODE_OPTIONS: PlayMenuMode[] = [
+  'ranked',
+  'quick_play',
+  'team_deathmatch',
+  'battle_royal',
+  'practice',
+  'custom',
+];
 export const PLAY_MENU_PREFERENCES_STORAGE_KEY = 'voxel_strike_play_menu_preferences:v1';
 
 export function isPlayMenuMode(value: unknown): value is PlayMenuMode {

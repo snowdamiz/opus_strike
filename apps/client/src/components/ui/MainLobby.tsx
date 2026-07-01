@@ -102,6 +102,8 @@ const StatsPage = lazy(() => import('./StatsPage').then((module) => ({ default: 
 const SettingsModal = lazy(() => import('./SettingsModal').then((module) => ({ default: module.SettingsModal })));
 const HeroPreviewCanvas = lazy(() => import('./HeroPreviewCanvas').then((module) => ({ default: module.HeroPreviewCanvas })));
 const HERO_IDLE_ANIMATION_MODE: HeroPreviewAnimationMode = 'idle';
+const PLAY_MODE_OPTIONS_BEFORE_BOT_FILL = PLAY_MODE_OPTIONS.filter((mode) => mode !== 'practice' && mode !== 'custom');
+const PLAY_MODE_OPTIONS_AFTER_BOT_FILL = PLAY_MODE_OPTIONS.filter((mode) => mode === 'practice' || mode === 'custom');
 const PLAY_PARTY_SLOT_COUNT = getPartyMaxMembersForMode('quick_play', DEFAULT_GAMEPLAY_MODE);
 const PING_ADVISORY_VISIBLE_MIN_MS = 100;
 const EMPTY_HERO_ID_SET = new Set<HeroId>();
@@ -394,6 +396,7 @@ export function MainLobby() {
     quickPlay,
     rankedPlay,
     getRankedTokenHoldStatus,
+    startPracticeGame,
     startTutorialGame,
     ensureParty,
     joinParty,
@@ -504,13 +507,15 @@ export function MainLobby() {
     : customGameplayMode;
   const activeBotFillEnabledByMode = party?.botFillEnabledByMode ?? botFillEnabledByMode;
   const globalBotFillEnabled = isGlobalBotFillEnabled(activeBotFillEnabledByMode);
-  const customBotFillDisabled = activePlayMode === 'custom';
-  const botFillDisabledReason = customBotFillDisabled
-    ? 'Bot fill does not apply to custom lobbies'
+  const botFillDisabledForMode = activePlayMode === 'custom' || activePlayMode === 'practice';
+  const botFillDisabledReason = botFillDisabledForMode
+    ? activePlayMode === 'practice'
+      ? 'Bot fill does not apply to practice'
+      : 'Bot fill does not apply to custom lobbies'
     : isInParty && !isPartyLeader
       ? 'Party leader chooses bot fill'
       : null;
-  const displayedBotFillEnabled = customBotFillDisabled ? false : globalBotFillEnabled;
+  const displayedBotFillEnabled = botFillDisabledForMode ? false : globalBotFillEnabled;
   const activePerspectiveByMode = party?.perspectiveByMode ?? perspectiveByMode;
   const currentRank = getRankForStats(userStats);
   const soloPartyMember: PartyMemberSnapshot | null = isAuthenticated
@@ -1065,6 +1070,15 @@ export function MainLobby() {
     startTutorialGame(playerName);
   };
 
+  const handlePracticePlay = () => {
+    setError(null);
+    startPracticeGame(playerName, {
+      targetPractice: true,
+      heroId: featuredHero,
+      matchPerspective: getMatchPerspectiveForPlayMode('practice', activePerspectiveByMode),
+    });
+  };
+
   const handleSkipTutorial = async () => {
     if (isSkippingTutorial) return;
 
@@ -1149,6 +1163,11 @@ export function MainLobby() {
   };
 
   const handleSelectedPlayAction = () => {
+    if (activePlayMode === 'practice') {
+      handlePracticePlay();
+      return;
+    }
+
     if (isInParty) {
       if (isPartyLeader) {
         startParty();
@@ -1810,10 +1829,12 @@ function PlayTab({
     ? 'CHECKING...'
     : canReconnect
       ? 'RECONNECT'
-      : requiresTutorial
+      : requiresTutorial && selectedPlayMode !== 'practice'
         ? isLoading
           ? 'STARTING...'
           : 'START TUTORIAL'
+        : selectedPlayMode === 'practice'
+          ? getPlayModeActionLabel(selectedPlayMode, isLoading)
         : isInParty
           ? isPartyLeader
             ? isLoading
@@ -1826,13 +1847,14 @@ function PlayTab({
   const isRankedEligibilityBlocked = selectedPlayMode === 'ranked' &&
     !requiresTutorial &&
     rankedTokenHoldStatus?.eligible === false;
+  const isPracticePlayMode = selectedPlayMode === 'practice';
   const partySize = party?.members.length ?? 1;
   const gameplayModeForLimit = getGameplayModeForPlayMode(selectedPlayMode, customGameplayMode);
   const partyMemberLimit = getPartyMemberLimitForPlayMode(selectedPlayMode, gameplayModeForLimit);
-  const isPartyTooLargeForMode = isInParty && partySize > partyMemberLimit;
+  const isPartyTooLargeForMode = !isPracticePlayMode && isInParty && partySize > partyMemberLimit;
   const primaryDisabled = isLoading || isReconnectChecking || isSkippingTutorial || (
-    isInParty && isPartyLeader && !isPartyReadyToStart
-  ) || partyHasDuplicateHeroes || isPartyTooLargeForMode || (
+    !isPracticePlayMode && isInParty && isPartyLeader && !isPartyReadyToStart
+  ) || (!isPracticePlayMode && partyHasDuplicateHeroes) || isPartyTooLargeForMode || (
     selectedPlayMode === 'ranked' &&
     !requiresTutorial &&
     rankedSeason.mode === 'preseason'
@@ -2485,12 +2507,13 @@ function PlayActionStack({
   );
 
   const runPrimaryAction = () => {
+    const shouldStartTutorial = requiresTutorial && selectedPlayMode !== 'practice';
     playButtonClick();
     if (mobilePwaInstallRequired) {
       void onMobilePwaInstall();
     } else if (canReconnect) {
       onReconnect();
-    } else if (requiresTutorial) {
+    } else if (shouldStartTutorial) {
       onStartTutorial();
     } else {
       onPlayAction();
@@ -2567,7 +2590,7 @@ function PlayActionStack({
               {effectivePrimaryDisabledReason}
             </div>
           )}
-          {requiresTutorial && !mobilePwaInstallRequired && (
+          {requiresTutorial && selectedPlayMode !== 'practice' && !mobilePwaInstallRequired && (
             <button
               type="button"
               onClick={runSkipTutorial}
@@ -2617,52 +2640,56 @@ function PlayModeSelector({
   onSelectMode: (mode: PlayMenuMode) => void;
   onSetBotFillEnabled: (enabled: boolean) => void;
 }) {
+  const renderModeOption = (mode: PlayMenuMode) => {
+    const selected = mode === selectedPlayMode;
+    const isRanked = mode === 'ranked';
+    const locked = isRanked && (
+      rankedSeason.mode === 'preseason' ||
+      (isAuthenticated && rankedTokenHoldStatus?.eligible === false)
+    );
+    const title = getModeTitle({
+      mode,
+      isAuthenticated,
+      hasWalletAccount,
+      rankedSeason,
+      requiresTutorial,
+      rankedTokenHoldStatus,
+      rankedTokenHoldError,
+    });
+
+    return (
+      <div
+        key={mode}
+        className="play-mode-option-shell"
+      >
+        <button
+          type="button"
+          aria-pressed={selected}
+          disabled={modeReadOnly}
+          onClick={() => onSelectMode(mode)}
+          className={`play-mode-option${selected ? ' is-selected' : ''}${locked ? ' is-locked' : ''}`}
+          title={modeReadOnly ? 'Party leader chooses the mode' : title}
+        >
+          <span className="play-mode-option-icon">
+            <PlayModeIcon mode={mode} />
+          </span>
+          <span className="play-mode-option-copy">
+            <span className="play-mode-option-title">{getPlayModeLabel(mode)}</span>
+          </span>
+        </button>
+      </div>
+    );
+  };
+
   return (
     <div className="play-mode-selector" aria-label="Match mode and options">
-      {PLAY_MODE_OPTIONS.map((mode) => {
-        const selected = mode === selectedPlayMode;
-        const isRanked = mode === 'ranked';
-        const locked = isRanked && (
-          rankedSeason.mode === 'preseason' ||
-          (isAuthenticated && rankedTokenHoldStatus?.eligible === false)
-        );
-        const title = getModeTitle({
-          mode,
-          isAuthenticated,
-          hasWalletAccount,
-          rankedSeason,
-          requiresTutorial,
-          rankedTokenHoldStatus,
-          rankedTokenHoldError,
-        });
-        return (
-          <div
-            key={mode}
-            className="play-mode-option-shell"
-          >
-            <button
-              type="button"
-              aria-pressed={selected}
-              disabled={modeReadOnly}
-              onClick={() => onSelectMode(mode)}
-              className={`play-mode-option${selected ? ' is-selected' : ''}${locked ? ' is-locked' : ''}`}
-              title={modeReadOnly ? 'Party leader chooses the mode' : title}
-            >
-              <span className="play-mode-option-icon">
-                <PlayModeIcon mode={mode} />
-              </span>
-              <span className="play-mode-option-copy">
-                <span className="play-mode-option-title">{getPlayModeLabel(mode)}</span>
-              </span>
-            </button>
-          </div>
-        );
-      })}
+      {PLAY_MODE_OPTIONS_BEFORE_BOT_FILL.map(renderModeOption)}
       <BotFillToggle
         enabled={botFillEnabled}
         disabledReason={botFillDisabledReason}
         onToggle={onSetBotFillEnabled}
       />
+      {PLAY_MODE_OPTIONS_AFTER_BOT_FILL.map(renderModeOption)}
     </div>
   );
 }

@@ -112,6 +112,7 @@ export function App() {
   const gameplayMode = useGameStore((state) => state.gameplayMode);
   const isObserverMode = useGameStore((state) => state.localPlayer?.role === 'observer');
   const scoreboardKeybind = useSettingsStore((state) => state.settings.keybindings.scoreboard);
+  const showHUD = useSettingsStore((state) => state.settings.showHUD);
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showInGameMenu, setShowInGameMenu] = useState(false);
   const [shouldMountMatchWorld, setShouldMountMatchWorld] = useState(false);
@@ -599,7 +600,7 @@ export function App() {
         {/* Show HUD during active gameplay */}
         {isActiveGame && isMatchSceneReady && !isObserverMode && (
           <>
-            <HUD />
+            {showHUD && <HUD />}
             {isTutorialMode && <TutorialGuide />}
             <TeleportEffects />
             <UltimateEffects />
@@ -620,14 +621,14 @@ export function App() {
 
         {/* Round/game end overlays */}
         {gamePhase === 'round_end' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50">
-            <h2 className="font-display text-6xl text-white">Round Over</h2>
+          <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50 px-4 text-center">
+            <h2 className="game-end-overlay-title font-display text-white">Round Over</h2>
           </div>
         )}
 
         {gamePhase === 'game_end' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50">
-            <h2 className="font-display text-6xl text-voxel-primary">Game Over</h2>
+          <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50 px-4 text-center">
+            <h2 className="game-end-overlay-title font-display text-voxel-primary">Game Over</h2>
           </div>
         )}
 
@@ -710,7 +711,7 @@ function CountdownOverlay() {
       <div className="prematch-countdown-scanlines" />
       <div className="prematch-countdown-content">
         <div
-          className="font-display text-[200px] text-voxel-primary animate-pulse"
+          className="prematch-countdown-number font-display text-voxel-primary animate-pulse"
           style={{ textShadow: '0 0 60px rgb(var(--color-ui-objective) / 0.8)' }}
         >
           {countdown}

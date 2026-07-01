@@ -359,8 +359,9 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       )}
       size="xl"
       onClose={onClose}
-      panelClassName="h-[min(70vh,40rem)]"
-      bodyClassName="flex-1 flex overflow-hidden min-h-0"
+      panelClassName="settings-dialog-panel h-[min(70vh,40rem)]"
+      bodyClassName="settings-dialog-body flex-1 flex overflow-hidden min-h-0"
+      footerClassName="settings-dialog-footer flex items-center justify-between gap-3 px-[clamp(1.125rem,1.45vw,1.5rem)] py-[clamp(0.75rem,1vw,1rem)] border-t border-white/5 bg-strike-elevated/50"
       footer={(
         <>
           <button
@@ -392,12 +393,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       )}
     >
           {/* Sidebar */}
-          <div className="w-32 lg:w-40 xl:w-48 shrink-0 border-r border-white/5 p-2.5 lg:p-3 space-y-1.5">
+          <div className="settings-tab-list w-32 lg:w-40 xl:w-48 shrink-0 border-r border-white/5 p-2.5 lg:p-3 space-y-1.5">
             {tabs.map((tab) => (
  <button
  key={tab.id}
  onClick={() => setActiveTab(tab.id)}
- className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg font-display text-xs focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-400/70 [&_svg]:h-[1rem] [&_svg]:w-[1rem] ${
+ className={`settings-tab-button w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg font-display text-xs focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-400/70 [&_svg]:h-[1rem] [&_svg]:w-[1rem] ${
  activeTab === tab.id
  ? 'bg-orange-500/20 text-orange-400'
  : 'text-white/50 hover:text-white hover:bg-white/5'
@@ -410,7 +411,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           </div>
 
           {/* Settings Content */}
-          <div className="flex-1 p-[clamp(1.125rem,1.6vw,1.65rem)] overflow-y-auto custom-scrollbar">
+          <div className="settings-dialog-content flex-1 p-[clamp(1.125rem,1.6vw,1.65rem)] overflow-y-auto custom-scrollbar">
             {activeTab === 'video' && (
               <div className="space-y-4">
                 <SettingRow label="Graphics Preset" description="Applies a complete video profile">
@@ -627,7 +628,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   <h3 className="font-display text-base text-white mb-4">KEYBINDS</h3>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
                     {keybindRows.map((bind) => (
-                      <div key={bind.action} className="flex items-center justify-between gap-3 px-3.5 py-2 rounded bg-white/5">
+                      <div key={bind.action} className="settings-keybind-row flex items-center justify-between gap-3 px-3.5 py-2 rounded bg-white/5">
                         <span className="text-white/60 font-body text-sm">{bind.label}</span>
                         <button
                           type="button"
@@ -653,6 +654,13 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
             {activeTab === 'gameplay' && (
               <div className="space-y-4">
+                <SettingRow label="HUD" description="Show the in-game HUD">
+                  <ToggleInput
+                    value={settings.showHUD}
+                    onChange={(v) => updateSetting('showHUD', v)}
+                  />
+                </SettingRow>
+
                 <SettingRow label="Damage Numbers" description="Show damage dealt on hit">
                   <ToggleInput
                     value={settings.showDamageNumbers}
@@ -840,7 +848,7 @@ function formatAccountAddress(address: string | null | undefined): string {
 
 function AccountValue({ value }: { value: string }) {
   return (
-    <span className="block max-w-[17rem] truncate rounded-lg border border-white/10 bg-white/[0.07] px-3.5 py-2 font-mono text-xs text-white/70">
+    <span className="settings-account-value block max-w-[17rem] truncate rounded-lg border border-white/10 bg-white/[0.07] px-3.5 py-2 font-mono text-xs text-white/70">
       {value}
     </span>
   );
@@ -853,12 +861,12 @@ function SettingRow({ label, description, children }: {
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-6 py-3">
-      <div className="min-w-0">
+    <div className="settings-row flex items-center justify-between gap-6 py-3">
+      <div className="settings-row-copy min-w-0">
         <h4 className="font-display text-sm text-white">{label}</h4>
         <p className="text-white/40 text-xs font-body mt-0.5">{description}</p>
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="settings-row-control shrink-0">{children}</div>
     </div>
   );
 }
@@ -892,7 +900,7 @@ function SliderInput({ value, onChange, min, max, step }: {
   const percent = ((value - min) / (max - min)) * 100;
   
   return (
-    <div className="w-[10.5rem] xl:w-48 flex items-center gap-3">
+    <div className="settings-slider w-[10.5rem] xl:w-48 flex items-center gap-3">
       <input
         type="range"
         value={value}
@@ -955,7 +963,7 @@ function SelectInput({ value, onChange, options }: {
   };
 
   return (
-    <div ref={containerRef} className="relative min-w-36">
+    <div ref={containerRef} className="settings-select relative min-w-36">
       <button
         type="button"
         onClick={() => setIsOpen((open) => !open)}

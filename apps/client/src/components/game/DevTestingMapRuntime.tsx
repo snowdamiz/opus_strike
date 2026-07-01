@@ -15,7 +15,6 @@ import {
   type Vec3,
   type VoxelMapManifest,
 } from '@voxel-strike/shared';
-import { config } from '../../config/environment';
 import { useGameStore } from '../../store/gameStore';
 import { setPlayerVisualTransform } from '../../store/visualStore';
 import { DEV_OFFLINE_TRAINING_HERO_ID_PREFIX, updateTutorialOfflineTrainingDamageOverTime } from '../../utils/tutorialOfflineCombatRuntime';
@@ -392,7 +391,7 @@ export function DevTestingMapRuntime() {
     );
   }, [mapProfileId, mapSeed, mapSize, mapThemeId]);
 
-  if (!config.isDev || !isPracticeMode || mapProfileId !== DEV_TESTING_MAP_PROFILE_ID || gamePhase !== 'playing' || !manifest) {
+  if (!isPracticeMode || mapProfileId !== DEV_TESTING_MAP_PROFILE_ID || gamePhase !== 'playing' || !manifest) {
     return null;
   }
 

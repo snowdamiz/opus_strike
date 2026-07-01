@@ -302,11 +302,11 @@ function KillFeed({ events }: { events: KillFeedEvent[] }) {
   if (events.length === 0) return null;
 
   return (
-    <div className="absolute top-24 right-5 z-[120] flex flex-col gap-2 items-end">
+    <div className="hud-kill-feed absolute top-24 right-5 z-[120] flex flex-col gap-2 items-end">
       {events.map((event) => (
         <div
           key={event.id}
-          className="px-3 py-2 rounded-lg bg-black/55 border border-white/10 backdrop-blur-sm font-body text-xs text-white/75 shadow-lg animate-fade-in"
+          className="hud-kill-feed-item px-3 py-2 rounded-lg bg-black/55 border border-white/10 backdrop-blur-sm font-body text-xs text-white/75 shadow-lg animate-fade-in"
         >
           <span className="text-orange-300">{event.killerName}</span>
           <span className="mx-2 text-white/30">eliminated</span>
@@ -388,7 +388,7 @@ function BattleRoyalTopHud({
 }) {
   return (
     <div
-      className="flex items-stretch overflow-hidden rounded-b-xl backdrop-blur-md"
+      className="hud-top-panel hud-battle-royal-top flex items-stretch overflow-hidden rounded-b-xl backdrop-blur-md"
       style={{
         background: 'linear-gradient(180deg, rgba(8, 11, 16, 0.95) 0%, rgba(20, 24, 31, 0.9) 100%)',
         boxShadow: '0 6px 24px rgba(0, 0, 0, 0.46), inset 0 -1px 0 rgba(255,255,255,0.06)',
@@ -482,7 +482,7 @@ function SafeZoneStatus({ safeZone }: { safeZone: SafeZoneSnapshot | null }) {
       : 'border-cyan-200/24 bg-slate-950/46 text-cyan-100';
 
   return (
-    <div className={`absolute left-1/2 top-[clamp(2.8rem,4.2vw,4rem)] z-[124] -translate-x-1/2 rounded-md border px-3 py-1.5 text-center shadow-2xl backdrop-blur-md ${toneClass}`}>
+    <div className={`hud-safe-zone absolute left-1/2 top-[clamp(2.8rem,4.2vw,4rem)] z-[124] -translate-x-1/2 rounded-md border px-3 py-1.5 text-center shadow-2xl backdrop-blur-md ${toneClass}`}>
       <div className="font-display text-[0.62rem] tracking-[0.22em]">{label}</div>
       <div className="font-mono text-sm font-bold tabular-nums">{formatHudTime(secondsRemaining)}</div>
     </div>
@@ -522,7 +522,7 @@ function BattleRoyalDropPrompt({
     : 'mouse to guide';
 
   return (
-    <div className="absolute bottom-[clamp(6.25rem,14vh,8.75rem)] left-1/2 z-[126] -translate-x-1/2 text-center uppercase text-white">
+    <div className="hud-center-bottom hud-drop-prompt absolute bottom-[clamp(6.25rem,14vh,8.75rem)] left-1/2 z-[126] -translate-x-1/2 text-center uppercase text-white">
       <div className="relative grid justify-items-center">
         <div className="mb-1.5 flex items-center justify-center gap-3">
           <span className="h-px w-[clamp(2.75rem,8vw,6.5rem)] bg-gradient-to-r from-transparent via-white/40 to-white/10" />
@@ -625,7 +625,7 @@ function DownedStateHud({
 
   return (
     <div
-      className="absolute bottom-[clamp(6.5rem,13vh,8.75rem)] left-1/2 z-[126] w-[min(25rem,88vw)] -translate-x-1/2 text-center uppercase text-white"
+      className="hud-center-bottom hud-downed-state absolute bottom-[clamp(6.5rem,13vh,8.75rem)] left-1/2 z-[126] w-[min(25rem,88vw)] -translate-x-1/2 text-center uppercase text-white"
       aria-label={`${statusLabel}: ${remainingSeconds} seconds remaining`}
     >
       <div className="relative isolate grid gap-2 px-1 py-1 drop-shadow-[0_3px_10px_rgba(0,0,0,0.9)]">
@@ -706,7 +706,7 @@ function ReviveChannelHud({
   const remainingMs = target.reviveCompletesAt ? Math.max(0, target.reviveCompletesAt - now) : BATTLE_ROYAL_REVIVE_DURATION_MS;
 
   return (
-    <div className="absolute bottom-[clamp(6.5rem,13vh,8.5rem)] left-1/2 z-[126] w-[min(20rem,82vw)] -translate-x-1/2">
+    <div className="hud-center-bottom hud-revive-channel absolute bottom-[clamp(6.5rem,13vh,8.5rem)] left-1/2 z-[126] w-[min(20rem,82vw)] -translate-x-1/2">
       <div className="rounded-md border border-cyan-200/28 bg-black/52 px-4 py-3 text-center shadow-2xl backdrop-blur-md">
         <div className="flex items-center justify-between gap-3">
           <span className="font-display text-xs tracking-[0.24em] text-cyan-100">REVIVING</span>
@@ -738,7 +738,7 @@ function RevivePromptHud({
 }) {
   if (!target) return null;
   return (
-    <div className="absolute bottom-[clamp(6.5rem,13vh,8.5rem)] left-1/2 z-[125] -translate-x-1/2 rounded-md border border-white/16 bg-black/42 px-4 py-2 text-center shadow-xl backdrop-blur-md">
+    <div className="hud-center-bottom hud-revive-prompt absolute bottom-[clamp(6.5rem,13vh,8.5rem)] left-1/2 z-[125] -translate-x-1/2 rounded-md border border-white/16 bg-black/42 px-4 py-2 text-center shadow-xl backdrop-blur-md">
       <span className="font-mono text-sm font-black tracking-[0.18em] text-white">
         {interactKeyLabel}
       </span>
@@ -759,7 +759,7 @@ function InteractionPromptHud({
   if (!prompt) return null;
 
   return (
-    <div className="absolute left-1/2 top-1/2 z-[126] mt-9 -translate-x-1/2 rounded-md border border-white/16 bg-black/42 px-3.5 py-2 text-center shadow-xl backdrop-blur-md">
+    <div className="hud-interaction-prompt absolute left-1/2 top-1/2 z-[126] mt-9 -translate-x-1/2 rounded-md border border-white/16 bg-black/42 px-3.5 py-2 text-center shadow-xl backdrop-blur-md">
       <div>
         <span className="font-mono text-sm font-black tracking-[0.16em] text-white">
           {interactKeyLabel}
@@ -924,7 +924,7 @@ function PrimaryShotCounter({
 
   return (
     <div
-      className="relative w-[clamp(7.75rem,10vw,9.5rem)] rounded-md overflow-hidden backdrop-blur-md animate-fade-in"
+      className="hud-ammo-counter relative w-[clamp(7.75rem,10vw,9.5rem)] rounded-md overflow-hidden backdrop-blur-md animate-fade-in"
       style={{
         background: isReloading ? tone.reloadBackground : tone.idleBackground,
         border: isReloading ? tone.reloadBorder : tone.idleBorder,
@@ -952,7 +952,7 @@ function PrimaryShotCounter({
         <div className="mt-0.5 flex items-center justify-between gap-2">
           <div className="flex items-end gap-1">
             <span
-              className={`font-mono text-[clamp(1.75rem,2.35vw,2.25rem)] font-bold leading-none tabular-nums ${isReloading ? tone.reloadClass : tone.readyClass}`}
+              className={`hud-ammo-value font-mono text-[clamp(1.75rem,2.35vw,2.25rem)] font-bold leading-none tabular-nums ${isReloading ? tone.reloadClass : tone.readyClass}`}
               style={{ textShadow: isReloading ? tone.reloadTextShadow : tone.idleTextShadow }}
             >
               {displayAmmo}
@@ -1540,7 +1540,7 @@ export function HUD() {
 
       {/* Meteor Strike targeting instructions */}
       {bombTargeting && !suppressCombatHud && (
-        <div className="fixed top-1/3 left-1/2 -translate-x-1/2 text-center z-50 pointer-events-none">
+        <div className="hud-targeting-instruction fixed top-1/3 left-1/2 -translate-x-1/2 text-center z-50 pointer-events-none">
           <div
             className="px-4 py-2 rounded-lg backdrop-blur-sm"
             style={{
@@ -1563,7 +1563,7 @@ export function HUD() {
 
       {/* ===== TOP CENTER - Score Panel (Redesigned) ===== */}
       {!isPracticeMode && (
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 max-w-[92vw]">
+        <div className="hud-top-score absolute top-0 left-1/2 -translate-x-1/2 max-w-[92vw]">
           <div className="relative">
             {gameplayMode === 'battle_royal' ? (
               <BattleRoyalTopHud
@@ -1576,7 +1576,7 @@ export function HUD() {
               />
             ) : (
               <div
-                className="flex items-stretch rounded-b-xl overflow-hidden backdrop-blur-md"
+                className="hud-top-panel flex items-stretch rounded-b-xl overflow-hidden backdrop-blur-md"
                 style={{
                   background: 'linear-gradient(180deg, rgb(var(--color-strike-bg) / 0.95) 0%, rgb(var(--color-strike-elevated) / 0.9) 100%)',
                   boxShadow: '0 6px 24px rgba(0, 0, 0, 0.46), inset 0 -1px 0 rgba(255,255,255,0.05)',
@@ -1698,7 +1698,7 @@ export function HUD() {
 
       {showFloatingFlag && (
         <div
-          className="absolute left-1/2 -translate-x-1/2"
+          className="hud-floating-flag absolute left-1/2 -translate-x-1/2"
           style={{ top: floatingFlagTop }}
           role="img"
           aria-label="Carrying flag"
@@ -1745,7 +1745,7 @@ export function HUD() {
           {showChronosLifelineHelper && (
             <ChronosLifelineHelper />
           )}
-          <div className="flex items-end justify-center gap-2 sm:gap-2.5 lg:gap-3">
+          <div className="hud-skill-row flex items-end justify-center gap-2 sm:gap-2.5 lg:gap-3">
             {heroSkillItems.map((skill) => (
               <HUDSkillSlot
                 key={`${skill.input}-${skill.name}`}
@@ -1792,7 +1792,7 @@ export function HUD() {
         )}
 
         {/* Movement indicators container */}
-        <div className="flex flex-col items-end gap-1.5">
+        <div className="hud-movement-indicators flex flex-col items-end gap-1.5">
           {localIsWallRunning && <MovementIndicator label="WALL RUN" color="#06b6d4" icon="wall" />}
           {localIsSliding && <MovementIndicator label="SLIDE" color="#22c55e" icon="slide" />}
           {localIsGrappling && <MovementIndicator label="GRAPPLE" color="#06b6d4" icon="grapple" />}
@@ -1889,7 +1889,7 @@ const HUDSkillSlot = memo(function HUDSkillSlot({
   const isWideInput = inputLabel.length > 1;
 
   return (
-    <div className="relative drop-shadow-[0_5px_14px_rgba(0,0,0,0.42)]">
+    <div className="hud-skill-slot relative drop-shadow-[0_5px_14px_rgba(0,0,0,0.42)]">
       {isUltReady && (
         <div
           className="absolute -inset-1.5 rounded-lg animate-pulse"
@@ -1906,6 +1906,7 @@ const HUDSkillSlot = memo(function HUDSkillSlot({
           size="hud"
           muted={!isUsable && !showActiveTimer}
           active={isActive || isUltReady}
+          className="hud-skill-icon"
         />
 
         {(onCooldown || noChargesLeft || isUltCharging) && (
@@ -2027,7 +2028,7 @@ const HUDSkillSlot = memo(function HUDSkillSlot({
 const MovementIndicator = memo(function MovementIndicator({ label, color, icon }: { label: string; color: string; icon: string }) {
   return (
     <div
-      className="flex items-center gap-2 px-3 py-1.5 rounded-lg backdrop-blur-sm animate-fade-in"
+      className="hud-movement-indicator flex items-center gap-2 px-3 py-1.5 rounded-lg backdrop-blur-sm animate-fade-in"
       style={{
         background: `${color}15`,
         border: `1px solid ${color}40`,

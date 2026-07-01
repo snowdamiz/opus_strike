@@ -590,7 +590,7 @@ export function GameConsole() {
         );
 
         if (!isDevTestingMap) {
-          addMessage('Start the dev testing map before using /devtarget.', 'error');
+          addMessage('Start Practice before using /devtarget.', 'error');
           break;
         }
 

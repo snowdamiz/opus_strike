@@ -47,6 +47,7 @@ export interface ClientSettings {
   adaptiveQuality: boolean;
   fov: number;
   showFPS: FpsDisplayMode;
+  showHUD: boolean;
   masterVolume: number;
   sfxVolume: number;
   musicVolume: number;
@@ -126,6 +127,7 @@ export const defaultSettings: ClientSettings = {
   ...graphicsPresetSettings.balanced,
   fov: 90,
   showFPS: 'off',
+  showHUD: true,
   masterVolume: 80,
   sfxVolume: 100,
   musicVolume: 50,
@@ -250,6 +252,7 @@ export function sanitizeSettings(value: unknown): ClientSettings {
     adaptiveQuality: pickBoolean(raw.adaptiveQuality, preset.adaptiveQuality),
     fov: clamp(raw.fov, 60, 120, defaultSettings.fov),
     showFPS: pickFpsDisplayMode(raw.showFPS, defaultSettings.showFPS),
+    showHUD: pickBoolean(raw.showHUD, defaultSettings.showHUD),
     masterVolume: clamp(raw.masterVolume, 0, 100, defaultSettings.masterVolume),
     sfxVolume: clamp(raw.sfxVolume, 0, 100, defaultSettings.sfxVolume),
     musicVolume: clamp(raw.musicVolume, 0, 100, defaultSettings.musicVolume),

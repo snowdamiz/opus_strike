@@ -73,7 +73,7 @@ import { clearActivePartySession, saveActivePartySession } from '../utils/active
 
 export type { RankedTokenHoldStatus } from './networkApi';
 
-type StartPracticeGameOptions = { mapSeed?: number; tutorial?: boolean; devTesting?: boolean; heroId?: HeroId; matchPerspective?: MatchPerspective };
+type StartPracticeGameOptions = { mapSeed?: number; tutorial?: boolean; targetPractice?: boolean; heroId?: HeroId; matchPerspective?: MatchPerspective };
 type EnsurePartyOptions = { selectedMode?: PartyMode; gameplayMode?: GameplayMode; selectedSkinId?: HeroSkinId };
 type PartyLaunchJoinOptions = { preservePartyRoom?: Room | null };
 const TUTORIAL_HERO_ID: HeroId = 'blaze';
@@ -333,14 +333,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, [rejectPendingPlayerReportRequests, rejectPendingVoiceTokenRequests]);
 
   const startPracticeGame = useCallback((playerName?: string, options?: StartPracticeGameOptions) => {
-    if (options?.devTesting === true && !config.isDev) {
-      loggers.network.warn('dev testing map is only available in dev builds');
-      return;
-    }
-
     const name = resolvePracticePlayerName(playerName);
-    const isDevTesting = options?.devTesting === true;
-    const isTutorial = options?.tutorial === true && !isDevTesting;
+    const isTargetPractice = options?.targetPractice === true;
+    const isTutorial = options?.tutorial === true && !isTargetPractice;
     const matchPerspective = isTutorial
       ? DEFAULT_MATCH_PERSPECTIVE
       : options?.matchPerspective ?? DEFAULT_MATCH_PERSPECTIVE;
@@ -363,7 +358,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       try {
         const practiceManifest = isTutorial
           ? createTutorialVoxelMapManifest()
-          : isDevTesting
+          : isTargetPractice
           ? generateProceduralVoxelMap(DEV_TESTING_MAP_SEED, {
             mapSize: DEV_TESTING_MAP_SIZE_ID,
             profileId: DEV_TESTING_MAP_PROFILE_ID,
@@ -371,7 +366,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           : null;
         const seed = isTutorial
           ? TUTORIAL_MAP_SEED
-          : isDevTesting
+          : isTargetPractice
           ? DEV_TESTING_MAP_SEED
           : typeof options?.mapSeed === 'number'
           ? options.mapSeed >>> 0
@@ -385,13 +380,13 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           source: 'match',
         });
         prebuildPreparedMapGeometryDeferred(preparedMap, { frameBudgetMs: 2, label: 'practice-start' });
-        const spawnPoints = isTutorial || isDevTesting
+        const spawnPoints = isTutorial || isTargetPractice
           ? preparedMap.manifest.spawnPoints.red
           : [
             ...preparedMap.manifest.spawnPoints.red,
             ...preparedMap.manifest.spawnPoints.blue,
           ];
-        const spawn = isTutorial || isDevTesting
+        const spawn = isTutorial || isTargetPractice
           ? spawnPoints[0] ?? { x: 0, y: 1, z: 0 }
           : spawnPoints[Math.floor(Math.random() * spawnPoints.length)] ?? { x: 0, y: 1, z: 0 };
         const playerId = createPracticePlayerId();
@@ -402,7 +397,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         player.state = 'alive';
         player.position = { ...spawn };
         player.team = 'red';
-        if (isTutorial || isDevTesting) {
+        if (isTutorial || isTargetPractice) {
           player.lookYaw = facingToLookYaw(preparedMap.manifest.gameplay.spawns.red.facing);
           player.lookPitch = 0;
         }
@@ -475,7 +470,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         setConnected(false);
 
         loggers.network.info(
-          isTutorial ? 'started local tutorial' : isDevTesting ? 'started local dev testing map' : 'started local practice',
+          isTutorial ? 'started local tutorial' : isTargetPractice ? 'started local practice target range' : 'started local practice',
           seed
         );
       } catch (error) {
@@ -510,7 +505,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const startDevTestingMap = useCallback((playerName?: string) => {
     if (!config.isDev) return;
-    startPracticeGame(playerName, { devTesting: true });
+    startPracticeGame(playerName, { targetPractice: true });
   }, [startPracticeGame]);
 
   const setupLobbyListeners = useCallback((room: Room, playerName: string) => {

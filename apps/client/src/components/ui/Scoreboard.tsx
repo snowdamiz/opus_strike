@@ -140,9 +140,9 @@ export function Scoreboard() {
   }
 
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-md z-40 pointer-events-auto">
+    <div className="scoreboard-overlay absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-md z-40 pointer-events-auto">
       <div
-        className="w-full max-w-3xl lg:max-w-4xl xl:max-w-5xl mx-4 lg:mx-6 xl:mx-8 rounded-2xl overflow-hidden animate-scale-in"
+        className="scoreboard-panel w-full max-w-3xl lg:max-w-4xl xl:max-w-5xl mx-4 lg:mx-6 xl:mx-8 rounded-2xl overflow-hidden animate-scale-in"
         style={{
           background: 'linear-gradient(180deg, rgb(var(--color-strike-elevated) / 0.98) 0%, rgb(var(--color-strike-bg) / 0.98) 100%)',
           border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -150,17 +150,17 @@ export function Scoreboard() {
         }}
       >
         {/* Header with scores */}
-        <div 
-          className="flex items-center justify-between px-6 py-4"
+        <div
+          className="scoreboard-match-header flex items-center justify-between px-6 py-4"
           style={{
             background: 'linear-gradient(90deg, rgb(var(--color-accent-primary) / 0.15) 0%, rgb(var(--color-strike-elevated) / 0.9) 50%, rgb(var(--color-accent-secondary) / 0.15) 100%)',
             borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
           }}
         >
           {/* Solar Vanguard */}
-          <div className="flex items-center gap-4">
-            <div 
-              className="w-14 h-14 rounded-xl flex items-center justify-center"
+          <div className="scoreboard-team-score flex items-center gap-4">
+            <div
+              className="scoreboard-score-box w-14 h-14 rounded-xl flex items-center justify-center"
               style={{
                 background: `linear-gradient(135deg, ${FACTIONS.red.primaryColor}, ${FACTIONS.red.secondaryColor})`,
                 boxShadow: `0 0 25px ${FACTIONS.red.glowColor}`,
@@ -168,7 +168,7 @@ export function Scoreboard() {
             >
               <span className="font-display text-2xl text-white">{redScore}</span>
             </div>
-            <div>
+            <div className="scoreboard-team-copy">
               <div className="flex items-center gap-2">
                 <SolarIcon className="w-5 h-5" style={{ color: FACTIONS.red.primaryColor }} />
                 <span className="font-display text-xl" style={{ color: FACTIONS.red.primaryColor }}>
@@ -182,8 +182,8 @@ export function Scoreboard() {
           </div>
 
           {/* VS Badge */}
-          <div 
-            className="w-16 h-16 rounded-xl rotate-45 flex items-center justify-center"
+          <div
+            className="scoreboard-vs-badge w-16 h-16 rounded-xl rotate-45 flex items-center justify-center"
             style={{
               background: 'linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05))',
               border: '1px solid rgba(255,255,255,0.1)',
@@ -193,8 +193,8 @@ export function Scoreboard() {
           </div>
 
           {/* Void Legion */}
-          <div className="flex items-center gap-4">
-            <div className="text-right">
+          <div className="scoreboard-team-score scoreboard-team-score-reverse flex items-center gap-4">
+            <div className="scoreboard-team-copy text-right">
               <div className="flex items-center justify-end gap-2">
                 <span className="font-display text-xl" style={{ color: FACTIONS.blue.primaryColor }}>
                   {FACTIONS.blue.name}
@@ -205,8 +205,8 @@ export function Scoreboard() {
                 {FACTIONS.blue.fullName}
               </span>
             </div>
-            <div 
-              className="w-14 h-14 rounded-xl flex items-center justify-center"
+            <div
+              className="scoreboard-score-box w-14 h-14 rounded-xl flex items-center justify-center"
               style={{
                 background: `linear-gradient(135deg, ${FACTIONS.blue.primaryColor}, ${FACTIONS.blue.secondaryColor})`,
                 boxShadow: `0 0 25px ${FACTIONS.blue.glowColor}`,
@@ -218,9 +218,9 @@ export function Scoreboard() {
         </div>
 
         {/* Player lists */}
-        <div className="flex">
+        <div className="scoreboard-team-list-wrap flex">
           {/* Solar team */}
-          <div className="flex-1 border-r border-white/5">
+          <div className="scoreboard-team-list flex-1 border-r border-white/5">
             <FactionHeader faction={factionToPresentation(FACTIONS.red)} objectiveLabel={objectiveLabel} />
             <div className="divide-y divide-white/5">
               {solarPlayers.map(player => (
@@ -250,7 +250,7 @@ export function Scoreboard() {
           </div>
 
           {/* Void team */}
-          <div className="flex-1">
+          <div className="scoreboard-team-list flex-1">
             <FactionHeader faction={factionToPresentation(FACTIONS.blue)} objectiveLabel={objectiveLabel} />
             <div className="divide-y divide-white/5">
               {voidPlayers.map(player => (
@@ -281,8 +281,8 @@ export function Scoreboard() {
         </div>
 
         {/* Footer */}
-        <div 
-          className="px-4 py-3 text-center"
+        <div
+          className="scoreboard-footer px-4 py-3 text-center"
           style={{
             background: 'rgba(0, 0, 0, 0.3)',
             borderTop: '1px solid rgba(255, 255, 255, 0.05)',
@@ -335,9 +335,9 @@ function BattleRoyalScoreboard({
   }, [players, teamEntries]);
 
   return (
-    <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md pointer-events-auto">
+    <div className="scoreboard-overlay absolute inset-0 z-40 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md pointer-events-auto">
       <div
-        className="max-h-[90vh] w-full max-w-6xl overflow-hidden rounded-2xl animate-scale-in"
+        className="scoreboard-panel max-h-[90vh] w-full max-w-6xl overflow-hidden rounded-2xl animate-scale-in"
         style={{
           background: 'linear-gradient(180deg, rgb(var(--color-strike-elevated) / 0.98) 0%, rgb(var(--color-strike-bg) / 0.98) 100%)',
           border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -345,7 +345,7 @@ function BattleRoyalScoreboard({
         }}
       >
         <div
-          className="flex items-center justify-between gap-4 px-5 py-4"
+          className="scoreboard-match-header flex items-center justify-between gap-4 px-5 py-4"
           style={{
             background: SCOREBOARD_COLORS.battleRoyalHeaderBackground,
             borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
@@ -360,8 +360,8 @@ function BattleRoyalScoreboard({
           </div>
         </div>
 
-        <div className="max-h-[calc(90vh-8rem)] overflow-y-auto p-4">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="scoreboard-scroll-area max-h-[calc(90vh-8rem)] overflow-y-auto p-4">
+          <div className="scoreboard-battle-royal-grid grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {teamEntries.map((entry) => {
               const faction = teamEntryToPresentation(entry);
               const teamPlayers = playersByTeam.get(entry.id) ?? [];
@@ -413,7 +413,7 @@ function BattleRoyalScoreboard({
           </div>
         </div>
 
-        <div className="border-t border-white/5 bg-black/30 px-4 py-3 text-center">
+        <div className="scoreboard-footer border-t border-white/5 bg-black/30 px-4 py-3 text-center">
           <span className="font-body text-xs text-white/30">
             {reportNotice || <>Press <span className="font-mono text-white/50">TAB</span> to close</>}
           </span>
@@ -430,18 +430,18 @@ interface FactionHeaderProps {
 
 function FactionHeader({ faction, objectiveLabel }: FactionHeaderProps) {
   return (
-    <div 
-      className="grid grid-cols-9 gap-2 px-4 py-2.5 text-[10px] font-body uppercase tracking-wider"
+    <div
+      className="scoreboard-team-header grid gap-2 px-4 py-2.5 text-[10px] font-body uppercase tracking-wider"
       style={{ background: faction.bgColor }}
     >
-      <span className="col-span-2" style={{ color: faction.primaryColor }}>Warrior</span>
-      <span className="text-white/40 text-center">K</span>
-      <span className="text-white/40 text-center">D</span>
-      <span className="text-white/40 text-center">A</span>
-      <span className="text-white/40 text-center">{objectiveLabel}</span>
-      <span className="text-white/40 text-center">Ping</span>
-      <span className="text-white/40 text-center">Voice</span>
-      <span className="text-white/40 text-center">Report</span>
+      <span className="scoreboard-header-player" style={{ color: faction.primaryColor }}>Warrior</span>
+      <span className="scoreboard-header-kills text-white/40 text-center">K</span>
+      <span className="scoreboard-header-deaths text-white/40 text-center">D</span>
+      <span className="scoreboard-header-assists text-white/40 text-center">A</span>
+      <span className="scoreboard-header-objective text-white/40 text-center">{objectiveLabel}</span>
+      <span className="scoreboard-header-ping text-white/40 text-center">Ping</span>
+      <span className="scoreboard-header-voice text-white/40 text-center">Voice</span>
+      <span className="scoreboard-header-report text-white/40 text-center">Report</span>
     </div>
   );
 }
@@ -479,15 +479,15 @@ function PlayerRow({
   const objectiveValue = isCaptureTheFlag ? stats.flagCaptures : stats.kills;
   
   return (
-    <div 
-      className={`grid grid-cols-9 gap-2 px-4 py-3 items-center transition-colors ${
+    <div
+      className={`scoreboard-player-row grid gap-2 px-4 py-3 items-center transition-colors ${
         isLocal ? 'bg-white/[0.06]' : 'hover:bg-white/[0.02]'
       }`}
     >
-      <div className="col-span-2 flex items-center gap-3">
+      <div className="scoreboard-player-cell flex items-center gap-3">
         {/* Hero avatar */}
-        <div 
-          className="w-9 h-9 rounded-lg flex items-center justify-center"
+        <div
+          className="scoreboard-player-avatar w-9 h-9 rounded-lg flex items-center justify-center"
           style={{
             background: `linear-gradient(135deg, ${faction.primaryColor}, ${faction.secondaryColor})`,
             boxShadow: isLocal ? `0 0 15px ${faction.glowColor}` : undefined,
@@ -532,19 +532,19 @@ function PlayerRow({
         </div>
       </div>
       
-      <span className="font-mono text-sm text-center text-white/70">{stats.kills}</span>
-      <span className="font-mono text-sm text-center text-white/50">{stats.deaths}</span>
-      <span className="font-mono text-sm text-center text-white/50">{stats.assists}</span>
+      <span className="scoreboard-stat scoreboard-stat-kills font-mono text-sm text-center text-white/70">{stats.kills}</span>
+      <span className="scoreboard-stat scoreboard-stat-deaths font-mono text-sm text-center text-white/50">{stats.deaths}</span>
+      <span className="scoreboard-stat scoreboard-stat-assists font-mono text-sm text-center text-white/50">{stats.assists}</span>
       <span 
-        className="font-mono text-sm text-center font-medium"
+        className="scoreboard-stat scoreboard-stat-objective font-mono text-sm text-center font-medium"
         style={{ color: objectiveValue > 0 ? faction.secondaryColor : 'rgba(255,255,255,0.3)' }}
       >
         {objectiveValue}
       </span>
-      <span className={`font-mono text-xs text-center ${getPingClassName(player, pingMs)}`}>
+      <span className={`scoreboard-stat scoreboard-stat-ping font-mono text-xs text-center ${getPingClassName(player, pingMs)}`}>
         {formatPing(player, pingMs)}
       </span>
-      <div className="flex justify-center">
+      <div className="scoreboard-voice-cell flex justify-center">
         {canMuteVoice ? (
           <button
             type="button"
@@ -571,7 +571,7 @@ function PlayerRow({
           <span className="text-white/18">-</span>
         )}
       </div>
-      <div className="flex justify-center">
+      <div className="scoreboard-report-cell flex justify-center">
         {canReport ? (
           <button
             type="button"
