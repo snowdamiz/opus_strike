@@ -176,6 +176,18 @@ Server environment:
 - `RANKED_TOKEN_HOLD_PRICE_STALE_MS`: price cache window. Default: `60000`.
 - `RANKED_TOKEN_HOLD_RPC_TIMEOUT_MS`: balance RPC timeout. Default: `5000`.
 
+### Game Token And Paid Skins
+
+Paid skins use the global game SPL token for payment. The server verifies the token payment and grants account skin ownership after confirmation.
+
+Server environment:
+
+- `GAME_TOKEN_MINT`: global SPL token mint used by ranked gates, skin payments, and future token-gated systems.
+- `GAME_TOKEN_SYMBOL`: ticker shown in the UI.
+- `SOLANA_RPC_URL`: RPC used for token payments and wallet checks.
+- `SOLANA_CLUSTER`: cluster label returned to clients. Default: `mainnet-beta`.
+- `WAGER_TREASURY_WALLET`: treasury wallet that receives skin payments.
+
 ### Playing
 
 1. Start the server: `pnpm run dev:server`

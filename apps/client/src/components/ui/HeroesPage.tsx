@@ -4,7 +4,7 @@ import type { HeroId } from '@voxel-strike/shared';
 import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { HeroIcon } from './HeroIcons';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
-import { ABILITY_COLORS, HERO_COLORS } from '../../styles/colorTokens';
+import { HERO_COLORS, SKILL_RARITY_COLORS } from '../../styles/colorTokens';
 
 const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((module) => ({
   default: module.FeaturedHeroPreview,
@@ -159,9 +159,9 @@ function QuickStat({ label, value }: { label: string; value: number }) {
   );
 }
 
-function AbilityCard({ item, color }: { item: HeroSkillItem; color: string }) {
-  const isClick = item.tone === 'click';
-  const isUltimate = item.tone === 'ultimate';
+function AbilityCard({ item }: { item: HeroSkillItem; color: string }) {
+  const rarity = item.rarity ?? 'common';
+  const rc = SKILL_RARITY_COLORS[rarity].hex;
   const metaPills = getMetaPills(item);
 
   return (
@@ -170,43 +170,39 @@ function AbilityCard({ item, color }: { item: HeroSkillItem; color: string }) {
       tabIndex={metaPills.length > 0 ? 0 : undefined}
       style={{
         ...GLASS_CARD_STYLE,
-        background: isUltimate
-          ? `linear-gradient(135deg, ${ABILITY_COLORS.ultimatePanelStart}, rgb(var(--color-strike-surface) / 0.46) 66%)`
-          : isClick
-            ? `linear-gradient(135deg, ${color}18, rgb(var(--color-strike-surface) / 0.46) 58%)`
-            : 'linear-gradient(135deg, rgba(255,255,255,0.038), rgb(var(--color-strike-surface) / 0.4))',
-        border: '1px solid rgba(255,255,255,0.13)',
-        boxShadow: isUltimate
-          ? `0 12px 34px rgba(0,0,0,0.2), 0 0 22px ${ABILITY_COLORS.ultimateGlow}, inset 0 1px 0 rgba(255,255,255,0.1)`
-          : '0 12px 30px rgba(0,0,0,0.16), inset 0 1px 0 rgba(255,255,255,0.08)',
+        background: `linear-gradient(135deg, ${rc}1f, rgb(var(--color-strike-surface) / 0.5) 62%)`,
+        border: `1px solid ${rc}3d`,
+        boxShadow: `0 12px 30px rgba(0,0,0,0.18), 0 0 18px ${rc}1f, inset 0 1px 0 rgba(255,255,255,0.08)`,
       }}
     >
       <div className="absolute inset-x-0 top-0 h-px bg-white/15" />
       <div
-        className="absolute inset-y-0 left-0 w-px opacity-70"
+        className="absolute inset-y-0 left-0 w-px opacity-80"
         style={{
-          background: `linear-gradient(180deg, transparent, ${isUltimate ? ABILITY_COLORS.ultimate : color}66, transparent)`,
+          background: `linear-gradient(180deg, transparent, ${rc}b3, transparent)`,
         }}
       />
       <div className="relative p-3">
         <div className="flex items-start gap-3">
-          <HeroSkillIcon item={item} color={color} />
+          <HeroSkillIcon item={item} />
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <InputTag color={isUltimate ? ABILITY_COLORS.ultimate : color}>{item.input}</InputTag>
+              <InputTag color={rc}>{item.input}</InputTag>
               <h4 className="font-display text-white text-[15px] leading-none truncate">{item.name}</h4>
+              <span
+                className="ml-auto shrink-0 rounded px-1.5 py-0.5 font-body text-[8px] font-extrabold uppercase leading-none tracking-wide"
+                style={{ color: rc, background: `${rc}1f`, border: `1px solid ${rc}59` }}
+              >
+                {rarity}
+              </span>
             </div>
             <p className="mt-1 text-white/70 text-[11px] font-body leading-snug">{item.description}</p>
 
             {metaPills.length > 0 && (
               <div className="hero-ability-meta flex flex-wrap items-center gap-1.5">
                 {metaPills.map((pill, index) => (
-                  <MetaPill
-                    key={pill}
-                    color={isUltimate ? ABILITY_COLORS.ultimate : color}
-                    index={index}
-                  >
+                  <MetaPill key={pill} color={rc} index={index}>
                     {pill}
                   </MetaPill>
                 ))}

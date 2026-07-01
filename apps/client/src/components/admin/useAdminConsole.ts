@@ -3,9 +3,12 @@ import { AdminApiError, adminGet, adminPost } from './api';
 import type {
   AccountActionRequest,
   AdminOverview,
+  MissionDefinitionRequest,
+  MissionReorderRequest,
   RankedEntryGateUpdate,
   RankedSeasonUpdate,
   RewardEconomyUpdate,
+  SeasonTopTenPayoutRequest,
   SkinShopItemUpdate,
   SkinShopSettingsUpdate,
   UpdateRankRequest,
@@ -55,7 +58,13 @@ export interface UseAdminConsole {
   removeGlobalNotification: () => Promise<MutationResult>;
   saveRankedSeason: (body: RankedSeasonUpdate) => Promise<MutationResult>;
   saveRankedEntryGate: (body: RankedEntryGateUpdate) => Promise<MutationResult>;
+  createMission: (body: MissionDefinitionRequest) => Promise<MutationResult>;
+  saveMission: (missionId: string, body: MissionDefinitionRequest) => Promise<MutationResult>;
+  archiveMission: (missionId: string) => Promise<MutationResult>;
+  duplicateMission: (missionId: string) => Promise<MutationResult>;
+  reorderMissions: (body: MissionReorderRequest) => Promise<MutationResult>;
   saveRewardEconomy: (body: RewardEconomyUpdate) => Promise<MutationResult>;
+  settleSeasonTopTenPayout: (body: SeasonTopTenPayoutRequest) => Promise<MutationResult>;
   setGoldenDistributionMode: (mode: 'manual' | 'auto') => Promise<MutationResult>;
   distributeGoldenReward: (rewardId: string) => Promise<MutationResult>;
   saveSkinShopSettings: (body: SkinShopSettingsUpdate) => Promise<MutationResult>;
@@ -221,9 +230,53 @@ export function useAdminConsole(): UseAdminConsole {
     [runMutation]
   );
 
+  const createMission = useCallback(
+    (body: MissionDefinitionRequest) =>
+      runMutation('Mission', (csrf) => adminPost('/missions', body, csrf)),
+    [runMutation]
+  );
+
+  const saveMission = useCallback(
+    (missionId: string, body: MissionDefinitionRequest) =>
+      runMutation('Mission', (csrf) =>
+        adminPost(`/missions/${encodeURIComponent(missionId)}`, body, csrf)
+      ),
+    [runMutation]
+  );
+
+  const archiveMission = useCallback(
+    (missionId: string) =>
+      runMutation('Mission archive', (csrf) =>
+        adminPost(`/missions/${encodeURIComponent(missionId)}/archive`, {}, csrf)
+      ),
+    [runMutation]
+  );
+
+  const duplicateMission = useCallback(
+    (missionId: string) =>
+      runMutation('Mission duplicate', (csrf) =>
+        adminPost(`/missions/${encodeURIComponent(missionId)}/duplicate`, {}, csrf)
+      ),
+    [runMutation]
+  );
+
+  const reorderMissions = useCallback(
+    (body: MissionReorderRequest) =>
+      runMutation('Mission order', (csrf) => adminPost('/missions/reorder', body, csrf)),
+    [runMutation]
+  );
+
   const saveRewardEconomy = useCallback(
     (body: RewardEconomyUpdate) =>
       runMutation('Reward economy', (csrf) => adminPost('/reward-economy', body, csrf)),
+    [runMutation]
+  );
+
+  const settleSeasonTopTenPayout = useCallback(
+    (body: SeasonTopTenPayoutRequest) =>
+      runMutation('Season top 10 payout', (csrf) =>
+        adminPost('/reward-economy/season-top-10', body, csrf)
+      ),
     [runMutation]
   );
 
@@ -277,7 +330,13 @@ export function useAdminConsole(): UseAdminConsole {
     removeGlobalNotification,
     saveRankedSeason,
     saveRankedEntryGate,
+    createMission,
+    saveMission,
+    archiveMission,
+    duplicateMission,
+    reorderMissions,
     saveRewardEconomy,
+    settleSeasonTopTenPayout,
     setGoldenDistributionMode,
     distributeGoldenReward,
     saveSkinShopSettings,

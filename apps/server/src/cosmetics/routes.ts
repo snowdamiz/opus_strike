@@ -95,7 +95,7 @@ router.put('/loadouts/:heroId', async (req, res) => {
     }
     res.json(await updateUserHeroLoadout({ userId: user.id, heroId, skinId }));
   } catch (error) {
-    sendCosmeticsError(res, error, 'Failed to update loadout');
+    sendCosmeticsError(res, error, 'Failed to update skin selection');
   }
 });
 

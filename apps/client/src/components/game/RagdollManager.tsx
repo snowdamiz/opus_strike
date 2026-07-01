@@ -18,7 +18,7 @@ import {
   EMPTY_TEAM_ACCENT_PARTS,
 } from '../../model-system/heroBodyManifests';
 import { resolveHeroSkinModel } from '../../model-system/heroSkinModelResolver';
-import { groupHeroBodyRenderParts } from '../../model-system/heroBodyRenderParts';
+import { getHeroBodyRenderParts } from '../../model-system/heroBodyRenderParts';
 import type {
   HeroBoneName,
   MaterialKind,
@@ -414,9 +414,14 @@ function getRagdollRenderResources(heroId: HeroId, skinId: HeroSkinId): RagdollR
   if (cached) return cached;
 
   const manifest = resolved.bodyManifest;
+  const renderParts = getHeroBodyRenderParts(manifest.parts);
+  const renderTeamAccentParts = getHeroBodyRenderParts(
+    manifest.teamAccentParts ?? EMPTY_TEAM_ACCENT_PARTS,
+    renderParts
+  );
   const resources: RagdollRenderResources = {
-    riggedPartsByBone: groupHeroBodyRenderParts(manifest.parts),
-    riggedTeamAccentPartsByBone: groupRiggedParts(manifest.teamAccentParts ?? EMPTY_TEAM_ACCENT_PARTS),
+    riggedPartsByBone: groupRiggedParts(renderParts),
+    riggedTeamAccentPartsByBone: groupRiggedParts(renderTeamAccentParts),
     baseMaterialByKind: createRagdollBaseMaterials(heroId, resolved.skinId),
   };
   ragdollRenderResourcesBySkin.set(resolved.skinId, resources);

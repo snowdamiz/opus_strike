@@ -16,6 +16,7 @@ export * from './types/team.js';
 export * from './types/party.js';
 export * from './types/modelSystem.js';
 export * from './types/skins.js';
+export * from './types/dailyMissions.js';
 
 // Constants
 export * from './constants/game.js';

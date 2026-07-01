@@ -116,7 +116,7 @@ export function Minimap() {
   return (
     <div
       ref={containerRef}
-      className="absolute left-3 top-3 sm:left-4 sm:top-4 pointer-events-none z-[125] aspect-square w-[clamp(7.75rem,13vw,10.75rem)] select-none"
+      className="hud-minimap absolute left-3 top-3 sm:left-4 sm:top-4 pointer-events-none z-[125] aspect-square w-[clamp(7.75rem,13vw,10.75rem)] select-none"
       aria-hidden="true"
     >
       <div

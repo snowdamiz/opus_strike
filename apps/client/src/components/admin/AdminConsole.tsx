@@ -10,6 +10,7 @@ import {
   Server,
   ShieldAlert,
   ShieldCheck,
+  Target,
   Users,
   X,
 } from 'lucide-react';
@@ -23,6 +24,7 @@ import { StatusDot } from './common';
 import { formatRelativeTime, truncateAddress } from './format';
 import { OverviewSection } from './sections/OverviewSection';
 import { LiveOpsSection } from './sections/LiveOpsSection';
+import { MissionsSection } from './sections/MissionsSection';
 import { PlayersSection } from './sections/PlayersSection';
 import { EconomySection } from './sections/EconomySection';
 import { InfrastructureSection } from './sections/InfrastructureSection';
@@ -37,6 +39,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'live-ops', label: 'Live Ops', icon: Radio },
+  { id: 'missions', label: 'Missions', icon: Target },
   { id: 'players', label: 'Players', icon: Users },
   { id: 'economy', label: 'Economy', icon: Coins },
   { id: 'infrastructure', label: 'Infrastructure', icon: Server },
@@ -58,8 +61,11 @@ export function AdminConsole() {
       (r) => r.status === 'pending' || r.status === 'failed'
     ).length;
     const warnings = overview?.diagnostics?.warnings?.length ?? 0;
+    const missionWarnings = (overview?.missions?.summary.failedGrants ?? 0)
+      + (overview?.missions?.summary.pendingTokenPayouts ?? 0);
     return {
       players: openReports,
+      missions: missionWarnings,
       economy: pendingGolden,
       infrastructure: warnings,
     } as Partial<Record<SectionId, number>>;
@@ -72,6 +78,8 @@ export function AdminConsole() {
         return <OverviewSection {...props} />;
       case 'live-ops':
         return <LiveOpsSection {...props} />;
+      case 'missions':
+        return <MissionsSection {...props} />;
       case 'players':
         return <PlayersSection {...props} />;
       case 'economy':

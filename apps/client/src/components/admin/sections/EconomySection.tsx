@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Coins, Gift, Sparkles, ShoppingBag, Loader2, Send } from 'lucide-react';
+import { Coins, Gift, Loader2, Send, ShoppingBag, Sparkles } from 'lucide-react';
 import type { HeroSkinRarity } from '@voxel-strike/shared';
 import type { SectionProps } from '../section';
 import type {
@@ -121,6 +121,15 @@ function num(value: string): number {
 function str(value: string | number | null | undefined): string {
   return value == null ? '' : String(value);
 }
+function positiveIntegerText(value: string): boolean {
+  const normalized = value.trim();
+  if (!/^[0-9]+$/.test(normalized)) return false;
+  try {
+    return BigInt(normalized) > 0n;
+  } catch {
+    return false;
+  }
+}
 
 /* ----------------------------- Rewards Tab -------------------------- */
 
@@ -137,9 +146,6 @@ interface RewardsForm {
   maxMatchPayoutLamports: string;
   treasuryReserveLamports: string;
   payoutBatchSize: string;
-  weeklyEnabled: boolean;
-  weeklyPoolLamports: string;
-  weeklyTopPlayers: string;
   platformFeeBps: string;
 }
 
@@ -160,9 +166,6 @@ function buildRewardsForm(
     maxMatchPayoutLamports: str(rewards.maxMatchPayoutLamports),
     treasuryReserveLamports: str(rewards.treasuryReserveLamports),
     payoutBatchSize: str(rewards.payoutBatchSize),
-    weeklyEnabled: rewards.weeklyEnabled,
-    weeklyPoolLamports: str(rewards.weeklyPoolLamports),
-    weeklyTopPlayers: str(rewards.weeklyTopPlayers),
     platformFeeBps: str(platformFeeBps),
   };
 }
@@ -170,6 +173,7 @@ function buildRewardsForm(
 function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
   const overview = c.overview;
   const economy = overview?.rewardEconomy;
+  const rankedSeason = overview?.rankedSeason;
   const tokenSymbol = economy?.rewardTokenSymbol ?? null;
   const tokenLabel = tokenSymbol ? ` (${tokenSymbol})` : '';
 
@@ -180,11 +184,22 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
     )
   );
   const [saving, setSaving] = React.useState(false);
+  const [settlingSeasonTopTen, setSettlingSeasonTopTen] = React.useState(false);
+  const [seasonTopTenAmount, setSeasonTopTenAmount] = React.useState('');
+  const [seasonTopTenNumber, setSeasonTopTenNumber] = React.useState(
+    rankedSeason?.seasonNumber != null ? String(rankedSeason.seasonNumber) : '1'
+  );
 
   React.useEffect(() => {
     if (!economy) return;
     setForm(buildRewardsForm(economy.playerRewards, economy.wagers?.platformFeeBps ?? 0));
   }, [economy?.playerRewards, economy?.wagers]);
+
+  React.useEffect(() => {
+    if (rankedSeason?.seasonNumber != null) {
+      setSeasonTopTenNumber(String(rankedSeason.seasonNumber));
+    }
+  }, [rankedSeason?.seasonNumber]);
 
   const set = <K extends keyof RewardsForm>(key: K, value: RewardsForm[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -208,9 +223,6 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
           maxMatchPayoutLamports: num(form.maxMatchPayoutLamports),
           treasuryReserveLamports: num(form.treasuryReserveLamports),
           payoutBatchSize: num(form.payoutBatchSize),
-          weeklyEnabled: form.weeklyEnabled,
-          weeklyPoolLamports: num(form.weeklyPoolLamports),
-          weeklyTopPlayers: num(form.weeklyTopPlayers),
         },
         wagers: { platformFeeBps: num(form.platformFeeBps) },
       });
@@ -219,9 +231,30 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
     }
   };
 
+  const onSettleSeasonTopTen = async () => {
+    if (!rankedSeason) return;
+    setSettlingSeasonTopTen(true);
+    try {
+      await c.settleSeasonTopTenPayout({
+        mode: rankedSeason.mode,
+        seasonNumber: Math.max(1, Math.floor(num(seasonTopTenNumber))),
+        amountLamports: seasonTopTenAmount.trim(),
+      });
+    } finally {
+      setSettlingSeasonTopTen(false);
+    }
+  };
+
   const unitHint = tokenSymbol
     ? `Integer ${tokenSymbol} base units.`
     : 'Integer token base units.';
+  const seasonTopTenSeasonNumber = num(seasonTopTenNumber);
+  const canSettleSeasonTopTen = Boolean(
+    rankedSeason
+    && positiveIntegerText(seasonTopTenAmount)
+    && Number.isInteger(seasonTopTenSeasonNumber)
+    && seasonTopTenSeasonNumber > 0
+  );
 
   return (
     <div className="space-y-6">
@@ -333,30 +366,39 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
 
           <Separator />
 
-          {/* Weekly Pool */}
+          {/* Season Top 10 */}
           <div>
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex items-center justify-between gap-4">
               <h4 className="text-xs font-semibold uppercase tracking-wide text-white/50">
-                Weekly Pool
+                Season Top 10
               </h4>
-              <Switch
-                checked={form.weeklyEnabled}
-                onCheckedChange={(v) => set('weeklyEnabled', v)}
-              />
+              {rankedSeason ? <Badge variant="secondary">{rankedSeason.label}</Badge> : null}
             </div>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               <NumberField
-                label={`Weekly Prize Pool${tokenLabel}`}
-                value={form.weeklyPoolLamports}
-                onChange={(v) => set('weeklyPoolLamports', v)}
+                label={`Per-Player Payout${tokenLabel}`}
+                value={seasonTopTenAmount}
+                onChange={setSeasonTopTenAmount}
                 hint={unitHint}
               />
               <NumberField
-                label="Paid Placements"
-                value={form.weeklyTopPlayers}
-                onChange={(v) => set('weeklyTopPlayers', v)}
-                hint="Top players paid each week."
+                label="Season Number"
+                value={seasonTopTenNumber}
+                onChange={setSeasonTopTenNumber}
+                hint="Pays the ranked top 10 for this season."
               />
+              <div className="flex items-end">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={onSettleSeasonTopTen}
+                  disabled={settlingSeasonTopTen || !canSettleSeasonTopTen}
+                  className="w-full"
+                >
+                  {settlingSeasonTopTen ? <Loader2 className="animate-spin" /> : <Send />}
+                  Create Payouts
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -793,7 +835,7 @@ function SkinItemModelPreview({ item }: { item: SkinShopItem }) {
   return (
     <div ref={previewRef} className={cn('admin-skin-preview-frame', skinRarityClass(skin.rarity))} aria-hidden="true">
       <SkinRarityChrome />
-      <div className="loadout-skin-preview-button">
+      <div className="skins-preview-button">
         {shouldMountPreview ? (
           <React.Suspense fallback={null}>
             <AdminHeroPreviewCanvas
@@ -804,7 +846,7 @@ function SkinItemModelPreview({ item }: { item: SkinShopItem }) {
               idleAnimation={false}
               showShadow={false}
               initialYaw={Math.PI - 0.28}
-              className="loadout-skin-card-preview admin-skin-card-preview"
+              className="skins-card-preview admin-skin-card-preview"
             />
           </React.Suspense>
         ) : (
@@ -863,7 +905,7 @@ function SkinItemCard({
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <div className="text-sm font-semibold text-white">{displayName}</div>
-                <span className={cn('loadout-rarity-chip admin-skin-rarity-chip', rarityClass)}>
+                <span className={cn('skins-rarity-chip admin-skin-rarity-chip', rarityClass)}>
                   {skin.rarity}
                 </span>
               </div>

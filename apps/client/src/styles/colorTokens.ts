@@ -31,6 +31,15 @@ export const HERO_COLORS = {
   chronos: palette.chronos.hex,
 } satisfies Record<HeroId, string>;
 
+// Rarity tier colors shared by every skill surface (loadout, hero kit, HUD).
+// `rgb` is a space-separated triplet for use inside rgb(var / alpha) CSS.
+export const SKILL_RARITY_COLORS = {
+  common: { hex: '#94a3b8', rgb: '148 163 184' },
+  epic: { hex: '#a78bfa', rgb: '167 139 250' },
+  unique: { hex: '#22d3ee', rgb: '34 211 238' },
+  legendary: { hex: '#facc15', rgb: '250 204 21' },
+} as const;
+
 export const HERO_PREVIEW_COLORS = {
   neutralShadow: '#05070a',
   platformBase: '#151922',

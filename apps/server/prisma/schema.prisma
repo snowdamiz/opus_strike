@@ -88,7 +88,8 @@ enum GoldenBiomeRewardDistributionMode {
 enum PlayerRewardKind {
   daily_ranked_drip
   objective_bounty
-  weekly_leaderboard
+  season_top_10
+  daily_mission
 }
 
 enum PlayerRewardStatus {
@@ -156,6 +157,29 @@ enum SkinPurchaseIntentStatus {
   expired
 }
 
+enum MissionRewardType {
+  sol
+  game_token
+  skin
+}
+
+enum MissionRewardGrantStatus {
+  pending
+  processing
+  granted
+  failed
+  canceled
+}
+
+enum GameTokenPayoutStatus {
+  pending
+  processing
+  submitted
+  granted
+  failed
+  canceled
+}
+
 model User {
   id                     String                  @id @default(cuid())
   walletAddress          String?                 @unique
@@ -183,6 +207,10 @@ model User {
   heroLoadouts           UserHeroLoadout[]
   playerRewards          PlayerReward[]
   playerRewardPayouts    PlayerRewardPayout[]
+  dailyMissionProgress   UserDailyMissionProgress[]
+  dailyMissionContributions UserDailyMissionContribution[]
+  missionRewardGrants    MissionRewardGrant[]
+  gameTokenPayouts       GameTokenPayout[]
 
   // Player stats (optional - can expand later)
   totalGames                Int       @default(0)
@@ -403,6 +431,17 @@ model UserHeroLoadout {
   @@index([selectedSkinId])
 }
 
+// Singleton counter backing the "first 50 ranked players" golden founder reward.
+// Claimed via an atomic conditional increment so concurrent match finalizations
+// can never grant more than maxClaims founder sets.
+model RankedFounderReward {
+  id           String   @id @default("ranked_founder_golden")
+  claimedCount Int      @default(0)
+  maxClaims    Int      @default(50)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
 model PersistentParty {
   id             String   @id
   roomId         String   @unique
@@ -423,6 +462,7 @@ model GameMatch {
   roomId                   String
   lobbyId                  String?
   matchMode                MatchMode @default(custom)
+  gameplayMode             String    @default("capture_the_flag")
   mapSeed                  BigInt
   mapThemeId               String    @default("standard")
   startedAt                DateTime
@@ -440,10 +480,12 @@ model GameMatch {
 
   participants GameMatchParticipant[]
   playerRewards PlayerReward[]
+  killEvents GameMatchKillEvent[]
 
   @@index([roomId])
   @@index([lobbyId])
   @@index([matchMode])
+  @@index([gameplayMode])
   @@index([mapThemeId])
   @@index([startedAt])
   @@index([winningTeam])
@@ -451,6 +493,32 @@ model GameMatch {
   @@index([antiCheatIntegrityStatus])
   @@index([antiCheatReviewRequired])
   @@index([rankedOutcomeStatus])
+}
+
+model GameMatchKillEvent {
+  id                    String   @id @default(cuid())
+  matchId               String
+  killerUserId          String?
+  killerPlayerSessionId String?
+  victimUserId          String?
+  victimPlayerSessionId String
+  killerHeroId          String?
+  victimHeroId          String?
+  abilityId             String?
+  damageType            String?
+  victimHadFlag         Boolean  @default(false)
+  occurredAt            DateTime
+  createdAt             DateTime @default(now())
+
+  match GameMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@index([matchId, occurredAt])
+  @@index([killerUserId, occurredAt])
+  @@index([victimUserId, occurredAt])
+  @@index([killerHeroId, occurredAt])
+  @@index([victimHeroId, occurredAt])
+  @@index([abilityId, occurredAt])
+  @@index([victimHadFlag, occurredAt])
 }
 
 model GameMatchParticipant {
@@ -701,9 +769,6 @@ model PlayerRewardSettings {
   maxMatchPayoutLamports      BigInt   @default(250000)
   treasuryReserveLamports     BigInt   @default(1000000000)
   payoutBatchSize             Int      @default(100)
-  weeklyEnabled               Boolean  @default(true)
-  weeklyPoolLamports          BigInt   @default(1000000)
-  weeklyTopPlayers            Int      @default(10)
   updatedByUserId             String?
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
@@ -725,15 +790,139 @@ model PlayerReward {
   updatedAt       DateTime           @updatedAt
   paidAt          DateTime?
 
-  user   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  match  GameMatch?          @relation(fields: [matchId], references: [id], onDelete: SetNull)
-  payout PlayerRewardPayout? @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+  user                 User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  match                GameMatch?           @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  payout               PlayerRewardPayout?  @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+  missionRewardGrants  MissionRewardGrant[]
 
   @@index([userId, status, createdAt])
   @@index([kind, createdAt])
   @@index([matchId])
   @@index([payoutId])
   @@index([status, createdAt])
+}
+
+model DailyMissionDefinition {
+  id              String   @id @default(cuid())
+  displayName     String
+  description     String   @default("")
+  enabled         Boolean  @default(true)
+  sortOrder       Int      @default(0)
+  activeStartsAt  DateTime?
+  activeEndsAt    DateTime?
+  resetPolicy     String   @default("utc")
+  criteria        Json
+  rewards         Json
+  eligibility     Json
+  createdByUserId String?
+  updatedByUserId String?
+  archivedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  progress      UserDailyMissionProgress[]
+  contributions UserDailyMissionContribution[]
+  rewardGrants  MissionRewardGrant[]
+
+  @@index([enabled, archivedAt, sortOrder])
+  @@index([activeStartsAt, activeEndsAt])
+  @@index([archivedAt, updatedAt])
+}
+
+model UserDailyMissionProgress {
+  id                 String    @id @default(cuid())
+  userId             String
+  missionId          String
+  dayKey             String
+  progress           Json
+  completedAt        DateTime?
+  grantedAt          DateTime?
+  lastContributingMatchId String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user    User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mission DailyMissionDefinition @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, missionId, dayKey])
+  @@index([userId, dayKey])
+  @@index([missionId, dayKey])
+  @@index([completedAt])
+  @@index([grantedAt])
+}
+
+model UserDailyMissionContribution {
+  id        String   @id @default(cuid())
+  userId    String
+  missionId String
+  dayKey    String
+  matchId   String
+  createdAt DateTime @default(now())
+
+  user    User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mission DailyMissionDefinition @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, missionId, dayKey, matchId])
+  @@index([matchId])
+  @@index([missionId, dayKey])
+}
+
+model MissionRewardGrant {
+  id              String                   @id @default(cuid())
+  userId          String
+  missionId       String
+  dayKey          String
+  rewardType      MissionRewardType
+  amountBaseUnits BigInt?
+  skinId          String?
+  status          MissionRewardGrantStatus @default(pending)
+  idempotencyKey  String                   @unique
+  playerRewardId  String?
+  tokenPayoutId   String?                  @unique
+  metadata        Json?
+  lastError       String?
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  grantedAt       DateTime?
+
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mission      DailyMissionDefinition @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  playerReward PlayerReward?          @relation(fields: [playerRewardId], references: [id], onDelete: SetNull)
+  tokenPayout  GameTokenPayout?       @relation(fields: [tokenPayoutId], references: [id], onDelete: SetNull)
+
+  @@index([userId, dayKey])
+  @@index([missionId, dayKey])
+  @@index([rewardType, status])
+  @@index([status, createdAt])
+}
+
+model GameTokenPayout {
+  id                   String                @id @default(cuid())
+  userId               String
+  walletAddress        String?
+  tokenMintAddress     String
+  tokenSymbol          String
+  tokenAmountBaseUnits BigInt
+  tokenDecimals        Int?
+  treasuryTokenAccount String?
+  recipientTokenAccount String?
+  status               GameTokenPayoutStatus @default(pending)
+  signature            String?               @unique
+  idempotencyKey       String                @unique
+  attemptCount         Int                   @default(0)
+  lastError            String?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  submittedAt          DateTime?
+  grantedAt            DateTime?
+  failedAt             DateTime?
+
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  missionRewardGrant  MissionRewardGrant?
+
+  @@index([userId, status, createdAt])
+  @@index([status, createdAt])
+  @@index([tokenMintAddress])
 }
 
 model PlayerRewardPayout {

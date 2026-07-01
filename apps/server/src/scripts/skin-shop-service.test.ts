@@ -215,11 +215,10 @@ async function runSkinShopServiceTests() {
   const previousSolanaRpcUrl = process.env.SOLANA_RPC_URL;
   const previousGameTokenMint = process.env.GAME_TOKEN_MINT;
   const previousGameTokenSymbol = process.env.GAME_TOKEN_SYMBOL;
+  const previousSkinShopTokenMint = process.env.SKIN_SHOP_TOKEN_MINT;
+  const previousSkinShopTokenSymbol = process.env.SKIN_SHOP_TOKEN_SYMBOL;
   process.env.WAGER_TREASURY_WALLET = 'Treasury1111111111111111111111111111111111';
   process.env.SOLANA_RPC_URL = 'https://example.invalid/rpc';
-  // No game token configured yet — the shop starts without a usable token.
-  delete process.env.GAME_TOKEN_MINT;
-  delete process.env.GAME_TOKEN_SYMBOL;
 
   const fake = createFakePrisma();
   (globalThis as any).prisma = fake.prisma;
@@ -231,6 +230,16 @@ async function runSkinShopServiceTests() {
     updateSkinShopSettings,
     updateUserHeroLoadout,
   } = await import('../cosmetics/skinShopService');
+
+  // No game token configured yet — the shop starts without a usable token.
+  // Clear these AFTER importing the service: the import pulls in Prisma, which
+  // loads the developer's .env into process.env and would otherwise re-populate
+  // the token vars. getGameTokenConfig() also honours the legacy SKIN_SHOP_TOKEN_*
+  // fallbacks, so clear those too to keep the test hermetic.
+  delete process.env.GAME_TOKEN_MINT;
+  delete process.env.GAME_TOKEN_SYMBOL;
+  delete process.env.SKIN_SHOP_TOKEN_MINT;
+  delete process.env.SKIN_SHOP_TOKEN_SYMBOL;
 
   const shop = await updateSkinShopSettings({
     enabled: false,
@@ -414,6 +423,16 @@ async function runSkinShopServiceTests() {
     delete process.env.GAME_TOKEN_SYMBOL;
   } else {
     process.env.GAME_TOKEN_SYMBOL = previousGameTokenSymbol;
+  }
+  if (previousSkinShopTokenMint === undefined) {
+    delete process.env.SKIN_SHOP_TOKEN_MINT;
+  } else {
+    process.env.SKIN_SHOP_TOKEN_MINT = previousSkinShopTokenMint;
+  }
+  if (previousSkinShopTokenSymbol === undefined) {
+    delete process.env.SKIN_SHOP_TOKEN_SYMBOL;
+  } else {
+    process.env.SKIN_SHOP_TOKEN_SYMBOL = previousSkinShopTokenSymbol;
   }
 }
 

@@ -9,6 +9,7 @@ import {
   DEFAULT_COMPETITIVE_RATING,
   RANK_DEFINITIONS,
   getRankFromRating,
+  type DailyMissionAdminOverview,
 } from '@voxel-strike/shared';
 import type { ColyseusRuntimeConfig } from '../config/colyseus';
 import { loggers } from '../utils/logger';
@@ -45,6 +46,10 @@ import {
   removeGlobalNotification,
   GLOBAL_NOTIFICATION_MAX_MESSAGE_LENGTH,
 } from '../notifications/globalNotificationService';
+import {
+  dailyMissionService,
+} from '../missions/service';
+import { MissionValidationError } from '../missions/validation';
 import {
   getRankedSeason,
   setRankedSeason,
@@ -139,6 +144,7 @@ interface MachineOverview {
 type AdminRankedSeason = RankedSeasonAdminView;
 type AdminRankedEntryGate = RankedEntryGateAdminView;
 type AdminSkinShop = SkinShopAdminOverview;
+type AdminMissions = DailyMissionAdminOverview;
 
 function adminWallet(): string | null {
   const wallet = process.env.ADMIN_WALLET?.trim();
@@ -755,7 +761,7 @@ function summarizeLobbyRoom(room: AdminRoomListing, processSnapshots: Map<string
 
 async function collectAdminOverview(options: AdminRouterOptions, adminUser: AdminUser) {
   const generatedAtMs = Date.now();
-  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, rewardEconomySettings, goldenBiomeRewards, globalNotification, rankedSeason, rankedEntryGate, skinShop] = await Promise.all([
+  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, rewardEconomySettings, goldenBiomeRewards, globalNotification, rankedSeason, rankedEntryGate, missions, skinShop] = await Promise.all([
     pingRedis(options.redis),
     queryRooms(options.matchMaker, 'game_room'),
     queryRooms(options.matchMaker, 'lobby_room'),
@@ -769,6 +775,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     getGlobalNotification(),
     getRankedSeason(),
     getRankedEntryGateSettings(),
+    dailyMissionService.getAdminOverview(),
     getSkinShopAdminOverview(),
   ]);
 
@@ -895,11 +902,16 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     globalNotification,
     rankedSeason: rankedSeason satisfies AdminRankedSeason,
     rankedEntryGate: rankedEntryGate satisfies AdminRankedEntryGate,
+    missions: missions satisfies AdminMissions,
     skinShop: skinShop satisfies AdminSkinShop,
   };
 }
 
 function sendAdminMutationError(res: Response, error: unknown): void {
+  if (error instanceof MissionValidationError) {
+    res.status(error.statusCode).json({ error: error.message });
+    return;
+  }
   if (error instanceof SkinShopServiceError) {
     res.status(error.statusCode).json({ error: error.message });
     return;
@@ -920,6 +932,73 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         error: error instanceof Error ? error.message : String(error),
       });
       res.status(500).json({ error: 'Failed to collect admin overview' });
+    }
+  });
+
+  router.get('/api/missions', ensureAdmin, async (_req, res) => {
+    noStore(res);
+    try {
+      res.json(await dailyMissionService.getAdminOverview());
+    } catch (error) {
+      loggers.room.error('Failed to collect mission overview', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: 'Failed to collect mission overview' });
+    }
+  });
+
+  router.post('/api/missions', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    try {
+      const mission = await dailyMissionService.createMission(req.body, adminUser.id);
+      res.json({ ok: true, mission });
+    } catch (error) {
+      sendAdminMutationError(res, error);
+    }
+  });
+
+  router.post('/api/missions/reorder', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    try {
+      const missions = await dailyMissionService.reorderMissions(req.body, adminUser.id);
+      res.json({ ok: true, missions });
+    } catch (error) {
+      sendAdminMutationError(res, error);
+    }
+  });
+
+  router.post('/api/missions/:missionId', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    try {
+      const mission = await dailyMissionService.updateMission(req.params.missionId, req.body, adminUser.id);
+      res.json({ ok: true, mission });
+    } catch (error) {
+      sendAdminMutationError(res, error);
+    }
+  });
+
+  router.post('/api/missions/:missionId/archive', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    try {
+      const mission = await dailyMissionService.archiveMission(req.params.missionId, adminUser.id);
+      res.json({ ok: true, mission });
+    } catch (error) {
+      sendAdminMutationError(res, error);
+    }
+  });
+
+  router.post('/api/missions/:missionId/duplicate', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    try {
+      const mission = await dailyMissionService.duplicateMission(req.params.missionId, adminUser.id);
+      res.json({ ok: true, mission });
+    } catch (error) {
+      sendAdminMutationError(res, error);
     }
   });
 
@@ -1072,6 +1151,23 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         ),
       ]);
       res.json({ ok: true, rewardEconomy: { playerRewards, wagers }, goldenBiome });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/reward-economy/season-top-10', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+
+    try {
+      const payout = await playerRewardService.settleSeasonTopTenRewards({
+        amountLamports: req.body?.amountLamports,
+        mode: req.body?.mode,
+        seasonNumber: req.body?.seasonNumber,
+        updatedByUserId: adminUser.id,
+      });
+      res.json({ ok: true, payout });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }

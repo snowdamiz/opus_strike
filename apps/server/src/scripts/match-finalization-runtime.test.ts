@@ -41,6 +41,7 @@ function ledger(input: Partial<MatchPersistenceLedger> = {}): MatchPersistenceLe
     winningTeam: null,
     state: 'active',
     participants: new Map(),
+    killEvents: [],
     ...input,
   };
 }
@@ -154,6 +155,8 @@ async function run(): Promise<void> {
     finalScore: { red: 3, blue: 2 },
     winningTeam: 'red',
     participants,
+    gameplayMode: 'capture_the_flag',
+    killEvents: currentLedger.killEvents,
     rankedEligible: true,
     integrityGate: gate({ reviewRequired: true, observedOnly: true, reason: 'watching', score: 12 }),
     endedAt: new Date('2026-06-10T10:15:00.000Z'),
@@ -188,6 +191,8 @@ async function run(): Promise<void> {
     finalScore: { red: 3, blue: 2 },
     winningTeam: 'red',
     participants,
+    gameplayMode: 'capture_the_flag',
+    killEvents: currentLedger.killEvents,
     rankedEligible: true,
     integrityGate: gate(),
     endedAt: new Date('2026-06-10T10:15:00.000Z'),
@@ -216,6 +221,8 @@ async function run(): Promise<void> {
     finalScore: { red: 0, blue: 1 },
     winningTeam: 'blue',
     participants: [participant()],
+    gameplayMode: 'capture_the_flag',
+    killEvents: currentLedger.killEvents,
     rankedEligible: false,
     integrityGate: gate(),
   });

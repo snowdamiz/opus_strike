@@ -172,7 +172,7 @@ export function VoiceHud() {
 
   return (
     <div
-      className="absolute z-[130] pointer-events-none select-none"
+      className="hud-voice absolute z-[130] pointer-events-none select-none"
       style={{
         left: 'clamp(0.75rem, 1.25vw, 1.125rem)',
         bottom: 'calc(clamp(0.75rem, 1.25vw, 1.125rem) + 1.35rem)',

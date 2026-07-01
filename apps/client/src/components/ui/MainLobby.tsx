@@ -23,6 +23,7 @@ import {
 } from '../../contexts/networkApi';
 import { GameDialog } from './GameDialog';
 import { GlobalChat } from './GlobalChat';
+import { DailyMissionTracker } from './DailyMissionTracker';
 import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
@@ -97,10 +98,13 @@ const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((mod
   default: module.FeaturedHeroPreview,
 })));
 const HeroesPage = lazy(() => import('./HeroesPage').then((module) => ({ default: module.HeroesPage })));
+const LoadoutTab = lazy(() => import('./LoadoutTab').then((module) => ({ default: module.LoadoutTab })));
 const StatsPage = lazy(() => import('./StatsPage').then((module) => ({ default: module.StatsPage })));
 const SettingsModal = lazy(() => import('./SettingsModal').then((module) => ({ default: module.SettingsModal })));
 const HeroPreviewCanvas = lazy(() => import('./HeroPreviewCanvas').then((module) => ({ default: module.HeroPreviewCanvas })));
 const HERO_IDLE_ANIMATION_MODE: HeroPreviewAnimationMode = 'idle';
+const PLAY_MODE_OPTIONS_BEFORE_BOT_FILL = PLAY_MODE_OPTIONS.filter((mode) => mode !== 'practice' && mode !== 'custom');
+const PLAY_MODE_OPTIONS_AFTER_BOT_FILL = PLAY_MODE_OPTIONS.filter((mode) => mode === 'practice' || mode === 'custom');
 const PLAY_PARTY_SLOT_COUNT = getPartyMaxMembersForMode('quick_play', DEFAULT_GAMEPLAY_MODE);
 const PING_ADVISORY_VISIBLE_MIN_MS = 100;
 const EMPTY_HERO_ID_SET = new Set<HeroId>();
@@ -123,7 +127,11 @@ async function transactionFromBase64(base64: string): Promise<Transaction> {
 
 async function waitForCreditedPurchase(intent: SkinPurchaseIntentSnapshot): Promise<SkinPurchaseIntentSnapshot> {
   let latest = intent;
-  for (let attempt = 0; attempt < PURCHASE_STATUS_POLL_ATTEMPTS && latest.status === 'submitted'; attempt += 1) {
+  for (
+    let attempt = 0;
+    attempt < PURCHASE_STATUS_POLL_ATTEMPTS && latest.status === 'submitted';
+    attempt += 1
+  ) {
     await sleep(PURCHASE_STATUS_POLL_MS);
     latest = await getSkinPurchaseIntent(latest.intentId);
   }
@@ -280,7 +288,8 @@ function SlopHeroesMark({ className }: { className?: string }) {
 }
 
 // Navigation tabs
-type MainTab = 'play' | 'heroes' | 'stats' | 'loadout';
+const MAIN_TABS = ['play', 'heroes', 'loadout', 'skins', 'stats'] as const;
+type MainTab = (typeof MAIN_TABS)[number];
 const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
   mode: 'season',
   seasonNumber: DEFAULT_RANKED_SEASON_NUMBER,
@@ -388,6 +397,7 @@ export function MainLobby() {
     quickPlay,
     rankedPlay,
     getRankedTokenHoldStatus,
+    startPracticeGame,
     startTutorialGame,
     ensureParty,
     joinParty,
@@ -498,13 +508,15 @@ export function MainLobby() {
     : customGameplayMode;
   const activeBotFillEnabledByMode = party?.botFillEnabledByMode ?? botFillEnabledByMode;
   const globalBotFillEnabled = isGlobalBotFillEnabled(activeBotFillEnabledByMode);
-  const customBotFillDisabled = activePlayMode === 'custom';
-  const botFillDisabledReason = customBotFillDisabled
-    ? 'Bot fill does not apply to custom lobbies'
+  const botFillDisabledForMode = activePlayMode === 'custom' || activePlayMode === 'practice';
+  const botFillDisabledReason = botFillDisabledForMode
+    ? activePlayMode === 'practice'
+      ? 'Bot fill does not apply to practice'
+      : 'Bot fill does not apply to custom lobbies'
     : isInParty && !isPartyLeader
       ? 'Party leader chooses bot fill'
       : null;
-  const displayedBotFillEnabled = customBotFillDisabled ? false : globalBotFillEnabled;
+  const displayedBotFillEnabled = botFillDisabledForMode ? false : globalBotFillEnabled;
   const activePerspectiveByMode = party?.perspectiveByMode ?? perspectiveByMode;
   const currentRank = getRankForStats(userStats);
   const soloPartyMember: PartyMemberSnapshot | null = isAuthenticated
@@ -600,7 +612,7 @@ export function MainLobby() {
 
   useEffect(() => {
     void loadSkinCatalog();
-  }, [isAuthenticated, loadSkinCatalog, user?.id]);
+  }, [isAuthenticated, loadSkinCatalog, user?.id, user?.walletAddress]);
 
   // Handle user authenticated - close modal and set user info
   useEffect(() => {
@@ -1059,6 +1071,15 @@ export function MainLobby() {
     startTutorialGame(playerName);
   };
 
+  const handlePracticePlay = () => {
+    setError(null);
+    startPracticeGame(playerName, {
+      targetPractice: true,
+      heroId: featuredHero,
+      matchPerspective: getMatchPerspectiveForPlayMode('practice', activePerspectiveByMode),
+    });
+  };
+
   const handleSkipTutorial = async () => {
     if (isSkippingTutorial) return;
 
@@ -1143,6 +1164,11 @@ export function MainLobby() {
   };
 
   const handleSelectedPlayAction = () => {
+    if (activePlayMode === 'practice') {
+      handlePracticePlay();
+      return;
+    }
+
     if (isInParty) {
       if (isPartyLeader) {
         startParty();
@@ -1198,7 +1224,7 @@ export function MainLobby() {
           </div>
 
           <div className="main-lobby-tabs flex min-w-0 items-center">
-            {(['play', 'heroes', 'stats', 'loadout'] as MainTab[]).map((tab) => (
+            {MAIN_TABS.map((tab) => (
  <button
  key={tab}
  onClick={() => { playButtonClick(); setActiveTab(tab); }}
@@ -1253,6 +1279,11 @@ export function MainLobby() {
           </div>
         </div>
       </nav>
+
+      <DailyMissionTracker
+        enabled={isAuthenticated && !isNewUser}
+        className="absolute left-4 top-[5.35rem] z-20 w-[min(23rem,calc(100vw-2rem))] sm:left-6 xl:left-8"
+      />
 
       {/* Main Content Area */}
       <div className={`menu-main ${activeTab === 'play' ? 'menu-main-play' : ''}`}>
@@ -1313,13 +1344,21 @@ export function MainLobby() {
             />
           </Suspense>
         )}
+        {activeTab === 'loadout' && (
+          <Suspense fallback={null}>
+            <LoadoutTab
+              featuredHero={featuredHero}
+              onSelectHero={handleSelectHero}
+            />
+          </Suspense>
+        )}
         {activeTab === 'stats' && (
           <Suspense fallback={null}>
             <StatsPage />
           </Suspense>
         )}
-        {activeTab === 'loadout' && (
-          <LoadoutTab
+        {activeTab === 'skins' && (
+          <SkinsTab
             featuredHero={featuredHero}
             selectedSkinId={selectedSkinId}
             skins={skinsForFeaturedHero}
@@ -1397,8 +1436,40 @@ function skinRarityClass(rarity: HeroSkinCatalogItem['rarity']): string {
   return `is-${rarity}`;
 }
 
+type SkinFilter = 'all' | 'owned' | 'available' | 'locked';
+
+const SKIN_FILTERS: { id: SkinFilter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'owned', label: 'Owned' },
+  { id: 'available', label: 'Available' },
+  { id: 'locked', label: 'Locked' },
+];
+
+// A skin is "available" when it isn't owned yet but can be purchased right now.
+// Everything else that isn't owned (unlockable founder skins, sold-out or
+// shop-disabled paid skins) falls into "locked".
+function isSkinPurchasable(skin: HeroSkinCatalogItem): boolean {
+  return skin.availability === 'paid' && !skin.purchaseDisabledReason;
+}
+
+function skinMatchesFilter(skin: HeroSkinCatalogItem, filter: SkinFilter): boolean {
+  switch (filter) {
+    case 'owned':
+      return skin.owned;
+    case 'available':
+      return !skin.owned && isSkinPurchasable(skin);
+    case 'locked':
+      return !skin.owned && !isSkinPurchasable(skin);
+    default:
+      return true;
+  }
+}
+
 function skinOwnershipLabel(skin: HeroSkinCatalogItem): string {
-  if (!skin.owned) return skin.availability === 'paid' ? formatSkinPrice(skin) : 'LOCKED';
+  if (!skin.owned) {
+    if (skin.availability === 'paid') return formatSkinPrice(skin);
+    return skin.unlockHint ? skin.unlockHint.toUpperCase() : 'LOCKED';
+  }
   if (skin.entitlementSource === 'free') return 'BASE ISSUE';
   return 'OWNED';
 }
@@ -1412,7 +1483,7 @@ function skinSupplyLabel(skin: HeroSkinCatalogItem): string | null {
   return `${(price.remainingSupply ?? 0).toLocaleString('en-US')} left`;
 }
 
-function LoadoutTab({
+function SkinsTab({
   featuredHero,
   selectedSkinId,
   skins,
@@ -1439,26 +1510,38 @@ function LoadoutTab({
 }) {
   const hero = HERO_DEFINITIONS[featuredHero];
   const [previewSkinId, setPreviewSkinId] = useState<HeroSkinId>(selectedSkinId);
+  const [skinFilter, setSkinFilter] = useState<SkinFilter>('all');
   const selectedSkin = skins.find((skin) => skin.id === selectedSkinId) ?? skins[0] ?? null;
   const previewSkin = skins.find((skin) => skin.id === previewSkinId) ?? selectedSkin;
   const stageTitle = previewSkin?.displayName ?? hero.name;
   const stageRarityClass = previewSkin ? skinRarityClass(previewSkin.rarity) : 'is-common';
+
+  const filterCounts = useMemo(() => ({
+    all: skins.length,
+    owned: skins.filter((skin) => skinMatchesFilter(skin, 'owned')).length,
+    available: skins.filter((skin) => skinMatchesFilter(skin, 'available')).length,
+    locked: skins.filter((skin) => skinMatchesFilter(skin, 'locked')).length,
+  }), [skins]);
+  const visibleSkins = useMemo(
+    () => skins.filter((skin) => skinMatchesFilter(skin, skinFilter)),
+    [skins, skinFilter],
+  );
 
   useEffect(() => {
     setPreviewSkinId(selectedSkinId);
   }, [featuredHero, selectedSkinId]);
 
   return (
-    <div className="loadout-screen menu-content-wide">
+    <div className="skins-screen menu-content-wide">
       {error && (
-        <div className="loadout-error" role="alert">
+        <div className="skins-error" role="alert">
           {error}
         </div>
       )}
 
-      <div className="loadout-workbench">
-        <aside className="loadout-roster" aria-label="Choose hero">
-          <div className="loadout-roster-list">
+      <div className="skins-workbench">
+        <aside className="skins-roster" aria-label="Choose hero">
+          <div className="skins-roster-list">
             {ALL_HERO_IDS.map((heroId) => {
               const heroDefinition = HERO_DEFINITIONS[heroId];
               const active = heroId === featuredHero;
@@ -1470,14 +1553,14 @@ function LoadoutTab({
                   type="button"
                   key={heroId}
                   onClick={() => onSelectHero(heroId)}
-                  className={`loadout-hero-tab${active ? ' is-active' : ''}`}
+                  className={`skins-hero-tab${active ? ' is-active' : ''}`}
                   aria-pressed={active}
                   title={heroDefinition.name}
                 >
-                  <HeroIcon heroId={heroId} className="loadout-hero-tab-icon" />
-                  <span className="loadout-hero-tab-copy">
-                    <span className="loadout-hero-tab-name">{heroDefinition.name}</span>
-                    <span className="loadout-hero-tab-skin">{equippedSkinName}</span>
+                  <HeroIcon heroId={heroId} className="skins-hero-tab-icon" />
+                  <span className="skins-hero-tab-copy">
+                    <span className="skins-hero-tab-name">{heroDefinition.name}</span>
+                    <span className="skins-hero-tab-skin">{equippedSkinName}</span>
                   </span>
                 </button>
               );
@@ -1485,18 +1568,18 @@ function LoadoutTab({
           </div>
         </aside>
 
-        <section className={`loadout-stage ${stageRarityClass}`} aria-label={`${hero.name} cosmetic preview`}>
-          <SkinRarityChrome className="loadout-stage-card-chrome" />
+        <section className={`skins-stage ${stageRarityClass}`} aria-label={`${hero.name} cosmetic preview`}>
+          <SkinRarityChrome className="skins-stage-card-chrome" />
 
-          <div className="loadout-stage-copy">
+          <div className="skins-stage-copy">
             <div>
-              <p className="loadout-kicker">
+              <p className="skins-kicker">
                 {previewSkin?.owned ? 'ARMORY READY' : 'PREVIEW ACCESS'}
               </p>
-              <div className="loadout-stage-title-line">
-                <h2 className="loadout-stage-title">{stageTitle}</h2>
+              <div className="skins-stage-title-line">
+                <h2 className="skins-stage-title">{stageTitle}</h2>
                 {previewSkin && (
-                  <span className={`loadout-rarity-chip ${stageRarityClass}`}>
+                  <span className={`skins-rarity-chip ${stageRarityClass}`}>
                     {previewSkin.rarity}
                   </span>
                 )}
@@ -1504,32 +1587,53 @@ function LoadoutTab({
             </div>
           </div>
 
-          <div className="loadout-stage-preview">
+          <div className="skins-stage-preview">
             <Suspense fallback={null}>
               <FeaturedHeroPreview
                 heroId={featuredHero}
                 skinId={previewSkin?.id ?? selectedSkinId}
                 initialYaw={Math.PI - 0.18}
                 animationMode={HERO_IDLE_ANIMATION_MODE}
-                className="loadout-featured-preview"
+                className="skins-featured-preview"
               />
             </Suspense>
           </div>
         </section>
 
-        <section className="loadout-skin-bay" aria-label={`${hero.name} cosmetics`}>
-          <div className="loadout-skin-list">
+        <section className="skins-bay" aria-label={`${hero.name} cosmetics`}>
+          {skins.length > 0 && (
+            <div className="skins-filter" role="group" aria-label="Filter skins">
+              {SKIN_FILTERS.map((filter) => (
+                <button
+                  type="button"
+                  key={filter.id}
+                  className={`skins-filter-chip${skinFilter === filter.id ? ' is-active' : ''}`}
+                  onClick={() => setSkinFilter(filter.id)}
+                  aria-pressed={skinFilter === filter.id}
+                >
+                  <span className="skins-filter-label">{filter.label}</span>
+                  <span className="skins-filter-count">{filterCounts[filter.id]}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="skins-list">
             {isLoading && skins.length === 0 && (
-              <div className="loadout-empty-state">
+              <div className="skins-empty-state">
                 Loading skins...
               </div>
             )}
             {!isLoading && skins.length === 0 && (
-              <div className="loadout-empty-state">
+              <div className="skins-empty-state">
                 No hero skins available.
               </div>
             )}
-            {skins.map((skin) => {
+            {skins.length > 0 && visibleSkins.length === 0 && (
+              <div className="skins-empty-state">
+                No {skinFilter} skins for {hero.name}.
+              </div>
+            )}
+            {visibleSkins.map((skin) => {
               const busy = busySkinId === skin.id;
               const equipped = skin.id === selectedSkinId;
               const previewed = skin.id === previewSkin?.id;
@@ -1539,19 +1643,19 @@ function LoadoutTab({
               return (
                 <article
                   key={skin.id}
-                  className={`loadout-skin-row ${skinRarityClass(skin.rarity)}${previewed ? ' is-previewed' : ''}${equipped ? ' is-equipped' : ''}${skin.owned ? '' : ' is-locked'}`}
+                  className={`skins-row ${skinRarityClass(skin.rarity)}${previewed ? ' is-previewed' : ''}${equipped ? ' is-equipped' : ''}${skin.owned ? '' : ' is-locked'}`}
                 >
                   <SkinRarityChrome />
 
                   <button
                     type="button"
-                    className="loadout-skin-row-hitbox"
+                    className="skins-row-hitbox"
                     onClick={() => setPreviewSkinId(skin.id)}
                     aria-label={`Preview ${skin.displayName}`}
                     aria-pressed={previewed}
                   />
 
-                  <div className="loadout-skin-preview-button" aria-hidden="true">
+                  <div className="skins-preview-button" aria-hidden="true">
                     <Suspense fallback={null}>
                       <HeroPreviewCanvas
                         heroId={skin.heroId}
@@ -1561,49 +1665,56 @@ function LoadoutTab({
                         idleAnimation={false}
                         showShadow={false}
                         initialYaw={Math.PI - 0.28}
-                        className="loadout-skin-card-preview"
+                        className="skins-card-preview"
                       />
                     </Suspense>
                   </div>
 
-                  <div className="loadout-skin-copy">
-                    <div className="loadout-skin-title-line">
+                  <div className="skins-copy">
+                    <div className="skins-title-line">
                       <h2>{skin.displayName}</h2>
-                      <span className={`loadout-rarity-chip ${skinRarityClass(skin.rarity)}`}>
+                      <span className={`skins-rarity-chip ${skinRarityClass(skin.rarity)}`}>
                         {skin.rarity}
                       </span>
                     </div>
                     <p>{skin.subtitle}</p>
-                    <div className="loadout-skin-tags">
+                    <div className="skins-tags">
                       <span>{skinOwnershipLabel(skin)}</span>
                       {supplyLabel && <span>{supplyLabel}</span>}
-                      {equipped && <span>equipped</span>}
-                      {previewed && !equipped && <span>previewing</span>}
+                      {equipped && <span className="is-status is-equipped-tag">equipped</span>}
+                      {previewed && !equipped && <span className="is-status is-previewing-tag">previewing</span>}
                     </div>
                   </div>
 
-                  <div className="loadout-skin-actions">
+                  <div className="skins-actions">
                     {skin.owned ? (
                       <button
                         type="button"
                         disabled={equipped || busy}
                         onClick={() => onEquipSkin(skin)}
-                        className="loadout-action-button is-equip"
+                        className={`skins-action-button is-equip${equipped ? ' is-equipped' : ''}`}
                       >
                         {equipped ? 'EQUIPPED' : busy ? 'EQUIPPING...' : 'EQUIP'}
                       </button>
-                    ) : (
+                    ) : skin.availability === 'paid' ? (
                       <button
                         type="button"
                         disabled={!canPurchase || busy || !isAuthenticated}
                         onClick={() => onPurchaseSkin(skin)}
-                        className="loadout-action-button is-purchase"
+                        className="skins-action-button is-purchase"
                       >
                         {busy ? 'PURCHASING...' : isAuthenticated ? formatSkinPrice(skin) : 'SIGN IN'}
                       </button>
+                    ) : (
+                      <button type="button" disabled className="skins-action-button is-locked">
+                        LOCKED
+                      </button>
+                    )}
+                    {skin.availability !== 'paid' && !skin.owned && skin.unlockHint && (
+                      <span className="skins-disabled-reason">{skin.unlockHint}</span>
                     )}
                     {disabledReason && !skin.owned && (
-                      <span className="loadout-skin-disabled-reason">{disabledReason}</span>
+                      <span className="skins-disabled-reason">{disabledReason}</span>
                     )}
                   </div>
                 </article>
@@ -1724,10 +1835,12 @@ function PlayTab({
     ? 'CHECKING...'
     : canReconnect
       ? 'RECONNECT'
-      : requiresTutorial
+      : requiresTutorial && selectedPlayMode !== 'practice'
         ? isLoading
           ? 'STARTING...'
           : 'START TUTORIAL'
+        : selectedPlayMode === 'practice'
+          ? getPlayModeActionLabel(selectedPlayMode, isLoading)
         : isInParty
           ? isPartyLeader
             ? isLoading
@@ -1740,13 +1853,14 @@ function PlayTab({
   const isRankedEligibilityBlocked = selectedPlayMode === 'ranked' &&
     !requiresTutorial &&
     rankedTokenHoldStatus?.eligible === false;
+  const isPracticePlayMode = selectedPlayMode === 'practice';
   const partySize = party?.members.length ?? 1;
   const gameplayModeForLimit = getGameplayModeForPlayMode(selectedPlayMode, customGameplayMode);
   const partyMemberLimit = getPartyMemberLimitForPlayMode(selectedPlayMode, gameplayModeForLimit);
-  const isPartyTooLargeForMode = isInParty && partySize > partyMemberLimit;
+  const isPartyTooLargeForMode = !isPracticePlayMode && isInParty && partySize > partyMemberLimit;
   const primaryDisabled = isLoading || isReconnectChecking || isSkippingTutorial || (
-    isInParty && isPartyLeader && !isPartyReadyToStart
-  ) || partyHasDuplicateHeroes || isPartyTooLargeForMode || (
+    !isPracticePlayMode && isInParty && isPartyLeader && !isPartyReadyToStart
+  ) || (!isPracticePlayMode && partyHasDuplicateHeroes) || isPartyTooLargeForMode || (
     selectedPlayMode === 'ranked' &&
     !requiresTutorial &&
     rankedSeason.mode === 'preseason'
@@ -2399,12 +2513,13 @@ function PlayActionStack({
   );
 
   const runPrimaryAction = () => {
+    const shouldStartTutorial = requiresTutorial && selectedPlayMode !== 'practice';
     playButtonClick();
     if (mobilePwaInstallRequired) {
       void onMobilePwaInstall();
     } else if (canReconnect) {
       onReconnect();
-    } else if (requiresTutorial) {
+    } else if (shouldStartTutorial) {
       onStartTutorial();
     } else {
       onPlayAction();
@@ -2481,7 +2596,7 @@ function PlayActionStack({
               {effectivePrimaryDisabledReason}
             </div>
           )}
-          {requiresTutorial && !mobilePwaInstallRequired && (
+          {requiresTutorial && selectedPlayMode !== 'practice' && !mobilePwaInstallRequired && (
             <button
               type="button"
               onClick={runSkipTutorial}
@@ -2531,52 +2646,56 @@ function PlayModeSelector({
   onSelectMode: (mode: PlayMenuMode) => void;
   onSetBotFillEnabled: (enabled: boolean) => void;
 }) {
+  const renderModeOption = (mode: PlayMenuMode) => {
+    const selected = mode === selectedPlayMode;
+    const isRanked = mode === 'ranked';
+    const locked = isRanked && (
+      rankedSeason.mode === 'preseason' ||
+      (isAuthenticated && rankedTokenHoldStatus?.eligible === false)
+    );
+    const title = getModeTitle({
+      mode,
+      isAuthenticated,
+      hasWalletAccount,
+      rankedSeason,
+      requiresTutorial,
+      rankedTokenHoldStatus,
+      rankedTokenHoldError,
+    });
+
+    return (
+      <div
+        key={mode}
+        className="play-mode-option-shell"
+      >
+        <button
+          type="button"
+          aria-pressed={selected}
+          disabled={modeReadOnly}
+          onClick={() => onSelectMode(mode)}
+          className={`play-mode-option${selected ? ' is-selected' : ''}${locked ? ' is-locked' : ''}`}
+          title={modeReadOnly ? 'Party leader chooses the mode' : title}
+        >
+          <span className="play-mode-option-icon">
+            <PlayModeIcon mode={mode} />
+          </span>
+          <span className="play-mode-option-copy">
+            <span className="play-mode-option-title">{getPlayModeLabel(mode)}</span>
+          </span>
+        </button>
+      </div>
+    );
+  };
+
   return (
     <div className="play-mode-selector" aria-label="Match mode and options">
-      {PLAY_MODE_OPTIONS.map((mode) => {
-        const selected = mode === selectedPlayMode;
-        const isRanked = mode === 'ranked';
-        const locked = isRanked && (
-          rankedSeason.mode === 'preseason' ||
-          (isAuthenticated && rankedTokenHoldStatus?.eligible === false)
-        );
-        const title = getModeTitle({
-          mode,
-          isAuthenticated,
-          hasWalletAccount,
-          rankedSeason,
-          requiresTutorial,
-          rankedTokenHoldStatus,
-          rankedTokenHoldError,
-        });
-        return (
-          <div
-            key={mode}
-            className="play-mode-option-shell"
-          >
-            <button
-              type="button"
-              aria-pressed={selected}
-              disabled={modeReadOnly}
-              onClick={() => onSelectMode(mode)}
-              className={`play-mode-option${selected ? ' is-selected' : ''}${locked ? ' is-locked' : ''}`}
-              title={modeReadOnly ? 'Party leader chooses the mode' : title}
-            >
-              <span className="play-mode-option-icon">
-                <PlayModeIcon mode={mode} />
-              </span>
-              <span className="play-mode-option-copy">
-                <span className="play-mode-option-title">{getPlayModeLabel(mode)}</span>
-              </span>
-            </button>
-          </div>
-        );
-      })}
+      {PLAY_MODE_OPTIONS_BEFORE_BOT_FILL.map(renderModeOption)}
       <BotFillToggle
         enabled={botFillEnabled}
         disabledReason={botFillDisabledReason}
         onToggle={onSetBotFillEnabled}
       />
+      {PLAY_MODE_OPTIONS_AFTER_BOT_FILL.map(renderModeOption)}
     </div>
   );
 }

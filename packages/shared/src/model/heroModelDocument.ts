@@ -3,6 +3,7 @@ import {
   type HeroModelDocumentV1,
   type ModelBoneName,
   type ModelMaterialDescriptor,
+  type ModelPartAttachmentMode,
   type ModelPartKind,
   type ModelPartDescriptor,
   type ModelSocketDescriptor,
@@ -38,6 +39,11 @@ const MODEL_PART_KINDS = new Set<ModelPartKind>([
   'sphere',
   'cylinder',
   'cone',
+]);
+
+const MODEL_PART_ATTACHMENT_MODES = new Set<ModelPartAttachmentMode>([
+  'surface',
+  'floating',
 ]);
 
 const VIEWMODEL_CHANNEL_KINDS = new Set<ViewmodelPoseChannelDescriptor['kind']>([
@@ -150,6 +156,13 @@ function validatePart(
   validateTransformTuple(value.position, `${path}.position`, errors);
   validateTransformTuple(value.scale, `${path}.scale`, errors);
   validateTransformTuple(value.rotation, `${path}.rotation`, errors, false);
+  if (
+    value.attachmentMode !== undefined &&
+    (!isNonEmptyString(value.attachmentMode) ||
+      !MODEL_PART_ATTACHMENT_MODES.has(value.attachmentMode as ModelPartAttachmentMode))
+  ) {
+    errors.push(`${path}.attachmentMode must be surface or floating when provided`);
+  }
   for (const key of ['emissive', 'transparent', 'generated'] as const) {
     if (value[key] !== undefined && typeof value[key] !== 'boolean') {
       errors.push(`${path}.${key} must be a boolean when provided`);

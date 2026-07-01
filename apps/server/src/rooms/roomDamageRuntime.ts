@@ -78,7 +78,12 @@ export interface RoomDamageRuntimeDeps {
     payload: PlayerDownedEvent
   ): void;
   recordMatchDeath(victim: Player, killer: Player | null): void;
-  recordMatchKill(killer: Player, victim: Player): void;
+  recordMatchKill(killer: Player, victim: Player, details?: {
+    abilityId?: string | null;
+    damageType?: string | null;
+    victimHadFlag?: boolean;
+    occurredAt?: Date;
+  }): void;
   recordMatchAssist(assister: Player, victim: Player): void;
   resetPlayerLifeRuntime(player: Player, deathAt: number): void;
   isCaptureTheFlagMode(): boolean;
@@ -424,6 +429,7 @@ export class RoomDamageRuntime {
     const killer = death.killer;
     const deathPosition = { x: target.position.x, y: target.position.y, z: target.position.z };
     const deathVelocity = { x: target.velocity.x, y: target.velocity.y, z: target.velocity.z };
+    const victimHadFlag = target.hasFlag;
     this.deps.recordMatchDeath(target, killer ?? null);
     this.deps.resetPlayerLifeRuntime(target, death.deathAt);
 
@@ -432,7 +438,12 @@ export class RoomDamageRuntime {
     }
 
     if (killer) {
-      this.deps.recordMatchKill(killer, target);
+      this.deps.recordMatchKill(killer, target, {
+        abilityId: context.abilityId ?? null,
+        damageType: context.damageType ?? death.lastDamageEntry?.damageType ?? null,
+        victimHadFlag,
+        occurredAt: new Date(death.deathAt),
+      });
       this.deps.scoreTeamDeathmatchKill(killer, target);
     }
 

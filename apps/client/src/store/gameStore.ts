@@ -50,6 +50,12 @@ export interface PowerupPickupCollectionState {
   collectedAt: number;
 }
 
+export interface InteractionPrompt {
+  id: string;
+  actionLabel: string;
+  targetLabel?: string;
+}
+
 export type ObserverFlightSpeed = 'low' | 'med' | 'hight';
 
 export function normalizeObserverFlightSpeed(value: string): ObserverFlightSpeed | null {
@@ -108,6 +114,9 @@ interface CoreState {
   battleRoyalDrop: BattleRoyalDropSnapshot | null;
   powerupPickups: Map<string, PowerupPickupRuntimeState>;
   powerupPickupCollections: Map<string, PowerupPickupCollectionState>;
+  interactionPrompt: InteractionPrompt | null;
+  devTestingTargetBotFrozen: boolean;
+  devTestingTargetBotResetRequestId: number;
 
   // Teams
   redScore: number;
@@ -165,6 +174,9 @@ interface CoreActions {
   setMapThemeId: (themeId: VoxelMapTheme['id'] | null) => void;
   setMapSize: (mapSize: VoxelMapSizeId | string | null | undefined) => void;
   setMapProfileId: (mapProfileId: MapProfileId | string | null | undefined) => void;
+  setInteractionPrompt: (prompt: InteractionPrompt | null) => void;
+  requestDevTestingTargetBotHold: () => void;
+  resetDevTestingTargetBotHold: () => void;
   setPowerupPickups: (pickups: PowerupPickupRuntimeState[]) => void;
   updatePowerupPickup: (pickup: PowerupPickupRuntimeState) => void;
   recordPowerupPickupCollection: (collection: PowerupPickupCollectionState) => void;
@@ -285,6 +297,9 @@ const coreInitialState: CoreState = {
   battleRoyalDrop: null,
   powerupPickups: new Map(),
   powerupPickupCollections: new Map(),
+  interactionPrompt: null,
+  devTestingTargetBotFrozen: false,
+  devTestingTargetBotResetRequestId: 0,
   redScore: 0,
   blueScore: 0,
   redFlag: null,
@@ -316,8 +331,13 @@ export function normalizeMapProfileId(mapProfileId: MapProfileId | string | null
   return mapProfileId === 'battle_royal_large'
     || mapProfileId === 'ctf_arena'
     || mapProfileId === 'tdm_arena'
+    || mapProfileId === 'dev_testing'
     ? mapProfileId
     : null;
+}
+
+function areInteractionPromptsEqual(a: InteractionPrompt | null, b: InteractionPrompt | null): boolean {
+  return a?.id === b?.id && a?.actionLabel === b?.actionLabel && a?.targetLabel === b?.targetLabel;
 }
 
 // ============================================================================
@@ -349,8 +369,8 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       return state.isPracticeMode ? state : { isPracticeMode: true };
     }
 
-    return state.isPracticeMode || state.isTutorialMode || state.isPracticePreparing
-      ? { isPracticeMode: false, isTutorialMode: false, isPracticePreparing: false }
+    return state.isPracticeMode || state.isTutorialMode || state.isPracticePreparing || state.interactionPrompt
+      ? { isPracticeMode: false, isTutorialMode: false, isPracticePreparing: false, interactionPrompt: null }
       : state;
   }),
   setTutorialMode: (enabled) => set((state) => (
@@ -450,8 +470,27 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       mapProfileId: normalizedMapProfileId,
       powerupPickups: new Map(),
       powerupPickupCollections: new Map(),
+      interactionPrompt: null,
+      ...(normalizedMapProfileId === 'dev_testing'
+        ? {}
+        : { devTestingTargetBotFrozen: false, devTestingTargetBotResetRequestId: 0 }),
     };
   }),
+
+  setInteractionPrompt: (prompt) => set((state) => (
+    areInteractionPromptsEqual(state.interactionPrompt, prompt) ? state : { interactionPrompt: prompt }
+  )),
+
+  requestDevTestingTargetBotHold: () => set((state) => ({
+    devTestingTargetBotFrozen: true,
+    devTestingTargetBotResetRequestId: state.devTestingTargetBotResetRequestId + 1,
+  })),
+
+  resetDevTestingTargetBotHold: () => set((state) => (
+    state.devTestingTargetBotFrozen || state.devTestingTargetBotResetRequestId !== 0
+      ? { devTestingTargetBotFrozen: false, devTestingTargetBotResetRequestId: 0 }
+      : state
+  )),
 
   setPowerupPickups: (pickups) => set({
     powerupPickups: new Map(pickups.map((pickup) => [pickup.pickupId, pickup])),

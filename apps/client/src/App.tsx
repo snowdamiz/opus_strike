@@ -6,7 +6,6 @@ import { MainLobby } from './components/ui/MainLobby';
 import { Lobby } from './components/ui/Lobby';
 import { MatchmakingScreen } from './components/ui/MatchmakingScreen';
 import { HUD } from './components/ui/HUD';
-import { LoadingScreen } from './components/ui/LoadingScreen';
 import { PracticeLoadingScreen } from './components/ui/PracticeLoadingScreen';
 import { MATCH_LOADING_INITIAL_PROGRESS, MatchLoadingScreen } from './components/ui/MatchLoadingScreen';
 import { TeleportEffects } from './components/ui/TeleportEffects';
@@ -37,6 +36,8 @@ const PREMATCH_COUNTDOWN_EFFECT_FADE_MS = 3000;
 const STARTUP_QUALITY_RAMP_MS = 1600;
 const MATCH_RESOURCE_WARMUP_IDLE_TIMEOUT_MS = 80;
 const BATTLE_ROYAL_PENDING_MAP_PROGRESS_CAP = 24;
+const MENU_LOADING_PROGRESS_CAP = 72;
+const MAP_VOTE_LOADING_PROGRESS_CAP = 64;
 
 type CountdownEffectStyle = CSSProperties & {
   '--prematch-countdown-backdrop-opacity': string;
@@ -111,6 +112,7 @@ export function App() {
   const gameplayMode = useGameStore((state) => state.gameplayMode);
   const isObserverMode = useGameStore((state) => state.localPlayer?.role === 'observer');
   const scoreboardKeybind = useSettingsStore((state) => state.settings.keybindings.scoreboard);
+  const showHUD = useSettingsStore((state) => state.settings.showHUD);
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showInGameMenu, setShowInGameMenu] = useState(false);
   const [shouldMountMatchWorld, setShouldMountMatchWorld] = useState(false);
@@ -496,7 +498,17 @@ export function App() {
   }
 
   if (isLoading && appPhase === 'menu') {
-    return <LoadingScreen />;
+    return (
+      <MatchLoadingScreen
+        eyebrow="Network"
+        title="CONNECTING"
+        label="Server"
+        ariaLabel="Connecting to server"
+        trackStartLabel="Client"
+        trackEndLabel="Server"
+        fallbackProgressCap={MENU_LOADING_PROGRESS_CAP}
+      />
+    );
   }
 
   // Show appropriate screen based on app phase
@@ -515,7 +527,19 @@ export function App() {
 
   if (appPhase === 'map_vote') {
     return (
-      <Suspense fallback={<LoadingScreen />}>
+      <Suspense
+        fallback={(
+          <MatchLoadingScreen
+            eyebrow="Maps"
+            title="PREPARING VOTE"
+            label="Map Options"
+            ariaLabel="Preparing map vote"
+            trackStartLabel="Lobby"
+            trackEndLabel="Vote"
+            fallbackProgressCap={MAP_VOTE_LOADING_PROGRESS_CAP}
+          />
+        )}
+      >
         <MapVoteScreen />
       </Suspense>
     );
@@ -576,7 +600,7 @@ export function App() {
         {/* Show HUD during active gameplay */}
         {isActiveGame && isMatchSceneReady && !isObserverMode && (
           <>
-            <HUD />
+            {showHUD && <HUD />}
             {isTutorialMode && <TutorialGuide />}
             <TeleportEffects />
             <UltimateEffects />
@@ -597,14 +621,14 @@ export function App() {
 
         {/* Round/game end overlays */}
         {gamePhase === 'round_end' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50">
-            <h2 className="font-display text-6xl text-white">Round Over</h2>
+          <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50 px-4 text-center">
+            <h2 className="game-end-overlay-title font-display text-white">Round Over</h2>
           </div>
         )}
 
         {gamePhase === 'game_end' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50">
-            <h2 className="font-display text-6xl text-voxel-primary">Game Over</h2>
+          <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50 px-4 text-center">
+            <h2 className="game-end-overlay-title font-display text-voxel-primary">Game Over</h2>
           </div>
         )}
 
@@ -687,7 +711,7 @@ function CountdownOverlay() {
       <div className="prematch-countdown-scanlines" />
       <div className="prematch-countdown-content">
         <div
-          className="font-display text-[200px] text-voxel-primary animate-pulse"
+          className="prematch-countdown-number font-display text-voxel-primary animate-pulse"
           style={{ textShadow: '0 0 60px rgb(var(--color-ui-objective) / 0.8)' }}
         >
           {countdown}

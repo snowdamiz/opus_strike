@@ -55,7 +55,7 @@ import {
 import {
   HERO_BODY_BOT_MARKER_PART,
 } from '../../model-system/heroBodyGeneratedParts';
-import { groupHeroBodyRenderParts } from '../../model-system/heroBodyRenderParts';
+import { getHeroBodyRenderParts } from '../../model-system/heroBodyRenderParts';
 import {
   EMPTY_REMOTE_SOCKET_MARKERS,
   EMPTY_RIGGED_PARTS,
@@ -1874,13 +1874,17 @@ function createRemotePartDescriptors(heroId: HeroId, skinId: HeroSkinId, team: T
     return getOrAddMaterialKey(getPaletteMaterialOptions(part.material, color));
   };
 
-  const riggedPartsByBone = groupHeroBodyRenderParts(manifest.parts);
+  const renderParts = getHeroBodyRenderParts(manifest.parts);
+  const riggedPartsByBone = groupRiggedParts(renderParts);
   appendRiggedPartDescriptors(descriptors, riggedPartsByBone, materialKeyForPalettePart, {
     prefix: `${skinId}-palette`,
     palette: true,
   });
 
-  const teamAccentParts = manifest.teamAccentParts ?? EMPTY_TEAM_ACCENT_PARTS;
+  const teamAccentParts = getHeroBodyRenderParts(
+    manifest.teamAccentParts ?? EMPTY_TEAM_ACCENT_PARTS,
+    renderParts
+  );
   const teamAccentKeyFor = (part: VoxelPart) => {
     const accent = part as TeamAccentPart;
     const transparent = accent.transparent || accent.opacity !== undefined;

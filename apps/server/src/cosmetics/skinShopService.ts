@@ -39,10 +39,18 @@ const DEFAULT_INTENT_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_INTENT_EXPIRY_GRACE_MS = 2 * 60 * 1000;
 const DEFAULT_RPC_TIMEOUT_MS = 12_000;
 const MAX_SUPPLY_LIMIT = 2_147_483_647;
-const ACTIVE_SUPPLY_RESERVATION_STATUSES = [
+type SkinShopConnectionFactory = (rpcUrl: string) => Connection;
+
+let skinShopConnectionFactory: SkinShopConnectionFactory = (rpcUrl) => new Connection(rpcUrl, {
+  commitment: 'confirmed',
+  confirmTransactionInitialTimeout: DEFAULT_RPC_TIMEOUT_MS,
+});
+const EXPIRING_SUPPLY_RESERVATION_STATUSES = [
   'intent_created',
   'transaction_built',
   'submitted',
+] as const;
+const PAID_SUPPLY_RESERVATION_STATUSES = [
   'confirmed',
 ] as const;
 
@@ -108,13 +116,6 @@ function envFlag(name: string, fallback = false): boolean {
   const raw = process.env[name]?.trim().toLowerCase();
   if (!raw) return fallback;
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
-}
-
-function cleanOptionalString(value: unknown, maxLength: number): string | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value !== 'string') throw new SkinShopServiceError('Invalid string value');
-  const cleaned = value.trim().replace(/\s+/g, ' ').slice(0, maxLength);
-  return cleaned || null;
 }
 
 function readPositiveBaseUnits(value: unknown, options: { required: boolean }): bigint | null {
@@ -372,8 +373,13 @@ async function loadPaidSkinSupplyCounts(): Promise<Map<HeroSkinId, SkinSupplyCou
     prisma.skinPurchaseIntent.groupBy({
       by: ['skinId'],
       where: {
-        status: { in: [...ACTIVE_SUPPLY_RESERVATION_STATUSES] },
-        intentExpiresAt: { gt: now },
+        OR: [
+          {
+            status: { in: [...EXPIRING_SUPPLY_RESERVATION_STATUSES] },
+            intentExpiresAt: { gt: now },
+          },
+          { status: { in: [...PAID_SUPPLY_RESERVATION_STATUSES] } },
+        ],
       },
       _count: { _all: true },
     }),
@@ -406,8 +412,13 @@ async function getPaidSkinSupplyCounts(
     client.skinPurchaseIntent.count({
       where: {
         skinId,
-        status: { in: [...ACTIVE_SUPPLY_RESERVATION_STATUSES] },
-        intentExpiresAt: { gt: now },
+        OR: [
+          {
+            status: { in: [...EXPIRING_SUPPLY_RESERVATION_STATUSES] },
+            intentExpiresAt: { gt: now },
+          },
+          { status: { in: [...PAID_SUPPLY_RESERVATION_STATUSES] } },
+        ],
       },
     }),
   ]);
@@ -432,6 +443,9 @@ function isSkinVisibleInGame(input: {
   item: Awaited<ReturnType<typeof getOrCreateItemSettings>> | null;
 }): boolean {
   if (input.skin.availability === 'free') return true;
+  // Unlockable skins (e.g. the golden founder reward) are always shown so players
+  // can preview them and equip them once granted — they are never purchased.
+  if (input.skin.availability === 'unlockable') return input.skin.releaseState !== 'disabled';
   if (input.skin.releaseState === 'disabled') return false;
   if (!input.shop.enabled || !input.shop.tokenMintAddress || !input.shop.treasuryWallet || !input.shop.rpcUrl) return false;
   if (!input.item?.saleEnabled || !input.item.tokenAmountBaseUnits) return false;
@@ -555,11 +569,12 @@ export async function getSkinCatalogForUser(userId?: string | null): Promise<Her
   const skins: HeroSkinCatalogItem[] = HERO_SKIN_CATALOG.filter((skin) => visibleSkinIds.has(skin.id)).map((skin) => {
     const item = itemRowsBySkin.get(skin.id) ?? null;
     const supply = supplyBySkin.get(skin.id) ?? { soldCount: 0, reservedCount: 0 };
+    const entitlementSource = entitlementBySkin.get(skin.id) ?? null;
     return {
       ...skin,
       owned: ownedSkinIds.has(skin.id),
       equipped: equippedSkinIds.has(skin.id),
-      entitlementSource: entitlementBySkin.get(skin.id) ?? null,
+      entitlementSource,
       shopPrice: buildShopPriceState({ skin, shop, item, supply }),
       purchaseDisabledReason: purchaseDisabledReason({ skin, shop, item, supply }),
     };
@@ -639,10 +654,14 @@ export async function updateUserHeroLoadout(input: {
 
 function connectionForShop(shop: Awaited<ReturnType<typeof getOrCreateShopSettings>>): Connection {
   if (!shop.rpcUrl) throw new SkinShopServiceError('SOLANA_RPC_URL is not configured', 503);
-  return new Connection(shop.rpcUrl, {
+  return skinShopConnectionFactory(shop.rpcUrl);
+}
+
+export function setSkinShopConnectionFactoryForTests(factory: SkinShopConnectionFactory | null): void {
+  skinShopConnectionFactory = factory ?? ((rpcUrl) => new Connection(rpcUrl, {
     commitment: 'confirmed',
     confirmTransactionInitialTimeout: DEFAULT_RPC_TIMEOUT_MS,
-  });
+  }));
 }
 
 async function assertPurchaseAvailable(input: {
@@ -704,6 +723,9 @@ export async function createSkinPurchaseIntent(input: {
   skinId: HeroSkinId;
 }): Promise<SkinPurchaseIntentSnapshot> {
   const skin = getHeroSkinDefinition(input.skinId);
+  if (skin.availability === 'unlockable') {
+    throw new SkinShopServiceError('This skin cannot be purchased; it is earned in game');
+  }
   if (skin.availability !== 'paid') {
     throw new SkinShopServiceError('Default skins do not need to be purchased');
   }
@@ -789,6 +811,7 @@ async function getIntentForUser(userId: string, intentId: string) {
 
 function assertIntentActive(intent: { status: string; intentExpiresAt: Date }): void {
   if (intent.status === 'credited') throw new SkinShopServiceError('Purchase intent is already credited', 409);
+  if (intent.status === 'confirmed') throw new SkinShopServiceError('Payment is already confirmed', 409);
   if (intent.status === 'failed') throw new SkinShopServiceError('Purchase intent failed', 409);
   if (intent.intentExpiresAt.getTime() <= Date.now()) {
     throw new SkinShopServiceError('Purchase intent has expired', 409);
@@ -934,7 +957,6 @@ export async function submitSkinPurchaseSignature(input: {
     throw new SkinShopServiceError('Invalid Solana transaction signature');
   }
   const intent = await getIntentForUser(input.userId, input.intentId);
-  if (intent.status === 'credited') return serializeIntent(intent);
   assertIntentActive(intent);
 
   const duplicate = await prisma.skinPurchaseIntent.findFirst({
@@ -958,6 +980,62 @@ export async function submitSkinPurchaseSignature(input: {
   });
 
   return verifySubmittedSkinPurchase(input.userId, intent.id, { keepSubmittedWhenNotFound: true });
+}
+
+type SkinPurchaseIntentRecord = NonNullable<Awaited<ReturnType<typeof prisma.skinPurchaseIntent.findUnique>>>;
+
+async function creditOffchainPaidSkinPurchase(intent: SkinPurchaseIntentRecord): Promise<SkinPurchaseIntentSnapshot> {
+  const creditedAt = new Date();
+  const credited = await (async () => {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const currentItem = await tx.skinShopItemSettings.findUnique({ where: { skinId: intent.skinId } });
+        if (currentItem?.maxSupply !== null && currentItem?.maxSupply !== undefined) {
+          const soldCount = await tx.skinPurchaseIntent.count({
+            where: { skinId: intent.skinId, status: 'credited' },
+          });
+          if (soldCount >= currentItem.maxSupply) {
+            throw new SkinShopServiceError('Sold out', 409);
+          }
+        }
+
+        await tx.userSkinOwnership.upsert({
+          where: { userId_skinId: { userId: intent.userId, skinId: intent.skinId } },
+          create: {
+            userId: intent.userId,
+            skinId: intent.skinId,
+            source: 'paid',
+            purchaseId: intent.id,
+            grantedAt: creditedAt,
+          },
+          update: {
+            source: 'paid',
+            purchaseId: intent.id,
+            revokedAt: null,
+          },
+        });
+        return tx.skinPurchaseIntent.update({
+          where: { id: intent.id },
+          data: {
+            status: 'credited',
+            creditedAt,
+            lastError: null,
+          },
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error) {
+      if (isSerializableTransactionConflict(error)) {
+        throw new SkinShopServiceError('Skin supply changed; try again', 409);
+      }
+      throw error;
+    }
+  })();
+
+  return serializeIntent(credited);
+}
+
+async function creditVerifiedSkinPurchase(intent: SkinPurchaseIntentRecord): Promise<SkinPurchaseIntentSnapshot> {
+  return creditOffchainPaidSkinPurchase(intent);
 }
 
 export async function verifySubmittedSkinPurchase(
@@ -1006,53 +1084,7 @@ export async function verifySubmittedSkinPurchase(
     return serializeIntent(failed);
   }
 
-  const creditedAt = new Date();
-  const credited = await (async () => {
-    try {
-      return await prisma.$transaction(async (tx) => {
-        const currentItem = await tx.skinShopItemSettings.findUnique({ where: { skinId: intent.skinId } });
-        if (currentItem?.maxSupply !== null && currentItem?.maxSupply !== undefined) {
-          const soldCount = await tx.skinPurchaseIntent.count({
-            where: { skinId: intent.skinId, status: 'credited' },
-          });
-          if (soldCount >= currentItem.maxSupply) {
-            throw new SkinShopServiceError('Sold out', 409);
-          }
-        }
-
-        await tx.userSkinOwnership.upsert({
-          where: { userId_skinId: { userId: intent.userId, skinId: intent.skinId } },
-          create: {
-            userId: intent.userId,
-            skinId: intent.skinId,
-            source: 'paid',
-            purchaseId: intent.id,
-            grantedAt: creditedAt,
-          },
-          update: {
-            source: 'paid',
-            purchaseId: intent.id,
-            revokedAt: null,
-          },
-        });
-        return tx.skinPurchaseIntent.update({
-          where: { id: intent.id },
-          data: {
-            status: 'credited',
-            creditedAt,
-            lastError: null,
-          },
-        });
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-    } catch (error) {
-      if (isSerializableTransactionConflict(error)) {
-        throw new SkinShopServiceError('Skin supply changed; try again', 409);
-      }
-      throw error;
-    }
-  })();
-
-  return serializeIntent(credited);
+  return creditVerifiedSkinPurchase(intent);
 }
 
 export async function getSkinPurchaseIntent(input: {

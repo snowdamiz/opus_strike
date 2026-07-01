@@ -21,7 +21,7 @@ import {
   movementStateFromPlayer,
   resetLocalMovementPrediction,
 } from '../../movement/localPrediction';
-import { createPracticeAbilityStates } from '../../contexts/practiceAbilities';
+import { createPracticeAbilityStates } from '../../utils/practiceAbilityStates';
 import { useGameStore } from '../../store/gameStore';
 import { removePlayerVisualState, visualStore } from '../../store/visualStore';
 import {

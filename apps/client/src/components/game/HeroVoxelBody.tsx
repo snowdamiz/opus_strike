@@ -44,7 +44,7 @@ import {
   HERO_BODY_BOT_MARKER_PART,
   type HeroBodyGeneratedRootPart,
 } from '../../model-system/heroBodyGeneratedParts';
-import { groupHeroBodyRenderParts } from '../../model-system/heroBodyRenderParts';
+import { getHeroBodyRenderParts } from '../../model-system/heroBodyRenderParts';
 import {
   EMPTY_REMOTE_SOCKET_MARKERS,
   EMPTY_RIGGED_PARTS,
@@ -258,8 +258,16 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const manifest = resolvedSkinModel.bodyManifest;
   const parts = manifest.parts;
   const teamAccentParts = showTeamAccents ? manifest.teamAccentParts : EMPTY_TEAM_ACCENT_PARTS;
-  const riggedPartsByBone = useMemo(() => groupHeroBodyRenderParts(parts), [parts]);
-  const riggedTeamAccentPartsByBone = useMemo(() => groupRiggedParts(teamAccentParts), [teamAccentParts]);
+  const renderParts = useMemo(() => getHeroBodyRenderParts(parts), [parts]);
+  const renderTeamAccentParts = useMemo(
+    () => getHeroBodyRenderParts(teamAccentParts, renderParts),
+    [teamAccentParts, renderParts]
+  );
+  const riggedPartsByBone = useMemo(() => groupRiggedParts(renderParts), [renderParts]);
+  const riggedTeamAccentPartsByBone = useMemo(
+    () => groupRiggedParts(renderTeamAccentParts),
+    [renderTeamAccentParts]
+  );
   const socketMarkersByBone = useMemo(() => {
     const grouped: Partial<Record<HeroBoneName, RemoteBodySocketMarker[]>> = {};
     for (const marker of manifest.remoteSocketMarkers ?? EMPTY_REMOTE_SOCKET_MARKERS) {

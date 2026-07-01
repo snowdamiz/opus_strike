@@ -29,7 +29,7 @@ pnpm-debug.log*
 
 # Testing
 coverage/
+prelaunch-evidence/
 
 # Misc
 *.tsbuildinfo
-

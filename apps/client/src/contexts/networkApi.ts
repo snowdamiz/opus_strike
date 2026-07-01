@@ -5,6 +5,7 @@ import type {
   HeroSkinCatalogResponse,
   HeroSkinId,
   MatchPerspective,
+  PlayerDailyMissionsResponse,
   SkinPurchaseIntentSnapshot,
   SkinPurchaseTransactionSnapshot,
   VoxelMapSizeId,
@@ -100,9 +101,6 @@ export interface RewardEconomyResponse {
       maxMatchPayoutLamports: string;
       treasuryReserveLamports: string;
       payoutBatchSize: number;
-      weeklyEnabled: boolean;
-      weeklyPoolLamports: string;
-      weeklyTopPlayers: number;
       updatedByUserId: string | null;
       updatedAt: string | null;
     };
@@ -226,6 +224,19 @@ export async function requestRewardEconomy(): Promise<RewardEconomyResponse['eco
   return payload.economy;
 }
 
+export async function requestDailyMissions(): Promise<PlayerDailyMissionsResponse> {
+  const response = await fetch(`${getHttpUrl()}/missions/daily`, {
+    credentials: 'include',
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load daily missions'));
+  }
+
+  return response.json() as Promise<PlayerDailyMissionsResponse>;
+}
+
 export async function requestRunningGameStatus(roomId: string): Promise<RunningGameStatusResponse> {
   const response = await fetch(`${getHttpUrl()}/matchmaking/running-game/${encodeURIComponent(roomId)}`, {
     credentials: 'include',
@@ -274,7 +285,7 @@ export async function updateHeroSkinLoadout(input: {
   });
 
   if (!response.ok) {
-    throw new Error(await readErrorMessage(response, 'Failed to update loadout'));
+    throw new Error(await readErrorMessage(response, 'Failed to update skin selection'));
   }
 
   return response.json();

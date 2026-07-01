@@ -1092,7 +1092,7 @@ export class GameRoom extends Room<GameState> {
     enterBattleRoyalDowned: (target, source, payload) => this.enterBattleRoyalDowned(target, source, payload),
     broadcastPlayerKilled: (target, killer, payload) => this.broadcastPlayerKilled(target, killer, payload),
     recordMatchDeath: (victim, killer) => this.recordMatchDeath(victim, killer),
-    recordMatchKill: (killer, victim) => this.recordMatchKill(killer, victim),
+    recordMatchKill: (killer, victim, details) => this.recordMatchKill(killer, victim, details),
     recordMatchAssist: (assister, victim) => this.recordMatchAssist(assister, victim),
     resetPlayerLifeRuntime: (player, deathAt) => this.resetPlayerLifeRuntime(player, deathAt),
     isCaptureTheFlagMode: () => isCaptureTheFlagMode(this.gameplayMode),
@@ -3490,8 +3490,13 @@ export class GameRoom extends Room<GameState> {
     this.matchLedger.recordDeath(victim, killer);
   }
 
-  private recordMatchKill(killer: Player, victim: Player): void {
-    this.matchLedger.recordKill(killer, victim);
+  private recordMatchKill(killer: Player, victim: Player, details?: {
+    abilityId?: string | null;
+    damageType?: string | null;
+    victimHadFlag?: boolean;
+    occurredAt?: Date;
+  }): void {
+    this.matchLedger.recordKill(killer, victim, details);
   }
 
   private recordMatchAssist(assister: Player, victim: Player): void {
@@ -3567,6 +3572,8 @@ export class GameRoom extends Room<GameState> {
       participants,
       rankedEligible,
       integrityGate,
+      gameplayMode: this.gameplayMode,
+      killEvents: [...ledger.killEvents],
     });
   }
 

@@ -71,6 +71,7 @@ import {
   type ViewmodelHeroId,
   type ViewmodelMaterialSet,
 } from './heroViewmodelMaterials';
+import { ViewmodelSkinOverlay } from './viewmodelSkinOverlays';
 import {
   getActionState,
   hasOwnedActiveGrappleLineOnSide,
@@ -1620,12 +1621,14 @@ function samplePhantomVoidRayOrbSocket(
 function PhantomAnimatedForearm({
   side,
   materials,
+  skinId,
   primaryAttackRef,
   voidRayReleaseRef,
   locomotionRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
+  skinId?: HeroSkinId | string | null;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
   voidRayReleaseRef: MutableRefObject<PhantomVoidRayReleaseState | null>;
   locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
@@ -1731,6 +1734,7 @@ function PhantomAnimatedForearm({
       <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[0, thickness * 0.7, -0.09]} scale={[width * 0.56, Math.max(0.014, thickness * 0.2), length * 0.46]} />
       <mesh geometry={SHARED_GEOMETRIES.box} material={reloadGlowMaterial} position={[0, thickness * 0.32, -0.08]} scale={[width * 1.08, thickness * 0.84, length * 0.84]} />
       <mesh geometry={SHARED_GEOMETRIES.box} material={reloadGlowMaterial} position={[0, thickness * 0.82, -0.1]} scale={[width * 0.7, Math.max(0.018, thickness * 0.28), length * 0.58]} />
+      <ViewmodelSkinOverlay skinId={skinId} side={side} materials={materials} attach="forearm" />
     </group>
   );
 }
@@ -1738,12 +1742,14 @@ function PhantomAnimatedForearm({
 function PhantomPoseableHand({
   side,
   materials,
+  skinId,
   primaryAttackRef,
   voidRayReleaseRef,
   locomotionRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
+  skinId?: HeroSkinId | string | null;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
   voidRayReleaseRef: MutableRefObject<PhantomVoidRayReleaseState | null>;
   locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
@@ -1968,6 +1974,7 @@ function PhantomPoseableHand({
             position={[side * -0.048, 0, -0.078]}
             scale={[0.052, 0.122, 0.042]}
           />
+          <ViewmodelSkinOverlay skinId={skinId} side={side} materials={materials} attach="hand" />
         </group>
       </group>
 
@@ -2172,11 +2179,13 @@ function PhantomVeilViewmodelSplit() {
 
 function PhantomViewmodel({
   materials,
+  skinId,
   primaryAttackRef,
   voidRayReleaseRef,
   locomotionRef,
 }: {
   materials: ViewmodelMaterialSet;
+  skinId?: HeroSkinId | string | null;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
   voidRayReleaseRef: MutableRefObject<PhantomVoidRayReleaseState | null>;
   locomotionRef: MutableRefObject<ViewmodelLocomotionPose>;
@@ -2187,10 +2196,10 @@ function PhantomViewmodel({
       DEFAULT_VIEWMODEL_ROOT_OFFSET.y,
       DEFAULT_VIEWMODEL_ROOT_OFFSET.z,
     ]}>
-      <PhantomAnimatedForearm side={-1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
-      <PhantomAnimatedForearm side={1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
-      <PhantomPoseableHand side={-1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
-      <PhantomPoseableHand side={1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
+      <PhantomAnimatedForearm side={-1} materials={materials} skinId={skinId} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
+      <PhantomAnimatedForearm side={1} materials={materials} skinId={skinId} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
+      <PhantomPoseableHand side={-1} materials={materials} skinId={skinId} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
+      <PhantomPoseableHand side={1} materials={materials} skinId={skinId} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
       <PhantomVoidRayChargeOrb />
       <PhantomVeilViewmodelSplit />
     </group>
@@ -4958,6 +4967,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, skinId, ac
         {heroId === 'phantom' && (
           <PhantomViewmodel
             materials={materials}
+            skinId={skinId}
             primaryAttackRef={phantomPrimaryAttackRef}
             voidRayReleaseRef={phantomVoidRayReleaseRef}
             locomotionRef={viewmodelLocomotionRef}

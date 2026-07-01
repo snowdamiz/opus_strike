@@ -75,7 +75,7 @@ export type MapTeam = Team;
 export type TeamMap<T> = Record<MapTeam, T>;
 export type MapGameMode = 'ctf' | 'battle_royal';
 export type MapFamilyId = 'ctf_semantic_arena' | 'battle_royal_large';
-export type MapProfileId = 'ctf_arena' | 'tdm_arena' | 'battle_royal_large';
+export type MapProfileId = 'ctf_arena' | 'tdm_arena' | 'battle_royal_large' | 'dev_testing';
 export type MapTopologyId = 'lane_triad' | 'diamond' | 'hourglass' | 'ring' | 'split_level';
 export type MapSymmetryLevel = 'mirrored' | 'rotational' | 'asymmetric_balanced';
 

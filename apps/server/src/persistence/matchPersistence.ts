@@ -1,13 +1,14 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { calculateMatchExperience } from '@voxel-strike/shared';
-import type { MatchOutcome, Team } from '@voxel-strike/shared';
-import type { MatchMode } from '@voxel-strike/shared';
+import type { GameplayMode, HeroId, MatchOutcome, Team } from '@voxel-strike/shared';
+import { DEFAULT_GAMEPLAY_MODE, type MatchMode } from '@voxel-strike/shared';
 import {
   calculateRankedRatingUpdates,
   type RankedRatingUpdate,
   type RankedUserState,
 } from '../ranking/ratingService';
 import { ensureRankedSeasonSettingsTx } from '../ranking/seasonService';
+import { tryGrantRankedFounderSkins } from '../cosmetics/rankedFounderRewards';
 import { mapSeedToDatabaseValue } from '../utils/mapSeedPersistence';
 
 export interface MatchParticipantStats {
@@ -28,11 +29,25 @@ export interface MatchParticipantSnapshot extends MatchParticipantStats {
   leftAt: Date | null;
 }
 
+export interface MatchKillEventSnapshot {
+  killerUserId: string | null;
+  killerPlayerSessionId: string | null;
+  victimUserId: string | null;
+  victimPlayerSessionId: string;
+  killerHeroId: HeroId | null;
+  victimHeroId: HeroId | null;
+  abilityId: string | null;
+  damageType: string | null;
+  victimHadFlag: boolean;
+  occurredAt: Date;
+}
+
 export interface CompletedMatchPersistenceInput {
   matchId: string;
   roomId: string;
   lobbyId: string | null;
   matchMode: MatchMode;
+  gameplayMode?: GameplayMode;
   mapSeed: number;
   mapThemeId?: string | null;
   rankedEligible?: boolean;
@@ -42,6 +57,7 @@ export interface CompletedMatchPersistenceInput {
   blueScore: number;
   winningTeam: Team | null;
   participants: MatchParticipantSnapshot[];
+  killEvents?: MatchKillEventSnapshot[];
   antiCheatIntegrityStatus?: string;
   antiCheatReviewRequired?: boolean;
   antiCheatIntegrityReason?: string | null;
@@ -300,6 +316,7 @@ export async function persistCompletedMatch(
           roomId: input.roomId,
           lobbyId: input.lobbyId,
           matchMode: input.matchMode,
+          gameplayMode: input.gameplayMode ?? DEFAULT_GAMEPLAY_MODE,
           mapSeed: mapSeedToDatabaseValue(input.mapSeed),
           mapThemeId: input.mapThemeId || 'standard',
           rankedEligible,
@@ -346,6 +363,25 @@ export async function persistCompletedMatch(
         });
       }
 
+      const killEvents = input.killEvents ?? [];
+      if (killEvents.length > 0) {
+        await tx.gameMatchKillEvent.createMany({
+          data: killEvents.map((event) => ({
+            matchId: input.matchId,
+            killerUserId: event.killerUserId,
+            killerPlayerSessionId: event.killerPlayerSessionId,
+            victimUserId: event.victimUserId,
+            victimPlayerSessionId: event.victimPlayerSessionId,
+            killerHeroId: event.killerHeroId,
+            victimHeroId: event.victimHeroId,
+            abilityId: event.abilityId,
+            damageType: event.damageType,
+            victimHadFlag: event.victimHadFlag,
+            occurredAt: event.occurredAt,
+          })),
+        });
+      }
+
       for (const participant of participants) {
         const ratingUpdate = ratingUpdatesByUserId.get(participant.userId);
         await tx.user.update({
@@ -361,6 +397,15 @@ export async function persistCompletedMatch(
         });
 
         const user = usersById.get(participant.userId);
+
+        // Founder reward: grant the golden skin set to the first N players to
+        // complete a ranked match. `user.rankedGames` is the pre-update value, so
+        // 0 means this ranked-eligible match is their first. Runs in this same
+        // transaction so the grant is atomic with the rankedGames increment.
+        if (rankedEligible && user && user.rankedGames === 0) {
+          await tryGrantRankedFounderSkins(tx, participant.userId);
+        }
+
         if (rankedSeason && ratingUpdate && user) {
           const mode = rankedSeason.mode === 'preseason' ? 'preseason' : 'season';
           const createData = getSeasonAggregateCreateData(participant, user, ratingUpdate, input.endedAt);

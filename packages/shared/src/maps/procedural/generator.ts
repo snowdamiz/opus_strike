@@ -27,6 +27,15 @@ import {
   createTutorialVoxelMapManifest,
   isTutorialMapSeed,
 } from './tutorial.js';
+import {
+  DEV_TESTING_MAP_FOOTPRINT_SCALE,
+  DEV_TESTING_MAP_PROFILE_ID,
+  DEV_TESTING_MAP_SIZE_ID,
+  DEV_TESTING_HERO_LINEUP_SPACING,
+  DEV_TESTING_TARGET_AREA_HALF_EXTENTS,
+  createDevTestingFeaturePlan,
+  isDevTestingMapSeed,
+} from './devTesting.js';
 import { generateBattleRoyalVoxelMap } from './battleRoyalGenerator.js';
 import {
   CONSTRUCTED_MAP_MANIFEST_VERSION,
@@ -142,10 +151,29 @@ export interface ProceduralVoxelMapGenerationOptions {
   themeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
   profileId?: MapProfileId | string | null;
+  footprintScale?: number | null;
 }
 
 function normalizeArenaMapProfileId(profileId?: MapProfileId | string | null): MapProfileId {
   return profileId === 'tdm_arena' ? 'tdm_arena' : 'ctf_arena';
+}
+
+function isDevTestingMapProfileId(profileId?: MapProfileId | string | null): boolean {
+  return profileId === DEV_TESTING_MAP_PROFILE_ID;
+}
+
+function getEffectiveGenerationOptions(
+  seed: number,
+  options: ProceduralVoxelMapGenerationOptions
+): ProceduralVoxelMapGenerationOptions {
+  if (!isDevTestingMapSeed(seed) && !isDevTestingMapProfileId(options.profileId)) return options;
+
+  return {
+    ...options,
+    mapSize: DEV_TESTING_MAP_SIZE_ID,
+    profileId: DEV_TESTING_MAP_PROFILE_ID,
+    footprintScale: DEV_TESTING_MAP_FOOTPRINT_SCALE,
+  };
 }
 
 interface PlacedStructure {
@@ -2109,6 +2137,188 @@ function paintObjectivePads(ctx: StructureStampContext, layout: ProceduralCTFLay
   stampDisc(ctx, layout.flagZones.blue, FLAG_PAD_RADIUS, blueFlagRow, ctx.palette.flag);
 }
 
+function getDevTestingPlanForHeightMap(
+  layout: ProceduralCTFLayout,
+  heightMap: Uint16Array,
+  spawnPoints: TeamMap<Vec3[]>,
+  flagZones: TeamMap<Vec3>
+) {
+  return createDevTestingFeaturePlan({
+    redSpawn: spawnPoints.red[0] ?? flagZones.red,
+    redFlag: flagZones.red,
+    blueFlag: flagZones.blue,
+    samplePlayerCenterY: (point) => {
+      const row = heightRowAtWorld(heightMap, layout.origin, layout.size, layout.voxelSize, point);
+      return gridRowsToWorldY(row + 1, layout.origin.y, layout.voxelSize.y) + PLAYER_HEIGHT / 2 + 0.05;
+    },
+  });
+}
+
+function flattenDevTestingFeaturePads(
+  heightMap: Uint16Array,
+  layout: ProceduralCTFLayout,
+  spawnPoints: TeamMap<Vec3[]>,
+  flagZones: TeamMap<Vec3>
+): void {
+  const plan = getDevTestingPlanForHeightMap(layout, heightMap, spawnPoints, flagZones);
+  const targetRow = sampleMedianHeight(
+    heightMap,
+    layout.origin,
+    layout.size,
+    layout.voxelSize,
+    plan.targetBotArea.center,
+    DEV_TESTING_TARGET_AREA_HALF_EXTENTS.x
+  );
+
+  flattenDisc(
+    heightMap,
+    layout.origin,
+    layout.size,
+    layout.voxelSize,
+    plan.targetBotArea.center,
+    DEV_TESTING_TARGET_AREA_HALF_EXTENTS.x,
+    targetRow,
+    1.6
+  );
+
+  for (const entry of plan.heroLineup) {
+    const row = sampleMedianHeight(heightMap, layout.origin, layout.size, layout.voxelSize, entry.position, 1.2);
+    flattenDisc(heightMap, layout.origin, layout.size, layout.voxelSize, entry.position, 1.15, row, 0.8);
+  }
+}
+
+function devTestingFeatureOverlapsPlacement(
+  plan: ReturnType<typeof getDevTestingPlanForHeightMap>,
+  placement: PlacedStructure
+): boolean {
+  const targetRadius = Math.max(
+    DEV_TESTING_TARGET_AREA_HALF_EXTENTS.x,
+    DEV_TESTING_TARGET_AREA_HALF_EXTENTS.z
+  ) + placement.padRadius + 2.5;
+  if (distance2D(placement.position, plan.targetBotArea.center) <= targetRadius) return true;
+
+  if (plan.heroLineup.length === 0) return false;
+
+  const firstHero = plan.heroLineup[0].position;
+  const lastHero = plan.heroLineup[plan.heroLineup.length - 1].position;
+  const lineupClearance = placement.padRadius + 2.6;
+  return distanceToSegmentSq2D(placement.position, firstHero, lastHero) <= lineupClearance * lineupClearance;
+}
+
+function filterDevTestingFeaturePlacements(
+  placements: PlacedStructure[],
+  layout: ProceduralCTFLayout,
+  heightMap: Uint16Array,
+  spawnPoints: TeamMap<Vec3[]>,
+  flagZones: TeamMap<Vec3>
+): PlacedStructure[] {
+  const plan = getDevTestingPlanForHeightMap(layout, heightMap, spawnPoints, flagZones);
+  return placements.filter((placement) => !devTestingFeatureOverlapsPlacement(plan, placement));
+}
+
+function stampOrientedRect(
+  ctx: StructureStampContext,
+  center: { x: number; z: number },
+  facing: { x: number; z: number },
+  width: number,
+  depth: number,
+  minY: number,
+  maxY: number,
+  block: number
+): void {
+  const halfWidth = width / 2;
+  const halfDepth = depth / 2;
+  const bound = Math.sqrt(halfWidth * halfWidth + halfDepth * halfDepth) + Math.max(ctx.voxelSize.x, ctx.voxelSize.z);
+  const minX = worldToGrid(center.x - bound, ctx.origin.x, ctx.voxelSize.x, ctx.size.x);
+  const maxX = worldToGrid(center.x + bound, ctx.origin.x, ctx.voxelSize.x, ctx.size.x);
+  const minZ = worldToGrid(center.z - bound, ctx.origin.z, ctx.voxelSize.z, ctx.size.z);
+  const maxZ = worldToGrid(center.z + bound, ctx.origin.z, ctx.voxelSize.z, ctx.size.z);
+  const sideAxis = perpendicular(facing);
+
+  for (let z = minZ; z <= maxZ; z++) {
+    const worldZ = gridToWorldCenter(z, ctx.origin.z, ctx.voxelSize.z);
+    for (let x = minX; x <= maxX; x++) {
+      const worldX = gridToWorldCenter(x, ctx.origin.x, ctx.voxelSize.x);
+      const dx = worldX - center.x;
+      const dz = worldZ - center.z;
+      const side = dx * sideAxis.x + dz * sideAxis.z;
+      const forward = dx * facing.x + dz * facing.z;
+      if (Math.abs(side) > halfWidth || Math.abs(forward) > halfDepth) continue;
+
+      for (let y = minY; y <= maxY; y++) {
+        setBlock(ctx, x, y, z, block);
+      }
+    }
+  }
+}
+
+function clearDiscHeadroom(
+  ctx: StructureStampContext,
+  center: { x: number; z: number },
+  radius: number,
+  surfaceRow: number,
+  extraRows = HEADROOM_ROWS
+): void {
+  const minX = worldToGrid(center.x - radius, ctx.origin.x, ctx.voxelSize.x, ctx.size.x);
+  const maxX = worldToGrid(center.x + radius, ctx.origin.x, ctx.voxelSize.x, ctx.size.x);
+  const minZ = worldToGrid(center.z - radius, ctx.origin.z, ctx.voxelSize.z, ctx.size.z);
+  const maxZ = worldToGrid(center.z + radius, ctx.origin.z, ctx.voxelSize.z, ctx.size.z);
+  const radiusSq = radius * radius;
+
+  for (let z = minZ; z <= maxZ; z++) {
+    const worldZ = gridToWorldCenter(z, ctx.origin.z, ctx.voxelSize.z);
+    for (let x = minX; x <= maxX; x++) {
+      const worldX = gridToWorldCenter(x, ctx.origin.x, ctx.voxelSize.x);
+      if ((worldX - center.x) ** 2 + (worldZ - center.z) ** 2 > radiusSq) continue;
+
+      for (let y = surfaceRow + 1; y <= Math.min(ctx.size.y - 1, surfaceRow + extraRows); y++) {
+        setBlock(ctx, x, y, z, AIR);
+      }
+    }
+  }
+}
+
+function paintDevTestingFeaturePads(
+  ctx: StructureStampContext,
+  layout: ProceduralCTFLayout,
+  spawnPoints: TeamMap<Vec3[]>,
+  flagZones: TeamMap<Vec3>
+): void {
+  const plan = getDevTestingPlanForHeightMap(layout, ctx.heightMap, spawnPoints, flagZones);
+  const targetRow = heightRowAtWorld(ctx.heightMap, ctx.origin, ctx.size, ctx.voxelSize, plan.targetBotArea.center);
+  const goldPanel = getBlockNumericId('gold_panel');
+
+  clearDiscHeadroom(ctx, plan.targetBotArea.center, DEV_TESTING_TARGET_AREA_HALF_EXTENTS.x + 1.25, targetRow, ctx.size.y);
+  stampDisc(ctx, plan.targetBotArea.center, DEV_TESTING_TARGET_AREA_HALF_EXTENTS.x, targetRow, ctx.palette.powerupPad);
+  stampDisc(ctx, plan.targetBotArea.center, 1.7, targetRow, goldPanel);
+
+  if (plan.heroLineup.length === 0) return;
+
+  const lineupCenter = averageVec3(plan.heroLineup.map((entry) => entry.position));
+  const wallRow = heightRowAtWorld(ctx.heightMap, ctx.origin, ctx.size, ctx.voxelSize, lineupCenter);
+  const wallWidth = DEV_TESTING_HERO_LINEUP_SPACING * Math.max(1, plan.heroLineup.length - 1) + 1.4;
+
+  clearDiscHeadroom(ctx, lineupCenter, wallWidth * 0.5 + 1.5, wallRow, ctx.size.y);
+
+  for (const entry of plan.heroLineup) {
+    const row = heightRowAtWorld(ctx.heightMap, ctx.origin, ctx.size, ctx.voxelSize, entry.position);
+    clearDiscHeadroom(ctx, entry.position, 1.25, row, ctx.size.y);
+    stampDisc(ctx, entry.position, 1.05, row, goldPanel);
+  }
+
+  const facing = normalize2D({
+    x: -Math.sin(plan.heroLineup[0].yaw),
+    z: -Math.cos(plan.heroLineup[0].yaw),
+  });
+  const wallCenter = {
+    x: lineupCenter.x - facing.x * 0.82,
+    z: lineupCenter.z - facing.z * 0.82,
+  };
+
+  stampOrientedRect(ctx, wallCenter, facing, wallWidth, 0.34, wallRow + 1, wallRow + 8, ctx.palette.wall);
+  stampOrientedRect(ctx, wallCenter, facing, wallWidth, 0.38, wallRow + 9, wallRow + 9, ctx.palette.glass);
+}
+
 function clearObjectiveHeadroom(ctx: StructureStampContext, layout: ProceduralCTFLayout): void {
   const surfaceRowAtPoint = (point: Vec3): number => {
     const grid = getGridPointForWorld(point, ctx.origin, ctx.size, ctx.voxelSize);
@@ -2949,17 +3159,21 @@ function generateProceduralVoxelMapInternal(
   options: ProceduralVoxelMapGenerationOptions = {}
 ): VoxelMapManifest {
   const normalizedSeed = seed >>> 0;
-  const mapSize = normalizeVoxelMapSizeId(options.mapSize);
+  const effectiveOptions = getEffectiveGenerationOptions(normalizedSeed, options);
+  const isDevTesting = isDevTestingMapProfileId(effectiveOptions.profileId);
+  const mapSize = normalizeVoxelMapSizeId(effectiveOptions.mapSize);
   const markStage = markStageFactory(diagnostics);
-  const layout = createProceduralCTFLayout(normalizedSeed, mapSize);
-  const theme = getVoxelMapTheme(normalizedSeed, options.themeId);
+  const layout = createProceduralCTFLayout(normalizedSeed, mapSize, {
+    footprintScale: effectiveOptions.footprintScale ?? undefined,
+  });
+  const theme = getVoxelMapTheme(normalizedSeed, effectiveOptions.themeId);
   const construction = createMapConstruction(normalizedSeed, layout, theme);
   const palette = createBlockPalette(theme);
   markStage('layout');
 
   const heightMap = createHeightMap(normalizedSeed, layout);
   flattenGameplayPads(heightMap, layout);
-  const placements = createPlacedStructures(normalizedSeed, construction, layout, theme, heightMap);
+  let placements = createPlacedStructures(normalizedSeed, construction, layout, theme, heightMap);
   flattenStructurePads(heightMap, layout, placements);
   limitHeightSteps(heightMap, layout, MAX_TERRAIN_STEP_ROWS, FINAL_TERRAIN_SMOOTHING_PASSES);
   flattenGameplayPads(heightMap, layout);
@@ -2967,6 +3181,9 @@ function generateProceduralVoxelMapInternal(
   updatePlacementSurfaceRows(heightMap, layout, placements);
   const spawnPoints = createSpawnPoints(layout, heightMap);
   const flagZones = createFlagZones(layout, heightMap);
+  if (isDevTesting) {
+    placements = filterDevTestingFeaturePlacements(placements, layout, heightMap, spawnPoints, flagZones);
+  }
   let blueprint = patchBlueprintForGeneratedMap({
     blueprint: construction.blueprint,
     construction,
@@ -2979,6 +3196,9 @@ function generateProceduralVoxelMapInternal(
   let powerups = createMapPowerups(normalizedSeed, blueprint, layout, heightMap);
   flattenPowerupPads(heightMap, layout, powerups);
   powerups = updatePowerupSurfacePositions(layout, heightMap, powerups);
+  if (isDevTesting) {
+    flattenDevTestingFeaturePads(heightMap, layout, spawnPoints, flagZones);
+  }
   blueprint = patchBlueprintForGeneratedMap({
     blueprint: construction.blueprint,
     construction,
@@ -3009,6 +3229,9 @@ function generateProceduralVoxelMapInternal(
   paintObjectivePads(stampContext, layout);
   clearPowerupPadHeadroom(stampContext, powerups);
   paintPowerupPads(stampContext, powerups);
+  if (isDevTesting) {
+    paintDevTestingFeaturePads(stampContext, layout, spawnPoints, flagZones);
+  }
   removeSmallFloatingFragments(stampContext, layout, SPAWN_EGRESS_FLOATING_CLEANUP_MAX_BLOCKS);
   markStage('objects');
 
@@ -3058,6 +3281,7 @@ function generateProceduralVoxelMapInternal(
       ...buildObjectSummary(placements),
       health_pack: powerups.filter((pickup) => pickup.kind === 'health_pack').length,
       powerup: powerups.filter((pickup) => pickup.kind === 'powerup').length,
+      ...(isDevTesting ? { dev_testing_hero_lineup: 1, dev_testing_target_pad: 1 } : {}),
     };
     diagnostics.repairActions = {};
   }
@@ -3067,7 +3291,7 @@ function generateProceduralVoxelMapInternal(
     version: CONSTRUCTED_MAP_MANIFEST_VERSION,
     seed: normalizedSeed,
     mapSize: layout.mapSize,
-    profileId: normalizeArenaMapProfileId(options.profileId),
+    profileId: isDevTesting ? DEV_TESTING_MAP_PROFILE_ID : normalizeArenaMapProfileId(effectiveOptions.profileId),
     familyId: construction.designBrief.familyId,
     topologyId: blueprint.topologyId,
     themeId: theme.id,
@@ -3130,7 +3354,7 @@ export function generateProceduralVoxelMap(
     return generateBattleRoyalVoxelMap(seed, { themeId: options.themeId, mapSize: options.mapSize });
   }
 
-  return generateProceduralVoxelMapInternal(seed, undefined, options);
+  return generateProceduralVoxelMapInternal(seed, undefined, getEffectiveGenerationOptions(seed >>> 0, options));
 }
 
 export function generateProceduralVoxelMapWithDiagnostics(
@@ -3175,13 +3399,14 @@ export function generateProceduralVoxelMapWithDiagnostics(
     };
   }
 
-  const mapSize = normalizeVoxelMapSizeId(options.mapSize);
+  const effectiveOptions = getEffectiveGenerationOptions(normalizedSeed, options);
+  const mapSize = normalizeVoxelMapSizeId(effectiveOptions.mapSize);
   const diagnostics = createProceduralVoxelMapDiagnostics(
     normalizedSeed,
-    getVoxelMapTheme(normalizedSeed, options.themeId).id,
+    getVoxelMapTheme(normalizedSeed, effectiveOptions.themeId).id,
     mapSize
   );
-  const manifest = generateProceduralVoxelMapInternal(normalizedSeed, diagnostics, options);
+  const manifest = generateProceduralVoxelMapInternal(normalizedSeed, diagnostics, effectiveOptions);
   return { manifest, diagnostics };
 }
 

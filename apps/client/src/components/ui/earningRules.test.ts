@@ -23,9 +23,6 @@ function createEconomy(overrides: RewardEconomyOverrides = {}): RewardEconomy {
       maxMatchPayoutLamports: '250000',
       treasuryReserveLamports: '1000000000',
       payoutBatchSize: 100,
-      weeklyEnabled: true,
-      weeklyPoolLamports: '1000000',
-      weeklyTopPlayers: 10,
       updatedByUserId: null,
       updatedAt: null,
     },
@@ -75,47 +72,41 @@ function valuesFor(economy: RewardEconomy | null): string[] {
 
 assert.deepEqual(
   labelsFor(createEconomy()),
-  ['Ranked match', 'Win + assist', 'Flag bonus', 'Weekly top 10', 'Golden map', 'Wagers'],
+  ['Ranked match', 'Win + assist', 'Flag bonus', 'Play Ranked', 'Golden map', 'Wager Games'],
   'enabled reward economy should show all payout rules',
 );
 
 assert.deepEqual(
   labelsFor(createEconomy({ playerRewards: { enabled: false } })),
-  ['Weekly top 10', 'Golden map', 'Wagers'],
-  'turning off ranked payouts should hide ranked match and bonuses without hiding weekly rewards',
-);
-
-assert.deepEqual(
-  labelsFor(createEconomy({ playerRewards: { weeklyEnabled: false } })),
-  ['Ranked match', 'Win + assist', 'Flag bonus', 'Golden map', 'Wagers'],
-  'turning off weekly payouts should hide the weekly leaderboard row only',
+  ['Play Ranked', 'Golden map', 'Wager Games'],
+  'turning off ranked payouts should hide ranked match and bonuses',
 );
 
 assert.deepEqual(
   labelsFor(createEconomy({ goldenBiome: { enabled: false } })),
-  ['Ranked match', 'Win + assist', 'Flag bonus', 'Weekly top 10', 'Wagers'],
+  ['Ranked match', 'Win + assist', 'Flag bonus', 'Play Ranked', 'Wager Games'],
   'turning off golden map rewards should hide the golden map row',
 );
 
 assert.deepEqual(
   labelsFor(createEconomy({ wagers: { enabled: false } })),
-  ['Ranked match', 'Win + assist', 'Flag bonus', 'Weekly top 10', 'Golden map'],
+  ['Ranked match', 'Win + assist', 'Flag bonus', 'Play Ranked', 'Golden map'],
   'turning off wagers should hide the wager row',
 );
 
 assert.deepEqual(
   labelsFor(createEconomy({
-    playerRewards: { enabled: false, weeklyEnabled: false },
+    playerRewards: { enabled: false },
     goldenBiome: { enabled: false },
     wagers: { enabled: false },
   })),
-  [],
-  'turning off every reward economy item should hide every payout rule',
+  ['Play Ranked'],
+  'ranked token hold copy stays visible when payout rewards are disabled',
 );
 
 assert.deepEqual(
   labelsFor(null),
-  ['Ranked match', 'Win + assist', 'Flag bonus', 'Weekly top 10', 'Golden map', 'Wagers'],
+  ['Ranked match', 'Win + assist', 'Flag bonus', 'Play Ranked', 'Golden map', 'Wager Games'],
   'missing economy data should keep default copy while the API request is pending or unavailable',
 );
 
@@ -125,9 +116,9 @@ assert.deepEqual(
     '20K UNITS, max 5/day',
     '10K UNITS win, 2K UNITS assist',
     '15K UNITS capture, 5K UNITS return',
-    'split 1M UNITS',
+    'Hold 1M UNITS',
     '2% roll, 0.2 SOL each winner',
-    'winners split pot, treasury keeps 5%',
+    'Winners split pot',
   ],
   'token payout values should be compact and human-readable',
 );

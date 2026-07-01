@@ -13,8 +13,12 @@ const LegalPage = lazy(() => import('./components/ui/LegalPage').then((module) =
 const AdminConsole = lazy(() =>
   import('./components/admin/AdminConsole').then((module) => ({ default: module.AdminConsole }))
 );
+const ModelLab = lazy(() =>
+  import('./components/ui/ModelLab').then((module) => ({ default: module.ModelLab }))
+);
 const legalPageKind = getLegalPageKind(window.location.pathname);
 const isAdminRoute = getIsAdminRoute(window.location.pathname);
+const isModelLabRoute = getIsModelLabRoute(window.location.pathname);
 
 function getLegalPageKind(pathname: string) {
   if (pathname === '/terms-of-service') return 'terms';
@@ -24,6 +28,10 @@ function getLegalPageKind(pathname: string) {
 
 function getIsAdminRoute(pathname: string) {
   return pathname === '/admin' || pathname === '/admin/';
+}
+
+function getIsModelLabRoute(pathname: string) {
+  return pathname === '/model-lab' || pathname === '/model-lab/';
 }
 
 function ClientAppShell() {
@@ -48,7 +56,9 @@ function ClientAppShell() {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <Suspense fallback={null}>
-      {isAdminRoute ? (
+      {isModelLabRoute ? (
+        <ModelLab />
+      ) : isAdminRoute ? (
         <AdminConsole />
       ) : legalPageKind ? (
         <LegalPage kind={legalPageKind} />

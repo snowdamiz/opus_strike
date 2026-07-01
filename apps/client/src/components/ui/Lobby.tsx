@@ -21,6 +21,7 @@ import type { LobbyPlayer } from '../../store/types';
 import { BLAZE_UI_COLORS, FACTIONS, TEAM_FALLBACK_COLORS } from '../../styles/colorTokens';
 import { RankIcon, getRankForStats } from './RankBadge';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
+import { DailyMissionTracker } from './DailyMissionTracker';
 
 // Solar Vanguard Icon - Stylized sun with radiating beams
 function SolarIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -546,6 +547,11 @@ export function Lobby() {
         </div>
       </nav>
 
+      <DailyMissionTracker
+        enabled={isAuthenticated}
+        className="absolute left-4 top-[5.35rem] z-20 w-[min(23rem,calc(100vw-2rem))] sm:left-6 xl:left-8"
+      />
+
       {/* Main Content */}
       <div className="team-select-main menu-main menu-main-play">
         {isBattleRoyal ? (
@@ -652,18 +658,18 @@ export function Lobby() {
 
       {/* Bottom Status Bar */}
       <div
-        className="absolute bottom-0 left-0 right-0 z-20"
+        className="lobby-bottom-bar absolute bottom-0 left-0 right-0 z-20"
         style={{
           background: 'linear-gradient(to top, rgb(var(--color-strike-page-top) / 0.95), rgb(var(--color-strike-page-top) / 0.6), transparent)',
         }}
       >
         {lobbyError && (
-          <div className="mx-auto mb-2 max-w-xl rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-center text-sm text-red-200">
+          <div className="lobby-error mx-auto mb-2 max-w-xl rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-center text-sm text-red-200">
             {lobbyError}
           </div>
         )}
-        <div className="flex items-center justify-center py-2 xl:py-4">
-          <div className="flex items-center gap-3 xl:gap-4 px-4 xl:px-5 py-2 rounded-full bg-white/[0.035] border border-white/5 backdrop-blur-xl shadow-2xl shadow-black/30">
+        <div className="lobby-bottom-bar-inner flex items-center justify-center py-2 xl:py-4">
+          <div className="lobby-action-bar flex items-center gap-3 xl:gap-4 px-4 xl:px-5 py-2 rounded-full bg-white/[0.035] border border-white/5 backdrop-blur-xl shadow-2xl shadow-black/30">
             {isBattleRoyal ? (
               <div className="flex items-center gap-2.5">
                 <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-orange-500/15">
@@ -694,7 +700,7 @@ export function Lobby() {
                 type="button"
                 onClick={() => { playButtonClick(); handleStartGame(); }}
                 disabled={!canStart || isLoading}
-                className={`h-10 min-w-[12.5rem] rounded-full px-5 font-display text-xs uppercase tracking-wide transition-all ${
+                className={`lobby-primary-action h-10 min-w-[12.5rem] rounded-full px-5 font-display text-xs uppercase tracking-wide transition-all ${
                   canStart
                     ? 'text-white hover:brightness-110 active:scale-[0.98]'
                     : 'bg-white/[0.055] text-white/30 cursor-not-allowed'
@@ -742,7 +748,7 @@ export function Lobby() {
                 type="button"
                 onClick={() => { playButtonClick(); handleToggleReady(); }}
                 disabled={!hasChosenRole || isLoading}
-                className={`h-10 min-w-[12.5rem] rounded-full px-5 font-display text-xs uppercase tracking-wide transition-all ${
+                className={`lobby-primary-action h-10 min-w-[12.5rem] rounded-full px-5 font-display text-xs uppercase tracking-wide transition-all ${
                   hasChosenRole
                     ? 'text-white hover:brightness-110 active:scale-[0.98]'
                     : 'bg-white/[0.055] text-white/30 cursor-not-allowed'
@@ -1135,7 +1141,7 @@ function JoinTeamCard({ faction, reverse, canJoin, canAddBot, canInvite, onJoin,
         <button
           type="button"
           onClick={() => { playButtonClick(); onJoin(); }}
-          className={`group flex min-w-0 flex-1 items-center rounded-xl border border-dashed transition-all hover:bg-white/[0.045] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 ${compact ? 'gap-2 p-1.5' : 'gap-3 p-2'} ${
+          className={`lobby-join-team-button group flex min-w-0 flex-1 items-center rounded-xl border border-dashed transition-all hover:bg-white/[0.045] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 ${compact ? 'gap-2 p-1.5' : 'gap-3 p-2'} ${
             reverse ? 'flex-row-reverse text-right' : ''
           }`}
           style={{
@@ -1169,7 +1175,7 @@ function JoinTeamCard({ faction, reverse, canJoin, canAddBot, canInvite, onJoin,
           onClick={() => { playButtonClick(); onInvite(); }}
           aria-label="Invite player"
           title="Invite player"
-          className={`group relative flex ${actionButtonClass} shrink-0 items-center justify-center rounded-xl border border-dashed bg-white/[0.045] text-white/55 transition-all hover:bg-white/[0.08] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30`}
+          className={`lobby-team-icon-action group relative flex ${actionButtonClass} shrink-0 items-center justify-center rounded-xl border border-dashed bg-white/[0.045] text-white/55 transition-all hover:bg-white/[0.08] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30`}
           style={{
             borderColor: `${faction.primaryColor}28`,
           }}
@@ -1185,7 +1191,7 @@ function JoinTeamCard({ faction, reverse, canJoin, canAddBot, canInvite, onJoin,
           onClick={() => { playButtonClick(); onAddBot(); }}
           aria-label={`Add ${faction.name} bot`}
           title="Add bot"
-          className={`group relative flex ${actionButtonClass} shrink-0 items-center justify-center rounded-xl border border-dashed bg-cyan-500/[0.055] text-cyan-300 transition-all hover:bg-cyan-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40`}
+          className={`lobby-team-icon-action group relative flex ${actionButtonClass} shrink-0 items-center justify-center rounded-xl border border-dashed bg-cyan-500/[0.055] text-cyan-300 transition-all hover:bg-cyan-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40`}
           style={{
             borderColor: `${faction.primaryColor}28`,
           }}
@@ -1258,7 +1264,7 @@ function PlayerCard({
 
   return (
     <div
-      className={`group relative flex w-full min-w-0 items-center ${compact ? 'gap-2' : 'gap-3'} ${cardClass} rounded-xl transition-all ${
+      className={`lobby-player-card group relative flex w-full min-w-0 items-center ${compact ? 'gap-2' : 'gap-3'} ${cardClass} rounded-xl transition-all ${
         isCurrentPlayer 
           ? 'bg-white/[0.08] ring-1 ring-inset ring-white/20'
           : 'bg-white/[0.02] hover:bg-white/[0.05]'
@@ -1362,7 +1368,7 @@ function PlayerCard({
       {isLobbyHost && !isCurrentPlayer && !player.isHost && (
  <button
  onClick={(event) => { event.stopPropagation(); playButtonClick(); player.isBot ? onRemoveBot() : onKick(); }}
- className="absolute right-2 top-1/2 z-10 h-8 w-8 -translate-y-1/2 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 bg-red-500/10 text-red-400/60 hover:text-red-400 hover:bg-red-500/20"
+	          className="lobby-kick-button absolute right-2 top-1/2 z-10 h-8 w-8 -translate-y-1/2 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 bg-red-500/10 text-red-400/60 hover:text-red-400 hover:bg-red-500/20"
  >
  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

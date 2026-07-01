@@ -10,6 +10,10 @@ import {
   DEFAULT_VOXEL_MAP_SIZE_ID,
   TUTORIAL_MAP_SEED,
   createTutorialVoxelMapManifest,
+  DEV_TESTING_MAP_SEED,
+  DEV_TESTING_MAP_PROFILE_ID,
+  DEV_TESTING_MAP_SIZE_ID,
+  generateProceduralVoxelMap,
   getGameplayModeLabel,
   getDefaultHeroSkinId,
   getHeroStats,
@@ -63,13 +67,13 @@ import {
 } from '../movement/localPrediction';
 import { projectileInitialState } from '../store/slices/projectiles';
 import { resetGameTiming } from '../store/gameTimingStore';
-import { createPracticeAbilityStates } from './practiceAbilities';
+import { createPracticeAbilityStates } from '../utils/practiceAbilityStates';
 import { usePartyStore } from '../store/partyStore';
 import { clearActivePartySession, saveActivePartySession } from '../utils/activePartySession';
 
 export type { RankedTokenHoldStatus } from './networkApi';
 
-type StartPracticeGameOptions = { mapSeed?: number; tutorial?: boolean; heroId?: HeroId; matchPerspective?: MatchPerspective };
+type StartPracticeGameOptions = { mapSeed?: number; tutorial?: boolean; targetPractice?: boolean; heroId?: HeroId; matchPerspective?: MatchPerspective };
 type EnsurePartyOptions = { selectedMode?: PartyMode; gameplayMode?: GameplayMode; selectedSkinId?: HeroSkinId };
 type PartyLaunchJoinOptions = { preservePartyRoom?: Room | null };
 const TUTORIAL_HERO_ID: HeroId = 'blaze';
@@ -104,6 +108,7 @@ interface NetworkContextType {
   getRankedTokenHoldStatus: () => Promise<RankedTokenHoldStatus>;
   startPracticeGame: (playerName?: string, options?: StartPracticeGameOptions) => void;
   startTutorialGame: (playerName?: string) => void;
+  startDevTestingMap: (playerName?: string) => void;
   joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
   joinMatchmakingLobby: (playerName: string, launch: PartyLaunchPayload, options?: PartyLaunchJoinOptions) => Promise<void>;
   leaveLobby: () => void;
@@ -329,7 +334,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const startPracticeGame = useCallback((playerName?: string, options?: StartPracticeGameOptions) => {
     const name = resolvePracticePlayerName(playerName);
-    const isTutorial = options?.tutorial === true;
+    const isTargetPractice = options?.targetPractice === true;
+    const isTutorial = options?.tutorial === true && !isTargetPractice;
     const matchPerspective = isTutorial
       ? DEFAULT_MATCH_PERSPECTIVE
       : options?.matchPerspective ?? DEFAULT_MATCH_PERSPECTIVE;
@@ -350,28 +356,37 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       if (practiceStartTokenRef.current !== startToken) return;
 
       try {
-        const tutorialManifest = isTutorial ? createTutorialVoxelMapManifest() : null;
+        const practiceManifest = isTutorial
+          ? createTutorialVoxelMapManifest()
+          : isTargetPractice
+          ? generateProceduralVoxelMap(DEV_TESTING_MAP_SEED, {
+            mapSize: DEV_TESTING_MAP_SIZE_ID,
+            profileId: DEV_TESTING_MAP_PROFILE_ID,
+          })
+          : null;
         const seed = isTutorial
           ? TUTORIAL_MAP_SEED
+          : isTargetPractice
+          ? DEV_TESTING_MAP_SEED
           : typeof options?.mapSeed === 'number'
           ? options.mapSeed >>> 0
           : createRandomSeed();
         const preparedMap = prepareVoxelMapCpu({
           seed,
-          manifest: tutorialManifest ?? undefined,
-          mapSize: tutorialManifest?.mapSize ?? DEFAULT_VOXEL_MAP_SIZE_ID,
-          themeId: tutorialManifest?.themeId ?? null,
-          mapProfileId: tutorialManifest?.profileId ?? null,
+          manifest: practiceManifest ?? undefined,
+          mapSize: practiceManifest?.mapSize ?? DEFAULT_VOXEL_MAP_SIZE_ID,
+          themeId: practiceManifest?.themeId ?? null,
+          mapProfileId: practiceManifest?.profileId ?? null,
           source: 'match',
         });
         prebuildPreparedMapGeometryDeferred(preparedMap, { frameBudgetMs: 2, label: 'practice-start' });
-        const spawnPoints = isTutorial
+        const spawnPoints = isTutorial || isTargetPractice
           ? preparedMap.manifest.spawnPoints.red
           : [
             ...preparedMap.manifest.spawnPoints.red,
             ...preparedMap.manifest.spawnPoints.blue,
           ];
-        const spawn = isTutorial
+        const spawn = isTutorial || isTargetPractice
           ? spawnPoints[0] ?? { x: 0, y: 1, z: 0 }
           : spawnPoints[Math.floor(Math.random() * spawnPoints.length)] ?? { x: 0, y: 1, z: 0 };
         const playerId = createPracticePlayerId();
@@ -382,7 +397,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         player.state = 'alive';
         player.position = { ...spawn };
         player.team = 'red';
-        if (isTutorial) {
+        if (isTutorial || isTargetPractice) {
           player.lookYaw = facingToLookYaw(preparedMap.manifest.gameplay.spawns.red.facing);
           player.lookPitch = 0;
         }
@@ -432,6 +447,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
             { pickupId: pickup.id, availableAt: 0 },
           ])),
           powerupPickupCollections: new Map(),
+          interactionPrompt: null,
+          devTestingTargetBotFrozen: false,
+          devTestingTargetBotResetRequestId: 0,
           players: new Map([[playerId, player]]),
           localPlayer: player,
           playerPings: new Map(),
@@ -451,7 +469,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         setRoomId(null);
         setConnected(false);
 
-        loggers.network.info(isTutorial ? 'started local tutorial' : 'started local practice', seed);
+        loggers.network.info(
+          isTutorial ? 'started local tutorial' : isTargetPractice ? 'started local practice target range' : 'started local practice',
+          seed
+        );
       } catch (error) {
         loggers.network.error('failed to start local practice', error);
         practiceStartTokenRef.current += 1;
@@ -459,6 +480,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           isPracticePreparing: false,
           isPracticeMode: false,
           isTutorialMode: false,
+          interactionPrompt: null,
           appPhase: 'menu',
           gamePhase: 'waiting',
         });
@@ -479,6 +501,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const startTutorialGame = useCallback((playerName?: string) => {
     startPracticeGame(playerName, { tutorial: true });
+  }, [startPracticeGame]);
+
+  const startDevTestingMap = useCallback((playerName?: string) => {
+    if (!config.isDev) return;
+    startPracticeGame(playerName, { targetPractice: true });
   }, [startPracticeGame]);
 
   const setupLobbyListeners = useCallback((room: Room, playerName: string) => {
@@ -1145,6 +1172,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       mapThemeId: null,
       mapSize: DEFAULT_VOXEL_MAP_SIZE_ID,
       mapProfileId: null,
+      interactionPrompt: null,
       gameplayMode: DEFAULT_GAMEPLAY_MODE,
       matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
       redFlag: null,
@@ -1345,6 +1373,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     getRankedTokenHoldStatus,
     startPracticeGame,
     startTutorialGame,
+    startDevTestingMap,
     joinLobby,
     joinMatchmakingLobby,
     ensureParty,
@@ -1453,6 +1482,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     startParty,
     startPracticeGame,
     startTutorialGame,
+    startDevTestingMap,
     updateLobbyBotDifficulty,
     updateLobbyBotHero,
     updateLobbyBotTeam,

@@ -11,10 +11,17 @@ import {
 } from '@voxel-strike/shared';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import { useGameStore } from '../store/gameStore';
-import { syncPlayerVisualEffectIndexes } from '../store/visualStore';
+import {
+  DEATH_VISUAL_LIFETIME_MS,
+  addDeathVisual,
+  syncPlayerVisualEffectIndexes,
+  visualStore,
+} from '../store/visualStore';
 
 export const TUTORIAL_OFFLINE_TRAINING_HERO_ID_PREFIX = 'tutorial_training_hero_';
+export const DEV_OFFLINE_TRAINING_HERO_ID_PREFIX = 'dev_training_hero_';
 export const TUTORIAL_OFFLINE_TRAINING_HERO_RESPAWN_MS = 1800;
+export const PRACTICE_OFFLINE_TARGET_RESPAWN_MS = 3600;
 
 interface TutorialOfflineTrainingDamageInput {
   target: Player | null | undefined;
@@ -84,7 +91,10 @@ const tutorialOfflineBurns = new Map<string, TutorialOfflineBurn>();
 const tutorialOfflineDamageHistory: DamageHistoryStore = new Map();
 
 export function isTutorialOfflineTrainingHeroId(playerId: string | null | undefined): boolean {
-  return Boolean(playerId?.startsWith(TUTORIAL_OFFLINE_TRAINING_HERO_ID_PREFIX));
+  return Boolean(
+    playerId?.startsWith(TUTORIAL_OFFLINE_TRAINING_HERO_ID_PREFIX) ||
+      playerId?.startsWith(DEV_OFFLINE_TRAINING_HERO_ID_PREFIX)
+  );
 }
 
 export function isTutorialOfflineTrainingHero(player: Player | null | undefined): player is Player {
@@ -106,6 +116,12 @@ function getTutorialOfflineSource(input: Pick<TutorialOfflineTrainingDamageInput
 
 function getDefaultDamageResult(): TutorialOfflineTrainingDamageResult {
   return { applied: false, killed: false, damage: 0 };
+}
+
+function getOfflineTrainingHeroRespawnMs(playerId: string): number {
+  return playerId.startsWith(DEV_OFFLINE_TRAINING_HERO_ID_PREFIX)
+    ? PRACTICE_OFFLINE_TARGET_RESPAWN_MS
+    : TUTORIAL_OFFLINE_TRAINING_HERO_RESPAWN_MS;
 }
 
 function clonePlayerForDamage(player: Player): Player {
@@ -218,6 +234,79 @@ function prepareDeadTrainingHero(player: Player): void {
   };
 }
 
+function cloneVec3(source: Vec3): Vec3 {
+  return { x: source.x, y: source.y, z: source.z };
+}
+
+function normalizeVec3(source: Vec3 | null | undefined): Vec3 | null {
+  if (!source) return null;
+
+  const length = Math.hypot(source.x, source.y, source.z);
+  if (!Number.isFinite(length) || length <= 0.0001) return null;
+
+  return {
+    x: source.x / length,
+    y: source.y / length,
+    z: source.z / length,
+  };
+}
+
+function getOfflineTrainingDeathSourceDirection(
+  targetPosition: Vec3,
+  target: Player,
+  source: Player | null
+): Vec3 | null {
+  if (source) {
+    const visualSourcePosition = visualStore.getState().playerPositions.get(source.id) ?? source.position;
+    const fromSource = normalizeVec3({
+      x: targetPosition.x - visualSourcePosition.x,
+      y: targetPosition.y - visualSourcePosition.y,
+      z: targetPosition.z - visualSourcePosition.z,
+    });
+    if (fromSource) return fromSource;
+  }
+
+  return (
+    normalizeVec3(target.velocity) ??
+    normalizeVec3({
+      x: Math.sin(target.lookYaw),
+      y: 0,
+      z: Math.cos(target.lookYaw),
+    })
+  );
+}
+
+function addOfflineTrainingDeathVisual(target: Player, source: Player | null, now: number): void {
+  const store = useGameStore.getState();
+  const localPlayerId = store.localPlayer?.id ?? store.playerId;
+  const visualState = visualStore.getState();
+  const position = cloneVec3(visualState.playerPositions.get(target.id) ?? target.position);
+  const lookYaw = visualState.playerRotations.get(target.id) ?? target.lookYaw;
+  const expiresAtMs = Number.isFinite(target.respawnTime)
+    ? target.respawnTime!
+    : now + DEATH_VISUAL_LIFETIME_MS;
+
+  addDeathVisual({
+    id: `death:${target.id}:${now}`,
+    playerId: target.id,
+    heroId: target.heroId,
+    skinId: target.skinId,
+    team: target.team,
+    isBot: target.isBot,
+    name: target.name,
+    position,
+    velocity: cloneVec3(target.velocity),
+    lookYaw,
+    lookPitch: target.lookPitch,
+    movement: target.movement,
+    killerId: source?.id ?? null,
+    sourceDirection: getOfflineTrainingDeathSourceDirection(position, target, source),
+    startedAtMs: now,
+    expiresAtMs,
+    local: target.id === localPlayerId,
+  });
+}
+
 function clearTargetDamageRuntime(targetId: string): void {
   tutorialOfflineBurns.delete(targetId);
   tutorialOfflineDamageHistory.delete(targetId);
@@ -267,7 +356,7 @@ export function applyTutorialOfflineTrainingDamage(input: TutorialOfflineTrainin
     damageHistory: tutorialOfflineDamageHistory,
     now,
     assistWindowMs: 10000,
-    respawnDelayMs: TUTORIAL_OFFLINE_TRAINING_HERO_RESPAWN_MS,
+    respawnDelayMs: getOfflineTrainingHeroRespawnMs(target.id),
     creditOverkillDamage: false,
     ultimateChargePerKill: 0,
     ultimateChargePerAssist: 0,
@@ -284,6 +373,7 @@ export function applyTutorialOfflineTrainingDamage(input: TutorialOfflineTrainin
   if (!result.applied) return getDefaultDamageResult();
 
   if (result.death) {
+    addOfflineTrainingDeathVisual(target, source, now);
     prepareDeadTrainingHero(target);
     clearTargetDamageRuntime(target.id);
   }

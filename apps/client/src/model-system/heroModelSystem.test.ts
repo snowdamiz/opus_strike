@@ -68,7 +68,7 @@ import {
   setChronosPrimaryHeld,
   triggerChronosTimebreakPose,
 } from '../viewmodel/chronosPose';
-import type { HeroBoneRefs, VoxelPartDraft } from './heroBodyTypes';
+import type { HeroBoneName, HeroBoneRefs, MaterialKind, VoxelPart, VoxelPartDraft } from './heroBodyTypes';
 
 const heroIds = Object.keys(HERO_DEFINITIONS).sort() as HeroId[];
 const skinIds = HERO_SKIN_CATALOG.map((skin) => skin.id).sort() as HeroSkinId[];
@@ -99,6 +99,30 @@ const expectedRemoteSockets: Record<HeroId, readonly string[]> = {
     CHRONOS_PRIMARY_ORB_SOCKET_NAME,
   ],
 };
+
+const TERMINAL_HAND_DETAIL_BONES = new Set<HeroBoneName>([
+  'leftArm',
+  'rightArm',
+  'leftForearm',
+  'rightForearm',
+]);
+const TERMINAL_HAND_DETAIL_MATERIALS = new Set<MaterialKind>([
+  'accent',
+  'glass',
+  'glow',
+  'metal',
+]);
+
+function isTinyTerminalHandDetail(part: Pick<VoxelPart, 'bone' | 'material' | 'position' | 'scale'>): boolean {
+  const [, y, z] = part.position;
+  return (
+    TERMINAL_HAND_DETAIL_BONES.has(part.bone) &&
+    TERMINAL_HAND_DETAIL_MATERIALS.has(part.material) &&
+    y <= 0.9 &&
+    z <= -0.1 &&
+    Math.max(...part.scale) <= 0.18
+  );
+}
 
 for (const heroId of heroIds) {
   const manifest = HERO_BODY_MANIFESTS[heroId];
@@ -175,7 +199,7 @@ for (const skin of HERO_SKIN_CATALOG) {
   assert.equal(document.heroId, skin.heroId, `${skin.id} model document must match catalog hero`);
   assert.equal(validateHeroModelDocument(document).ok, true, `${skin.id} model document must validate`);
 
-  if (skin.availability === 'paid') {
+  if (skin.availability !== 'free') {
     const defaultSkinId = DEFAULT_HERO_SKIN_IDS[skin.heroId];
     const defaultManifest = HERO_SKIN_BODY_MANIFESTS[defaultSkinId];
     const defaultDocument = HERO_SKIN_MODEL_DOCUMENTS[defaultSkinId];
@@ -198,6 +222,15 @@ for (const skin of HERO_SKIN_CATALOG) {
     assert.ok(fullBodySocketNames.has(socketName), `${skin.id} full-body document missing ${socketName}`);
     assert.ok(viewmodelSocketNames.has(socketName), `${skin.id} viewmodel document missing ${socketName}`);
   }
+
+  const tinyTerminalHandDetails = [...manifest.parts, ...manifest.teamAccentParts]
+    .filter(isTinyTerminalHandDetail)
+    .map((part) => part.id);
+  assert.deepEqual(
+    tinyTerminalHandDetails,
+    [],
+    `${skin.id} should keep full-body hands clean of tiny terminal detail geometry`
+  );
 }
 
 for (const skinId of ['phantom.default', 'phantom.void-monarch'] as const) {
@@ -246,7 +279,7 @@ for (const part of voidMonarchLowerLegTrim) {
   );
 }
 
-for (const skin of HERO_SKIN_CATALOG.filter((catalogSkin) => catalogSkin.availability === 'paid')) {
+for (const skin of HERO_SKIN_CATALOG.filter((catalogSkin) => catalogSkin.availability !== 'free')) {
   assert.equal(
     resolveHeroSkinModel(skin.heroId, skin.id).skinId,
     skin.id,
@@ -273,6 +306,7 @@ invalidViewmodelDocument.defaultFallbackSockets.customEditorRole = {
   forwardOffset: 0,
   sideOffset: 0,
 };
+invalidViewmodelDocument.fullBody.parts[0].attachmentMode = 'hovering';
 const invalidViewmodelValidation = validateHeroModelDocument(invalidViewmodelDocument);
 assert.equal(invalidViewmodelValidation.ok, false);
 assert.ok(
@@ -286,6 +320,10 @@ assert.ok(
 assert.ok(
   invalidViewmodelValidation.errors.some((error) => error.includes('defaultFallbackSockets.customEditorRole.handHeight')),
   'validator should reject malformed custom fallback socket offsets'
+);
+assert.ok(
+  invalidViewmodelValidation.errors.some((error) => error.includes('fullBody.parts[0].attachmentMode')),
+  'validator should reject unknown full-body attachment modes'
 );
 
 const customEditorDocument = JSON.parse(JSON.stringify(HERO_SKIN_MODEL_DOCUMENTS['phantom.default']));
@@ -317,6 +355,24 @@ assert.equal(classifyHeroBone(sampleParts[2]), 'leftShin');
 assert.equal(classifyHeroBone(sampleParts[3]), 'rightArm');
 assert.equal(classifyHeroBone(sampleParts[4]), 'aura');
 assert.equal(classifyHeroBone(sampleParts[5]), 'rightForearm');
+
+const surfaceAttachmentParts = addVoxelPartMetadata<VoxelPartDraft>([
+  { material: 'armor', bone: 'torso', position: [0, 1, 0], scale: [0.8, 0.8, 0.4] },
+  { material: 'metal', bone: 'torso', position: [0, 1, -0.31], scale: [0.32, 0.22, 0.1] },
+  { material: 'glow', bone: 'torso', position: [0, 1, -0.78], scale: [0.32, 0.22, 0.1], attachmentMode: 'floating' },
+], 'test.surfaceAttachment');
+const resolvedSurfaceAttachmentParts = getHeroBodyRenderParts(surfaceAttachmentParts);
+assert.equal(resolvedSurfaceAttachmentParts[0], surfaceAttachmentParts[0]);
+assert.equal(surfaceAttachmentParts[1].position[2], -0.31);
+assert.ok(
+  resolvedSurfaceAttachmentParts[1].position[2] > surfaceAttachmentParts[1].position[2],
+  'surface attachments should move toward the same-bone host surface when separated by a small gap'
+);
+assert.deepEqual(
+  resolvedSurfaceAttachmentParts[2].position,
+  surfaceAttachmentParts[2].position,
+  'floating attachments should keep their authored coordinates'
+);
 
 const grouped = groupRiggedParts(sampleParts);
 assert.equal(grouped.head.length, 1);

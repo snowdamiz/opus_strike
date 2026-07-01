@@ -62,6 +62,10 @@ interface ProceduralMapFootprint {
   mapScale: number;
 }
 
+export interface ProceduralCTFLayoutOptions {
+  footprintScale?: number;
+}
+
 interface Point2 {
   x: number;
   z: number;
@@ -164,9 +168,14 @@ function isBoundarySafePoint(x: number, z: number, boundary: BoundaryPoint[], mi
   return isInsideBoundaryPolygon(x, z, boundary) && distanceToBoundary(x, z, boundary) >= minBoundaryDistance;
 }
 
-function createProceduralMapFootprint(seed: number, mapSize: VoxelMapSizeId): ProceduralMapFootprint {
+function createProceduralMapFootprint(
+  seed: number,
+  mapSize: VoxelMapSizeId,
+  options: ProceduralCTFLayoutOptions = {}
+): ProceduralMapFootprint {
   const random = mulberry32(seed ^ 0x793f7d9);
-  const mapScale = getVoxelMapSizeDefinition(mapSize).scale;
+  const footprintScale = clamp(options.footprintScale ?? 1, 0.5, 1.5);
+  const mapScale = getVoxelMapSizeDefinition(mapSize).scale * footprintScale;
   const sizeScale = lerp(0.98, 1.06, random());
   const xScale = lerp(0.96, 1.05, random());
   const zScale = lerp(0.96, 1.05, random());
@@ -425,9 +434,13 @@ function createLayoutSpawnCluster(
   }));
 }
 
-export function createProceduralCTFLayout(seed = 0, mapSize?: VoxelMapSizeId | null): ProceduralCTFLayout {
+export function createProceduralCTFLayout(
+  seed = 0,
+  mapSize?: VoxelMapSizeId | null,
+  options: ProceduralCTFLayoutOptions = {}
+): ProceduralCTFLayout {
   const normalizedMapSize = normalizeVoxelMapSizeId(mapSize);
-  const footprint = createProceduralMapFootprint(seed, normalizedMapSize);
+  const footprint = createProceduralMapFootprint(seed, normalizedMapSize, options);
   const boundary = createProceduralBoundary(seed, footprint.worldSize);
   const flagRandom = mulberry32(seed ^ 0x51f15eed);
   const spawnRandom = mulberry32(seed ^ 0xbadc0de);

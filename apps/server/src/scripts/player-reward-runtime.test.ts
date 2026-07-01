@@ -3,8 +3,7 @@ import type { AntiCheatIntegrityGate } from '../anticheat';
 import type { MatchParticipantSnapshot } from '../persistence/matchPersistence';
 import {
   buildMatchPlayerRewardGrants,
-  buildWeeklyLeaderboardRewardGrants,
-  getPreviousUtcWeekRange,
+  buildSeasonTopTenRewardGrants,
   limitPlayerRewardGrantsToBudget,
 } from '../rewards/service';
 import type { PlayerRewardRuntimeConfig } from '../rewards/config';
@@ -55,9 +54,6 @@ const config: PlayerRewardRuntimeConfig = {
   maxMatchPayoutLamports: 1_000n,
   treasuryReserveLamports: 0n,
   payoutBatchSize: 100,
-  weeklyEnabled: true,
-  weeklyPoolLamports: 600n,
-  weeklyTopPlayers: 3,
 };
 
 {
@@ -128,25 +124,27 @@ const config: PlayerRewardRuntimeConfig = {
 }
 
 {
-  const range = getPreviousUtcWeekRange(new Date('2026-06-24T12:00:00.000Z'));
-  assert.equal(range.weekKey, '2026-06-15');
-
-  const grants = buildWeeklyLeaderboardRewardGrants({
-    range,
-    poolLamports: 600n,
+  const grants = buildSeasonTopTenRewardGrants({
+    mode: 'season',
+    seasonNumber: 2,
+    amountLamports: 600n,
+    settledByUserId: 'admin-a',
     entries: [
-      { userId: 'first', score: 1000, matchCount: 8 },
-      { userId: 'second', score: 500, matchCount: 5 },
-      { userId: 'third', score: 100, matchCount: 2 },
+      { userId: 'first', userName: 'First', competitiveRating: 1500, rankedGames: 8, rankedWins: 6, rankedLosses: 2, rankedDraws: 0, rankedPeakRating: 1510, rank: 1 },
+      { userId: 'second', userName: 'Second', competitiveRating: 1400, rankedGames: 5, rankedWins: 4, rankedLosses: 1, rankedDraws: 0, rankedPeakRating: 1420, rank: 2 },
+      { userId: 'third', userName: 'Third', competitiveRating: 1300, rankedGames: 2, rankedWins: 1, rankedLosses: 1, rankedDraws: 0, rankedPeakRating: 1300, rank: 3 },
     ],
   });
 
-  assert.deepEqual(grants.map((grant) => grant.amountLamports), [300n, 200n, 100n]);
+  assert.deepEqual(grants.map((grant) => grant.amountLamports), [600n, 600n, 600n]);
   assert.deepEqual(grants.map((grant) => grant.idempotencyKey), [
-    'weekly:2026-06-15:first',
-    'weekly:2026-06-15:second',
-    'weekly:2026-06-15:third',
+    'season_top_10:season:2:first',
+    'season_top_10:season:2:second',
+    'season_top_10:season:2:third',
   ]);
+  assert.deepEqual(grants.map((grant) => grant.kind), ['season_top_10', 'season_top_10', 'season_top_10']);
+  assert.equal(grants[0].metadata.rank, 1);
+  assert.equal(grants[0].metadata.settledByUserId, 'admin-a');
 }
 
 console.log('player reward runtime tests passed');

@@ -1,5 +1,5 @@
 import type { PlayerRewardStatus, Prisma } from '@prisma/client';
-import type { MatchMode, Team } from '@voxel-strike/shared';
+import type { MatchMode, RankedSeasonMode, Team } from '@voxel-strike/shared';
 import type { AntiCheatIntegrityGate } from '../anticheat';
 import prisma from '../db';
 import {
@@ -14,6 +14,7 @@ import {
   getPlayerRewardRuntimeConfig,
   type PlayerRewardRuntimeConfig,
 } from './config';
+import { getRankedSeason } from '../ranking/seasonService';
 
 export interface CreateMatchPlayerRewardsInput {
   matchId: string;
@@ -32,7 +33,7 @@ export interface PlayerRewardGrant {
   userId: string;
   matchId: string | null;
   playerSessionId: string | null;
-  kind: 'daily_ranked_drip' | 'objective_bounty' | 'weekly_leaderboard';
+  kind: 'daily_ranked_drip' | 'objective_bounty' | 'season_top_10';
   amountLamports: bigint;
   idempotencyKey: string;
   reason: string;
@@ -45,16 +46,16 @@ export interface MatchRewardBuildInput extends CreateMatchPlayerRewardsInput {
   dailyRewardCountsByUserId: Map<string, number>;
 }
 
-export interface WeeklyLeaderboardEntry {
+export interface SeasonTopTenEntry {
   userId: string;
-  score: number;
-  matchCount: number;
-}
-
-export interface WeeklyRewardRange {
-  weekStartsAt: Date;
-  weekEndsAt: Date;
-  weekKey: string;
+  userName: string;
+  competitiveRating: number;
+  rankedGames: number;
+  rankedWins: number;
+  rankedLosses: number;
+  rankedDraws: number;
+  rankedPeakRating: number;
+  rank: number;
 }
 
 export interface PlayerRewardCreationResult {
@@ -91,9 +92,6 @@ export interface PlayerRewardSettingsSnapshot {
   maxMatchPayoutLamports: string;
   treasuryReserveLamports: string;
   payoutBatchSize: number;
-  weeklyEnabled: boolean;
-  weeklyPoolLamports: string;
-  weeklyTopPlayers: number;
   updatedByUserId: string | null;
   updatedAt: string | null;
 }
@@ -126,19 +124,23 @@ function getUtcDayRange(date: Date): { start: Date; end: Date; key: string } {
   return { start, end, key: toUtcDateKey(start) };
 }
 
-export function getPreviousUtcWeekRange(now = new Date()): WeeklyRewardRange {
-  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  const today = new Date(todayUtc);
-  const day = today.getUTCDay();
-  const daysSinceMonday = (day + 6) % 7;
-  const currentWeekStart = new Date(today.getTime() - daysSinceMonday * 24 * 60 * 60 * 1000);
-  const weekStartsAt = new Date(currentWeekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const weekEndsAt = currentWeekStart;
-  return {
-    weekStartsAt,
-    weekEndsAt,
-    weekKey: toUtcDateKey(weekStartsAt),
-  };
+function readSeasonPayoutMode(value: unknown, fallback: RankedSeasonMode): RankedSeasonMode {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (value === 'preseason' || value === 'season') return value;
+  throw new Error('Season payout mode must be preseason or season');
+}
+
+function readSeasonPayoutNumber(value: unknown, fallback: number): number {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim() !== ''
+      ? Number(value)
+      : Number.NaN;
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error('Season payout number must be a positive integer');
+  }
+  return Math.floor(parsed);
 }
 
 function isCleanRankedRewardMatch(input: CreateMatchPlayerRewardsInput): boolean {
@@ -260,40 +262,39 @@ export function buildMatchPlayerRewardGrants(input: MatchRewardBuildInput): Play
   return limitPlayerRewardGrantsToBudget(grants, config.maxMatchPayoutLamports);
 }
 
-export function buildWeeklyLeaderboardRewardGrants(input: {
-  entries: WeeklyLeaderboardEntry[];
-  poolLamports: bigint;
-  range: WeeklyRewardRange;
+export function buildSeasonTopTenRewardGrants(input: {
+  entries: SeasonTopTenEntry[];
+  amountLamports: bigint;
+  mode: RankedSeasonMode;
+  seasonNumber: number;
+  settledByUserId: string | null;
 }): PlayerRewardGrant[] {
-  const entries = input.entries.filter((entry) => entry.score > 0);
-  if (entries.length === 0 || input.poolLamports <= 0n) return [];
+  if (input.entries.length === 0 || input.amountLamports <= 0n) return [];
 
-  const weights = entries.map((_, index) => BigInt(entries.length - index));
-  const totalWeight = sumLamports(weights);
-  const baseAmounts = weights.map((weight) => input.poolLamports * weight / totalWeight);
-  const dustLamports = input.poolLamports - sumLamports(baseAmounts);
-
-  return entries.flatMap((entry, index) => {
-    const amountLamports = baseAmounts[index] + (index === 0 ? dustLamports : 0n);
-    if (amountLamports <= 0n) return [];
-
+  return input.entries.flatMap((entry) => {
+    if (entry.rankedGames <= 0) return [];
     return [{
       userId: entry.userId,
       matchId: null,
       playerSessionId: null,
-      kind: 'weekly_leaderboard' as const,
-      amountLamports,
-      idempotencyKey: `weekly:${input.range.weekKey}:${entry.userId}`,
-      reason: 'weekly_ranked_leaderboard_pool',
+      kind: 'season_top_10' as const,
+      amountLamports: input.amountLamports,
+      idempotencyKey: `season_top_10:${input.mode}:${input.seasonNumber}:${entry.userId}`,
+      reason: 'season_top_10_manual_payout',
       priority: 30,
       metadata: {
-        weekStartsAt: input.range.weekStartsAt.toISOString(),
-        weekEndsAt: input.range.weekEndsAt.toISOString(),
-        weekKey: input.range.weekKey,
-        rank: index + 1,
-        score: entry.score,
-        matchCount: entry.matchCount,
-        amountLamports: amountLamports.toString(),
+        mode: input.mode,
+        seasonNumber: input.seasonNumber,
+        rank: entry.rank,
+        userName: entry.userName,
+        competitiveRating: entry.competitiveRating,
+        rankedGames: entry.rankedGames,
+        rankedWins: entry.rankedWins,
+        rankedLosses: entry.rankedLosses,
+        rankedDraws: entry.rankedDraws,
+        rankedPeakRating: entry.rankedPeakRating,
+        amountLamports: input.amountLamports.toString(),
+        settledByUserId: input.settledByUserId,
       },
     }];
   });
@@ -339,9 +340,6 @@ function playerRewardSettingsCreateData(updatedByUserId: string | null = null) {
     maxMatchPayoutLamports: config.maxMatchPayoutLamports,
     treasuryReserveLamports: config.treasuryReserveLamports,
     payoutBatchSize: config.payoutBatchSize,
-    weeklyEnabled: config.weeklyEnabled,
-    weeklyPoolLamports: config.weeklyPoolLamports,
-    weeklyTopPlayers: config.weeklyTopPlayers,
     updatedByUserId,
   };
 }
@@ -359,9 +357,6 @@ function runtimeConfigFromSettings(settings: {
   maxMatchPayoutLamports: bigint;
   treasuryReserveLamports: bigint;
   payoutBatchSize: number;
-  weeklyEnabled: boolean;
-  weeklyPoolLamports: bigint;
-  weeklyTopPlayers: number;
 }): PlayerRewardRuntimeConfig {
   return {
     enabled: settings.enabled,
@@ -376,9 +371,6 @@ function runtimeConfigFromSettings(settings: {
     maxMatchPayoutLamports: settings.maxMatchPayoutLamports,
     treasuryReserveLamports: settings.treasuryReserveLamports,
     payoutBatchSize: settings.payoutBatchSize,
-    weeklyEnabled: settings.weeklyEnabled,
-    weeklyPoolLamports: settings.weeklyPoolLamports,
-    weeklyTopPlayers: settings.weeklyTopPlayers,
   };
 }
 
@@ -395,9 +387,6 @@ function serializePlayerRewardSettings(settings: {
   maxMatchPayoutLamports: bigint;
   treasuryReserveLamports: bigint;
   payoutBatchSize: number;
-  weeklyEnabled: boolean;
-  weeklyPoolLamports: bigint;
-  weeklyTopPlayers: number;
   updatedByUserId: string | null;
   updatedAt: Date;
 }): PlayerRewardSettingsSnapshot {
@@ -414,9 +403,6 @@ function serializePlayerRewardSettings(settings: {
     maxMatchPayoutLamports: settings.maxMatchPayoutLamports.toString(),
     treasuryReserveLamports: settings.treasuryReserveLamports.toString(),
     payoutBatchSize: settings.payoutBatchSize,
-    weeklyEnabled: settings.weeklyEnabled,
-    weeklyPoolLamports: settings.weeklyPoolLamports.toString(),
-    weeklyTopPlayers: settings.weeklyTopPlayers,
     updatedByUserId: settings.updatedByUserId,
     updatedAt: settings.updatedAt.toISOString(),
   };
@@ -473,6 +459,12 @@ function parseLamportSetting(value: unknown, fieldName: string): bigint {
     return BigInt(value.trim());
   }
   throw new Error(`${fieldName} must be an unsigned integer`);
+}
+
+function parsePositiveLamportSetting(value: unknown, fieldName: string): bigint {
+  const amount = parseLamportSetting(value, fieldName);
+  if (amount <= 0n) throw new Error(`${fieldName} must be greater than zero`);
+  return amount;
 }
 
 function readLamportUpdate(
@@ -546,9 +538,6 @@ export class PlayerRewardService {
         maxMatchPayoutLamports: readLamportUpdate(settings, current.maxMatchPayoutLamports, 'maxMatchPayoutLamports'),
         treasuryReserveLamports: readLamportUpdate(settings, current.treasuryReserveLamports, 'treasuryReserveLamports'),
         payoutBatchSize: readIntegerUpdate(settings, current.payoutBatchSize, 'payoutBatchSize', { min: 1, max: 500 }),
-        weeklyEnabled: readBooleanUpdate(settings, current.weeklyEnabled, 'weeklyEnabled'),
-        weeklyPoolLamports: readLamportUpdate(settings, current.weeklyPoolLamports, 'weeklyPoolLamports'),
-        weeklyTopPlayers: readIntegerUpdate(settings, current.weeklyTopPlayers, 'weeklyTopPlayers', { min: 1, max: 100 }),
         updatedByUserId: updatedByUserId ?? null,
       },
     });
@@ -605,66 +594,126 @@ export class PlayerRewardService {
     };
   }
 
-  async settlePreviousWeeklyLeaderboardRewards(now = new Date()): Promise<PlayerRewardCreationResult> {
+  async settleSeasonTopTenRewards(input: {
+    amountLamports: unknown;
+    mode?: unknown;
+    seasonNumber?: unknown;
+    updatedByUserId?: string | null;
+  }): Promise<PlayerRewardCreationResult & {
+    mode: RankedSeasonMode;
+    seasonNumber: number;
+    selectedPlayerCount: number;
+    amountPerPlayerLamports: string;
+  }> {
     const config = await this.getConfig();
-    if (!config.weeklyEnabled) {
-      return { createdCount: 0, totalLamports: '0', requestedLamports: '0', skippedReason: 'disabled' };
-    }
-
-    const range = getPreviousUtcWeekRange(now);
+    const currentSeason = await getRankedSeason();
+    const mode = readSeasonPayoutMode(input.mode, currentSeason.mode);
+    const seasonNumber = readSeasonPayoutNumber(input.seasonNumber, currentSeason.seasonNumber);
+    const amountLamports = parsePositiveLamportSetting(input.amountLamports, 'Season top 10 payout amount');
+    const idempotencyPrefix = `season_top_10:${mode}:${seasonNumber}:`;
     const existing = await prisma.playerReward.findFirst({
       where: {
-        kind: 'weekly_leaderboard',
-        idempotencyKey: { startsWith: `weekly:${range.weekKey}:` },
+        kind: 'season_top_10',
+        idempotencyKey: { startsWith: idempotencyPrefix },
       },
       select: { id: true },
     });
     if (existing) {
-      return { createdCount: 0, totalLamports: '0', requestedLamports: '0', skippedReason: 'already_settled' };
+      return {
+        createdCount: 0,
+        totalLamports: '0',
+        requestedLamports: '0',
+        skippedReason: 'already_settled',
+        mode,
+        seasonNumber,
+        selectedPlayerCount: 0,
+        amountPerPlayerLamports: amountLamports.toString(),
+      };
     }
 
-    const rows = await prisma.gameMatchParticipant.groupBy({
-      by: ['userId'],
+    const rows = await prisma.rankedSeasonUserStats.findMany({
       where: {
-        rankedEligible: true,
-        leftAt: null,
-        match: {
-          matchMode: 'ranked',
-          rankedEligible: true,
-          rankedOutcomeStatus: 'applied',
-          antiCheatIntegrityStatus: 'clean',
-          antiCheatReviewRequired: false,
-          endedAt: {
-            gte: range.weekStartsAt,
-            lt: range.weekEndsAt,
-          },
-        },
+        mode,
+        seasonNumber,
+        rankedGames: { gt: 0 },
       },
-      _sum: { score: true },
-      _count: { userId: true },
       orderBy: [
-        { _sum: { score: 'desc' } },
-        { _count: { userId: 'desc' } },
+        { competitiveRating: 'desc' },
+        { rankedWins: 'desc' },
+        { rankedGames: 'asc' },
+        { updatedAt: 'asc' },
       ],
-      take: config.weeklyTopPlayers,
+      take: 10,
+      select: {
+        userId: true,
+        userName: true,
+        competitiveRating: true,
+        rankedGames: true,
+        rankedWins: true,
+        rankedLosses: true,
+        rankedDraws: true,
+        rankedPeakRating: true,
+      },
     });
 
-    const entries: WeeklyLeaderboardEntry[] = rows.map((row) => ({
+    const entries: SeasonTopTenEntry[] = rows.map((row, index) => ({
       userId: row.userId,
-      score: row._sum.score ?? 0,
-      matchCount: row._count.userId,
+      userName: row.userName,
+      competitiveRating: row.competitiveRating,
+      rankedGames: row.rankedGames,
+      rankedWins: row.rankedWins,
+      rankedLosses: row.rankedLosses,
+      rankedDraws: row.rankedDraws,
+      rankedPeakRating: row.rankedPeakRating,
+      rank: index + 1,
     }));
     if (entries.length === 0) {
-      return { createdCount: 0, totalLamports: '0', requestedLamports: config.weeklyPoolLamports.toString(), skippedReason: 'no_rewards' };
+      return {
+        createdCount: 0,
+        totalLamports: '0',
+        requestedLamports: '0',
+        skippedReason: 'no_rewards',
+        mode,
+        seasonNumber,
+        selectedPlayerCount: 0,
+        amountPerPlayerLamports: amountLamports.toString(),
+      };
+    }
+
+    const grants = buildSeasonTopTenRewardGrants({
+      entries,
+      amountLamports,
+      mode,
+      seasonNumber,
+      settledByUserId: input.updatedByUserId ?? null,
+    });
+    const requestedLamports = amountLamports * BigInt(entries.length);
+    const totalLamports = sumLamports(grants.map((grant) => grant.amountLamports));
+    if (grants.length === 0 || totalLamports <= 0n) {
+      return {
+        createdCount: 0,
+        totalLamports: '0',
+        requestedLamports: requestedLamports.toString(),
+        skippedReason: 'no_rewards',
+        mode,
+        seasonNumber,
+        selectedPlayerCount: 0,
+        amountPerPlayerLamports: amountLamports.toString(),
+      };
     }
 
     const availableLamports = await this.getTreasuryAvailableBudgetLamports(config);
-    const poolLamports = minBigint(config.weeklyPoolLamports, availableLamports);
-    const grants = buildWeeklyLeaderboardRewardGrants({ entries, poolLamports, range });
-    const requestedLamports = config.weeklyPoolLamports;
-    const totalLamports = sumLamports(grants.map((grant) => grant.amountLamports));
-    if (grants.length === 0 || totalLamports <= 0n) {
-      return { createdCount: 0, totalLamports: '0', requestedLamports: requestedLamports.toString(), skippedReason: 'no_rewards' };
+    if (availableLamports < totalLamports) {
+      return {
+        createdCount: 0,
+        totalLamports: '0',
+        requestedLamports: requestedLamports.toString(),
+        skippedReason: 'treasury_budget_unavailable',
+        mode,
+        seasonNumber,
+        selectedPlayerCount: entries.length,
+        amountPerPlayerLamports: amountLamports.toString(),
+      };
     }
 
     const result = await prisma.playerReward.createMany({
@@ -687,6 +736,10 @@ export class PlayerRewardService {
       totalLamports: totalLamports.toString(),
       requestedLamports: requestedLamports.toString(),
       skippedReason: result.count === 0 ? 'duplicates' : null,
+      mode,
+      seasonNumber,
+      selectedPlayerCount: entries.length,
+      amountPerPlayerLamports: amountLamports.toString(),
     };
   }
 
@@ -992,16 +1045,6 @@ export class PlayerRewardService {
     if (this.backgroundStarted) return;
     this.backgroundStarted = true;
 
-    const runWeekly = () => {
-      this.settlePreviousWeeklyLeaderboardRewards().then((result) => {
-        if (result.createdCount > 0) {
-          loggers.room.info('Weekly player reward pool settled', result);
-        }
-      }).catch((error) => {
-        loggers.room.error('Weekly player reward settlement failed', error);
-      });
-    };
-
     const runPayouts = () => {
       this.payPendingRewards().then((result) => {
         if (result.payoutCount > 0) {
@@ -1012,9 +1055,7 @@ export class PlayerRewardService {
       });
     };
 
-    this.backgroundTimers.push(setInterval(runWeekly, 60 * 60 * 1000));
     this.backgroundTimers.push(setInterval(runPayouts, 60 * 1000));
-    runWeekly();
     runPayouts();
   }
 
