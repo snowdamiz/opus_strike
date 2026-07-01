@@ -100,7 +100,8 @@ const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((mod
 const HeroesPage = lazy(() => import('./HeroesPage').then((module) => ({ default: module.HeroesPage })));
 const LoadoutTab = lazy(() => import('./LoadoutTab').then((module) => ({ default: module.LoadoutTab })));
 const StatsPage = lazy(() => import('./StatsPage').then((module) => ({ default: module.StatsPage })));
-const SettingsModal = lazy(() => import('./SettingsModal').then((module) => ({ default: module.SettingsModal })));
+const loadSettingsModalModule = () => import('./SettingsModal');
+const SettingsModal = lazy(() => loadSettingsModalModule().then((module) => ({ default: module.SettingsModal })));
 const HeroPreviewCanvas = lazy(() => import('./HeroPreviewCanvas').then((module) => ({ default: module.HeroPreviewCanvas })));
 const HERO_IDLE_ANIMATION_MODE: HeroPreviewAnimationMode = 'idle';
 const PLAY_MODE_OPTIONS_BEFORE_BOT_FILL = PLAY_MODE_OPTIONS.filter((mode) => mode !== 'practice' && mode !== 'custom');
@@ -518,6 +519,20 @@ export function MainLobby() {
       : null;
   const displayedBotFillEnabled = botFillDisabledForMode ? false : globalBotFillEnabled;
   const activePerspectiveByMode = party?.perspectiveByMode ?? perspectiveByMode;
+
+  useEffect(() => {
+    const preloadSettings = () => {
+      void loadSettingsModalModule().catch(() => undefined);
+    };
+
+    if (typeof requestIdleCallback !== 'undefined') {
+      const idleId = requestIdleCallback(preloadSettings, { timeout: 1500 });
+      return () => cancelIdleCallback(idleId);
+    }
+
+    const timeoutId = window.setTimeout(preloadSettings, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, []);
   const currentRank = getRankForStats(userStats);
   const soloPartyMember: PartyMemberSnapshot | null = isAuthenticated
     ? {
