@@ -11,6 +11,18 @@ export interface RedisHealthStatus {
 let sharedRedisClient: Redis | null = null;
 let sharedRedisUrl: string | null = null;
 
+const STARTUP_PROBE_ATTEMPTS = 5;
+const STARTUP_PROBE_CONNECT_TIMEOUT_MS = 5_000;
+const STARTUP_PROBE_RETRY_DELAY_MS = 750;
+
+interface RedisProbeOptions {
+  connectTimeoutMs?: number;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function createRedisClient(redisUrl: string, connectionName: string): Redis {
   const client = new Redis(redisUrl, {
     lazyConnect: true,
@@ -61,12 +73,15 @@ export async function pingRedis(client: Redis | null): Promise<RedisHealthStatus
   }
 }
 
-export async function probeRedisConnection(redisUrl: string): Promise<RedisHealthStatus> {
+export async function probeRedisConnection(
+  redisUrl: string,
+  options: RedisProbeOptions = {}
+): Promise<RedisHealthStatus> {
   let connectionError: unknown;
   const probe = new Redis(redisUrl, {
     lazyConnect: true,
     connectionName: `voxel-strike:${process.pid}:startup-probe`,
-    connectTimeout: 1_000,
+    connectTimeout: options.connectTimeoutMs ?? STARTUP_PROBE_CONNECT_TIMEOUT_MS,
     maxRetriesPerRequest: 1,
     enableReadyCheck: true,
     retryStrategy: () => null,
@@ -102,8 +117,23 @@ export async function assertRedisAvailableForDistributedRuntime(
     throw new Error('COLYSEUS_DISTRIBUTED=1 requires COLYSEUS_REDIS_URL or REDIS_URL');
   }
 
-  const redis = await probeRedisConnection(config.redisUrl);
-  if (redis.ok) return;
+  let redis: RedisHealthStatus = { ok: false, status: 'not_checked' };
+  for (let attempt = 1; attempt <= STARTUP_PROBE_ATTEMPTS; attempt += 1) {
+    redis = await probeRedisConnection(config.redisUrl, {
+      connectTimeoutMs: STARTUP_PROBE_CONNECT_TIMEOUT_MS,
+    });
+    if (redis.ok) return;
+
+    if (attempt < STARTUP_PROBE_ATTEMPTS) {
+      loggers.room.warn('Redis startup probe failed; retrying', {
+        attempt,
+        attempts: STARTUP_PROBE_ATTEMPTS,
+        status: redis.status,
+        error: redis.error,
+      });
+      await delay(STARTUP_PROBE_RETRY_DELAY_MS * attempt);
+    }
+  }
 
   const detail = redis.error ? `${redis.status}: ${redis.error}` : redis.status;
   throw new Error(
