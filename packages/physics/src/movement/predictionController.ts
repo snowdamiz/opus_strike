@@ -400,6 +400,9 @@ export class MovementPredictionController {
     const predictedAtAck = this.commandRecords.get(authority.ackSeq)?.predictedState;
     const positionError = predictedAtAck ? distance(predictedAtAck.position, authoritativeState.position) : Infinity;
     const velocityError = predictedAtAck ? distance(predictedAtAck.velocity, authoritativeState.velocity) : Infinity;
+    if (!Number.isFinite(positionError) || positionError >= MOVEMENT_HARD_CORRECTION_METERS) {
+      return this.reconcile(authority, context, nowMs);
+    }
 
     this.trimAcknowledged(authority.ackSeq);
     this.lastAckSeq = authority.ackSeq;

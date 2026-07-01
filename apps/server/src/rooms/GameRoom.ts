@@ -4444,7 +4444,8 @@ export class GameRoom extends Room<GameState> {
     if (!validation.accepted) {
       const reason = validation.reason ?? 'invalid_transform';
       this.incrementMovementProposalRejectMetric(authority, reason);
-      this.markMovementBarrier(player.id, reason);
+      // Ask the next movement response to include the server transform without churning epochs.
+      authority.lastFullAuthoritySentAt = 0;
       return false;
     }
 

@@ -1,8 +1,10 @@
 import type { HeroStats, MovementCorrectionReason, PlayerMovementState, Vec3 } from '@voxel-strike/shared';
 import {
   BHOP_MAX_VELOCITY,
+  MOVEMENT_SUBSTEP_SECONDS,
   SLIDE_MAX_SPEED_MULTIPLIER,
   SPRINT_MULTIPLIER,
+  movementSeqDistance,
 } from '@voxel-strike/shared';
 
 export interface MovementBounds {
@@ -54,6 +56,11 @@ export interface MovementProposalResult {
 const MIN_ELAPSED_SECONDS = 1 / 120;
 const MAX_ELAPSED_SECONDS = 0.75;
 const POSITION_EPSILON = 0.001;
+
+function clampElapsedSeconds(value: number): number {
+  if (!Number.isFinite(value)) return MIN_ELAPSED_SECONDS;
+  return Math.max(MIN_ELAPSED_SECONDS, Math.min(MAX_ELAPSED_SECONDS, value));
+}
 
 function isFiniteVec3(value: Vec3): boolean {
   return Number.isFinite(value.x) && Number.isFinite(value.y) && Number.isFinite(value.z);
@@ -114,11 +121,17 @@ function withinBounds(position: Vec3, bounds: MovementBounds): boolean {
   );
 }
 
+function calculateElapsedSeconds(context: MovementProposalContext): number {
+  const sequenceDelta = movementSeqDistance(context.previous.sequence, context.inputSequence);
+  if (sequenceDelta > 0) {
+    return clampElapsedSeconds(sequenceDelta * MOVEMENT_SUBSTEP_SECONDS);
+  }
+
+  return clampElapsedSeconds((context.receivedAt - context.previous.acceptedAt) / 1000);
+}
+
 export function validateMovementProposal(context: MovementProposalContext): MovementProposalResult {
-  const elapsedSeconds = Math.max(
-    MIN_ELAPSED_SECONDS,
-    Math.min(MAX_ELAPSED_SECONDS, (context.receivedAt - context.previous.acceptedAt) / 1000)
-  );
+  const elapsedSeconds = calculateElapsedSeconds(context);
   const horizontalSpeed = distance2D(context.previous.position, context.proposedPosition) / elapsedSeconds;
   const verticalSpeed = Math.abs(context.proposedPosition.y - context.previous.position.y) / elapsedSeconds;
   const horizontalVelocity = horizontalMagnitude(context.proposedVelocity);
