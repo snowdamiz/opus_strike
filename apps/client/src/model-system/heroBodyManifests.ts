@@ -774,20 +774,23 @@ export const ECLIPSE_SERAPH_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'metal', kind: 'cylinder', position: [0, 1.98, -0.08], scale: [0.26, 0.016, 0.26], rotation: [Math.PI / 2, 0, 0], emissive: true, attachmentMode: 'floating' },
   { material: 'metal', position: [-0.18, 1.92, -0.04], scale: [0.08, 0.24, 0.17], rotation: [0, 0, 0.32] },
   { material: 'metal', position: [0.18, 1.92, -0.04], scale: [0.08, 0.24, 0.17], rotation: [0, 0, -0.32] },
-  { material: 'glow', position: [-0.52, 1.38, 0.2], scale: [0.08, 0.6, 0.028], rotation: [0, 0, -0.46], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.52, 1.38, 0.2], scale: [0.08, 0.6, 0.028], rotation: [0, 0, 0.46], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [-0.68, 1.17, 0.22], scale: [0.06, 0.46, 0.026], rotation: [0, 0, -0.72], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [0.68, 1.17, 0.22], scale: [0.06, 0.46, 0.026], rotation: [0, 0, 0.72], emissive: true, transparent: true, bone: 'torso' },
+  // Eclipse motif: a dark void disc fills the halo so the ring reads as a glowing
+  // corona, ringed by prismatic glints. (Unique to this skin — replaces wings.)
+  { material: 'void', kind: 'cylinder', position: [0, 2.06, -0.08], scale: [0.33, 0.01, 0.33], rotation: [Math.PI / 2, 0, 0], attachmentMode: 'floating' },
+  { material: 'glow', kind: 'sphere', position: [0, 2.48, -0.08], scale: [0.032, 0.032, 0.032], emissive: true, transparent: true, attachmentMode: 'floating' },
+  { material: 'accent', kind: 'sphere', position: [0, 1.64, -0.08], scale: [0.03, 0.03, 0.03], emissive: true, transparent: true, attachmentMode: 'floating' },
+  { material: 'accent', kind: 'sphere', position: [-0.42, 2.06, -0.08], scale: [0.03, 0.03, 0.03], emissive: true, transparent: true, attachmentMode: 'floating' },
+  { material: 'glow', kind: 'sphere', position: [0.42, 2.06, -0.08], scale: [0.032, 0.032, 0.032], emissive: true, transparent: true, attachmentMode: 'floating' },
   { material: 'metal', position: [0, 1.34, -0.266], scale: [0.36, 0.036, 0.024], emissive: true },
   { material: 'glow', kind: 'sphere', position: [0, 1.12, -0.286], scale: [0.09, 0.09, 0.09], emissive: true, transparent: true },
   { material: 'glass', kind: 'sphere', position: [-0.32, 1.2, -0.29], scale: [0.052, 0.052, 0.052], emissive: true, transparent: true },
   { material: 'glass', kind: 'sphere', position: [0.32, 1.2, -0.29], scale: [0.052, 0.052, 0.052], emissive: true, transparent: true },
-  // Eclipse ascension: a second tier of longer radiant wings, a rayed crown
-  // above the halo, and a prismatic heart core for the legendary read.
-  { material: 'glow', position: [-0.7, 1.64, 0.22], scale: [0.07, 0.62, 0.028], rotation: [0, 0, -0.52], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.7, 1.64, 0.22], scale: [0.07, 0.62, 0.028], rotation: [0, 0, 0.52], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [-0.86, 1.4, 0.24], scale: [0.05, 0.5, 0.026], rotation: [0, 0, -0.78], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [0.86, 1.4, 0.24], scale: [0.05, 0.5, 0.026], rotation: [0, 0, 0.78], emissive: true, transparent: true, bone: 'torso' },
+  // Eclipse ascension: upright prismatic shoulder crystals and a rayed crown for
+  // the legendary read (replaces the old wing tier).
+  { material: 'glass', position: [-0.2, 1.62, -0.04], scale: [0.05, 0.18, 0.05], rotation: [0, 0, 0.3], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glass', position: [0.2, 1.62, -0.04], scale: [0.05, 0.18, 0.05], rotation: [0, 0, -0.3], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', position: [-0.2, 1.74, -0.04], scale: [0.03, 0.1, 0.03], rotation: [0, 0, 0.3], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', position: [0.2, 1.74, -0.04], scale: [0.03, 0.1, 0.03], rotation: [0, 0, -0.3], emissive: true, transparent: true, bone: 'torso' },
   { material: 'metal', position: [0, 2.02, -0.04], scale: [0.04, 0.18, 0.05], emissive: true },
   { material: 'metal', position: [-0.14, 1.97, -0.04], scale: [0.035, 0.13, 0.045], rotation: [0, 0, 0.24], emissive: true },
   { material: 'metal', position: [0.14, 1.97, -0.04], scale: [0.035, 0.13, 0.045], rotation: [0, 0, -0.24], emissive: true },
@@ -849,8 +852,11 @@ export const KRAKEN_SOVEREIGN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'metal', position: [0.2, 1.94, -0.03], scale: [0.09, 0.24, 0.18], rotation: [0, 0, -0.28] },
   { material: 'metal', position: [-0.48, 1.42, -0.09], scale: [0.24, 0.2, 0.08], rotation: [0, 0, -0.24] },
   { material: 'metal', position: [0.48, 1.42, -0.09], scale: [0.24, 0.2, 0.08], rotation: [0, 0, 0.24] },
-  { material: 'glow', position: [-0.74, 1.14, 0.2], scale: [0.06, 0.52, 0.026], rotation: [0, 0, -0.56], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.74, 1.14, 0.2], scale: [0.06, 0.52, 0.026], rotation: [0, 0, 0.56], emissive: true, transparent: true, bone: 'torso' },
+  // Abyssal lures: bioluminescent orbs drifting off the back instead of wings —
+  // the kraken tentacles below carry this skin's silhouette.
+  { material: 'glow', kind: 'sphere', position: [-0.4, 1.7, 0.22], scale: [0.05, 0.05, 0.05], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [0.46, 1.46, 0.2], scale: [0.045, 0.045, 0.045], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glass', kind: 'sphere', position: [-0.3, 1.28, 0.24], scale: [0.04, 0.04, 0.04], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
   { material: 'accent', position: [0, 1.2, -0.282], scale: [0.38, 0.04, 0.026], emissive: true },
   { material: 'glow', kind: 'sphere', position: [0, 1.06, -0.3], scale: [0.09, 0.09, 0.09], emissive: true, transparent: true },
   { material: 'metal', position: [-0.6, 0.92, -0.38], scale: [0.22, 0.046, 0.036], bone: 'leftForearm' },
@@ -894,10 +900,11 @@ export const INFERNO_ARCHON_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.72, 0.012, 0.72], transparent: true },
   { material: 'metal', position: [-0.18, 1.9, -0.04], scale: [0.08, 0.22, 0.16], rotation: [0, 0, 0.36] },
   { material: 'metal', position: [0.18, 1.9, -0.04], scale: [0.08, 0.22, 0.16], rotation: [0, 0, -0.36] },
-  { material: 'glow', position: [-0.55, 1.32, 0.2], scale: [0.07, 0.5, 0.026], rotation: [0, 0, -0.5], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.55, 1.32, 0.2], scale: [0.07, 0.5, 0.026], rotation: [0, 0, 0.5], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [-0.67, 1.08, 0.22], scale: [0.05, 0.36, 0.024], rotation: [0, 0, -0.74], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [0.67, 1.08, 0.22], scale: [0.05, 0.36, 0.024], rotation: [0, 0, 0.74], emissive: true, transparent: true, bone: 'torso' },
+  // Ember jets: short upward flame vents off the shoulders instead of wings.
+  { material: 'glow', kind: 'cone', position: [-0.38, 1.66, -0.02], scale: [0.1, 0.26, 0.1], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', kind: 'cone', position: [0.38, 1.66, -0.02], scale: [0.1, 0.26, 0.1], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', kind: 'sphere', position: [-0.38, 1.86, -0.02], scale: [0.05, 0.05, 0.05], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'accent', kind: 'sphere', position: [0.38, 1.86, -0.02], scale: [0.05, 0.05, 0.05], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
   { material: 'metal', position: [0, 1.32, -0.27], scale: [0.34, 0.04, 0.026], emissive: true },
   { material: 'glow', kind: 'sphere', position: [0, 1.1, -0.292], scale: [0.08, 0.08, 0.08], emissive: true, transparent: true },
   { material: 'metal', kind: 'cylinder', position: [0.52, 1.48, -0.38], scale: [0.14, 0.03, 0.14], emissive: true, bone: 'rightForearm' },
@@ -910,8 +917,8 @@ export const INFERNO_ARCHON_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'metal', position: [0.2, 2.08, -0.02], scale: [0.05, 0.22, 0.06], rotation: [0, 0, -0.42] },
   { material: 'accent', position: [-0.26, 2.2, -0.02], scale: [0.035, 0.1, 0.045], rotation: [0, 0, 0.6], emissive: true },
   { material: 'accent', position: [0.26, 2.2, -0.02], scale: [0.035, 0.1, 0.045], rotation: [0, 0, -0.6], emissive: true },
-  { material: 'glow', position: [-0.64, 1.42, 0.2], scale: [0.06, 0.58, 0.028], rotation: [0, 0, -0.46], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.64, 1.42, 0.2], scale: [0.06, 0.58, 0.028], rotation: [0, 0, 0.46], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [-0.3, 1.96, 0.06], scale: [0.035, 0.035, 0.035], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'accent', kind: 'sphere', position: [0.34, 2.04, 0.04], scale: [0.03, 0.03, 0.03], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
   { material: 'glow', kind: 'sphere', position: [-0.34, 1.46, -0.04], scale: [0.07, 0.07, 0.07], emissive: true, transparent: true, bone: 'torso' },
   { material: 'glow', kind: 'sphere', position: [0.34, 1.46, -0.04], scale: [0.07, 0.07, 0.07], emissive: true, transparent: true, bone: 'torso' },
 ], 'blaze.infernoArchon.body');
@@ -921,10 +928,11 @@ export const STARFALL_PHOENIX_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'glow', kind: 'cylinder', position: [0, 2.14, -0.04], scale: [0.34, 0.014, 0.34], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true, attachmentMode: 'floating' },
   { material: 'metal', kind: 'cone', position: [0.02, 2.44, -0.02], scale: [0.2, 0.28, 0.2], rotation: [0, 0, -0.12], attachmentMode: 'floating' },
   { material: 'glow', kind: 'sphere', position: [0.08, 2.6, -0.02], scale: [0.07, 0.07, 0.07], emissive: true, transparent: true, attachmentMode: 'floating' },
-  { material: 'glow', position: [-0.58, 1.42, 0.2], scale: [0.08, 0.62, 0.028], rotation: [0, 0, -0.42], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.58, 1.42, 0.2], scale: [0.08, 0.62, 0.028], rotation: [0, 0, 0.42], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [-0.78, 1.18, 0.22], scale: [0.06, 0.5, 0.026], rotation: [0, 0, -0.72], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [0.78, 1.18, 0.22], scale: [0.06, 0.5, 0.026], rotation: [0, 0, 0.72], emissive: true, transparent: true, bone: 'torso' },
+  // Stellar comet tail: glowing plumes trailing down off the lower back instead
+  // of wings (paired with drifting star sparks below).
+  { material: 'glow', position: [0, 0.92, 0.24], scale: [0.07, 0.66, 0.03], rotation: [0.3, 0, 0], emissive: true, transparent: true, bone: 'hips' },
+  { material: 'accent', position: [-0.12, 0.78, 0.25], scale: [0.05, 0.5, 0.026], rotation: [0.34, 0, 0.12], emissive: true, transparent: true, bone: 'hips' },
+  { material: 'accent', position: [0.12, 0.78, 0.25], scale: [0.05, 0.5, 0.026], rotation: [0.34, 0, -0.12], emissive: true, transparent: true, bone: 'hips' },
   { material: 'metal', position: [0, 1.34, -0.274], scale: [0.38, 0.04, 0.026], emissive: true },
   { material: 'glow', kind: 'sphere', position: [0, 1.12, -0.298], scale: [0.1, 0.1, 0.1], emissive: true, transparent: true },
   { material: 'metal', kind: 'cylinder', position: [0.52, 1.5, -0.38], scale: [0.16, 0.03, 0.16], emissive: true, bone: 'rightForearm' },
@@ -932,10 +940,9 @@ export const STARFALL_PHOENIX_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'accent', position: [0.52, 1.95, -0.38], scale: [0.07, 0.16, 0.07], emissive: true, bone: 'rightForearm' },
   // Stellar phoenix: a layered double plume wingspan and a star crown burning
   // above the helm for the legendary read.
-  { material: 'glow', position: [-0.7, 1.54, 0.2], scale: [0.07, 0.64, 0.028], rotation: [0, 0, -0.52], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.7, 1.54, 0.2], scale: [0.07, 0.64, 0.028], rotation: [0, 0, 0.52], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [-0.64, 1.06, 0.22], scale: [0.05, 0.5, 0.026], rotation: [0, 0, -0.78], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [0.64, 1.06, 0.22], scale: [0.05, 0.5, 0.026], rotation: [0, 0, 0.78], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [-0.22, 0.6, 0.28], scale: [0.04, 0.04, 0.04], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'hips' },
+  { material: 'accent', kind: 'sphere', position: [0.2, 0.42, 0.3], scale: [0.035, 0.035, 0.035], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'hips' },
+  { material: 'glow', kind: 'sphere', position: [0.04, 0.24, 0.32], scale: [0.03, 0.03, 0.03], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'hips' },
   { material: 'glow', kind: 'sphere', position: [0, 2.02, -0.02], scale: [0.07, 0.07, 0.07], emissive: true, transparent: true },
   { material: 'metal', position: [0, 2.14, -0.02], scale: [0.035, 0.12, 0.04] },
   { material: 'metal', position: [-0.1, 2.08, -0.02], scale: [0.03, 0.09, 0.035], rotation: [0, 0, 0.4] },
@@ -990,18 +997,17 @@ export const ETERNITY_SOVEREIGN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata(
   { material: 'metal', kind: 'cylinder', position: [0, 1.96, -0.08], scale: [0.26, 0.016, 0.26], rotation: [Math.PI / 2, 0, 0], emissive: true, attachmentMode: 'floating' },
   { material: 'metal', position: [-0.2, 1.94, -0.04], scale: [0.09, 0.25, 0.18], rotation: [0, 0, 0.3] },
   { material: 'metal', position: [0.2, 1.94, -0.04], scale: [0.09, 0.25, 0.18], rotation: [0, 0, -0.3] },
-  { material: 'glow', position: [-0.56, 1.44, 0.24], scale: [0.07, 0.58, 0.028], rotation: [0, 0, -0.4], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.56, 1.44, 0.24], scale: [0.07, 0.58, 0.028], rotation: [0, 0, 0.4], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [-0.74, 1.2, 0.24], scale: [0.06, 0.48, 0.026], rotation: [0, 0, -0.68], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [0.74, 1.2, 0.24], scale: [0.06, 0.48, 0.026], rotation: [0, 0, 0.68], emissive: true, transparent: true, bone: 'torso' },
+  // Clockwork orbit: a tilted gold time-ring with orbiting gems instead of wings.
+  { material: 'metal', kind: 'cylinder', position: [0, 1.4, 0.04], scale: [0.56, 0.014, 0.56], rotation: [1.1, 0, 0.3], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glass', kind: 'sphere', position: [-0.5, 1.56, 0.12], scale: [0.05, 0.05, 0.05], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glass', kind: 'sphere', position: [0.52, 1.24, 0.1], scale: [0.045, 0.045, 0.045], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
   { material: 'metal', position: [0, 1.32, -0.28], scale: [0.38, 0.04, 0.026], emissive: true },
   { material: 'glow', kind: 'sphere', position: [0, 1.1, -0.304], scale: [0.092, 0.092, 0.092], emissive: true, transparent: true },
   { material: 'glass', kind: 'sphere', position: [-0.28, 1.2, -0.3], scale: [0.062, 0.062, 0.062], emissive: true, transparent: true },
   { material: 'glass', kind: 'sphere', position: [0.28, 1.2, -0.3], scale: [0.062, 0.062, 0.062], emissive: true, transparent: true },
   // Eternal sovereign: a second tier of gold time-wings, an eternal crown spire,
   // and a triple-orb regalia orbiting above the crown.
-  { material: 'metal', position: [-0.66, 1.58, 0.24], scale: [0.06, 0.62, 0.03], rotation: [0, 0, -0.5], bone: 'torso' },
-  { material: 'metal', position: [0.66, 1.58, 0.24], scale: [0.06, 0.62, 0.03], rotation: [0, 0, 0.5], bone: 'torso' },
+  { material: 'glow', kind: 'cylinder', position: [0, 1.4, 0.04], scale: [0.4, 0.012, 0.4], rotation: [0.6, 0.5, 0], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
   { material: 'metal', position: [0, 2.04, -0.04], scale: [0.04, 0.18, 0.05], emissive: true },
   { material: 'glow', kind: 'sphere', position: [0, 2.24, -0.02], scale: [0.06, 0.06, 0.06], emissive: true, transparent: true, attachmentMode: 'floating' },
   { material: 'glass', kind: 'sphere', position: [-0.18, 2.16, -0.02], scale: [0.045, 0.045, 0.045], emissive: true, transparent: true, attachmentMode: 'floating' },
@@ -1048,17 +1054,17 @@ function createGoldenRegaliaParts(): VoxelPartDraft[] {
 
 export const PHANTOM_GOLDEN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   ...createGoldenRegaliaParts(),
-  // Swept gold wing fins (flanker silhouette)
-  { material: 'metal', position: [-0.58, 1.4, 0.22], scale: [0.07, 0.6, 0.03], rotation: [0, 0, -0.46], bone: 'torso' },
-  { material: 'metal', position: [0.58, 1.4, 0.22], scale: [0.07, 0.6, 0.03], rotation: [0, 0, 0.46], bone: 'torso' },
-  { material: 'glow', position: [-0.74, 1.16, 0.24], scale: [0.05, 0.46, 0.026], rotation: [0, 0, -0.7], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.74, 1.16, 0.24], scale: [0.05, 0.46, 0.026], rotation: [0, 0, 0.7], emissive: true, transparent: true, bone: 'torso' },
-  // Phantom golden flourish: a radiant chest sunburst and a swept outer wing tier.
+  // Phantom sun-king: a radiant solar backplate behind the shoulders with a
+  // gilded rim and three rising rays. (Unique to this skin — replaces wings.)
+  { material: 'metal', kind: 'cylinder', position: [0, 1.46, 0.24], scale: [0.4, 0.012, 0.4], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', kind: 'cylinder', position: [0, 1.46, 0.235], scale: [0.47, 0.01, 0.47], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'metal', position: [0, 1.92, 0.24], scale: [0.03, 0.18, 0.025], emissive: true, bone: 'torso' },
+  { material: 'metal', position: [-0.25, 1.85, 0.24], scale: [0.026, 0.14, 0.024], rotation: [0, 0, 0.44], emissive: true, bone: 'torso' },
+  { material: 'metal', position: [0.25, 1.85, 0.24], scale: [0.026, 0.14, 0.024], rotation: [0, 0, -0.44], emissive: true, bone: 'torso' },
+  // Radiant chest sunburst.
   { material: 'glow', kind: 'sphere', position: [0, 1.16, -0.27], scale: [0.09, 0.09, 0.05], emissive: true, transparent: true },
   { material: 'metal', position: [0, 1.16, -0.27], scale: [0.05, 0.3, 0.03], emissive: true },
   { material: 'metal', position: [0, 1.16, -0.27], scale: [0.3, 0.05, 0.03], emissive: true },
-  { material: 'metal', position: [-0.68, 1.62, 0.22], scale: [0.06, 0.5, 0.03], rotation: [0, 0, -0.5], bone: 'torso' },
-  { material: 'metal', position: [0.68, 1.62, 0.22], scale: [0.06, 0.5, 0.03], rotation: [0, 0, 0.5], bone: 'torso' },
 ], 'phantom.golden.body');
 
 export const HOOKSHOT_GOLDEN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
@@ -1068,11 +1074,13 @@ export const HOOKSHOT_GOLDEN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'metal', position: [0, 1.04, -0.24], scale: [0.18, 0.05, 0.04] },
   { material: 'glow', position: [-0.14, 0.82, -0.24], scale: [0.05, 0.05, 0.03], emissive: true },
   { material: 'glow', position: [0.14, 0.82, -0.24], scale: [0.05, 0.05, 0.03], emissive: true },
-  // Hookshot golden flourish: swept gold anchor-wings off the shoulders.
-  { material: 'metal', position: [-0.62, 1.42, 0.22], scale: [0.06, 0.52, 0.03], rotation: [0, 0, -0.48], bone: 'torso' },
-  { material: 'metal', position: [0.62, 1.42, 0.22], scale: [0.06, 0.52, 0.03], rotation: [0, 0, 0.48], bone: 'torso' },
-  { material: 'glow', position: [-0.78, 1.18, 0.24], scale: [0.05, 0.46, 0.026], rotation: [0, 0, -0.72], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.78, 1.18, 0.24], scale: [0.05, 0.46, 0.026], rotation: [0, 0, 0.72], emissive: true, transparent: true, bone: 'torso' },
+  // Gilded back anchor: a mounted gold anchor (stock, crossbar, flukes) instead
+  // of anchor-wings — unique to the golden Hookshot.
+  { material: 'metal', position: [0, 1.5, 0.24], scale: [0.05, 0.6, 0.04], emissive: true, bone: 'torso' },
+  { material: 'metal', position: [0, 1.74, 0.24], scale: [0.34, 0.05, 0.04], emissive: true, bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [0, 1.82, 0.24], scale: [0.045, 0.045, 0.045], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'metal', position: [-0.26, 1.12, 0.24], scale: [0.05, 0.18, 0.04], rotation: [0, 0, 0.7], emissive: true, bone: 'torso' },
+  { material: 'metal', position: [0.26, 1.12, 0.24], scale: [0.05, 0.18, 0.04], rotation: [0, 0, -0.7], emissive: true, bone: 'torso' },
 ], 'hookshot.golden.body');
 
 export const BLAZE_GOLDEN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
@@ -1080,12 +1088,13 @@ export const BLAZE_GOLDEN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   // Floating solar crown above the halo
   { material: 'metal', kind: 'cone', position: [0.02, 2.4, -0.02], scale: [0.18, 0.26, 0.18], rotation: [0, 0, -0.1], attachmentMode: 'floating' },
   { material: 'glow', kind: 'sphere', position: [0.08, 2.56, -0.02], scale: [0.07, 0.07, 0.07], emissive: true, transparent: true, attachmentMode: 'floating' },
-  // Solar ray fins off the shoulders
-  { material: 'glow', position: [-0.56, 1.46, 0.22], scale: [0.07, 0.5, 0.026], rotation: [0, 0, -0.44], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.56, 1.46, 0.22], scale: [0.07, 0.5, 0.026], rotation: [0, 0, 0.44], emissive: true, transparent: true, bone: 'torso' },
-  // Blaze golden flourish: solid gold wing feathers framing the solar rays.
-  { material: 'metal', position: [-0.64, 1.5, 0.22], scale: [0.06, 0.54, 0.03], rotation: [0, 0, -0.5], bone: 'torso' },
-  { material: 'metal', position: [0.64, 1.5, 0.22], scale: [0.06, 0.54, 0.03], rotation: [0, 0, 0.5], bone: 'torso' },
+  // Solar corona: a fan of gold sun-rays radiating around the helm instead of
+  // wing fins — unique to the golden Blaze.
+  { material: 'metal', position: [0, 2.26, -0.02], scale: [0.03, 0.18, 0.025], emissive: true, attachmentMode: 'floating' },
+  { material: 'metal', position: [-0.34, 2.12, -0.02], scale: [0.026, 0.14, 0.024], rotation: [0, 0, 0.6], emissive: true, attachmentMode: 'floating' },
+  { material: 'metal', position: [0.34, 2.12, -0.02], scale: [0.026, 0.14, 0.024], rotation: [0, 0, -0.6], emissive: true, attachmentMode: 'floating' },
+  { material: 'metal', position: [-0.44, 1.92, -0.02], scale: [0.024, 0.12, 0.022], rotation: [0, 0, 1.0], emissive: true, attachmentMode: 'floating' },
+  { material: 'metal', position: [0.44, 1.92, -0.02], scale: [0.024, 0.12, 0.022], rotation: [0, 0, -1.0], emissive: true, attachmentMode: 'floating' },
 ], 'blaze.golden.body');
 
 export const CHRONOS_GOLDEN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
@@ -1095,11 +1104,14 @@ export const CHRONOS_GOLDEN_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'glass', kind: 'sphere', position: [-0.26, 1.2, -0.3], scale: [0.06, 0.06, 0.06], emissive: true, transparent: true },
   { material: 'glass', kind: 'sphere', position: [0.26, 1.2, -0.3], scale: [0.06, 0.06, 0.06], emissive: true, transparent: true },
   { material: 'glow', kind: 'cylinder', position: [0, 2.18, -0.06], scale: [0.3, 0.012, 0.3], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true, attachmentMode: 'floating' },
-  // Chronos golden flourish: swept gold time-wings off the shoulders.
-  { material: 'metal', position: [-0.62, 1.44, 0.22], scale: [0.06, 0.52, 0.03], rotation: [0, 0, -0.48], bone: 'torso' },
-  { material: 'metal', position: [0.62, 1.44, 0.22], scale: [0.06, 0.52, 0.03], rotation: [0, 0, 0.48], bone: 'torso' },
-  { material: 'glow', position: [-0.78, 1.2, 0.24], scale: [0.05, 0.46, 0.026], rotation: [0, 0, -0.72], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.78, 1.2, 0.24], scale: [0.05, 0.46, 0.026], rotation: [0, 0, 0.72], emissive: true, transparent: true, bone: 'torso' },
+  // Gilded chronometer: a floating gold clock-dial behind the shoulders with
+  // hour marks and orbiting gems instead of time-wings — unique to golden Chronos.
+  { material: 'metal', kind: 'cylinder', position: [0, 1.5, 0.24], scale: [0.4, 0.014, 0.4], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', kind: 'cylinder', position: [0, 1.5, 0.235], scale: [0.46, 0.01, 0.46], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'metal', position: [0, 1.86, 0.24], scale: [0.024, 0.12, 0.022], emissive: true, bone: 'torso' },
+  { material: 'metal', position: [0, 1.14, 0.24], scale: [0.024, 0.12, 0.022], emissive: true, bone: 'torso' },
+  { material: 'glass', kind: 'sphere', position: [-0.4, 1.5, 0.22], scale: [0.045, 0.045, 0.045], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glass', kind: 'sphere', position: [0.4, 1.5, 0.22], scale: [0.045, 0.045, 0.045], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
 ], 'chronos.golden.body');
 
 export const UMBRAL_REAVER_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
@@ -1131,13 +1143,14 @@ export const UMBRAL_REAVER_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
 
 export const OBSIDIAN_REVENANT_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.74, 0.012, 0.74], transparent: true },
-  // Fractured glass wings with a cyan soul-fire trailing edge.
-  { material: 'glass', position: [-0.5, 1.4, 0.2], scale: [0.08, 0.6, 0.03], rotation: [0, 0, -0.46], transparent: true, bone: 'torso' },
-  { material: 'glass', position: [0.5, 1.4, 0.2], scale: [0.08, 0.6, 0.03], rotation: [0, 0, 0.46], transparent: true, bone: 'torso' },
-  { material: 'glow', position: [-0.66, 1.16, 0.22], scale: [0.05, 0.46, 0.026], rotation: [0, 0, -0.7], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.66, 1.16, 0.22], scale: [0.05, 0.46, 0.026], rotation: [0, 0, 0.7], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'edge', position: [-0.58, 1.62, 0.22], scale: [0.05, 0.4, 0.026], rotation: [0, 0, -0.5], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'edge', position: [0.58, 1.62, 0.22], scale: [0.05, 0.4, 0.026], rotation: [0, 0, 0.5], emissive: true, transparent: true, bone: 'torso' },
+  // Drifting shard storm: a scattered constellation of shattered glass shards
+  // orbiting the frame (asymmetric, not wings) — this skin's signature read.
+  { material: 'glass', position: [-0.5, 1.52, 0.16], scale: [0.06, 0.11, 0.04], rotation: [0.2, 0, -0.5], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glass', position: [0.54, 1.34, 0.1], scale: [0.05, 0.13, 0.04], rotation: [0, 0.3, 0.4], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glass', position: [-0.46, 1.06, 0.2], scale: [0.045, 0.09, 0.035], rotation: [0.3, 0, 0.2], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glass', position: [0.48, 1.62, 0.04], scale: [0.04, 0.08, 0.03], rotation: [0, 0, -0.3], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glow', position: [-0.54, 1.3, 0.18], scale: [0.026, 0.07, 0.022], rotation: [0, 0, -0.5], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glow', position: [0.5, 1.5, 0.12], scale: [0.024, 0.06, 0.02], rotation: [0, 0, 0.4], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
   // Jagged shoulder shards.
   { material: 'glass', position: [-0.33, 1.5, -0.02], scale: [0.08, 0.3, 0.12], rotation: [0, 0, -0.4], transparent: true, bone: 'torso' },
   { material: 'glass', position: [0.33, 1.5, -0.02], scale: [0.08, 0.3, 0.12], rotation: [0, 0, 0.4], transparent: true, bone: 'torso' },
@@ -1193,13 +1206,11 @@ export const MAELSTROM_WARLORD_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'metal', position: [0.12, 2.02, -0.02], scale: [0.05, 0.22, 0.06], rotation: [0, 0, -0.2] },
   { material: 'glow', kind: 'sphere', position: [0, 2.18, -0.02], scale: [0.055, 0.055, 0.055], emissive: true, transparent: true },
   { material: 'accent', position: [0, 1.96, -0.04], scale: [0.06, 0.16, 0.14], emissive: true },
-  // Cyclone fin wings (layered, swept).
-  { material: 'metal', position: [-0.54, 1.42, 0.2], scale: [0.07, 0.56, 0.03], rotation: [0, 0, -0.46], bone: 'torso' },
-  { material: 'metal', position: [0.54, 1.42, 0.2], scale: [0.07, 0.56, 0.03], rotation: [0, 0, 0.46], bone: 'torso' },
-  { material: 'glow', position: [-0.7, 1.18, 0.22], scale: [0.05, 0.5, 0.026], rotation: [0, 0, -0.7], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.7, 1.18, 0.22], scale: [0.05, 0.5, 0.026], rotation: [0, 0, 0.7], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [-0.64, 1.6, 0.22], scale: [0.045, 0.46, 0.026], rotation: [0, 0, -0.52], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [0.64, 1.6, 0.22], scale: [0.045, 0.46, 0.026], rotation: [0, 0, 0.52], emissive: true, transparent: true, bone: 'torso' },
+  // Twin cyclone arc: a second crossed-tilt storm ring instead of fin wings,
+  // with arc sparks (pairs with the orbiting storm ring below).
+  { material: 'accent', kind: 'cylinder', position: [0, 1.34, 0], scale: [0.52, 0.012, 0.52], rotation: [1.0, 0, -0.6], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [-0.46, 1.5, 0.06], scale: [0.045, 0.045, 0.045], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [0.5, 1.26, 0.1], scale: [0.04, 0.04, 0.04], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
   // Storm pauldrons.
   { material: 'metal', position: [-0.46, 1.42, -0.08], scale: [0.22, 0.18, 0.08], rotation: [0, 0, -0.24] },
   { material: 'metal', position: [0.46, 1.42, -0.08], scale: [0.22, 0.18, 0.08], rotation: [0, 0, 0.24] },
@@ -1251,13 +1262,13 @@ export const PYRE_TYRANT_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'glow', kind: 'sphere', position: [0, 2.22, -0.02], scale: [0.06, 0.06, 0.06], emissive: true, transparent: true },
   { material: 'metal', position: [-0.18, 1.96, -0.04], scale: [0.05, 0.2, 0.06], rotation: [0, 0, 0.42] },
   { material: 'metal', position: [0.18, 1.96, -0.04], scale: [0.05, 0.2, 0.06], rotation: [0, 0, -0.42] },
-  // Lava wing jets (layered).
-  { material: 'glow', position: [-0.56, 1.4, 0.2], scale: [0.08, 0.58, 0.028], rotation: [0, 0, -0.46], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.56, 1.4, 0.2], scale: [0.08, 0.58, 0.028], rotation: [0, 0, 0.46], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [-0.7, 1.16, 0.22], scale: [0.05, 0.46, 0.026], rotation: [0, 0, -0.72], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [0.7, 1.16, 0.22], scale: [0.05, 0.46, 0.026], rotation: [0, 0, 0.72], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [-0.66, 1.6, 0.22], scale: [0.06, 0.5, 0.028], rotation: [0, 0, -0.52], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.66, 1.6, 0.22], scale: [0.06, 0.5, 0.028], rotation: [0, 0, 0.52], emissive: true, transparent: true, bone: 'torso' },
+  // Erupting back vents: vertical magma cracks venting up the back instead of
+  // wing jets, with floating ember chunks.
+  { material: 'glow', position: [-0.16, 1.46, 0.24], scale: [0.05, 0.5, 0.03], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'glow', position: [0.16, 1.46, 0.24], scale: [0.05, 0.5, 0.03], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', position: [0, 1.5, 0.25], scale: [0.045, 0.56, 0.026], emissive: true, transparent: true, bone: 'torso' },
+  { material: 'accent', kind: 'sphere', position: [-0.2, 1.84, 0.22], scale: [0.04, 0.04, 0.04], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [0.22, 1.96, 0.22], scale: [0.035, 0.035, 0.035], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
   // Obsidian shoulder plates with magma vents.
   { material: 'metal', position: [-0.34, 1.4, -0.02], scale: [0.18, 0.16, 0.24], bone: 'torso' },
   { material: 'metal', position: [0.34, 1.4, -0.02], scale: [0.18, 0.16, 0.24], bone: 'torso' },
@@ -1313,11 +1324,12 @@ export const QUANTUM_ARBITER_EXTRA_PARTS: VoxelPart[] = addVoxelPartMetadata([
   { material: 'metal', position: [0, 1.32, -0.27], scale: [0.34, 0.04, 0.026], emissive: true },
   { material: 'glass', kind: 'sphere', position: [0, 1.1, -0.29], scale: [0.1, 0.1, 0.1], emissive: true, transparent: true },
   { material: 'glow', kind: 'sphere', position: [0, 1.1, -0.27], scale: [0.05, 0.05, 0.04], emissive: true, transparent: true },
-  // Causality conduit wings.
-  { material: 'glow', position: [-0.5, 1.36, 0.22], scale: [0.06, 0.5, 0.026], rotation: [0, 0, -0.4], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'glow', position: [0.5, 1.36, 0.22], scale: [0.06, 0.5, 0.026], rotation: [0, 0, 0.4], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [-0.64, 1.14, 0.22], scale: [0.05, 0.42, 0.026], rotation: [0, 0, -0.68], emissive: true, transparent: true, bone: 'torso' },
-  { material: 'accent', position: [0.64, 1.14, 0.22], scale: [0.05, 0.42, 0.026], rotation: [0, 0, 0.68], emissive: true, transparent: true, bone: 'torso' },
+  // Probability shards: drifting prism fragments instead of conduit wings
+  // (complements the crossed orbital rings above).
+  { material: 'glass', position: [-0.46, 1.56, 0.16], scale: [0.05, 0.1, 0.035], rotation: [0.2, 0, -0.5], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'accent', position: [0.5, 1.3, 0.12], scale: [0.04, 0.11, 0.03], rotation: [0, 0.3, 0.4], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glass', position: [-0.42, 1.08, 0.18], scale: [0.04, 0.08, 0.03], rotation: [0.3, 0, 0.2], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
+  { material: 'glow', kind: 'sphere', position: [0.44, 1.62, 0.08], scale: [0.03, 0.03, 0.03], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
   // Floating prism shoulder orbs.
   { material: 'glass', kind: 'sphere', position: [-0.42, 1.5, 0], scale: [0.06, 0.06, 0.06], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },
   { material: 'glass', kind: 'sphere', position: [0.42, 1.5, 0], scale: [0.06, 0.06, 0.06], emissive: true, transparent: true, attachmentMode: 'floating', bone: 'torso' },

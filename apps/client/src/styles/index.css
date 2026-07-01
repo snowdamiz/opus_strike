@@ -3220,6 +3220,899 @@ body,
   }
 }
 
+/* ===== LOADOUT BENCH ===== */
+/* Category-grid loadout configurator. Clones the skins armory chrome with a
+   single neutral tier (no rarity) and the same orange active/equip accent. */
+.loadout-screen {
+  --loadout-neutral: 148 163 184;
+  --loadout-neutral-2: 71 85 105;
+  --loadout-amber: 245 158 11;
+  --loadout-orange: rgb(249 115 22);
+  --loadout-panel: rgb(6 8 10 / 0.58);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 0.72rem;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  padding: clamp(0.35rem, 1.2vh, 0.85rem) 0 clamp(0.5rem, 1.4vh, 1rem);
+}
+
+.loadout-workbench {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: minmax(10.5rem, 0.28fr) minmax(20rem, 0.78fr) minmax(27rem, 1.12fr);
+  gap: 0.72rem;
+  width: min(88rem, 100%);
+  flex: 1 1 auto;
+  height: 100%;
+  margin-inline: auto;
+}
+
+/* roster ---------------------------------------------------------------- */
+.loadout-roster {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  align-content: start;
+}
+
+.loadout-roster-list {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 0.48rem;
+  overflow-y: auto;
+}
+
+.loadout-hero-tab-name,
+.loadout-stage-title,
+.loadout-title-line h2,
+.loadout-action-button,
+.loadout-group-label {
+  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.loadout-hero-tab {
+  position: relative;
+  display: grid;
+  grid-template-columns: 2.1rem minmax(0, 1fr);
+  min-width: 0;
+  min-height: 3.55rem;
+  align-items: center;
+  gap: 0.58rem;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 0.32rem;
+  background: rgb(255 255 255 / 0.026);
+  padding: 0.48rem 0.58rem;
+  color: rgb(255 255 255 / 0.56);
+  text-align: left;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.loadout-hero-tab::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0.16rem;
+  background: transparent;
+  transition: background 160ms ease, box-shadow 160ms ease;
+}
+
+.loadout-hero-tab:hover,
+.loadout-hero-tab:focus-visible {
+  border-color: rgb(255 255 255 / 0.16);
+  background: rgb(255 255 255 / 0.052);
+  color: rgb(255 255 255 / 0.88);
+  outline: none;
+}
+
+.loadout-hero-tab.is-active {
+  border-color: rgb(249 115 22 / 0.5);
+  background:
+    linear-gradient(90deg, rgb(249 115 22 / 0.18), rgb(34 211 238 / 0.04)),
+    rgb(255 255 255 / 0.045);
+  color: white;
+}
+
+.loadout-hero-tab.is-active::before {
+  background: var(--loadout-orange);
+  box-shadow: 0 0 1rem rgb(249 115 22 / 0.6);
+}
+
+.loadout-hero-tab-icon {
+  width: 1.9rem;
+  height: 1.9rem;
+  filter: drop-shadow(0 0.3rem 0.6rem rgb(0 0 0 / 0.58));
+}
+
+.loadout-hero-tab-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+}
+
+.loadout-hero-tab-name {
+  overflow: hidden;
+  font-size: 1.04rem;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loadout-hero-tab-sub {
+  overflow: hidden;
+  color: rgb(255 255 255 / 0.42);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* stage ----------------------------------------------------------------- */
+.loadout-stage {
+  --loadout-tier: var(--loadout-neutral);
+  --loadout-tier-2: var(--loadout-neutral-2);
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(14rem, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid rgb(var(--loadout-tier) / 0.2);
+  border-radius: 0.36rem;
+  background:
+    linear-gradient(90deg, rgb(var(--loadout-tier) / 0.032), rgb(var(--loadout-tier-2) / 0.026) 52%, rgb(255 255 255 / 0.018)),
+    var(--loadout-panel);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.048),
+    inset 0 -1px 0 rgb(0 0 0 / 0.18),
+    0 1rem 2.4rem rgb(0 0 0 / 0.2),
+    0 0.8rem 2.8rem rgb(var(--loadout-tier) / 0.055);
+}
+
+.loadout-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 70%, rgb(var(--loadout-tier) / 0.065), transparent 32%),
+    linear-gradient(90deg, rgb(var(--loadout-tier) / 0.05), transparent 38%);
+}
+
+.loadout-stage-copy {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: clamp(0.9rem, 1.4vw, 1.25rem) clamp(0.95rem, 1.6vw, 1.35rem) 0;
+}
+
+.loadout-stage-copy > div {
+  position: relative;
+  isolation: isolate;
+  max-width: min(100%, 38rem);
+}
+
+.loadout-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: rgb(103 232 249 / 0.92);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  text-transform: uppercase;
+  text-shadow: 0 0.16rem 0.36rem rgb(0 0 0 / 0.86);
+}
+
+.loadout-kicker::before {
+  content: "";
+  width: 1.15rem;
+  height: 0.12rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgb(103 232 249 / 0.95), rgb(103 232 249 / 0.05));
+  box-shadow: 0 0 0.55rem rgb(103 232 249 / 0.5);
+}
+
+.loadout-stage-title-line {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.54rem;
+  margin-top: 0.24rem;
+}
+
+.loadout-stage-title {
+  min-width: 0;
+  color: rgb(245 247 249);
+  font-size: clamp(2rem, 3vw, 3.2rem);
+  line-height: 0.9;
+  text-shadow:
+    0 0.55rem 1rem rgb(0 0 0 / 0.72),
+    0 0 1.6rem rgb(var(--loadout-tier) / 0.22);
+}
+
+.loadout-stage-chip {
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 0.32rem;
+  background: rgb(255 255 255 / 0.045);
+  color: rgb(255 255 255 / 0.64);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.64rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 0.34rem 0.46rem;
+  text-transform: uppercase;
+  transform: translateY(-0.06rem);
+}
+
+.loadout-stage-preview {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  padding-inline: 0.6rem;
+}
+
+.loadout-stage-preview::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  bottom: clamp(1.4rem, 6vh, 3rem);
+  width: clamp(8rem, 19vw, 13.5rem);
+  height: 1.5rem;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgb(var(--loadout-tier) / 0.34), rgb(var(--loadout-tier) / 0.08) 48%, transparent 72%);
+  filter: blur(0.35rem);
+}
+
+.loadout-featured-preview {
+  position: relative;
+  z-index: 2;
+  width: clamp(18rem, 30vw, 30rem);
+  height: clamp(20rem, 48vh, 34rem);
+  transform: translateY(-0.25rem) scale(1.03);
+  transform-origin: center bottom;
+}
+
+/* equipped summary strip ------------------------------------------------ */
+.loadout-equipped-strip {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0 clamp(0.95rem, 1.6vw, 1.35rem) clamp(0.9rem, 1.4vw, 1.2rem);
+}
+
+.loadout-equipped-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 0.32rem;
+  background: rgb(0 0 0 / 0.28);
+  padding: 0.3rem 0.46rem;
+}
+
+.loadout-equipped-key {
+  flex: 0 0 auto;
+  border-radius: 0.22rem;
+  padding: 0.18rem 0.34rem;
+  color: white;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  text-transform: uppercase;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
+}
+
+.loadout-equipped-name {
+  overflow: hidden;
+  max-width: 8rem;
+  color: rgb(255 255 255 / 0.82);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* catalog bay ----------------------------------------------------------- */
+.loadout-bay {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0.58rem;
+}
+
+/* Owned / Available / Locked filter chips (mirrors the skins armory filter). */
+.loadout-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.loadout-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 0.32rem;
+  background: rgb(255 255 255 / 0.028);
+  padding: 0.42rem 0.62rem;
+  color: rgb(255 255 255 / 0.56);
+  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
+  font-size: 0.96rem;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  text-transform: uppercase;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.loadout-filter-chip:hover,
+.loadout-filter-chip:focus-visible {
+  border-color: rgb(255 255 255 / 0.18);
+  background: rgb(255 255 255 / 0.055);
+  color: rgb(255 255 255 / 0.88);
+  outline: none;
+}
+
+.loadout-filter-chip.is-active {
+  border-color: rgb(249 115 22 / 0.5);
+  background: linear-gradient(180deg, rgb(249 115 22 / 0.2), rgb(249 115 22 / 0.08));
+  color: rgb(255 237 213);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    0 0 0.9rem rgb(249 115 22 / 0.14);
+}
+
+.loadout-filter-count {
+  min-width: 1.15rem;
+  border-radius: 0.26rem;
+  background: rgb(0 0 0 / 0.28);
+  padding: 0.16rem 0.32rem;
+  color: rgb(255 255 255 / 0.62);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-align: center;
+}
+
+.loadout-filter-chip.is-active .loadout-filter-count {
+  background: rgb(249 115 22 / 0.26);
+  color: rgb(255 237 213);
+}
+
+.loadout-empty {
+  border: 1px solid rgb(255 255 255 / 0.075);
+  border-radius: 0.34rem;
+  background: rgb(0 0 0 / 0.12);
+  padding: 1.1rem;
+  color: rgb(255 255 255 / 0.48);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.loadout-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.08rem 0.1rem 0.08rem 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.loadout-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.loadout-group {
+  margin-bottom: 0.4rem;
+}
+
+.loadout-group-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.55rem;
+  padding: 0.34rem 0 0.44rem;
+  color: rgb(255 255 255 / 0.82);
+  font-size: 1.04rem;
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid rgb(255 255 255 / 0.09);
+}
+
+.loadout-group-label::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 0.95rem;
+  height: 0.14rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--loadout-orange), rgb(249 115 22 / 0.08));
+  box-shadow: 0 0 0.5rem rgb(249 115 22 / 0.45);
+}
+
+/* Rows reuse the skins-row rarity chrome (border, rail, glow, hatch patterns,
+   clip silhouettes, corner brackets + sash via <SkinRarityChrome/>). The
+   .loadout-row modifier only overrides layout for the narrower icon column and
+   restores the orange equipped accent on top of the tier styling. */
+.loadout-row {
+  grid-template-columns: 4.6rem minmax(0, 1fr) minmax(7.6rem, auto);
+  min-height: 6.4rem;
+}
+
+.loadout-row.is-legendary {
+  grid-template-columns: 4.6rem minmax(0, 1fr) minmax(7.6rem, auto);
+  min-height: 6.4rem;
+}
+
+/* Equipped/selected isn't shown with a heavy orange border — the row keeps only
+   the subtle tier ring inherited from .skins-row.is-equipped, and the selection
+   is marked by a green check badge on the icon plus the EQUIPPED button. */
+.loadout-equipped-mark {
+  position: absolute;
+  top: -0.32rem;
+  right: -0.32rem;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 999px;
+  background: rgb(34 197 94);
+  color: rgb(3 33 16);
+  font-size: 0.8rem;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow:
+    0 0 0 0.16rem rgb(9 9 11),
+    0 0.2rem 0.5rem rgb(0 0 0 / 0.5),
+    0 0 0.7rem rgb(34 197 94 / 0.5);
+}
+
+/* the emblem + the unique sash are anchored to the wider skins thumbnail column,
+   so they'd land over the copy here — suppress just those. */
+.loadout-row .skins-card-emblem {
+  display: none;
+}
+
+.loadout-row.is-unique .skins-card-sash {
+  display: none;
+}
+
+.loadout-row-icon {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-width: 0;
+  height: 4.4rem;
+  border: 1px solid rgb(var(--skins-tier-rgb) / 0.24);
+  border-radius: 0.28rem;
+  background:
+    radial-gradient(circle at 50% 38%, rgb(var(--skins-tier-rgb) / 0.16), transparent 70%),
+    linear-gradient(160deg, rgb(var(--skins-tier-rgb) / 0.1), rgb(0 0 0 / 0.32));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.06),
+    inset 0 0 1.2rem rgb(var(--skins-tier-rgb) / 0.06);
+}
+
+.loadout-copy {
+  position: relative;
+  z-index: 3;
+  min-width: 0;
+}
+
+.loadout-title-line {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.46rem;
+}
+
+.loadout-title-line h2 {
+  min-width: 0;
+  color: white;
+  font-size: 1.24rem;
+  line-height: 0.95;
+  text-shadow: 0 0.16rem 0.34rem rgb(0 0 0 / 0.72);
+}
+
+.loadout-slot-badge {
+  flex: 0 0 auto;
+  border-radius: 0.3rem;
+  padding: 0.18rem 0.4rem;
+  color: white;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-transform: uppercase;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
+}
+
+.loadout-demo-chip {
+  flex: 0 0 auto;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 0.28rem;
+  background: rgb(255 255 255 / 0.06);
+  color: rgb(255 255 255 / 0.62);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.56rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 0.22rem 0.36rem;
+  text-transform: uppercase;
+}
+
+.loadout-rarity-chip {
+  flex: 0 0 auto;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 0.3rem;
+  background: rgb(255 255 255 / 0.045);
+  color: rgb(255 255 255 / 0.64);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  padding: 0.22rem 0.4rem;
+  text-transform: uppercase;
+}
+
+.loadout-rarity-chip.is-common {
+  border-radius: 0.28rem;
+  border-color: rgb(148 163 184 / 0.26);
+  background: rgb(148 163 184 / 0.08);
+  color: rgb(226 232 240);
+}
+
+.loadout-rarity-chip.is-epic {
+  border-radius: 0.14rem;
+  border-color: rgb(167 139 250 / 0.4);
+  background:
+    linear-gradient(135deg, rgb(167 139 250 / 0.22), rgb(236 72 153 / 0.08)),
+    rgb(167 139 250 / 0.1);
+  color: rgb(233 213 255);
+}
+
+.loadout-rarity-chip.is-unique {
+  border-radius: 0.08rem;
+  border-color: rgb(34 211 238 / 0.42);
+  background:
+    linear-gradient(90deg, rgb(34 211 238 / 0.2) 0 1px, transparent 1px),
+    rgb(34 211 238 / 0.1);
+  background-size: 0.48rem 100%;
+  color: rgb(207 250 254);
+}
+
+.loadout-rarity-chip.is-legendary {
+  border-radius: 999px;
+  border-color: rgb(250 204 21 / 0.4);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.16), transparent 48%),
+    linear-gradient(90deg, rgb(250 204 21 / 0.2), rgb(249 115 22 / 0.12));
+  color: rgb(254 240 138);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.16),
+    0 0 0.75rem rgb(250 204 21 / 0.16);
+}
+
+.loadout-copy p {
+  margin-top: 0.4rem;
+  max-width: 28rem;
+  color: rgb(255 255 255 / 0.72);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.34;
+}
+
+.loadout-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+  margin-top: 0.6rem;
+}
+
+.loadout-tags span {
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 0.32rem;
+  background: rgb(255 255 255 / 0.045);
+  color: rgb(255 255 255 / 0.64);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.64rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 0.3rem 0.42rem;
+  text-transform: uppercase;
+}
+
+.loadout-actions {
+  position: relative;
+  z-index: 4;
+  display: grid;
+  align-content: center;
+  justify-items: end;
+  gap: 0.4rem;
+}
+
+.loadout-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.42rem;
+  min-width: 7.6rem;
+  min-height: 2.42rem;
+  border: 1px solid rgb(255 255 255 / 0.11);
+  border-radius: 0.34rem;
+  background: rgb(255 255 255 / 0.055);
+  color: white;
+  font-size: 1.02rem;
+  line-height: 1;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.loadout-action-button:hover:not(:disabled),
+.loadout-action-button:focus-visible:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 0.5rem 1.1rem rgb(0 0 0 / 0.28);
+  outline: none;
+}
+
+/* Equip button is tinted by the card's rarity tier (like the skins purchase
+   button), not a fixed orange — so it matches each card. */
+.loadout-action-button.is-equip:not(:disabled) {
+  border-color: rgb(var(--skins-tier-rgb) / 0.46);
+  background: rgb(var(--skins-tier-rgb) / 0.14);
+  color: rgb(255 255 255 / 0.92);
+}
+
+.loadout-action-button.is-equip:not(:disabled):hover,
+.loadout-action-button.is-equip:not(:disabled):focus-visible {
+  background: rgb(var(--skins-tier-rgb) / 0.24);
+  box-shadow: 0 0 1rem rgb(var(--skins-tier-rgb) / 0.14);
+}
+
+.loadout-action-button.is-equip.is-equipped:disabled {
+  cursor: default;
+  border-color: rgb(var(--skins-tier-rgb) / 0.5);
+  background: linear-gradient(180deg, rgb(var(--skins-tier-rgb) / 0.22), rgb(var(--skins-tier-rgb) / 0.08));
+  color: rgb(255 255 255 / 0.95);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
+}
+
+.loadout-action-button.is-equip.is-equipped:disabled::before {
+  content: "✓";
+  font-size: 0.9rem;
+  line-height: 1;
+  color: rgb(var(--skins-tier-rgb) / 0.95);
+}
+
+.loadout-action-button:disabled {
+  cursor: default;
+}
+
+/* Available (can unlock) and locked states for non-owned skills. */
+.loadout-action-button.is-available:disabled {
+  cursor: default;
+  border-color: rgb(var(--skins-tier-rgb) / 0.42);
+  background: rgb(var(--skins-tier-rgb) / 0.12);
+  color: rgb(255 255 255 / 0.72);
+}
+
+.loadout-action-button.is-locked-btn:disabled {
+  cursor: default;
+  border-color: rgb(255 255 255 / 0.12);
+  background: rgb(255 255 255 / 0.05);
+  color: rgb(255 255 255 / 0.5);
+  letter-spacing: 0.08em;
+}
+
+/* "E / Q interchangeable" hint on the Abilities group header */
+.loadout-group-hint {
+  margin-left: 0.6rem;
+  color: rgb(255 255 255 / 0.42);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Dual E/Q assign buttons for interchangeable ability rows */
+.loadout-actions-dual {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.loadout-slot-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  min-width: 3.5rem;
+  min-height: 2.42rem;
+  border: 1px solid rgb(var(--skins-tier-rgb) / 0.4);
+  border-radius: 0.34rem;
+  background: rgb(var(--skins-tier-rgb) / 0.1);
+  color: rgb(255 255 255 / 0.86);
+  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.loadout-slot-button:hover:not(:disabled),
+.loadout-slot-button:focus-visible:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgb(var(--skins-tier-rgb) / 0.6);
+  background: rgb(var(--skins-tier-rgb) / 0.2);
+  box-shadow: 0 0.5rem 1.1rem rgb(0 0 0 / 0.28);
+  outline: none;
+}
+
+.loadout-slot-button.is-on:disabled {
+  cursor: default;
+  border-color: rgb(var(--skins-tier-rgb) / 0.6);
+  background: linear-gradient(180deg, rgb(var(--skins-tier-rgb) / 0.28), rgb(var(--skins-tier-rgb) / 0.1));
+  color: white;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1);
+}
+
+@media (max-width: 1180px) {
+  .loadout-workbench {
+    grid-template-columns: minmax(9.75rem, 0.32fr) minmax(0, 1fr);
+    grid-template-areas:
+      "roster stage"
+      "bay bay";
+  }
+
+  .loadout-roster {
+    grid-area: roster;
+  }
+
+  .loadout-stage {
+    grid-area: stage;
+    min-height: 28rem;
+  }
+
+  .loadout-bay {
+    grid-area: bay;
+    min-height: 22rem;
+  }
+}
+
+@media (max-width: 860px) {
+  .loadout-screen {
+    padding-top: 0.25rem;
+    overflow-y: auto;
+  }
+
+  .loadout-workbench {
+    display: grid;
+    height: auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "roster"
+      "stage"
+      "bay";
+  }
+
+  .loadout-roster-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .loadout-stage-copy {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .loadout-row {
+    grid-template-columns: 4.2rem minmax(0, 1fr);
+  }
+
+  .loadout-actions {
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: center;
+    justify-items: start;
+  }
+}
+
+@media (max-width: 560px) {
+  .loadout-roster-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .loadout-stage {
+    min-height: 25rem;
+  }
+
+  .loadout-stage-title {
+    font-size: 1.95rem;
+  }
+
+  .loadout-featured-preview {
+    height: 20rem;
+  }
+
+  .loadout-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .loadout-row-icon {
+    width: 4.4rem;
+    justify-self: start;
+  }
+
+  .loadout-actions {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: stretch;
+  }
+
+  .loadout-action-button {
+    width: 100%;
+  }
+}
+
 .play-season-plate-kicker {
   font-family: 'Exo 2', 'Rajdhani', sans-serif;
   text-transform: uppercase;

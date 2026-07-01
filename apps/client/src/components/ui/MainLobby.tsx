@@ -98,6 +98,7 @@ const FeaturedHeroPreview = lazy(() => import('./FeaturedHeroPreview').then((mod
   default: module.FeaturedHeroPreview,
 })));
 const HeroesPage = lazy(() => import('./HeroesPage').then((module) => ({ default: module.HeroesPage })));
+const LoadoutTab = lazy(() => import('./LoadoutTab').then((module) => ({ default: module.LoadoutTab })));
 const StatsPage = lazy(() => import('./StatsPage').then((module) => ({ default: module.StatsPage })));
 const SettingsModal = lazy(() => import('./SettingsModal').then((module) => ({ default: module.SettingsModal })));
 const HeroPreviewCanvas = lazy(() => import('./HeroPreviewCanvas').then((module) => ({ default: module.HeroPreviewCanvas })));
@@ -288,7 +289,8 @@ function SlopHeroesMark({ className }: { className?: string }) {
 }
 
 // Navigation tabs
-type MainTab = 'play' | 'heroes' | 'stats' | 'skins';
+const MAIN_TABS = ['play', 'heroes', 'loadout', 'skins', 'stats'] as const;
+type MainTab = (typeof MAIN_TABS)[number];
 const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
   mode: 'season',
   seasonNumber: DEFAULT_RANKED_SEASON_NUMBER,
@@ -1235,7 +1237,7 @@ export function MainLobby() {
           </div>
 
           <div className="main-lobby-tabs flex min-w-0 items-center">
-            {(['play', 'heroes', 'stats', 'skins'] as MainTab[]).map((tab) => (
+            {MAIN_TABS.map((tab) => (
  <button
  key={tab}
  onClick={() => { playButtonClick(); setActiveTab(tab); }}
@@ -1346,6 +1348,14 @@ export function MainLobby() {
           <Suspense fallback={null}>
             <HeroesPage
               selectedHero={featuredHero}
+              onSelectHero={handleSelectHero}
+            />
+          </Suspense>
+        )}
+        {activeTab === 'loadout' && (
+          <Suspense fallback={null}>
+            <LoadoutTab
+              featuredHero={featuredHero}
               onSelectHero={handleSelectHero}
             />
           </Suspense>

@@ -13,10 +13,11 @@ import {
   HOOKSHOT_FIRE_INTERVAL,
   PHANTOM_FIRE_INTERVAL,
 } from '../../hooks/player/constants';
-import { ABILITY_COLORS } from '../../styles/colorTokens';
+import { SKILL_RARITY_COLORS } from '../../styles/colorTokens';
 import { AbilityIcon, getAbilityIconType, type AbilityIconType } from './HeroIcons';
 
 export type HeroSkillTone = 'click' | 'ultimate';
+export type HeroSkillRarity = 'common' | 'epic' | 'unique' | 'legendary';
 
 export interface HeroSkillItem {
   input: string;
@@ -25,6 +26,7 @@ export interface HeroSkillItem {
   iconType: AbilityIconType;
   abilityId?: string;
   tone?: HeroSkillTone;
+  rarity?: HeroSkillRarity;
   cooldown?: number;
   duration?: number;
   charges?: number;
@@ -200,9 +202,12 @@ export function getHeroSkillItems(heroId: HeroId): HeroSkillItem[] {
   if (cached) return cached;
 
   const items: HeroSkillItem[] = [
+    // Real, shipped skills are all common. Higher rarities are only used by the
+    // synthesized loadout demo variants to showcase the rarity system.
     ...HERO_CLICK_SKILLS[heroId].map((skill) => ({
       ...skill,
       tone: 'click' as const,
+      rarity: 'common' as const,
       meta: [
         ...getAbilityCardMeta(skill.statKey),
         ...(skill.meta ?? []),
@@ -210,6 +215,7 @@ export function getHeroSkillItems(heroId: HeroId): HeroSkillItem[] {
     })),
     ...HERO_ABILITY_SKILLS[heroId].map((skill) => ({
       ...skill,
+      rarity: 'common' as const,
       meta: [
         ...getAbilityCardMeta(skill.statKey),
         ...(skill.meta ?? []),
@@ -235,39 +241,39 @@ const iconGlyphSize: Record<HeroSkillIconSize, number> = {
 
 export function HeroSkillIcon({
   item,
-  color,
+  color: _color,
   size = 'card',
   muted = false,
   active = false,
   className = '',
 }: {
   item: HeroSkillItem;
-  color: string;
+  /** Deprecated: skills are tinted by rarity now, not hero color. Kept for callers. */
+  color?: string;
   size?: HeroSkillIconSize;
   muted?: boolean;
   active?: boolean;
   className?: string;
 }) {
-  const isUltimate = item.tone === 'ultimate';
-  const activeColor = isUltimate ? ABILITY_COLORS.ultimate : color;
+  const hex = SKILL_RARITY_COLORS[item.rarity ?? 'common'].hex;
 
   return (
     <div
       className={`${iconSizeClass[size]} rounded-md flex items-center justify-center flex-shrink-0 overflow-hidden ${className}`}
       style={{
         background: muted
-          ? 'rgba(255,255,255,0.06)'
-          : isUltimate
-            ? `linear-gradient(135deg, ${ABILITY_COLORS.ultimate}, ${ABILITY_COLORS.ultimateDarker})`
-            : color,
-        border: active ? `1px solid ${activeColor}` : '1px solid rgba(255,255,255,0.12)',
-        boxShadow: active ? `0 0 18px ${activeColor}55` : 'inset 0 1px 0 rgba(255,255,255,0.08)',
+          ? 'rgba(255,255,255,0.05)'
+          : `radial-gradient(circle at 50% 32%, ${hex}3d, transparent 70%), linear-gradient(160deg, ${hex}29, rgba(0,0,0,0.42))`,
+        border: `1px solid ${hex}${active ? 'e6' : '57'}`,
+        boxShadow: active
+          ? `0 0 16px ${hex}80, inset 0 1px 0 rgba(255,255,255,0.1)`
+          : `inset 0 1px 0 rgba(255,255,255,0.06), inset 0 0 14px ${hex}0d`,
       }}
     >
       <AbilityIcon
         type={item.iconType}
         size={iconGlyphSize[size]}
-        color={muted ? 'rgba(255,255,255,0.42)' : '#ffffff'}
+        color={muted ? 'rgba(255,255,255,0.4)' : hex}
       />
     </div>
   );

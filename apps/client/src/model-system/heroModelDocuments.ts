@@ -171,13 +171,9 @@ const ASTRAL_EXECUTIONER_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
 const ECLIPSE_SERAPH_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
   { id: 'phantom.eclipse-seraph.viewmodel.left.goldBrace', material: 'metal', bone: 'leftForearm', position: [-0.24, -0.052, -0.3], scale: [0.1, 0.018, 0.036], emissive: true },
   { id: 'phantom.eclipse-seraph.viewmodel.right.goldBrace', material: 'metal', bone: 'rightForearm', position: [0.24, -0.052, -0.3], scale: [0.1, 0.018, 0.036], emissive: true },
-  { id: 'phantom.eclipse-seraph.viewmodel.left.seraphWing', material: 'glow', bone: 'leftForearm', position: [-0.33, -0.12, -0.56], scale: [0.034, 0.12, 0.2], rotation: [0, 0.32, 0], emissive: true, transparent: true },
-  { id: 'phantom.eclipse-seraph.viewmodel.right.seraphWing', material: 'glow', bone: 'rightForearm', position: [0.33, -0.12, -0.56], scale: [0.034, 0.12, 0.2], rotation: [0, -0.32, 0], emissive: true, transparent: true },
   { id: 'phantom.eclipse-seraph.viewmodel.orb.outerHalo', material: 'glow', bone: 'root', kind: 'cylinder', position: [0, -0.12, -0.8], scale: [0.2, 0.012, 0.2], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
   { id: 'phantom.eclipse-seraph.viewmodel.orb.crownRing', material: 'metal', bone: 'root', kind: 'cylinder', position: [0, -0.12, -0.76], scale: [0.14, 0.014, 0.14], rotation: [Math.PI / 2, 0, 0], emissive: true },
   { id: 'phantom.eclipse-seraph.viewmodel.orb.prismCore', material: 'glass', bone: 'root', kind: 'sphere', position: [0, -0.12, -0.72], scale: [0.105, 0.105, 0.105], emissive: true, transparent: true },
-  { id: 'phantom.eclipse-seraph.viewmodel.left.seraphWingOuter', material: 'accent', bone: 'leftForearm', position: [-0.36, -0.13, -0.5], scale: [0.028, 0.1, 0.16], rotation: [0, 0.36, 0], emissive: true, transparent: true },
-  { id: 'phantom.eclipse-seraph.viewmodel.right.seraphWingOuter', material: 'accent', bone: 'rightForearm', position: [0.36, -0.13, -0.5], scale: [0.028, 0.1, 0.16], rotation: [0, -0.36, 0], emissive: true, transparent: true },
 ];
 
 const IRON_LEVIATHAN_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
@@ -227,8 +223,6 @@ const ASHEN_VANGUARD_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
 ];
 
 const INFERNO_ARCHON_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
-  { id: 'blaze.inferno-archon.viewmodel.left.archonWing', material: 'glow', bone: 'leftForearm', position: [-0.32, -0.11, -0.52], scale: [0.034, 0.12, 0.18], rotation: [0, 0.26, 0], emissive: true, transparent: true },
-  { id: 'blaze.inferno-archon.viewmodel.right.archonWing', material: 'glow', bone: 'rightForearm', position: [0.32, -0.11, -0.52], scale: [0.034, 0.12, 0.18], rotation: [0, -0.26, 0], emissive: true, transparent: true },
   { id: 'blaze.inferno-archon.viewmodel.left.goldBrace', material: 'metal', bone: 'leftForearm', position: [-0.24, -0.052, -0.27], scale: [0.1, 0.018, 0.024], emissive: true },
   { id: 'blaze.inferno-archon.viewmodel.right.goldBrace', material: 'metal', bone: 'rightForearm', position: [0.24, -0.052, -0.27], scale: [0.1, 0.018, 0.024], emissive: true },
   { id: 'blaze.inferno-archon.viewmodel.staff.archonRing', material: 'accent', bone: 'rightForearm', kind: 'cylinder', position: [0.32, -0.07, -0.92], scale: [0.13, 0.014, 0.13], emissive: true },
@@ -283,8 +277,6 @@ const ETERNITY_SOVEREIGN_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
 const PHANTOM_GOLDEN_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
   { id: 'phantom.golden.viewmodel.left.goldBrace', material: 'metal', bone: 'leftForearm', position: [-0.24, -0.052, -0.3], scale: [0.1, 0.02, 0.038], emissive: true },
   { id: 'phantom.golden.viewmodel.right.goldBrace', material: 'metal', bone: 'rightForearm', position: [0.24, -0.052, -0.3], scale: [0.1, 0.02, 0.038], emissive: true },
-  { id: 'phantom.golden.viewmodel.left.goldWing', material: 'glow', bone: 'leftForearm', position: [-0.33, -0.12, -0.56], scale: [0.034, 0.12, 0.2], rotation: [0, 0.32, 0], emissive: true, transparent: true },
-  { id: 'phantom.golden.viewmodel.right.goldWing', material: 'glow', bone: 'rightForearm', position: [0.33, -0.12, -0.56], scale: [0.034, 0.12, 0.2], rotation: [0, -0.32, 0], emissive: true, transparent: true },
   { id: 'phantom.golden.viewmodel.orb.outerHalo', material: 'glow', bone: 'root', kind: 'cylinder', position: [0, -0.12, -0.8], scale: [0.2, 0.012, 0.2], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
   { id: 'phantom.golden.viewmodel.orb.crownRing', material: 'metal', bone: 'root', kind: 'cylinder', position: [0, -0.12, -0.76], scale: [0.14, 0.014, 0.14], rotation: [Math.PI / 2, 0, 0], emissive: true },
   { id: 'phantom.golden.viewmodel.orb.goldCore', material: 'glass', bone: 'root', kind: 'sphere', position: [0, -0.12, -0.72], scale: [0.105, 0.105, 0.105], emissive: true, transparent: true },
@@ -342,8 +334,6 @@ const OBSIDIAN_REVENANT_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
   { id: 'phantom.obsidian-revenant.viewmodel.right.soulRune', material: 'glow', bone: 'rightForearm', position: [0.24, -0.13, -0.43], scale: [0.036, 0.036, 0.018], emissive: true },
   { id: 'phantom.obsidian-revenant.viewmodel.orb.glassShell', material: 'glass', bone: 'root', kind: 'sphere', position: [0, -0.12, -0.72], scale: [0.14, 0.14, 0.14], transparent: true },
   { id: 'phantom.obsidian-revenant.viewmodel.orb.soulCore', material: 'glow', bone: 'root', kind: 'sphere', position: [0, -0.12, -0.72], scale: [0.09, 0.09, 0.09], emissive: true, transparent: true },
-  { id: 'phantom.obsidian-revenant.viewmodel.left.wingShard', material: 'glass', bone: 'leftForearm', position: [-0.3, -0.12, -0.56], scale: [0.03, 0.1, 0.18], rotation: [0, 0.32, 0], emissive: true, transparent: true },
-  { id: 'phantom.obsidian-revenant.viewmodel.right.wingShard', material: 'glass', bone: 'rightForearm', position: [0.3, -0.12, -0.56], scale: [0.03, 0.1, 0.18], rotation: [0, -0.32, 0], emissive: true, transparent: true },
 ];
 
 const CORAL_WARDEN_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
@@ -383,8 +373,6 @@ const CINDER_WARDEN_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
 ];
 
 const PYRE_TYRANT_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
-  { id: 'blaze.pyre-tyrant.viewmodel.left.lavaWing', material: 'glow', bone: 'leftForearm', position: [-0.32, -0.11, -0.52], scale: [0.034, 0.12, 0.18], rotation: [0, 0.26, 0], emissive: true, transparent: true },
-  { id: 'blaze.pyre-tyrant.viewmodel.right.lavaWing', material: 'glow', bone: 'rightForearm', position: [0.32, -0.11, -0.52], scale: [0.034, 0.12, 0.18], rotation: [0, -0.26, 0], emissive: true, transparent: true },
   { id: 'blaze.pyre-tyrant.viewmodel.left.magmaBrace', material: 'metal', bone: 'leftForearm', position: [-0.24, -0.052, -0.27], scale: [0.1, 0.018, 0.024], emissive: true },
   { id: 'blaze.pyre-tyrant.viewmodel.right.magmaBrace', material: 'metal', bone: 'rightForearm', position: [0.24, -0.052, -0.27], scale: [0.1, 0.018, 0.024], emissive: true },
   { id: 'blaze.pyre-tyrant.viewmodel.staff.pyreRing', material: 'accent', bone: 'rightForearm', kind: 'cylinder', position: [0.32, -0.07, -0.92], scale: [0.13, 0.014, 0.13], emissive: true },

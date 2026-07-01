@@ -168,6 +168,23 @@ export type AbilityIconType =
   | 'timebreak'
   | 'lifelineconduit'
   | 'ascendantparadox'
+  // Epic loadout skills (UI-only)
+  | 'soulrend'
+  | 'riftbolt'
+  | 'umbraldecoy'
+  | 'nightreign'
+  | 'razorchain'
+  | 'reelslam'
+  | 'tethertrap'
+  | 'leviathanhook'
+  | 'scrapshot'
+  | 'phosphorflare'
+  | 'afterburner'
+  | 'phoenixdive'
+  | 'entropybeam'
+  | 'rewindbulwark'
+  | 'rewind'
+  | 'chronosphere'
   | 'ultimate';
 
 export function AbilityIcon({ type, size = 24, color = 'currentColor', className = '' }: IconProps & { type: AbilityIconType }) {
@@ -217,6 +234,38 @@ export function AbilityIcon({ type, size = 24, color = 'currentColor', className
       return <LifelineConduitIcon size={size} color={color} className={className} />;
     case 'ascendantparadox':
       return <AscendantParadoxIcon size={size} color={color} className={className} />;
+    case 'soulrend':
+      return <SoulrendDaggersIcon size={size} color={color} className={className} />;
+    case 'riftbolt':
+      return <RiftBoltIcon size={size} color={color} className={className} />;
+    case 'umbraldecoy':
+      return <UmbralDecoyIcon size={size} color={color} className={className} />;
+    case 'nightreign':
+      return <NightreignIcon size={size} color={color} className={className} />;
+    case 'razorchain':
+      return <RazorChainIcon size={size} color={color} className={className} />;
+    case 'reelslam':
+      return <ReelSlamIcon size={size} color={color} className={className} />;
+    case 'tethertrap':
+      return <TetherTrapIcon size={size} color={color} className={className} />;
+    case 'leviathanhook':
+      return <LeviathanHookIcon size={size} color={color} className={className} />;
+    case 'scrapshot':
+      return <ScrapshotIcon size={size} color={color} className={className} />;
+    case 'phosphorflare':
+      return <PhosphorFlareIcon size={size} color={color} className={className} />;
+    case 'afterburner':
+      return <AfterburnerDashIcon size={size} color={color} className={className} />;
+    case 'phoenixdive':
+      return <PhoenixDiveIcon size={size} color={color} className={className} />;
+    case 'entropybeam':
+      return <EntropyBeamIcon size={size} color={color} className={className} />;
+    case 'rewindbulwark':
+      return <RewindBulwarkIcon size={size} color={color} className={className} />;
+    case 'rewind':
+      return <RewindIcon size={size} color={color} className={className} />;
+    case 'chronosphere':
+      return <ChronosphereIcon size={size} color={color} className={className} />;
     case 'ultimate':
       return <UltimateIcon size={size} color={color} className={className} />;
     case 'passive':
@@ -515,6 +564,212 @@ function UltimateIcon({ size, color, className }: IconProps) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
       <path d="M12 2.5L14.2 8.8H21L15.5 12.8L17.8 21.2L12 16.4L6.2 21.2L8.5 12.8L3 8.8H9.8L12 2.5Z" fill={color} />
       <path d="M12 7.2L13 10.2H16.1L13.5 12L14.6 15.7L12 13.6L9.4 15.7L10.5 12L7.9 10.2H11L12 7.2Z" fill="#ffffff" opacity="0.35" />
+    </svg>
+  );
+}
+
+// ============= EPIC LOADOUT SKILL ICONS (UI-only) =============
+
+// Phantom — Soulrend Daggers: a shadow dagger with a ricochet bounce path.
+function SoulrendDaggersIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M15 3.2L17 8.8L14.4 11.4L12.4 9.4L15 3.2Z" fill={color} />
+      <path d="M12.4 9.4L14.4 11.4L13.4 13.1L11.6 11.3Z" fill={color} opacity="0.7" />
+      <path d="M12.6 11.5L7.5 15.5L10 17.4L4.6 20.6" stroke={color} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="2 2" opacity="0.72" />
+      <circle cx="7.5" cy="15.5" r="1.2" fill={color} />
+    </svg>
+  );
+}
+
+// Phantom — Rift Bolt: a void orb with a trailing teleport arrow.
+function RiftBoltIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M3.5 12H6.5" stroke={color} strokeWidth="2" strokeLinecap="round" opacity="0.7" />
+      <circle cx="9.5" cy="12" r="3.6" fill={color} opacity="0.32" />
+      <circle cx="9.5" cy="12" r="1.7" fill={color} />
+      <path d="M14.5 12H19.5" stroke={color} strokeWidth="2" strokeLinecap="round" strokeDasharray="1.6 2.2" />
+      <path d="M16.8 8.8L20.4 12L16.8 15.2" stroke={color} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// Phantom — Umbral Decoy: a solid phantom beside a faded clone.
+function UmbralDecoyIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M12 18.5V10.5a3.6 3.6 0 0 1 7.2 0V18.5l-1.2-1.1-1.2 1.1-1.2-1.1-1.2 1.1-1.2-1.1Z" fill={color} opacity="0.3" />
+      <path d="M4 18.5V9.5a4 4 0 0 1 8 0V18.5l-1.3-1.2-1.35 1.2-1.35-1.2-1.35 1.2-1.3-1.2Z" fill={color} opacity="0.92" />
+      <circle cx="6.6" cy="10.4" r="0.95" fill="#0a0a0f" />
+      <circle cx="9.4" cy="10.4" r="0.95" fill="#0a0a0f" />
+    </svg>
+  );
+}
+
+// Phantom — Nightreign: a crescent moon over a wraith spark.
+function NightreignIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M16.2 3.4A8.4 8.4 0 1 0 20.6 16.8 6.6 6.6 0 0 1 16.2 3.4Z" fill={color} opacity="0.9" />
+      <path d="M8.2 9.5L9.1 11.8L11.4 12.7L9.1 13.6L8.2 15.9L7.3 13.6L5 12.7L7.3 11.8Z" fill={color} opacity="0.7" />
+      <circle cx="18.4" cy="7.2" r="0.9" fill={color} opacity="0.6" />
+    </svg>
+  );
+}
+
+// Hookshot — Razor Chain: barbed chain links with bleed drips.
+function RazorChainIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <ellipse cx="7" cy="8" rx="2.4" ry="3.2" transform="rotate(-45 7 8)" stroke={color} strokeWidth="1.8" />
+      <ellipse cx="12" cy="13" rx="2.4" ry="3.2" transform="rotate(-45 12 13)" stroke={color} strokeWidth="1.8" />
+      <path d="M14.5 11.5L18 8M18 8L16.6 7.4M18 8L17.4 9.4" stroke={color} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9 15.5L8.2 18.8M11.6 16L11 19.6" stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity="0.7" />
+    </svg>
+  );
+}
+
+// Hookshot — Reel Slam: motion lines and a chevron yanking toward a hook.
+function ReelSlamIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M3 8.5H8.5M2.5 12H9.5M3 15.5H8.5" stroke={color} strokeWidth="1.8" strokeLinecap="round" opacity="0.6" />
+      <path d="M9.5 12L12.5 9.5M9.5 12L12.5 14.5" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M14.5 5L17.5 3.5L16.6 6.8L19 7.8" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M16.8 7C17.4 10.4 15.6 13.4 12.4 14.2" stroke={color} strokeWidth="2" strokeLinecap="round" />
+      <circle cx="12.2" cy="12" r="1.4" fill={color} />
+    </svg>
+  );
+}
+
+// Hookshot — Tether Trap: a dashed chain tripwire strung between two anchors.
+function TetherTrapIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M4 6V13M4 6L2.5 8M4 6L5.5 8" stroke={color} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M20 6V13M20 6L18.5 8M20 6L21.5 8" stroke={color} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 11C8 14 16 14 20 11" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="2 2" />
+      <path d="M8.5 13.2V15.6M12 13.7V16.4M15.5 13.2V15.6" stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity="0.72" />
+      <path d="M3 19.6H21" stroke={color} strokeWidth="1.6" strokeLinecap="round" opacity="0.55" />
+    </svg>
+  );
+}
+
+// Hookshot — Leviathan Hook: a giant line hook dragging a pile of targets.
+function LeviathanHookIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M20 4.5L16.5 5L18 8" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M17.5 6.2C17.5 10 14.5 12.6 11 12.6" stroke={color} strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M3 12.6H11" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeDasharray="2.5 2" />
+      <circle cx="4.6" cy="16.5" r="1.6" fill={color} opacity="0.85" />
+      <circle cx="8.2" cy="17.2" r="1.6" fill={color} opacity="0.7" />
+      <circle cx="6.4" cy="14" r="1.6" fill={color} opacity="0.78" />
+    </svg>
+  );
+}
+
+// Blaze — Scrapshot: a barrel spraying a fan of incendiary pellets.
+function ScrapshotIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <rect x="3" y="10" width="5.5" height="4" rx="1" fill={color} />
+      <path d="M3.6 14L2.1 17M4 10L2.6 7" stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity="0.65" />
+      <circle cx="12" cy="12" r="1.5" fill={color} />
+      <circle cx="15.5" cy="8.5" r="1.2" fill={color} opacity="0.85" />
+      <circle cx="16.5" cy="12" r="1.3" fill={color} opacity="0.9" />
+      <circle cx="15" cy="15.5" r="1.1" fill={color} opacity="0.8" />
+      <circle cx="20" cy="7.4" r="0.9" fill={color} opacity="0.55" />
+      <circle cx="21" cy="12" r="0.9" fill={color} opacity="0.55" />
+      <circle cx="19.6" cy="16.6" r="0.85" fill={color} opacity="0.5" />
+    </svg>
+  );
+}
+
+// Blaze — Phosphor Flare: a lobbed canister arcing into a fire pool.
+function PhosphorFlareIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M3 16C6 9 9.5 5.5 12.5 4.5" stroke={color} strokeWidth="1.7" strokeLinecap="round" strokeDasharray="2.5 2.2" opacity="0.7" />
+      <rect x="11.5" y="3.2" width="3" height="4.4" rx="1.2" transform="rotate(28 13 5.4)" fill={color} />
+      <path d="M4.5 19.5C5 16.5 8 16.2 9.2 17.2C10.2 15 12.4 15 13.6 16.6C14.4 14.6 17.5 15.2 18 17.2C18.3 18.2 18.6 19 18.8 19.5Z" fill={color} opacity="0.52" />
+      <path d="M3.5 19.6H20.5" stroke={color} strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+// Blaze — Afterburner Dash: a forward arrow with a tapering flame trail.
+function AfterburnerDashIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M2.5 9C5 9.4 8 10.2 11.5 11.4M2 12H11.5M2.5 15C5 14.6 8 13.8 11.5 12.6" stroke={color} strokeWidth="1.7" strokeLinecap="round" opacity="0.62" />
+      <path d="M11 12H20M20 12L16.8 8.4M20 12L16.8 15.6" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// Blaze — Phoenix Dive: an arc up then a flaming crash with an impact burst.
+function PhoenixDiveIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M3 16C3.5 9 7 5 11 5" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="2.4 2" opacity="0.6" />
+      <path d="M11 5C15 5 16.8 8 16 11.5" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="2.4 2" opacity="0.6" />
+      <path d="M16 9.5C16 9.5 13.5 11.5 13.5 14C13.5 16 15 17.2 16 17.8C17 17.2 18.5 16 18.5 14C18.5 11.5 16 9.5 16 9.5Z" fill={color} />
+      <path d="M9.5 20.5L11.8 18.2M16 21V18.4M22.5 20.5L20.2 18.2" stroke={color} strokeWidth="1.6" strokeLinecap="round" opacity="0.68" />
+      <path d="M10.5 21.4C13 20.2 19 20.2 21.5 21.4" stroke={color} strokeWidth="1.6" strokeLinecap="round" opacity="0.5" />
+    </svg>
+  );
+}
+
+// Chronos — Entropy Beam: a beam that widens into a decaying impact orb.
+function EntropyBeamIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M3 12L17 12" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M9 12L17 12" stroke={color} strokeWidth="3.4" strokeLinecap="round" opacity="0.85" />
+      <circle cx="17.5" cy="12" r="3" fill={color} opacity="0.3" />
+      <circle cx="17.5" cy="12" r="1.5" fill={color} />
+      <path d="M19.6 8.6L21 7.2M20.6 12H22M19.6 15.4L21 16.8" stroke={color} strokeWidth="1.4" strokeLinecap="round" opacity="0.7" />
+      <circle cx="6" cy="9.6" r="0.7" fill={color} opacity="0.5" />
+      <circle cx="11" cy="15" r="0.7" fill={color} opacity="0.5" />
+    </svg>
+  );
+}
+
+// Chronos — Rewind Bulwark: a time dome with a rewind arrow inside.
+function RewindBulwarkIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M4 18C4 11.4 7.6 7 12 7C16.4 7 20 11.4 20 18" fill={color} opacity="0.2" />
+      <path d="M4 18C4 11.4 7.6 7 12 7C16.4 7 20 11.4 20 18" stroke={color} strokeWidth="2" strokeLinecap="round" />
+      <path d="M3 18H21" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M14.6 11.6A3.4 3.4 0 1 0 15 16.2" stroke={color} strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M14.9 9.6L15 12.1L12.5 11.8" stroke={color} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// Chronos — Rewind: a counterclockwise recall arrow around a clock hand.
+function RewindIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M19 13.5A7 7 0 1 1 13 5.2" stroke={color} strokeWidth="2" strokeLinecap="round" />
+      <path d="M13.4 2.5L13 5.4L16 6" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 8.6V12L14.6 13.6" stroke={color} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// Chronos — Chronosphere: a slow-field bubble around a clock.
+function ChronosphereIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <circle cx="12" cy="12" r="9" fill={color} opacity="0.16" />
+      <circle cx="12" cy="12" r="9" stroke={color} strokeWidth="1.6" opacity="0.6" />
+      <circle cx="12" cy="12" r="5.4" stroke={color} strokeWidth="1.8" />
+      <path d="M12 8.4V12L14.6 13.4" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 3V5M12 19V21M3 12H5M19 12H21" stroke={color} strokeWidth="1.6" strokeLinecap="round" opacity="0.7" />
     </svg>
   );
 }
