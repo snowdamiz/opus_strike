@@ -272,51 +272,59 @@ async function collectDetailedHealth() {
   return {
     healthy,
     body: {
-    status: healthy ? 'ok' : 'degraded',
-    process: {
-      pid: process.pid,
-      colyseusProcessId: matchMaker.processId,
-      publicAddress: colyseusRuntime.publicAddress ?? null,
-      flyMachineId: colyseusRuntime.flyReplay.machineId ?? null,
-      flyRegion: colyseusRuntime.flyReplay.region ?? null,
-    },
-    distributed: {
-      enabled: colyseusRuntime.distributed,
-      redisConfigured: Boolean(colyseusRuntime.redisUrl),
-      requirePublicAddress: colyseusRuntime.requirePublicAddress,
-      redis,
-    },
-    routing: {
-      strategy: colyseusRuntime.routingStrategy,
-      roomCreateStrategy: colyseusRuntime.roomCreateStrategy,
-      flyReplay: {
-        enabled: colyseusRuntime.flyReplay.enabled,
-        appName: colyseusRuntime.flyReplay.appName ?? null,
-        machineId: colyseusRuntime.flyReplay.machineId ?? null,
-        region: colyseusRuntime.flyReplay.region ?? null,
-        registered: Boolean(flyReplayRouteHandle),
-        processRegistryTtlMs: colyseusRuntime.flyReplay.processRegistryTtlMs,
-        processRegistryHeartbeatMs: colyseusRuntime.flyReplay.processRegistryHeartbeatMs,
-        replayTimeout: colyseusRuntime.flyReplay.replayTimeout,
-        replayFallback: colyseusRuntime.flyReplay.replayFallback,
+      status: healthy ? 'ok' : 'degraded',
+      process: {
+        pid: process.pid,
+        colyseusProcessId: matchMaker.processId,
+        publicAddress: colyseusRuntime.publicAddress ?? null,
+        flyMachineId: colyseusRuntime.flyReplay.machineId ?? null,
+        flyRegion: colyseusRuntime.flyReplay.region ?? null,
       },
-    },
-    colyseus: {
-      localRoomCount: autoscalerMetrics.localRoomCount,
-      localCcu: autoscalerMetrics.localCcu,
-      visibleLobbyRoomCount: autoscalerMetrics.visibleLobbyCount,
-      lobbyParticipants: autoscalerMetrics.lobbyParticipants,
-      matchmakerQueryHealthy,
-      matchmakerError: autoscalerMetrics.matchmakerError,
-    },
+      distributed: {
+        enabled: colyseusRuntime.distributed,
+        redisConfigured: Boolean(colyseusRuntime.redisUrl),
+        requirePublicAddress: colyseusRuntime.requirePublicAddress,
+        redis,
+      },
+      routing: {
+        strategy: colyseusRuntime.routingStrategy,
+        roomCreateStrategy: colyseusRuntime.roomCreateStrategy,
+        flyReplay: {
+          enabled: colyseusRuntime.flyReplay.enabled,
+          appName: colyseusRuntime.flyReplay.appName ?? null,
+          machineId: colyseusRuntime.flyReplay.machineId ?? null,
+          region: colyseusRuntime.flyReplay.region ?? null,
+          registered: Boolean(flyReplayRouteHandle),
+          processRegistryTtlMs: colyseusRuntime.flyReplay.processRegistryTtlMs,
+          processRegistryHeartbeatMs: colyseusRuntime.flyReplay.processRegistryHeartbeatMs,
+          replayTimeout: colyseusRuntime.flyReplay.replayTimeout,
+          replayFallback: colyseusRuntime.flyReplay.replayFallback,
+        },
+      },
+      colyseus: {
+        localRoomCount: autoscalerMetrics.localRoomCount,
+        localCcu: autoscalerMetrics.localCcu,
+        visibleLobbyRoomCount: autoscalerMetrics.visibleLobbyCount,
+        lobbyParticipants: autoscalerMetrics.lobbyParticipants,
+        matchmakerQueryHealthy,
+        matchmakerError: autoscalerMetrics.matchmakerError,
+      },
     },
   };
 }
 
-// Public liveness endpoint. Detailed internals require an internal status token in production.
-app.get('/health', async (req, res) => {
+// Public liveness endpoint. Keep this independent from Redis/matchmaker
+// readiness so Fly does not restart a serving process during transient
+// dependency lag or when detailed status endpoints are public.
+app.get('/health', async (_req, res) => {
+  res.json({ status: 'ok' });
+});
+
+// Detailed internals require an internal status token in production unless
+// PUBLIC_STATUS_ENDPOINTS is explicitly enabled.
+app.get('/health/details', async (req, res) => {
   if (!canReadDetailedStatus(req)) {
-    res.json({ status: 'ok' });
+    hideStatusEndpoint(res);
     return;
   }
 

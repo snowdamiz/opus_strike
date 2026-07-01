@@ -114,7 +114,7 @@ async function waitFor<T>(label: string, timeoutMs: number, poll: () => Promise<
 
 async function waitForHealth(server: ManagedServer): Promise<HealthPayload> {
   return waitFor(`server ${server.name} health`, 30_000, async () => {
-    const health = await requestJson<HealthPayload>(`http://localhost:${server.port}/health`);
+    const health = await requestJson<HealthPayload>(`http://localhost:${server.port}/health/details`);
     return health.status === 'ok' ? health : null;
   });
 }
@@ -219,8 +219,8 @@ async function assertQueueVisibleFromBothServers(minPlayers: number): Promise<vo
 async function findSingleGameOwner(serverA: ManagedServer, serverB: ManagedServer): Promise<ManagedServer> {
   return waitFor('single game-room owner', 10_000, async () => {
     const [healthA, healthB] = await Promise.all([
-      requestJson<HealthPayload>(`http://localhost:${serverA.port}/health`),
-      requestJson<HealthPayload>(`http://localhost:${serverB.port}/health`),
+      requestJson<HealthPayload>(`http://localhost:${serverA.port}/health/details`),
+      requestJson<HealthPayload>(`http://localhost:${serverB.port}/health/details`),
     ]);
 
     if (healthA.colyseus.localRoomCount === 1 && healthB.colyseus.localRoomCount === 0) return serverA;
