@@ -39,6 +39,12 @@ const DEFAULT_INTENT_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_INTENT_EXPIRY_GRACE_MS = 2 * 60 * 1000;
 const DEFAULT_RPC_TIMEOUT_MS = 12_000;
 const MAX_SUPPLY_LIMIT = 2_147_483_647;
+type SkinShopConnectionFactory = (rpcUrl: string) => Connection;
+
+let skinShopConnectionFactory: SkinShopConnectionFactory = (rpcUrl) => new Connection(rpcUrl, {
+  commitment: 'confirmed',
+  confirmTransactionInitialTimeout: DEFAULT_RPC_TIMEOUT_MS,
+});
 const EXPIRING_SUPPLY_RESERVATION_STATUSES = [
   'intent_created',
   'transaction_built',
@@ -648,10 +654,14 @@ export async function updateUserHeroLoadout(input: {
 
 function connectionForShop(shop: Awaited<ReturnType<typeof getOrCreateShopSettings>>): Connection {
   if (!shop.rpcUrl) throw new SkinShopServiceError('SOLANA_RPC_URL is not configured', 503);
-  return new Connection(shop.rpcUrl, {
+  return skinShopConnectionFactory(shop.rpcUrl);
+}
+
+export function setSkinShopConnectionFactoryForTests(factory: SkinShopConnectionFactory | null): void {
+  skinShopConnectionFactory = factory ?? ((rpcUrl) => new Connection(rpcUrl, {
     commitment: 'confirmed',
     confirmTransactionInitialTimeout: DEFAULT_RPC_TIMEOUT_MS,
-  });
+  }));
 }
 
 async function assertPurchaseAvailable(input: {
@@ -947,7 +957,6 @@ export async function submitSkinPurchaseSignature(input: {
     throw new SkinShopServiceError('Invalid Solana transaction signature');
   }
   const intent = await getIntentForUser(input.userId, input.intentId);
-  if (intent.status === 'credited') return serializeIntent(intent);
   assertIntentActive(intent);
 
   const duplicate = await prisma.skinPurchaseIntent.findFirst({

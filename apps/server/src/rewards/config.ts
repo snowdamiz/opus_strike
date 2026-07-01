@@ -13,9 +13,6 @@ export interface PlayerRewardRuntimeConfig {
   maxMatchPayoutLamports: bigint;
   treasuryReserveLamports: bigint;
   payoutBatchSize: number;
-  weeklyEnabled: boolean;
-  weeklyPoolLamports: bigint;
-  weeklyTopPlayers: number;
 }
 
 const DEFAULT_DAILY_RANKED_DRIP_LAMPORTS = 20_000n;
@@ -29,8 +26,6 @@ const DEFAULT_MAX_PLAYER_MATCH_LAMPORTS = 50_000n;
 const DEFAULT_MAX_MATCH_PAYOUT_LAMPORTS = 250_000n;
 const DEFAULT_TREASURY_RESERVE_LAMPORTS = 1_000_000_000n;
 const DEFAULT_PAYOUT_BATCH_SIZE = 100;
-const DEFAULT_WEEKLY_POOL_LAMPORTS = 1_000_000n;
-const DEFAULT_WEEKLY_TOP_PLAYERS = 10;
 
 function bigintEnv(name: string, fallback: bigint): bigint {
   const value = process.env[name];
@@ -74,8 +69,5 @@ export function getPlayerRewardRuntimeConfig(): PlayerRewardRuntimeConfig {
     maxMatchPayoutLamports: bigintEnv('PLAYER_REWARD_MAX_MATCH_PAYOUT_LAMPORTS', DEFAULT_MAX_MATCH_PAYOUT_LAMPORTS),
     treasuryReserveLamports: bigintEnv('PLAYER_REWARD_TREASURY_RESERVE_LAMPORTS', DEFAULT_TREASURY_RESERVE_LAMPORTS),
     payoutBatchSize: intEnv('PLAYER_REWARD_PAYOUT_BATCH_SIZE', DEFAULT_PAYOUT_BATCH_SIZE, { min: 1, max: 500 }),
-    weeklyEnabled: envFlag('PLAYER_REWARD_WEEKLY_ENABLED', enabled),
-    weeklyPoolLamports: bigintEnv('PLAYER_REWARD_WEEKLY_POOL_LAMPORTS', DEFAULT_WEEKLY_POOL_LAMPORTS),
-    weeklyTopPlayers: intEnv('PLAYER_REWARD_WEEKLY_TOP_PLAYERS', DEFAULT_WEEKLY_TOP_PLAYERS, { min: 1, max: 100 }),
   };
 }

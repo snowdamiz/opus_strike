@@ -1,4 +1,12 @@
-import type { HeroSkinDefinition, HeroSkinId } from '@voxel-strike/shared';
+import type {
+  DailyMissionAdminOverview,
+  DailyMissionCriteria,
+  DailyMissionDefinitionSnapshot,
+  DailyMissionEligibility,
+  DailyMissionRewardBundle,
+  HeroSkinDefinition,
+  HeroSkinId,
+} from '@voxel-strike/shared';
 
 /**
  * Types for the admin API surface (`/admin/api/*`), matched to the server's
@@ -12,6 +20,7 @@ import type { HeroSkinDefinition, HeroSkinId } from '@voxel-strike/shared';
 export type SectionId =
   | 'overview'
   | 'live-ops'
+  | 'missions'
   | 'players'
   | 'economy'
   | 'infrastructure'
@@ -177,6 +186,24 @@ export interface RankedEntryGate {
   updatedByUserId: string | null;
 }
 
+/* ----------------------------- Missions ----------------------------- */
+
+export type MissionDefinition = DailyMissionDefinitionSnapshot;
+export type MissionsAdminOverview = DailyMissionAdminOverview;
+
+export interface MissionDefinitionUpdate {
+  displayName: string;
+  description: string;
+  enabled: boolean;
+  sortOrder: number;
+  activeStartsAt: string | null;
+  activeEndsAt: string | null;
+  resetPolicy: 'utc';
+  criteria: DailyMissionCriteria;
+  rewards: DailyMissionRewardBundle;
+  eligibility: DailyMissionEligibility;
+}
+
 /* ----------------------------- Players ------------------------------ */
 
 export type PlayerReportStatus =
@@ -288,9 +315,6 @@ export interface PlayerRewardSettings {
   maxMatchPayoutLamports: LamportString;
   treasuryReserveLamports: LamportString;
   payoutBatchSize: number;
-  weeklyEnabled: boolean;
-  weeklyPoolLamports: LamportString;
-  weeklyTopPlayers: number;
   updatedByUserId: string | null;
   updatedAt: string | null;
 }
@@ -446,6 +470,7 @@ export interface AdminOverview {
   globalNotification: GlobalNotification | null;
   rankedSeason: RankedSeason;
   rankedEntryGate: RankedEntryGate;
+  missions: MissionsAdminOverview;
   skinShop: SkinShopOverview;
 }
 
@@ -476,6 +501,12 @@ export interface RewardEconomyUpdate {
   goldenBiome?: Record<string, unknown>;
 }
 
+export interface SeasonTopTenPayoutRequest {
+  mode: RankedSeasonMode;
+  seasonNumber: number;
+  amountLamports: string | number;
+}
+
 export interface RankedSeasonUpdate {
   mode: RankedSeasonMode;
   seasonNumber: number;
@@ -485,6 +516,12 @@ export interface RankedSeasonUpdate {
 export interface RankedEntryGateUpdate {
   mode: RankedEntryGateMode;
   requiredTokenAmount?: number;
+}
+
+export type MissionDefinitionRequest = MissionDefinitionUpdate;
+
+export interface MissionReorderRequest {
+  items: Array<{ id: string; sortOrder: number }>;
 }
 
 export interface SkinShopSettingsUpdate {

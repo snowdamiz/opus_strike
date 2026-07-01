@@ -40,7 +40,6 @@ export function getEarningRules(tokenSymbol: string | null, economy: RewardEcono
   const wagers = economy?.wagers;
   const golden = economy?.goldenBiome;
   const rankedRewardsEnabled = rewards?.enabled !== false;
-  const weeklyRewardsEnabled = rewards?.weeklyEnabled !== false;
   const goldenRewardsEnabled = golden?.enabled !== false;
   const wagersEnabled = wagers?.enabled !== false;
   const rules: EarningRule[] = [];
@@ -60,13 +59,7 @@ export function getEarningRules(tokenSymbol: string | null, economy: RewardEcono
     );
   }
 
-  rules.push({ label: `Play Ranked`, value: `Hold 1M ${tokenSymbol} `})
-
-  if (weeklyRewardsEnabled) {
-    const weeklyTop = rewards?.weeklyTopPlayers ?? 10;
-    const weeklyPool = formatCompactTokenAmount(rewards?.weeklyPoolLamports, '1M');
-    rules.push({ label: `Weekly top ${weeklyTop}`, value: `Split ${tokenAmountLabel(weeklyPool, token)}` });
-  }
+  rules.push({ label: 'Play Ranked', value: `Hold 1M ${token ?? 'tokens'}` });
 
   if (goldenRewardsEnabled) {
     const goldenChance = formatBpsShort(golden?.chanceBps, 200);

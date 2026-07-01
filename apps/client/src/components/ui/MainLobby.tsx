@@ -23,6 +23,7 @@ import {
 } from '../../contexts/networkApi';
 import { GameDialog } from './GameDialog';
 import { GlobalChat } from './GlobalChat';
+import { DailyMissionTracker } from './DailyMissionTracker';
 import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
@@ -1278,6 +1279,11 @@ export function MainLobby() {
           </div>
         </div>
       </nav>
+
+      <DailyMissionTracker
+        enabled={isAuthenticated && !isNewUser}
+        className="absolute left-4 top-[5.35rem] z-20 w-[min(23rem,calc(100vw-2rem))] sm:left-6 xl:left-8"
+      />
 
       {/* Main Content Area */}
       <div className={`menu-main ${activeTab === 'play' ? 'menu-main-play' : ''}`}>

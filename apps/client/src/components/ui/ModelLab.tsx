@@ -7,6 +7,7 @@ import {
   type HeroSkinDefinition,
   type Team,
 } from '@voxel-strike/shared';
+import { SKILL_RARITY_COLORS } from '../../styles/colorTokens';
 import { HeroPreviewCanvas, type HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 
 /**
@@ -30,13 +31,6 @@ const ANIMATION_OPTIONS: { id: HeroPreviewAnimationMode; label: string }[] = [
   { id: 'crouch', label: 'Crouch' },
   { id: 'attack', label: 'Attack' },
 ];
-
-const RARITY_COLORS: Record<HeroSkinDefinition['rarity'], string> = {
-  common: '#9ca3af',
-  epic: '#a855f7',
-  unique: '#f59e0b',
-  legendary: '#fbbf24',
-};
 
 export function ModelLab() {
   const [team, setTeam] = useState<Team>('blue');
@@ -103,7 +97,7 @@ export function ModelLab() {
                     </div>
                     <div style={styles.cardMeta}>
                       <span style={styles.skinName}>{skin.displayName}</span>
-                      <span style={{ ...styles.rarityTag, color: RARITY_COLORS[skin.rarity] }}>
+                      <span style={{ ...styles.rarityTag, color: SKILL_RARITY_COLORS[skin.rarity].hex }}>
                         {skin.rarity}
                       </span>
                     </div>
@@ -162,8 +156,8 @@ function Segmented<T extends string>({
 const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: '100%',
-    background: 'radial-gradient(circle at 50% 0%, #161324 0%, #0a0812 55%, #060409 100%)',
-    color: '#e7e3f5',
+    background: 'radial-gradient(circle at 50% 0%, rgb(var(--color-strike-elevated)) 0%, rgb(var(--color-strike-bg)) 55%, rgb(var(--color-strike-page-bottom)) 100%)',
+    color: 'rgb(var(--color-strike-border) / 0.9)',
     fontFamily: 'system-ui, sans-serif',
     paddingBottom: '4rem',
   },
@@ -177,23 +171,23 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     alignItems: 'flex-end',
     padding: '1.25rem 1.75rem',
-    background: 'rgba(8, 6, 16, 0.86)',
+    background: 'rgb(var(--color-strike-chrome) / 0.86)',
     backdropFilter: 'blur(10px)',
-    borderBottom: '1px solid rgba(255,255,255,0.08)',
+    borderBottom: '1px solid rgb(var(--color-strike-border) / 0.08)',
   },
   title: { margin: 0, fontSize: '1.5rem', fontWeight: 700, letterSpacing: '0.04em' },
-  subtitle: { margin: '0.25rem 0 0', fontSize: '0.85rem', color: 'rgba(231,227,245,0.6)' },
+  subtitle: { margin: '0.25rem 0 0', fontSize: '0.85rem', color: 'rgb(var(--color-strike-border) / 0.6)' },
   controls: { display: 'flex', flexWrap: 'wrap', gap: '0.85rem', alignItems: 'flex-end' },
   controlGroup: { display: 'flex', flexDirection: 'column', gap: '0.3rem' },
   controlLabel: {
     fontSize: '0.65rem',
     textTransform: 'uppercase',
     letterSpacing: '0.12em',
-    color: 'rgba(231,227,245,0.45)',
+    color: 'rgb(var(--color-strike-border) / 0.45)',
   },
   segmented: {
     display: 'inline-flex',
-    background: 'rgba(255,255,255,0.05)',
+    background: 'rgb(var(--color-strike-border) / 0.05)',
     borderRadius: '999px',
     padding: '0.2rem',
     gap: '0.15rem',
@@ -201,14 +195,14 @@ const styles: Record<string, React.CSSProperties> = {
   segmentedButton: {
     border: 'none',
     background: 'transparent',
-    color: 'rgba(231,227,245,0.7)',
+    color: 'rgb(var(--color-strike-border) / 0.7)',
     padding: '0.32rem 0.7rem',
     borderRadius: '999px',
     fontSize: '0.78rem',
     cursor: 'pointer',
     transition: 'background 120ms ease, color 120ms ease',
   },
-  segmentedButtonActive: { background: '#7c3aed', color: '#fff' },
+  segmentedButtonActive: { background: 'rgb(var(--color-accent-tertiary))', color: 'rgb(var(--color-strike-border))' },
   main: { padding: '1.5rem 1.75rem', display: 'flex', flexDirection: 'column', gap: '2.5rem' },
   heroSection: { display: 'flex', flexDirection: 'column', gap: '1rem' },
   heroHeading: {
@@ -221,7 +215,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '0.75rem',
   },
-  heroSkinCount: { fontSize: '0.7rem', fontWeight: 500, color: 'rgba(231,227,245,0.45)' },
+  heroSkinCount: { fontSize: '0.7rem', fontWeight: 500, color: 'rgb(var(--color-strike-border) / 0.45)' },
   grid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
@@ -230,15 +224,15 @@ const styles: Record<string, React.CSSProperties> = {
   card: {
     display: 'flex',
     flexDirection: 'column',
-    background: 'rgba(255,255,255,0.035)',
-    border: '1px solid rgba(255,255,255,0.07)',
+    background: 'rgb(var(--color-strike-border) / 0.035)',
+    border: '1px solid rgb(var(--color-strike-border) / 0.07)',
     borderRadius: '14px',
     overflow: 'hidden',
   },
   canvasShell: {
     position: 'relative',
     height: '300px',
-    background: 'radial-gradient(circle at 50% 35%, rgba(124,58,237,0.12) 0%, rgba(0,0,0,0) 70%)',
+    background: 'radial-gradient(circle at 50% 35%, rgb(var(--color-accent-tertiary) / 0.12) 0%, transparent 70%)',
   },
   cardMeta: {
     display: 'flex',
@@ -255,7 +249,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   skinId: {
     fontSize: '0.66rem',
-    color: 'rgba(231,227,245,0.4)',
+    color: 'rgb(var(--color-strike-border) / 0.4)',
     padding: '0 0.85rem 0.7rem',
     fontFamily: 'ui-monospace, monospace',
   },

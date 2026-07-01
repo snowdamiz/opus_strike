@@ -5,7 +5,7 @@ import type {
   Team,
   VoxelMapTheme,
 } from '@voxel-strike/shared';
-import type { MatchParticipantSnapshot } from '../persistence/matchPersistence';
+import type { MatchKillEventSnapshot, MatchParticipantSnapshot } from '../persistence/matchPersistence';
 import { isHeroId, isTeam } from './protocolValidation';
 import type { Player } from './schema/Player';
 
@@ -30,6 +30,7 @@ export interface MatchPersistenceLedger {
   winningTeam: Team | null;
   state: MatchPersistenceState;
   participants: Map<string, MatchLedgerParticipant>;
+  killEvents: MatchKillEventSnapshot[];
 }
 
 export interface MatchLedgerConfig {
@@ -97,6 +98,7 @@ export class MatchLedgerRuntime {
         winningTeam: null,
         state: 'active',
         participants: new Map(),
+        killEvents: [],
       };
       return { ledger: this.ledger, created: true };
     }
@@ -207,13 +209,31 @@ export class MatchLedgerRuntime {
     }
   }
 
-  recordKill(killer: Player, victim: Player): void {
+  recordKill(killer: Player, victim: Player, details: {
+    abilityId?: string | null;
+    damageType?: string | null;
+    victimHadFlag?: boolean;
+    occurredAt?: Date;
+  } = {}): void {
     if (!this.isDurableHumanPlayer(killer) || !this.isDurableHumanPlayer(victim)) return;
 
-    const participant = this.registerParticipant(killer);
-    if (participant) {
-      participant.kills++;
-    }
+    const killerParticipant = this.registerParticipant(killer);
+    const victimParticipant = this.registerParticipant(victim);
+    if (killerParticipant) killerParticipant.kills++;
+    if (!killerParticipant || !victimParticipant) return;
+
+    this.ledger?.killEvents.push({
+      killerUserId: killerParticipant.userId,
+      killerPlayerSessionId: killerParticipant.playerSessionId,
+      victimUserId: victimParticipant.userId,
+      victimPlayerSessionId: victimParticipant.playerSessionId,
+      killerHeroId: getParticipantHeroId(killer),
+      victimHeroId: getParticipantHeroId(victim),
+      abilityId: details.abilityId ?? null,
+      damageType: details.damageType ?? null,
+      victimHadFlag: details.victimHadFlag === true,
+      occurredAt: details.occurredAt ?? new Date(),
+    });
   }
 
   recordAssist(assister: Player, victim: Player): void {

@@ -21,6 +21,7 @@ import type { LobbyPlayer } from '../../store/types';
 import { BLAZE_UI_COLORS, FACTIONS, TEAM_FALLBACK_COLORS } from '../../styles/colorTokens';
 import { RankIcon, getRankForStats } from './RankBadge';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
+import { DailyMissionTracker } from './DailyMissionTracker';
 
 // Solar Vanguard Icon - Stylized sun with radiating beams
 function SolarIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -545,6 +546,11 @@ export function Lobby() {
           </div>
         </div>
       </nav>
+
+      <DailyMissionTracker
+        enabled={isAuthenticated}
+        className="absolute left-4 top-[5.35rem] z-20 w-[min(23rem,calc(100vw-2rem))] sm:left-6 xl:left-8"
+      />
 
       {/* Main Content */}
       <div className="team-select-main menu-main menu-main-play">

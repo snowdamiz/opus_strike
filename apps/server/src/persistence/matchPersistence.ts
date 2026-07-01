@@ -1,7 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { calculateMatchExperience } from '@voxel-strike/shared';
-import type { MatchOutcome, Team } from '@voxel-strike/shared';
-import type { MatchMode } from '@voxel-strike/shared';
+import type { GameplayMode, HeroId, MatchOutcome, Team } from '@voxel-strike/shared';
+import { DEFAULT_GAMEPLAY_MODE, type MatchMode } from '@voxel-strike/shared';
 import {
   calculateRankedRatingUpdates,
   type RankedRatingUpdate,
@@ -29,11 +29,25 @@ export interface MatchParticipantSnapshot extends MatchParticipantStats {
   leftAt: Date | null;
 }
 
+export interface MatchKillEventSnapshot {
+  killerUserId: string | null;
+  killerPlayerSessionId: string | null;
+  victimUserId: string | null;
+  victimPlayerSessionId: string;
+  killerHeroId: HeroId | null;
+  victimHeroId: HeroId | null;
+  abilityId: string | null;
+  damageType: string | null;
+  victimHadFlag: boolean;
+  occurredAt: Date;
+}
+
 export interface CompletedMatchPersistenceInput {
   matchId: string;
   roomId: string;
   lobbyId: string | null;
   matchMode: MatchMode;
+  gameplayMode?: GameplayMode;
   mapSeed: number;
   mapThemeId?: string | null;
   rankedEligible?: boolean;
@@ -43,6 +57,7 @@ export interface CompletedMatchPersistenceInput {
   blueScore: number;
   winningTeam: Team | null;
   participants: MatchParticipantSnapshot[];
+  killEvents?: MatchKillEventSnapshot[];
   antiCheatIntegrityStatus?: string;
   antiCheatReviewRequired?: boolean;
   antiCheatIntegrityReason?: string | null;
@@ -301,6 +316,7 @@ export async function persistCompletedMatch(
           roomId: input.roomId,
           lobbyId: input.lobbyId,
           matchMode: input.matchMode,
+          gameplayMode: input.gameplayMode ?? DEFAULT_GAMEPLAY_MODE,
           mapSeed: mapSeedToDatabaseValue(input.mapSeed),
           mapThemeId: input.mapThemeId || 'standard',
           rankedEligible,
@@ -343,6 +359,25 @@ export async function persistCompletedMatch(
             leaverPenaltyApplied: ratingUpdatesByUserId.get(participant.userId)?.leaverPenaltyApplied ?? false,
             joinedAt: participant.joinedAt,
             leftAt: participant.leftAt,
+          })),
+        });
+      }
+
+      const killEvents = input.killEvents ?? [];
+      if (killEvents.length > 0) {
+        await tx.gameMatchKillEvent.createMany({
+          data: killEvents.map((event) => ({
+            matchId: input.matchId,
+            killerUserId: event.killerUserId,
+            killerPlayerSessionId: event.killerPlayerSessionId,
+            victimUserId: event.victimUserId,
+            victimPlayerSessionId: event.victimPlayerSessionId,
+            killerHeroId: event.killerHeroId,
+            victimHeroId: event.victimHeroId,
+            abilityId: event.abilityId,
+            damageType: event.damageType,
+            victimHadFlag: event.victimHadFlag,
+            occurredAt: event.occurredAt,
           })),
         });
       }

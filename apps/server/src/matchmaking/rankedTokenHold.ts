@@ -11,6 +11,7 @@ const RANKED_ENTRY_GATE_CACHE_TTL_MS = 10 * 1000;
 const MAX_STATUS_CACHE_ENTRIES = 2_000;
 
 export type RankedEntryGateMode = 'locked' | 'token_required';
+type RankedTokenHoldConnectionFactory = (rpcUrl: string) => Connection;
 
 interface RankedEntryGateRow {
   id: string;
@@ -69,6 +70,7 @@ export interface RankedTokenHoldingStatus {
 const cachedStatuses = new Map<string, { expiresAt: number; status: RankedTokenHoldingStatus }>();
 let rankedEntryGateCache: { value: RankedEntryGateAdminView; expiresAt: number } | null = null;
 let lastStatusCleanupAt = 0;
+let connectionFactory: RankedTokenHoldConnectionFactory = (rpcUrl) => new Connection(rpcUrl, 'confirmed');
 
 function intEnv(name: string, fallback: number, options: { min?: number; max?: number } = {}): number {
   const value = process.env[name];
@@ -173,6 +175,11 @@ async function ensureRankedEntryGateSettings(): Promise<RankedEntryGateRow> {
 function clearRankedEntryGateCaches(): void {
   rankedEntryGateCache = null;
   cachedStatuses.clear();
+}
+
+export function setRankedTokenHoldConnectionFactoryForTests(factory: RankedTokenHoldConnectionFactory | null): void {
+  connectionFactory = factory ?? ((rpcUrl) => new Connection(rpcUrl, 'confirmed'));
+  clearRankedEntryGateCaches();
 }
 
 export async function getRankedEntryGateSettings(): Promise<RankedEntryGateAdminView> {
@@ -409,7 +416,7 @@ export async function getRankedTokenHoldingStatus(walletAddress?: string | null)
 
   const publicKey = parseWalletAddress(walletAddress);
   const tokenMint = new PublicKey(config.tokenMintAddress);
-  const connection = new Connection(config.rpcUrl, 'confirmed');
+  const connection = connectionFactory(config.rpcUrl);
   const balance = await getSplTokenBalance(connection, publicKey, tokenMint, config.rpcTimeoutMs);
   const requiredTokenBaseUnits = calculateRequiredTokenBaseUnits(config.requiredTokenAmount, balance.decimals);
   const status: RankedTokenHoldingStatus = {
