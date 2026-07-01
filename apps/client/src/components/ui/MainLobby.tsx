@@ -18,7 +18,6 @@ import {
   requestRewardEconomy,
   requestSkinCatalog,
   simulateSkinPurchaseTransaction,
-  syncWalletSkins,
   submitSignedSkinPurchaseTransaction,
   updateHeroSkinLoadout,
 } from '../../contexts/networkApi';
@@ -127,10 +126,7 @@ async function waitForCreditedPurchase(intent: SkinPurchaseIntentSnapshot): Prom
   let latest = intent;
   for (
     let attempt = 0;
-    attempt < PURCHASE_STATUS_POLL_ATTEMPTS && (
-      latest.status === 'submitted' ||
-      (latest.status === 'confirmed' && (latest.nftMintStatus === 'pending' || latest.nftMintStatus === 'minting'))
-    );
+    attempt < PURCHASE_STATUS_POLL_ATTEMPTS && latest.status === 'submitted';
     attempt += 1
   ) {
     await sleep(PURCHASE_STATUS_POLL_MS);
@@ -455,7 +451,6 @@ export function MainLobby() {
   const [rewardEconomy, setRewardEconomy] = useState<RewardEconomy | null>(null);
   const [skinCatalog, setSkinCatalog] = useState<HeroSkinCatalogResponse | null>(null);
   const [isSkinCatalogLoading, setIsSkinCatalogLoading] = useState(false);
-  const [isSkinNftSyncing, setIsSkinNftSyncing] = useState(false);
   const [skinCatalogError, setSkinCatalogError] = useState<string | null>(null);
   const [skinActionBusyId, setSkinActionBusyId] = useState<HeroSkinId | null>(null);
   const [runningGameSession, setRunningGameSession] = useState<RunningGameSession | null>(null);
@@ -961,28 +956,6 @@ export function MainLobby() {
     }
   };
 
-  const handleSyncWalletSkins = async () => {
-    if (!isAuthenticated) {
-      handleOpenLogin();
-      return;
-    }
-    if (!hasWalletAccount) {
-      const linked = await handleLinkWallet();
-      if (!linked) return;
-    }
-
-    setIsSkinNftSyncing(true);
-    setSkinCatalogError(null);
-    try {
-      await syncWalletSkins();
-      await loadSkinCatalog();
-    } catch (err) {
-      setSkinCatalogError(err instanceof Error ? err.message : 'Failed to sync wallet skins');
-    } finally {
-      setIsSkinNftSyncing(false);
-    }
-  };
-
   const handlePurchaseSkin = async (skin: HeroSkinCatalogItem) => {
     if (!isAuthenticated) {
       handleOpenLogin();
@@ -1025,12 +998,6 @@ export function MainLobby() {
       });
       const finalIntent = await waitForCreditedPurchase(submitted);
       if (finalIntent.status !== 'credited') {
-        if (finalIntent.status === 'confirmed' && finalIntent.nftMintStatus === 'failed') {
-          throw new Error(finalIntent.nftMintError || 'Payment confirmed; NFT mint retry needed');
-        }
-        if (finalIntent.status === 'confirmed') {
-          throw new Error('Payment confirmed; NFT mint is still pending');
-        }
         throw new Error(finalIntent.lastError || 'Purchase is still waiting for confirmation');
       }
 
@@ -1372,14 +1339,12 @@ export function MainLobby() {
             skins={skinsForFeaturedHero}
             catalog={skinCatalog}
             isLoading={isSkinCatalogLoading}
-            isNftSyncing={isSkinNftSyncing}
             error={skinCatalogError}
             busySkinId={skinActionBusyId}
             isAuthenticated={isAuthenticated}
             onSelectHero={handleSelectHero}
             onEquipSkin={handleEquipSkin}
             onPurchaseSkin={handlePurchaseSkin}
-            onSyncWalletSkins={handleSyncWalletSkins}
           />
         )}
       </div>
@@ -1476,26 +1441,12 @@ function skinMatchesFilter(skin: HeroSkinCatalogItem, filter: SkinFilter): boole
 }
 
 function skinOwnershipLabel(skin: HeroSkinCatalogItem): string {
-  if (skin.nft?.missingFromLinkedWallet) return 'NFT MISSING';
   if (!skin.owned) {
     if (skin.availability === 'paid') return formatSkinPrice(skin);
     return skin.unlockHint ? skin.unlockHint.toUpperCase() : 'LOCKED';
   }
   if (skin.entitlementSource === 'free') return 'BASE ISSUE';
-  if (skin.entitlementSource === 'nft') {
-    return skin.nft?.ownedAssetCount && skin.nft.ownedAssetCount > 1
-      ? `${skin.nft.ownedAssetCount} NFTS`
-      : 'NFT OWNED';
-  }
   return 'OWNED';
-}
-
-function skinNftStatusLabel(skin: HeroSkinCatalogItem): string | null {
-  if (!skin.nft?.required) return null;
-  if (skin.nft.lastSyncError) return 'sync error';
-  if (skin.nft.missingFromLinkedWallet) return 'not in wallet';
-  if (skin.nft.ownedAssetCount > 0) return 'wallet asset';
-  return null;
 }
 
 function skinSupplyLabel(skin: HeroSkinCatalogItem): string | null {
@@ -1513,28 +1464,24 @@ function SkinsTab({
   skins,
   catalog,
   isLoading,
-  isNftSyncing,
   error,
   busySkinId,
   isAuthenticated,
   onSelectHero,
   onEquipSkin,
   onPurchaseSkin,
-  onSyncWalletSkins,
 }: {
   featuredHero: HeroId;
   selectedSkinId: HeroSkinId;
   skins: HeroSkinCatalogItem[];
   catalog: HeroSkinCatalogResponse | null;
   isLoading: boolean;
-  isNftSyncing: boolean;
   error: string | null;
   busySkinId: HeroSkinId | null;
   isAuthenticated: boolean;
   onSelectHero: (heroId: HeroId) => void;
   onEquipSkin: (skin: HeroSkinCatalogItem) => void;
   onPurchaseSkin: (skin: HeroSkinCatalogItem) => void;
-  onSyncWalletSkins: () => void;
 }) {
   const hero = HERO_DEFINITIONS[featuredHero];
   const [previewSkinId, setPreviewSkinId] = useState<HeroSkinId>(selectedSkinId);
@@ -1554,14 +1501,6 @@ function SkinsTab({
     () => skins.filter((skin) => skinMatchesFilter(skin, skinFilter)),
     [skins, skinFilter],
   );
-  const nftShop = catalog?.shop.nft;
-  const nftStatusText = nftShop?.enabled
-    ? nftShop.lastSyncError
-      ? `Wallet asset sync failed: ${nftShop.lastSyncError}`
-      : nftShop.lastSyncedAt
-        ? `Wallet assets synced ${new Date(nftShop.lastSyncedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-        : 'Wallet asset sync ready'
-    : null;
 
   useEffect(() => {
     setPreviewSkinId(selectedSkinId);
@@ -1651,21 +1590,6 @@ function SkinsTab({
                   <span className="skins-filter-count">{filterCounts[filter.id]}</span>
                 </button>
               ))}
-              {nftShop?.enabled && (
-                <button
-                  type="button"
-                  className="skins-filter-chip skins-nft-sync-button"
-                  onClick={onSyncWalletSkins}
-                  disabled={isNftSyncing || !isAuthenticated}
-                >
-                  {isNftSyncing ? 'Syncing' : 'Sync Wallet'}
-                </button>
-              )}
-            </div>
-          )}
-          {nftStatusText && (
-            <div className="skins-nft-status" role="status">
-              {nftStatusText}
             </div>
           )}
           <div className="skins-list">
@@ -1691,7 +1615,6 @@ function SkinsTab({
               const canPurchase = skin.availability === 'paid' && !skin.owned && !skin.purchaseDisabledReason;
               const disabledReason = skin.purchaseDisabledReason;
               const supplyLabel = skinSupplyLabel(skin);
-              const nftStatusLabel = skinNftStatusLabel(skin);
               return (
                 <article
                   key={skin.id}
@@ -1733,7 +1656,6 @@ function SkinsTab({
                     <div className="skins-tags">
                       <span>{skinOwnershipLabel(skin)}</span>
                       {supplyLabel && <span>{supplyLabel}</span>}
-                      {nftStatusLabel && <span>{nftStatusLabel}</span>}
                       {equipped && <span className="is-status is-equipped-tag">equipped</span>}
                       {previewed && !equipped && <span className="is-status is-previewing-tag">previewing</span>}
                     </div>

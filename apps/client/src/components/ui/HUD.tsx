@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef } from 'react';
-import { useGameStore } from '../../store/gameStore';
+import { useGameStore, type InteractionPrompt } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
 import {
   ABILITY_DEFINITIONS,
@@ -749,6 +749,34 @@ function RevivePromptHud({
   );
 }
 
+function InteractionPromptHud({
+  prompt,
+  interactKeyLabel,
+}: {
+  prompt: InteractionPrompt | null;
+  interactKeyLabel: string;
+}) {
+  if (!prompt) return null;
+
+  return (
+    <div className="absolute left-1/2 top-1/2 z-[126] mt-9 -translate-x-1/2 rounded-md border border-white/16 bg-black/42 px-3.5 py-2 text-center shadow-xl backdrop-blur-md">
+      <div>
+        <span className="font-mono text-sm font-black tracking-[0.16em] text-white">
+          {interactKeyLabel}
+        </span>
+        <span className="ml-2 font-display text-sm tracking-[0.14em] text-cyan-100">
+          {prompt.actionLabel}
+        </span>
+      </div>
+      {prompt.targetLabel && (
+        <div className="mt-0.5 font-body text-[0.68rem] text-white/50">
+          {prompt.targetLabel}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface ShotCounterTone {
   labelClass: string;
   readyClass: string;
@@ -1229,6 +1257,7 @@ export function HUD() {
     gameClockFrozen,
     safeZone,
     battleRoyalDrop,
+    interactionPrompt,
     clientCooldowns,
     clientCharges,
     ultimateEffectActive,
@@ -1285,6 +1314,7 @@ export function HUD() {
       gameClockFrozen: state.gameClockFrozen,
       safeZone: state.safeZone,
       battleRoyalDrop: state.battleRoyalDrop,
+      interactionPrompt: state.interactionPrompt,
       clientCooldowns: state.clientCooldowns,
       clientCharges: state.clientCharges,
       ultimateEffectActive: state.ultimateEffectActive,
@@ -1464,6 +1494,12 @@ export function HUD() {
         </div>
       )}
 
+      {!suppressCombatHud && (
+        <InteractionPromptHud
+          prompt={interactionPrompt}
+          interactKeyLabel={formatKeybind(interactKeybind)}
+        />
+      )}
       {showKillFeed && <KillFeed events={killFeed} />}
       {!isTutorialMode && <Minimap />}
       {gameplayMode === 'battle_royal' && <SafeZoneStatus safeZone={safeZone} />}

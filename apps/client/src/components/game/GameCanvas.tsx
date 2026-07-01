@@ -16,6 +16,7 @@ import { Flags } from './Flags';
 import { Powerups } from './Powerups';
 import { TutorialWorldPrompts } from './TutorialWorldPrompts';
 import { TutorialTargetRange } from './TutorialTargetRange';
+import { DevTestingMapRuntime } from './DevTestingMapRuntime';
 import { Effects } from './Effects';
 import { HeroViewmodel } from './HeroViewmodel';
 import { VoidZonesManager, DireBallsManager, VoidRaysManager, PhantomPersonalShieldsManager } from './phantom';
@@ -1472,6 +1473,7 @@ export function GameCanvas({
             {(!isPracticeMode || isTutorialMode) && <Powerups />}
             {isTutorialMode && <TutorialWorldPrompts />}
             {isTutorialMode && <TutorialTargetRange />}
+            {isPracticeMode && mapProfileId === 'dev_testing' && <DevTestingMapRuntime />}
             <Effects />
             <CombatTextLayer enabled={settings.showDamageNumbers} />
             {!isObserverMode && <HeroViewmodel config={qualityConfig.viewmodel} />}

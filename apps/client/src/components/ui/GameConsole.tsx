@@ -8,6 +8,7 @@ import {
   ABILITY_DEFINITIONS,
   BLAZE_FLAMETHROWER_MAX_FUEL,
   ALL_HERO_IDS,
+  DEV_TESTING_MAP_PROFILE_ID,
   getDefaultHeroSkinId,
   getHeroSkinsForHero,
   HERO_DEFINITIONS,
@@ -38,7 +39,7 @@ let messageId = 0;
 const CHAT_PREVIEW_IDLE_TIMEOUT_MS = 30_000;
 const CHAT_PREVIEW_FADE_MS = 500;
 const PUBLIC_COMMAND_LIST = '/seed copy, /observer <low|med|hight>';
-const DEV_COMMAND_LIST = '/seed copy, /observer <low|med|hight>, /immune, /hero <hero>, /hero down <hero>, /skins <hero>, /skins apply <skin>, /end, /bot add <hero> <red|blue>, /bot skill <hero> <red|blue> <e|q|f|lmb|rmb>, /bot look <hero> <red|blue> <up|down>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze';
+const DEV_COMMAND_LIST = '/seed copy, /observer <low|med|hight>, /devtarget, /immune, /hero <hero>, /hero down <hero>, /skins <hero>, /skins apply <skin>, /end, /bot add <hero> <red|blue>, /bot skill <hero> <red|blue> <e|q|f|lmb|rmb>, /bot look <hero> <red|blue> <up|down>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze';
 type BotLookDirection = 'up' | 'down';
 const BOT_SKILL_KEYS: Record<string, string> = {
   e: 'e',
@@ -566,6 +567,35 @@ export function GameConsole() {
         const shouldFreeze = action === 'freeze';
         setDevTimeFrozen(shouldFreeze);
         addMessage(`Game clock ${shouldFreeze ? 'frozen' : 'unfrozen'}.`, 'info');
+        setTimeout(() => setIsOpen(false), 100);
+        break;
+      }
+
+      case '/devtarget': {
+        if (!config.isDev) {
+          addMessage('Developer commands are disabled outside development builds.', 'error');
+          break;
+        }
+
+        if (parts.length !== 1) {
+          addMessage('Usage: /devtarget', 'error');
+          break;
+        }
+
+        const store = useGameStore.getState();
+        const isDevTestingMap = (
+          store.isPracticeMode &&
+          store.gamePhase === 'playing' &&
+          store.mapProfileId === DEV_TESTING_MAP_PROFILE_ID
+        );
+
+        if (!isDevTestingMap) {
+          addMessage('Start the dev testing map before using /devtarget.', 'error');
+          break;
+        }
+
+        store.requestDevTestingTargetBotHold();
+        addMessage('Dev target bot reset to center and frozen.', 'info');
         setTimeout(() => setIsOpen(false), 100);
         break;
       }

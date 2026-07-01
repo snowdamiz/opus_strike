@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Map as MapIcon } from 'lucide-react';
 import { useAudio } from '../../hooks/useAudio';
 import { config } from '../../config/environment';
 import {
@@ -10,6 +11,7 @@ import {
   useSettingsStore,
 } from '../../store/settingsStore';
 import { useGameStore } from '../../store/gameStore';
+import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
 import { formatKeybind, mouseButtonToKeybindCode } from '../../utils/keybindings';
 import { GameDialog } from './GameDialog';
@@ -82,6 +84,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const gamePlayerName = useGameStore(state => state.playerName);
   const setGameUser = useGameStore(state => state.setUser);
   const setGameWalletAddress = useGameStore(state => state.setWalletAddress);
+  const { startDevTestingMap } = useNetwork();
   const {
     isAuthenticated,
     isConnecting,
@@ -170,6 +173,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     } finally {
       setIsLinkingWallet(false);
     }
+  };
+
+  const handleStartDevTestingMap = () => {
+    startDevTestingMap(displayName);
+    onClose();
   };
 
   const updateKeybinding = useCallback((action: KeybindAction, code: string) => {
@@ -694,6 +702,17 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     onChange={(v) => updateSetting('devTutorialOverride', v as DevTutorialOverride)}
                     options={devTutorialOverrideOptions}
                   />
+                </SettingRow>
+
+                <SettingRow label="Testing Map" description="Local target range and hero switch lineup">
+                  <button
+                    type="button"
+                    onClick={handleStartDevTestingMap}
+                    className="flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-cyan-300/20 bg-cyan-500/15 px-3.5 font-display text-xs text-cyan-100 transition-colors hover:border-cyan-200/40 hover:bg-cyan-500/25 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/70"
+                  >
+                    <MapIcon className="h-4 w-4" aria-hidden="true" />
+                    START
+                  </button>
                 </SettingRow>
               </div>
             )}

@@ -16,7 +16,6 @@ import {
   submitSkinPurchaseSignature,
   updateUserHeroLoadout,
 } from './skinShopService';
-import { SkinNftServiceError, syncUserSkinNftOwnership } from './skinNftService';
 
 const router: RouterType = Router();
 
@@ -65,10 +64,6 @@ function sendCosmeticsError(res: Response, error: unknown, fallback: string): vo
     res.status(error.statusCode).json({ error: error.message });
     return;
   }
-  if (error instanceof SkinNftServiceError) {
-    res.status(error.statusCode).json({ error: error.message });
-    return;
-  }
   const statusCode = typeof error === 'object' && error && 'statusCode' in error
     ? Number((error as { statusCode?: unknown }).statusCode) || 500
     : 500;
@@ -101,17 +96,6 @@ router.put('/loadouts/:heroId', async (req, res) => {
     res.json(await updateUserHeroLoadout({ userId: user.id, heroId, skinId }));
   } catch (error) {
     sendCosmeticsError(res, error, 'Failed to update skin selection');
-  }
-});
-
-router.post('/nft/sync', async (req, res) => {
-  if (!enforceJsonRateLimit(req, res, 'cosmetics:nft-sync', COSMETICS_RATE_LIMITS.mutate)) return;
-  try {
-    const user = await requireUser(req, res);
-    if (!user) return;
-    res.json(await syncUserSkinNftOwnership({ userId: user.id, force: true }));
-  } catch (error) {
-    sendCosmeticsError(res, error, 'Failed to sync wallet skins');
   }
 });
 

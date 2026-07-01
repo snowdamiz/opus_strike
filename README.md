@@ -5,7 +5,6 @@ A browser-based 4v4 Capture the Flag game with Minecraft-style voxel graphics an
 ## Planning
 
 - [Battle Royal Mode Plan](BATTLE_ROYAL_PLAN.md)
-- [Skin NFT Plan](SKIN_NFT_PLAN.md)
 
 ## Features
 
@@ -177,27 +176,17 @@ Server environment:
 - `RANKED_TOKEN_HOLD_PRICE_STALE_MS`: price cache window. Default: `60000`.
 - `RANKED_TOKEN_HOLD_RPC_TIMEOUT_MS`: balance RPC timeout. Default: `5000`.
 
-### Game Token And Skin NFTs
+### Game Token And Paid Skins
 
-Paid skins use the global game SPL token for payment. When `SKIN_NFT_COLLECTION_ADDRESS` is configured, paid skin delivery becomes NFT-backed: the server verifies the token payment, mints a Metaplex Core asset to the linked wallet, and caches wallet-asset ownership for fast loadout checks.
+Paid skins use the global game SPL token for payment. The server verifies the token payment and grants account skin ownership after confirmation.
 
 Server environment:
 
 - `GAME_TOKEN_MINT`: global SPL token mint used by ranked gates, skin payments, and future token-gated systems.
 - `GAME_TOKEN_SYMBOL`: ticker shown in the UI.
-- `SOLANA_RPC_URL`: RPC used for token payments, minting, and wallet checks.
+- `SOLANA_RPC_URL`: RPC used for token payments and wallet checks.
 - `SOLANA_CLUSTER`: cluster label returned to clients. Default: `mainnet-beta`.
 - `WAGER_TREASURY_WALLET`: treasury wallet that receives skin payments.
-- `SKIN_NFT_ENABLED`: override NFT mode on/off. Defaults on when `SKIN_NFT_COLLECTION_ADDRESS` is present.
-- `SKIN_NFT_COLLECTION_ADDRESS`: verified Metaplex Core collection for Opus Strike skins.
-- `SKIN_NFT_MINT_AUTHORITY_PUBLIC_KEY`: public mint authority address shown in diagnostics.
-- `SKIN_NFT_MINT_AUTHORITY_SECRET_KEY`: JSON byte array, comma bytes, or base58 secret used by the server to mint Core assets. Store as a secret.
-- `SKIN_NFT_METADATA_BASE_URI`: base URI used as `<base>/<skinId>.json`.
-- `SKIN_NFT_METADATA_URI_TEMPLATE`: optional template with `{skinId}`, `{heroId}`, `{rarity}`, and `{edition}` placeholders.
-- `SKIN_NFT_DAS_RPC_URL`: DAS-capable RPC for wallet ownership sync. Falls back to `SOLANA_RPC_URL`.
-- `SKIN_NFT_SYNC_CACHE_MS`: catalog-load sync cache window. Default: `60000`.
-- `SKIN_NFT_EDITION`: metadata edition attribute. Default: `genesis`.
-- `SKIN_NFT_FOUNDER_ENABLED`: enables founder/unlockable NFT behavior. Default: `false`.
 
 ### Playing
 

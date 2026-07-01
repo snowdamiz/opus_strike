@@ -14,6 +14,7 @@ import { useGameStore } from '../store/gameStore';
 import { syncPlayerVisualEffectIndexes } from '../store/visualStore';
 
 export const TUTORIAL_OFFLINE_TRAINING_HERO_ID_PREFIX = 'tutorial_training_hero_';
+export const DEV_OFFLINE_TRAINING_HERO_ID_PREFIX = 'dev_training_hero_';
 export const TUTORIAL_OFFLINE_TRAINING_HERO_RESPAWN_MS = 1800;
 
 interface TutorialOfflineTrainingDamageInput {
@@ -84,7 +85,10 @@ const tutorialOfflineBurns = new Map<string, TutorialOfflineBurn>();
 const tutorialOfflineDamageHistory: DamageHistoryStore = new Map();
 
 export function isTutorialOfflineTrainingHeroId(playerId: string | null | undefined): boolean {
-  return Boolean(playerId?.startsWith(TUTORIAL_OFFLINE_TRAINING_HERO_ID_PREFIX));
+  return Boolean(
+    playerId?.startsWith(TUTORIAL_OFFLINE_TRAINING_HERO_ID_PREFIX) ||
+      playerId?.startsWith(DEV_OFFLINE_TRAINING_HERO_ID_PREFIX)
+  );
 }
 
 export function isTutorialOfflineTrainingHero(player: Player | null | undefined): player is Player {

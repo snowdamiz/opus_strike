@@ -2094,19 +2094,6 @@ body,
   opacity: 0.54;
 }
 
-.skins-nft-status {
-  min-height: 1.7rem;
-  border: 1px solid rgb(255 255 255 / 0.075);
-  border-radius: 0.32rem;
-  background: rgb(0 0 0 / 0.16);
-  padding: 0.42rem 0.58rem;
-  color: rgb(255 255 255 / 0.58);
-  font-family: 'Exo 2', 'Rajdhani', sans-serif;
-  font-size: 0.74rem;
-  font-weight: 800;
-  line-height: 1.15;
-}
-
 .skins-filter-chip.is-active {
   border-color: rgb(249 115 22 / 0.5);
   background: linear-gradient(180deg, rgb(249 115 22 / 0.2), rgb(249 115 22 / 0.08));

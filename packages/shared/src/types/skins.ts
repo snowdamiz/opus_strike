@@ -39,7 +39,7 @@ export type HeroSkinRarity = 'common' | 'epic' | 'unique' | 'legendary';
 // granted via achievements/events (e.g. the first-50-ranked founder reward).
 export type HeroSkinAvailability = 'free' | 'paid' | 'unlockable';
 export type HeroSkinReleaseState = 'live' | 'ready_when_token_launches' | 'disabled';
-export type HeroSkinEntitlement = 'free' | 'paid' | 'nft' | 'admin_grant' | 'event';
+export type HeroSkinEntitlement = 'free' | 'paid' | 'admin_grant' | 'event';
 
 export interface HeroSkinPrice {
   tokenSymbol: string;
@@ -94,14 +94,6 @@ export interface HeroSkinCatalogItem extends HeroSkinDefinition {
   entitlementSource: HeroSkinEntitlement | null;
   shopPrice: HeroSkinCatalogPriceState | null;
   purchaseDisabledReason: string | null;
-  nft?: {
-    required: boolean;
-    collectionAddress: string | null;
-    ownedAssetCount: number;
-    missingFromLinkedWallet: boolean;
-    lastSyncedAt: string | null;
-    lastSyncError: string | null;
-  };
 }
 
 export interface HeroSkinCatalogResponse {
@@ -112,30 +104,10 @@ export interface HeroSkinCatalogResponse {
     treasuryWallet: string | null;
     cluster: string;
     rpcConfigured: boolean;
-    nft?: {
-      enabled: boolean;
-      collectionAddress: string | null;
-      mintAuthorityPublicKey: string | null;
-      mintAuthorityConfigured: boolean;
-      metadataConfigured: boolean;
-      dasRpcConfigured: boolean;
-      syncAvailable: boolean;
-      mintingAvailable: boolean;
-      founderMintEnabled: boolean;
-      lastSyncedAt: string | null;
-      lastSyncError: string | null;
-    };
   };
   skins: HeroSkinCatalogItem[];
   loadouts: HeroLoadoutSelection[];
 }
-
-export type SkinNftMintStatus =
-  | 'not_applicable'
-  | 'pending'
-  | 'minting'
-  | 'minted'
-  | 'failed';
 
 export type SkinPurchaseIntentStatus =
   | 'intent_created'
@@ -162,14 +134,6 @@ export interface SkinPurchaseIntentSnapshot {
   transactionSignature: string | null;
   creditedAt: string | null;
   lastError: string | null;
-  nftMintStatus: SkinNftMintStatus;
-  mintedAssetAddress: string | null;
-  nftCollectionAddress: string | null;
-  nftMetadataUri: string | null;
-  nftMintSignature: string | null;
-  nftMintAttemptCount: number;
-  nftMintAttemptedAt: string | null;
-  nftMintError: string | null;
 }
 
 export interface SkinPurchaseTransactionSnapshot {

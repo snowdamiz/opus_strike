@@ -142,7 +142,6 @@ enum PartyInviteStatus {
 enum SkinEntitlementSource {
   free
   paid
-  nft
   admin_grant
   event
 }
@@ -155,14 +154,6 @@ enum SkinPurchaseIntentStatus {
   credited
   failed
   expired
-}
-
-enum NftMintStatus {
-  not_applicable
-  pending
-  minting
-  minted
-  failed
 }
 
 model User {
@@ -188,8 +179,6 @@ model User {
   sentPartyInvites       PartyInvite[]           @relation("PartyInviteSender")
   receivedPartyInvites   PartyInvite[]           @relation("PartyInviteRecipient")
   skinOwnerships         UserSkinOwnership[]
-  skinNftAssets          SkinNftAsset[]
-  skinNftWalletSyncs     SkinNftWalletSync[]
   skinPurchaseIntents    SkinPurchaseIntent[]
   heroLoadouts           UserHeroLoadout[]
   playerRewards          PlayerReward[]
@@ -323,7 +312,6 @@ model SkinShopItemSettings {
   saleEnabled          Boolean  @default(false)
   tokenAmountBaseUnits BigInt?
   maxSupply            Int?
-  nftMetadataUriOverride String?
   priceVersion         Int      @default(1)
   updatedByUserId      String?
   createdAt            DateTime @default(now())
@@ -339,8 +327,6 @@ model SkinShopItemAudit {
   newTokenAmountBaseUnits    BigInt?
   oldMaxSupply               Int?
   newMaxSupply               Int?
-  oldNftMetadataUriOverride  String?
-  newNftMetadataUriOverride  String?
   oldSaleEnabled             Boolean?
   newSaleEnabled             Boolean?
   oldPriceVersion            Int?
@@ -390,26 +376,16 @@ model SkinPurchaseIntent {
   lastValidBlockHeight BigInt?
   creditedAt           DateTime?
   lastError            String?
-  nftMintStatus        NftMintStatus             @default(not_applicable)
-  mintedAssetAddress   String?                   @unique
-  nftCollectionAddress String?
-  nftMetadataUri       String?
-  nftMintSignature     String?                   @unique
-  nftMintAttemptCount  Int                       @default(0)
-  nftMintAttemptedAt   DateTime?
-  nftMintError         String?
   createdAt            DateTime                 @default(now())
   updatedAt            DateTime                 @updatedAt
 
   user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   ownership UserSkinOwnership?
-  nftAsset  SkinNftAsset?
 
   @@index([userId, status, createdAt])
   @@index([walletAddress])
   @@index([skinId, status])
   @@index([status, intentExpiresAt])
-  @@index([nftMintStatus, updatedAt])
 }
 
 model UserHeroLoadout {
@@ -425,56 +401,6 @@ model UserHeroLoadout {
   @@unique([userId, heroId])
   @@index([userId])
   @@index([selectedSkinId])
-}
-
-model SkinNftAsset {
-  assetAddress       String    @id
-  collectionAddress  String
-  ownerWalletAddress String
-  ownerUserId        String?
-  skinId             String
-  heroId             String?
-  rarity             String?
-  metadataUri        String?
-  name               String?
-  edition            String?
-  serial             String?
-  source             String?
-  sourcePurchaseId   String?   @unique
-  mintSignature      String?   @unique
-  firstSeenAt        DateTime  @default(now())
-  lastSyncedAt       DateTime  @default(now())
-  revokedAt          DateTime?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
-
-  ownerUser      User?               @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
-  sourcePurchase SkinPurchaseIntent? @relation(fields: [sourcePurchaseId], references: [id], onDelete: SetNull)
-
-  @@index([ownerWalletAddress, revokedAt])
-  @@index([ownerUserId, revokedAt])
-  @@index([collectionAddress, skinId])
-  @@index([skinId, revokedAt])
-  @@index([lastSyncedAt])
-}
-
-model SkinNftWalletSync {
-  id                     String   @id @default(cuid())
-  userId                 String
-  walletAddress          String
-  collectionAddress      String
-  assetCount             Int      @default(0)
-  activeEntitlementCount Int      @default(0)
-  lastSyncedAt           DateTime @default(now())
-  lastError              String?
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, walletAddress, collectionAddress])
-  @@index([walletAddress, collectionAddress])
-  @@index([lastSyncedAt])
 }
 
 // Singleton counter backing the "first 50 ranked players" golden founder reward.

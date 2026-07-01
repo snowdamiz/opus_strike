@@ -33,22 +33,6 @@ import {
   signatureLooksValid,
   verifyParsedSplTokenPayment,
 } from './tokenPayments';
-import {
-  SkinNftServiceError,
-  assertSkinNftMintReady,
-  buildPurchaseSkinNftSerial,
-  canRetrySkinNftMint,
-  getSkinNftAdminOverview,
-  getSkinNftReadiness,
-  loadSkinNftOwnershipState,
-  mintSkinNft,
-  resolveSkinNftMetadataUri,
-  skinNftModeEnabled,
-  syncWalletNftOwnership,
-  upsertMintedSkinNftProjection,
-  type SkinNftOwnershipState,
-  type SkinNftWalletSyncSummary,
-} from './skinNftService';
 
 const SHOP_SETTINGS_ID = 'default';
 const DEFAULT_INTENT_TTL_MS = 15 * 60 * 1000;
@@ -80,7 +64,6 @@ function isSerializableTransactionConflict(error: unknown): boolean {
 
 export interface SkinShopAdminOverview {
   shop: Awaited<ReturnType<typeof serializeShopSettings>>;
-  nft: Awaited<ReturnType<typeof getSkinNftAdminOverview>>;
   items: Array<{
     skin: HeroSkinDefinition;
     settings: SerializedSkinShopItemSettings;
@@ -96,7 +79,6 @@ export interface SerializedSkinShopItemSettings {
   soldCount: number;
   reservedCount: number;
   remainingSupply: number | null;
-  nftMetadataUriOverride: string | null;
   priceVersion: number;
   updatedByUserId: string | null;
   updatedAt: string | null;
@@ -110,8 +92,6 @@ export interface SerializedSkinShopItemAudit {
   newTokenAmountBaseUnits: string | null;
   oldMaxSupply: number | null;
   newMaxSupply: number | null;
-  oldNftMetadataUriOverride: string | null;
-  newNftMetadataUriOverride: string | null;
   oldSaleEnabled: boolean | null;
   newSaleEnabled: boolean | null;
   oldPriceVersion: number | null;
@@ -130,22 +110,6 @@ function envFlag(name: string, fallback = false): boolean {
   const raw = process.env[name]?.trim().toLowerCase();
   if (!raw) return fallback;
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
-}
-
-function cleanOptionalString(value: unknown, maxLength: number): string | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value !== 'string') throw new SkinShopServiceError('Invalid string value');
-  const cleaned = value.trim().replace(/\s+/g, ' ').slice(0, maxLength);
-  return cleaned || null;
-}
-
-function readOptionalMetadataUri(value: unknown): string | null {
-  const cleaned = cleanOptionalString(value, 1_000);
-  if (!cleaned) return null;
-  if (!/^(https?|ipfs|ar):\/\/[^\s]+$/i.test(cleaned)) {
-    throw new SkinShopServiceError('NFT metadata URI must start with https://, ipfs://, or ar://');
-  }
-  return cleaned;
 }
 
 function readPositiveBaseUnits(value: unknown, options: { required: boolean }): bigint | null {
@@ -300,7 +264,6 @@ function serializeShopSettings(settings: {
   updatedByUserId?: string | null;
   updatedAt?: Date | null;
 }) {
-  const nft = getSkinNftReadiness();
   return {
     enabled: settings.enabled,
     tokenMintAddress: settings.tokenMintAddress,
@@ -310,19 +273,6 @@ function serializeShopSettings(settings: {
     rpcConfigured: Boolean(settings.rpcUrl),
     updatedByUserId: settings.updatedByUserId ?? null,
     updatedAt: settings.updatedAt?.toISOString() ?? null,
-    nft: {
-      enabled: nft.enabled && nft.collectionConfigured,
-      collectionAddress: nft.collectionAddress,
-      mintAuthorityPublicKey: nft.mintAuthorityPublicKey,
-      mintAuthorityConfigured: nft.mintAuthoritySecretConfigured && nft.mintAuthorityMatchesPublicKey !== false,
-      metadataConfigured: nft.metadataConfigured,
-      dasRpcConfigured: nft.dasRpcConfigured,
-      syncAvailable: nft.readyToSync,
-      mintingAvailable: nft.readyToMint,
-      founderMintEnabled: nft.founderMintEnabled,
-      lastSyncedAt: null as string | null,
-      lastSyncError: null as string | null,
-    },
   };
 }
 
@@ -331,7 +281,6 @@ function serializeItemSettings(item: {
   saleEnabled: boolean;
   tokenAmountBaseUnits: bigint | null;
   maxSupply: number | null;
-  nftMetadataUriOverride: string | null;
   priceVersion: number;
   updatedByUserId: string | null;
   updatedAt: Date;
@@ -345,7 +294,6 @@ function serializeItemSettings(item: {
     soldCount: supply.soldCount,
     reservedCount: supply.reservedCount,
     remainingSupply: supply.remainingSupply,
-    nftMetadataUriOverride: item.nftMetadataUriOverride,
     priceVersion: item.priceVersion,
     updatedByUserId: item.updatedByUserId,
     updatedAt: item.updatedAt.toISOString(),
@@ -360,8 +308,6 @@ function serializeAudit(audit: {
   newTokenAmountBaseUnits: bigint | null;
   oldMaxSupply: number | null;
   newMaxSupply: number | null;
-  oldNftMetadataUriOverride: string | null;
-  newNftMetadataUriOverride: string | null;
   oldSaleEnabled: boolean | null;
   newSaleEnabled: boolean | null;
   oldPriceVersion: number | null;
@@ -376,8 +322,6 @@ function serializeAudit(audit: {
     newTokenAmountBaseUnits: bigintToString(audit.newTokenAmountBaseUnits),
     oldMaxSupply: audit.oldMaxSupply,
     newMaxSupply: audit.newMaxSupply,
-    oldNftMetadataUriOverride: audit.oldNftMetadataUriOverride,
-    newNftMetadataUriOverride: audit.newNftMetadataUriOverride,
     oldSaleEnabled: audit.oldSaleEnabled,
     newSaleEnabled: audit.newSaleEnabled,
     oldPriceVersion: audit.oldPriceVersion,
@@ -387,7 +331,7 @@ function serializeAudit(audit: {
 }
 
 function toEntitlementSource(value: string): HeroSkinEntitlement {
-  return value === 'paid' || value === 'nft' || value === 'admin_grant' || value === 'event' || value === 'free'
+  return value === 'paid' || value === 'admin_grant' || value === 'event' || value === 'free'
     ? value
     : 'paid';
 }
@@ -535,45 +479,6 @@ async function loadGameVisibleSkinIds(): Promise<Set<HeroSkinId>> {
   return buildGameVisibleSkinIds(shop, itemRowsBySkin);
 }
 
-async function prepareSkinNftCatalogContext(userId: string | null | undefined): Promise<{
-  walletAddress: string | null;
-  sync: SkinNftWalletSyncSummary | null;
-}> {
-  if (!userId || !skinNftModeEnabled()) {
-    return { walletAddress: null, sync: null };
-  }
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { walletAddress: true },
-  });
-  if (!user?.walletAddress) return { walletAddress: null, sync: null };
-
-  try {
-    const sync = await syncWalletNftOwnership({
-      userId,
-      walletAddress: user.walletAddress,
-      force: false,
-    });
-    return { walletAddress: user.walletAddress, sync };
-  } catch {
-    return { walletAddress: user.walletAddress, sync: null };
-  }
-}
-
-function attachCatalogNftSyncState(
-  shop: ReturnType<typeof serializeShopSettings>,
-  nftState: SkinNftOwnershipState
-) {
-  return {
-    ...shop,
-    nft: {
-      ...shop.nft,
-      lastSyncedAt: nftState.sync.lastSyncedAt,
-      lastSyncError: nftState.sync.lastError,
-    },
-  };
-}
-
 function buildShopPriceState(input: {
   skin: HeroSkinDefinition;
   shop: Awaited<ReturnType<typeof getOrCreateShopSettings>>;
@@ -618,13 +523,6 @@ function purchaseDisabledReason(input: {
   };
   if (!input.shop.treasuryWallet) return 'WAGER_TREASURY_WALLET is not configured';
   if (!input.shop.rpcUrl) return 'SOLANA_RPC_URL is not configured';
-  if (skinNftModeEnabled()) {
-    try {
-      assertSkinNftMintReady(undefined, { metadataConfigured: Boolean(input.item?.nftMetadataUriOverride) });
-    } catch (error) {
-      return error instanceof Error ? error.message : 'Skin NFT minting is not ready';
-    }
-  }
   const baseReason = getPurchaseDisabledReasonForSkin(
     mergedSkin,
     input.item?.saleEnabled ?? false,
@@ -636,13 +534,11 @@ function purchaseDisabledReason(input: {
 }
 
 export async function getSkinCatalogForUser(userId?: string | null): Promise<HeroSkinCatalogResponse> {
-  const nftContext = await prepareSkinNftCatalogContext(userId);
-  const [shop, ownerships, itemRows, supplyBySkin, nftState] = await Promise.all([
+  const [shop, ownerships, itemRows, supplyBySkin] = await Promise.all([
     getOrCreateShopSettings(),
     loadOwnershipRows(userId),
     prisma.skinShopItemSettings.findMany(),
     loadPaidSkinSupplyCounts(),
-    loadSkinNftOwnershipState({ userId, walletAddress: nftContext.walletAddress }),
   ]);
   const itemRowsBySkin = new Map(itemRows.map((item) => [item.skinId, item]));
   for (const skin of paidSkins()) {
@@ -667,7 +563,6 @@ export async function getSkinCatalogForUser(userId?: string | null): Promise<Her
   const skins: HeroSkinCatalogItem[] = HERO_SKIN_CATALOG.filter((skin) => visibleSkinIds.has(skin.id)).map((skin) => {
     const item = itemRowsBySkin.get(skin.id) ?? null;
     const supply = supplyBySkin.get(skin.id) ?? { soldCount: 0, reservedCount: 0 };
-    const ownedAssetCount = nftState.assetCountsBySkin.get(skin.id) ?? 0;
     const entitlementSource = entitlementBySkin.get(skin.id) ?? null;
     return {
       ...skin,
@@ -676,19 +571,11 @@ export async function getSkinCatalogForUser(userId?: string | null): Promise<Her
       entitlementSource,
       shopPrice: buildShopPriceState({ skin, shop, item, supply }),
       purchaseDisabledReason: purchaseDisabledReason({ skin, shop, item, supply }),
-      nft: {
-        required: nftState.enabled && skin.availability === 'paid',
-        collectionAddress: nftState.collectionAddress,
-        ownedAssetCount,
-        missingFromLinkedWallet: entitlementSource === 'nft' && ownedAssetCount === 0,
-        lastSyncedAt: nftState.sync.lastSyncedAt,
-        lastSyncError: nftState.sync.lastError,
-      },
     };
   });
 
   return {
-    shop: attachCatalogNftSyncState(serializeShopSettings(shop), nftState),
+    shop: serializeShopSettings(shop),
     skins,
     loadouts,
   };
@@ -800,14 +687,6 @@ function serializeIntent(
     transactionSignature: string | null;
     creditedAt: Date | null;
     lastError: string | null;
-    nftMintStatus: string;
-    mintedAssetAddress: string | null;
-    nftCollectionAddress: string | null;
-    nftMetadataUri: string | null;
-    nftMintSignature: string | null;
-    nftMintAttemptCount: number;
-    nftMintAttemptedAt: Date | null;
-    nftMintError: string | null;
   }
 ): SkinPurchaseIntentSnapshot {
   return {
@@ -826,14 +705,6 @@ function serializeIntent(
     transactionSignature: intent.transactionSignature,
     creditedAt: intent.creditedAt?.toISOString() ?? null,
     lastError: intent.lastError,
-    nftMintStatus: intent.nftMintStatus as SkinPurchaseIntentSnapshot['nftMintStatus'],
-    mintedAssetAddress: intent.mintedAssetAddress,
-    nftCollectionAddress: intent.nftCollectionAddress,
-    nftMetadataUri: intent.nftMetadataUri,
-    nftMintSignature: intent.nftMintSignature,
-    nftMintAttemptCount: intent.nftMintAttemptCount,
-    nftMintAttemptedAt: intent.nftMintAttemptedAt?.toISOString() ?? null,
-    nftMintError: intent.nftMintError,
   };
 }
 
@@ -930,7 +801,7 @@ async function getIntentForUser(userId: string, intentId: string) {
 
 function assertIntentActive(intent: { status: string; intentExpiresAt: Date }): void {
   if (intent.status === 'credited') throw new SkinShopServiceError('Purchase intent is already credited', 409);
-  if (intent.status === 'confirmed') throw new SkinShopServiceError('Payment is confirmed and NFT delivery is pending', 409);
+  if (intent.status === 'confirmed') throw new SkinShopServiceError('Payment is already confirmed', 409);
   if (intent.status === 'failed') throw new SkinShopServiceError('Purchase intent failed', 409);
   if (intent.intentExpiresAt.getTime() <= Date.now()) {
     throw new SkinShopServiceError('Purchase intent has expired', 409);
@@ -1138,7 +1009,6 @@ async function creditOffchainPaidSkinPurchase(intent: SkinPurchaseIntentRecord):
           where: { id: intent.id },
           data: {
             status: 'credited',
-            nftMintStatus: 'not_applicable',
             creditedAt,
             lastError: null,
           },
@@ -1155,181 +1025,7 @@ async function creditOffchainPaidSkinPurchase(intent: SkinPurchaseIntentRecord):
   return serializeIntent(credited);
 }
 
-async function finalizeMintedSkinNftPurchase(
-  intent: SkinPurchaseIntentRecord,
-  mint: {
-    assetAddress: string;
-    collectionAddress: string;
-    metadataUri: string | null;
-    mintSignature: string | null;
-    serial: string;
-    edition: string;
-    source: string;
-  }
-): Promise<SkinPurchaseIntentSnapshot> {
-  const skin = getHeroSkinDefinition(intent.skinId as HeroSkinId);
-  const creditedAt = new Date();
-  const credited = await prisma.$transaction(async (tx) => {
-    await upsertMintedSkinNftProjection(tx, {
-      userId: intent.userId,
-      ownerWalletAddress: intent.walletAddress,
-      skin,
-      sourcePurchaseId: intent.id,
-      syncedAt: creditedAt,
-      ...mint,
-    });
-
-    return tx.skinPurchaseIntent.update({
-      where: { id: intent.id },
-      data: {
-        status: 'credited',
-        creditedAt,
-        lastError: null,
-        nftMintStatus: 'minted',
-        mintedAssetAddress: mint.assetAddress,
-        nftCollectionAddress: mint.collectionAddress,
-        nftMetadataUri: mint.metadataUri,
-        nftMintSignature: mint.mintSignature,
-        nftMintError: null,
-      },
-    });
-  });
-
-  return serializeIntent(credited);
-}
-
-async function markSkinNftMintFailed(intentId: string, error: unknown): Promise<SkinPurchaseIntentSnapshot> {
-  const message = error instanceof Error ? error.message : String(error);
-  const failed = await prisma.skinPurchaseIntent.update({
-    where: { id: intentId },
-    data: {
-      status: 'confirmed',
-      nftMintStatus: 'failed',
-      nftMintError: message,
-      lastError: `nft_mint_failed: ${message}`,
-    },
-  });
-  return serializeIntent(failed);
-}
-
-async function creditNftBackedSkinPurchase(intent: SkinPurchaseIntentRecord): Promise<SkinPurchaseIntentSnapshot> {
-  if (intent.mintedAssetAddress && intent.nftCollectionAddress) {
-    return finalizeMintedSkinNftPurchase(intent, {
-      assetAddress: intent.mintedAssetAddress,
-      collectionAddress: intent.nftCollectionAddress,
-      metadataUri: intent.nftMetadataUri,
-      mintSignature: intent.nftMintSignature,
-      serial: buildPurchaseSkinNftSerial(intent.id),
-      edition: getSkinNftReadiness().edition,
-      source: 'paid_purchase',
-    });
-  }
-
-  const claim = await (async () => {
-    try {
-      return await prisma.$transaction(async (tx) => {
-        const latest = await tx.skinPurchaseIntent.findUnique({ where: { id: intent.id } });
-        if (!latest) throw new SkinShopServiceError('Purchase intent not found', 404);
-        if (latest.status === 'credited') return { kind: 'done' as const, intent: latest, metadataUri: null };
-        if (latest.mintedAssetAddress && latest.nftCollectionAddress) {
-          return { kind: 'minted' as const, intent: latest, metadataUri: latest.nftMetadataUri };
-        }
-        if (!canRetrySkinNftMint(latest)) {
-          return { kind: 'busy' as const, intent: latest, metadataUri: latest.nftMetadataUri };
-        }
-
-        const skin = getHeroSkinDefinition(latest.skinId as HeroSkinId);
-        const currentItem = await tx.skinShopItemSettings.findUnique({ where: { skinId: latest.skinId } });
-        if (currentItem?.maxSupply !== null && currentItem?.maxSupply !== undefined) {
-          const committedCount = await tx.skinPurchaseIntent.count({
-            where: {
-              skinId: latest.skinId,
-              id: { not: latest.id },
-              status: { in: ['credited', 'confirmed'] },
-            },
-          });
-          if (committedCount >= currentItem.maxSupply) {
-            throw new SkinShopServiceError('Sold out', 409);
-          }
-        }
-
-        const metadataUri = resolveSkinNftMetadataUri({
-          skin,
-          overrideUri: currentItem?.nftMetadataUriOverride,
-        });
-        const readiness = getSkinNftReadiness();
-        const updated = await tx.skinPurchaseIntent.update({
-          where: { id: latest.id },
-          data: {
-            status: 'confirmed',
-            nftMintStatus: 'minting',
-            nftCollectionAddress: readiness.collectionAddress,
-            nftMetadataUri: metadataUri,
-            nftMintAttemptCount: { increment: 1 },
-            nftMintAttemptedAt: new Date(),
-            nftMintError: null,
-            lastError: null,
-          },
-        });
-        return { kind: 'mint' as const, intent: updated, metadataUri };
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-    } catch (error) {
-      if (isSerializableTransactionConflict(error)) {
-        throw new SkinShopServiceError('Skin supply changed; try again', 409);
-      }
-      throw error;
-    }
-  })();
-
-  if (claim.kind === 'done') return serializeIntent(claim.intent);
-  if (claim.kind === 'busy') return serializeIntent(claim.intent);
-  if (claim.kind === 'minted') {
-    return finalizeMintedSkinNftPurchase(claim.intent, {
-      assetAddress: claim.intent.mintedAssetAddress!,
-      collectionAddress: claim.intent.nftCollectionAddress!,
-      metadataUri: claim.intent.nftMetadataUri,
-      mintSignature: claim.intent.nftMintSignature,
-      serial: buildPurchaseSkinNftSerial(claim.intent.id),
-      edition: getSkinNftReadiness().edition,
-      source: 'paid_purchase',
-    });
-  }
-
-  const skin = getHeroSkinDefinition(claim.intent.skinId as HeroSkinId);
-  try {
-    const minted = await mintSkinNft({
-      ownerAddress: claim.intent.walletAddress,
-      skin,
-      metadataUri: claim.metadataUri!,
-      serial: buildPurchaseSkinNftSerial(claim.intent.id),
-      source: 'paid_purchase',
-      assetSeed: claim.intent.id,
-    });
-    return finalizeMintedSkinNftPurchase(claim.intent, {
-      ...minted,
-      source: 'paid_purchase',
-    });
-  } catch (error) {
-    return markSkinNftMintFailed(claim.intent.id, error);
-  }
-}
-
 async function creditVerifiedSkinPurchase(intent: SkinPurchaseIntentRecord): Promise<SkinPurchaseIntentSnapshot> {
-  if (skinNftModeEnabled()) {
-    try {
-      assertSkinNftMintReady(undefined, { metadataConfigured: true });
-    } catch (error) {
-      return markSkinNftMintFailed(intent.id, error);
-    }
-    try {
-      return await creditNftBackedSkinPurchase(intent);
-    } catch (error) {
-      if (error instanceof SkinNftServiceError) {
-        return markSkinNftMintFailed(intent.id, error);
-      }
-      throw error;
-    }
-  }
   return creditOffchainPaidSkinPurchase(intent);
 }
 
@@ -1400,36 +1096,17 @@ export async function getSkinPurchaseIntent(input: {
   if (intent.status === 'submitted') {
     return verifySubmittedSkinPurchase(input.userId, input.intentId, { keepSubmittedWhenNotFound: true });
   }
-  if (intent.status === 'confirmed' && intent.mintedAssetAddress && intent.nftCollectionAddress) {
-    return creditNftBackedSkinPurchase(intent);
-  }
   return serializeIntent(intent);
 }
 
-export async function retrySkinNftMint(input: {
-  intentId: string;
-}): Promise<SkinPurchaseIntentSnapshot> {
-  if (!skinNftModeEnabled()) {
-    throw new SkinShopServiceError('Skin NFT mode is not enabled', 400);
-  }
-  const intent = await prisma.skinPurchaseIntent.findUnique({ where: { id: input.intentId } });
-  if (!intent) throw new SkinShopServiceError('Purchase intent not found', 404);
-  if (intent.status !== 'confirmed' && intent.status !== 'credited') {
-    throw new SkinShopServiceError('Only payment-confirmed NFT purchases can be retried', 409);
-  }
-  if (intent.status === 'credited') return serializeIntent(intent);
-  return creditVerifiedSkinPurchase(intent);
-}
-
 export async function getSkinShopAdminOverview(): Promise<SkinShopAdminOverview> {
-  const [shop, audits, supplyBySkin, nft] = await Promise.all([
+  const [shop, audits, supplyBySkin] = await Promise.all([
     getOrCreateShopSettings(),
     prisma.skinShopItemAudit.findMany({
       orderBy: { createdAt: 'desc' },
       take: 50,
     }),
     loadPaidSkinSupplyCounts(),
-    getSkinNftAdminOverview(),
   ]);
   const auditsBySkin = new Map<string, SerializedSkinShopItemAudit>();
   for (const audit of audits) {
@@ -1449,7 +1126,6 @@ export async function getSkinShopAdminOverview(): Promise<SkinShopAdminOverview>
 
   return {
     shop: serializeShopSettings(shop),
-    nft,
     items,
   };
 }
@@ -1481,7 +1157,6 @@ export async function updateSkinShopItemSettings(input: {
   saleEnabled?: unknown;
   tokenAmountBaseUnits?: unknown;
   maxSupply?: unknown;
-  nftMetadataUriOverride?: unknown;
   expectedPriceVersion?: unknown;
   updatedByUserId: string;
 }): Promise<SerializedSkinShopItemSettings> {
@@ -1506,9 +1181,6 @@ export async function updateSkinShopItemSettings(input: {
   const nextMaxSupply = input.maxSupply === undefined
     ? current.maxSupply
     : readOptionalMaxSupply(input.maxSupply);
-  const nextNftMetadataUriOverride = input.nftMetadataUriOverride === undefined
-    ? current.nftMetadataUriOverride
-    : readOptionalMetadataUri(input.nftMetadataUriOverride);
   if (nextSaleEnabled && !nextAmount) {
     throw new SkinShopServiceError('Token amount is required when sale is enabled');
   }
@@ -1521,7 +1193,6 @@ export async function updateSkinShopItemSettings(input: {
         saleEnabled: nextSaleEnabled,
         tokenAmountBaseUnits: nextAmount,
         maxSupply: nextMaxSupply,
-        nftMetadataUriOverride: nextNftMetadataUriOverride,
         priceVersion: nextVersion,
         updatedByUserId: input.updatedByUserId,
       },
@@ -1534,8 +1205,6 @@ export async function updateSkinShopItemSettings(input: {
         newTokenAmountBaseUnits: nextAmount,
         oldMaxSupply: current.maxSupply,
         newMaxSupply: nextMaxSupply,
-        oldNftMetadataUriOverride: current.nftMetadataUriOverride,
-        newNftMetadataUriOverride: nextNftMetadataUriOverride,
         oldSaleEnabled: current.saleEnabled,
         newSaleEnabled: nextSaleEnabled,
         oldPriceVersion: current.priceVersion,

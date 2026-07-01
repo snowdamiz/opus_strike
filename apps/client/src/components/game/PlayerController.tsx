@@ -218,6 +218,12 @@ import {
   type BattleRoyalFirstPersonDropCameraRuntime,
   type BattleRoyalDeploymentCameraTarget,
 } from './battleRoyalDropView';
+import {
+  createDevTestingHeroSwitchUpdates,
+  getDevTestingHeroInteraction,
+  isDevTestingMapProfileId,
+} from '../../utils/devTestingMapInteraction';
+import { getPreparedVoxelMap } from '../../utils/mapWarmup/mapPrepCache';
 export {
   deriveServerCombatInput,
   getContinuingHeroHoldInput,
@@ -1640,6 +1646,55 @@ function runHeroSwapPhase(ctx: LocalPlayerFrameContext, localPlayer: Player, now
   blazeAbilities.resetRocketJump();
 }
 
+function runDevTestingInteractionFrame(
+  localPlayer: Player,
+  frameInput: InputState,
+  interactHeldRef: MutableRefObject<boolean>
+): boolean {
+  const store = useGameStore.getState();
+  const canInteract = (
+    store.isPracticeMode &&
+    store.gamePhase === 'playing' &&
+    localPlayer.state === 'alive' &&
+    isDevTestingMapProfileId(store.mapProfileId)
+  );
+
+  if (!canInteract) {
+    store.setInteractionPrompt(null);
+    interactHeldRef.current = frameInput.interact;
+    return false;
+  }
+
+  const position = visualStore.getState().playerPositions.get(localPlayer.id) ?? localPlayer.position;
+  const preparedMap = getPreparedVoxelMap({
+    seed: store.mapSeed,
+    themeId: store.mapThemeId,
+    mapSize: store.mapSize,
+    mapProfileId: store.mapProfileId,
+  });
+  const manifest = preparedMap?.manifest ?? null;
+  const interaction = manifest ? getDevTestingHeroInteraction(manifest, position, localPlayer.heroId) : null;
+  const pressed = frameInput.interact && !interactHeldRef.current;
+  interactHeldRef.current = frameInput.interact;
+
+  if (!interaction) {
+    store.setInteractionPrompt(null);
+    return false;
+  }
+
+  store.setInteractionPrompt({
+    id: `dev-testing-switch-${interaction.heroId}`,
+    actionLabel: 'Switch hero',
+    targetLabel: interaction.label,
+  });
+
+  if (!pressed) return false;
+
+  store.updateLocalPlayer(createDevTestingHeroSwitchUpdates(localPlayer, interaction.heroId));
+  store.setInteractionPrompt(null);
+  return true;
+}
+
 function runDisabledLifecycleFrame(
   ctx: LocalPlayerFrameContext,
   localPlayer: Player,
@@ -2114,6 +2169,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const chronosLifelineBlockPrimaryRef = useRef(false);
   const chronosLifelineBlockSecondaryRef = useRef(false);
   const chronosLifelineCommitHeldRef = useRef(false);
+  const devTestingInteractHeldRef = useRef(false);
   const suppressJumpUntilReleaseRef = useRef(false);
   const positionRef = useRef(new THREE.Vector3());
   const audioForwardRef = useRef(new THREE.Vector3());
@@ -2589,6 +2645,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     const frameNowMs = frameClock.nowMs;
 
     if (!localPlayer) {
+      useGameStore.getState().setInteractionPrompt(null);
+      devTestingInteractHeldRef.current = false;
       runNoLocalPlayerFrame(frameCtx, now);
       return;
     }
@@ -2610,6 +2668,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     }
 
     if (!enabled) {
+      useGameStore.getState().setInteractionPrompt(null);
+      devTestingInteractHeldRef.current = false;
       runDisabledLifecycleFrame(frameCtx, localPlayer, timing, authority.authorityApplied);
       return;
     }
@@ -2627,6 +2687,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     );
 
     if (localPlayer.role === 'observer') {
+      useGameStore.getState().setInteractionPrompt(null);
+      devTestingInteractHeldRef.current = frameInput.interact;
       runObserverLifecycleFrame(frameCtx, localPlayer, timing, frameInput);
       return;
     }
@@ -2684,6 +2746,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       localPlayer = { ...localPlayer, ...landedUpdates };
     }
     frameInput = suppressJumpInputUntilReleased(frameInput, frameCtx.refs.suppressJumpUntilReleaseRef);
+    if (runDevTestingInteractionFrame(localPlayer, frameInput, devTestingInteractHeldRef)) {
+      return;
+    }
     const isLocalStillDeploying = localDropPlayer
       ? localDropPlayer.status !== 'landed'
       : localPlayer.state === 'dropping';

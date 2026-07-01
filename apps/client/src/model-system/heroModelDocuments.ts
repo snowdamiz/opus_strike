@@ -158,8 +158,8 @@ const NIGHTGLASS_WRAITH_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
 ];
 
 const ASTRAL_EXECUTIONER_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
-  { id: 'phantom.astral-executioner.viewmodel.left.executionerBlade', material: 'edge', bone: 'leftForearm', position: [-0.3, -0.11, -0.62], scale: [0.03, 0.05, 0.18], rotation: [0, 0.28, 0], emissive: true },
-  { id: 'phantom.astral-executioner.viewmodel.right.executionerBlade', material: 'edge', bone: 'rightForearm', position: [0.3, -0.11, -0.62], scale: [0.03, 0.05, 0.18], rotation: [0, -0.28, 0], emissive: true },
+  { id: 'phantom.astral-executioner.viewmodel.left.executionerBlade', material: 'accent', bone: 'leftForearm', position: [-0.3, -0.11, -0.62], scale: [0.03, 0.05, 0.18], rotation: [0, 0.28, 0], emissive: true },
+  { id: 'phantom.astral-executioner.viewmodel.right.executionerBlade', material: 'accent', bone: 'rightForearm', position: [0.3, -0.11, -0.62], scale: [0.03, 0.05, 0.18], rotation: [0, -0.28, 0], emissive: true },
   { id: 'phantom.astral-executioner.viewmodel.left.starClamp', material: 'metal', bone: 'leftForearm', position: [-0.23, -0.055, -0.32], scale: [0.09, 0.018, 0.034] },
   { id: 'phantom.astral-executioner.viewmodel.right.starClamp', material: 'metal', bone: 'rightForearm', position: [0.23, -0.055, -0.32], scale: [0.09, 0.018, 0.034] },
   { id: 'phantom.astral-executioner.viewmodel.orb.astralHalo', material: 'glow', bone: 'root', kind: 'cylinder', position: [0, -0.12, -0.78], scale: [0.18, 0.012, 0.18], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
@@ -190,10 +190,10 @@ const IRON_LEVIATHAN_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
 const ABYSSAL_CORSAIR_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
   { id: 'hookshot.abyssal-corsair.viewmodel.left.lanternCore', material: 'glass', bone: 'leftForearm', kind: 'sphere', position: [-0.2, -0.12, -0.5], scale: [0.062, 0.062, 0.062], emissive: true, transparent: true },
   { id: 'hookshot.abyssal-corsair.viewmodel.right.lanternCore', material: 'glass', bone: 'rightForearm', kind: 'sphere', position: [0.2, -0.12, -0.5], scale: [0.062, 0.062, 0.062], emissive: true, transparent: true },
-  { id: 'hookshot.abyssal-corsair.viewmodel.left.corsairFin', material: 'edge', bone: 'leftForearm', position: [-0.28, -0.1, -0.88], scale: [0.032, 0.046, 0.16], rotation: [0, 0.46, 0], emissive: true },
+  { id: 'hookshot.abyssal-corsair.viewmodel.left.corsairFin', material: 'accent', bone: 'leftForearm', position: [-0.28, -0.1, -0.88], scale: [0.032, 0.046, 0.16], rotation: [0, 0.46, 0], emissive: true },
   { id: 'hookshot.abyssal-corsair.viewmodel.left.corsairHook', material: 'glow', bone: 'leftForearm', position: [-0.12, -0.1, -0.9], scale: [0.034, 0.044, 0.14], rotation: [0, -0.46, 0], emissive: true },
   { id: 'hookshot.abyssal-corsair.viewmodel.right.corsairHook', material: 'glow', bone: 'rightForearm', position: [0.12, -0.1, -0.9], scale: [0.034, 0.044, 0.14], rotation: [0, 0.46, 0], emissive: true },
-  { id: 'hookshot.abyssal-corsair.viewmodel.right.corsairFin', material: 'edge', bone: 'rightForearm', position: [0.28, -0.1, -0.88], scale: [0.032, 0.046, 0.16], rotation: [0, -0.46, 0], emissive: true },
+  { id: 'hookshot.abyssal-corsair.viewmodel.right.corsairFin', material: 'accent', bone: 'rightForearm', position: [0.28, -0.1, -0.88], scale: [0.032, 0.046, 0.16], rotation: [0, -0.46, 0], emissive: true },
   { id: 'hookshot.abyssal-corsair.viewmodel.left.lanternGlow', material: 'glow', bone: 'leftForearm', position: [-0.2, -0.04, -0.36], scale: [0.05, 0.05, 0.04], emissive: true, transparent: true },
   { id: 'hookshot.abyssal-corsair.viewmodel.right.lanternGlow', material: 'glow', bone: 'rightForearm', position: [0.2, -0.04, -0.36], scale: [0.05, 0.05, 0.04], emissive: true, transparent: true },
 ];
