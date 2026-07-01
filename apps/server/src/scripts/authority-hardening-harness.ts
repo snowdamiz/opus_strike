@@ -3,6 +3,7 @@ import {
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
   DEFAULT_GAME_CONFIG,
   MOVEMENT_BUTTON_MOVE_FORWARD,
+  MOVEMENT_SUBSTEP_SECONDS,
   parseMovementCommandPayload,
 } from '@voxel-strike/shared';
 import type { HeroStats, Team, Vec3 } from '@voxel-strike/shared';
@@ -48,12 +49,18 @@ const previous = {
   sequence: 1,
 };
 
-function movementContext(position: Vec3, velocity: Vec3, receivedAt = 10_200) {
+function movementContext(
+  position: Vec3,
+  velocity: Vec3,
+  receivedAt = 10_200,
+  inputSequence = 2,
+  lastSafe = previous
+) {
   return {
-    previous,
+    previous: lastSafe,
     proposedPosition: position,
     proposedVelocity: velocity,
-    inputSequence: 2,
+    inputSequence,
     receivedAt,
     heroStats,
     movement: {
@@ -75,7 +82,9 @@ function runMovementTests(): void {
   assert.equal(
     validateMovementProposal(movementContext(
       { x: 1.5, y: 5, z: 0 },
-      { x: 7.5, y: 0, z: 0 }
+      { x: 7.5, y: 0, z: 0 },
+      10_200,
+      13
     )).accepted,
     true,
     'normal Rapier-like sample should be accepted'
@@ -88,6 +97,30 @@ function runMovementTests(): void {
   ));
   assert.equal(teleport.accepted, false, 'teleport sample should be rejected');
   assert.equal(teleport.reason, 'speed_limit');
+
+  const tickBoundaryPrevious = {
+    ...previous,
+    acceptedAt: 10_050,
+    sequence: 41,
+  };
+  const tickBoundary = validateMovementProposal(movementContext(
+    { x: 0.22, y: 5, z: 0 },
+    { x: 13.2, y: 0, z: 0 },
+    10_050,
+    42,
+    tickBoundaryPrevious
+  ));
+  assert.equal(tickBoundary.accepted, true, '60Hz movement should validate across 20Hz tick boundaries');
+  assert.equal(tickBoundary.metrics.elapsedSeconds, MOVEMENT_SUBSTEP_SECONDS);
+
+  const rocketJumpStep = validateMovementProposal(movementContext(
+    { x: 0, y: 5 + BLAZE_ROCKET_JUMP_VERTICAL_FORCE * MOVEMENT_SUBSTEP_SECONDS, z: 0 },
+    { x: 0, y: BLAZE_ROCKET_JUMP_VERTICAL_FORCE, z: 0 },
+    12_000,
+    43,
+    { ...tickBoundaryPrevious, acceptedAt: 12_000, sequence: 42 }
+  ));
+  assert.equal(rocketJumpStep.accepted, true, 'Blaze rocket-jump vertical impulse should validate by command cadence');
 
   const invalid = validateMovementProposal(movementContext(
     { x: Number.NaN, y: 5, z: 0 },

@@ -735,6 +735,42 @@ function runClientAuthoritativeAckDoesNotMovePresentation() {
   assert.equal(controller.getState().movement.jetpackFuel, 41);
 }
 
+function runLargeFullAuthorityDriftReplays() {
+  const input = createEmptyInputState();
+  input.moveForward = true;
+  const buttons = inputStateToMovementButtons(input);
+  const controller = new MovementPredictionController();
+  controller.initialize(createSimulationState(), 0, 0);
+  const commands = Array.from({ length: 8 }, (_, index) => command(index + 1, buttons));
+  for (const movementCommand of commands) {
+    controller.step(movementCommand, context());
+  }
+
+  const predictedAtAck = new MovementPredictionController();
+  predictedAtAck.initialize(createSimulationState(), 0, 0);
+  for (const movementCommand of commands.slice(0, 4)) {
+    predictedAtAck.step(movementCommand, context());
+  }
+  const ackState = predictedAtAck.getState();
+  const metrics = controller.acknowledgeAuthority({
+    serverTick: 100,
+    serverTime: 1000,
+    ackSeq: 4,
+    movementEpoch: 0,
+    position: { x: ackState.position.x + 2.0, y: ackState.position.y, z: ackState.position.z },
+    velocity: ackState.velocity,
+    lookYaw: 0,
+    lookPitch: 0,
+    movement: ackState.movement,
+    correctionReason: 'normal',
+  }, context(), 1100);
+
+  assert.equal(metrics.corrected, true);
+  assert.equal(metrics.hardCorrection, true);
+  assert.equal(metrics.replayedCommands, 4);
+  assert.equal(controller.getBufferedCommandCount(), 4);
+}
+
 function runOverwriteUpdatesLatestAckState() {
   const controller = new MovementPredictionController();
   controller.initialize(createSimulationState(), 0, 0);
@@ -1914,6 +1950,7 @@ runProceduralLookupClampsToMapCeiling();
 runCorrectionReplay();
 runSmallAuthorityDriftDoesNotReplay();
 runClientAuthoritativeAckDoesNotMovePresentation();
+runLargeFullAuthorityDriftReplays();
 runOverwriteUpdatesLatestAckState();
 runOverwriteDefaultsToExternalCorrection();
 runEpochBarrier();
