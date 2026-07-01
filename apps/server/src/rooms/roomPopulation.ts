@@ -1,10 +1,13 @@
 export interface RoomPopulationPlayer {
   id: string;
   isBot?: boolean | null;
+  role?: string | null;
 }
 
 export interface RoomPopulationCounts {
   humanCount: number;
+  combatHumanCount: number;
+  regularObserverCount: number;
   botCount: number;
   npcCount: number;
   participantCount: number;
@@ -16,6 +19,8 @@ export function getRoomPopulationCounts(input: {
   npcIds: ReadonlySet<string>;
 }): RoomPopulationCounts {
   let humanCount = 0;
+  let combatHumanCount = 0;
+  let regularObserverCount = 0;
   let botCount = 0;
   let npcCount = 0;
 
@@ -26,11 +31,18 @@ export function getRoomPopulationCounts(input: {
       botCount++;
     } else {
       humanCount++;
+      if (player.role === 'observer') {
+        regularObserverCount++;
+      } else {
+        combatHumanCount++;
+      }
     }
   }
 
   return {
     humanCount,
+    combatHumanCount,
+    regularObserverCount,
     botCount,
     npcCount,
     participantCount: humanCount + botCount,

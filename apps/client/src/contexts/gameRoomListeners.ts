@@ -422,6 +422,8 @@ export function setupGameRoomListeners(
     disconnectVoice('left_game_room');
     if (gameRoomRef.current === room) {
       gameRoomRef.current = null;
+    } else {
+      return;
     }
     isJoiningGameRef.current = false;
     setLoading(false);

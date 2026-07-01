@@ -57,10 +57,12 @@ export const HOOKSHOT_CHAIN_HOOKS_COOLDOWN_SECONDS = HOOKSHOT_CHAIN_HOOKS_COOLDO
 export const HOOKSHOT_CHAIN_HOOKS_MAX_DISTANCE = 17.5;
 export const HOOKSHOT_CHAIN_HOOKS_COLLISION_RADIUS = 0.22;
 export const HOOKSHOT_DRAG_HOOK_DAMAGE = 24;
+export const HOOKSHOT_DRAG_HOOK_COOLDOWN_SECONDS = 6;
+export const HOOKSHOT_DRAG_HOOK_COOLDOWN_MS = HOOKSHOT_DRAG_HOOK_COOLDOWN_SECONDS * 1000;
 export const HOOKSHOT_DRAG_HOOK_MAX_DISTANCE = 24;
 export const HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS = 0.28;
 export const HOOKSHOT_DRAG_HOOK_PULL_FRONT_DISTANCE = 1.35;
-export const HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS = 1250;
+export const HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS = 1500;
 export const HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE = 0.32;
 export const HOOKSHOT_DRAG_HOOK_RETRACT_SPEED = 55;
 export const HOOKSHOT_GROUND_HOOKS_RADIUS = 13.9;
@@ -379,7 +381,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     name: 'Drag Hook',
     type: 'offensive',
     targeting: 'direction',
-    cooldown: 3.6,
+    cooldown: HOOKSHOT_DRAG_HOOK_COOLDOWN_SECONDS,
     description: 'Fire a long-range hook that attaches to heroes and pulls them in front of you.',
   },
 

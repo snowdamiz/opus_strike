@@ -5,7 +5,7 @@
   "packageManager": "pnpm@9.12.0",
   "scripts": {
     "dev": "turbo run dev",
-    "dev:all": "pnpm db:up && pnpm db:migrate && concurrently -n db,redis,server,client -c magenta,yellow,green,cyan \"docker compose logs -f postgres\" \"docker compose logs -f redis\" \"pnpm dev:server\" \"pnpm dev:client\"",
+    "dev:all": "pnpm db:up && pnpm db:migrate && concurrently -n db,redis,app -c magenta,yellow,cyan \"docker compose logs -f postgres\" \"docker compose logs -f redis\" \"turbo run dev --filter=@voxel-strike/server --filter=@voxel-strike/client\"",
     "build": "turbo run build",
     "build:client": "turbo run build --filter=@voxel-strike/client",
     "build:server": "turbo run build --filter=@voxel-strike/server",

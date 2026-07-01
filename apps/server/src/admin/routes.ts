@@ -1,10 +1,6 @@
-import crypto from 'node:crypto';
 import type { Prisma } from '@prisma/client';
-import { Router, type NextFunction, type Request, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import prisma from '../db';
-import { verifyAuthToken } from '../auth/session';
-import { getAllowedClientOrigins } from '../config/clientOrigins';
-import { getAuthTokenSecret } from '../config/security';
 import {
   DEFAULT_COMPETITIVE_RATING,
   RANK_DEFINITIONS,
@@ -17,7 +13,6 @@ import {
   AntiCheatEvidenceStore,
   applyHeldRankedOutcome,
   cancelHeldRankedOutcome,
-  getAntiCheatConfig,
   type AntiCheatAccountActionType,
   type AntiCheatCaseStatus,
 } from '../anticheat';
@@ -68,19 +63,19 @@ import {
   updateSkinShopSettings,
   type SkinShopAdminOverview,
 } from '../cosmetics/skinShopService';
+import {
+  createAdminCsrfToken,
+  ensureGameAdmin as ensureAdmin,
+  ensureGameAdminMutation as ensureAdminMutation,
+  noStore,
+  type GameAdminUser as AdminUser,
+} from '../auth/gameAdmin';
 
 interface AdminRouterOptions {
   config: ColyseusRuntimeConfig;
   matchMaker: AdminMatchMaker;
   redis: AdminMachineRedisClient | null;
   flyReplayRegistered: () => boolean;
-}
-
-interface AdminUser {
-  id: string;
-  name: string;
-  walletAddress: string;
-  elevatedAntiCheatRole: boolean;
 }
 
 const ADMIN_RANK_USER_LIMIT_MAX = 100;
@@ -146,99 +141,7 @@ type AdminRankedEntryGate = RankedEntryGateAdminView;
 type AdminSkinShop = SkinShopAdminOverview;
 type AdminMissions = DailyMissionAdminOverview;
 
-function adminWallet(): string | null {
-  const wallet = process.env.ADMIN_WALLET?.trim();
-  return wallet || null;
-}
-
-const ADMIN_CSRF_HEADER = 'x-csrf-token';
-const ADMIN_CSRF_WINDOW_MS = 60 * 60 * 1000;
-
 const antiCheatEvidenceStore = new AntiCheatEvidenceStore(prisma);
-
-function notFound(res: Response): void {
-  res.status(404).type('text').send('Not found');
-}
-
-function noStore(res: Response): void {
-  res.setHeader('Cache-Control', 'no-store, private, max-age=0');
-  res.setHeader('Pragma', 'no-cache');
-}
-
-function timingSafeStringEqual(a: string, b: string): boolean {
-  const aBuffer = Buffer.from(a);
-  const bBuffer = Buffer.from(b);
-  return aBuffer.length === bBuffer.length && crypto.timingSafeEqual(aBuffer, bBuffer);
-}
-
-function adminCsrfSignature(adminUser: AdminUser, bucket: number): string {
-  return crypto
-    .createHmac('sha256', getAuthTokenSecret())
-    .update(`${adminUser.id}:${adminUser.walletAddress}:${bucket}`)
-    .digest('base64url');
-}
-
-function createAdminCsrfToken(adminUser: AdminUser, now = Date.now()): string {
-  const bucket = Math.floor(now / ADMIN_CSRF_WINDOW_MS);
-  return `${bucket}.${adminCsrfSignature(adminUser, bucket)}`;
-}
-
-function verifyAdminCsrfToken(adminUser: AdminUser, token: string, now = Date.now()): boolean {
-  const [bucketRaw, signature, ...extra] = token.split('.');
-  if (!bucketRaw || !signature || extra.length > 0 || !/^[0-9]+$/.test(bucketRaw)) return false;
-
-  const bucket = Number(bucketRaw);
-  if (!Number.isSafeInteger(bucket)) return false;
-
-  const currentBucket = Math.floor(now / ADMIN_CSRF_WINDOW_MS);
-  if (bucket < currentBucket - 1 || bucket > currentBucket) return false;
-
-  return timingSafeStringEqual(signature, adminCsrfSignature(adminUser, bucket));
-}
-
-function readHeaderString(req: Request, name: string): string {
-  const value = req.headers[name.toLowerCase()];
-  if (Array.isArray(value)) return value[0] ?? '';
-  return typeof value === 'string' ? value : '';
-}
-
-function adminAllowedOrigins(): string[] {
-  return getAllowedClientOrigins();
-}
-
-function isAllowedConfiguredAdminOrigin(source: string): boolean {
-  try {
-    const sourceOrigin = new URL(source).origin;
-    return adminAllowedOrigins().some((origin) => {
-      try {
-        return new URL(origin).origin === sourceOrigin;
-      } catch {
-        return false;
-      }
-    });
-  } catch {
-    return false;
-  }
-}
-
-function hasAllowedAdminOrigin(req: Request): boolean {
-  const fetchSite = readHeaderString(req, 'sec-fetch-site').toLowerCase();
-
-  const host = req.headers.host;
-  if (!host) return false;
-
-  const origin = readHeaderString(req, 'origin');
-  const referer = origin ? '' : readHeaderString(req, 'referer');
-  const source = origin || referer;
-  if (!source) return fetchSite === 'same-origin' || fetchSite === 'same-site' || fetchSite === 'none';
-
-  try {
-    if (fetchSite === 'cross-site') return isAllowedConfiguredAdminOrigin(source);
-    return new URL(source).host === host || isAllowedConfiguredAdminOrigin(source);
-  } catch {
-    return false;
-  }
-}
 
 function readRequestString(value: unknown, maxLength = 500): string {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
@@ -458,87 +361,6 @@ function groupKeyForRoom(
   }
 
   return room.processId ? `process:${room.processId}` : room.publicAddress || 'unknown';
-}
-
-async function ensureAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
-  noStore(res);
-
-  const configuredAdminWallet = adminWallet();
-  if (!configuredAdminWallet) {
-    loggers.auth.warn('Admin route requested without ADMIN_WALLET configured', { path: req.path });
-    notFound(res);
-    return;
-  }
-
-  try {
-    const token = req.cookies?.auth_token;
-    const payload = typeof token === 'string' ? verifyAuthToken(token) : null;
-    if (!payload) {
-      loggers.auth.warn('Admin route rejected non-admin session', {
-        path: req.path,
-        hasSession: false,
-      });
-      notFound(res);
-      return;
-    }
-
-    const user = await prisma.user.findFirst({
-      where: {
-        id: payload.userId,
-        walletAddress: configuredAdminWallet,
-      },
-      select: {
-        id: true,
-        name: true,
-        walletAddress: true,
-      },
-    });
-
-    const walletAddress = user?.walletAddress;
-    if (!user || !walletAddress) {
-      loggers.auth.warn('Admin route rejected stale admin token', {
-        path: req.path,
-        userId: payload.userId,
-      });
-      notFound(res);
-      return;
-    }
-
-    res.locals.adminUser = {
-      id: user.id,
-      name: user.name,
-      walletAddress,
-      elevatedAntiCheatRole: getAntiCheatConfig().elevatedAdminWallets.includes(walletAddress),
-    } satisfies AdminUser;
-    next();
-  } catch (error) {
-    loggers.auth.error('Admin authorization failed', {
-      path: req.path,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    res.status(500).json({ error: 'Admin authorization failed' });
-  }
-}
-
-function ensureAdminMutation(req: Request, res: Response, next: NextFunction): void {
-  noStore(res);
-
-  const adminUser = res.locals.adminUser as AdminUser | undefined;
-  const token = readHeaderString(req, ADMIN_CSRF_HEADER);
-
-  if (!adminUser || !hasAllowedAdminOrigin(req) || !verifyAdminCsrfToken(adminUser, token)) {
-    loggers.auth.warn('Admin mutation rejected by CSRF guard', {
-      path: req.path,
-      hasAdminUser: Boolean(adminUser),
-      hasToken: Boolean(token),
-      origin: readHeaderString(req, 'origin') || null,
-      fetchSite: readHeaderString(req, 'sec-fetch-site') || null,
-    });
-    notFound(res);
-    return;
-  }
-
-  next();
 }
 
 async function queryRooms(matchMaker: AdminMatchMaker, name: string): Promise<RoomQueryResult> {

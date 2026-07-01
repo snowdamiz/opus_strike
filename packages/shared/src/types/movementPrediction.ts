@@ -99,6 +99,13 @@ export interface MovementCommand {
   movementEpoch: number;
   collisionRevision?: number;
   abilityCastHints?: AbilityCastOriginHint[];
+  clientState?: MovementClientStateSnapshot;
+}
+
+export interface MovementClientStateSnapshot {
+  position: Vec3;
+  velocity: Vec3;
+  movement: PlayerMovementState;
 }
 
 export interface MovementCommandPacket {
@@ -311,7 +318,112 @@ export function sanitizeMovementCommand(command: MovementCommand): MovementComma
       ? Math.max(0, Math.trunc(command.collisionRevision as number))
       : undefined,
     abilityCastHints: sanitizeAbilityCastOriginHints(command.abilityCastHints),
+    clientState: sanitizeMovementClientState(command.clientState),
   };
+}
+
+function sanitizeMovementVec3(value: unknown): Vec3 | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+
+  const raw = value as Record<string, unknown>;
+  const x = coerceFiniteMovementNumber(raw.x);
+  const y = coerceFiniteMovementNumber(raw.y);
+  const z = coerceFiniteMovementNumber(raw.z);
+  if (x === null || y === null || z === null) return null;
+  return { x, y, z };
+}
+
+function sanitizeMovementBoolean(value: unknown): boolean {
+  return value === true;
+}
+
+function hasOwnKey(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function sanitizePlayerMovementState(value: unknown): PlayerMovementState | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+
+  const raw = value as Record<string, unknown>;
+  const requiredKeys = [
+    'isGrounded',
+    'isSprinting',
+    'isCrouching',
+    'isSliding',
+    'slideTimeRemaining',
+    'isWallRunning',
+    'wallRunSide',
+    'isGrappling',
+    'grapplePoint',
+    'isJetpacking',
+    'jetpackFuel',
+    'isGliding',
+  ] as const;
+  if (requiredKeys.some((key) => !hasOwnKey(raw, key))) return null;
+
+  const booleanKeys = [
+    'isGrounded',
+    'isSprinting',
+    'isCrouching',
+    'isSliding',
+    'isWallRunning',
+    'isGrappling',
+    'isJetpacking',
+    'isGliding',
+  ] as const;
+  if (booleanKeys.some((key) => typeof raw[key] !== 'boolean')) return null;
+
+  const slideTimeRemaining = coerceFiniteMovementNumber(raw.slideTimeRemaining);
+  const jetpackFuel = coerceFiniteMovementNumber(raw.jetpackFuel);
+  if (slideTimeRemaining === null || jetpackFuel === null) return null;
+
+  const wallRunSide = raw.wallRunSide;
+  if (wallRunSide !== null && wallRunSide !== 'left' && wallRunSide !== 'right') return null;
+
+  const grapplePoint = raw.grapplePoint === undefined || raw.grapplePoint === null
+    ? null
+    : sanitizeMovementVec3(raw.grapplePoint);
+  if (grapplePoint === null && raw.grapplePoint !== null) return null;
+
+  const chronosAscendantStartY = raw.chronosAscendantStartY === undefined || raw.chronosAscendantStartY === null
+    ? undefined
+    : coerceFiniteMovementNumber(raw.chronosAscendantStartY);
+  if (chronosAscendantStartY === null) return null;
+
+  return {
+    isGrounded: sanitizeMovementBoolean(raw.isGrounded),
+    isSprinting: sanitizeMovementBoolean(raw.isSprinting),
+    isCrouching: sanitizeMovementBoolean(raw.isCrouching),
+    isSliding: sanitizeMovementBoolean(raw.isSliding),
+    slideTimeRemaining: Math.max(0, slideTimeRemaining),
+    isWallRunning: sanitizeMovementBoolean(raw.isWallRunning),
+    wallRunSide,
+    isGrappling: sanitizeMovementBoolean(raw.isGrappling),
+    grapplePoint,
+    isJetpacking: sanitizeMovementBoolean(raw.isJetpacking),
+    jetpackFuel: Math.max(0, jetpackFuel),
+    isGliding: sanitizeMovementBoolean(raw.isGliding),
+    chronosAscendantStartY,
+  };
+}
+
+export function sanitizeMovementClientState(value: unknown): MovementClientStateSnapshot | undefined {
+  if (value === undefined || value === null) return undefined;
+
+  const parsed = parseMovementClientStatePayload(value);
+  return parsed ?? undefined;
+}
+
+export function parseMovementClientStatePayload(value: unknown): MovementClientStateSnapshot | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+
+  const raw = value as Record<string, unknown>;
+  const position = sanitizeMovementVec3(raw.position);
+  const velocity = sanitizeMovementVec3(raw.velocity);
+  const movement = sanitizePlayerMovementState(raw.movement);
+  if (!position || !velocity || !movement) return null;
+
+  return { position, velocity, movement };
 }
 
 function quantizeCastOriginValue(value: number): number {
@@ -443,6 +555,9 @@ export function parseMovementCommandPayload(value: unknown): MovementCommand | n
     ? undefined
     : coerceFiniteMovementNumber(raw.collisionRevision);
   const abilityCastHints = sanitizeAbilityCastOriginHints(raw.abilityCastHints);
+  const clientState = raw.clientState === undefined || raw.clientState === null
+    ? undefined
+    : parseMovementClientStatePayload(raw.clientState);
 
   if (
     seq === null ||
@@ -452,6 +567,7 @@ export function parseMovementCommandPayload(value: unknown): MovementCommand | n
     clientTimeMs === null ||
     movementEpoch === null ||
     collisionRevision === null ||
+    clientState === null ||
     seq < 0 ||
     seq > UINT32_MAX
   ) {
@@ -467,6 +583,7 @@ export function parseMovementCommandPayload(value: unknown): MovementCommand | n
     movementEpoch,
     collisionRevision,
     abilityCastHints,
+    clientState,
   });
 
   return isValidMovementCommand(sanitized) ? sanitized : null;

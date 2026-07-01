@@ -82,6 +82,7 @@ const MOVEMENT_COMMAND_SHAPE_KEYS = [
   'movementEpoch',
   'collisionRevision',
   'abilityCastHints',
+  'clientState',
 ] as const;
 
 function buildMalformedCommandDetail(command: unknown): Record<string, unknown> {

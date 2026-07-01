@@ -641,7 +641,7 @@ function runCorrectionReplay() {
     serverTime: 1000,
     ackSeq: 4,
     movementEpoch: 0,
-    position: { x: ackState.position.x + 0.2, y: ackState.position.y, z: ackState.position.z },
+    position: { x: ackState.position.x + 2.0, y: ackState.position.y, z: ackState.position.z },
     velocity: ackState.velocity,
     lookYaw: 0,
     lookPitch: 0,
@@ -650,9 +650,47 @@ function runCorrectionReplay() {
   };
   const metrics = controller.reconcile(authority, context(), 1100);
   assert.equal(metrics.corrected, true);
+  assert.equal(metrics.hardCorrection, true);
   assert.equal(metrics.replayedCommands, 4);
   assert.equal(controller.getBufferedCommandCount(), 4);
   assert.equal(Number.isFinite(controller.getState().position.x), true);
+}
+
+function runSmallAuthorityDriftDoesNotReplay() {
+  const input = createEmptyInputState();
+  input.moveForward = true;
+  const buttons = inputStateToMovementButtons(input);
+  const controller = new MovementPredictionController();
+  controller.initialize(createSimulationState(), 0, 0);
+  const commands = Array.from({ length: 8 }, (_, index) => command(index + 1, buttons));
+  for (const movementCommand of commands) {
+    controller.step(movementCommand, context());
+  }
+
+  const beforeAck = controller.getState();
+  const predictedAtAck = new MovementPredictionController();
+  predictedAtAck.initialize(createSimulationState(), 0, 0);
+  for (const movementCommand of commands.slice(0, 4)) {
+    predictedAtAck.step(movementCommand, context());
+  }
+  const ackState = predictedAtAck.getState();
+  const metrics = controller.reconcile({
+    serverTick: 100,
+    serverTime: 1000,
+    ackSeq: 4,
+    movementEpoch: 0,
+    position: { x: ackState.position.x + 0.4, y: ackState.position.y, z: ackState.position.z },
+    velocity: { ...ackState.velocity, x: ackState.velocity.x + 0.2 },
+    lookYaw: 0,
+    lookPitch: 0,
+    movement: ackState.movement,
+    correctionReason: 'normal',
+  }, context(), 1100);
+
+  assert.equal(metrics.corrected, false);
+  assert.equal(metrics.replayedCommands, 0);
+  assert.equal(controller.getBufferedCommandCount(), 4);
+  assertVecNear(controller.getState().position, beforeAck.position, 'small drift keeps client position');
 }
 
 function runClientAuthoritativeAckDoesNotMovePresentation() {
@@ -729,7 +767,7 @@ function runOverwriteDefaultsToExternalCorrection() {
   controller.step(command(1, MOVEMENT_BUTTON_MOVE_FORWARD), context());
 
   const overwritten = controller.getState();
-  overwritten.position.x += 0.5;
+  overwritten.position.x += 2;
   overwritten.velocity.x += 1;
   controller.overwriteState(overwritten);
 
@@ -1874,6 +1912,7 @@ runChronosAscendantCapsAtPlayableCeiling();
 runPlayableCeilingClampsSharedMovement();
 runProceduralLookupClampsToMapCeiling();
 runCorrectionReplay();
+runSmallAuthorityDriftDoesNotReplay();
 runClientAuthoritativeAckDoesNotMovePresentation();
 runOverwriteUpdatesLatestAckState();
 runOverwriteDefaultsToExternalCorrection();

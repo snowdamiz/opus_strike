@@ -71,6 +71,7 @@
     "test:line-of-sight-cache": "tsx src/scripts/line-of-sight-cache.test.ts",
     "test:room-map-runtime": "tsx src/scripts/room-map-runtime.test.ts",
     "test:room-metadata-snapshot": "tsx src/scripts/room-metadata-snapshot.test.ts",
+    "test:streamer": "tsx src/scripts/streamer-ticket.test.ts && tsx src/scripts/streamer-service.test.ts",
     "test:room-participants": "tsx src/scripts/room-participant-registry.test.ts",
     "test:room-npc-spawn": "tsx src/scripts/room-npc-spawn-runtime.test.ts",
     "test:room-timeouts": "tsx src/scripts/room-timeouts.test.ts",

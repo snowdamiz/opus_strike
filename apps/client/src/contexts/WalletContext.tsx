@@ -77,6 +77,7 @@ export interface PendingRegistrationData {
 export interface UserData {
   id: string;
   walletAddress: string | null;
+  isGameAdmin: boolean;
   name: string;
   lastLoginAt: string | null;
   tutorialCompletedAt: string | null;

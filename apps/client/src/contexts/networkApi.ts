@@ -78,6 +78,51 @@ export interface ActivePartySessionResponse {
   } | null;
 }
 
+export interface StreamerTargetMetadata {
+  phase: string | null;
+  gameplayMode: string | null;
+  matchPerspective: string | null;
+  mapSeed: number | null;
+  mapThemeId: string | null;
+  mapSize: string | null;
+  mapProfileId: string | null;
+  combatHumanCount: number;
+  regularObserverCount: number;
+  streamerObserverCount: number;
+  streamerManagedBotGame: boolean;
+}
+
+export interface StreamerNextTarget {
+  roomId: string;
+  roomName: 'game_room';
+  processId: string | null;
+  publicAddress: string | null;
+  source: 'real_player' | 'fallback_bot';
+  streamerObserverTicket: string;
+  metadata: StreamerTargetMetadata;
+}
+
+export interface StreamerStatusResponse {
+  allowed: true;
+  currentRoomId: string | null;
+  fallbackBotGame: {
+    exists: boolean;
+    roomId: string | null;
+    phase: string | null;
+  };
+  csrfToken: string;
+}
+
+export interface StreamerNextResponse {
+  target: StreamerNextTarget;
+  csrfToken: string;
+}
+
+export interface StreamerStopResponse {
+  stopped: true;
+  csrfToken: string;
+}
+
 export interface SkinPurchaseSimulationResponse {
   intentId: string;
   ok: boolean;
@@ -244,6 +289,60 @@ export async function requestRunningGameStatus(roomId: string): Promise<RunningG
 
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, 'Failed to check running game'));
+  }
+
+  return response.json();
+}
+
+export async function requestStreamerStatus(): Promise<StreamerStatusResponse> {
+  const response = await fetch(`${getHttpUrl()}/streamer/status`, {
+    credentials: 'include',
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load streamer status'));
+  }
+
+  return response.json();
+}
+
+export async function requestNextStreamerTarget(input: {
+  currentRoomId: string | null;
+  csrfToken: string;
+}): Promise<StreamerNextResponse> {
+  const response = await fetch(`${getHttpUrl()}/streamer/next`, {
+    method: 'POST',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-csrf-token': input.csrfToken,
+    },
+    body: JSON.stringify({ currentRoomId: input.currentRoomId }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to resolve streamer target'));
+  }
+
+  return response.json();
+}
+
+export async function requestStopStreamer(csrfToken: string): Promise<StreamerStopResponse> {
+  const response = await fetch(`${getHttpUrl()}/streamer/stop`, {
+    method: 'POST',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-csrf-token': csrfToken,
+    },
+    body: JSON.stringify({}),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to stop streamer mode'));
   }
 
   return response.json();

@@ -143,6 +143,7 @@ import type { MovementSimulationState, PredictionCorrectionMetrics } from '@voxe
 import { isMovementTraceRecordingEnabled, recordMovementTraceFrame } from '../../anticheat/movementTraceRecorder';
 import {
   addLocalMovementImpulse,
+  attachClientMovementState,
   confirmLocalMovementTransform,
   createLocalMovementCommand,
   createMovementCommandPacket,
@@ -639,6 +640,7 @@ function clearBattleRoyalDeploymentPresentation(
 
 interface PlayerControllerProps {
   enabled?: boolean;
+  inputEnabled?: boolean;
 }
 
 type GameStoreSnapshot = ReturnType<typeof useGameStore.getState>;
@@ -1160,8 +1162,10 @@ export function runPredictionAndCommandPhase(input: {
     });
     recordMovementCommandGenerated();
     refs.pendingCrouchPressedRef.current = false;
-    refs.pendingMovementCommandsRef.current.push(command);
     const nextPredictedState = stepLocalMovementPrediction(localPlayer, command);
+    refs.pendingMovementCommandsRef.current.push(
+      attachClientMovementState(command, nextPredictedState)
+    );
     if (
       commandInput.jump &&
       wasGroundedBeforeStep &&
@@ -2082,7 +2086,9 @@ function runBattleRoyalDeploymentFrame(
       clientTimeMs: now,
     });
     recordMovementCommandGenerated();
-    refs.pendingMovementCommandsRef.current.push(command);
+    refs.pendingMovementCommandsRef.current.push(
+      predictedDropState ? attachClientMovementState(command, predictedDropState) : command
+    );
     refs.movementCommandAccumulatorRef.current -= MOVEMENT_SUBSTEP_SECONDS;
     refs.tickRef.current = command.seq;
     substepsThisFrame++;
@@ -2092,7 +2098,7 @@ function runBattleRoyalDeploymentFrame(
   return { kind: 'live', authorityApplied, substeps: substepsThisFrame };
 }
 
-export function PlayerController({ enabled = true }: PlayerControllerProps) {
+export function PlayerController({ enabled = true, inputEnabled = true }: PlayerControllerProps) {
   const { camera } = useThree();
 
   // Store state and actions
@@ -2106,7 +2112,14 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const isPracticeMode = useGameStore(state => state.isPracticeMode);
 
   // Input and network
-  const { inputState, isPointerLocked, isTouchInputActive, requestPointerLock, exitPointerLock } = useInput();
+  const {
+    inputState,
+    isPointerLocked,
+    isTouchInputActive,
+    isGamepadInputActive,
+    requestPointerLock,
+    exitPointerLock,
+  } = useInput({ gamepadEnabled: inputEnabled });
   usePhysics();
   const { sendMovementCommands } = useNetwork();
 
@@ -2676,7 +2689,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
     // ESC/menu releases pointer lock, but local physics still needs to keep
     // grounding and server position sync alive instead of replaying stale input.
-    const hasControlInput = isPointerLocked || isTouchInputActive;
+    const hasControlInput = inputEnabled && (isPointerLocked || isTouchInputActive || isGamepadInputActive);
     const rawFrameInput = hasControlInput ? inputState : INACTIVE_INPUT_STATE;
     let frameInput = rawFrameInput;
     const hasMovementInput = (

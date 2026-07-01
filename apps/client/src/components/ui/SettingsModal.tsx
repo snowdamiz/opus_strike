@@ -114,6 +114,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const discordAccount = linkedAccounts.find((account) => account.provider === 'discord') ?? null;
   const accountInitial = displayName.charAt(0).toUpperCase();
   const hasAccount = isAuthenticated && Boolean(user);
+  const isGameAdmin = user?.isGameAdmin === true;
   const showDevelopmentSettings = config.isDev;
 
   const updateSetting = <K extends keyof ClientSettings>(key: K, value: ClientSettings[K]) => {
@@ -674,6 +675,15 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     onChange={(v) => updateSetting('showKillFeed', v)}
                   />
                 </SettingRow>
+
+                {isGameAdmin && (
+                  <SettingRow label="Streamer Mode" description="Cinematic admin observer feed">
+                    <ToggleInput
+                      value={settings.streamerModeEnabled}
+                      onChange={(v) => updateSetting('streamerModeEnabled', v)}
+                    />
+                  </SettingRow>
+                )}
 
                 <SettingRow label="Crosshair Style" description="Choose your crosshair appearance">
                   <SelectInput

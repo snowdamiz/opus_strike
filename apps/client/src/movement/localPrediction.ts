@@ -1,4 +1,12 @@
-import type { AbilityCastOriginHint, MovementCommand, Player, SelfMovementAck, SelfMovementAuthority, Vec3 } from '@voxel-strike/shared';
+import type {
+  AbilityCastOriginHint,
+  MovementClientStateSnapshot,
+  MovementCommand,
+  Player,
+  SelfMovementAck,
+  SelfMovementAuthority,
+  Vec3,
+} from '@voxel-strike/shared';
 import {
   MOVEMENT_PROTOCOL_VERSION,
   ABILITY_DEFINITIONS,
@@ -169,6 +177,27 @@ export function movementStateFromPlayer(player: Player): MovementSimulationState
       grapplePoint: player.movement.grapplePoint ? { ...player.movement.grapplePoint } : null,
     },
   };
+}
+
+export function movementClientStateFromSimulation(
+  state: MovementSimulationState
+): MovementClientStateSnapshot {
+  return {
+    position: { ...state.position },
+    velocity: { ...state.velocity },
+    movement: {
+      ...state.movement,
+      grapplePoint: state.movement.grapplePoint ? { ...state.movement.grapplePoint } : null,
+    },
+  };
+}
+
+export function attachClientMovementState(
+  command: MovementCommand,
+  state: MovementSimulationState
+): MovementCommand {
+  command.clientState = movementClientStateFromSimulation(state);
+  return command;
 }
 
 export function ensureLocalPredictionInitialized(player: Player): void {

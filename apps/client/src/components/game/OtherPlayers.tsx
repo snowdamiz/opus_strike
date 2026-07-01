@@ -35,9 +35,10 @@ interface OtherPlayersProps {
     | 'remoteMovementEffectBotDistanceScale'
   >;
   theme: VoxelMapTheme;
+  hiddenPlayerId?: string | null;
 }
 
-export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps) {
+export function OtherPlayers({ config, effectConfig, theme, hiddenPlayerId = null }: OtherPlayersProps) {
   // NOTE: This component subscribes to gameStore.players but does NOT re-render on
   // v2 transform position updates because remote player entries are mutated in-place.
   // The Map reference only changes when players are added/removed. Position interpolation
@@ -84,6 +85,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
     const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
 
     for (const player of players.values()) {
+      if (player.id === hiddenPlayerId) continue;
       if (player.role === 'observer') continue;
       const isLocalPlayer = player.id === playerId || player.id === localPlayerId;
       if (isLocalPlayer && !showLocalPlayerBody) continue;
@@ -107,7 +109,7 @@ export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps)
       otherPlayers: nextPlayers,
       remoteBatchResourcePlayers: isBattleRoyal ? nextResourcePlayers : nextPlayers,
     };
-  }, [gamePhase, isBattleRoyal, localPlayerId, playerId, players, showFirstPersonDropBody, showLocalPlayerBody]);
+  }, [gamePhase, hiddenPlayerId, isBattleRoyal, localPlayerId, playerId, players, showFirstPersonDropBody, showLocalPlayerBody]);
 
   useEffect(() => {
     if (!isBattleRoyal && !config.showNameplates) return;

@@ -16,7 +16,7 @@ import {
 } from '@voxel-strike/shared';
 import type { MatchPerspective } from '@voxel-strike/shared';
 import type { CameraRefs } from './types';
-import { consumeMobileLookDelta } from '../../store/mobileControlsStore';
+import { consumeLookDelta } from '../../store/lookInputStore';
 import { useSettingsStore } from '../../store/settingsStore';
 
 export interface UseCameraOptions {
@@ -285,9 +285,9 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
       return;
     }
 
-    const touchLookDelta = consumeMobileLookDelta();
-    if (touchLookDelta.x !== 0) {
-      applyDeathLookDelta(touchLookDelta.x);
+    const lookDelta = consumeLookDelta();
+    if (lookDelta.x !== 0) {
+      applyDeathLookDelta(lookDelta.x);
     }
 
     const elapsedMs = Math.max(0, nowMs - deathCamera.startedAtMs);
@@ -339,9 +339,9 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
   ) => {
     if (deathCameraRef.current) return;
 
-    const touchLookDelta = consumeMobileLookDelta();
-    if (touchLookDelta.x !== 0 || touchLookDelta.y !== 0) {
-      applyLookDelta(touchLookDelta.x, touchLookDelta.y);
+    const lookDelta = consumeLookDelta();
+    if (lookDelta.x !== 0 || lookDelta.y !== 0) {
+      applyLookDelta(lookDelta.x, lookDelta.y);
     }
 
     // Interpolate crouch camera height

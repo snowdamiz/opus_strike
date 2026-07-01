@@ -108,7 +108,7 @@ export interface MatchmakingStatus {
   capacityMaxPlayers: number | null;
 }
 
-export type AppPhase = 'menu' | 'matchmaking' | 'in_lobby' | 'map_vote' | 'match_loading' | 'in_game';
+export type AppPhase = 'menu' | 'matchmaking' | 'in_lobby' | 'map_vote' | 'match_loading' | 'streamer_loading' | 'in_game';
 
 // ============================================================================
 // PHANTOM PROJECTILE TYPES

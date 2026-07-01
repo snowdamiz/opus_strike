@@ -8,6 +8,7 @@ import type { VoxelMapWarmupStatus } from './procedural/VoxelMap';
 import { WorldAtmosphere } from './WorldAtmosphere';
 import { PlayerController } from './PlayerController';
 import { BattleRoyalTeamSpectatorCameraController } from './BattleRoyalTeamSpectatorCameraController';
+import { StreamerCameraDirector } from './StreamerCameraDirector';
 import { BattleRoyalDropDeployment } from './BattleRoyalDropDeployment';
 import { BattleRoyalSafeZone } from './BattleRoyalSafeZone';
 import { OtherPlayers } from './OtherPlayers';
@@ -31,6 +32,7 @@ import { BudgetedPointLight, DynamicLightBudgetSystem } from './systems/DynamicL
 import { CombatTextLayer } from './CombatText';
 import { useGameStore } from '../../store/gameStore';
 import { graphicsPresetSettings, useSettingsStore } from '../../store/settingsStore';
+import { useStreamerStore } from '../../store/streamerStore';
 import { getMapPrepCacheKey } from '../../utils/mapWarmup/mapPrepCacheKey';
 import {
   createMapWarmupSnapshot,
@@ -1153,6 +1155,7 @@ interface GameCanvasProps {
   onMatchStartReady?: () => void;
   onReady?: () => void;
   onWarmupUpdate?: (snapshot: MapWarmupSnapshot) => void;
+  inputEnabled?: boolean;
   startupRampActive?: boolean;
 }
 
@@ -1160,6 +1163,7 @@ export function GameCanvas({
   onMatchStartReady,
   onReady,
   onWarmupUpdate,
+  inputEnabled = true,
   startupRampActive = false,
 }: GameCanvasProps) {
   useEffect(() => () => {
@@ -1172,6 +1176,8 @@ export function GameCanvas({
   const gameplayMode = useGameStore((state) => state.gameplayMode);
   const localPlayerState = useGameStore((state) => state.localPlayer?.state ?? null);
   const isObserverMode = useGameStore((state) => state.localPlayer?.role === 'observer');
+  const streamerIsActive = useStreamerStore((state) => state.isActive);
+  const streamerHiddenPlayerId = useStreamerStore((state) => state.hiddenFirstPersonTargetId);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
@@ -1452,10 +1458,12 @@ export function GameCanvas({
         <BattleRoyalDropDeployment />
         <BattleRoyalSafeZone />
 
-        {isBattleRoyalEliminated ? (
+        {streamerIsActive ? (
+          <StreamerCameraDirector enabled={isWorldReady} />
+        ) : isBattleRoyalEliminated ? (
           <BattleRoyalTeamSpectatorCameraController enabled />
         ) : (
-          <PlayerController enabled={isWorldReady} />
+          <PlayerController enabled={isWorldReady} inputEnabled={inputEnabled} />
         )}
         
         {/* Other players - always rendered so players can see each other in lobby */}
@@ -1463,6 +1471,7 @@ export function GameCanvas({
           config={effectiveRemotePlayerConfig}
           effectConfig={effectiveEffectsConfig}
           theme={mapTheme}
+          hiddenPlayerId={streamerHiddenPlayerId}
         />
         <RagdollManager config={effectiveRagdollConfig} />
         
@@ -1510,7 +1519,7 @@ export function GameCanvas({
         />
 
         {/* Orbit controls when not playing for looking around */}
-        {!isPlaying && <OrbitControls target={[0, 0, 0]} enablePan={false} />}
+        {!isPlaying && !streamerIsActive && <OrbitControls target={[0, 0, 0]} enablePan={false} />}
 
         <SceneAtmosphereColors
           fogDensity={battleRoyalVisibility?.fogDensity ?? DEFAULT_SCENE_FOG_DENSITY}

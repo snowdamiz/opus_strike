@@ -310,8 +310,11 @@ import {
   PHANTOM_PRIMARY_RELOAD_MS,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
   PLAYER_COMBAT_HITBOX_PADDING,
+  PLAYER_CROUCH_HEIGHT,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
+  PLAYER_SLIDE_HEIGHT,
+  PLAYER_SLIDE_RADIUS,
   VOID_RAY_CHARGE_TIME,
   MOVEMENT_PROTOCOL_VERSION,
   MOVEMENT_SUBSTEP_SECONDS,
@@ -370,6 +373,7 @@ import type {
   Team, 
   PlayerInput,
   PlayerMovementState,
+  MovementClientStateSnapshot,
   MovementCommand,
   MovementCommandPacket,
   MovementCorrectionReason,
@@ -421,25 +425,40 @@ import {
   isDirectGameRoomJoinAllowed,
 } from '../config/security';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
+import { isGameAdminUserId } from '../auth/gameAdmin';
 import { verifyGameEntryTicket, type GameEntryTicketClaims } from '../security/entryTickets';
+import {
+  verifyStreamerObserverTicket,
+  type StreamerObserverTicketClaims,
+} from '../security/streamerTickets';
 import { voiceService } from '../voice/VoiceService';
 import type { MatchParticipantSnapshot } from '../persistence/matchPersistence';
 import { createPlayerReport } from '../reports/playerReportService';
 import {
   AntiCheatEvidenceStore,
   AntiCheatRoomRuntime,
+  advanceMovementShadowSimulation,
   createMovementShadowSimulationState,
   getAntiCheatConfig,
+  recordMovementShadowDriftSample,
   type AntiCheatIntegrityGate,
 } from '../anticheat';
 import { AccountRestrictedError, assertGameplayAccountEligible } from '../auth/accountEligibility';
 import { consumeReplayNonce } from '../security/replayNonceStore';
+import { getStreamerObserverSeatCount } from '../streamer/config';
 import {
   GAME_MESSAGE_RATE_LIMITS,
   MessageRateLimiter,
   type RateLimitRule,
 } from './rateLimiter';
 import { shouldResolveGenericSecondaryAttack } from './combatInputRouting';
+import { validateMovementProposal, type LastSafeMovementState, type MovementBounds } from './movementValidation';
+import {
+  buildPlayerMovementSnapshot,
+  getMovementShadowClass,
+  getMovementShadowFrameRateBand,
+  getMovementShadowPingBand,
+} from './movementShadowTelemetry';
 import {
   SecurityEventLogSampler,
   buildRoomSecurityEvent,
@@ -648,6 +667,18 @@ interface PlayerStateStreamRecipientSendResult {
   sentInterest: boolean;
 }
 
+interface GameRoomAuthBundle {
+  auth: RoomAuthContext;
+  ticket: GameEntryTicketClaims | null;
+  streamerTicket: StreamerObserverTicketClaims | null;
+}
+
+interface StreamerObserverSession {
+  adminUserId: string;
+  joinedAt: number;
+  lastHeartbeatAt: number;
+}
+
 interface CreateOptions {
   lobbyId?: string;
   lobbyName?: string;
@@ -663,6 +694,8 @@ interface CreateOptions {
   requiredHumanPlayers?: number;
   reservedHumanPlayers?: number;
   capacityPlayerCost?: number;
+  streamerManagedBotGame?: boolean;
+  streamerManagedByUserId?: string;
 }
 
 interface JoinOptions {
@@ -673,6 +706,7 @@ interface JoinOptions {
   authToken?: string;
   clientBuildId?: string;
   movementProtocolVersion?: number;
+  streamerObserverTicket?: string;
 }
 
 interface BotAssignment {
@@ -1128,7 +1162,11 @@ export class GameRoom extends Room<GameState> {
   private requiredHumanPlayers = 1;
   private rankedRequiredHumanPlayers = DEFAULT_GAME_CONFIG.maxPlayers;
   private reservedHumanPlayers = 0;
+  private playerClientCapacity = DEFAULT_GAME_CONFIG.maxPlayers;
   private capacityPlayerCost = 0;
+  private streamerManagedBotGame = false;
+  private streamerManagedByUserId: string | null = null;
+  private readonly streamerObservers = new Map<string, StreamerObserverSession>();
   private battleRoyalSafeZone: BattleRoyalSafeZoneState | null = null;
   private battleRoyalDrop: BattleRoyalDropState | null = null;
   private nextBattleRoyalSafeZoneDamageAt = 0;
@@ -1144,14 +1182,35 @@ export class GameRoom extends Room<GameState> {
     client: Client,
     options: JoinOptions,
     request?: IncomingMessage
-  ): Promise<{ auth: RoomAuthContext; ticket: GameEntryTicketClaims | null }> {
+  ): Promise<GameRoomAuthBundle> {
+    const auth = await resolveRoomAuthContext(options as Record<string, unknown>, request);
+    const streamerTicket = verifyStreamerObserverTicket(options.streamerObserverTicket, {
+      gameRoomId: this.roomId,
+      adminUserId: auth.userId,
+    });
+
+    if (streamerTicket) {
+      const consumed = await consumeReplayNonce('streamer_observer', streamerTicket.nonce, streamerTicket.expiresAt);
+      if (!consumed) {
+        this.recordAuthReject(client, 'streamer_observer_ticket_nonce_replay');
+        throw new Error('Streamer observer ticket already used');
+      }
+
+      if (!(await isGameAdminUserId(auth.userId))) {
+        this.recordAuthReject(client, 'streamer_observer_non_admin', { userId: auth.userId });
+        throw new Error('Streamer observer access denied');
+      }
+
+      this.recordClientJoinHints(client, auth, options);
+      return { auth, ticket: null, streamerTicket };
+    }
+
     const directJoin = !this.lobbyId;
     if (directJoin && !isDirectGameRoomJoinAllowed()) {
       this.recordAuthReject(client, 'direct_join_disabled');
       throw new Error('Direct game room joins are disabled');
     }
 
-    const auth = await resolveRoomAuthContext(options as Record<string, unknown>, request);
     let ticket: GameEntryTicketClaims | null = null;
 
     if (this.lobbyId) {
@@ -1204,7 +1263,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.recordClientJoinHints(client, auth, options);
-    return { auth, ticket };
+    return { auth, ticket, streamerTicket: null };
   }
 
   private createRunningGameReconnectTicket(
@@ -1234,6 +1293,10 @@ export class GameRoom extends Room<GameState> {
     onDrop?: (client: Client, data: T) => void
   ): void {
     this.onMessage(type, (client, data: T) => {
+      if (this.isStreamerObserverSession(client.sessionId) && !this.isStreamerObserverAllowedMessage(type)) {
+        return;
+      }
+
       if (!this.rateLimiter.consume(client.sessionId, type, rule)) {
         this.recordRateLimitDrop(client.sessionId, type);
         onDrop?.(client, data);
@@ -1307,6 +1370,10 @@ export class GameRoom extends Room<GameState> {
     this.config = createGameConfigForGameplayMode(this.gameplayMode);
     this.setSeatReservationTime(readGameRoomSeatReservationSeconds());
     this.rankedEligibilityCandidate = options.rankedEligible === true;
+    this.streamerManagedBotGame = options.streamerManagedBotGame === true;
+    this.streamerManagedByUserId = typeof options.streamerManagedByUserId === 'string'
+      ? options.streamerManagedByUserId
+      : null;
     this.requiredHumanPlayers = Math.max(
       0,
       Math.floor(options.requiredHumanPlayers ?? (this.lobbyId ? DEFAULT_GAME_CONFIG.maxPlayers : 1))
@@ -1317,10 +1384,11 @@ export class GameRoom extends Room<GameState> {
       this.reservedHumanPlayers,
       Math.floor(options.capacityPlayerCost ?? this.reservedHumanPlayers)
     );
-    this.maxClients = Math.max(
+    this.playerClientCapacity = Math.max(
       this.config.maxPlayers,
       this.reservedHumanPlayers + Math.max(0, options.botAssignments?.length ?? 0)
     );
+    this.maxClients = this.playerClientCapacity + getStreamerObserverSeatCount();
     this.antiCheat = new AntiCheatRoomRuntime({
       roomId: this.roomId,
       lobbyId: this.lobbyId,
@@ -1472,6 +1540,10 @@ export class GameRoom extends Room<GameState> {
     this.onRateLimitedMessage('playerPingResponse', GAME_MESSAGE_RATE_LIMITS.playerPingResponse, (client, data: unknown) => {
       this.handlePlayerPingResponse(client, data);
     });
+
+    this.onRateLimitedMessage('streamerHeartbeat', GAME_MESSAGE_RATE_LIMITS.playerPingResponse, (client) => {
+      this.handleStreamerHeartbeat(client);
+    });
   }
 
   private registerDevelopmentMessageHandlers(): void {
@@ -1542,13 +1614,19 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    const authBundle = (client as Client & { auth?: { auth?: RoomAuthContext; ticket?: GameEntryTicketClaims | null } }).auth;
+    const authBundle = (client as Client & { auth?: GameRoomAuthBundle }).auth;
     const authContext = authBundle?.auth;
     if (!authContext) {
       client.send('error', { message: 'Authentication required' });
       client.leave();
       return;
     }
+
+    if (authBundle.streamerTicket) {
+      this.joinStreamerObserver(client, authBundle.streamerTicket);
+      return;
+    }
+
     if (this.lobbyId && !this.autoDispose) {
       this.autoDispose = true;
     }
@@ -1563,7 +1641,7 @@ export class GameRoom extends Room<GameState> {
 
     if (shouldRejectRoomJoinForCapacity({
       playerCount: this.state.players.size,
-      maxPlayers: this.maxClients,
+      maxPlayers: this.playerClientCapacity,
     })) {
       client.send('error', { message: 'Game room is full' });
       this.participantRegistry.clearSession(client.sessionId);
@@ -1609,6 +1687,42 @@ export class GameRoom extends Room<GameState> {
     this.requestPlayerPing(client, Date.now());
 
     // Check if we should start hero select
+    this.checkPhaseTransition();
+  }
+
+  private joinStreamerObserver(client: Client, streamerTicket: StreamerObserverTicketClaims): void {
+    const streamerSeatCount = getStreamerObserverSeatCount();
+    if (this.streamerObservers.size >= streamerSeatCount) {
+      client.send('error', { message: 'Streamer observer seats are full' });
+      client.leave();
+      return;
+    }
+
+    const now = Date.now();
+    this.streamerObservers.set(client.sessionId, {
+      adminUserId: streamerTicket.adminUserId,
+      joinedAt: now,
+      lastHeartbeatAt: now,
+    });
+    this.clientRegistry.setClient(client.sessionId, client);
+    this.updateMetadata();
+    this.ensureTickLoopStarted();
+
+    client.send('streamerObserverJoined', {
+      roomId: this.roomId,
+      sessionId: client.sessionId,
+      streamerObserverCount: this.streamerObservers.size,
+      streamerObserverSeatCount: streamerSeatCount,
+      streamerManagedBotGame: this.streamerManagedBotGame,
+    });
+    this.sendCurrentSnapshots(client);
+
+    loggers.room.info('Streamer observer join complete', {
+      sessionId: client.sessionId,
+      adminUserId: streamerTicket.adminUserId,
+      streamerObserverCount: this.streamerObservers.size,
+    });
+
     this.checkPhaseTransition();
   }
 
@@ -1726,6 +1840,21 @@ export class GameRoom extends Room<GameState> {
   }
 
   onLeave(client: Client, consented: boolean) {
+    const streamerObserver = this.streamerObservers.get(client.sessionId);
+    if (streamerObserver) {
+      this.streamerObservers.delete(client.sessionId);
+      this.clientRegistry.deleteClient(client.sessionId);
+      this.rateLimiter.clearScope(client.sessionId);
+      this.updateMetadata();
+      loggers.room.info('Streamer observer left', {
+        sessionId: client.sessionId,
+        adminUserId: streamerObserver.adminUserId,
+        consented,
+        streamerObserverCount: this.streamerObservers.size,
+      });
+      return;
+    }
+
     loggers.room.info('Player left', client.sessionId, 'consented', consented);
 
     const player = this.state.players.get(client.sessionId);
@@ -2527,6 +2656,9 @@ export class GameRoom extends Room<GameState> {
       mapSolidBlockCount: mapStats.solidBlocks,
       reservedHumanPlayers: this.reservedHumanPlayers,
       capacityPlayerCost: this.capacityPlayerCost,
+      streamerObserverCount: this.streamerObservers.size,
+      streamerManagedBotGame: this.streamerManagedBotGame,
+      streamerManagedByUserId: this.streamerManagedByUserId,
       rankedEligibilityCandidate: this.rankedEligibilityCandidate,
       rankedRequiredHumanPlayers: this.rankedRequiredHumanPlayers,
       reconnectIdentityKeys: this.participantRegistry.getReconnectIdentityKeys(),
@@ -2947,6 +3079,21 @@ export class GameRoom extends Room<GameState> {
     this.checkCompetitiveNetworkQualityAfterProbe();
   }
 
+  private isStreamerObserverSession(sessionId: string): boolean {
+    return this.streamerObservers.has(sessionId);
+  }
+
+  private isStreamerObserverAllowedMessage(type: string): boolean {
+    return type === 'playerPingResponse' || type === 'streamerHeartbeat';
+  }
+
+  private handleStreamerHeartbeat(client: Client): void {
+    const observer = this.streamerObservers.get(client.sessionId);
+    if (!observer) return;
+
+    observer.lastHeartbeatAt = Date.now();
+  }
+
   private probePlayerPings(): void {
     const now = this.state.serverTime || Date.now();
     if (!isPhasedIntervalDue(now, this.lastPingProbeAt, DEFAULT_PLAYER_PING_INTERVAL_MS, this.pingProbePhaseAtMs)) {
@@ -3157,8 +3304,9 @@ export class GameRoom extends Room<GameState> {
   ): PlayerStateStreamRecipientSendResult {
     const recipient = this.state.players.get(client.sessionId) ?? null;
     const recipientId = client.sessionId;
+    const isStreamerObserver = this.isStreamerObserverSession(client.sessionId);
     const vitalsState = options.shouldBroadcastVitals ? this.getVitalsReplicationState(recipientId) : null;
-    const interestSignatures = options.shouldBroadcastInterest && recipient
+    const interestSignatures = options.shouldBroadcastInterest && (recipient || isStreamerObserver)
       ? this.getInterestSignatureState(recipientId)
       : null;
     const transformState = options.shouldBroadcastTransforms ? this.getTransformReplicationState(recipientId) : null;
@@ -3988,9 +4136,17 @@ export class GameRoom extends Room<GameState> {
     stepSeconds: number,
     stepNow: number,
     collisionWorld: MovementCollisionWorld,
-    options: { processGameplayInput: boolean }
+    options: { processGameplayInput: boolean; command?: MovementCommand }
   ): PlayerInput {
     const movementInput = this.getSanitizedMovementInput(player, input, stepNow);
+    const authority = this.getMovementAuthority(player.id);
+    const previousMovement: PlayerMovementState = buildPlayerMovementSnapshot(player);
+    const previousSafe: LastSafeMovementState = authority.lastSafe ?? {
+      position: vec3SchemaToPlain(player.position),
+      velocity: vec3SchemaToPlain(player.velocity),
+      acceptedAt: stepNow - stepSeconds * 1000,
+      sequence: authority.lastProcessedSeq,
+    };
     player.lastInput = movementInput;
     player.lookYaw = movementInput.lookYaw;
     player.lookPitch = movementInput.lookPitch;
@@ -4014,6 +4170,16 @@ export class GameRoom extends Room<GameState> {
       this.stepHookshotGrappleAuthority(player, simulationInput, stepSeconds, stepNow, collisionWorld);
     }
     this.stepHookshotDragPullAuthority(player, stepSeconds, stepNow, collisionWorld);
+    this.applyClientMovementProposal({
+      player,
+      authority,
+      command: options.command,
+      movementInput,
+      previous: previousSafe,
+      previousMovement,
+      collisionWorld,
+      now: stepNow,
+    });
     if (options.processGameplayInput) {
       if (this.shouldProcessMovementGameplayInput(player, movementInput)) {
         this.measureTickSpan('movement_gameplay_input', () => {
@@ -4063,6 +4229,227 @@ export class GameRoom extends Room<GameState> {
     player.movement.isJetpacking = false;
     player.movement.isGliding = false;
     player.movement.chronosAscendantStartY = 0;
+  }
+
+  private getMovementProposalBounds(): MovementBounds {
+    const manifest = this.getMapManifest();
+    return {
+      minX: manifest.origin.x - PLAYER_RADIUS,
+      maxX: manifest.origin.x + manifest.size.x * manifest.voxelSize.x + PLAYER_RADIUS,
+      minY: manifest.origin.y - PLAYER_HEIGHT * 4,
+      maxY: manifest.origin.y + manifest.size.y * manifest.voxelSize.y + PLAYER_HEIGHT * 2,
+      minZ: manifest.origin.z - PLAYER_RADIUS,
+      maxZ: manifest.origin.z + manifest.size.z * manifest.voxelSize.z + PLAYER_RADIUS,
+    };
+  }
+
+  private isInsideMovementProposalArea(position: PlainVec3): boolean {
+    const manifest = this.getMapManifest();
+    if (manifest.boundary.length >= 3) {
+      return isInsideBoundaryPolygon(position.x, position.z, manifest.boundary);
+    }
+
+    return (
+      position.x >= manifest.origin.x &&
+      position.x <= manifest.origin.x + manifest.size.x * manifest.voxelSize.x &&
+      position.z >= manifest.origin.z &&
+      position.z <= manifest.origin.z + manifest.size.z * manifest.voxelSize.z
+    );
+  }
+
+  private getMovementCapsuleDimensions(movement: Pick<PlayerMovementState, 'isSliding' | 'isCrouching'>): {
+    height: number;
+    radius: number;
+  } {
+    if (movement.isSliding) {
+      return { height: PLAYER_SLIDE_HEIGHT, radius: PLAYER_SLIDE_RADIUS };
+    }
+    if (movement.isCrouching) {
+      return { height: PLAYER_CROUCH_HEIGHT, radius: PLAYER_RADIUS };
+    }
+    return { height: PLAYER_HEIGHT, radius: PLAYER_RADIUS };
+  }
+
+  private incrementMovementProposalRejectMetric(
+    authority: ServerMovementAuthorityState,
+    reason: MovementCorrectionReason
+  ): void {
+    switch (reason) {
+      case 'invalid_transform':
+        authority.metrics.invalidTransforms = (authority.metrics.invalidTransforms ?? 0) + 1;
+        break;
+      case 'speed_limit':
+        authority.metrics.speedViolations = (authority.metrics.speedViolations ?? 0) + 1;
+        break;
+      case 'blocked_path':
+        authority.metrics.blockedPathCorrections = (authority.metrics.blockedPathCorrections ?? 0) + 1;
+        break;
+      case 'bounds':
+        authority.metrics.boundsCorrections = (authority.metrics.boundsCorrections ?? 0) + 1;
+        break;
+      default:
+        authority.metrics.hardCorrections = (authority.metrics.hardCorrections ?? 0) + 1;
+        break;
+    }
+  }
+
+  private applyClientAuthoritativeMovementState(
+    player: Player,
+    clientState: MovementClientStateSnapshot,
+    serverMovement: PlayerMovementState
+  ): void {
+    player.position.x = clientState.position.x;
+    player.position.y = clientState.position.y;
+    player.position.z = clientState.position.z;
+    player.velocity.x = clientState.velocity.x;
+    player.velocity.y = clientState.velocity.y;
+    player.velocity.z = clientState.velocity.z;
+
+    player.movement.isGrounded = serverMovement.isGrounded;
+    player.movement.isSprinting = serverMovement.isSprinting;
+    player.movement.isCrouching = serverMovement.isCrouching;
+    player.movement.isSliding = serverMovement.isSliding;
+    player.movement.slideTimeRemaining = serverMovement.slideTimeRemaining;
+    player.movement.isWallRunning = serverMovement.isWallRunning;
+    player.movement.wallRunSide = serverMovement.wallRunSide ?? '';
+    player.movement.isGliding = serverMovement.isGliding;
+    player.movement.chronosAscendantStartY = serverMovement.chronosAscendantStartY ?? 0;
+    player.movement.isGrappling = serverMovement.isGrappling;
+    player.movement.isJetpacking = serverMovement.isJetpacking;
+    player.movement.jetpackFuel = serverMovement.jetpackFuel;
+
+    if (player.state === 'downed') {
+      this.forceDownedMovementState(player);
+    }
+  }
+
+  private recordClientMovementShadowSample(input: {
+    player: Player;
+    authority: ServerMovementAuthorityState;
+    movementInput: PlayerInput;
+    previous: LastSafeMovementState;
+    clientState: MovementClientStateSnapshot;
+    previousMovement: PlayerMovementState;
+  }): void {
+    const { player, authority, movementInput, previous, clientState, previousMovement } = input;
+    const heroId = isHeroId(player.heroId) ? player.heroId : null;
+    const movementHeroId = heroId ?? 'phantom';
+    const shadow = advanceMovementShadowSimulation({
+      state: authority.shadow,
+      playerPosition: previous.position,
+      playerVelocity: previous.velocity,
+      playerMovement: previousMovement,
+      heroStats: getHeroStats(movementHeroId),
+      input: movementInput,
+      terrain: this.mapRuntime.terrain,
+      flagCarrier: isCaptureTheFlagMode(this.gameplayMode) && player.hasFlag,
+      activeSpeedMultiplier: this.getActiveSpeedMultiplier(player) *
+        (player.state === 'downed' ? BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER : 1),
+      chronosAscendantActive: player.state === 'downed' ? false : this.isChronosAscendantActive(player),
+      proposedPosition: clientState.position,
+      proposedVelocity: clientState.velocity,
+      proposedMovement: clientState.movement,
+    });
+
+    authority.shadow = shadow.nextState;
+    authority.metrics.shadowSamples = (authority.metrics.shadowSamples ?? 0) + 1;
+    authority.metrics.shadowLastPositionDrift = shadow.sample.positionDrift;
+    authority.metrics.shadowLastVelocityDrift = shadow.sample.velocityDrift;
+    authority.metrics.shadowMaxPositionDrift = Math.max(
+      authority.metrics.shadowMaxPositionDrift ?? 0,
+      shadow.sample.positionDrift
+    );
+    authority.metrics.shadowMaxVelocityDrift = Math.max(
+      authority.metrics.shadowMaxVelocityDrift ?? 0,
+      shadow.sample.velocityDrift
+    );
+    if (shadow.sample.movementMismatch) {
+      authority.metrics.shadowMovementMismatches = (authority.metrics.shadowMovementMismatches ?? 0) + 1;
+    }
+
+    recordMovementShadowDriftSample({
+      roomId: this.roomId,
+      matchMode: this.matchMode,
+      heroId: heroId ?? 'unknown',
+      movementClass: getMovementShadowClass({
+        hasFlag: player.hasFlag,
+        heroId: heroId ?? 'unknown',
+        movement: {
+          isGrounded: clientState.movement.isGrounded,
+          isGrappling: previousMovement.isGrappling,
+          isSliding: clientState.movement.isSliding,
+          isGliding: clientState.movement.isGliding,
+          isWallRunning: clientState.movement.isWallRunning,
+        },
+      }, movementInput),
+      mapSeed: this.state.mapSeed,
+      pingBandMs: getMovementShadowPingBand(this.playerPings.getPingMs(player.id)),
+      frameRateBand: getMovementShadowFrameRateBand(movementInput),
+      positionDrift: shadow.sample.positionDrift,
+      velocityDrift: shadow.sample.velocityDrift,
+      movementMismatch: shadow.sample.movementMismatch,
+      objectiveSuppressed: this.isObjectiveSuppressed(player.id, movementInput.timestamp),
+      sampledAt: movementInput.timestamp,
+    });
+  }
+
+  private applyClientMovementProposal(input: {
+    player: Player;
+    authority: ServerMovementAuthorityState;
+    command: MovementCommand | undefined;
+    movementInput: PlayerInput;
+    previous: LastSafeMovementState;
+    previousMovement: PlayerMovementState;
+    collisionWorld: MovementCollisionWorld;
+    now: number;
+  }): boolean {
+    const { player, authority, command, movementInput, previous, previousMovement, collisionWorld, now } = input;
+    const clientState = command?.clientState;
+    if (!clientState) return false;
+    if (this.playerRoots.isRooted(player.id, now) || this.hookshotRuntime.hasDragPull(player.id)) return false;
+
+    const serverMovement = buildPlayerMovementSnapshot(player);
+    this.recordClientMovementShadowSample({
+      player,
+      authority,
+      movementInput,
+      previous,
+      clientState,
+      previousMovement,
+    });
+
+    const capsule = this.getMovementCapsuleDimensions(serverMovement);
+    const validation = validateMovementProposal({
+      previous,
+      proposedPosition: clientState.position,
+      proposedVelocity: clientState.velocity,
+      inputSequence: movementInput.tick,
+      receivedAt: now,
+      heroStats: getHeroStats(isHeroId(player.heroId) ? player.heroId : 'phantom'),
+      movement: {
+        isSliding: serverMovement.isSliding,
+        isGrappling: serverMovement.isGrappling,
+        isJetpacking: serverMovement.isJetpacking,
+        isGliding: serverMovement.isGliding,
+      },
+      activeSpeedMultiplier: this.getActiveSpeedMultiplier(player) *
+        (player.state === 'downed' ? BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER : 1),
+      flagCarrier: isCaptureTheFlagMode(this.gameplayMode) && player.hasFlag,
+      bounds: this.getMovementProposalBounds(),
+      isInsidePlayableArea: (position) => this.isInsideMovementProposalArea(position),
+      isSpaceBlocked: (position) => !canCapsuleOccupy(collisionWorld, position, capsule.height, capsule.radius),
+      isPathBlocked: (from, to) => !sweepCapsulePathClear(collisionWorld, from, to, capsule.height, capsule.radius),
+    });
+
+    if (!validation.accepted) {
+      const reason = validation.reason ?? 'invalid_transform';
+      this.incrementMovementProposalRejectMetric(authority, reason);
+      this.markMovementBarrier(player.id, reason);
+      return false;
+    }
+
+    this.applyClientAuthoritativeMovementState(player, clientState, serverMovement);
+    return true;
   }
 
   private startHookshotGrappleAuthority(
@@ -10015,7 +10402,7 @@ export class GameRoom extends Room<GameState> {
           stepSeconds,
           stepNow,
           collisionWorld,
-          { processGameplayInput: true }
+          { processGameplayInput: true, command }
         );
       });
       authority.metrics.commandsProcessed++;
