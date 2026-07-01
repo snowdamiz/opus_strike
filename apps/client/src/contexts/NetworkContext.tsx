@@ -32,6 +32,7 @@ import {
   type PartyMode,
   type PartyStateSnapshot,
   type Team,
+  type VoxelMapTheme,
   type MovementCommandPacket,
 } from '@voxel-strike/shared';
 import type { VoiceScope, VoiceTokenResponse } from '../voice/types';
@@ -53,6 +54,7 @@ import {
   requestRunningGameStatus,
   type ActivePartySessionResponse,
   type RankedTokenHoldStatus,
+  type StreamerNextTarget,
 } from './networkApi';
 import { setupLobbyListeners as setupLobbyRoomListeners } from './lobbyListeners';
 import { setupGameRoomListeners } from './gameRoomListeners';
@@ -70,6 +72,7 @@ import { resetGameTiming } from '../store/gameTimingStore';
 import { createPracticeAbilityStates } from '../utils/practiceAbilityStates';
 import { usePartyStore } from '../store/partyStore';
 import { clearActivePartySession, saveActivePartySession } from '../utils/activePartySession';
+import { useStreamerStore } from '../store/streamerStore';
 
 export type { RankedTokenHoldStatus } from './networkApi';
 
@@ -150,6 +153,8 @@ interface NetworkContextType {
   ) => Promise<void>;
   getRunningGameReconnect: () => Promise<RunningGameReconnectStatus>;
   reconnectRunningGame: () => Promise<void>;
+  joinStreamerRoom: (target: StreamerNextTarget) => Promise<void>;
+  sendStreamerHeartbeat: () => void;
   leaveGame: () => void;
   disconnect: () => void;
   sendChatMessage: (message: string, options?: { teamOnly?: boolean }) => boolean;
@@ -1133,6 +1138,96 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   joinGameRoomRef.current = joinGameRoom;
   leaveLobbyRef.current = leaveLobby;
 
+  const joinStreamerRoom = useCallback(async (target: StreamerNextTarget) => {
+    if (isJoiningGameRef.current) {
+      loggers.network.debug('already joining a game room, ignoring duplicate streamer call');
+      throw new Error('Already joining a game room');
+    }
+    isJoiningGameRef.current = true;
+    setLoading(true);
+    setAppPhase('streamer_loading');
+
+    try {
+      cleanupExistingConnections();
+      isJoiningGameRef.current = true;
+      clearRunningGameSession();
+      useGameStore.getState().setPlayers(new Map());
+      clearMatchSummary();
+      setPracticeMode(false);
+      setMatchStartGateKey(null);
+      setGamePhase('waiting');
+      setPhaseEndTime(null);
+      useChatStore.getState().clearMessages();
+
+      const store = useGameStore.getState();
+      if (typeof target.metadata.mapSeed === 'number') {
+        store.setMapSeed(target.metadata.mapSeed);
+      }
+      store.setMapThemeId((target.metadata.mapThemeId ?? null) as VoxelMapTheme['id'] | null);
+      store.setMapSize(target.metadata.mapSize);
+      store.setMapProfileId(target.metadata.mapProfileId);
+      if (isGameplayMode(target.metadata.gameplayMode)) {
+        useGameStore.setState({ gameplayMode: target.metadata.gameplayMode });
+      }
+      if (isMatchPerspective(target.metadata.matchPerspective)) {
+        useGameStore.setState({ matchPerspective: target.metadata.matchPerspective });
+      }
+
+      const client = getClient();
+      const room = await client.joinById(target.roomId, {
+        streamerObserverTicket: target.streamerObserverTicket,
+        clientBuildId: config.buildId,
+      });
+      gameRoomRef.current = room;
+
+      setupGameListeners(room, 'Streamer');
+
+      const localObserver = createDefaultLocalPlayer(room.sessionId, 'Streamer');
+      localObserver.role = 'observer';
+      localObserver.team = '';
+      localObserver.heroId = null;
+      localObserver.skinId = null;
+      localObserver.state = 'spectating';
+      localObserver.isReady = true;
+      localObserver.position = { x: 0, y: 16, z: 0 };
+      setLocalPlayer(localObserver);
+
+      setRoomId(room.id);
+      setPlayerId(room.sessionId);
+      setAppPhase('in_game');
+      setLoading(false);
+      isJoiningGameRef.current = false;
+
+      loggers.network.info('joined streamer room', {
+        roomId: room.id,
+        source: target.source,
+      });
+    } catch (error) {
+      loggers.network.error('failed to join streamer room', error);
+      setLoading(false);
+      isJoiningGameRef.current = false;
+      throw error;
+    }
+  }, [
+    cleanupExistingConnections,
+    getClient,
+    setupGameListeners,
+    setLoading,
+    setAppPhase,
+    clearMatchSummary,
+    setPracticeMode,
+    setMatchStartGateKey,
+    setGamePhase,
+    setPhaseEndTime,
+    setLocalPlayer,
+    setRoomId,
+    setPlayerId,
+  ]);
+
+  const sendStreamerHeartbeat = useCallback(() => {
+    gameRoomRef.current?.send('streamerHeartbeat', { sentAt: Date.now() });
+  }, []);
+
   const reconnectRunningGame = useCallback(async () => {
     const status = await getRunningGameReconnect();
     if (!status.available || !status.session) {
@@ -1150,6 +1245,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, [getRunningGameReconnect, joinGameRoom]);
 
   const leaveGame = useCallback(() => {
+    useStreamerStore.getState().reset();
     clearRunningGameSession(useGameStore.getState().roomId);
     disconnectVoice('leave_game');
     rejectPendingVoiceTokenRequests('left game before voice token response');
@@ -1199,6 +1295,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, [setRoomId, setPlayerId, setConnected, setPracticeMode, setMatchStartGateKey, resetLobby, clearMatchSummary, setGamePhase, setAppPhase, rejectPendingVoiceTokenRequests, rejectPendingPlayerReportRequests]);
 
   const disconnect = useCallback(() => {
+    useStreamerStore.getState().reset();
     clearRunningGameSession();
     disconnectVoice('network_disconnect');
     rejectPendingVoiceTokenRequests('network disconnected before voice token response');
@@ -1406,6 +1503,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     joinGameRoom,
     getRunningGameReconnect,
     reconnectRunningGame,
+    joinStreamerRoom,
+    sendStreamerHeartbeat,
     leaveGame,
     disconnect,
     sendChatMessage,
@@ -1444,6 +1543,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     ensureParty,
     getRunningGameReconnect,
     joinGameRoom,
+    joinStreamerRoom,
     joinLobby,
     joinMatchmakingLobby,
     joinParty,
@@ -1465,6 +1565,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     selectTeam,
     sendChatMessage,
     sendMovementCommands,
+    sendStreamerHeartbeat,
     setDevBotBrainEnabled,
     setDevBotsRooted,
     setDevImmune,

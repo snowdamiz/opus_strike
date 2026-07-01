@@ -20,6 +20,9 @@ export interface GameRoomMetadataInput {
   mapSolidBlockCount?: number;
   reservedHumanPlayers: number;
   capacityPlayerCost?: number;
+  streamerObserverCount: number;
+  streamerManagedBotGame?: boolean;
+  streamerManagedByUserId?: string | null;
   rankedEligibilityCandidate: boolean;
   rankedRequiredHumanPlayers: number;
   reconnectIdentityKeys: string[];
@@ -41,6 +44,11 @@ export function buildGameRoomMetadata(input: GameRoomMetadataInput): Record<stri
     mapSize: input.mapSize,
     mapProfileId: input.mapProfileId ?? 'ctf_arena',
     humanCount: counts.humanCount,
+    combatHumanCount: counts.combatHumanCount,
+    regularObserverCount: counts.regularObserverCount,
+    streamerObserverCount: input.streamerObserverCount,
+    streamerManagedBotGame: input.streamerManagedBotGame === true,
+    streamerManagedByUserId: input.streamerManagedByUserId || undefined,
     botCount: counts.botCount,
     npcCount: counts.npcCount,
     participantCount: counts.participantCount,

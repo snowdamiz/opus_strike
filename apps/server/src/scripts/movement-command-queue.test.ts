@@ -143,6 +143,58 @@ assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
 
 {
   const movementAuthority = authority();
+  const clientState = {
+    position: { x: 1, y: 2, z: 3 },
+    velocity: { x: 4, y: 5, z: 6 },
+    movement: {
+      isGrounded: true,
+      isSprinting: false,
+      isCrouching: false,
+      isSliding: false,
+      slideTimeRemaining: 0,
+      isWallRunning: false,
+      wallRunSide: null,
+      isGrappling: false,
+      grapplePoint: null,
+      isJetpacking: false,
+      jetpackFuel: 100,
+      isGliding: false,
+      chronosAscendantStartY: undefined,
+    },
+  };
+  const result = sanitizeIncomingMovementCommand({
+    authority: movementAuthority,
+    command: command(2, { clientState }),
+    currentCollisionRevision: 0,
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) throw new Error('expected client movement snapshot acceptance');
+  assert.deepEqual(result.command.clientState, clientState);
+}
+
+{
+  const movementAuthority = authority();
+  const result = sanitizeIncomingMovementCommand({
+    authority: movementAuthority,
+    command: command(2, {
+      clientState: {
+        position: { x: Number.NaN, y: 2, z: 3 },
+        velocity: { x: 0, y: 0, z: 0 },
+        movement: {},
+      } as MovementCommand['clientState'],
+    }),
+    currentCollisionRevision: 0,
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) throw new Error('expected malformed client movement snapshot rejection');
+  assert.equal(result.rejection.reason, 'malformed_command');
+  assert.equal(movementAuthority.metrics.malformedCommands, 1);
+}
+
+{
+  const movementAuthority = authority();
   const result = sanitizeIncomingMovementCommand({
     authority: movementAuthority,
     command: { seq: 'bad', buttons: null },
@@ -162,6 +214,7 @@ assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
     movementEpoch: 'undefined',
     collisionRevision: 'undefined',
     abilityCastHints: 'undefined',
+    clientState: 'undefined',
   });
 }
 

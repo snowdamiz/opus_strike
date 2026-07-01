@@ -13,7 +13,6 @@ import {
   MOVEMENT_MEDIUM_CORRECTION_METERS,
   MOVEMENT_POSITION_EPSILON_METERS,
   MOVEMENT_SUBSTEP_SECONDS,
-  MOVEMENT_VELOCITY_EPSILON_METERS_PER_SECOND,
   compareMovementSeq,
   isMovementSeqAfter,
   writeMovementButtonsToInputState,
@@ -78,9 +77,6 @@ type PredictionInputScratch = Pick<
   | 'interact'
 >;
 
-const SOFT_CORRECTION_PERSISTENT_ACKS = 3;
-const SOFT_CORRECTION_ERROR_BUDGET_METERS = 0.18;
-
 function cloneVec3(value: Vec3): Vec3 {
   return { x: value.x, y: value.y, z: value.z };
 }
@@ -109,18 +105,6 @@ function distance(a: Vec3, b: Vec3): number {
 
 function magnitude(offset: VisualCorrectionOffset): number {
   return Math.sqrt(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z);
-}
-
-function movementModesRequireReplay(a: PlayerMovementState, b: PlayerMovementState): boolean {
-  return (
-    a.isGrounded !== b.isGrounded ||
-    a.isCrouching !== b.isCrouching ||
-    a.isSliding !== b.isSliding ||
-    a.isWallRunning !== b.isWallRunning ||
-    a.wallRunSide !== b.wallRunSide ||
-    a.isGrappling !== b.isGrappling ||
-    a.isGliding !== b.isGliding
-  );
 }
 
 function applyAuthorityOwnedMovementResources(
@@ -173,8 +157,6 @@ export class MovementPredictionController {
   private visualCorrection: VisualCorrectionOffset = { x: 0, y: 0, z: 0 };
   private correctionStartedAtMs = 0;
   private correctionDurationMs = 0;
-  private softCorrectionAckCount = 0;
-  private softCorrectionErrorBudget = 0;
   private readonly commandInputScratch: PredictionInputScratch = {
     moveForward: false,
     moveBackward: false,
@@ -202,8 +184,6 @@ export class MovementPredictionController {
     this.visualCorrection = { x: 0, y: 0, z: 0 };
     this.correctionStartedAtMs = 0;
     this.correctionDurationMs = 0;
-    this.softCorrectionAckCount = 0;
-    this.softCorrectionErrorBudget = 0;
   }
 
   reset(): void {
@@ -215,8 +195,6 @@ export class MovementPredictionController {
     this.visualCorrection = { x: 0, y: 0, z: 0 };
     this.correctionStartedAtMs = 0;
     this.correctionDurationMs = 0;
-    this.softCorrectionAckCount = 0;
-    this.softCorrectionErrorBudget = 0;
   }
 
   hasState(): boolean {
@@ -333,61 +311,32 @@ export class MovementPredictionController {
     const predictedAtAck = this.commandRecords.get(authority.ackSeq)?.predictedState;
     const positionError = predictedAtAck ? distance(predictedAtAck.position, authoritativeState.position) : Infinity;
     const velocityError = predictedAtAck ? distance(predictedAtAck.velocity, authoritativeState.velocity) : Infinity;
-    const modesRequireReplay = predictedAtAck ? movementModesRequireReplay(predictedAtAck.movement, authoritativeState.movement) : true;
     const authorityBarrier = isAuthorityBarrierReason(authority);
 
     this.trimAcknowledged(authority.ackSeq);
     this.lastAckSeq = authority.ackSeq;
 
-    const exceedsDeadband =
+    const hardCorrection =
+      authorityBarrier ||
       !Number.isFinite(positionError) ||
-      positionError >= MOVEMENT_POSITION_EPSILON_METERS ||
-      velocityError >= MOVEMENT_VELOCITY_EPSILON_METERS_PER_SECOND;
-    const mediumCorrection = positionError >= MOVEMENT_MEDIUM_CORRECTION_METERS && positionError < MOVEMENT_HARD_CORRECTION_METERS;
-    const hardCorrection = authorityBarrier || positionError >= MOVEMENT_HARD_CORRECTION_METERS;
-
-    if (!exceedsDeadband && !modesRequireReplay && !authorityBarrier) {
-      this.softCorrectionAckCount = 0;
-      this.softCorrectionErrorBudget = 0;
+      positionError >= MOVEMENT_HARD_CORRECTION_METERS;
+    if (!hardCorrection) {
       if (this.state) {
         applyAuthorityOwnedMovementResources(this.state.movement, authoritativeState.movement);
       }
 
       return {
-        ...emptyCorrectionMetrics(authority.ackSeq),
+        ackSeq: authority.ackSeq,
         positionError,
         velocityError,
+        replayedCommands: 0,
+        hardCorrection: false,
+        mediumCorrection: false,
+        corrected: false,
+        visualCorrectionMagnitude: 0,
+        visualCorrectionDurationMs: 0,
       };
     }
-
-    if (!hardCorrection && !mediumCorrection && !modesRequireReplay) {
-      this.softCorrectionAckCount++;
-      this.softCorrectionErrorBudget += Number.isFinite(positionError) ? positionError : MOVEMENT_MEDIUM_CORRECTION_METERS;
-      const shouldApplySoftCorrection =
-        this.softCorrectionAckCount >= SOFT_CORRECTION_PERSISTENT_ACKS ||
-        this.softCorrectionErrorBudget >= SOFT_CORRECTION_ERROR_BUDGET_METERS;
-
-      if (!shouldApplySoftCorrection) {
-        if (this.state) {
-          applyAuthorityOwnedMovementResources(this.state.movement, authoritativeState.movement);
-        }
-
-        return {
-          ackSeq: authority.ackSeq,
-          positionError,
-          velocityError,
-          replayedCommands: 0,
-          hardCorrection: false,
-          mediumCorrection: false,
-          corrected: false,
-          visualCorrectionMagnitude: 0,
-          visualCorrectionDurationMs: 0,
-        };
-      }
-    }
-
-    this.softCorrectionAckCount = 0;
-    this.softCorrectionErrorBudget = 0;
 
     let replayState = authoritativeState;
     let replayedCommands = 0;
@@ -416,7 +365,7 @@ export class MovementPredictionController {
       velocityError,
       replayedCommands,
       hardCorrection,
-      mediumCorrection,
+      mediumCorrection: false,
       corrected: true,
       visualCorrectionMagnitude,
       visualCorrectionDurationMs: duration,
@@ -451,13 +400,6 @@ export class MovementPredictionController {
     const predictedAtAck = this.commandRecords.get(authority.ackSeq)?.predictedState;
     const positionError = predictedAtAck ? distance(predictedAtAck.position, authoritativeState.position) : Infinity;
     const velocityError = predictedAtAck ? distance(predictedAtAck.velocity, authoritativeState.velocity) : Infinity;
-    const modesRequireReplay = predictedAtAck
-      ? movementModesRequireReplay(predictedAtAck.movement, authoritativeState.movement)
-      : false;
-
-    if (modesRequireReplay) {
-      return this.reconcile(authority, context, nowMs);
-    }
 
     this.trimAcknowledged(authority.ackSeq);
     this.lastAckSeq = authority.ackSeq;
@@ -485,8 +427,6 @@ export class MovementPredictionController {
 
     this.trimAcknowledged(ack.ackSeq);
     this.lastAckSeq = ack.ackSeq;
-    this.softCorrectionAckCount = 0;
-    this.softCorrectionErrorBudget = 0;
     return emptyCorrectionMetrics(ack.ackSeq);
   }
 

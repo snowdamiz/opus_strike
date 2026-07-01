@@ -18,6 +18,7 @@ import missionsRoutes from './missions/routes';
 import rewardsRoutes from './rewards/routes';
 import socialRoutes from './social/routes';
 import wagersRoutes from './wagers/routes';
+import { createStreamerRouter } from './streamer/routes';
 import { dailyMissionService } from './missions/service';
 import { playerRewardService } from './rewards/service';
 import { wagerService } from './wagers/service';
@@ -29,7 +30,12 @@ import {
   shouldCreateRoomOnLocalColyseusProcess,
   validateColyseusRuntimeConfig,
 } from './config/colyseus';
-import { closeSharedRedisClient, getSharedRedisClient, pingRedis } from './config/redis';
+import {
+  assertRedisAvailableForDistributedRuntime,
+  closeSharedRedisClient,
+  getSharedRedisClient,
+  pingRedis,
+} from './config/redis';
 import { getAllowedClientOrigins, isCorsOriginAllowed } from './config/clientOrigins';
 import { ALLOWED_CORS_HEADER_VALUE } from './config/corsHeaders';
 import { envFlag } from './config/security';
@@ -55,6 +61,8 @@ const httpServer = createServer(app);
 const colyseusRuntime = getColyseusRuntimeConfig();
 validateColyseusRuntimeConfig(colyseusRuntime);
 const sharedRedisClient = colyseusRuntime.distributed ? getSharedRedisClient(colyseusRuntime) : null;
+let gameServer: Server | null = null;
+let flyReplayUpgradeRouterInstalled = false;
 let flyReplayRouteHandle: FlyReplayProcessRouteHandle | null = null;
 let adminMachineHeartbeatHandle: AdminMachineHeartbeatHandle | null = null;
 
@@ -100,37 +108,52 @@ const selectProcessIdToCreateRoom: NonNullable<ServerOptions['selectProcessIdToC
   return selectLeastLoadedColyseusProcess(await matchMaker.stats.fetchAll(), matchMaker.processId);
 };
 
-// Create Colyseus server
-const gameServer = new Server({
-  ...createDistributedColyseusOptions(colyseusRuntime),
-  selectProcessIdToCreateRoom,
-  gracefullyShutdown: false,
-  transport: new WebSocketTransport({
+function createGameServer(): Server {
+  const server = new Server({
+    ...createDistributedColyseusOptions(colyseusRuntime),
+    selectProcessIdToCreateRoom,
+    gracefullyShutdown: false,
+    transport: new WebSocketTransport({
+      server: httpServer,
+      pingInterval: 5000,
+      pingMaxRetries: 3,
+    }),
+  });
+
+  server.define('game_room', GameRoom);
+  server.define('global_chat_room', GlobalChatRoom);
+  server
+    .define('party_room', PartyRoom)
+    .enableRealtimeListing();
+  server.define('social_room', SocialRoom);
+  server
+    .define('lobby_room', LobbyRoom)
+    .filterBy(['isPrivate', 'matchmakingMode', 'matchMode', 'rankBandId', 'gameplayMode'])
+    .sortBy({ clients: -1 })
+    .enableRealtimeListing();
+
+  return server;
+}
+
+function getGameServer(): Server {
+  if (!gameServer) {
+    gameServer = createGameServer();
+  }
+
+  return gameServer;
+}
+
+function installRuntimeUpgradeRouter(): void {
+  if (flyReplayUpgradeRouterInstalled) return;
+
+  installFlyReplayUpgradeRouter({
     server: httpServer,
-    pingInterval: 5000,
-    pingMaxRetries: 3,
-  }),
-});
-
-// Register rooms
-gameServer.define('game_room', GameRoom);
-gameServer.define('global_chat_room', GlobalChatRoom);
-gameServer
-  .define('party_room', PartyRoom)
-  .enableRealtimeListing();
-gameServer.define('social_room', SocialRoom);
-gameServer
-  .define('lobby_room', LobbyRoom)
-  .filterBy(['isPrivate', 'matchmakingMode', 'matchMode', 'rankBandId', 'gameplayMode'])
-  .sortBy({ clients: -1 })
-  .enableRealtimeListing();
-
-installFlyReplayUpgradeRouter({
-  server: httpServer,
-  config: colyseusRuntime,
-  redis: sharedRedisClient,
-  getLocalProcessId: () => matchMaker.processId,
-});
+    config: colyseusRuntime,
+    redis: sharedRedisClient,
+    getLocalProcessId: () => matchMaker.processId,
+  });
+  flyReplayUpgradeRouterInstalled = true;
+}
 
 // CORS configuration - MUST be before routes
 const ALLOWED_ORIGINS = getAllowedClientOrigins();
@@ -170,6 +193,7 @@ app.use('/missions', missionsRoutes);
 app.use('/rewards', rewardsRoutes);
 app.use('/social', socialRoutes);
 app.use('/wagers', wagersRoutes);
+app.use('/streamer', createStreamerRouter({ matchMaker }));
 app.use('/admin', createAdminRouter({
   config: colyseusRuntime,
   matchMaker,
@@ -409,6 +433,10 @@ const PORT = parseInt(process.env.PORT || '2567', 10);
 
 async function startServer(): Promise<void> {
   try {
+    await assertRedisAvailableForDistributedRuntime(colyseusRuntime);
+    const server = getGameServer();
+    installRuntimeUpgradeRouter();
+
     if (colyseusRuntime.flyReplay.enabled) {
       if (!sharedRedisClient) throw new Error('Fly replay routing requires Redis');
       flyReplayRouteHandle = await registerFlyReplayProcessRoute(
@@ -427,7 +455,7 @@ async function startServer(): Promise<void> {
       });
     }
 
-    await gameServer.listen(PORT);
+    await server.listen(PORT);
     wagerService.startBackgroundJobs();
     playerRewardService.startBackgroundJobs();
     dailyMissionService.startBackgroundJobs();
@@ -439,6 +467,14 @@ async function startServer(): Promise<void> {
     adminMachineHeartbeatHandle = null;
     await flyReplayRouteHandle?.close();
     flyReplayRouteHandle = null;
+    if (gameServer) {
+      await gameServer.gracefullyShutdown(false).catch((shutdownError) => {
+        loggers.room.warn('Failed to shut down Colyseus after startup error', {
+          error: shutdownError instanceof Error ? shutdownError.message : String(shutdownError),
+        });
+      });
+      gameServer = null;
+    }
     throw error;
   }
 
@@ -479,13 +515,15 @@ async function shutdown(signal: string): Promise<void> {
   });
 
   try {
+    dailyMissionService.stopBackgroundJobs();
     playerRewardService.stopBackgroundJobs();
     wagerService.stopBackgroundJobs();
     await adminMachineHeartbeatHandle?.close();
     adminMachineHeartbeatHandle = null;
     await flyReplayRouteHandle?.close();
     flyReplayRouteHandle = null;
-    await gameServer.gracefullyShutdown(false);
+    await gameServer?.gracefullyShutdown(false);
+    gameServer = null;
     await closeSharedRedisClient();
     loggers.room.info('Graceful shutdown finished', {
       signal,

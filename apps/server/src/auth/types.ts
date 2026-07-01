@@ -27,6 +27,7 @@ export interface LinkedAccountSummary {
 export interface UserResponse {
   id: string;
   walletAddress: string | null;
+  isGameAdmin: boolean;
   name: string;
   lastLoginAt: string | null;
   tutorialCompletedAt: string | null;

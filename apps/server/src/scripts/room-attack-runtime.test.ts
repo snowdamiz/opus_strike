@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import {
+  ABILITY_DEFINITIONS,
   BLAZE_BOMB_AEGIS_COLLISION_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_COLLISION_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE,
   CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
+  HOOKSHOT_DRAG_HOOK_COOLDOWN_MS,
+  HOOKSHOT_DRAG_HOOK_COOLDOWN_SECONDS,
+  HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS,
   PHANTOM_DIRE_BALL_COLLISION_RADIUS,
 } from '@voxel-strike/shared';
 import {
@@ -26,6 +30,19 @@ import {
 
   assert.equal(attack?.damageType, 'dire_ball');
   assert.equal(attack?.collisionRadius, PHANTOM_DIRE_BALL_COLLISION_RADIUS);
+}
+
+{
+  const attack = getRoomAttackConfig({
+    heroId: 'hookshot',
+    mode: 'secondary',
+    chronosAscendantActive: false,
+  });
+
+  assert.equal(attack?.damageType, 'drag_hook');
+  assert.equal(attack?.cooldownMs, HOOKSHOT_DRAG_HOOK_COOLDOWN_MS);
+  assert.equal(ABILITY_DEFINITIONS.hookshot_heavy_attack.cooldown, HOOKSHOT_DRAG_HOOK_COOLDOWN_SECONDS);
+  assert.equal(HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS, 1_500);
 }
 
 {

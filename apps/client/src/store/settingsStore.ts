@@ -66,6 +66,7 @@ export interface ClientSettings {
   toggleSprint: boolean;
   showDamageNumbers: boolean;
   showKillFeed: boolean;
+  streamerModeEnabled: boolean;
   crosshairStyle: CrosshairStyle;
   crosshairColor: string;
   devTutorialOverride: DevTutorialOverride;
@@ -146,6 +147,7 @@ export const defaultSettings: ClientSettings = {
   toggleSprint: false,
   showDamageNumbers: true,
   showKillFeed: true,
+  streamerModeEnabled: false,
   crosshairStyle: 'default',
   crosshairColor: '#ffffff',
   devTutorialOverride: 'account',
@@ -271,6 +273,7 @@ export function sanitizeSettings(value: unknown): ClientSettings {
     toggleSprint: pickBoolean(raw.toggleSprint, defaultSettings.toggleSprint),
     showDamageNumbers: pickBoolean(raw.showDamageNumbers, defaultSettings.showDamageNumbers),
     showKillFeed: pickBoolean(raw.showKillFeed, defaultSettings.showKillFeed),
+    streamerModeEnabled: pickBoolean(raw.streamerModeEnabled, defaultSettings.streamerModeEnabled),
     crosshairStyle: pickOption(raw.crosshairStyle, ['default', 'dot', 'circle', 'cross'] as const, defaultSettings.crosshairStyle),
     crosshairColor: normalizeHexColor(raw.crosshairColor, defaultSettings.crosshairColor),
     devTutorialOverride: pickOption(raw.devTutorialOverride, ['account', 'bypass', 'force'] as const, defaultSettings.devTutorialOverride),

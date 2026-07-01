@@ -143,6 +143,7 @@ import type { MovementSimulationState, PredictionCorrectionMetrics } from '@voxe
 import { isMovementTraceRecordingEnabled, recordMovementTraceFrame } from '../../anticheat/movementTraceRecorder';
 import {
   addLocalMovementImpulse,
+  attachClientMovementState,
   confirmLocalMovementTransform,
   createLocalMovementCommand,
   createMovementCommandPacket,
@@ -1161,8 +1162,10 @@ export function runPredictionAndCommandPhase(input: {
     });
     recordMovementCommandGenerated();
     refs.pendingCrouchPressedRef.current = false;
-    refs.pendingMovementCommandsRef.current.push(command);
     const nextPredictedState = stepLocalMovementPrediction(localPlayer, command);
+    refs.pendingMovementCommandsRef.current.push(
+      attachClientMovementState(command, nextPredictedState)
+    );
     if (
       commandInput.jump &&
       wasGroundedBeforeStep &&
@@ -2083,7 +2086,9 @@ function runBattleRoyalDeploymentFrame(
       clientTimeMs: now,
     });
     recordMovementCommandGenerated();
-    refs.pendingMovementCommandsRef.current.push(command);
+    refs.pendingMovementCommandsRef.current.push(
+      predictedDropState ? attachClientMovementState(command, predictedDropState) : command
+    );
     refs.movementCommandAccumulatorRef.current -= MOVEMENT_SUBSTEP_SECONDS;
     refs.tickRef.current = command.seq;
     substepsThisFrame++;

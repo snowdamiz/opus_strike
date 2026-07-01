@@ -24,6 +24,8 @@ import { getMapPrepCacheKey } from './utils/mapWarmup/mapPrepCacheKey';
 import { prebuildPreparedMapGeometryDeferred } from './utils/mapWarmup/deferredMapGeometryWarmup';
 import { config } from './config/environment';
 import type { MapWarmupSnapshot } from './utils/mapWarmup/mapWarmupCoordinator';
+import { useStreamerModeController } from './hooks/useStreamerModeController';
+import { useStreamerStore, type StreamerLoadingReason } from './store/streamerStore';
 
 const loadGameCanvasModule = () => import('./components/game/GameCanvas');
 const loadMapVoteScreenModule = () => import('./components/ui/MapVoteScreen');
@@ -85,6 +87,12 @@ function yieldForMatchResourceWarmup(): Promise<void> {
   });
 }
 
+function getStreamerLoadingTitle(reason: StreamerLoadingReason): string {
+  if (reason === 'spinning_up_bot_match') return 'SPINNING UP BOT MATCH';
+  if (reason === 'switching_feed') return 'SWITCHING FEED';
+  return 'FINDING LIVE GAME';
+}
+
 async function prepareMatchMapWarmupResources(input: {
   seed: number;
   themeId?: VoxelMapTheme['id'] | null;
@@ -128,6 +136,9 @@ export function App() {
   const isObserverMode = useGameStore((state) => state.localPlayer?.role === 'observer');
   const scoreboardKeybind = useSettingsStore((state) => state.settings.keybindings.scoreboard);
   const showHUD = useSettingsStore((state) => state.settings.showHUD);
+  const streamerIsActive = useStreamerStore((state) => state.isActive);
+  const streamerLoadingReason = useStreamerStore((state) => state.loadingReason);
+  const streamerLastError = useStreamerStore((state) => state.lastError);
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showInGameMenu, setShowInGameMenu] = useState(false);
   const [shouldMountMatchWorld, setShouldMountMatchWorld] = useState(false);
@@ -146,15 +157,17 @@ export function App() {
   const { preloadSoundGroup } = useAudio();
   const { matchStartGateKey, reportMatchSceneReady } = useNetwork();
   useGlobalButtonSounds();
+  useStreamerModeController();
 
   useEffect(() => () => {
     disposeSharedAudioResources();
   }, []);
 
   const isActiveGame = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
+  const visibleMatchSummary = streamerIsActive ? null : matchSummary;
   const shouldPrepareMatchWorld = (
     appPhase === 'in_game' &&
-    !matchSummary &&
+    !visibleMatchSummary &&
     (gamePhase === 'waiting' || gamePhase === 'hero_select' || isActiveGame)
   );
   const warmupKey = useMemo(
@@ -169,7 +182,7 @@ export function App() {
       !isMatchSceneReady
     )
   );
-  const shouldTrackMatchLoadingProgress = appPhase === 'match_loading' || shouldPrepareMatchWorld;
+  const shouldTrackMatchLoadingProgress = appPhase === 'match_loading' || appPhase === 'streamer_loading' || shouldPrepareMatchWorld;
   const isBattleRoyalLoading = gameplayMode === 'battle_royal' || mapProfileId === 'battle_royal_large';
   const matchLoadingTitle = isBattleRoyalLoading ? 'GENERATING MAP' : 'LOADING ARENA';
   const matchLoadingEyebrow = isBattleRoyalLoading ? 'Battle Royal' : 'Match';
@@ -200,7 +213,8 @@ export function App() {
       appPhase === 'matchmaking' ||
       appPhase === 'in_lobby' ||
       appPhase === 'map_vote' ||
-      appPhase === 'match_loading'
+      appPhase === 'match_loading' ||
+      appPhase === 'streamer_loading'
     );
 
     preloadSoundGroup(shouldPreloadLobbyAudio ? 'lobby' : 'menu');
@@ -350,7 +364,8 @@ export function App() {
         document.pointerLockElement === null &&
         appPhase === 'in_game' &&
         !showInGameMenu &&
-        !tutorialCompletionOverlayOpen
+        !tutorialCompletionOverlayOpen &&
+        !streamerIsActive
       ) {
         // Pointer lock was exited - open the menu
         setShowInGameMenu(true);
@@ -370,7 +385,7 @@ export function App() {
       window.removeEventListener('mouseup', handleMouseUp);
       document.removeEventListener('pointerlockchange', handlePointerLockChange);
     };
-  }, [appPhase, scoreboardKeybind, showInGameMenu]);
+  }, [appPhase, scoreboardKeybind, showInGameMenu, streamerIsActive]);
 
   // Close menu when leaving the game
   useEffect(() => {
@@ -576,9 +591,26 @@ export function App() {
     );
   }
 
+  if (appPhase === 'streamer_loading') {
+    return (
+      <MatchLoadingScreen
+        key={`streamer:${streamerLoadingReason}`}
+        initialProgress={matchLoadingProgressRef.current}
+        eyebrow="Streamer Mode"
+        title={getStreamerLoadingTitle(streamerLoadingReason)}
+        label={streamerLastError ?? 'Live Feed'}
+        ariaLabel="Loading streamer feed"
+        trackStartLabel="Control"
+        trackEndLabel="Broadcast"
+        fallbackProgressCap={streamerLoadingReason === 'spinning_up_bot_match' ? 72 : 88}
+        onProgressChange={handleMatchLoadingProgressChange}
+      />
+    );
+  }
+
   // In game
   if (appPhase === 'in_game') {
-    if (matchSummary) {
+    if (visibleMatchSummary) {
       return (
         <Suspense fallback={null}>
           <MatchSummaryScreen />
@@ -591,7 +623,7 @@ export function App() {
         <Suspense fallback={null}>
           {shouldMountMatchWorld && (
             <GameCanvas
-              inputEnabled={!showInGameMenu && !tutorialCompletionOverlayOpen}
+              inputEnabled={!streamerIsActive && !showInGameMenu && !tutorialCompletionOverlayOpen}
               onMatchStartReady={handleMatchStartSceneReady}
               onReady={handleMatchSceneReady}
               onWarmupUpdate={handleWarmupUpdate}
@@ -616,7 +648,7 @@ export function App() {
         )}
 
         {/* Show HUD during active gameplay */}
-        {isActiveGame && isMatchSceneReady && !isObserverMode && (
+        {isActiveGame && isMatchSceneReady && !streamerIsActive && !isObserverMode && (
           <>
             {showHUD && <HUD />}
             {isTutorialMode && <TutorialGuide />}
@@ -635,16 +667,16 @@ export function App() {
         )}
 
         {/* Countdown overlay */}
-        {gamePhase === 'countdown' && isMatchSceneReady && !isObserverMode && <CountdownOverlay />}
+        {gamePhase === 'countdown' && isMatchSceneReady && !streamerIsActive && !isObserverMode && <CountdownOverlay />}
 
         {/* Round/game end overlays */}
-        {gamePhase === 'round_end' && (
+        {gamePhase === 'round_end' && !streamerIsActive && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50 px-4 text-center">
             <h2 className="game-end-overlay-title font-display text-white">Round Over</h2>
           </div>
         )}
 
-        {gamePhase === 'game_end' && (
+        {gamePhase === 'game_end' && !streamerIsActive && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50 px-4 text-center">
             <h2 className="game-end-overlay-title font-display text-voxel-primary">Game Over</h2>
           </div>
@@ -652,17 +684,17 @@ export function App() {
 
         {/* In-game menu (ESC) */}
         <Suspense fallback={null}>
-          {showInGameMenu && !tutorialCompletionOverlayOpen && <InGameMenu onClose={() => setShowInGameMenu(false)} />}
+          {showInGameMenu && !streamerIsActive && !tutorialCompletionOverlayOpen && <InGameMenu onClose={() => setShowInGameMenu(false)} />}
         </Suspense>
 
         {/* Developer console (Enter key) */}
         <Suspense fallback={null}>
-          <GameConsole />
+          {!streamerIsActive && <GameConsole />}
         </Suspense>
 
         {/* Performance monitor overlay */}
         <Suspense fallback={null}>
-          {config.clientDiagnosticsEnabled && isMatchSceneReady && <PerfMonitorOverlay />}
+          {config.clientDiagnosticsEnabled && isMatchSceneReady && !streamerIsActive && <PerfMonitorOverlay />}
         </Suspense>
       </div>
     );

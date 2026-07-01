@@ -23,6 +23,7 @@ export interface MovementShadowSimulationInput {
   chronosAscendantActive?: boolean;
   proposedPosition: Vec3;
   proposedVelocity: Vec3;
+  proposedMovement?: PlayerMovementState;
 }
 
 export interface MovementShadowSimulationSample {
@@ -178,7 +179,7 @@ export function advanceMovementShadowSimulation(input: MovementShadowSimulationI
   const sample = {
     positionDrift: distance(simulated.position, input.proposedPosition),
     velocityDrift: distance(simulated.velocity, input.proposedVelocity),
-    movementMismatch: movementMismatch(simulated.movement, input.playerMovement),
+    movementMismatch: movementMismatch(simulated.movement, input.proposedMovement ?? input.playerMovement),
   };
 
   return {

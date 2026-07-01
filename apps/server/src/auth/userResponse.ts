@@ -1,6 +1,7 @@
 import type { AuthAccount, User } from '@prisma/client';
 import type { LinkedAccountSummary, UserResponse } from './types';
 import { serializeRankPayload } from '../ranking/serialization';
+import { isConfiguredGameAdminWallet } from './gameAdmin';
 
 type UserWithAccounts = User & {
   authAccounts?: AuthAccount[];
@@ -20,6 +21,7 @@ export function serializeUser(user: UserWithAccounts): UserResponse {
   return {
     id: user.id,
     walletAddress: user.walletAddress,
+    isGameAdmin: isConfiguredGameAdminWallet(user.walletAddress),
     name: user.name,
     lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
     tutorialCompletedAt: user.tutorialCompletedAt?.toISOString() ?? null,
