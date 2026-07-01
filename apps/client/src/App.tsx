@@ -25,11 +25,17 @@ import { prebuildPreparedMapGeometryDeferred } from './utils/mapWarmup/deferredM
 import { config } from './config/environment';
 import type { MapWarmupSnapshot } from './utils/mapWarmup/mapWarmupCoordinator';
 
-const GameCanvas = lazy(() => import('./components/game/GameCanvas').then((module) => ({ default: module.GameCanvas })));
-const MapVoteScreen = lazy(() => import('./components/ui/MapVoteScreen').then((module) => ({ default: module.MapVoteScreen })));
-const Scoreboard = lazy(() => import('./components/ui/Scoreboard').then((module) => ({ default: module.Scoreboard })));
-const InGameMenu = lazy(() => import('./components/ui/InGameMenu').then((module) => ({ default: module.InGameMenu })));
-const GameConsole = lazy(() => import('./components/ui/GameConsole').then((module) => ({ default: module.GameConsole })));
+const loadGameCanvasModule = () => import('./components/game/GameCanvas');
+const loadMapVoteScreenModule = () => import('./components/ui/MapVoteScreen');
+const loadScoreboardModule = () => import('./components/ui/Scoreboard');
+const loadInGameMenuModule = () => import('./components/ui/InGameMenu');
+const loadGameConsoleModule = () => import('./components/ui/GameConsole');
+
+const GameCanvas = lazy(() => loadGameCanvasModule().then((module) => ({ default: module.GameCanvas })));
+const MapVoteScreen = lazy(() => loadMapVoteScreenModule().then((module) => ({ default: module.MapVoteScreen })));
+const Scoreboard = lazy(() => loadScoreboardModule().then((module) => ({ default: module.Scoreboard })));
+const InGameMenu = lazy(() => loadInGameMenuModule().then((module) => ({ default: module.InGameMenu })));
+const GameConsole = lazy(() => loadGameConsoleModule().then((module) => ({ default: module.GameConsole })));
 const MatchSummaryScreen = lazy(() => import('./components/ui/MatchSummaryScreen').then((module) => ({ default: module.MatchSummaryScreen })));
 const PerfMonitorOverlay = lazy(() => import('./components/game/PerfMonitor').then((module) => ({ default: module.PerfMonitorOverlay })));
 const PREMATCH_COUNTDOWN_EFFECT_FADE_MS = 3000;
@@ -94,6 +100,15 @@ async function prepareMatchMapWarmupResources(input: {
   });
   const preparedMap = seedMapPrepCacheFromManifest(input.seed, manifest, 'match');
   prebuildPreparedMapGeometryDeferred(preparedMap, { frameBudgetMs: 2, label: input.label });
+}
+
+async function preloadMatchRuntimeModules(): Promise<void> {
+  await Promise.all([
+    loadGameCanvasModule(),
+    loadGameConsoleModule(),
+    loadInGameMenuModule(),
+    import('./hooks/usePhysics').then(({ initPhysics }) => initPhysics()),
+  ]);
 }
 
 export function App() {
@@ -221,11 +236,13 @@ export function App() {
           .then((combatText) => {
             combatText.prewarmCombatTextTextures();
           });
+        const runtimeModuleWarmupPromise = preloadMatchRuntimeModules();
 
         await Promise.all([
           soundWarmupPromise,
           effectWarmupPromise,
           combatTextWarmupPromise,
+          runtimeModuleWarmupPromise,
           mapWarmupPromise,
         ]);
         await yieldForMatchResourceWarmup();

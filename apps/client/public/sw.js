@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'slop-heroes';
-const CACHE_VERSION = `${CACHE_PREFIX}-v5`;
+const CACHE_VERSION = `${CACHE_PREFIX}-v6`;
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const CACHE_PREFIXES_TO_CLEAN = ['slop-heroes-', 'voxel-strike-'];
@@ -102,7 +102,11 @@ async function networkFirst(request, cacheName, fallbackUrl) {
     const response = await fetch(request, { cache: 'no-store' });
 
     if (response.ok) {
-      await cache.put(request, response.clone());
+      try {
+        await cache.put(request, response.clone());
+      } catch {
+        // Keep serving the fresh navigation response if Cache Storage is unavailable.
+      }
     }
 
     return response;
@@ -122,8 +126,12 @@ async function staleWhileRevalidate(request, cacheName) {
     const response = await fetch(request);
 
     if (response.ok && shouldCacheRuntimeResponse(response)) {
-      await cache.put(request, response.clone());
-      await trimRuntimeCache(cache);
+      try {
+        await cache.put(request, response.clone());
+        await trimRuntimeCache(cache);
+      } catch {
+        // The network response is still valid even if runtime cache writes fail.
+      }
     }
 
     return response;
@@ -134,7 +142,11 @@ async function staleWhileRevalidate(request, cacheName) {
     return cachedResponse;
   }
 
-  return fetchAndCache();
+  try {
+    return await fetchAndCache();
+  } catch {
+    return cachedResponse || Response.error();
+  }
 }
 
 function shouldCacheRuntimeResponse(response) {

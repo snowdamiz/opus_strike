@@ -1,5 +1,5 @@
 import './polyfills';
-import React, { Suspense, lazy, useState } from 'react';
+import React, { Suspense, lazy, useState, type ReactNode } from 'react';
 import ReactDOM from 'react-dom/client';
 import { WalletProvider } from './contexts/WalletContext';
 import { NetworkProvider } from './contexts/NetworkContext';
@@ -19,6 +19,8 @@ const ModelLab = lazy(() =>
 const legalPageKind = getLegalPageKind(window.location.pathname);
 const isAdminRoute = getIsAdminRoute(window.location.pathname);
 const isModelLabRoute = getIsModelLabRoute(window.location.pathname);
+const DYNAMIC_IMPORT_RELOAD_STORAGE_KEY = 'slop:dynamicImportReloadAt';
+const DYNAMIC_IMPORT_RELOAD_COOLDOWN_MS = 60_000;
 
 function getLegalPageKind(pathname: string) {
   if (pathname === '/terms-of-service') return 'terms';
@@ -32,6 +34,64 @@ function getIsAdminRoute(pathname: string) {
 
 function getIsModelLabRoute(pathname: string) {
   return pathname === '/model-lab' || pathname === '/model-lab/';
+}
+
+function isDynamicImportLoadError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /dynamically imported module|Importing a module script failed|error loading dynamically imported module|ChunkLoadError|Loading chunk \d+ failed|CSS_CHUNK_LOAD_FAILED/i.test(message);
+}
+
+function canReloadAfterDynamicImportError(): boolean {
+  try {
+    const now = Date.now();
+    const lastReloadAt = Number(window.sessionStorage.getItem(DYNAMIC_IMPORT_RELOAD_STORAGE_KEY) || 0);
+    if (Number.isFinite(lastReloadAt) && now - lastReloadAt < DYNAMIC_IMPORT_RELOAD_COOLDOWN_MS) {
+      return false;
+    }
+    window.sessionStorage.setItem(DYNAMIC_IMPORT_RELOAD_STORAGE_KEY, String(now));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+class ChunkLoadErrorBoundary extends React.Component<
+  { children: ReactNode },
+  { hasError: boolean; isChunkLoadError: boolean }
+> {
+  state = { hasError: false, isChunkLoadError: false };
+
+  static getDerivedStateFromError(error: unknown) {
+    return {
+      hasError: true,
+      isChunkLoadError: isDynamicImportLoadError(error),
+    };
+  }
+
+  componentDidCatch(error: unknown) {
+    if (!isDynamicImportLoadError(error) || !canReloadAfterDynamicImportError()) return;
+
+    window.setTimeout(() => {
+      window.location.reload();
+    }, 50);
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-[#09090b] px-6 text-center font-display text-white">
+        <div>
+          <div className="text-sm uppercase tracking-[0.28em] text-white/55">
+            {this.state.isChunkLoadError ? 'Refreshing client' : 'Client error'}
+          </div>
+          <div className="mt-3 text-2xl text-white">
+            {this.state.isChunkLoadError ? 'Reloading...' : 'Refresh required'}
+          </div>
+        </div>
+      </div>
+    );
+  }
 }
 
 function ClientAppShell() {
@@ -55,17 +115,19 @@ function ClientAppShell() {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <Suspense fallback={null}>
-      {isModelLabRoute ? (
-        <ModelLab />
-      ) : isAdminRoute ? (
-        <AdminConsole />
-      ) : legalPageKind ? (
-        <LegalPage kind={legalPageKind} />
-      ) : (
-        <ClientAppShell />
-      )}
-    </Suspense>
+    <ChunkLoadErrorBoundary>
+      <Suspense fallback={null}>
+        {isModelLabRoute ? (
+          <ModelLab />
+        ) : isAdminRoute ? (
+          <AdminConsole />
+        ) : legalPageKind ? (
+          <LegalPage kind={legalPageKind} />
+        ) : (
+          <ClientAppShell />
+        )}
+      </Suspense>
+    </ChunkLoadErrorBoundary>
   </React.StrictMode>
 );
 
