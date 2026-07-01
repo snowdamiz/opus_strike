@@ -1153,6 +1153,7 @@ interface GameCanvasProps {
   onMatchStartReady?: () => void;
   onReady?: () => void;
   onWarmupUpdate?: (snapshot: MapWarmupSnapshot) => void;
+  inputEnabled?: boolean;
   startupRampActive?: boolean;
 }
 
@@ -1160,6 +1161,7 @@ export function GameCanvas({
   onMatchStartReady,
   onReady,
   onWarmupUpdate,
+  inputEnabled = true,
   startupRampActive = false,
 }: GameCanvasProps) {
   useEffect(() => () => {
@@ -1455,7 +1457,7 @@ export function GameCanvas({
         {isBattleRoyalEliminated ? (
           <BattleRoyalTeamSpectatorCameraController enabled />
         ) : (
-          <PlayerController enabled={isWorldReady} />
+          <PlayerController enabled={isWorldReady} inputEnabled={inputEnabled} />
         )}
         
         {/* Other players - always rendered so players can see each other in lobby */}

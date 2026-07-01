@@ -5,6 +5,7 @@ import { isGameConsoleOpen } from '../store/gameConsoleState';
 import { useMobileControlsStore } from '../store/mobileControlsStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { mouseButtonToKeybindCode } from '../utils/keybindings';
+import { useGamepadInput } from './gamepadInput';
 
 type InputAction = keyof InputState;
 
@@ -12,8 +13,13 @@ interface UseInputReturn {
   inputState: InputState;
   isPointerLocked: boolean;
   isTouchInputActive: boolean;
+  isGamepadInputActive: boolean;
   requestPointerLock: () => void;
   exitPointerLock: () => void;
+}
+
+interface UseInputOptions {
+  gamepadEnabled?: boolean;
 }
 
 function mergeInputStates(primary: InputState, secondary: InputState): InputState {
@@ -67,7 +73,8 @@ export function shouldPreventGameplayBrowserShortcut(input: {
   );
 }
 
-export function useInput(): UseInputReturn {
+export function useInput(options: UseInputOptions = {}): UseInputReturn {
+  const { gamepadEnabled = true } = options;
   const inputStateRef = useRef<InputState>(createEmptyInputState());
   const [inputState, setInputState] = useState<InputState>(createEmptyInputState());
   const [isPointerLocked, setIsPointerLocked] = useState(
@@ -75,6 +82,7 @@ export function useInput(): UseInputReturn {
   );
   const mobileInputState = useMobileControlsStore(state => state.inputState);
   const isTouchInputActive = useMobileControlsStore(state => state.isTouchInputActive);
+  const { inputState: gamepadInputState, isGamepadInputActive } = useGamepadInput(gamepadEnabled);
   const toggleCrouch = useSettingsStore(state => state.settings.toggleCrouch);
   const toggleSprint = useSettingsStore(state => state.settings.toggleSprint);
   const keybindings = useSettingsStore(state => state.settings.keybindings);
@@ -301,14 +309,15 @@ export function useInput(): UseInputReturn {
   }, []);
 
   const mergedInputState = useMemo(
-    () => mergeInputStates(inputState, mobileInputState),
-    [inputState, mobileInputState]
+    () => mergeInputStates(mergeInputStates(inputState, mobileInputState), gamepadInputState),
+    [gamepadInputState, inputState, mobileInputState]
   );
 
   return {
     inputState: mergedInputState,
     isPointerLocked,
     isTouchInputActive,
+    isGamepadInputActive,
     requestPointerLock,
     exitPointerLock,
   };

@@ -1,11 +1,8 @@
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { type HeroId, type InputState } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
-import {
-  addMobileLookDelta,
-  resetMobileControls,
-  useMobileControlsStore,
-} from '../../store/mobileControlsStore';
+import { addLookDelta } from '../../store/lookInputStore';
+import { resetMobileControls, useMobileControlsStore } from '../../store/mobileControlsStore';
 import { useTouchControlsAvailable } from '../../hooks/useDeviceCapabilities';
 import { HUD_HERO_COLORS } from '../../styles/colorTokens';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
@@ -59,7 +56,7 @@ function TouchLookZone({ disabled }: { disabled: boolean }) {
         const deltaX = e.clientX - lastPoint.x;
         const deltaY = e.clientY - lastPoint.y;
         lastPointRef.current = { x: e.clientX, y: e.clientY };
-        addMobileLookDelta(deltaX, deltaY);
+        addLookDelta(deltaX, deltaY);
         e.preventDefault();
         e.stopPropagation();
       }}

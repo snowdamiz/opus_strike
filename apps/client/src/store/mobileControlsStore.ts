@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { createEmptyInputState } from '@voxel-strike/shared';
 import type { InputState } from '@voxel-strike/shared';
+import { resetLookDelta } from './lookInputStore';
 
 type MobileMovementVector = {
   x: number;
@@ -18,8 +19,6 @@ interface MobileControlsState {
 
 const MOVEMENT_DEADZONE = 0.28;
 const SPRINT_THRESHOLD = 0.78;
-
-let pendingLookDelta = { x: 0, y: 0 };
 
 function hasAnyInput(inputState: InputState): boolean {
   return Object.values(inputState).some(Boolean);
@@ -88,22 +87,7 @@ export const useMobileControlsStore = create<MobileControlsState>((set) => ({
   }),
 }));
 
-export function addMobileLookDelta(deltaX: number, deltaY: number): void {
-  if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) return;
-
-  pendingLookDelta = {
-    x: pendingLookDelta.x + deltaX,
-    y: pendingLookDelta.y + deltaY,
-  };
-}
-
-export function consumeMobileLookDelta(): MobileMovementVector {
-  const delta = pendingLookDelta;
-  pendingLookDelta = { x: 0, y: 0 };
-  return delta;
-}
-
 export function resetMobileControls(): void {
-  pendingLookDelta = { x: 0, y: 0 };
+  resetLookDelta();
   useMobileControlsStore.getState().reset();
 }

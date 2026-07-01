@@ -591,6 +591,7 @@ export function App() {
         <Suspense fallback={null}>
           {shouldMountMatchWorld && (
             <GameCanvas
+              inputEnabled={!showInGameMenu && !tutorialCompletionOverlayOpen}
               onMatchStartReady={handleMatchStartSceneReady}
               onReady={handleMatchSceneReady}
               onWarmupUpdate={handleWarmupUpdate}
