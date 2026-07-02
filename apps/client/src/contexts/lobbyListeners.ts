@@ -63,6 +63,7 @@ interface MatchmakingStatusMessage {
   queuedHumanCount?: number;
   provisionalHumanCount?: number;
   requiredPlayers?: number;
+  botFillGraceEndsAt?: number;
   capacityBlocked?: boolean;
   capacityMaxPlayers?: number;
 }
@@ -140,6 +141,7 @@ function toMatchmakingStatus(data: MatchmakingStatusMessage): MatchmakingStatusS
     queuedHumanCount: typeof data.queuedHumanCount === 'number' ? data.queuedHumanCount : null,
     provisionalHumanCount: typeof data.provisionalHumanCount === 'number' ? data.provisionalHumanCount : null,
     requiredPlayers: typeof data.requiredPlayers === 'number' ? data.requiredPlayers : null,
+    botFillGraceEndsAt: typeof data.botFillGraceEndsAt === 'number' ? data.botFillGraceEndsAt : null,
     capacityBlocked: data.capacityBlocked === true,
     capacityMaxPlayers: typeof data.capacityMaxPlayers === 'number' ? data.capacityMaxPlayers : null,
   };

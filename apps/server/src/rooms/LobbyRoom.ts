@@ -155,6 +155,7 @@ const PRODUCTION_CUSTOM_MIN_PARTICIPANTS = 2;
 const CUSTOM_OBSERVER_SLOT_COUNT = 1;
 const MAP_VOTE_DURATION_MS = 30000;
 const MATCHMAKING_AUTO_START_DELAY_MS = 250;
+const MATCHMAKING_BOT_FILL_GRACE_PERIOD_MS = 30000;
 const BOT_NAMES = [
   'Vector',
   'Cipher',
@@ -232,6 +233,19 @@ export function getMatchmakingBotFillPriorityTeams(input: {
   return Array.from({ length: fillCount }, () => partyTeam);
 }
 
+export function getMatchmakingJoinCapacity(input: {
+  botFillEnabled: boolean;
+  status: string;
+  requiredPlayers: number;
+  maxPlayers: number;
+}): number {
+  if (input.botFillEnabled && input.status === 'matchmaking') {
+    return input.maxPlayers;
+  }
+
+  return input.requiredPlayers;
+}
+
 export function shouldCancelExpectedPartyMatchmakingQueue(input: {
   status: string;
   leavingUserId: string | null;
@@ -270,6 +284,7 @@ export class LobbyRoom extends Room<LobbyState> {
   private matchmakingPartyTeam: Team | null = null;
   private pendingPartyBots: PartyBotLaunchDescriptor[] = [];
   private matchmakingAutoStartTimeout: ReturnType<typeof setTimeout> | null = null;
+  private matchmakingAutoStartAt = 0;
   private capacityRetryTimeout: ReturnType<typeof setTimeout> | null = null;
   private gameStartDisconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private matchmakingCapacityBlocked = false;
@@ -489,7 +504,7 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!this.isJoinSelectedSkinConsistent(options, requestedTicket)) return false;
     const requestedUserId = this.getRequestedMatchmakingUserId(options);
     if (this.shouldReserveExpectedHumanSlot(requestedUserId)) return false;
-    if (this.getCombatParticipantCount() >= this.getMatchmakingRequiredPlayers()) return false;
+    if (this.getCombatParticipantCount() >= this.getMatchmakingJoinCapacity()) return false;
     if (!this.canAdmitMatchmakingHero(requestedUserId, this.resolveJoinSelectedHero(options, requestedTicket))) return false;
     return true;
   }
@@ -1797,6 +1812,15 @@ export class LobbyRoom extends Room<LobbyState> {
     return this.gameplayRules.maxPlayers;
   }
 
+  private getMatchmakingJoinCapacity(): number {
+    return getMatchmakingJoinCapacity({
+      botFillEnabled: this.isBotFillMatchmakingQueue(),
+      status: this.state.status,
+      requiredPlayers: this.getMatchmakingRequiredPlayers(),
+      maxPlayers: this.gameplayRules.maxPlayers,
+    });
+  }
+
   private getLargestAssignableTeamCount(): number {
     const counts = countLobbyRoster(this.state.players).team;
     return this.getAssignableTeamIds().reduce((largest, teamId) => (
@@ -1975,6 +1999,10 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!this.hasMinimumMatchmakingHumans()) return;
     const requiredPlayers = this.getMatchmakingRequiredPlayers();
     if (!this.isBotFillMatchmakingQueue() && this.getCombatParticipantCount() < requiredPlayers) return;
+    if (this.shouldWaitForMatchmakingBotFillGrace()) {
+      this.scheduleMatchmakingAutoStart(this.getMatchmakingBotFillGraceRemainingMs());
+      return;
+    }
 
     const capacityAvailable = await this.ensureInGameCapacityAvailableForRoster();
     if (!capacityAvailable || this.state.status !== 'matchmaking') return;
@@ -1985,14 +2013,37 @@ export class LobbyRoom extends Room<LobbyState> {
     await this.startMapSelection();
   }
 
-  private scheduleMatchmakingAutoStart(): void {
+  private shouldWaitForMatchmakingBotFillGrace(now = Date.now()): boolean {
+    return this.isBotFillMatchmakingQueue()
+      && this.state.status === 'matchmaking'
+      && this.getCombatParticipantCount() < this.gameplayRules.maxPlayers
+      && this.getMatchmakingBotFillGraceRemainingMs(now) > 0;
+  }
+
+  private getMatchmakingBotFillGraceRemainingMs(now = Date.now()): number {
+    if (!this.isBotFillMatchmakingQueue()) return 0;
+    return Math.max(0, this.getMatchmakingBotFillGraceEndsAt() - now);
+  }
+
+  private getMatchmakingBotFillGraceEndsAt(): number {
+    return (this.state.createdAt || Date.now()) + MATCHMAKING_BOT_FILL_GRACE_PERIOD_MS;
+  }
+
+  private scheduleMatchmakingAutoStart(delayMs = MATCHMAKING_AUTO_START_DELAY_MS): void {
     if (!this.isMatchmakingQueue() || this.disposed || this.state.status !== 'matchmaking') return;
-    if (this.matchmakingAutoStartTimeout) return;
+    const delay = Math.max(0, Math.floor(delayMs));
+    const scheduledAt = Date.now() + delay;
+    if (this.matchmakingAutoStartTimeout) {
+      if (this.matchmakingAutoStartAt <= scheduledAt) return;
+      this.clearMatchmakingAutoStart();
+    }
 
     this.matchmakingAutoStartTimeout = setTimeout(() => {
       this.matchmakingAutoStartTimeout = null;
+      this.matchmakingAutoStartAt = 0;
       this.tryStartMatchmakingMapVote();
-    }, MATCHMAKING_AUTO_START_DELAY_MS);
+    }, delay);
+    this.matchmakingAutoStartAt = scheduledAt;
     this.matchmakingAutoStartTimeout.unref?.();
   }
 
@@ -2000,6 +2051,7 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!this.matchmakingAutoStartTimeout) return;
     clearTimeout(this.matchmakingAutoStartTimeout);
     this.matchmakingAutoStartTimeout = null;
+    this.matchmakingAutoStartAt = 0;
   }
 
   private clearCapacityRetry(): void {
@@ -2268,6 +2320,10 @@ export class LobbyRoom extends Room<LobbyState> {
       rankSearchDistance: getAllowedRankDivisionDistance(this.getMatchmakingWaitMs()),
       matchmakingCreatedAt: this.state.createdAt,
       requiredPlayers: this.getMatchmakingRequiredPlayers(),
+      matchmakingJoinCapacity: this.getMatchmakingJoinCapacity(),
+      botFillGraceEndsAt: this.isBotFillMatchmakingQueue()
+        ? this.getMatchmakingBotFillGraceEndsAt()
+        : undefined,
       queuedHumanCount,
       provisionalHumanCount: Math.max(0, humanCount - queuedHumanCount),
       capacityBlocked: this.matchmakingCapacityBlocked,
@@ -2308,6 +2364,7 @@ export class LobbyRoom extends Room<LobbyState> {
       matchmakingMode: this.isMatchmakingQueue(),
       rankBandId: this.isMatchmakingQueue() ? this.rankBandId : undefined,
       requiredPlayers: this.isMatchmakingQueue() ? this.getMatchmakingRequiredPlayers() : undefined,
+      matchmakingJoinCapacity: this.isMatchmakingQueue() ? this.getMatchmakingJoinCapacity() : undefined,
       queuedHumanCount: humanCount,
       matchmakingTeamCounts: matchmakingHeroQueueState?.teamCounts,
       matchmakingTeamHeroIds: matchmakingHeroQueueState?.teamHeroIds,

@@ -594,6 +594,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         queuedHumanCount: 0,
         provisionalHumanCount: 1,
         requiredPlayers: null,
+        botFillGraceEndsAt: null,
         capacityBlocked: false,
         capacityMaxPlayers: null,
       });
@@ -659,6 +660,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         queuedHumanCount: 0,
         provisionalHumanCount: 1,
         requiredPlayers: null,
+        botFillGraceEndsAt: null,
         capacityBlocked: false,
         capacityMaxPlayers: null,
       });
@@ -753,6 +755,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           queuedHumanCount: 0,
           provisionalHumanCount: 1,
           requiredPlayers: null,
+          botFillGraceEndsAt: null,
           capacityBlocked: false,
           capacityMaxPlayers: null,
         });

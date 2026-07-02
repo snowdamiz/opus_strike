@@ -104,6 +104,7 @@ export interface MatchmakingStatus {
   queuedHumanCount: number | null;
   provisionalHumanCount: number | null;
   requiredPlayers: number | null;
+  botFillGraceEndsAt: number | null;
   capacityBlocked: boolean;
   capacityMaxPlayers: number | null;
 }
