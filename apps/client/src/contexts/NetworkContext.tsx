@@ -1191,6 +1191,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       gameRoomRef.current = room;
 
       setupGameListeners(room, 'Streamer');
+      room.send('streamerObserverReady', { clientTime: Date.now() });
 
       const localObserver = createDefaultLocalPlayer(room.sessionId, 'Streamer');
       localObserver.role = 'observer';
