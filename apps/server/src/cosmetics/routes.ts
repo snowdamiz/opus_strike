@@ -11,7 +11,6 @@ import {
   getSkinPurchaseIntent,
   parseHeroIdParam,
   parseSkinIdInput,
-  simulateSkinPurchaseTransaction,
   submitSignedSkinPurchaseTransaction,
   submitSkinPurchaseSignature,
   updateUserHeroLoadout,
@@ -109,7 +108,10 @@ router.post('/purchases/intents', async (req, res) => {
       res.status(400).json({ error: 'Invalid skin' });
       return;
     }
-    res.json(await createSkinPurchaseIntent({ userId: user.id, skinId }));
+    const walletAddress = typeof req.body?.walletAddress === 'string'
+      ? req.body.walletAddress
+      : '';
+    res.json(await createSkinPurchaseIntent({ userId: user.id, skinId, walletAddress }));
   } catch (error) {
     sendCosmeticsError(res, error, 'Failed to create purchase intent');
   }
@@ -134,24 +136,6 @@ router.post('/purchases/intents/:intentId/transaction', async (req, res) => {
     res.json(await buildSkinPurchaseTransaction({ userId: user.id, intentId: req.params.intentId }));
   } catch (error) {
     sendCosmeticsError(res, error, 'Failed to build purchase transaction');
-  }
-});
-
-router.post('/purchases/intents/:intentId/simulate', async (req, res) => {
-  if (!enforceJsonRateLimit(req, res, 'cosmetics:purchase-simulate', COSMETICS_RATE_LIMITS.purchase)) return;
-  try {
-    const user = await requireUser(req, res);
-    if (!user) return;
-    const transactionBase64 = typeof req.body?.transactionBase64 === 'string'
-      ? req.body.transactionBase64.trim()
-      : '';
-    res.json(await simulateSkinPurchaseTransaction({
-      userId: user.id,
-      intentId: req.params.intentId,
-      transactionBase64,
-    }));
-  } catch (error) {
-    sendCosmeticsError(res, error, 'Failed to simulate purchase transaction');
   }
 });
 

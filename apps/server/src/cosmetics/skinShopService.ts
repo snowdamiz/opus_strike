@@ -105,13 +105,6 @@ export interface SerializedSkinShopItemAudit {
   createdAt: string;
 }
 
-export interface SkinPurchaseSimulationSnapshot {
-  intentId: string;
-  ok: boolean;
-  error: unknown;
-  logs: string[];
-}
-
 function envFlag(name: string, fallback = false): boolean {
   const raw = process.env[name]?.trim().toLowerCase();
   if (!raw) return fallback;
@@ -718,9 +711,18 @@ function serializeIntent(
   };
 }
 
+function readPayerWalletAddress(walletAddress: string): string {
+  const trimmed = walletAddress.trim();
+  if (!trimmed) {
+    throw new SkinShopServiceError('A connected Solana wallet is required');
+  }
+  return assertSolanaPublicKey(trimmed, 'walletAddress').toBase58();
+}
+
 export async function createSkinPurchaseIntent(input: {
   userId: string;
   skinId: HeroSkinId;
+  walletAddress: string;
 }): Promise<SkinPurchaseIntentSnapshot> {
   const skin = getHeroSkinDefinition(input.skinId);
   if (skin.availability === 'unlockable') {
@@ -733,18 +735,18 @@ export async function createSkinPurchaseIntent(input: {
     throw new SkinShopServiceError('Skin is already owned', 409);
   }
 
+  const walletAddress = readPayerWalletAddress(input.walletAddress);
   const [user, shop, item] = await Promise.all([
     prisma.user.findUnique({
       where: { id: input.userId },
-      select: { walletAddress: true },
+      select: { id: true },
     }),
     getOrCreateShopSettings(),
     getOrCreateItemSettings(input.skinId),
   ]);
-  if (!user?.walletAddress) {
-    throw new SkinShopServiceError('A linked Solana wallet is required', 400);
+  if (!user) {
+    throw new SkinShopServiceError('Sign in to purchase skins', 401);
   }
-  const walletAddress = user.walletAddress;
   await assertPurchaseAvailable({ skin, shop, item });
 
   const tokenMintAddress = shop.tokenMintAddress!;
@@ -894,35 +896,6 @@ function decodeSkinPurchaseTransaction(transactionBase64: string): Transaction {
   } catch {
     throw new SkinShopServiceError('Transaction could not be decoded');
   }
-}
-
-export async function simulateSkinPurchaseTransaction(input: {
-  userId: string;
-  intentId: string;
-  transactionBase64: string;
-}): Promise<SkinPurchaseSimulationSnapshot> {
-  const intent = await getIntentForUser(input.userId, input.intentId);
-  assertIntentActive(intent);
-  const transaction = decodeSkinPurchaseTransaction(input.transactionBase64);
-  assertTransactionMessageMatchesIntent(transaction, intent);
-
-  const shop = await getOrCreateShopSettings();
-  const simulation = await (connectionForShop(shop) as Connection & {
-    simulateTransaction: (
-      transaction: Transaction,
-      config?: { sigVerify?: boolean; replaceRecentBlockhash?: boolean }
-    ) => Promise<{ value: { err: unknown; logs: string[] | null } }>;
-  }).simulateTransaction(transaction, {
-    sigVerify: false,
-    replaceRecentBlockhash: false,
-  });
-
-  return {
-    intentId: intent.id,
-    ok: !simulation.value.err,
-    error: simulation.value.err ?? null,
-    logs: simulation.value.logs ?? [],
-  };
 }
 
 export async function submitSignedSkinPurchaseTransaction(input: {

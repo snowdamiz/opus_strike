@@ -17,7 +17,6 @@ import {
   getSkinPurchaseIntent,
   requestRewardEconomy,
   requestSkinCatalog,
-  simulateSkinPurchaseTransaction,
   submitSignedSkinPurchaseTransaction,
   updateHeroSkinLoadout,
 } from '../../contexts/networkApi';
@@ -423,6 +422,7 @@ export function MainLobby() {
     walletAddress,
     connectWallet,
     walletProviders,
+    isConnected: isWalletConnected,
     isConnecting: isWalletConnecting,
     isAuthenticated,
     isNewUser,
@@ -986,32 +986,21 @@ export function MainLobby() {
       setSkinCatalogError(skin.purchaseDisabledReason);
       return;
     }
-    if (!hasWalletAccount) {
-      const linked = await handleLinkWallet();
-      if (!linked) return;
-    }
-
     setSkinActionBusyId(skin.id);
     setSkinCatalogError(null);
     try {
-      const intent = await createSkinPurchaseIntent(skin.id);
-      const connectedWallet = walletAddress ?? await connectWallet();
-      if (!connectedWallet) {
+      const payerWalletAddress = isWalletConnected && walletAddress
+        ? walletAddress
+        : await connectWallet();
+      if (!payerWalletAddress) {
         throw new Error('Connect a wallet before paying');
       }
-      if (connectedWallet !== intent.walletAddress) {
-        throw new Error('Connected wallet does not match the linked account wallet');
-      }
 
-      const transactionPayload = await buildSkinPurchaseTransaction(intent.intentId);
-      const simulation = await simulateSkinPurchaseTransaction({
-        intentId: intent.intentId,
-        transactionBase64: transactionPayload.transactionBase64,
+      const intent = await createSkinPurchaseIntent({
+        skinId: skin.id,
+        walletAddress: payerWalletAddress,
       });
-      if (!simulation.ok) {
-        throw new Error('Purchase transaction simulation failed');
-      }
-
+      const transactionPayload = await buildSkinPurchaseTransaction(intent.intentId);
       const signedTransactionBase64 = await signTransaction(await transactionFromBase64(transactionPayload.transactionBase64));
       const submitted = await submitSignedSkinPurchaseTransaction({
         intentId: intent.intentId,
