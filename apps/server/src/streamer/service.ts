@@ -69,6 +69,9 @@ export interface StreamerGameRoomCreateOptions {
   capacityPlayerCost: number;
   streamerManagedBotGame: true;
   streamerManagedByUserId: string;
+  streamerFeedMode: StreamerFeedMode;
+  streamerCameraMode: StreamerCameraMode;
+  endlessMatch: boolean;
 }
 
 export interface StreamerBotAssignment {
@@ -84,7 +87,7 @@ export interface StreamerBotAssignment {
 
 export interface StreamerTarget {
   room: StreamerRoomListing;
-  source: 'real_player' | 'fallback_bot';
+  source: 'real_player' | 'fallback_bot' | 'bot_deathmatch';
 }
 
 export interface StreamerNextTarget {
@@ -107,6 +110,8 @@ export interface StreamerNextTarget {
     regularObserverCount: number;
     streamerObserverCount: number;
     streamerManagedBotGame: boolean;
+    streamerFeedMode: StreamerFeedMode;
+    streamerCameraMode: StreamerCameraMode;
   };
 }
 
@@ -137,6 +142,9 @@ interface CreateFallbackResult {
 
 const STREAMER_LIVE_PHASES = new Set(['hero_select', 'countdown', 'deployment', 'playing', 'round_end']);
 const STREAMER_ACTIVE_PHASES = new Set(['countdown', 'deployment', 'playing', 'round_end']);
+export const STREAMER_FEED_MODES = ['random', 'bot_deathmatch'] as const;
+export type StreamerFeedMode = typeof STREAMER_FEED_MODES[number];
+export type StreamerCameraMode = 'directed' | 'fixed_aerial';
 const STREAMER_BOT_NAMES = [
   'Ash Relay',
   'Byte Caster',
@@ -189,6 +197,14 @@ function readBoolean(metadata: Record<string, unknown> | null | undefined, key: 
   return metadata?.[key] === true;
 }
 
+function readStreamerFeedMode(metadata: Record<string, unknown> | null | undefined): StreamerFeedMode {
+  return metadata?.streamerFeedMode === 'bot_deathmatch' ? 'bot_deathmatch' : 'random';
+}
+
+function readStreamerCameraMode(metadata: Record<string, unknown> | null | undefined): StreamerCameraMode {
+  return metadata?.streamerCameraMode === 'fixed_aerial' ? 'fixed_aerial' : 'directed';
+}
+
 function metadataForRoom(room: StreamerRoomListing): Record<string, unknown> {
   return room.metadata ?? {};
 }
@@ -207,6 +223,8 @@ export function getStreamerRoomMetadata(room: StreamerRoomListing): StreamerNext
     regularObserverCount: readNumber(metadata, 'regularObserverCount') ?? 0,
     streamerObserverCount: readNumber(metadata, 'streamerObserverCount') ?? 0,
     streamerManagedBotGame: readBoolean(metadata, 'streamerManagedBotGame'),
+    streamerFeedMode: readStreamerFeedMode(metadata),
+    streamerCameraMode: readStreamerCameraMode(metadata),
   };
 }
 
@@ -236,6 +254,7 @@ export function isUsableFallbackStreamerRoom(room: StreamerRoomListing): boolean
   const metadata = getStreamerRoomMetadata(room);
   if (room.locked) return false;
   if (!metadata.streamerManagedBotGame) return false;
+  if (metadata.streamerFeedMode !== 'random') return false;
   if (!metadata.phase || metadata.phase === 'game_end' || metadata.phase === 'cancelled') return false;
   return hasStreamerSeat(room);
 }
@@ -244,6 +263,25 @@ function isSelectableFallbackStreamerRoom(room: StreamerRoomListing, currentRoom
   const metadata = getStreamerRoomMetadata(room);
   if (room.locked) return false;
   if (!metadata.streamerManagedBotGame) return false;
+  if (metadata.streamerFeedMode !== 'random') return false;
+  if (!metadata.phase || metadata.phase === 'game_end' || metadata.phase === 'cancelled') return false;
+  return room.roomId === currentRoomId || hasStreamerSeat(room);
+}
+
+export function isUsableBotDeathmatchStreamerRoom(room: StreamerRoomListing): boolean {
+  const metadata = getStreamerRoomMetadata(room);
+  if (room.locked) return false;
+  if (!metadata.streamerManagedBotGame) return false;
+  if (metadata.streamerFeedMode !== 'bot_deathmatch') return false;
+  if (!metadata.phase || metadata.phase === 'game_end' || metadata.phase === 'cancelled') return false;
+  return hasStreamerSeat(room);
+}
+
+function isSelectableBotDeathmatchStreamerRoom(room: StreamerRoomListing, currentRoomId: string | null): boolean {
+  const metadata = getStreamerRoomMetadata(room);
+  if (room.locked) return false;
+  if (!metadata.streamerManagedBotGame) return false;
+  if (metadata.streamerFeedMode !== 'bot_deathmatch') return false;
   if (!metadata.phase || metadata.phase === 'game_end' || metadata.phase === 'cancelled') return false;
   return room.roomId === currentRoomId || hasStreamerSeat(room);
 }
@@ -349,6 +387,45 @@ function createFallbackRoomOptions(input: {
     capacityPlayerCost: getGameplayModeCapacityCost(input.gameplayMode, 0),
     streamerManagedBotGame: true,
     streamerManagedByUserId: input.adminUserId,
+    streamerFeedMode: 'random',
+    streamerCameraMode: 'directed',
+    endlessMatch: false,
+  };
+}
+
+function createBotDeathmatchRoomOptions(input: {
+  adminUserId: string;
+  random: () => number;
+}): StreamerGameRoomCreateOptions {
+  const gameplayMode: GameplayMode = 'team_deathmatch';
+  const mapSeed = createRandomSeed();
+  const mapThemeId = chooseFrom(VOXEL_MAP_THEMES, input.random).id;
+  const mapSize = chooseFrom(VOXEL_MAP_SIZE_IDS, input.random);
+  const rules = getGameplayModeRules(gameplayMode);
+  const botAssignments = createStreamerBotAssignments({
+    gameplayMode,
+    seed: mapSeed,
+  });
+
+  return {
+    lobbyName: 'Streamer Bot Deathmatch',
+    matchMode: 'custom',
+    gameplayMode,
+    matchPerspective: 'third_person',
+    mapSeed,
+    mapThemeId,
+    mapSize,
+    mapProfileId: rules.mapProfileId,
+    botAssignments,
+    rankedEligible: false,
+    requiredHumanPlayers: 0,
+    reservedHumanPlayers: 0,
+    capacityPlayerCost: getGameplayModeCapacityCost(gameplayMode, 0),
+    streamerManagedBotGame: true,
+    streamerManagedByUserId: input.adminUserId,
+    streamerFeedMode: 'bot_deathmatch',
+    streamerCameraMode: 'fixed_aerial',
+    endlessMatch: true,
   };
 }
 
@@ -382,6 +459,33 @@ async function createFallbackRoom(input: {
   }
 
   return { room: null, capacityFailure: lastFailure };
+}
+
+async function createBotDeathmatchRoom(input: {
+  adminUserId: string;
+  matchMaker: StreamerMatchMaker;
+  random: () => number;
+}): Promise<CreateFallbackResult> {
+  const createOptions = createBotDeathmatchRoomOptions({
+    adminUserId: input.adminUserId,
+    random: input.random,
+  });
+  const admission = await runWithInGameCapacity({
+    matchMaker: input.matchMaker,
+    requestedPlayers: createOptions.capacityPlayerCost,
+  }, () => input.matchMaker.createRoom('game_room', createOptions));
+
+  if (admission.admitted) {
+    return { room: admission.result, capacityFailure: null };
+  }
+
+  return {
+    room: null,
+    capacityFailure: {
+      reason: admission.reason,
+      requestedPlayers: createOptions.capacityPlayerCost,
+    },
+  };
 }
 
 function buildStreamerObserverSeatOptions(input: {
@@ -459,6 +563,7 @@ export async function getNextStreamerTarget(input: {
   currentRoomId?: string | null;
   clientBuildId?: string | null;
   authToken?: string | null;
+  feedMode?: StreamerFeedMode;
   random?: () => number;
 }): Promise<StreamerNextTarget> {
   const random = input.random ?? Math.random;
@@ -466,6 +571,55 @@ export async function getNextStreamerTarget(input: {
     ? streamerSessions.get(input.adminUserId)?.roomId ?? null
     : input.currentRoomId;
   const rooms = await input.matchMaker.query({ name: 'game_room' });
+
+  if (input.feedMode === 'bot_deathmatch') {
+    const targetRoom = rooms
+      .filter((room) => isSelectableBotDeathmatchStreamerRoom(room, selectionCurrentRoomId))
+      .sort((a, b) => selectionScore(b, selectionCurrentRoomId, random) - selectionScore(a, selectionCurrentRoomId, random))[0] ?? null;
+
+    if (targetRoom) {
+      streamerSessions.set(input.adminUserId, {
+        adminUserId: input.adminUserId,
+        roomId: targetRoom.roomId,
+        updatedAt: Date.now(),
+      });
+      return toNextTarget({
+        adminUserId: input.adminUserId,
+        target: { room: targetRoom, source: 'bot_deathmatch' },
+        matchMaker: input.matchMaker,
+        reserveSeat: targetRoom.roomId !== input.currentRoomId,
+        clientBuildId: input.clientBuildId,
+        authToken: input.authToken,
+      });
+    }
+
+    const botDeathmatch = await createBotDeathmatchRoom({
+      adminUserId: input.adminUserId,
+      matchMaker: input.matchMaker,
+      random,
+    });
+    if (!botDeathmatch.room) {
+      const reason = botDeathmatch.capacityFailure
+        ? `capacity_${botDeathmatch.capacityFailure.reason}`
+        : 'bot_deathmatch_unavailable';
+      throw new Error(`Streamer bot deathmatch unavailable: ${reason}`);
+    }
+
+    streamerSessions.set(input.adminUserId, {
+      adminUserId: input.adminUserId,
+      roomId: botDeathmatch.room.roomId,
+      updatedAt: Date.now(),
+    });
+    return toNextTarget({
+      adminUserId: input.adminUserId,
+      target: { room: botDeathmatch.room, source: 'bot_deathmatch' },
+      matchMaker: input.matchMaker,
+      reserveSeat: true,
+      clientBuildId: input.clientBuildId,
+      authToken: input.authToken,
+    });
+  }
+
   const target = selectStreamerTargetRoom({
     rooms,
     currentRoomId: selectionCurrentRoomId,

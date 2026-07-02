@@ -699,6 +699,9 @@ interface CreateOptions {
   capacityPlayerCost?: number;
   streamerManagedBotGame?: boolean;
   streamerManagedByUserId?: string;
+  streamerFeedMode?: string;
+  streamerCameraMode?: string;
+  endlessMatch?: boolean;
 }
 
 interface JoinOptions {
@@ -1173,6 +1176,9 @@ export class GameRoom extends Room<GameState> {
   private capacityPlayerCost = 0;
   private streamerManagedBotGame = false;
   private streamerManagedByUserId: string | null = null;
+  private streamerFeedMode: string | null = null;
+  private streamerCameraMode: string | null = null;
+  private endlessMatch = false;
   private readonly streamerObservers = new Map<string, StreamerObserverSession>();
   private battleRoyalSafeZone: BattleRoyalSafeZoneState | null = null;
   private battleRoyalDrop: BattleRoyalDropState | null = null;
@@ -1381,6 +1387,13 @@ export class GameRoom extends Room<GameState> {
     this.streamerManagedByUserId = typeof options.streamerManagedByUserId === 'string'
       ? options.streamerManagedByUserId
       : null;
+    this.streamerFeedMode = typeof options.streamerFeedMode === 'string'
+      ? options.streamerFeedMode
+      : null;
+    this.streamerCameraMode = typeof options.streamerCameraMode === 'string'
+      ? options.streamerCameraMode
+      : null;
+    this.endlessMatch = options.endlessMatch === true;
     this.requiredHumanPlayers = Math.max(
       0,
       Math.floor(options.requiredHumanPlayers ?? (this.lobbyId ? DEFAULT_GAME_CONFIG.maxPlayers : 1))
@@ -1783,6 +1796,9 @@ export class GameRoom extends Room<GameState> {
       streamerObserverCount: this.streamerObservers.size,
       streamerObserverSeatCount: streamerSeatCount,
       streamerManagedBotGame: this.streamerManagedBotGame,
+      streamerFeedMode: this.streamerFeedMode,
+      streamerCameraMode: this.streamerCameraMode,
+      endlessMatch: this.endlessMatch,
     });
     this.sendCurrentSnapshots(client);
 
@@ -2246,7 +2262,7 @@ export class GameRoom extends Room<GameState> {
 
     this.measureTickSpan('phase_gameplay_update', () => {
       // Update round timer
-      if (this.state.roundStartTime && !this.devRuntime.isGameClockFrozen()) {
+      if (!this.endlessMatch && this.state.roundStartTime && !this.devRuntime.isGameClockFrozen()) {
         this.state.roundTimeRemaining = getRoomRoundTimeRemaining({
           roundStartTime: this.state.roundStartTime,
           roundTimeRemaining: this.state.roundTimeRemaining,
@@ -2728,6 +2744,9 @@ export class GameRoom extends Room<GameState> {
       streamerObserverCount: this.streamerObservers.size,
       streamerManagedBotGame: this.streamerManagedBotGame,
       streamerManagedByUserId: this.streamerManagedByUserId,
+      streamerFeedMode: this.streamerFeedMode,
+      streamerCameraMode: this.streamerCameraMode,
+      endlessMatch: this.endlessMatch,
       rankedEligibilityCandidate: this.rankedEligibilityCandidate,
       rankedRequiredHumanPlayers: this.rankedRequiredHumanPlayers,
       reconnectIdentityKeys: this.participantRegistry.getReconnectIdentityKeys(),
@@ -3176,6 +3195,9 @@ export class GameRoom extends Room<GameState> {
       streamerObserverCount: this.streamerObservers.size,
       streamerObserverSeatCount: getStreamerObserverSeatCount(),
       streamerManagedBotGame: this.streamerManagedBotGame,
+      streamerFeedMode: this.streamerFeedMode,
+      streamerCameraMode: this.streamerCameraMode,
+      endlessMatch: this.endlessMatch,
     });
     this.sendCurrentSnapshots(client);
   }
@@ -7245,7 +7267,7 @@ export class GameRoom extends Room<GameState> {
       timestamp: now,
     });
 
-    if (hasTeamReachedScoreLimit(this.state.redTeam.score, this.state.blueTeam.score, this.config.scoreToWin)) {
+    if (!this.endlessMatch && hasTeamReachedScoreLimit(this.state.redTeam.score, this.state.blueTeam.score, this.config.scoreToWin)) {
       this.endRound();
     } else {
       this.returnFlagToBase(capturedTeam, player.id, false);
@@ -9568,10 +9590,14 @@ export class GameRoom extends Room<GameState> {
     this.clearMatchStartCancelTimer();
     const now = Date.now();
     this.battleRoyalDrop = null;
-    this.applyPhaseStatePatch(buildPlayingPhaseStatePatch({
+    const playingPatch = buildPlayingPhaseStatePatch({
       now,
       roundTimeSeconds: this.config.roundTimeSeconds,
-    }));
+    });
+    if (this.endlessMatch) {
+      playingPatch.phaseEndTime = 0;
+    }
+    this.applyPhaseStatePatch(playingPatch);
     this.updateMetadata();
     const ledger = this.ensureMatchPersistenceLedger(this.state.roundStartTime);
 
@@ -10197,7 +10223,7 @@ export class GameRoom extends Room<GameState> {
       this.state.blueTeam.score++;
     }
 
-    if (hasTeamReachedScoreLimit(this.state.redTeam.score, this.state.blueTeam.score, this.config.scoreToWin)) {
+    if (!this.endlessMatch && hasTeamReachedScoreLimit(this.state.redTeam.score, this.state.blueTeam.score, this.config.scoreToWin)) {
       this.endRound();
     }
   }

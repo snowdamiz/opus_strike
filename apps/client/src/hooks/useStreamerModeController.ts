@@ -4,6 +4,7 @@ import {
   requestNextStreamerTarget,
   requestStopStreamer,
   requestStreamerStatus,
+  type StreamerNextTarget,
 } from '../contexts/networkApi';
 import { useWallet } from '../contexts/WalletContext';
 import { useGameStore } from '../store/gameStore';
@@ -29,13 +30,14 @@ function disablePersistedStreamerMode(): void {
   });
 }
 
-function loadingReasonForTarget(source: 'real_player' | 'fallback_bot', currentRoomId: string | null): StreamerLoadingReason {
+function loadingReasonForTarget(source: StreamerNextTarget['source'], currentRoomId: string | null): StreamerLoadingReason {
   if (currentRoomId) return 'switching_feed';
-  return source === 'fallback_bot' ? 'spinning_up_bot_match' : 'finding_live_game';
+  return source === 'real_player' ? 'finding_live_game' : 'spinning_up_bot_match';
 }
 
 export function useStreamerModeController(): void {
   const enabled = useSettingsStore((state) => state.settings.streamerModeEnabled);
+  const feedMode = useSettingsStore((state) => state.settings.streamerFeedMode);
   const gamePhase = useGameStore((state) => state.gamePhase);
   const { isAuthenticated, isSessionLoading, user } = useWallet();
   const isGameAdmin = user?.isGameAdmin === true;
@@ -68,7 +70,7 @@ export function useStreamerModeController(): void {
     let cancelled = false;
     let pollTimeout: number | null = null;
     const streamerStore = useStreamerStore.getState();
-    streamerStore.setLoading('finding_live_game');
+    streamerStore.setLoading(feedMode === 'bot_deathmatch' ? 'spinning_up_bot_match' : 'finding_live_game');
     useGameStore.getState().setAppPhase('streamer_loading');
 
     const clearPollTimeout = () => {
@@ -106,6 +108,7 @@ export function useStreamerModeController(): void {
         const response = await requestNextStreamerTarget({
           currentRoomId: joinedRoomId,
           csrfToken,
+          feedMode,
         });
         if (cancelled) return;
 
@@ -149,7 +152,7 @@ export function useStreamerModeController(): void {
       }
       useStreamerStore.getState().reset();
     };
-  }, [enabled, isAuthenticated, isGameAdmin, joinStreamerRoom, leaveGame]);
+  }, [enabled, feedMode, isAuthenticated, isGameAdmin, joinStreamerRoom, leaveGame]);
 
   useEffect(() => {
     if (!enabled || !isAuthenticated || !isGameAdmin) return;
