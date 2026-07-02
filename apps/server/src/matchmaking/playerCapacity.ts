@@ -111,11 +111,17 @@ export async function collectInGameCapacitySnapshot(
   return createInGameCapacitySnapshot(gameRooms, machineSnapshots);
 }
 
+export function canAdmitInGameCapacity(
+  snapshot: Pick<InGameCapacitySnapshot, 'availablePlayers'>,
+  requestedPlayers: number
+): boolean {
+  return Math.max(0, Math.ceil(requestedPlayers)) <= snapshot.availablePlayers;
+}
+
 export async function runWithInGameCapacity<T>(
   options: {
     matchMaker: CapacityMatchMaker;
     requestedPlayers: number;
-    localProcessId?: string;
   },
   fn: () => Promise<T>
 ): Promise<{ admitted: true; result: T; snapshot: InGameCapacitySnapshot } | {
@@ -127,13 +133,7 @@ export async function runWithInGameCapacity<T>(
 
   const admit = async () => {
     const snapshot = await collectInGameCapacitySnapshot(options.matchMaker);
-    const localMachine = options.localProcessId
-      ? snapshot.machines.find((machine) => machine.processId === options.localProcessId)
-      : null;
-    if (localMachine && requestedPlayers > localMachine.availablePlayers) {
-      return { admitted: false as const, reason: 'full' as const, snapshot };
-    }
-    if (requestedPlayers > snapshot.availablePlayers) {
+    if (!canAdmitInGameCapacity(snapshot, requestedPlayers)) {
       return { admitted: false as const, reason: 'full' as const, snapshot };
     }
 

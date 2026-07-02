@@ -15,7 +15,9 @@ import {
   IN_GAME_MAX_MACHINES,
   IN_GAME_PLAYERS_PER_MACHINE,
   MAX_IN_GAME_PLAYERS,
+  canAdmitInGameCapacity,
   createInGameCapacitySnapshot,
+  runWithInGameCapacity,
 } from '../matchmaking/playerCapacity';
 import {
   collectAutoscalerMetricSnapshot,
@@ -320,6 +322,42 @@ async function runInGameCapacityPolicyTests(): Promise<void> {
   assert.equal(battleRoyalSnapshot.reservedPlayers, 50);
   assert.equal(battleRoyalSnapshot.availablePlayers, 190);
   assert.equal(battleRoyalSnapshot.machines[0]?.reservedPlayers, 50);
+
+  const oneLocalBattleRoyalSnapshot = createInGameCapacitySnapshot([
+    {
+      processId: 'process-1',
+      clients: 1,
+      metadata: {
+        gameplayMode: 'battle_royal',
+        humanCount: 1,
+        reservedHumanPlayers: 1,
+        capacityPlayerCost: 33,
+      },
+    },
+  ]);
+  assert.equal(oneLocalBattleRoyalSnapshot.machines[0]?.availablePlayers, 15);
+  assert.equal(canAdmitInGameCapacity(oneLocalBattleRoyalSnapshot, 33), true);
+
+  const nextBattleRoyalAdmission = await runWithInGameCapacity({
+    matchMaker: new FakeMatchMaker([], null, [
+      {
+        processId: 'process-1',
+        clients: 1,
+        metadata: {
+          gameplayMode: 'battle_royal',
+          humanCount: 1,
+          reservedHumanPlayers: 1,
+          capacityPlayerCost: 33,
+        },
+      },
+    ]),
+    requestedPlayers: 33,
+  }, async () => 'created');
+  assert.equal(nextBattleRoyalAdmission.admitted, true);
+  if (!nextBattleRoyalAdmission.admitted) {
+    throw new Error('Expected autoscaled fleet capacity admission');
+  }
+  assert.equal(nextBattleRoyalAdmission.result, 'created');
 
   const fullSnapshot = createInGameCapacitySnapshot(
     Array.from({ length: 30 }, () => ({ clients: 8, metadata: { humanCount: 8, reservedHumanPlayers: 8 } }))
