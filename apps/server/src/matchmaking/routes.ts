@@ -39,6 +39,7 @@ import {
   normalizeMatchmakingBotFillMode,
   type MatchmakingBotFillMode,
 } from './matchSettings';
+import { getLocalMatchmakingRegion } from './region';
 import { resolveUserLoadoutForHero } from '../cosmetics/skinShopService';
 
 const router: RouterType = Router();
@@ -118,7 +119,8 @@ async function getQueueStatus(
   mode: MatchMode,
   gameplayMode: GameplayMode,
   botFillMode: MatchmakingBotFillMode,
-  matchPerspective: MatchPerspective
+  matchPerspective: MatchPerspective,
+  matchmakingRegion?: string
 ): Promise<MatchmakingQueueStatus> {
   const [rooms, capacity] = await Promise.all([
     matchMaker.query({ name: 'lobby_room' }),
@@ -137,6 +139,7 @@ async function getQueueStatus(
       gameplayMode,
       botFillMode,
       matchPerspective,
+      matchmakingRegion,
     });
     if (!doesMatchmakingMetadataMatchSettings(metadata, settings)) continue;
 
@@ -176,10 +179,11 @@ function getCachedQueueStatus(
   mode: MatchMode,
   gameplayMode: GameplayMode,
   botFillMode: MatchmakingBotFillMode,
-  matchPerspective: MatchPerspective
+  matchPerspective: MatchPerspective,
+  matchmakingRegion?: string
 ): Promise<MatchmakingQueueStatus> {
   const now = Date.now();
-  const cacheKey = getQueueStatusCacheKey(mode, gameplayMode, botFillMode, matchPerspective);
+  const cacheKey = getQueueStatusCacheKey(mode, gameplayMode, botFillMode, matchPerspective, matchmakingRegion);
   const cached = queueStatusCache.get(cacheKey);
   if (cached?.value && cached.expiresAt > now) {
     return Promise.resolve(cached.value);
@@ -188,7 +192,7 @@ function getCachedQueueStatus(
     return cached.inFlight;
   }
 
-  const inFlight = getQueueStatus(mode, gameplayMode, botFillMode, matchPerspective)
+  const inFlight = getQueueStatus(mode, gameplayMode, botFillMode, matchPerspective, matchmakingRegion)
     .then((value) => {
       queueStatusCache.set(cacheKey, {
         value,
@@ -236,7 +240,8 @@ router.get('/queue-status', async (req: Request, res: Response) => {
       requestedMode,
       requestedGameplayMode,
       requestedBotFillMode,
-      requestedPerspective
+      requestedPerspective,
+      getLocalMatchmakingRegion()
     ));
   } catch (error) {
     console.error('[matchmaking] Failed to get queue status:', error);
@@ -308,6 +313,7 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
     const selectedSkinId = selectedHero
       ? await resolveUserLoadoutForHero(context.userId, selectedHero, readSelectedSkin(selectedHero, req.query.selectedSkinId))
       : undefined;
+    const matchmakingRegion = getLocalMatchmakingRegion();
     const targetRankDivisionIndex = await chooseMatchmakingRankBand({
       mode: 'quick_play',
       playerRating: context.competitiveRating,
@@ -316,6 +322,7 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
       botFillMode,
       matchPerspective,
       selectedHero,
+      matchmakingRegion,
     });
     res.json(issueQuickPlayTicket(context, targetRankDivisionIndex, {
       gameplayMode,
@@ -323,6 +330,7 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
       matchPerspective,
       selectedHero,
       selectedSkinId,
+      matchmakingRegion,
     }));
   } catch (error) {
     console.error('[matchmaking] Failed to issue quick-play ticket:', error);
@@ -359,14 +367,23 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
     const selectedSkinId = selectedHero
       ? await resolveUserLoadoutForHero(context.userId, selectedHero, readSelectedSkin(selectedHero, req.body?.selectedSkinId))
       : undefined;
+    const matchmakingRegion = getLocalMatchmakingRegion();
     const targetRankDivisionIndex = await chooseMatchmakingRankBand({
       mode: 'ranked',
       playerRating: context.competitiveRating,
       playerDivisionIndex: context.rankDivisionIndex,
       matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
       selectedHero,
+      matchmakingRegion,
     });
-    res.json(issueRankedTicket(context, targetRankDivisionIndex, tokenHold, selectedHero, selectedSkinId));
+    res.json(issueRankedTicket(
+      context,
+      targetRankDivisionIndex,
+      tokenHold,
+      selectedHero,
+      selectedSkinId,
+      matchmakingRegion
+    ));
   } catch (error) {
     console.error('[matchmaking] Failed to issue ranked ticket:', error);
     sendRouteError(res, error, 'Failed to issue ranked ticket');

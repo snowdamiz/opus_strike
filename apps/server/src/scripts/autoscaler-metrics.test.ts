@@ -371,6 +371,8 @@ async function runInGameCapacityPolicyTests(): Promise<void> {
 async function runAutoscalerConfigTests(): Promise<void> {
   const config = await readFile(path.resolve(process.cwd(), 'fly-autoscaler.yml'), 'utf8');
 
+  assert.match(config, /regions: \["iad"\]/);
+  assert.match(config, /process-group: "app"/);
   assert.match(config, new RegExp(`created-machine-count: "${AUTOSCALER_CREATED_MACHINE_COUNT_EXPRESSION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
   assert.match(config, /initial-machine-state: "stopped"/);
   assert.match(config, /metric-name: "demand_players"/);

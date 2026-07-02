@@ -37,7 +37,7 @@ import {
   pingRedis,
 } from './config/redis';
 import { getAllowedClientOrigins, isCorsOriginAllowed } from './config/clientOrigins';
-import { ALLOWED_CORS_HEADER_VALUE } from './config/corsHeaders';
+import { ALLOWED_CORS_HEADER_VALUE, ALLOWED_CORS_METHOD_VALUE } from './config/corsHeaders';
 import { envFlag } from './config/security';
 import {
   installFlyReplayUpgradeRouter,
@@ -126,7 +126,7 @@ function createGameServer(): Server {
   server.define('social_room', SocialRoom);
   server
     .define('lobby_room', LobbyRoom)
-    .filterBy(['isPrivate', 'matchmakingMode', 'matchMode', 'rankBandId', 'gameplayMode'])
+    .filterBy(['isPrivate', 'matchmakingMode', 'matchMode', 'rankBandId', 'gameplayMode', 'matchmakingRegion'])
     .sortBy({ clients: -1 })
     .enableRealtimeListing();
 
@@ -165,7 +165,7 @@ app.use((_req, res, next) => {
     res.header('Access-Control-Allow-Origin', origin);
   }
 
-  res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Methods', ALLOWED_CORS_METHOD_VALUE);
   res.header('Access-Control-Allow-Headers', ALLOWED_CORS_HEADER_VALUE);
   res.header('Access-Control-Allow-Credentials', 'true');
 

@@ -123,19 +123,23 @@ fly redis status opus-strike-redis
 # Store the private Redis URL as a server secret. Do not put it in fly.toml.
 fly secrets set -a opus-strike-server COLYSEUS_REDIS_URL='<private redis URL>'
 
-# Deploy the server and then run at least two Machines.
+# Deploy the server, keep the primary region stronger, and add one smaller
+# Europe and Asia Machine.
 fly deploy -a opus-strike-server --config apps/server/fly.toml
-fly scale count 2 -a opus-strike-server
+fly scale count app=3 europe=0 asia=0 -a opus-strike-server --config apps/server/fly.toml --region iad
+fly scale count europe=1 -a opus-strike-server --config apps/server/fly.toml --region lhr
+fly scale count asia=1 -a opus-strike-server --config apps/server/fly.toml --region nrt
 ```
 
 The checked-in `apps/server/fly.toml` enables:
 
 - `COLYSEUS_DISTRIBUTED=1`
 - `COLYSEUS_ROUTING_STRATEGY=fly_replay`
-- `COLYSEUS_PUBLIC_ADDRESS=opus-strike-server.fly.dev`
+- `COLYSEUS_ROOM_CREATE_STRATEGY=local`
+- `COLYSEUS_PUBLIC_ADDRESS=api.slopheroes.xyz`
 - `COLYSEUS_REQUIRE_PUBLIC_ADDRESS=1`
 
-Fly provides `FLY_APP_NAME`, `FLY_MACHINE_ID`, and `FLY_REGION` at runtime. Each server process registers its Colyseus `processId` to `FLY_MACHINE_ID` in Redis with a heartbeat. WebSocket joins to a room owned by another process return `fly-replay: instance=<machine id>` before the upgrade, so the Fly proxy routes the connection to the room-owning Machine. `/health` reports Redis, distributed matchmaking, and Fly replay registration status.
+Fly provides `FLY_APP_NAME`, `FLY_MACHINE_ID`, and `FLY_REGION` at runtime. Matchmaking tickets include the issuing `FLY_REGION`, and matchmaking lobby filters include that region, so players queue into the closest healthy Fly region selected for their request. Each server process registers its Colyseus `processId` to `FLY_MACHINE_ID` in Redis with a heartbeat. WebSocket joins to a room owned by another process return `fly-replay: instance=<machine id>` before the upgrade, so the Fly proxy routes the connection to the room-owning Machine. `/health` reports Redis, distributed matchmaking, and Fly replay registration status.
 
 ### Voice Chat
 

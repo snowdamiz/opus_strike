@@ -26,6 +26,7 @@ import {
   normalizeMatchmakingBotFillMode,
   type MatchmakingBotFillMode,
 } from '../matchmaking/matchSettings';
+import { normalizeMatchmakingRegion } from '../matchmaking/region';
 
 export interface MatchmakingTicketClaims {
   version: 2;
@@ -35,6 +36,7 @@ export interface MatchmakingTicketClaims {
   matchPerspective: MatchPerspective;
   selectedHero?: HeroId;
   selectedSkinId?: HeroSkinId;
+  matchmakingRegion?: string;
   userId: string;
   competitiveRating: number;
   rankDivisionIndex: number;
@@ -57,6 +59,7 @@ export interface CreateMatchmakingTicketInput {
   matchPerspective?: MatchPerspective;
   selectedHero?: HeroId;
   selectedSkinId?: HeroSkinId;
+  matchmakingRegion?: string;
   userId: string;
   competitiveRating: number;
   rankDivisionIndex: number;
@@ -107,6 +110,7 @@ export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
       : DEFAULT_MATCH_PERSPECTIVE,
     selectedHero,
     selectedSkinId: normalizeSelectedSkinId(selectedHero, input.selectedSkinId),
+    matchmakingRegion: normalizeMatchmakingRegion(input.matchmakingRegion),
     userId: input.userId,
     competitiveRating: Math.round(Number.isFinite(input.competitiveRating) ? input.competitiveRating : DEFAULT_MATCHMAKING_RATING),
     rankDivisionIndex: normalizeRankDivisionIndex(input.rankDivisionIndex),
@@ -145,6 +149,7 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
     : DEFAULT_MATCH_PERSPECTIVE;
   const selectedHero = isKnownHeroId(claims.selectedHero) ? claims.selectedHero : undefined;
   const selectedSkinId = normalizeSelectedSkinId(selectedHero, claims.selectedSkinId);
+  const matchmakingRegion = normalizeMatchmakingRegion(claims.matchmakingRegion);
   if (!claims.userId || !claims.nonce) return null;
   if (claims.expiresAt < now || claims.issuedAt > now + 5_000) return null;
   if (!Number.isFinite(claims.competitiveRating)) return null;
@@ -180,6 +185,7 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
     matchPerspective,
     selectedHero,
     selectedSkinId,
+    matchmakingRegion,
     competitiveRating: Math.round(claims.competitiveRating),
     rankDivisionIndex: claims.rankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,
     targetRankDivisionIndex: claims.targetRankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,

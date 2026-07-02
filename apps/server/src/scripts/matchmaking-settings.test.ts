@@ -31,7 +31,38 @@ assert.equal(
   getQueueStatusCacheKey('ranked', 'capture_the_flag', 'manual', 'third_person'),
   'ranked:first_person'
 );
+assert.equal(
+  getQueueStatusCacheKey('quick_play', 'team_deathmatch', 'manual', 'third_person', 'lhr'),
+  'quick_play:team_deathmatch:manual:third_person:lhr'
+);
+assert.equal(
+  getQueueStatusCacheKey('ranked', 'capture_the_flag', 'manual', 'third_person', 'nrt'),
+  'ranked:first_person:nrt'
+);
 
+const regionalQuickPlay = createMatchmakingSettings({
+  matchMode: 'quick_play',
+  gameplayMode: 'team_deathmatch',
+  botFillMode: 'manual',
+  matchPerspective: 'first_person',
+  matchmakingRegion: 'LHR',
+});
+assert.equal(regionalQuickPlay.matchmakingRegion, 'lhr');
+
+assert.equal(doesMatchmakingMetadataMatchSettings({
+  matchMode: 'quick_play',
+  gameplayMode: 'team_deathmatch',
+  botFillMode: 'manual',
+  matchPerspective: 'first_person',
+  matchmakingRegion: 'lhr',
+}, regionalQuickPlay), true);
+assert.equal(doesMatchmakingMetadataMatchSettings({
+  matchMode: 'quick_play',
+  gameplayMode: 'team_deathmatch',
+  botFillMode: 'manual',
+  matchPerspective: 'first_person',
+  matchmakingRegion: 'iad',
+}, regionalQuickPlay), false);
 assert.equal(doesMatchmakingMetadataMatchSettings({
   matchMode: 'quick_play',
   gameplayMode: 'team_deathmatch',

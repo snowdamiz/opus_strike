@@ -55,6 +55,7 @@ export interface IssuedMatchmakingTicket {
   matchPerspective: MatchPerspective;
   selectedHero?: HeroId;
   selectedSkinId?: HeroSkinId;
+  matchmakingRegion?: string;
   expiresAt: number;
   competitiveRating: number;
   rankDivisionIndex: number;
@@ -128,6 +129,7 @@ export async function chooseMatchmakingRankBand(input: {
   botFillMode?: MatchmakingBotFillMode;
   matchPerspective?: MatchPerspective;
   selectedHero?: HeroId;
+  matchmakingRegion?: string;
 }): Promise<number> {
   const now = Date.now();
   const rooms = await matchMaker.query({ name: 'lobby_room' });
@@ -136,6 +138,7 @@ export async function chooseMatchmakingRankBand(input: {
     gameplayMode: input.gameplayMode,
     botFillMode: input.botFillMode,
     matchPerspective: input.matchPerspective,
+    matchmakingRegion: input.matchmakingRegion,
   });
 
   const candidates: QueueCandidate[] = rooms.flatMap((room: any) => {
@@ -211,6 +214,7 @@ export function issueQuickPlayTicket(
     matchPerspective: MatchPerspective;
     selectedHero?: HeroId;
     selectedSkinId?: HeroSkinId;
+    matchmakingRegion?: string;
   }
 ): IssuedMatchmakingTicket {
   const { ticket, claims } = createMatchmakingTicket({
@@ -220,6 +224,7 @@ export function issueQuickPlayTicket(
     matchPerspective: settings.matchPerspective,
     selectedHero: settings.selectedHero,
     selectedSkinId: settings.selectedSkinId,
+    matchmakingRegion: settings.matchmakingRegion,
     userId: context.userId,
     competitiveRating: context.competitiveRating,
     rankDivisionIndex: context.rankDivisionIndex,
@@ -235,6 +240,7 @@ export function issueQuickPlayTicket(
     matchPerspective: claims.matchPerspective,
     selectedHero: claims.selectedHero,
     selectedSkinId: claims.selectedSkinId,
+    matchmakingRegion: claims.matchmakingRegion,
     expiresAt: claims.expiresAt,
     competitiveRating: context.competitiveRating,
     rankDivisionIndex: context.rankDivisionIndex,
@@ -249,12 +255,14 @@ export function issueRankedTicket(
   targetRankDivisionIndex: number,
   tokenHold: RankedTokenHoldingStatus,
   selectedHero?: HeroId,
-  selectedSkinId?: HeroSkinId
+  selectedSkinId?: HeroSkinId,
+  matchmakingRegion?: string
 ): IssuedRankedTicket {
   const { ticket, claims } = createMatchmakingTicket({
     mode: 'ranked',
     selectedHero,
     selectedSkinId,
+    matchmakingRegion,
     userId: context.userId,
     competitiveRating: context.competitiveRating,
     rankDivisionIndex: context.rankDivisionIndex,
@@ -275,6 +283,7 @@ export function issueRankedTicket(
     matchPerspective: claims.matchPerspective,
     selectedHero: claims.selectedHero,
     selectedSkinId: claims.selectedSkinId,
+    matchmakingRegion: claims.matchmakingRegion,
     expiresAt: claims.expiresAt,
     competitiveRating: context.competitiveRating,
     rankDivisionIndex: context.rankDivisionIndex,
