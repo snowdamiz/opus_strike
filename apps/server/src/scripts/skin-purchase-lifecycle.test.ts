@@ -381,6 +381,10 @@ async function main(): Promise<void> {
   skinShop.setSkinShopConnectionFactoryForTests((rpcUrl) => {
     assert.equal(rpcUrl, 'http://127.0.0.1:8899');
     return {
+      getAccountInfo: async (tokenMint: PublicKey) => {
+        assert.equal(tokenMint.toBase58(), mint.toBase58());
+        return { owner: TOKEN_PROGRAM_ID };
+      },
       getTokenSupply: async (tokenMint: PublicKey) => {
         assert.equal(tokenMint.toBase58(), mint.toBase58());
         return { value: { decimals: 6 } };

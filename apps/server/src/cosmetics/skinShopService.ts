@@ -29,7 +29,7 @@ import {
   buildSplTokenPaymentTransaction,
   createSkinPaymentMemo,
   getAssociatedTokenAccountAddress,
-  getSplTokenMintDecimals,
+  getSplTokenMintRuntime,
   signatureLooksValid,
   verifyParsedSplTokenPayment,
 } from './tokenPayments';
@@ -752,13 +752,12 @@ export async function createSkinPurchaseIntent(input: {
   const tokenMintAddress = shop.tokenMintAddress!;
   const treasuryWallet = shop.treasuryWallet!;
   const connection = connectionForShop(shop);
-  const [tokenDecimals, treasuryTokenAccount] = await Promise.all([
-    getSplTokenMintDecimals(connection, tokenMintAddress),
-    getAssociatedTokenAccountAddress({
-      ownerAddress: treasuryWallet,
-      tokenMintAddress,
-    }),
-  ]);
+  const tokenRuntime = await getSplTokenMintRuntime(connection, tokenMintAddress);
+  const treasuryTokenAccountForProgram = await getAssociatedTokenAccountAddress({
+    ownerAddress: treasuryWallet,
+    tokenMintAddress,
+    tokenProgramId: tokenRuntime.tokenProgramId,
+  });
 
   const intent = await (async () => {
     try {
@@ -782,9 +781,9 @@ export async function createSkinPurchaseIntent(input: {
             tokenMintAddress,
             tokenSymbol: shop.tokenSymbol,
             tokenAmountBaseUnits: currentItem.tokenAmountBaseUnits!,
-            tokenDecimals,
+            tokenDecimals: tokenRuntime.decimals,
             treasuryWallet,
-            treasuryTokenAccount,
+            treasuryTokenAccount: treasuryTokenAccountForProgram,
             cluster: shop.cluster,
             memo: createSkinPaymentMemo(intentId),
             status: 'intent_created',
@@ -829,13 +828,15 @@ export async function buildSkinPurchaseTransaction(input: {
 
   const shop = await getOrCreateShopSettings();
   const connection = connectionForShop(shop);
+  const tokenRuntime = await getSplTokenMintRuntime(connection, intent.tokenMintAddress);
   const built = await buildSplTokenPaymentTransaction({
     connection,
     walletAddress: intent.walletAddress,
     tokenMintAddress: intent.tokenMintAddress,
     treasuryWallet: intent.treasuryWallet,
     tokenAmountBaseUnits: intent.tokenAmountBaseUnits.toString(),
-    tokenDecimals: intent.tokenDecimals ?? await getSplTokenMintDecimals(connection, intent.tokenMintAddress),
+    tokenDecimals: intent.tokenDecimals ?? tokenRuntime.decimals,
+    tokenProgramId: tokenRuntime.tokenProgramId,
     memo: intent.memo,
   });
 
