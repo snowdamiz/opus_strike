@@ -356,6 +356,7 @@ async function main(): Promise<void> {
   };
 
   const buyer = Keypair.generate();
+  const payerWallet = Keypair.generate();
   const wrongBuyer = Keypair.generate();
   const mint = Keypair.generate().publicKey;
   const treasuryWallet = Keypair.generate().publicKey;
@@ -396,12 +397,16 @@ async function main(): Promise<void> {
 
   try {
     await expectServiceError(
-      () => skinShop.createSkinPurchaseIntent({ userId: 'user-no-wallet', skinId }),
-      /linked Solana wallet/,
+      () => skinShop.createSkinPurchaseIntent({ userId: 'user-no-wallet', skinId, walletAddress: '' }),
+      /connected Solana wallet/,
       400
     );
 
-    const intent = await skinShop.createSkinPurchaseIntent({ userId: 'user-a', skinId });
+    const intent = await skinShop.createSkinPurchaseIntent({
+      userId: 'user-no-wallet',
+      skinId,
+      walletAddress: payerWallet.publicKey.toBase58(),
+    });
     const row = fake.intents.get(intent.intentId);
     assert.ok(row);
     assert.equal(intent.status, 'intent_created');
@@ -409,20 +414,27 @@ async function main(): Promise<void> {
     assert.equal(intent.tokenMintAddress, mint.toBase58());
     assert.equal(intent.tokenSymbol, 'TEST');
     assert.equal(intent.tokenAmountBaseUnits, '2500000');
-    assert.equal(intent.walletAddress, buyer.publicKey.toBase58());
+    assert.equal(intent.walletAddress, payerWallet.publicKey.toBase58());
+    assert.notEqual(intent.walletAddress, buyer.publicKey.toBase58());
     assert.equal(intent.treasuryTokenAccount, treasuryTokenAccount.toBase58());
     assert.ok(intent.memo.startsWith('opus-skin:'));
     assert.equal(row.memo, createSkinPaymentMemo(intent.intentId));
     assert.equal(row.tokenDecimals, 6);
     assert.equal(row.treasuryWallet, treasuryWallet.toBase58());
 
-    const built = await skinShop.buildSkinPurchaseTransaction({ userId: 'user-a', intentId: intent.intentId });
+    const built = await skinShop.buildSkinPurchaseTransaction({ userId: 'user-no-wallet', intentId: intent.intentId });
+    const builtTransaction = Transaction.from(Buffer.from(built.transactionBase64, 'base64'));
     assert.equal(built.lastValidBlockHeight, 12345);
+    assert.equal(builtTransaction.feePayer?.toBase58(), payerWallet.publicKey.toBase58());
     assert.equal(built.treasuryTokenAccount, treasuryTokenAccount.toBase58());
     assert.equal(fake.intents.get(intent.intentId)?.status, 'transaction_built');
     assert.equal(fake.intents.get(intent.intentId)?.lastValidBlockHeight, 12345n);
 
-    const expiredIntent = await skinShop.createSkinPurchaseIntent({ userId: 'user-b', skinId });
+    const expiredIntent = await skinShop.createSkinPurchaseIntent({
+      userId: 'user-b',
+      skinId,
+      walletAddress: payerWallet.publicKey.toBase58(),
+    });
     fake.intents.get(expiredIntent.intentId)!.intentExpiresAt = new Date(Date.now() - 1_000);
     const expired = await skinShop.getSkinPurchaseIntent({ userId: 'user-b', intentId: expiredIntent.intentId });
     assert.equal(expired.status, 'expired');
@@ -430,7 +442,7 @@ async function main(): Promise<void> {
 
     await expectServiceError(
       () => skinShop.submitSignedSkinPurchaseTransaction({
-        userId: 'user-a',
+        userId: 'user-no-wallet',
         intentId: intent.intentId,
         signedTransactionBase64: 'not a transaction',
       }),
@@ -438,7 +450,7 @@ async function main(): Promise<void> {
     );
     await expectServiceError(
       () => skinShop.submitSignedSkinPurchaseTransaction({
-        userId: 'user-a',
+        userId: 'user-no-wallet',
         intentId: intent.intentId,
         signedTransactionBase64: signedTransactionPayload({
           feePayer: wrongBuyer.publicKey,
@@ -449,10 +461,10 @@ async function main(): Promise<void> {
     );
     await expectServiceError(
       () => skinShop.submitSignedSkinPurchaseTransaction({
-        userId: 'user-a',
+        userId: 'user-no-wallet',
         intentId: intent.intentId,
         signedTransactionBase64: signedTransactionPayload({
-          feePayer: buyer.publicKey,
+          feePayer: payerWallet.publicKey,
           memo: 'wrong memo',
         }),
       }),
@@ -460,10 +472,10 @@ async function main(): Promise<void> {
     );
     await expectServiceError(
       () => skinShop.submitSignedSkinPurchaseTransaction({
-        userId: 'user-a',
+        userId: 'user-no-wallet',
         intentId: intent.intentId,
         signedTransactionBase64: signedTransactionPayload({
-          feePayer: buyer.publicKey,
+          feePayer: payerWallet.publicKey,
           memo: row.memo,
         }),
       }),
@@ -473,25 +485,25 @@ async function main(): Promise<void> {
     const signature = validSignature(1);
     parsedTransactions.set(signature, paymentTransactionFixture(row));
     const credited = await skinShop.submitSkinPurchaseSignature({
-      userId: 'user-a',
+      userId: 'user-no-wallet',
       intentId: intent.intentId,
       signature,
     });
     assert.equal(credited.status, 'credited');
-    const ownership = fake.ownerships.get(fake.ownershipKey('user-a', skinId));
+    const ownership = fake.ownerships.get(fake.ownershipKey('user-no-wallet', skinId));
     assert.ok(ownership);
     assert.equal(ownership.source, 'paid');
     assert.equal(ownership.purchaseId, intent.intentId);
     assert.equal(ownership.revokedAt, null);
 
     await expectServiceError(
-      () => skinShop.buildSkinPurchaseTransaction({ userId: 'user-a', intentId: intent.intentId }),
+      () => skinShop.buildSkinPurchaseTransaction({ userId: 'user-no-wallet', intentId: intent.intentId }),
       /already credited/,
       409
     );
     await expectServiceError(
       () => skinShop.submitSkinPurchaseSignature({
-        userId: 'user-a',
+        userId: 'user-no-wallet',
         intentId: intent.intentId,
         signature: validSignature(2),
       }),
@@ -499,7 +511,11 @@ async function main(): Promise<void> {
       409
     );
 
-    const duplicateIntent = await skinShop.createSkinPurchaseIntent({ userId: 'user-c', skinId });
+    const duplicateIntent = await skinShop.createSkinPurchaseIntent({
+      userId: 'user-c',
+      skinId,
+      walletAddress: payerWallet.publicKey.toBase58(),
+    });
     await expectServiceError(
       () => skinShop.submitSkinPurchaseSignature({
         userId: 'user-c',
@@ -534,7 +550,11 @@ async function main(): Promise<void> {
       grantedAt: createdAt,
       revokedAt: new Date('2026-07-01T09:00:00.000Z'),
     });
-    const restoreIntent = await skinShop.createSkinPurchaseIntent({ userId: 'user-restored', skinId });
+    const restoreIntent = await skinShop.createSkinPurchaseIntent({
+      userId: 'user-restored',
+      skinId,
+      walletAddress: payerWallet.publicKey.toBase58(),
+    });
     const restoreRow = fake.intents.get(restoreIntent.intentId)!;
     const restoreSignature = validSignature(4);
     parsedTransactions.set(restoreSignature, paymentTransactionFixture(restoreRow));

@@ -137,13 +137,6 @@ export interface StreamerStopResponse {
   csrfToken: string;
 }
 
-export interface SkinPurchaseSimulationResponse {
-  intentId: string;
-  ok: boolean;
-  error: unknown;
-  logs: string[];
-}
-
 export interface RewardEconomyResponse {
   economy: {
     rewardTokenSymbol: string | null;
@@ -409,12 +402,15 @@ export async function updateHeroSkinLoadout(input: {
   return response.json();
 }
 
-export async function createSkinPurchaseIntent(skinId: HeroSkinId): Promise<SkinPurchaseIntentSnapshot> {
+export async function createSkinPurchaseIntent(input: {
+  skinId: HeroSkinId;
+  walletAddress: string;
+}): Promise<SkinPurchaseIntentSnapshot> {
   const response = await fetch(`${getHttpUrl()}/cosmetics/purchases/intents`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ skinId }),
+    body: JSON.stringify(input),
   });
 
   if (!response.ok) {
@@ -446,24 +442,6 @@ export async function buildSkinPurchaseTransaction(intentId: string): Promise<Sk
 
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, 'Failed to build purchase transaction'));
-  }
-
-  return response.json();
-}
-
-export async function simulateSkinPurchaseTransaction(input: {
-  intentId: string;
-  transactionBase64: string;
-}): Promise<SkinPurchaseSimulationResponse> {
-  const response = await fetch(`${getHttpUrl()}/cosmetics/purchases/intents/${encodeURIComponent(input.intentId)}/simulate`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transactionBase64: input.transactionBase64 }),
-  });
-
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response, 'Failed to simulate purchase transaction'));
   }
 
   return response.json();
