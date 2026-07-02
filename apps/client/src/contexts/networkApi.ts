@@ -94,6 +94,7 @@ export interface StreamerTargetMetadata {
   streamerManagedBotGame: boolean;
   streamerFeedMode: 'random' | 'bot_deathmatch';
   streamerCameraMode: 'directed' | 'fixed_aerial';
+  streamerMapRotationStartedAt?: number | null;
 }
 
 export interface GameSeatReservationPayload {

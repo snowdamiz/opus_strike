@@ -27,7 +27,10 @@ import {
   type GameSeatReservationPayload,
 } from '../rooms/lobbyGameStartRuntime';
 import { createStreamerObserverTicket } from '../security/streamerTickets';
-import { getStreamerObserverSeatCount } from './config';
+import {
+  getStreamerBotDeathmatchMapRotationMs,
+  getStreamerObserverSeatCount,
+} from './config';
 
 export interface StreamerRoomListing {
   name?: string;
@@ -71,6 +74,7 @@ export interface StreamerGameRoomCreateOptions {
   streamerManagedByUserId: string;
   streamerFeedMode: StreamerFeedMode;
   streamerCameraMode: StreamerCameraMode;
+  streamerMapRotationStartedAt?: number | null;
   endlessMatch: boolean;
 }
 
@@ -112,6 +116,7 @@ export interface StreamerNextTarget {
     streamerManagedBotGame: boolean;
     streamerFeedMode: StreamerFeedMode;
     streamerCameraMode: StreamerCameraMode;
+    streamerMapRotationStartedAt: number | null;
   };
 }
 
@@ -129,7 +134,6 @@ export interface StreamerSessionStatus {
 interface StreamerSessionRecord {
   adminUserId: string;
   roomId: string;
-  updatedAt: number;
 }
 
 interface CreateFallbackResult {
@@ -225,6 +229,7 @@ export function getStreamerRoomMetadata(room: StreamerRoomListing): StreamerNext
     streamerManagedBotGame: readBoolean(metadata, 'streamerManagedBotGame'),
     streamerFeedMode: readStreamerFeedMode(metadata),
     streamerCameraMode: readStreamerCameraMode(metadata),
+    streamerMapRotationStartedAt: readNumber(metadata, 'streamerMapRotationStartedAt'),
   };
 }
 
@@ -268,21 +273,29 @@ function isSelectableFallbackStreamerRoom(room: StreamerRoomListing, currentRoom
   return room.roomId === currentRoomId || hasStreamerSeat(room);
 }
 
-export function isUsableBotDeathmatchStreamerRoom(room: StreamerRoomListing): boolean {
+function isExpiredBotDeathmatchStreamerRoom(room: StreamerRoomListing, now: number): boolean {
+  const startedAt = getStreamerRoomMetadata(room).streamerMapRotationStartedAt;
+  if (startedAt === null) return true;
+  return now - startedAt >= getStreamerBotDeathmatchMapRotationMs();
+}
+
+export function isUsableBotDeathmatchStreamerRoom(room: StreamerRoomListing, now = Date.now()): boolean {
   const metadata = getStreamerRoomMetadata(room);
   if (room.locked) return false;
   if (!metadata.streamerManagedBotGame) return false;
   if (metadata.streamerFeedMode !== 'bot_deathmatch') return false;
   if (!metadata.phase || metadata.phase === 'game_end' || metadata.phase === 'cancelled') return false;
+  if (isExpiredBotDeathmatchStreamerRoom(room, now)) return false;
   return hasStreamerSeat(room);
 }
 
-function isSelectableBotDeathmatchStreamerRoom(room: StreamerRoomListing, currentRoomId: string | null): boolean {
+function isSelectableBotDeathmatchStreamerRoom(room: StreamerRoomListing, currentRoomId: string | null, now: number): boolean {
   const metadata = getStreamerRoomMetadata(room);
   if (room.locked) return false;
   if (!metadata.streamerManagedBotGame) return false;
   if (metadata.streamerFeedMode !== 'bot_deathmatch') return false;
   if (!metadata.phase || metadata.phase === 'game_end' || metadata.phase === 'cancelled') return false;
+  if (isExpiredBotDeathmatchStreamerRoom(room, now) && room.roomId !== currentRoomId) return false;
   return room.roomId === currentRoomId || hasStreamerSeat(room);
 }
 
@@ -396,6 +409,7 @@ function createFallbackRoomOptions(input: {
 function createBotDeathmatchRoomOptions(input: {
   adminUserId: string;
   random: () => number;
+  now: number;
 }): StreamerGameRoomCreateOptions {
   const gameplayMode: GameplayMode = 'team_deathmatch';
   const mapSeed = createRandomSeed();
@@ -425,6 +439,7 @@ function createBotDeathmatchRoomOptions(input: {
     streamerManagedByUserId: input.adminUserId,
     streamerFeedMode: 'bot_deathmatch',
     streamerCameraMode: 'fixed_aerial',
+    streamerMapRotationStartedAt: input.now,
     endlessMatch: true,
   };
 }
@@ -465,10 +480,12 @@ async function createBotDeathmatchRoom(input: {
   adminUserId: string;
   matchMaker: StreamerMatchMaker;
   random: () => number;
+  now: number;
 }): Promise<CreateFallbackResult> {
   const createOptions = createBotDeathmatchRoomOptions({
     adminUserId: input.adminUserId,
     random: input.random,
+    now: input.now,
   });
   const admission = await runWithInGameCapacity({
     matchMaker: input.matchMaker,
@@ -565,8 +582,10 @@ export async function getNextStreamerTarget(input: {
   authToken?: string | null;
   feedMode?: StreamerFeedMode;
   random?: () => number;
+  now?: () => number;
 }): Promise<StreamerNextTarget> {
   const random = input.random ?? Math.random;
+  const now = input.now?.() ?? Date.now();
   const selectionCurrentRoomId = input.currentRoomId === undefined
     ? streamerSessions.get(input.adminUserId)?.roomId ?? null
     : input.currentRoomId;
@@ -574,14 +593,13 @@ export async function getNextStreamerTarget(input: {
 
   if (input.feedMode === 'bot_deathmatch') {
     const targetRoom = rooms
-      .filter((room) => isSelectableBotDeathmatchStreamerRoom(room, selectionCurrentRoomId))
+      .filter((room) => isSelectableBotDeathmatchStreamerRoom(room, selectionCurrentRoomId, now))
       .sort((a, b) => selectionScore(b, selectionCurrentRoomId, random) - selectionScore(a, selectionCurrentRoomId, random))[0] ?? null;
 
     if (targetRoom) {
       streamerSessions.set(input.adminUserId, {
         adminUserId: input.adminUserId,
         roomId: targetRoom.roomId,
-        updatedAt: Date.now(),
       });
       return toNextTarget({
         adminUserId: input.adminUserId,
@@ -597,6 +615,7 @@ export async function getNextStreamerTarget(input: {
       adminUserId: input.adminUserId,
       matchMaker: input.matchMaker,
       random,
+      now,
     });
     if (!botDeathmatch.room) {
       const reason = botDeathmatch.capacityFailure
@@ -608,7 +627,6 @@ export async function getNextStreamerTarget(input: {
     streamerSessions.set(input.adminUserId, {
       adminUserId: input.adminUserId,
       roomId: botDeathmatch.room.roomId,
-      updatedAt: Date.now(),
     });
     return toNextTarget({
       adminUserId: input.adminUserId,
@@ -630,7 +648,6 @@ export async function getNextStreamerTarget(input: {
     streamerSessions.set(input.adminUserId, {
       adminUserId: input.adminUserId,
       roomId: target.room.roomId,
-      updatedAt: Date.now(),
     });
     return toNextTarget({
       adminUserId: input.adminUserId,
@@ -661,7 +678,6 @@ export async function getNextStreamerTarget(input: {
   streamerSessions.set(input.adminUserId, {
     adminUserId: input.adminUserId,
     roomId: fallback.room.roomId,
-    updatedAt: Date.now(),
   });
   return toNextTarget({
     adminUserId: input.adminUserId,

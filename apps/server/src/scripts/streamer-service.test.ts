@@ -15,6 +15,9 @@ import {
   type StreamerRoomListing,
 } from '../streamer/service';
 
+const NOW = 1_000_000;
+const BOT_DEATHMATCH_ROTATION_MS = 5 * 60 * 1000;
+
 function room(roomId: string, metadata: Record<string, unknown>, locked = false): StreamerRoomListing {
   return {
     name: 'game_room',
@@ -51,6 +54,7 @@ class FakeStreamerMatchMaker implements StreamerMatchMaker {
       streamerManagedBotGame: true,
       streamerFeedMode: options.streamerFeedMode,
       streamerCameraMode: options.streamerCameraMode,
+      streamerMapRotationStartedAt: options.streamerMapRotationStartedAt,
       endlessMatch: options.endlessMatch,
     });
     this.rooms.push(created);
@@ -104,6 +108,7 @@ const botDeathmatchRoom = room('bot-deathmatch-a', {
   streamerManagedBotGame: true,
   streamerFeedMode: 'bot_deathmatch',
   streamerCameraMode: 'fixed_aerial',
+  streamerMapRotationStartedAt: NOW,
 });
 
 assert.equal(isEligibleRealPlayerStreamerRoom(liveRoom), true);
@@ -111,7 +116,8 @@ assert.equal(isEligibleRealPlayerStreamerRoom(observerOnlyRoom), false);
 assert.equal(isEligibleRealPlayerStreamerRoom(fallbackRoom), false);
 assert.equal(isUsableFallbackStreamerRoom(fallbackRoom), true);
 assert.equal(isUsableFallbackStreamerRoom(botDeathmatchRoom), false);
-assert.equal(isUsableBotDeathmatchStreamerRoom(botDeathmatchRoom), true);
+assert.equal(isUsableBotDeathmatchStreamerRoom(botDeathmatchRoom, NOW), true);
+assert.equal(isUsableBotDeathmatchStreamerRoom(botDeathmatchRoom, NOW + BOT_DEATHMATCH_ROTATION_MS), false);
 
 const selectedReal = selectStreamerTargetRoom({
   rooms: [fallbackRoom, liveRoom],
@@ -232,6 +238,7 @@ async function runAsyncTests(): Promise<void> {
     currentRoomId: null,
     feedMode: 'bot_deathmatch',
     random: () => 0,
+    now: () => NOW,
   });
 
   assert.equal(botDeathmatchTarget.source, 'bot_deathmatch');
@@ -245,6 +252,7 @@ async function runAsyncTests(): Promise<void> {
   assert.equal(botDeathmatchOptions.endlessMatch, true);
   assert.equal(botDeathmatchOptions.streamerFeedMode, 'bot_deathmatch');
   assert.equal(botDeathmatchOptions.streamerCameraMode, 'fixed_aerial');
+  assert.equal(botDeathmatchOptions.streamerMapRotationStartedAt, NOW);
   assert.equal(botDeathmatchOptions.botAssignments.length, getGameplayModeRules('team_deathmatch').maxPlayers);
   assert.equal(botDeathmatchOptions.botAssignments.filter((assignment) => assignment.team === 'red').length, 4);
   assert.equal(botDeathmatchOptions.botAssignments.filter((assignment) => assignment.team === 'blue').length, 4);
@@ -255,11 +263,45 @@ async function runAsyncTests(): Promise<void> {
     currentRoomId: botDeathmatchTarget.roomId,
     feedMode: 'bot_deathmatch',
     random: () => 0,
+    now: () => NOW + BOT_DEATHMATCH_ROTATION_MS - 1,
   });
 
   assert.equal(reusedBotDeathmatchTarget.roomId, botDeathmatchTarget.roomId);
   assert.equal(reusedBotDeathmatchTarget.seatReservation, undefined);
   assert.equal(botDeathmatchMatchMaker.createdOptions.length, 1);
+
+  const expiredCurrentBotDeathmatchTarget = await getNextStreamerTarget({
+    adminUserId: 'admin-a',
+    matchMaker: botDeathmatchMatchMaker,
+    currentRoomId: botDeathmatchTarget.roomId,
+    feedMode: 'bot_deathmatch',
+    random: () => 0,
+    now: () => NOW + BOT_DEATHMATCH_ROTATION_MS,
+  });
+
+  assert.equal(expiredCurrentBotDeathmatchTarget.roomId, botDeathmatchTarget.roomId);
+  assert.equal(expiredCurrentBotDeathmatchTarget.source, 'bot_deathmatch');
+  assert.equal(expiredCurrentBotDeathmatchTarget.seatReservation, undefined);
+  assert.equal(botDeathmatchMatchMaker.createdOptions.length, 1);
+
+  clearStreamerSessionsForTests();
+  const expiredNonCurrentBotDeathmatchMatchMaker = new FakeStreamerMatchMaker([botDeathmatchRoom]);
+  const replacementBotDeathmatchTarget = await getNextStreamerTarget({
+    adminUserId: 'admin-a',
+    matchMaker: expiredNonCurrentBotDeathmatchMatchMaker,
+    currentRoomId: null,
+    feedMode: 'bot_deathmatch',
+    random: () => 0,
+    now: () => NOW + BOT_DEATHMATCH_ROTATION_MS,
+  });
+
+  assert.notEqual(replacementBotDeathmatchTarget.roomId, botDeathmatchRoom.roomId);
+  assert.equal(replacementBotDeathmatchTarget.source, 'bot_deathmatch');
+  assert.equal(expiredNonCurrentBotDeathmatchMatchMaker.createdOptions.length, 1);
+  assert.equal(
+    expiredNonCurrentBotDeathmatchMatchMaker.createdOptions[0]?.streamerMapRotationStartedAt,
+    NOW + BOT_DEATHMATCH_ROTATION_MS
+  );
 }
 
 runAsyncTests().then(() => {

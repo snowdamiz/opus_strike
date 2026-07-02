@@ -448,7 +448,10 @@ import {
 } from '../anticheat';
 import { AccountRestrictedError, assertGameplayAccountEligible } from '../auth/accountEligibility';
 import { consumeReplayNonce } from '../security/replayNonceStore';
-import { getStreamerObserverSeatCount } from '../streamer/config';
+import {
+  getStreamerBotDeathmatchMapRotationMs,
+  getStreamerObserverSeatCount,
+} from '../streamer/config';
 import {
   GAME_MESSAGE_RATE_LIMITS,
   MessageRateLimiter,
@@ -701,6 +704,7 @@ interface CreateOptions {
   streamerManagedByUserId?: string;
   streamerFeedMode?: string;
   streamerCameraMode?: string;
+  streamerMapRotationStartedAt?: number | null;
   endlessMatch?: boolean;
 }
 
@@ -1178,6 +1182,7 @@ export class GameRoom extends Room<GameState> {
   private streamerManagedByUserId: string | null = null;
   private streamerFeedMode: string | null = null;
   private streamerCameraMode: string | null = null;
+  private streamerMapRotationStartedAt: number | null = null;
   private endlessMatch = false;
   private readonly streamerObservers = new Map<string, StreamerObserverSession>();
   private battleRoyalSafeZone: BattleRoyalSafeZoneState | null = null;
@@ -1393,6 +1398,13 @@ export class GameRoom extends Room<GameState> {
     this.streamerCameraMode = typeof options.streamerCameraMode === 'string'
       ? options.streamerCameraMode
       : null;
+    const fallbackStreamerMapRotationStartedAt = this.streamerManagedBotGame && this.streamerFeedMode === 'bot_deathmatch'
+      ? Date.now()
+      : null;
+    this.streamerMapRotationStartedAt = typeof options.streamerMapRotationStartedAt === 'number'
+      && Number.isFinite(options.streamerMapRotationStartedAt)
+      ? options.streamerMapRotationStartedAt
+      : fallbackStreamerMapRotationStartedAt;
     this.endlessMatch = options.endlessMatch === true;
     this.requiredHumanPlayers = Math.max(
       0,
@@ -2260,6 +2272,10 @@ export class GameRoom extends Room<GameState> {
     const now = Date.now();
     const dt = TICK_INTERVAL_MS / 1000;
 
+    if (this.rotateStreamerBotDeathmatchMapIfDue(now)) {
+      return;
+    }
+
     this.measureTickSpan('phase_gameplay_update', () => {
       // Update round timer
       if (!this.endlessMatch && this.state.roundStartTime && !this.devRuntime.isGameClockFrozen()) {
@@ -2746,6 +2762,7 @@ export class GameRoom extends Room<GameState> {
       streamerManagedByUserId: this.streamerManagedByUserId,
       streamerFeedMode: this.streamerFeedMode,
       streamerCameraMode: this.streamerCameraMode,
+      streamerMapRotationStartedAt: this.streamerMapRotationStartedAt,
       endlessMatch: this.endlessMatch,
       rankedEligibilityCandidate: this.rankedEligibilityCandidate,
       rankedRequiredHumanPlayers: this.rankedRequiredHumanPlayers,
@@ -9958,14 +9975,44 @@ export class GameRoom extends Room<GameState> {
   }
 
   private resetAfterGame(): void {
+    this.resetRoomForNewMap(createRandomSeed());
+  }
+
+  private resetRoomForNewMap(mapSeed: number): void {
     this.battleRoyalDownedRuntime.clearAll(this.state.players.values(), Date.now());
-    this.applyPostGameResetStatePatch(buildPostGameResetStatePatch(createRandomSeed()));
+    this.applyPostGameResetStatePatch(buildPostGameResetStatePatch(mapSeed));
     this.refreshMapManifest();
     resetFlagsFromManifest(this.state, this.getMapManifest());
 
     this.state.players.forEach(resetPostGamePlayer);
     this.matchLedger.clear();
     this.updateMetadata();
+  }
+
+  private rotateStreamerBotDeathmatchMapIfDue(now: number): boolean {
+    if (!this.streamerManagedBotGame) return false;
+    if (this.streamerFeedMode !== 'bot_deathmatch') return false;
+    if (this.state.phase !== 'playing') return false;
+    if (this.streamerMapRotationStartedAt === null) {
+      this.streamerMapRotationStartedAt = now;
+      this.updateMetadata();
+      return false;
+    }
+    if (now - this.streamerMapRotationStartedAt < getStreamerBotDeathmatchMapRotationMs()) return false;
+
+    const nextMapSeed = createRandomSeed();
+    this.streamerMapRotationStartedAt = now;
+    this.resetRoomForNewMap(nextMapSeed);
+    loggers.room.info('Streamer bot deathmatch map rotated', {
+      roomId: this.roomId,
+      mapSeed: this.state.mapSeed,
+      mapThemeId: this.state.mapThemeId,
+      mapSize: this.state.mapSize,
+      mapProfileId: this.state.mapProfileId,
+    });
+    this.checkPhaseTransition();
+    this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
+    return true;
   }
 
   private updateVoidZones(now: number) {
