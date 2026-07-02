@@ -15,6 +15,7 @@ interface StreamerStoreState {
   hiddenFirstPersonTargetId: string | null;
   setCsrfToken: (csrfToken: string | null) => void;
   setLoading: (reason: StreamerLoadingReason) => void;
+  setPendingTarget: (target: StreamerNextTarget) => void;
   setTarget: (target: StreamerNextTarget) => void;
   setError: (message: string | null) => void;
   setHiddenFirstPersonTargetId: (playerId: string | null) => void;
@@ -43,6 +44,15 @@ export const useStreamerStore = create<StreamerStoreState>((set) => ({
     lastError: null,
     hiddenFirstPersonTargetId: null,
   }),
+  setPendingTarget: (target) => set({
+    isActive: true,
+    isLoading: true,
+    currentRoomId: target.roomId,
+    source: target.source,
+    metadata: target.metadata,
+    lastError: null,
+    hiddenFirstPersonTargetId: null,
+  }),
   setTarget: (target) => set({
     isActive: true,
     isLoading: false,
@@ -53,6 +63,10 @@ export const useStreamerStore = create<StreamerStoreState>((set) => ({
     hiddenFirstPersonTargetId: null,
   }),
   setError: (lastError) => set({ lastError }),
-  setHiddenFirstPersonTargetId: (hiddenFirstPersonTargetId) => set({ hiddenFirstPersonTargetId }),
+  setHiddenFirstPersonTargetId: (hiddenFirstPersonTargetId) => set((state) => (
+    state.hiddenFirstPersonTargetId === hiddenFirstPersonTargetId
+      ? state
+      : { hiddenFirstPersonTargetId }
+  )),
   reset: () => set({ ...initialStreamerState }),
 }));
