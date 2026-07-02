@@ -35,6 +35,19 @@ assert.equal(initial.warning, false);
 assert.equal(isOutsideBattleRoyalSafeZone(initial, { x: 0, z: 0 }), false);
 assert.equal(isOutsideBattleRoyalSafeZone(initial, { x: initial.radius + 0.1, z: 0 }), true);
 
+const expectedShrinkDurationsMs = [90_000, 80_000, 70_000, 60_000, 50_000, 45_000];
+let phaseForTimingChecks = initial;
+expectedShrinkDurationsMs.forEach((expectedShrinkMs, phaseIndex) => {
+  assert.equal(phaseForTimingChecks.phaseIndex, phaseIndex);
+  assert.equal(phaseForTimingChecks.phaseEndsAt - phaseForTimingChecks.shrinkStartsAt, expectedShrinkMs);
+  if (phaseIndex < expectedShrinkDurationsMs.length - 1) {
+    phaseForTimingChecks = updateBattleRoyalSafeZoneState(
+      phaseForTimingChecks,
+      phaseForTimingChecks.phaseEndsAt + 1
+    );
+  }
+});
+
 const warning = updateBattleRoyalSafeZoneState(initial, initial.shrinkStartsAt - 10_000);
 assert.equal(warning.warning, true);
 assert.equal(warning.shrinking, false);
