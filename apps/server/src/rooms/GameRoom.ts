@@ -1609,6 +1609,10 @@ export class GameRoom extends Room<GameState> {
     this.onRateLimitedMessage('streamerHeartbeat', GAME_MESSAGE_RATE_LIMITS.playerPingResponse, (client) => {
       this.handleStreamerHeartbeat(client);
     });
+
+    this.onRateLimitedMessage('streamerObserverReady', GAME_MESSAGE_RATE_LIMITS.playerPingResponse, (client) => {
+      this.handleStreamerObserverReady(client);
+    });
   }
 
   private registerDevelopmentMessageHandlers(): void {
@@ -3149,7 +3153,9 @@ export class GameRoom extends Room<GameState> {
   }
 
   private isStreamerObserverAllowedMessage(type: string): boolean {
-    return type === 'playerPingResponse' || type === 'streamerHeartbeat';
+    return type === 'playerPingResponse'
+      || type === 'streamerHeartbeat'
+      || type === 'streamerObserverReady';
   }
 
   private handleStreamerHeartbeat(client: Client): void {
@@ -3157,6 +3163,21 @@ export class GameRoom extends Room<GameState> {
     if (!observer) return;
 
     observer.lastHeartbeatAt = Date.now();
+  }
+
+  private handleStreamerObserverReady(client: Client): void {
+    const observer = this.streamerObservers.get(client.sessionId);
+    if (!observer) return;
+
+    observer.lastHeartbeatAt = Date.now();
+    client.send('streamerObserverJoined', {
+      roomId: this.roomId,
+      sessionId: client.sessionId,
+      streamerObserverCount: this.streamerObservers.size,
+      streamerObserverSeatCount: getStreamerObserverSeatCount(),
+      streamerManagedBotGame: this.streamerManagedBotGame,
+    });
+    this.sendCurrentSnapshots(client);
   }
 
   private probePlayerPings(): void {

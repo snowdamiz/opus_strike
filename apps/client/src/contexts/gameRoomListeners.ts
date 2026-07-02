@@ -123,6 +123,14 @@ interface MatchCancelledMessage {
   };
 }
 
+interface StreamerObserverJoinedMessage {
+  roomId?: string;
+  sessionId?: string;
+  streamerObserverCount?: number;
+  streamerObserverSeatCount?: number;
+  streamerManagedBotGame?: boolean;
+}
+
 export function setupGameRoomListeners(
   room: Room,
   {
@@ -187,6 +195,16 @@ export function setupGameRoomListeners(
   const syncInterval = enableFallbackPolling
     ? setupPollingSync(room, { setGamePhase })
     : null;
+
+  room.onMessage('streamerObserverJoined', measureNetworkMessage('streamerObserverJoined', (data: StreamerObserverJoinedMessage) => {
+    loggers.network.info('streamer observer session acknowledged', {
+      roomId: data.roomId ?? room.id,
+      sessionId: data.sessionId ?? room.sessionId,
+      streamerObserverCount: data.streamerObserverCount,
+      streamerObserverSeatCount: data.streamerObserverSeatCount,
+      streamerManagedBotGame: data.streamerManagedBotGame === true,
+    });
+  }));
 
   room.onMessage('phaseChange', measureNetworkMessage('phaseChange', (data: {
     phase: string;
