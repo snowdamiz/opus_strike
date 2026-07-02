@@ -1177,11 +1177,17 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       }
 
       const client = getClient();
-      if (!target.seatReservation) {
-        throw new Error(`Streamer target ${target.roomId} is missing a seat reservation`);
+      const room = target.seatReservation
+        ? await client.consumeSeatReservation(target.seatReservation)
+        : target.streamerObserverTicket
+          ? await client.joinById(target.roomId, {
+            streamerObserverTicket: target.streamerObserverTicket,
+            clientBuildId: config.buildId,
+          })
+          : null;
+      if (!room) {
+        throw new Error(`Streamer target ${target.roomId} is missing join credentials`);
       }
-
-      const room = await client.consumeSeatReservation(target.seatReservation);
       gameRoomRef.current = room;
 
       setupGameListeners(room, 'Streamer');

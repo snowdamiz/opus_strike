@@ -109,6 +109,7 @@ export interface StreamerNextTarget {
   processId: string | null;
   publicAddress: string | null;
   source: 'real_player' | 'fallback_bot';
+  streamerObserverTicket?: string;
   seatReservation?: GameSeatReservationPayload;
   metadata: StreamerTargetMetadata;
 }
