@@ -59,6 +59,7 @@ export type VerifySplTokenPaymentReason =
   | 'wrong_mint'
   | 'wrong_recipient'
   | 'wrong_authority'
+  | 'self_transfer'
   | 'underpayment'
   | 'expired_intent'
   | 'transaction_before_intent'
@@ -155,6 +156,9 @@ export async function buildSplTokenPaymentTransaction(
   const tokenProgramId = readTokenProgramId(input.tokenProgramId);
   const sourceTokenAccount = await getAssociatedTokenAddress(mint, wallet, false, tokenProgramId);
   const treasuryTokenAccount = await getAssociatedTokenAddress(mint, treasuryWallet, false, tokenProgramId);
+  if (sourceTokenAccount.equals(treasuryTokenAccount)) {
+    throw Object.assign(new Error('treasuryWallet must be different from walletAddress'), { statusCode: 400 });
+  }
   const latest = await input.connection.getLatestBlockhash('confirmed');
 
   const transaction = new Transaction({
@@ -242,6 +246,7 @@ function hasSigner(transaction: ParsedTransactionWithMeta, walletAddress: string
 }
 
 function parsedTransferInfo(instruction: ParsedInstruction | PartiallyDecodedInstruction): {
+  source: string;
   mint: string;
   destination: string;
   authority: string;
@@ -254,6 +259,7 @@ function parsedTransferInfo(instruction: ParsedInstruction | PartiallyDecodedIns
   if (!info || typeof info !== 'object') return null;
   const amount = info.tokenAmount?.amount ?? info.amount;
   if (
+    typeof info.source !== 'string' ||
     typeof info.mint !== 'string' ||
     typeof info.destination !== 'string' ||
     typeof info.authority !== 'string' ||
@@ -263,6 +269,7 @@ function parsedTransferInfo(instruction: ParsedInstruction | PartiallyDecodedIns
     return null;
   }
   return {
+    source: info.source,
     mint: info.mint,
     destination: info.destination,
     authority: info.authority,
@@ -300,6 +307,7 @@ export function verifyParsedSplTokenPayment(input: VerifySplTokenPaymentInput): 
   if (transfer.mint !== input.tokenMintAddress) return { ok: false, reason: 'wrong_mint' };
   if (transfer.destination !== input.treasuryTokenAccount) return { ok: false, reason: 'wrong_recipient' };
   if (transfer.authority !== input.walletAddress) return { ok: false, reason: 'wrong_authority' };
+  if (transfer.source === transfer.destination) return { ok: false, reason: 'self_transfer' };
   if (BigInt(transfer.amount) < BigInt(input.tokenAmountBaseUnits)) {
     return { ok: false, reason: 'underpayment' };
   }

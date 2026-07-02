@@ -55,6 +55,7 @@ function encodedMemoInstruction(value = memo) {
 }
 
 function transferCheckedInstruction(overrides: Partial<{
+  source: string;
   mint: string;
   destination: string;
   authority: string;
@@ -66,6 +67,7 @@ function transferCheckedInstruction(overrides: Partial<{
     parsed: {
       type: 'transferChecked',
       info: {
+        source: overrides.source ?? Keypair.generate().publicKey.toBase58(),
         mint: overrides.mint ?? mint.toBase58(),
         destination: overrides.destination ?? treasuryTokenAccount.toBase58(),
         authority: overrides.authority ?? wallet.toBase58(),
@@ -179,6 +181,15 @@ function assertReason(
   assertReason(transactionFixture({ transfer: transferCheckedInstruction({ mint: Keypair.generate().publicKey.toBase58() }) }), 'wrong_mint');
   assertReason(transactionFixture({ transfer: transferCheckedInstruction({ destination: Keypair.generate().publicKey.toBase58() }) }), 'wrong_recipient');
   assertReason(transactionFixture({ transfer: transferCheckedInstruction({ authority: Keypair.generate().publicKey.toBase58() }) }), 'wrong_authority');
+  assertReason(
+    transactionFixture({
+      transfer: transferCheckedInstruction({
+        source: treasuryTokenAccount.toBase58(),
+        destination: treasuryTokenAccount.toBase58(),
+      }),
+    }),
+    'self_transfer'
+  );
   assertReason(transactionFixture({ transfer: transferCheckedInstruction({ amount: '999' }) }), 'underpayment');
   assertReason(
     transactionFixture({ blockTime: Math.floor(new Date('2026-06-24T11:59:00.000Z').getTime() / 1000) }),
@@ -218,8 +229,24 @@ async function runTransactionBuilderTest() {
   assert.equal(transaction.instructions.length, 3);
   assert.equal(transaction.instructions[0].programId.toBase58(), ASSOCIATED_TOKEN_PROGRAM_ID.toBase58());
   assert.equal(transaction.instructions[1].programId.toBase58(), TOKEN_PROGRAM_ID.toBase58());
+  assert.equal(transaction.instructions[1].data[0], 12);
+  assert.equal(transaction.instructions[1].data.readBigUInt64LE(1).toString(), tokenAmountBaseUnits);
+  assert.equal(transaction.instructions[1].data[9], 6);
   assert.equal(transaction.instructions[2].programId.toBase58(), MEMO_PROGRAM_ID.toBase58());
   assert.equal(Buffer.from(transaction.instructions[2].data).toString('utf8'), memo);
+
+  await assert.rejects(
+    () => buildSplTokenPaymentTransaction({
+      connection: connection as never,
+      walletAddress: treasuryWallet.toBase58(),
+      tokenMintAddress: mint.toBase58(),
+      treasuryWallet: treasuryWallet.toBase58(),
+      tokenAmountBaseUnits,
+      tokenDecimals: 6,
+      memo,
+    }),
+    /treasuryWallet must be different from walletAddress/
+  );
 
   const token2022Built = await buildSplTokenPaymentTransaction({
     connection: connection as never,

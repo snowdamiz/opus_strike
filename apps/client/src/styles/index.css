@@ -1407,7 +1407,7 @@ body,
   flex-direction: column;
   align-items: center;
   justify-self: center;
-  gap: 0.25rem;
+  gap: 0.55rem;
 }
 
 .main-lobby-tabs {
@@ -1416,9 +1416,9 @@ body,
 
 .main-lobby-ca-badge {
   display: inline-flex;
-  max-width: min(32rem, calc(100vw - (var(--main-lobby-edge-x) * 2)));
+  max-width: min(39rem, calc(100vw - (var(--main-lobby-edge-x) * 2)));
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.55rem;
   overflow: hidden;
   border: 1px solid rgb(var(--color-accent-primary) / 0.42);
   border-radius: 0.35rem;
@@ -1429,14 +1429,14 @@ body,
     0 0.45rem 1.3rem rgb(0 0 0 / 0.32),
     0 0 1.1rem rgb(var(--color-accent-primary) / 0.12),
     inset 0 1px 0 rgb(255 255 255 / 0.1);
-  padding: 0.18rem 0.55rem 0.2rem;
+  padding: 0.28rem 0.72rem 0.3rem;
   backdrop-filter: blur(10px);
 }
 
 .main-lobby-ca-label {
   flex: 0 0 auto;
   font-family: 'Bebas Neue', 'Orbitron', sans-serif;
-  font-size: 0.68rem;
+  font-size: 0.8rem;
   letter-spacing: 0.14em;
   line-height: 1;
   color: rgb(var(--color-accent-primary-hover));
@@ -1448,7 +1448,7 @@ body,
   overflow: hidden;
   color: rgb(255 255 255 / 0.82);
   font-family: 'JetBrains Mono', monospace;
-  font-size: 0.68rem;
+  font-size: 0.78rem;
   font-weight: 500;
   line-height: 1;
   text-overflow: ellipsis;
@@ -1457,6 +1457,36 @@ body,
 
 .main-lobby-controls {
   justify-self: end;
+}
+
+.main-lobby-x-link {
+  position: relative;
+  display: flex;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: rgb(255 255 255 / 0.6);
+  filter: drop-shadow(0 0.12rem 0.4rem rgb(0 0 0 / 0.42));
+  transition:
+    color 150ms ease,
+    filter 150ms ease,
+    transform 150ms ease;
+}
+
+.main-lobby-x-link:hover {
+  color: white;
+  filter:
+    drop-shadow(0 0.16rem 0.5rem rgb(0 0 0 / 0.52))
+    drop-shadow(0 0 0.7rem rgb(var(--color-accent-primary) / 0.26));
+  transform: translateY(-0.04rem);
+}
+
+.main-lobby-x-link:focus-visible {
+  border-radius: 0.35rem;
+  outline: 2px solid rgb(255 255 255 / 0.35);
+  outline-offset: 0.18rem;
 }
 
 @media (max-width: 980px) {
