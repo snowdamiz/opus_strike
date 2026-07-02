@@ -120,6 +120,7 @@ export function useStreamerModeController(): void {
         if (shouldJoinTarget) {
           const reason = loadingReasonForTarget(target.source, joinedRoomId);
           useStreamerStore.getState().setLoading(reason);
+          useStreamerStore.getState().setPendingTarget(target);
           useGameStore.getState().setAppPhase('streamer_loading');
           await joinStreamerRoom(target);
           if (cancelled) return;

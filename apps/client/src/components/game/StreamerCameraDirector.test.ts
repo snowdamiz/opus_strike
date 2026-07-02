@@ -65,15 +65,34 @@ assert.deepEqual(emptyShot, {
   shotKind: 'aerial',
 });
 
-const fixedAerialShot = selectStreamerCameraShot({
+const fixedAerialPatrolShot = selectStreamerCameraShot({
   players,
   shotIndex: 0,
   cameraMode: 'fixed_aerial',
 });
 
-assert.deepEqual(fixedAerialShot, {
+assert.deepEqual(fixedAerialPatrolShot, {
   targetId: null,
   shotKind: 'aerial',
 });
+
+const fixedAerialChaseShot = selectStreamerCameraShot({
+  players,
+  shotIndex: 1,
+  cameraMode: 'fixed_aerial',
+});
+
+assert.equal(fixedAerialChaseShot.targetId, 'human-a');
+assert.equal(fixedAerialChaseShot.shotKind, 'chase');
+
+const fixedAerialNoFirstPersonShot = selectStreamerCameraShot({
+  players,
+  shotIndex: 4,
+  cameraMode: 'fixed_aerial',
+});
+
+assert.equal(fixedAerialNoFirstPersonShot.shotKind, 'chase');
+assert.notEqual(fixedAerialNoFirstPersonShot.shotKind, 'first_person');
+assert.notEqual(fixedAerialNoFirstPersonShot.shotKind, 'orbit');
 
 console.log('streamer camera director tests passed');

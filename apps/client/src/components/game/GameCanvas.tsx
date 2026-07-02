@@ -398,6 +398,7 @@ const GPU_WARMUP_RENDER_FRAMES = 4;
 const GPU_WARMUP_TIMEOUT_MS = 3600;
 const GPU_WARMUP_STALL_TIMEOUT_MS = 10_000;
 const GPU_SETTLING_STALL_TIMEOUT_MS = 2_500;
+const STREAMER_CPU_WARMUP_STALL_TIMEOUT_MS = 12_000;
 const WORLD_WARMUP_ROOT_NAME = 'procedural-voxel-map';
 const WORLD_WARMUP_MIN_RADIUS = 48;
 
@@ -1380,11 +1381,19 @@ export function GameCanvas({
 
   useEffect(() => {
     if (warmupSnapshot.key !== warmupKey) return;
-    if (warmupSnapshot.state !== 'preparingGpu' && warmupSnapshot.state !== 'settling') return;
+    if (
+      warmupSnapshot.state !== 'preparingGpu' &&
+      warmupSnapshot.state !== 'settling' &&
+      !(streamerIsActive && warmupSnapshot.state === 'preparingCpu')
+    ) {
+      return;
+    }
 
     const timeoutMs = warmupSnapshot.state === 'settling'
       ? GPU_SETTLING_STALL_TIMEOUT_MS
-      : GPU_WARMUP_STALL_TIMEOUT_MS;
+      : warmupSnapshot.state === 'preparingCpu'
+        ? STREAMER_CPU_WARMUP_STALL_TIMEOUT_MS
+        : GPU_WARMUP_STALL_TIMEOUT_MS;
     const timeoutId = window.setTimeout(() => {
       console.warn('[MapWarmup] Warmup stalled; falling back to interactive scene', {
         warmupKey,
@@ -1402,6 +1411,7 @@ export function GameCanvas({
     warmupSnapshot.label,
     warmupSnapshot.progress,
     warmupSnapshot.state,
+    streamerIsActive,
   ]);
 
   return (
@@ -1487,7 +1497,7 @@ export function GameCanvas({
         <BattleRoyalSafeZone />
 
         {streamerIsActive ? (
-          <StreamerCameraDirector enabled={isWorldReady} />
+          <StreamerCameraDirector enabled />
         ) : isBattleRoyalEliminated ? (
           <BattleRoyalTeamSpectatorCameraController enabled />
         ) : (
