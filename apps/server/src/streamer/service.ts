@@ -93,6 +93,7 @@ export interface StreamerNextTarget {
   processId: string | null;
   publicAddress: string | null;
   source: StreamerTarget['source'];
+  streamerObserverTicket: string;
   seatReservation?: GameSeatReservationPayload;
   metadata: {
     phase: string | null;
@@ -414,6 +415,7 @@ async function toNextTarget(input: {
     processId: room.processId ?? null,
     publicAddress: room.publicAddress ?? null,
     source: input.target.source,
+    streamerObserverTicket,
     metadata: getStreamerRoomMetadata(room),
   };
 

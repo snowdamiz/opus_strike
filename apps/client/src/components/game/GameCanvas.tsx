@@ -396,6 +396,8 @@ function SceneReadySignal({
 
 const GPU_WARMUP_RENDER_FRAMES = 4;
 const GPU_WARMUP_TIMEOUT_MS = 3600;
+const GPU_WARMUP_STALL_TIMEOUT_MS = 10_000;
+const GPU_SETTLING_STALL_TIMEOUT_MS = 2_500;
 const WORLD_WARMUP_ROOT_NAME = 'procedural-voxel-map';
 const WORLD_WARMUP_MIN_RADIUS = 48;
 
@@ -1375,6 +1377,32 @@ export function GameCanvas({
   const handleSettlingFrame = useCallback(() => {
     dispatchWarmup({ type: 'settlingFrame' });
   }, []);
+
+  useEffect(() => {
+    if (warmupSnapshot.key !== warmupKey) return;
+    if (warmupSnapshot.state !== 'preparingGpu' && warmupSnapshot.state !== 'settling') return;
+
+    const timeoutMs = warmupSnapshot.state === 'settling'
+      ? GPU_SETTLING_STALL_TIMEOUT_MS
+      : GPU_WARMUP_STALL_TIMEOUT_MS;
+    const timeoutId = window.setTimeout(() => {
+      console.warn('[MapWarmup] Warmup stalled; falling back to interactive scene', {
+        warmupKey,
+        state: warmupSnapshot.state,
+        label: warmupSnapshot.label,
+        progress: warmupSnapshot.progress,
+      });
+      dispatchWarmup({ type: 'fallback', reason: `${warmupSnapshot.state}-stall` });
+    }, timeoutMs);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    warmupKey,
+    warmupSnapshot.key,
+    warmupSnapshot.label,
+    warmupSnapshot.progress,
+    warmupSnapshot.state,
+  ]);
 
   return (
     <Canvas

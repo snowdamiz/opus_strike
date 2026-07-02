@@ -47,6 +47,7 @@ const MATCH_RESOURCE_WARMUP_IDLE_TIMEOUT_MS = 80;
 const BATTLE_ROYAL_PENDING_MAP_PROGRESS_CAP = 24;
 const MENU_LOADING_PROGRESS_CAP = 72;
 const MAP_VOTE_LOADING_PROGRESS_CAP = 64;
+const MATCH_RESOURCE_PRELOAD_TIMEOUT_MS = 12_000;
 
 type CountdownEffectStyle = CSSProperties & {
   '--prematch-countdown-backdrop-opacity': string;
@@ -86,6 +87,20 @@ function yieldForMatchResourceWarmup(): Promise<void> {
 
     window.setTimeout(resolve, 0);
   });
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId = 0;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([
+    promise.finally(() => window.clearTimeout(timeoutId)),
+    timeoutPromise,
+  ]);
 }
 
 function getStreamerLoadingTitle(reason: StreamerLoadingReason): string {
@@ -253,13 +268,17 @@ export function App() {
           });
         const runtimeModuleWarmupPromise = preloadMatchRuntimeModules();
 
-        await Promise.all([
-          soundWarmupPromise,
-          effectWarmupPromise,
-          combatTextWarmupPromise,
-          runtimeModuleWarmupPromise,
-          mapWarmupPromise,
-        ]);
+        await withTimeout(
+          Promise.all([
+            soundWarmupPromise,
+            effectWarmupPromise,
+            combatTextWarmupPromise,
+            runtimeModuleWarmupPromise,
+            mapWarmupPromise,
+          ]),
+          MATCH_RESOURCE_PRELOAD_TIMEOUT_MS,
+          'Match resource preload'
+        );
         await yieldForMatchResourceWarmup();
       } catch (error) {
         console.warn('[App] Match resource preload failed', error);

@@ -182,7 +182,7 @@ async function runAsyncTests(): Promise<void> {
   assert.equal(matchMaker.reservations[0]?.options.clientBuildId, 'build-a');
   assert.equal(matchMaker.reservations[0]?.options.authToken, 'auth-a');
   assert.equal(typeof matchMaker.reservations[0]?.options.streamerObserverTicket, 'string');
-  assert.equal('streamerObserverTicket' in (target as unknown as Record<string, unknown>), false);
+  assert.equal(typeof target.streamerObserverTicket, 'string');
 
   clearStreamerSessionsForTests();
   const alreadyWatchingMatchMaker = new FakeStreamerMatchMaker([liveRoom]);
