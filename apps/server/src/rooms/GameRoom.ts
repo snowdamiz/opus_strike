@@ -142,7 +142,10 @@ import {
   type MovementCommandDrainDecision,
   type RoomMovementCatchupBudgetRequest,
 } from './movementCommandDrain';
-import { ingestMovementCommandPacket } from './movementCommandIngress';
+import {
+  ingestMovementCommandPacket,
+  promoteMovementCommandAcrossAuthorityBarrier,
+} from './movementCommandIngress';
 import {
   MovementAuthorityRegistry,
   type ServerMovementAuthorityState,
@@ -3950,10 +3953,7 @@ export class GameRoom extends Room<GameState> {
     if (options.preserveQueuedCommands) {
       for (const command of authority.pendingCommands) {
         if (!isMovementSeqAfter(command.seq, authority.lastProcessedSeq)) continue;
-        preservedCommands.push({
-          ...command,
-          movementEpoch: nextEpoch,
-        });
+        preservedCommands.push(promoteMovementCommandAcrossAuthorityBarrier(command, nextEpoch));
       }
     }
     authority.movementEpoch = nextEpoch;

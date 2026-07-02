@@ -25,6 +25,7 @@ import {
 import {
   getMovementQueueOverflowBarrierPolicy,
   ingestMovementCommandPacket,
+  promoteMovementCommandAcrossAuthorityBarrier,
   sanitizeIncomingMovementCommand,
 } from '../rooms/movementCommandIngress';
 
@@ -58,6 +59,28 @@ function authority() {
     maxPacketCommands: MOVEMENT_MAX_PACKET_COMMANDS,
     now: () => 0,
   }).get('player-a');
+}
+
+function clientStateSnapshot(): NonNullable<MovementCommand['clientState']> {
+  return {
+    position: { x: 1, y: 2, z: 3 },
+    velocity: { x: 4, y: 5, z: 6 },
+    movement: {
+      isGrounded: true,
+      isSprinting: false,
+      isCrouching: false,
+      isSliding: false,
+      slideTimeRemaining: 0,
+      isWallRunning: false,
+      wallRunSide: null,
+      isGrappling: false,
+      grapplePoint: null,
+      isJetpacking: false,
+      jetpackFuel: 100,
+      isGliding: false,
+      chronosAscendantStartY: undefined,
+    },
+  };
 }
 
 const queue = new MovementCommandQueue(4);
@@ -143,25 +166,7 @@ assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
 
 {
   const movementAuthority = authority();
-  const clientState = {
-    position: { x: 1, y: 2, z: 3 },
-    velocity: { x: 4, y: 5, z: 6 },
-    movement: {
-      isGrounded: true,
-      isSprinting: false,
-      isCrouching: false,
-      isSliding: false,
-      slideTimeRemaining: 0,
-      isWallRunning: false,
-      wallRunSide: null,
-      isGrappling: false,
-      grapplePoint: null,
-      isJetpacking: false,
-      jetpackFuel: 100,
-      isGliding: false,
-      chronosAscendantStartY: undefined,
-    },
-  };
+  const clientState = clientStateSnapshot();
   const result = sanitizeIncomingMovementCommand({
     authority: movementAuthority,
     command: command(2, { clientState }),
@@ -171,6 +176,18 @@ assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
   assert.equal(result.ok, true);
   if (!result.ok) throw new Error('expected client movement snapshot acceptance');
   assert.deepEqual(result.command.clientState, clientState);
+}
+
+{
+  const clientState = clientStateSnapshot();
+  const promoted = promoteMovementCommandAcrossAuthorityBarrier(
+    command(8, { movementEpoch: 0, clientState }),
+    1
+  );
+
+  assert.equal(promoted.seq, 8);
+  assert.equal(promoted.movementEpoch, 1);
+  assert.equal(promoted.clientState, undefined);
 }
 
 {
@@ -222,15 +239,17 @@ assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
   const movementAuthority = authority();
   movementAuthority.movementEpoch = 1;
   movementAuthority.lastProcessedSeq = 1956;
+  const clientState = clientStateSnapshot();
   const result = sanitizeIncomingMovementCommand({
     authority: movementAuthority,
-    command: command(1963, { movementEpoch: 0 }),
+    command: command(1963, { movementEpoch: 0, clientState }),
     currentCollisionRevision: 0,
   });
 
   assert.equal(result.ok, true);
   if (!result.ok) throw new Error('expected previous-epoch command promotion');
   assert.equal(result.command.movementEpoch, 1);
+  assert.equal(result.command.clientState, undefined);
   assert.equal(movementAuthority.metrics.lateCommands, 0);
 }
 

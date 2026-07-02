@@ -85,6 +85,19 @@ const MOVEMENT_COMMAND_SHAPE_KEYS = [
   'clientState',
 ] as const;
 
+export function promoteMovementCommandAcrossAuthorityBarrier(
+  command: MovementCommand,
+  movementEpoch: number
+): MovementCommand {
+  const promoted = {
+    ...command,
+    movementEpoch,
+  };
+  // The snapshot was predicted from the old epoch and must not overwrite post-barrier server movement.
+  delete promoted.clientState;
+  return promoted;
+}
+
 function buildMalformedCommandDetail(command: unknown): Record<string, unknown> {
   const isObject = command !== null && typeof command === 'object';
   const record = isObject ? command as Record<string, unknown> : null;
@@ -145,10 +158,7 @@ export function sanitizeIncomingMovementCommand(input: {
     if (canPromotePreviousEpochCommand) {
       return {
         ok: true,
-        command: {
-          ...sanitized,
-          movementEpoch: authority.movementEpoch,
-        },
+        command: promoteMovementCommandAcrossAuthorityBarrier(sanitized, authority.movementEpoch),
       };
     }
 
