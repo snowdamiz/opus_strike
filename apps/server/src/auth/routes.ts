@@ -33,6 +33,7 @@ import { appendAuthStatus, sanitizeReturnTo } from './returnTo';
 import { consumeOAuthState, createOAuthState, type OAuthStateRecord } from './oauthState';
 import { consumeRateLimit } from './rateLimit';
 import { enforceJsonRateLimit, getRequestAuthToken } from './http';
+import { consumeWalletAuthNonce, storeWalletAuthNonce } from './walletNonceStore';
 import { serializeUser } from './userResponse';
 import type { AuthAccountIdentity, AuthProviderName, PendingRegistrationIdentity } from './types';
 import { getRankedSeason } from '../ranking/seasonService';
@@ -42,8 +43,6 @@ const router: RouterType = Router();
 const JWT_EXPIRY = '30d';
 const COOKIE_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
 const PENDING_COOKIE_MAX_AGE = 60 * 60 * 1000;
-const NONCE_TTL_MS = 5 * 60 * 1000;
-const MAX_NONCE_RECORDS = 2_000;
 const DEFAULT_CLIENT_ORIGIN = process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3000';
 
 const AUTH_RATE_LIMITS = {
@@ -57,11 +56,6 @@ const AUTH_RATE_LIMITS = {
 
 const LEADERBOARD_DEFAULT_LIMIT = 25;
 const LEADERBOARD_MAX_LIMIT = 50;
-
-interface NonceRecord {
-  nonce: string;
-  timestamp: number;
-}
 
 interface LeaderboardUserSummary {
   id: string;
@@ -208,8 +202,6 @@ class ProviderConflictError extends Error {
   }
 }
 
-const nonceStore = new Map<string, NonceRecord>();
-
 function authCookieOptions(maxAge?: number) {
   return {
     httpOnly: true,
@@ -231,25 +223,6 @@ function clearAuthCookie(res: Response): void {
   res.clearCookie('auth_token', authCookieOptions());
 }
 
-function cleanupNonces(): void {
-  const expiresBefore = Date.now() - NONCE_TTL_MS;
-  for (const [address, data] of nonceStore.entries()) {
-    if (data.timestamp < expiresBefore) {
-      nonceStore.delete(address);
-    }
-  }
-}
-
-function trimNonces(): void {
-  cleanupNonces();
-
-  while (nonceStore.size >= MAX_NONCE_RECORDS) {
-    const oldestAddress = nonceStore.keys().next().value as string | undefined;
-    if (!oldestAddress) break;
-    nonceStore.delete(oldestAddress);
-  }
-}
-
 function normalizeWalletAddress(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -261,8 +234,6 @@ function normalizeWalletAddress(value: unknown): string | null {
     return null;
   }
 }
-
-setInterval(cleanupNonces, 5 * 60 * 1000).unref?.();
 
 function isPrismaUniqueError(error: unknown): error is Prisma.PrismaClientKnownRequestError {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
@@ -830,7 +801,7 @@ function logOAuthFailure(reason: string, details?: unknown): void {
   console.error('[auth] Discord OAuth failed', { provider: 'discord', reason, error: details });
 }
 
-router.get('/nonce', (req: Request, res: Response) => {
+router.get('/nonce', async (req: Request, res: Response) => {
   if (!enforceJsonRateLimit(req, res, 'auth:nonce', AUTH_RATE_LIMITS.nonce)) return;
 
   const walletAddress = normalizeWalletAddress(req.query.walletAddress);
@@ -839,10 +810,14 @@ router.get('/nonce', (req: Request, res: Response) => {
     return;
   }
 
-  trimNonces();
   const nonce = generateNonce();
   const message = createSignMessage(nonce);
-  nonceStore.set(walletAddress, { nonce, timestamp: Date.now() });
+  const stored = await storeWalletAuthNonce(walletAddress, nonce);
+  if (!stored) {
+    res.status(503).json({ error: 'Wallet authentication is temporarily unavailable' });
+    return;
+  }
+
   res.json({ nonce, message });
 });
 
@@ -858,9 +833,8 @@ router.post('/verify', async (req: Request, res: Response) => {
       return;
     }
 
-    const storedData = nonceStore.get(walletAddress);
-    if (!storedData || storedData.nonce !== nonce || Date.now() - storedData.timestamp > NONCE_TTL_MS) {
-      nonceStore.delete(walletAddress);
+    const hasValidNonce = await consumeWalletAuthNonce(walletAddress, nonce);
+    if (!hasValidNonce) {
       res.status(401).json({ error: 'Invalid or expired nonce' });
       return;
     }
@@ -871,8 +845,6 @@ router.post('/verify', async (req: Request, res: Response) => {
       res.status(401).json({ error: 'Invalid signature' });
       return;
     }
-
-    nonceStore.delete(walletAddress);
 
     const linkedAccount = await prisma.authAccount.findUnique({
       where: {
