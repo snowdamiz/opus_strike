@@ -112,11 +112,18 @@ export function OtherPlayers({ config, effectConfig, theme, hiddenPlayerId = nul
   }, [gamePhase, hiddenPlayerId, isBattleRoyal, localPlayerId, playerId, players, showFirstPersonDropBody, showLocalPlayerBody]);
 
   useEffect(() => {
-    if (!isBattleRoyal && !config.showNameplates) return;
     for (const player of otherPlayers) {
       if (player.id === playerId || player.id === localPlayerId) continue;
-      if (!shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam, nameplateAnchorPosition)) continue;
-      prewarmNameplateTexture(
+      const statusPlateMode = getRemoteStatusPlateMode(
+        player,
+        config,
+        isBattleRoyal,
+        localPlayerTeam,
+        nameplateAnchorPosition
+      );
+      if (!statusPlateMode) continue;
+      prewarmStatusPlateTexture(
+        statusPlateMode,
         player.name,
         player.health,
         player.maxHealth
@@ -136,16 +143,17 @@ export function OtherPlayers({ config, effectConfig, theme, hiddenPlayerId = nul
       />
       <RemoteMovementEffects players={otherPlayers} theme={theme} config={effectConfig} />
       {otherPlayers.map((player) => {
-        const showNameplate = player.id !== playerId
+        const statusPlateMode = player.id !== playerId
           && player.id !== localPlayerId
-          && shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam, nameplateAnchorPosition);
+          ? getRemoteStatusPlateMode(player, config, isBattleRoyal, localPlayerTeam, nameplateAnchorPosition)
+          : null;
         const showFlagIndicator = !isBattleRoyal && player.hasFlag;
-        return shouldRenderRemotePlayerFallback(player, showNameplate, showFlagIndicator) ? (
+        return shouldRenderRemotePlayerFallback(player, statusPlateMode, showFlagIndicator) ? (
           <OtherPlayer
             key={player.id}
             player={player}
             localPlayerId={showLocalPlayerBody ? (localPlayerId ?? playerId) : null}
-            showNameplate={showNameplate}
+            statusPlateMode={statusPlateMode}
             showFlagIndicator={showFlagIndicator}
           />
         ) : null;
@@ -157,7 +165,7 @@ export function OtherPlayers({ config, effectConfig, theme, hiddenPlayerId = nul
 interface OtherPlayerProps {
   player: Player;
   localPlayerId?: string | null;
-  showNameplate: boolean;
+  statusPlateMode: RemoteStatusPlateMode | null;
   showFlagIndicator: boolean;
 }
 
@@ -285,7 +293,16 @@ function isWithinNameplateDistance(
   return distanceSquared(player.position, anchorPosition) <= distance * distance;
 }
 
-function shouldShowRemoteNameplate(
+export type RemoteStatusPlateMode = 'full' | 'enemyHealth';
+
+export function isEnemyRemotePlayer(
+  player: Pick<Player, 'team'>,
+  localPlayerTeam: Team | null
+): boolean {
+  return localPlayerTeam !== null && player.team !== localPlayerTeam;
+}
+
+export function shouldShowRemoteNameplate(
   player: Player,
   config: RemotePlayerQualityConfig,
   isBattleRoyal: boolean,
@@ -299,12 +316,25 @@ function shouldShowRemoteNameplate(
   return isWithinNameplateDistance(player, config, anchorPosition);
 }
 
+export function getRemoteStatusPlateMode(
+  player: Player,
+  config: RemotePlayerQualityConfig,
+  isBattleRoyal: boolean,
+  localPlayerTeam: Team | null,
+  anchorPosition: Vec3 | null
+): RemoteStatusPlateMode | null {
+  if (shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam, anchorPosition)) {
+    return 'full';
+  }
+  return isEnemyRemotePlayer(player, localPlayerTeam) ? 'enemyHealth' : null;
+}
+
 function shouldRenderRemotePlayerFallback(
   player: Player,
-  showNameplate: boolean,
+  statusPlateMode: RemoteStatusPlateMode | null,
   showFlagIndicator: boolean
 ): boolean {
-  return hasActivePhantomVeil(player) || showFlagIndicator || showNameplate;
+  return hasActivePhantomVeil(player) || showFlagIndicator || statusPlateMode !== null;
 }
 
 function getPlayerRenderMovement(
@@ -317,7 +347,7 @@ function getPlayerRenderMovement(
 const OtherPlayer = memo(function OtherPlayer({
   player,
   localPlayerId,
-  showNameplate,
+  statusPlateMode,
   showFlagIndicator,
 }: OtherPlayerProps) {
   const groupRef = useRef<THREE.Group>(null);
@@ -550,9 +580,10 @@ const OtherPlayer = memo(function OtherPlayer({
         />
       )}
 
-      {/* Nameplate */}
-      {!isVeiled && showNameplate && (
-        <Nameplate
+      {/* Status plate */}
+      {!isVeiled && statusPlateMode && (
+        <StatusPlate
+          mode={statusPlateMode}
           name={player.name}
           health={player.health}
           maxHealth={player.maxHealth}
@@ -568,7 +599,8 @@ const OtherPlayer = memo(function OtherPlayer({
   );
 });
 
-interface NameplateProps {
+interface StatusPlateProps {
+  mode: RemoteStatusPlateMode;
   name: string;
   health: number;
   maxHealth: number;
@@ -577,18 +609,22 @@ interface NameplateProps {
 
 const NAMEPLATE_CANVAS_WIDTH = 256;
 const NAMEPLATE_CANVAS_HEIGHT = 72;
+const NAMEPLATE_HEALTH_CANVAS_WIDTH = 192;
+const NAMEPLATE_HEALTH_CANVAS_HEIGHT = 28;
 const NAMEPLATE_HEALTH_BUCKETS = 40;
 const NAMEPLATE_TEXTURE_CACHE_LIMIT = 192;
 const NAMEPLATE_FULL_SPRITE_HEIGHT = 0.68;
+const NAMEPLATE_HEALTH_SPRITE_WIDTH = 1.9;
+const NAMEPLATE_HEALTH_SPRITE_HEIGHT = 0.28;
 
-interface NameplateTextureEntry {
+interface StatusPlateTextureEntry {
   texture: THREE.CanvasTexture;
   refCount: number;
   lastUsedAt: number;
 }
 
-const nameplateTextureCache = new Map<string, NameplateTextureEntry>();
-let nameplateTextureUseCounter = 0;
+const statusPlateTextureCache = new Map<string, StatusPlateTextureEntry>();
+let statusPlateTextureUseCounter = 0;
 
 function roundedRectPath(
   ctx: CanvasRenderingContext2D,
@@ -622,15 +658,63 @@ function trimTextToWidth(ctx: CanvasRenderingContext2D, value: string, maxWidth:
   return `${trimmed}...`;
 }
 
-function drawNameplateTexture(
+function drawHealthBar(
+  ctx: CanvasRenderingContext2D,
+  barX: number,
+  barY: number,
+  barWidth: number,
+  barHeight: number,
+  healthPercent: number
+): void {
+  const barRadius = barHeight / 2;
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+  roundedRectPath(ctx, barX, barY, barWidth, barHeight, barRadius);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.68)';
+  ctx.fill();
+
+  const fillWidth = Math.max(0, Math.min(barWidth, barWidth * healthPercent));
+  if (fillWidth <= 0) return;
+
+  roundedRectPath(ctx, barX, barY, fillWidth, barHeight, barRadius);
+  const gradient = ctx.createLinearGradient(barX, 0, barX + barWidth, 0);
+  if (healthPercent > 0.3) {
+    gradient.addColorStop(0, '#22c55e');
+    gradient.addColorStop(1, '#86efac');
+  } else {
+    gradient.addColorStop(0, '#ef4444');
+    gradient.addColorStop(1, '#f97316');
+  }
+  ctx.fillStyle = gradient;
+  ctx.fill();
+}
+
+function drawStatusPlateTexture(
   canvas: HTMLCanvasElement,
+  mode: RemoteStatusPlateMode,
   name: string,
   healthPercent: number
 ): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
-  ctx.clearRect(0, 0, NAMEPLATE_CANVAS_WIDTH, NAMEPLATE_CANVAS_HEIGHT);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (mode === 'enemyHealth') {
+    const barX = 10;
+    const barY = 9;
+    const barWidth = NAMEPLATE_HEALTH_CANVAS_WIDTH - barX * 2;
+    const barHeight = 10;
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.88)';
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetY = 1;
+    roundedRectPath(ctx, barX - 2, barY - 2, barWidth + 4, barHeight + 4, 7);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
+    ctx.fill();
+    drawHealthBar(ctx, barX, barY, barWidth, barHeight, healthPercent);
+    return;
+  }
 
   ctx.font = '700 17px Inter, ui-sans-serif, system-ui, sans-serif';
   ctx.textBaseline = 'middle';
@@ -645,30 +729,7 @@ function drawNameplateTexture(
   const barY = 52;
   const barWidth = 188;
   const barHeight = 6;
-  const barRadius = 3;
-  ctx.shadowColor = 'transparent';
-  ctx.shadowBlur = 0;
-  ctx.shadowOffsetY = 0;
-  roundedRectPath(ctx, barX, barY, barWidth, barHeight, barRadius);
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.shadowOffsetY = 0;
-
-  const fillWidth = Math.max(0, Math.min(barWidth, barWidth * healthPercent));
-  if (fillWidth > 0) {
-    roundedRectPath(ctx, barX, barY, fillWidth, barHeight, barRadius);
-    const gradient = ctx.createLinearGradient(barX, 0, barX + barWidth, 0);
-    if (healthPercent > 0.3) {
-      gradient.addColorStop(0, '#22c55e');
-      gradient.addColorStop(1, '#86efac');
-    } else {
-      gradient.addColorStop(0, '#ef4444');
-      gradient.addColorStop(1, '#f97316');
-    }
-    ctx.fillStyle = gradient;
-    ctx.fill();
-  }
+  drawHealthBar(ctx, barX, barY, barWidth, barHeight, healthPercent);
 }
 
 function getQuantizedNameplateHealthPercent(health: number, maxHealth: number): number {
@@ -676,21 +737,23 @@ function getQuantizedNameplateHealthPercent(health: number, maxHealth: number): 
   return Math.round(healthPercent * NAMEPLATE_HEALTH_BUCKETS) / NAMEPLATE_HEALTH_BUCKETS;
 }
 
-function getNameplateTextureKey(
+function getStatusPlateTextureKey(
+  mode: RemoteStatusPlateMode,
   name: string,
   healthPercent: number
 ): string {
-  return `full:${name}:${healthPercent}`;
+  return `${mode}:${mode === 'full' ? name : 'enemy'}:${healthPercent}`;
 }
 
-function createNameplateTexture(
+function createStatusPlateTexture(
+  mode: RemoteStatusPlateMode,
   name: string,
   healthPercent: number
 ): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
-  canvas.width = NAMEPLATE_CANVAS_WIDTH;
-  canvas.height = NAMEPLATE_CANVAS_HEIGHT;
-  drawNameplateTexture(canvas, name, healthPercent);
+  canvas.width = mode === 'full' ? NAMEPLATE_CANVAS_WIDTH : NAMEPLATE_HEALTH_CANVAS_WIDTH;
+  canvas.height = mode === 'full' ? NAMEPLATE_CANVAS_HEIGHT : NAMEPLATE_HEALTH_CANVAS_HEIGHT;
+  drawStatusPlateTexture(canvas, mode, name, healthPercent);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -700,14 +763,14 @@ function createNameplateTexture(
   return texture;
 }
 
-function evictUnusedNameplateTextures(): void {
-  if (nameplateTextureCache.size <= NAMEPLATE_TEXTURE_CACHE_LIMIT) return;
+function evictUnusedStatusPlateTextures(): void {
+  if (statusPlateTextureCache.size <= NAMEPLATE_TEXTURE_CACHE_LIMIT) return;
 
-  while (nameplateTextureCache.size > NAMEPLATE_TEXTURE_CACHE_LIMIT) {
+  while (statusPlateTextureCache.size > NAMEPLATE_TEXTURE_CACHE_LIMIT) {
     let oldestKey: string | null = null;
-    let oldestEntry: NameplateTextureEntry | null = null;
+    let oldestEntry: StatusPlateTextureEntry | null = null;
 
-    for (const [key, entry] of nameplateTextureCache) {
+    for (const [key, entry] of statusPlateTextureCache) {
       if (entry.refCount > 0) continue;
       if (!oldestEntry || entry.lastUsedAt < oldestEntry.lastUsedAt) {
         oldestKey = key;
@@ -717,71 +780,77 @@ function evictUnusedNameplateTextures(): void {
 
     if (oldestKey === null || oldestEntry === null) return;
     oldestEntry.texture.dispose();
-    nameplateTextureCache.delete(oldestKey);
+    statusPlateTextureCache.delete(oldestKey);
   }
 }
 
-function acquireNameplateTexture(
+function acquireStatusPlateTexture(
+  mode: RemoteStatusPlateMode,
   name: string,
   healthPercent: number
 ): THREE.CanvasTexture {
-  const key = getNameplateTextureKey(name, healthPercent);
-  let entry = nameplateTextureCache.get(key);
+  const key = getStatusPlateTextureKey(mode, name, healthPercent);
+  let entry = statusPlateTextureCache.get(key);
   if (!entry) {
     entry = {
-      texture: createNameplateTexture(name, healthPercent),
+      texture: createStatusPlateTexture(mode, name, healthPercent),
       refCount: 0,
       lastUsedAt: 0,
     };
-    nameplateTextureCache.set(key, entry);
+    statusPlateTextureCache.set(key, entry);
   }
 
   entry.refCount++;
-  entry.lastUsedAt = ++nameplateTextureUseCounter;
-  evictUnusedNameplateTextures();
+  entry.lastUsedAt = ++statusPlateTextureUseCounter;
+  evictUnusedStatusPlateTextures();
   return entry.texture;
 }
 
-function releaseNameplateTexture(
+function releaseStatusPlateTexture(
+  mode: RemoteStatusPlateMode,
   name: string,
   healthPercent: number
 ): void {
-  const entry = nameplateTextureCache.get(getNameplateTextureKey(name, healthPercent));
+  const entry = statusPlateTextureCache.get(getStatusPlateTextureKey(mode, name, healthPercent));
   if (!entry) return;
   entry.refCount = Math.max(0, entry.refCount - 1);
-  entry.lastUsedAt = ++nameplateTextureUseCounter;
-  evictUnusedNameplateTextures();
+  entry.lastUsedAt = ++statusPlateTextureUseCounter;
+  evictUnusedStatusPlateTextures();
 }
 
-function prewarmNameplateTexture(
+function prewarmStatusPlateTexture(
+  mode: RemoteStatusPlateMode,
   name: string,
   health: number,
   maxHealth: number
 ): void {
   if (typeof document === 'undefined') return;
   const healthPercent = getQuantizedNameplateHealthPercent(health, maxHealth);
-  const texture = acquireNameplateTexture(name, healthPercent);
-  releaseNameplateTexture(name, healthPercent);
+  const texture = acquireStatusPlateTexture(mode, name, healthPercent);
+  releaseStatusPlateTexture(mode, name, healthPercent);
   texture.needsUpdate = true;
 }
 
-const Nameplate = memo(function Nameplate({ name, health, maxHealth, height }: NameplateProps) {
+const StatusPlate = memo(function StatusPlate({ mode, name, health, maxHealth, height }: StatusPlateProps) {
   const quantizedHealthPercent = getQuantizedNameplateHealthPercent(health, maxHealth);
   const texture = useMemo(
-    () => acquireNameplateTexture(name, quantizedHealthPercent),
-    [name, quantizedHealthPercent]
+    () => acquireStatusPlateTexture(mode, name, quantizedHealthPercent),
+    [mode, name, quantizedHealthPercent]
   );
 
   useEffect(
-    () => () => releaseNameplateTexture(name, quantizedHealthPercent),
-    [name, quantizedHealthPercent]
+    () => () => releaseStatusPlateTexture(mode, name, quantizedHealthPercent),
+    [mode, name, quantizedHealthPercent]
   );
 
-  const width = Math.max(1.75, Math.min(2.7, 1.55 + name.length * 0.045));
+  const width = mode === 'full'
+    ? Math.max(1.75, Math.min(2.7, 1.55 + name.length * 0.045))
+    : NAMEPLATE_HEALTH_SPRITE_WIDTH;
+  const spriteHeight = mode === 'full' ? NAMEPLATE_FULL_SPRITE_HEIGHT : NAMEPLATE_HEALTH_SPRITE_HEIGHT;
 
   return (
-    <sprite position={[0, height + NAMEPLATE_WORLD_OFFSET_Y, 0]} scale={[width, NAMEPLATE_FULL_SPRITE_HEIGHT, 1]} renderOrder={30}>
-      <spriteMaterial map={texture} transparent depthTest depthWrite={false} toneMapped={false} />
+    <sprite position={[0, height + NAMEPLATE_WORLD_OFFSET_Y, 0]} scale={[width, spriteHeight, 1]} renderOrder={60}>
+      <spriteMaterial map={texture} transparent depthTest={false} depthWrite={false} toneMapped={false} />
     </sprite>
   );
 });
