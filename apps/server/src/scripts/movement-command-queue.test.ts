@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import {
+  MOVEMENT_BUTTON_ABILITY_1,
+  MOVEMENT_BUTTON_MOVE_FORWARD,
   MOVEMENT_COMMAND_STALE_GRACE_STEPS,
   MOVEMENT_BUTTON_PRIMARY_FIRE,
   MOVEMENT_MAX_COMMANDS_PER_SECOND,
@@ -181,12 +183,17 @@ assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
 {
   const clientState = clientStateSnapshot();
   const promoted = promoteMovementCommandAcrossAuthorityBarrier(
-    command(8, { movementEpoch: 0, clientState }),
+    command(8, {
+      movementEpoch: 0,
+      buttons: MOVEMENT_BUTTON_MOVE_FORWARD | MOVEMENT_BUTTON_ABILITY_1,
+      clientState,
+    }),
     1
   );
 
   assert.equal(promoted.seq, 8);
   assert.equal(promoted.movementEpoch, 1);
+  assert.equal(promoted.buttons, MOVEMENT_BUTTON_MOVE_FORWARD);
   assert.equal(promoted.clientState, undefined);
 }
 

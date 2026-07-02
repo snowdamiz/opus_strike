@@ -21,6 +21,7 @@ import {
   type PublicRankSnapshot,
 } from '@voxel-strike/shared';
 import { normalizeMapProfileId, useGameStore } from '../store/gameStore';
+import { useStreamerStore } from '../store/streamerStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import { setGameTiming } from '../store/gameTimingStore';
 import {
@@ -95,6 +96,10 @@ import {
   type SoundName,
 } from '../hooks/useAudio';
 import { loggers } from '../utils/logger';
+import {
+  getStreamerMapTransitionKey,
+  preloadStreamerMapTransitionTarget,
+} from '../utils/streamerMapTransition';
 import { normalizeServerAbilityCooldown } from '../abilities/cooldowns';
 import { normalizeGamePhase } from './gamePhase';
 import { measureNetworkMessage } from './networkMessageMetrics';
@@ -153,6 +158,9 @@ let lastLocalChronosReloadSoundKey = '';
 let hasReceivedSelfMovementAuthority = false;
 const HOOKSHOT_SHOT_CLIP_MS = 250;
 const BATTLE_ROYAL_REVIVE_AUDIO_LOOP_PREFIX = 'battle-royal-revive:';
+const STREAMER_MATCH_SNAPSHOT_MAP_TRANSITION_LEAD_MS = 360;
+let pendingStreamerSnapshotMapTransitionKey: string | null = null;
+let pendingStreamerSnapshotMapTransitionSerial = 0;
 const PLAYER_STATES = new Set<string>([
   'spectating',
   'selecting',
@@ -1535,15 +1543,19 @@ export function setupMatchSnapshotHandler(room: Room) {
       clearAllDeathVisuals();
     }
     setGameTiming(data.tick, data.serverTime);
-    useGameStore.setState({
+    const nextMapSize = normalizeVoxelMapSizeId(data.mapSize);
+    const nextMapProfileId = normalizeMapProfileId(data.mapProfileId);
+    const mapFields = {
       mapSeed: data.mapSeed,
+      mapThemeId: data.mapThemeId ?? null,
+      mapSize: nextMapSize,
+      mapProfileId: nextMapProfileId,
+    };
+    const baseSnapshot = {
       gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : store.gameplayMode ?? DEFAULT_GAMEPLAY_MODE,
       matchPerspective: isMatchPerspective(data.matchPerspective)
         ? data.matchPerspective
         : store.matchPerspective ?? DEFAULT_MATCH_PERSPECTIVE,
-      mapThemeId: data.mapThemeId ?? null,
-      mapSize: normalizeVoxelMapSizeId(data.mapSize),
-      mapProfileId: normalizeMapProfileId(data.mapProfileId),
       gamePhase: data.phase,
       redScore: data.redScore,
       blueScore: data.blueScore,
@@ -1554,6 +1566,60 @@ export function setupMatchSnapshotHandler(room: Room) {
       gameClockFrozen: data.gameClockFrozen === true,
       safeZone: data.safeZone ?? null,
       battleRoyalDrop: data.battleRoyalDrop ?? null,
+    };
+    const mapChanged = (
+      mapFields.mapSeed !== store.mapSeed ||
+      mapFields.mapThemeId !== store.mapThemeId ||
+      mapFields.mapSize !== store.mapSize ||
+      mapFields.mapProfileId !== store.mapProfileId
+    );
+
+    if (useStreamerStore.getState().isActive && mapChanged) {
+      const transitionKey = getStreamerMapTransitionKey({
+        mapSeed: mapFields.mapSeed,
+        mapThemeId: mapFields.mapThemeId,
+        mapSize: mapFields.mapSize,
+        mapProfileId: mapFields.mapProfileId,
+      });
+      const streamerStore = useStreamerStore.getState();
+      if (streamerStore.sceneTransition?.key !== transitionKey) {
+        streamerStore.beginSceneTransition({
+          key: transitionKey,
+          reason: 'map_rotation',
+        });
+      }
+
+      if (pendingStreamerSnapshotMapTransitionKey !== transitionKey) {
+        pendingStreamerSnapshotMapTransitionKey = transitionKey;
+        const transitionSerial = ++pendingStreamerSnapshotMapTransitionSerial;
+        const leadPromise = new Promise<void>((resolve) => {
+          window.setTimeout(resolve, STREAMER_MATCH_SNAPSHOT_MAP_TRANSITION_LEAD_MS);
+        });
+
+        void Promise.allSettled([
+          preloadStreamerMapTransitionTarget({
+            mapSeed: mapFields.mapSeed,
+            mapThemeId: mapFields.mapThemeId,
+            mapSize: mapFields.mapSize,
+            mapProfileId: mapFields.mapProfileId,
+          }, 'streamer-match-snapshot'),
+          leadPromise,
+        ]).then(() => {
+          if (transitionSerial !== pendingStreamerSnapshotMapTransitionSerial) return;
+          const latestStore = useGameStore.getState();
+          pendingStreamerSnapshotMapTransitionKey = null;
+          if (!useStreamerStore.getState().isActive || latestStore.roomId !== room.id) return;
+          useGameStore.setState(mapFields);
+        });
+      }
+
+      useGameStore.setState(baseSnapshot);
+      return;
+    }
+
+    useGameStore.setState({
+      ...baseSnapshot,
+      ...mapFields,
     });
   }));
 }

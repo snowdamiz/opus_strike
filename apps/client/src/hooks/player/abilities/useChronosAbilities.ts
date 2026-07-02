@@ -63,7 +63,7 @@ export interface UseChronosAbilitiesReturn {
   updateChronosPrimaryReload: (now?: number) => void;
   reloadChronosPrimary: (now?: number) => boolean;
   resetChronosPrimaryMagazine: () => void;
-  executeLifelineConduit: (ctx: AbilityContext, useAbilityCharge: (abilityId: string) => boolean) => boolean;
+  executeLifelineConduit: (ctx: AbilityContext) => boolean;
   executeTimebreak: (
     ctx: AbilityContext,
     startClientCooldown: (abilityId: string) => void
@@ -169,10 +169,7 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
     });
   }
 
-  const executeLifelineConduit = useCallback((
-    ctx: AbilityContext,
-    _useAbilityCharge: (abilityId: string) => boolean
-  ): boolean => {
+  const executeLifelineConduit = useCallback((ctx: AbilityContext): boolean => {
     const now = Date.now();
     triggerChronosLifelineConduitPose(now);
     markPredictedLocalAbilityVisual('chronos_lifeline_conduit', ctx.localPlayer.id, `predicted_chronos_lifeline_${ctx.localPlayer.id}_${now}`, {

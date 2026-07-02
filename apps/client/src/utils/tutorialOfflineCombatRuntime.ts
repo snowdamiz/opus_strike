@@ -1,4 +1,9 @@
 import {
+  CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE,
+  CHRONOS_TIMEBREAK_SHOCKWAVE_KNOCKBACK_FORCE,
+  CHRONOS_TIMEBREAK_SHOCKWAVE_MAX_VERTICAL_DELTA,
+  CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
+  CHRONOS_TIMEBREAK_SHOCKWAVE_VERTICAL_FORCE,
   applyDamage as resolveSharedDamage,
   calculateFalloffDamage,
   getAimConeHitAgainstPlayerCombatHitbox,
@@ -72,6 +77,13 @@ interface TutorialOfflineTrainingConeDamageInput {
     intervalMs: number;
     abilityId?: string;
   };
+}
+
+interface TutorialOfflineTimebreakKnockbackInput {
+  origin: Vec3;
+  direction: Vec3;
+  sourceId?: string | null;
+  sourceTeam?: Team | null;
 }
 
 interface TutorialOfflineBurn {
@@ -247,6 +259,19 @@ function normalizeVec3(source: Vec3 | null | undefined): Vec3 | null {
   return {
     x: source.x / length,
     y: source.y / length,
+    z: source.z / length,
+  };
+}
+
+function normalizeHorizontalVec3(source: Vec3 | null | undefined): Vec3 | null {
+  if (!source) return null;
+
+  const length = Math.hypot(source.x, source.z);
+  if (!Number.isFinite(length) || length <= 0.0001) return null;
+
+  return {
+    x: source.x / length,
+    y: 0,
     z: source.z / length,
   };
 }
@@ -498,6 +523,69 @@ export function applyTutorialOfflineTrainingConeDamage(input: TutorialOfflineTra
       });
       extendTutorialOfflineTargetBurn(target.id, burnUntil, now);
     }
+  }
+
+  return appliedCount;
+}
+
+export function applyTutorialOfflineTrainingTimebreakKnockback(input: TutorialOfflineTimebreakKnockbackInput): number {
+  const store = useGameStore.getState();
+  if (!store.isPracticeMode || store.gamePhase !== 'playing') return 0;
+
+  const forward = normalizeHorizontalVec3(input.direction);
+  if (!forward) return 0;
+
+  const { sourceId, sourceTeam } = getTutorialOfflineSource(input);
+  const minForwardDot = Math.cos(CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE);
+  let appliedCount = 0;
+
+  for (const target of store.players.values()) {
+    if (!isTutorialOfflineTrainingHero(target) || target.state !== 'alive') continue;
+    if (sourceId && target.id === sourceId) continue;
+    if (sourceTeam && target.team === sourceTeam) continue;
+
+    const dx = target.position.x - input.origin.x;
+    const dy = target.position.y - input.origin.y;
+    const dz = target.position.z - input.origin.z;
+    if (Math.abs(dy) > CHRONOS_TIMEBREAK_SHOCKWAVE_MAX_VERTICAL_DELTA) continue;
+
+    const horizontalDistance = Math.hypot(dx, dz);
+    if (horizontalDistance > CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE) continue;
+
+    const away = horizontalDistance > 0.001
+      ? { x: dx / horizontalDistance, z: dz / horizontalDistance }
+      : { x: forward.x, z: forward.z };
+    const forwardDot = away.x * forward.x + away.z * forward.z;
+    if (forwardDot < minForwardDot) continue;
+
+    const falloff = 1 - horizontalDistance / CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE * 0.35;
+    const knockbackSpeed = CHRONOS_TIMEBREAK_SHOCKWAVE_KNOCKBACK_FORCE * falloff;
+    const verticalSpeed = CHRONOS_TIMEBREAK_SHOCKWAVE_VERTICAL_FORCE * falloff;
+    const currentAwaySpeed = target.velocity.x * away.x + target.velocity.z * away.z;
+    const horizontalBoost = Math.max(0, knockbackSpeed - currentAwaySpeed);
+    const impulse = {
+      x: away.x * horizontalBoost,
+      y: Math.max(0, verticalSpeed - target.velocity.y),
+      z: away.z * horizontalBoost,
+    };
+    if (impulse.x === 0 && impulse.y === 0 && impulse.z === 0) continue;
+
+    const nextPlayer = {
+      ...target,
+      velocity: {
+        x: target.velocity.x + impulse.x,
+        y: target.velocity.y + impulse.y,
+        z: target.velocity.z + impulse.z,
+      },
+      movement: {
+        ...target.movement,
+        isGrounded: false,
+        isSliding: false,
+        slideTimeRemaining: 0,
+      },
+    };
+    store.updatePlayer(target.id, nextPlayer);
+    appliedCount++;
   }
 
   return appliedCount;

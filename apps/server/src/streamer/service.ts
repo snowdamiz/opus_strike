@@ -26,6 +26,7 @@ import {
   type GameSeatReservationLike,
   type GameSeatReservationPayload,
 } from '../rooms/lobbyGameStartRuntime';
+import { BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX } from '../rooms/bot-ai';
 import { createStreamerObserverTicket } from '../security/streamerTickets';
 import {
   getStreamerBotDeathmatchMapRotationMs,
@@ -341,6 +342,8 @@ function botDifficultyForIndex(index: number): BotDifficulty {
 export function createStreamerBotAssignments(input: {
   gameplayMode: GameplayMode;
   seed: number;
+  botDifficulty?: BotDifficulty;
+  botProfileIdPrefix?: string;
 }): StreamerBotAssignment[] {
   const rules = getGameplayModeRules(input.gameplayMode);
   const teamIds = getTeamIdsForGameplayMode(input.gameplayMode).slice(0, rules.maxTeams) as Team[];
@@ -353,6 +356,10 @@ export function createStreamerBotAssignments(input: {
     heroCountByTeam.set(team, teamHeroIndex + 1);
     const heroId = ALL_HERO_IDS[(teamHeroIndex + index) % ALL_HERO_IDS.length];
     const botName = STREAMER_BOT_NAMES[index % STREAMER_BOT_NAMES.length] ?? `Bot ${index + 1}`;
+    const botDifficulty = input.botDifficulty ?? botDifficultyForIndex(index);
+    const botProfileId = input.botProfileIdPrefix
+      ? `${input.botProfileIdPrefix}-${index}`
+      : `streamer-${input.gameplayMode}-${botDifficulty}`;
 
     assignments.push({
       playerId: `streamer-bot:${input.seed}:${index}`,
@@ -361,8 +368,8 @@ export function createStreamerBotAssignments(input: {
       isBot: true,
       heroId,
       skinId: getDefaultHeroSkinId(heroId),
-      botDifficulty: botDifficultyForIndex(index),
-      botProfileId: `streamer-${input.gameplayMode}-${botDifficultyForIndex(index)}`,
+      botDifficulty,
+      botProfileId,
     });
   }
 
@@ -419,6 +426,8 @@ function createBotDeathmatchRoomOptions(input: {
   const botAssignments = createStreamerBotAssignments({
     gameplayMode,
     seed: mapSeed,
+    botDifficulty: 'hard',
+    botProfileIdPrefix: BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX,
   });
 
   return {

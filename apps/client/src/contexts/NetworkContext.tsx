@@ -73,6 +73,10 @@ import { createPracticeAbilityStates } from '../utils/practiceAbilityStates';
 import { usePartyStore } from '../store/partyStore';
 import { clearActivePartySession, saveActivePartySession } from '../utils/activePartySession';
 import { useStreamerStore } from '../store/streamerStore';
+import {
+  getStreamerMapTransitionKey,
+  preloadStreamerMapTransitionTarget,
+} from '../utils/streamerMapTransition';
 
 export type { RankedTokenHoldStatus } from './networkApi';
 
@@ -1153,6 +1157,16 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setAppPhase('streamer_loading');
 
     try {
+      const previousRoomId = useGameStore.getState().roomId;
+      const transitionKey = getStreamerMapTransitionKey(target.metadata);
+      useStreamerStore.getState().beginSceneTransition({
+        key: transitionKey,
+        reason: previousRoomId && previousRoomId !== target.roomId ? 'switching_feed' : 'initial_feed',
+      });
+      await preloadStreamerMapTransitionTarget(target.metadata, 'streamer-room-switch').catch((error) => {
+        loggers.network.warn('streamer target map preload failed', error);
+      });
+
       cleanupExistingConnections();
       isJoiningGameRef.current = true;
       clearRunningGameSession();

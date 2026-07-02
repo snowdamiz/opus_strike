@@ -14,6 +14,7 @@ import {
   type StreamerObserverSeatOptions,
   type StreamerRoomListing,
 } from '../streamer/service';
+import { BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX } from '../rooms/bot-ai';
 
 const NOW = 1_000_000;
 const BOT_DEATHMATCH_ROTATION_MS = 5 * 60 * 1000;
@@ -256,6 +257,10 @@ async function runAsyncTests(): Promise<void> {
   assert.equal(botDeathmatchOptions.botAssignments.length, getGameplayModeRules('team_deathmatch').maxPlayers);
   assert.equal(botDeathmatchOptions.botAssignments.filter((assignment) => assignment.team === 'red').length, 4);
   assert.equal(botDeathmatchOptions.botAssignments.filter((assignment) => assignment.team === 'blue').length, 4);
+  assert.ok(botDeathmatchOptions.botAssignments.every((assignment) => assignment.botDifficulty === 'hard'));
+  assert.ok(botDeathmatchOptions.botAssignments.every((assignment) => (
+    assignment.botProfileId.startsWith(`${BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX}-`)
+  )));
 
   const reusedBotDeathmatchTarget = await getNextStreamerTarget({
     adminUserId: 'admin-a',

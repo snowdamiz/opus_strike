@@ -3,16 +3,17 @@ import { GRAVITY } from '@voxel-strike/shared';
 
 export const HOOKSHOT_GRAPPLE_EXTENSION_SPEED = 80;
 export const HOOKSHOT_SWING_DURATION_SECONDS = 2.75;
-export const HOOKSHOT_SWING_MIN_ROPE_LENGTH = 5;
 export const HOOKSHOT_SWING_ANCHOR_RELEASE_DISTANCE = 1.15;
+export const HOOKSHOT_SWING_MIN_ROPE_LENGTH = HOOKSHOT_SWING_ANCHOR_RELEASE_DISTANCE + 0.35;
 export const HOOKSHOT_SWING_TAUTNESS = 0.96;
 export const HOOKSHOT_SWING_INITIAL_PULL = 8;
+export const HOOKSHOT_SWING_REEL_SPEED = 20;
 export const HOOKSHOT_SWING_LOOK_STEER = 34;
 export const HOOKSHOT_SWING_INPUT_STEER = 22;
 export const HOOKSHOT_SWING_STRAFE_PUMP = 7;
 export const HOOKSHOT_SWING_STRAFE_PUMP_MAX_SPEED = 32;
 export const HOOKSHOT_SWING_TENSION_FORCE = 76;
-export const HOOKSHOT_SWING_NATURAL_PULL = 3.5;
+export const HOOKSHOT_SWING_REEL_PULL = 18;
 export const HOOKSHOT_SWING_GRAVITY_SCALE = 0.9;
 export const HOOKSHOT_SWING_MAX_SPEED = 56;
 export const HOOKSHOT_SWING_RELEASE_BOOST = 7;
@@ -262,6 +263,11 @@ export function stepHookshotSwing(input: HookshotSwingStepInput): HookshotSwingS
 
   velocity.y += GRAVITY * HOOKSHOT_SWING_GRAVITY_SCALE * dt;
 
+  swing.ropeLength = Math.max(
+    HOOKSHOT_SWING_MIN_ROPE_LENGTH,
+    (swing.ropeLength || currentLength) - HOOKSHOT_SWING_REEL_SPEED * dt
+  );
+
   const ropeLength = swing.ropeLength || currentLength;
   if (currentLength > ropeLength) {
     const awaySpeed = velocity.x * -ropeDirX + velocity.y * -ropeDirY + velocity.z * -ropeDirZ;
@@ -282,9 +288,9 @@ export function stepHookshotSwing(input: HookshotSwingStepInput): HookshotSwingS
     position.z = swing.target.z - ropeDirZ * ropeLength;
   }
 
-  velocity.x += ropeDirX * HOOKSHOT_SWING_NATURAL_PULL * dt;
-  velocity.y += ropeDirY * HOOKSHOT_SWING_NATURAL_PULL * dt * 0.35;
-  velocity.z += ropeDirZ * HOOKSHOT_SWING_NATURAL_PULL * dt;
+  velocity.x += ropeDirX * HOOKSHOT_SWING_REEL_PULL * dt;
+  velocity.y += ropeDirY * HOOKSHOT_SWING_REEL_PULL * dt * 0.75;
+  velocity.z += ropeDirZ * HOOKSHOT_SWING_REEL_PULL * dt;
 
   if (position.y < swing.target.y) {
     const heightDiff = swing.target.y - position.y;
