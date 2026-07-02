@@ -25,6 +25,7 @@ export interface GameRoomMetadataInput {
   streamerManagedByUserId?: string | null;
   streamerFeedMode?: string | null;
   streamerCameraMode?: string | null;
+  streamerMapRotationStartedAt?: number | null;
   endlessMatch?: boolean;
   rankedEligibilityCandidate: boolean;
   rankedRequiredHumanPlayers: number;
@@ -54,6 +55,7 @@ export function buildGameRoomMetadata(input: GameRoomMetadataInput): Record<stri
     streamerManagedByUserId: input.streamerManagedByUserId || undefined,
     streamerFeedMode: input.streamerFeedMode || undefined,
     streamerCameraMode: input.streamerCameraMode || undefined,
+    streamerMapRotationStartedAt: input.streamerMapRotationStartedAt ?? undefined,
     endlessMatch: input.endlessMatch === true,
     botCount: counts.botCount,
     npcCount: counts.npcCount,
