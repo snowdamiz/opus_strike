@@ -24,6 +24,7 @@ import {
   type MatchmakingUserContext,
 } from '../matchmaking/service';
 import type { MatchmakingBotFillMode } from '../matchmaking/matchSettings';
+import { getLocalMatchmakingRegion } from '../matchmaking/region';
 import { resolveUserLoadoutForHero } from '../cosmetics/skinShopService';
 import type { PartyRosterRuntime, PartyRuntimeMember } from './partyRuntime';
 
@@ -88,6 +89,7 @@ async function createMatchmakingLobby(input: {
   partyBots: PartyBotLaunchDescriptor[];
   botFillMode: MatchmakingBotFillMode;
   matchPerspective: MatchPerspective;
+  matchmakingRegion?: string;
   expectedHumanPlayers: number;
   expectedHumanUserIds: string[];
 }) {
@@ -105,6 +107,7 @@ async function createMatchmakingLobby(input: {
     initialBotCount: 0,
     botFillMode: input.botFillMode,
     matchPerspective: input.matchPerspective,
+    matchmakingRegion: input.matchmakingRegion,
     defaultBotDifficulty: 'normal',
     partyBots: input.partyBots,
   });
@@ -130,11 +133,13 @@ export async function launchPartyToMatchmaking(
   const matchPerspective = mode === 'ranked'
     ? DEFAULT_MATCH_PERSPECTIVE
     : party.getActiveMatchPerspective('quick_play', gameplayMode);
+  const matchmakingRegion = getLocalMatchmakingRegion();
   const targetRankDivisionIndex = await chooseMatchmakingRankBand({
     ...averageMatchmakingContext(contexts, mode),
     gameplayMode,
     botFillMode,
     matchPerspective,
+    matchmakingRegion,
   });
 
   const tickets = new Map<string, ReturnType<typeof issueQuickPlayTicket> | ReturnType<typeof issueRankedTicket>>();
@@ -147,7 +152,8 @@ export async function launchPartyToMatchmaking(
         targetRankDivisionIndex,
         tokenHold,
         member?.heroId,
-        member?.skinId
+        member?.skinId,
+        matchmakingRegion
       ));
     }
   } else {
@@ -159,6 +165,7 @@ export async function launchPartyToMatchmaking(
         matchPerspective,
         selectedHero: member?.heroId,
         selectedSkinId: member?.skinId,
+        matchmakingRegion,
       }));
     }
   }
@@ -182,6 +189,7 @@ export async function launchPartyToMatchmaking(
     partyBots,
     botFillMode,
     matchPerspective,
+    matchmakingRegion,
     expectedHumanPlayers: humanMembers.length,
     expectedHumanUserIds: humanMembers.map((member) => member.userId),
   });

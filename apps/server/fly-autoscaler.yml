@@ -1,11 +1,15 @@
 app-name: "opus-strike-server"
 regions: ["iad"]
+process-group: "app"
 
 # Capacity is fed by live server pressure metrics. Each process publishes a
 # dynamic player-capacity estimate from tick cost, CPU, event-loop delay, and
 # memory pressure; overloaded Machines can request one more Machine even before
 # raw player demand crosses the projected per-Machine capacity.
-# Keep one running Machine through fly.toml and one stopped spare ready here.
+# The autoscaler only creates primary-region app Machines. The europe and asia
+# process groups are fixed smaller regional pools managed with fly scale count.
+# Keep three running primary Machines through fly.toml and one stopped spare
+# ready here.
 # Demand can create up to five Machines total. The running-machine guard is
 # outside the demand calculation so an already-running Machine is never selected
 # for deletion just because demand has dropped.

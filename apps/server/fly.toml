@@ -7,6 +7,11 @@ primary_region = "iad"
 [deploy]
   release_command = "pnpm --filter @voxel-strike/server db:deploy"
 
+[processes]
+  app = "node dist/index.js"
+  europe = "node dist/index.js"
+  asia = "node dist/index.js"
+
 [env]
   NODE_ENV = "production"
   PORT = "2567"
@@ -20,28 +25,66 @@ primary_region = "iad"
   COLYSEUS_PUBLIC_ADDRESS = "api.slopheroes.xyz"
   COLYSEUS_REQUIRE_PUBLIC_ADDRESS = "1"
   COLYSEUS_PRESENCE_SHORT_TIMEOUT = "10000"
-  COLYSEUS_ROOM_CREATE_STRATEGY = "least_loaded"
+  COLYSEUS_ROOM_CREATE_STRATEGY = "local"
   GAME_ROOM_SEAT_RESERVATION_SECONDS = "60"
 
-[http_service]
+[[services]]
   internal_port = 2567
-  force_https = true
+  protocol = "tcp"
   auto_stop_machines = "stop"
   auto_start_machines = true
   min_machines_running = 3
   processes = ["app"]
 
-  [[http_service.checks]]
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+    force_https = true
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.http_checks]]
     grace_period = "15s"
     interval = "30s"
     method = "GET"
     timeout = "5s"
     path = "/health"
 
-  [http_service.concurrency]
+  [services.concurrency]
     type = "connections"
     soft_limit = 64
     hard_limit = 96
+
+[[services]]
+  internal_port = 2567
+  protocol = "tcp"
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["europe", "asia"]
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+    force_https = true
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.http_checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
+
+  [services.concurrency]
+    type = "connections"
+    soft_limit = 32
+    hard_limit = 48
 
 [metrics]
   port = 2567
@@ -51,3 +94,10 @@ primary_region = "iad"
   memory = "2gb"
   cpu_kind = "shared"
   cpus = 4
+  processes = ["app"]
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 2
+  processes = ["europe", "asia"]

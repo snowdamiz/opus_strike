@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { DEV_TUTORIAL_BYPASS_HEADER } from '@voxel-strike/shared';
-import { ALLOWED_CORS_HEADERS, ALLOWED_CORS_HEADER_VALUE } from '../config/corsHeaders';
+import {
+  ALLOWED_CORS_HEADERS,
+  ALLOWED_CORS_HEADER_VALUE,
+  ALLOWED_CORS_METHODS,
+  ALLOWED_CORS_METHOD_VALUE,
+} from '../config/corsHeaders';
 
 assert.ok(ALLOWED_CORS_HEADERS.includes('Authorization'));
 assert.ok(ALLOWED_CORS_HEADERS.includes('Content-Type'));
@@ -9,5 +14,12 @@ assert.ok(ALLOWED_CORS_HEADERS.includes('X-Internal-Status-Token'));
 assert.ok(ALLOWED_CORS_HEADERS.includes(DEV_TUTORIAL_BYPASS_HEADER));
 assert.equal(new Set(ALLOWED_CORS_HEADERS).size, ALLOWED_CORS_HEADERS.length);
 assert.equal(ALLOWED_CORS_HEADER_VALUE, ALLOWED_CORS_HEADERS.join(', '));
+assert.ok(ALLOWED_CORS_METHODS.includes('GET'));
+assert.ok(ALLOWED_CORS_METHODS.includes('POST'));
+assert.ok(ALLOWED_CORS_METHODS.includes('PUT'));
+assert.ok(ALLOWED_CORS_METHODS.includes('DELETE'));
+assert.ok(ALLOWED_CORS_METHODS.includes('OPTIONS'));
+assert.equal(new Set(ALLOWED_CORS_METHODS).size, ALLOWED_CORS_METHODS.length);
+assert.equal(ALLOWED_CORS_METHOD_VALUE, ALLOWED_CORS_METHODS.join(', '));
 
 console.log('CORS header config tests passed.');

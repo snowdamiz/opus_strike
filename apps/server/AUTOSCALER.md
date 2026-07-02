@@ -2,14 +2,24 @@
 
 This server uses two scaling layers on Fly.io:
 
-- Fly Proxy autostop/autostart keeps at least one server Machine running and starts existing stopped Machines when connection load needs them.
-- `opus-strike-server-autoscaler` runs `flyio/fly-autoscaler:0.3.1` and changes the number of created server Machines.
+- Fly Proxy autostop/autostart keeps primary-region server Machines running and starts existing stopped Machines when connection load needs them.
+- `opus-strike-server-autoscaler` runs `flyio/fly-autoscaler:0.3.1` and changes the number of created primary `app` Machines.
+
+## Regional Layout
+
+The production server app has three process groups:
+
+- `app`: primary North America capacity in `iad`, scaled to three running Machines, `shared` 4 CPU / 2GB.
+- `europe`: fixed Europe capacity in `lhr`, scaled to one Machine, `shared` 2 CPU / 1GB.
+- `asia`: fixed Asia capacity in `nrt`, scaled to one Machine, `shared` 2 CPU / 1GB.
+
+Fly only applies `min_machines_running` in the app's primary region, so the smaller Europe and Asia pools have their own service config with `auto_stop_machines = "off"` and are kept intentionally fixed with `fly scale count`. The autoscaler is pinned to `process-group: "app"` and `regions: ["iad"]` so demand growth does not create the stronger primary Machine shape in the regional pools.
 
 ## Repository Files
 
 - `fly.toml` exposes `/metrics` for Fly Prometheus scraping.
 - `fly.autoscaler.toml` deploys the dedicated autoscaler app.
-- `fly-autoscaler.yml` defines the created-Machine policy and Prometheus collectors.
+- `fly-autoscaler.yml` defines the created-Machine policy and Prometheus collectors for the primary `app` process group.
 
 ## Policy
 
@@ -23,11 +33,11 @@ max(running_machines, min(max(max(ceil(demand_players / dynamic_players_per_mach
 
 `dynamic_players_per_machine` is the average live server capacity estimate exported by each server process from tick cost, CPU, event-loop delay, and memory pressure. `overloaded_machines` counts Machines whose capacity pressure is above 1 so the fleet can add capacity before raw player demand crosses the projected per-Machine capacity.
 
-That policy keeps a two-Machine created floor, one spare stopped Machine above demand, and a demand-driven cap of five created Machines. `fly.toml` keeps one of those Machines running; the other floor Machine starts stopped and ready. The `running_machines` guard wins over the cap so an already-running Machine is not destroyed during scale-down.
+That policy keeps a two-Machine created floor for the primary `app` group, one spare stopped Machine above demand, and a demand-driven cap of five created Machines. `fly.toml` keeps three primary Machines running; additional primary floor or demand Machines start stopped and ready. The `running_machines` guard wins over the cap so an already-running Machine is not destroyed during scale-down.
 
 New Machines are created in the `stopped` state. Fly Proxy starts them later when the server service crosses its connection limits.
 
-With Fly Replay routing enabled, `COLYSEUS_ROOM_CREATE_STRATEGY=local` keeps each matchmaking request and the room it creates on the same Machine. This avoids a burst path where HTTP matchmaking lands on one Machine, creates the room on another Colyseus process, and then replays the websocket back across Machines.
+With Fly Replay routing enabled, `COLYSEUS_ROOM_CREATE_STRATEGY=local` keeps each matchmaking request and the room it creates on the same Machine. Matchmaking tickets carry the issuing `FLY_REGION`, and matchmaking lobbies include that region in their metadata/filter keys, so players join regional queues instead of being pulled into a global least-loaded lobby. This avoids a burst path where HTTP matchmaking lands on one Machine, creates the room on another Colyseus process, and then replays the websocket back across Machines.
 
 ## Required Secrets
 
@@ -51,6 +61,9 @@ Deploy server metrics first, then the autoscaler:
 ```sh
 cd apps/server
 fly deploy -a opus-strike-server -c fly.toml
+fly scale count app=3 europe=0 asia=0 -a opus-strike-server -c fly.toml --region iad
+fly scale count europe=1 -a opus-strike-server -c fly.toml --region lhr
+fly scale count asia=1 -a opus-strike-server -c fly.toml --region nrt
 fly deploy -a opus-strike-server-autoscaler -c fly.autoscaler.toml --ha=false
 ```
 
@@ -114,6 +127,8 @@ Confirm these before raising production caps:
 - Fly Proxy starts the stopped Machine after connection load crosses service limits.
 - Demand decrease first leaves running Machines alone, then destroys only excess stopped Machines.
 - Fly Replay routes continue to point clients to the owning Colyseus process.
+- Matchmaking lobbies created in `iad`, `lhr`, and `nrt` have matching `matchmakingRegion` metadata, and queue status only counts the local region when `FLY_REGION` is set.
+- `fly scale show -a opus-strike-server` reports `app` in `iad(3)`, `europe` in `lhr`, and `asia` in `nrt`, with the regional groups on the smaller 2 CPU / 1GB VM shape.
 
 For the first real traffic window, keep the demand cap at `3`. After metrics look stable, change the cap in `fly-autoscaler.yml` from `3` to `6`, deploy, and observe another full traffic window.
 

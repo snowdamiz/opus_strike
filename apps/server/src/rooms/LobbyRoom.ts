@@ -37,6 +37,11 @@ import { createGameEntryTicket, verifyGameEntryTicket } from '../security/entryT
 import { verifyMatchmakingTicket, type MatchmakingTicketClaims } from '../security/matchmakingTickets';
 import { consumeReplayNonce } from '../security/replayNonceStore';
 import {
+  doesMatchmakingRegionMatch,
+  getLocalMatchmakingRegion,
+  normalizeMatchmakingRegion,
+} from '../matchmaking/region';
+import {
   DEFAULT_MATCHMAKING_RATING,
   DEFAULT_RANK_DIVISION_INDEX,
   getAllowedRankDivisionDistance,
@@ -122,6 +127,7 @@ interface JoinOptions {
   matchMode?: MatchMode;
   gameplayMode?: GameplayMode;
   matchmakingTicket?: string;
+  matchmakingRegion?: string;
   matchPerspective?: MatchPerspective;
   rankBandId?: number;
   expectedPartyLeaderUserId?: string;
@@ -275,6 +281,7 @@ export class LobbyRoom extends Room<LobbyState> {
   private gameplayRules: GameplayModeRules = getGameplayModeRules(DEFAULT_GAMEPLAY_MODE);
   private isQuickPlayQueue = false;
   private isRankedQueue = false;
+  private matchmakingRegion: string | undefined;
   private wagerSetupStarted = false;
   private rankBandId = DEFAULT_RANK_DIVISION_INDEX;
   private minimumMatchmakingHumanCount = 1;
@@ -315,6 +322,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.gameplayRules = getGameplayModeRules(this.gameplayMode);
     this.isQuickPlayQueue = this.matchMode === 'quick_play';
     this.isRankedQueue = this.matchMode === 'ranked';
+    this.matchmakingRegion = this.resolveRoomMatchmakingRegion(options, initialMatchmakingTicket);
     this.rankBandId = this.resolveRoomRankBand(options, initialMatchmakingTicket);
 
     this.setState(new LobbyState());
@@ -476,6 +484,9 @@ export class LobbyRoom extends Room<LobbyState> {
     const requestedTicketMode = requestedTicket?.mode === 'ranked' ? 'ranked' : requestedTicket?.mode === 'quick_play' ? 'quick_play' : null;
     const requestedMatchMode: MatchMode = requestedTicketMode ?? (options.matchMode === 'ranked' ? 'ranked' : 'quick_play');
     if (requestedMatchMode !== this.matchMode) return false;
+    const requestedRegion = normalizeMatchmakingRegion(requestedTicket?.matchmakingRegion)
+      ?? normalizeMatchmakingRegion(options.matchmakingRegion);
+    if (!doesMatchmakingRegionMatch(this.matchmakingRegion, requestedRegion)) return false;
 
     const requestedGameplayMode = requestedMatchMode === 'ranked'
       ? DEFAULT_GAMEPLAY_MODE
@@ -2157,6 +2168,16 @@ export class LobbyRoom extends Room<LobbyState> {
     return ticket?.targetRankDivisionIndex ?? normalizeRankDivisionIndex(options.rankBandId);
   }
 
+  private resolveRoomMatchmakingRegion(
+    options: JoinOptions,
+    ticket: MatchmakingTicketClaims | null
+  ): string | undefined {
+    if (options.matchmakingMode !== true) return undefined;
+    return normalizeMatchmakingRegion(ticket?.matchmakingRegion)
+      ?? normalizeMatchmakingRegion(options.matchmakingRegion)
+      ?? getLocalMatchmakingRegion();
+  }
+
   private resolveMinimumMatchmakingHumanCount(options: JoinOptions): number {
     if (!this.isMatchmakingQueue()) return 1;
     const expectedHumanPlayers = typeof options.expectedHumanPlayers === 'number'
@@ -2362,6 +2383,7 @@ export class LobbyRoom extends Room<LobbyState> {
       matchPerspective: this.matchPerspective,
       botFillMode: this.state.botFillMode,
       matchmakingMode: this.isMatchmakingQueue(),
+      matchmakingRegion: this.isMatchmakingQueue() ? this.matchmakingRegion : undefined,
       rankBandId: this.isMatchmakingQueue() ? this.rankBandId : undefined,
       requiredPlayers: this.isMatchmakingQueue() ? this.getMatchmakingRequiredPlayers() : undefined,
       matchmakingJoinCapacity: this.isMatchmakingQueue() ? this.getMatchmakingJoinCapacity() : undefined,

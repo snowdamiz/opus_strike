@@ -9,3 +9,14 @@ export const ALLOWED_CORS_HEADERS = [
 ] as const;
 
 export const ALLOWED_CORS_HEADER_VALUE = ALLOWED_CORS_HEADERS.join(', ');
+
+export const ALLOWED_CORS_METHODS = [
+  'GET',
+  'HEAD',
+  'POST',
+  'PUT',
+  'DELETE',
+  'OPTIONS',
+] as const;
+
+export const ALLOWED_CORS_METHOD_VALUE = ALLOWED_CORS_METHODS.join(', ');

@@ -23,6 +23,7 @@ export interface QuickPlayTicketResponse {
   matchPerspective: MatchPerspective;
   selectedHero?: HeroId;
   selectedSkinId?: HeroSkinId;
+  matchmakingRegion?: string;
   competitiveRating: number;
   rankDivisionIndex: number;
   rank: unknown;
@@ -53,6 +54,7 @@ export interface RankedTicketResponse {
   matchPerspective: MatchPerspective;
   selectedHero?: HeroId;
   selectedSkinId?: HeroSkinId;
+  matchmakingRegion?: string;
   competitiveRating: number;
   rankDivisionIndex: number;
   rank: unknown;

@@ -29,6 +29,7 @@ const { ticket, claims } = createMatchmakingTicket({
   botFillMode: 'fill_even',
   matchPerspective: 'third_person',
   selectedHero: 'phantom',
+  matchmakingRegion: 'LHR',
   userId: 'user_1',
   competitiveRating: strongPlayer,
   rankDivisionIndex: getRankDivisionIndex(strongPlayer),
@@ -45,6 +46,7 @@ assert.equal(verified.gameplayMode, 'battle_royal');
 assert.equal(verified.botFillMode, 'fill_even');
 assert.equal(verified.matchPerspective, 'third_person');
 assert.equal(verified.selectedHero, 'phantom');
+assert.equal(verified.matchmakingRegion, 'lhr');
 assert.equal(verified.competitiveRating, strongPlayer);
 assert.equal(verified.targetRankDivisionIndex, getRankDivisionIndex(1300));
 
