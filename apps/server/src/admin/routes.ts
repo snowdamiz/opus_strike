@@ -1097,7 +1097,7 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
       const settings = await updateSkinShopItemSettings({
         skinId,
         saleEnabled: req.body?.saleEnabled,
-        tokenAmountBaseUnits: req.body?.tokenAmountBaseUnits,
+        tokenAmount: req.body?.tokenAmount,
         maxSupply: req.body?.maxSupply,
         expectedPriceVersion: req.body?.expectedPriceVersion,
         updatedByUserId: adminUser.id,

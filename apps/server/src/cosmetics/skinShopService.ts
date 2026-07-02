@@ -32,6 +32,7 @@ import {
   getSplTokenMintRuntime,
   signatureLooksValid,
   verifyParsedSplTokenPayment,
+  type SplTokenMintRuntime,
 } from './tokenPayments';
 
 const SHOP_SETTINGS_ID = 'default';
@@ -80,7 +81,9 @@ export interface SkinShopAdminOverview {
 export interface SerializedSkinShopItemSettings {
   skinId: HeroSkinId;
   saleEnabled: boolean;
+  tokenAmount: string | null;
   tokenAmountBaseUnits: string | null;
+  tokenDecimals: number | null;
   maxSupply: number | null;
   soldCount: number;
   reservedCount: number;
@@ -111,19 +114,38 @@ function envFlag(name: string, fallback = false): boolean {
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
 }
 
-function readPositiveBaseUnits(value: unknown, options: { required: boolean }): bigint | null {
+function readPositiveTokenAmountBaseUnits(
+  value: unknown,
+  decimals: number,
+  options: { required: boolean }
+): bigint | null {
   if (value === null || value === undefined || value === '') {
     if (options.required) throw new SkinShopServiceError('Token amount is required');
     return null;
   }
   if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') {
-    throw new SkinShopServiceError('Token amount must be an integer in base units');
+    throw new SkinShopServiceError('Token amount must be a positive token amount');
   }
-  const text = String(value).trim();
-  if (!/^[0-9]+$/.test(text)) {
-    throw new SkinShopServiceError('Token amount must be an integer in base units');
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 255) {
+    throw new SkinShopServiceError('Token mint returned invalid decimals', 503);
   }
-  const amount = BigInt(text);
+
+  const text = String(value).trim().replace(/,/g, '');
+  if (!/^[0-9]+(?:\.[0-9]+)?$/.test(text)) {
+    throw new SkinShopServiceError('Token amount must be a positive token amount');
+  }
+
+  const [wholeText, fractionText = ''] = text.split('.');
+  if (fractionText.length > decimals) {
+    throw new SkinShopServiceError(`Token amount cannot have more than ${decimals} decimal places`);
+  }
+
+  const scale = 10n ** BigInt(decimals);
+  const whole = BigInt(wholeText);
+  const fraction = fractionText
+    ? BigInt(fractionText.padEnd(decimals, '0'))
+    : 0n;
+  const amount = whole * scale + fraction;
   if (amount <= 0n) {
     throw new SkinShopServiceError('Token amount must be greater than zero');
   }
@@ -151,6 +173,16 @@ function readOptionalMaxSupply(value: unknown): number | null {
 
 function bigintToString(value: bigint | number | null | undefined): string | null {
   return value === null || value === undefined ? null : value.toString();
+}
+
+function baseUnitsToTokenAmount(value: bigint | null | undefined, decimals: number | null | undefined): string | null {
+  if (value === null || value === undefined || decimals === null || decimals === undefined) return null;
+  if (!Number.isInteger(decimals) || decimals < 0) return null;
+  const scale = 10n ** BigInt(decimals);
+  const whole = value / scale;
+  const fraction = value % scale;
+  if (fraction === 0n) return whole.toString();
+  return `${whole}.${fraction.toString().padStart(decimals, '0').replace(/0+$/, '')}`;
 }
 
 interface SkinSupplyCounts {
@@ -283,12 +315,14 @@ function serializeItemSettings(item: {
   priceVersion: number;
   updatedByUserId: string | null;
   updatedAt: Date;
-}, counts: SkinSupplyCounts): SerializedSkinShopItemSettings {
+}, counts: SkinSupplyCounts, tokenDecimals: number | null = null): SerializedSkinShopItemSettings {
   const supply = buildSupplySnapshot(item.maxSupply, counts);
   return {
     skinId: item.skinId as HeroSkinId,
     saleEnabled: item.saleEnabled,
+    tokenAmount: baseUnitsToTokenAmount(item.tokenAmountBaseUnits, tokenDecimals),
     tokenAmountBaseUnits: bigintToString(item.tokenAmountBaseUnits),
+    tokenDecimals,
     maxSupply: supply.maxSupply,
     soldCount: supply.soldCount,
     reservedCount: supply.reservedCount,
@@ -478,11 +512,34 @@ async function loadGameVisibleSkinIds(): Promise<Set<HeroSkinId>> {
   return buildGameVisibleSkinIds(shop, itemRowsBySkin);
 }
 
+async function loadShopTokenRuntime(
+  shop: Awaited<ReturnType<typeof getOrCreateShopSettings>>
+): Promise<SplTokenMintRuntime | null> {
+  if (!shop.tokenMintAddress || !shop.rpcUrl) return null;
+  try {
+    return await getSplTokenMintRuntime(connectionForShop(shop), shop.tokenMintAddress);
+  } catch {
+    return null;
+  }
+}
+
+async function loadShopTokenRuntimeStrict(): Promise<SplTokenMintRuntime> {
+  const shop = await getOrCreateShopSettings();
+  if (!shop.tokenMintAddress) {
+    throw new SkinShopServiceError('Game token mint is not configured', 503);
+  }
+  if (!shop.rpcUrl) {
+    throw new SkinShopServiceError('SOLANA_RPC_URL is not configured', 503);
+  }
+  return getSplTokenMintRuntime(connectionForShop(shop), shop.tokenMintAddress);
+}
+
 function buildShopPriceState(input: {
   skin: HeroSkinDefinition;
   shop: Awaited<ReturnType<typeof getOrCreateShopSettings>>;
   item: Awaited<ReturnType<typeof getOrCreateItemSettings>> | null;
   supply: SkinSupplyCounts;
+  tokenDecimals: number | null;
 }): HeroSkinCatalogPriceState | null {
   if (input.skin.availability !== 'paid') return null;
   const supply = buildSupplySnapshot(input.item?.maxSupply, input.supply);
@@ -490,6 +547,7 @@ function buildShopPriceState(input: {
     tokenSymbol: input.shop.tokenMintAddress ? input.shop.tokenSymbol : '',
     tokenMintAddress: input.shop.tokenMintAddress,
     amountBaseUnits: bigintToString(input.item?.tokenAmountBaseUnits),
+    tokenDecimals: input.tokenDecimals,
     adminEditable: input.skin.price?.adminEditable ?? true,
     disabledReason: input.skin.price?.disabledReason ?? null,
     saleEnabled: input.item?.saleEnabled ?? false,
@@ -539,6 +597,7 @@ export async function getSkinCatalogForUser(userId?: string | null): Promise<Her
     prisma.skinShopItemSettings.findMany(),
     loadPaidSkinSupplyCounts(),
   ]);
+  const tokenRuntime = await loadShopTokenRuntime(shop);
   const itemRowsBySkin = new Map(itemRows.map((item) => [item.skinId, item]));
   for (const skin of paidSkins()) {
     if (!itemRowsBySkin.has(skin.id)) {
@@ -568,7 +627,13 @@ export async function getSkinCatalogForUser(userId?: string | null): Promise<Her
       owned: ownedSkinIds.has(skin.id),
       equipped: equippedSkinIds.has(skin.id),
       entitlementSource,
-      shopPrice: buildShopPriceState({ skin, shop, item, supply }),
+      shopPrice: buildShopPriceState({
+        skin,
+        shop,
+        item,
+        supply,
+        tokenDecimals: tokenRuntime?.decimals ?? null,
+      }),
       purchaseDisabledReason: purchaseDisabledReason({ skin, shop, item, supply }),
     };
   });
@@ -1079,6 +1144,9 @@ export async function getSkinPurchaseIntent(input: {
   if (intent.status === 'submitted') {
     return verifySubmittedSkinPurchase(input.userId, input.intentId, { keepSubmittedWhenNotFound: true });
   }
+  if (intent.status === 'failed' && intent.lastError === 'missing_memo' && intent.transactionSignature) {
+    return verifySubmittedSkinPurchase(input.userId, input.intentId, { keepSubmittedWhenNotFound: true });
+  }
   return serializeIntent(intent);
 }
 
@@ -1091,6 +1159,7 @@ export async function getSkinShopAdminOverview(): Promise<SkinShopAdminOverview>
     }),
     loadPaidSkinSupplyCounts(),
   ]);
+  const tokenRuntime = await loadShopTokenRuntime(shop);
   const auditsBySkin = new Map<string, SerializedSkinShopItemAudit>();
   for (const audit of audits) {
     if (!auditsBySkin.has(audit.skinId)) auditsBySkin.set(audit.skinId, serializeAudit(audit));
@@ -1102,7 +1171,7 @@ export async function getSkinShopAdminOverview(): Promise<SkinShopAdminOverview>
     const supply = supplyBySkin.get(skin.id) ?? { soldCount: 0, reservedCount: 0 };
     items.push({
       skin,
-      settings: serializeItemSettings(settings, supply),
+      settings: serializeItemSettings(settings, supply, tokenRuntime?.decimals ?? null),
       lastAudit: auditsBySkin.get(skin.id) ?? null,
     });
   }
@@ -1138,7 +1207,7 @@ export async function updateSkinShopSettings(input: {
 export async function updateSkinShopItemSettings(input: {
   skinId: HeroSkinId;
   saleEnabled?: unknown;
-  tokenAmountBaseUnits?: unknown;
+  tokenAmount?: unknown;
   maxSupply?: unknown;
   expectedPriceVersion?: unknown;
   updatedByUserId: string;
@@ -1158,9 +1227,14 @@ export async function updateSkinShopItemSettings(input: {
   const nextSaleEnabled = input.saleEnabled === undefined
     ? current.saleEnabled
     : input.saleEnabled === true;
-  const nextAmount = input.tokenAmountBaseUnits === undefined
-    ? current.tokenAmountBaseUnits
-    : readPositiveBaseUnits(input.tokenAmountBaseUnits, { required: nextSaleEnabled });
+  let tokenRuntime: SplTokenMintRuntime | null = null;
+  let nextAmount = current.tokenAmountBaseUnits;
+  if (input.tokenAmount !== undefined) {
+    tokenRuntime = await loadShopTokenRuntimeStrict();
+    nextAmount = readPositiveTokenAmountBaseUnits(input.tokenAmount, tokenRuntime.decimals, {
+      required: nextSaleEnabled,
+    });
+  }
   const nextMaxSupply = input.maxSupply === undefined
     ? current.maxSupply
     : readOptionalMaxSupply(input.maxSupply);
@@ -1197,7 +1271,13 @@ export async function updateSkinShopItemSettings(input: {
     return item;
   });
 
-  return serializeItemSettings(updated, await getPaidSkinSupplyCounts(input.skinId));
+  const shop = await getOrCreateShopSettings();
+  const responseTokenRuntime = tokenRuntime ?? await loadShopTokenRuntime(shop);
+  return serializeItemSettings(
+    updated,
+    await getPaidSkinSupplyCounts(input.skinId),
+    responseTokenRuntime?.decimals ?? null
+  );
 }
 
 export function parseHeroIdParam(value: unknown): HeroId | null {

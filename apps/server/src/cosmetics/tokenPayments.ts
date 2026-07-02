@@ -206,6 +206,9 @@ function getMemo(instruction: ParsedInstruction | PartiallyDecodedInstruction): 
   const program = 'program' in instruction ? instruction.program : undefined;
   const programId = instructionProgramId(instruction);
   if (program !== 'spl-memo' && programId !== MEMO_PROGRAM_ID.toBase58()) return null;
+  if ('parsed' in instruction && typeof instruction.parsed === 'string') {
+    return instruction.parsed;
+  }
   if ('parsed' in instruction && instruction.parsed && typeof instruction.parsed === 'object') {
     const parsed = instruction.parsed as { memo?: unknown };
     if (typeof parsed.memo === 'string') return parsed.memo;

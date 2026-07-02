@@ -791,14 +791,14 @@ function SkinShopSettingsCard({ console: c }: { console: SectionProps['console']
 
 interface SkinItemForm {
   saleEnabled: boolean;
-  tokenAmountBaseUnits: string;
+  tokenAmount: string;
   maxSupply: string;
 }
 
 function buildSkinItemForm(item: SkinShopItem): SkinItemForm {
   return {
     saleEnabled: item.settings.saleEnabled,
-    tokenAmountBaseUnits: str(item.settings.tokenAmountBaseUnits),
+    tokenAmount: str(item.settings.tokenAmount),
     maxSupply: item.settings.maxSupply == null ? '' : str(item.settings.maxSupply),
   };
 }
@@ -881,7 +881,7 @@ function SkinItemCard({
       const trimmed = form.maxSupply.trim();
       await c.saveSkinShopItem(settings.skinId, {
         saleEnabled: form.saleEnabled,
-        tokenAmountBaseUnits: num(form.tokenAmountBaseUnits),
+        tokenAmount: form.tokenAmount.trim(),
         maxSupply: trimmed === '' ? null : num(trimmed),
         expectedPriceVersion: settings.priceVersion,
       });
@@ -922,10 +922,12 @@ function SkinItemCard({
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <NumberField
-              label={`Price (base units of ${tokenSymbol})`}
-              value={form.tokenAmountBaseUnits}
-              onChange={(v) => set('tokenAmountBaseUnits', v)}
-              hint="Token base units per purchase."
+              label={`Price (${tokenSymbol})`}
+              value={form.tokenAmount}
+              onChange={(v) => set('tokenAmount', v)}
+              hint="Whole tokens per purchase."
+              step="any"
+              min="0"
             />
             <NumberField
               label="Max Supply"
