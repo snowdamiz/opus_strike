@@ -816,6 +816,9 @@ export async function createSkinPurchaseIntent(input: {
 
   const tokenMintAddress = shop.tokenMintAddress!;
   const treasuryWallet = shop.treasuryWallet!;
+  if (walletAddress === treasuryWallet) {
+    throw new SkinShopServiceError('Connect a wallet different from WAGER_TREASURY_WALLET to buy skins');
+  }
   const connection = connectionForShop(shop);
   const tokenRuntime = await getSplTokenMintRuntime(connection, tokenMintAddress);
   const treasuryTokenAccountForProgram = await getAssociatedTokenAccountAddress({

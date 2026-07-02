@@ -290,6 +290,7 @@ function SlopHeroesMark({ className }: { className?: string }) {
 // Navigation tabs
 const MAIN_TABS = ['play', 'heroes', 'loadout', 'skins', 'stats'] as const;
 const MAIN_PLAY_CONTRACT_ADDRESS = '5Dq9LnhLRiisTQPfb21pgoGZt8h3E9h31JyiSzvYpump';
+const SLOP_HEROES_X_URL = 'https://x.com/slopheroes';
 type MainTab = (typeof MAIN_TABS)[number];
 const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
   mode: 'season',
@@ -309,6 +310,30 @@ function ContractAddressBadge() {
       <span className="main-lobby-ca-label">CA</span>
       <span className="main-lobby-ca-address">{MAIN_PLAY_CONTRACT_ADDRESS}</span>
     </div>
+  );
+}
+
+function XSocialIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M14.56 10.6 22.08 2h-1.78l-6.53 7.46L8.56 2H2.55l7.89 11.29L2.55 22h1.78l6.9-7.88L16.74 22h6.01l-8.19-11.4Zm-2.44 2.79-.8-1.12L4.96 3.31h2.75l5.13 7.23.8 1.12 6.67 9.4h-2.75l-5.44-7.67Z" />
+    </svg>
+  );
+}
+
+function XProfileLink({ onActivate }: { onActivate: () => void }) {
+  return (
+    <a
+      className="main-lobby-x-link"
+      href={SLOP_HEROES_X_URL}
+      target="_blank"
+      rel="noreferrer"
+      aria-label="Open @slopheroes on X"
+      title="@slopheroes on X"
+      onClick={onActivate}
+    >
+      <XSocialIcon className="h-5 w-5" />
+    </a>
   );
 }
 
@@ -1266,6 +1291,8 @@ export function MainLobby() {
 
           {/* Right side controls */}
           <div className="main-lobby-controls flex shrink-0 items-center gap-3 xl:gap-4">
+            <XProfileLink onActivate={playButtonClick} />
+
             {isAuthenticated && (
               <SocialButton
                 badgeCount={socialBadgeCount}

@@ -8,6 +8,7 @@ import {
 } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
+  getAssociatedTokenAddressSync,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import bs58 from 'bs58';
@@ -65,6 +66,7 @@ function parsedMemoInstruction(memo: string) {
 }
 
 function transferCheckedInstruction(input: {
+  source: string;
   mint: string;
   destination: string;
   authority: string;
@@ -76,6 +78,7 @@ function transferCheckedInstruction(input: {
     parsed: {
       type: 'transferChecked',
       info: {
+        source: input.source,
         mint: input.mint,
         destination: input.destination,
         authority: input.authority,
@@ -120,6 +123,12 @@ function paymentTransactionFixture(intent: SkinPurchaseIntentRow): ParsedTransac
         instructions: [
           parsedMemoInstruction(intent.memo),
           transferCheckedInstruction({
+            source: getAssociatedTokenAddressSync(
+              new PublicKey(intent.tokenMintAddress),
+              new PublicKey(intent.walletAddress),
+              false,
+              TOKEN_PROGRAM_ID
+            ).toBase58(),
             mint: intent.tokenMintAddress,
             destination: intent.treasuryTokenAccount,
             authority: intent.walletAddress,
@@ -403,6 +412,15 @@ async function main(): Promise<void> {
     await expectServiceError(
       () => skinShop.createSkinPurchaseIntent({ userId: 'user-no-wallet', skinId, walletAddress: '' }),
       /connected Solana wallet/,
+      400
+    );
+    await expectServiceError(
+      () => skinShop.createSkinPurchaseIntent({
+        userId: 'user-no-wallet',
+        skinId,
+        walletAddress: treasuryWallet.toBase58(),
+      }),
+      /different from WAGER_TREASURY_WALLET/,
       400
     );
 
