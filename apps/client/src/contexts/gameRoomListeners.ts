@@ -129,6 +129,9 @@ interface StreamerObserverJoinedMessage {
   streamerObserverCount?: number;
   streamerObserverSeatCount?: number;
   streamerManagedBotGame?: boolean;
+  streamerFeedMode?: string | null;
+  streamerCameraMode?: string | null;
+  endlessMatch?: boolean;
 }
 
 export function setupGameRoomListeners(
@@ -203,6 +206,9 @@ export function setupGameRoomListeners(
       streamerObserverCount: data.streamerObserverCount,
       streamerObserverSeatCount: data.streamerObserverSeatCount,
       streamerManagedBotGame: data.streamerManagedBotGame === true,
+      streamerFeedMode: data.streamerFeedMode ?? null,
+      streamerCameraMode: data.streamerCameraMode ?? null,
+      endlessMatch: data.endlessMatch === true,
     });
   }));
 

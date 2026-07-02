@@ -9,6 +9,7 @@ import { visualStore } from '../../store/visualStore';
 import { getVisiblePlayerHeight } from './playerWorldAnchors';
 
 export type StreamerCameraShotKind = 'first_person' | 'chase' | 'orbit' | 'aerial';
+export type StreamerCameraMode = 'directed' | 'fixed_aerial';
 
 export interface StreamerCameraSelectablePlayer {
   id: string;
@@ -78,7 +79,12 @@ export function selectStreamerCameraShot(input: {
   players: Iterable<StreamerCameraSelectablePlayer>;
   previousTargetId?: string | null;
   shotIndex: number;
+  cameraMode?: StreamerCameraMode;
 }): StreamerCameraSelection {
+  if (input.cameraMode === 'fixed_aerial') {
+    return { targetId: null, shotKind: 'aerial' };
+  }
+
   const candidates = Array.from(input.players).filter(isCombatCameraCandidate);
   if (candidates.length === 0) {
     return { targetId: null, shotKind: 'aerial' };
@@ -146,6 +152,7 @@ export function StreamerCameraDirector({ enabled }: { enabled: boolean }) {
     }))
   );
   const setHiddenFirstPersonTargetId = useStreamerStore((state) => state.setHiddenFirstPersonTargetId);
+  const streamerCameraMode = useStreamerStore((state) => state.metadata?.streamerCameraMode ?? 'directed');
   const shotRef = useRef<StreamerCameraShot | null>(null);
   const shotIndexRef = useRef(0);
   const targetPositionRef = useRef(new THREE.Vector3());
@@ -170,15 +177,23 @@ export function StreamerCameraDirector({ enabled }: { enabled: boolean }) {
     const currentShot = shotRef.current;
     const currentTarget = currentShot?.targetId ? players.get(currentShot.targetId) ?? null : null;
     const targetStillValid = currentTarget ? isCombatCameraCandidate(currentTarget) : false;
+    const forcedAerialMismatch = streamerCameraMode === 'fixed_aerial' && currentShot?.shotKind !== 'aerial';
+    const missingTargetExpired = currentShot
+      ? Boolean(currentShot.targetId) &&
+        !targetStillValid &&
+        now - currentShot.startedAt > TARGET_RESELECT_GRACE_SECONDS
+      : false;
     const needsShot = !currentShot ||
+      forcedAerialMismatch ||
       now - currentShot.startedAt >= currentShot.duration ||
-      (!targetStillValid && now - currentShot.startedAt > TARGET_RESELECT_GRACE_SECONDS);
+      missingTargetExpired;
 
     if (needsShot) {
       const selection = selectStreamerCameraShot({
         players: players.values(),
         previousTargetId: currentShot?.targetId ?? null,
         shotIndex: shotIndexRef.current,
+        cameraMode: streamerCameraMode,
       });
       shotRef.current = {
         ...selection,

@@ -12,6 +12,7 @@ import {
   getNextStreamerTarget,
   getStreamerSessionStatus,
   stopStreamerSession,
+  type StreamerFeedMode,
   type StreamerMatchMaker,
 } from './service';
 
@@ -37,6 +38,10 @@ function readClientBuildId(req: Request): string | null {
 function readAuthToken(req: Request): string | null {
   const value = req.cookies?.auth_token;
   return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function readFeedMode(req: Request): StreamerFeedMode {
+  return req.body?.feedMode === 'bot_deathmatch' ? 'bot_deathmatch' : 'random';
 }
 
 function enforceStreamerMutationRateLimit(req: Request, res: Response, adminUser: GameAdminUser): boolean {
@@ -89,6 +94,7 @@ export function createStreamerRouter(options: StreamerRouterOptions): Router {
         currentRoomId: readCurrentRoomId(req),
         clientBuildId: readClientBuildId(req),
         authToken: readAuthToken(req),
+        feedMode: readFeedMode(req),
       });
       res.json({
         target,

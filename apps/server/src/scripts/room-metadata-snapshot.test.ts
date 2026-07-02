@@ -101,6 +101,9 @@ const load: RoomLoadSnapshot = {
       streamerObserverCount: 1,
       streamerManagedBotGame: true,
       streamerManagedByUserId: 'admin-user',
+      streamerFeedMode: 'bot_deathmatch',
+      streamerCameraMode: 'fixed_aerial',
+      endlessMatch: true,
       rankedEligibilityCandidate: true,
       rankedRequiredHumanPlayers: 4,
       reconnectIdentityKeys: ['auth:a', 'auth:b'],
@@ -124,6 +127,9 @@ const load: RoomLoadSnapshot = {
       streamerObserverCount: 1,
       streamerManagedBotGame: true,
       streamerManagedByUserId: 'admin-user',
+      streamerFeedMode: 'bot_deathmatch',
+      streamerCameraMode: 'fixed_aerial',
+      endlessMatch: true,
       botCount: 3,
       npcCount: 5,
       participantCount: 6,
@@ -214,6 +220,7 @@ const load: RoomLoadSnapshot = {
   assert.equal(metadata.lobbyId, undefined);
   assert.equal(metadata.mapProfileId, 'ctf_arena');
   assert.equal(metadata.capacityPlayerCost, 0);
+  assert.equal(metadata.endlessMatch, false);
 }
 
 {

@@ -90,6 +90,8 @@ export interface StreamerTargetMetadata {
   regularObserverCount: number;
   streamerObserverCount: number;
   streamerManagedBotGame: boolean;
+  streamerFeedMode: 'random' | 'bot_deathmatch';
+  streamerCameraMode: 'directed' | 'fixed_aerial';
 }
 
 export interface GameSeatReservationPayload {
@@ -108,7 +110,7 @@ export interface StreamerNextTarget {
   roomName: 'game_room';
   processId: string | null;
   publicAddress: string | null;
-  source: 'real_player' | 'fallback_bot';
+  source: 'real_player' | 'fallback_bot' | 'bot_deathmatch';
   streamerObserverTicket?: string;
   seatReservation?: GameSeatReservationPayload;
   metadata: StreamerTargetMetadata;
@@ -322,6 +324,7 @@ export async function requestStreamerStatus(): Promise<StreamerStatusResponse> {
 export async function requestNextStreamerTarget(input: {
   currentRoomId: string | null;
   csrfToken: string;
+  feedMode: 'random' | 'bot_deathmatch';
 }): Promise<StreamerNextResponse> {
   const response = await fetch(`${getHttpUrl()}/streamer/next`, {
     method: 'POST',
@@ -334,6 +337,7 @@ export async function requestNextStreamerTarget(input: {
     body: JSON.stringify({
       currentRoomId: input.currentRoomId,
       clientBuildId: config.buildId,
+      feedMode: input.feedMode,
     }),
   });
 

@@ -23,6 +23,9 @@ export interface GameRoomMetadataInput {
   streamerObserverCount: number;
   streamerManagedBotGame?: boolean;
   streamerManagedByUserId?: string | null;
+  streamerFeedMode?: string | null;
+  streamerCameraMode?: string | null;
+  endlessMatch?: boolean;
   rankedEligibilityCandidate: boolean;
   rankedRequiredHumanPlayers: number;
   reconnectIdentityKeys: string[];
@@ -49,6 +52,9 @@ export function buildGameRoomMetadata(input: GameRoomMetadataInput): Record<stri
     streamerObserverCount: input.streamerObserverCount,
     streamerManagedBotGame: input.streamerManagedBotGame === true,
     streamerManagedByUserId: input.streamerManagedByUserId || undefined,
+    streamerFeedMode: input.streamerFeedMode || undefined,
+    streamerCameraMode: input.streamerCameraMode || undefined,
+    endlessMatch: input.endlessMatch === true,
     botCount: counts.botCount,
     npcCount: counts.npcCount,
     participantCount: counts.participantCount,

@@ -8,6 +8,7 @@ import {
   type ClientSettings,
   type DevTutorialOverride,
   type KeybindAction,
+  type StreamerFeedMode,
   useSettingsStore,
 } from '../../store/settingsStore';
 import { useGameStore } from '../../store/gameStore';
@@ -56,6 +57,11 @@ const devTutorialOverrideOptions = [
   { value: 'account', label: 'Account Status' },
   { value: 'bypass', label: 'Bypass Tutorial' },
   { value: 'force', label: 'Force Tutorial' },
+];
+
+const streamerFeedModeOptions = [
+  { value: 'random', label: 'Random Matches' },
+  { value: 'bot_deathmatch', label: 'Bot Deathmatch' },
 ];
 
 const keybindRows: { action: KeybindAction; label: string }[] = [
@@ -677,12 +683,22 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 </SettingRow>
 
                 {isGameAdmin && (
-                  <SettingRow label="Streamer Mode" description="Cinematic admin observer feed">
-                    <ToggleInput
-                      value={settings.streamerModeEnabled}
-                      onChange={(v) => updateSetting('streamerModeEnabled', v)}
-                    />
-                  </SettingRow>
+                  <>
+                    <SettingRow label="Streamer Mode" description="Cinematic admin observer feed">
+                      <ToggleInput
+                        value={settings.streamerModeEnabled}
+                        onChange={(v) => updateSetting('streamerModeEnabled', v)}
+                      />
+                    </SettingRow>
+
+                    <SettingRow label="Streamer Feed" description="Choose the admin observer source">
+                      <SelectInput
+                        value={settings.streamerFeedMode}
+                        onChange={(v) => updateSetting('streamerFeedMode', v as StreamerFeedMode)}
+                        options={streamerFeedModeOptions}
+                      />
+                    </SettingRow>
+                  </>
                 )}
 
                 <SettingRow label="Crosshair Style" description="Choose your crosshair appearance">

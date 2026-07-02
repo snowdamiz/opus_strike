@@ -8,6 +8,7 @@ export type CrosshairStyle = 'default' | 'dot' | 'circle' | 'cross';
 export type GraphicsPreset = 'potato' | 'competitive' | 'balanced' | 'cinematic';
 export type FpsDisplayMode = 'off' | 'fps';
 export type DevTutorialOverride = 'account' | 'bypass' | 'force';
+export type StreamerFeedMode = 'random' | 'bot_deathmatch';
 export type KeybindAction = keyof InputState | 'scoreboard' | 'pushToTalk';
 export type Keybindings = Record<KeybindAction, string>;
 
@@ -67,6 +68,7 @@ export interface ClientSettings {
   showDamageNumbers: boolean;
   showKillFeed: boolean;
   streamerModeEnabled: boolean;
+  streamerFeedMode: StreamerFeedMode;
   crosshairStyle: CrosshairStyle;
   crosshairColor: string;
   devTutorialOverride: DevTutorialOverride;
@@ -148,6 +150,7 @@ export const defaultSettings: ClientSettings = {
   showDamageNumbers: true,
   showKillFeed: true,
   streamerModeEnabled: false,
+  streamerFeedMode: 'random',
   crosshairStyle: 'default',
   crosshairColor: '#ffffff',
   devTutorialOverride: 'account',
@@ -274,6 +277,7 @@ export function sanitizeSettings(value: unknown): ClientSettings {
     showDamageNumbers: pickBoolean(raw.showDamageNumbers, defaultSettings.showDamageNumbers),
     showKillFeed: pickBoolean(raw.showKillFeed, defaultSettings.showKillFeed),
     streamerModeEnabled: pickBoolean(raw.streamerModeEnabled, defaultSettings.streamerModeEnabled),
+    streamerFeedMode: pickOption(raw.streamerFeedMode, ['random', 'bot_deathmatch'] as const, defaultSettings.streamerFeedMode),
     crosshairStyle: pickOption(raw.crosshairStyle, ['default', 'dot', 'circle', 'cross'] as const, defaultSettings.crosshairStyle),
     crosshairColor: normalizeHexColor(raw.crosshairColor, defaultSettings.crosshairColor),
     devTutorialOverride: pickOption(raw.devTutorialOverride, ['account', 'bypass', 'force'] as const, defaultSettings.devTutorialOverride),

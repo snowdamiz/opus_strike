@@ -6,6 +6,7 @@ import {
   getNextStreamerTarget,
   getStreamerRoomMetadata,
   isEligibleRealPlayerStreamerRoom,
+  isUsableBotDeathmatchStreamerRoom,
   isUsableFallbackStreamerRoom,
   selectStreamerTargetRoom,
   type StreamerGameRoomCreateOptions,
@@ -27,6 +28,7 @@ function room(roomId: string, metadata: Record<string, unknown>, locked = false)
 
 class FakeStreamerMatchMaker implements StreamerMatchMaker {
   reservations: Array<{ roomId: string; options: StreamerObserverSeatOptions }> = [];
+  createdOptions: StreamerGameRoomCreateOptions[] = [];
 
   constructor(private rooms: StreamerRoomListing[]) {}
 
@@ -35,6 +37,7 @@ class FakeStreamerMatchMaker implements StreamerMatchMaker {
   }
 
   async createRoom(_name: 'game_room', options: StreamerGameRoomCreateOptions) {
+    this.createdOptions.push(options);
     const created = room(`created-${this.rooms.length + 1}`, {
       phase: 'waiting',
       gameplayMode: options.gameplayMode,
@@ -46,6 +49,9 @@ class FakeStreamerMatchMaker implements StreamerMatchMaker {
       combatHumanCount: 0,
       streamerObserverCount: 0,
       streamerManagedBotGame: true,
+      streamerFeedMode: options.streamerFeedMode,
+      streamerCameraMode: options.streamerCameraMode,
+      endlessMatch: options.endlessMatch,
     });
     this.rooms.push(created);
     return created;
@@ -88,12 +94,24 @@ const fallbackRoom = room('fallback-a', {
   combatHumanCount: 0,
   streamerObserverCount: 0,
   streamerManagedBotGame: true,
+  streamerFeedMode: 'random',
+});
+
+const botDeathmatchRoom = room('bot-deathmatch-a', {
+  phase: 'playing',
+  combatHumanCount: 0,
+  streamerObserverCount: 0,
+  streamerManagedBotGame: true,
+  streamerFeedMode: 'bot_deathmatch',
+  streamerCameraMode: 'fixed_aerial',
 });
 
 assert.equal(isEligibleRealPlayerStreamerRoom(liveRoom), true);
 assert.equal(isEligibleRealPlayerStreamerRoom(observerOnlyRoom), false);
 assert.equal(isEligibleRealPlayerStreamerRoom(fallbackRoom), false);
 assert.equal(isUsableFallbackStreamerRoom(fallbackRoom), true);
+assert.equal(isUsableFallbackStreamerRoom(botDeathmatchRoom), false);
+assert.equal(isUsableBotDeathmatchStreamerRoom(botDeathmatchRoom), true);
 
 const selectedReal = selectStreamerTargetRoom({
   rooms: [fallbackRoom, liveRoom],
@@ -110,6 +128,13 @@ const selectedFallback = selectStreamerTargetRoom({
 
 assert.equal(selectedFallback?.room.roomId, 'fallback-a');
 assert.equal(selectedFallback?.source, 'fallback_bot');
+
+const randomSelectionIgnoresBotDeathmatch = selectStreamerTargetRoom({
+  rooms: [botDeathmatchRoom, observerOnlyRoom],
+  random: () => 0,
+});
+
+assert.equal(randomSelectionIgnoresBotDeathmatch, null);
 
 assert.equal(
   selectStreamerTargetRoom({
@@ -144,6 +169,8 @@ const metadata = getStreamerRoomMetadata(liveRoom);
 assert.equal(metadata.combatHumanCount, 2);
 assert.equal(metadata.regularObserverCount, 1);
 assert.equal(metadata.streamerManagedBotGame, false);
+assert.equal(metadata.streamerFeedMode, 'random');
+assert.equal(metadata.streamerCameraMode, 'directed');
 
 const botAssignments = createStreamerBotAssignments({
   gameplayMode: 'capture_the_flag',
@@ -196,6 +223,43 @@ async function runAsyncTests(): Promise<void> {
   assert.equal(alreadyWatchingTarget.roomId, 'live-a');
   assert.equal(alreadyWatchingTarget.seatReservation, undefined);
   assert.equal(alreadyWatchingMatchMaker.reservations.length, 0);
+
+  clearStreamerSessionsForTests();
+  const botDeathmatchMatchMaker = new FakeStreamerMatchMaker([]);
+  const botDeathmatchTarget = await getNextStreamerTarget({
+    adminUserId: 'admin-a',
+    matchMaker: botDeathmatchMatchMaker,
+    currentRoomId: null,
+    feedMode: 'bot_deathmatch',
+    random: () => 0,
+  });
+
+  assert.equal(botDeathmatchTarget.source, 'bot_deathmatch');
+  assert.equal(botDeathmatchTarget.metadata.gameplayMode, 'team_deathmatch');
+  assert.equal(botDeathmatchTarget.metadata.streamerFeedMode, 'bot_deathmatch');
+  assert.equal(botDeathmatchTarget.metadata.streamerCameraMode, 'fixed_aerial');
+  assert.equal(botDeathmatchMatchMaker.createdOptions.length, 1);
+  const botDeathmatchOptions = botDeathmatchMatchMaker.createdOptions[0];
+  assert.ok(botDeathmatchOptions);
+  assert.equal(botDeathmatchOptions.gameplayMode, 'team_deathmatch');
+  assert.equal(botDeathmatchOptions.endlessMatch, true);
+  assert.equal(botDeathmatchOptions.streamerFeedMode, 'bot_deathmatch');
+  assert.equal(botDeathmatchOptions.streamerCameraMode, 'fixed_aerial');
+  assert.equal(botDeathmatchOptions.botAssignments.length, getGameplayModeRules('team_deathmatch').maxPlayers);
+  assert.equal(botDeathmatchOptions.botAssignments.filter((assignment) => assignment.team === 'red').length, 4);
+  assert.equal(botDeathmatchOptions.botAssignments.filter((assignment) => assignment.team === 'blue').length, 4);
+
+  const reusedBotDeathmatchTarget = await getNextStreamerTarget({
+    adminUserId: 'admin-a',
+    matchMaker: botDeathmatchMatchMaker,
+    currentRoomId: botDeathmatchTarget.roomId,
+    feedMode: 'bot_deathmatch',
+    random: () => 0,
+  });
+
+  assert.equal(reusedBotDeathmatchTarget.roomId, botDeathmatchTarget.roomId);
+  assert.equal(reusedBotDeathmatchTarget.seatReservation, undefined);
+  assert.equal(botDeathmatchMatchMaker.createdOptions.length, 1);
 }
 
 runAsyncTests().then(() => {
