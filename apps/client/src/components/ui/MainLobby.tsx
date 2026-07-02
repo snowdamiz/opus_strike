@@ -420,6 +420,22 @@ function getPartyMemberLimitForPlayMode(
   return getPartyMaxMembersForMode(getPartyModeForPlayMode(mode), gameplayMode);
 }
 
+function getBotFillUnavailableReasonForPlayMode(mode: PlayMenuMode): string | null {
+  switch (mode) {
+    case 'ranked':
+      return 'Bot fill does not apply to ranked';
+    case 'practice':
+      return 'Bot fill does not apply to practice';
+    case 'custom':
+      return 'Bot fill does not apply to custom lobbies';
+    case 'quick_play':
+    case 'team_deathmatch':
+    case 'battle_royal':
+    default:
+      return null;
+  }
+}
+
 export function MainLobby() {
   const { playerName, isLoading, userStats, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore(
     useShallow((state) => ({
@@ -548,15 +564,13 @@ export function MainLobby() {
     : customGameplayMode;
   const activeBotFillEnabledByMode = party?.botFillEnabledByMode ?? botFillEnabledByMode;
   const globalBotFillEnabled = isGlobalBotFillEnabled(activeBotFillEnabledByMode);
-  const botFillDisabledForMode = activePlayMode === 'custom' || activePlayMode === 'practice';
-  const botFillDisabledReason = botFillDisabledForMode
-    ? activePlayMode === 'practice'
-      ? 'Bot fill does not apply to practice'
-      : 'Bot fill does not apply to custom lobbies'
+  const botFillUnavailableReason = getBotFillUnavailableReasonForPlayMode(activePlayMode);
+  const botFillDisabledReason = botFillUnavailableReason
+    ? botFillUnavailableReason
     : isInParty && !isPartyLeader
       ? 'Party leader chooses bot fill'
       : null;
-  const displayedBotFillEnabled = botFillDisabledForMode ? false : globalBotFillEnabled;
+  const displayedBotFillEnabled = botFillUnavailableReason ? false : globalBotFillEnabled;
   const activePerspectiveByMode = party?.perspectiveByMode ?? perspectiveByMode;
 
   useEffect(() => {
@@ -1189,6 +1203,8 @@ export function MainLobby() {
   };
 
   const handleSetBotFillEnabled = (enabled: boolean) => {
+    if (getBotFillUnavailableReasonForPlayMode(activePlayMode)) return;
+
     if (isInParty) {
       if (isPartyLeader) {
         for (const gameplayMode of GAMEPLAY_MODES) {

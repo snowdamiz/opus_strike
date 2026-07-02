@@ -224,7 +224,7 @@ function PersonalStatsBand({ player }: { player: PersonalLeaderboardPlayer | nul
   const personalRank = player ? getRankForStats(player.stats) : null;
   const overviewStats = player ? [
     { label: 'Level', value: formatNumber(getLevelProgress(player.stats.totalExperience).level) },
-    { label: 'Score', value: formatNumber(player.stats.totalScore) },
+    { label: 'XP', value: formatNumber(player.stats.totalExperience) },
     { label: 'Win Rate', value: formatPercent(player.stats.totalWins, player.stats.totalGames) },
     { label: 'Games', value: formatNumber(player.stats.totalGames) },
     { label: 'K/D', value: formatRatio(player.stats.totalKills, player.stats.totalDeaths) },

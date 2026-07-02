@@ -471,6 +471,8 @@ model GameMatch {
   blueScore                Int
   winningTeam              String?
   rankedEligible           Boolean   @default(false)
+  rankedSeasonMode         RankedSeasonMode?
+  rankedSeasonNumber       Int?
   antiCheatIntegrityStatus String    @default("clean")
   antiCheatReviewRequired  Boolean   @default(false)
   antiCheatIntegrityReason String?
@@ -490,6 +492,7 @@ model GameMatch {
   @@index([startedAt])
   @@index([winningTeam])
   @@index([rankedEligible])
+  @@index([rankedSeasonMode, rankedSeasonNumber])
   @@index([antiCheatIntegrityStatus])
   @@index([antiCheatReviewRequired])
   @@index([rankedOutcomeStatus])

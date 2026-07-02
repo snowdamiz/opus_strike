@@ -1,5 +1,6 @@
 import {
   DEFAULT_COMPETITIVE_RATING,
+  RANK_PLACEMENT_MATCHES,
   getRankFromRating,
   type RankSummary,
 } from '@voxel-strike/shared';
@@ -38,7 +39,7 @@ export function serializeRankPayload(user: RankedUserFields | null | undefined):
   const current = getRankFromRating(competitiveRating, rankedGames);
   const peak = getRankFromRating(
     user?.rankedPeakRating ?? competitiveRating,
-    Math.max(rankedGames, 5)
+    Math.max(rankedGames, RANK_PLACEMENT_MATCHES)
   );
 
   return {
