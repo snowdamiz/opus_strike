@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { LogOut } from 'lucide-react';
 import { LobbyBackdrop } from './LobbyBackdrop';
 
 export const MATCH_LOADING_INITIAL_PROGRESS = 8;
@@ -25,6 +26,8 @@ interface MatchLoadingScreenProps {
   trackStartLabel?: string;
   trackEndLabel?: string;
   stages?: MatchLoadingStage[];
+  actionLabel?: string;
+  onAction?: () => void;
   onProgressChange?: (progress: number) => void;
 }
 
@@ -45,6 +48,8 @@ export function MatchLoadingScreen({
   trackStartLabel = 'World',
   trackEndLabel = 'Spawn',
   stages,
+  actionLabel,
+  onAction,
   onProgressChange,
 }: MatchLoadingScreenProps) {
   const [progress, setProgress] = useState(() => clampLoadingProgress(initialProgress));
@@ -161,6 +166,19 @@ export function MatchLoadingScreen({
                   </div>
                 );
               })}
+            </div>
+          ) : null}
+
+          {actionLabel && onAction ? (
+            <div className="mt-7 flex justify-center">
+              <button
+                type="button"
+                onClick={onAction}
+                className="inline-flex h-10 items-center gap-2 border border-white/15 bg-black/45 px-4 font-display text-xs uppercase tracking-[0.18em] text-white/80 shadow-[0_12px_30px_rgba(0,0,0,0.3)] transition hover:border-orange-300/70 hover:bg-orange-500/15 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300/70"
+              >
+                <LogOut className="h-4 w-4" aria-hidden="true" />
+                <span>{actionLabel}</span>
+              </button>
             </div>
           ) : null}
         </div>

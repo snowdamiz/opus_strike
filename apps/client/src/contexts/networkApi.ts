@@ -92,13 +92,24 @@ export interface StreamerTargetMetadata {
   streamerManagedBotGame: boolean;
 }
 
+export interface GameSeatReservationPayload {
+  sessionId: string;
+  room: {
+    name: string;
+    roomId: string;
+    processId: string;
+    publicAddress?: string;
+  };
+  devMode?: boolean;
+}
+
 export interface StreamerNextTarget {
   roomId: string;
   roomName: 'game_room';
   processId: string | null;
   publicAddress: string | null;
   source: 'real_player' | 'fallback_bot';
-  streamerObserverTicket: string;
+  seatReservation?: GameSeatReservationPayload;
   metadata: StreamerTargetMetadata;
 }
 
@@ -319,7 +330,10 @@ export async function requestNextStreamerTarget(input: {
       'Content-Type': 'application/json',
       'x-csrf-token': input.csrfToken,
     },
-    body: JSON.stringify({ currentRoomId: input.currentRoomId }),
+    body: JSON.stringify({
+      currentRoomId: input.currentRoomId,
+      clientBuildId: config.buildId,
+    }),
   });
 
   if (!response.ok) {

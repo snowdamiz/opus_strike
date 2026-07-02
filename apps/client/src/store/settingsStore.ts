@@ -286,16 +286,23 @@ export function loadSettings(): ClientSettings {
 
   try {
     const saved = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
-    return saved ? sanitizeSettings(JSON.parse(saved)) : defaultSettings;
+    return withRuntimeOnlySettingsReset(saved ? sanitizeSettings(JSON.parse(saved)) : defaultSettings);
   } catch (error) {
     loggers.room.warn('failed to load settings', error);
-    return defaultSettings;
+    return withRuntimeOnlySettingsReset(defaultSettings);
   }
+}
+
+function withRuntimeOnlySettingsReset(settings: ClientSettings): ClientSettings {
+  return {
+    ...settings,
+    streamerModeEnabled: false,
+  };
 }
 
 function persistSettings(settings: ClientSettings): void {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(withRuntimeOnlySettingsReset(settings)));
 }
 
 interface SettingsStore {

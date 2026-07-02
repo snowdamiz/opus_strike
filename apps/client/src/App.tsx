@@ -16,6 +16,7 @@ import { TutorialGuide } from './components/ui/TutorialGuide';
 import { disposeSharedAudioResources, useAudio, useMusic } from './hooks/useAudio';
 import { useGlobalButtonSounds } from './hooks/useUiAudio';
 import { useNetwork } from './contexts/NetworkContext';
+import { requestStopStreamer } from './contexts/networkApi';
 import { mouseButtonToKeybindCode } from './utils/keybindings';
 import { installLocalCombatStressScenario } from './utils/combatStressScenario';
 import { requestMapPreviewManifest } from './utils/mapPreview/mapPreviewManifestClient';
@@ -155,7 +156,7 @@ export function App() {
   const reportedMatchStartGateRef = useRef<number | null>(null);
   const { playLobbyMusic, playGameMusic, pauseMusic, resumeMusic } = useMusic();
   const { preloadSoundGroup } = useAudio();
-  const { matchStartGateKey, reportMatchSceneReady } = useNetwork();
+  const { matchStartGateKey, reportMatchSceneReady, leaveGame } = useNetwork();
   useGlobalButtonSounds();
   useStreamerModeController();
 
@@ -480,6 +481,33 @@ export function App() {
     matchLoadingProgressRef.current = progress;
   }, []);
 
+  const handleExitStreamerMode = useCallback(() => {
+    const { csrfToken } = useStreamerStore.getState();
+    if (csrfToken) {
+      void requestStopStreamer(csrfToken).catch((error) => {
+        console.warn('[StreamerMode] Failed to stop streamer session', error);
+      });
+    }
+
+    const settingsStore = useSettingsStore.getState();
+    if (settingsStore.settings.streamerModeEnabled) {
+      settingsStore.applySettings({
+        ...settingsStore.settings,
+        streamerModeEnabled: false,
+      });
+    }
+
+    matchLoadingProgressRef.current = MATCH_LOADING_INITIAL_PROGRESS;
+    setMatchWarmupSnapshot(null);
+    setIsMatchStartSceneReady(false);
+    setIsMatchSceneReady(false);
+    setIsMatchLoadingVisible(false);
+    setShouldMountMatchWorld(false);
+    setAreMatchResourcesReady(false);
+    useStreamerStore.getState().reset();
+    leaveGame();
+  }, [leaveGame]);
+
   useEffect(() => {
     if (matchStartGateKey === null) {
       reportedMatchStartGateRef.current = null;
@@ -603,6 +631,8 @@ export function App() {
         trackStartLabel="Control"
         trackEndLabel="Broadcast"
         fallbackProgressCap={streamerLoadingReason === 'spinning_up_bot_match' ? 72 : 88}
+        actionLabel="Exit Streamer Mode"
+        onAction={handleExitStreamerMode}
         onProgressChange={handleMatchLoadingProgressChange}
       />
     );
@@ -643,6 +673,8 @@ export function App() {
             label={matchWarmupSnapshot?.label ?? (isBattleRoyalLoading ? 'Client Map' : 'Preparing')}
             fallbackProgressCap={isBattleRoyalLoading ? BATTLE_ROYAL_PENDING_MAP_PROGRESS_CAP : undefined}
             stages={isBattleRoyalLoading ? matchWarmupStages : undefined}
+            actionLabel={streamerIsActive ? 'Exit Streamer Mode' : undefined}
+            onAction={streamerIsActive ? handleExitStreamerMode : undefined}
             onProgressChange={handleMatchLoadingProgressChange}
           />
         )}
