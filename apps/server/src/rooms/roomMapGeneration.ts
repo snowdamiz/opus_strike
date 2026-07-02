@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 import {
   generateProceduralVoxelMap,
@@ -8,6 +9,7 @@ import {
   type VoxelMapSizeId,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
+import { loggers } from '../utils/logger';
 
 export interface RoomMapGenerationInput {
   mapSeed: number;
@@ -21,6 +23,8 @@ type RoomMapGenerationWorkerResponse =
   | { ok: false; error: string };
 
 const MAP_GENERATION_WORKER_TIMEOUT_MS = 120_000;
+const MAP_GENERATION_SLOW_LOG_MS = 3000;
+const MAP_GENERATION_QUEUE_WAIT_LOG_MS = 1000;
 
 let mapGenerationQueue = Promise.resolve();
 
@@ -82,9 +86,45 @@ function generateMapWithWorker(input: RoomMapGenerationInput): Promise<VoxelMapM
 }
 
 export function generateRoomMapManifest(input: RoomMapGenerationInput): Promise<VoxelMapManifest> {
-  const run = () => shouldUseMapGenerationWorker(input)
-    ? generateMapWithWorker(input)
-    : Promise.resolve(generateMapSync(input));
+  const requestedAt = performance.now();
+  const run = async () => {
+    const startedAt = performance.now();
+    const queueWaitMs = startedAt - requestedAt;
+    const worker = shouldUseMapGenerationWorker(input);
+    try {
+      const manifest = worker
+        ? await generateMapWithWorker(input)
+        : generateMapSync(input);
+      const durationMs = performance.now() - startedAt;
+      if (durationMs >= MAP_GENERATION_SLOW_LOG_MS || queueWaitMs >= MAP_GENERATION_QUEUE_WAIT_LOG_MS) {
+        loggers.room.warn('Room map generation slow', {
+          mapSeed: input.mapSeed,
+          mapThemeId: input.mapThemeId ?? null,
+          mapSize: input.mapSize ?? null,
+          mapProfileId: input.mapProfileId ?? null,
+          worker,
+          queueWaitMs: Math.round(queueWaitMs),
+          durationMs: Math.round(durationMs),
+          renderableChunkCount: manifest.stats.renderableChunkCount,
+          colliderCount: manifest.stats.colliderCount,
+          solidBlockCount: manifest.stats.solidBlocks,
+        });
+      }
+      return manifest;
+    } catch (error) {
+      loggers.room.error('Room map generation failed', {
+        mapSeed: input.mapSeed,
+        mapThemeId: input.mapThemeId ?? null,
+        mapSize: input.mapSize ?? null,
+        mapProfileId: input.mapProfileId ?? null,
+        worker,
+        queueWaitMs: Math.round(queueWaitMs),
+        durationMs: Math.round(performance.now() - startedAt),
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  };
   const queued = mapGenerationQueue.then(run, run);
   mapGenerationQueue = queued.then(
     () => undefined,

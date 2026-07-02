@@ -94,12 +94,10 @@ function configureTrustProxy(): void {
 configureTrustProxy();
 
 const selectProcessIdToCreateRoom: NonNullable<ServerOptions['selectProcessIdToCreateRoom']> = async (
-  roomName,
-  clientOptions
+  roomName
 ) => {
   if (shouldCreateRoomOnLocalColyseusProcess({
     roomName,
-    clientOptions,
     roomCreateStrategy: colyseusRuntime.roomCreateStrategy,
   })) {
     return matchMaker.processId;

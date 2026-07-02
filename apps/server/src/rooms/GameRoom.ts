@@ -916,6 +916,9 @@ const DRAG_HOOK_SPEED = 50;
 const DEFAULT_GAME_ROOM_SEAT_RESERVATION_SECONDS = 60;
 const MAX_CONSECUTIVE_TICK_ERRORS = 5;
 const TICK_ERROR_LOG_SAMPLE_MS = 1000;
+const MAP_MANIFEST_SLOW_LOG_MS = 3000;
+const TICK_DELAY_WARN_MS = Math.max(250, TICK_INTERVAL_MS * 5);
+const TICK_DELAY_LOG_SAMPLE_MS = 5000;
 
 function readGameRoomSeatReservationSeconds(): number {
   const raw = process.env.GAME_ROOM_SEAT_RESERVATION_SECONDS
@@ -1079,6 +1082,7 @@ export class GameRoom extends Room<GameState> {
   private playerSpatialIndexDirty = true;
   private readonly roomMetrics = new RoomMetrics();
   private eventLoopDelay: IntervalHistogram | null = null;
+  private lastTickDelayLoggedAtMs = 0;
   private readonly lineOfSightCache = new LineOfSightCache();
   private readonly rateLimiter = new MessageRateLimiter();
   private readonly participantRegistry = new RoomParticipantRegistry();
@@ -1418,10 +1422,46 @@ export class GameRoom extends Room<GameState> {
     this.state.mapThemeId = options.mapThemeId ?? getVoxelMapTheme(this.state.mapSeed).id;
     this.state.mapSize = normalizeVoxelMapSizeId(options.mapSize);
     this.state.mapProfileId = options.mapProfileId ?? getGameplayModeRules(this.gameplayMode).mapProfileId;
-    await this.refreshMapManifestAsync();
+    const mapManifestStartedAt = performance.now();
+    try {
+      await this.refreshMapManifestAsync();
+    } catch (error) {
+      loggers.room.error('Game room map manifest setup failed', {
+        roomId: this.roomId,
+        lobbyId: this.lobbyId,
+        gameplayMode: this.gameplayMode,
+        mapSeed: this.state.mapSeed,
+        mapSize: this.state.mapSize,
+        mapProfileId: this.state.mapProfileId,
+        durationMs: Math.round(performance.now() - mapManifestStartedAt),
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+    const mapManifestDurationMs = performance.now() - mapManifestStartedAt;
+    const mapManifest = this.getMapManifest();
     this.initializeStreamSchedule(Date.now());
-    loggers.room.info('Map seed', this.state.mapSeed);
-    resetFlagsFromManifest(this.state, this.getMapManifest());
+    const mapManifestLog = {
+      roomId: this.roomId,
+      lobbyId: this.lobbyId,
+      gameplayMode: this.gameplayMode,
+      mapSeed: this.state.mapSeed,
+      mapThemeId: this.state.mapThemeId,
+      mapSize: this.state.mapSize,
+      mapProfileId: this.state.mapProfileId,
+      durationMs: Math.round(mapManifestDurationMs),
+      renderableChunkCount: mapManifest.stats.renderableChunkCount,
+      colliderCount: mapManifest.stats.colliderCount,
+      solidBlockCount: mapManifest.stats.solidBlocks,
+      botAssignmentCount: options.botAssignments?.length ?? 0,
+      capacityPlayerCost: this.capacityPlayerCost,
+    };
+    if (mapManifestDurationMs >= MAP_MANIFEST_SLOW_LOG_MS) {
+      loggers.room.warn('Game room map manifest setup slow', mapManifestLog);
+    } else {
+      loggers.room.info('Game room map manifest setup complete', mapManifestLog);
+    }
+    resetFlagsFromManifest(this.state, mapManifest);
     this.createBotsFromAssignments(options.botAssignments || []);
     this.updateMetadata();
     this.startMatchStartCancelTimer();
@@ -1454,7 +1494,12 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    const scheduledTickAtMs = this.nextTickAtMs || performance.now();
+    const nowMs = performance.now();
+    const scheduledTickAtMs = this.nextTickAtMs || nowMs;
+    const tickDelayMs = nowMs - scheduledTickAtMs;
+    if (tickDelayMs >= TICK_DELAY_WARN_MS) {
+      this.logTickDelay(tickDelayMs);
+    }
     this.tickInProgress = true;
     try {
       this.tick();
@@ -1481,6 +1526,23 @@ export class GameRoom extends Room<GameState> {
     if (!this.tickTimer) return;
     clearTimeout(this.tickTimer);
     this.tickTimer = null;
+  }
+
+  private logTickDelay(delayMs: number): void {
+    const now = Date.now();
+    if (now - this.lastTickDelayLoggedAtMs < TICK_DELAY_LOG_SAMPLE_MS) return;
+    this.lastTickDelayLoggedAtMs = now;
+
+    loggers.room.warn('Game room tick delayed', {
+      roomId: this.roomId,
+      lobbyId: this.lobbyId,
+      phase: this.state.phase,
+      tick: this.state.tick,
+      delayMs: Math.round(delayMs),
+      tickIntervalMs: TICK_INTERVAL_MS,
+      eventLoopDelayP99Ms: this.eventLoopDelay ? Math.round(this.eventLoopDelay.percentile(99) / 1_000_000) : 0,
+      serverTime: this.state.serverTime || now,
+    });
   }
 
   private handleTickError(error: unknown): void {
