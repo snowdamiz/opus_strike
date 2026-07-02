@@ -8,6 +8,7 @@ type SessionModule = typeof import('../auth/session');
 type OAuthStateModule = typeof import('../auth/oauthState');
 type ReturnToModule = typeof import('../auth/returnTo');
 type RateLimitModule = typeof import('../auth/rateLimit');
+type WalletNonceStoreModule = typeof import('../auth/walletNonceStore');
 
 function testReturnToValidation(returnTo: ReturnToModule): void {
   const { appendAuthStatus, sanitizeReturnTo } = returnTo;
@@ -160,18 +161,65 @@ function testRateLimitIdentity(rateLimit: RateLimitModule): void {
   assert.equal(spoofedForwardedFor.ok, false, 'x-forwarded-for must not bypass IP rate limits');
 }
 
+async function testWalletNonceStore(walletNonceStore: WalletNonceStoreModule): Promise<void> {
+  const {
+    WALLET_AUTH_NONCE_TTL_MS,
+    consumeWalletAuthNonce,
+    forceLocalWalletAuthNonceStoreForTests,
+    getLocalWalletAuthNonceCountForTests,
+    resetWalletAuthNonceStoreForTests,
+    storeWalletAuthNonce,
+  } = walletNonceStore;
+
+  resetWalletAuthNonceStoreForTests();
+  forceLocalWalletAuthNonceStoreForTests();
+
+  const walletAddress = 'wallet_address_for_nonce_tests';
+
+  assert.equal(await storeWalletAuthNonce(walletAddress, 'nonce-one', 1_000), true);
+  assert.equal(await storeWalletAuthNonce(walletAddress, 'nonce-two', 1_001), true);
+
+  assert.equal(
+    await consumeWalletAuthNonce(walletAddress, 'nonce-one', 1_002),
+    true,
+    'issuing a second nonce must not invalidate the first pending signature'
+  );
+  assert.equal(
+    await consumeWalletAuthNonce(walletAddress, 'nonce-one', 1_003),
+    false,
+    'wallet auth nonces must be one-time use'
+  );
+  assert.equal(
+    await consumeWalletAuthNonce(walletAddress, 'nonce-two', 1_004),
+    true,
+    'later pending nonces should remain valid after consuming an earlier nonce'
+  );
+
+  assert.equal(await storeWalletAuthNonce(walletAddress, 'expired-nonce', 2_000), true);
+  assert.equal(
+    await consumeWalletAuthNonce(walletAddress, 'expired-nonce', 2_000 + WALLET_AUTH_NONCE_TTL_MS + 1),
+    false,
+    'expired wallet auth nonces must be rejected'
+  );
+  assert.equal(getLocalWalletAuthNonceCountForTests(), 0);
+
+  resetWalletAuthNonceStoreForTests();
+}
+
 async function main(): Promise<void> {
-  const [session, oauthState, returnTo, rateLimit] = await Promise.all([
+  const [session, oauthState, returnTo, rateLimit, walletNonceStore] = await Promise.all([
     import('../auth/session'),
     import('../auth/oauthState'),
     import('../auth/returnTo'),
     import('../auth/rateLimit'),
+    import('../auth/walletNonceStore'),
   ]);
 
   testReturnToValidation(returnTo);
   testOAuthStateLifecycle(oauthState);
   testSessionTokens(session);
   testRateLimitIdentity(rateLimit);
+  await testWalletNonceStore(walletNonceStore);
 
   console.log('auth-service tests passed');
 }
