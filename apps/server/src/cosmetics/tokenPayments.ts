@@ -3,6 +3,7 @@ import {
   PublicKey,
   Transaction,
   TransactionInstruction,
+  type AccountInfo,
   type ParsedInstruction,
   type ParsedTransactionWithMeta,
   type PartiallyDecodedInstruction,
@@ -11,6 +12,7 @@ import {
   createAssociatedTokenAccountIdempotentInstruction,
   createTransferCheckedInstruction,
   getAssociatedTokenAddress,
+  TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import bs58 from 'bs58';
@@ -25,6 +27,7 @@ export interface BuildSplTokenPaymentTransactionInput {
   treasuryWallet: string;
   tokenAmountBaseUnits: string;
   tokenDecimals: number;
+  tokenProgramId?: string;
   memo: string;
 }
 
@@ -65,6 +68,11 @@ export type VerifySplTokenPaymentResult =
   | { ok: true; amountBaseUnits: string; blockTime: Date | null }
   | { ok: false; reason: VerifySplTokenPaymentReason };
 
+export interface SplTokenMintRuntime {
+  decimals: number;
+  tokenProgramId: string;
+}
+
 export function createSkinPaymentMemo(intentId: string): string {
   return `${SKIN_PAYMENT_MEMO_PREFIX}${intentId}`;
 }
@@ -85,22 +93,57 @@ export function signatureLooksValid(signature: string): boolean {
   return /^[1-9A-HJ-NP-Za-km-z]{64,96}$/.test(signature);
 }
 
+function supportedTokenProgramId(programId: PublicKey, fieldName = 'tokenProgramId'): PublicKey {
+  const base58 = programId.toBase58();
+  if (base58 === TOKEN_PROGRAM_ID.toBase58() || base58 === TOKEN_2022_PROGRAM_ID.toBase58()) {
+    return programId;
+  }
+  throw Object.assign(new Error(`${fieldName} must be an SPL Token or Token-2022 program id`), { statusCode: 400 });
+}
+
+function readTokenProgramId(tokenProgramId?: string): PublicKey {
+  if (!tokenProgramId) return TOKEN_PROGRAM_ID;
+  return supportedTokenProgramId(assertSolanaPublicKey(tokenProgramId, 'tokenProgramId'));
+}
+
+function readMintOwner(accountInfo: AccountInfo<Buffer> | null): PublicKey {
+  if (!accountInfo) {
+    throw Object.assign(new Error('tokenMintAddress account was not found'), { statusCode: 400 });
+  }
+  return supportedTokenProgramId(accountInfo.owner, 'tokenMintAddress owner');
+}
+
 export async function getAssociatedTokenAccountAddress(input: {
   ownerAddress: string;
   tokenMintAddress: string;
+  tokenProgramId?: string;
 }): Promise<string> {
   const owner = assertSolanaPublicKey(input.ownerAddress, 'ownerAddress');
   const mint = assertSolanaPublicKey(input.tokenMintAddress, 'tokenMintAddress');
-  return (await getAssociatedTokenAddress(mint, owner, false, TOKEN_PROGRAM_ID)).toBase58();
+  const tokenProgramId = readTokenProgramId(input.tokenProgramId);
+  return (await getAssociatedTokenAddress(mint, owner, false, tokenProgramId)).toBase58();
+}
+
+export async function getSplTokenMintRuntime(
+  connection: Connection,
+  tokenMintAddress: string
+): Promise<SplTokenMintRuntime> {
+  const mint = assertSolanaPublicKey(tokenMintAddress, 'tokenMintAddress');
+  const [accountInfo, supply] = await Promise.all([
+    connection.getAccountInfo(mint, 'confirmed'),
+    connection.getTokenSupply(mint, 'confirmed'),
+  ]);
+  return {
+    decimals: supply.value.decimals,
+    tokenProgramId: readMintOwner(accountInfo).toBase58(),
+  };
 }
 
 export async function getSplTokenMintDecimals(
   connection: Connection,
   tokenMintAddress: string
 ): Promise<number> {
-  const mint = assertSolanaPublicKey(tokenMintAddress, 'tokenMintAddress');
-  const supply = await connection.getTokenSupply(mint, 'confirmed');
-  return supply.value.decimals;
+  return (await getSplTokenMintRuntime(connection, tokenMintAddress)).decimals;
 }
 
 export async function buildSplTokenPaymentTransaction(
@@ -109,8 +152,9 @@ export async function buildSplTokenPaymentTransaction(
   const wallet = assertSolanaPublicKey(input.walletAddress, 'walletAddress');
   const mint = assertSolanaPublicKey(input.tokenMintAddress, 'tokenMintAddress');
   const treasuryWallet = assertSolanaPublicKey(input.treasuryWallet, 'treasuryWallet');
-  const sourceTokenAccount = await getAssociatedTokenAddress(mint, wallet, false, TOKEN_PROGRAM_ID);
-  const treasuryTokenAccount = await getAssociatedTokenAddress(mint, treasuryWallet, false, TOKEN_PROGRAM_ID);
+  const tokenProgramId = readTokenProgramId(input.tokenProgramId);
+  const sourceTokenAccount = await getAssociatedTokenAddress(mint, wallet, false, tokenProgramId);
+  const treasuryTokenAccount = await getAssociatedTokenAddress(mint, treasuryWallet, false, tokenProgramId);
   const latest = await input.connection.getLatestBlockhash('confirmed');
 
   const transaction = new Transaction({
@@ -123,7 +167,7 @@ export async function buildSplTokenPaymentTransaction(
       treasuryTokenAccount,
       treasuryWallet,
       mint,
-      TOKEN_PROGRAM_ID
+      tokenProgramId
     ),
     createTransferCheckedInstruction(
       sourceTokenAccount,
@@ -133,7 +177,7 @@ export async function buildSplTokenPaymentTransaction(
       BigInt(input.tokenAmountBaseUnits),
       input.tokenDecimals,
       [],
-      TOKEN_PROGRAM_ID
+      tokenProgramId
     ),
     new TransactionInstruction({
       programId: MEMO_PROGRAM_ID,

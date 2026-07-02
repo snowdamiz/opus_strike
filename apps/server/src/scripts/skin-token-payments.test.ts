@@ -8,6 +8,7 @@ import {
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddress,
+  TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import bs58 from 'bs58';
@@ -15,6 +16,7 @@ import {
   MEMO_PROGRAM_ID,
   buildSplTokenPaymentTransaction,
   createSkinPaymentMemo,
+  getSplTokenMintRuntime,
   verifyParsedSplTokenPayment,
   type VerifySplTokenPaymentReason,
 } from '../cosmetics/tokenPayments';
@@ -202,9 +204,51 @@ async function runTransactionBuilderTest() {
   assert.equal(transaction.instructions[1].programId.toBase58(), TOKEN_PROGRAM_ID.toBase58());
   assert.equal(transaction.instructions[2].programId.toBase58(), MEMO_PROGRAM_ID.toBase58());
   assert.equal(Buffer.from(transaction.instructions[2].data).toString('utf8'), memo);
+
+  const token2022Built = await buildSplTokenPaymentTransaction({
+    connection: connection as never,
+    walletAddress: wallet.toBase58(),
+    tokenMintAddress: mint.toBase58(),
+    treasuryWallet: treasuryWallet.toBase58(),
+    tokenAmountBaseUnits,
+    tokenDecimals: 6,
+    tokenProgramId: TOKEN_2022_PROGRAM_ID.toBase58(),
+    memo,
+  });
+  const expectedTreasuryToken2022Account = await getAssociatedTokenAddress(
+    mint,
+    treasuryWallet,
+    false,
+    TOKEN_2022_PROGRAM_ID
+  );
+  const token2022Transaction = Transaction.from(Buffer.from(token2022Built.transactionBase64, 'base64'));
+
+  assert.equal(token2022Built.treasuryTokenAccount, expectedTreasuryToken2022Account.toBase58());
+  assert.equal(token2022Transaction.instructions[0].programId.toBase58(), ASSOCIATED_TOKEN_PROGRAM_ID.toBase58());
+  assert.equal(token2022Transaction.instructions[1].programId.toBase58(), TOKEN_2022_PROGRAM_ID.toBase58());
 }
 
-runTransactionBuilderTest()
+async function runMintRuntimeTest() {
+  const connection = {
+    getAccountInfo: async (tokenMint: PublicKey) => {
+      assert.equal(tokenMint.toBase58(), mint.toBase58());
+      return { owner: TOKEN_2022_PROGRAM_ID };
+    },
+    getTokenSupply: async (tokenMint: PublicKey) => {
+      assert.equal(tokenMint.toBase58(), mint.toBase58());
+      return { value: { decimals: 6 } };
+    },
+  };
+  assert.deepEqual(await getSplTokenMintRuntime(connection as never, mint.toBase58()), {
+    decimals: 6,
+    tokenProgramId: TOKEN_2022_PROGRAM_ID.toBase58(),
+  });
+}
+
+Promise.all([
+  runTransactionBuilderTest(),
+  runMintRuntimeTest(),
+])
   .then(() => {
     console.log('skin token payment tests passed');
   });
