@@ -3,6 +3,7 @@ import { assignTeamByCapacity, getGameplayModeRules } from '@voxel-strike/shared
 import {
   getMatchmakingBotFillPriorityTeams,
   getMatchmakingBotFillRequiredParticipants,
+  getMatchmakingJoinCapacity,
   shouldCancelExpectedPartyMatchmakingQueue,
 } from '../rooms/LobbyRoom';
 
@@ -93,6 +94,36 @@ assert.deepEqual(
     missingParticipants: 3,
   }),
   []
+);
+
+assert.equal(
+  getMatchmakingJoinCapacity({
+    botFillEnabled: true,
+    status: 'matchmaking',
+    requiredPlayers: 2,
+    maxPlayers: 8,
+  }),
+  8
+);
+
+assert.equal(
+  getMatchmakingJoinCapacity({
+    botFillEnabled: true,
+    status: 'map_vote',
+    requiredPlayers: 2,
+    maxPlayers: 8,
+  }),
+  2
+);
+
+assert.equal(
+  getMatchmakingJoinCapacity({
+    botFillEnabled: false,
+    status: 'matchmaking',
+    requiredPlayers: 8,
+    maxPlayers: 8,
+  }),
+  8
 );
 
 {

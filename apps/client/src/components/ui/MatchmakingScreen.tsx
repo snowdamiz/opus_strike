@@ -40,11 +40,23 @@ function buildQueueStatusUrl(
 
 const MIN_RANK_SEARCH_DISTANCE = 2;
 const RANKED_TOKEN_HOLD_LABEL = 'SPL Token Hold';
+const COUNTDOWN_TICK_MS = 1000;
 
 interface MatchmakingTeammate {
   id: string;
   name: string;
   rank: LobbyPlayer['rank'];
+}
+
+function getCountdownSeconds(endsAt: number | null, now: number): number {
+  if (!endsAt) return 0;
+  return Math.max(0, Math.ceil((endsAt - now) / 1000));
+}
+
+function formatCountdown(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
 }
 
 export function MatchmakingScreen() {
@@ -80,9 +92,15 @@ export function MatchmakingScreen() {
     ? 10
     : Math.max(2, Math.min(requiredPlayers, 10));
   const [totalPlayersInQueue, setTotalPlayersInQueue] = useState(filledSlots);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const displayedQueueCount = Math.max(totalPlayersInQueue, filledSlots);
   const queuePlayerLabel = displayedQueueCount === 1 ? 'player' : 'players';
   const capacityBlocked = matchmakingStatus.capacityBlocked;
+  const botFillGraceEndsAt = !isRanked && queuedBotFillMode === 'fill_even'
+    ? matchmakingStatus.botFillGraceEndsAt
+    : null;
+  const botFillCountdownSeconds = getCountdownSeconds(botFillGraceEndsAt, nowMs);
+  const showBotFillCountdown = Boolean(botFillGraceEndsAt && botFillCountdownSeconds > 0);
   const currentRank = getRankForStats(userStats);
   const lobbyTeammates: MatchmakingTeammate[] = Array.from(lobbyPlayers.values())
     .map((player) => ({
@@ -117,6 +135,30 @@ export function MatchmakingScreen() {
   useEffect(() => {
     preloadSoundGroup('lobby');
   }, [preloadSoundGroup]);
+
+  useEffect(() => {
+    const initialNow = Date.now();
+    setNowMs(initialNow);
+    if (!botFillGraceEndsAt || botFillGraceEndsAt <= initialNow) return;
+
+    let intervalId: number | null = null;
+    const tick = () => {
+      const nextNow = Date.now();
+      setNowMs(nextNow);
+      if (nextNow >= botFillGraceEndsAt && intervalId !== null) {
+        window.clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    tick();
+    intervalId = window.setInterval(tick, COUNTDOWN_TICK_MS);
+    return () => {
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+      }
+    };
+  }, [botFillGraceEndsAt]);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,6 +248,18 @@ export function MatchmakingScreen() {
               Searching near {searchLabel} +/-{displayedRankSearchDistance}
             </span>
           </div>
+
+          {showBotFillCountdown && (
+            <div className="mx-auto mt-6 flex min-h-16 max-w-sm items-center justify-between gap-4 border border-orange-300/20 bg-black/35 px-4 py-3 text-left shadow-[0_0_24px_rgba(251,146,60,0.10)] backdrop-blur-sm">
+              <div className="min-w-0">
+                <p className="font-body text-xs uppercase tracking-[0.22em] text-orange-200/60">Bot fill</p>
+                <p className="mt-1 font-body text-xs text-white/40">Waiting for players first</p>
+              </div>
+              <span className="min-w-20 text-right font-display text-2xl leading-none text-orange-100 tabular-nums">
+                {formatCountdown(botFillCountdownSeconds)}
+              </span>
+            </div>
+          )}
 
           {isRanked && (
             <div className="mx-auto mt-7 max-w-md border border-amber-300/18 bg-black/35 p-4 text-left backdrop-blur-sm">

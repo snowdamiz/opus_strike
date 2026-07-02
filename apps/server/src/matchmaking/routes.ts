@@ -148,8 +148,11 @@ async function getQueueStatus(
       ? metadata.queuedHumanCount
       : humanCount);
     const roomRequiredPlayers = typeof metadata.requiredPlayers === 'number' ? metadata.requiredPlayers : room.maxClients ?? 0;
+    const matchmakingJoinCapacity = typeof metadata.matchmakingJoinCapacity === 'number'
+      ? metadata.matchmakingJoinCapacity
+      : roomRequiredPlayers;
     requiredPlayers = roomRequiredPlayers || requiredPlayers;
-    if (roomRequiredPlayers > 0 && participantCount >= roomRequiredPlayers && metadata.capacityBlocked !== true) continue;
+    if (matchmakingJoinCapacity > 0 && participantCount >= matchmakingJoinCapacity && metadata.capacityBlocked !== true) continue;
 
     totalPlayersInQueue += queuedHumanCount;
     provisionalPlayerCount += Math.max(0, humanCount - queuedHumanCount);

@@ -155,12 +155,16 @@ export async function chooseMatchmakingRankBand(input: {
     const participantCount = typeof metadata.participantCount === 'number'
       ? metadata.participantCount
       : humanCount;
+    const matchmakingJoinCapacity = typeof metadata.matchmakingJoinCapacity === 'number'
+      ? metadata.matchmakingJoinCapacity
+      : undefined;
     const queuedHumanCount = typeof metadata.queuedHumanCount === 'number'
       ? metadata.queuedHumanCount
       : humanCount;
     const requiredPlayers = typeof metadata.requiredPlayers === 'number' ? metadata.requiredPlayers : room.maxClients ?? 0;
+    const joinCapacity = matchmakingJoinCapacity ?? requiredPlayers;
 
-    if (participantCount >= requiredPlayers) return [];
+    if (participantCount >= joinCapacity) return [];
     if (distance > getAllowedRankDivisionDistance(waitMs)) return [];
     if (isKnownHeroId(input.selectedHero)) {
       const rules = getGameplayModeRules(settings.gameplayMode);
