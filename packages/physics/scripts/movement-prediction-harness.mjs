@@ -112,6 +112,13 @@ function speed2D(velocity) {
   return Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
 }
 
+function distance3D(a, b) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const dz = a.z - b.z;
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+
 function simulateHeldInput(input, steps = 120) {
   let state = createSimulationState();
 
@@ -1931,6 +1938,42 @@ function runHookshotSwingStep() {
   assert.equal(released.ended, true);
   assert.equal(released.endReason, 'jump');
   assert.ok(released.velocity.y >= 8, `jump release should preserve upward boost, got ${released.velocity.y}`);
+
+  const target = { x: 0, y: 8, z: -18 };
+  let reelPosition = { x: 0, y: 0.9, z: 0 };
+  let reelVelocity = { x: 0, y: 0, z: 0 };
+  let reelSwing = createHookshotSwingState(reelPosition, target, true);
+  const initialDistance = distance3D(reelPosition, target);
+  let closestDistance = initialDistance;
+
+  for (let step = 0; step < 45 && reelSwing; step++) {
+    const result = stepHookshotSwing({
+      position: reelPosition,
+      velocity: reelVelocity,
+      swing: reelSwing,
+      input: {
+        moveForward: false,
+        moveBackward: false,
+        moveLeft: false,
+        moveRight: false,
+        jump: false,
+      },
+      lookYaw: 0,
+      lookPitch: 0,
+      isGrounded: step === 0,
+      deltaTime: 1 / 60,
+    });
+
+    reelPosition = result.position;
+    reelVelocity = result.velocity;
+    reelSwing = result.swing;
+    closestDistance = Math.min(closestDistance, distance3D(reelPosition, target));
+  }
+
+  assert.ok(
+    closestDistance <= initialDistance - 8,
+    `grapple should reel player toward anchor: initial ${initialDistance}, closest ${closestDistance}`
+  );
 }
 
 runDeterministicReplay();

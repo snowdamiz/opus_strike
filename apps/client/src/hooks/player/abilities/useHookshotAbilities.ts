@@ -91,6 +91,25 @@ function readHookshotHookSocketPosition(
 
 type MutableVec3 = { x: number; y: number; z: number };
 
+export function selectCurrentGrappleLine(
+  grappleLines: readonly GrappleLineData[],
+  activeLineId: string | null,
+  ownerId: string
+): GrappleLineData | null {
+  if (activeLineId) {
+    return grappleLines.find((line) => line.id === activeLineId) ?? null;
+  }
+
+  for (let index = grappleLines.length - 1; index >= 0; index--) {
+    const line = grappleLines[index];
+    if (line.ownerId !== ownerId) continue;
+    if (line.state === 'done' || line.state === 'retracting') continue;
+    return line;
+  }
+
+  return null;
+}
+
 function writeLookDirection(out: MutableVec3, yaw: number, pitch: number): MutableVec3 {
   const cosPitch = Math.cos(pitch);
   out.x = -Math.sin(yaw) * cosPitch;
@@ -309,7 +328,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
   const isGrapplingRef = useRef(false);
   const grappleTargetRef = useRef<{ x: number; y: number; z: number } | null>(null);
   const activeGrappleLineIdRef = useRef<string | null>(null);
-  const activeGrappleLineRef = useRef<GrappleLineData | null>(null);
   const activeGrappleStartTimeRef = useRef(0);
 
   // Grapple swing state
@@ -466,7 +484,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     // Store target - pulling will start when hook reaches target
     grappleTargetRef.current = grapplePoint;
     activeGrappleLineIdRef.current = lineId;
-    activeGrappleLineRef.current = line;
     activeGrappleStartTimeRef.current = startTime;
     isGrapplingRef.current = false;
     swingWasAirborneRef.current = false;
@@ -548,7 +565,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     isSwingingRef.current = false;
     grappleTargetRef.current = null;
     activeGrappleLineIdRef.current = null;
-    activeGrappleLineRef.current = null;
     activeGrappleStartTimeRef.current = 0;
     swingWasAirborneRef.current = false;
     grappleSwingStateRef.current = null;
@@ -565,7 +581,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       isSwingingRef.current = false;
       grappleTargetRef.current = null;
       activeGrappleLineIdRef.current = null;
-      activeGrappleLineRef.current = null;
       activeGrappleStartTimeRef.current = 0;
       swingWasAirborneRef.current = false;
       grappleSwingStateRef.current = null;
@@ -573,23 +588,18 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
 
     const store = useGameStore.getState();
     if (!activeGrappleLineIdRef.current) {
-      for (let index = store.grappleLines.length - 1; index >= 0; index--) {
-        const line = store.grappleLines[index];
-        if (line.ownerId !== ctx.localPlayer.id) continue;
-        if (line.state === 'done' || line.state === 'retracting') continue;
-
+      const line = selectCurrentGrappleLine(store.grappleLines, null, ctx.localPlayer.id);
+      if (line) {
         activeGrappleLineIdRef.current = line.id;
-        activeGrappleLineRef.current = line;
         activeGrappleStartTimeRef.current = line.startTime;
         grappleTargetRef.current = line.endPosition;
         isGrapplingRef.current = false;
         swingWasAirborneRef.current = false;
-        break;
       }
     }
 
     const lineId = activeGrappleLineIdRef.current;
-    const target = grappleTargetRef.current;
+    let target = grappleTargetRef.current;
     if (!lineId || !target) {
       if (isGrapplingRef.current) {
         releaseGrappleSwing();
@@ -598,13 +608,13 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     }
 
     if (!isGrapplingRef.current) {
-      const activeLine = activeGrappleLineRef.current?.id === lineId
-        ? activeGrappleLineRef.current
-        : null;
+      const activeLine = selectCurrentGrappleLine(store.grappleLines, lineId, ctx.localPlayer.id);
       if (!activeLine) {
         releaseGrappleSwing();
         return;
       }
+      target = activeLine.endPosition;
+      grappleTargetRef.current = target;
       if (activeLine.state !== 'attached' && activeLine.state !== 'pulling') return;
 
       isGrapplingRef.current = true;
@@ -617,7 +627,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       );
       swingWasAirborneRef.current = grappleSwingStateRef.current.wasAirborne;
       store.updateGrappleLine(lineId, { state: 'pulling' });
-      activeGrappleLineRef.current = { ...activeLine, state: 'pulling' };
     }
 
     if (!grappleSwingStateRef.current) return;

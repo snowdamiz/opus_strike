@@ -2,7 +2,13 @@ import { useEffect, useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
-import { PHANTOM_VOID_RAY_COLLISION_RADIUS, type Team } from '@voxel-strike/shared';
+import {
+  PHANTOM_VOID_RAY_COLLISION_RADIUS,
+  PHANTOM_VOID_RAY_DAMAGE,
+  PLAYER_COMBAT_HITBOX_PADDING,
+  PLAYER_RADIUS,
+  type Team,
+} from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import type { VoidRayData } from '../../../store/types';
 import { getPhysicsWorld, isPhysicsReady, raycastInto, type RaycastHitResult } from '../../../hooks/usePhysics';
@@ -10,6 +16,8 @@ import { getFrameClock } from '../../../utils/frameClock';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 import { measureFrameWork } from '../../../movement/networkDiagnostics';
+import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
+import { applyTutorialOfflineTrainingDamage } from '../../../utils/tutorialOfflineCombatRuntime';
 
 interface VoidRayProps {
   id: string;
@@ -31,6 +39,7 @@ interface VoidRayProps {
 const RAY_SPEED = 420;
 const RAY_LENGTH = 100;
 const RAY_RADIUS = PHANTOM_VOID_RAY_COLLISION_RADIUS;
+const PROJECTILE_COMBAT_QUERY_PADDING = PLAYER_RADIUS + PLAYER_COMBAT_HITBOX_PADDING + 0.75;
 const RAY_SPIN_UP_TIME = 0.24;
 const RAY_SUSTAIN_TIME = 0.44;
 const RAY_SPIN_DOWN_TIME = 0.32;
@@ -522,6 +531,7 @@ export const VoidRay = React.memo(({
   const hasRequestedRemovalRef = useRef(false);
   const lastCollisionSampleRef = useRef(-VOID_RAY_COLLISION_SAMPLE_INTERVAL_MS);
   const cachedVisualCollisionDistanceRef = useRef<number | null>(null);
+  const hasAppliedPracticeDamageRef = useRef(false);
   const terrainHitRef = useRef<RaycastHitResult>({
     point: { x: 0, y: 0, z: 0 },
     normal: { x: 0, y: 1, z: 0 },
@@ -715,6 +725,47 @@ export const VoidRay = React.memo(({
     if (authoritativeHit && authoritativeHit.distance < targetLength) {
       targetLength = authoritativeHit.distance;
     }
+
+    if (!hasAppliedPracticeDamageRef.current && targetLength > 0.001) {
+      const store = useGameStore.getState();
+      if (store.isPracticeMode && store.gamePhase === 'playing') {
+        const clock = getFrameClock();
+        const combatCache = rebuildCombatVisualFrameCache(
+          store.players.values(),
+          clock.nowMs,
+          clock.nowMs,
+          store.players.size
+        );
+        const hitPlayer = findCombatVisualEnemyPlayerHit(
+          combatCache,
+          ownerTeam,
+          ownerId,
+          startPosition,
+          direction,
+          targetLength,
+          RAY_RADIUS,
+          {
+            x: startPosition.x + direction.x * targetLength * 0.5,
+            z: startPosition.z + direction.z * targetLength * 0.5,
+          },
+          targetLength * 0.5 + RAY_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
+        );
+
+        if (hitPlayer) {
+          const result = applyTutorialOfflineTrainingDamage({
+            target: hitPlayer,
+            damage: PHANTOM_VOID_RAY_DAMAGE,
+            damageType: 'void_ray',
+            hitPosition: { x: hitPlayer.position.x, y: hitPlayer.position.y, z: hitPlayer.position.z },
+            sourceId: ownerId,
+            sourceTeam: ownerTeam,
+            abilityId: 'phantom_void_ray',
+          });
+          hasAppliedPracticeDamageRef.current = result.applied;
+        }
+      }
+    }
+
     const safeTargetLength = Math.max(targetLength, 0.001);
     
     // Update core beam

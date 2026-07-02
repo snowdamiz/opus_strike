@@ -12,6 +12,7 @@ import { PlayerPressStateTracker } from '../rooms/playerPressState';
 type BotMovementLodRoom = {
   stepServerOwnedBotMovementLodProxy(player: Player, input: PlayerInput, stepSeconds: number): boolean;
   stepServerOwnedBotKinematicMovementProxy(player: Player, input: PlayerInput, stepSeconds: number): boolean;
+  getBotPlanningBudgets(scheduledBotCount: number): { urgentBudget: number; deferredBudget: number };
   consumeServerOwnedBotMovementFullStepBudget(
     aliveBotCount: number,
     simulationTier?: 'critical' | 'near' | 'background'
@@ -42,6 +43,8 @@ type BotMovementLodRoom = {
   tickProfiler: { recordCounter(name: string, count?: number): void };
   botsWithReusedInputThisTick: Set<string>;
   playerPressStates: PlayerPressStateTracker;
+  streamerManagedBotGame?: boolean;
+  streamerFeedMode?: string | null;
   botMovementFullStepBudgetTick: number;
   botMovementFullStepBudgetRemaining: number;
   clampToPlayableMap(position: { x: number; y: number; z: number }): { x: number; y: number; z: number };
@@ -67,6 +70,11 @@ function createRoom(): BotMovementLodRoom {
     Number.isFinite(position.z)
   );
   return room;
+}
+
+function enableStreamerBotDeathmatch(room: BotMovementLodRoom): void {
+  room.streamerManagedBotGame = true;
+  room.streamerFeedMode = 'bot_deathmatch';
 }
 
 function createBot(room: BotMovementLodRoom): Player {
@@ -196,6 +204,30 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
     if (room.shouldScheduleBotPlanningForTier(bot, 'background', 48)) scheduled++;
   }
   assert.equal(scheduled, 1, `expected one high-count background planning slot in 5 ticks, got ${scheduled}`);
+}
+
+{
+  const room = createRoom();
+  enableStreamerBotDeathmatch(room);
+  const bot = createBot(room);
+  const planningBudgets = room.getBotPlanningBudgets(8);
+
+  assert.equal(planningBudgets.urgentBudget, 8);
+  assert.equal(planningBudgets.deferredBudget, 8);
+
+  for (let tick = 0; tick < 6; tick++) {
+    room.state.tick = tick;
+    assert.equal(room.shouldScheduleBotPlanningForTier(bot, 'background', 48), true);
+  }
+
+  room.state.tick = 98;
+  for (let index = 0; index < 12; index++) {
+    assert.equal(room.consumeServerOwnedBotMovementFullStepBudget(48, 'background'), true);
+  }
+
+  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'background'), Number.POSITIVE_INFINITY);
+  assert.equal(room.getBotLineOfSightFrameBudget(48), Number.POSITIVE_INFINITY);
+  assert.equal(room.getBotSteeringProbeFrameBudget(48), Number.POSITIVE_INFINITY);
 }
 
 {

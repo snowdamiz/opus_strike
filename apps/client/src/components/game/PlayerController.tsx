@@ -224,6 +224,7 @@ import {
   getDevTestingHeroInteraction,
   isDevTestingMapProfileId,
 } from '../../utils/devTestingMapInteraction';
+import { applyTutorialOfflineTrainingTimebreakKnockback } from '../../utils/tutorialOfflineCombatRuntime';
 import { getPreparedVoxelMap } from '../../utils/mapWarmup/mapPrepCache';
 export {
   deriveServerCombatInput,
@@ -447,6 +448,29 @@ function buildPracticeAbilityState(
     cooldownUntil: cooldownSeconds > 0 ? now + cooldownSeconds * 1000 : 0,
     charges: existingAbility?.charges ?? abilityDef?.charges ?? 1,
     isActive,
+    activatedAt: now,
+  };
+}
+
+function buildPracticeChargedAbilityState(
+  existingAbilities: Player['abilities'] | undefined,
+  abilityId: string,
+  now: number,
+  charges: number | undefined,
+  cooldownUntil: number | undefined
+) {
+  const abilityDef = ABILITY_DEFINITIONS[abilityId];
+  const existingAbility = existingAbilities?.[abilityId];
+  const maxCharges = abilityDef?.charges ?? existingAbility?.charges ?? 1;
+  const nextCharges = Math.max(0, Math.min(maxCharges, charges ?? existingAbility?.charges ?? maxCharges));
+  const activeCooldownUntil = cooldownUntil && cooldownUntil > now ? cooldownUntil : 0;
+
+  return {
+    abilityId,
+    cooldownRemaining: activeCooldownUntil > 0 ? Math.max(0, (activeCooldownUntil - now) / 1000) : 0,
+    cooldownUntil: activeCooldownUntil,
+    charges: nextCharges,
+    isActive: existingAbility?.isActive ?? false,
     activatedAt: now,
   };
 }
@@ -2867,6 +2891,29 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
       });
     };
 
+    const consumePracticeAbilityCharge = (abilityId: string): boolean => {
+      if (!abilitySystem.useAbilityCharge(abilityId)) return false;
+
+      const currentPlayer = localPlayer ?? useGameStore.getState().localPlayer;
+      if (!currentPlayer) return false;
+
+      const nextAbilities = {
+        ...currentPlayer.abilities,
+        [abilityId]: buildPracticeChargedAbilityState(
+          currentPlayer.abilities,
+          abilityId,
+          now,
+          abilitySystem.clientChargesRef.current[abilityId],
+          abilitySystem.clientCooldownsRef.current[abilityId]
+        ),
+      };
+
+      updateLocalPlayer({ abilities: nextAbilities });
+      localPlayer = { ...currentPlayer, abilities: nextAbilities };
+      soundLocalPlayerRef.current = localPlayer;
+      return true;
+    };
+
     if (localPlayer.state === 'downed') {
       const downedFrameInput = suppressDownedMovementInput(frameInput, {
         frozen: Boolean(localPlayer.reviveByPlayerId),
@@ -3100,9 +3147,9 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
                   ? CHRONOS_LIFELINE_SELF_HEAL
                   : CHRONOS_LIFELINE_ALLY_HEAL;
                 const targets = getChronosPracticeLifelineTargets(chronosLifelineCommitMode, healAmount);
-                if (targets.length > 0 && abilitySystem.useAbilityCharge(ability1Id)) {
+                if (targets.length > 0 && consumePracticeAbilityCharge(ability1Id)) {
                   useGameStore.getState().recordSkillCast(now);
-                  if (chronosAbilities.executeLifelineConduit(abilityCtx, abilitySystem.useAbilityCharge)) {
+                  if (chronosAbilities.executeLifelineConduit(abilityCtx)) {
                     lockHeroActions(heroId, CHRONOS_LIFELINE_POSE_DURATION_MS, now);
                   }
                   const store = useGameStore.getState();
@@ -3155,7 +3202,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
                   }
                   setChronosLifelineQueuedState(false, now);
                 }
-              } else if (chronosAbilities.executeLifelineConduit(abilityCtx, abilitySystem.useAbilityCharge)) {
+              } else if (chronosAbilities.executeLifelineConduit(abilityCtx)) {
                 useGameStore.getState().recordSkillCast(now);
                 lockHeroActions(heroId, CHRONOS_LIFELINE_POSE_DURATION_MS, now);
                 setChronosLifelineQueuedState(false, now);
@@ -3167,7 +3214,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
             if (heroId === 'phantom') {
               if (isPracticeMode) {
                 const startPosition = { x: position.x, y: position.y, z: position.z };
-                if (abilitySystem.useAbilityCharge(ability1Id)) {
+                if (consumePracticeAbilityCharge(ability1Id)) {
                   useGameStore.getState().recordSkillCast(now);
                   const nextState = predictLocalPhantomBlink(localPlayer, abilityCtx.yaw, abilityCtx.pitch);
                   applyPracticePredictedState(nextState);
@@ -3216,7 +3263,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
             const playLocalShieldCast = () => {
               markPredictedLocalAbilitySound(abilityId, now, 1600);
               triggerPhantomShieldCastEffect({
-                playerId: localPlayer.id,
+                playerId: abilityCtx.localPlayer.id,
                 isLocalPlayer: true,
                 position: { x: position.x, y: position.y, z: position.z },
                 yaw: abilityCtx.yaw,
@@ -3294,7 +3341,16 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
                 startTime: now,
                 releaseTime: now + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
               });
+              const shockwaveOrigin = { x: position.x, y: position.y, z: position.z };
+              const shockwaveSourceId = localPlayer.id;
+              const shockwaveSourceTeam = localPlayer.team;
               window.setTimeout(() => {
+                applyTutorialOfflineTrainingTimebreakKnockback({
+                  origin: shockwaveOrigin,
+                  direction: forward,
+                  sourceId: shockwaveSourceId,
+                  sourceTeam: shockwaveSourceTeam,
+                });
                 void playSharedSound('chronosPush', {
                   position: effectPosition,
                   volume: 1.05,

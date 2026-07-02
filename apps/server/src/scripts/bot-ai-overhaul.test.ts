@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import type { PlayerInput } from '@voxel-strike/shared';
 import {
+  BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX,
   applyBotAbilityInputPlan,
   buildBotBlackboard,
   buildTeamTactics,
@@ -358,6 +359,30 @@ function testRoutePlannerAvoidsBlockedEdge() {
   assert.ok(plan.pathNodeIds.includes('flank'), `expected flank route, got ${plan.pathNodeIds.join('>')}`);
 }
 
+function testRoutePlannerSkipsNearbyStartNodeForOutgoingGoals() {
+  const bot = player({ id: 'red-runner-offset', team: 'red', heroId: 'phantom', x: -33, z: 0 });
+  const blackboard = blackboardFor(bot, [bot]);
+  const intent = {
+    ...scoreBotIntents(bot, blackboard, getBotSkillProfile('hard')),
+    type: 'capture_enemy_flag' as const,
+    targetPosition: vec(40, 0),
+    reason: 'test outgoing route',
+  };
+  const plan = planBotRoute({
+    now: NOW,
+    bot,
+    intent,
+    blackboard,
+    routeGraph: routeGraph(),
+    blockedEdges: new Map(),
+    skill: getBotSkillProfile('hard'),
+  });
+
+  assert.deepEqual(plan.pathNodeIds, ['red_base', 'mid', 'blue_flag']);
+  assert.equal(plan.nextNodeId, 'mid');
+  assert.deepEqual(plan.steeringTarget, vec(0, 0));
+}
+
 function testBotPlanningStateRefreshesAndReusesCachedState() {
   const bot = player({ id: 'red-runner', team: 'red', heroId: 'phantom', x: -40, z: 0 });
   const flagState = flags();
@@ -419,6 +444,50 @@ function testBotPlanningStateRefreshesAndReusesCachedState() {
   assert.equal(brain.nextBlackboardAt, NOW + 150);
   assert.equal(brain.nextThinkAt, NOW + 150);
   assert.equal(shouldRefreshBotPlanningState(brain, NOW + 150), true);
+}
+
+function testStreamerDeathmatchBotsCommitToLongerStrafes() {
+  const bot = player({
+    id: 'streamer-red-runner',
+    team: 'red',
+    heroId: 'phantom',
+    x: -40,
+    z: 0,
+    profile: `${BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX}-strafe`,
+  });
+  const flagState = flags();
+  const brain = createInitialBotBrain(bot.position);
+  const skill = {
+    ...getBotSkillProfile('hard', bot.botProfileId),
+    thinkIntervalMs: 200,
+    replanIntervalMs: 500,
+  };
+  const players = [bot];
+  const teamTactics = buildTeamTactics({
+    gameplayMode: 'team_deathmatch',
+    now: NOW,
+    revision: 1,
+    players,
+    flags: flagState,
+  }).red;
+
+  updateBotPlanningState({
+    brain,
+    now: NOW,
+    gameplayMode: 'team_deathmatch',
+    bot,
+    players,
+    flags: flagState,
+    visibleEnemyIds: new Set(),
+    enemyLineOfSightIds: new Set(),
+    recentDamageSources: [],
+    teamTactics,
+    routeGraph: routeGraph(),
+    skill,
+    random: randomSequence([0, 0]),
+  });
+
+  assert.equal(brain.strafeUntil, NOW + 2600);
 }
 
 function testBotMovementRecoveryStateReplansBlockedEdges() {
@@ -1321,6 +1390,50 @@ function testSkillProfilesScaleCombatResponsiveness() {
   assert.ok(normal.memoryMs >= 1000);
 }
 
+function testStreamerDeathmatchProfileIsShowcaseAggressive() {
+  const hard = getBotSkillProfile('hard');
+  const showcase = getBotSkillProfile('hard', `${BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX}-0`);
+
+  assert.ok(showcase.thinkIntervalMs < hard.thinkIntervalMs);
+  assert.ok(showcase.reactionMs < hard.reactionMs);
+  assert.ok(showcase.fireChance > hard.fireChance);
+  assert.ok(showcase.secondaryChance > hard.secondaryChance);
+  assert.ok(showcase.abilityScoreThreshold < hard.abilityScoreThreshold);
+  assert.ok(showcase.focusFireWeight > hard.focusFireWeight);
+  assert.ok(showcase.aggression > 1);
+}
+
+function testStreamerDeathmatchTacticsPairPressureTargets() {
+  const redBots = [
+    player({ id: 'red-a', team: 'red', heroId: 'phantom', x: -10, z: -3, profile: `${BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX}-0` }),
+    player({ id: 'red-b', team: 'red', heroId: 'hookshot', x: -10, z: -1, profile: `${BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX}-1` }),
+    player({ id: 'red-c', team: 'red', heroId: 'blaze', x: -10, z: 1, profile: `${BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX}-2` }),
+    player({ id: 'red-d', team: 'red', heroId: 'chronos', x: -10, z: 3, profile: `${BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX}-3` }),
+  ];
+  const woundedChronos = player({ id: 'blue-wounded-chronos', team: 'blue', heroId: 'chronos', x: 28, z: 0, health: 35 });
+  const blueBlaze = player({ id: 'blue-blaze', team: 'blue', heroId: 'blaze', x: 30, z: 2 });
+  const blueHook = player({ id: 'blue-hook', team: 'blue', heroId: 'hookshot', x: 34, z: -4 });
+  const bluePhantom = player({ id: 'blue-phantom', team: 'blue', heroId: 'phantom', x: 36, z: 4 });
+  const tactics = buildTeamTactics({
+    gameplayMode: 'team_deathmatch',
+    now: NOW,
+    revision: 1,
+    players: [...redBots, woundedChronos, blueBlaze, blueHook, bluePhantom],
+    flags: flags(),
+  }).red;
+
+  const assignments = redBots.map((bot) => tactics.assignments[bot.id]);
+  assert.ok(assignments.every((assignment) => assignment.job === 'fight'));
+  assert.ok(assignments.every((assignment) => assignment.role === 'fighter'));
+  const firstAssignment = assignments[0];
+  const secondAssignment = assignments[1];
+  assert.ok(firstAssignment);
+  assert.ok(secondAssignment);
+  assert.equal(firstAssignment.targetPlayerId, woundedChronos.id);
+  assert.equal(secondAssignment.targetPlayerId, woundedChronos.id);
+  assert.equal(firstAssignment.reason, 'streamer deathmatch focus pressure');
+}
+
 function testNeutralAllBotOpenerPressuresFlag() {
   const redBots = [
     player({ id: 'red-phantom', team: 'red', heroId: 'phantom', x: -42, z: 0, profile: 'defender-alpha' }),
@@ -1426,7 +1539,9 @@ testTeamTacticsAssignments();
 testBattleRoyalTacticsUseAllEnemySquads();
 testIntentScoring();
 testRoutePlannerAvoidsBlockedEdge();
+testRoutePlannerSkipsNearbyStartNodeForOutgoingGoals();
 testBotPlanningStateRefreshesAndReusesCachedState();
+testStreamerDeathmatchBotsCommitToLongerStrafes();
 testBotMovementRecoveryStateReplansBlockedEdges();
 testBotMovementRecoveryStateKeepsRouteWhenProgressing();
 testLocalAvoidance();
@@ -1447,6 +1562,8 @@ testChronosHealingThresholds();
 testHeroAbilityControllers();
 testDifficultyChangesDecisionQuality();
 testSkillProfilesScaleCombatResponsiveness();
+testStreamerDeathmatchProfileIsShowcaseAggressive();
+testStreamerDeathmatchTacticsPairPressureTargets();
 testNeutralAllBotOpenerPressuresFlag();
 testUncontestedDefendersHoldControlUltimates();
 testContestedObjectiveStillSpendsControlUltimate();

@@ -26,7 +26,7 @@ import { prebuildPreparedMapGeometryDeferred } from './utils/mapWarmup/deferredM
 import { config } from './config/environment';
 import type { MapWarmupSnapshot } from './utils/mapWarmup/mapWarmupCoordinator';
 import { useStreamerModeController } from './hooks/useStreamerModeController';
-import { useStreamerStore, type StreamerLoadingReason } from './store/streamerStore';
+import { useStreamerStore, type StreamerLoadingReason, type StreamerSceneTransition } from './store/streamerStore';
 
 const loadGameCanvasModule = () => import('./components/game/GameCanvas');
 const loadMapVoteScreenModule = () => import('./components/ui/MapVoteScreen');
@@ -48,6 +48,7 @@ const BATTLE_ROYAL_PENDING_MAP_PROGRESS_CAP = 24;
 const MENU_LOADING_PROGRESS_CAP = 72;
 const MAP_VOTE_LOADING_PROGRESS_CAP = 64;
 const MATCH_RESOURCE_PRELOAD_TIMEOUT_MS = 12_000;
+const STREAMER_SCENE_TRANSITION_MIN_VISIBLE_MS = 980;
 
 type CountdownEffectStyle = CSSProperties & {
   '--prematch-countdown-backdrop-opacity': string;
@@ -109,6 +110,12 @@ function getStreamerLoadingTitle(reason: StreamerLoadingReason): string {
   return 'FINDING LIVE GAME';
 }
 
+function getStreamerTransitionTitle(reason: StreamerSceneTransition['reason']): string {
+  if (reason === 'map_rotation') return 'SWITCHING ARENA';
+  if (reason === 'switching_feed') return 'SWITCHING FEED';
+  return 'PREPARING FEED';
+}
+
 async function prepareMatchMapWarmupResources(input: {
   seed: number;
   themeId?: VoxelMapTheme['id'] | null;
@@ -155,6 +162,7 @@ export function App() {
   const streamerIsActive = useStreamerStore((state) => state.isActive);
   const streamerLoadingReason = useStreamerStore((state) => state.loadingReason);
   const streamerLastError = useStreamerStore((state) => state.lastError);
+  const streamerSceneTransition = useStreamerStore((state) => state.sceneTransition);
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showInGameMenu, setShowInGameMenu] = useState(false);
   const [shouldMountMatchWorld, setShouldMountMatchWorld] = useState(false);
@@ -180,9 +188,16 @@ export function App() {
   }, []);
 
   const isActiveGame = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
+  const shouldRenderStreamerTransitionWorld = (
+    appPhase === 'streamer_loading' &&
+    streamerIsActive &&
+    streamerSceneTransition !== null &&
+    mountedWarmupKeyRef.current !== null
+  );
+  const shouldRenderGameScene = appPhase === 'in_game' || shouldRenderStreamerTransitionWorld;
   const visibleMatchSummary = streamerIsActive ? null : matchSummary;
   const shouldPrepareMatchWorld = (
-    appPhase === 'in_game' &&
+    shouldRenderGameScene &&
     !visibleMatchSummary &&
     (gamePhase === 'waiting' || gamePhase === 'hero_select' || isActiveGame)
   );
@@ -192,6 +207,7 @@ export function App() {
   );
   const shouldShowMatchLoading = (
     shouldPrepareMatchWorld &&
+    !(streamerIsActive && streamerSceneTransition !== null) &&
     (
       isMatchLoadingVisible ||
       !shouldMountMatchWorld ||
@@ -484,6 +500,20 @@ export function App() {
     return () => window.clearTimeout(timeout);
   }, [isMatchSceneReady]);
 
+  useEffect(() => {
+    if (!streamerSceneTransition) return;
+    if (warmupKey !== streamerSceneTransition.key && streamerSceneTransition.key !== 'streamer:unknown-map') return;
+    if (!isMatchSceneReady) return;
+
+    const elapsedMs = Date.now() - streamerSceneTransition.startedAt;
+    const remainingMs = Math.max(0, STREAMER_SCENE_TRANSITION_MIN_VISIBLE_MS - elapsedMs);
+    const timeout = window.setTimeout(() => {
+      useStreamerStore.getState().endSceneTransition(streamerSceneTransition.key);
+    }, remainingMs);
+
+    return () => window.clearTimeout(timeout);
+  }, [isMatchSceneReady, streamerSceneTransition, warmupKey]);
+
   const handleMatchStartSceneReady = useCallback(() => {
     setIsMatchStartSceneReady(true);
   }, []);
@@ -638,7 +668,7 @@ export function App() {
     );
   }
 
-  if (appPhase === 'streamer_loading') {
+  if (appPhase === 'streamer_loading' && !shouldRenderStreamerTransitionWorld) {
     return (
       <MatchLoadingScreen
         key={`streamer:${streamerLoadingReason}`}
@@ -658,7 +688,7 @@ export function App() {
   }
 
   // In game
-  if (appPhase === 'in_game') {
+  if (shouldRenderGameScene) {
     if (visibleMatchSummary) {
       return (
         <Suspense fallback={null}>
@@ -695,6 +725,14 @@ export function App() {
             actionLabel={streamerIsActive ? 'Exit Streamer Mode' : undefined}
             onAction={streamerIsActive ? handleExitStreamerMode : undefined}
             onProgressChange={handleMatchLoadingProgressChange}
+          />
+        )}
+
+        {streamerIsActive && streamerSceneTransition && (
+          <StreamerSceneTransitionOverlay
+            transition={streamerSceneTransition}
+            progress={warmupKey === streamerSceneTransition.key ? matchWarmupSnapshot?.progress : undefined}
+            ready={(warmupKey === streamerSceneTransition.key || streamerSceneTransition.key === 'streamer:unknown-map') && isMatchSceneReady}
           />
         )}
 
@@ -753,6 +791,40 @@ export function App() {
 
   // Fallback to main lobby
   return <MainLobby />;
+}
+
+function StreamerSceneTransitionOverlay({
+  progress,
+  ready,
+  transition,
+}: {
+  progress?: number;
+  ready: boolean;
+  transition: StreamerSceneTransition;
+}) {
+  const normalizedProgress = Math.min(1, Math.max(0.08, progress ?? (ready ? 1 : 0.38)));
+  const title = getStreamerTransitionTitle(transition.reason);
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-[70] flex items-center justify-center overflow-hidden bg-black/55 text-white backdrop-blur-xl">
+      <div className="absolute inset-0 bg-[linear-gradient(115deg,rgba(34,211,238,0.2),transparent_32%,rgba(255,255,255,0.1)_52%,transparent_64%,rgba(251,146,60,0.18))] opacity-80" />
+      <div className="absolute inset-0 animate-pulse bg-white/[0.035]" />
+      <div className="relative flex w-[min(520px,calc(100vw-48px))] flex-col items-center gap-5 text-center">
+        <div className="font-display text-[clamp(2rem,5vw,4.4rem)] font-black uppercase leading-none drop-shadow-[0_8px_24px_rgba(0,0,0,0.55)]">
+          {title}
+        </div>
+        <div className="h-1 w-full overflow-hidden bg-white/20">
+          <div
+            className="h-full bg-cyan-200 transition-[width] duration-300 ease-out"
+            style={{ width: `${Math.round(normalizedProgress * 100)}%` }}
+          />
+        </div>
+        <div className="font-mono text-xs uppercase text-white/70">
+          {ready ? 'LIVE' : 'SYNCING WORLD'}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function CountdownOverlay() {

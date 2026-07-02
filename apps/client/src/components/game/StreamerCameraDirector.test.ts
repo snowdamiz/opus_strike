@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import * as THREE from 'three';
 import {
+  selectStreamerCameraLookLeadDirection,
   selectStreamerCameraShot,
   type StreamerCameraSelectablePlayer,
 } from './StreamerCameraDirector';
@@ -45,7 +47,7 @@ const firstShot = selectStreamerCameraShot({
 });
 
 assert.equal(firstShot.targetId, 'human-a');
-assert.ok(['first_person', 'chase', 'orbit', 'aerial'].includes(firstShot.shotKind));
+assert.ok(['first_person', 'close_chase', 'chase', 'side_track', 'orbit', 'crane', 'aerial'].includes(firstShot.shotKind));
 
 const secondShot = selectStreamerCameraShot({
   players,
@@ -83,7 +85,7 @@ const fixedAerialChaseShot = selectStreamerCameraShot({
 });
 
 assert.equal(fixedAerialChaseShot.targetId, 'human-a');
-assert.equal(fixedAerialChaseShot.shotKind, 'chase');
+assert.equal(fixedAerialChaseShot.shotKind, 'close_chase');
 
 const fixedAerialNoFirstPersonShot = selectStreamerCameraShot({
   players,
@@ -91,8 +93,32 @@ const fixedAerialNoFirstPersonShot = selectStreamerCameraShot({
   cameraMode: 'fixed_aerial',
 });
 
-assert.equal(fixedAerialNoFirstPersonShot.shotKind, 'chase');
+assert.equal(fixedAerialNoFirstPersonShot.shotKind, 'crane');
 assert.notEqual(fixedAerialNoFirstPersonShot.shotKind, 'first_person');
 assert.notEqual(fixedAerialNoFirstPersonShot.shotKind, 'orbit');
+
+const viewForward = new THREE.Vector3(1, 0, 0);
+const followForward = new THREE.Vector3(0, 0, -1);
+
+assert.equal(
+  selectStreamerCameraLookLeadDirection('first_person', viewForward, followForward),
+  viewForward
+);
+assert.equal(
+  selectStreamerCameraLookLeadDirection('chase', viewForward, followForward),
+  followForward
+);
+assert.equal(
+  selectStreamerCameraLookLeadDirection('close_chase', viewForward, followForward),
+  followForward
+);
+assert.equal(
+  selectStreamerCameraLookLeadDirection('side_track', viewForward, followForward),
+  followForward
+);
+assert.equal(
+  selectStreamerCameraLookLeadDirection('crane', viewForward, followForward),
+  followForward
+);
 
 console.log('streamer camera director tests passed');

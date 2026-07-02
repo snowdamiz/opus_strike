@@ -1398,7 +1398,7 @@ export class GameRoom extends Room<GameState> {
     this.streamerCameraMode = typeof options.streamerCameraMode === 'string'
       ? options.streamerCameraMode
       : null;
-    const fallbackStreamerMapRotationStartedAt = this.streamerManagedBotGame && this.streamerFeedMode === 'bot_deathmatch'
+    const fallbackStreamerMapRotationStartedAt = this.isStreamerBotDeathmatchFeed()
       ? Date.now()
       : null;
     this.streamerMapRotationStartedAt = typeof options.streamerMapRotationStartedAt === 'number'
@@ -4528,7 +4528,13 @@ export class GameRoom extends Room<GameState> {
     const { player, authority, command, movementInput, previous, previousMovement, collisionWorld, now } = input;
     const clientState = command?.clientState;
     if (!clientState) return false;
-    if (this.playerRoots.isRooted(player.id, now) || this.hookshotRuntime.hasDragPull(player.id)) return false;
+    if (
+      this.playerRoots.isRooted(player.id, now) ||
+      this.hookshotRuntime.hasDragPull(player.id) ||
+      player.movement.isGrappling
+    ) {
+      return false;
+    }
 
     const serverMovement = buildPlayerMovementSnapshot(player);
     this.recordClientMovementShadowSample({
@@ -6122,6 +6128,10 @@ export class GameRoom extends Room<GameState> {
     return brain;
   }
 
+  private isStreamerBotDeathmatchFeed(): boolean {
+    return this.streamerManagedBotGame && this.streamerFeedMode === 'bot_deathmatch';
+  }
+
   private initializePressState(playerId: string): void {
     this.playerPressStates.initialize(playerId);
   }
@@ -7051,6 +7061,50 @@ export class GameRoom extends Room<GameState> {
     return moved;
   }
 
+  private stepHookshotGrappleWithoutCommand(
+    player: Player,
+    tickTime: number,
+    collisionWorld = this.getMovementCollisionWorld(tickTime)
+  ): boolean {
+    const grapple = this.hookshotRuntime.getGrapple(player.id);
+    if (!grapple) return false;
+
+    let moved = false;
+    const authority = this.getMovementAuthority(player.id);
+    for (let step = 0; step < SERVER_MOVEMENT_SUBSTEPS_PER_TICK; step++) {
+      const activeGrapple = this.hookshotRuntime.getGrapple(player.id);
+      if (!activeGrapple) break;
+
+      const stepNow = tickTime + step * MOVEMENT_SUBSTEP_SECONDS * 1000;
+      if (!activeGrapple.swing && stepNow < activeGrapple.attachAt) continue;
+
+      const before = vec3SchemaToPlain(player.position);
+      const input = this.getRootedMovementInput(
+        player,
+        player.lastInput ?? createEmptyPlayerInput(this.state.tick, player, stepNow),
+        stepNow
+      );
+      if (!this.hookshotRuntime.getGrapple(player.id)) break;
+
+      this.prepareHookshotGrappleForMovement(player, stepNow);
+      this.simulateAuthoritativeMovementStep(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow, collisionWorld);
+      this.stepHookshotGrappleAuthority(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow, collisionWorld);
+
+      const after = player.position;
+      const didMove = (
+        Math.abs(after.x - before.x) > 0.001 ||
+        Math.abs(after.y - before.y) > 0.001 ||
+        Math.abs(after.z - before.z) > 0.001
+      );
+      if (didMove) {
+        moved = true;
+        this.updateLastSafeMovement(player, authority.lastProcessedSeq, stepNow);
+      }
+    }
+
+    return moved;
+  }
+
   private scheduleChronosTimebreakShockwave(
     casterId: string,
     castDirection: PlainVec3,
@@ -7114,7 +7168,7 @@ export class GameRoom extends Room<GameState> {
       target.movement.isGrounded = false;
       target.movement.isSliding = false;
       target.movement.slideTimeRemaining = 0;
-      this.markMovementBarrier(target.id, 'knockback');
+      this.markMovementBarrier(target.id, 'knockback', { preserveQueuedCommands: true });
 
       const targetClient = this.clientRegistry.getClient(target.id);
       targetClient?.send('chronosTimebreakImpulse', {
@@ -7436,6 +7490,13 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getBotPlanningBudgets(scheduledBotCount: number): { urgentBudget: number; deferredBudget: number } {
+    if (this.isStreamerBotDeathmatchFeed()) {
+      return {
+        urgentBudget: scheduledBotCount,
+        deferredBudget: scheduledBotCount,
+      };
+    }
+
     if (scheduledBotCount <= BOT_FULL_RATE_PLANNING_COUNT) {
       return {
         urgentBudget: BOT_URGENT_PLANNING_BUDGET_PER_TICK,
@@ -7528,6 +7589,7 @@ export class GameRoom extends Room<GameState> {
     now: number
   ): BotSimulationTier {
     if (!bot.isBot || bot.state !== 'alive') return 'critical';
+    if (this.isStreamerBotDeathmatchFeed()) return 'critical';
     if (this.getAliveBotMovementLodCount() < BOT_MOVEMENT_LOD_START_COUNT) return 'critical';
     if (this.isPriorityBot(bot, brain, now)) return 'critical';
     if (this.isServerOwnedBotNearHuman(bot, BOT_SIMULATION_NEAR_HUMAN_DISTANCE_SQ)) return 'near';
@@ -7553,6 +7615,7 @@ export class GameRoom extends Room<GameState> {
     tier: BotSimulationTier,
     aliveBotCount: number
   ): boolean {
+    if (this.isStreamerBotDeathmatchFeed()) return true;
     if (tier === 'critical') return true;
     if (aliveBotCount < BOT_PLANNING_LOD_START_COUNT) return true;
 
@@ -7881,6 +7944,7 @@ export class GameRoom extends Room<GameState> {
     aliveBotCount: number,
     simulationTier: BotSimulationTier
   ): number {
+    if (this.isStreamerBotDeathmatchFeed()) return Number.POSITIVE_INFINITY;
     if (aliveBotCount <= BOT_PERCEPTION_LOS_LOD_START_COUNT) {
       if (simulationTier === 'background') return BOT_PERCEPTION_LOS_BACKGROUND_LOW_CANDIDATE_LIMIT;
       if (simulationTier === 'near') return BOT_PERCEPTION_LOS_NEAR_LOW_CANDIDATE_LIMIT;
@@ -7900,6 +7964,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getBotLineOfSightFrameBudget(aliveBotCount: number): number {
+    if (this.isStreamerBotDeathmatchFeed()) return Number.POSITIVE_INFINITY;
     if (aliveBotCount < BOT_PERCEPTION_LOS_LOD_START_COUNT) return Number.POSITIVE_INFINITY;
     if (aliveBotCount >= BOT_PERCEPTION_LOS_LOD_HIGH_COUNT) return BOT_PERCEPTION_LOS_FRAME_BUDGET_HIGH;
     if (aliveBotCount >= BOT_PERCEPTION_LOS_LOD_MEDIUM_COUNT) return BOT_PERCEPTION_LOS_FRAME_BUDGET_MEDIUM;
@@ -8089,6 +8154,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getBotSteeringProbeFrameBudget(aliveBotCount: number): number {
+    if (this.isStreamerBotDeathmatchFeed()) return Number.POSITIVE_INFINITY;
     if (aliveBotCount < BOT_MOVEMENT_LOD_START_COUNT) return Number.POSITIVE_INFINITY;
     if (aliveBotCount >= BOT_MOVEMENT_LOD_HIGH_COUNT) return BOT_STEERING_PROBE_FRAME_BUDGET_HIGH;
     if (aliveBotCount >= BOT_MOVEMENT_LOD_MEDIUM_COUNT) return BOT_STEERING_PROBE_FRAME_BUDGET_MEDIUM;
@@ -8216,7 +8282,7 @@ export class GameRoom extends Room<GameState> {
     dt: number,
     frameContext: BotFrameContext
   ): PlayerInput {
-    const skill = getBotSkillProfile(bot.botDifficulty);
+    const skill = getBotSkillProfile(bot.botDifficulty, bot.botProfileId);
     const snapshots = frameContext.snapshots;
     const botSnapshot = frameContext.snapshotById.get(bot.id) ?? this.getBotPlayerSnapshot(bot);
     if (!botSnapshot) return createEmptyBotInput(this.state.tick, bot, now);
@@ -9990,8 +10056,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private rotateStreamerBotDeathmatchMapIfDue(now: number): boolean {
-    if (!this.streamerManagedBotGame) return false;
-    if (this.streamerFeedMode !== 'bot_deathmatch') return false;
+    if (!this.isStreamerBotDeathmatchFeed()) return false;
     if (this.state.phase !== 'playing') return false;
     if (this.streamerMapRotationStartedAt === null) {
       this.streamerMapRotationStartedAt = now;
@@ -10518,6 +10583,7 @@ export class GameRoom extends Room<GameState> {
     if (drainDecision.underflow) {
       this.tickProfiler.recordCounter('movement_underflow_entries');
       authority.metrics.underflowTicks = (authority.metrics.underflowTicks ?? 0) + 1;
+      const grappleMoved = this.stepHookshotGrappleWithoutCommand(player, tickTime, collisionWorld);
       const dragPullMoved = this.stepHookshotDragPullWithoutCommand(player, tickTime, collisionWorld);
       authority.metrics.queueLength = authority.pendingCommands.length;
       authority.metrics.queueLengthAfterTick = authority.pendingCommands.length;
@@ -10526,7 +10592,7 @@ export class GameRoom extends Room<GameState> {
       }
 
       const client = this.clientRegistry.getClient(player.id);
-      if (client && (authority.correctionReason || dragPullMoved)) {
+      if (client && (authority.correctionReason || grappleMoved || dragPullMoved)) {
         this.sendSelfMovementAuthority(player, client, authority.correctionReason);
       }
       return;
@@ -10756,6 +10822,8 @@ export class GameRoom extends Room<GameState> {
     input: PlayerInput,
     simulationTier = this.getServerOwnedBotSimulationTier(player, tickTime)
   ): boolean {
+    if (this.isStreamerBotDeathmatchFeed() && player.isBot) return true;
+
     const fullRateReason = this.getServerOwnedBotMovementFullRateReason(player, input);
     if (fullRateReason) {
       this.tickProfiler.recordCounter(fullRateReason);
@@ -10837,6 +10905,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getServerOwnedBotMovementFullStepBudget(aliveBotCount: number): number {
+    if (this.isStreamerBotDeathmatchFeed()) return Number.POSITIVE_INFINITY;
     if (aliveBotCount < BOT_MOVEMENT_LOD_START_COUNT) return Number.POSITIVE_INFINITY;
     if (aliveBotCount >= BOT_MOVEMENT_LOD_HIGH_COUNT) return BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_HIGH;
     if (aliveBotCount >= BOT_MOVEMENT_LOD_MEDIUM_COUNT) return BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_MEDIUM;

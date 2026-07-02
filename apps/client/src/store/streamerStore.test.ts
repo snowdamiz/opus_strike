@@ -47,6 +47,21 @@ const joinedState = useStreamerStore.getState();
 assert.equal(joinedState.isLoading, false);
 assert.equal(joinedState.metadata?.streamerCameraMode, 'fixed_aerial');
 
+useStreamerStore.getState().beginSceneTransition({
+  key: 'map-a',
+  reason: 'map_rotation',
+});
+const transitioningState = useStreamerStore.getState();
+assert.equal(transitioningState.sceneTransition?.key, 'map-a');
+assert.equal(transitioningState.sceneTransition?.reason, 'map_rotation');
+
+useStreamerStore.getState().endSceneTransition('map-b');
+assert.equal(useStreamerStore.getState().sceneTransition?.key, 'map-a');
+
+useStreamerStore.getState().endSceneTransition('map-a');
+assert.equal(useStreamerStore.getState().sceneTransition, null);
+
 useStreamerStore.getState().reset();
+assert.equal(useStreamerStore.getState().sceneTransition, null);
 
 console.log('streamer store tests passed');

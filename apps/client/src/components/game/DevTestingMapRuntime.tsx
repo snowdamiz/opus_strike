@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import {
   DEV_TESTING_MAP_PROFILE_ID,
+  PLAYER_HEIGHT,
+  PLAYER_RADIUS,
   createDefaultPlayerMovementState,
   getDevTestingHeroLineup,
   getDevTestingTargetBotArea,
@@ -15,8 +17,10 @@ import {
   type Vec3,
   type VoxelMapManifest,
 } from '@voxel-strike/shared';
+import { computeAnchorWallAabbs, type MovementAabb } from '@voxel-strike/physics';
 import { useGameStore } from '../../store/gameStore';
 import { setPlayerVisualTransform } from '../../store/visualStore';
+import type { EarthWallData, HookshotGroundHooksData } from '../../store/types';
 import { DEV_OFFLINE_TRAINING_HERO_ID_PREFIX, updateTutorialOfflineTrainingDamageOverTime } from '../../utils/tutorialOfflineCombatRuntime';
 import { getPreparedVoxelMap, prepareVoxelMapCpu } from '../../utils/mapWarmup/mapPrepCache';
 import { HeroVoxelBody } from './HeroVoxelBody';
@@ -26,6 +30,9 @@ const DEV_TARGET_BOT_ID = `${DEV_OFFLINE_TRAINING_HERO_ID_PREFIX}target`;
 const DEV_TARGET_UPDATE_INTERVAL_SECONDS = 0.08;
 const DEV_TARGET_WALK_SPEED = 2.6;
 const DEV_TARGET_RUN_SPEED = 5.1;
+const DEV_TARGET_KNOCKBACK_SPEED_THRESHOLD = DEV_TARGET_RUN_SPEED * 1.25;
+const DEV_TARGET_KNOCKBACK_DRAG_PER_SECOND = 5.5;
+const DEV_TARGET_KNOCKBACK_GRAVITY = 18;
 
 type DevTargetBehavior = 'run' | 'strafe' | 'slide' | 'hop';
 
@@ -201,6 +208,104 @@ function createStationaryMovementState(): PlayerMovementState {
   });
 }
 
+function isDevTestingTargetInExternalKnockback(player: Player): boolean {
+  return Math.hypot(player.velocity.x, player.velocity.z) > DEV_TARGET_KNOCKBACK_SPEED_THRESHOLD;
+}
+
+export function isDevTestingTargetRootedByHookshot(
+  playerId: string,
+  effects: readonly HookshotGroundHooksData[],
+  now: number
+): boolean {
+  for (const effect of effects) {
+    if (now > effect.rootUntil) continue;
+    for (const target of effect.targets) {
+      if (target.targetId === playerId && now <= target.rootUntil) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function hasCapsuleVerticalOverlap(start: Vec3, end: Vec3, aabb: MovementAabb): boolean {
+  const minCenterY = Math.min(start.y, end.y);
+  const maxCenterY = Math.max(start.y, end.y);
+  const capsuleMinY = minCenterY - PLAYER_HEIGHT / 2;
+  const capsuleMaxY = maxCenterY + PLAYER_HEIGHT / 2;
+  return capsuleMaxY >= aabb.min.y && capsuleMinY <= aabb.max.y;
+}
+
+function isPointInsideExpandedAabb(point: Vec3, aabb: MovementAabb): boolean {
+  return (
+    point.x >= aabb.min.x - PLAYER_RADIUS &&
+    point.x <= aabb.max.x + PLAYER_RADIUS &&
+    point.z >= aabb.min.z - PLAYER_RADIUS &&
+    point.z <= aabb.max.z + PLAYER_RADIUS
+  );
+}
+
+function segmentIntersectsExpandedAabb(start: Vec3, end: Vec3, aabb: MovementAabb): boolean {
+  let tMin = 0;
+  let tMax = 1;
+  const deltaX = end.x - start.x;
+  const deltaZ = end.z - start.z;
+
+  const clipAxis = (origin: number, delta: number, min: number, max: number): boolean => {
+    if (Math.abs(delta) <= 0.000001) {
+      return origin >= min && origin <= max;
+    }
+
+    const invDelta = 1 / delta;
+    let t1 = (min - origin) * invDelta;
+    let t2 = (max - origin) * invDelta;
+    if (t1 > t2) {
+      const nextT1 = t2;
+      t2 = t1;
+      t1 = nextT1;
+    }
+
+    tMin = Math.max(tMin, t1);
+    tMax = Math.min(tMax, t2);
+    return tMin <= tMax;
+  };
+
+  return (
+    clipAxis(start.x, deltaX, aabb.min.x - PLAYER_RADIUS, aabb.max.x + PLAYER_RADIUS) &&
+    clipAxis(start.z, deltaZ, aabb.min.z - PLAYER_RADIUS, aabb.max.z + PLAYER_RADIUS)
+  );
+}
+
+function isSegmentBlockedByAnchorWall(start: Vec3, end: Vec3, aabb: MovementAabb): boolean {
+  if (!hasCapsuleVerticalOverlap(start, end, aabb)) return false;
+
+  const startInside = isPointInsideExpandedAabb(start, aabb);
+  const endInside = isPointInsideExpandedAabb(end, aabb);
+  if (startInside && !endInside) return false;
+  if (endInside) return true;
+
+  return segmentIntersectsExpandedAabb(start, end, aabb);
+}
+
+export function constrainDevTestingTargetMovementForAnchorWalls(
+  currentPosition: Vec3,
+  nextPosition: Vec3,
+  walls: readonly EarthWallData[],
+  now: number
+): Vec3 {
+  if (walls.length === 0) return nextPosition;
+
+  const wallAabbs = computeAnchorWallAabbs(walls, now);
+  for (const aabb of wallAabbs) {
+    if (isSegmentBlockedByAnchorWall(currentPosition, nextPosition, aabb)) {
+      return currentPosition;
+    }
+  }
+
+  return nextPosition;
+}
+
 function resetTargetBotToCenter(now: number, spawn: Vec3): Player {
   return {
     ...createDevTargetBot(now, spawn),
@@ -343,6 +448,62 @@ function DevTestingTargetBot({ manifest }: { manifest: VoxelMapManifest }) {
       return;
     }
 
+    if (isDevTestingTargetRootedByHookshot(current.id, store.hookshotGroundHooks, now)) {
+      const rooted = {
+        ...current,
+        velocity: { x: 0, y: 0, z: 0 },
+        movement: createStationaryMovementState(),
+        visibility: 'visible' as const,
+      };
+      store.updatePlayer(DEV_TARGET_BOT_ID, rooted);
+      setPlayerVisualTransform(rooted.id, rooted.position, rooted.lookYaw, rooted.lookPitch);
+      return;
+    }
+
+    if (isDevTestingTargetInExternalKnockback(current)) {
+      const nextUnconstrainedPosition = {
+        x: current.position.x + current.velocity.x * updateDelta,
+        y: Math.max(spawn.y, current.position.y + current.velocity.y * updateDelta),
+        z: current.position.z + current.velocity.z * updateDelta,
+      };
+      const nextPosition = constrainDevTestingTargetMovementForAnchorWalls(
+        current.position,
+        nextUnconstrainedPosition,
+        store.earthWalls,
+        now
+      );
+      const wasWallBlocked =
+        nextPosition.x !== nextUnconstrainedPosition.x ||
+        nextPosition.y !== nextUnconstrainedPosition.y ||
+        nextPosition.z !== nextUnconstrainedPosition.z;
+      const drag = Math.max(0, 1 - DEV_TARGET_KNOCKBACK_DRAG_PER_SECOND * updateDelta);
+      const nextVelocity = wasWallBlocked
+        ? { x: 0, y: 0, z: 0 }
+        : {
+          x: current.velocity.x * drag,
+          y: nextPosition.y <= spawn.y + 0.001
+            ? 0
+            : Math.max(0, current.velocity.y - DEV_TARGET_KNOCKBACK_GRAVITY * updateDelta),
+          z: current.velocity.z * drag,
+        };
+      const lookYaw = lookYawFromVelocity(nextVelocity, current.lookYaw);
+
+      store.updatePlayer(DEV_TARGET_BOT_ID, {
+        ...current,
+        position: nextPosition,
+        velocity: nextVelocity,
+        lookYaw,
+        movement: createDefaultPlayerMovementState({
+          isGrounded: nextPosition.y <= spawn.y + 0.001,
+          isSprinting: false,
+          isSliding: false,
+          slideTimeRemaining: 0,
+        }),
+        visibility: 'visible',
+      });
+      return;
+    }
+
     if (now >= runtime.nextRetargetAtMs || horizontalDistance(current.position, runtime.target) <= 0.3) {
       refreshRuntime(runtime, now, area);
     }
@@ -356,19 +517,31 @@ function DevTestingTargetBot({ manifest }: { manifest: VoxelMapManifest }) {
       ...nextHorizontal,
       y: spawn.y + getBehaviorLift(runtime, now),
     };
+    const constrainedNextPosition = constrainDevTestingTargetMovementForAnchorWalls(
+      current.position,
+      nextPosition,
+      store.earthWalls,
+      now
+    );
+    const isWallBlocked =
+      constrainedNextPosition.x !== nextPosition.x ||
+      constrainedNextPosition.y !== nextPosition.y ||
+      constrainedNextPosition.z !== nextPosition.z;
     const velocity = {
-      x: (nextPosition.x - current.position.x) / updateDelta,
-      y: (nextPosition.y - current.position.y) / updateDelta,
-      z: (nextPosition.z - current.position.z) / updateDelta,
+      x: (constrainedNextPosition.x - current.position.x) / updateDelta,
+      y: (constrainedNextPosition.y - current.position.y) / updateDelta,
+      z: (constrainedNextPosition.z - current.position.z) / updateDelta,
     };
     const lookYaw = lookYawFromVelocity(velocity, current.lookYaw);
 
     store.updatePlayer(DEV_TARGET_BOT_ID, {
       ...current,
-      position: nextPosition,
+      position: constrainedNextPosition,
       velocity,
       lookYaw,
-      movement: sampleMovementState(runtime.behavior, nextPosition.y, spawn.y),
+      movement: isWallBlocked
+        ? createStationaryMovementState()
+        : sampleMovementState(runtime.behavior, constrainedNextPosition.y, spawn.y),
       visibility: 'visible',
     });
   });

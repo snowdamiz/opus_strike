@@ -5,6 +5,7 @@ import {
   MOVEMENT_MAX_SERVER_QUEUE,
   MOVEMENT_PROTOCOL_VERSION,
   isMovementSeqAfter,
+  movementButtonsForHeldCommand,
   movementSeqDistance,
   parseMovementCommandPayload,
   type MovementCommand,
@@ -91,9 +92,11 @@ export function promoteMovementCommandAcrossAuthorityBarrier(
 ): MovementCommand {
   const promoted = {
     ...command,
+    buttons: movementButtonsForHeldCommand(command.buttons),
     movementEpoch,
   };
-  // The snapshot was predicted from the old epoch and must not overwrite post-barrier server movement.
+  // Old-epoch button edges and snapshots were predicted before the server-owned
+  // movement change and must not replay abilities or overwrite the new movement.
   delete promoted.clientState;
   return promoted;
 }

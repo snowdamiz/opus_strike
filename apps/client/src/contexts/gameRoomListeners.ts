@@ -4,6 +4,7 @@ import {
   DEFAULT_MATCH_PERSPECTIVE,
   isGameplayMode,
   isMatchPerspective,
+  normalizeVoxelMapSizeId,
   type GameEndEvent,
   type HeroId,
   type HeroSkinId,
@@ -13,13 +14,15 @@ import {
   type VoxelMapSizeId,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
-import { useGameStore } from '../store/gameStore';
+import { normalizeMapProfileId, useGameStore } from '../store/gameStore';
+import { useStreamerStore } from '../store/streamerStore';
 import type { VoiceTokenResponse } from '../voice/types';
 import { disconnectVoice } from '../voice/voiceControls';
-import { seedMapPrepCacheFromManifest } from '../utils/mapWarmup/mapPrepCache';
-import { prebuildPreparedMapGeometryDeferred } from '../utils/mapWarmup/deferredMapGeometryWarmup';
-import { requestMapPreviewManifest } from '../utils/mapPreview/mapPreviewManifestClient';
 import { clearRunningGameSession } from '../utils/runningGameSession';
+import {
+  getStreamerMapTransitionKey,
+  preloadStreamerMapTransitionTarget,
+} from '../utils/streamerMapTransition';
 import {
   movementStateFromPlayer,
   resetLocalMovementPrediction,
@@ -134,6 +137,8 @@ interface StreamerObserverJoinedMessage {
   endlessMatch?: boolean;
 }
 
+const STREAMER_MAP_TRANSITION_LEAD_MS = 360;
+
 export function setupGameRoomListeners(
   room: Room,
   {
@@ -168,6 +173,79 @@ export function setupGameRoomListeners(
   } = useGameStore.getState();
   const sessionId = room.sessionId;
   const localPlayerName = playerName;
+  let streamerMapTransitionSerial = 0;
+
+  const applyIncomingMapState = (data: {
+    mapSeed: number;
+    mapThemeId?: VoxelMapTheme['id'] | null;
+    mapSize?: VoxelMapSizeId | null;
+    mapProfileId?: MapProfileId | null;
+  }) => {
+    setMapSeed(data.mapSeed);
+    setMapThemeId(data.mapThemeId ?? null);
+    setMapSize(data.mapSize);
+    useGameStore.getState().setMapProfileId(data.mapProfileId);
+  };
+
+  const applyIncomingMapStateWithStreamerTransition = (data: {
+    mapSeed: number;
+    mapThemeId?: VoxelMapTheme['id'] | null;
+    mapSize?: VoxelMapSizeId | null;
+    mapProfileId?: MapProfileId | null;
+  }) => {
+    const nextMapSize = normalizeVoxelMapSizeId(data.mapSize);
+    const nextMapProfileId = normalizeMapProfileId(data.mapProfileId);
+    const current = useGameStore.getState();
+    const mapChanged = (
+      data.mapSeed !== current.mapSeed ||
+      (data.mapThemeId ?? null) !== current.mapThemeId ||
+      nextMapSize !== current.mapSize ||
+      nextMapProfileId !== current.mapProfileId
+    );
+
+    if (!useStreamerStore.getState().isActive || !mapChanged) {
+      applyIncomingMapState(data);
+      return;
+    }
+
+    const transitionKey = getStreamerMapTransitionKey({
+      mapSeed: data.mapSeed,
+      mapThemeId: data.mapThemeId ?? null,
+      mapSize: nextMapSize,
+      mapProfileId: nextMapProfileId,
+    });
+    const transitionSerial = ++streamerMapTransitionSerial;
+    useStreamerStore.getState().beginSceneTransition({
+      key: transitionKey,
+      reason: 'map_rotation',
+    });
+
+    const leadPromise = new Promise<void>((resolve) => {
+      window.setTimeout(resolve, STREAMER_MAP_TRANSITION_LEAD_MS);
+    });
+    void Promise.allSettled([
+      preloadStreamerMapTransitionTarget({
+        mapSeed: data.mapSeed,
+        mapThemeId: data.mapThemeId ?? null,
+        mapSize: nextMapSize,
+        mapProfileId: nextMapProfileId,
+      }, 'streamer-phase-change'),
+      leadPromise,
+    ]).then(() => {
+      if (transitionSerial !== streamerMapTransitionSerial) return;
+      if (!useStreamerStore.getState().isActive || gameRoomRef.current !== room) return;
+      applyIncomingMapState(data);
+    }).catch((error) => {
+      loggers.network.warn('streamer phase map transition failed', error);
+      if (
+        transitionSerial === streamerMapTransitionSerial &&
+        useStreamerStore.getState().isActive &&
+        gameRoomRef.current === room
+      ) {
+        applyIncomingMapState(data);
+      }
+    });
+  };
 
   setLocalPlayer(createDefaultLocalPlayer(sessionId, playerName));
   useGameStore.getState().cleanupGhostPlayers();
@@ -222,28 +300,12 @@ export function setupGameRoomListeners(
   }) => {
     loggers.network.debug('phase change message', data.phase);
     if (typeof data.mapSeed === 'number') {
-      const mapSeed = data.mapSeed;
-      setMapSeed(mapSeed);
-      setMapThemeId(data.mapThemeId ?? null);
-      setMapSize(data.mapSize);
-      useGameStore.getState().setMapProfileId(data.mapProfileId);
-      void requestMapPreviewManifest({
-        seed: mapSeed,
-        themeId: data.mapThemeId ?? null,
+      applyIncomingMapStateWithStreamerTransition({
+        mapSeed: data.mapSeed,
+        mapThemeId: data.mapThemeId ?? null,
         mapSize: data.mapSize,
         mapProfileId: data.mapProfileId,
-      })
-        .then((manifest) => {
-          const preparedMap = seedMapPrepCacheFromManifest(
-            mapSeed,
-            manifest,
-            'match'
-          );
-          prebuildPreparedMapGeometryDeferred(preparedMap, { frameBudgetMs: 2, label: 'phase-change' });
-        })
-        .catch((error) => {
-          loggers.network.warn('phase map worker prep failed', error);
-        });
+      });
     }
     const nextPhase = normalizeGamePhase(data.phase);
     setGamePhase(nextPhase);
@@ -257,10 +319,12 @@ export function setupGameRoomListeners(
     if (!data || typeof data.key !== 'number' || !Number.isInteger(data.key)) return;
 
     if (typeof data.mapSeed === 'number') {
-      setMapSeed(data.mapSeed);
-      setMapThemeId(data.mapThemeId ?? null);
-      setMapSize(data.mapSize);
-      useGameStore.getState().setMapProfileId(data.mapProfileId);
+      applyIncomingMapState({
+        mapSeed: data.mapSeed,
+        mapThemeId: data.mapThemeId ?? null,
+        mapSize: data.mapSize,
+        mapProfileId: data.mapProfileId,
+      });
     }
 
     const position = data.position;
