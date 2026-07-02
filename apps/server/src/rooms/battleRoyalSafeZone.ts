@@ -24,12 +24,12 @@ export interface BattleRoyalSafeZoneState extends SafeZoneSnapshot {
 const WARNING_WINDOW_MS = 30_000;
 
 const SAFE_ZONE_PHASES: readonly SafeZonePhaseDefinition[] = [
-  { waitMs: 90_000, shrinkMs: 150_000, radiusRatio: 0.72, damagePerSecond: 3 },
-  { waitMs: 70_000, shrinkMs: 140_000, radiusRatio: 0.50, damagePerSecond: 5 },
-  { waitMs: 55_000, shrinkMs: 125_000, radiusRatio: 0.32, damagePerSecond: 8 },
-  { waitMs: 45_000, shrinkMs: 110_000, radiusRatio: 0.18, damagePerSecond: 12 },
-  { waitMs: 30_000, shrinkMs: 95_000, radiusRatio: 0.08, damagePerSecond: 18 },
-  { waitMs: 15_000, shrinkMs: 90_000, radiusRatio: 0.025, damagePerSecond: 25 },
+  { waitMs: 90_000, shrinkMs: 90_000, radiusRatio: 0.72, damagePerSecond: 3 },
+  { waitMs: 70_000, shrinkMs: 80_000, radiusRatio: 0.50, damagePerSecond: 5 },
+  { waitMs: 55_000, shrinkMs: 70_000, radiusRatio: 0.32, damagePerSecond: 8 },
+  { waitMs: 45_000, shrinkMs: 60_000, radiusRatio: 0.18, damagePerSecond: 12 },
+  { waitMs: 30_000, shrinkMs: 50_000, radiusRatio: 0.08, damagePerSecond: 18 },
+  { waitMs: 15_000, shrinkMs: 45_000, radiusRatio: 0.025, damagePerSecond: 25 },
 ];
 
 function clamp(value: number, min: number, max: number): number {
