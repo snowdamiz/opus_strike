@@ -807,7 +807,7 @@ function StreamerSceneTransitionOverlay({
 
   return (
     <div className="pointer-events-none absolute inset-0 z-[70] flex items-center justify-center overflow-hidden bg-black/55 text-white backdrop-blur-xl">
-      <div className="absolute inset-0 bg-[linear-gradient(115deg,rgba(34,211,238,0.2),transparent_32%,rgba(255,255,255,0.1)_52%,transparent_64%,rgba(251,146,60,0.18))] opacity-80" />
+      <div className="absolute inset-0 bg-[linear-gradient(115deg,rgb(var(--color-accent-secondary)_/_0.2),transparent_32%,rgba(255,255,255,0.1)_52%,transparent_64%,rgb(var(--color-accent-primary-hover)_/_0.18))] opacity-80" />
       <div className="absolute inset-0 animate-pulse bg-white/[0.035]" />
       <div className="relative flex w-[min(520px,calc(100vw-48px))] flex-col items-center gap-5 text-center">
         <div className="font-display text-[clamp(2rem,5vw,4.4rem)] font-black uppercase leading-none drop-shadow-[0_8px_24px_rgba(0,0,0,0.55)]">
