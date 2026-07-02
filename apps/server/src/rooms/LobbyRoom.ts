@@ -46,6 +46,7 @@ import {
 import {
   IN_GAME_CAPACITY_RETRY_MS,
   MAX_IN_GAME_PLAYERS,
+  canAdmitInGameCapacity,
   collectInGameCapacitySnapshot,
   isInGameCapacityAdmissionError,
   runWithInGameCapacity,
@@ -1178,7 +1179,6 @@ export class LobbyRoom extends Room<LobbyState> {
       const admission = await runWithInGameCapacity({
         matchMaker,
         requestedPlayers: capacityPlayerCost,
-        localProcessId: matchMaker.processId,
       }, () => matchMaker.createRoom('game_room', {
         lobbyId: this.state.lobbyId,
         lobbyName: this.state.name,
@@ -2047,9 +2047,7 @@ export class LobbyRoom extends Room<LobbyState> {
     if (requestedPlayers <= 0) return true;
 
     const snapshot = await collectInGameCapacitySnapshot(matchMaker);
-    const localMachine = snapshot.machines.find((machine) => machine.processId === matchMaker.processId);
-    const localAvailablePlayers = localMachine?.availablePlayers ?? snapshot.availablePlayers;
-    if (requestedPlayers <= snapshot.availablePlayers && requestedPlayers <= localAvailablePlayers) {
+    if (canAdmitInGameCapacity(snapshot, requestedPlayers)) {
       this.setMatchmakingCapacityBlocked(false);
       return true;
     }

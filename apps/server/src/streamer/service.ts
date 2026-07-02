@@ -20,7 +20,6 @@ import {
   type VoxelMapSizeId,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
-import { matchMaker } from 'colyseus';
 import { runWithInGameCapacity, type InGameCapacityAdmissionFailureReason } from '../matchmaking/playerCapacity';
 import { createStreamerObserverTicket } from '../security/streamerTickets';
 import { getStreamerObserverSeatCount } from './config';
@@ -339,7 +338,6 @@ async function createFallbackRoom(input: {
     const admission = await runWithInGameCapacity({
       matchMaker: input.matchMaker,
       requestedPlayers: createOptions.capacityPlayerCost,
-      localProcessId: input.matchMaker.processId ?? matchMaker.processId,
     }, () => input.matchMaker.createRoom('game_room', createOptions));
 
     if (admission.admitted) {
