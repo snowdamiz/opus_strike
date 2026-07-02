@@ -20,7 +20,7 @@ primary_region = "iad"
   COLYSEUS_PUBLIC_ADDRESS = "api.slopheroes.xyz"
   COLYSEUS_REQUIRE_PUBLIC_ADDRESS = "1"
   COLYSEUS_PRESENCE_SHORT_TIMEOUT = "10000"
-  COLYSEUS_ROOM_CREATE_STRATEGY = "local"
+  COLYSEUS_ROOM_CREATE_STRATEGY = "least_loaded"
   GAME_ROOM_SEAT_RESERVATION_SECONDS = "60"
 
 [http_service]
@@ -28,7 +28,7 @@ primary_region = "iad"
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 2
   processes = ["app"]
 
   [[http_service.checks]]
