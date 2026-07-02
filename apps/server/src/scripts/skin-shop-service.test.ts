@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 
 type SkinShopItemRow = {
   skinId: string;
@@ -226,6 +227,7 @@ async function runSkinShopServiceTests() {
   const {
     getSkinCatalogForUser,
     resolveUserLoadoutForHero,
+    setSkinShopConnectionFactoryForTests,
     updateSkinShopItemSettings,
     updateSkinShopSettings,
     updateUserHeroLoadout,
@@ -257,7 +259,7 @@ async function runSkinShopServiceTests() {
     () => updateSkinShopItemSettings({
       skinId: 'phantom.default' as never,
       saleEnabled: true,
-      tokenAmountBaseUnits: '1000',
+      tokenAmount: '1000',
       updatedByUserId: 'admin-a',
     }),
     /Default skins cannot be priced/
@@ -275,11 +277,23 @@ async function runSkinShopServiceTests() {
   assert.equal(fake.itemCreateManyCount, 1);
   assert.equal(fake.itemFindUniqueCount, 1);
 
+  // Configure the global game token before saving prices; admins enter whole
+  // token amounts and the service converts them using the mint decimals.
+  process.env.GAME_TOKEN_MINT = 'So11111111111111111111111111111111111111112';
+  process.env.GAME_TOKEN_SYMBOL = 'STRIKE';
+  setSkinShopConnectionFactoryForTests((rpcUrl) => {
+    assert.equal(rpcUrl, process.env.SOLANA_RPC_URL);
+    return {
+      getAccountInfo: async () => ({ owner: TOKEN_PROGRAM_ID }),
+      getTokenSupply: async () => ({ value: { decimals: 6 } }),
+    } as never;
+  });
+
   await expectServiceError(
     () => updateSkinShopItemSettings({
       skinId: 'phantom.void-monarch',
       saleEnabled: true,
-      tokenAmountBaseUnits: '0',
+      tokenAmount: '0',
       expectedPriceVersion: 1,
       updatedByUserId: 'admin-a',
     }),
@@ -311,7 +325,7 @@ async function runSkinShopServiceTests() {
   const updated = await updateSkinShopItemSettings({
     skinId: 'phantom.void-monarch',
     saleEnabled: true,
-    tokenAmountBaseUnits: '2500000',
+    tokenAmount: '2.5',
     maxSupply: '100',
     expectedPriceVersion: 1,
     updatedByUserId: 'admin-a',
@@ -319,7 +333,9 @@ async function runSkinShopServiceTests() {
 
   assert.equal(updated.skinId, 'phantom.void-monarch');
   assert.equal(updated.saleEnabled, true);
+  assert.equal(updated.tokenAmount, '2.5');
   assert.equal(updated.tokenAmountBaseUnits, '2500000');
+  assert.equal(updated.tokenDecimals, 6);
   assert.equal(updated.maxSupply, 100);
   assert.equal(updated.soldCount, 0);
   assert.equal(updated.reservedCount, 0);
@@ -332,7 +348,9 @@ async function runSkinShopServiceTests() {
     'saleEnabled',
     'skinId',
     'soldCount',
+    'tokenAmount',
     'tokenAmountBaseUnits',
+    'tokenDecimals',
     'updatedAt',
     'updatedByUserId',
   ]);
@@ -348,6 +366,20 @@ async function runSkinShopServiceTests() {
   assert.equal(fake.audits[0].oldPriceVersion, 1);
   assert.equal(fake.audits[0].newPriceVersion, 2);
 
+  const updated150k = await updateSkinShopItemSettings({
+    skinId: 'phantom.void-monarch',
+    saleEnabled: true,
+    tokenAmount: '150000',
+    maxSupply: '100',
+    expectedPriceVersion: 2,
+    updatedByUserId: 'admin-a',
+  });
+
+  assert.equal(updated150k.tokenAmount, '150000');
+  assert.equal(updated150k.tokenAmountBaseUnits, '150000000000');
+  assert.equal(updated150k.tokenDecimals, 6);
+  assert.equal(updated150k.priceVersion, 3);
+
   const disabledShopCatalog = await getSkinCatalogForUser('user-a');
   assert.deepEqual(
     disabledShopCatalog.skins.filter((skin) => skin.availability === 'paid').map((skin) => skin.id),
@@ -355,9 +387,7 @@ async function runSkinShopServiceTests() {
     'paid skins stay out of the public catalog while the shop is disabled'
   );
 
-  // Configure the global game token; the shop now transacts in it.
-  process.env.GAME_TOKEN_MINT = 'So11111111111111111111111111111111111111112';
-  process.env.GAME_TOKEN_SYMBOL = 'STRIKE';
+  // Enable the shop; it now transacts in the configured game token.
   await updateSkinShopSettings({
     enabled: true,
     updatedByUserId: 'admin-a',
@@ -434,6 +464,7 @@ async function runSkinShopServiceTests() {
   } else {
     process.env.SKIN_SHOP_TOKEN_SYMBOL = previousSkinShopTokenSymbol;
   }
+  setSkinShopConnectionFactoryForTests(null);
 }
 
 runSkinShopServiceTests()

@@ -419,7 +419,9 @@ export interface SkinShopSettings {
 export interface SkinShopItemSettings {
   skinId: HeroSkinId;
   saleEnabled: boolean;
+  tokenAmount: string | null;
   tokenAmountBaseUnits: LamportString | null;
+  tokenDecimals: number | null;
   maxSupply: number | null;
   soldCount: number;
   reservedCount: number;
@@ -530,7 +532,7 @@ export interface SkinShopSettingsUpdate {
 
 export interface SkinShopItemUpdate {
   saleEnabled: boolean;
-  tokenAmountBaseUnits: string | number;
+  tokenAmount: string;
   maxSupply?: number | null;
   expectedPriceVersion: number;
 }

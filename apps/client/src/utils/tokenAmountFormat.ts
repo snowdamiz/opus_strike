@@ -60,3 +60,28 @@ export function formatCompactTokenAmount(value: TokenAmountInput, fallback = '0'
 
   return `${sign}${absolute.toLocaleString('en-US')}`;
 }
+
+export function formatTokenBaseUnits(
+  value: TokenAmountInput,
+  decimals: number | null | undefined,
+  fallback = '0'
+): string {
+  const amount = parseTokenAmount(value);
+  if (amount === null) return fallback;
+  if (decimals === null || decimals === undefined || !Number.isInteger(decimals) || decimals < 0) {
+    return formatCompactTokenAmount(value, fallback);
+  }
+
+  const sign = amount < 0n ? '-' : '';
+  const absolute = amount < 0n ? -amount : amount;
+  const scale = 10n ** BigInt(decimals);
+  const whole = absolute / scale;
+  const fraction = absolute % scale;
+
+  if (fraction === 0n) {
+    return `${sign}${formatCompactTokenAmount(whole, fallback)}`;
+  }
+
+  const fractionText = fraction.toString().padStart(decimals, '0').replace(/0+$/, '');
+  return `${sign}${whole.toLocaleString('en-US')}.${fractionText}`;
+}

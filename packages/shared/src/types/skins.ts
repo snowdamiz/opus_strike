@@ -45,6 +45,7 @@ export interface HeroSkinPrice {
   tokenSymbol: string;
   tokenMintAddress: string | null;
   amountBaseUnits: string | null;
+  tokenDecimals?: number | null;
   adminEditable: boolean;
   disabledReason?: string | null;
 }

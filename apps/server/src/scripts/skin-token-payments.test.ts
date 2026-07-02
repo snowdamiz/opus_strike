@@ -38,6 +38,14 @@ function parsedMemoInstruction(value = memo) {
   };
 }
 
+function parsedMemoStringInstruction(value = memo) {
+  return {
+    program: 'spl-memo',
+    programId: MEMO_PROGRAM_ID,
+    parsed: value,
+  };
+}
+
 function encodedMemoInstruction(value = memo) {
   return {
     programId: MEMO_PROGRAM_ID,
@@ -74,7 +82,7 @@ function transferCheckedInstruction(overrides: Partial<{
 
 function transactionFixture(overrides: {
   signer?: boolean;
-  memo?: ReturnType<typeof parsedMemoInstruction> | ReturnType<typeof encodedMemoInstruction> | null;
+  memo?: ReturnType<typeof parsedMemoInstruction> | ReturnType<typeof parsedMemoStringInstruction> | ReturnType<typeof encodedMemoInstruction> | null;
   transfer?: ReturnType<typeof transferCheckedInstruction> | null;
   metaErr?: unknown;
   blockTime?: number | null;
@@ -147,6 +155,14 @@ function assertReason(
 
 {
   assert.deepEqual(verify(transactionFixture({ memo: encodedMemoInstruction() })), {
+    ok: true,
+    amountBaseUnits: tokenAmountBaseUnits,
+    blockTime: createdAt,
+  });
+}
+
+{
+  assert.deepEqual(verify(transactionFixture({ memo: parsedMemoStringInstruction() })), {
     ok: true,
     amountBaseUnits: tokenAmountBaseUnits,
     blockTime: createdAt,

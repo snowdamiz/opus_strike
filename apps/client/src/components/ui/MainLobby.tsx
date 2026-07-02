@@ -89,7 +89,7 @@ import {
 } from '../../utils/playMenuPreferences';
 import type { ServerLatencyProbeSnapshot } from '../../utils/serverLatency';
 import { requiresTutorial } from '../../utils/tutorialAccess';
-import { formatCompactTokenAmount } from '../../utils/tokenAmountFormat';
+import { formatCompactTokenAmount, formatTokenBaseUnits } from '../../utils/tokenAmountFormat';
 import { RankIcon, getRankForStats } from './RankBadge';
 import { SkinRarityChrome } from './SkinRarityChrome';
 
@@ -289,6 +289,7 @@ function SlopHeroesMark({ className }: { className?: string }) {
 
 // Navigation tabs
 const MAIN_TABS = ['play', 'heroes', 'loadout', 'skins', 'stats'] as const;
+const MAIN_PLAY_CONTRACT_ADDRESS = '5Dq9LnhLRiisTQPfb21pgoGZt8h3E9h31JyiSzvYpump';
 type MainTab = (typeof MAIN_TABS)[number];
 const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
   mode: 'season',
@@ -297,6 +298,19 @@ const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
   endsAt: null,
 };
 const SEASON_RULES_ARIA = 'Season rewards and ranked history are tracked by season.';
+
+function ContractAddressBadge() {
+  return (
+    <div
+      className="main-lobby-ca-badge"
+      aria-label={`Contract address ${MAIN_PLAY_CONTRACT_ADDRESS}`}
+      title={MAIN_PLAY_CONTRACT_ADDRESS}
+    >
+      <span className="main-lobby-ca-label">CA</span>
+      <span className="main-lobby-ca-address">{MAIN_PLAY_CONTRACT_ADDRESS}</span>
+    </div>
+  );
+}
 
 function rankedTokenHoldRequirement(status: RankedTokenHoldStatus): string {
   const symbol = rewardTokenTicker(status.tokenSymbol);
@@ -1227,20 +1241,27 @@ export function MainLobby() {
             </div>
           </div>
 
-          <div className="main-lobby-tabs flex min-w-0 items-center">
-            {MAIN_TABS.map((tab) => (
- <button
- key={tab}
- onClick={() => { playButtonClick(); setActiveTab(tab); }}
- className={`relative px-3 lg:px-5 xl:px-6 py-3 font-display text-base xl:text-lg tracking-wide whitespace-nowrap ${activeTab === tab ? 'text-white' : 'text-white/40 hover:text-white/70'
- }`}
- >
- {tab.toUpperCase()}
- {activeTab === tab && (
- <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-orange-500" />
- )}
- </button>
-            ))}
+          <div className="main-lobby-center-stack">
+            <div className="main-lobby-tabs flex min-w-0 items-center">
+              {MAIN_TABS.map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => {
+                    playButtonClick();
+                    setActiveTab(tab);
+                  }}
+                  className={`relative px-3 py-3 font-display text-base tracking-wide whitespace-nowrap lg:px-5 xl:px-6 xl:text-lg ${
+                    activeTab === tab ? 'text-white' : 'text-white/40 hover:text-white/70'
+                  }`}
+                >
+                  {tab.toUpperCase()}
+                  {activeTab === tab && (
+                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-orange-500" />
+                  )}
+                </button>
+              ))}
+            </div>
+            {activeTab === 'play' && <ContractAddressBadge />}
           </div>
 
           {/* Right side controls */}
@@ -1426,7 +1447,11 @@ function formatSkinPrice(skin: HeroSkinCatalogItem): string {
   const price = skin.shopPrice;
   const tokenSymbol = formatTokenSymbol(price?.tokenSymbol);
   if (!price?.amountBaseUnits) return tokenSymbol ? `TBA ${tokenSymbol}` : 'TBA';
-  const amount = formatCompactTokenAmount(price.amountBaseUnits, price.amountBaseUnits);
+  const amount = formatTokenBaseUnits(
+    price.amountBaseUnits,
+    price.tokenDecimals,
+    price.amountBaseUnits
+  );
   return tokenSymbol ? `${amount} ${tokenSymbol}` : amount;
 }
 
