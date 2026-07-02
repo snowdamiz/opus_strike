@@ -99,8 +99,12 @@ export function useStreamerModeController(): void {
           useStreamerStore.getState().setCsrfToken(csrfToken);
         }
 
+        const activeRoomIdBeforeRequest = useGameStore.getState().roomId;
+        const joinedRoomId = currentRoomId && activeRoomIdBeforeRequest === currentRoomId
+          ? currentRoomId
+          : null;
         const response = await requestNextStreamerTarget({
-          currentRoomId,
+          currentRoomId: joinedRoomId,
           csrfToken,
         });
         if (cancelled) return;
@@ -108,10 +112,10 @@ export function useStreamerModeController(): void {
         useStreamerStore.getState().setCsrfToken(response.csrfToken);
         const target = response.target;
         const activeRoomId = useGameStore.getState().roomId;
-        const shouldJoinTarget = target.roomId !== currentRoomId || activeRoomId !== target.roomId;
+        const shouldJoinTarget = activeRoomId !== target.roomId || joinedRoomId !== target.roomId;
 
         if (shouldJoinTarget) {
-          const reason = loadingReasonForTarget(target.source, currentRoomId);
+          const reason = loadingReasonForTarget(target.source, joinedRoomId);
           useStreamerStore.getState().setLoading(reason);
           useGameStore.getState().setAppPhase('streamer_loading');
           await joinStreamerRoom(target);

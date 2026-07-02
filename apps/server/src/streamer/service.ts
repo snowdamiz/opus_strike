@@ -21,10 +21,16 @@ import {
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
 import { runWithInGameCapacity, type InGameCapacityAdmissionFailureReason } from '../matchmaking/playerCapacity';
+import {
+  serializeGameSeatReservation,
+  type GameSeatReservationLike,
+  type GameSeatReservationPayload,
+} from '../rooms/lobbyGameStartRuntime';
 import { createStreamerObserverTicket } from '../security/streamerTickets';
 import { getStreamerObserverSeatCount } from './config';
 
 export interface StreamerRoomListing {
+  name?: string;
   roomId: string;
   processId?: string;
   publicAddress?: string;
@@ -38,6 +44,13 @@ export interface StreamerMatchMaker {
   processId?: string;
   query(criteria: { name: string }): Promise<StreamerRoomListing[]>;
   createRoom(name: 'game_room', options: StreamerGameRoomCreateOptions): Promise<StreamerRoomListing>;
+  reserveSeatFor(room: StreamerRoomListing, options: StreamerObserverSeatOptions): Promise<GameSeatReservationLike>;
+}
+
+export interface StreamerObserverSeatOptions {
+  streamerObserverTicket: string;
+  clientBuildId?: string;
+  authToken?: string;
 }
 
 export interface StreamerGameRoomCreateOptions {
@@ -80,7 +93,7 @@ export interface StreamerNextTarget {
   processId: string | null;
   publicAddress: string | null;
   source: StreamerTarget['source'];
-  streamerObserverTicket: string;
+  seatReservation?: GameSeatReservationPayload;
   metadata: {
     phase: string | null;
     gameplayMode: string | null;
@@ -209,12 +222,29 @@ export function isEligibleRealPlayerStreamerRoom(room: StreamerRoomListing): boo
   return hasStreamerSeat(room);
 }
 
+function isSelectableRealPlayerStreamerRoom(room: StreamerRoomListing, currentRoomId: string | null): boolean {
+  const metadata = getStreamerRoomMetadata(room);
+  if (room.locked) return false;
+  if (metadata.streamerManagedBotGame) return false;
+  if (!metadata.phase || !STREAMER_LIVE_PHASES.has(metadata.phase)) return false;
+  if (metadata.combatHumanCount <= 0) return false;
+  return room.roomId === currentRoomId || hasStreamerSeat(room);
+}
+
 export function isUsableFallbackStreamerRoom(room: StreamerRoomListing): boolean {
   const metadata = getStreamerRoomMetadata(room);
   if (room.locked) return false;
   if (!metadata.streamerManagedBotGame) return false;
   if (!metadata.phase || metadata.phase === 'game_end' || metadata.phase === 'cancelled') return false;
   return hasStreamerSeat(room);
+}
+
+function isSelectableFallbackStreamerRoom(room: StreamerRoomListing, currentRoomId: string | null): boolean {
+  const metadata = getStreamerRoomMetadata(room);
+  if (room.locked) return false;
+  if (!metadata.streamerManagedBotGame) return false;
+  if (!metadata.phase || metadata.phase === 'game_end' || metadata.phase === 'cancelled') return false;
+  return room.roomId === currentRoomId || hasStreamerSeat(room);
 }
 
 function selectionScore(room: StreamerRoomListing, currentRoomId: string | null, random: () => number): number {
@@ -234,13 +264,13 @@ export function selectStreamerTargetRoom(input: {
 }): StreamerTarget | null {
   const random = input.random ?? Math.random;
   const currentRoomId = input.currentRoomId ?? null;
-  const realRooms = input.rooms.filter(isEligibleRealPlayerStreamerRoom);
+  const realRooms = input.rooms.filter((room) => isSelectableRealPlayerStreamerRoom(room, currentRoomId));
   if (realRooms.length > 0) {
     realRooms.sort((a, b) => selectionScore(b, currentRoomId, random) - selectionScore(a, currentRoomId, random));
     return { room: realRooms[0], source: 'real_player' };
   }
 
-  const fallbackRooms = input.rooms.filter(isUsableFallbackStreamerRoom);
+  const fallbackRooms = input.rooms.filter((room) => isSelectableFallbackStreamerRoom(room, currentRoomId));
   if (fallbackRooms.length === 0) return null;
   fallbackRooms.sort((a, b) => selectionScore(b, currentRoomId, random) - selectionScore(a, currentRoomId, random));
   return { room: fallbackRooms[0], source: 'fallback_bot' };
@@ -353,22 +383,54 @@ async function createFallbackRoom(input: {
   return { room: null, capacityFailure: lastFailure };
 }
 
-function toNextTarget(input: {
+function buildStreamerObserverSeatOptions(input: {
+  streamerObserverTicket: string;
+  clientBuildId?: string | null;
+  authToken?: string | null;
+}): StreamerObserverSeatOptions {
+  return {
+    streamerObserverTicket: input.streamerObserverTicket,
+    ...(input.clientBuildId ? { clientBuildId: input.clientBuildId } : {}),
+    ...(input.authToken ? { authToken: input.authToken } : {}),
+  };
+}
+
+async function toNextTarget(input: {
   adminUserId: string;
   target: StreamerTarget;
-}): StreamerNextTarget {
+  matchMaker: StreamerMatchMaker;
+  reserveSeat: boolean;
+  clientBuildId?: string | null;
+  authToken?: string | null;
+}): Promise<StreamerNextTarget> {
   const room = input.target.room;
-  return {
+  const streamerObserverTicket = createStreamerObserverTicket({
+    adminUserId: input.adminUserId,
+    gameRoomId: room.roomId,
+  });
+  const target: StreamerNextTarget = {
     roomId: room.roomId,
     roomName: 'game_room',
     processId: room.processId ?? null,
     publicAddress: room.publicAddress ?? null,
     source: input.target.source,
-    streamerObserverTicket: createStreamerObserverTicket({
-      adminUserId: input.adminUserId,
-      gameRoomId: room.roomId,
-    }),
     metadata: getStreamerRoomMetadata(room),
+  };
+
+  if (!input.reserveSeat) return target;
+
+  const seatReservation = await input.matchMaker.reserveSeatFor(
+    room,
+    buildStreamerObserverSeatOptions({
+      streamerObserverTicket,
+      clientBuildId: input.clientBuildId,
+      authToken: input.authToken,
+    })
+  );
+
+  return {
+    ...target,
+    seatReservation: serializeGameSeatReservation(seatReservation),
   };
 }
 
@@ -393,13 +455,18 @@ export async function getNextStreamerTarget(input: {
   adminUserId: string;
   matchMaker: StreamerMatchMaker;
   currentRoomId?: string | null;
+  clientBuildId?: string | null;
+  authToken?: string | null;
   random?: () => number;
 }): Promise<StreamerNextTarget> {
   const random = input.random ?? Math.random;
+  const selectionCurrentRoomId = input.currentRoomId === undefined
+    ? streamerSessions.get(input.adminUserId)?.roomId ?? null
+    : input.currentRoomId;
   const rooms = await input.matchMaker.query({ name: 'game_room' });
   const target = selectStreamerTargetRoom({
     rooms,
-    currentRoomId: input.currentRoomId ?? streamerSessions.get(input.adminUserId)?.roomId ?? null,
+    currentRoomId: selectionCurrentRoomId,
     random,
   });
 
@@ -409,7 +476,14 @@ export async function getNextStreamerTarget(input: {
       roomId: target.room.roomId,
       updatedAt: Date.now(),
     });
-    return toNextTarget({ adminUserId: input.adminUserId, target });
+    return toNextTarget({
+      adminUserId: input.adminUserId,
+      target,
+      matchMaker: input.matchMaker,
+      reserveSeat: target.room.roomId !== input.currentRoomId,
+      clientBuildId: input.clientBuildId,
+      authToken: input.authToken,
+    });
   }
 
   const fallback = await createFallbackRoom({
@@ -433,7 +507,14 @@ export async function getNextStreamerTarget(input: {
     roomId: fallback.room.roomId,
     updatedAt: Date.now(),
   });
-  return toNextTarget({ adminUserId: input.adminUserId, target: nextTarget });
+  return toNextTarget({
+    adminUserId: input.adminUserId,
+    target: nextTarget,
+    matchMaker: input.matchMaker,
+    reserveSeat: true,
+    clientBuildId: input.clientBuildId,
+    authToken: input.authToken,
+  });
 }
 
 export function stopStreamerSession(adminUserId: string): void {

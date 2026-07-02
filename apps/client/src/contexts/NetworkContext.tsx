@@ -1177,10 +1177,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       }
 
       const client = getClient();
-      const room = await client.joinById(target.roomId, {
-        streamerObserverTicket: target.streamerObserverTicket,
-        clientBuildId: config.buildId,
-      });
+      if (!target.seatReservation) {
+        throw new Error(`Streamer target ${target.roomId} is missing a seat reservation`);
+      }
+
+      const room = await client.consumeSeatReservation(target.seatReservation);
       gameRoomRef.current = room;
 
       setupGameListeners(room, 'Streamer');

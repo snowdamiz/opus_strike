@@ -29,6 +29,16 @@ function readCurrentRoomId(req: Request): string | null {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, 128) : null;
 }
 
+function readClientBuildId(req: Request): string | null {
+  const value = req.body?.clientBuildId;
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 128) : null;
+}
+
+function readAuthToken(req: Request): string | null {
+  const value = req.cookies?.auth_token;
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
 function enforceStreamerMutationRateLimit(req: Request, res: Response, adminUser: GameAdminUser): boolean {
   const result = consumeRateLimitForKey(`admin:${adminUser.id}`, {
     keyPrefix: `streamer:${req.path}`,
@@ -77,6 +87,8 @@ export function createStreamerRouter(options: StreamerRouterOptions): Router {
         adminUserId: adminUser.id,
         matchMaker: options.matchMaker,
         currentRoomId: readCurrentRoomId(req),
+        clientBuildId: readClientBuildId(req),
+        authToken: readAuthToken(req),
       });
       res.json({
         target,
