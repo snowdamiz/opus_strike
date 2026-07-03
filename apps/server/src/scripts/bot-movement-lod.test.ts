@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import {
+  DEFAULT_GAMEPLAY_MODE,
   PLAYER_HEIGHT,
+  type GameplayMode,
   type PlayerInput,
+  type Team,
 } from '@voxel-strike/shared';
 import { SERVER_OWNED_MOVEMENT_STEP_SECONDS } from '../rooms/movementCommandDrain';
 import { GameRoom } from '../rooms/GameRoom';
@@ -36,13 +39,24 @@ type BotMovementLodRoom = {
     tier: 'critical' | 'near' | 'background',
     input: PlayerInput
   ): boolean;
+  isBattleRoyalPriorityBot(bot: Player, now: number): boolean;
+  isServerOwnedBotNearBattleRoyalEnemy(bot: Player, distanceSq: number): boolean;
+  isServerOwnedBotNearBattleRoyalDownedPlayer(bot: Player, distanceSq: number): boolean;
   suppressServerOwnedBotSkippedFullStepGameplayInput(input: PlayerInput): void;
   suppressServerOwnedBotHighCountFullStepAbilityInput(input: PlayerInput): void;
   shouldProcessServerOwnedBotProxyGameplayInput(player: Player, input: PlayerInput): boolean;
+  queryPlayersRadiusInto(
+    position: { x: number; y: number; z: number },
+    radius: number,
+    results: Player[],
+    options?: { team?: Team; excludeTeam?: Team; excludeId?: string; includeDowned?: boolean }
+  ): void;
   state: { tick: number; serverTime: number; players: Map<string, Player> };
+  gameplayMode: GameplayMode;
   tickProfiler: { recordCounter(name: string, count?: number): void };
   botsWithReusedInputThisTick: Set<string>;
   playerPressStates: PlayerPressStateTracker;
+  botSimulationHumanScratch: Player[];
   streamerManagedBotGame?: boolean;
   streamerFeedMode?: string | null;
   botMovementFullStepBudgetTick: number;
@@ -56,9 +70,11 @@ type BotMovementLodRoom = {
 function createRoom(): BotMovementLodRoom {
   const room = Object.create(GameRoom.prototype) as BotMovementLodRoom;
   room.state = { tick: 0, serverTime: 1_800_000_000_000, players: new Map() };
+  room.gameplayMode = DEFAULT_GAMEPLAY_MODE;
   room.tickProfiler = { recordCounter: () => undefined };
   room.botsWithReusedInputThisTick = new Set();
   room.playerPressStates = new PlayerPressStateTracker();
+  room.botSimulationHumanScratch = [];
   room.botMovementFullStepBudgetTick = -1;
   room.botMovementFullStepBudgetRemaining = Number.POSITIVE_INFINITY;
   room.clampToPlayableMap = (position) => ({ ...position });
@@ -69,6 +85,22 @@ function createRoom(): BotMovementLodRoom {
     Number.isFinite(position.y) &&
     Number.isFinite(position.z)
   );
+  room.queryPlayersRadiusInto = (position, radius, results, options = {}) => {
+    results.length = 0;
+    const radiusSq = radius * radius;
+    for (const player of room.state.players.values()) {
+      if (options.excludeId && player.id === options.excludeId) continue;
+      if (options.team && player.team !== options.team) continue;
+      if (options.excludeTeam && player.team === options.excludeTeam) continue;
+      if (!options.includeDowned && player.state !== 'alive') continue;
+      const dx = player.position.x - position.x;
+      const dy = player.position.y - position.y;
+      const dz = player.position.z - position.z;
+      if (dx * dx + dy * dy + dz * dz <= radiusSq) {
+        results.push(player);
+      }
+    }
+  };
   return room;
 }
 
@@ -77,19 +109,31 @@ function enableStreamerBotDeathmatch(room: BotMovementLodRoom): void {
   room.streamerFeedMode = 'bot_deathmatch';
 }
 
-function createBot(room: BotMovementLodRoom): Player {
+function createBot(
+  room: BotMovementLodRoom,
+  options: Partial<{
+    id: string;
+    team: Team;
+    heroId: string;
+    isBot: boolean;
+    state: string;
+    x: number;
+    y: number;
+    z: number;
+  }> = {}
+): Player {
   const bot = new Player();
-  bot.id = 'bot-lod';
-  bot.name = 'bot-lod';
-  bot.team = 'red';
-  bot.heroId = 'phantom';
-  bot.state = 'alive';
-  bot.isBot = true;
+  bot.id = options.id ?? 'bot-lod';
+  bot.name = bot.id;
+  bot.team = options.team ?? 'red';
+  bot.heroId = options.heroId ?? 'phantom';
+  bot.state = options.state ?? 'alive';
+  bot.isBot = options.isBot ?? true;
   bot.maxHealth = 200;
   bot.health = 200;
-  bot.position.x = 0;
-  bot.position.z = 0;
-  bot.position.y = PLAYER_HEIGHT / 2;
+  bot.position.x = options.x ?? 0;
+  bot.position.z = options.z ?? 0;
+  bot.position.y = options.y ?? PLAYER_HEIGHT / 2;
   bot.movement.isGrounded = true;
   room.state.players.set(bot.id, bot);
   return bot;
@@ -172,6 +216,16 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
 
 {
   const room = createRoom();
+  room.gameplayMode = 'battle_royal';
+  room.state.tick = 80;
+  for (let index = 0; index < 4; index++) {
+    assert.equal(room.consumeServerOwnedBotMovementFullStepBudget(48, 'critical'), true);
+  }
+  assert.equal(room.consumeServerOwnedBotMovementFullStepBudget(48, 'critical'), false);
+}
+
+{
+  const room = createRoom();
   const counters: string[] = [];
   room.tickProfiler = { recordCounter: (name) => counters.push(name) };
   room.state.tick = 88;
@@ -228,6 +282,15 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'background'), Number.POSITIVE_INFINITY);
   assert.equal(room.getBotLineOfSightFrameBudget(48), Number.POSITIVE_INFINITY);
   assert.equal(room.getBotSteeringProbeFrameBudget(48), Number.POSITIVE_INFINITY);
+}
+
+{
+  const room = createRoom();
+  room.gameplayMode = 'battle_royal';
+  const planningBudgets = room.getBotPlanningBudgets(48);
+
+  assert.equal(planningBudgets.urgentBudget, 6);
+  assert.equal(planningBudgets.deferredBudget, 2);
 }
 
 {
@@ -312,6 +375,30 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
 {
   const room = createRoom();
   const bot = createBot(room);
+  room.gameplayMode = 'battle_royal';
+  bot.team = 'br_01';
+  bot.lastInput = botInput(bot, {
+    interact: true,
+    primaryFire: true,
+    secondaryFire: true,
+    ability1: true,
+    ability2: true,
+    ultimate: true,
+  });
+
+  room.continueDeferredBotInput(bot.id, 1_800_000_000_000, 'critical');
+
+  assert.equal(bot.lastInput?.interact, true);
+  assert.equal(bot.lastInput?.primaryFire, true);
+  assert.equal(bot.lastInput?.secondaryFire, true);
+  assert.equal(bot.lastInput?.ability1, false);
+  assert.equal(bot.lastInput?.ability2, false);
+  assert.equal(bot.lastInput?.ultimate, false);
+}
+
+{
+  const room = createRoom();
+  const bot = createBot(room);
   const inertInput = botInput(bot, { moveForward: false, sprint: false });
   assert.equal(room.shouldProcessServerOwnedBotProxyGameplayInput(bot, inertInput), false);
 
@@ -361,6 +448,30 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
 
 {
   const room = createRoom();
+  room.gameplayMode = 'battle_royal';
+  const bot = createBot(room, { team: 'br_01' });
+  const input = botInput(bot, {
+    primaryFire: true,
+    secondaryFire: true,
+    ability1: true,
+    ability2: true,
+    ultimate: true,
+    interact: true,
+  });
+
+  room.suppressServerOwnedBotSkippedFullStepGameplayInput(input);
+
+  assert.equal(input.primaryFire, false);
+  assert.equal(input.secondaryFire, false);
+  assert.equal(input.ability1, false);
+  assert.equal(input.ability2, false);
+  assert.equal(input.ultimate, false);
+  assert.equal(input.interact, true);
+  assert.equal(room.shouldProcessServerOwnedBotProxyGameplayInput(bot, input), true);
+}
+
+{
+  const room = createRoom();
   const bot = createBot(room);
   const input = botInput(bot, {
     primaryFire: true,
@@ -379,6 +490,29 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   assert.equal(input.ability2, false);
   assert.equal(input.ultimate, false);
   assert.equal(input.interact, false);
+}
+
+{
+  const room = createRoom();
+  room.gameplayMode = 'battle_royal';
+  const bot = createBot(room);
+  const input = botInput(bot, {
+    primaryFire: true,
+    secondaryFire: true,
+    ability1: true,
+    ability2: true,
+    ultimate: true,
+    interact: true,
+  });
+
+  room.suppressServerOwnedBotHighCountFullStepAbilityInput(input);
+
+  assert.equal(input.primaryFire, true);
+  assert.equal(input.secondaryFire, true);
+  assert.equal(input.ability1, false);
+  assert.equal(input.ability2, false);
+  assert.equal(input.ultimate, false);
+  assert.equal(input.interact, true);
 }
 
 {
@@ -444,6 +578,39 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
       botInput(bot, { ability1: true })
     ),
     false
+  );
+}
+
+{
+  const room = createRoom();
+  room.gameplayMode = 'battle_royal';
+  const bot = createBot(room, { team: 'br_01', x: 0, z: 0 });
+  createBot(room, { id: 'enemy-bot', team: 'br_02', x: 10, z: 0 });
+
+  assert.equal(room.isServerOwnedBotNearBattleRoyalEnemy(bot, 24 * 24), true);
+  assert.equal(room.isBattleRoyalPriorityBot(bot, 1_800_000_000_000), true);
+}
+
+{
+  const room = createRoom();
+  room.gameplayMode = 'battle_royal';
+  const bot = createBot(room, { team: 'br_01', x: 0, z: 0 });
+  createBot(room, { id: 'downed-enemy-bot', team: 'br_02', x: 8, z: 0, state: 'downed' });
+
+  assert.equal(room.isServerOwnedBotNearBattleRoyalDownedPlayer(bot, 18 * 18), true);
+}
+
+{
+  const room = createRoom();
+  room.gameplayMode = 'battle_royal';
+  const bot = createBot(room);
+  assert.equal(
+    room.shouldServerOwnedBotMovementReasonBypassBudget(
+      'movement_bot_lod_full_input',
+      'critical',
+      botInput(bot, { interact: true })
+    ),
+    true
   );
 }
 

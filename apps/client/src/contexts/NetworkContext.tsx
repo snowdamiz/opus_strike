@@ -521,6 +521,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const setupLobbyListeners = useCallback((room: Room, playerName: string) => {
     setupLobbyRoomListeners(room, {
       playerName,
+      lobbyRoomRef,
       joinGameRoom: (...args) => {
         const joinGameRoom = joinGameRoomRef.current;
         if (!joinGameRoom) {

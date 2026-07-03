@@ -158,8 +158,10 @@ export class MatchStartGateTracker {
     return this.open && key === this.currentKey;
   }
 
-  markSceneReady(playerId: string): void {
+  markSceneReady(playerId: string): boolean {
+    const wasReady = this.sceneReadyPlayerIds.has(playerId);
     this.sceneReadyPlayerIds.add(playerId);
+    return !wasReady;
   }
 
   clearPlayer(playerId: string): void {

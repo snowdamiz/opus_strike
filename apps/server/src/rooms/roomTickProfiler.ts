@@ -77,6 +77,7 @@ export const ROOM_TICK_COUNTER_NAMES = [
   'movement_bot_lod_full_active_ability',
   'movement_bot_lod_full_airborne',
   'movement_bot_lod_full_enemy_human',
+  'movement_bot_lod_full_enemy_battle_royal',
   'movement_npc_commands_processed',
 ] as const;
 

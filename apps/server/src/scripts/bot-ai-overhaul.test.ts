@@ -415,6 +415,59 @@ function testBattleRoyalReviveAndFinishIntents() {
   assert.equal(combatPlan.targetId, downedEnemy.id);
 }
 
+function testBattleRoyalBotsPrioritizeHumanRevives() {
+  const bot = player({ id: 'rescue-bot', team: 'br_01', heroId: 'hookshot', x: 0, z: 0 });
+  const closerBotAlly = player({ id: 'bot-ally-downed', team: 'br_01', heroId: 'blaze', x: 5, z: 0, state: 'downed' });
+  const humanAlly = player({ id: 'human-ally-downed', team: 'br_01', heroId: 'phantom', x: 45, z: 0, state: 'downed', isBot: false });
+  const enemy = player({ id: 'enemy-pressure', team: 'br_02', heroId: 'hookshot', x: 8, z: 0 });
+  const board = blackboardFor(bot, [bot, closerBotAlly, humanAlly, enemy], {
+    gameplayMode: 'battle_royal',
+    visibleEnemyIds: [enemy.id],
+    losEnemyIds: [enemy.id],
+  });
+  const intent = scoreBotIntents(bot, board, getBotSkillProfile('hard'));
+  const combatPlan = chooseBotCombatPlan({
+    bot,
+    intent,
+    blackboard: board,
+    skill: getBotSkillProfile('hard'),
+    primaryRange: 18,
+    protectedEnemyIds: new Set(),
+  });
+
+  assert.equal(board.nearestDownedAlly?.id, humanAlly.id);
+  assert.equal(intent.type, 'revive_teammate');
+  assert.equal(intent.targetPlayerId, humanAlly.id);
+  assert.equal(combatPlan.targetId, null);
+  assert.equal(combatPlan.reason, 'revive teammate priority');
+}
+
+function testBattleRoyalTacticsAssignHumanSupportBeforeFinish() {
+  const supportBot = player({ id: 'support-bot', team: 'br_01', heroId: 'chronos', x: 0, z: 0 });
+  const humanAlly = player({ id: 'human-squadmate', team: 'br_01', heroId: 'phantom', x: 26, z: 0, isBot: false });
+  const downedEnemy = player({ id: 'downed-enemy', team: 'br_02', heroId: 'blaze', x: 4, z: 0, state: 'downed' });
+  const tactics = buildTeamTactics({
+    gameplayMode: 'battle_royal',
+    now: NOW,
+    revision: 1,
+    players: [supportBot, humanAlly, downedEnemy],
+    flags: flags(),
+  })[supportBot.team];
+
+  assert.equal(tactics.assignments[supportBot.id].job, 'support_cluster');
+  assert.equal(tactics.assignments[supportBot.id].targetPlayerId, humanAlly.id);
+  assert.equal(tactics.assignments[supportBot.id].reason, 'battle royal human squad support');
+
+  const board = blackboardFor(supportBot, [supportBot, humanAlly, downedEnemy], {
+    gameplayMode: 'battle_royal',
+    visibleEnemyIds: [],
+    losEnemyIds: [],
+  });
+  const intent = scoreBotIntents(supportBot, board, getBotSkillProfile('normal'));
+  assert.equal(intent.type, 'peel_for_ally');
+  assert.equal(intent.targetPlayerId, humanAlly.id);
+}
+
 function testBattleRoyalDisengagesBadThirdPartyFight() {
   const bot = player({ id: 'pinched-bot', team: 'br_01', heroId: 'phantom', x: 0, z: 0, health: 75, maxHealth: 120 });
   const enemyA = player({ id: 'enemy-a', team: 'br_02', heroId: 'hookshot', x: 8, z: 0, isBot: false });
@@ -427,6 +480,20 @@ function testBattleRoyalDisengagesBadThirdPartyFight() {
   const intent = scoreBotIntents(bot, board, getBotSkillProfile('normal'));
 
   assert.equal(intent.type, 'disengage_third_party');
+}
+
+function testBattleRoyalLowHealthRetreatMovesAwayFromThreat() {
+  const bot = player({ id: 'retreat-bot', team: 'br_01', heroId: 'phantom', x: 0, z: 0, health: 25, maxHealth: 120 });
+  const enemy = player({ id: 'close-enemy', team: 'br_02', heroId: 'hookshot', x: 8, z: 0 });
+  const board = blackboardFor(bot, [bot, enemy], {
+    gameplayMode: 'battle_royal',
+    visibleEnemyIds: [enemy.id],
+    losEnemyIds: [enemy.id],
+  });
+  const intent = scoreBotIntents(bot, board, getBotSkillProfile('normal'));
+
+  assert.equal(intent.type, 'retreat');
+  assert.ok(intent.targetPosition.x < -12, `expected BR retreat target away from enemy, got ${JSON.stringify(intent.targetPosition)}`);
 }
 
 function testIntentScoring() {
@@ -1694,7 +1761,10 @@ testBattleRoyalTacticsUseAllEnemySquads();
 testRankedBattleRoyalProfileIsStrongerThanHard();
 testBattleRoyalSafeZoneIntentRotatesBeforeFighting();
 testBattleRoyalReviveAndFinishIntents();
+testBattleRoyalBotsPrioritizeHumanRevives();
+testBattleRoyalTacticsAssignHumanSupportBeforeFinish();
 testBattleRoyalDisengagesBadThirdPartyFight();
+testBattleRoyalLowHealthRetreatMovesAwayFromThreat();
 testIntentScoring();
 testRoutePlannerAvoidsBlockedEdge();
 testRoutePlannerSkipsNearbyStartNodeForOutgoingGoals();
