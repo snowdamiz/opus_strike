@@ -6,11 +6,13 @@ import {
 } from '@voxel-strike/shared';
 import {
   addMissingBotMapVotes,
+  BATTLE_ROYAL_EVENT_BIOME_CHANCE_BPS,
   buildMapVoteStartedPayload,
   buildMapVoteUpdatedPayload,
   createMapLaunchSelection,
   createMapVoteOption,
   createMapVoteOptions,
+  getBattleRoyalEventBiomeThemeId,
   getBattleRoyalMapSizeForParticipantCount,
   getMapVoteRecords,
   getWinningMapOption,
@@ -58,7 +60,7 @@ for (const gameplayMode of ['capture_the_flag', 'team_deathmatch'] as const) {
   }
 }
 
-// Battle royal never gets an event map (it skips the vote entirely).
+// Battle royal skips map voting; event-biome selection happens during direct launch instead.
 {
   const options = createMapVoteOptions({
     gameplayMode: 'battle_royal',
@@ -75,6 +77,29 @@ for (const gameplayMode of ['capture_the_flag', 'team_deathmatch'] as const) {
   });
 
   assert.deepEqual(options, []);
+}
+
+{
+  let eventRolls = 0;
+  const sampleSize = 10_000;
+  for (let seed = 0; seed < sampleSize; seed++) {
+    if (getBattleRoyalEventBiomeThemeId({
+      seed,
+      eventThemeId: INDEPENDENCE_VOXEL_MAP_THEME_ID,
+    }) === INDEPENDENCE_VOXEL_MAP_THEME_ID) {
+      eventRolls++;
+    }
+  }
+
+  const expectedRolls = sampleSize * (BATTLE_ROYAL_EVENT_BIOME_CHANCE_BPS / 10_000);
+  assert.ok(
+    Math.abs(eventRolls - expectedRolls) <= sampleSize * 0.03,
+    `expected battle royal event biome rolls near 33%, got ${eventRolls}/${sampleSize}`
+  );
+  assert.equal(getBattleRoyalEventBiomeThemeId({
+    seed: 0,
+    eventThemeId: null,
+  }), null);
 }
 
 {

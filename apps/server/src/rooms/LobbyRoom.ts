@@ -96,6 +96,7 @@ import {
   buildMapVoteUpdatedPayload,
   createMapLaunchSelection,
   createMapVoteOptions,
+  getBattleRoyalEventBiomeThemeId,
   getMapVoteRecords,
   getWinningMapOption,
   haveAllHumanPlayersVoted,
@@ -1584,6 +1585,14 @@ export class LobbyRoom extends Room<LobbyState> {
           error: error instanceof Error ? error.message : String(error),
         });
       }
+    }
+
+    if (this.gameplayMode === 'battle_royal') {
+      const eventThemeId = getBattleRoyalEventBiomeThemeId({
+        seed,
+        eventThemeId: await getEnabledEventBiomeThemeId(),
+      });
+      if (eventThemeId) return eventThemeId;
     }
 
     return getVoxelMapTheme(seed).id;

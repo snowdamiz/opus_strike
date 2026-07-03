@@ -60,7 +60,7 @@ export interface CreateMapVoteOptionsInput {
   /**
    * When set, one of the generated map-vote options is forced to use this biome (e.g. the
    * temporary Independence Day event theme). The theme is carried through as `mapThemeId`
-   * so it survives voting and drives the live match. Ignored for battle royal.
+   * so it survives voting and drives the live match. Battle royal uses a launch-time roll.
    */
   eventThemeId?: VoxelMapTheme['id'] | null;
 }
@@ -82,6 +82,9 @@ const MAP_NAME_SUFFIXES = [
   'Ridge',
   'Gate',
 ];
+
+export const BATTLE_ROYAL_EVENT_BIOME_CHANCE_BPS = 3_300;
+const BATTLE_ROYAL_EVENT_BIOME_ROLL_SALT = 0x1776_2026;
 
 function getShuffledThemeIndices(source: number): number[] {
   const themeIndices = VOXEL_MAP_THEMES.map((_, index) => index);
@@ -175,6 +178,17 @@ export function getBattleRoyalMapSizeForParticipantCount(input: {
   if (participantCount <= smallMaxPlayers) return 'small';
   if (participantCount >= largeMinPlayers) return 'large';
   return 'medium';
+}
+
+export function getBattleRoyalEventBiomeThemeId(input: {
+  seed: number;
+  eventThemeId?: VoxelMapTheme['id'] | null;
+}): VoxelMapTheme['id'] | null {
+  const eventThemeId = input.eventThemeId ?? null;
+  if (!eventThemeId) return null;
+
+  const roll = hashSeed((input.seed >>> 0) ^ BATTLE_ROYAL_EVENT_BIOME_ROLL_SALT) % 10_000;
+  return roll < BATTLE_ROYAL_EVENT_BIOME_CHANCE_BPS ? eventThemeId : null;
 }
 
 export function createMapLaunchSelection(input: CreateMapVoteOptionsInput): MapLaunchSelection {
