@@ -103,10 +103,10 @@ export const GAMEPLAY_MODE_RULES = {
   battle_royal: {
     id: 'battle_royal',
     label: 'Battle Royal',
-    maxPlayers: 33,
+    maxPlayers: 27,
     minPlayers: 12,
     maxTeamSize: 3,
-    maxTeams: 11,
+    maxTeams: 9,
     scoreToWin: 0,
     roundTimeSeconds: 1200,
     respawnTimeSeconds: 0,
@@ -125,8 +125,8 @@ export const GAMEPLAY_MODE_RULES = {
     powerupsEnabled: true,
     botsEnabled: true,
     rankedEnabled: true,
-    capacityWeight: 33 / 8,
-    expectedRoomCost: 33,
+    capacityWeight: 27 / 8,
+    expectedRoomCost: 27,
   },
 } as const satisfies Record<GameplayMode, GameplayModeRules>;
 

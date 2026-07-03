@@ -126,6 +126,12 @@ assert.equal(
 );
 
 assert.equal(
+  getRemoteStatusPlateMode(teammate, NAMEPLATES_DISABLED_CONFIG, true, localTeam, anchorPosition),
+  'fullTeam',
+  'battle royale teammates should get a team-tagged full nameplate even when normal nameplates are disabled'
+);
+
+assert.equal(
   getRemoteStatusPlateMode(teammate, NAMEPLATES_DISABLED_CONFIG, false, localTeam, anchorPosition),
   null,
   'disabled nameplates should stay disabled for teammates'

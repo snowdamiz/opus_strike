@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { buildGameRoomMetadata } from '../rooms/roomMetadataSnapshot';
 import type { RoomLoadSnapshot } from '../rooms/roomLoadSnapshot';
+import { getGameplayModeCapacityCost, getGameplayModeRules } from '@voxel-strike/shared';
+
+const battleRoyalRules = getGameplayModeRules('battle_royal');
+const battleRoyalTwelveHumanCapacityCost = getGameplayModeCapacityCost('battle_royal', 12);
 
 const tickOperationCounts = {
   bot_los_checks: 29,
@@ -247,12 +251,12 @@ const load: RoomLoadSnapshot = {
       participantCount: 12,
       entityCount: 12,
     },
-    maxPlayers: 33,
+    maxPlayers: battleRoyalRules.maxPlayers,
     mapRenderableChunkCount: 3000,
     mapColliderCount: 80000,
     mapSolidBlockCount: 2200000,
     reservedHumanPlayers: 12,
-    capacityPlayerCost: 50,
+    capacityPlayerCost: battleRoyalTwelveHumanCapacityCost,
     streamerObserverCount: 0,
     rankedEligibilityCandidate: false,
     rankedRequiredHumanPlayers: 12,
@@ -262,8 +266,8 @@ const load: RoomLoadSnapshot = {
 
   assert.equal(metadata.gameplayMode, 'battle_royal');
   assert.equal(metadata.mapProfileId, 'battle_royal_large');
-  assert.equal(metadata.playerCap, 33);
-  assert.equal(metadata.capacityPlayerCost, 50);
+  assert.equal(metadata.playerCap, battleRoyalRules.maxPlayers);
+  assert.equal(metadata.capacityPlayerCost, battleRoyalTwelveHumanCapacityCost);
   assert.equal(metadata.mapRenderableChunkCount, 3000);
   assert.equal(metadata.mapColliderCount, 80000);
   assert.equal(metadata.mapSolidBlockCount, 2200000);

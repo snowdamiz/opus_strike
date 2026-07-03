@@ -14,6 +14,7 @@ import {
   createInitialBotBrain,
   createBotRouteGraphAdapter,
   getBotAimReadinessTrace,
+  getBotAwarenessRange,
   getBotCombatEngagementState,
   getBotPredictedAimPoint,
   getBotLocomotionActionState,
@@ -362,6 +363,22 @@ function testRankedBattleRoyalProfileIsStrongerThanHard() {
   assert.ok(ranked.fireChance > hard.fireChance);
   assert.ok(ranked.routeDangerWeight > hard.routeDangerWeight);
   assert.ok(ranked.pathExpansionLimit > hard.pathExpansionLimit);
+}
+
+function testBattleRoyalAwarenessExtendsFocusPressure() {
+  const bot = player({ id: 'br-pressure-bot', team: 'br_01', heroId: 'phantom', x: 0, z: 0 });
+  const nearerHealthy = player({ id: 'nearer-healthy', team: 'br_02', heroId: 'hookshot', x: 50, z: 0 });
+  const fartherWeak = player({ id: 'farther-weak', team: 'br_03', heroId: 'blaze', x: 65, z: 0, health: 45 });
+  const tactics = buildTeamTactics({
+    gameplayMode: 'battle_royal',
+    now: NOW,
+    revision: 1,
+    players: [bot, nearerHealthy, fartherWeak],
+    flags: flags(),
+  })[bot.team];
+
+  assert.ok(getBotAwarenessRange('battle_royal') > getBotAwarenessRange(DEFAULT_GAMEPLAY_MODE));
+  assert.equal(tactics.assignments[bot.id].targetPlayerId, fartherWeak.id);
 }
 
 function testBattleRoyalSafeZoneIntentRotatesBeforeFighting() {
@@ -1759,6 +1776,7 @@ function testContestedObjectiveStillSpendsControlUltimate() {
 testTeamTacticsAssignments();
 testBattleRoyalTacticsUseAllEnemySquads();
 testRankedBattleRoyalProfileIsStrongerThanHard();
+testBattleRoyalAwarenessExtendsFocusPressure();
 testBattleRoyalSafeZoneIntentRotatesBeforeFighting();
 testBattleRoyalReviveAndFinishIntents();
 testBattleRoyalBotsPrioritizeHumanRevives();

@@ -23,8 +23,6 @@ export const BATTLE_ROYAL_TEAM_IDS = [
   'br_07',
   'br_08',
   'br_09',
-  'br_10',
-  'br_11',
 ] as const;
 
 export const TEAM_CATALOG = [
@@ -114,22 +112,6 @@ export const TEAM_CATALOG = [
     compactLabel: 'I9',
     color: '#0ea5e9',
     accentColor: '#bae6fd',
-    modeIds: ['battle_royal'],
-  },
-  {
-    id: 'br_10',
-    label: 'Javelin Team',
-    compactLabel: 'J10',
-    color: '#ec4899',
-    accentColor: '#fbcfe8',
-    modeIds: ['battle_royal'],
-  },
-  {
-    id: 'br_11',
-    label: 'Kilo Team',
-    compactLabel: 'K11',
-    color: '#6366f1',
-    accentColor: '#c7d2fe',
     modeIds: ['battle_royal'],
   },
 ] as const satisfies readonly TeamCatalogEntry[];

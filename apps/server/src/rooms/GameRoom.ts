@@ -525,7 +525,6 @@ import {
 import { buildAuthRejectRecord } from './authRejectRuntime';
 import { buildClientJoinHintRecords } from './clientJoinHintsRuntime';
 import {
-  BOT_AWARENESS_RANGE,
   BOT_CLOSE_REVEAL_RANGE,
   BOT_TACTICS_INTERVAL_MS,
   BOT_THINK_INTERVAL_MS,
@@ -539,6 +538,7 @@ import {
   composeBotMovementDirection,
   createInitialBotBrain,
   createSteeringProbeDirections,
+  getBotAwarenessRange as resolveBotAwarenessRange,
   getBotAimReadinessTrace,
   getBotCombatEngagementState,
   getBotPredictedAimPoint,
@@ -868,8 +868,6 @@ const BOT_MID_URGENT_PLANNING_BUDGET_PER_TICK = 3;
 const BOT_MID_DEFERRED_PLANNING_BUDGET_PER_TICK = 1;
 const BOT_MIN_URGENT_PLANNING_BUDGET_PER_TICK = 2;
 const BOT_MIN_DEFERRED_PLANNING_BUDGET_PER_TICK = 1;
-const BOT_BATTLE_ROYAL_MIN_URGENT_PLANNING_BUDGET_PER_TICK = 6;
-const BOT_BATTLE_ROYAL_MIN_DEFERRED_PLANNING_BUDGET_PER_TICK = 2;
 const BOT_MOVEMENT_LOD_START_COUNT = 8;
 const BOT_MOVEMENT_LOD_MEDIUM_COUNT = 16;
 const BOT_MOVEMENT_LOD_HIGH_COUNT = 32;
@@ -880,9 +878,9 @@ const BOT_BATTLE_ROYAL_CRITICAL_ENEMY_DISTANCE_SQ = BOT_BATTLE_ROYAL_CRITICAL_EN
 const BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_LOW = 3;
 const BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_MEDIUM = 2;
 const BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_HIGH = 1;
-const BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_LOW = 5;
-const BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_MEDIUM = 4;
-const BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_HIGH = 4;
+const BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_LOW = 12;
+const BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_MEDIUM = 18;
+const BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_HIGH = 24;
 const BOT_MOVEMENT_LOD_PROXY_MAX_DISTANCE = 0.68;
 const BOT_MOVEMENT_LOD_PROXY_MAX_GROUND_DELTA = 0.95;
 const BOT_MOVEMENT_LOD_PROXY_MIN_HORIZONTAL_SPEED = 0.05;
@@ -906,13 +904,22 @@ const BOT_PERCEPTION_LOS_NEAR_HIGH_CANDIDATE_LIMIT = 3;
 const BOT_PERCEPTION_LOS_BACKGROUND_LOW_CANDIDATE_LIMIT = 2;
 const BOT_PERCEPTION_LOS_BACKGROUND_MEDIUM_CANDIDATE_LIMIT = 2;
 const BOT_PERCEPTION_LOS_BACKGROUND_HIGH_CANDIDATE_LIMIT = 1;
+const BOT_BATTLE_ROYAL_PERCEPTION_LOS_CRITICAL_CANDIDATE_LIMIT = 14;
+const BOT_BATTLE_ROYAL_PERCEPTION_LOS_NEAR_CANDIDATE_LIMIT = 10;
+const BOT_BATTLE_ROYAL_PERCEPTION_LOS_BACKGROUND_CANDIDATE_LIMIT = 6;
 const BOT_PERCEPTION_LOS_TARGET_SCORE_BONUS = 10_000;
 const BOT_PERCEPTION_LOS_FRAME_BUDGET_LOW = 12;
 const BOT_PERCEPTION_LOS_FRAME_BUDGET_MEDIUM = 14;
 const BOT_PERCEPTION_LOS_FRAME_BUDGET_HIGH = 16;
+const BOT_BATTLE_ROYAL_PERCEPTION_LOS_FRAME_BUDGET_LOW = 48;
+const BOT_BATTLE_ROYAL_PERCEPTION_LOS_FRAME_BUDGET_MEDIUM = 72;
+const BOT_BATTLE_ROYAL_PERCEPTION_LOS_FRAME_BUDGET_HIGH = 96;
 const BOT_STEERING_PROBE_FRAME_BUDGET_LOW = 12;
 const BOT_STEERING_PROBE_FRAME_BUDGET_MEDIUM = 14;
 const BOT_STEERING_PROBE_FRAME_BUDGET_HIGH = 16;
+const BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_LOW = 48;
+const BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_MEDIUM = 72;
+const BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_HIGH = 96;
 const BOT_INITIAL_THINK_STAGGER_MS = BOT_THINK_INTERVAL_MS;
 const BOT_INITIAL_BLACKBOARD_STAGGER_MS = BOT_TACTICS_INTERVAL_MS;
 const EMPTY_BOT_PERCEPTION_IDS = new Set<string>();
@@ -7543,6 +7550,13 @@ export class GameRoom extends Room<GameState> {
       };
     }
 
+    if (isBattleRoyalMode(this.gameplayMode)) {
+      return {
+        urgentBudget: scheduledBotCount,
+        deferredBudget: scheduledBotCount,
+      };
+    }
+
     if (scheduledBotCount <= BOT_FULL_RATE_PLANNING_COUNT) {
       return {
         urgentBudget: BOT_URGENT_PLANNING_BUDGET_PER_TICK,
@@ -7558,7 +7572,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     const scale = BOT_PLANNING_LOD_START_COUNT / scheduledBotCount;
-    const lodBudget = {
+    return {
       urgentBudget: Math.max(
         BOT_MIN_URGENT_PLANNING_BUDGET_PER_TICK,
         Math.round(BOT_MID_URGENT_PLANNING_BUDGET_PER_TICK * scale)
@@ -7566,17 +7580,6 @@ export class GameRoom extends Room<GameState> {
       deferredBudget: Math.max(
         BOT_MIN_DEFERRED_PLANNING_BUDGET_PER_TICK,
         Math.floor(BOT_MID_DEFERRED_PLANNING_BUDGET_PER_TICK * scale)
-      ),
-    };
-    if (!isBattleRoyalMode(this.gameplayMode)) return lodBudget;
-    return {
-      urgentBudget: Math.min(
-        scheduledBotCount,
-        Math.max(lodBudget.urgentBudget, BOT_BATTLE_ROYAL_MIN_URGENT_PLANNING_BUDGET_PER_TICK)
-      ),
-      deferredBudget: Math.min(
-        scheduledBotCount,
-        Math.max(lodBudget.deferredBudget, BOT_BATTLE_ROYAL_MIN_DEFERRED_PLANNING_BUDGET_PER_TICK)
       ),
     };
   }
@@ -7993,6 +7996,7 @@ export class GameRoom extends Room<GameState> {
 
     const perception = this.allocateBotPerceptionSets();
     const { visibleEnemyIds, enemyLineOfSightIds, lineOfSightUnknownEnemyIds } = perception;
+    const awarenessRange = resolveBotAwarenessRange(this.gameplayMode);
     const losCandidateLimit = this.getBotPerceptionLineOfSightCandidateLimit(
       frameContext.aliveBotCount,
       simulationTier
@@ -8007,7 +8011,7 @@ export class GameRoom extends Room<GameState> {
     for (const enemy of candidates) {
       this.tickProfiler.recordCounter('bot_perception_candidates');
       const distance = distance3D(bot.position, enemy.position);
-      if (distance > BOT_AWARENESS_RANGE && !enemy.hasFlag) continue;
+      if (distance > awarenessRange && !enemy.hasFlag) continue;
 
       const veil = enemy.abilities.get('phantom_veil');
       if (veil?.isActive && !enemy.hasFlag && distance > BOT_CLOSE_REVEAL_RANGE) continue;
@@ -8083,6 +8087,11 @@ export class GameRoom extends Room<GameState> {
     simulationTier: BotSimulationTier
   ): number {
     if (this.isStreamerBotDeathmatchFeed()) return Number.POSITIVE_INFINITY;
+    if (isBattleRoyalMode(this.gameplayMode)) {
+      if (simulationTier === 'background') return BOT_BATTLE_ROYAL_PERCEPTION_LOS_BACKGROUND_CANDIDATE_LIMIT;
+      if (simulationTier === 'near') return BOT_BATTLE_ROYAL_PERCEPTION_LOS_NEAR_CANDIDATE_LIMIT;
+      return BOT_BATTLE_ROYAL_PERCEPTION_LOS_CRITICAL_CANDIDATE_LIMIT;
+    }
     if (aliveBotCount <= BOT_PERCEPTION_LOS_LOD_START_COUNT) {
       if (simulationTier === 'background') return BOT_PERCEPTION_LOS_BACKGROUND_LOW_CANDIDATE_LIMIT;
       if (simulationTier === 'near') return BOT_PERCEPTION_LOS_NEAR_LOW_CANDIDATE_LIMIT;
@@ -8104,6 +8113,11 @@ export class GameRoom extends Room<GameState> {
   private getBotLineOfSightFrameBudget(aliveBotCount: number): number {
     if (this.isStreamerBotDeathmatchFeed()) return Number.POSITIVE_INFINITY;
     if (aliveBotCount < BOT_PERCEPTION_LOS_LOD_START_COUNT) return Number.POSITIVE_INFINITY;
+    if (isBattleRoyalMode(this.gameplayMode)) {
+      if (aliveBotCount >= BOT_PERCEPTION_LOS_LOD_HIGH_COUNT) return BOT_BATTLE_ROYAL_PERCEPTION_LOS_FRAME_BUDGET_HIGH;
+      if (aliveBotCount >= BOT_PERCEPTION_LOS_LOD_MEDIUM_COUNT) return BOT_BATTLE_ROYAL_PERCEPTION_LOS_FRAME_BUDGET_MEDIUM;
+      return BOT_BATTLE_ROYAL_PERCEPTION_LOS_FRAME_BUDGET_LOW;
+    }
     if (aliveBotCount >= BOT_PERCEPTION_LOS_LOD_HIGH_COUNT) return BOT_PERCEPTION_LOS_FRAME_BUDGET_HIGH;
     if (aliveBotCount >= BOT_PERCEPTION_LOS_LOD_MEDIUM_COUNT) return BOT_PERCEPTION_LOS_FRAME_BUDGET_MEDIUM;
     return BOT_PERCEPTION_LOS_FRAME_BUDGET_LOW;
@@ -8158,7 +8172,7 @@ export class GameRoom extends Room<GameState> {
     const enemyTeam = getEnemyTeam(bot.team);
     this.queryPlayersRadiusInto(
       bot.position,
-      BOT_AWARENESS_RANGE,
+      resolveBotAwarenessRange(this.gameplayMode),
       candidates,
       { team: enemyTeam, excludeId: bot.id }
     );
@@ -8294,6 +8308,11 @@ export class GameRoom extends Room<GameState> {
   private getBotSteeringProbeFrameBudget(aliveBotCount: number): number {
     if (this.isStreamerBotDeathmatchFeed()) return Number.POSITIVE_INFINITY;
     if (aliveBotCount < BOT_MOVEMENT_LOD_START_COUNT) return Number.POSITIVE_INFINITY;
+    if (isBattleRoyalMode(this.gameplayMode)) {
+      if (aliveBotCount >= BOT_MOVEMENT_LOD_HIGH_COUNT) return BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_HIGH;
+      if (aliveBotCount >= BOT_MOVEMENT_LOD_MEDIUM_COUNT) return BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_MEDIUM;
+      return BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_LOW;
+    }
     if (aliveBotCount >= BOT_MOVEMENT_LOD_HIGH_COUNT) return BOT_STEERING_PROBE_FRAME_BUDGET_HIGH;
     if (aliveBotCount >= BOT_MOVEMENT_LOD_MEDIUM_COUNT) return BOT_STEERING_PROBE_FRAME_BUDGET_MEDIUM;
     return BOT_STEERING_PROBE_FRAME_BUDGET_LOW;
@@ -8655,7 +8674,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private canBotPerceiveEnemy(enemy: Player, distance: number, hasLineOfSight: boolean): boolean {
-    if (distance > BOT_AWARENESS_RANGE && !enemy.hasFlag) return false;
+    if (distance > resolveBotAwarenessRange(this.gameplayMode) && !enemy.hasFlag) return false;
 
     const veil = enemy.abilities.get('phantom_veil');
     if (veil?.isActive && !enemy.hasFlag && distance > BOT_CLOSE_REVEAL_RANGE) {
@@ -10896,7 +10915,7 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    if (this.getAliveBotMovementLodCount() >= BOT_MOVEMENT_LOD_HIGH_COUNT) {
+    if (this.shouldSuppressServerOwnedBotHighCountFullStepAbilityInput(simulationTier)) {
       this.suppressServerOwnedBotHighCountFullStepAbilityInput(input);
     }
 
@@ -10989,6 +11008,11 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private shouldSuppressServerOwnedBotHighCountFullStepAbilityInput(simulationTier: BotSimulationTier): boolean {
+    if (this.getAliveBotMovementLodCount() < BOT_MOVEMENT_LOD_HIGH_COUNT) return false;
+    return !(isBattleRoyalMode(this.gameplayMode) && simulationTier === 'critical');
+  }
+
   private shouldProcessMovementGameplayInput(player: Player, input: PlayerInput): boolean {
     if (
       input.primaryFire ||
@@ -11065,8 +11089,18 @@ export class GameRoom extends Room<GameState> {
     tier: BotSimulationTier,
     input: PlayerInput
   ): boolean {
-    if (tier === 'critical' && isBattleRoyalMode(this.gameplayMode) && input.interact) return true;
+    if (tier === 'critical' && isBattleRoyalMode(this.gameplayMode)) {
+      if (input.interact) return true;
+      if (this.isCriticalBattleRoyalBotMovementFullRateReason(reason)) return true;
+    }
     return this.isCriticalServerOwnedBotMovementFullRateReason(reason);
+  }
+
+  private isCriticalBattleRoyalBotMovementFullRateReason(reason: RoomTickCounterName): boolean {
+    return reason === 'movement_bot_lod_full_enemy_battle_royal' ||
+      reason === 'movement_bot_lod_full_input' ||
+      reason === 'movement_bot_lod_full_active_ability' ||
+      reason === 'movement_bot_lod_full_airborne';
   }
 
   private isCriticalServerOwnedBotMovementFullRateReason(reason: RoomTickCounterName): boolean {

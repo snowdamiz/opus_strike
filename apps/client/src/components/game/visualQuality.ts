@@ -476,6 +476,8 @@ const BATTLE_ROYAL_FLIGHT_CULL_PADDING = 96;
 const BATTLE_ROYAL_FLIGHT_CAMERA_FAR_PADDING = 96;
 const BATTLE_ROYAL_FLIGHT_MIN_TERRAIN_CULL_DISTANCE = 760;
 const BATTLE_ROYAL_FLIGHT_MIN_CAMERA_FAR = 860;
+const BATTLE_ROYAL_FLIGHT_FOG_DENSITY_MULTIPLIER = 0.26;
+const BATTLE_ROYAL_FLIGHT_FAR_TERRAIN_FOG_BLEND_MULTIPLIER = 0.42;
 
 export function scaleBattleRoyalVisibilityConfig(
   config: BattleRoyalVisibilityConfig,
@@ -545,10 +547,13 @@ export function createBattleRoyalFlightVisibilityConfig(
     flightCullDistance + BATTLE_ROYAL_FLIGHT_CAMERA_FAR_PADDING,
     BATTLE_ROYAL_FLIGHT_MIN_CAMERA_FAR
   );
+  const flightFogDensity = config.fogDensity * BATTLE_ROYAL_FLIGHT_FOG_DENSITY_MULTIPLIER;
+  const flightFarTerrainFogBlend = config.farTerrainFogBlend * BATTLE_ROYAL_FLIGHT_FAR_TERRAIN_FOG_BLEND_MULTIPLIER;
 
   return {
     ...config,
     cameraFar: THREE.MathUtils.lerp(config.cameraFar, flightCameraFar, flightBlend),
+    fogDensity: THREE.MathUtils.lerp(config.fogDensity, flightFogDensity, flightBlend),
     terrainCullDistance: THREE.MathUtils.lerp(config.terrainCullDistance, flightCullDistance, flightBlend),
     terrainLodFullDistance: THREE.MathUtils.lerp(config.terrainLodFullDistance, flightFullDistance, flightBlend),
     terrainLodCoarseDistance: THREE.MathUtils.lerp(config.terrainLodCoarseDistance, flightCoarseDistance, flightBlend),
@@ -560,6 +565,11 @@ export function createBattleRoyalFlightVisibilityConfig(
     terrainPrebuildFullDistance: THREE.MathUtils.lerp(
       config.terrainPrebuildFullDistance,
       flightFullDistance,
+      flightBlend
+    ),
+    farTerrainFogBlend: THREE.MathUtils.lerp(
+      config.farTerrainFogBlend,
+      flightFarTerrainFogBlend,
       flightBlend
     ),
   };

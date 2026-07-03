@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { SafeZoneSnapshot, VoxelMapManifest } from '@voxel-strike/shared';
-import { shouldRenderBattleRoyalSafeZone } from './BattleRoyalSafeZone';
+import { getBattleRoyalSafeZoneVisualY, shouldRenderBattleRoyalSafeZone } from './BattleRoyalSafeZone';
 import { getBattleRoyalTerrainLodDistances } from './battleRoyalTerrainLod';
 import {
   getBattleRoyalOuterFillY,
@@ -182,15 +182,13 @@ assert.ok(
   scaledBalancedFlightVisibility.terrainCullDistance >= 500,
   'flight cull distance should still cover high deployment views after adaptive scaling'
 );
-assert.equal(
-  balancedFlightVisibility.fogDensity,
-  BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.fogDensity,
-  'flight visibility should keep runtime fog density unchanged'
+assert.ok(
+  balancedFlightVisibility.fogDensity < BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.fogDensity * 0.35,
+  'flight visibility should substantially reduce scene fog for aerial map reads'
 );
-assert.equal(
-  balancedFlightVisibility.farTerrainFogBlend,
-  BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.farTerrainFogBlend,
-  'flight visibility should keep runtime far-terrain fog blend unchanged'
+assert.ok(
+  balancedFlightVisibility.farTerrainFogBlend < BATTLE_ROYAL_VISIBILITY_CONFIG.balanced.farTerrainFogBlend * 0.5,
+  'flight visibility should reduce far-terrain fog washout for aerial map reads'
 );
 assert.equal(
   balancedFlightVisibility.dressingCullDistance,
@@ -239,5 +237,28 @@ assert.equal(shouldRenderBattleRoyalSafeZone({
   gameplayMode: 'battle_royal',
   safeZone,
 }), true);
+
+const safeZoneHeightRows = new Uint16Array(25).fill(4);
+safeZoneHeightRows[4 + 2 * 5] = 20;
+const safeZoneHeightManifest = {
+  origin: { x: 0, y: 0, z: 0 },
+  voxelSize: { x: 1, y: 0.5, z: 1 },
+  heightfield: {
+    origin: { x: 0, y: 0, z: 0 },
+    voxelSize: { x: 1, y: 0.5, z: 1 },
+    size: { x: 5, z: 5 },
+    topSolidRows: safeZoneHeightRows,
+  },
+} as unknown as VoxelMapManifest;
+assert.equal(getBattleRoyalSafeZoneVisualY(
+  safeZoneHeightManifest,
+  { x: 2, y: 0, z: 2 },
+  2
+), 11.4);
+assert.equal(getBattleRoyalSafeZoneVisualY(
+  null,
+  { x: 2, y: 0, z: 2 },
+  2
+), 18);
 
 console.log('battle royal visibility config tests passed');

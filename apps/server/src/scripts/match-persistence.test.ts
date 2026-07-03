@@ -9,9 +9,13 @@ import {
 } from '../persistence/matchPersistence';
 import type { MatchParticipantSnapshot } from '../persistence/matchPersistence';
 import { GOLDEN_FOUNDER_SKIN_IDS, RANKED_FOUNDER_REWARD_ID } from '../cosmetics/rankedFounderRewards';
+import { getGameplayModeRules } from '@voxel-strike/shared';
 
 const joinedAt = new Date('2026-06-10T10:00:00.000Z');
 const rejoinedAt = new Date('2026-06-10T10:05:00.000Z');
+const fullBattleRoyalRules = getGameplayModeRules('battle_royal');
+const fullBattleRoyalPlayerCount = fullBattleRoyalRules.maxPlayers;
+const fullBattleRoyalTeamCount = fullBattleRoyalRules.maxTeams;
 const uint32MapSeedAboveInt4 = 2_191_938_583;
 assert.ok(uint32MapSeedAboveInt4 > 2_147_483_647);
 
@@ -421,10 +425,10 @@ async function runPersistenceWriteTests() {
     redScore: 0,
     blueScore: 0,
     winningTeam: 'br_01',
-    totalParticipants: 33,
+    totalParticipants: fullBattleRoyalPlayerCount,
     humanParticipants: 2,
-    botParticipants: 31,
-    activeTeamCount: 11,
+    botParticipants: fullBattleRoyalPlayerCount - 2,
+    activeTeamCount: fullBattleRoyalTeamCount,
     participants: [
       {
         ...baseParticipant,
@@ -441,7 +445,7 @@ async function runPersistenceWriteTests() {
         humanAssists: 1,
         botAssists: 0,
         placement: 1,
-        activeTeamCount: 11,
+        activeTeamCount: fullBattleRoyalTeamCount,
         teamEliminatedAt: null,
         leftAt: null,
       },
@@ -459,8 +463,8 @@ async function runPersistenceWriteTests() {
         botKills: 0,
         humanAssists: 0,
         botAssists: 1,
-        placement: 11,
-        activeTeamCount: 11,
+        placement: fullBattleRoyalTeamCount,
+        activeTeamCount: fullBattleRoyalTeamCount,
         teamEliminatedAt: heldBattleRoyalBlueEliminatedAt,
         leftAt: null,
       },
@@ -483,7 +487,7 @@ async function runPersistenceWriteTests() {
   assert.ok(heldBattleRoyalBreakdown);
   assert.equal(heldBattleRoyalBreakdown.rulesVersion, 'ranked_br_v1');
   assert.equal(heldBattleRoyalBreakdown.placement, 1);
-  assert.equal(heldBattleRoyalBreakdown.activeTeamCount, 11);
+  assert.equal(heldBattleRoyalBreakdown.activeTeamCount, fullBattleRoyalTeamCount);
   assert.equal(heldBattleRoyalBreakdown.normalizedPlacement, 1);
   assert.equal(heldBattleRoyalBreakdown.placementPoints, 125);
   assert.equal(heldBattleRoyalBreakdown.humanKills, 1);
@@ -492,12 +496,12 @@ async function runPersistenceWriteTests() {
   assert.equal(heldBattleRoyalBreakdown.botAssists, 0);
   assert.equal(heldBattleRoyalBreakdown.combatPoints, 39);
   assert.equal(heldBattleRoyalBreakdown.humanParticipants, 2);
-  assert.equal(heldBattleRoyalBreakdown.botParticipants, 31);
-  assert.equal(heldBattleRoyalBreakdown.totalParticipants, 33);
+  assert.equal(heldBattleRoyalBreakdown.botParticipants, fullBattleRoyalPlayerCount - 2);
+  assert.equal(heldBattleRoyalBreakdown.totalParticipants, fullBattleRoyalPlayerCount);
   assert.equal(heldBattleRoyalBreakdown.earlyLeaver, false);
   assert.equal(heldBattleRoyalBreakdown.teamEliminatedAt, null);
   assert.equal(
-    Math.abs(heldBattleRoyalBreakdown.qualityMultiplier - (0.45 + (2 / 33) * 0.55)) < 1e-12,
+    Math.abs(heldBattleRoyalBreakdown.qualityMultiplier - (0.45 + (2 / fullBattleRoyalPlayerCount) * 0.55)) < 1e-12,
     true
   );
 
@@ -515,10 +519,10 @@ async function runPersistenceWriteTests() {
     redScore: 0,
     blueScore: 0,
     winningTeam: 'br_01',
-    totalParticipants: 33,
+    totalParticipants: fullBattleRoyalPlayerCount,
     humanParticipants: 2,
-    botParticipants: 31,
-    activeTeamCount: 11,
+    botParticipants: fullBattleRoyalPlayerCount - 2,
+    activeTeamCount: fullBattleRoyalTeamCount,
     participants: [
       {
         ...baseParticipant,
@@ -534,7 +538,7 @@ async function runPersistenceWriteTests() {
         humanAssists: 0,
         botAssists: 0,
         placement: 1,
-        activeTeamCount: 11,
+        activeTeamCount: fullBattleRoyalTeamCount,
         teamEliminatedAt: null,
         leftAt: null,
       },
@@ -552,7 +556,7 @@ async function runPersistenceWriteTests() {
         humanAssists: 0,
         botAssists: 0,
         placement: 2,
-        activeTeamCount: 11,
+        activeTeamCount: fullBattleRoyalTeamCount,
         teamEliminatedAt: new Date('2026-06-10T10:49:00.000Z'),
         leftAt: null,
       },
