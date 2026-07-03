@@ -49,6 +49,7 @@ router.get('/economy', async (_req, res) => {
         rewardTokenSymbol,
         rankedEntryGate: {
           mode: rankedEntryGate.mode,
+          tokenAddress: rankedEntryGate.tokenAddress,
           requiredTokenAmount: rankedEntryGate.requiredTokenAmount,
         },
         playerRewards,

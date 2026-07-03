@@ -157,22 +157,34 @@ function setDurable(playerId: string, userId = `user-${playerId}`): void {
   npcIds.add(npc.id);
 
   runtime.recordDeath(red, bot);
-  assert.equal(runtime.registerParticipant(red)?.deaths, 0);
+  assert.equal(runtime.registerParticipant(red)?.deaths, 1);
 
   runtime.recordDeath(red, blue);
   runtime.recordKill(blue, red);
   runtime.recordAssist(blue, red);
+  runtime.recordKill(red, bot);
+  runtime.recordAssist(red, bot);
   runtime.recordFlagCapture(red);
   runtime.recordFlagReturn(red);
   runtime.recordFlagCapture(npc);
 
   const redParticipant = runtime.syncParticipant(red);
   const blueParticipant = runtime.syncParticipant(blue);
-  assert.equal(redParticipant?.deaths, 1);
+  assert.equal(redParticipant?.deaths, 2);
+  assert.equal(redParticipant?.kills, 1);
+  assert.equal(redParticipant?.assists, 1);
+  assert.equal(redParticipant?.humanKills, 0);
+  assert.equal(redParticipant?.botKills, 1);
+  assert.equal(redParticipant?.humanAssists, 0);
+  assert.equal(redParticipant?.botAssists, 1);
   assert.equal(redParticipant?.flagCaptures, 1);
   assert.equal(redParticipant?.flagReturns, 1);
   assert.equal(blueParticipant?.kills, 1);
   assert.equal(blueParticipant?.assists, 1);
+  assert.equal(blueParticipant?.humanKills, 1);
+  assert.equal(blueParticipant?.botKills, 0);
+  assert.equal(blueParticipant?.humanAssists, 1);
+  assert.equal(blueParticipant?.botAssists, 0);
   assert.equal(runtime.buildParticipantSnapshots([red, blue, bot, npc]).length, 2);
 }
 

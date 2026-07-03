@@ -241,6 +241,7 @@ const runtime = new MatchSummaryRuntime({
       rankedUserStates,
       rankedEligible: true,
       rankedHoldRequired: false,
+      gameplayMode: 'team_deathmatch',
     },
   });
 
@@ -282,6 +283,7 @@ const runtime = new MatchSummaryRuntime({
         .map((context) => buildRankedUserStatesFromAuthContexts([context])[0]),
       rankedEligible: true,
       rankedHoldRequired: true,
+      gameplayMode: 'team_deathmatch',
     },
   });
 

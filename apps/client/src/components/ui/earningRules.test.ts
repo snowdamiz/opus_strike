@@ -13,6 +13,7 @@ function createEconomy(overrides: RewardEconomyOverrides = {}): RewardEconomy {
     rewardTokenSymbol: 'UNITS',
     rankedEntryGate: {
       mode: 'token_required',
+      tokenAddress: 'Token1111111111111111111111111111111111111',
       requiredTokenAmount: '2500000',
     },
     playerRewards: {

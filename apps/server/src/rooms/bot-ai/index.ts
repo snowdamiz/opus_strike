@@ -11,6 +11,7 @@ import {
   type GameplayMode,
   type HeroId,
   type PlayerInput,
+  type SafeZoneSnapshot,
   type Team,
   type VoxelMapManifest,
 } from '@voxel-strike/shared';
@@ -52,7 +53,12 @@ export type BotIntentType =
   | 'peel_for_ally'
   | 'retreat'
   | 'regroup'
-  | 'pressure_lane';
+  | 'pressure_lane'
+  | 'rotate_safe_zone'
+  | 'hold_safe_zone_edge'
+  | 'revive_teammate'
+  | 'finish_downed_enemy'
+  | 'disengage_third_party';
 
 export type BotTacticsJob =
   | 'carry'
@@ -64,7 +70,12 @@ export type BotTacticsJob =
   | 'support_cluster'
   | 'fight'
   | 'run_flag'
-  | 'regroup';
+  | 'regroup'
+  | 'rotate_safe_zone'
+  | 'hold_edge'
+  | 'revive'
+  | 'finish'
+  | 'disengage';
 
 export interface BotSkillProfile {
   thinkIntervalMs: number;
@@ -279,6 +290,18 @@ export interface BotAllyHealthDebt {
   retreating: boolean;
 }
 
+export interface BotSafeZoneFact {
+  snapshot: SafeZoneSnapshot;
+  distanceToCenter: number;
+  distanceToBoundary: number;
+  nextDistanceToBoundary: number;
+  outside: boolean;
+  nextOutside: boolean;
+  pressure: number;
+  rotateTarget: PlainVec3;
+  edgeHoldTarget: PlainVec3;
+}
+
 export interface BotKnownEnemy {
   player: BotPlayerSnapshot;
   visible: boolean;
@@ -302,7 +325,12 @@ export interface BotBlackboard {
   weakestEnemy: BotKnownEnemy | null;
   enemyCarrier: BotKnownEnemy | null;
   nearestAlly: BotPlayerSnapshot | null;
+  downedAllies: BotPlayerSnapshot[];
+  downedEnemies: BotPlayerSnapshot[];
+  nearestDownedAlly: BotPlayerSnapshot | null;
+  nearestDownedEnemy: BotPlayerSnapshot | null;
   alliedCarrier: BotPlayerSnapshot | null;
+  safeZone: BotSafeZoneFact | null;
   droppedFriendlyFlag: PlainVec3 | null;
   droppedEnemyFlag: PlainVec3 | null;
   enemyFlagPosition: PlainVec3;
@@ -558,6 +586,7 @@ export interface BotPlanningStateInput {
   bot: BotPlayerSnapshot;
   players: BotPlayerSnapshot[];
   flags: Record<Team, BotFlagSnapshot>;
+  safeZone?: SafeZoneSnapshot | null;
   visibleEnemyIds: Set<string>;
   enemyLineOfSightIds: Set<string>;
   recentDamageSources: BotRecentDamageSource[];
@@ -630,6 +659,7 @@ export interface BotBlackboardInput {
   bot: BotPlayerSnapshot;
   players: BotPlayerSnapshot[];
   flags: Record<Team, BotFlagSnapshot>;
+  safeZone?: SafeZoneSnapshot | null;
   visibleEnemyIds: Set<string>;
   enemyLineOfSightIds: Set<string>;
   recentDamageSources: BotRecentDamageSource[];
@@ -678,94 +708,95 @@ export const BOT_LOS_SAMPLE_STEP = 0.55;
 export const BOT_THINK_INTERVAL_MS = 200;
 export const BOT_TACTICS_INTERVAL_MS = 420;
 export const BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX = 'streamer-bot-deathmatch-showcase';
+export const BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX = 'ranked-battle-royal';
 
 export const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {
   easy: {
-    thinkIntervalMs: 720,
-    reactionMs: 900,
-    turnRateRadians: 2.4,
-    aimLeadSeconds: -0.06,
-    aimErrorRadians: 0.34,
-    aimJitterRefreshMs: [760, 1500],
-    aimFireToleranceScale: 1,
-    fireChance: 0.22,
-    secondaryChance: 0.08,
-    fireDecisionMs: [680, 1260],
-    burstDurationMs: [100, 250],
-    abilityCadenceMs: [3200, 5400],
-    ultimateCadenceMs: [4800, 8200],
-    preferredRangeScale: 0.94,
-    aggression: 0.42,
-    retreatHealthRatio: 0.62,
+    thinkIntervalMs: 660,
+    reactionMs: 820,
+    turnRateRadians: 2.75,
+    aimLeadSeconds: -0.03,
+    aimErrorRadians: 0.3,
+    aimJitterRefreshMs: [700, 1360],
+    aimFireToleranceScale: 0.99,
+    fireChance: 0.27,
+    secondaryChance: 0.11,
+    fireDecisionMs: [620, 1160],
+    burstDurationMs: [120, 290],
+    abilityCadenceMs: [2850, 5000],
+    ultimateCadenceMs: [4300, 7600],
+    preferredRangeScale: 0.92,
+    aggression: 0.48,
+    retreatHealthRatio: 0.57,
     routeDangerWeight: 0.24,
     blockedEdgeTtlMs: 700,
-    pathExpansionLimit: 10,
-    memoryMs: 350,
-    minHealValue: 54,
-    abilityScoreThreshold: 58,
-    replanIntervalMs: 1100,
-    localProbeDistance: 0.9,
-    focusFireWeight: 0.14,
-    escortCommitDistance: 12,
-    directRouteBias: 0.62,
+    pathExpansionLimit: 12,
+    memoryMs: 500,
+    minHealValue: 50,
+    abilityScoreThreshold: 54,
+    replanIntervalMs: 1000,
+    localProbeDistance: 1,
+    focusFireWeight: 0.22,
+    escortCommitDistance: 14,
+    directRouteBias: 0.58,
   },
   normal: {
-    thinkIntervalMs: 460,
-    reactionMs: 560,
-    turnRateRadians: 4.2,
-    aimLeadSeconds: 0.02,
-    aimErrorRadians: 0.21,
-    aimJitterRefreshMs: [560, 1060],
-    aimFireToleranceScale: 1,
-    fireChance: 0.39,
-    secondaryChance: 0.21,
-    fireDecisionMs: [470, 880],
-    burstDurationMs: [160, 390],
-    abilityCadenceMs: [2300, 4100],
-    ultimateCadenceMs: [3200, 5900],
-    preferredRangeScale: 1,
-    aggression: 0.62,
-    retreatHealthRatio: 0.42,
-    routeDangerWeight: 0.56,
-    blockedEdgeTtlMs: 1500,
-    pathExpansionLimit: 28,
-    memoryMs: 1100,
-    minHealValue: 80,
-    abilityScoreThreshold: 84,
-    replanIntervalMs: 700,
-    localProbeDistance: 1.4,
-    focusFireWeight: 0.46,
-    escortCommitDistance: 23,
-    directRouteBias: 0.82,
+    thinkIntervalMs: 410,
+    reactionMs: 500,
+    turnRateRadians: 4.75,
+    aimLeadSeconds: 0.04,
+    aimErrorRadians: 0.18,
+    aimJitterRefreshMs: [500, 960],
+    aimFireToleranceScale: 0.98,
+    fireChance: 0.45,
+    secondaryChance: 0.26,
+    fireDecisionMs: [420, 800],
+    burstDurationMs: [185, 440],
+    abilityCadenceMs: [2000, 3650],
+    ultimateCadenceMs: [2900, 5350],
+    preferredRangeScale: 0.96,
+    aggression: 0.7,
+    retreatHealthRatio: 0.38,
+    routeDangerWeight: 0.6,
+    blockedEdgeTtlMs: 1650,
+    pathExpansionLimit: 34,
+    memoryMs: 1450,
+    minHealValue: 74,
+    abilityScoreThreshold: 78,
+    replanIntervalMs: 620,
+    localProbeDistance: 1.55,
+    focusFireWeight: 0.6,
+    escortCommitDistance: 26,
+    directRouteBias: 0.76,
   },
   hard: {
-    thinkIntervalMs: 330,
-    reactionMs: 430,
-    turnRateRadians: 5.6,
-    aimLeadSeconds: 0.06,
-    aimErrorRadians: 0.13,
-    aimJitterRefreshMs: [430, 840],
-    aimFireToleranceScale: 0.96,
-    fireChance: 0.53,
-    secondaryChance: 0.32,
-    fireDecisionMs: [360, 700],
-    burstDurationMs: [200, 520],
-    abilityCadenceMs: [1650, 3200],
-    ultimateCadenceMs: [2400, 4800],
-    preferredRangeScale: 1.06,
-    aggression: 0.8,
-    retreatHealthRatio: 0.35,
-    routeDangerWeight: 0.94,
-    blockedEdgeTtlMs: 2500,
-    pathExpansionLimit: 52,
-    memoryMs: 2400,
-    minHealValue: 102,
-    abilityScoreThreshold: 98,
-    replanIntervalMs: 460,
-    localProbeDistance: 1.9,
-    focusFireWeight: 0.78,
-    escortCommitDistance: 32,
-    directRouteBias: 0.98,
+    thinkIntervalMs: 295,
+    reactionMs: 380,
+    turnRateRadians: 6.15,
+    aimLeadSeconds: 0.08,
+    aimErrorRadians: 0.105,
+    aimJitterRefreshMs: [380, 760],
+    aimFireToleranceScale: 0.94,
+    fireChance: 0.59,
+    secondaryChance: 0.38,
+    fireDecisionMs: [315, 640],
+    burstDurationMs: [230, 590],
+    abilityCadenceMs: [1450, 2850],
+    ultimateCadenceMs: [2150, 4300],
+    preferredRangeScale: 1.02,
+    aggression: 0.9,
+    retreatHealthRatio: 0.31,
+    routeDangerWeight: 0.98,
+    blockedEdgeTtlMs: 2700,
+    pathExpansionLimit: 58,
+    memoryMs: 2850,
+    minHealValue: 94,
+    abilityScoreThreshold: 90,
+    replanIntervalMs: 410,
+    localProbeDistance: 2.05,
+    focusFireWeight: 0.94,
+    escortCommitDistance: 35,
+    directRouteBias: 0.9,
   },
 };
 
@@ -776,33 +807,64 @@ export function normalizeBotDifficulty(difficulty?: string): BotDifficulty {
 
 export const BOT_STREAMER_DEATHMATCH_SKILL_PROFILE: BotSkillProfile = {
   ...BOT_SKILL_PROFILES.hard,
-  thinkIntervalMs: 180,
-  reactionMs: 190,
-  turnRateRadians: 7.2,
-  aimLeadSeconds: 0.08,
-  aimErrorRadians: 0.075,
-  aimJitterRefreshMs: [240, 520],
-  aimFireToleranceScale: 0.88,
-  fireChance: 0.72,
-  secondaryChance: 0.48,
-  fireDecisionMs: [220, 430],
-  burstDurationMs: [260, 720],
-  abilityCadenceMs: [950, 1900],
-  ultimateCadenceMs: [1500, 3200],
-  preferredRangeScale: 0.86,
-  aggression: 1.14,
-  retreatHealthRatio: 0.24,
+  thinkIntervalMs: 165,
+  reactionMs: 175,
+  turnRateRadians: 7.7,
+  aimLeadSeconds: 0.1,
+  aimErrorRadians: 0.065,
+  aimJitterRefreshMs: [220, 480],
+  aimFireToleranceScale: 0.86,
+  fireChance: 0.76,
+  secondaryChance: 0.52,
+  fireDecisionMs: [200, 395],
+  burstDurationMs: [285, 780],
+  abilityCadenceMs: [850, 1750],
+  ultimateCadenceMs: [1350, 2900],
+  preferredRangeScale: 0.84,
+  aggression: 1.2,
+  retreatHealthRatio: 0.21,
   routeDangerWeight: 0.48,
   blockedEdgeTtlMs: 1800,
-  pathExpansionLimit: 68,
-  memoryMs: 3600,
-  minHealValue: 74,
-  abilityScoreThreshold: 70,
-  replanIntervalMs: 280,
-  localProbeDistance: 2.15,
-  focusFireWeight: 1.16,
-  escortCommitDistance: 38,
-  directRouteBias: 1.08,
+  pathExpansionLimit: 74,
+  memoryMs: 4100,
+  minHealValue: 68,
+  abilityScoreThreshold: 64,
+  replanIntervalMs: 245,
+  localProbeDistance: 2.3,
+  focusFireWeight: 1.28,
+  escortCommitDistance: 40,
+  directRouteBias: 0.98,
+};
+
+export const BOT_RANKED_BATTLE_ROYAL_SKILL_PROFILE: BotSkillProfile = {
+  ...BOT_SKILL_PROFILES.hard,
+  thinkIntervalMs: 230,
+  reactionMs: 270,
+  turnRateRadians: 6.75,
+  aimLeadSeconds: 0.09,
+  aimErrorRadians: 0.088,
+  aimJitterRefreshMs: [320, 650],
+  aimFireToleranceScale: 0.91,
+  fireChance: 0.66,
+  secondaryChance: 0.43,
+  fireDecisionMs: [260, 540],
+  burstDurationMs: [255, 680],
+  abilityCadenceMs: [1150, 2300],
+  ultimateCadenceMs: [1850, 3700],
+  preferredRangeScale: 0.98,
+  aggression: 1.03,
+  retreatHealthRatio: 0.27,
+  routeDangerWeight: 1.12,
+  blockedEdgeTtlMs: 3000,
+  pathExpansionLimit: 70,
+  memoryMs: 3650,
+  minHealValue: 84,
+  abilityScoreThreshold: 82,
+  replanIntervalMs: 320,
+  localProbeDistance: 2.25,
+  focusFireWeight: 1.1,
+  escortCommitDistance: 37,
+  directRouteBias: 0.88,
 };
 
 export function isStreamerDeathmatchBotProfile(profileId?: string | null): boolean {
@@ -813,8 +875,17 @@ export function isStreamerDeathmatchBotProfile(profileId?: string | null): boole
     );
 }
 
+export function isRankedBattleRoyalBotProfile(profileId?: string | null): boolean {
+  return typeof profileId === 'string' &&
+    (
+      profileId === BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX ||
+      profileId.startsWith(`${BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX}-`)
+    );
+}
+
 export function getBotSkillProfile(difficulty?: string, profileId?: string | null): BotSkillProfile {
   if (isStreamerDeathmatchBotProfile(profileId)) return BOT_STREAMER_DEATHMATCH_SKILL_PROFILE;
+  if (isRankedBattleRoyalBotProfile(profileId)) return BOT_RANKED_BATTLE_ROYAL_SKILL_PROFILE;
   return BOT_SKILL_PROFILES[normalizeBotDifficulty(difficulty)];
 }
 
@@ -1174,6 +1245,7 @@ export function updateBotPlanningState(input: BotPlanningStateInput): BotPlannin
       bot,
       players: input.players,
       flags: input.flags,
+      safeZone: input.safeZone,
       visibleEnemyIds: input.visibleEnemyIds,
       enemyLineOfSightIds: input.enemyLineOfSightIds,
       recentDamageSources: input.recentDamageSources,
@@ -1592,6 +1664,31 @@ function selectStreamerDeathmatchTarget(
   return focusTarget ?? nearestEnemy;
 }
 
+function selectEliminationPressureTarget(
+  bot: BotPlayerSnapshot,
+  enemies: readonly BotPlayerSnapshot[],
+  rankedTargets: readonly BotPlayerSnapshot[],
+  threatClusters: readonly BotThreatCluster[]
+): BotPlayerSnapshot | null {
+  const nearestEnemy = nearestPlayer(enemies, bot.position);
+  if (!nearestEnemy) return rankedTargets[0] ?? null;
+  if (distance2D(bot.position, nearestEnemy.position) <= 5) return nearestEnemy;
+
+  const focusTarget = rankedTargets[0] ?? null;
+  if (!focusTarget || focusTarget.id === nearestEnemy.id) return nearestEnemy;
+
+  const focusDistance = distance2D(bot.position, focusTarget.position);
+  if (focusDistance > BOT_AWARENESS_RANGE) return nearestEnemy;
+
+  const nearestScore = scoreEliminationFocusTarget(nearestEnemy, threatClusters);
+  const focusScore = scoreEliminationFocusTarget(focusTarget, threatClusters);
+  const focusHealthRatio = focusTarget.health / Math.max(1, focusTarget.maxHealth);
+  const closeEnoughToChase = focusDistance <= 36 || focusDistance <= distance2D(bot.position, nearestEnemy.position) + 16;
+  return closeEnoughToChase && (focusHealthRatio <= 0.55 || focusScore >= nearestScore + 50)
+    ? focusTarget
+    : nearestEnemy;
+}
+
 function assignmentSuitability(bot: BotPlayerSnapshot, role: BotStrategicRole, targetPosition?: PlainVec3): number {
   const personality = getBotPersonality(bot);
   let score = 0;
@@ -1664,14 +1761,23 @@ function buildEliminationTacticsForTeam(input: BotTeamTacticsInput, team: Team):
   const enemyTeam = otherTeam(team);
   const allies: BotPlayerSnapshot[] = [];
   const enemies: BotPlayerSnapshot[] = [];
+  const downedAllies: BotPlayerSnapshot[] = [];
+  const downedEnemies: BotPlayerSnapshot[] = [];
   const bots: BotPlayerSnapshot[] = [];
   for (const player of input.players) {
-    if (player.state !== 'alive') continue;
     if (player.team === team) {
-      allies.push(player);
-      if (player.isBot) bots.push(player);
+      if (player.state === 'alive') {
+        allies.push(player);
+        if (player.isBot) bots.push(player);
+      } else if (player.state === 'downed') {
+        downedAllies.push(player);
+      }
     } else if (isEnemyForGameplayMode(input.gameplayMode, player.team, team)) {
-      enemies.push(player);
+      if (player.state === 'alive') {
+        enemies.push(player);
+      } else if (player.state === 'downed') {
+        downedEnemies.push(player);
+      }
     }
   }
 
@@ -1695,6 +1801,49 @@ function buildEliminationTacticsForTeam(input: BotTeamTacticsInput, team: Team):
   const streamerDeathmatchTargets = streamerDeathmatch
     ? rankEliminationFocusTargets(enemies, threatClusters)
     : [];
+  const pressureTargets = streamerDeathmatchTargets.length > 0
+    ? streamerDeathmatchTargets
+    : rankEliminationFocusTargets(enemies, threatClusters);
+
+  const nearestDownedAlly = downedAllies.length > 0
+    ? [...downedAllies].sort((a, b) => (
+      distance2D(a.position, bots[0]?.position ?? a.position) - distance2D(b.position, bots[0]?.position ?? b.position) ||
+      a.id.localeCompare(b.id)
+    ))[0] ?? null
+    : null;
+  if (nearestDownedAlly && input.gameplayMode === 'battle_royal') {
+    assignBestBot(
+      sortedBots,
+      assigned,
+      'support',
+      'revive',
+      nearestDownedAlly.position,
+      nearestDownedAlly.id,
+      'battle royal downed ally revive',
+      940,
+      assignments
+    );
+  }
+
+  const nearestDownedEnemy = downedEnemies.length > 0
+    ? [...downedEnemies].sort((a, b) => (
+      distance2D(a.position, bots[0]?.position ?? a.position) - distance2D(b.position, bots[0]?.position ?? b.position) ||
+      a.id.localeCompare(b.id)
+    ))[0] ?? null
+    : null;
+  if (nearestDownedEnemy && input.gameplayMode === 'battle_royal') {
+    assignBestBot(
+      sortedBots,
+      assigned,
+      'fighter',
+      'finish',
+      nearestDownedEnemy.position,
+      nearestDownedEnemy.id,
+      'battle royal downed enemy finish',
+      760,
+      assignments
+    );
+  }
 
   if (lowHealthAllies.length > 0) {
     assignBestBot(
@@ -1716,8 +1865,8 @@ function buildEliminationTacticsForTeam(input: BotTeamTacticsInput, team: Team):
 
     const nearestEnemy = nearestPlayer(enemies, bot.position);
     const focusTarget = streamerDeathmatch
-      ? selectStreamerDeathmatchTarget(bot, enemies, streamerDeathmatchTargets, fightAssignmentIndex)
-      : nearestEnemy;
+      ? selectStreamerDeathmatchTarget(bot, enemies, pressureTargets, fightAssignmentIndex)
+      : selectEliminationPressureTarget(bot, enemies, pressureTargets, threatClusters);
     fightAssignmentIndex++;
 
     const targetPosition = focusTarget?.position
@@ -2146,6 +2295,67 @@ function buildHealCluster(bot: BotPlayerSnapshot, debts: readonly BotAllyHealthD
   return best && distance2D(bot.position, best.center) <= CHRONOS_LIFELINE_RADIUS + 12 ? best : null;
 }
 
+function safeZoneDistanceToBoundary(
+  center: Pick<PlainVec3, 'x' | 'z'>,
+  radius: number,
+  position: Pick<PlainVec3, 'x' | 'z'>
+): number {
+  return radius - Math.hypot(position.x - center.x, position.z - center.z);
+}
+
+function safeZonePointToward(
+  from: PlainVec3,
+  target: Pick<PlainVec3, 'x' | 'z'>,
+  fallbackY = from.y
+): PlainVec3 {
+  return {
+    x: target.x,
+    y: fallbackY,
+    z: target.z,
+  };
+}
+
+function safeZoneEdgeHoldTarget(bot: BotPlayerSnapshot, safeZone: SafeZoneSnapshot): PlainVec3 {
+  const direction = direction2DFromTo(safeZone.center, bot.position) ?? { x: 1, z: 0 };
+  const edgeRadius = Math.max(4, safeZone.radius - 7);
+  return {
+    x: safeZone.center.x + direction.x * edgeRadius,
+    y: bot.position.y,
+    z: safeZone.center.z + direction.z * edgeRadius,
+  };
+}
+
+function analyzeBotSafeZone(bot: BotPlayerSnapshot, safeZone?: SafeZoneSnapshot | null): BotSafeZoneFact | null {
+  if (!safeZone?.enabled) return null;
+  const distanceToCenter = distance2D(bot.position, safeZone.center);
+  const distanceToBoundary = safeZone.radius - distanceToCenter;
+  const nextDistanceToBoundary = safeZoneDistanceToBoundary(safeZone.nextCenter, safeZone.nextRadius, bot.position);
+  const outside = distanceToBoundary < 0;
+  const nextOutside = nextDistanceToBoundary < 0;
+  const edgePressure = Math.max(0, 16 - distanceToBoundary) / 16;
+  const nextPressure = Math.max(0, 18 - nextDistanceToBoundary) / 18;
+  const phasePressure = safeZone.shrinking ? 1 : safeZone.warning ? 0.7 : 0.35;
+  const pressure = clamp(
+    (outside ? 1.2 : edgePressure) + (nextOutside ? 0.9 : nextPressure * phasePressure),
+    0,
+    2.5
+  );
+  const rotateAnchor = (safeZone.shrinking || safeZone.warning || nextOutside)
+    ? safeZone.nextCenter
+    : safeZone.center;
+  return {
+    snapshot: safeZone,
+    distanceToCenter,
+    distanceToBoundary,
+    nextDistanceToBoundary,
+    outside,
+    nextOutside,
+    pressure,
+    rotateTarget: safeZonePointToward(bot.position, rotateAnchor),
+    edgeHoldTarget: safeZoneEdgeHoldTarget(bot, safeZone),
+  };
+}
+
 export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
   const bot = input.bot;
   const team = bot.team;
@@ -2155,21 +2365,30 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
   const enemyFlag = getFlagSnapshotOrFallback(input.flags, enemyTeam, bot.position);
   const allies: BotPlayerSnapshot[] = [];
   const enemyPlayers: BotPlayerSnapshot[] = [];
+  const downedAllies: BotPlayerSnapshot[] = [];
+  const downedEnemies: BotPlayerSnapshot[] = [];
   let alliedCarrier: BotPlayerSnapshot | null = null;
   let enemyCarrierPlayer: BotPlayerSnapshot | null = null;
   let enemyFlagCarrierPosition: PlainVec3 | null = null;
 
   for (const player of input.players) {
-    if (player.state !== 'alive') continue;
     if (player.team === team) {
       if (player.id !== bot.id) {
-        allies.push(player);
-        if (isCaptureTheFlag && player.hasFlag) alliedCarrier = player;
+        if (player.state === 'alive') {
+          allies.push(player);
+          if (isCaptureTheFlag && player.hasFlag) alliedCarrier = player;
+        } else if (player.state === 'downed') {
+          downedAllies.push(player);
+        }
       }
     } else if (isEnemyForGameplayMode(input.gameplayMode, player.team, team)) {
-      enemyPlayers.push(player);
-      if (isCaptureTheFlag && (player.hasFlag || ownFlag.carrierId === player.id)) {
-        enemyCarrierPlayer = player;
+      if (player.state === 'alive') {
+        enemyPlayers.push(player);
+        if (isCaptureTheFlag && (player.hasFlag || ownFlag.carrierId === player.id)) {
+          enemyCarrierPlayer = player;
+        }
+      } else if (player.state === 'downed') {
+        downedEnemies.push(player);
       }
     }
     if (isCaptureTheFlag && enemyFlag.carrierId && player.id === enemyFlag.carrierId) {
@@ -2283,6 +2502,8 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
     if (dx * dx + dz * dz <= nearbyRangeSq) nearbyAllyCount++;
   }
   const allyHealthDebts = buildAllyHealthDebts(bot, allies, visibleEnemies);
+  const nearestDownedAlly = nearestPlayer(downedAllies, bot.position);
+  const nearestDownedEnemy = nearestPlayer(downedEnemies, bot.position);
 
   return {
     bot,
@@ -2297,7 +2518,12 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
     weakestEnemy,
     enemyCarrier,
     nearestAlly,
+    downedAllies,
+    downedEnemies,
+    nearestDownedAlly,
+    nearestDownedEnemy,
     alliedCarrier,
+    safeZone: analyzeBotSafeZone(bot, input.safeZone),
     droppedFriendlyFlag: isCaptureTheFlag && !ownFlag.isAtBase && !ownFlag.carrierId ? { ...ownFlag.position } : null,
     droppedEnemyFlag: isCaptureTheFlag && !enemyFlag.isAtBase && !enemyFlag.carrierId ? { ...enemyFlag.position } : null,
     enemyFlagPosition: enemyFlag.carrierId
@@ -2352,21 +2578,109 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
   const assignmentBoost = (job: BotTacticsJob, amount: number): number => assignment?.job === job ? amount + assignment.priority * 0.22 : 0;
   const role = assignment?.role ?? getDefaultRole(bot, blackboard.teamTactics.roleDemand);
   const isCaptureTheFlag = blackboard.gameplayMode === 'capture_the_flag';
+  const isBattleRoyal = blackboard.gameplayMode === 'battle_royal';
+  const outnumberedRegroupHealthRatio = getOutnumberedRegroupHealthRatio(skill);
+  const thirdPartyDisengageHealthRatio = getThirdPartyDisengageHealthRatio(skill);
 
   if (isCaptureTheFlag && bot.hasFlag) {
     addIntent(candidates, 'carry_flag_home', 10000, blackboard.ownBasePosition, 'bot is carrying enemy flag');
   }
 
-  const pressuredRetreatHealthRatio = skill.retreatHealthRatio + localEnemyPressure * 0.08;
+  if (isBattleRoyal && blackboard.safeZone) {
+    const safeZone = blackboard.safeZone;
+    if (safeZone.outside) {
+      addIntent(
+        candidates,
+        'rotate_safe_zone',
+        1120 + Math.min(360, Math.abs(safeZone.distanceToBoundary) * 18) + safeZone.snapshot.damagePerSecond * 8,
+        safeZone.rotateTarget,
+        'outside safe zone'
+      );
+    } else if (
+      safeZone.nextOutside ||
+      (safeZone.snapshot.shrinking && safeZone.distanceToBoundary <= 14) ||
+      (safeZone.snapshot.warning && safeZone.nextDistanceToBoundary <= 16)
+    ) {
+      addIntent(
+        candidates,
+        'rotate_safe_zone',
+        760 + safeZone.pressure * 160 + assignmentBoost('rotate_safe_zone', 160),
+        safeZone.rotateTarget,
+        safeZone.nextOutside ? 'next safe zone rotation needed' : 'safe zone edge pressure'
+      );
+    } else if (
+      safeZone.distanceToBoundary <= 30 &&
+      nearestEnemyDistance <= BOT_AWARENESS_RANGE
+    ) {
+      addIntent(
+        candidates,
+        'hold_safe_zone_edge',
+        320 + safeZone.pressure * 90 + blackboard.visibleEnemies.length * 42 + assignmentBoost('hold_edge', 130),
+        safeZone.edgeHoldTarget,
+        'hold safe-zone edge'
+      );
+    }
+  }
+
+  const pressuredRetreatHealthRatio = skill.retreatHealthRatio + localEnemyPressure * 0.06;
   if (healthRatio < pressuredRetreatHealthRatio && nearestEnemyDistance < 24 && !blackboard.enemyCarrier) {
     addIntent(candidates, 'retreat', 820 + (1 - healthRatio) * 520 + localEnemyPressure * 90, blackboard.ownBasePosition, 'low health under pressure');
   } else if (
     localEnemyPressure >= 2 &&
-    healthRatio < (skill.aggression >= 1 ? 0.48 : 0.72) &&
+    healthRatio < outnumberedRegroupHealthRatio &&
     nearestEnemyDistance < 20 &&
     !blackboard.enemyCarrier
   ) {
-    addIntent(candidates, 'regroup', 620 + localEnemyPressure * 80 + (0.72 - healthRatio) * 260, blackboard.nearestAlly?.position ?? blackboard.ownBasePosition, 'outnumbered local fight');
+    addIntent(
+      candidates,
+      'regroup',
+      620 + localEnemyPressure * 80 + (outnumberedRegroupHealthRatio - healthRatio) * 260,
+      blackboard.nearestAlly?.position ?? blackboard.ownBasePosition,
+      'outnumbered local fight'
+    );
+  }
+
+  if (
+    isBattleRoyal &&
+    localEnemyPressure >= 2 &&
+    healthRatio < thirdPartyDisengageHealthRatio &&
+    nearestEnemyDistance < 30
+  ) {
+    addIntent(
+      candidates,
+      'disengage_third_party',
+      850 + localEnemyPressure * 110 + (thirdPartyDisengageHealthRatio - healthRatio) * 340 + (blackboard.safeZone?.pressure ?? 0) * 120,
+      blackboard.safeZone?.rotateTarget ?? blackboard.nearestAlly?.position ?? blackboard.ownBasePosition,
+      'bad third-party fight'
+    );
+  }
+
+  if (isBattleRoyal && blackboard.nearestDownedAlly) {
+    const downedAllyDistance = distance2D(bot.position, blackboard.nearestDownedAlly.position);
+    if (downedAllyDistance <= 28) {
+      addIntent(
+        candidates,
+        'revive_teammate',
+        900 - downedAllyDistance * 16 + (blackboard.nearbyEnemyCount === 0 ? 130 : -blackboard.nearbyEnemyCount * 95) + assignmentBoost('revive', 210),
+        blackboard.nearestDownedAlly.position,
+        blackboard.nearbyEnemyCount === 0 ? 'nearby downed ally is safe to revive' : 'nearby downed ally needs rescue',
+        blackboard.nearestDownedAlly.id
+      );
+    }
+  }
+
+  if (isBattleRoyal && blackboard.nearestDownedEnemy) {
+    const downedEnemyDistance = distance2D(bot.position, blackboard.nearestDownedEnemy.position);
+    if (downedEnemyDistance <= 26) {
+      addIntent(
+        candidates,
+        'finish_downed_enemy',
+        720 - downedEnemyDistance * 10 + skill.aggression * 110 + assignmentBoost('finish', 180),
+        blackboard.nearestDownedEnemy.position,
+        'finish downed enemy before revive',
+        blackboard.nearestDownedEnemy.id
+      );
+    }
   }
 
   if (isCaptureTheFlag && blackboard.enemyCarrier) {
@@ -2426,7 +2740,7 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
     addIntent(
       candidates,
       'fight_local_enemy',
-      410 + assignmentBoost('fight', 180) + focusBonus + Math.max(0, 24 - nearestEnemyDistance) * 7 * skill.aggression,
+      440 + assignmentBoost('fight', 190) + focusBonus + Math.max(0, 30 - nearestEnemyDistance) * 7.5 * skill.aggression,
       blackboard.nearestEnemy.lastKnownPosition,
       'local enemy pressure',
       blackboard.nearestEnemy.player.id
@@ -2438,7 +2752,10 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
       addIntent(
         candidates,
         'fight_local_enemy',
-        360 + assignmentBoost('fight', 160) + Math.max(0, 1 - blackboard.weakestEnemy.player.health / Math.max(1, blackboard.weakestEnemy.player.maxHealth)) * 220 * skill.aggression,
+        400 +
+          assignmentBoost('fight', 180) +
+          Math.max(0, 1 - blackboard.weakestEnemy.player.health / Math.max(1, blackboard.weakestEnemy.player.maxHealth)) * 280 * skill.aggression +
+          Math.max(0, 30 - blackboard.weakestEnemy.distance) * 3.2 * skill.aggression,
         blackboard.weakestEnemy.lastKnownPosition,
         'pressure weakened enemy',
         blackboard.weakestEnemy.player.id
@@ -2452,7 +2769,7 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
       addIntent(
         candidates,
         'pressure_lane',
-        300 + assignmentBoost('fight', 180) + (focusTarget ? Math.max(0, 34 - focusTarget.distance) * 4 * skill.aggression : 0),
+        320 + assignmentBoost('fight', 190) + (focusTarget ? Math.max(0, 38 - focusTarget.distance) * 4.5 * skill.aggression : 0),
         assignment.targetPosition,
         'team deathmatch pressure',
         assignment.targetPlayerId
@@ -2574,6 +2891,26 @@ export function getBotCloseCombatRange(heroId: HeroId | '', skill: BotSkillProfi
   );
 }
 
+function getOutnumberedRegroupHealthRatio(skill: BotSkillProfile): number {
+  if (skill.aggression >= 1) return 0.44;
+  return clamp(0.78 - skill.aggression * 0.18, 0.58, 0.72);
+}
+
+function getThirdPartyDisengageHealthRatio(skill: BotSkillProfile): number {
+  return clamp(0.82 - skill.aggression * 0.16, 0.58, 0.74);
+}
+
+function getCautiousUnderPressureHealthRatio(skill: BotSkillProfile): number {
+  if (skill.aggression >= 1) return 0.48;
+  return clamp(0.82 - skill.aggression * 0.2, 0.62, 0.74);
+}
+
+function getSafeClosePressureLimit(skill: BotSkillProfile): number {
+  return skill.aggression >= 1
+    ? 3
+    : Math.max(1, Math.round(skill.aggression * 2.4));
+}
+
 function nearestRouteNode(routeGraph: BotRouteGraphAdapter, position: PlainVec3): BotRouteNodeInfo | null {
   let best: BotRouteNodeInfo | null = null;
   let bestDistance = Infinity;
@@ -2603,6 +2940,17 @@ function edgeCost(
   }
   if (lane?.kind === 'primary') cost *= input.skill.directRouteBias;
   if (input.intent.type === 'defend_base' && edge.tags.includes('base')) cost *= 0.86;
+
+  const safeZone = input.blackboard.safeZone?.snapshot ?? null;
+  if (safeZone) {
+    const currentBoundary = safeZoneDistanceToBoundary(safeZone.center, safeZone.radius, edge.midpoint);
+    const nextBoundary = safeZoneDistanceToBoundary(safeZone.nextCenter, safeZone.nextRadius, edge.midpoint);
+    if (currentBoundary < 0) cost += 180 + Math.abs(currentBoundary) * 22 * input.skill.routeDangerWeight;
+    if (nextBoundary < 0) cost += 90 + Math.abs(nextBoundary) * 12 * input.skill.routeDangerWeight;
+    if ((safeZone.shrinking || safeZone.warning) && nextBoundary < 12) {
+      cost += (12 - nextBoundary) * 8 * input.skill.routeDangerWeight;
+    }
+  }
 
   for (const cluster of input.blackboard.teamTactics.threatClusters) {
     const distance = distance2D(edge.midpoint, cluster.center);
@@ -2718,6 +3066,14 @@ function routePlanCacheKey(
     input.intent.type,
     input.bot.hasFlag ? 'carrier' : 'free',
     input.blackboard.teamTactics.revision,
+    input.blackboard.safeZone
+      ? [
+        input.blackboard.safeZone.snapshot.phaseIndex,
+        input.blackboard.safeZone.snapshot.shrinking ? 'shrinking' : input.blackboard.safeZone.snapshot.warning ? 'warning' : 'stable',
+        Math.round(input.blackboard.safeZone.snapshot.radius),
+        Math.round(input.blackboard.safeZone.snapshot.nextRadius),
+      ].join(':')
+      : 'no-zone',
     blockedEdgeSignature(input.blockedEdges, input.now),
   ].join('|');
 }
@@ -2912,6 +3268,18 @@ export function planBotRoute(input: BotRoutePlanInput): BotRoutePlan {
 }
 
 export function chooseBotCombatPlan(input: BotCombatPlanInput): BotCombatPlan {
+  if (input.intent.type === 'finish_downed_enemy' && input.intent.targetPlayerId) {
+    const downedTarget = input.blackboard.downedEnemies.find((enemy) => enemy.id === input.intent.targetPlayerId) ?? null;
+    if (downedTarget) {
+      return {
+        targetId: downedTarget.id,
+        stance: 'close',
+        score: 860 - Math.min(320, distance2D(input.bot.position, downedTarget.position) * 12),
+        reason: 'finish downed battle royal enemy',
+      };
+    }
+  }
+
   let bestTarget: BotKnownEnemy | null = null;
   let bestScore = -Infinity;
   const healthRatio = input.bot.health / Math.max(1, input.bot.maxHealth);
@@ -2923,18 +3291,18 @@ export function chooseBotCombatPlan(input: BotCombatPlanInput): BotCombatPlan {
     if (enemy.player.hasFlag) score += 950;
     if (input.bot.hasFlag && enemy.distance < 24) score += 420;
     if (input.intent.type === 'intercept_enemy_carrier' && enemy.player.id === input.blackboard.enemyCarrier?.player.id) score += 520;
-    if (input.intent.type === 'fight_local_enemy' && enemy.player.id === input.blackboard.nearestEnemy?.player.id) score += 130;
-    if (enemy.player.id === input.blackboard.weakestEnemy?.player.id) score += 90;
+    if (input.intent.type === 'fight_local_enemy' && enemy.player.id === input.blackboard.nearestEnemy?.player.id) score += 145;
+    if (enemy.player.id === input.blackboard.weakestEnemy?.player.id) score += 125;
     if (input.intent.targetPlayerId && enemy.player.id === input.intent.targetPlayerId) {
-      score += 180 + input.skill.focusFireWeight * 140;
+      score += 200 + input.skill.focusFireWeight * 155;
     }
     if (enemy.hasLineOfSight) score += 120;
     if (enemy.visible && !enemy.hasLineOfSight && !enemy.player.hasFlag) score -= 80;
     if (input.protectedEnemyIds.has(enemy.player.id)) score -= 260;
-    if (input.focusTargetIds?.has(enemy.player.id)) score += input.skill.focusFireWeight * 120;
-    score += (1 - enemyHealthRatio) * 180;
-    score += Math.max(0, 28 - enemy.distance) * 4.5;
-    score -= Math.max(0, enemy.distance - input.primaryRange) * (enemy.player.hasFlag ? 2 : 6);
+    if (input.focusTargetIds?.has(enemy.player.id)) score += input.skill.focusFireWeight * 145;
+    score += (1 - enemyHealthRatio) * 230;
+    score += Math.max(0, 32 - enemy.distance) * 5.2;
+    score -= Math.max(0, enemy.distance - input.primaryRange) * (enemy.player.hasFlag ? 1.7 : 5.2);
     if (!enemy.visible && !enemy.player.hasFlag) score -= 80;
     if (localEnemyPressure > 0 && !enemy.player.hasFlag) score -= localEnemyPressure * 34;
     score -= enemy.memoryAgeMs / 1000 * 28;
@@ -2945,10 +3313,14 @@ export function chooseBotCombatPlan(input: BotCombatPlanInput): BotCombatPlan {
     }
   }
 
-  if (!bestTarget || bestScore <= 20) {
+  if (!bestTarget || bestScore <= 12) {
     return {
       targetId: null,
-      stance: input.intent.type === 'retreat' ? 'retreat' : input.intent.type === 'escort_allied_carrier' ? 'escort' : 'hold_cover',
+      stance: input.intent.type === 'retreat' || input.intent.type === 'disengage_third_party' || input.intent.type === 'rotate_safe_zone'
+        ? 'retreat'
+        : input.intent.type === 'escort_allied_carrier'
+          ? 'escort'
+          : 'hold_cover',
       score: 0,
       reason: 'no valuable combat target',
     };
@@ -2958,16 +3330,22 @@ export function chooseBotCombatPlan(input: BotCombatPlanInput): BotCombatPlan {
   const closeRange = getBotCloseCombatRange(input.bot.heroId, input.skill, input.primaryRange);
   const cautiousUnderPressure = (
     localEnemyPressure >= 2 &&
-    healthRatio < (input.skill.aggression >= 1 ? 0.52 : 0.78)
-  ) || healthRatio < input.skill.retreatHealthRatio + 0.1;
+    healthRatio < getCautiousUnderPressureHealthRatio(input.skill)
+  ) || healthRatio < input.skill.retreatHealthRatio + 0.08;
+  const safeClosePressureLimit = getSafeClosePressureLimit(input.skill);
   const canSafelyClose = bestTarget.player.hasFlag
     || (
       bestTarget.visible &&
       bestTarget.hasLineOfSight &&
       !cautiousUnderPressure &&
-      localEnemyPressure <= (input.skill.aggression >= 1 ? 3 : 1)
+      localEnemyPressure <= safeClosePressureLimit
     );
-  const stance: BotCombatPlan['stance'] = input.intent.type === 'retreat' || (cautiousUnderPressure && bestTarget.distance < closeRange + 4)
+  const stance: BotCombatPlan['stance'] = (
+    input.intent.type === 'retreat' ||
+    input.intent.type === 'disengage_third_party' ||
+    (input.intent.type === 'rotate_safe_zone' && input.blackboard.safeZone?.outside === true) ||
+    (cautiousUnderPressure && bestTarget.distance < closeRange + 4)
+  )
     ? 'retreat'
     : input.intent.type === 'escort_allied_carrier'
       ? 'escort'
@@ -3085,7 +3463,11 @@ function scorePhantomAbility(input: BotAbilityPlanInput, current: BotAbilityPlan
   if (input.bot.heroId !== 'phantom') return current;
   let best = current;
   const healthRatio = input.bot.health / Math.max(1, input.bot.maxHealth);
-  const objective = input.intent.type === 'capture_enemy_flag' || input.intent.type === 'carry_flag_home' || input.intent.type === 'intercept_enemy_carrier';
+  const objective = input.intent.type === 'capture_enemy_flag' ||
+    input.intent.type === 'carry_flag_home' ||
+    input.intent.type === 'intercept_enemy_carrier' ||
+    input.intent.type === 'rotate_safe_zone' ||
+    input.intent.type === 'disengage_third_party';
   const combatTarget = input.combatPlan.targetId
     ? input.blackboard.enemies.find((enemy) => enemy.player.id === input.combatPlan.targetId)
     : null;
@@ -3157,7 +3539,11 @@ function hasVisibleObjectiveContest(input: BotAbilityPlanInput, position = input
 function scoreHookshotAbility(input: BotAbilityPlanInput, current: BotAbilityPlan): BotAbilityPlan {
   if (input.bot.heroId !== 'hookshot') return current;
   let best = current;
-  const objective = input.intent.type === 'capture_enemy_flag' || input.intent.type === 'carry_flag_home' || input.intent.type === 'intercept_enemy_carrier';
+  const objective = input.intent.type === 'capture_enemy_flag' ||
+    input.intent.type === 'carry_flag_home' ||
+    input.intent.type === 'intercept_enemy_carrier' ||
+    input.intent.type === 'rotate_safe_zone' ||
+    input.intent.type === 'disengage_third_party';
   const combatTarget = input.combatPlan.targetId
     ? input.blackboard.enemies.find((enemy) => enemy.player.id === input.combatPlan.targetId)
     : null;
@@ -3249,6 +3635,8 @@ function scoreBlazeAbility(input: BotAbilityPlanInput, current: BotAbilityPlan):
     (
       input.geometry.movementProgressBlocked ||
       input.intent.type === 'retreat' ||
+      input.intent.type === 'rotate_safe_zone' ||
+      input.intent.type === 'disengage_third_party' ||
       input.intent.type === 'intercept_enemy_carrier' ||
       healthRatio < 0.34 ||
       (target && input.combatPlan.stance === 'close' && target.distance > BLAZE_FLAMETHROWER_RANGE + 4)
@@ -3377,6 +3765,12 @@ export function composeBotMovementDirection(
     } else if (intent.type === 'retreat') {
       move = mix2D(move, 1.2, awayFromEnemy, 0.65);
       move = mix2D(move, 1, strafe, 0.25);
+    } else if (intent.type === 'disengage_third_party') {
+      move = mix2D(move, 1.35, awayFromEnemy, 0.95);
+      move = mix2D(move, 1, strafe, 0.2);
+    } else if (intent.type === 'rotate_safe_zone') {
+      move = mix2D(move, 1.45, stance === 'retreat' ? awayFromEnemy : rangeMove, 0.45);
+      move = mix2D(move, 1, strafe, 0.16);
     } else if (intent.type === 'escort_allied_carrier') {
       move = mix2D(move, 0.95, rangeMove, 0.55);
       move = mix2D(move, 1, strafe, 0.35);

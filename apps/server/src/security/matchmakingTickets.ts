@@ -8,6 +8,7 @@ import {
 import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_MATCH_PERSPECTIVE,
+  RANKED_GAMEPLAY_MODE,
   isGameplayMode,
   isHeroSkinId,
   isMatchMode,
@@ -24,6 +25,7 @@ import { createSignedTicket, readSignedTicketClaims } from './signedTicket';
 import {
   isMatchmakingBotFillMode,
   normalizeMatchmakingBotFillMode,
+  RANKED_BOT_FILL_MODE,
   type MatchmakingBotFillMode,
 } from '../matchmaking/matchSettings';
 import { normalizeMatchmakingRegion } from '../matchmaking/region';
@@ -99,12 +101,14 @@ export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
   const claims: MatchmakingTicketClaims = {
     version: 2,
     mode: input.mode,
-    gameplayMode: input.mode === 'quick_play' && isGameplayMode(input.gameplayMode)
-      ? input.gameplayMode
-      : DEFAULT_GAMEPLAY_MODE,
-    botFillMode: input.mode === 'quick_play'
-      ? normalizeMatchmakingBotFillMode(input.botFillMode)
-      : 'manual',
+    gameplayMode: input.mode === 'ranked'
+      ? RANKED_GAMEPLAY_MODE
+      : isGameplayMode(input.gameplayMode)
+        ? input.gameplayMode
+        : DEFAULT_GAMEPLAY_MODE,
+    botFillMode: input.mode === 'ranked'
+      ? RANKED_BOT_FILL_MODE
+      : normalizeMatchmakingBotFillMode(input.botFillMode),
     matchPerspective: input.mode === 'quick_play' && isMatchPerspective(input.matchPerspective)
       ? input.matchPerspective
       : DEFAULT_MATCH_PERSPECTIVE,
@@ -138,12 +142,16 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
 
   if (claims.version !== 2) return null;
   const mode = isMatchMode(claims.mode) ? claims.mode : 'quick_play';
-  const gameplayMode = mode === 'quick_play' && isGameplayMode(claims.gameplayMode)
-    ? claims.gameplayMode
-    : DEFAULT_GAMEPLAY_MODE;
-  const botFillMode = mode === 'quick_play' && isMatchmakingBotFillMode(claims.botFillMode)
-    ? claims.botFillMode
-    : 'manual';
+  const gameplayMode = mode === 'ranked'
+    ? RANKED_GAMEPLAY_MODE
+    : isGameplayMode(claims.gameplayMode)
+      ? claims.gameplayMode
+      : DEFAULT_GAMEPLAY_MODE;
+  const botFillMode = mode === 'ranked'
+    ? RANKED_BOT_FILL_MODE
+    : isMatchmakingBotFillMode(claims.botFillMode)
+      ? claims.botFillMode
+      : 'manual';
   const matchPerspective = mode === 'quick_play' && isMatchPerspective(claims.matchPerspective)
     ? claims.matchPerspective
     : DEFAULT_MATCH_PERSPECTIVE;

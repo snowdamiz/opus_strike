@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import type { MatchMode, MatchOutcome, Team } from '@voxel-strike/shared';
+import type { GameplayMode, MatchMode, MatchOutcome, Team } from '@voxel-strike/shared';
 import { calculateRankedRatingUpdates, type RankedUserState } from '../ranking/ratingService';
 import { ensureRankedSeasonSettingsTx } from '../ranking/seasonService';
 import { tryGrantRankedFounderSkins } from '../cosmetics/rankedFounderRewards';
@@ -24,6 +24,31 @@ import type {
 
 function prismaJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+interface StoredBattleRoyalBreakdown {
+  activeTeamCount?: number;
+  humanKills?: number;
+  botKills?: number;
+  humanAssists?: number;
+  botAssists?: number;
+  entryCost?: number;
+  humanParticipants?: number;
+  botParticipants?: number;
+  totalParticipants?: number;
+  teamEliminatedAt?: string | null;
+}
+
+function readStoredBattleRoyalBreakdown(value: unknown): StoredBattleRoyalBreakdown | null {
+  return value && typeof value === 'object'
+    ? value as StoredBattleRoyalBreakdown
+    : null;
+}
+
+function readStoredDate(value: unknown): Date | null {
+  if (typeof value !== 'string') return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
 }
 
 function scoreBand(score: number): string {
@@ -574,22 +599,39 @@ export async function applyHeldRankedOutcome(prisma: PrismaClient, input: {
   });
   if (users.length !== match.participants.length) throw new Error('Ranked participants are incomplete');
 
+  const firstBreakdown = readStoredBattleRoyalBreakdown(match.participants[0]?.rankedBreakdown);
   const updates = calculateRankedRatingUpdates({
-    participants: match.participants.map((participant) => ({
-      userId: participant.userId,
-      team: participant.team as Team,
-      outcome: participant.outcome as 'win' | 'loss' | 'draw',
-      score: participant.score,
-      kills: participant.kills,
-      deaths: participant.deaths,
-      assists: participant.assists,
-      flagCaptures: participant.flagCaptures,
-      flagReturns: participant.flagReturns,
-      leftAt: participant.leftAt,
-    })),
+    gameplayMode: match.gameplayMode as GameplayMode,
+    participants: match.participants.map((participant) => {
+      const breakdown = readStoredBattleRoyalBreakdown(participant.rankedBreakdown);
+      return {
+        userId: participant.userId,
+        team: participant.team as Team,
+        outcome: participant.outcome as 'win' | 'loss' | 'draw',
+        score: participant.score,
+        kills: participant.kills,
+        deaths: participant.deaths,
+        assists: participant.assists,
+        flagCaptures: participant.flagCaptures,
+        flagReturns: participant.flagReturns,
+        leftAt: participant.leftAt,
+        placement: participant.placement,
+        activeTeamCount: breakdown?.activeTeamCount,
+        teamEliminatedAt: readStoredDate(breakdown?.teamEliminatedAt),
+        humanKills: breakdown?.humanKills,
+        botKills: breakdown?.botKills,
+        humanAssists: breakdown?.humanAssists,
+        botAssists: breakdown?.botAssists,
+        rankedEntryCost: breakdown?.entryCost,
+      };
+    }),
     users: users as RankedUserState[],
     winningTeam: match.winningTeam as Team | null,
     endedAt: match.endedAt,
+    totalParticipants: firstBreakdown?.totalParticipants,
+    humanParticipants: firstBreakdown?.humanParticipants,
+    botParticipants: firstBreakdown?.botParticipants,
+    activeTeamCount: firstBreakdown?.activeTeamCount,
   });
   const updatesByUserId = new Map(updates.map((update) => [update.userId, update]));
   const usersById = new Map(users.map((user) => [user.id, user]));
@@ -622,6 +664,14 @@ export async function applyHeldRankedOutcome(prisma: PrismaClient, input: {
           ratingDelta: update.ratingDelta,
           visibleRankBefore: update.visibleRankBefore,
           visibleRankAfter: update.visibleRankAfter,
+          rankedPlacementPoints: update.rankedPlacementPoints,
+          rankedCombatPoints: update.rankedCombatPoints,
+          rankedEntryCost: update.rankedEntryCost,
+          rankedQualityMultiplier: update.rankedQualityMultiplier,
+          rankedRulesVersion: update.rankedRulesVersion,
+          rankedBreakdown: update.rankedBreakdown
+            ? prismaJson(update.rankedBreakdown)
+            : undefined,
           leaverPenaltyApplied: update.leaverPenaltyApplied,
         },
       });
@@ -732,6 +782,11 @@ export async function cancelHeldRankedOutcome(prisma: PrismaClient, input: {
         ratingDelta: null,
         visibleRankBefore: null,
         visibleRankAfter: null,
+        rankedPlacementPoints: null,
+        rankedCombatPoints: null,
+        rankedEntryCost: null,
+        rankedQualityMultiplier: null,
+        rankedRulesVersion: null,
         leaverPenaltyApplied: false,
       },
     });

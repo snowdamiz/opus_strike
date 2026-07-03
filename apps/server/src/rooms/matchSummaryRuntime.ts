@@ -42,6 +42,11 @@ export interface RankedSummaryPreviewInput {
   rankedUserStates: readonly RankedUserState[];
   rankedEligible: boolean;
   rankedHoldRequired: boolean;
+  gameplayMode: GameplayMode;
+  totalParticipants?: number;
+  humanParticipants?: number;
+  botParticipants?: number;
+  activeTeamCount?: number;
 }
 
 export interface BuildGameEndEventInput {
@@ -160,31 +165,46 @@ export class MatchSummaryRuntime {
       endedAt: Date;
     }
   ): boolean {
+    const participantsByUserId = new Map(input.participants.map((participant) => [participant.userId, participant]));
+    for (const player of event.players) {
+      if (!player.userId) continue;
+      player.placement = participantsByUserId.get(player.userId)?.placement ?? null;
+    }
+
     if (!input.rankedEligible || input.rankedHoldRequired) return false;
 
     const usersById = new Map(input.rankedUserStates.map((user) => [user.id, user]));
     const users = input.participants.map((participant) => usersById.get(participant.userId));
     if (users.some((user) => !user)) return false;
 
-    const participantsByUserId = new Map(input.participants.map((participant) => [participant.userId, participant]));
     const updates = calculateRankedRatingUpdates({
-      participants: event.players
-        .filter((player) => !player.isBot && player.userId)
-        .map((player) => ({
-          userId: player.userId!,
-          team: player.team,
-          outcome: player.outcome,
-          score: player.score,
-          kills: player.stats.kills,
-          deaths: player.stats.deaths,
-          assists: player.stats.assists,
-          flagCaptures: player.stats.flagCaptures,
-          flagReturns: player.stats.flagReturns,
-          leftAt: participantsByUserId.get(player.userId!)?.leftAt ?? null,
-        })),
+      gameplayMode: input.gameplayMode,
+      participants: input.participants.map((participant) => ({
+        userId: participant.userId,
+        team: participant.team,
+        outcome: getMatchOutcome(participant.team, input.winningTeam),
+        score: calculateParticipantScore(participant),
+        kills: participant.kills,
+        deaths: participant.deaths,
+        assists: participant.assists,
+        flagCaptures: participant.flagCaptures,
+        flagReturns: participant.flagReturns,
+        leftAt: participant.leftAt,
+        placement: participant.placement,
+        activeTeamCount: participant.activeTeamCount,
+        teamEliminatedAt: participant.teamEliminatedAt,
+        humanKills: participant.humanKills,
+        botKills: participant.botKills,
+        humanAssists: participant.humanAssists,
+        botAssists: participant.botAssists,
+      })),
       users: users as RankedUserState[],
       winningTeam: input.winningTeam,
       endedAt: input.endedAt,
+      totalParticipants: input.totalParticipants,
+      humanParticipants: input.humanParticipants,
+      botParticipants: input.botParticipants,
+      activeTeamCount: input.activeTeamCount,
     });
     const updatesByUserId = new Map(updates.map((update) => [update.userId, update]));
 

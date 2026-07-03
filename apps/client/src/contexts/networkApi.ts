@@ -145,6 +145,7 @@ export interface RewardEconomyResponse {
     rewardTokenSymbol: string | null;
     rankedEntryGate: {
       mode: 'locked' | 'token_required';
+      tokenAddress: string;
       requiredTokenAmount: string;
     };
     playerRewards: {

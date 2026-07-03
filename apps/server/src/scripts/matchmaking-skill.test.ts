@@ -70,8 +70,8 @@ const ranked = createMatchmakingTicket({
 const rankedVerified = verifyMatchmakingTicket(ranked.ticket, ranked.claims.issuedAt + 1);
 assert.ok(rankedVerified);
 assert.equal(rankedVerified.mode, 'ranked');
-assert.equal(rankedVerified.gameplayMode, 'capture_the_flag');
-assert.equal(rankedVerified.botFillMode, 'manual');
+assert.equal(rankedVerified.gameplayMode, 'battle_royal');
+assert.equal(rankedVerified.botFillMode, 'fill_even');
 assert.equal(rankedVerified.matchPerspective, 'first_person');
 assert.equal(rankedVerified.selectedHero, 'chronos');
 assert.equal(rankedVerified.rankedTokenAddress, RANKED_TEST_SPL_MINT);

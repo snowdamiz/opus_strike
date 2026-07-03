@@ -139,6 +139,10 @@ export class MatchLedgerRuntime {
       kills: 0,
       deaths: 0,
       assists: 0,
+      humanKills: 0,
+      botKills: 0,
+      humanAssists: 0,
+      botAssists: 0,
       flagCaptures: 0,
       flagReturns: 0,
       joinedAt: new Date(now),
@@ -185,6 +189,10 @@ export class MatchLedgerRuntime {
       kills: participant.kills,
       deaths: participant.deaths,
       assists: participant.assists,
+      humanKills: participant.humanKills,
+      botKills: participant.botKills,
+      humanAssists: participant.humanAssists,
+      botAssists: participant.botAssists,
       flagCaptures: participant.flagCaptures,
       flagReturns: participant.flagReturns,
       joinedAt: participant.joinedAt,
@@ -201,7 +209,6 @@ export class MatchLedgerRuntime {
 
   recordDeath(victim: Player, killer: Player | null): void {
     if (!this.isDurableHumanPlayer(victim)) return;
-    if (killer && !this.isDurableHumanPlayer(killer)) return;
 
     const participant = this.registerParticipant(victim);
     if (participant) {
@@ -215,18 +222,28 @@ export class MatchLedgerRuntime {
     victimHadFlag?: boolean;
     occurredAt?: Date;
   } = {}): void {
-    if (!this.isDurableHumanPlayer(killer) || !this.isDurableHumanPlayer(victim)) return;
+    if (!this.isTrackableCombatPlayer(killer) || !this.isTrackableCombatPlayer(victim)) return;
 
-    const killerParticipant = this.registerParticipant(killer);
-    const victimParticipant = this.registerParticipant(victim);
-    if (killerParticipant) killerParticipant.kills++;
-    if (!killerParticipant || !victimParticipant) return;
+    const killerParticipant = this.isDurableHumanPlayer(killer)
+      ? this.registerParticipant(killer)
+      : null;
+    const victimParticipant = this.isDurableHumanPlayer(victim)
+      ? this.registerParticipant(victim)
+      : null;
+    if (killerParticipant) {
+      killerParticipant.kills++;
+      if (victimParticipant) {
+        killerParticipant.humanKills = (killerParticipant.humanKills ?? 0) + 1;
+      } else {
+        killerParticipant.botKills = (killerParticipant.botKills ?? 0) + 1;
+      }
+    }
 
     this.ledger?.killEvents.push({
-      killerUserId: killerParticipant.userId,
-      killerPlayerSessionId: killerParticipant.playerSessionId,
-      victimUserId: victimParticipant.userId,
-      victimPlayerSessionId: victimParticipant.playerSessionId,
+      killerUserId: killerParticipant?.userId ?? null,
+      killerPlayerSessionId: killer.id,
+      victimUserId: victimParticipant?.userId ?? null,
+      victimPlayerSessionId: victim.id,
       killerHeroId: getParticipantHeroId(killer),
       victimHeroId: getParticipantHeroId(victim),
       abilityId: details.abilityId ?? null,
@@ -237,11 +254,16 @@ export class MatchLedgerRuntime {
   }
 
   recordAssist(assister: Player, victim: Player): void {
-    if (!this.isDurableHumanPlayer(assister) || !this.isDurableHumanPlayer(victim)) return;
+    if (!this.isDurableHumanPlayer(assister) || !this.isTrackableCombatPlayer(victim)) return;
 
     const participant = this.registerParticipant(assister);
     if (participant) {
       participant.assists++;
+      if (this.isDurableHumanPlayer(victim)) {
+        participant.humanAssists = (participant.humanAssists ?? 0) + 1;
+      } else {
+        participant.botAssists = (participant.botAssists ?? 0) + 1;
+      }
     }
   }
 
@@ -280,6 +302,14 @@ export class MatchLedgerRuntime {
     participant.displayName = player.name;
     participant.team = player.team as Team;
     participant.heroId = getParticipantHeroId(player);
+  }
+
+  private isTrackableCombatPlayer(player: Player | null | undefined): player is Player {
+    return Boolean(
+      player
+      && !this.deps.isNpc(player.id)
+      && isTeam(player.team)
+    );
   }
 }
 

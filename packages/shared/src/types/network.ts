@@ -498,6 +498,7 @@ export interface MatchSummaryPlayer {
   stats: PlayerStats;
   score: number;
   experienceGained: number;
+  placement?: number | null;
   rank?: PublicRankSnapshot;
   ratingDelta?: number | null;
   rankBefore?: PublicRankSnapshot | null;

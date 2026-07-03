@@ -153,6 +153,15 @@ export class PlayerPingRuntime {
     );
   }
 
+  resetCompetitiveGate(input: {
+    players: Iterable<[string, PlayerPingParticipant]>;
+    now: number;
+    matchMode: MatchMode;
+  }): void {
+    if (!this.isCompetitiveGateRequired(input)) return;
+    this.tracker.resetNetworkQualityForPlayers(input.players, input.now);
+  }
+
   ensureCompetitiveGateForStart(
     input: EnsureCompetitiveNetworkQualityInput
   ): EnsureCompetitiveNetworkQualityResult {

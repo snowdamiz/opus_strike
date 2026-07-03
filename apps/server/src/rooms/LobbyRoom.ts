@@ -5,6 +5,7 @@ import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_GAME_CONFIG,
   DEFAULT_MATCH_PERSPECTIVE,
+  RANKED_GAMEPLAY_MODE,
   GOLDEN_VOXEL_MAP_THEME_ID,
   HERO_DEFINITIONS,
   assignTeamByCapacity,
@@ -48,6 +49,7 @@ import {
   getRankDivisionLabel,
   normalizeRankDivisionIndex,
 } from '../matchmaking/skill';
+import { RANKED_BOT_FILL_MODE } from '../matchmaking/matchSettings';
 import {
   IN_GAME_CAPACITY_RETRY_MS,
   MAX_IN_GAME_PLAYERS,
@@ -117,6 +119,7 @@ import { loggers } from '../utils/logger';
 import { wagerService, type CreateWagerOptions } from '../wagers/service';
 import { getEnabledEventBiomeThemeId } from '../liveops/eventBiomeService';
 import type { WagerRosterPlayer } from '../wagers/math';
+import { BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX } from './bot-ai';
 
 type BotFillMode = 'manual' | 'fill_even';
 
@@ -139,6 +142,7 @@ interface JoinOptions {
   initialBotCount?: number;
   botFillMode?: BotFillMode;
   defaultBotDifficulty?: BotDifficulty;
+  botProfilePrefix?: string;
   selectedHero?: HeroId;
   selectedSkinId?: HeroSkinId;
   partyBots?: PartyBotLaunchDescriptor[];
@@ -163,6 +167,7 @@ const CUSTOM_OBSERVER_SLOT_COUNT = 1;
 const MAP_VOTE_DURATION_MS = 30000;
 const MATCHMAKING_AUTO_START_DELAY_MS = 250;
 const MATCHMAKING_BOT_FILL_GRACE_PERIOD_MS = 30000;
+const RANKED_MATCHMAKING_BOT_FILL_GRACE_PERIOD_MS = 10000;
 const BOT_NAMES = [
   'Vector',
   'Cipher',
@@ -297,6 +302,7 @@ export class LobbyRoom extends Room<LobbyState> {
   private gameStartDisconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private matchmakingCapacityBlocked = false;
   private matchmakingCapacityCheckInFlight = false;
+  private botProfilePrefix = '';
   
   // Track durable auth identity -> sessionId mapping for duplicate session handling.
   private identityToSessionId: Map<string, string> = new Map();
@@ -343,6 +349,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.state.createdAt = Date.now();
     this.state.status = this.isMatchmakingQueue() ? 'matchmaking' : 'waiting';
     this.state.defaultBotDifficulty = this.normalizeDifficulty(options.defaultBotDifficulty);
+    this.botProfilePrefix = this.resolveBotProfilePrefix(options);
     this.state.botFillMode = this.gameplayRules.botsEnabled
       ? this.resolveRoomBotFillMode(options, initialMatchmakingTicket)
       : 'manual';
@@ -490,7 +497,7 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!doesMatchmakingRegionMatch(this.matchmakingRegion, requestedRegion)) return false;
 
     const requestedGameplayMode = requestedMatchMode === 'ranked'
-      ? DEFAULT_GAMEPLAY_MODE
+      ? RANKED_GAMEPLAY_MODE
       : isGameplayMode(requestedTicket?.gameplayMode)
         ? requestedTicket.gameplayMode
         : isGameplayMode(options.gameplayMode)
@@ -508,9 +515,11 @@ export class LobbyRoom extends Room<LobbyState> {
     if (requestedPerspective !== this.matchPerspective) return false;
 
     if (typeof options.rankBandId === 'number' && options.rankBandId !== this.rankBandId) return false;
-    const requestedBotFillMode = requestedMatchMode === 'quick_play' && requestedTicket
-      ? requestedTicket.botFillMode
-      : this.normalizeBotFillMode(options.botFillMode);
+    const requestedBotFillMode = requestedMatchMode === 'ranked'
+      ? RANKED_BOT_FILL_MODE
+      : requestedTicket
+        ? requestedTicket.botFillMode
+        : this.normalizeBotFillMode(options.botFillMode);
     if (requestedBotFillMode !== this.state.botFillMode) return false;
     if (!this.isJoinSelectedHeroConsistent(options, requestedTicket)) return false;
     if (!this.isJoinSelectedSkinConsistent(options, requestedTicket)) return false;
@@ -1475,6 +1484,7 @@ export class LobbyRoom extends Room<LobbyState> {
     name?: string;
     heroId?: HeroId | '';
     skinId?: HeroSkinId | '';
+    botProfileId?: string;
   }): CreateBotResult {
     const requestedTeam = data.team && this.isTeam(data.team)
       ? data.team
@@ -1513,7 +1523,7 @@ export class LobbyRoom extends Room<LobbyState> {
     bot.skinId = this.normalizeSkinId(botHeroId, data.skinId);
     bot.isBot = true;
     bot.botDifficulty = this.normalizeDifficulty(data.difficulty);
-    bot.botProfileId = profileName.toLowerCase();
+    bot.botProfileId = data.botProfileId ?? this.createBotProfileId(profileName, botIndex);
 
     this.state.players.set(bot.id, bot);
     this.broadcast('playerJoined', buildLobbyPlayerJoinedPayload(bot.id, bot));
@@ -1844,9 +1854,12 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   private isBotFillMatchmakingQueue(): boolean {
-    return this.matchMode === 'quick_play'
-      && this.state.botFillMode === 'fill_even'
-      && this.gameplayRules.botsEnabled;
+    return this.state.botFillMode === 'fill_even'
+      && this.gameplayRules.botsEnabled
+      && (
+        this.matchMode === 'quick_play'
+        || (this.matchMode === 'ranked' && this.gameplayMode === RANKED_GAMEPLAY_MODE)
+      );
   }
 
   private fillMatchmakingBotsToRequiredPlayers(requiredPlayers: number): void {
@@ -1937,9 +1950,22 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   private resolveRoomBotFillMode(options: JoinOptions, ticket: MatchmakingTicketClaims | null): BotFillMode {
-    if (this.matchMode === 'ranked') return 'manual';
+    if (this.matchMode === 'ranked') return RANKED_BOT_FILL_MODE;
     if (this.matchMode === 'quick_play' && ticket) return ticket.botFillMode;
     return this.normalizeBotFillMode(options.botFillMode);
+  }
+
+  private resolveBotProfilePrefix(options: JoinOptions): string {
+    if (typeof options.botProfilePrefix === 'string' && options.botProfilePrefix.trim()) {
+      return options.botProfilePrefix.trim().slice(0, 64);
+    }
+    return this.matchMode === 'ranked' ? BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX : '';
+  }
+
+  private createBotProfileId(profileName: string, botIndex: number): string {
+    return this.botProfilePrefix
+      ? `${this.botProfilePrefix}-${botIndex}`
+      : profileName.toLowerCase();
   }
 
   private normalizeHeroId(heroId?: HeroId | string): HeroId | '' {
@@ -2041,7 +2067,18 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   private getMatchmakingBotFillGraceEndsAt(): number {
-    return (this.state.createdAt || Date.now()) + MATCHMAKING_BOT_FILL_GRACE_PERIOD_MS;
+    if (
+      this.isRankedQueue &&
+      this.expectedMatchmakingUserIds &&
+      this.expectedMatchmakingUserIds.size > 1 &&
+      this.getMissingExpectedHumanCount() === 0
+    ) {
+      return this.state.createdAt || Date.now();
+    }
+    const gracePeriodMs = this.isRankedQueue
+      ? RANKED_MATCHMAKING_BOT_FILL_GRACE_PERIOD_MS
+      : MATCHMAKING_BOT_FILL_GRACE_PERIOD_MS;
+    return (this.state.createdAt || Date.now()) + gracePeriodMs;
   }
 
   private scheduleMatchmakingAutoStart(delayMs = MATCHMAKING_AUTO_START_DELAY_MS): void {
@@ -2150,7 +2187,7 @@ export class LobbyRoom extends Room<LobbyState> {
   private resolveRoomGameplayMode(options: JoinOptions, ticket: MatchmakingTicketClaims | null): GameplayMode {
     if (options.matchmakingMode === true) {
       const requestedMode = ticket?.mode ?? (isMatchMode(options.matchMode) ? options.matchMode : null);
-      if (requestedMode === 'ranked') return DEFAULT_GAMEPLAY_MODE;
+      if (requestedMode === 'ranked') return RANKED_GAMEPLAY_MODE;
       if (isGameplayMode(ticket?.gameplayMode)) return ticket.gameplayMode;
       return isGameplayMode(options.gameplayMode) ? options.gameplayMode : DEFAULT_GAMEPLAY_MODE;
     }

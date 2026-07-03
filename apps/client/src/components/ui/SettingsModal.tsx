@@ -793,8 +793,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   </div>
                 </SettingRow>
 
-                <SettingRow label="Restricted Modes" description={hasWalletAccount ? 'Ranked access ready' : 'Wallet required for ranked'}>
-                  <AccountValue value={hasWalletAccount ? 'READY' : hasAccount ? 'WALLET NEEDED' : 'SIGNED OUT'} />
+                <SettingRow label="Restricted Modes" description={hasWalletAccount ? 'Wallet linked; token hold checked on queue' : 'Wallet required for ranked'}>
+                  <AccountValue value={hasWalletAccount ? 'WALLET LINKED' : hasAccount ? 'WALLET NEEDED' : 'SIGNED OUT'} />
                 </SettingRow>
 
                 <SettingRow label="Discord" description={discordAccount ? 'Connected login provider' : 'Link Discord to this profile'}>

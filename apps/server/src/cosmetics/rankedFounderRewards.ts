@@ -1,14 +1,45 @@
 import type { Prisma } from '@prisma/client';
-import { HERO_SKIN_CATALOG, type HeroSkinId } from '@voxel-strike/shared';
+import {
+  BATTLE_ROYAL_GAMEPLAY_MODE,
+  HERO_SKIN_CATALOG,
+  type GameplayMode,
+  type HeroSkinId,
+  type Team,
+} from '@voxel-strike/shared';
 
 export const RANKED_FOUNDER_REWARD_ID = 'ranked_founder_golden';
 
 // The golden founder skins (one per hero) granted as a single set to the first N
-// players to complete a ranked match. Derived from the catalog so the list stays
-// in sync with whatever skins are marked `unlockable`.
+// ranked Battle Royal winners. Derived from the catalog so the list stays in
+// sync with whatever skins are marked `unlockable`.
 export const GOLDEN_FOUNDER_SKIN_IDS: HeroSkinId[] = HERO_SKIN_CATALOG
   .filter((skin) => skin.availability === 'unlockable')
   .map((skin) => skin.id);
+
+export interface RankedFounderRewardParticipant {
+  team: Team;
+  placement?: number | null;
+  leftAt?: Date | null;
+}
+
+export function isRankedBattleRoyalFounderRewardEligible(input: {
+  rankedEligible: boolean;
+  gameplayMode: GameplayMode;
+  winningTeam: Team | null;
+  endedAt: Date;
+  participant: RankedFounderRewardParticipant;
+}): boolean {
+  return input.rankedEligible
+    && input.gameplayMode === BATTLE_ROYAL_GAMEPLAY_MODE
+    && input.winningTeam !== null
+    && input.participant.team === input.winningTeam
+    && input.participant.placement === 1
+    && (
+      input.participant.leftAt === null ||
+      input.participant.leftAt === undefined ||
+      input.participant.leftAt.getTime() >= input.endedAt.getTime()
+    );
+}
 
 /**
  * Attempt to claim one of the limited golden founder slots for `userId`, and if a
@@ -19,9 +50,9 @@ export const GOLDEN_FOUNDER_SKIN_IDS: HeroSkinId[] = HERO_SKIN_CATALOG
  * acquiring the row lock, so simultaneous match finalizations serialize on the
  * counter row and can never push `claimedCount` past `maxClaims`.
  *
- * Idempotency: callers gate on the player's *first* ranked match, and a user who
- * already owns a founder skin is skipped without consuming a slot. The grant
- * itself is an upsert on the unique (userId, skinId) ownership row.
+ * Idempotency: a user who already owns a founder skin is skipped without
+ * consuming a slot. The grant itself is an upsert on the unique (userId, skinId)
+ * ownership row.
  *
  * Must be called inside the same transaction as the ranked-match persistence so
  * the grant is atomic with the `rankedGames` increment.

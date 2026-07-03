@@ -41,15 +41,90 @@ function mergeInputStates(primary: InputState, secondary: InputState): InputStat
   };
 }
 
-const BROWSER_SHORTCUT_MODIFIER_CODES = new Set(['ControlLeft', 'ControlRight', 'MetaLeft', 'MetaRight']);
+const BROWSER_SHORTCUT_MODIFIER_CODES = new Set([
+  'AltLeft',
+  'AltRight',
+  'ControlLeft',
+  'ControlRight',
+  'MetaLeft',
+  'MetaRight',
+]);
 
-function hasPressedGameplayCode(
-  pressedCodes: ReadonlySet<string>,
-  gameplayCodes: Pick<ReadonlySet<string>, 'has'>
-): boolean {
-  for (const code of pressedCodes) {
-    if (gameplayCodes.has(code)) return true;
+const SINGLE_KEY_BROWSER_UNLOAD_CODES = new Set([
+  'Backspace',
+  'BrowserBack',
+  'BrowserForward',
+  'F5',
+]);
+
+const BROWSER_CONTROL_CODES = new Set([
+  'F1',
+  'F3',
+  'F4',
+  'F5',
+  'F6',
+  'F7',
+  'F10',
+  'F11',
+  'F12',
+]);
+
+function hasShortcutModifier(input: { ctrlKey: boolean; metaKey: boolean; altKey: boolean }): boolean {
+  return input.ctrlKey || input.metaKey || input.altKey;
+}
+
+function isBrowserUnloadShortcut(input: {
+  code: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+  isEditableTarget?: boolean;
+}): boolean {
+  if (
+    SINGLE_KEY_BROWSER_UNLOAD_CODES.has(input.code) &&
+    !(input.isEditableTarget && input.code === 'Backspace')
+  ) {
+    return true;
   }
+  if (input.shiftKey && input.code === 'Escape') return true;
+  if (hasShortcutModifier(input) && input.code === 'Escape') return true;
+
+  if ((input.ctrlKey || input.metaKey) && (
+    input.code === 'KeyQ' ||
+    input.code === 'KeyR' ||
+    input.code === 'KeyW'
+  )) {
+    return true;
+  }
+
+  if ((input.ctrlKey || input.metaKey || input.altKey) && input.code === 'F4') {
+    return true;
+  }
+
+  if (input.altKey && (
+    input.code === 'KeyF' ||
+    input.code === 'Space'
+  )) {
+    return true;
+  }
+
+  if ((input.altKey || input.metaKey) && (
+    input.code === 'ArrowLeft' ||
+    input.code === 'ArrowRight' ||
+    input.code === 'BracketLeft' ||
+    input.code === 'BracketRight'
+  )) {
+    return true;
+  }
+
+  if (input.metaKey && (
+    input.code === 'KeyH' ||
+    input.code === 'KeyM'
+  )) {
+    return true;
+  }
+
   return false;
 }
 
@@ -57,20 +132,24 @@ export function shouldPreventGameplayBrowserShortcut(input: {
   code: string;
   ctrlKey: boolean;
   metaKey: boolean;
-  isPointerLocked: boolean;
-  pressedCodes: ReadonlySet<string>;
-  gameplayCodes: Pick<ReadonlySet<string>, 'has'>;
+  altKey: boolean;
+  shiftKey: boolean;
+  isEditableTarget?: boolean;
 }): boolean {
-  if (!input.isPointerLocked) return false;
-
-  const isGameplayCode = input.gameplayCodes.has(input.code);
-  const isShortcutModifierDown = input.ctrlKey || input.metaKey;
-  if (isGameplayCode && isShortcutModifierDown) return true;
+  if (isBrowserUnloadShortcut(input)) return true;
+  if (BROWSER_CONTROL_CODES.has(input.code)) return true;
+  if (input.isEditableTarget) return false;
 
   return (
-    BROWSER_SHORTCUT_MODIFIER_CODES.has(input.code) &&
-    hasPressedGameplayCode(input.pressedCodes, input.gameplayCodes)
+    BROWSER_SHORTCUT_MODIFIER_CODES.has(input.code) ||
+    hasShortcutModifier(input)
   );
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (document.body.dataset.rebindingKeybind === 'true') return true;
+  if (!(target instanceof HTMLElement)) return false;
+  return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
 }
 
 export function useInput(options: UseInputOptions = {}): UseInputReturn {
@@ -174,24 +253,34 @@ export function useInput(options: UseInputOptions = {}): UseInputReturn {
     return true;
   }, [setActionPressed]);
 
+  const shouldConsumeBrowserShortcut = useCallback((e: KeyboardEvent) => (
+    shouldPreventGameplayBrowserShortcut({
+      code: e.code,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      altKey: e.altKey,
+      shiftKey: e.shiftKey,
+      isEditableTarget: isEditableKeyboardTarget(e.target),
+    })
+  ), []);
+
+  const consumeKeyboardEvent = useCallback((e: KeyboardEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+  }, []);
+
   // Handle key down
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const consumedBrowserShortcut = shouldConsumeBrowserShortcut(e);
+      if (consumedBrowserShortcut) {
+        consumeKeyboardEvent(e);
+      }
+
       // Ignore game controls when console is open
       if (isGameConsoleOpen()) {
         return;
-      }
-
-      if (shouldPreventGameplayBrowserShortcut({
-        code: e.code,
-        ctrlKey: e.ctrlKey,
-        metaKey: e.metaKey,
-        isPointerLocked: document.pointerLockElement !== null,
-        pressedCodes: pressedCodesRef.current,
-        gameplayCodes: keyToAction.current,
-      })) {
-        e.preventDefault();
-        e.stopPropagation();
       }
 
       if (pressInputCode(e.code)) {
@@ -200,6 +289,10 @@ export function useInput(options: UseInputOptions = {}): UseInputReturn {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
+      if (shouldConsumeBrowserShortcut(e)) {
+        consumeKeyboardEvent(e);
+      }
+
       if (releaseInputCode(e.code)) {
         e.preventDefault();
       }
@@ -212,7 +305,7 @@ export function useInput(options: UseInputOptions = {}): UseInputReturn {
       window.removeEventListener('keydown', handleKeyDown, true);
       window.removeEventListener('keyup', handleKeyUp, true);
     };
-  }, [pressInputCode, releaseInputCode]);
+  }, [consumeKeyboardEvent, pressInputCode, releaseInputCode, shouldConsumeBrowserShortcut]);
 
   // Handle mouse buttons
   useEffect(() => {
@@ -248,8 +341,6 @@ export function useInput(options: UseInputOptions = {}): UseInputReturn {
   }, [isPointerLocked, pressInputCode, releaseInputCode]);
 
   useEffect(() => {
-    if (!isPointerLocked) return;
-
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
@@ -257,7 +348,7 @@ export function useInput(options: UseInputOptions = {}): UseInputReturn {
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isPointerLocked]);
+  }, []);
 
   // Handle pointer lock
   useEffect(() => {

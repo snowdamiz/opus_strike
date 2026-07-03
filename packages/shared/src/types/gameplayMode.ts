@@ -6,6 +6,7 @@ export type CustomLobbyGameplayMode = typeof CUSTOM_LOBBY_GAMEPLAY_MODES[number]
 
 export const DEFAULT_GAMEPLAY_MODE: GameplayMode = 'capture_the_flag';
 export const BATTLE_ROYAL_GAMEPLAY_MODE: GameplayMode = 'battle_royal';
+export const RANKED_GAMEPLAY_MODE: GameplayMode = BATTLE_ROYAL_GAMEPLAY_MODE;
 
 export type GameplayScoreModel = 'ctf_flags' | 'team_kills' | 'last_team_alive';
 export type GameplayRespawnPolicy = 'timed' | 'none_after_active_play';
@@ -67,7 +68,7 @@ export const GAMEPLAY_MODE_RULES = {
     safeZoneEnabled: false,
     powerupsEnabled: true,
     botsEnabled: true,
-    rankedEnabled: true,
+    rankedEnabled: false,
     capacityWeight: 1,
     expectedRoomCost: 8,
   },
@@ -95,7 +96,7 @@ export const GAMEPLAY_MODE_RULES = {
     safeZoneEnabled: false,
     powerupsEnabled: true,
     botsEnabled: true,
-    rankedEnabled: true,
+    rankedEnabled: false,
     capacityWeight: 1,
     expectedRoomCost: 8,
   },
@@ -123,7 +124,7 @@ export const GAMEPLAY_MODE_RULES = {
     safeZoneEnabled: true,
     powerupsEnabled: true,
     botsEnabled: true,
-    rankedEnabled: false,
+    rankedEnabled: true,
     capacityWeight: 33 / 8,
     expectedRoomCost: 33,
   },

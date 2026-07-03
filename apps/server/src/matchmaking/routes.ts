@@ -15,6 +15,7 @@ import { collectInGameCapacitySnapshot, type InGameCapacitySnapshot } from './pl
 import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_MATCH_PERSPECTIVE,
+  RANKED_GAMEPLAY_MODE,
   getHeroSkinDefinition,
   isGameplayMode,
   isHeroSkinId,
@@ -37,6 +38,7 @@ import {
   doesMatchmakingMetadataMatchSettings,
   getQueueStatusCacheKey,
   normalizeMatchmakingBotFillMode,
+  RANKED_BOT_FILL_MODE,
   type MatchmakingBotFillMode,
 } from './matchSettings';
 import { getLocalMatchmakingRegion } from './region';
@@ -164,8 +166,8 @@ async function getQueueStatus(
 
   return {
     mode,
-    gameplayMode: mode === 'quick_play' ? gameplayMode : undefined,
-    botFillMode: mode === 'quick_play' ? botFillMode : undefined,
+    gameplayMode,
+    botFillMode,
     matchPerspective: mode === 'ranked' ? DEFAULT_MATCH_PERSPECTIVE : matchPerspective,
     totalPlayersInQueue,
     queueCount,
@@ -228,10 +230,14 @@ router.get('/queue-status', async (req: Request, res: Response) => {
 
   try {
     const requestedMode = req.query.mode === 'ranked' ? 'ranked' : 'quick_play';
-    const requestedGameplayMode = isGameplayMode(req.query.gameplayMode)
+    const requestedGameplayMode = requestedMode === 'ranked'
+      ? RANKED_GAMEPLAY_MODE
+      : isGameplayMode(req.query.gameplayMode)
       ? req.query.gameplayMode
       : DEFAULT_GAMEPLAY_MODE;
-    const requestedBotFillMode = normalizeMatchmakingBotFillMode(req.query.botFillMode);
+    const requestedBotFillMode = requestedMode === 'ranked'
+      ? RANKED_BOT_FILL_MODE
+      : normalizeMatchmakingBotFillMode(req.query.botFillMode);
     const requestedPerspective = isMatchPerspective(req.query.perspective)
       ? req.query.perspective
       : DEFAULT_MATCH_PERSPECTIVE;
@@ -372,6 +378,8 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
       mode: 'ranked',
       playerRating: context.competitiveRating,
       playerDivisionIndex: context.rankDivisionIndex,
+      gameplayMode: RANKED_GAMEPLAY_MODE,
+      botFillMode: RANKED_BOT_FILL_MODE,
       matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
       selectedHero,
       matchmakingRegion,

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import type { PlayerInput } from '@voxel-strike/shared';
 import {
+  BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX,
   BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX,
   applyBotAbilityInputPlan,
   buildBotBlackboard,
@@ -39,7 +40,9 @@ import {
   DEFAULT_GAMEPLAY_MODE,
   getHeroStats,
   type BotDifficulty,
+  type GameplayMode,
   type HeroId,
+  type SafeZoneSnapshot,
   type Team,
   type VoxelMapManifest,
 } from '@voxel-strike/shared';
@@ -102,6 +105,7 @@ function player(options: {
   profile?: string;
   hasFlag?: boolean;
   ultimateCharge?: number;
+  state?: string;
 }): BotPlayerSnapshot {
   const heroId = options.heroId ?? 'phantom';
   const maxHealth = options.maxHealth ?? getHeroStats(heroId).maxHealth;
@@ -110,7 +114,7 @@ function player(options: {
     name: options.id,
     team: options.team,
     heroId,
-    state: 'alive',
+    state: options.state ?? 'alive',
     isBot: options.isBot ?? true,
     botDifficulty: options.difficulty ?? 'normal',
     botProfileId: options.profile ?? options.id,
@@ -157,9 +161,32 @@ function flags(overrides: Partial<Record<Team, Partial<BotFlagSnapshot>>> = {}):
   };
 }
 
-function tacticsFor(bot: BotPlayerSnapshot, players: BotPlayerSnapshot[], flagState = flags()): BotTeamTactics {
+function safeZone(overrides: Partial<SafeZoneSnapshot> = {}): SafeZoneSnapshot {
+  return {
+    enabled: true,
+    phaseIndex: 3,
+    center: vec(0, 0, 0),
+    radius: 20,
+    nextCenter: vec(0, 0, 0),
+    nextRadius: 12,
+    nextZoneRevealsAt: NOW - 5000,
+    shrinkStartsAt: NOW - 1000,
+    phaseEndsAt: NOW + 30_000,
+    damagePerSecond: 12,
+    warning: false,
+    shrinking: true,
+    ...overrides,
+  };
+}
+
+function tacticsFor(
+  bot: BotPlayerSnapshot,
+  players: BotPlayerSnapshot[],
+  flagState = flags(),
+  gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE
+): BotTeamTactics {
   return buildTeamTactics({
-    gameplayMode: DEFAULT_GAMEPLAY_MODE,
+    gameplayMode,
     now: NOW,
     revision: 1,
     players,
@@ -175,19 +202,23 @@ function blackboardFor(
     visibleEnemyIds?: string[];
     losEnemyIds?: string[];
     difficulty?: BotDifficulty;
+    gameplayMode?: GameplayMode;
+    safeZone?: SafeZoneSnapshot | null;
   } = {}
 ) {
   const flagState = options.flagState ?? flags();
+  const gameplayMode = options.gameplayMode ?? DEFAULT_GAMEPLAY_MODE;
   return buildBotBlackboard({
     now: NOW,
-    gameplayMode: DEFAULT_GAMEPLAY_MODE,
+    gameplayMode,
     bot,
     players,
     flags: flagState,
+    safeZone: options.safeZone,
     visibleEnemyIds: new Set(options.visibleEnemyIds ?? players.filter((candidate) => candidate.team !== bot.team).map((candidate) => candidate.id)),
     enemyLineOfSightIds: new Set(options.losEnemyIds ?? options.visibleEnemyIds ?? []),
     recentDamageSources: [],
-    teamTactics: tacticsFor(bot, players, flagState),
+    teamTactics: tacticsFor(bot, players, flagState, gameplayMode),
     enemyMemory: new Map(),
     skill: getBotSkillProfile(options.difficulty ?? bot.botDifficulty),
   });
@@ -320,6 +351,82 @@ function testBattleRoyalTacticsUseAllEnemySquads() {
   const intent = scoreBotIntents(alphaBot, blackboard, getBotSkillProfile('normal'));
   assert.equal(intent.type, 'fight_local_enemy');
   assert.equal(intent.targetPlayerId, charlieEnemy.id);
+}
+
+function testRankedBattleRoyalProfileIsStrongerThanHard() {
+  const hard = getBotSkillProfile('hard');
+  const ranked = getBotSkillProfile('normal', `${BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX}-12`);
+
+  assert.ok(ranked.thinkIntervalMs < hard.thinkIntervalMs);
+  assert.ok(ranked.reactionMs < hard.reactionMs);
+  assert.ok(ranked.fireChance > hard.fireChance);
+  assert.ok(ranked.routeDangerWeight > hard.routeDangerWeight);
+  assert.ok(ranked.pathExpansionLimit > hard.pathExpansionLimit);
+}
+
+function testBattleRoyalSafeZoneIntentRotatesBeforeFighting() {
+  const bot = player({ id: 'zone-bot', team: 'br_01', heroId: 'hookshot', x: 36, z: 0 });
+  const zone = safeZone({ radius: 18, nextRadius: 10 });
+  const blackboard = blackboardFor(bot, [bot], {
+    gameplayMode: 'battle_royal',
+    safeZone: zone,
+    visibleEnemyIds: [],
+    losEnemyIds: [],
+  });
+  const intent = scoreBotIntents(bot, blackboard, getBotSkillProfile('hard'));
+
+  assert.equal(blackboard.safeZone?.outside, true);
+  assert.equal(intent.type, 'rotate_safe_zone');
+  assert.deepEqual(intent.targetPosition, { x: zone.nextCenter.x, y: bot.position.y, z: zone.nextCenter.z });
+}
+
+function testBattleRoyalReviveAndFinishIntents() {
+  const bot = player({ id: 'squad-bot', team: 'br_01', heroId: 'chronos', x: 0, z: 0 });
+  const downedAlly = player({ id: 'downed-ally', team: 'br_01', heroId: 'phantom', x: 3, z: 0, state: 'downed', isBot: false });
+  const reviveBoard = blackboardFor(bot, [bot, downedAlly], {
+    gameplayMode: 'battle_royal',
+    visibleEnemyIds: [],
+    losEnemyIds: [],
+  });
+  const reviveIntent = scoreBotIntents(bot, reviveBoard, getBotSkillProfile('hard'));
+
+  assert.equal(reviveBoard.nearestDownedAlly?.id, downedAlly.id);
+  assert.equal(reviveIntent.type, 'revive_teammate');
+  assert.equal(reviveIntent.targetPlayerId, downedAlly.id);
+
+  const downedEnemy = player({ id: 'downed-enemy', team: 'br_02', heroId: 'blaze', x: 4, z: 0, state: 'downed', isBot: false });
+  const finishBoard = blackboardFor(bot, [bot, downedEnemy], {
+    gameplayMode: 'battle_royal',
+    visibleEnemyIds: [downedEnemy.id],
+    losEnemyIds: [downedEnemy.id],
+  });
+  const finishIntent = scoreBotIntents(bot, finishBoard, getBotSkillProfile('hard'));
+  const combatPlan = chooseBotCombatPlan({
+    bot,
+    intent: finishIntent,
+    blackboard: finishBoard,
+    skill: getBotSkillProfile('hard'),
+    primaryRange: 18,
+    protectedEnemyIds: new Set(),
+  });
+
+  assert.equal(finishBoard.nearestDownedEnemy?.id, downedEnemy.id);
+  assert.equal(finishIntent.type, 'finish_downed_enemy');
+  assert.equal(combatPlan.targetId, downedEnemy.id);
+}
+
+function testBattleRoyalDisengagesBadThirdPartyFight() {
+  const bot = player({ id: 'pinched-bot', team: 'br_01', heroId: 'phantom', x: 0, z: 0, health: 75, maxHealth: 120 });
+  const enemyA = player({ id: 'enemy-a', team: 'br_02', heroId: 'hookshot', x: 8, z: 0, isBot: false });
+  const enemyB = player({ id: 'enemy-b', team: 'br_03', heroId: 'blaze', x: 9, z: 2, isBot: false });
+  const board = blackboardFor(bot, [bot, enemyA, enemyB], {
+    gameplayMode: 'battle_royal',
+    visibleEnemyIds: [enemyA.id, enemyB.id],
+    losEnemyIds: [enemyA.id, enemyB.id],
+  });
+  const intent = scoreBotIntents(bot, board, getBotSkillProfile('normal'));
+
+  assert.equal(intent.type, 'disengage_third_party');
 }
 
 function testIntentScoring() {
@@ -1214,6 +1321,35 @@ function testCombatMovementKitesInsideMinimumRange() {
   assert.ok(move.x < -0.45, `expected bot to back away from close enemy, got ${JSON.stringify(move)}`);
 }
 
+function testEliminationBotsPressureWoundedTargets() {
+  const redA = player({ id: 'red-a', team: 'red', heroId: 'phantom', x: 0, z: 0 });
+  const redB = player({ id: 'red-b', team: 'red', heroId: 'hookshot', x: -2, z: 0 });
+  const healthyClose = player({ id: 'blue-healthy', team: 'blue', heroId: 'hookshot', x: 7, z: 0 });
+  const woundedChronos = player({ id: 'blue-wounded', team: 'blue', heroId: 'chronos', x: 16, z: 0, health: 45, maxHealth: 180 });
+  const players = [redA, redB, healthyClose, woundedChronos];
+  const tactics = buildTeamTactics({
+    gameplayMode: 'team_deathmatch',
+    now: NOW,
+    revision: 1,
+    players,
+    flags: flags(),
+  }).red;
+
+  assert.equal(tactics.assignments[redA.id].targetPlayerId, woundedChronos.id);
+  assert.equal(tactics.assignments[redB.id].targetPlayerId, woundedChronos.id);
+
+  const board = blackboardFor(redA, players, {
+    gameplayMode: 'team_deathmatch',
+    visibleEnemyIds: [healthyClose.id, woundedChronos.id],
+    losEnemyIds: [healthyClose.id, woundedChronos.id],
+  });
+  const intent = scoreBotIntents(redA, board, getBotSkillProfile('normal'));
+
+  assert.equal(intent.type, 'fight_local_enemy');
+  assert.equal(intent.targetPlayerId, woundedChronos.id);
+  assert.equal(intent.reason, 'pressure weakened enemy');
+}
+
 function testOutnumberedBotsRegroupBeforeCriticalHealth() {
   const bot = player({ id: 'red-phantom', team: 'red', heroId: 'phantom', x: 0, z: 0, health: 115 });
   const enemyA = player({ id: 'blue-a', team: 'blue', heroId: 'phantom', x: 8, z: 0 });
@@ -1226,6 +1362,20 @@ function testOutnumberedBotsRegroupBeforeCriticalHealth() {
 
   assert.equal(intent.type, 'regroup');
   assert.equal(intent.reason, 'outnumbered local fight');
+}
+
+function testModeratelyHealthyOutnumberedBotsKeepPressure() {
+  const bot = player({ id: 'red-phantom', team: 'red', heroId: 'phantom', x: 0, z: 0, health: 125, maxHealth: 180 });
+  const enemyA = player({ id: 'blue-a', team: 'blue', heroId: 'phantom', x: 8, z: 0 });
+  const enemyB = player({ id: 'blue-b', team: 'blue', heroId: 'hookshot', x: 10, z: 3 });
+  const blackboard = blackboardFor(bot, [bot, enemyA, enemyB], {
+    visibleEnemyIds: [enemyA.id, enemyB.id],
+    losEnemyIds: [enemyA.id, enemyB.id],
+  });
+  const intent = scoreBotIntents(bot, blackboard, getBotSkillProfile('normal'));
+
+  assert.equal(intent.type, 'fight_local_enemy');
+  assert.equal(intent.targetPlayerId, enemyA.id);
 }
 
 function testChronosHealingThresholds() {
@@ -1383,11 +1533,15 @@ function testSkillProfilesScaleCombatResponsiveness() {
   assert.ok(hard.memoryMs > normal.memoryMs);
   assert.ok(normal.pathExpansionLimit > easy.pathExpansionLimit);
   assert.ok(hard.pathExpansionLimit > normal.pathExpansionLimit);
+  assert.ok(normal.aggression > easy.aggression);
+  assert.ok(hard.aggression > normal.aggression);
+  assert.ok(normal.retreatHealthRatio < easy.retreatHealthRatio);
+  assert.ok(hard.retreatHealthRatio < normal.retreatHealthRatio);
 
   assert.ok(normal.thinkIntervalMs <= 480);
   assert.ok(normal.reactionMs <= 600);
-  assert.ok(normal.fireChance >= 0.38);
-  assert.ok(normal.memoryMs >= 1000);
+  assert.ok(normal.fireChance >= 0.44);
+  assert.ok(normal.memoryMs >= 1400);
 }
 
 function testStreamerDeathmatchProfileIsShowcaseAggressive() {
@@ -1537,6 +1691,10 @@ function testContestedObjectiveStillSpendsControlUltimate() {
 
 testTeamTacticsAssignments();
 testBattleRoyalTacticsUseAllEnemySquads();
+testRankedBattleRoyalProfileIsStrongerThanHard();
+testBattleRoyalSafeZoneIntentRotatesBeforeFighting();
+testBattleRoyalReviveAndFinishIntents();
+testBattleRoyalDisengagesBadThirdPartyFight();
 testIntentScoring();
 testRoutePlannerAvoidsBlockedEdge();
 testRoutePlannerSkipsNearbyStartNodeForOutgoingGoals();
@@ -1557,7 +1715,9 @@ testBotInputMovementState();
 testBotAbilityInputPlanApplication();
 testCombatPlannerHoldsStandoffInsideAttackEnvelope();
 testCombatMovementKitesInsideMinimumRange();
+testEliminationBotsPressureWoundedTargets();
 testOutnumberedBotsRegroupBeforeCriticalHealth();
+testModeratelyHealthyOutnumberedBotsKeepPressure();
 testChronosHealingThresholds();
 testHeroAbilityControllers();
 testDifficultyChangesDecisionQuality();

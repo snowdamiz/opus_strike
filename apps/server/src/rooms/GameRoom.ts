@@ -632,6 +632,7 @@ import {
   isTeamDeathmatchMode,
   resolveBattleRoyalMatchEnd,
 } from './gameModeRules';
+import { BattleRoyalPlacementTracker } from './battleRoyalPlacement';
 import {
   CTF_TEAMS,
   getBotFlagSnapshots,
@@ -768,6 +769,7 @@ interface BotFrameContext {
   snapshots: BotPlayerSnapshot[];
   snapshotById: Map<string, BotPlayerSnapshot>;
   aliveBotCount: number;
+  safeZone: BattleRoyalSafeZoneState | null;
   flags: ReturnType<typeof getBotFlagSnapshots>;
   teamTactics: BotTeamTacticsByTeam;
   protectedEnemyIdsByTeam: Map<Team, Set<string>>;
@@ -1187,6 +1189,7 @@ export class GameRoom extends Room<GameState> {
   private readonly streamerObservers = new Map<string, StreamerObserverSession>();
   private battleRoyalSafeZone: BattleRoyalSafeZoneState | null = null;
   private battleRoyalDrop: BattleRoyalDropState | null = null;
+  private readonly battleRoyalPlacement = new BattleRoyalPlacementTracker();
   private nextBattleRoyalSafeZoneDamageAt = 0;
   private matchMode: MatchMode = 'custom';
   private gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE;
@@ -2364,6 +2367,7 @@ export class GameRoom extends Room<GameState> {
     });
 
     this.updateBattleRoyalSafeZone(now);
+    this.updateBattleRoyalPlacement(now);
     this.flushDeferredTrackedMessages();
     this.checkBattleRoyalWinCondition();
     this.flushDeferredTrackedMessages();
@@ -2701,6 +2705,7 @@ export class GameRoom extends Room<GameState> {
     let rankedPreview: RankedSummaryPreviewInput | undefined;
     if (ledger && ledger.state === 'active') {
       const participants = this.buildMatchParticipantSnapshots(ledger);
+      const rosterCounts = this.getCombatRosterCountsForRanking();
       rankedPreview = {
         participants,
         rankedUserStates: buildRankedUserStatesFromAuthContexts(this.participantRegistry.getAuthContexts()),
@@ -2710,6 +2715,8 @@ export class GameRoom extends Room<GameState> {
           forcedByPlayerId
         ),
         rankedHoldRequired: integrityGate?.rankedHoldRequired === true,
+        gameplayMode: this.gameplayMode,
+        ...rosterCounts,
       };
     }
 
@@ -3752,7 +3759,10 @@ export class GameRoom extends Room<GameState> {
 
   private buildMatchParticipantSnapshots(ledger: MatchPersistenceLedger): MatchParticipantSnapshot[] {
     if (ledger !== this.matchLedger.getLedger()) return [];
-    return this.matchLedger.buildParticipantSnapshots(this.state.players.values());
+    const participants = this.matchLedger.buildParticipantSnapshots(this.state.players.values());
+    return isBattleRoyalMode(this.gameplayMode)
+      ? this.battleRoyalPlacement.enrichParticipantSnapshots(participants)
+      : participants;
   }
 
   private markMatchParticipantLeft(player: Player, now = Date.now()): void {
@@ -3847,7 +3857,36 @@ export class GameRoom extends Room<GameState> {
       integrityGate,
       gameplayMode: this.gameplayMode,
       killEvents: [...ledger.killEvents],
+      ...this.getCombatRosterCountsForRanking(),
     });
+  }
+
+  private getCombatRosterCountsForRanking(): {
+    totalParticipants: number;
+    humanParticipants: number;
+    botParticipants: number;
+    activeTeamCount?: number;
+  } {
+    let totalParticipants = 0;
+    let humanParticipants = 0;
+    let botParticipants = 0;
+    this.state.players.forEach((player, playerId) => {
+      if (this.npcs.has(playerId) || isObserverPlayer(player)) return;
+      totalParticipants++;
+      if (player.isBot) {
+        botParticipants++;
+      } else {
+        humanParticipants++;
+      }
+    });
+    return {
+      totalParticipants,
+      humanParticipants,
+      botParticipants,
+      activeTeamCount: isBattleRoyalMode(this.gameplayMode)
+        ? this.battleRoyalPlacement.activeTeamCount
+        : undefined,
+    };
   }
 
   private async removeVoiceParticipantForPlayer(
@@ -7635,6 +7674,7 @@ export class GameRoom extends Room<GameState> {
 
   private isPriorityBot(bot: Player, brain: BotBrain | undefined, now: number): boolean {
     if (bot.hasFlag) return true;
+    if (this.isBattleRoyalPriorityBot(bot, now)) return true;
     if (
       this.replicationState.getRecentCombatTransformUntil(bot.id) > now &&
       (
@@ -7656,6 +7696,63 @@ export class GameRoom extends Room<GameState> {
       return hasCloseHumanCombatTarget || this.isServerOwnedBotNearEnemyHuman(bot, BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE_SQ);
     }
     return hasCloseHumanCombatTarget;
+  }
+
+  private isBattleRoyalPriorityBot(bot: Player, now: number): boolean {
+    if (!isBattleRoyalMode(this.gameplayMode)) return false;
+    if (this.isBattleRoyalSafeZonePriorityBot(bot)) return true;
+    if (this.isServerOwnedBotNearBattleRoyalDownedPlayer(bot, 18 * 18)) return true;
+    if (
+      this.replicationState.getRecentCombatTransformUntil(bot.id) > now &&
+      this.isServerOwnedBotNearEnemyHuman(bot, BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE_SQ)
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  private isBattleRoyalSafeZonePriorityBot(bot: Player): boolean {
+    const safeZone = this.battleRoyalSafeZone;
+    if (!safeZone?.enabled) return false;
+    const distanceToCurrentBoundary = safeZone.radius - Math.hypot(
+      bot.position.x - safeZone.center.x,
+      bot.position.z - safeZone.center.z
+    );
+    const distanceToNextBoundary = safeZone.nextRadius - Math.hypot(
+      bot.position.x - safeZone.nextCenter.x,
+      bot.position.z - safeZone.nextCenter.z
+    );
+    const finalRingPressure = safeZone.phaseIndex >= 4 || safeZone.radius <= Math.max(16, safeZone.baseRadius * 0.12);
+    return (
+      distanceToCurrentBoundary < 0 ||
+      distanceToNextBoundary < 0 ||
+      (safeZone.shrinking && distanceToCurrentBoundary <= 18) ||
+      (safeZone.warning && distanceToNextBoundary <= 18) ||
+      finalRingPressure
+    );
+  }
+
+  private isServerOwnedBotNearBattleRoyalDownedPlayer(bot: Player, distanceSq: number): boolean {
+    const radius = Math.sqrt(distanceSq);
+    const candidates = this.botSimulationHumanScratch;
+    this.queryPlayersRadiusInto(
+      bot.position,
+      radius,
+      candidates,
+      { excludeId: bot.id, includeDowned: true }
+    );
+
+    for (const player of candidates) {
+      if (player.state !== 'downed') continue;
+      const isRelevantAlly = player.team === bot.team;
+      const isRelevantEnemy = player.team !== bot.team && !player.isBot;
+      if (!isRelevantAlly && !isRelevantEnemy) continue;
+      const dx = player.position.x - bot.position.x;
+      const dy = player.position.y - bot.position.y;
+      const dz = player.position.z - bot.position.z;
+      if (dx * dx + dy * dy + dz * dz <= distanceSq) return true;
+    }
+    return false;
   }
 
   private hasRecentHumanCombatInterest(bot: Player, now: number): boolean {
@@ -7795,6 +7892,7 @@ export class GameRoom extends Room<GameState> {
       snapshots,
       snapshotById,
       aliveBotCount,
+      safeZone: this.battleRoyalSafeZone,
       flags,
       teamTactics,
       protectedEnemyIdsByTeam,
@@ -8304,6 +8402,7 @@ export class GameRoom extends Room<GameState> {
       bot: botSnapshot,
       players: snapshots,
       flags: frameContext.flags,
+      safeZone: frameContext.safeZone,
       visibleEnemyIds,
       enemyLineOfSightIds,
       recentDamageSources: this.getBotRecentDamageSources(bot.id, now),
@@ -8475,6 +8574,23 @@ export class GameRoom extends Room<GameState> {
       now,
       tempoMultiplier,
     });
+
+    if (brain.intent.type === 'revive_teammate' && brain.intent.targetPlayerId) {
+      const reviveTarget = this.state.players.get(brain.intent.targetPlayerId) ?? null;
+      if (
+        reviveTarget &&
+        reviveTarget.team === bot.team &&
+        reviveTarget.state === 'downed' &&
+        distance3D(bot.position, reviveTarget.position) <= 4.5
+      ) {
+        input.interact = true;
+        input.primaryFire = false;
+        input.secondaryFire = false;
+        input.ability1 = false;
+        input.ability2 = false;
+        input.ultimate = false;
+      }
+    }
 
     if (dt <= 0) {
       input.moveForward = false;
@@ -9500,6 +9616,12 @@ export class GameRoom extends Room<GameState> {
     if (!this.matchStartGate.openGate()) return;
 
     const now = Date.now();
+    this.playerPings.resetCompetitiveGate({
+      players: this.state.players,
+      now,
+      matchMode: this.matchMode,
+    });
+
     this.state.players.forEach((player) => {
       if (isObserverPlayer(player)) {
         player.state = 'spectating';
@@ -9740,6 +9862,11 @@ export class GameRoom extends Room<GameState> {
       })
       : null;
     this.nextBattleRoyalSafeZoneDamageAt = (this.battleRoyalSafeZone?.phaseStartedAt ?? now) + 1000;
+    if (isBattleRoyalMode(this.gameplayMode)) {
+      this.battleRoyalPlacement.initialize(this.state.players.values(), now);
+    } else {
+      this.battleRoyalPlacement.clear();
+    }
 
     this.broadcastPhaseChange('playing');
     this.broadcastTracked('powerupState', this.powerupPickups.buildStateMessage(
@@ -9777,6 +9904,16 @@ export class GameRoom extends Room<GameState> {
     if (!decision.shouldEnd) return;
 
     this.endGame(undefined, decision.winningTeam);
+  }
+
+  private updateBattleRoyalPlacement(now = Date.now()): void {
+    if (!isBattleRoyalMode(this.gameplayMode) || this.state.phase !== 'playing') return;
+    this.battleRoyalPlacement.update(this.state.players.values(), now);
+  }
+
+  private finalizeBattleRoyalPlacement(winningTeam: Team | null, now = Date.now()): void {
+    if (!isBattleRoyalMode(this.gameplayMode)) return;
+    this.battleRoyalPlacement.finalize(this.state.players.values(), winningTeam, now);
   }
 
   private updateBattleRoyalSafeZone(now: number): void {
@@ -10031,6 +10168,7 @@ export class GameRoom extends Room<GameState> {
       blue: this.state.blueTeam.score,
     };
     const endedAt = Date.now();
+    this.finalizeBattleRoyalPlacement(winningTeam, endedAt);
 
     this.broadcastTracked('gameEnd', this.buildGameEndEvent(finalScore, winningTeam, endedAt, forcedByPlayerId));
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
@@ -10052,6 +10190,7 @@ export class GameRoom extends Room<GameState> {
 
     this.state.players.forEach(resetPostGamePlayer);
     this.matchLedger.clear();
+    this.battleRoyalPlacement.clear();
     this.updateMetadata();
   }
 
@@ -10789,11 +10928,14 @@ export class GameRoom extends Room<GameState> {
   }
 
   private suppressServerOwnedBotHighCountFullStepAbilityInput(input: PlayerInput): void {
-    const suppressesAbility = input.ability1 || input.ability2 || input.ultimate || input.interact;
+    const keepBattleRoyalInteract = input.interact && isBattleRoyalMode(this.gameplayMode);
+    const suppressesAbility = input.ability1 || input.ability2 || input.ultimate || (input.interact && !keepBattleRoyalInteract);
     input.ability1 = false;
     input.ability2 = false;
     input.ultimate = false;
-    input.interact = false;
+    if (!keepBattleRoyalInteract) {
+      input.interact = false;
+    }
     if (suppressesAbility) {
       this.tickProfiler.recordCounter('movement_bot_lod_full_ability_suppressed');
     }

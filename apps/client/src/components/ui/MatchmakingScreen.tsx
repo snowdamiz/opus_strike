@@ -1,6 +1,7 @@
 import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_MATCH_PERSPECTIVE,
+  RANKED_GAMEPLAY_MODE,
   getGameplayModeLabel,
   getGameplayModeRules,
   isGameplayMode,
@@ -30,11 +31,9 @@ function buildQueueStatusUrl(
   const params = new URLSearchParams({
     mode: isRanked ? 'ranked' : 'quick_play',
   });
-  if (!isRanked) {
-    params.set('gameplayMode', gameplayMode);
-    params.set('botFillMode', botFillMode);
-    params.set('perspective', matchPerspective);
-  }
+  params.set('gameplayMode', gameplayMode);
+  params.set('botFillMode', botFillMode);
+  params.set('perspective', matchPerspective);
   return `${getHttpUrl()}/matchmaking/queue-status?${params.toString()}`;
 }
 
@@ -75,18 +74,24 @@ export function MatchmakingScreen() {
   const isRanked = matchmakingStatus.matchMode === 'ranked';
   const queuedGameplayMode = isGameplayMode(matchmakingStatus.gameplayMode)
     ? matchmakingStatus.gameplayMode
-    : DEFAULT_GAMEPLAY_MODE;
-  const queuedBotFillMode = matchmakingStatus.botFillMode ?? 'manual';
+    : isRanked
+      ? RANKED_GAMEPLAY_MODE
+      : DEFAULT_GAMEPLAY_MODE;
+  const queuedBotFillMode = matchmakingStatus.botFillMode ?? (isRanked ? 'fill_even' : 'manual');
   const queuedMatchPerspective = isMatchPerspective(matchmakingStatus.matchPerspective)
     ? matchmakingStatus.matchPerspective
     : DEFAULT_MATCH_PERSPECTIVE;
-  const matchmakingLabel = isRanked ? 'Ranked' : getGameplayModeLabel(queuedGameplayMode);
+  const matchmakingLabel = isRanked ? `Ranked ${getGameplayModeLabel(queuedGameplayMode)}` : getGameplayModeLabel(queuedGameplayMode);
   const combatParticipantCount = lobbyPlayers.size;
   const provisionalHumanCount = isRanked
     ? Math.max(0, matchmakingStatus.provisionalHumanCount ?? 0)
     : 0;
   const requiredPlayers = matchmakingStatus.requiredPlayers ?? getGameplayModeRules(queuedGameplayMode).maxPlayers;
-  const rankedParticipantCount = Math.max(matchmakingStatus.queuedHumanCount ?? 0, combatParticipantCount);
+  const rankedParticipantCount = Math.max(
+    provisionalHumanCount,
+    matchmakingStatus.queuedHumanCount ?? 0,
+    combatParticipantCount
+  );
   const filledSlots = Math.min(isRanked ? rankedParticipantCount : combatParticipantCount, requiredPlayers);
   const slotColumnCount = requiredPlayers >= 20
     ? 10
@@ -96,7 +101,7 @@ export function MatchmakingScreen() {
   const displayedQueueCount = Math.max(totalPlayersInQueue, filledSlots);
   const queuePlayerLabel = displayedQueueCount === 1 ? 'player' : 'players';
   const capacityBlocked = matchmakingStatus.capacityBlocked;
-  const botFillGraceEndsAt = !isRanked && queuedBotFillMode === 'fill_even'
+  const botFillGraceEndsAt = queuedBotFillMode === 'fill_even'
     ? matchmakingStatus.botFillGraceEndsAt
     : null;
   const botFillCountdownSeconds = getCountdownSeconds(botFillGraceEndsAt, nowMs);
@@ -239,7 +244,7 @@ export function MatchmakingScreen() {
             {capacityBlocked
               ? 'Servers are full. Your squad will launch when a match frees space.'
               : isRanked
-              ? `${playerName ? `${playerName}, ` : ''}token holding verified. Finding a ranked squad.`
+              ? `${playerName ? `${playerName}, ` : ''}token holding verified. Building a ranked Battle Royal roster.`
               : `${playerName ? `${playerName}, hold tight.` : 'Hold tight.'} Building a full match squad.`}
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
@@ -252,8 +257,12 @@ export function MatchmakingScreen() {
           {showBotFillCountdown && (
             <div className="mx-auto mt-6 flex min-h-16 max-w-sm items-center justify-between gap-4 border border-orange-300/20 bg-black/35 px-4 py-3 text-left shadow-[0_0_24px_rgba(251,146,60,0.10)] backdrop-blur-sm">
               <div className="min-w-0">
-                <p className="font-body text-xs uppercase tracking-[0.22em] text-orange-200/60">Bot fill</p>
-                <p className="mt-1 font-body text-xs text-white/40">Waiting for players first</p>
+                <p className="font-body text-xs uppercase tracking-[0.22em] text-orange-200/60">
+                  {isRanked ? 'Automatic fill' : 'Bot fill'}
+                </p>
+                <p className="mt-1 font-body text-xs text-white/40">
+                  {isRanked ? 'Completing the BR roster' : 'Waiting for players first'}
+                </p>
               </div>
               <span className="min-w-20 text-right font-display text-2xl leading-none text-orange-100 tabular-nums">
                 {formatCountdown(botFillCountdownSeconds)}
