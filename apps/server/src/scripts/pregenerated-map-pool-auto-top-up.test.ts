@@ -129,7 +129,10 @@ function overview(lowSlices = 1): MapPoolAdminOverview {
   }).maxGeneratedPerRun, 4);
   assert.equal(getPregeneratedMapPoolAutoTopUpConfig({
     NODE_ENV: 'production',
-  }).maxCapacityPressure, 0.25);
+  }).maxCapacityPressure, 0.35);
+  assert.equal(getPregeneratedMapPoolAutoTopUpConfig({
+    NODE_ENV: 'production',
+  }).maxLocalCcu, 4);
   assert.equal(getPregeneratedMapPoolAutoTopUpConfig({
     NODE_ENV: 'development',
     COLYSEUS_DISTRIBUTED: '0',

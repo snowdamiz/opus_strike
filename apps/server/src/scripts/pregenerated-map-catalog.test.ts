@@ -10,6 +10,8 @@ import {
 } from '@voxel-strike/shared';
 import {
   formatMapPoolConsoleStatus,
+  getRequiredMapPoolSlices,
+  planMapPoolTopUpSliceIndexes,
   PregeneratedMapCatalogService,
 } from '../maps/pregeneratedMapCatalog';
 
@@ -104,6 +106,36 @@ async function withMapPoolConsoleStatusDisabled<T>(fn: () => Promise<T>): Promis
   }
 }
 
+function withMapPoolReadyCountEnv<T>(arena: string | undefined, battleRoyal: string | undefined, fn: () => T): T {
+  const previousArena = process.env.PREGENERATED_MAP_POOL_ARENA_READY_PER_SLICE;
+  const previousBattleRoyal = process.env.PREGENERATED_MAP_POOL_BATTLE_ROYAL_READY_PER_SLICE;
+  if (arena == null) {
+    delete process.env.PREGENERATED_MAP_POOL_ARENA_READY_PER_SLICE;
+  } else {
+    process.env.PREGENERATED_MAP_POOL_ARENA_READY_PER_SLICE = arena;
+  }
+  if (battleRoyal == null) {
+    delete process.env.PREGENERATED_MAP_POOL_BATTLE_ROYAL_READY_PER_SLICE;
+  } else {
+    process.env.PREGENERATED_MAP_POOL_BATTLE_ROYAL_READY_PER_SLICE = battleRoyal;
+  }
+
+  try {
+    return fn();
+  } finally {
+    if (previousArena == null) {
+      delete process.env.PREGENERATED_MAP_POOL_ARENA_READY_PER_SLICE;
+    } else {
+      process.env.PREGENERATED_MAP_POOL_ARENA_READY_PER_SLICE = previousArena;
+    }
+    if (previousBattleRoyal == null) {
+      delete process.env.PREGENERATED_MAP_POOL_BATTLE_ROYAL_READY_PER_SLICE;
+    } else {
+      process.env.PREGENERATED_MAP_POOL_BATTLE_ROYAL_READY_PER_SLICE = previousBattleRoyal;
+    }
+  }
+}
+
 function createFakePoolPrisma() {
   const calls = {
     readyGroupBy: 0,
@@ -152,6 +184,30 @@ function createFakePoolPrisma() {
 }
 
 async function run(): Promise<void> {
+  withMapPoolReadyCountEnv(undefined, undefined, () => {
+    const slices = getRequiredMapPoolSlices();
+    assert.deepEqual(slices.slice(0, 3).map((slice) => slice.profileId), [
+      'ctf_arena',
+      'tdm_arena',
+      'battle_royal_large',
+    ]);
+    assert.equal(slices.every((slice) => slice.requiredReadyCount === 1), true);
+    assert.equal(new Set(slices.map((slice) => `${slice.profileId}:${slice.mapSize}:${slice.themeId}`)).size, slices.length);
+  });
+
+  withMapPoolReadyCountEnv('2', '3', () => {
+    const slices = getRequiredMapPoolSlices();
+    const ctfSlice = slices.find((slice) => slice.profileId === 'ctf_arena');
+    const tdmSlice = slices.find((slice) => slice.profileId === 'tdm_arena');
+    const battleRoyalSlice = slices.find((slice) => slice.profileId === 'battle_royal_large');
+    assert.equal(ctfSlice?.requiredReadyCount, 2);
+    assert.equal(tdmSlice?.requiredReadyCount, 2);
+    assert.equal(battleRoyalSlice?.requiredReadyCount, 3);
+  });
+
+  assert.deepEqual(planMapPoolTopUpSliceIndexes([2, 2, 1], 5), [0, 1, 2, 0, 1]);
+  assert.deepEqual(planMapPoolTopUpSliceIndexes([0, 2, 0, 1], 3), [1, 3, 1]);
+
   {
     const line = formatMapPoolConsoleStatus('map-generated', {
       mapId: 'pgmap_test',
@@ -232,6 +288,13 @@ async function run(): Promise<void> {
       && slice.mapSize === 'small'
       && slice.themeId === 'verdant'
       && slice.readyCount === 1
+    )), false);
+    assert.equal(overview.lowSlices.some((slice) => (
+      slice.profileId === 'tdm_arena'
+      && slice.mapSize === 'small'
+      && slice.themeId === 'verdant'
+      && slice.readyCount === 0
+      && slice.requiredReadyCount === 1
     )), true);
 
     const result = await service.topUpPool({
