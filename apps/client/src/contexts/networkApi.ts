@@ -143,6 +143,10 @@ export interface StreamerStopResponse {
 export interface RewardEconomyResponse {
   economy: {
     rewardTokenSymbol: string | null;
+    rankedEntryGate: {
+      mode: 'locked' | 'token_required';
+      requiredTokenAmount: string;
+    };
     playerRewards: {
       enabled: boolean;
       dailyRankedDripLamports: string;
