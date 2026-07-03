@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { calculateMatchExperience } from '@voxel-strike/shared';
-import type { GameplayMode, HeroId, MatchOutcome, Team } from '@voxel-strike/shared';
+import type { GameplayMode, HeroId, MatchOutcome, RankedSeasonMode, Team } from '@voxel-strike/shared';
 import { DEFAULT_GAMEPLAY_MODE, type MatchMode } from '@voxel-strike/shared';
 import {
   calculateRankedRatingUpdates,
@@ -82,6 +82,26 @@ interface PersistableParticipant extends MatchParticipantSnapshot {
   outcome: MatchOutcome;
   score: number;
   experienceGained: number;
+}
+
+export interface RankedSeasonIdentity {
+  mode: RankedSeasonMode;
+  seasonNumber: number;
+}
+
+export interface RankedSeasonParticipantAggregate {
+  outcome: MatchOutcome;
+  kills: number;
+  deaths: number;
+  assists: number;
+  flagCaptures: number;
+  flagReturns: number;
+  score: number;
+  experienceGained: number;
+}
+
+export interface RankedSeasonUserAggregate {
+  name: string;
 }
 
 export function calculateParticipantScore(stats: MatchParticipantStats): number {
@@ -181,9 +201,13 @@ function getRankedAggregateIncrement(
   };
 }
 
-function getSeasonAggregateCreateData(
-  participant: PersistableParticipant,
-  user: { name: string },
+export function normalizeRankedSeasonMode(mode: RankedSeasonMode | string): RankedSeasonMode {
+  return mode === 'preseason' ? 'preseason' : 'season';
+}
+
+export function getRankedSeasonAggregateCreateData(
+  participant: RankedSeasonParticipantAggregate,
+  user: RankedSeasonUserAggregate,
   ratingUpdate: RankedRatingUpdate,
   endedAt: Date
 ) {
@@ -215,13 +239,13 @@ function getSeasonAggregateCreateData(
   };
 }
 
-function getSeasonAggregateUpdateData(
-  participant: PersistableParticipant,
-  user: { name: string },
+export function getRankedSeasonAggregateUpdateData(
+  participant: RankedSeasonParticipantAggregate,
+  user: RankedSeasonUserAggregate,
   ratingUpdate: RankedRatingUpdate,
   endedAt: Date
 ): Prisma.RankedSeasonUserStatsUpdateInput {
-  const createData = getSeasonAggregateCreateData(participant, user, ratingUpdate, endedAt);
+  const createData = getRankedSeasonAggregateCreateData(participant, user, ratingUpdate, endedAt);
 
   return {
     userName: createData.userName,
@@ -308,7 +332,14 @@ export async function persistCompletedMatch(
         : [];
       const ratingUpdatesByUserId = new Map(ratingUpdates.map((update) => [update.userId, update]));
       const usersById = new Map(existingUsers.map((user) => [user.id, user]));
-      const rankedSeason = rankedEligible ? await ensureRankedSeasonSettingsTx(tx) : null;
+      const shouldRecordRankedSeason = input.matchMode === 'ranked' && (rankedEligible || rankedOutcomeHeld);
+      const rankedSeason = shouldRecordRankedSeason ? await ensureRankedSeasonSettingsTx(tx) : null;
+      const rankedSeasonIdentity: RankedSeasonIdentity | null = rankedSeason
+        ? {
+          mode: normalizeRankedSeasonMode(rankedSeason.mode),
+          seasonNumber: rankedSeason.seasonNumber,
+        }
+        : null;
 
       await tx.gameMatch.create({
         data: {
@@ -326,6 +357,8 @@ export async function persistCompletedMatch(
           blueScore: input.blueScore,
           winningTeam: input.winningTeam,
           antiCheatIntegrityStatus: input.antiCheatIntegrityStatus ?? 'clean',
+          rankedSeasonMode: rankedSeasonIdentity?.mode,
+          rankedSeasonNumber: rankedSeasonIdentity?.seasonNumber,
           antiCheatReviewRequired: input.antiCheatReviewRequired === true,
           antiCheatIntegrityReason: input.antiCheatIntegrityReason ?? null,
           rankedOutcomeStatus: input.rankedOutcomeStatus
@@ -406,25 +439,24 @@ export async function persistCompletedMatch(
           await tryGrantRankedFounderSkins(tx, participant.userId);
         }
 
-        if (rankedSeason && ratingUpdate && user) {
-          const mode = rankedSeason.mode === 'preseason' ? 'preseason' : 'season';
-          const createData = getSeasonAggregateCreateData(participant, user, ratingUpdate, input.endedAt);
+        if (rankedSeasonIdentity && rankedEligible && ratingUpdate && user) {
+          const createData = getRankedSeasonAggregateCreateData(participant, user, ratingUpdate, input.endedAt);
 
           await tx.rankedSeasonUserStats.upsert({
             where: {
               mode_seasonNumber_userId: {
-                mode,
-                seasonNumber: rankedSeason.seasonNumber,
+                mode: rankedSeasonIdentity.mode,
+                seasonNumber: rankedSeasonIdentity.seasonNumber,
                 userId: participant.userId,
               },
             },
             create: {
-              mode,
-              seasonNumber: rankedSeason.seasonNumber,
+              mode: rankedSeasonIdentity.mode,
+              seasonNumber: rankedSeasonIdentity.seasonNumber,
               userId: participant.userId,
               ...createData,
             },
-            update: getSeasonAggregateUpdateData(participant, user, ratingUpdate, input.endedAt),
+            update: getRankedSeasonAggregateUpdateData(participant, user, ratingUpdate, input.endedAt),
           });
         }
       }

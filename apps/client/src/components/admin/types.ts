@@ -453,6 +453,15 @@ export interface AntiCheatReview {
   [key: string]: unknown;
 }
 
+/* ----------------------------- Event Biome -------------------------- */
+
+export interface EventBiomeSettings {
+  enabled: boolean;
+  themeId: string;
+  updatedByUserId: string | null;
+  updatedAt: string;
+}
+
 /* ----------------------------- Root --------------------------------- */
 
 export interface AdminOverview {
@@ -474,6 +483,7 @@ export interface AdminOverview {
   rankedEntryGate: RankedEntryGate;
   missions: MissionsAdminOverview;
   skinShop: SkinShopOverview;
+  eventBiome: EventBiomeSettings;
 }
 
 /* ----------------------- Request payloads --------------------------- */
@@ -527,6 +537,10 @@ export interface MissionReorderRequest {
 }
 
 export interface SkinShopSettingsUpdate {
+  enabled: boolean;
+}
+
+export interface EventBiomeUpdate {
   enabled: boolean;
 }
 

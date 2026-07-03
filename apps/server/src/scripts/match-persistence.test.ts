@@ -250,14 +250,18 @@ async function runPersistenceWriteTests() {
   assert.equal(fake.matches.get('ranked_match').mapSeed, BigInt(uint32MapSeedAboveInt4));
   assert.equal(fake.matches.get('ranked_match').rankedEligible, true);
   assert.equal(fake.matches.get('ranked_match').matchMode, 'ranked');
+  assert.equal(fake.matches.get('ranked_match').rankedSeasonMode, 'season');
+  assert.equal(fake.matches.get('ranked_match').rankedSeasonNumber, 1);
   assert.equal(fake.users.get('ranked_red').rankedGames, 6);
   assert.notEqual(fake.users.get('ranked_red').competitiveRating, 800);
+  assert.equal(fake.users.get('ranked_red').totalExperience, calculateParticipantExperience(baseParticipant, 'win'));
   const rankedRedSeason = fake.rankedSeasonStats.get('season:1:ranked_red');
   assert.ok(rankedRedSeason);
   assert.equal(rankedRedSeason.rankedGames, 1);
   assert.equal(rankedRedSeason.totalGames, 1);
   assert.equal(rankedRedSeason.totalKills, baseParticipant.kills);
   assert.equal(rankedRedSeason.totalCaptures, baseParticipant.flagCaptures);
+  assert.equal(rankedRedSeason.totalExperience, calculateParticipantExperience(baseParticipant, 'win'));
   const rankedParticipant = fake.participants.find((participant) => participant.userId === 'ranked_blue');
   assert.equal(rankedParticipant.rankedEligible, true);
   assert.equal(typeof rankedParticipant.ratingDelta, 'number');
@@ -307,6 +311,42 @@ async function runPersistenceWriteTests() {
   assert.equal(rankedRedSeasonAfterSecond.rankedGames, 2);
   assert.equal(rankedRedSeasonAfterSecond.totalGames, 2);
   assert.equal(rankedRedSeasonAfterSecond.totalKills, baseParticipant.kills * 2);
+
+  const rankedGamesBeforeHeld = fake.users.get('ranked_red').rankedGames;
+  const heldRankedResult = await persistCompletedMatch(fake.prisma as any, {
+    matchId: 'held_ranked_match',
+    roomId: 'room_ranked',
+    lobbyId: 'lobby_ranked',
+    matchMode: 'ranked',
+    mapSeed: 321,
+    rankedEligible: true,
+    rankedOutcomeStatus: 'held',
+    startedAt: joinedAt,
+    endedAt: new Date('2026-06-10T10:30:00.000Z'),
+    redScore: 2,
+    blueScore: 0,
+    winningTeam: 'red',
+    participants: [
+      { ...baseParticipant, userId: 'ranked_red', team: 'red', leftAt: null },
+      { ...baseParticipant, userId: 'ranked_blue', team: 'blue', leftAt: null },
+    ],
+  });
+  assert.equal(heldRankedResult.alreadyPersisted, false);
+  assert.equal(fake.matches.get('held_ranked_match').rankedEligible, false);
+  assert.equal(fake.matches.get('held_ranked_match').rankedOutcomeStatus, 'held');
+  assert.equal(fake.matches.get('held_ranked_match').rankedSeasonMode, 'season');
+  assert.equal(fake.matches.get('held_ranked_match').rankedSeasonNumber, 1);
+  assert.equal(fake.users.get('ranked_red').rankedGames, rankedGamesBeforeHeld);
+  assert.equal(
+    fake.users.get('ranked_red').totalExperience,
+    calculateParticipantExperience(baseParticipant, 'win') * 3
+  );
+  assert.equal(fake.rankedSeasonStats.get('season:1:ranked_red').rankedGames, 2);
+  const heldRankedParticipant = fake.participants.find((participant) => (
+    participant.matchId === 'held_ranked_match' && participant.userId === 'ranked_red'
+  ));
+  assert.equal(heldRankedParticipant.rankedEligible, true);
+  assert.equal(heldRankedParticipant.ratingDelta, undefined);
 
   const unrankedBefore = fake.users.get('unranked_red').competitiveRating;
   await persistCompletedMatch(fake.prisma as any, {

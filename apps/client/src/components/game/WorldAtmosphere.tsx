@@ -5,6 +5,7 @@ import type { VoxelMapTheme } from '@voxel-strike/shared';
 import type { EnvironmentQualityConfig } from './visualQuality';
 import { getBlazeGearstormSkyIntensity } from './blaze/airstrike';
 import { getPhantomVeilSkyIntensity } from './phantom/veilAtmosphere';
+import { Fireworks } from './Fireworks';
 
 interface WorldAtmosphereProps {
   theme: VoxelMapTheme;
@@ -68,6 +69,7 @@ const SKY_DOME_MAX_RADIUS = 96;
 const SKY_DOME_FAR_MARGIN = 8;
 const DEFAULT_ATMOSPHERE_SUN_POSITION: [number, number, number] = [92, 118, -76];
 const LATE_DAY_ATMOSPHERE_SUN_POSITION: [number, number, number] = [-286, 48, -204];
+const INDEPENDENCE_DUSK_ATMOSPHERE_SUN_POSITION: [number, number, number] = [-232, 34, -188];
 const BLAZE_SUN_CORE_COLOR = new THREE.Color('#ffd36a');
 const BLAZE_SUN_CORONA_COLOR = new THREE.Color('#ff5a00');
 const BLAZE_SUN_OUTER_CORONA_COLOR = new THREE.Color('#ff2700');
@@ -187,6 +189,7 @@ function createThemeColor(hex: string, mixTarget: string, amount: number): THREE
 }
 
 function getAtmosphereSunPosition(theme: VoxelMapTheme): [number, number, number] {
+  if (theme.skyVariantId === 'independence_dusk') return INDEPENDENCE_DUSK_ATMOSPHERE_SUN_POSITION;
   return theme.skyVariantId === 'late_day' ? LATE_DAY_ATMOSPHERE_SUN_POSITION : DEFAULT_ATMOSPHERE_SUN_POSITION;
 }
 
@@ -206,6 +209,7 @@ function getSkyDomeRadius(camera: THREE.Camera): number {
 
 function getSunsetIntensity(theme: VoxelMapTheme): number {
   if (theme.skyVariantId === 'late_day') return 1;
+  if (theme.skyVariantId === 'independence_dusk') return 0.9;
   if (theme.id === 'desert' || theme.id === 'golden') return 0.22;
   return 0.1;
 }
@@ -343,6 +347,62 @@ function getAtmosphereProfiles(theme: VoxelMapTheme, seed: number): AtmospherePr
           verticalDirection: 'fall',
         },
       ],
+    ]);
+  }
+
+  if (theme.id === 'independence') {
+    return withSeededWinds(seed ^ 0x17761204, [
+      {
+        kind: 'glimmer',
+        variant: 'firework-embers-red',
+        color: '#ff4d5e',
+        count: 260,
+        opacity: 0.72,
+        size: 0.11,
+        fallSpeed: 0.5,
+        spreadX: 86,
+        spreadZ: 76,
+        minY: 1.5,
+        maxY: 40,
+        turbulence: 0.2,
+        windScale: 0.7,
+        floatStrength: 0.34,
+        verticalDirection: 'rise',
+      },
+      {
+        kind: 'glimmer',
+        variant: 'firework-embers-blue',
+        color: '#5aa0ff',
+        count: 240,
+        opacity: 0.7,
+        size: 0.1,
+        fallSpeed: 0.46,
+        spreadX: 84,
+        spreadZ: 74,
+        minY: 1.5,
+        maxY: 38,
+        turbulence: 0.2,
+        windScale: 0.72,
+        floatStrength: 0.32,
+        verticalDirection: 'rise',
+      },
+      {
+        kind: 'glimmer',
+        variant: 'sparkler-white',
+        color: '#ffffff',
+        count: 220,
+        opacity: 0.8,
+        size: 0.085,
+        fallSpeed: 0.4,
+        spreadX: 80,
+        spreadZ: 70,
+        minY: 1,
+        maxY: 32,
+        turbulence: 0.22,
+        windScale: 0.6,
+        floatStrength: 0.4,
+        verticalDirection: 'float',
+      },
     ]);
   }
 
@@ -1034,8 +1094,8 @@ function createDustDevils(profile: AtmosphereProfile, seed: number): DustDevilCo
 }
 
 function getSkyUniforms(theme: VoxelMapTheme) {
-  const darken = theme.id === 'basalt' || theme.id === 'volcanic' ? 0.44 : theme.id === 'crystal' ? 0.2 : theme.id === 'golden' ? 0.02 : 0.08;
-  const warmHorizon = theme.id === 'golden' ? 0.28 : theme.id === 'desert' || theme.id === 'volcanic' || theme.id === 'sakura' ? 0.18 : 0.06;
+  const darken = theme.id === 'basalt' || theme.id === 'volcanic' ? 0.44 : theme.id === 'crystal' ? 0.2 : theme.id === 'golden' ? 0.02 : theme.id === 'independence' ? 0.16 : 0.08;
+  const warmHorizon = theme.id === 'golden' ? 0.28 : theme.id === 'independence' ? 0.24 : theme.id === 'desert' || theme.id === 'volcanic' || theme.id === 'sakura' ? 0.18 : 0.06;
 
   return {
     topColor: { value: createThemeColor(theme.skyColor, '#07111f', darken) },
@@ -1454,6 +1514,7 @@ export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
           <meshBasicMaterial ref={sunMaterialRef} color={sunColor} transparent opacity={1} toneMapped={false} fog={false} />
         </mesh>
       </group>
+      {theme.id === 'independence' ? <Fireworks seed={seed} config={config} /> : null}
       {atmosphereProfiles.map((profile, index) => {
         const profileSeed = seed ^ (0x5a7c0de + index * 0x27d4eb2d);
         return (

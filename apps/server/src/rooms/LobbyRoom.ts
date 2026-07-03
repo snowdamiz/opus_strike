@@ -115,6 +115,7 @@ import { applyRoomRankState } from './roomRankSnapshot';
 import { resolveUserLoadoutForHero } from '../cosmetics/skinShopService';
 import { loggers } from '../utils/logger';
 import { wagerService, type CreateWagerOptions } from '../wagers/service';
+import { getEnabledEventBiomeThemeId } from '../liveops/eventBiomeService';
 import type { WagerRosterPlayer } from '../wagers/math';
 
 type BotFillMode = 'manual' | 'fill_even';
@@ -945,7 +946,7 @@ export class LobbyRoom extends Room<LobbyState> {
       return;
     }
 
-    this.beginMapVote();
+    await this.beginMapVote();
   }
 
   private async startBattleRoyalMapGeneration(errorClient?: Client): Promise<void> {
@@ -1005,17 +1006,20 @@ export class LobbyRoom extends Room<LobbyState> {
     }
   }
 
-  private beginMapVote(): void {
+  private async beginMapVote(): Promise<void> {
     this.clearMapVoteTimer();
     this.clearCapacityRetry();
     this.setMatchmakingCapacityBlocked(false);
     this.state.status = 'map_vote';
     this.setMatchmakingLocked(true);
     const mapVoteSource = this.createMapSelectionSource();
+    // When the admin event-biome toggle is on, force it onto one of the three vote options.
+    const eventThemeId = await getEnabledEventBiomeThemeId();
     this.mapVoteSession = {
       options: createMapVoteOptions({
         gameplayMode: this.gameplayMode,
         source: mapVoteSource,
+        eventThemeId,
       }),
       votes: new Map(),
       phaseEndTime: null,

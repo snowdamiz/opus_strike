@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   getGameplayModeRules,
+  INDEPENDENCE_VOXEL_MAP_THEME_ID,
   VOXEL_MAP_SIZE_IDS,
 } from '@voxel-strike/shared';
 import {
@@ -33,6 +34,38 @@ function option(id: string): MapVoteOption {
   assert.deepEqual(options.map((mapOption) => mapOption.id), VOXEL_MAP_SIZE_IDS.map((_, index) => `map_${index + 1}`));
   assert.deepEqual(options.map((mapOption) => mapOption.mapSize), VOXEL_MAP_SIZE_IDS);
   assert.equal(options.every((mapOption) => mapOption.mapThemeId === null), true);
+}
+
+// Event biome: when forced, exactly one of the three CTF/TDM vote options carries it, across
+// many seed sources, and its theme threads through both mapThemeId and the resolved themeId.
+for (const gameplayMode of ['capture_the_flag', 'team_deathmatch'] as const) {
+  for (let source = 1; source <= 40; source++) {
+    const options = createMapVoteOptions({
+      gameplayMode,
+      source: source * 0x9e3779b1,
+      eventThemeId: INDEPENDENCE_VOXEL_MAP_THEME_ID,
+    });
+
+    const eventOptions = options.filter(
+      (mapOption) => mapOption.mapThemeId === INDEPENDENCE_VOXEL_MAP_THEME_ID
+    );
+    assert.equal(options.length, VOXEL_MAP_SIZE_IDS.length);
+    assert.equal(eventOptions.length, 1, `expected exactly one event map for ${gameplayMode} source ${source}`);
+    assert.equal(eventOptions[0].themeId, INDEPENDENCE_VOXEL_MAP_THEME_ID);
+    assert.equal(eventOptions[0].themeName, 'Independence Day');
+    // The other two remain seed-derived (standard rotation only).
+    assert.equal(options.filter((mapOption) => mapOption.mapThemeId === null).length, 2);
+  }
+}
+
+// Battle royal never gets an event map (it skips the vote entirely).
+{
+  const options = createMapVoteOptions({
+    gameplayMode: 'battle_royal',
+    source: 777,
+    eventThemeId: INDEPENDENCE_VOXEL_MAP_THEME_ID,
+  });
+  assert.deepEqual(options, []);
 }
 
 {

@@ -68,6 +68,13 @@ const SKY_PALETTES: Record<VoxelSkyVariantId, VoxelSkyPalette> = {
     sunColor: '#fff0a8',
     fogColor: '#f7c85f',
   },
+  independence_dusk: {
+    skyVariantId: 'independence_dusk',
+    skyColor: '#141a4a',
+    ambientColor: '#c2ccf5',
+    sunColor: '#ffb15e',
+    fogColor: '#b5546e',
+  },
 };
 
 export const STANDARD_VOXEL_MAP_THEMES: VoxelMapTheme[] = [
@@ -210,9 +217,36 @@ export const GOLDEN_VOXEL_MAP_THEME: VoxelMapTheme = {
   },
 };
 
+// Temporary 4th-of-July event biome. Like GOLDEN_VOXEL_MAP_THEME it is deliberately
+// excluded from the standard rotation (VOXEL_MAP_THEMES) so it can only appear when an
+// operator explicitly opts in — here, via the admin "Event Biome" toggle which forces it
+// onto one of the three map-vote options. Heavy red/white/blue with a dusk fireworks sky.
+export const INDEPENDENCE_VOXEL_MAP_THEME: VoxelMapTheme = {
+  id: 'independence',
+  name: 'Independence Day',
+  ...SKY_PALETTES.independence_dusk,
+  ground: {
+    top: '#4f6fb0',
+    side: '#3c5590',
+    dirt: '#6b5a86',
+    stone: '#9aa6c8',
+  },
+  structures: {
+    metal: '#b03a4a',
+    glass: '#eef2ff',
+    barrier: '#1c2550',
+    accent: '#f2f6ff',
+  },
+};
+
 export const VOXEL_MAP_THEMES: VoxelMapTheme[] = STANDARD_VOXEL_MAP_THEMES;
-export const ALL_VOXEL_MAP_THEMES: VoxelMapTheme[] = [...STANDARD_VOXEL_MAP_THEMES, GOLDEN_VOXEL_MAP_THEME];
+export const ALL_VOXEL_MAP_THEMES: VoxelMapTheme[] = [
+  ...STANDARD_VOXEL_MAP_THEMES,
+  GOLDEN_VOXEL_MAP_THEME,
+  INDEPENDENCE_VOXEL_MAP_THEME,
+];
 export const GOLDEN_VOXEL_MAP_THEME_ID = GOLDEN_VOXEL_MAP_THEME.id;
+export const INDEPENDENCE_VOXEL_MAP_THEME_ID = INDEPENDENCE_VOXEL_MAP_THEME.id;
 
 const SKY_VARIANTS_BY_THEME = {
   verdant: ['clear_day', 'late_day', 'stormfront', 'desert_heat', 'frost_glow', 'crystal_dusk', 'sakura_dawn'],
@@ -223,6 +257,7 @@ const SKY_VARIANTS_BY_THEME = {
   volcanic: ['stormfront', 'crystal_dusk', 'ember_haze'],
   sakura: ['clear_day', 'stormfront', 'frost_glow', 'crystal_dusk', 'sakura_dawn'],
   golden: ['clear_day', 'desert_heat', 'sakura_dawn', 'treasury_glow'],
+  independence: ['independence_dusk'],
 } satisfies Record<VoxelMapThemeId, readonly VoxelSkyVariantId[]>;
 
 const SKY_VARIANT_SALTS = {
@@ -234,6 +269,7 @@ const SKY_VARIANT_SALTS = {
   volcanic: 0x701ca11c,
   sakura: 0x5a4a12a,
   golden: 0x906d3a,
+  independence: 0x1776_1204,
 } satisfies Record<VoxelMapThemeId, number>;
 
 const VOXEL_MAP_THEME_BY_ID = Object.fromEntries(

@@ -42,6 +42,10 @@ import {
   GLOBAL_NOTIFICATION_MAX_MESSAGE_LENGTH,
 } from '../notifications/globalNotificationService';
 import {
+  getEventBiomeAdminOverview,
+  setEventBiomeSettings,
+} from '../liveops/eventBiomeService';
+import {
   dailyMissionService,
 } from '../missions/service';
 import { MissionValidationError } from '../missions/validation';
@@ -583,7 +587,7 @@ function summarizeLobbyRoom(room: AdminRoomListing, processSnapshots: Map<string
 
 async function collectAdminOverview(options: AdminRouterOptions, adminUser: AdminUser) {
   const generatedAtMs = Date.now();
-  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, rewardEconomySettings, goldenBiomeRewards, globalNotification, rankedSeason, rankedEntryGate, missions, skinShop] = await Promise.all([
+  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, rewardEconomySettings, goldenBiomeRewards, globalNotification, rankedSeason, rankedEntryGate, missions, skinShop, eventBiome] = await Promise.all([
     pingRedis(options.redis),
     queryRooms(options.matchMaker, 'game_room'),
     queryRooms(options.matchMaker, 'lobby_room'),
@@ -599,6 +603,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     getRankedEntryGateSettings(),
     dailyMissionService.getAdminOverview(),
     getSkinShopAdminOverview(),
+    getEventBiomeAdminOverview(),
   ]);
 
   let machineSnapshots: AdminMachineSnapshot[] = [];
@@ -726,6 +731,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     rankedEntryGate: rankedEntryGate satisfies AdminRankedEntryGate,
     missions: missions satisfies AdminMissions,
     skinShop: skinShop satisfies AdminSkinShop,
+    eventBiome,
   };
 }
 
@@ -1079,6 +1085,21 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         updatedByUserId: adminUser.id,
       });
       res.json({ ok: true, shop });
+    } catch (error) {
+      sendAdminMutationError(res, error);
+    }
+  });
+
+  router.post('/api/event-biome', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+
+    try {
+      const eventBiome = await setEventBiomeSettings({
+        enabled: req.body?.enabled === true,
+        updatedByUserId: adminUser.id,
+      });
+      res.json({ ok: true, eventBiome });
     } catch (error) {
       sendAdminMutationError(res, error);
     }

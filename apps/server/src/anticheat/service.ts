@@ -1,6 +1,14 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import type { MatchMode, Team } from '@voxel-strike/shared';
+import type { MatchMode, MatchOutcome, Team } from '@voxel-strike/shared';
 import { calculateRankedRatingUpdates, type RankedUserState } from '../ranking/ratingService';
+import { ensureRankedSeasonSettingsTx } from '../ranking/seasonService';
+import { tryGrantRankedFounderSkins } from '../cosmetics/rankedFounderRewards';
+import {
+  getRankedSeasonAggregateCreateData,
+  getRankedSeasonAggregateUpdateData,
+  normalizeRankedSeasonMode,
+  type RankedSeasonIdentity,
+} from '../persistence/matchPersistence';
 import { loggers } from '../utils/logger';
 import { getAntiCheatConfig } from './config';
 import { getMovementShadowDriftReport, type MovementShadowDriftReport } from './movementShadow';
@@ -554,6 +562,7 @@ export async function applyHeldRankedOutcome(prisma: PrismaClient, input: {
     where: { id: { in: match.participants.map((participant) => participant.userId) } },
     select: {
       id: true,
+      name: true,
       competitiveRating: true,
       rankedGames: true,
       rankedWins: true,
@@ -583,10 +592,26 @@ export async function applyHeldRankedOutcome(prisma: PrismaClient, input: {
     endedAt: match.endedAt,
   });
   const updatesByUserId = new Map(updates.map((update) => [update.userId, update]));
+  const usersById = new Map(users.map((user) => [user.id, user]));
 
   await prisma.$transaction(async (tx) => {
+    const hasStoredRankedSeason = Boolean(match.rankedSeasonMode && match.rankedSeasonNumber !== null);
+    const fallbackSeason = hasStoredRankedSeason
+      ? null
+      : await ensureRankedSeasonSettingsTx(tx);
+    const rankedSeason: RankedSeasonIdentity = hasStoredRankedSeason
+      ? {
+        mode: normalizeRankedSeasonMode(match.rankedSeasonMode!),
+        seasonNumber: match.rankedSeasonNumber!,
+      }
+      : {
+        mode: normalizeRankedSeasonMode(fallbackSeason?.mode ?? 'season'),
+        seasonNumber: fallbackSeason?.seasonNumber ?? 1,
+      };
+
     for (const participant of match.participants) {
       const update = updatesByUserId.get(participant.userId);
+      const user = usersById.get(participant.userId);
       if (!update) continue;
       await tx.gameMatchParticipant.update({
         where: { id: participant.id },
@@ -613,13 +638,57 @@ export async function applyHeldRankedOutcome(prisma: PrismaClient, input: {
           rankedLastMatchAt: match.endedAt,
         },
       });
+      if (user) {
+        const participantAggregate = {
+          outcome: participant.outcome as MatchOutcome,
+          kills: participant.kills,
+          deaths: participant.deaths,
+          assists: participant.assists,
+          flagCaptures: participant.flagCaptures,
+          flagReturns: participant.flagReturns,
+          score: participant.score,
+          experienceGained: participant.experienceGained,
+        };
+
+        await tx.rankedSeasonUserStats.upsert({
+          where: {
+            mode_seasonNumber_userId: {
+              mode: rankedSeason.mode,
+              seasonNumber: rankedSeason.seasonNumber,
+              userId: participant.userId,
+            },
+          },
+          create: {
+            mode: rankedSeason.mode,
+            seasonNumber: rankedSeason.seasonNumber,
+            userId: participant.userId,
+            ...getRankedSeasonAggregateCreateData(participantAggregate, user, update, match.endedAt),
+          },
+          update: getRankedSeasonAggregateUpdateData(participantAggregate, user, update, match.endedAt),
+        });
+
+        if (user.rankedGames === 0) {
+          await tryGrantRankedFounderSkins(tx, participant.userId);
+        }
+      }
     }
     await tx.gameMatch.update({
       where: { id: match.id },
       data: {
         rankedEligible: true,
+        rankedSeasonMode: rankedSeason.mode,
+        rankedSeasonNumber: rankedSeason.seasonNumber,
         rankedOutcomeStatus: 'applied',
         antiCheatReviewRequired: false,
+      },
+    });
+    await tx.antiCheatMatchIntegrity.updateMany({
+      where: { matchId: match.id },
+      data: {
+        rankedImpact: 'none',
+        resolvedByUserId: input.actorUserId,
+        resolvedAt: new Date(),
+        resolution: input.reason,
       },
     });
     await tx.antiCheatAction.create({
@@ -641,13 +710,46 @@ export async function cancelHeldRankedOutcome(prisma: PrismaClient, input: {
   actorUserId: string;
   reason: string;
 }): Promise<void> {
+  const match = await prisma.gameMatch.findUnique({
+    where: { id: input.matchId },
+    select: {
+      id: true,
+      matchMode: true,
+      rankedOutcomeStatus: true,
+    },
+  });
+  if (!match) throw new Error('Match not found');
+  if (match.rankedOutcomeStatus !== 'held') throw new Error('Ranked outcome is not held');
+  if (match.matchMode !== 'ranked') throw new Error('Only ranked matches can cancel ranked outcomes');
+
   await prisma.$transaction(async (tx) => {
+    await tx.gameMatchParticipant.updateMany({
+      where: { matchId: input.matchId },
+      data: {
+        rankedEligible: false,
+        ratingBefore: null,
+        ratingAfter: null,
+        ratingDelta: null,
+        visibleRankBefore: null,
+        visibleRankAfter: null,
+        leaverPenaltyApplied: false,
+      },
+    });
     await tx.gameMatch.update({
       where: { id: input.matchId },
       data: {
         rankedEligible: false,
         rankedOutcomeStatus: 'canceled',
         antiCheatReviewRequired: false,
+      },
+    });
+    await tx.antiCheatMatchIntegrity.updateMany({
+      where: { matchId: input.matchId },
+      data: {
+        rankedImpact: 'none',
+        resolvedByUserId: input.actorUserId,
+        resolvedAt: new Date(),
+        resolution: input.reason,
       },
     });
     await tx.antiCheatAction.create({

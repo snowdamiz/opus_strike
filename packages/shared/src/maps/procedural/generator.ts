@@ -589,6 +589,8 @@ function getTerrainProfile(theme: VoxelMapTheme): TerrainProfile {
       return { top: 'ash', side: 'obsidian', deep: 'stone', foliage: 'cactus' };
     case 'sakura':
       return { top: 'grass', side: 'dirt', deep: 'stone', foliage: 'blossom_leaves' };
+    case 'independence':
+      return { top: 'grass', side: 'dirt', deep: 'stone', foliage: 'leaves' };
     case 'verdant':
     default:
       return { top: 'grass', side: 'dirt', deep: 'stone', foliage: 'leaves' };

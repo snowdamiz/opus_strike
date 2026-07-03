@@ -3,6 +3,7 @@ import { AdminApiError, adminGet, adminPost } from './api';
 import type {
   AccountActionRequest,
   AdminOverview,
+  EventBiomeUpdate,
   MissionDefinitionRequest,
   MissionReorderRequest,
   RankedEntryGateUpdate,
@@ -69,6 +70,7 @@ export interface UseAdminConsole {
   distributeGoldenReward: (rewardId: string) => Promise<MutationResult>;
   saveSkinShopSettings: (body: SkinShopSettingsUpdate) => Promise<MutationResult>;
   saveSkinShopItem: (skinId: string, body: SkinShopItemUpdate) => Promise<MutationResult>;
+  saveEventBiome: (body: EventBiomeUpdate) => Promise<MutationResult>;
 }
 
 export function useAdminConsole(): UseAdminConsole {
@@ -310,6 +312,12 @@ export function useAdminConsole(): UseAdminConsole {
     [runMutation]
   );
 
+  const saveEventBiome = useCallback(
+    (body: EventBiomeUpdate) =>
+      runMutation('Event biome', (csrf) => adminPost('/event-biome', body, csrf)),
+    [runMutation]
+  );
+
   return {
     overview,
     loading,
@@ -341,5 +349,6 @@ export function useAdminConsole(): UseAdminConsole {
     distributeGoldenReward,
     saveSkinShopSettings,
     saveSkinShopItem,
+    saveEventBiome,
   };
 }

@@ -190,6 +190,20 @@ const REMOTE_MOVEMENT_EFFECT_STYLES = {
     drag: 2.45,
     lifetimeMs: 760,
   },
+  independence: {
+    label: 'festival sparks',
+    shape: 'spark',
+    colors: [0xd7263d, 0xffffff, 0x2a4bd7],
+    opacity: 0.6,
+    baseSize: 0.036,
+    sizeVariance: 0.026,
+    flatten: 0.46,
+    stretch: 1.5,
+    lift: 1.04,
+    gravity: 2.15,
+    drag: 2.4,
+    lifetimeMs: 780,
+  },
 } as const satisfies Record<VoxelMapTheme['id'], RemoteMovementEffectStyle>;
 
 const MODE_EMISSION_RATES = {
