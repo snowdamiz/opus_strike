@@ -104,13 +104,25 @@ function participants(): Map<string, PlayerPingParticipant> {
   tracker.recordNetworkQualitySample('red-human', { at: 7_500, pingMs: 205 });
   tracker.recordNetworkQualitySample('red-human', { at: 8_000, pingMs: 215 });
 
+  assert.deepEqual(
+    tracker.evaluateCompetitiveGate(
+      new Map([['red-human', participants().get('red-human')!]]),
+      8_000,
+      true
+    ),
+    { status: 'ready' }
+  );
+
+  tracker.recordNetworkQualitySample('red-human', { at: 11_000, pingMs: null, timedOut: true });
+  tracker.recordNetworkQualitySample('red-human', { at: 14_000, pingMs: null, timedOut: true });
+
   const blocked = tracker.evaluateCompetitiveGate(
     new Map([['red-human', participants().get('red-human')!]]),
-    8_000,
+    14_000,
     true
   );
   assert.equal(blocked.status, 'blocked');
-  assert.equal(blocked.evaluation?.reason, 'average_ping_high');
+  assert.equal(blocked.evaluation?.reason, 'network_timeouts');
 }
 
 {

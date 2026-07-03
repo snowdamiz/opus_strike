@@ -166,11 +166,47 @@ const clients: TestClient[] = [
     matchMode: 'ranked',
   });
 
+  assert.deepEqual(result, {
+    ready: true,
+    gate: { status: 'ready' },
+  });
+}
+
+{
+  const runtime = new PlayerPingRuntime();
+  const rankedPlayers = new Map([['red-human', participants().get('red-human')!]]);
+  const rankedClients: TestClient[] = [{ sessionId: 'red-human' }];
+
+  runtime.startProbe({
+    clients: rankedClients,
+    players: rankedPlayers,
+    tick: 1,
+    now: 3_000,
+  });
+  runtime.startProbe({
+    clients: rankedClients,
+    players: rankedPlayers,
+    tick: 2,
+    now: 13_001,
+  });
+  runtime.startProbe({
+    clients: rankedClients,
+    players: rankedPlayers,
+    tick: 3,
+    now: 23_002,
+  });
+
+  const result = runtime.ensureCompetitiveGateForStart({
+    players: rankedPlayers,
+    now: 23_002,
+    matchMode: 'ranked',
+  });
+
   assert.equal(result.ready, false);
   assert.equal(result.gate.status, 'blocked');
   assert.equal(result.cancelNotice?.blockedPlayerId, 'red-human');
   assert.equal(result.cancelNotice?.blockedPlayerName, 'Red Human');
-  assert.equal(result.cancelNotice?.networkQuality?.reason, 'average_ping_high');
+  assert.equal(result.cancelNotice?.networkQuality?.reason, 'network_timeouts');
   assert.match(result.cancelNotice?.message ?? '', /Red Human/);
 }
 
@@ -219,33 +255,46 @@ const clients: TestClient[] = [
 {
   const runtime = new PlayerPingRuntime();
   const rankedPlayers = new Map([['red-human', participants().get('red-human')!]]);
+  const rankedClients: TestClient[] = [{ sessionId: 'red-human' }];
 
-  let request = runtime.createPingRequest('red-human', 1, 1_000);
-  runtime.recordPingResponse('red-human', request.nonce, 1_820);
-  request = runtime.createPingRequest('red-human', 2, 4_000);
-  runtime.recordPingResponse('red-human', request.nonce, 4_640);
-  request = runtime.createPingRequest('red-human', 3, 7_000);
-  runtime.recordPingResponse('red-human', request.nonce, 7_590);
+  runtime.startProbe({
+    clients: rankedClients,
+    players: rankedPlayers,
+    tick: 1,
+    now: 3_000,
+  });
+  runtime.startProbe({
+    clients: rankedClients,
+    players: rankedPlayers,
+    tick: 2,
+    now: 13_001,
+  });
+  runtime.startProbe({
+    clients: rankedClients,
+    players: rankedPlayers,
+    tick: 3,
+    now: 23_002,
+  });
 
   const blockedBeforeSceneReady = runtime.ensureCompetitiveGateForStart({
     players: rankedPlayers,
-    now: 8_000,
+    now: 23_002,
     matchMode: 'ranked',
   });
 
   assert.equal(blockedBeforeSceneReady.ready, false);
   assert.equal(blockedBeforeSceneReady.gate.status, 'blocked');
-  assert.equal(blockedBeforeSceneReady.cancelNotice?.networkQuality?.reason, 'average_ping_high');
+  assert.equal(blockedBeforeSceneReady.cancelNotice?.networkQuality?.reason, 'network_timeouts');
 
   runtime.resetCompetitiveGateForPlayer({
     playerId: 'red-human',
-    now: 8_100,
+    now: 23_100,
     matchMode: 'ranked',
   });
 
   const pendingAfterSceneReady = runtime.ensureCompetitiveGateForStart({
     players: rankedPlayers,
-    now: 8_200,
+    now: 23_200,
     matchMode: 'ranked',
   });
 
@@ -253,17 +302,17 @@ const clients: TestClient[] = [
   assert.equal(pendingAfterSceneReady.gate.status, 'pending');
   assert.equal(pendingAfterSceneReady.cancelNotice, undefined);
 
-  request = runtime.createPingRequest('red-human', 4, 11_000);
-  runtime.recordPingResponse('red-human', request.nonce, 11_045);
-  request = runtime.createPingRequest('red-human', 5, 14_000);
-  runtime.recordPingResponse('red-human', request.nonce, 14_048);
-  request = runtime.createPingRequest('red-human', 6, 17_000);
-  runtime.recordPingResponse('red-human', request.nonce, 17_043);
+  let request = runtime.createPingRequest('red-human', 4, 26_000);
+  runtime.recordPingResponse('red-human', request.nonce, 26_045);
+  request = runtime.createPingRequest('red-human', 5, 29_000);
+  runtime.recordPingResponse('red-human', request.nonce, 29_048);
+  request = runtime.createPingRequest('red-human', 6, 32_000);
+  runtime.recordPingResponse('red-human', request.nonce, 32_043);
 
   assert.deepEqual(
     runtime.ensureCompetitiveGateForStart({
       players: rankedPlayers,
-      now: 17_000,
+      now: 32_000,
       matchMode: 'ranked',
     }),
     {

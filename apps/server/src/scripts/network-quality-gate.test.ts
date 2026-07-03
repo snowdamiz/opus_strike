@@ -57,15 +57,17 @@ function evaluate(samples: Array<number | null>, now = 10_000) {
 {
   const result = evaluate([190, 205, 215]);
 
-  assert.equal(result.status, 'blocked');
-  assert.equal(result.reason, 'average_ping_high');
+  assert.equal(result.status, 'ready');
+  assert.equal(result.reason, null);
+  assert.equal(result.metrics.averagePingMs, 203);
 }
 
 {
   const result = evaluate([44, 210, 48]);
 
-  assert.equal(result.status, 'blocked');
-  assert.equal(result.reason, 'jitter_high');
+  assert.equal(result.status, 'ready');
+  assert.equal(result.reason, null);
+  assert.equal(result.metrics.jitterMs, 166);
 }
 
 {
