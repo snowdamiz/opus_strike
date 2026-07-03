@@ -177,18 +177,22 @@ export interface MapPoolConsoleStatusPayload {
   [key: string]: unknown;
 }
 
-interface PoolSliceIdentity {
+export interface PoolSliceIdentity {
   profileId: MapProfileId;
   mapSize: VoxelMapSizeId;
   themeId: VoxelMapTheme['id'];
+}
+
+export interface MapPoolRequiredSlice extends PoolSliceIdentity {
+  requiredReadyCount: number;
 }
 
 type PregeneratedMapWithArtifact = Prisma.PregeneratedMapGetPayload<{
   include: { artifact: true };
 }>;
 
-const ARENA_READY_COUNT_PER_THEME = 3;
-const BATTLE_ROYAL_READY_COUNT_PER_THEME = 2;
+const DEFAULT_ARENA_READY_COUNT_PER_SLICE = 1;
+const DEFAULT_BATTLE_ROYAL_READY_COUNT_PER_SLICE = 1;
 const RESERVATION_TTL_MS = 90_000;
 const RECENT_SELECTION_WINDOW_MS = 60 * 60 * 1000;
 const MAP_NAME_SUFFIXES = [
@@ -253,10 +257,24 @@ function profileToGameplayMode(profileId: MapProfileId): MapGameMode {
   return profileId === 'battle_royal_large' ? 'battle_royal' : 'ctf';
 }
 
+function readReadyCountEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  const parsed = raw == null || raw.trim() === '' ? NaN : Number(raw);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 10 ? parsed : fallback;
+}
+
 function requiredCountForProfile(profileId: MapProfileId): number {
-  return profileId === 'battle_royal_large'
-    ? BATTLE_ROYAL_READY_COUNT_PER_THEME
-    : ARENA_READY_COUNT_PER_THEME;
+  if (profileId === 'battle_royal_large') {
+    return readReadyCountEnv(
+      'PREGENERATED_MAP_POOL_BATTLE_ROYAL_READY_PER_SLICE',
+      DEFAULT_BATTLE_ROYAL_READY_COUNT_PER_SLICE
+    );
+  }
+
+  return readReadyCountEnv(
+    'PREGENERATED_MAP_POOL_ARENA_READY_PER_SLICE',
+    DEFAULT_ARENA_READY_COUNT_PER_SLICE
+  );
 }
 
 function createDisplayName(manifest: VoxelMapManifest, salt: number): string {
@@ -407,10 +425,10 @@ function isShippableMap(manifest: VoxelMapManifest): boolean {
   return !manifest.construction.diagnostics.warnings.some((warning) => severeWarningPattern.test(warning));
 }
 
-function getRequiredPoolSlices() {
-  return PLAYABLE_PROFILE_IDS.flatMap((profileId) => (
-    VOXEL_MAP_SIZE_IDS.flatMap((mapSize) => (
-      STANDARD_VOXEL_MAP_THEMES.map((theme) => ({
+export function getRequiredMapPoolSlices(): MapPoolRequiredSlice[] {
+  return VOXEL_MAP_SIZE_IDS.flatMap((mapSize) => (
+    STANDARD_VOXEL_MAP_THEMES.flatMap((theme) => (
+      PLAYABLE_PROFILE_IDS.map((profileId) => ({
         profileId,
         mapSize,
         themeId: theme.id,
@@ -418,6 +436,34 @@ function getRequiredPoolSlices() {
       }))
     ))
   ));
+}
+
+export function planMapPoolTopUpSliceIndexes(
+  deficits: readonly number[],
+  maxGenerated: number
+): number[] {
+  const remainingDeficits = deficits.map((deficit) => Math.max(0, Math.floor(deficit)));
+  const generationOrder: number[] = [];
+  let cursor = 0;
+
+  while (generationOrder.length < maxGenerated) {
+    let selectedIndex = -1;
+    for (let offset = 0; offset < remainingDeficits.length; offset += 1) {
+      const index = (cursor + offset) % remainingDeficits.length;
+      if ((remainingDeficits[index] ?? 0) > 0) {
+        selectedIndex = index;
+        break;
+      }
+    }
+
+    if (selectedIndex < 0) break;
+
+    generationOrder.push(selectedIndex);
+    remainingDeficits[selectedIndex] = Math.max(0, (remainingDeficits[selectedIndex] ?? 0) - 1);
+    cursor = (selectedIndex + 1) % remainingDeficits.length;
+  }
+
+  return generationOrder;
 }
 
 function scoreSelectableMap(map: PregeneratedMapCatalogSummary, source: number): number {
@@ -852,7 +898,7 @@ export class PregeneratedMapCatalogService {
   async topUpPool(options: MapPoolTopUpOptions = {}): Promise<MapPoolTopUpResult> {
     await this.releaseExpiredReservations();
     const visibility = options.visibility ?? 'public';
-    const slices = getRequiredPoolSlices().filter((slice) => (
+    const slices = getRequiredMapPoolSlices().filter((slice) => (
       (!options.profileId || slice.profileId === options.profileId) &&
       (!options.mapSize || slice.mapSize === options.mapSize) &&
       (!options.themeId || slice.themeId === options.themeId)
@@ -879,7 +925,7 @@ export class PregeneratedMapCatalogService {
 
     const readyCountsBySlice = await this.countReadyMapsBySlice(slices, visibility);
 
-    for (const slice of slices) {
+    const sliceStates = slices.map((slice) => {
       const targetReadyCount = options.targetReadyCount ?? slice.requiredReadyCount;
       const readyCount = readyCountsBySlice.get(createPoolSliceKey(slice)) ?? 0;
       const sliceResult = {
@@ -894,100 +940,121 @@ export class PregeneratedMapCatalogService {
         failed: 0,
       };
       result.slices.push(sliceResult);
-      let deficit = Math.max(0, targetReadyCount - readyCount);
+      return {
+        slice,
+        result: sliceResult,
+        deficit: Math.max(0, targetReadyCount - readyCount),
+      };
+    });
+
+    for (const slice of slices) {
+      const state = sliceStates.find((candidate) => candidate.slice === slice);
+      if (!state) continue;
+      const targetReadyCount = options.targetReadyCount ?? slice.requiredReadyCount;
       writeVerboseMapPoolConsoleStatus('slice-status', {
         profileId: slice.profileId,
         mapSize: slice.mapSize,
         themeId: slice.themeId,
         visibility,
-        readyCount,
+        readyCount: state.result.readyCount,
         targetReadyCount,
-        deficit,
+        deficit: state.deficit,
         remainingGenerationBudget,
       });
-      if (deficit === 0) {
+      if (state.deficit === 0) {
         result.skipped += 1;
-        continue;
       }
+    }
 
-      while (deficit > 0 && remainingGenerationBudget > 0) {
-        remainingGenerationBudget -= 1;
-        const seed = createSeedForSlice({
+    for (const selectedStateIndex of planMapPoolTopUpSliceIndexes(
+      sliceStates.map((state) => state.deficit),
+      remainingGenerationBudget
+    )) {
+      const state = sliceStates[selectedStateIndex];
+      if (!state) break;
+
+      const { slice, result: sliceResult } = state;
+      const targetReadyCount = sliceResult.targetReadyCount;
+      const generatedIndex = targetReadyCount - state.deficit;
+      remainingGenerationBudget -= 1;
+      const seed = createSeedForSlice({
+        profileId: slice.profileId,
+        mapSize: slice.mapSize,
+        themeId: slice.themeId,
+        index: generatedIndex,
+        salt: remainingGenerationBudget,
+      });
+      try {
+        const manifest = generateProceduralVoxelMap(seed, {
+          themeId: slice.themeId,
+          mapSize: slice.mapSize,
+          profileId: slice.profileId,
+        });
+        if (!isShippableMap(manifest)) {
+          const failedSummary = await this.createCatalogEntry({ manifest, visibility, status: 'failed' });
+          result.failed += 1;
+          sliceResult.failed += 1;
+          writeMapPoolConsoleStatus('map-candidate-rejected', {
+            ...summarizeGeneratedMapForStatus(failedSummary),
+            profileId: slice.profileId,
+            mapSize: slice.mapSize,
+            themeId: slice.themeId,
+            readyCountAfter: sliceResult.readyCountAfter,
+            remainingDeficit: state.deficit,
+          });
+          continue;
+        }
+        const summary = await this.createCatalogEntry({ manifest, visibility, status: 'ready' });
+        const generatedMap = summarizeGeneratedMapForStatus(summary);
+        result.generatedMaps.push(generatedMap);
+        result.generated += 1;
+        sliceResult.generated += 1;
+        state.deficit -= 1;
+        sliceResult.readyCountAfter += 1;
+        sliceResult.remainingDeficit = Math.max(0, targetReadyCount - sliceResult.readyCountAfter);
+        writeMapPoolConsoleStatus('map-generated', {
+          ...generatedMap,
+          readyCountAfter: sliceResult.readyCountAfter,
+          targetReadyCount,
+          remainingDeficit: sliceResult.remainingDeficit,
+          remainingGenerationBudget,
+        });
+      } catch (error) {
+        result.failed += 1;
+        sliceResult.failed += 1;
+        loggers.room.warn('Pregenerated map pool candidate failed', {
           profileId: slice.profileId,
           mapSize: slice.mapSize,
           themeId: slice.themeId,
-          index: targetReadyCount - deficit,
-          salt: remainingGenerationBudget,
+          seed,
+          error: error instanceof Error ? error.message : String(error),
         });
-        try {
-          const manifest = generateProceduralVoxelMap(seed, {
-            themeId: slice.themeId,
-            mapSize: slice.mapSize,
-            profileId: slice.profileId,
-          });
-          if (!isShippableMap(manifest)) {
-            const failedSummary = await this.createCatalogEntry({ manifest, visibility, status: 'failed' });
-            result.failed += 1;
-            sliceResult.failed += 1;
-            writeMapPoolConsoleStatus('map-candidate-rejected', {
-              ...summarizeGeneratedMapForStatus(failedSummary),
-              profileId: slice.profileId,
-              mapSize: slice.mapSize,
-              themeId: slice.themeId,
-              readyCountAfter: sliceResult.readyCountAfter,
-              remainingDeficit: deficit,
-            });
-            continue;
-          }
-          const summary = await this.createCatalogEntry({ manifest, visibility, status: 'ready' });
-          const generatedMap = summarizeGeneratedMapForStatus(summary);
-          result.generatedMaps.push(generatedMap);
-          result.generated += 1;
-          sliceResult.generated += 1;
-          deficit -= 1;
-          sliceResult.readyCountAfter += 1;
-          sliceResult.remainingDeficit = Math.max(0, targetReadyCount - sliceResult.readyCountAfter);
-          writeMapPoolConsoleStatus('map-generated', {
-            ...generatedMap,
-            readyCountAfter: sliceResult.readyCountAfter,
-            targetReadyCount,
-            remainingDeficit: sliceResult.remainingDeficit,
-            remainingGenerationBudget,
-          });
-        } catch (error) {
-          result.failed += 1;
-          sliceResult.failed += 1;
-          loggers.room.warn('Pregenerated map pool candidate failed', {
-            profileId: slice.profileId,
-            mapSize: slice.mapSize,
-            themeId: slice.themeId,
-            seed,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          writeMapPoolConsoleStatus('map-generation-failed', {
-            profileId: slice.profileId,
-            mapSize: slice.mapSize,
-            themeId: slice.themeId,
-            visibility,
-            seed,
-            readyCountAfter: sliceResult.readyCountAfter,
-            targetReadyCount,
-            remainingDeficit: Math.max(0, targetReadyCount - sliceResult.readyCountAfter),
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
+        writeMapPoolConsoleStatus('map-generation-failed', {
+          profileId: slice.profileId,
+          mapSize: slice.mapSize,
+          themeId: slice.themeId,
+          visibility,
+          seed,
+          readyCountAfter: sliceResult.readyCountAfter,
+          targetReadyCount,
+          remainingDeficit: Math.max(0, targetReadyCount - sliceResult.readyCountAfter),
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
+    }
 
-      sliceResult.remainingDeficit = Math.max(0, targetReadyCount - sliceResult.readyCountAfter);
+    for (const state of sliceStates) {
+      const { slice, result: sliceResult } = state;
+      sliceResult.remainingDeficit = Math.max(0, sliceResult.targetReadyCount - sliceResult.readyCountAfter);
       if (sliceResult.generated > 0 || sliceResult.failed > 0) {
         writeMapPoolConsoleStatus('slice-complete', {
           profileId: slice.profileId,
           mapSize: slice.mapSize,
           themeId: slice.themeId,
           visibility,
-          readyCountBefore: readyCount,
+          readyCountBefore: sliceResult.readyCount,
           readyCountAfter: sliceResult.readyCountAfter,
-          targetReadyCount,
+          targetReadyCount: sliceResult.targetReadyCount,
           remainingDeficit: sliceResult.remainingDeficit,
           generated: sliceResult.generated,
           failed: sliceResult.failed,
@@ -1013,7 +1080,7 @@ export class PregeneratedMapCatalogService {
 
   async getAdminOverview(): Promise<MapPoolAdminOverview> {
     await this.releaseExpiredReservations();
-    const slices = getRequiredPoolSlices();
+    const slices = getRequiredMapPoolSlices();
     const [
       statusCounts,
       artifactAggregate,
