@@ -1402,12 +1402,12 @@ body,
 }
 
 .main-lobby-center-stack {
+  position: relative;
   display: flex;
   min-width: 0;
   flex-direction: column;
   align-items: center;
   justify-self: center;
-  gap: 0.55rem;
 }
 
 .main-lobby-tabs {
@@ -1415,6 +1415,10 @@ body,
 }
 
 .main-lobby-ca-badge {
+  position: absolute;
+  top: calc(100% + 0.8rem);
+  left: 50%;
+  transform: translateX(-50%);
   display: inline-flex;
   max-width: min(39rem, calc(100vw - (var(--main-lobby-edge-x) * 2)));
   align-items: center;
