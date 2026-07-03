@@ -3,8 +3,12 @@ import {
   applyHeldRankedOutcome,
   cancelHeldRankedOutcome,
 } from '../anticheat/service';
+import { getGameplayModeRules } from '@voxel-strike/shared';
 
 const endedAt = new Date('2026-06-12T10:20:00.000Z');
+const fullBattleRoyalRules = getGameplayModeRules('battle_royal');
+const fullBattleRoyalPlayerCount = fullBattleRoyalRules.maxPlayers;
+const fullBattleRoyalTeamCount = fullBattleRoyalRules.maxTeams;
 
 function applyUpdate(target: Record<string, any>, update: Record<string, any>): void {
   for (const [key, value] of Object.entries(update)) {
@@ -113,9 +117,9 @@ function createFakePrisma() {
   ]);
   const battleRoyalBreakdown = {
     rulesVersion: 'ranked_br_v1',
-    placement: 8,
-    activeTeamCount: 11,
-    normalizedPlacement: 8,
+    placement: 7,
+    activeTeamCount: fullBattleRoyalTeamCount,
+    normalizedPlacement: 7,
     placementPoints: 0,
     humanKills: 0,
     botKills: 0,
@@ -125,10 +129,10 @@ function createFakePrisma() {
     placementMultiplier: 0.5,
     combatPoints: 0,
     entryCost: 6,
-    qualityMultiplier: 0.45 + (1 / 33) * 0.55,
+    qualityMultiplier: 0.45 + (1 / fullBattleRoyalPlayerCount) * 0.55,
     humanParticipants: 1,
-    botParticipants: 32,
-    totalParticipants: 33,
+    botParticipants: fullBattleRoyalPlayerCount - 1,
+    totalParticipants: fullBattleRoyalPlayerCount,
     grossPoints: 0,
     positiveCap: 35,
     earlyLeaver: false,
@@ -206,7 +210,7 @@ function createFakePrisma() {
       matchId: 'held_br',
       userId: 'br_release',
       team: 'br_01',
-      placement: 8,
+      placement: 7,
       rankedBreakdown: battleRoyalBreakdown,
     }),
     {
@@ -414,7 +418,7 @@ async function run(): Promise<void> {
   assert.equal(brReleaseParticipant?.rankedEntryCost, 6);
   assert.equal(brReleaseParticipant?.ratingDelta, -6);
   assert.equal(fake.users.get('br_release').competitiveRating, 1594);
-  assert.equal(brReleaseParticipant?.placement, 8);
+  assert.equal(brReleaseParticipant?.placement, 7);
   assert.equal(brReleaseParticipant?.rankedBreakdown.entryCost, 6);
 
   await cancelHeldRankedOutcome(fake.prisma as any, {

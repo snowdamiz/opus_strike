@@ -181,6 +181,7 @@ const REMOTE_ATTACK_STATE_CLEANUP_MS = 5000;
 const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
 const PHANTOM_VEIL_BODY_OPACITY = 0.12;
 const PHANTOM_VEIL_OPACITY_DAMP_RATE = 12;
+const BATTLE_ROYAL_TEAMMATE_NAMEPLATE_MIN_DISTANCE = 180;
 
 function getHorizontalSpeed(velocity: { x: number; z: number }): number {
   return Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
@@ -284,16 +285,17 @@ function getNameplateAnchorPosition(
 function isWithinNameplateDistance(
   player: Player,
   config: RemotePlayerQualityConfig,
-  anchorPosition: Vec3 | null
+  anchorPosition: Vec3 | null,
+  minimumDistance = 0
 ): boolean {
-  const distance = config.nameplateDistance;
+  const distance = Math.max(config.nameplateDistance, minimumDistance);
   if (!Number.isFinite(distance)) return true;
   if (distance <= 0) return false;
   if (!anchorPosition) return true;
   return distanceSquared(player.position, anchorPosition) <= distance * distance;
 }
 
-export type RemoteStatusPlateMode = 'full' | 'enemyHealth';
+export type RemoteStatusPlateMode = 'full' | 'fullTeam' | 'enemyHealth';
 
 export function isEnemyRemotePlayer(
   player: Pick<Player, 'team'>,
@@ -310,7 +312,8 @@ export function shouldShowRemoteNameplate(
   anchorPosition: Vec3 | null
 ): boolean {
   if (isBattleRoyal) {
-    return player.team === localPlayerTeam && isWithinNameplateDistance(player, config, anchorPosition);
+    return player.team === localPlayerTeam &&
+      isWithinNameplateDistance(player, config, anchorPosition, BATTLE_ROYAL_TEAMMATE_NAMEPLATE_MIN_DISTANCE);
   }
   if (!config.showNameplates) return false;
   return isWithinNameplateDistance(player, config, anchorPosition);
@@ -324,7 +327,7 @@ export function getRemoteStatusPlateMode(
   anchorPosition: Vec3 | null
 ): RemoteStatusPlateMode | null {
   if (shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam, anchorPosition)) {
-    return 'full';
+    return isBattleRoyal && player.team === localPlayerTeam ? 'fullTeam' : 'full';
   }
   return isEnemyRemotePlayer(player, localPlayerTeam) ? 'enemyHealth' : null;
 }
@@ -609,11 +612,14 @@ interface StatusPlateProps {
 
 const NAMEPLATE_CANVAS_WIDTH = 256;
 const NAMEPLATE_CANVAS_HEIGHT = 72;
+const NAMEPLATE_TEAM_CANVAS_HEIGHT = 96;
 const NAMEPLATE_HEALTH_CANVAS_WIDTH = 192;
 const NAMEPLATE_HEALTH_CANVAS_HEIGHT = 28;
 const NAMEPLATE_HEALTH_BUCKETS = 40;
 const NAMEPLATE_TEXTURE_CACHE_LIMIT = 192;
 const NAMEPLATE_FULL_SPRITE_HEIGHT = 0.68;
+const NAMEPLATE_TEAM_SPRITE_HEIGHT = 0.9;
+const NAMEPLATE_TEAM_WORLD_EXTRA_OFFSET_Y = 0.1;
 const NAMEPLATE_HEALTH_SPRITE_WIDTH = 1.9;
 const NAMEPLATE_HEALTH_SPRITE_HEIGHT = 0.28;
 
@@ -716,6 +722,32 @@ function drawStatusPlateTexture(
     return;
   }
 
+  if (mode === 'fullTeam') {
+    ctx.font = '800 13px Inter, ui-sans-serif, system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetY = 2;
+
+    const tagWidth = 62;
+    const tagHeight = 19;
+    const tagX = (NAMEPLATE_CANVAS_WIDTH - tagWidth) / 2;
+    const tagY = 8;
+    roundedRectPath(ctx, tagX, tagY, tagWidth, tagHeight, 9.5);
+    ctx.fillStyle = 'rgba(34, 211, 238, 0.92)';
+    ctx.fill();
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = 'rgba(236, 254, 255, 0.9)';
+    ctx.stroke();
+
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.fillStyle = '#062433';
+    ctx.fillText('TEAM', NAMEPLATE_CANVAS_WIDTH / 2, tagY + tagHeight / 2 + 0.5);
+  }
+
   ctx.font = '700 17px Inter, ui-sans-serif, system-ui, sans-serif';
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'center';
@@ -723,10 +755,14 @@ function drawStatusPlateTexture(
   ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
   ctx.shadowBlur = 5;
   ctx.shadowOffsetY = 2;
-  ctx.fillText(trimTextToWidth(ctx, name.toUpperCase(), 224), NAMEPLATE_CANVAS_WIDTH / 2, 27);
+  ctx.fillText(
+    trimTextToWidth(ctx, name.toUpperCase(), 224),
+    NAMEPLATE_CANVAS_WIDTH / 2,
+    mode === 'fullTeam' ? 46 : 27
+  );
 
   const barX = 34;
-  const barY = 52;
+  const barY = mode === 'fullTeam' ? 74 : 52;
   const barWidth = 188;
   const barHeight = 6;
   drawHealthBar(ctx, barX, barY, barWidth, barHeight, healthPercent);
@@ -742,7 +778,7 @@ function getStatusPlateTextureKey(
   name: string,
   healthPercent: number
 ): string {
-  return `${mode}:${mode === 'full' ? name : 'enemy'}:${healthPercent}`;
+  return `${mode}:${mode === 'enemyHealth' ? 'enemy' : name}:${healthPercent}`;
 }
 
 function createStatusPlateTexture(
@@ -751,8 +787,13 @@ function createStatusPlateTexture(
   healthPercent: number
 ): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
-  canvas.width = mode === 'full' ? NAMEPLATE_CANVAS_WIDTH : NAMEPLATE_HEALTH_CANVAS_WIDTH;
-  canvas.height = mode === 'full' ? NAMEPLATE_CANVAS_HEIGHT : NAMEPLATE_HEALTH_CANVAS_HEIGHT;
+  if (mode === 'fullTeam') {
+    canvas.width = NAMEPLATE_CANVAS_WIDTH;
+    canvas.height = NAMEPLATE_TEAM_CANVAS_HEIGHT;
+  } else {
+    canvas.width = mode === 'full' ? NAMEPLATE_CANVAS_WIDTH : NAMEPLATE_HEALTH_CANVAS_WIDTH;
+    canvas.height = mode === 'full' ? NAMEPLATE_CANVAS_HEIGHT : NAMEPLATE_HEALTH_CANVAS_HEIGHT;
+  }
   drawStatusPlateTexture(canvas, mode, name, healthPercent);
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -845,11 +886,19 @@ const StatusPlate = memo(function StatusPlate({ mode, name, health, maxHealth, h
 
   const width = mode === 'full'
     ? Math.max(1.75, Math.min(2.7, 1.55 + name.length * 0.045))
-    : NAMEPLATE_HEALTH_SPRITE_WIDTH;
-  const spriteHeight = mode === 'full' ? NAMEPLATE_FULL_SPRITE_HEIGHT : NAMEPLATE_HEALTH_SPRITE_HEIGHT;
+    : mode === 'fullTeam'
+      ? Math.max(1.85, Math.min(2.8, 1.62 + name.length * 0.045))
+      : NAMEPLATE_HEALTH_SPRITE_WIDTH;
+  const spriteHeight = mode === 'full'
+    ? NAMEPLATE_FULL_SPRITE_HEIGHT
+    : mode === 'fullTeam'
+      ? NAMEPLATE_TEAM_SPRITE_HEIGHT
+      : NAMEPLATE_HEALTH_SPRITE_HEIGHT;
+  const yOffset = NAMEPLATE_WORLD_OFFSET_Y +
+    (mode === 'fullTeam' ? NAMEPLATE_TEAM_WORLD_EXTRA_OFFSET_Y : 0);
 
   return (
-    <sprite position={[0, height + NAMEPLATE_WORLD_OFFSET_Y, 0]} scale={[width, spriteHeight, 1]} renderOrder={60}>
+    <sprite position={[0, height + yOffset, 0]} scale={[width, spriteHeight, 1]} renderOrder={60}>
       <spriteMaterial map={texture} transparent depthTest={false} depthWrite={false} toneMapped={false} />
     </sprite>
   );

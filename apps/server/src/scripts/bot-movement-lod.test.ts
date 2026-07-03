@@ -20,6 +20,7 @@ type BotMovementLodRoom = {
     aliveBotCount: number,
     simulationTier?: 'critical' | 'near' | 'background'
   ): boolean;
+  getServerOwnedBotMovementFullStepBudget(aliveBotCount: number): number;
   shouldScheduleBotPlanningForTier(
     bot: Player,
     tier: 'critical' | 'near' | 'background',
@@ -44,6 +45,9 @@ type BotMovementLodRoom = {
   isServerOwnedBotNearBattleRoyalDownedPlayer(bot: Player, distanceSq: number): boolean;
   suppressServerOwnedBotSkippedFullStepGameplayInput(input: PlayerInput): void;
   suppressServerOwnedBotHighCountFullStepAbilityInput(input: PlayerInput): void;
+  shouldSuppressServerOwnedBotHighCountFullStepAbilityInput(
+    simulationTier: 'critical' | 'near' | 'background'
+  ): boolean;
   shouldProcessServerOwnedBotProxyGameplayInput(player: Player, input: PlayerInput): boolean;
   queryPlayersRadiusInto(
     position: { x: number; y: number; z: number },
@@ -218,7 +222,7 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   const room = createRoom();
   room.gameplayMode = 'battle_royal';
   room.state.tick = 80;
-  for (let index = 0; index < 4; index++) {
+  for (let index = 0; index < 24; index++) {
     assert.equal(room.consumeServerOwnedBotMovementFullStepBudget(48, 'critical'), true);
   }
   assert.equal(room.consumeServerOwnedBotMovementFullStepBudget(48, 'critical'), false);
@@ -288,9 +292,24 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   const room = createRoom();
   room.gameplayMode = 'battle_royal';
   const planningBudgets = room.getBotPlanningBudgets(48);
+  const smallPlanningBudgets = room.getBotPlanningBudgets(8);
 
-  assert.equal(planningBudgets.urgentBudget, 6);
-  assert.equal(planningBudgets.deferredBudget, 2);
+  assert.equal(smallPlanningBudgets.urgentBudget, 8);
+  assert.equal(smallPlanningBudgets.deferredBudget, 8);
+  assert.equal(planningBudgets.urgentBudget, 48);
+  assert.equal(planningBudgets.deferredBudget, 48);
+  assert.equal(room.getServerOwnedBotMovementFullStepBudget(8), 12);
+  assert.equal(room.getServerOwnedBotMovementFullStepBudget(24), 18);
+  assert.equal(room.getServerOwnedBotMovementFullStepBudget(48), 24);
+  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'critical'), 14);
+  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'near'), 10);
+  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'background'), 6);
+  assert.equal(room.getBotLineOfSightFrameBudget(8), 48);
+  assert.equal(room.getBotLineOfSightFrameBudget(24), 72);
+  assert.equal(room.getBotLineOfSightFrameBudget(48), 96);
+  assert.equal(room.getBotSteeringProbeFrameBudget(8), 48);
+  assert.equal(room.getBotSteeringProbeFrameBudget(24), 72);
+  assert.equal(room.getBotSteeringProbeFrameBudget(48), 96);
 }
 
 {
@@ -517,6 +536,18 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
 
 {
   const room = createRoom();
+  room.gameplayMode = 'battle_royal';
+  for (let index = 0; index < 32; index++) {
+    createBot(room, { id: `br-bot-${index}`, team: index === 0 ? 'br_01' : 'br_02' });
+  }
+
+  assert.equal(room.shouldSuppressServerOwnedBotHighCountFullStepAbilityInput('critical'), false);
+  assert.equal(room.shouldSuppressServerOwnedBotHighCountFullStepAbilityInput('near'), true);
+  assert.equal(room.shouldSuppressServerOwnedBotHighCountFullStepAbilityInput('background'), true);
+}
+
+{
+  const room = createRoom();
   const bot = createBot(room);
   bot.movement.isGrounded = false;
   bot.position.y = PLAYER_HEIGHT / 2 + 2;
@@ -611,6 +642,30 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
       botInput(bot, { interact: true })
     ),
     true
+  );
+  assert.equal(
+    room.shouldServerOwnedBotMovementReasonBypassBudget(
+      'movement_bot_lod_full_enemy_battle_royal',
+      'critical',
+      botInput(bot)
+    ),
+    true
+  );
+  assert.equal(
+    room.shouldServerOwnedBotMovementReasonBypassBudget(
+      'movement_bot_lod_full_input',
+      'critical',
+      botInput(bot, { ability1: true })
+    ),
+    true
+  );
+  assert.equal(
+    room.shouldServerOwnedBotMovementReasonBypassBudget(
+      'movement_bot_lod_full_airborne',
+      'near',
+      botInput(bot)
+    ),
+    false
   );
 }
 

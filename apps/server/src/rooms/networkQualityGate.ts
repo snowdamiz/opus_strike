@@ -4,9 +4,6 @@ export interface NetworkQualityGateConfig {
   sampleWindowMs: number;
   minObservationMs: number;
   minSuccessfulSamples: number;
-  maxAveragePingMs: number;
-  maxPeakPingMs: number;
-  maxJitterMs: number;
   maxTimeoutRatio: number;
   maxTimeouts: number;
   maxConsecutiveTimeouts: number;
@@ -48,9 +45,6 @@ export const DEFAULT_COMPETITIVE_NETWORK_QUALITY_GATE: NetworkQualityGateConfig 
   sampleWindowMs: 30_000,
   minObservationMs: 6_000,
   minSuccessfulSamples: 3,
-  maxAveragePingMs: 180,
-  maxPeakPingMs: 325,
-  maxJitterMs: 140,
   maxTimeoutRatio: 0.25,
   maxTimeouts: 1,
   maxConsecutiveTimeouts: 1,
@@ -194,9 +188,6 @@ function getNetworkQualityBlockReason(
   if (metrics.timeoutCount > config.maxTimeouts) return 'network_timeouts';
   if (metrics.successfulSamples < config.minSuccessfulSamples) return null;
   if (metrics.timeoutRatio > config.maxTimeoutRatio) return 'packet_loss';
-  if (metrics.averagePingMs !== null && metrics.averagePingMs > config.maxAveragePingMs) return 'average_ping_high';
-  if (metrics.peakPingMs !== null && metrics.peakPingMs > config.maxPeakPingMs) return 'ping_spike_high';
-  if (metrics.jitterMs !== null && metrics.jitterMs > config.maxJitterMs) return 'jitter_high';
   return null;
 }
 

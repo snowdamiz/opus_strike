@@ -7,9 +7,12 @@ import {
   MATCH_DELTA_MIN,
 } from '../ranking/ratingService';
 import type { RankedMatchParticipant, RankedUserState } from '../ranking/ratingService';
-import type { Team } from '@voxel-strike/shared';
+import { getGameplayModeRules, type Team } from '@voxel-strike/shared';
 
 const endedAt = new Date('2026-06-10T12:00:00.000Z');
+const fullBattleRoyalRules = getGameplayModeRules('battle_royal');
+const fullBattleRoyalPlayerCount = fullBattleRoyalRules.maxPlayers;
+const fullBattleRoyalTeamCount = fullBattleRoyalRules.maxTeams;
 
 function user(id: string, rating: number, rankedGames = 0): RankedUserState {
   return {
@@ -141,7 +144,7 @@ const singleHumanBattleRoyalWin = calculateRankedRatingUpdates({
       team: 'br_01',
       outcome: 'win',
       placement: 1,
-      activeTeamCount: 11,
+      activeTeamCount: fullBattleRoyalTeamCount,
       humanKills: 2,
       humanAssists: 1,
       botKills: 10,
@@ -149,9 +152,9 @@ const singleHumanBattleRoyalWin = calculateRankedRatingUpdates({
     }),
   ],
   humanParticipants: 1,
-  botParticipants: 32,
-  totalParticipants: 33,
-  activeTeamCount: 11,
+  botParticipants: fullBattleRoyalPlayerCount - 1,
+  totalParticipants: fullBattleRoyalPlayerCount,
+  activeTeamCount: fullBattleRoyalTeamCount,
 });
 assert.equal(singleHumanBattleRoyalWin.length, 1);
 assert.equal(singleHumanBattleRoyalWin[0].ratingDelta, 35);
@@ -160,7 +163,7 @@ assert.equal(singleHumanBattleRoyalWin[0].rankedPlacementPoints, 125);
 assert.equal(singleHumanBattleRoyalWin[0].rankedCombatPoints, 75);
 assert.equal(singleHumanBattleRoyalWin[0].rankedEntryCost, 6);
 assert.equal(singleHumanBattleRoyalWin[0].rankedBreakdown?.positiveCap, 35);
-assert.ok(Math.abs((singleHumanBattleRoyalWin[0].rankedQualityMultiplier ?? 0) - (0.45 + (1 / 33) * 0.55)) < 0.000001);
+assert.ok(Math.abs((singleHumanBattleRoyalWin[0].rankedQualityMultiplier ?? 0) - (0.45 + (1 / fullBattleRoyalPlayerCount) * 0.55)) < 0.000001);
 
 const normalizedSmallLobby = calculateRankedRatingUpdates({
   gameplayMode: 'battle_royal',
@@ -179,7 +182,7 @@ const normalizedSmallLobby = calculateRankedRatingUpdates({
   totalParticipants: 3,
   activeTeamCount: 3,
 });
-assert.equal(normalizedSmallLobby[0].rankedBreakdown?.normalizedPlacement, 11);
+assert.equal(normalizedSmallLobby[0].rankedBreakdown?.normalizedPlacement, 9);
 assert.equal(normalizedSmallLobby[0].rankedPlacementPoints, -15);
 
 const entryCostCases: Array<[string, number, number]> = [
@@ -199,13 +202,13 @@ for (const [id, rating, entryCost] of entryCostCases) {
     participants: [
       battleRoyalParticipant({
         userId: id,
-        placement: 8,
-        activeTeamCount: 11,
+        placement: 7,
+        activeTeamCount: fullBattleRoyalTeamCount,
       }),
     ],
     humanParticipants: 1,
     totalParticipants: 1,
-    activeTeamCount: 11,
+    activeTeamCount: fullBattleRoyalTeamCount,
   });
   assert.equal(update.rankedEntryCost, entryCost);
   assert.equal(update.ratingDelta, entryCost === 0 ? 0 : -entryCost);
@@ -221,14 +224,14 @@ const battleRoyalLeaver = calculateRankedRatingUpdates({
       userId: 'early-leaver',
       outcome: 'win',
       placement: 1,
-      activeTeamCount: 11,
+      activeTeamCount: fullBattleRoyalTeamCount,
       leftAt: new Date('2026-06-10T11:40:00.000Z'),
       teamEliminatedAt: new Date('2026-06-10T11:55:00.000Z'),
     }),
   ],
   humanParticipants: 1,
   totalParticipants: 1,
-  activeTeamCount: 11,
+  activeTeamCount: fullBattleRoyalTeamCount,
 });
 assert.equal(battleRoyalLeaver[0].leaverPenaltyApplied, true);
 assert.equal(battleRoyalLeaver[0].ratingDelta, BATTLE_ROYAL_MATCH_DELTA_MIN);
@@ -239,12 +242,12 @@ const botOnlyExcluded = calculateRankedRatingUpdates({
   winningTeam: 'br_01',
   users: [],
   participants: [
-    battleRoyalParticipant({ userId: 'bot-user', placement: 1, activeTeamCount: 11 }),
+    battleRoyalParticipant({ userId: 'bot-user', placement: 1, activeTeamCount: fullBattleRoyalTeamCount }),
   ],
   humanParticipants: 0,
-  botParticipants: 33,
-  totalParticipants: 33,
-  activeTeamCount: 11,
+  botParticipants: fullBattleRoyalPlayerCount,
+  totalParticipants: fullBattleRoyalPlayerCount,
+  activeTeamCount: fullBattleRoyalTeamCount,
 });
 assert.equal(botOnlyExcluded.length, 0);
 

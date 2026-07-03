@@ -100,7 +100,7 @@ export interface RankedRatingUpdate {
   rankedBreakdown?: RankedBattleRoyalBreakdown;
 }
 
-const BATTLE_ROYAL_PLACEMENT_POINTS = [125, 85, 60, 40, 30, 20, 10, 0, -5, -10, -15] as const;
+const BATTLE_ROYAL_PLACEMENT_POINTS = [125, 85, 60, 40, 20, 10, 0, -10, -15] as const;
 
 const BATTLE_ROYAL_ENTRY_COST_BY_TIER: Record<RankTierId, number> = {
   plastic: 0,

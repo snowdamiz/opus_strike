@@ -46,7 +46,7 @@ const WORLD_SIZE = 376;
 const WORLD_HEIGHT = 96;
 const CHUNK_SIZE: VoxelSize = { x: 16, y: 16, z: 16 };
 const BASE_RADIUS = 173;
-const BATTLE_ROYAL_SIZE_VARIANT_SCALE = 0.9;
+const BATTLE_ROYAL_SIZE_VARIANT_SCALE = 0.82;
 const SPAWN_CLUSTER_POINT_RADIUS = 2.75;
 const SPAWN_FLATTEN_RADIUS = 11.5;
 const SPAWN_CAPSULE_CLEARANCE_RADIUS = PLAYER_RADIUS + 0.04;
@@ -133,7 +133,7 @@ const BATTLE_ROYAL_SIZE_PROFILES: Record<VoxelMapSizeId, BattleRoyalSizeProfile>
     strategicPowerupCount: 12,
     sightlineOcclusionTargetDistance: 150,
     sightlineWarningMaxDistance: 190,
-    labelTags: ['Battle Royal', '12-18 Players', 'Compact', 'Towns', 'Fast Routes'],
+    labelTags: ['Battle Royal', '12-16 Players', 'Compact', 'Towns', 'Fast Routes'],
     performanceBudget: {
       maxSolidBlocks: 4_600_000,
       maxColliders: 150_000,
@@ -146,7 +146,7 @@ const BATTLE_ROYAL_SIZE_PROFILES: Record<VoxelMapSizeId, BattleRoyalSizeProfile>
     strategicPowerupCount: 18,
     sightlineOcclusionTargetDistance: 180,
     sightlineWarningMaxDistance: 220,
-    labelTags: ['Battle Royal', '19-26 Players', 'Balanced', 'Towns', 'Open Routes'],
+    labelTags: ['Battle Royal', '17-22 Players', 'Balanced', 'Towns', 'Open Routes'],
     performanceBudget: {
       maxSolidBlocks: 6_400_000,
       maxColliders: 215_000,
@@ -159,7 +159,7 @@ const BATTLE_ROYAL_SIZE_PROFILES: Record<VoxelMapSizeId, BattleRoyalSizeProfile>
     strategicPowerupCount: STRATEGIC_POWERUP_COUNT,
     sightlineOcclusionTargetDistance: 215,
     sightlineWarningMaxDistance: 265,
-    labelTags: ['Battle Royal', '27-33 Players', 'Expansive', 'Towns', 'Open Routes'],
+    labelTags: ['Battle Royal', '23-27 Players', 'Expansive', 'Towns', 'Open Routes'],
     performanceBudget: {
       maxSolidBlocks: 8_750_000,
       maxColliders: 280_000,

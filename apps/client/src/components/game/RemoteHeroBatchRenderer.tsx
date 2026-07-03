@@ -279,7 +279,7 @@ const REMOTE_BATCH_PREWARM_PLAYER_CAPACITY = 4;
 const REMOTE_BATCH_CAPACITY_GROWTH_PADDING = 2;
 // Allocate instanced-mesh player capacity in coarse steps so the geometry/emissive
 // buffers are not re-cloned each time a single player joins. A granularity of 16
-// covers the battle-royale max (33 players) in at most two growth events, after
+// covers the battle-royale max (27 players) in at most two growth events, after
 // which capacity stays fixed for the rest of the match. Larger buffers only widen
 // allocations; the per-frame active instance count (mesh.count) is unaffected.
 const REMOTE_BATCH_CAPACITY_GRANULARITY = 16;

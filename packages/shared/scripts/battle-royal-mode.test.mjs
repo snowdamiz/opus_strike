@@ -134,10 +134,10 @@ function assertApproximately(actual, expected, tolerance, message) {
 
 const rules = getGameplayModeRules(BATTLE_ROYAL_GAMEPLAY_MODE);
 assert.equal(RANKED_GAMEPLAY_MODE, BATTLE_ROYAL_GAMEPLAY_MODE);
-assert.equal(rules.maxPlayers, 33);
+assert.equal(rules.maxPlayers, 27);
 assert.equal(rules.minPlayers, 12);
 assert.equal(rules.maxTeamSize, 3);
-assert.equal(rules.maxTeams, 11);
+assert.equal(rules.maxTeams, 9);
 assert.equal(rules.scoreModel, 'last_team_alive');
 assert.equal(rules.respawnPolicy, 'none_after_active_play');
 assert.equal(rules.matchEndPolicy, 'last_team_alive');
@@ -153,15 +153,15 @@ assert.equal(getPartyMaxMembersForMode('ranked', 'capture_the_flag'), 3);
 assert.equal(getPartyMaxMembersForMode('ranked', 'team_deathmatch'), 3);
 assert.equal(getPartyMaxMembersForMode('ranked', BATTLE_ROYAL_GAMEPLAY_MODE), 3);
 assert.equal(getPartyMaxMembersForMode('quick_play', 'capture_the_flag'), 4);
-assert.equal(getGameplayModeCapacityCost('battle_royal', 12), 50);
-assert.equal(getGameplayModeCapacityCost('battle_royal', 33), 137);
+assert.equal(getGameplayModeCapacityCost('battle_royal', 12), 41);
+assert.equal(getGameplayModeCapacityCost('battle_royal', 27), 92);
 
 assert.deepEqual(createGameConfigForGameplayMode('battle_royal'), {
   gameplayMode: 'battle_royal',
-  maxPlayers: 33,
+  maxPlayers: 27,
   minPlayers: 12,
   teamSize: 3,
-  maxTeams: 11,
+  maxTeams: 9,
   scoreToWin: 0,
   roundTimeSeconds: 1200,
   respawnTimeSeconds: 0,
@@ -173,8 +173,8 @@ assert.deepEqual(createGameConfigForGameplayMode('battle_royal'), {
 
 assert.deepEqual(getTeamIdsForGameplayMode('battle_royal'), [...BATTLE_ROYAL_TEAM_IDS]);
 const catalog = getTeamCatalogForGameplayMode('battle_royal');
-assert.equal(catalog.length, 11);
-assert.equal(new Set(catalog.map((team) => team.color)).size, 11);
+assert.equal(catalog.length, 9);
+assert.equal(new Set(catalog.map((team) => team.color)).size, 9);
 
 const preview = createProceduralMapPreview(0x51f15eed, 'large', { profileId: 'battle_royal_large' });
 const mediumPreview = createProceduralMapPreview(0x51f15eed, 'medium', { profileId: 'battle_royal_large' });
@@ -184,9 +184,9 @@ assert.equal(preview.mapSize, 'large');
 assert.equal(mediumPreview.mapSize, 'medium');
 assert.equal(smallPreview.mapSize, 'small');
 assert.equal(preview.preview.labelTags.includes('Battle Royal'), true);
-assert.equal(preview.preview.labelTags.includes('27-33 Players'), true);
-assert.equal(mediumPreview.preview.labelTags.includes('19-26 Players'), true);
-assert.equal(smallPreview.preview.labelTags.includes('12-18 Players'), true);
+assert.equal(preview.preview.labelTags.includes('23-27 Players'), true);
+assert.equal(mediumPreview.preview.labelTags.includes('17-22 Players'), true);
+assert.equal(smallPreview.preview.labelTags.includes('12-16 Players'), true);
 assert.equal(preview.preview.labelTags.includes('Expansive'), true);
 assert.equal(preview.preview.labelTags.includes('Towns'), true);
 assert.equal(preview.preview.labelTags.includes('Open Routes'), true);
@@ -201,9 +201,9 @@ assert.equal(
   mediumPreview.preview.thumbnailSilhouette.bounds.maxX < preview.preview.thumbnailSilhouette.bounds.maxX,
   true
 );
-assertApproximately(smallPreview.preview.thumbnailSilhouette.bounds.maxX, 112.104, 0.01, 'small BR radius should be reduced by 10%');
-assertApproximately(mediumPreview.preview.thumbnailSilhouette.bounds.maxX, 133.902, 0.01, 'medium BR radius should be reduced by 10%');
-assertApproximately(preview.preview.thumbnailSilhouette.bounds.maxX, 155.7, 0.01, 'large BR radius should be reduced by 10%');
+assertApproximately(smallPreview.preview.thumbnailSilhouette.bounds.maxX, 102.1392, 0.01, 'small BR radius should be toned down');
+assertApproximately(mediumPreview.preview.thumbnailSilhouette.bounds.maxX, 121.9996, 0.01, 'medium BR radius should be toned down');
+assertApproximately(preview.preview.thumbnailSilhouette.bounds.maxX, 141.86, 0.01, 'large BR radius should be toned down');
 assert.equal(preview.preview.thumbnailSilhouette.routes.length >= 30, true);
 
 const manifest = generateProceduralVoxelMap(0x51f15eed, {
@@ -218,9 +218,9 @@ const manifestAgain = generateProceduralVoxelMap(0x51f15eed, {
 assert.equal(manifest.profileId, 'battle_royal_large');
 assert.equal(manifest.mapSize, 'large');
 assert.equal(manifest.gameplay.mode, 'battle_royal');
-assert.equal(manifest.size.x >= 660 && manifest.size.x <= 690, true);
+assert.equal(manifest.size.x >= 610 && manifest.size.x <= 625, true);
 assert.equal(manifest.size.y >= 180, true);
-assert.equal(manifest.size.z >= 660 && manifest.size.z <= 690, true);
+assert.equal(manifest.size.z >= 610 && manifest.size.z <= 625, true);
 assert.equal(boundaryRadiusRange(manifest.boundary) >= 38, true);
 assert.equal(manifest.spawnPoints.red.length, 0);
 assert.equal(manifest.spawnPoints.blue.length, 0);

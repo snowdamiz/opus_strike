@@ -706,6 +706,7 @@ const TEAMS: readonly Team[] = ['red', 'blue'];
 const ROUTE_START_NODE_SKIP_DISTANCE = 14;
 
 export const BOT_AWARENESS_RANGE = 58;
+export const BOT_BATTLE_ROYAL_AWARENESS_RANGE = 76;
 export const BOT_CLOSE_REVEAL_RANGE = 8;
 export const BOT_LOS_SAMPLE_STEP = 0.55;
 export const BOT_THINK_INTERVAL_MS = 200;
@@ -717,6 +718,10 @@ const BATTLE_ROYAL_BOT_REVIVE_RANGE = 42;
 const BATTLE_ROYAL_HUMAN_REVIVE_RANGE = 58;
 const BATTLE_ROYAL_HUMAN_SUPPORT_RANGE = 76;
 const BATTLE_ROYAL_SQUAD_COHESION_MIN_DISTANCE = 18;
+
+export function getBotAwarenessRange(gameplayMode: GameplayMode): number {
+  return gameplayMode === 'battle_royal' ? BOT_BATTLE_ROYAL_AWARENESS_RANGE : BOT_AWARENESS_RANGE;
+}
 
 export const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {
   easy: {
@@ -1764,7 +1769,8 @@ function selectEliminationPressureTarget(
   bot: BotPlayerSnapshot,
   enemies: readonly BotPlayerSnapshot[],
   rankedTargets: readonly BotPlayerSnapshot[],
-  threatClusters: readonly BotThreatCluster[]
+  threatClusters: readonly BotThreatCluster[],
+  awarenessRange = BOT_AWARENESS_RANGE
 ): BotPlayerSnapshot | null {
   const nearestEnemy = nearestPlayer(enemies, bot.position);
   if (!nearestEnemy) return rankedTargets[0] ?? null;
@@ -1774,7 +1780,7 @@ function selectEliminationPressureTarget(
   if (!focusTarget || focusTarget.id === nearestEnemy.id) return nearestEnemy;
 
   const focusDistance = distance2D(bot.position, focusTarget.position);
-  if (focusDistance > BOT_AWARENESS_RANGE) return nearestEnemy;
+  if (focusDistance > awarenessRange) return nearestEnemy;
 
   const nearestScore = scoreEliminationFocusTarget(nearestEnemy, threatClusters);
   const focusScore = scoreEliminationFocusTarget(focusTarget, threatClusters);
@@ -1977,7 +1983,7 @@ function buildEliminationTacticsForTeam(input: BotTeamTacticsInput, team: Team):
     const nearestEnemy = nearestPlayer(enemies, bot.position);
     const focusTarget = streamerDeathmatch
       ? selectStreamerDeathmatchTarget(bot, enemies, pressureTargets, fightAssignmentIndex)
-      : selectEliminationPressureTarget(bot, enemies, pressureTargets, threatClusters);
+      : selectEliminationPressureTarget(bot, enemies, pressureTargets, threatClusters, getBotAwarenessRange(input.gameplayMode));
     fightAssignmentIndex++;
 
     const targetPosition = focusTarget?.position
@@ -2563,8 +2569,9 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
   const nearestEnemy = knownEnemies[0] ?? null;
   let weakestEnemy: BotKnownEnemy | null = null;
   let weakestEnemyHealthRatio = Infinity;
+  const awarenessRange = getBotAwarenessRange(input.gameplayMode);
   for (const enemy of knownEnemies) {
-    if (enemy.distance > BOT_AWARENESS_RANGE) continue;
+    if (enemy.distance > awarenessRange) continue;
     const healthRatio = enemy.player.health / Math.max(1, enemy.player.maxHealth);
     if (
       healthRatio < weakestEnemyHealthRatio ||
@@ -2739,6 +2746,7 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
   const role = assignment?.role ?? getDefaultRole(bot, blackboard.teamTactics.roleDemand);
   const isCaptureTheFlag = blackboard.gameplayMode === 'capture_the_flag';
   const isBattleRoyal = blackboard.gameplayMode === 'battle_royal';
+  const awarenessRange = getBotAwarenessRange(blackboard.gameplayMode);
   const outnumberedRegroupHealthRatio = getOutnumberedRegroupHealthRatio(skill);
   const thirdPartyDisengageHealthRatio = getThirdPartyDisengageHealthRatio(skill);
   const survivalTarget = isBattleRoyal ? getBattleRoyalSurvivalTarget(bot, blackboard) : blackboard.ownBasePosition;
@@ -2774,7 +2782,7 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
       );
     } else if (
       safeZone.distanceToBoundary <= 30 &&
-      nearestEnemyDistance <= BOT_AWARENESS_RANGE
+      nearestEnemyDistance <= awarenessRange
     ) {
       addIntent(
         candidates,
@@ -2955,7 +2963,7 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
     }
   }
 
-  if (blackboard.nearestEnemy && nearestEnemyDistance <= getBotEngageRange(bot.heroId, skill)) {
+  if (blackboard.nearestEnemy && nearestEnemyDistance <= getBotEngageRange(bot.heroId, skill, 18, awarenessRange)) {
     const focusBonus = blackboard.nearestEnemy.player.hasFlag ? 260 : 0;
     addIntent(
       candidates,
@@ -3080,10 +3088,15 @@ export function getBotPreferredCombatRange(heroId: HeroId | ''): number {
   }
 }
 
-export function getBotEngageRange(heroId: HeroId | '', skill: BotSkillProfile, primaryRange = 18): number {
+export function getBotEngageRange(
+  heroId: HeroId | '',
+  skill: BotSkillProfile,
+  primaryRange = 18,
+  awarenessRange = BOT_AWARENESS_RANGE
+): number {
   const preferredRange = getBotPreferredCombatRange(heroId);
   return Math.min(
-    BOT_AWARENESS_RANGE,
+    awarenessRange,
     Math.max(18, primaryRange * (1.05 + skill.aggression * 0.18), preferredRange + 8)
   );
 }
@@ -3513,8 +3526,9 @@ export function chooseBotCombatPlan(input: BotCombatPlanInput): BotCombatPlan {
   let bestScore = -Infinity;
   const healthRatio = input.bot.health / Math.max(1, input.bot.maxHealth);
   const localEnemyPressure = Math.max(0, input.blackboard.nearbyEnemyCount - input.blackboard.nearbyAllyCount);
+  const awarenessRange = getBotAwarenessRange(input.blackboard.gameplayMode);
   for (const enemy of input.blackboard.enemies) {
-    if (enemy.distance > BOT_AWARENESS_RANGE && !enemy.player.hasFlag) continue;
+    if (enemy.distance > awarenessRange && !enemy.player.hasFlag) continue;
     const enemyHealthRatio = enemy.player.health / Math.max(1, enemy.player.maxHealth);
     let score = 0;
     if (enemy.player.hasFlag) score += 950;

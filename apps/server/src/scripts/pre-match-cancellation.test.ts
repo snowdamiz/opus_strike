@@ -63,9 +63,9 @@ import {
 
 {
   const networkQuality = {
-    reason: 'average_ping_high',
-    averagePingMs: 220,
-    peakPingMs: 260,
+    reason: 'network_timeouts',
+    timeoutCount: 2,
+    consecutiveTimeouts: 2,
   };
 
   assert.deepEqual(

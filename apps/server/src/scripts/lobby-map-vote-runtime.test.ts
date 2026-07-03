@@ -79,10 +79,11 @@ for (const gameplayMode of ['capture_the_flag', 'team_deathmatch'] as const) {
 
 {
   const rules = getGameplayModeRules('battle_royal');
-  const smallMaxPlayers = 18;
-  const mediumMinPlayers = 19;
-  const mediumMaxPlayers = 26;
-  const largeMinPlayers = 27;
+  const mapSizeBandWidth = Math.max(1, Math.floor((rules.maxPlayers - rules.minPlayers + 1) / 3));
+  const smallMaxPlayers = rules.minPlayers + mapSizeBandWidth - 1;
+  const mediumMinPlayers = smallMaxPlayers + 1;
+  const largeMinPlayers = rules.maxPlayers - mapSizeBandWidth + 1;
+  const mediumMaxPlayers = largeMinPlayers - 1;
 
   assert.equal(getBattleRoyalMapSizeForParticipantCount({ participantCount: rules.minPlayers, rules }), 'small');
   assert.equal(getBattleRoyalMapSizeForParticipantCount({ participantCount: smallMaxPlayers, rules }), 'small');

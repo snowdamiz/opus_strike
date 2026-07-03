@@ -26,6 +26,12 @@ import {
   type AutoscalerRoomListing,
 } from '../metrics/autoscalerMetrics';
 import { ProcessLoadSampler } from '../runtime/processLoad';
+import { getGameplayModeCapacityCost, getGameplayModeRules } from '@voxel-strike/shared';
+
+const battleRoyalRules = getGameplayModeRules('battle_royal');
+const battleRoyalFullPlayerCount = battleRoyalRules.maxPlayers;
+const battleRoyalOneHumanCapacityCost = getGameplayModeCapacityCost('battle_royal', 1);
+const battleRoyalTwelveHumanCapacityCost = getGameplayModeCapacityCost('battle_royal', 12);
 
 class FakeMatchMaker implements AutoscalerMatchMaker {
   processId = 'process-1';
@@ -313,15 +319,15 @@ async function runInGameCapacityPolicyTests(): Promise<void> {
         gameplayMode: 'battle_royal',
         humanCount: 12,
         reservedHumanPlayers: 12,
-        capacityPlayerCost: 50,
+        capacityPlayerCost: battleRoyalTwelveHumanCapacityCost,
       },
     },
   ]);
 
   assert.equal(battleRoyalSnapshot.activePlayers, 12);
-  assert.equal(battleRoyalSnapshot.reservedPlayers, 50);
-  assert.equal(battleRoyalSnapshot.availablePlayers, 190);
-  assert.equal(battleRoyalSnapshot.machines[0]?.reservedPlayers, 50);
+  assert.equal(battleRoyalSnapshot.reservedPlayers, battleRoyalTwelveHumanCapacityCost);
+  assert.equal(battleRoyalSnapshot.availablePlayers, MAX_IN_GAME_PLAYERS - battleRoyalTwelveHumanCapacityCost);
+  assert.equal(battleRoyalSnapshot.machines[0]?.reservedPlayers, battleRoyalTwelveHumanCapacityCost);
 
   const oneLocalBattleRoyalSnapshot = createInGameCapacitySnapshot([
     {
@@ -331,12 +337,12 @@ async function runInGameCapacityPolicyTests(): Promise<void> {
         gameplayMode: 'battle_royal',
         humanCount: 1,
         reservedHumanPlayers: 1,
-        capacityPlayerCost: 33,
+        capacityPlayerCost: battleRoyalOneHumanCapacityCost,
       },
     },
   ]);
-  assert.equal(oneLocalBattleRoyalSnapshot.machines[0]?.availablePlayers, 15);
-  assert.equal(canAdmitInGameCapacity(oneLocalBattleRoyalSnapshot, 33), true);
+  assert.equal(oneLocalBattleRoyalSnapshot.machines[0]?.availablePlayers, IN_GAME_PLAYERS_PER_MACHINE - battleRoyalOneHumanCapacityCost);
+  assert.equal(canAdmitInGameCapacity(oneLocalBattleRoyalSnapshot, battleRoyalFullPlayerCount), true);
 
   const nextBattleRoyalAdmission = await runWithInGameCapacity({
     matchMaker: new FakeMatchMaker([], null, [
@@ -347,11 +353,11 @@ async function runInGameCapacityPolicyTests(): Promise<void> {
           gameplayMode: 'battle_royal',
           humanCount: 1,
           reservedHumanPlayers: 1,
-          capacityPlayerCost: 33,
+          capacityPlayerCost: battleRoyalOneHumanCapacityCost,
         },
       },
     ]),
-    requestedPlayers: 33,
+    requestedPlayers: battleRoyalFullPlayerCount,
   }, async () => 'created');
   assert.equal(nextBattleRoyalAdmission.admitted, true);
   if (!nextBattleRoyalAdmission.admitted) {
