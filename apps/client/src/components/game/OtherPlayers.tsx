@@ -125,8 +125,8 @@ export function OtherPlayers({ config, effectConfig, theme, hiddenPlayerId = nul
       prewarmStatusPlateTexture(
         statusPlateMode,
         player.name,
-        player.health,
-        player.maxHealth
+        getStatusPlateHealth(player, statusPlateMode),
+        getStatusPlateMaxHealth(player, statusPlateMode)
       );
     }
   }, [config.showNameplates, config.nameplateDistance, isBattleRoyal, localPlayerId, localPlayerTeam, nameplateAnchorPosition, otherPlayers, playerId]);
@@ -295,7 +295,7 @@ function isWithinNameplateDistance(
   return distanceSquared(player.position, anchorPosition) <= distance * distance;
 }
 
-export type RemoteStatusPlateMode = 'full' | 'fullTeam' | 'enemyHealth';
+export type RemoteStatusPlateMode = 'full' | 'fullTeam' | 'enemyHealth' | 'enemyDowned';
 
 export function isEnemyRemotePlayer(
   player: Pick<Player, 'team'>,
@@ -329,7 +329,18 @@ export function getRemoteStatusPlateMode(
   if (shouldShowRemoteNameplate(player, config, isBattleRoyal, localPlayerTeam, anchorPosition)) {
     return isBattleRoyal && player.team === localPlayerTeam ? 'fullTeam' : 'full';
   }
+  if (isBattleRoyal && player.state === 'downed' && isEnemyRemotePlayer(player, localPlayerTeam)) {
+    return 'enemyDowned';
+  }
   return isEnemyRemotePlayer(player, localPlayerTeam) ? 'enemyHealth' : null;
+}
+
+function getStatusPlateHealth(player: Player, mode: RemoteStatusPlateMode): number {
+  return mode === 'enemyDowned' ? player.downedHealth ?? player.health : player.health;
+}
+
+function getStatusPlateMaxHealth(player: Player, mode: RemoteStatusPlateMode): number {
+  return mode === 'enemyDowned' ? player.downedMaxHealth ?? player.maxHealth : player.maxHealth;
 }
 
 function shouldRenderRemotePlayerFallback(
@@ -588,8 +599,8 @@ const OtherPlayer = memo(function OtherPlayer({
         <StatusPlate
           mode={statusPlateMode}
           name={player.name}
-          health={player.health}
-          maxHealth={player.maxHealth}
+          health={getStatusPlateHealth(player, statusPlateMode)}
+          maxHealth={getStatusPlateMaxHealth(player, statusPlateMode)}
           height={visibleHeight}
         />
       )}
@@ -615,6 +626,8 @@ const NAMEPLATE_CANVAS_HEIGHT = 72;
 const NAMEPLATE_TEAM_CANVAS_HEIGHT = 96;
 const NAMEPLATE_HEALTH_CANVAS_WIDTH = 192;
 const NAMEPLATE_HEALTH_CANVAS_HEIGHT = 28;
+const NAMEPLATE_DOWNED_CANVAS_WIDTH = 192;
+const NAMEPLATE_DOWNED_CANVAS_HEIGHT = 58;
 const NAMEPLATE_HEALTH_BUCKETS = 40;
 const NAMEPLATE_TEXTURE_CACHE_LIMIT = 192;
 const NAMEPLATE_FULL_SPRITE_HEIGHT = 0.68;
@@ -622,6 +635,8 @@ const NAMEPLATE_TEAM_SPRITE_HEIGHT = 0.9;
 const NAMEPLATE_TEAM_WORLD_EXTRA_OFFSET_Y = 0.1;
 const NAMEPLATE_HEALTH_SPRITE_WIDTH = 1.9;
 const NAMEPLATE_HEALTH_SPRITE_HEIGHT = 0.28;
+const NAMEPLATE_DOWNED_SPRITE_WIDTH = 1.9;
+const NAMEPLATE_DOWNED_SPRITE_HEIGHT = 0.58;
 
 interface StatusPlateTextureEntry {
   texture: THREE.CanvasTexture;
@@ -670,7 +685,8 @@ function drawHealthBar(
   barY: number,
   barWidth: number,
   barHeight: number,
-  healthPercent: number
+  healthPercent: number,
+  tone: 'health' | 'downed' = 'health'
 ): void {
   const barRadius = barHeight / 2;
   ctx.shadowColor = 'transparent';
@@ -685,7 +701,10 @@ function drawHealthBar(
 
   roundedRectPath(ctx, barX, barY, fillWidth, barHeight, barRadius);
   const gradient = ctx.createLinearGradient(barX, 0, barX + barWidth, 0);
-  if (healthPercent > 0.3) {
+  if (tone === 'downed') {
+    gradient.addColorStop(0, '#ef4444');
+    gradient.addColorStop(1, '#fb7185');
+  } else if (healthPercent > 0.3) {
     gradient.addColorStop(0, '#22c55e');
     gradient.addColorStop(1, '#86efac');
   } else {
@@ -719,6 +738,38 @@ function drawStatusPlateTexture(
     ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
     ctx.fill();
     drawHealthBar(ctx, barX, barY, barWidth, barHeight, healthPercent);
+    return;
+  }
+
+  if (mode === 'enemyDowned') {
+    const tagWidth = 132;
+    const tagHeight = 26;
+    const tagX = (NAMEPLATE_DOWNED_CANVAS_WIDTH - tagWidth) / 2;
+    const tagY = 5;
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetY = 2;
+    roundedRectPath(ctx, tagX, tagY, tagWidth, tagHeight, 6);
+    ctx.fillStyle = 'rgba(185, 28, 28, 0.94)';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(254, 202, 202, 0.92)';
+    ctx.stroke();
+
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.font = '900 18px Inter, ui-sans-serif, system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fff7f7';
+    ctx.fillText('DOWNED', NAMEPLATE_DOWNED_CANVAS_WIDTH / 2, tagY + tagHeight / 2 + 1);
+
+    const barX = 22;
+    const barY = 41;
+    const barWidth = NAMEPLATE_DOWNED_CANVAS_WIDTH - barX * 2;
+    const barHeight = 8;
+    drawHealthBar(ctx, barX, barY, barWidth, barHeight, healthPercent, 'downed');
     return;
   }
 
@@ -778,7 +829,8 @@ function getStatusPlateTextureKey(
   name: string,
   healthPercent: number
 ): string {
-  return `${mode}:${mode === 'enemyHealth' ? 'enemy' : name}:${healthPercent}`;
+  const playerKey = mode === 'full' || mode === 'fullTeam' ? name : 'enemy';
+  return `${mode}:${playerKey}:${healthPercent}`;
 }
 
 function createStatusPlateTexture(
@@ -790,6 +842,9 @@ function createStatusPlateTexture(
   if (mode === 'fullTeam') {
     canvas.width = NAMEPLATE_CANVAS_WIDTH;
     canvas.height = NAMEPLATE_TEAM_CANVAS_HEIGHT;
+  } else if (mode === 'enemyDowned') {
+    canvas.width = NAMEPLATE_DOWNED_CANVAS_WIDTH;
+    canvas.height = NAMEPLATE_DOWNED_CANVAS_HEIGHT;
   } else {
     canvas.width = mode === 'full' ? NAMEPLATE_CANVAS_WIDTH : NAMEPLATE_HEALTH_CANVAS_WIDTH;
     canvas.height = mode === 'full' ? NAMEPLATE_CANVAS_HEIGHT : NAMEPLATE_HEALTH_CANVAS_HEIGHT;
@@ -888,12 +943,16 @@ const StatusPlate = memo(function StatusPlate({ mode, name, health, maxHealth, h
     ? Math.max(1.75, Math.min(2.7, 1.55 + name.length * 0.045))
     : mode === 'fullTeam'
       ? Math.max(1.85, Math.min(2.8, 1.62 + name.length * 0.045))
-      : NAMEPLATE_HEALTH_SPRITE_WIDTH;
+      : mode === 'enemyDowned'
+        ? NAMEPLATE_DOWNED_SPRITE_WIDTH
+        : NAMEPLATE_HEALTH_SPRITE_WIDTH;
   const spriteHeight = mode === 'full'
     ? NAMEPLATE_FULL_SPRITE_HEIGHT
     : mode === 'fullTeam'
       ? NAMEPLATE_TEAM_SPRITE_HEIGHT
-      : NAMEPLATE_HEALTH_SPRITE_HEIGHT;
+      : mode === 'enemyDowned'
+        ? NAMEPLATE_DOWNED_SPRITE_HEIGHT
+        : NAMEPLATE_HEALTH_SPRITE_HEIGHT;
   const yOffset = NAMEPLATE_WORLD_OFFSET_Y +
     (mode === 'fullTeam' ? NAMEPLATE_TEAM_WORLD_EXTRA_OFFSET_Y : 0);
 

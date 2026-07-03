@@ -102,7 +102,7 @@ export function BattleRoyalSafeZone() {
     opacity: CURRENT_RING_OPACITY,
     side: THREE.DoubleSide,
     depthWrite: false,
-    depthTest: false,
+    depthTest: true,
     blending: THREE.AdditiveBlending,
   }), []);
   const nextRingMaterial = useMemo(() => new THREE.MeshBasicMaterial({
@@ -111,7 +111,7 @@ export function BattleRoyalSafeZone() {
     opacity: NEXT_RING_OPACITY,
     side: THREE.DoubleSide,
     depthWrite: false,
-    depthTest: false,
+    depthTest: true,
     blending: THREE.AdditiveBlending,
   }), []);
   const currentWallMaterial = useMemo(() => new THREE.MeshBasicMaterial({
@@ -120,7 +120,7 @@ export function BattleRoyalSafeZone() {
     opacity: CURRENT_WALL_OPACITY,
     side: THREE.DoubleSide,
     depthWrite: false,
-    depthTest: false,
+    depthTest: true,
     blending: THREE.AdditiveBlending,
   }), []);
   const nextWallMaterial = useMemo(() => new THREE.MeshBasicMaterial({
@@ -129,7 +129,7 @@ export function BattleRoyalSafeZone() {
     opacity: NEXT_WALL_OPACITY,
     side: THREE.DoubleSide,
     depthWrite: false,
-    depthTest: false,
+    depthTest: true,
     blending: THREE.AdditiveBlending,
   }), []);
   const manifest = useMemo(() => {

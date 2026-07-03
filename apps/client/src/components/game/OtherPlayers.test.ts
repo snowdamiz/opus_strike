@@ -36,18 +36,24 @@ function makePlayer({
   team,
   heroId = 'phantom',
   position = vec3(0, 1, 0),
+  state = 'alive',
+  downedHealth = null,
+  downedMaxHealth = null,
 }: {
   id: string;
   team: Team;
   heroId?: HeroId;
   position?: { x: number; y: number; z: number };
+  state?: Player['state'];
+  downedHealth?: number | null;
+  downedMaxHealth?: number | null;
 }): Player {
   return {
     id,
     name: id,
     team,
     heroId,
-    state: 'alive',
+    state,
     isReady: true,
     isBot: false,
     position,
@@ -56,6 +62,8 @@ function makePlayer({
     lookPitch: 0,
     health: 72,
     maxHealth: 100,
+    downedHealth,
+    downedMaxHealth,
     ultimateCharge: 0,
     movement: {
       isGrounded: true,
@@ -117,6 +125,36 @@ assert.equal(
   getRemoteStatusPlateMode(enemy, NAMEPLATES_DISABLED_CONFIG, true, localTeam, anchorPosition),
   'enemyHealth',
   'battle royale enemies should show health without requiring teammate nameplates'
+);
+
+assert.equal(
+  getRemoteStatusPlateMode(
+    makePlayer({
+      id: 'downed-enemy',
+      team: 'blue',
+      state: 'downed',
+      downedHealth: 220,
+      downedMaxHealth: 250,
+    }),
+    NAMEPLATES_DISABLED_CONFIG,
+    true,
+    localTeam,
+    anchorPosition
+  ),
+  'enemyDowned',
+  'battle royale downed enemies should show the DOWNED status plate'
+);
+
+assert.equal(
+  getRemoteStatusPlateMode(
+    makePlayer({ id: 'non-br-downed-enemy', team: 'blue', state: 'downed' }),
+    NAMEPLATES_DISABLED_CONFIG,
+    false,
+    localTeam,
+    anchorPosition
+  ),
+  'enemyHealth',
+  'non-battle royale downed enemies should keep the normal enemy health plate'
 );
 
 assert.equal(
