@@ -9,14 +9,14 @@ interface BattleRoyalPlacementPlayer {
   state?: string | null;
 }
 
-interface TeamPlacement {
+export interface BattleRoyalTeamPlacement {
   placement: number;
   eliminatedAt: Date | null;
 }
 
 export class BattleRoyalPlacementTracker {
   private readonly activeTeamIds = new Set<Team>();
-  private readonly placements = new Map<Team, TeamPlacement>();
+  private readonly placements = new Map<Team, BattleRoyalTeamPlacement>();
 
   get activeTeamCount(): number {
     return this.activeTeamIds.size;
@@ -35,11 +35,12 @@ export class BattleRoyalPlacementTracker {
     this.update(players, now);
   }
 
-  update(players: Iterable<BattleRoyalPlacementPlayer>, now = Date.now()): void {
-    if (this.activeTeamIds.size === 0) return;
+  update(players: Iterable<BattleRoyalPlacementPlayer>, now = Date.now()): Team[] {
+    if (this.activeTeamIds.size === 0) return [];
     const contestingTeams = getBattleRoyalContestingTeamSet(players);
     const unplacedCount = this.getUnplacedTeamCount();
     const eliminatedAt = new Date(now);
+    const newlyPlacedTeams: Team[] = [];
 
     for (const team of this.activeTeamIds) {
       if (this.placements.has(team) || contestingTeams.has(team)) continue;
@@ -47,7 +48,9 @@ export class BattleRoyalPlacementTracker {
         placement: Math.max(1, unplacedCount - this.getNewlyPlacedTeamCount(eliminatedAt)),
         eliminatedAt,
       });
+      newlyPlacedTeams.push(team);
     }
+    return newlyPlacedTeams;
   }
 
   finalize(players: Iterable<BattleRoyalPlacementPlayer>, winningTeam: Team | null, now = Date.now()): void {
@@ -79,6 +82,14 @@ export class BattleRoyalPlacementTracker {
         teamEliminatedAt: teamPlacement?.eliminatedAt ?? null,
       };
     });
+  }
+
+  getTeamPlacement(team: Team): BattleRoyalTeamPlacement | null {
+    return this.placements.get(team) ?? null;
+  }
+
+  hasTeamPlacement(team: Team): boolean {
+    return this.placements.has(team);
   }
 
   private getUnplacedTeamCount(): number {

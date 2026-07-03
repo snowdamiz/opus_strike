@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { calculateMatchExperience } from '@voxel-strike/shared';
-import type { GameplayMode, HeroId, MatchOutcome, RankedSeasonMode, Team } from '@voxel-strike/shared';
+import type { GameplayMode, HeroId, MapProfileId, MapTopologyId, MatchOutcome, PregeneratedMapId, RankedSeasonMode, Team, VoxelMapSizeId } from '@voxel-strike/shared';
 import { DEFAULT_GAMEPLAY_MODE, type MatchMode } from '@voxel-strike/shared';
 import {
   calculateRankedRatingUpdates,
@@ -60,6 +60,11 @@ export interface CompletedMatchPersistenceInput {
   gameplayMode?: GameplayMode;
   mapSeed: number;
   mapThemeId?: string | null;
+  mapSize?: VoxelMapSizeId | null;
+  mapProfileId?: MapProfileId | null;
+  mapTopologyId?: MapTopologyId | null;
+  mapGeneratorVersion?: number | null;
+  pregeneratedMapId?: PregeneratedMapId | null;
   rankedEligible?: boolean;
   startedAt: Date;
   endedAt: Date;
@@ -381,6 +386,11 @@ export async function persistCompletedMatch(
           gameplayMode: input.gameplayMode ?? DEFAULT_GAMEPLAY_MODE,
           mapSeed: mapSeedToDatabaseValue(input.mapSeed),
           mapThemeId: input.mapThemeId || 'standard',
+          mapSize: input.mapSize ?? null,
+          mapProfileId: input.mapProfileId ?? null,
+          mapTopologyId: input.mapTopologyId ?? null,
+          mapGeneratorVersion: input.mapGeneratorVersion ?? null,
+          pregeneratedMapId: input.pregeneratedMapId ?? null,
           rankedEligible,
           startedAt: input.startedAt,
           endedAt: input.endedAt,

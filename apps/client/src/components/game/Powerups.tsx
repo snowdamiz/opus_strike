@@ -401,16 +401,17 @@ export function Powerups() {
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
   const mapProfileId = useGameStore((state) => state.mapProfileId);
+  const pregeneratedMapId = useGameStore((state) => state.pregeneratedMapId);
   const powerupPickups = useGameStore((state) => state.powerupPickups);
   const powerupPickupCollections = useGameStore((state) => state.powerupPickupCollections);
   const [now, setNow] = useState(() => Date.now());
 
   const manifest = useMemo(() => {
     return (
-      getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId })
-      ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, source: 'match' })
+      getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId })
+      ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId, source: 'match' })
     ).manifest;
-  }, [mapSeed, mapThemeId, mapSize, mapProfileId]);
+  }, [mapSeed, mapThemeId, mapSize, mapProfileId, pregeneratedMapId]);
 
   useEffect(() => {
     setNow(Date.now());

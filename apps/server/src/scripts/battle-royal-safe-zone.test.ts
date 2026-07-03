@@ -1,10 +1,22 @@
 import assert from 'node:assert/strict';
-import type { VoxelMapManifest } from '@voxel-strike/shared';
+import { BATTLE_ROYAL_MATCH_DURATION_SECONDS, type VoxelMapManifest } from '@voxel-strike/shared';
 import {
   createBattleRoyalSafeZoneState,
   isOutsideBattleRoyalSafeZone,
   updateBattleRoyalSafeZoneState,
 } from '../rooms/battleRoyalSafeZone';
+
+function advanceToFinalSafeZonePhase(
+  initialState: ReturnType<typeof createBattleRoyalSafeZoneState>
+): ReturnType<typeof createBattleRoyalSafeZoneState> {
+  let current = initialState;
+  for (let phaseCount = 0; phaseCount < 16; phaseCount++) {
+    const next = updateBattleRoyalSafeZoneState(current, current.phaseEndsAt + 1);
+    if (next.phaseIndex === current.phaseIndex) return next;
+    current = next;
+  }
+  return current;
+}
 
 const manifest = {
   seed: 0x51f15eed,
@@ -47,6 +59,17 @@ expectedShrinkDurationsMs.forEach((expectedShrinkMs, phaseIndex) => {
     );
   }
 });
+
+const matchDurationMs = BATTLE_ROYAL_MATCH_DURATION_SECONDS * 1000;
+const finalPhase = advanceToFinalSafeZonePhase(initial);
+assert.equal(finalPhase.phaseEndsAt - initial.phaseStartedAt <= matchDurationMs, true);
+
+const firstRevealBufferMs = 3_000;
+const bufferedInitial = createBattleRoyalSafeZoneState(manifest, startedAt + firstRevealBufferMs, {
+  firstNextZoneRevealsAt: startedAt + firstRevealBufferMs,
+});
+const bufferedFinalPhase = advanceToFinalSafeZonePhase(bufferedInitial);
+assert.equal(bufferedFinalPhase.phaseEndsAt <= startedAt + matchDurationMs, true);
 
 const warning = updateBattleRoyalSafeZoneState(initial, initial.shrinkStartsAt - 10_000);
 assert.equal(warning.warning, true);

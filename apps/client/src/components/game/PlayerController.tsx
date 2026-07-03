@@ -1699,6 +1699,7 @@ function runDevTestingInteractionFrame(
     themeId: store.mapThemeId,
     mapSize: store.mapSize,
     mapProfileId: store.mapProfileId,
+    pregeneratedMapId: store.pregeneratedMapId,
   });
   const manifest = preparedMap?.manifest ?? null;
   const interaction = manifest ? getDevTestingHeroInteraction(manifest, position, localPlayer.heroId) : null;

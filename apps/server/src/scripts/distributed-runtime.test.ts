@@ -208,6 +208,28 @@ function runConfigTests(): void {
   assert.equal(local.routingStrategy, 'direct');
   assert.equal(local.roomCreateStrategy, 'least_loaded');
 
+  const redisBackedDev = getColyseusRuntimeConfig({
+    COLYSEUS_REDIS_URL: 'redis://localhost:6379',
+  });
+  assert.equal(redisBackedDev.nodeEnv, 'development');
+  assert.equal(redisBackedDev.distributed, true);
+  assert.equal(redisBackedDev.redisUrl, 'redis://localhost:6379');
+  assert.doesNotThrow(() => validateColyseusRuntimeConfig(redisBackedDev));
+
+  const explicitSingleProcessDev = getColyseusRuntimeConfig({
+    COLYSEUS_DISTRIBUTED: '0',
+    COLYSEUS_REDIS_URL: 'redis://localhost:6379',
+  });
+  assert.equal(explicitSingleProcessDev.distributed, false);
+  assert.equal(explicitSingleProcessDev.redisUrl, 'redis://localhost:6379');
+
+  const redisConfiguredProduction = getColyseusRuntimeConfig({
+    NODE_ENV: 'production',
+    COLYSEUS_REDIS_URL: 'redis://localhost:6379',
+  });
+  assert.equal(redisConfiguredProduction.distributed, false);
+  assert.equal(redisConfiguredProduction.redisUrl, 'redis://localhost:6379');
+
   const distributed = getColyseusRuntimeConfig({
     COLYSEUS_DISTRIBUTED: '1',
     REDIS_URL: 'redis://redis.example:6379',
@@ -285,6 +307,7 @@ function runConfigTests(): void {
   );
   assert.throws(
     () => validateColyseusRuntimeConfig(getColyseusRuntimeConfig({
+      NODE_ENV: 'production',
       COLYSEUS_ROUTING_STRATEGY: 'fly_replay',
       COLYSEUS_REDIS_URL: 'redis://localhost:6379',
       FLY_APP_NAME: 'opus-strike-server',

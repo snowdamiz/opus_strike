@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { SettingsModal } from './SettingsModal';
 import { GameDialog } from './GameDialog';
+
+const UNSTUCK_REQUEST_COOLDOWN_MS = 15000;
 
 interface InGameMenuProps {
   onClose: () => void;
@@ -11,7 +13,15 @@ interface InGameMenuProps {
 export function InGameMenu({ onClose }: InGameMenuProps) {
   const playerName = useGameStore((state) => state.playerName);
   const [showSettings, setShowSettings] = useState(false);
-  const { leaveGame } = useNetwork();
+  const [unstuckRequested, setUnstuckRequested] = useState(false);
+  const unstuckCooldownTimer = useRef<number | null>(null);
+  const { leaveGame, requestUnstuck } = useNetwork();
+
+  useEffect(() => () => {
+    if (unstuckCooldownTimer.current !== null) {
+      window.clearTimeout(unstuckCooldownTimer.current);
+    }
+  }, []);
 
   const handleResume = () => {
     const canvas = document.querySelector('canvas');
@@ -44,6 +54,19 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
     leaveGame();
   };
 
+  const handleUnstuck = () => {
+    if (unstuckRequested) return;
+    requestUnstuck();
+    setUnstuckRequested(true);
+    if (unstuckCooldownTimer.current !== null) {
+      window.clearTimeout(unstuckCooldownTimer.current);
+    }
+    unstuckCooldownTimer.current = window.setTimeout(() => {
+      setUnstuckRequested(false);
+      unstuckCooldownTimer.current = null;
+    }, UNSTUCK_REQUEST_COOLDOWN_MS);
+  };
+
   return (
     <>
       <GameDialog
@@ -64,6 +87,10 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
 
         <MenuButton onClick={() => setShowSettings(true)}>
           SETTINGS
+        </MenuButton>
+
+        <MenuButton onClick={handleUnstuck} disabled={unstuckRequested}>
+          {unstuckRequested ? 'UNSTUCK REQUESTED' : 'UNSTUCK'}
         </MenuButton>
 
         <div className="pt-2 border-t border-strike-border">
@@ -88,27 +115,32 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
 }
 
 interface MenuButtonProps {
-  children: React.ReactNode;
+  children: ReactNode;
   onClick: () => void;
   primary?: boolean;
   danger?: boolean;
+  disabled?: boolean;
 }
 
-function MenuButton({ children, onClick, primary, danger }: MenuButtonProps) {
+function MenuButton({ children, onClick, primary, danger, disabled = false }: MenuButtonProps) {
   let className = `
-    w-full py-3 font-display text-lg rounded-lg transition-colors
+    w-full py-3 font-display text-lg rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-45
   `;
 
   if (primary) {
-    className += ` bg-orange-500 text-white hover:bg-orange-400`;
+    className += disabled ? ` bg-orange-500 text-white` : ` bg-orange-500 text-white hover:bg-orange-400`;
   } else if (danger) {
-    className += ` bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20`;
+    className += disabled
+      ? ` bg-red-500/10 border border-red-500/30 text-red-400`
+      : ` bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20`;
   } else {
-    className += ` bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 hover:text-white`;
+    className += disabled
+      ? ` bg-white/5 border border-white/10 text-white/70`
+      : ` bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 hover:text-white`;
   }
 
   return (
-    <button type="button" onClick={onClick} className={className}>
+    <button type="button" onClick={onClick} disabled={disabled} className={className}>
       {children}
     </button>
   );

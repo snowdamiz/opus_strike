@@ -25,7 +25,7 @@ import type {
 import { useChatStore } from '../store/chatStore';
 import { seedMapPrepCacheFromManifest, type PrepareVoxelMapOptions } from '../utils/mapWarmup/mapPrepCache';
 import { prebuildPreparedMapGeometryDeferred } from '../utils/mapWarmup/deferredMapGeometryWarmup';
-import { requestMapPreviewManifest } from '../utils/mapPreview/mapPreviewManifestClient';
+import { requestMatchMapManifest } from '../utils/mapWarmup/mapManifestLoader';
 import { disconnectVoice } from '../voice/voiceControls';
 import { loggers } from '../utils/logger';
 
@@ -118,6 +118,8 @@ interface GameStartingMessage {
   matchPerspective?: MatchPerspective;
   mapSize?: VoxelMapSizeId | null;
   mapProfileId?: MapProfileId | null;
+  pregeneratedMapId?: string | null;
+  mapArtifactId?: string | null;
 }
 
 interface SelectedMapMessage {
@@ -125,6 +127,8 @@ interface SelectedMapMessage {
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
   mapProfileId?: MapProfileId | null;
+  pregeneratedMapId?: string | null;
+  mapArtifactId?: string | null;
   gameplayMode?: GameplayMode;
 }
 
@@ -213,6 +217,7 @@ export function setupLobbyListeners(
     setMapSeed,
     setMapThemeId,
     setMapSize,
+    setPregeneratedMapIdentity,
     resetLobby,
   } = useGameStore.getState();
 
@@ -306,19 +311,22 @@ export function setupLobbyListeners(
     setMapThemeId(data.mapThemeId ?? null);
     setMapSize(data.mapSize);
     useGameStore.getState().setMapProfileId(data.mapProfileId);
+    setPregeneratedMapIdentity(data.pregeneratedMapId, data.mapArtifactId);
     setAppPhase('match_loading');
 
-    void requestMapPreviewManifest({
+    void requestMatchMapManifest({
       seed: data.mapSeed,
       themeId: data.mapThemeId ?? null,
       mapSize: data.mapSize,
       mapProfileId: data.mapProfileId,
+      pregeneratedMapId: data.pregeneratedMapId,
     })
-      .then((manifest) => {
+      .then(({ manifest }) => {
         const preparedMap = seedMapPrepCacheFromManifest(
           data.mapSeed,
           manifest,
-          cacheLabel
+          cacheLabel,
+          data.pregeneratedMapId
         );
         prebuildPreparedMapGeometryDeferred(preparedMap, { frameBudgetMs: 3, label: cacheLabel });
       })
@@ -397,6 +405,8 @@ export function setupLobbyListeners(
     mapThemeId?: VoxelMapTheme['id'] | null;
     mapSize?: VoxelMapSizeId | null;
     mapProfileId?: MapProfileId | null;
+    pregeneratedMapId?: string | null;
+    mapArtifactId?: string | null;
     gameplayMode?: GameplayMode;
     votes: MapVoteRecord[];
   }) => {
@@ -500,6 +510,7 @@ export function setupLobbyListeners(
     });
     setMapSize(data.mapSize);
     useGameStore.getState().setMapProfileId(data.mapProfileId);
+    setPregeneratedMapIdentity(data.pregeneratedMapId, data.mapArtifactId);
 
     try {
       await joinGameRoomWithRetry(data.gameRoomId, myTeam, data.entryTicket, data.seatReservation);

@@ -13,6 +13,8 @@ export interface GameRoomMetadataInput {
   mapThemeId: string;
   mapSize: string;
   mapProfileId?: string;
+  pregeneratedMapId?: string | null;
+  mapArtifactId?: string | null;
   counts: RoomPopulationCounts;
   maxPlayers: number;
   mapRenderableChunkCount?: number;
@@ -35,7 +37,7 @@ export interface GameRoomMetadataInput {
 
 export function buildGameRoomMetadata(input: GameRoomMetadataInput): Record<string, unknown> {
   const { counts, load } = input;
-  return {
+  const metadata: Record<string, unknown> = {
     name: input.lobbyName || `Game ${input.roomId.slice(0, 6)}`,
     status: input.phase,
     phase: input.phase,
@@ -104,4 +106,7 @@ export function buildGameRoomMetadata(input: GameRoomMetadataInput): Record<stri
     antiCheatDroppedLowMediumSignals: load.antiCheatDroppedLowMediumSignals,
     antiCheatDbErrors: load.antiCheatDbErrors,
   };
+  if (input.pregeneratedMapId) metadata.pregeneratedMapId = input.pregeneratedMapId;
+  if (input.mapArtifactId) metadata.mapArtifactId = input.mapArtifactId;
+  return metadata;
 }

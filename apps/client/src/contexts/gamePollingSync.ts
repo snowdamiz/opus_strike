@@ -10,7 +10,7 @@ import { useGameStore } from '../store/gameStore';
 import { loggers } from '../utils/logger';
 import { seedMapPrepCacheFromManifest } from '../utils/mapWarmup/mapPrepCache';
 import { prebuildPreparedMapGeometryDeferred } from '../utils/mapWarmup/deferredMapGeometryWarmup';
-import { requestMapPreviewManifest } from '../utils/mapPreview/mapPreviewManifestClient';
+import { requestMatchMapManifest } from '../utils/mapWarmup/mapManifestLoader';
 import { normalizeGamePhase } from './gamePhase';
 import type { GameStoreActions } from './gameMessageHandlers';
 
@@ -33,6 +33,12 @@ export function setupPollingSync(
     const nextMapProfileId = typeof room.state.mapProfileId === 'string'
       ? room.state.mapProfileId as MapProfileId
       : null;
+    const nextPregeneratedMapId = typeof room.state.pregeneratedMapId === 'string' && room.state.pregeneratedMapId
+      ? room.state.pregeneratedMapId
+      : null;
+    const nextMapArtifactId = typeof room.state.mapArtifactId === 'string' && room.state.mapArtifactId
+      ? room.state.mapArtifactId
+      : null;
 
     if (
       typeof room.state.mapSeed === 'number'
@@ -41,20 +47,24 @@ export function setupPollingSync(
         || nextMapThemeId !== store.mapThemeId
         || nextMapSize !== store.mapSize
         || nextMapProfileId !== store.mapProfileId
+        || nextPregeneratedMapId !== store.pregeneratedMapId
+        || nextMapArtifactId !== store.mapArtifactId
       )
     ) {
       store.setMapSeed(room.state.mapSeed);
       store.setMapThemeId(nextMapThemeId);
       store.setMapSize(nextMapSize);
       store.setMapProfileId(nextMapProfileId);
-      void requestMapPreviewManifest({
+      store.setPregeneratedMapIdentity(nextPregeneratedMapId, nextMapArtifactId);
+      void requestMatchMapManifest({
         seed: room.state.mapSeed,
         themeId: nextMapThemeId,
         mapSize: nextMapSize,
         mapProfileId: nextMapProfileId,
+        pregeneratedMapId: nextPregeneratedMapId,
       })
-        .then((manifest) => {
-          const preparedMap = seedMapPrepCacheFromManifest(room.state.mapSeed, manifest, 'match');
+        .then(({ manifest }) => {
+          const preparedMap = seedMapPrepCacheFromManifest(room.state.mapSeed, manifest, 'match', nextPregeneratedMapId);
           prebuildPreparedMapGeometryDeferred(preparedMap, { frameBudgetMs: 2, label: 'fallback-poll' });
         })
         .catch((error) => {

@@ -89,11 +89,19 @@ export function MatchSummaryScreen() {
   const currentProgress = getLevelProgress(totalExperience);
   const leveledUp = currentProgress.level > previousProgress.level;
   const localOutcome = localPlayer?.outcome ?? 'draw';
-  const resultLabel = localOutcome === 'win' ? 'Victory' : localOutcome === 'loss' ? 'Defeat' : 'Draw';
-  const winnerLabel = summary.winningTeam ? `${getFactionLabel(summary.winningTeam)} Wins` : 'Draw';
   const isCaptureTheFlag = summary.gameplayMode === 'capture_the_flag';
   const isBattleRoyal = summary.gameplayMode === 'battle_royal';
-  const showRankChange = summary.matchMode === 'ranked';
+  const isTeamEliminatedSummary = isBattleRoyal && summary.completionReason === 'team_eliminated';
+  const placementLabel = summary.completedTeamPlacement
+    ? `Placed #${summary.completedTeamPlacement}${summary.activeTeamCount ? ` of ${summary.activeTeamCount}` : ''}`
+    : null;
+  const resultLabel = isTeamEliminatedSummary
+    ? 'Squad Eliminated'
+    : localOutcome === 'win' ? 'Victory' : localOutcome === 'loss' ? 'Defeat' : 'Draw';
+  const winnerLabel = isTeamEliminatedSummary
+    ? placementLabel ?? 'Placement Recorded'
+    : summary.winningTeam ? `${getFactionLabel(summary.winningTeam)} Wins` : 'Draw';
+  const showRankChange = summary.matchMode === 'ranked' && !isTeamEliminatedSummary;
 
   const handleReturn = () => {
     clearMatchSummary();
@@ -113,7 +121,9 @@ export function MatchSummaryScreen() {
         <div className="mx-auto flex min-h-[calc(100vh-2.5rem)] max-w-7xl flex-col gap-5">
           <header className="grid gap-4 border-b border-white/10 pb-5 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-end">
             <div className="min-w-0">
-              <p className="font-body text-xs uppercase text-white/40">Match Complete</p>
+              <p className="font-body text-xs uppercase text-white/40">
+                {isTeamEliminatedSummary ? 'Battle Royal' : 'Match Complete'}
+              </p>
               <div className="mt-2 flex flex-wrap items-end gap-x-4 gap-y-2">
                 <h1 className="font-display text-5xl leading-none text-white sm:text-7xl">{resultLabel}</h1>
                 <span className="mb-2 rounded border border-white/15 bg-white/10 px-2.5 py-1 font-mono text-sm text-white/70">
@@ -204,6 +214,25 @@ function TeamScore({ team, score, align = 'left' }: { team: Team; score: number;
 }
 
 function BattleRoyalSummaryHeader({ summary }: { summary: GameEndEvent }) {
+  if (summary.completionReason === 'team_eliminated') {
+    const teamLabel = summary.completedTeam ? getFactionLabel(summary.completedTeam) : 'Squad';
+    const placement = summary.completedTeamPlacement
+      ? `#${summary.completedTeamPlacement}${summary.activeTeamCount ? ` / ${summary.activeTeamCount}` : ''}`
+      : 'Recorded';
+
+    return (
+      <div className="border border-white/10 bg-black/35 p-3 backdrop-blur-sm">
+        <p className="font-body text-xs uppercase text-white/35">Battle Royal Placement</p>
+        <p className="mt-1 truncate font-display text-3xl leading-none text-white">
+          {placement}
+        </p>
+        <p className="mt-2 font-body text-sm text-white/45">
+          {teamLabel} eliminated
+        </p>
+      </div>
+    );
+  }
+
   const aliveTeams = new Set(
     summary.players
       .filter((player) => player.outcome === 'win' || player.team === summary.winningTeam)

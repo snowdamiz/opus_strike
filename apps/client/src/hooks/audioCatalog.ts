@@ -52,7 +52,7 @@ export const SOUND_EFFECTS = {
   chronosTimebreak: { path: '/sounds/chronos_charge.mp3', volume: 0 },
   chronosSuperchargedImpact: { path: '/sounds/magic_impact.mp3', volume: 0.72 },
 
-  hit: { path: '/sounds/laser_hit.mp3', volume: 0.6 },
+  hit: { path: '/sounds/hit.mp3', volume: 0.15 },
   damage: { path: '/sounds/laser_hit.mp3', volume: 0.5 },
   death: { path: '/sounds/scream.mp3', volume: 0.6 },
   kill: { path: '/sounds/magic_impact.mp3', volume: 0.7 },

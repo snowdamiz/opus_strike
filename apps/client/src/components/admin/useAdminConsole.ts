@@ -4,6 +4,8 @@ import type {
   AccountActionRequest,
   AdminOverview,
   EventBiomeUpdate,
+  MapPoolTopUpRequest,
+  MapPoolTopUpResponse,
   MissionDefinitionRequest,
   MissionReorderRequest,
   RankedEntryGateUpdate,
@@ -71,6 +73,7 @@ export interface UseAdminConsole {
   saveSkinShopSettings: (body: SkinShopSettingsUpdate) => Promise<MutationResult>;
   saveSkinShopItem: (skinId: string, body: SkinShopItemUpdate) => Promise<MutationResult>;
   saveEventBiome: (body: EventBiomeUpdate) => Promise<MutationResult>;
+  topUpMapPool: (body?: MapPoolTopUpRequest) => Promise<MutationResult<MapPoolTopUpResponse>>;
 }
 
 export function useAdminConsole(): UseAdminConsole {
@@ -318,6 +321,14 @@ export function useAdminConsole(): UseAdminConsole {
     [runMutation]
   );
 
+  const topUpMapPool = useCallback(
+    (body?: MapPoolTopUpRequest) =>
+      runMutation('Map pool top-up', (csrf) =>
+        adminPost<MapPoolTopUpResponse>('/map-pool/top-up', body ?? {}, csrf)
+      ),
+    [runMutation]
+  );
+
   return {
     overview,
     loading,
@@ -350,5 +361,6 @@ export function useAdminConsole(): UseAdminConsole {
     saveSkinShopSettings,
     saveSkinShopItem,
     saveEventBiome,
+    topUpMapPool,
   };
 }

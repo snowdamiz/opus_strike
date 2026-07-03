@@ -19,9 +19,9 @@ import { useNetwork } from './contexts/NetworkContext';
 import { requestStopStreamer } from './contexts/networkApi';
 import { mouseButtonToKeybindCode } from './utils/keybindings';
 import { installLocalCombatStressScenario } from './utils/combatStressScenario';
-import { requestMapPreviewManifest } from './utils/mapPreview/mapPreviewManifestClient';
 import { seedMapPrepCacheFromManifest } from './utils/mapWarmup/mapPrepCache';
 import { getMapPrepCacheKey } from './utils/mapWarmup/mapPrepCacheKey';
+import { requestMatchMapManifest } from './utils/mapWarmup/mapManifestLoader';
 import { prebuildPreparedMapGeometryDeferred } from './utils/mapWarmup/deferredMapGeometryWarmup';
 import { config } from './config/environment';
 import type { MapWarmupSnapshot } from './utils/mapWarmup/mapWarmupCoordinator';
@@ -121,15 +121,17 @@ async function prepareMatchMapWarmupResources(input: {
   themeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
   mapProfileId?: MapProfileId | null;
+  pregeneratedMapId?: string | null;
   label: string;
 }): Promise<void> {
-  const manifest = await requestMapPreviewManifest({
+  const { manifest } = await requestMatchMapManifest({
     seed: input.seed,
     themeId: input.themeId ?? null,
     mapSize: input.mapSize,
     mapProfileId: input.mapProfileId,
+    pregeneratedMapId: input.pregeneratedMapId,
   });
-  const preparedMap = seedMapPrepCacheFromManifest(input.seed, manifest, 'match');
+  const preparedMap = seedMapPrepCacheFromManifest(input.seed, manifest, 'match', input.pregeneratedMapId);
   prebuildPreparedMapGeometryDeferred(preparedMap, { frameBudgetMs: 2, label: input.label });
 }
 
@@ -155,6 +157,7 @@ export function App() {
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
   const mapProfileId = useGameStore((state) => state.mapProfileId);
+  const pregeneratedMapId = useGameStore((state) => state.pregeneratedMapId);
   const gameplayMode = useGameStore((state) => state.gameplayMode);
   const isObserverMode = useGameStore((state) => state.localPlayer?.role === 'observer');
   const scoreboardKeybind = useSettingsStore((state) => state.settings.keybindings.scoreboard);
@@ -202,8 +205,8 @@ export function App() {
     (gamePhase === 'waiting' || gamePhase === 'hero_select' || isActiveGame)
   );
   const warmupKey = useMemo(
-    () => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId }),
-    [mapSeed, mapThemeId, mapSize, mapProfileId]
+    () => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId }),
+    [mapSeed, mapThemeId, mapSize, mapProfileId, pregeneratedMapId]
   );
   const shouldShowMatchLoading = (
     shouldPrepareMatchWorld &&
@@ -216,7 +219,7 @@ export function App() {
   );
   const shouldTrackMatchLoadingProgress = appPhase === 'match_loading' || appPhase === 'streamer_loading' || shouldPrepareMatchWorld;
   const isBattleRoyalLoading = gameplayMode === 'battle_royal' || mapProfileId === 'battle_royal_large';
-  const matchLoadingTitle = isBattleRoyalLoading ? 'GENERATING MAP' : 'LOADING ARENA';
+  const matchLoadingTitle = isBattleRoyalLoading ? 'LOADING DROP ZONE' : 'LOADING ARENA';
   const matchLoadingEyebrow = isBattleRoyalLoading ? 'Battle Royal' : 'Match';
   const matchWarmupStages = useMemo(
     () => matchWarmupSnapshot ? Object.values(matchWarmupSnapshot.stages) : undefined,
@@ -266,6 +269,7 @@ export function App() {
         themeId: mapThemeId,
         mapSize,
         mapProfileId,
+        pregeneratedMapId,
         label: 'match-loading',
       }).catch((error) => {
         console.warn('[App] Match map warmup failed', error);
@@ -314,6 +318,7 @@ export function App() {
     mapSeed,
     mapSize,
     mapThemeId,
+    pregeneratedMapId,
     preloadSoundGroup,
     shouldPrepareMatchWorld,
   ]);

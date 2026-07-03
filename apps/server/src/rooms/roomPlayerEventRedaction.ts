@@ -35,6 +35,7 @@ export function buildPlayerDamagedPayload(
     newHealth: visibility.canKnowTarget || visibility.isParticipant ? payload.newHealth : undefined,
     newDownedHealth: visibility.canKnowTarget || visibility.isParticipant ? payload.newDownedHealth : undefined,
     sourcePosition: visibility.canKnowSource || visibility.isParticipant ? payload.sourcePosition : undefined,
+    sourceDirection: visibility.canKnowSource || visibility.isParticipant ? payload.sourceDirection : undefined,
     targetPosition: visibility.canKnowTarget || visibility.isParticipant ? payload.targetPosition : undefined,
     sourceHeroId: visibility.canKnowSource || visibility.isParticipant ? payload.sourceHeroId : null,
     targetHeroId: visibility.canKnowTarget || visibility.isParticipant ? payload.targetHeroId : null,

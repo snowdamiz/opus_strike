@@ -142,6 +142,8 @@ assert.deepEqual(
     mapThemeId: 'verdant',
     mapSize: 'medium',
     mapProfileId: 'battle_royal_large',
+    pregeneratedMapId: null,
+    mapArtifactId: null,
     position: { x: 1, y: 2, z: 3 },
     movementEpoch: 4,
     ackSeq: 5,
@@ -154,6 +156,8 @@ assert.deepEqual(
     mapThemeId: 'verdant',
     mapSize: 'medium',
     mapProfileId: 'battle_royal_large',
+    pregeneratedMapId: null,
+    mapArtifactId: null,
     position: { x: 1, y: 2, z: 3 },
     movementEpoch: 4,
     ackSeq: 5,
@@ -175,6 +179,27 @@ assert.equal(
   }).mapProfileId,
   'ctf_arena'
 );
+
+const pregeneratedGatePayload = buildMatchStartGatePayload({
+  key: 9,
+  serverTime: 12_345,
+  mapSeed: 99,
+  mapThemeId: 'verdant',
+  mapSize: 'medium',
+  pregeneratedMapId: 'pgmap_gate',
+  mapArtifactId: 'pgartifact_gate',
+  position: { x: 1, y: 2, z: 3 },
+  movementEpoch: 4,
+  ackSeq: 5,
+  collisionRevision: 6,
+});
+assert.deepEqual({
+  pregeneratedMapId: pregeneratedGatePayload.pregeneratedMapId,
+  mapArtifactId: pregeneratedGatePayload.mapArtifactId,
+}, {
+  pregeneratedMapId: 'pgmap_gate',
+  mapArtifactId: 'pgartifact_gate',
+});
 
 {
   const gate = new MatchStartGateTracker();

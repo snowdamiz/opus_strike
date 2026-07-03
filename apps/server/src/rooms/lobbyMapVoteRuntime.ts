@@ -13,6 +13,8 @@ import {
   type GameplayModeRules,
   type MapProfileId,
   type MapTopologyId,
+  type PregeneratedMapCatalogSummary,
+  type PregeneratedMapStats,
   type VoxelMapSizeId,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
@@ -30,6 +32,11 @@ export interface MapVoteOption {
   topologyId: MapTopologyId;
   preview: BlueprintPreview;
   score: number;
+  pregeneratedMapId?: string | null;
+  mapArtifactId?: string | null;
+  catalogTags?: string[];
+  stats?: PregeneratedMapStats;
+  generatorVersion?: number | null;
 }
 
 export interface MapVoteRecord {
@@ -70,6 +77,8 @@ export interface MapLaunchSelection {
   seed: number;
   mapSize: VoxelMapSizeId;
   mapProfileId: MapProfileId;
+  pregeneratedMapId?: string | null;
+  mapArtifactId?: string | null;
 }
 
 const MAP_NAME_SUFFIXES = [
@@ -140,6 +149,34 @@ export function createMapVoteOption(
     topologyId: preview.topologyId,
     preview: preview.preview,
     score: preview.diagnostics.score,
+  };
+}
+
+export function createMapVoteOptionFromCatalog(
+  map: PregeneratedMapCatalogSummary,
+  index: number
+): MapVoteOption {
+  const mapSizeDefinition = getVoxelMapSizeDefinition(map.mapSize);
+  const theme = getVoxelMapTheme(map.seed, map.themeId);
+
+  return {
+    id: `map_${index + 1}`,
+    seed: map.seed >>> 0,
+    name: map.displayName,
+    mapSize: mapSizeDefinition.id,
+    mapSizeLabel: mapSizeDefinition.label,
+    mapProfileId: map.profileId,
+    themeId: map.themeId,
+    themeName: theme.name,
+    mapThemeId: map.themeId,
+    topologyId: map.topologyId,
+    preview: map.preview,
+    score: map.diagnosticsScore,
+    pregeneratedMapId: map.id,
+    mapArtifactId: map.artifactId,
+    catalogTags: map.previewTags,
+    stats: map.stats,
+    generatorVersion: map.generatorVersion,
   };
 }
 

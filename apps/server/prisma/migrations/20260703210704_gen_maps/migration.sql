@@ -1,0 +1,8 @@
+-- RenameIndex
+ALTER INDEX "PregeneratedMap_gameplayMode_profileId_mapSize_status_visibilit" RENAME TO "PregeneratedMap_gameplayMode_profileId_mapSize_status_visib_idx";
+
+-- RenameIndex
+ALTER INDEX "PregeneratedMap_seed_themeId_profileId_mapSize_topologyId_gener" RENAME TO "PregeneratedMap_seed_themeId_profileId_mapSize_topologyId_g_key";
+
+-- RenameIndex
+ALTER INDEX "PregeneratedMap_status_visibility_gameplayMode_profileId_mapSiz" RENAME TO "PregeneratedMap_status_visibility_gameplayMode_profileId_ma_idx";

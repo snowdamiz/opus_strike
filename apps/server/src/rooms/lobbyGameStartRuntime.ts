@@ -12,6 +12,8 @@ import {
   type HeroSkinId,
   type MapProfileId,
   type MatchPerspective,
+  type PregeneratedMapArtifactId,
+  type PregeneratedMapId,
   type PlayerRole,
   type Team,
   type VoxelMapSizeId,
@@ -65,6 +67,8 @@ export interface GameStartingPayload {
   mapThemeId: VoxelMapTheme['id'];
   mapSize: VoxelMapSizeId;
   mapProfileId: MapProfileId;
+  pregeneratedMapId?: PregeneratedMapId | null;
+  mapArtifactId?: PregeneratedMapArtifactId | null;
 }
 
 export interface GameSeatReservationPayload {
@@ -254,6 +258,8 @@ export function buildGameStartingPayload(input: {
   mapThemeId: VoxelMapTheme['id'];
   mapSize: VoxelMapSizeId;
   mapProfileId?: MapProfileId;
+  pregeneratedMapId?: PregeneratedMapId | null;
+  mapArtifactId?: PregeneratedMapArtifactId | null;
 }): GameStartingPayload {
   return {
     gameRoomId: input.gameRoomId,
@@ -265,6 +271,8 @@ export function buildGameStartingPayload(input: {
     mapThemeId: input.mapThemeId,
     mapSize: input.mapSize,
     mapProfileId: input.mapProfileId ?? 'ctf_arena',
+    pregeneratedMapId: input.pregeneratedMapId ?? null,
+    mapArtifactId: input.mapArtifactId ?? null,
   };
 }
 

@@ -1,3 +1,4 @@
+import { deserializeVoxelMapManifest } from '@voxel-strike/shared';
 import type {
   GameplayMode,
   HeroId,
@@ -6,10 +7,13 @@ import type {
   HeroSkinId,
   MatchPerspective,
   PlayerDailyMissionsResponse,
+  PregeneratedMapArtifactEnvelope,
+  PregeneratedMapCatalogSummary,
   SkinPurchaseIntentSnapshot,
   SkinPurchaseTransactionSnapshot,
   VoxelMapSizeId,
   VoxelMapTheme,
+  VoxelMapManifest,
 } from '@voxel-strike/shared';
 import { config } from '../config/environment';
 import { useSettingsStore } from '../store/settingsStore';
@@ -88,6 +92,8 @@ export interface StreamerTargetMetadata {
   mapThemeId: string | null;
   mapSize: string | null;
   mapProfileId: string | null;
+  pregeneratedMapId?: string | null;
+  mapArtifactId?: string | null;
   combatHumanCount: number;
   regularObserverCount: number;
   streamerObserverCount: number;
@@ -183,6 +189,12 @@ export interface RewardEconomyResponse {
   };
 }
 
+export interface PregeneratedMapManifestResponse {
+  map: PregeneratedMapCatalogSummary;
+  artifact: PregeneratedMapArtifactEnvelope;
+  manifest: VoxelMapManifest;
+}
+
 function getHttpUrl(): string {
   return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
 }
@@ -233,6 +245,30 @@ export async function requestQuickPlayTicket(input: {
   }
 
   return response.json();
+}
+
+export async function requestPregeneratedMapManifest(mapId: string): Promise<PregeneratedMapManifestResponse> {
+  const response = await fetch(`${getHttpUrl()}/maps/pregenerated/${encodeURIComponent(mapId)}/manifest`, {
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load pregenerated map'));
+  }
+
+  const payload = await response.json() as {
+    map?: PregeneratedMapCatalogSummary;
+    artifact?: PregeneratedMapArtifactEnvelope;
+  };
+  if (!payload.map || !payload.artifact?.manifest || payload.artifact.header?.mapId !== mapId) {
+    throw new Error('Pregenerated map response is invalid');
+  }
+
+  return {
+    map: payload.map,
+    artifact: payload.artifact,
+    manifest: deserializeVoxelMapManifest(payload.artifact.manifest),
+  };
 }
 
 export async function requestRankedTicket(input: { selectedHero?: HeroId; selectedSkinId?: HeroSkinId } = {}): Promise<RankedTicketResponse> {

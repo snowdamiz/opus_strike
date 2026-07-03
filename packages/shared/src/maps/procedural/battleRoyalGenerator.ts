@@ -2,7 +2,8 @@ import {
   POWERUP_PICKUP_RADIUS,
   POWERUP_RESPAWN_SECONDS,
 } from '../../constants/game.js';
-import { PLAYER_HEIGHT, PLAYER_RADIUS } from '../../constants/physics.js';
+import { PLAYER_HEIGHT, PLAYER_RADIUS, STEP_HEIGHT } from '../../constants/physics.js';
+import { BATTLE_ROYAL_MATCH_DURATION_SECONDS } from '../../types/gameplayMode.js';
 import { BATTLE_ROYAL_TEAM_IDS, type Team } from '../../types/team.js';
 import type { Vec3 } from '../../types/vector.js';
 import { getClosestBoundaryPoint, isInsideBoundaryPolygon } from './boundaries.js';
@@ -72,6 +73,12 @@ const ROAD_LANE_OUTER = 'outer_routes';
 const ROAD_LANE_LOOP = 'settlement_loop';
 const ROAD_LANE_SETTLEMENT = 'settlement_paths';
 const ROAD_LANE_WILD = 'wild_routes';
+const TERRAIN_TRAP_REPAIR_MAX_PASSES = 4;
+const TERRAIN_TRAP_REPAIR_MAX_STEP_ROWS = Math.max(1, Math.ceil(STEP_HEIGHT / VOXEL_SIZE.y));
+const TERRAIN_TRAP_REPAIR_MIN_DEPTH_ROWS = TERRAIN_TRAP_REPAIR_MAX_STEP_ROWS + 2;
+const TERRAIN_TRAP_REPAIR_MAX_RAISE_ROWS = 20;
+const TERRAIN_TRAP_REPAIR_MIN_HIGH_NEIGHBORS = 5;
+const TERRAIN_TRAP_REPAIR_MAX_PASSABLE_EXITS = 2;
 
 type PoiRole = 'citadel' | 'watchtower' | 'bunker' | 'depot' | 'highrise' | 'hangar' | 'relay' | 'compound';
 type DistrictKind = 'city_core' | 'town' | 'industrial' | 'hamlet' | 'outpost' | 'open_field' | 'wildland';
@@ -1988,10 +1995,132 @@ function getThemeTerrainBlocks(theme: VoxelMapTheme): { top: number; side: numbe
   return byTheme[theme.id];
 }
 
+function isTerrainTrapRepairSurfaceBlock(block: number): boolean {
+  return block !== AIR && block !== BARRIER && block !== METAL && block !== GLASS;
+}
+
+function setRaisedTerrainSurface(
+  layout: BattleRoyalLayout,
+  blocks: Uint8Array,
+  x: number,
+  z: number,
+  fromRow: number,
+  toRow: number,
+  terrain: { top: number; side: number; deep: number }
+): void {
+  const startRow = clamp(Math.floor(fromRow), 0, layout.size.y);
+  const endRow = clamp(Math.floor(toRow), 0, layout.size.y);
+  if (endRow <= startRow) return;
+
+  for (let y = startRow; y < endRow; y++) {
+    const block = y === endRow - 1
+      ? terrain.top
+      : y >= endRow - TERRAIN_SIDE_ROWS
+        ? terrain.side
+        : terrain.deep;
+    setBlock(layout, blocks, x, y, z, block);
+  }
+}
+
+function getBattleRoyalTerrainTrapRepairTarget(
+  layout: BattleRoyalLayout,
+  blocks: Uint8Array,
+  heightfield: VoxelHeightfield,
+  x: number,
+  z: number
+): number | null {
+  const row = heightfield.topSolidRows[x + z * heightfield.size.x];
+  if (row <= 0 || row >= layout.size.y) return null;
+
+  const worldX = layout.origin.x + (x + 0.5) * VOXEL_SIZE.x;
+  const worldZ = layout.origin.z + (z + 0.5) * VOXEL_SIZE.z;
+  if (!isInsideBoundaryPolygon(worldX, worldZ, layout.boundary)) return null;
+  if (isRepairProtectedTerrainCell(layout, worldX, worldZ)) return null;
+
+  const surfaceBlock = blocks[index(x, row - 1, z, layout.size)];
+  if (!isTerrainTrapRepairSurfaceBlock(surfaceBlock)) return null;
+
+  let highNeighborCount = 0;
+  let passableExitCount = 0;
+  let shallowestBlockingRow = Infinity;
+
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dz === 0) continue;
+
+      const neighborX = x + dx;
+      const neighborZ = z + dz;
+      let neighborRow = BOUNDARY_WALL_ROWS;
+
+      if (neighborX >= 0 && neighborZ >= 0 && neighborX < heightfield.size.x && neighborZ < heightfield.size.z) {
+        const neighborWorldX = layout.origin.x + (neighborX + 0.5) * VOXEL_SIZE.x;
+        const neighborWorldZ = layout.origin.z + (neighborZ + 0.5) * VOXEL_SIZE.z;
+        neighborRow = isInsideBoundaryPolygon(neighborWorldX, neighborWorldZ, layout.boundary)
+          ? heightfield.topSolidRows[neighborX + neighborZ * heightfield.size.x]
+          : BOUNDARY_WALL_ROWS;
+      }
+
+      if (neighborRow - row > TERRAIN_TRAP_REPAIR_MAX_STEP_ROWS) {
+        highNeighborCount++;
+        shallowestBlockingRow = Math.min(shallowestBlockingRow, neighborRow);
+      } else {
+        passableExitCount++;
+      }
+    }
+  }
+
+  if (highNeighborCount < TERRAIN_TRAP_REPAIR_MIN_HIGH_NEIGHBORS) return null;
+  if (passableExitCount > TERRAIN_TRAP_REPAIR_MAX_PASSABLE_EXITS) return null;
+  if (!Number.isFinite(shallowestBlockingRow)) return null;
+  if (shallowestBlockingRow - row < TERRAIN_TRAP_REPAIR_MIN_DEPTH_ROWS) return null;
+
+  const targetRow = Math.min(
+    layout.size.y,
+    row + TERRAIN_TRAP_REPAIR_MAX_RAISE_ROWS,
+    shallowestBlockingRow - TERRAIN_TRAP_REPAIR_MAX_STEP_ROWS
+  );
+  return targetRow > row ? targetRow : null;
+}
+
+function repairBattleRoyalTerrainTraps(
+  layout: BattleRoyalLayout,
+  blocks: Uint8Array,
+  terrain: { top: number; side: number; deep: number },
+  initialHeightfield: VoxelHeightfield
+): { heightfield: VoxelHeightfield; repairedCells: number } {
+  let heightfield = initialHeightfield;
+  let repairedCells = 0;
+
+  for (let pass = 0; pass < TERRAIN_TRAP_REPAIR_MAX_PASSES; pass++) {
+    const repairs: Array<{ x: number; z: number; fromRow: number; toRow: number }> = [];
+
+    for (let z = 0; z < heightfield.size.z; z++) {
+      for (let x = 0; x < heightfield.size.x; x++) {
+        const fromRow = heightfield.topSolidRows[x + z * heightfield.size.x];
+        const toRow = getBattleRoyalTerrainTrapRepairTarget(layout, blocks, heightfield, x, z);
+        if (toRow === null) continue;
+        repairs.push({ x, z, fromRow, toRow });
+      }
+    }
+
+    if (repairs.length === 0) break;
+
+    for (const repair of repairs) {
+      setRaisedTerrainSurface(layout, blocks, repair.x, repair.z, repair.fromRow, repair.toRow, terrain);
+    }
+
+    repairedCells += repairs.length;
+    heightfield = createHeightfield({ blocks, size: layout.size, origin: layout.origin });
+  }
+
+  return { heightfield, repairedCells };
+}
+
 function buildBlocks(layout: BattleRoyalLayout): {
   blocks: Uint8Array;
   heightfield: VoxelHeightfield;
   solidBlockCount: number;
+  terrainTrapRepairCount: number;
 } {
   const blocks = new Uint8Array(layout.size.x * layout.size.y * layout.size.z);
   const terrain = getThemeTerrainBlocks(layout.theme);
@@ -2057,11 +2186,19 @@ function buildBlocks(layout: BattleRoyalLayout): {
     heightfield = createHeightfield({ blocks, size: layout.size, origin: layout.origin });
   }
 
+  const terrainTrapRepair = repairBattleRoyalTerrainTraps(layout, blocks, terrain, heightfield);
+  heightfield = terrainTrapRepair.heightfield;
+
   clearSpawnCapsuleVolumes(layout, blocks);
   heightfield = createHeightfield({ blocks, size: layout.size, origin: layout.origin });
 
   solidBlockCount = blocks.reduce((count, block) => count + (block === AIR ? 0 : 1), 0);
-  return { blocks, heightfield, solidBlockCount };
+  return {
+    blocks,
+    heightfield,
+    solidBlockCount,
+    terrainTrapRepairCount: terrainTrapRepair.repairedCells,
+  };
 }
 
 function worldToGrid(layout: BattleRoyalLayout, value: Vec3): { x: number; y: number; z: number } {
@@ -3068,6 +3205,7 @@ function createDiagnostics(input: {
   heightfield: VoxelHeightfield;
   stats: VoxelMapStats;
   generationMs: number;
+  terrainTrapRepairCount: number;
 }): MapDiagnostics {
   const sightlineMetrics = computeSightlineMetrics({
     layout: input.layout,
@@ -3168,6 +3306,7 @@ function createDiagnostics(input: {
     repairActions: {
       settlementCoverage: Math.round(settlementCoverage * 1000) / 1000,
       openAreaCoverage: Math.round(openAreaCoverage * 1000) / 1000,
+      terrainTrapRepairCells: input.terrainTrapRepairCount,
     },
     warnings,
   };
@@ -3328,6 +3467,7 @@ export function generateBattleRoyalVoxelMap(
     heightfield: blockResult.heightfield,
     stats,
     generationMs,
+    terrainTrapRepairCount: blockResult.terrainTrapRepairCount,
   });
   const preview = createPreview(layout);
   const designBrief: MapDesignBrief = {
@@ -3338,7 +3478,7 @@ export function generateBattleRoyalVoxelMap(
     teamSize: 3,
     familyId: 'battle_royal_large',
     themeId: layout.theme.id,
-    targetMatchLengthSeconds: 1200,
+    targetMatchLengthSeconds: BATTLE_ROYAL_MATCH_DURATION_SECONDS,
     desiredTopology: 'ring',
     desiredSymmetry: 'asymmetric_balanced',
     performanceBudget: layout.profile.performanceBudget,

@@ -94,15 +94,23 @@ import {
   addMissingBotMapVotes as addMissingBotMapVotesForRoster,
   buildMapVoteStartedPayload,
   buildMapVoteUpdatedPayload,
+  createMapVoteOptionFromCatalog,
   createMapLaunchSelection,
   createMapVoteOptions,
   getBattleRoyalEventBiomeThemeId,
+  getBattleRoyalMapSizeForParticipantCount,
   getMapVoteRecords,
   getWinningMapOption,
   haveAllHumanPlayersVoted,
+  type MapLaunchSelection,
   type MapVoteOption,
   type MapVotePlayer,
 } from './lobbyMapVoteRuntime';
+import {
+  isPublicSeedGenerationFallbackEnabled,
+  pregeneratedMapCatalogService,
+  type PregeneratedMapLaunchSelection,
+} from '../maps/pregeneratedMapCatalog';
 import {
   buildGameEntryTicketInputs,
   buildGameStartingPayload,
@@ -162,10 +170,17 @@ interface MapVoteSession {
   previewReadyPlayerIds: Set<string>;
 }
 
+interface CreateGameMapLaunchOptions {
+  pregeneratedMapId?: string | null;
+  mapArtifactId?: string | null;
+  mapSelectionId?: string | null;
+}
+
 const MAX_PLAYERS_PER_TEAM = DEFAULT_GAME_CONFIG.teamSize;
 const PRODUCTION_CUSTOM_MIN_PARTICIPANTS = 2;
 const CUSTOM_OBSERVER_SLOT_COUNT = 1;
 const MAP_VOTE_DURATION_MS = 30000;
+const MAP_VOTE_PREVIEW_READY_TIMEOUT_MS = 5000;
 const MATCHMAKING_AUTO_START_DELAY_MS = 250;
 const MATCHMAKING_BOT_FILL_GRACE_PERIOD_MS = 30000;
 const RANKED_MATCHMAKING_BOT_FILL_GRACE_PERIOD_MS = 10000;
@@ -277,6 +292,7 @@ export class LobbyRoom extends Room<LobbyState> {
   private mapVoteSession: MapVoteSession | null = null;
   private isFinalizingMapVote = false;
   private mapVoteFinalizeTimeout: ReturnType<typeof setTimeout> | null = null;
+  private mapVotePreviewReadyTimeout: ReturnType<typeof setTimeout> | null = null;
   private readonly rateLimiter = new MessageRateLimiter();
   private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
   private readonly playerCompetitiveRatings = new Map<string, number>();
@@ -954,30 +970,108 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   private async startMapSelection(errorClient?: Client): Promise<void> {
-    if (this.gameplayMode === 'battle_royal') {
-      await this.startBattleRoyalMapGeneration(errorClient);
-      return;
-    }
+    try {
+      if (this.gameplayMode === 'battle_royal') {
+        await this.startBattleRoyalMapGeneration(errorClient);
+        return;
+      }
 
-    await this.beginMapVote();
+      await this.beginMapVote();
+    } catch (error) {
+      loggers.room.warn('Failed to start map selection', {
+        lobbyId: this.state.lobbyId,
+        gameplayMode: this.gameplayMode,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      const status = this.isMatchmakingQueue() ? 'matchmaking' : 'waiting';
+      this.state.status = status;
+      this.mapVoteSession = null;
+      this.clearMapVoteTimer();
+      this.setMatchmakingLocked(false);
+      this.updateMetadata({ status });
+      this.broadcast('mapVoteCancelled', {
+        reason: 'Failed to load ready maps',
+        status,
+        gameplayMode: this.gameplayMode,
+      });
+      this.broadcastLobbyState();
+      errorClient?.send('error', { message: 'Failed to load ready maps' });
+    }
   }
 
   private async startBattleRoyalMapGeneration(errorClient?: Client): Promise<void> {
     if (this.isFinalizingMapVote || this.state.status === 'starting' || this.state.status === 'in_game') return;
 
     this.isFinalizingMapVote = true;
+    let launchOptions: CreateGameMapLaunchOptions | null = null;
     try {
       this.clearMapVoteTimer();
       this.clearCapacityRetry();
       this.setMatchmakingCapacityBlocked(false);
       this.mapVoteSession = null;
 
-      const selection = createMapLaunchSelection({
-        gameplayMode: this.gameplayMode,
-        source: this.createMapSelectionSource(),
-        participantCount: this.getCombatParticipantCount(),
+      const source = this.createMapSelectionSource();
+      const participantCount = this.getCombatParticipantCount();
+      const eventThemeId = await getEnabledEventBiomeThemeId();
+      const pooledSelection = await pregeneratedMapCatalogService.selectMapForBattleRoyal({
+        participantCount,
+        preferredMapSize: getBattleRoyalMapSizeForParticipantCount({
+          participantCount,
+          rules: this.gameplayRules,
+        }),
+        source,
+        eventThemeId,
       });
-      const selectedMapThemeId = await this.resolveSelectedMapThemeId(selection.seed);
+
+      let selection: MapLaunchSelection | PregeneratedMapLaunchSelection | null = pooledSelection;
+      let selectedMapThemeId: VoxelMapTheme['id'];
+      let reservedMapThemeId: VoxelMapTheme['id'] | null = null;
+      if (selection?.pregeneratedMapId) {
+        const reserved = await pregeneratedMapCatalogService.reserveMapForLaunch({
+          mapId: selection.pregeneratedMapId,
+          lobbyId: this.state.lobbyId,
+          selectionSource: 'battle-royal-auto',
+        });
+        if (!reserved) {
+          if (!isPublicSeedGenerationFallbackEnabled()) {
+            throw new Error('Selected Battle Royal map is no longer ready');
+          }
+          selection = null;
+        } else {
+          selection = {
+            id: 'map_1',
+            seed: reserved.map.seed,
+            mapSize: reserved.map.mapSize,
+            mapProfileId: reserved.map.profileId,
+            mapThemeId: reserved.map.themeId,
+            pregeneratedMapId: reserved.map.id,
+            mapArtifactId: reserved.map.artifactId,
+            topologyId: reserved.map.topologyId,
+            displayName: reserved.map.displayName,
+          };
+          reservedMapThemeId = reserved.map.themeId;
+          launchOptions = {
+            pregeneratedMapId: reserved.map.id,
+            mapArtifactId: reserved.map.artifactId,
+            mapSelectionId: reserved.selectionId,
+          };
+        }
+      }
+
+      if (!selection) {
+        if (!isPublicSeedGenerationFallbackEnabled()) {
+          throw new Error('Battle Royal map pool is depleted');
+        }
+        selection = createMapLaunchSelection({
+          gameplayMode: this.gameplayMode,
+          source,
+          participantCount,
+          eventThemeId,
+        });
+        selectedMapThemeId = await this.resolveSelectedMapThemeId(selection.seed);
+      } else {
+        selectedMapThemeId = reservedMapThemeId ?? await this.resolveSelectedMapThemeId(selection.seed);
+      }
 
       this.state.status = 'starting';
       this.setMatchmakingLocked(true);
@@ -988,6 +1082,8 @@ export class LobbyRoom extends Room<LobbyState> {
         mapThemeId: selectedMapThemeId,
         mapSize: selection.mapSize,
         mapProfileId: selection.mapProfileId,
+        pregeneratedMapId: launchOptions?.pregeneratedMapId ?? null,
+        mapArtifactId: launchOptions?.mapArtifactId ?? null,
         gameplayMode: this.gameplayMode,
       });
 
@@ -995,9 +1091,18 @@ export class LobbyRoom extends Room<LobbyState> {
         selection.seed,
         selectedMapThemeId,
         selection.mapSize,
-        selection.mapProfileId
+        selection.mapProfileId,
+        launchOptions ?? undefined
       );
     } catch (error) {
+      if (launchOptions?.pregeneratedMapId) {
+        await pregeneratedMapCatalogService.recordMapLaunchResult({
+          mapId: launchOptions.pregeneratedMapId,
+          selectionId: launchOptions.mapSelectionId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       console.error('Failed to create battle royal game room:', error);
       const capacityError = isInGameCapacityAdmissionError(error) ? error : null;
       const reason = capacityError
@@ -1028,12 +1133,31 @@ export class LobbyRoom extends Room<LobbyState> {
     const mapVoteSource = this.createMapSelectionSource();
     // When the admin event-biome toggle is on, force it onto one of the three vote options.
     const eventThemeId = await getEnabledEventBiomeThemeId();
-    this.mapVoteSession = {
-      options: createMapVoteOptions({
+    const pooledOptions = await pregeneratedMapCatalogService.createMapVoteOptionsFromPool({
+      gameplayMode: this.gameplayMode,
+      profileId: this.gameplayRules.mapProfileId,
+      source: mapVoteSource,
+      eventThemeId,
+    });
+    let options = pooledOptions.map(createMapVoteOptionFromCatalog);
+    if (options.length < 3) {
+      if (!isPublicSeedGenerationFallbackEnabled()) {
+        throw new Error(`Map pool is depleted for ${this.gameplayRules.mapProfileId}`);
+      }
+      loggers.room.warn('Using seed-generated map vote fallback because the pregenerated map pool is low', {
+        lobbyId: this.state.lobbyId,
+        gameplayMode: this.gameplayMode,
+        profileId: this.gameplayRules.mapProfileId,
+        pooledOptionCount: options.length,
+      });
+      options = createMapVoteOptions({
         gameplayMode: this.gameplayMode,
         source: mapVoteSource,
         eventThemeId,
-      }),
+      });
+    }
+    this.mapVoteSession = {
+      options,
       votes: new Map(),
       phaseEndTime: null,
       previewReadyPlayerIds: new Set(),
@@ -1044,6 +1168,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.updateMetadata({ status: 'map_vote' });
     this.broadcastMapVoteStarted();
     this.startMapVoteCountdownIfReady();
+    this.scheduleMapVotePreviewReadyFallback();
   }
 
   private handleMapVotePreviewsReady(client: Client): void {
@@ -1101,6 +1226,32 @@ export class LobbyRoom extends Room<LobbyState> {
     }, MAP_VOTE_DURATION_MS);
   }
 
+  private scheduleMapVotePreviewReadyFallback(): void {
+    this.clearMapVotePreviewReadyTimeout();
+    if (!this.mapVoteSession || this.state.status !== 'map_vote' || this.mapVoteSession.phaseEndTime || this.disposed) {
+      return;
+    }
+
+    this.mapVotePreviewReadyTimeout = setTimeout(() => {
+      this.mapVotePreviewReadyTimeout = null;
+      if (!this.mapVoteSession || this.state.status !== 'map_vote' || this.mapVoteSession.phaseEndTime) return;
+
+      let humanPlayerCount = 0;
+      this.state.players.forEach((player) => {
+        if (!player.isBot && !isLobbyObserver(player)) humanPlayerCount += 1;
+      });
+
+      loggers.room.warn('Starting map vote countdown after preview readiness timeout', {
+        lobbyId: this.state.lobbyId,
+        gameplayMode: this.gameplayMode,
+        readyPlayerCount: this.mapVoteSession.previewReadyPlayerIds.size,
+        humanPlayerCount,
+      });
+      this.startMapVoteCountdown();
+    }, MAP_VOTE_PREVIEW_READY_TIMEOUT_MS);
+    this.mapVotePreviewReadyTimeout.unref?.();
+  }
+
   private handleMapVote(client: Client, optionId: string): void {
     if (!this.mapVoteSession || this.state.status !== 'map_vote') {
       client.send('error', { message: 'Map vote is not active' });
@@ -1147,6 +1298,7 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!this.mapVoteSession || this.state.status !== 'map_vote' || this.isFinalizingMapVote) return;
 
     this.isFinalizingMapVote = true;
+    let launchOptions: CreateGameMapLaunchOptions | null = null;
     try {
       this.addMissingBotMapVotes();
       const selectedOption = getWinningMapOption({
@@ -1154,23 +1306,63 @@ export class LobbyRoom extends Room<LobbyState> {
         votes: this.mapVoteSession.votes,
         hostId: this.state.hostId,
       });
-      const selectedMapThemeId = selectedOption.mapThemeId ?? await this.resolveSelectedMapThemeId(selectedOption.seed);
+      let selectedMapThemeId = selectedOption.mapThemeId ?? await this.resolveSelectedMapThemeId(selectedOption.seed);
+      let mapSeed = selectedOption.seed;
+      let mapSize = selectedOption.mapSize;
+      let mapProfileId = selectedOption.mapProfileId;
+      if (selectedOption.pregeneratedMapId) {
+        const reserved = await pregeneratedMapCatalogService.reserveMapForLaunch({
+          mapId: selectedOption.pregeneratedMapId,
+          lobbyId: this.state.lobbyId,
+          selectionSource: this.isMatchmakingQueue() ? 'matchmaking' : 'vote',
+        });
+        if (!reserved) {
+          if (!isPublicSeedGenerationFallbackEnabled()) {
+            throw new Error('Selected map is no longer ready');
+          }
+          loggers.room.warn('Using seed-generated fallback because selected pregenerated map could not be reserved', {
+            lobbyId: this.state.lobbyId,
+            mapId: selectedOption.pregeneratedMapId,
+            optionId: selectedOption.id,
+          });
+        } else {
+          mapSeed = reserved.map.seed;
+          mapSize = reserved.map.mapSize;
+          mapProfileId = reserved.map.profileId;
+          selectedMapThemeId = reserved.map.themeId;
+          launchOptions = {
+            pregeneratedMapId: reserved.map.id,
+            mapArtifactId: reserved.map.artifactId,
+            mapSelectionId: reserved.selectionId,
+          };
+        }
+      }
       this.clearMapVoteTimer();
       this.state.status = 'starting';
       this.updateMetadata({ status: 'starting' });
 
       this.broadcast('mapVoteFinalized', {
         selectedOptionId: selectedOption.id,
-        mapSeed: selectedOption.seed,
+        mapSeed,
         mapThemeId: selectedMapThemeId,
-        mapSize: selectedOption.mapSize,
-        mapProfileId: selectedOption.mapProfileId,
+        mapSize,
+        mapProfileId,
+        pregeneratedMapId: launchOptions?.pregeneratedMapId ?? null,
+        mapArtifactId: launchOptions?.mapArtifactId ?? null,
         gameplayMode: this.gameplayMode,
         votes: getMapVoteRecords(this.mapVoteSession.votes),
       });
 
-      await this.createGameFromLobby(selectedOption.seed, selectedMapThemeId, selectedOption.mapSize, selectedOption.mapProfileId);
+      await this.createGameFromLobby(mapSeed, selectedMapThemeId, mapSize, mapProfileId, launchOptions ?? undefined);
     } catch (error) {
+      if (launchOptions?.pregeneratedMapId) {
+        await pregeneratedMapCatalogService.recordMapLaunchResult({
+          mapId: launchOptions.pregeneratedMapId,
+          selectionId: launchOptions.mapSelectionId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       console.error('Failed to create game room:', error);
       const capacityError = isInGameCapacityAdmissionError(error) ? error : null;
       const reason = capacityError
@@ -1196,7 +1388,8 @@ export class LobbyRoom extends Room<LobbyState> {
     mapSeed: number,
     mapThemeId: VoxelMapTheme['id'],
     mapSize: VoxelMapSizeId,
-    mapProfileId: MapProfileId
+    mapProfileId: MapProfileId,
+    mapLaunchOptions: CreateGameMapLaunchOptions = {}
   ): Promise<void> {
     const assignments = createLobbyGameStartAssignments({
       players: this.state.players.values(),
@@ -1232,6 +1425,9 @@ export class LobbyRoom extends Room<LobbyState> {
         mapThemeId,
         mapSize,
         mapProfileId,
+        pregeneratedMapId: mapLaunchOptions.pregeneratedMapId ?? null,
+        mapArtifactId: mapLaunchOptions.mapArtifactId ?? null,
+        mapSelectionId: mapLaunchOptions.mapSelectionId ?? null,
         botAssignments,
         rankedEligible,
         requiredHumanPlayers,
@@ -1303,6 +1499,8 @@ export class LobbyRoom extends Room<LobbyState> {
             mapThemeId,
             mapSize,
             mapProfileId,
+            pregeneratedMapId: mapLaunchOptions.pregeneratedMapId ?? null,
+            mapArtifactId: mapLaunchOptions.mapArtifactId ?? null,
           }),
         };
       }));
@@ -1637,6 +1835,13 @@ export class LobbyRoom extends Room<LobbyState> {
       clearTimeout(this.mapVoteFinalizeTimeout);
       this.mapVoteFinalizeTimeout = null;
     }
+    this.clearMapVotePreviewReadyTimeout();
+  }
+
+  private clearMapVotePreviewReadyTimeout(): void {
+    if (!this.mapVotePreviewReadyTimeout) return;
+    clearTimeout(this.mapVotePreviewReadyTimeout);
+    this.mapVotePreviewReadyTimeout = null;
   }
 
   private assignBalancedTeam(): Team {

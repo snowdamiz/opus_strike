@@ -1,4 +1,4 @@
-import { AlertTriangle, RefreshCw, Server } from 'lucide-react';
+import { AlertTriangle, Database, PackagePlus, RefreshCw, Server } from 'lucide-react';
 import type { SectionProps } from '../section';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Badge } from '../ui/badge';
@@ -17,7 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from '../ui/table';
-import { EmptyState, KeyValue, SectionHeader } from '../common';
+import { EmptyState, KeyValue, SectionHeader, Stat } from '../common';
 import { cn } from '../lib/utils';
 import {
   formatBytes,
@@ -43,7 +43,7 @@ const pressureTextClass: Record<'success' | 'warning' | 'danger', string> = {
 export function InfrastructureSection({ console }: SectionProps) {
   if (!console.overview) return null;
 
-  const { diagnostics, machines, rooms } = console.overview;
+  const { diagnostics, machines, rooms, mapPool } = console.overview;
   const gameRooms = rooms?.game ?? [];
   const lobbies = rooms?.lobbies ?? [];
   const warnings = diagnostics.warnings ?? [];
@@ -154,6 +154,129 @@ export function InfrastructureSection({ console }: SectionProps) {
           </CardContent>
         </Card>
       ) : null}
+
+      <Card>
+        <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
+          <div>
+            <CardTitle>Pregenerated Map Pool</CardTitle>
+            <p className="mt-1 text-xs text-white/45">
+              Ready inventory, artifact storage, and refill health for public launch paths.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant={mapPool.lowSlices.length > 0 ? 'default' : 'secondary'}
+            disabled={refreshing}
+            onClick={() => void console.topUpMapPool({ maxGenerated: 24 })}
+          >
+            <PackagePlus className="h-4 w-4" />
+            Top Up
+          </Button>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Stat
+              label="Ready Maps"
+              value={`${formatNumber(mapPool.readyTotal)} / ${formatNumber(mapPool.requiredReadyTotal)}`}
+              sub={`${formatNumber(mapPool.lowSlices.length)} low slices`}
+              icon={Database}
+              tone={mapPool.lowSlices.length > 0 ? 'warning' : 'success'}
+            />
+            <Stat
+              label="In Flight"
+              value={formatNumber(mapPool.reservedTotal + mapPool.activeTotal)}
+              sub={`${formatNumber(mapPool.reservedTotal)} reserved, ${formatNumber(mapPool.activeTotal)} active`}
+              icon={Server}
+              tone="secondary"
+            />
+            <Stat
+              label="Artifact Storage"
+              value={formatBytes(mapPool.artifactBytesTotal)}
+              sub={`Oldest ready ${formatRelativeTime(mapPool.oldestReadyCreatedAt)}`}
+              icon={Database}
+              tone="primary"
+            />
+            <Stat
+              label="Recent Selections"
+              value={formatNumber(mapPool.recentSelectionCount)}
+              sub={`${formatNumber(mapPool.failedTotal)} failed, ${formatNumber(mapPool.retiredTotal)} retired`}
+              icon={RefreshCw}
+              tone={mapPool.failedTotal > 0 ? 'warning' : 'default'}
+            />
+          </div>
+
+          {mapPool.lowSlices.length > 0 ? (
+            <div className="mt-5 overflow-hidden rounded-lg border border-ui-warning/25 bg-ui-warning/[0.04]">
+              <div className="flex items-center gap-2 border-b border-ui-warning/20 px-4 py-3 text-sm font-medium text-ui-warning">
+                <AlertTriangle className="h-4 w-4" />
+                Pool slices below target
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Profile</TableHead>
+                    <TableHead>Size</TableHead>
+                    <TableHead>Theme</TableHead>
+                    <TableHead>Ready</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {mapPool.lowSlices.slice(0, 12).map((slice) => (
+                    <TableRow key={`${slice.profileId}:${slice.mapSize}:${slice.themeId}`}>
+                      <TableCell>{titleCase(slice.profileId)}</TableCell>
+                      <TableCell>{titleCase(slice.mapSize)}</TableCell>
+                      <TableCell>{titleCase(slice.themeId)}</TableCell>
+                      <TableCell>
+                        <Badge variant="warning">
+                          {formatNumber(slice.readyCount)} / {formatNumber(slice.requiredReadyCount)}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ) : null}
+
+          {mapPool.failures.length > 0 ? (
+            <div className="mt-5 overflow-hidden rounded-lg border border-strike-border">
+              <div className="border-b border-strike-border px-4 py-3 text-sm font-medium text-white/75">
+                Recent failed candidates
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Map</TableHead>
+                    <TableHead>Profile</TableHead>
+                    <TableHead>Size</TableHead>
+                    <TableHead>Theme</TableHead>
+                    <TableHead>Warning</TableHead>
+                    <TableHead>Updated</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {mapPool.failures.map((failure) => (
+                    <TableRow key={failure.id}>
+                      <TableCell className="font-mono text-xs text-white/70">
+                        {truncateAddress(failure.id, 8, 4)}
+                      </TableCell>
+                      <TableCell>{titleCase(failure.profileId)}</TableCell>
+                      <TableCell>{titleCase(failure.mapSize)}</TableCell>
+                      <TableCell>{titleCase(failure.themeId)}</TableCell>
+                      <TableCell className="max-w-xs truncate text-white/55">
+                        {failure.diagnosticsWarnings[0] ?? 'Generation failed'}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-xs text-white/50">
+                        {formatRelativeTime(failure.updatedAt)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
 
       {/* Tabs */}
       <Tabs defaultValue="machines">

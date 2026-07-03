@@ -1185,12 +1185,13 @@ export function GameCanvas({
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
   const mapProfileId = useGameStore((state) => state.mapProfileId);
+  const pregeneratedMapId = useGameStore((state) => state.pregeneratedMapId);
   const settings = useSettingsStore(state => state.settings);
   const qualityConfig = useMemo(() => getVisualQualityConfig(settings), [settings]);
   const canvasAntialiasRef = useRef(qualityConfig.render.antialias);
   const warmupKey = useMemo(
-    () => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId }),
-    [mapSeed, mapThemeId, mapSize, mapProfileId]
+    () => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId }),
+    [mapSeed, mapThemeId, mapSize, mapProfileId, pregeneratedMapId]
   );
   const [warmupSnapshot, dispatchWarmup] = useReducer(
     reduceMapWarmup,
@@ -1489,6 +1490,7 @@ export function GameCanvas({
           battleRoyalVisibility={battleRoyalVisibility}
           themeId={mapThemeId}
           mapProfileId={mapProfileId}
+          pregeneratedMapId={pregeneratedMapId}
           prebuildRegions
           onWarmupStatus={handleVoxelWarmupStatus}
         />

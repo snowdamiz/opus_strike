@@ -100,6 +100,7 @@ import {
   getStreamerMapTransitionKey,
   preloadStreamerMapTransitionTarget,
 } from '../utils/streamerMapTransition';
+import { getDamageIndicatorAngleDeg } from '../utils/damageIndicator';
 import { normalizeServerAbilityCooldown } from '../abilities/cooldowns';
 import { normalizeGamePhase } from './gamePhase';
 import { measureNetworkMessage } from './networkMessageMetrics';
@@ -159,6 +160,8 @@ let hasReceivedSelfMovementAuthority = false;
 const HOOKSHOT_SHOT_CLIP_MS = 250;
 const BATTLE_ROYAL_REVIVE_AUDIO_LOOP_PREFIX = 'battle-royal-revive:';
 const STREAMER_MATCH_SNAPSHOT_MAP_TRANSITION_LEAD_MS = 360;
+const LOCAL_DAMAGE_HIT_MIN_PITCH = 0.88;
+const LOCAL_DAMAGE_HIT_PITCH_RANGE = 0.28;
 let pendingStreamerSnapshotMapTransitionKey: string | null = null;
 let pendingStreamerSnapshotMapTransitionSerial = 0;
 const PLAYER_STATES = new Set<string>([
@@ -460,6 +463,19 @@ function normalizePlainVec3(
 function getPlayerSnapshotPosition(player: Player): { x: number; y: number; z: number } {
   const visualPosition = visualStore.getState().playerPositions.get(player.id);
   return clonePlainVec3(visualPosition ?? player.position);
+}
+
+function getKnownPlayer(
+  store: ReturnType<typeof useGameStore.getState>,
+  playerId: string | null | undefined
+): Player | null {
+  if (!playerId) return null;
+  if (store.localPlayer?.id === playerId) return store.localPlayer;
+  return store.players.get(playerId) ?? null;
+}
+
+function getLocalDamageHitPitch(): number {
+  return LOCAL_DAMAGE_HIT_MIN_PITCH + Math.random() * LOCAL_DAMAGE_HIT_PITCH_RANGE;
 }
 
 function getKillerSourceDirection(
@@ -1550,6 +1566,8 @@ export function setupMatchSnapshotHandler(room: Room) {
       mapThemeId: data.mapThemeId ?? null,
       mapSize: nextMapSize,
       mapProfileId: nextMapProfileId,
+      pregeneratedMapId: data.pregeneratedMapId ?? null,
+      mapArtifactId: data.mapArtifactId ?? null,
     };
     const baseSnapshot = {
       gameplayMode: isGameplayMode(data.gameplayMode) ? data.gameplayMode : store.gameplayMode ?? DEFAULT_GAMEPLAY_MODE,
@@ -1571,7 +1589,9 @@ export function setupMatchSnapshotHandler(room: Room) {
       mapFields.mapSeed !== store.mapSeed ||
       mapFields.mapThemeId !== store.mapThemeId ||
       mapFields.mapSize !== store.mapSize ||
-      mapFields.mapProfileId !== store.mapProfileId
+      mapFields.mapProfileId !== store.mapProfileId ||
+      mapFields.pregeneratedMapId !== store.pregeneratedMapId ||
+      mapFields.mapArtifactId !== store.mapArtifactId
     );
 
     if (useStreamerStore.getState().isActive && mapChanged) {
@@ -1580,6 +1600,7 @@ export function setupMatchSnapshotHandler(room: Room) {
         mapThemeId: mapFields.mapThemeId,
         mapSize: mapFields.mapSize,
         mapProfileId: mapFields.mapProfileId,
+        pregeneratedMapId: mapFields.pregeneratedMapId,
       });
       const streamerStore = useStreamerStore.getState();
       if (streamerStore.sceneTransition?.key !== transitionKey) {
@@ -1602,6 +1623,7 @@ export function setupMatchSnapshotHandler(room: Room) {
             mapThemeId: mapFields.mapThemeId,
             mapSize: mapFields.mapSize,
             mapProfileId: mapFields.mapProfileId,
+            pregeneratedMapId: mapFields.pregeneratedMapId,
           }, 'streamer-match-snapshot'),
           leadPromise,
         ]).then(() => {
@@ -3073,13 +3095,14 @@ function handlePlayerDamagedMessage(data: PlayerDamagedEvent): void {
 
   const store = useGameStore.getState();
   const localPlayerId = store.localPlayer?.id ?? store.playerId;
-  const sourcePlayer = data.sourceId ? store.players.get(data.sourceId) : null;
-  const targetPlayer = store.players.get(data.targetId);
-  const sourcePosition = data.sourcePosition ?? sourcePlayer?.position ?? null;
-  const targetPosition = data.targetPosition ?? targetPlayer?.position ?? null;
+  const sourcePlayer = getKnownPlayer(store, data.sourceId);
+  const targetPlayer = getKnownPlayer(store, data.targetId);
+  const sourcePosition = data.sourcePosition ?? (sourcePlayer ? getPlayerSnapshotPosition(sourcePlayer) : null);
+  const targetPosition = data.targetPosition ?? (targetPlayer ? getPlayerSnapshotPosition(targetPlayer) : null);
   const newDownedHealth = typeof data.newDownedHealth === 'number' && Number.isFinite(data.newDownedHealth)
     ? Math.max(0, data.newDownedHealth)
     : null;
+  const combatFeedback = useCombatFeedbackStore.getState();
 
   if (newDownedHealth !== null) {
     if (data.targetId === localPlayerId) {
@@ -3092,9 +3115,29 @@ function handlePlayerDamagedMessage(data: PlayerDamagedEvent): void {
     }
   }
 
+  if (data.targetId === localPlayerId) {
+    const targetLookYaw = targetPlayer
+      ? visualStore.getState().playerRotations.get(targetPlayer.id) ?? targetPlayer.lookYaw
+      : 0;
+    combatFeedback.addLocalDamageEvent({
+      amount: data.damage,
+      angleDeg: getDamageIndicatorAngleDeg({
+        sourcePosition,
+        sourceDirection: data.sourceDirection ?? null,
+        targetPosition,
+        lookYaw: targetLookYaw,
+      }),
+      damageType: data.damageType,
+      sourceId: data.sourceId,
+    });
+    void playSharedSound('hit', {
+      pitch: getLocalDamageHitPitch(),
+    });
+  }
+
   if (data.sourceId === localPlayerId && targetPosition) {
     const fixedAnchor = data.damageType === 'bomb' || newDownedHealth !== null || targetPlayer?.state === 'downed';
-    useCombatFeedbackStore.getState().addCombatTextEvent({
+    combatFeedback.addCombatTextEvent({
       kind: 'damage',
       amount: data.damage,
       damageType: data.damageType,

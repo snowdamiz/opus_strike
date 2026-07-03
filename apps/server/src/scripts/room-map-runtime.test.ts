@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
 import {
   DEFAULT_GAMEPLAY_MODE,
+  generateProceduralVoxelMap,
+  getPregeneratedMapDiagnostics,
+  getPregeneratedMapPreviewTags,
+  getPregeneratedMapStats,
   type Team,
   type MapProfileId,
+  type PregeneratedMapCatalogSummary,
   type VoxelMapSizeId,
   type VoxelMapTheme,
+  type VoxelMapManifest,
 } from '@voxel-strike/shared';
 import {
   BOT_TACTICS_INTERVAL_MS,
@@ -24,6 +30,39 @@ function createRuntime(): RoomMapRuntime {
     getMapConfig: () => config,
     getCollisionAabbs: () => [],
   });
+}
+
+function createPregeneratedSummary(
+  manifest: VoxelMapManifest,
+  id = 'pgmap_room_runtime',
+  artifactId = 'pgartifact_room_runtime'
+): PregeneratedMapCatalogSummary {
+  const diagnostics = getPregeneratedMapDiagnostics(manifest);
+  return {
+    id,
+    artifactId,
+    seed: manifest.seed,
+    themeId: manifest.themeId,
+    profileId: manifest.profileId ?? 'ctf_arena',
+    gameplayMode: manifest.gameplay.mode,
+    familyId: manifest.familyId,
+    mapSize: manifest.mapSize,
+    topologyId: manifest.topologyId,
+    displayName: 'Runtime Test Map',
+    previewTags: getPregeneratedMapPreviewTags(manifest),
+    preview: manifest.preview,
+    stats: getPregeneratedMapStats(manifest),
+    diagnosticsScore: diagnostics.score,
+    diagnosticsWarnings: diagnostics.warnings,
+    status: 'ready',
+    visibility: 'public',
+    generatorVersion: manifest.version,
+    lastSelectedAt: null,
+    selectionCount: 0,
+    failureCount: 0,
+    createdAt: '2026-07-03T00:00:00.000Z',
+    updatedAt: '2026-07-03T00:00:00.000Z',
+  };
 }
 
 function flag(team: Team): BotFlagSnapshot {
@@ -57,6 +96,69 @@ async function runAsyncTests(): Promise<void> {
   assert.equal(manifest.seed, config.mapSeed);
   assert.equal(runtime.getMapManifest(), manifest);
   assert.notEqual(runtime.getBotRouteGraph(), null);
+
+  const pregeneratedManifest = generateProceduralVoxelMap(44_444, {
+    themeId: 'verdant',
+    mapSize: 'small',
+    profileId: 'ctf_arena',
+  });
+  const pregeneratedSummary = createPregeneratedSummary(pregeneratedManifest);
+  config = {
+    mapSeed: pregeneratedManifest.seed,
+    mapThemeId: pregeneratedManifest.themeId,
+    mapSize: pregeneratedManifest.mapSize,
+    mapProfileId: pregeneratedManifest.profileId,
+    pregeneratedMapId: pregeneratedSummary.id,
+    mapArtifactId: pregeneratedSummary.artifactId,
+  };
+  let loadCalls = 0;
+  let fallbackRecordCount = 0;
+  const artifactRuntime = new RoomMapRuntime({
+    getMapConfig: () => config,
+    getCollisionAabbs: () => [],
+    isMapGenerationFallbackEnabled: () => false,
+    loadPregeneratedMapManifest: async (mapId) => {
+      loadCalls += 1;
+      assert.equal(mapId, pregeneratedSummary.id);
+      return { summary: pregeneratedSummary, manifest: pregeneratedManifest };
+    },
+    recordMapFallbackGeneration: async () => {
+      fallbackRecordCount += 1;
+    },
+  });
+  const loaded = await artifactRuntime.refreshMapAsync();
+  assert.equal(loaded, pregeneratedManifest);
+  assert.equal(artifactRuntime.getMapManifest(), pregeneratedManifest);
+  assert.equal(artifactRuntime.getLoadedPregeneratedMapSummary()?.id, pregeneratedSummary.id);
+  assert.equal(loadCalls, 1);
+  assert.equal(fallbackRecordCount, 0);
+
+  const missingRuntime = new RoomMapRuntime({
+    getMapConfig: () => config,
+    getCollisionAabbs: () => [],
+    isMapGenerationFallbackEnabled: () => false,
+    loadPregeneratedMapManifest: async () => {
+      throw new Error('artifact missing');
+    },
+  });
+  await assert.rejects(() => missingRuntime.refreshMapAsync(), /artifact missing/);
+  assert.throws(() => missingRuntime.getMapManifest(), /required but cannot be loaded synchronously/);
+
+  let fallbackReason = '';
+  const fallbackRuntime = new RoomMapRuntime({
+    getMapConfig: () => config,
+    getCollisionAabbs: () => [],
+    isMapGenerationFallbackEnabled: () => true,
+    loadPregeneratedMapManifest: async () => {
+      throw new Error('hash mismatch');
+    },
+    recordMapFallbackGeneration: async (input) => {
+      fallbackReason = input.reason;
+    },
+  });
+  const fallbackManifest = await fallbackRuntime.refreshMapAsync();
+  assert.equal(fallbackManifest.seed, config.mapSeed);
+  assert.match(fallbackReason, /hash mismatch/);
 }
 
 {

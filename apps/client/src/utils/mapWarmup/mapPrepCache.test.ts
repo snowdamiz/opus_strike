@@ -25,6 +25,10 @@ assert.equal(
   getMapPrepCacheKey({ seed: 123, mapSize: 'large', mapProfileId: 'battle_royal_large' }),
   `procedural-v${CONSTRUCTED_MAP_MANIFEST_VERSION}:123:battle_royal_large:large`
 );
+assert.equal(
+  getMapPrepCacheKey({ seed: 123, mapSize: 'large', pregeneratedMapId: 'pgmap_client_cache' }),
+  `pregenerated-v${CONSTRUCTED_MAP_MANIFEST_VERSION}:pgmap_client_cache`
+);
 
 const first = prepareVoxelMapCpu({ seed: 20260611, source: 'test' });
 const second = prepareVoxelMapCpu({ seed: 20260611, source: 'test' });
@@ -55,11 +59,13 @@ const fakeBattleRoyalManifest = {
 const battleRoyalOne = prepareVoxelMapCpu({
   seed: 1001,
   manifest: { ...fakeBattleRoyalManifest, seed: 1001, id: 'br-one' },
+  pregeneratedMapId: 'pgmap_br_one',
   source: 'test',
 });
 const battleRoyalTwo = prepareVoxelMapCpu({
   seed: 1002,
   manifest: { ...fakeBattleRoyalManifest, seed: 1002, id: 'br-two' },
+  pregeneratedMapId: 'pgmap_br_two',
   source: 'test',
 });
 
@@ -77,6 +83,7 @@ assert.equal(
     themeId: fakeBattleRoyalManifest.themeId,
     mapSize: 'large',
     mapProfileId: 'battle_royal_large',
+    pregeneratedMapId: 'pgmap_br_two',
   })?.manifest.id,
   'br-two'
 );

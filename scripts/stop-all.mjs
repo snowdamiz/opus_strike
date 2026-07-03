@@ -17,7 +17,7 @@ const composeProjects = [
 const processPatterns = [
   {
     label: 'dev orchestration',
-    pattern: 'pnpm([^[:space:]]*)?[[:space:]]+(run[[:space:]]+)?dev(:all|:client|:server|:server:distributed:[ab])?([[:space:]]|$)',
+    pattern: 'pnpm([^[:space:]]*)?[[:space:]]+(run[[:space:]]+)?dev(:all|:client|:server|:server:cluster:(up|logs|infra-logs)|:server:local)?([[:space:]]|$)',
   },
   {
     label: 'turbo dev tasks',
@@ -29,11 +29,11 @@ const processPatterns = [
   },
   {
     label: 'dev log followers',
-    pattern: 'docker[[:space:]]+compose[[:space:]]+logs[[:space:]]+-f[[:space:]]+(postgres|redis)',
+    pattern: 'docker[[:space:]]+compose([^[:space:]]*[[:space:]]+)*logs[[:space:]]+-f[[:space:]]+(postgres|redis|server-us-1|server-us-2|server-us-3|server-eu-1|server-asia-1)',
   },
   {
     label: 'dev:all runner',
-    pattern: 'concurrently([^[:space:]]*)?[[:space:]]+-n[[:space:]]+db,redis,server,client',
+    pattern: 'concurrently([^[:space:]]*)?[[:space:]]+-n[[:space:]]+(db,redis,server,client|servers,client)',
   },
   {
     label: 'video studio',
@@ -41,7 +41,7 @@ const processPatterns = [
   },
 ];
 
-const devPorts = [3000, 2567, 2568, 3030, 3031];
+const devPorts = [3000, 2567, 2568, 2569, 2570, 2571, 3030, 3031];
 const servicePorts = [5432, 55433, 6379, 7880, 7881];
 const watchedPorts = [...new Set([...devPorts, ...servicePorts])];
 
@@ -49,7 +49,14 @@ const knownContainers = [
   'voxel-strike-db',
   'voxel-strike-redis',
   'voxel-strike-livekit',
+  'voxel-strike-server-us-1',
+  'voxel-strike-server-us-2',
+  'voxel-strike-server-us-3',
+  'voxel-strike-server-eu-1',
+  'voxel-strike-server-asia-1',
 ];
+
+let dockerUsable;
 
 function run(label, command, args, options = {}) {
   const rendered = [command, ...args].join(' ');
@@ -75,6 +82,37 @@ function run(label, command, args, options = {}) {
   }
 
   return result;
+}
+
+function canUseDocker() {
+  if (dryRun) {
+    return true;
+  }
+
+  if (dockerUsable !== undefined) {
+    return dockerUsable;
+  }
+
+  const result = spawnSync('docker', ['info'], {
+    cwd: rootDir,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  if (result.error?.code === 'ENOENT') {
+    console.warn('Docker CLI is not available; skipping Docker container cleanup.');
+    dockerUsable = false;
+    return dockerUsable;
+  }
+
+  if (result.status !== 0) {
+    console.warn('Docker daemon is not available; skipping Docker container cleanup.');
+    dockerUsable = false;
+    return dockerUsable;
+  }
+
+  dockerUsable = true;
+  return dockerUsable;
 }
 
 function capture(command, args) {
@@ -121,10 +159,18 @@ function stopDevPorts(signal) {
 }
 
 function removeKnownContainers() {
+  if (!canUseDocker()) {
+    return;
+  }
+
   run('remove known project containers', 'docker', ['rm', '-f', ...knownContainers], { ignoreExitCode: true });
 }
 
 function stopComposeServices() {
+  if (!canUseDocker()) {
+    return;
+  }
+
   for (const { label, cwd, file } of composeProjects) {
     if (!existsSync(resolve(cwd, file))) {
       continue;
@@ -141,6 +187,10 @@ function stopComposeServices() {
 }
 
 function dockerContainersForPort(port) {
+  if (!canUseDocker()) {
+    return [];
+  }
+
   const output = capture('docker', ['ps', '--format', '{{.Names}}\t{{.Ports}}']);
 
   return output

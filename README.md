@@ -5,6 +5,7 @@ A browser-based 4v4 Capture the Flag game with Minecraft-style voxel graphics an
 ## Planning
 
 - [Battle Royal Mode Plan](BATTLE_ROYAL_PLAN.md)
+- [Pregenerated Map Pool Plan](PREGENERATED_MAP_POOL_PLAN.md)
 
 ## Features
 
@@ -78,36 +79,45 @@ pnpm run build
 ### Development
 
 ```bash
-# Start both client and server in development mode
+# Build/start the local Docker server cluster, run migrations, and launch the client.
+# Server dev uses Redis-backed distributed Colyseus plus map-pool auto top-up.
 pnpm run dev
 
 # Or start individually:
 pnpm run dev:client  # Start client on http://localhost:3000
-pnpm run dev:server  # Start server on ws://localhost:2567
+pnpm run dev:server  # Start the Docker server cluster and tail its logs
 ```
 
 ### Distributed Colyseus Development
 
-Local distributed mode uses Redis for Colyseus presence, room discovery, seat reservations, and lightweight wager notifications.
+Local server development is Docker-backed and Redis-backed by default so it stays close to production. `pnpm dev` starts Postgres, Redis, and five server containers: three US machines (`server-us-1..3`) plus one Europe and one Asia machine. `server-us-1` is exposed at `ws://localhost:2567` for the client; the other machines are exposed at ports `2568` through `2571` so Colyseus direct seat reservations can connect to the room-owning process.
+
+`pnpm dev`, `pnpm dev:server`, and `pnpm db:up` run a Docker readiness preflight before calling Compose. On macOS, if Docker Desktop is installed but closed, the preflight opens it and waits up to 120 seconds by default before continuing. Override that wait with `DOCKER_START_TIMEOUT_MS`, or set `DOCKER_AUTO_START=0` to require Docker to be started manually.
 
 ```bash
-pnpm db:up
-pnpm db:migrate
+# start or rebuild just the server cluster
+pnpm dev:server:cluster:up
 
-# terminal 1
-pnpm dev:server:distributed:a
+# tail server logs
+pnpm dev:server:cluster:logs
 
-# terminal 2
-pnpm dev:server:distributed:b
+# tail Redis and Postgres logs when debugging infrastructure
+pnpm dev:server:cluster:infra-logs
+
+# explicit single-process fallback for narrow debugging only
+pnpm dev:server:local
 
 # optional Node-only verification harness
 pnpm --filter @voxel-strike/server harness:colyseus-distributed
 ```
 
+With Redis configured in development, the pregenerated map pool top-up worker is enabled by default. Each server reports its local room/load snapshot to Redis; the worker picks an idle server with no active lobby or game participants, takes a Redis owner lock, and generates more maps only on that idle server. Local Docker dev starts checking after 1s, checks every 5s, and can generate up to 16 maps per idle pass; look for `[map-pool]` console lines for generated counts and skipped/status reasons. Repeated status-only lines are sampled once per minute for the whole Redis-backed cluster. Dev allows a higher `PREGENERATED_MAP_AUTO_TOP_UP_MAX_CAPACITY_PRESSURE` than production so idle Docker servers can still top up during normal laptop load while the room/player safety gates stay strict. Raw Prisma SQL query logs are off by default; set `PRISMA_LOG_QUERIES=1` only when debugging database calls, or `PREGENERATED_MAP_POOL_VERBOSE_STATUS=1` for per-slice pool diagnostics. Run `pnpm stop:all` to tear down the cluster.
+
 Required production variables for a single direct-address deployment:
 
 - `COLYSEUS_DISTRIBUTED=1`
 - `COLYSEUS_REDIS_URL` or `REDIS_URL`
+- `PREGENERATED_MAP_AUTO_TOP_UP_ENABLED=1`
 - `COLYSEUS_PUBLIC_ADDRESS`, when each room-owning process has a stable direct address
 - `COLYSEUS_REQUIRE_PUBLIC_ADDRESS=1`, to fail fast if routing depends on direct process addresses
 
@@ -138,6 +148,7 @@ The checked-in `apps/server/fly.toml` enables:
 - `COLYSEUS_ROOM_CREATE_STRATEGY=local`
 - `COLYSEUS_PUBLIC_ADDRESS=api.slopheroes.xyz`
 - `COLYSEUS_REQUIRE_PUBLIC_ADDRESS=1`
+- `PREGENERATED_MAP_AUTO_TOP_UP_ENABLED=1`
 
 Fly provides `FLY_APP_NAME`, `FLY_MACHINE_ID`, and `FLY_REGION` at runtime. Matchmaking tickets include the issuing `FLY_REGION`, and matchmaking lobby filters include that region, so players queue into the closest healthy Fly region selected for their request. Each server process registers its Colyseus `processId` to `FLY_MACHINE_ID` in Redis with a heartbeat. WebSocket joins to a room owned by another process return `fly-replay: instance=<machine id>` before the upgrade, so the Fly proxy routes the connection to the room-owning Machine. `/health` reports Redis, distributed matchmaking, and Fly replay registration status.
 

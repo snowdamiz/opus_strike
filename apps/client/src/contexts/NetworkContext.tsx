@@ -164,6 +164,7 @@ interface NetworkContextType {
   disconnect: () => void;
   sendChatMessage: (message: string, options?: { teamOnly?: boolean }) => boolean;
   sendMovementCommands: (packet: MovementCommandPacket) => void;
+  requestUnstuck: () => void;
   devSetHero: (heroId: HeroId) => void;
   devSetSkin: (skinId: HeroSkinId) => void;
   devDownHero: (heroId: HeroId) => void;
@@ -1188,6 +1189,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       store.setMapThemeId((target.metadata.mapThemeId ?? null) as VoxelMapTheme['id'] | null);
       store.setMapSize(target.metadata.mapSize);
       store.setMapProfileId(target.metadata.mapProfileId);
+      store.setPregeneratedMapIdentity(target.metadata.pregeneratedMapId, target.metadata.mapArtifactId);
       if (isGameplayMode(target.metadata.gameplayMode)) {
         useGameStore.setState({ gameplayMode: target.metadata.gameplayMode });
       }
@@ -1387,6 +1389,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('movementCommands', packet);
   }, []);
 
+  const requestUnstuck = useCallback(() => {
+    gameRoomRef.current?.send('requestUnstuck', { requestedAt: Date.now() });
+  }, []);
+
   const reportPlayer = useCallback((targetPlayerId: string, reason = 'cheating', details = ''): Promise<void> => {
     const room = gameRoomRef.current;
     const store = useGameStore.getState();
@@ -1539,6 +1545,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     disconnect,
     sendChatMessage,
     sendMovementCommands,
+    requestUnstuck,
     devSetHero,
     devSetSkin,
     devDownHero,
@@ -1590,6 +1597,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     reportMapVotePreviewsReady,
     reportMatchSceneReady,
     reportPlayer,
+    requestUnstuck,
     requestVoiceToken,
     restoreParty,
     selectTeam,

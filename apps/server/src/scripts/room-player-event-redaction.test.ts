@@ -19,6 +19,7 @@ import {
 
 const position = { x: 10, y: 2, z: -8 };
 const sourcePosition = { x: 5, y: 2, z: -3 };
+const sourceDirection = { x: 1, y: 0, z: -1 };
 const coarsePosition = { x: 12, y: 2, z: -12 };
 
 const damagePayload: PlayerDamagedEvent = {
@@ -29,6 +30,7 @@ const damagePayload: PlayerDamagedEvent = {
   newHealth: 75,
   newDownedHealth: 20,
   sourcePosition,
+  sourceDirection,
   targetPosition: position,
   sourceHeroId: 'phantom',
   targetHeroId: 'blaze',
@@ -53,6 +55,7 @@ const damagePayload: PlayerDamagedEvent = {
     newHealth: 75,
     newDownedHealth: 20,
     sourcePosition: undefined,
+    sourceDirection: undefined,
     targetPosition: position,
     sourceHeroId: null,
     targetHeroId: 'blaze',

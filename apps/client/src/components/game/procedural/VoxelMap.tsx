@@ -313,6 +313,7 @@ interface VoxelMapProps {
   themeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
   mapProfileId?: MapProfileId | null;
+  pregeneratedMapId?: string | null;
   manifest?: VoxelMapManifest;
   enablePhysics?: boolean;
   shadowsEnabled: boolean;
@@ -347,6 +348,7 @@ export function VoxelMap({
   themeId: providedThemeId,
   mapSize: providedMapSize,
   mapProfileId: providedMapProfileId,
+  pregeneratedMapId: providedPregeneratedMapId,
   manifest: providedManifest,
   enablePhysics = true,
   shadowsEnabled,
@@ -367,20 +369,23 @@ export function VoxelMap({
   const storeMapThemeId = useGameStore((state) => state.mapThemeId);
   const storeMapSize = useGameStore((state) => state.mapSize);
   const storeMapProfileId = useGameStore((state) => state.mapProfileId);
+  const storePregeneratedMapId = useGameStore((state) => state.pregeneratedMapId);
   const mapSeed = seed ?? storeMapSeed;
   const mapThemeId = providedThemeId ?? storeMapThemeId;
   const mapSize = providedMapSize ?? providedManifest?.mapSize ?? storeMapSize;
   const mapProfileId = providedMapProfileId ?? providedManifest?.profileId ?? storeMapProfileId;
+  const pregeneratedMapId = providedPregeneratedMapId ?? storePregeneratedMapId;
   const preparedMap = useMemo(() => {
     return prepareVoxelMapCpu({
       seed: mapSeed,
       themeId: mapThemeId,
       mapSize,
       mapProfileId,
+      pregeneratedMapId,
       manifest: providedManifest,
       source: providedManifest ? 'mapVotePreview' : 'match',
     });
-  }, [mapSeed, mapThemeId, mapSize, mapProfileId, providedManifest]);
+  }, [mapSeed, mapThemeId, mapSize, mapProfileId, pregeneratedMapId, providedManifest]);
   const manifest = preparedMap.manifest;
   const activeBattleRoyalVisibility = manifest.gameplay.mode === 'battle_royal' ? battleRoyalVisibility : undefined;
   const activeBattleRoyalTerrainLodEnabled = activeBattleRoyalVisibility?.terrainLodEnabled ?? false;

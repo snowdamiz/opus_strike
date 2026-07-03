@@ -87,6 +87,16 @@ export function OverviewSection({ console, navigate }: SectionProps) {
       target: 'infrastructure',
     });
   }
+  if (overview.mapPool.lowSlices.length > 0) {
+    attention.push({
+      id: 'map-pool',
+      tone: 'warning',
+      icon: Database,
+      title: `${overview.mapPool.lowSlices.length} map pool slice${overview.mapPool.lowSlices.length === 1 ? '' : 's'} below target`,
+      detail: 'Refill pregenerated map inventory before matchmaking depletes the ready pool.',
+      target: 'infrastructure',
+    });
+  }
   if (overview.globalNotification) {
     attention.push({
       id: 'broadcast',

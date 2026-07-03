@@ -78,7 +78,7 @@ function CaptureFrame({
   }, [captureKey]);
 
   useEffect(() => {
-    if (!ready || capturedRef.current) return;
+    if (!ready || capturedRef.current) return undefined;
 
     let firstFrame = 0;
     let secondFrame = 0;
@@ -161,16 +161,19 @@ const MAP_PREVIEW_PERFORMANCE_BUDGET: WorldPerformanceBudget = {
 function MapPreviewCanvas({
   option,
   onCapture,
+  onFailed,
 }: {
   option: MapVoteOption;
   onCapture: (image: string) => void;
+  onFailed: () => void;
 }) {
   const mapThemeId = option.mapThemeId ?? null;
   const [manifest, setManifest] = useState<VoxelMapManifest | null>(null);
   const previewThemeId = mapThemeId ?? manifest?.themeId ?? null;
+  const optionIdentity = `${option.pregeneratedMapId ?? ''}:${option.mapArtifactId ?? ''}`;
   const optionKey = manifest
-    ? `${manifest.id}:${previewThemeId}:${option.id}`
-    : `${option.seed}:${mapThemeId ?? ''}:${option.mapProfileId ?? 'arena'}:${option.mapSize}:loading`;
+    ? `${manifest.id}:${previewThemeId}:${option.id}:${optionIdentity}`
+    : `${option.seed}:${mapThemeId ?? ''}:${option.mapProfileId ?? 'arena'}:${option.mapSize}:${optionIdentity}:loading`;
   const materialQuality = useSettingsStore((state) => state.settings.materialQuality);
   const [readyKey, setReadyKey] = useState<string | null>(null);
   const mapReady = readyKey === optionKey;
@@ -192,13 +195,14 @@ function MapPreviewCanvas({
       .catch((error) => {
         if (!cancelled) {
           console.warn('[MapVote] Failed to generate map preview manifest', option.id, error);
+          onFailed();
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [mapThemeId, option.id, option.mapProfileId, option.mapSize, option.seed]);
+  }, [mapThemeId, onFailed, option.id, option.mapProfileId, option.mapSize, option.seed]);
 
   const handleMapReady = useCallback(() => {
     setReadyKey(optionKey);
@@ -277,7 +281,7 @@ function MapPreviewImage({
     setImage(null);
     setImageVisible(false);
     didReportReadyRef.current = false;
-  }, [option.id, option.mapProfileId, option.mapSize, option.mapThemeId, option.seed]);
+  }, [option.id, option.mapArtifactId, option.mapProfileId, option.mapSize, option.mapThemeId, option.pregeneratedMapId, option.seed]);
 
   useEffect(() => {
     if (!image) {
@@ -292,13 +296,16 @@ function MapPreviewImage({
     return () => window.cancelAnimationFrame(frame);
   }, [image]);
 
+  const reportReady = useCallback(() => {
+    if (didReportReadyRef.current) return;
+    didReportReadyRef.current = true;
+    onReady(option.id);
+  }, [onReady, option.id]);
+
   const handleCapture = useCallback((capturedImage: string) => {
     setImage((current) => current ?? capturedImage);
-    if (!didReportReadyRef.current) {
-      didReportReadyRef.current = true;
-      onReady(option.id);
-    }
-  }, [onReady, option.id]);
+    reportReady();
+  }, [reportReady]);
 
   const hasVisibleImage = Boolean(image && imageVisible);
 
@@ -315,7 +322,7 @@ function MapPreviewImage({
       )}
       {!image && active && (
         <div className="pointer-events-none absolute inset-0 opacity-0">
-          <MapPreviewCanvas option={option} onCapture={handleCapture} />
+          <MapPreviewCanvas option={option} onCapture={handleCapture} onFailed={reportReady} />
         </div>
       )}
       <div className={`pointer-events-none absolute inset-0 transition-opacity duration-200 ease-out ${hasVisibleImage ? 'opacity-0' : 'opacity-100'}`}>
@@ -479,17 +486,17 @@ export function MapVoteScreen() {
   );
   const { leaveLobby, voteMap, reportMapVotePreviewsReady } = useNetwork();
   const { playButtonClick } = useUISounds();
-  const [readyPreviewIds, setReadyPreviewIds] = useState<Set<string>>(() => new Set());
+  const [thumbnailReadyIds, setThumbnailReadyIds] = useState<Set<string>>(() => new Set());
   const [pendingVoteOptionId, setPendingVoteOptionId] = useState<string | null>(null);
   const reportedPreviewSignatureRef = useRef('');
 
   const mapOptionSignature = useMemo(
-    () => mapVoteOptions.map((option) => `${option.id}:${option.seed}:${option.mapThemeId ?? ''}:${option.mapProfileId ?? ''}:${option.mapSize}`).join('|'),
+    () => mapVoteOptions.map((option) => `${option.id}:${option.pregeneratedMapId ?? option.seed}:${option.mapArtifactId ?? ''}:${option.mapThemeId ?? ''}:${option.mapProfileId ?? ''}:${option.mapSize}`).join('|'),
     [mapVoteOptions]
   );
 
   useEffect(() => {
-    setReadyPreviewIds(new Set());
+    setThumbnailReadyIds(new Set());
     reportedPreviewSignatureRef.current = '';
   }, [mapOptionSignature]);
 
@@ -502,7 +509,7 @@ export function MapVoteScreen() {
   const isFinalized = Boolean(selectedMapOptionId);
   const isPreparingMaps = mapVoteOptions.length === 0;
   const expectedMapOptionCount = 3;
-  const areMapPreviewsReady = mapVoteOptions.length > 0 && readyPreviewIds.size >= mapVoteOptions.length;
+  const areMapPreviewsReady = mapVoteOptions.length > 0;
   const isVoteTimerStarted = Boolean(mapVotePhaseEndTime);
   const canSubmitVote = Boolean(
     pendingVoteOptionId &&
@@ -511,10 +518,9 @@ export function MapVoteScreen() {
     !isFinalized
   );
   const activePreviewOptionId = useMemo(
-    () => mapVoteOptions.find((option) => !readyPreviewIds.has(option.id))?.id ?? null,
-    [mapVoteOptions, readyPreviewIds]
+    () => mapVoteOptions.find((option) => !thumbnailReadyIds.has(option.id))?.id ?? null,
+    [mapVoteOptions, thumbnailReadyIds]
   );
-
   const votersByOption = useMemo(() => {
     const groups = new Map<string, LobbyPlayer[]>();
     for (const option of mapVoteOptions) {
@@ -552,7 +558,7 @@ export function MapVoteScreen() {
   };
 
   const handlePreviewReady = useCallback((optionId: string) => {
-    setReadyPreviewIds((current) => {
+    setThumbnailReadyIds((current) => {
       if (current.has(optionId)) return current;
       const next = new Set(current);
       next.add(optionId);
@@ -673,7 +679,7 @@ export function MapVoteScreen() {
                     ? 'Change'
                     : isVoteTimerStarted
                       ? 'Vote'
-                      : 'Generating';
+                      : 'Preparing';
               const cardBorderClass = isGoldenBiome
                 ? 'map-vote-card-golden'
                 : isWinner
@@ -765,10 +771,10 @@ export function MapVoteScreen() {
             >
               {isFinalized
                 ? 'Launching'
-                : canSubmitVote
+                  : canSubmitVote
                   ? localVote ? 'Change Vote' : 'Vote'
                   : !isVoteTimerStarted
-                    ? 'Generating'
+                    ? 'Preparing'
                     : localVote ? 'Vote Submitted' : 'Select Map'}
             </button>
 
