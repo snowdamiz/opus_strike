@@ -8,7 +8,10 @@ import {
   type RankedUserState,
 } from '../ranking/ratingService';
 import { ensureRankedSeasonSettingsTx } from '../ranking/seasonService';
-import { tryGrantRankedFounderSkins } from '../cosmetics/rankedFounderRewards';
+import {
+  isRankedBattleRoyalFounderRewardEligible,
+  tryGrantRankedFounderSkins,
+} from '../cosmetics/rankedFounderRewards';
 import { mapSeedToDatabaseValue } from '../utils/mapSeedPersistence';
 
 export interface MatchParticipantStats {
@@ -17,6 +20,10 @@ export interface MatchParticipantStats {
   assists: number;
   flagCaptures: number;
   flagReturns: number;
+  humanKills?: number;
+  botKills?: number;
+  humanAssists?: number;
+  botAssists?: number;
 }
 
 export interface MatchParticipantSnapshot extends MatchParticipantStats {
@@ -27,6 +34,9 @@ export interface MatchParticipantSnapshot extends MatchParticipantStats {
   heroId: string | null;
   joinedAt: Date;
   leftAt: Date | null;
+  placement?: number | null;
+  activeTeamCount?: number | null;
+  teamEliminatedAt?: Date | null;
 }
 
 export interface MatchKillEventSnapshot {
@@ -58,6 +68,10 @@ export interface CompletedMatchPersistenceInput {
   winningTeam: Team | null;
   participants: MatchParticipantSnapshot[];
   killEvents?: MatchKillEventSnapshot[];
+  totalParticipants?: number;
+  humanParticipants?: number;
+  botParticipants?: number;
+  activeTeamCount?: number;
   antiCheatIntegrityStatus?: string;
   antiCheatReviewRequired?: boolean;
   antiCheatIntegrityReason?: string | null;
@@ -154,9 +168,16 @@ export function normalizeMatchParticipants(
     existing.assists += participant.assists;
     existing.flagCaptures += participant.flagCaptures;
     existing.flagReturns += participant.flagReturns;
+    existing.humanKills = (existing.humanKills ?? 0) + (participant.humanKills ?? 0);
+    existing.botKills = (existing.botKills ?? 0) + (participant.botKills ?? 0);
+    existing.humanAssists = (existing.humanAssists ?? 0) + (participant.humanAssists ?? 0);
+    existing.botAssists = (existing.botAssists ?? 0) + (participant.botAssists ?? 0);
     existing.score += score;
     existing.experienceGained += experienceGained;
     existing.outcome = outcome;
+    existing.placement = participant.placement ?? existing.placement;
+    existing.activeTeamCount = participant.activeTeamCount ?? existing.activeTeamCount;
+    existing.teamEliminatedAt = participant.teamEliminatedAt ?? existing.teamEliminatedAt;
     if (participant.joinedAt < existing.joinedAt) {
       existing.joinedAt = participant.joinedAt;
     }
@@ -322,15 +343,25 @@ export async function persistCompletedMatch(
         && !rankedOutcomeHeld
         && skippedUserIds.length === 0
         && participants.length > 0;
-      const ratingUpdates = rankedEligible
+      const canCalculateRankedUpdates = input.rankedEligible === true
+        && skippedUserIds.length === 0
+        && participants.length > 0;
+      const calculatedRankedUpdates = canCalculateRankedUpdates
         ? calculateRankedRatingUpdates({
+          gameplayMode: input.gameplayMode ?? DEFAULT_GAMEPLAY_MODE,
           participants,
           users: existingUsers as RankedUserState[],
           winningTeam: input.winningTeam,
           endedAt: input.endedAt,
+          totalParticipants: input.totalParticipants,
+          humanParticipants: input.humanParticipants,
+          botParticipants: input.botParticipants,
+          activeTeamCount: input.activeTeamCount,
         })
         : [];
+      const ratingUpdates = rankedEligible ? calculatedRankedUpdates : [];
       const ratingUpdatesByUserId = new Map(ratingUpdates.map((update) => [update.userId, update]));
+      const calculatedRankedUpdatesByUserId = new Map(calculatedRankedUpdates.map((update) => [update.userId, update]));
       const usersById = new Map(existingUsers.map((user) => [user.id, user]));
       const shouldRecordRankedSeason = input.matchMode === 'ranked' && (rankedEligible || rankedOutcomeHeld);
       const rankedSeason = shouldRecordRankedSeason ? await ensureRankedSeasonSettingsTx(tx) : null;
@@ -383,12 +414,19 @@ export async function persistCompletedMatch(
             score: participant.score,
             experienceGained: participant.experienceGained,
             outcome: participant.outcome,
+            placement: participant.placement ?? undefined,
             rankedEligible: rankedEligible || rankedOutcomeHeld,
             ratingBefore: ratingUpdatesByUserId.get(participant.userId)?.ratingBefore,
             ratingAfter: ratingUpdatesByUserId.get(participant.userId)?.ratingAfter,
             ratingDelta: ratingUpdatesByUserId.get(participant.userId)?.ratingDelta,
             visibleRankBefore: ratingUpdatesByUserId.get(participant.userId)?.visibleRankBefore,
             visibleRankAfter: ratingUpdatesByUserId.get(participant.userId)?.visibleRankAfter,
+            rankedPlacementPoints: ratingUpdatesByUserId.get(participant.userId)?.rankedPlacementPoints,
+            rankedCombatPoints: ratingUpdatesByUserId.get(participant.userId)?.rankedCombatPoints,
+            rankedEntryCost: ratingUpdatesByUserId.get(participant.userId)?.rankedEntryCost,
+            rankedQualityMultiplier: ratingUpdatesByUserId.get(participant.userId)?.rankedQualityMultiplier,
+            rankedRulesVersion: ratingUpdatesByUserId.get(participant.userId)?.rankedRulesVersion,
+            rankedBreakdown: calculatedRankedUpdatesByUserId.get(participant.userId)?.rankedBreakdown as Prisma.InputJsonValue | undefined,
             leaverPenaltyApplied: ratingUpdatesByUserId.get(participant.userId)?.leaverPenaltyApplied ?? false,
             joinedAt: participant.joinedAt,
             leftAt: participant.leftAt,
@@ -431,11 +469,16 @@ export async function persistCompletedMatch(
 
         const user = usersById.get(participant.userId);
 
-        // Founder reward: grant the golden skin set to the first N players to
-        // complete a ranked match. `user.rankedGames` is the pre-update value, so
-        // 0 means this ranked-eligible match is their first. Runs in this same
-        // transaction so the grant is atomic with the rankedGames increment.
-        if (rankedEligible && user && user.rankedGames === 0) {
+        // Founder reward: grant the golden skin set to the first N humans who
+        // finish a ranked Battle Royal match on the winning team. Runs in this
+        // same transaction so the limited claim and match persistence are atomic.
+        if (isRankedBattleRoyalFounderRewardEligible({
+          rankedEligible,
+          gameplayMode: input.gameplayMode ?? DEFAULT_GAMEPLAY_MODE,
+          winningTeam: input.winningTeam,
+          endedAt: input.endedAt,
+          participant,
+        })) {
           await tryGrantRankedFounderSkins(tx, participant.userId);
         }
 

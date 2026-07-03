@@ -353,7 +353,7 @@ export const HERO_SKIN_CATALOG = [
     availability: 'unlockable',
     releaseState: 'live',
     modelDocumentId: 'phantom.golden',
-    unlockHint: 'First 50 ranked players',
+    unlockHint: 'First 50 ranked BR winners',
   },
   {
     id: 'hookshot.golden',
@@ -364,7 +364,7 @@ export const HERO_SKIN_CATALOG = [
     availability: 'unlockable',
     releaseState: 'live',
     modelDocumentId: 'hookshot.golden',
-    unlockHint: 'First 50 ranked players',
+    unlockHint: 'First 50 ranked BR winners',
   },
   {
     id: 'blaze.golden',
@@ -375,7 +375,7 @@ export const HERO_SKIN_CATALOG = [
     availability: 'unlockable',
     releaseState: 'live',
     modelDocumentId: 'blaze.golden',
-    unlockHint: 'First 50 ranked players',
+    unlockHint: 'First 50 ranked BR winners',
   },
   {
     id: 'chronos.golden',
@@ -386,7 +386,7 @@ export const HERO_SKIN_CATALOG = [
     availability: 'unlockable',
     releaseState: 'live',
     modelDocumentId: 'chronos.golden',
-    unlockHint: 'First 50 ranked players',
+    unlockHint: 'First 50 ranked BR winners',
   },
 ] as const satisfies readonly HeroSkinDefinition[];
 

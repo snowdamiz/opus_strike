@@ -8,6 +8,7 @@ import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_MATCH_PERSPECTIVE,
   DEFAULT_VOXEL_MAP_SIZE_ID,
+  RANKED_GAMEPLAY_MODE,
   TUTORIAL_MAP_SEED,
   createTutorialVoxelMapManifest,
   DEV_TESTING_MAP_SEED,
@@ -636,12 +637,13 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         matchmakingMode: true,
         matchMode: 'ranked',
         matchmakingTicket: rankedTicket.ticket,
-        matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
+        gameplayMode: rankedTicket.gameplayMode,
+        matchPerspective: rankedTicket.matchPerspective,
         matchmakingRegion: rankedTicket.matchmakingRegion,
         rankBandId: rankedTicket.targetRankDivisionIndex,
         initialBotCount: 0,
-        botFillMode: 'manual',
-        defaultBotDifficulty: 'normal',
+        botFillMode: rankedTicket.botFillMode,
+        defaultBotDifficulty: 'hard',
         selectedHero,
         selectedSkinId,
       });
@@ -650,14 +652,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
       setPlayerId(lobbyRoomRef.current.sessionId);
       useGameStore.setState({
-        gameplayMode: DEFAULT_GAMEPLAY_MODE,
-        matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
+        gameplayMode: rankedTicket.gameplayMode,
+        matchPerspective: rankedTicket.matchPerspective,
       });
       setMatchmakingStatus({
         matchMode: 'ranked',
-        gameplayMode: DEFAULT_GAMEPLAY_MODE,
-        botFillMode: 'manual',
-        matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
+        gameplayMode: rankedTicket.gameplayMode ?? RANKED_GAMEPLAY_MODE,
+        botFillMode: rankedTicket.botFillMode,
+        matchPerspective: rankedTicket.matchPerspective,
         rankBandId: rankedTicket.targetRankDivisionIndex,
         rankBandLabel: rankedTicket.targetRankLabel,
         averageCompetitiveRating: rankedTicket.competitiveRating,

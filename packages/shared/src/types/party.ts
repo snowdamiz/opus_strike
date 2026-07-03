@@ -2,6 +2,7 @@ import { DEFAULT_GAME_CONFIG } from '../constants/game.js';
 import {
   DEFAULT_GAMEPLAY_MODE,
   GAMEPLAY_MODES,
+  RANKED_GAMEPLAY_MODE,
   getGameplayModeRules,
   isCustomLobbyGameplayMode,
   type GameplayMode,
@@ -25,6 +26,10 @@ export function getPartyMaxMembersForMode(
   mode: PartyMode,
   gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE
 ): number {
+  if (mode === 'ranked') {
+    return getGameplayModeRules(RANKED_GAMEPLAY_MODE).maxTeamSize;
+  }
+
   if (mode === 'custom') {
     const customGameplayMode = isCustomLobbyGameplayMode(gameplayMode)
       ? gameplayMode

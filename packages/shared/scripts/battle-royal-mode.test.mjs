@@ -4,12 +4,14 @@ import assert from 'node:assert/strict';
 import {
   BATTLE_ROYAL_GAMEPLAY_MODE,
   BATTLE_ROYAL_TEAM_IDS,
+  RANKED_GAMEPLAY_MODE,
   createGameConfigForGameplayMode,
   createProceduralMapPreview,
   createProceduralTerrainLookup,
   generateProceduralVoxelMap,
   getGameplayModeCapacityCost,
   getGameplayModeRules,
+  getPartyMaxMembersForMode,
   getTeamCatalogForGameplayMode,
   getTeamIdsForGameplayMode,
   PLAYER_HEIGHT,
@@ -131,6 +133,7 @@ function assertApproximately(actual, expected, tolerance, message) {
 }
 
 const rules = getGameplayModeRules(BATTLE_ROYAL_GAMEPLAY_MODE);
+assert.equal(RANKED_GAMEPLAY_MODE, BATTLE_ROYAL_GAMEPLAY_MODE);
 assert.equal(rules.maxPlayers, 33);
 assert.equal(rules.minPlayers, 12);
 assert.equal(rules.maxTeamSize, 3);
@@ -143,7 +146,13 @@ assert.equal(rules.safeZoneEnabled, true);
 assert.equal(rules.flagsEnabled, false);
 assert.equal(rules.teamScoresEnabled, false);
 assert.equal(rules.botsEnabled, true);
-assert.equal(rules.rankedEnabled, false);
+assert.equal(rules.rankedEnabled, true);
+assert.equal(getGameplayModeRules('capture_the_flag').rankedEnabled, false);
+assert.equal(getGameplayModeRules('team_deathmatch').rankedEnabled, false);
+assert.equal(getPartyMaxMembersForMode('ranked', 'capture_the_flag'), 3);
+assert.equal(getPartyMaxMembersForMode('ranked', 'team_deathmatch'), 3);
+assert.equal(getPartyMaxMembersForMode('ranked', BATTLE_ROYAL_GAMEPLAY_MODE), 3);
+assert.equal(getPartyMaxMembersForMode('quick_play', 'capture_the_flag'), 4);
 assert.equal(getGameplayModeCapacityCost('battle_royal', 12), 50);
 assert.equal(getGameplayModeCapacityCost('battle_royal', 33), 137);
 

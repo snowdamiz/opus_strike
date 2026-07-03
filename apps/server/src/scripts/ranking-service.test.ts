@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
-import { calculateRankedRatingUpdates, MATCH_DELTA_MAX, MATCH_DELTA_MIN } from '../ranking/ratingService';
+import {
+  BATTLE_ROYAL_MATCH_DELTA_MIN,
+  RANKED_BATTLE_ROYAL_RULES_VERSION,
+  calculateRankedRatingUpdates,
+  MATCH_DELTA_MAX,
+  MATCH_DELTA_MIN,
+} from '../ranking/ratingService';
 import type { RankedMatchParticipant, RankedUserState } from '../ranking/ratingService';
+import type { Team } from '@voxel-strike/shared';
 
 const endedAt = new Date('2026-06-10T12:00:00.000Z');
 
@@ -35,6 +42,29 @@ function participant(
     flagCaptures: outcome === 'win' ? 1 : 0,
     flagReturns: score > 500 ? 1 : 0,
     leftAt,
+  };
+}
+
+function battleRoyalParticipant(input: Partial<RankedMatchParticipant> & { userId: string; team?: Team }): RankedMatchParticipant {
+  return {
+    userId: input.userId,
+    team: input.team ?? 'br_01',
+    outcome: input.outcome ?? 'loss',
+    score: input.score ?? 0,
+    kills: input.kills ?? 0,
+    deaths: input.deaths ?? 0,
+    assists: input.assists ?? 0,
+    flagCaptures: 0,
+    flagReturns: 0,
+    leftAt: input.leftAt ?? null,
+    placement: input.placement,
+    activeTeamCount: input.activeTeamCount,
+    teamEliminatedAt: input.teamEliminatedAt,
+    humanKills: input.humanKills,
+    botKills: input.botKills,
+    humanAssists: input.humanAssists,
+    botAssists: input.botAssists,
+    rankedEntryCost: input.rankedEntryCost,
   };
 }
 
@@ -99,5 +129,123 @@ for (const update of [...balancedUpdates, ...leaverUpdates, ...topTierUpdates]) 
   assert.ok(update.ratingDelta >= MATCH_DELTA_MIN);
   assert.ok(update.ratingDelta <= MATCH_DELTA_MAX);
 }
+
+const singleHumanBattleRoyalWin = calculateRankedRatingUpdates({
+  gameplayMode: 'battle_royal',
+  endedAt,
+  winningTeam: 'br_01',
+  users: [user('solo', 800, 10)],
+  participants: [
+    battleRoyalParticipant({
+      userId: 'solo',
+      team: 'br_01',
+      outcome: 'win',
+      placement: 1,
+      activeTeamCount: 11,
+      humanKills: 2,
+      humanAssists: 1,
+      botKills: 10,
+      botAssists: 4,
+    }),
+  ],
+  humanParticipants: 1,
+  botParticipants: 32,
+  totalParticipants: 33,
+  activeTeamCount: 11,
+});
+assert.equal(singleHumanBattleRoyalWin.length, 1);
+assert.equal(singleHumanBattleRoyalWin[0].ratingDelta, 35);
+assert.equal(singleHumanBattleRoyalWin[0].rankedRulesVersion, RANKED_BATTLE_ROYAL_RULES_VERSION);
+assert.equal(singleHumanBattleRoyalWin[0].rankedPlacementPoints, 125);
+assert.equal(singleHumanBattleRoyalWin[0].rankedCombatPoints, 75);
+assert.equal(singleHumanBattleRoyalWin[0].rankedEntryCost, 6);
+assert.equal(singleHumanBattleRoyalWin[0].rankedBreakdown?.positiveCap, 35);
+assert.ok(Math.abs((singleHumanBattleRoyalWin[0].rankedQualityMultiplier ?? 0) - (0.45 + (1 / 33) * 0.55)) < 0.000001);
+
+const normalizedSmallLobby = calculateRankedRatingUpdates({
+  gameplayMode: 'battle_royal',
+  endedAt,
+  winningTeam: 'br_01',
+  users: [user('third-of-three', 800, 10)],
+  participants: [
+    battleRoyalParticipant({
+      userId: 'third-of-three',
+      team: 'br_03',
+      placement: 3,
+      activeTeamCount: 3,
+    }),
+  ],
+  humanParticipants: 3,
+  totalParticipants: 3,
+  activeTeamCount: 3,
+});
+assert.equal(normalizedSmallLobby[0].rankedBreakdown?.normalizedPlacement, 11);
+assert.equal(normalizedSmallLobby[0].rankedPlacementPoints, -15);
+
+const entryCostCases: Array<[string, number, number]> = [
+  ['plastic', 600, 0],
+  ['bronze', 800, 6],
+  ['silver', 1000, 14],
+  ['gold', 1200, 26],
+  ['diamond', 1400, 40],
+  ['unemployed', 1600, 58],
+];
+for (const [id, rating, entryCost] of entryCostCases) {
+  const [update] = calculateRankedRatingUpdates({
+    gameplayMode: 'battle_royal',
+    endedAt,
+    winningTeam: 'br_01',
+    users: [user(id, rating, 20)],
+    participants: [
+      battleRoyalParticipant({
+        userId: id,
+        placement: 8,
+        activeTeamCount: 11,
+      }),
+    ],
+    humanParticipants: 1,
+    totalParticipants: 1,
+    activeTeamCount: 11,
+  });
+  assert.equal(update.rankedEntryCost, entryCost);
+  assert.equal(update.ratingDelta, entryCost === 0 ? 0 : -entryCost);
+}
+
+const battleRoyalLeaver = calculateRankedRatingUpdates({
+  gameplayMode: 'battle_royal',
+  endedAt,
+  winningTeam: 'br_01',
+  users: [user('early-leaver', 1600, 20)],
+  participants: [
+    battleRoyalParticipant({
+      userId: 'early-leaver',
+      outcome: 'win',
+      placement: 1,
+      activeTeamCount: 11,
+      leftAt: new Date('2026-06-10T11:40:00.000Z'),
+      teamEliminatedAt: new Date('2026-06-10T11:55:00.000Z'),
+    }),
+  ],
+  humanParticipants: 1,
+  totalParticipants: 1,
+  activeTeamCount: 11,
+});
+assert.equal(battleRoyalLeaver[0].leaverPenaltyApplied, true);
+assert.equal(battleRoyalLeaver[0].ratingDelta, BATTLE_ROYAL_MATCH_DELTA_MIN);
+
+const botOnlyExcluded = calculateRankedRatingUpdates({
+  gameplayMode: 'battle_royal',
+  endedAt,
+  winningTeam: 'br_01',
+  users: [],
+  participants: [
+    battleRoyalParticipant({ userId: 'bot-user', placement: 1, activeTeamCount: 11 }),
+  ],
+  humanParticipants: 0,
+  botParticipants: 33,
+  totalParticipants: 33,
+  activeTeamCount: 11,
+});
+assert.equal(botOnlyExcluded.length, 0);
 
 console.log('ranking service tests passed');

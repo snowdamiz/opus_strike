@@ -13,6 +13,7 @@ import {
 import {
   getGameplayModeRules,
   getRankDivisionIndex,
+  RANKED_GAMEPLAY_MODE,
   getTeamIdsForGameplayMode,
   isKnownHeroId,
 } from '@voxel-strike/shared';
@@ -22,6 +23,7 @@ import type { RankedTokenHoldingStatus } from './rankedTokenHold';
 import {
   createMatchmakingSettings,
   doesMatchmakingMetadataMatchSettings,
+  RANKED_BOT_FILL_MODE,
   type MatchmakingBotFillMode,
 } from './matchSettings';
 import {
@@ -260,6 +262,8 @@ export function issueRankedTicket(
 ): IssuedRankedTicket {
   const { ticket, claims } = createMatchmakingTicket({
     mode: 'ranked',
+    gameplayMode: RANKED_GAMEPLAY_MODE,
+    botFillMode: RANKED_BOT_FILL_MODE,
     selectedHero,
     selectedSkinId,
     matchmakingRegion,

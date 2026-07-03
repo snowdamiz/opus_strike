@@ -137,6 +137,21 @@ export class PlayerPingTracker {
     recordNetworkQualitySample(state, sample, this.qualityConfig);
   }
 
+  resetNetworkQuality(playerId: string, now: number): void {
+    this.pendingPings.delete(playerId);
+    this.playerNetworkQuality.set(playerId, createNetworkQualityState(now));
+  }
+
+  resetNetworkQualityForPlayers(
+    players: Iterable<[string, PlayerPingParticipant]>,
+    now: number
+  ): void {
+    for (const [playerId, player] of players) {
+      if (player.isBot) continue;
+      this.resetNetworkQuality(playerId, now);
+    }
+  }
+
   evaluateCompetitiveGate(
     players: Iterable<[string, PlayerPingParticipant]>,
     now: number,

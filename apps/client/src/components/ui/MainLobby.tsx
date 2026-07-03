@@ -41,6 +41,7 @@ import {
   DEFAULT_RANKED_SEASON_NUMBER,
   GAMEPLAY_MODES,
   HERO_DEFINITIONS,
+  RANKED_GAMEPLAY_MODE,
   getDefaultHeroSkinId,
   getMatchPerspectiveSettingMode,
   getGameplayModeLabel,
@@ -289,7 +290,6 @@ function SlopHeroesMark({ className }: { className?: string }) {
 
 // Navigation tabs
 const MAIN_TABS = ['play', 'heroes', 'loadout', 'skins', 'stats'] as const;
-const MAIN_PLAY_CONTRACT_ADDRESS = '5Dq9LnhLRiisTQPfb21pgoGZt8h3E9h31JyiSzvYpump';
 const SLOP_HEROES_X_URL = 'https://x.com/slopheroes';
 type MainTab = (typeof MAIN_TABS)[number];
 const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
@@ -300,15 +300,15 @@ const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
 };
 const SEASON_RULES_ARIA = 'Season rewards and ranked history are tracked by season.';
 
-function ContractAddressBadge() {
+function ContractAddressBadge({ address }: { address: string }) {
   return (
     <div
       className="main-lobby-ca-badge"
-      aria-label={`Contract address ${MAIN_PLAY_CONTRACT_ADDRESS}`}
-      title={MAIN_PLAY_CONTRACT_ADDRESS}
+      aria-label={`Contract address ${address}`}
+      title={address}
     >
       <span className="main-lobby-ca-label">CA</span>
-      <span className="main-lobby-ca-address">{MAIN_PLAY_CONTRACT_ADDRESS}</span>
+      <span className="main-lobby-ca-address">{address}</span>
     </div>
   );
 }
@@ -378,8 +378,9 @@ function getGameplayModeForPlayMode(
       return 'battle_royal';
     case 'custom':
       return customGameplayMode;
-    case 'practice':
     case 'ranked':
+      return RANKED_GAMEPLAY_MODE;
+    case 'practice':
     case 'quick_play':
     default:
       return DEFAULT_GAMEPLAY_MODE;
@@ -423,7 +424,7 @@ function getPartyMemberLimitForPlayMode(
 function getBotFillUnavailableReasonForPlayMode(mode: PlayMenuMode): string | null {
   switch (mode) {
     case 'ranked':
-      return 'Bot fill does not apply to ranked';
+      return 'Ranked uses automatic fill';
     case 'practice':
       return 'Bot fill does not apply to practice';
     case 'custom':
@@ -551,6 +552,9 @@ export function MainLobby() {
     rewardEconomy?.rewardTokenSymbol
     ?? rankedTokenHoldStatus?.tokenSymbol
   );
+  const displayedContractAddress = rewardEconomy?.rankedEntryGate.tokenAddress
+    || rankedTokenHoldStatus?.tokenAddress
+    || null;
   const isInParty = Boolean(party);
   const isPartyLeader = isPartyLeaderForUser(party, localPartyUserId);
   const isPartyReadyToStart = arePartyMembersReady(party);
@@ -570,7 +574,11 @@ export function MainLobby() {
     : isInParty && !isPartyLeader
       ? 'Party leader chooses bot fill'
       : null;
-  const displayedBotFillEnabled = botFillUnavailableReason ? false : globalBotFillEnabled;
+  const displayedBotFillEnabled = activePlayMode === 'ranked'
+    ? true
+    : botFillUnavailableReason
+      ? false
+      : globalBotFillEnabled;
   const activePerspectiveByMode = party?.perspectiveByMode ?? perspectiveByMode;
 
   useEffect(() => {
@@ -1302,7 +1310,9 @@ export function MainLobby() {
                 </button>
               ))}
             </div>
-            {activeTab === 'play' && <ContractAddressBadge />}
+            {activeTab === 'play' && displayedContractAddress && (
+              <ContractAddressBadge address={displayedContractAddress} />
+            )}
           </div>
 
           {/* Right side controls */}
@@ -2502,7 +2512,7 @@ function getModeTitle(input: {
     return rankedTokenGateBlockedMessage(input.rankedTokenHoldStatus);
   }
   if (input.isAuthenticated && !input.hasWalletAccount) return 'Connect a wallet before entering ranked';
-  return input.rankedTokenHoldError ?? 'Competitive queue';
+  return input.rankedTokenHoldError ?? 'Battle Royal ranked queue';
 }
 
 function PlayActionStack({

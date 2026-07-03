@@ -113,4 +113,28 @@ function participants(): Map<string, PlayerPingParticipant> {
   assert.equal(blocked.evaluation?.reason, 'average_ping_high');
 }
 
+{
+  const tracker = new PlayerPingTracker(config);
+  const rankedPlayers = new Map([['red-human', participants().get('red-human')!]]);
+  const staleRequest = tracker.createPingRequest('red-human', 1, 1_000);
+  tracker.recordPingResponse('red-human', staleRequest.nonce, 1_900);
+
+  tracker.resetNetworkQualityForPlayers(rankedPlayers, 2_000);
+
+  assert.equal(tracker.hasPendingPing('red-human'), false);
+  assert.deepEqual(tracker.recordPingResponse('red-human', staleRequest.nonce, 2_050), { accepted: false });
+  const pending = tracker.evaluateCompetitiveGate(rankedPlayers, 2_100, true);
+  assert.equal(pending.status, 'pending');
+  assert.equal(pending.evaluation?.reason, 'collecting_network_samples');
+
+  tracker.recordNetworkQualitySample('red-human', { at: 5_000, pingMs: 42 });
+  tracker.recordNetworkQualitySample('red-human', { at: 8_000, pingMs: 48 });
+  tracker.recordNetworkQualitySample('red-human', { at: 10_000, pingMs: 45 });
+
+  assert.deepEqual(
+    tracker.evaluateCompetitiveGate(rankedPlayers, 10_000, true),
+    { status: 'ready' }
+  );
+}
+
 console.log('player ping tracker tests passed');

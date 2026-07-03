@@ -111,6 +111,10 @@ export interface PersistMatchLedgerInput {
   killEvents: MatchKillEventSnapshot[];
   rankedEligible: boolean;
   integrityGate: AntiCheatIntegrityGate;
+  totalParticipants?: number;
+  humanParticipants?: number;
+  botParticipants?: number;
+  activeTeamCount?: number;
   endedAt?: Date;
 }
 
@@ -176,6 +180,10 @@ export class MatchFinalizationRuntime {
         winningTeam: input.winningTeam,
         participants: input.participants,
         killEvents: input.killEvents,
+        totalParticipants: input.totalParticipants,
+        humanParticipants: input.humanParticipants,
+        botParticipants: input.botParticipants,
+        activeTeamCount: input.activeTeamCount,
         antiCheatIntegrityStatus: input.integrityGate.status,
         antiCheatReviewRequired: input.integrityGate.reviewRequired,
         antiCheatIntegrityReason: input.integrityGate.reason,

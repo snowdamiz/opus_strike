@@ -1,4 +1,4 @@
--- Golden founder reward: singleton counter for the first 50 ranked players.
+-- Golden founder reward: singleton counter for the first 50 ranked BR winners.
 CREATE TABLE "RankedFounderReward" (
   "id" TEXT NOT NULL DEFAULT 'ranked_founder_golden',
   "claimedCount" INTEGER NOT NULL DEFAULT 0,

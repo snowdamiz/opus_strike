@@ -104,7 +104,7 @@ for (const skinId of founderSkinIds) {
   assert.ok(skin, `${skinId} should be in the catalog`);
   assert.equal(skin.availability, 'unlockable');
   assert.equal(skin.releaseState, 'live');
-  assert.equal(skin.unlockHint, 'First 50 ranked players');
+  assert.equal(skin.unlockHint, 'First 50 ranked BR winners');
 }
 
 const matched = resolveHeroSkinDefinition('phantom', 'phantom.void-monarch', {

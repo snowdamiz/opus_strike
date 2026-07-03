@@ -91,7 +91,7 @@
     "test:movement-shadow-telemetry": "tsx src/scripts/movement-shadow-telemetry.test.ts",
     "test:network-quality": "tsx src/scripts/network-quality-gate.test.ts",
     "test:bot-ai": "tsx src/scripts/bot-ai-overhaul.test.ts",
-    "test:battle-royal": "tsx src/scripts/battle-royal-safe-zone.test.ts && tsx src/scripts/battle-royal-drop.test.ts",
+    "test:battle-royal": "tsx src/scripts/battle-royal-safe-zone.test.ts && tsx src/scripts/battle-royal-drop.test.ts && tsx src/scripts/battle-royal-placement.test.ts",
     "test:message-metrics": "tsx src/scripts/custom-message-metrics.test.ts",
     "test:security-logging": "tsx src/scripts/security-event-logging.test.ts",
     "test:visibility-interest": "tsx src/scripts/visibility-interest-management.test.ts",

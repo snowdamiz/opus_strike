@@ -431,7 +431,7 @@ model UserHeroLoadout {
   @@index([selectedSkinId])
 }
 
-// Singleton counter backing the "first 50 ranked players" golden founder reward.
+// Singleton counter backing the "first 50 ranked BR winners" golden founder reward.
 // Claimed via an atomic conditional increment so concurrent match finalizations
 // can never grant more than maxClaims founder sets.
 model RankedFounderReward {
@@ -540,12 +540,19 @@ model GameMatchParticipant {
   score                Int       @default(0)
   experienceGained     Int       @default(0)
   outcome              String
+  placement            Int?
   rankedEligible       Boolean   @default(false)
   ratingBefore         Int?
   ratingAfter          Int?
   ratingDelta          Int?
   visibleRankBefore    String?
   visibleRankAfter     String?
+  rankedPlacementPoints Int?
+  rankedCombatPoints   Int?
+  rankedEntryCost      Int?
+  rankedQualityMultiplier Float?
+  rankedRulesVersion   String?
+  rankedBreakdown      Json?
   leaverPenaltyApplied Boolean   @default(false)
   joinedAt             DateTime
   leftAt               DateTime?

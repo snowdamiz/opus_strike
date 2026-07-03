@@ -175,6 +175,48 @@ const clients: TestClient[] = [
 }
 
 {
+  const runtime = new PlayerPingRuntime();
+  const rankedPlayers = new Map([['red-human', participants().get('red-human')!]]);
+
+  let request = runtime.createPingRequest('red-human', 1, 1_000);
+  runtime.recordPingResponse('red-human', request.nonce, 1_900);
+
+  runtime.resetCompetitiveGate({
+    players: rankedPlayers,
+    now: 2_000,
+    matchMode: 'ranked',
+  });
+
+  const resetPending = runtime.ensureCompetitiveGateForStart({
+    players: rankedPlayers,
+    now: 2_100,
+    matchMode: 'ranked',
+  });
+  assert.equal(resetPending.ready, false);
+  assert.equal(resetPending.gate.status, 'pending');
+  assert.equal(resetPending.cancelNotice, undefined);
+
+  request = runtime.createPingRequest('red-human', 2, 5_000);
+  runtime.recordPingResponse('red-human', request.nonce, 5_045);
+  request = runtime.createPingRequest('red-human', 3, 8_000);
+  runtime.recordPingResponse('red-human', request.nonce, 8_048);
+  request = runtime.createPingRequest('red-human', 4, 10_000);
+  runtime.recordPingResponse('red-human', request.nonce, 10_043);
+
+  assert.deepEqual(
+    runtime.ensureCompetitiveGateForStart({
+      players: rankedPlayers,
+      now: 10_000,
+      matchMode: 'ranked',
+    }),
+    {
+      ready: true,
+      gate: { status: 'ready' },
+    }
+  );
+}
+
+{
   const notice = buildNetworkQualityCancelNotice(undefined, 'network_not_verified');
 
   assert.equal(notice.blockedPlayerId, undefined);

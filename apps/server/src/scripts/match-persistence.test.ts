@@ -8,6 +8,7 @@ import {
   persistCompletedMatch,
 } from '../persistence/matchPersistence';
 import type { MatchParticipantSnapshot } from '../persistence/matchPersistence';
+import { GOLDEN_FOUNDER_SKIN_IDS, RANKED_FOUNDER_REWARD_ID } from '../cosmetics/rankedFounderRewards';
 
 const joinedAt = new Date('2026-06-10T10:00:00.000Z');
 const rejoinedAt = new Date('2026-06-10T10:05:00.000Z');
@@ -149,6 +150,9 @@ function createFakePrisma() {
   const matches = new Map<string, any>();
   const participants: any[] = [];
   const rankedSeasonStats = new Map<string, any>();
+  const founderCounter = { id: RANKED_FOUNDER_REWARD_ID, claimedCount: 0, maxClaims: 50, exists: false };
+  const skinOwnerships = new Map<string, any>();
+  const skinOwnershipKey = (userId: string, skinId: string) => `${userId}::${skinId}`;
   const rankedSeasonSettings = {
     id: 'default',
     mode: 'season',
@@ -213,6 +217,56 @@ function createFakePrisma() {
         return row;
       },
     },
+    rankedFounderReward: {
+      upsert: async ({ create }: any) => {
+        if (!founderCounter.exists) {
+          founderCounter.exists = true;
+          if (typeof create?.maxClaims === 'number') founderCounter.maxClaims = create.maxClaims;
+        }
+        return { ...founderCounter };
+      },
+      findUniqueOrThrow: async ({ select }: any) => {
+        assert.equal(founderCounter.exists, true);
+        return select?.maxClaims ? { maxClaims: founderCounter.maxClaims } : { ...founderCounter };
+      },
+      updateMany: async ({ where, data }: any) => {
+        if (where.id !== RANKED_FOUNDER_REWARD_ID) return { count: 0 };
+        const maxClaims = where.claimedCount?.lt;
+        if (typeof maxClaims === 'number' && founderCounter.claimedCount >= maxClaims) return { count: 0 };
+        founderCounter.claimedCount += data.claimedCount?.increment ?? 0;
+        return { count: 1 };
+      },
+    },
+    userSkinOwnership: {
+      findFirst: async ({ where }: any) => {
+        const skinIds = new Set<string>(where.skinId?.in ?? []);
+        for (const [id, ownership] of skinOwnerships) {
+          if (
+            ownership.userId === where.userId &&
+            skinIds.has(ownership.skinId) &&
+            ownership.revokedAt == null
+          ) {
+            return { id };
+          }
+        }
+        return null;
+      },
+      upsert: async ({ where, create, update }: any) => {
+        const key = skinOwnershipKey(where.userId_skinId.userId, where.userId_skinId.skinId);
+        const existing = skinOwnerships.get(key);
+        if (existing) {
+          Object.assign(existing, update);
+          return existing;
+        }
+        const row = {
+          id: key,
+          revokedAt: null,
+          ...create,
+        };
+        skinOwnerships.set(key, row);
+        return row;
+      },
+    },
   };
 
   return {
@@ -220,6 +274,8 @@ function createFakePrisma() {
     matches,
     participants,
     rankedSeasonStats,
+    founderCounter,
+    skinOwnerships,
     prisma: {
       $transaction: async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
     },
@@ -347,6 +403,174 @@ async function runPersistenceWriteTests() {
   ));
   assert.equal(heldRankedParticipant.rankedEligible, true);
   assert.equal(heldRankedParticipant.ratingDelta, undefined);
+
+  const rankedGamesBeforeHeldBattleRoyal = fake.users.get('ranked_red').rankedGames;
+  const heldBattleRoyalEndedAt = new Date('2026-06-10T10:40:00.000Z');
+  const heldBattleRoyalBlueEliminatedAt = new Date('2026-06-10T10:37:00.000Z');
+  const heldBattleRoyalResult = await persistCompletedMatch(fake.prisma as any, {
+    matchId: 'held_ranked_br_match',
+    roomId: 'room_ranked_br',
+    lobbyId: 'lobby_ranked_br',
+    matchMode: 'ranked',
+    gameplayMode: 'battle_royal',
+    mapSeed: 654,
+    rankedEligible: true,
+    rankedOutcomeStatus: 'held',
+    startedAt: joinedAt,
+    endedAt: heldBattleRoyalEndedAt,
+    redScore: 0,
+    blueScore: 0,
+    winningTeam: 'br_01',
+    totalParticipants: 33,
+    humanParticipants: 2,
+    botParticipants: 31,
+    activeTeamCount: 11,
+    participants: [
+      {
+        ...baseParticipant,
+        userId: 'ranked_red',
+        team: 'br_01',
+        heroId: 'phantom',
+        kills: 2,
+        deaths: 0,
+        assists: 1,
+        flagCaptures: 0,
+        flagReturns: 0,
+        humanKills: 1,
+        botKills: 1,
+        humanAssists: 1,
+        botAssists: 0,
+        placement: 1,
+        activeTeamCount: 11,
+        teamEliminatedAt: null,
+        leftAt: null,
+      },
+      {
+        ...baseParticipant,
+        userId: 'ranked_blue',
+        team: 'br_02',
+        heroId: 'blaze',
+        kills: 0,
+        deaths: 1,
+        assists: 1,
+        flagCaptures: 0,
+        flagReturns: 0,
+        humanKills: 0,
+        botKills: 0,
+        humanAssists: 0,
+        botAssists: 1,
+        placement: 11,
+        activeTeamCount: 11,
+        teamEliminatedAt: heldBattleRoyalBlueEliminatedAt,
+        leftAt: null,
+      },
+    ],
+  });
+  assert.equal(heldBattleRoyalResult.alreadyPersisted, false);
+  assert.equal(fake.matches.get('held_ranked_br_match').gameplayMode, 'battle_royal');
+  assert.equal(fake.matches.get('held_ranked_br_match').rankedEligible, false);
+  assert.equal(fake.matches.get('held_ranked_br_match').rankedOutcomeStatus, 'held');
+  assert.equal(fake.users.get('ranked_red').rankedGames, rankedGamesBeforeHeldBattleRoyal);
+  const heldBattleRoyalParticipant = fake.participants.find((participant) => (
+    participant.matchId === 'held_ranked_br_match' && participant.userId === 'ranked_red'
+  ));
+  assert.equal(heldBattleRoyalParticipant.rankedEligible, true);
+  assert.equal(heldBattleRoyalParticipant.placement, 1);
+  assert.equal(heldBattleRoyalParticipant.ratingDelta, undefined);
+  assert.equal(heldBattleRoyalParticipant.rankedPlacementPoints, undefined);
+  assert.equal(heldBattleRoyalParticipant.rankedCombatPoints, undefined);
+  const heldBattleRoyalBreakdown = heldBattleRoyalParticipant.rankedBreakdown;
+  assert.ok(heldBattleRoyalBreakdown);
+  assert.equal(heldBattleRoyalBreakdown.rulesVersion, 'ranked_br_v1');
+  assert.equal(heldBattleRoyalBreakdown.placement, 1);
+  assert.equal(heldBattleRoyalBreakdown.activeTeamCount, 11);
+  assert.equal(heldBattleRoyalBreakdown.normalizedPlacement, 1);
+  assert.equal(heldBattleRoyalBreakdown.placementPoints, 125);
+  assert.equal(heldBattleRoyalBreakdown.humanKills, 1);
+  assert.equal(heldBattleRoyalBreakdown.botKills, 1);
+  assert.equal(heldBattleRoyalBreakdown.humanAssists, 1);
+  assert.equal(heldBattleRoyalBreakdown.botAssists, 0);
+  assert.equal(heldBattleRoyalBreakdown.combatPoints, 39);
+  assert.equal(heldBattleRoyalBreakdown.humanParticipants, 2);
+  assert.equal(heldBattleRoyalBreakdown.botParticipants, 31);
+  assert.equal(heldBattleRoyalBreakdown.totalParticipants, 33);
+  assert.equal(heldBattleRoyalBreakdown.earlyLeaver, false);
+  assert.equal(heldBattleRoyalBreakdown.teamEliminatedAt, null);
+  assert.equal(
+    Math.abs(heldBattleRoyalBreakdown.qualityMultiplier - (0.45 + (2 / 33) * 0.55)) < 1e-12,
+    true
+  );
+
+  const founderClaimsBeforeBattleRoyalWin = fake.founderCounter.claimedCount;
+  await persistCompletedMatch(fake.prisma as any, {
+    matchId: 'ranked_br_founder_match',
+    roomId: 'room_ranked_br',
+    lobbyId: 'lobby_ranked_br',
+    matchMode: 'ranked',
+    gameplayMode: 'battle_royal',
+    mapSeed: 987,
+    rankedEligible: true,
+    startedAt: joinedAt,
+    endedAt: new Date('2026-06-10T10:50:00.000Z'),
+    redScore: 0,
+    blueScore: 0,
+    winningTeam: 'br_01',
+    totalParticipants: 33,
+    humanParticipants: 2,
+    botParticipants: 31,
+    activeTeamCount: 11,
+    participants: [
+      {
+        ...baseParticipant,
+        userId: 'ranked_red',
+        team: 'br_01',
+        kills: 1,
+        deaths: 0,
+        assists: 0,
+        flagCaptures: 0,
+        flagReturns: 0,
+        humanKills: 1,
+        botKills: 0,
+        humanAssists: 0,
+        botAssists: 0,
+        placement: 1,
+        activeTeamCount: 11,
+        teamEliminatedAt: null,
+        leftAt: null,
+      },
+      {
+        ...baseParticipant,
+        userId: 'ranked_blue',
+        team: 'br_02',
+        kills: 0,
+        deaths: 1,
+        assists: 0,
+        flagCaptures: 0,
+        flagReturns: 0,
+        humanKills: 0,
+        botKills: 0,
+        humanAssists: 0,
+        botAssists: 0,
+        placement: 2,
+        activeTeamCount: 11,
+        teamEliminatedAt: new Date('2026-06-10T10:49:00.000Z'),
+        leftAt: null,
+      },
+    ],
+  });
+  assert.equal(fake.founderCounter.claimedCount, founderClaimsBeforeBattleRoyalWin + 1);
+  for (const skinId of GOLDEN_FOUNDER_SKIN_IDS) {
+    assert.equal(
+      fake.skinOwnerships.get(`ranked_red::${skinId}`)?.source,
+      'event',
+      `ranked BR winner should receive ${skinId}`
+    );
+    assert.equal(
+      fake.skinOwnerships.has(`ranked_blue::${skinId}`),
+      false,
+      `ranked BR loser should not receive ${skinId}`
+    );
+  }
 
   const unrankedBefore = fake.users.get('unranked_red').competitiveRating;
   await persistCompletedMatch(fake.prisma as any, {

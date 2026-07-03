@@ -2,6 +2,7 @@ import { matchMaker } from 'colyseus';
 import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_MATCH_PERSPECTIVE,
+  RANKED_GAMEPLAY_MODE,
   getGameplayModeLabel,
   getRankDivisionIndex,
   isCustomLobbyGameplayMode,
@@ -24,8 +25,10 @@ import {
   type MatchmakingUserContext,
 } from '../matchmaking/service';
 import type { MatchmakingBotFillMode } from '../matchmaking/matchSettings';
+import { RANKED_BOT_FILL_MODE } from '../matchmaking/matchSettings';
 import { getLocalMatchmakingRegion } from '../matchmaking/region';
 import { resolveUserLoadoutForHero } from '../cosmetics/skinShopService';
+import { BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX } from '../rooms/bot-ai';
 import type { PartyRosterRuntime, PartyRuntimeMember } from './partyRuntime';
 
 interface PartyLaunchResult {
@@ -108,7 +111,8 @@ async function createMatchmakingLobby(input: {
     botFillMode: input.botFillMode,
     matchPerspective: input.matchPerspective,
     matchmakingRegion: input.matchmakingRegion,
-    defaultBotDifficulty: 'normal',
+    defaultBotDifficulty: input.mode === 'ranked' ? 'hard' : 'normal',
+    botProfilePrefix: input.mode === 'ranked' ? BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX : undefined,
     partyBots: input.partyBots,
   });
 }
@@ -119,17 +123,19 @@ export async function launchPartyToMatchmaking(
 ): Promise<PartyLaunchResult> {
   await revalidateHumanMemberSkins(party);
   const humanMembers = party.getHumanMembers();
-  const partyBots = party.getBotMembers().map(toPartyBotDescriptor);
+  const partyBots = mode === 'ranked' ? [] : party.getBotMembers().map(toPartyBotDescriptor);
   if (humanMembers.length === 0) {
     throw new Error('Party is empty');
   }
 
   humanMembers.forEach(assertPartyTutorialComplete);
   const contexts = humanMembers.map(toMatchmakingContext);
-  const gameplayMode = mode === 'ranked' ? DEFAULT_GAMEPLAY_MODE : party.selectedGameplayMode;
-  const botFillMode: MatchmakingBotFillMode = mode === 'quick_play' && party.getBotFillEnabled(gameplayMode)
-    ? 'fill_even'
-    : 'manual';
+  const gameplayMode = mode === 'ranked' ? RANKED_GAMEPLAY_MODE : party.selectedGameplayMode;
+  const botFillMode: MatchmakingBotFillMode = mode === 'ranked'
+    ? RANKED_BOT_FILL_MODE
+    : party.getBotFillEnabled(gameplayMode)
+      ? 'fill_even'
+      : 'manual';
   const matchPerspective = mode === 'ranked'
     ? DEFAULT_MATCH_PERSPECTIVE
     : party.getActiveMatchPerspective('quick_play', gameplayMode);

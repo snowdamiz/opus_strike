@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   GOLDEN_FOUNDER_SKIN_IDS,
   RANKED_FOUNDER_REWARD_ID,
+  isRankedBattleRoyalFounderRewardEligible,
   tryGrantRankedFounderSkins,
 } from '../cosmetics/rankedFounderRewards';
 
@@ -10,6 +11,53 @@ assert.equal(GOLDEN_FOUNDER_SKIN_IDS.length, 4, 'expected one golden founder ski
 assert.ok(
   GOLDEN_FOUNDER_SKIN_IDS.every((id) => id.endsWith('.golden')),
   'founder skins should be the `.golden` variants'
+);
+
+const endedAt = new Date('2026-07-03T12:00:00.000Z');
+
+assert.equal(
+  isRankedBattleRoyalFounderRewardEligible({
+    rankedEligible: true,
+    gameplayMode: 'battle_royal',
+    winningTeam: 'br_01',
+    endedAt,
+    participant: { team: 'br_01', placement: 1, leftAt: null },
+  }),
+  true,
+  'ranked BR winner who finished should be founder-eligible'
+);
+assert.equal(
+  isRankedBattleRoyalFounderRewardEligible({
+    rankedEligible: true,
+    gameplayMode: 'battle_royal',
+    winningTeam: 'br_01',
+    endedAt,
+    participant: { team: 'br_02', placement: 2, leftAt: null },
+  }),
+  false,
+  'ranked BR losers should not be founder-eligible'
+);
+assert.equal(
+  isRankedBattleRoyalFounderRewardEligible({
+    rankedEligible: true,
+    gameplayMode: 'battle_royal',
+    winningTeam: 'br_01',
+    endedAt,
+    participant: { team: 'br_01', placement: 1, leftAt: new Date('2026-07-03T11:59:00.000Z') },
+  }),
+  false,
+  'winning-team leavers should not be founder-eligible'
+);
+assert.equal(
+  isRankedBattleRoyalFounderRewardEligible({
+    rankedEligible: true,
+    gameplayMode: 'capture_the_flag',
+    winningTeam: 'red',
+    endedAt,
+    participant: { team: 'red', leftAt: null },
+  }),
+  false,
+  'legacy ranked team-mode winners should not be founder-eligible'
 );
 
 function createFakeTx(maxClaims = 50) {

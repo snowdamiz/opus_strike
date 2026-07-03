@@ -18,6 +18,12 @@ const thirdPersonQuickPlay = createMatchmakingSettings({
   botFillMode: 'manual',
   matchPerspective: 'third_person',
 });
+const rankedSettings = createMatchmakingSettings({
+  matchMode: 'ranked',
+  gameplayMode: 'capture_the_flag',
+  botFillMode: 'manual',
+  matchPerspective: 'third_person',
+});
 
 assert.notEqual(
   getQueueStatusCacheKey('quick_play', 'team_deathmatch', 'manual', 'first_person'),
@@ -29,7 +35,7 @@ assert.notEqual(
 );
 assert.equal(
   getQueueStatusCacheKey('ranked', 'capture_the_flag', 'manual', 'third_person'),
-  'ranked:first_person'
+  'ranked:battle_royal:fill_even:first_person'
 );
 assert.equal(
   getQueueStatusCacheKey('quick_play', 'team_deathmatch', 'manual', 'third_person', 'lhr'),
@@ -37,7 +43,7 @@ assert.equal(
 );
 assert.equal(
   getQueueStatusCacheKey('ranked', 'capture_the_flag', 'manual', 'third_person', 'nrt'),
-  'ranked:first_person:nrt'
+  'ranked:battle_royal:fill_even:first_person:nrt'
 );
 
 const regionalQuickPlay = createMatchmakingSettings({
@@ -81,6 +87,21 @@ assert.equal(doesMatchmakingMetadataMatchSettings({
   botFillMode: 'fill_even',
   matchPerspective: 'third_person',
 }, thirdPersonQuickPlay), false);
+assert.equal(rankedSettings.gameplayMode, 'battle_royal');
+assert.equal(rankedSettings.botFillMode, 'fill_even');
+assert.equal(rankedSettings.matchPerspective, 'first_person');
+assert.equal(doesMatchmakingMetadataMatchSettings({
+  matchMode: 'ranked',
+  gameplayMode: 'battle_royal',
+  botFillMode: 'fill_even',
+  matchPerspective: 'first_person',
+}, rankedSettings), true);
+assert.equal(doesMatchmakingMetadataMatchSettings({
+  matchMode: 'ranked',
+  gameplayMode: 'capture_the_flag',
+  botFillMode: 'manual',
+  matchPerspective: 'first_person',
+}, rankedSettings), false);
 
 const ticket = createGameEntryTicket({
   lobbyId: 'lobby-settings',

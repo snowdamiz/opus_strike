@@ -3,6 +3,7 @@ import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_MATCH_PERSPECTIVE,
   PARTY_MAX_MEMBERS,
+  RANKED_GAMEPLAY_MODE,
   createDefaultMatchPerspectiveSettings,
   createDefaultPartyBotFillSettings,
   getMatchPerspectiveSettingMode,
@@ -150,6 +151,9 @@ export class PartyRosterRuntime {
     }
     if (isGameplayMode(input.gameplayMode)) {
       this.gameplayMode = input.gameplayMode;
+    }
+    if (this.selectedMode === 'ranked') {
+      this.gameplayMode = RANKED_GAMEPLAY_MODE;
     }
     if (this.selectedMode === 'custom' && !isCustomLobbyGameplayMode(this.gameplayMode)) {
       this.gameplayMode = DEFAULT_GAMEPLAY_MODE;
@@ -485,6 +489,9 @@ export class PartyRosterRuntime {
         throw new Error('Invalid gameplay mode');
       }
       nextGameplayMode = gameplayMode;
+    }
+    if (mode === 'ranked') {
+      nextGameplayMode = RANKED_GAMEPLAY_MODE;
     }
     if (mode === 'custom' && !isCustomLobbyGameplayMode(nextGameplayMode)) {
       throw new Error('Custom lobbies support Capture the Flag or Team Deathmatch');
