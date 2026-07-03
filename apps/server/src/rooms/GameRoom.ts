@@ -383,8 +383,11 @@ import type {
   GameEndEvent,
   GameplayMode,
   MapProfileId,
+  MapTopologyId,
   MatchMode,
   MatchPerspective,
+  PregeneratedMapArtifactId,
+  PregeneratedMapId,
   SelfMovementAck,
   SelfMovementAuthority,
   MatchSnapshotMessage,
@@ -458,6 +461,7 @@ import {
   type RateLimitRule,
 } from './rateLimiter';
 import { shouldResolveGenericSecondaryAttack } from './combatInputRouting';
+import { pregeneratedMapCatalogService } from '../maps/pregeneratedMapCatalog';
 import { validateMovementProposal, type LastSafeMovementState, type MovementBounds } from './movementValidation';
 import {
   buildPlayerMovementSnapshot,
@@ -696,6 +700,9 @@ interface CreateOptions {
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
   mapProfileId?: MapProfileId | null;
+  pregeneratedMapId?: PregeneratedMapId | null;
+  mapArtifactId?: PregeneratedMapArtifactId | null;
+  mapSelectionId?: string | null;
   botAssignments?: BotAssignment[];
   rankedEligible?: boolean;
   requiredHumanPlayers?: number;
@@ -859,6 +866,11 @@ const LOW_FREQUENCY_STATE_INTERVAL_MS = 250;
 const PLAYER_PING_BROADCAST_INTERVAL_MS = 250;
 const BATTLE_ROYAL_FIRST_SAFE_ZONE_REVEAL_BUFFER_MS = 3_000;
 const SELF_MOVEMENT_FULL_AUTHORITY_INTERVAL_MS = 100;
+const UNSTUCK_SEARCH_MAX_RADIUS = 14;
+const UNSTUCK_SEARCH_RADIUS_STEP = 1.25;
+const UNSTUCK_SEARCH_ANGLE_COUNT = 16;
+const UNSTUCK_GROUND_PROBE_UP = 3;
+const UNSTUCK_DESTINATION_Y_OFFSET = PLAYER_HEIGHT / 2 + 0.06;
 const ROOM_MOVEMENT_EXTRA_CATCHUP_SUBSTEPS_PER_TICK = SERVER_MOVEMENT_SUBSTEPS_PER_TICK * 4;
 const BOT_URGENT_PLANNING_BUDGET_PER_TICK = 8;
 const BOT_DEFERRED_PLANNING_BUDGET_PER_TICK = 4;
@@ -1006,14 +1018,27 @@ export class GameRoom extends Room<GameState> {
   private readonly playerCombatActivity = new PlayerCombatActivityTracker();
   private readonly chronosAegisShields = new ChronosAegisShieldTracker();
   private readonly devRuntime = new DevRoomRuntime();
+  private mapSelectionId: string | null = null;
   private readonly mapRuntime = new RoomMapRuntime({
     getMapConfig: () => ({
       mapSeed: this.state.mapSeed,
       mapThemeId: this.state.mapThemeId as VoxelMapTheme['id'] | null,
       mapSize: this.state.mapSize as VoxelMapSizeId | null,
       mapProfileId: this.state.mapProfileId as MapProfileId | null,
+      pregeneratedMapId: this.state.pregeneratedMapId || null,
+      mapArtifactId: this.state.mapArtifactId || null,
     }),
     getCollisionAabbs: (bounds) => this.hookshotRuntime.getAnchorWallAabbs(this.state.serverTime || Date.now(), bounds),
+    recordMapFallbackGeneration: async ({ mapId, reason }) => {
+      await pregeneratedMapCatalogService.recordMapLaunchResult({
+        mapId,
+        selectionId: this.mapSelectionId,
+        roomId: this.roomId,
+        matchId: this.matchLedger.getMatchId(),
+        ok: false,
+        error: `artifact-fallback:${reason}`,
+      });
+    },
   });
   
   private readonly clientRegistry = new RoomClientRegistry<Client>();
@@ -1183,6 +1208,11 @@ export class GameRoom extends Room<GameState> {
       matchMode: this.matchMode,
       mapSeed: this.state.mapSeed,
       mapThemeId: this.state.mapThemeId as VoxelMapTheme['id'],
+      mapSize: this.state.mapSize as VoxelMapSizeId,
+      mapProfileId: this.state.mapProfileId as MapProfileId,
+      mapTopologyId: this.getMapManifest().topologyId as MapTopologyId,
+      mapGeneratorVersion: this.getMapManifest().version,
+      pregeneratedMapId: this.state.pregeneratedMapId || null,
       rankedEligible: this.rankedEligibilityCandidate,
     }),
     getDurableUserId: (playerId) => this.getDurableUserId(playerId),
@@ -1204,6 +1234,7 @@ export class GameRoom extends Room<GameState> {
   private battleRoyalSafeZone: BattleRoyalSafeZoneState | null = null;
   private battleRoyalDrop: BattleRoyalDropState | null = null;
   private readonly battleRoyalPlacement = new BattleRoyalPlacementTracker();
+  private readonly battleRoyalTeamSummarySent = new Set<Team>();
   private nextBattleRoyalSafeZoneDamageAt = 0;
   private matchMode: MatchMode = 'custom';
   private gameplayMode: GameplayMode = DEFAULT_GAMEPLAY_MODE;
@@ -1464,9 +1495,21 @@ export class GameRoom extends Room<GameState> {
     this.state.mapThemeId = options.mapThemeId ?? getVoxelMapTheme(this.state.mapSeed).id;
     this.state.mapSize = normalizeVoxelMapSizeId(options.mapSize);
     this.state.mapProfileId = options.mapProfileId ?? getGameplayModeRules(this.gameplayMode).mapProfileId;
+    this.state.pregeneratedMapId = options.pregeneratedMapId ?? '';
+    this.state.mapArtifactId = options.mapArtifactId ?? '';
+    this.mapSelectionId = options.mapSelectionId ?? null;
     const mapManifestStartedAt = performance.now();
     try {
       await this.refreshMapManifestAsync();
+      if (this.state.pregeneratedMapId) {
+        await pregeneratedMapCatalogService.recordMapLaunchResult({
+          mapId: this.state.pregeneratedMapId,
+          selectionId: this.mapSelectionId,
+          roomId: this.roomId,
+          matchId: this.matchLedger.getMatchId(),
+          ok: true,
+        });
+      }
     } catch (error) {
       loggers.room.error('Game room map manifest setup failed', {
         roomId: this.roomId,
@@ -1475,9 +1518,21 @@ export class GameRoom extends Room<GameState> {
         mapSeed: this.state.mapSeed,
         mapSize: this.state.mapSize,
         mapProfileId: this.state.mapProfileId,
+        pregeneratedMapId: this.state.pregeneratedMapId || null,
+        mapArtifactId: this.state.mapArtifactId || null,
         durationMs: Math.round(performance.now() - mapManifestStartedAt),
         error: error instanceof Error ? error.message : String(error),
       });
+      if (this.state.pregeneratedMapId) {
+        await pregeneratedMapCatalogService.recordMapLaunchResult({
+          mapId: this.state.pregeneratedMapId,
+          selectionId: this.mapSelectionId,
+          roomId: this.roomId,
+          matchId: this.matchLedger.getMatchId(),
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       throw error;
     }
     const mapManifestDurationMs = performance.now() - mapManifestStartedAt;
@@ -1491,6 +1546,8 @@ export class GameRoom extends Room<GameState> {
       mapThemeId: this.state.mapThemeId,
       mapSize: this.state.mapSize,
       mapProfileId: this.state.mapProfileId,
+      pregeneratedMapId: this.state.pregeneratedMapId || null,
+      mapArtifactId: this.state.mapArtifactId || null,
       durationMs: Math.round(mapManifestDurationMs),
       renderableChunkCount: mapManifest.stats.renderableChunkCount,
       colliderCount: mapManifest.stats.colliderCount,
@@ -1622,6 +1679,10 @@ export class GameRoom extends Room<GameState> {
 
     this.onRateLimitedMessage('matchSceneReady', GAME_MESSAGE_RATE_LIMITS.matchSceneReady, (client, data: unknown) => {
       this.handleMatchSceneReady(client, data);
+    });
+
+    this.onRateLimitedMessage('requestUnstuck', GAME_MESSAGE_RATE_LIMITS.unstuck, (client) => {
+      this.handleUnstuckRequest(client);
     });
 
     this.onRateLimitedMessage('chat', GAME_MESSAGE_RATE_LIMITS.chat, (client, data: unknown) => {
@@ -1889,6 +1950,15 @@ export class GameRoom extends Room<GameState> {
       this.setPlayerHero(player, entryTicket.selectedHero, entryTicket.selectedSkinId);
     }
     if (
+      this.state.phase === 'playing' &&
+      isBattleRoyalMode(this.gameplayMode) &&
+      this.hasBattleRoyalTeamCompleted(player.team)
+    ) {
+      player.state = 'dead';
+      player.respawnTime = 0;
+      return player;
+    }
+    if (
       this.state.phase === 'deployment' &&
       isBattleRoyalMode(this.gameplayMode) &&
       player.heroId
@@ -1931,7 +2001,7 @@ export class GameRoom extends Room<GameState> {
     const oldPlayer = this.state.players.get(existingSessionId);
     void this.removeVoiceParticipantForPlayer(existingSessionId, normalizeVoiceTeam(oldPlayer?.team), 'duplicate_session');
     if (oldPlayer) {
-      this.markMatchParticipantLeft(oldPlayer);
+      this.markMatchParticipantLeftIfIncomplete(oldPlayer);
     }
     if (oldPlayer?.hasFlag) {
       this.dropFlag(oldPlayer);
@@ -1980,7 +2050,7 @@ export class GameRoom extends Room<GameState> {
       this.dropFlag(player);
     }
     if (player) {
-      this.markMatchParticipantLeft(player);
+      this.markMatchParticipantLeftIfIncomplete(player);
       this.battleRoyalDownedRuntime.clearPlayer(
         player,
         Date.now(),
@@ -2035,6 +2105,11 @@ export class GameRoom extends Room<GameState> {
 
   onDispose() {
     loggers.room.info('Room disposing', this.roomId);
+    void pregeneratedMapCatalogService.releaseMapAfterLaunch({
+      mapId: this.state?.pregeneratedMapId || null,
+      roomId: this.roomId,
+      matchId: this.matchLedger.getMatchId(),
+    });
     this.clearMatchStartCancelTimer();
     this.clearMatchCancelDisconnectTimer();
     this.eventLoopDelay?.disable();
@@ -2682,6 +2757,8 @@ export class GameRoom extends Room<GameState> {
       mapThemeId: this.state.mapThemeId as VoxelMapTheme['id'],
       mapSize: this.state.mapSize as VoxelMapSizeId,
       mapProfileId: this.state.mapProfileId as MapProfileId,
+      pregeneratedMapId: this.state.pregeneratedMapId || null,
+      mapArtifactId: this.state.mapArtifactId || null,
       redScore: this.state.redTeam.score,
       blueScore: this.state.blueTeam.score,
       redFlag: getFlagSync(this.state, 'red'),
@@ -2752,6 +2829,63 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
+  private buildBattleRoyalTeamEliminatedEvent(
+    team: Team,
+    placement: number,
+    endedAt: number
+  ): GameEndEvent {
+    const ledger = this.matchLedger.getLedger();
+    const startedAt = ledger?.startedAt.getTime()
+      ?? (this.state.roundStartTime || endedAt);
+    const summary = this.matchSummary.buildGameEndEvent({
+      matchMode: this.matchMode,
+      gameplayMode: this.gameplayMode,
+      matchPerspective: this.matchPerspective,
+      winningTeam: null,
+      finalScore: {
+        red: this.state.redTeam.score,
+        blue: this.state.blueTeam.score,
+      },
+      matchId: this.matchLedger.getMatchId(),
+      startedAt,
+      endedAt,
+      players: this.state.players,
+      mapThemeId: this.state.mapThemeId,
+      goldenBiomeRewardLamports: '0',
+    });
+
+    summary.completionReason = 'team_eliminated';
+    summary.completedTeam = team;
+    summary.completedTeamPlacement = placement;
+    summary.activeTeamCount = this.battleRoyalPlacement.activeTeamCount || null;
+
+    for (const player of summary.players) {
+      const teamPlacement = this.battleRoyalPlacement.getTeamPlacement(player.team);
+      player.placement = teamPlacement?.placement ?? player.placement ?? null;
+      if (player.team === team) {
+        player.outcome = 'loss';
+        player.placement = placement;
+      }
+    }
+
+    return summary;
+  }
+
+  private sendBattleRoyalTeamEliminatedSummary(team: Team, now = Date.now()): void {
+    if (this.battleRoyalTeamSummarySent.has(team)) return;
+    const teamPlacement = this.battleRoyalPlacement.getTeamPlacement(team);
+    if (!teamPlacement) return;
+
+    this.battleRoyalTeamSummarySent.add(team);
+    const summary = this.buildBattleRoyalTeamEliminatedEvent(team, teamPlacement.placement, now);
+
+    for (const client of this.clients) {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || player.team !== team || isObserverPlayer(player)) continue;
+      this.sendTrackedAfterGameplayWork(client, 'gameEnd', summary);
+    }
+  }
+
   private updateMetadata(): void {
     const counts = getRoomPopulationCounts({
       players: this.state.players.values(),
@@ -2771,6 +2905,8 @@ export class GameRoom extends Room<GameState> {
       mapThemeId: this.state.mapThemeId,
       mapSize: this.state.mapSize,
       mapProfileId: this.state.mapProfileId,
+      pregeneratedMapId: this.state.pregeneratedMapId || null,
+      mapArtifactId: this.state.mapArtifactId || null,
       counts,
       maxPlayers: this.config.maxPlayers,
       mapRenderableChunkCount: mapStats.renderableChunkCount,
@@ -2891,6 +3027,8 @@ export class GameRoom extends Room<GameState> {
       mapThemeId: this.state.mapThemeId,
       mapSize: this.state.mapSize as VoxelMapSizeId,
       mapProfileId: this.state.mapProfileId as MapProfileId,
+      pregeneratedMapId: this.state.pregeneratedMapId || null,
+      mapArtifactId: this.state.mapArtifactId || null,
     }));
   }
 
@@ -3763,6 +3901,7 @@ export class GameRoom extends Room<GameState> {
 
   private registerMatchParticipant(player: Player, now = Date.now()) {
     if (isObserverPlayer(player)) return null;
+    if (this.hasBattleRoyalTeamCompleted(player.team)) return null;
     return this.matchLedger.registerParticipant(player, now);
   }
 
@@ -3781,6 +3920,19 @@ export class GameRoom extends Room<GameState> {
 
   private markMatchParticipantLeft(player: Player, now = Date.now()): void {
     this.matchLedger.markParticipantLeft(player, now);
+  }
+
+  private markMatchParticipantLeftIfIncomplete(player: Player, now = Date.now()): void {
+    if (this.hasBattleRoyalTeamCompleted(player.team)) return;
+    this.markMatchParticipantLeft(player, now);
+  }
+
+  private hasBattleRoyalTeamCompleted(team: string | null | undefined): boolean {
+    return (
+      isBattleRoyalMode(this.gameplayMode) &&
+      isTeam(team) &&
+      this.battleRoyalPlacement.hasTeamPlacement(team)
+    );
   }
 
   private recordMatchDeath(victim: Player, killer: Player | null): void {
@@ -9384,6 +9536,11 @@ export class GameRoom extends Room<GameState> {
     this.state.mapThemeId = mapManifest.themeId;
     this.state.mapSize = mapManifest.mapSize;
     this.state.mapProfileId = mapManifest.profileId ?? getGameplayModeRules(this.gameplayMode).mapProfileId;
+    const loadedPregeneratedMap = this.mapRuntime.getLoadedPregeneratedMapSummary();
+    if (loadedPregeneratedMap) {
+      this.state.pregeneratedMapId = loadedPregeneratedMap.id;
+      this.state.mapArtifactId = loadedPregeneratedMap.artifactId;
+    }
     this.powerupBoosts.clearAll();
     this.powerupPickups.reset(mapManifest, 0);
     this.hookshotRuntime.clearAnchorWalls();
@@ -9443,6 +9600,115 @@ export class GameRoom extends Room<GameState> {
 
   private isFiniteVec3(position: { x: number; y: number; z: number }): boolean {
     return Number.isFinite(position.x) && Number.isFinite(position.y) && Number.isFinite(position.z);
+  }
+
+  private resolveUnstuckCandidate(
+    collisionWorld: MovementCollisionWorld,
+    current: PlainVec3,
+    x: number,
+    z: number
+  ): PlainVec3 | null {
+    const clamped = this.clampToPlayableMap({ x, y: current.y, z });
+    if (!this.isFiniteVec3(clamped)) return null;
+
+    const groundY = this.getProceduralGroundY({
+      x: clamped.x,
+      y: current.y + UNSTUCK_GROUND_PROBE_UP,
+      z: clamped.z,
+    });
+    if (groundY === null || !Number.isFinite(groundY)) return null;
+
+    const candidate = this.clampToPlayableMap({
+      x: clamped.x,
+      y: groundY + UNSTUCK_DESTINATION_Y_OFFSET,
+      z: clamped.z,
+    });
+    if (!this.isFiniteVec3(candidate)) return null;
+    return canCapsuleOccupy(collisionWorld, candidate, PLAYER_HEIGHT, PLAYER_RADIUS) ? candidate : null;
+  }
+
+  private resolveUnstuckPosition(player: Player): PlainVec3 | null {
+    const collisionWorld = this.getMovementCollisionWorld();
+    const current = vec3SchemaToPlain(player.position);
+    const currentCandidate = this.resolveUnstuckCandidate(collisionWorld, current, current.x, current.z);
+    if (currentCandidate) return currentCandidate;
+
+    const authority = this.getMovementAuthority(player.id);
+    if (authority.lastSafe) {
+      const lastSafeCandidate = this.resolveUnstuckCandidate(
+        collisionWorld,
+        authority.lastSafe.position,
+        authority.lastSafe.position.x,
+        authority.lastSafe.position.z
+      );
+      if (lastSafeCandidate) return lastSafeCandidate;
+    }
+
+    const startAngle = Number.isFinite(player.lookYaw) ? player.lookYaw : 0;
+    for (
+      let radius = UNSTUCK_SEARCH_RADIUS_STEP;
+      radius <= UNSTUCK_SEARCH_MAX_RADIUS + 0.001;
+      radius += UNSTUCK_SEARCH_RADIUS_STEP
+    ) {
+      for (let step = 0; step < UNSTUCK_SEARCH_ANGLE_COUNT; step++) {
+        const angle = startAngle + (step / UNSTUCK_SEARCH_ANGLE_COUNT) * Math.PI * 2;
+        const candidate = this.resolveUnstuckCandidate(
+          collisionWorld,
+          current,
+          current.x + Math.cos(angle) * radius,
+          current.z + Math.sin(angle) * radius
+        );
+        if (candidate) return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  private applyUnstuckPosition(player: Player, position: PlainVec3, client: Client): void {
+    player.position.x = position.x;
+    player.position.y = position.y;
+    player.position.z = position.z;
+    player.velocity.x = 0;
+    player.velocity.y = 0;
+    player.velocity.z = 0;
+    player.movement.isGrounded = true;
+    player.movement.isSprinting = false;
+    player.movement.isCrouching = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    player.movement.isGrappling = false;
+    player.movement.isJetpacking = false;
+    player.movement.isGliding = false;
+    player.movement.chronosAscendantStartY = 0;
+
+    this.resetPlayerPressState(player.id);
+    this.clearHookshotGrapple(player.id);
+    this.clearHookshotDragPull(player.id);
+    this.clearHookshotDragPullsInvolving(player.id);
+    this.markMovementBarrier(player.id, 'teleport');
+    this.sendSelfMovementAuthority(player, client, 'teleport');
+  }
+
+  private handleUnstuckRequest(client: Client): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || isObserverPlayer(player) || player.state !== 'alive') return;
+    if (isBattleRoyalMode(this.gameplayMode) && this.state.phase === 'deployment') return;
+
+    const destination = this.resolveUnstuckPosition(player);
+    if (destination) {
+      this.applyUnstuckPosition(player, destination, client);
+      return;
+    }
+
+    this.resetPlayerPressState(player.id);
+    this.clearHookshotGrapple(player.id);
+    this.clearHookshotDragPull(player.id);
+    this.clearHookshotDragPullsInvolving(player.id);
+    this.placePlayerAtSpawn(player, 'teleport');
+    this.sendSelfMovementAuthority(player, client, 'teleport');
   }
 
   private disablePlayerSkills(player: Player) {
@@ -9643,6 +9909,9 @@ export class GameRoom extends Room<GameState> {
     this.state.mapThemeId = patch.mapThemeId;
     this.state.mapSize = patch.mapSize;
     this.state.mapProfileId = getGameplayModeRules(this.gameplayMode).mapProfileId;
+    this.state.pregeneratedMapId = '';
+    this.state.mapArtifactId = '';
+    this.mapSelectionId = null;
     this.state.redTeam.score = patch.redScore;
     this.state.blueTeam.score = patch.blueScore;
   }
@@ -9724,6 +9993,8 @@ export class GameRoom extends Room<GameState> {
         mapThemeId: this.state.mapThemeId,
         mapSize: this.state.mapSize as VoxelMapSizeId,
         mapProfileId: this.state.mapProfileId as MapProfileId,
+        pregeneratedMapId: this.state.pregeneratedMapId || null,
+        mapArtifactId: this.state.mapArtifactId || null,
         position: vec3SchemaToPlain(player.position),
         movementEpoch: authority.movementEpoch,
         ackSeq: authority.lastProcessedSeq,
@@ -9928,6 +10199,7 @@ export class GameRoom extends Room<GameState> {
       })
       : null;
     this.nextBattleRoyalSafeZoneDamageAt = (this.battleRoyalSafeZone?.phaseStartedAt ?? now) + 1000;
+    this.battleRoyalTeamSummarySent.clear();
     if (isBattleRoyalMode(this.gameplayMode)) {
       this.battleRoyalPlacement.initialize(this.state.players.values(), now);
     } else {
@@ -9974,7 +10246,10 @@ export class GameRoom extends Room<GameState> {
 
   private updateBattleRoyalPlacement(now = Date.now()): void {
     if (!isBattleRoyalMode(this.gameplayMode) || this.state.phase !== 'playing') return;
-    this.battleRoyalPlacement.update(this.state.players.values(), now);
+    const newlyCompletedTeams = this.battleRoyalPlacement.update(this.state.players.values(), now);
+    for (const team of newlyCompletedTeams) {
+      this.sendBattleRoyalTeamEliminatedSummary(team, now);
+    }
   }
 
   private finalizeBattleRoyalPlacement(winningTeam: Team | null, now = Date.now()): void {
@@ -10249,6 +10524,13 @@ export class GameRoom extends Room<GameState> {
   }
 
   private resetRoomForNewMap(mapSeed: number): void {
+    if (this.state.pregeneratedMapId) {
+      void pregeneratedMapCatalogService.releaseMapAfterLaunch({
+        mapId: this.state.pregeneratedMapId,
+        roomId: this.roomId,
+        matchId: this.matchLedger.getMatchId(),
+      });
+    }
     this.battleRoyalDownedRuntime.clearAll(this.state.players.values(), Date.now());
     this.applyPostGameResetStatePatch(buildPostGameResetStatePatch(mapSeed));
     this.refreshMapManifest();
@@ -10257,6 +10539,7 @@ export class GameRoom extends Room<GameState> {
     this.state.players.forEach(resetPostGamePlayer);
     this.matchLedger.clear();
     this.battleRoyalPlacement.clear();
+    this.battleRoyalTeamSummarySent.clear();
     this.updateMetadata();
   }
 

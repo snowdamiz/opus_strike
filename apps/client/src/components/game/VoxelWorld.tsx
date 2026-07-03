@@ -7,6 +7,7 @@ interface VoxelWorldProps {
   seed?: number;
   themeId?: VoxelMapTheme['id'] | null;
   mapProfileId?: MapProfileId | null;
+  pregeneratedMapId?: string | null;
   enablePhysics?: boolean;
   shadowsEnabled: boolean;
   dressingShadows: boolean;
@@ -24,6 +25,7 @@ export function VoxelWorld({
   seed,
   themeId,
   mapProfileId,
+  pregeneratedMapId,
   enablePhysics = true,
   shadowsEnabled,
   dressingShadows,
@@ -42,6 +44,7 @@ export function VoxelWorld({
         seed={seed}
         themeId={themeId}
         mapProfileId={mapProfileId}
+        pregeneratedMapId={pregeneratedMapId}
         enablePhysics={enablePhysics}
         shadowsEnabled={shadowsEnabled}
         dressingShadows={dressingShadows}

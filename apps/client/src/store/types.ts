@@ -11,6 +11,7 @@ import type {
   MapProfileId,
   MapTopologyId,
   MatchMode,
+  PregeneratedMapStats,
   PublicRankSnapshot,
   PowerupPickupRuntimeState,
   SafeZoneSnapshot,
@@ -55,6 +56,11 @@ export interface MapVoteOption {
   topologyId?: MapTopologyId;
   preview?: BlueprintPreview;
   score?: number;
+  pregeneratedMapId?: string | null;
+  mapArtifactId?: string | null;
+  catalogTags?: string[];
+  stats?: PregeneratedMapStats;
+  generatorVersion?: number | null;
 }
 
 export interface MapVoteRecord {

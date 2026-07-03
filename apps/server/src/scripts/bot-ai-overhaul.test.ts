@@ -394,7 +394,27 @@ function testBattleRoyalSafeZoneIntentRotatesBeforeFighting() {
 
   assert.equal(blackboard.safeZone?.outside, true);
   assert.equal(intent.type, 'rotate_safe_zone');
-  assert.deepEqual(intent.targetPosition, { x: zone.nextCenter.x, y: bot.position.y, z: zone.nextCenter.z });
+  assert.equal(intent.targetPosition.y, bot.position.y);
+  assert.ok(intent.targetPosition.x > zone.nextCenter.x + 2, `expected rotation to avoid circle center, got ${JSON.stringify(intent.targetPosition)}`);
+  assert.ok(Math.hypot(intent.targetPosition.x - zone.nextCenter.x, intent.targetPosition.z - zone.nextCenter.z) < zone.nextRadius);
+}
+
+function testBattleRoyalSafeZoneRotationStaysNearHumanSquadmate() {
+  const bot = player({ id: 'zone-support-bot', team: 'br_01', heroId: 'hookshot', x: 36, z: 0 });
+  const humanAlly = player({ id: 'human-squadmate', team: 'br_01', heroId: 'phantom', x: 6, z: 0, isBot: false });
+  const zone = safeZone({ radius: 18, nextRadius: 10 });
+  const blackboard = blackboardFor(bot, [bot, humanAlly], {
+    gameplayMode: 'battle_royal',
+    safeZone: zone,
+    visibleEnemyIds: [],
+    losEnemyIds: [],
+  });
+  const intent = scoreBotIntents(bot, blackboard, getBotSkillProfile('hard'));
+
+  assert.equal(intent.type, 'rotate_safe_zone');
+  assert.equal(intent.targetPlayerId, humanAlly.id);
+  assertClose(intent.targetPosition.x, humanAlly.position.x, 'rotation should stay near human squadmate');
+  assertClose(intent.targetPosition.z, humanAlly.position.z, 'rotation should stay near human squadmate');
 }
 
 function testBattleRoyalReviveAndFinishIntents() {
@@ -483,6 +503,51 @@ function testBattleRoyalTacticsAssignHumanSupportBeforeFinish() {
   const intent = scoreBotIntents(supportBot, board, getBotSkillProfile('normal'));
   assert.equal(intent.type, 'peel_for_ally');
   assert.equal(intent.targetPlayerId, humanAlly.id);
+}
+
+function testBattleRoyalHumanSquadAssignsAllAvailableBotsToSupport() {
+  const bots = [
+    player({ id: 'support-a', team: 'br_01', heroId: 'chronos', x: 0, z: 0 }),
+    player({ id: 'support-b', team: 'br_01', heroId: 'hookshot', x: 2, z: 0 }),
+    player({ id: 'support-c', team: 'br_01', heroId: 'blaze', x: -2, z: 0 }),
+  ];
+  const humanAlly = player({ id: 'human-squadmate', team: 'br_01', heroId: 'phantom', x: 34, z: 0, isBot: false });
+  const downedEnemy = player({ id: 'downed-enemy', team: 'br_02', heroId: 'blaze', x: 6, z: 0, state: 'downed' });
+  const tactics = buildTeamTactics({
+    gameplayMode: 'battle_royal',
+    now: NOW,
+    revision: 1,
+    players: [...bots, humanAlly, downedEnemy],
+    flags: flags(),
+  })[humanAlly.team];
+
+  for (const bot of bots) {
+    assert.equal(tactics.assignments[bot.id].job, 'support_cluster');
+    assert.equal(tactics.assignments[bot.id].targetPlayerId, humanAlly.id);
+    assert.equal(tactics.assignments[bot.id].reason, 'battle royal human squad support');
+  }
+}
+
+function testBattleRoyalBotOnlySquadsShareFocusTarget() {
+  const bots = [
+    player({ id: 'bot-a', team: 'br_01', heroId: 'phantom', x: 0, z: -18 }),
+    player({ id: 'bot-b', team: 'br_01', heroId: 'hookshot', x: 0, z: 0 }),
+    player({ id: 'bot-c', team: 'br_01', heroId: 'blaze', x: 0, z: 18 }),
+  ];
+  const woundedEnemy = player({ id: 'wounded-enemy', team: 'br_02', heroId: 'chronos', x: 54, z: 0, health: 35 });
+  const healthyEnemy = player({ id: 'healthy-enemy', team: 'br_03', heroId: 'hookshot', x: 20, z: 20 });
+  const tactics = buildTeamTactics({
+    gameplayMode: 'battle_royal',
+    now: NOW,
+    revision: 1,
+    players: [...bots, woundedEnemy, healthyEnemy],
+    flags: flags(),
+  })[bots[0].team];
+
+  for (const bot of bots) {
+    assert.equal(tactics.assignments[bot.id].job, 'fight');
+    assert.equal(tactics.assignments[bot.id].targetPlayerId, woundedEnemy.id);
+  }
 }
 
 function testBattleRoyalDisengagesBadThirdPartyFight() {
@@ -1778,9 +1843,12 @@ testBattleRoyalTacticsUseAllEnemySquads();
 testRankedBattleRoyalProfileIsStrongerThanHard();
 testBattleRoyalAwarenessExtendsFocusPressure();
 testBattleRoyalSafeZoneIntentRotatesBeforeFighting();
+testBattleRoyalSafeZoneRotationStaysNearHumanSquadmate();
 testBattleRoyalReviveAndFinishIntents();
 testBattleRoyalBotsPrioritizeHumanRevives();
 testBattleRoyalTacticsAssignHumanSupportBeforeFinish();
+testBattleRoyalHumanSquadAssignsAllAvailableBotsToSupport();
+testBattleRoyalBotOnlySquadsShareFocusTarget();
 testBattleRoyalDisengagesBadThirdPartyFight();
 testBattleRoyalLowHealthRetreatMovesAwayFromThreat();
 testIntentScoring();

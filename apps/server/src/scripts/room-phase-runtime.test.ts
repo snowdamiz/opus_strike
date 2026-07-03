@@ -249,6 +249,8 @@ import {
       mapThemeId: 'verdant',
       mapSize: 'medium',
       mapProfileId: 'ctf_arena',
+      pregeneratedMapId: null,
+      mapArtifactId: null,
     }
   );
 }

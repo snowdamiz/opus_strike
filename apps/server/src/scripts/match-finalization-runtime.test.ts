@@ -33,6 +33,11 @@ function ledger(input: Partial<MatchPersistenceLedger> = {}): MatchPersistenceLe
     matchMode: 'ranked',
     mapSeed: 123,
     mapThemeId: 'forest' as VoxelMapTheme['id'],
+    mapSize: 'medium',
+    mapProfileId: 'ctf_arena',
+    mapTopologyId: 'lane_triad',
+    mapGeneratorVersion: 13,
+    pregeneratedMapId: 'pgmap_finalization',
     rankedEligible: true,
     startedAt: new Date('2026-06-10T10:00:00.000Z'),
     endedAt: null,
@@ -167,6 +172,8 @@ async function run(): Promise<void> {
   assert.equal(currentLedger.redScore, 3);
   assert.equal(currentLedger.winningTeam, 'red');
   assert.equal(calls.persisted.length, 1);
+  assert.equal((calls.persisted[0] as { pregeneratedMapId: string }).pregeneratedMapId, 'pgmap_finalization');
+  assert.equal((calls.persisted[0] as { mapGeneratorVersion: number }).mapGeneratorVersion, 13);
   assert.equal((calls.persisted[0] as { rankedOutcomeStatus: string }).rankedOutcomeStatus, 'applied');
   assert.equal((calls.persisted[0] as { antiCheatReviewRequired: boolean }).antiCheatReviewRequired, true);
   assert.equal(calls.integrity.length, 1);

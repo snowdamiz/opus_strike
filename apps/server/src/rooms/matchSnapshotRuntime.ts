@@ -7,6 +7,8 @@ import {
   type MapProfileId,
   type MatchPerspective,
   type MatchSnapshotMessage,
+  type PregeneratedMapArtifactId,
+  type PregeneratedMapId,
   type SafeZoneSnapshot,
   type VoxelMapSizeId,
   type VoxelMapTheme,
@@ -24,6 +26,8 @@ export interface BuildMatchSnapshotInput {
   mapThemeId: VoxelMapTheme['id'] | null;
   mapSize: VoxelMapSizeId | null;
   mapProfileId?: MapProfileId | null;
+  pregeneratedMapId?: PregeneratedMapId | null;
+  mapArtifactId?: PregeneratedMapArtifactId | null;
   redScore: number;
   blueScore: number;
   redFlag: FlagSync;
@@ -47,6 +51,8 @@ export class MatchSnapshotRuntime {
       mapThemeId: input.mapThemeId,
       mapSize: input.mapSize,
       mapProfileId: input.mapProfileId ?? null,
+      pregeneratedMapId: input.pregeneratedMapId ?? null,
+      mapArtifactId: input.mapArtifactId ?? null,
       redScore: input.redScore,
       blueScore: input.blueScore,
       redFlag: input.redFlag,

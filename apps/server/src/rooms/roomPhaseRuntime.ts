@@ -2,6 +2,8 @@ import type {
   GamePhase,
   GameplayMode,
   MapProfileId,
+  PregeneratedMapArtifactId,
+  PregeneratedMapId,
   RoundEndEvent,
   VoxelMapSizeId,
 } from '@voxel-strike/shared';
@@ -161,6 +163,8 @@ export function buildPhaseChangePayload(input: {
   mapThemeId: string;
   mapSize: VoxelMapSizeId;
   mapProfileId?: MapProfileId;
+  pregeneratedMapId?: PregeneratedMapId | null;
+  mapArtifactId?: PregeneratedMapArtifactId | null;
 }): {
   phase: GamePhase;
   endTime: number;
@@ -168,6 +172,8 @@ export function buildPhaseChangePayload(input: {
   mapThemeId: string;
   mapSize: VoxelMapSizeId;
   mapProfileId: MapProfileId;
+  pregeneratedMapId: PregeneratedMapId | null;
+  mapArtifactId: PregeneratedMapArtifactId | null;
 } {
   return {
     phase: input.phase,
@@ -176,6 +182,8 @@ export function buildPhaseChangePayload(input: {
     mapThemeId: input.mapThemeId,
     mapSize: input.mapSize,
     mapProfileId: input.mapProfileId ?? 'ctf_arena',
+    pregeneratedMapId: input.pregeneratedMapId ?? null,
+    mapArtifactId: input.mapArtifactId ?? null,
   };
 }
 

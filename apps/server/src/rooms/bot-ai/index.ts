@@ -299,7 +299,6 @@ export interface BotSafeZoneFact {
   outside: boolean;
   nextOutside: boolean;
   pressure: number;
-  rotateTarget: PlainVec3;
   edgeHoldTarget: PlainVec3;
 }
 
@@ -716,8 +715,10 @@ export const BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX = 'ranked-battle-royal';
 
 const BATTLE_ROYAL_BOT_REVIVE_RANGE = 42;
 const BATTLE_ROYAL_HUMAN_REVIVE_RANGE = 58;
-const BATTLE_ROYAL_HUMAN_SUPPORT_RANGE = 76;
+const BATTLE_ROYAL_HUMAN_SUPPORT_RANGE = 140;
 const BATTLE_ROYAL_SQUAD_COHESION_MIN_DISTANCE = 18;
+const BATTLE_ROYAL_SAFE_ZONE_ROTATION_MARGIN = 7;
+const BATTLE_ROYAL_HUMAN_SAFE_ZONE_ROTATION_MARGIN = 3;
 
 export function getBotAwarenessRange(gameplayMode: GameplayMode): number {
   return gameplayMode === 'battle_royal' ? BOT_BATTLE_ROYAL_AWARENESS_RANGE : BOT_AWARENESS_RANGE;
@@ -1791,6 +1792,23 @@ function selectEliminationPressureTarget(
     : nearestEnemy;
 }
 
+function selectBattleRoyalSquadPressureTarget(
+  bot: BotPlayerSnapshot,
+  enemies: readonly BotPlayerSnapshot[],
+  squadFocusTarget: BotPlayerSnapshot,
+  threatClusters: readonly BotThreatCluster[],
+  awarenessRange = BOT_BATTLE_ROYAL_AWARENESS_RANGE
+): BotPlayerSnapshot {
+  const nearestEnemy = nearestPlayer(enemies, bot.position);
+  if (nearestEnemy && distance2D(bot.position, nearestEnemy.position) <= 8) return nearestEnemy;
+
+  const focusDistance = distance2D(bot.position, squadFocusTarget.position);
+  if (focusDistance <= awarenessRange + 24) return squadFocusTarget;
+
+  return selectEliminationPressureTarget(bot, enemies, [squadFocusTarget], threatClusters, awarenessRange)
+    ?? squadFocusTarget;
+}
+
 function assignmentSuitability(bot: BotPlayerSnapshot, role: BotStrategicRole, targetPosition?: PlainVec3): number {
   const personality = getBotPersonality(bot);
   let score = 0;
@@ -1898,8 +1916,8 @@ function buildEliminationTacticsForTeam(input: BotTeamTacticsInput, team: Team):
     defenders: 0,
     escorts: 0,
     interceptors: 0,
-    support: downedAllies.length > 0 || humanSupportTarget || lowHealthAllies.length > 0 ? 1 : 0,
-    fighters: bots.length,
+    support: humanSupportTarget ? bots.length : downedAllies.length > 0 || lowHealthAllies.length > 0 ? 1 : 0,
+    fighters: humanSupportTarget ? 0 : bots.length,
   };
   const assignments: Record<string, BotRoleAssignment> = {};
   const assigned = new Set<string>();
@@ -1910,6 +1928,9 @@ function buildEliminationTacticsForTeam(input: BotTeamTacticsInput, team: Team):
   const pressureTargets = streamerDeathmatchTargets.length > 0
     ? streamerDeathmatchTargets
     : rankEliminationFocusTargets(enemies, threatClusters);
+  const battleRoyalSquadFocusTarget = isBattleRoyal && !humanSupportTarget
+    ? pressureTargets[0] ?? null
+    : null;
 
   const downedAllyTarget = isBattleRoyal
     ? selectBattleRoyalDownedAllyTarget(downedAllies, sortedBots, enemies)
@@ -1929,20 +1950,23 @@ function buildEliminationTacticsForTeam(input: BotTeamTacticsInput, team: Team):
   }
 
   if (humanSupportTarget) {
-    assignBestBot(
-      sortedBots,
-      assigned,
-      'support',
-      'support_cluster',
-      humanSupportTarget.position,
-      humanSupportTarget.id,
-      'battle royal human squad support',
-      780,
-      assignments
-    );
+    while (assigned.size < sortedBots.length) {
+      const assignedBot = assignBestBot(
+        sortedBots,
+        assigned,
+        'support',
+        'support_cluster',
+        humanSupportTarget.position,
+        humanSupportTarget.id,
+        'battle royal human squad support',
+        780,
+        assignments
+      );
+      if (!assignedBot) break;
+    }
   }
 
-  if (lowHealthAllies.length > 0) {
+  if (lowHealthAllies.length > 0 && !humanSupportTarget) {
     assignBestBot(
       sortedBots,
       assigned,
@@ -1962,7 +1986,7 @@ function buildEliminationTacticsForTeam(input: BotTeamTacticsInput, team: Team):
       a.id.localeCompare(b.id)
     ))[0] ?? null
     : null;
-  if (nearestDownedEnemy && isBattleRoyal) {
+  if (nearestDownedEnemy && isBattleRoyal && !humanSupportTarget) {
     assignBestBot(
       sortedBots,
       assigned,
@@ -1983,7 +2007,9 @@ function buildEliminationTacticsForTeam(input: BotTeamTacticsInput, team: Team):
     const nearestEnemy = nearestPlayer(enemies, bot.position);
     const focusTarget = streamerDeathmatch
       ? selectStreamerDeathmatchTarget(bot, enemies, pressureTargets, fightAssignmentIndex)
-      : selectEliminationPressureTarget(bot, enemies, pressureTargets, threatClusters, getBotAwarenessRange(input.gameplayMode));
+      : battleRoyalSquadFocusTarget
+        ? selectBattleRoyalSquadPressureTarget(bot, enemies, battleRoyalSquadFocusTarget, threatClusters, getBotAwarenessRange(input.gameplayMode))
+        : selectEliminationPressureTarget(bot, enemies, pressureTargets, threatClusters, getBotAwarenessRange(input.gameplayMode));
     fightAssignmentIndex++;
 
     const targetPosition = focusTarget?.position
@@ -2423,18 +2449,6 @@ function safeZoneDistanceToBoundary(
   return radius - Math.hypot(position.x - center.x, position.z - center.z);
 }
 
-function safeZonePointToward(
-  from: PlainVec3,
-  target: Pick<PlainVec3, 'x' | 'z'>,
-  fallbackY = from.y
-): PlainVec3 {
-  return {
-    x: target.x,
-    y: fallbackY,
-    z: target.z,
-  };
-}
-
 function safeZoneEdgeHoldTarget(bot: BotPlayerSnapshot, safeZone: SafeZoneSnapshot): PlainVec3 {
   const direction = direction2DFromTo(safeZone.center, bot.position) ?? { x: 1, z: 0 };
   const edgeRadius = Math.max(4, safeZone.radius - 7);
@@ -2460,9 +2474,6 @@ function analyzeBotSafeZone(bot: BotPlayerSnapshot, safeZone?: SafeZoneSnapshot 
     0,
     2.5
   );
-  const rotateAnchor = (safeZone.shrinking || safeZone.warning || nextOutside)
-    ? safeZone.nextCenter
-    : safeZone.center;
   return {
     snapshot: safeZone,
     distanceToCenter,
@@ -2471,7 +2482,6 @@ function analyzeBotSafeZone(bot: BotPlayerSnapshot, safeZone?: SafeZoneSnapshot 
     outside,
     nextOutside,
     pressure,
-    rotateTarget: safeZonePointToward(bot.position, rotateAnchor),
     edgeHoldTarget: safeZoneEdgeHoldTarget(bot, safeZone),
   };
 }
@@ -2688,9 +2698,157 @@ function mixPosition2D(a: PlainVec3, aWeight: number, b: PlainVec3, bWeight: num
   };
 }
 
+interface BattleRoyalSquadAnchor {
+  position: PlainVec3;
+  targetPlayerId?: string;
+  isHuman: boolean;
+}
+
+interface BattleRoyalRotationTarget {
+  position: PlainVec3;
+  targetPlayerId?: string;
+}
+
+function battleRoyalSquadCentroid(bot: BotPlayerSnapshot, allies: readonly BotPlayerSnapshot[]): PlainVec3 | null {
+  let x = bot.position.x;
+  let y = bot.position.y;
+  let z = bot.position.z;
+  let count = bot.state === 'alive' ? 1 : 0;
+  if (count === 0) {
+    x = 0;
+    y = 0;
+    z = 0;
+  }
+
+  for (const ally of allies) {
+    if (ally.state !== 'alive') continue;
+    x += ally.position.x;
+    y += ally.position.y;
+    z += ally.position.z;
+    count++;
+  }
+
+  if (count <= 1) return null;
+  return {
+    x: x / count,
+    y: y / count,
+    z: z / count,
+  };
+}
+
+function getBattleRoyalSquadAnchor(bot: BotPlayerSnapshot, blackboard: BotBlackboard): BattleRoyalSquadAnchor | null {
+  const humanAlly = blackboard.nearestHumanAlly;
+  if (humanAlly?.state === 'alive') {
+    return {
+      position: { ...humanAlly.position },
+      targetPlayerId: humanAlly.id,
+      isHuman: true,
+    };
+  }
+
+  const assignment = blackboard.currentAssignment;
+  if (assignment?.job === 'support_cluster' && assignment.targetPosition) {
+    return {
+      position: { ...assignment.targetPosition },
+      targetPlayerId: assignment.targetPlayerId,
+      isHuman: false,
+    };
+  }
+
+  const centroid = battleRoyalSquadCentroid(bot, blackboard.allies);
+  if (centroid) {
+    return {
+      position: centroid,
+      targetPlayerId: blackboard.nearestAlly?.id,
+      isHuman: false,
+    };
+  }
+
+  return null;
+}
+
+function safeZoneInteriorRadius(radius: number, margin: number): number {
+  const effectiveMargin = Math.min(margin, Math.max(1.5, radius * 0.45));
+  return Math.max(2, radius - effectiveMargin);
+}
+
+function projectPointInsideSafeZoneCircle(
+  point: PlainVec3,
+  center: Pick<PlainVec3, 'x' | 'z'>,
+  radius: number,
+  fallbackY: number,
+  margin: number
+): PlainVec3 {
+  const allowedRadius = safeZoneInteriorRadius(radius, margin);
+  const distance = distance2D(point, center);
+  if (distance <= allowedRadius) {
+    return {
+      x: point.x,
+      y: fallbackY,
+      z: point.z,
+    };
+  }
+
+  const direction = direction2DFromTo(center, point) ?? { x: 1, z: 0 };
+  return {
+    x: center.x + direction.x * allowedRadius,
+    y: fallbackY,
+    z: center.z + direction.z * allowedRadius,
+  };
+}
+
+function projectPointInsideBattleRoyalSafeZone(
+  point: PlainVec3,
+  safeZone: BotSafeZoneFact,
+  fallbackY: number,
+  margin: number
+): PlainVec3 {
+  let target = projectPointInsideSafeZoneCircle(
+    point,
+    safeZone.snapshot.center,
+    safeZone.snapshot.radius,
+    fallbackY,
+    margin
+  );
+  if (safeZone.snapshot.shrinking || safeZone.snapshot.warning || safeZone.nextOutside) {
+    target = projectPointInsideSafeZoneCircle(
+      target,
+      safeZone.snapshot.nextCenter,
+      safeZone.snapshot.nextRadius,
+      fallbackY,
+      margin
+    );
+  }
+  return target;
+}
+
+function getBattleRoyalSafeZoneRotationTarget(
+  bot: BotPlayerSnapshot,
+  blackboard: BotBlackboard
+): BattleRoyalRotationTarget {
+  const anchor = getBattleRoyalSquadAnchor(bot, blackboard);
+  const source = anchor?.position ?? bot.position;
+  const safeZone = blackboard.safeZone;
+  const margin = anchor?.isHuman
+    ? BATTLE_ROYAL_HUMAN_SAFE_ZONE_ROTATION_MARGIN
+    : BATTLE_ROYAL_SAFE_ZONE_ROTATION_MARGIN;
+
+  return {
+    position: safeZone
+      ? projectPointInsideBattleRoyalSafeZone(source, safeZone, bot.position.y, margin)
+      : { ...source },
+    targetPlayerId: anchor?.targetPlayerId,
+  };
+}
+
 function getBattleRoyalSurvivalTarget(bot: BotPlayerSnapshot, blackboard: BotBlackboard): PlainVec3 {
-  const safeTarget = blackboard.safeZone?.rotateTarget ?? null;
-  const allyTarget = blackboard.nearestAlly?.state === 'alive' ? blackboard.nearestAlly.position : null;
+  const safeTarget = blackboard.safeZone
+    ? getBattleRoyalSafeZoneRotationTarget(bot, blackboard).position
+    : null;
+  const ally = blackboard.nearestHumanAlly?.state === 'alive'
+    ? blackboard.nearestHumanAlly
+    : blackboard.nearestAlly;
+  const allyTarget = ally?.state === 'alive' ? ally.position : null;
   const enemy = blackboard.nearestEnemy;
 
   if (enemy) {
@@ -2760,13 +2918,15 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
 
   if (isBattleRoyal && blackboard.safeZone) {
     const safeZone = blackboard.safeZone;
+    const rotationTarget = getBattleRoyalSafeZoneRotationTarget(bot, blackboard);
     if (safeZone.outside) {
       addIntent(
         candidates,
         'rotate_safe_zone',
         1120 + Math.min(360, Math.abs(safeZone.distanceToBoundary) * 18) + safeZone.snapshot.damagePerSecond * 8,
-        safeZone.rotateTarget,
-        'outside safe zone'
+        rotationTarget.position,
+        'outside safe zone',
+        rotationTarget.targetPlayerId
       );
     } else if (
       safeZone.nextOutside ||
@@ -2777,8 +2937,9 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
         candidates,
         'rotate_safe_zone',
         760 + safeZone.pressure * 160 + assignmentBoost('rotate_safe_zone', 160),
-        safeZone.rotateTarget,
-        safeZone.nextOutside ? 'next safe zone rotation needed' : 'safe zone edge pressure'
+        rotationTarget.position,
+        safeZone.nextOutside ? 'next safe zone rotation needed' : 'safe zone edge pressure',
+        rotationTarget.targetPlayerId
       );
     } else if (
       safeZone.distanceToBoundary <= 30 &&
@@ -2822,7 +2983,7 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
       candidates,
       'disengage_third_party',
       850 + localEnemyPressure * 110 + (thirdPartyDisengageHealthRatio - healthRatio) * 340 + (blackboard.safeZone?.pressure ?? 0) * 120,
-      blackboard.safeZone?.rotateTarget ?? regroupTarget,
+      blackboard.safeZone ? getBattleRoyalSafeZoneRotationTarget(bot, blackboard).position : regroupTarget,
       'bad third-party fight'
     );
   }

@@ -17,7 +17,7 @@ import {
   type SafeZoneSnapshot,
 } from '@voxel-strike/shared';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
-import { useCombatFeedbackStore, type KillFeedEvent } from '../../store/combatFeedbackStore';
+import { useCombatFeedbackStore, type KillFeedEvent, type LocalDamageEvent } from '../../store/combatFeedbackStore';
 import { useSettingsStore, type CrosshairStyle } from '../../store/settingsStore';
 import { useHudNow } from '../../store/hudSignals';
 import { visualStore } from '../../store/visualStore';
@@ -176,6 +176,21 @@ function BlazeFuelIndicator({ fuel, active }: { fuel: number; active: boolean })
 }
 
 const VOID_RAY_RING_CIRCUMFERENCE = 2 * Math.PI * 28;
+const LOCAL_DAMAGE_FULL_INTENSITY_AMOUNT = 40;
+
+type LocalDamageFeedbackStyle = React.CSSProperties & {
+  '--damage-angle'?: string;
+  '--damage-center-opacity'?: number;
+  '--damage-indicator-fade-opacity'?: number;
+  '--damage-indicator-opacity'?: number;
+  '--damage-vignette-fade-opacity'?: number;
+  '--damage-vignette-opacity'?: number;
+};
+
+function getLocalDamageIntensity(amount: number): number {
+  if (!Number.isFinite(amount) || amount <= 0) return 0.55;
+  return Math.max(0.55, Math.min(1, amount / LOCAL_DAMAGE_FULL_INTENSITY_AMOUNT));
+}
 
 function VoidRayChargeIndicator({ chargeStart }: { chargeStart: number }) {
   const progressCircleRef = useRef<SVGCircleElement | null>(null);
@@ -267,6 +282,46 @@ function VoidRayChargeIndicator({ chargeStart }: { chargeStart: number }) {
           {initialReady ? 'FIRE' : `${Math.floor(initialProgress * 100)}%`}
         </span>
       </div>
+    </div>
+  );
+}
+
+function LocalDamageFeedback({ events }: { events: LocalDamageEvent[] }) {
+  if (events.length === 0) return null;
+
+  return (
+    <div className="local-damage-feedback absolute inset-0 pointer-events-none" aria-hidden="true">
+      {events.map((event) => {
+        const intensity = getLocalDamageIntensity(event.amount);
+        const eventStyle: LocalDamageFeedbackStyle = {
+          '--damage-center-opacity': 0.34 * intensity,
+          '--damage-indicator-fade-opacity': 0.82 * intensity,
+          '--damage-indicator-opacity': intensity,
+          '--damage-vignette-fade-opacity': 0.22 * intensity,
+          '--damage-vignette-opacity': 0.74 * intensity,
+        };
+        const hasDirection = typeof event.angleDeg === 'number' && Number.isFinite(event.angleDeg);
+        const indicatorStyle: LocalDamageFeedbackStyle = hasDirection
+          ? {
+              '--damage-angle': `${event.angleDeg}deg`,
+            }
+          : {};
+
+        return (
+          <div key={event.id} className="local-damage-event absolute inset-0" style={eventStyle}>
+            <div className="local-damage-vignette absolute inset-0" />
+            <div className="local-damage-center-flash absolute left-1/2 top-1/2" />
+            {hasDirection && (
+              <div className="local-damage-indicator absolute inset-0" style={indicatorStyle}>
+                <div className="local-damage-edge-glow absolute left-1/2 top-0" />
+                <div className="local-damage-edge-band absolute left-1/2 top-0" />
+                <div className="local-damage-spoke absolute left-1/2 top-0" />
+                <div className="local-damage-arrow absolute left-1/2" />
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1402,7 +1457,15 @@ export function HUD() {
       interactKeybind: state.settings.keybindings.interact,
     }))
   );
-  const killFeed = useCombatFeedbackStore((state) => state.killFeed);
+  const {
+    killFeed,
+    localDamageEvents,
+  } = useCombatFeedbackStore(
+    useShallow(state => ({
+      killFeed: state.killFeed,
+      localDamageEvents: state.localDamageEvents,
+    }))
+  );
   const {
     battleRoyalRemainingPlayers,
     reviveChannelTarget,
@@ -1492,12 +1555,12 @@ export function HUD() {
       {/* Low health vignette effect */}
       {isLowHealth && (
         <div
-          className={`absolute inset-0 pointer-events-none ${isCriticalHealth ? 'animate-pulse' : 'animate-pulse-soft'}`}
-          style={{
-            background: `radial-gradient(ellipse at center, transparent 30%, ${isCriticalHealth ? 'rgba(239, 68, 68, 0.35)' : 'rgba(239, 68, 68, 0.2)'} 100%)`,
-          }}
+          className={`hud-low-health-vignette absolute inset-0 pointer-events-none ${
+            isCriticalHealth ? 'hud-low-health-vignette-critical' : ''
+          }`}
         />
       )}
+      <LocalDamageFeedback events={localDamageEvents} />
 
       {/* Crosshair - changes for Meteor Strike targeting mode */}
       {!suppressCombatHud && (

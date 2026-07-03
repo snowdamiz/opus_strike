@@ -7,6 +7,9 @@ import {
   normalizeVoxelMapSizeId,
   type GameplayMode,
   type MapProfileId,
+  type PregeneratedMapArtifactId,
+  type PregeneratedMapCatalogSummary,
+  type PregeneratedMapId,
   type Team,
   type VoxelMapManifest,
   type VoxelMapSizeId,
@@ -28,17 +31,30 @@ import {
 } from './bot-ai';
 import { VoxelChunkLookup, worldToVoxelGrid } from './voxelChunkLookup';
 import { generateRoomMapManifest } from './roomMapGeneration';
+import {
+  isPublicSeedGenerationFallbackEnabled,
+  pregeneratedMapCatalogService,
+  type LoadedPregeneratedMapManifest,
+} from '../maps/pregeneratedMapCatalog';
 
 export interface RoomMapRuntimeConfig {
   mapSeed: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
   mapProfileId?: MapProfileId | null;
+  pregeneratedMapId?: PregeneratedMapId | null;
+  mapArtifactId?: PregeneratedMapArtifactId | null;
 }
 
 export interface RoomMapRuntimeOptions {
   getMapConfig: () => RoomMapRuntimeConfig;
   getCollisionAabbs: NonNullable<MovementTerrainAdapter['getCollisionAabbs']>;
+  loadPregeneratedMapManifest?: (mapId: PregeneratedMapId) => Promise<LoadedPregeneratedMapManifest>;
+  isMapGenerationFallbackEnabled?: () => boolean;
+  recordMapFallbackGeneration?: (input: {
+    mapId: PregeneratedMapId;
+    reason: string;
+  }) => Promise<void>;
 }
 
 export interface RefreshBotTeamTacticsInput {
@@ -50,6 +66,7 @@ export interface RefreshBotTeamTacticsInput {
 
 export class RoomMapRuntime {
   private mapManifest: VoxelMapManifest | null = null;
+  private loadedPregeneratedMap: PregeneratedMapCatalogSummary | null = null;
   private botRouteGraph: BotRouteGraphAdapter | null = null;
   private botTeamTactics: BotTeamTacticsByTeam | null = null;
   private nextBotTacticsAt = 0;
@@ -75,6 +92,10 @@ export class RoomMapRuntime {
 
   refreshMap(): VoxelMapManifest {
     const config = this.resolveMapConfig();
+    if (config.pregeneratedMapId) {
+      this.assertFallbackAllowed(config.pregeneratedMapId, 'synchronous refresh requested before artifact load');
+      void this.recordFallbackGeneration(config.pregeneratedMapId, 'synchronous refresh requested before artifact load');
+    }
     const manifest = generateProceduralVoxelMap(config.mapSeed, {
       themeId: config.mapThemeId,
       mapSize: config.mapSize,
@@ -84,12 +105,31 @@ export class RoomMapRuntime {
   }
 
   async refreshMapAsync(): Promise<VoxelMapManifest> {
-    const manifest = await generateRoomMapManifest(this.resolveMapConfig());
+    const config = this.resolveMapConfig();
+    if (config.pregeneratedMapId) {
+      try {
+        const loaded = await this.loadPregeneratedMapManifest(config.pregeneratedMapId);
+        this.validatePregeneratedManifest(config, loaded);
+        return this.applyMapManifest(loaded.manifest, loaded.summary);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        if (!config.mapGenerationFallbackEnabled) {
+          throw error;
+        }
+        await this.recordFallbackGeneration(config.pregeneratedMapId, reason);
+      }
+    }
+
+    const manifest = await generateRoomMapManifest(config);
     return this.applyMapManifest(manifest);
   }
 
-  private applyMapManifest(manifest: VoxelMapManifest): VoxelMapManifest {
+  private applyMapManifest(
+    manifest: VoxelMapManifest,
+    pregeneratedMap: PregeneratedMapCatalogSummary | null = null
+  ): VoxelMapManifest {
     this.mapManifest = manifest;
+    this.loadedPregeneratedMap = pregeneratedMap;
     this.proceduralTerrainLookup = createProceduralTerrainLookup(manifest);
     this.mapChunks.reset(manifest);
     this.botRouteGraph = createBotRouteGraphAdapter(manifest);
@@ -103,6 +143,13 @@ export class RoomMapRuntime {
   getMapManifest(): VoxelMapManifest {
     const config = this.resolveMapConfig();
     if (
+      config.pregeneratedMapId
+      && (!this.loadedPregeneratedMap || this.loadedPregeneratedMap.id !== config.pregeneratedMapId)
+    ) {
+      this.assertFallbackAllowed(config.pregeneratedMapId, 'synchronous manifest access before artifact load');
+      return this.refreshMap();
+    }
+    if (
       !this.mapManifest
       || this.mapManifest.seed !== config.mapSeed
       || this.mapManifest.themeId !== config.mapThemeId
@@ -112,6 +159,10 @@ export class RoomMapRuntime {
       return this.refreshMap();
     }
     return this.mapManifest;
+  }
+
+  getLoadedPregeneratedMapSummary(): PregeneratedMapCatalogSummary | null {
+    return this.loadedPregeneratedMap;
   }
 
   getBotRouteGraph(): BotRouteGraphAdapter | null {
@@ -220,13 +271,60 @@ export class RoomMapRuntime {
     return this.mapManifest ?? this.refreshMap();
   }
 
-  private resolveMapConfig(): Required<RoomMapRuntimeConfig> {
+  private resolveMapConfig(): Required<RoomMapRuntimeConfig> & { mapGenerationFallbackEnabled: boolean } {
     const config = this.options.getMapConfig();
     const mapSeed = config.mapSeed;
     const mapThemeId = config.mapThemeId ?? getVoxelMapTheme(mapSeed).id;
     const mapSize = normalizeVoxelMapSizeId(config.mapSize || DEFAULT_VOXEL_MAP_SIZE_ID);
     const mapProfileId = config.mapProfileId ?? 'ctf_arena';
-    return { mapSeed, mapThemeId, mapSize, mapProfileId };
+    const pregeneratedMapId = config.pregeneratedMapId ?? null;
+    const mapArtifactId = config.mapArtifactId ?? null;
+    const mapGenerationFallbackEnabled = this.options.isMapGenerationFallbackEnabled?.()
+      ?? isPublicSeedGenerationFallbackEnabled();
+    return {
+      mapSeed,
+      mapThemeId,
+      mapSize,
+      mapProfileId,
+      pregeneratedMapId,
+      mapArtifactId,
+      mapGenerationFallbackEnabled,
+    };
+  }
+
+  private loadPregeneratedMapManifest(mapId: PregeneratedMapId): Promise<LoadedPregeneratedMapManifest> {
+    return this.options.loadPregeneratedMapManifest?.(mapId)
+      ?? pregeneratedMapCatalogService.loadMapManifest(mapId);
+  }
+
+  private validatePregeneratedManifest(
+    config: Required<RoomMapRuntimeConfig> & { mapGenerationFallbackEnabled: boolean },
+    loaded: LoadedPregeneratedMapManifest
+  ): void {
+    if (config.mapArtifactId && loaded.summary.artifactId !== config.mapArtifactId) {
+      throw new Error(`Pregenerated map artifact mismatch: expected ${config.mapArtifactId}, got ${loaded.summary.artifactId}`);
+    }
+    if (loaded.summary.seed !== config.mapSeed) {
+      throw new Error(`Pregenerated map seed mismatch: expected ${config.mapSeed}, got ${loaded.summary.seed}`);
+    }
+    if (loaded.summary.themeId !== config.mapThemeId) {
+      throw new Error(`Pregenerated map theme mismatch: expected ${config.mapThemeId}, got ${loaded.summary.themeId}`);
+    }
+    if (loaded.summary.mapSize !== config.mapSize) {
+      throw new Error(`Pregenerated map size mismatch: expected ${config.mapSize}, got ${loaded.summary.mapSize}`);
+    }
+    if (loaded.summary.profileId !== config.mapProfileId) {
+      throw new Error(`Pregenerated map profile mismatch: expected ${config.mapProfileId}, got ${loaded.summary.profileId}`);
+    }
+  }
+
+  private assertFallbackAllowed(mapId: PregeneratedMapId, reason: string): void {
+    if (this.resolveMapConfig().mapGenerationFallbackEnabled) return;
+    throw new Error(`Pregenerated map ${mapId} is required but cannot be loaded synchronously: ${reason}`);
+  }
+
+  private async recordFallbackGeneration(mapId: PregeneratedMapId, reason: string): Promise<void> {
+    await this.options.recordMapFallbackGeneration?.({ mapId, reason }).catch(() => undefined);
   }
 
   private clearBotTeamTactics(): void {

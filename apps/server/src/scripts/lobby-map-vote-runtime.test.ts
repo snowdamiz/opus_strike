@@ -3,6 +3,8 @@ import {
   getGameplayModeRules,
   INDEPENDENCE_VOXEL_MAP_THEME_ID,
   VOXEL_MAP_SIZE_IDS,
+  createProceduralMapPreview,
+  type PregeneratedMapCatalogSummary,
 } from '@voxel-strike/shared';
 import {
   addMissingBotMapVotes,
@@ -10,6 +12,7 @@ import {
   buildMapVoteStartedPayload,
   buildMapVoteUpdatedPayload,
   createMapLaunchSelection,
+  createMapVoteOptionFromCatalog,
   createMapVoteOption,
   createMapVoteOptions,
   getBattleRoyalEventBiomeThemeId,
@@ -248,6 +251,51 @@ for (const gameplayMode of ['capture_the_flag', 'team_deathmatch'] as const) {
     () => getWinningMapOption({ options: [], votes: [], hostId: 'host' }),
     /Cannot choose map without map options/
   );
+}
+
+{
+  const preview = createProceduralMapPreview(0x701, 'medium', {
+    profileId: 'tdm_arena',
+    themeId: 'verdant',
+  });
+  const catalogMap: PregeneratedMapCatalogSummary = {
+    id: 'pgmap_vote_runtime',
+    artifactId: 'pgartifact_vote_runtime',
+    seed: 0x701,
+    themeId: 'verdant',
+    profileId: 'tdm_arena',
+    gameplayMode: 'ctf',
+    familyId: 'ctf_semantic_arena',
+    mapSize: 'medium',
+    topologyId: preview.topologyId,
+    displayName: 'Verdant Relay',
+    previewTags: ['verdant', 'medium', preview.topologyId],
+    preview: preview.preview,
+    stats: {
+      solidBlockCount: 100,
+      renderableChunkCount: 8,
+      colliderCount: 12,
+      estimatedTriangles: 400,
+    },
+    diagnosticsScore: 91,
+    diagnosticsWarnings: [],
+    status: 'ready',
+    visibility: 'public',
+    generatorVersion: 13,
+    lastSelectedAt: null,
+    selectionCount: 0,
+    failureCount: 0,
+    createdAt: '2026-07-03T00:00:00.000Z',
+    updatedAt: '2026-07-03T00:00:00.000Z',
+  };
+  const catalogOption = createMapVoteOptionFromCatalog(catalogMap, 1);
+  assert.equal(catalogOption.id, 'map_2');
+  assert.equal(catalogOption.name, catalogMap.displayName);
+  assert.equal(catalogOption.pregeneratedMapId, catalogMap.id);
+  assert.equal(catalogOption.mapArtifactId, catalogMap.artifactId);
+  assert.deepEqual(catalogOption.catalogTags, catalogMap.previewTags);
+  assert.equal(catalogOption.stats, catalogMap.stats);
+  assert.equal(catalogOption.generatorVersion, catalogMap.generatorVersion);
 }
 
 {

@@ -465,6 +465,11 @@ model GameMatch {
   gameplayMode             String    @default("capture_the_flag")
   mapSeed                  BigInt
   mapThemeId               String    @default("standard")
+  mapSize                  String?
+  mapProfileId             String?
+  mapTopologyId            String?
+  mapGeneratorVersion      Int?
+  pregeneratedMapId        String?
   startedAt                DateTime
   endedAt                  DateTime
   redScore                 Int
@@ -483,12 +488,17 @@ model GameMatch {
   participants GameMatchParticipant[]
   playerRewards PlayerReward[]
   killEvents GameMatchKillEvent[]
+  pregeneratedMap PregeneratedMap? @relation(fields: [pregeneratedMapId], references: [id], onDelete: SetNull)
 
   @@index([roomId])
   @@index([lobbyId])
   @@index([matchMode])
   @@index([gameplayMode])
   @@index([mapThemeId])
+  @@index([mapSize])
+  @@index([mapProfileId])
+  @@index([mapTopologyId])
+  @@index([pregeneratedMapId])
   @@index([startedAt])
   @@index([winningTeam])
   @@index([rankedEligible])
@@ -496,6 +506,82 @@ model GameMatch {
   @@index([antiCheatIntegrityStatus])
   @@index([antiCheatReviewRequired])
   @@index([rankedOutcomeStatus])
+}
+
+model PregeneratedMapArtifact {
+  id                    String   @id
+  storageProvider       String   @default("database")
+  storageKey            String   @unique
+  byteSize              Int
+  compressionCodec      String   @default("none")
+  contentHash           String   @unique
+  manifestSchemaVersion Int
+  data                  Bytes?
+  createdAt             DateTime @default(now())
+
+  maps PregeneratedMap[]
+
+  @@index([storageProvider])
+  @@index([contentHash])
+  @@index([createdAt])
+}
+
+model PregeneratedMap {
+  id                  String   @id
+  artifactId          String
+  generatorVersion    Int
+  seed                BigInt
+  themeId             String
+  profileId           String
+  gameplayMode        String
+  familyId            String
+  mapSize             String
+  topologyId          String
+  displayName         String
+  previewTags         String[] @default([])
+  previewSilhouette   Json
+  stats               Json
+  diagnosticsScore    Float
+  diagnosticsWarnings String[] @default([])
+  status              String   @default("ready")
+  visibility          String   @default("public")
+  lastSelectedAt      DateTime?
+  selectionCount      Int      @default(0)
+  failureCount        Int      @default(0)
+  reservationExpiresAt DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  artifact   PregeneratedMapArtifact @relation(fields: [artifactId], references: [id], onDelete: Restrict)
+  selections PregeneratedMapSelection[]
+  matches    GameMatch[]
+
+  @@unique([seed, themeId, profileId, mapSize, topologyId, generatorVersion, visibility])
+  @@index([artifactId])
+  @@index([status, visibility, gameplayMode, profileId, mapSize, themeId, topologyId])
+  @@index([gameplayMode, profileId, mapSize, status, visibility, lastSelectedAt])
+  @@index([generatorVersion, status])
+  @@index([lastSelectedAt])
+  @@index([createdAt])
+}
+
+model PregeneratedMapSelection {
+  id                 String   @id @default(cuid())
+  mapId              String
+  lobbyId            String?
+  roomId             String?
+  matchId            String?
+  selectionSource    String
+  selectedByPlayerId String?
+  selectedAt         DateTime @default(now())
+
+  map PregeneratedMap @relation(fields: [mapId], references: [id], onDelete: Cascade)
+
+  @@index([mapId, selectedAt])
+  @@index([lobbyId])
+  @@index([roomId])
+  @@index([matchId])
+  @@index([selectionSource, selectedAt])
 }
 
 model GameMatchKillEvent {

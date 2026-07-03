@@ -14,6 +14,7 @@ export interface MapPrepCacheKeyInput {
   themeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | string | null;
   mapProfileId?: MapProfileId | string | null;
+  pregeneratedMapId?: string | null;
   generatorVersion?: number;
 }
 
@@ -22,10 +23,15 @@ export function getMapPrepCacheKey({
   themeId,
   mapSize,
   mapProfileId,
+  pregeneratedMapId,
   generatorVersion = CONSTRUCTED_MAP_MANIFEST_VERSION,
 }: MapPrepCacheKeyInput): string {
   if (isTutorialMapSeed(seed)) {
     return `tutorial-v${generatorVersion}:${TUTORIAL_MAP_SEED}`;
+  }
+
+  if (pregeneratedMapId) {
+    return `pregenerated-v${generatorVersion}:${pregeneratedMapId}`;
   }
 
   const themeSuffix = themeId ? `:${themeId}` : '';

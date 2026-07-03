@@ -399,6 +399,7 @@ export class RoomDamageRuntime {
       newHealth: result.newHealth,
       newDownedHealth: result.newDownedHealth,
       sourcePosition: result.sourcePosition,
+      sourceDirection: result.sourceDirection,
       targetPosition: this.deps.vec3ToPlain(target.position),
       sourceHeroId: source?.heroId || null,
       targetHeroId: target.heroId || null,

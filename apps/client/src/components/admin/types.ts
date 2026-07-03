@@ -6,6 +6,10 @@ import type {
   DailyMissionRewardBundle,
   HeroSkinDefinition,
   HeroSkinId,
+  MapProfileId,
+  PregeneratedMapVisibility,
+  VoxelMapSizeId,
+  VoxelMapTheme,
 } from '@voxel-strike/shared';
 
 /**
@@ -149,6 +153,68 @@ export interface AdminDiagnostics {
   };
   localProcessId: string | null;
   warnings: string[];
+}
+
+/* ----------------------------- Map Pool ----------------------------- */
+
+export interface MapPoolLowSlice {
+  profileId: MapProfileId;
+  mapSize: VoxelMapSizeId;
+  themeId: VoxelMapTheme['id'];
+  readyCount: number;
+  requiredReadyCount: number;
+}
+
+export interface MapPoolFailure {
+  id: string;
+  seed: number;
+  profileId: string;
+  mapSize: string;
+  themeId: string;
+  diagnosticsWarnings: string[];
+  updatedAt: string;
+}
+
+export interface MapPoolAdminOverview {
+  requiredReadyTotal: number;
+  readyTotal: number;
+  reservedTotal: number;
+  activeTotal: number;
+  failedTotal: number;
+  retiredTotal: number;
+  artifactBytesTotal: number;
+  oldestReadyCreatedAt: string | null;
+  recentSelectionCount: number;
+  lowSlices: MapPoolLowSlice[];
+  failures: MapPoolFailure[];
+}
+
+export interface MapPoolTopUpRequest {
+  profileId?: MapProfileId;
+  mapSize?: VoxelMapSizeId;
+  themeId?: VoxelMapTheme['id'];
+  visibility?: PregeneratedMapVisibility;
+  targetReadyCount?: number;
+  maxGenerated?: number;
+}
+
+export interface MapPoolTopUpResponse {
+  ok: true;
+  result: {
+    generated: number;
+    failed: number;
+    skipped: number;
+    slices: Array<{
+      profileId: MapProfileId;
+      mapSize: VoxelMapSizeId;
+      themeId: VoxelMapTheme['id'];
+      targetReadyCount: number;
+      readyCount: number;
+      generated: number;
+      failed: number;
+    }>;
+  };
+  mapPool: MapPoolAdminOverview;
 }
 
 /* ----------------------------- Live Ops ----------------------------- */
@@ -484,6 +550,7 @@ export interface AdminOverview {
   missions: MissionsAdminOverview;
   skinShop: SkinShopOverview;
   eventBiome: EventBiomeSettings;
+  mapPool: MapPoolAdminOverview;
 }
 
 /* ----------------------- Request payloads --------------------------- */

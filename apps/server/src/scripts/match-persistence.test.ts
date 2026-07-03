@@ -294,6 +294,12 @@ async function runPersistenceWriteTests() {
     lobbyId: 'lobby_ranked',
     matchMode: 'ranked',
     mapSeed: uint32MapSeedAboveInt4,
+    mapThemeId: 'verdant',
+    mapSize: 'large',
+    mapProfileId: 'battle_royal_large',
+    mapTopologyId: 'ring',
+    mapGeneratorVersion: 13,
+    pregeneratedMapId: 'pgmap_persisted',
     rankedEligible: true,
     startedAt: joinedAt,
     endedAt: new Date('2026-06-10T10:20:00.000Z'),
@@ -308,6 +314,12 @@ async function runPersistenceWriteTests() {
 
   assert.equal(rankedResult.alreadyPersisted, false);
   assert.equal(fake.matches.get('ranked_match').mapSeed, BigInt(uint32MapSeedAboveInt4));
+  assert.equal(fake.matches.get('ranked_match').mapThemeId, 'verdant');
+  assert.equal(fake.matches.get('ranked_match').mapSize, 'large');
+  assert.equal(fake.matches.get('ranked_match').mapProfileId, 'battle_royal_large');
+  assert.equal(fake.matches.get('ranked_match').mapTopologyId, 'ring');
+  assert.equal(fake.matches.get('ranked_match').mapGeneratorVersion, 13);
+  assert.equal(fake.matches.get('ranked_match').pregeneratedMapId, 'pgmap_persisted');
   assert.equal(fake.matches.get('ranked_match').rankedEligible, true);
   assert.equal(fake.matches.get('ranked_match').matchMode, 'ranked');
   assert.equal(fake.matches.get('ranked_match').rankedSeasonMode, 'season');

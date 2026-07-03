@@ -7,6 +7,7 @@ export type CustomLobbyGameplayMode = typeof CUSTOM_LOBBY_GAMEPLAY_MODES[number]
 export const DEFAULT_GAMEPLAY_MODE: GameplayMode = 'capture_the_flag';
 export const BATTLE_ROYAL_GAMEPLAY_MODE: GameplayMode = 'battle_royal';
 export const RANKED_GAMEPLAY_MODE: GameplayMode = BATTLE_ROYAL_GAMEPLAY_MODE;
+export const BATTLE_ROYAL_MATCH_DURATION_SECONDS = 12 * 60;
 
 export type GameplayScoreModel = 'ctf_flags' | 'team_kills' | 'last_team_alive';
 export type GameplayRespawnPolicy = 'timed' | 'none_after_active_play';
@@ -108,7 +109,7 @@ export const GAMEPLAY_MODE_RULES = {
     maxTeamSize: 3,
     maxTeams: 9,
     scoreToWin: 0,
-    roundTimeSeconds: 1200,
+    roundTimeSeconds: BATTLE_ROYAL_MATCH_DURATION_SECONDS,
     respawnTimeSeconds: 0,
     spawnProtectionSeconds: 3,
     flagReturnTimeSeconds: 0,

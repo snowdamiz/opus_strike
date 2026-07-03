@@ -1,3 +1,50 @@
+x-server-env: &server-env
+  NODE_ENV: "${SERVER_CLUSTER_NODE_ENV:-development}"
+  PORT: "2567"
+  CLIENT_ORIGIN: "http://localhost:3000"
+  PUBLIC_CLIENT_ORIGIN: "http://localhost:3000"
+  ALLOWED_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
+  DISCORD_AUTH_ENABLED: "false"
+  WAGER_SOL_ENABLED: "false"
+  JWT_SECRET: "${JWT_SECRET:-local-dev-jwt-secret-for-docker-machines-please-change}"
+  ENTRY_TICKET_SECRET: "${ENTRY_TICKET_SECRET:-local-dev-entry-ticket-secret-for-docker-machines}"
+  DATABASE_URL: "postgresql://voxelstrike:voxelstrike_dev@postgres:5432/voxelstrike?schema=public"
+  PRISMA_LOG_QUERIES: "${PRISMA_LOG_QUERIES:-0}"
+  COLYSEUS_DISTRIBUTED: "1"
+  COLYSEUS_REDIS_URL: "redis://redis:6379"
+  COLYSEUS_ROUTING_STRATEGY: "direct"
+  COLYSEUS_ROOM_CREATE_STRATEGY: "least_loaded"
+  COLYSEUS_REQUIRE_PUBLIC_ADDRESS: "1"
+  FLY_APP_NAME: "opus-strike-local"
+  COLYSEUS_FLY_APP_NAME: "opus-strike-local"
+  PREGENERATED_MAP_AUTO_TOP_UP_ENABLED: "1"
+  PREGENERATED_MAP_AUTO_TOP_UP_INITIAL_DELAY_MS: "1000"
+  PREGENERATED_MAP_AUTO_TOP_UP_INTERVAL_MS: "5000"
+  PREGENERATED_MAP_AUTO_TOP_UP_MAX_GENERATED_PER_RUN: "16"
+  PREGENERATED_MAP_AUTO_TOP_UP_MAX_CAPACITY_PRESSURE: "${PREGENERATED_MAP_AUTO_TOP_UP_MAX_CAPACITY_PRESSURE:-0.75}"
+  PREGENERATED_MAP_FALLBACK_ENABLED: "1"
+  PREGENERATED_MAP_POOL_CONSOLE_STATUS: "${PREGENERATED_MAP_POOL_CONSOLE_STATUS:-1}"
+  PREGENERATED_MAP_POOL_VERBOSE_STATUS: "${PREGENERATED_MAP_POOL_VERBOSE_STATUS:-0}"
+  PREGENERATED_MAP_POOL_STATUS_SAMPLE_MS: "${PREGENERATED_MAP_POOL_STATUS_SAMPLE_MS:-60000}"
+  PUBLIC_STATUS_ENDPOINTS: "1"
+  LIVEKIT_WS_URL: "ws://livekit:7880"
+  LIVEKIT_API_KEY: "devkey"
+  LIVEKIT_API_SECRET: "secret"
+
+x-server-common: &server-common
+  build:
+    context: .
+    dockerfile: apps/server/Dockerfile
+    target: runtime
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+  profiles:
+    - server-cluster
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -37,6 +84,71 @@ services:
       - "${LIVEKIT_RTC_UDP_PORT:-7882}:7882/udp"
     environment:
       LIVEKIT_KEYS: "devkey: secret"
+
+  server-us-1:
+    <<: *server-common
+    container_name: voxel-strike-server-us-1
+    environment:
+      <<: *server-env
+      COLYSEUS_PUBLIC_ADDRESS: "localhost:${SERVER_US_1_PORT:-2567}"
+      COLYSEUS_FLY_MACHINE_ID: "dev-us-1"
+      FLY_MACHINE_ID: "dev-us-1"
+      COLYSEUS_FLY_REGION: "iad"
+      FLY_REGION: "iad"
+    ports:
+      - "${SERVER_US_1_PORT:-2567}:2567"
+
+  server-us-2:
+    <<: *server-common
+    container_name: voxel-strike-server-us-2
+    environment:
+      <<: *server-env
+      COLYSEUS_PUBLIC_ADDRESS: "localhost:${SERVER_US_2_PORT:-2568}"
+      COLYSEUS_FLY_MACHINE_ID: "dev-us-2"
+      FLY_MACHINE_ID: "dev-us-2"
+      COLYSEUS_FLY_REGION: "iad"
+      FLY_REGION: "iad"
+    ports:
+      - "${SERVER_US_2_PORT:-2568}:2567"
+
+  server-us-3:
+    <<: *server-common
+    container_name: voxel-strike-server-us-3
+    environment:
+      <<: *server-env
+      COLYSEUS_PUBLIC_ADDRESS: "localhost:${SERVER_US_3_PORT:-2569}"
+      COLYSEUS_FLY_MACHINE_ID: "dev-us-3"
+      FLY_MACHINE_ID: "dev-us-3"
+      COLYSEUS_FLY_REGION: "iad"
+      FLY_REGION: "iad"
+    ports:
+      - "${SERVER_US_3_PORT:-2569}:2567"
+
+  server-eu-1:
+    <<: *server-common
+    container_name: voxel-strike-server-eu-1
+    environment:
+      <<: *server-env
+      COLYSEUS_PUBLIC_ADDRESS: "localhost:${SERVER_EU_1_PORT:-2570}"
+      COLYSEUS_FLY_MACHINE_ID: "dev-eu-1"
+      FLY_MACHINE_ID: "dev-eu-1"
+      COLYSEUS_FLY_REGION: "ams"
+      FLY_REGION: "ams"
+    ports:
+      - "${SERVER_EU_1_PORT:-2570}:2567"
+
+  server-asia-1:
+    <<: *server-common
+    container_name: voxel-strike-server-asia-1
+    environment:
+      <<: *server-env
+      COLYSEUS_PUBLIC_ADDRESS: "localhost:${SERVER_ASIA_1_PORT:-2571}"
+      COLYSEUS_FLY_MACHINE_ID: "dev-asia-1"
+      FLY_MACHINE_ID: "dev-asia-1"
+      COLYSEUS_FLY_REGION: "nrt"
+      FLY_REGION: "nrt"
+    ports:
+      - "${SERVER_ASIA_1_PORT:-2571}:2567"
 
 volumes:
   postgres_data:

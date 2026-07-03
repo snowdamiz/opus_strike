@@ -84,6 +84,7 @@ export function BattleRoyalSafeZone() {
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
   const mapProfileId = useGameStore((state) => state.mapProfileId);
+  const pregeneratedMapId = useGameStore((state) => state.pregeneratedMapId);
   const rootRef = useRef<THREE.Group>(null);
   const currentRingRef = useRef<THREE.Mesh>(null);
   const nextRingRef = useRef<THREE.Mesh>(null);
@@ -135,10 +136,10 @@ export function BattleRoyalSafeZone() {
   const manifest = useMemo(() => {
     if (gameplayMode !== 'battle_royal') return null;
     return (
-      getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId })
-      ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, source: 'match' })
+      getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId })
+      ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId, source: 'match' })
     ).manifest;
-  }, [gameplayMode, mapProfileId, mapSeed, mapSize, mapThemeId]);
+  }, [gameplayMode, mapProfileId, mapSeed, mapSize, mapThemeId, pregeneratedMapId]);
 
   useFrame(({ clock }, delta) => {
     const root = rootRef.current;

@@ -555,14 +555,15 @@ export function DevTestingMapRuntime() {
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
   const mapProfileId = useGameStore((state) => state.mapProfileId);
+  const pregeneratedMapId = useGameStore((state) => state.pregeneratedMapId);
   const gamePhase = useGameStore((state) => state.gamePhase);
   const manifest = useMemo(() => {
     if (mapProfileId !== DEV_TESTING_MAP_PROFILE_ID) return null;
     return (
-      getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId })?.manifest
-      ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, source: 'match' }).manifest
+      getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId })?.manifest
+      ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId, source: 'match' }).manifest
     );
-  }, [mapProfileId, mapSeed, mapSize, mapThemeId]);
+  }, [mapProfileId, mapSeed, mapSize, mapThemeId, pregeneratedMapId]);
 
   if (!isPracticeMode || mapProfileId !== DEV_TESTING_MAP_PROFILE_ID || gamePhase !== 'playing' || !manifest) {
     return null;

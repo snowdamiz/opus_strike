@@ -170,6 +170,7 @@ export function prepareVoxelMapCpu(options: PrepareVoxelMapOptions): PreparedVox
     themeId: options.themeId ?? options.manifest?.themeId ?? null,
     mapSize: options.mapSize ?? options.manifest?.mapSize ?? DEFAULT_VOXEL_MAP_SIZE_ID,
     mapProfileId: options.mapProfileId ?? options.manifest?.profileId ?? null,
+    pregeneratedMapId: options.pregeneratedMapId ?? null,
     generatorVersion,
   });
   const cached = preparedMapCache.get(key);
@@ -213,9 +214,10 @@ export function prepareVoxelMapCpu(options: PrepareVoxelMapOptions): PreparedVox
 export function seedMapPrepCacheFromManifest(
   seed: number,
   manifest: VoxelMapManifest,
-  source: NonNullable<PrepareVoxelMapOptions['source']> = 'mapVotePreview'
+  source: NonNullable<PrepareVoxelMapOptions['source']> = 'mapVotePreview',
+  pregeneratedMapId?: string | null
 ): PreparedVoxelMap {
-  return prepareVoxelMapCpu({ seed, manifest, source });
+  return prepareVoxelMapCpu({ seed, manifest, source, pregeneratedMapId });
 }
 
 export function getPreparedVoxelMap(options: MapPrepCacheKeyInput): PreparedVoxelMap | null {

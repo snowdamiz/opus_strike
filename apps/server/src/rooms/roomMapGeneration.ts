@@ -22,6 +22,12 @@ type RoomMapGenerationWorkerResponse =
   | { ok: true; manifest: VoxelMapManifest }
   | { ok: false; error: string };
 
+export interface RoomMapGenerationWorkerSpec {
+  filename: string;
+  execArgv?: string[];
+  source: 'compiled-js' | 'tsx';
+}
+
 const MAP_GENERATION_WORKER_TIMEOUT_MS = 120_000;
 const MAP_GENERATION_SLOW_LOG_MS = 3000;
 const MAP_GENERATION_QUEUE_WAIT_LOG_MS = 1000;
@@ -36,15 +42,37 @@ function generateMapSync(input: RoomMapGenerationInput): VoxelMapManifest {
   });
 }
 
-function shouldUseMapGenerationWorker(input: RoomMapGenerationInput): boolean {
-  if (process.env.SERVER_MAP_GENERATION_WORKER === '0') return false;
-  if (input.mapProfileId !== 'battle_royal_large') return false;
-  return existsSync(path.join(__dirname, 'roomMapGenerationWorker.js'));
+export function getRoomMapGenerationWorkerSpec(
+  input: RoomMapGenerationInput,
+  env: NodeJS.ProcessEnv = process.env
+): RoomMapGenerationWorkerSpec | null {
+  if (env.SERVER_MAP_GENERATION_WORKER === '0') return null;
+  if (input.mapProfileId !== 'battle_royal_large') return null;
+
+  const compiledWorker = path.join(__dirname, 'roomMapGenerationWorker.js');
+  if (existsSync(compiledWorker)) {
+    return { filename: compiledWorker, source: 'compiled-js' };
+  }
+
+  const tsWorker = path.join(__dirname, 'roomMapGenerationWorker.ts');
+  if ((env.NODE_ENV?.trim() || 'development') !== 'production' && existsSync(tsWorker)) {
+    return {
+      filename: tsWorker,
+      execArgv: ['--import', 'tsx'],
+      source: 'tsx',
+    };
+  }
+
+  return null;
 }
 
-function generateMapWithWorker(input: RoomMapGenerationInput): Promise<VoxelMapManifest> {
+function generateMapWithWorker(
+  input: RoomMapGenerationInput,
+  workerSpec: RoomMapGenerationWorkerSpec
+): Promise<VoxelMapManifest> {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(path.join(__dirname, 'roomMapGenerationWorker.js'), {
+    const worker = new Worker(workerSpec.filename, {
+      execArgv: workerSpec.execArgv,
       workerData: input,
     });
     let settled = false;
@@ -90,10 +118,10 @@ export function generateRoomMapManifest(input: RoomMapGenerationInput): Promise<
   const run = async () => {
     const startedAt = performance.now();
     const queueWaitMs = startedAt - requestedAt;
-    const worker = shouldUseMapGenerationWorker(input);
+    const workerSpec = getRoomMapGenerationWorkerSpec(input);
     try {
-      const manifest = worker
-        ? await generateMapWithWorker(input)
+      const manifest = workerSpec
+        ? await generateMapWithWorker(input, workerSpec)
         : generateMapSync(input);
       const durationMs = performance.now() - startedAt;
       if (durationMs >= MAP_GENERATION_SLOW_LOG_MS || queueWaitMs >= MAP_GENERATION_QUEUE_WAIT_LOG_MS) {
@@ -102,7 +130,8 @@ export function generateRoomMapManifest(input: RoomMapGenerationInput): Promise<
           mapThemeId: input.mapThemeId ?? null,
           mapSize: input.mapSize ?? null,
           mapProfileId: input.mapProfileId ?? null,
-          worker,
+          worker: Boolean(workerSpec),
+          workerSource: workerSpec?.source ?? null,
           queueWaitMs: Math.round(queueWaitMs),
           durationMs: Math.round(durationMs),
           renderableChunkCount: manifest.stats.renderableChunkCount,
@@ -117,7 +146,8 @@ export function generateRoomMapManifest(input: RoomMapGenerationInput): Promise<
         mapThemeId: input.mapThemeId ?? null,
         mapSize: input.mapSize ?? null,
         mapProfileId: input.mapProfileId ?? null,
-        worker,
+        worker: Boolean(workerSpec),
+        workerSource: workerSpec?.source ?? null,
         queueWaitMs: Math.round(queueWaitMs),
         durationMs: Math.round(performance.now() - startedAt),
         error: error instanceof Error ? error.message : String(error),

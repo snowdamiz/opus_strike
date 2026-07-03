@@ -10,12 +10,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: true
+  group: production-release
+  cancel-in-progress: false
+  queue: max
 
 env:
   SERVER_APP: opus-strike-server
   CLIENT_APP: opus-strike-client
+  SERVER_ORIGIN: https://api.slopheroes.xyz
   CLIENT_ORIGIN: https://slopheroes.xyz
   EXPECTED_CLIENT_SERVER_URL: wss://api.slopheroes.xyz
 
@@ -26,6 +28,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -38,6 +42,12 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+
+      - name: Check Prisma migration safety
+        run: node scripts/check-prisma-migration-safety.mjs
+        env:
+          MIGRATION_SAFETY_BASE: ${{ github.event.before }}
+          MIGRATION_SAFETY_HEAD: ${{ github.sha }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -69,15 +79,17 @@ jobs:
           flyctl deploy . --config apps/server/fly.toml --app "$SERVER_APP" --remote-only
           --dockerfile apps/server/Dockerfile
           --wait-timeout 10m
-          --skip-release-command
           --ha=false
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
-      - name: Run server migrations
-        run: flyctl ssh console --app "$SERVER_APP" --command 'sh -lc "pnpm --filter @voxel-strike/server db:deploy"'
+      - name: Verify server migration status
+        run: flyctl ssh console --app "$SERVER_APP" --command 'sh -lc "cd /app && pnpm --filter @voxel-strike/server exec prisma migrate status"'
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Verify deployed server health
+        run: curl -fsSL "$SERVER_ORIGIN/health" >/dev/null
 
       - name: Verify client server URL config
         run: |

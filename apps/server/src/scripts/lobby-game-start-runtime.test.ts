@@ -259,7 +259,26 @@ function player(overrides: Partial<LobbyGameStartPlayer> = {}): LobbyGameStartPl
     mapThemeId: 'golden',
     mapSize: 'small',
     mapProfileId: 'ctf_arena',
+    pregeneratedMapId: null,
+    mapArtifactId: null,
   });
+}
+
+{
+  const payload = buildGameStartingPayload({
+    gameRoomId: 'game-b',
+    players: [],
+    gameplayMode: 'battle_royal',
+    matchPerspective: 'third_person',
+    mapThemeId: 'verdant',
+    mapSize: 'large',
+    mapProfileId: 'battle_royal_large',
+    pregeneratedMapId: 'pgmap_start',
+    mapArtifactId: 'pgartifact_start',
+  });
+
+  assert.equal(payload.pregeneratedMapId, 'pgmap_start');
+  assert.equal(payload.mapArtifactId, 'pgartifact_start');
 }
 
 {

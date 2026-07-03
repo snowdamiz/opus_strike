@@ -110,6 +110,8 @@ interface CoreState {
   mapThemeId: VoxelMapTheme['id'] | null;
   mapSize: VoxelMapSizeId;
   mapProfileId: MapProfileId | null;
+  pregeneratedMapId: string | null;
+  mapArtifactId: string | null;
   safeZone: SafeZoneSnapshot | null;
   battleRoyalDrop: BattleRoyalDropSnapshot | null;
   powerupPickups: Map<string, PowerupPickupRuntimeState>;
@@ -174,6 +176,7 @@ interface CoreActions {
   setMapThemeId: (themeId: VoxelMapTheme['id'] | null) => void;
   setMapSize: (mapSize: VoxelMapSizeId | string | null | undefined) => void;
   setMapProfileId: (mapProfileId: MapProfileId | string | null | undefined) => void;
+  setPregeneratedMapIdentity: (mapId?: string | null, artifactId?: string | null) => void;
   setInteractionPrompt: (prompt: InteractionPrompt | null) => void;
   requestDevTestingTargetBotHold: () => void;
   resetDevTestingTargetBotHold: () => void;
@@ -294,6 +297,8 @@ const coreInitialState: CoreState = {
   mapThemeId: null,
   mapSize: DEFAULT_VOXEL_MAP_SIZE_ID,
   mapProfileId: null,
+  pregeneratedMapId: null,
+  mapArtifactId: null,
   safeZone: null,
   battleRoyalDrop: null,
   powerupPickups: new Map(),
@@ -476,6 +481,13 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
         ? {}
         : { devTestingTargetBotFrozen: false, devTestingTargetBotResetRequestId: 0 }),
     };
+  }),
+  setPregeneratedMapIdentity: (mapId, artifactId) => set((state) => {
+    const nextMapId = mapId || null;
+    const nextArtifactId = artifactId || null;
+    return state.pregeneratedMapId === nextMapId && state.mapArtifactId === nextArtifactId
+      ? state
+      : { pregeneratedMapId: nextMapId, mapArtifactId: nextArtifactId };
   }),
 
   setInteractionPrompt: (prompt) => set((state) => (
@@ -790,5 +802,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     },
     gameplayMode: DEFAULT_GAMEPLAY_MODE,
     matchPerspective: DEFAULT_MATCH_PERSPECTIVE,
+    pregeneratedMapId: null,
+    mapArtifactId: null,
   }),
 }));

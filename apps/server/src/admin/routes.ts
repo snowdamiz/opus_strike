@@ -4,8 +4,14 @@ import prisma from '../db';
 import {
   DEFAULT_COMPETITIVE_RATING,
   RANK_DEFINITIONS,
+  STANDARD_VOXEL_MAP_THEMES,
+  VOXEL_MAP_SIZE_IDS,
   getRankFromRating,
   type DailyMissionAdminOverview,
+  type MapProfileId,
+  type PregeneratedMapVisibility,
+  type VoxelMapSizeId,
+  type VoxelMapTheme,
 } from '@voxel-strike/shared';
 import type { ColyseusRuntimeConfig } from '../config/colyseus';
 import { loggers } from '../utils/logger';
@@ -74,6 +80,10 @@ import {
   noStore,
   type GameAdminUser as AdminUser,
 } from '../auth/gameAdmin';
+import {
+  pregeneratedMapCatalogService,
+  type MapPoolTopUpOptions,
+} from '../maps/pregeneratedMapCatalog';
 
 interface AdminRouterOptions {
   config: ColyseusRuntimeConfig;
@@ -84,6 +94,8 @@ interface AdminRouterOptions {
 
 const ADMIN_RANK_USER_LIMIT_MAX = 100;
 const ADMIN_MANUAL_RATING_MAX = 5000;
+const ADMIN_POOL_PROFILE_IDS = ['ctf_arena', 'tdm_arena', 'battle_royal_large'] as const satisfies readonly MapProfileId[];
+const ADMIN_POOL_VISIBILITIES = ['public', 'matchmaking-only', 'admin-only'] as const satisfies readonly PregeneratedMapVisibility[];
 
 const adminRankUserSelect = {
   id: true,
@@ -144,6 +156,57 @@ type AdminRankedSeason = RankedSeasonAdminView;
 type AdminRankedEntryGate = RankedEntryGateAdminView;
 type AdminSkinShop = SkinShopAdminOverview;
 type AdminMissions = DailyMissionAdminOverview;
+
+function readStringField(body: unknown, key: string): string | null {
+  if (!body || typeof body !== 'object') return null;
+  const value = (body as Record<string, unknown>)[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function readOptionalBoundedInteger(
+  body: unknown,
+  key: string,
+  min: number,
+  max: number
+): number | undefined {
+  if (!body || typeof body !== 'object') return undefined;
+  const value = (body as Record<string, unknown>)[key];
+  if (value == null || value === '') return undefined;
+  const numberValue = typeof value === 'number' ? value : Number(value);
+  if (!Number.isInteger(numberValue) || numberValue < min || numberValue > max) {
+    throw new Error(`${key} must be an integer between ${min} and ${max}`);
+  }
+  return numberValue;
+}
+
+function parseAdminMapPoolTopUpOptions(body: unknown): MapPoolTopUpOptions {
+  const profileId = readStringField(body, 'profileId');
+  const mapSize = readStringField(body, 'mapSize');
+  const themeId = readStringField(body, 'themeId');
+  const visibility = readStringField(body, 'visibility');
+
+  if (profileId && !(ADMIN_POOL_PROFILE_IDS as readonly string[]).includes(profileId)) {
+    throw new Error(`Unsupported map profile: ${profileId}`);
+  }
+  if (mapSize && !VOXEL_MAP_SIZE_IDS.includes(mapSize as VoxelMapSizeId)) {
+    throw new Error(`Unsupported map size: ${mapSize}`);
+  }
+  if (themeId && !STANDARD_VOXEL_MAP_THEMES.some((theme) => theme.id === themeId)) {
+    throw new Error(`Unsupported map theme: ${themeId}`);
+  }
+  if (visibility && !ADMIN_POOL_VISIBILITIES.includes(visibility as PregeneratedMapVisibility)) {
+    throw new Error(`Unsupported map visibility: ${visibility}`);
+  }
+
+  return {
+    profileId: profileId as MapProfileId | undefined,
+    mapSize: mapSize as VoxelMapSizeId | undefined,
+    themeId: themeId as VoxelMapTheme['id'] | undefined,
+    visibility: visibility as PregeneratedMapVisibility | undefined,
+    targetReadyCount: readOptionalBoundedInteger(body, 'targetReadyCount', 1, 100),
+    maxGenerated: readOptionalBoundedInteger(body, 'maxGenerated', 1, 250),
+  };
+}
 
 const antiCheatEvidenceStore = new AntiCheatEvidenceStore(prisma);
 
@@ -587,7 +650,7 @@ function summarizeLobbyRoom(room: AdminRoomListing, processSnapshots: Map<string
 
 async function collectAdminOverview(options: AdminRouterOptions, adminUser: AdminUser) {
   const generatedAtMs = Date.now();
-  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, rewardEconomySettings, goldenBiomeRewards, globalNotification, rankedSeason, rankedEntryGate, missions, skinShop, eventBiome] = await Promise.all([
+  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, rewardEconomySettings, goldenBiomeRewards, globalNotification, rankedSeason, rankedEntryGate, missions, skinShop, eventBiome, mapPool] = await Promise.all([
     pingRedis(options.redis),
     queryRooms(options.matchMaker, 'game_room'),
     queryRooms(options.matchMaker, 'lobby_room'),
@@ -604,6 +667,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     dailyMissionService.getAdminOverview(),
     getSkinShopAdminOverview(),
     getEventBiomeAdminOverview(),
+    pregeneratedMapCatalogService.getAdminOverview(),
   ]);
 
   let machineSnapshots: AdminMachineSnapshot[] = [];
@@ -666,6 +730,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     gameRoomResult.error ? `game_room query failed: ${gameRoomResult.error}` : null,
     lobbyRoomResult.error ? `lobby_room query failed: ${lobbyRoomResult.error}` : null,
     machineRegistryError ? `machine registry failed: ${machineRegistryError}` : null,
+    mapPool.lowSlices.length > 0 ? `pregenerated map pool has ${mapPool.lowSlices.length} low slice${mapPool.lowSlices.length === 1 ? '' : 's'}` : null,
     ...freshSnapshots
       .filter((snapshot) => !snapshot.matchmakerQueryUp && snapshot.matchmakerError)
       .map((snapshot) => `${snapshot.machineId}/${snapshot.processId}: ${snapshot.matchmakerError}`),
@@ -732,6 +797,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     missions: missions satisfies AdminMissions,
     skinShop: skinShop satisfies AdminSkinShop,
     eventBiome,
+    mapPool,
   };
 }
 
@@ -772,6 +838,18 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         error: error instanceof Error ? error.message : String(error),
       });
       res.status(500).json({ error: 'Failed to collect mission overview' });
+    }
+  });
+
+  router.post('/api/map-pool/top-up', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    try {
+      const options = parseAdminMapPoolTopUpOptions(req.body);
+      const result = await pregeneratedMapCatalogService.topUpPool(options);
+      const mapPool = await pregeneratedMapCatalogService.getAdminOverview();
+      res.json({ ok: true, result, mapPool });
+    } catch (error) {
+      sendAdminMutationError(res, error);
     }
   });
 

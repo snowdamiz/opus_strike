@@ -42,6 +42,7 @@ export const GAME_MESSAGE_RATE_LIMITS = {
   chat: { limit: 4, intervalMs: 5000 },
   selection: { limit: 6, intervalMs: 3000 },
   matchSceneReady: { limit: 12, intervalMs: 5000 },
+  unstuck: { limit: 2, intervalMs: 15000 },
   playerPingResponse: { limit: 30, intervalMs: 10000 },
   devCommand: { limit: 6, intervalMs: 5000 },
   voiceToken: { limit: 4, intervalMs: 60000 },

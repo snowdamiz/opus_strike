@@ -25,15 +25,28 @@ export interface KillFeedEvent {
   createdAt: number;
 }
 
+export interface LocalDamageEvent {
+  id: string;
+  amount: number;
+  angleDeg: number | null;
+  damageType?: string;
+  sourceId?: string | null;
+  createdAt: number;
+}
+
 interface CombatFeedbackStore {
   combatTextEvents: CombatTextEvent[];
+  localDamageEvents: LocalDamageEvent[];
   killFeed: KillFeedEvent[];
   addCombatTextEvent: (event: Omit<CombatTextEvent, 'id' | 'createdAt'>) => void;
+  addLocalDamageEvent: (event: Omit<LocalDamageEvent, 'id' | 'createdAt'>) => void;
   addKillFeedEvent: (event: Omit<KillFeedEvent, 'id' | 'createdAt'>) => void;
 }
 
 const COMBAT_TEXT_TTL = 1450;
+const LOCAL_DAMAGE_TTL = 900;
 const MAX_COMBAT_TEXT_EVENTS = 28;
+const MAX_LOCAL_DAMAGE_EVENTS = 6;
 const KILL_TTL = 5000;
 // Single shared sweep replaces per-event timers; expiry resolves within
 // EXPIRY_SWEEP_INTERVAL_MS of the exact TTL, which is imperceptible because
@@ -86,19 +99,26 @@ export const useCombatFeedbackStore = create<CombatFeedbackStore>((set, get) => 
       const now = Date.now();
       const state = get();
       const nextCombat = pruneExpiredItems(state.combatTextEvents, now, COMBAT_TEXT_TTL);
+      const nextLocalDamage = pruneExpiredItems(state.localDamageEvents, now, LOCAL_DAMAGE_TTL);
       const nextKills = pruneExpiredItems(state.killFeed, now, KILL_TTL);
       const combatChanged = nextCombat !== state.combatTextEvents;
+      const localDamageChanged = nextLocalDamage !== state.localDamageEvents;
       const killsChanged = nextKills !== state.killFeed;
 
-      if (combatChanged || killsChanged) {
+      if (combatChanged || localDamageChanged || killsChanged) {
         set({
           ...(combatChanged ? { combatTextEvents: nextCombat } : {}),
+          ...(localDamageChanged ? { localDamageEvents: nextLocalDamage } : {}),
           ...(killsChanged ? { killFeed: nextKills } : {}),
         });
       }
 
       const settled = get();
-      if (settled.combatTextEvents.length === 0 && settled.killFeed.length === 0) {
+      if (
+        settled.combatTextEvents.length === 0 &&
+        settled.localDamageEvents.length === 0 &&
+        settled.killFeed.length === 0
+      ) {
         stopExpirySweep();
       }
     }, EXPIRY_SWEEP_INTERVAL_MS);
@@ -106,6 +126,7 @@ export const useCombatFeedbackStore = create<CombatFeedbackStore>((set, get) => 
 
   return {
     combatTextEvents: [],
+    localDamageEvents: [],
     killFeed: [],
     addCombatTextEvent: (event) => {
       const id = nextId();
@@ -116,6 +137,20 @@ export const useCombatFeedbackStore = create<CombatFeedbackStore>((set, get) => 
             ...event,
             id,
             position: { ...event.position },
+            createdAt: Date.now(),
+          },
+        ],
+      }));
+      ensureExpirySweep();
+    },
+    addLocalDamageEvent: (event) => {
+      const id = nextId();
+      set((state) => ({
+        localDamageEvents: [
+          ...state.localDamageEvents.slice(-(MAX_LOCAL_DAMAGE_EVENTS - 1)),
+          {
+            ...event,
+            id,
             createdAt: Date.now(),
           },
         ],

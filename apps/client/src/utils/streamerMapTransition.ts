@@ -1,8 +1,8 @@
 import type { MapProfileId, VoxelMapSizeId, VoxelMapTheme } from '@voxel-strike/shared';
-import { requestMapPreviewManifest } from './mapPreview/mapPreviewManifestClient';
 import { seedMapPrepCacheFromManifest } from './mapWarmup/mapPrepCache';
 import { getMapPrepCacheKey } from './mapWarmup/mapPrepCacheKey';
 import { prebuildPreparedMapGeometryDeferred } from './mapWarmup/deferredMapGeometryWarmup';
+import { requestMatchMapManifest } from './mapWarmup/mapManifestLoader';
 
 const STREAMER_MAP_PRELOAD_TIMEOUT_MS = 2_600;
 
@@ -11,6 +11,7 @@ export interface StreamerMapTransitionTarget {
   mapThemeId?: VoxelMapTheme['id'] | string | null;
   mapSize?: VoxelMapSizeId | string | null;
   mapProfileId?: MapProfileId | string | null;
+  pregeneratedMapId?: string | null;
 }
 
 function withPreloadTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
@@ -39,6 +40,7 @@ export function getStreamerMapTransitionKey(target: StreamerMapTransitionTarget)
     themeId: (target.mapThemeId ?? null) as VoxelMapTheme['id'] | null,
     mapSize: target.mapSize ?? null,
     mapProfileId: target.mapProfileId ?? null,
+    pregeneratedMapId: target.pregeneratedMapId ?? null,
   });
 }
 
@@ -48,15 +50,16 @@ export async function preloadStreamerMapTransitionTarget(
 ): Promise<void> {
   if (typeof target.mapSeed !== 'number') return;
 
-  const manifest = await withPreloadTimeout(
-    requestMapPreviewManifest({
+  const { manifest } = await withPreloadTimeout(
+    requestMatchMapManifest({
       seed: target.mapSeed,
       themeId: (target.mapThemeId ?? null) as VoxelMapTheme['id'] | null,
       mapSize: (target.mapSize ?? null) as VoxelMapSizeId | null,
       mapProfileId: target.mapProfileId ?? null,
+      pregeneratedMapId: target.pregeneratedMapId ?? null,
     }),
     label
   );
-  const preparedMap = seedMapPrepCacheFromManifest(target.mapSeed, manifest, 'match');
+  const preparedMap = seedMapPrepCacheFromManifest(target.mapSeed, manifest, 'match', target.pregeneratedMapId);
   prebuildPreparedMapGeometryDeferred(preparedMap, { frameBudgetMs: 2, label });
 }

@@ -104,9 +104,21 @@ function parseRoomCreateStrategy(
   throw new Error(`Unsupported COLYSEUS_ROOM_CREATE_STRATEGY "${strategy}"`);
 }
 
+function parseDistributedRuntimeEnabled(
+  env: NodeJS.ProcessEnv,
+  redisUrl: string | null,
+  nodeEnv: string
+): boolean {
+  const explicit = optionalEnv(env.COLYSEUS_DISTRIBUTED);
+  if (explicit !== undefined) return envFlag(explicit);
+
+  return nodeEnv === 'development' && Boolean(redisUrl);
+}
+
 export function getColyseusRuntimeConfig(env: NodeJS.ProcessEnv = process.env): ColyseusRuntimeConfig {
-  const distributed = envFlag(env.COLYSEUS_DISTRIBUTED);
+  const nodeEnv = optionalEnv(env.NODE_ENV) ?? 'development';
   const redisUrl = optionalEnv(env.COLYSEUS_REDIS_URL) ?? optionalEnv(env.REDIS_URL) ?? null;
+  const distributed = parseDistributedRuntimeEnabled(env, redisUrl, nodeEnv);
   const routingStrategy = parseRoutingStrategy(env);
   const roomCreateStrategy = parseRoomCreateStrategy(env.COLYSEUS_ROOM_CREATE_STRATEGY, routingStrategy);
   const flyAppName = optionalEnv(env.COLYSEUS_FLY_APP_NAME) ?? optionalEnv(env.FLY_APP_NAME);
@@ -137,7 +149,7 @@ export function getColyseusRuntimeConfig(env: NodeJS.ProcessEnv = process.env): 
       replayTimeout: optionalEnv(env.COLYSEUS_FLY_REPLAY_TIMEOUT) ?? '5s',
       replayFallback: parseFlyReplayFallback(env.COLYSEUS_FLY_REPLAY_FALLBACK),
     },
-    nodeEnv: env.NODE_ENV || 'development',
+    nodeEnv,
   };
 }
 

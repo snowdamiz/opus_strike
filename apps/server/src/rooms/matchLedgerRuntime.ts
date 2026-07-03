@@ -1,8 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type {
   HeroId,
+  MapProfileId,
+  MapTopologyId,
   MatchMode,
+  PregeneratedMapId,
   Team,
+  VoxelMapSizeId,
   VoxelMapTheme,
 } from '@voxel-strike/shared';
 import type { MatchKillEventSnapshot, MatchParticipantSnapshot } from '../persistence/matchPersistence';
@@ -22,6 +26,11 @@ export interface MatchPersistenceLedger {
   matchMode: MatchMode;
   mapSeed: number;
   mapThemeId: VoxelMapTheme['id'];
+  mapSize: VoxelMapSizeId | null;
+  mapProfileId: MapProfileId | null;
+  mapTopologyId: MapTopologyId | null;
+  mapGeneratorVersion: number | null;
+  pregeneratedMapId: PregeneratedMapId | null;
   rankedEligible: boolean;
   startedAt: Date;
   endedAt: Date | null;
@@ -39,6 +48,11 @@ export interface MatchLedgerConfig {
   matchMode: MatchMode;
   mapSeed: number;
   mapThemeId: VoxelMapTheme['id'];
+  mapSize: VoxelMapSizeId | null;
+  mapProfileId: MapProfileId | null;
+  mapTopologyId: MapTopologyId | null;
+  mapGeneratorVersion: number | null;
+  pregeneratedMapId: PregeneratedMapId | null;
   rankedEligible: boolean;
 }
 
@@ -90,6 +104,11 @@ export class MatchLedgerRuntime {
         matchMode: config.matchMode,
         mapSeed: config.mapSeed,
         mapThemeId: config.mapThemeId,
+        mapSize: config.mapSize,
+        mapProfileId: config.mapProfileId,
+        mapTopologyId: config.mapTopologyId,
+        mapGeneratorVersion: config.mapGeneratorVersion,
+        pregeneratedMapId: config.pregeneratedMapId,
         rankedEligible: config.rankedEligible,
         startedAt: new Date(now),
         endedAt: null,

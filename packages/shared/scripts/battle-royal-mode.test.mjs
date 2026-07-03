@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import {
   BATTLE_ROYAL_GAMEPLAY_MODE,
+  BATTLE_ROYAL_MATCH_DURATION_SECONDS,
   BATTLE_ROYAL_TEAM_IDS,
   RANKED_GAMEPLAY_MODE,
   createGameConfigForGameplayMode,
@@ -15,6 +16,7 @@ import {
   getTeamCatalogForGameplayMode,
   getTeamIdsForGameplayMode,
   PLAYER_HEIGHT,
+  STEP_HEIGHT,
 } from '../dist/index.js';
 
 function distance2D(a, b) {
@@ -115,6 +117,68 @@ function playableSlopeStats(manifest, radius, maxMeasuredRow = 68) {
   };
 }
 
+function terrainTrapStats(manifest, radius, maxMeasuredRow = 68) {
+  const { origin, voxelSize, size, topSolidRows } = manifest.heightfield;
+  const maxStepRows = Math.max(1, Math.ceil(STEP_HEIGHT / voxelSize.y));
+  const minDepthRows = maxStepRows + 2;
+  let checked = 0;
+  let trapCells = 0;
+
+  for (let z = 0; z < size.z; z++) {
+    const worldZ = origin.z + (z + 0.5) * voxelSize.z;
+    for (let x = 0; x < size.x; x++) {
+      const worldX = origin.x + (x + 0.5) * voxelSize.x;
+      if (Math.hypot(worldX, worldZ) > radius) continue;
+      const row = topSolidRows[x + z * size.x];
+      if (row <= 0 || row >= maxMeasuredRow) continue;
+
+      let neighborCount = 0;
+      let highNeighborCount = 0;
+      let passableExitCount = 0;
+      let shallowestBlockingRow = Infinity;
+
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dz === 0) continue;
+          const neighborX = x + dx;
+          const neighborZ = z + dz;
+          if (neighborX < 0 || neighborZ < 0 || neighborX >= size.x || neighborZ >= size.z) continue;
+
+          const neighborWorldX = origin.x + (neighborX + 0.5) * voxelSize.x;
+          const neighborWorldZ = origin.z + (neighborZ + 0.5) * voxelSize.z;
+          if (Math.hypot(neighborWorldX, neighborWorldZ) > radius) continue;
+
+          neighborCount++;
+          const neighborRow = topSolidRows[neighborX + neighborZ * size.x];
+          if (neighborRow - row > maxStepRows) {
+            highNeighborCount++;
+            shallowestBlockingRow = Math.min(shallowestBlockingRow, neighborRow);
+          } else {
+            passableExitCount++;
+          }
+        }
+      }
+
+      checked++;
+      if (
+        neighborCount >= 7 &&
+        highNeighborCount >= 5 &&
+        passableExitCount <= 2 &&
+        Number.isFinite(shallowestBlockingRow) &&
+        shallowestBlockingRow - row >= minDepthRows
+      ) {
+        trapCells++;
+      }
+    }
+  }
+
+  return {
+    trapCellRatio: checked === 0 ? 0 : trapCells / checked,
+    trapCells,
+    checked,
+  };
+}
+
 function percentile(sortedValues, percentileValue) {
   return sortedValues[Math.floor(sortedValues.length * percentileValue)];
 }
@@ -139,6 +203,7 @@ assert.equal(rules.minPlayers, 12);
 assert.equal(rules.maxTeamSize, 3);
 assert.equal(rules.maxTeams, 9);
 assert.equal(rules.scoreModel, 'last_team_alive');
+assert.equal(rules.roundTimeSeconds, BATTLE_ROYAL_MATCH_DURATION_SECONDS);
 assert.equal(rules.respawnPolicy, 'none_after_active_play');
 assert.equal(rules.matchEndPolicy, 'last_team_alive');
 assert.equal(rules.mapProfileId, 'battle_royal_large');
@@ -163,7 +228,7 @@ assert.deepEqual(createGameConfigForGameplayMode('battle_royal'), {
   teamSize: 3,
   maxTeams: 9,
   scoreToWin: 0,
-  roundTimeSeconds: 1200,
+  roundTimeSeconds: BATTLE_ROYAL_MATCH_DURATION_SECONDS,
   respawnTimeSeconds: 0,
   spawnProtectionSeconds: 3,
   flagReturnTimeSeconds: 0,
@@ -218,6 +283,7 @@ const manifestAgain = generateProceduralVoxelMap(0x51f15eed, {
 assert.equal(manifest.profileId, 'battle_royal_large');
 assert.equal(manifest.mapSize, 'large');
 assert.equal(manifest.gameplay.mode, 'battle_royal');
+assert.equal(manifest.construction.designBrief.targetMatchLengthSeconds, BATTLE_ROYAL_MATCH_DURATION_SECONDS);
 assert.equal(manifest.size.x >= 610 && manifest.size.x <= 625, true);
 assert.equal(manifest.size.y >= 180, true);
 assert.equal(manifest.size.z >= 610 && manifest.size.z <= 625, true);
@@ -252,6 +318,7 @@ assert.equal(minSpawnSeparation > preview.preview.thumbnailSilhouette.bounds.max
 const largePlayableRadius = preview.preview.thumbnailSilhouette.bounds.maxX * 0.96;
 const playableRows = playableHeightRows(manifest, largePlayableRadius);
 const playableSlopes = playableSlopeStats(manifest, largePlayableRadius);
+const terrainTraps = terrainTrapStats(manifest, largePlayableRadius);
 const terrainLookup = createProceduralTerrainLookup(manifest);
 assert.equal(percentile(playableRows, 0.1) >= 10, true);
 assert.equal(percentile(playableRows, 0.9) >= 30, true);
@@ -260,6 +327,11 @@ assert.equal(playableMidSpan >= 12, true);
 assert.equal(percentile(playableRows, 0.98) - percentile(playableRows, 0.02) >= 28, true);
 assert.equal(playableSlopes.steepStepRatio <= 0.006, true);
 assert.equal(playableSlopes.cliffStepRatio <= 0.003, true);
+assert.equal(
+  terrainTraps.trapCellRatio <= 0.001,
+  true,
+  `expected low terrain trap ratio, got ${terrainTraps.trapCells}/${terrainTraps.checked}`
+);
 assert.equal(terrainLookup.getMaxPlayableY() >= maxSurfaceY(manifest) + PLAYER_HEIGHT / 2 + 12, true);
 const hillierManifest = generateProceduralVoxelMap(0x00000001, {
   mapSize: 'large',
@@ -270,7 +342,17 @@ const hillierRows = playableHeightRows(
   hillierManifest.preview.thumbnailSilhouette.bounds.maxX * 0.96
 );
 const hillierMidSpan = percentile(hillierRows, 0.9) - percentile(hillierRows, 0.1);
+const hillierTerrainTraps = terrainTrapStats(
+  hillierManifest,
+  hillierManifest.preview.thumbnailSilhouette.bounds.maxX * 0.96
+);
 assert.equal(hillierMidSpan >= playableMidSpan + 15, true);
+assert.equal(
+  hillierTerrainTraps.trapCellRatio <= 0.001,
+  true,
+  `expected low hillier terrain trap ratio, got ${hillierTerrainTraps.trapCells}/${hillierTerrainTraps.checked}`
+);
+assert.equal(hillierManifest.construction.diagnostics.repairActions.terrainTrapRepairCells >= 0, true);
 assert.equal(hillierManifest.construction.diagnostics.spawnVisibilityPairs, 0);
 assert.deepEqual(hillierManifest.construction.diagnostics.warnings, []);
 const pickupCounts = manifest.gameplay.powerups.reduce((counts, pickup) => {

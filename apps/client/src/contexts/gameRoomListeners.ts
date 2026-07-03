@@ -96,6 +96,8 @@ interface MatchStartGateMessage {
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
   mapProfileId?: MapProfileId | null;
+  pregeneratedMapId?: string | null;
+  mapArtifactId?: string | null;
   position?: { x: number; y: number; z: number };
   movementEpoch?: number;
   ackSeq?: number;
@@ -163,6 +165,7 @@ export function setupGameRoomListeners(
     setMapSeed,
     setMapThemeId,
     setMapSize,
+    setPregeneratedMapIdentity,
     setLocalPlayer,
     updatePlayer,
     removePlayer,
@@ -180,11 +183,14 @@ export function setupGameRoomListeners(
     mapThemeId?: VoxelMapTheme['id'] | null;
     mapSize?: VoxelMapSizeId | null;
     mapProfileId?: MapProfileId | null;
+    pregeneratedMapId?: string | null;
+    mapArtifactId?: string | null;
   }) => {
     setMapSeed(data.mapSeed);
     setMapThemeId(data.mapThemeId ?? null);
     setMapSize(data.mapSize);
     useGameStore.getState().setMapProfileId(data.mapProfileId);
+    setPregeneratedMapIdentity(data.pregeneratedMapId, data.mapArtifactId);
   };
 
   const applyIncomingMapStateWithStreamerTransition = (data: {
@@ -192,6 +198,8 @@ export function setupGameRoomListeners(
     mapThemeId?: VoxelMapTheme['id'] | null;
     mapSize?: VoxelMapSizeId | null;
     mapProfileId?: MapProfileId | null;
+    pregeneratedMapId?: string | null;
+    mapArtifactId?: string | null;
   }) => {
     const nextMapSize = normalizeVoxelMapSizeId(data.mapSize);
     const nextMapProfileId = normalizeMapProfileId(data.mapProfileId);
@@ -200,7 +208,9 @@ export function setupGameRoomListeners(
       data.mapSeed !== current.mapSeed ||
       (data.mapThemeId ?? null) !== current.mapThemeId ||
       nextMapSize !== current.mapSize ||
-      nextMapProfileId !== current.mapProfileId
+      nextMapProfileId !== current.mapProfileId ||
+      (data.pregeneratedMapId ?? null) !== current.pregeneratedMapId ||
+      (data.mapArtifactId ?? null) !== current.mapArtifactId
     );
 
     if (!useStreamerStore.getState().isActive || !mapChanged) {
@@ -213,6 +223,7 @@ export function setupGameRoomListeners(
       mapThemeId: data.mapThemeId ?? null,
       mapSize: nextMapSize,
       mapProfileId: nextMapProfileId,
+      pregeneratedMapId: data.pregeneratedMapId ?? null,
     });
     const transitionSerial = ++streamerMapTransitionSerial;
     useStreamerStore.getState().beginSceneTransition({
@@ -229,6 +240,7 @@ export function setupGameRoomListeners(
         mapThemeId: data.mapThemeId ?? null,
         mapSize: nextMapSize,
         mapProfileId: nextMapProfileId,
+        pregeneratedMapId: data.pregeneratedMapId ?? null,
       }, 'streamer-phase-change'),
       leadPromise,
     ]).then(() => {
@@ -297,6 +309,8 @@ export function setupGameRoomListeners(
     mapThemeId?: VoxelMapTheme['id'] | null;
     mapSize?: VoxelMapSizeId | null;
     mapProfileId?: MapProfileId | null;
+    pregeneratedMapId?: string | null;
+    mapArtifactId?: string | null;
   }) => {
     loggers.network.debug('phase change message', data.phase);
     if (typeof data.mapSeed === 'number') {
@@ -305,6 +319,8 @@ export function setupGameRoomListeners(
         mapThemeId: data.mapThemeId ?? null,
         mapSize: data.mapSize,
         mapProfileId: data.mapProfileId,
+        pregeneratedMapId: data.pregeneratedMapId,
+        mapArtifactId: data.mapArtifactId,
       });
     }
     const nextPhase = normalizeGamePhase(data.phase);
@@ -324,6 +340,8 @@ export function setupGameRoomListeners(
         mapThemeId: data.mapThemeId ?? null,
         mapSize: data.mapSize,
         mapProfileId: data.mapProfileId,
+        pregeneratedMapId: data.pregeneratedMapId,
+        mapArtifactId: data.mapArtifactId,
       });
     }
 

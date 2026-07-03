@@ -142,6 +142,7 @@ export function BattleRoyalDropDeployment() {
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
   const mapProfileId = useGameStore((state) => state.mapProfileId);
+  const pregeneratedMapId = useGameStore((state) => state.pregeneratedMapId);
   const isBattleRoyal = gameplayMode === 'battle_royal';
   const isDeploymentPhase = gamePhase === 'countdown' || gamePhase === 'deployment';
   const shouldRenderDropVisuals = isBattleRoyal && isDeploymentPhase && drop?.enabled === true;
@@ -150,7 +151,7 @@ export function BattleRoyalDropDeployment() {
     LOCATION_LABEL_FADE_SMOOTHING,
     LOCATION_LABEL_MIN_RENDER_OPACITY
   );
-  const preparedMap = getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId });
+  const preparedMap = getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId });
   const namedLocations = preparedMap?.manifest.gameplay.namedLocations ?? [];
 
   const podPlayers = useMemo(

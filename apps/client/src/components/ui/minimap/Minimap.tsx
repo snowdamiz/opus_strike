@@ -35,20 +35,21 @@ export function Minimap() {
   const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const size = useMeasuredSquareSize(containerRef, DEFAULT_MINIMAP_SIZE);
   const devicePixelRatio = useDevicePixelRatio();
-  const { localPlayerId, mapSeed, mapThemeId, mapSize, mapProfileId } = useGameStore(
+  const { localPlayerId, mapSeed, mapThemeId, mapSize, mapProfileId, pregeneratedMapId } = useGameStore(
     useShallow((state) => ({
       localPlayerId: state.localPlayer?.id ?? null,
       mapSeed: state.mapSeed,
       mapThemeId: state.mapThemeId,
       mapSize: state.mapSize,
       mapProfileId: state.mapProfileId,
+      pregeneratedMapId: state.pregeneratedMapId,
     }))
   );
 
   const preparedMap = useMemo(() => (
-    getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId })
-    ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, source: 'match' })
-  ), [mapSeed, mapThemeId, mapSize, mapProfileId]);
+    getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId })
+    ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId, source: 'match' })
+  ), [mapSeed, mapThemeId, mapSize, mapProfileId, pregeneratedMapId]);
   const manifest = preparedMap.manifest;
   const projection = useMemo(() => (
     createMinimapProjection(getMinimapBounds(manifest), size, MINIMAP_PADDING)

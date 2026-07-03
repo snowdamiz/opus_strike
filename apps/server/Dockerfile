@@ -22,7 +22,10 @@ COPY packages/shared/package.json packages/shared/package.json
 COPY packages/physics/package.json packages/physics/package.json
 
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-  pnpm install --frozen-lockfile --store-dir /pnpm/store
+  apt-get update \
+  && apt-get install -y --no-install-recommends g++ make python3 \
+  && rm -rf /var/lib/apt/lists/* \
+  && pnpm install --frozen-lockfile --store-dir /pnpm/store
 
 FROM deps AS build
 
@@ -44,8 +47,12 @@ COPY packages/shared/package.json packages/shared/package.json
 COPY packages/physics/package.json packages/physics/package.json
 
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-  pnpm install --prod --frozen-lockfile --filter @voxel-strike/server... --store-dir /pnpm/store \
-  && pnpm --filter @voxel-strike/server db:generate
+  apt-get update \
+  && apt-get install -y --no-install-recommends g++ make python3 \
+  && pnpm install --prod --frozen-lockfile --filter @voxel-strike/server... --store-dir /pnpm/store \
+  && pnpm --filter @voxel-strike/server db:generate \
+  && apt-get purge -y --auto-remove g++ make python3 \
+  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/apps/server/dist apps/server/dist
 COPY --from=build /app/packages/shared/dist packages/shared/dist

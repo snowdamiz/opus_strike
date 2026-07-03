@@ -12,6 +12,8 @@ export class GameState extends Schema {
   mapThemeId: string = '';
   mapSize: string = DEFAULT_VOXEL_MAP_SIZE_ID;
   mapProfileId: string = '';
+  pregeneratedMapId: string = '';
+  mapArtifactId: string = '';
   gameplayMode: string = 'capture_the_flag';
   matchPerspective: string = 'first_person';
 
@@ -52,6 +54,8 @@ defineTypes(GameState, {
   mapThemeId: 'string',
   mapSize: 'string',
   mapProfileId: 'string',
+  pregeneratedMapId: 'string',
+  mapArtifactId: 'string',
   gameplayMode: 'string',
   matchPerspective: 'string',
   players: { map: Player },

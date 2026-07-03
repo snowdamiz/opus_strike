@@ -38,6 +38,11 @@ let config: MatchLedgerConfig = {
   matchMode: 'ranked',
   mapSeed: 123,
   mapThemeId: 'forest' as VoxelMapTheme['id'],
+  mapSize: 'medium',
+  mapProfileId: 'ctf_arena',
+  mapTopologyId: 'lane_triad',
+  mapGeneratorVersion: 13,
+  pregeneratedMapId: 'pgmap_ledger',
   rankedEligible: true,
 };
 let nextMatchId = 1;
@@ -69,6 +74,8 @@ function setDurable(playerId: string, userId = `user-${playerId}`): void {
   assert.equal(first.ledger.matchId, 'match-1');
   assert.equal(first.ledger.roomId, config.roomId);
   assert.equal(first.ledger.matchMode, 'ranked');
+  assert.equal(first.ledger.pregeneratedMapId, 'pgmap_ledger');
+  assert.equal(first.ledger.mapGeneratorVersion, 13);
   assert.equal(first.ledger.startedAt.toISOString(), '2026-01-01T00:00:00.000Z');
   assert.equal(runtime.getMatchId(), 'match-1');
 

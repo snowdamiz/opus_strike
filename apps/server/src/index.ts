@@ -14,6 +14,13 @@ import authRoutes from './auth/routes';
 import createAdminRouter from './admin/routes';
 import cosmeticsRoutes from './cosmetics/routes';
 import matchmakingRoutes from './matchmaking/routes';
+import { createMapRouter } from './maps/routes';
+import {
+  getPregeneratedMapPoolAutoTopUpConfig,
+  startPregeneratedMapPoolAutoTopUp,
+  type MapPoolAutoTopUpRedisClient,
+  type PregeneratedMapPoolAutoTopUpHandle,
+} from './maps/pregeneratedMapPoolAutoTopUp';
 import missionsRoutes from './missions/routes';
 import rewardsRoutes from './rewards/routes';
 import socialRoutes from './social/routes';
@@ -65,6 +72,7 @@ let gameServer: Server | null = null;
 let flyReplayUpgradeRouterInstalled = false;
 let flyReplayRouteHandle: FlyReplayProcessRouteHandle | null = null;
 let adminMachineHeartbeatHandle: AdminMachineHeartbeatHandle | null = null;
+let pregeneratedMapPoolAutoTopUpHandle: PregeneratedMapPoolAutoTopUpHandle | null = null;
 
 function getAutoscalerMetricLabels() {
   return {
@@ -187,6 +195,7 @@ app.use(express.json());
 app.use('/auth', authRoutes);
 app.use('/cosmetics', cosmeticsRoutes);
 app.use('/matchmaking', matchmakingRoutes);
+app.use('/maps', createMapRouter());
 app.use('/missions', missionsRoutes);
 app.use('/rewards', rewardsRoutes);
 app.use('/social', socialRoutes);
@@ -465,7 +474,18 @@ async function startServer(): Promise<void> {
     wagerService.startBackgroundJobs();
     playerRewardService.startBackgroundJobs();
     dailyMissionService.startBackgroundJobs();
+    pregeneratedMapPoolAutoTopUpHandle = startPregeneratedMapPoolAutoTopUp({
+      config: getPregeneratedMapPoolAutoTopUpConfig(),
+      runtime: {
+        config: colyseusRuntime,
+        matchMaker,
+        flyReplayRegistered: () => Boolean(flyReplayRouteHandle),
+      },
+      redis: sharedRedisClient as MapPoolAutoTopUpRedisClient | null,
+    });
   } catch (error) {
+    pregeneratedMapPoolAutoTopUpHandle?.close();
+    pregeneratedMapPoolAutoTopUpHandle = null;
     dailyMissionService.stopBackgroundJobs();
     playerRewardService.stopBackgroundJobs();
     wagerService.stopBackgroundJobs();
@@ -524,6 +544,8 @@ async function shutdown(signal: string): Promise<void> {
     dailyMissionService.stopBackgroundJobs();
     playerRewardService.stopBackgroundJobs();
     wagerService.stopBackgroundJobs();
+    pregeneratedMapPoolAutoTopUpHandle?.close();
+    pregeneratedMapPoolAutoTopUpHandle = null;
     await adminMachineHeartbeatHandle?.close();
     adminMachineHeartbeatHandle = null;
     await flyReplayRouteHandle?.close();

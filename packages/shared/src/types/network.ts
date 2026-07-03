@@ -11,6 +11,7 @@ import type { MatchMode } from './matchMode.js';
 import type { GameplayMode } from './gameplayMode.js';
 import type { MatchPerspective } from './matchPerspective.js';
 import type { MapPowerupKind, MapProfileId, VoxelMapSizeId, VoxelMapTheme } from '../maps/procedural/types.js';
+import type { PregeneratedMapArtifactId, PregeneratedMapId } from '../maps/pregenerated.js';
 
 // Client -> Server Messages
 export type ClientMessage = 
@@ -27,6 +28,7 @@ export type ClientMessage =
   | { type: 'chat'; payload: { message: string; teamOnly: boolean } }
   | { type: 'ready'; payload: { ready: boolean } }
   | { type: 'matchSceneReady'; payload: MatchSceneReadyMessage }
+  | { type: 'requestUnstuck'; payload: { requestedAt?: number } }
   | { type: 'requestVoiceToken'; payload: VoiceTokenRequest }
   | { type: 'ability'; payload: AbilityCast };
 
@@ -121,6 +123,7 @@ export interface PlayerDamagedEvent {
   newHealth?: number;
   newDownedHealth?: number;
   sourcePosition?: Vec3 | null;
+  sourceDirection?: Vec3 | null;
   targetPosition?: Vec3 | null;
   sourceHeroId?: string | null;
   targetHeroId?: string | null;
@@ -290,6 +293,8 @@ export interface MatchStartGateMessage {
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
   mapProfileId?: MapProfileId | null;
+  pregeneratedMapId?: PregeneratedMapId | null;
+  mapArtifactId?: PregeneratedMapArtifactId | null;
   position: Vec3;
   movementEpoch: number;
   ackSeq: number;
@@ -391,6 +396,8 @@ export interface MatchSnapshotMessage {
   mapThemeId?: VoxelMapTheme['id'] | null;
   mapSize?: VoxelMapSizeId | null;
   mapProfileId?: MapProfileId | null;
+  pregeneratedMapId?: PregeneratedMapId | null;
+  mapArtifactId?: PregeneratedMapArtifactId | null;
   redScore: number;
   blueScore: number;
   redFlag: FlagSync;
@@ -461,6 +468,10 @@ export interface GameEndEvent {
   matchMode: MatchMode;
   gameplayMode: GameplayMode;
   matchPerspective: MatchPerspective;
+  completionReason?: 'match_end' | 'team_eliminated';
+  completedTeam?: Team | null;
+  completedTeamPlacement?: number | null;
+  activeTeamCount?: number | null;
   winningTeam: Team | null;
   finalScore: { red: number; blue: number };
   matchId: string | null;
