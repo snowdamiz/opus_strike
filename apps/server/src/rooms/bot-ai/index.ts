@@ -285,6 +285,7 @@ export interface BotAllyHealthDebt {
   healthRatio: number;
   distance: number;
   isCarrier: boolean;
+  isHuman: boolean;
   threatened: boolean;
   fighting: boolean;
   retreating: boolean;
@@ -325,6 +326,8 @@ export interface BotBlackboard {
   weakestEnemy: BotKnownEnemy | null;
   enemyCarrier: BotKnownEnemy | null;
   nearestAlly: BotPlayerSnapshot | null;
+  humanAllies: BotPlayerSnapshot[];
+  nearestHumanAlly: BotPlayerSnapshot | null;
   downedAllies: BotPlayerSnapshot[];
   downedEnemies: BotPlayerSnapshot[];
   nearestDownedAlly: BotPlayerSnapshot | null;
@@ -709,6 +712,11 @@ export const BOT_THINK_INTERVAL_MS = 200;
 export const BOT_TACTICS_INTERVAL_MS = 420;
 export const BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX = 'streamer-bot-deathmatch-showcase';
 export const BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX = 'ranked-battle-royal';
+
+const BATTLE_ROYAL_BOT_REVIVE_RANGE = 42;
+const BATTLE_ROYAL_HUMAN_REVIVE_RANGE = 58;
+const BATTLE_ROYAL_HUMAN_SUPPORT_RANGE = 76;
+const BATTLE_ROYAL_SQUAD_COHESION_MIN_DISTANCE = 18;
 
 export const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {
   easy: {
@@ -1620,6 +1628,94 @@ function healthResources(allies: readonly BotPlayerSnapshot[], enemies: readonly
   return resources;
 }
 
+function countPlayersNear(
+  players: readonly BotPlayerSnapshot[],
+  position: PlainVec3,
+  radius: number,
+  predicate: (player: BotPlayerSnapshot) => boolean = () => true
+): number {
+  let count = 0;
+  for (const player of players) {
+    if (!predicate(player)) continue;
+    if (distance2D(player.position, position) <= radius) count++;
+  }
+  return count;
+}
+
+function distanceToNearestPlayer(
+  players: readonly BotPlayerSnapshot[],
+  position: PlainVec3,
+  predicate: (player: BotPlayerSnapshot) => boolean = () => true
+): number {
+  let best = Infinity;
+  for (const player of players) {
+    if (!predicate(player)) continue;
+    best = Math.min(best, distance2D(player.position, position));
+  }
+  return best;
+}
+
+function scoreBattleRoyalDownedAllyTarget(
+  ally: BotPlayerSnapshot,
+  bots: readonly BotPlayerSnapshot[],
+  enemies: readonly BotPlayerSnapshot[]
+): number {
+  const nearestBotDistance = distanceToNearestPlayer(bots, ally.position);
+  const nearbyEnemyCount = countPlayersNear(enemies, ally.position, 22);
+  return (ally.isBot ? 0 : 520) - nearestBotDistance * 4.8 - nearbyEnemyCount * 64;
+}
+
+function selectBattleRoyalDownedAllyTarget(
+  downedAllies: readonly BotPlayerSnapshot[],
+  bots: readonly BotPlayerSnapshot[],
+  enemies: readonly BotPlayerSnapshot[]
+): BotPlayerSnapshot | null {
+  let best: BotPlayerSnapshot | null = null;
+  let bestScore = -Infinity;
+  for (const ally of downedAllies) {
+    const score = scoreBattleRoyalDownedAllyTarget(ally, bots, enemies);
+    if (score > bestScore || (score === bestScore && ally.id < (best?.id ?? '~'))) {
+      best = ally;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function scoreBattleRoyalHumanSupportTarget(
+  ally: BotPlayerSnapshot,
+  allies: readonly BotPlayerSnapshot[],
+  enemies: readonly BotPlayerSnapshot[],
+  bots: readonly BotPlayerSnapshot[]
+): number {
+  const nearestBotDistance = distanceToNearestPlayer(bots, ally.position);
+  const nearestEnemyDistance = distanceToNearestPlayer(enemies, ally.position);
+  const nearbyAllyCount = countPlayersNear(allies, ally.position, 18, (candidate) => candidate.id !== ally.id);
+  const missingHealthRatio = Math.max(0, 1 - ally.health / Math.max(1, ally.maxHealth));
+  const threatBonus = nearestEnemyDistance <= 28 ? 220 : nearestEnemyDistance <= 42 ? 100 : 0;
+  const isolationBonus = nearbyAllyCount === 0 ? 150 : 0;
+  const leashBonus = nearestBotDistance > 22 ? Math.min(220, (nearestBotDistance - 22) * 7) : 0;
+  return 460 + missingHealthRatio * 320 + threatBonus + isolationBonus + leashBonus - Math.max(0, nearestBotDistance - 70) * 10;
+}
+
+function selectBattleRoyalHumanSupportTarget(
+  allies: readonly BotPlayerSnapshot[],
+  enemies: readonly BotPlayerSnapshot[],
+  bots: readonly BotPlayerSnapshot[]
+): BotPlayerSnapshot | null {
+  let best: BotPlayerSnapshot | null = null;
+  let bestScore = -Infinity;
+  for (const ally of allies) {
+    if (ally.isBot || ally.state !== 'alive') continue;
+    const score = scoreBattleRoyalHumanSupportTarget(ally, allies, enemies, bots);
+    if (score > bestScore || (score === bestScore && ally.id < (best?.id ?? '~'))) {
+      best = ally;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
 function isStreamerDeathmatchTactics(gameplayMode: GameplayMode, bots: readonly BotPlayerSnapshot[]): boolean {
   return gameplayMode === 'team_deathmatch' &&
     bots.some((bot) => isStreamerDeathmatchBotProfile(bot.botProfileId));
@@ -1783,16 +1879,20 @@ function buildEliminationTacticsForTeam(input: BotTeamTacticsInput, team: Team):
 
   const threatClusters = createThreatClusters(enemyTeam, enemies);
   const healthFacts = healthResources(allies, enemies);
+  const isBattleRoyal = input.gameplayMode === 'battle_royal';
   const streamerDeathmatch = isStreamerDeathmatchTactics(input.gameplayMode, bots);
   const lowHealthAllies = streamerDeathmatch
     ? []
     : healthFacts.filter((fact) => fact.healthRatio < 0.72);
+  const humanSupportTarget = isBattleRoyal
+    ? selectBattleRoyalHumanSupportTarget(allies, enemies, bots)
+    : null;
   const roleDemand: BotRoleDemand = {
     runners: 0,
     defenders: 0,
     escorts: 0,
     interceptors: 0,
-    support: lowHealthAllies.length > 0 ? 1 : 0,
+    support: downedAllies.length > 0 || humanSupportTarget || lowHealthAllies.length > 0 ? 1 : 0,
     fighters: bots.length,
   };
   const assignments: Record<string, BotRoleAssignment> = {};
@@ -1805,42 +1905,33 @@ function buildEliminationTacticsForTeam(input: BotTeamTacticsInput, team: Team):
     ? streamerDeathmatchTargets
     : rankEliminationFocusTargets(enemies, threatClusters);
 
-  const nearestDownedAlly = downedAllies.length > 0
-    ? [...downedAllies].sort((a, b) => (
-      distance2D(a.position, bots[0]?.position ?? a.position) - distance2D(b.position, bots[0]?.position ?? b.position) ||
-      a.id.localeCompare(b.id)
-    ))[0] ?? null
+  const downedAllyTarget = isBattleRoyal
+    ? selectBattleRoyalDownedAllyTarget(downedAllies, sortedBots, enemies)
     : null;
-  if (nearestDownedAlly && input.gameplayMode === 'battle_royal') {
+  if (downedAllyTarget) {
     assignBestBot(
       sortedBots,
       assigned,
       'support',
       'revive',
-      nearestDownedAlly.position,
-      nearestDownedAlly.id,
-      'battle royal downed ally revive',
-      940,
+      downedAllyTarget.position,
+      downedAllyTarget.id,
+      downedAllyTarget.isBot ? 'battle royal downed ally revive' : 'battle royal human ally revive',
+      downedAllyTarget.isBot ? 940 : 1180,
       assignments
     );
   }
 
-  const nearestDownedEnemy = downedEnemies.length > 0
-    ? [...downedEnemies].sort((a, b) => (
-      distance2D(a.position, bots[0]?.position ?? a.position) - distance2D(b.position, bots[0]?.position ?? b.position) ||
-      a.id.localeCompare(b.id)
-    ))[0] ?? null
-    : null;
-  if (nearestDownedEnemy && input.gameplayMode === 'battle_royal') {
+  if (humanSupportTarget) {
     assignBestBot(
       sortedBots,
       assigned,
-      'fighter',
-      'finish',
-      nearestDownedEnemy.position,
-      nearestDownedEnemy.id,
-      'battle royal downed enemy finish',
-      760,
+      'support',
+      'support_cluster',
+      humanSupportTarget.position,
+      humanSupportTarget.id,
+      'battle royal human squad support',
+      780,
       assignments
     );
   }
@@ -1855,6 +1946,26 @@ function buildEliminationTacticsForTeam(input: BotTeamTacticsInput, team: Team):
       lowHealthAllies[0].playerId,
       'low-health ally resource cluster',
       640,
+      assignments
+    );
+  }
+
+  const nearestDownedEnemy = downedEnemies.length > 0
+    ? [...downedEnemies].sort((a, b) => (
+      distanceToNearestPlayer(sortedBots, a.position) - distanceToNearestPlayer(sortedBots, b.position) ||
+      a.id.localeCompare(b.id)
+    ))[0] ?? null
+    : null;
+  if (nearestDownedEnemy && isBattleRoyal) {
+    assignBestBot(
+      sortedBots,
+      assigned,
+      'fighter',
+      'finish',
+      nearestDownedEnemy.position,
+      nearestDownedEnemy.id,
+      'battle royal downed enemy finish',
+      680,
       assignments
     );
   }
@@ -2210,7 +2321,8 @@ function recentDamageSource(sources: readonly BotRecentDamageSource[], now: numb
 function buildAllyHealthDebts(
   bot: BotPlayerSnapshot,
   allies: readonly BotPlayerSnapshot[],
-  visibleEnemies: readonly BotKnownEnemy[]
+  visibleEnemies: readonly BotKnownEnemy[],
+  gameplayMode: GameplayMode
 ): BotAllyHealthDebt[] {
   const debts: BotAllyHealthDebt[] = [];
   for (const ally of allies) {
@@ -2231,7 +2343,8 @@ function buildAllyHealthDebts(
     const retreating = nearestEnemyDistance < 18 && speed > 0.8 && currentDistanceToBot < projectedDistanceToBot;
     const threatened = nearestEnemyDistance <= 18 || ally.hasFlag;
     const fighting = nearestEnemyDistance <= 24 && !retreating;
-    const importance = (ally.hasFlag ? 1.65 : 1) * (threatened ? 1.32 : 1) * (fighting ? 1.12 : 1);
+    const humanSquadPriority = gameplayMode === 'battle_royal' && !ally.isBot ? 1.45 : 1;
+    const importance = humanSquadPriority * (ally.hasFlag ? 1.65 : 1) * (threatened ? 1.32 : 1) * (fighting ? 1.12 : 1);
     debts.push({
       playerId: ally.id,
       position: { ...ally.position },
@@ -2240,6 +2353,7 @@ function buildAllyHealthDebts(
       healthRatio: ally.health / Math.max(1, ally.maxHealth),
       distance: currentDistanceToBot,
       isCarrier: ally.hasFlag,
+      isHuman: !ally.isBot,
       threatened,
       fighting,
       retreating,
@@ -2501,8 +2615,12 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
     const dz = ally.position.z - bot.position.z;
     if (dx * dx + dz * dz <= nearbyRangeSq) nearbyAllyCount++;
   }
-  const allyHealthDebts = buildAllyHealthDebts(bot, allies, visibleEnemies);
-  const nearestDownedAlly = nearestPlayer(downedAllies, bot.position);
+  const allyHealthDebts = buildAllyHealthDebts(bot, allies, visibleEnemies, input.gameplayMode);
+  const humanAllies = allies.filter((ally) => !ally.isBot);
+  const nearestHumanAlly = nearestPlayer(humanAllies, bot.position);
+  const nearestDownedAlly = input.gameplayMode === 'battle_royal'
+    ? selectBattleRoyalDownedAllyTarget(downedAllies, [bot], enemyPlayers)
+    : nearestPlayer(downedAllies, bot.position);
   const nearestDownedEnemy = nearestPlayer(downedEnemies, bot.position);
 
   return {
@@ -2518,6 +2636,8 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
     weakestEnemy,
     enemyCarrier,
     nearestAlly,
+    humanAllies,
+    nearestHumanAlly,
     downedAllies,
     downedEnemies,
     nearestDownedAlly,
@@ -2552,6 +2672,46 @@ function addIntent(candidates: BotIntentCandidate[], type: BotIntentType, score:
   });
 }
 
+function mixPosition2D(a: PlainVec3, aWeight: number, b: PlainVec3, bWeight: number, y = a.y): PlainVec3 {
+  const totalWeight = Math.max(0.001, aWeight + bWeight);
+  return {
+    x: (a.x * aWeight + b.x * bWeight) / totalWeight,
+    y,
+    z: (a.z * aWeight + b.z * bWeight) / totalWeight,
+  };
+}
+
+function getBattleRoyalSurvivalTarget(bot: BotPlayerSnapshot, blackboard: BotBlackboard): PlainVec3 {
+  const safeTarget = blackboard.safeZone?.rotateTarget ?? null;
+  const allyTarget = blackboard.nearestAlly?.state === 'alive' ? blackboard.nearestAlly.position : null;
+  const enemy = blackboard.nearestEnemy;
+
+  if (enemy) {
+    const away = direction2DFromTo(enemy.lastKnownPosition, bot.position);
+    if (away) {
+      const localEnemyPressure = Math.max(0, blackboard.nearbyEnemyCount - blackboard.nearbyAllyCount);
+      const evadeDistance = 22 + Math.min(18, localEnemyPressure * 6);
+      const evadeTarget: PlainVec3 = {
+        x: bot.position.x + away.x * evadeDistance,
+        y: bot.position.y,
+        z: bot.position.z + away.z * evadeDistance,
+      };
+
+      if (safeTarget && blackboard.safeZone && (blackboard.safeZone.outside || blackboard.safeZone.pressure >= 0.6)) {
+        return mixPosition2D(safeTarget, 0.8, evadeTarget, 0.45, bot.position.y);
+      }
+      if (allyTarget && distance2D(bot.position, allyTarget) > 5) {
+        return mixPosition2D(allyTarget, 0.65, evadeTarget, 0.5, bot.position.y);
+      }
+      return evadeTarget;
+    }
+  }
+
+  if (safeTarget) return { ...safeTarget, y: bot.position.y };
+  if (allyTarget) return { ...allyTarget };
+  return { ...blackboard.ownBasePosition };
+}
+
 export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboard, skill: BotSkillProfile): BotIntentPlan {
   if (bot.state === 'dead') {
     return {
@@ -2581,6 +2741,10 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
   const isBattleRoyal = blackboard.gameplayMode === 'battle_royal';
   const outnumberedRegroupHealthRatio = getOutnumberedRegroupHealthRatio(skill);
   const thirdPartyDisengageHealthRatio = getThirdPartyDisengageHealthRatio(skill);
+  const survivalTarget = isBattleRoyal ? getBattleRoyalSurvivalTarget(bot, blackboard) : blackboard.ownBasePosition;
+  const regroupTarget = isBattleRoyal
+    ? blackboard.nearestAlly?.position ?? survivalTarget
+    : blackboard.nearestAlly?.position ?? blackboard.ownBasePosition;
 
   if (isCaptureTheFlag && bot.hasFlag) {
     addIntent(candidates, 'carry_flag_home', 10000, blackboard.ownBasePosition, 'bot is carrying enemy flag');
@@ -2624,7 +2788,7 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
 
   const pressuredRetreatHealthRatio = skill.retreatHealthRatio + localEnemyPressure * 0.06;
   if (healthRatio < pressuredRetreatHealthRatio && nearestEnemyDistance < 24 && !blackboard.enemyCarrier) {
-    addIntent(candidates, 'retreat', 820 + (1 - healthRatio) * 520 + localEnemyPressure * 90, blackboard.ownBasePosition, 'low health under pressure');
+    addIntent(candidates, 'retreat', 820 + (1 - healthRatio) * 520 + localEnemyPressure * 90, survivalTarget, 'low health under pressure');
   } else if (
     localEnemyPressure >= 2 &&
     healthRatio < outnumberedRegroupHealthRatio &&
@@ -2635,7 +2799,7 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
       candidates,
       'regroup',
       620 + localEnemyPressure * 80 + (outnumberedRegroupHealthRatio - healthRatio) * 260,
-      blackboard.nearestAlly?.position ?? blackboard.ownBasePosition,
+      regroupTarget,
       'outnumbered local fight'
     );
   }
@@ -2650,21 +2814,26 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
       candidates,
       'disengage_third_party',
       850 + localEnemyPressure * 110 + (thirdPartyDisengageHealthRatio - healthRatio) * 340 + (blackboard.safeZone?.pressure ?? 0) * 120,
-      blackboard.safeZone?.rotateTarget ?? blackboard.nearestAlly?.position ?? blackboard.ownBasePosition,
+      blackboard.safeZone?.rotateTarget ?? regroupTarget,
       'bad third-party fight'
     );
   }
 
   if (isBattleRoyal && blackboard.nearestDownedAlly) {
-    const downedAllyDistance = distance2D(bot.position, blackboard.nearestDownedAlly.position);
-    if (downedAllyDistance <= 28) {
+    const downedAlly = blackboard.nearestDownedAlly;
+    const downedAllyDistance = distance2D(bot.position, downedAlly.position);
+    const reviveRange = downedAlly.isBot ? BATTLE_ROYAL_BOT_REVIVE_RANGE : BATTLE_ROYAL_HUMAN_REVIVE_RANGE;
+    if (downedAllyDistance <= reviveRange) {
+      const humanBonus = downedAlly.isBot ? 0 : 430;
+      const enemyPenalty = downedAlly.isBot ? 76 : 38;
+      const safeWindowBonus = blackboard.nearbyEnemyCount === 0 ? 170 : 0;
       addIntent(
         candidates,
         'revive_teammate',
-        900 - downedAllyDistance * 16 + (blackboard.nearbyEnemyCount === 0 ? 130 : -blackboard.nearbyEnemyCount * 95) + assignmentBoost('revive', 210),
-        blackboard.nearestDownedAlly.position,
+        1040 + humanBonus - downedAllyDistance * 10 + safeWindowBonus - blackboard.nearbyEnemyCount * enemyPenalty + assignmentBoost('revive', 260),
+        downedAlly.position,
         blackboard.nearbyEnemyCount === 0 ? 'nearby downed ally is safe to revive' : 'nearby downed ally needs rescue',
-        blackboard.nearestDownedAlly.id
+        downedAlly.id
       );
     }
   }
@@ -2725,14 +2894,65 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
   }
 
   if (blackboard.healCluster && bot.heroId === 'chronos') {
+    const hasHumanHealTarget = isBattleRoyal &&
+      blackboard.healCluster.targetIds.some((targetId) => blackboard.humanAllies.some((ally) => ally.id === targetId));
     addIntent(
       candidates,
       'peel_for_ally',
-      540 + assignmentBoost('support_cluster', 220) + blackboard.healCluster.expectedHeal * 1.3,
+      540 + assignmentBoost('support_cluster', 220) + blackboard.healCluster.expectedHeal * 1.3 + (hasHumanHealTarget ? 190 : 0),
       blackboard.healCluster.center,
-      'high-value heal cluster',
+      hasHumanHealTarget ? 'high-value human heal cluster' : 'high-value heal cluster',
       blackboard.healCluster.targetIds[0]
     );
+  }
+
+  if (isBattleRoyal && assignment?.job === 'support_cluster' && assignment.targetPosition) {
+    const supportDistance = distance2D(bot.position, assignment.targetPosition);
+    addIntent(
+      candidates,
+      'peel_for_ally',
+      500 + assignmentBoost('support_cluster', 240) + Math.min(180, supportDistance * 2),
+      assignment.targetPosition,
+      'battle royal assigned squad support',
+      assignment.targetPlayerId
+    );
+  }
+
+  if (isBattleRoyal && blackboard.nearestHumanAlly) {
+    const humanAlly = blackboard.nearestHumanAlly;
+    const humanDistance = distance2D(bot.position, humanAlly.position);
+    const healthDebt = blackboard.allyHealthDebts.find((debt) => debt.playerId === humanAlly.id) ?? null;
+    const humanThreatened = Boolean(healthDebt?.threatened) ||
+      blackboard.visibleEnemies.some((enemy) => distance2D(enemy.lastKnownPosition, humanAlly.position) <= 30);
+    const supportWanted = humanDistance > 12 || humanThreatened || Boolean(healthDebt);
+    if (supportWanted && humanDistance <= BATTLE_ROYAL_HUMAN_SUPPORT_RANGE) {
+      addIntent(
+        candidates,
+        'peel_for_ally',
+        410 +
+          assignmentBoost('support_cluster', 210) +
+          Math.max(0, humanDistance - 14) * 5 +
+          (humanThreatened ? 230 : 0) +
+          (healthDebt ? Math.min(260, healthDebt.effectiveMissingHealth * 1.25) : 0),
+        humanAlly.position,
+        humanThreatened ? 'human squadmate under pressure' : 'stay with human squadmate',
+        humanAlly.id
+      );
+    }
+  }
+
+  if (isBattleRoyal && blackboard.nearestAlly) {
+    const allyDistance = distance2D(bot.position, blackboard.nearestAlly.position);
+    if (allyDistance > BATTLE_ROYAL_SQUAD_COHESION_MIN_DISTANCE) {
+      addIntent(
+        candidates,
+        'regroup',
+        280 + Math.min(260, (allyDistance - BATTLE_ROYAL_SQUAD_COHESION_MIN_DISTANCE) * 6),
+        blackboard.nearestAlly.position,
+        'battle royal squad cohesion',
+        blackboard.nearestAlly.id
+      );
+    }
   }
 
   if (blackboard.nearestEnemy && nearestEnemyDistance <= getBotEngageRange(bot.heroId, skill)) {
@@ -3268,6 +3488,15 @@ export function planBotRoute(input: BotRoutePlanInput): BotRoutePlan {
 }
 
 export function chooseBotCombatPlan(input: BotCombatPlanInput): BotCombatPlan {
+  if (input.intent.type === 'revive_teammate') {
+    return {
+      targetId: null,
+      stance: 'hold_cover',
+      score: 0,
+      reason: 'revive teammate priority',
+    };
+  }
+
   if (input.intent.type === 'finish_downed_enemy' && input.intent.targetPlayerId) {
     const downedTarget = input.blackboard.downedEnemies.find((enemy) => enemy.id === input.intent.targetPlayerId) ?? null;
     if (downedTarget) {

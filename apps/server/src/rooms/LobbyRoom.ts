@@ -584,8 +584,6 @@ export class LobbyRoom extends Room<LobbyState> {
           oldClient.leave(4000); // Custom code for duplicate session
         }
         
-        // Clean up old session data
-        const oldAuthContext = this.playerAuthContexts.get(existingSessionId);
         const cleanup = this.cleanupLobbySession(existingSessionId);
         
         // Broadcast that old player left
@@ -659,6 +657,7 @@ export class LobbyRoom extends Room<LobbyState> {
       this.sendMapVoteStarted(client);
     }
     this.updateMetadata();
+    this.broadcastLobbyState();
     this.broadcastMatchmakingStatus();
     this.scheduleMatchmakingAutoStart();
   }
@@ -717,6 +716,7 @@ export class LobbyRoom extends Room<LobbyState> {
     }
     this.startMapVoteCountdownIfReady();
     this.updateMetadata();
+    this.broadcastLobbyState();
     this.broadcastMatchmakingStatus();
 
     if (shouldCancelExpectedPartyQueue) {
@@ -762,6 +762,7 @@ export class LobbyRoom extends Room<LobbyState> {
       ready: player.isReady,
     });
     this.updateMetadata();
+    this.broadcastLobbyState();
   }
 
   private handleSetTeam(client: Client, team: string) {
@@ -801,6 +802,7 @@ export class LobbyRoom extends Room<LobbyState> {
       isReady: player.isReady,
     });
     this.updateMetadata();
+    this.broadcastLobbyState();
   }
 
   private handleSetObserver(client: Client, observer: boolean): void {
@@ -836,6 +838,7 @@ export class LobbyRoom extends Room<LobbyState> {
       isReady: player.isReady,
     });
     this.updateMetadata();
+    this.broadcastLobbyState();
   }
 
   private async handleStartGame(client: Client) {
@@ -1395,7 +1398,9 @@ export class LobbyRoom extends Room<LobbyState> {
     const result = this.createBot(data);
     if (!result.ok) {
       client.send('error', { message: this.getCreateBotFailureMessage(result.reason) });
+      return;
     }
+    this.broadcastLobbyState();
   }
 
   private handleRemoveBot(client: Client, botId: string): void {
@@ -1429,6 +1434,7 @@ export class LobbyRoom extends Room<LobbyState> {
       this.broadcast('botHeroChanged', { playerId: botId, heroId: bot.heroId, skinId: bot.skinId });
     }
     this.updateMetadata();
+    this.broadcastLobbyState();
   }
 
   private handleUpdateBotDifficulty(client: Client, botId: string, difficulty: BotDifficulty): void {
@@ -1440,6 +1446,7 @@ export class LobbyRoom extends Room<LobbyState> {
     bot.botDifficulty = this.normalizeDifficulty(difficulty);
     this.broadcast('botDifficultyChanged', { playerId: botId, difficulty: bot.botDifficulty });
     this.updateMetadata();
+    this.broadcastLobbyState();
   }
 
   private handleUpdateBotHero(client: Client, botId: string, heroId: HeroId | ''): void {
@@ -1462,6 +1469,7 @@ export class LobbyRoom extends Room<LobbyState> {
     bot.skinId = this.normalizeSkinId(nextHeroId, bot.skinId);
     this.broadcast('botHeroChanged', { playerId: botId, heroId: bot.heroId, skinId: bot.skinId });
     this.updateMetadata();
+    this.broadcastLobbyState();
   }
 
   private getCreateBotFailureMessage(reason: CreateBotFailureReason): string {
@@ -1545,6 +1553,7 @@ export class LobbyRoom extends Room<LobbyState> {
       this.broadcastMapVoteUpdated();
     }
     this.updateMetadata();
+    this.broadcastLobbyState();
   }
 
   private cleanupLobbySession(sessionId: string): CleanupLobbySessionResult {

@@ -190,14 +190,15 @@ assert.equal(
   assert.equal(gate.canAcceptSceneReadyKey(1), true);
   assert.equal(gate.canAcceptSceneReadyKey(null), false);
 
-  gate.markSceneReady('human-red');
+  assert.equal(gate.markSceneReady('human-red'), true);
+  assert.equal(gate.markSceneReady('human-red'), false);
   assert.equal(gate.areHumansSceneReady({
     players: readyPlayers,
     connectedClientIds: new Set(['human-red', 'human-blue']),
     requiredHumanPlayers: 2,
   }), false);
 
-  gate.markSceneReady('human-blue');
+  assert.equal(gate.markSceneReady('human-blue'), true);
   assert.equal(gate.areHumansSceneReady({
     players: readyPlayers,
     connectedClientIds: new Set(['human-red', 'human-blue']),

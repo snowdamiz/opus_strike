@@ -162,6 +162,15 @@ export class PlayerPingRuntime {
     this.tracker.resetNetworkQualityForPlayers(input.players, input.now);
   }
 
+  resetCompetitiveGateForPlayer(input: {
+    playerId: string;
+    now: number;
+    matchMode: MatchMode;
+  }): void {
+    if (!this.isCompetitiveGateRequired(input)) return;
+    this.tracker.resetNetworkQuality(input.playerId, input.now);
+  }
+
   ensureCompetitiveGateForStart(
     input: EnsureCompetitiveNetworkQualityInput
   ): EnsureCompetitiveNetworkQualityResult {

@@ -217,6 +217,63 @@ const clients: TestClient[] = [
 }
 
 {
+  const runtime = new PlayerPingRuntime();
+  const rankedPlayers = new Map([['red-human', participants().get('red-human')!]]);
+
+  let request = runtime.createPingRequest('red-human', 1, 1_000);
+  runtime.recordPingResponse('red-human', request.nonce, 1_820);
+  request = runtime.createPingRequest('red-human', 2, 4_000);
+  runtime.recordPingResponse('red-human', request.nonce, 4_640);
+  request = runtime.createPingRequest('red-human', 3, 7_000);
+  runtime.recordPingResponse('red-human', request.nonce, 7_590);
+
+  const blockedBeforeSceneReady = runtime.ensureCompetitiveGateForStart({
+    players: rankedPlayers,
+    now: 8_000,
+    matchMode: 'ranked',
+  });
+
+  assert.equal(blockedBeforeSceneReady.ready, false);
+  assert.equal(blockedBeforeSceneReady.gate.status, 'blocked');
+  assert.equal(blockedBeforeSceneReady.cancelNotice?.networkQuality?.reason, 'average_ping_high');
+
+  runtime.resetCompetitiveGateForPlayer({
+    playerId: 'red-human',
+    now: 8_100,
+    matchMode: 'ranked',
+  });
+
+  const pendingAfterSceneReady = runtime.ensureCompetitiveGateForStart({
+    players: rankedPlayers,
+    now: 8_200,
+    matchMode: 'ranked',
+  });
+
+  assert.equal(pendingAfterSceneReady.ready, false);
+  assert.equal(pendingAfterSceneReady.gate.status, 'pending');
+  assert.equal(pendingAfterSceneReady.cancelNotice, undefined);
+
+  request = runtime.createPingRequest('red-human', 4, 11_000);
+  runtime.recordPingResponse('red-human', request.nonce, 11_045);
+  request = runtime.createPingRequest('red-human', 5, 14_000);
+  runtime.recordPingResponse('red-human', request.nonce, 14_048);
+  request = runtime.createPingRequest('red-human', 6, 17_000);
+  runtime.recordPingResponse('red-human', request.nonce, 17_043);
+
+  assert.deepEqual(
+    runtime.ensureCompetitiveGateForStart({
+      players: rankedPlayers,
+      now: 17_000,
+      matchMode: 'ranked',
+    }),
+    {
+      ready: true,
+      gate: { status: 'ready' },
+    }
+  );
+}
+
+{
   const notice = buildNetworkQualityCancelNotice(undefined, 'network_not_verified');
 
   assert.equal(notice.blockedPlayerId, undefined);

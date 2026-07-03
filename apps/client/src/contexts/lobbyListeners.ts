@@ -46,6 +46,7 @@ const GAME_JOIN_RETRY_DELAYS_MS = [450, 1_200] as const;
 
 interface SetupLobbyListenersOptions {
   playerName: string;
+  lobbyRoomRef: { current: Room | null };
   joinGameRoom: JoinGameRoomFromLobby;
   leaveLobby: () => void;
 }
@@ -195,7 +196,7 @@ function waitForRetry(delayMs: number): Promise<void> {
 
 export function setupLobbyListeners(
   room: Room,
-  { playerName, joinGameRoom, leaveLobby }: SetupLobbyListenersOptions
+  { playerName, lobbyRoomRef, joinGameRoom, leaveLobby }: SetupLobbyListenersOptions
 ): void {
   const {
     setCurrentLobby,
@@ -550,6 +551,8 @@ export function setupLobbyListeners(
 
   room.onLeave((code) => {
     loggers.network.debug('left lobby room', code);
+    if (lobbyRoomRef.current !== room) return;
+    lobbyRoomRef.current = null;
     if (hasJoinedGame || hasFailedGameStart) return;
     if (isJoiningGame || isAwaitingGameStart) {
       armGameStartTimeout();

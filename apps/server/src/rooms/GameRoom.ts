@@ -868,14 +868,21 @@ const BOT_MID_URGENT_PLANNING_BUDGET_PER_TICK = 3;
 const BOT_MID_DEFERRED_PLANNING_BUDGET_PER_TICK = 1;
 const BOT_MIN_URGENT_PLANNING_BUDGET_PER_TICK = 2;
 const BOT_MIN_DEFERRED_PLANNING_BUDGET_PER_TICK = 1;
+const BOT_BATTLE_ROYAL_MIN_URGENT_PLANNING_BUDGET_PER_TICK = 6;
+const BOT_BATTLE_ROYAL_MIN_DEFERRED_PLANNING_BUDGET_PER_TICK = 2;
 const BOT_MOVEMENT_LOD_START_COUNT = 8;
 const BOT_MOVEMENT_LOD_MEDIUM_COUNT = 16;
 const BOT_MOVEMENT_LOD_HIGH_COUNT = 32;
 const BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE = 26;
 const BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE_SQ = BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE * BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE;
+const BOT_BATTLE_ROYAL_CRITICAL_ENEMY_DISTANCE = 24;
+const BOT_BATTLE_ROYAL_CRITICAL_ENEMY_DISTANCE_SQ = BOT_BATTLE_ROYAL_CRITICAL_ENEMY_DISTANCE * BOT_BATTLE_ROYAL_CRITICAL_ENEMY_DISTANCE;
 const BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_LOW = 3;
 const BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_MEDIUM = 2;
 const BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_HIGH = 1;
+const BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_LOW = 5;
+const BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_MEDIUM = 4;
+const BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_HIGH = 4;
 const BOT_MOVEMENT_LOD_PROXY_MAX_DISTANCE = 0.68;
 const BOT_MOVEMENT_LOD_PROXY_MAX_GROUND_DELTA = 0.95;
 const BOT_MOVEMENT_LOD_PROXY_MIN_HORIZONTAL_SPEED = 0.05;
@@ -7551,7 +7558,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     const scale = BOT_PLANNING_LOD_START_COUNT / scheduledBotCount;
-    return {
+    const lodBudget = {
       urgentBudget: Math.max(
         BOT_MIN_URGENT_PLANNING_BUDGET_PER_TICK,
         Math.round(BOT_MID_URGENT_PLANNING_BUDGET_PER_TICK * scale)
@@ -7559,6 +7566,17 @@ export class GameRoom extends Room<GameState> {
       deferredBudget: Math.max(
         BOT_MIN_DEFERRED_PLANNING_BUDGET_PER_TICK,
         Math.floor(BOT_MID_DEFERRED_PLANNING_BUDGET_PER_TICK * scale)
+      ),
+    };
+    if (!isBattleRoyalMode(this.gameplayMode)) return lodBudget;
+    return {
+      urgentBudget: Math.min(
+        scheduledBotCount,
+        Math.max(lodBudget.urgentBudget, BOT_BATTLE_ROYAL_MIN_URGENT_PLANNING_BUDGET_PER_TICK)
+      ),
+      deferredBudget: Math.min(
+        scheduledBotCount,
+        Math.max(lodBudget.deferredBudget, BOT_BATTLE_ROYAL_MIN_DEFERRED_PLANNING_BUDGET_PER_TICK)
       ),
     };
   }
@@ -7580,7 +7598,7 @@ export class GameRoom extends Room<GameState> {
     input.ability1 = false;
     input.ability2 = false;
     input.ultimate = false;
-    input.interact = false;
+    input.interact = tier === 'critical' && isBattleRoyalMode(this.gameplayMode) && input.interact;
     if (tier !== 'critical') {
       if (input.primaryFire) {
         input.primaryFire = false;
@@ -7702,6 +7720,7 @@ export class GameRoom extends Room<GameState> {
     if (!isBattleRoyalMode(this.gameplayMode)) return false;
     if (this.isBattleRoyalSafeZonePriorityBot(bot)) return true;
     if (this.isServerOwnedBotNearBattleRoyalDownedPlayer(bot, 18 * 18)) return true;
+    if (this.isServerOwnedBotNearBattleRoyalEnemy(bot, BOT_BATTLE_ROYAL_CRITICAL_ENEMY_DISTANCE_SQ)) return true;
     if (
       this.replicationState.getRecentCombatTransformUntil(bot.id) > now &&
       this.isServerOwnedBotNearEnemyHuman(bot, BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE_SQ)
@@ -7745,8 +7764,29 @@ export class GameRoom extends Room<GameState> {
     for (const player of candidates) {
       if (player.state !== 'downed') continue;
       const isRelevantAlly = player.team === bot.team;
-      const isRelevantEnemy = player.team !== bot.team && !player.isBot;
+      const isRelevantEnemy = player.team !== bot.team;
       if (!isRelevantAlly && !isRelevantEnemy) continue;
+      const dx = player.position.x - bot.position.x;
+      const dy = player.position.y - bot.position.y;
+      const dz = player.position.z - bot.position.z;
+      if (dx * dx + dy * dy + dz * dz <= distanceSq) return true;
+    }
+    return false;
+  }
+
+  private isServerOwnedBotNearBattleRoyalEnemy(bot: Player, distanceSq: number): boolean {
+    if (!isBattleRoyalMode(this.gameplayMode)) return false;
+    const radius = Math.sqrt(distanceSq);
+    const candidates = this.botSimulationHumanScratch;
+    this.queryPlayersRadiusInto(
+      bot.position,
+      radius,
+      candidates,
+      { excludeTeam: bot.team, excludeId: bot.id }
+    );
+
+    for (const player of candidates) {
+      if (player.team === bot.team || player.state !== 'alive') continue;
       const dx = player.position.x - bot.position.x;
       const dy = player.position.y - bot.position.y;
       const dz = player.position.z - bot.position.z;
@@ -9471,7 +9511,14 @@ export class GameRoom extends Room<GameState> {
     const player = this.state.players.get(client.sessionId);
     if (!canMarkMatchSceneReady(player)) return;
 
-    this.matchStartGate.markSceneReady(client.sessionId);
+    const markedSceneReady = this.matchStartGate.markSceneReady(client.sessionId);
+    if (markedSceneReady) {
+      this.playerPings.resetCompetitiveGateForPlayer({
+        playerId: client.sessionId,
+        now: Date.now(),
+        matchMode: this.matchMode,
+      });
+    }
     this.checkPhaseTransition();
   }
 
@@ -10902,6 +10949,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private suppressServerOwnedBotSkippedFullStepGameplayInput(input: PlayerInput): void {
+    const keepBattleRoyalInteract = input.interact && isBattleRoyalMode(this.gameplayMode);
     const suppressesGameplay =
       input.primaryFire ||
       input.secondaryFire ||
@@ -10909,7 +10957,7 @@ export class GameRoom extends Room<GameState> {
       input.ability1 ||
       input.ability2 ||
       input.ultimate ||
-      input.interact;
+      (input.interact && !keepBattleRoyalInteract);
 
     if (input.primaryFire) {
       input.primaryFire = false;
@@ -10921,7 +10969,7 @@ export class GameRoom extends Room<GameState> {
     input.ability1 = false;
     input.ability2 = false;
     input.ultimate = false;
-    input.interact = false;
+    input.interact = keepBattleRoyalInteract;
     if (suppressesGameplay) {
       this.tickProfiler.recordCounter('movement_bot_lod_proxy_gameplay_suppressed');
     }
@@ -11014,9 +11062,10 @@ export class GameRoom extends Room<GameState> {
 
   private shouldServerOwnedBotMovementReasonBypassBudget(
     reason: RoomTickCounterName,
-    _tier: BotSimulationTier,
-    _input: PlayerInput
+    tier: BotSimulationTier,
+    input: PlayerInput
   ): boolean {
+    if (tier === 'critical' && isBattleRoyalMode(this.gameplayMode) && input.interact) return true;
     return this.isCriticalServerOwnedBotMovementFullRateReason(reason);
   }
 
@@ -11049,6 +11098,11 @@ export class GameRoom extends Room<GameState> {
   private getServerOwnedBotMovementFullStepBudget(aliveBotCount: number): number {
     if (this.isStreamerBotDeathmatchFeed()) return Number.POSITIVE_INFINITY;
     if (aliveBotCount < BOT_MOVEMENT_LOD_START_COUNT) return Number.POSITIVE_INFINITY;
+    if (isBattleRoyalMode(this.gameplayMode)) {
+      if (aliveBotCount >= BOT_MOVEMENT_LOD_HIGH_COUNT) return BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_HIGH;
+      if (aliveBotCount >= BOT_MOVEMENT_LOD_MEDIUM_COUNT) return BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_MEDIUM;
+      return BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_LOW;
+    }
     if (aliveBotCount >= BOT_MOVEMENT_LOD_HIGH_COUNT) return BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_HIGH;
     if (aliveBotCount >= BOT_MOVEMENT_LOD_MEDIUM_COUNT) return BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_MEDIUM;
     return BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_LOW;
@@ -11307,6 +11361,12 @@ export class GameRoom extends Room<GameState> {
       Math.abs(player.velocity.y) > 0.01
     ) {
       return 'movement_bot_lod_full_airborne';
+    }
+    if (
+      isBattleRoyalMode(this.gameplayMode) &&
+      this.isServerOwnedBotNearBattleRoyalEnemy(player, BOT_BATTLE_ROYAL_CRITICAL_ENEMY_DISTANCE_SQ)
+    ) {
+      return 'movement_bot_lod_full_enemy_battle_royal';
     }
     return this.isServerOwnedBotNearEnemyHuman(player, BOT_MOVEMENT_LOD_ENEMY_HUMAN_DISTANCE_SQ)
       ? 'movement_bot_lod_full_enemy_human'
