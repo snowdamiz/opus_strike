@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import { useGameStore, type InteractionPrompt } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
 import {
@@ -20,6 +20,7 @@ import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkil
 import { useCombatFeedbackStore, type KillFeedEvent } from '../../store/combatFeedbackStore';
 import { useSettingsStore, type CrosshairStyle } from '../../store/settingsStore';
 import { useHudNow } from '../../store/hudSignals';
+import { visualStore } from '../../store/visualStore';
 import { FACTIONS, HUD_HERO_COLORS } from '../../styles/colorTokens';
 import { Minimap } from './minimap/Minimap';
 import { VoiceHud } from './VoiceHud';
@@ -579,11 +580,18 @@ function getHudMeterScale(value: number, max: number): number {
   return Math.max(0, Math.min(1, value / Math.max(1, max)));
 }
 
-function getPlayerDistanceSq(a: Player, b: Player): number {
-  const dx = a.position.x - b.position.x;
-  const dy = a.position.y - b.position.y;
-  const dz = a.position.z - b.position.z;
+function getPositionDistanceSq(a: Player['position'], b: Player['position']): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const dz = a.z - b.z;
   return dx * dx + dy * dy + dz * dz;
+}
+
+function getPlayerHudPosition(
+  visualPositions: ReadonlyMap<string, Player['position']>,
+  player: Pick<Player, 'id' | 'position'>
+): Player['position'] {
+  return visualPositions.get(player.id) ?? player.position;
 }
 
 function DownedStateHud({
@@ -747,6 +755,48 @@ function RevivePromptHud({
       </span>
     </div>
   );
+}
+
+function NearbyRevivePromptHud({
+  localPlayerId,
+  interactKeyLabel,
+}: {
+  localPlayerId: string | null;
+  interactKeyLabel: string;
+}) {
+  const hudNow = useHudNow();
+  const { players, gameplayMode, gamePhase } = useGameStore(
+    useShallow(state => ({
+      players: state.players,
+      gameplayMode: state.gameplayMode,
+      gamePhase: state.gamePhase,
+    }))
+  );
+  const target = useMemo(() => {
+    const player = localPlayerId ? players.get(localPlayerId) ?? null : null;
+    if (!player || gameplayMode !== 'battle_royal' || gamePhase !== 'playing') return null;
+
+    const visualPositions = visualStore.getState().playerPositions;
+    const playerPosition = getPlayerHudPosition(visualPositions, player);
+    let nearestAlly: Player | null = null;
+    let nearestDistanceSq = (BATTLE_ROYAL_REVIVE_RADIUS + 0.35) * (BATTLE_ROYAL_REVIVE_RADIUS + 0.35);
+
+    for (const candidate of players.values()) {
+      if (candidate.id === player.id || candidate.team !== player.team || candidate.state !== 'downed') continue;
+      if (candidate.reviveByPlayerId) continue;
+
+      const candidatePosition = getPlayerHudPosition(visualPositions, candidate);
+      const distanceSq = getPositionDistanceSq(playerPosition, candidatePosition);
+      if (distanceSq <= nearestDistanceSq) {
+        nearestDistanceSq = distanceSq;
+        nearestAlly = candidate;
+      }
+    }
+
+    return nearestAlly;
+  }, [gamePhase, gameplayMode, hudNow, localPlayerId, players]);
+
+  return <RevivePromptHud target={target} interactKeyLabel={interactKeyLabel} />;
 }
 
 function InteractionPromptHud({
@@ -1356,22 +1406,19 @@ export function HUD() {
   const {
     battleRoyalRemainingPlayers,
     reviveChannelTarget,
-    nearbyDownedAlly,
   } = useGameStore(
     useShallow(state => {
       const player = state.localPlayer;
       if (!player) {
-        return { battleRoyalRemainingPlayers: 0, reviveChannelTarget: null, nearbyDownedAlly: null };
+        return { battleRoyalRemainingPlayers: 0, reviveChannelTarget: null };
       }
       if (state.gameplayMode !== 'battle_royal') {
-        return { battleRoyalRemainingPlayers: 0, reviveChannelTarget: null, nearbyDownedAlly: null };
+        return { battleRoyalRemainingPlayers: 0, reviveChannelTarget: null };
       }
 
       let remainingPlayers = 0;
       let sawLocalPlayer = false;
       let channelTarget: Player | null = null;
-      let nearestAlly: Player | null = null;
-      let nearestDistanceSq = (BATTLE_ROYAL_REVIVE_RADIUS + 0.35) * (BATTLE_ROYAL_REVIVE_RADIUS + 0.35);
 
       for (const candidate of state.players.values()) {
         if (candidate.id === player.id) {
@@ -1380,15 +1427,14 @@ export function HUD() {
         if (isBattleRoyalRemainingPlayer(candidate)) {
           remainingPlayers++;
         }
-        if (state.gamePhase !== 'playing') continue;
-        if (candidate.id === player.id || candidate.team !== player.team || candidate.state !== 'downed') continue;
-        if (candidate.reviveByPlayerId === player.id) {
+        if (
+          state.gamePhase === 'playing' &&
+          candidate.id !== player.id &&
+          candidate.team === player.team &&
+          candidate.state === 'downed' &&
+          candidate.reviveByPlayerId === player.id
+        ) {
           channelTarget = candidate;
-        }
-        const distanceSq = getPlayerDistanceSq(player, candidate);
-        if (distanceSq <= nearestDistanceSq && !candidate.reviveByPlayerId) {
-          nearestDistanceSq = distanceSq;
-          nearestAlly = candidate;
         }
       }
 
@@ -1397,7 +1443,6 @@ export function HUD() {
           !sawLocalPlayer && isBattleRoyalRemainingPlayer(player) ? 1 : 0
         ),
         reviveChannelTarget: channelTarget,
-        nearbyDownedAlly: nearestAlly,
       };
     })
   );
@@ -1531,8 +1576,8 @@ export function HUD() {
         />
       )}
       {gameplayMode === 'battle_royal' && !isLocalDowned && !isLocalReviving && (
-        <RevivePromptHud
-          target={nearbyDownedAlly}
+        <NearbyRevivePromptHud
+          localPlayerId={localPlayerId}
           interactKeyLabel={formatKeybind(interactKeybind)}
         />
       )}
