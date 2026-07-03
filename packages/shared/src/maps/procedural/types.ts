@@ -473,10 +473,11 @@ export type VoxelSkyVariantId =
   | 'crystal_dusk'
   | 'ember_haze'
   | 'sakura_dawn'
-  | 'treasury_glow';
+  | 'treasury_glow'
+  | 'independence_dusk';
 
 export interface VoxelMapTheme {
-  id: 'verdant' | 'basalt' | 'desert' | 'frost' | 'crystal' | 'volcanic' | 'sakura' | 'golden';
+  id: 'verdant' | 'basalt' | 'desert' | 'frost' | 'crystal' | 'volcanic' | 'sakura' | 'golden' | 'independence';
   name: string;
   skyVariantId: VoxelSkyVariantId;
   skyColor: string;

@@ -8,6 +8,7 @@ import { setMapBoundaryPolygon } from '../../../config/mapBoundaries';
 import { useVoxelFarMaterial, useVoxelMaterial } from './materials';
 import { VoxelRegionMesh, type VoxelMeshBuildMode } from './VoxelRegionMesh';
 import { WorldDressing } from './WorldDressing';
+import { IndependenceFlags } from '../IndependenceFlags';
 import {
   cancelVoxelGeometryBuilds,
   clearVoxelGeometryCache,
@@ -1227,6 +1228,7 @@ export function VoxelMap({
         shadowsEnabled={dressingShadows}
         reflectionIntensity={reflectionIntensity}
       />
+      {manifest.theme.id === 'independence' ? <IndependenceFlags manifest={manifest} /> : null}
     </group>
   );
 }

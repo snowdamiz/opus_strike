@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Coins, Loader2, Megaphone, Radio, ShieldCheck, Trophy } from 'lucide-react';
+import { Coins, Loader2, Megaphone, Radio, ShieldCheck, Sparkles, Trophy } from 'lucide-react';
 import type { SectionProps } from '../section';
 import type { RankedEntryGateMode, RankedSeasonMode } from '../types';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
@@ -7,6 +7,7 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Textarea } from '../ui/textarea';
 import { Badge } from '../ui/badge';
+import { Switch } from '../ui/switch';
 import {
   Select,
   SelectContent,
@@ -49,12 +50,16 @@ function localInputToIso(value: string): string | null {
 export function LiveOpsSection({ console }: SectionProps) {
   if (!console.overview) return null;
 
-  const { globalNotification, rankedSeason, rankedEntryGate, gameToken } = console.overview;
+  const { globalNotification, rankedSeason, rankedEntryGate, gameToken, eventBiome } = console.overview;
 
   /* ----------------------------- Broadcast -------------------------- */
   const [message, setMessage] = useState('');
   const [broadcastSaving, setBroadcastSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
+
+  /* ----------------------------- Event biome ------------------------ */
+  const [eventBiomeEnabled, setEventBiomeEnabled] = useState(eventBiome.enabled);
+  const [eventBiomeSaving, setEventBiomeSaving] = useState(false);
 
   /* ----------------------------- Entry gate ------------------------- */
   const [gateMode, setGateMode] = useState<RankedEntryGateMode>(
@@ -89,6 +94,21 @@ export function LiveOpsSection({ console }: SectionProps) {
     setSeasonNumber(rankedSeason.seasonNumber != null ? String(rankedSeason.seasonNumber) : '1');
     setSeasonEndsAt(isoToLocalInput(rankedSeason.endsAt));
   }, [rankedSeason]);
+
+  useEffect(() => {
+    setEventBiomeEnabled(eventBiome.enabled);
+  }, [eventBiome]);
+
+  async function handleToggleEventBiome(next: boolean) {
+    setEventBiomeEnabled(next); // optimistic; refresh re-syncs on completion
+    setEventBiomeSaving(true);
+    try {
+      const result = await console.saveEventBiome({ enabled: next });
+      if (!result.ok) setEventBiomeEnabled(!next);
+    } finally {
+      setEventBiomeSaving(false);
+    }
+  }
 
   /* ----------------------------- Handlers --------------------------- */
   const trimmedMessage = message.trim();
@@ -306,6 +326,41 @@ export function LiveOpsSection({ console }: SectionProps) {
                 {broadcastSaving ? <Loader2 className="animate-spin" /> : null}
                 Set Notification
               </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Event Biome */}
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-accent-primary" />
+              Event Biome
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between gap-4 rounded-lg border border-strike-border bg-white/[0.02] px-3.5 py-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-white/85">Independence Day biome</span>
+                  <Badge variant={eventBiomeEnabled ? 'success' : 'secondary'}>
+                    {eventBiomeEnabled ? 'Live' : 'Off'}
+                  </Badge>
+                  {eventBiomeSaving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-white/40" />
+                  ) : null}
+                </div>
+                <p className="mt-1 text-[12px] text-white/45">
+                  When on, a 4th-of-July dusk-and-fireworks map is guaranteed as one of the three
+                  Capture the Flag and Team Deathmatch vote options. Temporary — turn off to end the event.
+                </p>
+              </div>
+              <Switch
+                checked={eventBiomeEnabled}
+                disabled={eventBiomeSaving}
+                onCheckedChange={(v) => void handleToggleEventBiome(v)}
+                aria-label="Toggle Independence Day event biome"
+              />
             </div>
           </CardContent>
         </Card>

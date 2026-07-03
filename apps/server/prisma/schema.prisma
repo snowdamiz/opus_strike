@@ -777,6 +777,17 @@ model PlayerRewardSettings {
   updatedAt                   DateTime @updatedAt
 }
 
+// Temporary event biome toggle (e.g. the 4th-of-July "Independence Day" map theme).
+// When enabled, one of the three CTF/TDM map-vote options is forced to use `themeId`.
+model EventBiomeSettings {
+  id              String   @id @default("default")
+  enabled         Boolean  @default(false)
+  themeId         String   @default("independence")
+  updatedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
 model PlayerReward {
   id              String             @id @default(cuid())
   userId          String

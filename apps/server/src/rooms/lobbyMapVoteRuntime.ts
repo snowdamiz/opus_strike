@@ -57,6 +57,12 @@ export interface CreateMapVoteOptionsInput {
   gameplayMode?: GameplayMode;
   source: number;
   participantCount?: number;
+  /**
+   * When set, one of the generated map-vote options is forced to use this biome (e.g. the
+   * temporary Independence Day event theme). The theme is carried through as `mapThemeId`
+   * so it survives voting and drives the live match. Ignored for battle royal.
+   */
+  eventThemeId?: VoxelMapTheme['id'] | null;
 }
 
 export interface MapLaunchSelection {
@@ -143,11 +149,17 @@ export function createMapVoteOptions(input: CreateMapVoteOptionsInput): MapVoteO
 
   const themeIndices = getShuffledThemeIndices(input.source);
 
+  const eventThemeId = input.eventThemeId ?? null;
+  // Pick which of the three slots hosts the event biome (deterministic per source so the
+  // guarantee holds without always landing on the same map size).
+  const eventIndex = eventThemeId ? createRandomSeed(input.source ^ 0x4a554c59) % mapSizes.length : -1;
+
   return Array.from({ length: mapSizes.length }, (_, index) => {
     const themeIndex = themeIndices[index % themeIndices.length];
     const seed = createSeedForTheme(themeIndex, input.source ^ Math.imul(index + 1, 0x85ebca6b));
     const mapSize = mapSizes[index % mapSizes.length];
-    return createMapVoteOption(seed, index, null, mapSize, mapProfileId);
+    const forcedThemeId = index === eventIndex ? eventThemeId : null;
+    return createMapVoteOption(seed, index, forcedThemeId, mapSize, mapProfileId);
   });
 }
 

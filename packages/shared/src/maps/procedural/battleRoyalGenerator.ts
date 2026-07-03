@@ -1983,6 +1983,7 @@ function getThemeTerrainBlocks(theme: VoxelMapTheme): { top: number; side: numbe
     volcanic: { top: getBlockNumericId('ash'), side: getBlockNumericId('obsidian'), deep: getBlockNumericId('stone') },
     sakura: { top: getBlockNumericId('grass'), side: getBlockNumericId('moss'), deep: getBlockNumericId('stone') },
     golden: { top: getBlockNumericId('gold_panel'), side: getBlockNumericId('gold_ore'), deep: getBlockNumericId('stone') },
+    independence: { top: getBlockNumericId('grass'), side: getBlockNumericId('dirt'), deep: getBlockNumericId('stone') },
   };
   return byTheme[theme.id];
 }

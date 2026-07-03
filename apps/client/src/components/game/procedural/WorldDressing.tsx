@@ -300,6 +300,15 @@ function getDressingPalette(theme: VoxelMapTheme): DressingPalette {
     };
   }
 
+  if (theme.id === 'independence') {
+    return {
+      tuft: '#c0392b',
+      pebble: '#eef2ff',
+      crystal: '#4a9cff',
+      crystalEmissive: '#78b4ff',
+    };
+  }
+
   return {
     tuft: '#58b957',
     pebble: '#737b80',
@@ -339,6 +348,10 @@ function getBiomeDensities(theme: VoxelMapTheme): { tuft: number; pebble: number
 
   if (theme.id === 'sakura') {
     return { tuft: 0.04, pebble: 0.02, crystal: 0.012 };
+  }
+
+  if (theme.id === 'independence') {
+    return { tuft: 0.03, pebble: 0.03, crystal: 0.02 };
   }
 
   return { tuft: 0.048, pebble: 0.022, crystal: 0.01 };
