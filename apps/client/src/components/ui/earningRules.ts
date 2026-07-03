@@ -34,6 +34,15 @@ function tokenAmountLabel(amount: string, tokenSymbol: string | null): string {
   return tokenSymbol ? `${amount} ${tokenSymbol}` : `${amount} tokens`;
 }
 
+function rankedEntryGateLabel(economy: RewardEconomy | null, tokenSymbol: string | null): string | null {
+  const gate = economy?.rankedEntryGate;
+  if (!gate) return null;
+  if (gate.mode === 'locked') return 'Locked';
+
+  const amount = formatCompactTokenAmount(gate.requiredTokenAmount, gate.requiredTokenAmount || '0');
+  return `Hold ${tokenAmountLabel(amount, tokenSymbol)}`;
+}
+
 export function getEarningRules(tokenSymbol: string | null, economy: RewardEconomy | null): EarningRule[] {
   const token = rewardTokenTicker(tokenSymbol);
   const rewards = economy?.playerRewards;
@@ -59,7 +68,10 @@ export function getEarningRules(tokenSymbol: string | null, economy: RewardEcono
     );
   }
 
-  rules.push({ label: 'Play Ranked', value: `Hold 1M ${token ?? 'tokens'}` });
+  const rankedGateLabel = rankedEntryGateLabel(economy, token);
+  if (rankedGateLabel) {
+    rules.push({ label: 'Play Ranked', value: rankedGateLabel });
+  }
 
   if (goldenRewardsEnabled) {
     const goldenChance = formatBpsShort(golden?.chanceBps, 200);
@@ -68,7 +80,6 @@ export function getEarningRules(tokenSymbol: string | null, economy: RewardEcono
   }
 
   if (wagersEnabled) {
-    const wagerFee = formatBpsShort(wagers?.platformFeeBps, 500);
     rules.push({ label: 'Wager Games', value: `Winners split pot` });
   }
 

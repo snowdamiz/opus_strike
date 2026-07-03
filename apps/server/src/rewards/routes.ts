@@ -44,7 +44,18 @@ router.get('/economy', async (_req, res) => {
       getRankedEntryGateSettings(),
     ]);
     const rewardTokenSymbol = rankedEntryGate.tokenMintAddress ? rankedEntryGate.tokenSymbol : null;
-    res.json({ economy: { rewardTokenSymbol, playerRewards, wagers, goldenBiome } });
+    res.json({
+      economy: {
+        rewardTokenSymbol,
+        rankedEntryGate: {
+          mode: rankedEntryGate.mode,
+          requiredTokenAmount: rankedEntryGate.requiredTokenAmount,
+        },
+        playerRewards,
+        wagers,
+        goldenBiome,
+      },
+    });
   } catch (error) {
     sendRouteError(res, error);
   }

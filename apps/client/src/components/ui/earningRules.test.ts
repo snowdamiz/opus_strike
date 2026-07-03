@@ -1,15 +1,20 @@
 import assert from 'node:assert/strict';
 import { getEarningRules, type RewardEconomy } from './earningRules';
 
-type RewardEconomyOverrides = Partial<Omit<RewardEconomy, 'playerRewards' | 'wagers' | 'goldenBiome'>> & {
+type RewardEconomyOverrides = Partial<Omit<RewardEconomy, 'playerRewards' | 'wagers' | 'goldenBiome' | 'rankedEntryGate'>> & {
   playerRewards?: Partial<RewardEconomy['playerRewards']>;
   wagers?: Partial<RewardEconomy['wagers']>;
   goldenBiome?: Partial<RewardEconomy['goldenBiome']>;
+  rankedEntryGate?: Partial<RewardEconomy['rankedEntryGate']>;
 };
 
 function createEconomy(overrides: RewardEconomyOverrides = {}): RewardEconomy {
   const economy: RewardEconomy = {
     rewardTokenSymbol: 'UNITS',
+    rankedEntryGate: {
+      mode: 'token_required',
+      requiredTokenAmount: '2500000',
+    },
     playerRewards: {
       enabled: true,
       dailyRankedDripLamports: '20000',
@@ -59,6 +64,10 @@ function createEconomy(overrides: RewardEconomyOverrides = {}): RewardEconomy {
       ...economy.goldenBiome,
       ...overrides.goldenBiome,
     },
+    rankedEntryGate: {
+      ...economy.rankedEntryGate,
+      ...overrides.rankedEntryGate,
+    },
   };
 }
 
@@ -106,8 +115,8 @@ assert.deepEqual(
 
 assert.deepEqual(
   labelsFor(null),
-  ['Ranked match', 'Win + assist', 'Flag bonus', 'Play Ranked', 'Golden map', 'Wager Games'],
-  'missing economy data should keep default copy while the API request is pending or unavailable',
+  ['Ranked match', 'Win + assist', 'Flag bonus', 'Golden map', 'Wager Games'],
+  'missing economy data should not show a stale ranked token requirement',
 );
 
 assert.deepEqual(
@@ -116,11 +125,23 @@ assert.deepEqual(
     '20K UNITS, max 5/day',
     '10K UNITS win, 2K UNITS assist',
     '15K UNITS capture, 5K UNITS return',
-    'Hold 1M UNITS',
+    'Hold 2.5M UNITS',
     '2% roll, 0.2 SOL each winner',
     'Winners split pot',
   ],
   'token payout values should be compact and human-readable',
+);
+
+assert.equal(
+  valuesFor(createEconomy({ rankedEntryGate: { requiredTokenAmount: '500' } })).at(3),
+  'Hold 500 UNITS',
+  'ranked token hold copy should use the admin-configured amount',
+);
+
+assert.equal(
+  valuesFor(createEconomy({ rankedEntryGate: { mode: 'locked', requiredTokenAmount: '0' } })).at(3),
+  'Locked',
+  'locked ranked gates should not show a token amount',
 );
 
 console.log('earning rules tests passed');
