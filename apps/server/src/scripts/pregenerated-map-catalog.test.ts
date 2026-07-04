@@ -16,6 +16,8 @@ import {
 } from '../maps/pregeneratedMapCatalog';
 
 type ListInput = Parameters<PregeneratedMapCatalogService['listSelectableMaps']>[0];
+type CreateCatalogEntryInput = Parameters<PregeneratedMapCatalogService['createCatalogEntry']>[0];
+type ReserveMapForLaunchInput = Parameters<PregeneratedMapCatalogService['reserveMapForLaunch']>[0];
 
 function catalogMap(input: {
   id: string;
@@ -89,6 +91,44 @@ class FakeCatalogService extends PregeneratedMapCatalogService {
       .filter((map) => !input.themeId || map.themeId === input.themeId)
       .filter((map) => !input.topologyId || map.topologyId === input.topologyId)
       .slice(0, input.limit ?? 100);
+  }
+}
+
+class FakeGenerateAndReserveService extends PregeneratedMapCatalogService {
+  readonly createdEntries: CreateCatalogEntryInput[] = [];
+  readonly reservationInputs: ReserveMapForLaunchInput[] = [];
+  private generatedSummary: PregeneratedMapCatalogSummary | null = null;
+
+  constructor() {
+    super({} as never, {} as never);
+  }
+
+  override async createCatalogEntry(input: CreateCatalogEntryInput): Promise<PregeneratedMapCatalogSummary> {
+    this.createdEntries.push(input);
+    const summary = catalogMap({
+      id: 'pgmap_on_demand',
+      seed: input.manifest.seed,
+      profileId: input.manifest.profileId ?? 'ctf_arena',
+      mapSize: input.manifest.mapSize,
+      themeId: input.manifest.themeId,
+      topologyId: input.manifest.topologyId,
+      visibility: input.visibility,
+    });
+    this.generatedSummary = {
+      ...summary,
+      artifactId: 'pgartifact_on_demand',
+      status: input.status ?? 'ready',
+    };
+    return this.generatedSummary;
+  }
+
+  override async reserveMapForLaunch(input: ReserveMapForLaunchInput) {
+    this.reservationInputs.push(input);
+    if (!this.generatedSummary) return null;
+    return {
+      map: this.generatedSummary,
+      selectionId: 'selection_on_demand',
+    };
   }
 }
 
@@ -177,6 +217,84 @@ function createFakePoolPrisma() {
     },
     pregeneratedMapSelection: {
       count: async () => 0,
+    },
+  };
+
+  return { calls, client: client as never };
+}
+
+function createFakeReservationPrisma() {
+  const preview = createProceduralMapPreview(777, 'large', {
+    profileId: 'battle_royal_large',
+    themeId: 'basalt',
+  });
+  const calls = {
+    releaseExpiredReservations: 0,
+    reservationUpdates: 0,
+    transactionFindUnique: 0,
+    outerFindUniqueArgs: null as unknown,
+  };
+  const row = {
+    id: 'pgmap_reserve',
+    artifactId: 'pgartifact_reserve',
+    generatorVersion: 13,
+    seed: BigInt(777),
+    themeId: 'basalt',
+    profileId: 'battle_royal_large',
+    gameplayMode: 'battle_royal',
+    familyId: 'battle_royal_large',
+    mapSize: 'large',
+    topologyId: preview.topologyId,
+    displayName: 'Basalt Reserve',
+    previewTags: ['basalt', 'large'],
+    previewSilhouette: preview.preview,
+    stats: {
+      solidBlockCount: 100,
+      renderableChunkCount: 4,
+      colliderCount: 8,
+      estimatedTriangles: 200,
+    },
+    diagnosticsScore: 100,
+    diagnosticsWarnings: [],
+    status: 'reserved',
+    visibility: 'matchmaking-only',
+    lastSelectedAt: new Date('2026-07-03T00:00:00.000Z'),
+    selectionCount: 1,
+    failureCount: 0,
+    reservationExpiresAt: new Date('2026-07-03T00:01:30.000Z'),
+    createdAt: new Date('2026-07-03T00:00:00.000Z'),
+    updatedAt: new Date('2026-07-03T00:00:00.000Z'),
+  };
+
+  const transactionClient = {
+    pregeneratedMap: {
+      updateMany: async (args: { where: { status?: string } }) => {
+        if (args.where.status === 'ready') {
+          calls.reservationUpdates += 1;
+        }
+        return { count: 1 };
+      },
+      findUnique: async () => {
+        calls.transactionFindUnique += 1;
+        throw new Error('reservation transaction must not load map rows');
+      },
+    },
+    pregeneratedMapSelection: {
+      create: async () => ({ id: 'selection_reserve' }),
+    },
+  };
+
+  const client = {
+    $transaction: async (fn: (tx: typeof transactionClient) => unknown) => fn(transactionClient),
+    pregeneratedMap: {
+      updateMany: async () => {
+        calls.releaseExpiredReservations += 1;
+        return { count: 0 };
+      },
+      findUnique: async (args: unknown) => {
+        calls.outerFindUniqueArgs = args;
+        return row;
+      },
     },
   };
 
@@ -273,6 +391,50 @@ async function run(): Promise<void> {
     });
     assert.equal(selected?.pregeneratedMapId, 'br-medium-only');
     assert.equal(selected?.mapSize, 'medium');
+  }
+
+  {
+    const { calls, client } = createFakeReservationPrisma();
+    const service = new PregeneratedMapCatalogService(client, {} as never);
+    const reserved = await service.reserveMapForLaunch({
+      mapId: 'pgmap_reserve',
+      lobbyId: 'lobby_reserve',
+      selectionSource: 'battle-royal-auto',
+    });
+    assert.equal(reserved?.map.id, 'pgmap_reserve');
+    assert.equal(reserved?.selectionId, 'selection_reserve');
+    assert.equal(calls.releaseExpiredReservations, 1);
+    assert.equal(calls.reservationUpdates, 1);
+    assert.equal(calls.transactionFindUnique, 0);
+    assert.equal(Boolean(calls.outerFindUniqueArgs && typeof calls.outerFindUniqueArgs === 'object' && 'include' in calls.outerFindUniqueArgs), false);
+  }
+
+  {
+    const service = new FakeGenerateAndReserveService();
+    const reserved = await service.generateAndReserveMapForLaunch({
+      seed: 0x515102,
+      themeId: 'basalt',
+      profileId: 'battle_royal_large',
+      mapSize: 'large',
+      selectionSource: 'fallback',
+      lobbyId: 'lobby_on_demand',
+    });
+    assert.equal(reserved.map.id, 'pgmap_on_demand');
+    assert.equal(reserved.selectionId, 'selection_on_demand');
+    assert.equal(service.createdEntries.length, 1);
+    assert.equal(service.createdEntries[0]?.visibility, 'matchmaking-only');
+    assert.equal(service.createdEntries[0]?.status, 'ready');
+    assert.equal(service.createdEntries[0]?.manifest.profileId, 'battle_royal_large');
+    assert.equal(service.createdEntries[0]?.manifest.mapSize, 'large');
+    assert.equal(service.createdEntries[0]?.manifest.themeId, 'basalt');
+    assert.deepEqual(service.reservationInputs[0], {
+      mapId: 'pgmap_on_demand',
+      lobbyId: 'lobby_on_demand',
+      roomId: undefined,
+      matchId: undefined,
+      selectionSource: 'fallback',
+      selectedByPlayerId: undefined,
+    });
   }
 
   await withMapPoolConsoleStatusDisabled(async () => {

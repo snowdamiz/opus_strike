@@ -54,6 +54,20 @@ export interface ReservedPregeneratedMapLaunch {
   selectionId: string;
 }
 
+export interface GenerateMapForLaunchInput {
+  seed: number;
+  themeId: VoxelMapTheme['id'];
+  profileId: MapProfileId;
+  mapSize: VoxelMapSizeId;
+  visibility?: PregeneratedMapVisibility;
+  maxAttempts?: number;
+  lobbyId?: string | null;
+  roomId?: string | null;
+  matchId?: string | null;
+  selectionSource: PregeneratedMapSelectionSource;
+  selectedByPlayerId?: string | null;
+}
+
 export interface MapPoolTopUpOptions {
   profileId?: MapProfileId;
   mapSize?: VoxelMapSizeId;
@@ -187,9 +201,7 @@ export interface MapPoolRequiredSlice extends PoolSliceIdentity {
   requiredReadyCount: number;
 }
 
-type PregeneratedMapWithArtifact = Prisma.PregeneratedMapGetPayload<{
-  include: { artifact: true };
-}>;
+type PregeneratedMapRow = Prisma.PregeneratedMapGetPayload<Record<string, never>>;
 
 const DEFAULT_ARENA_READY_COUNT_PER_SLICE = 1;
 const DEFAULT_BATTLE_ROYAL_READY_COUNT_PER_SLICE = 1;
@@ -373,7 +385,7 @@ function parseStats(stats: unknown): PregeneratedMapStats {
   };
 }
 
-function summarizeMap(row: PregeneratedMapWithArtifact): PregeneratedMapCatalogSummary {
+function summarizeMap(row: PregeneratedMapRow): PregeneratedMapCatalogSummary {
   return {
     id: row.id,
     artifactId: row.artifactId,
@@ -598,7 +610,6 @@ export class PregeneratedMapCatalogService {
 
     const rows = await this.client.pregeneratedMap.findMany({
       where,
-      include: { artifact: true },
       orderBy: [
         { lastSelectedAt: 'asc' },
         { selectionCount: 'asc' },
@@ -688,23 +699,21 @@ export class PregeneratedMapCatalogService {
   async reserveMapForLaunch(input: ReserveMapForLaunchInput): Promise<ReservedPregeneratedMapLaunch | null> {
     await this.releaseExpiredReservations();
     const reservationExpiresAt = new Date(Date.now() + RESERVATION_TTL_MS);
-    return this.client.$transaction(async (tx) => {
-      const map = await tx.pregeneratedMap.findUnique({
-        where: { id: input.mapId },
-        include: { artifact: true },
-      });
-      if (!map || map.status !== 'ready') return null;
-
-      const updated = await tx.pregeneratedMap.update({
-        where: { id: input.mapId },
+    const selectionId = await this.client.$transaction(async (tx) => {
+      const updated = await tx.pregeneratedMap.updateMany({
+        where: {
+          id: input.mapId,
+          status: 'ready',
+        },
         data: {
           status: 'reserved',
           reservationExpiresAt,
           lastSelectedAt: new Date(),
           selectionCount: { increment: 1 },
         },
-        include: { artifact: true },
       });
+      if (updated.count === 0) return null;
+
       const selection = await tx.pregeneratedMapSelection.create({
         data: {
           mapId: input.mapId,
@@ -715,11 +724,19 @@ export class PregeneratedMapCatalogService {
           selectedByPlayerId: input.selectedByPlayerId ?? null,
         },
       });
-      return {
-        map: summarizeMap(updated),
-        selectionId: selection.id,
-      };
+      return selection.id;
     });
+    if (!selectionId) return null;
+
+    const map = await this.client.pregeneratedMap.findUnique({
+      where: { id: input.mapId },
+    });
+    if (!map) return null;
+
+    return {
+      map: summarizeMap(map),
+      selectionId,
+    };
   }
 
   async recordMapLaunchResult(input: RecordMapLaunchResultInput): Promise<void> {
@@ -790,7 +807,6 @@ export class PregeneratedMapCatalogService {
   async loadMapManifest(mapId: PregeneratedMapId): Promise<LoadedPregeneratedMapManifest> {
     const row = await this.client.pregeneratedMap.findUnique({
       where: { id: mapId },
-      include: { artifact: true },
     });
     if (!row) throw new Error(`Pregenerated map ${mapId} was not found`);
     if (row.status === 'retired' || row.status === 'failed') {
@@ -811,7 +827,6 @@ export class PregeneratedMapCatalogService {
   }> {
     const row = await this.client.pregeneratedMap.findUnique({
       where: { id: mapId },
-      include: { artifact: true },
     });
     if (!row) throw new Error(`Pregenerated map ${mapId} was not found`);
     if (row.visibility === 'admin-only' || row.status === 'retired' || row.status === 'failed') {
@@ -889,10 +904,107 @@ export class PregeneratedMapCatalogService {
         diagnosticsWarnings: diagnostics.warnings,
         status: input.status ?? 'ready',
       },
-      include: { artifact: true },
     });
 
     return summarizeMap(row);
+  }
+
+  async generateAndReserveMapForLaunch(input: GenerateMapForLaunchInput): Promise<ReservedPregeneratedMapLaunch> {
+    const visibility = input.visibility ?? 'matchmaking-only';
+    const maxAttempts = Math.max(1, Math.min(8, Math.floor(input.maxAttempts ?? 4)));
+    let lastError: Error | null = null;
+
+    writeMapPoolConsoleStatus('on-demand-generation-started', {
+      seed: input.seed >>> 0,
+      profileId: input.profileId,
+      mapSize: input.mapSize,
+      themeId: input.themeId,
+      visibility,
+      maxAttempts,
+      selectionSource: input.selectionSource,
+    });
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const seed = attempt === 0
+        ? input.seed >>> 0
+        : createSeedForSlice({
+          profileId: input.profileId,
+          mapSize: input.mapSize,
+          themeId: input.themeId,
+          index: attempt,
+          salt: input.seed,
+        });
+
+      try {
+        const manifest = generateProceduralVoxelMap(seed, {
+          themeId: input.themeId,
+          mapSize: input.mapSize,
+          profileId: input.profileId,
+        });
+
+        if (!isShippableMap(manifest)) {
+          const failedSummary = await this.createCatalogEntry({ manifest, visibility, status: 'failed' });
+          writeMapPoolConsoleStatus('on-demand-candidate-rejected', {
+            ...summarizeGeneratedMapForStatus(failedSummary),
+            attempt: attempt + 1,
+            maxAttempts,
+          });
+          lastError = new Error(`Generated on-demand map was rejected by diagnostics: ${failedSummary.diagnosticsWarnings.join('; ')}`);
+          continue;
+        }
+
+        const summary = await this.createCatalogEntry({ manifest, visibility, status: 'ready' });
+        const reserved = await this.reserveMapForLaunch({
+          mapId: summary.id,
+          lobbyId: input.lobbyId,
+          roomId: input.roomId,
+          matchId: input.matchId,
+          selectionSource: input.selectionSource,
+          selectedByPlayerId: input.selectedByPlayerId,
+        });
+
+        if (reserved) {
+          writeMapPoolConsoleStatus('on-demand-map-generated', {
+            ...summarizeGeneratedMapForStatus(reserved.map),
+            attempt: attempt + 1,
+            maxAttempts,
+            selectionId: reserved.selectionId,
+          });
+          return reserved;
+        }
+
+        lastError = new Error(`Generated on-demand map ${summary.id} could not be reserved`);
+        writeMapPoolConsoleStatus('on-demand-reservation-missed', {
+          ...summarizeGeneratedMapForStatus(summary),
+          attempt: attempt + 1,
+          maxAttempts,
+        });
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        loggers.room.warn('On-demand pregenerated map generation failed', {
+          seed,
+          profileId: input.profileId,
+          mapSize: input.mapSize,
+          themeId: input.themeId,
+          visibility,
+          attempt: attempt + 1,
+          maxAttempts,
+          error: lastError.message,
+        });
+        writeMapPoolConsoleStatus('on-demand-generation-failed', {
+          seed,
+          profileId: input.profileId,
+          mapSize: input.mapSize,
+          themeId: input.themeId,
+          visibility,
+          attempt: attempt + 1,
+          maxAttempts,
+          error: lastError.message,
+        });
+      }
+    }
+
+    throw lastError ?? new Error('On-demand pregenerated map generation failed');
   }
 
   async topUpPool(options: MapPoolTopUpOptions = {}): Promise<MapPoolTopUpResult> {
