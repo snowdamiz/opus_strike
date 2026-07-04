@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import type { PlayerRewardRuntimeConfig } from '../rewards/config';
+import {
+  getPlayerRewardRuntimeConfig,
+  type PlayerRewardRuntimeConfig,
+} from '../rewards/config';
 import {
   RankedBrRewardAccumulator,
   computeRankedBrDynamicMatchPoolLamports,
@@ -37,6 +40,24 @@ const config: PlayerRewardRuntimeConfig = {
   minPayoutUsdCents: 1_500,
   payoutPriceQuoteTtlMs: 300_000,
 };
+
+{
+  const previousTreasuryReserve = process.env.PLAYER_REWARD_TREASURY_RESERVE_LAMPORTS;
+  delete process.env.PLAYER_REWARD_TREASURY_RESERVE_LAMPORTS;
+  try {
+    const defaults = getPlayerRewardRuntimeConfig();
+    assert.equal(defaults.rankedBrCombatRewardsEnabled, true);
+    assert.equal(defaults.rankedBrCombatRewardsShadowMode, false);
+    assert.equal(defaults.treasuryReserveLamports, 0n);
+    assert.equal(defaults.rankedBrTreasuryExposureBps, 10_000);
+  } finally {
+    if (previousTreasuryReserve === undefined) {
+      delete process.env.PLAYER_REWARD_TREASURY_RESERVE_LAMPORTS;
+    } else {
+      process.env.PLAYER_REWARD_TREASURY_RESERVE_LAMPORTS = previousTreasuryReserve;
+    }
+  }
+}
 
 function accumulator(overrides: Partial<ConstructorParameters<typeof RankedBrRewardAccumulator>[0]> = {}) {
   return new RankedBrRewardAccumulator({
