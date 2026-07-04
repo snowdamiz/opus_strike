@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import {
+  CONSTRUCTED_MAP_MANIFEST_VERSION,
   STANDARD_VOXEL_MAP_THEMES,
   VOXEL_MAP_SIZE_IDS,
   createRandomSeed,
@@ -565,6 +566,7 @@ export class PregeneratedMapCatalogService {
       where: {
         status: 'ready',
         visibility,
+        generatorVersion: CONSTRUCTED_MAP_MANIFEST_VERSION,
         profileId: { in: Array.from(new Set(slices.map((slice) => slice.profileId))) },
         mapSize: { in: Array.from(new Set(slices.map((slice) => slice.mapSize))) },
         themeId: { in: Array.from(new Set(slices.map((slice) => slice.themeId))) },
@@ -601,6 +603,7 @@ export class PregeneratedMapCatalogService {
     const where: Prisma.PregeneratedMapWhereInput = {
       status: 'ready',
       visibility: { in: toVisibilityArray(input.visibility) },
+      generatorVersion: CONSTRUCTED_MAP_MANIFEST_VERSION,
     };
     if (input.gameplayMode) where.gameplayMode = input.gameplayMode;
     if (input.profileId) where.profileId = input.profileId;
@@ -704,6 +707,7 @@ export class PregeneratedMapCatalogService {
         where: {
           id: input.mapId,
           status: 'ready',
+          generatorVersion: CONSTRUCTED_MAP_MANIFEST_VERSION,
         },
         data: {
           status: 'reserved',
@@ -1298,6 +1302,9 @@ export class PregeneratedMapCatalogService {
       if (expected[key] !== actual[key]) {
         throw new Error(`Pregenerated map ${summary.id} metadata mismatch for ${key}: expected ${expected[key]}, got ${actual[key]}`);
       }
+    }
+    if (actual.generatorVersion !== CONSTRUCTED_MAP_MANIFEST_VERSION) {
+      throw new Error(`Pregenerated map ${summary.id} uses outdated generator version ${actual.generatorVersion}; expected ${CONSTRUCTED_MAP_MANIFEST_VERSION}`);
     }
     if (!contentHash) {
       throw new Error(`Pregenerated map ${summary.id} artifact is missing content hash`);

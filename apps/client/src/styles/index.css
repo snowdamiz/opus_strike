@@ -4488,12 +4488,29 @@ body,
   column-gap: 0.24rem;
   min-width: 0;
   padding: 0;
-  white-space: nowrap;
+  white-space: normal;
+}
+
+.play-earnings-rule-list li.play-earnings-rule-featured {
+  margin: -0.08rem -0.08rem 0.03rem;
+  padding: 0.38rem 0.46rem;
+  border: 1px solid rgb(var(--color-accent-primary) / 0.24);
+  border-radius: 0.38rem;
+  background:
+    linear-gradient(100deg, rgb(var(--color-accent-primary) / 0.16), rgb(var(--color-accent-secondary) / 0.08) 54%, rgb(255 255 255 / 0.035));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    0 0.42rem 0.95rem rgb(var(--color-accent-primary) / 0.08);
 }
 
 .play-earnings-rule-label {
   color: rgb(var(--color-accent-primary) / 0.95);
   white-space: nowrap;
+}
+
+.play-earnings-rule-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .global-chat-panel {

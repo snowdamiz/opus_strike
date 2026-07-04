@@ -10505,6 +10505,10 @@ export class GameRoom extends Room<GameState> {
     if (loadedPregeneratedMap) {
       this.state.pregeneratedMapId = loadedPregeneratedMap.id;
       this.state.mapArtifactId = loadedPregeneratedMap.artifactId;
+    } else {
+      this.state.pregeneratedMapId = '';
+      this.state.mapArtifactId = '';
+      this.mapSelectionId = null;
     }
     this.powerupBoosts.clearAll();
     this.powerupPickups.reset(mapManifest, 0);

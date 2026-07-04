@@ -14,7 +14,7 @@ import {
   type MinimapSurfaceKind,
 } from './minimapData';
 
-const STATIC_RENDER_VERSION = 3;
+const STATIC_RENDER_VERSION = 4;
 const MAX_STATIC_CANVAS_CACHE_SIZE = 8;
 const topBlockCache = new Map<string, Uint8Array>();
 const staticCanvasCache = new Map<string, HTMLCanvasElement>();
@@ -135,28 +135,33 @@ function drawSummoningCircles(
   ctx.save();
   for (const circle of circles) {
     const projected = worldToMinimap(projection, circle.position);
-    const radius = clamp(circle.radius * projection.scale, 3.8, 7.5);
+    const radius = clamp(circle.radius * projection.scale + 2.6, 5.2, 9.4);
     ctx.save();
     ctx.translate(projected.x, projected.y);
     ctx.shadowColor = MINIMAP_COLORS.static.summoningCircleShadow;
-    ctx.shadowBlur = 5;
+    ctx.shadowBlur = 8;
     ctx.beginPath();
     ctx.arc(0, 0, radius, 0, Math.PI * 2);
     ctx.fillStyle = MINIMAP_COLORS.static.summoningCircleFill;
     ctx.fill();
-    ctx.lineWidth = 1.2;
+    ctx.lineWidth = 1.6;
     ctx.strokeStyle = MINIMAP_COLORS.static.summoningCircleStroke;
     ctx.stroke();
 
     ctx.shadowBlur = 0;
     ctx.strokeStyle = MINIMAP_COLORS.static.summoningCircleAccent;
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1.3;
     ctx.beginPath();
     ctx.moveTo(-radius * 0.55, 0);
     ctx.lineTo(radius * 0.55, 0);
     ctx.moveTo(0, -radius * 0.55);
     ctx.lineTo(0, radius * 0.55);
     ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(0, 0, Math.max(1.4, radius * 0.22), 0, Math.PI * 2);
+    ctx.fillStyle = MINIMAP_COLORS.static.summoningCircleStroke;
+    ctx.fill();
     ctx.restore();
   }
   ctx.restore();

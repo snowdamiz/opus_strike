@@ -4,6 +4,7 @@ import { formatCompactTokenAmount } from '../../utils/tokenAmountFormat';
 export type EarningRule = {
   label: string;
   value: string;
+  emphasis?: 'sol-combat';
 };
 
 export type RewardEconomy = RewardEconomyResponse['economy'];
@@ -48,6 +49,25 @@ function rankedEntryGateLabel(economy: RewardEconomy | null, tokenSymbol: string
   return `Hold ${tokenAmountLabel(amount, tokenSymbol)}`;
 }
 
+function getRankedBrSolCombatRules(rewards: RewardEconomy['playerRewards'] | undefined): EarningRule[] {
+  if (rewards?.rankedBrCombatRewardsEnabled === false) return [];
+  if (rewards?.rankedBrCombatRewardsShadowMode === true) return [];
+
+  const damage = formatSolLamports(rewards?.rankedBrDamageLamportsPerHp, '250');
+  const kill = formatSolLamports(rewards?.rankedBrKillLamports, '100000');
+  const botMultiplier = formatBpsShort(rewards?.rankedBrBotTargetRewardBps, 7000);
+  const minPayout = formatUsdCents(rewards?.minPayoutUsdCents, 1500);
+
+  return [
+    {
+      label: 'Ranked BR SOL',
+      value: `Enemy damage: ${damage} SOL/HP; eliminations +${kill} SOL`,
+      emphasis: 'sol-combat',
+    },
+    { label: 'SOL payouts', value: `Bots pay ${botMultiplier}; clean matches pay after ${minPayout}` },
+  ];
+}
+
 export function getEarningRules(tokenSymbol: string | null, economy: RewardEconomy | null): EarningRule[] {
   const token = rewardTokenTicker(tokenSymbol);
   const rewards = economy?.playerRewards;
@@ -71,19 +91,9 @@ export function getEarningRules(tokenSymbol: string | null, economy: RewardEcono
       { label: 'Win + assist', value: `${tokenAmountLabel(win, token)} win, ${tokenAmountLabel(assist, token)} assist` },
       { label: 'Flag bonus', value: `${tokenAmountLabel(capture, token)} capture, ${tokenAmountLabel(flagReturn, token)} return` },
     );
-
-    if (rewards?.rankedBrCombatRewardsEnabled !== false) {
-      const damage = formatSolLamports(rewards?.rankedBrDamageLamportsPerHp, '250');
-      const kill = formatSolLamports(rewards?.rankedBrKillLamports, '100000');
-      const botMultiplier = formatBpsShort(rewards?.rankedBrBotTargetRewardBps, 7000);
-      const minPayout = formatUsdCents(rewards?.minPayoutUsdCents, 1500);
-      rules.push(
-        { label: 'Ranked BR damage', value: `${damage} SOL per HP` },
-        { label: 'Ranked BR kill', value: `${kill} SOL final, bots ${botMultiplier}` },
-        { label: 'SOL payouts', value: `Pending integrity; paid after ${minPayout}` },
-      );
-    }
   }
+
+  rules.push(...getRankedBrSolCombatRules(rewards));
 
   const rankedGateLabel = rankedEntryGateLabel(economy, token);
   if (rankedGateLabel) {

@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import {
+  BATTLE_ROYAL_SUMMONING_CIRCLE_COUNT,
+  BATTLE_ROYAL_SUMMONING_CIRCLE_RADIUS,
   BATTLE_ROYAL_TEAM_IDS,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
   createProceduralTerrainLookup,
   generateProceduralVoxelMap,
+  isInsideBoundaryPolygon,
 } from '@voxel-strike/shared';
 import {
   canCapsuleOccupy,
@@ -17,6 +20,15 @@ function assertBattleRoyalSpawnsAreCapsuleSafe(seed: number): void {
     mapSize: 'large',
   });
   const terrain = createProceduralTerrainLookup(manifest);
+  const summoningCircles = manifest.gameplay.summoningCircles ?? [];
+  assert.equal(summoningCircles.length, BATTLE_ROYAL_SUMMONING_CIRCLE_COUNT);
+  assert.equal(new Set(summoningCircles.map((circle) => circle.id)).size, summoningCircles.length);
+  for (const circle of summoningCircles) {
+    assert.equal(circle.radius, BATTLE_ROYAL_SUMMONING_CIRCLE_RADIUS);
+    assert.equal(isInsideBoundaryPolygon(circle.position.x, circle.position.z, manifest.boundary), true);
+    assert.notEqual(terrain.getGroundY(circle.position), null);
+  }
+
   const world = createVoxelCollisionWorld({
     origin: manifest.origin,
     voxelSize: manifest.voxelSize,
