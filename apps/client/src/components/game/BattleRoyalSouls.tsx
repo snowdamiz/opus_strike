@@ -15,6 +15,8 @@ const CIRCLE_PRIMARY_COLOR = '#41f0c8';
 const CIRCLE_SECONDARY_COLOR = '#6ab7ff';
 const RING_ROTATION: [number, number, number] = [-Math.PI / 2, 0, 0];
 const STATION_POST_ANGLES = [0, Math.PI / 2, Math.PI, Math.PI * 1.5] as const;
+const SOUL_HOVER_HEIGHT = 0.42;
+const SOUL_BOB_AMPLITUDE = 0.055;
 
 function getStablePhase(id: string): number {
   let hash = 0;
@@ -37,7 +39,7 @@ const FloatingHeroSoul = memo(function FloatingHeroSoul({
     if (!group) return;
 
     const elapsed = clock.elapsedTime;
-    group.position.y = soul.position.y + 1.18 + Math.sin(elapsed * 1.65 + phase) * 0.12;
+    group.position.y = soul.position.y + SOUL_HOVER_HEIGHT + Math.sin(elapsed * 1.65 + phase) * SOUL_BOB_AMPLITUDE;
     group.rotation.y += delta * 0.36;
     const pulse = 1 + Math.sin(elapsed * 2.4 + phase) * 0.035;
     group.scale.setScalar(pulse);
@@ -46,7 +48,7 @@ const FloatingHeroSoul = memo(function FloatingHeroSoul({
   return (
     <group
       ref={groupRef}
-      position={[soul.position.x, soul.position.y + 1.18, soul.position.z]}
+      position={[soul.position.x, soul.position.y + SOUL_HOVER_HEIGHT, soul.position.z]}
       renderOrder={5}
     >
       <mesh scale={[0.72, 1.14, 0.72]} renderOrder={3}>

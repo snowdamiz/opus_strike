@@ -9,6 +9,7 @@ import type {
   MapPoolTopUpResponse,
   MissionDefinitionRequest,
   MissionReorderRequest,
+  RankedBrCombatRewardPayoutsResponse,
   RankedEntryGateUpdate,
   RankedSeasonUpdate,
   RewardEconomyUpdate,
@@ -21,6 +22,7 @@ import type {
 } from './types';
 
 const USERS_PAGE_SIZE = 25;
+const RANKED_BR_PAYOUTS_PAGE_SIZE = 50;
 
 export interface Notice {
   id: number;
@@ -47,6 +49,12 @@ export interface UseAdminConsole {
   usersLoading: boolean;
   usersError: string | null;
   loadUsers: (opts?: { page?: number; query?: string }) => Promise<void>;
+
+  // Ranked BR SOL rewards
+  rankedBrPayouts: RankedBrCombatRewardPayoutsResponse | null;
+  rankedBrPayoutsLoading: boolean;
+  rankedBrPayoutsError: string | null;
+  loadRankedBrPayouts: (opts?: { page?: number; limit?: number }) => Promise<void>;
 
   // Mutations
   updateUserRank: (userId: string, body: UpdateRankRequest) => Promise<MutationResult>;
@@ -89,6 +97,9 @@ export function useAdminConsole(): UseAdminConsole {
   const [users, setUsers] = useState<UsersListResponse | null>(null);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
+  const [rankedBrPayouts, setRankedBrPayouts] = useState<RankedBrCombatRewardPayoutsResponse | null>(null);
+  const [rankedBrPayoutsLoading, setRankedBrPayoutsLoading] = useState(false);
+  const [rankedBrPayoutsError, setRankedBrPayoutsError] = useState<string | null>(null);
 
   const csrfRef = useRef<string>('');
   const inFlightRef = useRef(false);
@@ -164,6 +175,35 @@ export function useAdminConsole(): UseAdminConsole {
         setUsersError(message);
       } finally {
         if (mountedRef.current) setUsersLoading(false);
+      }
+    },
+    []
+  );
+
+  const loadRankedBrPayouts = useCallback(
+    async (opts?: { page?: number; limit?: number }) => {
+      const page = Math.max(1, opts?.page ?? 1);
+      const limit = Math.max(1, opts?.limit ?? RANKED_BR_PAYOUTS_PAGE_SIZE);
+      setRankedBrPayoutsLoading(true);
+      setRankedBrPayoutsError(null);
+      try {
+        const params = new URLSearchParams({
+          limit: String(limit),
+          page: String(page),
+        });
+        const data = await adminGet<RankedBrCombatRewardPayoutsResponse>(
+          `/reward-economy/ranked-br-payouts?${params.toString()}`
+        );
+        if (!mountedRef.current) return;
+        setRankedBrPayouts(data);
+      } catch (err) {
+        if (!mountedRef.current) return;
+        const message = err instanceof AdminApiError
+          ? err.message
+          : 'Failed to load ranked BR payouts';
+        setRankedBrPayoutsError(message);
+      } finally {
+        if (mountedRef.current) setRankedBrPayoutsLoading(false);
       }
     },
     []
@@ -352,6 +392,10 @@ export function useAdminConsole(): UseAdminConsole {
     usersLoading,
     usersError,
     loadUsers,
+    rankedBrPayouts,
+    rankedBrPayoutsLoading,
+    rankedBrPayoutsError,
+    loadRankedBrPayouts,
     updateUserRank,
     updateReportStatus,
     createAccountAction,

@@ -39,8 +39,18 @@ interface LocalPlaybackServer {
 interface RenderPage {
   evaluate<T = unknown>(pageFunction: (...args: any[]) => T | Promise<T>, arg?: unknown): Promise<T>;
   goto(url: string, options?: { waitUntil?: 'networkidle' | 'load' | 'domcontentloaded'; timeout?: number }): Promise<unknown>;
+  route(url: string, handler: (route: RenderRoute) => Promise<void> | void): Promise<void>;
   screenshot(options?: { type?: 'png'; animations?: 'disabled' | 'allow' }): Promise<Buffer>;
   waitForFunction(pageFunction: (...args: any[]) => unknown, arg?: unknown, options?: { timeout?: number }): Promise<unknown>;
+}
+
+interface RenderRoute {
+  abort(errorCode?: string): Promise<void>;
+  continue(): Promise<void>;
+  request(): {
+    resourceType(): string;
+    url(): string;
+  };
 }
 
 interface RenderBrowser {
@@ -77,6 +87,35 @@ const MIME_TYPES: Record<string, string> = {
   '.webp': 'image/webp',
   '.woff2': 'font/woff2',
 };
+
+const REMOTE_FONT_HOSTS = new Set([
+  'fonts.googleapis.com',
+  'fonts.gstatic.com',
+]);
+const FONT_FILE_EXTENSION_PATTERN = /\.(?:eot|otf|ttf|woff|woff2)$/i;
+
+// Playwright screenshots wait for document.fonts.ready; stalled web fonts can block every rendered frame.
+export function shouldAbortRecordingRenderRequest(input: {
+  resourceType?: string | null;
+  url: string;
+}): boolean {
+  let requestUrl: URL;
+  try {
+    requestUrl = new URL(input.url);
+  } catch {
+    return false;
+  }
+
+  if (requestUrl.protocol !== 'http:' && requestUrl.protocol !== 'https:') {
+    return false;
+  }
+
+  if (REMOTE_FONT_HOSTS.has(requestUrl.hostname.toLowerCase())) {
+    return true;
+  }
+
+  return input.resourceType === 'font' || FONT_FILE_EXTENSION_PATTERN.test(requestUrl.pathname);
+}
 
 function usage(): never {
   throw new Error([
@@ -274,6 +313,21 @@ function buildPlaybackUrl(input: {
   return url.toString();
 }
 
+async function installRenderRequestGuards(page: RenderPage): Promise<void> {
+  await page.route('**/*', async (route) => {
+    const request = route.request();
+    if (shouldAbortRecordingRenderRequest({
+      resourceType: request.resourceType(),
+      url: request.url(),
+    })) {
+      await route.abort('blockedbyclient');
+      return;
+    }
+
+    await route.continue();
+  });
+}
+
 function updateRender(summary: RecordingSummary, renderId: string | null, patch: Partial<RecordingRenderArtifact>): RecordingSummary {
   if (!renderId) return summary;
   return {
@@ -448,6 +502,7 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
       viewport,
       deviceScaleFactor: manifest.devicePixelRatio || 1,
     });
+    await installRenderRequestGuards(page);
     await page.goto(playbackUrl, { waitUntil: 'networkidle' });
     await page.waitForFunction(() => Boolean((window as RecordingBrowserWindow).__voxelRecording), null, { timeout: 30_000 });
     await page.evaluate(async () => {

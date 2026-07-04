@@ -1,9 +1,22 @@
 import * as React from 'react';
-import { Coins, Gift, Loader2, Send, ShoppingBag, Sparkles } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Coins,
+  Gift,
+  Loader2,
+  RefreshCw,
+  Send,
+  ShoppingBag,
+  Sparkles,
+} from 'lucide-react';
 import type { HeroSkinRarity } from '@voxel-strike/shared';
 import type { SectionProps } from '../section';
 import type {
   PlayerRewardSettings,
+  PlayerRewardPayoutStatus,
+  PlayerRewardStatus,
+  RankedBrCombatRewardPayoutRow,
   GoldenBiomeSettings,
   GoldenDistributionMode,
   GoldenRewardStatus,
@@ -39,6 +52,7 @@ import {
   formatSol,
   formatNumber,
   formatBps,
+  formatDateTime,
   formatRelativeTime,
   truncateAddress,
   lamportsToSol,
@@ -151,6 +165,258 @@ function formatMicroUsd(value: string | null | undefined): string {
   const fraction = microUsd % 1_000_000n;
   if (fraction === 0n) return `$${whole.toString()}`;
   return `$${whole.toString()}.${fraction.toString().padStart(6, '0').replace(/0+$/, '')}`;
+}
+
+function playerRewardStatusBadgeVariant(
+  status: PlayerRewardStatus | undefined
+): React.ComponentProps<typeof Badge>['variant'] {
+  switch (status) {
+    case 'paid':
+      return 'success';
+    case 'pending':
+    case 'processing':
+      return 'warning';
+    case 'failed':
+    case 'canceled':
+      return 'danger';
+    default:
+      return 'default';
+  }
+}
+
+function playerRewardPayoutStatusBadgeVariant(
+  status: PlayerRewardPayoutStatus | undefined
+): React.ComponentProps<typeof Badge>['variant'] {
+  switch (status) {
+    case 'confirmed':
+      return 'success';
+    case 'pending':
+    case 'submitted':
+      return 'warning';
+    case 'failed':
+      return 'danger';
+    default:
+      return 'outline';
+  }
+}
+
+function RankedBrCombatRewardPayoutTableRow({
+  reward,
+}: {
+  reward: RankedBrCombatRewardPayoutRow;
+}) {
+  const payout = reward.payout;
+  const payoutTime = payout?.confirmedAt
+    ?? payout?.submittedAt
+    ?? payout?.failedAt
+    ?? null;
+  const payoutReference = payout?.signature
+    ? `Sig ${truncateAddress(payout.signature, 6, 6)}`
+    : payout?.walletAddress
+      ? `Wallet ${truncateAddress(payout.walletAddress, 4, 4)}`
+      : 'No payout';
+  const capped = positiveIntegerText(reward.cappedLamports);
+
+  return (
+    <TableRow>
+      <TableCell>
+        <div className="font-medium text-white/85">{reward.userName}</div>
+        <div className="font-mono text-[11px] text-white/40">
+          {truncateAddress(reward.userWalletAddress ?? reward.userId, 6, 6)}
+        </div>
+      </TableCell>
+      <TableCell>
+        <div className="font-mono text-xs text-white/70">
+          {truncateAddress(reward.matchId, 6, 6)}
+        </div>
+        <div className="text-[11px] text-white/40">{formatDateTime(reward.createdAt)}</div>
+      </TableCell>
+      <TableCell>
+        <div className="text-white/80">
+          {formatNumber(reward.rewardableDamageHp)} HP
+        </div>
+        <div className="text-[11px] text-white/40">
+          {formatNumber(reward.humanRewardableDamageHp)} human / {formatNumber(reward.botRewardableDamageHp)} bot
+        </div>
+      </TableCell>
+      <TableCell>
+        <div className="text-white/80">{formatNumber(reward.eliminations)}</div>
+        <div className="text-[11px] text-white/40">
+          {formatNumber(reward.humanEliminations)} human / {formatNumber(reward.botEliminations)} bot
+        </div>
+      </TableCell>
+      <TableCell className="text-white/85">{formatSol(reward.damageRewardLamports)}</TableCell>
+      <TableCell className="text-white/85">{formatSol(reward.eliminationRewardLamports)}</TableCell>
+      <TableCell>
+        <div className="font-semibold text-white/90">{formatSol(reward.amountLamports)}</div>
+        <div className={cn('text-[11px]', capped ? 'text-ui-warning' : 'text-white/35')}>
+          {capped ? `${formatSol(reward.cappedLamports)} capped` : 'No cap'}
+        </div>
+      </TableCell>
+      <TableCell>
+        <div className="flex flex-col items-start gap-1">
+          <Badge variant={playerRewardStatusBadgeVariant(reward.rewardStatus)}>
+            {titleCase(reward.rewardStatus)}
+          </Badge>
+          {payout ? (
+            <Badge variant={playerRewardPayoutStatusBadgeVariant(payout.status)}>
+              {titleCase(payout.status)}
+            </Badge>
+          ) : (
+            <Badge variant="outline">No payout</Badge>
+          )}
+        </div>
+      </TableCell>
+      <TableCell className="min-w-[10rem]">
+        <div className="font-mono text-xs text-white/65">{payoutReference}</div>
+        <div className="text-[11px] text-white/40">
+          {payoutTime ? formatDateTime(payoutTime) : formatDateTime(reward.paidAt)}
+        </div>
+        {payout?.lastError ? (
+          <div className="mt-1 max-w-[14rem] truncate text-[11px] text-ui-danger">
+            {payout.lastError}
+          </div>
+        ) : null}
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function RankedBrCombatPayoutsCard({ console: c }: { console: SectionProps['console'] }) {
+  const didLoadRef = React.useRef(false);
+  const payouts = c.rankedBrPayouts;
+  const rows = payouts?.rewards ?? [];
+  const page = payouts?.pagination.page ?? 1;
+  const totalPages = payouts?.pagination.totalPages ?? 1;
+  const loadPage = (nextPage: number) => {
+    void c.loadRankedBrPayouts({ page: nextPage });
+  };
+
+  React.useEffect(() => {
+    if (didLoadRef.current) return;
+    didLoadRef.current = true;
+    void c.loadRankedBrPayouts({ page: 1 });
+  }, [c.loadRankedBrPayouts]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-1">
+            <CardTitle>Ranked BR SOL Payouts</CardTitle>
+            <CardDescription>
+              Damage and elimination rewards from ranked Battle Royal.
+            </CardDescription>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {payouts ? (
+              <Badge variant="secondary">
+                {formatNumber(payouts.totals.count)} rewards / {formatSol(payouts.totals.amountLamports)}
+              </Badge>
+            ) : null}
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => loadPage(page)}
+              disabled={c.rankedBrPayoutsLoading}
+            >
+              <RefreshCw className={cn(c.rankedBrPayoutsLoading && 'animate-spin')} />
+              Refresh
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {payouts ? (
+          <div className="grid gap-3 sm:grid-cols-3">
+            <ReadOnlyMetric
+              label="Pending"
+              value={formatSol(payouts.totals.byRewardStatus.pending?.amountLamports)}
+            />
+            <ReadOnlyMetric
+              label="Processing"
+              value={formatSol(payouts.totals.byRewardStatus.processing?.amountLamports)}
+            />
+            <ReadOnlyMetric
+              label="Paid"
+              value={formatSol(payouts.totals.byRewardStatus.paid?.amountLamports)}
+            />
+          </div>
+        ) : null}
+
+        {c.rankedBrPayoutsError ? (
+          <div className="rounded-lg border border-ui-danger/30 bg-ui-danger/10 px-3 py-2 text-sm text-ui-danger">
+            {c.rankedBrPayoutsError}
+          </div>
+        ) : null}
+
+        {c.rankedBrPayoutsLoading && !payouts ? (
+          <div className="flex items-center justify-center gap-2 rounded-lg border border-strike-border bg-strike-canvas/30 py-8 text-sm text-white/50">
+            <Loader2 className="animate-spin" />
+            Loading payouts
+          </div>
+        ) : rows.length === 0 ? (
+          <EmptyState
+            icon={Gift}
+            title="No ranked BR SOL rewards yet"
+            description="Damage and elimination rewards will appear here after ranked Battle Royal matches pay."
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Player</TableHead>
+                <TableHead>Match</TableHead>
+                <TableHead>Damage</TableHead>
+                <TableHead>Elims</TableHead>
+                <TableHead>Damage SOL</TableHead>
+                <TableHead>Elim SOL</TableHead>
+                <TableHead>Total</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Payout</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((reward) => (
+                <RankedBrCombatRewardPayoutTableRow key={reward.id} reward={reward} />
+              ))}
+            </TableBody>
+          </Table>
+        )}
+
+        {payouts && payouts.pagination.total > 0 ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-strike-border pt-3">
+            <div className="text-xs text-white/40">
+              Page {formatNumber(page)} of {formatNumber(totalPages)}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => loadPage(page - 1)}
+                disabled={c.rankedBrPayoutsLoading || !payouts.pagination.hasPrevious}
+              >
+                <ChevronLeft />
+                Prev
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => loadPage(page + 1)}
+                disabled={c.rankedBrPayoutsLoading || !payouts.pagination.hasNext}
+              >
+                Next
+                <ChevronRight />
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
 }
 
 /* ----------------------------- Rewards Tab -------------------------- */
@@ -303,6 +569,7 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
     setForcingPayout(true);
     try {
       await c.forcePlayerRewardPayout({ userId: forcePayoutUserId.trim() });
+      void c.loadRankedBrPayouts({ page: c.rankedBrPayouts?.pagination.page ?? 1 });
       setForcePayoutUserId('');
     } finally {
       setForcingPayout(false);
@@ -637,6 +904,7 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
           </div>
         </CardContent>
       </Card>
+      <RankedBrCombatPayoutsCard console={c} />
     </div>
   );
 }

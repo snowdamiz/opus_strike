@@ -368,6 +368,19 @@ export interface UsersListResponse {
 
 /* ----------------------------- Economy ------------------------------ */
 
+export type PlayerRewardStatus =
+  | 'pending'
+  | 'processing'
+  | 'paid'
+  | 'failed'
+  | 'canceled';
+
+export type PlayerRewardPayoutStatus =
+  | 'pending'
+  | 'submitted'
+  | 'confirmed'
+  | 'failed';
+
 export interface PlayerRewardSettings {
   enabled: boolean;
   settingsVersion: number;
@@ -421,6 +434,68 @@ export interface RewardEconomy {
   rewardTokenSymbol: string | null;
   playerRewards: PlayerRewardSettings;
   wagers: WagerSettings;
+}
+
+export interface RankedBrCombatRewardPayoutRow {
+  id: string;
+  userId: string;
+  userName: string;
+  userWalletAddress: string | null;
+  matchId: string | null;
+  roomId: string | null;
+  lobbyId: string | null;
+  matchMode: string | null;
+  gameplayMode: string | null;
+  playerSessionId: string | null;
+  rewardStatus: PlayerRewardStatus;
+  amountLamports: LamportString;
+  damageRewardLamports: LamportString;
+  eliminationRewardLamports: LamportString;
+  cappedLamports: LamportString;
+  rewardableDamageHp: number;
+  humanRewardableDamageHp: number;
+  botRewardableDamageHp: number;
+  eliminations: number;
+  humanEliminations: number;
+  botEliminations: number;
+  formulaVersion: string | null;
+  settingsVersion: number | null;
+  payout: {
+    id: string;
+    amountLamports: LamportString;
+    status: PlayerRewardPayoutStatus;
+    signature: string | null;
+    walletAddress: string;
+    priceSource: string | null;
+    solUsdPriceMicroUsd: LamportString | null;
+    priceObservedAt: string | null;
+    submittedAt: string | null;
+    confirmedAt: string | null;
+    failedAt: string | null;
+    lastError: string | null;
+  } | null;
+  createdAt: string;
+  paidAt: string | null;
+}
+
+export interface RankedBrCombatRewardPayoutsResponse {
+  rewards: RankedBrCombatRewardPayoutRow[];
+  totals: {
+    count: number;
+    amountLamports: LamportString;
+    byRewardStatus: Partial<Record<PlayerRewardStatus, {
+      count: number;
+      amountLamports: LamportString;
+    }>>;
+  };
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasPrevious: boolean;
+    hasNext: boolean;
+  };
 }
 
 export type GoldenDistributionMode = 'manual' | 'auto';

@@ -337,6 +337,35 @@ function getTeamAutoDropAt(input: {
   return Math.min(input.autoDropAt, input.dropStartsAt + duration * ratio);
 }
 
+function createBattleRoyalBotDropInput(input: {
+  playerId: string;
+  team: Team;
+  seed: number;
+  now: number;
+}): PlayerInput {
+  const botSeed = (input.seed ^ hashString(`${input.team}:${input.playerId}:drop`)) >>> 0;
+  return {
+    tick: 0,
+    moveForward: true,
+    moveBackward: false,
+    moveLeft: false,
+    moveRight: false,
+    jump: false,
+    crouch: false,
+    sprint: false,
+    primaryFire: false,
+    secondaryFire: false,
+    reload: false,
+    ability1: false,
+    ability2: false,
+    ultimate: false,
+    interact: false,
+    lookYaw: unitRandom(botSeed) * Math.PI * 2 - Math.PI,
+    lookPitch: 0,
+    timestamp: input.now,
+  };
+}
+
 export function isBattleRoyalDropShipDroppable(
   state: BattleRoyalDropState,
   now: number
@@ -476,7 +505,14 @@ export function createBattleRoyalDropState(
       slotOffset,
       landingOffset,
       attachedToPlayerId: attachedToPlayerId === participant.playerId ? null : attachedToPlayerId,
-      latestInput: null,
+      latestInput: participant.isBot === true
+        ? createBattleRoyalBotDropInput({
+          playerId: participant.playerId,
+          team: participant.team,
+          seed: manifest.seed,
+          now,
+        })
+        : null,
     };
     players.set(participant.playerId, player);
     teamList.push(player);
@@ -555,7 +591,14 @@ export function addBattleRoyalDropParticipant(
     slotOffset,
     landingOffset,
     attachedToPlayerId,
-    latestInput: null,
+    latestInput: participant.isBot === true
+      ? createBattleRoyalBotDropInput({
+        playerId: participant.playerId,
+        team: participant.team,
+        seed: state.phaseStartedAt,
+        now,
+      })
+      : null,
   };
 
   state.players.set(participant.playerId, player);

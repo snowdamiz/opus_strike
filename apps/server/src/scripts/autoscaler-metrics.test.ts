@@ -293,6 +293,7 @@ async function runInGameCapacityPolicyTests(): Promise<void> {
   assert.equal(snapshot.reservedPlayers, 15);
   assert.equal(snapshot.availablePlayers, 225);
   assert.equal(snapshot.full, false);
+  assert.equal(snapshot.capacityPressure, 15 / MAX_IN_GAME_PLAYERS);
   assert.equal(snapshot.source, 'live');
   assert.equal(snapshot.machines[0]?.playersPerMachine, 48);
 
@@ -310,6 +311,36 @@ async function runInGameCapacityPolicyTests(): Promise<void> {
 
   assert.equal(pressuredSnapshot.machines[0]?.playersPerMachine, 8);
   assert.equal(pressuredSnapshot.machines[0]?.availablePlayers, 0);
+  assert.equal(pressuredSnapshot.machines[0]?.capacityPressure, 1.25);
+  assert.equal(pressuredSnapshot.capacityPressure, 8 / pressuredSnapshot.maxPlayers);
+
+  const overloadedHeadroomSnapshot = createInGameCapacitySnapshot([
+    {
+      processId: 'process-1',
+      clients: 1,
+      metadata: {
+        humanCount: 1,
+        reservedHumanPlayers: 1,
+        capacityPlayerCost: 35,
+        tickDurationP99Ms: 6.5,
+      },
+    },
+  ], [
+    {
+      processId: 'process-1',
+      updatedAtMs: Date.now(),
+      localGamePlayers: 1,
+      localGameRoomCount: 1,
+      capacityPressure: 6.51,
+    },
+  ]);
+
+  assert.equal(overloadedHeadroomSnapshot.maxPlayers, 168);
+  assert.equal(overloadedHeadroomSnapshot.reservedPlayers, 35);
+  assert.equal(overloadedHeadroomSnapshot.availablePlayers, 133);
+  assert.equal(overloadedHeadroomSnapshot.full, false);
+  assert.equal(overloadedHeadroomSnapshot.machines[0]?.capacityPressure, 6.51);
+  assert.equal(overloadedHeadroomSnapshot.capacityPressure, 35 / 168);
 
   const battleRoyalSnapshot = createInGameCapacitySnapshot([
     {

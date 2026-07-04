@@ -1981,6 +1981,7 @@ export class GameRoom extends Room<GameState> {
     });
 
     this.sendCurrentSnapshots(client);
+    this.sendBattleRoyalCompletedTeamSummaryToClient(client, player.team);
     this.requestPlayerPing(client, Date.now());
 
     // Check if we should start hero select
@@ -3113,6 +3114,15 @@ export class GameRoom extends Room<GameState> {
     if (soulsChanged) {
       this.broadcastStateStreams({ transforms: false, forceVitals: false, forceMatch: true });
     }
+  }
+
+  private sendBattleRoyalCompletedTeamSummaryToClient(client: Client, team: string | null | undefined, now = Date.now()): void {
+    if (!isBattleRoyalMode(this.gameplayMode) || this.state.phase !== 'playing' || !isTeam(team)) return;
+
+    const teamPlacement = this.battleRoyalPlacement.getTeamPlacement(team);
+    if (!teamPlacement) return;
+
+    this.sendTrackedAfterGameplayWork(client, 'gameEnd', this.buildBattleRoyalTeamEliminatedEvent(team, teamPlacement.placement, now));
   }
 
   private updateMetadata(): void {
