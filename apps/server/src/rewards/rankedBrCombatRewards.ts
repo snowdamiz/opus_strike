@@ -148,7 +148,7 @@ export class RankedBrRewardAccumulator {
     totals.latestKillLamports = input.config.rankedBrKillLamports;
     totals.latestBotTargetRewardBps = input.config.rankedBrBotTargetRewardBps;
 
-    if (!input.config.enabled || !input.config.rankedBrCombatRewardsEnabled) {
+    if (!input.config.rankedBrCombatRewardsEnabled) {
       addSkippedLamports(totals, 'disabled', this.estimateGrossLamports(input));
       return null;
     }

@@ -1,4 +1,4 @@
-import type { PlayerRewardSettings, PlayerRewardStatus, Prisma } from '@prisma/client';
+import type { PlayerRewardKind, PlayerRewardSettings, PlayerRewardStatus, Prisma } from '@prisma/client';
 import type { MatchMode, RankedSeasonMode, Team } from '@voxel-strike/shared';
 import type { AntiCheatIntegrityGate } from '../anticheat';
 import prisma from '../db';
@@ -155,6 +155,13 @@ export type PlayerRewardSettingsUpdate = Partial<Record<keyof Omit<
 const PLAYER_REWARD_SETTINGS_ID = 'default';
 const UNSIGNED_INTEGER_PATTERN = /^[0-9]+$/;
 const PLAYER_REWARD_SETTINGS_CACHE_TTL_MS = 5_000;
+const TOKEN_DRIP_PAYOUT_REWARD_KINDS = [
+  'daily_ranked_drip',
+  'objective_bounty',
+  'season_top_10',
+  'daily_mission',
+] as const satisfies readonly PlayerRewardKind[];
+const RANKED_BR_COMBAT_PAYOUT_REWARD_KIND = 'ranked_br_combat_bounty' as const satisfies PlayerRewardKind;
 
 function sumLamports(values: Iterable<bigint>): bigint {
   let total = 0n;
@@ -205,6 +212,13 @@ function isCleanRankedRewardMatch(input: CreateMatchPlayerRewardsInput): boolean
     && input.integrityGate.status === 'clean'
     && !input.integrityGate.rankedHoldRequired
     && !input.integrityGate.reviewRequired;
+}
+
+function getPayoutEligibleRewardKinds(config: PlayerRewardRuntimeConfig): PlayerRewardKind[] {
+  const rewardKinds: PlayerRewardKind[] = [];
+  if (config.enabled) rewardKinds.push(...TOKEN_DRIP_PAYOUT_REWARD_KINDS);
+  if (config.rankedBrCombatRewardsEnabled) rewardKinds.push(RANKED_BR_COMBAT_PAYOUT_REWARD_KIND);
+  return rewardKinds;
 }
 
 export function buildPendingPlayerRewardPayoutGroups(
@@ -1140,7 +1154,8 @@ export class PlayerRewardService {
   } = {}): Promise<PlayerRewardAutoPayoutResult> {
     const config = await this.getConfig();
     const empty = { payoutCount: 0, rewardCount: 0, totalLamports: '0' };
-    if (!config.enabled || !this.hasSettlementSigner()) return empty;
+    const payoutEligibleRewardKinds = getPayoutEligibleRewardKinds(config);
+    if (payoutEligibleRewardKinds.length === 0 || !this.hasSettlementSigner()) return empty;
 
     let candidateUserIds: string[] | null = options.userIds?.length
       ? Array.from(new Set(options.userIds))
@@ -1149,6 +1164,7 @@ export class PlayerRewardService {
       const seedRewards = await prisma.playerReward.findMany({
         where: {
           status: 'pending',
+          kind: { in: payoutEligibleRewardKinds },
           idempotencyKey: { in: options.idempotencyKeys },
         },
         select: { userId: true },
@@ -1163,6 +1179,7 @@ export class PlayerRewardService {
     const rewards = await prisma.playerReward.findMany({
       where: {
         status: 'pending',
+        kind: { in: payoutEligibleRewardKinds },
         ...(candidateUserIds?.length ? { userId: { in: candidateUserIds } } : {}),
       },
       orderBy: { createdAt: 'asc' },
