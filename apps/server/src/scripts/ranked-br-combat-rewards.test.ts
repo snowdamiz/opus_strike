@@ -6,6 +6,7 @@ import {
 import {
   RankedBrRewardAccumulator,
   computeRankedBrDynamicMatchPoolLamports,
+  type RankedBrRewardTargetKind,
 } from '../rewards/rankedBrCombatRewards';
 import {
   computeMinimumPayoutLamports,
@@ -72,7 +73,9 @@ function accumulator(overrides: Partial<ConstructorParameters<typeof RankedBrRew
 
 function record(input: {
   acc: RankedBrRewardAccumulator;
-  targetKind?: 'human' | 'official_ranked_br_bot';
+  targetKind?: RankedBrRewardTargetKind;
+  sourceTeam?: string | null;
+  targetTeam?: string | null;
   damage: number;
   kill?: boolean;
   config?: PlayerRewardRuntimeConfig;
@@ -81,9 +84,13 @@ function record(input: {
     config: input.config ?? config,
     sourcePlayerId: 'source-session',
     sourceUserId: 'source-user',
-    sourceTeam: 'red',
-    targetPlayerId: input.targetKind === 'official_ranked_br_bot' ? 'bot-target' : 'human-target',
-    targetTeam: 'blue',
+    sourceTeam: input.sourceTeam ?? 'red',
+    targetPlayerId: input.targetKind === 'official_ranked_br_bot'
+      ? 'bot-target'
+      : input.targetKind === 'non_rewardable'
+        ? 'non-rewardable-target'
+        : 'human-target',
+    targetTeam: input.targetTeam ?? 'blue',
     targetKind: input.targetKind ?? 'human',
     playerSessionId: 'source-session',
     serverAppliedDamageHp: input.damage,
@@ -94,6 +101,8 @@ function record(input: {
 {
   const acc = accumulator();
   assert.equal(record({ acc, damage: 12 })?.amountLamports, 3_000n);
+  assert.equal(acc.getLastEventOutcome()?.reason, 'rewarded');
+  assert.equal(acc.getLastEventOutcome()?.rewardLamports, 3_000n);
   assert.equal(record({ acc, damage: 40 })?.amountLamports, 10_000n);
   assert.equal(record({ acc, damage: 100 })?.amountLamports, 25_000n);
 }
@@ -108,6 +117,7 @@ function record(input: {
   const acc = accumulator();
   assert.equal(record({ acc, damage: 400 })?.amountLamports, 78_750n);
   assert.equal(record({ acc, damage: 1 }), null);
+  assert.equal(acc.getLastEventOutcome()?.reason, 'source_victim_damage_cap');
 }
 
 {
@@ -120,6 +130,7 @@ function record(input: {
   const acc = accumulator();
   const shadowConfig = { ...config, rankedBrCombatRewardsShadowMode: true };
   assert.equal(record({ acc, damage: 100, config: shadowConfig }), null);
+  assert.equal(acc.getLastEventOutcome()?.reason, 'shadow_mode');
   assert.equal(acc.buildGrants().length, 0);
 }
 
@@ -133,7 +144,26 @@ function record(input: {
   const acc = accumulator();
   const combatDisabledConfig = { ...config, rankedBrCombatRewardsEnabled: false };
   assert.equal(record({ acc, damage: 100, config: combatDisabledConfig }), null);
+  assert.equal(acc.getLastEventOutcome()?.reason, 'disabled');
   assert.equal(acc.buildGrants().length, 0);
+}
+
+{
+  const acc = accumulator();
+  assert.equal(record({ acc, targetKind: 'non_rewardable', damage: 100 }), null);
+  assert.equal(acc.getLastEventOutcome()?.reason, 'non_rewardable_target');
+}
+
+{
+  const acc = accumulator();
+  assert.equal(record({
+    acc,
+    targetKind: 'official_ranked_br_bot',
+    sourceTeam: 'br_01',
+    targetTeam: 'br_01',
+    damage: 100,
+  }), null);
+  assert.equal(acc.getLastEventOutcome()?.reason, 'friendly_fire');
 }
 
 {

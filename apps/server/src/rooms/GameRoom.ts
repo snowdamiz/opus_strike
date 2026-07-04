@@ -90,7 +90,11 @@ import {
 } from './matchLedgerRuntime';
 import { createRoomMatchFinalizationRuntime } from './matchFinalizationRuntime';
 import { playerRewardService, type RankedBrRewardAccumulatorInit } from '../rewards/service';
-import type { RankedBrRewardAccumulator, RankedBrRewardTargetKind } from '../rewards/rankedBrCombatRewards';
+import type {
+  RankedBrRewardAccumulator,
+  RankedBrRewardEventOutcome,
+  RankedBrRewardTargetKind,
+} from '../rewards/rankedBrCombatRewards';
 import { getWagerRuntimeConfig } from '../wagers/config';
 import {
   MatchSummaryRuntime,
@@ -998,6 +1002,8 @@ const TICK_ERROR_LOG_SAMPLE_MS = 1000;
 const MAP_MANIFEST_SLOW_LOG_MS = 3000;
 const TICK_DELAY_WARN_MS = Math.max(250, TICK_INTERVAL_MS * 5);
 const TICK_DELAY_LOG_SAMPLE_MS = 5000;
+const RANKED_BR_REWARD_SKIP_LOG_LIMIT_PER_REASON = 3;
+const RANKED_BR_REWARD_AWARD_LOG_LIMIT = 5;
 
 function getScaledBotPlanningBudgets(
   scheduledBotCount: number,
@@ -1224,6 +1230,8 @@ export class GameRoom extends Room<GameState> {
   private rankedBrRewardConfigRefreshInFlight = false;
   private rankedBrRewardConfigRefreshAfterMs = 0;
   private rankedBrRewardInitGeneration = 0;
+  private readonly rankedBrRewardSkipLogCounts = new Map<string, number>();
+  private rankedBrRewardAwardLogCount = 0;
   private readonly matchSummary = new MatchSummaryRuntime({
     getDurableUserId: (playerId) => this.getDurableUserId(playerId),
     isNpc: (playerId) => this.npcs.has(playerId),
@@ -4390,11 +4398,66 @@ export class GameRoom extends Room<GameState> {
     return this.participantRegistry.getDurableUserId(playerId);
   }
 
+  private serializeRankedBrRewardOutcome(outcome: RankedBrRewardEventOutcome): Record<string, unknown> {
+    return {
+      outcomeReason: outcome.reason,
+      sourcePlayerId: outcome.sourcePlayerId,
+      sourceUserId: outcome.sourceUserId,
+      sourceTeam: outcome.sourceTeam,
+      targetPlayerId: outcome.targetPlayerId,
+      targetTeam: outcome.targetTeam,
+      targetKind: outcome.targetKind,
+      serverAppliedDamageHp: outcome.serverAppliedDamageHp,
+      finalEnemyElimination: outcome.finalEnemyElimination,
+      settingsVersion: outcome.settingsVersion,
+      grossRewardLamports: outcome.grossRewardLamports.toString(),
+      rewardLamports: outcome.rewardLamports.toString(),
+      matchPoolRemainingLamports: outcome.matchPoolRemainingLamports.toString(),
+      matchAwardedLamports: outcome.matchAwardedLamports.toString(),
+    };
+  }
+
+  private logRankedBrRewardSkip(reason: string, details: Record<string, unknown> = {}): void {
+    const current = this.rankedBrRewardSkipLogCounts.get(reason) ?? 0;
+    if (current >= RANKED_BR_REWARD_SKIP_LOG_LIMIT_PER_REASON) return;
+    const sample = current + 1;
+    this.rankedBrRewardSkipLogCounts.set(reason, sample);
+    loggers.room.info('Ranked BR combat reward skipped', {
+      roomId: this.roomId,
+      lobbyId: this.lobbyId,
+      reason,
+      sample,
+      matchMode: this.matchMode,
+      gameplayMode: this.gameplayMode,
+      phase: this.state.phase,
+      rankedEligibilityCandidate: this.rankedEligibilityCandidate,
+      hasAccumulator: Boolean(this.rankedBrRewardAccumulator),
+      hasConfig: Boolean(this.rankedBrRewardConfig),
+      ...details,
+    });
+  }
+
+  private logRankedBrRewardAward(details: Record<string, unknown>): void {
+    if (this.rankedBrRewardAwardLogCount >= RANKED_BR_REWARD_AWARD_LOG_LIMIT) return;
+    this.rankedBrRewardAwardLogCount += 1;
+    loggers.room.info('Ranked BR combat reward awarded', {
+      roomId: this.roomId,
+      lobbyId: this.lobbyId,
+      sample: this.rankedBrRewardAwardLogCount,
+      matchMode: this.matchMode,
+      gameplayMode: this.gameplayMode,
+      phase: this.state.phase,
+      ...details,
+    });
+  }
+
   private initializeRankedBrRewardAccumulator(ledger: MatchPersistenceLedger): void {
     const initGeneration = ++this.rankedBrRewardInitGeneration;
     this.rankedBrRewardAccumulator = null;
     this.rankedBrRewardConfig = null;
     this.rankedBrRewardConfigRefreshAfterMs = 0;
+    this.rankedBrRewardSkipLogCounts.clear();
+    this.rankedBrRewardAwardLogCount = 0;
 
     if (
       this.matchMode !== 'ranked' ||
@@ -4402,6 +4465,14 @@ export class GameRoom extends Room<GameState> {
       !this.rankedEligibilityCandidate ||
       ledger.state !== 'active'
     ) {
+      if (this.matchMode === 'ranked' || isBattleRoyalMode(this.gameplayMode)) {
+        this.logRankedBrRewardSkip('init_gate_failed', {
+          matchId: ledger.matchId,
+          ledgerState: ledger.state,
+          isRankedMatch: this.matchMode === 'ranked',
+          isBattleRoyal: isBattleRoyalMode(this.gameplayMode),
+        });
+      }
       return;
     }
 
@@ -4424,11 +4495,35 @@ export class GameRoom extends Room<GameState> {
         ledger.state !== 'active' ||
         this.state.phase !== 'playing'
       ) {
+        this.logRankedBrRewardSkip('init_discarded', {
+          matchId: ledger.matchId,
+          ledgerState: ledger.state,
+          initGeneration,
+          currentInitGeneration: this.rankedBrRewardInitGeneration,
+          currentPhase: this.state.phase,
+        });
         return;
       }
       this.rankedBrRewardAccumulator = init.accumulator;
       this.rankedBrRewardConfig = init.config;
       this.rankedBrRewardConfigRefreshAfterMs = Date.now() + 5_000;
+      const snapshot = init.accumulator.getDebugSnapshot();
+      loggers.room.info('Ranked BR reward accumulator initialized', {
+        roomId: this.roomId,
+        matchId: ledger.matchId,
+        lobbyId: ledger.lobbyId,
+        userCount: userIds.size,
+        rewardSettingsEnabled: init.config.enabled,
+        rankedBrCombatRewardsEnabled: init.config.rankedBrCombatRewardsEnabled,
+        rankedBrCombatRewardsShadowMode: init.config.rankedBrCombatRewardsShadowMode,
+        rankedBrDamageLamportsPerHp: init.config.rankedBrDamageLamportsPerHp.toString(),
+        rankedBrKillLamports: init.config.rankedBrKillLamports.toString(),
+        rankedBrBotTargetRewardBps: init.config.rankedBrBotTargetRewardBps,
+        rankedBrMaxMatchLamports: init.config.rankedBrMaxMatchLamports.toString(),
+        rankedBrTreasuryExposureBps: init.config.rankedBrTreasuryExposureBps,
+        matchPoolLamports: snapshot.matchPoolLamports.toString(),
+        matchPoolRemainingLamports: snapshot.matchPoolRemainingLamports.toString(),
+      });
     }).catch((error) => {
       loggers.room.warn('Ranked BR reward accumulator initialization failed', {
         roomId: this.roomId,
@@ -4479,25 +4574,69 @@ export class GameRoom extends Room<GameState> {
     finalEnemyElimination: boolean;
     damageType: string;
   }): { amountLamports: string } | null {
+    if (!isBattleRoyalMode(this.gameplayMode)) return null;
+
+    const targetDetails = {
+      targetPlayerId: input.target.id,
+      targetTeam: input.target.team || null,
+      targetIsBot: input.target.isBot,
+      targetBotProfileId: input.target.botProfileId || null,
+      targetIsNpc: this.npcs.has(input.target.id),
+      appliedDamage: input.appliedDamage,
+      finalEnemyElimination: input.finalEnemyElimination,
+      damageType: input.damageType,
+    };
+
+    if (this.matchMode !== 'ranked') {
+      this.logRankedBrRewardSkip('not_ranked', targetDetails);
+      return null;
+    }
+    if (this.state.phase !== 'playing') {
+      this.logRankedBrRewardSkip('not_playing', targetDetails);
+      return null;
+    }
+    if (input.appliedDamage <= 0) {
+      this.logRankedBrRewardSkip('no_applied_damage', targetDetails);
+      return null;
+    }
+    if (!input.source) {
+      this.logRankedBrRewardSkip('missing_source', targetDetails);
+      return null;
+    }
+
+    const sourceDetails = {
+      sourcePlayerId: input.source.id,
+      sourceTeam: input.source.team || null,
+      sourceIsBot: input.source.isBot,
+      sourceIsNpc: this.npcs.has(input.source.id),
+      sourceIsObserver: isObserverPlayer(input.source),
+    };
     if (
-      this.matchMode !== 'ranked' ||
-      !isBattleRoyalMode(this.gameplayMode) ||
-      this.state.phase !== 'playing' ||
-      input.appliedDamage <= 0 ||
-      !input.source ||
       input.source.isBot ||
       this.npcs.has(input.source.id) ||
       isObserverPlayer(input.source)
     ) {
+      this.logRankedBrRewardSkip('invalid_source', { ...targetDetails, ...sourceDetails });
       return null;
     }
 
     const sourceUserId = this.getDurableUserId(input.source.id);
-    if (!sourceUserId) return null;
+    if (!sourceUserId) {
+      this.logRankedBrRewardSkip('missing_source_user', { ...targetDetails, ...sourceDetails });
+      return null;
+    }
     const accumulator = this.rankedBrRewardAccumulator;
     const config = this.getRankedBrRewardConfigForAccrual();
-    if (!accumulator || !config) return null;
+    if (!accumulator || !config) {
+      this.logRankedBrRewardSkip('accumulator_not_ready', {
+        ...targetDetails,
+        ...sourceDetails,
+        sourceUserId,
+      });
+      return null;
+    }
 
+    const targetKind = this.getRankedBrRewardTargetKind(input.target);
     const reward = accumulator.recordDamage({
       config,
       sourcePlayerId: input.source.id,
@@ -4505,12 +4644,30 @@ export class GameRoom extends Room<GameState> {
       sourceTeam: input.source.team || null,
       targetPlayerId: input.target.id,
       targetTeam: input.target.team || null,
-      targetKind: this.getRankedBrRewardTargetKind(input.target),
+      targetKind,
       playerSessionId: input.source.id,
       serverAppliedDamageHp: input.appliedDamage,
       finalEnemyElimination: input.finalEnemyElimination,
     });
-    if (!reward || reward.amountLamports <= 0n) return null;
+    const outcome = accumulator.getLastEventOutcome();
+    const outcomeDetails = outcome ? this.serializeRankedBrRewardOutcome(outcome) : {};
+    if (!reward || reward.amountLamports <= 0n) {
+      this.logRankedBrRewardSkip(outcome?.reason ?? 'no_reward', {
+        ...targetDetails,
+        ...sourceDetails,
+        sourceUserId,
+        targetKind,
+        ...outcomeDetails,
+      });
+      return null;
+    }
+    this.logRankedBrRewardAward({
+      ...targetDetails,
+      ...sourceDetails,
+      sourceUserId,
+      targetKind,
+      ...outcomeDetails,
+    });
     return { amountLamports: reward.amountLamports.toString() };
   }
 
