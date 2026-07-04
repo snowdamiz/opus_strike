@@ -7,8 +7,3 @@ ALTER TABLE "WagerSettlement"
 
 ALTER TABLE "WagerSettlement"
   ADD COLUMN "burnLamports" BIGINT NOT NULL DEFAULT 0;
-
-ALTER TABLE "WageredLobby"
-  DROP COLUMN "platformFeeBps";
-
-DROP TABLE IF EXISTS "WagerEconomySettings";
