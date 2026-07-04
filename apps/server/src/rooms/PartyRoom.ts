@@ -14,6 +14,7 @@ import {
   type MatchPerspectiveSettingMode,
   type PartyMode,
   isHeroSkinId,
+  type PartyLaunchWagerOptions,
 } from '@voxel-strike/shared';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
 import { assertGameplayAccountEligible } from '../auth/accountEligibility';
@@ -141,6 +142,34 @@ function validatePartyMemberIdPayload(value: unknown): string | null {
   return sanitizeShortText(value.userId, 96);
 }
 
+function validatePartyWagerPayload(value: unknown): PartyLaunchWagerOptions | undefined | null {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) return null;
+  if (value.enabled !== true) return { enabled: false };
+
+  const coverChargeLamports = typeof value.coverChargeLamports === 'string'
+    ? value.coverChargeLamports.trim()
+    : typeof value.coverChargeLamports === 'number' && Number.isSafeInteger(value.coverChargeLamports)
+      ? String(value.coverChargeLamports)
+      : '';
+  if (!/^[0-9]+$/.test(coverChargeLamports)) return null;
+  if (BigInt(coverChargeLamports) <= 0n) return null;
+
+  return {
+    enabled: true,
+    coverChargeLamports,
+    ...(value.token === 'SOL' ? { token: 'SOL' as const } : {}),
+  };
+}
+
+function validateStartPayload(value: unknown): { wager?: PartyLaunchWagerOptions } | null {
+  if (value === undefined) return {};
+  if (!isRecord(value)) return {};
+  const wager = validatePartyWagerPayload(value.wager);
+  if (wager === null) return null;
+  return wager === undefined ? {} : { wager };
+}
+
 function validateSkinPayload(value: unknown): HeroSkinId | null {
   return isRecord(value) && isHeroSkinId(value.skinId) ? value.skinId : null;
 }
@@ -247,9 +276,14 @@ export class PartyRoom extends Room {
       this.handleKickMember(client, targetUserId);
     });
 
-    this.onMessage('start', (client) => {
+    this.onMessage('start', (client, data: unknown) => {
       if (!this.consumePartyMessage(client, 'start', PARTY_MESSAGE_RATE_LIMITS.start)) return;
-      this.handleStart(client).catch((error) => {
+      const payload = validateStartPayload(data);
+      if (!payload) {
+        client.send('error', { message: 'Invalid party start options' });
+        return;
+      }
+      this.handleStart(client, payload).catch((error) => {
         this.sendLaunchError(client, error instanceof Error ? error.message : 'Failed to start party');
       });
     });
@@ -569,7 +603,10 @@ export class PartyRoom extends Room {
     }
   }
 
-  private async handleStart(client: Client): Promise<void> {
+  private async handleStart(
+    client: Client,
+    options: { wager?: PartyLaunchWagerOptions } = {}
+  ): Promise<void> {
     const member = this.memberForClient(client);
     if (!member) return;
     if (member.userId !== this.party.leaderId) {
@@ -585,7 +622,7 @@ export class PartyRoom extends Room {
 
     const result = this.party.mode === 'quick_play' || this.party.mode === 'ranked'
       ? await launchPartyToMatchmaking(this.party, this.party.mode)
-      : await launchPartyToCustomLobby(this.party);
+      : await launchPartyToCustomLobby(this.party, options);
 
     this.launchStarted = true;
     this.party.setPendingLaunchPayloads(result.payloadsByUserId);

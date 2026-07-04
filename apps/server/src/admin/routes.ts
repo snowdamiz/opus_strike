@@ -658,7 +658,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     listPlayerReportQueue(prisma),
     Promise.all([
       playerRewardService.getSettingsOverview(),
-      wagerService.getWagerEconomySettings(),
+      wagerService.getWagerEconomy(),
     ]).then(([playerRewards, wagers]) => ({ playerRewards, wagers })),
     wagerService.getGoldenBiomeAdminOverview(),
     getGlobalNotification(),
@@ -1037,7 +1037,6 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     const adminUser = res.locals.adminUser as AdminUser;
     const body = req.body && typeof req.body === 'object' ? req.body as {
       playerRewards?: Record<string, unknown>;
-      wagers?: Record<string, unknown>;
       goldenBiome?: Record<string, unknown>;
     } : {};
 
@@ -1047,10 +1046,7 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
           body.playerRewards && typeof body.playerRewards === 'object' ? body.playerRewards : {},
           adminUser.id
         ),
-        wagerService.updateWagerEconomySettings(
-          body.wagers && typeof body.wagers === 'object' ? body.wagers : {},
-          adminUser.id
-        ),
+        wagerService.getWagerEconomy(),
         wagerService.updateGoldenBiomeSettings(
           body.goldenBiome && typeof body.goldenBiome === 'object' ? body.goldenBiome : {},
           adminUser.id

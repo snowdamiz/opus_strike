@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Map as MapIcon } from 'lucide-react';
+import {
+  ALL_HERO_IDS,
+  GAMEPLAY_MODES,
+  HERO_DEFINITIONS,
+  getGameplayModeLabel,
+  type GameplayMode,
+  type HeroId,
+} from '@voxel-strike/shared';
+import { Download, Film, Loader2, Map as MapIcon } from 'lucide-react';
 import { useAudio } from '../../hooks/useAudio';
 import { config } from '../../config/environment';
 import {
@@ -14,6 +22,12 @@ import {
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
+import {
+  requestCreateRecordingShowcase,
+  requestRecordingShowcaseJob,
+  requestRecordingsIndex,
+  type RecordingShowcaseJob,
+} from '../../contexts/networkApi';
 import { formatKeybind, mouseButtonToKeybindCode } from '../../utils/keybindings';
 import { GameDialog } from './GameDialog';
 import { WalletProviderOptions } from './WalletProviderOptions';
@@ -64,6 +78,16 @@ const streamerFeedModeOptions = [
   { value: 'bot_deathmatch', label: 'Bot Deathmatch' },
 ];
 
+const recordingHeroOptions = ALL_HERO_IDS.map((heroId) => ({
+  value: heroId,
+  label: HERO_DEFINITIONS[heroId].name,
+}));
+
+const recordingGameplayModeOptions = GAMEPLAY_MODES.map((mode) => ({
+  value: mode,
+  label: getGameplayModeLabel(mode),
+}));
+
 const keybindRows: { action: KeybindAction; label: string }[] = [
   { action: 'moveForward', label: 'Move Forward' },
   { action: 'moveBackward', label: 'Move Back' },
@@ -111,6 +135,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [rebindingAction, setRebindingAction] = useState<KeybindAction | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isLinkingWallet, setIsLinkingWallet] = useState(false);
+  const [recordingHeroId, setRecordingHeroId] = useState<HeroId>('blaze');
+  const [recordingGameplayMode, setRecordingGameplayMode] = useState<GameplayMode>('team_deathmatch');
+  const [recordingJob, setRecordingJob] = useState<RecordingShowcaseJob | null>(null);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [isStartingRecording, setIsStartingRecording] = useState(false);
+  const [isDownloadingRecording, setIsDownloadingRecording] = useState(false);
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([]);
   const { updateSettings: applyAudioSettings } = useAudio();
@@ -122,6 +152,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const hasAccount = isAuthenticated && Boolean(user);
   const isGameAdmin = user?.isGameAdmin === true;
   const showDevelopmentSettings = config.isDev;
+  const isRecordingActive = recordingJob?.status === 'recording' || recordingJob?.status === 'rendering';
+  const isRecordingBusy = isStartingRecording || isRecordingActive;
 
   const updateSetting = <K extends keyof ClientSettings>(key: K, value: ClientSettings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -187,6 +219,58 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     onClose();
   };
 
+  const handleStartShowcaseRecording = async () => {
+    if (!isGameAdmin || isRecordingBusy) return;
+
+    setIsStartingRecording(true);
+    setRecordingError(null);
+    try {
+      const recordings = await requestRecordingsIndex();
+      const response = await requestCreateRecordingShowcase({
+        csrfToken: recordings.csrfToken,
+        heroId: recordingHeroId,
+        gameplayMode: recordingGameplayMode,
+      });
+      setRecordingJob(response.job);
+      setRecordingError(response.job.status === 'failed' ? response.job.error : null);
+    } catch (error) {
+      setRecordingError(error instanceof Error ? error.message : 'Failed to start showcase recording');
+    } finally {
+      setIsStartingRecording(false);
+    }
+  };
+
+  const handleDownloadShowcaseRecording = async () => {
+    if (!recordingJob?.downloadUrl || isDownloadingRecording) return;
+
+    setIsDownloadingRecording(true);
+    setRecordingError(null);
+    try {
+      const response = await fetch(`${config.serverHttpUrl}${recordingJob.downloadUrl}`, {
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error ?? 'Failed to download recording');
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${recordingJob.recordingId}.mp4`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    } catch (error) {
+      setRecordingError(error instanceof Error ? error.message : 'Failed to download recording');
+    } finally {
+      setIsDownloadingRecording(false);
+    }
+  };
+
   const updateKeybinding = useCallback((action: KeybindAction, code: string) => {
     setSettings((prev) => {
       const nextKeybindings = { ...prev.keybindings };
@@ -237,6 +321,35 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       navigator.mediaDevices.removeEventListener?.('devicechange', refreshDevices);
     };
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!recordingJob || recordingJob.status === 'succeeded' || recordingJob.status === 'failed') return;
+
+    let cancelled = false;
+    const refreshJob = async () => {
+      try {
+        const response = await requestRecordingShowcaseJob(recordingJob.id);
+        if (!cancelled) {
+          setRecordingJob(response.job);
+          setRecordingError(response.job.status === 'failed' ? response.job.error : null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setRecordingError(error instanceof Error ? error.message : 'Failed to refresh showcase recording');
+        }
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void refreshJob();
+    }, 2_500);
+    void refreshJob();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [recordingJob?.id, recordingJob?.status]);
 
   useEffect(() => {
     if (!rebindingAction) return;
@@ -698,6 +811,75 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                         options={streamerFeedModeOptions}
                       />
                     </SettingRow>
+
+                    <div className="pt-3 border-t border-white/5" />
+
+                    <SettingRow label="Recording Hero" description="Featured bot for the server recording">
+                      <SelectInput
+                        value={recordingHeroId}
+                        onChange={(v) => setRecordingHeroId(v as HeroId)}
+                        options={recordingHeroOptions}
+                      />
+                    </SettingRow>
+
+                    <SettingRow label="Recording Mode" description="Random lobby mode for the capture">
+                      <SelectInput
+                        value={recordingGameplayMode}
+                        onChange={(v) => setRecordingGameplayMode(v as GameplayMode)}
+                        options={recordingGameplayModeOptions}
+                      />
+                    </SettingRow>
+
+                    <SettingRow
+                      label="Showcase Recording"
+                      description={recordingJob ? formatRecordingJobStatus(recordingJob) : 'Server captures and renders 5 minutes'}
+                    >
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleStartShowcaseRecording}
+                          disabled={isRecordingBusy}
+                          className={`flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border px-3.5 font-display text-xs transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-300/70 ${
+                            isRecordingBusy
+                              ? 'border-white/10 bg-white/5 text-white/35 cursor-not-allowed'
+                              : 'border-orange-300/25 bg-orange-500/15 text-orange-100 hover:border-orange-200/45 hover:bg-orange-500/25'
+                          }`}
+                        >
+                          {isRecordingBusy ? (
+                            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Film className="h-4 w-4" aria-hidden="true" />
+                          )}
+                          {isRecordingBusy ? 'RUNNING' : 'CREATE'}
+                        </button>
+
+                        {recordingJob?.status === 'succeeded' && recordingJob.downloadUrl && (
+                          <button
+                            type="button"
+                            onClick={handleDownloadShowcaseRecording}
+                            disabled={isDownloadingRecording}
+                            aria-label="Download showcase recording"
+                            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/70 ${
+                              isDownloadingRecording
+                                ? 'border-white/10 bg-white/5 text-white/35 cursor-not-allowed'
+                                : 'border-cyan-300/25 bg-cyan-500/15 text-cyan-100 hover:border-cyan-200/45 hover:bg-cyan-500/25'
+                            }`}
+                          >
+                            {isDownloadingRecording ? (
+                              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                            ) : (
+                              <Download className="h-4 w-4" aria-hidden="true" />
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </SettingRow>
+
+                    {recordingError && (
+                      <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2">
+                        <p className="text-red-300 text-xs font-body">{recordingError}</p>
+                      </div>
+                    )}
                   </>
                 )}
 
@@ -870,6 +1052,13 @@ function formatAccountAddress(address: string | null | undefined): string {
   if (!address) return 'UNLINKED';
   if (address.length <= 14) return address;
   return `${address.slice(0, 6)}...${address.slice(-6)}`;
+}
+
+function formatRecordingJobStatus(job: RecordingShowcaseJob): string {
+  if (job.status === 'succeeded') return 'Ready to download';
+  if (job.status === 'failed') return 'Recording failed';
+  if (job.status === 'rendering') return 'Rendering MP4 on server';
+  return 'Recording random lobby on server';
 }
 
 function AccountValue({ value }: { value: string }) {

@@ -55,6 +55,9 @@ enum WagerSettlementStatus {
 
 enum WagerSettlementTransferKind {
   winner_payout
+  treasury_fee
+  burn
+  // Historical value migrated to treasury_fee; retained for old database compatibility.
   developer_fee
   refund
 }
@@ -687,7 +690,6 @@ model WageredLobby {
   token               String             @default("SOL")
   coverChargeLamports BigInt
   treasuryWallet      String
-  platformFeeBps      Int                @default(500)
   createdByUserId     String
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
@@ -754,7 +756,8 @@ model WagerSettlement {
   matchId              String?
   winningTeam          String?
   totalPotLamports     BigInt                @default(0)
-  developerFeeLamports BigInt                @default(0)
+  treasuryFeeLamports  BigInt                @default(0)
+  burnLamports         BigInt                @default(0)
   winnerPoolLamports   BigInt                @default(0)
   status               WagerSettlementStatus @default(pending)
   attemptCount         Int                   @default(0)
@@ -841,14 +844,6 @@ model GoldenBiomeRewardSettings {
   updatedByUserId       String?
   createdAt             DateTime                          @default(now())
   updatedAt             DateTime                          @updatedAt
-}
-
-model WagerEconomySettings {
-  id              String   @id @default("default")
-  platformFeeBps  Int      @default(500)
-  updatedByUserId String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
 }
 
 model PlayerRewardSettings {

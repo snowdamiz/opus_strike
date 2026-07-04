@@ -35,6 +35,8 @@ export interface LobbyStatePayload {
   humanCount: number;
   botCount: number;
   requiredPlayers: number | undefined;
+  wager?: unknown;
+  wagerPaymentStatuses?: unknown[];
   [key: string]: unknown;
 }
 
@@ -51,6 +53,8 @@ export interface BuildLobbyStatePayloadInput {
   maxParticipants: number;
   requiredPlayers: number | undefined;
   matchmakingStatus?: Record<string, unknown>;
+  wager?: unknown;
+  wagerPaymentStatuses?: unknown[];
 }
 
 export function buildLobbyPlayerJoinedPayload(
@@ -92,6 +96,8 @@ export function buildLobbyStatePayload(
     humanCount: rosterCounts.human,
     botCount: rosterCounts.bot,
     requiredPlayers: input.requiredPlayers,
+    wager: input.wager,
+    wagerPaymentStatuses: input.wagerPaymentStatuses ?? [],
     ...input.matchmakingStatus,
   };
 }

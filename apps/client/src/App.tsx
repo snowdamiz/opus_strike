@@ -27,6 +27,8 @@ import { config } from './config/environment';
 import type { MapWarmupSnapshot } from './utils/mapWarmup/mapWarmupCoordinator';
 import { useStreamerModeController } from './hooks/useStreamerModeController';
 import { useStreamerStore, type StreamerLoadingReason, type StreamerSceneTransition } from './store/streamerStore';
+import { useRecordingPlaybackStore } from './store/recordingPlaybackStore';
+import { readRecordingPlaybackOptionsFromLocation, startRecordingPlayback } from './recording/recordingPlayback';
 
 const loadGameCanvasModule = () => import('./components/game/GameCanvas');
 const loadMapVoteScreenModule = () => import('./components/ui/MapVoteScreen');
@@ -166,6 +168,8 @@ export function App() {
   const streamerLoadingReason = useStreamerStore((state) => state.loadingReason);
   const streamerLastError = useStreamerStore((state) => state.lastError);
   const streamerSceneTransition = useStreamerStore((state) => state.sceneTransition);
+  const recordingPlaybackIsActive = useRecordingPlaybackStore((state) => state.isActive);
+  const recordingPlaybackHudMode = useRecordingPlaybackStore((state) => state.hudMode);
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showInGameMenu, setShowInGameMenu] = useState(false);
   const [shouldMountMatchWorld, setShouldMountMatchWorld] = useState(false);
@@ -190,6 +194,37 @@ export function App() {
     disposeSharedAudioResources();
   }, []);
 
+  useEffect(() => {
+    let cleanup: (() => void) | null = null;
+    let cancelled = false;
+    let options: ReturnType<typeof readRecordingPlaybackOptionsFromLocation> = null;
+
+    try {
+      options = readRecordingPlaybackOptionsFromLocation();
+    } catch (error) {
+      useRecordingPlaybackStore.getState().setError(error instanceof Error ? error.message : String(error));
+      return undefined;
+    }
+    if (!options) return undefined;
+
+    void startRecordingPlayback(options)
+      .then((dispose) => {
+        if (cancelled) {
+          dispose();
+          return;
+        }
+        cleanup = dispose;
+      })
+      .catch((error) => {
+        useRecordingPlaybackStore.getState().setError(error instanceof Error ? error.message : String(error));
+      });
+
+    return () => {
+      cancelled = true;
+      cleanup?.();
+    };
+  }, []);
+
   const isActiveGame = gamePhase === 'playing' || gamePhase === 'countdown' || gamePhase === 'deployment';
   const shouldRenderStreamerTransitionWorld = (
     appPhase === 'streamer_loading' &&
@@ -198,7 +233,7 @@ export function App() {
     mountedWarmupKeyRef.current !== null
   );
   const shouldRenderGameScene = appPhase === 'in_game' || shouldRenderStreamerTransitionWorld;
-  const visibleMatchSummary = streamerIsActive ? null : matchSummary;
+  const visibleMatchSummary = streamerIsActive || recordingPlaybackIsActive ? null : matchSummary;
   const shouldPrepareMatchWorld = (
     shouldRenderGameScene &&
     !visibleMatchSummary &&
@@ -406,7 +441,8 @@ export function App() {
         appPhase === 'in_game' &&
         !showInGameMenu &&
         !tutorialCompletionOverlayOpen &&
-        !streamerIsActive
+        !streamerIsActive &&
+        !recordingPlaybackIsActive
       ) {
         // Pointer lock was exited - open the menu
         setShowInGameMenu(true);
@@ -426,7 +462,7 @@ export function App() {
       window.removeEventListener('mouseup', handleMouseUp);
       document.removeEventListener('pointerlockchange', handlePointerLockChange);
     };
-  }, [appPhase, scoreboardKeybind, showInGameMenu, streamerIsActive]);
+  }, [appPhase, recordingPlaybackIsActive, scoreboardKeybind, showInGameMenu, streamerIsActive]);
 
   // Close menu when leaving the game
   useEffect(() => {
@@ -707,7 +743,7 @@ export function App() {
         <Suspense fallback={null}>
           {shouldMountMatchWorld && (
             <GameCanvas
-              inputEnabled={!streamerIsActive && !showInGameMenu && !tutorialCompletionOverlayOpen}
+              inputEnabled={!streamerIsActive && !recordingPlaybackIsActive && !showInGameMenu && !tutorialCompletionOverlayOpen}
               onMatchStartReady={handleMatchStartSceneReady}
               onReady={handleMatchSceneReady}
               onWarmupUpdate={handleWarmupUpdate}
@@ -744,24 +780,26 @@ export function App() {
         {/* Show HUD during active gameplay */}
         {isActiveGame && isMatchSceneReady && !streamerIsActive && !isObserverMode && (
           <>
-            {showHUD && <HUD />}
-            {isTutorialMode && <TutorialGuide />}
+            {(!recordingPlaybackIsActive ? showHUD : recordingPlaybackHudMode === 'selected_player') && <HUD />}
+            {!recordingPlaybackIsActive && isTutorialMode && <TutorialGuide />}
             <TeleportEffects />
             <UltimateEffects />
             <SlideEffects />
-            <MobileControls
-              disabled={showInGameMenu || tutorialCompletionOverlayOpen}
-              onOpenMenu={() => setShowInGameMenu(true)}
-              onScoreboardChange={setShowScoreboard}
-            />
+            {!recordingPlaybackIsActive && (
+              <MobileControls
+                disabled={showInGameMenu || tutorialCompletionOverlayOpen}
+                onOpenMenu={() => setShowInGameMenu(true)}
+                onScoreboardChange={setShowScoreboard}
+              />
+            )}
             <Suspense fallback={null}>
-              {showScoreboard && !isPracticeMode && <Scoreboard />}
+              {showScoreboard && !recordingPlaybackIsActive && !isPracticeMode && <Scoreboard />}
             </Suspense>
           </>
         )}
 
         {/* Countdown overlay */}
-        {gamePhase === 'countdown' && isMatchSceneReady && !streamerIsActive && !isObserverMode && <CountdownOverlay />}
+        {gamePhase === 'countdown' && isMatchSceneReady && !streamerIsActive && !isObserverMode && !recordingPlaybackIsActive && <CountdownOverlay />}
 
         {/* Round/game end overlays */}
         {gamePhase === 'round_end' && !streamerIsActive && (
@@ -778,17 +816,17 @@ export function App() {
 
         {/* In-game menu (ESC) */}
         <Suspense fallback={null}>
-          {showInGameMenu && !streamerIsActive && !tutorialCompletionOverlayOpen && <InGameMenu onClose={() => setShowInGameMenu(false)} />}
+          {showInGameMenu && !streamerIsActive && !recordingPlaybackIsActive && !tutorialCompletionOverlayOpen && <InGameMenu onClose={() => setShowInGameMenu(false)} />}
         </Suspense>
 
         {/* Developer console (Enter key) */}
         <Suspense fallback={null}>
-          {!streamerIsActive && <GameConsole />}
+          {!streamerIsActive && !recordingPlaybackIsActive && <GameConsole />}
         </Suspense>
 
         {/* Performance monitor overlay */}
         <Suspense fallback={null}>
-          {config.clientDiagnosticsEnabled && isMatchSceneReady && !streamerIsActive && <PerfMonitorOverlay />}
+          {config.clientDiagnosticsEnabled && isMatchSceneReady && !streamerIsActive && !recordingPlaybackIsActive && <PerfMonitorOverlay />}
         </Suspense>
       </div>
     );

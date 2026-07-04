@@ -5,7 +5,6 @@ x-server-env: &server-env
   PUBLIC_CLIENT_ORIGIN: "http://localhost:3000"
   ALLOWED_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
   DISCORD_AUTH_ENABLED: "false"
-  WAGER_SOL_ENABLED: "false"
   JWT_SECRET: "${JWT_SECRET:-local-dev-jwt-secret-for-docker-machines-please-change}"
   ENTRY_TICKET_SECRET: "${ENTRY_TICKET_SECRET:-local-dev-entry-ticket-secret-for-docker-machines}"
   DATABASE_URL: "postgresql://voxelstrike:voxelstrike_dev@postgres:5432/voxelstrike?schema=public"
@@ -39,6 +38,9 @@ x-server-common: &server-common
     context: .
     dockerfile: apps/server/Dockerfile
     target: runtime
+  env_file:
+    - path: apps/server/.env
+      required: false
   depends_on:
     postgres:
       condition: service_healthy

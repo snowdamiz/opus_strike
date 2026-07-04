@@ -146,6 +146,32 @@ export interface StreamerStopResponse {
   csrfToken: string;
 }
 
+export type RecordingShowcaseJobStatus = 'recording' | 'rendering' | 'succeeded' | 'failed';
+
+export interface RecordingShowcaseJob {
+  id: string;
+  recordingId: string;
+  renderId: string | null;
+  status: RecordingShowcaseJobStatus;
+  heroId: HeroId;
+  gameplayMode: GameplayMode;
+  recordingDurationMs: number;
+  downloadUrl: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecordingsIndexResponse {
+  recordings: unknown[];
+  csrfToken: string;
+}
+
+export interface RecordingShowcaseJobResponse {
+  job: RecordingShowcaseJob;
+  csrfToken: string;
+}
+
 export interface RewardEconomyResponse {
   economy: {
     rewardTokenSymbol: string | null;
@@ -172,7 +198,11 @@ export interface RewardEconomyResponse {
     };
     wagers: {
       enabled: boolean;
-      platformFeeBps: number;
+      winnerPoolBps: number;
+      burnBps: number;
+      treasuryBps: number;
+      burnWallet: string;
+      treasuryWallet: string | null;
       updatedByUserId: string | null;
       updatedAt: string | null;
     };
@@ -187,6 +217,27 @@ export interface RewardEconomyResponse {
       updatedAt: string | null;
     };
   };
+}
+
+export interface WagerPaymentIntentSnapshot {
+  intentId: string;
+  lobbyId: string;
+  status: string;
+  token: 'SOL';
+  amountLamports: string;
+  treasuryWallet: string;
+  walletAddress: string;
+  memo: string;
+  expiresAt: string;
+  cluster: string;
+  lastError?: string | null;
+}
+
+export interface WagerPaymentTransactionSnapshot {
+  intentId: string;
+  transactionBase64: string;
+  lastValidBlockHeight: number;
+  cluster: string;
 }
 
 export interface PregeneratedMapManifestResponse {
@@ -320,6 +371,64 @@ export async function requestRewardEconomy(): Promise<RewardEconomyResponse['eco
   return payload.economy;
 }
 
+export async function createWagerPaymentIntent(input: {
+  lobbyId: string;
+  walletAddress: string;
+  lobbyPlayerId?: string | null;
+}): Promise<WagerPaymentIntentSnapshot> {
+  const response = await fetch(`${getHttpUrl()}/wagers/lobbies/${encodeURIComponent(input.lobbyId)}/intents`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      walletAddress: input.walletAddress,
+      lobbyPlayerId: input.lobbyPlayerId ?? null,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to create wager payment'));
+  }
+
+  const payload = await response.json() as { intent: WagerPaymentIntentSnapshot };
+  return payload.intent;
+}
+
+export async function buildWagerPaymentTransaction(intentId: string): Promise<WagerPaymentTransactionSnapshot> {
+  const response = await fetch(`${getHttpUrl()}/wagers/intents/${encodeURIComponent(intentId)}/transaction`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to build wager transaction'));
+  }
+
+  const payload = await response.json() as { transaction: WagerPaymentTransactionSnapshot };
+  return payload.transaction;
+}
+
+export async function submitSignedWagerPaymentTransaction(input: {
+  intentId: string;
+  signedTransactionBase64: string;
+}): Promise<WagerPaymentIntentSnapshot> {
+  const response = await fetch(`${getHttpUrl()}/wagers/intents/${encodeURIComponent(input.intentId)}/signed-transaction`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ signedTransactionBase64: input.signedTransactionBase64 }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to submit wager payment'));
+  }
+
+  const payload = await response.json() as { intent: WagerPaymentIntentSnapshot };
+  return payload.intent;
+}
+
 export async function requestDailyMissions(): Promise<PlayerDailyMissionsResponse> {
   const response = await fetch(`${getHttpUrl()}/missions/daily`, {
     credentials: 'include',
@@ -399,6 +508,58 @@ export async function requestStopStreamer(csrfToken: string): Promise<StreamerSt
 
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, 'Failed to stop streamer mode'));
+  }
+
+  return response.json();
+}
+
+export async function requestRecordingsIndex(): Promise<RecordingsIndexResponse> {
+  const response = await fetch(`${getHttpUrl()}/recordings`, {
+    credentials: 'include',
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load recording controls'));
+  }
+
+  return response.json();
+}
+
+export async function requestCreateRecordingShowcase(input: {
+  csrfToken: string;
+  heroId: HeroId;
+  gameplayMode: GameplayMode;
+}): Promise<RecordingShowcaseJobResponse> {
+  const response = await fetch(`${getHttpUrl()}/recordings/showcase`, {
+    method: 'POST',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-csrf-token': input.csrfToken,
+    },
+    body: JSON.stringify({
+      heroId: input.heroId,
+      gameplayMode: input.gameplayMode,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to start showcase recording'));
+  }
+
+  return response.json();
+}
+
+export async function requestRecordingShowcaseJob(jobId: string): Promise<RecordingShowcaseJobResponse> {
+  const response = await fetch(`${getHttpUrl()}/recordings/showcase/${encodeURIComponent(jobId)}`, {
+    credentials: 'include',
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to load showcase recording'));
   }
 
   return response.json();

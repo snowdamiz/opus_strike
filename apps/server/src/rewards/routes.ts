@@ -39,7 +39,7 @@ router.get('/economy', async (_req, res) => {
   try {
     const [playerRewards, wagers, goldenBiome, rankedEntryGate] = await Promise.all([
       playerRewardService.getSettingsOverview(),
-      wagerService.getWagerEconomySettings(),
+      wagerService.getWagerEconomy(),
       wagerService.getGoldenBiomeSettings(),
       getRankedEntryGateSettings(),
     ]);

@@ -80,7 +80,10 @@ export function getEarningRules(tokenSymbol: string | null, economy: RewardEcono
   }
 
   if (wagersEnabled) {
-    rules.push({ label: 'Wager Games', value: `Winners split pot` });
+    const winnerSplit = formatBpsShort(wagers?.winnerPoolBps, 9000);
+    const burnSplit = formatBpsShort(wagers?.burnBps, 500);
+    const treasurySplit = formatBpsShort(wagers?.treasuryBps, 500);
+    rules.push({ label: 'Wager Games', value: `${winnerSplit} winners, ${burnSplit} burn, ${treasurySplit} treasury` });
   }
 
   return rules;

@@ -32,6 +32,7 @@ import {
   type MatchPerspectiveSettingMode,
   type MatchPerspectiveSettings,
   type PartyLaunchPayload,
+  type PartyLaunchWagerOptions,
   type PartyBotFillSettings,
   type PartyMemberSnapshot,
   type PartyMode,
@@ -767,6 +768,7 @@ function normalizePartyLaunchPayload(value: unknown): PartyLaunchPayload | null 
   if (payload.botFillMode !== undefined && payload.botFillMode !== 'manual' && payload.botFillMode !== 'fill_even') {
     return null;
   }
+  const wager = normalizePartyLaunchWagerOptions(payload.wager);
 
   return {
     mode: payload.mode,
@@ -775,10 +777,26 @@ function normalizePartyLaunchPayload(value: unknown): PartyLaunchPayload | null 
     gameplayMode: payload.gameplayMode,
     ...(payload.botFillMode === undefined ? {} : { botFillMode: payload.botFillMode }),
     matchPerspective: payload.matchPerspective,
+    ...(wager ? { wager } : {}),
     ...(isKnownHeroId(payload.selectedHero) ? { selectedHero: payload.selectedHero } : {}),
     ...(isHeroSkinId(payload.selectedSkinId) ? { selectedSkinId: payload.selectedSkinId } : {}),
     ...(typeof payload.matchmakingTicket === 'string' ? { matchmakingTicket: payload.matchmakingTicket } : {}),
     ...(typeof payload.targetRankDivisionIndex === 'number' ? { targetRankDivisionIndex: payload.targetRankDivisionIndex } : {}),
     ...(typeof payload.targetRankLabel === 'string' ? { targetRankLabel: payload.targetRankLabel } : {}),
+  };
+}
+
+function normalizePartyLaunchWagerOptions(value: unknown): PartyLaunchWagerOptions | null {
+  if (!value || typeof value !== 'object') return null;
+  const wager = value as Partial<PartyLaunchWagerOptions>;
+  if (wager.enabled !== true) return { enabled: false };
+  if (typeof wager.coverChargeLamports !== 'string' || !/^[0-9]+$/.test(wager.coverChargeLamports)) {
+    return null;
+  }
+  if (BigInt(wager.coverChargeLamports) <= 0n) return null;
+  return {
+    enabled: true,
+    coverChargeLamports: wager.coverChargeLamports,
+    ...(wager.token === 'SOL' ? { token: 'SOL' } : {}),
   };
 }

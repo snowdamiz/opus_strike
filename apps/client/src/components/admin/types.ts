@@ -387,9 +387,13 @@ export interface PlayerRewardSettings {
 
 export interface WagerSettings {
   enabled: boolean;
-  platformFeeBps: number;
+  winnerPoolBps: number;
+  burnBps: number;
+  treasuryBps: number;
+  burnWallet: string;
+  treasuryWallet: string | null;
   updatedByUserId: string | null;
-  updatedAt: string;
+  updatedAt: string | null;
 }
 
 export interface RewardEconomy {
@@ -576,7 +580,6 @@ export interface AccountActionRequest {
 /** Reward economy update. Lamport fields are sent as strings or numbers. */
 export interface RewardEconomyUpdate {
   playerRewards?: Record<string, unknown>;
-  wagers?: Record<string, unknown>;
   goldenBiome?: Record<string, unknown>;
 }
 

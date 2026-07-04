@@ -9,7 +9,6 @@ export interface WagerRuntimeConfig {
   treasuryWallet: string;
   minCoverChargeLamports: bigint;
   maxCoverChargeLamports: bigint;
-  platformFeeBps: number;
   intentTtlMs: number;
   intentExpiryGraceMs: number;
   settlementMaxAttempts: number;
@@ -73,7 +72,6 @@ export function getWagerRuntimeConfig(): WagerRuntimeConfig {
     assertPublicKey(treasuryWallet, 'WAGER_TREASURY_WALLET');
   }
 
-  const platformFeeBps = intEnv('WAGER_PLATFORM_FEE_BPS', 500, { min: 0, max: 10_000 });
   const minCoverChargeLamports = bigintEnv('WAGER_MIN_COVER_CHARGE_LAMPORTS', DEFAULT_MIN_COVER_CHARGE_LAMPORTS);
   const maxCoverChargeLamports = bigintEnv('WAGER_MAX_COVER_CHARGE_LAMPORTS', DEFAULT_MAX_COVER_CHARGE_LAMPORTS);
 
@@ -88,7 +86,6 @@ export function getWagerRuntimeConfig(): WagerRuntimeConfig {
     treasuryWallet,
     minCoverChargeLamports,
     maxCoverChargeLamports,
-    platformFeeBps,
     intentTtlMs: intEnv('WAGER_INTENT_TTL_MS', 15 * 60 * 1000, { min: 30_000 }),
     intentExpiryGraceMs: intEnv('WAGER_INTENT_EXPIRY_GRACE_MS', 2 * 60 * 1000, { min: 0 }),
     settlementMaxAttempts: intEnv('WAGER_SETTLEMENT_MAX_ATTEMPTS', 6, { min: 1, max: 50 }),

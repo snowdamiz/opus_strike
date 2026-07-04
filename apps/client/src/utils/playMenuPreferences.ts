@@ -16,11 +16,14 @@ export type PlayMenuMode = PartyMode | 'team_deathmatch' | 'battle_royal';
 export interface PlayMenuPreferences {
   selectedPlayMode: PlayMenuMode;
   customGameplayMode: CustomLobbyGameplayMode;
+  customWagerEnabled: boolean;
+  customWagerEntrySol: string;
   botFillEnabledByMode: PartyBotFillSettings;
   perspectiveByMode: MatchPerspectiveSettings;
 }
 
 export const DEFAULT_CUSTOM_GAMEPLAY_MODE: CustomLobbyGameplayMode = CUSTOM_LOBBY_GAMEPLAY_MODES[0];
+export const DEFAULT_CUSTOM_WAGER_ENTRY_SOL = '0.01';
 export const PLAY_MODE_OPTIONS: PlayMenuMode[] = [
   'ranked',
   'quick_play',
@@ -58,6 +61,15 @@ export function sanitizeCustomGameplayMode(value: unknown): CustomLobbyGameplayM
   return isCustomLobbyGameplayMode(value) ? value : DEFAULT_CUSTOM_GAMEPLAY_MODE;
 }
 
+export function sanitizeCustomWagerEntrySol(value: unknown): string {
+  if (typeof value !== 'string' && typeof value !== 'number') return DEFAULT_CUSTOM_WAGER_ENTRY_SOL;
+  const normalized = String(value).trim();
+  if (!/^(?:0|[1-9]\d*)(?:\.\d{0,9})?$/.test(normalized)) {
+    return DEFAULT_CUSTOM_WAGER_ENTRY_SOL;
+  }
+  return normalized;
+}
+
 export function sanitizeMatchPerspectiveSettings(_value: unknown): MatchPerspectiveSettings {
   // Third-person selection is temporarily unavailable in the play menu.
   return createDefaultMatchPerspectiveSettings();
@@ -67,6 +79,8 @@ export function createDefaultPlayMenuPreferences(): PlayMenuPreferences {
   return {
     selectedPlayMode: 'quick_play',
     customGameplayMode: DEFAULT_CUSTOM_GAMEPLAY_MODE,
+    customWagerEnabled: false,
+    customWagerEntrySol: DEFAULT_CUSTOM_WAGER_ENTRY_SOL,
     botFillEnabledByMode: createGlobalBotFillSettings(false),
     perspectiveByMode: createDefaultMatchPerspectiveSettings(),
   };
@@ -81,12 +95,15 @@ export function sanitizePlayMenuPreferences(value: unknown): PlayMenuPreferences
     ? raw.selectedPlayMode
     : defaults.selectedPlayMode;
   const customGameplayMode = sanitizeCustomGameplayMode(raw.customGameplayMode);
+  const customWagerEntrySol = sanitizeCustomWagerEntrySol(raw.customWagerEntrySol);
   const botFillEnabledByMode = sanitizeBotFillSettings(raw.botFillEnabledByMode);
   const perspectiveByMode = sanitizeMatchPerspectiveSettings(raw.perspectiveByMode);
 
   return {
     selectedPlayMode,
     customGameplayMode,
+    customWagerEnabled: raw.customWagerEnabled === true,
+    customWagerEntrySol,
     botFillEnabledByMode,
     perspectiveByMode,
   };

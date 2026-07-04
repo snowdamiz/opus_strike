@@ -126,7 +126,14 @@ import {
 import { applyRoomRankState } from './roomRankSnapshot';
 import { resolveUserLoadoutForHero } from '../cosmetics/skinShopService';
 import { loggers } from '../utils/logger';
-import { wagerService, type CreateWagerOptions } from '../wagers/service';
+import {
+  wagerService,
+  type CreateWagerOptions,
+  type LobbyWagerSnapshot,
+  type PlayerWagerPaymentStatus,
+  type WagerPaymentStatusChanged,
+} from '../wagers/service';
+import { wagerEventBus } from '../wagers/eventBus';
 import { getEnabledEventBiomeThemeId } from '../liveops/eventBiomeService';
 import type { WagerRosterPlayer } from '../wagers/math';
 import { BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX } from './bot-ai';
@@ -314,6 +321,10 @@ export class LobbyRoom extends Room<LobbyState> {
   private expectedMatchmakingPartyLeaderUserId: string | null = null;
   private matchmakingPartyTeam: Team | null = null;
   private pendingPartyBots: PartyBotLaunchDescriptor[] = [];
+  private initialWagerOptions: CreateWagerOptions | undefined;
+  private lobbyWagerSnapshot: LobbyWagerSnapshot = { enabled: false };
+  private playerWagerPaymentStatuses: PlayerWagerPaymentStatus[] = [];
+  private unsubscribeWagerEvents: (() => Promise<void>) | null = null;
   private matchmakingAutoStartTimeout: ReturnType<typeof setTimeout> | null = null;
   private matchmakingAutoStartAt = 0;
   private capacityRetryTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -344,6 +355,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.matchMode = this.resolveRoomMatchMode(options, initialMatchmakingTicket);
     this.gameplayMode = this.resolveRoomGameplayMode(options, initialMatchmakingTicket);
     this.matchPerspective = this.resolveRoomMatchPerspective(options, initialMatchmakingTicket);
+    this.initialWagerOptions = options.wager;
     this.gameplayRules = getGameplayModeRules(this.gameplayMode);
     this.isQuickPlayQueue = this.matchMode === 'quick_play';
     this.isRankedQueue = this.matchMode === 'ranked';
@@ -664,6 +676,7 @@ export class LobbyRoom extends Room<LobbyState> {
       this.resolvePlayerCompetitiveRating(authContext)
     );
     this.createPendingPartyBotsForJoinedPlayer(authContext, player.team);
+    await this.refreshWagerPaymentStatuses();
 
     // Notify all players
     this.broadcast('playerJoined', buildLobbyPlayerJoinedPayload(client.sessionId, player));
@@ -748,6 +761,15 @@ export class LobbyRoom extends Room<LobbyState> {
     this.clearMatchmakingAutoStart();
     this.clearCapacityRetry();
     this.clearGameStartDisconnectTimer();
+    if (this.unsubscribeWagerEvents) {
+      await this.unsubscribeWagerEvents().catch((error) => {
+        loggers.room.warn('Failed to unsubscribe wager events', {
+          lobbyId: this.state.lobbyId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+      this.unsubscribeWagerEvents = null;
+    }
   }
 
   private consumeLobbyMessage(client: Client, messageType: string, rule: RateLimitRule): boolean {
@@ -940,20 +962,29 @@ export class LobbyRoom extends Room<LobbyState> {
     hostUserId: string,
     wagerOptions?: CreateWagerOptions
   ): Promise<boolean> {
+    const baseWagerOptions = this.initialWagerOptions ?? wagerOptions;
     const effectiveWagerOptions = this.matchMode === 'custom_wager'
-      ? { ...wagerOptions, enabled: true }
-      : wagerOptions;
+      ? { ...baseWagerOptions, enabled: true }
+      : baseWagerOptions;
     if (effectiveWagerOptions?.enabled !== true) return true;
     if (this.wagerSetupStarted) return true;
 
     this.wagerSetupStarted = true;
     try {
-      await wagerService.createWageredLobby({
+      const snapshot = await wagerService.createWageredLobby({
         lobbyId: this.state.lobbyId,
         createdByUserId: hostUserId,
         matchMode: this.matchMode === 'ranked' ? 'ranked' : 'custom_wager',
         options: effectiveWagerOptions,
       });
+      if (!snapshot.enabled) {
+        this.wagerSetupStarted = false;
+        return this.matchMode !== 'custom_wager';
+      }
+      this.lobbyWagerSnapshot = snapshot;
+      await this.subscribeToWagerEvents();
+      await this.refreshWagerPaymentStatuses();
+      this.updateMetadata();
       return true;
     } catch (error) {
       loggers.room.warn('Failed to create wagered lobby', {
@@ -964,6 +995,33 @@ export class LobbyRoom extends Room<LobbyState> {
       this.wagerSetupStarted = false;
       return false;
     }
+  }
+
+  private async subscribeToWagerEvents(): Promise<void> {
+    if (this.unsubscribeWagerEvents || !this.lobbyWagerSnapshot.enabled) return;
+    this.unsubscribeWagerEvents = await wagerEventBus.subscribeToLobby(
+      this.state.lobbyId,
+      (payload) => this.handleWagerPaymentStatusChanged(payload)
+    );
+  }
+
+  private async handleWagerPaymentStatusChanged(payload: WagerPaymentStatusChanged): Promise<void> {
+    if (payload.lobbyId !== this.state.lobbyId) return;
+    await this.refreshWagerPaymentStatuses();
+    this.updateMetadata();
+    this.broadcastLobbyState();
+  }
+
+  private async refreshWagerPaymentStatuses(): Promise<void> {
+    if (!this.lobbyWagerSnapshot.enabled) {
+      this.playerWagerPaymentStatuses = [];
+      return;
+    }
+    this.lobbyWagerSnapshot = await wagerService.getLobbySnapshot(this.state.lobbyId);
+    this.playerWagerPaymentStatuses = await wagerService.getPlayerPaymentStatuses(
+      this.state.lobbyId,
+      this.buildWagerRoster()
+    );
   }
 
   private createMapSelectionSource(): number {
@@ -2342,6 +2400,8 @@ export class LobbyRoom extends Room<LobbyState> {
       maxParticipants: this.state.maxParticipants,
       requiredPlayers: this.isMatchmakingQueue() ? this.getMatchmakingRequiredPlayers() : undefined,
       matchmakingStatus: this.getMatchmakingStatusPayload(),
+      wager: this.lobbyWagerSnapshot,
+      wagerPaymentStatuses: this.playerWagerPaymentStatuses,
     });
   }
 
@@ -2762,6 +2822,10 @@ export class LobbyRoom extends Room<LobbyState> {
       matchmakingTeamHeroIds: matchmakingHeroQueueState?.teamHeroIds,
       capacityBlocked: this.isMatchmakingQueue() ? this.matchmakingCapacityBlocked : undefined,
       capacityMaxPlayers: this.isMatchmakingQueue() ? MAX_IN_GAME_PLAYERS : undefined,
+      wagerEnabled: this.lobbyWagerSnapshot.enabled,
+      wagerCoverChargeLamports: this.lobbyWagerSnapshot.coverChargeLamports,
+      wagerPaidPlayerCount: this.lobbyWagerSnapshot.paidPlayerCount,
+      wagerPotLamports: this.lobbyWagerSnapshot.potLamports,
       ...this.getMatchmakingStatusPayload(),
       ...overrides,
     });

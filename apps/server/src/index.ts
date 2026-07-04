@@ -26,6 +26,7 @@ import rewardsRoutes from './rewards/routes';
 import socialRoutes from './social/routes';
 import wagersRoutes from './wagers/routes';
 import { createStreamerRouter } from './streamer/routes';
+import { createRecordingsRouter } from './recordings/routes';
 import { dailyMissionService } from './missions/service';
 import { playerRewardService } from './rewards/service';
 import { wagerService } from './wagers/service';
@@ -121,6 +122,7 @@ function createGameServer(): Server {
     gracefullyShutdown: false,
     transport: new WebSocketTransport({
       server: httpServer,
+      maxPayload: colyseusRuntime.webSocketMaxPayloadBytes,
       pingInterval: 5000,
       pingMaxRetries: 3,
     }),
@@ -201,6 +203,7 @@ app.use('/rewards', rewardsRoutes);
 app.use('/social', socialRoutes);
 app.use('/wagers', wagersRoutes);
 app.use('/streamer', createStreamerRouter({ matchMaker }));
+app.use('/recordings', createRecordingsRouter({ matchMaker }));
 app.use('/admin', createAdminRouter({
   config: colyseusRuntime,
   matchMaker,
@@ -520,6 +523,7 @@ async function startServer(): Promise<void> {
       redisUrlConfigured: Boolean(colyseusRuntime.redisUrl),
       routingStrategy: colyseusRuntime.routingStrategy,
       roomCreateStrategy: colyseusRuntime.roomCreateStrategy,
+      webSocketMaxPayloadBytes: colyseusRuntime.webSocketMaxPayloadBytes,
       flyMachineId: colyseusRuntime.flyReplay.machineId ?? null,
       processId: matchMaker.processId,
       pid: process.pid,

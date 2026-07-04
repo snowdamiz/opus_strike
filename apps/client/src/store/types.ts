@@ -43,6 +43,47 @@ export interface LobbyPlayer {
   rank?: PublicRankSnapshot;
 }
 
+export type WagerPaymentStatus =
+  | 'intent_created'
+  | 'submitted'
+  | 'confirmed'
+  | 'credited'
+  | 'failed'
+  | 'expired'
+  | 'refunded'
+  | 'settled'
+  | 'not_required'
+  | 'unpaid';
+
+export interface LobbyWagerSnapshot {
+  enabled: boolean;
+  wageredLobbyId?: string;
+  lobbyId?: string;
+  matchMode?: MatchMode;
+  rankedEntryQuoteId?: string | null;
+  status?: string;
+  token?: 'SOL';
+  coverChargeLamports?: string;
+  treasuryWallet?: string;
+  winnerPoolBps?: number;
+  burnBps?: number;
+  treasuryBps?: number;
+  burnWallet?: string;
+  potLamports?: string;
+  paidPlayerCount?: number;
+}
+
+export interface PlayerWagerPaymentStatus {
+  lobbyPlayerId: string;
+  userId: string | null;
+  status: WagerPaymentStatus;
+  walletAddress?: string;
+  amountLamports?: string;
+  depositSignature?: string;
+  refundSignature?: string;
+  refundReason?: string | null;
+}
+
 export interface MapVoteOption {
   id: string;
   seed: number;

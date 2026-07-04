@@ -9,6 +9,7 @@ import {
 } from './gameplayMode.js';
 import type { HeroId } from './hero.js';
 import type { HeroSkinId } from './skins.js';
+import type { MatchMode } from './matchMode.js';
 import type { MatchPerspective, MatchPerspectiveSettings } from './matchPerspective.js';
 import type { BotDifficulty } from './player.js';
 import type { RankSummary } from '../progression/ranking.js';
@@ -87,13 +88,20 @@ export interface PartyStateSnapshot {
   launchError: string | null;
 }
 
+export interface PartyLaunchWagerOptions {
+  enabled?: boolean;
+  coverChargeLamports?: string;
+  token?: 'SOL';
+}
+
 export interface PartyLaunchPayload {
   mode: PartyMode;
   lobbyId: string;
-  matchMode: 'quick_play' | 'ranked' | 'custom';
+  matchMode: MatchMode;
   gameplayMode: GameplayMode;
   botFillMode?: 'manual' | 'fill_even';
   matchPerspective: MatchPerspective;
+  wager?: PartyLaunchWagerOptions;
   selectedHero?: HeroId;
   selectedSkinId?: HeroSkinId;
   matchmakingTicket?: string;

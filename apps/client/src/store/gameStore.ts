@@ -31,8 +31,10 @@ import type {
   Player,
   Vec3,
   LobbyPlayer,
+  LobbyWagerSnapshot,
   MapVoteOption,
   MapVoteRecord,
+  PlayerWagerPaymentStatus,
   UserStats,
   MatchmakingStatus,
   AppPhase,
@@ -94,6 +96,8 @@ interface CoreState {
   lobbyPlayers: Map<string, LobbyPlayer>;
   isLobbyHost: boolean;
   lobbyError: string | null;
+  lobbyWager: LobbyWagerSnapshot;
+  lobbyWagerPayments: PlayerWagerPaymentStatus[];
   mapVoteOptions: MapVoteOption[];
   mapVotes: Map<string, string>;
   mapVotePhaseEndTime: number | null;
@@ -197,6 +201,7 @@ interface CoreActions {
   removeLobbyPlayer: (playerId: string) => void;
   setIsLobbyHost: (isHost: boolean) => void;
   setLobbyError: (message: string | null) => void;
+  setLobbyWagerState: (wager: LobbyWagerSnapshot, payments: PlayerWagerPaymentStatus[]) => void;
   setMapVoteState: (options: MapVoteOption[], votes: MapVoteRecord[], phaseEndTime: number | null, selectedOptionId?: string | null) => void;
   setMapVotes: (votes: MapVoteRecord[], selectedOptionId?: string | null) => void;
   clearMapVote: () => void;
@@ -267,6 +272,8 @@ const coreInitialState: CoreState = {
   lobbyPlayers: new Map(),
   isLobbyHost: false,
   lobbyError: null,
+  lobbyWager: { enabled: false },
+  lobbyWagerPayments: [],
   mapVoteOptions: [],
   mapVotes: new Map(),
   mapVotePhaseEndTime: null,
@@ -700,6 +707,8 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
   setLobbyError: (message) => set((state) => state.lobbyError === message ? state : { lobbyError: message }),
 
+  setLobbyWagerState: (lobbyWager, lobbyWagerPayments) => set({ lobbyWager, lobbyWagerPayments }),
+
   setMapVoteState: (options, votes, phaseEndTime, selectedOptionId = null) => set({
     mapVoteOptions: options,
     mapVotes: new Map(votes.map((vote) => [vote.playerId, vote.optionId])),
@@ -779,6 +788,8 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     lobbyPlayers: new Map(),
     isLobbyHost: false,
     lobbyError: null,
+    lobbyWager: { enabled: false },
+    lobbyWagerPayments: [],
     mapVoteOptions: [],
     mapVotes: new Map(),
     mapVotePhaseEndTime: null,

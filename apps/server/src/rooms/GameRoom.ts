@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'http';
+import crypto from 'node:crypto';
 import { monitorEventLoopDelay, performance, type IntervalHistogram } from 'node:perf_hooks';
 import { Room, Client } from 'colyseus';
 import { GameState } from './schema/GameState';
@@ -366,6 +367,7 @@ import {
   isHeroSkinId,
   CHRONOS_PRIMARY_MAGAZINE_SIZE,
   CHRONOS_PRIMARY_RELOAD_MS,
+  RECORDING_ARTIFACT_VERSION,
 } from '@voxel-strike/shared';
 import type { 
   AbilityCastOriginHint,
@@ -412,6 +414,14 @@ import type {
   VoxelMapManifest,
   VoxelMapSizeId,
   VoxelMapTheme,
+  RecordingActionRow,
+  RecordingBotAssignment,
+  RecordingCheckpointRow,
+  RecordingHudMode,
+  RecordingManifest,
+  RecordingRoomOptions,
+  RecordingSummary,
+  RecordingSummaryPlayer,
 } from '@voxel-strike/shared';
 import {
   HOOKSHOT_GRAPPLE_EXTENSION_SPEED,
@@ -638,6 +648,11 @@ import {
 } from './gameModeRules';
 import { BattleRoyalPlacementTracker } from './battleRoyalPlacement';
 import {
+  RecordingArtifactWriter,
+  buildRecordingArtifactRefs,
+} from '../recordings/artifacts';
+import type { GameRoomRecordingOptions } from '../recordings/types';
+import {
   CTF_TEAMS,
   getBotFlagSnapshots,
   getCarriedFlagCountForPlayer,
@@ -714,6 +729,7 @@ interface CreateOptions {
   streamerCameraMode?: string;
   streamerMapRotationStartedAt?: number | null;
   endlessMatch?: boolean;
+  recording?: GameRoomRecordingOptions;
 }
 
 interface JoinOptions {
@@ -858,6 +874,8 @@ const BLAZE_FLAMETHROWER_CONE_DOT = Math.cos(BLAZE_FLAMETHROWER_CONE_HALF_ANGLE)
 const PLAYER_VITALS_INTERVAL_MS = 125;
 const PLAYER_VITALS_RECONCILE_INTERVAL_MS = 2500;
 const TRANSFORM_HIGH_RELEVANCE_DISTANCE_SQ = 48 * 48;
+const RECORDING_CHECKPOINT_INTERVAL_MS = 5_000;
+const RECORDING_STOP_POLL_INTERVAL_MS = 1_000;
 const RECENT_COMBAT_TRANSFORM_MS = 650;
 const RECENT_COMBAT_INTEREST_MS = 900;
 const PLAYER_INTEREST_INTERVAL_MS = 200;
@@ -1231,6 +1249,13 @@ export class GameRoom extends Room<GameState> {
   private streamerMapRotationStartedAt: number | null = null;
   private endlessMatch = false;
   private readonly streamerObservers = new Map<string, StreamerObserverSession>();
+  private recordingOptions: GameRoomRecordingOptions | null = null;
+  private recordingWriter: RecordingArtifactWriter | null = null;
+  private recordingStartedAtMs = 0;
+  private recordingLastCheckpointAtMs = 0;
+  private recordingLastStopPollAtMs = 0;
+  private recordingStopPollInFlight = false;
+  private recordingFinalizing = false;
   private battleRoyalSafeZone: BattleRoyalSafeZoneState | null = null;
   private battleRoyalDrop: BattleRoyalDropState | null = null;
   private readonly battleRoyalPlacement = new BattleRoyalPlacementTracker();
@@ -1563,11 +1588,18 @@ export class GameRoom extends Room<GameState> {
     resetFlagsFromManifest(this.state, mapManifest);
     this.createBotsFromAssignments(options.botAssignments || []);
     this.updateMetadata();
+    if (options.recording) {
+      await this.startRecording(options.recording, options);
+    }
     this.startMatchStartCancelTimer();
 
     this.registerCoreMessageHandlers();
     if (this.isDevelopmentMode()) {
       this.registerDevelopmentMessageHandlers();
+    }
+    if (this.recordingWriter) {
+      this.ensureTickLoopStarted();
+      this.checkPhaseTransition();
     }
   }
 
@@ -1662,6 +1694,9 @@ export class GameRoom extends Room<GameState> {
       roomId: this.roomId,
       consecutiveTickErrors: this.consecutiveTickErrors,
     });
+    if (this.recordingWriter) {
+      this.finalizeRecording('failed', 'repeated_tick_failures');
+    }
     this.stopTickLoop();
     this.disconnect();
   }
@@ -2116,6 +2151,9 @@ export class GameRoom extends Room<GameState> {
     this.roomTimeouts.clear();
     this.antiCheat?.flushAggregates();
     void this.antiCheatEvidenceStore.flush();
+    if (this.recordingWriter) {
+      this.finalizeRecording('failed', 'room_disposed');
+    }
     this.state.players.forEach((player, playerId) => {
       if (!player.isBot) {
         void this.removeVoiceParticipantForPlayer(playerId, normalizeVoiceTeam(player.team), 'room_dispose');
@@ -2289,6 +2327,9 @@ export class GameRoom extends Room<GameState> {
       const tickDurationMs = performance.now() - tickStartedAt;
       this.tickProfiler.endTick(tickDurationMs);
       this.roomMetrics.recordTickDuration(tickDurationMs);
+      if (tickCompleted) {
+        this.updateRecordingLifecycle();
+      }
     }
   }
 
@@ -2956,6 +2997,380 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
+  private getRecordingElapsedMs(now = Date.now()): number {
+    if (!this.recordingStartedAtMs) return 0;
+    return Math.max(0, now - this.recordingStartedAtMs);
+  }
+
+  private toRecordingBotAssignments(assignments: readonly BotAssignment[]): RecordingBotAssignment[] {
+    return assignments.map((assignment) => ({
+      playerId: assignment.playerId,
+      playerName: assignment.playerName,
+      team: assignment.team,
+      heroId: assignment.heroId && isHeroId(assignment.heroId) ? assignment.heroId : null,
+      skinId: assignment.skinId && isHeroSkinId(assignment.skinId) ? assignment.skinId : null,
+      botDifficulty: normalizeBotDifficulty(assignment.botDifficulty),
+      botProfileId: assignment.botProfileId || '',
+    }));
+  }
+
+  private buildRecordingRoomOptions(options: CreateOptions): RecordingRoomOptions {
+    return {
+      lobbyName: options.lobbyName || this.lobbyName || `Recording ${this.roomId.slice(0, 6)}`,
+      matchMode: this.matchMode,
+      gameplayMode: this.gameplayMode,
+      matchPerspective: this.matchPerspective,
+      rankedEligible: this.rankedEligibilityCandidate,
+      requiredHumanPlayers: this.requiredHumanPlayers,
+      reservedHumanPlayers: this.reservedHumanPlayers,
+      capacityPlayerCost: this.capacityPlayerCost,
+      streamerManagedBotGame: this.streamerManagedBotGame,
+      streamerFeedMode: this.streamerFeedMode,
+      streamerCameraMode: this.streamerCameraMode,
+      endlessMatch: this.endlessMatch,
+    };
+  }
+
+  private buildRecordingManifest(
+    recording: GameRoomRecordingOptions,
+    options: CreateOptions
+  ): RecordingManifest {
+    const nowIso = new Date().toISOString();
+    return {
+      recordingVersion: RECORDING_ARTIFACT_VERSION,
+      id: recording.id,
+      source: 'bot_match',
+      status: 'creating',
+      createdAt: nowIso,
+      startedAt: null,
+      finalizedAt: null,
+      requestedDurationMs: recording.requestedDurationMs,
+      maxDurationMs: recording.maxDurationMs,
+      fps: recording.fps,
+      viewport: recording.viewport,
+      devicePixelRatio: recording.devicePixelRatio,
+      cameraMode: recording.cameraMode,
+      hudMode: recording.hudMode,
+      hudSubjectPlayerId: recording.hudSubjectPlayerId ?? this.selectDefaultRecordingHudSubjectId(recording.hudMode),
+      gameBuildId: recording.gameBuildId ?? process.env.CLIENT_BUILD_ID ?? null,
+      serverBuildId: recording.serverBuildId ?? process.env.SERVER_BUILD_ID ?? process.env.FLY_IMAGE_REF ?? null,
+      roomId: this.roomId,
+      matchId: this.matchLedger.getMatchId(),
+      map: {
+        seed: this.state.mapSeed,
+        themeId: this.state.mapThemeId as VoxelMapTheme['id'] | null,
+        size: this.state.mapSize as VoxelMapSizeId,
+        profileId: this.state.mapProfileId as MapProfileId | null,
+        pregeneratedMapId: this.state.pregeneratedMapId ? this.state.pregeneratedMapId as PregeneratedMapId : null,
+        artifactId: this.state.mapArtifactId ? this.state.mapArtifactId as PregeneratedMapArtifactId : null,
+      },
+      gameMode: this.gameplayMode,
+      matchMode: this.matchMode,
+      matchPerspective: this.matchPerspective,
+      botAssignments: this.toRecordingBotAssignments(options.botAssignments ?? []),
+      roomOptions: this.buildRecordingRoomOptions(options),
+      artifacts: buildRecordingArtifactRefs(recording.id),
+      checksums: {},
+      error: null,
+    };
+  }
+
+  private selectDefaultRecordingHudSubjectId(mode: RecordingHudMode): string | null {
+    if (mode !== 'selected_player') return null;
+    for (const player of this.state.players.values()) {
+      if (player.isBot && !isObserverPlayer(player)) return player.id;
+    }
+    for (const player of this.state.players.values()) {
+      if (!isObserverPlayer(player)) return player.id;
+    }
+    return null;
+  }
+
+  private async startRecording(recording: GameRoomRecordingOptions, options: CreateOptions): Promise<void> {
+    this.recordingOptions = recording;
+    const writer = await RecordingArtifactWriter.create({
+      manifest: this.buildRecordingManifest(recording, options),
+    });
+    this.recordingWriter = writer;
+    this.recordingStartedAtMs = Date.now();
+    this.recordingLastCheckpointAtMs = 0;
+    this.recordingLastStopPollAtMs = 0;
+    this.recordingStopPollInFlight = false;
+    this.recordCurrentRecordingSnapshots();
+    this.recordRecordingCheckpoint(true);
+    loggers.room.info('Recording capture started', {
+      roomId: this.roomId,
+      recordingId: writer.id,
+      durationMs: recording.requestedDurationMs,
+      fps: recording.fps,
+    });
+  }
+
+  private recordObserverEvent(type: string, payload: unknown): void {
+    this.recordingWriter?.appendEvent(type, payload, {
+      tick: this.state.tick,
+      serverTime: this.state.serverTime || Date.now(),
+    });
+  }
+
+  private buildRecordingPlayerVitalsMessage(): PlayerVitalsMessage {
+    return {
+      tick: this.state.tick,
+      serverTime: this.state.serverTime || Date.now(),
+      players: Array.from(
+        this.state.players,
+        ([id, player]) => this.buildPlayerVitalsForRecipient(id, player, null)
+      ),
+    };
+  }
+
+  private buildRecordingPlayerInterestMessage(): PlayerInterestMessage {
+    return {
+      tick: this.state.tick,
+      serverTime: this.state.serverTime || Date.now(),
+      players: Array.from(this.state.players, ([id, player]) => (
+        buildPlayerInterestSnapshot(id, this.getRecipientInterest(null, player))
+      )),
+    };
+  }
+
+  private buildRecordingSnapshotPayload(forceTransforms = true): RecordingCheckpointRow['snapshot'] {
+    const powerupState = this.powerupPickups.buildStateMessage(
+      this.state.serverTime || Date.now(),
+      this.getMapManifest()
+    );
+    const transformPayload = this.buildPlayerTransformsV2Payload({
+      force: forceTransforms,
+    });
+    return {
+      matchSnapshot: this.buildMatchSnapshot(),
+      playerVitals: this.buildRecordingPlayerVitalsMessage(),
+      playerInterest: this.buildRecordingPlayerInterestMessage(),
+      playerTransformsV2: transformPayload,
+      powerupState,
+    };
+  }
+
+  private recordCurrentRecordingSnapshots(): void {
+    const snapshot = this.buildRecordingSnapshotPayload(true);
+    if (snapshot.matchSnapshot) this.recordObserverEvent('matchSnapshot', snapshot.matchSnapshot);
+    if (snapshot.powerupState) this.recordObserverEvent('powerupState', snapshot.powerupState);
+    if (snapshot.playerVitals) this.recordObserverEvent('playerVitals', snapshot.playerVitals);
+    if (snapshot.playerInterest) this.recordObserverEvent('playerInterest', snapshot.playerInterest);
+    const transforms = snapshot.playerTransformsV2 as PlayerTransformsV2Message | undefined;
+    if (transforms && (transforms.players.length > 0 || transforms.hiddenPlayerIds?.length || transforms.full)) {
+      this.recordObserverEvent('playerTransformsV2', transforms);
+    }
+  }
+
+  private stableRecordingJson(value: unknown): string {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => this.stableRecordingJson(item)).join(',')}]`;
+    }
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => (
+      `${JSON.stringify(key)}:${this.stableRecordingJson(record[key])}`
+    )).join(',')}}`;
+  }
+
+  private recordRecordingCheckpoint(force = false): void {
+    const writer = this.recordingWriter;
+    if (!writer) return;
+    const now = this.state.serverTime || Date.now();
+    if (!force && now - this.recordingLastCheckpointAtMs < RECORDING_CHECKPOINT_INTERVAL_MS) return;
+
+    const snapshot = this.buildRecordingSnapshotPayload(true);
+    const hash = crypto
+      .createHash('sha256')
+      .update(this.stableRecordingJson(snapshot))
+      .digest('hex');
+    writer.appendCheckpoint({
+      recordingTimeMs: this.getRecordingElapsedMs(now),
+      serverTime: now,
+      tick: this.state.tick,
+      phase: this.state.phase as GamePhase,
+      hash,
+      snapshot,
+    });
+    this.recordingLastCheckpointAtMs = now;
+  }
+
+  private recordRecordingStateStreams(options: {
+    shouldBroadcastVitals: boolean;
+    shouldBroadcastInterest: boolean;
+    shouldBroadcastTransforms: boolean;
+    forceVitals: boolean;
+    forceTransforms: boolean;
+  }): void {
+    if (!this.recordingWriter) return;
+
+    if (options.shouldBroadcastVitals || options.forceVitals) {
+      this.recordObserverEvent('playerVitals', this.buildRecordingPlayerVitalsMessage());
+    }
+    if (options.shouldBroadcastInterest || options.forceVitals) {
+      this.recordObserverEvent('playerInterest', this.buildRecordingPlayerInterestMessage());
+    }
+    if (options.shouldBroadcastTransforms || options.forceTransforms) {
+      const message = this.buildPlayerTransformsV2Payload({
+        force: options.forceTransforms,
+      });
+      if (message.players.length > 0 || message.hiddenPlayerIds?.length || message.full) {
+        this.recordObserverEvent('playerTransformsV2', message);
+      }
+    }
+  }
+
+  private recordingButtonsFromInput(input: PlayerInput): RecordingActionRow['buttons'] {
+    return {
+      moveForward: input.moveForward,
+      moveBackward: input.moveBackward,
+      moveLeft: input.moveLeft,
+      moveRight: input.moveRight,
+      jump: input.jump,
+      crouch: input.crouch,
+      crouchPressed: input.crouchPressed,
+      sprint: input.sprint,
+      primaryFire: input.primaryFire,
+      secondaryFire: input.secondaryFire,
+      reload: input.reload,
+      ability1: input.ability1,
+      ability2: input.ability2,
+      ultimate: input.ultimate,
+      interact: input.interact,
+    };
+  }
+
+  private selectedAbilitySlotFromInput(input: PlayerInput): RecordingActionRow['selectedAbilitySlot'] {
+    if (input.ultimate) return 'ultimate';
+    if (input.ability1) return 'ability1';
+    if (input.ability2) return 'ability2';
+    if (input.secondaryFire) return 'secondary';
+    if (input.primaryFire) return 'primary';
+    return null;
+  }
+
+  private recordBotAction(player: Player, input: PlayerInput, brain: BotBrain | undefined, reused: boolean): void {
+    const writer = this.recordingWriter;
+    if (!writer) return;
+    const now = this.state.serverTime || Date.now();
+    writer.appendAction({
+      recordingTimeMs: this.getRecordingElapsedMs(now),
+      serverTime: now,
+      tick: this.state.tick,
+      playerId: player.id,
+      kind: 'bot_input',
+      buttons: this.recordingButtonsFromInput(input),
+      lookYaw: input.lookYaw,
+      lookPitch: input.lookPitch,
+      selectedAbilitySlot: this.selectedAbilitySlotFromInput(input),
+      combatTargetId: brain?.targetId || null,
+      botIntent: brain?.intent.type ?? null,
+      routeTarget: brain?.routePlan?.steeringTarget ?? null,
+      compression: {
+        repeated: reused,
+        intervalStartTick: reused ? input.tick : undefined,
+        intervalEndTick: reused ? this.state.tick : undefined,
+      },
+    });
+  }
+
+  private buildRecordingSummaryPlayers(): RecordingSummaryPlayer[] {
+    return Array.from(this.state.players.values())
+      .filter((player) => !this.npcs.has(player.id))
+      .map((player) => ({
+        playerId: player.id,
+        playerName: player.name,
+        role: getPlayerRole(player),
+        team: isObserverPlayer(player) ? '' : player.team,
+        heroId: isHeroId(player.heroId) ? player.heroId : null,
+        isBot: player.isBot,
+        kills: player.kills,
+        deaths: player.deaths,
+        assists: player.assists,
+      }));
+  }
+
+  private buildRecordingSummary(status: RecordingSummary['status'], error: string | null): Omit<RecordingSummary, 'eventCount' | 'actionCount' | 'checkpointCount' | 'checksums'> {
+    const writer = this.recordingWriter;
+    const createdAt = new Date(this.recordingStartedAtMs || Date.now()).toISOString();
+    const winner = this.state.phase === 'game_end'
+      ? getWinningTeam(this.state.redTeam.score, this.state.blueTeam.score) ?? 'draw'
+      : null;
+    return {
+      recordingVersion: RECORDING_ARTIFACT_VERSION,
+      id: writer?.id ?? this.recordingOptions?.id ?? 'unknown',
+      status,
+      createdAt,
+      startedAt: createdAt,
+      finalizedAt: new Date().toISOString(),
+      durationMs: this.getRecordingElapsedMs(),
+      requestedDurationMs: this.recordingOptions?.requestedDurationMs ?? 0,
+      roomId: this.roomId,
+      matchId: this.matchLedger.getMatchId(),
+      players: this.buildRecordingSummaryPlayers(),
+      winner,
+      notableEvents: [],
+      renders: [],
+      artifacts: buildRecordingArtifactRefs(writer?.id ?? this.recordingOptions?.id ?? 'unknown'),
+      error,
+    };
+  }
+
+  private finalizeRecording(status: RecordingSummary['status'] = 'finalized', error: string | null = null): void {
+    const writer = this.recordingWriter;
+    if (!writer || this.recordingFinalizing) return;
+    this.recordingFinalizing = true;
+    const summary = this.buildRecordingSummary(status, error);
+    this.recordingWriter = null;
+    void writer.finalize(summary).then((finalSummary) => {
+      loggers.room.info('Recording capture finalized', {
+        roomId: this.roomId,
+        recordingId: finalSummary.id,
+        status: finalSummary.status,
+        durationMs: finalSummary.durationMs,
+        eventCount: finalSummary.eventCount,
+        actionCount: finalSummary.actionCount,
+        checkpointCount: finalSummary.checkpointCount,
+      });
+    }).catch((finalizeError) => {
+      loggers.room.error('Recording capture finalization failed', {
+        roomId: this.roomId,
+        recordingId: writer.id,
+        error: finalizeError instanceof Error ? finalizeError.message : String(finalizeError),
+      });
+    });
+  }
+
+  private updateRecordingLifecycle(): void {
+    const writer = this.recordingWriter;
+    const options = this.recordingOptions;
+    if (!writer || !options || this.recordingFinalizing) return;
+    const now = this.state.serverTime || Date.now();
+    this.recordRecordingCheckpoint();
+    if (this.getRecordingElapsedMs(now) >= Math.min(options.requestedDurationMs, options.maxDurationMs)) {
+      this.finalizeRecording('finalized');
+      return;
+    }
+    if (this.recordingStopPollInFlight || now - this.recordingLastStopPollAtMs < RECORDING_STOP_POLL_INTERVAL_MS) {
+      return;
+    }
+    this.recordingLastStopPollAtMs = now;
+    this.recordingStopPollInFlight = true;
+    void writer.hasStopBeenRequested().then((requested) => {
+      if (!requested || this.recordingFinalizing) return;
+      void writer.markStopping().finally(() => this.finalizeRecording('finalized'));
+    }).catch((error) => {
+      loggers.room.warn('Recording stop poll failed', {
+        roomId: this.roomId,
+        recordingId: writer.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }).finally(() => {
+      this.recordingStopPollInFlight = false;
+    });
+  }
+
   private sendTracked(client: Client, type: string, payload: unknown): void {
     this.roomMetrics.recordCustomMessage(type, payload, 1);
     client.send(type, payload);
@@ -3016,6 +3431,7 @@ export class GameRoom extends Room<GameState> {
 
   private broadcastTracked(type: string, payload: unknown): void {
     this.roomMetrics.recordCustomMessage(type, payload, this.clients.length);
+    this.recordObserverEvent(type, payload);
     this.broadcast(type, payload);
   }
 
@@ -3033,6 +3449,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private broadcastExactPlayerEvent(type: string, player: Player, payload: Record<string, unknown>): void {
+    this.recordObserverEvent(type, payload);
     const now = this.state.serverTime || Date.now();
     const frameContext = this.getEventReplicationFrameContext(now);
     for (const client of this.clients) {
@@ -3047,6 +3464,7 @@ export class GameRoom extends Room<GameState> {
     source: Player | null,
     payload: PlayerDamagedEvent
   ): void {
+    this.recordObserverEvent('playerDamaged', payload);
     const now = this.state.serverTime || Date.now();
     const frameContext = this.getEventReplicationFrameContext(now);
     for (const client of this.clients) {
@@ -3082,6 +3500,7 @@ export class GameRoom extends Room<GameState> {
       serverTime: number;
     }
   ): void {
+    this.recordObserverEvent('chronosAegisDamaged', payload);
     const now = this.state.serverTime || Date.now();
     const frameContext = this.getEventReplicationFrameContext(now);
     for (const client of this.clients) {
@@ -3107,6 +3526,7 @@ export class GameRoom extends Room<GameState> {
     source: Player | null,
     payload: PhantomShieldBrokenEvent
   ): void {
+    this.recordObserverEvent('phantomShieldBroken', payload);
     const now = this.state.serverTime || Date.now();
     const frameContext = this.getEventReplicationFrameContext(now);
     for (const client of this.clients) {
@@ -3124,6 +3544,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private broadcastPlayerHealed(source: Player, payload: PlayerHealedEvent): void {
+    this.recordObserverEvent('playerHealed', payload);
     const now = this.state.serverTime || Date.now();
     const frameContext = this.getEventReplicationFrameContext(now);
     for (const client of this.clients) {
@@ -3151,6 +3572,7 @@ export class GameRoom extends Room<GameState> {
     collector: Player,
     payload: PowerupCollectedMessage
   ): void {
+    this.recordObserverEvent('powerupCollected', payload);
     const now = this.state.serverTime || Date.now();
     const frameContext = this.getEventReplicationFrameContext(now);
     for (const client of this.clients) {
@@ -3161,6 +3583,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private broadcastPlayerDowned(payload: PlayerDownedEvent): void {
+    this.recordObserverEvent('playerDowned', payload);
     const target = this.state.players.get(payload.targetId);
     if (!target) return;
     const source = payload.sourceId ? this.state.players.get(payload.sourceId) ?? null : null;
@@ -3202,6 +3625,7 @@ export class GameRoom extends Room<GameState> {
     reviverId: string | null,
     payload: PlayerReviveStartedEvent | PlayerReviveCancelledEvent | PlayerRevivedEvent
   ): void {
+    this.recordObserverEvent(type, payload);
     const target = this.state.players.get(targetId);
     if (!target) return;
     const reviver = reviverId ? this.state.players.get(reviverId) ?? null : null;
@@ -3221,6 +3645,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private broadcastPlayerKilled(victim: Player, killer: Player | null, payload: PlayerDeathEvent): void {
+    this.recordObserverEvent('playerKilled', payload);
     const now = this.state.serverTime || Date.now();
     const exactPosition = payload.position;
     this.resetEventReplicationFrameContext();
@@ -3566,10 +3991,19 @@ export class GameRoom extends Room<GameState> {
       sentInterest ||= sent.sentInterest;
     }
 
-    if (shouldBroadcastVitals && (sentVitals || forceVitals)) {
+    this.recordRecordingStateStreams({
+      shouldBroadcastVitals,
+      shouldBroadcastInterest,
+      shouldBroadcastTransforms,
+      forceVitals,
+      forceTransforms,
+    });
+
+    const recorderReceivedState = Boolean(this.recordingWriter);
+    if (shouldBroadcastVitals && (sentVitals || forceVitals || recorderReceivedState)) {
       this.lastVitalsBroadcastAt = now;
     }
-    if (shouldBroadcastInterest && (sentInterest || forceVitals)) {
+    if (shouldBroadcastInterest && (sentInterest || forceVitals || recorderReceivedState)) {
       this.lastInterestBroadcastAt = now;
     }
   }
@@ -7771,6 +8205,7 @@ export class GameRoom extends Room<GameState> {
 
     bot.lastInput = input;
     this.botsWithReusedInputThisTick.add(botId);
+    this.recordBotAction(bot, input, this.botRuntime.getBrain(botId), true);
   }
 
   private prepareBotSimulationTierCache(): void {
@@ -7979,6 +8414,7 @@ export class GameRoom extends Room<GameState> {
       lookOverride
     );
     bot.lastInput = botInput;
+    this.recordBotAction(bot, botInput, brain, false);
   }
 
   private getBotPlayerSnapshot(player: Player): BotPlayerSnapshot | null {

@@ -134,6 +134,8 @@ perspectiveByMode.battle_royal = 'third_person';
 savePlayMenuPreferences({
   selectedPlayMode: 'battle_royal',
   customGameplayMode: 'team_deathmatch',
+  customWagerEnabled: false,
+  customWagerEntrySol: '0.01',
   botFillEnabledByMode,
   perspectiveByMode,
 });

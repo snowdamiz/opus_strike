@@ -37,6 +37,7 @@ FROM base AS runtime
 
 ENV NODE_ENV="production"
 ENV PORT="2567"
+ENV PLAYWRIGHT_BROWSERS_PATH="/ms-playwright"
 
 WORKDIR /app
 
@@ -48,9 +49,10 @@ COPY packages/physics/package.json packages/physics/package.json
 
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
   apt-get update \
-  && apt-get install -y --no-install-recommends g++ make python3 \
+  && apt-get install -y --no-install-recommends ffmpeg g++ make python3 \
   && pnpm install --prod --frozen-lockfile --filter @voxel-strike/server... --store-dir /pnpm/store \
   && pnpm --filter @voxel-strike/server db:generate \
+  && pnpm --filter @voxel-strike/server exec playwright install --with-deps chromium \
   && apt-get purge -y --auto-remove g++ make python3 \
   && rm -rf /var/lib/apt/lists/*
 

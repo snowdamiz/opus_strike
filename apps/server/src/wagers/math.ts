@@ -1,16 +1,20 @@
 import type { Team } from '@voxel-strike/shared';
 
 export const WAGER_TOKEN = 'SOL' as const;
-export const WAGER_PLATFORM_FEE_BPS = 500;
 export const WAGER_BPS_DENOMINATOR = 10_000n;
+export const WAGER_WINNER_POOL_BPS = 9_000;
+export const WAGER_BURN_BPS = 500;
+export const WAGER_TREASURY_BPS = 500;
+export const WAGER_SOL_BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111';
 
 export interface WagerPayoutMath {
   totalPotLamports: bigint;
-  developerFeeLamports: bigint;
   winnerPoolLamports: bigint;
   winnerShareLamports: bigint;
-  dustLamports: bigint;
-  developerTotalLamports: bigint;
+  burnLamports: bigint;
+  treasuryFeeLamports: bigint;
+  treasuryDustLamports: bigint;
+  treasuryTotalLamports: bigint;
 }
 
 export interface WagerRosterPlayer {
@@ -30,31 +34,32 @@ export interface WagerStartEligibility {
 
 export function calculateWagerPayouts(
   totalPotLamports: bigint,
-  winningPaidHumanCount: number,
-  platformFeeBps = WAGER_PLATFORM_FEE_BPS
+  winningPaidHumanCount: number
 ): WagerPayoutMath {
   if (totalPotLamports < 0n) {
     throw new Error('total pot cannot be negative');
-  }
-  if (!Number.isInteger(platformFeeBps) || platformFeeBps < 0 || platformFeeBps > 10_000) {
-    throw new Error('platform fee bps must be between 0 and 10000');
   }
   if (!Number.isInteger(winningPaidHumanCount) || winningPaidHumanCount < 1) {
     throw new Error('winning paid human count must be at least one');
   }
 
-  const developerFeeLamports = totalPotLamports * BigInt(platformFeeBps) / WAGER_BPS_DENOMINATOR;
-  const winnerPoolLamports = totalPotLamports - developerFeeLamports;
-  const winnerShareLamports = winnerPoolLamports / BigInt(winningPaidHumanCount);
-  const dustLamports = winnerPoolLamports - winnerShareLamports * BigInt(winningPaidHumanCount);
+  const grossWinnerPoolLamports = totalPotLamports * BigInt(WAGER_WINNER_POOL_BPS) / WAGER_BPS_DENOMINATOR;
+  const burnLamports = totalPotLamports * BigInt(WAGER_BURN_BPS) / WAGER_BPS_DENOMINATOR;
+  const treasuryFeeLamports = totalPotLamports * BigInt(WAGER_TREASURY_BPS) / WAGER_BPS_DENOMINATOR;
+  const splitDustLamports = totalPotLamports - grossWinnerPoolLamports - burnLamports - treasuryFeeLamports;
+  const winnerShareLamports = grossWinnerPoolLamports / BigInt(winningPaidHumanCount);
+  const winnerPoolLamports = winnerShareLamports * BigInt(winningPaidHumanCount);
+  const winnerDustLamports = grossWinnerPoolLamports - winnerPoolLamports;
+  const treasuryDustLamports = splitDustLamports + winnerDustLamports;
 
   return {
     totalPotLamports,
-    developerFeeLamports,
     winnerPoolLamports,
     winnerShareLamports,
-    dustLamports,
-    developerTotalLamports: developerFeeLamports + dustLamports,
+    burnLamports,
+    treasuryFeeLamports,
+    treasuryDustLamports,
+    treasuryTotalLamports: treasuryFeeLamports + treasuryDustLamports,
   };
 }
 

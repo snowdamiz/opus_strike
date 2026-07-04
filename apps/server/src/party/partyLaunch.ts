@@ -10,6 +10,7 @@ import {
   type MatchPerspective,
   type PartyBotLaunchDescriptor,
   type PartyLaunchPayload,
+  type PartyLaunchWagerOptions,
 } from '@voxel-strike/shared';
 import type { MatchMode } from '@voxel-strike/shared';
 import prisma from '../db';
@@ -29,6 +30,7 @@ import { RANKED_BOT_FILL_MODE } from '../matchmaking/matchSettings';
 import { getLocalMatchmakingRegion } from '../matchmaking/region';
 import { resolveUserLoadoutForHero } from '../cosmetics/skinShopService';
 import { BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX } from '../rooms/bot-ai';
+import { wagerService } from '../wagers/service';
 import type { PartyRosterRuntime, PartyRuntimeMember } from './partyRuntime';
 
 interface PartyLaunchResult {
@@ -245,7 +247,22 @@ async function createAcceptedLobbyInvites(input: {
   });
 }
 
-export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promise<PartyLaunchResult> {
+async function normalizeCustomWagerOptions(
+  wager: PartyLaunchWagerOptions | undefined
+): Promise<PartyLaunchWagerOptions | undefined> {
+  const normalized = await wagerService.normalizeCreateOptions(wager);
+  if (!normalized.enabled) return undefined;
+  return {
+    enabled: true,
+    coverChargeLamports: normalized.coverChargeLamports.toString(),
+    token: normalized.token,
+  };
+}
+
+export async function launchPartyToCustomLobby(
+  party: PartyRosterRuntime,
+  options: { wager?: PartyLaunchWagerOptions } = {}
+): Promise<PartyLaunchResult> {
   await revalidateHumanMemberSkins(party);
   const humanMembers = party.getHumanMembers();
   const partyBots = party.getBotMembers().map(toPartyBotDescriptor);
@@ -259,27 +276,35 @@ export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promi
   humanMembers.forEach(assertPartyTutorialComplete);
 
   const gameplayMode = party.selectedGameplayMode;
+  const wager = party.mode === 'custom'
+    ? await normalizeCustomWagerOptions(options.wager)
+    : undefined;
+  const matchMode: MatchMode = wager ? 'custom_wager' : 'custom';
   const lobbyName = party.mode === 'practice'
     ? 'Party Practice'
-    : `Custom ${getGameplayModeLabel(gameplayMode)}`;
+    : wager
+      ? `Wager ${getGameplayModeLabel(gameplayMode)}`
+      : `Custom ${getGameplayModeLabel(gameplayMode)}`;
   const matchPerspective = party.mode === 'practice'
     ? party.getActiveMatchPerspective('practice', party.selectedGameplayMode)
     : party.getActiveMatchPerspective('custom', gameplayMode);
   const room = await matchMaker.createRoom('lobby_room', {
     lobbyName,
     isPrivate: true,
+    matchMode,
     initialBotCount: 0,
     botFillMode: 'manual',
     defaultBotDifficulty: 'normal',
     partyBots,
     gameplayMode,
     matchPerspective,
+    wager,
   });
 
   await createAcceptedLobbyInvites({
     lobbyId: room.roomId,
     lobbyName,
-    matchMode: 'custom',
+    matchMode,
     leaderUserId: party.leaderId,
     members: humanMembers,
   });
@@ -289,10 +314,11 @@ export async function launchPartyToCustomLobby(party: PartyRosterRuntime): Promi
     payloadsByUserId.set(member.userId, {
       mode: party.mode,
       lobbyId: room.roomId,
-      matchMode: 'custom',
+      matchMode,
       gameplayMode,
       botFillMode: 'manual',
       matchPerspective,
+      ...(wager ? { wager } : {}),
       selectedHero: member.heroId,
       selectedSkinId: member.skinId,
     });
