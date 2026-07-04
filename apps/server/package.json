@@ -143,6 +143,7 @@
     "ioredis": "^5.8.2",
     "jsonwebtoken": "^9.0.2",
     "livekit-server-sdk": "2.15.4",
+    "playwright": "1.61.1",
     "prisma": "^5.22.0",
     "tweetnacl": "^1.0.3"
   },

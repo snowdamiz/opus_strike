@@ -323,7 +323,8 @@ async function waitForFinalizedRecording(id: string): Promise<{
         };
       }
       if (recording.summary?.status === 'failed' || recording.manifest.status === 'failed') {
-        throw new Error(recording.summary?.error ?? recording.manifest.error ?? 'Recording failed');
+        const failureMessage = recording.summary?.error ?? recording.manifest.error ?? 'unknown error';
+        throw new Error(`Recording failed: ${failureMessage}`);
       }
     } catch (error) {
       lastError = error;

@@ -232,6 +232,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         gameplayMode: recordingGameplayMode,
       });
       setRecordingJob(response.job);
+      setRecordingError(response.job.status === 'failed' ? response.job.error : null);
     } catch (error) {
       setRecordingError(error instanceof Error ? error.message : 'Failed to start showcase recording');
     } finally {
@@ -330,7 +331,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         const response = await requestRecordingShowcaseJob(recordingJob.id);
         if (!cancelled) {
           setRecordingJob(response.job);
-          setRecordingError(null);
+          setRecordingError(response.job.status === 'failed' ? response.job.error : null);
         }
       } catch (error) {
         if (!cancelled) {
