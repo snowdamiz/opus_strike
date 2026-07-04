@@ -87,6 +87,7 @@
     "test:matchmaking-hero-queues": "tsx src/scripts/matchmaking-hero-queues.test.ts",
     "test:matchmaking-settings": "tsx src/scripts/matchmaking-settings.test.ts",
     "test:ranked-token-hold": "tsx src/scripts/ranked-token-hold.test.ts",
+    "test:ranked-br-rewards": "tsx src/scripts/ranked-br-combat-rewards.test.ts",
     "test:persistence": "tsx src/scripts/match-persistence.test.ts",
     "test:ranking": "tsx src/scripts/ranking-service.test.ts && tsx src/scripts/ranked-season-service.test.ts && tsx src/scripts/ranked-held-outcome.test.ts",
     "test:spawns": "tsx src/scripts/spawn-assignments.test.ts && tsx src/scripts/battle-royal-spawns.test.ts",

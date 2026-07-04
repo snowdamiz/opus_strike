@@ -13,6 +13,16 @@ export interface PlayerEventVisibility {
   isParticipant: boolean;
   canKnowTarget: boolean;
   canKnowSource: boolean;
+  canKnowSourceOnlyReward?: boolean;
+}
+
+function applySourceOnlyRewardVisibility(
+  payload: PlayerDamagedEvent,
+  canKnowSourceOnlyReward: boolean | undefined
+): PlayerDamagedEvent {
+  if (canKnowSourceOnlyReward && payload.rankedBrSolRewardLamports !== undefined) return payload;
+  const { rankedBrSolRewardLamports: _rankedBrSolRewardLamports, ...redacted } = payload;
+  return redacted;
 }
 
 export function buildPlayerDamagedPayload(
@@ -27,10 +37,10 @@ export function buildPlayerDamagedPayload(
     visibility.isParticipant
     || (visibility.canKnowTarget && visibility.canKnowSource)
   ) {
-    return payload;
+    return applySourceOnlyRewardVisibility(payload, visibility.canKnowSourceOnlyReward);
   }
 
-  return {
+  return applySourceOnlyRewardVisibility({
     ...payload,
     newHealth: visibility.canKnowTarget || visibility.isParticipant ? payload.newHealth : undefined,
     newDownedHealth: visibility.canKnowTarget || visibility.isParticipant ? payload.newDownedHealth : undefined,
@@ -39,7 +49,7 @@ export function buildPlayerDamagedPayload(
     targetPosition: visibility.canKnowTarget || visibility.isParticipant ? payload.targetPosition : undefined,
     sourceHeroId: visibility.canKnowSource || visibility.isParticipant ? payload.sourceHeroId : null,
     targetHeroId: visibility.canKnowTarget || visibility.isParticipant ? payload.targetHeroId : null,
-  };
+  }, visibility.canKnowSourceOnlyReward);
 }
 
 export function buildChronosAegisDamagedPayload(

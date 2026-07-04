@@ -127,6 +127,7 @@ export interface PlayerDamagedEvent {
   targetPosition?: Vec3 | null;
   sourceHeroId?: string | null;
   targetHeroId?: string | null;
+  rankedBrSolRewardLamports?: string;
 }
 
 export interface PlayerDownedEvent {

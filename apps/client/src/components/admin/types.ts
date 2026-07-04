@@ -370,6 +370,7 @@ export interface UsersListResponse {
 
 export interface PlayerRewardSettings {
   enabled: boolean;
+  settingsVersion: number;
   dailyRankedDripLamports: LamportString;
   dailyRankedDripMaxMatches: number;
   minMatchDurationMs: number;
@@ -381,6 +382,26 @@ export interface PlayerRewardSettings {
   maxMatchPayoutLamports: LamportString;
   treasuryReserveLamports: LamportString;
   payoutBatchSize: number;
+  rankedBrCombatRewardsEnabled: boolean;
+  rankedBrCombatRewardsShadowMode: boolean;
+  rankedBrDamageLamportsPerHp: LamportString;
+  rankedBrKillLamports: LamportString;
+  rankedBrBotTargetRewardBps: number;
+  rankedBrSourceVictimDamageCapHp: number;
+  rankedBrMaxPlayerMatchLamports: LamportString;
+  rankedBrMaxPlayerDailyLamports: LamportString;
+  rankedBrMaxMatchLamports: LamportString;
+  rankedBrTreasuryExposureBps: number;
+  rankedBrClientRewardTextMinLamports: LamportString;
+  minPayoutUsdCents: number;
+  payoutPriceQuoteTtlMs: number;
+  payoutPriceQuote: {
+    source: string;
+    solUsdPriceMicroUsd: string;
+    observedAt: string;
+    expiresAt: string;
+    fresh: boolean;
+  } | null;
   updatedByUserId: string | null;
   updatedAt: string | null;
 }
@@ -581,6 +602,10 @@ export interface AccountActionRequest {
 export interface RewardEconomyUpdate {
   playerRewards?: Record<string, unknown>;
   goldenBiome?: Record<string, unknown>;
+}
+
+export interface ForcePlayerRewardPayoutRequest {
+  userId: string;
 }
 
 export interface SeasonTopTenPayoutRequest {

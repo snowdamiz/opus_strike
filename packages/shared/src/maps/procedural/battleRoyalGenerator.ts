@@ -55,7 +55,7 @@ const POWERUP_FLATTEN_RADIUS = 3.2;
 const POI_FLATTEN_RADIUS = 9.5;
 const BASE_TERRAIN_ROWS = 13;
 const MIN_TERRAIN_ROWS = 10;
-const MAX_TERRAIN_ROWS = 70;
+const MAX_TERRAIN_ROWS = 58;
 const TERRAIN_SHELL_DEPTH_ROWS = 5;
 const TERRAIN_SIDE_ROWS = 3;
 const BOUNDARY_WALL_THICKNESS = 3.4;
@@ -79,6 +79,8 @@ const TERRAIN_TRAP_REPAIR_MIN_DEPTH_ROWS = TERRAIN_TRAP_REPAIR_MAX_STEP_ROWS + 2
 const TERRAIN_TRAP_REPAIR_MAX_RAISE_ROWS = 20;
 const TERRAIN_TRAP_REPAIR_MIN_HIGH_NEIGHBORS = 5;
 const TERRAIN_TRAP_REPAIR_MAX_PASSABLE_EXITS = 2;
+const TERRAIN_FEATURE_HEIGHT_SCALE = 0.82;
+const NATURAL_RIDGE_HEIGHT_SCALE = 0.72;
 
 type PoiRole = 'citadel' | 'watchtower' | 'bunker' | 'depot' | 'highrise' | 'hangar' | 'relay' | 'compound';
 type DistrictKind = 'city_core' | 'town' | 'industrial' | 'hamlet' | 'outpost' | 'open_field' | 'wildland';
@@ -452,42 +454,42 @@ function unitFromSeed(seed: number): number {
 const TERRAIN_RELIEF_PROFILES: readonly TerrainReliefProfile[] = [
   {
     id: 'flats',
+    noiseAmplitudeScale: 0.46,
+    edgeLiftScale: 0.34,
+    naturalFeatureCountScale: 0.3,
+    naturalFeatureAmplitudeScale: 0.36,
+    occlusionFeatureCountScale: 0.12,
+    occlusionFeatureAmplitudeScale: 0.22,
+    landmarkScreenCountScale: 0.14,
+    landmarkScreenAmplitudeScale: 0.24,
+    sightlineRepairPasses: 3,
+    sightlineRepairAmplitudeScale: 0.3,
+  },
+  {
+    id: 'rolling',
     noiseAmplitudeScale: 0.58,
-    edgeLiftScale: 0.42,
-    naturalFeatureCountScale: 0.48,
-    naturalFeatureAmplitudeScale: 0.48,
-    occlusionFeatureCountScale: 0.2,
+    edgeLiftScale: 0.44,
+    naturalFeatureCountScale: 0.45,
+    naturalFeatureAmplitudeScale: 0.44,
+    occlusionFeatureCountScale: 0.22,
     occlusionFeatureAmplitudeScale: 0.32,
-    landmarkScreenCountScale: 0.24,
+    landmarkScreenCountScale: 0.25,
     landmarkScreenAmplitudeScale: 0.34,
     sightlineRepairPasses: 5,
     sightlineRepairAmplitudeScale: 0.38,
   },
   {
-    id: 'rolling',
-    noiseAmplitudeScale: 0.74,
-    edgeLiftScale: 0.58,
-    naturalFeatureCountScale: 0.68,
-    naturalFeatureAmplitudeScale: 0.6,
-    occlusionFeatureCountScale: 0.34,
-    occlusionFeatureAmplitudeScale: 0.44,
-    landmarkScreenCountScale: 0.38,
-    landmarkScreenAmplitudeScale: 0.46,
-    sightlineRepairPasses: 8,
-    sightlineRepairAmplitudeScale: 0.5,
-  },
-  {
     id: 'highlands',
-    noiseAmplitudeScale: 0.9,
-    edgeLiftScale: 0.72,
-    naturalFeatureCountScale: 0.86,
-    naturalFeatureAmplitudeScale: 0.74,
-    occlusionFeatureCountScale: 0.52,
-    occlusionFeatureAmplitudeScale: 0.6,
-    landmarkScreenCountScale: 0.54,
-    landmarkScreenAmplitudeScale: 0.62,
-    sightlineRepairPasses: 12,
-    sightlineRepairAmplitudeScale: 0.62,
+    noiseAmplitudeScale: 0.68,
+    edgeLiftScale: 0.54,
+    naturalFeatureCountScale: 0.58,
+    naturalFeatureAmplitudeScale: 0.52,
+    occlusionFeatureCountScale: 0.32,
+    occlusionFeatureAmplitudeScale: 0.42,
+    landmarkScreenCountScale: 0.34,
+    landmarkScreenAmplitudeScale: 0.44,
+    sightlineRepairPasses: 7,
+    sightlineRepairAmplitudeScale: 0.46,
   },
 ];
 
@@ -495,11 +497,11 @@ function createTerrainReliefProfile(seed: number): TerrainReliefProfile {
   const profileRoll = unitFromSeed(seed ^ 0x6e617475);
   const baseProfile = profileRoll < 0.34
     ? TERRAIN_RELIEF_PROFILES[0]
-    : profileRoll < 0.78
+    : profileRoll < 0.88
       ? TERRAIN_RELIEF_PROFILES[1]
       : TERRAIN_RELIEF_PROFILES[2];
-  const amplitudeJitter = lerp(0.92, 1.08, unitFromSeed(seed ^ 0x72756e));
-  const countJitter = lerp(0.9, 1.12, unitFromSeed(seed ^ 0x766172));
+  const amplitudeJitter = lerp(0.88, 1.03, unitFromSeed(seed ^ 0x72756e));
+  const countJitter = lerp(0.82, 1, unitFromSeed(seed ^ 0x766172));
 
   return {
     ...baseProfile,
@@ -582,11 +584,11 @@ function terrainRows(
   relief: TerrainReliefProfile
 ): number {
   const radial = Math.hypot(worldX, worldZ) / profile.baseRadius;
-  const centerRise = Math.max(0, 1 - radial) * 1.8;
-  const outerShoulder = radial > 0.76 ? smoothstep((radial - 0.76) / 0.2) * 4.5 * relief.edgeLiftScale : 0;
-  const broad = (fractalNoise2(seed ^ 0x514f, worldX * 0.0065, worldZ * 0.0065, 5) - 0.5) * 9 * relief.noiseAmplitudeScale;
-  const medium = (fractalNoise2(seed ^ 0x2d7, worldX * 0.019, worldZ * 0.019, 4) - 0.5) * 4.2 * relief.noiseAmplitudeScale;
-  const detail = (fractalNoise2(seed ^ 0xf00d, worldX * 0.055, worldZ * 0.055, 2) - 0.5) * 1.2 * lerp(0.75, 1, relief.noiseAmplitudeScale);
+  const centerRise = Math.max(0, 1 - radial) * 1.3;
+  const outerShoulder = radial > 0.76 ? smoothstep((radial - 0.76) / 0.2) * 3 * relief.edgeLiftScale : 0;
+  const broad = (fractalNoise2(seed ^ 0x514f, worldX * 0.0058, worldZ * 0.0058, 5) - 0.5) * 5.8 * relief.noiseAmplitudeScale;
+  const medium = (fractalNoise2(seed ^ 0x2d7, worldX * 0.016, worldZ * 0.016, 4) - 0.5) * 2.7 * relief.noiseAmplitudeScale;
+  const detail = (fractalNoise2(seed ^ 0xf00d, worldX * 0.044, worldZ * 0.044, 2) - 0.5) * 0.7 * lerp(0.65, 0.88, relief.noiseAmplitudeScale);
   let rows = BASE_TERRAIN_ROWS + centerRise + outerShoulder + broad + medium + detail;
 
   for (const feature of terrainFeatures) {
@@ -597,8 +599,8 @@ function terrainRows(
       1.08,
       fractalNoise2(feature.noiseSeed, worldX * 0.018, worldZ * 0.018, 3)
     );
-    const influence = feature.amplitudeRows * falloff * roughness;
-    rows += feature.kind === 'ridge' ? influence * 1.02 : influence;
+    const influence = feature.amplitudeRows * falloff * roughness * TERRAIN_FEATURE_HEIGHT_SCALE;
+    rows += feature.kind === 'ridge' ? influence * 0.9 : influence;
   }
 
   for (const zone of flattenZones) {
@@ -1119,35 +1121,35 @@ function createTerrainFeatures(
     });
   };
 
-  const mountainCount = scaledCount(6, relief.naturalFeatureCountScale, 2);
+  const mountainCount = scaledCount(4, relief.naturalFeatureCountScale, 1);
   for (let index = 0; index < mountainCount; index++) {
     addFeature(
       'mountain',
       index,
       { min: baseRadius * 0.28, max: baseRadius * 0.9 },
-      { min: 32 * scale, max: 58 * scale },
-      { min: 42 * scale, max: 78 * scale },
-      { min: 9, max: 16 },
+      { min: 42 * scale, max: 72 * scale },
+      { min: 54 * scale, max: 92 * scale },
+      { min: 6, max: 10 },
       18
     );
   }
 
-  const ridgeCount = scaledCount(6, relief.naturalFeatureCountScale, 2);
+  const ridgeCount = scaledCount(4, relief.naturalFeatureCountScale, 1);
   for (let index = 0; index < ridgeCount; index++) {
     addFeature(
       'ridge',
       index,
       { min: baseRadius * 0.18, max: baseRadius * 0.86 },
-      { min: 58 * scale, max: 96 * scale },
-      { min: 18 * scale, max: 30 * scale },
-      { min: 7, max: 12 },
+      { min: 72 * scale, max: 112 * scale },
+      { min: 24 * scale, max: 38 * scale },
+      { min: 5, max: 8 },
       14,
       random() > 0.5 ? 0 : Math.PI * 0.5
     );
   }
 
   const occlusionPhase = random() * Math.PI * 2;
-  const sectorScreenCount = scaledCount(6, relief.occlusionFeatureCountScale, 1);
+  const sectorScreenCount = scaledCount(4, relief.occlusionFeatureCountScale, 1);
   for (let index = 0; index < sectorScreenCount; index++) {
     const angle = occlusionPhase + (index / sectorScreenCount) * Math.PI * 2;
     const radialDistance = baseRadius * lerp(0.36, 0.54, random());
@@ -1157,15 +1159,15 @@ function createTerrainFeatures(
         x: Math.cos(angle) * radialDistance,
         z: Math.sin(angle) * radialDistance,
       },
-      lerp(112 * scale, 156 * scale, random()),
-      lerp(22 * scale, 34 * scale, random()),
+      lerp(96 * scale, 136 * scale, random()),
+      lerp(28 * scale, 42 * scale, random()),
       angle,
-      lerp(30, 44, random()),
+      lerp(16, 26, random()),
       Math.imul(index + 11, 0x5bd1e995)
     );
   }
 
-  const horizonBreakCount = scaledCount(6, relief.occlusionFeatureCountScale, 1);
+  const horizonBreakCount = scaledCount(4, relief.occlusionFeatureCountScale, 1);
   for (let index = 0; index < horizonBreakCount; index++) {
     const angle = occlusionPhase + Math.PI / 6 + (index / horizonBreakCount) * Math.PI * 2;
     const radialDistance = baseRadius * lerp(0.52, 0.76, random());
@@ -1175,15 +1177,15 @@ function createTerrainFeatures(
         x: Math.cos(angle) * radialDistance,
         z: Math.sin(angle) * radialDistance,
       },
-      lerp(98 * scale, 132 * scale, random()),
-      lerp(20 * scale, 32 * scale, random()),
+      lerp(86 * scale, 118 * scale, random()),
+      lerp(26 * scale, 40 * scale, random()),
       angle + Math.PI * 0.5,
-      lerp(28, 40, random()),
+      lerp(15, 24, random()),
       Math.imul(index + 29, 0x27d4eb2d)
     );
   }
 
-  const midfieldLipCount = scaledCount(8, relief.occlusionFeatureCountScale, 1);
+  const midfieldLipCount = scaledCount(5, relief.occlusionFeatureCountScale, 1);
   for (let index = 0; index < midfieldLipCount; index++) {
     const angle = occlusionPhase + Math.PI / 8 + (index / midfieldLipCount) * Math.PI * 2;
     addOcclusionRidge(
@@ -1192,10 +1194,10 @@ function createTerrainFeatures(
         x: Math.cos(angle) * baseRadius * lerp(0.24, 0.36, random()),
         z: Math.sin(angle) * baseRadius * lerp(0.24, 0.36, random()),
       },
-      lerp(68 * scale, 96 * scale, random()),
-      lerp(18 * scale, 28 * scale, random()),
+      lerp(62 * scale, 88 * scale, random()),
+      lerp(22 * scale, 34 * scale, random()),
       angle + Math.PI * 0.5,
-      lerp(21, 32, random()),
+      lerp(12, 20, random()),
       Math.imul(index + 37, 0x85ebca6b)
     );
   }
@@ -1210,7 +1212,7 @@ function createTerrainFeatures(
     ))
     .filter((pair) => pair.distance >= baseRadius * 0.62)
     .sort((a, b) => b.distance - a.distance);
-  const districtScreenLimit = Math.min(scaledCount(38, relief.occlusionFeatureCountScale, 5), districtPairs.length);
+  const districtScreenLimit = Math.min(scaledCount(24, relief.occlusionFeatureCountScale, 3), districtPairs.length);
   for (let index = 0; index < districtScreenLimit; index++) {
     const { a, b, distance } = districtPairs[index];
     const openAreaPair = a.kind === 'wildland' || a.kind === 'open_field' ||
@@ -1222,15 +1224,15 @@ function createTerrainFeatures(
     addOcclusionRidge(
       `district_screen_${index + 1}`,
       offsetMidpoint,
-      clamp(distance * lerp(openAreaPair ? 0.2 : 0.18, openAreaPair ? 0.3 : 0.26, random()), 52 * scale, (openAreaPair ? 104 : 88) * scale),
-      lerp((openAreaPair ? 22 : 18) * scale, (openAreaPair ? 36 : 30) * scale, random()),
+      clamp(distance * lerp(openAreaPair ? 0.18 : 0.16, openAreaPair ? 0.26 : 0.23, random()), 48 * scale, (openAreaPair ? 92 : 78) * scale),
+      lerp((openAreaPair ? 26 : 22) * scale, (openAreaPair ? 42 : 36) * scale, random()),
       Math.atan2(normal.z, normal.x),
-      lerp(openAreaPair ? 30 : 25, openAreaPair ? 44 : 38, random()),
+      lerp(openAreaPair ? 15 : 13, openAreaPair ? 26 : 22, random()),
       Math.imul(index + 73, 0xc2b2ae35)
     );
   }
 
-  const outerBowlCount = scaledCount(4, relief.occlusionFeatureCountScale, 1);
+  const outerBowlCount = scaledCount(3, relief.occlusionFeatureCountScale, 1);
   for (let index = 0; index < outerBowlCount; index++) {
     const angle = occlusionPhase + Math.PI / 4 + (index / outerBowlCount) * Math.PI * 2;
     addOcclusionRidge(
@@ -1239,10 +1241,10 @@ function createTerrainFeatures(
         x: Math.cos(angle) * baseRadius * 0.82,
         z: Math.sin(angle) * baseRadius * 0.82,
       },
-      lerp(76 * scale, 104 * scale, random()),
-      lerp(20 * scale, 32 * scale, random()),
+      lerp(70 * scale, 96 * scale, random()),
+      lerp(26 * scale, 40 * scale, random()),
       angle + Math.PI * 0.5,
-      lerp(26, 38, random()),
+      lerp(14, 23, random()),
       Math.imul(index + 43, 0x165667b1)
     );
   }
@@ -1263,13 +1265,13 @@ function createTerrainFeatures(
     addOcclusionRidge(
       `spawn_separator_${index + 1}`,
       midpoint,
-      lerp(48 * scale, 68 * scale, random()),
-      lerp(16 * scale, 24 * scale, random()),
+      lerp(54 * scale, 74 * scale, random()),
+      lerp(24 * scale, 36 * scale, random()),
       radialAngle,
-      lerp(15, 25, random()),
+      lerp(15, 23, random()),
       Math.imul(index + 61, 0x9e3779b1),
-      Math.max(0.68, relief.occlusionFeatureAmplitudeScale),
-      10
+      Math.max(0.62, relief.occlusionFeatureAmplitudeScale),
+      9
     );
   }
 
@@ -1286,57 +1288,57 @@ const POI_ROLE_SPECS: Record<
   }
 > = {
   highrise: {
-    radius: { min: 6.5, max: 10 },
-    heightRows: { min: 16, max: 24 },
-    flattenOffsetRows: { min: 5, max: 9 },
+    radius: { min: 5.8, max: 8.5 },
+    heightRows: { min: 12, max: 17 },
+    flattenOffsetRows: { min: 4, max: 7 },
     clearance: 20,
   },
   compound: {
-    radius: { min: 10, max: 15 },
-    heightRows: { min: 10, max: 16 },
-    flattenOffsetRows: { min: 3, max: 6 },
+    radius: { min: 8.5, max: 12.5 },
+    heightRows: { min: 7, max: 11 },
+    flattenOffsetRows: { min: 2, max: 5 },
     clearance: 22,
   },
   hangar: {
-    radius: { min: 9, max: 14 },
-    heightRows: { min: 8, max: 14 },
+    radius: { min: 8, max: 12 },
+    heightRows: { min: 6, max: 10 },
     flattenOffsetRows: { min: 1, max: 4 },
     clearance: 20,
   },
   relay: {
-    radius: { min: 5.5, max: 8.5 },
-    heightRows: { min: 10, max: 16 },
-    flattenOffsetRows: { min: 3, max: 7 },
+    radius: { min: 4.8, max: 7.2 },
+    heightRows: { min: 8, max: 12 },
+    flattenOffsetRows: { min: 2, max: 5 },
     clearance: 17,
   },
   watchtower: {
-    radius: { min: 5.5, max: 8 },
-    heightRows: { min: 8, max: 12 },
-    flattenOffsetRows: { min: 2, max: 5 },
+    radius: { min: 4.6, max: 6.8 },
+    heightRows: { min: 6, max: 9 },
+    flattenOffsetRows: { min: 1, max: 4 },
     clearance: 16,
   },
   bunker: {
-    radius: { min: 8, max: 12 },
-    heightRows: { min: 8, max: 15 },
+    radius: { min: 7, max: 10 },
+    heightRows: { min: 6, max: 10 },
     flattenOffsetRows: { min: 1, max: 4 },
     clearance: 18,
   },
   depot: {
-    radius: { min: 6, max: 10 },
-    heightRows: { min: 6, max: 12 },
+    radius: { min: 5.2, max: 8.4 },
+    heightRows: { min: 4, max: 8 },
     flattenOffsetRows: { min: 0, max: 3 },
     clearance: 16,
   },
 };
 
 const DISTRICT_POI_PLANS: Record<DistrictKind, Array<Exclude<PoiRole, 'citadel'>>> = {
-  city_core: ['highrise', 'highrise', 'highrise', 'compound', 'compound', 'relay', 'compound', 'depot', 'watchtower', 'bunker'],
-  town: ['compound', 'compound', 'depot', 'depot', 'watchtower', 'bunker'],
-  industrial: ['hangar', 'hangar', 'depot', 'depot', 'relay', 'bunker', 'compound'],
-  hamlet: ['depot', 'bunker', 'compound'],
-  outpost: ['watchtower', 'watchtower', 'bunker', 'relay', 'depot'],
-  open_field: ['watchtower', 'depot'],
-  wildland: ['watchtower', 'bunker'],
+  city_core: ['highrise', 'highrise', 'compound', 'relay', 'depot', 'bunker'],
+  town: ['compound', 'depot', 'watchtower', 'bunker'],
+  industrial: ['hangar', 'depot', 'relay', 'bunker'],
+  hamlet: ['depot', 'bunker'],
+  outpost: ['watchtower', 'relay', 'bunker'],
+  open_field: ['depot'],
+  wildland: ['watchtower'],
 };
 
 const LOCATION_NAME_PARTS: Record<DistrictKind, { prefixes: string[]; suffixes: string[]; kind: MapNamedLocationKind; priority: number }> = {
@@ -1402,21 +1404,21 @@ function createPois(
     id: 'center_citadel',
     role: 'citadel',
     position: { x: center.x, y: 0, z: center.z },
-    radius: 19,
-    heightRows: 26,
-    flattenRows: BASE_TERRAIN_ROWS + 6,
+    radius: 16,
+    heightRows: 18,
+    flattenRows: BASE_TERRAIN_ROWS + 5,
     rotation: cityDistrict?.rotation ?? random() * Math.PI * 2,
     variant: Math.floor(random() * 4),
     districtId: cityDistrict?.id,
   }];
   const flattenZones: FlattenZone[] = [{
     center,
-    radius: 28,
-    rows: BASE_TERRAIN_ROWS + 5,
+    radius: 25,
+    rows: BASE_TERRAIN_ROWS + 4,
     strength: 0.95,
-    maxLowerRows: 18,
+    maxLowerRows: 14,
   }];
-  protectedPositions.push({ x: center.x, z: center.z, radius: 24 });
+  protectedPositions.push({ x: center.x, z: center.z, radius: 22 });
 
   let id = 0;
   const placePoi = (district: BattleRoyalDistrict, role: Exclude<PoiRole, 'citadel'>, slotIndex: number): void => {
@@ -1576,9 +1578,9 @@ function createPowerups(
   const city = settlementAnchors.find((anchor) => anchor.kind === 'city_core') ?? settlementAnchors[0];
   for (let index = 0; index < 4 && city; index++) {
     const angle = (index / 4) * Math.PI * 2 + random() * 0.2;
-      const anchor = {
-        ...city,
-        position: {
+    const anchor = {
+      ...city,
+      position: {
         x: city.position.x + Math.cos(angle) * 11,
         y: 0,
         z: city.position.z + Math.sin(angle) * 11,
@@ -1687,7 +1689,7 @@ function createCoverPieces(
     clearance = 2.8
   ): boolean => {
     const point = clampPointToBoundary(position, boundary, 2.5);
-    if (!isClearOfCircles(point, protectedCircles, clearance, 0.32)) return false;
+    if (!isClearOfCircles(point, protectedCircles, clearance, 0.48)) return false;
     protectedCircles.push({
       x: point.x,
       z: point.z,
@@ -1707,13 +1709,13 @@ function createCoverPieces(
 
   for (const district of districts) {
     const coverCountByKind: Record<DistrictKind, number> = {
-      city_core: 26,
-      town: 16,
-      industrial: 22,
-      hamlet: 8,
-      outpost: 11,
-      open_field: 8,
-      wildland: 12,
+      city_core: 16,
+      town: 10,
+      industrial: 13,
+      hamlet: 5,
+      outpost: 7,
+      open_field: 4,
+      wildland: 6,
     };
     const coverCount = coverCountByKind[district.kind];
     for (let index = 0; index < coverCount; index++) {
@@ -1740,13 +1742,13 @@ function createCoverPieces(
           role,
           point,
           {
-            x: lerp(1.2, 3.8, random()) * scale,
-            z: lerp(0.45, 1.45, random()) * (role === 'natural' ? 1.2 : 1),
+            x: lerp(1, 3.1, random()) * scale,
+            z: lerp(0.4, 1.18, random()) * (role === 'natural' ? 1.15 : 1),
           },
-          Math.floor(lerp(role === 'natural' ? 2 : 3, district.kind === 'city_core' ? 8 : 6, random())),
+          Math.floor(lerp(role === 'natural' ? 2 : 3, district.kind === 'city_core' ? 6 : 5, random())),
           material,
           district.rotation + random() * Math.PI,
-          role === 'natural' ? 2.4 : 1.6
+          role === 'natural' ? 3 : 2.35
         );
         if (placed) break;
       }
@@ -1758,11 +1760,11 @@ function createCoverPieces(
       const start = segment.points[pointIndex - 1];
       const end = segment.points[pointIndex];
       const length = distance2D(start, end);
-      const samples = Math.max(1, Math.floor(length / 32));
+      const samples = Math.max(1, Math.floor(length / 44));
       const direction = normalize2D({ x: end.x - start.x, z: end.z - start.z });
       const normal = { x: -direction.z, z: direction.x };
       for (let sample = 0; sample < samples; sample++) {
-        if (random() < (segment.kind === 'primary' ? 0.22 : 0.34)) continue;
+        if (random() < (segment.kind === 'primary' ? 0.48 : 0.58)) continue;
         const t = (sample + 0.5 + random() * 0.24) / samples;
         const center = lerpPoint2D(start, end, clamp(t, 0, 1));
         const side = random() > 0.5 ? 1 : -1;
@@ -1771,11 +1773,11 @@ function createCoverPieces(
         addCover(
           'roadside',
           add2D(center, normal, offset),
-          { x: lerp(1.4, 3.8, random()), z: lerp(0.6, 1.7, random()) },
-          Math.floor(lerp(2, segment.kind === 'primary' ? 6 : 5, random())),
+          { x: lerp(1.2, 3.1, random()), z: lerp(0.5, 1.35, random()) },
+          Math.floor(lerp(2, segment.kind === 'primary' ? 5 : 4, random())),
           materialRoll > 0.72 ? 'metal' : 'terrain',
           Math.atan2(direction.z, direction.x) + lerp(-0.4, 0.4, random()),
-          2.4
+          3
         );
       }
     }
@@ -1791,11 +1793,11 @@ function createCoverPieces(
           x: spawn.center.x + facing.x * 5.4 + tangent.x * side * 5.6,
           z: spawn.center.z + facing.z * 5.4 + tangent.z * side * 5.6,
         },
-        { x: 2.3, z: 0.8 },
-        4,
+        { x: 2.1, z: 0.75 },
+        3,
         'metal',
         Math.atan2(facing.z, facing.x),
-        1
+        1.25
       );
     }
   }
@@ -2365,7 +2367,7 @@ function stampNaturalMountainRidge(
         1.06,
         fractalNoise2(noiseSeed, worldX * 0.035, worldZ * 0.035, 3)
       );
-      const localHeightRows = Math.round(heightRows * lengthFade * widthFade * roughness);
+      const localHeightRows = Math.round(heightRows * NATURAL_RIDGE_HEIGHT_SCALE * lengthFade * widthFade * roughness);
       if (localHeightRows < 3) continue;
 
       stampColumn(layout, blocks, x, z, localHeightRows, block);
@@ -2461,9 +2463,9 @@ function stampSightlineMountainRidge(
   }
 
   clampedCenter ??= clampPointToBoundary(add2D(lerpPoint2D(pair.from, pair.to, baseT), normal, offsetSign * offsetMagnitude), layout.boundary, 5);
-  const length = clamp(pair.distance * lerp(0.38, 0.54, unitFromSeed(salt ^ 0x85ebca6b)), 72, 132);
-  const thickness = lerp(24, 38, unitFromSeed(salt ^ 0xc2b2ae35));
-  const heightRows = Math.max(10, Math.round(clamp(pair.distance * 0.18, 44, 68) * relief.sightlineRepairAmplitudeScale));
+  const length = clamp(pair.distance * lerp(0.34, 0.48, unitFromSeed(salt ^ 0x85ebca6b)), 64, 116);
+  const thickness = lerp(30, 46, unitFromSeed(salt ^ 0xc2b2ae35));
+  const heightRows = Math.max(7, Math.round(clamp(pair.distance * 0.13, 26, 44) * relief.sightlineRepairAmplitudeScale));
 
   stampNaturalMountainRidge(
     layout,
@@ -2713,11 +2715,11 @@ function stampStrategicLandmarkRelief(
       clamp(district.influenceRadius * 1.9, 74, 128),
       lerp(24, 36, unitFromSeed(salt ^ 0xc2b2ae35)),
       Math.max(
-        10,
+        7,
         Math.round(
           lerp(
-            district.kind === 'wildland' ? 64 : 58,
-            district.kind === 'wildland' ? 84 : 76,
+            district.kind === 'wildland' ? 30 : 26,
+            district.kind === 'wildland' ? 48 : 42,
             unitFromSeed(salt ^ 0x85ebca6b)
           ) * layout.terrainRelief.landmarkScreenAmplitudeScale
         )
@@ -2785,8 +2787,8 @@ function stampStrategicLandmarkRelief(
       blocks,
       center,
       clamp(pair.distance * lerp(0.38, 0.5, unitFromSeed(salt ^ 0x85ebca6b)), 74, 132),
-      lerp(22, 34, unitFromSeed(salt ^ 0xc2b2ae35)),
-      Math.max(10, Math.round(clamp(pair.distance * 0.21, 56, 82) * layout.terrainRelief.landmarkScreenAmplitudeScale)),
+      lerp(28, 42, unitFromSeed(salt ^ 0xc2b2ae35)),
+      Math.max(7, Math.round(clamp(pair.distance * 0.14, 30, 48) * layout.terrainRelief.landmarkScreenAmplitudeScale)),
       block,
       Math.atan2(normal.z, normal.x),
       salt ^ 0x7f4a7c15
@@ -3278,11 +3280,11 @@ function createDiagnostics(input: {
     laneWidths,
     routeChoiceCount: input.routeGraph.edges.length,
     coverDensityByLane: {
-      [ROAD_LANE_PRIMARY]: 0.54,
-      [ROAD_LANE_OUTER]: 0.58,
-      [ROAD_LANE_LOOP]: 0.5,
-      [ROAD_LANE_SETTLEMENT]: 0.68,
-      [ROAD_LANE_WILD]: 0.42,
+      [ROAD_LANE_PRIMARY]: 0.34,
+      [ROAD_LANE_OUTER]: 0.36,
+      [ROAD_LANE_LOOP]: 0.32,
+      [ROAD_LANE_SETTLEMENT]: 0.42,
+      [ROAD_LANE_WILD]: 0.26,
     },
     maxSightlineLength: sightlineMetrics.maxSightlineLength,
     spawnVisibilityPairs: sightlineMetrics.spawnVisibilityPairs,
@@ -3542,11 +3544,11 @@ export function generateBattleRoyalVoxelMap(
     };
   };
   const lanes: LaneDescriptor[] = [
-    createLane(ROAD_LANE_PRIMARY, 'Primary Roads', 'primary', 0.54, { minY: 3, maxY: 34 }),
-    createLane(ROAD_LANE_OUTER, 'Outer Rotations', 'flank', 0.58, { minY: 3, maxY: 30 }),
-    createLane(ROAD_LANE_LOOP, 'Settlement Loop', 'flank', 0.5, { minY: 3, maxY: 30 }),
-    createLane(ROAD_LANE_SETTLEMENT, 'Settlement Paths', 'access', 0.68, { minY: 4, maxY: 38 }),
-    createLane(ROAD_LANE_WILD, 'Wildland Routes', 'access', 0.42, { minY: 3, maxY: 32 }),
+    createLane(ROAD_LANE_PRIMARY, 'Primary Roads', 'primary', 0.34, { minY: 3, maxY: 26 }),
+    createLane(ROAD_LANE_OUTER, 'Outer Rotations', 'flank', 0.36, { minY: 3, maxY: 24 }),
+    createLane(ROAD_LANE_LOOP, 'Settlement Loop', 'flank', 0.32, { minY: 3, maxY: 24 }),
+    createLane(ROAD_LANE_SETTLEMENT, 'Settlement Paths', 'access', 0.42, { minY: 4, maxY: 30 }),
+    createLane(ROAD_LANE_WILD, 'Wildland Routes', 'access', 0.26, { minY: 3, maxY: 24 }),
   ].filter((lane) => lane.nodeIds.length > 0);
   const bases: TeamMap<BaseZone> = {};
   const flags: TeamMap<FlagZone> = {};

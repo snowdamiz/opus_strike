@@ -1,4 +1,4 @@
-import type { PlayerRewardStatus, Prisma } from '@prisma/client';
+import type { PlayerRewardSettings, PlayerRewardStatus, Prisma } from '@prisma/client';
 import type { MatchMode, RankedSeasonMode, Team } from '@voxel-strike/shared';
 import type { AntiCheatIntegrityGate } from '../anticheat';
 import prisma from '../db';
@@ -15,30 +15,43 @@ import {
   type PlayerRewardRuntimeConfig,
 } from './config';
 import { getRankedSeason } from '../ranking/seasonService';
+import {
+  RankedBrRewardAccumulator,
+  computeRankedBrDynamicMatchPoolLamports,
+  type RankedBrCombatGrant,
+} from './rankedBrCombatRewards';
+import {
+  computeMinimumPayoutLamports,
+  solUsdPriceService,
+  type SolUsdPriceQuoteSnapshot,
+  type SolUsdPriceQuote,
+} from './solPrice';
 
 export interface CreateMatchPlayerRewardsInput {
   matchId: string;
   roomId: string;
   lobbyId: string | null;
   matchMode: MatchMode;
+  gameplayMode?: string;
   startedAt: Date;
   endedAt: Date;
   winningTeam: Team | null;
   participants: MatchParticipantSnapshot[];
   rankedEligible: boolean;
   integrityGate: AntiCheatIntegrityGate;
+  rankedBrCombatGrants?: RankedBrCombatGrant[];
 }
 
 export interface PlayerRewardGrant {
   userId: string;
   matchId: string | null;
   playerSessionId: string | null;
-  kind: 'daily_ranked_drip' | 'objective_bounty' | 'season_top_10';
+  kind: 'daily_ranked_drip' | 'objective_bounty' | 'season_top_10' | 'ranked_br_combat_bounty';
   amountLamports: bigint;
   idempotencyKey: string;
   reason: string;
   priority: number;
-  metadata: Record<string, string | number | boolean | null>;
+  metadata: Record<string, unknown>;
 }
 
 export interface MatchRewardBuildInput extends CreateMatchPlayerRewardsInput {
@@ -79,8 +92,32 @@ export interface PlayerRewardAutoPayoutResult {
   totalLamports: string;
 }
 
+export interface PendingPlayerRewardPayoutGroup {
+  userId: string;
+  walletAddress: string;
+  rewardIds: string[];
+  amountLamports: bigint;
+  firstCreatedAt: Date;
+}
+
+export interface PendingPlayerRewardForPayout {
+  id: string;
+  userId: string;
+  amountLamports: bigint;
+  createdAt: Date;
+  user: {
+    walletAddress: string | null;
+  };
+}
+
+export interface RankedBrRewardAccumulatorInit {
+  accumulator: RankedBrRewardAccumulator;
+  config: PlayerRewardRuntimeConfig;
+}
+
 export interface PlayerRewardSettingsSnapshot {
   enabled: boolean;
+  settingsVersion: number;
   dailyRankedDripLamports: string;
   dailyRankedDripMaxMatches: number;
   minMatchDurationMs: number;
@@ -92,17 +129,32 @@ export interface PlayerRewardSettingsSnapshot {
   maxMatchPayoutLamports: string;
   treasuryReserveLamports: string;
   payoutBatchSize: number;
+  rankedBrCombatRewardsEnabled: boolean;
+  rankedBrCombatRewardsShadowMode: boolean;
+  rankedBrDamageLamportsPerHp: string;
+  rankedBrKillLamports: string;
+  rankedBrBotTargetRewardBps: number;
+  rankedBrSourceVictimDamageCapHp: number;
+  rankedBrMaxPlayerMatchLamports: string;
+  rankedBrMaxPlayerDailyLamports: string;
+  rankedBrMaxMatchLamports: string;
+  rankedBrTreasuryExposureBps: number;
+  rankedBrClientRewardTextMinLamports: string;
+  minPayoutUsdCents: number;
+  payoutPriceQuoteTtlMs: number;
+  payoutPriceQuote: SolUsdPriceQuoteSnapshot | null;
   updatedByUserId: string | null;
   updatedAt: string | null;
 }
 
 export type PlayerRewardSettingsUpdate = Partial<Record<keyof Omit<
   PlayerRewardSettingsSnapshot,
-  'updatedByUserId' | 'updatedAt'
+  'settingsVersion' | 'payoutPriceQuote' | 'updatedByUserId' | 'updatedAt'
 >, unknown>>;
 
 const PLAYER_REWARD_SETTINGS_ID = 'default';
 const UNSIGNED_INTEGER_PATTERN = /^[0-9]+$/;
+const PLAYER_REWARD_SETTINGS_CACHE_TTL_MS = 5_000;
 
 function sumLamports(values: Iterable<bigint>): bigint {
   let total = 0n;
@@ -110,8 +162,12 @@ function sumLamports(values: Iterable<bigint>): bigint {
   return total;
 }
 
-function minBigint(a: bigint, b: bigint): bigint {
-  return a < b ? a : b;
+function minBigint(...values: bigint[]): bigint {
+  let min = values[0] ?? 0n;
+  for (const value of values) {
+    if (value < min) min = value;
+  }
+  return min;
 }
 
 function toUtcDateKey(date: Date): string {
@@ -149,6 +205,58 @@ function isCleanRankedRewardMatch(input: CreateMatchPlayerRewardsInput): boolean
     && input.integrityGate.status === 'clean'
     && !input.integrityGate.rankedHoldRequired
     && !input.integrityGate.reviewRequired;
+}
+
+export function buildPendingPlayerRewardPayoutGroups(
+  rewards: Iterable<PendingPlayerRewardForPayout>,
+  onInvalidWallet?: (input: {
+    userId: string;
+    rewardId: string;
+    walletAddress: string | null;
+    error: unknown;
+  }) => void
+): PendingPlayerRewardPayoutGroup[] {
+  const groups = new Map<string, PendingPlayerRewardPayoutGroup>();
+
+  for (const reward of rewards) {
+    const walletAddress = reward.user.walletAddress;
+    if (!walletAddress) continue;
+    try {
+      assertPublicKey(walletAddress, 'walletAddress');
+    } catch (error) {
+      onInvalidWallet?.({
+        userId: reward.userId,
+        rewardId: reward.id,
+        walletAddress,
+        error,
+      });
+      continue;
+    }
+
+    const key = `${reward.userId}:${walletAddress}`;
+    const group = groups.get(key) ?? {
+      userId: reward.userId,
+      walletAddress,
+      rewardIds: [],
+      amountLamports: 0n,
+      firstCreatedAt: reward.createdAt,
+    };
+    group.rewardIds.push(reward.id);
+    group.amountLamports += reward.amountLamports;
+    if (reward.createdAt < group.firstCreatedAt) group.firstCreatedAt = reward.createdAt;
+    groups.set(key, group);
+  }
+
+  return Array.from(groups.values());
+}
+
+export function isPendingPlayerRewardPayoutEligible(input: {
+  amountLamports: bigint;
+  minimumPayoutLamports: bigint;
+  force?: boolean;
+}): boolean {
+  if (input.amountLamports <= 0n) return false;
+  return input.force === true || input.amountLamports >= input.minimumPayoutLamports;
 }
 
 export function limitPlayerRewardGrantsToBudget(
@@ -262,6 +370,32 @@ export function buildMatchPlayerRewardGrants(input: MatchRewardBuildInput): Play
   return limitPlayerRewardGrantsToBudget(grants, config.maxMatchPayoutLamports);
 }
 
+export function buildRankedBrCombatPlayerRewardGrants(input: {
+  matchId: string;
+  roomId: string;
+  lobbyId: string | null;
+  grants: RankedBrCombatGrant[];
+}): PlayerRewardGrant[] {
+  return input.grants.flatMap((grant) => {
+    if (grant.amountLamports <= 0n) return [];
+    return [{
+      userId: grant.userId,
+      matchId: input.matchId,
+      playerSessionId: grant.playerSessionId,
+      kind: 'ranked_br_combat_bounty' as const,
+      amountLamports: grant.amountLamports,
+      idempotencyKey: `match:${input.matchId}:ranked_br_combat_bounty:${grant.userId}`,
+      reason: 'ranked_br_combat_bounty',
+      priority: 15,
+      metadata: {
+        ...grant.metadata,
+        roomId: input.roomId,
+        lobbyId: input.lobbyId,
+      },
+    }];
+  });
+}
+
 export function buildSeasonTopTenRewardGrants(input: {
   entries: SeasonTopTenEntry[];
   amountLamports: bigint;
@@ -324,11 +458,21 @@ function serializeReward(reward: {
   };
 }
 
+function serializeSolUsdPriceQuote(quote: SolUsdPriceQuote | null) {
+  if (!quote) return null;
+  return {
+    source: quote.source,
+    solUsdPriceMicroUsd: quote.solUsdPriceMicroUsd.toString(),
+    observedAt: quote.observedAt.toISOString(),
+  };
+}
+
 function playerRewardSettingsCreateData(updatedByUserId: string | null = null) {
   const config = getPlayerRewardRuntimeConfig();
   return {
     id: PLAYER_REWARD_SETTINGS_ID,
     enabled: config.enabled,
+    settingsVersion: config.settingsVersion,
     dailyRankedDripLamports: config.dailyRankedDripLamports,
     dailyRankedDripMaxMatches: config.dailyRankedDripMaxMatches,
     minMatchDurationMs: config.minMatchDurationMs,
@@ -340,12 +484,26 @@ function playerRewardSettingsCreateData(updatedByUserId: string | null = null) {
     maxMatchPayoutLamports: config.maxMatchPayoutLamports,
     treasuryReserveLamports: config.treasuryReserveLamports,
     payoutBatchSize: config.payoutBatchSize,
+    rankedBrCombatRewardsEnabled: config.rankedBrCombatRewardsEnabled,
+    rankedBrCombatRewardsShadowMode: config.rankedBrCombatRewardsShadowMode,
+    rankedBrDamageLamportsPerHp: config.rankedBrDamageLamportsPerHp,
+    rankedBrKillLamports: config.rankedBrKillLamports,
+    rankedBrBotTargetRewardBps: config.rankedBrBotTargetRewardBps,
+    rankedBrSourceVictimDamageCapHp: config.rankedBrSourceVictimDamageCapHp,
+    rankedBrMaxPlayerMatchLamports: config.rankedBrMaxPlayerMatchLamports,
+    rankedBrMaxPlayerDailyLamports: config.rankedBrMaxPlayerDailyLamports,
+    rankedBrMaxMatchLamports: config.rankedBrMaxMatchLamports,
+    rankedBrTreasuryExposureBps: config.rankedBrTreasuryExposureBps,
+    rankedBrClientRewardTextMinLamports: config.rankedBrClientRewardTextMinLamports,
+    minPayoutUsdCents: config.minPayoutUsdCents,
+    payoutPriceQuoteTtlMs: config.payoutPriceQuoteTtlMs,
     updatedByUserId,
   };
 }
 
 function runtimeConfigFromSettings(settings: {
   enabled: boolean;
+  settingsVersion: number;
   dailyRankedDripLamports: bigint;
   dailyRankedDripMaxMatches: number;
   minMatchDurationMs: number;
@@ -357,9 +515,23 @@ function runtimeConfigFromSettings(settings: {
   maxMatchPayoutLamports: bigint;
   treasuryReserveLamports: bigint;
   payoutBatchSize: number;
+  rankedBrCombatRewardsEnabled: boolean;
+  rankedBrCombatRewardsShadowMode: boolean;
+  rankedBrDamageLamportsPerHp: bigint;
+  rankedBrKillLamports: bigint;
+  rankedBrBotTargetRewardBps: number;
+  rankedBrSourceVictimDamageCapHp: number;
+  rankedBrMaxPlayerMatchLamports: bigint;
+  rankedBrMaxPlayerDailyLamports: bigint;
+  rankedBrMaxMatchLamports: bigint;
+  rankedBrTreasuryExposureBps: number;
+  rankedBrClientRewardTextMinLamports: bigint;
+  minPayoutUsdCents: number;
+  payoutPriceQuoteTtlMs: number;
 }): PlayerRewardRuntimeConfig {
   return {
     enabled: settings.enabled,
+    settingsVersion: settings.settingsVersion,
     dailyRankedDripLamports: settings.dailyRankedDripLamports,
     dailyRankedDripMaxMatches: settings.dailyRankedDripMaxMatches,
     minMatchDurationMs: settings.minMatchDurationMs,
@@ -371,11 +543,25 @@ function runtimeConfigFromSettings(settings: {
     maxMatchPayoutLamports: settings.maxMatchPayoutLamports,
     treasuryReserveLamports: settings.treasuryReserveLamports,
     payoutBatchSize: settings.payoutBatchSize,
+    rankedBrCombatRewardsEnabled: settings.rankedBrCombatRewardsEnabled,
+    rankedBrCombatRewardsShadowMode: settings.rankedBrCombatRewardsShadowMode,
+    rankedBrDamageLamportsPerHp: settings.rankedBrDamageLamportsPerHp,
+    rankedBrKillLamports: settings.rankedBrKillLamports,
+    rankedBrBotTargetRewardBps: settings.rankedBrBotTargetRewardBps,
+    rankedBrSourceVictimDamageCapHp: settings.rankedBrSourceVictimDamageCapHp,
+    rankedBrMaxPlayerMatchLamports: settings.rankedBrMaxPlayerMatchLamports,
+    rankedBrMaxPlayerDailyLamports: settings.rankedBrMaxPlayerDailyLamports,
+    rankedBrMaxMatchLamports: settings.rankedBrMaxMatchLamports,
+    rankedBrTreasuryExposureBps: settings.rankedBrTreasuryExposureBps,
+    rankedBrClientRewardTextMinLamports: settings.rankedBrClientRewardTextMinLamports,
+    minPayoutUsdCents: settings.minPayoutUsdCents,
+    payoutPriceQuoteTtlMs: settings.payoutPriceQuoteTtlMs,
   };
 }
 
 function serializePlayerRewardSettings(settings: {
   enabled: boolean;
+  settingsVersion: number;
   dailyRankedDripLamports: bigint;
   dailyRankedDripMaxMatches: number;
   minMatchDurationMs: number;
@@ -387,11 +573,25 @@ function serializePlayerRewardSettings(settings: {
   maxMatchPayoutLamports: bigint;
   treasuryReserveLamports: bigint;
   payoutBatchSize: number;
+  rankedBrCombatRewardsEnabled: boolean;
+  rankedBrCombatRewardsShadowMode: boolean;
+  rankedBrDamageLamportsPerHp: bigint;
+  rankedBrKillLamports: bigint;
+  rankedBrBotTargetRewardBps: number;
+  rankedBrSourceVictimDamageCapHp: number;
+  rankedBrMaxPlayerMatchLamports: bigint;
+  rankedBrMaxPlayerDailyLamports: bigint;
+  rankedBrMaxMatchLamports: bigint;
+  rankedBrTreasuryExposureBps: number;
+  rankedBrClientRewardTextMinLamports: bigint;
+  minPayoutUsdCents: number;
+  payoutPriceQuoteTtlMs: number;
   updatedByUserId: string | null;
   updatedAt: Date;
 }): PlayerRewardSettingsSnapshot {
   return {
     enabled: settings.enabled,
+    settingsVersion: settings.settingsVersion,
     dailyRankedDripLamports: settings.dailyRankedDripLamports.toString(),
     dailyRankedDripMaxMatches: settings.dailyRankedDripMaxMatches,
     minMatchDurationMs: settings.minMatchDurationMs,
@@ -403,6 +603,20 @@ function serializePlayerRewardSettings(settings: {
     maxMatchPayoutLamports: settings.maxMatchPayoutLamports.toString(),
     treasuryReserveLamports: settings.treasuryReserveLamports.toString(),
     payoutBatchSize: settings.payoutBatchSize,
+    rankedBrCombatRewardsEnabled: settings.rankedBrCombatRewardsEnabled,
+    rankedBrCombatRewardsShadowMode: settings.rankedBrCombatRewardsShadowMode,
+    rankedBrDamageLamportsPerHp: settings.rankedBrDamageLamportsPerHp.toString(),
+    rankedBrKillLamports: settings.rankedBrKillLamports.toString(),
+    rankedBrBotTargetRewardBps: settings.rankedBrBotTargetRewardBps,
+    rankedBrSourceVictimDamageCapHp: settings.rankedBrSourceVictimDamageCapHp,
+    rankedBrMaxPlayerMatchLamports: settings.rankedBrMaxPlayerMatchLamports.toString(),
+    rankedBrMaxPlayerDailyLamports: settings.rankedBrMaxPlayerDailyLamports.toString(),
+    rankedBrMaxMatchLamports: settings.rankedBrMaxMatchLamports.toString(),
+    rankedBrTreasuryExposureBps: settings.rankedBrTreasuryExposureBps,
+    rankedBrClientRewardTextMinLamports: settings.rankedBrClientRewardTextMinLamports.toString(),
+    minPayoutUsdCents: settings.minPayoutUsdCents,
+    payoutPriceQuoteTtlMs: settings.payoutPriceQuoteTtlMs,
+    payoutPriceQuote: solUsdPriceService.getCachedQuoteSnapshot(settings.payoutPriceQuoteTtlMs),
     updatedByUserId: settings.updatedByUserId,
     updatedAt: settings.updatedAt.toISOString(),
   };
@@ -495,8 +709,18 @@ function readBooleanUpdate(
 export class PlayerRewardService {
   private backgroundStarted = false;
   private backgroundTimers: ReturnType<typeof setInterval>[] = [];
+  private settingsRowCache: { value: PlayerRewardSettings; expiresAtMs: number } | null = null;
+
+  invalidateSettingsCache(): void {
+    this.settingsRowCache = null;
+  }
 
   private async getSettingsRow() {
+    const now = Date.now();
+    if (this.settingsRowCache && this.settingsRowCache.expiresAtMs > now) {
+      return this.settingsRowCache.value;
+    }
+
     return readSingletonAfterUniqueRace(
       () => prisma.playerRewardSettings.upsert({
         where: { id: PLAYER_REWARD_SETTINGS_ID },
@@ -506,7 +730,13 @@ export class PlayerRewardService {
       () => prisma.playerRewardSettings.findUnique({
         where: { id: PLAYER_REWARD_SETTINGS_ID },
       })
-    );
+    ).then((settings) => {
+      this.settingsRowCache = {
+        value: settings,
+        expiresAtMs: Date.now() + PLAYER_REWARD_SETTINGS_CACHE_TTL_MS,
+      };
+      return settings;
+    });
   }
 
   async getConfig(): Promise<PlayerRewardRuntimeConfig> {
@@ -527,6 +757,7 @@ export class PlayerRewardService {
       where: { id: PLAYER_REWARD_SETTINGS_ID },
       data: {
         enabled: readBooleanUpdate(settings, current.enabled, 'enabled'),
+        settingsVersion: { increment: 1 },
         dailyRankedDripLamports: readLamportUpdate(settings, current.dailyRankedDripLamports, 'dailyRankedDripLamports'),
         dailyRankedDripMaxMatches: readIntegerUpdate(settings, current.dailyRankedDripMaxMatches, 'dailyRankedDripMaxMatches', { min: 0, max: 100 }),
         minMatchDurationMs: readIntegerUpdate(settings, current.minMatchDurationMs, 'minMatchDurationMs', { min: 0 }),
@@ -538,27 +769,90 @@ export class PlayerRewardService {
         maxMatchPayoutLamports: readLamportUpdate(settings, current.maxMatchPayoutLamports, 'maxMatchPayoutLamports'),
         treasuryReserveLamports: readLamportUpdate(settings, current.treasuryReserveLamports, 'treasuryReserveLamports'),
         payoutBatchSize: readIntegerUpdate(settings, current.payoutBatchSize, 'payoutBatchSize', { min: 1, max: 500 }),
+        rankedBrCombatRewardsEnabled: readBooleanUpdate(settings, current.rankedBrCombatRewardsEnabled, 'rankedBrCombatRewardsEnabled'),
+        rankedBrCombatRewardsShadowMode: readBooleanUpdate(settings, current.rankedBrCombatRewardsShadowMode, 'rankedBrCombatRewardsShadowMode'),
+        rankedBrDamageLamportsPerHp: readLamportUpdate(settings, current.rankedBrDamageLamportsPerHp, 'rankedBrDamageLamportsPerHp'),
+        rankedBrKillLamports: readLamportUpdate(settings, current.rankedBrKillLamports, 'rankedBrKillLamports'),
+        rankedBrBotTargetRewardBps: readIntegerUpdate(settings, current.rankedBrBotTargetRewardBps, 'rankedBrBotTargetRewardBps', { min: 0, max: 10_000 }),
+        rankedBrSourceVictimDamageCapHp: readIntegerUpdate(settings, current.rankedBrSourceVictimDamageCapHp, 'rankedBrSourceVictimDamageCapHp', { min: 0, max: 100_000 }),
+        rankedBrMaxPlayerMatchLamports: readLamportUpdate(settings, current.rankedBrMaxPlayerMatchLamports, 'rankedBrMaxPlayerMatchLamports'),
+        rankedBrMaxPlayerDailyLamports: readLamportUpdate(settings, current.rankedBrMaxPlayerDailyLamports, 'rankedBrMaxPlayerDailyLamports'),
+        rankedBrMaxMatchLamports: readLamportUpdate(settings, current.rankedBrMaxMatchLamports, 'rankedBrMaxMatchLamports'),
+        rankedBrTreasuryExposureBps: readIntegerUpdate(settings, current.rankedBrTreasuryExposureBps, 'rankedBrTreasuryExposureBps', { min: 0, max: 100 }),
+        rankedBrClientRewardTextMinLamports: readLamportUpdate(settings, current.rankedBrClientRewardTextMinLamports, 'rankedBrClientRewardTextMinLamports'),
+        minPayoutUsdCents: readIntegerUpdate(settings, current.minPayoutUsdCents, 'minPayoutUsdCents', { min: 1, max: 1_000_000 }),
+        payoutPriceQuoteTtlMs: readIntegerUpdate(settings, current.payoutPriceQuoteTtlMs, 'payoutPriceQuoteTtlMs', { min: 1_000, max: 3_600_000 }),
         updatedByUserId: updatedByUserId ?? null,
       },
     });
 
+    this.invalidateSettingsCache();
     return serializePlayerRewardSettings(updated);
+  }
+
+  async createRankedBrRewardAccumulator(input: {
+    matchId: string;
+    roomId: string;
+    lobbyId: string | null;
+    userIds: string[];
+    now?: Date;
+  }): Promise<RankedBrRewardAccumulatorInit> {
+    const config = await this.getConfig();
+    const now = input.now ?? new Date();
+    const day = getUtcDayRange(now);
+    const [dailyTotalsByUserId, availableTreasuryLamports] = await Promise.all([
+      this.getDailyRankedBrRewardTotalsByUserId(input.userIds, day.start, day.end),
+      this.getTreasuryAvailableBudgetLamports(config),
+    ]);
+    const matchPoolLamports = computeRankedBrDynamicMatchPoolLamports({
+      availableTreasuryLamports,
+      maxMatchLamports: config.rankedBrMaxMatchLamports,
+      treasuryExposureBps: config.rankedBrTreasuryExposureBps,
+    });
+
+    return {
+      config,
+      accumulator: new RankedBrRewardAccumulator({
+        matchId: input.matchId,
+        roomId: input.roomId,
+        lobbyId: input.lobbyId,
+        dailyTotalsByUserId,
+        matchPoolLamports,
+      }),
+    };
   }
 
   async createMatchRewards(input: CreateMatchPlayerRewardsInput): Promise<PlayerRewardCreationResult> {
     const config = await this.getConfig();
-    if (!config.enabled) {
+    const rankedBrRequestedGrants = isCleanRankedRewardMatch(input) && input.gameplayMode === 'battle_royal'
+      ? buildRankedBrCombatPlayerRewardGrants({
+        matchId: input.matchId,
+        roomId: input.roomId,
+        lobbyId: input.lobbyId,
+        grants: input.rankedBrCombatGrants ?? [],
+      })
+      : [];
+
+    if (!config.enabled && rankedBrRequestedGrants.length === 0) {
       return { createdCount: 0, totalLamports: '0', requestedLamports: '0', skippedReason: 'disabled' };
     }
 
     const userIds = Array.from(new Set(input.participants.map((participant) => participant.userId)));
     const day = getUtcDayRange(input.endedAt);
     const dailyRewardCountsByUserId = await this.getDailyRewardCountsByUserId(userIds, day.start, day.end);
-    const requestedGrants = buildMatchPlayerRewardGrants({
-      ...input,
+    const matchRequestedGrants = config.enabled
+      ? buildMatchPlayerRewardGrants({
+        ...input,
+        config,
+        dailyRewardCountsByUserId,
+      })
+      : [];
+    const rankedBrCombatGrants = await this.limitRankedBrCombatGrantsToFinalCaps(
+      rankedBrRequestedGrants,
       config,
-      dailyRewardCountsByUserId,
-    });
+      input.endedAt
+    );
+    const requestedGrants = [...matchRequestedGrants, ...rankedBrCombatGrants];
     const requestedLamports = sumLamports(requestedGrants.map((grant) => grant.amountLamports));
     if (requestedGrants.length === 0 || requestedLamports <= 0n) {
       return { createdCount: 0, totalLamports: '0', requestedLamports: requestedLamports.toString(), skippedReason: 'no_rewards' };
@@ -744,7 +1038,8 @@ export class PlayerRewardService {
   }
 
   async getUserRewardSummary(userId: string) {
-    const [totals, rewards, payouts] = await Promise.all([
+    const [config, totals, rewards, payouts] = await Promise.all([
+      this.getConfig(),
       prisma.playerReward.groupBy({
         by: ['status'],
         where: { userId },
@@ -777,6 +1072,9 @@ export class PlayerRewardService {
           status: true,
           signature: true,
           walletAddress: true,
+          priceSource: true,
+          solUsdPriceMicroUsd: true,
+          priceObservedAt: true,
           createdAt: true,
           submittedAt: true,
           confirmedAt: true,
@@ -785,6 +1083,19 @@ export class PlayerRewardService {
         },
       }),
     ]);
+    const pendingLamports = totals.find((row) => row.status === 'pending')?._sum.amountLamports ?? 0n;
+    const priceQuote = await solUsdPriceService.getFreshQuote(config.payoutPriceQuoteTtlMs);
+    const minimumPayoutLamports = priceQuote
+      ? computeMinimumPayoutLamports(config.minPayoutUsdCents, priceQuote.solUsdPriceMicroUsd)
+      : null;
+    const remainingLamports = minimumPayoutLamports === null
+      ? null
+      : pendingLamports >= minimumPayoutLamports
+        ? 0n
+        : minimumPayoutLamports - pendingLamports;
+    const progressBps = minimumPayoutLamports === null || minimumPayoutLamports <= 0n
+      ? null
+      : Number(minBigint(10_000n, pendingLamports * 10_000n / minimumPayoutLamports));
 
     return {
       totals: Object.fromEntries(totals.map((row) => [
@@ -794,6 +1105,14 @@ export class PlayerRewardService {
           count: row._count._all,
         },
       ])),
+      payoutProgress: {
+        minPayoutUsdCents: config.minPayoutUsdCents,
+        pendingLamports: pendingLamports.toString(),
+        minimumPayoutLamports: minimumPayoutLamports?.toString() ?? null,
+        remainingLamports: remainingLamports?.toString() ?? null,
+        progressBps,
+        priceQuote: serializeSolUsdPriceQuote(priceQuote),
+      },
       rewards: rewards.map(serializeReward),
       payouts: payouts.map((payout) => ({
         id: payout.id,
@@ -801,6 +1120,9 @@ export class PlayerRewardService {
         status: payout.status,
         signature: payout.signature,
         walletAddress: payout.walletAddress,
+        priceSource: payout.priceSource,
+        solUsdPriceMicroUsd: payout.solUsdPriceMicroUsd?.toString() ?? null,
+        priceObservedAt: payout.priceObservedAt?.toISOString() ?? null,
         createdAt: payout.createdAt.toISOString(),
         submittedAt: payout.submittedAt?.toISOString() ?? null,
         confirmedAt: payout.confirmedAt?.toISOString() ?? null,
@@ -812,25 +1134,43 @@ export class PlayerRewardService {
 
   async payPendingRewards(options: {
     idempotencyKeys?: string[];
+    userIds?: string[];
     limit?: number;
+    force?: boolean;
   } = {}): Promise<PlayerRewardAutoPayoutResult> {
     const config = await this.getConfig();
     const empty = { payoutCount: 0, rewardCount: 0, totalLamports: '0' };
     if (!config.enabled || !this.hasSettlementSigner()) return empty;
 
+    let candidateUserIds: string[] | null = options.userIds?.length
+      ? Array.from(new Set(options.userIds))
+      : null;
+    if (options.idempotencyKeys?.length) {
+      const seedRewards = await prisma.playerReward.findMany({
+        where: {
+          status: 'pending',
+          idempotencyKey: { in: options.idempotencyKeys },
+        },
+        select: { userId: true },
+      });
+      const seedUserIds = Array.from(new Set(seedRewards.map((reward) => reward.userId)));
+      candidateUserIds = candidateUserIds
+        ? candidateUserIds.filter((userId) => seedUserIds.includes(userId))
+        : seedUserIds;
+      if (candidateUserIds.length === 0) return empty;
+    }
+
     const rewards = await prisma.playerReward.findMany({
       where: {
         status: 'pending',
-        ...(options.idempotencyKeys?.length
-          ? { idempotencyKey: { in: options.idempotencyKeys } }
-          : {}),
+        ...(candidateUserIds?.length ? { userId: { in: candidateUserIds } } : {}),
       },
       orderBy: { createdAt: 'asc' },
-      take: options.limit ?? config.payoutBatchSize,
       select: {
         id: true,
         userId: true,
         amountLamports: true,
+        createdAt: true,
         user: {
           select: {
             walletAddress: true,
@@ -840,45 +1180,47 @@ export class PlayerRewardService {
     });
     if (rewards.length === 0) return empty;
 
-    const groups = new Map<string, {
-      userId: string;
-      walletAddress: string;
-      rewardIds: string[];
-      amountLamports: bigint;
-    }>();
+    const groups = buildPendingPlayerRewardPayoutGroups(rewards, (invalid) => {
+      loggers.room.warn('Skipping player reward payout for invalid wallet', {
+        userId: invalid.userId,
+        rewardId: invalid.rewardId,
+        error: invalid.error instanceof Error ? invalid.error.message : String(invalid.error),
+      });
+    });
+    if (groups.length === 0) return empty;
 
-    for (const reward of rewards) {
-      const walletAddress = reward.user.walletAddress;
-      if (!walletAddress) continue;
-      try {
-        assertPublicKey(walletAddress, 'walletAddress');
-      } catch (error) {
-        loggers.room.warn('Skipping player reward payout for invalid wallet', {
-          userId: reward.userId,
-          rewardId: reward.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        continue;
-      }
-
-      const key = `${reward.userId}:${walletAddress}`;
-      const group = groups.get(key) ?? {
-        userId: reward.userId,
-        walletAddress,
-        rewardIds: [],
-        amountLamports: 0n,
-      };
-      group.rewardIds.push(reward.id);
-      group.amountLamports += reward.amountLamports;
-      groups.set(key, group);
-    }
+    const priceQuote = await solUsdPriceService.getFreshQuote(config.payoutPriceQuoteTtlMs);
+    if (!priceQuote) return empty;
+    const minimumPayoutLamports = computeMinimumPayoutLamports(
+      config.minPayoutUsdCents,
+      priceQuote.solUsdPriceMicroUsd
+    );
 
     let payoutCount = 0;
     let rewardCount = 0;
     let totalLamports = 0n;
+    const maxGroups = Math.max(1, options.limit ?? config.payoutBatchSize);
+    const sortedGroups = groups
+      .sort((a, b) => a.firstCreatedAt.getTime() - b.firstCreatedAt.getTime())
+      .slice(0, maxGroups);
 
-    for (const group of groups.values()) {
+    for (const group of sortedGroups) {
       if (group.amountLamports <= 0n || group.rewardIds.length === 0) continue;
+      if (!isPendingPlayerRewardPayoutEligible({
+        amountLamports: group.amountLamports,
+        minimumPayoutLamports,
+        force: options.force,
+      })) {
+        loggers.room.info('Player reward payout deferred below USD threshold', {
+          userId: group.userId,
+          rewardCount: group.rewardIds.length,
+          amountLamports: group.amountLamports.toString(),
+          minimumPayoutLamports: minimumPayoutLamports.toString(),
+          priceSource: priceQuote.source,
+          solUsdPriceMicroUsd: priceQuote.solUsdPriceMicroUsd.toString(),
+        });
+        continue;
+      }
 
       const treasuryBudgetLamports = await this.getTreasuryAvailableBudgetLamports(config);
       if (group.amountLamports > treasuryBudgetLamports) {
@@ -892,7 +1234,7 @@ export class PlayerRewardService {
       }
 
       try {
-        const payout = await this.payRewardGroup(group);
+        const payout = await this.payRewardGroup(group, priceQuote);
         payoutCount += 1;
         rewardCount += payout.rewardCount;
         totalLamports += BigInt(payout.amountLamports);
@@ -922,18 +1264,33 @@ export class PlayerRewardService {
     });
   }
 
+  async forcePayPendingRewardsForUser(userId: string): Promise<PlayerRewardAutoPayoutResult> {
+    const normalizedUserId = userId.trim();
+    if (!normalizedUserId) {
+      throw new Error('userId is required');
+    }
+    return this.payPendingRewards({
+      userIds: [normalizedUserId],
+      limit: 1,
+      force: true,
+    });
+  }
+
   private async payRewardGroup(input: {
     userId: string;
     walletAddress: string;
     rewardIds: string[];
     amountLamports: bigint;
-  }): Promise<PlayerRewardPayoutResult> {
+  }, priceQuote: SolUsdPriceQuote): Promise<PlayerRewardPayoutResult> {
     const payout = await prisma.$transaction(async (tx) => {
       const created = await tx.playerRewardPayout.create({
         data: {
           userId: input.userId,
           walletAddress: input.walletAddress,
           amountLamports: input.amountLamports,
+          priceSource: priceQuote.source,
+          solUsdPriceMicroUsd: priceQuote.solUsdPriceMicroUsd,
+          priceObservedAt: priceQuote.observedAt,
         },
       });
       const update = await tx.playerReward.updateMany({
@@ -1065,6 +1422,55 @@ export class PlayerRewardService {
     this.backgroundStarted = false;
   }
 
+  private async limitRankedBrCombatGrantsToFinalCaps(
+    grants: PlayerRewardGrant[],
+    config: PlayerRewardRuntimeConfig,
+    endedAt: Date
+  ): Promise<PlayerRewardGrant[]> {
+    if (grants.length === 0) return [];
+
+    const userIds = Array.from(new Set(grants.map((grant) => grant.userId)));
+    const day = getUtcDayRange(endedAt);
+    const [dailyTotalsByUserId, availableTreasuryLamports] = await Promise.all([
+      this.getDailyRankedBrRewardTotalsByUserId(userIds, day.start, day.end),
+      this.getTreasuryAvailableBudgetLamports(config),
+    ]);
+    let remainingMatchBudget = computeRankedBrDynamicMatchPoolLamports({
+      availableTreasuryLamports,
+      maxMatchLamports: config.rankedBrMaxMatchLamports,
+      treasuryExposureBps: config.rankedBrTreasuryExposureBps,
+    });
+    if (remainingMatchBudget <= 0n) return [];
+
+    const limited: PlayerRewardGrant[] = [];
+    for (const grant of grants) {
+      if (remainingMatchBudget <= 0n) break;
+      const dailyTotal = dailyTotalsByUserId.get(grant.userId) ?? 0n;
+      const remainingDailyBudget = config.rankedBrMaxPlayerDailyLamports - dailyTotal;
+      const amountLamports = minBigint(grant.amountLamports, remainingDailyBudget, remainingMatchBudget);
+      if (amountLamports <= 0n) continue;
+
+      const finalCappedLamports = grant.amountLamports - amountLamports;
+      limited.push({
+        ...grant,
+        amountLamports,
+        metadata: {
+          ...grant.metadata,
+          requestedAmountLamports: grant.amountLamports.toString(),
+          finalDailyTotalBeforeMatchLamports: dailyTotal.toString(),
+          finalBudgetCapped: finalCappedLamports > 0n,
+          finalCappedLamports: finalCappedLamports.toString(),
+          cappedLamports: (
+            BigInt(String(grant.metadata.cappedLamports ?? '0')) + finalCappedLamports
+          ).toString(),
+        },
+      });
+      remainingMatchBudget -= amountLamports;
+    }
+
+    return limited;
+  }
+
   private async getDailyRewardCountsByUserId(
     userIds: string[],
     start: Date,
@@ -1087,6 +1493,30 @@ export class PlayerRewardService {
     });
 
     return new Map(rows.map((row) => [row.userId, row._count._all]));
+  }
+
+  private async getDailyRankedBrRewardTotalsByUserId(
+    userIds: string[],
+    start: Date,
+    end: Date
+  ): Promise<Map<string, bigint>> {
+    if (userIds.length === 0) return new Map();
+
+    const rows = await prisma.playerReward.groupBy({
+      by: ['userId'],
+      where: {
+        userId: { in: userIds },
+        kind: 'ranked_br_combat_bounty',
+        status: { not: 'canceled' },
+        createdAt: {
+          gte: start,
+          lt: end,
+        },
+      },
+      _sum: { amountLamports: true },
+    });
+
+    return new Map(rows.map((row) => [row.userId, row._sum.amountLamports ?? 0n]));
   }
 
   private async getTreasuryAvailableBudgetLamports(config?: PlayerRewardRuntimeConfig): Promise<bigint> {

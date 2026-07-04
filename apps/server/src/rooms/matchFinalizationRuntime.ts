@@ -15,6 +15,7 @@ import {
 import { loggers } from '../utils/logger';
 import { dailyMissionService, type SettleMatchDailyMissionsInput } from '../missions/service';
 import { playerRewardService, type CreateMatchPlayerRewardsInput } from '../rewards/service';
+import type { RankedBrCombatGrant } from '../rewards/rankedBrCombatRewards';
 import { wagerService } from '../wagers/service';
 import type { MatchPersistenceLedger } from './matchLedgerRuntime';
 
@@ -109,6 +110,7 @@ export interface PersistMatchLedgerInput {
   participants: MatchParticipantSnapshot[];
   gameplayMode: GameplayMode;
   killEvents: MatchKillEventSnapshot[];
+  rankedBrCombatGrants?: RankedBrCombatGrant[];
   rankedEligible: boolean;
   integrityGate: AntiCheatIntegrityGate;
   totalParticipants?: number;
@@ -247,12 +249,14 @@ export class MatchFinalizationRuntime {
         roomId: ledger.roomId,
         lobbyId: ledger.lobbyId,
         matchMode: ledger.matchMode,
+        gameplayMode: input.gameplayMode,
         startedAt: ledger.startedAt,
         endedAt: ledger.endedAt ?? new Date(),
         winningTeam: input.winningTeam,
         participants: input.participants,
         rankedEligible: input.rankedEligible,
         integrityGate: input.integrityGate,
+        rankedBrCombatGrants: input.rankedBrCombatGrants ?? [],
       }).catch((error) => {
         this.deps.log.warn('Player match rewards were skipped after persistence', {
           roomId: ledger.roomId,

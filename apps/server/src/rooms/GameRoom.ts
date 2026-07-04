@@ -89,6 +89,8 @@ import {
   type MatchPersistenceLedger,
 } from './matchLedgerRuntime';
 import { createRoomMatchFinalizationRuntime } from './matchFinalizationRuntime';
+import { playerRewardService, type RankedBrRewardAccumulatorInit } from '../rewards/service';
+import type { RankedBrRewardAccumulator, RankedBrRewardTargetKind } from '../rewards/rankedBrCombatRewards';
 import { getWagerRuntimeConfig } from '../wagers/config';
 import {
   MatchSummaryRuntime,
@@ -540,6 +542,7 @@ import { buildAuthRejectRecord } from './authRejectRuntime';
 import { buildClientJoinHintRecords } from './clientJoinHintsRuntime';
 import {
   BOT_CLOSE_REVEAL_RANGE,
+  BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX,
   BOT_TACTICS_INTERVAL_MS,
   BOT_THINK_INTERVAL_MS,
   applyBotAbilityInputPlan,
@@ -956,8 +959,9 @@ const EMPTY_BOT_PERCEPTION_IDS = new Set<string>();
 const BOT_STEERING_PATH_CACHE_TTL_MS = 160;
 const BOT_STEERING_PATH_CACHE_MAX_ENTRIES = 2048;
 const BOT_STEERING_PATH_POSITION_QUANTIZATION = 2;
-const BOT_STEERING_PATH_DIRECTION_QUANTIZATION = 12;
-const BOT_STEERING_PATH_DISTANCE_QUANTIZATION = 4;
+const BOT_STEERING_TERRAIN_LOOKAHEAD_MIN_DISTANCE = 3.2;
+const BOT_STEERING_TERRAIN_LOOKAHEAD_MAX_DISTANCE = 5.4;
+const BOT_STEERING_TERRAIN_LOOKAHEAD_SECONDS = 0.32;
 const CHRONOS_AEGIS_SHIELD_TRANSFORM_SCALE = 255;
 const OBJECTIVE_SUPPRESSION_MS = 650;
 const SECURITY_EVENT_LOG_SAMPLE_MS = 5000;
@@ -1157,6 +1161,11 @@ export class GameRoom extends Room<GameState> {
     evidenceStore: this.antiCheatEvidenceStore,
     serializeError: (error) => this.serializePersistenceError(error),
   });
+  private rankedBrRewardAccumulator: RankedBrRewardAccumulator | null = null;
+  private rankedBrRewardConfig: RankedBrRewardAccumulatorInit['config'] | null = null;
+  private rankedBrRewardConfigRefreshInFlight = false;
+  private rankedBrRewardConfigRefreshAfterMs = 0;
+  private rankedBrRewardInitGeneration = 0;
   private readonly matchSummary = new MatchSummaryRuntime({
     getDurableUserId: (playerId) => this.getDurableUserId(playerId),
     isNpc: (playerId) => this.npcs.has(playerId),
@@ -1188,6 +1197,7 @@ export class GameRoom extends Room<GameState> {
     markRecentCombatInterest: (sourceId, targetId, now) => (
       this.replicationState.markRecentCombatInterest(sourceId, targetId, now, RECENT_COMBAT_INTEREST_MS)
     ),
+    recordRankedBrCombatReward: (input) => this.recordRankedBrCombatReward(input),
     broadcastPhantomShieldBroken: (target, source, payload) => this.broadcastPhantomShieldBroken(target, source, payload),
     broadcastPlayerDamaged: (target, source, payload) => this.broadcastPlayerDamaged(target, source, payload),
     shouldDownLethalDamage: (target) => (
@@ -3464,7 +3474,10 @@ export class GameRoom extends Room<GameState> {
     source: Player | null,
     payload: PlayerDamagedEvent
   ): void {
-    this.recordObserverEvent('playerDamaged', payload);
+    this.recordObserverEvent('playerDamaged', {
+      ...payload,
+      rankedBrSolRewardLamports: undefined,
+    });
     const now = this.state.serverTime || Date.now();
     const frameContext = this.getEventReplicationFrameContext(now);
     for (const client of this.clients) {
@@ -3478,6 +3491,7 @@ export class GameRoom extends Room<GameState> {
         isParticipant: Boolean(isParticipant),
         canKnowTarget,
         canKnowSource,
+        canKnowSourceOnlyReward: Boolean(source && recipient?.id === source.id),
       });
 
       if (!eventPayload) continue;
@@ -4318,6 +4332,130 @@ export class GameRoom extends Room<GameState> {
     return this.participantRegistry.getDurableUserId(playerId);
   }
 
+  private initializeRankedBrRewardAccumulator(ledger: MatchPersistenceLedger): void {
+    const initGeneration = ++this.rankedBrRewardInitGeneration;
+    this.rankedBrRewardAccumulator = null;
+    this.rankedBrRewardConfig = null;
+    this.rankedBrRewardConfigRefreshAfterMs = 0;
+
+    if (
+      this.matchMode !== 'ranked' ||
+      !isBattleRoyalMode(this.gameplayMode) ||
+      !this.rankedEligibilityCandidate ||
+      ledger.state !== 'active'
+    ) {
+      return;
+    }
+
+    const userIds = new Set<string>();
+    this.state.players.forEach((player) => {
+      if (player.isBot || this.npcs.has(player.id) || isObserverPlayer(player)) return;
+      const userId = this.getDurableUserId(player.id);
+      if (userId) userIds.add(userId);
+    });
+    void playerRewardService.createRankedBrRewardAccumulator({
+      matchId: ledger.matchId,
+      roomId: ledger.roomId,
+      lobbyId: ledger.lobbyId,
+      userIds: Array.from(userIds),
+      now: new Date(this.state.roundStartTime || Date.now()),
+    }).then((init) => {
+      if (
+        initGeneration !== this.rankedBrRewardInitGeneration ||
+        this.matchLedger.getLedger() !== ledger ||
+        ledger.state !== 'active' ||
+        this.state.phase !== 'playing'
+      ) {
+        return;
+      }
+      this.rankedBrRewardAccumulator = init.accumulator;
+      this.rankedBrRewardConfig = init.config;
+      this.rankedBrRewardConfigRefreshAfterMs = Date.now() + 5_000;
+    }).catch((error) => {
+      loggers.room.warn('Ranked BR reward accumulator initialization failed', {
+        roomId: this.roomId,
+        matchId: ledger.matchId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
+  private getRankedBrRewardConfigForAccrual(now = Date.now()): RankedBrRewardAccumulatorInit['config'] | null {
+    if (!this.rankedBrRewardAccumulator || !this.rankedBrRewardConfig) return null;
+    if (now < this.rankedBrRewardConfigRefreshAfterMs || this.rankedBrRewardConfigRefreshInFlight) {
+      return this.rankedBrRewardConfig;
+    }
+
+    this.rankedBrRewardConfigRefreshInFlight = true;
+    void playerRewardService.getConfig().then((config) => {
+      this.rankedBrRewardConfig = config;
+      this.rankedBrRewardConfigRefreshAfterMs = Date.now() + 5_000;
+    }).catch((error) => {
+      this.rankedBrRewardConfigRefreshAfterMs = Date.now() + 1_000;
+      loggers.room.warn('Ranked BR reward settings refresh failed', {
+        roomId: this.roomId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }).finally(() => {
+      this.rankedBrRewardConfigRefreshInFlight = false;
+    });
+
+    return this.rankedBrRewardConfig;
+  }
+
+  private getRankedBrRewardTargetKind(target: Player): RankedBrRewardTargetKind {
+    if (this.npcs.has(target.id)) return 'non_rewardable';
+    if (target.isBot) {
+      return target.botProfileId === BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX ||
+        target.botProfileId.startsWith(`${BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX}-`)
+        ? 'official_ranked_br_bot'
+        : 'non_rewardable';
+    }
+    return this.getDurableUserId(target.id) ? 'human' : 'non_rewardable';
+  }
+
+  private recordRankedBrCombatReward(input: {
+    target: Player;
+    source: Player | null;
+    appliedDamage: number;
+    finalEnemyElimination: boolean;
+    damageType: string;
+  }): { amountLamports: string } | null {
+    if (
+      this.matchMode !== 'ranked' ||
+      !isBattleRoyalMode(this.gameplayMode) ||
+      this.state.phase !== 'playing' ||
+      input.appliedDamage <= 0 ||
+      !input.source ||
+      input.source.isBot ||
+      this.npcs.has(input.source.id) ||
+      isObserverPlayer(input.source)
+    ) {
+      return null;
+    }
+
+    const sourceUserId = this.getDurableUserId(input.source.id);
+    if (!sourceUserId) return null;
+    const accumulator = this.rankedBrRewardAccumulator;
+    const config = this.getRankedBrRewardConfigForAccrual();
+    if (!accumulator || !config) return null;
+
+    const reward = accumulator.recordDamage({
+      config,
+      sourcePlayerId: input.source.id,
+      sourceUserId,
+      sourceTeam: input.source.team || null,
+      targetPlayerId: input.target.id,
+      targetTeam: input.target.team || null,
+      targetKind: this.getRankedBrRewardTargetKind(input.target),
+      playerSessionId: input.source.id,
+      serverAppliedDamageHp: input.appliedDamage,
+      finalEnemyElimination: input.finalEnemyElimination,
+    });
+    if (!reward || reward.amountLamports <= 0n) return null;
+    return { amountLamports: reward.amountLamports.toString() };
+  }
+
   private ensureMatchPersistenceLedger(now = Date.now()): MatchPersistenceLedger {
     const { ledger, created } = this.matchLedger.ensureLedger(now);
     if (created) {
@@ -4428,6 +4566,7 @@ export class GameRoom extends Room<GameState> {
       ledger,
       participants,
       currentMatchMode: this.matchMode,
+      gameplayMode: this.gameplayMode,
       npcCount: this.npcs.size,
       requiredHumanPlayers: this.rankedRequiredHumanPlayers,
       forcedByPlayerId,
@@ -4447,6 +4586,9 @@ export class GameRoom extends Room<GameState> {
     const integrityGate = this.antiCheat?.buildIntegrityGate({
       rankedEligible,
     }) ?? this.cleanAntiCheatGate();
+    const rankedBrCombatGrants = this.rankedBrRewardAccumulator?.buildGrants() ?? [];
+    this.rankedBrRewardAccumulator = null;
+    this.rankedBrRewardConfig = null;
 
     void this.matchFinalization.persistLedger({
       ledger,
@@ -4457,6 +4599,7 @@ export class GameRoom extends Room<GameState> {
       integrityGate,
       gameplayMode: this.gameplayMode,
       killEvents: [...ledger.killEvents],
+      rankedBrCombatGrants,
       ...this.getCombatRosterCountsForRanking(),
     });
   }
@@ -8808,17 +8951,26 @@ export class GameRoom extends Room<GameState> {
     const now = this.state.serverTime || Date.now();
     const collisionRevision = this.getMovementCollisionRevision(now);
     const start = vec3SchemaToPlain(bot.position);
-    const cacheKey = this.getBotSteeringPathCacheKey(start, normalized, distance, collisionRevision);
-    const cached = this.botSteeringPathCache.get(cacheKey);
-    if (cached && cached.expiresAt > now && cached.collisionRevision === collisionRevision) {
-      return cached.clear;
-    }
-
     const end = {
       x: start.x + normalized.x * distance,
       y: start.y,
       z: start.z + normalized.z * distance,
     };
+    return this.isBotCapsulePathClear(start, end, now, collisionRevision);
+  }
+
+  private isBotCapsulePathClear(
+    start: PlainVec3,
+    end: PlainVec3,
+    now = this.state.serverTime || Date.now(),
+    collisionRevision = this.getMovementCollisionRevision(now)
+  ): boolean {
+    const cacheKey = this.getBotCapsulePathCacheKey(start, end, collisionRevision);
+    const cached = this.botSteeringPathCache.get(cacheKey);
+    if (cached && cached.expiresAt > now && cached.collisionRevision === collisionRevision) {
+      return cached.clear;
+    }
+
     const clear = sweepCapsulePathClear(this.getMovementCollisionWorld(now), start, end, PLAYER_HEIGHT, PLAYER_RADIUS);
     this.pruneBotSteeringPathCache(now);
     this.botSteeringPathCache.set(cacheKey, {
@@ -8844,27 +8996,24 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private getBotSteeringPathCacheKey(
+  private getBotCapsulePathCacheKey(
     start: PlainVec3,
-    normalizedDirection: PlainVec2,
-    distance: number,
+    end: PlainVec3,
     collisionRevision: number
   ): string {
     const qPosition = BOT_STEERING_PATH_POSITION_QUANTIZATION;
-    const qDirection = BOT_STEERING_PATH_DIRECTION_QUANTIZATION;
-    const qDistance = BOT_STEERING_PATH_DISTANCE_QUANTIZATION;
     return `${collisionRevision}:${
       Math.round(start.x * qPosition)
     }:${
       Math.round(start.y * qPosition)
     }:${
       Math.round(start.z * qPosition)
+    }>${
+      Math.round(end.x * qPosition)
     }:${
-      Math.round(normalizedDirection.x * qDirection)
+      Math.round(end.y * qPosition)
     }:${
-      Math.round(normalizedDirection.z * qDirection)
-    }:${
-      Math.round(distance * qDistance)
+      Math.round(end.z * qPosition)
     }`;
   }
 
@@ -8881,6 +9030,16 @@ export class GameRoom extends Room<GameState> {
       clear: this.isBotPathClear(bot, probe.direction, distance),
       distance,
     };
+  }
+
+  private getBotSteeringProbeDistance(bot: Player, skill: BotSkillProfile): number {
+    const speed = Math.sqrt(bot.velocity.x * bot.velocity.x + bot.velocity.z * bot.velocity.z);
+    const speedLookahead = speed * BOT_STEERING_TERRAIN_LOOKAHEAD_SECONDS;
+    return clamp(
+      Math.max(skill.localProbeDistance, BOT_STEERING_TERRAIN_LOOKAHEAD_MIN_DISTANCE, speedLookahead),
+      skill.localProbeDistance,
+      BOT_STEERING_TERRAIN_LOOKAHEAD_MAX_DISTANCE
+    );
   }
 
   private consumeBotSteeringProbeFrameBudget(frameContext: BotFrameContext): boolean {
@@ -8921,6 +9080,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     const directDirection = directions.find((probe) => probe.label === 'direct') ?? directions[0];
+    const probeDistance = this.getBotSteeringProbeDistance(bot, skill);
     if (!directDirection) {
       return {
         steering: chooseLocalAvoidanceDirection(desiredMove, [], skill),
@@ -8928,7 +9088,7 @@ export class GameRoom extends Room<GameState> {
       };
     }
 
-    const directProbe = this.getBotSteeringProbe(bot, directDirection, skill.localProbeDistance, frameContext);
+    const directProbe = this.getBotSteeringProbe(bot, directDirection, probeDistance, frameContext);
     if (!directProbe) {
       return {
         steering: chooseLocalAvoidanceDirection(desiredMove, [], skill),
@@ -8945,7 +9105,7 @@ export class GameRoom extends Room<GameState> {
     const probes: BotSteeringProbe[] = [directProbe];
     for (const probe of directions) {
       if (probe.label === 'direct') continue;
-      const steeringProbe = this.getBotSteeringProbe(bot, probe, skill.localProbeDistance, frameContext);
+      const steeringProbe = this.getBotSteeringProbe(bot, probe, probeDistance, frameContext);
       if (!steeringProbe) break;
       probes.push(steeringProbe);
     }
@@ -10622,6 +10782,7 @@ export class GameRoom extends Room<GameState> {
         this.registerMatchParticipant(player, this.state.roundStartTime);
       }
     });
+    this.initializeRankedBrRewardAccumulator(ledger);
 
     // Reset flags
     const mapManifest = this.getMapManifest();
@@ -11972,6 +12133,19 @@ export class GameRoom extends Room<GameState> {
       return false;
     }
 
+    if (!this.isBotCapsulePathClear(vec3SchemaToPlain(player.position), {
+      x: proposed.x,
+      y: nextY,
+      z: proposed.z,
+    })) {
+      player.velocity.x = 0;
+      player.velocity.y = 0;
+      player.velocity.z = 0;
+      player.movement.isSprinting = false;
+      this.tickProfiler.recordCounter('movement_bot_lod_proxy_collision_rejected');
+      return true;
+    }
+
     const clampedX = Math.abs(proposed.x - (player.position.x + deltaX)) > 0.001;
     const clampedZ = Math.abs(proposed.z - (player.position.z + deltaZ)) > 0.001;
     player.position.x = proposed.x;
@@ -12027,7 +12201,7 @@ export class GameRoom extends Room<GameState> {
       deltaZ *= scale;
     }
 
-    const proposed = this.clampToPlayableMap({
+    let proposed = this.clampToPlayableMap({
       x: player.position.x + deltaX,
       y: player.position.y,
       z: player.position.z + deltaZ,
@@ -12050,14 +12224,31 @@ export class GameRoom extends Room<GameState> {
       return false;
     }
 
+    let blockedByCollision = false;
+    if (!this.isBotCapsulePathClear(vec3SchemaToPlain(player.position), {
+      x: proposed.x,
+      y: nextY,
+      z: proposed.z,
+    })) {
+      blockedByCollision = true;
+      deltaX = 0;
+      deltaZ = 0;
+      proposed = {
+        x: player.position.x,
+        y: proposed.y,
+        z: player.position.z,
+      };
+      this.tickProfiler.recordCounter('movement_bot_lod_proxy_collision_rejected');
+    }
+
     const clampedX = Math.abs(proposed.x - (player.position.x + deltaX)) > 0.001;
     const clampedZ = Math.abs(proposed.z - (player.position.z + deltaZ)) > 0.001;
     player.position.x = proposed.x;
     player.position.y = nextY;
     player.position.z = proposed.z;
-    player.velocity.x = clampedX ? 0 : player.velocity.x;
+    player.velocity.x = blockedByCollision || clampedX ? 0 : player.velocity.x;
     player.velocity.y = grounded ? 0 : nextVelocityY;
-    player.velocity.z = clampedZ ? 0 : player.velocity.z;
+    player.velocity.z = blockedByCollision || clampedZ ? 0 : player.velocity.z;
     player.movement.isGrounded = grounded;
     if (grounded) {
       player.movement.isSliding = false;

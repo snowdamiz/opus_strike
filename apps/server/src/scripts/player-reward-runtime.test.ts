@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import type { AntiCheatIntegrityGate } from '../anticheat';
 import type { MatchParticipantSnapshot } from '../persistence/matchPersistence';
 import {
+  buildPendingPlayerRewardPayoutGroups,
   buildMatchPlayerRewardGrants,
   buildSeasonTopTenRewardGrants,
+  isPendingPlayerRewardPayoutEligible,
   limitPlayerRewardGrantsToBudget,
 } from '../rewards/service';
 import type { PlayerRewardRuntimeConfig } from '../rewards/config';
@@ -43,6 +45,7 @@ function participant(input: Partial<MatchParticipantSnapshot> = {}): MatchPartic
 
 const config: PlayerRewardRuntimeConfig = {
   enabled: true,
+  settingsVersion: 1,
   dailyRankedDripLamports: 100n,
   dailyRankedDripMaxMatches: 5,
   minMatchDurationMs: 60_000,
@@ -54,7 +57,65 @@ const config: PlayerRewardRuntimeConfig = {
   maxMatchPayoutLamports: 1_000n,
   treasuryReserveLamports: 0n,
   payoutBatchSize: 100,
+  rankedBrCombatRewardsEnabled: true,
+  rankedBrCombatRewardsShadowMode: false,
+  rankedBrDamageLamportsPerHp: 250n,
+  rankedBrKillLamports: 100_000n,
+  rankedBrBotTargetRewardBps: 7_000,
+  rankedBrSourceVictimDamageCapHp: 315,
+  rankedBrMaxPlayerMatchLamports: 750_000n,
+  rankedBrMaxPlayerDailyLamports: 2_500_000n,
+  rankedBrMaxMatchLamports: 5_000_000n,
+  rankedBrTreasuryExposureBps: 10,
+  rankedBrClientRewardTextMinLamports: 1_000n,
+  minPayoutUsdCents: 1_500,
+  payoutPriceQuoteTtlMs: 300_000,
 };
+
+{
+  const walletAddress = '11111111111111111111111111111111';
+  const groups = buildPendingPlayerRewardPayoutGroups([
+    {
+      id: 'reward-a',
+      userId: 'user-a',
+      amountLamports: 60n,
+      createdAt: new Date('2026-06-10T10:00:00.000Z'),
+      user: { walletAddress },
+    },
+    {
+      id: 'reward-b',
+      userId: 'user-a',
+      amountLamports: 40n,
+      createdAt: new Date('2026-06-10T10:05:00.000Z'),
+      user: { walletAddress },
+    },
+    {
+      id: 'reward-c',
+      userId: 'user-b',
+      amountLamports: 200n,
+      createdAt: new Date('2026-06-10T10:01:00.000Z'),
+      user: { walletAddress },
+    },
+  ]);
+
+  assert.equal(groups.length, 2);
+  assert.deepEqual(groups[0].rewardIds, ['reward-a', 'reward-b']);
+  assert.equal(groups[0].amountLamports, 100n);
+  assert.equal(groups[0].firstCreatedAt.toISOString(), '2026-06-10T10:00:00.000Z');
+  assert.equal(isPendingPlayerRewardPayoutEligible({
+    amountLamports: groups[0].amountLamports,
+    minimumPayoutLamports: 101n,
+  }), false);
+  assert.equal(isPendingPlayerRewardPayoutEligible({
+    amountLamports: groups[0].amountLamports,
+    minimumPayoutLamports: 100n,
+  }), true);
+  assert.equal(isPendingPlayerRewardPayoutEligible({
+    amountLamports: groups[0].amountLamports,
+    minimumPayoutLamports: 101n,
+    force: true,
+  }), true);
+}
 
 {
   const grants = buildMatchPlayerRewardGrants({

@@ -1075,6 +1075,21 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     }
   });
 
+  router.post('/api/reward-economy/force-payout', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const body = req.body && typeof req.body === 'object' ? req.body as { userId?: unknown } : {};
+
+    try {
+      if (typeof body.userId !== 'string' || !body.userId.trim()) {
+        throw new Error('userId is required');
+      }
+      const payout = await playerRewardService.forcePayPendingRewardsForUser(body.userId);
+      res.json({ ok: true, payout });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   router.post('/api/golden-biome/rewards/:rewardId/distribute', ensureAdmin, ensureAdminMutation, async (req, res) => {
     noStore(res);
     const adminUser = res.locals.adminUser as AdminUser;

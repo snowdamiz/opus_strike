@@ -58,6 +58,7 @@ export const ROOM_TICK_COUNTER_NAMES = [
   'movement_bot_lod_kinematic_proxy_steps',
   'movement_bot_lod_background_proxy_steps',
   'movement_bot_lod_proxy_stationary',
+  'movement_bot_lod_proxy_collision_rejected',
   'movement_bot_lod_proxy_rejected',
   'movement_bot_lod_proxy_gameplay_suppressed',
   'movement_bot_lod_proxy_gameplay_skipped',

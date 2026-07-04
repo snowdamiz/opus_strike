@@ -137,6 +137,15 @@ function getCombatTextColors(kind: CombatTextKind): {
     };
   }
 
+  if (kind === 'solReward') {
+    return {
+      top: '#fef9c3',
+      middle: '#34d399',
+      bottom: '#0f766e',
+      glow: 'rgba(45, 212, 191, 0.9)',
+    };
+  }
+
   return {
     top: '#fff7ad',
     middle: '#fb923c',
@@ -192,13 +201,16 @@ function drawShieldDamageIcon(
   ctx.restore();
 }
 
-function drawCombatTextTexture(canvas: HTMLCanvasElement, kind: CombatTextKind, amount: number): void {
+function drawCombatTextTexture(canvas: HTMLCanvasElement, kind: CombatTextKind, amount: number, label?: string): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
   const colors = getCombatTextColors(kind);
-  const text = `${kind === 'heal' ? '+' : '-'}${Math.max(1, Math.round(amount))}`;
+  const text = kind === 'solReward'
+    ? label ?? '+0 SOL'
+    : `${kind === 'heal' ? '+' : '-'}${Math.max(1, Math.round(amount))}`;
   const isShieldDamage = kind === 'shieldDamage';
+  const isSolReward = kind === 'solReward';
   const textX = isShieldDamage ? 34 : 0;
 
   ctx.clearRect(0, 0, COMBAT_TEXT_CANVAS_WIDTH, COMBAT_TEXT_CANVAS_HEIGHT);
@@ -206,7 +218,9 @@ function drawCombatTextTexture(canvas: HTMLCanvasElement, kind: CombatTextKind, 
   ctx.translate(COMBAT_TEXT_CANVAS_WIDTH / 2, COMBAT_TEXT_CANVAS_HEIGHT / 2 + 4);
   ctx.rotate(kind === 'heal' ? 0.035 : -0.045);
 
-  ctx.font = '900 92px Inter, ui-sans-serif, system-ui, sans-serif';
+  ctx.font = isSolReward
+    ? '900 50px Inter, ui-sans-serif, system-ui, sans-serif'
+    : '900 92px Inter, ui-sans-serif, system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
@@ -214,17 +228,19 @@ function drawCombatTextTexture(canvas: HTMLCanvasElement, kind: CombatTextKind, 
 
   ctx.shadowColor = colors.glow;
   ctx.shadowBlur = 34;
-  ctx.lineWidth = 18;
+  ctx.lineWidth = isSolReward ? 12 : 18;
   ctx.strokeStyle = 'rgba(0, 0, 0, 0.92)';
   ctx.strokeText(text, textX, 0);
 
   ctx.shadowBlur = 20;
-  ctx.lineWidth = 7;
+  ctx.lineWidth = isSolReward ? 5 : 7;
   ctx.strokeStyle = kind === 'heal'
     ? 'rgba(6, 78, 59, 0.94)'
     : kind === 'shieldDamage'
       ? 'rgba(30, 64, 175, 0.94)'
-      : 'rgba(127, 29, 29, 0.94)';
+      : kind === 'solReward'
+        ? 'rgba(20, 83, 45, 0.94)'
+        : 'rgba(127, 29, 29, 0.94)';
   ctx.strokeText(text, textX, 0);
 
   if (isShieldDamage) {
@@ -245,16 +261,18 @@ function drawCombatTextTexture(canvas: HTMLCanvasElement, kind: CombatTextKind, 
   ctx.restore();
 }
 
-function getCombatTextTextureKey(kind: CombatTextKind, amount: number): string {
-  return `${kind}:${Math.max(1, Math.round(amount))}`;
+function getCombatTextTextureKey(kind: CombatTextKind, amount: number, label?: string): string {
+  return kind === 'solReward'
+    ? `${kind}:${label ?? '+0 SOL'}`
+    : `${kind}:${Math.max(1, Math.round(amount))}`;
 }
 
-function createCombatTextTexture(kind: CombatTextKind, amount: number): THREE.CanvasTexture {
+function createCombatTextTexture(kind: CombatTextKind, amount: number, label?: string): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = COMBAT_TEXT_CANVAS_WIDTH;
   canvas.height = COMBAT_TEXT_CANVAS_HEIGHT;
 
-  drawCombatTextTexture(canvas, kind, amount);
+  drawCombatTextTexture(canvas, kind, amount, label);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -285,12 +303,12 @@ function evictUnusedCombatTextTextures(): void {
   }
 }
 
-function acquireCombatTextTexture(kind: CombatTextKind, amount: number): THREE.CanvasTexture {
-  const key = getCombatTextTextureKey(kind, amount);
+function acquireCombatTextTexture(kind: CombatTextKind, amount: number, label?: string): THREE.CanvasTexture {
+  const key = getCombatTextTextureKey(kind, amount, label);
   let entry = combatTextTextureCache.get(key);
   if (!entry) {
     entry = {
-      texture: createCombatTextTexture(kind, amount),
+      texture: createCombatTextTexture(kind, amount, label),
       refCount: 0,
       lastUsedAt: 0,
     };
@@ -303,8 +321,8 @@ function acquireCombatTextTexture(kind: CombatTextKind, amount: number): THREE.C
   return entry.texture;
 }
 
-function releaseCombatTextTexture(kind: CombatTextKind, amount: number): void {
-  const entry = combatTextTextureCache.get(getCombatTextTextureKey(kind, amount));
+function releaseCombatTextTexture(kind: CombatTextKind, amount: number, label?: string): void {
+  const entry = combatTextTextureCache.get(getCombatTextTextureKey(kind, amount, label));
   if (!entry) return;
   entry.refCount = Math.max(0, entry.refCount - 1);
   entry.lastUsedAt = ++combatTextTextureUseCounter;
@@ -391,18 +409,34 @@ function CombatTextSprite({
   const drift = useMemo(() => {
     const seed = hashString(event.id);
     const angle = (seed / 0xffffffff) * Math.PI * 2;
-    const radius = event.kind === 'heal' ? 0.32 : event.kind === 'shieldDamage' ? 0.38 : 0.46;
+    const radius = event.kind === 'heal'
+      ? 0.32
+      : event.kind === 'shieldDamage'
+        ? 0.38
+        : event.kind === 'solReward'
+          ? 0.3
+          : 0.46;
     return {
       x: Math.cos(angle) * radius,
       z: Math.sin(angle) * radius,
     };
   }, [event.id, event.kind]);
-  const textureAmount = Math.max(1, Math.round(event.amount));
+  const eventAmount = event.amount ?? 1;
+  const textureAmount = Math.max(1, Math.round(eventAmount));
+  const textureLabel = event.kind === 'solReward' ? event.label : undefined;
   const texture = useMemo(
-    () => acquireCombatTextTexture(event.kind, textureAmount),
-    [event.kind, textureAmount]
+    () => acquireCombatTextTexture(event.kind, textureAmount, textureLabel),
+    [event.kind, textureAmount, textureLabel]
   );
-  const baseHeight = (event.kind === 'heal' ? 0.74 : event.kind === 'shieldDamage' ? 0.78 : 0.82) + getAmountScale(event.amount);
+  const baseHeight = (
+    event.kind === 'heal'
+      ? 0.74
+      : event.kind === 'shieldDamage'
+        ? 0.78
+        : event.kind === 'solReward'
+          ? 0.54
+          : 0.82
+  ) + (event.kind === 'solReward' ? 0.02 : getAmountScale(eventAmount));
   const baseWidth = baseHeight * COMBAT_TEXT_ASPECT;
   const initialY = event.targetId
     ? getCombatTextWorldY(event.position.y, null, DEFAULT_MOVEMENT)
@@ -440,7 +474,10 @@ function CombatTextSprite({
     };
   }, [registry, event.id]);
 
-  useEffect(() => () => releaseCombatTextTexture(event.kind, textureAmount), [event.kind, textureAmount]);
+  useEffect(
+    () => () => releaseCombatTextTexture(event.kind, textureAmount, textureLabel),
+    [event.kind, textureAmount, textureLabel]
+  );
 
   return (
     <sprite

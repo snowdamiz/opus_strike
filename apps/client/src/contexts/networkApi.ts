@@ -182,6 +182,7 @@ export interface RewardEconomyResponse {
     };
     playerRewards: {
       enabled: boolean;
+      settingsVersion: number;
       dailyRankedDripLamports: string;
       dailyRankedDripMaxMatches: number;
       minMatchDurationMs: number;
@@ -193,6 +194,26 @@ export interface RewardEconomyResponse {
       maxMatchPayoutLamports: string;
       treasuryReserveLamports: string;
       payoutBatchSize: number;
+      rankedBrCombatRewardsEnabled: boolean;
+      rankedBrCombatRewardsShadowMode: boolean;
+      rankedBrDamageLamportsPerHp: string;
+      rankedBrKillLamports: string;
+      rankedBrBotTargetRewardBps: number;
+      rankedBrSourceVictimDamageCapHp: number;
+      rankedBrMaxPlayerMatchLamports: string;
+      rankedBrMaxPlayerDailyLamports: string;
+      rankedBrMaxMatchLamports: string;
+      rankedBrTreasuryExposureBps: number;
+      rankedBrClientRewardTextMinLamports: string;
+      minPayoutUsdCents: number;
+      payoutPriceQuoteTtlMs: number;
+      payoutPriceQuote: {
+        source: string;
+        solUsdPriceMicroUsd: string;
+        observedAt: string;
+        expiresAt: string;
+        fresh: boolean;
+      } | null;
       updatedByUserId: string | null;
       updatedAt: string | null;
     };
@@ -217,6 +238,76 @@ export interface RewardEconomyResponse {
       updatedAt: string | null;
     };
   };
+}
+
+export type PlayerRewardStatus = 'pending' | 'processing' | 'paid' | 'failed' | 'canceled';
+export type PlayerRewardPayoutStatus = 'pending' | 'submitted' | 'confirmed' | 'failed';
+export type PlayerRewardKind =
+  | 'daily_ranked_drip'
+  | 'objective_bounty'
+  | 'season_top_10'
+  | 'daily_mission'
+  | 'ranked_br_combat_bounty';
+
+export interface PlayerRewardTotalsEntry {
+  amountLamports: string;
+  count: number;
+}
+
+export type PlayerRewardTotals = Partial<Record<PlayerRewardStatus, PlayerRewardTotalsEntry>>;
+
+export interface PlayerRewardPriceQuote {
+  source: string;
+  solUsdPriceMicroUsd: string;
+  observedAt: string;
+}
+
+export interface PlayerRewardPayoutProgress {
+  minPayoutUsdCents: number;
+  pendingLamports: string;
+  minimumPayoutLamports: string | null;
+  remainingLamports: string | null;
+  progressBps: number | null;
+  priceQuote: PlayerRewardPriceQuote | null;
+}
+
+export interface PlayerRewardRow {
+  id: string;
+  kind: PlayerRewardKind;
+  status: PlayerRewardStatus;
+  amountLamports: string;
+  reason: string;
+  matchId: string | null;
+  metadata: unknown;
+  createdAt: string;
+  paidAt: string | null;
+}
+
+export interface PlayerRewardPayoutRow {
+  id: string;
+  amountLamports: string;
+  status: PlayerRewardPayoutStatus;
+  signature: string | null;
+  walletAddress: string;
+  priceSource: string | null;
+  solUsdPriceMicroUsd: string | null;
+  priceObservedAt: string | null;
+  createdAt: string;
+  submittedAt: string | null;
+  confirmedAt: string | null;
+  failedAt: string | null;
+  lastError: string | null;
+}
+
+export interface PlayerRewardSummary {
+  totals: PlayerRewardTotals;
+  payoutProgress: PlayerRewardPayoutProgress;
+  rewards: PlayerRewardRow[];
+  payouts: PlayerRewardPayoutRow[];
+}
+
+export interface PlayerRewardSummaryResponse {
+  rewards: PlayerRewardSummary;
 }
 
 export interface WagerPaymentIntentSnapshot {
@@ -369,6 +460,22 @@ export async function requestRewardEconomy(): Promise<RewardEconomyResponse['eco
 
   const payload = await response.json() as RewardEconomyResponse;
   return payload.economy;
+}
+
+export async function requestPlayerRewardSummary(signal?: AbortSignal): Promise<PlayerRewardSummary> {
+  const response = await fetch(`${getHttpUrl()}/rewards`, {
+    credentials: 'include',
+    cache: 'no-store',
+    signal,
+  });
+
+  if (!response.ok) {
+    const message = await readErrorMessage(response, 'Failed to load reward summary');
+    throw Object.assign(new Error(message), { statusCode: response.status });
+  }
+
+  const payload = await response.json() as PlayerRewardSummaryResponse;
+  return payload.rewards;
 }
 
 export async function createWagerPaymentIntent(input: {

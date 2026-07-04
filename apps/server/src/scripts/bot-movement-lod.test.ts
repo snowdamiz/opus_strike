@@ -6,6 +6,16 @@ import {
   type PlayerInput,
   type Team,
 } from '@voxel-strike/shared';
+import {
+  createVoxelCollisionWorld,
+  type MovementAabb,
+  type MovementCollisionWorld,
+} from '@voxel-strike/physics';
+import {
+  getBotSkillProfile,
+  type BotSteeringChoice,
+  type PlainVec2,
+} from '../rooms/bot-ai';
 import { SERVER_OWNED_MOVEMENT_STEP_SECONDS } from '../rooms/movementCommandDrain';
 import { GameRoom } from '../rooms/GameRoom';
 import { Player } from '../rooms/schema/Player';
@@ -34,6 +44,12 @@ type BotMovementLodRoom = {
   getBotSteeringProbeFrameBudget(aliveBotCount: number): number;
   consumeBotLineOfSightFrameBudget(frameContext: { lineOfSightChecksRemaining: number }): boolean;
   consumeBotSteeringProbeFrameBudget(frameContext: { steeringProbeChecksRemaining: number }): boolean;
+  chooseBotSteering(
+    bot: Player,
+    desiredMove: PlainVec2 | null,
+    skill: ReturnType<typeof getBotSkillProfile>,
+    frameContext: { steeringProbeChecksRemaining: number }
+  ): { steering: BotSteeringChoice; directPathBlocked: boolean };
   continueDeferredBotInput(botId: string, now: number, simulationTier?: 'critical' | 'near' | 'background'): void;
   shouldServerOwnedBotMovementReasonBypassBudget(
     reason: string,
@@ -58,6 +74,8 @@ type BotMovementLodRoom = {
   state: { tick: number; serverTime: number; players: Map<string, Player> };
   gameplayMode: GameplayMode;
   tickProfiler: { recordCounter(name: string, count?: number): void };
+  botRuntime: { getBrain(botId: string): undefined };
+  botSteeringPathCache: Map<string, { clear: boolean; expiresAt: number; collisionRevision: number }>;
   botsWithReusedInputThisTick: Set<string>;
   playerPressStates: PlayerPressStateTracker;
   botSimulationHumanScratch: Player[];
@@ -67,15 +85,27 @@ type BotMovementLodRoom = {
   botMovementFullStepBudgetRemaining: number;
   clampToPlayableMap(position: { x: number; y: number; z: number }): { x: number; y: number; z: number };
   getProceduralGroundY(position: { x: number; y: number; z: number }): number | null;
+  getMovementCollisionRevision(now?: number): number;
+  getMovementCollisionWorld(now?: number): MovementCollisionWorld;
   getActiveSpeedMultiplier(player: Player): number;
   isFiniteVec3(position: { x: number; y: number; z: number }): boolean;
 };
 
+function createCollisionWorld(aabbs: readonly MovementAabb[] = []): MovementCollisionWorld {
+  return createVoxelCollisionWorld({
+    collisionRevision: 1,
+    getCollisionAabbs: () => aabbs,
+  });
+}
+
 function createRoom(): BotMovementLodRoom {
   const room = Object.create(GameRoom.prototype) as BotMovementLodRoom;
+  const collisionWorld = createCollisionWorld();
   room.state = { tick: 0, serverTime: 1_800_000_000_000, players: new Map() };
   room.gameplayMode = DEFAULT_GAMEPLAY_MODE;
   room.tickProfiler = { recordCounter: () => undefined };
+  room.botRuntime = { getBrain: () => undefined };
+  room.botSteeringPathCache = new Map();
   room.botsWithReusedInputThisTick = new Set();
   room.playerPressStates = new PlayerPressStateTracker();
   room.botSimulationHumanScratch = [];
@@ -83,6 +113,8 @@ function createRoom(): BotMovementLodRoom {
   room.botMovementFullStepBudgetRemaining = Number.POSITIVE_INFINITY;
   room.clampToPlayableMap = (position) => ({ ...position });
   room.getProceduralGroundY = () => 0;
+  room.getMovementCollisionRevision = () => 1;
+  room.getMovementCollisionWorld = () => collisionWorld;
   room.getActiveSpeedMultiplier = () => 1;
   room.isFiniteVec3 = (position) => (
     Number.isFinite(position.x) &&
@@ -171,6 +203,49 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
 
 {
   const room = createRoom();
+  const wall = {
+    min: { x: -4, y: 0, z: -0.95 },
+    max: { x: 4, y: PLAYER_HEIGHT + 1, z: -0.75 },
+  };
+  const collisionWorld = createCollisionWorld([wall]);
+  room.getMovementCollisionWorld = () => collisionWorld;
+  const bot = createBot(room);
+  bot.velocity.z = -20;
+  const moved = room.stepServerOwnedBotMovementLodProxy(
+    bot,
+    botInput(bot),
+    SERVER_OWNED_MOVEMENT_STEP_SECONDS
+  );
+
+  assert.equal(moved, true);
+  assert.equal(bot.position.z, 0);
+  assert.equal(bot.velocity.z, 0);
+}
+
+{
+  const room = createRoom();
+  const wall = {
+    min: { x: -4, y: 0, z: -0.95 },
+    max: { x: 4, y: PLAYER_HEIGHT + 1, z: -0.75 },
+  };
+  const collisionWorld = createCollisionWorld([wall]);
+  room.getMovementCollisionWorld = () => collisionWorld;
+  const bot = createBot(room);
+  bot.movement.isGrounded = false;
+  bot.velocity.z = -20;
+  const moved = room.stepServerOwnedBotKinematicMovementProxy(
+    bot,
+    botInput(bot),
+    SERVER_OWNED_MOVEMENT_STEP_SECONDS
+  );
+
+  assert.equal(moved, true);
+  assert.equal(bot.position.z, 0);
+  assert.equal(bot.velocity.z, 0);
+}
+
+{
+  const room = createRoom();
   const bot = createBot(room);
   const moved = room.stepServerOwnedBotMovementLodProxy(
     bot,
@@ -180,6 +255,30 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
 
   assert.equal(moved, true);
   assert.ok(bot.position.z < -0.01, `expected horizontal proxy movement while jump waits, got z=${bot.position.z}`);
+}
+
+{
+  const room = createRoom();
+  const wall = {
+    min: { x: -8, y: 0, z: -3.4 },
+    max: { x: 8, y: PLAYER_HEIGHT + 1, z: -2.2 },
+  };
+  const collisionWorld = createCollisionWorld([wall]);
+  room.getMovementCollisionWorld = () => collisionWorld;
+  const bot = createBot(room);
+  const result = room.chooseBotSteering(
+    bot,
+    { x: 0, z: -1 },
+    getBotSkillProfile('normal'),
+    { steeringProbeChecksRemaining: 12 }
+  );
+
+  assert.equal(result.directPathBlocked, true);
+  assert.equal(result.steering.blocked, true);
+  assert.ok(
+    result.steering.direction && result.steering.direction.z > -0.99,
+    'expected terrain-aware steering to avoid the blocked direct route'
+  );
 }
 
 {

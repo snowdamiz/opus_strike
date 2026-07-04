@@ -18,6 +18,7 @@ function createEconomy(overrides: RewardEconomyOverrides = {}): RewardEconomy {
     },
     playerRewards: {
       enabled: true,
+      settingsVersion: 1,
       dailyRankedDripLamports: '20000',
       dailyRankedDripMaxMatches: 5,
       minMatchDurationMs: 180000,
@@ -29,6 +30,20 @@ function createEconomy(overrides: RewardEconomyOverrides = {}): RewardEconomy {
       maxMatchPayoutLamports: '250000',
       treasuryReserveLamports: '1000000000',
       payoutBatchSize: 100,
+      rankedBrCombatRewardsEnabled: true,
+      rankedBrCombatRewardsShadowMode: false,
+      rankedBrDamageLamportsPerHp: '250',
+      rankedBrKillLamports: '100000',
+      rankedBrBotTargetRewardBps: 7000,
+      rankedBrSourceVictimDamageCapHp: 315,
+      rankedBrMaxPlayerMatchLamports: '750000',
+      rankedBrMaxPlayerDailyLamports: '2500000',
+      rankedBrMaxMatchLamports: '5000000',
+      rankedBrTreasuryExposureBps: 10,
+      rankedBrClientRewardTextMinLamports: '1000',
+      minPayoutUsdCents: 1500,
+      payoutPriceQuoteTtlMs: 300000,
+      payoutPriceQuote: null,
       updatedByUserId: null,
       updatedAt: null,
     },
@@ -86,7 +101,7 @@ function valuesFor(economy: RewardEconomy | null): string[] {
 
 assert.deepEqual(
   labelsFor(createEconomy()),
-  ['Ranked match', 'Win + assist', 'Flag bonus', 'Play Ranked', 'Golden map', 'Wager Games'],
+  ['Ranked match', 'Win + assist', 'Flag bonus', 'Ranked BR damage', 'Ranked BR kill', 'SOL payouts', 'Play Ranked', 'Golden map', 'Wager Games'],
   'enabled reward economy should show all payout rules',
 );
 
@@ -98,13 +113,13 @@ assert.deepEqual(
 
 assert.deepEqual(
   labelsFor(createEconomy({ goldenBiome: { enabled: false } })),
-  ['Ranked match', 'Win + assist', 'Flag bonus', 'Play Ranked', 'Wager Games'],
+  ['Ranked match', 'Win + assist', 'Flag bonus', 'Ranked BR damage', 'Ranked BR kill', 'SOL payouts', 'Play Ranked', 'Wager Games'],
   'turning off golden map rewards should hide the golden map row',
 );
 
 assert.deepEqual(
   labelsFor(createEconomy({ wagers: { enabled: false } })),
-  ['Ranked match', 'Win + assist', 'Flag bonus', 'Play Ranked', 'Golden map'],
+  ['Ranked match', 'Win + assist', 'Flag bonus', 'Ranked BR damage', 'Ranked BR kill', 'SOL payouts', 'Play Ranked', 'Golden map'],
   'turning off wagers should hide the wager row',
 );
 
@@ -120,7 +135,7 @@ assert.deepEqual(
 
 assert.deepEqual(
   labelsFor(null),
-  ['Ranked match', 'Win + assist', 'Flag bonus', 'Golden map', 'Wager Games'],
+  ['Ranked match', 'Win + assist', 'Flag bonus', 'Ranked BR damage', 'Ranked BR kill', 'SOL payouts', 'Golden map', 'Wager Games'],
   'missing economy data should not show a stale ranked token requirement',
 );
 
@@ -130,6 +145,9 @@ assert.deepEqual(
     '20K UNITS, max 5/day',
     '10K UNITS win, 2K UNITS assist',
     '15K UNITS capture, 5K UNITS return',
+    '0.00000025 SOL per HP',
+    '0.0001 SOL final, bots 70%',
+    'Pending integrity; paid after $15',
     'Hold 2.5M UNITS',
     '2% roll, 0.2 SOL each winner',
     '90% winners, 5% burn, 5% treasury',
@@ -138,13 +156,13 @@ assert.deepEqual(
 );
 
 assert.equal(
-  valuesFor(createEconomy({ rankedEntryGate: { requiredTokenAmount: '500' } })).at(3),
+  valuesFor(createEconomy({ rankedEntryGate: { requiredTokenAmount: '500' } })).at(6),
   'Hold 500 UNITS',
   'ranked token hold copy should use the admin-configured amount',
 );
 
 assert.equal(
-  valuesFor(createEconomy({ rankedEntryGate: { mode: 'locked', requiredTokenAmount: '0' } })).at(3),
+  valuesFor(createEconomy({ rankedEntryGate: { mode: 'locked', requiredTokenAmount: '0' } })).at(6),
   'Locked',
   'locked ranked gates should not show a token amount',
 );

@@ -64,7 +64,7 @@ function elevatedRoofCellCount(manifest, node, radius = 2.6, minRowsAboveSurface
   return count;
 }
 
-function playableHeightRows(manifest, radius) {
+function playableHeightRows(manifest, radius, maxMeasuredRow = 68) {
   const rows = [];
   const { origin, voxelSize, size, topSolidRows } = manifest.heightfield;
   for (let z = 0; z < size.z; z++) {
@@ -72,7 +72,9 @@ function playableHeightRows(manifest, radius) {
     for (let x = 0; x < size.x; x++) {
       const worldX = origin.x + (x + 0.5) * voxelSize.x;
       if (Math.hypot(worldX, worldZ) > radius) continue;
-      rows.push(topSolidRows[x + z * size.x]);
+      const row = topSolidRows[x + z * size.x];
+      if (row <= 0 || row >= maxMeasuredRow) continue;
+      rows.push(row);
     }
   }
   return rows.sort((a, b) => a - b);
@@ -81,8 +83,11 @@ function playableHeightRows(manifest, radius) {
 function playableSlopeStats(manifest, radius, maxMeasuredRow = 68) {
   const { origin, voxelSize, size, topSolidRows } = manifest.heightfield;
   let checked = 0;
+  let maxRowDifference = 0;
+  let movementBlockingSteps = 0;
   let steepSteps = 0;
   let cliffSteps = 0;
+  const maxStepRows = Math.max(1, Math.ceil(STEP_HEIGHT / voxelSize.y));
 
   for (let z = 0; z < size.z; z++) {
     const worldZ = origin.z + (z + 0.5) * voxelSize.z;
@@ -105,6 +110,8 @@ function playableSlopeStats(manifest, radius, maxMeasuredRow = 68) {
         if (neighborRow <= 0 || neighborRow >= maxMeasuredRow) continue;
         const rowDifference = Math.abs(row - neighborRow);
         checked++;
+        maxRowDifference = Math.max(maxRowDifference, rowDifference);
+        if (rowDifference > maxStepRows) movementBlockingSteps++;
         if (rowDifference > 12) steepSteps++;
         if (rowDifference > 24) cliffSteps++;
       }
@@ -112,6 +119,8 @@ function playableSlopeStats(manifest, radius, maxMeasuredRow = 68) {
   }
 
   return {
+    maxRowDifference,
+    movementBlockingStepRatio: movementBlockingSteps / checked,
     steepStepRatio: steepSteps / checked,
     cliffStepRatio: cliffSteps / checked,
   };
@@ -321,40 +330,53 @@ const playableSlopes = playableSlopeStats(manifest, largePlayableRadius);
 const terrainTraps = terrainTrapStats(manifest, largePlayableRadius);
 const terrainLookup = createProceduralTerrainLookup(manifest);
 assert.equal(percentile(playableRows, 0.1) >= 10, true);
-assert.equal(percentile(playableRows, 0.9) >= 30, true);
+assert.equal(percentile(playableRows, 0.9) >= 22, true);
+assert.equal(percentile(playableRows, 0.98) <= 30, true);
 const playableMidSpan = percentile(playableRows, 0.9) - percentile(playableRows, 0.1);
-assert.equal(playableMidSpan >= 12, true);
-assert.equal(percentile(playableRows, 0.98) - percentile(playableRows, 0.02) >= 28, true);
-assert.equal(playableSlopes.steepStepRatio <= 0.006, true);
-assert.equal(playableSlopes.cliffStepRatio <= 0.003, true);
+assert.equal(playableMidSpan >= 8, true);
+assert.equal(playableMidSpan <= 12, true);
+assert.equal(percentile(playableRows, 0.98) - percentile(playableRows, 0.02) <= 18, true);
+assert.equal(playableSlopes.maxRowDifference <= 18, true);
+assert.equal(playableSlopes.movementBlockingStepRatio <= 0.03, true);
+assert.equal(playableSlopes.steepStepRatio <= 0.002, true);
+assert.equal(playableSlopes.cliffStepRatio <= 0.00005, true);
 assert.equal(
   terrainTraps.trapCellRatio <= 0.001,
   true,
   `expected low terrain trap ratio, got ${terrainTraps.trapCells}/${terrainTraps.checked}`
 );
 assert.equal(terrainLookup.getMaxPlayableY() >= maxSurfaceY(manifest) + PLAYER_HEIGHT / 2 + 12, true);
-const hillierManifest = generateProceduralVoxelMap(0x00000001, {
+const alternateManifest = generateProceduralVoxelMap(0x00000001, {
   mapSize: 'large',
   profileId: 'battle_royal_large',
 });
-const hillierRows = playableHeightRows(
-  hillierManifest,
-  hillierManifest.preview.thumbnailSilhouette.bounds.maxX * 0.96
+const alternateRows = playableHeightRows(
+  alternateManifest,
+  alternateManifest.preview.thumbnailSilhouette.bounds.maxX * 0.96
 );
-const hillierMidSpan = percentile(hillierRows, 0.9) - percentile(hillierRows, 0.1);
-const hillierTerrainTraps = terrainTrapStats(
-  hillierManifest,
-  hillierManifest.preview.thumbnailSilhouette.bounds.maxX * 0.96
+const alternateMidSpan = percentile(alternateRows, 0.9) - percentile(alternateRows, 0.1);
+const alternateSlopes = playableSlopeStats(
+  alternateManifest,
+  alternateManifest.preview.thumbnailSilhouette.bounds.maxX * 0.96
 );
-assert.equal(hillierMidSpan >= playableMidSpan + 15, true);
+const alternateTerrainTraps = terrainTrapStats(
+  alternateManifest,
+  alternateManifest.preview.thumbnailSilhouette.bounds.maxX * 0.96
+);
+assert.equal(alternateMidSpan >= 8, true);
+assert.equal(alternateMidSpan <= 12, true);
+assert.equal(percentile(alternateRows, 0.98) - percentile(alternateRows, 0.02) <= 18, true);
+assert.equal(alternateSlopes.maxRowDifference <= 18, true);
+assert.equal(alternateSlopes.steepStepRatio <= 0.002, true);
+assert.equal(alternateSlopes.cliffStepRatio <= 0.00005, true);
 assert.equal(
-  hillierTerrainTraps.trapCellRatio <= 0.001,
+  alternateTerrainTraps.trapCellRatio <= 0.001,
   true,
-  `expected low hillier terrain trap ratio, got ${hillierTerrainTraps.trapCells}/${hillierTerrainTraps.checked}`
+  `expected low alternate terrain trap ratio, got ${alternateTerrainTraps.trapCells}/${alternateTerrainTraps.checked}`
 );
-assert.equal(hillierManifest.construction.diagnostics.repairActions.terrainTrapRepairCells >= 0, true);
-assert.equal(hillierManifest.construction.diagnostics.spawnVisibilityPairs, 0);
-assert.deepEqual(hillierManifest.construction.diagnostics.warnings, []);
+assert.equal(alternateManifest.construction.diagnostics.repairActions.terrainTrapRepairCells >= 0, true);
+assert.equal(alternateManifest.construction.diagnostics.spawnVisibilityPairs, 0);
+assert.deepEqual(alternateManifest.construction.diagnostics.warnings, []);
 const pickupCounts = manifest.gameplay.powerups.reduce((counts, pickup) => {
   counts[pickup.kind] = (counts[pickup.kind] ?? 0) + 1;
   return counts;
@@ -363,7 +385,9 @@ assert.equal(pickupCounts.health_pack, 42);
 assert.equal(pickupCounts.powerup, 24);
 assert.equal(manifest.gameplay.powerups.length, 66);
 assert.equal(manifest.construction.diagnostics.routeChoiceCount >= 120, true);
-assert.equal(manifest.construction.diagnostics.moduleCountsByRole.medium_landmark >= 35, true);
+assert.equal(manifest.construction.diagnostics.routeChoiceCount <= 165, true);
+assert.equal(manifest.construction.diagnostics.moduleCountsByRole.medium_landmark >= 36, true);
+assert.equal(manifest.construction.diagnostics.moduleCountsByRole.medium_landmark <= 48, true);
 assert.equal(manifest.construction.diagnostics.moduleCountsByRole.district_city_core, 1);
 assert.equal(manifest.construction.diagnostics.moduleCountsByRole.district_town, 3);
 assert.equal(manifest.construction.diagnostics.moduleCountsByRole.district_industrial, 1);
@@ -393,17 +417,21 @@ const roofedBuildingRoles = new Set(['citadel', 'highrise', 'compound', 'hangar'
 const roofedBuildingNodes = manifest.gameplay.routeGraph.nodes.filter((node) => (
   node.kind === 'landmark' && node.tags.some((tag) => roofedBuildingRoles.has(tag))
 ));
-assert.equal(roofedBuildingNodes.length >= 45, true);
+assert.equal(roofedBuildingNodes.length >= 36, true);
+assert.equal(roofedBuildingNodes.length <= 48, true);
 for (const node of roofedBuildingNodes) {
   const role = node.tags.find((tag) => roofedBuildingRoles.has(tag));
-  const roofCells = elevatedRoofCellCount(manifest, node);
+  const minRoofRows = role === 'depot' ? 4 : 6;
+  const minRoofCells = role === 'depot' ? 18 : 24;
+  const roofCells = elevatedRoofCellCount(manifest, node, 2.6, minRoofRows);
   assert.equal(
-    roofCells >= 24,
+    roofCells >= minRoofCells,
     true,
     `${node.id} ${role} should have elevated roof coverage, got ${roofCells}`
   );
 }
-assert.equal(manifest.construction.diagnostics.moduleCountsByRole.cover_cluster >= 220, true);
+assert.equal(manifest.construction.diagnostics.moduleCountsByRole.cover_cluster >= 120, true);
+assert.equal(manifest.construction.diagnostics.moduleCountsByRole.cover_cluster <= 170, true);
 assert.deepEqual(manifest.gameplay.lanes.map((lane) => lane.id).sort(), [
   'outer_routes',
   'primary_roads',
@@ -415,7 +443,7 @@ assert.equal(manifest.gameplay.routeGraph.edges.every((edge) => edge.tags.includ
 assert.equal(manifest.construction.diagnostics.scoreBreakdown.settlementStructure > 0, true);
 assert.equal(manifest.construction.diagnostics.scoreBreakdown.openAreaStructure > 0, true);
 assert.equal(manifest.construction.diagnostics.repairActions.openAreaCoverage > 0.1, true);
-assert.equal(manifest.construction.diagnostics.maxSightlineLength <= preview.preview.thumbnailSilhouette.bounds.maxX * 1.71, true);
+assert.equal(manifest.construction.diagnostics.maxSightlineLength <= preview.preview.thumbnailSilhouette.bounds.maxX * 1.76, true);
 assert.equal(manifest.construction.diagnostics.spawnVisibilityPairs, 0);
 assert.deepEqual(manifest.construction.diagnostics.warnings, []);
 assert.equal(manifest.stats.solidBlocks <= manifest.construction.designBrief.performanceBudget.maxSolidBlocks, true);
