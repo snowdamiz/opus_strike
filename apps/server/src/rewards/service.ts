@@ -778,7 +778,7 @@ export class PlayerRewardService {
         rankedBrMaxPlayerMatchLamports: readLamportUpdate(settings, current.rankedBrMaxPlayerMatchLamports, 'rankedBrMaxPlayerMatchLamports'),
         rankedBrMaxPlayerDailyLamports: readLamportUpdate(settings, current.rankedBrMaxPlayerDailyLamports, 'rankedBrMaxPlayerDailyLamports'),
         rankedBrMaxMatchLamports: readLamportUpdate(settings, current.rankedBrMaxMatchLamports, 'rankedBrMaxMatchLamports'),
-        rankedBrTreasuryExposureBps: readIntegerUpdate(settings, current.rankedBrTreasuryExposureBps, 'rankedBrTreasuryExposureBps', { min: 0, max: 100 }),
+        rankedBrTreasuryExposureBps: readIntegerUpdate(settings, current.rankedBrTreasuryExposureBps, 'rankedBrTreasuryExposureBps', { min: 0, max: 10_000 }),
         rankedBrClientRewardTextMinLamports: readLamportUpdate(settings, current.rankedBrClientRewardTextMinLamports, 'rankedBrClientRewardTextMinLamports'),
         minPayoutUsdCents: readIntegerUpdate(settings, current.minPayoutUsdCents, 'minPayoutUsdCents', { min: 1, max: 1_000_000 }),
         payoutPriceQuoteTtlMs: readIntegerUpdate(settings, current.payoutPriceQuoteTtlMs, 'payoutPriceQuoteTtlMs', { min: 1_000, max: 3_600_000 }),
