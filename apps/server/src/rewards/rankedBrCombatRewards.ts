@@ -13,6 +13,34 @@ export type RankedBrRewardSkippedReason =
   | 'player_match_cap'
   | 'player_daily_cap'
   | 'match_pool_cap';
+export type RankedBrRewardEventOutcomeReason = RankedBrRewardSkippedReason | 'zero_gross_reward' | 'rewarded';
+
+export interface RankedBrRewardEventOutcome {
+  reason: RankedBrRewardEventOutcomeReason;
+  sourcePlayerId: string;
+  sourceUserId: string;
+  sourceTeam: string | null;
+  targetPlayerId: string;
+  targetTeam: string | null;
+  targetKind: RankedBrRewardTargetKind;
+  serverAppliedDamageHp: number;
+  finalEnemyElimination: boolean;
+  settingsVersion: number;
+  grossRewardLamports: bigint;
+  rewardLamports: bigint;
+  matchPoolRemainingLamports: bigint;
+  matchAwardedLamports: bigint;
+}
+
+export interface RankedBrRewardAccumulatorSnapshot {
+  matchId: string;
+  roomId: string;
+  lobbyId: string | null;
+  matchPoolLamports: bigint;
+  matchPoolRemainingLamports: bigint;
+  matchAwardedLamports: bigint;
+  userCount: number;
+}
 
 export interface RankedBrCombatGrant {
   userId: string;
@@ -134,9 +162,26 @@ export class RankedBrRewardAccumulator {
   private readonly sourceVictimDamageHp = new Map<string, number>();
   private matchPoolRemainingLamports: bigint;
   private matchAwardedLamports = 0n;
+  private lastEventOutcome: RankedBrRewardEventOutcome | null = null;
 
   constructor(private readonly input: RankedBrRewardAccumulatorInput) {
     this.matchPoolRemainingLamports = input.matchPoolLamports;
+  }
+
+  getDebugSnapshot(): RankedBrRewardAccumulatorSnapshot {
+    return {
+      matchId: this.input.matchId,
+      roomId: this.input.roomId,
+      lobbyId: this.input.lobbyId,
+      matchPoolLamports: this.input.matchPoolLamports,
+      matchPoolRemainingLamports: this.matchPoolRemainingLamports,
+      matchAwardedLamports: this.matchAwardedLamports,
+      userCount: this.perUser.size,
+    };
+  }
+
+  getLastEventOutcome(): RankedBrRewardEventOutcome | null {
+    return this.lastEventOutcome;
   }
 
   recordDamage(input: RankedBrRewardEventInput): RankedBrRewardEventResult | null {
@@ -149,23 +194,33 @@ export class RankedBrRewardAccumulator {
     totals.latestBotTargetRewardBps = input.config.rankedBrBotTargetRewardBps;
 
     if (!input.config.rankedBrCombatRewardsEnabled) {
-      addSkippedLamports(totals, 'disabled', this.estimateGrossLamports(input));
+      const grossRewardLamports = this.estimateGrossLamports(input);
+      addSkippedLamports(totals, 'disabled', grossRewardLamports);
+      this.setLastEventOutcome(input, 'disabled', grossRewardLamports, 0n);
       return null;
     }
     if (input.config.rankedBrCombatRewardsShadowMode) {
-      addSkippedLamports(totals, 'shadow_mode', this.estimateGrossLamports(input));
+      const grossRewardLamports = this.estimateGrossLamports(input);
+      addSkippedLamports(totals, 'shadow_mode', grossRewardLamports);
+      this.setLastEventOutcome(input, 'shadow_mode', grossRewardLamports, 0n);
       return null;
     }
     if (input.targetKind === 'non_rewardable') {
-      addSkippedLamports(totals, 'non_rewardable_target', this.estimateGrossLamports(input));
+      const grossRewardLamports = this.estimateGrossLamports(input);
+      addSkippedLamports(totals, 'non_rewardable_target', grossRewardLamports);
+      this.setLastEventOutcome(input, 'non_rewardable_target', grossRewardLamports, 0n);
       return null;
     }
     if (input.sourcePlayerId === input.targetPlayerId) {
-      addSkippedLamports(totals, 'self_damage', this.estimateGrossLamports(input));
+      const grossRewardLamports = this.estimateGrossLamports(input);
+      addSkippedLamports(totals, 'self_damage', grossRewardLamports);
+      this.setLastEventOutcome(input, 'self_damage', grossRewardLamports, 0n);
       return null;
     }
     if (input.sourceTeam && input.targetTeam && input.sourceTeam === input.targetTeam) {
-      addSkippedLamports(totals, 'friendly_fire', this.estimateGrossLamports(input));
+      const grossRewardLamports = this.estimateGrossLamports(input);
+      addSkippedLamports(totals, 'friendly_fire', grossRewardLamports);
+      this.setLastEventOutcome(input, 'friendly_fire', grossRewardLamports, 0n);
       return null;
     }
 
@@ -195,7 +250,15 @@ export class RankedBrRewardAccumulator {
       const skipped = BigInt(damageCapSkippedHp) * input.config.rankedBrDamageLamportsPerHp * BigInt(targetBps) / 10_000n;
       addSkippedLamports(totals, 'source_victim_damage_cap', skipped);
     }
-    if (grossRewardLamports <= 0n) return null;
+    if (grossRewardLamports <= 0n) {
+      this.setLastEventOutcome(
+        input,
+        damageCapSkippedHp > 0 ? 'source_victim_damage_cap' : 'zero_gross_reward',
+        grossRewardLamports,
+        0n
+      );
+      return null;
+    }
 
     const dailyBeforeMatch = this.input.dailyTotalsByUserId.get(input.sourceUserId) ?? 0n;
     const remainingPlayerMatch = input.config.rankedBrMaxPlayerMatchLamports - totals.totalLamports;
@@ -212,15 +275,17 @@ export class RankedBrRewardAccumulator {
     );
 
     if (rewardLamports <= 0n) {
+      const reason = remainingPlayerMatch <= 0n
+        ? 'player_match_cap'
+        : remainingPlayerDaily <= 0n
+          ? 'player_daily_cap'
+          : 'match_pool_cap';
       addSkippedLamports(
         totals,
-        remainingPlayerMatch <= 0n
-          ? 'player_match_cap'
-          : remainingPlayerDaily <= 0n
-            ? 'player_daily_cap'
-            : 'match_pool_cap',
+        reason,
         grossRewardLamports
       );
+      this.setLastEventOutcome(input, reason, grossRewardLamports, 0n);
       return null;
     }
 
@@ -247,6 +312,7 @@ export class RankedBrRewardAccumulator {
     }
     this.matchPoolRemainingLamports -= rewardLamports;
     this.matchAwardedLamports += rewardLamports;
+    this.setLastEventOutcome(input, 'rewarded', grossRewardLamports, rewardLamports);
 
     return {
       amountLamports: rewardLamports,
@@ -326,4 +392,27 @@ export class RankedBrRewardAccumulator {
     return (damageLamports + killLamports) * targetBps / 10_000n;
   }
 
+  private setLastEventOutcome(
+    input: RankedBrRewardEventInput,
+    reason: RankedBrRewardEventOutcomeReason,
+    grossRewardLamports: bigint,
+    rewardLamports: bigint
+  ): void {
+    this.lastEventOutcome = {
+      reason,
+      sourcePlayerId: input.sourcePlayerId,
+      sourceUserId: input.sourceUserId,
+      sourceTeam: input.sourceTeam,
+      targetPlayerId: input.targetPlayerId,
+      targetTeam: input.targetTeam,
+      targetKind: input.targetKind,
+      serverAppliedDamageHp: input.serverAppliedDamageHp,
+      finalEnemyElimination: input.finalEnemyElimination,
+      settingsVersion: input.config.settingsVersion,
+      grossRewardLamports,
+      rewardLamports,
+      matchPoolRemainingLamports: this.matchPoolRemainingLamports,
+      matchAwardedLamports: this.matchAwardedLamports,
+    };
+  }
 }
