@@ -354,15 +354,20 @@ function testBattleRoyalTacticsUseAllEnemySquads() {
   assert.equal(intent.targetPlayerId, charlieEnemy.id);
 }
 
-function testRankedBattleRoyalProfileIsStrongerThanHard() {
+function testRankedBattleRoyalProfileIsConservativeForServerLoad() {
+  const normal = getBotSkillProfile('normal');
   const hard = getBotSkillProfile('hard');
   const ranked = getBotSkillProfile('normal', `${BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX}-12`);
 
-  assert.ok(ranked.thinkIntervalMs < hard.thinkIntervalMs);
-  assert.ok(ranked.reactionMs < hard.reactionMs);
-  assert.ok(ranked.fireChance > hard.fireChance);
-  assert.ok(ranked.routeDangerWeight > hard.routeDangerWeight);
-  assert.ok(ranked.pathExpansionLimit > hard.pathExpansionLimit);
+  assert.ok(ranked.thinkIntervalMs > hard.thinkIntervalMs);
+  assert.ok(ranked.thinkIntervalMs < normal.thinkIntervalMs);
+  assert.ok(ranked.reactionMs > hard.reactionMs);
+  assert.ok(ranked.reactionMs < normal.reactionMs);
+  assert.ok(ranked.fireChance < hard.fireChance);
+  assert.ok(ranked.fireChance > normal.fireChance);
+  assert.ok(ranked.pathExpansionLimit < hard.pathExpansionLimit);
+  assert.ok(ranked.pathExpansionLimit <= normal.pathExpansionLimit);
+  assert.ok(ranked.abilityCadenceMs[0] > hard.abilityCadenceMs[0]);
 }
 
 function testBattleRoyalAwarenessExtendsFocusPressure() {
@@ -1840,7 +1845,7 @@ function testContestedObjectiveStillSpendsControlUltimate() {
 
 testTeamTacticsAssignments();
 testBattleRoyalTacticsUseAllEnemySquads();
-testRankedBattleRoyalProfileIsStrongerThanHard();
+testRankedBattleRoyalProfileIsConservativeForServerLoad();
 testBattleRoyalAwarenessExtendsFocusPressure();
 testBattleRoyalSafeZoneIntentRotatesBeforeFighting();
 testBattleRoyalSafeZoneRotationStaysNearHumanSquadmate();

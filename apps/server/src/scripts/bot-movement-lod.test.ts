@@ -321,7 +321,7 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   const room = createRoom();
   room.gameplayMode = 'battle_royal';
   room.state.tick = 80;
-  for (let index = 0; index < 24; index++) {
+  for (let index = 0; index < 10; index++) {
     assert.equal(room.consumeServerOwnedBotMovementFullStepBudget(48, 'critical'), true);
   }
   assert.equal(room.consumeServerOwnedBotMovementFullStepBudget(48, 'critical'), false);
@@ -394,21 +394,21 @@ function botInput(bot: Player, overrides: Partial<PlayerInput> = {}): PlayerInpu
   const smallPlanningBudgets = room.getBotPlanningBudgets(8);
 
   assert.equal(smallPlanningBudgets.urgentBudget, 8);
-  assert.equal(smallPlanningBudgets.deferredBudget, 8);
-  assert.equal(planningBudgets.urgentBudget, 48);
-  assert.equal(planningBudgets.deferredBudget, 48);
-  assert.equal(room.getServerOwnedBotMovementFullStepBudget(8), 12);
-  assert.equal(room.getServerOwnedBotMovementFullStepBudget(24), 18);
-  assert.equal(room.getServerOwnedBotMovementFullStepBudget(48), 24);
-  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'critical'), 14);
-  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'near'), 10);
-  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'background'), 6);
-  assert.equal(room.getBotLineOfSightFrameBudget(8), 48);
-  assert.equal(room.getBotLineOfSightFrameBudget(24), 72);
-  assert.equal(room.getBotLineOfSightFrameBudget(48), 96);
-  assert.equal(room.getBotSteeringProbeFrameBudget(8), 48);
-  assert.equal(room.getBotSteeringProbeFrameBudget(24), 72);
-  assert.equal(room.getBotSteeringProbeFrameBudget(48), 96);
+  assert.equal(smallPlanningBudgets.deferredBudget, 4);
+  assert.equal(planningBudgets.urgentBudget, 4);
+  assert.equal(planningBudgets.deferredBudget, 1);
+  assert.equal(room.getServerOwnedBotMovementFullStepBudget(8), 6);
+  assert.equal(room.getServerOwnedBotMovementFullStepBudget(24), 8);
+  assert.equal(room.getServerOwnedBotMovementFullStepBudget(48), 10);
+  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'critical'), 8);
+  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'near'), 5);
+  assert.equal(room.getBotPerceptionLineOfSightCandidateLimit(48, 'background'), 2);
+  assert.equal(room.getBotLineOfSightFrameBudget(8), 20);
+  assert.equal(room.getBotLineOfSightFrameBudget(24), 24);
+  assert.equal(room.getBotLineOfSightFrameBudget(48), 28);
+  assert.equal(room.getBotSteeringProbeFrameBudget(8), 20);
+  assert.equal(room.getBotSteeringProbeFrameBudget(24), 24);
+  assert.equal(room.getBotSteeringProbeFrameBudget(48), 28);
 }
 
 {

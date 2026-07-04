@@ -243,17 +243,18 @@ export function App() {
     () => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId }),
     [mapSeed, mapThemeId, mapSize, mapProfileId, pregeneratedMapId]
   );
+  const isBattleRoyalLoading = gameplayMode === 'battle_royal' || mapProfileId === 'battle_royal_large';
+  const canRevealMatchScene = isMatchSceneReady && (!isBattleRoyalLoading || isActiveGame);
   const shouldShowMatchLoading = (
     shouldPrepareMatchWorld &&
     !(streamerIsActive && streamerSceneTransition !== null) &&
     (
       isMatchLoadingVisible ||
       !shouldMountMatchWorld ||
-      !isMatchSceneReady
+      !canRevealMatchScene
     )
   );
   const shouldTrackMatchLoadingProgress = appPhase === 'match_loading' || appPhase === 'streamer_loading' || shouldPrepareMatchWorld;
-  const isBattleRoyalLoading = gameplayMode === 'battle_royal' || mapProfileId === 'battle_royal_large';
   const matchLoadingTitle = isBattleRoyalLoading ? 'LOADING DROP ZONE' : 'LOADING ARENA';
   const matchLoadingEyebrow = isBattleRoyalLoading ? 'Battle Royal' : 'Match';
   const matchWarmupStages = useMemo(
@@ -532,14 +533,14 @@ export function App() {
   ]);
 
   useEffect(() => {
-    if (!isMatchSceneReady) return;
+    if (!canRevealMatchScene) return;
 
     const timeout = window.setTimeout(() => {
       setIsMatchLoadingVisible(false);
     }, 240);
 
     return () => window.clearTimeout(timeout);
-  }, [isMatchSceneReady]);
+  }, [canRevealMatchScene]);
 
   useEffect(() => {
     if (!streamerSceneTransition) return;
@@ -626,7 +627,7 @@ export function App() {
   ]);
 
   useEffect(() => {
-    if (!isActiveGame || !isMatchSceneReady || isMatchLoadingVisible) return;
+    if (!isActiveGame || !canRevealMatchScene || isMatchLoadingVisible) return;
     if (revealedWarmupKeyRef.current === warmupKey) return;
 
     revealedWarmupKeyRef.current = warmupKey;
@@ -641,7 +642,7 @@ export function App() {
       window.clearTimeout(timeout);
       setIsStartupRampActive(false);
     };
-  }, [isActiveGame, isMatchLoadingVisible, isMatchSceneReady, warmupKey]);
+  }, [canRevealMatchScene, isActiveGame, isMatchLoadingVisible, warmupKey]);
 
   if (isPracticePreparing) {
     return <PracticeLoadingScreen />;
@@ -755,7 +756,7 @@ export function App() {
         {shouldShowMatchLoading && (
           <MatchLoadingScreen
             key={warmupKey}
-            isComplete={isMatchSceneReady}
+            isComplete={canRevealMatchScene}
             initialProgress={matchLoadingProgressRef.current}
             progress={matchWarmupSnapshot?.progress}
             eyebrow={matchLoadingEyebrow}
@@ -778,7 +779,7 @@ export function App() {
         )}
 
         {/* Show HUD during active gameplay */}
-        {isActiveGame && isMatchSceneReady && !streamerIsActive && !isObserverMode && (
+        {isActiveGame && canRevealMatchScene && !streamerIsActive && !isObserverMode && (
           <>
             {(!recordingPlaybackIsActive ? showHUD : recordingPlaybackHudMode === 'selected_player') && <HUD />}
             {!recordingPlaybackIsActive && isTutorialMode && <TutorialGuide />}
@@ -799,7 +800,7 @@ export function App() {
         )}
 
         {/* Countdown overlay */}
-        {gamePhase === 'countdown' && isMatchSceneReady && !streamerIsActive && !isObserverMode && !recordingPlaybackIsActive && <CountdownOverlay />}
+        {gamePhase === 'countdown' && canRevealMatchScene && !streamerIsActive && !isObserverMode && !recordingPlaybackIsActive && <CountdownOverlay />}
 
         {/* Round/game end overlays */}
         {gamePhase === 'round_end' && !streamerIsActive && (

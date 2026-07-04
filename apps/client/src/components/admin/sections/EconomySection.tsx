@@ -463,7 +463,7 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
                 label="Treasury Exposure (bps)"
                 value={form.rankedBrTreasuryExposureBps}
                 onChange={(v) => set('rankedBrTreasuryExposureBps', v)}
-                hint="Capped server-side at 1%."
+                hint="Capped server-side at 100%."
               />
               <NumberField
                 label="Reward Text Min Lamports"
