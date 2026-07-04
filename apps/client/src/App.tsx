@@ -244,7 +244,7 @@ export function App() {
     [mapSeed, mapThemeId, mapSize, mapProfileId, pregeneratedMapId]
   );
   const isBattleRoyalLoading = gameplayMode === 'battle_royal' || mapProfileId === 'battle_royal_large';
-  const canRevealMatchScene = isMatchSceneReady && (!isBattleRoyalLoading || isActiveGame);
+  const canRevealMatchScene = isMatchSceneReady && (recordingPlaybackIsActive || !isBattleRoyalLoading || isActiveGame);
   const shouldShowMatchLoading = (
     shouldPrepareMatchWorld &&
     !(streamerIsActive && streamerSceneTransition !== null) &&
@@ -567,6 +567,11 @@ export function App() {
   const handleWarmupUpdate = useCallback((snapshot: MapWarmupSnapshot) => {
     setMatchWarmupSnapshot(snapshot);
   }, []);
+
+  useEffect(() => {
+    if (!recordingPlaybackIsActive || !isMatchSceneReady || isMatchLoadingVisible) return;
+    window.__voxelRecording?.markSceneReady();
+  }, [isMatchLoadingVisible, isMatchSceneReady, recordingPlaybackIsActive, warmupKey]);
 
   const handleMatchLoadingProgressChange = useCallback((progress: number) => {
     matchLoadingProgressRef.current = progress;

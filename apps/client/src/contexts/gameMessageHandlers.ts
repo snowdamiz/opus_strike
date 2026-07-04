@@ -1429,8 +1429,10 @@ export function setupPlayerVitalsHandler(
     let nextPlayers = initialStore.players;
     let nextLocalPlayer = initialStore.localPlayer;
     let nextPlayerPings = initialStore.playerPings;
+    let nextMapPings = initialStore.mapPings;
     let playersChanged = false;
     let playerPingsChanged = false;
+    let mapPingsChanged = false;
     let shouldPublishTiming = false;
     const liveVisualUpdates: Player[] = [];
     const hiddenVisualUpdates: string[] = [];
@@ -1453,6 +1455,14 @@ export function setupPlayerVitalsHandler(
       return nextPlayerPings;
     };
 
+    const writableMapPings = () => {
+      if (nextMapPings === initialStore.mapPings) {
+        nextMapPings = new Map(initialStore.mapPings);
+      }
+      mapPingsChanged = true;
+      return nextMapPings;
+    };
+
     for (const removedId of data.removedPlayerIds || []) {
       stopRemotePhantomCharge(removedId);
       stopObservedAbilityCastEffects(removedId);
@@ -1463,6 +1473,9 @@ export function setupPlayerVitalsHandler(
       }
       if (nextPlayerPings.has(removedId)) {
         writablePlayerPings().delete(removedId);
+      }
+      if (nextMapPings.has(removedId)) {
+        writableMapPings().delete(removedId);
       }
       removedVisuals.push(removedId);
       shouldPublishTiming = true;
@@ -1529,10 +1542,11 @@ export function setupPlayerVitalsHandler(
       setGameTiming(data.tick, data.serverTime);
     }
 
-    if (playersChanged || playerPingsChanged) {
+    if (playersChanged || playerPingsChanged || mapPingsChanged) {
       useGameStore.setState({
         ...(playersChanged ? { players: nextPlayers, localPlayer: nextLocalPlayer } : {}),
         ...(playerPingsChanged ? { playerPings: nextPlayerPings } : {}),
+        ...(mapPingsChanged ? { mapPings: nextMapPings } : {}),
         ...(nextLocalPlayer?.state !== 'alive' ? { chronosLifelineQueued: false } : {}),
       });
     }

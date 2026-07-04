@@ -68,6 +68,7 @@ const BROWSER_CONTROL_CODES = new Set([
   'F11',
   'F12',
 ]);
+const INPUT_ACTION_KEYS = new Set(Object.keys(createEmptyInputState()) as InputAction[]);
 
 function hasShortcutModifier(input: { ctrlKey: boolean; metaKey: boolean; altKey: boolean }): boolean {
   return input.ctrlKey || input.metaKey || input.altKey;
@@ -152,6 +153,10 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
 }
 
+function isInputAction(action: string): action is InputAction {
+  return INPUT_ACTION_KEYS.has(action as InputAction);
+}
+
 export function useInput(options: UseInputOptions = {}): UseInputReturn {
   const { gamepadEnabled = true } = options;
   const inputStateRef = useRef<InputState>(createEmptyInputState());
@@ -179,8 +184,8 @@ export function useInput(options: UseInputOptions = {}): UseInputReturn {
     // Build reverse mapping
     const map = new Map<string, InputAction>();
     for (const [action, code] of Object.entries(keybindings)) {
-      if (action === 'scoreboard') continue;
-      map.set(code, action as InputAction);
+      if (!isInputAction(action)) continue;
+      map.set(code, action);
     }
     keyToAction.current = map;
     inputStateRef.current = createEmptyInputState();

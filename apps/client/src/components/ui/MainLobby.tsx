@@ -1,4 +1,6 @@
 import { lazy, Suspense, type CSSProperties, useCallback, useMemo, useState, useEffect, useRef } from 'react';
+import * as TooltipPrimitive from '@radix-ui/react-tooltip';
+import { Info } from 'lucide-react';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import { useCombatFeedbackStore } from '../../store/combatFeedbackStore';
@@ -3133,17 +3135,35 @@ function EarningRulesPlate({ tokenSymbol, economy }: { tokenSymbol: string | nul
 
   return (
     <aside className="play-earnings-plate" aria-label="Ways to earn and payout rules">
-      <ul className="play-earnings-rule-list">
-        {rules.map((rule) => (
-          <li
-            key={rule.label}
-            className={rule.emphasis === 'sol-combat' ? 'play-earnings-rule-featured' : undefined}
-          >
-            <span className="play-earnings-rule-label">{rule.label}:</span>
-            <span className="play-earnings-rule-value">{rule.value}</span>
-          </li>
-        ))}
-      </ul>
+      <TooltipPrimitive.Provider delayDuration={180}>
+        <ul className="play-earnings-rule-list">
+          {rules.map((rule) => (
+            <li key={rule.label}>
+              <span className="play-earnings-rule-label">{rule.label}:</span>
+              <span className="play-earnings-rule-value">{rule.value}</span>
+              <TooltipPrimitive.Root>
+                <TooltipPrimitive.Trigger asChild>
+                  <button type="button" className="play-earnings-rule-info" aria-label={`${rule.label} details`}>
+                    <Info aria-hidden="true" />
+                  </button>
+                </TooltipPrimitive.Trigger>
+                <TooltipPrimitive.Portal>
+                  <TooltipPrimitive.Content
+                    className="play-earnings-rule-tooltip"
+                    side="left"
+                    align="center"
+                    sideOffset={8}
+                    collisionPadding={12}
+                  >
+                    {rule.tooltip}
+                    <TooltipPrimitive.Arrow className="play-earnings-rule-tooltip-arrow" />
+                  </TooltipPrimitive.Content>
+                </TooltipPrimitive.Portal>
+              </TooltipPrimitive.Root>
+            </li>
+          ))}
+        </ul>
+      </TooltipPrimitive.Provider>
     </aside>
   );
 }

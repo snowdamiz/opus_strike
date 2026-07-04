@@ -72,6 +72,7 @@ const ALLOWED_OBSERVER_MESSAGE_TYPES = new Set([
   'gameEnd',
   'matchCancelled',
   'matchSnapshot',
+  'mapPing',
   'phaseChange',
   'phantomPrimaryState',
   'phantomShieldBroken',

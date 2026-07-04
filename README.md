@@ -204,6 +204,20 @@ Server environment:
 - `SOLANA_CLUSTER`: cluster label returned to clients. Default: `mainnet-beta`.
 - `WAGER_TREASURY_WALLET`: treasury wallet that receives skin payments.
 
+### SOL Wager Settlement
+
+SOL wager deposits land in `WAGER_TREASURY_WALLET`. On clean settlement the server pays 90% of the pot to the winning paid humans, swaps 5% of the pot from SOL to the configured game token for the treasury wallet, and swaps then burns 5% as the game token.
+
+Server environment:
+
+- `WAGER_SOL_ENABLED`: enable SOL wager deposits and settlement.
+- `WAGER_TREASURY_WALLET`: treasury wallet and settlement signer public key.
+- `WAGER_SETTLEMENT_SECRET_KEY`: treasury signer secret key used for payouts, token conversion, and burns.
+- `GAME_TOKEN_MINT`: SPL or Token-2022 game token mint to receive and burn.
+- `JUPITER_API_KEY`: Jupiter Swap API key used to build SOL to game-token swaps.
+- `JUPITER_SWAP_BASE_URL`: Jupiter Router API base URL. Default: `https://api.jup.ag/swap/v2`.
+- `WAGER_TOKEN_SWAP_SLIPPAGE_BPS`: swap slippage in basis points. Default: `50`.
+
 ### Playing
 
 1. Start the server: `pnpm run dev:server`

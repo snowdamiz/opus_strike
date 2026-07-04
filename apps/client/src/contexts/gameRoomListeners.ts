@@ -8,6 +8,7 @@ import {
   type HeroId,
   type HeroSkinId,
   type MapProfileId,
+  type MapPingMessage,
   type PlayerPingRequestMessage,
   type PlayerPingsMessage,
   type VoxelMapSizeId,
@@ -171,6 +172,7 @@ export function setupGameRoomListeners<TRoom extends GameMessageBus>(
     removePlayer,
     setMatchSummary,
     setPlayerPings,
+    setMapPings,
     clearMatchSummary,
     resetLobby,
   } = useGameStore.getState();
@@ -435,6 +437,10 @@ export function setupGameRoomListeners<TRoom extends GameMessageBus>(
 
   room.onMessage('playerPings', measureNetworkMessage('playerPings', (data: PlayerPingsMessage) => {
     setPlayerPings(data);
+  }));
+
+  room.onMessage('mapPing', measureNetworkMessage('mapPing', (data: MapPingMessage) => {
+    setMapPings(data);
   }));
 
   room.onMessage('chat', measureNetworkMessage('chat', (data: unknown) => {

@@ -8,6 +8,8 @@ import {
   type GameplayMode,
   type MatchPerspective,
   type GameEndEvent,
+  type MapPingMessage,
+  type MapPingSnapshot,
   type PlayerPingsMessage,
   type PowerupPickupRuntimeState,
   type BattleRoyalDropSnapshot,
@@ -136,6 +138,7 @@ interface CoreState {
   players: Map<string, Player>;
   localPlayer: Player | null;
   playerPings: Map<string, number | null>;
+  mapPings: Map<string, MapPingSnapshot>;
 
   // Timing
   roundTimeRemaining: number;
@@ -196,6 +199,7 @@ interface CoreActions {
   updatePlayer: (playerId: string, player: Player) => void;
   removePlayer: (playerId: string) => void;
   setPlayerPings: (message: PlayerPingsMessage) => void;
+  setMapPings: (message: MapPingMessage) => void;
   // Lobby actions
   setCurrentLobby: (lobbyId: string | null, lobbyName: string | null) => void;
   setLobbyPlayers: (players: Map<string, LobbyPlayer>) => void;
@@ -323,6 +327,7 @@ const coreInitialState: CoreState = {
   players: new Map(),
   localPlayer: null,
   playerPings: new Map(),
+  mapPings: new Map(),
   roundTimeRemaining: 0,
   phaseEndTime: null,
   gameClockFrozen: false,
@@ -473,12 +478,12 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     const mapSeed = seed >>> 0;
     return state.mapSeed === mapSeed
       ? state
-      : { mapSeed, battleRoyalSouls: null, powerupPickups: new Map(), powerupPickupCollections: new Map() };
+      : { mapSeed, mapPings: new Map(), battleRoyalSouls: null, powerupPickups: new Map(), powerupPickupCollections: new Map() };
   }),
   setMapThemeId: (themeId) => set((state) => (
     state.mapThemeId === themeId
       ? state
-      : { mapThemeId: themeId, battleRoyalSouls: null, powerupPickups: new Map(), powerupPickupCollections: new Map() }
+      : { mapThemeId: themeId, mapPings: new Map(), battleRoyalSouls: null, powerupPickups: new Map(), powerupPickupCollections: new Map() }
   )),
   setMapSize: (mapSize) => set((state) => {
     const normalizedMapSize = normalizeVoxelMapSizeId(mapSize);
@@ -486,6 +491,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       ? state
       : {
         mapSize: normalizedMapSize,
+        mapPings: new Map(),
         battleRoyalSouls: null,
         powerupPickups: new Map(),
         powerupPickupCollections: new Map(),
@@ -495,6 +501,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     const normalizedMapProfileId = normalizeMapProfileId(mapProfileId);
     return state.mapProfileId === normalizedMapProfileId ? state : {
       mapProfileId: normalizedMapProfileId,
+      mapPings: new Map(),
       battleRoyalSouls: null,
       powerupPickups: new Map(),
       powerupPickupCollections: new Map(),
@@ -509,7 +516,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     const nextArtifactId = artifactId || null;
     return state.pregeneratedMapId === nextMapId && state.mapArtifactId === nextArtifactId
       ? state
-      : { pregeneratedMapId: nextMapId, mapArtifactId: nextArtifactId, battleRoyalSouls: null };
+      : { pregeneratedMapId: nextMapId, mapArtifactId: nextArtifactId, mapPings: new Map(), battleRoyalSouls: null };
   }),
 
   setInteractionPrompt: (prompt) => set((state) => (
@@ -582,13 +589,19 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   },
 
   setPlayers: (players) => {
-    const { playerId, playerPings, localPlayer: previousLocalPlayer, chronosLifelineQueued } = get();
+    const { playerId, playerPings, mapPings, localPlayer: previousLocalPlayer, chronosLifelineQueued } = get();
     const localPlayer = playerId ? players.get(playerId) ?? null : null;
     const nextPlayerPings = new Map<string, number | null>();
+    const nextMapPings = new Map<string, MapPingSnapshot>();
 
     playerPings.forEach((pingMs, id) => {
       if (players.has(id)) {
         nextPlayerPings.set(id, pingMs);
+      }
+    });
+    mapPings.forEach((ping, id) => {
+      if (players.has(id)) {
+        nextMapPings.set(id, ping);
       }
     });
 
@@ -596,6 +609,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       players,
       localPlayer,
       playerPings: nextPlayerPings,
+      mapPings: nextMapPings,
       chronosLifelineQueued: shouldKeepChronosLifelineQueued(chronosLifelineQueued, previousLocalPlayer, localPlayer),
     });
 
@@ -632,7 +646,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   },
 
   removePlayer: (playerId) => {
-    const { players, playerPings } = get();
+    const { players, playerPings, mapPings } = get();
     if (!players.has(playerId)) return;
 
     const updatedPlayers = new Map(players);
@@ -640,7 +654,9 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     removePlayerVisualState(playerId);
     const updatedPings = new Map(playerPings);
     updatedPings.delete(playerId);
-    set({ players: updatedPlayers, playerPings: updatedPings });
+    const updatedMapPings = new Map(mapPings);
+    updatedMapPings.delete(playerId);
+    set({ players: updatedPlayers, playerPings: updatedPings, mapPings: updatedMapPings });
   },
 
   setPlayerPings: (message) => {
@@ -665,6 +681,28 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       }
 
       return changed ? { playerPings: nextPings } : state;
+    });
+  },
+
+  setMapPings: (message) => {
+    set((state) => {
+      const nextPings = new Map<string, MapPingSnapshot>();
+      for (const ping of message.pings) {
+        nextPings.set(ping.playerId, ping);
+      }
+
+      if (nextPings.size === state.mapPings.size) {
+        let changed = false;
+        for (const [playerId, ping] of nextPings) {
+          if (state.mapPings.get(playerId) !== ping) {
+            changed = true;
+            break;
+          }
+        }
+        if (!changed) return state;
+      }
+
+      return { mapPings: nextPings };
     });
   },
 

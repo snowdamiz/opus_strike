@@ -6,12 +6,13 @@ declare global {
   interface Window {
     Buffer: typeof Buffer;
     __voxelRecording?: {
-      ready: Promise<void>;
+      isReady: boolean;
       durationMs: number;
       fps: number;
       stepTo: (recordingTimeMs: number) => Promise<void>;
       play: () => void;
       pause: () => void;
+      markSceneReady: () => void;
     };
   }
 }

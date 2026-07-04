@@ -14,6 +14,7 @@ import {
 import {
   createBotMatchRecording,
   enqueueRecordingRender,
+  formatShowcaseJobError,
   getRecordingShowcaseJob,
   type RecordingShowcaseJob,
   type RecordingShowcaseJobRedis,
@@ -255,6 +256,12 @@ async function main(): Promise<void> {
       await fs.readFile(path.join(rootDir, 'showcase-jobs', `${cachedShowcaseJob.id}.json`), 'utf8')
     ) as RecordingShowcaseJob;
     assert.equal(hydratedShowcaseJob.id, cachedShowcaseJob.id);
+
+    assert.equal(
+      formatShowcaseJobError(new Error('page.screenshot: Timeout 30000ms exceeded')),
+      'Recording render timed out while capturing the video. Try again in a moment.'
+    );
+    assert.equal(formatShowcaseJobError(new Error('Recording failed: missing events')), 'Recording failed: missing events');
 
     await fs.rm(rootDir, { recursive: true, force: true });
   } finally {

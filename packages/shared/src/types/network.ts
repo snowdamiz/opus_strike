@@ -17,6 +17,7 @@ import type { PregeneratedMapArtifactId, PregeneratedMapId } from '../maps/prege
 export type ClientMessage = 
   | { type: 'movementCommands'; payload: MovementCommandPacket }
   | { type: 'playerPingResponse'; payload: PlayerPingResponseMessage }
+  | { type: 'mapPing'; payload: MapPingRequestMessage }
   | { type: 'selectHero'; payload: { heroId: HeroId } }
   | { type: 'devSetHero'; payload: { heroId: HeroId } }
   | { type: 'devDownHero'; payload: { heroId: HeroId } }
@@ -41,6 +42,7 @@ export type ServerMessage =
   | { type: 'playerVitals'; payload: PlayerVitalsMessage }
   | { type: 'playerPingRequest'; payload: PlayerPingRequestMessage }
   | { type: 'playerPings'; payload: PlayerPingsMessage }
+  | { type: 'mapPing'; payload: MapPingMessage }
   | { type: 'matchSnapshot'; payload: MatchSnapshotMessage }
   | { type: 'powerupState'; payload: PowerupStateMessage }
   | { type: 'powerupCollected'; payload: PowerupCollectedMessage }
@@ -87,6 +89,28 @@ export type PlayerEventBatchItem =
 
 export interface PlayerEventBatchMessage {
   events: PlayerEventBatchItem[];
+}
+
+export interface MapPingRequestMessage {
+  position?: Vec3 | null;
+  clear?: boolean;
+  clientTime?: number;
+}
+
+export interface MapPingSnapshot {
+  id: string;
+  playerId: string;
+  playerName?: string;
+  team: Team;
+  position: Vec3;
+  createdAt: number;
+  expiresAt: number;
+  sequence: number;
+}
+
+export interface MapPingMessage {
+  serverTime: number;
+  pings: MapPingSnapshot[];
 }
 
 export interface ChronosAegisDamagedEvent {

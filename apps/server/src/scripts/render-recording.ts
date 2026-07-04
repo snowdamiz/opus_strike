@@ -40,7 +40,7 @@ interface RenderPage {
   evaluate<T = unknown>(pageFunction: (...args: any[]) => T | Promise<T>, arg?: unknown): Promise<T>;
   goto(url: string, options?: { waitUntil?: 'networkidle' | 'load' | 'domcontentloaded'; timeout?: number }): Promise<unknown>;
   route(url: string, handler: (route: RenderRoute) => Promise<void> | void): Promise<void>;
-  screenshot(options?: { type?: 'png'; animations?: 'disabled' | 'allow' }): Promise<Buffer>;
+  screenshot(options?: { type?: 'png'; animations?: 'disabled' | 'allow'; timeout?: number }): Promise<Buffer>;
   waitForFunction(pageFunction: (...args: any[]) => unknown, arg?: unknown, options?: { timeout?: number }): Promise<unknown>;
 }
 
@@ -69,7 +69,7 @@ interface PlaywrightRuntime {
 
 type RecordingBrowserWindow = Window & {
   __voxelRecording?: {
-    ready: Promise<void>;
+    isReady: boolean;
     durationMs: number;
     stepTo: (recordingTimeMs: number) => Promise<void>;
   };
@@ -93,6 +93,9 @@ const REMOTE_FONT_HOSTS = new Set([
   'fonts.gstatic.com',
 ]);
 const FONT_FILE_EXTENSION_PATTERN = /\.(?:eot|otf|ttf|woff|woff2)$/i;
+const RECORDING_PLAYBACK_BOOT_TIMEOUT_MS = 30_000;
+const RECORDING_PLAYBACK_READY_TIMEOUT_MS = 120_000;
+const RECORDING_FRAME_SCREENSHOT_TIMEOUT_MS = 120_000;
 
 // Playwright screenshots wait for document.fonts.ready; stalled web fonts can block every rendered frame.
 export function shouldAbortRecordingRenderRequest(input: {
@@ -392,7 +395,11 @@ async function renderFrames(input: {
     await input.page.evaluate(async (timeMs) => {
       await (window as RecordingBrowserWindow).__voxelRecording?.stepTo(timeMs);
     }, recordingTimeMs);
-    const screenshot = await input.page.screenshot({ type: 'png', animations: 'disabled' });
+    const screenshot = await input.page.screenshot({
+      type: 'png',
+      animations: 'disabled',
+      timeout: RECORDING_FRAME_SCREENSHOT_TIMEOUT_MS,
+    });
     await writeBufferToStream(ffmpeg.stdin, screenshot);
   }
   ffmpeg.stdin.end();
@@ -503,11 +510,17 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
       deviceScaleFactor: manifest.devicePixelRatio || 1,
     });
     await installRenderRequestGuards(page);
-    await page.goto(playbackUrl, { waitUntil: 'networkidle' });
-    await page.waitForFunction(() => Boolean((window as RecordingBrowserWindow).__voxelRecording), null, { timeout: 30_000 });
-    await page.evaluate(async () => {
-      await (window as RecordingBrowserWindow).__voxelRecording?.ready;
-    });
+    await page.goto(playbackUrl, { waitUntil: 'networkidle', timeout: RECORDING_PLAYBACK_BOOT_TIMEOUT_MS });
+    await page.waitForFunction(
+      () => Boolean((window as RecordingBrowserWindow).__voxelRecording),
+      null,
+      { timeout: RECORDING_PLAYBACK_BOOT_TIMEOUT_MS }
+    );
+    await page.waitForFunction(
+      () => Boolean((window as RecordingBrowserWindow).__voxelRecording?.isReady),
+      null,
+      { timeout: RECORDING_PLAYBACK_READY_TIMEOUT_MS }
+    );
     const durationMs = normalizedOptions.durationMs ?? await page.evaluate(() => (
       (window as RecordingBrowserWindow).__voxelRecording?.durationMs ?? 0
     ));

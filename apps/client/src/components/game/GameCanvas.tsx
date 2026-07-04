@@ -12,6 +12,7 @@ import { StreamerCameraDirector } from './StreamerCameraDirector';
 import { BattleRoyalDropDeployment } from './BattleRoyalDropDeployment';
 import { BattleRoyalSafeZone } from './BattleRoyalSafeZone';
 import { BattleRoyalSouls } from './BattleRoyalSouls';
+import { TeamPings } from './TeamPings';
 import { OtherPlayers } from './OtherPlayers';
 import { RagdollManager } from './RagdollManager';
 import { Flags } from './Flags';
@@ -1498,6 +1499,7 @@ export function GameCanvas({
 
         <BattleRoyalDropDeployment />
         <BattleRoyalSafeZone />
+        <TeamPings />
 
         {streamerIsActive ? (
           <StreamerCameraDirector enabled />

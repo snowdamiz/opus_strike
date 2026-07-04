@@ -54,6 +54,7 @@ export type BotIntentType =
   | 'retreat'
   | 'regroup'
   | 'pressure_lane'
+  | 'follow_ping'
   | 'rotate_safe_zone'
   | 'hold_safe_zone_edge'
   | 'revive_teammate'
@@ -140,6 +141,15 @@ export interface BotPlayerSnapshot {
   abilities: Record<string, BotAbilitySnapshot>;
   hasFlag: boolean;
   spawnProtectionUntil: number;
+}
+
+export interface BotMapPingSnapshot {
+  id: string;
+  playerId: string;
+  team: Team;
+  position: PlainVec3;
+  createdAt: number;
+  expiresAt: number;
 }
 
 export interface BotFlagSnapshot {
@@ -332,6 +342,8 @@ export interface BotBlackboard {
   nearestDownedAlly: BotPlayerSnapshot | null;
   nearestDownedEnemy: BotPlayerSnapshot | null;
   alliedCarrier: BotPlayerSnapshot | null;
+  teamPings: BotMapPingSnapshot[];
+  nearestTeamPing: BotMapPingSnapshot | null;
   safeZone: BotSafeZoneFact | null;
   droppedFriendlyFlag: PlainVec3 | null;
   droppedEnemyFlag: PlainVec3 | null;
@@ -418,6 +430,9 @@ export interface BotMovementProgress {
   lastDistanceToTarget: number;
   lastProgressAt: number;
   stalledMs: number;
+  stallStrikeCount: number;
+  detourTarget: PlainVec3 | null;
+  detourUntil: number;
   blockerDirection: PlainVec2 | null;
   failedEdgeId: string | null;
 }
@@ -589,6 +604,7 @@ export interface BotPlanningStateInput {
   players: BotPlayerSnapshot[];
   flags: Record<Team, BotFlagSnapshot>;
   safeZone?: SafeZoneSnapshot | null;
+  mapPings?: readonly BotMapPingSnapshot[];
   visibleEnemyIds: Set<string>;
   enemyLineOfSightIds: Set<string>;
   recentDamageSources: BotRecentDamageSource[];
@@ -619,6 +635,7 @@ export interface BotMovementRecoveryInput {
 export interface BotMovementRecoveryResult {
   stalled: boolean;
   markBlockedEdgeId: string | null;
+  stallStrikeCount: number;
   routePlan: BotRoutePlan;
 }
 
@@ -662,6 +679,7 @@ export interface BotBlackboardInput {
   players: BotPlayerSnapshot[];
   flags: Record<Team, BotFlagSnapshot>;
   safeZone?: SafeZoneSnapshot | null;
+  mapPings?: readonly BotMapPingSnapshot[];
   visibleEnemyIds: Set<string>;
   enemyLineOfSightIds: Set<string>;
   recentDamageSources: BotRecentDamageSource[];
@@ -999,6 +1017,9 @@ export function createInitialBotBrain(position: PlainVec3 = { x: 0, y: 0, z: 0 }
       lastDistanceToTarget: Infinity,
       lastProgressAt: 0,
       stalledMs: 0,
+      stallStrikeCount: 0,
+      detourTarget: null,
+      detourUntil: 0,
       blockerDirection: null,
       failedEdgeId: null,
     },
@@ -1278,6 +1299,7 @@ export function updateBotPlanningState(input: BotPlanningStateInput): BotPlannin
       players: input.players,
       flags: input.flags,
       safeZone: input.safeZone,
+      mapPings: input.mapPings,
       visibleEnemyIds: input.visibleEnemyIds,
       enemyLineOfSightIds: input.enemyLineOfSightIds,
       recentDamageSources: input.recentDamageSources,
@@ -1329,6 +1351,8 @@ export function updateBotPlanningState(input: BotPlanningStateInput): BotPlannin
     });
   }
 
+  applyActiveMovementRecoveryDetour(brain, now);
+
   return {
     blackboard,
     routePlan: brain.routePlan,
@@ -1367,10 +1391,86 @@ export function updateBotMovementRecoveryState(input: BotMovementRecoveryInput):
     brain.reverseUntil = now + randomBetweenWith(random, 220, 420);
   }
 
+  if (progress.stalled && progress.stallStrikeCount >= 2) {
+    const detourTarget = selectMovementRecoveryDetour({
+      bot,
+      routeGraph: input.routeGraph,
+      targetPosition: routePlan.targetPosition,
+      blockerDirection: brain.movementProgress.blockerDirection,
+    });
+    if (detourTarget) {
+      brain.movementProgress.detourTarget = detourTarget;
+      brain.movementProgress.detourUntil = now + 1400;
+      brain.routePlan = applyMovementRecoveryDetourToRoutePlan(
+        brain.routePlan ?? routePlan,
+        detourTarget,
+        now
+      );
+    }
+  }
+
   return {
     ...progress,
     routePlan: brain.routePlan ?? routePlan,
   };
+}
+
+function applyMovementRecoveryDetourToRoutePlan(routePlan: BotRoutePlan, detourTarget: PlainVec3, now: number): BotRoutePlan {
+  return {
+    ...routePlan,
+    steeringTarget: { ...detourTarget },
+    nextNodeId: null,
+    activeEdgeId: null,
+    laneId: null,
+    reason: `${routePlan.reason}; movement recovery detour`,
+    plannedAt: now,
+  };
+}
+
+function applyActiveMovementRecoveryDetour(brain: BotBrain, now: number): void {
+  const progress = brain.movementProgress;
+  if (!progress.detourTarget || !brain.routePlan) return;
+  if (now >= progress.detourUntil) {
+    progress.detourTarget = null;
+    progress.detourUntil = 0;
+    return;
+  }
+
+  brain.routePlan = applyMovementRecoveryDetourToRoutePlan(brain.routePlan, progress.detourTarget, now);
+}
+
+function selectMovementRecoveryDetour(input: {
+  bot: BotPlayerSnapshot;
+  routeGraph: BotRouteGraphAdapter | null;
+  targetPosition: PlainVec3;
+  blockerDirection: PlainVec2 | null;
+}): PlainVec3 | null {
+  const { bot, routeGraph, targetPosition } = input;
+  if (!routeGraph || routeGraph.nodes.length === 0) return null;
+
+  const blocker = input.blockerDirection ? normalize2D(input.blockerDirection) : direction2DFromTo(bot.position, targetPosition);
+  const targetDirection = direction2DFromTo(bot.position, targetPosition);
+  let bestNode: BotRouteNodeInfo | null = null;
+  let bestScore = -Infinity;
+
+  for (const node of routeGraph.nodes) {
+    const distanceFromBot = distance2D(bot.position, node.position);
+    if (distanceFromBot < 5.5 || distanceFromBot > 42) continue;
+    const toNode = direction2DFromTo(bot.position, node.position);
+    if (!toNode) continue;
+    const blockerDot = blocker ? toNode.x * blocker.x + toNode.z * blocker.z : 0;
+    if (blockerDot > 0.88) continue;
+    const targetProgressDot = targetDirection ? toNode.x * targetDirection.x + toNode.z * targetDirection.z : 0;
+    const targetDistanceGain = distance2D(bot.position, targetPosition) - distance2D(node.position, targetPosition);
+    const distanceScore = 32 - Math.abs(distanceFromBot - 18) * 1.4;
+    const score = distanceScore + targetProgressDot * 36 + targetDistanceGain * 1.1 - Math.max(0, blockerDot) * 40;
+    if (score > bestScore) {
+      bestNode = node;
+      bestScore = score;
+    }
+  }
+
+  return bestNode ? { ...bestNode.position } : null;
 }
 
 function randomBetweenWith(random: () => number, min: number, max: number): number {
@@ -2653,6 +2753,15 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
   const allyHealthDebts = buildAllyHealthDebts(bot, allies, visibleEnemies, input.gameplayMode);
   const humanAllies = allies.filter((ally) => !ally.isBot);
   const nearestHumanAlly = nearestPlayer(humanAllies, bot.position);
+  const teamPings = (input.mapPings ?? [])
+    .filter((ping) => ping.team === team && ping.expiresAt > input.now)
+    .slice()
+    .sort((a, b) => (
+      distance2D(bot.position, a.position) - distance2D(bot.position, b.position) ||
+      b.createdAt - a.createdAt ||
+      a.id.localeCompare(b.id)
+    ));
+  const nearestTeamPing = teamPings[0] ?? null;
   const nearestDownedAlly = input.gameplayMode === 'battle_royal'
     ? selectBattleRoyalDownedAllyTarget(downedAllies, [bot], enemyPlayers)
     : nearestPlayer(downedAllies, bot.position);
@@ -2678,6 +2787,8 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
     nearestDownedAlly,
     nearestDownedEnemy,
     alliedCarrier,
+    teamPings,
+    nearestTeamPing,
     safeZone: analyzeBotSafeZone(bot, input.safeZone),
     droppedFriendlyFlag: isCaptureTheFlag && !ownFlag.isAtBase && !ownFlag.carrierId ? { ...ownFlag.position } : null,
     droppedEnemyFlag: isCaptureTheFlag && !enemyFlag.isAtBase && !enemyFlag.carrierId ? { ...enemyFlag.position } : null,
@@ -3037,6 +3148,20 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
         blackboard.nearestDownedEnemy.id
       );
     }
+  }
+
+  if (isBattleRoyal && blackboard.nearestTeamPing) {
+    const ping = blackboard.nearestTeamPing;
+    const pingDistance = distance2D(bot.position, ping.position);
+    const humanPingBonus = blackboard.humanAllies.some((ally) => ally.id === ping.playerId) ? 150 : 0;
+    addIntent(
+      candidates,
+      'follow_ping',
+      650 + Math.min(220, pingDistance * 2) + humanPingBonus + assignmentBoost('support_cluster', 120),
+      ping.position,
+      'team map ping',
+      ping.playerId
+    );
   }
 
   if (isCaptureTheFlag && blackboard.enemyCarrier) {
@@ -4305,30 +4430,47 @@ export function updateBotMovementProgress(
   desiredDirection: PlainVec2 | null,
   directBlocked: boolean,
   skill: BotSkillProfile
-): { stalled: boolean; markBlockedEdgeId: string | null } {
+): { stalled: boolean; markBlockedEdgeId: string | null; stallStrikeCount: number } {
   const targetChanged = !progress.desiredTarget || distance2D(progress.desiredTarget, desiredTarget) > 3.5;
   const currentDistance = distance2D(position, desiredTarget);
+  const activeDetourMatchesTarget = Boolean(
+    progress.detourTarget &&
+    now < progress.detourUntil &&
+    distance2D(progress.detourTarget, desiredTarget) <= 3.5
+  );
   if (targetChanged) {
     progress.desiredTarget = { ...desiredTarget };
     progress.lastPosition = { ...position };
     progress.lastDistanceToTarget = currentDistance;
     progress.lastProgressAt = now;
     progress.stalledMs = 0;
+    progress.stallStrikeCount = 0;
+    if (!activeDetourMatchesTarget) {
+      progress.detourTarget = null;
+      progress.detourUntil = 0;
+    }
     progress.blockerDirection = null;
     progress.failedEdgeId = null;
-    return { stalled: false, markBlockedEdgeId: null };
+    return { stalled: false, markBlockedEdgeId: null, stallStrikeCount: 0 };
   }
 
   const movedDistance = distance2D(position, progress.lastPosition);
   const madeProgress = progress.lastDistanceToTarget - currentDistance;
-  if (madeProgress > 0.24 || movedDistance > 0.45) {
+  const madeForwardProgress = madeProgress > 0.18;
+  const movedMeaningfullyTowardTarget = movedDistance > 0.75 && currentDistance <= progress.lastDistanceToTarget + 0.25;
+  if (madeForwardProgress || movedMeaningfullyTowardTarget) {
     progress.lastPosition = { ...position };
     progress.lastDistanceToTarget = currentDistance;
     progress.lastProgressAt = now;
     progress.stalledMs = 0;
+    progress.stallStrikeCount = 0;
+    if (!activeDetourMatchesTarget || currentDistance <= 3.2) {
+      progress.detourTarget = null;
+      progress.detourUntil = 0;
+    }
     progress.blockerDirection = null;
     progress.failedEdgeId = null;
-    return { stalled: false, markBlockedEdgeId: null };
+    return { stalled: false, markBlockedEdgeId: null, stallStrikeCount: 0 };
   }
 
   const elapsed = Math.max(0, now - progress.lastProgressAt);
@@ -4336,10 +4478,14 @@ export function updateBotMovementProgress(
   if (directBlocked && desiredDirection) {
     progress.blockerDirection = { ...desiredDirection };
   }
-  const stalled = elapsed >= Math.max(420, skill.replanIntervalMs * 1.25);
+  const stallThreshold = Math.max(420, skill.replanIntervalMs * 1.25);
+  const stalled = elapsed >= stallThreshold;
+  if (stalled) {
+    progress.stallStrikeCount = Math.max(progress.stallStrikeCount, Math.floor(elapsed / stallThreshold));
+  }
   const markBlockedEdgeId = stalled && activeEdgeId ? activeEdgeId : null;
   if (markBlockedEdgeId) progress.failedEdgeId = markBlockedEdgeId;
-  return { stalled, markBlockedEdgeId };
+  return { stalled, markBlockedEdgeId, stallStrikeCount: progress.stallStrikeCount };
 }
 
 export function clearExpiredBlockedEdges(blockedEdges: Map<string, number>, now: number): void {
