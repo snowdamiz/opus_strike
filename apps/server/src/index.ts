@@ -203,7 +203,11 @@ app.use('/rewards', rewardsRoutes);
 app.use('/social', socialRoutes);
 app.use('/wagers', wagersRoutes);
 app.use('/streamer', createStreamerRouter({ matchMaker }));
-app.use('/recordings', createRecordingsRouter({ matchMaker }));
+app.use('/recordings', createRecordingsRouter({
+  matchMaker,
+  showcaseJobStore: { redis: sharedRedisClient },
+  config: colyseusRuntime,
+}));
 app.use('/admin', createAdminRouter({
   config: colyseusRuntime,
   matchMaker,

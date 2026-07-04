@@ -11,6 +11,7 @@ import { BattleRoyalTeamSpectatorCameraController } from './BattleRoyalTeamSpect
 import { StreamerCameraDirector } from './StreamerCameraDirector';
 import { BattleRoyalDropDeployment } from './BattleRoyalDropDeployment';
 import { BattleRoyalSafeZone } from './BattleRoyalSafeZone';
+import { BattleRoyalSouls } from './BattleRoyalSouls';
 import { OtherPlayers } from './OtherPlayers';
 import { RagdollManager } from './RagdollManager';
 import { Flags } from './Flags';
@@ -1520,6 +1521,7 @@ export function GameCanvas({
           <>
             {(!isPracticeMode || isTutorialMode) && <Flags />}
             {(!isPracticeMode || isTutorialMode) && <Powerups />}
+            {isBattleRoyal && <BattleRoyalSouls />}
             {isTutorialMode && <TutorialWorldPrompts />}
             {isTutorialMode && <TutorialTargetRange />}
             {isPracticeMode && mapProfileId === 'dev_testing' && <DevTestingMapRuntime />}

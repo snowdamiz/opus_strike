@@ -11,6 +11,7 @@ import {
   type PlayerPingsMessage,
   type PowerupPickupRuntimeState,
   type BattleRoyalDropSnapshot,
+  type BattleRoyalHeroSoulStateSnapshot,
   type SafeZoneSnapshot,
   type MapProfileId,
   type VoxelMapSizeId,
@@ -118,6 +119,7 @@ interface CoreState {
   mapArtifactId: string | null;
   safeZone: SafeZoneSnapshot | null;
   battleRoyalDrop: BattleRoyalDropSnapshot | null;
+  battleRoyalSouls: BattleRoyalHeroSoulStateSnapshot | null;
   powerupPickups: Map<string, PowerupPickupRuntimeState>;
   powerupPickupCollections: Map<string, PowerupPickupCollectionState>;
   interactionPrompt: InteractionPrompt | null;
@@ -308,6 +310,7 @@ const coreInitialState: CoreState = {
   mapArtifactId: null,
   safeZone: null,
   battleRoyalDrop: null,
+  battleRoyalSouls: null,
   powerupPickups: new Map(),
   powerupPickupCollections: new Map(),
   interactionPrompt: null,
@@ -468,19 +471,31 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   setPhaseEndTime: (time) => set((state) => state.phaseEndTime === time ? state : { phaseEndTime: time }),
   setMapSeed: (seed) => set((state) => {
     const mapSeed = seed >>> 0;
-    return state.mapSeed === mapSeed ? state : { mapSeed, powerupPickups: new Map(), powerupPickupCollections: new Map() };
+    return state.mapSeed === mapSeed
+      ? state
+      : { mapSeed, battleRoyalSouls: null, powerupPickups: new Map(), powerupPickupCollections: new Map() };
   }),
   setMapThemeId: (themeId) => set((state) => (
-    state.mapThemeId === themeId ? state : { mapThemeId: themeId, powerupPickups: new Map(), powerupPickupCollections: new Map() }
+    state.mapThemeId === themeId
+      ? state
+      : { mapThemeId: themeId, battleRoyalSouls: null, powerupPickups: new Map(), powerupPickupCollections: new Map() }
   )),
   setMapSize: (mapSize) => set((state) => {
     const normalizedMapSize = normalizeVoxelMapSizeId(mapSize);
-    return state.mapSize === normalizedMapSize ? state : { mapSize: normalizedMapSize, powerupPickups: new Map(), powerupPickupCollections: new Map() };
+    return state.mapSize === normalizedMapSize
+      ? state
+      : {
+        mapSize: normalizedMapSize,
+        battleRoyalSouls: null,
+        powerupPickups: new Map(),
+        powerupPickupCollections: new Map(),
+      };
   }),
   setMapProfileId: (mapProfileId) => set((state) => {
     const normalizedMapProfileId = normalizeMapProfileId(mapProfileId);
     return state.mapProfileId === normalizedMapProfileId ? state : {
       mapProfileId: normalizedMapProfileId,
+      battleRoyalSouls: null,
       powerupPickups: new Map(),
       powerupPickupCollections: new Map(),
       interactionPrompt: null,
@@ -494,7 +509,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     const nextArtifactId = artifactId || null;
     return state.pregeneratedMapId === nextMapId && state.mapArtifactId === nextArtifactId
       ? state
-      : { pregeneratedMapId: nextMapId, mapArtifactId: nextArtifactId };
+      : { pregeneratedMapId: nextMapId, mapArtifactId: nextArtifactId, battleRoyalSouls: null };
   }),
 
   setInteractionPrompt: (prompt) => set((state) => (

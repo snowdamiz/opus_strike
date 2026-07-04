@@ -1584,6 +1584,7 @@ export function setupMatchSnapshotHandler(room: GameMessageBus) {
       gameClockFrozen: data.gameClockFrozen === true,
       safeZone: data.safeZone ?? null,
       battleRoyalDrop: data.battleRoyalDrop ?? null,
+      battleRoyalSouls: data.battleRoyalSouls ?? null,
     };
     const mapChanged = (
       mapFields.mapSeed !== store.mapSeed ||

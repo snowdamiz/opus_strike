@@ -156,10 +156,13 @@ export interface RecordingShowcaseJob {
   heroId: HeroId;
   gameplayMode: GameplayMode;
   recordingDurationMs: number;
+  recordingStartedAt: string | null;
   downloadUrl: string | null;
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  serverProcessId: string | null;
+  serverMachineId: string | null;
 }
 
 export interface RecordingsIndexResponse {

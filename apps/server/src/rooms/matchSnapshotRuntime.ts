@@ -1,6 +1,7 @@
 import {
   DEFAULT_VOXEL_MAP_SIZE_ID,
   TRANSFORM_POSITION_SCALE,
+  type BattleRoyalHeroSoulStateSnapshot,
   type BattleRoyalDropSnapshot,
   type FlagSync,
   type GameplayMode,
@@ -37,6 +38,7 @@ export interface BuildMatchSnapshotInput {
   gameClockFrozen: boolean;
   safeZone?: SafeZoneSnapshot | null;
   battleRoyalDrop?: BattleRoyalDropSnapshot | null;
+  battleRoyalSouls?: BattleRoyalHeroSoulStateSnapshot | null;
 }
 
 export class MatchSnapshotRuntime {
@@ -62,6 +64,7 @@ export class MatchSnapshotRuntime {
       gameClockFrozen: input.gameClockFrozen,
       safeZone: input.safeZone ?? null,
       battleRoyalDrop: input.battleRoyalDrop ?? null,
+      battleRoyalSouls: input.battleRoyalSouls ?? null,
     };
   }
 
@@ -88,6 +91,25 @@ export class MatchSnapshotRuntime {
       snapshot.battleRoyalDrop?.phaseEndsAt ?? 0,
       snapshot.battleRoyalDrop?.players.map((player) => (
         `${player.playerId}.${player.status}.${player.droppedAt ?? 0}.${player.landedAt ?? 0}.${player.attachedToPlayerId ?? ''}`
+      )).join(',') ?? '',
+      snapshot.battleRoyalSouls?.souls.map((soul) => (
+        [
+          soul.soulId,
+          soul.playerId,
+          soul.status,
+          soul.carriedByPlayerId ?? '',
+          soul.collectByPlayerId ?? '',
+          soul.collectCompletesAt ?? 0,
+          soul.summonByPlayerId ?? '',
+          soul.summonCircleId ?? '',
+          soul.summonCompletesAt ?? 0,
+          this.quantizePosition(soul.position.x),
+          this.quantizePosition(soul.position.y),
+          this.quantizePosition(soul.position.z),
+        ].join('.')
+      )).join(',') ?? '',
+      snapshot.battleRoyalSouls?.interactions.map((interaction) => (
+        `${interaction.playerId}.${interaction.kind}.${interaction.soulId ?? ''}.${interaction.circleId ?? ''}.${interaction.startedAt}.${interaction.completesAt}`
       )).join(',') ?? '',
       snapshot.redFlag.carrierId ?? '',
       snapshot.redFlag.isAtBase ? 1 : 0,

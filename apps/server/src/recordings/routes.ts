@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import { Router, type Request, type Response } from 'express';
+import type { ColyseusRuntimeConfig } from '../config/colyseus';
 import {
   createAdminCsrfToken,
   ensureGameAdmin,
@@ -14,6 +15,9 @@ import {
   type RecordingArtifactKey,
 } from './artifacts';
 import {
+  buildFlyReplayHeader,
+} from '../runtime/flyReplayRouting';
+import {
   createBotMatchRecording,
   deleteRecording,
   enqueueRecordingRender,
@@ -22,6 +26,8 @@ import {
   getRecordingShowcaseJob,
   listRecordings,
   RecordingCapacityError,
+  type RecordingShowcaseJob,
+  type RecordingShowcaseJobStore,
   RecordingValidationError,
   startShowcaseRecordingJob,
   stopRecording,
@@ -30,6 +36,8 @@ import type { StreamerMatchMaker } from '../streamer/service';
 
 interface RecordingsRouterOptions {
   matchMaker: StreamerMatchMaker;
+  showcaseJobStore?: RecordingShowcaseJobStore;
+  config?: ColyseusRuntimeConfig;
 }
 
 const RECORDING_MUTATION_RATE_LIMIT = {
@@ -84,6 +92,41 @@ function sendAdminError(res: Response, status: number, error: string, adminUser:
     error,
     csrfToken: createAdminCsrfToken(adminUser),
   });
+}
+
+function replayToShowcaseJobOwner(
+  res: Response,
+  job: RecordingShowcaseJob,
+  config: ColyseusRuntimeConfig | undefined
+): boolean {
+  const ownerMachineId = job.serverMachineId;
+  const localMachineId = config?.flyReplay.machineId;
+  if (!config?.flyReplay.enabled || !ownerMachineId || !localMachineId || ownerMachineId === localMachineId) {
+    return false;
+  }
+
+  res.status(307);
+  res.setHeader('Fly-Replay', buildFlyReplayHeader(ownerMachineId, config));
+  res.end();
+  return true;
+}
+
+async function replayDownloadToShowcaseJobOwner(
+  req: Request,
+  res: Response,
+  options: RecordingsRouterOptions
+): Promise<boolean> {
+  const showcaseJobId = typeof req.query.showcaseJobId === 'string'
+    ? req.query.showcaseJobId.trim().slice(0, 180)
+    : '';
+  if (!showcaseJobId) return false;
+
+  try {
+    const job = await getRecordingShowcaseJob(showcaseJobId, options.showcaseJobStore);
+    return replayToShowcaseJobOwner(res, job, options.config);
+  } catch {
+    return false;
+  }
 }
 
 export function createRecordingsRouter(options: RecordingsRouterOptions): Router {
@@ -147,6 +190,9 @@ export function createRecordingsRouter(options: RecordingsRouterOptions): Router
         adminUserId: adminUser.id,
         matchMaker: options.matchMaker,
         request: req.body ?? {},
+        showcaseJobStore: options.showcaseJobStore,
+        serverProcessId: options.matchMaker.processId ?? null,
+        serverMachineId: options.config?.flyReplay.machineId ?? null,
       });
       res.status(202).json({
         job,
@@ -175,7 +221,8 @@ export function createRecordingsRouter(options: RecordingsRouterOptions): Router
     const adminUser = res.locals.adminUser as GameAdminUser;
     const jobId = typeof req.params.jobId === 'string' ? req.params.jobId.trim().slice(0, 180) : '';
     try {
-      const job = await getRecordingShowcaseJob(jobId);
+      const job = await getRecordingShowcaseJob(jobId, options.showcaseJobStore);
+      if (replayToShowcaseJobOwner(res, job, options.config)) return;
       res.json({
         job,
         csrfToken: createAdminCsrfToken(adminUser),
@@ -281,6 +328,7 @@ export function createRecordingsRouter(options: RecordingsRouterOptions): Router
     noStore(res);
     const adminUser = res.locals.adminUser as GameAdminUser;
     try {
+      if (await replayDownloadToShowcaseJobOwner(req, res, options)) return;
       const mp4Path = await getLatestRecordingMp4Path(readRecordingId(req));
       if (!mp4Path) {
         sendAdminError(res, 404, 'Recording MP4 not found', adminUser);

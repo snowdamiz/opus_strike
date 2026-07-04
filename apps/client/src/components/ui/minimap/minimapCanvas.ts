@@ -1,4 +1,4 @@
-import type { ModuleInstance, VoxelMapManifest } from '@voxel-strike/shared';
+import type { MapSummoningCircle, ModuleInstance, VoxelMapManifest } from '@voxel-strike/shared';
 import { MINIMAP_COLORS } from '../../../styles/colorTokens';
 import {
   buildTopBlockIndex,
@@ -14,7 +14,7 @@ import {
   type MinimapSurfaceKind,
 } from './minimapData';
 
-const STATIC_RENDER_VERSION = 2;
+const STATIC_RENDER_VERSION = 3;
 const MAX_STATIC_CANVAS_CACHE_SIZE = 8;
 const topBlockCache = new Map<string, Uint8Array>();
 const staticCanvasCache = new Map<string, HTMLCanvasElement>();
@@ -116,12 +116,50 @@ function renderStaticLayer(
 
   drawModuleFootprints(ctx, manifest, projection);
   drawRoutes(ctx, manifest, projection);
+  drawSummoningCircles(ctx, projection, manifest.gameplay.summoningCircles ?? []);
   drawObjectiveDiamond(ctx, projection, manifest.flagZones.red, MINIMAP_COLORS.team.red);
   drawObjectiveDiamond(ctx, projection, manifest.flagZones.blue, MINIMAP_COLORS.team.blue);
   drawSpawnPoints(ctx, projection, manifest.spawnPoints.red, MINIMAP_COLORS.spawn.red);
   drawSpawnPoints(ctx, projection, manifest.spawnPoints.blue, MINIMAP_COLORS.spawn.blue);
   drawBoundary(ctx, manifest, projection);
   drawScanGrid(ctx, projection);
+}
+
+function drawSummoningCircles(
+  ctx: CanvasRenderingContext2D,
+  projection: MinimapProjection,
+  circles: readonly MapSummoningCircle[]
+): void {
+  if (circles.length === 0) return;
+
+  ctx.save();
+  for (const circle of circles) {
+    const projected = worldToMinimap(projection, circle.position);
+    const radius = clamp(circle.radius * projection.scale, 3.8, 7.5);
+    ctx.save();
+    ctx.translate(projected.x, projected.y);
+    ctx.shadowColor = MINIMAP_COLORS.static.summoningCircleShadow;
+    ctx.shadowBlur = 5;
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    ctx.fillStyle = MINIMAP_COLORS.static.summoningCircleFill;
+    ctx.fill();
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = MINIMAP_COLORS.static.summoningCircleStroke;
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = MINIMAP_COLORS.static.summoningCircleAccent;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-radius * 0.55, 0);
+    ctx.lineTo(radius * 0.55, 0);
+    ctx.moveTo(0, -radius * 0.55);
+    ctx.lineTo(0, radius * 0.55);
+    ctx.stroke();
+    ctx.restore();
+  }
+  ctx.restore();
 }
 
 function getCachedTopBlockIndex(manifest: VoxelMapManifest): Uint8Array {

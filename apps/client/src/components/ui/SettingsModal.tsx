@@ -7,7 +7,7 @@ import {
   type GameplayMode,
   type HeroId,
 } from '@voxel-strike/shared';
-import { Download, Film, Loader2, Map as MapIcon } from 'lucide-react';
+import { Download, Film, Loader2, Map as MapIcon, Timer } from 'lucide-react';
 import { useAudio } from '../../hooks/useAudio';
 import { config } from '../../config/environment';
 import {
@@ -141,6 +141,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [isStartingRecording, setIsStartingRecording] = useState(false);
   const [isDownloadingRecording, setIsDownloadingRecording] = useState(false);
+  const [recordingNowMs, setRecordingNowMs] = useState(() => Date.now());
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([]);
   const { updateSettings: applyAudioSettings } = useAudio();
@@ -154,6 +155,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const showDevelopmentSettings = config.isDev;
   const isRecordingActive = recordingJob?.status === 'recording' || recordingJob?.status === 'rendering';
   const isRecordingBusy = isStartingRecording || isRecordingActive;
+  const recordingWaitLabel = recordingJob ? formatRecordingWaitRemaining(recordingJob, recordingNowMs) : null;
 
   const updateSetting = <K extends keyof ClientSettings>(key: K, value: ClientSettings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -350,6 +352,19 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       window.clearInterval(intervalId);
     };
   }, [recordingJob?.id, recordingJob?.status]);
+
+  useEffect(() => {
+    if (!isRecordingActive) return;
+
+    setRecordingNowMs(Date.now());
+    const intervalId = window.setInterval(() => {
+      setRecordingNowMs(Date.now());
+    }, 1_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isRecordingActive, recordingJob?.id]);
 
   useEffect(() => {
     if (!rebindingAction) return;
@@ -832,9 +847,15 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
                     <SettingRow
                       label="Showcase Recording"
-                      description={recordingJob ? formatRecordingJobStatus(recordingJob) : 'Server captures and renders 5 minutes'}
+                      description={recordingJob ? formatRecordingJobStatus(recordingJob, recordingNowMs) : 'Server captures and renders 5 minutes'}
                     >
                       <div className="flex items-center gap-2">
+                        {recordingWaitLabel && (
+                          <span className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.06] px-3 font-mono text-[11px] tabular-nums text-white/65">
+                            <Timer className="h-3.5 w-3.5 text-orange-200/80" aria-hidden="true" />
+                            {recordingWaitLabel}
+                          </span>
+                        )}
                         <button
                           type="button"
                           onClick={handleStartShowcaseRecording}
@@ -1054,11 +1075,35 @@ function formatAccountAddress(address: string | null | undefined): string {
   return `${address.slice(0, 6)}...${address.slice(-6)}`;
 }
 
-function formatRecordingJobStatus(job: RecordingShowcaseJob): string {
+function readRecordingStartMs(job: RecordingShowcaseJob): number {
+  const startedAt = Date.parse(job.recordingStartedAt ?? job.createdAt);
+  if (Number.isFinite(startedAt)) return startedAt;
+  const createdAt = Date.parse(job.createdAt);
+  return Number.isFinite(createdAt) ? createdAt : Date.now();
+}
+
+function formatDurationClock(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(durationMs / 1_000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function formatRecordingWaitRemaining(job: RecordingShowcaseJob, nowMs: number): string | null {
+  if (job.status !== 'recording') return null;
+  const elapsedMs = Math.max(0, nowMs - readRecordingStartMs(job));
+  const remainingMs = Math.max(0, job.recordingDurationMs - elapsedMs);
+  return `${formatDurationClock(remainingMs)} left`;
+}
+
+function formatRecordingJobStatus(job: RecordingShowcaseJob, nowMs: number): string {
   if (job.status === 'succeeded') return 'Ready to download';
   if (job.status === 'failed') return 'Recording failed';
   if (job.status === 'rendering') return 'Rendering MP4 on server';
-  return 'Recording random lobby on server';
+  const remaining = formatRecordingWaitRemaining(job, nowMs);
+  return remaining
+    ? `Recording random lobby on server - ${remaining} before render`
+    : 'Recording random lobby on server';
 }
 
 function AccountValue({ value }: { value: string }) {

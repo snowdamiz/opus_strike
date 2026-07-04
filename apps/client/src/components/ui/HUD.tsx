@@ -5,6 +5,10 @@ import {
   ABILITY_DEFINITIONS,
   BATTLE_ROYAL_REVIVE_DURATION_MS,
   BATTLE_ROYAL_REVIVE_RADIUS,
+  BATTLE_ROYAL_SOUL_COLLECT_DURATION_MS,
+  BATTLE_ROYAL_SOUL_INTERACTION_RADIUS,
+  BATTLE_ROYAL_SOUL_SUMMON_DURATION_MS,
+  BATTLE_ROYAL_SUMMONING_CIRCLE_INTERACTION_RADIUS,
   BLAZE_PRIMARY_MAGAZINE_SIZE,
   BLAZE_PRIMARY_RELOAD_MS,
   CHRONOS_PRIMARY_MAGAZINE_SIZE,
@@ -12,7 +16,9 @@ import {
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
   VOID_RAY_CHARGE_TIME,
+  type BattleRoyalHeroSoulInteractionSnapshot,
   type BattleRoyalDropPlayerStatus,
+  type MapSummoningCircle,
   type Player,
   type SafeZoneSnapshot,
 } from '@voxel-strike/shared';
@@ -25,6 +31,7 @@ import { FACTIONS, HUD_HERO_COLORS } from '../../styles/colorTokens';
 import { Minimap } from './minimap/Minimap';
 import { VoiceHud } from './VoiceHud';
 import { formatKeybind } from '../../utils/keybindings';
+import { getPreparedVoxelMap, prepareVoxelMapCpu } from '../../utils/mapWarmup/mapPrepCache';
 import {
   getAbilityCooldownSeconds,
   getAbilityMaxCharges,
@@ -625,9 +632,17 @@ function getReviveProgress(
   player: Pick<Player, 'reviveStartedAt' | 'reviveCompletesAt'>,
   now: number
 ): number {
-  if (!player.reviveStartedAt || !player.reviveCompletesAt) return 0;
-  const duration = Math.max(1, player.reviveCompletesAt - player.reviveStartedAt);
-  return Math.max(0, Math.min(1, (now - player.reviveStartedAt) / duration));
+  return getTimedHoldProgress(player.reviveStartedAt, player.reviveCompletesAt, now);
+}
+
+function getTimedHoldProgress(
+  startedAt: number | null | undefined,
+  completesAt: number | null | undefined,
+  now: number
+): number {
+  if (!startedAt || !completesAt) return 0;
+  const duration = Math.max(1, completesAt - startedAt);
+  return Math.max(0, Math.min(1, (now - startedAt) / duration));
 }
 
 function getHudMeterScale(value: number, max: number): number {
@@ -792,27 +807,83 @@ function ReviveChannelHud({
   );
 }
 
-function RevivePromptHud({
-  target,
+function BattleRoyalSoulChannelHud({
+  interaction,
   interactKeyLabel,
 }: {
-  target: Player | null;
+  interaction: BattleRoyalHeroSoulInteractionSnapshot | null;
   interactKeyLabel: string;
 }) {
-  if (!target) return null;
+  const now = useHudNow();
+  if (!interaction) return null;
+
+  const isCollecting = interaction.kind === 'collect';
+  const progress = getTimedHoldProgress(interaction.startedAt, interaction.completesAt, now);
+  const fallbackDuration = isCollecting
+    ? BATTLE_ROYAL_SOUL_COLLECT_DURATION_MS
+    : BATTLE_ROYAL_SOUL_SUMMON_DURATION_MS;
+  const remainingMs = interaction.completesAt
+    ? Math.max(0, interaction.completesAt - now)
+    : fallbackDuration;
+  const label = isCollecting ? 'COLLECTING SOUL' : 'SUMMONING';
+
   return (
-    <div className="hud-center-bottom hud-revive-prompt absolute bottom-[clamp(6.5rem,13vh,8.5rem)] left-1/2 z-[125] -translate-x-1/2 rounded-md border border-white/16 bg-black/42 px-4 py-2 text-center shadow-xl backdrop-blur-md">
-      <span className="font-mono text-sm font-black tracking-[0.18em] text-white">
-        {interactKeyLabel}
-      </span>
-      <span className="ml-2 font-display text-sm tracking-[0.18em] text-cyan-100">
-        REVIVE
-      </span>
+    <div className="hud-center-bottom hud-soul-channel absolute bottom-[clamp(6.5rem,13vh,8.5rem)] left-1/2 z-[126] w-[min(20rem,82vw)] -translate-x-1/2">
+      <div className="rounded-md border border-cyan-100/24 bg-black/52 px-4 py-3 text-center shadow-2xl backdrop-blur-md">
+        <div className="flex items-center justify-between gap-3">
+          <span className="font-display text-xs tracking-[0.22em] text-cyan-50">{label}</span>
+          <span className="font-mono text-sm font-bold tabular-nums text-white">{(remainingMs / 1000).toFixed(1)}s</span>
+        </div>
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+          <div
+            className="h-full w-full origin-left rounded-full transition-transform duration-100"
+            style={{
+              transform: `scaleX(${progress})`,
+              background: isCollecting
+                ? 'linear-gradient(90deg, rgba(142, 234, 255, 0.96), rgba(217, 255, 246, 0.78))'
+                : 'linear-gradient(90deg, rgba(65, 240, 200, 0.94), rgba(106, 183, 255, 0.78))',
+              boxShadow: '0 0 12px rgba(103, 232, 249, 0.68)',
+            }}
+          />
+        </div>
+        <div className="mt-2 font-mono text-[0.68rem] font-bold tracking-[0.2em] text-white/62">
+          HOLD {interactKeyLabel}
+        </div>
+      </div>
     </div>
   );
 }
 
-function NearbyRevivePromptHud({
+function BattleRoyalPromptHud({
+  actionLabel,
+  targetLabel,
+  interactKeyLabel,
+}: {
+  actionLabel: string | null;
+  targetLabel?: string | null;
+  interactKeyLabel: string;
+}) {
+  if (!actionLabel) return null;
+  return (
+    <div className="hud-center-bottom hud-revive-prompt absolute bottom-[clamp(6.5rem,13vh,8.5rem)] left-1/2 z-[125] -translate-x-1/2 rounded-md border border-white/16 bg-black/42 px-4 py-2 text-center shadow-xl backdrop-blur-md">
+      <div>
+        <span className="font-mono text-sm font-black tracking-[0.18em] text-white">
+          {interactKeyLabel}
+        </span>
+        <span className="ml-2 font-display text-sm tracking-[0.18em] text-cyan-100">
+          {actionLabel}
+        </span>
+      </div>
+      {targetLabel && (
+        <div className="mt-0.5 font-body text-[0.68rem] text-white/52">
+          {targetLabel}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NearbyBattleRoyalInteractionPromptHud({
   localPlayerId,
   interactKeyLabel,
 }: {
@@ -820,16 +891,41 @@ function NearbyRevivePromptHud({
   interactKeyLabel: string;
 }) {
   const hudNow = useHudNow();
-  const { players, gameplayMode, gamePhase } = useGameStore(
+  const {
+    players,
+    battleRoyalSouls,
+    gameplayMode,
+    gamePhase,
+    mapSeed,
+    mapThemeId,
+    mapSize,
+    mapProfileId,
+    pregeneratedMapId,
+  } = useGameStore(
     useShallow(state => ({
       players: state.players,
+      battleRoyalSouls: state.battleRoyalSouls,
       gameplayMode: state.gameplayMode,
       gamePhase: state.gamePhase,
+      mapSeed: state.mapSeed,
+      mapThemeId: state.mapThemeId,
+      mapSize: state.mapSize,
+      mapProfileId: state.mapProfileId,
+      pregeneratedMapId: state.pregeneratedMapId,
     }))
   );
-  const target = useMemo(() => {
+  const summoningCircles = useMemo<readonly MapSummoningCircle[]>(() => {
+    if (gameplayMode !== 'battle_royal' || gamePhase !== 'playing') return [];
+    return (
+      getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId })
+      ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId, source: 'match' })
+    ).manifest.gameplay.summoningCircles ?? [];
+  }, [gamePhase, gameplayMode, mapProfileId, mapSeed, mapSize, mapThemeId, pregeneratedMapId]);
+  const prompt = useMemo((): { actionLabel: string; targetLabel?: string } | null => {
     const player = localPlayerId ? players.get(localPlayerId) ?? null : null;
-    if (!player || gameplayMode !== 'battle_royal' || gamePhase !== 'playing') return null;
+    if (!player || gameplayMode !== 'battle_royal' || gamePhase !== 'playing' || player.state !== 'alive') {
+      return null;
+    }
 
     const visualPositions = visualStore.getState().playerPositions;
     const playerPosition = getPlayerHudPosition(visualPositions, player);
@@ -848,10 +944,56 @@ function NearbyRevivePromptHud({
       }
     }
 
-    return nearestAlly;
-  }, [gamePhase, gameplayMode, hudNow, localPlayerId, players]);
+    if (nearestAlly) {
+      return { actionLabel: 'REVIVE' };
+    }
 
-  return <RevivePromptHud target={target} interactKeyLabel={interactKeyLabel} />;
+    const soulRadiusSq = (BATTLE_ROYAL_SOUL_INTERACTION_RADIUS + 0.35) * (BATTLE_ROYAL_SOUL_INTERACTION_RADIUS + 0.35);
+    let nearestSoul: NonNullable<typeof battleRoyalSouls>['souls'][number] | null = null;
+    nearestDistanceSq = soulRadiusSq;
+    for (const soul of battleRoyalSouls?.souls ?? []) {
+      if (soul.playerId === player.id) continue;
+      if (soul.team !== player.team) continue;
+      if (soul.status !== 'available') continue;
+      const distanceSq = getPositionDistanceSq(playerPosition, soul.position);
+      if (distanceSq <= nearestDistanceSq) {
+        nearestDistanceSq = distanceSq;
+        nearestSoul = soul;
+      }
+    }
+
+    if (nearestSoul) {
+      return { actionLabel: 'COLLECT SOUL', targetLabel: nearestSoul.playerName };
+    }
+
+    const carriedSoulCount = (battleRoyalSouls?.souls ?? []).reduce((count, soul) => (
+      soul.status === 'carried' && soul.carriedByPlayerId === player.id ? count + 1 : count
+    ), 0);
+    if (carriedSoulCount <= 0) return null;
+
+    const circleRadiusSq = (
+      BATTLE_ROYAL_SUMMONING_CIRCLE_INTERACTION_RADIUS + 0.35
+    ) * (
+      BATTLE_ROYAL_SUMMONING_CIRCLE_INTERACTION_RADIUS + 0.35
+    );
+    for (const circle of summoningCircles) {
+      if (getPositionDistanceSq(playerPosition, circle.position) > circleRadiusSq) continue;
+      return {
+        actionLabel: 'SUMMON',
+        targetLabel: carriedSoulCount === 1 ? '1 SOUL' : `${carriedSoulCount} SOULS`,
+      };
+    }
+
+    return null;
+  }, [battleRoyalSouls, gamePhase, gameplayMode, hudNow, localPlayerId, players, summoningCircles]);
+
+  return (
+    <BattleRoyalPromptHud
+      actionLabel={prompt?.actionLabel ?? null}
+      targetLabel={prompt?.targetLabel ?? null}
+      interactKeyLabel={interactKeyLabel}
+    />
+  );
 }
 
 function InteractionPromptHud({
@@ -1469,19 +1611,23 @@ export function HUD() {
   const {
     battleRoyalRemainingPlayers,
     reviveChannelTarget,
+    soulChannelInteraction,
   } = useGameStore(
     useShallow(state => {
       const player = state.localPlayer;
       if (!player) {
-        return { battleRoyalRemainingPlayers: 0, reviveChannelTarget: null };
+        return { battleRoyalRemainingPlayers: 0, reviveChannelTarget: null, soulChannelInteraction: null };
       }
       if (state.gameplayMode !== 'battle_royal') {
-        return { battleRoyalRemainingPlayers: 0, reviveChannelTarget: null };
+        return { battleRoyalRemainingPlayers: 0, reviveChannelTarget: null, soulChannelInteraction: null };
       }
 
       let remainingPlayers = 0;
       let sawLocalPlayer = false;
       let channelTarget: Player | null = null;
+      const soulInteraction = state.battleRoyalSouls?.interactions.find((interaction) => (
+        interaction.playerId === player.id
+      )) ?? null;
 
       for (const candidate of state.players.values()) {
         if (candidate.id === player.id) {
@@ -1506,6 +1652,7 @@ export function HUD() {
           !sawLocalPlayer && isBattleRoyalRemainingPlayer(player) ? 1 : 0
         ),
         reviveChannelTarget: channelTarget,
+        soulChannelInteraction: soulInteraction,
       };
     })
   );
@@ -1514,6 +1661,7 @@ export function HUD() {
 
   const isLocalDowned = localPlayerState === 'downed';
   const isLocalReviving = Boolean(reviveChannelTarget);
+  const isLocalSoulInteracting = Boolean(soulChannelInteraction);
   const displayedHealth = isLocalDowned ? localDownedHealth ?? 0 : localHealth ?? 0;
   const displayedMaxHealth = isLocalDowned ? Math.max(1, localDownedMaxHealth ?? 1) : localMaxHealth ?? 0;
   const healthPercent = (displayedHealth / displayedMaxHealth) * 100;
@@ -1541,7 +1689,7 @@ export function HUD() {
     battleRoyalDropStatus === 'aboard' ||
     battleRoyalDropStatus === 'dropping'
   );
-  const suppressCombatHud = isBattleRoyalPreLanding || isLocalDowned || isLocalReviving;
+  const suppressCombatHud = isBattleRoyalPreLanding || isLocalDowned || isLocalReviving || isLocalSoulInteracting;
   const healthColor = healthPercent <= 15
     ? '#ef4444'
     : healthPercent <= 30
@@ -1638,8 +1786,14 @@ export function HUD() {
           interactKeyLabel={formatKeybind(interactKeybind)}
         />
       )}
-      {gameplayMode === 'battle_royal' && !isLocalDowned && !isLocalReviving && (
-        <NearbyRevivePromptHud
+      {gameplayMode === 'battle_royal' && (
+        <BattleRoyalSoulChannelHud
+          interaction={soulChannelInteraction}
+          interactKeyLabel={formatKeybind(interactKeybind)}
+        />
+      )}
+      {gameplayMode === 'battle_royal' && !isLocalDowned && !isLocalReviving && !isLocalSoulInteracting && (
+        <NearbyBattleRoyalInteractionPromptHud
           localPlayerId={localPlayerId}
           interactKeyLabel={formatKeybind(interactKeybind)}
         />

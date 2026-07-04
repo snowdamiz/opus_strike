@@ -82,8 +82,12 @@ import {
 } from './battleRoyalDrop';
 import {
   BattleRoyalDownedRuntime,
-  hasBattleRoyalReviveBreakingInput,
+  hasBattleRoyalHoldInteractionBreakingInput,
 } from './battleRoyalDownedRuntime';
+import {
+  BattleRoyalSoulRuntime,
+  type BattleRoyalSoulSummonCompletion,
+} from './battleRoyalSoulRuntime';
 import {
   MatchLedgerRuntime,
   type MatchPersistenceLedger,
@@ -275,6 +279,8 @@ import {
   ULTIMATE_CHARGE_PER_SECOND,
   BLAZE_FLAMETHROWER_MAX_FUEL,
   BATTLE_ROYAL_CRAWL_SPEED_MULTIPLIER,
+  BATTLE_ROYAL_REVIVED_HEALTH,
+  BATTLE_ROYAL_REVIVE_RADIUS,
   BLAZE_FLAMETHROWER_RANGE,
   BLAZE_FLAMETHROWER_CONE_HALF_ANGLE,
   BLAZE_FLAMETHROWER_DAMAGE,
@@ -399,6 +405,7 @@ import type {
   SelfMovementAck,
   SelfMovementAuthority,
   MatchSnapshotMessage,
+  MapSummoningCircle,
   PhantomShieldBrokenEvent,
   PlayerInterestMessage,
   PlayerDamagedEvent,
@@ -550,6 +557,7 @@ import {
   BOT_TACTICS_INTERVAL_MS,
   BOT_THINK_INTERVAL_MS,
   applyBotAbilityInputPlan,
+  applyBotReviveTeammateInput,
   canUseBotAbility,
   chooseBotAbilityPlan,
   chooseBotCombatPlan,
@@ -1248,7 +1256,7 @@ export class GameRoom extends Room<GameState> {
     getPlayerById: (playerId) => this.state.players.get(playerId) ?? null,
     isDevelopmentMode: () => this.isDevelopmentMode(),
     isPlayerDevImmune: (playerId) => this.devRuntime.isPlayerImmune(playerId),
-    getRespawnDelayMs: () => isBattleRoyalMode(this.gameplayMode) && this.state.phase === 'playing'
+    getRespawnDelayMs: () => this.isBattleRoyalActiveCombatPhase()
       ? null
       : this.config.respawnTimeSeconds * 1000,
     vec3ToPlain: vec3SchemaToPlain,
@@ -1267,11 +1275,10 @@ export class GameRoom extends Room<GameState> {
     broadcastPhantomShieldBroken: (target, source, payload) => this.broadcastPhantomShieldBroken(target, source, payload),
     broadcastPlayerDamaged: (target, source, payload) => this.broadcastPlayerDamaged(target, source, payload),
     shouldDownLethalDamage: (target) => (
-      isBattleRoyalMode(this.gameplayMode) &&
-      this.state.phase === 'playing' &&
+      this.isBattleRoyalActiveCombatPhase() &&
       target.state === 'alive'
     ),
-    shouldDamageDownedPlayers: () => isBattleRoyalMode(this.gameplayMode) && this.state.phase === 'playing',
+    shouldDamageDownedPlayers: () => this.isBattleRoyalActiveCombatPhase(),
     enterBattleRoyalDowned: (target, source, payload) => this.enterBattleRoyalDowned(target, source, payload),
     broadcastPlayerKilled: (target, killer, payload) => this.broadcastPlayerKilled(target, killer, payload),
     recordMatchDeath: (victim, killer) => this.recordMatchDeath(victim, killer),
@@ -1295,6 +1302,7 @@ export class GameRoom extends Room<GameState> {
     broadcastReviveCancelled: (payload) => this.broadcastPlayerReviveCancelled(payload),
     broadcastPlayerRevived: (payload) => this.broadcastPlayerRevived(payload),
   });
+  private readonly battleRoyalSouls = new BattleRoyalSoulRuntime();
   private readonly matchLedger = new MatchLedgerRuntime({
     getConfig: () => ({
       roomId: this.roomId,
@@ -1332,6 +1340,8 @@ export class GameRoom extends Room<GameState> {
   private recordingLastStopPollAtMs = 0;
   private recordingStopPollInFlight = false;
   private recordingFinalizing = false;
+  private disconnectAfterRecordingFinalizes = false;
+  private roomDisposing = false;
   private battleRoyalSafeZone: BattleRoyalSafeZoneState | null = null;
   private battleRoyalDrop: BattleRoyalDropState | null = null;
   private readonly battleRoyalPlacement = new BattleRoyalPlacementTracker();
@@ -1565,6 +1575,10 @@ export class GameRoom extends Room<GameState> {
       this.reservedHumanPlayers,
       Math.floor(options.capacityPlayerCost ?? this.reservedHumanPlayers)
     );
+    if (options.recording) {
+      this.autoDispose = false;
+      this.disconnectAfterRecordingFinalizes = !this.lobbyId && this.requiredHumanPlayers === 0;
+    }
     this.playerClientCapacity = Math.max(
       this.config.maxPlayers,
       this.reservedHumanPlayers + Math.max(0, options.botAssignments?.length ?? 0)
@@ -2118,11 +2132,14 @@ export class GameRoom extends Room<GameState> {
       this.dropFlag(oldPlayer);
     }
     if (oldPlayer) {
+      const leaveNow = Date.now();
       this.battleRoyalDownedRuntime.clearPlayer(
         oldPlayer,
-        Date.now(),
+        leaveNow,
         oldPlayer.state === 'downed' ? 'target_removed' : 'reviver_removed'
       );
+      this.battleRoyalSouls.dropCarriedSouls(oldPlayer, leaveNow);
+      this.battleRoyalSouls.clearPlayer(oldPlayer.id);
     }
     this.state.players.delete(existingSessionId);
     this.clearCombatPlayerRuntimeState(existingSessionId);
@@ -2162,11 +2179,14 @@ export class GameRoom extends Room<GameState> {
     }
     if (player) {
       this.markMatchParticipantLeftIfIncomplete(player);
+      const leaveNow = Date.now();
       this.battleRoyalDownedRuntime.clearPlayer(
         player,
-        Date.now(),
+        leaveNow,
         player.state === 'downed' ? 'target_removed' : 'reviver_removed'
       );
+      this.battleRoyalSouls.dropCarriedSouls(player, leaveNow);
+      this.battleRoyalSouls.clearPlayer(player.id);
     }
 
     this.state.players.delete(client.sessionId);
@@ -2215,6 +2235,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   onDispose() {
+    this.roomDisposing = true;
     loggers.room.info('Room disposing', this.roomId);
     void pregeneratedMapCatalogService.releaseMapAfterLaunch({
       mapId: this.state?.pregeneratedMapId || null,
@@ -2477,6 +2498,149 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private isBattleRoyalActiveCombatPhase(): boolean {
+    return isBattleRoyalMode(this.gameplayMode) && (
+      this.state.phase === 'playing' ||
+      this.state.phase === 'deployment'
+    );
+  }
+
+  private updateActivePlayerRuntimes(now: number, dt: number): void {
+    if (isBattleRoyalMode(this.gameplayMode)) {
+      this.battleRoyalDownedRuntime.update(this.state.players.values(), now);
+      this.updateBattleRoyalSouls(now);
+    }
+
+    this.state.players.forEach(player => {
+      if (player.state === 'dead') {
+        if (this.isBattleRoyalActiveCombatPhase()) {
+          player.respawnTime = 0;
+          return;
+        }
+        if (!Number.isFinite(player.respawnTime) || player.respawnTime <= 0) {
+          player.respawnTime = now + this.config.respawnTimeSeconds * 1000;
+        }
+        if (now >= player.respawnTime) {
+          this.respawnPlayer(player);
+        }
+        return;
+      }
+
+      if (player.state !== 'alive') return;
+
+      const chronosTempoMultiplier = this.getChronosTimebreakTempoMultiplier(player);
+      const abilityTempoMultiplier = this.getAbilityTempoMultiplier(player, now);
+
+      updateAbilityCooldowns(player, dt, abilityTempoMultiplier);
+      this.updateTimeScaledSkillTimers(player, dt, abilityTempoMultiplier, now);
+
+      if (player.ultimateCharge < 100) {
+        player.ultimateCharge = Math.min(
+          100,
+          player.ultimateCharge + ULTIMATE_CHARGE_PER_SECOND * dt * chronosTempoMultiplier
+        );
+      }
+
+      updateActiveAbilities(player, now);
+      this.syncChronosAscendantMovementState(player, now);
+    });
+    this.updateChronosAegisShields(dt);
+    this.playerRoots.clearExpired(now);
+  }
+
+  private updateBattleRoyalSouls(now: number): void {
+    if (!isBattleRoyalMode(this.gameplayMode) || this.state.phase !== 'playing') return;
+
+    const result = this.battleRoyalSouls.update(
+      this.state.players,
+      this.getBattleRoyalSummoningCircles(),
+      now
+    );
+    if (result.completedSummons.length === 0) return;
+
+    for (const completion of result.completedSummons) {
+      this.completeBattleRoyalSoulSummon(completion);
+    }
+  }
+
+  private completeBattleRoyalSoulSummon(completion: BattleRoyalSoulSummonCompletion): void {
+    const circle = this.getBattleRoyalSummoningCircles().find((candidate) => candidate.id === completion.circleId);
+    if (!circle) return;
+
+    let revivedCount = 0;
+    for (const soul of completion.souls) {
+      const player = this.state.players.get(soul.playerId) ?? null;
+      if (!player) continue;
+      if (player.state !== 'dead') continue;
+      if (player.team !== soul.team) continue;
+      this.prepareBattleRoyalSoulSummonedPlayer(
+        player,
+        circle,
+        revivedCount,
+        completion.souls.length,
+        completion.completedAt
+      );
+      revivedCount++;
+    }
+
+    if (revivedCount > 0) {
+      this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
+    }
+  }
+
+  private prepareBattleRoyalSoulSummonedPlayer(
+    player: Player,
+    circle: MapSummoningCircle,
+    index: number,
+    total: number,
+    now: number
+  ): void {
+    const resetPlan = applyPlayerAliveRuntimeReset(player, {
+      now,
+      spawnProtectionMs: 0,
+      resetRespawnTime: true,
+    });
+    player.health = Math.min(player.maxHealth, BATTLE_ROYAL_REVIVED_HEALTH);
+    this.resetPlayerLifeRuntime(player, now);
+    this.placePlayerAtBattleRoyalSummoningCircle(player, circle, index, total);
+
+    if (resetPlan.resetPrimaryMagazine) {
+      this.resetPrimaryMagazineForHero(player.id, player.heroId);
+    }
+    if (resetPlan.clearChronosAegisShield) {
+      this.chronosAegisShields.clear(player.id);
+    }
+    if (resetPlan.resetBotBrain) {
+      this.botRuntime.setBrain(player.id, this.createBotBrain(player, hashString(player.id), {
+        now,
+        staggerInitialSchedule: true,
+      }));
+    }
+    if (resetPlan.resetAbilityCooldowns) {
+      resetAbilityCooldowns(player);
+    }
+  }
+
+  private updateActiveGameplayEffects(now: number, dt: number): void {
+    this.updateVoidZones(now);
+
+    this.updatePendingAreaDamage(now);
+    this.updateBlazeGearstorms(now);
+    this.cleanupDamageWindows(now);
+
+    this.updateBlazeFlamethrowers(now, dt);
+    this.updateBlazeBurns(now);
+    this.playerCombatActivity.updateOutOfCombatHealthRegens(this.state.players.values(), now, dt);
+  }
+
+  private updatePostMovementGameplaySystems(now: number): void {
+    this.updatePowerupPickups(now);
+
+    if (isCaptureTheFlagMode(this.gameplayMode)) {
+      this.updateCTFObjectives(now);
+    }
+  }
+
   private updatePlaying() {
     const now = Date.now();
     const dt = TICK_INTERVAL_MS / 1000;
@@ -2500,76 +2664,17 @@ export class GameRoom extends Room<GameState> {
         }
       }
 
-      if (isBattleRoyalMode(this.gameplayMode)) {
-        this.battleRoyalDownedRuntime.update(this.state.players.values(), now);
-      }
-
-      // Update each player
-      this.state.players.forEach(player => {
-        // Handle respawns
-        if (player.state === 'dead') {
-          if (isBattleRoyalMode(this.gameplayMode) && this.state.phase === 'playing') {
-            player.respawnTime = 0;
-            return;
-          }
-          if (!Number.isFinite(player.respawnTime) || player.respawnTime <= 0) {
-            player.respawnTime = now + this.config.respawnTimeSeconds * 1000;
-          }
-          if (now >= player.respawnTime) {
-            this.respawnPlayer(player);
-          }
-          return;
-        }
-
-        if (player.state !== 'alive') return;
-
-        const chronosTempoMultiplier = this.getChronosTimebreakTempoMultiplier(player);
-        const abilityTempoMultiplier = this.getAbilityTempoMultiplier(player, now);
-
-        // Update ability cooldowns
-        updateAbilityCooldowns(player, dt, abilityTempoMultiplier);
-        this.updateTimeScaledSkillTimers(player, dt, abilityTempoMultiplier, now);
-
-        // Passive ultimate charge
-        if (player.ultimateCharge < 100) {
-          player.ultimateCharge = Math.min(
-            100,
-            player.ultimateCharge + ULTIMATE_CHARGE_PER_SECOND * dt * chronosTempoMultiplier
-          );
-        }
-
-        // Process active abilities (like Phantom Veil)
-        updateActiveAbilities(player, now);
-        this.syncChronosAscendantMovementState(player, now);
-      });
-      this.updateChronosAegisShields(dt);
-      this.playerRoots.clearExpired(now);
+      this.updateActivePlayerRuntimes(now, dt);
     });
 
     this.measureTickSpan('powerups_objectives_effects', () => {
-      // Update void zones (damage enemies inside)
-      this.updateVoidZones(now);
-
-      this.updatePendingAreaDamage(now);
-      this.updateBlazeGearstorms(now);
-      this.cleanupDamageWindows(now);
-
-      // Update held Blaze flamethrowers
-      this.updateBlazeFlamethrowers(now, dt);
-      this.updateBlazeBurns(now);
-      this.playerCombatActivity.updateOutOfCombatHealthRegens(this.state.players.values(), now, dt);
+      this.updateActiveGameplayEffects(now, dt);
     });
 
     this.updatePhysics();
 
     this.measureTickSpan('powerups_objectives_effects', () => {
-      // Update map pickups after movement so collection uses the latest authoritative position.
-      this.updatePowerupPickups(now);
-
-      // Update CTF objective interactions after movement.
-      if (isCaptureTheFlagMode(this.gameplayMode)) {
-        this.updateCTFObjectives(now);
-      }
+      this.updatePostMovementGameplaySystems(now);
     });
 
     this.updateBattleRoyalSafeZone(now);
@@ -2887,6 +2992,9 @@ export class GameRoom extends Room<GameState> {
       battleRoyalDrop: this.battleRoyalDrop
         ? buildBattleRoyalDropSnapshot(this.battleRoyalDrop, this.state.serverTime || Date.now())
         : null,
+      battleRoyalSouls: isBattleRoyalMode(this.gameplayMode)
+        ? this.battleRoyalSouls.buildSnapshot()
+        : null,
     });
   }
 
@@ -2994,12 +3102,16 @@ export class GameRoom extends Room<GameState> {
     if (!teamPlacement) return;
 
     this.battleRoyalTeamSummarySent.add(team);
+    const soulsChanged = this.battleRoyalSouls?.clearTeam(team) ?? false;
     const summary = this.buildBattleRoyalTeamEliminatedEvent(team, teamPlacement.placement, now);
 
     for (const client of this.clients) {
       const player = this.state.players.get(client.sessionId);
       if (!player || player.team !== team || isObserverPlayer(player)) continue;
       this.sendTrackedAfterGameplayWork(client, 'gameEnd', summary);
+    }
+    if (soulsChanged) {
+      this.broadcastStateStreams({ transforms: false, forceVitals: false, forceMatch: true });
     }
   }
 
@@ -3415,6 +3527,10 @@ export class GameRoom extends Room<GameState> {
         recordingId: writer.id,
         error: finalizeError instanceof Error ? finalizeError.message : String(finalizeError),
       });
+    }).finally(() => {
+      if (this.disconnectAfterRecordingFinalizes && !this.roomDisposing) {
+        this.disconnect();
+      }
     });
   }
 
@@ -4997,19 +5113,7 @@ export class GameRoom extends Room<GameState> {
     return suppressLocomotionInput(input);
   }
 
-  private getBattleRoyalReviveLockedInput(player: Player, input: PlayerInput, now: number): PlayerInput {
-    if (!this.battleRoyalDownedRuntime.isReviving(player.id)) return input;
-
-    const targetId = this.battleRoyalDownedRuntime.getReviveTargetId(player.id);
-    const target = targetId ? this.state.players.get(targetId) ?? null : null;
-    if (!input.interact || hasBattleRoyalReviveBreakingInput(input)) {
-      if (target) {
-        this.battleRoyalDownedRuntime.cancelReviveForTarget(target, 'interrupted', now);
-      } else {
-        this.battleRoyalDownedRuntime.cancelReviveForPlayer(player.id, 'target_removed', now);
-      }
-    }
-
+  private suppressBattleRoyalHoldInteractionInput(input: PlayerInput): PlayerInput {
     return {
       ...input,
       moveForward: false,
@@ -5028,6 +5132,32 @@ export class GameRoom extends Room<GameState> {
       ultimate: false,
       interact: false,
     };
+  }
+
+  private getBattleRoyalReviveLockedInput(player: Player, input: PlayerInput, now: number): PlayerInput {
+    if (!this.battleRoyalDownedRuntime.isReviving(player.id)) return input;
+
+    const targetId = this.battleRoyalDownedRuntime.getReviveTargetId(player.id);
+    const target = targetId ? this.state.players.get(targetId) ?? null : null;
+    if (!input.interact || hasBattleRoyalHoldInteractionBreakingInput(input)) {
+      if (target) {
+        this.battleRoyalDownedRuntime.cancelReviveForTarget(target, 'interrupted', now);
+      } else {
+        this.battleRoyalDownedRuntime.cancelReviveForPlayer(player.id, 'target_removed', now);
+      }
+    }
+
+    return this.suppressBattleRoyalHoldInteractionInput(input);
+  }
+
+  private getBattleRoyalSoulLockedInput(player: Player, input: PlayerInput, now: number): PlayerInput {
+    if (!(this.battleRoyalSouls?.hasActiveInteraction(player.id) ?? false)) return input;
+
+    if (!input.interact || hasBattleRoyalHoldInteractionBreakingInput(input)) {
+      this.battleRoyalSouls.cancelInteractionForPlayer(player.id);
+    }
+
+    return this.suppressBattleRoyalHoldInteractionInput(input);
   }
 
   private getDownedMovementInput(player: Player, input: PlayerInput): PlayerInput {
@@ -5056,7 +5186,14 @@ export class GameRoom extends Room<GameState> {
   private getSanitizedMovementInput(player: Player, input: PlayerInput, now: number): PlayerInput {
     return this.getRootedMovementInput(
       player,
-      this.getDownedMovementInput(player, this.getBattleRoyalReviveLockedInput(player, input, now)),
+      this.getDownedMovementInput(
+        player,
+        this.getBattleRoyalSoulLockedInput(
+          player,
+          this.getBattleRoyalReviveLockedInput(player, input, now),
+          now
+        )
+      ),
       now
     );
   }
@@ -7302,6 +7439,22 @@ export class GameRoom extends Room<GameState> {
       });
       return;
     }
+    if (
+      isBattleRoyalMode(this.gameplayMode) &&
+      this.state.phase === 'playing' &&
+      input.interact &&
+      this.tryStartBattleRoyalSoulInteraction(player, now)
+    ) {
+      this.playerPressStates.applyInput(player.id, {
+        primaryFire: false,
+        secondaryFire: false,
+        reload: false,
+        ability1: false,
+        ability2: false,
+        ultimate: false,
+      });
+      return;
+    }
 
     const reloadPressed = Boolean(input.reload);
     this.updatePhantomPrimaryHoldState(player, input, previous, now);
@@ -7378,6 +7531,14 @@ export class GameRoom extends Room<GameState> {
     });
 
     return bestTarget ? this.battleRoyalDownedRuntime.tryStartRevive(reviver, bestTarget, now) : false;
+  }
+
+  private tryStartBattleRoyalSoulInteraction(player: Player, now: number): boolean {
+    if (this.battleRoyalSouls.hasActiveInteraction(player.id)) return true;
+    return (
+      this.battleRoyalSouls.tryStartNearestCollect(player, now) ||
+      this.battleRoyalSouls.tryStartSummon(player, this.getBattleRoyalSummoningCircles(), now)
+    );
   }
 
   private tryResolveAttack(player: Player, mode: AttackMode, now = Date.now()): void {
@@ -9582,14 +9743,9 @@ export class GameRoom extends Room<GameState> {
         reviveTarget &&
         reviveTarget.team === bot.team &&
         reviveTarget.state === 'downed' &&
-        distance3D(bot.position, reviveTarget.position) <= 4.5
+        distance3D(bot.position, reviveTarget.position) <= BATTLE_ROYAL_REVIVE_RADIUS
       ) {
-        input.interact = true;
-        input.primaryFire = false;
-        input.secondaryFire = false;
-        input.ability1 = false;
-        input.ability2 = false;
-        input.ultimate = false;
+        applyBotReviveTeammateInput(input);
       }
     }
 
@@ -9690,7 +9846,26 @@ export class GameRoom extends Room<GameState> {
     return Boolean(target.spawnProtectionUntil && now < target.spawnProtectionUntil);
   }
 
+  private shouldCreateBattleRoyalSoulForFinalElimination(player: Player): boolean {
+    return (
+      isBattleRoyalMode(this.gameplayMode) &&
+      this.state.phase === 'playing' &&
+      player.state === 'dead' &&
+      !isObserverPlayer(player)
+    );
+  }
+
   private resetPlayerLifeRuntime(player: Player, now = Date.now()): void {
+    if (isBattleRoyalMode(this.gameplayMode)) {
+      const shouldCreateSoul = this.shouldCreateBattleRoyalSoulForFinalElimination(player);
+      this.battleRoyalSouls.dropCarriedSouls(player, now);
+      this.battleRoyalSouls.cancelInteractionForPlayer(player.id);
+      if (shouldCreateSoul) {
+        this.battleRoyalSouls.createSoul(player, now);
+      } else if (player.state !== 'dead') {
+        this.battleRoyalSouls.clearPlayer(player.id);
+      }
+    }
     this.battleRoyalDownedRuntime.clearPlayer(player, now);
     this.disablePlayerSkills(player);
     this.resetPlayerPressState(player.id);
@@ -10338,6 +10513,7 @@ export class GameRoom extends Room<GameState> {
     this.lineOfSightCache.clear();
     this.visibilityInterest.clearAll();
     this.battleRoyalDownedRuntime.clearAll(this.state.players.values(), Date.now());
+    this.battleRoyalSouls.clearAll();
     this.battleRoyalSafeZone = null;
     this.battleRoyalDrop = null;
     this.nextBattleRoyalSafeZoneDamageAt = 0;
@@ -10374,6 +10550,10 @@ export class GameRoom extends Room<GameState> {
 
   private getMapManifest(): VoxelMapManifest {
     return this.mapRuntime.getMapManifest();
+  }
+
+  private getBattleRoyalSummoningCircles(): readonly MapSummoningCircle[] {
+    return this.getMapManifest().gameplay.summoningCircles ?? [];
   }
 
   private getBlockAtWorld(position: { x: number; y: number; z: number }): number {
@@ -10932,8 +11112,12 @@ export class GameRoom extends Room<GameState> {
     this.applyPhaseStatePatch(playingPatch);
     this.updateMetadata();
     const ledger = this.ensureMatchPersistenceLedger(this.state.roundStartTime);
+    const preserveBattleRoyalDeploymentGameplay = isBattleRoyalMode(this.gameplayMode) &&
+      options.preserveAlivePlayers === true;
 
-    this.blazeBurns.clearAll();
+    if (!preserveBattleRoyalDeploymentGameplay) {
+      this.blazeBurns.clearAll();
+    }
 
     this.state.players.forEach(player => {
       if (isObserverPlayer(player)) {
@@ -10981,8 +11165,10 @@ export class GameRoom extends Room<GameState> {
     // Reset flags
     const mapManifest = this.getMapManifest();
     resetFlagsFromManifest(this.state, mapManifest);
-    this.powerupBoosts.clearAll();
-    this.powerupPickups.reset(mapManifest, 0);
+    if (!preserveBattleRoyalDeploymentGameplay) {
+      this.powerupBoosts.clearAll();
+      this.powerupPickups.reset(mapManifest, 0);
+    }
     const firstSafeZoneRevealsAt = Math.max(now, options.firstSafeZoneRevealsAt ?? now);
     this.battleRoyalSafeZone = isBattleRoyalMode(this.gameplayMode)
       ? createBattleRoyalSafeZoneState(mapManifest, firstSafeZoneRevealsAt, {
@@ -10992,8 +11178,10 @@ export class GameRoom extends Room<GameState> {
     this.nextBattleRoyalSafeZoneDamageAt = (this.battleRoyalSafeZone?.phaseStartedAt ?? now) + 1000;
     this.battleRoyalTeamSummarySent.clear();
     if (isBattleRoyalMode(this.gameplayMode)) {
+      this.battleRoyalSouls.clearAll();
       this.battleRoyalPlacement.initialize(this.state.players.values(), now);
     } else {
+      this.battleRoyalSouls.clearAll();
       this.battleRoyalPlacement.clear();
     }
 
@@ -11145,7 +11333,7 @@ export class GameRoom extends Room<GameState> {
     drop.players.forEach((dropPlayer, playerId) => {
       const player = this.state.players.get(playerId);
       if (!player) return;
-      if (dropPlayer.status === 'landed' && player.state === 'alive') return;
+      if (dropPlayer.status === 'landed' && player.state !== 'dropping') return;
       this.applyBattleRoyalDropTransform(player, dropPlayer);
       this.updateLastSafeMovement(player, this.getMovementAuthority(player.id).lastProcessedSeq, now);
     });
@@ -11163,7 +11351,7 @@ export class GameRoom extends Room<GameState> {
       this.applyBattleRoyalDropTransform(player, dropPlayer);
       const resetPlan = applyPlayerAliveRuntimeReset(player, {
         now,
-        spawnProtectionMs: this.config.spawnProtectionSeconds * 1000,
+        spawnProtectionMs: 0,
         resetRespawnTime: true,
       });
       this.resetPlayerLifeRuntime(player, now);
@@ -11241,6 +11429,7 @@ export class GameRoom extends Room<GameState> {
       clampToPlayableMap: (position) => this.clampToPlayableMap(position),
     });
     this.syncBattleRoyalDropPlayers(now);
+    this.activateLandedBattleRoyalDropPlayers(now);
     this.state.players.forEach((player) => {
       this.markMovementBarrier(player.id, 'spawn');
     });
@@ -11259,20 +11448,31 @@ export class GameRoom extends Room<GameState> {
     }
 
     const now = Date.now();
+    const dt = TICK_INTERVAL_MS / 1000;
     this.measureTickSpan('phase_gameplay_update', () => {
       this.drainBattleRoyalDropInputs(now);
       advanceBattleRoyalDropState({
         state: drop,
         now,
-        dt: TICK_INTERVAL_MS / 1000,
+        dt,
         getGroundY: (position) => this.getProceduralGroundY(position),
         clampToPlayableMap: (position) => this.clampToPlayableMap(position),
       });
       this.syncBattleRoyalDropPlayers(now);
       this.activateLandedBattleRoyalDropPlayers(now);
+      this.updateActivePlayerRuntimes(now, dt);
+    });
+
+    this.measureTickSpan('powerups_objectives_effects', () => {
+      this.updateActiveGameplayEffects(now, dt);
     });
 
     this.updatePhysics();
+
+    this.measureTickSpan('powerups_objectives_effects', () => {
+      this.updatePostMovementGameplaySystems(now);
+    });
+
     this.sendBattleRoyalDropAuthorities(now);
 
     if (
@@ -11323,6 +11523,7 @@ export class GameRoom extends Room<GameState> {
       });
     }
     this.battleRoyalDownedRuntime.clearAll(this.state.players.values(), Date.now());
+    this.battleRoyalSouls.clearAll();
     this.applyPostGameResetStatePatch(buildPostGameResetStatePatch(mapSeed));
     this.refreshMapManifest();
     resetFlagsFromManifest(this.state, this.getMapManifest());
@@ -12101,6 +12302,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     return (this.battleRoyalDownedRuntime?.isReviving(player.id) ?? false) ||
+      (this.battleRoyalSouls?.hasActiveInteraction(player.id) ?? false) ||
       this.hasPressedGameplayState(this.playerPressStates.get(player.id));
   }
 
@@ -12590,6 +12792,33 @@ export class GameRoom extends Room<GameState> {
     this.markMovementBarrier(player.id, reason);
   }
 
+  private placePlayerAtBattleRoyalSummoningCircle(
+    player: Player,
+    circle: MapSummoningCircle,
+    index: number,
+    total: number
+  ): void {
+    const spreadRadius = total <= 1 ? 0 : Math.min(circle.radius * 0.48, 1.6);
+    const angle = total <= 1 ? 0 : (index / Math.max(1, total)) * Math.PI * 2;
+    const clamped = this.clampToPlayableMap({
+      x: circle.position.x + Math.cos(angle) * spreadRadius,
+      y: circle.position.y + PLAYER_HEIGHT,
+      z: circle.position.z + Math.sin(angle) * spreadRadius,
+    });
+    const groundY = this.getProceduralGroundY(clamped);
+    const fallbackY = circle.position.y + PLAYER_HEIGHT / 2 + 0.06;
+
+    player.position.x = clamped.x;
+    player.position.y = groundY !== null && Number.isFinite(groundY)
+      ? groundY + PLAYER_HEIGHT / 2 + 0.06
+      : fallbackY;
+    player.position.z = clamped.z;
+    player.velocity.x = 0;
+    player.velocity.y = 0;
+    player.velocity.z = 0;
+    this.markMovementBarrier(player.id, 'revived');
+  }
+
   private placePlayersAtBattleRoyalDropShipStart(
     now: number,
     reason: MovementCorrectionReason = 'spawn'
@@ -12819,11 +13048,14 @@ export class GameRoom extends Room<GameState> {
   private removeNpcPlayer(playerId: string): void {
     const player = this.state.players.get(playerId);
     if (player) {
+      const now = Date.now();
       this.battleRoyalDownedRuntime.clearPlayer(
         player,
-        Date.now(),
+        now,
         player.state === 'downed' ? 'target_removed' : 'reviver_removed'
       );
+      this.battleRoyalSouls.dropCarriedSouls(player, now);
+      this.battleRoyalSouls.clearPlayer(player.id);
     }
     this.state.players.delete(playerId);
     this.npcs.delete(playerId);

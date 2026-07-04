@@ -1,15 +1,12 @@
-import { memo, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import { memo, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Billboard, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import {
   MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
   type BattleRoyalDropPlayerSnapshot,
   type BattleRoyalDropSnapshot,
-  type MapNamedLocation,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
-import { getPreparedVoxelMap } from '../../utils/mapWarmup/mapPrepCache';
 import {
   sampleRemoteTransformInto,
   visualStore,
@@ -31,14 +28,6 @@ const POD_SNAP_DISTANCE = 80;
 const POD_SNAP_DISTANCE_SQ = POD_SNAP_DISTANCE * POD_SNAP_DISTANCE;
 const POD_MODEL_FORWARD = new THREE.Vector3(0, 1, 0);
 const POD_SNAPSHOT_EXTRAPOLATION_CAP_MS = 10_000;
-const LOCATION_LABEL_MAX_COUNT = 18;
-const LOCATION_LABEL_FONT_SCALE = 0.9;
-const LOCATION_LABEL_FONT_WEIGHT = 800;
-const LOCATION_LABEL_TYPE_FONT_WEIGHT = 700;
-const LOCATION_LABEL_OUTLINE_WIDTH = 0.18;
-const LOCATION_LABEL_TYPE_OUTLINE_WIDTH = 0.08;
-const LOCATION_LABEL_FADE_SMOOTHING = 5.5;
-const LOCATION_LABEL_MIN_RENDER_OPACITY = 0.015;
 const SHIP_WINDOW_Z_OFFSETS = [3.8, 2.65, 1.5, 0.35, -0.8, -1.95, -3.1] as const;
 const SHIP_ENGINE_X_OFFSETS = [-2.25, 0, 2.25] as const;
 const SHIP_WING_TIP_LIGHTS = [
@@ -96,63 +85,14 @@ function createSampledRemoteTransform(): SampledRemoteTransform {
   };
 }
 
-function useSmoothedScalarVisibility(
-  target: number,
-  smoothing: number,
-  minVisibleValue: number
-): { valueRef: MutableRefObject<number>; visible: boolean } {
-  const targetRef = useRef(target);
-  const valueRef = useRef(target);
-  const visibleRef = useRef(target > minVisibleValue);
-  const [visible, setVisible] = useState(() => visibleRef.current);
-
-  useEffect(() => {
-    targetRef.current = target;
-    if (target > minVisibleValue && !visibleRef.current) {
-      visibleRef.current = true;
-      setVisible(true);
-    }
-  }, [minVisibleValue, target]);
-
-  useFrame((_, delta) => {
-    const current = valueRef.current;
-    const nextTarget = targetRef.current;
-    const alpha = 1 - Math.exp(-smoothing * Math.max(0, delta));
-    const next = Math.abs(current - nextTarget) < 0.001
-      ? nextTarget
-      : THREE.MathUtils.lerp(current, nextTarget, alpha);
-
-    valueRef.current = next;
-    const shouldBeVisible = next > minVisibleValue || nextTarget > minVisibleValue;
-    if (shouldBeVisible !== visibleRef.current) {
-      visibleRef.current = shouldBeVisible;
-      setVisible(shouldBeVisible);
-    }
-  });
-
-  return { valueRef, visible };
-}
-
 export function BattleRoyalDropDeployment() {
   const gameplayMode = useGameStore((state) => state.gameplayMode);
   const gamePhase = useGameStore((state) => state.gamePhase);
   const drop = useGameStore((state) => state.battleRoyalDrop);
   const localPlayerId = useGameStore((state) => state.localPlayer?.id ?? state.playerId);
-  const mapSeed = useGameStore((state) => state.mapSeed);
-  const mapThemeId = useGameStore((state) => state.mapThemeId);
-  const mapSize = useGameStore((state) => state.mapSize);
-  const mapProfileId = useGameStore((state) => state.mapProfileId);
-  const pregeneratedMapId = useGameStore((state) => state.pregeneratedMapId);
   const isBattleRoyal = gameplayMode === 'battle_royal';
   const isDeploymentPhase = gamePhase === 'countdown' || gamePhase === 'deployment';
   const shouldRenderDropVisuals = isBattleRoyal && isDeploymentPhase && drop?.enabled === true;
-  const { valueRef: labelOpacityRef, visible: labelsVisible } = useSmoothedScalarVisibility(
-    isBattleRoyal && isDeploymentPhase ? 1 : 0,
-    LOCATION_LABEL_FADE_SMOOTHING,
-    LOCATION_LABEL_MIN_RENDER_OPACITY
-  );
-  const preparedMap = getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId });
-  const namedLocations = preparedMap?.manifest.gameplay.namedLocations ?? [];
 
   const podPlayers = useMemo(
     () => shouldRenderDropVisuals ? drop?.players.filter((player) => (
@@ -160,16 +100,12 @@ export function BattleRoyalDropDeployment() {
     )) ?? [] : [],
     [drop, shouldRenderDropVisuals]
   );
-  const shouldRenderLabels = isBattleRoyal &&
-    namedLocations.length > 0 &&
-    labelsVisible;
 
-  if (!shouldRenderDropVisuals && !shouldRenderLabels) return null;
+  if (!shouldRenderDropVisuals) return null;
 
   return (
     <group>
       {shouldRenderDropVisuals && drop ? <DropShipVisual drop={drop} frozen={gamePhase === 'countdown'} /> : null}
-      {shouldRenderLabels ? <BattleRoyalLocationLabels locations={namedLocations} opacityRef={labelOpacityRef} /> : null}
       {shouldRenderDropVisuals && drop ? podPlayers.map((player) => {
         const isLocal = player.playerId === localPlayerId;
         return (
@@ -181,146 +117,6 @@ export function BattleRoyalDropDeployment() {
           />
         );
       }) : null}
-    </group>
-  );
-}
-
-function getLocationLabelStyle(location: MapNamedLocation): {
-  fontSize: number;
-  yOffset: number;
-  color: string;
-  accent: string;
-  typeLabel: string;
-} {
-  switch (location.kind) {
-    case 'city':
-      return { fontSize: 5.8, yOffset: 36, color: '#f8fbff', accent: '#67e8f9', typeLabel: 'CITY' };
-    case 'town':
-      return { fontSize: 4.6, yOffset: 30, color: '#f4f7ff', accent: '#fbbf24', typeLabel: 'TOWN' };
-    case 'industrial':
-      return { fontSize: 4.4, yOffset: 30, color: '#f2f5ff', accent: '#fb923c', typeLabel: 'INDUSTRIAL' };
-    case 'hamlet':
-      return { fontSize: 3.6, yOffset: 25, color: '#eef6ff', accent: '#86efac', typeLabel: 'HAMLET' };
-    case 'outpost':
-      return { fontSize: 3.8, yOffset: 27, color: '#f0f8ff', accent: '#93c5fd', typeLabel: 'OUTPOST' };
-    case 'open_area':
-      return { fontSize: 3.2, yOffset: 23, color: '#edf7ff', accent: '#c4b5fd', typeLabel: 'OPEN AREA' };
-    case 'wildland':
-      return { fontSize: 3.2, yOffset: 23, color: '#edf7ff', accent: '#5eead4', typeLabel: 'WILDS' };
-    default:
-      return { fontSize: 3.4, yOffset: 24, color: '#f4f7ff', accent: '#bae6fd', typeLabel: 'LANDMARK' };
-  }
-}
-
-function BattleRoyalLocationLabels({
-  locations,
-  opacityRef,
-}: {
-  locations: MapNamedLocation[];
-  opacityRef: MutableRefObject<number>;
-}) {
-  const groupRef = useRef<THREE.Group>(null);
-  const beamMaterialRefs = useRef<(THREE.MeshBasicMaterial | null)[]>([]);
-  const ringMaterialRefs = useRef<(THREE.MeshBasicMaterial | null)[]>([]);
-  const textRefs = useRef<Array<{ fillOpacity?: number; outlineOpacity?: number; sync?: () => void } | null>>([]);
-  const lastAppliedOpacityRef = useRef(Number.NaN);
-  const visibleLocations = useMemo(
-    () => locations.slice().sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name)).slice(0, LOCATION_LABEL_MAX_COUNT),
-    [locations]
-  );
-
-  useFrame(() => {
-    if (!groupRef.current) return;
-    const opacity = opacityRef.current;
-    if (Math.abs(opacity - lastAppliedOpacityRef.current) < 0.001) return;
-    lastAppliedOpacityRef.current = opacity;
-
-    for (let index = 0; index < visibleLocations.length; index++) {
-      const beamMaterial = beamMaterialRefs.current[index];
-      if (beamMaterial) beamMaterial.opacity = 0.22 * opacity;
-      const ringMaterial = ringMaterialRefs.current[index];
-      if (ringMaterial) ringMaterial.opacity = 0.36 * opacity;
-    }
-    for (const text of textRefs.current) {
-      if (!text) continue;
-      text.fillOpacity = opacity;
-      text.outlineOpacity = opacity;
-      text.sync?.();
-    }
-  });
-
-  const initialOpacity = opacityRef.current;
-
-  return (
-    <group ref={groupRef} name="battle-royal-location-labels">
-      {visibleLocations.map((location, index) => {
-        const style = getLocationLabelStyle(location);
-        const labelFontSize = style.fontSize * LOCATION_LABEL_FONT_SCALE;
-        const typeFontSize = Math.max(1.05, labelFontSize * 0.3);
-        const beamHeight = Math.max(12, style.yOffset - 6);
-        const labelY = location.position.y + style.yOffset;
-        const beamY = location.position.y + beamHeight * 0.5 + 1.2;
-
-        return (
-          <group key={location.id} position={[location.position.x, 0, location.position.z]}>
-            <mesh position={[0, beamY, 0]} renderOrder={18}>
-              <cylinderGeometry args={[0.1, 0.22, beamHeight, 8]} />
-              <meshBasicMaterial
-                ref={(material) => { beamMaterialRefs.current[index] = material; }}
-                color={style.accent}
-                transparent
-                opacity={0.22 * initialOpacity}
-                depthWrite={false}
-              />
-            </mesh>
-            <mesh position={[0, location.position.y + 0.35, 0]} rotation={[Math.PI / 2, 0, 0]} renderOrder={17}>
-              <ringGeometry args={[Math.max(3.5, location.radius * 0.18), Math.max(4.4, location.radius * 0.18 + 0.8), 48]} />
-              <meshBasicMaterial
-                ref={(material) => { ringMaterialRefs.current[index] = material; }}
-                color={style.accent}
-                transparent
-                opacity={0.36 * initialOpacity}
-                depthWrite={false}
-              />
-            </mesh>
-            <Billboard position={[0, labelY, 0]} follow>
-              <Text
-                ref={(text) => { textRefs.current[index * 2] = text; }}
-                anchorX="center"
-                anchorY="middle"
-                color={style.color}
-                fontSize={labelFontSize}
-                fontWeight={LOCATION_LABEL_FONT_WEIGHT}
-                outlineColor="#06111d"
-                fillOpacity={initialOpacity}
-                outlineOpacity={initialOpacity}
-                outlineWidth={LOCATION_LABEL_OUTLINE_WIDTH}
-                renderOrder={20}
-                textAlign="center"
-              >
-                {location.name.toUpperCase()}
-              </Text>
-              <Text
-                ref={(text) => { textRefs.current[index * 2 + 1] = text; }}
-                position={[0, -labelFontSize * 0.78, 0]}
-                anchorX="center"
-                anchorY="middle"
-                color={style.accent}
-                fontSize={typeFontSize}
-                fontWeight={LOCATION_LABEL_TYPE_FONT_WEIGHT}
-                outlineColor="#06111d"
-                fillOpacity={initialOpacity}
-                outlineOpacity={initialOpacity}
-                outlineWidth={LOCATION_LABEL_TYPE_OUTLINE_WIDTH}
-                renderOrder={20}
-                textAlign="center"
-              >
-                {style.typeLabel}
-              </Text>
-            </Billboard>
-          </group>
-        );
-      })}
     </group>
   );
 }

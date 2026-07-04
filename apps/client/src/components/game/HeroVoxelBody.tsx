@@ -109,6 +109,8 @@ interface HeroVoxelBodyProps {
   bodyOpacity?: number;
   bodyOpacityRef?: MutableRefObject<number>;
   showOutline?: boolean;
+  silhouetteColor?: string | null;
+  silhouetteOpacity?: number;
   socketOwnerId?: string;
 }
 
@@ -215,6 +217,8 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   bodyOpacity = 1,
   bodyOpacityRef,
   showOutline = false,
+  silhouetteColor = null,
+  silhouetteOpacity = 0.72,
   socketOwnerId,
 }: HeroVoxelBodyProps) {
   const resolvedHero = heroId || 'phantom';
@@ -277,10 +281,27 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   }, [manifest]);
   const colors = manifest.materialPalette;
   const idleProfile = manifest.idleProfile;
+  const outlineColor = silhouetteColor ?? teamColor;
 
   const materials = useMemo(() => {
     const materialByKind = new Map<MaterialKind, THREE.MeshStandardMaterial>();
     (Object.keys(colors) as MaterialKind[]).forEach((kind) => {
+      if (silhouetteColor) {
+        const spectralColor = new THREE.Color(silhouetteColor);
+        materialByKind.set(kind, new THREE.MeshStandardMaterial({
+          color: spectralColor,
+          emissive: spectralColor,
+          emissiveIntensity: 0.68,
+          roughness: 0.54,
+          metalness: 0.06,
+          transparent: true,
+          opacity: clamp01(silhouetteOpacity),
+          depthWrite: false,
+          toneMapped: false,
+        }));
+        return;
+      }
+
       const baseColor = colors[kind];
       // Emissive intensity is driven per-frame (including the hasFlag boost), so build with
       // the no-flag baseline here. Emissive color is always baseColor: when intensity is 0 the
@@ -301,16 +322,16 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       }));
     });
     return materialByKind;
-  }, [colors]);
+  }, [colors, silhouetteColor, silhouetteOpacity]);
   const outlineMaterial = useMemo(() => new THREE.MeshBasicMaterial({
-    color: teamColor,
+    color: outlineColor,
     transparent: true,
-    opacity: TEAM_BODY_GLOW_OUTLINE_OPACITY,
+    opacity: silhouetteColor ? 0.34 : TEAM_BODY_GLOW_OUTLINE_OPACITY,
     depthWrite: false,
     side: THREE.BackSide,
     blending: THREE.AdditiveBlending,
     toneMapped: false,
-  }), [teamColor]);
+  }), [outlineColor, silhouetteColor]);
 
   useEffect(() => {
     return () => {
@@ -579,9 +600,11 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       groupRef.current.position.set(0, 0, 0);
       groupRef.current.rotation.set(0, 0, 0);
       groupRef.current.scale.set(scale, baseScaleY, scale);
-      materials.forEach((material, kind) => {
-        material.emissiveIntensity = getHeroBodyMaterialEmissiveIntensity(kind, hasFlag);
-      });
+      if (!silhouetteColor) {
+        materials.forEach((material, kind) => {
+          material.emissiveIntensity = getHeroBodyMaterialEmissiveIntensity(kind, hasFlag);
+        });
+      }
       applyHeroBodyPoseTransition(
         poseTransitionRuntimeRef.current,
         groupRef.current,
@@ -689,10 +712,12 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       0.035 * downedAmount +
       0.09 * slideAmount +
       0.16 * attackPulse;
-    materials.forEach((material, kind) => {
-      const baseEmissiveIntensity = getHeroBodyMaterialEmissiveIntensity(kind, hasFlag);
-      material.emissiveIntensity = baseEmissiveIntensity * (1 + glowPulse);
-    });
+    if (!silhouetteColor) {
+      materials.forEach((material, kind) => {
+        const baseEmissiveIntensity = getHeroBodyMaterialEmissiveIntensity(kind, hasFlag);
+        material.emissiveIntensity = baseEmissiveIntensity * (1 + glowPulse);
+      });
+    }
 
     applyWalkingBonePose(bones, movementCycleTime, movingAmount, smoothedWalkDirection, movementProfile);
     applySlideBonePose(bones, t, slideAmount);
@@ -804,7 +829,11 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
           castShadow={castShadow}
           geometry={geometry}
         >
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={emissiveIntensity} />
+          {silhouetteColor ? (
+            <primitive object={materials.get(part.material)!} attach="material" />
+          ) : (
+            <meshStandardMaterial color={color} emissive={color} emissiveIntensity={emissiveIntensity} />
+          )}
         </mesh>
         {renderOutlineMesh(
           `${resolvedSkinId}-${part.id}-outline`,

@@ -387,6 +387,43 @@ export interface BattleRoyalDropSnapshot {
   players: BattleRoyalDropPlayerSnapshot[];
 }
 
+export type BattleRoyalHeroSoulStatus = 'available' | 'collecting' | 'carried' | 'summoning';
+export type BattleRoyalHeroSoulInteractionKind = 'collect' | 'summon';
+
+export interface BattleRoyalHeroSoulSnapshot {
+  soulId: string;
+  playerId: string;
+  playerName: string;
+  team: Team;
+  heroId: HeroId | null;
+  skinId?: HeroSkinId | null;
+  position: Vec3;
+  status: BattleRoyalHeroSoulStatus;
+  carriedByPlayerId: string | null;
+  collectByPlayerId: string | null;
+  collectStartedAt: number | null;
+  collectCompletesAt: number | null;
+  summonByPlayerId: string | null;
+  summonCircleId: string | null;
+  summonStartedAt: number | null;
+  summonCompletesAt: number | null;
+  createdAt: number;
+}
+
+export interface BattleRoyalHeroSoulInteractionSnapshot {
+  playerId: string;
+  kind: BattleRoyalHeroSoulInteractionKind;
+  soulId?: string | null;
+  circleId?: string | null;
+  startedAt: number;
+  completesAt: number;
+}
+
+export interface BattleRoyalHeroSoulStateSnapshot {
+  souls: BattleRoyalHeroSoulSnapshot[];
+  interactions: BattleRoyalHeroSoulInteractionSnapshot[];
+}
+
 export interface MatchSnapshotMessage {
   tick: number;
   serverTime: number;
@@ -408,6 +445,7 @@ export interface MatchSnapshotMessage {
   gameClockFrozen?: boolean;
   safeZone?: SafeZoneSnapshot | null;
   battleRoyalDrop?: BattleRoyalDropSnapshot | null;
+  battleRoyalSouls?: BattleRoyalHeroSoulStateSnapshot | null;
 }
 
 export interface PowerupPickupRuntimeState {
