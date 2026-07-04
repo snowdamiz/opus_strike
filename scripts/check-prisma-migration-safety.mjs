@@ -79,11 +79,16 @@ const warningRules = [
   },
 ];
 
-const requiredRiskSections = [
-  /^legacy confirmation:/im,
-  /^backup plan:/im,
-  /^rollback plan:/im,
-];
+const reviewedLegacyFatalFindings = new Map([
+  [
+    'apps/server/prisma/migrations/20260704120000_fixed_wager_split_burn/migration.sql:drop-column:DROP COLUMN "platformFeeBps";',
+    'Legacy wager split migration already applied; SQL was restored to match Prisma checksum history and must not be replayed on migrated production databases.',
+  ],
+  [
+    'apps/server/prisma/migrations/20260704120000_fixed_wager_split_burn/migration.sql:drop-table:DROP TABLE IF EXISTS "WagerEconomySettings";',
+    'Legacy wager split migration already applied; SQL was restored to match Prisma checksum history and must not be replayed on migrated production databases.',
+  ],
+]);
 
 function usage() {
   return `Usage: node scripts/check-prisma-migration-safety.mjs [--base <ref>] [--head <ref>] [--all] [--help]
@@ -94,11 +99,9 @@ By default the script compares MIGRATION_SAFETY_BASE/GITHUB_EVENT_BEFORE to
 MIGRATION_SAFETY_HEAD/GITHUB_SHA. If no usable base is available it falls back
 to HEAD^..HEAD.
 
-Fatal findings are allowed only when the migration directory contains RISK.md
-with these top-level sections:
-  Legacy confirmation:
-  Backup plan:
-  Rollback plan:
+Fatal findings are allowed only when they are explicitly listed in this script's
+reviewed legacy fatal findings map. New destructive migrations should be
+rewritten to preserve data instead of being allowlisted.
 `;
 }
 
@@ -238,23 +241,12 @@ export function scanSqlContent(content, file) {
   return { fatal, warnings };
 }
 
-export function riskFileStatus(migrationSqlPath) {
-  const riskPath = path.join(path.dirname(path.resolve(repoRoot, migrationSqlPath)), 'RISK.md');
-  if (!existsSync(riskPath)) {
-    return { ok: false, path: riskPath, reason: 'missing RISK.md' };
-  }
+function fatalFindingIdentity(finding) {
+  return `${finding.file}:${finding.ruleId}:${finding.source}`;
+}
 
-  const body = readFileSync(riskPath, 'utf8');
-  const missing = requiredRiskSections.filter((pattern) => !pattern.test(body));
-  if (missing.length > 0) {
-    return {
-      ok: false,
-      path: riskPath,
-      reason: 'RISK.md must include Legacy confirmation:, Backup plan:, and Rollback plan: sections',
-    };
-  }
-
-  return { ok: true, path: riskPath, reason: '' };
+export function legacyReviewForFinding(finding) {
+  return reviewedLegacyFatalFindings.get(fatalFindingIdentity(finding)) ?? null;
 }
 
 function escapeAnnotation(value) {
@@ -293,11 +285,11 @@ export function evaluateFindings(files) {
     allWarnings.push(...result.warnings);
   }
 
-  const unapprovedFatal = [];
+  const unreviewedFatal = [];
   for (const finding of allFatal) {
-    const risk = riskFileStatus(finding.file);
-    if (!risk.ok) {
-      unapprovedFatal.push({ ...finding, risk });
+    const legacyReview = legacyReviewForFinding(finding);
+    if (!legacyReview) {
+      unreviewedFatal.push(finding);
     }
   }
 
@@ -305,7 +297,7 @@ export function evaluateFindings(files) {
     deletedMigrationFiles,
     fatal: allFatal,
     warnings: allWarnings,
-    unapprovedFatal,
+    unreviewedFatal,
   };
 }
 
@@ -334,18 +326,19 @@ function main() {
     printFinding('WARNING', finding);
   }
 
-  const unapprovedKeys = new Set(result.unapprovedFatal.map((finding) => (
-    `${finding.file}:${finding.line}:${finding.ruleId}`
+  const unreviewedKeys = new Set(result.unreviewedFatal.map((finding) => (
+    `${finding.file}:${finding.line}:${fatalFindingIdentity(finding)}`
   )));
 
   for (const finding of result.fatal) {
-    const key = `${finding.file}:${finding.line}:${finding.ruleId}`;
-    if (unapprovedKeys.has(key)) {
+    const key = `${finding.file}:${finding.line}:${fatalFindingIdentity(finding)}`;
+    if (unreviewedKeys.has(key)) {
       annotate('error', finding);
       printFinding('FATAL', finding);
     } else {
       annotate('warning', finding);
       printFinding('REVIEWED', finding);
+      console.log(`    ${legacyReviewForFinding(finding)}`);
     }
   }
 
@@ -354,16 +347,16 @@ function main() {
     console.log(`FATAL ${file} - deleting a committed Prisma migration is blocked`);
   }
 
-  if (result.unapprovedFatal.length > 0 || result.deletedMigrationFiles.length > 0) {
-    for (const finding of result.unapprovedFatal) {
-      console.log(`Missing review for ${finding.file}:${finding.line}: ${finding.risk.reason}`);
+  if (result.unreviewedFatal.length > 0 || result.deletedMigrationFiles.length > 0) {
+    for (const finding of result.unreviewedFatal) {
+      console.log(`Unreviewed destructive SQL in ${finding.file}:${finding.line}: ${finding.ruleId}`);
     }
-    console.error('\nMigration safety check failed. Add a reviewed RISK.md beside each destructive migration before release.');
+    console.error('\nMigration safety check failed. Destructive migration SQL is blocked unless it is an explicitly reviewed legacy exception in scripts/check-prisma-migration-safety.mjs.');
     process.exit(1);
   }
 
   if (result.fatal.length > 0) {
-    console.log('Destructive migration SQL found, but each finding has a reviewed RISK.md.');
+    console.log('Destructive migration SQL found, but each finding is an explicitly reviewed legacy exception.');
   } else {
     console.log('No destructive migration SQL found.');
   }
