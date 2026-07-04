@@ -9,10 +9,12 @@ import { HeroVoxelBody } from './HeroVoxelBody';
 const SOUL_COLOR = '#8eeaff';
 const SOUL_CORE_COLOR = '#c8fbff';
 const SOUL_GLOW_COLOR = '#2dd4ff';
+const CIRCLE_BASE_COLOR = '#0c2f2c';
 const CIRCLE_INNER_COLOR = '#d9fff6';
 const CIRCLE_PRIMARY_COLOR = '#41f0c8';
 const CIRCLE_SECONDARY_COLOR = '#6ab7ff';
 const RING_ROTATION: [number, number, number] = [-Math.PI / 2, 0, 0];
+const STATION_POST_ANGLES = [0, Math.PI / 2, Math.PI, Math.PI * 1.5] as const;
 
 function getStablePhase(id: string): number {
   let hash = 0;
@@ -107,12 +109,24 @@ const SummoningCircleVisual = memo(function SummoningCircleVisual({
       position={[circle.position.x, circle.position.y + 0.08, circle.position.z]}
       renderOrder={2}
     >
+      <mesh position={[0, -0.025, 0]} renderOrder={1} receiveShadow>
+        <cylinderGeometry args={[circle.radius * 0.98, circle.radius * 0.98, 0.08, 80]} />
+        <meshStandardMaterial
+          color={CIRCLE_BASE_COLOR}
+          emissive={CIRCLE_PRIMARY_COLOR}
+          emissiveIntensity={0.18}
+          roughness={0.62}
+          metalness={0.18}
+          transparent
+          opacity={0.84}
+        />
+      </mesh>
       <mesh rotation={RING_ROTATION} renderOrder={2}>
         <torusGeometry args={[circle.radius * 0.92, 0.055, 10, 96]} />
         <meshBasicMaterial
           color={CIRCLE_PRIMARY_COLOR}
           transparent
-          opacity={0.62}
+          opacity={0.84}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
           toneMapped={false}
@@ -123,7 +137,18 @@ const SummoningCircleVisual = memo(function SummoningCircleVisual({
         <meshBasicMaterial
           color={CIRCLE_SECONDARY_COLOR}
           transparent
-          opacity={0.46}
+          opacity={0.68}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh rotation={RING_ROTATION} renderOrder={2}>
+        <torusGeometry args={[circle.radius * 0.22, 0.045, 8, 48]} />
+        <meshBasicMaterial
+          color={CIRCLE_INNER_COLOR}
+          transparent
+          opacity={0.72}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
           toneMapped={false}
@@ -134,11 +159,63 @@ const SummoningCircleVisual = memo(function SummoningCircleVisual({
         <meshBasicMaterial
           color={CIRCLE_INNER_COLOR}
           transparent
-          opacity={0.09}
+          opacity={0.18}
           depthWrite={false}
+          side={THREE.DoubleSide}
           toneMapped={false}
         />
       </mesh>
+      <mesh position={[0, 0.92, 0]} renderOrder={3}>
+        <cylinderGeometry args={[0.16, 0.44, 1.7, 28, 1, true]} />
+        <meshBasicMaterial
+          color={CIRCLE_PRIMARY_COLOR}
+          transparent
+          opacity={0.16}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          blending={THREE.AdditiveBlending}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh position={[0, 0.2, 0]} renderOrder={3}>
+        <cylinderGeometry args={[0.28, 0.36, 0.24, 24]} />
+        <meshStandardMaterial
+          color={CIRCLE_BASE_COLOR}
+          emissive={CIRCLE_SECONDARY_COLOR}
+          emissiveIntensity={0.28}
+          roughness={0.5}
+          metalness={0.22}
+        />
+      </mesh>
+      {STATION_POST_ANGLES.map((angle, index) => {
+        const x = Math.cos(angle) * circle.radius * 0.78;
+        const z = Math.sin(angle) * circle.radius * 0.78;
+        return (
+          <group key={index} position={[x, 0, z]}>
+            <mesh position={[0, 0.34, 0]} renderOrder={3}>
+              <cylinderGeometry args={[0.09, 0.14, 0.68, 10]} />
+              <meshStandardMaterial
+                color={CIRCLE_BASE_COLOR}
+                emissive={CIRCLE_PRIMARY_COLOR}
+                emissiveIntensity={0.32}
+                roughness={0.48}
+                metalness={0.2}
+              />
+            </mesh>
+            <mesh position={[0, 0.78, 0]} renderOrder={4}>
+              <sphereGeometry args={[0.17, 12, 8]} />
+              <meshBasicMaterial
+                color={CIRCLE_INNER_COLOR}
+                transparent
+                opacity={0.86}
+                depthWrite={false}
+                blending={THREE.AdditiveBlending}
+                toneMapped={false}
+              />
+            </mesh>
+          </group>
+        );
+      })}
     </group>
   );
 });

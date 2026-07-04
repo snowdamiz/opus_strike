@@ -31,7 +31,10 @@ FROM deps AS build
 
 COPY . .
 
-RUN pnpm build:server
+ARG VITE_SERVER_URL="wss://api.slopheroes.xyz"
+ENV VITE_SERVER_URL=$VITE_SERVER_URL
+
+RUN pnpm build:server && pnpm build:client
 
 FROM base AS runtime
 
@@ -57,6 +60,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/apps/server/dist apps/server/dist
+COPY --from=build /app/apps/client/dist apps/client/dist
 COPY --from=build /app/packages/shared/dist packages/shared/dist
 COPY --from=build /app/packages/physics/dist packages/physics/dist
 

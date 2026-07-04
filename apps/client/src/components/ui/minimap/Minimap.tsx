@@ -4,6 +4,7 @@ import {
   getTeamCatalogEntry,
   type BattleRoyalHeroSoulSnapshot,
   type BattleRoyalDropSnapshot,
+  type MapSummoningCircle,
   type Player,
   type VoxelMapManifest,
 } from '@voxel-strike/shared';
@@ -165,6 +166,10 @@ function drawLiveOverlay(
     drawSafeZone(ctx, projection, store.safeZone, isSafeZoneTargetRevealed(store.safeZone));
   }
 
+  if (store.gameplayMode === 'battle_royal') {
+    drawSummoningStationMarkers(ctx, projection, manifest.gameplay.summoningCircles ?? []);
+  }
+
   if (store.gameplayMode === 'battle_royal' && store.battleRoyalDrop?.enabled) {
     const dropPathTime = store.gamePhase === 'countdown' ? store.battleRoyalDrop.ship.startedAt : Date.now();
     drawBattleRoyalDropFlightPath(ctx, projection, store.battleRoyalDrop, dropPathTime);
@@ -193,6 +198,52 @@ function drawLiveOverlay(
   const localRotation = visualState.playerRotations.get(localPlayer.id) ?? localPlayer.lookYaw;
   drawLocalMarker(ctx, worldToMinimap(projection, localPosition), localRotation, teamColor, Boolean(localPlayer.hasFlag));
 
+  ctx.restore();
+}
+
+function drawSummoningStationMarkers(
+  ctx: CanvasRenderingContext2D,
+  projection: MinimapProjection,
+  circles: readonly MapSummoningCircle[]
+): void {
+  if (circles.length === 0) return;
+
+  ctx.save();
+  for (const circle of circles) {
+    const point = worldToMinimap(projection, circle.position);
+    const radius = Math.max(5.6, Math.min(9.2, circle.radius * projection.scale + 3.2));
+
+    ctx.save();
+    ctx.translate(point.x, point.y);
+    ctx.globalAlpha = 0.96;
+    ctx.shadowColor = MINIMAP_COLORS.static.summoningCircleShadow;
+    ctx.shadowBlur = 8;
+
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    ctx.fillStyle = MINIMAP_COLORS.static.summoningCircleFill;
+    ctx.fill();
+    ctx.lineWidth = 1.7;
+    ctx.strokeStyle = MINIMAP_COLORS.static.summoningCircleStroke;
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = MINIMAP_COLORS.static.summoningCircleAccent;
+    ctx.lineWidth = 1.45;
+    ctx.beginPath();
+    ctx.moveTo(-radius * 0.58, 0);
+    ctx.lineTo(radius * 0.58, 0);
+    ctx.moveTo(0, -radius * 0.58);
+    ctx.lineTo(0, radius * 0.58);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(0, 0, Math.max(1.6, radius * 0.24), 0, Math.PI * 2);
+    ctx.fillStyle = MINIMAP_COLORS.static.summoningCircleStroke;
+    ctx.fill();
+    ctx.restore();
+  }
   ctx.restore();
 }
 

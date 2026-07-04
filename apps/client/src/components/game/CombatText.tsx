@@ -14,6 +14,7 @@ interface CombatTextLayerProps {
 
 const COMBAT_TEXT_DURATION_MS = 1360;
 const COMBAT_TEXT_CANVAS_WIDTH = 384;
+const SOL_REWARD_TEXT_CANVAS_WIDTH = 640;
 const COMBAT_TEXT_CANVAS_HEIGHT = 192;
 const COMBAT_TEXT_ASPECT = COMBAT_TEXT_CANVAS_WIDTH / COMBAT_TEXT_CANVAS_HEIGHT;
 const STACKED_TEXT_GAP_Y = 0.34;
@@ -55,6 +56,11 @@ const DEFAULT_MOVEMENT: PlayerMovementState = Object.freeze({
   jetpackFuel: 0,
   isGliding: false,
 });
+
+interface CombatTextCanvasSize {
+  width: number;
+  height: number;
+}
 
 interface CombatTextTextureEntry {
   texture: THREE.CanvasTexture;
@@ -139,10 +145,10 @@ function getCombatTextColors(kind: CombatTextKind): {
 
   if (kind === 'solReward') {
     return {
-      top: '#4ade80',
-      middle: '#4ade80',
-      bottom: '#4ade80',
-      glow: 'rgba(34, 197, 94, 0.74)',
+      top: '#f0fdf4',
+      middle: '#86efac',
+      bottom: '#22c55e',
+      glow: 'rgba(34, 197, 94, 0.5)',
     };
   }
 
@@ -152,6 +158,18 @@ function getCombatTextColors(kind: CombatTextKind): {
     bottom: '#ef4444',
     glow: 'rgba(248, 113, 113, 0.96)',
   };
+}
+
+function getCombatTextCanvasSize(kind: CombatTextKind): CombatTextCanvasSize {
+  return {
+    width: kind === 'solReward' ? SOL_REWARD_TEXT_CANVAS_WIDTH : COMBAT_TEXT_CANVAS_WIDTH,
+    height: COMBAT_TEXT_CANVAS_HEIGHT,
+  };
+}
+
+function getCombatTextAspect(kind: CombatTextKind): number {
+  if (kind !== 'solReward') return COMBAT_TEXT_ASPECT;
+  return SOL_REWARD_TEXT_CANVAS_WIDTH / COMBAT_TEXT_CANVAS_HEIGHT;
 }
 
 function drawShieldDamageIcon(
@@ -201,10 +219,43 @@ function drawShieldDamageIcon(
   ctx.restore();
 }
 
+function drawSolRewardText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  colors: ReturnType<typeof getCombatTextColors>
+): void {
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.72)';
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetY = 3;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(3, 18, 12, 0.78)';
+  ctx.strokeText(text, x, y, maxWidth);
+
+  const gradient = ctx.createLinearGradient(0, -46, 0, 48);
+  gradient.addColorStop(0, colors.top);
+  gradient.addColorStop(0.52, colors.middle);
+  gradient.addColorStop(1, colors.bottom);
+  ctx.shadowColor = colors.glow;
+  ctx.shadowBlur = 5;
+  ctx.shadowOffsetY = 0;
+  ctx.fillStyle = gradient;
+  ctx.fillText(text, x, y, maxWidth);
+
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 0.68;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(text, x - 1, y - 6, maxWidth);
+  ctx.globalAlpha = 1;
+}
+
 function drawCombatTextTexture(canvas: HTMLCanvasElement, kind: CombatTextKind, amount: number, label?: string): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
+  const canvasSize = getCombatTextCanvasSize(kind);
   const colors = getCombatTextColors(kind);
   const text = kind === 'solReward'
     ? label ?? '+0 SOL'
@@ -213,12 +264,12 @@ function drawCombatTextTexture(canvas: HTMLCanvasElement, kind: CombatTextKind, 
   const isSolReward = kind === 'solReward';
   const textX = isShieldDamage ? 34 : 0;
 
-  ctx.clearRect(0, 0, COMBAT_TEXT_CANVAS_WIDTH, COMBAT_TEXT_CANVAS_HEIGHT);
+  ctx.clearRect(0, 0, canvasSize.width, canvasSize.height);
   ctx.save();
-  ctx.translate(COMBAT_TEXT_CANVAS_WIDTH / 2, COMBAT_TEXT_CANVAS_HEIGHT / 2 + 4);
+  ctx.translate(canvasSize.width / 2, canvasSize.height / 2 + 4);
   ctx.rotate(kind === 'heal' ? 0.035 : -0.045);
 
-  const fontSize = isSolReward ? 68 : 92;
+  const fontSize = isSolReward ? 78 : 92;
   ctx.font = `900 ${fontSize}px Inter, ui-sans-serif, system-ui, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -227,9 +278,7 @@ function drawCombatTextTexture(canvas: HTMLCanvasElement, kind: CombatTextKind, 
 
   ctx.shadowColor = colors.glow;
   if (isSolReward) {
-    ctx.shadowBlur = 16;
-    ctx.fillStyle = colors.middle;
-    ctx.fillText(text, textX, 0, COMBAT_TEXT_CANVAS_WIDTH - 56);
+    drawSolRewardText(ctx, text, textX, 0, canvasSize.width - 44, colors);
     ctx.restore();
     return;
   }
@@ -273,9 +322,10 @@ function getCombatTextTextureKey(kind: CombatTextKind, amount: number, label?: s
 }
 
 function createCombatTextTexture(kind: CombatTextKind, amount: number, label?: string): THREE.CanvasTexture {
+  const canvasSize = getCombatTextCanvasSize(kind);
   const canvas = document.createElement('canvas');
-  canvas.width = COMBAT_TEXT_CANVAS_WIDTH;
-  canvas.height = COMBAT_TEXT_CANVAS_HEIGHT;
+  canvas.width = canvasSize.width;
+  canvas.height = canvasSize.height;
 
   drawCombatTextTexture(canvas, kind, amount, label);
 
@@ -439,10 +489,10 @@ function CombatTextSprite({
       : event.kind === 'shieldDamage'
         ? 0.78
         : event.kind === 'solReward'
-          ? 0.82
+          ? 0.96
           : 0.82
   ) + (event.kind === 'solReward' ? 0.02 : getAmountScale(eventAmount));
-  const baseWidth = baseHeight * COMBAT_TEXT_ASPECT;
+  const baseWidth = baseHeight * getCombatTextAspect(event.kind);
   const initialY = event.targetId
     ? getCombatTextWorldY(event.position.y, null, DEFAULT_MOVEMENT)
     : getStandaloneCombatTextY(event);

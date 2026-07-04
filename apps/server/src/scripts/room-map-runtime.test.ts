@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  CONSTRUCTED_MAP_MANIFEST_VERSION,
   DEFAULT_GAMEPLAY_MODE,
   generateProceduralVoxelMap,
   getPregeneratedMapDiagnostics,
@@ -132,6 +133,23 @@ async function runAsyncTests(): Promise<void> {
   assert.equal(artifactRuntime.getLoadedPregeneratedMapSummary()?.id, pregeneratedSummary.id);
   assert.equal(loadCalls, 1);
   assert.equal(fallbackRecordCount, 0);
+
+  const outdatedRuntime = new RoomMapRuntime({
+    getMapConfig: () => config,
+    getCollisionAabbs: () => [],
+    isMapGenerationFallbackEnabled: () => false,
+    loadPregeneratedMapManifest: async () => ({
+      summary: {
+        ...pregeneratedSummary,
+        generatorVersion: CONSTRUCTED_MAP_MANIFEST_VERSION - 1,
+      },
+      manifest: pregeneratedManifest,
+    }),
+  });
+  await assert.rejects(
+    () => outdatedRuntime.refreshMapAsync(),
+    /outdated generator version/
+  );
 
   const missingRuntime = new RoomMapRuntime({
     getMapConfig: () => config,

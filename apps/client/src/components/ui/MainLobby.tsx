@@ -3135,9 +3135,12 @@ function EarningRulesPlate({ tokenSymbol, economy }: { tokenSymbol: string | nul
     <aside className="play-earnings-plate" aria-label="Ways to earn and payout rules">
       <ul className="play-earnings-rule-list">
         {rules.map((rule) => (
-          <li key={rule.label}>
+          <li
+            key={rule.label}
+            className={rule.emphasis === 'sol-combat' ? 'play-earnings-rule-featured' : undefined}
+          >
             <span className="play-earnings-rule-label">{rule.label}:</span>
-            <span>{rule.value}</span>
+            <span className="play-earnings-rule-value">{rule.value}</span>
           </li>
         ))}
       </ul>

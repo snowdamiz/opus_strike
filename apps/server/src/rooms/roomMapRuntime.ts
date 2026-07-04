@@ -1,4 +1,5 @@
 import {
+  CONSTRUCTED_MAP_MANIFEST_VERSION,
   DEFAULT_VOXEL_MAP_SIZE_ID,
   createProceduralTerrainLookup,
   generateProceduralVoxelMap,
@@ -301,6 +302,12 @@ export class RoomMapRuntime {
     config: Required<RoomMapRuntimeConfig> & { mapGenerationFallbackEnabled: boolean },
     loaded: LoadedPregeneratedMapManifest
   ): void {
+    if (loaded.summary.generatorVersion !== CONSTRUCTED_MAP_MANIFEST_VERSION) {
+      throw new Error(`Pregenerated map ${loaded.summary.id} uses outdated generator version ${loaded.summary.generatorVersion}; expected ${CONSTRUCTED_MAP_MANIFEST_VERSION}`);
+    }
+    if (loaded.manifest.version !== CONSTRUCTED_MAP_MANIFEST_VERSION) {
+      throw new Error(`Pregenerated map ${loaded.summary.id} artifact uses outdated generator version ${loaded.manifest.version}; expected ${CONSTRUCTED_MAP_MANIFEST_VERSION}`);
+    }
     if (config.mapArtifactId && loaded.summary.artifactId !== config.mapArtifactId) {
       throw new Error(`Pregenerated map artifact mismatch: expected ${config.mapArtifactId}, got ${loaded.summary.artifactId}`);
     }

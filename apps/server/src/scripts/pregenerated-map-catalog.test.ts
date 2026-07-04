@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  CONSTRUCTED_MAP_MANIFEST_VERSION,
   createProceduralMapPreview,
   type MapProfileId,
   type MapTopologyId,
@@ -27,6 +28,7 @@ function catalogMap(input: {
   themeId: VoxelMapTheme['id'];
   topologyId?: MapTopologyId;
   visibility?: PregeneratedMapVisibility;
+  generatorVersion?: number;
   lastSelectedAt?: string | null;
   selectionCount?: number;
 }): PregeneratedMapCatalogSummary {
@@ -57,7 +59,7 @@ function catalogMap(input: {
     diagnosticsWarnings: [],
     status: 'ready',
     visibility: input.visibility ?? 'public',
-    generatorVersion: 13,
+    generatorVersion: input.generatorVersion ?? CONSTRUCTED_MAP_MANIFEST_VERSION,
     lastSelectedAt: input.lastSelectedAt ?? null,
     selectionCount: input.selectionCount ?? 0,
     failureCount: 0,
@@ -90,6 +92,7 @@ class FakeCatalogService extends PregeneratedMapCatalogService {
       .filter((map) => !input.mapSize || map.mapSize === input.mapSize)
       .filter((map) => !input.themeId || map.themeId === input.themeId)
       .filter((map) => !input.topologyId || map.topologyId === input.topologyId)
+      .filter((map) => map.generatorVersion === CONSTRUCTED_MAP_MANIFEST_VERSION)
       .slice(0, input.limit ?? 100);
   }
 }
@@ -181,6 +184,7 @@ function createFakePoolPrisma() {
     readyGroupBy: 0,
     statusGroupBy: 0,
     count: 0,
+    readyGroupByGeneratorVersion: null as number | null,
   };
 
   const client = {
@@ -196,6 +200,7 @@ function createFakePoolPrisma() {
         }
 
         calls.readyGroupBy += 1;
+        calls.readyGroupByGeneratorVersion = (args as { where?: { generatorVersion?: number } }).where?.generatorVersion ?? null;
         return [
           {
             profileId: 'ctf_arena',
@@ -233,11 +238,12 @@ function createFakeReservationPrisma() {
     reservationUpdates: 0,
     transactionFindUnique: 0,
     outerFindUniqueArgs: null as unknown,
+    reservationGeneratorVersion: null as number | null,
   };
   const row = {
     id: 'pgmap_reserve',
     artifactId: 'pgartifact_reserve',
-    generatorVersion: 13,
+    generatorVersion: CONSTRUCTED_MAP_MANIFEST_VERSION,
     seed: BigInt(777),
     themeId: 'basalt',
     profileId: 'battle_royal_large',
@@ -268,9 +274,10 @@ function createFakeReservationPrisma() {
 
   const transactionClient = {
     pregeneratedMap: {
-      updateMany: async (args: { where: { status?: string } }) => {
+      updateMany: async (args: { where: { status?: string; generatorVersion?: number } }) => {
         if (args.where.status === 'ready') {
           calls.reservationUpdates += 1;
+          calls.reservationGeneratorVersion = args.where.generatorVersion ?? null;
         }
         return { count: 1 };
       },
@@ -365,6 +372,16 @@ async function run(): Promise<void> {
 
   {
     const service = new FakeCatalogService([
+      catalogMap({
+        id: 'br-stale-small',
+        seed: 200,
+        profileId: 'battle_royal_large',
+        mapSize: 'small',
+        themeId: 'verdant',
+        topologyId: 'ring',
+        visibility: 'matchmaking-only',
+        generatorVersion: CONSTRUCTED_MAP_MANIFEST_VERSION - 1,
+      }),
       catalogMap({ id: 'br-small', seed: 201, profileId: 'battle_royal_large', mapSize: 'small', themeId: 'verdant', topologyId: 'ring', visibility: 'matchmaking-only' }),
       catalogMap({ id: 'br-medium', seed: 202, profileId: 'battle_royal_large', mapSize: 'medium', themeId: 'basalt', topologyId: 'ring' }),
       catalogMap({ id: 'br-large', seed: 203, profileId: 'battle_royal_large', mapSize: 'large', themeId: 'desert', topologyId: 'ring' }),
@@ -377,6 +394,28 @@ async function run(): Promise<void> {
     });
     assert.equal(selected?.pregeneratedMapId, 'br-small');
     assert.equal(selected?.mapSize, 'small');
+  }
+
+  {
+    const service = new FakeCatalogService([
+      catalogMap({
+        id: 'br-stale-only',
+        seed: 211,
+        profileId: 'battle_royal_large',
+        mapSize: 'small',
+        themeId: 'verdant',
+        topologyId: 'ring',
+        visibility: 'matchmaking-only',
+        generatorVersion: CONSTRUCTED_MAP_MANIFEST_VERSION - 1,
+      }),
+    ]);
+
+    const selected = await service.selectMapForBattleRoyal({
+      participantCount: 4,
+      preferredMapSize: 'small',
+      source: 0x51f15eed,
+    });
+    assert.equal(selected, null);
   }
 
   {
@@ -405,6 +444,7 @@ async function run(): Promise<void> {
     assert.equal(reserved?.selectionId, 'selection_reserve');
     assert.equal(calls.releaseExpiredReservations, 1);
     assert.equal(calls.reservationUpdates, 1);
+    assert.equal(calls.reservationGeneratorVersion, CONSTRUCTED_MAP_MANIFEST_VERSION);
     assert.equal(calls.transactionFindUnique, 0);
     assert.equal(Boolean(calls.outerFindUniqueArgs && typeof calls.outerFindUniqueArgs === 'object' && 'include' in calls.outerFindUniqueArgs), false);
   }
@@ -445,6 +485,7 @@ async function run(): Promise<void> {
     assert.equal(calls.count, 0);
     assert.equal(calls.statusGroupBy, 1);
     assert.equal(calls.readyGroupBy, 1);
+    assert.equal(calls.readyGroupByGeneratorVersion, CONSTRUCTED_MAP_MANIFEST_VERSION);
     assert.equal(overview.lowSlices.some((slice) => (
       slice.profileId === 'ctf_arena'
       && slice.mapSize === 'small'
