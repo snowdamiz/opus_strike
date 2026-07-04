@@ -2,6 +2,8 @@ import { RedisDriver } from '@colyseus/redis-driver';
 import { RedisPresence } from '@colyseus/redis-presence';
 import type { ServerOptions } from 'colyseus';
 
+export const DEFAULT_COLYSEUS_WEBSOCKET_MAX_PAYLOAD_BYTES = 64 * 1024;
+
 export interface ColyseusRuntimeConfig {
   distributed: boolean;
   redisUrl: string | null;
@@ -9,6 +11,7 @@ export interface ColyseusRuntimeConfig {
   requirePublicAddress: boolean;
   routingStrategy: ColyseusRoutingStrategy;
   roomCreateStrategy: ColyseusRoomCreateStrategy;
+  webSocketMaxPayloadBytes: number;
   flyReplay: FlyReplayRuntimeConfig;
   nodeEnv: string;
 }
@@ -139,6 +142,10 @@ export function getColyseusRuntimeConfig(env: NodeJS.ProcessEnv = process.env): 
     requirePublicAddress: envFlag(env.COLYSEUS_REQUIRE_PUBLIC_ADDRESS),
     routingStrategy,
     roomCreateStrategy,
+    webSocketMaxPayloadBytes: positiveIntegerEnv(
+      env.COLYSEUS_WEBSOCKET_MAX_PAYLOAD_BYTES,
+      DEFAULT_COLYSEUS_WEBSOCKET_MAX_PAYLOAD_BYTES
+    ),
     flyReplay: {
       enabled: flyReplayEnabled,
       appName: flyAppName,

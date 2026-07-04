@@ -1,5 +1,4 @@
 import { lazy, Suspense, type CSSProperties, useCallback, useMemo, useState, useEffect, useRef } from 'react';
-import type { Transaction } from '@solana/web3.js';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import {
@@ -39,6 +38,7 @@ import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_MATCH_PERSPECTIVE,
   DEFAULT_RANKED_SEASON_NUMBER,
+  CUSTOM_LOBBY_GAMEPLAY_MODES,
   GAMEPLAY_MODES,
   HERO_DEFINITIONS,
   RANKED_GAMEPLAY_MODE,
@@ -91,6 +91,7 @@ import {
 import type { ServerLatencyProbeSnapshot } from '../../utils/serverLatency';
 import { requiresTutorial } from '../../utils/tutorialAccess';
 import { formatCompactTokenAmount, formatTokenBaseUnits } from '../../utils/tokenAmountFormat';
+import { transactionFromBase64 } from '../../utils/solanaTransactions';
 import { RankIcon, getRankForStats } from './RankBadge';
 import { SkinRarityChrome } from './SkinRarityChrome';
 
@@ -111,19 +112,10 @@ const PING_ADVISORY_VISIBLE_MIN_MS = 100;
 const EMPTY_HERO_ID_SET = new Set<HeroId>();
 const PURCHASE_STATUS_POLL_MS = 1800;
 const PURCHASE_STATUS_POLL_ATTEMPTS = 6;
+const LAMPORTS_PER_SOL = 1_000_000_000n;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-async function transactionFromBase64(base64: string): Promise<Transaction> {
-  const { Transaction } = await import('@solana/web3.js');
-  const binary = window.atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return Transaction.from(bytes);
 }
 
 async function waitForCreditedPurchase(intent: SkinPurchaseIntentSnapshot): Promise<SkinPurchaseIntentSnapshot> {
@@ -137,6 +129,20 @@ async function waitForCreditedPurchase(intent: SkinPurchaseIntentSnapshot): Prom
     latest = await getSkinPurchaseIntent(latest.intentId);
   }
   return latest;
+}
+
+function customWagerSolToLamports(value: string): string {
+  const match = /^(\d+)(?:\.(\d{0,9}))?$/.exec(value.trim());
+  if (!match) {
+    throw new Error('Entry price must be a SOL amount');
+  }
+  const whole = BigInt(match[1]);
+  const fractional = BigInt((match[2] ?? '').padEnd(9, '0'));
+  const lamports = whole * LAMPORTS_PER_SOL + fractional;
+  if (lamports <= 0n) {
+    throw new Error('Entry price must be greater than 0 SOL');
+  }
+  return lamports.toString();
 }
 
 function DiscordIcon({ className, style }: { className?: string; style?: CSSProperties }) {
@@ -503,6 +509,7 @@ export function MainLobby() {
   const [showLoginDialog, setShowLoginDialog] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showSocial, setShowSocial] = useState(false);
+  const [showCustomLobbyDialog, setShowCustomLobbyDialog] = useState(false);
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
   const [playMenuPreferences, setPlayMenuPreferences] = useState<PlayMenuPreferences>(loadPlayMenuPreferences);
   const [rankedTokenHoldStatus, setRankedTokenHoldStatus] = useState<RankedTokenHoldStatus | null>(null);
@@ -560,6 +567,8 @@ export function MainLobby() {
   const isPartyReadyToStart = arePartyMembersReady(party);
   const selectedPlayMode = playMenuPreferences.selectedPlayMode;
   const customGameplayMode = playMenuPreferences.customGameplayMode;
+  const customWagerEnabled = playMenuPreferences.customWagerEnabled;
+  const customWagerEntrySol = playMenuPreferences.customWagerEntrySol;
   const botFillEnabledByMode = playMenuPreferences.botFillEnabledByMode;
   const perspectiveByMode = playMenuPreferences.perspectiveByMode;
   const activePlayMode = party ? getPlayModeFromParty(party) : selectedPlayMode;
@@ -580,6 +589,18 @@ export function MainLobby() {
       ? false
       : globalBotFillEnabled;
   const activePerspectiveByMode = party?.perspectiveByMode ?? perspectiveByMode;
+
+  const buildCustomWagerStartOptions = () => (
+    customWagerEnabled
+      ? {
+          wager: {
+            enabled: true,
+            coverChargeLamports: customWagerSolToLamports(customWagerEntrySol),
+            token: 'SOL' as const,
+          },
+        }
+      : { wager: { enabled: false } }
+  );
 
   useEffect(() => {
     const preloadSettings = () => {
@@ -1101,11 +1122,11 @@ export function MainLobby() {
     }
   };
 
-  const handleCustomPlay = async () => {
+  const launchCustomPlay = async (): Promise<boolean> => {
     setError(null);
     if (tutorialRequired) {
       handleStartTutorial();
-      return;
+      return false;
     }
     try {
       await ensureParty(playerName, featuredHero, {
@@ -1114,10 +1135,35 @@ export function MainLobby() {
         selectedSkinId,
       });
       setPartyPerspective('custom', getMatchPerspectiveForPlayMode('custom', activePerspectiveByMode));
-      startParty();
+      startParty(buildCustomWagerStartOptions());
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create custom lobby');
+      return false;
     }
+  };
+
+  const handleStartCustomLobbyFromDialog = async () => {
+    playButtonClick();
+    setError(null);
+
+    if (tutorialRequired) {
+      setShowCustomLobbyDialog(false);
+      handleStartTutorial();
+      return;
+    }
+
+    if (isInParty) {
+      if (!isPartyLeader) return;
+      try {
+        startParty(buildCustomWagerStartOptions());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to start custom lobby');
+      }
+      return;
+    }
+
+    await launchCustomPlay();
   };
 
   const handleReconnectGame = async () => {
@@ -1210,6 +1256,40 @@ export function MainLobby() {
     ));
   };
 
+  const handleSelectCustomGameplayMode = (gameplayMode: CustomLobbyGameplayMode) => {
+    if (isInParty) {
+      if (isPartyLeader) {
+        setPartyMode('custom', gameplayMode);
+      }
+      return;
+    }
+
+    updatePlayMenuPreferences((current) => (
+      current.customGameplayMode === gameplayMode ? current : {
+        ...current,
+        customGameplayMode: gameplayMode,
+      }
+    ));
+  };
+
+  const handleSetCustomWagerEnabled = (enabled: boolean) => {
+    updatePlayMenuPreferences((current) => (
+      current.customWagerEnabled === enabled ? current : {
+        ...current,
+        customWagerEnabled: enabled,
+      }
+    ));
+  };
+
+  const handleSetCustomWagerEntrySol = (entrySol: string) => {
+    updatePlayMenuPreferences((current) => (
+      current.customWagerEntrySol === entrySol ? current : {
+        ...current,
+        customWagerEntrySol: entrySol,
+      }
+    ));
+  };
+
   const handleSetBotFillEnabled = (enabled: boolean) => {
     if (getBotFillUnavailableReasonForPlayMode(activePlayMode)) return;
 
@@ -1236,9 +1316,19 @@ export function MainLobby() {
       return;
     }
 
+    if (activePlayMode === 'custom' && (!isInParty || isPartyLeader)) {
+      setError(null);
+      setShowCustomLobbyDialog(true);
+      return;
+    }
+
     if (isInParty) {
       if (isPartyLeader) {
-        startParty();
+        try {
+          startParty();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to start party');
+        }
       } else {
         setPartyReady(!localPartyMember?.ready);
       }
@@ -1256,9 +1346,6 @@ export function MainLobby() {
           globalBotFillEnabled,
           getMatchPerspectiveForPlayMode(activePlayMode, activePerspectiveByMode)
         );
-        break;
-      case 'custom':
-        void handleCustomPlay();
         break;
       case 'quick_play':
       default:
@@ -1375,7 +1462,7 @@ export function MainLobby() {
             isAuthenticated={isAuthenticated}
             hasWalletAccount={hasWalletAccount}
             requiresTutorial={tutorialRequired}
-            error={error ?? partyLaunchError}
+            error={showCustomLobbyDialog ? null : error ?? partyLaunchError}
             party={party}
             soloPartyMember={soloPartyMember}
             localPartyUserId={localPartyUserId}
@@ -1455,6 +1542,25 @@ export function MainLobby() {
       {shouldShowPwaInstallToast && <PwaInstallToast />}
 
       {/* Modals */}
+      {showCustomLobbyDialog && activePlayMode === 'custom' && (!isInParty || isPartyLeader) && (
+        <CustomLobbyDialog
+          gameplayMode={activeCustomGameplayMode}
+          wagerEnabled={customWagerEnabled}
+          wagerEntrySol={customWagerEntrySol}
+          error={error ?? partyLaunchError}
+          onSelectGameplayMode={(mode) => {
+            playButtonClick();
+            handleSelectCustomGameplayMode(mode);
+          }}
+          onSetWagerEnabled={(enabled) => {
+            playButtonClick();
+            handleSetCustomWagerEnabled(enabled);
+          }}
+          onSetWagerEntrySol={handleSetCustomWagerEntrySol}
+          onStart={handleStartCustomLobbyFromDialog}
+          onClose={() => setShowCustomLobbyDialog(false)}
+        />
+      )}
       {showSocial && isAuthenticated && (
         <SocialBox
           selectedHero={featuredHero}
@@ -2778,6 +2884,140 @@ function PlayModeSelector({
         onToggle={onSetBotFillEnabled}
       />
       {PLAY_MODE_OPTIONS_AFTER_BOT_FILL.map(renderModeOption)}
+    </div>
+  );
+}
+
+function CustomLobbyDialog({
+  gameplayMode,
+  wagerEnabled,
+  wagerEntrySol,
+  error,
+  onSelectGameplayMode,
+  onSetWagerEnabled,
+  onSetWagerEntrySol,
+  onStart,
+  onClose,
+}: {
+  gameplayMode: CustomLobbyGameplayMode;
+  wagerEnabled: boolean;
+  wagerEntrySol: string;
+  error: string | null;
+  onSelectGameplayMode: (mode: CustomLobbyGameplayMode) => void;
+  onSetWagerEnabled: (enabled: boolean) => void;
+  onSetWagerEntrySol: (entrySol: string) => void;
+  onStart: () => Promise<void>;
+  onClose: () => void;
+}) {
+  return (
+    <GameDialog
+      title="CUSTOM GAME"
+      icon={<PlayModeIcon mode="custom" />}
+      iconClassName="custom-lobby-dialog-icon"
+      size="sm"
+      onClose={onClose}
+      panelClassName="custom-lobby-dialog-panel"
+      bodyClassName="custom-lobby-dialog-body"
+      footerClassName="custom-lobby-dialog-footer"
+      footer={(
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            className="custom-lobby-dialog-secondary"
+          >
+            CANCEL
+          </button>
+          <button
+            type="button"
+            onClick={() => { void onStart(); }}
+            className="custom-lobby-dialog-primary"
+          >
+            <PlayModeIcon mode="custom" />
+            START
+          </button>
+        </>
+      )}
+    >
+      <CustomLobbyControls
+        gameplayMode={gameplayMode}
+        wagerEnabled={wagerEnabled}
+        wagerEntrySol={wagerEntrySol}
+        disabled={false}
+        onSelectGameplayMode={onSelectGameplayMode}
+        onSetWagerEnabled={onSetWagerEnabled}
+        onSetWagerEntrySol={onSetWagerEntrySol}
+      />
+      {error && (
+        <div className="play-action-error custom-lobby-dialog-error" role="status">
+          {error}
+        </div>
+      )}
+    </GameDialog>
+  );
+}
+
+function CustomLobbyControls({
+  gameplayMode,
+  wagerEnabled,
+  wagerEntrySol,
+  disabled,
+  onSelectGameplayMode,
+  onSetWagerEnabled,
+  onSetWagerEntrySol,
+}: {
+  gameplayMode: CustomLobbyGameplayMode;
+  wagerEnabled: boolean;
+  wagerEntrySol: string;
+  disabled: boolean;
+  onSelectGameplayMode: (mode: CustomLobbyGameplayMode) => void;
+  onSetWagerEnabled: (enabled: boolean) => void;
+  onSetWagerEntrySol: (entrySol: string) => void;
+}) {
+  return (
+    <div className="custom-lobby-controls">
+      <div className="custom-lobby-mode-toggle" aria-label="Custom gameplay mode">
+        {CUSTOM_LOBBY_GAMEPLAY_MODES.map((mode) => {
+          const selected = mode === gameplayMode;
+          return (
+            <button
+              key={mode}
+              type="button"
+              aria-pressed={selected}
+              disabled={disabled}
+              className={`custom-lobby-mode-button${selected ? ' is-selected' : ''}`}
+              onClick={() => onSelectGameplayMode(mode)}
+            >
+              {mode === 'team_deathmatch' ? 'TDM' : 'CTF'}
+            </button>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={wagerEnabled}
+        disabled={disabled}
+        className={`custom-wager-toggle${wagerEnabled ? ' is-enabled' : ''}`}
+        onClick={() => onSetWagerEnabled(!wagerEnabled)}
+      >
+        <span>WAGER</span>
+        <span className="custom-wager-switch" aria-hidden="true">
+          <span />
+        </span>
+      </button>
+      {wagerEnabled && (
+        <label className="custom-wager-entry">
+          <span>SOL</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={wagerEntrySol}
+            disabled={disabled}
+            onChange={(event) => onSetWagerEntrySol(event.target.value)}
+          />
+        </label>
+      )}
     </div>
   );
 }

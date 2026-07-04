@@ -73,18 +73,29 @@ function parsedPaymentTx(options: {
 }
 
 function runPayoutMathTests(): void {
-  const payouts = calculateWagerPayouts(101n, 3, 500);
-  assert.equal(payouts.developerFeeLamports, 5n);
-  assert.equal(payouts.winnerPoolLamports, 96n);
-  assert.equal(payouts.winnerShareLamports, 32n);
-  assert.equal(payouts.dustLamports, 0n);
-  assert.equal(payouts.developerTotalLamports, 5n);
+  const payouts = calculateWagerPayouts(100n, 2);
+  assert.equal(payouts.winnerPoolLamports, 90n);
+  assert.equal(payouts.winnerShareLamports, 45n);
+  assert.equal(payouts.burnLamports, 5n);
+  assert.equal(payouts.treasuryFeeLamports, 5n);
+  assert.equal(payouts.treasuryDustLamports, 0n);
+  assert.equal(payouts.treasuryTotalLamports, 5n);
 
-  const dusty = calculateWagerPayouts(100n, 3, 500);
-  assert.equal(dusty.developerFeeLamports, 5n);
-  assert.equal(dusty.winnerShareLamports, 31n);
-  assert.equal(dusty.dustLamports, 2n);
-  assert.equal(dusty.developerTotalLamports, 7n);
+  const splitDust = calculateWagerPayouts(101n, 3);
+  assert.equal(splitDust.winnerPoolLamports, 90n);
+  assert.equal(splitDust.winnerShareLamports, 30n);
+  assert.equal(splitDust.burnLamports, 5n);
+  assert.equal(splitDust.treasuryFeeLamports, 5n);
+  assert.equal(splitDust.treasuryDustLamports, 1n);
+  assert.equal(splitDust.treasuryTotalLamports, 6n);
+
+  const winnerDust = calculateWagerPayouts(100n, 4);
+  assert.equal(winnerDust.winnerPoolLamports, 88n);
+  assert.equal(winnerDust.winnerShareLamports, 22n);
+  assert.equal(winnerDust.burnLamports, 5n);
+  assert.equal(winnerDust.treasuryFeeLamports, 5n);
+  assert.equal(winnerDust.treasuryDustLamports, 2n);
+  assert.equal(winnerDust.treasuryTotalLamports, 7n);
 }
 
 function runStartGateTests(): void {
@@ -185,7 +196,7 @@ function runWagerStatsTests(): void {
         status: 'confirmed',
       },
       {
-        kind: 'developer_fee',
+        kind: 'treasury_fee',
         recipientWallet: 'wallet-treasury',
         amountLamports: 100n,
         status: 'confirmed',

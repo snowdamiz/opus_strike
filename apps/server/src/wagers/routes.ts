@@ -3,6 +3,7 @@ import prisma from '../db';
 import { verifyAuthToken } from '../auth/session';
 import { assertGameplayAccountEligible } from '../auth/accountEligibility';
 import { isAdminRetryAllowed } from './config';
+import { WAGER_BURN_BPS, WAGER_TREASURY_BPS, WAGER_WINNER_POOL_BPS } from './math';
 import { wagerService } from './service';
 
 const router: ExpressRouter = Router();
@@ -58,7 +59,10 @@ router.post('/lobbies/preflight', async (req, res) => {
         cluster: wagerService.getConfig().cluster,
         minCoverChargeLamports: wagerService.getConfig().minCoverChargeLamports.toString(),
         maxCoverChargeLamports: wagerService.getConfig().maxCoverChargeLamports.toString(),
-        platformFeeBps: normalized.platformFeeBps,
+        winnerPoolBps: WAGER_WINNER_POOL_BPS,
+        burnBps: WAGER_BURN_BPS,
+        treasuryBps: WAGER_TREASURY_BPS,
+        burnWallet: normalized.burnWallet,
       },
     });
   } catch (error) {

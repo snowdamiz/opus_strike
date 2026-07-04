@@ -3,6 +3,7 @@ import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_MATCH_PERSPECTIVE,
   isGameplayMode,
+  isMatchMode,
   isMatchPerspective,
   type BotDifficulty,
   type GameplayMode,
@@ -19,8 +20,11 @@ import {
 import { useGameStore } from '../store/gameStore';
 import type {
   LobbyPlayer,
+  LobbyWagerSnapshot,
   MapVoteOption,
   MapVoteRecord,
+  PlayerWagerPaymentStatus,
+  WagerPaymentStatus,
 } from '../store/types';
 import { useChatStore } from '../store/chatStore';
 import { seedMapPrepCacheFromManifest, type PrepareVoxelMapOptions } from '../utils/mapWarmup/mapPrepCache';
@@ -92,6 +96,8 @@ interface LobbyStateMessage extends MatchmakingStatusMessage {
   hostId: string;
   status: string;
   players: LobbyPlayerWire[];
+  wager?: unknown;
+  wagerPaymentStatuses?: unknown[];
 }
 
 interface PlayerJoinedMessage {
@@ -130,6 +136,82 @@ interface SelectedMapMessage {
   pregeneratedMapId?: string | null;
   mapArtifactId?: string | null;
   gameplayMode?: GameplayMode;
+}
+
+const WAGER_PAYMENT_STATUSES = new Set<WagerPaymentStatus>([
+  'intent_created',
+  'submitted',
+  'confirmed',
+  'credited',
+  'failed',
+  'expired',
+  'refunded',
+  'settled',
+  'not_required',
+  'unpaid',
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function optionalNullableString(value: unknown): string | null | undefined {
+  return value === null || typeof value === 'string' ? value : undefined;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function toLobbyWagerSnapshot(value: unknown): LobbyWagerSnapshot {
+  if (!isRecord(value) || value.enabled !== true) return { enabled: false };
+
+  return {
+    enabled: true,
+    wageredLobbyId: optionalString(value.wageredLobbyId),
+    lobbyId: optionalString(value.lobbyId),
+    matchMode: isMatchMode(value.matchMode) ? value.matchMode : undefined,
+    rankedEntryQuoteId: optionalNullableString(value.rankedEntryQuoteId),
+    status: optionalString(value.status),
+    token: value.token === 'SOL' ? 'SOL' : undefined,
+    coverChargeLamports: optionalString(value.coverChargeLamports),
+    treasuryWallet: optionalString(value.treasuryWallet),
+    winnerPoolBps: optionalNumber(value.winnerPoolBps),
+    burnBps: optionalNumber(value.burnBps),
+    treasuryBps: optionalNumber(value.treasuryBps),
+    burnWallet: optionalString(value.burnWallet),
+    potLamports: optionalString(value.potLamports),
+    paidPlayerCount: optionalNumber(value.paidPlayerCount),
+  };
+}
+
+function toPlayerWagerPaymentStatuses(value: unknown[] | undefined): PlayerWagerPaymentStatus[] {
+  if (!Array.isArray(value)) return [];
+
+  const statuses: PlayerWagerPaymentStatus[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry) || typeof entry.lobbyPlayerId !== 'string') continue;
+    const status = typeof entry.status === 'string' && WAGER_PAYMENT_STATUSES.has(entry.status as WagerPaymentStatus)
+      ? entry.status as WagerPaymentStatus
+      : 'unpaid';
+
+    statuses.push({
+      lobbyPlayerId: entry.lobbyPlayerId,
+      userId: typeof entry.userId === 'string' ? entry.userId : null,
+      status,
+      walletAddress: optionalString(entry.walletAddress),
+      amountLamports: optionalString(entry.amountLamports),
+      depositSignature: optionalString(entry.depositSignature),
+      refundSignature: optionalString(entry.refundSignature),
+      refundReason: optionalNullableString(entry.refundReason),
+    });
+  }
+
+  return statuses;
 }
 
 function toMatchmakingStatus(data: MatchmakingStatusMessage): MatchmakingStatusState {
@@ -209,6 +291,7 @@ export function setupLobbyListeners(
     removeLobbyPlayer,
     setIsLobbyHost,
     setLobbyError,
+    setLobbyWagerState,
     setMatchmakingStatus,
     setAppPhase,
     setMapVoteState,
@@ -357,6 +440,10 @@ export function setupLobbyListeners(
     });
     setIsLobbyHost(data.hostId === room.sessionId);
     setMatchmakingStatus(toMatchmakingStatus(data));
+    setLobbyWagerState(
+      toLobbyWagerSnapshot(data.wager),
+      toPlayerWagerPaymentStatuses(data.wagerPaymentStatuses)
+    );
     if (data.status === 'map_vote') {
       setAppPhase('map_vote');
     } else if (data.status === 'matchmaking') {

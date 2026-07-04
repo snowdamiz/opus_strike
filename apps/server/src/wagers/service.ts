@@ -33,6 +33,10 @@ import {
   calculateNetRefundLamports,
   calculateWagerPayouts,
   evaluateWagerStartEligibility,
+  WAGER_BURN_BPS,
+  WAGER_SOL_BURN_ADDRESS,
+  WAGER_TREASURY_BPS,
+  WAGER_WINNER_POOL_BPS,
   WAGER_TOKEN,
   type WagerRosterPlayer,
   type WagerStartEligibility,
@@ -68,7 +72,6 @@ type WageredLobbyStatus =
   | 'refunded'
   | 'failed';
 
-type TransferKind = 'winner_payout' | 'developer_fee' | 'refund';
 type GoldenBiomeRewardStatus = 'pending' | 'processing' | 'complete' | 'failed';
 type GoldenBiomeRewardTransferStatus = 'pending' | 'submitted' | 'confirmed' | 'failed';
 export type GoldenBiomeRewardDistributionMode = 'manual' | 'auto';
@@ -81,7 +84,6 @@ const WAGER_REFUND_RETRY_CONCURRENCY = 3;
 const WAGER_SETTLEMENT_RETRY_CONCURRENCY = 2;
 const WAGER_TREASURY_RECONCILE_CONCURRENCY = 6;
 const WAGER_STATUS_EMIT_CONCURRENCY = 10;
-const WAGER_ECONOMY_SETTINGS_ID = 'default';
 const GOLDEN_BIOME_SETTINGS_ID = 'default';
 const UNSIGNED_INTEGER_PATTERN = /^[0-9]+$/;
 
@@ -119,7 +121,10 @@ export interface LobbyWagerSnapshot {
   token?: typeof WAGER_TOKEN;
   coverChargeLamports?: string;
   treasuryWallet?: string;
-  platformFeeBps?: number;
+  winnerPoolBps?: number;
+  burnBps?: number;
+  treasuryBps?: number;
+  burnWallet?: string;
   potLamports?: string;
   paidPlayerCount?: number;
 }
@@ -173,7 +178,7 @@ export interface LockedWagerContext {
   token: typeof WAGER_TOKEN;
   coverChargeLamports: string;
   treasuryWallet: string;
-  platformFeeBps: number;
+  burnWallet: string;
   matchMode: MatchMode;
   rankedEntryQuoteId?: string | null;
   paidPlayers: LockedWagerPlayer[];
@@ -201,7 +206,8 @@ export interface WagerSettlementSnapshot {
   wageredLobbyId: string;
   status: string;
   totalPotLamports: string;
-  developerFeeLamports: string;
+  treasuryFeeLamports: string;
+  burnLamports: string;
   winnerPoolLamports: string;
   winningTeam: string | null;
 }
@@ -306,14 +312,16 @@ export type GoldenBiomeSettingsUpdate = Partial<Record<
   unknown
 >>;
 
-export interface WagerEconomySettingsSnapshot {
+export interface WagerEconomySnapshot {
   enabled: boolean;
-  platformFeeBps: number;
+  winnerPoolBps: number;
+  burnBps: number;
+  treasuryBps: number;
+  burnWallet: string;
+  treasuryWallet: string | null;
   updatedByUserId: string | null;
   updatedAt: string | null;
 }
-
-export type WagerEconomySettingsUpdate = Partial<Record<'platformFeeBps', unknown>>;
 
 export interface TreasuryTransferResult {
   signature: string | null;
@@ -487,15 +495,6 @@ export class WagerService extends EventEmitter {
     return getWagerRuntimeConfig();
   }
 
-  private wagerEconomySettingsCreateData(updatedByUserId: string | null = null) {
-    const config = this.getConfig();
-    return {
-      id: WAGER_ECONOMY_SETTINGS_ID,
-      platformFeeBps: config.platformFeeBps,
-      updatedByUserId,
-    };
-  }
-
   private goldenBiomeSettingsCreateData(updatedByUserId: string | null = null) {
     const config = this.getConfig();
     return {
@@ -507,19 +506,6 @@ export class WagerService extends EventEmitter {
       treasuryMinLamports: config.goldenBiomeTreasuryMinLamports,
       updatedByUserId,
     };
-  }
-
-  private async getWagerEconomySettingsRow() {
-    return readSingletonAfterUniqueRace(
-      () => prisma.wagerEconomySettings.upsert({
-        where: { id: WAGER_ECONOMY_SETTINGS_ID },
-        create: this.wagerEconomySettingsCreateData(),
-        update: {},
-      }),
-      () => prisma.wagerEconomySettings.findUnique({
-        where: { id: WAGER_ECONOMY_SETTINGS_ID },
-      })
-    );
   }
 
   private async getGoldenBiomeSettingsRow() {
@@ -535,39 +521,17 @@ export class WagerService extends EventEmitter {
     );
   }
 
-  async getWagerEconomySettings(): Promise<WagerEconomySettingsSnapshot> {
-    const settings = await this.getWagerEconomySettingsRow();
+  async getWagerEconomy(): Promise<WagerEconomySnapshot> {
     const config = this.getConfig();
     return {
       enabled: config.enabled,
-      platformFeeBps: settings.platformFeeBps,
-      updatedByUserId: settings.updatedByUserId,
-      updatedAt: settings.updatedAt.toISOString(),
-    };
-  }
-
-  async updateWagerEconomySettings(
-    input: WagerEconomySettingsUpdate,
-    updatedByUserId?: string | null
-  ): Promise<WagerEconomySettingsSnapshot> {
-    const current = await this.getWagerEconomySettingsRow();
-    const settings = input ?? {};
-    const config = this.getConfig();
-    const updated = await prisma.wagerEconomySettings.update({
-      where: { id: WAGER_ECONOMY_SETTINGS_ID },
-      data: {
-        platformFeeBps: hasOwnSetting(settings, 'platformFeeBps')
-          ? parseIntegerSetting(settings.platformFeeBps, 'platformFeeBps', { min: 0, max: 10_000 })
-          : current.platformFeeBps,
-        updatedByUserId: updatedByUserId ?? null,
-      },
-    });
-
-    return {
-      enabled: config.enabled,
-      platformFeeBps: updated.platformFeeBps,
-      updatedByUserId: updated.updatedByUserId,
-      updatedAt: updated.updatedAt.toISOString(),
+      winnerPoolBps: WAGER_WINNER_POOL_BPS,
+      burnBps: WAGER_BURN_BPS,
+      treasuryBps: WAGER_TREASURY_BPS,
+      burnWallet: WAGER_SOL_BURN_ADDRESS,
+      treasuryWallet: config.treasuryWallet || null,
+      updatedByUserId: null,
+      updatedAt: null,
     };
   }
 
@@ -825,11 +789,10 @@ export class WagerService extends EventEmitter {
     coverChargeLamports: bigint;
     token: typeof WAGER_TOKEN;
     treasuryWallet: string;
-    platformFeeBps: number;
+    burnWallet: string;
   }> {
     if (!options?.enabled) return { enabled: false };
     const config = this.getConfig();
-    const economySettings = await this.getWagerEconomySettingsRow();
     assertWagerPaymentsConfigured(config);
 
     const token = options.token || WAGER_TOKEN;
@@ -853,7 +816,7 @@ export class WagerService extends EventEmitter {
       coverChargeLamports,
       token: WAGER_TOKEN,
       treasuryWallet: config.treasuryWallet,
-      platformFeeBps: economySettings.platformFeeBps,
+      burnWallet: WAGER_SOL_BURN_ADDRESS,
     };
   }
 
@@ -876,7 +839,6 @@ export class WagerService extends EventEmitter {
         token: normalized.token,
         coverChargeLamports: normalized.coverChargeLamports,
         treasuryWallet: normalized.treasuryWallet,
-        platformFeeBps: normalized.platformFeeBps,
         createdByUserId: input.createdByUserId,
       },
     });
@@ -1376,7 +1338,7 @@ export class WagerService extends EventEmitter {
       token: WAGER_TOKEN,
       coverChargeLamports: bigintToJson(wageredLobby.coverChargeLamports),
       treasuryWallet: wageredLobby.treasuryWallet,
-      platformFeeBps: wageredLobby.platformFeeBps,
+      burnWallet: WAGER_SOL_BURN_ADDRESS,
       matchMode: wageredLobby.matchMode as MatchMode,
       rankedEntryQuoteId: wageredLobby.rankedEntryQuoteId,
       paidPlayers,
@@ -1835,7 +1797,6 @@ export class WagerService extends EventEmitter {
       token: string;
       coverChargeLamports: bigint;
       treasuryWallet: string;
-      platformFeeBps: number;
     },
     potLamports: bigint,
     paidPlayerCount: number
@@ -1850,7 +1811,10 @@ export class WagerService extends EventEmitter {
       token: WAGER_TOKEN,
       coverChargeLamports: bigintToJson(row.coverChargeLamports),
       treasuryWallet: row.treasuryWallet,
-      platformFeeBps: row.platformFeeBps,
+      winnerPoolBps: WAGER_WINNER_POOL_BPS,
+      burnBps: WAGER_BURN_BPS,
+      treasuryBps: WAGER_TREASURY_BPS,
+      burnWallet: WAGER_SOL_BURN_ADDRESS,
       potLamports: bigintToJson(potLamports),
       paidPlayerCount,
     };
@@ -1942,7 +1906,8 @@ export class WagerService extends EventEmitter {
     wageredLobbyId: string;
     status: string;
     totalPotLamports: bigint;
-    developerFeeLamports: bigint;
+    treasuryFeeLamports: bigint;
+    burnLamports: bigint;
     winnerPoolLamports: bigint;
     winningTeam: string | null;
   }): WagerSettlementSnapshot {
@@ -1951,7 +1916,8 @@ export class WagerService extends EventEmitter {
       wageredLobbyId: settlement.wageredLobbyId,
       status: settlement.status,
       totalPotLamports: bigintToJson(settlement.totalPotLamports),
-      developerFeeLamports: bigintToJson(settlement.developerFeeLamports),
+      treasuryFeeLamports: bigintToJson(settlement.treasuryFeeLamports),
+      burnLamports: bigintToJson(settlement.burnLamports),
       winnerPoolLamports: bigintToJson(settlement.winnerPoolLamports),
       winningTeam: settlement.winningTeam,
     };
@@ -2053,7 +2019,7 @@ export class WagerService extends EventEmitter {
 
     const signer = getSettlementKeypair();
     if (!signer) {
-      throw new Error('WAGER_SETTLEMENT_SECRET_KEY is required for payouts and refunds');
+      throw new Error('WAGER_SETTLEMENT_SECRET_KEY is required for settlement transfers');
     }
     if (signer.publicKey.toBase58() !== config.treasuryWallet) {
       throw new Error('Settlement signer public key must match WAGER_TREASURY_WALLET');
@@ -2300,15 +2266,15 @@ export class WagerService extends EventEmitter {
 
       const payouts = calculateWagerPayouts(
         totalPotLamports,
-        winners.length,
-        settlement.wageredLobby.platformFeeBps
+        winners.length
       );
 
       await tx.wagerSettlement.update({
         where: { id: settlement.id },
         data: {
           totalPotLamports: payouts.totalPotLamports,
-          developerFeeLamports: payouts.developerTotalLamports,
+          treasuryFeeLamports: payouts.treasuryTotalLamports,
+          burnLamports: payouts.burnLamports,
           winnerPoolLamports: payouts.winnerPoolLamports,
         },
       });
@@ -2341,23 +2307,45 @@ export class WagerService extends EventEmitter {
         where: {
           settlementId_kind_recipientWallet: {
             settlementId: settlement.id,
-            kind: 'developer_fee',
+            kind: 'treasury_fee',
             recipientWallet: settlement.wageredLobby.treasuryWallet,
           },
         },
         create: {
           settlementId: settlement.id,
-          idempotencyKey: `${settlement.id}:developer:${settlement.wageredLobby.treasuryWallet}`,
-          kind: 'developer_fee',
+          idempotencyKey: `${settlement.id}:treasury:${settlement.wageredLobby.treasuryWallet}`,
+          kind: 'treasury_fee',
           recipientWallet: settlement.wageredLobby.treasuryWallet,
-          amountLamports: payouts.developerTotalLamports,
+          amountLamports: payouts.treasuryTotalLamports,
           status: 'confirmed',
           confirmedAt: new Date(),
         },
         update: {
-          amountLamports: payouts.developerTotalLamports,
+          amountLamports: payouts.treasuryTotalLamports,
           status: 'confirmed',
           confirmedAt: new Date(),
+        },
+      });
+
+      await tx.wagerSettlementTransfer.upsert({
+        where: {
+          settlementId_kind_recipientWallet: {
+            settlementId: settlement.id,
+            kind: 'burn',
+            recipientWallet: WAGER_SOL_BURN_ADDRESS,
+          },
+        },
+        create: {
+          settlementId: settlement.id,
+          idempotencyKey: `${settlement.id}:burn:${WAGER_SOL_BURN_ADDRESS}`,
+          kind: 'burn',
+          recipientWallet: WAGER_SOL_BURN_ADDRESS,
+          amountLamports: payouts.burnLamports,
+          status: payouts.burnLamports > 0n ? 'pending' : 'confirmed',
+          confirmedAt: payouts.burnLamports > 0n ? null : new Date(),
+        },
+        update: {
+          amountLamports: payouts.burnLamports,
         },
       });
     });

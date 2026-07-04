@@ -92,6 +92,15 @@ function NumberField({
   );
 }
 
+function ReadOnlyMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-white/35">{label}</div>
+      <div className="mt-1 text-sm font-semibold text-white/85">{value}</div>
+    </div>
+  );
+}
+
 /* ----------------------------- SaveButton --------------------------- */
 
 function SaveButton({
@@ -146,13 +155,9 @@ interface RewardsForm {
   maxMatchPayoutLamports: string;
   treasuryReserveLamports: string;
   payoutBatchSize: string;
-  platformFeeBps: string;
 }
 
-function buildRewardsForm(
-  rewards: PlayerRewardSettings,
-  platformFeeBps: number
-): RewardsForm {
+function buildRewardsForm(rewards: PlayerRewardSettings): RewardsForm {
   return {
     enabled: rewards.enabled,
     dailyRankedDripLamports: str(rewards.dailyRankedDripLamports),
@@ -166,7 +171,6 @@ function buildRewardsForm(
     maxMatchPayoutLamports: str(rewards.maxMatchPayoutLamports),
     treasuryReserveLamports: str(rewards.treasuryReserveLamports),
     payoutBatchSize: str(rewards.payoutBatchSize),
-    platformFeeBps: str(platformFeeBps),
   };
 }
 
@@ -178,10 +182,7 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
   const tokenLabel = tokenSymbol ? ` (${tokenSymbol})` : '';
 
   const [form, setForm] = React.useState<RewardsForm>(() =>
-    buildRewardsForm(
-      economy?.playerRewards ?? ({} as PlayerRewardSettings),
-      economy?.wagers?.platformFeeBps ?? 0
-    )
+    buildRewardsForm(economy?.playerRewards ?? ({} as PlayerRewardSettings))
   );
   const [saving, setSaving] = React.useState(false);
   const [settlingSeasonTopTen, setSettlingSeasonTopTen] = React.useState(false);
@@ -192,8 +193,8 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
 
   React.useEffect(() => {
     if (!economy) return;
-    setForm(buildRewardsForm(economy.playerRewards, economy.wagers?.platformFeeBps ?? 0));
-  }, [economy?.playerRewards, economy?.wagers]);
+    setForm(buildRewardsForm(economy.playerRewards));
+  }, [economy?.playerRewards]);
 
   React.useEffect(() => {
     if (rankedSeason?.seasonNumber != null) {
@@ -224,7 +225,6 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
           treasuryReserveLamports: num(form.treasuryReserveLamports),
           payoutBatchSize: num(form.payoutBatchSize),
         },
-        wagers: { platformFeeBps: num(form.platformFeeBps) },
       });
     } finally {
       setSaving(false);
@@ -409,13 +409,10 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
             <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-white/50">
               Wager
             </h4>
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              <NumberField
-                label="Platform Fee (bps)"
-                value={form.platformFeeBps}
-                onChange={(v) => set('platformFeeBps', v)}
-                hint={`Equivalent to ${formatBps(num(form.platformFeeBps))}.`}
-              />
+            <div className="grid gap-3 sm:grid-cols-3">
+              <ReadOnlyMetric label="Winner Split" value={formatBps(economy.wagers.winnerPoolBps)} />
+              <ReadOnlyMetric label="Burn" value={formatBps(economy.wagers.burnBps)} />
+              <ReadOnlyMetric label="Treasury" value={formatBps(economy.wagers.treasuryBps)} />
             </div>
           </div>
 

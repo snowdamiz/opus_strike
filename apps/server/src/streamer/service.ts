@@ -28,6 +28,7 @@ import {
 } from '../rooms/lobbyGameStartRuntime';
 import { BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX } from '../rooms/bot-ai';
 import { createStreamerObserverTicket } from '../security/streamerTickets';
+import type { GameRoomRecordingOptions } from '../recordings/types';
 import {
   getStreamerBotDeathmatchMapRotationMs,
   getStreamerObserverSeatCount,
@@ -77,6 +78,7 @@ export interface StreamerGameRoomCreateOptions {
   streamerCameraMode: StreamerCameraMode;
   streamerMapRotationStartedAt?: number | null;
   endlessMatch: boolean;
+  recording?: GameRoomRecordingOptions;
 }
 
 export interface StreamerBotAssignment {
@@ -413,25 +415,48 @@ function createFallbackRoomOptions(input: {
   };
 }
 
-function createBotDeathmatchRoomOptions(input: {
+function applyFeaturedHeroAssignment(input: {
+  assignments: StreamerBotAssignment[];
+  heroId: HeroId | null | undefined;
+}): StreamerBotAssignment[] {
+  if (!input.heroId || input.assignments.length === 0) return input.assignments;
+  const [featured, ...rest] = input.assignments;
+  return [
+    {
+      ...featured,
+      heroId: input.heroId,
+      skinId: getDefaultHeroSkinId(input.heroId),
+      botDifficulty: 'hard',
+      botProfileId: `${BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX}-featured-${input.heroId}`,
+    },
+    ...rest,
+  ];
+}
+
+export function createStreamerBotShowcaseRoomOptions(input: {
   adminUserId: string;
   random: () => number;
   now: number;
+  gameplayMode: GameplayMode;
+  featuredHeroId?: HeroId | null;
 }): StreamerGameRoomCreateOptions {
-  const gameplayMode: GameplayMode = 'team_deathmatch';
+  const gameplayMode = input.gameplayMode;
   const mapSeed = createRandomSeed();
   const mapThemeId = chooseFrom(VOXEL_MAP_THEMES, input.random).id;
   const mapSize = chooseFrom(VOXEL_MAP_SIZE_IDS, input.random);
   const rules = getGameplayModeRules(gameplayMode);
-  const botAssignments = createStreamerBotAssignments({
-    gameplayMode,
-    seed: mapSeed,
-    botDifficulty: 'hard',
-    botProfileIdPrefix: BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX,
+  const botAssignments = applyFeaturedHeroAssignment({
+    heroId: input.featuredHeroId,
+    assignments: createStreamerBotAssignments({
+      gameplayMode,
+      seed: mapSeed,
+      botDifficulty: 'hard',
+      botProfileIdPrefix: BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX,
+    }),
   });
 
   return {
-    lobbyName: 'Streamer Bot Deathmatch',
+    lobbyName: `Recording ${rules.label}`,
     matchMode: 'custom',
     gameplayMode,
     matchPerspective: 'third_person',
@@ -451,6 +476,19 @@ function createBotDeathmatchRoomOptions(input: {
     streamerMapRotationStartedAt: input.now,
     endlessMatch: true,
   };
+}
+
+export function createStreamerBotDeathmatchRoomOptions(input: {
+  adminUserId: string;
+  random: () => number;
+  now: number;
+}): StreamerGameRoomCreateOptions {
+  return createStreamerBotShowcaseRoomOptions({
+    adminUserId: input.adminUserId,
+    random: input.random,
+    now: input.now,
+    gameplayMode: 'team_deathmatch',
+  });
 }
 
 async function createFallbackRoom(input: {
@@ -491,7 +529,7 @@ async function createBotDeathmatchRoom(input: {
   random: () => number;
   now: number;
 }): Promise<CreateFallbackResult> {
-  const createOptions = createBotDeathmatchRoomOptions({
+  const createOptions = createStreamerBotDeathmatchRoomOptions({
     adminUserId: input.adminUserId,
     random: input.random,
     now: input.now,

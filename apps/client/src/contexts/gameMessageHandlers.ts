@@ -1,4 +1,3 @@
-import type { Room } from 'colyseus.js';
 import * as THREE from 'three';
 import {
   ABILITY_DEFINITIONS,
@@ -146,6 +145,7 @@ import type {
   Team,
 } from '@voxel-strike/shared';
 import type { AppPhase } from '../store/types';
+import type { GameMessageBus } from './gameMessageBus';
 
 const CHRONOS_TIMEBREAK_CHARGE_FADE_OUT_MS = 110;
 const CHRONOS_PRIMARY_RELOAD_SOUND_FADE_OUT_MS = 240;
@@ -1117,7 +1117,7 @@ export function syncPlayerFromSchema(
  * Sets up the playerJoined message handler
  */
 export function setupPlayerJoinedHandler(
-  room: Room,
+  room: GameMessageBus,
   sessionId: string,
   localPlayerName: string,
   updatePlayer: GameStoreActions['updatePlayer']
@@ -1198,7 +1198,7 @@ export function setupPlayerJoinedHandler(
 }
 
 export function setupPlayerTransformsHandler(
-  room: Room,
+  room: GameMessageBus,
   sessionId: string,
   localPlayerName: string,
   actions: Pick<GameStoreActions, 'setLocalPlayer'>
@@ -1351,7 +1351,7 @@ export function setupPlayerTransformsHandler(
   }));
 }
 
-export function setupPlayerInterestHandler(room: Room, sessionId: string) {
+export function setupPlayerInterestHandler(room: GameMessageBus, sessionId: string) {
   room.onMessage('playerInterest', measureNetworkMessage('playerInterest', (data: PlayerInterestMessage) => {
     const store = useGameStore.getState();
     let nextPlayers: Map<string, Player> | null = null;
@@ -1386,7 +1386,7 @@ export function setupPlayerInterestHandler(room: Room, sessionId: string) {
   }));
 }
 
-export function setupSelfMovementAuthorityHandler(room: Room) {
+export function setupSelfMovementAuthorityHandler(room: GameMessageBus) {
   hasReceivedSelfMovementAuthority = false;
 
   room.onMessage('selfMovementAuthority', measureNetworkMessage('selfMovementAuthority', (authority: SelfMovementAuthority) => {
@@ -1419,7 +1419,7 @@ export function setupSelfMovementAuthorityHandler(room: Room) {
 }
 
 export function setupPlayerVitalsHandler(
-  room: Room,
+  room: GameMessageBus,
   sessionId: string,
   localPlayerName: string
 ) {
@@ -1552,7 +1552,7 @@ export function setupPlayerVitalsHandler(
   }));
 }
 
-export function setupMatchSnapshotHandler(room: Room) {
+export function setupMatchSnapshotHandler(room: GameMessageBus) {
   room.onMessage('matchSnapshot', measureNetworkMessage('matchSnapshot', (data: MatchSnapshotMessage) => {
     const store = useGameStore.getState();
     if (data.phase !== 'playing' && data.phase !== 'countdown' && data.phase !== 'deployment') {
@@ -1679,7 +1679,7 @@ function handlePowerupCollectedMessage(data: PowerupCollectedMessage): void {
   }
 }
 
-export function setupPowerupHandlers(room: Room) {
+export function setupPowerupHandlers(room: GameMessageBus) {
   room.onMessage('powerupState', measureNetworkMessage('powerupState', (data: PowerupStateMessage) => {
     if (!data || !Array.isArray(data.pickups)) return;
     useGameStore.getState().setPowerupPickups(data.pickups);
@@ -1693,7 +1693,7 @@ export function setupPowerupHandlers(room: Room) {
 /**
  * Sets up void zone event handlers
  */
-export function setupVoidZoneHandlers(room: Room, sessionId: string) {
+export function setupVoidZoneHandlers(room: GameMessageBus, sessionId: string) {
   room.onMessage('voidZoneCreated', measureNetworkMessage('voidZoneCreated', (data: {
     id: string;
     position: { x: number; y: number; z: number };
@@ -3326,7 +3326,7 @@ function handlePlayerEventBatchMessage(data: PlayerEventBatchMessage): void {
 /**
  * Sets up combat event handlers (damage, kills)
  */
-export function setupCombatHandlers(room: Room) {
+export function setupCombatHandlers(room: GameMessageBus) {
   room.onMessage('phantomPrimaryState', measureNetworkMessage('phantomPrimaryState', (data: {
     ammo: number;
     reloading: boolean;

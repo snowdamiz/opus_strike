@@ -6,6 +6,7 @@ A browser-based 4v4 Capture the Flag game with Minecraft-style voxel graphics an
 
 - [Battle Royal Mode Plan](BATTLE_ROYAL_PLAN.md)
 - [Pregenerated Map Pool Plan](PREGENERATED_MAP_POOL_PLAN.md)
+- [Server Action Replay Recording Plan](SERVER_ACTION_REPLAY_RECORDING_PLAN.md)
 
 ## Features
 

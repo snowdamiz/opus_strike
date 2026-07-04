@@ -2,7 +2,14 @@ import { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
+import { useWallet } from '../../contexts/WalletContext';
+import {
+  buildWagerPaymentTransaction,
+  createWagerPaymentIntent,
+  submitSignedWagerPaymentTransaction,
+} from '../../contexts/networkApi';
 import { useUISounds } from '../../hooks/useUiAudio';
+import { transactionFromBase64 } from '../../utils/solanaTransactions';
 import {
   ALL_HERO_IDS,
   DEFAULT_GAME_CONFIG,
@@ -17,7 +24,7 @@ import {
   type HeroId,
   type Team,
 } from '@voxel-strike/shared';
-import type { LobbyPlayer } from '../../store/types';
+import type { LobbyPlayer, WagerPaymentStatus } from '../../store/types';
 import { BLAZE_UI_COLORS, FACTIONS, TEAM_FALLBACK_COLORS } from '../../styles/colorTokens';
 import { RankIcon, getRankForStats } from './RankBadge';
 import { SocialBox, SocialButton, useSocialBadgeCount } from './SocialBox';
@@ -156,6 +163,33 @@ const OBSERVER_LOBBY_FACTION: LobbyFaction = {
   glowColor: 'rgb(var(--color-accent-primary) / 0.35)',
   bgColor: 'rgb(var(--color-accent-primary) / 0.12)',
 };
+const LAMPORTS_PER_SOL = 1_000_000_000n;
+const WAGER_PAID_STATUSES = new Set<WagerPaymentStatus>(['credited', 'settled']);
+const WAGER_PENDING_STATUSES = new Set<WagerPaymentStatus>(['submitted', 'confirmed']);
+
+function isPaidWagerStatus(status: WagerPaymentStatus | undefined): boolean {
+  return status !== undefined && WAGER_PAID_STATUSES.has(status);
+}
+
+function isPendingWagerStatus(status: WagerPaymentStatus | undefined): boolean {
+  return status !== undefined && WAGER_PENDING_STATUSES.has(status);
+}
+
+function formatLamportsAsSol(lamports?: string): string {
+  if (!lamports) return 'SOL';
+
+  try {
+    const amount = BigInt(lamports);
+    const whole = amount / LAMPORTS_PER_SOL;
+    const fractional = amount % LAMPORTS_PER_SOL;
+    if (fractional === 0n) return `${whole.toString()} SOL`;
+
+    const fractionalText = fractional.toString().padStart(9, '0').replace(/0+$/, '');
+    return `${whole.toString()}.${fractionalText} SOL`;
+  } catch {
+    return 'SOL';
+  }
+}
 
 function isHeroId(value: string | undefined): value is HeroId {
   return ALL_HERO_IDS.includes(value as HeroId);
@@ -260,6 +294,8 @@ export function Lobby() {
     lobbyPlayers, 
     isLobbyHost,
     lobbyError,
+    lobbyWager,
+    lobbyWagerPayments,
     isLoading,
     userStats,
     userId,
@@ -277,6 +313,8 @@ export function Lobby() {
       lobbyPlayers: state.lobbyPlayers,
       isLobbyHost: state.isLobbyHost,
       lobbyError: state.lobbyError,
+      lobbyWager: state.lobbyWager,
+      lobbyWagerPayments: state.lobbyWagerPayments,
       isLoading: state.isLoading,
       userStats: state.userStats,
       userId: state.userId,
@@ -299,8 +337,16 @@ export function Lobby() {
     startGame,
     kickPlayer,
   } = useNetwork();
+  const {
+    connectWallet,
+    isConnected: isWalletConnected,
+    signTransaction,
+    walletAddress,
+  } = useWallet();
   const { playButtonClick } = useUISounds();
   const [showSocial, setShowSocial] = useState(false);
+  const [isPayingWager, setIsPayingWager] = useState(false);
+  const [wagerPaymentError, setWagerPaymentError] = useState<string | null>(null);
   const socialBadgeCount = useSocialBadgeCount();
   const isAuthenticated = Boolean(userId);
 
@@ -375,9 +421,39 @@ export function Lobby() {
     };
   }, [lobbyPlayers, teamEntries]);
   const currentMatchMode = matchmakingStatus.matchMode ?? null;
-  const botsAllowed = currentMatchMode === 'custom';
-  const invitesAllowed = currentMatchMode === 'custom';
-  const observersAllowed = currentMatchMode === 'custom' && !isBattleRoyal;
+  const isCustomLobbyMode = currentMatchMode === 'custom' || currentMatchMode === 'custom_wager';
+  const botsAllowed = isCustomLobbyMode;
+  const invitesAllowed = isCustomLobbyMode;
+  const observersAllowed = isCustomLobbyMode && !isBattleRoyal;
+  const wagerEnabled = lobbyWager.enabled;
+  const currentWagerPayment = lobbyWagerPayments.find((payment) => (
+    payment.lobbyPlayerId === playerId || Boolean(userId && payment.userId === userId)
+  ));
+  const hasPaidWager = isPaidWagerStatus(currentWagerPayment?.status);
+  const hasPendingWagerPayment = isPendingWagerStatus(currentWagerPayment?.status);
+  const currentPlayerMustPayWager = wagerEnabled
+    && currentPlayer != null
+    && currentPlayer.role !== 'observer'
+    && currentPlayer.isBot !== true;
+  const canPayWager = currentPlayerMustPayWager
+    && !hasPaidWager
+    && !hasPendingWagerPayment
+    && !isPayingWager
+    && Boolean(currentLobbyId && playerId);
+  const paidWagerPlayerIds = new Set(
+    lobbyWagerPayments
+      .filter((payment) => isPaidWagerStatus(payment.status))
+      .map((payment) => payment.lobbyPlayerId)
+  );
+  const wagerCombatHumanPlayers = combatPlayers.filter((player) => !player.isBot);
+  const allWagerHumansPaid = wagerCombatHumanPlayers.every((player) => paidWagerPlayerIds.has(player.id));
+  const wagerHasPaidHumanOnEachTeam = ['red', 'blue'].every((team) => (
+    wagerCombatHumanPlayers.some((player) => player.team === team && paidWagerPlayerIds.has(player.id))
+  ));
+  const paidWagerCount = lobbyWager.paidPlayerCount
+    ?? paidWagerPlayerIds.size;
+  const wagerCombatHumanCount = wagerCombatHumanPlayers.length;
+  const allRequiredWagersPaid = !wagerEnabled || (allWagerHumansPaid && wagerHasPaidHumanOnEachTeam);
 
   const handleToggleReady = () => {
     if (!hasChosenRole) return;
@@ -400,18 +476,59 @@ export function Lobby() {
     setAppPhase('map_vote');
     startGame();
   };
+  const handlePayWager = async () => {
+    if (!currentLobbyId || !playerId) return;
+
+    playButtonClick();
+    setLobbyError(null);
+    setWagerPaymentError(null);
+    setIsPayingWager(true);
+    try {
+      const payerWalletAddress = isWalletConnected && walletAddress
+        ? walletAddress
+        : await connectWallet();
+      if (!payerWalletAddress) {
+        throw new Error('Connect a wallet before paying');
+      }
+
+      const intent = await createWagerPaymentIntent({
+        lobbyId: currentLobbyId,
+        lobbyPlayerId: playerId,
+        walletAddress: payerWalletAddress,
+      });
+      const transactionPayload = await buildWagerPaymentTransaction(intent.intentId);
+      const signedTransactionBase64 = await signTransaction(await transactionFromBase64(transactionPayload.transactionBase64));
+      const submitted = await submitSignedWagerPaymentTransaction({
+        intentId: intent.intentId,
+        signedTransactionBase64,
+      });
+
+      if (submitted.status === 'failed') {
+        throw new Error(submitted.lastError || 'Wager payment failed');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to pay wager';
+      setWagerPaymentError(message);
+    } finally {
+      setIsPayingWager(false);
+    }
+  };
   const handleKick = (targetId: string) => kickPlayer(targetId);
 
   const allPlayersAssigned = combatPlayers.length > 0 && assignedCount === combatPlayers.length;
   const isProductionCustomLobby = import.meta.env.PROD
-    && currentMatchMode === 'custom';
+    && isCustomLobbyMode;
   const minimumParticipantsToStart = isBattleRoyal
     ? gameplayRules.minPlayers
     : isProductionCustomLobby
       ? gameplayRules.minPlayers
       : 1;
   const hasMinimumParticipants = combatPlayers.length >= minimumParticipantsToStart;
-  const canStart = isLobbyHost && hasMinimumParticipants && allPlayersAssigned && (combatPlayers.length === 1 || readyCount === combatPlayers.length);
+  const canStart = isLobbyHost
+    && hasMinimumParticipants
+    && allPlayersAssigned
+    && allRequiredWagersPaid
+    && (combatPlayers.length === 1 || readyCount === combatPlayers.length);
 
   const currentFaction = currentPlayer?.team ? factionFromCatalog(currentPlayer.team) : null;
   const currentRoleLabel = isObserving ? 'Observer' : currentFaction?.fullName || 'Unassigned';
@@ -663,6 +780,34 @@ export function Lobby() {
           background: 'linear-gradient(to top, rgb(var(--color-strike-page-top) / 0.95), rgb(var(--color-strike-page-top) / 0.6), transparent)',
         }}
       >
+        {wagerEnabled && (
+          <div className="lobby-wager-strip">
+            <div className="lobby-wager-copy">
+              <span className="lobby-wager-kicker">Wager</span>
+              <span className="lobby-wager-amount">{formatLamportsAsSol(lobbyWager.coverChargeLamports)}</span>
+              <span className="lobby-wager-paid">{paidWagerCount}/{wagerCombatHumanCount} paid</span>
+            </div>
+            {currentPlayerMustPayWager && (
+              <button
+                type="button"
+                onClick={handlePayWager}
+                disabled={!canPayWager}
+                className={`lobby-wager-pay${hasPaidWager ? ' is-paid' : ''}`}
+              >
+                {hasPaidWager
+                  ? 'Paid'
+                  : hasPendingWagerPayment
+                    ? 'Verifying'
+                    : isPayingWager
+                      ? 'Paying...'
+                      : 'Pay Entry'}
+              </button>
+            )}
+            {wagerPaymentError && (
+              <span className="lobby-wager-error">{wagerPaymentError}</span>
+            )}
+          </div>
+        )}
         {lobbyError && (
           <div className="lobby-error mx-auto mb-2 max-w-xl rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-center text-sm text-red-200">
             {lobbyError}
@@ -725,6 +870,14 @@ export function Lobby() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l7 4v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V7l7-4z" />
                       </svg>
                       Awaiting Teams
+                    </>
+                  ) : !allRequiredWagersPaid ? (
+                    <>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-2.21 0-4 1.12-4 2.5S9.79 13 12 13s4-1.12 4-2.5S14.21 8 12 8z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10.5v4C8 15.88 9.79 17 12 17s4-1.12 4-2.5v-4M6 12.5v4C6 18.43 8.69 20 12 20s6-1.57 6-3.5v-4" />
+                      </svg>
+                      Awaiting Entry
                     </>
                   ) : !canStart ? (
                     <>

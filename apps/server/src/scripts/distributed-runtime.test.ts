@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import type { IncomingMessage } from 'node:http';
 import { PassThrough } from 'node:stream';
 import {
+  DEFAULT_COLYSEUS_WEBSOCKET_MAX_PAYLOAD_BYTES,
   getColyseusRuntimeConfig,
   selectLeastLoadedColyseusProcess,
   shouldCreateRoomOnLocalColyseusProcess,
@@ -207,6 +208,16 @@ function runConfigTests(): void {
   assert.equal(local.redisUrl, null);
   assert.equal(local.routingStrategy, 'direct');
   assert.equal(local.roomCreateStrategy, 'least_loaded');
+  assert.equal(local.webSocketMaxPayloadBytes, DEFAULT_COLYSEUS_WEBSOCKET_MAX_PAYLOAD_BYTES);
+  assert.ok(
+    local.webSocketMaxPayloadBytes > 4 * 1024,
+    'movement packets with client prediction snapshots must fit above Colyseus ws-transport default'
+  );
+
+  const customPayloadLimit = getColyseusRuntimeConfig({
+    COLYSEUS_WEBSOCKET_MAX_PAYLOAD_BYTES: '32768',
+  });
+  assert.equal(customPayloadLimit.webSocketMaxPayloadBytes, 32_768);
 
   const redisBackedDev = getColyseusRuntimeConfig({
     COLYSEUS_REDIS_URL: 'redis://localhost:6379',

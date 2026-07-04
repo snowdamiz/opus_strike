@@ -1,4 +1,3 @@
-import type { Room } from 'colyseus.js';
 import {
   DEFAULT_GAMEPLAY_MODE,
   DEFAULT_MATCH_PERSPECTIVE,
@@ -48,6 +47,7 @@ import { setupPollingSync } from './gamePollingSync';
 import { measureNetworkMessage } from './networkMessageMetrics';
 import { loggers } from '../utils/logger';
 import { useChatStore } from '../store/chatStore';
+import type { GameMessageBus } from './gameMessageBus';
 
 type MutableRef<T> = { current: T };
 type SchemaPlayerCollection = {
@@ -71,9 +71,9 @@ interface PendingPlayerReportRequest {
   timeoutId: number;
 }
 
-interface SetupGameListenersOptions {
+interface SetupGameListenersOptions<TRoom extends GameMessageBus> {
   playerName: string;
-  gameRoomRef: MutableRef<Room | null>;
+  gameRoomRef: MutableRef<TRoom | null>;
   isJoiningGameRef: MutableRef<boolean>;
   voiceTokenRequestsRef: MutableRef<Map<string, PendingVoiceTokenRequest>>;
   playerReportRequestsRef: MutableRef<Map<string, PendingPlayerReportRequest>>;
@@ -141,8 +141,8 @@ interface StreamerObserverJoinedMessage {
 
 const STREAMER_MAP_TRANSITION_LEAD_MS = 360;
 
-export function setupGameRoomListeners(
-  room: Room,
+export function setupGameRoomListeners<TRoom extends GameMessageBus>(
+  room: TRoom,
   {
     playerName,
     gameRoomRef,
@@ -152,7 +152,7 @@ export function setupGameRoomListeners(
     rejectPendingVoiceTokenRequests,
     rejectPendingPlayerReportRequests,
     setMatchStartGateKey,
-  }: SetupGameListenersOptions
+  }: SetupGameListenersOptions<TRoom>
 ): void {
   const {
     setConnected,
@@ -262,7 +262,7 @@ export function setupGameRoomListeners(
   setLocalPlayer(createDefaultLocalPlayer(sessionId, playerName));
   useGameStore.getState().cleanupGhostPlayers();
 
-  const playersMap = room.state.players as SchemaPlayerCollection | undefined;
+  const playersMap = room.state?.players as SchemaPlayerCollection | undefined;
   if (playersMap && typeof playersMap.onAdd === 'function' && typeof playersMap.onRemove === 'function') {
     playersMap.onAdd((schemaPlayer, id) => {
       const schemaPlayerWithChange = schemaPlayer as SchemaPlayerWithChange;
@@ -285,7 +285,7 @@ export function setupGameRoomListeners(
   }
 
   const enableFallbackPolling = import.meta.env.DEV && import.meta.env.VITE_ENABLE_SCHEMA_POLLING === '1';
-  const syncInterval = enableFallbackPolling
+  const syncInterval = enableFallbackPolling && room.state
     ? setupPollingSync(room, { setGamePhase })
     : null;
 
@@ -515,11 +515,11 @@ export function setupGameRoomListeners(
     loggers.network.error('developer command error:', data.message);
   });
 
-  room.onError((code, message) => {
+  room.onError?.((code, message) => {
     loggers.network.error('room error:', code, message);
   });
 
-  room.onLeave((code) => {
+  room.onLeave?.((code) => {
     loggers.network.debug('left room', code);
     if (syncInterval) clearInterval(syncInterval);
     rejectPendingVoiceTokenRequests('game room left before voice token response');

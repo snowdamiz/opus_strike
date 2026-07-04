@@ -30,6 +30,7 @@ import {
   type MatchPerspective,
   type MatchPerspectiveSettingMode,
   type PartyLaunchPayload,
+  type PartyLaunchWagerOptions,
   type PartyMode,
   type PartyStateSnapshot,
   type Team,
@@ -83,6 +84,7 @@ export type { RankedTokenHoldStatus } from './networkApi';
 
 type StartPracticeGameOptions = { mapSeed?: number; tutorial?: boolean; targetPractice?: boolean; heroId?: HeroId; matchPerspective?: MatchPerspective };
 type EnsurePartyOptions = { selectedMode?: PartyMode; gameplayMode?: GameplayMode; selectedSkinId?: HeroSkinId };
+type StartPartyOptions = { wager?: PartyLaunchWagerOptions };
 type PartyLaunchJoinOptions = { preservePartyRoom?: Room | null };
 const TUTORIAL_HERO_ID: HeroId = 'blaze';
 
@@ -133,7 +135,7 @@ interface NetworkContextType {
   setPartyPerspective: (modeKey: MatchPerspectiveSettingMode, perspective: MatchPerspective) => void;
   addPartyBot: (options?: { difficulty?: BotDifficulty; displayName?: string; heroId?: HeroId }) => void;
   kickPartyMember: (userId: string) => void;
-  startParty: () => void;
+  startParty: (options?: StartPartyOptions) => void;
   setLobbyReady: (ready: boolean) => void;
   setLobbyTeam: (team: string) => void;
   setLobbyObserver: (observer?: boolean) => void;
@@ -744,6 +746,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       if (launch.selectedSkinId) {
         joinOptions.selectedSkinId = launch.selectedSkinId;
       }
+      if (launch.wager) {
+        joinOptions.wager = launch.wager;
+      }
       joinOptions.matchPerspective = launch.matchPerspective;
 
       lobbyRoomRef.current = await client.joinById(launch.lobbyId, joinOptions);
@@ -774,7 +779,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         gameplayMode: launch.gameplayMode,
         matchPerspective: launch.matchPerspective,
       });
-      setAppPhase(launch.matchMode === 'custom' ? 'in_lobby' : 'matchmaking');
+      setAppPhase(launch.matchMode === 'quick_play' || launch.matchMode === 'ranked' ? 'matchmaking' : 'in_lobby');
       setConnected(true);
       setLoading(false);
 
@@ -971,8 +976,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     partyRoomRef.current?.send('kickMember', { userId });
   }, []);
 
-  const startParty = useCallback(() => {
-    partyRoomRef.current?.send('start');
+  const startParty = useCallback((options: StartPartyOptions = {}) => {
+    partyRoomRef.current?.send('start', options);
   }, []);
 
   const leaveLobby = useCallback(() => {

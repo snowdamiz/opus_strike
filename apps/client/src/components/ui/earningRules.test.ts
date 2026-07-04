@@ -34,7 +34,11 @@ function createEconomy(overrides: RewardEconomyOverrides = {}): RewardEconomy {
     },
     wagers: {
       enabled: true,
-      platformFeeBps: 500,
+      winnerPoolBps: 9000,
+      burnBps: 500,
+      treasuryBps: 500,
+      burnWallet: '1nc1nerator11111111111111111111111111111111',
+      treasuryWallet: 'Treasury1111111111111111111111111111111111',
       updatedByUserId: null,
       updatedAt: null,
     },
@@ -128,7 +132,7 @@ assert.deepEqual(
     '15K UNITS capture, 5K UNITS return',
     'Hold 2.5M UNITS',
     '2% roll, 0.2 SOL each winner',
-    'Winners split pot',
+    '90% winners, 5% burn, 5% treasury',
   ],
   'token payout values should be compact and human-readable',
 );

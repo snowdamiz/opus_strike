@@ -1,4 +1,3 @@
-import type { Room } from 'colyseus.js';
 import {
   DEFAULT_VOXEL_MAP_SIZE_ID,
   isGameplayMode,
@@ -13,9 +12,23 @@ import { prebuildPreparedMapGeometryDeferred } from '../utils/mapWarmup/deferred
 import { requestMatchMapManifest } from '../utils/mapWarmup/mapManifestLoader';
 import { normalizeGamePhase } from './gamePhase';
 import type { GameStoreActions } from './gameMessageHandlers';
+import type { GameMessageBus } from './gameMessageBus';
+
+type PollableGameMessageBus = GameMessageBus & {
+  state?: {
+    phase?: unknown;
+    mapSeed?: unknown;
+    mapThemeId?: unknown;
+    mapSize?: unknown;
+    mapProfileId?: unknown;
+    pregeneratedMapId?: unknown;
+    mapArtifactId?: unknown;
+    gameplayMode?: unknown;
+  };
+};
 
 export function setupPollingSync(
-  room: Room,
+  room: PollableGameMessageBus,
   actions: Pick<GameStoreActions, 'setGamePhase'>
 ): ReturnType<typeof setInterval> {
   const FALLBACK_POLL_INTERVAL_MS = 250;
@@ -51,20 +64,21 @@ export function setupPollingSync(
         || nextMapArtifactId !== store.mapArtifactId
       )
     ) {
-      store.setMapSeed(room.state.mapSeed);
+      const mapSeed = room.state.mapSeed;
+      store.setMapSeed(mapSeed);
       store.setMapThemeId(nextMapThemeId);
       store.setMapSize(nextMapSize);
       store.setMapProfileId(nextMapProfileId);
       store.setPregeneratedMapIdentity(nextPregeneratedMapId, nextMapArtifactId);
       void requestMatchMapManifest({
-        seed: room.state.mapSeed,
+        seed: mapSeed,
         themeId: nextMapThemeId,
         mapSize: nextMapSize,
         mapProfileId: nextMapProfileId,
         pregeneratedMapId: nextPregeneratedMapId,
       })
         .then(({ manifest }) => {
-          const preparedMap = seedMapPrepCacheFromManifest(room.state.mapSeed, manifest, 'match', nextPregeneratedMapId);
+          const preparedMap = seedMapPrepCacheFromManifest(mapSeed, manifest, 'match', nextPregeneratedMapId);
           prebuildPreparedMapGeometryDeferred(preparedMap, { frameBudgetMs: 2, label: 'fallback-poll' });
         })
         .catch((error) => {
@@ -73,7 +87,7 @@ export function setupPollingSync(
     }
 
     if (room.state.phase !== store.gamePhase) {
-      actions.setGamePhase(normalizeGamePhase(room.state.phase, store.gamePhase));
+      actions.setGamePhase(normalizeGamePhase(String(room.state.phase), store.gamePhase));
     }
     if (isGameplayMode(room.state.gameplayMode) && room.state.gameplayMode !== store.gameplayMode) {
       useGameStore.setState({ gameplayMode: room.state.gameplayMode });
