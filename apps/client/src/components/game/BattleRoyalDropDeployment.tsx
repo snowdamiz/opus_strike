@@ -5,6 +5,7 @@ import {
   MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
   type BattleRoyalDropPlayerSnapshot,
   type BattleRoyalDropSnapshot,
+  type Player,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import {
@@ -20,13 +21,12 @@ import {
 
 const SHIP_SCALE = 1.38;
 const POD_SCALE = 1.05;
-const POD_POSITION_SMOOTHING = 24;
-const POD_REMOTE_POSITION_SMOOTHING = 32;
 const POD_ROTATION_SMOOTHING = 18;
 const POD_VELOCITY_SMOOTHING = 14;
 const POD_SNAP_DISTANCE = 80;
 const POD_SNAP_DISTANCE_SQ = POD_SNAP_DISTANCE * POD_SNAP_DISTANCE;
-const POD_MODEL_FORWARD = new THREE.Vector3(0, 1, 0);
+const POD_DIRECTION_MIN_SPEED_SQ = 0.01;
+const POD_HEADING_MIN_SPEED_SQ = 0.25;
 const POD_SNAPSHOT_EXTRAPOLATION_CAP_MS = 10_000;
 const SHIP_WINDOW_Z_OFFSETS = [3.8, 2.65, 1.5, 0.35, -0.8, -1.95, -3.1] as const;
 const SHIP_ENGINE_X_OFFSETS = [-2.25, 0, 2.25] as const;
@@ -352,12 +352,14 @@ const DropPodVisual = memo(function DropPodVisual({
   const groupRef = useRef<THREE.Group>(null);
   const targetRef = useRef(new THREE.Vector3());
   const targetVelocityRef = useRef(new THREE.Vector3(snapshot.velocity.x, snapshot.velocity.y, snapshot.velocity.z));
-  const previousTargetRef = useRef(new THREE.Vector3(snapshot.position.x, snapshot.position.y, snapshot.position.z));
-  const hasPreviousTargetRef = useRef(false);
   const velocityRef = useRef(new THREE.Vector3());
   const sampledRemoteRef = useRef<SampledRemoteTransform>(createSampledRemoteTransform());
   const initializedRef = useRef(false);
   const directionRef = useRef(new THREE.Vector3(0, -1, 0));
+  const headingRef = useRef(new THREE.Vector3(0, 0, -1));
+  const basisXRef = useRef(new THREE.Vector3(1, 0, 0));
+  const basisZRef = useRef(new THREE.Vector3(0, 0, 1));
+  const basisMatrixRef = useRef(new THREE.Matrix4());
   const quaternionRef = useRef(new THREE.Quaternion());
 
   useFrame((_, delta) => {
@@ -374,19 +376,12 @@ const DropPodVisual = memo(function DropPodVisual({
         ? targetRef.current.set(visualPosition.x, visualPosition.y, visualPosition.z)
         : writeExtrapolatedDropPodSnapshotPosition(snapshot, snapshotServerTime, nowMs, targetRef.current);
 
-    if (hasSampledRemote) {
-      targetVelocityRef.current.set(
-        sampledRemote.velocity.x,
-        sampledRemote.velocity.y,
-        sampledRemote.velocity.z
-      );
-    } else if (hasPreviousTargetRef.current && delta > 0.0001) {
-      targetVelocityRef.current.copy(target).sub(previousTargetRef.current).multiplyScalar(1 / delta);
-    } else {
-      targetVelocityRef.current.set(snapshot.velocity.x, snapshot.velocity.y, snapshot.velocity.z);
-    }
-    previousTargetRef.current.copy(target);
-    hasPreviousTargetRef.current = true;
+    writeDropPodVisualVelocity({
+      snapshot,
+      sampledRemote: hasSampledRemote ? sampledRemote : null,
+      localPlayer: isLocal ? useGameStore.getState().localPlayer : null,
+      target: targetVelocityRef.current,
+    });
 
     const velocitySmoothing = 1 - Math.exp(-POD_VELOCITY_SMOOTHING * delta);
     if (!initializedRef.current) {
@@ -400,17 +395,24 @@ const DropPodVisual = memo(function DropPodVisual({
     if (velocityRef.current.lengthSq() <= 0.01) {
       velocityRef.current.set(0, -1, 0);
     }
-    directionRef.current.copy(velocityRef.current).normalize();
-    quaternionRef.current.setFromUnitVectors(POD_MODEL_FORWARD, directionRef.current);
+    writeDropPodVisualQuaternion({
+      velocity: velocityRef.current,
+      direction: directionRef.current,
+      heading: headingRef.current,
+      basisX: basisXRef.current,
+      basisZ: basisZRef.current,
+      basisMatrix: basisMatrixRef.current,
+      target: quaternionRef.current,
+    });
 
     if (!initializedRef.current || group.position.distanceToSquared(target) > POD_SNAP_DISTANCE_SQ) {
       group.position.copy(target);
+      group.quaternion.copy(quaternionRef.current);
       initializedRef.current = true;
     } else {
-      const smoothingRate = hasSampledRemote ? POD_REMOTE_POSITION_SMOOTHING : POD_POSITION_SMOOTHING;
-      group.position.lerp(target, 1 - Math.exp(-smoothingRate * delta));
+      group.position.copy(target);
+      group.quaternion.slerp(quaternionRef.current, 1 - Math.exp(-POD_ROTATION_SMOOTHING * delta));
     }
-    group.quaternion.slerp(quaternionRef.current, 1 - Math.exp(-POD_ROTATION_SMOOTHING * delta));
   });
 
   return (
@@ -511,6 +513,67 @@ const DropPodVisual = memo(function DropPodVisual({
     </group>
   );
 });
+
+function writeDropPodVisualVelocity(input: {
+  snapshot: BattleRoyalDropPlayerSnapshot;
+  sampledRemote: SampledRemoteTransform | null;
+  localPlayer: Player | null;
+  target: THREE.Vector3;
+}): THREE.Vector3 {
+  if (input.sampledRemote) {
+    return input.target.set(
+      input.sampledRemote.velocity.x,
+      input.sampledRemote.velocity.y,
+      input.sampledRemote.velocity.z
+    );
+  }
+
+  if (input.localPlayer?.id === input.snapshot.playerId && input.localPlayer.state === 'dropping') {
+    return input.target.set(
+      input.localPlayer.velocity.x,
+      input.localPlayer.velocity.y,
+      input.localPlayer.velocity.z
+    );
+  }
+
+  return input.target.set(
+    input.snapshot.velocity.x,
+    input.snapshot.velocity.y,
+    input.snapshot.velocity.z
+  );
+}
+
+function writeDropPodVisualQuaternion(input: {
+  velocity: THREE.Vector3;
+  direction: THREE.Vector3;
+  heading: THREE.Vector3;
+  basisX: THREE.Vector3;
+  basisZ: THREE.Vector3;
+  basisMatrix: THREE.Matrix4;
+  target: THREE.Quaternion;
+}): THREE.Quaternion {
+  if (input.velocity.lengthSq() > POD_DIRECTION_MIN_SPEED_SQ) {
+    input.direction.copy(input.velocity).normalize();
+  }
+
+  const horizontalSpeedSq = input.velocity.x * input.velocity.x + input.velocity.z * input.velocity.z;
+  if (horizontalSpeedSq > POD_HEADING_MIN_SPEED_SQ) {
+    input.heading.set(input.velocity.x, 0, input.velocity.z).normalize();
+  }
+
+  input.basisZ.copy(input.heading).addScaledVector(input.direction, -input.heading.dot(input.direction));
+  if (input.basisZ.lengthSq() <= 0.0001) {
+    input.basisZ.set(0, 0, -1).addScaledVector(input.direction, input.direction.z);
+  }
+  if (input.basisZ.lengthSq() <= 0.0001) {
+    input.basisZ.set(1, 0, 0).addScaledVector(input.direction, -input.direction.x);
+  }
+  input.basisZ.normalize();
+  input.basisX.crossVectors(input.direction, input.basisZ).normalize();
+  input.basisZ.crossVectors(input.basisX, input.direction).normalize();
+  input.basisMatrix.makeBasis(input.basisX, input.direction, input.basisZ);
+  return input.target.setFromRotationMatrix(input.basisMatrix);
+}
 
 function writeSampledDropPodPosition(
   sampledRemote: SampledRemoteTransform,

@@ -69,6 +69,7 @@ function createRoomWithPlacement(): any {
   room.matchMode = 'ranked';
   room.matchPerspective = 'third_person';
   room.state = {
+    phase: 'playing',
     roundStartTime: 1000,
     redTeam: { score: 0 },
     blueTeam: { score: 0 },
@@ -153,6 +154,21 @@ function createRoomWithPlacement(): any {
 
   room.sendBattleRoyalTeamEliminatedSummary('br_01', 2100);
   assert.equal(room.sent.length, 2);
+}
+
+{
+  const room = createRoomWithPlacement();
+  room.sendBattleRoyalTeamEliminatedSummary('br_01', 2000);
+  room.sent = [];
+
+  room.sendBattleRoyalCompletedTeamSummaryToClient({ sessionId: 'reconnect' }, 'br_01', 2200);
+
+  assert.equal(room.sent.length, 1);
+  assert.equal(room.sent[0].sessionId, 'reconnect');
+  assert.equal(room.sent[0].type, 'gameEnd');
+  assert.equal(room.sent[0].payload.completionReason, 'team_eliminated');
+  assert.equal(room.sent[0].payload.completedTeam, 'br_01');
+  assert.equal(room.sent[0].payload.completedTeamPlacement, 2);
 }
 
 console.log('battle royal completion tests passed');

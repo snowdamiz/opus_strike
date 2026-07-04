@@ -310,7 +310,9 @@ advanceBattleRoyalDropState({
   getGroundY: flatGroundY,
   clampToPlayableMap: unclamped,
 });
-assert.equal(botOnlyState.players.get('bot-blue')?.status, 'dropping');
+const botDropPlayer = botOnlyState.players.get('bot-blue');
+assert.equal(botDropPlayer?.status, 'dropping');
+assert.equal(Math.hypot(botDropPlayer?.velocity.x ?? 0, botDropPlayer?.velocity.z ?? 0) > 1, true);
 
 const removalState = createBattleRoyalDropState(
   manifest,

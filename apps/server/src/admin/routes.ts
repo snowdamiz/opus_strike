@@ -93,6 +93,8 @@ interface AdminRouterOptions {
 }
 
 const ADMIN_RANK_USER_LIMIT_MAX = 100;
+const ADMIN_REWARD_PAYOUT_LIMIT_DEFAULT = 50;
+const ADMIN_REWARD_PAYOUT_LIMIT_MAX = 100;
 const ADMIN_MANUAL_RATING_MAX = 5000;
 const ADMIN_POOL_PROFILE_IDS = ['ctf_arena', 'tdm_arena', 'battle_royal_large'] as const satisfies readonly MapProfileId[];
 const ADMIN_POOL_VISIBILITIES = ['public', 'matchmaking-only', 'admin-only'] as const satisfies readonly PregeneratedMapVisibility[];
@@ -234,6 +236,16 @@ function readAdminRankUserLimit(value: unknown): number {
 }
 
 function readAdminRankUserPage(value: unknown): number {
+  const page = readRequestInteger(value) ?? 1;
+  return Math.max(1, page);
+}
+
+function readAdminRewardPayoutLimit(value: unknown): number {
+  const limit = readRequestInteger(value) ?? ADMIN_REWARD_PAYOUT_LIMIT_DEFAULT;
+  return Math.max(1, Math.min(ADMIN_REWARD_PAYOUT_LIMIT_MAX, limit));
+}
+
+function readAdminRewardPayoutPage(value: unknown): number {
   const page = readRequestInteger(value) ?? 1;
   return Math.max(1, page);
 }
@@ -838,6 +850,21 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         error: error instanceof Error ? error.message : String(error),
       });
       res.status(500).json({ error: 'Failed to collect mission overview' });
+    }
+  });
+
+  router.get('/api/reward-economy/ranked-br-payouts', ensureAdmin, async (req, res) => {
+    noStore(res);
+    try {
+      res.json(await playerRewardService.listAdminRankedBrCombatRewardPayouts({
+        page: readAdminRewardPayoutPage(req.query.page),
+        limit: readAdminRewardPayoutLimit(req.query.limit),
+      }));
+    } catch (error) {
+      loggers.room.error('Failed to collect ranked BR reward payouts', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: 'Failed to collect ranked BR reward payouts' });
     }
   });
 

@@ -1,4 +1,10 @@
-import type { PlayerRewardKind, PlayerRewardSettings, PlayerRewardStatus, Prisma } from '@prisma/client';
+import type {
+  PlayerRewardKind,
+  PlayerRewardPayoutStatus,
+  PlayerRewardSettings,
+  PlayerRewardStatus,
+  Prisma,
+} from '@prisma/client';
 import type { MatchMode, RankedSeasonMode, Team } from '@voxel-strike/shared';
 import type { AntiCheatIntegrityGate } from '../anticheat';
 import prisma from '../db';
@@ -92,6 +98,68 @@ export interface PlayerRewardAutoPayoutResult {
   totalLamports: string;
 }
 
+export interface AdminRankedBrCombatRewardPayoutRow {
+  id: string;
+  userId: string;
+  userName: string;
+  userWalletAddress: string | null;
+  matchId: string | null;
+  roomId: string | null;
+  lobbyId: string | null;
+  matchMode: string | null;
+  gameplayMode: string | null;
+  playerSessionId: string | null;
+  rewardStatus: PlayerRewardStatus;
+  amountLamports: string;
+  damageRewardLamports: string;
+  eliminationRewardLamports: string;
+  cappedLamports: string;
+  rewardableDamageHp: number;
+  humanRewardableDamageHp: number;
+  botRewardableDamageHp: number;
+  eliminations: number;
+  humanEliminations: number;
+  botEliminations: number;
+  formulaVersion: string | null;
+  settingsVersion: number | null;
+  payout: {
+    id: string;
+    amountLamports: string;
+    status: PlayerRewardPayoutStatus;
+    signature: string | null;
+    walletAddress: string;
+    priceSource: string | null;
+    solUsdPriceMicroUsd: string | null;
+    priceObservedAt: string | null;
+    submittedAt: string | null;
+    confirmedAt: string | null;
+    failedAt: string | null;
+    lastError: string | null;
+  } | null;
+  createdAt: string;
+  paidAt: string | null;
+}
+
+export interface AdminRankedBrCombatRewardPayoutsResponse {
+  rewards: AdminRankedBrCombatRewardPayoutRow[];
+  totals: {
+    count: number;
+    amountLamports: string;
+    byRewardStatus: Partial<Record<PlayerRewardStatus, {
+      count: number;
+      amountLamports: string;
+    }>>;
+  };
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasPrevious: boolean;
+    hasNext: boolean;
+  };
+}
+
 export interface PendingPlayerRewardPayoutGroup {
   userId: string;
   walletAddress: string;
@@ -162,6 +230,7 @@ const TOKEN_DRIP_PAYOUT_REWARD_KINDS = [
   'daily_mission',
 ] as const satisfies readonly PlayerRewardKind[];
 const RANKED_BR_COMBAT_PAYOUT_REWARD_KIND = 'ranked_br_combat_bounty' as const satisfies PlayerRewardKind;
+const ADMIN_REWARD_PAYOUT_LIMIT_MAX = 100;
 
 function sumLamports(values: Iterable<bigint>): bigint {
   let total = 0n;
@@ -467,6 +536,116 @@ function serializeReward(reward: {
     reason: reward.reason,
     matchId: reward.matchId,
     metadata: reward.metadata,
+    createdAt: reward.createdAt.toISOString(),
+    paidAt: reward.paidAt?.toISOString() ?? null,
+  };
+}
+
+function jsonRecord(value: Prisma.JsonValue | null): Record<string, Prisma.JsonValue> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, Prisma.JsonValue>;
+}
+
+function readJsonString(
+  metadata: Record<string, Prisma.JsonValue>,
+  key: string,
+  fallback: string | null = null
+): string | null {
+  const value = metadata[key];
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'boolean') return String(value);
+  return fallback;
+}
+
+function readJsonNumber(
+  metadata: Record<string, Prisma.JsonValue>,
+  key: string,
+  fallback: number | null = null
+): number | null {
+  const value = metadata[key];
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function serializeAdminRankedBrCombatRewardPayout(reward: Prisma.PlayerRewardGetPayload<{
+  include: {
+    user: { select: { id: true; name: true; walletAddress: true } };
+    match: {
+      select: {
+        id: true;
+        roomId: true;
+        lobbyId: true;
+        matchMode: true;
+        gameplayMode: true;
+      };
+    };
+    payout: {
+      select: {
+        id: true;
+        amountLamports: true;
+        status: true;
+        signature: true;
+        walletAddress: true;
+        priceSource: true;
+        solUsdPriceMicroUsd: true;
+        priceObservedAt: true;
+        submittedAt: true;
+        confirmedAt: true;
+        failedAt: true;
+        lastError: true;
+      };
+    };
+  };
+}>): AdminRankedBrCombatRewardPayoutRow {
+  const metadata = jsonRecord(reward.metadata);
+  const humanRewardableDamageHp = readJsonNumber(metadata, 'humanRewardableDamageHp', 0) ?? 0;
+  const botRewardableDamageHp = readJsonNumber(metadata, 'botRewardableDamageHp', 0) ?? 0;
+  const humanEliminations = readJsonNumber(metadata, 'humanKills', 0) ?? 0;
+  const botEliminations = readJsonNumber(metadata, 'botKills', 0) ?? 0;
+
+  return {
+    id: reward.id,
+    userId: reward.user.id,
+    userName: reward.user.name,
+    userWalletAddress: reward.user.walletAddress,
+    matchId: reward.matchId,
+    roomId: reward.match?.roomId ?? null,
+    lobbyId: reward.match?.lobbyId ?? null,
+    matchMode: reward.match?.matchMode ?? null,
+    gameplayMode: reward.match?.gameplayMode ?? null,
+    playerSessionId: reward.playerSessionId,
+    rewardStatus: reward.status,
+    amountLamports: reward.amountLamports.toString(),
+    damageRewardLamports: readJsonString(metadata, 'damageRewardLamports', '0') ?? '0',
+    eliminationRewardLamports: readJsonString(metadata, 'killRewardLamports', '0') ?? '0',
+    cappedLamports: readJsonString(metadata, 'cappedLamports', '0') ?? '0',
+    rewardableDamageHp: humanRewardableDamageHp + botRewardableDamageHp,
+    humanRewardableDamageHp,
+    botRewardableDamageHp,
+    eliminations: humanEliminations + botEliminations,
+    humanEliminations,
+    botEliminations,
+    formulaVersion: readJsonString(metadata, 'formulaVersion'),
+    settingsVersion: readJsonNumber(metadata, 'settingsVersion'),
+    payout: reward.payout ? {
+      id: reward.payout.id,
+      amountLamports: reward.payout.amountLamports.toString(),
+      status: reward.payout.status,
+      signature: reward.payout.signature,
+      walletAddress: reward.payout.walletAddress,
+      priceSource: reward.payout.priceSource,
+      solUsdPriceMicroUsd: reward.payout.solUsdPriceMicroUsd?.toString() ?? null,
+      priceObservedAt: reward.payout.priceObservedAt?.toISOString() ?? null,
+      submittedAt: reward.payout.submittedAt?.toISOString() ?? null,
+      confirmedAt: reward.payout.confirmedAt?.toISOString() ?? null,
+      failedAt: reward.payout.failedAt?.toISOString() ?? null,
+      lastError: reward.payout.lastError,
+    } : null,
     createdAt: reward.createdAt.toISOString(),
     paidAt: reward.paidAt?.toISOString() ?? null,
   };
@@ -1143,6 +1322,95 @@ export class PlayerRewardService {
         failedAt: payout.failedAt?.toISOString() ?? null,
         lastError: payout.lastError,
       })),
+    };
+  }
+
+  async listAdminRankedBrCombatRewardPayouts(input: {
+    page?: number;
+    limit?: number;
+  } = {}): Promise<AdminRankedBrCombatRewardPayoutsResponse> {
+    const page = Math.max(1, Math.floor(input.page ?? 1));
+    const limit = Math.max(1, Math.min(
+      ADMIN_REWARD_PAYOUT_LIMIT_MAX,
+      Math.floor(input.limit ?? 50)
+    ));
+    const where = { kind: RANKED_BR_COMBAT_PAYOUT_REWARD_KIND };
+    const [total, amountTotal, statusTotals, rewards] = await Promise.all([
+      prisma.playerReward.count({ where }),
+      prisma.playerReward.aggregate({
+        where,
+        _sum: { amountLamports: true },
+      }),
+      prisma.playerReward.groupBy({
+        by: ['status'],
+        where,
+        _sum: { amountLamports: true },
+        _count: { _all: true },
+      }),
+      prisma.playerReward.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              walletAddress: true,
+            },
+          },
+          match: {
+            select: {
+              id: true,
+              roomId: true,
+              lobbyId: true,
+              matchMode: true,
+              gameplayMode: true,
+            },
+          },
+          payout: {
+            select: {
+              id: true,
+              amountLamports: true,
+              status: true,
+              signature: true,
+              walletAddress: true,
+              priceSource: true,
+              solUsdPriceMicroUsd: true,
+              priceObservedAt: true,
+              submittedAt: true,
+              confirmedAt: true,
+              failedAt: true,
+              lastError: true,
+            },
+          },
+        },
+      }),
+    ]);
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    return {
+      rewards: rewards.map(serializeAdminRankedBrCombatRewardPayout),
+      totals: {
+        count: total,
+        amountLamports: (amountTotal._sum.amountLamports ?? 0n).toString(),
+        byRewardStatus: Object.fromEntries(statusTotals.map((row) => [
+          row.status,
+          {
+            count: row._count._all,
+            amountLamports: (row._sum.amountLamports ?? 0n).toString(),
+          },
+        ])),
+      },
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasPrevious: page > 1,
+        hasNext: page < totalPages,
+      },
     };
   }
 

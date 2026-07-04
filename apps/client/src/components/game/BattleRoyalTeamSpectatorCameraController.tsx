@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
+import type { Player } from '../../store/types';
 
 const CAMERA_DISTANCE = 6.4;
 const CAMERA_HEIGHT = 2.6;
@@ -9,6 +10,47 @@ const LOOK_HEIGHT = 1.15;
 const DOWNED_CAMERA_HEIGHT = 1.7;
 const DOWNED_LOOK_HEIGHT = 0.45;
 const POSITION_LERP = 0.16;
+
+export type BattleRoyalTeamSpectatorTarget = Pick<Player, 'id' | 'name' | 'team' | 'state'>;
+
+export function getBattleRoyalTeamSpectatorTargets<T extends BattleRoyalTeamSpectatorTarget>(
+  localPlayer: Pick<Player, 'id' | 'team'> | null | undefined,
+  players: Iterable<T>
+): T[] {
+  if (!localPlayer?.team) return [];
+
+  const targets: T[] = [];
+  for (const player of players) {
+    if (
+      player.team === localPlayer.team
+      && player.id !== localPlayer.id
+      && (player.state === 'alive' || player.state === 'downed')
+    ) {
+      targets.push(player);
+    }
+  }
+  return targets.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function getNextBattleRoyalTeamSpectatorTargetId(
+  currentId: string | null,
+  targets: readonly BattleRoyalTeamSpectatorTarget[],
+  direction: 1 | -1
+): string | null {
+  if (targets.length === 0) return null;
+
+  const currentIndex = currentId
+    ? targets.findIndex((player) => player.id === currentId)
+    : -1;
+  if (currentIndex < 0) {
+    return direction > 0
+      ? targets[0]?.id ?? null
+      : targets[targets.length - 1]?.id ?? null;
+  }
+
+  const nextIndex = (currentIndex + direction + targets.length) % targets.length;
+  return targets[nextIndex]?.id ?? currentId;
+}
 
 function writeBehindOffset(lookYaw: number, downed: boolean, target: THREE.Vector3): THREE.Vector3 {
   return target.set(
@@ -19,7 +61,7 @@ function writeBehindOffset(lookYaw: number, downed: boolean, target: THREE.Vecto
 }
 
 export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled: boolean }) {
-  const { camera } = useThree();
+  const { camera, gl } = useThree();
   const localPlayer = useGameStore((state) => state.localPlayer);
   const players = useGameStore((state) => state.players);
   const [targetId, setTargetId] = useState<string | null>(null);
@@ -29,14 +71,7 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
   const behindOffsetRef = useRef(new THREE.Vector3());
 
   const teammateTargets = useMemo(() => {
-    if (!localPlayer?.team) return [];
-    return Array.from(players.values())
-      .filter((player) => (
-        player.team === localPlayer.team
-        && player.id !== localPlayer.id
-        && (player.state === 'alive' || player.state === 'downed')
-      ))
-      .sort((a, b) => a.name.localeCompare(b.name));
+    return getBattleRoyalTeamSpectatorTargets(localPlayer, players.values());
   }, [localPlayer?.id, localPlayer?.team, players]);
 
   const teammateTargetById = useMemo(() => {
@@ -58,16 +93,12 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
     setTargetId(teammateTargets[0]?.id ?? null);
   }, [enabled, targetId, teammateTargets]);
 
+  const cycleTarget = useCallback((direction: 1 | -1) => {
+    setTargetId((current) => getNextBattleRoyalTeamSpectatorTargetId(current, teammateTargets, direction));
+  }, [teammateTargets]);
+
   useEffect(() => {
     if (!enabled || teammateTargets.length <= 1) return undefined;
-
-    const cycleTarget = (direction: 1 | -1) => {
-      setTargetId((current) => {
-        const currentIndex = Math.max(0, teammateTargets.findIndex((player) => player.id === current));
-        const nextIndex = (currentIndex + direction + teammateTargets.length) % teammateTargets.length;
-        return teammateTargets[nextIndex]?.id ?? current;
-      });
-    };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.repeat) return;
@@ -82,7 +113,21 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [enabled, teammateTargets]);
+  }, [cycleTarget, enabled, teammateTargets.length]);
+
+  useEffect(() => {
+    if (!enabled || teammateTargets.length <= 1) return undefined;
+
+    const handleMouseDown = (event: MouseEvent) => {
+      if (event.button !== 0 || event.defaultPrevented) return;
+      event.preventDefault();
+      cycleTarget(1);
+    };
+
+    const canvas = gl.domElement;
+    canvas.addEventListener('mousedown', handleMouseDown);
+    return () => canvas.removeEventListener('mousedown', handleMouseDown);
+  }, [cycleTarget, enabled, gl, teammateTargets.length]);
 
   useFrame(() => {
     if (!enabled) return;

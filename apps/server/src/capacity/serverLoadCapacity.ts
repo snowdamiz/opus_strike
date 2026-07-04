@@ -227,9 +227,7 @@ export function createServerLoadCapacitySnapshot(
   const activePlayers = options.rooms.reduce((sum, room) => sum + getActiveHumanPlayers(room), 0);
   const reservedPlayers = options.rooms.reduce((sum, room) => sum + getReservedCapacityPlayers(room), 0);
   const liveEstimates = cappedEstimates.filter((estimate) => estimate.source === 'live');
-  const capacityPressure = liveEstimates.length > 0
-    ? Math.max(...liveEstimates.map((estimate) => estimate.capacityPressure))
-    : 0;
+  const capacityPressure = maxPlayers > 0 ? reservedPlayers / maxPlayers : 0;
   const source = liveEstimates.length > 0
     ? 'live'
     : cappedEstimates.some((estimate) => estimate.source === 'room_metrics')
