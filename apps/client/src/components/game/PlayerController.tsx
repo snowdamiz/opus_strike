@@ -15,6 +15,7 @@ import { useRef, useEffect, useCallback, useMemo, type MutableRefObject } from '
 import { useFrame, useThree, type RootState } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type ObserverFlightSpeed } from '../../store/gameStore';
+import { useSettingsStore } from '../../store/settingsStore';
 import { useCombatFeedbackStore } from '../../store/combatFeedbackStore';
 import {
   consumeLocalPlayerImpulses,
@@ -31,6 +32,8 @@ import {
 import { useInput } from '../../hooks/useInput';
 import { getPhysicsWorld, isPhysicsReady, raycast, usePhysics } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
+import { isGameConsoleOpen } from '../../store/gameConsoleState';
+import { mouseButtonToKeybindCode } from '../../utils/keybindings';
 import {
   playSharedBlazeAirstrikeSound,
   playSharedLoop,
@@ -304,7 +307,15 @@ const THIRD_PERSON_CROSSHAIR_AIM_RAYCAST_OPTIONS = {
   priority: 'visual',
   feature: 'third-person-crosshair-aim',
 } as const;
+const MAP_PING_RAYCAST_OPTIONS = {
+  priority: 'gameplay',
+  feature: 'map-ping',
+  includeNormal: true,
+} as const;
+const MAP_PING_RAYCAST_MAX_DISTANCE = 360;
+const MAP_PING_CLEAR_DISTANCE_SQ = 4.5 * 4.5;
 const thirdPersonAimPointScratch: MutableVec3 = { x: 0, y: 0, z: 0 };
+const mapPingRayDirectionScratch = new THREE.Vector3();
 // Reused scratch for confirmLocalMovementTransform. That function copies every
 // field out synchronously into a fresh state object and never retains the arg,
 // so a single mutable scratch is safe to reuse across both call sites per frame.
@@ -333,6 +344,34 @@ function resolveThirdPersonCameraCollision(
   const world = getPhysicsWorld();
   if (!world) return null;
   return raycast(world, origin, direction, maxDistance, THIRD_PERSON_CAMERA_RAYCAST_OPTIONS)?.distance ?? null;
+}
+
+function resolveMapPingAimPosition(camera: THREE.Camera): MutableVec3 | null {
+  if (!isPhysicsReady()) return null;
+  const world = getPhysicsWorld();
+  if (!world) return null;
+
+  camera.getWorldDirection(mapPingRayDirectionScratch).normalize();
+  const hit = raycast(
+    world,
+    camera.position,
+    mapPingRayDirectionScratch,
+    MAP_PING_RAYCAST_MAX_DISTANCE,
+    MAP_PING_RAYCAST_OPTIONS
+  );
+  return hit?.point ?? null;
+}
+
+function isNearActivePing(position: MutableVec3): boolean {
+  const store = useGameStore.getState();
+  const localPlayer = store.localPlayer;
+  if (!localPlayer) return false;
+  const ping = store.mapPings.get(localPlayer.id);
+  if (!ping || ping.expiresAt <= Date.now()) return false;
+
+  const dx = ping.position.x - position.x;
+  const dz = ping.position.z - position.z;
+  return dx * dx + dz * dz <= MAP_PING_CLEAR_DISTANCE_SQ;
 }
 
 export function resolveThirdPersonCrosshairAimPoint({
@@ -2146,7 +2185,8 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
     exitPointerLock,
   } = useInput({ gamepadEnabled: inputEnabled });
   usePhysics();
-  const { sendMovementCommands } = useNetwork();
+  const { sendMovementCommands, sendMapPing } = useNetwork();
+  const pingKeybinding = useSettingsStore(state => state.settings.keybindings.ping);
 
   // Audio hooks
   const {
@@ -2516,6 +2556,46 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
       return () => canvas.removeEventListener('click', handleClick);
     }
   }, [handleClick]);
+
+  useEffect(() => {
+    const consumePingEvent = (event: MouseEvent | KeyboardEvent): void => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
+
+    const handlePingAction = (event: MouseEvent | KeyboardEvent): void => {
+      if (!enabled || !inputEnabled || !isPointerLocked) return;
+      if (document.body.dataset.rebindingKeybind === 'true' || isGameConsoleOpen()) return;
+
+      const localPlayer = useGameStore.getState().localPlayer;
+      if (!localPlayer || localPlayer.state !== 'alive') return;
+
+      const position = resolveMapPingAimPosition(camera);
+      if (!position) return;
+
+      consumePingEvent(event);
+      sendMapPing(isNearActivePing(position) ? null : position);
+    };
+
+    const handleMouseDown = (event: MouseEvent) => {
+      if (mouseButtonToKeybindCode(event.button) !== pingKeybinding) return;
+      handlePingAction(event);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat || event.code !== pingKeybinding) return;
+      handlePingAction(event);
+    };
+
+    window.addEventListener('mousedown', handleMouseDown, true);
+    window.addEventListener('keydown', handleKeyDown, true);
+
+    return () => {
+      window.removeEventListener('mousedown', handleMouseDown, true);
+      window.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }, [camera, enabled, inputEnabled, isPointerLocked, pingKeybinding, sendMapPing]);
 
   // Cancel targeting on right-click or Escape
   useEffect(() => {

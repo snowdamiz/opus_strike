@@ -68,7 +68,6 @@ export interface LobbyWagerSnapshot {
   winnerPoolBps?: number;
   burnBps?: number;
   treasuryBps?: number;
-  burnWallet?: string;
   potLamports?: string;
   paidPlayerCount?: number;
 }

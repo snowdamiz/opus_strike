@@ -88,6 +88,14 @@ const reviewedLegacyFatalFindings = new Map([
     'apps/server/prisma/migrations/20260704120000_fixed_wager_split_burn/migration.sql:drop-table:DROP TABLE IF EXISTS "WagerEconomySettings";',
     'Legacy wager split migration already applied; SQL was restored to match Prisma checksum history and must not be replayed on migrated production databases.',
   ],
+  [
+    'apps/server/prisma/migrations/20260704150000_wager_game_token_conversion/migration.sql:alter-column-type:ALTER COLUMN "kind" TYPE "WagerSettlementTransferKind_new"',
+    'Legacy developer_fee wager transfer kind is converted to treasury_fee before recreating the enum; PostgreSQL requires an enum type rewrite to remove the retired value.',
+  ],
+  [
+    'apps/server/prisma/migrations/20260704150000_wager_game_token_conversion/migration.sql:drop-type:DROP TYPE "WagerSettlementTransferKind";',
+    'Legacy developer_fee wager transfer kind is converted to treasury_fee before recreating the enum; dropping the old enum type is part of the PostgreSQL enum-value removal rewrite.',
+  ],
 ]);
 
 function usage() {

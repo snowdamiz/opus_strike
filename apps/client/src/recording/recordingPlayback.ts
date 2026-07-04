@@ -219,10 +219,8 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
   let playing = false;
   let lastWallTime = 0;
   let disposed = false;
-  let resolveReady!: () => void;
-  const ready = new Promise<void>((resolve) => {
-    resolveReady = resolve;
-  });
+  let playbackReadyResolved = false;
+  let sceneReadyResolved = false;
 
   const playbackStore = useRecordingPlaybackStore.getState();
   playbackStore.setActive({
@@ -295,18 +293,31 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
     frameHandle = window.requestAnimationFrame(playFrame);
   };
 
-  window.__voxelRecording = {
-    ready,
+  let recordingControls: NonNullable<Window['__voxelRecording']>;
+  const resolveRecordingReady = () => {
+    if (!playbackReadyResolved || !sceneReadyResolved || recordingControls.isReady) return;
+    recordingControls.isReady = true;
+    useRecordingPlaybackStore.getState().setReady(true);
+  };
+
+  recordingControls = {
+    isReady: false,
     durationMs,
     fps: manifest.fps,
     stepTo,
     play,
     pause,
+    markSceneReady: () => {
+      if (disposed || sceneReadyResolved) return;
+      sceneReadyResolved = true;
+      resolveRecordingReady();
+    },
   };
+  window.__voxelRecording = recordingControls;
 
   await stepTo(0);
-  useRecordingPlaybackStore.getState().setReady(true);
-  resolveReady();
+  playbackReadyResolved = true;
+  resolveRecordingReady();
   if (options.autoplay) play();
 
   return () => {
@@ -314,7 +325,7 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
     pause();
     bus.leave();
     useRecordingPlaybackStore.getState().reset();
-    if (window.__voxelRecording?.ready === ready) {
+    if (window.__voxelRecording === recordingControls) {
       delete window.__voxelRecording;
     }
   };

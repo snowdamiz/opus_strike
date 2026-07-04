@@ -4,7 +4,7 @@ import { formatCompactTokenAmount } from '../../utils/tokenAmountFormat';
 export type EarningRule = {
   label: string;
   value: string;
-  emphasis?: 'sol-combat';
+  tooltip: string;
 };
 
 export type RewardEconomy = RewardEconomyResponse['economy'];
@@ -61,10 +61,14 @@ function getRankedBrSolCombatRules(rewards: RewardEconomy['playerRewards'] | und
   return [
     {
       label: 'Ranked BR SOL',
-      value: `Enemy damage: ${damage} SOL/HP; eliminations +${kill} SOL`,
-      emphasis: 'sol-combat',
+      value: 'Earn SOL from ranked BR combat',
+      tooltip: `Enemy damage currently earns ${damage} SOL/HP, and eliminations add ${kill} SOL before integrity checks.`,
     },
-    { label: 'SOL payouts', value: `Bots pay ${botMultiplier}; clean matches pay after ${minPayout}` },
+    {
+      label: 'SOL payouts',
+      value: 'Clean matches batch into payouts',
+      tooltip: `Official bots pay ${botMultiplier} of combat rewards. Clean matches pay once pending SOL reaches ${minPayout}.`,
+    },
   ];
 }
 
@@ -87,9 +91,21 @@ export function getEarningRules(tokenSymbol: string | null, economy: RewardEcono
     const flagReturn = formatCompactTokenAmount(rewards?.objectiveFlagReturnLamports, '5K');
 
     rules.push(
-      { label: 'Ranked match', value: `${tokenAmountLabel(rankedDrip, token)}, max ${maxDaily}/day` },
-      { label: 'Win + assist', value: `${tokenAmountLabel(win, token)} win, ${tokenAmountLabel(assist, token)} assist` },
-      { label: 'Flag bonus', value: `${tokenAmountLabel(capture, token)} capture, ${tokenAmountLabel(flagReturn, token)} return` },
+      {
+        label: 'Ranked match',
+        value: `${tokenAmountLabel(rankedDrip, token)}, max ${maxDaily}/day`,
+        tooltip: `Eligible ranked matches award ${tokenAmountLabel(rankedDrip, token)} up to ${maxDaily} times per day.`,
+      },
+      {
+        label: 'Win + assist',
+        value: `${tokenAmountLabel(win, token)} win, ${tokenAmountLabel(assist, token)} assist`,
+        tooltip: `Ranked wins award ${tokenAmountLabel(win, token)}; eligible assists award ${tokenAmountLabel(assist, token)}.`,
+      },
+      {
+        label: 'Flag bonus',
+        value: `${tokenAmountLabel(capture, token)} capture, ${tokenAmountLabel(flagReturn, token)} return`,
+        tooltip: `Objective bonuses award ${tokenAmountLabel(capture, token)} for captures and ${tokenAmountLabel(flagReturn, token)} for returns.`,
+      },
     );
   }
 
@@ -97,20 +113,34 @@ export function getEarningRules(tokenSymbol: string | null, economy: RewardEcono
 
   const rankedGateLabel = rankedEntryGateLabel(economy, token);
   if (rankedGateLabel) {
-    rules.push({ label: 'Play Ranked', value: rankedGateLabel });
+    rules.push({
+      label: 'Play Ranked',
+      value: rankedGateLabel,
+      tooltip: rankedGateLabel === 'Locked'
+        ? 'Ranked queue access is currently locked.'
+        : 'Ranked queue access requires holding the listed token amount.',
+    });
   }
 
   if (goldenRewardsEnabled) {
     const goldenChance = formatBpsShort(golden?.chanceBps, 200);
     const goldenReward = formatSolLamports(golden?.winnerRewardLamports, '200000000');
-    rules.push({ label: 'Golden map', value: `${goldenChance} roll, ${goldenReward} SOL each winner` });
+    rules.push({
+      label: 'Golden map',
+      value: `${goldenChance} roll, ${goldenReward} SOL each winner`,
+      tooltip: `Eligible matches can roll a golden map at ${goldenChance}; each winner receives ${goldenReward} SOL when it hits.`,
+    });
   }
 
   if (wagersEnabled) {
     const winnerSplit = formatBpsShort(wagers?.winnerPoolBps, 9000);
     const burnSplit = formatBpsShort(wagers?.burnBps, 500);
     const treasurySplit = formatBpsShort(wagers?.treasuryBps, 500);
-    rules.push({ label: 'Wager Games', value: `${winnerSplit} winners, ${burnSplit} burn, ${treasurySplit} treasury` });
+    rules.push({
+      label: 'Wager Games',
+      value: `${winnerSplit} winners, ${burnSplit} burn, ${treasurySplit} treasury`,
+      tooltip: `Wager pools split ${winnerSplit} to winners, ${burnSplit} to burn, and ${treasurySplit} to treasury.`,
+    });
   }
 
   return rules;

@@ -32,6 +32,7 @@ import {
   updateBotPlanningState,
   type BotAbilityGeometry,
   type BotFlagSnapshot,
+  type BotMapPingSnapshot,
   type BotPlayerSnapshot,
   type BotRouteGraphAdapter,
   type BotRoutePlan,
@@ -207,6 +208,7 @@ function blackboardFor(
     difficulty?: BotDifficulty;
     gameplayMode?: GameplayMode;
     safeZone?: SafeZoneSnapshot | null;
+    mapPings?: BotMapPingSnapshot[];
   } = {}
 ) {
   const flagState = options.flagState ?? flags();
@@ -218,6 +220,7 @@ function blackboardFor(
     players,
     flags: flagState,
     safeZone: options.safeZone,
+    mapPings: options.mapPings,
     visibleEnemyIds: new Set(options.visibleEnemyIds ?? players.filter((candidate) => candidate.team !== bot.team).map((candidate) => candidate.id)),
     enemyLineOfSightIds: new Set(options.losEnemyIds ?? options.visibleEnemyIds ?? []),
     recentDamageSources: [],
@@ -549,6 +552,32 @@ function testBattleRoyalTacticsAssignHumanSupportBeforeFinish() {
   assert.equal(intent.targetPlayerId, humanAlly.id);
 }
 
+function testBattleRoyalMapPingIntentOverridesRoutineHumanSupport() {
+  const bot = player({ id: 'ping-bot', team: 'br_01', heroId: 'hookshot', x: 0, z: 0 });
+  const humanAlly = player({ id: 'human-pinger', team: 'br_01', heroId: 'phantom', x: 12, z: 0, isBot: false });
+  const pingPosition = vec(72, 18);
+  const board = blackboardFor(bot, [bot, humanAlly], {
+    gameplayMode: 'battle_royal',
+    visibleEnemyIds: [],
+    losEnemyIds: [],
+    mapPings: [{
+      id: 'ping-1',
+      playerId: humanAlly.id,
+      team: humanAlly.team,
+      position: pingPosition,
+      createdAt: NOW - 120,
+      expiresAt: NOW + 10_000,
+    }],
+  });
+  const intent = scoreBotIntents(bot, board, getBotSkillProfile('normal'));
+
+  assert.equal(board.nearestTeamPing?.id, 'ping-1');
+  assert.equal(intent.type, 'follow_ping');
+  assert.equal(intent.targetPlayerId, humanAlly.id);
+  assertClose(intent.targetPosition.x, pingPosition.x, 'ping target x');
+  assertClose(intent.targetPosition.z, pingPosition.z, 'ping target z');
+}
+
 function testBattleRoyalHumanSquadAssignsAllAvailableBotsToSupport() {
   const bots = [
     player({ id: 'support-a', team: 'br_01', heroId: 'chronos', x: 0, z: 0 }),
@@ -871,6 +900,82 @@ function testBotMovementRecoveryStateKeepsRouteWhenProgressing() {
   assert.equal(brain.blockedEdges.size, 0);
   assert.equal(brain.reverseUntil, 0);
   assert.equal(recovered.routePlan, brain.routePlan);
+}
+
+function testBotMovementRecoveryStateTreatsWallScrapeAsStall() {
+  const bot = player({ id: 'wall-scrape-runner', team: 'red', heroId: 'phantom', x: -40, z: 0.6 });
+  const blackboard = blackboardFor(bot, [bot]);
+  const brain = createInitialBotBrain(vec(-40, 0));
+  const skill = {
+    ...getBotSkillProfile('normal'),
+    replanIntervalMs: 400,
+  };
+  brain.intent = {
+    ...scoreBotIntents(bot, blackboard, skill),
+    type: 'capture_enemy_flag',
+    targetPosition: vec(40, 0),
+    reason: 'test scrape route',
+  };
+  brain.routePlan = directRoutePlan(vec(40, 0));
+  brain.movementProgress.desiredTarget = { x: 40, y: 1, z: 0 };
+  brain.movementProgress.lastPosition = vec(-40, 0);
+  brain.movementProgress.lastDistanceToTarget = 80;
+  brain.movementProgress.lastProgressAt = NOW - 800;
+
+  const recovered = updateBotMovementRecoveryState({
+    brain,
+    now: NOW,
+    bot,
+    blackboard,
+    routeGraph: routeGraph(),
+    routePlan: brain.routePlan,
+    desiredMove: { x: 1, z: 0 },
+    steeringBlocked: true,
+    skill,
+    random: randomSequence([0]),
+  });
+
+  assert.equal(recovered.stalled, true);
+  assert.equal(recovered.stallStrikeCount, 1);
+}
+
+function testBotMovementRecoveryStateEscalatesRepeatedTerrainPocketDetour() {
+  const bot = player({ id: 'pocket-runner', team: 'red', heroId: 'phantom', x: -30, z: 0 });
+  const blackboard = blackboardFor(bot, [bot]);
+  const brain = createInitialBotBrain(bot.position);
+  const skill = {
+    ...getBotSkillProfile('normal'),
+    replanIntervalMs: 400,
+  };
+  brain.intent = {
+    ...scoreBotIntents(bot, blackboard, skill),
+    type: 'capture_enemy_flag',
+    targetPosition: vec(40, 0),
+    reason: 'test pocket route',
+  };
+  brain.routePlan = directRoutePlan(vec(40, 0));
+  brain.movementProgress.desiredTarget = { x: 40, y: 1, z: 0 };
+  brain.movementProgress.lastPosition = { ...bot.position };
+  brain.movementProgress.lastDistanceToTarget = 70;
+  brain.movementProgress.lastProgressAt = NOW - 1300;
+
+  const recovered = updateBotMovementRecoveryState({
+    brain,
+    now: NOW,
+    bot,
+    blackboard,
+    routeGraph: routeGraph(),
+    routePlan: brain.routePlan,
+    desiredMove: { x: 1, z: 0 },
+    steeringBlocked: true,
+    skill,
+    random: randomSequence([0]),
+  });
+
+  assert.equal(recovered.stalled, true);
+  assert.ok(recovered.stallStrikeCount >= 2);
+  assert.ok(brain.movementProgress.detourTarget, 'expected repeated stall to create a detour target');
+  assert.ok(brain.routePlan?.reason.includes('movement recovery detour'), `expected recovery route, got ${brain.routePlan?.reason}`);
 }
 
 function testLocalAvoidance() {
@@ -1892,6 +1997,7 @@ testBattleRoyalReviveAndFinishIntents();
 testBattleRoyalBotsPrioritizeHumanRevives();
 testBattleRoyalBotReviveInputHoldsChannel();
 testBattleRoyalTacticsAssignHumanSupportBeforeFinish();
+testBattleRoyalMapPingIntentOverridesRoutineHumanSupport();
 testBattleRoyalHumanSquadAssignsAllAvailableBotsToSupport();
 testBattleRoyalBotOnlySquadsShareFocusTarget();
 testBattleRoyalDisengagesBadThirdPartyFight();
@@ -1903,6 +2009,8 @@ testBotPlanningStateRefreshesAndReusesCachedState();
 testStreamerDeathmatchBotsCommitToLongerStrafes();
 testBotMovementRecoveryStateReplansBlockedEdges();
 testBotMovementRecoveryStateKeepsRouteWhenProgressing();
+testBotMovementRecoveryStateTreatsWallScrapeAsStall();
+testBotMovementRecoveryStateEscalatesRepeatedTerrainPocketDetour();
 testLocalAvoidance();
 testBotPrimaryFireDecisionTiming();
 testBotCombatEngagementState();

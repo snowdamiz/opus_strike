@@ -225,7 +225,6 @@ export interface RewardEconomyResponse {
       winnerPoolBps: number;
       burnBps: number;
       treasuryBps: number;
-      burnWallet: string;
       treasuryWallet: string | null;
       updatedByUserId: string | null;
       updatedAt: string | null;

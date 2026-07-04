@@ -398,6 +398,9 @@ import type {
   GameplayMode,
   MapProfileId,
   MapTopologyId,
+  MapPingMessage,
+  MapPingRequestMessage,
+  MapPingSnapshot,
   MatchMode,
   MatchPerspective,
   PregeneratedMapArtifactId,
@@ -584,6 +587,7 @@ import {
   type BotAbilityGeometry,
   type BotBlackboard,
   type BotBrain,
+  type BotMapPingSnapshot,
   type BotPlayerSnapshot,
   type BotRecentDamageSource,
   type BotRoutePlan,
@@ -808,6 +812,7 @@ interface BotFrameContext {
   snapshotById: Map<string, BotPlayerSnapshot>;
   aliveBotCount: number;
   safeZone: BattleRoyalSafeZoneState | null;
+  mapPings: BotMapPingSnapshot[];
   flags: ReturnType<typeof getBotFlagSnapshots>;
   teamTactics: BotTeamTacticsByTeam;
   protectedEnemyIdsByTeam: Map<Team, Set<string>>;
@@ -897,6 +902,11 @@ const PLAYER_INTEREST_INTERVAL_MS = 200;
 const MATCH_SNAPSHOT_DRIFT_SYNC_INTERVAL_MS = 2000;
 const LOW_FREQUENCY_STATE_INTERVAL_MS = 250;
 const PLAYER_PING_BROADCAST_INTERVAL_MS = 250;
+const MAP_PING_TTL_MS = 15_000;
+const MAP_PING_MAX_DISTANCE = 380;
+const MAP_PING_TOGGLE_CLEAR_DISTANCE = 4.5;
+const MAP_PING_GROUND_PROBE_UP = 6;
+const MAP_PING_GROUND_Y_OFFSET = 0.08;
 const BATTLE_ROYAL_FIRST_SAFE_ZONE_REVEAL_BUFFER_MS = 3_000;
 const SELF_MOVEMENT_FULL_AUTHORITY_INTERVAL_MS = 100;
 const UNSTUCK_SEARCH_MAX_RADIUS = 14;
@@ -1153,6 +1163,8 @@ export class GameRoom extends Room<GameState> {
   });
   private matchSnapshotSignature = '';
   private readonly playerPings = new PlayerPingRuntime();
+  private readonly activeMapPings = new Map<string, MapPingSnapshot>();
+  private mapPingSequence = 0;
   private readonly tickProfiler = new RoomTickProfiler();
   private streamScheduleStartedAt = 0;
   private vitalsPhaseAtMs = 0;
@@ -1810,6 +1822,10 @@ export class GameRoom extends Room<GameState> {
       this.handleUnstuckRequest(client);
     });
 
+    this.onRateLimitedMessage('mapPing', GAME_MESSAGE_RATE_LIMITS.mapPing, (client, data: unknown) => {
+      this.handleMapPing(client, data);
+    });
+
     this.onRateLimitedMessage('chat', GAME_MESSAGE_RATE_LIMITS.chat, (client, data: unknown) => {
       const chat = validateChatPayload(data, { teamOnly: true });
       if (!chat) return;
@@ -2143,6 +2159,7 @@ export class GameRoom extends Room<GameState> {
       this.battleRoyalSouls.clearPlayer(oldPlayer.id);
     }
     this.state.players.delete(existingSessionId);
+    const clearedMapPing = this.activeMapPings.delete(existingSessionId);
     this.clearCombatPlayerRuntimeState(existingSessionId);
     this.clientRegistry.clearSession(existingSessionId);
     this.participantRegistry.clearSession(existingSessionId);
@@ -2150,6 +2167,7 @@ export class GameRoom extends Room<GameState> {
     this.clearPlayerReplicationState(existingSessionId);
     this.resetCountdownStartGate();
     this.broadcastTracked('playerLeft', { playerId: existingSessionId });
+    if (clearedMapPing) this.broadcastMapPings();
   }
 
   onLeave(client: Client, consented: boolean) {
@@ -2191,6 +2209,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.state.players.delete(client.sessionId);
+    const clearedMapPing = this.activeMapPings.delete(client.sessionId);
     this.clientRegistry.deleteClient(client.sessionId);
     this.clearPlayerReplicationState(client.sessionId);
     this.clearCombatPlayerRuntimeState(client.sessionId);
@@ -2204,6 +2223,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcastTracked('playerLeft', {
       playerId: client.sessionId,
     });
+    if (clearedMapPing) this.broadcastMapPings();
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
 
     // Check if game should end
@@ -2364,6 +2384,9 @@ export class GameRoom extends Room<GameState> {
       const dt = TICK_INTERVAL_MS / 1000;
       this.measureTickSpan('spatial_index_rebuild', () => this.rebuildPlayerSpatialIndex());
       this.updateBots(this.state.serverTime, dt);
+      if (this.pruneExpiredMapPings(this.state.serverTime)) {
+        this.broadcastMapPings();
+      }
 
       // Update based on phase
       switch (this.state.phase) {
@@ -3937,6 +3960,7 @@ export class GameRoom extends Room<GameState> {
       players: this.state.players,
       recipient,
     }));
+    this.sendTracked(client, 'mapPing', this.buildMapPingMessage(recipient));
     this.sendTracked(client, 'playerInterest', {
       tick: this.state.tick,
       serverTime: this.state.serverTime,
@@ -4084,6 +4108,58 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private pruneExpiredMapPings(now = this.state.serverTime || Date.now()): boolean {
+    let changed = false;
+    for (const [playerId, ping] of this.activeMapPings) {
+      if (ping.expiresAt > now && this.state.players.has(playerId)) continue;
+      this.activeMapPings.delete(playerId);
+      changed = true;
+    }
+    return changed;
+  }
+
+  private getActiveMapPings(now = this.state.serverTime || Date.now()): MapPingSnapshot[] {
+    this.pruneExpiredMapPings(now);
+    return Array.from(this.activeMapPings.values()).sort((a, b) => (
+      a.team.localeCompare(b.team) ||
+      b.createdAt - a.createdAt ||
+      a.playerId.localeCompare(b.playerId)
+    ));
+  }
+
+  private canReceiveMapPing(recipient: Player | null, ping: MapPingSnapshot): boolean {
+    if (!recipient || isObserverPlayer(recipient)) return true;
+    return recipient.team === ping.team || recipient.id === ping.playerId;
+  }
+
+  private buildMapPingMessage(recipient: Player | null): MapPingMessage {
+    const now = this.state.serverTime || Date.now();
+    return {
+      serverTime: now,
+      pings: this.getActiveMapPings(now).filter((ping) => this.canReceiveMapPing(recipient, ping)),
+    };
+  }
+
+  private broadcastMapPings(): void {
+    const observerMessage = this.buildMapPingMessage(null);
+    this.recordObserverEvent('mapPing', observerMessage);
+    for (const client of this.clients) {
+      const recipient = this.state.players.get(client.sessionId) ?? null;
+      this.sendTracked(client, 'mapPing', this.buildMapPingMessage(recipient));
+    }
+  }
+
+  private getBotMapPingSnapshots(now = this.state.serverTime || Date.now()): BotMapPingSnapshot[] {
+    return this.getActiveMapPings(now).map((ping) => ({
+      id: ping.id,
+      playerId: ping.playerId,
+      team: ping.team,
+      position: { ...ping.position },
+      createdAt: ping.createdAt,
+      expiresAt: ping.expiresAt,
+    }));
+  }
+
   private buildPlayerTransformsV2Payload(options: {
     force?: boolean;
     recipient?: Player | null;
@@ -4174,10 +4250,13 @@ export class GameRoom extends Room<GameState> {
       });
 
       globallyRemovedPlayerIds.push(...this.replicationState.removeMissingKnownPlayers(frameContext.currentIds));
+      let mapPingsChanged = false;
       for (const id of globallyRemovedPlayerIds) {
         this.visibilityInterest.clearPlayer(id);
         this.playerPings.clearPlayer(id);
+        mapPingsChanged = this.activeMapPings.delete(id) || mapPingsChanged;
       }
+      if (mapPingsChanged) this.broadcastMapPings();
     }
 
     let sentVitals = false;
@@ -9032,6 +9111,7 @@ export class GameRoom extends Room<GameState> {
       snapshotById,
       aliveBotCount,
       safeZone: this.battleRoyalSafeZone,
+      mapPings: this.getBotMapPingSnapshots(now),
       flags,
       teamTactics,
       protectedEnemyIdsByTeam,
@@ -9575,6 +9655,7 @@ export class GameRoom extends Room<GameState> {
       players: snapshots,
       flags: frameContext.flags,
       safeZone: frameContext.safeZone,
+      mapPings: frameContext.mapPings,
       visibleEnemyIds,
       enemyLineOfSightIds,
       recentDamageSources: this.getBotRecentDamageSources(bot.id, now),
@@ -10522,6 +10603,8 @@ export class GameRoom extends Room<GameState> {
     }
     this.powerupBoosts.clearAll();
     this.powerupPickups.reset(mapManifest, 0);
+    const hadMapPings = this.activeMapPings.size > 0;
+    this.activeMapPings.clear();
     this.hookshotRuntime.clearAnchorWalls();
     this.botSteeringPathCache.clear();
     this.lineOfSightCache.clear();
@@ -10532,6 +10615,7 @@ export class GameRoom extends Room<GameState> {
     this.battleRoyalDrop = null;
     this.nextBattleRoyalSafeZoneDamageAt = 0;
     this.forceTransformFullSync();
+    if (hadMapPings) this.broadcastMapPings();
   }
 
   private bumpMovementCollisionRevision(options: { forceTransformSync?: boolean } = {}): void {
@@ -10674,6 +10758,73 @@ export class GameRoom extends Room<GameState> {
     this.clearHookshotDragPullsInvolving(player.id);
     this.markMovementBarrier(player.id, 'teleport');
     this.sendSelfMovementAuthority(player, client, 'teleport');
+  }
+
+  private readMapPingPosition(position: unknown): PlainVec3 | null {
+    if (!isRecord(position)) return null;
+    const x = typeof position.x === 'number' ? position.x : Number(position.x);
+    const y = typeof position.y === 'number' ? position.y : Number(position.y);
+    const z = typeof position.z === 'number' ? position.z : Number(position.z);
+    const parsed = { x, y, z };
+    return this.isFiniteVec3(parsed) ? parsed : null;
+  }
+
+  private resolveMapPingPosition(position: PlainVec3): PlainVec3 | null {
+    const clamped = this.clampToPlayableMap(position);
+    if (!this.isFiniteVec3(clamped)) return null;
+
+    const groundY = this.getProceduralGroundY({
+      x: clamped.x,
+      y: clamped.y + MAP_PING_GROUND_PROBE_UP,
+      z: clamped.z,
+    });
+    const grounded = this.clampToPlayableMap({
+      x: clamped.x,
+      y: Number.isFinite(groundY) ? (groundY as number) + MAP_PING_GROUND_Y_OFFSET : clamped.y,
+      z: clamped.z,
+    });
+
+    return this.isFiniteVec3(grounded) ? grounded : null;
+  }
+
+  private handleMapPing(client: Client, data: unknown): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || isObserverPlayer(player) || player.state !== 'alive' || !isTeam(player.team)) return;
+    if (!isRecord(data)) return;
+
+    const payload = data as MapPingRequestMessage;
+    if (payload.clear === true || payload.position === null) {
+      if (this.activeMapPings.delete(player.id)) this.broadcastMapPings();
+      return;
+    }
+
+    const position = this.readMapPingPosition(payload.position);
+    if (!position) return;
+
+    const pingPosition = this.resolveMapPingPosition(position);
+    if (!pingPosition) return;
+    if (distance2D(player.position, pingPosition) > MAP_PING_MAX_DISTANCE) return;
+
+    const previous = this.activeMapPings.get(player.id);
+    if (previous && distance2D(previous.position, pingPosition) <= MAP_PING_TOGGLE_CLEAR_DISTANCE) {
+      this.activeMapPings.delete(player.id);
+      this.broadcastMapPings();
+      return;
+    }
+
+    const now = this.state.serverTime || Date.now();
+    const sequence = ++this.mapPingSequence;
+    this.activeMapPings.set(player.id, {
+      id: `${player.id}:${sequence}`,
+      playerId: player.id,
+      playerName: player.name,
+      team: player.team,
+      position: pingPosition,
+      createdAt: now,
+      expiresAt: now + MAP_PING_TTL_MS,
+      sequence,
+    });
+    this.broadcastMapPings();
   }
 
   private handleUnstuckRequest(client: Client): void {

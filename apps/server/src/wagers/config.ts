@@ -7,6 +7,9 @@ export interface WagerRuntimeConfig {
   cluster: string;
   rpcUrl: string;
   treasuryWallet: string;
+  jupiterApiKey: string;
+  jupiterSwapBaseUrl: string;
+  jupiterSwapSlippageBps: number;
   minCoverChargeLamports: bigint;
   maxCoverChargeLamports: bigint;
   intentTtlMs: number;
@@ -29,6 +32,8 @@ const DEFAULT_REFUND_FEE_FALLBACK_LAMPORTS = 5_000n;
 const DEFAULT_GOLDEN_BIOME_CHANCE_BPS = 200;
 const DEFAULT_GOLDEN_BIOME_TREASURY_MIN_LAMPORTS = 1_000_000_000n;
 const DEFAULT_GOLDEN_BIOME_WINNER_REWARD_LAMPORTS = 200_000_000n;
+const DEFAULT_JUPITER_SWAP_BASE_URL = 'https://api.jup.ag/swap/v2';
+const DEFAULT_JUPITER_SWAP_SLIPPAGE_BPS = 50;
 
 function bigintEnv(name: string, fallback: bigint): bigint {
   const value = process.env[name];
@@ -84,6 +89,9 @@ export function getWagerRuntimeConfig(): WagerRuntimeConfig {
     cluster: process.env.SOLANA_CLUSTER || 'mainnet-beta',
     rpcUrl: process.env.SOLANA_RPC_URL || '',
     treasuryWallet,
+    jupiterApiKey: process.env.JUPITER_API_KEY || '',
+    jupiterSwapBaseUrl: process.env.JUPITER_SWAP_BASE_URL || DEFAULT_JUPITER_SWAP_BASE_URL,
+    jupiterSwapSlippageBps: intEnv('WAGER_TOKEN_SWAP_SLIPPAGE_BPS', DEFAULT_JUPITER_SWAP_SLIPPAGE_BPS, { min: 1, max: 5_000 }),
     minCoverChargeLamports,
     maxCoverChargeLamports,
     intentTtlMs: intEnv('WAGER_INTENT_TTL_MS', 15 * 60 * 1000, { min: 30_000 }),

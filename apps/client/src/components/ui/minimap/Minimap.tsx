@@ -179,6 +179,13 @@ function drawLiveOverlay(
     drawTeamSoulMarkers(ctx, projection, store.battleRoyalSouls.souls, localPlayer.team);
   }
 
+  const now = Date.now();
+  for (const ping of store.mapPings.values()) {
+    if (ping.team !== localPlayer.team || ping.expiresAt <= now) continue;
+    if (!isWorldPointInsideBoundary(ping.position, manifest.boundary)) continue;
+    drawMapPingMarker(ctx, worldToMinimap(projection, ping.position), ping.playerId === localPlayer.id);
+  }
+
   for (const teammate of teammates) {
     const position = visualState.playerPositions.get(teammate.id) ?? teammate.position;
     if (!isWorldPointInsideBoundary(position, manifest.boundary)) continue;
@@ -432,6 +439,28 @@ function drawTeammateMarker(
   ctx.lineWidth = 1.4;
   ctx.lineCap = 'round';
   ctx.strokeStyle = color;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawMapPingMarker(ctx: CanvasRenderingContext2D, point: MinimapPoint, isLocal: boolean): void {
+  ctx.save();
+  ctx.translate(point.x, point.y);
+  ctx.shadowColor = MINIMAP_COLORS.live.mapPingShadow;
+  ctx.shadowBlur = isLocal ? 8 : 6;
+  ctx.lineWidth = isLocal ? 1.8 : 1.35;
+
+  ctx.beginPath();
+  ctx.arc(0, 0, isLocal ? 6.4 : 5.4, 0, Math.PI * 2);
+  ctx.strokeStyle = MINIMAP_COLORS.live.mapPingFill;
+  ctx.stroke();
+
+  ctx.rotate(Math.PI / 4);
+  ctx.beginPath();
+  ctx.rect(-3.2, -3.2, 6.4, 6.4);
+  ctx.fillStyle = MINIMAP_COLORS.live.mapPingFill;
+  ctx.fill();
+  ctx.strokeStyle = MINIMAP_COLORS.live.mapPingStroke;
   ctx.stroke();
   ctx.restore();
 }

@@ -183,7 +183,6 @@ function toLobbyWagerSnapshot(value: unknown): LobbyWagerSnapshot {
     winnerPoolBps: optionalNumber(value.winnerPoolBps),
     burnBps: optionalNumber(value.burnBps),
     treasuryBps: optionalNumber(value.treasuryBps),
-    burnWallet: optionalString(value.burnWallet),
     potLamports: optionalString(value.potLamports),
     paidPlayerCount: optionalNumber(value.paidPlayerCount),
   };

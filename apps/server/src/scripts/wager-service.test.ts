@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import type { ParsedTransactionWithMeta } from '@solana/web3.js';
+import { Keypair, type ParsedTransactionWithMeta } from '@solana/web3.js';
 import {
   calculateNetRefundLamports,
   calculateWagerPayouts,
@@ -7,7 +7,8 @@ import {
   type WagerRosterPlayer,
 } from '../wagers/math';
 import { createWagerMemo, verifyParsedSolPayment } from '../wagers/solana';
-import { buildWagerUserStatIncrements } from '../wagers/service';
+import { buildWagerUserStatIncrements, WagerService } from '../wagers/service';
+import { extractTokenAccountMintDelta } from '../wagers/tokenConversion';
 
 const createdAt = new Date('2026-06-10T10:00:00.000Z');
 const expiresAt = new Date('2026-06-10T10:15:00.000Z');
@@ -76,6 +77,7 @@ function runPayoutMathTests(): void {
   const payouts = calculateWagerPayouts(100n, 2);
   assert.equal(payouts.winnerPoolLamports, 90n);
   assert.equal(payouts.winnerShareLamports, 45n);
+  assert.deepEqual(payouts.winnerPayoutLamports, [45n, 45n]);
   assert.equal(payouts.burnLamports, 5n);
   assert.equal(payouts.treasuryFeeLamports, 5n);
   assert.equal(payouts.treasuryDustLamports, 0n);
@@ -84,18 +86,20 @@ function runPayoutMathTests(): void {
   const splitDust = calculateWagerPayouts(101n, 3);
   assert.equal(splitDust.winnerPoolLamports, 90n);
   assert.equal(splitDust.winnerShareLamports, 30n);
+  assert.deepEqual(splitDust.winnerPayoutLamports, [30n, 30n, 30n]);
   assert.equal(splitDust.burnLamports, 5n);
   assert.equal(splitDust.treasuryFeeLamports, 5n);
   assert.equal(splitDust.treasuryDustLamports, 1n);
   assert.equal(splitDust.treasuryTotalLamports, 6n);
 
   const winnerDust = calculateWagerPayouts(100n, 4);
-  assert.equal(winnerDust.winnerPoolLamports, 88n);
+  assert.equal(winnerDust.winnerPoolLamports, 90n);
   assert.equal(winnerDust.winnerShareLamports, 22n);
+  assert.deepEqual(winnerDust.winnerPayoutLamports, [23n, 23n, 22n, 22n]);
   assert.equal(winnerDust.burnLamports, 5n);
   assert.equal(winnerDust.treasuryFeeLamports, 5n);
-  assert.equal(winnerDust.treasuryDustLamports, 2n);
-  assert.equal(winnerDust.treasuryTotalLamports, 7n);
+  assert.equal(winnerDust.treasuryDustLamports, 0n);
+  assert.equal(winnerDust.treasuryTotalLamports, 5n);
 }
 
 function runStartGateTests(): void {
@@ -169,6 +173,66 @@ function runRefundMathTests(): void {
   assert.throws(() => calculateNetRefundLamports(5_000n, 6_000n), /manual review/);
 }
 
+function runTokenConversionAccountingTests(): void {
+  const tokenAccount = 'TokenAcct111111111111111111111111111111111';
+  const mint = 'Mint111111111111111111111111111111111111111';
+  const transaction = {
+    meta: {
+      err: null,
+      fee: 5000,
+      preBalances: [],
+      postBalances: [],
+      innerInstructions: [],
+      logMessages: [],
+      rewards: [],
+      preTokenBalances: [
+        {
+          accountIndex: 1,
+          mint,
+          owner: 'Treasury1111111111111111111111111111111111',
+          programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+          uiTokenAmount: {
+            amount: '1000',
+            decimals: 6,
+            uiAmount: 0.001,
+            uiAmountString: '0.001',
+          },
+        },
+      ],
+      postTokenBalances: [
+        {
+          accountIndex: 1,
+          mint,
+          owner: 'Treasury1111111111111111111111111111111111',
+          programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+          uiTokenAmount: {
+            amount: '1750',
+            decimals: 6,
+            uiAmount: 0.00175,
+            uiAmountString: '0.00175',
+          },
+        },
+      ],
+    },
+    transaction: {
+      message: {
+        accountKeys: [
+          { pubkey: { toBase58: () => 'Other111111111111111111111111111111111111111' } },
+          { pubkey: { toBase58: () => tokenAccount } },
+        ],
+        instructions: [],
+      },
+      signatures: ['sig'],
+    },
+    blockTime: null,
+    slot: 123,
+    version: 0,
+  } as unknown as ParsedTransactionWithMeta;
+
+  assert.equal(extractTokenAccountMintDelta(transaction, tokenAccount, mint), 750n);
+  assert.equal(extractTokenAccountMintDelta(transaction, tokenAccount, 'OtherMint111111111111111111111111111111111'), 0n);
+}
+
 function runWagerStatsTests(): void {
   const settled = buildWagerUserStatIncrements({
     winningTeam: 'red',
@@ -192,12 +256,18 @@ function runWagerStatsTests(): void {
       {
         kind: 'winner_payout',
         recipientWallet: 'wallet-red',
-        amountLamports: 1_900n,
+        amountLamports: 1_800n,
         status: 'confirmed',
       },
       {
         kind: 'treasury_fee',
         recipientWallet: 'wallet-treasury',
+        amountLamports: 100n,
+        status: 'confirmed',
+      },
+      {
+        kind: 'burn',
+        recipientWallet: 'burn',
         amountLamports: 100n,
         status: 'confirmed',
       },
@@ -210,7 +280,7 @@ function runWagerStatsTests(): void {
   assert.ok(loser);
   assert.equal(getIncrementValue(winner.data, 'totalWagerGames'), 1);
   assert.equal(getIncrementValue(winner.data, 'totalWagerWins'), 1);
-  assert.equal(getIncrementValue(winner.data, 'totalWagerWonLamports'), 900n);
+  assert.equal(getIncrementValue(winner.data, 'totalWagerWonLamports'), 800n);
   assert.equal(getIncrementValue(winner.data, 'totalWagerLostLamports'), 0n);
   assert.equal(getIncrementValue(loser.data, 'totalWagerLosses'), 1);
   assert.equal(getIncrementValue(loser.data, 'totalWagerWonLamports'), 0n);
@@ -244,10 +314,81 @@ function runWagerStatsTests(): void {
   assert.equal(getIncrementValue(refunded[0].data, 'totalWagerLostLamports'), 0n);
 }
 
-runPayoutMathTests();
-runRefundMathTests();
-runStartGateTests();
-runTransactionParserTests();
-runWagerStatsTests();
+async function runSettlementConfigGuardTests(): Promise<void> {
+  const previous = {
+    GAME_TOKEN_MINT: process.env.GAME_TOKEN_MINT,
+    JUPITER_API_KEY: process.env.JUPITER_API_KEY,
+    SOLANA_RPC_URL: process.env.SOLANA_RPC_URL,
+    WAGER_SETTLEMENT_SECRET_KEY: process.env.WAGER_SETTLEMENT_SECRET_KEY,
+    WAGER_SOL_ENABLED: process.env.WAGER_SOL_ENABLED,
+    WAGER_TREASURY_WALLET: process.env.WAGER_TREASURY_WALLET,
+  };
+  const signer = Keypair.generate();
+  const tokenMint = Keypair.generate().publicKey.toBase58();
+  const service = new WagerService();
+  const wagerOptions = {
+    enabled: true,
+    token: 'SOL' as const,
+    coverChargeLamports: '1000000',
+  };
 
-console.log('wager service tests passed');
+  try {
+    process.env.WAGER_SOL_ENABLED = 'true';
+    process.env.SOLANA_RPC_URL = 'http://127.0.0.1:8899';
+    process.env.WAGER_TREASURY_WALLET = signer.publicKey.toBase58();
+    process.env.WAGER_SETTLEMENT_SECRET_KEY = JSON.stringify(Array.from(signer.secretKey));
+    process.env.JUPITER_API_KEY = 'test-jupiter-key';
+    delete process.env.GAME_TOKEN_MINT;
+
+    await assert.rejects(
+      () => service.normalizeCreateOptions(wagerOptions),
+      /GAME_TOKEN_MINT/
+    );
+
+    process.env.GAME_TOKEN_MINT = 'not-a-public-key';
+    await assert.rejects(
+      () => service.normalizeCreateOptions(wagerOptions),
+      /GAME_TOKEN_MINT must be a valid Solana public key/
+    );
+
+    process.env.GAME_TOKEN_MINT = tokenMint;
+    delete process.env.JUPITER_API_KEY;
+    await assert.rejects(
+      () => service.normalizeCreateOptions(wagerOptions),
+      /JUPITER_API_KEY/
+    );
+
+    process.env.JUPITER_API_KEY = 'test-jupiter-key';
+    const normalized = await service.normalizeCreateOptions(wagerOptions);
+    assert.equal(normalized.enabled, true);
+    if (normalized.enabled) {
+      assert.equal(normalized.treasuryWallet, signer.publicKey.toBase58());
+      assert.equal(normalized.coverChargeLamports, 1_000_000n);
+    }
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+async function main(): Promise<void> {
+  runPayoutMathTests();
+  runRefundMathTests();
+  runStartGateTests();
+  runTransactionParserTests();
+  runTokenConversionAccountingTests();
+  runWagerStatsTests();
+  await runSettlementConfigGuardTests();
+
+  console.log('wager service tests passed');
+}
+
+void main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

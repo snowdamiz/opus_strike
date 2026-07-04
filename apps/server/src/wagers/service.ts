@@ -4,12 +4,14 @@ import type { Prisma } from '@prisma/client';
 import { matchMaker } from 'colyseus';
 import {
   Connection,
+  Keypair,
   Message,
   PublicKey,
   SystemInstruction,
   SystemProgram,
   Transaction,
   TransactionInstruction,
+  type ParsedTransactionWithMeta,
 } from '@solana/web3.js';
 import type { MatchMode } from '@voxel-strike/shared';
 import prisma from '../db';
@@ -34,7 +36,6 @@ import {
   calculateWagerPayouts,
   evaluateWagerStartEligibility,
   WAGER_BURN_BPS,
-  WAGER_SOL_BURN_ADDRESS,
   WAGER_TREASURY_BPS,
   WAGER_WINNER_POOL_BPS,
   WAGER_TOKEN,
@@ -43,12 +44,23 @@ import {
 } from './math';
 import { wagerEventBus } from './eventBus';
 import { runWithRedisOwnerLock, type RedisOwnerLockClient } from './workerLock';
+import { getGameTokenConfig } from '../config/gameToken';
 import {
   createWagerMemo,
   findWagerMemoInParsedTransaction,
   verifyParsedSolPayment,
   type PaymentVerificationFailure,
 } from './solana';
+import {
+  buildBurnCheckedTransaction,
+  buildJupiterSwapTransaction,
+  extractTokenAccountMintDelta,
+  fetchJupiterSwapBuild,
+  getWagerGameTokenRuntime,
+  WAGER_NATIVE_SOL_MINT,
+  type BuiltJupiterSwapTransaction,
+  type WagerGameTokenRuntime,
+} from './tokenConversion';
 
 type WagerPaymentStatus =
   | 'intent_created'
@@ -124,7 +136,6 @@ export interface LobbyWagerSnapshot {
   winnerPoolBps?: number;
   burnBps?: number;
   treasuryBps?: number;
-  burnWallet?: string;
   potLamports?: string;
   paidPlayerCount?: number;
 }
@@ -178,7 +189,6 @@ export interface LockedWagerContext {
   token: typeof WAGER_TOKEN;
   coverChargeLamports: string;
   treasuryWallet: string;
-  burnWallet: string;
   matchMode: MatchMode;
   rankedEntryQuoteId?: string | null;
   paidPlayers: LockedWagerPlayer[];
@@ -317,7 +327,6 @@ export interface WagerEconomySnapshot {
   winnerPoolBps: number;
   burnBps: number;
   treasuryBps: number;
-  burnWallet: string;
   treasuryWallet: string | null;
   updatedByUserId: string | null;
   updatedAt: string | null;
@@ -325,6 +334,12 @@ export interface WagerEconomySnapshot {
 
 export interface TreasuryTransferResult {
   signature: string | null;
+  confirmedAt: Date;
+}
+
+interface WagerGameTokenConversionResult {
+  conversionSignature: string;
+  convertedTokenBaseUnits: bigint;
   confirmedAt: Date;
 }
 
@@ -350,6 +365,23 @@ interface WagerSettlementTransferForStats {
   status: string;
 }
 
+interface WagerSettlementTransferForProcessing {
+  id: string;
+  kind: string;
+  recipientWallet: string;
+  amountLamports: bigint;
+  signature: string | null;
+  conversionSignature: string | null;
+  burnSignature: string | null;
+  tokenMintAddress: string | null;
+  tokenProgramId: string | null;
+  tokenDecimals: number | null;
+  tokenAccountAddress: string | null;
+  convertedTokenBaseUnits: bigint | null;
+  status: string;
+  updatedAt: Date;
+}
+
 export interface WagerUserStatIncrement {
   userId: string;
   data: Prisma.UserUpdateInput;
@@ -367,6 +399,56 @@ function isSafeLamportNumber(value: bigint): boolean {
   return value <= BigInt(Number.MAX_SAFE_INTEGER);
 }
 
+function isGameTokenConversionTransferKind(kind: string): boolean {
+  return kind === 'treasury_fee' || kind === 'burn';
+}
+
+function isGameTokenConversionTransferComplete(transfer: {
+  kind: string;
+  amountLamports: bigint;
+  status: string;
+  conversionSignature?: string | null;
+  burnSignature?: string | null;
+  tokenMintAddress?: string | null;
+  tokenProgramId?: string | null;
+  tokenDecimals?: number | null;
+  tokenAccountAddress?: string | null;
+  convertedTokenBaseUnits?: bigint | null;
+}): boolean {
+  if (transfer.status !== 'confirmed') return false;
+  if (!isGameTokenConversionTransferKind(transfer.kind) || transfer.amountLamports <= 0n) return true;
+  const conversionComplete = Boolean(
+    transfer.conversionSignature
+    && transfer.tokenMintAddress
+    && transfer.tokenProgramId
+    && transfer.tokenDecimals !== null
+    && transfer.tokenDecimals !== undefined
+    && transfer.tokenAccountAddress
+    && transfer.convertedTokenBaseUnits !== null
+    && transfer.convertedTokenBaseUnits !== undefined
+  );
+  if (transfer.kind === 'treasury_fee') return conversionComplete;
+  return conversionComplete && Boolean(transfer.burnSignature);
+}
+
+function isSettlementTransferComplete(transfer: {
+  kind: string;
+  amountLamports: bigint;
+  status: string;
+  conversionSignature?: string | null;
+  burnSignature?: string | null;
+  tokenMintAddress?: string | null;
+  tokenProgramId?: string | null;
+  tokenDecimals?: number | null;
+  tokenAccountAddress?: string | null;
+  convertedTokenBaseUnits?: bigint | null;
+}): boolean {
+  if (isGameTokenConversionTransferKind(transfer.kind)) {
+    return isGameTokenConversionTransferComplete(transfer);
+  }
+  return transfer.status === 'confirmed';
+}
+
 function parseCoverChargeLamports(value: unknown): bigint {
   if (typeof value === 'bigint') return value;
   if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return BigInt(value);
@@ -380,6 +462,10 @@ function signatureLooksValid(signature: string): boolean {
 
 function base64LooksValid(value: string): boolean {
   return value.length > 0 && value.length <= 100_000 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function hashGoldenRoll(seed: number, salt: number): number {
@@ -528,7 +614,6 @@ export class WagerService extends EventEmitter {
       winnerPoolBps: WAGER_WINNER_POOL_BPS,
       burnBps: WAGER_BURN_BPS,
       treasuryBps: WAGER_TREASURY_BPS,
-      burnWallet: WAGER_SOL_BURN_ADDRESS,
       treasuryWallet: config.treasuryWallet || null,
       updatedByUserId: null,
       updatedAt: null,
@@ -789,11 +874,10 @@ export class WagerService extends EventEmitter {
     coverChargeLamports: bigint;
     token: typeof WAGER_TOKEN;
     treasuryWallet: string;
-    burnWallet: string;
   }> {
     if (!options?.enabled) return { enabled: false };
     const config = this.getConfig();
-    assertWagerPaymentsConfigured(config);
+    this.getWagerSettlementExecutionConfig(config);
 
     const token = options.token || WAGER_TOKEN;
     if (token !== WAGER_TOKEN) {
@@ -816,7 +900,6 @@ export class WagerService extends EventEmitter {
       coverChargeLamports,
       token: WAGER_TOKEN,
       treasuryWallet: config.treasuryWallet,
-      burnWallet: WAGER_SOL_BURN_ADDRESS,
     };
   }
 
@@ -1338,7 +1421,6 @@ export class WagerService extends EventEmitter {
       token: WAGER_TOKEN,
       coverChargeLamports: bigintToJson(wageredLobby.coverChargeLamports),
       treasuryWallet: wageredLobby.treasuryWallet,
-      burnWallet: WAGER_SOL_BURN_ADDRESS,
       matchMode: wageredLobby.matchMode as MatchMode,
       rankedEntryQuoteId: wageredLobby.rankedEntryQuoteId,
       paidPlayers,
@@ -1814,7 +1896,6 @@ export class WagerService extends EventEmitter {
       winnerPoolBps: WAGER_WINNER_POOL_BPS,
       burnBps: WAGER_BURN_BPS,
       treasuryBps: WAGER_TREASURY_BPS,
-      burnWallet: WAGER_SOL_BURN_ADDRESS,
       potLamports: bigintToJson(potLamports),
       paidPlayerCount,
     };
@@ -2017,13 +2098,7 @@ export class WagerService extends EventEmitter {
       throw new Error('Refund amount exceeds safe lamport range');
     }
 
-    const signer = getSettlementKeypair();
-    if (!signer) {
-      throw new Error('WAGER_SETTLEMENT_SECRET_KEY is required for settlement transfers');
-    }
-    if (signer.publicKey.toBase58() !== config.treasuryWallet) {
-      throw new Error('Settlement signer public key must match WAGER_TREASURY_WALLET');
-    }
+    const signer = this.getTreasurySettlementSigner(config);
 
     let outboundFeeLamports = config.refundFeeFallbackLamports;
     let feeSource: RefundTransferAudit['feeSource'] = 'fallback';
@@ -2279,7 +2354,8 @@ export class WagerService extends EventEmitter {
         },
       });
 
-      for (const winner of winners) {
+      for (const [winnerIndex, winner] of winners.entries()) {
+        const winnerPayoutLamports = payouts.winnerPayoutLamports[winnerIndex] ?? 0n;
         await tx.wagerSettlementTransfer.upsert({
           where: {
             settlementId_kind_recipientWallet: {
@@ -2293,12 +2369,12 @@ export class WagerService extends EventEmitter {
             idempotencyKey: `${settlement.id}:winner:${winner.userId}`,
             kind: 'winner_payout',
             recipientWallet: winner.walletAddress,
-            amountLamports: payouts.winnerShareLamports,
-            status: payouts.winnerShareLamports > 0n ? 'pending' : 'confirmed',
-            confirmedAt: payouts.winnerShareLamports > 0n ? null : new Date(),
+            amountLamports: winnerPayoutLamports,
+            status: winnerPayoutLamports > 0n ? 'pending' : 'confirmed',
+            confirmedAt: winnerPayoutLamports > 0n ? null : new Date(),
           },
           update: {
-            amountLamports: payouts.winnerShareLamports,
+            amountLamports: winnerPayoutLamports,
           },
         });
       }
@@ -2317,13 +2393,11 @@ export class WagerService extends EventEmitter {
           kind: 'treasury_fee',
           recipientWallet: settlement.wageredLobby.treasuryWallet,
           amountLamports: payouts.treasuryTotalLamports,
-          status: 'confirmed',
-          confirmedAt: new Date(),
+          status: payouts.treasuryTotalLamports > 0n ? 'pending' : 'confirmed',
+          confirmedAt: payouts.treasuryTotalLamports > 0n ? null : new Date(),
         },
         update: {
           amountLamports: payouts.treasuryTotalLamports,
-          status: 'confirmed',
-          confirmedAt: new Date(),
         },
       });
 
@@ -2332,14 +2406,14 @@ export class WagerService extends EventEmitter {
           settlementId_kind_recipientWallet: {
             settlementId: settlement.id,
             kind: 'burn',
-            recipientWallet: WAGER_SOL_BURN_ADDRESS,
+            recipientWallet: settlement.wageredLobby.treasuryWallet,
           },
         },
         create: {
           settlementId: settlement.id,
-          idempotencyKey: `${settlement.id}:burn:${WAGER_SOL_BURN_ADDRESS}`,
+          idempotencyKey: `${settlement.id}:burn:${settlement.wageredLobby.treasuryWallet}`,
           kind: 'burn',
-          recipientWallet: WAGER_SOL_BURN_ADDRESS,
+          recipientWallet: settlement.wageredLobby.treasuryWallet,
           amountLamports: payouts.burnLamports,
           status: payouts.burnLamports > 0n ? 'pending' : 'confirmed',
           confirmedAt: payouts.burnLamports > 0n ? null : new Date(),
@@ -2365,7 +2439,7 @@ export class WagerService extends EventEmitter {
       });
 
       for (const transfer of settlement.transfers) {
-        if (transfer.status === 'confirmed') continue;
+        if (isSettlementTransferComplete(transfer)) continue;
         if (transfer.amountLamports <= 0n) {
           await prisma.wagerSettlementTransfer.updateMany({
             where: { id: transfer.id, status: transfer.status, updatedAt: transfer.updatedAt },
@@ -2376,6 +2450,8 @@ export class WagerService extends EventEmitter {
         if (
           transfer.status === 'submitted'
           && !transfer.signature
+          && !transfer.conversionSignature
+          && !transfer.burnSignature
           && transfer.updatedAt.getTime() > Date.now() - WAGER_TRANSFER_RETRY_GRACE_MS
         ) {
           loggers.room.debug('Skipping recently claimed wager settlement transfer', {
@@ -2400,17 +2476,19 @@ export class WagerService extends EventEmitter {
         }
 
         try {
-          const result = await this.sendTreasuryTransfer({
-            recipientWallet: transfer.recipientWallet,
-            amountLamports: transfer.amountLamports,
-            existingSignature: transfer.signature,
-            onSubmitted: async (signature) => {
-              await prisma.wagerSettlementTransfer.update({
-                where: { id: transfer.id },
-                data: { signature, status: 'submitted', lastError: null },
-              });
-            },
-          });
+          const result = isGameTokenConversionTransferKind(transfer.kind)
+            ? await this.processGameTokenConversionTransfer(transfer)
+            : await this.sendTreasuryTransfer({
+              recipientWallet: transfer.recipientWallet,
+              amountLamports: transfer.amountLamports,
+              existingSignature: transfer.signature,
+              onSubmitted: async (signature) => {
+                await prisma.wagerSettlementTransfer.update({
+                  where: { id: transfer.id },
+                  data: { signature, status: 'submitted', lastError: null },
+                });
+              },
+            });
 
           await prisma.wagerSettlementTransfer.updateMany({
             where: { id: transfer.id, status: 'submitted' },
@@ -2575,7 +2653,7 @@ export class WagerService extends EventEmitter {
     });
 
     if (settlement.status === 'complete') return;
-    if (settlement.transfers.some((transfer) => transfer.status !== 'confirmed')) return;
+    if (settlement.transfers.some((transfer) => !isSettlementTransferComplete(transfer))) return;
 
     const now = new Date();
     const isRefundSettlement = !isValidTeam(settlement.winningTeam);
@@ -2640,6 +2718,337 @@ export class WagerService extends EventEmitter {
     });
   }
 
+  private getTreasurySettlementSigner(config = this.getConfig()): Keypair {
+    const signer = getSettlementKeypair();
+    if (!signer) {
+      throw new Error('WAGER_SETTLEMENT_SECRET_KEY is required for payouts, refunds, and wager token conversion');
+    }
+    if (signer.publicKey.toBase58() !== config.treasuryWallet) {
+      throw new Error('Settlement signer public key must match WAGER_TREASURY_WALLET');
+    }
+    return signer;
+  }
+
+  private getWagerSettlementExecutionConfig(config = this.getConfig()): {
+    signer: Keypair;
+    gameTokenMintAddress: string;
+  } {
+    assertWagerPaymentsConfigured(config);
+    const signer = this.getTreasurySettlementSigner(config);
+    const gameToken = getGameTokenConfig();
+    if (!gameToken.mintAddress) {
+      throw new Error('GAME_TOKEN_MINT is required for wager treasury and burn conversion');
+    }
+    assertPublicKey(gameToken.mintAddress, 'GAME_TOKEN_MINT');
+    if (!config.jupiterApiKey.trim()) {
+      throw new Error('JUPITER_API_KEY is required for wager token conversion');
+    }
+    return { signer, gameTokenMintAddress: gameToken.mintAddress };
+  }
+
+  private async getExistingSignatureConfirmedAt(
+    connection: Connection,
+    signature: string,
+    label: string
+  ): Promise<Date | null> {
+    const existing = await connection.getSignatureStatuses([signature], { searchTransactionHistory: true });
+    const status = existing.value[0];
+    if (status?.err) {
+      loggers.room.warn(`Existing wager ${label} signature failed; sending replacement`, signature);
+      return null;
+    }
+    if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') {
+      return new Date();
+    }
+    if (status) {
+      throw new Error(`${label} ${signature} is still ${status.confirmationStatus ?? 'pending'}`);
+    }
+    throw new Error(`${label} ${signature} has unknown status; manual review required before replacement`);
+  }
+
+  private async loadParsedTransactionWithRetry(
+    connection: Connection,
+    signature: string
+  ): Promise<ParsedTransactionWithMeta> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const transaction = await connection.getParsedTransaction(signature, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0,
+      });
+      if (transaction) return transaction;
+      await sleep(500);
+    }
+    throw new Error(`Confirmed transaction ${signature} was not available for token accounting`);
+  }
+
+  private async getConfirmedTokenDelta(input: {
+    connection: Connection;
+    signature: string;
+    tokenAccountAddress: string;
+    mintAddress: string;
+  }): Promise<bigint> {
+    const transaction = await this.loadParsedTransactionWithRetry(input.connection, input.signature);
+    if (transaction.meta?.err) {
+      throw new Error(`Token conversion transaction failed: ${JSON.stringify(transaction.meta.err)}`);
+    }
+    const delta = extractTokenAccountMintDelta(
+      transaction,
+      input.tokenAccountAddress,
+      input.mintAddress
+    );
+    if (delta <= 0n) {
+      throw new Error('Token conversion did not increase the treasury game-token account');
+    }
+    return delta;
+  }
+
+  private async sendGameTokenConversionSwap(input: {
+    transfer: WagerSettlementTransferForProcessing;
+    config: WagerRuntimeConfig;
+    signer: Keypair;
+    runtime: WagerGameTokenRuntime;
+  }): Promise<BuiltJupiterSwapTransaction & { signature: string }> {
+    const build = await fetchJupiterSwapBuild({
+      apiBaseUrl: input.config.jupiterSwapBaseUrl,
+      apiKey: input.config.jupiterApiKey,
+      inputMint: WAGER_NATIVE_SOL_MINT,
+      outputMint: input.runtime.mint.toBase58(),
+      amountLamports: input.transfer.amountLamports,
+      taker: input.signer.publicKey.toBase58(),
+      payer: input.signer.publicKey.toBase58(),
+      destinationTokenAccount: input.runtime.treasuryTokenAccount.toBase58(),
+      slippageBps: input.config.jupiterSwapSlippageBps,
+    });
+    const built = buildJupiterSwapTransaction({
+      build,
+      feePayer: input.signer.publicKey,
+      outputTokenAccount: input.runtime.treasuryTokenAccount,
+      outputMint: input.runtime.mint,
+      outputOwner: input.signer.publicKey,
+      outputTokenProgramId: input.runtime.tokenProgramId,
+    });
+    built.transaction.sign([input.signer]);
+
+    const connection = this.getConnection();
+    const simulation = await connection.simulateTransaction(built.transaction, {
+      commitment: 'confirmed',
+      sigVerify: true,
+    });
+    if (simulation.value.err) {
+      throw new Error(`Jupiter game-token conversion simulation failed: ${JSON.stringify(simulation.value.err)}`);
+    }
+
+    const signature = await connection.sendRawTransaction(built.transaction.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+    await prisma.wagerSettlementTransfer.update({
+      where: { id: input.transfer.id },
+      data: {
+        conversionSignature: signature,
+        tokenMintAddress: input.runtime.mint.toBase58(),
+        tokenProgramId: input.runtime.tokenProgramId.toBase58(),
+        tokenDecimals: input.runtime.decimals,
+        tokenAccountAddress: input.runtime.treasuryTokenAccount.toBase58(),
+        status: 'submitted',
+        lastError: null,
+      },
+    });
+
+    const confirmation = await connection.confirmTransaction({
+      signature,
+      blockhash: built.blockhash,
+      lastValidBlockHeight: built.lastValidBlockHeight,
+    }, 'confirmed');
+    if (confirmation.value.err) {
+      throw new Error(`Jupiter game-token conversion failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
+
+    return { ...built, signature };
+  }
+
+  private async ensureGameTokenConversion(input: {
+    transfer: WagerSettlementTransferForProcessing;
+    config: WagerRuntimeConfig;
+    signer: Keypair;
+    runtime: WagerGameTokenRuntime;
+  }): Promise<WagerGameTokenConversionResult> {
+    const connection = this.getConnection();
+    const mintAddress = input.runtime.mint.toBase58();
+    const tokenAccountAddress = input.runtime.treasuryTokenAccount.toBase58();
+    const existingConvertedAmount = input.transfer.convertedTokenBaseUnits;
+
+    if (input.transfer.conversionSignature) {
+      const confirmedAt = await this.getExistingSignatureConfirmedAt(
+        connection,
+        input.transfer.conversionSignature,
+        'game-token conversion'
+      );
+      if (confirmedAt && existingConvertedAmount !== null) {
+        return {
+          conversionSignature: input.transfer.conversionSignature,
+          convertedTokenBaseUnits: existingConvertedAmount,
+          confirmedAt,
+        };
+      }
+      if (confirmedAt) {
+        const convertedTokenBaseUnits = await this.getConfirmedTokenDelta({
+          connection,
+          signature: input.transfer.conversionSignature,
+          tokenAccountAddress,
+          mintAddress,
+        });
+        await prisma.wagerSettlementTransfer.update({
+          where: { id: input.transfer.id },
+          data: {
+            tokenMintAddress: mintAddress,
+            tokenProgramId: input.runtime.tokenProgramId.toBase58(),
+            tokenDecimals: input.runtime.decimals,
+            tokenAccountAddress,
+            convertedTokenBaseUnits,
+            lastError: null,
+          },
+        });
+        return {
+          conversionSignature: input.transfer.conversionSignature,
+          convertedTokenBaseUnits,
+          confirmedAt,
+        };
+      }
+    }
+
+    const swap = await this.sendGameTokenConversionSwap(input);
+    const convertedTokenBaseUnits = await this.getConfirmedTokenDelta({
+      connection,
+      signature: swap.signature,
+      tokenAccountAddress,
+      mintAddress,
+    });
+
+    await prisma.wagerSettlementTransfer.update({
+      where: { id: input.transfer.id },
+      data: {
+        convertedTokenBaseUnits,
+        lastError: null,
+      },
+    });
+
+    return {
+      conversionSignature: swap.signature,
+      convertedTokenBaseUnits,
+      confirmedAt: new Date(),
+    };
+  }
+
+  private async sendGameTokenBurn(input: {
+    transferId: string;
+    signer: Keypair;
+    runtime: WagerGameTokenRuntime;
+    amountBaseUnits: bigint;
+  }): Promise<TreasuryTransferResult> {
+    const connection = this.getConnection();
+    const latest = await connection.getLatestBlockhash('confirmed');
+    const transaction = buildBurnCheckedTransaction({
+      feePayer: input.signer.publicKey,
+      tokenAccount: input.runtime.treasuryTokenAccount,
+      mint: input.runtime.mint,
+      authority: input.signer.publicKey,
+      amountBaseUnits: input.amountBaseUnits,
+      decimals: input.runtime.decimals,
+      tokenProgramId: input.runtime.tokenProgramId,
+      blockhash: latest.blockhash,
+      lastValidBlockHeight: latest.lastValidBlockHeight,
+    });
+    transaction.sign(input.signer);
+
+    const simulation = await connection.simulateTransaction(transaction, undefined, true);
+    if (simulation.value.err) {
+      throw new Error(`Game-token burn simulation failed: ${JSON.stringify(simulation.value.err)}`);
+    }
+
+    const signature = await connection.sendRawTransaction(transaction.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+    await prisma.wagerSettlementTransfer.update({
+      where: { id: input.transferId },
+      data: {
+        burnSignature: signature,
+        signature,
+        status: 'submitted',
+        lastError: null,
+      },
+    });
+
+    const confirmation = await connection.confirmTransaction({
+      signature,
+      blockhash: latest.blockhash,
+      lastValidBlockHeight: latest.lastValidBlockHeight,
+    }, 'confirmed');
+    if (confirmation.value.err) {
+      throw new Error(`Game-token burn failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
+
+    return { signature, confirmedAt: new Date() };
+  }
+
+  private async ensureGameTokenBurn(input: {
+    transfer: WagerSettlementTransferForProcessing;
+    signer: Keypair;
+    runtime: WagerGameTokenRuntime;
+    convertedTokenBaseUnits: bigint;
+  }): Promise<TreasuryTransferResult> {
+    if (input.convertedTokenBaseUnits <= 0n) {
+      return { signature: null, confirmedAt: new Date() };
+    }
+    if (input.transfer.burnSignature) {
+      const confirmedAt = await this.getExistingSignatureConfirmedAt(
+        this.getConnection(),
+        input.transfer.burnSignature,
+        'game-token burn'
+      );
+      if (confirmedAt) {
+        return { signature: input.transfer.burnSignature, confirmedAt };
+      }
+    }
+
+    return this.sendGameTokenBurn({
+      transferId: input.transfer.id,
+      signer: input.signer,
+      runtime: input.runtime,
+      amountBaseUnits: input.convertedTokenBaseUnits,
+    });
+  }
+
+  private async processGameTokenConversionTransfer(
+    transfer: WagerSettlementTransferForProcessing
+  ): Promise<TreasuryTransferResult> {
+    const config = this.getConfig();
+    const { signer, gameTokenMintAddress } = this.getWagerSettlementExecutionConfig(config);
+    const runtime = await getWagerGameTokenRuntime(
+      this.getConnection(),
+      gameTokenMintAddress,
+      config.treasuryWallet
+    );
+    const conversion = await this.ensureGameTokenConversion({
+      transfer,
+      config,
+      signer,
+      runtime,
+    });
+
+    if (transfer.kind === 'treasury_fee') {
+      return { signature: conversion.conversionSignature, confirmedAt: conversion.confirmedAt };
+    }
+
+    return this.ensureGameTokenBurn({
+      transfer,
+      signer,
+      runtime,
+      convertedTokenBaseUnits: conversion.convertedTokenBaseUnits,
+    });
+  }
+
   private async sendTreasuryTransfer(input: {
     recipientWallet: string;
     amountLamports: bigint;
@@ -2660,13 +3069,7 @@ export class WagerService extends EventEmitter {
       throw new Error('Transfer amount exceeds safe lamport range');
     }
 
-    const signer = getSettlementKeypair();
-    if (!signer) {
-      throw new Error('WAGER_SETTLEMENT_SECRET_KEY is required for payouts and refunds');
-    }
-    if (signer.publicKey.toBase58() !== config.treasuryWallet) {
-      throw new Error('Settlement signer public key must match WAGER_TREASURY_WALLET');
-    }
+    const signer = this.getTreasurySettlementSigner(config);
 
     const connection = this.getConnection();
     if (input.existingSignature) {

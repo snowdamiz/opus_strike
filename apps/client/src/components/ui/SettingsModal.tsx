@@ -105,6 +105,7 @@ const keybindRows: { action: KeybindAction; label: string }[] = [
   { action: 'interact', label: 'Interact' },
   { action: 'scoreboard', label: 'Scoreboard' },
   { action: 'pushToTalk', label: 'Push To Talk' },
+  { action: 'ping', label: 'Ping' },
 ];
 
 export function SettingsModal({ onClose }: SettingsModalProps) {

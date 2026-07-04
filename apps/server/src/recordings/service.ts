@@ -43,6 +43,8 @@ const SHOWCASE_RECORDING_FINALIZE_TIMEOUT_MS = SHOWCASE_RECORDING_DURATION_MS + 
 const SHOWCASE_RECORDING_POLL_MS = 1_000;
 const SHOWCASE_JOB_CACHE_TTL_MS = 24 * 60 * 60_000;
 const SHOWCASE_JOB_CACHE_KEY_PREFIX = 'voxel-strike:recordings:showcase-job:';
+const SHOWCASE_RENDER_INTERNAL_ERROR_PATTERN = /(?:page\.\w+|playwright|chromium|browser|ffmpeg|Timeout \d+ms exceeded)/i;
+const SHOWCASE_ERROR_MESSAGE_MAX_LENGTH = 500;
 
 export interface BotMatchRecordingRequest {
   heroId?: unknown;
@@ -174,6 +176,16 @@ function cleanShowcaseJobId(id: string): string {
   const cleaned = id.replace(/[^a-zA-Z0-9_.:-]/g, '_').slice(0, 180);
   if (!cleaned) throw new Error('Showcase recording job id must not be empty');
   return cleaned;
+}
+
+export function formatShowcaseJobError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (SHOWCASE_RENDER_INTERNAL_ERROR_PATTERN.test(message)) {
+    return 'Recording render timed out while capturing the video. Try again in a moment.';
+  }
+  return message.length > SHOWCASE_ERROR_MESSAGE_MAX_LENGTH
+    ? `${message.slice(0, SHOWCASE_ERROR_MESSAGE_MAX_LENGTH - 3)}...`
+    : message;
 }
 
 function getShowcaseJobsDir(): string {
@@ -438,7 +450,7 @@ async function runShowcaseRecordingPipeline(
     const errorMessage = error instanceof Error ? error.message : String(error);
     await updateShowcaseJob(job, {
       status: 'failed',
-      error: errorMessage,
+      error: formatShowcaseJobError(error),
     }, store).catch(() => {});
     loggers.room.error('Showcase recording job failed', {
       jobId,

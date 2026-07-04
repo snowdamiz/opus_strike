@@ -29,6 +29,7 @@ import {
   type HeroSkinId,
   type MatchPerspective,
   type MatchPerspectiveSettingMode,
+  type MapPingRequestMessage,
   type PartyLaunchPayload,
   type PartyLaunchWagerOptions,
   type PartyMode,
@@ -36,6 +37,7 @@ import {
   type Team,
   type VoxelMapTheme,
   type MovementCommandPacket,
+  type Vec3,
 } from '@voxel-strike/shared';
 import type { VoiceScope, VoiceTokenResponse } from '../voice/types';
 import { disconnectVoice } from '../voice/voiceControls';
@@ -166,6 +168,7 @@ interface NetworkContextType {
   disconnect: () => void;
   sendChatMessage: (message: string, options?: { teamOnly?: boolean }) => boolean;
   sendMovementCommands: (packet: MovementCommandPacket) => void;
+  sendMapPing: (position: Vec3 | null) => void;
   requestUnstuck: () => void;
   devSetHero: (heroId: HeroId) => void;
   devSetSkin: (skinId: HeroSkinId) => void;
@@ -466,6 +469,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           players: new Map([[playerId, player]]),
           localPlayer: player,
           playerPings: new Map(),
+          mapPings: new Map(),
           roundTimeRemaining: 0,
           phaseEndTime: null,
           ultimateEffectActive: false,
@@ -1313,6 +1317,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       players: new Map(),
       localPlayer: null,
       playerPings: new Map(),
+      mapPings: new Map(),
       roundTimeRemaining: 0,
       phaseEndTime: null,
       ultimateEffectActive: false,
@@ -1392,6 +1397,13 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const sendMovementCommands = useCallback((packet: MovementCommandPacket) => {
     if (packet.commands.length === 0) return;
     gameRoomRef.current?.send('movementCommands', packet);
+  }, []);
+
+  const sendMapPing = useCallback((position: Vec3 | null) => {
+    const payload: MapPingRequestMessage = position
+      ? { position, clientTime: Date.now() }
+      : { clear: true, clientTime: Date.now() };
+    gameRoomRef.current?.send('mapPing', payload);
   }, []);
 
   const requestUnstuck = useCallback(() => {
@@ -1550,6 +1562,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     disconnect,
     sendChatMessage,
     sendMovementCommands,
+    sendMapPing,
     requestUnstuck,
     devSetHero,
     devSetSkin,
@@ -1608,6 +1621,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     selectTeam,
     sendChatMessage,
     sendMovementCommands,
+    sendMapPing,
     sendStreamerHeartbeat,
     setDevBotBrainEnabled,
     setDevBotsRooted,

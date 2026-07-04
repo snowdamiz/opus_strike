@@ -9,7 +9,7 @@ export type GraphicsPreset = 'potato' | 'competitive' | 'balanced' | 'cinematic'
 export type FpsDisplayMode = 'off' | 'fps';
 export type DevTutorialOverride = 'account' | 'bypass' | 'force';
 export type StreamerFeedMode = 'random' | 'bot_deathmatch';
-export type KeybindAction = keyof InputState | 'scoreboard' | 'pushToTalk';
+export type KeybindAction = keyof InputState | 'scoreboard' | 'pushToTalk' | 'ping';
 export type Keybindings = Record<KeybindAction, string>;
 
 export const keybindActionKeys = [
@@ -29,12 +29,14 @@ export const keybindActionKeys = [
   'interact',
   'scoreboard',
   'pushToTalk',
+  'ping',
 ] as const satisfies readonly KeybindAction[];
 
 export const defaultKeybindings: Keybindings = {
   ...DEFAULT_KEYBINDINGS,
   scoreboard: 'Tab',
   pushToTalk: 'KeyV',
+  ping: 'Mouse2',
 };
 
 export interface ClientSettings {

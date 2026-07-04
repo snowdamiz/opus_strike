@@ -5,12 +5,12 @@ export const WAGER_BPS_DENOMINATOR = 10_000n;
 export const WAGER_WINNER_POOL_BPS = 9_000;
 export const WAGER_BURN_BPS = 500;
 export const WAGER_TREASURY_BPS = 500;
-export const WAGER_SOL_BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111';
 
 export interface WagerPayoutMath {
   totalPotLamports: bigint;
   winnerPoolLamports: bigint;
   winnerShareLamports: bigint;
+  winnerPayoutLamports: bigint[];
   burnLamports: bigint;
   treasuryFeeLamports: bigint;
   treasuryDustLamports: bigint;
@@ -48,18 +48,20 @@ export function calculateWagerPayouts(
   const treasuryFeeLamports = totalPotLamports * BigInt(WAGER_TREASURY_BPS) / WAGER_BPS_DENOMINATOR;
   const splitDustLamports = totalPotLamports - grossWinnerPoolLamports - burnLamports - treasuryFeeLamports;
   const winnerShareLamports = grossWinnerPoolLamports / BigInt(winningPaidHumanCount);
-  const winnerPoolLamports = winnerShareLamports * BigInt(winningPaidHumanCount);
-  const winnerDustLamports = grossWinnerPoolLamports - winnerPoolLamports;
-  const treasuryDustLamports = splitDustLamports + winnerDustLamports;
+  const winnerRemainderLamports = grossWinnerPoolLamports - winnerShareLamports * BigInt(winningPaidHumanCount);
+  const winnerPayoutLamports = Array.from({ length: winningPaidHumanCount }, (_, index) => (
+    winnerShareLamports + (BigInt(index) < winnerRemainderLamports ? 1n : 0n)
+  ));
 
   return {
     totalPotLamports,
-    winnerPoolLamports,
+    winnerPoolLamports: grossWinnerPoolLamports,
     winnerShareLamports,
+    winnerPayoutLamports,
     burnLamports,
     treasuryFeeLamports,
-    treasuryDustLamports,
-    treasuryTotalLamports: treasuryFeeLamports + treasuryDustLamports,
+    treasuryDustLamports: splitDustLamports,
+    treasuryTotalLamports: treasuryFeeLamports + splitDustLamports,
   };
 }
 

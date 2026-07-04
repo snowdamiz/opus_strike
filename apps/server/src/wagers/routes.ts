@@ -62,7 +62,6 @@ router.post('/lobbies/preflight', async (req, res) => {
         winnerPoolBps: WAGER_WINNER_POOL_BPS,
         burnBps: WAGER_BURN_BPS,
         treasuryBps: WAGER_TREASURY_BPS,
-        burnWallet: normalized.burnWallet,
       },
     });
   } catch (error) {

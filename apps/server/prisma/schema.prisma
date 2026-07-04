@@ -57,8 +57,6 @@ enum WagerSettlementTransferKind {
   winner_payout
   treasury_fee
   burn
-  // Historical value migrated to treasury_fee; retained for old database compatibility.
-  developer_fee
   refund
 }
 
@@ -781,6 +779,13 @@ model WagerSettlementTransfer {
   kind                      WagerSettlementTransferKind
   recipientWallet           String
   amountLamports            BigInt
+  tokenMintAddress          String?
+  tokenProgramId            String?
+  tokenDecimals             Int?
+  tokenAccountAddress       String?
+  convertedTokenBaseUnits   BigInt?
+  conversionSignature       String?                       @unique
+  burnSignature             String?                       @unique
   signature                 String?                       @unique
   refundReason              String?
   refundGrossLamports       BigInt?

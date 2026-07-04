@@ -4484,23 +4484,12 @@ body,
 .play-earnings-rule-list li {
   position: relative;
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-columns: max-content minmax(0, 1fr) 1rem;
+  align-items: start;
   column-gap: 0.24rem;
   min-width: 0;
   padding: 0;
   white-space: normal;
-}
-
-.play-earnings-rule-list li.play-earnings-rule-featured {
-  margin: -0.08rem -0.08rem 0.03rem;
-  padding: 0.38rem 0.46rem;
-  border: 1px solid rgb(var(--color-accent-primary) / 0.24);
-  border-radius: 0.38rem;
-  background:
-    linear-gradient(100deg, rgb(var(--color-accent-primary) / 0.16), rgb(var(--color-accent-secondary) / 0.08) 54%, rgb(255 255 255 / 0.035));
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.08),
-    0 0.42rem 0.95rem rgb(var(--color-accent-primary) / 0.08);
 }
 
 .play-earnings-rule-label {
@@ -4511,6 +4500,66 @@ body,
 .play-earnings-rule-value {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.play-earnings-rule-info {
+  display: grid;
+  width: 1rem;
+  height: 1rem;
+  margin: -0.03rem 0 0 0.08rem;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgb(255 255 255 / 0.5);
+  cursor: help;
+  padding: 0;
+  pointer-events: auto;
+  transition:
+    color 120ms ease,
+    filter 120ms ease,
+    transform 120ms ease;
+}
+
+.play-earnings-rule-info:hover,
+.play-earnings-rule-info:focus-visible {
+  color: rgb(var(--color-accent-primary) / 0.96);
+  filter: drop-shadow(0 0 0.45rem rgb(var(--color-accent-primary) / 0.28));
+  transform: translateY(-0.02rem);
+}
+
+.play-earnings-rule-info:focus-visible {
+  outline: 1px solid rgb(var(--color-accent-primary) / 0.74);
+  outline-offset: 0.12rem;
+}
+
+.play-earnings-rule-info svg {
+  width: 0.82rem;
+  height: 0.82rem;
+  stroke-width: 2.4;
+}
+
+.play-earnings-rule-tooltip {
+  z-index: 200;
+  max-width: min(18rem, calc(100vw - 1.5rem));
+  border: 1px solid rgb(var(--color-accent-primary) / 0.24);
+  border-radius: 0.42rem;
+  background:
+    linear-gradient(180deg, rgb(20 20 22 / 0.96), rgb(7 8 10 / 0.96));
+  box-shadow:
+    0 0.85rem 1.8rem rgb(0 0 0 / 0.34),
+    inset 0 1px 0 rgb(255 255 255 / 0.07);
+  color: rgb(255 255 255 / 0.9);
+  font-family: 'Rajdhani', 'Exo 2', sans-serif;
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.18;
+  padding: 0.42rem 0.52rem;
+  text-shadow: 0 0.12rem 0.35rem rgb(0 0 0 / 0.78);
+}
+
+.play-earnings-rule-tooltip-arrow {
+  fill: rgb(20 20 22 / 0.96);
 }
 
 .global-chat-panel {
