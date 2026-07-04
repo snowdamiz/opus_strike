@@ -125,6 +125,19 @@ function record(input: {
 
 {
   const acc = accumulator();
+  const tokenDripDisabledConfig = { ...config, enabled: false };
+  assert.equal(record({ acc, damage: 100, config: tokenDripDisabledConfig })?.amountLamports, 25_000n);
+}
+
+{
+  const acc = accumulator();
+  const combatDisabledConfig = { ...config, rankedBrCombatRewardsEnabled: false };
+  assert.equal(record({ acc, damage: 100, config: combatDisabledConfig }), null);
+  assert.equal(acc.buildGrants().length, 0);
+}
+
+{
+  const acc = accumulator();
   record({ acc, damage: 100 });
   record({ acc, damage: 0, kill: true });
   const grants = acc.buildGrants();

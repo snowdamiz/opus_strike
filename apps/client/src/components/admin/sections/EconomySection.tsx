@@ -322,14 +322,14 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
 
   return (
     <div className="space-y-6">
-      {/* Ranked Token Payouts */}
+      {/* Ranked Token Drips */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between gap-4">
             <div className="space-y-1">
-              <CardTitle>Ranked Token Payouts</CardTitle>
+              <CardTitle>Ranked Token Drips</CardTitle>
               <CardDescription>
-                Per-match token drips for ranked play.
+                Daily and objective token rewards for ranked play.
                 {tokenSymbol ? (
                   <>
                     {' '}
