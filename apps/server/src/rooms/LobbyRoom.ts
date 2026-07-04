@@ -110,6 +110,7 @@ import {
   isPublicSeedGenerationFallbackEnabled,
   pregeneratedMapCatalogService,
   type PregeneratedMapLaunchSelection,
+  type ReservedPregeneratedMapLaunch,
 } from '../maps/pregeneratedMapCatalog';
 import {
   buildGameEntryTicketInputs,
@@ -1013,25 +1014,35 @@ export class LobbyRoom extends Room<LobbyState> {
       const source = this.createMapSelectionSource();
       const participantCount = this.getCombatParticipantCount();
       const eventThemeId = await getEnabledEventBiomeThemeId();
+      const preferredMapSize = getBattleRoyalMapSizeForParticipantCount({
+        participantCount,
+        rules: this.gameplayRules,
+      });
       const pooledSelection = await pregeneratedMapCatalogService.selectMapForBattleRoyal({
         participantCount,
-        preferredMapSize: getBattleRoyalMapSizeForParticipantCount({
-          participantCount,
-          rules: this.gameplayRules,
-        }),
+        preferredMapSize,
         source,
         eventThemeId,
       });
 
       let selection: MapLaunchSelection | PregeneratedMapLaunchSelection | null = pooledSelection;
-      let selectedMapThemeId: VoxelMapTheme['id'];
-      let reservedMapThemeId: VoxelMapTheme['id'] | null = null;
+      let selectedMapThemeId: VoxelMapTheme['id'] | null = null;
       if (selection?.pregeneratedMapId) {
-        const reserved = await pregeneratedMapCatalogService.reserveMapForLaunch({
-          mapId: selection.pregeneratedMapId,
-          lobbyId: this.state.lobbyId,
-          selectionSource: 'battle-royal-auto',
-        });
+        let reserved: ReservedPregeneratedMapLaunch | null = null;
+        try {
+          reserved = await pregeneratedMapCatalogService.reserveMapForLaunch({
+            mapId: selection.pregeneratedMapId,
+            lobbyId: this.state.lobbyId,
+            selectionSource: 'battle-royal-auto',
+          });
+        } catch (error) {
+          if (!isPublicSeedGenerationFallbackEnabled()) throw error;
+          loggers.room.warn('Using Battle Royal fallback because pregenerated map reservation failed', {
+            lobbyId: this.state.lobbyId,
+            mapId: selection.pregeneratedMapId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
         if (!reserved) {
           if (!isPublicSeedGenerationFallbackEnabled()) {
             throw new Error('Selected Battle Royal map is no longer ready');
@@ -1049,7 +1060,7 @@ export class LobbyRoom extends Room<LobbyState> {
             topologyId: reserved.map.topologyId,
             displayName: reserved.map.displayName,
           };
-          reservedMapThemeId = reserved.map.themeId;
+          selectedMapThemeId = reserved.map.themeId;
           launchOptions = {
             pregeneratedMapId: reserved.map.id,
             mapArtifactId: reserved.map.artifactId,
@@ -1068,10 +1079,55 @@ export class LobbyRoom extends Room<LobbyState> {
           participantCount,
           eventThemeId,
         });
-        selectedMapThemeId = await this.resolveSelectedMapThemeId(selection.seed);
-      } else {
-        selectedMapThemeId = reservedMapThemeId ?? await this.resolveSelectedMapThemeId(selection.seed);
+        const fallbackMapThemeId = await this.resolveSelectedMapThemeId(selection.seed);
+        try {
+          const generated = await pregeneratedMapCatalogService.generateAndReserveMapForLaunch({
+            seed: selection.seed,
+            themeId: fallbackMapThemeId,
+            mapSize: selection.mapSize,
+            profileId: selection.mapProfileId,
+            visibility: 'matchmaking-only',
+            lobbyId: this.state.lobbyId,
+            selectionSource: 'fallback',
+          });
+          selection = {
+            id: 'map_1',
+            seed: generated.map.seed,
+            mapSize: generated.map.mapSize,
+            mapProfileId: generated.map.profileId,
+            mapThemeId: generated.map.themeId,
+            pregeneratedMapId: generated.map.id,
+            mapArtifactId: generated.map.artifactId,
+            topologyId: generated.map.topologyId,
+            displayName: generated.map.displayName,
+          };
+          selectedMapThemeId = generated.map.themeId;
+          launchOptions = {
+            pregeneratedMapId: generated.map.id,
+            mapArtifactId: generated.map.artifactId,
+            mapSelectionId: generated.selectionId,
+          };
+          loggers.room.warn('Using on-demand generated Battle Royal map fallback', {
+            lobbyId: this.state.lobbyId,
+            pregeneratedMapId: generated.map.id,
+            mapArtifactId: generated.map.artifactId,
+            mapSeed: generated.map.seed,
+            mapSize: generated.map.mapSize,
+            mapThemeId: generated.map.themeId,
+          });
+        } catch (error) {
+          selectedMapThemeId = fallbackMapThemeId;
+          loggers.room.warn('Using seed-generated Battle Royal map fallback because on-demand generation failed', {
+            lobbyId: this.state.lobbyId,
+            mapSeed: selection.seed,
+            mapSize: selection.mapSize,
+            mapProfileId: selection.mapProfileId,
+            mapThemeId: fallbackMapThemeId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
+      selectedMapThemeId ??= await this.resolveSelectedMapThemeId(selection.seed);
 
       this.state.status = 'starting';
       this.setMatchmakingLocked(true);
@@ -1311,11 +1367,22 @@ export class LobbyRoom extends Room<LobbyState> {
       let mapSize = selectedOption.mapSize;
       let mapProfileId = selectedOption.mapProfileId;
       if (selectedOption.pregeneratedMapId) {
-        const reserved = await pregeneratedMapCatalogService.reserveMapForLaunch({
-          mapId: selectedOption.pregeneratedMapId,
-          lobbyId: this.state.lobbyId,
-          selectionSource: this.isMatchmakingQueue() ? 'matchmaking' : 'vote',
-        });
+        let reserved: ReservedPregeneratedMapLaunch | null = null;
+        try {
+          reserved = await pregeneratedMapCatalogService.reserveMapForLaunch({
+            mapId: selectedOption.pregeneratedMapId,
+            lobbyId: this.state.lobbyId,
+            selectionSource: this.isMatchmakingQueue() ? 'matchmaking' : 'vote',
+          });
+        } catch (error) {
+          if (!isPublicSeedGenerationFallbackEnabled()) throw error;
+          loggers.room.warn('Using map vote fallback because pregenerated map reservation failed', {
+            lobbyId: this.state.lobbyId,
+            mapId: selectedOption.pregeneratedMapId,
+            optionId: selectedOption.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
         if (!reserved) {
           if (!isPublicSeedGenerationFallbackEnabled()) {
             throw new Error('Selected map is no longer ready');
@@ -1325,6 +1392,45 @@ export class LobbyRoom extends Room<LobbyState> {
             mapId: selectedOption.pregeneratedMapId,
             optionId: selectedOption.id,
           });
+          try {
+            const generated = await pregeneratedMapCatalogService.generateAndReserveMapForLaunch({
+              seed: mapSeed,
+              themeId: selectedMapThemeId,
+              mapSize,
+              profileId: mapProfileId,
+              visibility: 'public',
+              lobbyId: this.state.lobbyId,
+              selectionSource: 'fallback',
+            });
+            mapSeed = generated.map.seed;
+            mapSize = generated.map.mapSize;
+            mapProfileId = generated.map.profileId;
+            selectedMapThemeId = generated.map.themeId;
+            launchOptions = {
+              pregeneratedMapId: generated.map.id,
+              mapArtifactId: generated.map.artifactId,
+              mapSelectionId: generated.selectionId,
+            };
+            loggers.room.warn('Using on-demand generated map vote fallback', {
+              lobbyId: this.state.lobbyId,
+              optionId: selectedOption.id,
+              pregeneratedMapId: generated.map.id,
+              mapArtifactId: generated.map.artifactId,
+              mapSeed,
+              mapSize,
+              mapThemeId: selectedMapThemeId,
+            });
+          } catch (error) {
+            loggers.room.warn('Continuing with seed-generated map vote fallback because on-demand generation failed', {
+              lobbyId: this.state.lobbyId,
+              optionId: selectedOption.id,
+              mapSeed,
+              mapSize,
+              mapProfileId,
+              mapThemeId: selectedMapThemeId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         } else {
           mapSeed = reserved.map.seed;
           mapSize = reserved.map.mapSize;
