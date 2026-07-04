@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
   HeroId,
+  GameplayMode,
   MapProfileId,
   MapTopologyId,
   MatchMode,
@@ -72,6 +73,7 @@ export interface FinalRankedEligibilityInput {
   ledger: MatchPersistenceLedger;
   participants: readonly MatchParticipantSnapshot[];
   currentMatchMode: MatchMode;
+  gameplayMode: GameplayMode;
   npcCount: number;
   requiredHumanPlayers: number;
   forcedByPlayerId?: string;
@@ -311,7 +313,9 @@ export class MatchLedgerRuntime {
       && input.currentMatchMode === 'ranked'
       && !input.forcedByPlayerId
       && input.npcCount === 0
-      && input.participants.length === input.requiredHumanPlayers
+      && (input.gameplayMode === 'battle_royal'
+        ? input.participants.length >= input.requiredHumanPlayers
+        : input.participants.length === input.requiredHumanPlayers)
       && input.participants.every((participant) => participant.userId)
     );
   }

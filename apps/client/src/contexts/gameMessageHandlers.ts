@@ -3144,6 +3144,14 @@ function handlePlayerDamagedMessage(data: PlayerDamagedEvent): void {
       targetId: fixedAnchor ? null : data.targetId,
       position: targetPosition,
     });
+    if (data.rankedBrSolRewardLamports) {
+      combatFeedback.addCombatTextEvent({
+        kind: 'solReward',
+        amountLamports: data.rankedBrSolRewardLamports,
+        targetId: fixedAnchor ? null : data.targetId,
+        position: targetPosition,
+      });
+    }
   }
 
   if (data.sourceId && data.sourceId !== localPlayerId && sourcePosition && targetPosition) {

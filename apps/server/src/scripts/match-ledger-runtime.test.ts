@@ -212,6 +212,7 @@ function setDurable(playerId: string, userId = `user-${playerId}`): void {
     ledger,
     participants,
     currentMatchMode: 'ranked',
+    gameplayMode: 'capture_the_flag',
     npcCount: 0,
     requiredHumanPlayers: 2,
   }), true);
@@ -219,6 +220,7 @@ function setDurable(playerId: string, userId = `user-${playerId}`): void {
     ledger,
     participants,
     currentMatchMode: 'ranked',
+    gameplayMode: 'capture_the_flag',
     npcCount: 1,
     requiredHumanPlayers: 2,
   }), false);
@@ -226,10 +228,20 @@ function setDurable(playerId: string, userId = `user-${playerId}`): void {
     ledger,
     participants,
     currentMatchMode: 'ranked',
+    gameplayMode: 'capture_the_flag',
     npcCount: 0,
     requiredHumanPlayers: 2,
     forcedByPlayerId: 'red',
   }), false);
+
+  assert.equal(runtime.isFinalRankedEligible({
+    ledger,
+    participants,
+    currentMatchMode: 'ranked',
+    gameplayMode: 'battle_royal',
+    npcCount: 0,
+    requiredHumanPlayers: 1,
+  }), true);
 }
 
 console.log('match ledger runtime tests passed');

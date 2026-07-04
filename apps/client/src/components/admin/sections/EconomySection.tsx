@@ -127,6 +127,10 @@ function num(value: string): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
 }
+function integerText(value: string): string {
+  const normalized = value.trim();
+  return /^[0-9]+$/.test(normalized) ? normalized : '0';
+}
 function str(value: string | number | null | undefined): string {
   return value == null ? '' : String(value);
 }
@@ -140,10 +144,21 @@ function positiveIntegerText(value: string): boolean {
   }
 }
 
+function formatMicroUsd(value: string | null | undefined): string {
+  if (!value || !/^[0-9]+$/.test(value)) return '—';
+  const microUsd = BigInt(value);
+  const whole = microUsd / 1_000_000n;
+  const fraction = microUsd % 1_000_000n;
+  if (fraction === 0n) return `$${whole.toString()}`;
+  return `$${whole.toString()}.${fraction.toString().padStart(6, '0').replace(/0+$/, '')}`;
+}
+
 /* ----------------------------- Rewards Tab -------------------------- */
 
 interface RewardsForm {
   enabled: boolean;
+  rankedBrCombatRewardsEnabled: boolean;
+  rankedBrCombatRewardsShadowMode: boolean;
   dailyRankedDripLamports: string;
   dailyRankedDripMaxMatches: string;
   minMatchDurationMs: string;
@@ -155,11 +170,24 @@ interface RewardsForm {
   maxMatchPayoutLamports: string;
   treasuryReserveLamports: string;
   payoutBatchSize: string;
+  rankedBrDamageLamportsPerHp: string;
+  rankedBrKillLamports: string;
+  rankedBrBotTargetRewardBps: string;
+  rankedBrSourceVictimDamageCapHp: string;
+  rankedBrMaxPlayerMatchLamports: string;
+  rankedBrMaxPlayerDailyLamports: string;
+  rankedBrMaxMatchLamports: string;
+  rankedBrTreasuryExposureBps: string;
+  rankedBrClientRewardTextMinLamports: string;
+  minPayoutUsdCents: string;
+  payoutPriceQuoteTtlMs: string;
 }
 
 function buildRewardsForm(rewards: PlayerRewardSettings): RewardsForm {
   return {
-    enabled: rewards.enabled,
+    enabled: rewards.enabled === true,
+    rankedBrCombatRewardsEnabled: rewards.rankedBrCombatRewardsEnabled === true,
+    rankedBrCombatRewardsShadowMode: rewards.rankedBrCombatRewardsShadowMode !== false,
     dailyRankedDripLamports: str(rewards.dailyRankedDripLamports),
     dailyRankedDripMaxMatches: str(rewards.dailyRankedDripMaxMatches),
     minMatchDurationMs: str(rewards.minMatchDurationMs),
@@ -171,6 +199,17 @@ function buildRewardsForm(rewards: PlayerRewardSettings): RewardsForm {
     maxMatchPayoutLamports: str(rewards.maxMatchPayoutLamports),
     treasuryReserveLamports: str(rewards.treasuryReserveLamports),
     payoutBatchSize: str(rewards.payoutBatchSize),
+    rankedBrDamageLamportsPerHp: str(rewards.rankedBrDamageLamportsPerHp),
+    rankedBrKillLamports: str(rewards.rankedBrKillLamports),
+    rankedBrBotTargetRewardBps: str(rewards.rankedBrBotTargetRewardBps),
+    rankedBrSourceVictimDamageCapHp: str(rewards.rankedBrSourceVictimDamageCapHp),
+    rankedBrMaxPlayerMatchLamports: str(rewards.rankedBrMaxPlayerMatchLamports),
+    rankedBrMaxPlayerDailyLamports: str(rewards.rankedBrMaxPlayerDailyLamports),
+    rankedBrMaxMatchLamports: str(rewards.rankedBrMaxMatchLamports),
+    rankedBrTreasuryExposureBps: str(rewards.rankedBrTreasuryExposureBps),
+    rankedBrClientRewardTextMinLamports: str(rewards.rankedBrClientRewardTextMinLamports),
+    minPayoutUsdCents: str(rewards.minPayoutUsdCents),
+    payoutPriceQuoteTtlMs: str(rewards.payoutPriceQuoteTtlMs),
   };
 }
 
@@ -186,6 +225,8 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
   );
   const [saving, setSaving] = React.useState(false);
   const [settlingSeasonTopTen, setSettlingSeasonTopTen] = React.useState(false);
+  const [forcePayoutUserId, setForcePayoutUserId] = React.useState('');
+  const [forcingPayout, setForcingPayout] = React.useState(false);
   const [seasonTopTenAmount, setSeasonTopTenAmount] = React.useState('');
   const [seasonTopTenNumber, setSeasonTopTenNumber] = React.useState(
     rankedSeason?.seasonNumber != null ? String(rankedSeason.seasonNumber) : '1'
@@ -213,17 +254,30 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
       await c.saveRewardEconomy({
         playerRewards: {
           enabled: form.enabled,
-          dailyRankedDripLamports: num(form.dailyRankedDripLamports),
+          rankedBrCombatRewardsEnabled: form.rankedBrCombatRewardsEnabled,
+          rankedBrCombatRewardsShadowMode: form.rankedBrCombatRewardsShadowMode,
+          dailyRankedDripLamports: integerText(form.dailyRankedDripLamports),
           dailyRankedDripMaxMatches: num(form.dailyRankedDripMaxMatches),
           minMatchDurationMs: num(form.minMatchDurationMs),
-          objectiveWinLamports: num(form.objectiveWinLamports),
-          objectiveFlagCaptureLamports: num(form.objectiveFlagCaptureLamports),
-          objectiveFlagReturnLamports: num(form.objectiveFlagReturnLamports),
-          objectiveAssistLamports: num(form.objectiveAssistLamports),
-          maxPlayerMatchLamports: num(form.maxPlayerMatchLamports),
-          maxMatchPayoutLamports: num(form.maxMatchPayoutLamports),
-          treasuryReserveLamports: num(form.treasuryReserveLamports),
+          objectiveWinLamports: integerText(form.objectiveWinLamports),
+          objectiveFlagCaptureLamports: integerText(form.objectiveFlagCaptureLamports),
+          objectiveFlagReturnLamports: integerText(form.objectiveFlagReturnLamports),
+          objectiveAssistLamports: integerText(form.objectiveAssistLamports),
+          maxPlayerMatchLamports: integerText(form.maxPlayerMatchLamports),
+          maxMatchPayoutLamports: integerText(form.maxMatchPayoutLamports),
+          treasuryReserveLamports: integerText(form.treasuryReserveLamports),
           payoutBatchSize: num(form.payoutBatchSize),
+          rankedBrDamageLamportsPerHp: integerText(form.rankedBrDamageLamportsPerHp),
+          rankedBrKillLamports: integerText(form.rankedBrKillLamports),
+          rankedBrBotTargetRewardBps: num(form.rankedBrBotTargetRewardBps),
+          rankedBrSourceVictimDamageCapHp: num(form.rankedBrSourceVictimDamageCapHp),
+          rankedBrMaxPlayerMatchLamports: integerText(form.rankedBrMaxPlayerMatchLamports),
+          rankedBrMaxPlayerDailyLamports: integerText(form.rankedBrMaxPlayerDailyLamports),
+          rankedBrMaxMatchLamports: integerText(form.rankedBrMaxMatchLamports),
+          rankedBrTreasuryExposureBps: num(form.rankedBrTreasuryExposureBps),
+          rankedBrClientRewardTextMinLamports: integerText(form.rankedBrClientRewardTextMinLamports),
+          minPayoutUsdCents: num(form.minPayoutUsdCents),
+          payoutPriceQuoteTtlMs: num(form.payoutPriceQuoteTtlMs),
         },
       });
     } finally {
@@ -242,6 +296,16 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
       });
     } finally {
       setSettlingSeasonTopTen(false);
+    }
+  };
+
+  const onForcePayout = async () => {
+    setForcingPayout(true);
+    try {
+      await c.forcePlayerRewardPayout({ userId: forcePayoutUserId.trim() });
+      setForcePayoutUserId('');
+    } finally {
+      setForcingPayout(false);
     }
   };
 
@@ -272,6 +336,10 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
                     Reward token: <span className="text-white/70">{tokenSymbol}</span>.
                   </>
                 ) : null}
+                {' '}
+                Settings v{economy.playerRewards.settingsVersion}.
+                {economy.playerRewards.updatedAt ? ` Updated ${formatRelativeTime(economy.playerRewards.updatedAt)}.` : ''}
+                {economy.playerRewards.updatedByUserId ? ` By ${truncateAddress(economy.playerRewards.updatedByUserId, 6, 6)}.` : ''}
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
@@ -321,6 +389,119 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
               onChange={(v) => set('objectiveFlagReturnLamports', v)}
               hint={unitHint}
             />
+          </div>
+
+          <Separator />
+
+          {/* Ranked BR Combat */}
+          <div>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-white/50">
+                Ranked BR SOL Combat
+              </h4>
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2 text-xs text-white/60">
+                  <span>Shadow</span>
+                  <Switch
+                    checked={form.rankedBrCombatRewardsShadowMode}
+                    onCheckedChange={(v) => set('rankedBrCombatRewardsShadowMode', v)}
+                  />
+                </label>
+                <label className="flex items-center gap-2 text-xs text-white/60">
+                  <span>Enabled</span>
+                  <Switch
+                    checked={form.rankedBrCombatRewardsEnabled}
+                    onCheckedChange={(v) => set('rankedBrCombatRewardsEnabled', v)}
+                  />
+                </label>
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              <NumberField
+                label="Damage Lamports / HP"
+                value={form.rankedBrDamageLamportsPerHp}
+                onChange={(v) => set('rankedBrDamageLamportsPerHp', v)}
+                hint="Server-applied effective HP only."
+              />
+              <NumberField
+                label="Kill Lamports"
+                value={form.rankedBrKillLamports}
+                onChange={(v) => set('rankedBrKillLamports', v)}
+                hint="Final enemy elimination bonus."
+              />
+              <NumberField
+                label="Bot Target Multiplier (bps)"
+                value={form.rankedBrBotTargetRewardBps}
+                onChange={(v) => set('rankedBrBotTargetRewardBps', v)}
+                hint={formatBps(num(form.rankedBrBotTargetRewardBps))}
+              />
+              <NumberField
+                label="Source-Victim Damage Cap HP"
+                value={form.rankedBrSourceVictimDamageCapHp}
+                onChange={(v) => set('rankedBrSourceVictimDamageCapHp', v)}
+                hint="Per attacker and victim per match."
+              />
+              <NumberField
+                label="BR Player Match Cap"
+                value={form.rankedBrMaxPlayerMatchLamports}
+                onChange={(v) => set('rankedBrMaxPlayerMatchLamports', v)}
+                hint="Lamports per player per match."
+              />
+              <NumberField
+                label="BR Player Daily Cap"
+                value={form.rankedBrMaxPlayerDailyLamports}
+                onChange={(v) => set('rankedBrMaxPlayerDailyLamports', v)}
+                hint="Lamports per UTC day."
+              />
+              <NumberField
+                label="BR Match Pool Cap"
+                value={form.rankedBrMaxMatchLamports}
+                onChange={(v) => set('rankedBrMaxMatchLamports', v)}
+                hint="Static cap before treasury exposure."
+              />
+              <NumberField
+                label="Treasury Exposure (bps)"
+                value={form.rankedBrTreasuryExposureBps}
+                onChange={(v) => set('rankedBrTreasuryExposureBps', v)}
+                hint="Capped server-side at 1%."
+              />
+              <NumberField
+                label="Reward Text Min Lamports"
+                value={form.rankedBrClientRewardTextMinLamports}
+                onChange={(v) => set('rankedBrClientRewardTextMinLamports', v)}
+                hint="Client buffers smaller events."
+              />
+              <NumberField
+                label="Min Payout (USD cents)"
+                value={form.minPayoutUsdCents}
+                onChange={(v) => set('minPayoutUsdCents', v)}
+                hint="Pending SOL pays after this value."
+              />
+              <NumberField
+                label="Price Quote TTL (ms)"
+                value={form.payoutPriceQuoteTtlMs}
+                onChange={(v) => set('payoutPriceQuoteTtlMs', v)}
+                hint="Freshness window for payout decisions."
+              />
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <ReadOnlyMetric
+                label="SOL/USD Quote"
+                value={formatMicroUsd(economy.playerRewards.payoutPriceQuote?.solUsdPriceMicroUsd)}
+              />
+              <ReadOnlyMetric
+                label="Quote Source"
+                value={economy.playerRewards.payoutPriceQuote?.source ?? '—'}
+              />
+              <ReadOnlyMetric
+                label="Quote Freshness"
+                value={economy.playerRewards.payoutPriceQuote
+                  ? economy.playerRewards.payoutPriceQuote.fresh
+                    ? `Fresh until ${formatRelativeTime(economy.playerRewards.payoutPriceQuote.expiresAt)}`
+                    : `Stale since ${formatRelativeTime(economy.playerRewards.payoutPriceQuote.expiresAt)}`
+                  : 'No quote yet'}
+              />
+            </div>
           </div>
 
           <Separator />
@@ -397,6 +578,39 @@ function RewardsTab({ console: c }: { console: SectionProps['console'] }) {
                 >
                   {settlingSeasonTopTen ? <Loader2 className="animate-spin" /> : <Send />}
                   Create Payouts
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* Manual Support */}
+          <div>
+            <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-white/50">
+              Manual Support
+            </h4>
+            <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
+              <div className="space-y-1.5">
+                <Label>User ID</Label>
+                <Input
+                  value={forcePayoutUserId}
+                  onChange={(event) => setForcePayoutUserId(event.target.value)}
+                  placeholder="user_..."
+                />
+                <p className="text-[11px] text-white/35">
+                  Bypasses the USD threshold; treasury reserve and wallet checks still apply.
+                </p>
+              </div>
+              <div className="flex items-start pt-7">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={onForcePayout}
+                  disabled={forcingPayout || !forcePayoutUserId.trim()}
+                >
+                  {forcingPayout ? <Loader2 className="animate-spin" /> : <Send />}
+                  Force Payout
                 </Button>
               </div>
             </div>

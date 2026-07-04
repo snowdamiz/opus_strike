@@ -4,6 +4,7 @@ import type {
   AccountActionRequest,
   AdminOverview,
   EventBiomeUpdate,
+  ForcePlayerRewardPayoutRequest,
   MapPoolTopUpRequest,
   MapPoolTopUpResponse,
   MissionDefinitionRequest,
@@ -68,6 +69,7 @@ export interface UseAdminConsole {
   reorderMissions: (body: MissionReorderRequest) => Promise<MutationResult>;
   saveRewardEconomy: (body: RewardEconomyUpdate) => Promise<MutationResult>;
   settleSeasonTopTenPayout: (body: SeasonTopTenPayoutRequest) => Promise<MutationResult>;
+  forcePlayerRewardPayout: (body: ForcePlayerRewardPayoutRequest) => Promise<MutationResult>;
   setGoldenDistributionMode: (mode: 'manual' | 'auto') => Promise<MutationResult>;
   distributeGoldenReward: (rewardId: string) => Promise<MutationResult>;
   saveSkinShopSettings: (body: SkinShopSettingsUpdate) => Promise<MutationResult>;
@@ -285,6 +287,14 @@ export function useAdminConsole(): UseAdminConsole {
     [runMutation]
   );
 
+  const forcePlayerRewardPayout = useCallback(
+    (body: ForcePlayerRewardPayoutRequest) =>
+      runMutation('Force reward payout', (csrf) =>
+        adminPost('/reward-economy/force-payout', body, csrf)
+      ),
+    [runMutation]
+  );
+
   const setGoldenDistributionMode = useCallback(
     (mode: 'manual' | 'auto') =>
       runMutation('Distribution mode', (csrf) =>
@@ -356,6 +366,7 @@ export function useAdminConsole(): UseAdminConsole {
     reorderMissions,
     saveRewardEconomy,
     settleSeasonTopTenPayout,
+    forcePlayerRewardPayout,
     setGoldenDistributionMode,
     distributeGoldenReward,
     saveSkinShopSettings,

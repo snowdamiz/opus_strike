@@ -35,6 +35,10 @@ const damagePayload: PlayerDamagedEvent = {
   sourceHeroId: 'phantom',
   targetHeroId: 'blaze',
 };
+const rewardDamagePayload: PlayerDamagedEvent = {
+  ...damagePayload,
+  rankedBrSolRewardLamports: '3000',
+};
 
 {
   assert.equal(buildPlayerDamagedPayload(damagePayload, {
@@ -66,6 +70,19 @@ const damagePayload: PlayerDamagedEvent = {
     canKnowTarget: false,
     canKnowSource: false,
   }), damagePayload);
+
+  assert.equal(buildPlayerDamagedPayload(rewardDamagePayload, {
+    isParticipant: true,
+    canKnowTarget: false,
+    canKnowSource: false,
+  })?.rankedBrSolRewardLamports, undefined);
+
+  assert.equal(buildPlayerDamagedPayload(rewardDamagePayload, {
+    isParticipant: true,
+    canKnowTarget: false,
+    canKnowSource: false,
+    canKnowSourceOnlyReward: true,
+  })?.rankedBrSolRewardLamports, '3000');
 }
 
 const aegisPayload: ChronosAegisDamagedEvent = {

@@ -1,6 +1,7 @@
 import { lazy, Suspense, type CSSProperties, useCallback, useMemo, useState, useEffect, useRef } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
+import { useCombatFeedbackStore } from '../../store/combatFeedbackStore';
 import {
   arePartyMembersReady,
   getPartyMember,
@@ -677,7 +678,12 @@ export function MainLobby() {
     const loadRewardEconomy = async () => {
       try {
         const economy = await requestRewardEconomy();
-        if (mounted) setRewardEconomy(economy);
+        if (mounted) {
+          useCombatFeedbackStore
+            .getState()
+            .setSolRewardTextMinLamports(economy.playerRewards.rankedBrClientRewardTextMinLamports);
+          setRewardEconomy(economy);
+        }
       } catch (err) {
         if (mounted) console.warn('[MainLobby] Reward economy unavailable:', err);
       } finally {

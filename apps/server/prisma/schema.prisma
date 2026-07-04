@@ -93,6 +93,7 @@ enum PlayerRewardKind {
   objective_bounty
   season_top_10
   daily_mission
+  ranked_br_combat_bounty
 }
 
 enum PlayerRewardStatus {
@@ -849,6 +850,7 @@ model GoldenBiomeRewardSettings {
 model PlayerRewardSettings {
   id                          String   @id @default("default")
   enabled                     Boolean  @default(true)
+  settingsVersion             Int      @default(1)
   dailyRankedDripLamports     BigInt   @default(20000)
   dailyRankedDripMaxMatches   Int      @default(5)
   minMatchDurationMs          Int      @default(180000)
@@ -860,6 +862,19 @@ model PlayerRewardSettings {
   maxMatchPayoutLamports      BigInt   @default(250000)
   treasuryReserveLamports     BigInt   @default(1000000000)
   payoutBatchSize             Int      @default(100)
+  rankedBrCombatRewardsEnabled Boolean @default(false)
+  rankedBrCombatRewardsShadowMode Boolean @default(true)
+  rankedBrDamageLamportsPerHp BigInt   @default(250)
+  rankedBrKillLamports        BigInt   @default(100000)
+  rankedBrBotTargetRewardBps  Int      @default(7000)
+  rankedBrSourceVictimDamageCapHp Int   @default(315)
+  rankedBrMaxPlayerMatchLamports BigInt @default(750000)
+  rankedBrMaxPlayerDailyLamports BigInt @default(2500000)
+  rankedBrMaxMatchLamports    BigInt   @default(5000000)
+  rankedBrTreasuryExposureBps Int      @default(10)
+  rankedBrClientRewardTextMinLamports BigInt @default(1000)
+  minPayoutUsdCents           Int      @default(1500)
+  payoutPriceQuoteTtlMs       Int      @default(300000)
   updatedByUserId             String?
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
@@ -1034,6 +1049,9 @@ model PlayerRewardPayout {
   amountLamports BigInt
   status         PlayerRewardPayoutStatus @default(pending)
   signature      String?                 @unique
+  priceSource    String?
+  solUsdPriceMicroUsd BigInt?
+  priceObservedAt DateTime?
   lastError      String?
   createdAt      DateTime                @default(now())
   updatedAt      DateTime                @updatedAt

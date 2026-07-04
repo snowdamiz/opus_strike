@@ -63,6 +63,13 @@ export interface RoomDamageRuntimeDeps {
   markCombatActivityBetween(source: Player | null, target: Player, now: number): void;
   markRecentCombatTransform(playerId: string, now: number): void;
   markRecentCombatInterest(sourceId: string, targetId: string, now: number): void;
+  recordRankedBrCombatReward?(input: {
+    target: Player;
+    source: Player | null;
+    appliedDamage: number;
+    finalEnemyElimination: boolean;
+    damageType: string;
+  }): { amountLamports: string } | null;
   broadcastPhantomShieldBroken(
     target: Player,
     source: Player | null,
@@ -390,6 +397,13 @@ export class RoomDamageRuntime {
       this.deps.markRecentCombatTransform(source.id, now);
       this.deps.markRecentCombatInterest(source.id, target.id, now);
     }
+    const rankedBrReward = this.deps.recordRankedBrCombatReward?.({
+      target,
+      source: source ?? null,
+      appliedDamage: result.appliedDamage,
+      finalEnemyElimination: Boolean(result.death && source && result.death.killerId === source.id),
+      damageType: result.damageType,
+    }) ?? null;
 
     this.deps.broadcastPlayerDamaged(target, source ?? null, {
       targetId: target.id,
@@ -403,6 +417,7 @@ export class RoomDamageRuntime {
       targetPosition: this.deps.vec3ToPlain(target.position),
       sourceHeroId: source?.heroId || null,
       targetHeroId: target.heroId || null,
+      rankedBrSolRewardLamports: rankedBrReward?.amountLamports,
     });
 
     if (result.downed) {
