@@ -14,6 +14,9 @@ import {
 import {
   createBotMatchRecording,
   enqueueRecordingRender,
+  getRecordingShowcaseJob,
+  type RecordingShowcaseJob,
+  type RecordingShowcaseJobRedis,
 } from '../recordings/service';
 import type {
   StreamerGameRoomCreateOptions,
@@ -52,6 +55,21 @@ class FakeRecordingMatchMaker implements StreamerMatchMaker {
 
   async reserveSeatFor(_room: StreamerRoomListing, _options: StreamerObserverSeatOptions): Promise<never> {
     throw new Error('reserveSeatFor should not be called');
+  }
+}
+
+class FakeShowcaseJobRedis implements RecordingShowcaseJobRedis {
+  cachedValue: string | null = null;
+  lastGetKey: string | null = null;
+
+  async get(key: string): Promise<string | null> {
+    this.lastGetKey = key;
+    return this.cachedValue;
+  }
+
+  async set(_key: string, value: string, _mode: 'PX', _durationMs: number): Promise<unknown> {
+    this.cachedValue = value;
+    return 'OK';
   }
 }
 
@@ -209,6 +227,34 @@ async function main(): Promise<void> {
       await fs.readFile(path.join(rootDir, 'render-queue', `${render.renderId}.json`), 'utf8')
     ) as typeof render;
     assert.equal(queuedJob.renderId, render.renderId);
+
+    const cachedShowcaseJob: RecordingShowcaseJob = {
+      id: 'showcase_cached',
+      recordingId: 'rec_cached',
+      renderId: null,
+      status: 'recording',
+      heroId: 'blaze',
+      gameplayMode: 'team_deathmatch',
+      recordingDurationMs: 300_000,
+      recordingStartedAt: '2026-01-01T00:00:00.000Z',
+      downloadUrl: null,
+      error: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      serverProcessId: 'process-a',
+      serverMachineId: 'machine-a',
+    };
+    const showcaseRedis = new FakeShowcaseJobRedis();
+    showcaseRedis.cachedValue = JSON.stringify(cachedShowcaseJob);
+    const loadedShowcaseJob = await getRecordingShowcaseJob(cachedShowcaseJob.id, {
+      redis: showcaseRedis,
+    });
+    assert.deepEqual(loadedShowcaseJob, cachedShowcaseJob);
+    assert.match(showcaseRedis.lastGetKey ?? '', /showcase_cached$/);
+    const hydratedShowcaseJob = JSON.parse(
+      await fs.readFile(path.join(rootDir, 'showcase-jobs', `${cachedShowcaseJob.id}.json`), 'utf8')
+    ) as RecordingShowcaseJob;
+    assert.equal(hydratedShowcaseJob.id, cachedShowcaseJob.id);
 
     await fs.rm(rootDir, { recursive: true, force: true });
   } finally {

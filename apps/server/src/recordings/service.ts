@@ -41,6 +41,8 @@ const DEFAULT_DEVICE_PIXEL_RATIO = 1;
 const SHOWCASE_RECORDING_DURATION_MS = 5 * 60_000;
 const SHOWCASE_RECORDING_FINALIZE_TIMEOUT_MS = SHOWCASE_RECORDING_DURATION_MS + 2 * 60_000;
 const SHOWCASE_RECORDING_POLL_MS = 1_000;
+const SHOWCASE_JOB_CACHE_TTL_MS = 24 * 60 * 60_000;
+const SHOWCASE_JOB_CACHE_KEY_PREFIX = 'voxel-strike:recordings:showcase-job:';
 
 export interface BotMatchRecordingRequest {
   heroId?: unknown;
@@ -88,15 +90,27 @@ export interface RecordingShowcaseJob {
   heroId: HeroId;
   gameplayMode: GameplayMode;
   recordingDurationMs: number;
+  recordingStartedAt: string | null;
   downloadUrl: string | null;
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  serverProcessId: string | null;
+  serverMachineId: string | null;
 }
 
 export interface RecordingShowcaseRequest {
   heroId?: unknown;
   gameplayMode?: unknown;
+}
+
+export interface RecordingShowcaseJobRedis {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, mode: 'PX', durationMs: number): Promise<unknown>;
+}
+
+export interface RecordingShowcaseJobStore {
+  redis?: RecordingShowcaseJobRedis | null;
 }
 
 function boundedInteger(value: unknown, fallback: number, min: number, max: number): number {
@@ -168,6 +182,10 @@ function getShowcaseJobsDir(): string {
 
 function getShowcaseJobPath(id: string): string {
   return path.join(getShowcaseJobsDir(), `${cleanShowcaseJobId(id)}.json`);
+}
+
+function getShowcaseJobCacheKey(id: string): string {
+  return `${SHOWCASE_JOB_CACHE_KEY_PREFIX}${cleanShowcaseJobId(id)}`;
 }
 
 async function readRecordingManifestWithRetry(id: string, attempts = 20): Promise<RecordingManifest> {
@@ -273,7 +291,7 @@ export class RecordingValidationError extends Error {
   }
 }
 
-async function writeShowcaseJob(job: RecordingShowcaseJob): Promise<void> {
+async function writeShowcaseJobFile(job: RecordingShowcaseJob): Promise<void> {
   await fs.mkdir(getShowcaseJobsDir(), { recursive: true });
   const jobPath = getShowcaseJobPath(job.id);
   const tempPath = `${jobPath}.${process.pid}.${Date.now()}.tmp`;
@@ -281,29 +299,78 @@ async function writeShowcaseJob(job: RecordingShowcaseJob): Promise<void> {
   await fs.rename(tempPath, jobPath);
 }
 
+async function writeShowcaseJobCache(
+  job: RecordingShowcaseJob,
+  store: RecordingShowcaseJobStore | undefined
+): Promise<void> {
+  if (!store?.redis) return;
+  await store.redis.set(
+    getShowcaseJobCacheKey(job.id),
+    JSON.stringify(job),
+    'PX',
+    SHOWCASE_JOB_CACHE_TTL_MS
+  );
+}
+
+async function writeShowcaseJob(
+  job: RecordingShowcaseJob,
+  store?: RecordingShowcaseJobStore
+): Promise<void> {
+  await writeShowcaseJobFile(job);
+  await writeShowcaseJobCache(job, store).catch((error) => {
+    loggers.room.warn('Failed to cache showcase recording job', {
+      jobId: job.id,
+      recordingId: job.recordingId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+}
+
 async function updateShowcaseJob(
   job: RecordingShowcaseJob,
-  patch: Partial<Omit<RecordingShowcaseJob, 'id' | 'createdAt'>>
+  patch: Partial<Omit<RecordingShowcaseJob, 'id' | 'createdAt'>>,
+  store?: RecordingShowcaseJobStore
 ): Promise<RecordingShowcaseJob> {
   const next: RecordingShowcaseJob = {
     ...job,
     ...patch,
     updatedAt: new Date().toISOString(),
   };
-  await writeShowcaseJob(next);
+  await writeShowcaseJob(next, store);
   return next;
 }
 
-function showcaseDownloadUrl(recordingId: string): string {
-  return `/recordings/${encodeURIComponent(recordingId)}/download`;
+function showcaseDownloadUrl(recordingId: string, jobId: string): string {
+  return `/recordings/${encodeURIComponent(recordingId)}/download?showcaseJobId=${encodeURIComponent(jobId)}`;
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function getRecordingShowcaseJob(id: string): Promise<RecordingShowcaseJob> {
-  return JSON.parse(await fs.readFile(getShowcaseJobPath(id), 'utf8')) as RecordingShowcaseJob;
+export async function getRecordingShowcaseJob(
+  id: string,
+  store?: RecordingShowcaseJobStore
+): Promise<RecordingShowcaseJob> {
+  try {
+    return JSON.parse(await fs.readFile(getShowcaseJobPath(id), 'utf8')) as RecordingShowcaseJob;
+  } catch (fileError) {
+    const cached = store?.redis
+      ? await store.redis.get(getShowcaseJobCacheKey(id))
+      : null;
+    if (!cached) {
+      throw fileError;
+    }
+
+    const job = JSON.parse(cached) as RecordingShowcaseJob;
+    await writeShowcaseJobFile(job).catch((error) => {
+      loggers.room.warn('Failed to hydrate showcase recording job from cache', {
+        jobId: id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    return job;
+  }
 }
 
 async function waitForFinalizedRecording(id: string): Promise<{
@@ -340,8 +407,11 @@ async function waitForFinalizedRecording(id: string): Promise<{
     : new Error('Timed out waiting for recording finalization');
 }
 
-async function runShowcaseRecordingPipeline(jobId: string): Promise<void> {
-  let job = await getRecordingShowcaseJob(jobId);
+async function runShowcaseRecordingPipeline(
+  jobId: string,
+  store?: RecordingShowcaseJobStore
+): Promise<void> {
+  let job = await getRecordingShowcaseJob(jobId, store);
   try {
     const recording = await waitForFinalizedRecording(job.recordingId);
     const render = await enqueueRecordingRender(job.recordingId, {
@@ -353,7 +423,7 @@ async function runShowcaseRecordingPipeline(jobId: string): Promise<void> {
       status: 'rendering',
       renderId: render.renderId,
       error: null,
-    });
+    }, store);
 
     await renderRecordingToMp4({
       jobPath: path.join(getRecordingArtifactDir(job.recordingId), `${render.renderId}.render-job.json`),
@@ -361,15 +431,15 @@ async function runShowcaseRecordingPipeline(jobId: string): Promise<void> {
 
     await updateShowcaseJob(job, {
       status: 'succeeded',
-      downloadUrl: showcaseDownloadUrl(job.recordingId),
+      downloadUrl: showcaseDownloadUrl(job.recordingId, job.id),
       error: null,
-    });
+    }, store);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     await updateShowcaseJob(job, {
       status: 'failed',
       error: errorMessage,
-    }).catch(() => {});
+    }, store).catch(() => {});
     loggers.room.error('Showcase recording job failed', {
       jobId,
       recordingId: job.recordingId,
@@ -385,6 +455,9 @@ export async function startShowcaseRecordingJob(input: {
   request: RecordingShowcaseRequest;
   random?: () => number;
   now?: () => number;
+  showcaseJobStore?: RecordingShowcaseJobStore;
+  serverProcessId?: string | null;
+  serverMachineId?: string | null;
 }): Promise<RecordingShowcaseJob> {
   const requestNow = input.now?.() ?? Date.now();
   const heroId = readRequiredHeroId(input.request.heroId);
@@ -414,13 +487,16 @@ export async function startShowcaseRecordingJob(input: {
     heroId,
     gameplayMode,
     recordingDurationMs: SHOWCASE_RECORDING_DURATION_MS,
+    recordingStartedAt: result.manifest.startedAt ?? timestamp,
     downloadUrl: null,
     error: null,
     createdAt: timestamp,
     updatedAt: timestamp,
+    serverProcessId: input.serverProcessId ?? null,
+    serverMachineId: input.serverMachineId ?? null,
   };
-  await writeShowcaseJob(job);
-  void runShowcaseRecordingPipeline(job.id).catch((error) => {
+  await writeShowcaseJob(job, input.showcaseJobStore);
+  void runShowcaseRecordingPipeline(job.id, input.showcaseJobStore).catch((error) => {
     loggers.room.error('Showcase recording job runner crashed', {
       jobId: job.id,
       recordingId: job.recordingId,

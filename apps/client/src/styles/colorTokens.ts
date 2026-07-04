@@ -158,6 +158,9 @@ export const MINIMAP_COLORS = {
     dropSegmentShadow: 'rgba(34, 211, 238, 0.76)',
     dropShipFill: 'rgba(251, 146, 60, 0.98)',
     dropShipStroke: 'rgba(255, 247, 237, 0.92)',
+    teamSoulFill: 'rgba(142, 234, 255, 0.9)',
+    teamSoulStroke: 'rgba(255, 255, 255, 0.86)',
+    teamSoulShadow: 'rgba(45, 212, 255, 0.72)',
   },
   team: {
     red: '#fb7185',
@@ -177,6 +180,10 @@ export const MINIMAP_COLORS = {
     moduleStroke: 'rgba(226, 242, 255, 0.22)',
     objectiveOutline: 'rgba(255, 255, 255, 0.78)',
     scanGrid: 'rgba(148, 163, 184, 0.08)',
+    summoningCircleFill: 'rgba(65, 240, 200, 0.22)',
+    summoningCircleStroke: 'rgba(217, 255, 246, 0.88)',
+    summoningCircleAccent: 'rgba(106, 183, 255, 0.9)',
+    summoningCircleShadow: 'rgba(45, 212, 255, 0.68)',
   },
   safeZone: {
     warningStroke: 'rgba(250, 204, 21, 0.92)',

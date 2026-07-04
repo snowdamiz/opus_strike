@@ -1182,6 +1182,24 @@ export function composeBotInputMovementState(input: BotInputMovementStateInput):
   };
 }
 
+export function applyBotReviveTeammateInput(input: PlayerInput): void {
+  input.moveForward = false;
+  input.moveBackward = false;
+  input.moveLeft = false;
+  input.moveRight = false;
+  input.jump = false;
+  input.crouch = false;
+  input.crouchPressed = false;
+  input.sprint = false;
+  input.primaryFire = false;
+  input.secondaryFire = false;
+  input.reload = false;
+  input.ability1 = false;
+  input.ability2 = false;
+  input.ultimate = false;
+  input.interact = true;
+}
+
 export function applyBotAbilityInputPlan(input: BotAbilityInputPlanInput): void {
   const { brain, input: controls, plan, skill, now, tempoMultiplier } = input;
   const random = input.random ?? Math.random;

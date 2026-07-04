@@ -51,6 +51,7 @@ const runtime = new MatchSnapshotRuntime();
   assert.equal(snapshot.mapProfileId, null);
   assert.equal(snapshot.safeZone, null);
   assert.equal(snapshot.battleRoyalDrop, null);
+  assert.equal(snapshot.battleRoyalSouls, null);
   assert.equal(snapshot.phaseEndTime, null);
   assert.equal(snapshot.redFlag, redFlag);
   assert.equal(snapshot.blueFlag, blueFlag);
@@ -100,6 +101,8 @@ const runtime = new MatchSnapshotRuntime();
     0,
     0,
     0,
+    '',
+    '',
     '',
     'red-carrier',
     0,

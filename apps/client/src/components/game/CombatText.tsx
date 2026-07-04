@@ -139,10 +139,10 @@ function getCombatTextColors(kind: CombatTextKind): {
 
   if (kind === 'solReward') {
     return {
-      top: '#fef9c3',
-      middle: '#34d399',
-      bottom: '#0f766e',
-      glow: 'rgba(45, 212, 191, 0.9)',
+      top: '#4ade80',
+      middle: '#4ade80',
+      bottom: '#4ade80',
+      glow: 'rgba(34, 197, 94, 0.74)',
     };
   }
 
@@ -218,29 +218,34 @@ function drawCombatTextTexture(canvas: HTMLCanvasElement, kind: CombatTextKind, 
   ctx.translate(COMBAT_TEXT_CANVAS_WIDTH / 2, COMBAT_TEXT_CANVAS_HEIGHT / 2 + 4);
   ctx.rotate(kind === 'heal' ? 0.035 : -0.045);
 
-  ctx.font = isSolReward
-    ? '900 50px Inter, ui-sans-serif, system-ui, sans-serif'
-    : '900 92px Inter, ui-sans-serif, system-ui, sans-serif';
+  const fontSize = isSolReward ? 68 : 92;
+  ctx.font = `900 ${fontSize}px Inter, ui-sans-serif, system-ui, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
   ctx.miterLimit = 2;
 
   ctx.shadowColor = colors.glow;
+  if (isSolReward) {
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = colors.middle;
+    ctx.fillText(text, textX, 0, COMBAT_TEXT_CANVAS_WIDTH - 56);
+    ctx.restore();
+    return;
+  }
+
   ctx.shadowBlur = 34;
-  ctx.lineWidth = isSolReward ? 12 : 18;
+  ctx.lineWidth = 18;
   ctx.strokeStyle = 'rgba(0, 0, 0, 0.92)';
   ctx.strokeText(text, textX, 0);
 
   ctx.shadowBlur = 20;
-  ctx.lineWidth = isSolReward ? 5 : 7;
+  ctx.lineWidth = 7;
   ctx.strokeStyle = kind === 'heal'
     ? 'rgba(6, 78, 59, 0.94)'
     : kind === 'shieldDamage'
       ? 'rgba(30, 64, 175, 0.94)'
-      : kind === 'solReward'
-        ? 'rgba(20, 83, 45, 0.94)'
-        : 'rgba(127, 29, 29, 0.94)';
+      : 'rgba(127, 29, 29, 0.94)';
   ctx.strokeText(text, textX, 0);
 
   if (isShieldDamage) {
@@ -434,7 +439,7 @@ function CombatTextSprite({
       : event.kind === 'shieldDamage'
         ? 0.78
         : event.kind === 'solReward'
-          ? 0.54
+          ? 0.82
           : 0.82
   ) + (event.kind === 'solReward' ? 0.02 : getAmountScale(eventAmount));
   const baseWidth = baseHeight * COMBAT_TEXT_ASPECT;

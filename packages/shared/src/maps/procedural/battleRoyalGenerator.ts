@@ -1,4 +1,6 @@
 import {
+  BATTLE_ROYAL_SUMMONING_CIRCLE_COUNT,
+  BATTLE_ROYAL_SUMMONING_CIRCLE_RADIUS,
   POWERUP_PICKUP_RADIUS,
   POWERUP_RESPAWN_SECONDS,
 } from '../../constants/game.js';
@@ -27,6 +29,7 @@ import {
   type MapNamedLocationKind,
   type MapPerformanceBudget,
   type MapPowerupPickup,
+  type MapSummoningCircle,
   type ProtectedZone,
   type RouteGraph,
   type RouteGraphEdge,
@@ -52,6 +55,7 @@ const SPAWN_CLUSTER_POINT_RADIUS = 2.75;
 const SPAWN_FLATTEN_RADIUS = 11.5;
 const SPAWN_CAPSULE_CLEARANCE_RADIUS = PLAYER_RADIUS + 0.04;
 const POWERUP_FLATTEN_RADIUS = 3.2;
+const SUMMONING_CIRCLE_FLATTEN_RADIUS = 4.1;
 const POI_FLATTEN_RADIUS = 9.5;
 const BASE_TERRAIN_ROWS = 13;
 const MIN_TERRAIN_ROWS = 10;
@@ -315,6 +319,7 @@ interface BattleRoyalLayout {
   roadNodes: RoadNode[];
   roadSegments: RoadSegment[];
   powerups: MapPowerupPickup[];
+  summoningCircles: MapSummoningCircle[];
   pois: BattleRoyalPoi[];
   coverPieces: CoverPiece[];
 }
@@ -1634,6 +1639,130 @@ function createPowerups(
   return { powerups, flattenZones };
 }
 
+function getAngleDistance(a: number, b: number): number {
+  const delta = Math.abs(a - b) % (Math.PI * 2);
+  return delta > Math.PI ? Math.PI * 2 - delta : delta;
+}
+
+function getSummoningCircleLaneId(district: BattleRoyalDistrict): string {
+  if (district.kind === 'wildland') return ROAD_LANE_WILD;
+  if (district.kind === 'open_field') return ROAD_LANE_SETTLEMENT;
+  if (district.kind === 'city_core') return ROAD_LANE_PRIMARY;
+  return ROAD_LANE_LOOP;
+}
+
+function selectSummoningCircleDistrictAnchors(
+  seed: number,
+  districts: readonly BattleRoyalDistrict[],
+  count: number
+): BattleRoyalDistrict[] {
+  const random = mulberry32(seed ^ 0x50554d);
+  const candidates = districts.filter((district) => district.kind !== 'city_core');
+  const selected: BattleRoyalDistrict[] = [];
+  const angleOffset = random() * Math.PI * 2;
+
+  for (let index = 0; index < count; index++) {
+    const targetAngle = angleOffset + (index / count) * Math.PI * 2;
+    let best: BattleRoyalDistrict | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    for (const district of candidates) {
+      if (selected.includes(district)) continue;
+      const angle = Math.atan2(district.center.z, district.center.x);
+      const radial = Math.hypot(district.center.x, district.center.z);
+      const score = getAngleDistance(angle, targetAngle) + Math.max(0, 42 - radial) * 0.003;
+      if (score >= bestScore) continue;
+      best = district;
+      bestScore = score;
+    }
+
+    if (best) selected.push(best);
+  }
+
+  if (selected.length < count) {
+    for (const district of candidates) {
+      if (selected.includes(district)) continue;
+      selected.push(district);
+      if (selected.length >= count) break;
+    }
+  }
+
+  return selected;
+}
+
+function createSummoningCircles(
+  seed: number,
+  boundary: BoundaryPoint[],
+  spawns: TeamMap<SpawnCluster>,
+  districts: readonly BattleRoyalDistrict[],
+  pois: readonly BattleRoyalPoi[],
+  powerups: readonly MapPowerupPickup[]
+): { summoningCircles: MapSummoningCircle[]; flattenZones: FlattenZone[] } {
+  const random = mulberry32(seed ^ 0x50a1);
+  const summoningCircles: MapSummoningCircle[] = [];
+  const flattenZones: FlattenZone[] = [];
+  const protectedPositions = [
+    ...getSpawnProtectedPositions(spawns).map((position) => ({ x: position.x, z: position.z, radius: 14 })),
+    ...pois.map((poi) => ({ x: poi.position.x, z: poi.position.z, radius: poi.radius + 3 })),
+    ...powerups.map((pickup) => ({ x: pickup.position.x, z: pickup.position.z, radius: 5.5 })),
+  ];
+  const anchors = selectSummoningCircleDistrictAnchors(
+    seed,
+    districts,
+    Math.min(BATTLE_ROYAL_SUMMONING_CIRCLE_COUNT, Math.max(0, districts.length - 1))
+  );
+
+  anchors.forEach((anchor, index) => {
+    let selected: { x: number; z: number } | null = null;
+    let fallback: { x: number; z: number } | null = null;
+    for (let attempt = 0; attempt < 96; attempt++) {
+      const offset = sampleAnnulusPoint(
+        random,
+        Math.max(4, anchor.radius * 0.18),
+        Math.max(9, anchor.radius * 0.58)
+      );
+      const point = clampPointToBoundary(
+        {
+          x: anchor.center.x + offset.x,
+          z: anchor.center.z + offset.z,
+        },
+        boundary,
+        BATTLE_ROYAL_SUMMONING_CIRCLE_RADIUS + 2.5
+      );
+      fallback = point;
+      if (isClearOfCircles(point, protectedPositions, BATTLE_ROYAL_SUMMONING_CIRCLE_RADIUS + 5.2, 0.56)) {
+        selected = point;
+        break;
+      }
+    }
+
+    const point = selected ?? fallback ?? anchor.center;
+    protectedPositions.push({
+      x: point.x,
+      z: point.z,
+      radius: BATTLE_ROYAL_SUMMONING_CIRCLE_RADIUS + 5,
+    });
+    const position = { x: point.x, y: 0, z: point.z };
+    flattenZones.push({
+      center: position,
+      radius: SUMMONING_CIRCLE_FLATTEN_RADIUS,
+      rows: BASE_TERRAIN_ROWS + 2,
+      strength: 0.78,
+      maxLowerRows: 8,
+      maxRaiseRows: 4,
+    });
+    summoningCircles.push({
+      id: `br_summon_${index + 1}`,
+      position,
+      radius: BATTLE_ROYAL_SUMMONING_CIRCLE_RADIUS,
+      routeNodeId: anchor.roadNodeId,
+      laneId: getSummoningCircleLaneId(anchor),
+    });
+  });
+
+  return { summoningCircles, flattenZones };
+}
+
 function createLocationName(seed: number, district: BattleRoyalDistrict, index: number, usedNames: Set<string>): string {
   const parts = LOCATION_NAME_PARTS[district.kind];
   const nameSeed = hashSeed(seed ^ Math.imul(index + 1, 0x632be59b));
@@ -1843,12 +1972,21 @@ function createBattleRoyalLayout(
     poiLayout.pois,
     profile
   );
+  const summoningCircleLayout = createSummoningCircles(
+    seed,
+    boundary,
+    spawnLayout.spawns,
+    districts,
+    poiLayout.pois,
+    pickupLayout.powerups
+  );
   const flattenZones = [
     ...createDistrictFlattenZones(districts),
     ...createRoadFlattenZones(roadLayout.roadSegments),
     ...spawnLayout.flattenZones,
     ...poiLayout.flattenZones,
     ...pickupLayout.flattenZones,
+    ...summoningCircleLayout.flattenZones,
   ];
   const layout: BattleRoyalLayout = {
     seed,
@@ -1866,6 +2004,7 @@ function createBattleRoyalLayout(
     roadNodes: roadLayout.roadNodes,
     roadSegments: roadLayout.roadSegments,
     powerups: pickupLayout.powerups,
+    summoningCircles: summoningCircleLayout.summoningCircles,
     pois: poiLayout.pois,
     coverPieces: createCoverPieces(
       seed,
@@ -1947,6 +2086,10 @@ function resolveSurfacePlacements(layout: BattleRoyalLayout): BattleRoyalLayout 
     powerups: layout.powerups.map((pickup) => ({
       ...pickup,
       position: getSurfacePosition(layout, pickup.position, 0.25),
+    })),
+    summoningCircles: layout.summoningCircles.map((circle) => ({
+      ...circle,
+      position: getSurfacePosition(layout, circle.position, 0.2),
     })),
   };
 }
@@ -2288,6 +2431,10 @@ function stampPads(layout: BattleRoyalLayout, blocks: Uint8Array): void {
 
   for (const pickup of layout.powerups) {
     stampDisc(layout, blocks, pickup.position, 1.35, pickup.kind === 'health_pack' ? HEALTH_PAD : POWERUP_PAD);
+  }
+
+  for (const circle of layout.summoningCircles) {
+    stampDisc(layout, blocks, circle.position, circle.radius, POWERUP_PAD);
   }
 }
 
@@ -3492,6 +3639,7 @@ export function generateBattleRoyalVoxelMap(
       cover: hashSeed(normalizedSeed ^ 0xc0a7e),
       districts: hashSeed(normalizedSeed ^ 0xd157c7),
       roads: hashSeed(normalizedSeed ^ 0x70ad),
+      summoningCircles: hashSeed(normalizedSeed ^ 0x50a1),
       terrainFeatures: hashSeed(normalizedSeed ^ 0x7e44a11),
       terrain: hashSeed(normalizedSeed ^ 0x514f),
     },
@@ -3591,6 +3739,7 @@ export function generateBattleRoyalVoxelMap(
       lanes,
       routeGraph,
       powerups: layout.powerups,
+      summoningCircles: layout.summoningCircles,
       namedLocations,
       sightlineSamples: [],
     },

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useShallow } from 'zustand/shallow';
 import {
   getTeamCatalogEntry,
+  type BattleRoyalHeroSoulSnapshot,
   type BattleRoyalDropSnapshot,
   type Player,
   type VoxelMapManifest,
@@ -169,6 +170,10 @@ function drawLiveOverlay(
     drawBattleRoyalDropFlightPath(ctx, projection, store.battleRoyalDrop, dropPathTime);
   }
 
+  if (store.gameplayMode === 'battle_royal' && store.battleRoyalSouls) {
+    drawTeamSoulMarkers(ctx, projection, store.battleRoyalSouls.souls, localPlayer.team);
+  }
+
   for (const teammate of teammates) {
     const position = visualState.playerPositions.get(teammate.id) ?? teammate.position;
     if (!isWorldPointInsideBoundary(position, manifest.boundary)) continue;
@@ -188,6 +193,38 @@ function drawLiveOverlay(
   const localRotation = visualState.playerRotations.get(localPlayer.id) ?? localPlayer.lookYaw;
   drawLocalMarker(ctx, worldToMinimap(projection, localPosition), localRotation, teamColor, Boolean(localPlayer.hasFlag));
 
+  ctx.restore();
+}
+
+function drawTeamSoulMarkers(
+  ctx: CanvasRenderingContext2D,
+  projection: MinimapProjection,
+  souls: readonly BattleRoyalHeroSoulSnapshot[],
+  team: Player['team']
+): void {
+  ctx.save();
+  for (const soul of souls) {
+    if (soul.team !== team) continue;
+    if (soul.status !== 'available' && soul.status !== 'collecting') continue;
+    const point = worldToMinimap(projection, soul.position);
+    const alpha = soul.status === 'collecting' ? 0.55 : 0.95;
+    ctx.save();
+    ctx.translate(point.x, point.y);
+    ctx.globalAlpha = alpha;
+    ctx.shadowColor = MINIMAP_COLORS.live.teamSoulShadow;
+    ctx.shadowBlur = 7;
+    ctx.beginPath();
+    ctx.moveTo(0, -5);
+    ctx.bezierCurveTo(4, -2.5, 4.2, 2.8, 0, 5.6);
+    ctx.bezierCurveTo(-4.2, 2.8, -4, -2.5, 0, -5);
+    ctx.closePath();
+    ctx.fillStyle = MINIMAP_COLORS.live.teamSoulFill;
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = MINIMAP_COLORS.live.teamSoulStroke;
+    ctx.stroke();
+    ctx.restore();
+  }
   ctx.restore();
 }
 

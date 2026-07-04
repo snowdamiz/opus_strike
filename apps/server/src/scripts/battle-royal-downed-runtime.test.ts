@@ -7,7 +7,7 @@ import {
 } from '@voxel-strike/shared';
 import {
   BattleRoyalDownedRuntime,
-  hasBattleRoyalReviveBreakingInput,
+  hasBattleRoyalHoldInteractionBreakingInput,
 } from '../rooms/battleRoyalDownedRuntime';
 import { GameRoom } from '../rooms/GameRoom';
 import type { Player } from '../rooms/schema/Player';
@@ -122,11 +122,11 @@ runtime.enterDowned(secondTarget, null, 'safe_zone', now);
 runtime.update(players.values(), now + BATTLE_ROYAL_DOWNED_DURATION_MS + 1);
 assert.deepEqual(eliminated, [{ playerId: 'second', sourceId: null, damageType: 'bleed_out' }]);
 
-assert.equal(hasBattleRoyalReviveBreakingInput({
+assert.equal(hasBattleRoyalHoldInteractionBreakingInput({
   ...input({ interact: true }),
   timestamp: now,
 }), false);
-assert.equal(hasBattleRoyalReviveBreakingInput({
+assert.equal(hasBattleRoyalHoldInteractionBreakingInput({
   ...input({ tick: 2, moveForward: true, interact: true }),
   timestamp: now,
 }), true);

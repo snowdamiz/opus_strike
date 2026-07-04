@@ -4,6 +4,7 @@ import {
   BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX,
   BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX,
   applyBotAbilityInputPlan,
+  applyBotReviveTeammateInput,
   buildBotBlackboard,
   buildTeamTactics,
   chooseBotAbilityPlan,
@@ -37,6 +38,7 @@ import {
   type BotTeamTactics,
   type PlainVec3,
 } from '../rooms/bot-ai';
+import { hasBattleRoyalHoldInteractionBreakingInput } from '../rooms/battleRoyalDownedRuntime';
 import {
   DEFAULT_GAMEPLAY_MODE,
   getHeroStats,
@@ -482,6 +484,43 @@ function testBattleRoyalBotsPrioritizeHumanRevives() {
   assert.equal(intent.targetPlayerId, humanAlly.id);
   assert.equal(combatPlan.targetId, null);
   assert.equal(combatPlan.reason, 'revive teammate priority');
+}
+
+function testBattleRoyalBotReviveInputHoldsChannel() {
+  const input: PlayerInput = {
+    tick: 7,
+    moveForward: true,
+    moveBackward: false,
+    moveLeft: true,
+    moveRight: false,
+    jump: true,
+    crouch: true,
+    crouchPressed: true,
+    sprint: true,
+    primaryFire: true,
+    secondaryFire: true,
+    reload: true,
+    ability1: true,
+    ability2: true,
+    ultimate: true,
+    interact: false,
+    lookYaw: 0,
+    lookPitch: 0,
+    timestamp: NOW,
+  };
+
+  applyBotReviveTeammateInput(input);
+
+  assert.equal(input.interact, true);
+  assert.equal(hasBattleRoyalHoldInteractionBreakingInput(input), false);
+  assert.equal(input.moveForward, false);
+  assert.equal(input.moveLeft, false);
+  assert.equal(input.jump, false);
+  assert.equal(input.sprint, false);
+  assert.equal(input.primaryFire, false);
+  assert.equal(input.reload, false);
+  assert.equal(input.ability1, false);
+  assert.equal(input.ultimate, false);
 }
 
 function testBattleRoyalTacticsAssignHumanSupportBeforeFinish() {
@@ -1851,6 +1890,7 @@ testBattleRoyalSafeZoneIntentRotatesBeforeFighting();
 testBattleRoyalSafeZoneRotationStaysNearHumanSquadmate();
 testBattleRoyalReviveAndFinishIntents();
 testBattleRoyalBotsPrioritizeHumanRevives();
+testBattleRoyalBotReviveInputHoldsChannel();
 testBattleRoyalTacticsAssignHumanSupportBeforeFinish();
 testBattleRoyalHumanSquadAssignsAllAvailableBotsToSupport();
 testBattleRoyalBotOnlySquadsShareFocusTarget();

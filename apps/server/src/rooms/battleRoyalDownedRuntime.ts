@@ -39,7 +39,7 @@ export interface BattleRoyalDownedRuntimeDeps {
   broadcastPlayerRevived(payload: PlayerRevivedEvent): void;
 }
 
-export function hasBattleRoyalReviveBreakingInput(input: PlayerInput): boolean {
+export function hasBattleRoyalHoldInteractionBreakingInput(input: PlayerInput): boolean {
   return Boolean(
     input.moveForward ||
     input.moveBackward ||
