@@ -4429,7 +4429,7 @@ body,
   bottom: max(var(--play-corner-inset), env(safe-area-inset-bottom));
   z-index: 6;
   display: grid;
-  width: min(21.5rem, calc(100vw - (var(--play-corner-inset) * 2)));
+  width: min(28rem, calc(100vw - (var(--play-corner-inset) * 2)));
   align-content: end;
   justify-items: end;
   gap: var(--play-bottom-right-stack-gap);
@@ -4447,7 +4447,7 @@ body,
 
 .play-earnings-plate {
   display: flex;
-  width: min(14rem, 100%);
+  width: min(27.5rem, 100%);
   flex-direction: column;
   overflow: hidden;
   border: 1px solid rgb(255 255 255 / 0.06);
@@ -4488,6 +4488,7 @@ body,
   column-gap: 0.24rem;
   min-width: 0;
   padding: 0;
+  white-space: nowrap;
 }
 
 .play-earnings-rule-label {
@@ -8621,7 +8622,7 @@ body,
   .play-tab-bottom-right-stack {
     right: max(0.8rem, env(safe-area-inset-right));
     bottom: max(0.8rem, env(safe-area-inset-bottom));
-    width: min(19rem, calc(100vw - 1.6rem));
+    width: min(28rem, calc(100vw - 1.6rem));
   }
 
   .play-season-plate {
@@ -8629,7 +8630,7 @@ body,
   }
 
   .play-earnings-plate {
-    width: min(10rem, 100%);
+    width: 100%;
   }
 
   .play-season-plate-title {

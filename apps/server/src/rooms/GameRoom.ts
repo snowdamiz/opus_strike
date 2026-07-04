@@ -893,14 +893,36 @@ const UNSTUCK_SEARCH_ANGLE_COUNT = 16;
 const UNSTUCK_GROUND_PROBE_UP = 3;
 const UNSTUCK_DESTINATION_Y_OFFSET = PLAYER_HEIGHT / 2 + 0.06;
 const ROOM_MOVEMENT_EXTRA_CATCHUP_SUBSTEPS_PER_TICK = SERVER_MOVEMENT_SUBSTEPS_PER_TICK * 4;
-const BOT_URGENT_PLANNING_BUDGET_PER_TICK = 8;
-const BOT_DEFERRED_PLANNING_BUDGET_PER_TICK = 4;
-const BOT_FULL_RATE_PLANNING_COUNT = 6;
-const BOT_PLANNING_LOD_START_COUNT = 8;
-const BOT_MID_URGENT_PLANNING_BUDGET_PER_TICK = 3;
-const BOT_MID_DEFERRED_PLANNING_BUDGET_PER_TICK = 1;
-const BOT_MIN_URGENT_PLANNING_BUDGET_PER_TICK = 2;
-const BOT_MIN_DEFERRED_PLANNING_BUDGET_PER_TICK = 1;
+interface BotPlanningBudgetTuning {
+  fullRateCount: number;
+  lodStartCount: number;
+  urgentBudget: number;
+  deferredBudget: number;
+  midUrgentBudget: number;
+  midDeferredBudget: number;
+  minUrgentBudget: number;
+  minDeferredBudget: number;
+}
+const DEFAULT_BOT_PLANNING_BUDGET_TUNING: BotPlanningBudgetTuning = {
+  urgentBudget: 8,
+  deferredBudget: 4,
+  fullRateCount: 6,
+  lodStartCount: 8,
+  midUrgentBudget: 3,
+  midDeferredBudget: 1,
+  minUrgentBudget: 2,
+  minDeferredBudget: 1,
+};
+const BATTLE_ROYAL_BOT_PLANNING_BUDGET_TUNING: BotPlanningBudgetTuning = {
+  urgentBudget: 8,
+  deferredBudget: 4,
+  fullRateCount: 8,
+  lodStartCount: 16,
+  midUrgentBudget: 6,
+  midDeferredBudget: 2,
+  minUrgentBudget: 4,
+  minDeferredBudget: 1,
+};
 const BOT_MOVEMENT_LOD_START_COUNT = 8;
 const BOT_MOVEMENT_LOD_MEDIUM_COUNT = 16;
 const BOT_MOVEMENT_LOD_HIGH_COUNT = 32;
@@ -911,9 +933,9 @@ const BOT_BATTLE_ROYAL_CRITICAL_ENEMY_DISTANCE_SQ = BOT_BATTLE_ROYAL_CRITICAL_EN
 const BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_LOW = 3;
 const BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_MEDIUM = 2;
 const BOT_MOVEMENT_LOD_FULL_STEP_BUDGET_HIGH = 1;
-const BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_LOW = 12;
-const BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_MEDIUM = 18;
-const BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_HIGH = 24;
+const BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_LOW = 6;
+const BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_MEDIUM = 8;
+const BOT_BATTLE_ROYAL_MOVEMENT_FULL_STEP_BUDGET_HIGH = 10;
 const BOT_MOVEMENT_LOD_PROXY_MAX_DISTANCE = 0.68;
 const BOT_MOVEMENT_LOD_PROXY_MAX_GROUND_DELTA = 0.95;
 const BOT_MOVEMENT_LOD_PROXY_MIN_HORIZONTAL_SPEED = 0.05;
@@ -937,22 +959,22 @@ const BOT_PERCEPTION_LOS_NEAR_HIGH_CANDIDATE_LIMIT = 3;
 const BOT_PERCEPTION_LOS_BACKGROUND_LOW_CANDIDATE_LIMIT = 2;
 const BOT_PERCEPTION_LOS_BACKGROUND_MEDIUM_CANDIDATE_LIMIT = 2;
 const BOT_PERCEPTION_LOS_BACKGROUND_HIGH_CANDIDATE_LIMIT = 1;
-const BOT_BATTLE_ROYAL_PERCEPTION_LOS_CRITICAL_CANDIDATE_LIMIT = 14;
-const BOT_BATTLE_ROYAL_PERCEPTION_LOS_NEAR_CANDIDATE_LIMIT = 10;
-const BOT_BATTLE_ROYAL_PERCEPTION_LOS_BACKGROUND_CANDIDATE_LIMIT = 6;
+const BOT_BATTLE_ROYAL_PERCEPTION_LOS_CRITICAL_CANDIDATE_LIMIT = 8;
+const BOT_BATTLE_ROYAL_PERCEPTION_LOS_NEAR_CANDIDATE_LIMIT = 5;
+const BOT_BATTLE_ROYAL_PERCEPTION_LOS_BACKGROUND_CANDIDATE_LIMIT = 2;
 const BOT_PERCEPTION_LOS_TARGET_SCORE_BONUS = 10_000;
 const BOT_PERCEPTION_LOS_FRAME_BUDGET_LOW = 12;
 const BOT_PERCEPTION_LOS_FRAME_BUDGET_MEDIUM = 14;
 const BOT_PERCEPTION_LOS_FRAME_BUDGET_HIGH = 16;
-const BOT_BATTLE_ROYAL_PERCEPTION_LOS_FRAME_BUDGET_LOW = 48;
-const BOT_BATTLE_ROYAL_PERCEPTION_LOS_FRAME_BUDGET_MEDIUM = 72;
-const BOT_BATTLE_ROYAL_PERCEPTION_LOS_FRAME_BUDGET_HIGH = 96;
+const BOT_BATTLE_ROYAL_PERCEPTION_LOS_FRAME_BUDGET_LOW = 20;
+const BOT_BATTLE_ROYAL_PERCEPTION_LOS_FRAME_BUDGET_MEDIUM = 24;
+const BOT_BATTLE_ROYAL_PERCEPTION_LOS_FRAME_BUDGET_HIGH = 28;
 const BOT_STEERING_PROBE_FRAME_BUDGET_LOW = 12;
 const BOT_STEERING_PROBE_FRAME_BUDGET_MEDIUM = 14;
 const BOT_STEERING_PROBE_FRAME_BUDGET_HIGH = 16;
-const BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_LOW = 48;
-const BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_MEDIUM = 72;
-const BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_HIGH = 96;
+const BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_LOW = 20;
+const BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_MEDIUM = 24;
+const BOT_BATTLE_ROYAL_STEERING_PROBE_FRAME_BUDGET_HIGH = 28;
 const BOT_INITIAL_THINK_STAGGER_MS = BOT_THINK_INTERVAL_MS;
 const BOT_INITIAL_BLACKBOARD_STAGGER_MS = BOT_TACTICS_INTERVAL_MS;
 const EMPTY_BOT_PERCEPTION_IDS = new Set<string>();
@@ -976,6 +998,42 @@ const TICK_ERROR_LOG_SAMPLE_MS = 1000;
 const MAP_MANIFEST_SLOW_LOG_MS = 3000;
 const TICK_DELAY_WARN_MS = Math.max(250, TICK_INTERVAL_MS * 5);
 const TICK_DELAY_LOG_SAMPLE_MS = 5000;
+
+function getScaledBotPlanningBudgets(
+  scheduledBotCount: number,
+  tuning: BotPlanningBudgetTuning
+): { urgentBudget: number; deferredBudget: number } {
+  const count = Math.max(0, Math.floor(scheduledBotCount));
+  if (count <= 0) {
+    return { urgentBudget: 0, deferredBudget: 0 };
+  }
+
+  if (count <= tuning.fullRateCount) {
+    return {
+      urgentBudget: tuning.urgentBudget,
+      deferredBudget: tuning.deferredBudget,
+    };
+  }
+
+  if (count <= tuning.lodStartCount) {
+    return {
+      urgentBudget: tuning.midUrgentBudget,
+      deferredBudget: tuning.midDeferredBudget,
+    };
+  }
+
+  const scale = tuning.lodStartCount / count;
+  return {
+    urgentBudget: Math.max(
+      tuning.minUrgentBudget,
+      Math.round(tuning.midUrgentBudget * scale)
+    ),
+    deferredBudget: Math.max(
+      tuning.minDeferredBudget,
+      Math.floor(tuning.midDeferredBudget * scale)
+    ),
+  };
+}
 
 function readGameRoomSeatReservationSeconds(): number {
   const raw = process.env.GAME_ROOM_SEAT_RESERVATION_SECONDS
@@ -8280,37 +8338,16 @@ export class GameRoom extends Room<GameState> {
     }
 
     if (isBattleRoyalMode(this.gameplayMode)) {
-      return {
-        urgentBudget: scheduledBotCount,
-        deferredBudget: scheduledBotCount,
-      };
+      return getScaledBotPlanningBudgets(
+        scheduledBotCount,
+        BATTLE_ROYAL_BOT_PLANNING_BUDGET_TUNING
+      );
     }
 
-    if (scheduledBotCount <= BOT_FULL_RATE_PLANNING_COUNT) {
-      return {
-        urgentBudget: BOT_URGENT_PLANNING_BUDGET_PER_TICK,
-        deferredBudget: BOT_DEFERRED_PLANNING_BUDGET_PER_TICK,
-      };
-    }
-
-    if (scheduledBotCount <= BOT_PLANNING_LOD_START_COUNT) {
-      return {
-        urgentBudget: BOT_MID_URGENT_PLANNING_BUDGET_PER_TICK,
-        deferredBudget: BOT_MID_DEFERRED_PLANNING_BUDGET_PER_TICK,
-      };
-    }
-
-    const scale = BOT_PLANNING_LOD_START_COUNT / scheduledBotCount;
-    return {
-      urgentBudget: Math.max(
-        BOT_MIN_URGENT_PLANNING_BUDGET_PER_TICK,
-        Math.round(BOT_MID_URGENT_PLANNING_BUDGET_PER_TICK * scale)
-      ),
-      deferredBudget: Math.max(
-        BOT_MIN_DEFERRED_PLANNING_BUDGET_PER_TICK,
-        Math.floor(BOT_MID_DEFERRED_PLANNING_BUDGET_PER_TICK * scale)
-      ),
-    };
+    return getScaledBotPlanningBudgets(
+      scheduledBotCount,
+      DEFAULT_BOT_PLANNING_BUDGET_TUNING
+    );
   }
 
   private continueDeferredBotInput(
@@ -8407,7 +8444,7 @@ export class GameRoom extends Room<GameState> {
   ): boolean {
     if (this.isStreamerBotDeathmatchFeed()) return true;
     if (tier === 'critical') return true;
-    if (aliveBotCount < BOT_PLANNING_LOD_START_COUNT) return true;
+    if (aliveBotCount < DEFAULT_BOT_PLANNING_BUDGET_TUNING.lodStartCount) return true;
 
     const cadence = this.getBotPlanningCadenceForTier(tier, aliveBotCount);
     return (this.state.tick + hashString(bot.id)) % cadence === 0;
