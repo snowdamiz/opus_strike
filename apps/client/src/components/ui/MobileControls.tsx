@@ -24,12 +24,12 @@ function releasePointerCapture(element: Element, pointerId: number): void {
   }
 }
 
-function TouchLookZone({ disabled }: { disabled: boolean }) {
+function TouchAimZone({ disabled }: { disabled: boolean }) {
   const zoneRef = useRef<HTMLDivElement | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
   const lastPointRef = useRef({ x: 0, y: 0 });
 
-  const resetLookPointer = useCallback(() => {
+  const resetAimPointer = useCallback(() => {
     const pointerId = activePointerIdRef.current;
     if (pointerId !== null && zoneRef.current?.hasPointerCapture(pointerId)) {
       releasePointerCapture(zoneRef.current, pointerId);
@@ -38,11 +38,11 @@ function TouchLookZone({ disabled }: { disabled: boolean }) {
   }, []);
 
   useEffect(() => {
-    if (disabled) resetLookPointer();
-    return resetLookPointer;
-  }, [disabled, resetLookPointer]);
+    if (disabled) resetAimPointer();
+    return resetAimPointer;
+  }, [disabled, resetAimPointer]);
 
-  const endLook = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+  const endAim = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
     if (activePointerIdRef.current !== e.pointerId) return;
 
     activePointerIdRef.current = null;
@@ -69,15 +69,15 @@ function TouchLookZone({ disabled }: { disabled: boolean }) {
         if (disabled || activePointerIdRef.current !== e.pointerId) return;
 
         const lastPoint = lastPointRef.current;
-        const deltaX = e.clientX - lastPoint.x;
-        const deltaY = e.clientY - lastPoint.y;
+        const aimDeltaX = e.clientX - lastPoint.x;
+        const aimDeltaY = e.clientY - lastPoint.y;
         lastPointRef.current = { x: e.clientX, y: e.clientY };
-        addLookDelta(deltaX, deltaY);
+        addLookDelta(aimDeltaX, aimDeltaY);
         e.preventDefault();
         e.stopPropagation();
       }}
-      onPointerUp={endLook}
-      onPointerCancel={endLook}
+      onPointerUp={endAim}
+      onPointerCancel={endAim}
       onLostPointerCapture={(e) => {
         if (activePointerIdRef.current === e.pointerId) {
           activePointerIdRef.current = null;
@@ -472,7 +472,7 @@ export function MobileControls({
       } as CSSProperties}
       onContextMenu={(e) => e.preventDefault()}
     >
-      <TouchLookZone disabled={disabled} />
+      <TouchAimZone disabled={disabled} />
 
       <div className="mobile-system-controls">
         <MobileSystemButton

@@ -5,8 +5,17 @@ import { config } from '../config/environment';
 import { loggers } from '../utils/logger';
 
 type AuthProviderName = 'discord' | 'wallet';
+type MobileWalletDeepLinkProviderId = 'phantom' | 'solflare';
 const EMPTY_LINKED_ACCOUNTS: LinkedAccountSummary[] = [];
 const NO_WALLET_DETECTED_MESSAGE = 'No Solana wallet was detected. Open this app in Phantom, Solflare, Brave Wallet, Backpack, or another compatible wallet browser.';
+const MOBILE_DEEP_LINK_WALLET_PROVIDERS: Array<{
+  id: string;
+  name: string;
+  deepLinkProviderId: MobileWalletDeepLinkProviderId;
+}> = [
+  { id: 'phantom-mobile', name: 'Phantom', deepLinkProviderId: 'phantom' },
+  { id: 'solflare-mobile', name: 'Solflare', deepLinkProviderId: 'solflare' },
+];
 
 interface WalletPublicKey {
   toBase58: () => string;
@@ -33,6 +42,7 @@ export interface WalletProviderSummary {
   id: string;
   name: string;
   installed: boolean;
+  deepLinkProviderId?: MobileWalletDeepLinkProviderId;
 }
 
 interface DiscoveredWalletProvider extends WalletProviderSummary {
@@ -220,6 +230,16 @@ function discoverWalletProviders(): DiscoveredWalletProvider[] {
     });
   }
 
+  if (providers.length === 0 && canUseMobileWalletDeepLinks()) {
+    for (const mobileWallet of MOBILE_DEEP_LINK_WALLET_PROVIDERS) {
+      providers.push({
+        ...mobileWallet,
+        installed: false,
+        provider: null,
+      });
+    }
+  }
+
   return providers;
 }
 
@@ -251,10 +271,11 @@ function getConnectedWallet(
 }
 
 function toWalletProviderSummaries(providers: DiscoveredWalletProvider[]): WalletProviderSummary[] {
-  return providers.map(({ id, name, installed }) => ({
+  return providers.map(({ id, name, installed, deepLinkProviderId }) => ({
     id,
     name,
     installed,
+    deepLinkProviderId,
   }));
 }
 
@@ -307,6 +328,27 @@ function getCleanReturnTo(): string {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+function canUseMobileWalletDeepLinks(): boolean {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
+
+  const userAgent = navigator.userAgent || '';
+  return (
+    /Android|iPhone|iPad|iPod/i.test(userAgent) ||
+    (navigator.maxTouchPoints > 1 && /Macintosh/i.test(userAgent)) ||
+    window.matchMedia('(pointer: coarse)').matches ||
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.matchMedia('(display-mode: fullscreen)').matches
+  );
+}
+
+function startMobileWalletAuth(providerId: MobileWalletDeepLinkProviderId): void {
+  if (typeof window === 'undefined') return;
+
+  const url = new URL(`${getHttpUrl()}/auth/mobile-wallet/${providerId}/start`);
+  url.searchParams.set('returnTo', getCleanReturnTo());
+  window.location.assign(url.toString());
+}
+
 function cleanOAuthReturnParams(): void {
   if (typeof window === 'undefined') return;
 
@@ -333,12 +375,31 @@ function getOAuthReturnStatus(): {
   const provider = params.get('provider');
   return {
     status: params.get('auth'),
-    provider: provider === 'discord' ? provider : null,
+    provider: provider === 'discord' || provider === 'wallet' ? provider : null,
     errorCode: params.get('error'),
   };
 }
 
-function getOAuthErrorMessage(errorCode: string | null): string {
+function getOAuthErrorMessage(provider: AuthProviderName | null, errorCode: string | null): string {
+  if (provider === 'wallet') {
+    switch (errorCode) {
+      case 'wallet_denied':
+        return 'Wallet connection was canceled.';
+      case 'wallet_conflict':
+        return 'That wallet is already linked to another profile.';
+      case 'wallet_expired':
+        return 'Wallet connection expired. Please try again.';
+      case 'wallet_invalid_signature':
+        return 'Wallet signature could not be verified.';
+      case 'wallet_unavailable':
+        return 'Wallet authentication is temporarily unavailable.';
+      case 'wallet_unsupported':
+        return 'That mobile wallet is not supported yet.';
+      default:
+        return 'Wallet sign-in failed. Please try again.';
+    }
+  }
+
   switch (errorCode) {
     case 'not_configured':
       return 'Discord sign-in is not configured yet.';
@@ -358,6 +419,18 @@ function getOAuthErrorMessage(errorCode: string | null): string {
     default:
       return 'Discord sign-in failed. Please try again.';
   }
+}
+
+function getOAuthSuccessMessage(status: string | null, provider: AuthProviderName | null): string | null {
+  if (status === 'linked') {
+    return provider === 'wallet' ? 'Wallet connected.' : 'Discord connected.';
+  }
+
+  if (status === 'success') {
+    return provider === 'wallet' ? 'Signed in with wallet.' : 'Signed in with Discord.';
+  }
+
+  return null;
 }
 
 function getSuggestedPlayerName(pending: PendingRegistrationData | null): string {
@@ -524,11 +597,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         setError(err.message || 'Wallet connection failed. Please try again.');
       } finally {
         if (oauthReturn.status === 'error') {
-          setError(getOAuthErrorMessage(oauthReturn.errorCode));
-        } else if (oauthReturn.status === 'linked') {
-          setNotice('Discord connected.');
-        } else if (oauthReturn.status === 'success') {
-          setNotice('Signed in with Discord.');
+          setError(getOAuthErrorMessage(oauthReturn.provider, oauthReturn.errorCode));
+        } else {
+          const successMessage = getOAuthSuccessMessage(oauthReturn.status, oauthReturn.provider);
+          if (successMessage) {
+            setNotice(successMessage);
+          }
         }
 
         cleanOAuthReturnParams();
@@ -546,7 +620,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       const connectedWallet = getConnectedWallet(providers, activeWalletProviderIdRef.current);
 
       setDiscoveredWalletProviders(providers);
-      setIsWalletInstalled(providers.length > 0);
+      setIsWalletInstalled(providers.some((provider) => provider.installed));
 
       if (connectedWallet) {
         setActiveWalletProvider(connectedWallet.providerId);
@@ -686,6 +760,14 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const signInWithWallet = useCallback(async (providerId?: string): Promise<UserData | null> => {
     const wallet = getWalletById(providerId);
+
+    if (wallet?.deepLinkProviderId && !wallet.provider) {
+      setIsConnecting(true);
+      setError(null);
+      setNotice(null);
+      startMobileWalletAuth(wallet.deepLinkProviderId);
+      return null;
+    }
 
     if (!wallet?.provider) {
       setError(NO_WALLET_DETECTED_MESSAGE);

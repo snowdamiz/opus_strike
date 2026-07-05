@@ -22,6 +22,21 @@ type SkinShopSettingsRow = {
   updatedAt: Date;
 };
 
+type SkinOwnershipRow = {
+  userId: string;
+  skinId: string;
+  source: string;
+  grantedAt: Date;
+  revokedAt: Date | null;
+  purchaseId?: string | null;
+};
+
+type UserHeroLoadoutRow = {
+  userId: string;
+  heroId: string;
+  selectedSkinId: string;
+};
+
 function createFakePrisma() {
   const itemUpdatedAt = new Date('2026-06-24T12:00:00.000Z');
   const shop: SkinShopSettingsRow = {
@@ -45,7 +60,12 @@ function createFakePrisma() {
   });
   const item = createItemRow('phantom.void-monarch');
   const itemRows = new Map<string, SkinShopItemRow>([[item.skinId, item]]);
-  const ownerships = [
+  const users = [
+    { id: 'user-a' },
+    { id: 'user-b' },
+    { id: 'user-c' },
+  ];
+  const ownerships: SkinOwnershipRow[] = [
     {
       userId: 'user-a',
       skinId: 'phantom.void-monarch',
@@ -60,8 +80,16 @@ function createFakePrisma() {
       grantedAt: new Date('2026-06-24T12:16:00.000Z'),
       revokedAt: null,
     },
+    {
+      userId: 'user-b',
+      skinId: 'phantom.liberty-wraith',
+      source: 'event',
+      grantedAt: new Date('2026-06-24T12:17:00.000Z'),
+      revokedAt: new Date('2026-06-24T12:18:00.000Z'),
+      purchaseId: 'old-purchase',
+    },
   ];
-  const heroLoadouts = [
+  const heroLoadouts: UserHeroLoadoutRow[] = [
     {
       userId: 'user-a',
       heroId: 'phantom',
@@ -69,10 +97,82 @@ function createFakePrisma() {
     },
   ];
   const audits: any[] = [];
+  const antiCheatActions: any[] = [];
   let itemCreateManyCount = 0;
   let itemFindUniqueCount = 0;
   let lastShopCreate: Record<string, unknown> | null = null;
   let lastShopUpdate: Record<string, unknown> | null = null;
+  const findOwnership = (userId: string, skinId: string) => ownerships.find((ownership) => (
+    ownership.userId === userId && ownership.skinId === skinId
+  ));
+  const findUsers = ({ where, orderBy, select }: any = {}) => {
+    let rows = [...users];
+    if (Array.isArray(where?.id?.in)) {
+      const ids = new Set<string>(where.id.in);
+      rows = rows.filter((user) => ids.has(user.id));
+    }
+    if (orderBy?.id === 'asc') {
+      rows.sort((a, b) => a.id.localeCompare(b.id));
+    }
+    return rows.map((user) => (select?.id ? { id: user.id } : { ...user }));
+  };
+  const ownershipMatchesWhere = (row: SkinOwnershipRow, where: any) => {
+    if (typeof where?.userId === 'string' && row.userId !== where.userId) return false;
+    if (Array.isArray(where?.userId?.in) && !where.userId.in.includes(row.userId)) return false;
+    if (typeof where?.skinId === 'string' && row.skinId !== where.skinId) return false;
+    if (where?.revokedAt === null && row.revokedAt !== null) return false;
+    if (where?.revokedAt?.not === null && row.revokedAt === null) return false;
+    return true;
+  };
+  const createOwnerships = async ({ data, skipDuplicates }: any) => {
+    assert.equal(skipDuplicates, true);
+    let count = 0;
+    for (const row of data) {
+      if (findOwnership(row.userId, row.skinId)) continue;
+      ownerships.push({
+        purchaseId: null,
+        revokedAt: null,
+        ...row,
+      });
+      count += 1;
+    }
+    return { count };
+  };
+  const updateOwnerships = async ({ where, data }: any) => {
+    const ids = new Set<string>(where.userId?.in ?? []);
+    let count = 0;
+    for (const row of ownerships) {
+      if (!ids.has(row.userId) || row.skinId !== where.skinId) continue;
+      if (where.revokedAt?.not === null && row.revokedAt === null) continue;
+      Object.assign(row, data);
+      count += 1;
+    }
+    return { count };
+  };
+  const createLoadouts = async ({ data, skipDuplicates }: any) => {
+    assert.equal(skipDuplicates, true);
+    let count = 0;
+    for (const row of data) {
+      const existing = heroLoadouts.find((loadout) => (
+        loadout.userId === row.userId && loadout.heroId === row.heroId
+      ));
+      if (existing) continue;
+      heroLoadouts.push({ ...row });
+      count += 1;
+    }
+    return { count };
+  };
+  const updateLoadouts = async ({ where, data }: any) => {
+    const ids = new Set<string>(where.userId?.in ?? []);
+    let count = 0;
+    for (const row of heroLoadouts) {
+      if (!ids.has(row.userId) || row.heroId !== where.heroId) continue;
+      if (where.selectedSkinId?.not !== undefined && row.selectedSkinId === where.selectedSkinId.not) continue;
+      Object.assign(row, data);
+      count += 1;
+    }
+    return { count };
+  };
   const tx = {
     skinShopItemSettings: {
       update: async ({ where, data }: any) => {
@@ -93,11 +193,22 @@ function createFakePrisma() {
         return audit;
       },
     },
+    userSkinOwnership: {
+      createMany: createOwnerships,
+      updateMany: updateOwnerships,
+    },
+    userHeroLoadout: {
+      createMany: createLoadouts,
+      updateMany: updateLoadouts,
+    },
   };
 
   return {
     item,
     audits,
+    antiCheatActions,
+    ownerships,
+    heroLoadouts,
     get itemCreateManyCount() {
       return itemCreateManyCount;
     },
@@ -156,9 +267,12 @@ function createFakePrisma() {
         count: async () => 0,
         groupBy: async () => [],
       },
+      user: {
+        findMany: async (query?: any) => findUsers(query),
+      },
       userSkinOwnership: {
         findMany: async ({ where }: any) => ownerships
-          .filter((row) => row.userId === where.userId && row.revokedAt === where.revokedAt)
+          .filter((row) => ownershipMatchesWhere(row, where))
           .map((row) => ({ ...row })),
         findUnique: async ({ where }: any) => {
           const row = ownerships.find((ownership) => (
@@ -191,6 +305,17 @@ function createFakePrisma() {
           const next = { ...create };
           heroLoadouts.push(next);
           return { ...next };
+        },
+      },
+      antiCheatAction: {
+        create: async ({ data }: any) => {
+          const action = {
+            id: `action-${antiCheatActions.length + 1}`,
+            createdAt: new Date('2026-06-24T12:20:00.000Z'),
+            ...data,
+          };
+          antiCheatActions.push(action);
+          return action;
         },
       },
       $transaction: async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
@@ -226,6 +351,7 @@ async function runSkinShopServiceTests() {
 
   const {
     getSkinCatalogForUser,
+    grantSkinToUsers,
     resolveUserLoadoutForHero,
     setSkinShopConnectionFactoryForTests,
     updateSkinShopItemSettings,
@@ -422,6 +548,77 @@ async function runSkinShopServiceTests() {
     heroId: 'phantom',
     skinId: 'phantom.void-monarch',
   });
+
+  await expectServiceError(
+    () => grantSkinToUsers({
+      skinId: 'phantom.default' as never,
+      userIds: ['user-a'],
+      updatedByUserId: 'admin-a',
+    }),
+    /Default skins/
+  );
+
+  const manualGrant = await grantSkinToUsers({
+    skinId: 'phantom.liberty-wraith',
+    userIds: ['user-a', 'user-b', 'missing-user', 'user-a'],
+    equip: true,
+    updatedByUserId: 'admin-a',
+  });
+  assert.deepEqual(manualGrant, {
+    skinId: 'phantom.liberty-wraith',
+    heroId: 'phantom',
+    allUsers: false,
+    equip: true,
+    requestedUserCount: 3,
+    matchedUserCount: 2,
+    grantedCount: 1,
+    restoredCount: 1,
+    alreadyOwnedCount: 0,
+    equippedCount: 2,
+    loadoutChangedCount: 2,
+    skippedUserIds: ['missing-user'],
+  });
+  assert.equal(
+    fake.ownerships.find((row) => row.userId === 'user-a' && row.skinId === 'phantom.liberty-wraith')?.source,
+    'admin_grant'
+  );
+  assert.equal(
+    fake.ownerships.find((row) => row.userId === 'user-b' && row.skinId === 'phantom.liberty-wraith')?.revokedAt,
+    null
+  );
+  assert.equal(
+    fake.ownerships.find((row) => row.userId === 'user-b' && row.skinId === 'phantom.liberty-wraith')?.purchaseId,
+    null
+  );
+  assert.equal(
+    fake.heroLoadouts.find((row) => row.userId === 'user-a' && row.heroId === 'phantom')?.selectedSkinId,
+    'phantom.liberty-wraith'
+  );
+  assert.equal(
+    fake.heroLoadouts.find((row) => row.userId === 'user-b' && row.heroId === 'phantom')?.selectedSkinId,
+    'phantom.liberty-wraith'
+  );
+  assert.equal(fake.antiCheatActions.at(-1)?.actionType, 'skin_admin_grant');
+  assert.deepEqual(fake.antiCheatActions.at(-1)?.details, manualGrant);
+
+  const allGrant = await grantSkinToUsers({
+    skinId: 'phantom.liberty-wraith',
+    allUsers: true,
+    updatedByUserId: 'admin-a',
+  });
+  assert.equal(allGrant.allUsers, true);
+  assert.equal(allGrant.requestedUserCount, 3);
+  assert.equal(allGrant.matchedUserCount, 3);
+  assert.equal(allGrant.grantedCount, 1);
+  assert.equal(allGrant.restoredCount, 0);
+  assert.equal(allGrant.alreadyOwnedCount, 2);
+  assert.equal(allGrant.equippedCount, 0);
+  assert.equal(allGrant.loadoutChangedCount, 0);
+  assert.deepEqual(allGrant.skippedUserIds, []);
+  assert.equal(
+    fake.ownerships.find((row) => row.userId === 'user-c' && row.skinId === 'phantom.liberty-wraith')?.source,
+    'admin_grant'
+  );
 
   await expectServiceError(
     () => updateSkinShopItemSettings({

@@ -10,10 +10,10 @@ import {
 export const RANKED_FOUNDER_REWARD_ID = 'ranked_founder_golden';
 
 // The golden founder skins (one per hero) granted as a single set to the first N
-// ranked Battle Royal winners. Derived from the catalog so the list stays in
-// sync with whatever skins are marked `unlockable`.
+// ranked Battle Royal winners. Other unlockable event skins intentionally stay
+// out of this reward by requiring the stable `.golden` catalog suffix.
 export const GOLDEN_FOUNDER_SKIN_IDS: HeroSkinId[] = HERO_SKIN_CATALOG
-  .filter((skin) => skin.availability === 'unlockable')
+  .filter((skin) => skin.availability === 'unlockable' && skin.id.endsWith('.golden'))
   .map((skin) => skin.id);
 
 export interface RankedFounderRewardParticipant {

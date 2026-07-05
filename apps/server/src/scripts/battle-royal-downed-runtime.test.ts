@@ -205,6 +205,62 @@ assert.equal(hasBattleRoyalHoldInteractionBreakingInput({
 }
 
 {
+  const botRoom = Object.create(GameRoom.prototype) as any;
+  const botReviver = player('bot-reviver', 'br_01', 'alive', 0);
+  const closerBotAlly = player('closer-bot-ally', 'br_01', 'downed', 1);
+  const humanAlly = player('human-ally', 'br_01', 'downed', 2);
+  botReviver.isBot = true;
+  closerBotAlly.isBot = true;
+  humanAlly.isBot = false;
+
+  const botStarted: string[] = [];
+  botRoom.state = {
+    players: new Map([
+      [botReviver.id, botReviver],
+      [closerBotAlly.id, closerBotAlly],
+      [humanAlly.id, humanAlly],
+    ]),
+  };
+  botRoom.battleRoyalDownedRuntime = {
+    isReviving: () => false,
+    tryStartRevive: (_reviver: Player, target: Player) => {
+      botStarted.push(target.id);
+      return true;
+    },
+  };
+
+  assert.equal(botRoom.tryStartBattleRoyalRevive(botReviver, now), true);
+  assert.deepEqual(botStarted, [humanAlly.id]);
+
+  const humanRoom = Object.create(GameRoom.prototype) as any;
+  const humanReviver = player('human-reviver', 'br_01', 'alive', 0);
+  const nearestBotAlly = player('nearest-bot-ally', 'br_01', 'downed', 1);
+  const fartherHumanAlly = player('farther-human-ally', 'br_01', 'downed', 2);
+  humanReviver.isBot = false;
+  nearestBotAlly.isBot = true;
+  fartherHumanAlly.isBot = false;
+
+  const humanStarted: string[] = [];
+  humanRoom.state = {
+    players: new Map([
+      [humanReviver.id, humanReviver],
+      [nearestBotAlly.id, nearestBotAlly],
+      [fartherHumanAlly.id, fartherHumanAlly],
+    ]),
+  };
+  humanRoom.battleRoyalDownedRuntime = {
+    isReviving: () => false,
+    tryStartRevive: (_reviver: Player, target: Player) => {
+      humanStarted.push(target.id);
+      return true;
+    },
+  };
+
+  assert.equal(humanRoom.tryStartBattleRoyalRevive(humanReviver, now), true);
+  assert.deepEqual(humanStarted, [nearestBotAlly.id]);
+}
+
+{
   const room = Object.create(GameRoom.prototype) as any;
   const requester = player('requester', 'br_01', 'alive');
   const teammate = player('teammate', 'br_01', 'alive');

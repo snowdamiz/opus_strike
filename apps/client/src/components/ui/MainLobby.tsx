@@ -245,7 +245,12 @@ function LoginDialog({
   onWalletSignIn: (providerId?: string) => Promise<void>;
   onClose: () => void;
 }) {
-  const walletStatus = walletProviders.length > 0 ? 'Detected' : 'Not detected';
+  const hasInstalledWallet = walletProviders.some((wallet) => wallet.installed);
+  const walletStatus = hasInstalledWallet
+    ? 'Detected'
+    : walletProviders.length > 0
+      ? 'Mobile'
+      : 'Not detected';
 
   return (
     <GameDialog

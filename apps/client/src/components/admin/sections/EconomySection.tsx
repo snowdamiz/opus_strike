@@ -10,9 +10,10 @@ import {
   ShoppingBag,
   Sparkles,
 } from 'lucide-react';
-import type { HeroSkinRarity } from '@voxel-strike/shared';
+import { HERO_SKIN_CATALOG, type HeroSkinId, type HeroSkinRarity } from '@voxel-strike/shared';
 import type { SectionProps } from '../section';
 import type {
+  AdminSkinGrantResult,
   PlayerRewardSettings,
   PlayerRewardPayoutStatus,
   PlayerRewardStatus,
@@ -27,6 +28,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
+import { Textarea } from '../ui/textarea';
 import { Badge } from '../ui/badge';
 import { Switch } from '../ui/switch';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
@@ -1169,6 +1171,176 @@ function GoldenTab({ console: c }: { console: SectionProps['console'] }) {
 
 /* ----------------------------- Skin Shop Tab ------------------------ */
 
+const ADMIN_GRANT_SKIN_OPTIONS = HERO_SKIN_CATALOG.filter((skin) => skin.availability !== 'free');
+const DEFAULT_ADMIN_GRANT_SKIN_ID = (
+  ADMIN_GRANT_SKIN_OPTIONS.find((skin) => skin.id === 'phantom.liberty-wraith')?.id
+  ?? ADMIN_GRANT_SKIN_OPTIONS[0]?.id
+  ?? 'phantom.void-monarch'
+) as HeroSkinId;
+
+function parseGrantUserIds(value: string): string[] {
+  const seen = new Set<string>();
+  for (const part of value.split(/[\s,]+/g)) {
+    const trimmed = part.trim();
+    if (trimmed) seen.add(trimmed);
+  }
+  return Array.from(seen);
+}
+
+function SkinGrantResultSummary({ result }: { result: AdminSkinGrantResult }) {
+  return (
+    <div className="space-y-3 rounded-lg border border-strike-border bg-strike-canvas/40 p-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <ReadOnlyMetric label="Matched" value={formatNumber(result.matchedUserCount)} />
+        <ReadOnlyMetric label="Granted" value={formatNumber(result.grantedCount)} />
+        <ReadOnlyMetric label="Restored" value={formatNumber(result.restoredCount)} />
+        <ReadOnlyMetric label="Already Owned" value={formatNumber(result.alreadyOwnedCount)} />
+        <ReadOnlyMetric label="Equipped" value={formatNumber(result.equippedCount)} />
+        <ReadOnlyMetric label="Loadouts Changed" value={formatNumber(result.loadoutChangedCount)} />
+        <ReadOnlyMetric label="Requested" value={formatNumber(result.requestedUserCount)} />
+        <ReadOnlyMetric label="Skipped" value={formatNumber(result.skippedUserIds.length)} />
+      </div>
+      {result.skippedUserIds.length > 0 ? (
+        <div className="space-y-2">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-white/45">
+            Skipped Accounts
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {result.skippedUserIds.slice(0, 12).map((userId) => (
+              <Badge key={userId} variant="outline" className="font-mono">
+                {truncateAddress(userId, 6, 6)}
+              </Badge>
+            ))}
+            {result.skippedUserIds.length > 12 ? (
+              <Badge variant="outline">+{formatNumber(result.skippedUserIds.length - 12)}</Badge>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SkinGrantCard({ console: c }: { console: SectionProps['console'] }) {
+  const [skinId, setSkinId] = React.useState<HeroSkinId>(DEFAULT_ADMIN_GRANT_SKIN_ID);
+  const [userIdsText, setUserIdsText] = React.useState('');
+  const [allUsers, setAllUsers] = React.useState(false);
+  const [equip, setEquip] = React.useState(true);
+  const [saving, setSaving] = React.useState(false);
+  const [localError, setLocalError] = React.useState<string | null>(null);
+  const [lastResult, setLastResult] = React.useState<AdminSkinGrantResult | null>(null);
+
+  const targetUserIds = React.useMemo(() => parseGrantUserIds(userIdsText), [userIdsText]);
+  const selectedSkin = ADMIN_GRANT_SKIN_OPTIONS.find((skin) => skin.id === skinId);
+  const canGrant = Boolean(selectedSkin) && (allUsers || targetUserIds.length > 0);
+
+  const onGrant = async () => {
+    if (!allUsers && targetUserIds.length === 0) {
+      setLocalError('Enter at least one user id or enable all accounts.');
+      return;
+    }
+
+    setSaving(true);
+    setLocalError(null);
+    try {
+      const result = await c.grantSkin({
+        skinId,
+        userIds: allUsers ? [] : targetUserIds,
+        allUsers,
+        equip,
+      });
+      if (result.ok) {
+        setLastResult(result.data.result);
+      } else {
+        setLocalError(result.error);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-1">
+            <CardTitle>Skin Grants</CardTitle>
+            <CardDescription>Grant and equip skins for specific accounts or the full player base.</CardDescription>
+          </div>
+          <Badge variant={allUsers ? 'warning' : 'secondary'}>
+            {allUsers ? 'All Accounts' : `${formatNumber(targetUserIds.length)} Targets`}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">
+          <div className="space-y-1.5">
+            <Label>Skin</Label>
+            <Select value={skinId} onValueChange={(value) => setSkinId(value as HeroSkinId)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ADMIN_GRANT_SKIN_OPTIONS.map((skin) => (
+                  <SelectItem key={skin.id} value={skin.id}>
+                    {skin.displayName} · {titleCase(skin.heroId)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-white/35">
+              {selectedSkin ? selectedSkin.id : 'Unknown skin'}
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-strike-border bg-strike-canvas/40 px-3 py-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-white/55">
+                All Accounts
+              </span>
+              <Switch
+                checked={allUsers}
+                onCheckedChange={(value) => {
+                  setAllUsers(value);
+                  if (value) setLocalError(null);
+                }}
+              />
+            </label>
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-strike-border bg-strike-canvas/40 px-3 py-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-white/55">
+                Equip Skin
+              </span>
+              <Switch checked={equip} onCheckedChange={setEquip} />
+            </label>
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>User IDs</Label>
+          <Textarea
+            value={userIdsText}
+            disabled={allUsers}
+            onChange={(event) => setUserIdsText(event.target.value)}
+            placeholder="user_a, user_b"
+            className="min-h-[112px] font-mono text-xs"
+          />
+        </div>
+
+        {localError ? <p className="text-xs text-ui-danger">{localError}</p> : null}
+
+        <div className="flex justify-end">
+          <Button type="button" variant="secondary" onClick={onGrant} disabled={saving || !canGrant}>
+            {saving ? <Loader2 className="animate-spin" /> : <Gift />}
+            Grant Skin
+          </Button>
+        </div>
+
+        {lastResult ? <SkinGrantResultSummary result={lastResult} /> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 function SkinShopSettingsCard({ console: c }: { console: SectionProps['console'] }) {
   const shop = c.overview?.skinShop?.shop;
   const gameToken = c.overview?.gameToken;
@@ -1458,6 +1630,7 @@ function SkinShopTab({ console: c }: { console: SectionProps['console'] }) {
   const items = c.overview?.skinShop?.items ?? [];
   return (
     <div className="space-y-6">
+      <SkinGrantCard console={c} />
       <SkinShopSettingsCard console={c} />
       <Card>
         <CardHeader>

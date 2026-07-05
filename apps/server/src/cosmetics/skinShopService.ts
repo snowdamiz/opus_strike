@@ -40,6 +40,8 @@ const DEFAULT_INTENT_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_INTENT_EXPIRY_GRACE_MS = 2 * 60 * 1000;
 const DEFAULT_RPC_TIMEOUT_MS = 12_000;
 const MAX_SUPPLY_LIMIT = 2_147_483_647;
+const ADMIN_SKIN_GRANT_CHUNK_SIZE = 500;
+const ADMIN_SKIN_GRANT_MANUAL_LIMIT = 1000;
 type SkinShopConnectionFactory = (rpcUrl: string) => Connection;
 
 let skinShopConnectionFactory: SkinShopConnectionFactory = (rpcUrl) => new Connection(rpcUrl, {
@@ -69,6 +71,10 @@ function isSerializableTransactionConflict(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034';
 }
 
+function prismaJson(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
 export interface SkinShopAdminOverview {
   shop: Awaited<ReturnType<typeof serializeShopSettings>>;
   items: Array<{
@@ -76,6 +82,21 @@ export interface SkinShopAdminOverview {
     settings: SerializedSkinShopItemSettings;
     lastAudit: SerializedSkinShopItemAudit | null;
   }>;
+}
+
+export interface AdminSkinGrantResult {
+  skinId: HeroSkinId;
+  heroId: HeroId;
+  allUsers: boolean;
+  equip: boolean;
+  requestedUserCount: number;
+  matchedUserCount: number;
+  grantedCount: number;
+  restoredCount: number;
+  alreadyOwnedCount: number;
+  equippedCount: number;
+  loadoutChangedCount: number;
+  skippedUserIds: string[];
 }
 
 export interface SerializedSkinShopItemSettings {
@@ -708,6 +729,195 @@ export async function updateUserHeroLoadout(input: {
     heroId: loadout.heroId as HeroId,
     skinId: loadout.selectedSkinId as HeroSkinId,
   };
+}
+
+function uniqueUserIds(userIds: readonly string[] | undefined): string[] {
+  const seen = new Set<string>();
+  for (const id of userIds ?? []) {
+    const trimmed = id.trim();
+    if (trimmed) seen.add(trimmed);
+  }
+  return Array.from(seen);
+}
+
+function chunkArray<T>(items: readonly T[], chunkSize: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+async function resolveAdminSkinGrantUserIds(input: {
+  allUsers?: boolean;
+  userIds?: readonly string[];
+}): Promise<{ requestedUserCount: number; matchedUserIds: string[]; skippedUserIds: string[] }> {
+  if (input.allUsers === true) {
+    const users = await prisma.user.findMany({
+      orderBy: { id: 'asc' },
+      select: { id: true },
+    });
+    return {
+      requestedUserCount: users.length,
+      matchedUserIds: users.map((user) => user.id),
+      skippedUserIds: [],
+    };
+  }
+
+  const requestedUserIds = uniqueUserIds(input.userIds);
+  if (requestedUserIds.length === 0) {
+    throw new SkinShopServiceError('At least one target user id is required');
+  }
+  if (requestedUserIds.length > ADMIN_SKIN_GRANT_MANUAL_LIMIT) {
+    throw new SkinShopServiceError(`Manual skin grants are limited to ${ADMIN_SKIN_GRANT_MANUAL_LIMIT} users at a time`);
+  }
+
+  const users = await prisma.user.findMany({
+    where: { id: { in: requestedUserIds } },
+    select: { id: true },
+  });
+  const matched = new Set(users.map((user) => user.id));
+
+  return {
+    requestedUserCount: requestedUserIds.length,
+    matchedUserIds: users.map((user) => user.id),
+    skippedUserIds: requestedUserIds.filter((userId) => !matched.has(userId)),
+  };
+}
+
+export async function grantSkinToUsers(input: {
+  skinId: HeroSkinId;
+  userIds?: readonly string[];
+  allUsers?: boolean;
+  equip?: boolean;
+  updatedByUserId: string;
+}): Promise<AdminSkinGrantResult> {
+  const skin = getHeroSkinDefinition(input.skinId);
+  if (skin.availability === 'free') {
+    throw new SkinShopServiceError('Default skins are already available to every account');
+  }
+
+  const targets = await resolveAdminSkinGrantUserIds({
+    allUsers: input.allUsers,
+    userIds: input.userIds,
+  });
+  if (targets.matchedUserIds.length === 0) {
+    throw new SkinShopServiceError('No matching user accounts found', 404);
+  }
+
+  const result: AdminSkinGrantResult = {
+    skinId: input.skinId,
+    heroId: skin.heroId,
+    allUsers: input.allUsers === true,
+    equip: input.equip === true,
+    requestedUserCount: targets.requestedUserCount,
+    matchedUserCount: targets.matchedUserIds.length,
+    grantedCount: 0,
+    restoredCount: 0,
+    alreadyOwnedCount: 0,
+    equippedCount: input.equip === true ? targets.matchedUserIds.length : 0,
+    loadoutChangedCount: 0,
+    skippedUserIds: targets.skippedUserIds,
+  };
+
+  const grantedAt = new Date();
+  for (const userIdChunk of chunkArray(targets.matchedUserIds, ADMIN_SKIN_GRANT_CHUNK_SIZE)) {
+    const existingRows = await prisma.userSkinOwnership.findMany({
+      where: {
+        userId: { in: userIdChunk },
+        skinId: input.skinId,
+      },
+      select: {
+        userId: true,
+        revokedAt: true,
+      },
+    });
+    const existingByUser = new Map(existingRows.map((row) => [row.userId, row]));
+    const alreadyOwnedUserIds = existingRows
+      .filter((row) => row.revokedAt === null)
+      .map((row) => row.userId);
+    const revokedUserIds = existingRows
+      .filter((row) => row.revokedAt !== null)
+      .map((row) => row.userId);
+    const missingUserIds = userIdChunk.filter((userId) => !existingByUser.has(userId));
+
+    const chunkResult = await prisma.$transaction(async (tx) => {
+      const created = missingUserIds.length > 0
+        ? await tx.userSkinOwnership.createMany({
+          data: missingUserIds.map((userId) => ({
+            userId,
+            skinId: input.skinId,
+            source: 'admin_grant' as const,
+            grantedAt,
+          })),
+          skipDuplicates: true,
+        })
+        : { count: 0 };
+
+      const restored = revokedUserIds.length > 0
+        ? await tx.userSkinOwnership.updateMany({
+          where: {
+            userId: { in: revokedUserIds },
+            skinId: input.skinId,
+            revokedAt: { not: null },
+          },
+          data: {
+            source: 'admin_grant',
+            purchaseId: null,
+            grantedAt,
+            revokedAt: null,
+          },
+        })
+        : { count: 0 };
+
+      let loadoutChangedCount = 0;
+      if (input.equip === true) {
+        const createdLoadouts = await tx.userHeroLoadout.createMany({
+          data: userIdChunk.map((userId) => ({
+            userId,
+            heroId: skin.heroId,
+            selectedSkinId: input.skinId,
+          })),
+          skipDuplicates: true,
+        });
+        const updatedLoadouts = await tx.userHeroLoadout.updateMany({
+          where: {
+            userId: { in: userIdChunk },
+            heroId: skin.heroId,
+            selectedSkinId: { not: input.skinId },
+          },
+          data: { selectedSkinId: input.skinId },
+        });
+        loadoutChangedCount = createdLoadouts.count + updatedLoadouts.count;
+      }
+
+      return {
+        grantedCount: created.count,
+        restoredCount: restored.count,
+        alreadyOwnedCount: alreadyOwnedUserIds.length,
+        loadoutChangedCount,
+      };
+    });
+
+    result.grantedCount += chunkResult.grantedCount;
+    result.restoredCount += chunkResult.restoredCount;
+    result.alreadyOwnedCount += chunkResult.alreadyOwnedCount;
+    result.loadoutChangedCount += chunkResult.loadoutChangedCount;
+  }
+
+  await prisma.antiCheatAction.create({
+    data: {
+      actionType: 'skin_admin_grant',
+      userId: result.matchedUserCount === 1 ? targets.matchedUserIds[0] : null,
+      actorUserId: input.updatedByUserId,
+      reason: `Admin granted ${skin.displayName}`,
+      details: prismaJson(result),
+      observedOnly: false,
+      evidenceEventIds: [],
+    },
+  });
+
+  return result;
 }
 
 function connectionForShop(shop: Awaited<ReturnType<typeof getOrCreateShopSettings>>): Connection {

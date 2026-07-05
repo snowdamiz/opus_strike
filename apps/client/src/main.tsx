@@ -6,6 +6,7 @@ import { NetworkProvider } from './contexts/NetworkContext';
 import { VoiceProvider } from './contexts/VoiceContext';
 import { GlobalNotificationBanner } from './components/ui/GlobalNotificationBanner';
 import { registerServiceWorker } from './pwa';
+import { config } from './config/environment';
 import './styles/index.css';
 
 const App = lazy(() => import('./App').then((module) => ({ default: module.App })));
@@ -19,6 +20,7 @@ const ModelLab = lazy(() =>
 const legalPageKind = getLegalPageKind(window.location.pathname);
 const isAdminRoute = getIsAdminRoute(window.location.pathname);
 const isModelLabRoute = getIsModelLabRoute(window.location.pathname);
+const mobileWalletCallbackBridgeUrl = getMobileWalletCallbackBridgeUrl(window.location);
 const DYNAMIC_IMPORT_RELOAD_STORAGE_KEY = 'slop:dynamicImportReloadAt';
 const DYNAMIC_IMPORT_RELOAD_COOLDOWN_MS = 60_000;
 
@@ -34,6 +36,16 @@ function getIsAdminRoute(pathname: string) {
 
 function getIsModelLabRoute(pathname: string) {
   return pathname === '/model-lab' || pathname === '/model-lab/';
+}
+
+function getMobileWalletCallbackBridgeUrl(location: Location): string | null {
+  if (!/^\/auth\/mobile-wallet\/(?:phantom|solflare)\/(?:connect|sign)$/.test(location.pathname)) {
+    return null;
+  }
+
+  const apiUrl = new URL(location.pathname, config.serverHttpUrl);
+  apiUrl.search = location.search;
+  return apiUrl.toString();
 }
 
 function isDynamicImportLoadError(error: unknown): boolean {
@@ -113,22 +125,26 @@ function ClientAppShell() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <ChunkLoadErrorBoundary>
-      <Suspense fallback={null}>
-        {isModelLabRoute ? (
-          <ModelLab />
-        ) : isAdminRoute ? (
-          <AdminConsole />
-        ) : legalPageKind ? (
-          <LegalPage kind={legalPageKind} />
-        ) : (
-          <ClientAppShell />
-        )}
-      </Suspense>
-    </ChunkLoadErrorBoundary>
-  </React.StrictMode>
-);
+if (mobileWalletCallbackBridgeUrl) {
+  window.location.replace(mobileWalletCallbackBridgeUrl);
+} else {
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <ChunkLoadErrorBoundary>
+        <Suspense fallback={null}>
+          {isModelLabRoute ? (
+            <ModelLab />
+          ) : isAdminRoute ? (
+            <AdminConsole />
+          ) : legalPageKind ? (
+            <LegalPage kind={legalPageKind} />
+          ) : (
+            <ClientAppShell />
+          )}
+        </Suspense>
+      </ChunkLoadErrorBoundary>
+    </React.StrictMode>
+  );
 
-registerServiceWorker();
+  registerServiceWorker();
+}

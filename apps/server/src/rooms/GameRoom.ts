@@ -7599,11 +7599,11 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private tryStartBattleRoyalRevive(reviver: Player, now: number): boolean {
-    if (this.battleRoyalDownedRuntime.isReviving(reviver.id)) return true;
-
+  private selectBattleRoyalReviveTarget(reviver: Player): Player | null {
     let bestTarget: Player | null = null;
+    let bestPriority = Number.POSITIVE_INFINITY;
     let bestDistanceSq = Number.POSITIVE_INFINITY;
+    const reviveRadiusSq = BATTLE_ROYAL_REVIVE_RADIUS * BATTLE_ROYAL_REVIVE_RADIUS;
     this.state.players.forEach((candidate) => {
       if (candidate.id === reviver.id) return;
       if (candidate.team !== reviver.team) return;
@@ -7614,11 +7614,22 @@ export class GameRoom extends Room<GameState> {
       const dy = candidate.position.y - reviver.position.y;
       const dz = candidate.position.z - reviver.position.z;
       const distanceSq = dx * dx + dy * dy + dz * dz;
-      if (distanceSq >= bestDistanceSq) return;
+      if (distanceSq > reviveRadiusSq) return;
+
+      const priority = reviver.isBot && !candidate.isBot ? 0 : 1;
+      if (priority > bestPriority || (priority === bestPriority && distanceSq >= bestDistanceSq)) return;
+
+      bestPriority = priority;
       bestDistanceSq = distanceSq;
       bestTarget = candidate;
     });
+    return bestTarget;
+  }
 
+  private tryStartBattleRoyalRevive(reviver: Player, now: number): boolean {
+    if (this.battleRoyalDownedRuntime.isReviving(reviver.id)) return true;
+
+    const bestTarget = this.selectBattleRoyalReviveTarget(reviver);
     return bestTarget ? this.battleRoyalDownedRuntime.tryStartRevive(reviver, bestTarget, now) : false;
   }
 

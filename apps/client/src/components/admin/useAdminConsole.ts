@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminApiError, adminGet, adminPost } from './api';
 import type {
   AccountActionRequest,
+  AdminSkinGrantRequest,
+  AdminSkinGrantResponse,
   AdminOverview,
   EventBiomeUpdate,
   ForcePlayerRewardPayoutRequest,
@@ -82,6 +84,7 @@ export interface UseAdminConsole {
   distributeGoldenReward: (rewardId: string) => Promise<MutationResult>;
   saveSkinShopSettings: (body: SkinShopSettingsUpdate) => Promise<MutationResult>;
   saveSkinShopItem: (skinId: string, body: SkinShopItemUpdate) => Promise<MutationResult>;
+  grantSkin: (body: AdminSkinGrantRequest) => Promise<MutationResult<AdminSkinGrantResponse>>;
   saveEventBiome: (body: EventBiomeUpdate) => Promise<MutationResult>;
   topUpMapPool: (body?: MapPoolTopUpRequest) => Promise<MutationResult<MapPoolTopUpResponse>>;
 }
@@ -365,6 +368,14 @@ export function useAdminConsole(): UseAdminConsole {
     [runMutation]
   );
 
+  const grantSkin = useCallback(
+    (body: AdminSkinGrantRequest) =>
+      runMutation('Skin grant', (csrf) =>
+        adminPost<AdminSkinGrantResponse>('/skin-shop/grants', body, csrf)
+      ),
+    [runMutation]
+  );
+
   const saveEventBiome = useCallback(
     (body: EventBiomeUpdate) =>
       runMutation('Event biome', (csrf) => adminPost('/event-biome', body, csrf)),
@@ -415,6 +426,7 @@ export function useAdminConsole(): UseAdminConsole {
     distributeGoldenReward,
     saveSkinShopSettings,
     saveSkinShopItem,
+    grantSkin,
     saveEventBiome,
     topUpMapPool,
   };
