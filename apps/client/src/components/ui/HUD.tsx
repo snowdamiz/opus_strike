@@ -27,6 +27,7 @@ import { useCombatFeedbackStore, type KillFeedEvent, type LocalDamageEvent } fro
 import { useSettingsStore, type CrosshairStyle } from '../../store/settingsStore';
 import { useHudNow } from '../../store/hudSignals';
 import { visualStore } from '../../store/visualStore';
+import { useTouchControlsAvailable } from '../../hooks/useDeviceCapabilities';
 import { FACTIONS, HUD_HERO_COLORS } from '../../styles/colorTokens';
 import { Minimap } from './minimap/Minimap';
 import { VoiceHud } from './VoiceHud';
@@ -1706,6 +1707,7 @@ export function HUD() {
       };
     })
   );
+  const touchControlsAvailable = useTouchControlsAvailable();
 
   if (localPlayerId === null || localPlayerRole === 'observer') return null;
 
@@ -1747,6 +1749,47 @@ export function HUD() {
       : healthPercent <= 55
         ? '#fbbf24'
         : '#22c55e';
+  const primaryAmmoCounter = (
+    <>
+      {localHeroId === 'phantom' && (
+        <PhantomAmmoCounter
+          ammo={phantomPrimaryAmmo}
+          reloading={phantomPrimaryReloading}
+          reloadStart={phantomPrimaryReloadStart}
+          reloadEnd={phantomPrimaryReloadEnd}
+        />
+      )}
+      {localHeroId === 'hookshot' && <HookshotShotCounter />}
+      {localHeroId === 'blaze' && (
+        <BlazeAmmoCounter
+          ammo={blazePrimaryAmmo}
+          reloading={blazePrimaryReloading}
+          reloadStart={blazePrimaryReloadStart}
+          reloadEnd={blazePrimaryReloadEnd}
+        />
+      )}
+      {localHeroId === 'chronos' && (
+        <ChronosAmmoCounter
+          ammo={chronosPrimaryAmmo}
+          reloading={chronosPrimaryReloading}
+          reloadStart={chronosPrimaryReloadStart}
+          reloadEnd={chronosPrimaryReloadEnd}
+        />
+      )}
+    </>
+  );
+  const movementIndicators = (
+    <div className="hud-movement-indicators flex flex-col items-end gap-1.5">
+      {localIsWallRunning && <MovementIndicator label="WALL RUN" color="#06b6d4" icon="wall" />}
+      {localIsSliding && <MovementIndicator label="SLIDE" color="#22c55e" icon="slide" />}
+      {localIsGrappling && <MovementIndicator label="GRAPPLE" color="#06b6d4" icon="grapple" />}
+      {flamethrowerActive && <MovementIndicator label="FLAME" color="#f97316" icon="flame" />}
+      {localIsGliding && <MovementIndicator label="GLIDE" color="#a855f7" icon="glide" />}
+    </div>
+  );
+  const heroMeter = localHeroId === 'blaze'
+    ? <BlazeFuelIndicator fuel={flamethrowerFuel} active={flamethrowerActive} />
+    : null;
 
   return (
     <div className="absolute inset-0 pointer-events-none select-none z-hud">
@@ -2101,56 +2144,44 @@ export function HUD() {
       )}
 
       {/* ===== BOTTOM RIGHT - Movement Status (Improved) ===== */}
-      {!suppressCombatHud && (
-      <EditableHudItem
-        id="hud-status"
-        label="Status"
-        desktopClassName="absolute bottom-4 right-4 xl:bottom-6 xl:right-6 flex flex-col items-end gap-2 hud-status"
-        mobileClassName="hud-status z-[125]"
-        contentClassName="flex h-full w-full flex-col items-end justify-end gap-2"
-      >
-        {localHeroId === 'phantom' && (
-          <PhantomAmmoCounter
-            ammo={phantomPrimaryAmmo}
-            reloading={phantomPrimaryReloading}
-            reloadStart={phantomPrimaryReloadStart}
-            reloadEnd={phantomPrimaryReloadEnd}
-          />
-        )}
-        {localHeroId === 'hookshot' && <HookshotShotCounter />}
-        {localHeroId === 'blaze' && (
-          <BlazeAmmoCounter
-            ammo={blazePrimaryAmmo}
-            reloading={blazePrimaryReloading}
-            reloadStart={blazePrimaryReloadStart}
-            reloadEnd={blazePrimaryReloadEnd}
-          />
-        )}
-        {localHeroId === 'chronos' && (
-          <ChronosAmmoCounter
-            ammo={chronosPrimaryAmmo}
-            reloading={chronosPrimaryReloading}
-            reloadStart={chronosPrimaryReloadStart}
-            reloadEnd={chronosPrimaryReloadEnd}
-          />
-        )}
+      {!suppressCombatHud && (touchControlsAvailable ? (
+        <>
+          <EditableHudItem
+            id="hud-primary-ammo"
+            label="Ammo"
+            mobileClassName="hud-ammo-panel z-[125]"
+            contentClassName="flex h-full w-full items-center justify-end"
+          >
+            {primaryAmmoCounter}
+          </EditableHudItem>
 
-        {/* Movement indicators container */}
-        <div className="hud-movement-indicators flex flex-col items-end gap-1.5">
-          {localIsWallRunning && <MovementIndicator label="WALL RUN" color="#06b6d4" icon="wall" />}
-          {localIsSliding && <MovementIndicator label="SLIDE" color="#22c55e" icon="slide" />}
-          {localIsGrappling && <MovementIndicator label="GRAPPLE" color="#06b6d4" icon="grapple" />}
-          {flamethrowerActive && <MovementIndicator label="FLAME" color="#f97316" icon="flame" />}
-          {localIsGliding && <MovementIndicator label="GLIDE" color="#a855f7" icon="glide" />}
+          <EditableHudItem
+            id="hud-movement-indicators"
+            label="Movement"
+            mobileClassName="hud-movement-panel z-[125]"
+            contentClassName="flex h-full w-full flex-col items-end justify-start gap-1.5"
+          >
+            {movementIndicators}
+          </EditableHudItem>
+
+          {heroMeter && (
+            <EditableHudItem
+              id="hud-hero-meter"
+              label="Hero meter"
+              mobileClassName="hud-hero-meter z-[125]"
+              contentClassName="flex h-full w-full items-center justify-end"
+            >
+              {heroMeter}
+            </EditableHudItem>
+          )}
+        </>
+      ) : (
+        <div className="absolute bottom-4 right-4 xl:bottom-6 xl:right-6 flex flex-col items-end gap-2 hud-status">
+          {primaryAmmoCounter}
+          {movementIndicators}
+          {heroMeter}
         </div>
-
-        {/* Flamethrower Fuel */}
-        {localHeroId === 'blaze' && (
-          <BlazeFuelIndicator fuel={flamethrowerFuel} active={flamethrowerActive} />
-        )}
-
-      </EditableHudItem>
-      )}
+      ))}
     </div>
   );
 }

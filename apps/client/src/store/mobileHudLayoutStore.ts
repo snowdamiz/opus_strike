@@ -31,7 +31,9 @@ export type MobileHudLayoutElementId =
   | 'hud-flag'
   | 'hud-health'
   | 'hud-skill-bar'
-  | 'hud-status'
+  | 'hud-primary-ammo'
+  | 'hud-movement-indicators'
+  | 'hud-hero-meter'
   | 'hud-voice'
   | 'hud-drop-prompt'
   | 'hud-downed'
@@ -224,13 +226,29 @@ export const MOBILE_HUD_LAYOUT_DEFINITIONS: Record<MobileHudLayoutElementId, Mob
     maxWidth: 58,
     maxHeight: 28,
   },
-  'hud-status': {
-    label: 'Status',
-    defaultRect: { x: 79, y: 17, width: 18, height: 44 },
+  'hud-primary-ammo': {
+    label: 'Ammo',
+    defaultRect: { x: 80, y: 18, width: 18, height: 17 },
     minWidth: 12,
-    minHeight: 14,
+    minHeight: 10,
     maxWidth: 38,
-    maxHeight: 66,
+    maxHeight: 32,
+  },
+  'hud-movement-indicators': {
+    label: 'Movement',
+    defaultRect: { x: 80, y: 37, width: 18, height: 22 },
+    minWidth: 12,
+    minHeight: 10,
+    maxWidth: 38,
+    maxHeight: 40,
+  },
+  'hud-hero-meter': {
+    label: 'Hero meter',
+    defaultRect: { x: 79, y: 61, width: 19, height: 12 },
+    minWidth: 12,
+    minHeight: 8,
+    maxWidth: 38,
+    maxHeight: 24,
   },
   'hud-voice': {
     label: 'Voice',
