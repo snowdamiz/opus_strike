@@ -3,9 +3,11 @@ import { type HeroId, type InputState } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import { addLookDelta } from '../../store/lookInputStore';
 import { resetMobileControls, useMobileControlsStore } from '../../store/mobileControlsStore';
+import { useSettingsStore } from '../../store/settingsStore';
 import { useTouchControlsAvailable } from '../../hooks/useDeviceCapabilities';
 import { HUD_HERO_COLORS } from '../../styles/colorTokens';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
+import { EditableHudItem, MobileHudLayoutEditorToolbar } from './EditableHudItem';
 
 const MIN_PRESS_MS = 72;
 
@@ -407,7 +409,9 @@ export function MobileControls({
   const bombTargeting = useGameStore(state => state.bombTargeting);
   const setBombTargeting = useGameStore(state => state.setBombTargeting);
   const setActionPressed = useMobileControlsStore(state => state.setActionPressed);
+  const layoutEditing = useSettingsStore(state => state.settings.mobileHudLayoutEditing);
   const shouldRender = Boolean(controlsAvailable && !disabled && heroId);
+  const gameplayControlsDisabled = disabled || layoutEditing;
   const isTargeting = bombTargeting;
   const heroTone = heroId ? HUD_HERO_COLORS[heroId] : HUD_HERO_COLORS.blaze;
 
@@ -472,9 +476,10 @@ export function MobileControls({
       } as CSSProperties}
       onContextMenu={(e) => e.preventDefault()}
     >
-      <TouchAimZone disabled={disabled} />
+      <TouchAimZone disabled={gameplayControlsDisabled} />
+      <MobileHudLayoutEditorToolbar />
 
-      <div className="mobile-system-controls">
+      <EditableHudItem id="mobile-menu" label="Menu" interactive>
         <MobileSystemButton
           label="MENU"
           ariaLabel="Open menu"
@@ -482,6 +487,9 @@ export function MobileControls({
         >
           <MenuIcon />
         </MobileSystemButton>
+      </EditableHudItem>
+
+      <EditableHudItem id="mobile-scoreboard" label="Board" interactive>
         <MobileSystemButton
           label="BOARD"
           ariaLabel={scoreboardOpen ? 'Hide scoreboard' : 'Show scoreboard'}
@@ -490,89 +498,122 @@ export function MobileControls({
         >
           <BoardIcon />
         </MobileSystemButton>
-      </div>
+      </EditableHudItem>
 
-      <MovementStick disabled={disabled} />
+      <EditableHudItem id="mobile-joystick" label="Move" interactive>
+        <MovementStick disabled={gameplayControlsDisabled} />
+      </EditableHudItem>
 
       {isTargeting && (
-        <button
-          type="button"
-          className="mobile-target-cancel"
-          onPointerDown={(e) => {
-            cancelTargeting();
-            e.preventDefault();
-            e.stopPropagation();
-          }}
-        >
-          CANCEL
-        </button>
+        <EditableHudItem id="mobile-target-cancel" label="Cancel" interactive>
+          <button
+            type="button"
+            className="mobile-target-cancel"
+            onPointerDown={(e) => {
+              if (gameplayControlsDisabled) return;
+              cancelTargeting();
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            CANCEL
+          </button>
+        </EditableHudItem>
       )}
 
-      <div className="mobile-utility-cluster">
-        <MobileActionButton action="reload" label="REL" ariaLabel="Reload">
+      <EditableHudItem id="mobile-reload" label="Reload" interactive>
+        <MobileActionButton action="reload" label="REL" ariaLabel="Reload" disabled={gameplayControlsDisabled}>
           <ReloadIcon />
         </MobileActionButton>
-        <MobileActionButton action="interact" label="USE" ariaLabel="Interact">
+      </EditableHudItem>
+
+      <EditableHudItem id="mobile-interact" label="Interact" interactive>
+        <MobileActionButton action="interact" label="USE" ariaLabel="Interact" disabled={gameplayControlsDisabled}>
           <InteractIcon />
         </MobileActionButton>
-      </div>
+      </EditableHudItem>
 
-      <div className="mobile-right-dock">
-        <div className="mobile-ability-cluster">
-          <MobileSkillButton
-            action="ability1"
-            fallbackLabel="E"
-            ariaLabel={ability1Skill?.name ?? 'Ability one'}
-            skill={ability1Skill}
-            accentColor={heroTone.primary}
-          />
-          <MobileSkillButton
-            action="ability2"
-            fallbackLabel="Q"
-            ariaLabel={ability2Skill?.name ?? 'Ability two'}
-            skill={ability2Skill}
-            accentColor={heroTone.primary}
-          />
-          <MobileSkillButton
-            action="ultimate"
-            fallbackLabel="F"
-            ariaLabel={ultimateSkill?.name ?? 'Ultimate ability'}
-            skill={ultimateSkill}
-            accentColor={heroTone.primary}
-            className="mobile-ultimate-button"
-          />
-        </div>
+      <EditableHudItem id="mobile-ability1" label="Ability 1" interactive>
+        <MobileSkillButton
+          action="ability1"
+          fallbackLabel="E"
+          ariaLabel={ability1Skill?.name ?? 'Ability one'}
+          skill={ability1Skill}
+          accentColor={heroTone.primary}
+          disabled={gameplayControlsDisabled}
+        />
+      </EditableHudItem>
 
-        <div className="mobile-thumb-row">
-          <div className="mobile-movement-actions">
-            <MobileActionButton action="jump" label="JUMP" ariaLabel="Jump" className="mobile-jump-button">
-              <JumpIcon />
-            </MobileActionButton>
-            <MobileActionButton action="crouch" label="SLIDE" ariaLabel="Crouch or slide" className="mobile-crouch-button">
-              <CrouchIcon />
-            </MobileActionButton>
-          </div>
+      <EditableHudItem id="mobile-ability2" label="Ability 2" interactive>
+        <MobileSkillButton
+          action="ability2"
+          fallbackLabel="Q"
+          ariaLabel={ability2Skill?.name ?? 'Ability two'}
+          skill={ability2Skill}
+          accentColor={heroTone.primary}
+          disabled={gameplayControlsDisabled}
+        />
+      </EditableHudItem>
 
-          <div className="mobile-fire-cluster">
-            <MobileSkillButton
-              action="secondaryFire"
-              fallbackLabel="ALT"
-              ariaLabel={secondarySkill?.name ?? 'Secondary fire'}
-              skill={secondarySkill}
-              accentColor={heroTone.primary}
-              className="mobile-secondary-button"
-            />
-            <MobileSkillButton
-              action="primaryFire"
-              fallbackLabel="FIRE"
-              ariaLabel={primarySkill?.name ?? 'Primary fire'}
-              skill={primarySkill}
-              accentColor={heroTone.primary}
-              className="mobile-primary-button"
-            />
-          </div>
-        </div>
-      </div>
+      <EditableHudItem id="mobile-ultimate" label="Ultimate" interactive>
+        <MobileSkillButton
+          action="ultimate"
+          fallbackLabel="F"
+          ariaLabel={ultimateSkill?.name ?? 'Ultimate ability'}
+          skill={ultimateSkill}
+          accentColor={heroTone.primary}
+          className="mobile-ultimate-button"
+          disabled={gameplayControlsDisabled}
+        />
+      </EditableHudItem>
+
+      <EditableHudItem id="mobile-jump" label="Jump" interactive>
+        <MobileActionButton
+          action="jump"
+          label="JUMP"
+          ariaLabel="Jump"
+          className="mobile-jump-button"
+          disabled={gameplayControlsDisabled}
+        >
+          <JumpIcon />
+        </MobileActionButton>
+      </EditableHudItem>
+
+      <EditableHudItem id="mobile-crouch" label="Slide" interactive>
+        <MobileActionButton
+          action="crouch"
+          label="SLIDE"
+          ariaLabel="Crouch or slide"
+          className="mobile-crouch-button"
+          disabled={gameplayControlsDisabled}
+        >
+          <CrouchIcon />
+        </MobileActionButton>
+      </EditableHudItem>
+
+      <EditableHudItem id="mobile-secondary-fire" label="Alt fire" interactive>
+        <MobileSkillButton
+          action="secondaryFire"
+          fallbackLabel="ALT"
+          ariaLabel={secondarySkill?.name ?? 'Secondary fire'}
+          skill={secondarySkill}
+          accentColor={heroTone.primary}
+          className="mobile-secondary-button"
+          disabled={gameplayControlsDisabled}
+        />
+      </EditableHudItem>
+
+      <EditableHudItem id="mobile-primary-fire" label="Fire" interactive>
+        <MobileSkillButton
+          action="primaryFire"
+          fallbackLabel="FIRE"
+          ariaLabel={primarySkill?.name ?? 'Primary fire'}
+          skill={primarySkill}
+          accentColor={heroTone.primary}
+          className="mobile-primary-button"
+          disabled={gameplayControlsDisabled}
+        />
+      </EditableHudItem>
     </div>
   );
 }

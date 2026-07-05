@@ -19,6 +19,7 @@ import {
   type StreamerFeedMode,
   useSettingsStore,
 } from '../../store/settingsStore';
+import { resetMobileHudLayout } from '../../store/mobileHudLayoutStore';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
@@ -795,6 +796,23 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     value={settings.showHUD}
                     onChange={(v) => updateSetting('showHUD', v)}
                   />
+                </SettingRow>
+
+                <SettingRow label="Edit Mobile HUD" description="Drag and resize touch controls and HUD panels">
+                  <ToggleInput
+                    value={settings.mobileHudLayoutEditing}
+                    onChange={(v) => updateSetting('mobileHudLayoutEditing', v)}
+                  />
+                </SettingRow>
+
+                <SettingRow label="Mobile HUD Layout" description="Restore default touch control and panel positions">
+                  <button
+                    type="button"
+                    onClick={resetMobileHudLayout}
+                    className="flex h-9 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.07] px-3.5 font-display text-xs text-white/70 transition-colors hover:border-white/20 hover:bg-white/[0.1] hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-300/70"
+                  >
+                    RESET
+                  </button>
                 </SettingRow>
 
                 <SettingRow label="Damage Numbers" description="Show damage dealt on hit">

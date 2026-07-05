@@ -51,6 +51,7 @@ export interface ClientSettings {
   fov: number;
   showFPS: FpsDisplayMode;
   showHUD: boolean;
+  mobileHudLayoutEditing: boolean;
   masterVolume: number;
   sfxVolume: number;
   musicVolume: number;
@@ -133,6 +134,7 @@ export const defaultSettings: ClientSettings = {
   fov: 90,
   showFPS: 'off',
   showHUD: true,
+  mobileHudLayoutEditing: false,
   masterVolume: 80,
   sfxVolume: 100,
   musicVolume: 50,
@@ -260,6 +262,7 @@ export function sanitizeSettings(value: unknown): ClientSettings {
     fov: clamp(raw.fov, 60, 120, defaultSettings.fov),
     showFPS: pickFpsDisplayMode(raw.showFPS, defaultSettings.showFPS),
     showHUD: pickBoolean(raw.showHUD, defaultSettings.showHUD),
+    mobileHudLayoutEditing: pickBoolean(raw.mobileHudLayoutEditing, defaultSettings.mobileHudLayoutEditing),
     masterVolume: clamp(raw.masterVolume, 0, 100, defaultSettings.masterVolume),
     sfxVolume: clamp(raw.sfxVolume, 0, 100, defaultSettings.sfxVolume),
     musicVolume: clamp(raw.musicVolume, 0, 100, defaultSettings.musicVolume),
@@ -302,6 +305,7 @@ export function loadSettings(): ClientSettings {
 function withRuntimeOnlySettingsReset(settings: ClientSettings): ClientSettings {
   return {
     ...settings,
+    mobileHudLayoutEditing: false,
     streamerModeEnabled: false,
   };
 }

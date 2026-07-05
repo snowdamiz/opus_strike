@@ -30,6 +30,7 @@ import { visualStore } from '../../store/visualStore';
 import { FACTIONS, HUD_HERO_COLORS } from '../../styles/colorTokens';
 import { Minimap } from './minimap/Minimap';
 import { VoiceHud } from './VoiceHud';
+import { EditableHudItem } from './EditableHudItem';
 import { formatKeybind } from '../../utils/keybindings';
 import { getPreparedVoxelMap, prepareVoxelMapCpu } from '../../utils/mapWarmup/mapPrepCache';
 import {
@@ -365,7 +366,13 @@ function KillFeed({ events }: { events: KillFeedEvent[] }) {
   if (events.length === 0) return null;
 
   return (
-    <div className="hud-kill-feed absolute top-24 right-5 z-[120] flex flex-col gap-2 items-end">
+    <EditableHudItem
+      id="hud-kill-feed"
+      label="Kill feed"
+      desktopClassName="hud-kill-feed absolute top-24 right-5 z-[120] flex flex-col gap-2 items-end"
+      mobileClassName="hud-kill-feed z-[120]"
+      contentClassName="flex h-full w-full flex-col items-end gap-2 overflow-hidden"
+    >
       {events.map((event) => (
         <div
           key={event.id}
@@ -376,7 +383,7 @@ function KillFeed({ events }: { events: KillFeedEvent[] }) {
           <span className="text-cyan-200">{event.victimName}</span>
         </div>
       ))}
-    </div>
+    </EditableHudItem>
   );
 }
 
@@ -543,12 +550,19 @@ function SafeZoneStatus({ safeZone }: { safeZone: SafeZoneSnapshot | null }) {
     : safeZone.warning
       ? 'border-amber-200/40 bg-amber-950/34 text-amber-100'
       : 'border-cyan-200/24 bg-slate-950/46 text-cyan-100';
+  const className = `hud-safe-zone rounded-md border px-3 py-1.5 text-center shadow-2xl backdrop-blur-md ${toneClass}`;
 
   return (
-    <div className={`hud-safe-zone absolute left-1/2 top-[clamp(2.8rem,4.2vw,4rem)] z-[124] -translate-x-1/2 rounded-md border px-3 py-1.5 text-center shadow-2xl backdrop-blur-md ${toneClass}`}>
+    <EditableHudItem
+      id="hud-safe-zone"
+      label="Safe zone"
+      desktopClassName={`absolute left-1/2 top-[clamp(2.8rem,4.2vw,4rem)] z-[124] -translate-x-1/2 ${className}`}
+      mobileClassName={`z-[124] ${className}`}
+      contentClassName="flex h-full w-full flex-col items-center justify-center"
+    >
       <div className="font-display text-[0.62rem] tracking-[0.22em]">{label}</div>
       <div className="font-mono text-sm font-bold tabular-nums">{formatHudTime(secondsRemaining)}</div>
-    </div>
+    </EditableHudItem>
   );
 }
 
@@ -585,7 +599,13 @@ function BattleRoyalDropPrompt({
     : 'mouse to guide';
 
   return (
-    <div className="hud-center-bottom hud-drop-prompt absolute bottom-[clamp(6.25rem,14vh,8.75rem)] left-1/2 z-[126] -translate-x-1/2 text-center uppercase text-white">
+    <EditableHudItem
+      id="hud-drop-prompt"
+      label="Drop prompt"
+      desktopClassName="hud-center-bottom hud-drop-prompt absolute bottom-[clamp(6.25rem,14vh,8.75rem)] left-1/2 z-[126] -translate-x-1/2 text-center uppercase text-white"
+      mobileClassName="hud-center-bottom hud-drop-prompt z-[126] text-center uppercase text-white"
+      contentClassName="grid h-full w-full place-items-center"
+    >
       <div className="relative grid justify-items-center">
         <div className="mb-1.5 flex items-center justify-center gap-3">
           <span className="h-px w-[clamp(2.75rem,8vw,6.5rem)] bg-gradient-to-r from-transparent via-white/40 to-white/10" />
@@ -610,7 +630,7 @@ function BattleRoyalDropPrompt({
           {secondaryText}
         </span>
       </div>
-    </div>
+    </EditableHudItem>
   );
 }
 
@@ -702,11 +722,17 @@ function DownedStateHud({
     : 'from-transparent via-red-100/54 to-red-400/16';
 
   return (
-    <div
-      className="hud-center-bottom hud-downed-state absolute bottom-[clamp(6.5rem,13vh,8.75rem)] left-1/2 z-[126] w-[min(25rem,88vw)] -translate-x-1/2 text-center uppercase text-white"
-      aria-label={`${statusLabel}: ${remainingSeconds} seconds remaining`}
+    <EditableHudItem
+      id="hud-downed"
+      label="Downed"
+      desktopClassName="hud-center-bottom hud-downed-state absolute bottom-[clamp(6.5rem,13vh,8.75rem)] left-1/2 z-[126] w-[min(25rem,88vw)] -translate-x-1/2 text-center uppercase text-white"
+      mobileClassName="hud-center-bottom hud-downed-state z-[126] text-center uppercase text-white"
+      contentClassName="grid h-full w-full place-items-center"
     >
-      <div className="relative isolate grid gap-2 px-1 py-1 drop-shadow-[0_3px_10px_rgba(0,0,0,0.9)]">
+      <div
+        className="relative isolate grid gap-2 px-1 py-1 drop-shadow-[0_3px_10px_rgba(0,0,0,0.9)]"
+        aria-label={`${statusLabel}: ${remainingSeconds} seconds remaining`}
+      >
         <div
           className="absolute left-1/2 top-1/2 -z-10 h-20 w-[118%] -translate-x-1/2 -translate-y-1/2"
           style={{
@@ -766,7 +792,7 @@ function DownedStateHud({
           </div>
         )}
       </div>
-    </div>
+    </EditableHudItem>
   );
 }
 
@@ -784,7 +810,13 @@ function ReviveChannelHud({
   const remainingMs = target.reviveCompletesAt ? Math.max(0, target.reviveCompletesAt - now) : BATTLE_ROYAL_REVIVE_DURATION_MS;
 
   return (
-    <div className="hud-center-bottom hud-revive-channel absolute bottom-[clamp(6.5rem,13vh,8.5rem)] left-1/2 z-[126] w-[min(20rem,82vw)] -translate-x-1/2">
+    <EditableHudItem
+      id="hud-revive-channel"
+      label="Revive channel"
+      desktopClassName="hud-center-bottom hud-revive-channel absolute bottom-[clamp(6.5rem,13vh,8.5rem)] left-1/2 z-[126] w-[min(20rem,82vw)] -translate-x-1/2"
+      mobileClassName="hud-center-bottom hud-revive-channel z-[126]"
+      contentClassName="grid h-full w-full place-items-center"
+    >
       <div className="rounded-md border border-cyan-200/28 bg-black/52 px-4 py-3 text-center shadow-2xl backdrop-blur-md">
         <div className="flex items-center justify-between gap-3">
           <span className="font-display text-xs tracking-[0.24em] text-cyan-100">REVIVING</span>
@@ -803,7 +835,7 @@ function ReviveChannelHud({
           HOLD {interactKeyLabel}
         </div>
       </div>
-    </div>
+    </EditableHudItem>
   );
 }
 
@@ -828,7 +860,13 @@ function BattleRoyalSoulChannelHud({
   const label = isCollecting ? 'COLLECTING SOUL' : 'SUMMONING';
 
   return (
-    <div className="hud-center-bottom hud-soul-channel absolute bottom-[clamp(6.5rem,13vh,8.5rem)] left-1/2 z-[126] w-[min(20rem,82vw)] -translate-x-1/2">
+    <EditableHudItem
+      id="hud-soul-channel"
+      label="Soul channel"
+      desktopClassName="hud-center-bottom hud-soul-channel absolute bottom-[clamp(6.5rem,13vh,8.5rem)] left-1/2 z-[126] w-[min(20rem,82vw)] -translate-x-1/2"
+      mobileClassName="hud-center-bottom hud-soul-channel z-[126]"
+      contentClassName="grid h-full w-full place-items-center"
+    >
       <div className="rounded-md border border-cyan-100/24 bg-black/52 px-4 py-3 text-center shadow-2xl backdrop-blur-md">
         <div className="flex items-center justify-between gap-3">
           <span className="font-display text-xs tracking-[0.22em] text-cyan-50">{label}</span>
@@ -850,7 +888,7 @@ function BattleRoyalSoulChannelHud({
           HOLD {interactKeyLabel}
         </div>
       </div>
-    </div>
+    </EditableHudItem>
   );
 }
 
@@ -865,7 +903,13 @@ function BattleRoyalPromptHud({
 }) {
   if (!actionLabel) return null;
   return (
-    <div className="hud-center-bottom hud-revive-prompt absolute bottom-[clamp(6.5rem,13vh,8.5rem)] left-1/2 z-[125] -translate-x-1/2 rounded-md border border-white/16 bg-black/42 px-4 py-2 text-center shadow-xl backdrop-blur-md">
+    <EditableHudItem
+      id="hud-battle-royal-prompt"
+      label="BR prompt"
+      desktopClassName="hud-center-bottom hud-revive-prompt absolute bottom-[clamp(6.5rem,13vh,8.5rem)] left-1/2 z-[125] -translate-x-1/2 rounded-md border border-white/16 bg-black/42 px-4 py-2 text-center shadow-xl backdrop-blur-md"
+      mobileClassName="hud-center-bottom hud-revive-prompt z-[125] rounded-md border border-white/16 bg-black/42 px-4 py-2 text-center shadow-xl backdrop-blur-md"
+      contentClassName="grid h-full w-full place-items-center"
+    >
       <div>
         <span className="font-mono text-sm font-black tracking-[0.18em] text-white">
           {interactKeyLabel}
@@ -879,7 +923,7 @@ function BattleRoyalPromptHud({
           {targetLabel}
         </div>
       )}
-    </div>
+    </EditableHudItem>
   );
 }
 
@@ -1006,7 +1050,13 @@ function InteractionPromptHud({
   if (!prompt) return null;
 
   return (
-    <div className="hud-interaction-prompt absolute left-1/2 top-1/2 z-[126] mt-9 -translate-x-1/2 rounded-md border border-white/16 bg-black/42 px-3.5 py-2 text-center shadow-xl backdrop-blur-md">
+    <EditableHudItem
+      id="hud-interaction-prompt"
+      label="Interaction prompt"
+      desktopClassName="hud-interaction-prompt absolute left-1/2 top-1/2 z-[126] mt-9 -translate-x-1/2 rounded-md border border-white/16 bg-black/42 px-3.5 py-2 text-center shadow-xl backdrop-blur-md"
+      mobileClassName="hud-interaction-prompt z-[126] rounded-md border border-white/16 bg-black/42 px-3.5 py-2 text-center shadow-xl backdrop-blur-md"
+      contentClassName="grid h-full w-full place-items-center"
+    >
       <div>
         <span className="font-mono text-sm font-black tracking-[0.16em] text-white">
           {interactKeyLabel}
@@ -1020,7 +1070,7 @@ function InteractionPromptHud({
           {prompt.targetLabel}
         </div>
       )}
-    </div>
+    </EditableHudItem>
   );
 }
 
@@ -1802,7 +1852,13 @@ export function HUD() {
 
       {/* Meteor Strike targeting instructions */}
       {bombTargeting && !suppressCombatHud && (
-        <div className="hud-targeting-instruction fixed top-1/3 left-1/2 -translate-x-1/2 text-center z-50 pointer-events-none">
+        <EditableHudItem
+          id="hud-targeting-instruction"
+          label="Targeting prompt"
+          desktopClassName="hud-targeting-instruction fixed top-1/3 left-1/2 -translate-x-1/2 text-center z-50 pointer-events-none"
+          mobileClassName="hud-targeting-instruction z-50 text-center"
+          contentClassName="grid h-full w-full place-items-center"
+        >
           <div
             className="px-4 py-2 rounded-lg backdrop-blur-sm"
             style={{
@@ -1815,7 +1871,7 @@ export function HUD() {
             </p>
             <p className="text-white/70 text-xs">Release secondary to confirm, ESC to cancel</p>
           </div>
-        </div>
+        </EditableHudItem>
       )}
 
       {/* Void Ray Charge Indicator */}
@@ -1825,7 +1881,13 @@ export function HUD() {
 
       {/* ===== TOP CENTER - Score Panel (Redesigned) ===== */}
       {!isPracticeMode && (
-        <div className="hud-top-score absolute top-0 left-1/2 -translate-x-1/2 max-w-[92vw]">
+        <EditableHudItem
+          id="hud-score"
+          label="Score"
+          desktopClassName="hud-top-score absolute top-0 left-1/2 -translate-x-1/2 max-w-[92vw]"
+          mobileClassName="hud-top-score z-[123] max-w-[92vw]"
+          contentClassName="flex h-full w-full items-start justify-center"
+        >
           <div className="relative">
             {gameplayMode === 'battle_royal' ? (
               <BattleRoyalTopHud
@@ -1955,27 +2017,35 @@ export function HUD() {
               }}
             />
           </div>
-        </div>
+        </EditableHudItem>
       )}
 
       {showFloatingFlag && (
-        <div
-          className="hud-floating-flag absolute left-1/2 -translate-x-1/2"
-          style={{ top: floatingFlagTop }}
-          role="img"
-          aria-label="Carrying flag"
+        <EditableHudItem
+          id="hud-flag"
+          label="Flag"
+          desktopClassName="hud-floating-flag absolute left-1/2 -translate-x-1/2"
+          desktopStyle={{ top: floatingFlagTop }}
+          mobileClassName="hud-floating-flag z-[124]"
+          contentClassName="grid h-full w-full place-items-center"
         >
-          <FloatingFlagIcon className="hud-flag-float h-[clamp(3rem,4.8vw,4.25rem)] w-[clamp(3rem,4.8vw,4.25rem)] drop-shadow-[0_8px_16px_rgba(0,0,0,0.62)]" />
-        </div>
+          <div role="img" aria-label="Carrying flag">
+            <FloatingFlagIcon className="hud-flag-float h-[clamp(3rem,4.8vw,4.25rem)] w-[clamp(3rem,4.8vw,4.25rem)] drop-shadow-[0_8px_16px_rgba(0,0,0,0.62)]" />
+          </div>
+        </EditableHudItem>
       )}
 
       {/* ===== BOTTOM LEFT - Health ===== */}
-      <div
-        className="absolute hud-scale hud-health"
-        style={{
+      <EditableHudItem
+        id="hud-health"
+        label="Health"
+        desktopClassName="absolute hud-scale hud-health"
+        desktopStyle={{
           left: 'clamp(0.75rem, 1.25vw, 1.125rem)',
           bottom: 'clamp(0.75rem, 1.25vw, 1.125rem)',
         }}
+        mobileClassName="hud-scale hud-health z-[125]"
+        contentClassName="grid h-full w-full place-items-center"
       >
         <div className="relative w-[clamp(8.75rem,14vw,13rem)]">
           <div
@@ -1999,11 +2069,17 @@ export function HUD() {
           </div>
 
         </div>
-      </div>
+      </EditableHudItem>
 
       {/* ===== BOTTOM CENTER - Skill Bar ===== */}
       {heroSkillItems.length > 0 && !suppressCombatHud && (
-        <div className="absolute bottom-[clamp(0.45rem,1vw,0.875rem)] left-1/2 flex max-w-[94vw] -translate-x-1/2 flex-col items-center gap-2 hud-skill-bar">
+        <EditableHudItem
+          id="hud-skill-bar"
+          label="Skill bar"
+          desktopClassName="absolute bottom-[clamp(0.45rem,1vw,0.875rem)] left-1/2 flex max-w-[94vw] -translate-x-1/2 flex-col items-center gap-2 hud-skill-bar"
+          mobileClassName="hud-skill-bar z-[124] max-w-[94vw]"
+          contentClassName="flex h-full w-full flex-col items-center justify-center gap-2"
+        >
           {showChronosLifelineHelper && (
             <ChronosLifelineHelper />
           )}
@@ -2021,12 +2097,18 @@ export function HUD() {
               />
             ))}
           </div>
-        </div>
+        </EditableHudItem>
       )}
 
       {/* ===== BOTTOM RIGHT - Movement Status (Improved) ===== */}
       {!suppressCombatHud && (
-      <div className="absolute bottom-4 right-4 xl:bottom-6 xl:right-6 flex flex-col items-end gap-2 hud-status">
+      <EditableHudItem
+        id="hud-status"
+        label="Status"
+        desktopClassName="absolute bottom-4 right-4 xl:bottom-6 xl:right-6 flex flex-col items-end gap-2 hud-status"
+        mobileClassName="hud-status z-[125]"
+        contentClassName="flex h-full w-full flex-col items-end justify-end gap-2"
+      >
         {localHeroId === 'phantom' && (
           <PhantomAmmoCounter
             ammo={phantomPrimaryAmmo}
@@ -2067,7 +2149,7 @@ export function HUD() {
           <BlazeFuelIndicator fuel={flamethrowerFuel} active={flamethrowerActive} />
         )}
 
-      </div>
+      </EditableHudItem>
       )}
     </div>
   );

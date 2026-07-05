@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/shallow';
 import type { Team } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import { useVoiceStore, type VoiceConnectionState, type VoiceParticipant } from '../../store/voiceStore';
+import { EditableHudItem } from './EditableHudItem';
 
 function SpeakerIcon() {
   return (
@@ -171,12 +172,16 @@ export function VoiceHud() {
   if (talkers.length === 0 && !message) return null;
 
   return (
-    <div
-      className="hud-voice absolute z-[130] pointer-events-none select-none"
-      style={{
+    <EditableHudItem
+      id="hud-voice"
+      label="Voice"
+      desktopClassName="hud-voice absolute z-[130] pointer-events-none select-none"
+      desktopStyle={{
         left: 'clamp(0.75rem, 1.25vw, 1.125rem)',
         bottom: 'calc(clamp(0.75rem, 1.25vw, 1.125rem) + 1.35rem)',
       }}
+      mobileClassName="hud-voice z-[130] select-none"
+      contentClassName="flex h-full w-full items-end justify-start"
     >
       <div className="flex max-w-[min(15rem,44vw)] flex-col items-start gap-1.5">
         {talkers.map((talker) => (
@@ -204,6 +209,6 @@ export function VoiceHud() {
           </div>
         )}
       </div>
-    </div>
+    </EditableHudItem>
   );
 }
