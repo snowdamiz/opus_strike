@@ -40,12 +40,15 @@ const DEFAULT_RECORDING_FPS = 60;
 const DEFAULT_RECORDING_VIEWPORT: RecordingViewport = { width: 1920, height: 1080 };
 const DEFAULT_DEVICE_PIXEL_RATIO = 1;
 const SHOWCASE_RECORDING_DURATION_MS = 5 * 60_000;
+// Fly shared-CPU machines cannot reliably capture 1080p gameplay replay at 60fps.
+const SHOWCASE_RENDER_FPS = 30;
+const SHOWCASE_RENDER_VIEWPORT: RecordingViewport = { width: 1280, height: 720 };
 const SHOWCASE_RECORDING_FINALIZE_TIMEOUT_MS = SHOWCASE_RECORDING_DURATION_MS + 2 * 60_000;
 const SHOWCASE_RECORDING_POLL_MS = 1_000;
 const SHOWCASE_JOB_CACHE_TTL_MS = 24 * 60 * 60_000;
 const SHOWCASE_JOB_CACHE_KEY_PREFIX = 'voxel-strike:recordings:showcase-job:';
 const SHOWCASE_RENDER_HEARTBEAT_STALE_MS = 2 * 60_000;
-const SHOWCASE_RENDER_INTERNAL_ERROR_PATTERN = /(?:page\.\w+|playwright|chromium|browser|ffmpeg|Timeout \d+ms exceeded|timed out after \d+ms)/i;
+const SHOWCASE_RENDER_INTERNAL_ERROR_PATTERN = /(?:page\.\w+|playwright|chromium|browser|ffmpeg|Timeout \d+ms exceeded|timed out after \d+ms|Recording playback (?:stalled|stopped responding))/i;
 const SHOWCASE_ERROR_MESSAGE_MAX_LENGTH = 500;
 
 export interface BotMatchRecordingRequest {
@@ -457,10 +460,10 @@ async function runShowcaseRecordingPipeline(
 ): Promise<void> {
   let job = await getRecordingShowcaseJob(jobId, store);
   try {
-    const recording = await waitForFinalizedRecording(job.recordingId);
+    await waitForFinalizedRecording(job.recordingId);
     const render = await enqueueRecordingRender(job.recordingId, {
-      fps: DEFAULT_RECORDING_FPS,
-      viewport: recording.manifest.viewport,
+      fps: SHOWCASE_RENDER_FPS,
+      viewport: SHOWCASE_RENDER_VIEWPORT,
       hudMode: 'selected_player',
     });
     job = await updateShowcaseJob(job, {
@@ -477,6 +480,10 @@ async function runShowcaseRecordingPipeline(
       jobPath: path.join(getRecordingArtifactDir(job.recordingId), `${render.renderId}.render-job.json`),
       onProgress: async (progress) => {
         job = await updateShowcaseJob(job, {
+          ...(progress.error ? {
+            status: 'failed',
+            error: formatShowcaseJobError(new Error(progress.error)),
+          } : {}),
           renderStage: progress.stage,
           renderProgress: progress.progress,
           renderHeartbeatAt: progress.heartbeatAt,

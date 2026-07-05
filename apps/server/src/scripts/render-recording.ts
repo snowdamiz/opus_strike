@@ -110,6 +110,7 @@ export interface RecordingRenderProgressUpdate {
   heartbeatAt: string;
   startedAt?: string | null;
   message?: string | null;
+  error?: string | null;
 }
 
 type RenderProgressReporter = (progress: RecordingRenderProgressUpdate) => Promise<void> | void;
@@ -141,6 +142,7 @@ const RECORDING_CAPTURE_PROGRESS_READ_TIMEOUT_MS = 3_000;
 const RECORDING_CAPTURE_PROGRESS_STALE_MS = 60_000;
 const RECORDING_TRANSCODE_MIN_TIMEOUT_MS = 120_000;
 const RECORDING_TRANSCODE_TIMEOUT_MULTIPLIER = 2.5;
+const RECORDING_BROWSER_CLOSE_TIMEOUT_MS = 15_000;
 
 // Stalled web fonts can keep the replay page from ever reaching a stable ready state.
 export function shouldAbortRecordingRenderRequest(input: {
@@ -496,6 +498,14 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 }
 
+async function closeWithTimeout(label: string, close: () => Promise<void>): Promise<void> {
+  try {
+    await withTimeout(close(), RECORDING_BROWSER_CLOSE_TIMEOUT_MS, label);
+  } catch (error) {
+    console.warn(`${label} failed or timed out: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -720,6 +730,13 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
   }
 
   const renderStartedAt = new Date().toISOString();
+  let lastProgressUpdate: RecordingRenderProgressUpdate = {
+    stage: 'preparing',
+    progress: 0,
+    heartbeatAt: renderStartedAt,
+    startedAt: renderStartedAt,
+    message: 'Preparing playback',
+  };
   const reportProgress = async (
     stage: RecordingRenderStage,
     progress: number,
@@ -732,6 +749,7 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
       startedAt: renderStartedAt,
       message,
     };
+    lastProgressUpdate = update;
     await updateSummaryRender({
       artifactDir,
       renderId: job?.renderId ?? null,
@@ -833,7 +851,11 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
       durationMs,
       onProgress: (progress, message) => reportProgress('capturing', 0.05 + progress * 0.85, message),
     });
-    await context.close();
+    await withTimeout(
+      context.close(),
+      RECORDING_BROWSER_CLOSE_TIMEOUT_MS,
+      'Recording browser context close'
+    );
     context = null;
 
     const webmPath = await video.path();
@@ -881,6 +903,7 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
       outputPath,
     };
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     await fs.rm(outputPath, { force: true }).catch(() => {});
     await updateSummaryRender({
       artifactDir,
@@ -890,14 +913,24 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
         completedAt: new Date().toISOString(),
         outputPath,
         heartbeatAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
       },
     }).catch(() => {});
+    await Promise.resolve(normalizedOptions.onProgress?.({
+      ...lastProgressUpdate,
+      heartbeatAt: new Date().toISOString(),
+      message: errorMessage,
+      error: errorMessage,
+    })).catch(() => {});
     throw error;
   } finally {
-    if (context) await context.close().catch(() => {});
-    if (browser && !normalizedOptions.keepBrowserOpen) await browser.close();
-    if (playbackServer) await playbackServer.close();
+    if (context) {
+      await closeWithTimeout('Recording browser context close', () => context!.close());
+    }
+    if (browser && !normalizedOptions.keepBrowserOpen) {
+      await closeWithTimeout('Recording browser close', () => browser!.close());
+    }
+    if (playbackServer) await playbackServer.close().catch(() => {});
     if (tempVideoDir) await fs.rm(tempVideoDir, { recursive: true, force: true }).catch(() => {});
   }
 }
