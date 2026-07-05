@@ -5,7 +5,6 @@ interface WalletProviderOption {
   id?: string;
   name: string;
   installed: boolean;
-  mobileDeepLink: boolean;
 }
 
 interface WalletProviderOptionsProps {
@@ -20,12 +19,6 @@ interface WalletProviderOptionsProps {
   showLabels?: boolean;
   showSpinner?: boolean;
 }
-
-const FALLBACK_WALLET_OPTION: WalletProviderOption = {
-  name: 'Solana Wallet',
-  installed: false,
-  mobileDeepLink: false,
-};
 
 function WalletOptionSpinner() {
   return (
@@ -48,15 +41,19 @@ export function WalletProviderOptions({
   showLabels = true,
   showSpinner = true,
 }: WalletProviderOptionsProps) {
-  const walletOptions: WalletProviderOption[] = walletProviders.length > 0
-    ? walletProviders
-    : [FALLBACK_WALLET_OPTION];
+  if (walletProviders.length === 0) {
+    return (
+      <div className={className} role="status">
+        <span className="wallet-provider-empty-message">No Solana wallets detected.</span>
+      </div>
+    );
+  }
 
   return (
     <div className={className}>
-      {walletOptions.map((wallet) => (
+      {walletProviders.map((wallet) => (
         <WalletProviderOptionButton
-          key={wallet.id ?? 'wallet-fallback'}
+          key={wallet.id}
           wallet={wallet}
           disabled={disabled || isConnecting}
           isConnecting={isConnecting}
@@ -94,7 +91,7 @@ function WalletProviderOptionButton({
   onSelect: (providerId?: string) => Promise<void> | void;
 }) {
   const label = wallet.installed ? wallet.name : 'Connect Wallet';
-  const detail = wallet.mobileDeepLink ? 'Open mobile app' : wallet.installed ? 'Sign message' : 'Phantom, Solflare, Brave';
+  const detail = wallet.installed ? 'Sign message' : 'Phantom, Solflare, Brave';
 
   return (
     <button
