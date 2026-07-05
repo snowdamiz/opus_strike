@@ -9,6 +9,7 @@ import {
   recordAudioPreloadRequest,
   recordAudioRuntimeState,
 } from '../movement/networkDiagnostics';
+import { useRecordingPlaybackStore } from '../store/recordingPlaybackStore';
 import { loadAudioSettings } from './audioConfig';
 import {
   BLAZE_AIRSTRIKE_SOUND_DURATION_MS,
@@ -221,6 +222,10 @@ type LoadedSoundEffect = SoundEffect & { buffer: AudioBuffer };
 
 function hasLoadedSoundBuffer(sound: SoundEffect | null): sound is LoadedSoundEffect {
   return Boolean(sound?.buffer);
+}
+
+function shouldSuppressAudioPlayback(): boolean {
+  return useRecordingPlaybackStore.getState().isActive;
 }
 
 function createSoundEffect(buffer: AudioBuffer, soundDef: SoundDefinition): SoundEffect {
@@ -743,6 +748,7 @@ export async function playSharedSound(
   options?: PlaySoundOptions
 ): Promise<SoundPlayback | undefined> {
   if (sharedConfig.muted) return;
+  if (shouldSuppressAudioPlayback()) return;
   if (options?.signal?.aborted) return;
   recordAudioPlayRequest();
 
@@ -765,6 +771,7 @@ export async function playSharedBlazeAirstrikeSound(
   options?: PlaySoundOptions
 ): Promise<SoundPlayback | undefined> {
   if (sharedConfig.muted) return;
+  if (shouldSuppressAudioPlayback()) return;
   if (options?.signal?.aborted) return;
   recordAudioPlayRequest();
 
@@ -817,6 +824,7 @@ export async function playSharedLoop(
   } = {}
 ): Promise<void> {
   if (sharedConfig.muted) return;
+  if (shouldSuppressAudioPlayback()) return;
   if (sharedLoops.has(id) || sharedStreamedLoops.has(id) || sharedPendingLoops.has(id)) return;
   recordAudioPlayRequest();
 
