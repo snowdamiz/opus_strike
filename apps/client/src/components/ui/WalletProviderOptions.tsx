@@ -94,7 +94,7 @@ function WalletProviderOptionButton({
   onSelect: (providerId?: string) => Promise<void> | void;
 }) {
   const label = wallet.installed ? wallet.name : 'Connect Wallet';
-  const detail = wallet.mobileDeepLink ? 'Mobile deep link' : wallet.installed ? 'Sign message' : 'Phantom, Solflare, Brave';
+  const detail = wallet.mobileDeepLink ? 'Open mobile app' : wallet.installed ? 'Sign message' : 'Phantom, Solflare, Brave';
 
   return (
     <button
