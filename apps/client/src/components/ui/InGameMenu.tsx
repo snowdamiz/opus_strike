@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
+import { isTouchControlsAvailable } from '../../hooks/useDeviceCapabilities';
 import { SettingsModal } from './SettingsModal';
 import { GameDialog } from './GameDialog';
 
@@ -24,9 +25,21 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
   }, []);
 
   const handleResume = () => {
+    if (isTouchControlsAvailable()) {
+      onClose();
+      return;
+    }
+
     const canvas = document.querySelector('canvas');
     if (canvas) {
-      const lockPromise = canvas.requestPointerLock();
+      let lockPromise: Promise<void> | void;
+
+      try {
+        lockPromise = canvas.requestPointerLock();
+      } catch {
+        onClose();
+        return;
+      }
 
       if (lockPromise && typeof lockPromise.then === 'function') {
         lockPromise.then(() => {
@@ -35,13 +48,19 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
           onClose();
         });
       } else {
+        let fallbackTimer: number | null = null;
         const handleLockChange = () => {
           document.removeEventListener('pointerlockchange', handleLockChange);
+          if (fallbackTimer !== null) {
+            window.clearTimeout(fallbackTimer);
+            fallbackTimer = null;
+          }
           onClose();
         };
         document.addEventListener('pointerlockchange', handleLockChange);
-        setTimeout(() => {
+        fallbackTimer = window.setTimeout(() => {
           document.removeEventListener('pointerlockchange', handleLockChange);
+          fallbackTimer = null;
           onClose();
         }, 200);
       }

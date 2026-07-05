@@ -31,6 +31,7 @@ import { useStreamerStore, type StreamerLoadingReason, type StreamerSceneTransit
 import { useRecordingPlaybackStore } from './store/recordingPlaybackStore';
 import { readRecordingPlaybackOptionsFromLocation, startRecordingPlayback } from './recording/recordingPlayback';
 import { useMobileGameAccess } from './hooks/useMobileGameAccess';
+import { resetMobileControls } from './store/mobileControlsStore';
 
 const loadGameCanvasModule = () => import('./components/game/GameCanvas');
 const loadMapVoteScreenModule = () => import('./components/ui/MapVoteScreen');
@@ -202,6 +203,8 @@ export function App() {
   );
 
   const openInGameMenu = useCallback(() => {
+    resetMobileControls();
+
     if (document.pointerLockElement) {
       try {
         document.exitPointerLock();
@@ -211,6 +214,11 @@ export function App() {
     }
 
     setShowInGameMenu(true);
+  }, []);
+
+  const closeInGameMenu = useCallback(() => {
+    resetMobileControls();
+    setShowInGameMenu(false);
   }, []);
 
   useEffect(() => () => {
@@ -435,7 +443,7 @@ export function App() {
         if (canvas) {
           canvas.requestPointerLock().catch(() => { });
         }
-        setShowInGameMenu(false);
+        closeInGameMenu();
       }
     };
 
@@ -487,7 +495,7 @@ export function App() {
       window.removeEventListener('mouseup', handleMouseUp);
       document.removeEventListener('pointerlockchange', handlePointerLockChange);
     };
-  }, [appPhase, isMobileAccessBlocked, recordingPlaybackIsActive, scoreboardKeybind, showInGameMenu, streamerIsActive]);
+  }, [appPhase, closeInGameMenu, isMobileAccessBlocked, recordingPlaybackIsActive, scoreboardKeybind, showInGameMenu, streamerIsActive]);
 
   // Close menu when leaving the game
   useEffect(() => {
@@ -831,7 +839,7 @@ export function App() {
               />
             )}
             <Suspense fallback={null}>
-              {showScoreboard && !recordingPlaybackIsActive && !isPracticeMode && <Scoreboard />}
+              {showScoreboard && !recordingPlaybackIsActive && <Scoreboard />}
             </Suspense>
           </>
         )}
@@ -854,7 +862,7 @@ export function App() {
 
         {/* In-game menu (ESC) */}
         <Suspense fallback={null}>
-          {showInGameMenu && !streamerIsActive && !recordingPlaybackIsActive && !tutorialCompletionOverlayOpen && <InGameMenu onClose={() => setShowInGameMenu(false)} />}
+          {showInGameMenu && !streamerIsActive && !recordingPlaybackIsActive && !tutorialCompletionOverlayOpen && <InGameMenu onClose={closeInGameMenu} />}
         </Suspense>
 
         {/* Developer console (Enter key) */}

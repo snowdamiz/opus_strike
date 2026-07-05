@@ -25,8 +25,22 @@ function releasePointerCapture(element: Element, pointerId: number): void {
 }
 
 function TouchLookZone({ disabled }: { disabled: boolean }) {
+  const zoneRef = useRef<HTMLDivElement | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
   const lastPointRef = useRef({ x: 0, y: 0 });
+
+  const resetLookPointer = useCallback(() => {
+    const pointerId = activePointerIdRef.current;
+    if (pointerId !== null && zoneRef.current?.hasPointerCapture(pointerId)) {
+      releasePointerCapture(zoneRef.current, pointerId);
+    }
+    activePointerIdRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (disabled) resetLookPointer();
+    return resetLookPointer;
+  }, [disabled, resetLookPointer]);
 
   const endLook = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
     if (activePointerIdRef.current !== e.pointerId) return;
@@ -39,6 +53,7 @@ function TouchLookZone({ disabled }: { disabled: boolean }) {
 
   return (
     <div
+      ref={zoneRef}
       className="mobile-look-zone"
       aria-hidden="true"
       onPointerDown={(e) => {
@@ -77,6 +92,20 @@ function MovementStick({ disabled }: { disabled: boolean }) {
   const activePointerIdRef = useRef<number | null>(null);
   const movementVector = useMobileControlsStore(state => state.movementVector);
   const setMovementVector = useMobileControlsStore(state => state.setMovementVector);
+
+  const resetMovement = useCallback(() => {
+    const pointerId = activePointerIdRef.current;
+    if (pointerId !== null && stickRef.current?.hasPointerCapture(pointerId)) {
+      releasePointerCapture(stickRef.current, pointerId);
+    }
+    activePointerIdRef.current = null;
+    setMovementVector(0, 0);
+  }, [setMovementVector]);
+
+  useEffect(() => {
+    if (disabled) resetMovement();
+    return resetMovement;
+  }, [disabled, resetMovement]);
 
   const updateVector = useCallback((clientX: number, clientY: number) => {
     const stick = stickRef.current;
