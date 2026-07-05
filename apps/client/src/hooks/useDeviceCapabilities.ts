@@ -55,7 +55,7 @@ function useDeviceCapability(readCapability: () => boolean, mediaQueries: string
   return available;
 }
 
-function addMediaQueryListener(mediaQuery: MediaQueryList, listener: (event: MediaQueryListEvent) => void): () => void {
+export function addMediaQueryListener(mediaQuery: MediaQueryList, listener: (event: MediaQueryListEvent) => void): () => void {
   if (typeof mediaQuery.addEventListener === 'function') {
     mediaQuery.addEventListener('change', listener);
     return () => mediaQuery.removeEventListener('change', listener);

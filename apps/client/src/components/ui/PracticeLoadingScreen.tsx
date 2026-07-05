@@ -15,27 +15,27 @@ export function PracticeLoadingScreen() {
   const percent = Math.round(progress);
 
   return (
-    <div className="menu-screen overflow-hidden bg-strike-bg">
+    <div className="practice-loading-screen match-loading-screen menu-screen overflow-hidden bg-strike-bg">
       <LobbyBackdrop />
 
-      <main className="absolute inset-0 z-10 flex items-center justify-center px-6">
-        <div className="w-full max-w-2xl">
-          <div className="mb-6 flex items-end justify-between gap-4">
+      <main className="match-loading-main absolute inset-0 z-10 flex items-center justify-center px-6">
+        <div className="match-loading-panel w-full max-w-2xl">
+          <div className="match-loading-header mb-6 flex items-end justify-between gap-4">
             <div className="min-w-0">
-              <p className="font-body text-[11px] uppercase tracking-[0.34em] text-cyan-200/55">
+              <p className="match-loading-eyebrow font-body text-[11px] uppercase tracking-[0.34em] text-cyan-200/55">
                 Practice
               </p>
-              <h1 className="mt-2 font-display text-5xl leading-none text-white sm:text-6xl">
+              <h1 className="match-loading-title mt-2 font-display text-5xl leading-none text-white sm:text-6xl">
                 GENERATING MAP
               </h1>
             </div>
-            <div className="shrink-0 font-mono text-2xl font-semibold tabular-nums text-cyan-200 sm:text-3xl">
+            <div className="match-loading-percent shrink-0 font-mono text-2xl font-semibold tabular-nums text-cyan-200 sm:text-3xl">
               {percent.toString().padStart(2, '0')}%
             </div>
           </div>
 
           <div
-            className="relative h-4 overflow-hidden rounded-lg border border-cyan-200/15 bg-black/45 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+            className="match-loading-progress relative h-4 overflow-hidden rounded-lg border border-cyan-200/15 bg-black/45 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
             role="progressbar"
             aria-label="Preparing practice map"
             aria-valuemin={0}
@@ -52,7 +52,7 @@ export function PracticeLoadingScreen() {
             <div className="absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/20 to-transparent" />
           </div>
 
-          <div className="mt-4 flex items-center justify-between gap-4 font-body text-[11px] uppercase tracking-[0.26em] text-white/35">
+          <div className="match-loading-track mt-4 flex items-center justify-between gap-4 font-body text-[11px] uppercase tracking-[0.26em] text-white/35">
             <span>Seed</span>
             <span>Terrain</span>
             <span>Spawn</span>

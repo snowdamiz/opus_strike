@@ -110,27 +110,27 @@ export function MatchSummaryScreen() {
 
   return (
     <main
-      className="fixed inset-0 z-[9000] overflow-y-auto bg-black text-white"
+      className="match-summary-screen fixed inset-0 z-[9000] overflow-y-auto bg-black text-white"
       style={{
         backgroundImage: 'linear-gradient(180deg, rgb(var(--color-strike-page-top) / 0.86), rgb(var(--color-strike-page-bottom) / 0.97)), url(/bg.jpg)',
         backgroundSize: 'cover',
         backgroundPosition: 'center',
       }}
     >
-      <div className="min-h-full px-4 py-5 sm:px-6 lg:px-8">
-        <div className="mx-auto flex min-h-[calc(100vh-2.5rem)] max-w-7xl flex-col gap-5">
-          <header className="grid gap-4 border-b border-white/10 pb-5 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-end">
+      <div className="match-summary-body min-h-full px-4 py-5 sm:px-6 lg:px-8">
+        <div className="match-summary-shell mx-auto flex min-h-[calc(100vh-2.5rem)] max-w-7xl flex-col gap-5">
+          <header className="match-summary-header grid gap-4 border-b border-white/10 pb-5 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-end">
             <div className="min-w-0">
-              <p className="font-body text-xs uppercase text-white/40">
+              <p className="match-summary-kicker font-body text-xs uppercase text-white/40">
                 {isTeamEliminatedSummary ? 'Battle Royal' : 'Match Complete'}
               </p>
               <div className="mt-2 flex flex-wrap items-end gap-x-4 gap-y-2">
-                <h1 className="font-display text-5xl leading-none text-white sm:text-7xl">{resultLabel}</h1>
-                <span className="mb-2 rounded border border-white/15 bg-white/10 px-2.5 py-1 font-mono text-sm text-white/70">
+                <h1 className="match-summary-result-title font-display text-5xl leading-none text-white sm:text-7xl">{resultLabel}</h1>
+                <span className="match-summary-result-badge mb-2 rounded border border-white/15 bg-white/10 px-2.5 py-1 font-mono text-sm text-white/70">
                   {winnerLabel}
                 </span>
               </div>
-              <p className="mt-3 font-body text-sm text-white/45">
+              <p className="match-summary-meta mt-3 font-body text-sm text-white/45">
                 {getGameplayModeLabel(summary.gameplayMode)} - {formatDuration(summary.durationMs)} match length
               </p>
               {summary.matchIntegrity?.reviewRequired && (
@@ -143,7 +143,7 @@ export function MatchSummaryScreen() {
             {isBattleRoyal ? (
               <BattleRoyalSummaryHeader summary={summary} />
             ) : (
-              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border border-white/10 bg-black/35 p-3 backdrop-blur-sm">
+              <div className="match-summary-team-score grid grid-cols-[1fr_auto_1fr] items-center gap-3 border border-white/10 bg-black/35 p-3 backdrop-blur-sm">
                 <TeamScore team="red" score={summary.finalScore.red} />
                 <span className="font-display text-xl text-white/30">VS</span>
                 <TeamScore team="blue" score={summary.finalScore.blue} align="right" />
@@ -151,8 +151,8 @@ export function MatchSummaryScreen() {
             )}
           </header>
 
-          <section className="grid gap-5 lg:grid-cols-[20rem_minmax(0,1fr)]">
-            <div className="space-y-5">
+          <section className="match-summary-layout grid gap-5 lg:grid-cols-[20rem_minmax(0,1fr)]">
+            <div className="match-summary-side space-y-5">
               <ExperiencePanel
                 experienceGained={experienceGained}
                 previousLevel={previousProgress.level}
@@ -176,13 +176,13 @@ export function MatchSummaryScreen() {
               <button
                 type="button"
                 onClick={handleReturn}
-                className="h-12 w-full border border-accent-primary/50 bg-accent-primary/20 px-4 font-display text-lg text-white transition-colors hover:bg-accent-primary/30 focus:outline-none focus:ring-2 focus:ring-accent-primary/60"
+                className="match-summary-return h-12 w-full border border-accent-primary/50 bg-accent-primary/20 px-4 font-display text-lg text-white transition-colors hover:bg-accent-primary/30 focus:outline-none focus:ring-2 focus:ring-accent-primary/60"
               >
                 Return to Lobbies
               </button>
             </div>
 
-            <div className={isBattleRoyal ? 'grid min-w-0 gap-5 xl:grid-cols-2' : 'min-w-0 space-y-5'}>
+            <div className={isBattleRoyal ? 'match-summary-scoreboards grid min-w-0 gap-5 xl:grid-cols-2' : 'match-summary-scoreboards min-w-0 space-y-5'}>
               {teamEntries.map((entry) => (
                 <TeamScoreboard
                   key={entry.id}
@@ -221,7 +221,7 @@ function BattleRoyalSummaryHeader({ summary }: { summary: GameEndEvent }) {
       : 'Recorded';
 
     return (
-      <div className="border border-white/10 bg-black/35 p-3 backdrop-blur-sm">
+      <div className="match-summary-br-result border border-white/10 bg-black/35 p-3 backdrop-blur-sm">
         <p className="font-body text-xs uppercase text-white/35">Battle Royal Placement</p>
         <p className="mt-1 truncate font-display text-3xl leading-none text-white">
           {placement}
@@ -240,7 +240,7 @@ function BattleRoyalSummaryHeader({ summary }: { summary: GameEndEvent }) {
   );
 
   return (
-    <div className="border border-white/10 bg-black/35 p-3 backdrop-blur-sm">
+    <div className="match-summary-br-result border border-white/10 bg-black/35 p-3 backdrop-blur-sm">
       <p className="font-body text-xs uppercase text-white/35">Battle Royal Result</p>
       <p className="mt-1 truncate font-display text-3xl leading-none text-white">
         {summary.winningTeam ? getFactionLabel(summary.winningTeam) : 'No Contest'}
@@ -270,11 +270,11 @@ function ExperiencePanel({
   leveledUp: boolean;
 }) {
   return (
-    <section className="border border-white/10 bg-black/45 p-4 backdrop-blur-sm">
+    <section className="match-summary-xp-panel border border-white/10 bg-black/45 p-4 backdrop-blur-sm">
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="font-body text-xs uppercase text-white/35">Experience</p>
-          <p className="mt-1 font-display text-5xl leading-none text-accent-primary">
+          <p className="match-summary-xp-value mt-1 font-display text-5xl leading-none text-accent-primary">
             +{formatNumber(experienceGained)}
           </p>
         </div>
@@ -312,7 +312,7 @@ function LocalStatsPanel({ player, isCaptureTheFlag }: { player: MatchSummaryPla
   };
 
   return (
-    <section className="border border-white/10 bg-black/35 p-4 backdrop-blur-sm">
+    <section className="match-summary-local-panel border border-white/10 bg-black/35 p-4 backdrop-blur-sm">
       <div className="mb-3 min-w-0">
         <p className="font-body text-xs uppercase text-white/35">Your Match</p>
         <p className="mt-1 truncate font-display text-2xl leading-none text-white">
@@ -356,9 +356,9 @@ function TeamScoreboard({
   const objectiveLabel = isCaptureTheFlag ? 'Caps' : 'Elims';
 
   return (
-    <section className="min-w-0 border border-white/10 bg-black/35 backdrop-blur-sm">
+    <section className="match-summary-team-board min-w-0 border border-white/10 bg-black/35 backdrop-blur-sm">
       <div
-        className="flex items-center justify-between gap-4 border-b border-white/10 px-4 py-3"
+        className="match-summary-team-board-header flex items-center justify-between gap-4 border-b border-white/10 px-4 py-3"
         style={{ background: faction.bgColor }}
       >
         <div>
@@ -370,7 +370,7 @@ function TeamScoreboard({
         <span className="font-mono text-sm text-white/45">{players.length} players</span>
       </div>
 
-      <div className="grid grid-cols-[minmax(0,1.4fr)_2.75rem_2.75rem_2.75rem_3.25rem_4.5rem] gap-2 border-b border-white/10 px-4 py-2 font-body text-xs uppercase text-white/35 sm:grid-cols-[minmax(0,1.6fr)_4.5rem_2.75rem_2.75rem_2.75rem_3.25rem_4.5rem_4.5rem]">
+      <div className="match-summary-board-head grid grid-cols-[minmax(0,1.4fr)_2.75rem_2.75rem_2.75rem_3.25rem_4.5rem] gap-2 border-b border-white/10 px-4 py-2 font-body text-xs uppercase text-white/35 sm:grid-cols-[minmax(0,1.6fr)_4.5rem_2.75rem_2.75rem_2.75rem_3.25rem_4.5rem_4.5rem]">
         <span>Player</span>
         <span className="hidden text-right sm:block">Hero</span>
         <span className="text-right">K</span>
@@ -412,7 +412,7 @@ function ScoreboardRow({
   const objectiveValue = isCaptureTheFlag ? player.stats.flagCaptures : player.stats.kills;
 
   return (
-    <div className={`grid grid-cols-[minmax(0,1.4fr)_2.75rem_2.75rem_2.75rem_3.25rem_4.5rem] gap-2 border-b border-white/10 px-4 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1.6fr)_4.5rem_2.75rem_2.75rem_2.75rem_3.25rem_4.5rem_4.5rem] ${isLocal ? 'bg-white/[0.08]' : ''}`}>
+    <div className={`match-summary-board-row grid grid-cols-[minmax(0,1.4fr)_2.75rem_2.75rem_2.75rem_3.25rem_4.5rem] gap-2 border-b border-white/10 px-4 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1.6fr)_4.5rem_2.75rem_2.75rem_2.75rem_3.25rem_4.5rem_4.5rem] ${isLocal ? 'bg-white/[0.08]' : ''}`}>
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate font-display text-base leading-none text-white">{player.playerName}</span>

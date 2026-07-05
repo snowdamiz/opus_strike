@@ -1137,14 +1137,14 @@ function ToggleInput({ value, onChange }: { value: boolean; onChange: (value: bo
   return (
  <button
  onClick={() => onChange(!value)}
- className={`w-12 h-6 rounded-full relative ${
- value ? 'bg-orange-500' : 'bg-white/20'
- }`}
- >
- <div
- className={`absolute top-1 w-4 h-4 rounded-full bg-white ${
- value ? 'left-7' : 'left-1'
- }`}
+	 className={`settings-toggle w-12 h-6 rounded-full relative ${
+	 value ? 'bg-orange-500' : 'bg-white/20'
+	 }`}
+	 >
+	 <div
+	 className={`settings-toggle-knob absolute top-1 w-4 h-4 rounded-full bg-white ${
+	 value ? 'left-7' : 'left-1'
+	 }`}
  />
  </button>
   );
@@ -1169,12 +1169,12 @@ function SliderInput({ value, onChange, min, max, step }: {
         min={min}
         max={max}
         step={step}
-        className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer"
+        className="settings-slider-input flex-1 h-1.5 rounded-full appearance-none cursor-pointer"
         style={{
           background: `linear-gradient(to right, rgb(var(--color-accent-primary)) 0%, rgb(var(--color-accent-primary)) ${percent}%, rgba(255,255,255,0.2) ${percent}%, rgba(255,255,255,0.2) 100%)`,
         }}
       />
-      <span className="w-9 text-right text-white/60 font-mono text-xs">{value}</span>
+      <span className="settings-slider-value w-9 text-right text-white/60 font-mono text-xs">{value}</span>
     </div>
   );
 }
@@ -1231,7 +1231,7 @@ function SelectInput({ value, onChange, options }: {
         onKeyDown={handleKeyDown}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
-        className="w-full h-10 px-3.5 rounded-lg bg-white/[0.07] border border-white/10 text-sm text-white font-body cursor-pointer focus:outline-none focus:border-orange-500/80 hover:border-white/20 hover:bg-white/[0.1] flex items-center justify-between gap-3"
+        className="settings-select-button w-full h-10 px-3.5 rounded-lg bg-white/[0.07] border border-white/10 text-sm text-white font-body cursor-pointer focus:outline-none focus:border-orange-500/80 hover:border-white/20 hover:bg-white/[0.1] flex items-center justify-between gap-3"
       >
         <span>{selectedOption.label}</span>
         <svg
@@ -1247,7 +1247,7 @@ function SelectInput({ value, onChange, options }: {
       {isOpen && (
         <div
           role="listbox"
-          className="absolute right-0 top-12 z-50 w-full overflow-hidden rounded-lg border border-white/15 bg-strike-elevated/95 shadow-2xl backdrop-blur-md"
+          className="settings-select-menu absolute right-0 top-12 z-50 w-full overflow-hidden rounded-lg border border-white/15 bg-strike-elevated/95 shadow-2xl backdrop-blur-md"
         >
           {options.map((option) => {
             const isSelected = option.value === value;
@@ -1262,7 +1262,7 @@ function SelectInput({ value, onChange, options }: {
                   onChange(option.value);
                   setIsOpen(false);
                 }}
-                className={`w-full px-3.5 py-2.5 text-left text-sm font-body flex items-center gap-2 hover:bg-white/10 ${
+                className={`settings-select-option w-full px-3.5 py-2.5 text-left text-sm font-body flex items-center gap-2 hover:bg-white/10 ${
                   isSelected ? 'text-orange-300 bg-orange-500/15' : 'text-white/70'
                 }`}
               >

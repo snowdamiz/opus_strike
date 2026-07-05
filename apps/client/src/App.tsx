@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { MapProfileId, VoxelMapSizeId, VoxelMapTheme } from '@voxel-strike/shared';
 import { useGameStore } from './store/gameStore';
 import { useSettingsStore } from './store/settingsStore';
@@ -12,6 +12,7 @@ import { TeleportEffects } from './components/ui/TeleportEffects';
 import { UltimateEffects } from './components/ui/UltimateEffects';
 import { SlideEffects } from './components/ui/SlideEffects';
 import { MobileControls } from './components/ui/MobileControls';
+import { MobileAccessGate } from './components/ui/MobileAccessGate';
 import { TutorialGuide } from './components/ui/TutorialGuide';
 import { disposeSharedAudioResources, useAudio, useMusic } from './hooks/useAudio';
 import { useGlobalButtonSounds } from './hooks/useUiAudio';
@@ -29,6 +30,7 @@ import { useStreamerModeController } from './hooks/useStreamerModeController';
 import { useStreamerStore, type StreamerLoadingReason, type StreamerSceneTransition } from './store/streamerStore';
 import { useRecordingPlaybackStore } from './store/recordingPlaybackStore';
 import { readRecordingPlaybackOptionsFromLocation, startRecordingPlayback } from './recording/recordingPlayback';
+import { useMobileGameAccess } from './hooks/useMobileGameAccess';
 
 const loadGameCanvasModule = () => import('./components/game/GameCanvas');
 const loadMapVoteScreenModule = () => import('./components/ui/MapVoteScreen');
@@ -189,6 +191,15 @@ export function App() {
   const { matchStartGateKey, reportMatchSceneReady, leaveGame } = useNetwork();
   useGlobalButtonSounds();
   useStreamerModeController();
+  const mobileGameAccess = useMobileGameAccess();
+  const isMobileAccessBlocked = mobileGameAccess.isBlocked;
+
+  const renderWithMobileGate = (screen: ReactNode) => (
+    <>
+      {screen}
+      <MobileAccessGate access={mobileGameAccess} />
+    </>
+  );
 
   useEffect(() => () => {
     disposeSharedAudioResources();
@@ -442,6 +453,7 @@ export function App() {
         appPhase === 'in_game' &&
         !showInGameMenu &&
         !tutorialCompletionOverlayOpen &&
+        !isMobileAccessBlocked &&
         !streamerIsActive &&
         !recordingPlaybackIsActive
       ) {
@@ -463,7 +475,7 @@ export function App() {
       window.removeEventListener('mouseup', handleMouseUp);
       document.removeEventListener('pointerlockchange', handlePointerLockChange);
     };
-  }, [appPhase, recordingPlaybackIsActive, scoreboardKeybind, showInGameMenu, streamerIsActive]);
+  }, [appPhase, isMobileAccessBlocked, recordingPlaybackIsActive, scoreboardKeybind, showInGameMenu, streamerIsActive]);
 
   // Close menu when leaving the game
   useEffect(() => {
@@ -477,6 +489,13 @@ export function App() {
       setShowInGameMenu(false);
     }
   }, [tutorialCompletionOverlayOpen]);
+
+  useEffect(() => {
+    if (!isMobileAccessBlocked) return;
+
+    setShowInGameMenu(false);
+    setShowScoreboard(false);
+  }, [isMobileAccessBlocked]);
 
   useEffect(() => {
     if (!shouldPrepareMatchWorld) {
@@ -650,11 +669,11 @@ export function App() {
   }, [canRevealMatchScene, isActiveGame, isMatchLoadingVisible, warmupKey]);
 
   if (isPracticePreparing) {
-    return <PracticeLoadingScreen />;
+    return renderWithMobileGate(<PracticeLoadingScreen />);
   }
 
   if (isLoading && appPhase === 'menu') {
-    return (
+    return renderWithMobileGate(
       <MatchLoadingScreen
         eyebrow="Network"
         title="CONNECTING"
@@ -670,19 +689,19 @@ export function App() {
   // Show appropriate screen based on app phase
   // Authentication is now handled within MainLobby
   if (appPhase === 'menu') {
-    return <MainLobby />;
+    return renderWithMobileGate(<MainLobby />);
   }
 
   if (appPhase === 'in_lobby') {
-    return <Lobby />;
+    return renderWithMobileGate(<Lobby />);
   }
 
   if (appPhase === 'matchmaking') {
-    return <MatchmakingScreen />;
+    return renderWithMobileGate(<MatchmakingScreen />);
   }
 
   if (appPhase === 'map_vote') {
-    return (
+    return renderWithMobileGate(
       <Suspense
         fallback={(
           <MatchLoadingScreen
@@ -702,7 +721,7 @@ export function App() {
   }
 
   if (appPhase === 'match_loading') {
-    return (
+    return renderWithMobileGate(
       <MatchLoadingScreen
         key={warmupKey}
         initialProgress={matchLoadingProgressRef.current}
@@ -716,7 +735,7 @@ export function App() {
   }
 
   if (appPhase === 'streamer_loading' && !shouldRenderStreamerTransitionWorld) {
-    return (
+    return renderWithMobileGate(
       <MatchLoadingScreen
         key={`streamer:${streamerLoadingReason}`}
         initialProgress={matchLoadingProgressRef.current}
@@ -737,19 +756,19 @@ export function App() {
   // In game
   if (shouldRenderGameScene) {
     if (visibleMatchSummary) {
-      return (
+      return renderWithMobileGate(
         <Suspense fallback={null}>
           <MatchSummaryScreen />
         </Suspense>
       );
     }
 
-    return (
+    return renderWithMobileGate(
       <div className="w-full h-full relative game-active">
         <Suspense fallback={null}>
           {shouldMountMatchWorld && (
             <GameCanvas
-              inputEnabled={!streamerIsActive && !recordingPlaybackIsActive && !showInGameMenu && !tutorialCompletionOverlayOpen}
+              inputEnabled={!isMobileAccessBlocked && !streamerIsActive && !recordingPlaybackIsActive && !showInGameMenu && !tutorialCompletionOverlayOpen}
               onMatchStartReady={handleMatchStartSceneReady}
               onReady={handleMatchSceneReady}
               onWarmupUpdate={handleWarmupUpdate}
@@ -793,7 +812,7 @@ export function App() {
             <SlideEffects />
             {!recordingPlaybackIsActive && (
               <MobileControls
-                disabled={showInGameMenu || tutorialCompletionOverlayOpen}
+                disabled={isMobileAccessBlocked || showInGameMenu || tutorialCompletionOverlayOpen}
                 onOpenMenu={() => setShowInGameMenu(true)}
                 onScoreboardChange={setShowScoreboard}
               />
@@ -839,7 +858,7 @@ export function App() {
   }
 
   // Fallback to main lobby
-  return <MainLobby />;
+  return renderWithMobileGate(<MainLobby />);
 }
 
 function StreamerSceneTransitionOverlay({

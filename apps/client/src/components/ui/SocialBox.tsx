@@ -159,13 +159,13 @@ function matchModeLabel(mode: MatchMode | null): string {
 
 function UserIdentity({ user, detail }: { user: SocialUser; detail?: string }) {
   return (
-    <div className="flex min-w-0 items-center gap-3">
+    <div className="social-user-identity flex min-w-0 items-center gap-3">
       <div className="social-avatar flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-orange-100">
         <span className="font-display text-base leading-none">{user.name.slice(0, 1).toUpperCase()}</span>
       </div>
       <div className="min-w-0">
-        <p className="truncate font-display text-sm leading-none text-white">{user.name}</p>
-        <p className="mt-1 truncate text-xs font-body text-white/40">
+        <p className="social-user-name truncate font-display text-sm leading-none text-white">{user.name}</p>
+        <p className="social-user-detail mt-1 truncate text-xs font-body text-white/40">
           {detail ?? user.rank?.label ?? 'Unranked'}
         </p>
       </div>
@@ -378,7 +378,7 @@ function FriendCard({
   return (
     <SocialRow>
       <UserIdentity user={friend.user} />
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="social-row-actions flex shrink-0 items-center gap-2">
         <IconButton
           label={`Invite ${friend.user.name}`}
           title={canInvite ? `Invite ${friend.user.name}` : 'Open Play or join a lobby to invite'}
@@ -839,19 +839,19 @@ export function SocialBox({
           ))}
         </nav>
 
-        <main className="min-h-0 flex-1 overflow-y-auto px-5 py-5 custom-scrollbar" role="tabpanel">
-          <div className="space-y-4">
+        <main className="social-sidebar-body min-h-0 flex-1 overflow-y-auto px-5 py-5 custom-scrollbar" role="tabpanel">
+          <div className="social-sidebar-stack space-y-4">
             {visibleError && <StatusBanner message={visibleError} tone="error" />}
             {!visibleError && notice && <StatusBanner message={notice} tone="success" />}
 
             {isLoading ? (
-              <div className="flex h-52 items-center justify-center">
-                <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/10 border-t-orange-300" />
+              <div className="social-sidebar-loading flex h-52 items-center justify-center">
+                <div className="social-sidebar-spinner h-8 w-8 animate-spin rounded-full border-2 border-white/10 border-t-orange-300" />
               </div>
             ) : (
               <>
                 {activeTab === 'friends' && (
-                  <div className="space-y-5">
+                  <div className="social-tab-stack social-friends-panel space-y-5">
                     <SocialSection>
                       <SectionHeader title="Find Player" />
                       <form
@@ -938,7 +938,7 @@ export function SocialBox({
                 )}
 
                 {activeTab === 'bots' && (
-                  <div className="space-y-5">
+                  <div className="social-tab-stack social-bots-panel space-y-5">
                     <SocialSection className="space-y-3">
                       <SectionHeader
                         title="Party Bots"
@@ -953,7 +953,7 @@ export function SocialBox({
                           <p className="text-xs font-body text-white/40">
                             Add an AI teammate to open party slots.
                           </p>
-                          <div className="flex items-end gap-2">
+                          <div className="social-bot-controls flex items-end gap-2">
                             <BotDifficultySelect
                               value={selectedBotDifficulty}
                               disabled={!canAddPartyBot || Boolean(pendingAction)}
@@ -1002,7 +1002,7 @@ export function SocialBox({
                 )}
 
                 {activeTab === 'requests' && (
-                  <div className="space-y-4">
+                  <div className="social-tab-stack social-requests-panel space-y-4">
                     <RequestGroup
                       title="INCOMING"
                       requests={social.incomingRequests}
@@ -1022,7 +1022,7 @@ export function SocialBox({
                 )}
 
                 {activeTab === 'invites' && (
-                  <div className="social-list space-y-1">
+                  <div className="social-tab-stack social-invites-panel social-list space-y-1">
                     {social.partyInvites.length === 0 && social.lobbyInvites.length === 0 ? (
                       <EmptyState title="NO INVITES" />
                     ) : (
@@ -1030,7 +1030,7 @@ export function SocialBox({
                         {social.partyInvites.map((invite) => (
                           <SocialRow key={invite.inviteId} className="items-start">
                             <UserIdentity user={invite.from} detail="PARTY - Main Play" />
-                            <div className="flex shrink-0 items-center gap-2">
+                            <div className="social-row-actions flex shrink-0 items-center gap-2">
                               <IconButton
                                 label="Join party"
                                 title="Join party"
@@ -1058,7 +1058,7 @@ export function SocialBox({
                               user={invite.from}
                               detail={`${matchModeLabel(invite.matchMode)} - ${invite.lobbyName}`}
                             />
-                            <div className="flex shrink-0 items-center gap-2">
+                            <div className="social-row-actions flex shrink-0 items-center gap-2">
                               <IconButton
                                 label={tutorialRequired ? 'Accept and skip tutorial' : 'Join lobby'}
                                 title={tutorialRequired ? 'Accept and skip tutorial' : 'Join lobby'}
@@ -1127,7 +1127,7 @@ function RequestGroup({
         ) : requests.map((request) => (
           <SocialRow key={request.requestId}>
             <UserIdentity user={request.user} />
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="social-row-actions flex shrink-0 items-center gap-2">
               {onAccept && (
                 <IconButton
                   label={`Accept ${request.user.name}`}

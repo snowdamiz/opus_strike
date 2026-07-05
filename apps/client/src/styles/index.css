@@ -460,11 +460,220 @@ body,
 
 /* ===== GAME STATES ===== */
 .game-active {
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+  touch-action: none;
   user-select: none;
   -webkit-user-select: none;
   background:
     radial-gradient(ellipse at 50% 42%, rgb(var(--color-accent-secondary) / 0.05), transparent 58%),
     linear-gradient(180deg, rgb(var(--color-strike-page-top)), rgb(var(--color-strike-page-bottom)));
+}
+
+.mobile-access-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding:
+    max(1rem, env(safe-area-inset-top))
+    max(1rem, env(safe-area-inset-right))
+    max(1rem, env(safe-area-inset-bottom))
+    max(1rem, env(safe-area-inset-left));
+  background:
+    linear-gradient(180deg, rgb(4 5 7 / 0.94), rgb(8 8 10 / 0.98)),
+    rgb(var(--color-strike-bg));
+  color: white;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.mobile-access-gate::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgb(var(--color-accent-primary) / 0.08), transparent 30%, rgb(var(--color-accent-secondary) / 0.08)),
+    repeating-linear-gradient(0deg, rgb(255 255 255 / 0.035) 0 1px, transparent 1px 7px);
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.mobile-access-gate-panel {
+  position: relative;
+  display: grid;
+  width: min(28rem, 100%);
+  max-height: calc(100dvh - max(2rem, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
+  gap: 1rem;
+  overflow-y: auto;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 0.78rem;
+  background:
+    linear-gradient(135deg, rgb(var(--color-accent-primary) / 0.12), transparent 34%),
+    linear-gradient(180deg, rgb(20 21 24 / 0.88), rgb(7 8 10 / 0.92));
+  box-shadow:
+    0 1.4rem 3.6rem rgb(0 0 0 / 0.58),
+    inset 0 1px 0 rgb(255 255 255 / 0.09);
+  padding: clamp(1.05rem, 3.8dvh, 1.5rem);
+  text-align: center;
+  backdrop-filter: blur(18px) saturate(1.12);
+  -webkit-backdrop-filter: blur(18px) saturate(1.12);
+}
+
+.mobile-access-gate-device {
+  position: relative;
+  display: grid;
+  width: clamp(4.4rem, 16dvh, 6.25rem);
+  aspect-ratio: 1;
+  place-items: center;
+  justify-self: center;
+  color: rgb(var(--color-accent-primary-hover));
+  filter: drop-shadow(0 0 1.1rem rgb(var(--color-accent-primary) / 0.3));
+}
+
+.mobile-access-gate-phone {
+  width: 100%;
+  height: 100%;
+  stroke-width: 1.35;
+}
+
+.mobile-access-gate-action-icon {
+  position: absolute;
+  right: -0.35rem;
+  bottom: -0.18rem;
+  width: 2rem;
+  height: 2rem;
+  padding: 0.36rem;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.46);
+  color: rgb(var(--color-accent-secondary));
+  box-shadow: 0 0.45rem 1.1rem rgb(0 0 0 / 0.28);
+}
+
+.mobile-access-gate-copy {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.mobile-access-gate-kicker {
+  color: rgb(var(--color-accent-secondary));
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.mobile-access-gate-title {
+  color: white;
+  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
+  font-size: clamp(2.2rem, 10dvh, 3.8rem);
+  letter-spacing: 0;
+  line-height: 0.9;
+  text-transform: uppercase;
+}
+
+.mobile-access-gate-message,
+.mobile-access-gate-help,
+.mobile-access-gate-error {
+  margin-inline: auto;
+  max-width: 23rem;
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: clamp(0.9rem, 2.7dvh, 1rem);
+  font-weight: 700;
+  line-height: 1.32;
+}
+
+.mobile-access-gate-message {
+  color: rgb(255 255 255 / 0.74);
+}
+
+.mobile-access-gate-actions {
+  display: grid;
+  gap: 0.65rem;
+  justify-items: center;
+}
+
+.mobile-access-gate-button {
+  display: inline-flex;
+  min-height: 3rem;
+  min-width: min(14.5rem, 100%);
+  align-items: center;
+  justify-content: center;
+  gap: 0.58rem;
+  border: 1px solid rgb(var(--color-accent-primary-hover) / 0.72);
+  border-radius: 0.62rem;
+  background: linear-gradient(135deg, rgb(var(--color-accent-primary)), rgb(var(--color-accent-primary-deep)));
+  color: white;
+  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
+  font-size: 1.08rem;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+  box-shadow:
+    0 0.85rem 1.8rem rgb(var(--color-accent-primary) / 0.22),
+    inset 0 1px 0 rgb(255 255 255 / 0.22);
+}
+
+.mobile-access-gate-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.mobile-access-gate-button svg {
+  width: 1.12rem;
+  height: 1.12rem;
+}
+
+.mobile-access-gate-help {
+  color: rgb(255 255 255 / 0.55);
+  font-size: 0.78rem;
+}
+
+.mobile-access-gate-error {
+  border: 1px solid rgb(var(--color-ui-danger-light) / 0.32);
+  border-radius: 0.5rem;
+  background: rgb(var(--color-ui-danger) / 0.12);
+  padding: 0.58rem 0.7rem;
+  color: rgb(var(--color-ui-danger-light));
+  font-size: 0.82rem;
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .mobile-access-gate-panel {
+    grid-template-columns: auto minmax(0, 1fr);
+    width: min(38rem, 100%);
+    align-items: center;
+    gap: clamp(0.8rem, 2.8vw, 1.35rem);
+    padding: clamp(0.75rem, 2.8dvh, 1rem);
+    text-align: left;
+  }
+
+  .mobile-access-gate-device {
+    width: clamp(3.9rem, 20dvh, 5.4rem);
+  }
+
+  .mobile-access-gate-copy,
+  .mobile-access-gate-actions,
+  .mobile-access-gate-error {
+    grid-column: 2;
+    justify-items: start;
+  }
+
+  .mobile-access-gate-message,
+  .mobile-access-gate-help,
+  .mobile-access-gate-error {
+    margin-inline: 0;
+  }
+
+  .mobile-access-gate-title {
+    font-size: clamp(1.85rem, 12dvh, 3rem);
+  }
 }
 
 .pointer-locked {
@@ -7853,87 +8062,6 @@ body,
   }
 }
 
-@media (pointer: coarse) and (orientation: portrait),
-  (hover: none) and (orientation: portrait),
-  (max-width: 640px) and (orientation: portrait) {
-  .map-vote-screen {
-    --map-vote-footer-h: max(4.7rem, calc(env(safe-area-inset-bottom) + 4rem));
-  }
-
-  .map-vote-screen .map-vote-nav {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "title profile"
-      "timer timer";
-    row-gap: 0.5rem;
-  }
-
-  .map-vote-title-group {
-    grid-area: title;
-  }
-
-  .map-vote-timer {
-    grid-area: timer;
-    position: static;
-    left: auto;
-    top: auto;
-    transform: none;
-    justify-self: center;
-  }
-
-  .map-vote-profile {
-    grid-area: profile;
-    justify-self: end;
-    max-width: 11rem;
-  }
-
-  .map-vote-profile-avatar {
-    width: 2.4rem;
-    height: 2.4rem;
-  }
-
-  .map-vote-profile-copy p {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .map-vote-main {
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    padding-bottom: calc(var(--map-vote-footer-h) + 0.75rem);
-  }
-
-  .map-vote-content {
-    justify-content: start;
-    gap: 0.8rem;
-  }
-
-  .map-vote-heading h2 {
-    font-size: 1.35rem;
-  }
-
-  .map-vote-grid {
-    max-width: min(100%, 29rem);
-  }
-
-  .map-vote-card {
-    aspect-ratio: 16 / 9;
-  }
-
-  .map-vote-action-bar {
-    width: min(100% - 1.5rem, 26rem);
-    gap: 0.55rem;
-    padding: 0.48rem 0.62rem;
-  }
-
-  .map-vote-lock-status {
-    min-width: 0;
-    flex: 1;
-  }
-}
-
 .social-sidebar-layer {
   --social-sidebar-width: min(31rem, 100vw);
   --social-soft-line: rgb(255 255 255 / 0.055);
@@ -9118,70 +9246,6 @@ body,
 
   .team-select-layout.lobby-layout {
     margin-top: clamp(0.55rem, 2dvh, 1rem);
-  }
-}
-
-@media (pointer: coarse) and (orientation: portrait),
-  (hover: none) and (orientation: portrait),
-  (max-width: 640px) and (orientation: portrait) {
-  .team-select-layout.lobby-layout {
-    grid-template-columns: minmax(0, min(100%, 32rem));
-  }
-
-  .team-select-layout.lobby-layout.lobby-layout-observer {
-    grid-template-columns: minmax(0, min(100%, 32rem));
-  }
-
-  .team-select-layout .lobby-team-header-row {
-    grid-template-columns: minmax(0, 1fr);
-    justify-items: center;
-    row-gap: 0.75rem;
-  }
-
-  .team-select-layout .lobby-faction-header {
-    width: min(100%, 32rem);
-  }
-}
-
-@media (pointer: coarse) and (orientation: portrait) {
-  .mobile-joystick {
-    bottom: max(5.2rem, calc(env(safe-area-inset-bottom) + 4.4rem));
-  }
-
-  .mobile-right-dock {
-    bottom: max(5rem, calc(env(safe-area-inset-bottom) + 4.25rem));
-    width: min(58vw, 15.5rem);
-    gap: 0.5rem;
-  }
-
-  .mobile-fire-cluster {
-    width: clamp(7.9rem, 34vw, 9.35rem);
-    height: clamp(6.65rem, 29vw, 7.85rem);
-  }
-
-  .mobile-ability-cluster {
-    right: auto;
-    bottom: auto;
-    grid-template-columns: repeat(3, clamp(2.65rem, 11.5vw, 3.05rem));
-    margin-right: clamp(0.45rem, 4vw, 1rem);
-  }
-
-  .mobile-movement-actions {
-    right: auto;
-    bottom: auto;
-    grid-template-columns: 1fr;
-    width: clamp(2.72rem, 11.5vw, 3.05rem);
-  }
-
-  .mobile-utility-cluster {
-    left: var(--mobile-safe-left);
-    bottom: var(--mobile-safe-bottom);
-  }
-
-  .hud-health,
-  .hud-skill-bar,
-  .hud-status {
-    opacity: 0.82;
   }
 }
 
@@ -10534,33 +10598,6 @@ input[type="color"]::-webkit-color-swatch {
   }
 }
 
-@media (pointer: coarse) and (orientation: portrait),
-  (hover: none) and (orientation: portrait),
-  (max-width: 640px) and (orientation: portrait) {
-  .hud-health {
-    bottom: max(9.25rem, calc(env(safe-area-inset-bottom) + 8.35rem)) !important;
-  }
-
-  .hud-skill-bar {
-    bottom: max(8.25rem, calc(env(safe-area-inset-bottom) + 7.35rem)) !important;
-    transform: translateX(-50%) scale(0.76) !important;
-  }
-
-  .hud-status {
-    bottom: max(9rem, calc(env(safe-area-inset-bottom) + 8rem)) !important;
-    transform: scale(0.76) !important;
-  }
-
-  .hud-center-bottom {
-    bottom: max(10.5rem, calc(env(safe-area-inset-bottom) + 9.4rem)) !important;
-  }
-
-  .hud-drop-prompt {
-    transform: translateX(-50%) scale(0.84);
-    transform-origin: bottom center;
-  }
-}
-
 @media (max-width: 380px) {
   .hud-top-score {
     transform: translateX(-50%) scale(0.82);
@@ -10784,5 +10821,2012 @@ input[type="color"]::-webkit-color-swatch {
     min-height: 1.92rem;
     padding-inline: 0.56rem;
     font-size: 0.76rem;
+  }
+}
+
+/* ===== MOBILE LANDSCAPE MENU CONSOLIDATION ===== */
+@media (pointer: coarse) and (orientation: landscape),
+  (hover: none) and (orientation: landscape),
+  (max-width: 920px) and (orientation: landscape) {
+  :root {
+    --menu-safe-x: max(0.62rem, env(safe-area-inset-left), env(safe-area-inset-right));
+    --main-lobby-edge-x: var(--menu-safe-x);
+    --menu-nav-h: clamp(3.05rem, 10.8dvh, 3.65rem);
+    --menu-bottom-pad: max(0.45rem, env(safe-area-inset-bottom));
+    --menu-bottom-pad-lg: max(2.85rem, calc(env(safe-area-inset-bottom) + 2.2rem));
+    --menu-scale: 1;
+  }
+
+  .menu-screen {
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+
+  .menu-nav.main-lobby-nav {
+    --main-lobby-control-size: clamp(2.05rem, 7.2dvh, 2.45rem);
+    display: grid;
+    min-height: var(--menu-nav-h);
+    grid-template-columns: minmax(8.75rem, 0.8fr) minmax(0, 1.2fr) minmax(7.4rem, 0.8fr);
+    grid-template-areas: "brand tabs controls";
+    align-items: center;
+    align-content: center;
+    gap: 0.35rem clamp(0.42rem, 1.6vw, 0.8rem);
+    padding:
+      max(0.28rem, env(safe-area-inset-top))
+      var(--main-lobby-edge-x)
+      0.3rem;
+  }
+
+  .main-lobby-brand {
+    grid-area: brand;
+    gap: clamp(0.36rem, 1.6dvh, 0.58rem) !important;
+    min-width: 0;
+    justify-self: start;
+  }
+
+  .main-lobby-brand > div:first-child {
+    width: clamp(1.75rem, 7.2dvh, 2.2rem) !important;
+    height: clamp(1.75rem, 7.2dvh, 2.2rem) !important;
+  }
+
+  .main-lobby-brand h1 {
+    max-width: 8.75rem;
+    overflow: hidden;
+    font-size: clamp(1.08rem, 4.6dvh, 1.42rem) !important;
+    letter-spacing: 0 !important;
+    text-overflow: ellipsis;
+  }
+
+  .main-lobby-center-stack {
+    grid-area: tabs;
+    width: min(100%, 29rem);
+    justify-self: center;
+  }
+
+  .main-lobby-tabs {
+    justify-content: center;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .main-lobby-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .main-lobby-tabs button {
+    flex: 0 0 auto;
+    padding: clamp(0.24rem, 1.1dvh, 0.42rem) clamp(0.42rem, 1.8vw, 0.76rem);
+    font-size: clamp(0.78rem, 3.2dvh, 0.98rem);
+    letter-spacing: 0;
+    line-height: 1;
+  }
+
+  .main-lobby-ca-badge {
+    display: none;
+  }
+
+  .main-lobby-controls {
+    grid-area: controls;
+    gap: clamp(0.24rem, 1.2dvh, 0.46rem) !important;
+    justify-self: end;
+  }
+
+  .main-lobby-x-link,
+  .main-lobby-controls button {
+    width: var(--main-lobby-control-size) !important;
+    height: var(--main-lobby-control-size) !important;
+  }
+
+  .main-lobby-x-link svg,
+  .main-lobby-controls button svg {
+    width: clamp(1rem, 3.8dvh, 1.2rem) !important;
+    height: clamp(1rem, 3.8dvh, 1.2rem) !important;
+  }
+
+  .main-lobby-controls > div:last-child:not(:first-child) {
+    display: grid;
+    width: var(--main-lobby-control-size);
+    height: var(--main-lobby-control-size);
+    place-items: center;
+    gap: 0 !important;
+    overflow: hidden;
+  }
+
+  .main-lobby-controls > div:last-child:not(:first-child) > div:first-child {
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+  .main-lobby-controls > div:last-child:not(:first-child) svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .main-lobby-controls > div:last-child:not(:first-child) .min-w-0 {
+    display: none;
+  }
+
+  .menu-main {
+    padding:
+      calc(var(--menu-nav-h) + var(--global-notification-offset))
+      var(--menu-safe-x)
+      var(--menu-bottom-pad);
+  }
+
+  .menu-main-play {
+    padding-bottom: var(--menu-bottom-pad-lg);
+  }
+
+  .play-tab-shell,
+  .play-tab-shell.is-party-mode,
+  .play-tab-shell.is-guest-mode {
+    --play-corner-inset: var(--main-lobby-edge-x);
+    --play-stage-y-offset: 0rem;
+    --global-chat-collapsed-height: clamp(4.15rem, 13.2dvh, 4.9rem);
+    --global-chat-expanded-height: min(8.2rem, 36dvh);
+    --global-chat-stack-gap: 0.32rem;
+    --play-bottom-right-stack-gap: 0.32rem;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .play-tab-stage {
+    display: flex;
+    width: min(100%, clamp(19rem, 40vw, 26rem));
+    height: calc(100dvh - var(--menu-nav-h) - var(--menu-bottom-pad-lg));
+    min-height: 0;
+    align-items: center;
+    justify-content: center;
+    transform: none;
+  }
+
+  .play-action-stack {
+    left: var(--play-corner-inset);
+    bottom: max(0.58rem, env(safe-area-inset-bottom));
+    width: clamp(9.85rem, 22vw, 11.75rem);
+    gap: 0.14rem;
+  }
+
+  .play-action-stack .play-mode-selector {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.08rem;
+  }
+
+  .play-mode-option-shell:has(.play-mode-bot-fill-toggle) {
+    grid-column: auto;
+  }
+
+  .play-action-stack .play-mode-option,
+  .play-action-stack .play-mode-bot-fill-toggle {
+    grid-template-columns: clamp(1.05rem, 4dvh, 1.22rem) minmax(0, 1fr);
+    min-height: clamp(1.34rem, 4.7dvh, 1.64rem);
+    gap: 0.22rem;
+    padding: 0.1rem 0.18rem;
+  }
+
+  .play-action-stack .play-mode-bot-fill-toggle {
+    grid-template-columns: clamp(1.05rem, 4dvh, 1.22rem) minmax(0, 1fr) auto;
+  }
+
+  .play-action-stack .play-mode-option-icon,
+  .play-action-stack .play-mode-bot-fill-toggle .play-mode-option-icon {
+    width: clamp(1.05rem, 4dvh, 1.22rem);
+    height: clamp(1.05rem, 4dvh, 1.22rem);
+  }
+
+  .play-action-stack .play-mode-option-icon svg {
+    width: clamp(0.72rem, 2.7dvh, 0.86rem);
+    height: clamp(0.72rem, 2.7dvh, 0.86rem);
+  }
+
+  .play-action-stack .play-mode-option-copy {
+    min-height: 1rem;
+  }
+
+  .play-action-stack .play-mode-option-title {
+    font-size: clamp(0.68rem, 2.65dvh, 0.8rem);
+    letter-spacing: 0;
+    line-height: 0.92;
+  }
+
+  .play-action-stack .play-mode-bot-fill-status {
+    margin-left: 0.22rem;
+    font-size: 0.48rem;
+  }
+
+  .play-action-stack .play-mode-bot-fill-switch {
+    width: 1.58rem;
+    height: 0.84rem;
+    padding: 0.12rem;
+  }
+
+  .play-action-stack .play-mode-bot-fill-switch span {
+    width: 0.52rem;
+    height: 0.52rem;
+  }
+
+  .play-action-stack .play-mode-bot-fill-toggle.is-enabled .play-mode-bot-fill-switch span {
+    transform: translateX(0.74rem);
+  }
+
+  .play-action-stack .play-main-cta {
+    min-height: clamp(1.9rem, 6.2dvh, 2.22rem);
+    border-radius: 0.48rem;
+    font-size: clamp(0.78rem, 3dvh, 0.92rem);
+    letter-spacing: 0;
+  }
+
+  .play-action-stack .play-disabled-reason {
+    position: static;
+    width: 100%;
+    max-width: 100%;
+    margin-top: 0.18rem;
+    font-size: 0.52rem;
+    line-height: 1.15;
+    transform: none;
+  }
+
+  .party-lineup-stage {
+    width: min(100%, clamp(19rem, 40vw, 26rem));
+    gap: 0.16rem;
+    transform: none;
+  }
+
+  .party-lineup-grid {
+    --party-lineup-columns: 4;
+    --party-member-slot-width: clamp(4.45rem, 14dvh, 5.8rem);
+    --party-member-preview-height: clamp(6.15rem, 29dvh, 9rem);
+    width: max-content;
+    max-width: 100%;
+    column-gap: 0;
+    justify-content: center;
+  }
+
+  .party-member-card {
+    gap: 0.1rem;
+    transform: none;
+  }
+
+  .party-member-preview {
+    width: calc(var(--party-member-slot-width) * 1.08);
+    height: var(--party-member-preview-height);
+    transform: translateY(-0.04rem) scale(1);
+  }
+
+  .party-member-labels {
+    gap: 0.08rem;
+    margin-top: 0.12rem;
+  }
+
+  .party-member-rank-icon {
+    width: 0.78rem;
+    height: 0.78rem;
+  }
+
+  .party-member-name {
+    max-width: 4.1rem;
+    font-size: 0.66rem;
+    letter-spacing: 0;
+  }
+
+  .party-member-meta {
+    display: none;
+  }
+
+  .party-member-action-slot {
+    min-height: 1.05rem;
+  }
+
+  .party-member-action-button {
+    width: 1.24rem;
+    border-radius: 0.32rem;
+  }
+
+  .party-member-action-button svg {
+    width: 0.58rem;
+    height: 0.58rem;
+  }
+
+  .party-member-card.is-empty-slot {
+    --party-empty-slot-y: -0.45rem;
+    min-height: calc(var(--party-member-preview-height) + 0.8rem);
+  }
+
+  .party-lineup-add-button {
+    width: clamp(1.78rem, 7dvh, 2.34rem);
+  }
+
+  .party-lineup-controls {
+    bottom: max(0.22rem, env(safe-area-inset-bottom));
+    z-index: 21;
+  }
+
+  .party-hero-picker {
+    gap: 0.3rem;
+    min-height: clamp(1.92rem, 6.2dvh, 2.18rem);
+    padding-inline: 0;
+  }
+
+  .party-hero-picker-button {
+    width: clamp(1.92rem, 6.2dvh, 2.18rem);
+    height: clamp(1.92rem, 6.2dvh, 2.18rem);
+    border-radius: 0.42rem;
+  }
+
+  .party-hero-picker-button svg {
+    width: clamp(0.92rem, 3.3dvh, 1.05rem);
+    height: clamp(0.92rem, 3.3dvh, 1.05rem);
+  }
+
+  .play-tab-bottom-right-stack {
+    right: var(--play-corner-inset);
+    bottom: max(0.5rem, env(safe-area-inset-bottom));
+    left: auto;
+    width: min(15.25rem, 30vw);
+    justify-items: end;
+    gap: 0.28rem;
+    opacity: 1;
+  }
+
+  .play-season-plate {
+    display: grid;
+  }
+
+  .play-earnings-plate,
+  .global-chat-panel {
+    display: flex;
+  }
+
+  .play-season-plate {
+    padding: 0.05rem 0.1rem;
+  }
+
+  .play-season-plate-kicker {
+    gap: 0.22rem;
+    font-size: 0.5rem;
+    letter-spacing: 0.12em;
+  }
+
+  .play-season-plate-title {
+    margin-top: 0.02rem;
+    font-size: clamp(1.58rem, 7.2dvh, 2.22rem);
+    letter-spacing: 0;
+  }
+
+  .play-earnings-plate {
+    width: min(100%, 16rem);
+  }
+
+  .global-chat-panel {
+    height: var(--global-chat-height);
+    margin-top: 0.12rem;
+  }
+
+  .global-chat-messages {
+    padding: 0.32rem 0.48rem 0.26rem;
+  }
+
+  .global-chat-message-name,
+  .global-chat-message-text,
+  .global-chat-empty {
+    font-size: 0.66rem;
+  }
+
+  .global-chat-message-time {
+    font-size: 0.5rem;
+  }
+
+  .global-chat-form {
+    grid-template-columns: minmax(0, 1fr) 1.86rem;
+    min-height: 1.86rem;
+  }
+
+  .global-chat-form input {
+    min-width: 0;
+    padding-inline: 0.48rem;
+    font-size: 0.68rem;
+  }
+
+  .global-chat-form button {
+    width: 1.86rem;
+    height: 100%;
+  }
+
+  .global-chat-form svg {
+    width: 0.86rem;
+    height: 0.86rem;
+  }
+
+  .lobby-bottom-bar-inner {
+    padding-block: clamp(0.26rem, 1dvh, 0.42rem) !important;
+  }
+
+  .lobby-action-bar {
+    flex-wrap: nowrap;
+    gap: clamp(0.32rem, 1dvh, 0.54rem) !important;
+    border-radius: 0.5rem !important;
+    padding: 0.38rem 0.48rem !important;
+  }
+
+  .lobby-action-bar > div {
+    min-width: 0;
+  }
+
+  .lobby-primary-action {
+    flex: 0 0 auto;
+    height: clamp(2rem, 6.6dvh, 2.34rem);
+    min-height: clamp(2rem, 6.6dvh, 2.34rem);
+    min-width: min(10.6rem, 35vw) !important;
+    padding-inline: clamp(0.62rem, 1.8vw, 0.92rem) !important;
+    font-size: clamp(0.72rem, 2.7dvh, 0.86rem) !important;
+    letter-spacing: 0 !important;
+  }
+
+  .battle-royal-lobby-grid {
+    gap: 0.5rem !important;
+    padding:
+      0.28rem
+      max(0.42rem, env(safe-area-inset-right))
+      0.2rem
+      max(0.42rem, env(safe-area-inset-left)) !important;
+  }
+
+  .battle-royal-lobby-summary {
+    padding: 0.38rem 0.52rem !important;
+  }
+
+  .battle-royal-lobby-summary p:first-child {
+    font-size: 0.52rem;
+    letter-spacing: 0.08em;
+  }
+
+  .battle-royal-lobby-summary p:last-child {
+    font-size: clamp(0.92rem, 3.4dvh, 1.12rem);
+    letter-spacing: 0;
+  }
+
+  .battle-royal-lobby-scroll {
+    overflow: auto;
+    padding-bottom: 0.22rem;
+    overscroll-behavior: contain;
+  }
+
+  .battle-royal-lobby-teams {
+    grid-template-columns: repeat(5, minmax(8.7rem, 1fr)) !important;
+    min-width: max(100%, 47rem);
+    gap: 0.5rem !important;
+  }
+
+  .battle-royal-lobby-team-card {
+    min-height: clamp(10.7rem, 45dvh, 14.6rem) !important;
+    padding: 0.42rem !important;
+  }
+}
+
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 430px),
+  (hover: none) and (orientation: landscape) and (max-height: 430px),
+  (max-width: 920px) and (orientation: landscape) and (max-height: 430px) {
+  :root {
+    --menu-nav-h: clamp(2.8rem, 11.6dvh, 3.25rem);
+    --menu-bottom-pad-lg: max(2.55rem, calc(env(safe-area-inset-bottom) + 2rem));
+  }
+
+  .menu-nav.main-lobby-nav {
+    --main-lobby-control-size: clamp(1.88rem, 7.2dvh, 2.18rem);
+    grid-template-columns: minmax(7.6rem, 0.75fr) minmax(0, 1.4fr) minmax(6.8rem, 0.75fr);
+    padding-block: max(0.18rem, env(safe-area-inset-top)) 0.22rem;
+  }
+
+  .main-lobby-brand h1 {
+    max-width: 7.4rem;
+    font-size: clamp(0.96rem, 4.2dvh, 1.2rem) !important;
+  }
+
+  .main-lobby-tabs button {
+    padding-block: 0.2rem;
+    font-size: clamp(0.7rem, 3dvh, 0.84rem);
+  }
+
+  .play-action-stack {
+    width: clamp(8.7rem, 21vw, 10.1rem);
+    gap: 0.08rem;
+  }
+
+  .play-action-stack .play-mode-option,
+  .play-action-stack .play-mode-bot-fill-toggle {
+    min-height: clamp(1.22rem, 4.55dvh, 1.42rem);
+    padding-block: 0.07rem;
+  }
+
+  .play-action-stack .play-main-cta {
+    min-height: clamp(1.76rem, 6dvh, 2rem);
+  }
+
+  .play-tab-stage {
+    width: min(100%, clamp(14.5rem, 38vw, 20rem));
+  }
+
+  .party-lineup-stage {
+    width: min(100%, clamp(14.5rem, 38vw, 20rem));
+  }
+
+  .party-lineup-grid {
+    --party-member-slot-width: clamp(3.55rem, 14dvh, 4.5rem);
+    --party-member-preview-height: clamp(5.25rem, 28dvh, 7.1rem);
+  }
+
+  .party-member-card.is-empty-slot {
+    --party-empty-slot-y: -0.85rem;
+  }
+
+  .party-member-labels {
+    margin-top: 0;
+  }
+
+  .party-member-action-slot {
+    display: none;
+  }
+
+  .party-lineup-add-button {
+    width: clamp(1.55rem, 6.6dvh, 1.95rem);
+  }
+
+  .party-hero-picker {
+    gap: 0.24rem;
+  }
+
+  .party-hero-picker-button {
+    width: clamp(1.72rem, 6dvh, 1.95rem);
+    height: clamp(1.72rem, 6dvh, 1.95rem);
+  }
+
+  .play-tab-bottom-right-stack {
+    width: min(13rem, 28vw);
+    gap: 0.22rem;
+  }
+
+  .play-season-plate-kicker {
+    font-size: 0.46rem;
+  }
+
+  .play-season-plate-title {
+    font-size: clamp(1.35rem, 6.4dvh, 1.86rem);
+  }
+
+  .global-chat-panel {
+    --global-chat-height: clamp(3.62rem, 12.8dvh, 4.2rem);
+  }
+
+  .global-chat-messages {
+    padding-block: 0.24rem 0.18rem;
+  }
+
+  .global-chat-form {
+    grid-template-columns: minmax(0, 1fr) 1.72rem;
+    min-height: 1.72rem;
+  }
+
+  .global-chat-form button {
+    width: 1.72rem;
+  }
+
+  .lobby-primary-action {
+    height: 1.95rem;
+    min-height: 1.95rem;
+    font-size: 0.68rem !important;
+  }
+
+  .battle-royal-lobby-summary {
+    display: none !important;
+  }
+
+  .battle-royal-lobby-teams {
+    grid-template-columns: repeat(5, minmax(8.1rem, 1fr)) !important;
+    min-width: max(100%, 43.5rem);
+  }
+
+  .battle-royal-lobby-team-card {
+    min-height: 9.7rem !important;
+  }
+}
+
+/* ===== MOBILE LANDSCAPE GAME FLOW CONSOLIDATION ===== */
+@media (pointer: coarse) and (orientation: landscape),
+  (hover: none) and (orientation: landscape),
+  (max-width: 920px) and (orientation: landscape) {
+  .game-dialog-overlay {
+    padding:
+      max(0.5rem, env(safe-area-inset-top))
+      max(0.65rem, env(safe-area-inset-right))
+      max(0.5rem, env(safe-area-inset-bottom))
+      max(0.65rem, env(safe-area-inset-left));
+  }
+
+  .game-dialog {
+    max-height: calc(100dvh - max(1rem, env(safe-area-inset-top) + env(safe-area-inset-bottom))) !important;
+    border-radius: 0.55rem !important;
+  }
+
+  .game-dialog-header {
+    gap: 0.55rem !important;
+    padding: 0.48rem 0.62rem !important;
+  }
+
+  .game-dialog-icon,
+  .game-dialog-close {
+    width: clamp(1.62rem, 6dvh, 1.98rem) !important;
+    height: clamp(1.62rem, 6dvh, 1.98rem) !important;
+    border-radius: 0.42rem !important;
+  }
+
+  .game-dialog-icon svg,
+  .game-dialog-close svg {
+    width: clamp(0.82rem, 3.1dvh, 1rem) !important;
+    height: clamp(0.82rem, 3.1dvh, 1rem) !important;
+  }
+
+  .game-dialog-title {
+    font-size: clamp(0.9rem, 3.4dvh, 1.08rem) !important;
+    letter-spacing: 0;
+    line-height: 1;
+  }
+
+  .pause-menu-dialog {
+    width: min(21rem, calc(100vw - max(1.3rem, env(safe-area-inset-left) + env(safe-area-inset-right)))) !important;
+    max-width: min(21rem, calc(100vw - max(1.3rem, env(safe-area-inset-left) + env(safe-area-inset-right)))) !important;
+  }
+
+  .pause-menu-body {
+    display: grid;
+    gap: 0.34rem;
+    padding: 0.58rem !important;
+  }
+
+  .pause-menu-body > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+  }
+
+  .pause-menu-button {
+    min-height: clamp(1.78rem, 6.1dvh, 2.12rem);
+    border-radius: 0.42rem !important;
+    padding: 0.28rem 0.72rem !important;
+    font-size: clamp(0.72rem, 2.9dvh, 0.9rem) !important;
+    letter-spacing: 0;
+    line-height: 1;
+  }
+
+  .pause-menu-separator {
+    margin-top: 0.06rem;
+    padding-top: 0.34rem !important;
+  }
+
+  .pause-player-info {
+    bottom: max(0.42rem, env(safe-area-inset-bottom));
+    left: max(0.52rem, env(safe-area-inset-left));
+  }
+
+  .pause-player-card {
+    border-radius: 0.42rem !important;
+    padding: 0.3rem 0.52rem !important;
+  }
+
+  .pause-player-card span {
+    font-size: 0.66rem !important;
+    line-height: 1;
+  }
+
+  .match-loading-main {
+    padding:
+      max(0.5rem, env(safe-area-inset-top))
+      max(0.8rem, env(safe-area-inset-right))
+      max(0.5rem, env(safe-area-inset-bottom))
+      max(0.8rem, env(safe-area-inset-left));
+  }
+
+  .match-loading-panel {
+    max-width: min(42rem, calc(100vw - max(1.6rem, env(safe-area-inset-left) + env(safe-area-inset-right))));
+    transform: translateY(-0.12rem);
+  }
+
+  .match-loading-header {
+    margin-bottom: clamp(0.52rem, 1.8dvh, 0.76rem) !important;
+    gap: 0.7rem !important;
+  }
+
+  .match-loading-eyebrow {
+    font-size: clamp(0.48rem, 1.9dvh, 0.6rem) !important;
+    letter-spacing: 0.18em !important;
+  }
+
+  .match-loading-title {
+    margin-top: 0.26rem !important;
+    font-size: clamp(1.72rem, 8.8dvh, 3rem) !important;
+    letter-spacing: 0 !important;
+    line-height: 0.92 !important;
+    white-space: normal;
+  }
+
+  .match-loading-percent {
+    font-size: clamp(1.18rem, 6.2dvh, 1.9rem) !important;
+    line-height: 1;
+  }
+
+  .match-loading-progress {
+    height: clamp(0.42rem, 1.9dvh, 0.62rem) !important;
+    border-radius: 0.35rem !important;
+  }
+
+  .match-loading-track {
+    margin-top: 0.48rem !important;
+    gap: 0.55rem !important;
+    font-size: clamp(0.48rem, 1.85dvh, 0.58rem) !important;
+    letter-spacing: 0.16em !important;
+  }
+
+  .match-loading-stages {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 0.38rem !important;
+    margin-top: 0.65rem !important;
+  }
+
+  .match-loading-stage {
+    padding: 0.34rem 0.42rem !important;
+  }
+
+  .match-loading-stage-label,
+  .match-loading-stage-value {
+    font-size: 0.48rem !important;
+    letter-spacing: 0.1em !important;
+  }
+
+  .match-loading-stage-progress {
+    height: 0.16rem !important;
+    margin-top: 0.3rem !important;
+  }
+
+  .match-loading-action {
+    margin-top: 0.7rem !important;
+  }
+
+  .match-loading-action-button {
+    height: 1.84rem !important;
+    gap: 0.35rem !important;
+    padding-inline: 0.7rem !important;
+    font-size: 0.56rem !important;
+    letter-spacing: 0.08em !important;
+  }
+
+  .match-loading-action-button svg {
+    width: 0.8rem !important;
+    height: 0.8rem !important;
+  }
+
+  .matchmaking-main {
+    padding:
+      max(0.5rem, env(safe-area-inset-top))
+      max(0.8rem, env(safe-area-inset-right))
+      max(1.8rem, calc(env(safe-area-inset-bottom) + 1.35rem))
+      max(0.8rem, env(safe-area-inset-left));
+  }
+
+  .matchmaking-panel {
+    max-width: min(31rem, 100%);
+    transform: translateY(-0.08rem);
+  }
+
+  .matchmaking-teammate-row {
+    margin-bottom: 0.6rem !important;
+    gap: 0.38rem 0.85rem !important;
+  }
+
+  .matchmaking-kicker {
+    margin-bottom: 0.3rem !important;
+    font-size: 0.54rem !important;
+    letter-spacing: 0.18em !important;
+  }
+
+  .matchmaking-title {
+    font-size: clamp(1.7rem, 8dvh, 2.55rem) !important;
+    letter-spacing: 0;
+  }
+
+  .matchmaking-copy {
+    max-width: 25rem;
+    margin-top: 0.45rem !important;
+    font-size: 0.7rem !important;
+    line-height: 1.22 !important;
+  }
+
+  .matchmaking-rank-row {
+    margin-top: 0.55rem !important;
+    gap: 0.34rem !important;
+  }
+
+  .matchmaking-rank-row svg {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  .matchmaking-rank-row span {
+    font-size: 0.56rem !important;
+    letter-spacing: 0.08em !important;
+  }
+
+  .matchmaking-countdown-panel,
+  .matchmaking-access-panel {
+    max-width: min(21.5rem, 100%);
+    margin-top: 0.7rem !important;
+    padding: 0.48rem 0.58rem !important;
+  }
+
+  .matchmaking-countdown-panel {
+    min-height: 0 !important;
+  }
+
+  .matchmaking-panel-kicker {
+    font-size: 0.52rem !important;
+    letter-spacing: 0.12em !important;
+  }
+
+  .matchmaking-panel-copy {
+    margin-top: 0.16rem !important;
+    font-size: 0.56rem !important;
+  }
+
+  .matchmaking-countdown-value,
+  .matchmaking-access-title {
+    font-size: clamp(1rem, 4.3dvh, 1.3rem) !important;
+    letter-spacing: 0;
+  }
+
+  .matchmaking-slots-section {
+    margin-top: 0.85rem !important;
+  }
+
+  .matchmaking-slots-header {
+    margin-bottom: 0.38rem !important;
+    font-size: 0.66rem !important;
+  }
+
+  .matchmaking-slot-grid {
+    gap: 0.26rem !important;
+  }
+
+  .matchmaking-slot {
+    height: 0.42rem !important;
+  }
+
+  .matchmaking-cancel-wrap {
+    margin-top: 0.85rem !important;
+  }
+
+  .matchmaking-cancel-button {
+    border-radius: 0.5rem !important;
+    padding: 0.42rem 1rem !important;
+    font-size: 0.7rem !important;
+  }
+
+  .matchmaking-queue-count {
+    bottom: max(0.42rem, env(safe-area-inset-bottom)) !important;
+  }
+
+  .matchmaking-queue-count p {
+    font-size: 0.64rem !important;
+    letter-spacing: 0.12em !important;
+  }
+
+  .map-vote-screen {
+    --map-vote-nav-h: clamp(2.65rem, 10dvh, 3.18rem);
+    --map-vote-footer-h: clamp(2.65rem, 10dvh, 3.18rem);
+  }
+
+  .map-vote-screen .map-vote-nav {
+    min-height: var(--map-vote-nav-h);
+    padding:
+      max(0.22rem, env(safe-area-inset-top))
+      max(0.62rem, env(safe-area-inset-right))
+      0.26rem
+      max(0.62rem, env(safe-area-inset-left));
+  }
+
+  .map-vote-back-button,
+  .map-vote-profile-avatar,
+  .map-vote-action-icon {
+    width: clamp(1.82rem, 6.6dvh, 2.18rem) !important;
+    height: clamp(1.82rem, 6.6dvh, 2.18rem) !important;
+  }
+
+  .map-vote-title {
+    font-size: clamp(1rem, 4.3dvh, 1.32rem) !important;
+  }
+
+  .map-vote-timer {
+    gap: 0.3rem !important;
+  }
+
+  .map-vote-timer span {
+    font-size: clamp(1.05rem, 5dvh, 1.45rem) !important;
+  }
+
+  .map-vote-profile {
+    gap: 0.42rem !important;
+  }
+
+  .map-vote-profile-copy p:first-child {
+    font-size: 0.68rem !important;
+  }
+
+  .map-vote-profile-copy p:last-child {
+    font-size: 0.52rem !important;
+  }
+
+  .map-vote-main {
+    padding:
+      var(--map-vote-nav-h)
+      max(0.62rem, env(safe-area-inset-right))
+      calc(var(--map-vote-footer-h) + 0.18rem)
+      max(0.62rem, env(safe-area-inset-left)) !important;
+  }
+
+  .map-vote-content {
+    gap: 0.42rem !important;
+  }
+
+  .map-vote-heading h2 {
+    font-size: clamp(0.95rem, 3.8dvh, 1.25rem) !important;
+  }
+
+  .map-vote-grid {
+    gap: 0.44rem !important;
+  }
+
+  .map-vote-card {
+    aspect-ratio: 16 / 9.4;
+    border-radius: 0.55rem !important;
+  }
+
+  .map-vote-card-meta {
+    padding: 0.38rem 0.5rem !important;
+  }
+
+  .map-vote-card-meta .relative.flex {
+    min-height: 1.72rem !important;
+    gap: 0.38rem !important;
+  }
+
+  .map-vote-card-meta p {
+    font-size: clamp(0.72rem, 3dvh, 0.92rem) !important;
+  }
+
+  .map-vote-card-meta span {
+    padding: 0.28rem 0.42rem !important;
+    font-size: 0.5rem !important;
+    letter-spacing: 0.08em !important;
+  }
+
+  .map-vote-footer > div {
+    padding-block: 0.28rem !important;
+  }
+
+  .map-vote-action-bar {
+    gap: 0.36rem !important;
+    padding: 0.3rem 0.45rem !important;
+  }
+
+  .map-vote-lock-status {
+    min-width: clamp(8rem, 24vw, 10.25rem) !important;
+    height: clamp(1.86rem, 6.7dvh, 2.16rem) !important;
+    padding-inline: 0.72rem !important;
+    font-size: 0.6rem !important;
+    letter-spacing: 0.08em !important;
+  }
+
+  .scoreboard-overlay {
+    padding:
+      max(0.42rem, env(safe-area-inset-top))
+      max(0.5rem, env(safe-area-inset-right))
+      max(0.42rem, env(safe-area-inset-bottom))
+      max(0.5rem, env(safe-area-inset-left));
+  }
+
+  .scoreboard-panel {
+    max-width: calc(100vw - max(1rem, env(safe-area-inset-left) + env(safe-area-inset-right))) !important;
+    max-height: calc(100dvh - max(0.84rem, env(safe-area-inset-top) + env(safe-area-inset-bottom))) !important;
+    border-radius: 0.55rem !important;
+  }
+
+  .scoreboard-match-header {
+    gap: 0.5rem !important;
+    padding: 0.48rem 0.62rem !important;
+  }
+
+  .scoreboard-score-box {
+    width: 2.18rem !important;
+    height: 2.18rem !important;
+    border-radius: 0.45rem !important;
+  }
+
+  .scoreboard-score-box .font-display {
+    font-size: 1.08rem !important;
+  }
+
+  .scoreboard-vs-badge {
+    width: 2rem !important;
+    height: 2rem !important;
+    border-radius: 0.42rem !important;
+  }
+
+  .scoreboard-team-copy .font-display {
+    font-size: 0.9rem !important;
+  }
+
+  .scoreboard-team-header,
+  .scoreboard-player-row {
+    gap: 0.36rem !important;
+    padding: 0.38rem 0.5rem !important;
+  }
+
+  .scoreboard-scroll-area {
+    max-height: calc(100dvh - 5.4rem) !important;
+    padding: 0.55rem !important;
+  }
+
+  .social-sidebar-layer {
+    --social-sidebar-width: min(420px, 48vw, calc(100vw - max(12px, env(safe-area-inset-left) + env(safe-area-inset-right)))) !important;
+  }
+
+  .social-sidebar-scrim {
+    background: linear-gradient(90deg, rgb(0 0 0 / 0.48), rgb(0 0 0 / 0.26));
+  }
+
+  .social-sidebar-panel {
+    width: var(--social-sidebar-width) !important;
+    max-width: var(--social-sidebar-width) !important;
+    box-shadow:
+      -0.75rem 0 2.2rem rgb(0 0 0 / 0.48),
+      inset 1px 0 0 rgb(var(--color-accent-primary) / 0.2),
+      inset 0 1px 0 rgb(255 255 255 / 0.08);
+  }
+
+  .social-sidebar-header {
+    padding:
+      max(8px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      9px
+      12px !important;
+  }
+
+  .social-sidebar-header::after {
+    right: 12px;
+    left: 12px;
+  }
+
+  .social-title-icon,
+  .social-close-button {
+    width: clamp(30px, 7.8dvh, 36px) !important;
+    height: clamp(30px, 7.8dvh, 36px) !important;
+    border-radius: 8px !important;
+  }
+
+  .social-title-icon svg,
+  .social-close-button svg {
+    width: clamp(14px, 3.7dvh, 17px) !important;
+    height: clamp(14px, 3.7dvh, 17px) !important;
+  }
+
+  #social-sidebar-title {
+    font-size: clamp(19px, 4.7dvh, 25px) !important;
+    line-height: 1 !important;
+  }
+
+  .social-sidebar-tabs {
+    gap: 4px !important;
+    padding: 6px 10px 7px !important;
+  }
+
+  .social-sidebar-tab {
+    height: clamp(30px, 7.5dvh, 36px) !important;
+    gap: 4px !important;
+    border-radius: 8px !important;
+    padding-right: 5px !important;
+    padding-left: 5px !important;
+    font-size: clamp(10px, 2.45dvh, 12px) !important;
+    line-height: 1 !important;
+  }
+
+  .social-sidebar-tab::after {
+    right: 10px;
+    bottom: 4px;
+    left: 10px;
+  }
+
+  .social-sidebar-tab svg {
+    width: clamp(13px, 3.3dvh, 15px) !important;
+    height: clamp(13px, 3.3dvh, 15px) !important;
+  }
+
+  .social-sidebar-tab .rounded-full {
+    height: 16px !important;
+    min-width: 16px !important;
+    padding-inline: 4px !important;
+    font-size: 9px !important;
+  }
+
+  .social-sidebar-body {
+    padding:
+      10px
+      max(12px, env(safe-area-inset-right))
+      max(10px, env(safe-area-inset-bottom))
+      12px !important;
+  }
+
+  .social-sidebar-stack,
+  .social-tab-stack,
+  .social-section,
+  .social-list {
+    display: grid;
+    gap: 8px !important;
+  }
+
+  .social-sidebar-stack > :not([hidden]) ~ :not([hidden]),
+  .social-tab-stack > :not([hidden]) ~ :not([hidden]),
+  .social-section > :not([hidden]) ~ :not([hidden]),
+  .social-list > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 0 !important;
+  }
+
+  .social-section--separated {
+    margin-top: 4px !important;
+    padding-top: 9px !important;
+  }
+
+  .social-section-header {
+    min-height: 16px !important;
+    gap: 8px !important;
+  }
+
+  .social-section-title {
+    font-size: clamp(13px, 3.25dvh, 16px) !important;
+    line-height: 1 !important;
+  }
+
+  .social-section-meta,
+  .social-capacity-badge {
+    font-size: 10px !important;
+  }
+
+  .social-section > p {
+    font-size: 11px !important;
+    line-height: 1.2 !important;
+  }
+
+  .social-sidebar-loading {
+    height: clamp(62px, 18dvh, 86px) !important;
+  }
+
+  .social-sidebar-spinner {
+    width: clamp(24px, 6dvh, 30px) !important;
+    height: clamp(24px, 6dvh, 30px) !important;
+  }
+
+  .social-search-form {
+    min-height: 0 !important;
+    gap: 5px !important;
+    border-radius: 9px !important;
+    padding: 4px !important;
+  }
+
+  .social-search-input {
+    height: clamp(30px, 7.4dvh, 36px) !important;
+    padding-right: 9px !important;
+    padding-left: 9px !important;
+    font-size: clamp(13px, 3.1dvh, 15px) !important;
+  }
+
+  .social-row {
+    gap: 8px !important;
+    border-radius: 9px !important;
+    padding: 8px 10px !important;
+  }
+
+  .social-user-identity {
+    gap: 8px !important;
+  }
+
+  .social-avatar {
+    width: clamp(28px, 7.1dvh, 34px) !important;
+    height: clamp(28px, 7.1dvh, 34px) !important;
+    border-radius: 8px !important;
+  }
+
+  .social-avatar span {
+    font-size: clamp(12px, 3dvh, 15px) !important;
+  }
+
+  .social-user-name,
+  .social-row .font-display.text-sm {
+    font-size: clamp(12px, 3dvh, 14px) !important;
+    line-height: 1 !important;
+  }
+
+  .social-user-detail,
+  .social-row .font-body.text-xs {
+    margin-top: 3px !important;
+    font-size: clamp(10px, 2.45dvh, 12px) !important;
+    line-height: 1.05 !important;
+  }
+
+  .social-row-actions {
+    gap: 6px !important;
+  }
+
+  .social-action-button,
+  .social-icon-button,
+  .social-cta-button {
+    border-radius: 8px !important;
+    font-size: 11px !important;
+    line-height: 1 !important;
+  }
+
+  .social-action-button,
+  .social-cta-button {
+    height: clamp(30px, 7.3dvh, 34px) !important;
+    padding-right: 10px !important;
+    padding-left: 10px !important;
+  }
+
+  .social-icon-button {
+    width: clamp(30px, 7.3dvh, 34px) !important;
+    height: clamp(30px, 7.3dvh, 34px) !important;
+  }
+
+  .social-icon-button svg,
+  .social-cta-button svg {
+    width: 14px !important;
+    height: 14px !important;
+  }
+
+  .social-status-banner {
+    border-radius: 9px !important;
+    padding: 7px 9px !important;
+    font-size: 12px !important;
+    line-height: 1.25 !important;
+  }
+
+  .social-empty-state {
+    height: clamp(46px, 12dvh, 58px) !important;
+    border-radius: 9px !important;
+  }
+
+  .social-empty-state p {
+    font-size: clamp(13px, 3.2dvh, 15px) !important;
+    line-height: 1 !important;
+  }
+
+  .social-bot-controls {
+    gap: 6px !important;
+  }
+
+  .social-bot-select-label {
+    margin-bottom: 4px !important;
+    font-size: 10px !important;
+    line-height: 1 !important;
+  }
+
+  .social-bot-select-trigger {
+    height: clamp(30px, 7.3dvh, 34px) !important;
+    gap: 8px !important;
+    border-radius: 8px !important;
+    padding-right: 10px !important;
+    padding-left: 10px !important;
+    font-size: 13px !important;
+  }
+
+  .social-bot-select-item {
+    min-height: 30px !important;
+    border-radius: 7px !important;
+    padding-right: 9px !important;
+    padding-left: 28px !important;
+    font-size: 13px !important;
+  }
+
+  .settings-dialog-panel {
+    width: min(46rem, calc(100vw - max(1rem, env(safe-area-inset-left) + env(safe-area-inset-right)))) !important;
+    height: calc(100dvh - max(0.9rem, env(safe-area-inset-top) + env(safe-area-inset-bottom))) !important;
+    max-height: calc(100dvh - max(0.9rem, env(safe-area-inset-top) + env(safe-area-inset-bottom))) !important;
+  }
+
+  .settings-dialog-body {
+    flex-direction: row !important;
+    overflow: hidden !important;
+  }
+
+  .settings-tab-list {
+    display: flex;
+    width: clamp(5.8rem, 15vw, 7rem) !important;
+    height: auto;
+    flex: 0 0 clamp(5.8rem, 15vw, 7rem) !important;
+    flex-direction: column;
+    gap: 0.22rem !important;
+    overflow-x: hidden;
+    overflow-y: auto;
+    border-right: 1px solid rgb(255 255 255 / 0.06) !important;
+    border-bottom: 0 !important;
+    padding: 0.36rem !important;
+    scrollbar-width: none;
+  }
+
+  .settings-tab-button {
+    width: 100% !important;
+    min-width: 0 !important;
+    justify-content: flex-start;
+    gap: 0.34rem !important;
+    padding: 0.36rem 0.42rem !important;
+    font-size: 0.56rem !important;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .settings-tab-button svg {
+    width: 0.82rem !important;
+    height: 0.82rem !important;
+  }
+
+  .settings-dialog-content {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0.48rem 0.58rem !important;
+  }
+
+  .settings-dialog-content > div > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 0.42rem !important;
+  }
+
+  .settings-row {
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 0.6rem !important;
+    padding-block: 0.32rem !important;
+  }
+
+  .settings-row-copy {
+    flex: 1 1 auto;
+  }
+
+  .settings-row-copy h4 {
+    font-size: 0.72rem !important;
+    letter-spacing: 0;
+    line-height: 1;
+  }
+
+  .settings-row-copy p {
+    margin-top: 0.14rem !important;
+    font-size: 0.6rem !important;
+    line-height: 1.15;
+  }
+
+  .settings-row-control {
+    display: flex;
+    width: auto !important;
+    max-width: min(13rem, 32vw);
+    flex: 0 0 auto;
+    justify-content: flex-end;
+  }
+
+  .settings-row-control > * {
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .settings-select {
+    width: clamp(8.8rem, 24vw, 11.5rem) !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .settings-select-button {
+    height: 2rem !important;
+    border-radius: 0.42rem !important;
+    padding-inline: 0.58rem !important;
+    font-size: 0.72rem !important;
+  }
+
+  .settings-select-button svg {
+    width: 0.84rem !important;
+    height: 0.84rem !important;
+  }
+
+  .settings-select-menu {
+    top: 2.18rem !important;
+    border-radius: 0.42rem !important;
+  }
+
+  .settings-select-option {
+    padding: 0.42rem 0.58rem !important;
+    font-size: 0.68rem !important;
+  }
+
+  .settings-slider {
+    width: clamp(9rem, 24vw, 11.75rem) !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    gap: 0.5rem !important;
+  }
+
+  .settings-slider-input {
+    height: 0.32rem !important;
+  }
+
+  .settings-slider-value {
+    width: 1.7rem !important;
+    font-size: 0.58rem !important;
+  }
+
+  .settings-toggle {
+    width: 2.36rem !important;
+    height: 1.18rem !important;
+  }
+
+  .settings-toggle-knob {
+    top: 0.18rem !important;
+    width: 0.82rem !important;
+    height: 0.82rem !important;
+  }
+
+  .settings-toggle .settings-toggle-knob {
+    left: 0.2rem !important;
+  }
+
+  .settings-toggle.bg-orange-500 .settings-toggle-knob {
+    left: auto !important;
+    right: 0.2rem !important;
+  }
+
+  .settings-account-value {
+    width: auto !important;
+    max-width: min(11.5rem, 28vw) !important;
+    border-radius: 0.42rem !important;
+    padding: 0.46rem 0.58rem !important;
+    font-size: 0.58rem !important;
+  }
+
+  .settings-keybind-row {
+    flex-direction: row !important;
+    align-items: center !important;
+    padding: 0.4rem 0.48rem !important;
+  }
+
+  .settings-keybind-row span {
+    font-size: 0.66rem !important;
+  }
+
+  .settings-keybind-row button {
+    width: 4.85rem !important;
+    height: 1.72rem !important;
+    font-size: 0.54rem !important;
+  }
+
+  .settings-wallet-options {
+    gap: 0.3rem !important;
+  }
+
+  .settings-wallet-option {
+    width: 1.86rem !important;
+    height: 1.86rem !important;
+  }
+
+  .settings-wallet-icon,
+  .settings-wallet-logo {
+    width: 1.42rem !important;
+    height: 1.42rem !important;
+  }
+
+  .settings-dialog-footer {
+    min-height: 0;
+    gap: 0.38rem !important;
+    padding: 0.38rem 0.48rem !important;
+  }
+
+  .settings-dialog-footer > div {
+    gap: 0.38rem !important;
+  }
+
+  .settings-dialog-footer button {
+    min-height: 1.78rem !important;
+    border-radius: 0.42rem !important;
+    padding: 0.38rem 0.62rem !important;
+    font-size: 0.56rem !important;
+    line-height: 1 !important;
+  }
+
+  .match-summary-body {
+    padding:
+      max(0.42rem, env(safe-area-inset-top))
+      max(0.62rem, env(safe-area-inset-right))
+      max(0.42rem, env(safe-area-inset-bottom))
+      max(0.62rem, env(safe-area-inset-left)) !important;
+  }
+
+  .match-summary-shell {
+    min-height: calc(100dvh - max(0.84rem, env(safe-area-inset-top) + env(safe-area-inset-bottom))) !important;
+    gap: 0.6rem !important;
+  }
+
+  .match-summary-header {
+    grid-template-columns: minmax(0, 1fr) minmax(11.5rem, 0.42fr);
+    gap: 0.6rem !important;
+    padding-bottom: 0.55rem !important;
+  }
+
+  .match-summary-kicker,
+  .match-summary-meta,
+  .match-summary-br-result p,
+  .match-summary-team-board-header p {
+    font-size: 0.58rem !important;
+  }
+
+  .match-summary-result-title {
+    font-size: clamp(1.7rem, 8.2dvh, 2.45rem) !important;
+  }
+
+  .match-summary-result-badge {
+    margin-bottom: 0.16rem !important;
+    padding: 0.22rem 0.42rem !important;
+    font-size: 0.56rem !important;
+  }
+
+  .match-summary-layout {
+    grid-template-columns: minmax(11.5rem, 15rem) minmax(0, 1fr);
+    gap: 0.6rem !important;
+  }
+
+  .match-summary-side {
+    gap: 0.55rem !important;
+  }
+
+  .match-summary-xp-panel,
+  .match-summary-local-panel,
+  .match-summary-br-result,
+  .match-summary-team-score {
+    padding: 0.56rem !important;
+  }
+
+  .match-summary-xp-value,
+  .match-summary-team-score .font-display.text-5xl {
+    font-size: clamp(1.5rem, 6.8dvh, 2rem) !important;
+  }
+
+  .match-summary-return {
+    height: 2rem !important;
+    font-size: 0.76rem !important;
+  }
+
+  .match-summary-team-board-header {
+    padding: 0.48rem 0.56rem !important;
+  }
+
+  .match-summary-team-board-header .font-display {
+    font-size: 1rem !important;
+  }
+
+  .match-summary-board-head,
+  .match-summary-board-row {
+    grid-template-columns: minmax(0, 1.4fr) 2rem 2rem 2rem 2.35rem 3.2rem !important;
+    gap: 0.32rem !important;
+    padding-inline: 0.5rem !important;
+  }
+
+  .match-summary-board-head {
+    padding-block: 0.34rem !important;
+    font-size: 0.52rem !important;
+  }
+
+  .match-summary-board-row {
+    padding-block: 0.42rem !important;
+  }
+
+  .match-summary-board-row .font-display {
+    font-size: 0.78rem !important;
+  }
+
+  .match-summary-board-row .font-mono,
+  .match-summary-board-row .font-body {
+    font-size: 0.58rem !important;
+  }
+}
+
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 430px),
+  (hover: none) and (orientation: landscape) and (max-height: 430px),
+  (max-width: 920px) and (orientation: landscape) and (max-height: 430px) {
+  .game-dialog-header {
+    padding: 0.34rem 0.5rem !important;
+  }
+
+  .game-dialog-icon,
+  .game-dialog-close {
+    width: clamp(1.42rem, 6dvh, 1.7rem) !important;
+    height: clamp(1.42rem, 6dvh, 1.7rem) !important;
+  }
+
+  .pause-menu-dialog {
+    width: min(18.5rem, calc(100vw - max(1rem, env(safe-area-inset-left) + env(safe-area-inset-right)))) !important;
+    max-width: min(18.5rem, calc(100vw - max(1rem, env(safe-area-inset-left) + env(safe-area-inset-right)))) !important;
+  }
+
+  .pause-menu-body {
+    gap: 0.22rem;
+    padding: 0.42rem !important;
+  }
+
+  .pause-menu-button {
+    min-height: 1.48rem;
+    padding-block: 0.18rem !important;
+    font-size: 0.64rem !important;
+  }
+
+  .pause-menu-separator {
+    padding-top: 0.24rem !important;
+  }
+
+  .pause-player-card {
+    padding: 0.22rem 0.4rem !important;
+  }
+
+  .pause-player-card span {
+    font-size: 0.56rem !important;
+  }
+
+  .match-loading-panel {
+    max-width: min(39rem, calc(100vw - max(1.4rem, env(safe-area-inset-left) + env(safe-area-inset-right))));
+  }
+
+  .match-loading-header {
+    margin-bottom: 0.42rem !important;
+  }
+
+  .match-loading-title {
+    font-size: clamp(1.38rem, 7.6dvh, 2.14rem) !important;
+  }
+
+  .match-loading-percent {
+    font-size: clamp(1rem, 5.3dvh, 1.38rem) !important;
+  }
+
+  .match-loading-track {
+    margin-top: 0.34rem !important;
+  }
+
+  .match-loading-stages {
+    gap: 0.26rem !important;
+    margin-top: 0.42rem !important;
+  }
+
+  .match-loading-stage {
+    padding: 0.22rem 0.3rem !important;
+  }
+
+  .match-loading-stage-progress {
+    margin-top: 0.22rem !important;
+  }
+
+  .matchmaking-panel {
+    max-width: min(28rem, 100%);
+  }
+
+  .matchmaking-teammate-row,
+  .matchmaking-access-panel {
+    display: none !important;
+  }
+
+  .matchmaking-title {
+    font-size: clamp(1.38rem, 7.2dvh, 2rem) !important;
+  }
+
+  .matchmaking-copy {
+    margin-top: 0.34rem !important;
+  }
+
+  .matchmaking-slots-section,
+  .matchmaking-cancel-wrap {
+    margin-top: 0.62rem !important;
+  }
+
+  .matchmaking-slot-grid {
+    gap: 0.2rem !important;
+  }
+
+  .matchmaking-slot {
+    height: 0.34rem !important;
+  }
+
+  .map-vote-heading {
+    display: none !important;
+  }
+
+  .map-vote-card {
+    aspect-ratio: 16 / 8.5;
+  }
+
+  .map-vote-card-meta p {
+    font-size: 0.68rem !important;
+  }
+
+  .map-vote-lock-status {
+    height: 1.72rem !important;
+  }
+
+  .social-sidebar-layer {
+    --social-sidebar-width: min(390px, 46vw, calc(100vw - max(10px, env(safe-area-inset-left) + env(safe-area-inset-right)))) !important;
+  }
+
+  .social-sidebar-header {
+    padding:
+      max(6px, env(safe-area-inset-top))
+      max(10px, env(safe-area-inset-right))
+      6px
+      10px !important;
+  }
+
+  .social-sidebar-header::after {
+    right: 10px;
+    left: 10px;
+  }
+
+  .social-title-icon,
+  .social-close-button {
+    width: 28px !important;
+    height: 28px !important;
+  }
+
+  .social-title-icon svg,
+  .social-close-button svg {
+    width: 13px !important;
+    height: 13px !important;
+  }
+
+  #social-sidebar-title {
+    font-size: 18px !important;
+  }
+
+  .social-sidebar-tabs {
+    gap: 3px !important;
+    padding: 5px 8px !important;
+  }
+
+  .social-sidebar-tab {
+    height: 28px !important;
+    gap: 3px !important;
+    padding-right: 4px !important;
+    padding-left: 4px !important;
+    font-size: 9px !important;
+  }
+
+  .social-sidebar-tab svg {
+    width: 12px !important;
+    height: 12px !important;
+  }
+
+  .social-sidebar-body {
+    padding:
+      7px
+      max(10px, env(safe-area-inset-right))
+      max(7px, env(safe-area-inset-bottom))
+      10px !important;
+  }
+
+  .social-sidebar-stack,
+  .social-tab-stack,
+  .social-section,
+  .social-list {
+    gap: 6px !important;
+  }
+
+  .social-section--separated {
+    margin-top: 2px !important;
+    padding-top: 7px !important;
+  }
+
+  .social-section-title {
+    font-size: 12px !important;
+  }
+
+  .social-section > p {
+    font-size: 10px !important;
+  }
+
+  .social-sidebar-loading {
+    height: 54px !important;
+  }
+
+  .social-sidebar-spinner {
+    width: 22px !important;
+    height: 22px !important;
+  }
+
+  .social-search-form {
+    padding: 3px !important;
+  }
+
+  .social-search-input {
+    height: 28px !important;
+    font-size: 12px !important;
+  }
+
+  .social-row {
+    gap: 6px !important;
+    padding: 6px 8px !important;
+  }
+
+  .social-user-identity {
+    gap: 7px !important;
+  }
+
+  .social-avatar {
+    width: 26px !important;
+    height: 26px !important;
+  }
+
+  .social-avatar span {
+    font-size: 12px !important;
+  }
+
+  .social-user-name,
+  .social-row .font-display.text-sm {
+    font-size: 11px !important;
+  }
+
+  .social-user-detail,
+  .social-row .font-body.text-xs {
+    margin-top: 2px !important;
+    font-size: 9px !important;
+  }
+
+  .social-row-actions {
+    gap: 5px !important;
+  }
+
+  .social-action-button,
+  .social-cta-button {
+    height: 28px !important;
+    padding-right: 8px !important;
+    padding-left: 8px !important;
+    font-size: 10px !important;
+  }
+
+  .social-icon-button {
+    width: 28px !important;
+    height: 28px !important;
+  }
+
+  .social-icon-button svg,
+  .social-cta-button svg {
+    width: 13px !important;
+    height: 13px !important;
+  }
+
+  .social-empty-state {
+    height: 42px !important;
+  }
+
+  .social-empty-state p {
+    font-size: 12px !important;
+  }
+
+  .social-bot-select-label {
+    font-size: 9px !important;
+  }
+
+  .social-bot-select-trigger {
+    height: 28px !important;
+    font-size: 12px !important;
+  }
+
+  .settings-tab-list {
+    width: clamp(5.15rem, 14vw, 6.2rem) !important;
+    flex-basis: clamp(5.15rem, 14vw, 6.2rem) !important;
+    padding: 0.28rem !important;
+  }
+
+  .settings-tab-button {
+    gap: 0.28rem !important;
+    padding: 0.28rem 0.34rem !important;
+    font-size: 0.5rem !important;
+  }
+
+  .settings-tab-button svg {
+    width: 0.72rem !important;
+    height: 0.72rem !important;
+  }
+
+  .settings-dialog-content {
+    padding: 0.34rem 0.46rem !important;
+  }
+
+  .settings-dialog-content > div > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 0.28rem !important;
+  }
+
+  .settings-row {
+    gap: 0.48rem !important;
+    padding-block: 0.24rem !important;
+  }
+
+  .settings-row-copy h4 {
+    font-size: 0.64rem !important;
+  }
+
+  .settings-row-copy p {
+    font-size: 0.54rem !important;
+  }
+
+  .settings-select {
+    width: clamp(7.5rem, 22vw, 9.6rem) !important;
+  }
+
+  .settings-select-button {
+    height: 1.72rem !important;
+    font-size: 0.64rem !important;
+  }
+
+  .settings-select-menu {
+    top: 1.9rem !important;
+  }
+
+  .settings-select-option {
+    padding-block: 0.34rem !important;
+    font-size: 0.62rem !important;
+  }
+
+  .settings-slider {
+    width: clamp(7.8rem, 22vw, 10rem) !important;
+  }
+
+  .settings-toggle {
+    width: 2.12rem !important;
+    height: 1.04rem !important;
+  }
+
+  .settings-toggle-knob {
+    top: 0.14rem !important;
+    width: 0.76rem !important;
+    height: 0.76rem !important;
+  }
+
+  .settings-dialog-footer {
+    padding: 0.28rem 0.4rem !important;
+  }
+
+  .settings-dialog-footer button {
+    min-height: 1.56rem !important;
+    padding: 0.3rem 0.52rem !important;
+    font-size: 0.5rem !important;
+  }
+
+  .match-summary-header,
+  .match-summary-layout {
+    gap: 0.45rem !important;
+  }
+
+  .match-summary-result-title {
+    font-size: clamp(1.38rem, 7.2dvh, 1.95rem) !important;
+  }
+
+  .match-summary-layout {
+    grid-template-columns: minmax(10rem, 13rem) minmax(0, 1fr);
+  }
+
+  .match-summary-xp-panel,
+  .match-summary-local-panel,
+  .match-summary-br-result,
+  .match-summary-team-score {
+    padding: 0.44rem !important;
+  }
+
+  .match-summary-board-row {
+    padding-block: 0.32rem !important;
   }
 }

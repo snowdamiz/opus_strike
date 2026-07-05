@@ -35,6 +35,7 @@ import { CombatTextLayer } from './CombatText';
 import { useGameStore } from '../../store/gameStore';
 import { graphicsPresetSettings, useSettingsStore } from '../../store/settingsStore';
 import { useStreamerStore } from '../../store/streamerStore';
+import { useRecordingPlaybackStore } from '../../store/recordingPlaybackStore';
 import { getMapPrepCacheKey } from '../../utils/mapWarmup/mapPrepCacheKey';
 import {
   createMapWarmupSnapshot,
@@ -1183,6 +1184,7 @@ export function GameCanvas({
   const isObserverMode = useGameStore((state) => state.localPlayer?.role === 'observer');
   const streamerIsActive = useStreamerStore((state) => state.isActive);
   const streamerHiddenPlayerId = useStreamerStore((state) => state.hiddenFirstPersonTargetId);
+  const recordingPlaybackIsActive = useRecordingPlaybackStore((state) => state.isActive);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSize = useGameStore((state) => state.mapSize);
@@ -1387,7 +1389,7 @@ export function GameCanvas({
     if (
       warmupSnapshot.state !== 'preparingGpu' &&
       warmupSnapshot.state !== 'settling' &&
-      !(streamerIsActive && warmupSnapshot.state === 'preparingCpu')
+      !((streamerIsActive || recordingPlaybackIsActive) && warmupSnapshot.state === 'preparingCpu')
     ) {
       return;
     }
@@ -1415,6 +1417,7 @@ export function GameCanvas({
     warmupSnapshot.progress,
     warmupSnapshot.state,
     streamerIsActive,
+    recordingPlaybackIsActive,
   ]);
 
   return (
