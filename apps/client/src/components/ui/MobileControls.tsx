@@ -13,6 +13,7 @@ type InputAction = keyof InputState;
 
 interface MobileControlsProps {
   disabled?: boolean;
+  scoreboardOpen?: boolean;
   onOpenMenu: () => void;
   onScoreboardChange: (showScoreboard: boolean) => void;
 }
@@ -272,40 +273,39 @@ function MobileSkillButton({
 function MobileSystemButton({
   label,
   ariaLabel,
-  onPointerDown,
-  onPointerUp,
+  active = false,
+  onPress,
   children,
 }: {
   label: string;
   ariaLabel: string;
-  onPointerDown: () => void;
-  onPointerUp?: () => void;
+  active?: boolean;
+  onPress: () => void;
   children: ReactNode;
 }) {
   return (
     <button
       type="button"
-      className="mobile-system-button"
+      className={`mobile-system-button ${active ? 'is-active' : ''}`}
       aria-label={ariaLabel}
+      aria-pressed={active}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
-        onPointerDown();
-        e.preventDefault();
         e.stopPropagation();
       }}
       onPointerUp={(e) => {
         releasePointerCapture(e.currentTarget, e.pointerId);
-        onPointerUp?.();
-        e.preventDefault();
         e.stopPropagation();
       }}
       onPointerCancel={(e) => {
         releasePointerCapture(e.currentTarget, e.pointerId);
-        onPointerUp?.();
+        e.stopPropagation();
+      }}
+      onClick={(e) => {
+        onPress();
         e.preventDefault();
         e.stopPropagation();
       }}
-      onLostPointerCapture={() => onPointerUp?.()}
       onContextMenu={(e) => e.preventDefault()}
     >
       {children}
@@ -367,7 +367,12 @@ function getSkillByInput(skillItems: HeroSkillItem[], input: string): HeroSkillI
   return skillItems.find(skill => skill.input === input);
 }
 
-export function MobileControls({ disabled = false, onOpenMenu, onScoreboardChange }: MobileControlsProps) {
+export function MobileControls({
+  disabled = false,
+  scoreboardOpen = false,
+  onOpenMenu,
+  onScoreboardChange,
+}: MobileControlsProps) {
   const controlsAvailable = useTouchControlsAvailable();
   const heroId = useGameStore(state => state.localPlayer?.heroId ?? null) as HeroId | null;
   const bombTargeting = useGameStore(state => state.bombTargeting);
@@ -444,15 +449,15 @@ export function MobileControls({ disabled = false, onOpenMenu, onScoreboardChang
         <MobileSystemButton
           label="MENU"
           ariaLabel="Open menu"
-          onPointerDown={onOpenMenu}
+          onPress={onOpenMenu}
         >
           <MenuIcon />
         </MobileSystemButton>
         <MobileSystemButton
           label="BOARD"
-          ariaLabel="Show scoreboard"
-          onPointerDown={() => onScoreboardChange(true)}
-          onPointerUp={() => onScoreboardChange(false)}
+          ariaLabel={scoreboardOpen ? 'Hide scoreboard' : 'Show scoreboard'}
+          active={scoreboardOpen}
+          onPress={() => onScoreboardChange(!scoreboardOpen)}
         >
           <BoardIcon />
         </MobileSystemButton>

@@ -1101,6 +1101,7 @@ body,
 }
 
 .mobile-system-button:active,
+.mobile-system-button.is-active,
 .mobile-target-cancel:active {
   border-color: rgb(255 255 255 / 0.32);
   border-color: var(--mobile-glass-edge-hot);

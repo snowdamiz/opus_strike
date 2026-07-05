@@ -201,6 +201,18 @@ export function App() {
     </>
   );
 
+  const openInGameMenu = useCallback(() => {
+    if (document.pointerLockElement) {
+      try {
+        document.exitPointerLock();
+      } catch {
+        // Pointer lock can already be exiting on mobile/fullscreen tap sequences.
+      }
+    }
+
+    setShowInGameMenu(true);
+  }, []);
+
   useEffect(() => () => {
     disposeSharedAudioResources();
   }, []);
@@ -813,7 +825,8 @@ export function App() {
             {!recordingPlaybackIsActive && (
               <MobileControls
                 disabled={isMobileAccessBlocked || showInGameMenu || tutorialCompletionOverlayOpen}
-                onOpenMenu={() => setShowInGameMenu(true)}
+                scoreboardOpen={showScoreboard}
+                onOpenMenu={openInGameMenu}
                 onScoreboardChange={setShowScoreboard}
               />
             )}
