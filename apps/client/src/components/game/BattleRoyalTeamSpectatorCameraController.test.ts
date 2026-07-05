@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import * as THREE from 'three';
 import type { BattleRoyalTeamSpectatorTarget } from './BattleRoyalTeamSpectatorCameraController';
 import {
   getBattleRoyalTeamSpectatorTargets,
   getNextBattleRoyalTeamSpectatorTargetId,
+  writeBattleRoyalSpectatorCameraOffset,
 } from './BattleRoyalTeamSpectatorCameraController';
 
 function target(
@@ -58,6 +60,27 @@ assert.equal(
   getNextBattleRoyalTeamSpectatorTargetId('alpha', [], 1),
   null,
   'cycling with no available teammates should clear the target'
+);
+
+const neutralOffset = writeBattleRoyalSpectatorCameraOffset(0, 0, false, new THREE.Vector3());
+const rotatedOffset = writeBattleRoyalSpectatorCameraOffset(Math.PI / 2, 0, false, new THREE.Vector3());
+const upwardLookOffset = writeBattleRoyalSpectatorCameraOffset(0, 0.7, false, new THREE.Vector3());
+const downwardLookOffset = writeBattleRoyalSpectatorCameraOffset(0, -0.7, false, new THREE.Vector3());
+assert.equal(neutralOffset.z > 0, true, 'neutral spectator yaw should sit behind the target');
+assert.equal(
+  Math.abs(rotatedOffset.x - neutralOffset.z) < 0.000001,
+  true,
+  'spectator yaw should rotate the follow camera around the target'
+);
+assert.equal(
+  upwardLookOffset.y < neutralOffset.y,
+  true,
+  'positive spectator pitch should lower the orbit camera for upward free look'
+);
+assert.equal(
+  downwardLookOffset.y > neutralOffset.y,
+  true,
+  'negative spectator pitch should raise the orbit camera for downward free look'
 );
 
 console.log('battle royal team spectator camera tests passed');
