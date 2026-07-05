@@ -49,6 +49,7 @@ export function createMobileWalletDeepLinkState(input: {
   providerId: MobileWalletProviderId;
   returnTo: unknown;
   authToken: string | null;
+  callbackOrigin?: string;
   now?: number;
 }): MobileWalletDeepLinkState {
   const keyPair = nacl.box.keyPair();
@@ -62,6 +63,7 @@ export function createMobileWalletDeepLinkState(input: {
     dappSecretKey: bs58.encode(keyPair.secretKey),
     createdAt: input.now ?? Date.now(),
     authToken: input.authToken,
+    callbackOrigin: input.callbackOrigin,
   };
 }
 

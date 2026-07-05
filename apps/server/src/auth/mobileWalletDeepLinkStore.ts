@@ -14,6 +14,7 @@ export interface MobileWalletDeepLinkState {
   dappSecretKey: string;
   createdAt: number;
   authToken: string | null;
+  callbackOrigin?: string;
   walletEncryptionPublicKey?: string;
   walletAddress?: string;
   walletSession?: string;
@@ -96,6 +97,7 @@ function parseMobileWalletState(raw: string | null): MobileWalletDeepLinkState |
       dappSecretKey: state.dappSecretKey,
       createdAt: state.createdAt,
       authToken: typeof state.authToken === 'string' ? state.authToken : null,
+      callbackOrigin: typeof state.callbackOrigin === 'string' ? state.callbackOrigin : undefined,
       walletEncryptionPublicKey: typeof state.walletEncryptionPublicKey === 'string'
         ? state.walletEncryptionPublicKey
         : undefined,

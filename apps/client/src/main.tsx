@@ -24,6 +24,11 @@ const mobileWalletCallbackBridgeUrl = getMobileWalletCallbackBridgeUrl(window.lo
 const DYNAMIC_IMPORT_RELOAD_STORAGE_KEY = 'slop:dynamicImportReloadAt';
 const DYNAMIC_IMPORT_RELOAD_COOLDOWN_MS = 60_000;
 
+type MobileWalletCallbackBridgeResponse =
+  | { action: 'redirect'; url: string }
+  | { action: 'complete'; returnTo: string }
+  | { action: 'error'; returnTo: string };
+
 function getLegalPageKind(pathname: string) {
   if (pathname === '/terms-of-service') return 'terms';
   if (pathname === '/privacy-policy') return 'privacy';
@@ -46,6 +51,35 @@ function getMobileWalletCallbackBridgeUrl(location: Location): string | null {
   const apiUrl = new URL(location.pathname, config.serverHttpUrl);
   apiUrl.search = location.search;
   return apiUrl.toString();
+}
+
+async function handleMobileWalletCallbackBridge(apiUrl: string): Promise<void> {
+  try {
+    const url = new URL(apiUrl);
+    url.searchParams.set('response', 'json');
+
+    const response = await fetch(url.toString(), {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) {
+      throw new Error(`Wallet callback failed (${response.status})`);
+    }
+
+    const result = await response.json() as Partial<MobileWalletCallbackBridgeResponse>;
+    if (result.action === 'redirect' && typeof result.url === 'string') {
+      window.location.replace(result.url);
+      return;
+    }
+    if ((result.action === 'complete' || result.action === 'error') && typeof result.returnTo === 'string') {
+      window.location.replace(result.returnTo);
+      return;
+    }
+
+    throw new Error('Wallet callback returned an invalid response');
+  } catch {
+    window.location.replace('/?auth=error&provider=wallet&error=wallet_failed');
+  }
 }
 
 function isDynamicImportLoadError(error: unknown): boolean {
@@ -126,7 +160,7 @@ function ClientAppShell() {
 }
 
 if (mobileWalletCallbackBridgeUrl) {
-  window.location.replace(mobileWalletCallbackBridgeUrl);
+  void handleMobileWalletCallbackBridge(mobileWalletCallbackBridgeUrl);
 } else {
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>

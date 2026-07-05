@@ -6,6 +6,10 @@ import { loggers } from '../utils/logger';
 
 type AuthProviderName = 'discord' | 'wallet';
 type MobileWalletDeepLinkProviderId = 'phantom' | 'solflare';
+type MobileWalletAuthBridgeResponse =
+  | { action: 'redirect'; url: string }
+  | { action: 'complete'; returnTo: string }
+  | { action: 'error'; returnTo: string };
 const EMPTY_LINKED_ACCOUNTS: LinkedAccountSummary[] = [];
 const NO_WALLET_DETECTED_MESSAGE = 'No Solana wallet was detected. Open this app in Phantom, Solflare, Brave Wallet, Backpack, or another compatible wallet browser.';
 const MOBILE_DEEP_LINK_WALLET_PROVIDERS: Array<{
@@ -346,12 +350,41 @@ function canUseMobileWalletDeepLinks(): boolean {
   );
 }
 
-function startMobileWalletAuth(providerId: MobileWalletDeepLinkProviderId): void {
+async function requestMobileWalletAuthStep(url: URL): Promise<MobileWalletAuthBridgeResponse> {
+  url.searchParams.set('response', 'json');
+
+  const response = await fetch(url.toString(), {
+    credentials: 'include',
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!response.ok) {
+    throw new Error('Wallet authentication could not start.');
+  }
+
+  const data = await response.json() as Partial<MobileWalletAuthBridgeResponse>;
+  if (data.action === 'redirect' && typeof data.url === 'string') return data as MobileWalletAuthBridgeResponse;
+  if ((data.action === 'complete' || data.action === 'error') && typeof data.returnTo === 'string') {
+    return data as MobileWalletAuthBridgeResponse;
+  }
+
+  throw new Error('Wallet authentication returned an invalid response.');
+}
+
+async function startMobileWalletAuth(providerId: MobileWalletDeepLinkProviderId): Promise<void> {
   if (typeof window === 'undefined') return;
 
   const url = new URL(`${getHttpUrl()}/auth/mobile-wallet/${providerId}/start`);
   url.searchParams.set('returnTo', getCleanReturnTo());
-  window.location.assign(url.toString());
+  url.searchParams.set('callbackOrigin', window.location.origin);
+  const result = await requestMobileWalletAuthStep(url);
+
+  if (result.action === 'redirect') {
+    window.location.assign(result.url);
+    return;
+  }
+
+  window.location.assign(result.returnTo);
 }
 
 function cleanOAuthReturnParams(): void {
@@ -770,7 +803,14 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setIsConnecting(true);
       setError(null);
       setNotice(null);
-      startMobileWalletAuth(wallet.deepLinkProviderId);
+      try {
+        await startMobileWalletAuth(wallet.deepLinkProviderId);
+      } catch (err: any) {
+        loggers.auth.error('mobile wallet sign-in start error:', err);
+        setError(err?.message || 'Wallet sign-in failed');
+      } finally {
+        setIsConnecting(false);
+      }
       return null;
     }
 
