@@ -4,15 +4,17 @@ import type { RankSummary } from '@voxel-strike/shared';
 import { config } from '../config/environment';
 import { loggers } from '../utils/logger';
 import {
-  canUsePhantomMobileDeepLink,
-  clearPhantomMobileDeepLinkSession,
-  getPhantomMobileDeepLinkSession,
-  handlePhantomMobileDeepLinkCallback,
-  hasPhantomMobileDeepLinkCallback,
-  startPhantomMobileConnect,
-  startPhantomMobileSignMessage,
-  waitForPhantomMobileRedirect,
-} from '../utils/phantomDeepLink';
+  MOBILE_WALLET_DEEP_LINK_PROVIDERS,
+  canUseMobileWalletDeepLink,
+  clearMobileWalletDeepLinkSession,
+  getMobileWalletDeepLinkSession,
+  handleMobileWalletDeepLinkCallback,
+  hasMobileWalletDeepLinkCallback,
+  startMobileWalletConnect,
+  startMobileWalletSignMessage,
+  waitForMobileWalletRedirect,
+  type MobileWalletDeepLinkProviderId,
+} from '../utils/mobileWalletDeepLink';
 
 type AuthProviderName = 'discord' | 'wallet';
 const EMPTY_LINKED_ACCOUNTS: LinkedAccountSummary[] = [];
@@ -47,6 +49,7 @@ export interface WalletProviderSummary {
 
 interface DiscoveredWalletProvider extends WalletProviderSummary {
   provider: SolanaWalletProvider | null;
+  mobileDeepLinkProviderId?: MobileWalletDeepLinkProviderId;
 }
 
 declare global {
@@ -164,7 +167,7 @@ interface WalletContextType {
 }
 
 const WalletContext = createContext<WalletContextType | null>(null);
-const PHANTOM_MOBILE_PROVIDER_ID = 'phantom-mobile';
+const MOBILE_WALLET_PROVIDER_ID_PREFIX = 'mobile-';
 
 function isSolanaWalletProvider(value: unknown): value is SolanaWalletProvider {
   if (!value || typeof value !== 'object') return false;
@@ -182,6 +185,26 @@ function getWalletProviderName(provider: SolanaWalletProvider): string {
 function getWalletProviderId(provider: SolanaWalletProvider, fallback: string): string {
   const name = getWalletProviderName(provider).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   return name || fallback;
+}
+
+function getMobileWalletOptionId(providerId: MobileWalletDeepLinkProviderId): string {
+  return `${MOBILE_WALLET_PROVIDER_ID_PREFIX}${providerId}`;
+}
+
+function parseMobileWalletOptionId(providerId: string | null | undefined): MobileWalletDeepLinkProviderId | null {
+  if (!providerId?.startsWith(MOBILE_WALLET_PROVIDER_ID_PREFIX)) return null;
+  const mobileProviderId = providerId.slice(MOBILE_WALLET_PROVIDER_ID_PREFIX.length);
+  return MOBILE_WALLET_DEEP_LINK_PROVIDERS.some((provider) => provider.id === mobileProviderId)
+    ? mobileProviderId as MobileWalletDeepLinkProviderId
+    : null;
+}
+
+function getInjectedMobileWalletProviderId(provider: SolanaWalletProvider): MobileWalletDeepLinkProviderId | null {
+  const key = `${getWalletProviderId(provider, '')} ${getWalletProviderName(provider)}`.toLowerCase();
+  if (provider.isPhantom || key.includes('phantom')) return 'phantom';
+  if (provider.isSolflare || key.includes('solflare')) return 'solflare';
+  if (key.includes('backpack')) return 'backpack';
+  return null;
 }
 
 function collectInjectedWalletCandidates(): Array<{ provider: unknown; fallbackId: string }> {
@@ -209,10 +232,15 @@ function discoverWalletProviders(): DiscoveredWalletProvider[] {
   const providers: DiscoveredWalletProvider[] = [];
   const seen = new Set<SolanaWalletProvider>();
   const usedIds = new Set<string>();
+  const injectedMobileWalletProviderIds = new Set<MobileWalletDeepLinkProviderId>();
 
   for (const candidate of collectInjectedWalletCandidates()) {
     if (!isSolanaWalletProvider(candidate.provider) || seen.has(candidate.provider)) continue;
     seen.add(candidate.provider);
+    const mobileProviderId = getInjectedMobileWalletProviderId(candidate.provider);
+    if (mobileProviderId) {
+      injectedMobileWalletProviderIds.add(mobileProviderId);
+    }
 
     const baseId = getWalletProviderId(candidate.provider, candidate.fallbackId);
     let id = baseId;
@@ -232,14 +260,18 @@ function discoverWalletProviders(): DiscoveredWalletProvider[] {
     });
   }
 
-  if (providers.length === 0 && canUsePhantomMobileDeepLink()) {
-    providers.push({
-      id: PHANTOM_MOBILE_PROVIDER_ID,
-      name: 'Phantom Mobile',
-      installed: true,
-      mobileDeepLink: true,
-      provider: null,
-    });
+  if (canUseMobileWalletDeepLink()) {
+    for (const mobileWallet of MOBILE_WALLET_DEEP_LINK_PROVIDERS) {
+      if (injectedMobileWalletProviderIds.has(mobileWallet.id)) continue;
+      providers.push({
+        id: getMobileWalletOptionId(mobileWallet.id),
+        name: mobileWallet.name,
+        installed: true,
+        mobileDeepLink: true,
+        mobileDeepLinkProviderId: mobileWallet.id,
+        provider: null,
+      });
+    }
   }
 
   return providers;
@@ -269,9 +301,10 @@ function getConnectedWallet(
     }
   }
 
-  const mobileSession = getPhantomMobileDeepLinkSession();
+  const preferredMobileProviderId = parseMobileWalletOptionId(preferredProviderId);
+  const mobileSession = getMobileWalletDeepLinkSession(preferredMobileProviderId);
   return mobileSession
-    ? { providerId: PHANTOM_MOBILE_PROVIDER_ID, provider: null, address: mobileSession.publicKey }
+    ? { providerId: getMobileWalletOptionId(mobileSession.providerId), provider: null, address: mobileSession.publicKey }
     : null;
 }
 
@@ -523,27 +556,29 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       const oauthReturn = getOAuthReturnStatus();
 
       try {
-        if (hasPhantomMobileDeepLinkCallback()) {
-          const callback = handlePhantomMobileDeepLinkCallback();
+        if (hasMobileWalletDeepLinkCallback()) {
+          const callback = handleMobileWalletDeepLinkCallback();
           if (callback.handled) {
             if (!callback.ok) {
               setError(callback.error);
               return;
             }
 
+            const mobileWalletOptionId = getMobileWalletOptionId(callback.providerId);
             if (callback.action === 'connect') {
               setWalletAddress(callback.publicKey);
               setIsConnected(true);
-              setActiveWalletProvider(PHANTOM_MOBILE_PROVIDER_ID);
+              setActiveWalletProvider(mobileWalletOptionId);
               if (callback.purpose === 'linkWallet' || callback.purpose === 'walletAuth') {
                 setIsConnecting(true);
                 const { nonce, message } = await requestWalletAuthNonce(callback.publicKey);
-                startPhantomMobileSignMessage({
+                startMobileWalletSignMessage({
+                  providerId: callback.providerId,
                   publicKey: callback.publicKey,
                   message,
                   authNonce: nonce,
                 });
-                await waitForPhantomMobileRedirect<void>();
+                await waitForMobileWalletRedirect<void>();
               }
               return;
             }
@@ -553,7 +588,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
               callback.signature,
               callback.authNonce
             );
-            setActiveWalletProvider(PHANTOM_MOBILE_PROVIDER_ID);
+            setActiveWalletProvider(mobileWalletOptionId);
             applyWalletVerificationResult(result, callback.publicKey, result.linked ? 'Wallet connected.' : 'Signed in with wallet.');
             return;
           }
@@ -709,22 +744,23 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const connectWallet = useCallback(async (providerId?: string): Promise<string | null> => {
     const wallet = getWalletById(providerId);
 
-    if (wallet?.mobileDeepLink || (!wallet && canUsePhantomMobileDeepLink())) {
+    if (wallet?.mobileDeepLink || (!wallet && canUseMobileWalletDeepLink())) {
+      const mobileProviderId = wallet?.mobileDeepLinkProviderId ?? 'phantom';
       setIsConnecting(true);
       setError(null);
       setNotice(null);
 
       try {
-        const mobileSession = getPhantomMobileDeepLinkSession();
+        const mobileSession = getMobileWalletDeepLinkSession(mobileProviderId);
         if (mobileSession) {
-          setActiveWalletProvider(PHANTOM_MOBILE_PROVIDER_ID);
+          setActiveWalletProvider(getMobileWalletOptionId(mobileSession.providerId));
           setWalletAddress(mobileSession.publicKey);
           setIsConnected(true);
           return mobileSession.publicKey;
         }
 
-        startPhantomMobileConnect();
-        await waitForPhantomMobileRedirect<void>();
+        startMobileWalletConnect(mobileProviderId);
+        await waitForMobileWalletRedirect<void>();
         return null;
       } catch (err: any) {
         loggers.auth.error('failed to connect mobile wallet:', err);
@@ -764,7 +800,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     if (connectedWallet?.provider?.disconnect) {
       connectedWallet.provider.disconnect();
     }
-    clearPhantomMobileDeepLinkSession();
+    clearMobileWalletDeepLinkSession();
 
     setActiveWalletProvider(null);
     setIsConnected(false);
@@ -776,28 +812,30 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const signInWithWallet = useCallback(async (providerId?: string): Promise<UserData | null> => {
     const wallet = getWalletById(providerId);
 
-    if (wallet?.mobileDeepLink || (!wallet && canUsePhantomMobileDeepLink())) {
+    if (wallet?.mobileDeepLink || (!wallet && canUseMobileWalletDeepLink())) {
+      const mobileProviderId = wallet?.mobileDeepLinkProviderId ?? 'phantom';
       setIsConnecting(true);
       setError(null);
       setNotice(null);
 
       try {
-        const mobileSession = getPhantomMobileDeepLinkSession();
+        const mobileSession = getMobileWalletDeepLinkSession(mobileProviderId);
         if (mobileSession) {
-          setActiveWalletProvider(PHANTOM_MOBILE_PROVIDER_ID);
+          setActiveWalletProvider(getMobileWalletOptionId(mobileSession.providerId));
           setWalletAddress(mobileSession.publicKey);
           setIsConnected(true);
           const { nonce, message } = await requestWalletAuthNonce(mobileSession.publicKey);
-          startPhantomMobileSignMessage({
+          startMobileWalletSignMessage({
+            providerId: mobileSession.providerId,
             publicKey: mobileSession.publicKey,
             message,
             authNonce: nonce,
           });
         } else {
-          startPhantomMobileConnect('walletAuth');
+          startMobileWalletConnect(mobileProviderId, 'walletAuth');
         }
 
-        return await waitForPhantomMobileRedirect<UserData | null>();
+        return await waitForMobileWalletRedirect<UserData | null>();
       } catch (err: any) {
         loggers.auth.error('mobile wallet auth error:', err);
         setError(getWalletActionError(err, 'Wallet sign-in failed'));
@@ -930,7 +968,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         // Ignore disconnect errors; the server session is already cleared.
       }
     }
-    clearPhantomMobileDeepLinkSession();
+    clearMobileWalletDeepLinkSession();
 
     setActiveWalletProvider(null);
     setIsConnected(false);

@@ -23,7 +23,7 @@ const localStorage = {
 (globalThis as any).window = {
   localStorage,
   location: {
-    href: 'https://play.opus-strike.test/lobby?phantom_action=stale&data=old#join',
+    href: 'https://play.opus-strike.test/lobby?wallet_action=stale&data=old#join',
     assign: (url: string) => {
       assignedUrls.push(url);
     },
@@ -42,18 +42,29 @@ Object.defineProperty(globalThis, 'navigator', {
 });
 
 const {
-  createPhantomMobileDeepLinkUrl,
-  startPhantomMobileConnect,
-} = await import('./phantomDeepLink');
+  createMobileWalletDeepLinkUrl,
+  startMobileWalletConnect,
+} = await import('./mobileWalletDeepLink');
 
-const universalUrl = createPhantomMobileDeepLinkUrl(
-  'signMessage',
-  new URLSearchParams({ nonce: 'abc' }),
-  { preferCustomScheme: false }
+assert.equal(
+  createMobileWalletDeepLinkUrl(
+    'phantom',
+    'signMessage',
+    new URLSearchParams({ nonce: 'abc' }),
+    { preferCustomScheme: false }
+  ),
+  'https://phantom.app/ul/v1/signMessage?nonce=abc'
 );
-assert.equal(universalUrl, 'https://phantom.app/ul/v1/signMessage?nonce=abc');
+assert.equal(
+  createMobileWalletDeepLinkUrl('solflare', 'connect', new URLSearchParams({ request: '1' })),
+  'https://solflare.com/ul/v1/connect?request=1'
+);
+assert.equal(
+  createMobileWalletDeepLinkUrl('backpack', 'connect', new URLSearchParams({ request: '1' })),
+  'https://backpack.app/ul/v1/connect?request=1'
+);
 
-startPhantomMobileConnect('walletAuth');
+startMobileWalletConnect('phantom', 'walletAuth');
 
 assert.equal(assignedUrls.length, 1);
 
@@ -71,12 +82,14 @@ const redirectUrl = new URL(redirectLink);
 assert.equal(redirectUrl.origin, 'https://play.opus-strike.test');
 assert.equal(redirectUrl.pathname, '/lobby');
 assert.equal(redirectUrl.hash, '#join');
-assert.equal(redirectUrl.searchParams.get('phantom_action'), 'connect');
+assert.equal(redirectUrl.searchParams.get('wallet_provider'), 'phantom');
+assert.equal(redirectUrl.searchParams.get('wallet_action'), 'connect');
 assert.equal(redirectUrl.searchParams.has('data'), false);
 
-const storedRequest = JSON.parse(storage.get('opusStrike.phantomDeepLink.request') ?? '{}');
+const storedRequest = JSON.parse(storage.get('opusStrike.mobileWalletDeepLink.request') ?? '{}');
+assert.equal(storedRequest.providerId, 'phantom');
 assert.equal(storedRequest.action, 'connect');
 assert.equal(storedRequest.purpose, 'walletAuth');
-assert.equal(redirectUrl.searchParams.get('phantom_request'), storedRequest.requestId);
+assert.equal(redirectUrl.searchParams.get('wallet_request'), storedRequest.requestId);
 
-console.log('phantom deep link tests passed');
+console.log('mobile wallet deep link tests passed');
