@@ -56,9 +56,16 @@ const founderSkinIdsByHero = {
   chronos: ['chronos.golden'],
 };
 const founderSkinIds = Object.values(founderSkinIdsByHero).flat();
+const independenceSkinIdsByHero = {
+  phantom: ['phantom.liberty-wraith'],
+  hookshot: ['hookshot.liberty-anchor'],
+  blaze: ['blaze.liberty-flare'],
+  chronos: ['chronos.liberty-sentinel'],
+};
+const independenceSkinIds = Object.values(independenceSkinIdsByHero).flat();
 
-assert.equal(HERO_SKIN_CATALOG.length, 32);
-for (const skinId of [...paidSkinIds, ...founderSkinIds]) {
+assert.equal(HERO_SKIN_CATALOG.length, 36);
+for (const skinId of [...paidSkinIds, ...independenceSkinIds, ...founderSkinIds]) {
   assert.equal(isHeroSkinId(skinId), true, `${skinId} should be a known skin id`);
 }
 assert.equal(isHeroSkinId('Phantom.Void Monarch'), false);
@@ -68,7 +75,7 @@ for (const heroId of ALL_HERO_IDS) {
   assert.equal(defaultSkinId, DEFAULT_HERO_SKIN_IDS[heroId]);
 
   const skins = getHeroSkinsForHero(heroId);
-  assert.equal(skins.length, 8, `${heroId} should expose one default, six paid skins, and one founder skin`);
+  assert.equal(skins.length, 9, `${heroId} should expose one default, six paid skins, one Independence skin, and one founder skin`);
   assert.equal(
     skins.filter((skin) => skin.id === defaultSkinId).length,
     1,
@@ -81,12 +88,12 @@ for (const heroId of ALL_HERO_IDS) {
   );
   assert.deepEqual(
     skins.filter((skin) => skin.availability === 'unlockable').map((skin) => skin.id).sort(),
-    [...founderSkinIdsByHero[heroId]].sort(),
-    `${heroId} founder skins should match the expected catalog`
+    [...independenceSkinIdsByHero[heroId], ...founderSkinIdsByHero[heroId]].sort(),
+    `${heroId} unlockable skins should match the expected catalog`
   );
   assert.equal(skins.filter((skin) => skin.rarity === 'common').length, 1, `${heroId} should have one common skin`);
   assert.equal(skins.filter((skin) => skin.rarity === 'epic').length, 3, `${heroId} should have three epic skins`);
-  assert.equal(skins.filter((skin) => skin.rarity === 'unique').length, 2, `${heroId} should have two unique skins`);
+  assert.equal(skins.filter((skin) => skin.rarity === 'unique').length, 3, `${heroId} should have three unique skins`);
   assert.equal(skins.filter((skin) => skin.rarity === 'legendary').length, 2, `${heroId} should have two legendary skins`);
 }
 
@@ -97,6 +104,14 @@ for (const skinId of paidSkinIds) {
   assert.equal(skin.releaseState, 'ready_when_token_launches');
   assert.equal(skin.price.amountBaseUnits, null);
   assert.equal(skin.price.disabledReason, 'Disabled');
+}
+
+for (const skinId of independenceSkinIds) {
+  const skin = HERO_SKIN_CATALOG.find((catalogSkin) => catalogSkin.id === skinId);
+  assert.ok(skin, `${skinId} should be in the catalog`);
+  assert.equal(skin.availability, 'unlockable');
+  assert.equal(skin.releaseState, 'live');
+  assert.equal(skin.unlockHint, 'Independence Day admin grant');
 }
 
 for (const skinId of founderSkinIds) {
@@ -123,7 +138,7 @@ for (const skinId of paidSkinIds) {
   assert.equal(locked.fallbackReason, 'locked');
 }
 
-for (const skinId of founderSkinIds) {
+for (const skinId of [...independenceSkinIds, ...founderSkinIds]) {
   const skin = HERO_SKIN_CATALOG.find((catalogSkin) => catalogSkin.id === skinId);
   const locked = resolveHeroSkinDefinition(skin.heroId, skinId, {
     ownedSkinIds: new Set(),

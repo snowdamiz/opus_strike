@@ -90,8 +90,8 @@ function WalletProviderOptionButton({
   logoClassName: string;
   onSelect: (providerId?: string) => Promise<void> | void;
 }) {
-  const label = wallet.installed ? wallet.name : 'Connect Wallet';
-  const detail = wallet.installed ? 'Sign message' : 'Phantom, Solflare, Brave';
+  const label = wallet.name;
+  const detail = wallet.installed ? 'Sign message' : 'Open wallet app';
 
   return (
     <button

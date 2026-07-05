@@ -19,6 +19,7 @@ interface LeaderboardPlayer {
   rank: number;
   userId: string;
   name: string;
+  solWonLamports: string;
   stats: UserStats;
 }
 
@@ -196,6 +197,7 @@ function getLocalPersonalStats(playerName: string, userStats: UserStats | null):
     rank: null,
     userId: 'local',
     name: playerName || 'You',
+    solWonLamports: '0',
     stats: userStats,
   };
 }
@@ -655,6 +657,7 @@ function LeaderboardTable({
         <span>Player</span>
         <span className="text-right">Rating</span>
         <span className="hidden text-right sm:block">Wins</span>
+        <span className="hidden text-right md:block">SOL won</span>
         <span className="hidden text-right sm:block">K/D</span>
         <span className="hidden text-right md:block">Caps</span>
       </div>
@@ -695,6 +698,7 @@ function LeaderboardRow({
       </div>
       <span className="stats-row-number stats-row-primary">{formatNumber(player.stats.competitiveRating)}</span>
       <span className="stats-row-number hidden sm:block">{formatNumber(player.stats.totalWins)}</span>
+      <span className="stats-row-number stats-row-sol hidden md:block">{formatSolAmount(player.solWonLamports)}</span>
       <span className="stats-row-number hidden sm:block">{formatRatio(player.stats.totalKills, player.stats.totalDeaths)}</span>
       <span className="stats-row-number hidden md:block">{formatNumber(player.stats.totalCaptures)}</span>
     </div>

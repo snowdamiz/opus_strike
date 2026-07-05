@@ -28,6 +28,7 @@ import {
   setBattleRoyalFirstPersonDropBodyVisibleUntil,
   setPlayerVisualTransform,
   setFlamethrowerVisualPose,
+  rebuildCombatVisualFrameCache,
 } from '../../store/visualStore';
 import { useInput } from '../../hooks/useInput';
 import { getPhysicsWorld, isPhysicsReady, raycast, usePhysics } from '../../hooks/usePhysics';
@@ -98,7 +99,11 @@ import {
   type UseMovementReturn,
   type UsePhantomAbilitiesReturn,
 } from '../../hooks/player';
-import { THIRD_PERSON_CROSSHAIR_AIM_DISTANCE } from '../../hooks/player/abilityAim';
+import {
+  getMobileAimAssistActionConfig,
+  resolveMobileAimAssistPoint,
+  THIRD_PERSON_CROSSHAIR_AIM_DISTANCE,
+} from '../../hooks/player/abilityAim';
 import { writeThirdPersonCameraPosition } from '../../hooks/player/useCamera';
 import {
   HERO_ACTION_OVERLAP_GRACE_MS,
@@ -299,6 +304,12 @@ const observerFlightRight = new THREE.Vector3();
 const thirdPersonAimCameraPosition = new THREE.Vector3();
 const thirdPersonAimCollisionAnchor = new THREE.Vector3();
 const thirdPersonAimCameraDirection = new THREE.Vector3();
+const mobileAimAssistThirdPersonOrigin = new THREE.Vector3();
+const mobileAimAssistThirdPersonCollisionAnchor = new THREE.Vector3();
+const mobileAimAssistThirdPersonCameraDirection = new THREE.Vector3();
+const mobileAimAssistOriginScratch: MutableVec3 = { x: 0, y: 0, z: 0 };
+const mobileAimAssistDirectionScratch: MutableVec3 = { x: 0, y: 0, z: -1 };
+const mobileAimAssistLosDirectionScratch: MutableVec3 = { x: 0, y: 0, z: -1 };
 const THIRD_PERSON_CAMERA_RAYCAST_OPTIONS = {
   priority: 'visual',
   feature: 'third-person-camera',
@@ -312,8 +323,13 @@ const MAP_PING_RAYCAST_OPTIONS = {
   feature: 'map-ping',
   includeNormal: true,
 } as const;
+const MOBILE_AIM_ASSIST_RAYCAST_OPTIONS = {
+  priority: 'gameplay',
+  feature: 'mobile-aim-assist',
+} as const;
 const MAP_PING_RAYCAST_MAX_DISTANCE = 360;
 const MAP_PING_CLEAR_DISTANCE_SQ = 4.5 * 4.5;
+const MOBILE_AIM_ASSIST_LINE_OF_SIGHT_PADDING = 0.2;
 const thirdPersonAimPointScratch: MutableVec3 = { x: 0, y: 0, z: 0 };
 const mapPingRayDirectionScratch = new THREE.Vector3();
 // Reused scratch for confirmLocalMovementTransform. That function copies every
@@ -419,6 +435,128 @@ export function resolveThirdPersonCrosshairAimPoint({
   thirdPersonAimPointScratch.y = thirdPersonAimCameraPosition.y + direction.y * THIRD_PERSON_CROSSHAIR_AIM_DISTANCE;
   thirdPersonAimPointScratch.z = thirdPersonAimCameraPosition.z + direction.z * THIRD_PERSON_CROSSHAIR_AIM_DISTANCE;
   return thirdPersonAimPointScratch;
+}
+
+function writeMobileAimAssistOrigin({
+  out,
+  bodyPosition,
+  yaw,
+  eyeHeight,
+  matchPerspective,
+}: {
+  out: MutableVec3;
+  bodyPosition: { x: number; y: number; z: number };
+  yaw: number;
+  eyeHeight: number;
+  matchPerspective: MatchPerspective;
+}): MutableVec3 {
+  if (matchPerspective === 'third_person') {
+    writeThirdPersonCameraPosition(
+      mobileAimAssistThirdPersonOrigin,
+      mobileAimAssistThirdPersonCollisionAnchor,
+      mobileAimAssistThirdPersonCameraDirection,
+      {
+        bodyPosition,
+        yaw,
+        eyeHeight,
+        collision: resolveThirdPersonCameraCollision,
+      }
+    );
+    out.x = mobileAimAssistThirdPersonOrigin.x;
+    out.y = mobileAimAssistThirdPersonOrigin.y;
+    out.z = mobileAimAssistThirdPersonOrigin.z;
+    return out;
+  }
+
+  out.x = bodyPosition.x;
+  out.y = bodyPosition.y + eyeHeight;
+  out.z = bodyPosition.z;
+  return out;
+}
+
+function hasMobileAimAssistLineOfSight(from: MutableVec3, to: MutableVec3): boolean {
+  const world = isPhysicsReady() ? getPhysicsWorld() : null;
+  if (!world) return true;
+
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const dz = to.z - from.z;
+  const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (distance <= 0.001) return false;
+
+  mobileAimAssistLosDirectionScratch.x = dx / distance;
+  mobileAimAssistLosDirectionScratch.y = dy / distance;
+  mobileAimAssistLosDirectionScratch.z = dz / distance;
+  const hit = raycast(
+    world,
+    from,
+    mobileAimAssistLosDirectionScratch,
+    distance,
+    MOBILE_AIM_ASSIST_RAYCAST_OPTIONS
+  );
+
+  return !hit || hit.distance >= distance - MOBILE_AIM_ASSIST_LINE_OF_SIGHT_PADDING;
+}
+
+function resolveMobileAimAssistAimPoint({
+  isTouchInputActive,
+  inputState,
+  heroId,
+  localPlayer,
+  storeSnapshot,
+  bodyPosition,
+  yaw,
+  pitch,
+  eyeHeight,
+  matchPerspective,
+  frameNowMs,
+}: {
+  isTouchInputActive: boolean;
+  inputState: InputState;
+  heroId: HeroId;
+  localPlayer: Player;
+  storeSnapshot: GameStoreSnapshot;
+  bodyPosition: { x: number; y: number; z: number };
+  yaw: number;
+  pitch: number;
+  eyeHeight: number;
+  matchPerspective: MatchPerspective;
+  frameNowMs: number;
+}): MutableVec3 | null {
+  if (!isTouchInputActive) return null;
+
+  const assistConfig = getMobileAimAssistActionConfig(heroId, inputState);
+  if (!assistConfig) return null;
+
+  writeMobileAimAssistOrigin({
+    out: mobileAimAssistOriginScratch,
+    bodyPosition,
+    yaw,
+    eyeHeight,
+    matchPerspective,
+  });
+  const direction = calculateLookDirection(yaw, pitch);
+  mobileAimAssistDirectionScratch.x = direction.x;
+  mobileAimAssistDirectionScratch.y = direction.y;
+  mobileAimAssistDirectionScratch.z = direction.z;
+
+  const combatCache = rebuildCombatVisualFrameCache(
+    storeSnapshot.players.values(),
+    frameNowMs,
+    frameNowMs,
+    storeSnapshot.players.size
+  );
+
+  return resolveMobileAimAssistPoint({
+    ownerId: localPlayer.id,
+    ownerTeam: localPlayer.team,
+    origin: mobileAimAssistOriginScratch,
+    direction: mobileAimAssistDirectionScratch,
+    candidates: combatCache.alivePlayers,
+    maxDistance: assistConfig.maxDistance,
+    targetTeam: assistConfig.targetTeam,
+    hasLineOfSight: hasMobileAimAssistLineOfSight,
+  });
 }
 
 function frameRateBand(deltaSeconds: number): string {
@@ -3132,6 +3270,19 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
       eyeHeight: EYE_HEIGHT + cameraControl.refs.crouchHeight.current,
       matchPerspective: storeSnapshot.matchPerspective,
     });
+    const mobileAimAssistPoint = resolveMobileAimAssistAimPoint({
+      isTouchInputActive: frameCtx.isTouchInputActive,
+      inputState: localAbilityInput,
+      heroId,
+      localPlayer,
+      storeSnapshot,
+      bodyPosition: position,
+      yaw: aimYaw,
+      pitch: aimPitch,
+      eyeHeight: EYE_HEIGHT + cameraControl.refs.crouchHeight.current,
+      matchPerspective: storeSnapshot.matchPerspective,
+      frameNowMs,
+    });
 
     // Create ability context (reused mutable object; consumers read synchronously)
     let abilityCtx = abilityCtxRef.current;
@@ -3155,7 +3306,7 @@ export function PlayerController({ enabled = true, inputEnabled = true }: Player
     abilityCtx.camera = camera;
     abilityCtx.viewmodelElapsedSeconds = frameState.clock.elapsedTime;
     abilityCtx.viewmodelNowMs = now;
-    abilityCtx.aimPoint = thirdPersonAimPoint;
+    abilityCtx.aimPoint = mobileAimAssistPoint ?? thirdPersonAimPoint;
 
     setPhantomPrimaryHeld(phantomPrimaryHeldForPose, now);
     setBlazeRocketHeld(

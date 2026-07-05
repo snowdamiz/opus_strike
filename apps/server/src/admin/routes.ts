@@ -68,6 +68,7 @@ import {
 import {
   SkinShopServiceError,
   getSkinShopAdminOverview,
+  grantSkinToUsers,
   parseSkinIdInput,
   updateSkinShopItemSettings,
   updateSkinShopSettings,
@@ -214,6 +215,22 @@ const antiCheatEvidenceStore = new AntiCheatEvidenceStore(prisma);
 
 function readRequestString(value: unknown, maxLength = 500): string {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
+}
+
+function readRequestStringList(value: unknown, maxItems: number, maxLength = 128): string[] {
+  const rawItems = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(/[\s,]+/g)
+      : [];
+  const seen = new Set<string>();
+  for (const item of rawItems) {
+    if (typeof item !== 'string') continue;
+    const trimmed = item.trim().slice(0, maxLength);
+    if (trimmed) seen.add(trimmed);
+    if (seen.size >= maxItems) break;
+  }
+  return Array.from(seen);
 }
 
 function readQueryString(value: unknown, maxLength = 500): string {
@@ -1201,6 +1218,29 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         updatedByUserId: adminUser.id,
       });
       res.json({ ok: true, shop });
+    } catch (error) {
+      sendAdminMutationError(res, error);
+    }
+  });
+
+  router.post('/api/skin-shop/grants', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const skinId = parseSkinIdInput(req.body?.skinId);
+    if (!skinId) {
+      res.status(400).json({ error: 'Invalid skin id' });
+      return;
+    }
+
+    try {
+      const result = await grantSkinToUsers({
+        skinId,
+        allUsers: req.body?.allUsers === true,
+        userIds: readRequestStringList(req.body?.userIds, 1000),
+        equip: req.body?.equip === true,
+        updatedByUserId: adminUser.id,
+      });
+      res.json({ ok: true, result });
     } catch (error) {
       sendAdminMutationError(res, error);
     }

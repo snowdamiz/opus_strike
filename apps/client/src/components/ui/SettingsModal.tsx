@@ -728,7 +728,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
             {activeTab === 'controls' && (
               <div className="space-y-4">
-                <SettingRow label="Mouse Sensitivity" description="Adjust look sensitivity">
+                <SettingRow label="Aim Sensitivity" description="Mouse and touch look speed">
                   <SliderInput
                     value={settings.sensitivity}
                     onChange={(v) => updateSetting('sensitivity', v)}

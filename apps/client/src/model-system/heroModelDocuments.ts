@@ -19,7 +19,9 @@ import {
   ASHEN_VANGUARD_COLORS,
   ASTRAL_EXECUTIONER_COLORS,
   BLAZE_GOLDEN_COLORS,
+  BLAZE_LIBERTY_FLARE_COLORS,
   CHRONOS_GOLDEN_COLORS,
+  CHRONOS_LIBERTY_SENTINEL_COLORS,
   CINDER_WARDEN_COLORS,
   CLOCKWORK_MARSHAL_COLORS,
   CORAL_WARDEN_COLORS,
@@ -28,6 +30,7 @@ import {
   EPOCH_REGENT_COLORS,
   ETERNITY_SOVEREIGN_COLORS,
   HOOKSHOT_GOLDEN_COLORS,
+  HOOKSHOT_LIBERTY_ANCHOR_COLORS,
   INFERNO_ARCHON_COLORS,
   IRON_LEVIATHAN_COLORS,
   KRAKEN_SOVEREIGN_COLORS,
@@ -37,6 +40,7 @@ import {
   OBSIDIAN_REVENANT_COLORS,
   PARADOX_SENTINEL_COLORS,
   PHANTOM_GOLDEN_COLORS,
+  PHANTOM_LIBERTY_WRAITH_COLORS,
   PYRE_TYRANT_COLORS,
   QUANTUM_ARBITER_COLORS,
   SOLAR_FORGE_COLORS,
@@ -317,6 +321,47 @@ const CHRONOS_GOLDEN_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
   { id: 'chronos.golden.viewmodel.primaryOrb.goldCore', material: 'glass', bone: 'root', kind: 'sphere', position: [0, -0.12, -0.72], scale: [0.09, 0.09, 0.09], emissive: true, transparent: true },
 ];
 
+const PHANTOM_LIBERTY_WRAITH_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
+  { id: 'phantom.liberty-wraith.viewmodel.left.whiteBrace', material: 'edge', bone: 'leftForearm', position: [-0.24, -0.052, -0.3], scale: [0.1, 0.018, 0.036], emissive: true },
+  { id: 'phantom.liberty-wraith.viewmodel.right.whiteBrace', material: 'edge', bone: 'rightForearm', position: [0.24, -0.052, -0.3], scale: [0.1, 0.018, 0.036], emissive: true },
+  { id: 'phantom.liberty-wraith.viewmodel.left.redStripe', material: 'accent', bone: 'leftForearm', position: [-0.24, -0.105, -0.38], scale: [0.085, 0.02, 0.024], emissive: true },
+  { id: 'phantom.liberty-wraith.viewmodel.right.redStripe', material: 'accent', bone: 'rightForearm', position: [0.24, -0.105, -0.38], scale: [0.085, 0.02, 0.024], emissive: true },
+  { id: 'phantom.liberty-wraith.viewmodel.orb.flagHalo', material: 'glow', bone: 'root', kind: 'cylinder', position: [0, -0.12, -0.8], scale: [0.2, 0.012, 0.2], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { id: 'phantom.liberty-wraith.viewmodel.orb.libertyCore', material: 'glass', bone: 'root', kind: 'sphere', position: [0, -0.12, -0.72], scale: [0.1, 0.1, 0.1], emissive: true, transparent: true },
+];
+
+const HOOKSHOT_LIBERTY_ANCHOR_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
+  { id: 'hookshot.liberty-anchor.viewmodel.left.whiteClamp', material: 'edge', bone: 'leftForearm', position: [-0.2, -0.055, -0.31], scale: [0.11, 0.02, 0.036], emissive: true },
+  { id: 'hookshot.liberty-anchor.viewmodel.right.whiteClamp', material: 'edge', bone: 'rightForearm', position: [0.2, -0.055, -0.31], scale: [0.11, 0.02, 0.036], emissive: true },
+  { id: 'hookshot.liberty-anchor.viewmodel.left.anchorStar', material: 'glow', bone: 'leftForearm', kind: 'sphere', position: [-0.2, -0.11, -0.48], scale: [0.052, 0.052, 0.026], emissive: true, transparent: true },
+  { id: 'hookshot.liberty-anchor.viewmodel.right.anchorStar', material: 'glow', bone: 'rightForearm', kind: 'sphere', position: [0.2, -0.11, -0.48], scale: [0.052, 0.052, 0.026], emissive: true, transparent: true },
+  { id: 'hookshot.liberty-anchor.viewmodel.left.redHook', material: 'accent', bone: 'leftForearm', position: [-0.2, -0.1, -0.94], scale: [0.036, 0.046, 0.15], emissive: true },
+  { id: 'hookshot.liberty-anchor.viewmodel.right.redHook', material: 'accent', bone: 'rightForearm', position: [0.2, -0.1, -0.94], scale: [0.036, 0.046, 0.15], emissive: true },
+  { id: 'hookshot.liberty-anchor.viewmodel.left.blueFin', material: 'glass', bone: 'leftForearm', position: [-0.28, -0.1, -0.84], scale: [0.028, 0.038, 0.13], rotation: [0, 0.42, 0], transparent: true },
+  { id: 'hookshot.liberty-anchor.viewmodel.right.blueFin', material: 'glass', bone: 'rightForearm', position: [0.28, -0.1, -0.84], scale: [0.028, 0.038, 0.13], rotation: [0, -0.42, 0], transparent: true },
+];
+
+const BLAZE_LIBERTY_FLARE_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
+  { id: 'blaze.liberty-flare.viewmodel.left.whiteVent', material: 'edge', bone: 'leftForearm', position: [-0.24, -0.052, -0.27], scale: [0.1, 0.018, 0.024], emissive: true },
+  { id: 'blaze.liberty-flare.viewmodel.right.whiteVent', material: 'edge', bone: 'rightForearm', position: [0.24, -0.052, -0.27], scale: [0.1, 0.018, 0.024], emissive: true },
+  { id: 'blaze.liberty-flare.viewmodel.left.redVent', material: 'accent', bone: 'leftForearm', position: [-0.24, -0.115, -0.36], scale: [0.042, 0.028, 0.024], emissive: true },
+  { id: 'blaze.liberty-flare.viewmodel.right.redVent', material: 'accent', bone: 'rightForearm', position: [0.24, -0.115, -0.36], scale: [0.042, 0.028, 0.024], emissive: true },
+  { id: 'blaze.liberty-flare.viewmodel.staff.flagRing', material: 'glow', bone: 'rightForearm', kind: 'cylinder', position: [0.32, -0.07, -0.93], scale: [0.16, 0.012, 0.16], emissive: true, transparent: true },
+  { id: 'blaze.liberty-flare.viewmodel.staff.blueBand', material: 'glass', bone: 'rightForearm', kind: 'cylinder', position: [0.32, -0.07, -0.84], scale: [0.072, 0.018, 0.072], transparent: true },
+  { id: 'blaze.liberty-flare.viewmodel.staff.whiteStar', material: 'glow', bone: 'rightForearm', kind: 'sphere', position: [0.32, -0.07, -1.02], scale: [0.072, 0.072, 0.072], emissive: true, transparent: true },
+];
+
+const CHRONOS_LIBERTY_SENTINEL_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
+  { id: 'chronos.liberty-sentinel.viewmodel.left.whiteTrim', material: 'edge', bone: 'leftForearm', position: [-0.24, -0.052, -0.25], scale: [0.1, 0.018, 0.024], emissive: true },
+  { id: 'chronos.liberty-sentinel.viewmodel.right.whiteTrim', material: 'edge', bone: 'rightForearm', position: [0.24, -0.052, -0.25], scale: [0.1, 0.018, 0.024], emissive: true },
+  { id: 'chronos.liberty-sentinel.viewmodel.left.redDial', material: 'accent', bone: 'leftForearm', kind: 'cylinder', position: [-0.24, -0.105, -0.35], scale: [0.066, 0.012, 0.066], rotation: [Math.PI / 2, 0, 0], emissive: true },
+  { id: 'chronos.liberty-sentinel.viewmodel.right.redDial', material: 'accent', bone: 'rightForearm', kind: 'cylinder', position: [0.24, -0.105, -0.35], scale: [0.066, 0.012, 0.066], rotation: [Math.PI / 2, 0, 0], emissive: true },
+  { id: 'chronos.liberty-sentinel.viewmodel.primaryOrb.flagHalo', material: 'glow', bone: 'root', kind: 'cylinder', position: [0, -0.12, -0.82], scale: [0.2, 0.012, 0.2], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { id: 'chronos.liberty-sentinel.viewmodel.primaryOrb.blueGlass', material: 'glass', bone: 'root', kind: 'sphere', position: [0, -0.12, -0.72], scale: [0.09, 0.09, 0.09], emissive: true, transparent: true },
+  { id: 'chronos.liberty-sentinel.viewmodel.aegis.whiteBar', material: 'edge', bone: 'root', position: [0, 0.2, -0.7], scale: [0.62, 0.016, 0.02], emissive: true, transparent: true },
+  { id: 'chronos.liberty-sentinel.viewmodel.aegis.redBar', material: 'accent', bone: 'root', position: [0, -0.2, -0.7], scale: [0.62, 0.016, 0.02], emissive: true, transparent: true },
+];
+
 const UMBRAL_REAVER_VIEWMODEL_PARTS: readonly ModelPartDescriptor[] = [
   { id: 'phantom.umbral-reaver.viewmodel.left.scytheCuff', material: 'metal', bone: 'leftForearm', position: [-0.19, -0.255, -0.38], scale: [0.07, 0.02, 0.034] },
   { id: 'phantom.umbral-reaver.viewmodel.right.scytheCuff', material: 'metal', bone: 'rightForearm', position: [0.19, -0.255, -0.38], scale: [0.07, 0.02, 0.034] },
@@ -553,6 +598,26 @@ const VIEWMODEL_DOCUMENTS_BY_SKIN: Record<HeroSkinId, ViewmodelModelDocument> = 
     accentIntensity: 0.66,
     glassIntensity: 0.54,
     glowIntensity: 1.1,
+  }),
+  'phantom.liberty-wraith': createSkinViewmodelDocument('phantom', PHANTOM_LIBERTY_WRAITH_COLORS, PHANTOM_LIBERTY_WRAITH_VIEWMODEL_PARTS, {
+    accentIntensity: 0.64,
+    glassIntensity: 0.5,
+    glowIntensity: 1.12,
+  }),
+  'hookshot.liberty-anchor': createSkinViewmodelDocument('hookshot', HOOKSHOT_LIBERTY_ANCHOR_COLORS, HOOKSHOT_LIBERTY_ANCHOR_VIEWMODEL_PARTS, {
+    accentIntensity: 0.64,
+    glassIntensity: 0.48,
+    glowIntensity: 1.08,
+  }),
+  'blaze.liberty-flare': createSkinViewmodelDocument('blaze', BLAZE_LIBERTY_FLARE_COLORS, BLAZE_LIBERTY_FLARE_VIEWMODEL_PARTS, {
+    accentIntensity: 0.66,
+    glassIntensity: 0.5,
+    glowIntensity: 1.14,
+  }),
+  'chronos.liberty-sentinel': createSkinViewmodelDocument('chronos', CHRONOS_LIBERTY_SENTINEL_COLORS, CHRONOS_LIBERTY_SENTINEL_VIEWMODEL_PARTS, {
+    accentIntensity: 0.64,
+    glassIntensity: 0.5,
+    glowIntensity: 1.12,
   }),
   'phantom.golden': createSkinViewmodelDocument('phantom', PHANTOM_GOLDEN_COLORS, PHANTOM_GOLDEN_VIEWMODEL_PARTS, {
     accentIntensity: 0.72,

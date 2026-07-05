@@ -7231,6 +7231,14 @@ body,
   font-weight: 700;
 }
 
+.stats-row-sol {
+  overflow: hidden;
+  color: rgb(167 243 208);
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .stats-skeleton {
   display: grid;
   gap: 0.46rem;
@@ -7306,7 +7314,7 @@ body,
 @media (min-width: 768px) {
   .stats-table-head,
   .stats-table-row {
-    grid-template-columns: 3rem minmax(0, 1fr) 5rem 4rem 4rem 5rem;
+    grid-template-columns: 3rem minmax(0, 1fr) 5rem 4rem 6.25rem 4rem 5rem;
   }
 }
 

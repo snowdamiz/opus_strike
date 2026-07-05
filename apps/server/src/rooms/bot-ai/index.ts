@@ -732,8 +732,8 @@ export const BOT_STREAMER_DEATHMATCH_PROFILE_PREFIX = 'streamer-bot-deathmatch-s
 export const BOT_RANKED_BATTLE_ROYAL_PROFILE_PREFIX = 'ranked-battle-royal';
 
 const BATTLE_ROYAL_BOT_REVIVE_RANGE = 42;
-const BATTLE_ROYAL_HUMAN_REVIVE_RANGE = 58;
 const BATTLE_ROYAL_HUMAN_SUPPORT_RANGE = 140;
+const BATTLE_ROYAL_HUMAN_REVIVE_RANGE = BATTLE_ROYAL_HUMAN_SUPPORT_RANGE;
 const BATTLE_ROYAL_SQUAD_COHESION_MIN_DISTANCE = 18;
 const BATTLE_ROYAL_SAFE_ZONE_ROTATION_MARGIN = 7;
 const BATTLE_ROYAL_HUMAN_SAFE_ZONE_ROTATION_MARGIN = 3;
@@ -1786,7 +1786,7 @@ function scoreBattleRoyalDownedAllyTarget(
 ): number {
   const nearestBotDistance = distanceToNearestPlayer(bots, ally.position);
   const nearbyEnemyCount = countPlayersNear(enemies, ally.position, 22);
-  return (ally.isBot ? 0 : 520) - nearestBotDistance * 4.8 - nearbyEnemyCount * 64;
+  return -nearestBotDistance * 4.8 - nearbyEnemyCount * 64;
 }
 
 function selectBattleRoyalDownedAllyTarget(
@@ -1795,11 +1795,17 @@ function selectBattleRoyalDownedAllyTarget(
   enemies: readonly BotPlayerSnapshot[]
 ): BotPlayerSnapshot | null {
   let best: BotPlayerSnapshot | null = null;
+  let bestPriority = -Infinity;
   let bestScore = -Infinity;
   for (const ally of downedAllies) {
+    const priority = ally.isBot ? 0 : 1;
     const score = scoreBattleRoyalDownedAllyTarget(ally, bots, enemies);
-    if (score > bestScore || (score === bestScore && ally.id < (best?.id ?? '~'))) {
+    if (
+      priority > bestPriority ||
+      (priority === bestPriority && (score > bestScore || (score === bestScore && ally.id < (best?.id ?? '~'))))
+    ) {
       best = ally;
+      bestPriority = priority;
       bestScore = score;
     }
   }
@@ -3120,17 +3126,27 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
   if (isBattleRoyal && blackboard.nearestDownedAlly) {
     const downedAlly = blackboard.nearestDownedAlly;
     const downedAllyDistance = distance2D(bot.position, downedAlly.position);
-    const reviveRange = downedAlly.isBot ? BATTLE_ROYAL_BOT_REVIVE_RANGE : BATTLE_ROYAL_HUMAN_REVIVE_RANGE;
+    const humanRevive = !downedAlly.isBot;
+    const reviveRange = humanRevive ? BATTLE_ROYAL_HUMAN_REVIVE_RANGE : BATTLE_ROYAL_BOT_REVIVE_RANGE;
     if (downedAllyDistance <= reviveRange) {
-      const humanBonus = downedAlly.isBot ? 0 : 430;
-      const enemyPenalty = downedAlly.isBot ? 76 : 38;
+      const baseScore = humanRevive ? 1460 : 1040;
+      const distancePenalty = humanRevive ? downedAllyDistance * 5.5 : downedAllyDistance * 10;
+      const enemyPenalty = humanRevive ? 24 : 76;
       const safeWindowBonus = blackboard.nearbyEnemyCount === 0 ? 170 : 0;
+      const reviveScore = baseScore -
+        distancePenalty +
+        safeWindowBonus -
+        blackboard.nearbyEnemyCount * enemyPenalty +
+        assignmentBoost('revive', humanRevive ? 340 : 260);
+      const reviveReason = humanRevive
+        ? (blackboard.nearbyEnemyCount === 0 ? 'downed human ally is safe to revive' : 'downed human ally needs rescue')
+        : (blackboard.nearbyEnemyCount === 0 ? 'nearby downed ally is safe to revive' : 'nearby downed ally needs rescue');
       addIntent(
         candidates,
         'revive_teammate',
-        1040 + humanBonus - downedAllyDistance * 10 + safeWindowBonus - blackboard.nearbyEnemyCount * enemyPenalty + assignmentBoost('revive', 260),
+        reviveScore,
         downedAlly.position,
-        blackboard.nearbyEnemyCount === 0 ? 'nearby downed ally is safe to revive' : 'nearby downed ally needs rescue',
+        reviveReason,
         downedAlly.id
       );
     }

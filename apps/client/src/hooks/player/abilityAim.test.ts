@@ -5,7 +5,13 @@ import {
   calculateLookDirection,
   calculatePlayerSocketPosition,
 } from './constants';
-import { resolveAbilityAimDirection } from './abilityAim';
+import {
+  getMobileAimAssistActionConfig,
+  MOBILE_AIM_ASSIST_MAX_ANGLE_RADIANS,
+  resolveAbilityAimDirection,
+  resolveMobileAimAssistPoint,
+  type MobileAimAssistTargetCandidate,
+} from './abilityAim';
 import { buildAbilityCastOriginHints } from './abilityCastOriginHints';
 import type { AbilityContext } from './types';
 
@@ -98,5 +104,103 @@ const rawChronosOrigin = calculatePlayerSocketPosition(
 assert.ok(rawChronosOrigin);
 assert.equal(chronosHint.aimPoint?.y, 12);
 assert.equal(chronosHint.origin.y > rawChronosOrigin.y + 0.2, true);
+
+const mobileAssistCandidates: MobileAimAssistTargetCandidate[] = [
+  {
+    id: 'wide-enemy',
+    team: 'blue',
+    x: 5,
+    y: 1,
+    z: -20,
+    hitboxRadius: 0.45,
+    hitboxSegmentHalfHeight: 0.75,
+  },
+  {
+    id: 'near-crosshair-enemy',
+    team: 'blue',
+    x: 1,
+    y: 1,
+    z: -18,
+    hitboxRadius: 0.45,
+    hitboxSegmentHalfHeight: 0.75,
+  },
+  {
+    id: 'teammate',
+    team: 'red',
+    x: 0.2,
+    y: 1,
+    z: -10,
+    hitboxRadius: 0.45,
+    hitboxSegmentHalfHeight: 0.75,
+  },
+];
+
+const mobileAssistPoint = resolveMobileAimAssistPoint({
+  ownerId: 'local-player',
+  ownerTeam: 'red',
+  origin: { x: 0, y: 1, z: 0 },
+  direction: { x: 0, y: 0, z: -1 },
+  candidates: mobileAssistCandidates,
+  maxDistance: 30,
+});
+assert.deepEqual(mobileAssistPoint, { x: 1, y: 1, z: -18 });
+
+const teammateDragAssistPoint = resolveMobileAimAssistPoint({
+  ownerId: 'local-player',
+  ownerTeam: 'red',
+  origin: { x: 0, y: 1, z: 0 },
+  direction: { x: 0, y: 0, z: -1 },
+  candidates: mobileAssistCandidates,
+  maxDistance: 30,
+  targetTeam: 'any',
+});
+assert.deepEqual(teammateDragAssistPoint, { x: 0.2, y: 1, z: -10 });
+
+const blockedAssistPoint = resolveMobileAimAssistPoint({
+  ownerId: 'local-player',
+  ownerTeam: 'red',
+  origin: { x: 0, y: 1, z: 0 },
+  direction: { x: 0, y: 0, z: -1 },
+  candidates: mobileAssistCandidates,
+  maxDistance: 30,
+  hasLineOfSight: (_from, to) => to.x !== 1,
+});
+assert.equal(blockedAssistPoint, null);
+
+const outsideConeAssistPoint = resolveMobileAimAssistPoint({
+  ownerId: 'local-player',
+  ownerTeam: 'red',
+  origin: { x: 0, y: 1, z: 0 },
+  direction: { x: 0, y: 0, z: -1 },
+  candidates: [{
+    id: 'outside-cone',
+    team: 'blue',
+    x: 6,
+    y: 1,
+    z: -20,
+    hitboxRadius: 0.2,
+    hitboxSegmentHalfHeight: 0.75,
+  }],
+  maxDistance: 30,
+  maxAngleRadians: MOBILE_AIM_ASSIST_MAX_ANGLE_RADIANS,
+});
+assert.equal(outsideConeAssistPoint, null);
+
+assert.deepEqual(
+  getMobileAimAssistActionConfig('phantom', {
+    primaryFire: true,
+    secondaryFire: false,
+    ability1: false,
+  }),
+  { maxDistance: 30, targetTeam: 'enemy' }
+);
+assert.equal(
+  getMobileAimAssistActionConfig('chronos', {
+    primaryFire: true,
+    secondaryFire: false,
+    ability1: true,
+  }),
+  null
+);
 
 console.log('ability aim tests passed');

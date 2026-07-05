@@ -7,7 +7,7 @@
 import { useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import {
-  MOUSE_SENSITIVITY,
+  MOUSE_SENSITIVITY as BASE_AIM_SENSITIVITY,
   PITCH_LIMIT,
   PLAYER_EYE_HEIGHT,
   PLAYER_HEIGHT,
@@ -159,7 +159,7 @@ export function writeThirdPersonCameraPosition(
 export function useCamera(options: UseCameraOptions): UseCameraReturn {
   const { isPointerLocked } = options;
   const fov = useSettingsStore(state => state.settings.fov);
-  const sensitivity = useSettingsStore(state => state.settings.sensitivity);
+  const aimSensitivity = useSettingsStore(state => state.settings.sensitivity);
   const invertY = useSettingsStore(state => state.settings.invertY);
 
   // Camera rotation state
@@ -173,13 +173,13 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
   const slideRollRef = useRef(0);
   const deathCameraRef = useRef<DeathCameraRuntime | null>(null);
 
-  // Handle mouse movement
+  // Handle raw aim deltas from mouse, touch, and gamepad input.
   const applyLookDelta = useCallback((deltaX: number, deltaY: number) => {
-    const sensitivityMultiplier = sensitivity / 50;
-    yawRef.current -= deltaX * MOUSE_SENSITIVITY * sensitivityMultiplier;
-    pitchRef.current += (invertY ? 1 : -1) * deltaY * MOUSE_SENSITIVITY * sensitivityMultiplier;
+    const sensitivityMultiplier = aimSensitivity / 50;
+    yawRef.current -= deltaX * BASE_AIM_SENSITIVITY * sensitivityMultiplier;
+    pitchRef.current += (invertY ? 1 : -1) * deltaY * BASE_AIM_SENSITIVITY * sensitivityMultiplier;
     pitchRef.current = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitchRef.current));
-  }, [invertY, sensitivity]);
+  }, [aimSensitivity, invertY]);
 
   const applyDeathLookDelta = useCallback((deltaX: number) => {
     const deathCamera = deathCameraRef.current;
@@ -188,13 +188,13 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
     const elapsedMs = Date.now() - deathCamera.startedAtMs;
     if (elapsedMs < DEATH_LOOK_UNLOCK_MS) return;
 
-    const sensitivityMultiplier = sensitivity / 50;
+    const sensitivityMultiplier = aimSensitivity / 50;
     deathCamera.yawOffset = THREE.MathUtils.clamp(
-      deathCamera.yawOffset - deltaX * MOUSE_SENSITIVITY * sensitivityMultiplier * DEATH_YAW_SENSITIVITY_SCALE,
+      deathCamera.yawOffset - deltaX * BASE_AIM_SENSITIVITY * sensitivityMultiplier * DEATH_YAW_SENSITIVITY_SCALE,
       -DEATH_MAX_YAW_OFFSET,
       DEATH_MAX_YAW_OFFSET
     );
-  }, [sensitivity]);
+  }, [aimSensitivity]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {

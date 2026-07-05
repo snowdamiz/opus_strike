@@ -4,6 +4,7 @@ import type {
   DailyMissionDefinitionSnapshot,
   DailyMissionEligibility,
   DailyMissionRewardBundle,
+  HeroId,
   HeroSkinDefinition,
   HeroSkinId,
   MapProfileId,
@@ -609,6 +610,21 @@ export interface SkinShopOverview {
   items: SkinShopItem[];
 }
 
+export interface AdminSkinGrantResult {
+  skinId: HeroSkinId;
+  heroId: HeroId;
+  allUsers: boolean;
+  equip: boolean;
+  requestedUserCount: number;
+  matchedUserCount: number;
+  grantedCount: number;
+  restoredCount: number;
+  alreadyOwnedCount: number;
+  equippedCount: number;
+  loadoutChangedCount: number;
+  skippedUserIds: string[];
+}
+
 /* ----------------------------- Anti-Cheat --------------------------- */
 
 export interface AntiCheatReview {
@@ -718,4 +734,16 @@ export interface SkinShopItemUpdate {
   tokenAmount: string;
   maxSupply?: number | null;
   expectedPriceVersion: number;
+}
+
+export interface AdminSkinGrantRequest {
+  skinId: HeroSkinId;
+  userIds?: string[];
+  allUsers?: boolean;
+  equip?: boolean;
+}
+
+export interface AdminSkinGrantResponse {
+  ok: true;
+  result: AdminSkinGrantResult;
 }

@@ -465,7 +465,7 @@ function testBattleRoyalReviveAndFinishIntents() {
 function testBattleRoyalBotsPrioritizeHumanRevives() {
   const bot = player({ id: 'rescue-bot', team: 'br_01', heroId: 'hookshot', x: 0, z: 0 });
   const closerBotAlly = player({ id: 'bot-ally-downed', team: 'br_01', heroId: 'blaze', x: 5, z: 0, state: 'downed' });
-  const humanAlly = player({ id: 'human-ally-downed', team: 'br_01', heroId: 'phantom', x: 45, z: 0, state: 'downed', isBot: false });
+  const humanAlly = player({ id: 'human-ally-downed', team: 'br_01', heroId: 'phantom', x: 96, z: 0, state: 'downed', isBot: false });
   const enemy = player({ id: 'enemy-pressure', team: 'br_02', heroId: 'hookshot', x: 8, z: 0 });
   const board = blackboardFor(bot, [bot, closerBotAlly, humanAlly, enemy], {
     gameplayMode: 'battle_royal',

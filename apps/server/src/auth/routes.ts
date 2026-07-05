@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
-import { Prisma } from '@prisma/client';
+import { Prisma, type PlayerRewardKind, type PlayerRewardStatus } from '@prisma/client';
 import { PublicKey } from '@solana/web3.js';
 import {
   DEFAULT_COMPETITIVE_RATING,
@@ -37,6 +37,23 @@ import { consumeWalletAuthNonce, storeWalletAuthNonce } from './walletNonceStore
 import { serializeUser } from './userResponse';
 import type { AuthAccountIdentity, AuthProviderName, PendingRegistrationIdentity } from './types';
 import { getRankedSeason } from '../ranking/seasonService';
+import {
+  buildMobileWalletCallbackUrl,
+  buildMobileWalletConnectUrl,
+  buildMobileWalletSignMessageUrl,
+  createMobileWalletDeepLinkState,
+  decryptMobileWalletConnectResponse,
+  decryptMobileWalletSignMessageResponse,
+  getMobileWalletAppUrl,
+  parseMobileWalletProviderId,
+  readMobileWalletError,
+} from './mobileWalletDeepLink';
+import {
+  deleteMobileWalletDeepLinkState,
+  readMobileWalletDeepLinkState,
+  storeMobileWalletDeepLinkState,
+  type MobileWalletDeepLinkState,
+} from './mobileWalletDeepLinkStore';
 
 const router: RouterType = Router();
 
@@ -52,10 +69,23 @@ const AUTH_RATE_LIMITS = {
   tutorialComplete: { limit: 12, windowMs: 60 * 1000 },
   oauthStart: { limit: 20, windowMs: 60 * 1000 },
   oauthCallback: { limit: 30, windowMs: 60 * 1000 },
+  mobileWalletStart: { limit: 20, windowMs: 60 * 1000 },
+  mobileWalletCallback: { limit: 30, windowMs: 60 * 1000 },
 } as const;
 
 const LEADERBOARD_DEFAULT_LIMIT = 25;
 const LEADERBOARD_MAX_LIMIT = 50;
+const LEADERBOARD_SOL_REWARD_STATUSES = [
+  'pending',
+  'processing',
+  'paid',
+] as const satisfies readonly PlayerRewardStatus[];
+const LEADERBOARD_MATCH_SOL_REWARD_KINDS = [
+  'daily_ranked_drip',
+  'objective_bounty',
+  'daily_mission',
+  'ranked_br_combat_bounty',
+] as const satisfies readonly PlayerRewardKind[];
 
 interface LeaderboardUserSummary {
   id: string;
@@ -118,6 +148,21 @@ interface RankedSeasonStatsSummary {
 interface LeaderboardSeasonOption extends Pick<RankedSeasonSnapshot, 'mode' | 'seasonNumber' | 'label' | 'endsAt'> {
   identity: string;
   current: boolean;
+}
+
+interface WalletAuthResponsePayload {
+  authenticated: true;
+  isNewUser: boolean;
+  provider: AuthProviderName;
+  linked?: boolean;
+  user?: ReturnType<typeof serializeUser>;
+  walletAddress?: string;
+  pendingRegistration?: {
+    provider: AuthProviderName;
+    displayName: string | null;
+    avatarUrl: string | null;
+    walletAddress: string | null;
+  };
 }
 
 const leaderboardUserSelect = {
@@ -271,6 +316,42 @@ function redirectToClient(res: Response, returnTo: string, params: Record<string
   }
 
   res.redirect(303, new URL(returnPath, clientOrigin).toString());
+}
+
+function redirectWalletAuthError(
+  res: Response,
+  returnTo: string,
+  error: string
+): void {
+  redirectToClient(res, returnTo, {
+    auth: 'error',
+    provider: 'wallet',
+    error,
+  });
+}
+
+function getRequestSearchParams(req: Request): URLSearchParams {
+  return new URL(req.originalUrl, 'http://opus-strike.local').searchParams;
+}
+
+function getQueryStringValue(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
+  return null;
+}
+
+function getMobileWalletCluster(): string | undefined {
+  const cluster = process.env.SOLANA_CLUSTER?.trim();
+  return cluster === 'mainnet-beta' || cluster === 'testnet' || cluster === 'devnet'
+    ? cluster
+    : undefined;
+}
+
+function walletAuthSuccessParams(result: WalletAuthResponsePayload): Record<string, string> {
+  return {
+    auth: result.linked ? 'linked' : 'success',
+    provider: 'wallet',
+  };
 }
 
 function getSafeOAuthReturnTo(record: OAuthStateRecord | null): string {
@@ -505,22 +586,77 @@ function serializeEmptyRankedSeasonStats() {
   };
 }
 
-function serializeLeaderboardEntry(user: LeaderboardUserSummary, rank: number) {
+function serializeLamports(value: bigint | null | undefined): string {
+  return (value ?? 0n).toString();
+}
+
+function serializeLeaderboardEntry(
+  user: LeaderboardUserSummary,
+  rank: number,
+  solWonLamports: bigint | null | undefined = 0n
+) {
   return {
     rank,
     userId: user.id,
     name: user.name,
+    solWonLamports: serializeLamports(solWonLamports),
     stats: serializeLeaderboardStats(user),
   };
 }
 
-function serializeRankedSeasonLeaderboardEntry(user: RankedSeasonStatsSummary, rank: number) {
+function serializeRankedSeasonLeaderboardEntry(
+  user: RankedSeasonStatsSummary,
+  rank: number,
+  solWonLamports: bigint | null | undefined = 0n
+) {
   return {
     rank,
     userId: user.userId,
     name: user.userName,
+    solWonLamports: serializeLamports(solWonLamports),
     stats: serializeRankedSeasonStats(user),
   };
+}
+
+function uniqueUserIds(userIds: string[]): string[] {
+  return Array.from(new Set(userIds.filter((userId) => userId.length > 0)));
+}
+
+async function getLeaderboardSolWonLamportsByUserId(
+  userIds: string[],
+  season: LeaderboardSeasonOption | null = null
+): Promise<Map<string, bigint>> {
+  if (userIds.length === 0) return new Map();
+
+  const rows = await prisma.playerReward.groupBy({
+    by: ['userId'],
+    where: {
+      userId: { in: userIds },
+      status: { in: [...LEADERBOARD_SOL_REWARD_STATUSES] },
+      ...(season ? {
+        OR: [
+          {
+            kind: { in: [...LEADERBOARD_MATCH_SOL_REWARD_KINDS] },
+            match: {
+              is: {
+                rankedSeasonMode: season.mode,
+                rankedSeasonNumber: season.seasonNumber,
+              },
+            },
+          },
+          {
+            kind: 'season_top_10',
+            idempotencyKey: {
+              startsWith: `season_top_10:${season.mode}:${season.seasonNumber}:`,
+            },
+          },
+        ],
+      } : {}),
+    },
+    _sum: { amountLamports: true },
+  });
+
+  return new Map(rows.map((row) => [row.userId, row._sum.amountLamports ?? 0n]));
 }
 
 async function findUserForPayload(payload: AuthTokenPayload) {
@@ -712,6 +848,100 @@ async function linkWalletAccountToUser(userId: string, walletAddress: string) {
   });
 }
 
+async function completeVerifiedWalletAuth(
+  req: Request,
+  res: Response,
+  walletAddress: string,
+  authenticatedPayload: AuthTokenPayload | null = null
+): Promise<WalletAuthResponsePayload> {
+  const linkedAccount = await prisma.authAccount.findUnique({
+    where: {
+      provider_providerAccountId: {
+        provider: 'wallet',
+        providerAccountId: walletAddress,
+      },
+    },
+    include: { user: { include: { authAccounts: { orderBy: { createdAt: 'asc' } } } } },
+  });
+  const walletUser = linkedAccount?.user ?? await prisma.user.findUnique({
+    where: { walletAddress },
+    include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
+  });
+
+  const requestAuthenticatedPayload = authenticatedPayload ?? await getAuthenticatedPayload(req);
+  const authenticatedUser = requestAuthenticatedPayload
+    ? await findUserForPayload(requestAuthenticatedPayload)
+    : null;
+
+  if (authenticatedUser) {
+    const provider = requestAuthenticatedPayload?.provider ?? 'wallet';
+
+    if (walletUser && walletUser.id !== authenticatedUser.id) {
+      throw new ProviderConflictError('That wallet is already linked to another profile');
+    }
+
+    const user = await linkWalletAccountToUser(authenticatedUser.id, walletAddress);
+    setAuthCookie(res, createAuthToken({
+      userId: user.id,
+      provider,
+      walletAddress: user.walletAddress,
+      expiresIn: JWT_EXPIRY,
+    }));
+
+    return {
+      authenticated: true,
+      isNewUser: false,
+      provider,
+      linked: true,
+      user: serializeUser(user),
+    };
+  }
+
+  if (walletUser) {
+    const user = await prisma.user.update({
+      where: { id: walletUser.id },
+      data: { lastLoginAt: new Date() },
+      include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
+    });
+    setAuthCookie(res, createAuthToken({
+      userId: user.id,
+      provider: 'wallet',
+      walletAddress: user.walletAddress,
+      expiresIn: JWT_EXPIRY,
+    }));
+
+    return {
+      authenticated: true,
+      isNewUser: false,
+      provider: 'wallet',
+      linked: false,
+      user: serializeUser(user),
+    };
+  }
+
+  const pendingRegistration: PendingRegistrationIdentity = {
+    provider: 'wallet',
+    providerAccountId: walletAddress,
+    displayName: walletAddress,
+    avatarUrl: null,
+    emailHash: null,
+    walletAddress,
+  };
+  setPendingAuthCookie(res, createPendingAuthToken(pendingRegistration));
+
+  return {
+    authenticated: true,
+    isNewUser: true,
+    provider: 'wallet',
+    pendingRegistration: {
+      provider: pendingRegistration.provider,
+      displayName: pendingRegistration.displayName ?? null,
+      avatarUrl: pendingRegistration.avatarUrl ?? null,
+      walletAddress,
+    },
+  };
+}
+
 async function issueUserSession(res: Response, userId: string, provider: AuthProviderName): Promise<void> {
   const user = await prisma.user.update({
     where: { id: userId },
@@ -801,6 +1031,180 @@ function logOAuthFailure(reason: string, details?: unknown): void {
   console.error('[auth] Discord OAuth failed', { provider: 'discord', reason, error: details });
 }
 
+async function getMobileWalletAuthenticatedPayload(
+  req: Request,
+  state: MobileWalletDeepLinkState
+): Promise<AuthTokenPayload | null> {
+  const savedPayload = state.authToken ? verifyAuthToken(state.authToken) : null;
+  return savedPayload ?? getAuthenticatedPayload(req);
+}
+
+router.get('/mobile-wallet/:providerId/start', async (req: Request, res: Response) => {
+  if (!enforceJsonRateLimit(req, res, 'auth:mobile-wallet:start', AUTH_RATE_LIMITS.mobileWalletStart)) return;
+
+  const providerId = parseMobileWalletProviderId(req.params.providerId);
+  const returnTo = sanitizeReturnTo(req.query.returnTo);
+
+  if (!providerId) {
+    redirectWalletAuthError(res, returnTo, 'wallet_unsupported');
+    return;
+  }
+
+  const state = createMobileWalletDeepLinkState({
+    providerId,
+    returnTo,
+    authToken: getRequestAuthToken(req),
+  });
+
+  const stored = await storeMobileWalletDeepLinkState(state);
+  if (!stored) {
+    redirectWalletAuthError(res, state.returnTo, 'wallet_unavailable');
+    return;
+  }
+
+  const connectUrl = buildMobileWalletConnectUrl({
+    state,
+    appUrl: getMobileWalletAppUrl(req, getClientOrigin()),
+    redirectLink: buildMobileWalletCallbackUrl(req, providerId, 'connect', state.id, getClientOrigin()),
+    cluster: getMobileWalletCluster(),
+  });
+
+  res.redirect(303, connectUrl);
+});
+
+router.get('/mobile-wallet/:providerId/connect', async (req: Request, res: Response) => {
+  if (!enforceJsonRateLimit(req, res, 'auth:mobile-wallet:connect', AUTH_RATE_LIMITS.mobileWalletCallback)) return;
+
+  const providerId = parseMobileWalletProviderId(req.params.providerId);
+  const stateId = getQueryStringValue(req.query.state);
+  const state = stateId ? await readMobileWalletDeepLinkState(stateId) : null;
+  const returnTo = state?.returnTo ?? '/';
+
+  if (!providerId || !state || state.providerId !== providerId || state.phase !== 'connect') {
+    redirectWalletAuthError(res, returnTo, 'wallet_expired');
+    return;
+  }
+
+  const params = getRequestSearchParams(req);
+  const walletError = readMobileWalletError(params);
+  if (walletError) {
+    await deleteMobileWalletDeepLinkState(state.id);
+    redirectWalletAuthError(res, state.returnTo, 'wallet_denied');
+    return;
+  }
+
+  try {
+    const connectResponse = decryptMobileWalletConnectResponse(state, params);
+    const walletAddress = normalizeWalletAddress(connectResponse.data.public_key);
+    if (!walletAddress || typeof connectResponse.data.session !== 'string' || !connectResponse.data.session) {
+      throw new Error('Wallet connection callback returned an invalid session');
+    }
+
+    const authNonce = generateNonce();
+    const message = createSignMessage(authNonce);
+    const storedNonce = await storeWalletAuthNonce(walletAddress, authNonce);
+    if (!storedNonce) {
+      await deleteMobileWalletDeepLinkState(state.id);
+      redirectWalletAuthError(res, state.returnTo, 'wallet_unavailable');
+      return;
+    }
+
+    const signState: MobileWalletDeepLinkState = {
+      ...state,
+      phase: 'sign',
+      walletEncryptionPublicKey: connectResponse.walletEncryptionPublicKey,
+      walletAddress,
+      walletSession: connectResponse.data.session,
+      authNonce,
+    };
+    const storedState = await storeMobileWalletDeepLinkState(signState);
+    if (!storedState) {
+      await deleteMobileWalletDeepLinkState(state.id);
+      redirectWalletAuthError(res, state.returnTo, 'wallet_unavailable');
+      return;
+    }
+
+    const signUrl = buildMobileWalletSignMessageUrl({
+      state: signState,
+      message,
+      redirectLink: buildMobileWalletCallbackUrl(req, providerId, 'sign', state.id, getClientOrigin()),
+    });
+
+    res.redirect(303, signUrl);
+  } catch (error) {
+    await deleteMobileWalletDeepLinkState(state.id);
+    console.error('[auth] Mobile wallet connect callback error:', error);
+    redirectWalletAuthError(res, state.returnTo, 'wallet_failed');
+  }
+});
+
+router.get('/mobile-wallet/:providerId/sign', async (req: Request, res: Response) => {
+  if (!enforceJsonRateLimit(req, res, 'auth:mobile-wallet:sign', AUTH_RATE_LIMITS.mobileWalletCallback)) return;
+
+  const providerId = parseMobileWalletProviderId(req.params.providerId);
+  const stateId = getQueryStringValue(req.query.state);
+  const state = stateId ? await readMobileWalletDeepLinkState(stateId) : null;
+  const returnTo = state?.returnTo ?? '/';
+
+  if (!providerId || !state || state.providerId !== providerId || state.phase !== 'sign') {
+    redirectWalletAuthError(res, returnTo, 'wallet_expired');
+    return;
+  }
+
+  const params = getRequestSearchParams(req);
+  const walletError = readMobileWalletError(params);
+  if (walletError) {
+    await deleteMobileWalletDeepLinkState(state.id);
+    redirectWalletAuthError(res, state.returnTo, 'wallet_denied');
+    return;
+  }
+
+  try {
+    if (!state.walletAddress || !state.authNonce) {
+      throw new Error('Mobile wallet signature state is incomplete');
+    }
+
+    const signResponse = decryptMobileWalletSignMessageResponse(state, params);
+    if (typeof signResponse.signature !== 'string' || !signResponse.signature) {
+      throw new Error('Wallet signature callback returned an invalid signature');
+    }
+
+    const hasValidNonce = await consumeWalletAuthNonce(state.walletAddress, state.authNonce);
+    if (!hasValidNonce) {
+      await deleteMobileWalletDeepLinkState(state.id);
+      redirectWalletAuthError(res, state.returnTo, 'wallet_expired');
+      return;
+    }
+
+    const message = createSignMessage(state.authNonce);
+    if (!verifySignature(message, signResponse.signature, state.walletAddress)) {
+      await deleteMobileWalletDeepLinkState(state.id);
+      redirectWalletAuthError(res, state.returnTo, 'wallet_invalid_signature');
+      return;
+    }
+
+    const result = await completeVerifiedWalletAuth(
+      req,
+      res,
+      state.walletAddress,
+      await getMobileWalletAuthenticatedPayload(req, state)
+    );
+
+    await deleteMobileWalletDeepLinkState(state.id);
+    redirectToClient(res, state.returnTo, walletAuthSuccessParams(result));
+  } catch (error) {
+    await deleteMobileWalletDeepLinkState(state.id);
+
+    if (error instanceof ProviderConflictError || isPrismaUniqueError(error)) {
+      redirectWalletAuthError(res, state.returnTo, 'wallet_conflict');
+      return;
+    }
+
+    console.error('[auth] Mobile wallet sign callback error:', error);
+    redirectWalletAuthError(res, state.returnTo, 'wallet_failed');
+  }
+});
+
 router.get('/nonce', async (req: Request, res: Response) => {
   if (!enforceJsonRateLimit(req, res, 'auth:nonce', AUTH_RATE_LIMITS.nonce)) return;
 
@@ -846,92 +1250,7 @@ router.post('/verify', async (req: Request, res: Response) => {
       return;
     }
 
-    const linkedAccount = await prisma.authAccount.findUnique({
-      where: {
-        provider_providerAccountId: {
-          provider: 'wallet',
-          providerAccountId: walletAddress,
-        },
-      },
-      include: { user: { include: { authAccounts: { orderBy: { createdAt: 'asc' } } } } },
-    });
-    const walletUser = linkedAccount?.user ?? await prisma.user.findUnique({
-      where: { walletAddress },
-      include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
-    });
-
-    const authenticatedPayload = await getAuthenticatedPayload(req);
-    const authenticatedUser = authenticatedPayload ? await findUserForPayload(authenticatedPayload) : null;
-
-    if (authenticatedUser) {
-      if (walletUser && walletUser.id !== authenticatedUser.id) {
-        res.status(409).json({ error: 'That wallet is already linked to another profile' });
-        return;
-      }
-
-      const user = await linkWalletAccountToUser(authenticatedUser.id, walletAddress);
-      const provider = authenticatedPayload?.provider ?? 'wallet';
-      setAuthCookie(res, createAuthToken({
-        userId: user.id,
-        provider,
-        walletAddress: user.walletAddress,
-        expiresIn: JWT_EXPIRY,
-      }));
-
-      res.json({
-        authenticated: true,
-        isNewUser: false,
-        provider,
-        linked: true,
-        user: serializeUser(user),
-      });
-      return;
-    }
-
-    if (walletUser) {
-      const user = await prisma.user.update({
-        where: { id: walletUser.id },
-        data: { lastLoginAt: new Date() },
-        include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
-      });
-      setAuthCookie(res, createAuthToken({
-        userId: user.id,
-        provider: 'wallet',
-        walletAddress: user.walletAddress,
-        expiresIn: JWT_EXPIRY,
-      }));
-
-      res.json({
-        authenticated: true,
-        isNewUser: false,
-        provider: 'wallet',
-        linked: false,
-        user: serializeUser(user),
-      });
-      return;
-    }
-
-    const pendingRegistration: PendingRegistrationIdentity = {
-      provider: 'wallet',
-      providerAccountId: walletAddress,
-      displayName: walletAddress,
-      avatarUrl: null,
-      emailHash: null,
-      walletAddress,
-    };
-    setPendingAuthCookie(res, createPendingAuthToken(pendingRegistration));
-
-    res.json({
-      authenticated: true,
-      isNewUser: true,
-      provider: 'wallet',
-      pendingRegistration: {
-        provider: pendingRegistration.provider,
-        displayName: pendingRegistration.displayName,
-        avatarUrl: pendingRegistration.avatarUrl,
-        walletAddress,
-      },
-    });
+    res.json(await completeVerifiedWalletAuth(req, res, walletAddress));
   } catch (error) {
     if (error instanceof ProviderConflictError) {
       res.status(409).json({ error: error.message });
@@ -1316,18 +1635,30 @@ router.get('/leaderboard', async (req: Request, res: Response) => {
       const personalRank = seasonUser
         ? await getRankedSeasonLeaderboardRank(seasonUser, selectedSeason)
         : null;
+      const solWonByUserId = await getLeaderboardSolWonLamportsByUserId(
+        uniqueUserIds([
+          ...leaderboardUsers.map((leaderboardUser) => leaderboardUser.userId),
+          ...(user ? [user.id] : []),
+        ]),
+        selectedSeason
+      );
 
       res.json({
         mode,
         seasons,
         selectedSeason,
         leaderboard: leaderboardUsers.map((leaderboardUser, index) => (
-          serializeRankedSeasonLeaderboardEntry(leaderboardUser, index + 1)
+          serializeRankedSeasonLeaderboardEntry(
+            leaderboardUser,
+            index + 1,
+            solWonByUserId.get(leaderboardUser.userId)
+          )
         )),
         currentUser: user ? {
           rank: personalRank,
           userId: user.id,
           name: seasonUser?.userName ?? user.name,
+          solWonLamports: serializeLamports(solWonByUserId.get(user.id)),
           stats: seasonUser ? serializeRankedSeasonStats(seasonUser) : serializeEmptyRankedSeasonStats(),
         } : null,
       });
@@ -1343,18 +1674,29 @@ router.get('/leaderboard', async (req: Request, res: Response) => {
     const personalRank = user
       ? await getScoreLeaderboardRank(user)
       : null;
+    const solWonByUserId = await getLeaderboardSolWonLamportsByUserId(
+      uniqueUserIds([
+        ...leaderboardUsers.map((leaderboardUser) => leaderboardUser.id),
+        ...(user ? [user.id] : []),
+      ])
+    );
 
     res.json({
       mode,
       seasons,
       selectedSeason,
       leaderboard: leaderboardUsers.map((leaderboardUser, index) => (
-        serializeLeaderboardEntry(leaderboardUser, index + 1)
+        serializeLeaderboardEntry(
+          leaderboardUser,
+          index + 1,
+          solWonByUserId.get(leaderboardUser.id)
+        )
       )),
       currentUser: user ? {
         rank: personalRank,
         userId: user.id,
         name: user.name,
+        solWonLamports: serializeLamports(solWonByUserId.get(user.id)),
         stats: serializeLeaderboardStats(user),
       } : null,
     });
