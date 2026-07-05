@@ -9,6 +9,7 @@ import {
   type RecordingHudMode,
   type RecordingManifest,
   type RecordingRenderArtifact,
+  type RecordingRenderStage,
   type RecordingSummary,
   type RecordingViewport,
 } from '@voxel-strike/shared';
@@ -43,7 +44,8 @@ const SHOWCASE_RECORDING_FINALIZE_TIMEOUT_MS = SHOWCASE_RECORDING_DURATION_MS + 
 const SHOWCASE_RECORDING_POLL_MS = 1_000;
 const SHOWCASE_JOB_CACHE_TTL_MS = 24 * 60 * 60_000;
 const SHOWCASE_JOB_CACHE_KEY_PREFIX = 'voxel-strike:recordings:showcase-job:';
-const SHOWCASE_RENDER_INTERNAL_ERROR_PATTERN = /(?:page\.\w+|playwright|chromium|browser|ffmpeg|Timeout \d+ms exceeded)/i;
+const SHOWCASE_RENDER_HEARTBEAT_STALE_MS = 2 * 60_000;
+const SHOWCASE_RENDER_INTERNAL_ERROR_PATTERN = /(?:page\.\w+|playwright|chromium|browser|ffmpeg|Timeout \d+ms exceeded|timed out after \d+ms)/i;
 const SHOWCASE_ERROR_MESSAGE_MAX_LENGTH = 500;
 
 export interface BotMatchRecordingRequest {
@@ -95,6 +97,11 @@ export interface RecordingShowcaseJob {
   recordingStartedAt: string | null;
   downloadUrl: string | null;
   error: string | null;
+  renderStage?: RecordingRenderStage | null;
+  renderProgress?: number | null;
+  renderHeartbeatAt?: string | null;
+  renderMessage?: string | null;
+  renderStartedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   serverProcessId: string | null;
@@ -198,6 +205,30 @@ function getShowcaseJobPath(id: string): string {
 
 function getShowcaseJobCacheKey(id: string): string {
   return `${SHOWCASE_JOB_CACHE_KEY_PREFIX}${cleanShowcaseJobId(id)}`;
+}
+
+function parseDateMs(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isShowcaseRenderHeartbeatStale(job: RecordingShowcaseJob, now = Date.now()): boolean {
+  if (job.status !== 'rendering') return false;
+  const heartbeatMs = parseDateMs(job.renderHeartbeatAt) ?? parseDateMs(job.updatedAt);
+  return heartbeatMs !== null && now - heartbeatMs > SHOWCASE_RENDER_HEARTBEAT_STALE_MS;
+}
+
+async function failStaleShowcaseRenderJob(
+  job: RecordingShowcaseJob,
+  store?: RecordingShowcaseJobStore
+): Promise<RecordingShowcaseJob> {
+  if (!isShowcaseRenderHeartbeatStale(job)) return job;
+  return updateShowcaseJob(job, {
+    status: 'failed',
+    renderMessage: 'Render heartbeat expired',
+    error: 'Recording render stopped reporting progress. Try again in a moment.',
+  }, store);
 }
 
 async function readRecordingManifestWithRetry(id: string, attempts = 20): Promise<RecordingManifest> {
@@ -365,7 +396,8 @@ export async function getRecordingShowcaseJob(
   store?: RecordingShowcaseJobStore
 ): Promise<RecordingShowcaseJob> {
   try {
-    return JSON.parse(await fs.readFile(getShowcaseJobPath(id), 'utf8')) as RecordingShowcaseJob;
+    const job = JSON.parse(await fs.readFile(getShowcaseJobPath(id), 'utf8')) as RecordingShowcaseJob;
+    return await failStaleShowcaseRenderJob(job, store);
   } catch (fileError) {
     const cached = store?.redis
       ? await store.redis.get(getShowcaseJobCacheKey(id))
@@ -381,7 +413,7 @@ export async function getRecordingShowcaseJob(
         error: error instanceof Error ? error.message : String(error),
       });
     });
-    return job;
+    return await failStaleShowcaseRenderJob(job, store);
   }
 }
 
@@ -434,22 +466,40 @@ async function runShowcaseRecordingPipeline(
     job = await updateShowcaseJob(job, {
       status: 'rendering',
       renderId: render.renderId,
+      renderStage: 'queued',
+      renderProgress: 0,
+      renderHeartbeatAt: new Date().toISOString(),
+      renderMessage: 'Render queued',
       error: null,
     }, store);
 
     await renderRecordingToMp4({
       jobPath: path.join(getRecordingArtifactDir(job.recordingId), `${render.renderId}.render-job.json`),
+      onProgress: async (progress) => {
+        job = await updateShowcaseJob(job, {
+          renderStage: progress.stage,
+          renderProgress: progress.progress,
+          renderHeartbeatAt: progress.heartbeatAt,
+          renderMessage: progress.message ?? null,
+          renderStartedAt: progress.startedAt ?? job.renderStartedAt ?? null,
+        }, store);
+      },
     });
 
     await updateShowcaseJob(job, {
       status: 'succeeded',
       downloadUrl: showcaseDownloadUrl(job.recordingId, job.id),
+      renderStage: 'complete',
+      renderProgress: 1,
+      renderHeartbeatAt: new Date().toISOString(),
+      renderMessage: null,
       error: null,
     }, store);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     await updateShowcaseJob(job, {
       status: 'failed',
+      renderHeartbeatAt: new Date().toISOString(),
       error: formatShowcaseJobError(error),
     }, store).catch(() => {});
     loggers.room.error('Showcase recording job failed', {
@@ -502,6 +552,11 @@ export async function startShowcaseRecordingJob(input: {
     recordingStartedAt: result.manifest.startedAt ?? timestamp,
     downloadUrl: null,
     error: null,
+    renderStage: null,
+    renderProgress: null,
+    renderHeartbeatAt: null,
+    renderMessage: null,
+    renderStartedAt: null,
     createdAt: timestamp,
     updatedAt: timestamp,
     serverProcessId: input.serverProcessId ?? null,
@@ -571,11 +626,16 @@ export async function enqueueRecordingRender(
     id: renderId,
     status: 'queued',
     requestedAt: new Date().toISOString(),
+    startedAt: null,
     completedAt: null,
     fps,
     viewport,
     hudMode,
     outputPath,
+    stage: 'queued',
+    progress: 0,
+    progressMessage: 'Render queued',
+    heartbeatAt: null,
     error: null,
   };
   const nextSummary = {

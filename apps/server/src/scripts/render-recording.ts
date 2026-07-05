@@ -8,6 +8,7 @@ import type {
   RecordingHudMode,
   RecordingManifest,
   RecordingRenderArtifact,
+  RecordingRenderStage,
   RecordingSummary,
   RecordingViewport,
 } from '@voxel-strike/shared';
@@ -29,6 +30,7 @@ export interface RenderRecordingOptions {
   hudMode: RecordingHudMode | null;
   hudSubjectPlayerId: string | null;
   keepBrowserOpen: boolean;
+  onProgress: RenderProgressReporter | null;
 }
 
 interface LocalPlaybackServer {
@@ -40,8 +42,13 @@ interface RenderPage {
   evaluate<T = unknown>(pageFunction: (...args: any[]) => T | Promise<T>, arg?: unknown): Promise<T>;
   goto(url: string, options?: { waitUntil?: 'networkidle' | 'load' | 'domcontentloaded'; timeout?: number }): Promise<unknown>;
   route(url: string, handler: (route: RenderRoute) => Promise<void> | void): Promise<void>;
-  screenshot(options?: { type?: 'png'; animations?: 'disabled' | 'allow'; timeout?: number }): Promise<Buffer>;
   waitForFunction(pageFunction: (...args: any[]) => unknown, arg?: unknown, options?: { timeout?: number }): Promise<unknown>;
+  video(): RenderVideo | null;
+}
+
+interface RenderVideo {
+  path(): Promise<string>;
+  delete(): Promise<void>;
 }
 
 interface RenderRoute {
@@ -54,10 +61,19 @@ interface RenderRoute {
 }
 
 interface RenderBrowser {
-  newPage(options: {
+  newContext(options: {
     viewport: RecordingViewport;
     deviceScaleFactor: number;
-  }): Promise<RenderPage>;
+    recordVideo: {
+      dir: string;
+      size: RecordingViewport;
+    };
+  }): Promise<RenderBrowserContext>;
+  close(): Promise<void>;
+}
+
+interface RenderBrowserContext {
+  newPage(): Promise<RenderPage>;
   close(): Promise<void>;
 }
 
@@ -71,9 +87,23 @@ type RecordingBrowserWindow = Window & {
   __voxelRecording?: {
     isReady: boolean;
     durationMs: number;
-    stepTo: (recordingTimeMs: number) => Promise<void>;
+    currentTimeMs: number;
+    progress: number;
+    play: () => void;
+    pause: () => void;
+    waitUntilFinished: () => Promise<void>;
   };
 };
+
+export interface RecordingRenderProgressUpdate {
+  stage: RecordingRenderStage;
+  progress: number;
+  heartbeatAt: string;
+  startedAt?: string | null;
+  message?: string | null;
+}
+
+type RenderProgressReporter = (progress: RecordingRenderProgressUpdate) => Promise<void> | void;
 
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -95,9 +125,12 @@ const REMOTE_FONT_HOSTS = new Set([
 const FONT_FILE_EXTENSION_PATTERN = /\.(?:eot|otf|ttf|woff|woff2)$/i;
 const RECORDING_PLAYBACK_BOOT_TIMEOUT_MS = 30_000;
 const RECORDING_PLAYBACK_READY_TIMEOUT_MS = 120_000;
-const RECORDING_FRAME_SCREENSHOT_TIMEOUT_MS = 45_000;
+const RECORDING_RENDER_HEARTBEAT_MS = 5_000;
+const RECORDING_CAPTURE_TIMEOUT_BUFFER_MS = 90_000;
+const RECORDING_TRANSCODE_MIN_TIMEOUT_MS = 120_000;
+const RECORDING_TRANSCODE_TIMEOUT_MULTIPLIER = 2.5;
 
-// Playwright screenshots wait for document.fonts.ready; stalled web fonts can block every rendered frame.
+// Stalled web fonts can keep the replay page from ever reaching a stable ready state.
 export function shouldAbortRecordingRenderRequest(input: {
   resourceType?: string | null;
   url: string;
@@ -163,6 +196,7 @@ function parseArgs(args = process.argv.slice(2)): RenderRecordingOptions {
     hudMode: null,
     hudSubjectPlayerId: null,
     keepBrowserOpen: false,
+    onProgress: null,
   };
 
   for (let index = 0; index < args.length; index++) {
@@ -362,82 +396,192 @@ function sha256File(filePath: string): Promise<string> {
   });
 }
 
-async function writeBufferToStream(stream: NodeJS.WritableStream, buffer: Buffer): Promise<void> {
-  if (stream.write(buffer)) return;
-  await new Promise<void>((resolve, reject) => {
-    stream.once('drain', resolve);
-    stream.once('error', reject);
+function clampProgress(progress: number): number {
+  return Math.max(0, Math.min(1, progress));
+}
+
+function captureTimeoutMs(durationMs: number): number {
+  return Math.max(RECORDING_PLAYBACK_READY_TIMEOUT_MS, durationMs + RECORDING_CAPTURE_TIMEOUT_BUFFER_MS);
+}
+
+function transcodeTimeoutMs(durationMs: number): number {
+  return Math.max(
+    RECORDING_TRANSCODE_MIN_TIMEOUT_MS,
+    Math.ceil(durationMs * RECORDING_TRANSCODE_TIMEOUT_MULTIPLIER)
+  );
+}
+
+function formatFfmpegSeconds(ms: number): string {
+  return (Math.max(0, ms) / 1000).toFixed(3);
+}
+
+function waitForProcessClose(process: ReturnType<typeof spawn>): Promise<number | null> {
+  return new Promise<number | null>((resolve, reject) => {
+    process.once('error', reject);
+    process.once('close', resolve);
   });
 }
 
-export async function captureRecordingFrame(input: {
-  page: RenderPage;
-  frame: number;
-  recordingTimeMs: number;
-  previousFrame: Buffer | null;
-}): Promise<Buffer> {
-  await input.page.evaluate(async (timeMs) => {
-    await (window as RecordingBrowserWindow).__voxelRecording?.stepTo(timeMs);
-  }, input.recordingTimeMs);
+async function stopProcess(process: ReturnType<typeof spawn>, closePromise: Promise<number | null>): Promise<void> {
+  process.stdin?.destroy();
+  if (!process.killed) process.kill('SIGTERM');
+
+  const closed = await Promise.race([
+    closePromise.then(() => true, () => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2_000)),
+  ]);
+  if (closed) return;
+
+  process.kill('SIGKILL');
+  await Promise.race([
+    closePromise.catch(() => null),
+    new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+  ]);
+}
+
+async function waitForProcessCloseOrTimeout(input: {
+  process: ReturnType<typeof spawn>;
+  closePromise: Promise<number | null>;
+  timeoutMs: number;
+  label: string;
+}): Promise<number | null> {
+  let timeout: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(`${input.label} timed out after ${input.timeoutMs}ms`)), input.timeoutMs);
+  });
 
   try {
-    return await input.page.screenshot({
-      type: 'png',
-      animations: 'allow',
-      timeout: RECORDING_FRAME_SCREENSHOT_TIMEOUT_MS,
-    });
+    return await Promise.race([input.closePromise, timeoutPromise]);
   } catch (error) {
-    if (!input.previousFrame) throw error;
-
-    console.warn('[recording-render] Reusing previous frame after screenshot failure', {
-      frame: input.frame,
-      recordingTimeMs: input.recordingTimeMs,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return input.previousFrame;
+    await stopProcess(input.process, input.closePromise);
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 
-async function renderFrames(input: {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeout: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+export async function readRecordingPlaybackProgress(page: Pick<RenderPage, 'evaluate'>): Promise<{
+  currentTimeMs: number;
+  durationMs: number;
+  progress: number;
+}> {
+  return page.evaluate(() => {
+    const recording = (window as RecordingBrowserWindow).__voxelRecording;
+    return {
+      currentTimeMs: recording?.currentTimeMs ?? 0,
+      durationMs: recording?.durationMs ?? 0,
+      progress: recording?.progress ?? 0,
+    };
+  });
+}
+
+async function waitForRecordingPlayback(input: {
   page: RenderPage;
+  durationMs: number;
+  onProgress: (progress: number, message: string) => Promise<void>;
+}): Promise<void> {
+  let heartbeatInFlight = false;
+  const heartbeat = setInterval(() => {
+    if (heartbeatInFlight) return;
+    heartbeatInFlight = true;
+    void readRecordingPlaybackProgress(input.page)
+      .then((progress) => input.onProgress(
+        clampProgress(progress.progress || (progress.durationMs > 0 ? progress.currentTimeMs / progress.durationMs : 0)),
+        `Captured ${Math.round(progress.currentTimeMs / 1000)}s of ${Math.round((progress.durationMs || input.durationMs) / 1000)}s`
+      ))
+      .catch(() => {})
+      .finally(() => {
+        heartbeatInFlight = false;
+      });
+  }, RECORDING_RENDER_HEARTBEAT_MS);
+  heartbeat.unref?.();
+
+  try {
+    await withTimeout(
+      input.page.evaluate(async () => {
+        const recording = (window as RecordingBrowserWindow).__voxelRecording;
+        if (!recording) throw new Error('Recording playback controls were not initialized');
+        recording.play();
+        await recording.waitUntilFinished();
+      }),
+      captureTimeoutMs(input.durationMs),
+      'Recording viewport capture'
+    );
+    await input.onProgress(1, 'Capture complete');
+  } finally {
+    clearInterval(heartbeat);
+    void input.page.evaluate(() => {
+      (window as RecordingBrowserWindow).__voxelRecording?.pause();
+    }).catch(() => {});
+  }
+}
+
+async function transcodeVideoToMp4(input: {
+  webmPath: string;
   outputPath: string;
   fps: number;
   durationMs: number;
+  startOffsetMs: number;
+  onProgress: (progress: number, message: string) => Promise<void>;
 }): Promise<void> {
   await fs.mkdir(path.dirname(input.outputPath), { recursive: true });
   const ffmpeg = spawn('ffmpeg', [
     '-y',
-    '-f', 'image2pipe',
-    '-framerate', String(input.fps),
-    '-i', 'pipe:0',
+    '-i', input.webmPath,
+    '-ss', formatFfmpegSeconds(input.startOffsetMs),
+    '-t', formatFfmpegSeconds(input.durationMs),
+    '-r', String(input.fps),
     '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
     '-c:v', 'libx264',
     '-pix_fmt', 'yuv420p',
     '-movflags', '+faststart',
     input.outputPath,
-  ], { stdio: ['pipe', 'inherit', 'inherit'] });
+  ], { stdio: ['ignore', 'inherit', 'inherit'] });
+  const ffmpegClose = waitForProcessClose(ffmpeg);
+  const startedAt = Date.now();
+  let heartbeatInFlight = false;
+  const heartbeat = setInterval(() => {
+    if (heartbeatInFlight) return;
+    heartbeatInFlight = true;
+    const elapsedMs = Date.now() - startedAt;
+    const progress = clampProgress(0.9 + Math.min(0.08, (elapsedMs / transcodeTimeoutMs(input.durationMs)) * 0.08));
+    void input.onProgress(progress, 'Encoding MP4')
+      .catch(() => {})
+      .finally(() => {
+        heartbeatInFlight = false;
+      });
+  }, RECORDING_RENDER_HEARTBEAT_MS);
+  heartbeat.unref?.();
 
-  const frameCount = Math.max(1, Math.ceil((input.durationMs / 1000) * input.fps));
-  let previousFrame: Buffer | null = null;
-  for (let frame = 0; frame < frameCount; frame++) {
-    const recordingTimeMs = Math.min(input.durationMs, Math.round((frame / input.fps) * 1000));
-    const screenshot = await captureRecordingFrame({
-      page: input.page,
-      frame,
-      recordingTimeMs,
-      previousFrame,
+  try {
+    const exitCode = await waitForProcessCloseOrTimeout({
+      process: ffmpeg,
+      closePromise: ffmpegClose,
+      timeoutMs: transcodeTimeoutMs(input.durationMs),
+      label: 'Recording MP4 transcode',
     });
-    previousFrame = screenshot;
-    await writeBufferToStream(ffmpeg.stdin, screenshot);
-  }
-  ffmpeg.stdin.end();
-
-  const exitCode = await new Promise<number | null>((resolve, reject) => {
-    ffmpeg.once('error', reject);
-    ffmpeg.once('close', resolve);
-  });
-  if (exitCode !== 0) {
-    throw new Error(`ffmpeg exited with code ${exitCode ?? 'unknown'}`);
+    if (exitCode !== 0) {
+      throw new Error(`ffmpeg exited with code ${exitCode ?? 'unknown'}`);
+    }
+    await input.onProgress(0.98, 'MP4 encoded');
+  } catch (error) {
+    await fs.rm(input.outputPath, { force: true }).catch(() => {});
+    throw error;
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 
@@ -478,6 +622,7 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
     hudMode: options.hudMode ?? null,
     hudSubjectPlayerId: options.hudSubjectPlayerId ?? null,
     keepBrowserOpen: options.keepBrowserOpen ?? false,
+    onProgress: options.onProgress ?? null,
   };
   const job = normalizedOptions.jobPath
     ? await readJson<RecordingRenderQueueItem>(path.resolve(normalizedOptions.jobPath))
@@ -503,22 +648,64 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
     throw new Error('No client URL was provided and apps/client/dist was not found. Build the client or pass --client-url.');
   }
 
+  const renderStartedAt = new Date().toISOString();
+  const reportProgress = async (
+    stage: RecordingRenderStage,
+    progress: number,
+    message: string | null = null
+  ): Promise<void> => {
+    const update: RecordingRenderProgressUpdate = {
+      stage,
+      progress: clampProgress(progress),
+      heartbeatAt: new Date().toISOString(),
+      startedAt: renderStartedAt,
+      message,
+    };
+    await updateSummaryRender({
+      artifactDir,
+      renderId: job?.renderId ?? null,
+      patch: {
+        stage: update.stage,
+        progress: update.progress,
+        progressMessage: update.message ?? null,
+        heartbeatAt: update.heartbeatAt,
+        startedAt: update.startedAt ?? null,
+      },
+    });
+    await normalizedOptions.onProgress?.(update);
+  };
+
   await updateSummaryRender({
     artifactDir,
     renderId: job?.renderId ?? null,
     patch: {
       status: 'rendering',
+      startedAt: renderStartedAt,
       outputPath,
       fps,
       viewport,
       hudMode,
+      stage: 'preparing',
+      progress: 0,
+      progressMessage: 'Preparing playback',
+      heartbeatAt: renderStartedAt,
       error: null,
     },
+  });
+  await normalizedOptions.onProgress?.({
+    stage: 'preparing',
+    progress: 0,
+    heartbeatAt: renderStartedAt,
+    startedAt: renderStartedAt,
+    message: 'Preparing playback',
   });
 
   let playbackServer: LocalPlaybackServer | null = null;
   let browser: RenderBrowser | null = null;
+  let context: RenderBrowserContext | null = null;
+  let tempVideoDir: string | null = null;
   try {
+    await reportProgress('preparing', 0.01, 'Starting playback server');
     playbackServer = await startLocalPlaybackServer({ artifactDir, clientDist });
     const baseUrl = normalizedOptions.clientUrl ?? playbackServer?.baseUrl;
     if (!baseUrl) throw new Error('Playback URL was not resolved');
@@ -533,11 +720,22 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
     });
     const chromium = await loadChromium();
     browser = await chromium.launch({ headless: !normalizedOptions.keepBrowserOpen });
-    const page = await browser.newPage({
+    tempVideoDir = await fs.mkdtemp(path.join(artifactDir, `${job?.renderId ?? 'render'}.video-`));
+    context = await browser.newContext({
       viewport,
       deviceScaleFactor: manifest.devicePixelRatio || 1,
+      recordVideo: {
+        dir: tempVideoDir,
+        size: viewport,
+      },
     });
+    const page = await context.newPage();
+    const videoRecordStartedAt = Date.now();
+    const video = page.video();
+    if (!video) throw new Error('Playwright video recorder was not initialized');
+
     await installRenderRequestGuards(page);
+    await reportProgress('preparing', 0.03, 'Loading replay');
     await page.goto(playbackUrl, { waitUntil: 'networkidle', timeout: RECORDING_PLAYBACK_BOOT_TIMEOUT_MS });
     await page.waitForFunction(
       () => Boolean((window as RecordingBrowserWindow).__voxelRecording),
@@ -556,7 +754,27 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
       throw new Error('Recording duration was not available');
     }
 
-    await renderFrames({ page, outputPath, fps, durationMs });
+    await reportProgress('capturing', 0.05, 'Capturing viewport video');
+    const captureStartedAt = Date.now();
+    await waitForRecordingPlayback({
+      page,
+      durationMs,
+      onProgress: (progress, message) => reportProgress('capturing', 0.05 + progress * 0.85, message),
+    });
+    await context.close();
+    context = null;
+
+    const webmPath = await video.path();
+    await reportProgress('transcoding', 0.9, 'Encoding MP4');
+    await transcodeVideoToMp4({
+      webmPath,
+      outputPath,
+      fps,
+      durationMs,
+      startOffsetMs: captureStartedAt - videoRecordStartedAt,
+      onProgress: (progress, message) => reportProgress('transcoding', progress, message),
+    });
+    await reportProgress('finalizing', 0.99, 'Finalizing MP4');
     const mp4Sha256 = await sha256File(outputPath);
     await updateSummaryRender({
       artifactDir,
@@ -565,8 +783,19 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
         status: 'succeeded',
         completedAt: new Date().toISOString(),
         outputPath,
+        stage: 'complete',
+        progress: 1,
+        progressMessage: null,
+        heartbeatAt: new Date().toISOString(),
         error: null,
       },
+    });
+    await normalizedOptions.onProgress?.({
+      stage: 'complete',
+      progress: 1,
+      heartbeatAt: new Date().toISOString(),
+      startedAt: renderStartedAt,
+      message: null,
     });
     const manifestPath = path.join(artifactDir, 'manifest.json');
     const nextManifest = await readJson<RecordingManifest>(manifestPath);
@@ -580,6 +809,7 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
       outputPath,
     };
   } catch (error) {
+    await fs.rm(outputPath, { force: true }).catch(() => {});
     await updateSummaryRender({
       artifactDir,
       renderId: job?.renderId ?? null,
@@ -587,13 +817,16 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
         status: 'failed',
         completedAt: new Date().toISOString(),
         outputPath,
+        heartbeatAt: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error),
       },
     }).catch(() => {});
     throw error;
   } finally {
+    if (context) await context.close().catch(() => {});
     if (browser && !normalizedOptions.keepBrowserOpen) await browser.close();
     if (playbackServer) await playbackServer.close();
+    if (tempVideoDir) await fs.rm(tempVideoDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
