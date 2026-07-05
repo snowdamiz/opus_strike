@@ -25,6 +25,14 @@ export type RecordingRenderStatus =
   | 'succeeded'
   | 'failed';
 
+export type RecordingRenderStage =
+  | 'queued'
+  | 'preparing'
+  | 'capturing'
+  | 'transcoding'
+  | 'finalizing'
+  | 'complete';
+
 export type RecordingCameraMode = 'directed' | 'fixed_aerial';
 export type RecordingHudMode = 'hidden' | 'selected_player' | 'cinematic_observer';
 export type RecordingSource = 'bot_match';
@@ -186,11 +194,16 @@ export interface RecordingRenderArtifact {
   id: string;
   status: RecordingRenderStatus;
   requestedAt: string;
+  startedAt?: string | null;
   completedAt: string | null;
   fps: number;
   viewport: RecordingViewport;
   hudMode: RecordingHudMode;
   outputPath: string | null;
+  stage?: RecordingRenderStage | null;
+  progress?: number | null;
+  progressMessage?: string | null;
+  heartbeatAt?: string | null;
   error: string | null;
 }
 

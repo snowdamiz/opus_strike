@@ -9,6 +9,7 @@ import type {
   PlayerDailyMissionsResponse,
   PregeneratedMapArtifactEnvelope,
   PregeneratedMapCatalogSummary,
+  RecordingRenderStage,
   SkinPurchaseIntentSnapshot,
   SkinPurchaseTransactionSnapshot,
   VoxelMapSizeId,
@@ -159,6 +160,11 @@ export interface RecordingShowcaseJob {
   recordingStartedAt: string | null;
   downloadUrl: string | null;
   error: string | null;
+  renderStage?: RecordingRenderStage | null;
+  renderProgress?: number | null;
+  renderHeartbeatAt?: string | null;
+  renderMessage?: string | null;
+  renderStartedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   serverProcessId: string | null;

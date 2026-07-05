@@ -1100,11 +1100,27 @@ function formatRecordingWaitRemaining(job: RecordingShowcaseJob, nowMs: number):
 function formatRecordingJobStatus(job: RecordingShowcaseJob, nowMs: number): string {
   if (job.status === 'succeeded') return 'Ready to download';
   if (job.status === 'failed') return 'Recording failed';
-  if (job.status === 'rendering') return 'Rendering MP4 on server';
+  if (job.status === 'rendering') {
+    const progress = typeof job.renderProgress === 'number' && Number.isFinite(job.renderProgress)
+      ? Math.max(0, Math.min(1, job.renderProgress))
+      : null;
+    const stage = formatRecordingRenderStage(job.renderStage);
+    return progress === null
+      ? stage
+      : `${stage} - ${Math.round(progress * 100)}%`;
+  }
   const remaining = formatRecordingWaitRemaining(job, nowMs);
   return remaining
     ? `Recording random lobby on server - ${remaining} before render`
     : 'Recording random lobby on server';
+}
+
+function formatRecordingRenderStage(stage: RecordingShowcaseJob['renderStage']): string {
+  if (stage === 'capturing') return 'Capturing video on server';
+  if (stage === 'transcoding') return 'Encoding MP4 on server';
+  if (stage === 'finalizing') return 'Finalizing MP4';
+  if (stage === 'complete') return 'Ready to download';
+  return 'Preparing server render';
 }
 
 function AccountValue({ value }: { value: string }) {

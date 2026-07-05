@@ -9,9 +9,12 @@ declare global {
       isReady: boolean;
       durationMs: number;
       fps: number;
+      currentTimeMs: number;
+      progress: number;
       stepTo: (recordingTimeMs: number) => Promise<void>;
       play: () => void;
       pause: () => void;
+      waitUntilFinished: () => Promise<void>;
       markSceneReady: () => void;
     };
   }

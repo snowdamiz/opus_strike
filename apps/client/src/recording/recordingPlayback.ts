@@ -221,6 +221,9 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
   let disposed = false;
   let playbackReadyResolved = false;
   let sceneReadyResolved = false;
+  let finishResolved = false;
+  const finishResolvers = new Set<() => void>();
+  let recordingControls: NonNullable<Window['__voxelRecording']> | null = null;
 
   const playbackStore = useRecordingPlaybackStore.getState();
   playbackStore.setActive({
@@ -240,6 +243,17 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
     setMatchStartGateKey: () => {},
   });
 
+  const updateRecordingProgress = () => {
+    if (!recordingControls) return;
+    recordingControls.currentTimeMs = currentTimeMs;
+    recordingControls.progress = durationMs > 0 ? Math.min(1, currentTimeMs / durationMs) : 1;
+    if (currentTimeMs < durationMs) return;
+
+    finishResolved = true;
+    for (const resolve of finishResolvers) resolve();
+    finishResolvers.clear();
+  };
+
   const emitThrough = (targetTimeMs: number) => {
     while (eventIndex < events.length && events[eventIndex].recordingTimeMs <= targetTimeMs) {
       const event = events[eventIndex];
@@ -247,12 +261,15 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
       bus.emit(event.type, event.payload);
     }
     currentTimeMs = Math.max(0, Math.min(durationMs, targetTimeMs));
+    updateRecordingProgress();
   };
 
   const resetToStart = () => {
     applyManifestToGameStore(manifest, hudSubjectPlayerId);
     eventIndex = 0;
     currentTimeMs = 0;
+    finishResolved = false;
+    updateRecordingProgress();
   };
 
   const stepTo = async (targetTimeMs: number) => {
@@ -293,9 +310,14 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
     frameHandle = window.requestAnimationFrame(playFrame);
   };
 
-  let recordingControls: NonNullable<Window['__voxelRecording']>;
+  const waitUntilFinished = () => {
+    if (finishResolved || currentTimeMs >= durationMs) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      finishResolvers.add(resolve);
+    });
+  };
   const resolveRecordingReady = () => {
-    if (!playbackReadyResolved || !sceneReadyResolved || recordingControls.isReady) return;
+    if (!recordingControls || !playbackReadyResolved || !sceneReadyResolved || recordingControls.isReady) return;
     recordingControls.isReady = true;
     useRecordingPlaybackStore.getState().setReady(true);
   };
@@ -304,9 +326,12 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
     isReady: false,
     durationMs,
     fps: manifest.fps,
+    currentTimeMs: 0,
+    progress: 0,
     stepTo,
     play,
     pause,
+    waitUntilFinished,
     markSceneReady: () => {
       if (disposed || sceneReadyResolved) return;
       sceneReadyResolved = true;
@@ -325,7 +350,7 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
     pause();
     bus.leave();
     useRecordingPlaybackStore.getState().reset();
-    if (window.__voxelRecording === recordingControls) {
+    if (recordingControls && window.__voxelRecording === recordingControls) {
       delete window.__voxelRecording;
     }
   };
