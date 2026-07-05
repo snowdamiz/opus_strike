@@ -4,6 +4,7 @@ import type { RecordingHudMode } from '@voxel-strike/shared';
 interface RecordingPlaybackState {
   isActive: boolean;
   isReady: boolean;
+  renderMode: boolean;
   id: string | null;
   hudMode: RecordingHudMode;
   hudSubjectPlayerId: string | null;
@@ -12,6 +13,7 @@ interface RecordingPlaybackState {
     id: string;
     hudMode: RecordingHudMode;
     hudSubjectPlayerId: string | null;
+    renderMode?: boolean;
   }) => void;
   setReady: (ready: boolean) => void;
   setError: (error: string | null) => void;
@@ -21,6 +23,7 @@ interface RecordingPlaybackState {
 const initialRecordingPlaybackState = {
   isActive: false,
   isReady: false,
+  renderMode: false,
   id: null,
   hudMode: 'selected_player' as RecordingHudMode,
   hudSubjectPlayerId: null,
@@ -29,9 +32,10 @@ const initialRecordingPlaybackState = {
 
 export const useRecordingPlaybackStore = create<RecordingPlaybackState>((set) => ({
   ...initialRecordingPlaybackState,
-  setActive: ({ id, hudMode, hudSubjectPlayerId }) => set({
+  setActive: ({ id, hudMode, hudSubjectPlayerId, renderMode = false }) => set({
     isActive: true,
     isReady: false,
+    renderMode,
     id,
     hudMode,
     hudSubjectPlayerId,

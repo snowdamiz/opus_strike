@@ -48,7 +48,7 @@ const SHOWCASE_RECORDING_POLL_MS = 1_000;
 const SHOWCASE_JOB_CACHE_TTL_MS = 24 * 60 * 60_000;
 const SHOWCASE_JOB_CACHE_KEY_PREFIX = 'voxel-strike:recordings:showcase-job:';
 const SHOWCASE_RENDER_HEARTBEAT_STALE_MS = 2 * 60_000;
-const SHOWCASE_RENDER_INTERNAL_ERROR_PATTERN = /(?:page\.\w+|playwright|chromium|browser|ffmpeg|Timeout \d+ms exceeded|timed out after \d+ms|Recording playback (?:stalled|stopped responding))/i;
+const SHOWCASE_RENDER_INTERNAL_ERROR_PATTERN = /(?:page\.\w+|playwright|chromium|browser|ffmpeg|Timeout \d+ms exceeded|timed out after \d+ms|Recording playback (?:stalled|stopped responding)|effective frame rate)/i;
 const SHOWCASE_ERROR_MESSAGE_MAX_LENGTH = 500;
 
 export interface BotMatchRecordingRequest {
@@ -464,7 +464,7 @@ async function runShowcaseRecordingPipeline(
     const render = await enqueueRecordingRender(job.recordingId, {
       fps: SHOWCASE_RENDER_FPS,
       viewport: SHOWCASE_RENDER_VIEWPORT,
-      hudMode: 'selected_player',
+      hudMode: 'cinematic_observer',
     });
     job = await updateShowcaseJob(job, {
       status: 'rendering',

@@ -7,8 +7,12 @@ import {
   canUsePhantomMobileDeepLink,
   clearPhantomMobileDeepLinkSession,
   getPhantomMobileDeepLinkSession,
+  handlePhantomMobileDeepLinkCallback,
   hasPhantomMobileDeepLinkCallback,
-} from '../utils/phantomDeepLinkLite';
+  startPhantomMobileConnect,
+  startPhantomMobileSignMessage,
+  waitForPhantomMobileRedirect,
+} from '../utils/phantomDeepLink';
 
 type AuthProviderName = 'discord' | 'wallet';
 const EMPTY_LINKED_ACCOUNTS: LinkedAccountSummary[] = [];
@@ -520,11 +524,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
       try {
         if (hasPhantomMobileDeepLinkCallback()) {
-          const {
-            handlePhantomMobileDeepLinkCallback,
-            startPhantomMobileSignMessage,
-            waitForPhantomMobileRedirect,
-          } = await import('../utils/phantomDeepLink');
           const callback = handlePhantomMobileDeepLinkCallback();
           if (callback.handled) {
             if (!callback.ok) {
@@ -724,10 +723,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           return mobileSession.publicKey;
         }
 
-        const {
-          startPhantomMobileConnect,
-          waitForPhantomMobileRedirect,
-        } = await import('../utils/phantomDeepLink');
         startPhantomMobileConnect();
         await waitForPhantomMobileRedirect<void>();
         return null;
@@ -787,11 +782,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setNotice(null);
 
       try {
-        const {
-          startPhantomMobileConnect,
-          startPhantomMobileSignMessage,
-          waitForPhantomMobileRedirect,
-        } = await import('../utils/phantomDeepLink');
         const mobileSession = getPhantomMobileDeepLinkSession();
         if (mobileSession) {
           setActiveWalletProvider(PHANTOM_MOBILE_PROVIDER_ID);

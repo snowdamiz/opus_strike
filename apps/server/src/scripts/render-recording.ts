@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { createReadStream, createWriteStream, type WriteStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import { createServer, type ServerResponse } from 'node:http';
 import path from 'node:path';
@@ -40,22 +40,20 @@ interface LocalPlaybackServer {
 
 interface RenderPage {
   evaluate<T = unknown>(pageFunction: (...args: any[]) => T | Promise<T>, arg?: unknown): Promise<T>;
+  exposeBinding(
+    name: string,
+    callback: (source: unknown, ...args: any[]) => unknown | Promise<unknown>
+  ): Promise<void>;
   goto(url: string, options?: { waitUntil?: 'networkidle' | 'load' | 'domcontentloaded'; timeout?: number }): Promise<unknown>;
   on?(event: 'console', handler: (message: RenderConsoleMessage) => void): void;
   on?(event: 'pageerror', handler: (error: Error) => void): void;
   route(url: string, handler: (route: RenderRoute) => Promise<void> | void): Promise<void>;
   waitForFunction(pageFunction: (...args: any[]) => unknown, arg?: unknown, options?: { timeout?: number }): Promise<unknown>;
-  video(): RenderVideo | null;
 }
 
 interface RenderConsoleMessage {
   type(): string;
   text(): string;
-}
-
-interface RenderVideo {
-  path(): Promise<string>;
-  delete(): Promise<void>;
 }
 
 interface RenderRoute {
@@ -71,10 +69,6 @@ interface RenderBrowser {
   newContext(options: {
     viewport: RecordingViewport;
     deviceScaleFactor: number;
-    recordVideo: {
-      dir: string;
-      size: RecordingViewport;
-    };
   }): Promise<RenderBrowserContext>;
   close(): Promise<void>;
 }
@@ -102,7 +96,22 @@ type RecordingBrowserWindow = Window & {
     pause: () => void;
     waitUntilFinished: () => Promise<void>;
   };
+  __voxelRecordingCanvasCapture?: {
+    stop: () => Promise<RecordingCanvasCaptureResult>;
+  };
+  __voxelRecordingWriteVideoChunk?: (base64Chunk: string) => Promise<void>;
 };
+
+interface RecordingCanvasCaptureResult {
+  byteCount: number;
+  chunkCount: number;
+  mimeType: string;
+}
+
+interface CanvasVideoCapture {
+  webmPath: string;
+  stop: () => Promise<RecordingCanvasCaptureResult>;
+}
 
 export interface RecordingRenderProgressUpdate {
   stage: RecordingRenderStage;
@@ -143,6 +152,13 @@ const RECORDING_CAPTURE_PROGRESS_STALE_MS = 60_000;
 const RECORDING_TRANSCODE_MIN_TIMEOUT_MS = 120_000;
 const RECORDING_TRANSCODE_TIMEOUT_MULTIPLIER = 2.5;
 const RECORDING_BROWSER_CLOSE_TIMEOUT_MS = 15_000;
+const RECORDING_CANVAS_CAPTURE_TIMESLICE_MS = 1_000;
+const RECORDING_CANVAS_CAPTURE_STOP_TIMEOUT_MS = 30_000;
+const RECORDING_CANVAS_VIDEO_BITS_PER_SECOND = 7_000_000;
+const RECORDING_MIN_EFFECTIVE_FPS_RATIO = 0.4;
+const RECORDING_MIN_EFFECTIVE_FPS = 10;
+const RECORDING_VALIDATE_MIN_TIMEOUT_MS = 60_000;
+const RECORDING_VALIDATE_TIMEOUT_MULTIPLIER = 0.4;
 
 // Stalled web fonts can keep the replay page from ever reaching a stable ready state.
 export function shouldAbortRecordingRenderRequest(input: {
@@ -351,6 +367,7 @@ function buildPlaybackUrl(input: {
   eventsUrl: string;
   hudMode: RecordingHudMode;
   hudSubjectPlayerId: string | null;
+  renderMode: boolean;
 }): string {
   const url = new URL(input.baseUrl);
   url.searchParams.set('recordingPlayback', '1');
@@ -358,6 +375,9 @@ function buildPlaybackUrl(input: {
   url.searchParams.set('recordingManifestUrl', input.manifestUrl);
   url.searchParams.set('recordingEventsUrl', input.eventsUrl);
   url.searchParams.set('recordingHudMode', input.hudMode);
+  if (input.renderMode) {
+    url.searchParams.set('recordingRender', '1');
+  }
   if (input.hudSubjectPlayerId) {
     url.searchParams.set('recordingHudSubjectPlayerId', input.hudSubjectPlayerId);
   }
@@ -436,6 +456,13 @@ function transcodeTimeoutMs(durationMs: number): number {
   );
 }
 
+function validateTimeoutMs(durationMs: number): number {
+  return Math.max(
+    RECORDING_VALIDATE_MIN_TIMEOUT_MS,
+    Math.ceil(durationMs * RECORDING_VALIDATE_TIMEOUT_MULTIPLIER)
+  );
+}
+
 function formatFfmpegSeconds(ms: number): string {
   return (Math.max(0, ms) / 1000).toFixed(3);
 }
@@ -506,8 +533,199 @@ async function closeWithTimeout(label: string, close: () => Promise<void>): Prom
   }
 }
 
+function writeToStream(stream: WriteStream, chunk: Buffer): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      stream.off('drain', onDrain);
+      stream.off('error', onError);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    stream.once('error', onError);
+    if (stream.write(chunk)) {
+      cleanup();
+      resolve();
+      return;
+    }
+    stream.once('drain', onDrain);
+  });
+}
+
+function finishWriteStream(stream: WriteStream): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const cleanup = () => {
+      stream.off('error', onError);
+    };
+
+    stream.once('error', onError);
+    stream.end(() => {
+      cleanup();
+      resolve();
+    });
+  });
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function startCanvasVideoCapture(input: {
+  page: RenderPage;
+  webmPath: string;
+  fps: number;
+}): Promise<CanvasVideoCapture> {
+  await fs.mkdir(path.dirname(input.webmPath), { recursive: true });
+  const output = createWriteStream(input.webmPath);
+  let byteCount = 0;
+  let chunkCount = 0;
+  let writeError: Error | null = null;
+  output.once('error', (error) => {
+    writeError = error instanceof Error ? error : new Error(String(error));
+  });
+
+  await input.page.exposeBinding('__voxelRecordingWriteVideoChunk', async (_source, base64Chunk: string) => {
+    if (writeError) throw writeError;
+    const chunk = Buffer.from(base64Chunk, 'base64');
+    if (chunk.byteLength === 0) return;
+    await writeToStream(output, chunk);
+    byteCount += chunk.byteLength;
+    chunkCount += 1;
+  });
+
+  await input.page.waitForFunction(
+    () => Array.from(document.querySelectorAll('canvas')).some((candidate) => (
+      candidate instanceof HTMLCanvasElement &&
+      candidate.width > 0 &&
+      candidate.height > 0 &&
+      typeof candidate.captureStream === 'function'
+    )),
+    null,
+    { timeout: RECORDING_PLAYBACK_BOOT_TIMEOUT_MS }
+  );
+
+  await input.page.evaluate((settings) => {
+    const win = window as RecordingBrowserWindow;
+    const writeVideoChunk = win.__voxelRecordingWriteVideoChunk;
+    if (!writeVideoChunk) throw new Error('Recording video chunk writer was not installed');
+    if (typeof MediaRecorder === 'undefined') throw new Error('MediaRecorder is not available in this browser');
+
+    const canvas = Array.from(document.querySelectorAll('canvas'))
+      .filter((candidate): candidate is HTMLCanvasElement => (
+        candidate instanceof HTMLCanvasElement &&
+        candidate.width > 0 &&
+        candidate.height > 0 &&
+        typeof candidate.captureStream === 'function'
+      ))
+      .sort((left, right) => (right.width * right.height) - (left.width * left.height))[0];
+    if (!canvas) throw new Error('Recording gameplay canvas was not found');
+
+    const mimeType = [
+      'video/webm;codecs=vp8',
+      'video/webm;codecs=vp9',
+      'video/webm',
+    ].find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? '';
+    const stream = canvas.captureStream(settings.fps);
+    const recorder = new MediaRecorder(stream, {
+      ...(mimeType ? { mimeType } : {}),
+      videoBitsPerSecond: settings.videoBitsPerSecond,
+    });
+    const pendingWrites: Promise<void>[] = [];
+    let captureByteCount = 0;
+    let captureChunkCount = 0;
+    let captureError: string | null = null;
+
+    const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
+      const bytes = new Uint8Array(buffer);
+      const sliceSize = 0x8000;
+      let binary = '';
+      for (let offset = 0; offset < bytes.length; offset += sliceSize) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + sliceSize));
+      }
+      return btoa(binary);
+    };
+
+    recorder.addEventListener('dataavailable', (event) => {
+      if (!event.data.size) return;
+      captureByteCount += event.data.size;
+      captureChunkCount += 1;
+      pendingWrites.push(event.data.arrayBuffer().then((buffer) => (
+        writeVideoChunk(arrayBufferToBase64(buffer))
+      )));
+    });
+    recorder.addEventListener('error', (event) => {
+      captureError = (event as ErrorEvent).message || 'Canvas recorder failed';
+    });
+
+    win.__voxelRecordingCanvasCapture = {
+      stop: () => new Promise<RecordingCanvasCaptureResult>((resolve, reject) => {
+        const finalize = () => {
+          void Promise.all(pendingWrites)
+            .then(() => {
+              stream.getTracks().forEach((track) => track.stop());
+              if (captureError) {
+                reject(new Error(captureError));
+                return;
+              }
+              resolve({
+                byteCount: captureByteCount,
+                chunkCount: captureChunkCount,
+                mimeType: recorder.mimeType || mimeType || 'video/webm',
+              });
+            })
+            .catch(reject);
+        };
+
+        if (recorder.state === 'inactive') {
+          finalize();
+          return;
+        }
+        recorder.addEventListener('stop', finalize, { once: true });
+        recorder.stop();
+      }),
+    };
+
+    recorder.start(settings.timesliceMs);
+  }, {
+    fps: input.fps,
+    timesliceMs: RECORDING_CANVAS_CAPTURE_TIMESLICE_MS,
+    videoBitsPerSecond: RECORDING_CANVAS_VIDEO_BITS_PER_SECOND,
+  });
+
+  return {
+    webmPath: input.webmPath,
+    stop: async () => {
+      const captureResult = await withTimeout(
+        input.page.evaluate(() => {
+          const capture = (window as RecordingBrowserWindow).__voxelRecordingCanvasCapture;
+          if (!capture) throw new Error('Recording canvas capture was not initialized');
+          return capture.stop();
+        }),
+        RECORDING_CANVAS_CAPTURE_STOP_TIMEOUT_MS,
+        'Recording canvas capture stop'
+      );
+      await finishWriteStream(output);
+      if (writeError) throw writeError;
+      if (byteCount <= 0 || chunkCount <= 0 || captureResult.byteCount <= 0 || captureResult.chunkCount <= 0) {
+        throw new Error('Recording canvas capture produced no video data');
+      }
+      return {
+        byteCount,
+        chunkCount,
+        mimeType: captureResult.mimeType,
+      };
+    },
+  };
 }
 
 export async function readRecordingPlaybackProgress(page: Pick<RenderPage, 'evaluate'>): Promise<{
@@ -602,7 +820,7 @@ async function waitForRecordingPlayback(input: {
       }
     }
 
-    throw new Error(`Recording viewport capture timed out after ${captureTimeoutMs(input.durationMs)}ms`);
+    throw new Error(`Recording playback capture timed out after ${captureTimeoutMs(input.durationMs)}ms`);
   } finally {
     void input.page.evaluate(() => {
       (window as RecordingBrowserWindow).__voxelRecording?.pause();
@@ -663,6 +881,60 @@ async function transcodeVideoToMp4(input: {
     throw error;
   } finally {
     clearInterval(heartbeat);
+  }
+}
+
+async function estimateDistinctFrameCount(input: {
+  videoPath: string;
+  durationMs: number;
+}): Promise<number> {
+  const ffmpeg = spawn('ffmpeg', [
+    '-hide_banner',
+    '-i', input.videoPath,
+    '-vf', 'mpdecimate=max=64:hi=768:lo=320:frac=0.33',
+    '-an',
+    '-f', 'null',
+    '-',
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const ffmpegClose = waitForProcessClose(ffmpeg);
+  let distinctFrameCount = 0;
+  ffmpeg.stderr?.setEncoding('utf8');
+  ffmpeg.stderr?.on('data', (chunk: string) => {
+    for (const match of chunk.matchAll(/frame=\s*(\d+)/g)) {
+      distinctFrameCount = Math.max(distinctFrameCount, Number(match[1]));
+    }
+  });
+
+  const exitCode = await waitForProcessCloseOrTimeout({
+    process: ffmpeg,
+    closePromise: ffmpegClose,
+    timeoutMs: validateTimeoutMs(input.durationMs),
+    label: 'Recording MP4 motion validation',
+  });
+  if (exitCode !== 0) {
+    throw new Error(`ffmpeg motion validation exited with code ${exitCode ?? 'unknown'}`);
+  }
+  return distinctFrameCount;
+}
+
+async function validateMp4EffectiveFrameRate(input: {
+  outputPath: string;
+  fps: number;
+  durationMs: number;
+}): Promise<void> {
+  const distinctFrameCount = await estimateDistinctFrameCount({
+    videoPath: input.outputPath,
+    durationMs: input.durationMs,
+  });
+  const effectiveFps = distinctFrameCount / Math.max(1, input.durationMs / 1000);
+  const minimumEffectiveFps = Math.min(
+    input.fps * RECORDING_MIN_EFFECTIVE_FPS_RATIO,
+    RECORDING_MIN_EFFECTIVE_FPS
+  );
+  if (effectiveFps < minimumEffectiveFps) {
+    throw new Error(
+      `Recording video effective frame rate ${effectiveFps.toFixed(1)}fps is below ${minimumEffectiveFps.toFixed(1)}fps`
+    );
   }
 }
 
@@ -793,6 +1065,7 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
   let browser: RenderBrowser | null = null;
   let context: RenderBrowserContext | null = null;
   let tempVideoDir: string | null = null;
+  let canvasCapture: CanvasVideoCapture | null = null;
   try {
     await reportProgress('preparing', 0.01, 'Starting playback server');
     playbackServer = await startLocalPlaybackServer({ artifactDir, clientDist });
@@ -806,6 +1079,7 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
       eventsUrl,
       hudMode,
       hudSubjectPlayerId: normalizedOptions.hudSubjectPlayerId ?? manifest.hudSubjectPlayerId,
+      renderMode: true,
     });
     const chromium = await loadChromium();
     browser = await chromium.launch({ headless: !normalizedOptions.keepBrowserOpen });
@@ -813,15 +1087,8 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
     context = await browser.newContext({
       viewport,
       deviceScaleFactor: manifest.devicePixelRatio || 1,
-      recordVideo: {
-        dir: tempVideoDir,
-        size: viewport,
-      },
     });
     const page = await context.newPage();
-    const videoRecordStartedAt = Date.now();
-    const video = page.video();
-    if (!video) throw new Error('Playwright video recorder was not initialized');
 
     installRenderPageDiagnostics(page);
     await installRenderRequestGuards(page);
@@ -844,30 +1111,38 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
       throw new Error('Recording duration was not available');
     }
 
-    await reportProgress('capturing', 0.05, 'Capturing viewport video');
-    const captureStartedAt = Date.now();
+    const webmPath = path.join(tempVideoDir, `${job?.renderId ?? 'render'}.webm`);
+    await reportProgress('capturing', 0.05, 'Capturing gameplay canvas');
+    canvasCapture = await startCanvasVideoCapture({
+      page,
+      webmPath,
+      fps,
+    });
     await waitForRecordingPlayback({
       page,
       durationMs,
       onProgress: (progress, message) => reportProgress('capturing', 0.05 + progress * 0.85, message),
     });
-    await withTimeout(
-      context.close(),
-      RECORDING_BROWSER_CLOSE_TIMEOUT_MS,
-      'Recording browser context close'
-    );
-    context = null;
+    const captureResult = await canvasCapture.stop();
+    canvasCapture = null;
+    console.info('Recording canvas capture complete', {
+      renderId: job?.renderId ?? null,
+      chunkCount: captureResult.chunkCount,
+      byteCount: captureResult.byteCount,
+      mimeType: captureResult.mimeType,
+    });
 
-    const webmPath = await video.path();
     await reportProgress('transcoding', 0.9, 'Encoding MP4');
     await transcodeVideoToMp4({
       webmPath,
       outputPath,
       fps,
       durationMs,
-      startOffsetMs: captureStartedAt - videoRecordStartedAt,
+      startOffsetMs: 0,
       onProgress: (progress, message) => reportProgress('transcoding', progress, message),
     });
+    await reportProgress('finalizing', 0.985, 'Checking MP4 motion');
+    await validateMp4EffectiveFrameRate({ outputPath, fps, durationMs });
     await reportProgress('finalizing', 0.99, 'Finalizing MP4');
     const mp4Sha256 = await sha256File(outputPath);
     await updateSummaryRender({
@@ -924,6 +1199,11 @@ export async function renderRecordingToMp4(options: Partial<RenderRecordingOptio
     })).catch(() => {});
     throw error;
   } finally {
+    if (canvasCapture) {
+      await canvasCapture.stop().catch((error) => {
+        console.warn(`Recording canvas capture cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
     if (context) {
       await closeWithTimeout('Recording browser context close', () => context!.close());
     }

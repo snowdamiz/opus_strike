@@ -26,6 +26,7 @@ interface RecordingPlaybackSource {
 interface RecordingPlaybackStartOptions extends RecordingPlaybackSource {
   preferredHudMode?: RecordingHudMode | null;
   preferredHudSubjectPlayerId?: string | null;
+  renderMode?: boolean;
 }
 
 class RecordingPlaybackBus implements GameMessageBus {
@@ -254,6 +255,7 @@ export async function startRecordingPlayback(options: RecordingPlaybackStartOpti
     id: manifest.id,
     hudMode,
     hudSubjectPlayerId,
+    renderMode: options.renderMode === true,
   });
   applyManifestToGameStore(manifest, hudSubjectPlayerId);
   setupGameRoomListeners(bus, {
@@ -412,5 +414,6 @@ export function readRecordingPlaybackOptionsFromLocation(): RecordingPlaybackSta
     ...source,
     preferredHudMode: readHudMode(params.get('recordingHudMode')),
     preferredHudSubjectPlayerId: readUrlParam(params, 'recordingHudSubjectPlayerId'),
+    renderMode: params.get('recordingRender') === '1',
   };
 }

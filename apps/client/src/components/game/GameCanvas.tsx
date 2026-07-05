@@ -1191,7 +1191,18 @@ export function GameCanvas({
   const mapProfileId = useGameStore((state) => state.mapProfileId);
   const pregeneratedMapId = useGameStore((state) => state.pregeneratedMapId);
   const settings = useSettingsStore(state => state.settings);
-  const qualityConfig = useMemo(() => getVisualQualityConfig(settings), [settings]);
+  const recordingRenderMode = useRecordingPlaybackStore((state) => state.renderMode);
+  const renderSettings = useMemo(() => (
+    recordingRenderMode
+      ? {
+        ...settings,
+        graphicsPreset: 'competitive' as const,
+        ...graphicsPresetSettings.competitive,
+        showDamageNumbers: false,
+      }
+      : settings
+  ), [recordingRenderMode, settings]);
+  const qualityConfig = useMemo(() => getVisualQualityConfig(renderSettings), [renderSettings]);
   const canvasAntialiasRef = useRef(qualityConfig.render.antialias);
   const warmupKey = useMemo(
     () => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId, mapSize, mapProfileId, pregeneratedMapId }),
@@ -1425,7 +1436,7 @@ export function GameCanvas({
       shadows={qualityConfig.shadows.enabled}
       dpr={qualityConfig.render.dpr}
       camera={{
-        fov: settings.fov,
+        fov: renderSettings.fov,
         near: 0.1,
         far: effectiveCameraFar,
         position: [0, 2, 10], // Start at a reasonable height
@@ -1456,7 +1467,7 @@ export function GameCanvas({
       }}
     >
       <Suspense fallback={null}>
-        <CameraSettingsApplier far={effectiveCameraFar} fov={settings.fov} />
+        <CameraSettingsApplier far={effectiveCameraFar} fov={renderSettings.fov} />
         <RendererSettingsApplier exposure={qualityConfig.render.exposure} shadows={qualityConfig.shadows} />
         <PhysicsBudgetApplier maxVisualQueriesPerFrame={qualityConfig.budgets.maxVisualPhysicsQueriesPerFrame} />
         <GameplayFrameSystems />
@@ -1531,7 +1542,7 @@ export function GameCanvas({
             {isTutorialMode && <TutorialTargetRange />}
             {isPracticeMode && mapProfileId === 'dev_testing' && <DevTestingMapRuntime />}
             <Effects />
-            <CombatTextLayer enabled={settings.showDamageNumbers} />
+            <CombatTextLayer enabled={renderSettings.showDamageNumbers} />
             {!isObserverMode && <HeroViewmodel config={qualityConfig.viewmodel} />}
             <VoidZonesManager />
             <DireBallsManager />
