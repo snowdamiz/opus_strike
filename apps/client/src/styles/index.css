@@ -1052,18 +1052,43 @@ body,
 
 .mobile-hud-layout-resize-grip {
   position: absolute;
-  right: -0.55rem;
-  bottom: -0.55rem;
-  width: 1.15rem;
-  height: 1.15rem;
+  right: -0.95rem;
+  bottom: -0.95rem;
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  cursor: nwse-resize;
+  pointer-events: auto;
+  z-index: 3;
+}
+
+.mobile-hud-layout-resize-grip::before {
+  content: '';
+  position: absolute;
+  right: 0.48rem;
+  bottom: 0.48rem;
+  width: 1.18rem;
+  height: 1.18rem;
   border-radius: 999px;
   border: 1px solid rgb(255 255 255 / 0.5);
   background:
     radial-gradient(circle at 35% 30%, rgb(255 255 255 / 0.85), transparent 34%),
     color-mix(in srgb, var(--mobile-hero-color, rgb(var(--color-accent-primary))) 74%, rgb(var(--color-strike-bg)));
   box-shadow: 0 0 16px color-mix(in srgb, var(--mobile-hero-color, rgb(var(--color-accent-primary))) 42%, transparent);
-  cursor: nwse-resize;
-  z-index: 2;
+}
+
+.mobile-hud-layout-resize-grip::after {
+  content: '';
+  position: absolute;
+  right: 0.84rem;
+  bottom: 0.84rem;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-right: 2px solid rgb(255 255 255 / 0.78);
+  border-bottom: 2px solid rgb(255 255 255 / 0.78);
+  pointer-events: none;
 }
 
 .mobile-hud-layout-toolbar {

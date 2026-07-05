@@ -183,6 +183,17 @@ function getWalletProviderId(provider: SolanaWalletProvider, fallback: string): 
   return name || fallback;
 }
 
+function claimWalletProviderId(baseId: string, usedIds: Set<string>): string {
+  let id = baseId;
+  let duplicateIndex = 2;
+  while (usedIds.has(id)) {
+    id = `${baseId}-${duplicateIndex}`;
+    duplicateIndex += 1;
+  }
+  usedIds.add(id);
+  return id;
+}
+
 function collectInjectedWalletCandidates(): Array<{ provider: unknown; fallbackId: string }> {
   if (typeof window === 'undefined') return [];
 
@@ -213,14 +224,7 @@ function discoverWalletProviders(): DiscoveredWalletProvider[] {
     if (!isSolanaWalletProvider(candidate.provider) || seen.has(candidate.provider)) continue;
     seen.add(candidate.provider);
 
-    const baseId = getWalletProviderId(candidate.provider, candidate.fallbackId);
-    let id = baseId;
-    let duplicateIndex = 2;
-    while (usedIds.has(id)) {
-      id = `${baseId}-${duplicateIndex}`;
-      duplicateIndex += 1;
-    }
-    usedIds.add(id);
+    const id = claimWalletProviderId(getWalletProviderId(candidate.provider, candidate.fallbackId), usedIds);
 
     providers.push({
       id,
@@ -230,10 +234,11 @@ function discoverWalletProviders(): DiscoveredWalletProvider[] {
     });
   }
 
-  if (providers.length === 0 && canUseMobileWalletDeepLinks()) {
+  if (canUseMobileWalletDeepLinks()) {
     for (const mobileWallet of MOBILE_DEEP_LINK_WALLET_PROVIDERS) {
       providers.push({
         ...mobileWallet,
+        id: claimWalletProviderId(mobileWallet.id, usedIds),
         installed: false,
         provider: null,
       });
