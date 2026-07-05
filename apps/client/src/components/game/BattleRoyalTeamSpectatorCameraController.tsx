@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import {
+  MOUSE_SENSITIVITY as BASE_AIM_SENSITIVITY,
+  PITCH_LIMIT,
+} from '@voxel-strike/shared';
+import { useGamepadInput } from '../../hooks/gamepadInput';
 import { useGameStore } from '../../store/gameStore';
+import { consumeLookDelta } from '../../store/lookInputStore';
+import { useSettingsStore } from '../../store/settingsStore';
 import type { Player } from '../../store/types';
 
 const CAMERA_DISTANCE = 6.4;
@@ -10,6 +17,8 @@ const LOOK_HEIGHT = 1.15;
 const DOWNED_CAMERA_HEIGHT = 1.7;
 const DOWNED_LOOK_HEIGHT = 0.45;
 const POSITION_LERP = 0.16;
+const SPECTATOR_PITCH_LIMIT = Math.min(PITCH_LIMIT, Math.PI / 3);
+const SPECTATOR_VERTICAL_ORBIT_DISTANCE = 3.2;
 
 export type BattleRoyalTeamSpectatorTarget = Pick<Player, 'id' | 'name' | 'team' | 'state'>;
 
@@ -52,23 +61,45 @@ export function getNextBattleRoyalTeamSpectatorTargetId(
   return targets[nextIndex]?.id ?? currentId;
 }
 
-function writeBehindOffset(lookYaw: number, downed: boolean, target: THREE.Vector3): THREE.Vector3 {
+export function writeBattleRoyalSpectatorCameraOffset(
+  lookYaw: number,
+  lookPitch: number,
+  downed: boolean,
+  target: THREE.Vector3
+): THREE.Vector3 {
+  const pitch = THREE.MathUtils.clamp(lookPitch, -SPECTATOR_PITCH_LIMIT, SPECTATOR_PITCH_LIMIT);
+
   return target.set(
     Math.sin(lookYaw) * CAMERA_DISTANCE,
-    downed ? DOWNED_CAMERA_HEIGHT : CAMERA_HEIGHT,
+    (downed ? DOWNED_CAMERA_HEIGHT : CAMERA_HEIGHT) - Math.sin(pitch) * SPECTATOR_VERTICAL_ORBIT_DISTANCE,
     Math.cos(lookYaw) * CAMERA_DISTANCE
   );
 }
 
+function requestCanvasPointerLock(canvas: HTMLCanvasElement): void {
+  if (document.pointerLockElement === canvas) return;
+
+  const lockResult = canvas.requestPointerLock() as Promise<void> | void;
+  if (lockResult && typeof lockResult.catch === 'function') {
+    lockResult.catch(() => {});
+  }
+}
+
 export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled: boolean }) {
   const { camera, gl } = useThree();
+  const aimSensitivity = useSettingsStore(state => state.settings.sensitivity);
+  const invertY = useSettingsStore(state => state.settings.invertY);
   const localPlayer = useGameStore((state) => state.localPlayer);
   const players = useGameStore((state) => state.players);
   const [targetId, setTargetId] = useState<string | null>(null);
   const initializedTargetRef = useRef<string | null>(null);
+  const initializedLookRef = useRef(false);
+  const yawRef = useRef(0);
+  const pitchRef = useRef(0);
   const targetPositionRef = useRef(new THREE.Vector3());
   const desiredPositionRef = useRef(new THREE.Vector3());
   const behindOffsetRef = useRef(new THREE.Vector3());
+  useGamepadInput(enabled);
 
   const teammateTargets = useMemo(() => {
     return getBattleRoyalTeamSpectatorTargets(localPlayer, players.values());
@@ -85,6 +116,7 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
   useEffect(() => {
     if (!enabled) {
       initializedTargetRef.current = null;
+      initializedLookRef.current = false;
       setTargetId(null);
       return;
     }
@@ -96,6 +128,29 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
   const cycleTarget = useCallback((direction: 1 | -1) => {
     setTargetId((current) => getNextBattleRoyalTeamSpectatorTargetId(current, teammateTargets, direction));
   }, [teammateTargets]);
+
+  const applyLookDelta = useCallback((deltaX: number, deltaY: number) => {
+    const sensitivityMultiplier = aimSensitivity / 50;
+    yawRef.current -= deltaX * BASE_AIM_SENSITIVITY * sensitivityMultiplier;
+    pitchRef.current += (invertY ? 1 : -1) * deltaY * BASE_AIM_SENSITIVITY * sensitivityMultiplier;
+    pitchRef.current = THREE.MathUtils.clamp(
+      pitchRef.current,
+      -SPECTATOR_PITCH_LIMIT,
+      SPECTATOR_PITCH_LIMIT
+    );
+  }, [aimSensitivity, invertY]);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+
+    const handleMouseMove = (event: MouseEvent) => {
+      if (document.pointerLockElement !== gl.domElement) return;
+      applyLookDelta(event.movementX, event.movementY);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    return () => document.removeEventListener('mousemove', handleMouseMove);
+  }, [applyLookDelta, enabled, gl]);
 
   useEffect(() => {
     if (!enabled || teammateTargets.length <= 1) return undefined;
@@ -116,10 +171,19 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
   }, [cycleTarget, enabled, teammateTargets.length]);
 
   useEffect(() => {
-    if (!enabled || teammateTargets.length <= 1) return undefined;
+    if (!enabled) return undefined;
 
     const handleMouseDown = (event: MouseEvent) => {
       if (event.button !== 0 || event.defaultPrevented) return;
+      const canvas = gl.domElement;
+
+      if (document.pointerLockElement !== canvas) {
+        event.preventDefault();
+        requestCanvasPointerLock(canvas);
+        return;
+      }
+
+      if (teammateTargets.length <= 1) return;
       event.preventDefault();
       cycleTarget(1);
     };
@@ -143,9 +207,25 @@ export function BattleRoyalTeamSpectatorCameraController({ enabled }: { enabled:
       target.position.y + (isDowned ? DOWNED_LOOK_HEIGHT : LOOK_HEIGHT),
       target.position.z
     );
+    if (!initializedLookRef.current) {
+      yawRef.current = Number.isFinite(target.lookYaw) ? target.lookYaw : 0;
+      pitchRef.current = 0;
+      initializedLookRef.current = true;
+    }
+
+    const lookDelta = consumeLookDelta();
+    if (lookDelta.x !== 0 || lookDelta.y !== 0) {
+      applyLookDelta(lookDelta.x, lookDelta.y);
+    }
+
     const desiredPosition = desiredPositionRef.current
       .copy(targetPosition)
-      .add(writeBehindOffset(target.lookYaw, isDowned, behindOffsetRef.current));
+      .add(writeBattleRoyalSpectatorCameraOffset(
+        yawRef.current,
+        pitchRef.current,
+        isDowned,
+        behindOffsetRef.current
+      ));
 
     if (initializedTargetRef.current !== target.id) {
       camera.position.copy(desiredPosition);
