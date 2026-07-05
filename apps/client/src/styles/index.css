@@ -6339,70 +6339,6 @@ body,
   text-transform: none;
 }
 
-.play-ping-advisory {
-  --play-ping-accent: rgb(148 163 184);
-  position: absolute;
-  left: var(--play-corner-inset);
-  bottom: max(var(--play-corner-inset), env(safe-area-inset-bottom));
-  z-index: 3;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0.36rem;
-  pointer-events: auto;
-  color: var(--play-ping-accent);
-  opacity: 0.86;
-  text-shadow: 0 0.15rem 0.45rem rgb(0 0 0 / 0.82);
-}
-
-.play-ping-advisory[data-quality="good"] {
-  --play-ping-accent: rgb(110 231 183);
-}
-
-.play-ping-advisory[data-quality="fair"] {
-  --play-ping-accent: rgb(252 211 77);
-}
-
-.play-ping-advisory[data-quality="high"],
-.play-ping-advisory[data-quality="offline"] {
-  --play-ping-accent: rgb(251 146 60);
-  opacity: 1;
-}
-
-.play-ping-advisory[data-quality="offline"] {
-  --play-ping-accent: rgb(248 113 113);
-}
-
-.play-ping-advisory-icon {
-  display: grid;
-  width: 1.15rem;
-  height: 1.15rem;
-  place-items: center;
-}
-
-.play-ping-advisory-icon svg {
-  width: 1rem;
-  height: 1rem;
-  filter: drop-shadow(0 0 0.45rem color-mix(in srgb, var(--play-ping-accent) 38%, transparent));
-}
-
-.play-ping-advisory-value {
-  color: rgb(255 255 255 / 0.9);
-  font-family: 'Exo 2', 'Rajdhani', sans-serif;
-  font-size: 0.82rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  line-height: 1;
-  text-transform: uppercase;
-}
-
-.play-ping-advisory-unit {
-  margin-left: 0.14rem;
-  color: rgb(255 255 255 / 0.62);
-  font-size: 0.68em;
-  font-weight: 800;
-}
-
 /* ===== STATS PAGE ===== */
 .stats-page {
   height: 100%;
@@ -7585,10 +7521,6 @@ body,
     --play-stage-y-offset: 0.1rem;
   }
 
-  .play-ping-advisory-icon {
-    width: 1rem;
-    height: 1rem;
-  }
 }
 
 .heroes-page-layout {

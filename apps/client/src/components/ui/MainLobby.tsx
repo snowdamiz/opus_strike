@@ -34,7 +34,6 @@ import { WalletProviderLogo } from './WalletProviderLogo';
 import { WalletProviderOptions } from './WalletProviderOptions';
 import { useUISounds } from '../../hooks/useUiAudio';
 import { useMobileDevice } from '../../hooks/useDeviceCapabilities';
-import { useServerLatencyProbe } from '../../hooks/useServerLatencyProbe';
 import { config } from '../../config/environment';
 import {
   ALL_HERO_IDS,
@@ -91,7 +90,6 @@ import {
   type PlayMenuMode,
   type PlayMenuPreferences,
 } from '../../utils/playMenuPreferences';
-import type { ServerLatencyProbeSnapshot } from '../../utils/serverLatency';
 import { requiresTutorial } from '../../utils/tutorialAccess';
 import { formatCompactTokenAmount, formatTokenBaseUnits } from '../../utils/tokenAmountFormat';
 import { transactionFromBase64 } from '../../utils/solanaTransactions';
@@ -111,7 +109,6 @@ const HERO_IDLE_ANIMATION_MODE: HeroPreviewAnimationMode = 'idle';
 const PLAY_MODE_OPTIONS_BEFORE_BOT_FILL = PLAY_MODE_OPTIONS.filter((mode) => mode !== 'practice' && mode !== 'custom');
 const PLAY_MODE_OPTIONS_AFTER_BOT_FILL = PLAY_MODE_OPTIONS.filter((mode) => mode === 'practice' || mode === 'custom');
 const PLAY_PARTY_SLOT_COUNT = getPartyMaxMembersForMode('quick_play', DEFAULT_GAMEPLAY_MODE);
-const PING_ADVISORY_VISIBLE_MIN_MS = 100;
 const EMPTY_HERO_ID_SET = new Set<HeroId>();
 const PURCHASE_STATUS_POLL_MS = 1800;
 const PURCHASE_STATUS_POLL_ATTEMPTS = 6;
@@ -633,7 +630,6 @@ export function MainLobby() {
       }
     : null;
   const isRankedPreseason = rankedSeason.mode === 'preseason';
-  const serverLatency = useServerLatencyProbe(activeTab === 'play');
   const devTutorialOverride = useSettingsStore((state) => state.settings.devTutorialOverride);
   const tutorialRequired = requiresTutorial(user?.tutorialCompletedAt, devTutorialOverride);
   const mobilePwaInstallRequired = isMobileDevice && !pwaInstall.hasDownloaded && !pwaInstall.isInstalled;
@@ -1487,7 +1483,6 @@ export function MainLobby() {
             runningGameSession={runningGameSession}
             isReconnectChecking={isReconnectChecking}
             isSkippingTutorial={isSkippingTutorial}
-            serverLatency={serverLatency}
             mobilePwaInstallRequired={mobilePwaInstallRequired}
             mobilePwaCanInstall={pwaInstall.canPromptInstall}
             mobilePwaInstallInProgress={isMobilePwaInstalling}
@@ -1949,7 +1944,6 @@ interface PlayTabProps {
   runningGameSession: RunningGameSession | null;
   isReconnectChecking: boolean;
   isSkippingTutorial: boolean;
-  serverLatency: ServerLatencyProbeSnapshot | null;
   mobilePwaInstallRequired: boolean;
   mobilePwaCanInstall: boolean;
   mobilePwaInstallInProgress: boolean;
@@ -1994,7 +1988,6 @@ function PlayTab({
   runningGameSession,
   isReconnectChecking,
   isSkippingTutorial,
-  serverLatency,
   mobilePwaInstallRequired,
   mobilePwaCanInstall,
   mobilePwaInstallInProgress,
@@ -2160,9 +2153,6 @@ function PlayTab({
             onSelectHero={onSelectHero}
           />
         </div>
-      )}
-      {serverLatency && shouldShowServerLatencyAdvisory(serverLatency) && (
-        <ServerLatencyAdvisory snapshot={serverLatency} />
       )}
       <div className="play-tab-bottom-right-stack">
         <RankedSeasonPlate season={rankedSeason} />
@@ -3066,50 +3056,6 @@ function BotFillToggle({
           <span />
         </span>
       </button>
-    </div>
-  );
-}
-
-function shouldShowServerLatencyAdvisory(snapshot: ServerLatencyProbeSnapshot): boolean {
-  return snapshot.averagePingMs !== null && snapshot.averagePingMs > PING_ADVISORY_VISIBLE_MIN_MS;
-}
-
-function ServerLatencyAdvisory({ snapshot }: { snapshot: ServerLatencyProbeSnapshot }) {
-  const pingValue = snapshot.averagePingMs === null ? '--' : String(snapshot.averagePingMs);
-  const displayQuality = snapshot.quality === 'good' ? 'fair' : snapshot.quality;
-  const statusLabel = (() => {
-    switch (displayQuality) {
-      case 'fair':
-        return `Ping ${pingValue} milliseconds. Playable, with a little delay.`;
-      case 'high':
-        return `High ping ${pingValue} milliseconds. Playable, but combat may feel delayed.`;
-      case 'offline':
-        return 'Connection check failed. Matchmaking may have trouble reaching the server.';
-      case 'checking':
-      default:
-        return 'Checking connection. Sampling server response before you queue.';
-    }
-  })();
-
-  return (
-    <div
-      className="play-ping-advisory"
-      data-quality={displayQuality}
-      title={snapshot.error ?? statusLabel}
-      aria-label={statusLabel}
-      aria-live={displayQuality === 'high' || displayQuality === 'offline' ? 'polite' : 'off'}
-    >
-      <span className="play-ping-advisory-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 13.5a11.2 11.2 0 0116 0" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7.5 17a6.2 6.2 0 019 0" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M12 20h.01" />
-        </svg>
-      </span>
-      <span className="play-ping-advisory-value" aria-hidden="true">
-        {pingValue}
-        <span className="play-ping-advisory-unit">ms</span>
-      </span>
     </div>
   );
 }
