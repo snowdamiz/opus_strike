@@ -245,11 +245,7 @@ function LoginDialog({
   onWalletSignIn: (providerId?: string) => Promise<void>;
   onClose: () => void;
 }) {
-  const walletStatus = walletProviders.some((wallet) => wallet.mobileDeepLink)
-    ? 'Available'
-    : walletProviders.length > 0
-      ? 'Detected'
-      : 'Not detected';
+  const walletStatus = walletProviders.length > 0 ? 'Detected' : 'Not detected';
 
   return (
     <GameDialog

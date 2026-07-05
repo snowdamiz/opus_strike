@@ -6195,6 +6195,16 @@ body,
   display: grid;
 }
 
+.wallet-provider-empty-message {
+  display: block;
+  color: rgb(255 255 255 / 0.5);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.72rem 0.1rem;
+}
+
 .login-provider-button-wallet {
   justify-content: flex-start;
   border: 0;
@@ -6234,6 +6244,12 @@ body,
   align-items: center;
   justify-content: flex-end;
   gap: 0.55rem;
+}
+
+.settings-wallet-options .wallet-provider-empty-message {
+  max-width: 10rem;
+  padding: 0;
+  text-align: right;
 }
 
 .settings-wallet-option {
