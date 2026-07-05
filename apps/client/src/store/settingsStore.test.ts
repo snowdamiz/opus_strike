@@ -30,28 +30,33 @@ const {
 localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({
   ...defaultSettings,
   masterVolume: 37,
+  mobileHudLayoutEditing: true,
   streamerModeEnabled: true,
   streamerFeedMode: 'bot_deathmatch',
 }));
 
 const loadedSettings = loadSettings();
 assert.equal(loadedSettings.masterVolume, 37);
+assert.equal(loadedSettings.mobileHudLayoutEditing, false);
 assert.equal(loadedSettings.streamerModeEnabled, false);
 assert.equal(loadedSettings.streamerFeedMode, 'bot_deathmatch');
 
 useSettingsStore.getState().applySettings({
   ...defaultSettings,
   masterVolume: 42,
+  mobileHudLayoutEditing: true,
   streamerModeEnabled: true,
   streamerFeedMode: 'bot_deathmatch',
 });
 
 assert.equal(useSettingsStore.getState().settings.masterVolume, 42);
+assert.equal(useSettingsStore.getState().settings.mobileHudLayoutEditing, true);
 assert.equal(useSettingsStore.getState().settings.streamerModeEnabled, true);
 assert.equal(useSettingsStore.getState().settings.streamerFeedMode, 'bot_deathmatch');
 
 const persistedSettings = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) ?? '{}');
 assert.equal(persistedSettings.masterVolume, 42);
+assert.equal(persistedSettings.mobileHudLayoutEditing, false);
 assert.equal(persistedSettings.streamerModeEnabled, false);
 assert.equal(persistedSettings.streamerFeedMode, 'bot_deathmatch');
 

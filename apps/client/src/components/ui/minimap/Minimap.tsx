@@ -14,6 +14,7 @@ import { measureFrameWork } from '../../../movement/networkDiagnostics';
 import { MINIMAP_COLORS } from '../../../styles/colorTokens';
 import { isSafeZoneTargetRevealed } from '../../../utils/battleRoyalSafeZoneReveal';
 import { getPreparedVoxelMap, prepareVoxelMapCpu } from '../../../utils/mapWarmup/mapPrepCache';
+import { EditableHudItem } from '../EditableHudItem';
 import { getStaticMinimapLayer, resizeCanvas } from './minimapCanvas';
 import {
   createMinimapProjection,
@@ -117,13 +118,17 @@ export function Minimap() {
   if (!localPlayerId) return null;
 
   return (
-    <div
-      ref={containerRef}
-      className="hud-minimap absolute left-3 top-3 sm:left-4 sm:top-4 pointer-events-none z-[125] aspect-square w-[clamp(7.75rem,13vw,10.75rem)] select-none"
-      aria-hidden="true"
+    <EditableHudItem
+      id="hud-minimap"
+      label="Minimap"
+      desktopClassName="hud-minimap absolute left-3 top-3 sm:left-4 sm:top-4 pointer-events-none z-[125] aspect-square w-[clamp(7.75rem,13vw,10.75rem)] select-none"
+      mobileClassName="hud-minimap z-[125] aspect-square select-none"
+      contentClassName="h-full w-full"
     >
       <div
+        ref={containerRef}
         className="relative h-full w-full overflow-hidden rounded-lg border border-cyan-100/10 bg-slate-950/72 backdrop-blur-md"
+        aria-hidden="true"
         style={{
           boxShadow: MINIMAP_COLORS.frame.shadow,
         }}
@@ -134,7 +139,7 @@ export function Minimap() {
         <div className="absolute inset-x-2 top-2 h-px bg-gradient-to-r from-transparent via-cyan-100/30 to-transparent" />
         <div className="absolute inset-x-2 bottom-2 h-px bg-gradient-to-r from-transparent via-cyan-100/18 to-transparent" />
       </div>
-    </div>
+    </EditableHudItem>
   );
 }
 
