@@ -113,6 +113,8 @@ const EMPTY_HERO_ID_SET = new Set<HeroId>();
 const PURCHASE_STATUS_POLL_MS = 1800;
 const PURCHASE_STATUS_POLL_ATTEMPTS = 6;
 const LAMPORTS_PER_SOL = 1_000_000_000n;
+const RANKED_TOKEN_HOLD_CTA_LABEL = 'Hold 500k To Play';
+const RANKED_TOKEN_PUMP_FUN_URL = 'https://pump.fun/coin/5Dq9LnhLRiisTQPfb21pgoGZt8h3E9h31JyiSzvYpump';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -353,6 +355,14 @@ function rankedTokenHoldRequirement(status: RankedTokenHoldStatus): string {
 function rankedTokenGateBlockedMessage(status: RankedTokenHoldStatus): string {
   if (status.mode === 'locked') return status.lockedReason ?? 'Ranked is locked';
   return `Ranked requires ${rankedTokenHoldRequirement(status)}`;
+}
+
+function isRankedTokenHoldPurchaseStatus(status: RankedTokenHoldStatus | null): boolean {
+  return status?.mode === 'token_required' && status.eligible === false;
+}
+
+function openRankedTokenHoldLink() {
+  window.open(RANKED_TOKEN_PUMP_FUN_URL, '_blank', 'noopener,noreferrer');
 }
 
 function getSeasonBoundaryDate(season: RankedSeasonSnapshot): Date | null {
@@ -1223,6 +1233,10 @@ export function MainLobby() {
       handleOpenLogin();
       return;
     }
+    if (isRankedTokenHoldPurchaseStatus(rankedTokenHoldStatus)) {
+      openRankedTokenHoldLink();
+      return;
+    }
     if (rankedTokenHoldStatus?.eligible === false) {
       setError(rankedTokenGateBlockedMessage(rankedTokenHoldStatus));
       return;
@@ -2020,6 +2034,10 @@ function PlayTab({
     ? getHumanPartyHeroIds(lineupMembers, lineupLocalUserId)
     : EMPTY_HERO_ID_SET;
   const partyHasDuplicateHeroes = isInParty && uniquePartyHeroesRequired && hasDuplicatePartyHeroes(lineupMembers);
+  const isRankedTokenHoldPurchaseState = selectedPlayMode === 'ranked' &&
+    !requiresTutorial &&
+    isRankedTokenHoldPurchaseStatus(rankedTokenHoldStatus);
+  const isRankedTokenHoldPurchaseCtaActive = isRankedTokenHoldPurchaseState && !isReconnectChecking && !canReconnect;
   const mainPlayLabel = isReconnectChecking
     ? 'CHECKING...'
     : canReconnect
@@ -2028,6 +2046,8 @@ function PlayTab({
         ? isLoading
           ? 'STARTING...'
           : 'START TUTORIAL'
+        : isRankedTokenHoldPurchaseCtaActive
+          ? RANKED_TOKEN_HOLD_CTA_LABEL
         : selectedPlayMode === 'practice'
           ? getPlayModeActionLabel(selectedPlayMode, isLoading)
         : isInParty
@@ -2041,20 +2061,21 @@ function PlayTab({
             : getPlayModeActionLabel(selectedPlayMode, isLoading);
   const isRankedEligibilityBlocked = selectedPlayMode === 'ranked' &&
     !requiresTutorial &&
-    rankedTokenHoldStatus?.eligible === false;
+    rankedTokenHoldStatus?.eligible === false &&
+    !isRankedTokenHoldPurchaseState;
   const isPracticePlayMode = selectedPlayMode === 'practice';
   const partySize = party?.members.length ?? 1;
   const gameplayModeForLimit = getGameplayModeForPlayMode(selectedPlayMode, customGameplayMode);
   const partyMemberLimit = getPartyMemberLimitForPlayMode(selectedPlayMode, gameplayModeForLimit);
   const isPartyTooLargeForMode = !isPracticePlayMode && isInParty && partySize > partyMemberLimit;
-  const primaryDisabled = isLoading || isReconnectChecking || isSkippingTutorial || (
+  const primaryDisabled = isRankedTokenHoldPurchaseCtaActive ? false : isLoading || isReconnectChecking || isSkippingTutorial || (
     !isPracticePlayMode && isInParty && isPartyLeader && !isPartyReadyToStart
   ) || (!isPracticePlayMode && partyHasDuplicateHeroes) || isPartyTooLargeForMode || (
     selectedPlayMode === 'ranked' &&
     !requiresTutorial &&
     rankedSeason.mode === 'preseason'
   ) || isRankedEligibilityBlocked;
-  const primaryDisabledReason = getPrimaryDisabledReason({
+  const primaryDisabledReason = isRankedTokenHoldPurchaseCtaActive ? null : getPrimaryDisabledReason({
     isLoading,
     isReconnectChecking,
     isInParty,
@@ -2106,6 +2127,7 @@ function PlayTab({
         botFillDisabledReason={botFillDisabledReason}
         rankedTokenHoldStatus={rankedTokenHoldStatus}
         rankedTokenHoldError={rankedTokenHoldError}
+        isRankedTokenHoldPurchaseCtaActive={isRankedTokenHoldPurchaseCtaActive}
         isInParty={isInParty}
         isPartyLeader={isPartyLeader}
         canReconnect={canReconnect}
@@ -2121,6 +2143,7 @@ function PlayTab({
         onSetBotFillEnabled={onSetBotFillEnabled}
         onLogin={onLogin}
         onReconnect={onReconnect}
+        onRankedTokenHoldLink={openRankedTokenHoldLink}
         onStartTutorial={onStartTutorial}
         onSkipTutorial={onSkipTutorial}
         onPlayAction={onPlayAction}
@@ -2631,6 +2654,7 @@ function PlayActionStack({
   botFillDisabledReason,
   rankedTokenHoldStatus,
   rankedTokenHoldError,
+  isRankedTokenHoldPurchaseCtaActive,
   isInParty,
   isPartyLeader,
   canReconnect,
@@ -2646,6 +2670,7 @@ function PlayActionStack({
   onSetBotFillEnabled,
   onLogin,
   onReconnect,
+  onRankedTokenHoldLink,
   onStartTutorial,
   onSkipTutorial,
   onPlayAction,
@@ -2662,6 +2687,7 @@ function PlayActionStack({
   botFillDisabledReason: string | null;
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
   rankedTokenHoldError: string | null;
+  isRankedTokenHoldPurchaseCtaActive: boolean;
   isInParty: boolean;
   isPartyLeader: boolean;
   canReconnect: boolean;
@@ -2677,6 +2703,7 @@ function PlayActionStack({
   onSetBotFillEnabled: (enabled: boolean) => void;
   onLogin: () => void;
   onReconnect: () => void;
+  onRankedTokenHoldLink: () => void;
   onStartTutorial: () => void;
   onSkipTutorial: () => void;
   onPlayAction: () => void;
@@ -2707,6 +2734,8 @@ function PlayActionStack({
       onReconnect();
     } else if (shouldStartTutorial) {
       onStartTutorial();
+    } else if (isRankedTokenHoldPurchaseCtaActive) {
+      onRankedTokenHoldLink();
     } else {
       onPlayAction();
     }

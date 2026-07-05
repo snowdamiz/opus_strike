@@ -1,7 +1,8 @@
 import bs58 from 'bs58';
 import nacl from 'tweetnacl';
 
-const PHANTOM_DEEP_LINK_BASE_URL = 'https://phantom.app/ul/v1';
+const PHANTOM_DEEP_LINK_UNIVERSAL_BASE_URL = 'https://phantom.app/ul/v1';
+const PHANTOM_DEEP_LINK_CUSTOM_SCHEME_BASE_URL = 'phantom://v1';
 const PHANTOM_DEEP_LINK_SESSION_KEY = 'opusStrike.phantomDeepLink.session';
 const PHANTOM_DEEP_LINK_REQUEST_KEY = 'opusStrike.phantomDeepLink.request';
 const PHANTOM_DEEP_LINK_REQUEST_TTL_MS = 20 * 60 * 1000;
@@ -139,7 +140,7 @@ export function startPhantomMobileConnect(purpose: PhantomDeepLinkPurpose = 'con
     redirect_link: createRedirectLink('connect', requestId),
   });
 
-  window.location.assign(`${PHANTOM_DEEP_LINK_BASE_URL}/connect?${params.toString()}`);
+  openPhantomMobileDeepLink('connect', params);
 }
 
 export function startPhantomMobileSignMessage(options: {
@@ -180,11 +181,27 @@ export function startPhantomMobileSignMessage(options: {
     payload: bs58.encode(encryptedPayload),
   });
 
-  window.location.assign(`${PHANTOM_DEEP_LINK_BASE_URL}/signMessage?${params.toString()}`);
+  openPhantomMobileDeepLink('signMessage', params);
 }
 
 export function waitForPhantomMobileRedirect<T>(): Promise<T> {
   return new Promise<T>(() => undefined);
+}
+
+export function createPhantomMobileDeepLinkUrl(
+  action: PhantomDeepLinkAction,
+  params: URLSearchParams,
+  options: { preferCustomScheme?: boolean } = {}
+): string {
+  const preferCustomScheme = options.preferCustomScheme ?? canUsePhantomMobileDeepLink();
+  const baseUrl = preferCustomScheme
+    ? PHANTOM_DEEP_LINK_CUSTOM_SCHEME_BASE_URL
+    : PHANTOM_DEEP_LINK_UNIVERSAL_BASE_URL;
+  return `${baseUrl}/${action}?${params.toString()}`;
+}
+
+function openPhantomMobileDeepLink(action: PhantomDeepLinkAction, params: URLSearchParams): void {
+  window.location.assign(createPhantomMobileDeepLinkUrl(action, params));
 }
 
 export function handlePhantomMobileDeepLinkCallback(): PhantomMobileDeepLinkCallbackResult {

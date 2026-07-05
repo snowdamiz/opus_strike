@@ -269,6 +269,10 @@ async function main(): Promise<void> {
       formatShowcaseJobError(new Error('Recording playback stopped responding near 19s: Recording playback progress read timed out after 3000ms')),
       'Recording render timed out while capturing the video. Try again in a moment.'
     );
+    assert.equal(
+      formatShowcaseJobError(new Error('Recording video effective frame rate 2.3fps is below 10.0fps')),
+      'Recording render timed out while capturing the video. Try again in a moment.'
+    );
     assert.equal(formatShowcaseJobError(new Error('Recording failed: missing events')), 'Recording failed: missing events');
 
     await fs.rm(rootDir, { recursive: true, force: true });
